@@ -5,9 +5,9 @@
 //   2. 途中で落とす（ADR 0270 の形: A を普通に止める。札はターンの間に保持役の子へ置き直されている）。同じデータ置き場で B が起動で付け直す。
 //      時点: ツールの実行中（ゲートで止める）・A が居ない間に agy が result まで出した（終わった子）。どちらも turnEnd・completedAt・使用量（presentKey の 1 件）が
 //      1 回だけ、本文・ツールの結果・人の発言は履歴に 1 回、restart の中断にならない。付け直した子は会話の次のターンにも使う（同じ agy。起こし直さない）。
-//      A の最初の保持役の使用が、前のサーバーが残した idle の子を止める
+//      A の起動（restoreAdoptedTurns の後の sweepIdleAtStart）が、前のサーバーが残した idle の子を止める
 //   3. 強制終了（2e の形。手を離す口を経ない）: ツールの実行中のまま A を SIGKILL しても、札の置き直しで B が付け直す
-//   4. main が起こした起動（名前付きパイプ・同じトークンとポート）: A を普通に止めて B を起こすと、保持役の agy のターンを起動で付け直す。idle の agy は B の最初の保持役の使用が止める
+//   4. main が起こした起動（名前付きパイプ・同じトークンとポート）: A を普通に止めて B を起こすと、保持役の agy のターンを起動で付け直す。idle の agy は B の起動が止める
 //      （新サーバーは知らないので）。次のターンは agy を起こし直して続く
 //   5. サーバーが普通に終わる（更新・落ちたとき）: 保持役の agy は止めない（アプリの終了だけが止める）
 //   6. 後片付け: 保持役・偽の agy が残らない
@@ -123,7 +123,7 @@ export default async function (t) {
       const res = await ca.runTurn({ backend: 'antigravity', cwd: work, prompt: `hello ${k}` }, { ms: WAIT_MS });
       assert.equal(res.outcome, 'ok', a.tail(10));
       ids[k] = res.sessionId;
-      if (k === 'T') await until(() => !alive(leftover.pid), 10_000, '前のサーバーが残した idle の子は、A の最初の保持役の使用が止める')
+      if (k === 'T') await until(() => !alive(leftover.pid), 10_000, '前のサーバーが残した idle の子は、A の起動が止める')
         .catch(async error => { throw new Error(`${error.message}\n${a.tail(15)}\n[holder.log]\n${(await fs.readFile(path.join(root, 'logs', 'holder.log'), 'utf8').catch(() => '')).split('\n').slice(-15).join('\n')}`); });
     }
     assert.ok((await spawned()).length >= 6, '会話ごとに別の agy');
@@ -279,14 +279,14 @@ export default async function (t) {
       const nextR = await cb.runTurn({ backend: 'antigravity', sessionId: ids.R, cwd: work, prompt: 'next turn R' }, { ms: WAIT_MS });
       assert.equal(nextR.outcome, 'ok', b.tail(10));
       assert.equal((await spawned()).length, spawnedBefore, 'R: 付け直した agy が次のターンも使われる（起こし直さない）');
-      // B の最初の agy の使用（sweepIdle）が、前のサーバーが残した idle の agy（札も印も無い）を止める
+      // B の起動（sweepIdleAtStart）が、前のサーバーが残した idle の agy（札も印も無い）を止める
       // idle だった I の次のターンは、B が agy を起こし直して続く
       const next = await cb.runTurn({ backend: 'antigravity', sessionId: ids.I, cwd: work, prompt: 'after restart I' }, { ms: WAIT_MS });
       assert.equal(next.outcome, 'ok', b.tail(10));
-      await until(() => !alive(idlePid), 10_000, 'idle の agy を B の最初の agy の使用が止める');
+      await until(() => !alive(idlePid), 10_000, 'idle の agy を B の起動が止める');
       assert.equal((await spawned()).length, spawnedBefore + 1, 'I: idle だった会話の次のターンは agy を起こし直す');
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
-      t.ok('main が起こした起動: A を普通に止めて B を起こすと、保持役の agy のターンを起動で付け直して 1 回だけ締まる。idle の agy は B の最初の保持役の使用が止め、次のターンは起こし直して続く', true);
+      t.ok('main が起こした起動: A を普通に止めて B を起こすと、保持役の agy のターンを起動で付け直して 1 回だけ締まる。idle の agy は B の起動が止め、次のターンは起こし直して続く', true);
       t.ok('付け直した agy は会話の次のターンにも使われる（B が同じポート・トークンなので印の比べが合う）', true);
 
       // 5. サーバーが普通に終わる（更新・落ちたとき）: 保持役の agy は止めない（次の起動が拾う。止めるのはアプリの終了だけ）。

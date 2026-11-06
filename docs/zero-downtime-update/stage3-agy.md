@@ -54,11 +54,11 @@
 
 - **手を離す**（`control.holder.handOff`）: 控え（会話の記録）を最新に書いてから、札を子に置いて `detach`（答えが来た時点で以後の書き込みは転送されない）→ 読みを止める → ターンを `handedOff` で終える（server が締めない）。手を離している最中に `result` が届いてターンが終わっても、**札と印は外さない**（`handingOff`。終わった直後のターンを付け直す側が、記録の結果から締める）
 - **idle の子**（ターンが終わった agy）: ターンの終わりに**札と印を 1 回の書き込みで外す**（`held.endTurn()`。付け直す対象から外す）。次のターンは同じ子を使う。外す人が居なくなる経路ごとに片付ける:
-  - **引き継ぎ**: 新しいサーバーは idle の子を知らない（札が無い）ので、旧サーバーが **`backend.releaseIdle()`** で止める。**`core/server.mjs` の `handoverRun.stash` が、預かり物を置く前（`detach()` の前。後は旧サーバーの書き込みが転送されない）に、全バックエンドの `releaseIdle` を呼ぶ**（1 か所の追加）。次のターンは agy を起こし直す（会話は `--conversation` で続く）
-  - **普通の終了**（`process.once('exit')`）: 手を離していない子を木ごと止める。**止める依頼は `HolderClient.sendBatch` で 1 回の書き込みにまとめる**（続けて `write` すると、`process.exit` までに最初の 1 つしか出ない。実測: 3 つの idle の子のうち 1 つだけが止まった。Windows の名前付きパイプ）。手を離した子には触れない（agent の置き場も残す）
-  - **待ったまま時間が過ぎた**: `AGENT_HOST_AGY_IDLE_MS`（既定 30 分）を過ぎた idle の子は、サーバーが止める（`armIdle`。保持役に載せない子と同じ。次のターンは起こし直す。理由と既定の決め方は [multi-backend.md](../multi-backend.md) §2.8「待っている agy を時間で止める」）
-  - **サーバーが落ちた後**: 次の起動の**最初の保持役の使用**（`sweepIdle`。`antigravity.mjs` の `fresh` の始め）が、札か印の欠けた agy の子を止める（付け直せる子＝札と印の両方がある子には触れない）。保持役を使う前（起動の途中・agy を使わない間）は動かさない（`holderLink` が保持役の親の座を取るので、データ置き場のロックを取る前に呼べない）。**agy を使わないまま終わると、落ちたサーバーが残した idle の子は残る**（残り）
-- **孤児の掃除（`antigravity-pids.mjs`）・終了時の片付け**: 保持役の子は pid を持たず（`pids.remember(undefined)` は何もしない）、控えない。`process.once('exit')` は手を離した子を止めない
+  - **サーバーの停止・更新・落ち**（どれも同じ道。ADR 0270 の規則 ③）: 旧サーバーは終わるときに保持役の子に触れない（`process.once('exit')` は `session.held` の子を飛ばす。agent の置き場も残す）。新しいサーバーは idle の子を付け直さない（札も印も無い）・使い回さない（`live` が空）ので、**起動で止める**: `core/server.mjs` が `restoreAdoptedTurns` の後に `sweepIdleAtStart`（`antigravity-held.mjs`）を呼び、居る保持役にだけつないで（起こさない）`sweepIdle` を 1 回走らせる。札か印の欠けた agy の子を止め、生きている子の札が指さない `held-*` の置き場を消す。**付け直したターンの子（札と印の両方がある）には触れない**（一覧は保持役につないだ時点の写しなので、付け直した後にターンが終わって札と印が外れても止めない）。agy を使わない起動でも片付く。次のターンは agy を起こし直す（会話は `--conversation` で続く）。待つ agy を止めるタイマー（下）は旧サーバーのメモリにあって新しいサーバーへ渡らないので、ここで止めないと、agy を使わない間ずっと残り、ログインの切り替えを古い資格情報で書き戻し続ける
+    - 起動で保持役につなげなかったとき（保持役が居ない以外の失敗）は、**最初の保持役の使用**（`sweepIdle`。`antigravity.mjs` の `fresh` の始め）が同じことをする（1 プロセスで 1 回だけ）。データ置き場のロックを取る前は呼べない（`holderLink` が保持役の親の座を取る）ので、起動の付け直しより前には動かさない
+  - **アプリの終了**（`server` の `stopHeldChildren` → `stopHeldAgy`）: idle の子も走っている子も止め、置き場を消す
+  - **待ったまま時間が過ぎた**: `AGENT_HOST_AGY_IDLE_MS`（既定 30 分）を過ぎた idle の子は、サーバーが止める（`armIdle`。保持役に載せない子と同じ。次のターンは起こし直す。理由と既定の決め方は [multi-backend.md](../multi-backend.md) §2.8「待っている agy を時間で止める」）。タイマーはサーバーのメモリにあるので、サーバーが入れ替わった後の idle の子は上の起動の片付けが止める
+- **孤児の掃除（`antigravity-pids.mjs`）・終了時の片付け**: 保持役の子は pid を持たず（`pids.remember(undefined)` は何もしない）、控えない。`process.once('exit')` は保持役の子を止めない
 - **agent の置き場**: 保持役に載せる agy の置き場は **`held-<乱数>`**（`prepareAgent({ held: true })`）。サーバーの pid の名前（`<pid>-<乱数>`）では、旧サーバーが終わった後に `sweep()` が走る agy の置き場を消してしまうので、`sweep()` は `held-*` に触れない。消すのは agy が終わったとき（`cleanup`・付け直した側は札の `home` を `adoptHome` で受けて消す関数にする）と、前のサーバーが残した分（`sweepHeldHomes`。このプロセスのもの・生きている子の札が指すものは残す）
 
 ### 3.4 切り替え（`desktop/switch.cjs`）
@@ -67,7 +67,9 @@
 
 ## 4. テスト
 
-- `tests/unit/adopt-agy.mjs`（偽の agy `tests/lib/fake-agy.mjs` に、ゲートで止める台本 `gated:<名前>` を足した。ツールの実行中（ACTIVE）でゲートが開くまで待ち、`result` を出し終えたら `<ゲート>.done` の印を置く。待ちは実時間でなくゲートと印のファイル）: 切り替え（置き場なし・off・既定 on。ターンが終わった子は札も印も無い）・ツールの実行中（A で手を離し、B が付け直す）・終わった直後（A の読みを止めて agy が `result` まで出してから手を離す）・中断（木ごと止まり、記録が捨てられ、次のターンは起こし直す）・強制終了（A を SIGKILL。札の置き直しで B が付け直す）・引き継ぎ（偽の main の `handover` の依頼 → 新サーバー `--handover`。`handover.blocking` が 0・idle の agy は旧サーバーが止める・同じポート・トークンなので付け直した agy を次のターンも使う・idle だった会話の次のターンは起こし直す）・普通の終了（main の shutdown。idle の agy が保持役に残らない）・後片付け（保持役・偽の agy が残らない）。**どの時点も `turnEnd`・`completedAt`・使用量（`presentKey` の 1 件）が 1 回、本文・ツールの結果・人の発言は履歴に 1 回、`restart` の中断にならない**。A の最初の保持役の使用が前のサーバーが残した idle の子を止めることも見る
+- `tests/unit/adopt-agy.mjs`（偽の agy `tests/lib/fake-agy.mjs` に、ゲートで止める台本 `gated:<名前>` を足した。ツールの実行中（ACTIVE）でゲートが開くまで待ち、`result` を出し終えたら `<ゲート>.done` の印を置く。待ちは実時間でなくゲートと印のファイル）: 切り替え（置き場なし・off・既定 on。ターンが終わった子は札も印も無い）・ツールの実行中（A で手を離し、B が付け直す）・終わった直後（A の読みを止めて agy が `result` まで出してから手を離す）・中断（木ごと止まり、記録が捨てられ、次のターンは起こし直す）・強制終了（A を SIGKILL。札の置き直しで B が付け直す）・引き継ぎ（偽の main の `handover` の依頼 → 新サーバー `--handover`。`handover.blocking` が 0・idle の agy は旧サーバーが止める・同じポート・トークンなので付け直した agy を次のターンも使う・idle だった会話の次のターンは起こし直す）・普通の終了（main の shutdown。idle の agy が保持役に残らない）・後片付け（保持役・偽の agy が残らない）。**どの時点も `turnEnd`・`completedAt`・使用量（`presentKey` の 1 件）が 1 回、本文・ツールの結果・人の発言は履歴に 1 回、`restart` の中断にならない**。A の起動が前のサーバーが残した idle の子を止めることも見る
+- `tests/unit/restart-agy-idle.mjs`（`tests/lib/restart.mjs` で普通に止めて起こし直す）: idle の agy を持ったまま起こし直すと、agy のターンを始めなくても起動で子が止まり置き場も消える・同じ起こし直しでターン中の agy は止めずに付け直し、1 回だけ ok で締まり、次のターンも同じ agy を使う・止めた会話の次のターンは `--conversation` で起こし直す
+- `tests/unit/antigravity-idle.mjs`: 待つ agy を `AGENT_HOST_AGY_IDLE_MS` で止める（保持役に載せる子・載せない子）。setTimeout の上限（2^31−1 ms）を超える値は止めない扱い
 - `tests/unit/antigravity-held.mjs`（部品。偽の source）: 切り替え・`.cmd` は載せない・置き場（`held-*` の掃除・`adoptHome`）・付け直し（再生は `{ replay: true }`・続きは普通に流して行ごとに ack・`result` の再生で付け直しの直後に締まる・控えは再生で作り直す・終わったら札と印を外す・`result` の無いまま終わっていれば失敗・控えに発言が無ければ作らない）
 - `tests/unit/agy-relay-retry.mjs`（上の §2）
 - **Linux**: WSL（Ubuntu-24.04、Node 22）で `adopt-agy`・`antigravity-held`・`agy-relay-retry` が通る（unix ソケットの保持役・`process.kill(-pid)` の木ごとの停止）
@@ -79,7 +81,7 @@
 
 | ファイル | 変更 |
 |---|---|
-| `core/server.mjs` | `handoverRun.stash` の先頭で、全バックエンドの `releaseIdle?.()` を呼ぶ（3 行。agy だけが持つ） |
+| `core/server.mjs` | 起動の `restoreAdoptedTurns` の後に `sweepIdleAtStart()` を呼ぶ（前のサーバーが残した idle の agy を止める） |
 | `core/boot-env.mjs` | 起動用の変数に `AGENT_HOST_AGY_HOLDER` を足した |
 | `core/holder/client.mjs` | `HolderClient.sendBatch(frames)`（複数の依頼を 1 回の書き込みで送る）を足した。agy の終わり・ターンの終わりの取り外しが使う |
 | `desktop/switch.cjs` | **変更なし**（数え方は `held` / `blocking` のまま） |
@@ -90,7 +92,6 @@
 ## 6. 残り・申し送り
 
 - **既定の `on` の書き方**: `heldEnabled`（`antigravity-held.mjs`）は `AGENT_HOST_AGY_HOLDER` の `on`・`off`・無し（置き場があれば on）。Claude（`claude-held.mjs`）は今は「`on` を明示したときだけ」で、既定 on は別の作業が直している。合わせるときは、置き場の有無を見る読み口（`heldEnabled(env, boot)` の `boot` で差し替えられる）を揃える
-- **agy を使わないまま終わると、落ちたサーバーが残した idle の子は残る**（保持役の idle 終了は「生きた子が居ない」ときだけなので、保持役ごと残る）。次に agy を使う起動の最初の保持役の使用が止める。agy を使わない起動でも片付けたいなら、サーバーの起動（`restoreAdoptedTurns` の後）から呼ぶ口が要る（`core/server.mjs` の変更。Claude の付け直せなかった子の扱い（stage2-server-state.md 2b-7 の注意 (3)(4)）と一緒に決める）
 - **付け直せなかった agy の子**（札があって付け直しをあきらめた・ポートが取れない）は保持役に残る。Claude と同じ扱い（`sweepIdle` は札と印の両方がある子に触れない）
 - **ターンが終わった直後（`result` を処理し、`endTurn` で札と印を外した後）にサーバーが強制終了**されると、そのターンは完了していても `restart` の中断になる（札が無い）。窓は `turnEnd` の前後の数 ms
 - **stderr は再生されない**: 保持役は stderr を記録しない。付け直しの前に出た `print timeout` の印・未ログインの URL は新しいサーバーに届かない（付け直した後の分は届く）

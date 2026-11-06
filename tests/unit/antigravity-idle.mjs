@@ -4,6 +4,8 @@
 // 長く生かした agy が、切り替えた後のログインを古い方で上書きするので、待っている agy を時間で止める（docs/multi-backend.md §2.8）。
 // 保持役に載せない子（サーバーの子）と載せる子（保持役の子）の両方で、
 // 止まる・次のターンは `--conversation` で起こし直す・ターンの間は止めない、を見る。
+// setTimeout の上限（2^31−1 ms）を超える値・Infinity は止めない扱い（そのまま渡すと 1 ms になり、ターンのたびに止まる。idleDelay）。
+// サーバーを起こし直したときの片付けは tests/unit/restart-agy-idle.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -11,6 +13,7 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
+import { idleDelay } from '../../core/backends/antigravity.mjs';
 
 export const name = 'antigravity-idle';
 export const title = '次の発言を待つ agy は時間で止め、次のターンで起こし直す';
@@ -35,9 +38,36 @@ export default async function (t) {
   const work = path.join(scratch, 'work');
   await fs.mkdir(work, { recursive: true });
   const readJson = async (file) => JSON.parse(await fs.readFile(file, 'utf8').catch(() => '[]'));
+
   const cases = [['保持役に載せない', false], ['保持役に載せる', true]];
   const dataDirs = [];
   try {
+    // 値の読み: 止めない（null）のは 0 以下・数でない・setTimeout の上限を超える・Infinity
+    {
+      const values = [[30 * 60_000, 30 * 60_000], ['8000', 8000], [2 ** 31 - 1, 2 ** 31 - 1], [2 ** 31, null], ['99999999999', null], ['Infinity', null], [Infinity, null], ['0', null], ['-1', null], ['abc', null], ['', null]];
+      t.ok('値の読み: setTimeout の上限（2^31−1 ms）までは ms のまま、超える値・Infinity・0 以下・数でないものは止めない',
+        values.every(([value, expected]) => idleDelay(value) === expected), JSON.stringify(values.map(([value]) => [String(value), idleDelay(value)])));
+    }
+    // 上限を超える値を入れても、ターンの終わりに止めない（続けたターンは同じ agy を使う）
+    {
+      const dir = path.join(scratch, 'huge');
+      const dataDir = path.join(dir, 'data');
+      const pidFile = path.join(dir, 'agy-pids.json');
+      dataDirs.push([dataDir, path.join(dir, 'runtime')]);
+      const env = { AGENT_HOST_BACKENDS: 'antigravity', AGENT_HOST_AGY_BIN: `node "${fake}"`, AGENT_HOST_AGY_IDLE_MS: String(2 ** 31), AGENT_HOST_AGY_HOLDER: 'off', FAKE_AGY_PID_FILE: pidFile };
+      const s = await startServer({ env, dataDir, timeoutMs: 30_000 });
+      const c = await open({ port: s.port, token: s.token });
+      try {
+        const first = await c.runTurn({ backend: 'antigravity', cwd: work, prompt: 'plain' }, { ms: WAIT_MS });
+        assert.equal(first.outcome, 'ok', s.tail(10));
+        const [p1] = await readJson(pidFile);
+        await sleep(500);   // 上限を超えた値が 1 ms のタイマーになっていれば、ここで止まる
+        const next = await c.runTurn({ backend: 'antigravity', sessionId: first.sessionId, cwd: work, prompt: 'つづき' }, { ms: WAIT_MS });
+        assert.equal(next.outcome, 'ok', s.tail(10));
+        const pids = await readJson(pidFile);
+        t.ok('上限を超える値（2^31 ms）では待つ agy を止めず、続けたターンも同じ agy を使う', pids.length === 1 && alive(p1), JSON.stringify(pids));
+      } finally { c.close(); await s.stop(); }
+    }
     for (const [label, held] of cases) {
       const dir = path.join(scratch, held ? 'held' : 'plain');
       const dataDir = path.join(dir, 'data');

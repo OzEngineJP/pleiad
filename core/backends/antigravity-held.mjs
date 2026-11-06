@@ -7,7 +7,8 @@
 //     次のターンも書かれるので、印はターンごとに打ち直す（init は最初のターンの再生にだけ入る。会話の id は札が持つ）
 //   読み: 子の stdout の行を 1 行ずつ処理し（session.feedLine。Promise を返すものはそれを待つ）、処理し終えた行を ack する。付け直しは印から ack までを
 //     処理の再生（opts.replay）として流し、続きは普通に流す（core/adopt.mjs の replayRecord）
-//   ターンが終わったら札と印を外す（endTurn）: 子は idle のまま次のターンを待つ。印の無い子は、次の起動の最初の保持役の使用で止める（sweepIdle）。
+//   ターンが終わったら札と印を外す（endTurn）: 子は idle のまま次のターンを待つ。印の無い子は、次のサーバーの起動で止める（sweepIdleAtStart → sweepIdle。
+//     保持役につなげなかったときは、最初の保持役の使用で）。
 //     札と印を持つ子は付け直す（server の restoreAdoptedTurns）
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
@@ -158,8 +159,8 @@ export function createHeldAgy({ client = null, source = null } = {}) {
 
 let swept = false;
 /**
- * このプロセスの最初の保持役の使用で 1 回だけ、前のサーバーが残した agy の子を片付ける: **札か印の欠けた**（idle の）agy の子は止める
- * （旧サーバーの落ち・強制終了で、止める人が居なくなった）。札と印を持つ子は付け直し（server の restoreAdoptedTurns）が読むので触れない。
+ * このプロセスで 1 回だけ（起動の sweepIdleAtStart か、そこでつなげなければ最初の保持役の使用）、前のサーバーが残した agy の子を片付ける: **札か印の欠けた**（idle の）agy の子は止める
+ * （旧サーバーの停止・更新・落ちで、止めるタイマーを持つ人が居なくなった）。札と印を持つ子は付け直し（server の restoreAdoptedTurns）が読むので触れない。
  * agent の置き場（held-*）も、生きている子が指していないものを消す。この呼び出しの前に保持役へつないでいた自分の子（ids）は止めない
  */
 export async function sweepIdle(client, { ids = new Set() } = {}) {
@@ -180,6 +181,25 @@ export async function sweepIdle(client, { ids = new Set() } = {}) {
   const referenced = new Set(children.filter(child => child.alive && child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])).map(child => child.label?.backendCard?.agy?.home).filter(Boolean));
   sweepHeldHomes(referenced);
   return stopped;
+}
+
+/**
+ * サーバーの起動で、前のサーバーが保持役に残した idle の agy を止める（sweepIdle を 1 回）。server が起動の付け直し（restoreAdoptedTurns）の後に呼ぶ。
+ * idle の子のタイマー（antigravity.mjs の armIdle）は前のサーバーのメモリにあり、札と印も外れているので、新しいサーバーは付け直せず、使い回しもしない。
+ * 次に agy を保持役で起こすときまで待つと、agy を使わない間は止める人が居ない（ログインの切り替えを古い資格情報で書き戻し続ける）。
+ * 居る保持役にだけつなぐ（起こさない）。保持役が居ない・つなげないときは何もせず、次の保持役の使用（fresh の始め）に任せる
+ */
+export async function sweepIdleAtStart({ dataDir, log = console.error } = {}) {
+  const root = bootEnv('AGENT_HOST_RUNTIME_ROOT');
+  if (swept || !dataDir || !root) return [];
+  let client;
+  try { client = await holderLink({ dataDir, root, key: bootEnv('AGENT_HOST_RUNTIME_KEY') ?? '', launch: false }); }
+  catch (error) {
+    // i18n-ignore: サーバーのログ（log は console.error）
+    if (error?.code !== 'HOLDER_NONE') log('  保持役につなげないので、前のサーバーが残した agy は次の使用で片付ける:', String(error?.code ?? error?.message ?? error));
+    return [];
+  }
+  return sweepIdle(client);
 }
 
 /** テスト用: sweepIdle の「1 回だけ」を戻す */

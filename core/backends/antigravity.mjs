@@ -61,15 +61,27 @@ const BACKGROUND_AFTER_MS = Number(process.env.AGENT_HOST_AGY_BACKGROUND_MS ?? 3
 /** 裏のコマンドを落とした後、agy の DONE を待つ上限 */
 const STOP_WAIT_MS = Number(process.env.AGENT_HOST_AGY_STOP_WAIT_MS ?? 15_000);
 
+/** setTimeout が受ける最大の遅れ（2^31−1 ms。約 24.8 日）。これを超える値と Infinity を、Node は 1 ms にする */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 /**
- * ターンを終えて次の発言を待つ agy を止めるまでの ms（`0` 以下で止めない）。次のターンは `--conversation` で起こし直す。
+ * AGENT_HOST_AGY_IDLE_MS の値を、タイマーに渡す ms にする。止めないときは null（`0` 以下・数でない・setTimeout の上限を超える・Infinity）。
+ * 上限を超えた値をそのまま渡すと 1 ms になり、ターンのたびに止まって起こし直しになる。大きい値を入れた人の意図（止めない）に合わせる
+ */
+export function idleDelay(value) {
+  const ms = Number(value);
+  return Number.isFinite(ms) && ms > 0 && ms <= MAX_TIMER_MS ? ms : null;
+}
+
+/**
+ * ターンを終えて次の発言を待つ agy を止めるまでの ms（`0` 以下・setTimeout の上限を超える値で止めない。idleDelay）。次のターンは `--conversation` で起こし直す。
  * 動いている agy は起動の時にしかキーチェーンの資格情報を読まず、1 時間ごとにメモリのトークンを更新して書き戻す。
  * ログインを切り替えた後も、前から生きている agy が古い方の資格情報で上書きし、切り替えが戻る（docs/multi-backend.md §2.8）。
  * 既定を 30 分にしたのは、極端に長く残る agy（数時間〜数日）だけを拾えればよいため。
  * 10 分（Pleiad のコンテキストの接続の WARM_IDLE_MS）だと、少し間を空けて続ける会話のたびに起こし直しになり、起動を待たせる。
  * 30 分なら、書き戻しの間隔（1 時間）より短く、普通の会話の間では起こし直さない
  */
-const IDLE_MS = Number(process.env.AGENT_HOST_AGY_IDLE_MS ?? 30 * 60_000);
+const IDLE_MS = idleDelay(process.env.AGENT_HOST_AGY_IDLE_MS ?? 30 * 60_000);
 
 /**
  * 承認モード。**`yolo` の 1 つだけ**にしてある。
@@ -176,7 +188,7 @@ function release(conversationId, session) {
 /** 次のターンを待ち始めた agy に、IDLE_MS で止めるタイマーを付ける。止めた後の次のターンは起こし直す（会話は --conversation で続く） */
 function armIdle(conversationId, session) {
   disarmIdle(session);
-  if (!(IDLE_MS > 0) || !conversationId || !session?.proc || live.get(conversationId) !== session) return;
+  if (IDLE_MS === null || !conversationId || !session?.proc || live.get(conversationId) !== session) return;
   session.idleTimer = setTimeout(() => {
     session.idleTimer = null;
     if (live.get(conversationId) !== session) return;
@@ -1062,7 +1074,7 @@ async function agyPidOf(session) {
 
 /**
  * アプリの終了で、保持役の agy（idle の子も、走っている子も）を止める（server の stopHeldChildren）。更新・落ちたときは呼ばない
- * （保持役の子は残り、新しいサーバーが起動で拾う。idle の子は次の起動の最初の保持役の使用が止める。sweepIdle）
+ * （保持役の子は残り、新しいサーバーが起動で拾う。idle の子は次の起動が止める。antigravity-held.mjs の sweepIdleAtStart）
  */
 export async function stopHeldAgy() {
   for (const [id, session] of [...live]) {

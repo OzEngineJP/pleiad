@@ -727,6 +727,8 @@ const SUITES = [
   './unit/restart-cards.mjs',
   // 段 3: 委譲の子（保持役のターン）の実行の控えが続き、結果の確定と完了通知は 1 回だけ
   './unit/restart-delegation.mjs',
+  // 段階 3: 保持役に載せた、次の発言を待つ agy は起こし直しの起動で止める（ターン中の agy は付け直す）
+  './unit/restart-agy-idle.mjs',
   './unit/adopt-agy.mjs',
   './unit/adopt-claude.mjs',
   './unit/adopt-codex.mjs',

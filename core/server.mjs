@@ -121,6 +121,7 @@ import { stopHeldAppServer } from './backends/codex-held.mjs';
 import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart } from './backends/claude-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
 import { stopHeldAgy } from './backends/antigravity.mjs';
+import { sweepIdleAtStart } from './backends/antigravity-held.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
@@ -6375,6 +6376,12 @@ const outbox = createMessageQueue({
 const restoredCards = waitingCards.load();
 if (restoredCards.size) console.log(`  前の起動が残した承認・質問のカード ${restoredCards.size} 件を読んだ`);
 const adopting = await restoreAdoptedTurns();
+// 前のサーバーが保持役に残した idle の agy（ターンを終えて札も印も無い子）を止める。付け直したターンの子（札と印がある）には触れない。
+// 待つ agy を止めるタイマーは前のサーバーのメモリにあったので、ここで止めないと agy を使わない間ずっと残る（core/backends/antigravity-held.mjs の sweepIdleAtStart）
+{
+  const stoppedAgy = await sweepIdleAtStart({ dataDir: store.dataDir }).catch(err => { console.error('  前のサーバーが残した agy を片付けられませんでした:', String(err?.message ?? err)); return []; });
+  if (stoppedAgy.length) console.log(`  前のサーバーが残した待機中の agy ${stoppedAgy.length} 件を止めた`);
+}
 // 付け直さない会話のカードは、ここで取り下げを会話へ届ける（黙って消さない）。付け直すターンの分は、記録の再生が終わってから
 await withdrawRestoredCards(adopting);
 // 前のサーバーが保持役に残した外部の stdio MCP も拾う（ADR 0270 段 2c。core/context-mcp-held.mjs）。規則 ③: 起動の処理が復元の処理。
