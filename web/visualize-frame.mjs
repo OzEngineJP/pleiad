@@ -25,14 +25,51 @@ export function isolateFrame(frame) {
   return frame;
 }
 
+// 隔離の origin（ADR 0292 の 3）。ブラウザーの一本化の旗が on のとき、画面の起動が port と「一度だけ読み込む」の印の頼み方を渡す。
+// 渡されるまで（旗が off・リモートの画面）は、どの可視化も今のまま srcdoc で描く
+let isolated = null;
+/** @param {{ port: number, mintOnce?: (origins: string[]) => Promise<string|null> } | null} options */
+export function configureIsolatedOrigin(options) {
+  isolated = Number.isInteger(options?.port) && options.port > 0 ? { port: options.port, mintOnce: options.mintOnce ?? null } : null;
+}
+const BUNDLE_HASH = /^[0-9a-f]{64}$/;
+/**
+ * 束の URL（隔離の origin の /viz/<束のハッシュ>/<入口>）。隔離の origin が無い・束の形が違うときは null。
+ * embed: conversation（会話の枠）| panel（右の欄）| tab（別のタブ。高さの知らせ・橋を入れない）
+ */
+export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null } = {}) {
+  if (!isolated || !BUNDLE_HASH.test(bundle?.hash ?? '') || typeof bundle.entry !== 'string' || !bundle.entry) return null;
+  const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
+  const params = new URLSearchParams({ embed });
+  if (['light', 'dark'].includes(theme)) params.set('theme', theme);
+  if (once) params.set('once', once);
+  return `http://localhost:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
+}
+
 // fill: the frame gets its height from the container (the preview panel), so the
 // iframe's own height report is ignored instead of clamping it to 900px.
-export function visualizationFrame(content, title, { fill = false, conversation = false } = {}) {
+// bundle: 記録の行の束（core/viz-bundle.mjs）。隔離の origin があれば、束を URL で読ませる（相対パスの画像・fetch・WASM が効く）
+export function visualizationFrame(content, title, { fill = false, conversation = false, bundle = null } = {}) {
   const frame = document.createElement('iframe');
   frame.className = fill ? 'visualize-frame visualize-fill' : 'visualize-frame';
   isolateFrame(frame);
   frame.title = title || t('timeline.present.kind.visualization');
-  confirmedPreview(frame, policy => visualizationDocument(content, { theme: document.documentElement?.dataset?.theme, policy, conversation }));
+  const srcdoc = policy => visualizationDocument(content, { theme: document.documentElement?.dataset?.theme, policy, conversation });
+  if (!isolatedVisualizationUrl(bundle)) {
+    confirmedPreview(frame, srcdoc);
+    return frame;
+  }
+  // 隔離の origin の応答のヘッダーの sandbox と同じ（ADR 0292 の 3）。allow-same-origin は付けない
+  frame.setAttribute('sandbox', 'allow-scripts allow-downloads allow-forms');
+  confirmedPreview(frame, async (policy, once) => {
+    const theme = document.documentElement?.dataset?.theme;
+    const embed = conversation ? 'conversation' : 'panel';
+    if (!once.length) return { src: isolatedVisualizationUrl(bundle, { embed, theme }) };
+    // 「一度だけ読み込む」はサーバーに印を作らせて URL に載せる。作れなければ、会話の中身を srcdoc で描く（束の中の他のファイルは読めない）
+    const token = await Promise.resolve(isolated?.mintOnce?.(once)).catch(() => null);
+    const src = typeof token === 'string' && token ? isolatedVisualizationUrl(bundle, { embed, theme, once: token }) : null;
+    return src ? { src } : srcdoc(policy);
+  });
   return frame;
 }
 
