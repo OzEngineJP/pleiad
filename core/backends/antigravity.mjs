@@ -637,13 +637,13 @@ export const backend = {
           // 新しい agy の会話（再開でない・別の会話になった）は 0 から数える。基準の無い再開（更新前から続く会話）は出さない。
           // 全部 0 は数えていない result（打ち切りなど）なので、出さず、再開では基準にもしない
           const total = usageTotal(r.usage);
-          const fresh = !resumed || conversationId !== sessionId;
+          const usageFresh = !resumed || conversationId !== sessionId;
           const counted = total && USAGE_KEYS.some((key) => total[key]);
-          const usage = counted ? usageFor(usageDelta(total, fresh ? usageTotal({}) : usageBase)) : null;
+          const usage = counted ? usageFor(usageDelta(total, usageFresh ? usageTotal({}) : usageBase)) : null;
           if (usage) out(usage);
           const outcome = turnResultFor(r, { finishedReply });
           resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
-            ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}), ...(total && (counted || fresh) ? { usage: total } : {}) };
+            ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}), ...(total && (counted || usageFresh) ? { usage: total } : {}) };
           if (outcome.outcome === "error") failed = new Error(outcome.error);
           clearBehind();
           out(outcome);
