@@ -486,6 +486,9 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         return p.hasPrefix("/viz/") || p.hasPrefix("/f/")
     }
 
+    /// Sec-Fetch-Site of a file-page request: absent, same-origin or none (core/page-auth.mjs fetchSiteOk).
+    static func fetchSiteOk(_ site: String?) -> Bool { site == nil || site == "same-origin" || site == "none" }
+
     static func pageResponseLimit(_ path: String, isolated: Bool = false) -> Int {
         if isolated { return 32 * 1024 * 1024 }
         guard let p = pagePath(path), p.hasPrefix("/_pleiad/") else { return 0 }
@@ -505,6 +508,10 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         let forwardPath = restQuery.isEmpty ? path : "\(path)?\(restQuery)"
         let isUpgrade = (req.headers["upgrade"] ?? "").lowercased() == "websocket"
         if isolated && (isUpgrade || !DeviceProxy.isIsolatedPagePath(path)) { return writeSimple(out, 403, nil, []) }
+        // File pages: same check as the host's page entrance (core/page-auth.mjs). Only same-origin or the address bar
+        if !isolated && !isUpgrade && DeviceProxy.pageResponseLimit(path) > 0 && !DeviceProxy.fetchSiteOk(req.headers["sec-fetch-site"]) {
+            return writeSimple(out, 403, "text/plain; charset=utf-8", Bytes("forbidden".utf8))
+        }
         if isUpgrade {
             if path != "/ws" { return writeSimple(out, 404, nil, []) }
             if !tokenEq(qToken) { return writeSimple(out, 401, nil, []) }
@@ -627,6 +634,8 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         for (k, v) in req.headers where DeviceProxy.PASS_REQUEST.contains(k) { headers[k] = .string(v) }
         let limit = DeviceProxy.pageResponseLimit(path, isolated: isolated)
         if limit > 0 { headers["accept-encoding"] = .string("identity") }
+        // The host checks the same header, so pass it on page routes only
+        if limit > 0 && !isolated, let site = req.headers["sec-fetch-site"] { headers["sec-fetch-site"] = .string(site) }
         var fields: [String: JSON] = ["method": .string(req.method), "path": .string(forwardPath), "headers": .object(headers), "pagePorts": pagePorts]
         if isolated { fields["destination"] = .string("isolated") }
         let requestHead = JSON.object(fields)

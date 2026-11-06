@@ -58,6 +58,10 @@ export default async function(t) {
     }
     const files = await request(proxy.port, '/_pleiad/s/s1/files?token=drop', { headers: cookie });
     t.ok('ファイルページは Cookie で読み、ホストの Cookie を受け取らない', files.status === 200 && !files.headers['set-cookie']);
+    const site = value => request(proxy.port, '/_pleiad/s/s1/files', { headers: { ...cookie, 'sec-fetch-site': value } });
+    t.ok('ファイルページは、ほかのサイトから始まった要求を断る（ホストの入口と同じ）', (await site('cross-site')).status === 403 && (await site('same-site')).status === 403);
+    t.ok('同じ origin とアドレスバーからの要求は通し、出どころをホストへ渡す', (await site('same-origin')).status === 200 &&
+      heads.at(-1).headers['sec-fetch-site'] === 'same-origin' && (await site('none')).status === 200);
     t.ok('転送には端末の両ポートだけを添え token・Cookie は送らない', heads.at(-1).pagePorts.main === proxy.port &&
       heads.at(-1).pagePorts.isolated === proxy.isolatedPort && !heads.at(-1).headers.cookie && !heads.at(-1).path.includes('token='));
     t.ok('本体は Host が違うと断る', (await request(proxy.port, '/', { ...isolated, headers: cookie })).status === 403);

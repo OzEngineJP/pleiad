@@ -64,6 +64,10 @@ export default async function(t) {
       JSON.parse(req.headers['x-pleiad-page-ports']).pages === localPorts.main && req.headers['accept-encoding'] === 'identity' &&
       page.head.headers['content-security-policy'] === `frame-src http://localhost:51235; connect-src http://localhost:${pagePorts.isolated}0 http://localhost:${pagePorts.isolated}/assets/`);
     t.ok('ホストの Set-Cookie は端末へ渡さない', !page.head.headers['set-cookie']);
+    t.ok('ファイルページの出どころ（Sec-Fetch-Site）はホストの入口へ渡し、知らない値は cross-site にする',
+      (await run('/_pleiad/s/s1/files', { headers: { 'Sec-Fetch-Site': 'same-site' } })).head.status === 200 && requests.at(-1).headers['sec-fetch-site'] === 'same-site' &&
+      (await run('/_pleiad/s/s1/files', { headers: { 'sec-fetch-site': 'odd' } })).head.status === 200 && requests.at(-1).headers['sec-fetch-site'] === 'cross-site' &&
+      (await run('/api/env', { headers: { 'sec-fetch-site': 'cross-site' } })).head.status === 200 && requests.at(-1).headers['sec-fetch-site'] === undefined);
     const isolated = await run('/viz/key/index.html?token=device', { destination: 'isolated', pagePorts: localPorts,
       headers: { cookie: 'secret', authorization: 'secret', origin: 'http://evil' } });
     t.ok('隔離の port へ localhost の Host で転送し Cookie・Authorization・Origin を付けない', isolated.head.status === 200 &&

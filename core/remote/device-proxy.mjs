@@ -22,6 +22,7 @@ import { RESET_CODE } from './frames.mjs';
 import { DeviceLink } from './device-link.mjs';
 import { StaticCache } from './static-cache.mjs';
 import { isIsolatedPagePath, pageResponseLimit } from './forward.mjs';
+import { fetchSiteOk } from '../page-auth.mjs';
 import { t, currentLocale } from '../i18n.mjs';
 
 export const PROXY_COOKIE = 'pleiad_remote_token';
@@ -219,6 +220,8 @@ export class DeviceProxy extends EventEmitter {
     if (!url) { res.writeHead(400); return res.end(); }
     if (isolated && !isIsolatedPagePath(req.url)) { res.writeHead(403); return res.end(); }
     const limit = pageResponseLimit(url.pathname, isolated);
+    // ファイルのページの入口: ホストの入口（core/page-auth.mjs）と同じく、出どころが同じ origin かアドレスバーのときだけ通す
+    if (limit && !isolated && !fetchSiteOk(req.headers['sec-fetch-site'])) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('forbidden'); }
     const viaQuery = url.searchParams.get('token');
     const queryOk = !isolated && !limit && tokenEq(viaQuery, this.token);
     if (!isolated && !queryOk && !tokenEq(tokenFromCookie(req.headers.cookie), this.token)) {
@@ -259,6 +262,8 @@ export class DeviceProxy extends EventEmitter {
     const headers = {};
     for (const [k, v] of Object.entries(req.headers)) if (PASS_REQUEST.has(k)) headers[k] = Array.isArray(v) ? v.join(', ') : v;
     if (limit) headers['accept-encoding'] = 'identity';
+    // ホストの入口も同じ検査をするので、ページの道だけ出どころを渡す
+    if (limit && !isolated && typeof req.headers['sec-fetch-site'] === 'string') headers['sec-fetch-site'] = req.headers['sec-fetch-site'];
     try { stream = ch.openHttp({ method, path: this.#forwardPath(url), headers, pagePorts: this.pagePorts, ...(isolated ? { destination: 'isolated' } : {}) }); }
     catch (e) { return this.#unavailable(req, res, e); }
     let received = 0;

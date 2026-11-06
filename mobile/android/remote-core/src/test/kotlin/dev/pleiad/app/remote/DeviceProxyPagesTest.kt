@@ -13,6 +13,8 @@ class DeviceProxyPagesTest {
         assertEquals(32L * 1024 * 1024, DeviceProxy.pageResponseLimit("/_pleiad/s/session/api/raw"))
         assertEquals(32L * 1024 * 1024, DeviceProxy.pageResponseLimit("/viz/key/index.html", true))
         assertEquals(0L, DeviceProxy.pageResponseLimit("/local-file"))
+        assertTrue(DeviceProxy.fetchSiteOk(null) && DeviceProxy.fetchSiteOk("same-origin") && DeviceProxy.fetchSiteOk("none"))
+        assertFalse(DeviceProxy.fetchSiteOk("same-site") || DeviceProxy.fetchSiteOk("cross-site"))
     }
 
     @Test fun listenersCheckHostsAndPageCookiesBeforeConnecting() {
@@ -31,6 +33,10 @@ class DeviceProxyPagesTest {
             assertTrue(px.isolatedPort > 0 && px.isolatedPort != px.port)
             assertEquals(401, status(px.port, "127.0.0.1:${px.port}", "/_pleiad/s/s/files?token=${px.token}"))
             assertEquals(401, status(px.port, "127.0.0.1:${px.port}", "/x/%2e%2e/_pleiad/s/s/files?token=${px.token}"))
+            // File pages refuse requests started by another site, like the host's page entrance
+            assertEquals(403, status(px.port, "127.0.0.1:${px.port}", "/_pleiad/s/s/files", "Sec-Fetch-Site: cross-site\r\n"))
+            assertEquals(403, status(px.port, "127.0.0.1:${px.port}", "/_pleiad/s/s/files", "Sec-Fetch-Site: same-site\r\n"))
+            assertEquals(401, status(px.port, "127.0.0.1:${px.port}", "/_pleiad/s/s/files", "Sec-Fetch-Site: same-origin\r\n"))
             assertEquals(403, status(px.isolatedPort, "127.0.0.1:${px.isolatedPort}", "/viz/key/index.html"))
             assertEquals(403, status(px.isolatedPort, "localhost:${px.isolatedPort}", "/_pleiad/s/s/files"))
             // Valid paths reach the offline link; neither cookie nor query token opens a main-UI route on this origin.

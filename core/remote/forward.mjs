@@ -67,6 +67,15 @@ export function checkPath(raw) {
   return { path: u.pathname + u.search, pathname: u.pathname };
 }
 
+/** 端末から来た Sec-Fetch-Site。知らない値は cross-site として渡す（ホストで断られる） */
+function fetchSiteOf(from) {
+  if (!from || typeof from !== 'object' || Array.isArray(from)) return null;
+  const entry = Object.entries(from).find(([k]) => String(k).toLowerCase() === 'sec-fetch-site');
+  if (!entry) return null;
+  const value = String(entry[1] ?? '');
+  return ['same-origin', 'same-site', 'cross-site', 'none'].includes(value) ? value : 'cross-site';
+}
+
 function requestHeaders(from) {
   const out = {};
   if (from && typeof from === 'object' && !Array.isArray(from)) {
@@ -120,6 +129,8 @@ export function forwardStream(stream, { target, token, device = null, pagePorts 
     // このヘッダーは端末の HTTP 要求からは通さず、認証済みチャネルの頭からだけ作る。
     // ファイルページの api/env と CSP を端末の origin にするための情報（ADR 0292 §5）。
     if (!isolated && limit && ports) headers['x-pleiad-page-ports'] = JSON.stringify(ports);
+    // ファイルのページの出どころ（Sec-Fetch-Site）は、ページの道だけ通す。ホストの入口が same-origin・none のほかを断る（core/page-auth.mjs）
+    if (!isolated && limit) { const site = fetchSiteOf(head.headers); if (site) headers['sec-fetch-site'] = site; }
     const dest = isolated ? { host: '127.0.0.1', port: pagePorts.isolated } : target();
     return forwardHttp(stream, method, checked.path, headers, dest, isolated ? null : token, limit, pagePorts, ports);
   }

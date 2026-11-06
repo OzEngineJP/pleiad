@@ -112,6 +112,9 @@ class DeviceProxy(
             it.startsWith("/viz/") || it.startsWith("/f/")
         } ?: false
 
+        /** Sec-Fetch-Site of a file-page request: absent, same-origin or none (core/page-auth.mjs fetchSiteOk). */
+        internal fun fetchSiteOk(site: String?): Boolean = site == null || site == "same-origin" || site == "none"
+
         internal fun pageResponseLimit(path: String, isolated: Boolean = false): Long {
             if (isolated) return 32L * 1024 * 1024
             val p = normalizedPagePath(path) ?: return 0
@@ -394,6 +397,10 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         val forwardPath = if (restQuery.isEmpty()) path else "$path?$restQuery"
         val isUpgrade = (req.headers["upgrade"] ?: "").equals("websocket", ignoreCase = true)
         if (isolated && (isUpgrade || !isIsolatedPath(path))) return writeSimple(out, 403, null, ByteArray(0))
+        // File pages: same check as the host's page entrance (core/page-auth.mjs). Only same-origin or the address bar
+        if (!isolated && !isUpgrade && pageResponseLimit(path) > 0 && !fetchSiteOk(req.headers["sec-fetch-site"])) {
+            return writeSimple(out, 403, "text/plain; charset=utf-8", "forbidden".toByteArray())
+        }
         if (isUpgrade) {
             if (path != "/ws") return writeSimple(out, 404, null, ByteArray(0))
             if (!tokenEq(qToken, token)) return writeSimple(out, 401, null, ByteArray(0))
@@ -507,6 +514,8 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         for ((k, v) in req.headers) if (k in PASS_REQUEST) headers.put(k, v)
         val limit = pageResponseLimit(path, isolated)
         if (limit > 0) headers.put("accept-encoding", "identity")
+        // The host checks the same header, so pass it on page routes only
+        if (limit > 0 && !isolated) req.headers["sec-fetch-site"]?.let { headers.put("sec-fetch-site", it) }
         val head = JSONObject().put("method", req.method).put("path", forwardPath).put("headers", headers).put("pagePorts", pagePorts())
         if (isolated) head.put("destination", "isolated")
         loop.post {
