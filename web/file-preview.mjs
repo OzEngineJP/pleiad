@@ -54,7 +54,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     configureVisualizationTabs(options ? { connected: options.connected, openTab: options.openTab,
       sessionId:element => getContext(element)?.sessionId, onError:failed } : null);
     if (!options) { pageFrame = openPage = null; return; }
-    pageFrame = createPageFrame({ preview: options.pagePreview ?? { openPanel }, getSessionId: () => getContext(null)?.sessionId,
+    pageFrame = createPageFrame({ preview: options.pagePreview ?? { openPanel }, getSessionId: () => getContext(null)?.sessionId, wrap: options.pageBar,
       onRequest: request => request.type === 'file-menu'
         ? options.onFileMenu ? options.onFileMenu(request) : menu(request.x, request.y, { ...request, element: pageFrame.frame })
         : options.onRequest?.(request) });
@@ -510,6 +510,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     if (unifiedEnabled()) return openPage(ref, whereFrom({ path:ref.path, element, base }), element).catch(failed);
     return open(ref, element, base);
   }
+  /** 右の欄の ⋮ とタブの右クリックに足すファイルの操作（Pleiad のファイル・フォルダーのページ。web/browser-unify.mjs） */
+  function tabMenu(tab) {
+    if (!tab?.page?.path) return [];
+    const where = resolvedFiles.get(tab.page.path) ?? tab.page;
+    return fileMenuItems(where, { osActions:osActions(), defaultAppAllowed:where.defaultAppAllowed === true,
+      canUse:!!useFile, run:action => run(action, { ...where, element:tab.element }) });
+  }
   async function osAction(command, target) {
     if (!cmd || (unifiedEnabled() && !osActions())) return;
     try { await cmd(command, whereFrom(target)); }
@@ -645,7 +652,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   addEventListener('resize', layout);
   new MutationObserver(() => { if (!panel.hidden && document.body.classList.contains('settings')) close(false); }).observe(document.body,{attributes:true,attributeFilter:['class']});
   return { close, layout, openPanel, updatePanel, panelOpen: key => !panel.hidden && custom?.key === key,
-    configureBrowserUnify,
+    configureBrowserUnify, tabMenu,
     pageEnvChanged: env => pageFrame?.envChanged(env),
     pageCommand: command => pageFrame?.command(command),
     get pageFrame() { return pageFrame; },

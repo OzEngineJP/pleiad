@@ -13,7 +13,7 @@ export function createContextMenu() {
     cancelTimers();
     closeTimer = setTimeout(() => { if (!editing()) trim(depth); }, 250);
   }
-  const buttons = panel => [...panel.querySelectorAll(':scope > button, :scope > input')].filter(row => !row.disabled);
+  const buttons = panel => [...panel.querySelectorAll(':scope > button, :scope > input, :scope > .tools > button')].filter(row => !row.disabled);
   function trim(depth) {
     for (const p of panels.splice(depth)) { p.trigger?.setAttribute('aria-expanded', 'false'); p.remove(); }
   }
@@ -58,6 +58,20 @@ export function createContextMenu() {
       if (item.sep) { panel.append(el('div', 'sep')); continue; }
       // 途中の見出し（項目の群の名前）。wrap は全文を折り返す
       if (item.head) { panel.append(el('div', 'head' + (item.wrap ? ' wrap' : ''), item.head)); continue; }
+      // アイコンだけの操作を横に 1 段（ブラウザーの ⋮ の 戻る・進む・再読み込み）。名前は title と読み上げ名に持たせる
+      if (item.tools) {
+        const bar = el('div', 'tools'); bar.setAttribute('role', 'group');
+        for (const tool of item.tools) {
+          const button = el('button', 'tool'); button.type = 'button'; button.setAttribute('role', 'menuitem');
+          button.title = tool.label; button.setAttribute('aria-label', tool.label);
+          if (tool.disabled) { button.disabled = true; button.setAttribute('aria-disabled', 'true'); }
+          if (tool.icon) button.append(tool.icon);
+          button.onpointerenter = () => { scheduleTrim(depth + 1); };
+          button.onclick = () => { close(true); tool.onClick?.(); };
+          bar.append(button);
+        }
+        panel.append(bar); continue;
+      }
       if (item.input) {
         const input = el('input', 'field');
         input.placeholder = item.input.placeholder ?? ''; input.value = item.input.value ?? '';

@@ -3,6 +3,7 @@
     "label": "ブラウザーのタブ",
     "new": "新しいタブ",
     "close": "{{title}} を閉じる",
+    "closeTab": "タブを閉じる",
     "count": "{{count}} 個のタブ"
   },
   "address": {
@@ -20,6 +21,7 @@
     "more": "その他",
     "closePanel": "パネルを閉じる",
     "openPanel": "ブラウザーを開く",
+    "openPagePanel": "パネルを開く",
     "failed": "開けませんでした。入力したアドレスを確認してください。",
     "reasons": {
       "empty-input": "URL・パス・検索語を入力してください。",

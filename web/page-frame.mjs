@@ -39,10 +39,10 @@ export function framePoint(request, rect) {
 }
 
 /** The fallback serves only Pleiad's own pages, authenticated by the app cookie. */
-export function createPageFrame({ doc = globalThis.document, preview, onRequest = () => {}, getSessionId = () => null } = {}) {
-  let frame = null, sessionId = null;
+export function createPageFrame({ doc = globalThis.document, preview, onRequest = () => {}, getSessionId = () => null, wrap = null } = {}) {
+  let frame = null, sessionId = null, wrapped = null;
   const origin = () => doc.location?.origin ?? globalThis.location.origin;
-  function close() { frame?.remove(); frame = null; sessionId = null; }
+  function close() { wrapped?.dispose?.(); wrapped = null; frame?.remove(); frame = null; sessionId = null; }
   function send(type, data) { frame?.contentWindow?.postMessage({ type, ...data }, origin()); }
   async function receive(event) {
     if (!frame?.isConnected || event.source !== frame.contentWindow || event.origin !== origin()) return false;
@@ -65,12 +65,16 @@ export function createPageFrame({ doc = globalThis.document, preview, onRequest 
       const match = /^\/_pleiad\/s\/([^/]+)\/([^/]+)$/.exec(parsed.pathname);
       if (parsed.origin !== origin() || parsed.username || parsed.password || !match ||
           match[1] !== encodeURIComponent(id) || !PAGES.has(match[2])) return false;
+      // 同じ会話の枠が開いたままなら、その枠の中で移る（右の欄の頭の「戻る」で前のページへ戻れる）
+      if (frame?.isConnected && sessionId === id && wrapped && preview?.panelOpen?.('page-frame')) { frame.src = parsed.href; return true; }
       close(); sessionId = id;
       frame = doc.createElement('iframe'); frame.className = 'page-frame'; frame.title = title;
       frame.setAttribute('referrerpolicy', 'no-referrer');
       frame.style.cssText = 'border:0;width:100%;height:100%;min-height:0;display:block;flex:1';
       frame.src = parsed.href;
-      preview?.openPanel({ key: 'page-frame', title: heading ?? title, label: title, body: frame, element, onClose: close });
+      // wrap: the right pane's address-bar-shaped head around the frame (web/browser-unify.mjs frameBar)
+      wrapped = wrap?.(frame, { sessionId: id }) ?? null;
+      preview?.openPanel({ key: 'page-frame', title: heading ?? title, label: title, body: wrapped?.body ?? frame, element, onClose: close });
       return true;
     },
     close, receive,

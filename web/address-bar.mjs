@@ -102,9 +102,11 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   omni.onclick = event => { if (event.target === omni || event.target === crumbs || event.target.closest('.bu-separator,.bu-ellipsis') || (mobile() && !holderSlot.contains(event.target) && !tree.contains(event.target))) edit(); };
   crumbs.onkeydown = event => { if (event.target === crumbs && ['Enter', ' '].includes(event.key)) { event.preventDefault(); edit(); } };
   function fit() {
-    if (!input.hidden || !tab) return;
-    const file = Boolean(tab.page?.path), isFile = hasFileViews(tab);
+    if (!input.hidden) return;
     root.classList.toggle('bu-mobile', mobile()); root.classList.toggle('bu-tight', root.clientWidth < 360);
+    // Without a tab there is nothing to switch, so the view buttons stay out.
+    if (!tab) { views.hidden = true; return; }
+    const file = Boolean(tab.page?.path), isFile = hasFileViews(tab);
     views.classList.remove('bu-icons'); holderSlot.classList.remove('bu-dot'); views.hidden = !isFile || mobile();
     const items = [...crumbs.children]; for (const item of items) item.hidden = false;
     crumbs.classList.add('bu-measure');

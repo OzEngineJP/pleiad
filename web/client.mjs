@@ -7837,12 +7837,12 @@ let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   //
 // 会話の右の欄（ADR 0291〜0294）。サーバーの hostCapabilities.browserUnify（ページと隔離の origin の口）が届いてから読む
 let browserUnifyLoad = null;
 const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
-  controlStore:chromeControlStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer') })));
+  controlStore:chromeControlStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer'), osActions:() => state.osActions === true })));
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
   getContext: anchor => channelsUi.contextForPanel(anchor) ?? ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
-  onLayout: () => requestAnimationFrame(relayoutBranches),
+  onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); },
   // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
@@ -7850,8 +7850,26 @@ const filePreview = setupFilePreview({
   useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
 });
 // 頭の行の右の欄のボタンと近道（web/header-entries.mjs）。会話を開いていない間は出さない
+// 右の欄の開け閉め。Chrome の窓かタブがあればその窓を映す。つないであって窓がまだ無ければ、新しいタブ（Pleiad の新しいタブのページ）で窓を作る
+// （ADR 0291 の 4 の 5 と同じ。Chrome の窓はいつもタブを 1 つ持つ）。Chrome が無ければ、新しいタブのページを 1 枚の iframe で出す
+// （4 の 2。git・プラグイン・作業フォルダーへの入口はこのページだけ。5 の 5）
+let chromeLink = null;   // 中継の接続の状態（chromeBrowser の便り。ホストの PC の画面だけに届く）
+const rightPane = {
+  isOpen: () => chromePanel?.isOpen() === true || filePreview.panelOpen('page-frame'),
+  close() { if (chromePanel?.isOpen()) chromePanel.close(); else if (filePreview.panelOpen('page-frame')) filePreview.close(); },
+  open(anchor) {
+    const id = state.current; if (!id) return;
+    loadBrowserUnify().then(unify => {
+      if (state.current !== id) return;
+      if (chromeWindows.has(id) || unify.tabsOf(id).length) chromePanel?.open(anchor);
+      else if (chromeLink === 'connected') unify.openTab({ sessionId: id }).catch(error => notify(error?.message || t('tabs:address.failed')));
+      else filePreview.pageFrame?.open(`/_pleiad/s/${encodeURIComponent(id)}/new`, { sessionId: id, title: t('tabs:strip.new'), element: anchor });
+      browserEntry?.paint();
+    });
+  },
+};
 browserEntry = setupBrowserEntry({ button: $('browserEntry'),
-  chrome: () => chromePanel, windows: chromeWindows, getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
+  chrome: () => rightPane, windows: chromeWindows, pagesOnly: () => chromeLink !== 'connected' && !chromeWindows.has(state.current), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   getChromeState: id => chromeControlStore.get(id).state,
   waiting: handoffWaiting, announce,
   chromeAvailable: () => state.hostCaps?.chromeWindow === true,
@@ -8854,7 +8872,7 @@ function jumpToConversation({ uuid, toolId }) {
  * 旗が on: ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
  * タブを開けるのは Chrome につながっているか、その会話にもうタブがあるとき。それ以外は右パネルの iframe で開く（web/page-frame.mjs）
  */
-let chromeLink = null, filePagesConnected = false;
+let filePagesConnected = false;
 function connectFilePages(unify) {
   if (filePagesConnected) return;
   filePagesConnected = true;
@@ -8866,6 +8884,7 @@ function connectFilePages(unify) {
     focusTab: (tab, id) => unify.focusTab(tab, id),
     flashTab: (tab, id) => unify.flashTab(tab, id),
     onRequest: (request) => handlePageRequest(request, { sessionId: request?.sessionId }),
+    pageBar: (frame, context) => unify.frameBar(frame, context),
   });
 }
 /**
@@ -10855,7 +10874,7 @@ function openConversationMenu(s, r) {
   const items = conversationMenuItems({
     plugins: !$('contextEntry').hidden && { label: t('session.context.label'), onClick: () => sessionContext.open($('sessionMore')) },
     git: !$('gitEntry').hidden && { label: $('gitEntry').getAttribute('aria-label'), onClick: () => gitPanel?.open($('sessionMore')) },
-    browser: browserEntry?.available() && { label: t('browser.unifiedEntryLabel'), onClick: () => browserEntry.toggle($('sessionMore')) },
+    browser: browserEntry?.available() && { label: chromeLink === 'connected' || chromeWindows.has(state.current) ? t('browser.unifiedEntryLabel') : (rightPane.isOpen() ? t('tabs:address.closePanel') : t('tabs:address.openPagePanel')), onClick: () => browserEntry.toggle($('sessionMore')) },
     usage: { label: t('usage.header.title'), hint: used == null ? null : () => menuMeter(used), onClick: () => headerUsage.open($('sessionMore')) },
     compact: { label: t('compaction.short'), disabled: !supported,
       note: supported ? '' : t('compaction.agentManaged', { agent: labelOf(s.backend) }),

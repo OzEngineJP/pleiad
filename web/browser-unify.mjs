@@ -1,8 +1,12 @@
 import { t } from './i18n.mjs';
-import { createTabStrip, browserButton, tabIcon } from './tab-strip.mjs';
+import { createTabStrip, browserButton, browserIcon, tabIcon } from './tab-strip.mjs';
 import { createAddressBar, hasFileViews } from './address-bar.mjs';
 import { createControlBadge, createTabActivityDot, createPhoneBrowserStrip } from './chrome-control.mjs';
 import { pageRequestOf, framePoint } from './page-frame.mjs';
+import { openExternalLink } from './link-open.mjs';
+
+/** メニューの行のアイコン（タブの列・アドレスバーと同じ線の絵） */
+const menuIcon = kind => { const svg = browserIcon(kind); svg.classList.add('i'); return svg; };
 
 // Right-pane browser styles; injected once when the host reports browserUnify (always, since ADR 0291 stage C1).
 const css = `
@@ -51,15 +55,14 @@ const css = `
 .browser-unify #filePreview[data-panel=chrome-window] .file-preview-body-layout{padding:0;gap:0}
 .browser-unify #filePreview[data-panel=chrome-window] .file-preview-content{padding:0;overflow:hidden;display:flex;flex-direction:column}
 .browser-unify #filePreview[data-panel=page-frame]{padding:0;gap:0;overflow:hidden;background:var(--surface-paper)}
-.browser-unify #filePreview[data-panel=page-frame]>.file-preview-head{flex:none;align-items:center;height:46px;padding:0 6px 0 16px;background:var(--surface-1)}
-.browser-unify #filePreview[data-panel=page-frame]>.file-preview-toolbar,.browser-unify #filePreview[data-panel=page-frame] .file-preview-path{display:none}
-.browser-unify #filePreview[data-panel=page-frame] .file-preview-title h2{display:block;font-size:13.5px;font-weight:400;line-height:46px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.browser-unify #filePreview[data-panel=page-frame]>.file-preview-head,.browser-unify #filePreview[data-panel=page-frame]>.file-preview-toolbar{display:none}
+.bu-frame-body{display:flex;flex-direction:column;flex:1;min-height:0}.bu-frame .bu-count{display:none!important}
 .browser-unify #filePreview[data-panel=page-frame] .file-preview-body-layout{padding:0;gap:0}
 .browser-unify #filePreview[data-panel=page-frame] .file-preview-content{border-radius:0;overflow:hidden;display:flex;flex-direction:column}
 .browser-unify .entry-working{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:var(--ink-blue);box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
 .page-frame-dir{color:var(--ink-weak)}.page-frame-file{font-weight:600}
 .browser-unify .cp.bu-panel{display:flex;flex-direction:column;flex:1;min-height:0;gap:0;padding:0}
-.browser-unify .bu-panel>.cp-sw,.browser-unify .bu-panel>.cp-foot{display:none!important}
+.browser-unify .bu-panel>.cp-sw,.browser-unify .bu-panel>.cp-foot,.browser-unify .bu-panel .cp-pin{display:none!important}
 .browser-unify .bu-panel>.cp-screen{flex:1;min-height:0;border:0;border-radius:0;margin:0}
 .browser-unify #contextEntry,.browser-unify #gitEntry,.browser-unify .th-git{display:none!important}
 .bu-tab-pick .b2-tab-dot{flex:none}
@@ -76,6 +79,12 @@ export function pageName(tab) {
   const page = tab?.page; if (!page?.kind) return '';
   if (['file', 'dir'].includes(page.kind)) return String(page.path ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || page.path || '';
   return t(`tabs:address.locations.${page.kind}`, { defaultValue:tab.title || '' });
+}
+
+/** タブの帯と一覧の題。Pleiad のページはページの <title>（「· Pleiad」付き）でなく、ファイル・フォルダーの名前かページの名前。新しいタブのページは「新しいタブ」 */
+export function tabLabel(tab) {
+  if (tab?.page?.kind === 'new') return t('tabs:strip.new');
+  return pageName(tab) || tab?.title || tab?.page?.path || tab?.url || t('tabs:strip.new');
 }
 
 // スマホでは映像でなく端末内で描く Pleiad のページ（Web・HTML のファイル・新しいタブは映像のまま）
@@ -95,13 +104,13 @@ const pageKey = href => { try { const url = new URL(href); return `${url.pathnam
  * 旗が on の右の欄（タブの列・アドレスバー・札・タブの活動の点・スマホの帯）。web/client.mjs が旗が on のときだけ読む。
  * deps:
  *   - cmd・state・chrome（web/chrome-panel.mjs）・showMenu・notify
- *   - preview: web/file-preview.mjs（タブの ⋮ と右クリックのファイルの操作 tabMenu）
+ *   - preview: web/file-preview.mjs（タブの ⋮ と右クリックのファイルの操作 tabMenu）。osActions(): サーバーのある PC の画面か（外で開く操作を出す）
  *   - controlStore: web/chrome-control.mjs の chromeControlStore（エージェントが動いているか・止めたか）。agentName(sessionId): 札の名前
  *   - onPageRequest(request, { sessionId, targetId }): ファイルのページからの頼み（tab:page-request）。worktree の頼みは戻り値・例外をページへ返す
  *   - composer(): スマホの帯を置く入力欄（その上に置く）
  */
 export function createBrowserUnify(deps = {}) {
-  const { cmd, state = {}, chrome = () => null, showMenu = () => {}, notify = () => {} } = deps;
+  const { cmd, state = {}, chrome = () => null, showMenu = () => {}, notify = () => {}, osActions = () => false } = deps;
   const rows = new Map(), holders = new Map(); let active = null, enabled = false;
   const session = () => chrome()?.sessionId ?? state.current;
   const tabs = () => rows.get(session()) ?? [];
@@ -109,10 +118,15 @@ export function createBrowserUnify(deps = {}) {
   const holderOf = (sessionId, targetId) => holders.get(sessionId)?.get(targetId) ?? { holder:'ai' };
   const phoneQuery = matchMedia('(max-width: 600px)');
   const failed = error => notify(t(`tabs:address.reasons.${error?.code ?? error?.message}`, { defaultValue:t('tabs:address.failed') }));
-  /** ファイル・フォルダーのページのタブは、ファイルの操作（web/file-preview.mjs の tabMenu）を出す */
+  /**
+   * タブの ⋮ と右クリックの今のタブの操作。ファイル・フォルダーのページはファイルの操作（web/file-preview.mjs の tabMenu）、
+   * Web のページは「既定のブラウザーで開く」（URL）。リモートの画面では外で開く操作を出さない（ADR 0010。モック v6 の 9）
+   */
   const tabMenu = tab => {
     const page = tab?.page?.path && ['file', 'dir'].includes(tab.page.kind) ? { path:tab.page.path, kind:tab.page.kind === 'dir' ? 'directory' : 'file' } : null;
-    return page ? deps.preview?.tabMenu?.({ ...tab, page }) ?? [] : [];
+    if (page) return deps.preview?.tabMenu?.({ ...tab, page }) ?? [];
+    if (tab?.page || !/^https?:\/\//i.test(tab?.url ?? '') || !osActions()) return [];
+    return [{ label:t('browser.openExternal'), icon:menuIcon('web'), onClick:() => openExternalLink(tab.url) }];
   };
   async function navigate(action, args = {}) {
     const sessionId = session(); if (!sessionId) return;
@@ -136,10 +150,14 @@ export function createBrowserUnify(deps = {}) {
     const held = tab ? holderOf(sessionId, tab.targetId) : { holder:'ai' };
     return { sessionId, tab, held, agentTab, store, agentUsed:store !== 'idle' || agentTab != null, name:deps.agentName?.(sessionId) || 'Claude' };
   }
-  const strip = createTabStrip({ onPick:pick, onClose:tab => navigate('close', { targetId:tab.targetId }).catch(failed), onNew:() => navigate('new').catch(failed),
+  const strip = createTabStrip({ label:tabLabel, onPick:pick, onClose:tab => navigate('close', { targetId:tab.targetId }).catch(failed), onNew:() => navigate('new').catch(failed),
+    // タブの右クリック: 今のタブの操作、その下に再読み込み・タブを閉じる（モック v6 の「タブを右クリック」。題は付けない）
     onMenu(tab, event) {
+      event.preventDefault();
       const items = tabMenu(tab);
-      if (items.length) { event.preventDefault(); showMenu(event.clientX, event.clientY, items, tab.page?.path ?? tab.title); }
+      showMenu(event.clientX, event.clientY, [...items, ...(items.length ? [{ sep:true }] : []),
+        { label:t('tabs:address.reload'), icon:menuIcon('reload'), onClick:() => navigate('reload', { targetId:tab.targetId }).catch(failed) },
+        { label:t('tabs:strip.closeTab'), icon:menuIcon('close'), onClick:() => navigate('close', { targetId:tab.targetId }).catch(failed) }]);
     },
     decorate(tab, pickButton) {
       if (!enabled) return;
@@ -148,17 +166,25 @@ export function createBrowserUnify(deps = {}) {
         holder:holderOf(c.sessionId, tab.targetId).holder === 'human' ? 'human' : 'ai', waiting:false });
     } });
   const address = createAddressBar({ navigate, cwd:() => state.cwd ?? '', suggest:input => cmd('chromeAddress', { sessionId:session(), input }), onClose:() => chrome()?.close(), onTabs:() => showOverview(),
-    onMenu(anchor, { viewHidden, view, tab }) {
-      const items = [{ label:t('tabs:strip.new'), onClick:() => navigate('new').catch(failed) }];
-      if (matchMedia('(max-width: 600px)').matches) items.push({ sep:true }, ...['back', 'forward', 'reload'].map(action => ({ label:t(`tabs:address.${action}`), disabled:action === 'back' ? !tab?.canGoBack : action === 'forward' ? !tab?.canGoForward : !tab, onClick:() => navigate(action).catch(failed) })));
-      if (viewHidden && hasFileViews(tab)) {
-        items.push({ sep:true }, { label:t('tabs:address.showSource'), checked:view === 'source', onClick:() => address.setView(view === 'source' ? 'preview' : 'source') });
-      }
-      const extra = [...tabMenu(tab), ...(chrome()?.browserMenuItems?.(anchor) ?? [])];
-      if (extra.length) items.push({ sep:true }, ...extra);
-      items.push({ sep:true }, { label:t('tabs:address.closePanel'), onClick:() => chrome()?.close() });
-      const box = anchor.getBoundingClientRect(); showMenu(box.left, box.bottom + 4, items, t('tabs:address.more'));
-    } });
+    onMenu:(anchor, shown) => addressMenu(anchor, { ...shown, go:action => navigate(action).catch(failed), setView:view => address.setView(view),
+      extra:[...tabMenu(shown.tab), ...(chrome()?.browserMenuItems?.(anchor) ?? [])], close:() => chrome()?.close() }) });
+  /**
+   * アドレスバーの ⋮。会話の Chrome の欄と Chrome 無しの欄（frameBar）で同じ並びにする（モック v6 の「メニュー」）:
+   * 新しいタブ・（スマホ）戻る・進む・再読み込み・（表示の切り替えを隠したとき）原文を表示・ファイルの操作・（PC）パネルを閉じる。
+   * スマホは左上の ‹ で会話へ戻るので「パネルを閉じる」は出さない。見出しは付けない（モックに無い）
+   */
+  function addressMenu(anchor, { tab, view, viewHidden, go, setView, extra, close }) {
+    const icon = menuIcon;
+    const items = [];
+    // スマホは戻る・進む・再読み込みをアドレスバーから外したので、メニューの頭にアイコンの 1 段で置く（モック v6 の phone-menu）
+    if (phoneQuery.matches) items.push({ tools:['back', 'forward', 'reload'].map(action => ({ label:t(`tabs:address.${action}`), icon:icon(action),
+      disabled:action === 'back' ? !tab?.canGoBack : action === 'forward' ? !tab?.canGoForward : !tab, onClick:() => go(action) })) });
+    items.push({ label:t('tabs:strip.new'), icon:icon('plus'), onClick:() => go('new') });
+    if (viewHidden && hasFileViews(tab)) items.push({ sep:true }, { label:t('tabs:address.showSource'), icon:icon('source'), checked:view === 'source', onClick:() => setView(view === 'source' ? 'preview' : 'source') });
+    if (extra.length) items.push({ sep:true }, ...extra);
+    if (!phoneQuery.matches) items.push({ sep:true }, { label:t('tabs:address.closePanel'), icon:icon('panel'), onClick:close });
+    const box = anchor.getBoundingClientRect(); showMenu(box.left, box.bottom + 4, items);
+  }
   const root = document.createElement('div'); root.className = 'bu-chrome'; root.append(strip.root, address.root);
   const overview = document.createElement('div'); overview.className = 'bu-overview'; overview.hidden = true; root.append(overview);
   let badge = null, phoneStrip = null, stripHolder = null;
@@ -168,7 +194,7 @@ export function createBrowserUnify(deps = {}) {
       const card = document.createElement('div'); card.className = 'bu-card' + (tab.targetId === current()?.targetId ? ' on' : '');
       const pickButton = document.createElement('button'); pickButton.type = 'button'; pickButton.className = 'bu-card-pick';
       const img = document.createElement('img'); img.alt = ''; img.className = 'bu-card-preview';
-      const title = document.createElement('span'); title.className = 'bu-card-title'; title.textContent = tab.title || tab.page?.path || tab.url || t('tabs:strip.new');
+      const title = document.createElement('span'); title.className = 'bu-card-title'; title.textContent = tabLabel(tab);
       const label = document.createElement('div'); label.className = 'bu-card-label'; label.append(tabIcon(tab), title);
       pickButton.append(img, label); pickButton.onclick = () => pick(tab); card.append(pickButton);
       const close = browserButton('close', t('tabs:strip.close', { title:title.textContent }), () => navigate('close', { targetId:tab.targetId }).then(() => { overview.hidden = true; showOverview(); }).catch(failed)); close.classList.add('bu-card-close'); card.append(close);
@@ -245,6 +271,48 @@ export function createBrowserUnify(deps = {}) {
     try { reply(true, await deps.onPageRequest(framePoint(request, entry.frame.getBoundingClientRect()), { sessionId:entry.sessionId, targetId:entry.targetId })); }
     catch (error) { reply(false, error); }
   }
+  /**
+   * Chrome の無い会話の右の欄（web/page-frame.mjs の 1 枚の iframe）の頭。アドレスバーと同じ形（ツリー・区切り・プレビュー／原文）で、
+   * タブの列・件数・新しいタブは出さない（ADR 0291 の 4 の 2）。戻る・進むはその iframe の中の履歴だけ（Navigation API）。Web の URL は既定のブラウザーへ
+   */
+  function frameBar(frame, { sessionId }) {
+    const closePanel = () => deps.preview?.close?.();
+    const pageUrl = (kind, path) => `/_pleiad/s/${encodeURIComponent(sessionId)}/${kind}${path ? `?${new URLSearchParams({ path })}` : ''}`;
+    const win = () => { try { return frame.contentWindow; } catch { return null; } };
+    async function go(action, args = {}) {
+      if (action === 'tree') return pageCommand({ frame }, { type:'tree' });
+      if (action === 'view') return pageCommand({ frame }, { type:'view', view:args.view === 'source' ? 'source' : 'preview' });
+      if (action === 'reload') return win()?.location.reload();
+      if (action === 'back' || action === 'forward') { try { await win()?.navigation?.[action]().committed; } catch { /* 先が無い */ } return; }
+      if (action === 'home') { frame.src = pageUrl('new'); return; }
+      const input = String(args.input ?? '').trim();
+      if (/^https?:\/\//i.test(input)) { if (!openExternalLink(input)) throw new Error('blocked'); return; }
+      const where = await cmd('resolvePath', { sessionId, path:input });
+      frame.src = pageUrl(where.kind === 'directory' ? 'dir' : 'file', where.path);
+    }
+    const bar = createAddressBar({ navigate:go, cwd:() => state.cwd ?? '', onClose:closePanel,
+      suggest:input => cmd('chromeAddress', { sessionId, input }).catch(() => ({})),
+      onMenu:(anchor, shown) => addressMenu(anchor, { ...shown, go:action => go(action === 'new' ? 'home' : action).catch(failed), setView:view => bar.setView(view),
+        extra:tabMenu(shown.tab), close:closePanel }) });
+    /** iframe が今出しているページを、アドレスバーの 1 つのタブとして見せる */
+    function sync() {
+      let at; try { at = new URL(win()?.location.href); } catch { return; }
+      if (at.origin !== location.origin) return;
+      const kind = /^\/_pleiad\/s\/[^/]+\/([^/]+)$/.exec(at.pathname)?.[1], path = at.searchParams.get('path');
+      const navigation = win()?.navigation;
+      bar.show({ targetId:'page-frame', url:at.href, page:kind ? { kind, ...(path ? { path } : {}) } : null,
+        canGoBack:!!navigation?.canGoBack, canGoForward:!!navigation?.canGoForward }, 1);
+    }
+    frame.addEventListener('load', () => { sync(); win()?.navigation?.addEventListener?.('currententrychange', sync); });
+    const head = document.createElement('div'); head.className = 'bu-chrome bu-frame'; head.append(bar.root);
+    const body = document.createElement('div'); body.className = 'bu-frame-body'; body.append(head, frame);
+    let first; try { first = new URL(frame.src, location.origin); } catch { first = null; }
+    if (first) {
+      const kind = /\/([^/]+)$/.exec(first.pathname)?.[1], path = first.searchParams.get('path');
+      bar.show({ targetId:'page-frame', url:first.href, page:{ kind, ...(path ? { path } : {}) }, canGoBack:false, canGoForward:false }, 1);
+    }
+    return { body, dispose:() => bar.destroy() };
+  }
   function attach() {
     chrome()?.mountBrowserChrome?.(root, address.holderSlot);
     if (badge) chrome()?.mountStatus?.(badge.element);
@@ -262,7 +330,7 @@ export function createBrowserUnify(deps = {}) {
     } catch (error) { if (request.requestId) reply(false, error); }
   }
   return {
-    root, tabs:strip, address, navigate,
+    root, tabs:strip, address, navigate, frameBar,
     /** その会話のタブ（web/file-preview.mjs の configureBrowserUnify。同じファイルのタブを使い回す） */
     tabsOf:sessionId => rows.get(sessionId) ?? [],
     /** 会話の Chrome に新しいタブで開き、右の欄に映す（ファイルのリンク・可視化） */

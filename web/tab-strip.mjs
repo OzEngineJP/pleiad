@@ -10,6 +10,7 @@ const paths = {
   more: 'M12 4v.01M12 12v.01M12 20v.01', panel: 'M3 4h18v16H3zM14 4v16',
   git: 'M6 3v12a4 4 0 0 0 8 0V9M6 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4M14 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4',
   plugins: 'M9 3v4M15 3v4M6 7h12v4a6 6 0 0 1-12 0zM12 17v4',
+  profile: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0', chat: 'M4 5h16v11H9l-5 4z', window: 'M3 4h18v16H3zM3 9h18',
   new: 'M12 5v14M5 12h14', attachment: 'm9 12 6-6a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l9-9',
 };
 export function browserIcon(kind) {
@@ -31,8 +32,9 @@ export function tabIcon(tab) {
   return icon;
 }
 
-/** decorate(tab, pick): タブの題の横に足すもの（旗が on の活動の点。web/browser-unify.mjs） */
-export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {}, decorate = () => {} } = {}) {
+/** decorate(tab, pick): タブの題の横に足すもの（旗が on の活動の点。web/browser-unify.mjs）。label(tab): タブの題（既定はページの題） */
+export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {}, decorate = () => {},
+  label = tab => tab.title || tab.page?.path || tab.url || t('tabs:strip.new') } = {}) {
   const root = document.createElement('div'); root.className = 'bu-tabs'; root.setAttribute('role', 'tablist'); root.setAttribute('aria-label', t('tabs:strip.label'));
   const add = browserButton('plus', t('tabs:strip.new'), onNew); add.classList.add('bu-new');
   let tabs = [], selected = null;
@@ -45,7 +47,7 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       item.oncontextmenu = event => onMenu(tab, event);
       const pick = document.createElement('button'); pick.type = 'button'; pick.className = 'bu-tab-pick'; pick.setAttribute('role', 'tab');
       pick.setAttribute('aria-selected', String(tab.targetId === selected)); pick.tabIndex = tab.targetId === selected || (!selected && index === 0) ? 0 : -1;
-      pick.title = tab.title || tab.page?.path || tab.url || t('tabs:strip.new');
+      pick.title = label(tab);
       const icon = tabIcon(tab);
       const title = document.createElement('span'); title.className = 'bu-tab-title'; title.textContent = pick.title; pick.append(icon, title); decorate(tab, pick);
       pick.onclick = () => onPick(tab);

@@ -84,7 +84,7 @@ export const browserEntryMark = ({ requested = false, paused = false, working = 
  * blocked() が true の間は近道を効かせない（設定・ダイアログ）。会話を開いていない間は隠す
  */
 export function setupBrowserEntry({ button, chrome = () => null, windows = null, getSessionId = () => null,
-  getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false,
+  getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false, pagesOnly = () => false,
   mac = isMac(), blocked = () => false, announce = () => {} }) {
   if (!button) return null;
   button.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+B' : 'Control+Shift+B');
@@ -119,7 +119,8 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
       const icon = browserIcon('panel'); icon.classList.add('i'); button.querySelector('svg')?.replaceWith(icon); button.dataset.unifiedIcon = 'true';
     }
     announceChange(id, state);
-    const label = t(open() ? 'tabs:address.closePanel' : 'tabs:address.openPanel');
+    // Chrome が無い会話では Pleiad のページだけを出すので「ブラウザー」と呼ばない（ADR 0291 の 4 の 2）
+    const label = open() ? t('tabs:address.closePanel') : pagesOnly() ? t('tabs:address.openPagePanel') : t('tabs:address.openPanel');
     button.title = `${label}（${browserShortcutLabel(mac)}）`;
     button.setAttribute('aria-label', label);
     button.setAttribute('aria-expanded', String(open()));

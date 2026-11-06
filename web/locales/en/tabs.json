@@ -3,6 +3,7 @@
     "label": "Browser tabs",
     "new": "New tab",
     "close": "Close {{title}}",
+    "closeTab": "Close tab",
     "count": "{{count}} tabs"
   },
   "address": {
@@ -20,6 +21,7 @@
     "more": "More",
     "closePanel": "Close panel",
     "openPanel": "Open browser",
+    "openPagePanel": "Open panel",
     "failed": "Could not open this address. Check your input.",
     "reasons": {
       "empty-input": "Enter a URL, path or search.",

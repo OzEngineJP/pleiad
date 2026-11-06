@@ -123,6 +123,11 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pop .li.has-note{flex-wrap:wrap;row-gap:1px}
 .pop .li .note{flex-basis:100%;margin-left:17px;font-size:var(--fs-meta);color:var(--ink-weak);line-height:1.5;white-space:normal;overflow-wrap:anywhere}
 .pop .sep{height:6px}
+/* アイコンだけの操作の 1 段（ブラウザーの ⋮ の 戻る・進む・再読み込み）。面や線は足さず、下の項目との間は .sep と同じ 6px */
+.pop .tools{display:flex;justify-content:space-around;margin-bottom:6px}
+.pop .tools .tool{display:flex;align-items:center;justify-content:center;width:44px;height:36px;border-radius:var(--r-s);color:var(--ink);background:transparent;cursor:pointer}
+.pop .tools .tool:hover{background:var(--surface-hover)}
+.pop .tools .tool:disabled{color:var(--ink-weak);opacity:.5;cursor:default;background:transparent}
 .pop input.field{width:100%;background:var(--surface-1);border-radius:var(--r-pill);padding:5px 10px;margin:2px 0 4px}
 .pop input.field:focus{outline:none;background:var(--surface-2)}
 .pop input.field::placeholder{color:var(--ink-weak)}

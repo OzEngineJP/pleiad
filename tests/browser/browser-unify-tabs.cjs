@@ -21,7 +21,7 @@ window.sent=[]; window.notices=[]; window.pageRequests=[];
 window.filePath='D:/dev/pleiad/docs/file-preview.md';
 window.rows=[{sessionId:'one',targetId:'file',windowId:1,title:'file-preview.md',url:'http://localhost/_pleiad/s/one/file?path='+encodeURIComponent(filePath),page:{kind:'file',path:filePath},canGoBack:true},{sessionId:'one',targetId:'web',windowId:1,title:'GitHub · Pleiad',url:'https://github.com/tekalu1/pleiad',favicon:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="gray"/></svg>')}];
 window.chromeFixture={sessionId:'one',tabId:'file',mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(){},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true}};
-window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
+window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
 async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){chromeFixture.tabId=args.tabId;chromeFixture.change?.()}return {}},
 showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');b.textContent=item.label;b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
 window.resetRows=()=>ui.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows});resetRows();
@@ -100,6 +100,18 @@ window.ready=true;
     await page.evaluate(() => { rows.splice(2); resetRows(); });
     await page.locator('[data-target=web] .bu-tab-pick').click();
     check('web tab shows the URL on desktop', await page.locator('.bu-crumbs').innerText() === 'https://github.com/tekalu1/pleiad');
+    const menuLabels = () => page.locator('#menu button').allInnerTexts();
+    await page.locator('[data-target=web] .bu-tab-pick').click({button:'right'});
+    check('web tab right click offers reload and close, and no outside action off the host screen', JSON.stringify(await menuLabels()) === JSON.stringify(['再読み込み', 'タブを閉じる']));
+    await page.locator('#menu button').filter({hasText:'再読み込み'}).click();
+    check('tab right click reload targets that tab', await page.evaluate(() => sent.at(-1).args.action === 'reload' && sent.at(-1).args.targetId === 'web'));
+    await page.evaluate(() => { window.hostScreen = true; window.opened = []; window.open = url => { opened.push(url); return null; }; });
+    await page.locator('.bu-more').click();
+    check('web tab menu offers opening the URL in the default browser on the host screen', (await menuLabels()).includes('既定のブラウザーで開く'));
+    await page.locator('#menu').evaluate(node => { node.hidden = true; });
+    await page.locator('[data-target=file] .bu-tab-pick').click({button:'right'});
+    check('file tab right click keeps reload and close, with no web action', JSON.stringify((await menuLabels()).slice(-2)) === JSON.stringify(['再読み込み', 'タブを閉じる']) && !(await menuLabels()).includes('既定のブラウザーで開く'));
+    await page.locator('#menu').evaluate(node => { node.hidden = true; }); await page.evaluate(() => { window.hostScreen = false; });
     await page.locator('[data-target=file] .bu-tab-pick').click();
     await page.setViewportSize({width:360,height:720}); await page.locator('#panel').evaluate(node => node.style.width='');
     await page.waitForFunction(() => document.querySelector('.bu-toolbar').classList.contains('bu-mobile'));

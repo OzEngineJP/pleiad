@@ -24,6 +24,10 @@ import { notify } from './file-actions.mjs';
 import { createFrameSink, createScreencastInput } from './screencast-frame.mjs';
 import { containRect, toPageCoords, toPageDelta } from './page-coords.mjs';
 import { createWindowSwitch, createTabStrip, createCloseDialog, pinIcon } from './chrome-window-switch.mjs';
+import { browserIcon } from './tab-strip.mjs';
+
+/** 右の欄の ⋮ の行のアイコン（web/browser-unify.mjs のメニューと同じ線の絵） */
+const menuIcon = kind => { const svg = browserIcon(kind); svg.classList.add('i'); return svg; };
 
 const KEY = 'chrome-window';
 const HINT_MS = 2600;
@@ -629,11 +633,11 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
     browserMenuItems(anchor) {
       const items = [...(sessionId ? menuItems(sessionId) ?? [] : [])];
       const profile = parts?.profileSlot.querySelector('button');
-      if (profile) items.push({ label:t('browser.chromeWindow.profileActions'), onClick:() => profile.click() });
+      if (profile) items.push({ label:t('browser.chromeWindow.profileActions'), icon:menuIcon('profile'), onClick:() => profile.click() });
       if (sessionId && owner && sessionId !== owner && openConversation) {
-        const id = sessionId; items.push({ label:t('browser.chromeWindow.openConversation'), onClick:() => openConversation(id) });
+        const id = sessionId; items.push({ label:t('browser.chromeWindow.openConversation'), icon:menuIcon('chat'), onClick:() => openConversation(id) });
       }
-      items.push({ label:t('browser.chromeWindow.closeShown'), disabled:!windows.list(sessionId).length || closing, onClick:() => askClose(anchor) });
+      items.push({ label:t('browser.chromeWindow.closeShown'), icon:menuIcon('window'), disabled:!windows.list(sessionId).length || closing, onClick:() => askClose(anchor) });
       return items;
     },
     get tabId() { return shownTab(); },
