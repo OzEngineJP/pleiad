@@ -150,6 +150,7 @@ function emitInit() {
 const step = (body) => send({ event: "step_update", step_update: { conversation_id: conversationId, ...body } });
 
 let stepIndex = 0;
+let usageTurns = 0;   // このプロセスで返したターンの数（usage は累計で返す）
 
 // ---- カスタムエージェント（`--agent`）--------------------------------------
 //
@@ -501,12 +502,14 @@ async function runTurn(text) {
   // 会話には出さない step（実機では user_input が DONE だけで来る）
   step({ step_index: ++stepIndex, state: "DONE", step_type: "user_input" });
 
+  // 本物と同じく、usage はこのプロセスで続けた会話の累計（1 ターン 11・7・3・2 ずつ増える）
+  const n = ++usageTurns;
   send({
     event: "result",
     result: {
       conversation_id: conversationId, status: "SUCCESS", response: body,
       duration_seconds: 0.2, num_turns: 1,
-      usage: { input_tokens: 11, output_tokens: 7, thinking_tokens: 3, cache_read_tokens: 2, total_tokens: 23 },
+      usage: { input_tokens: 11 * n, output_tokens: 7 * n, thinking_tokens: 3 * n, cache_read_tokens: 2 * n, total_tokens: 21 * n },
     },
   });
 }

@@ -226,6 +226,11 @@ export default async function (t) {
     t.ok("同じ会話で続きが流れる", textOf(second) === "了解: つづき", JSON.stringify(textOf(second)));
     const after = JSON.parse(await fs.readFile(path.join(dataDir, "antigravity", `${sid}.json`), "utf8"));
     t.ok("控えが積み増される", after.messages.length === 4, `${after.messages.length} 件`);
+    // agy の usage は会話の累計（fake-agy は 2 ターン目に 22・14・6・4）。前のターンの累計（控えのターンの記録）との差を使用量にする
+    t.ok("再開ターンの usage は前のターンの累計との差",
+      second.events.filter((e) => e.type === "usage").map((e) => [e.inputTokens, e.outputTokens, e.cachedTokens]).join("|") === "13,10,2"
+        && after.turnResults?.at(-1)?.usage?.input_tokens === 22,
+      JSON.stringify({ usage: second.events.filter((e) => e.type === "usage"), trace: after.turnResults?.at(-1) ?? null }));
 
     // ---- 入力欄の `!`。Pleiad が実行し、結果を次の発言の前に agy へ渡す（ADR 0054・0281）。
     const shellFrom = c.mark();
