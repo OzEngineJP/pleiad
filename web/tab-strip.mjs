@@ -32,7 +32,7 @@ export function tabIcon(tab) {
   return icon;
 }
 
-/** decorate(tab, pick): タブの題の横に足すもの（旗が on の活動の点。web/browser-unify.mjs）。label(tab): タブの題（既定はページの題） */
+/** decorate(tab, pick): タブの題の横に足すもの（活動の点。web/browser-unify.mjs）。label(tab): タブの題（既定はページの題） */
 export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {}, decorate = () => {},
   label = tab => tab.title || tab.page?.path || tab.url || t('tabs:strip.new') } = {}) {
   const root = document.createElement('div'); root.className = 'bu-tabs'; root.setAttribute('role', 'tablist'); root.setAttribute('aria-label', t('tabs:strip.label'));

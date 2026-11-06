@@ -7429,7 +7429,7 @@ function applyTheme(mode) {
   for (const b of $("themeSeg").querySelectorAll("button")) b.classList.toggle("on", b.dataset.theme === m);
   paintTitleBar();
   paintShellTheme();
-  // 旗が on: 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295）
+  // 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295。browserUnify を返す本体だけ）
   if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
 }
 
@@ -8081,7 +8081,7 @@ function openLightbox(src, caption, path, origin) {
   d.querySelector(".lb-path-text").title = path ?? "";
   d.querySelector(".lb-panel").hidden = !path;
   d.querySelector(".lb-reveal").hidden = !path || state.osActions !== true;
-  // 既定のアプリで開く: 旗が on のホストの画面で、実体（添付なら uploads の中のファイル）が許した種類のときだけ。サーバーに聞いてから出す
+  // 既定のアプリで開く: ホストの画面で、実体（添付なら uploads の中のファイル）が許した種類のときだけ。サーバーに聞いてから出す
   const openDefault = d.querySelector(".lb-default");
   openDefault.hidden = true;
   const asked = lightboxFile;
@@ -8851,7 +8851,7 @@ function jumpToConversation({ uuid, toolId }) {
   return true;
 }
 /**
- * 旗が on: ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
+ * ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
  * タブを開けるのは Chrome につながっているか、その会話にもうタブがあるとき。それ以外は右パネルの iframe で開く（web/page-frame.mjs）
  */
 let filePagesConnected = false;

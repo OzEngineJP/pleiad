@@ -1,8 +1,8 @@
 // 中継の移動の検査とコマンドの前後のふるい（core/chrome/page-policy.mjs、ADR 0295 の 4）。
 //   - 移動の検査の表: 本体の port はどのホスト名でも断る・ファイルのページはその会話の localhost だけ・隔離は localhost だけ・ほかの localhost の port は通す
-//   - 止めた要求（JS の移動・サブリソース）: 同じ表で失敗させる。旗が off（port は main だけ）でも本体の port は止める
+//   - 止めた要求（JS の移動・サブリソース）: 同じ表で失敗させる。ページの port が無くても（port は main だけ）本体の port は止める
 //   - Cookie: pleiad_* を結果とイベントから除き、Pleiad の port・名前・パスの読み書きを断る
-//   - 偽の Chrome の上の中継: 本体の port への Page.navigate・人やページの JS の移動・ほかの会話のページ・旗が off のとき
+//   - 偽の Chrome の上の中継: 本体の port への Page.navigate・人やページの JS の移動・ほかの会話のページ・ページの port が無いとき
 //   - 中継の安全の手当て（A9）: エージェントへ送るイベントの Set-Cookie・タブのセッションの Cookie・後から決まった port・確認は主フレームの Document だけ・
 //     window.open の最初の要求（ブラウザーの単位の Fetch）・cross-site の iframe の要求（子のセッションの Fetch）
 import { agent, rig } from '../lib/chrome-relay-rig.mjs';
@@ -68,10 +68,10 @@ export default async function (t) {
     t.ok('pleiadVerdict は Pleiad の port でなければ null（今の扱い）', pleiadVerdict('http://localhost:5173/', { ports: ON, sessionId: ME }) === null && pleiadVerdict('data:text/html,x', { ports: ON }) === null
       && pleiadVerdict('nope', { ports: ON }) === null && pleiadVerdict(`http://localhost:${MAIN}/`, { ports: null }) === null);
 
-    // 旗が off: port は main だけ。本体の port だけを断り、ほかは今のまま
+    // ページの port が無い: port は main だけ。本体の port だけを断り、ほかは今のまま
     const off = createPagePolicy({ ports: () => OFF });
-    t.ok('旗が off でも本体の port はどの名前でも断る', ['127.0.0.1', 'localhost', '[::1]', '0.0.0.0'].every(host => !off.allowUrl(`http://${host}:${MAIN}/`, { sessionId: ME })));
-    t.ok('旗が off なら、ほかの port は今のまま通す（ファイルのページの port の番号も、ただの localhost の port）', off.allowUrl(`http://127.0.0.1:${PAGES}/`, { sessionId: ME }) && off.allowUrl('http://localhost:5173/', { sessionId: ME }));
+    t.ok('ページの port が無くても本体の port はどの名前でも断る', ['127.0.0.1', 'localhost', '[::1]', '0.0.0.0'].every(host => !off.allowUrl(`http://${host}:${MAIN}/`, { sessionId: ME })));
+    t.ok('ページの port が無いなら、ほかの port は今のまま通す（ファイルのページの port の番号も、ただの localhost の port）', off.allowUrl(`http://127.0.0.1:${PAGES}/`, { sessionId: ME }) && off.allowUrl('http://localhost:5173/', { sessionId: ME }));
     // サーバーが立つ前（port が null）・口が投げる
     const none = createPagePolicy();
     t.ok('port が分かる前は今のまま（safeUrl だけ）', none.allowUrl(`http://127.0.0.1:${MAIN}/`) && !none.allowUrl('file:///x') && none.intercepts === false);
@@ -84,14 +84,14 @@ export default async function (t) {
     let ports = OFF;
     const policy = createPagePolicy({ ports: () => ports });
     const req = (url, sessionId = ME, resourceType = 'Document') => policy.request({ sessionId, targetId: 'T', url, resourceType, frameId: 'T' });
-    t.ok('旗が off でも intercepts（どのタブにも中継のセッションを付ける）', policy.intercepts === true);
-    t.ok('旗が off の patterns は、今の主フレームの Document と本体の port の全部の種類', JSON.stringify(policy.fetchPatterns([{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }]))
+    t.ok('ページの port が無くても intercepts（どのタブにも中継のセッションを付ける）', policy.intercepts === true);
+    t.ok('ページの port が無いときの patterns は、今の主フレームの Document と本体の port の全部の種類', JSON.stringify(policy.fetchPatterns([{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }]))
       === JSON.stringify([{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }, { urlPattern: `*:${MAIN}/*`, requestStage: 'Request' }]));
-    t.ok('本体の port への JS の移動・fetch・画像は失敗させる（旗が off でも）', ['Document', 'XHR', 'Fetch', 'Image', 'Script'].every(type => req(`http://localhost:${MAIN}/api/x`, ME, type) === 'block')
+    t.ok('本体の port への JS の移動・fetch・画像は失敗させる（ページの port が無くても）', ['Document', 'XHR', 'Fetch', 'Image', 'Script'].every(type => req(`http://localhost:${MAIN}/api/x`, ME, type) === 'block')
       && req(`http://[::1]:${MAIN}/`) === 'block' && req(`http://0.0.0.0:${MAIN}/`) === 'block');
     t.ok('ほかの要求は止めない（null で今の扱いへ）', req('https://example.com/') === null && req('http://localhost:5173/') === null && req('data:text/plain,x') === null && req('') === null);
     ports = ON;
-    t.ok('旗が on の patterns は 3 つの port', policy.fetchPatterns([]).map(p => p.urlPattern).join(' ') === `*:${MAIN}/* *:${PAGES}/* *:${ISOLATED}/*` && policy.fetchPatterns([]).every(p => p.requestStage === 'Request' && !p.resourceType));
+    t.ok('ページの port があるときの patterns は 3 つの port', policy.fetchPatterns([]).map(p => p.urlPattern).join(' ') === `*:${MAIN}/* *:${PAGES}/* *:${ISOLATED}/*` && policy.fetchPatterns([]).every(p => p.requestStage === 'Request' && !p.resourceType));
     t.ok('ほかの会話のファイルのページ・違う名前の 2 つの port への要求は失敗させる', req(`http://localhost:${PAGES}/_pleiad/s/conv-b/api/raw?path=a.png`, ME, 'Image') === 'block'
       && req(`http://127.0.0.1:${PAGES}/_pleiad/s/${ME}/file`) === 'block' && req(`http://127.0.0.1:${ISOLATED}/viz/x/`) === 'block');
     t.ok('この会話のファイルのページ・隔離への要求は止めない', req(`http://localhost:${PAGES}/_pleiad/s/${ME}/api/raw?path=a.png`, ME, 'Image') === null && req(`http://localhost:${ISOLATED}/viz/x/a.js`, ME, 'Script') === null);
@@ -110,7 +110,7 @@ export default async function (t) {
     t.ok('Network.getCookies の結果から pleiad_* を除く（ほかは残す・元は変えない）', JSON.stringify(after.cookies.map(c => c.name)) === '["app"]' && result.cookies.length === 3);
     const plain = { cookies: [{ name: 'app', value: 'v' }] };
     t.ok('除く物が無ければ同じ結果・cookies の無い結果はそのまま', policy.after({ method: 'Network.getCookies', result: plain }) === plain && policy.after({ method: 'Runtime.evaluate', result: { result: { value: 'pleiad_pages=1' } } }).result.value === 'pleiad_pages=1');
-    t.ok('旗が off でも pleiad_* は除く', JSON.stringify(createPagePolicy({ ports: () => OFF }).after({ method: 'Network.getCookies', result }).cookies.map(c => c.name)) === '["app"]');
+    t.ok('ページの port が無くても pleiad_* は除く', JSON.stringify(createPagePolicy({ ports: () => OFF }).after({ method: 'Network.getCookies', result }).cookies.map(c => c.name)) === '["app"]');
 
     const refused = [
       ['Network.getCookies', { urls: [`http://localhost:${PAGES}/_pleiad/s/${ME}/file`] }], ['Network.getCookies', { urls: ['http://localhost:5173/', `http://localhost:${ISOLATED}/`] }],
@@ -197,7 +197,7 @@ export default async function (t) {
     let cookie = null;
     const logs = [];
     const policy = createPagePolicy({ ports: () => ON, cookie: () => cookie, log: line => logs.push(line) });
-    t.ok('旗が off（cookie が null）なら、つながっても・開く前も何も入れない', policy.connected({ send }) === undefined && policy.beforeOpen({ url: `http://localhost:${PAGES}/_pleiad/s/${ME}/file`, send }) === undefined && (await sleep(10), calls.length === 0));
+    t.ok('ページの port が無い（cookie が null）なら、つながっても・開く前も何も入れない', policy.connected({ send }) === undefined && policy.beforeOpen({ url: `http://localhost:${PAGES}/_pleiad/s/${ME}/file`, send }) === undefined && (await sleep(10), calls.length === 0));
     cookie = { name: 'pleiad_pages', value: 'SECRET', path: '/_pleiad/', httpOnly: true, sameSite: 'Strict' };
     policy.connected({ send });
     t.ok('つながると Storage.setCookies で入れる（localhost・Path・HttpOnly・Strict・ファイルのページの port）', await until(() => calls.length === 1)
@@ -223,20 +223,20 @@ export default async function (t) {
       await a.cmd('Target.setDiscoverTargets', { discover: true });
       const tabId = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
       const sid = (await a.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result?.sessionId;
-      t.ok('旗が off でも、タブに中継のセッションと本体の port の Fetch が付く', await until(() => r.chrome.calls.some(c => c.method === 'Fetch.enable' && c.sessionId && c.params.patterns?.some(p => p.urlPattern === `*:${MAIN}/*`))));
+      t.ok('ページの port が無くても、タブに中継のセッションと本体の port の Fetch が付く', await until(() => r.chrome.calls.some(c => c.method === 'Fetch.enable' && c.sessionId && c.params.patterns?.some(p => p.urlPattern === `*:${MAIN}/*`))));
       const navs = [];
       for (const host of ['127.0.0.1', 'localhost', '[::1]', '0.0.0.0']) navs.push(await a.cmd('Page.navigate', { url: `http://${host}:${MAIN}/` }, sid));
-      t.ok('本体の port への Page.navigate は、4 つのホスト名のどれでも断る（旗が off でも）', navs.every(n => n.error?.message === 'navigation denied'), JSON.stringify(navs.map(n => n.error?.message ?? n.result)));
+      t.ok('本体の port への Page.navigate は、4 つのホスト名のどれでも断る（ページの port が無くても）', navs.every(n => n.error?.message === 'navigation denied'), JSON.stringify(navs.map(n => n.error?.message ?? n.result)));
       t.ok('本体の port の URL で createTarget は断る', (await a.cmd('Target.createTarget', { url: `http://localhost:${MAIN}/` })).error?.message === 'navigation denied');
       // ページの JS の移動（location = …）は検査を通らず、Fetch で止まる
       const jsNav = await r.fake.navigateUser(tabId, `http://localhost:${MAIN}/`);
-      t.ok('ページの JS の本体の port への移動は、中継の Fetch で失敗する（旗が off でも）', jsNav?.errorText === 'net::ERR_BLOCKED_BY_CLIENT', JSON.stringify(jsNav));
+      t.ok('ページの JS の本体の port への移動は、中継の Fetch で失敗する（ページの port が無くても）', jsNav?.errorText === 'net::ERR_BLOCKED_BY_CLIENT', JSON.stringify(jsNav));
       const devNav = await a.cmd('Page.navigate', { url: 'http://localhost:5173/' }, sid);
       t.ok('dev サーバーなど、ほかの localhost の port は今のまま通す', !devNav.error && !devNav.result?.errorText, JSON.stringify(devNav));
       const cookies = await a.cmd('Network.getCookies', {}, sid);
       t.ok('Network.getCookies は今のまま（今のページの Cookie）', cookies.result?.cookies?.[0]?.name === 'page');
 
-      // 旗が on
+      // ページの port がある
       ports = ON;
       r.relay.setPageCookie({ name: 'pleiad_pages', value: 'SECRET', path: '/_pleiad/', httpOnly: true, sameSite: 'Strict' });
       const own = await a.cmd('Page.navigate', { url: `http://localhost:${PAGES}/_pleiad/s/${ME}/file?path=a.md` }, sid);

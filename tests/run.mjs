@@ -865,9 +865,9 @@ const SUITES = [
   './unit/page-coords.mjs',
   // 中継の 4 つの口（既定は今のまま・差し替えた口が決めた場所で呼ばれる）
   './unit/chrome-relay-hooks.mjs',
-  // ページの入口の認証（ページの Cookie・本体の Cookie）と旗の読み方
+  // ページの入口の認証（ページの Cookie・本体の Cookie・?token= を受けない）
   './unit/page-auth.mjs',
-  // 2 つのリスナー（Host が違えば 421・GET と HEAD だけ・::1・port の引き継ぎ）と、旗が off なら立たず on なら /_pleiad/ が 404
+  // 2 つのリスナー（Host が違えば 421・GET と HEAD だけ・::1・port の引き継ぎ）と、実際のサーバーで 2 つの port が立つ
   './unit/pages-listeners.mjs',
 
   // --- A1 映像 ---
@@ -885,7 +885,7 @@ const SUITES = [
   './unit/preview-policy.mjs',
   // 可視化の束（同じフォルダーの下・除くもの・上限・同じ中身は 1 つ・片付け・前の版の記録・集め役）
   './unit/viz-bundle.mjs',
-  // 隔離の origin の /viz/ と /f/（ヘッダーの CSP・フォルダーの外・鍵の期限・一度だけの印）と、旗が on の実際のサーバー
+  // 隔離の origin の /viz/ と /f/（ヘッダーの CSP・フォルダーの外・鍵の期限・一度だけの印）と、実際のサーバー
   './unit/isolated-routes.mjs',
 
   // --- A4 Pleiad のページ ---

@@ -103,7 +103,7 @@ export function localPageUrl(tab, sessionId, origin = globalThis.location?.origi
 const pageKey = href => { try { const url = new URL(href); return `${url.pathname}\n${url.searchParams.get('path') ?? ''}`; } catch { return ''; } };
 
 /**
- * 旗が on の右の欄（タブの列・アドレスバー・札・タブの活動の点・スマホの帯）。web/client.mjs が旗が on のときだけ読む。
+ * 右の欄（タブの列・アドレスバー・札・タブの活動の点・スマホの帯）。web/client.mjs は本体が browserUnify を返したときに読む（ADR 0294 の段 C1 から常に返す）。
  * deps:
  *   - cmd・state・chrome（web/chrome-panel.mjs）・showMenu・notify
  *   - preview: web/file-preview.mjs（タブの ⋮ と右クリックのファイルの操作 tabMenu）。osActions(): サーバーのある PC の画面か（外で開く操作を出す）

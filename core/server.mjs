@@ -2449,8 +2449,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
   if (!isReviewMode() && await botHost?.handleHttp(req, res)) return;
-  // Pleiad のページの本体の入口（画面の iframe。ADR 0295 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない。旗が off なら今のまま（下の 401・404）
-  if (pagesRoutes && url.pathname.startsWith(PAGES_PATH)) {
+  // Pleiad のページの本体の入口（画面の iframe。ADR 0295 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない
+  if (url.pathname.startsWith(PAGES_PATH)) {
     for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.setHeader('allow', 'GET, HEAD'); return sendStatus(req, res, 405, 'method not allowed'); }
     if (!pageRequestOk({ via: 'main', cookie: req.headers.cookie, token: TOKEN, site: req.headers['sec-fetch-site'] })) return sendStatus(req, res, 401, 'unauthorized');

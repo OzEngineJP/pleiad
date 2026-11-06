@@ -3,7 +3,7 @@
 //     入口は ?embed= で会話の枠と同じ包み（meta の CSP は書かない）。?once=<印> の出どころだけ足す
 //   - /f/<鍵>/<相対パス>: HTML のファイルのフォルダーの下だけ。外・ドットで始まる名前・データ置き場・期限切れの鍵は 404
 //   - `..`・区切りの混じり・知らない束は 404。HEAD は中身なし。Host が違えば 421（リスナー）
-//   - 実際のサーバー（旗が on）: 可視化の行が束を持ち、隔離の port がその束を配る
+//   - 実際のサーバー: 可視化の行が束を持ち、隔離の port がその束を配る
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
@@ -160,7 +160,7 @@ async function routeChecks(t, scratch) {
   }
 }
 
-/** 実際のサーバー（旗が on）: 可視化の行が束を持ち、隔離の port が束を配る。旗が off なら束を持たない */
+/** 実際のサーバー: 可視化の行が束を持ち、隔離の port が束を配る */
 async function serverChecks(t, scratch) {
   const work = path.join(scratch, 'srv-work');
   await fs.mkdir(path.join(work, 'img'), { recursive: true });
