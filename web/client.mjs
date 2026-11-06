@@ -10476,8 +10476,10 @@ function connect() {
         browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
         remoteSettings.setHostScreen(state.osActions);
-        // 可視化を隔離の origin（ADR 0292 の 3）で描く。LAN の端末はその画面のホスト名、Android アプリは転送した localhost の port で開く
-        configureIsolatedOrigin(c?.browserUnify?.isolated ? { port: c.browserUnify.isolated,
+        // 可視化を隔離の origin（ADR 0292 の 3）の localhost で描く。隔離のリスナーはループバックだけで待つので、LAN のブラウザーの画面では使わず srcdoc で描く
+        // （端末のアプリは端末の中のプロキシの port が来る）
+        const loopbackScreen = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+        configureIsolatedOrigin(c?.browserUnify?.isolated && loopbackScreen ? { port: c.browserUnify.isolated,
           mintOnce: (origins) => cmd("vizOnce", { origins }).then((r) => r?.token ?? null) } : null);
         filePreview.osChanged();
         syncAttachButton();

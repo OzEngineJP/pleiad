@@ -84,7 +84,7 @@ export default async function(t) {
   assert.equal(linkMenuItems({ act:{} }).length, 3);
   configureIsolatedOrigin({ port:8125 });
   const bundle = { hash:'a'.repeat(64), entry:'図/index.html', htmlOnly:true, reason:'too-large' };
-  assert.match(isolatedVisualizationUrl(bundle, { host:'192.168.1.7' }), /^http:\/\/192\.168\.1\.7:8125\/viz\//);
+  assert.match(isolatedVisualizationUrl(bundle), /^http:\/\/localhost:8125\/viz\//, '画面が 127.0.0.1 でも隔離は localhost（Host の検査に通る名前）');
   assert.equal(isolatedVisualizationUrl({ ...bundle, entry:'../x' }), null);
   const viz = [];
   configureVisualizationTabs({ sessionId:() => 's1', connected:() => true, openTab:args => viz.push(args) });

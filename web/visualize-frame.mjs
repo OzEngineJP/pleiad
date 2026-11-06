@@ -57,8 +57,9 @@ const BUNDLE_HASH = /^[0-9a-f]{64}$/;
 /**
  * 束の URL（隔離の origin の /viz/<束のハッシュ>/<入口>）。隔離の origin が無い・束の形が違うときは null。
  * embed: conversation（会話の枠）| panel（右の欄）| tab（別のタブ。高さの知らせ・橋を入れない）
+ * ホストは画面の名前によらず localhost（リスナーも端末のプロキシも Host が localhost:<port> のときだけ答える。127.0.0.1 は 421）
  */
-export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = globalThis.location?.hostname || 'localhost' } = {}) {
+export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = 'localhost' } = {}) {
   if (!isolated || !BUNDLE_HASH.test(bundle?.hash ?? '') || typeof bundle.entry !== 'string' || !bundle.entry) return null;
   if (!['conversation', 'panel', 'tab'].includes(embed) || bundle.entry.split('/').some(part => !part || part === '.' || part === '..' || /[\\\x00-\x1f]/.test(part))) return null;
   const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
