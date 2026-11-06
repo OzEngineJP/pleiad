@@ -62,6 +62,16 @@ const BACKGROUND_AFTER_MS = Number(process.env.AGENT_HOST_AGY_BACKGROUND_MS ?? 3
 const STOP_WAIT_MS = Number(process.env.AGENT_HOST_AGY_STOP_WAIT_MS ?? 15_000);
 
 /**
+ * ターンを終えて次の発言を待つ agy を止めるまでの ms（`0` 以下で止めない）。次のターンは `--conversation` で起こし直す。
+ * 動いている agy は起動の時にしかキーチェーンの資格情報を読まず、1 時間ごとにメモリのトークンを更新して書き戻す。
+ * ログインを切り替えた後も、前から生きている agy が古い方の資格情報で上書きし、切り替えが戻る（docs/multi-backend.md §2.8）。
+ * 既定を 30 分にしたのは、極端に長く残る agy（数時間〜数日）だけを拾えればよいため。
+ * 10 分（Pleiad のコンテキストの接続の WARM_IDLE_MS）だと、少し間を空けて続ける会話のたびに起こし直しになり、起動を待たせる。
+ * 30 分なら、書き戻しの間隔（1 時間）より短く、普通の会話の間では起こし直さない
+ */
+const IDLE_MS = Number(process.env.AGENT_HOST_AGY_IDLE_MS ?? 30 * 60_000);
+
+/**
  * 承認モード。**`yolo` の 1 つだけ**にしてある。
  *
  * `agy --help` には `--mode plan` と `--mode accept-edits` もあるが、**ヘッドレスでは使い物にならない**。
@@ -158,8 +168,28 @@ async function reportHookRuns(session, hooksRuntime, emit) {
 }
 
 function release(conversationId, session) {
+  disarmIdle(session);
   if (conversationId && live.get(conversationId) === session) live.delete(conversationId);
   if (session?.pid) pids.forget(session.pid);
+}
+
+/** 次のターンを待ち始めた agy に、IDLE_MS で止めるタイマーを付ける。止めた後の次のターンは起こし直す（会話は --conversation で続く） */
+function armIdle(conversationId, session) {
+  disarmIdle(session);
+  if (!(IDLE_MS > 0) || !conversationId || !session?.proc || live.get(conversationId) !== session) return;
+  session.idleTimer = setTimeout(() => {
+    session.idleTimer = null;
+    if (live.get(conversationId) !== session) return;
+    try { session.kill(); } catch {}
+    release(conversationId, session);
+  }, IDLE_MS);
+  session.idleTimer.unref?.();
+}
+
+function disarmIdle(session) {
+  if (!session?.idleTimer) return;
+  clearTimeout(session.idleTimer);
+  session.idleTimer = null;
 }
 
 /** 直近に引けたモデル一覧。`agy models` は認証が要るので、引けたときだけ覚える。 */
@@ -429,6 +459,7 @@ export const backend = {
 
     // 生きているプロセスを使い回す。落ちていれば立て直す（会話は --conversation で拾える）
     let session = !adopt && conversationId ? live.get(conversationId) : null;
+    disarmIdle(session);
     if (session && !session.proc) { live.delete(conversationId); session = null; }
     // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
     // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
@@ -787,6 +818,8 @@ export const backend = {
       await seal({ ok: false });
       // 保持役の子はターンが終わっても会話のあいだ生きる（idle）。札と印を外し、付け直す対象から外す
       session.held?.endTurn();
+      // 次の発言を待つ agy は IDLE_MS で止める（保持役の子も同じ）
+      armIdle(conversationId, session);
       if (control) { control.handle = null; control.steer = null; control.holder = null; control.backendCard = null; }
     }
 

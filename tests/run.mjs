@@ -809,6 +809,7 @@ const SUITES = [
   './unit/antigravity-onboarding.mjs',
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
   './unit/antigravity-pids.mjs',
+  './unit/antigravity-idle.mjs',
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
   // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
   './unit/relay.mjs',

@@ -56,6 +56,7 @@
 - **idle の子**（ターンが終わった agy）: ターンの終わりに**札と印を 1 回の書き込みで外す**（`held.endTurn()`。付け直す対象から外す）。次のターンは同じ子を使う。外す人が居なくなる経路ごとに片付ける:
   - **引き継ぎ**: 新しいサーバーは idle の子を知らない（札が無い）ので、旧サーバーが **`backend.releaseIdle()`** で止める。**`core/server.mjs` の `handoverRun.stash` が、預かり物を置く前（`detach()` の前。後は旧サーバーの書き込みが転送されない）に、全バックエンドの `releaseIdle` を呼ぶ**（1 か所の追加）。次のターンは agy を起こし直す（会話は `--conversation` で続く）
   - **普通の終了**（`process.once('exit')`）: 手を離していない子を木ごと止める。**止める依頼は `HolderClient.sendBatch` で 1 回の書き込みにまとめる**（続けて `write` すると、`process.exit` までに最初の 1 つしか出ない。実測: 3 つの idle の子のうち 1 つだけが止まった。Windows の名前付きパイプ）。手を離した子には触れない（agent の置き場も残す）
+  - **待ったまま時間が過ぎた**: `AGENT_HOST_AGY_IDLE_MS`（既定 30 分）を過ぎた idle の子は、サーバーが止める（`armIdle`。保持役に載せない子と同じ。次のターンは起こし直す。理由と既定の決め方は [multi-backend.md](../multi-backend.md) §2.8「待っている agy を時間で止める」）
   - **サーバーが落ちた後**: 次の起動の**最初の保持役の使用**（`sweepIdle`。`antigravity.mjs` の `fresh` の始め）が、札か印の欠けた agy の子を止める（付け直せる子＝札と印の両方がある子には触れない）。保持役を使う前（起動の途中・agy を使わない間）は動かさない（`holderLink` が保持役の親の座を取るので、データ置き場のロックを取る前に呼べない）。**agy を使わないまま終わると、落ちたサーバーが残した idle の子は残る**（残り）
 - **孤児の掃除（`antigravity-pids.mjs`）・終了時の片付け**: 保持役の子は pid を持たず（`pids.remember(undefined)` は何もしない）、控えない。`process.once('exit')` は手を離した子を止めない
 - **agent の置き場**: 保持役に載せる agy の置き場は **`held-<乱数>`**（`prepareAgent({ held: true })`）。サーバーの pid の名前（`<pid>-<乱数>`）では、旧サーバーが終わった後に `sweep()` が走る agy の置き場を消してしまうので、`sweep()` は `held-*` に触れない。消すのは agy が終わったとき（`cleanup`・付け直した側は札の `home` を `adoptHome` で受けて消す関数にする）と、前のサーバーが残した分（`sweepHeldHomes`。このプロセスのもの・生きている子の札が指すものは残す）
