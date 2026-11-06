@@ -19,7 +19,7 @@ export default async function(t) {
   }
   t.ok('unknown commands fail explicitly', await isolated.handle({command:'unknown'}).then(() => false, error => error.code === 'UNKNOWN_COMMAND'));
   t.ok('unavailable isolated listener returns no grant', (await createBrowserUnifyWs().handle({command:'vizOnce',args:{origins:[]}})).token === null);
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-b1-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-b1-')));
   let ws;
   try {
     const work = path.join(root, 'work'), dataDir = path.join(root, 'data'), profile = path.join(root, 'profile');
