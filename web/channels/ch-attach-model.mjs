@@ -1,5 +1,6 @@
 // チャンネル・スレッドの入力欄の添付と下書きの、DOM を触らない決まり（web/channels/ch-attachments.mjs・ch-composer.mjs が使う。
 // tests/unit/channels-composer-ui.mjs が直接確かめる）。添付の印・並べ方は Chats の入力欄（web/client.mjs の submit）と同じ。
+import { normalizeEditingState } from '../md-editing-state.mjs';
 import { attachmentLine, normalizeAttachmentPath } from '../timeline.mjs';
 
 /** 字の欄の札・添付の実体を引くキー（web/md-editor.mjs の `p:パス` と同じ） */
@@ -45,10 +46,12 @@ export function parseDrafts(raw) {
   for (const entry of list) {
     if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !entry[1] || typeof entry[1] !== 'object') continue;
     const [key, value] = entry;
+    const editing = normalizeEditingState(value.text, value.editing);
     out.set(key, {
       text: typeof value.text === 'string' ? value.text : '',
       attached: Array.isArray(value.attached) ? value.attached.filter((a) => a && typeof a.path === 'string') : [],
       at: Number.isFinite(value.at) ? value.at : 0,
+      ...(editing ? { editing } : {}),
       // 入力欄の「編集中」の状態（web/composer/edit-mode.mjs の snapshot。壊れていれば捨てる）
       ...(value.edit && typeof value.edit === 'object' && typeof value.edit.id === 'string' && value.edit.id ? { edit: value.edit } : {}),
     });

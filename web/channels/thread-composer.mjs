@@ -98,7 +98,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     if (!draftKey) return;
     // 「編集中」も下書きと一緒に残す。スレッドを開き直した直後（投稿を読むまで）は、読み込んだままの状態を持ち越す
     const snap = edit.snapshot() ?? pendingEdit;
-    const d = { text: input.value ?? '', attached: c.attach.items, at: Date.now(), ...(snap ? { edit: snap } : {}) };
+    const d = { text: input.value ?? '', attached: c.attach.items, editing: input.editor.snapshotEditing(), at: Date.now(), ...(snap ? { edit: snap } : {}) };
     if (!d.text.trim() && !d.attached.length && !snap) draftStore().delete(draftKey); else draftStore().set(draftKey, d);
     persistDrafts();
     saveServerDraft();
@@ -110,14 +110,14 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const key = draftKey;
     // 編集中の字は、まだ送っていない書きかけではない（ほかの端末の下書きにしない。戻したあとの保存が上書きする）
     if (!key || edit.active || pendingEdit) return;
-    const text = input.value;
-    serverTimer = setTimeout(() => { host.invoke('drafts.save', { key, text, at: Date.now() }).catch(() => {}); }, 1500);
+    const text = input.value, editing = input.editor.snapshotEditing();
+    serverTimer = setTimeout(() => { host.invoke('drafts.save', { key, text, editing, at: Date.now() }).catch(() => {}); }, 1500);
   };
   async function loadServerDraft(key) {
     if (!key || input.value.trim()) return;
     const got = await host.invoke('drafts.load', { key }).catch(() => null);
     if (draftKey !== key || input.value.trim() || !got?.text) return;
-    input.value = got.text;
+    input.editor.restoreDraft(got.text, got.editing);
     c.fit();
   }
 
@@ -154,8 +154,8 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   const edit = c.useEdit({
     kind: 'reply', texts: { running: t('channels:thread.resend.running') }, announce: (text) => announce(text),
     host: {
-      read: () => ({ text: input.value, attached: att.ordered() }),
-      write: ({ text, attached }) => { c.shell?.reset?.(); att.restore(attached); input.value = text; att.placeTail(); c.fit(); paintHint(); },
+      read: () => ({ text: input.value, attached: att.ordered(), editing: input.editor.snapshotEditing() }),
+      write: ({ text, attached, editing }) => { c.shell?.reset?.(); att.restore(attached); input.editor.restoreDraft(text, editing); att.placeTail(); c.fit(); paintHint(); },
       send: (ctx) => editHost.send(ctx), branch: (ctx) => editHost.branch(ctx),
       decorate: (id, on, tail) => editHost.decorate?.(id, on, tail), locate: (id) => editHost.locate?.(id),
       change: () => saveDraftSoon(),
@@ -188,6 +188,12 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     catch (err) { c.shell.enter(); input.value = command; say(t('chat.shell.runFailed', { error: err?.message ?? String(err) }), true); }
   }
   // このスレッドへの返信の予定の行（送信待ちの行と同じ部品。今すぐ送る・編集・取り消す）
+  const restoreOutboxText = text => {
+    if (input.value.trim()) input.setRangeText(text + '\n\n', 0, 0);
+    else input.value = text;
+    input.focus();
+    saveDraft();
+  };
   const scheduleActions = {
     now: async (entry) => { await host.invoke('sessions.sendScheduledNow', { id: entry.id }); },
     cancel: async (entry) => { await host.invoke('sessions.cancelSchedule', { id: entry.id }); },
@@ -195,16 +201,14 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     edit: async (entry) => {
       const taken = await host.invoke('sessions.cancelSchedule', { id: entry.id });
       const text = taken?.entry?.args?.prompt ?? entry.args?.prompt ?? '';
-      input.value = input.value.trim() ? `${text}\n\n${input.value}` : text;
-      input.focus();
-      saveDraft();
+      restoreOutboxText(text);
     },
   };
   // 送信待ち（bot へ届く前のあなたの投稿）の行。［編集］は取り下げて本文を入力欄へ戻す、［取り消し］は取り下げる
   const pendingAction = async (postId, name) => {
     const row = pending().find((p) => p.id === postId);
     await withdrawPending(postId);
-    if (name === 'edit' && row) { input.value = input.value.trim() ? `${row.text}\n\n${input.value}` : row.text; input.focus(); saveDraft(); }
+    if (name === 'edit' && row) restoreOutboxText(row.text);
   };
   function paintSchedules() {
     const queued = pending().map((p) => ({ id: p.id, status: 'queued', args: { prompt: p.text } }));
@@ -522,7 +526,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       chosen = null;   // 宛先はスレッドごと（別のスレッドへ移ったら、そのスレッドの決まりに戻る）
       const d = key ? draftStore().get(key) : null;
       att.restore(d?.attached);
-      input.value = d?.text ?? '';
+      input.editor.restoreDraft(d?.text ?? '', d?.editing);
       att.placeTail();
       // 編集中だったスレッドは、投稿を読み込んだあと（syncEdit）に「編集中」へ戻す
       if (d?.edit) pendingEdit = d.edit;

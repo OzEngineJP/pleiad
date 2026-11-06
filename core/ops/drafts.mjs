@@ -13,7 +13,7 @@ export const draftOps = [
   defineOp({
     id: 'drafts.save', summary: D('save', 'summary'), risk: 'write',
     riskReason: 'Keeps your own unsent text for a composer so you can continue it on another device. It sends nothing and changes no conversation',
-    input: z.object({ key: key('save'), text: z.string().max(DRAFT_TEXT_MAX).describe(D('save', 'text')), at: z.number().optional().describe(D('save', 'at')) }),
+    input: z.object({ key: key('save'), text: z.string().max(DRAFT_TEXT_MAX).describe(D('save', 'text')), editing: z.unknown().optional(), at: z.number().optional().describe(D('save', 'at')) }),
     output: z.object({ saved: z.boolean(), at: z.number() }),
     surfaces: { ui: true, mcp: false, cli: false },
     handler: async (ctx, args) => { needUi(ctx); return ctx.drafts.save(args); },
@@ -21,7 +21,7 @@ export const draftOps = [
   defineOp({
     id: 'drafts.load', summary: D('load', 'summary'), risk: 'read',
     input: z.object({ key: key('load') }),
-    output: z.object({ text: z.string(), at: z.number() }).nullable(),
+    output: z.object({ text: z.string(), at: z.number(), editing: z.unknown().optional() }).nullable(),
     surfaces: { ui: true, mcp: false, cli: false },
     handler: async (ctx, args) => { needUi(ctx); return ctx.drafts.load(args); },
   }),

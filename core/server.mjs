@@ -136,6 +136,7 @@ import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remo
 import { createPushNotifier } from './notify/notifier.mjs';
 import { createPresence } from './notify/presence.mjs';
 import { createNotifications } from './notifications.mjs';
+import { normalizeEditingState } from '../web/md-editing-state.mjs';
 import { createDrafts } from './drafts.mjs';
 import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
@@ -456,10 +457,11 @@ function sanitizeDraftEdit(edit) {
   const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
   const files = (list) => (Array.isArray(list) ? list : []).slice(0, 1000).map(a => ({ name: str(a?.name, 4096), path: str(a?.path, 8192), kind: str(a?.kind, 32) || "file", mime: str(a?.mime, 256),
     ...(a?.from === "host" || a?.from === "device" ? { from: a.from } : {}), ...(Number.isFinite(a?.size) && a.size >= 0 ? { size: a.size } : {}) }));
+  const editing = normalizeEditingState(edit.stash?.text, edit.stash?.editing);
   return {
     v: 1, id: edit.id, time: str(edit.time, 64), quote: str(edit.quote, 400),
     base: { text: str(edit.base?.text, 2_000_000), paths: (Array.isArray(edit.base?.paths) ? edit.base.paths : []).slice(0, 1000).map(x => str(x, 8192)) },
-    stash: { text: str(edit.stash?.text, 2_000_000), attached: files(edit.stash?.attached) },
+    stash: { text: str(edit.stash?.text, 2_000_000), attached: files(edit.stash?.attached), ...(editing ? { editing } : {}) },
   };
 }
 
@@ -9422,7 +9424,8 @@ wss.on("connection", (ws, req) => {
           if (files.some(a => a.path.length > 8192 || a.name.length > 4096)) throw new Error(t('session.attachmentInfoTooLarge'));
           // version: 2 = text が文中の添付の印（[添付] パス）を含む Markdown（位置が残る。ADR 0060）。無い下書きは印が無く、添付は文末に付く
           const edit = sanitizeDraftEdit(msg.args?.edit);
-          await store.setSessionData(sessionId, "draft", { text, attached: files, ...(Number.isInteger(version) ? { version } : {}), ...(edit ? { edit } : {}) }, { durable: true });
+          const editing = normalizeEditingState(text, msg.args?.editing);
+          await store.setSessionData(sessionId, "draft", { text, attached: files, ...(editing ? { editing } : {}), ...(Number.isInteger(version) ? { version } : {}), ...(edit ? { edit } : {}) }, { durable: true });
           if (!isReviewMode() && (await store.get(sessionId)).unsent && typeof msg.args?.cwd === "string") {
             await store.setMeta(sessionId, { cwd: msg.args.cwd });
           }

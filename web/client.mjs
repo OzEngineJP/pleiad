@@ -317,8 +317,8 @@ const chatRecall = createRecall({
   shell: () => shellComposer.active,
   load: ({ shell }) => loadSentMessages(shell),
   current: () => state.current,
-  take: () => ({ text: $('prompt').value, attached: state.attached.slice() }),
-  restore: (draft) => { state.attached = draft?.attached ?? []; $('prompt').value = draft?.text ?? ''; fitPrompt(); renderAttached(); },
+  take: () => ({ text: $('prompt').value, attached: state.attached.slice(), editing: composerEditor.snapshotEditing() }),
+  restore: (draft) => { state.attached = draft?.attached ?? []; composerEditor.restoreDraft(draft?.text ?? '', draft?.editing); fitPrompt(); renderAttached(); },
   put: (item) => putRecalled(item),
   // タッチの画面は欄の右に履歴のボタン。候補を入れるボタンが出ている間は譲る
   touch: () => matchMedia('(pointer:coarse)').matches,
@@ -1397,12 +1397,12 @@ function editTarget(id) {
   const forkOnly = Boolean(state.sessions.find(x => x.id === state.current)?.delegation);
   return { index: state.base + local, tail: tailInfo(state.messages, local, { running: isRunningHere(), forkOnly }) };
 }
-const editRead = () => ({ text: shellComposer.draftText(), attached: orderedAttachments() });
-function editWrite({ text, attached }) {
+const editRead = () => ({ text: shellComposer.draftText(), attached: orderedAttachments(), editing: shellComposer.active ? undefined : composerEditor.snapshotEditing() });
+function editWrite({ text, attached, editing }) {
   shellComposer.reset();
   state.attached = attached.slice();
   chatAttach.dropFailed();
-  $('prompt').value = text;
+  composerEditor.restoreDraft(text, editing);
   fitPrompt();
   renderAttached();
 }
@@ -1469,10 +1469,10 @@ async function editBranch({ id, text, attached }) {
   if (!m || !found) { chatEdit.targetLost(); return false; }
   const source = state.current;
   const stash = chatEdit.stashed();
-  await forkFrom(m, { draft: { text, attached, index: found.index } });
+  await forkFrom(m, { draft: { text, attached, editing: composerEditor.snapshotEditing(), index: found.index } });
   // 分岐の先へ移ったなら、元の会話の下書きは編集前の書きかけに戻す（直した内容は分岐の先へ渡った）。移れなかったら（理由は forkFrom が出した）開いたまま
   if (state.current === source) return false;
-  persistDraft(source, { text: stash?.text ?? '', attached: stash?.attached ?? [], version: 2, dirty: true }).catch(() => {});
+  persistDraft(source, { text: stash?.text ?? '', attached: stash?.attached ?? [], editing: stash?.editing, version: 2, dirty: true }).catch(() => {});
   if (stash?.extra !== undefined) armedSends.set(source, stash.extra);
   announce(t('chat.resend.doneBranch'));
   return false;
@@ -7768,7 +7768,7 @@ function saveDraft() {
   if (id && state.loadingSession === id && id !== freshSessionId) return Promise.resolve();
   // シェルの形の欄は `!` を頭に戻して残す（復元ではシェルの形に入らない。web/shell-composer.mjs）
   // text は文中の添付の印（[添付] パス）を含む Markdown（位置が残る）。version: 2 より前の下書きは印が無く、添付は「文末に付く」になる
-  const value = { text: shellComposer.draftText(), attached: state.attached.slice(), version: 2, dirty: true };
+  const value = { text: shellComposer.draftText(), attached: state.attached.slice(), editing: shellComposer.active ? undefined : composerEditor.snapshotEditing(), version: 2, dirty: true };
   // 「編集中」も下書きと一緒に残す（会話を切り替えても、読み込み直しても続く。web/composer/edit-mode.mjs の snapshot）
   const edit = chatEdit.snapshot();
   if (edit) value.edit = edit;
@@ -7823,7 +7823,7 @@ function loadDraft() {
   // 添付の実体を先に置く（本文の印は、ここにあるものだけが札になる。無い印・古い下書きの添付は「文末に付く」）
   state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
   chatAttach.dropFailed();
-  $("prompt").value = typeof d?.text === "string" ? d.text : "";
+  composerEditor.restoreDraft(typeof d?.text === "string" ? d.text : "", d?.editing);
   fitPrompt();
   renderAttached();
   // ホストのファイルの面で選んでいたもの・開いていた場所は会話ごと（次は新しい会話の作業ディレクトリから）
@@ -10092,7 +10092,7 @@ async function forkFrom(m, { draft, pending } = {}) {
     const boundary = draft ? { beforeMessageId: uuid } : { upToMessageId: uuid };
     const result = await cmd('fork', { sessionId: source, ...boundary });
     if (!result?.sessionId) throw new Error(t('chat.fork.noId'));
-    if (draft) await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, version: 2, dirty: true });
+    if (draft) await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, editing: draft.editing, version: 2, dirty: true });
     await refresh();
     await loadBranches(source);
     const groups = placeJunctions();
