@@ -224,6 +224,9 @@ export function createBrowserUnify(deps = {}) {
       phoneStrip = createPhoneBrowserStrip({ mount:stripHolder, onActivate:() => chrome()?.open?.(), onResume:() => cmd('chromeResume', { sessionId:session() }) });
     }
     if (stripHolder) stripHolder.hidden = !want;
+    // 帯は今の「一時停止中」の帯を置き換える（任せるは帯にもある）。帯を出している間は、会話の側の古い帯を出さない
+    const banner = document.getElementById('chromeBanner');
+    if (banner) banner.hidden = want;
     if (!want) return;
     const image = chrome()?.frameImage ?? stripThumb(c.sessionId, c.tab);
     phoneStrip.update({ url:c.tab?.url ?? '', title:pageName(c.tab) || vizTitle(c.tab), tabs:tabs().length, holder, name:c.name, image, last:c.held.last ?? null, pinned:!!c.held.pinned });

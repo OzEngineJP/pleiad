@@ -12,7 +12,7 @@ module.exports = async function browserUnifyTabs({ browser, check, screenshots, 
 <script type="importmap">{"imports":{"i18next":"/vendor/i18next.mjs"}}</script>
 <link rel="stylesheet" href="/web/tokens.css"><link rel="stylesheet" href="/web/pages/pages.css"><link rel="stylesheet" href="/web/pages/content.css">
 <style>body{display:flex;min-height:100vh;background:var(--surface-0)}#conversation{flex:1;min-width:0;padding:36px;font-size:14px}#panel{width:560px;flex:none;min-width:0;background:var(--surface-paper);height:100vh;display:flex;flex-direction:column;overflow:hidden}#page{overflow:auto;flex:1}#page main{padding:16px 28px}#page .metadata{font-size:11px}#tree{display:none}.i{width:18px;height:18px}#menu{position:fixed;z-index:50;background:var(--surface-paper);box-shadow:0 4px 16px var(--shadow);padding:6px;border-radius:8px}#menu button{display:block;width:100%;text-align:left}#menu[hidden]{display:none}@media(max-width:600px){#conversation{display:none}#panel{width:100%}#page main{padding:16px 20px}}</style>
-<section id="conversation"><h3>ブラウザーの一本化</h3><p>確認のために、計画と実際のページを開いてください。</p></section>
+<section id="conversation"><h3>ブラウザーの一本化</h3><p>確認のために、計画と実際のページを開いてください。</p><div id="chromeBanner"><div class="cc-banner">一時停止中</div></div><div id="composer"></div></section>
 <aside id="panel"><div id="page"><aside id="tree" hidden></aside><main id="content"></main></div></aside><div id="menu" hidden></div>
 <script type="module">
 import { createBrowserUnify } from '/web/browser-unify.mjs';
@@ -21,7 +21,7 @@ window.sent=[]; window.notices=[]; window.pageRequests=[];
 window.filePath='D:/dev/pleiad/docs/file-preview.md';
 window.rows=[{sessionId:'one',targetId:'file',windowId:1,title:'file-preview.md',url:'http://localhost/_pleiad/s/one/file?path='+encodeURIComponent(filePath),page:{kind:'file',path:filePath},canGoBack:true},{sessionId:'one',targetId:'web',windowId:1,title:'GitHub · Pleiad',url:'https://github.com/tekalu1/pleiad',favicon:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="gray"/></svg>')}];
 window.chromeFixture={sessionId:'one',tabId:'file',mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(){},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true}};
-window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
+window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,controlStore:{get:()=>({state:window.agentState||'idle'})},composer:()=>document.querySelector('#composer'),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
 async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){chromeFixture.tabId=args.tabId;chromeFixture.change?.()}return {}},
 showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');b.textContent=item.label;b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
 window.resetRows=()=>ui.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows});resetRows();
@@ -141,6 +141,11 @@ window.ready=true;
     check('web tabs stay as video on the phone', await local.count() === 0);
     await page.evaluate(() => { chromeFixture.tabId = 'file'; chromeFixture.isOpen = () => false; chromeFixture.change(); });
     check('closed panel shows no local page', await local.count() === 0);
+    await page.evaluate(() => { window.agentState = 'paused'; chromeFixture.change(); });
+    check('phone strip replaces the paused banner while the panel is closed', await page.evaluate(() => !document.querySelector('.bu-phone-strip').hidden && document.querySelector('#chromeBanner').hidden));
+    await page.evaluate(() => { chromeFixture.isOpen = () => true; chromeFixture.change(); });
+    check('paused banner returns when the phone strip is not shown', await page.evaluate(() => document.querySelector('.bu-phone-strip').hidden && !document.querySelector('#chromeBanner').hidden));
+    await page.evaluate(() => { window.agentState = 'idle'; chromeFixture.isOpen = () => false; chromeFixture.change(); });
     await page.locator('.bu-count').click(); check('phone tab overview shows two thumbnails', await page.locator('.bu-card').count() === 2 && await page.locator('.bu-card-label .bu-favicon').count() === 2 && await page.locator('.bu-overview-new').count() === 1); await shot('360-tabs'); await page.locator('.bu-count').click();
     await page.evaluate(() => document.documentElement.dataset.theme='dark'); await shot('360-dark');
     await page.setViewportSize({width:1280,height:720}); await shot('1280-dark');
