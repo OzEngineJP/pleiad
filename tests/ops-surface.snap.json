@@ -765,7 +765,7 @@
         "cli": false
       },
       "legacyCommand": "chromeNavigate",
-      "input": "b2ac0d8a8eac"
+      "input": "7debcb2dfe03"
     },
     {
       "id": "browser.chromePinWindow",

@@ -100,7 +100,7 @@ export const browserOps = [
       sessionId: sessionIdShape,
       targetId: z.string().min(1).max(200).optional().describe('agent:ops.browser.chromePinWindow.tabId'),
       action: z.enum(['navigate', 'new', 'back', 'forward', 'reload', 'close', 'view', 'tree']).default('navigate').describe('agent:ops.browser.chromeNavigate.action'),
-      input: z.string().max(8192).optional().describe('agent:ops.browser.chromeOpen.url'),
+      input: z.string().max(8192).optional().describe('agent:ops.browser.chromeNavigate.input'),
       view: z.enum(['preview', 'source']).optional().describe('agent:ops.browser.chromeNavigate.view'),
     }),
     output: z.object({ targetId:z.string().nullable().optional() }),

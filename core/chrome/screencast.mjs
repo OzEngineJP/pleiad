@@ -24,7 +24,7 @@
 // 段の口（setFormats）と止まった絵の口（capture）を足した形で使う。
 // 見る側の入力（タップ・文字）は、中継のタブごとの持ち手（relay.unify.tabHolder。ADR 0293）があれば入力の口のセッションで今のタブへ送り、そのタブを人の操作にする。
 // ページの大きさは見る人と持ち手から決める（core/chrome/viewport.mjs）。移動は受けない。URL は状態に載せない。
-// 持ち手の無い形（中継を渡さない）では見るだけで、operate(sessionId, viewport) の間だけ、映像のセッション（エージェントの接続ではない）で入力を送り、
+// 持ち手の無い形（中継を渡さない。試験だけ）では見るだけで、入力は view-only で断る。operate(sessionId, viewport) の間は、
 // ページの大きさを端末の映像の箱に合わせる（Emulation.setDeviceMetricsOverride。operate(sessionId, null) で clearDeviceMetricsOverride）。タブの列の × で、タブを閉じられる（closeTab）。
 import { inputCommands, deviceMetrics, createPageInput } from './input.mjs';
 import { decideViewport } from './viewport.mjs';
@@ -44,7 +44,7 @@ export function chromeScreencastSettings({ width, height, scale, quality } = {})
 /**
  * @param {object} deps
  * @param deps.host  core/chrome/relay.mjs の view（onChange・summary・tabs・current・attach・focus）
- * @param [deps.relay] core/chrome/relay.mjs の中継（unify.tabHolder・onTabEvent）。無ければ映像は見るだけ（入力は operate の間だけ）
+ * @param [deps.relay] core/chrome/relay.mjs の中継（unify.tabHolder・onTabEvent）。無ければ映像は見るだけ（入力は断る。本番はいつも渡す）
  */
 export function createChromeScreencast({ host, relay = null, log = () => {} } = {}) {
   const unified = !!relay?.unify?.tabHolder;   // タブごとの持ち手（relay.unify.tabHolder）があれば、映像から入力し、ページの大きさを見る人に合わせる（ADR 0293・0294）
@@ -485,48 +485,39 @@ export function createChromeScreencast({ host, relay = null, log = () => {} } = 
     close() { off(); offTab?.(); viewers.clear(); lastFrames.clear(); for (const sessionId of [...watches.keys()]) end(sessionId, 'closed'); },
   };
 
-  /** 端末からの入力を、映像のセッションで今のタブへ送る（端末が引き継いでいる間だけ） */
+  /** 端末からの入力を、入力の口のセッションで今のタブへ送る。タブごとの持ち手（relay）が無ければ見るだけ（view-only） */
   async function input(sessionId, value, context = {}) {
-    if (unified) {
-      const watch = watches.get(sessionId);
-      if (!watch?.inputView) throw new Error('not-watching');
-      // A delayed packet from the previous tab must never reach the newly selected tab.
-      if (context.tabId !== watch.tabId) throw new Error('no-tab');
-      const scale = watch.pageScaleFactor || 1;
-      const commands = inputCommands(value, watch.viewport ? { width: watch.viewport.width / scale, height: watch.viewport.height / scale } : {});
-      const sheet = ['dialog', 'field', 'select', 'files'].includes(value?.type);
-      if (!commands.length && !sheet) throw new Error('invalid-input');
-      // Chrome holds the triggering input response until its modal dialog is answered.
-      // The answer must bypass that response's queue, while still checking the watched tab.
-      if (value?.type === 'dialog') {
-        if (!await watch.pageInput.input(value)) throw new Error('invalid-input');
-        relay.unify.tabHolder.touch({ sessionId, targetId: context.tabId, by: context.device === 'phone' ? 'device' : 'pc',
-          viewport: context.device === 'phone' ? context.viewport : null });
-        return {};
-      }
-      const run = watch.queue.then(async () => {
-        if (watches.get(sessionId) !== watch || watch.tabId !== context.tabId || !watch.inputView) throw new Error('no-tab');
-        watch.inputClient = context.client;
-        if (sheet && !await watch.pageInput.input(value)) throw new Error('invalid-input');
-        relay.unify.tabHolder.touch({ sessionId, targetId: watch.tabId, by: context.device === 'phone' ? 'device' : 'pc',
-          viewport: context.device === 'phone' ? context.viewport : null });
-        // Dispatch the first tap against the geometry that produced the frame. Resize after it.
-        for (const [method, params] of commands) await watch.inputView.send(method, params);
-        if (value?.type === 'tap' && context.device === 'phone') await watch.pageInput.afterTap().catch(() => {});
-        await syncViewport(sessionId, watch);
-        return {};
-      });
-      watch.queue = run.catch(() => {});
-      return run;
+    if (!unified) throw new Error('view-only');
+    const watch = watches.get(sessionId);
+    if (!watch?.inputView) throw new Error('not-watching');
+    // A delayed packet from the previous tab must never reach the newly selected tab.
+    if (context.tabId !== watch.tabId) throw new Error('no-tab');
+    const scale = watch.pageScaleFactor || 1;
+    const commands = inputCommands(value, watch.viewport ? { width: watch.viewport.width / scale, height: watch.viewport.height / scale } : {});
+    const sheet = ['dialog', 'field', 'select', 'files'].includes(value?.type);
+    if (!commands.length && !sheet) throw new Error('invalid-input');
+    // Chrome holds the triggering input response until its modal dialog is answered.
+    // The answer must bypass that response's queue, while still checking the watched tab.
+    if (value?.type === 'dialog') {
+      if (!await watch.pageInput.input(value)) throw new Error('invalid-input');
+      relay.unify.tabHolder.touch({ sessionId, targetId: context.tabId, by: context.device === 'phone' ? 'device' : 'pc',
+        viewport: context.device === 'phone' ? context.viewport : null });
+      return {};
     }
-    const viewport = operated.get(sessionId);
-    if (!viewport) throw new Error('view-only');
-    const view = watches.get(sessionId)?.view;
-    if (!view) throw new Error('not-watching');
-    const commands = inputCommands(value, viewport);
-    if (!commands.length) throw new Error('invalid-input');
-    for (const [method, params] of commands) await view.send(method, params);
-    return {};
+    const run = watch.queue.then(async () => {
+      if (watches.get(sessionId) !== watch || watch.tabId !== context.tabId || !watch.inputView) throw new Error('no-tab');
+      watch.inputClient = context.client;
+      if (sheet && !await watch.pageInput.input(value)) throw new Error('invalid-input');
+      relay.unify.tabHolder.touch({ sessionId, targetId: watch.tabId, by: context.device === 'phone' ? 'device' : 'pc',
+        viewport: context.device === 'phone' ? context.viewport : null });
+      // Dispatch the first tap against the geometry that produced the frame. Resize after it.
+      for (const [method, params] of commands) await watch.inputView.send(method, params);
+      if (value?.type === 'tap' && context.device === 'phone') await watch.pageInput.afterTap().catch(() => {});
+      await syncViewport(sessionId, watch);
+      return {};
+    });
+    watch.queue = run.catch(() => {});
+    return run;
   }
 
   async function syncViewport(sessionId, watch) {

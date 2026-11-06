@@ -19,7 +19,7 @@
 // 引き継ぎ（一時停止。ADR 0148・0154。状態機械は core/chrome/control.mjs）: pause() の間は、エージェントのコマンドを全部 PAUSED_MESSAGE で断る
 // （人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。unpause() で解く。Chrome との接続が切れたときも解く。
 // ADR 0293 からは、人の操作はタブごとの持ち手（tab-holder.mjs）で断る。一時停止に入るのは、前の版から持ち越した引き継ぎ（restore の paused）だけで、
-// 呼び手は「任せる」（control の resume）か窓を閉じる操作で unpause() する。pause()・handOver() を呼ぶ本番の呼び手は無い（試験と、持ち越しの形のために残す）。
+// 呼び手は「任せる」（control の resume）か窓を閉じる操作で unpause() する。pause() を呼ぶ本番の呼び手は無い（restore は印を直に戻す。試験が一時停止の扱いを確かめるために残す）。
 //   - pause に入るときに、エージェントのブラウザーとタブの接続を切る（上りのセッションを外し、ws を 1000 で閉じる）。Chrome からの通知（Network の postData・Fetch.requestPaused など）が
 //     エージェントへ流れ続けず、エージェントの Fetch の横取りが人のページを固めないため。戻した後は agent-browser がつなぎ直す（つなぎ直した接続のコマンドは全部断る）
 //   - 一時停止の間は、タブを「エージェントが動かしている」と見なさない（人の移動をサイトの利用の確認にかけない）。確認の待ちも取り下げる
@@ -1282,14 +1282,6 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       entry.paused = { at, ...(typeof by === 'string' ? { by } : {}), ...(viewport ? { viewport: { ...viewport } } : {}) };
       noteUsed(entry);
       suspendAgent(entry);
-      changed(entry);
-      return true;
-    },
-    /** 一時停止のまま、操作する人を替える（PC から端末へ移す）。始まりの時刻は保つ */
-    handOver(sessionId, { by, viewport } = {}) {
-      const entry = entries.get(sessionId);
-      if (!entry?.paused) return false;
-      entry.paused = { at: entry.paused.at, ...(typeof by === 'string' ? { by } : {}), ...(viewport ? { viewport: { ...viewport } } : {}) };
       changed(entry);
       return true;
     },
