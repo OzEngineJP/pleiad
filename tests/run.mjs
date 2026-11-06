@@ -877,6 +877,10 @@ const SUITES = [
   './unit/screencast-pacing.mjs',
 
   // --- A2 ページの Cookie と中継の範囲 ---
+  // 中継の移動の検査（本体の port はどの名前でも断る・ファイルのページはその会話だけ・隔離は localhost だけ）・止めた要求・pleiad_* の Cookie を隠す（表と偽の Chrome）
+  './unit/chrome-page-policy.mjs',
+  // ページの Cookie を入れる形（localhost・Path・HttpOnly・Strict・port）と、入れる時点（つながったとき・ファイルのページを開く前・タブのセッション）
+  './unit/page-cookie.mjs',
 
   // --- A3 可視化と HTML のファイル ---
   // プレビューの CSP（core と web で同じ関数・文字列は今までと同じ）・隔離の応答の CSP・「一度だけ読み込む」の印
