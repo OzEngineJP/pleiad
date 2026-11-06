@@ -2373,6 +2373,7 @@ async function startPageListeners() {
     pagePorts = Object.freeze({ main: server.address().port, ...listeners.ports });
     chromeRelay?.setPagePorts(pagePorts);
     chromeRelay?.setPageCookie(pagesCookie(TOKEN));
+    remote.setPagePorts(pagePorts);   // スマホの道（端末のプロキシの 2 つ目・隔離の行き先。ADR 0292 の 5）
     pagesLog(`pages http://localhost:${pagePorts.pages}/ isolated http://localhost:${pagePorts.isolated}/`);
   } catch (error) {
     console.error('  [pages] could not start the page listeners:', String(error?.message ?? error));

@@ -1003,6 +1003,9 @@ export function createRemoteHost({
       return apply();
     },
     status,
+    /** ファイルのページと隔離の port（{ main, pages, isolated }。ブラウザーの一本化の旗が on のときだけ server が呼ぶ。ADR 0292 の 5）。
+     *  スマホの道で /_pleiad/ と隔離へ通すために A7 が使う。S0 では何もしない */
+    setPagePorts(ports) { void ports; },
 
     /** { enabled?, relayUrl?, enrollSecret?, hostName?, plusConnect? }。enrollSecret は undefined なら残し、'' か null で消す。 */
     async setSettings(args = {}) {
