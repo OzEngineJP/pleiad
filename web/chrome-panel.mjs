@@ -652,6 +652,13 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
       parts.screen.querySelector('[data-slot="overlay"]')?.remove();
       if (node) { node.dataset.slot = 'overlay'; parts.screen.append(node); }
     },
+    /** スマホで端末内に描く Pleiad のページ（web/browser-unify.mjs）。映像の箱いっぱいに重ね、置いている間は映像を絵として読ませない。null で外す */
+    mountPage(node) {
+      if (!parts) { parts = build(); root = parts.node; }
+      parts.screen.querySelector('[data-slot="page"]')?.remove();
+      if (node) { node.dataset.slot = 'page'; parts.screen.append(node); parts.screen.dataset.localPage = ''; parts.screen.removeAttribute('role'); parts.screen.tabIndex = -1; }
+      else if ('localPage' in parts.screen.dataset) { delete parts.screen.dataset.localPage; parts.screen.setAttribute('role', 'img'); parts.screen.tabIndex = 0; }
+    },
     /** ページの CSS px の点を画面の点へ（ページから頼まれたメニューの位置）。映像がまだ無ければ映像の箱の中央 */
     toScreen(point) {
       if (!parts) return null;

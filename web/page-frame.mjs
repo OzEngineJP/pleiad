@@ -20,6 +20,24 @@ export function pageHeading(path, cwd = '', doc = globalThis.document) {
   box.append(dir, name); return box;
 }
 
+/** iframe のページからの頼み（pleiad:page-request）を検査して返す。通さないものは null。スマホの端末内のページ（web/browser-unify.mjs）も使う */
+export function pageRequestOf(message, sessionId) {
+  const request = message?.request;
+  if (message?.type !== 'pleiad:page-request' || !request || !REQUESTS.has(request.type) || request.sessionId !== sessionId) return null;
+  try { if (JSON.stringify(message).length > 65536) return null; } catch { return null; }
+  if (['file-menu', 'use-file'].includes(request.type) && (typeof request.path !== 'string' || !request.path || request.path.length > 8192)) return null;
+  if (request.type === 'file-menu' && (!['file', 'directory'].includes(request.kind ?? 'file') ||
+      !Number.isFinite(request.x) || !Number.isFinite(request.y))) return null;
+  return request;
+}
+
+/** ページの中の点（file-menu の x・y）を、iframe の箱の中に収めて画面の点へ直す */
+export function framePoint(request, rect) {
+  return request.type === 'file-menu' ? { ...request,
+    x: rect.left + Math.max(0, Math.min(rect.width, request.x)),
+    y: rect.top + Math.max(0, Math.min(rect.height, request.y)) } : { ...request };
+}
+
 /** The fallback serves only Pleiad's own pages, authenticated by the app cookie. */
 export function createPageFrame({ doc = globalThis.document, preview, onRequest = () => {}, getSessionId = () => null } = {}) {
   let frame = null, sessionId = null;
@@ -28,17 +46,9 @@ export function createPageFrame({ doc = globalThis.document, preview, onRequest 
   function send(type, data) { frame?.contentWindow?.postMessage({ type, ...data }, origin()); }
   async function receive(event) {
     if (!frame?.isConnected || event.source !== frame.contentWindow || event.origin !== origin()) return false;
-    const message = event.data, request = message?.request;
-    if (message?.type !== 'pleiad:page-request' || !request || !REQUESTS.has(request.type) || request.sessionId !== sessionId ||
-        (getSessionId() && getSessionId() !== sessionId)) return false;
-    try { if (JSON.stringify(message).length > 65536) return false; } catch { return false; }
-    if (['file-menu', 'use-file'].includes(request.type) && (typeof request.path !== 'string' || !request.path || request.path.length > 8192)) return false;
-    if (request.type === 'file-menu' && (!['file', 'directory'].includes(request.kind ?? 'file') ||
-        !Number.isFinite(request.x) || !Number.isFinite(request.y))) return false;
-    const source = frame, rect = frame.getBoundingClientRect();
-    const detail = request.type === 'file-menu' ? { ...request,
-      x: rect.left + Math.max(0, Math.min(rect.width, request.x)),
-      y: rect.top + Math.max(0, Math.min(rect.height, request.y)) } : { ...request };
+    const request = pageRequestOf(event.data, sessionId);
+    if (!request || (getSessionId() && getSessionId() !== sessionId)) return false;
+    const source = frame, detail = framePoint(request, frame.getBoundingClientRect());
     try {
       const result = await onRequest(detail);
       if (frame === source && request.requestId) send('pleiad:page-result', { requestId: request.requestId, ok: true, result });

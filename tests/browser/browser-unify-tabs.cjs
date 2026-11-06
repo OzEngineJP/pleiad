@@ -17,11 +17,11 @@ module.exports = async function browserUnifyTabs({ browser, check, screenshots, 
 <script type="module">
 import { createBrowserUnify } from '/web/browser-unify.mjs';
 import { renderFile } from '/web/pages/file.mjs';
-window.sent=[]; window.notices=[];
+window.sent=[]; window.notices=[]; window.pageRequests=[];
 window.filePath='D:/dev/pleiad/docs/file-preview.md';
 window.rows=[{sessionId:'one',targetId:'file',windowId:1,title:'file-preview.md',url:'http://localhost/_pleiad/s/one/file?path='+encodeURIComponent(filePath),page:{kind:'file',path:filePath},canGoBack:true},{sessionId:'one',targetId:'web',windowId:1,title:'GitHub · Pleiad',url:'https://github.com/tekalu1/pleiad',favicon:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="gray"/></svg>')}];
 window.chromeFixture={sessionId:'one',tabId:'file',mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(){},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true}};
-window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,notify:text=>notices.push(text),
+window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
 async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){chromeFixture.tabId=args.tabId;chromeFixture.change?.()}return {}},
 showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');b.textContent=item.label;b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
 window.resetRows=()=>ui.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows});resetRows();
@@ -108,10 +108,27 @@ window.ready=true;
     await shot('360-light');
     await page.locator('.bu-omni').click({position:{x:90,y:17}}); await page.locator('.bu-address-input').fill('D:/editing.md'); await page.locator('.bu-address-input').click();
     check('clicking the phone input preserves edited text', await page.locator('.bu-address-input').inputValue() === 'D:/editing.md'); await page.locator('.bu-address-input').press('Escape');
-    for (const position of [{x:10,y:17},{x:90,y:17},{x:180,y:17}]) {
+    await page.locator('.bu-tree').click();
+    check('phone tree button opens the tree, not path editing', await page.evaluate(() => sent.at(-1).args.action === 'tree') && !(await page.locator('.bu-address-input').isVisible()));
+    for (const position of [{x:90,y:17},{x:180,y:17}]) {
       await page.locator('.bu-omni').click({position});
       check('phone address area enters text editing', await page.locator('.bu-address-input').isVisible()); await page.locator('.bu-address-input').press('Escape');
     }
+    await page.evaluate(() => { chromeFixture.isOpen = () => true; chromeFixture.mountPage = node => { document.querySelector('[data-slot="page"]')?.remove(); if (node) { node.dataset.slot = 'page'; document.querySelector('#panel').append(node); } }; chromeFixture.change(); });
+    const local = page.locator('#panel > iframe.bu-local-page');
+    check('phone file tab renders the page locally from the same origin', await local.count() === 1 && await local.evaluate(node => new URL(node.src).origin === location.origin && new URL(node.src).pathname === '/_pleiad/s/one/file' && new URL(node.src).searchParams.get('path') === filePath));
+    await page.waitForFunction(() => document.querySelector('iframe.bu-local-page')?.contentDocument?.querySelector('h1'));
+    await local.evaluate(node => node.contentWindow.Function(`parent.postMessage({type:'pleiad:page-request',request:{type:'file-menu',sessionId:'one',path:${JSON.stringify(filePath)},kind:'file',x:5,y:6}},location.origin)`)());
+    await page.waitForFunction(() => pageRequests.length === 1);
+    check('local page requests reach the host menu with the tab and a screen point', await page.evaluate(() => { const { request, where } = pageRequests[0], box = document.querySelector('iframe.bu-local-page').getBoundingClientRect(); return request.type === 'file-menu' && where.targetId === 'file' && request.x === box.left + 5 && request.y === box.top + 6; }));
+    await local.evaluate(node => node.contentWindow.Function(`parent.postMessage({type:'pleiad:page-request',request:{type:'file-menu',sessionId:'two',path:'x',kind:'file',x:1,y:1}},location.origin)`)());
+    await page.waitForTimeout(100); check('local page requests for another conversation are ignored', await page.evaluate(() => pageRequests.length === 1));
+    const before = await page.evaluate(() => sent.length); await page.locator('.bu-tree').click();
+    check('phone tree on a local page stays on the device', await page.evaluate(n => !sent.slice(n).some(item => item.args?.action === 'tree'), before));
+    await page.evaluate(() => { chromeFixture.tabId = 'web'; chromeFixture.change(); });
+    check('web tabs stay as video on the phone', await local.count() === 0);
+    await page.evaluate(() => { chromeFixture.tabId = 'file'; chromeFixture.isOpen = () => false; chromeFixture.change(); });
+    check('closed panel shows no local page', await local.count() === 0);
     await page.locator('.bu-count').click(); check('phone tab overview shows two thumbnails', await page.locator('.bu-card').count() === 2 && await page.locator('.bu-card-label .bu-favicon').count() === 2 && await page.locator('.bu-overview-new').count() === 1); await shot('360-tabs'); await page.locator('.bu-count').click();
     await page.evaluate(() => document.documentElement.dataset.theme='dark'); await shot('360-dark');
     await page.setViewportSize({width:1280,height:720}); await shot('1280-dark');

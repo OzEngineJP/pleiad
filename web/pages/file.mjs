@@ -114,5 +114,8 @@ export async function renderFile(root, file) {
     if (command.type === 'view') { source = command.view === 'source'; try { await paint(); } catch (error) { errorView(body, error); } }
     if (command.type === 'tree') { tree.hidden = command.open == null ? !tree.hidden : !command.open; if (!tree.hidden) await renderTree(tree, file.tree, file.path); }
   }, { signal });
+  // ツリーはページの上に重ねる。外を押すか Escape で閉じる
+  document.addEventListener('pointerdown', event => { if (!tree.hidden && !tree.contains(event.target)) tree.hidden = true; }, { signal });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !tree.hidden) tree.hidden = true; }, { signal });
   await paint();
 }

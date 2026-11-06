@@ -7432,7 +7432,7 @@ function applyTheme(mode) {
   paintTitleBar();
   paintShellTheme();
   // 旗が on: 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0292）
-  if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); }
+  if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
 }
 
 /**

@@ -2,6 +2,7 @@ import { t } from './i18n.mjs';
 import { createTabStrip, browserButton, tabIcon } from './tab-strip.mjs';
 import { createAddressBar, hasFileViews } from './address-bar.mjs';
 import { createControlBadge, createTabActivityDot, createPhoneBrowserStrip } from './chrome-control.mjs';
+import { pageRequestOf, framePoint } from './page-frame.mjs';
 
 // Local to the flagged browser: the legacy panel keeps its existing styles.
 const css = `
@@ -65,6 +66,7 @@ const css = `
 .bu-tab.bu-flash{animation:bu-flash .9s ease-out}@keyframes bu-flash{0%,40%{background:color-mix(in srgb,var(--line-blue) 22%,transparent)}}
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
 .bu-phone-strip{padding:0 0 6px}.bu-phone-strip[hidden]{display:none}
+.cp-screen>.bu-local-page{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;z-index:5;background:var(--surface-paper)}
 @media(max-width:600px){.bu-tabs{display:none}.bu-toolbar{height:48px}.browser-unify #filePreview[data-panel=chrome-window]{border-radius:0}}
 `;
 
@@ -75,6 +77,19 @@ export function pageName(tab) {
   if (['file', 'dir'].includes(page.kind)) return String(page.path ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || page.path || '';
   return t(`tabs:address.locations.${page.kind}`, { defaultValue:tab.title || '' });
 }
+
+// スマホでは映像でなく端末内で描く Pleiad のページ（Web・HTML のファイル・新しいタブは映像のまま）
+const LOCAL_PAGES = new Set(['file', 'dir', 'git', 'plugins']);
+/** スマホで端末内に描くページの URL。本体と同じ出どころの /_pleiad/（端末の Cookie で入る。ホストの pages の port は使わない）。描かないタブは null */
+export function localPageUrl(tab, sessionId, origin = globalThis.location?.origin) {
+  if (!LOCAL_PAGES.has(tab?.page?.kind) || !sessionId || !origin) return null;
+  let url; try { url = new URL(tab.url); } catch { return null; }
+  const match = /^\/_pleiad\/s\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+  if (!match || match[1] !== encodeURIComponent(sessionId) || match[2] !== tab.page.kind || url.username || url.password) return null;
+  return new URL(url.pathname + url.search, origin).href;
+}
+/** 同じページか（種類とパス）。行や表示の違いでは描き直さない */
+const pageKey = href => { try { const url = new URL(href); return `${url.pathname}\n${url.searchParams.get('path') ?? ''}`; } catch { return ''; } };
 
 /**
  * 旗が on の右の欄（タブの列・アドレスバー・札・タブの活動の点・スマホの帯）。web/client.mjs が旗が on のときだけ読む。
@@ -101,7 +116,12 @@ export function createBrowserUnify(deps = {}) {
   };
   async function navigate(action, args = {}) {
     const sessionId = session(); if (!sessionId) return;
+    const here = local && local.sessionId === sessionId && local.targetId === current()?.targetId ? local : null;
+    // 端末内のページ: ツリー・原文は手元のページへ（Chrome のタブにも表示を合わせる）、再読み込みは手元を読み直す
+    if (here && action === 'tree') { pageCommand(here, { type:'tree' }); return {}; }
+    if (here && action === 'reload') { try { here.frame.contentWindow?.location.reload(); } catch { /* 読み込み中 */ } return {}; }
     const result = await cmd('chromeNavigate', { sessionId, targetId:current()?.targetId, action, ...args });
+    if (here && action === 'view') pageCommand(here, { type:'view', view:args.view === 'source' ? 'source' : 'preview' });
     if (result?.targetId) await pick(tabs().find(tab => tab.targetId === result.targetId) ?? { targetId:result.targetId });
     return result;
   }
@@ -187,7 +207,44 @@ export function createBrowserUnify(deps = {}) {
     }
     return thumbs.get(key).src;
   }
-  function paint() { const tab = current(); strip.update(tabs(), tab?.targetId); address.show(tab, tabs().length); paintControl(); }
+  function paint() { const tab = current(); strip.update(tabs(), tab?.targetId); address.show(tab, tabs().length); paintControl(); paintLocal(); }
+  /** スマホのファイル・フォルダー・git・プラグインのタブは、映像の上に端末内のページを重ねる。タブ・題・履歴は Chrome のタブのまま */
+  let local = null;
+  function paintLocal() {
+    const tab = current(), sessionId = session();
+    const url = enabled && phoneQuery.matches && chrome()?.isOpen?.() ? localPageUrl(tab, sessionId) : null;
+    if (!url) { if (local) { local = null; chrome()?.mountPage?.(null); } return; }
+    if (local?.sessionId === sessionId && local.targetId === tab.targetId) {
+      // 戻る・進む・アドレスバーで Chrome のタブが別のページへ移った
+      if (pageKey(url) !== pageKey(local.url)) { local.url = url; try { local.frame.contentWindow.location.replace(url); } catch { local.frame.src = url; } }
+      return;
+    }
+    const frame = document.createElement('iframe'); frame.className = 'bu-local-page'; frame.title = pageName(tab) || tab.title || '';
+    frame.setAttribute('referrerpolicy', 'no-referrer'); frame.src = url;
+    const entry = local = { frame, sessionId, targetId:tab.targetId, url };
+    frame.addEventListener('load', () => followLocal(entry));
+    chrome()?.mountPage?.(frame);
+  }
+  /** ページの中のリンク（フォルダー → ファイルなど）で移ったら、Chrome のタブも同じページへ移す（タブの題・帯・戻るを合わせる） */
+  function followLocal(entry) {
+    if (local !== entry) return;
+    let at; try { at = new URL(entry.frame.contentWindow.location.href); } catch { return; }
+    if (at.origin !== location.origin || pageKey(at.href) === pageKey(entry.url)) return;
+    entry.url = at.href;
+    const kind = /\/(file|dir)$/.exec(at.pathname)?.[1], path = at.searchParams.get('path');
+    if (kind && path) cmd('chromeNavigate', { sessionId:entry.sessionId, targetId:entry.targetId, action:'navigate', input:path }).catch(failed);
+  }
+  function pageCommand(entry, command) { entry.frame.contentWindow?.postMessage({ type:'pleiad:page-command', command }, location.origin); }
+  /** 端末内のページの頼み（ファイルの ⋯ など）。Chrome のタブからの頼み（tab:page-request）と同じ口へ渡し、結果はページへ返す */
+  async function localRequest(event) {
+    const entry = local;
+    if (!entry || event.source !== entry.frame.contentWindow || event.origin !== location.origin || !deps.onPageRequest) return;
+    const request = pageRequestOf(event.data, entry.sessionId); if (!request) return;
+    const reply = (ok, value) => { if (local === entry && request.requestId) entry.frame.contentWindow?.postMessage({ type:'pleiad:page-result', requestId:request.requestId, ok,
+      ...(ok ? { result:value ?? null } : { error:String(value?.message ?? value ?? 'unavailable').slice(0, 200) }) }, location.origin); };
+    try { reply(true, await deps.onPageRequest(framePoint(request, entry.frame.getBoundingClientRect()), { sessionId:entry.sessionId, targetId:entry.targetId })); }
+    catch (error) { reply(false, error); }
+  }
   function attach() {
     chrome()?.mountBrowserChrome?.(root, address.holderSlot);
     if (badge) chrome()?.mountStatus?.(badge.element);
@@ -240,11 +297,14 @@ export function createBrowserUnify(deps = {}) {
         chrome()?.useInput?.({ phone:() => phoneQuery.matches });
         chrome()?.onOpenChange(attach); chrome()?.onTargetChange(attach); chrome()?.onTabChange?.(paint);
         deps.controlStore?.onChange?.(id => { if (id === session()) paint(); });
-        phoneQuery.addEventListener?.('change', paintControl);
+        phoneQuery.addEventListener?.('change', () => { paintControl(); paintLocal(); });
+        window.addEventListener('message', localRequest);
         document.dispatchEvent(new CustomEvent('ply-browser-availability'));
       }
       attach(); if (state.current) cmd('watchSession', { sessionId:state.current }).catch(failed);
     },
+    /** 配色が変わった（端末内のページにも渡す） */
+    envChanged(env) { local?.frame.contentWindow?.postMessage({ type:'pleiad:env', env }, location.origin); },
     onEvent(event) {
       document.dispatchEvent(new CustomEvent('ply-tab-event', { detail:event }));
       if (event.type === 'tab:info') {

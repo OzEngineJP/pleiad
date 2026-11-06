@@ -24,7 +24,7 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   const reload = browserButton('reload', t('tabs:address.reload'), () => run('reload'));
   const conversation = browserButton('back', t('tabs:address.conversation'), onClose); conversation.classList.add('bu-conversation');
   const omni = document.createElement('div'); omni.className = 'bu-omni';
-  const tree = browserButton('tree', t('tabs:address.tree'), () => { if (mobile()) edit(); else run('tree'); }); tree.classList.add('bu-tree');
+  const tree = browserButton('tree', t('tabs:address.tree'), () => run('tree')); tree.classList.add('bu-tree');
   const crumbs = document.createElement('div'); crumbs.className = 'bu-crumbs'; crumbs.tabIndex = 0; crumbs.setAttribute('role', 'button'); crumbs.setAttribute('aria-label', t('tabs:address.edit'));
   const views = document.createElement('div'); views.className = 'bu-views'; views.setAttribute('role', 'group'); views.setAttribute('aria-label', t('tabs:address.view'));
   const preview = browserButton('preview', t('tabs:address.preview'), () => setView('preview'));
@@ -99,7 +99,7 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     }
   };
   root.addEventListener('focusout', () => setTimeout(() => { if (!input.hidden && !root.contains(document.activeElement)) cancel(); }, 0));
-  omni.onclick = event => { if (event.target === omni || event.target === crumbs || event.target.closest('.bu-separator,.bu-ellipsis') || (mobile() && !holderSlot.contains(event.target))) edit(); };
+  omni.onclick = event => { if (event.target === omni || event.target === crumbs || event.target.closest('.bu-separator,.bu-ellipsis') || (mobile() && !holderSlot.contains(event.target) && !tree.contains(event.target))) edit(); };
   crumbs.onkeydown = event => { if (event.target === crumbs && ['Enter', ' '].includes(event.key)) { event.preventDefault(); edit(); } };
   function fit() {
     if (!input.hidden || !tab) return;
@@ -131,7 +131,6 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     if (!input.hidden) return;
     back.disabled = !tab?.canGoBack; forward.disabled = !tab?.canGoForward; reload.disabled = !tab;
     const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = tab?.page?.kind !== 'file';
-    tree.title = mobile() ? t('tabs:address.edit') : t('tabs:address.tree'); tree.setAttribute('aria-label', tree.title);
     holderSlot.hidden = false; crumbs.hidden = false; crumbs.replaceChildren();
     if (file && tab.page.kind !== 'attachment' && !mobile()) {
       const all = addressCrumbs(tab.page.path);
