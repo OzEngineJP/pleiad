@@ -47,7 +47,7 @@ async page => {
   await reload(); check('前置き後の未確定記号も復元', (await snap()).kinds, ['p', 'p', 'p']);
   await page.evaluate(() => { if (!document.querySelector('#armedChip').hidden) document.querySelector('#armedRemove').click(); });
   await exit();
-  await page.waitForFunction(() => !document.querySelector('#gitEntry').hidden);
+  await page.waitForFunction(() => !!document.querySelector('#cwdChip .git-br:not([hidden])'));
   if (!await page.evaluate(() => !!document.querySelector('[data-cuse]'))) await K.press('Control+Shift+g');
   await page.waitForFunction(() => !!document.querySelector('[data-cuse]'));
   await page.click('[data-cuse]');

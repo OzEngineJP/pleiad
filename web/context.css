@@ -467,4 +467,4 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .scx-issues>.scx-issues{margin-top:6px}
 .scx-place .scx-state{font-size:var(--fs-xs)}
 .scx-empty-result{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-s)}
-.scx-state .run svg,#contextEntry .entry-context-state.run svg{animation-duration:1.2s}
+.scx-state .run svg{animation-duration:1.2s}

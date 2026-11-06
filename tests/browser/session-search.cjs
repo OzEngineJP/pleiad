@@ -128,11 +128,11 @@ async (page) => {
     const m = [...document.querySelectorAll('.m[data-uuid]')].find(x => x.dataset.uuid === uuid);
     const log = document.getElementById('log').getBoundingClientRect(), r = m.getBoundingClientRect();
     return { visible: r.top >= log.top - 1 && r.bottom <= log.bottom + 1, marks: document.querySelectorAll('#thread mark.searchhit').length, active: m.querySelectorAll('mark.searchhit.active').length,
-      tocOpen: document.getElementById('tocEntry').getAttribute('aria-expanded'), title: document.querySelector('.topbar, header, #title')?.textContent ?? '' };
+      tocOpen: Boolean(document.querySelector('.toc-query')), title: document.querySelector('.topbar, header, #title')?.textContent ?? '' };
   }, target.uuid);
   check(landed.visible, 'the excerpt jumps to its message and the message is on screen');
   check(landed.marks >= 1 && landed.active === 1, 'the words are underlined in the conversation, with the matched message marked as current');
-  check(landed.tocOpen === 'false', 'the in-conversation search is not opened by the jump');
+  check(landed.tocOpen === false, 'the in-conversation search is not opened by the jump');
   check((await page.locator('#q').inputValue()) === 'gateway' && (await rows().count()) === 2, 'the query and results stay in the sidebar');
   check((await page.locator('#groups .row.res.sel').count()) === 1, 'the opened conversation is the selected row');
   // Ctrl+F の 1 手で、同じ語で残りの一致へ

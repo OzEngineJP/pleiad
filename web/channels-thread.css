@@ -174,11 +174,11 @@
 .th-bp-line.weak{font-size:var(--fs-xs);color:var(--ink-weak)}
 .th-bp-note{margin:10px 0 0;font-size:var(--fs-xs);line-height:1.6;color:var(--ink-weak)}
 
-/* ---- 狭い幅。スレッドだけが全画面（幅 900px 未満は solo）。見出しの入口は目次と ✕ だけ（git・ブラウザーは Chats と同じく狭い幅では出さない） */
+/* ---- 狭い幅。スレッドだけが全画面（幅 900px 未満は solo）。見出しの入口は目次と ✕ だけ（ブラウザーは Chats と同じく狭い幅では出さない） */
 @media (max-width:700px){
   .th-top{padding-left:6px}
   .th-crumb{font-size:var(--fs)}
-  .th-git,.th-browser{display:none}
+  .th-browser{display:none}
   .th-log,.th-frame > .th-log{padding:2px 22px 10px 6px}
   .th-sys{margin-left:44px}
   .th-perms{--gut:44px}

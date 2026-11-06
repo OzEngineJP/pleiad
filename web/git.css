@@ -1,10 +1,6 @@
 /* git の動き（docs/design-system.md「git の動き」、ADR 0085）。
-   返答の下の要約行・委譲カードの「変更」の行・右パネル「git」・頭の行のアイコンと入力欄のブランチ。
+   返答の下の要約行・委譲カードの「変更」の行・右パネル「git」・入力欄のブランチ。
    色の族は面（surface）・文字（ink）・線（line）と、差分と状態の文字にだけ使う --diff-*（docs/design-system.md §2.1）。枠線は使わない。 */
-
-/* ---------- 頭の行のアイコン ---------- */
-#gitEntry{position:relative}
-@media (max-width:700px){#gitEntry{display:none}}
 
 /* ---------- 返答の下の 1 行 ---------- */
 .git-sum-row{margin:2px 0 6px;min-width:0}

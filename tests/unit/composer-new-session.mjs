@@ -100,7 +100,7 @@ export default async function (t) {
     branchSnapshots: () => [], paintOutbox: noop, refreshOutbox: async () => [], branches: { load: async () => {}, reset: noop, has: () => false, nameOf: () => '' }, scrollToEnd: noop, atBottom: () => false,
     log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, thread: { children: [], querySelectorAll: () => [], classList: { toggle: noop } },
     setUuid: noop, closeTurnEl: noop, paintHistory: () => [], syncOutboxRows: noop, outboxes: new Map(), onEvent: noop, paintPendingPerms: noop, paintComputerWait: noop,
-    acknowledgeDisplayed: noop, placeJunctions: () => [], refreshContextEntry: async () => null,
+    acknowledgeDisplayed: noop, placeJunctions: () => [], refreshContextInfo: async () => null,
     isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }), relayoutBranches: noop, branchIsFresh: () => true, promptPlaceholder: () => '',
     ACTIVITY_LABEL: {}, attachMenu: null, setDraftNote: noop,
     isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop, paint: noop }, retiredHere: () => null, submittingMessages: new Set(),

@@ -64,7 +64,6 @@ const css = `
 .browser-unify .cp.bu-panel{display:flex;flex-direction:column;flex:1;min-height:0;gap:0;padding:0}
 .browser-unify .bu-panel>.cp-sw,.browser-unify .bu-panel>.cp-foot,.browser-unify .bu-panel .cp-pin{display:none!important}
 .browser-unify .bu-panel>.cp-screen{flex:1;min-height:0;border:0;border-radius:0;margin:0}
-.browser-unify #contextEntry,.browser-unify #gitEntry,.browser-unify .th-git{display:none!important}
 .bu-tab-pick .b2-tab-dot{flex:none}
 .bu-tab.bu-flash{animation:bu-flash .9s ease-out}@keyframes bu-flash{0%,40%{background:color-mix(in srgb,var(--line-blue) 22%,transparent)}}
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}

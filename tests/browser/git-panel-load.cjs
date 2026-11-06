@@ -32,7 +32,7 @@ async (page) => {
 
   const openPanel = async (id) => {
     await page.locator(`.row[data-session="${id}"]`).click();
-    await page.locator('#gitEntry:not([hidden])').waitFor({ timeout: 60000 });   // git の状態が届くと入口が出る
+    await page.locator('#cwdChip .git-br:not([hidden])').waitFor({ state: 'attached', timeout: 60000 });   // git の状態が届くと入力欄のチップにブランチが出る
     sent.length = 0;
     await page.locator('#prompt').click();
     await page.keyboard.press('Control+Shift+G');

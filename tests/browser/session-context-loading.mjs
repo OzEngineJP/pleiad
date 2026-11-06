@@ -50,7 +50,7 @@ try {
     const commands = new Map(), held = [], counts = {};
     let downstream;
     const behavior = { hold: new Set(), fail: new Set(), replace: {} };
-    if (['pending', 'menu-transition', 'report-race'].includes(state)) behavior.hold.add('sessionContext');
+    if (['pending', 'report-race'].includes(state)) behavior.hold.add('sessionContext');
     if (state === 'partial-pending') for (const name of ['nativeInstructions', 'contextSettings', 'contextFindings']) behavior.hold.add(name);
     if (state === 'error') behavior.fail.add('sessionContext');
     if (state === 'partial-error') for (const name of ['nativeInstructions', 'contextSettings', 'contextFindings']) behavior.fail.add(name);
@@ -90,7 +90,7 @@ try {
     await page.waitForSelector(`[data-session="${id}"]`, { state: 'attached' });
     await page.evaluate(() => document.querySelector('#onboardingDialog')?.close());
     await page.locator(`[data-session="${id}"]`).first().click();
-    await page.waitForFunction(() => !document.querySelector('#contextEntry').hidden);
+    await page.waitForFunction(() => !document.querySelector('#sessionMore').hidden);
     await page.setViewportSize({ width, height: 1000 });
     async function shot(suffix = '') {
       await page.waitForTimeout(260);
@@ -100,32 +100,19 @@ try {
       assert.equal(overflow.panel, false, `${state}/${width}: panel overflow`);
       const name = `${state}-${width}-${theme}${suffix}`;
       await page.screenshot({ path: path.join(out, `${name}.png`), animations: 'allow' });
-      const entry = await page.locator('#contextEntry').evaluate(e => ({ title: e.title, label: e.getAttribute('aria-label'), mark: e.querySelector('.entry-context-state')?.getAttribute('aria-hidden') }));
-      evidence.push({ name, text: await page.locator('.scx').count() ? await page.locator('.scx').innerText() : '', entry, overflow });
+      evidence.push({ name, text: await page.locator('.scx').count() ? await page.locator('.scx').innerText() : '', overflow });
     }
+    // 右パネル「この会話のプラグイン」の入口は「…」のメニューだけ（700px 以下・タッチ）。広い幅では一度狭めて開き、幅を戻す
     async function openPanel(menuShot = false) {
-      if (width === 360) {
-        await page.locator('#sessionMore').click();
-        if (menuShot) await shot('-menu');
-        await page.getByRole('menuitem', { name: /プラグイン/ }).click();
-      } else await page.locator('#contextEntry').click();
+      const wide = width > 700;
+      if (wide) { await page.setViewportSize({ width: 700, height: 1000 }); await page.locator('#sessionMore').waitFor({ state: 'visible' }); }
+      await page.locator('#sessionMore').click();
+      if (menuShot && !wide) await shot('-menu');
+      await page.getByRole('menuitem', { name: /プラグイン/ }).click();
       await page.waitForSelector('.scx');
+      if (wide) await page.setViewportSize({ width, height: 1000 });
     }
     try {
-    if (state === 'menu-transition') {
-      await page.locator('#sessionMore').click();
-      const row = page.getByRole('menuitem', { name: /プラグイン/ });
-      assert.match(await row.innerText(), /読み込み中/);
-      await shot('-pending');
-      behavior.fail.add('sessionContext'); behavior.hold.clear(); held.splice(0).forEach(r => r.send());
-      await page.waitForFunction(() => document.querySelector('.context-entry-status')?.textContent === '読み取れませんでした');
-      await shot('-failed');
-      await row.click();
-      behavior.fail.clear();
-      await page.locator('.scx').getByRole('button', { name: '再試行' }).click();
-      await page.waitForFunction(() => document.querySelector('.scx')?.innerText.includes('気になる所なし'));
-      return;
-    }
     await openPanel(['pending', 'error'].includes(state));
     const panel = page.locator('.scx');
     const expectText = async text => { await page.waitForFunction(text => document.querySelector('.scx')?.innerText.includes(text), text); };
@@ -146,7 +133,6 @@ try {
     if (state === 'pending') {
       await expectText('読み込み中…');
       assert(!(await panel.innerText()).includes('まだ始まっていません'));
-      assert.match(await page.locator('#contextEntry').getAttribute('aria-label'), /読み込み中/);
     } else if (state === 'error') {
       await expectText('読み取れませんでした');
       assert(!(await panel.innerText()).includes('まだ始まっていません'));
@@ -175,18 +161,14 @@ try {
       behavior.hold.add('sessionContext');
       await page.getByRole('button', { name: '新しい内容で会話を続ける', exact: true }).click();
       await expectText('更新中…'); await expectText('AGENTS.md');
-      assert.match(await page.locator('#contextEntry').getAttribute('aria-label'), /更新中/);
-      assert.equal(await page.locator('#contextEntry .entry-dot').count(), 1);
-      assert.equal(await page.locator('#contextEntry .entry-context-state').getAttribute('aria-hidden'), 'true');
       assert.equal(await panel.locator('.scx-n').innerText(), '1');
     }
     if (state === 'partial-refreshing') {
       await expectText('AGENTS.md'); await expectText('無いパス');
-      await page.setViewportSize({ width: 1280, height: 1000 });
-      await page.locator('#contextEntry').click();
+      await page.locator('#filePreview').press('Escape');   // 閉じて開き直すと、作業場所の設定・指示・気になる所を読み直す
+      await page.waitForFunction(() => !document.body.classList.contains('file-preview-open'));
       for (const name of ['nativeInstructions', 'contextSettings', 'contextFindings']) behavior.hold.add(name);
-      await page.locator('#contextEntry').click();
-      await page.setViewportSize({ width, height: 1000 });
+      await openPanel();
       await expectText('指示ファイルを再確認中…'); await expectText('設定を更新中…'); await expectText('気になる所を再確認中…');
       await expectText('AGENTS.md'); await expectText('無いパス');
       assert(await page.locator('[data-act=placeStart]').isDisabled());
@@ -196,7 +178,7 @@ try {
     await shot();
     if (state === 'pending' || state === 'partial-pending' || state.includes('refreshing')) {
       await page.emulateMedia({ reducedMotion: 'reduce' });
-      const animations = await page.locator('.scx-state .run svg, #contextEntry .run svg').evaluateAll(es => es.map(e => getComputedStyle(e).animationName));
+      const animations = await page.locator('.scx-state .run svg').evaluateAll(es => es.map(e => getComputedStyle(e).animationName));
       assert(animations.length > 0);
       assert(animations.every(name => name === 'none'), 'reduced motion stops every loading mark');
       if (state === 'partial-refreshing') behavior.fail.add('nativeInstructions');
@@ -236,10 +218,9 @@ try {
       throw error;
     } finally { await ctx.close(); }
   }
-  const states = process.env.CONTEXT_STATES?.split(',') ?? ['pending', 'loaded', 'empty', 'unknown', 'error', 'refreshing', 'partial-pending', 'partial-error', 'native-empty', 'unstarted', 'partial-refreshing', 'report-race', 'menu-transition'];
+  const states = process.env.CONTEXT_STATES?.split(',') ?? ['pending', 'loaded', 'empty', 'unknown', 'error', 'refreshing', 'partial-pending', 'partial-error', 'native-empty', 'unstarted', 'partial-refreshing', 'report-race'];
   for (const width of (process.env.CONTEXT_WIDTHS?.split(',').map(Number) ?? [1280, 360])) for (const theme of (process.env.CONTEXT_THEMES?.split(',') ?? ['light', 'dark'])) {
     for (const state of states) {
-      if (state === 'menu-transition' && width !== 360) continue;
       await scenario(state, width, theme);
       console.log('PASS', state, width, theme);
     }

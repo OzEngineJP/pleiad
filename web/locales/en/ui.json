@@ -1250,7 +1250,6 @@
       "retry": "Retry",
       "nativeError": "Couldn't read instruction files",
       "nativeRefreshing": "Checking instruction files again…",
-      "nativeUnknown": "Can't check instruction files",
       "settingsLoading": "Loading settings…",
       "settingsRefreshing": "Updating settings…",
       "settingsUnknown": "Settings unavailable",
@@ -1268,9 +1267,6 @@
       "common": "Shared"
     },
     "chip": {
-      "mcpBad": "MCP {{n}} ({{bad}} not connecting)",
-      "native": "{{kinds}} left to the agent",
-      "added": "Pleiad's instructions {{n}}",
       "join": ", "
     },
     "title": "Plugins for this conversation",
@@ -2612,11 +2608,8 @@
     "titleLabel": "Title",
     "titleWand": "Ask the AI for a title",
     "context": {
-      "entryTitle": "Plugins this conversation loads",
       "label": "Plugins",
-      "changed": "Changed",
-      "title": "Plugins for this conversation",
-      "titleWith": "Plugins for this conversation: {{summary}}"
+      "changed": "Changed"
     },
     "menu": {
       "iconFailed": "Couldn't change the icon: {{error}}",
@@ -5043,7 +5036,6 @@
     },
     "toc": {
       "title": "Contents",
-      "entry": "Search this conversation ({{key}})",
       "close": "Close (Esc)",
       "search": "Search this conversation",
       "prevHit": "Previous match (Shift+Enter)",
