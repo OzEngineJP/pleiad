@@ -22,6 +22,7 @@
 // ただし PC で引き継いでいる間に、端末が「この端末で操作する」を押したとき（takeOver(sessionId, { by: 'device', fromPc: true, ... })）は、
 // PC に見せていた窓を隠してから端末へ移す（一時停止は解かず、始まりの時刻も保つ）。隠せなければ移さず、conceal-failed を返す
 import { deviceViewport } from './input.mjs';
+import { browserUnifyOn } from '../browser-unify-flag.mjs';
 
 export const CONTROL_STATES = Object.freeze(['running', 'idle', 'stopped', 'paused']);
 
@@ -41,15 +42,21 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
   const listeners = new Set();
   const last = new Map();      // 会話の id -> 最後に配った状態の印（同じ状態を重ねて配らない）
   const queues = new Map();    // 会話の id -> 操作の順番待ち（同じ会話の引き継ぎ・戻す・止めるを順に流す）
+  const unify = browserUnifyOn(process.env);   // ブラウザーの一本化の旗（ADR 0293 の 1。off なら引き継ぎ・戻すは今の動きのまま）
 
   const errors = new Map();    // 会話の id -> 戻せなかった理由（'conceal-failed'。paused のまま画面へ返す。paused でなくなれば消す）
   const devices = new Map();   // 会話の id -> 端末の映像の箱（端末が引き継いでいる間。paused でなくなれば消す）
+  const pcTabs = new Map();    // 会話の id -> { targetId, since }（旗が on の「PC で操作する」で人の操作にしたタブ。窓を出している間は時間で戻さない）
+  /** タブごとの持ち手の口（core/chrome/tab-holder.mjs。relay.unify.tabHolder） */
+  const holder = () => relay.unify?.tabHolder ?? null;
 
   function stateOf(sessionId) {
     const s = relay.state(sessionId);
-    if (!s) return { sessionId, state: 'idle', since: null, error: null, by: null };
-    const state = s.paused ? 'paused' : s.stopped ? 'stopped' : s.turn ? 'running' : 'idle';
-    return { sessionId, state, since: s.paused?.at ?? null, error: s.paused ? errors.get(sessionId) ?? null : null, by: s.paused ? (devices.has(sessionId) ? 'device' : 'pc') : null };
+    const pc = pcTabs.get(sessionId) ?? null;
+    if (!s) return pc ? { sessionId, state: 'paused', since: pc.since, error: errors.get(sessionId) ?? null, by: 'pc' } : { sessionId, state: 'idle', since: null, error: null, by: null };
+    const held = Boolean(s.paused) || Boolean(pc);
+    const state = s.paused || pc ? 'paused' : s.stopped ? 'stopped' : s.turn ? 'running' : 'idle';
+    return { sessionId, state, since: s.paused?.at ?? pc?.since ?? null, error: held ? errors.get(sessionId) ?? null : null, by: held ? (devices.has(sessionId) ? 'device' : 'pc') : null };
   }
   const mark = state => `${state.state}:${state.since ?? ''}:${state.error ?? ''}:${state.by ?? ''}`;
 
@@ -68,8 +75,9 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     }
     if (!relay.state(sessionId)?.paused && devices.has(sessionId)) { devices.delete(sessionId); safe('operate', () => capture?.operate?.(sessionId, null)); }
     for (const id of [...devices.keys()]) if (!relay.state(id)) { devices.delete(id); safe('operate', () => capture?.operate?.(id, null)); }
+    for (const id of [...pcTabs.keys()]) if (!relay.state(id)) pcTabs.delete(id);   // 消えた会話の「PC で操作する」の記録
     if (!capture) return;
-    const paused = Boolean(relay.state(sessionId)?.paused) && !devices.has(sessionId);
+    const paused = (Boolean(relay.state(sessionId)?.paused) && !devices.has(sessionId)) || pcTabs.has(sessionId);
     if (paused && !suspended.has(sessionId)) { suspended.add(sessionId); safe('suspend', () => capture.suspend(sessionId)); }
     else if (!paused && suspended.has(sessionId)) { suspended.delete(sessionId); safe('resume', () => capture.resume(sessionId)); }
     for (const id of [...suspended]) if (!relay.state(id)) { suspended.delete(id); safe('resume', () => capture.resume(id)); }
@@ -96,12 +104,72 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     return run;
   };
 
+  /** 会話の窓を全部画面の外の見えない窓に戻す。隠せなかった窓があれば false */
+  async function concealWindows(sessionId) {
+    await relay.refreshWindows(sessionId).catch(error => log(`chrome-control: refreshWindows failed: ${error?.message ?? error}`));
+    let result = { concealed: 0, failed: 0 };
+    try { result = await relay.scope.conceal({ entryId: sessionId, cdp: relay.cdp }); }
+    catch (error) { log(`chrome-control: conceal failed: ${error?.message ?? error}`); result = { concealed: 0, failed: 1 }; }
+    return result.failed === 0;
+  }
+
+  /**
+   * 「PC で操作する」（旗が on・ADR 0293 の 1 の 6）: 見ているタブの窓を画面の中に出し、そのタブを人の操作にする（pinned）。
+   * 会話の一時停止はしない（エージェントはほかのタブで続けられる）。人が本物の窓で入力したことは CDP から見えないので、窓を出している間は時間で戻さない。
+   * 戻すのは「任せる」（doResume）。映像は「PC で操作中」の幕（撮影を断つ）
+   */
+  async function operateOnPc(sessionId) {
+    const targetId = relay.view?.current?.(sessionId) ?? null;
+    const tab = targetId ? relay.view?.tabs?.(sessionId)?.find(item => item.targetId === targetId) ?? null : null;
+    if (!tab || !relay.scope.windows?.(sessionId).some(window => window.ref)) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
+    holder()?.holdByPc?.({ sessionId, targetId });   // 先に人の操作にする（窓が見える間にエージェントが触れない）
+    pcTabs.set(sessionId, { targetId, since: now() });
+    publish(sessionId);   // 撮影を断つ・状態を配る
+    const near = await Promise.resolve(os.appWindow?.()).catch(() => null) ?? await Promise.resolve(os.foreground()).catch(() => null);
+    let result = { revealed: 0 };
+    try { result = await relay.scope.reveal({ entryId: sessionId, near, front: tab.windowId ?? undefined }); }
+    catch (error) { log(`chrome-control: reveal failed: ${error?.message ?? error}`); }
+    if (!result.revealed) {
+      pcTabs.delete(sessionId);
+      holder()?.release?.(sessionId, targetId);
+      publish(sessionId);
+      throw new ChromeControlError('NO_WINDOW', 'the agent browser window could not be shown');
+    }
+    if (!result.raised) log('chrome-control: the window was shown but did not take the foreground');
+    publish(sessionId);
+    return stateOf(sessionId);
+  }
+
+  /** 「この端末で操作する」（旗が on）: 見ているタブをその端末の人の操作にする。窓は出さず、会話の一時停止もしない（ほかのタブはエージェントが続けられる） */
+  async function takeOverByDeviceUnify(sessionId, { width, height, scale, fromPc = false } = {}) {
+    const viewport = deviceViewport({ width, height, scale });
+    if (!viewport) throw new ChromeControlError('INVALID', 'the size of the device view is needed');
+    const targetId = relay.view?.current?.(sessionId) ?? null;
+    if (!targetId) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
+    if (pcTabs.has(sessionId)) {
+      if (fromPc !== true) return stateOf(sessionId);   // 早い者勝ち（PC の窓を出している）
+      if (!(await concealWindows(sessionId))) { errors.set(sessionId, 'conceal-failed'); publish(sessionId); return stateOf(sessionId); }
+      const held = pcTabs.get(sessionId);
+      pcTabs.delete(sessionId);
+      errors.delete(sessionId);
+      holder()?.release?.(sessionId, held.targetId);
+    }
+    holder()?.touch?.({ sessionId, targetId, by: 'device', viewport });
+    publish(sessionId);
+    return stateOf(sessionId);
+  }
+
   async function doTakeOver(sessionId, { by = 'pc', width, height, scale, fromPc = false } = {}) {
     const before = relay.state(sessionId);
     if (!before) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
     if (before.paused) {
       if (by === 'device' && fromPc === true && !devices.has(sessionId)) return moveToDevice(sessionId, deviceViewport({ width, height, scale }));
       return stateOf(sessionId);
+    }
+    if (unify) {
+      // ADR 0293 の 1: 「PC で操作する」・「この端末で操作する」はタブごとの人の操作に読み替える（会話の一時停止は使わない）
+      if (by === 'device') return takeOverByDeviceUnify(sessionId, { width, height, scale, fromPc });
+      return operateOnPc(sessionId);
     }
     if (by === 'device') return takeOverByDevice(sessionId, deviceViewport({ width, height, scale }));
     // 見せられる窓が無ければ、一時停止にしない（一時停止はエージェントの接続を切るので、窓が無いのに切らない）
@@ -154,7 +222,18 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
   }
 
   async function doResume(sessionId) {
-    if (!relay.state(sessionId)?.paused) return stateOf(sessionId);
+    if (unify) {
+      // 「任せる」（旗が on）: 「PC で操作する」の窓が出ていれば画面の外へ戻してから、そのタブの人の操作を AI に戻す
+      if (pcTabs.has(sessionId)) {
+        if (!(await concealWindows(sessionId))) { errors.set(sessionId, 'conceal-failed'); publish(sessionId); return stateOf(sessionId); }
+        const held = pcTabs.get(sessionId);
+        pcTabs.delete(sessionId);
+        errors.delete(sessionId);
+        holder()?.release?.(sessionId, held.targetId);
+      }
+      holder()?.releaseAll?.(sessionId);   // 人の操作のタブを全部 AI に戻す
+    }
+    if (!relay.state(sessionId)?.paused) { publish(sessionId); return stateOf(sessionId); }
     if (devices.has(sessionId)) {
       // 端末の引き継ぎ: 窓は見せていないので隠す必要は無い。ページの大きさを戻してから解く（解くまで devices に残し、間の便りで映像を断らない）
       await Promise.resolve(capture?.operate?.(sessionId, null)).catch(error => log(`chrome-control: operate failed: ${error?.message ?? error}`));
@@ -189,6 +268,10 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
 
   async function doStop(sessionId) {
     if (!relay.state(sessionId)) return stateOf(sessionId);
+    if (unify && pcTabs.has(sessionId)) {
+      await doResume(sessionId);   // 「PC で操作する」の窓を戻してから止める
+      if (pcTabs.has(sessionId)) return stateOf(sessionId);   // 窓を隠せなかった。止めずに画面へ返す
+    }
     if (relay.state(sessionId).paused) {
       await doResume(sessionId);   // 窓を戻してから止める
       if (relay.state(sessionId)?.paused) return stateOf(sessionId);   // 窓を隠せなかった。止めずに画面へ返す
