@@ -40,6 +40,7 @@ export async function loadContent(file) {
 export function errorView(root, error) {
   const code = error?.code ?? 'read-failed';
   const known = ['not-found', 'session-not-found', 'access-denied', 'protected-data', 'network-path', 'different-host', 'cwd-unknown', 'not-file', 'invalid-path', 'over-limit', 'unsupported', 'unavailable', 'read-failed'];
+  // i18n-dynamic: errors.
   root.replaceChildren(node('p', 'empty error', text(`errors.${known.includes(code) ? code : 'read-failed'}`)));
 }
 // These are requests for the host's menu/confirmation, never write operations.

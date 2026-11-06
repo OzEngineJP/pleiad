@@ -8,6 +8,7 @@ export async function renderNew(root) {
   const shortcuts = node('div', 'shortcuts');
   for (const kind of ['git', 'plugins']) {
     const link = node('a', 'shortcut'); link.href = pageUrl(kind);
+    // i18n-dynamic: new.
     const label = node('span', '', text(`new.${kind}`));
     if (kind === 'git') {
       try { const changes = await api('git', { kind:'changes' }); if (changes.changes) label.textContent = text('new.changes', { count:changes.changes.total?.files ?? changes.changes.files.length }); } catch { /* Keep the entry available when git cannot be read. */ }

@@ -5048,12 +5048,12 @@
       "chipAgentRunning": "{{name}} is operating", "chipAgentIdle": "{{name}} operated last",
       "profileActions": "Chrome profiles"
     },
+    "video": { "lag": "The video is lagging", "stale": "Reconnecting" },
     "remote": {
       "screen": "Browser screen",
       "connecting": "Connecting…",
       "ended": "The browser tab was closed",
       "textInput": "Type text",
-      "video": { "lag": "The video is lagging", "stale": "Reconnecting" },
       "textLabel": "Text to type into the page",
       "textPlaceholder": "Text for the page",
       "textSend": "Send",

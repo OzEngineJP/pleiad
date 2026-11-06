@@ -4937,12 +4937,12 @@
       "chipAgentRunning": "{{name}} が操作中", "chipAgentIdle": "{{name}} が最後に操作",
       "profileActions": "Chrome のプロフィール"
     },
+    "video": { "lag": "映像が遅れています", "stale": "つなぎ直しています" },
     "remote": {
       "screen": "ブラウザーの画面",
       "connecting": "接続しています…",
       "ended": "ブラウザーのタブが閉じました",
       "textInput": "文字入力",
-      "video": { "lag": "映像が遅れています", "stale": "つなぎ直しています" },
       "textLabel": "ページへ入力する文字",
       "textPlaceholder": "ページに入力する文字",
       "textSend": "入力",

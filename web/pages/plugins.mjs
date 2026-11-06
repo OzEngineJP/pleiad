@@ -5,6 +5,7 @@ export async function renderPlugins(root) {
   const data = await api('plugins');
   const entries = data?.report?.entries ?? [];
   for (const kind of ['instruction', 'skill', 'mcp']) {
+    // i18n-dynamic: plugins.
     const group = node('section', 'plugin-group'); group.append(node('h2', '', text(`plugins.${kind}`)));
     const rows = entries.filter(e => e.kind === kind && e.status !== 'duplicate');
     if (!rows.length) group.append(node('p', 'empty', text('plugins.empty')));
