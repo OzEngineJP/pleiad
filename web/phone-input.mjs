@@ -27,22 +27,26 @@ export function fieldAt(fields, point) {
 /** Receive field/sheet events; reset on target changes, destroy on close. */
 export function createPhoneInput({ surface, send = () => {}, getRect = () => surface?.getBoundingClientRect(), getKeyboardRect = getRect, getMetadata = () => ({}), onPan = () => {}, phone = true, onError = () => {} } = {}) {
   // The caller can construct the part before mounting its surface.
-  if (!surface) return { focus() {}, beforeTap() { return true; }, receive() {}, reset() {}, destroy() {} };
+  if (!surface) return { focus() {}, blur() {}, beforeTap() { return true; }, receive() {}, reset() {}, destroy() {} };
   ensureBrowserControlStyles();
   const overlay = el('textarea', 'b2-phone-input'); overlay.setAttribute('aria-label', t('control:keyboardInput'));
   overlay.autocomplete = 'off'; overlay.autocapitalize = 'off'; overlay.spellcheck = false; overlay.tabIndex = -1;
+  // A textarea cannot be type=password, so password fields get their own overlay (no prediction or keyboard learning).
+  const secret = el('input', 'b2-phone-input'); secret.type = 'password'; secret.setAttribute('aria-label', t('control:keyboardInput'));
+  secret.autocomplete = 'off'; secret.autocapitalize = 'off'; secret.spellcheck = false; secret.tabIndex = -1;
+  const note = el('div', 'b2-phone-note', t('control:passwordNote')); note.hidden = true; note.setAttribute('role', 'status');
   const fallback = el('div', 'b2-fallback'), fallbackInput = el('input'), fallbackDone = el('button', 'b2-action', t('control:done'));
   fallbackInput.type = 'text'; fallbackInput.setAttribute('aria-label', t('control:keyboardInput')); fallbackDone.type = 'button'; fallback.append(fallbackInput, fallbackDone); fallback.hidden = true;
   const sheet = el('div', 'b2-sheet'), sheetBody = el('div', 'b2-sheet-body'); sheet.hidden = true; sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-modal', 'true'); sheet.append(sheetBody);
-  surface.append(overlay); document.body.append(fallback, sheet);
-  let fields = [], focused = null, previousFocus = null, sheetCleanup = () => {}, alive = true;
+  surface.append(overlay, secret); document.body.append(fallback, note, sheet);
+  let fields = [], focused = null, active = overlay, previousFocus = null, sheetCleanup = () => {}, alive = true;
   const post = value => { try { Promise.resolve(send(value)).catch(onError); } catch (error) { onError(error); } };
   const composition = createCompositionInput(post);
   const sentinel = '\u200b';
   const prepare = input => { input.value = sentinel; input.setSelectionRange?.(1, 1); };
   const disposers = [];
   const listen = (node, type, handler, options) => { node.addEventListener(type, handler, options); disposers.push(() => node.removeEventListener(type, handler, options)); };
-  for (const input of [overlay, fallbackInput]) {
+  for (const input of [overlay, secret, fallbackInput]) {
     listen(input, 'compositionstart', () => composition.start());
     listen(input, 'compositionupdate', event => composition.update(event.data ?? ''));
     prepare(input);
@@ -75,12 +79,9 @@ export function createPhoneInput({ surface, send = () => {}, getRect = () => sur
     const title = el('h2', 'b2-sheet-title'), error = el('p', 'b2-sheet-error'), actions = el('div', 'b2-actions');
     const cancel = el('button', 'b2-action', t('control:cancel')), done = el('button', 'b2-action primary', t('control:done'));
     cancel.type = done.type = 'button'; actions.append(cancel, done); sheetBody.append(title); sheet.hidden = false;
-    sheet.setAttribute('aria-label', message.type === 'password' ? t('control:passwordUnavailable') : message.type === 'select' ? t('control:select') : message.type === 'file' ? t('control:file') : t('control:dialog'));
+    sheet.setAttribute('aria-label', message.type === 'select' ? t('control:select') : message.type === 'file' ? t('control:file') : t('control:dialog'));
     cancel.addEventListener('click', () => message.type === 'dialog' ? act({ type: 'dialog', accept: false }, cancel, error) : message.type === 'file' ? act({ type: 'files', files: [] }, cancel, error) : closeSheet());
-    if (message.type === 'password') {
-      title.textContent = t('control:passwordUnavailable'); sheetBody.append(el('p', 'b2-sheet-message', t('control:passwordHint')));
-      cancel.hidden = true; done.textContent = t('control:close'); done.addEventListener('click', () => closeSheet());
-    } else if (message.type === 'dialog') {
+    if (message.type === 'dialog') {
       title.textContent = t('control:dialog'); sheetBody.append(el('p', 'b2-sheet-message', message.message));
       const prompt = el('input'); prompt.type = 'text'; prompt.value = message.defaultPrompt ?? ''; prompt.setAttribute('aria-label', t('control:keyboardInput'));
       if (message.dialogType === 'prompt') sheetBody.append(prompt);
@@ -122,40 +123,45 @@ export function createPhoneInput({ surface, send = () => {}, getRect = () => sur
     const rect = getRect(), box = surface.getBoundingClientRect(), metadata = getMetadata();
     if (!rect?.width || !metadata?.deviceWidth) return;
     const scale = rect.width / metadata.deviceWidth;
-    Object.assign(overlay.style, { left: `${rect.left - box.left + field.x * scale}px`, top: `${rect.top - box.top + field.y * scale}px`, width: `${field.width * scale}px`, height: `${Math.max(20, field.height * scale)}px` });
+    Object.assign(active.style, { left: `${rect.left - box.left + field.x * scale}px`, top: `${rect.top - box.top + field.y * scale}px`, width: `${field.width * scale}px`, height: `${Math.max(20, field.height * scale)}px` });
   }
   function focus(field) {
     focused = field;
-    if (phone && field?.type === 'password') { overlay.blur(); fallbackInput.blur(); showSheet({ type: 'password' }); return false; }
     if (field && ['file', 'select-one', 'select-multiple'].includes(field.type)) { post({ type: 'field', id: field.id }); return false; }
-    if (field && !['text', 'search', 'email', 'url', 'tel', 'number', 'textarea', 'password'].includes(field.type)) { overlay.blur(); return true; }
+    if (field && !['text', 'search', 'email', 'url', 'tel', 'number', 'textarea', 'password'].includes(field.type)) { active.blur(); return true; }
     if (field) {
-      fallback.hidden = true; position(field); overlay.inputMode = field.inputMode || (field.type === 'number' ? 'decimal' : 'text'); overlay.enterKeyHint = field.enterKeyHint || ''; overlay.focus({ preventScroll: true });
-    } else { fallback.hidden = false; fallbackInput.focus({ preventScroll: true }); }
+      const next = field.type === 'password' ? secret : overlay; if (next !== active) active.blur(); active = next;
+      fallback.hidden = true; position(field); active.inputMode = field.inputMode || (field.type === 'number' ? 'decimal' : 'text'); active.enterKeyHint = field.enterKeyHint || ''; active.focus({ preventScroll: true });
+    } else { active.blur(); fallback.hidden = false; fallbackInput.focus({ preventScroll: true }); }
+    note.hidden = !(phone && active === secret && document.activeElement === secret); keyboard();
     return true;
   }
   const viewport = globalThis.visualViewport;
   function keyboard() {
     if (!alive) return;
     const bottom = viewport ? viewport.offsetTop + viewport.height : innerHeight;
-    fallback.style.bottom = `${Math.max(8, innerHeight - bottom + 8)}px`;
-    if (!focused || ![overlay, fallbackInput].includes(document.activeElement)) { onPan(0); return; }
+    fallback.style.bottom = note.style.bottom = `${Math.max(8, innerHeight - bottom + 8)}px`;
+    if (!focused || ![overlay, secret, fallbackInput].includes(document.activeElement)) { onPan(0); return; }
     const rect = getKeyboardRect(), metadata = getMetadata();
     const fieldBottom = rect.top + (focused.y + focused.height) * rect.width / (metadata.deviceWidth || rect.width);
     onPan(Math.min(0, bottom - 24 - fieldBottom));
     position(focused);
   }
   if (viewport) { listen(viewport, 'resize', keyboard); listen(viewport, 'scroll', keyboard); }
+  // The note sits above the keyboard only while a password field is being typed into.
+  listen(secret, 'focus', () => { note.hidden = !phone; keyboard(); });
+  listen(secret, 'blur', () => { note.hidden = true; });
   listen(fallbackDone, 'click', () => { fallbackInput.blur(); fallback.hidden = true; focused = null; onPan(0); });
-  return { element: overlay, fallback, sheet, focus,
-    beforeTap(point) { const field = fieldAt(fields, point); if (field) return focus(field); focused = null; overlay.blur(); fallbackInput.blur(); fallback.hidden = true; onPan(0); return true; },
+  return { element: overlay, secret, note, fallback, sheet, focus,
+    blur() { active.blur(); },
+    beforeTap(point) { const field = fieldAt(fields, point); if (field) return focus(field); focused = null; active.blur(); fallbackInput.blur(); fallback.hidden = note.hidden = true; onPan(0); return true; },
     receive(message) {
       if (message?.type === 'fields') { fields = message.fields ?? []; if (focused) { focused = fields.find(field => field.id === focused.id) ?? null; if (focused) position(focused); } }
       else if (['dialog', 'select', 'file'].includes(message?.type)) showSheet(message);
       else if (message?.type === 'dismiss') closeSheet();
       else if (message?.type === 'keyboard' && !focused) { fallback.hidden = false; }
     },
-    reset() { fields = []; focused = null; composition.reset(); closeSheet(false); overlay.blur(); fallbackInput.blur(); fallback.hidden = true; onPan(0); },
-    destroy() { alive = false; composition.reset(); sheetCleanup(); for (const dispose of disposers) dispose(); overlay.remove(); fallback.remove(); sheet.remove(); onPan(0); },
+    reset() { fields = []; focused = null; composition.reset(); closeSheet(false); active.blur(); fallbackInput.blur(); fallback.hidden = note.hidden = true; onPan(0); },
+    destroy() { alive = false; composition.reset(); sheetCleanup(); for (const dispose of disposers) dispose(); overlay.remove(); secret.remove(); fallback.remove(); note.remove(); sheet.remove(); onPan(0); },
   };
 }

@@ -45,7 +45,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
     const point = coords(event); if (!point) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY }); surface.setPointerCapture?.(event.pointerId);
     if (pointers.size === 2) {
-      clearTimeout(longTimer); cancelTap(); phoneInput?.element.blur();
+      clearTimeout(longTimer); cancelTap(); phoneInput?.blur();
       const [a, b] = [...pointers.values()]; pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y), zoom, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, panX, panY }; gesture = null; return;
     }
     gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, lastX: event.clientX, lastY: event.clientY, point, moved: false, long: false, dragging: false };
@@ -81,7 +81,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
     const point = coords(event); if (!point) return;
     if (current.long) { dispatch({ type: 'context', ...point }); return; }
     if (phone && lastTap && event.timeStamp - lastTap < 280 && pendingTap && lastTapPoint && Math.hypot(event.clientX - lastTapPoint.x, event.clientY - lastTapPoint.y) < 24) {
-      cancelTap(); lastTap = 0; zoom = zoom > 1 ? 1 : 2; panX = panY = 0; phoneInput?.element.blur(); transform(); return;
+      cancelTap(); lastTap = 0; zoom = zoom > 1 ? 1 : 2; panX = panY = 0; phoneInput?.blur(); transform(); return;
     }
     ripple(event); lastTap = event.timeStamp; lastTapPoint = { x: event.clientX, y: event.clientY };
     // Focus within this gesture, not after awaiting the remote tap.
