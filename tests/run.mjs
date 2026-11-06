@@ -865,6 +865,8 @@ const SUITES = [
   // --- S0（差し込み口） ---
   // 映像の座標の変換の引っ越し（web/page-coords.mjs）・ページの port の認証（core/page-auth.mjs）・2 つのリスナー（Host・GET だけ・::1・旗・port の引き継ぎ）
   './unit/page-coords.mjs',
+  // 中継の 4 つの口（既定は今のまま・差し替えた口が決めた場所で呼ばれる）
+  './unit/chrome-relay-hooks.mjs',
 
   // --- A1 映像 ---
 
