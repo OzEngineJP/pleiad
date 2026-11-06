@@ -431,6 +431,8 @@ const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
 // ブラウザーの一本化（ADR 0291〜0294）の旗。off のあいだは、ページの口・リスナー・WS の口をどれも作らない（今の動きのまま）
 const BROWSER_UNIFY = browserUnifyOn(process.env);
+// 可視化の束（相対の資源を含めて隔離の origin で配る。ADR 0292 の 3）を置くデータの置き場。旗が off なら束を作らない
+const VIZ_BUNDLE_DIR = BROWSER_UNIFY ? store.dataDir : null;
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
 // 閉じた Chrome の窓の静止画は持ち主の会話を見ている要求にだけ見せる（guard。要求の sessionId が持ち主）。ここは持ち主を名乗らない口の分で、断る
@@ -7432,6 +7434,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   const emit = makeEmit(turn);
   turn.visualizations = createVisualizationCollector({
     access: fileAccess,
+    dataDir: VIZ_BUNDLE_DIR,
     publish: async payload => {
       await turn.setup;
       const id = turn.info.sessionId;
@@ -8107,6 +8110,7 @@ async function restoreTurn(card, source) {
   const emit = makeEmit(turn);
   turn.visualizations = createVisualizationCollector({
     access: fileAccess,
+    dataDir: VIZ_BUNDLE_DIR,
     publish: async payload => {
       const record = await history.recordPresent(sessionId, { ...payload, turnKey: turn.presentKey });
       emit({ type: 'present', sessionId, ...record }, { recorded: true });

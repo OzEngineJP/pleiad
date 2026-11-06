@@ -28,7 +28,9 @@ export async function prepareVisualization(ref, access) {
 
 // Serialize snapshots in response order, and drain before turnEnd. A missing or
 // rejected file gets a durable error card, rather than a disappearing reference.
-export function createVisualizationCollector({ access, publish }) {
+// dataDir はブラウザーの一本化の旗が on のときだけ入る（可視化の束の置き場。ADR 0292 の 3。束を作るのは A3。S0 では使わない）
+export function createVisualizationCollector({ access, publish, dataDir = null }) {
+  void dataDir;
   let text = '', chain = Promise.resolve(), count = 0;
   function end() {
     const refs = visualizeReferences(text); text = '';
