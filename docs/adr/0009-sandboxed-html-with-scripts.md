@@ -1,6 +1,6 @@
 # 0009 HTML はスクリプトごと、同じ隔離の中で動かす
 
-- 状態: 承認（2026-09-26）。CSP の許可範囲は置換（0042）
+- 状態: 承認（2026-09-26）。CSP の許可範囲は置換（0042）。一部置換（0292）: CSP は meta ではなく応答のヘッダーに置き、HTML は srcdoc ではなく隔離した origin（localhost の別 port）から配る。可視化の sandbox は allow-scripts allow-downloads allow-forms にする（HTML のファイルは allow-scripts だけのまま）
 
 ## 状況
 
