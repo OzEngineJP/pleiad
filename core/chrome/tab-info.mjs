@@ -193,7 +193,8 @@ export function createTabInfo({ emit = () => {}, log = () => {}, fetchResource =
     if (!live(state)) return;
     if (generation === state.generation) state.frameId = tree.frameTree?.frame?.id;
     run(history(state));
-    await favicon(state);
+    // 印を取れない（icon-fetch が断るアドレス。可視化の隔離の origin など）ときも、題は読む
+    await favicon(state).catch(report);
     if (live(state)) await readTitle(state);
   }
 

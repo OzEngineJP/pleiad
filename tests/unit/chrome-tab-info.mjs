@@ -210,6 +210,14 @@ export default async function(t) {
     markers.added(marker.tab); await settle();
     t.ok('window marker title hidden', markers.list('one')[0].title === '');
     markers.removed(marker.tab);
+    // 可視化の隔離の origin は印の取得を断られる。題は読む
+    const logs = [], viz = fake({ url: 'http://localhost:7436/viz/a/index.html', title: 'localhost:7436/viz/a/index.html', send: (method, params) => {
+      if (method === 'HTTP.fetch') throw new Error('blocked address');
+      if (method === 'Runtime.evaluate' && params.expression === 'document.title') return { result: { value: '売上' } };
+    } }), vizInfo = makeInfo(viz, { log: value => logs.push(value) });
+    vizInfo.added(viz.tab); await settle();
+    t.ok('title read when icon fetch is refused', vizInfo.list('one')[0].title === '売上' && vizInfo.list('one')[0].favicon === null && logs.length === 1);
+    vizInfo.removed(viz.tab);
   }
   {
     let release, detached = 0;

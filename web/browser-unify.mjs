@@ -81,6 +81,9 @@ export function pageName(tab) {
   return t(`tabs:address.locations.${page.kind}`, { defaultValue:tab.title || '' });
 }
 
+/** 可視化の別のタブ（隔離の origin の /viz/。web/visualize-frame.mjs）は、ホスト名（localhost）でなく説明の文（ページの <title>） */
+const vizTitle = tab => (/^http:\/\/localhost:\d+\/viz\/[0-9a-f]{64}\//.test(tab?.url ?? '') ? tab.title ?? '' : '');
+
 /** タブの帯と一覧の題。Pleiad のページはページの <title>（「· Pleiad」付き）でなく、ファイル・フォルダーの名前かページの名前。新しいタブのページは「新しいタブ」 */
 export function tabLabel(tab) {
   if (tab?.page?.kind === 'new') return t('tabs:strip.new');
@@ -223,7 +226,7 @@ export function createBrowserUnify(deps = {}) {
     if (stripHolder) stripHolder.hidden = !want;
     if (!want) return;
     const image = chrome()?.frameImage ?? stripThumb(c.sessionId, c.tab);
-    phoneStrip.update({ url:c.tab?.url ?? '', title:pageName(c.tab), tabs:tabs().length, holder, name:c.name, image, last:c.held.last ?? null, pinned:!!c.held.pinned });
+    phoneStrip.update({ url:c.tab?.url ?? '', title:pageName(c.tab) || vizTitle(c.tab), tabs:tabs().length, holder, name:c.name, image, last:c.held.last ?? null, pinned:!!c.held.pinned });
   }
   /** 帯の小さな絵: 右の欄を閉じている間は映像が無いので、タブを撮った絵を使う。同じタブは 15 秒に 1 回まで */
   const thumbs = new Map();
