@@ -78,7 +78,11 @@ export default async function(t) {
     const root = await op('channels.post', { channelId: channel.id, text: 'echo:thread', to: live.id });
     await until(async () => (await op('channels.read', { channelId: channel.id, threadId: root.id })).threads.some(th => th.sessions?.[live.id]));
     await until(async () => !(await client.cmd('running')).turns.length);
-    const postsBefore = (await op('channels.read', { channelId: channel.id, threadId: root.id })).posts;
+    // 会話が作成されてから実行が始まるまでの間は running が空になる。返事の保存完了を待って比較する。
+    const postsBefore = await until(async () => {
+      const posts = (await op('channels.read', { channelId: channel.id, threadId: root.id })).posts;
+      return posts.some(p => p.author?.botId === live.id && p.state === 'done') && posts;
+    });
     const routine = await op('routines.create', { name: 'Later', botId: live.id, channelId: channel.id, prompt: 'echo:later', trigger: { kind: 'daily', at: '23:59' } });
     await client.runTurn({ sessionId, prompt: 'control-info' });
     const control = JSON.parse((await client.cmd('loadSession', { sessionId })).messages.at(-1).text);
