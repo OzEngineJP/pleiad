@@ -608,8 +608,8 @@
       },
       "confirm": {
         "title": "External resources",
-        "scope": "In visualizations, HTML previews, and PC HTML files opened in the built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages or to HTML files opened in the default browser. This setting is shared by all screens.",
-        "scopeRemote": "In visualizations and HTML files opened in the host’s built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages or to HTML files opened in the default browser. This setting is shared by all screens.",
+        "scope": "In visualizations and HTML files opened in the right panel, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages or to HTML files opened in the default browser. This setting is shared by all screens.",
+        "scopeRemote": "In visualizations and HTML files opened in the right panel, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages or to HTML files opened in the default browser. This setting is shared by all screens.",
         "agentTitle": "Agent site access",
         "external": "Ask before loading external resources",
         "agent": "Ask before an agent uses a site",
