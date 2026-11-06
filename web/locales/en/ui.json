@@ -4965,6 +4965,7 @@
       "none": "This conversation has no Chrome window",
       "failed": "Couldn't open the Chrome window video.",
       "screenOperating": "Video of {{name}}'s Chrome window (operating from this device)",
+      "screenUnified": "This conversation's Chrome screen",
       "deviceNote": "Password managers and passkeys can't be used from this device",
       "inputFailed": "Couldn't send that to the Chrome window",
       "closeShown": "Close the window being shown", "closeFailed": "Couldn't close the Chrome window",

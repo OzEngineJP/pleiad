@@ -489,7 +489,9 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
   function paint() {
     if (!parts) return;
     const name = nameOf();
-    parts.screen.setAttribute('aria-label', operating ? t('browser.chromeWindow.screenOperating', { name }) : t('browser.chromeWindow.screen', { name }));
+    // 一本化した右の欄の映像は、そのまま触れる（見るだけではない。誰が操作中かはアドレスバーの札が示す）
+    parts.screen.setAttribute('aria-label', unifiedInput ? t('browser.chromeWindow.screenUnified')
+      : operating ? t('browser.chromeWindow.screenOperating', { name }) : t('browser.chromeWindow.screen', { name }));
     parts.screen.toggleAttribute('data-operating', operating);
     parts.text.hidden = !operating; parts.note.hidden = !operating;
     parts.veil.hidden = !state?.suspended || ended;

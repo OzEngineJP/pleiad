@@ -4854,6 +4854,7 @@
       "none": "この会話には Chrome のウィンドウがありません",
       "failed": "Chrome のウィンドウの映像を開けませんでした。",
       "screenOperating": "{{name}} の Chrome のウィンドウの映像（この端末で操作中）",
+      "screenUnified": "この会話の Chrome の画面",
       "deviceNote": "パスワード管理・パスキーは、この端末からは使えません",
       "inputFailed": "Chrome のウィンドウへ送れませんでした",
       "closeShown": "表示中のウィンドウを閉じる", "closeFailed": "Chrome のウィンドウを閉じられませんでした",

@@ -57,6 +57,23 @@ export default async function (t) {
       t.ok('選ばれたチップだけがタブ移動の対象（roving tabindex）', r.chips().map(chip => chip.attrs.tabindex).join() === '0,-1');
       t.ok('追う側のボタンは「追っている」状態（aria-pressed）', r.follow().attrs['aria-pressed'] === 'true' && r.follow().classList.contains('on'));
     }
+    // 一本化した右の欄（映像から入力する）の映像は、見るだけと読ませない
+    {
+      // 入力の口（web/screencast-frame.mjs）が使う document の口だけ足す（様式は入れ済み・知らせの置き場は body）
+      const doc = { ...globalThis.document }, body = new N('body'), blur = N.prototype.blur;
+      Object.assign(globalThis.document, { getElementById: () => ({}), querySelector: () => null, body, addEventListener() {}, removeEventListener() {} });
+      N.prototype.blur = function () {};
+      try {
+        const r = rig();
+        r.windows.apply(r.ev([7], 7));
+        r.panel.useInput({ phone: () => false });
+        r.panel.open();
+        await flush();
+        r.send([7], 7);
+        t.ok('映像から入力できる右の欄では、映像の名前に「見るだけ」を入れない', r.screen().attrs['aria-label'] === 'この会話の Chrome の画面', r.screen().attrs['aria-label']);
+        await wait(50);
+      } finally { N.prototype.blur = blur; for (const key of Object.keys(globalThis.document)) if (!(key in doc)) delete globalThis.document[key]; }
+    }
 
     // 押すと固定して映像が替わる。追うを押すと解ける
     {
