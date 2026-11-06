@@ -61,7 +61,7 @@ export default async function (t) {
   const commands = [];
   const handoffCard = browserHandoffView({ id: 'parent-card', sessionId: 'parent', targetSessionId: 'a',
     browserHandoff: { reason: 'login', state: 'asked', waitingTasks: [{ taskId: 'ta', title: 'A', current: true }, { taskId: 'tb', title: 'B', current: false }] } },
-  { el, t: key => key, cmd: async (name, args) => { commands.push([name, args]); } });
+  { el, t: key => key, cmd: async (name, args) => { commands.push([name, args]); }, openScreen: id => commands.push(['openScreen', id]) });
   const waitingList = handoffCard.body.children.find(child => child.tag === 'ul');
   assert.deepEqual(waitingList?.children.map(child => child.textContent), ['A', 'B']);
   assert.deepEqual(waitingList.children.map(child => child.className), ['current', null], 'どの子の窓を開くかを行で示す');
@@ -76,8 +76,8 @@ export default async function (t) {
   await handoffCard.buttons.at(-1).onclick();
   handoffCard.update({ state: 'operating' });
   await handoffCard.buttons.at(-1).onclick();
-  assert.deepEqual(commands, [['chromeTakeOver', { sessionId: 'a' }], ['chromeResume', { sessionId: 'a' }]]);
-  t.ok('親の 1 枚のカードに 2 つの作業を並べ、引き継ぎと戻すを子の会話へ送る', true);
+  assert.deepEqual(commands, [['chromeTakeOver', { sessionId: 'a' }], ['openScreen', 'a']]);
+  t.ok('親の 1 枚のカードに 2 つの作業を並べ、引き継ぎと「画面を開く」を子の会話へ向ける', true);
 
   let chromeLine = null;
   const card = { querySelector(selector) { return selector === ':scope > .tc-task-chrome' ? chromeLine : selector === ':scope > .tc-details' ? { after(line) { chromeLine = line; } } : null; } };

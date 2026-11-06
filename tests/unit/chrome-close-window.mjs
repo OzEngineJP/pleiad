@@ -147,15 +147,15 @@ export default async function (t) {
     try {
       let panelOpen = false, body = null;
       const commands = [];
-      let menuItems = [];
       const windows = createWindowTable();
       windows.apply({ sessionId: 'panel', windows: 1, windowIds: [41], currentWindowId: 41 });
       t.ok('窓の一覧は実際の窓と表示中の印を保持する', windows.count('panel') === 1 && windows.list('panel')[0].current);
       const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return { closed: true }; },
-        showMenu: (_x, _y, items) => { menuItems = items; },
-        preview: { openPanel: (options) => { panelOpen = true; body = options.body; options.toolbar[2].getBoundingClientRect = () => ({ left:0, bottom:0 }); options.toolbar[2].onclick(); }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
+        preview: { openPanel: (options) => { panelOpen = true; body = options.body; }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
         session: () => 'panel', windows });
       panel.open();
+      // ⋯ はアドレスバーのメニュー（web/browser-unify.mjs）が browserMenuItems の行を出す
+      const menuItems = panel.browserMenuItems(null);
       menuItems.find(item => item.label === '表示中のウィンドウを閉じる').onClick();
       t.ok('⋯ の「表示中のウィンドウを閉じる」は、確かめを出すまで chromeCloseWindow を送らない', !commands.some(([name]) => name === 'chromeCloseWindow'));
       body.querySelector('.cp-dlg-yes').onclick();

@@ -225,7 +225,7 @@
     "receiptMismatch": "The receipt does not match this approval. Reopen the card.",
     "remoteOffline": "Can't send the answer because {{host}} is offline. You can send it once the connection returns.",
     "alreadyResolved": "That approval has already been resolved.",
-    "browserHandoffAllow": "A Chrome handoff cannot be approved. Operate Chrome, then press \"Return to Claude\" on the card."
+    "browserHandoffAllow": "A Chrome handoff cannot be approved. Operate Chrome, then press \"Let agent continue\" on the address bar badge or \"Hand back to Claude\" on the paused banner."
   },
   "title": {
     "unsupported": "This agent cannot generate titles.",

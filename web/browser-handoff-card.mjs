@@ -4,8 +4,9 @@
 // トグルがオフ（setup）なら「オンにしてつなぐ」で Pleiad がトグルを入れる。確認なしのモードでも、ここは人が押す。
 // client.mjs は枠（見出し・置き場・名簿への登録）を作り、中身とボタンはここが持つ。
 // 決着（戻した・つながった・断った・中断）はサーバーの permissionSettled で届き、畳む字は settledLine が決める。
-// リモートの端末（client が operateHere を渡す）では「Chrome で操作する」を「この端末で操作する」（右パネルの Chrome の窓で操作する。by: 'device'）と
+// リモートの端末（client が operateHere を渡す）では「Chrome で操作する」を「この端末で操作する」（右の欄の Chrome の映像で操作する。by: 'device'）と
 // 「PC で操作する」に分ける（第 7 段）。
+// 人が操作している間のカードは記録に徹し、「あなたが操作中」と「画面を開く」だけにする。任せるのは札・帯・⋮（ADR 0294 の 6・0296）。
 
 const CHROME_INSPECT_ADDRESS = 'chrome://inspect/#remote-debugging';
 // i18n-dynamic: ui:chat.browserHandoff.
@@ -37,15 +38,16 @@ export function settledLine(t, ev) {
 
 /**
  * 本文とボタンを作る。
- *   view = browserHandoffView(ev, { el, t, cmd, operateHere })
+ *   view = browserHandoffView(ev, { el, t, cmd, operateHere, openScreen })
  *   view.body      … 本文の要素（差し替えで中身が替わる）
  *   view.buttons   … 今のボタン（actions へ並べる）。replaceButtons の呼び出しで並べ直す
  *   view.update(h) … permissionUpdate の browserHandoff を渡して描き直す
  * onChange(buttons, res) は描き直すたびに呼ばれ、client が actions を並べ直す。
  * spinner() は「つないでいます…」の回る印（web/arc.mjs の runMark）。
- * operateHere(会話の id) はリモートの端末だけ: 右パネルにその会話の Chrome の窓を開き、映像の箱の大きさ（{ width, height, scale }。開けなければ null）を返す
+ * operateHere(会話の id) はリモートの端末だけ: 右の欄にその会話の Chrome の映像を開き、映像の箱の大きさ（{ width, height, scale }。開けなければ null）を返す
+ * openScreen(会話の id) は人が操作している間の「画面を開く」: 右の欄にその会話の Chrome の映像を開く
  */
-export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operateHere = null, spinner = null }) {
+export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operateHere = null, openScreen = null, spinner = null }) {
   let h = ev.browserHandoff;
   const targetSessionId = () => h.targetSessionId ?? ev.targetSessionId ?? ev.sessionId;
   const body = el('div', 'bh-body');
@@ -158,10 +160,9 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
     const lead = el('div', 'bh-lead');
     if (h.state === 'operating') {
       lead.textContent = t(`${K}operating`);
-      const where = h.by !== 'device' ? t(`${K}operatingNote`) : operateHere ? t(`${K}operatingOnDevice`) : t(`${K}operatingByDevice`);
-      // 人が操作している間も、頼まれたこと（asked のときと同じ本文）を「Claude に戻す」まで出し続ける
-      body.replaceChildren(lead, ...(h.message ? [el('p', 'bh-message', h.message)] : []), note(where));
-      buttons = [button(t(h.turnLive === false ? `${K}resumeContinue` : `${K}resume`), () => cmd('chromeResume', { sessionId: targetSessionId() }), 'btn btn-primary')];
+      // 人が操作している間も、頼まれたこと（asked のときと同じ本文）を任せるまで出し続ける
+      body.replaceChildren(lead, ...(h.message ? [el('p', 'bh-message', h.message)] : []));
+      buttons = openScreen ? [button(t('control:openScreen'), () => openScreen(targetSessionId()))] : [];
     } else {
       lead.textContent = t(`${K}askedLead`, { reason: reasonLabel(t, h.reason) });
       body.replaceChildren(lead);

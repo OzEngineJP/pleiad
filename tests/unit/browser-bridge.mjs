@@ -65,8 +65,8 @@ export default async function (t) {
       const ja = open('ja');
       const list = (await (await fetch(ja.url, { method: 'POST', headers: { ...ja.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) })).json()).result.tools;
       t.ok('tools/list に hand_to_user（reason は列挙・message と一緒に必須）と close_browser_window', list.length === 2 && list[0].name === 'hand_to_user' && list[1].name === 'close_browser_window' && list[0].inputSchema.required.join() === 'reason,message'
-        && list[0].inputSchema.properties.reason.enum.join() === 'login,captcha,two_factor,payment,other' && /Claude に戻す/.test(list[0].description), JSON.stringify(list));
-      t.ok('英語の会話には英語の説明', /Return to Claude/.test(browserTools('en')[0].description));
+        && list[0].inputSchema.properties.reason.enum.join() === 'login,captcha,two_factor,payment,other' && /「任せる」/.test(list[0].description), JSON.stringify(list));
+      t.ok('英語の会話には英語の説明', /Let agent continue/.test(browserTools('en')[0].description));
 
       const resumed = await call(ja, 'hand_to_user', { reason: 'login', message: 'ログインしてください' });
       t.ok('resumed: ask → wait の順で呼び、時刻・url・title を添えて snapshot からのやり直しを促す（エラーにしない）',

@@ -116,7 +116,6 @@ const SUITES = [
   './unit/chrome-panel-lifecycle.mjs',
   // スマホで端末内のページを描いている間は Chrome の映像を止め、外したら映し直す（ADR 0295 の追記 2）
   './unit/browser-unify-local-pause.mjs',
-  './unit/chrome-window-switch.mjs',
   './unit/chrome-pill-resume.mjs',
   './unit/browser-handoff-card.mjs',
   './unit/chrome-wait-card.mjs',
@@ -134,9 +133,9 @@ const SUITES = [
   './unit/chrome-control.mjs',
   // 端末から Chrome の窓を操作する（第 7 段 C。by: 'device'）: 入力の変換は内蔵ブラウザーと同じ CDP・by: device の間だけ入力が通る・ページの大きさを合わせて戻す・窓は見せず映像も止めない・Chrome で開く（偽の Chrome・偽の OS の層）
   './unit/chrome-device.mjs',
-  // Chrome の操作待ちと引き継ぐ・戻すの通し（第 7 段 C）: カードの「Chrome で操作する」→ 引き継ぐ・「Claude に戻す」→ 決着・先に引き継いでいたら操作中から・ターンの外なら「続けてください」が 1 回（偽の Chrome・偽の OS の層）
+  // Chrome の操作待ちと引き継ぐ・戻すの通し（第 7 段 C）: カードの「Chrome で操作する」→ 引き継ぐ・札の「任せる」→ 決着・先に引き継いでいたら操作中から・ターンの外なら「続けてください」が 1 回（偽の Chrome・偽の OS の層）
   './unit/chrome-handoff-flow.mjs',
-  // エージェントの Chrome の窓の状態の一行（web/chrome-control.mjs）: 状態ごとの字とボタン・押した位置の輪・一時停止中の帯と膜・状態の置き場・会話の引き継ぎの行・記録（DOM の代役）
+  // エージェントの Chrome の窓の状態（web/chrome-control.mjs）: 一時停止中の帯と戻すボタン・押した位置の輪・スマホの帯の読み上げ・状態の置き場・会話の引き継ぎの行・記録（DOM の代役）
   './unit/chrome-control-ui.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
   './unit/chrome-os.mjs',

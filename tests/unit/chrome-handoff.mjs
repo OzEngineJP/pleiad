@@ -106,8 +106,8 @@ export default async function (t) {
     const h1 = r.handoffs.connect('s1');
     const h2 = r.handoffs.connect('s1');
     t.ok('connect は 1 会話に 1 枚（2 回目は同じ依頼でカードを増やさない）', r.cards.length === 1 && h1 === h2);
-    t.ok('カードは outlivesTurn で、接続の案内（reason: connect・state・turnLive）を載せる', r.cards[0].opts.outlivesTurn === true && r.cards[0].opts.kind === 'tool' && r.cards[0].opts.toolName === 'ply_browser'
-      && r.cards[0].opts.browserHandoff.reason === 'connect' && r.cards[0].opts.browserHandoff.state === 'setup' && r.cards[0].opts.browserHandoff.turnLive === true, JSON.stringify(r.cards[0].opts.browserHandoff));
+    t.ok('カードは outlivesTurn で、接続の案内（reason: connect・state）を載せる', r.cards[0].opts.outlivesTurn === true && r.cards[0].opts.kind === 'tool' && r.cards[0].opts.toolName === 'ply_browser'
+      && r.cards[0].opts.browserHandoff.reason === 'connect' && r.cards[0].opts.browserHandoff.state === 'setup', JSON.stringify(r.cards[0].opts.browserHandoff));
     t.ok('試行は自分の demand を持つ（中継の 20 秒が外れても止まらない）', r.conn.demands.length === 1);
     r.conn.set({ state: 'permission', dialog: false });
     r.conn.set({ state: 'permission', dialog: true });
@@ -246,7 +246,6 @@ export default async function (t) {
     r.handoffs.connect('s1');
     r.env.live = false;
     r.handoffs.turnChanged('s1', false);
-    t.ok('ターンが終わるとカードの turnLive が false になる', r.cards[0].updates.at(-1)?.turnLive === false);
     r.conn.set({ state: 'connected' });
     await tick();
     t.ok('ターンの外でつながったら「続けてください」を 1 回だけ送る', r.env.sent.length === 1 && r.env.sent[0].sessionId === 's1' && r.env.sent[0].kind === 'connected'

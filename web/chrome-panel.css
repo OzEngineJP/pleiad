@@ -1,15 +1,11 @@
-/* ブラウザーの固定タブ／リモート端末で見る Chrome の窓（docs/design-system.md「Chrome の窓」、ADR 0148）。
-   エージェントの専用の Chrome の窓の映像を縮めて映すだけ（見るだけ）。色は面（surface）・文字（ink）・線（line）の既存の族だけ。
+/* 右の欄の Chrome の映像（docs/design-system.md「Chrome の窓」、ADR 0294・0297）。
+   エージェントの専用の Chrome の窓の映像を映し、そのまま触れる。色は面（surface）・文字（ink）・線（line）の既存の族だけ。
    動きは --dur・--ease-out。動きを減らす設定では出し入れだけにする。 */
 
 /* ---------- パネルの中身 ---------- */
 .file-preview[data-panel="chrome-window"] .file-preview-content{background:var(--surface-paper);border-radius:var(--r-l)}
 .file-preview[data-panel="chrome-window"] .file-preview-toolbar{align-items:center;gap:6px;min-height:36px}
 .file-preview[data-panel="chrome-window"] .cp-slot{flex:1;min-width:0}
-/* 右パネルの幅は窓の幅と別に狭くなる。「止める」「引き継ぐ」は切らず、入らないときは字の行の下へ折り返す */
-.file-preview[data-panel="chrome-window"] .cp-slot .cc{flex-wrap:wrap}
-.file-preview[data-panel="chrome-window"] .cp-slot .cc-status{flex:1 1 120px}
-.file-preview[data-panel="chrome-window"] .cp-slot .cc-btn{flex:none}
 .cp-profile-slot{display:inline-flex;align-items:center;min-width:0;flex-shrink:1}
 .cp-profile-slot:empty{display:none}
 .cp-profile-btn{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font-size:var(--fs-s);line-height:1;max-width:160px;min-width:0;flex:0 1 auto;border:0;cursor:pointer;user-select:none;transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
@@ -33,7 +29,6 @@
 @media (max-width:360px){
   .cp-profile-btn{max-width:90px;padding:0 4px;gap:2px}
 }
-.cp-window-menu{margin-left:auto}
 .cp{display:flex;flex-direction:column;gap:8px;padding:8px}
 /* 状態の一行の差し込み口（第 6 段の web/chrome-control.mjs）。空の間は場所を取らない */
 .cp-slot:empty,.cp-slot:not(:has(> :not([hidden]))){display:none}
@@ -53,86 +48,17 @@
 .cp-veil-box{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:calc(100% - 24px)}
 .cp-veil-text{padding:6px 12px;border-radius:var(--r-pill);background:var(--surface-paper);font-size:var(--fs-s)}
 .cp-veil-here[hidden]{display:none}
-/* 見るだけの案内（白いページの上でも見えるよう沈んだ面 --surface-2）。押す・打つと出て、少しして消える（タッチでは出したまま） */
-.cp-hint{position:absolute;left:50%;bottom:12px;transform:translate(-50%,6px);max-width:calc(100% - 24px);padding:6px 12px;border-radius:var(--r-pill);
-  background:var(--surface-2);color:var(--ink);font-size:var(--fs-s);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  opacity:0;pointer-events:none;transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
-.cp-hint[data-shown]{opacity:1;transform:translate(-50%,0)}
 .cp-empty{display:grid;place-items:center;flex:1;min-height:120px;color:var(--ink-weak);font-size:var(--fs)}
 .cp-empty[hidden]{display:none}
-.cp-foot{display:flex;align-items:center;min-height:20px;padding:0 4px;color:var(--ink-weak)}
-.cp-fps{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* 端末から操作する間（第 7 段）: 指の動きはページへ送る（パネルをスクロールしない） */
-.cp-screen[data-operating]{touch-action:none;cursor:pointer}
-.cp-text{display:flex;gap:8px}
-.cp-text[hidden]{display:none}
-.cp-text input{flex:1;min-width:0;background:var(--surface-1);padding:10px 14px;border-radius:var(--r-pill);font-size:16px;border:0;color:var(--ink)}
-.cp-note{margin:0;padding:0 4px;color:var(--ink-weak)}
-.cp-note[hidden]{display:none}
 
 @keyframes cp-veil-in{from{opacity:0}to{opacity:1}}
 @media (prefers-reduced-motion:reduce){
   .cp-veil{animation:none}
-  .cp-frame,.cp-hint{transition:none}
-  .cp-hint{transform:translate(-50%,0)}
 }
 
-/* ---------- 見るウィンドウを選ぶ（承認済み 2026-10-09・会話とタブの列は 2026-10-18。docs/design-system.md「Chrome のウィンドウ」）---------- */
+/* ---------- 映すものを替える間の前の絵・閉じる前の確かめ ---------- */
 .file-preview[data-panel="chrome-window"] .cp{position:relative}
-/* 番号のチップの列。ウィンドウが 2 つ以上のときだけ開く（閉じている間は gap の分も詰める） */
-.cp-sw{display:grid;grid-template-rows:0fr;margin-bottom:-8px;visibility:hidden;
-  transition:grid-template-rows var(--dur) var(--ease-out),margin-bottom var(--dur) var(--ease-out),visibility 0s linear var(--dur)}
-.cp-sw[data-open]{grid-template-rows:1fr;margin-bottom:0;visibility:visible;transition-delay:0s}
-.cp-sw-in{overflow:hidden;min-height:0}
-.cp-sw-row{display:flex;align-items:center;gap:4px}
-.cp-sw-list{position:relative;display:flex;gap:2px;flex:1;min-width:0;padding:4px;overflow-x:auto;scrollbar-width:none;border-radius:var(--r-m);background:var(--surface-1)}
-.cp-sw-list::-webkit-scrollbar{display:none}
-.cp-sw-pad{position:absolute;left:0;top:4px;width:44px;height:28px;border-radius:var(--r-m);background:var(--surface-paper);pointer-events:none;
-  transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
-.cp-sw-chip{position:relative;flex:none;display:flex;align-items:center;justify-content:center;gap:2px;width:44px;height:28px;padding:0;border:0;border-radius:var(--r-m);
-  background:none;color:var(--ink-weak);font:inherit;font-size:var(--fs-s);cursor:pointer;
-  transition:width var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),color var(--dur-fast) var(--ease-out)}
-.cp-sw-chip:hover:not(:disabled){color:var(--ink)}
-.cp-sw-chip[aria-selected="true"]{color:var(--ink)}
-.cp-sw-chip:disabled{cursor:default}
-.cp-sw-chip.ghost{opacity:.35;pointer-events:none}
-.cp-sw-chip:focus-visible,.cp-sw-follow:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
-.cp-sw-num{min-width:0;line-height:1}
-/* エージェントの印: 操作中は弧、そうでなければ点。移ったときは膨らんで 1 回光る */
-.cp-sw-ag{display:grid;place-items:center;width:0;height:16px;transform:scale(0);transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
-.cp-sw-chip[data-agent] .cp-sw-ag{width:16px;transform:scale(1)}
-.cp-sw-ag .run{transform:scale(.8)}
-.cp-sw-chip[data-agent][data-idle] .cp-sw-ag::after{content:"";display:block;width:7px;height:7px;border-radius:50%;color:var(--ink-weak);background:currentColor}
-.cp-sw-dot{display:block;width:7px;height:7px;border-radius:50%;color:var(--ink-weak);background:currentColor}
-.cp-sw-dot.wait{color:var(--ink-mark)}
-/* 会話の題のチップ・タブのチップ（題を省略して並べる。印は題の前） */
-.cp-sw-chip.cp-sw-conv,.cp-sw-chip.cp-tab-b{width:auto;max-width:180px;padding:0 10px;gap:6px}
-.cp-sw-chip + .cp-sw-conv{margin-left:6px}
-.cp-sw-conv[data-on]{color:var(--ink)}
-.cp-sw-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
-.cp-sw-cm{display:grid;place-items:center;flex:none;width:12px;height:16px}
-.cp-sw-cm:empty{display:none}
-.cp-sw-cm .run{transform:scale(.8)}
-.cp-tab{position:relative;flex:none;display:flex;align-items:center}
-.cp-tab-x{display:grid;place-items:center;flex:none;width:20px;height:20px;margin:0 4px 0 -6px;padding:0;border:0;border-radius:50%;background:none;color:var(--ink-weak);font:inherit;font-size:14px;line-height:1;cursor:pointer;
-  position:relative;z-index:1}
-.cp-tab-x:hover{background:var(--surface-2);color:var(--ink)}
-.cp-tab-x:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
-.cp-tab-x[hidden]{display:none}
-.cp-sw-chip.flash{animation:cp-sw-flash 700ms var(--ease-out)}
-@keyframes cp-sw-flash{0%{box-shadow:0 0 0 3px var(--line-blue)}100%{box-shadow:0 0 0 3px transparent}}
-/* 引き継ぎ中は切り替えない */
-.cp-sw[data-paused] .cp-sw-chip:not(.cp-sw-conv){opacity:.45}
-/* 「エージェントを追う」: 枠のないアイコンのボタン（⋯ と同じ）。追っている間は青、固定している間は薄く、エージェントが別のウィンドウにいる間は濃く */
-.cp-sw-follow{flex:none;position:relative;color:var(--ink-weak)}
-.cp-sw-follow.on{color:var(--ink-blue)}
-.cp-sw-follow[data-away]{color:var(--ink)}
-.cp-sw-follow.flash::after{content:"";position:absolute;inset:0;border-radius:var(--r-pill);animation:cp-sw-flash 700ms var(--ease-out);pointer-events:none}
-/* 固定中の印（映像の左上）と、ウィンドウを替える間の前の絵 */
-.cp-pin{position:absolute;left:10px;top:10px;z-index:2;display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--surface-paper);color:var(--ink);
-  opacity:0;transform:scale(.6);transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out);pointer-events:none}
-.cp-pin svg{width:14px;height:14px}
-.cp-screen[data-pinned] .cp-pin{opacity:1;transform:scale(1)}
+/* 映すウィンドウ・会話を替える間の前の絵 */
 .cp-ghost{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:1;transition:opacity var(--dur) var(--ease-out)}
 .cp-ghost:not([src]){visibility:hidden}
 .cp-ghost.out{opacity:0}
@@ -152,16 +78,8 @@
 .cp-dlg-yes{background:var(--fill-primary);color:var(--on-fill)}
 .cp-dlg-yes:hover{background:var(--fill-primary-hover);color:var(--on-fill)}
 .cp-dlg .btn:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
-@media (pointer:coarse),(max-width:520px){
-  .cp-sw-chip,.cp-sw-pad{height:36px}
-  .cp-sw-chip{width:52px}
-  .cp-sw-pad{width:52px}
-  .cp-sw-chip.cp-sw-conv,.cp-sw-chip.cp-tab-b{width:auto}
-  .cp-sw-follow{width:40px;height:40px}
-  .cp-tab-x{width:28px;height:28px}
-}
+.cp-dlg-dot{display:block;width:7px;height:7px;border-radius:50%;color:var(--ink-weak);background:currentColor}
 @media (prefers-reduced-motion:reduce){
-  .cp-sw,.cp-sw-pad,.cp-sw-chip,.cp-sw-ag,.cp-pin,.cp-ghost{transition:none}
-  .cp-sw-chip.flash,.cp-sw-follow.flash::after,.cp-dlg,.cp-dlg-card{animation:none}
-  .cp-sw-chip.flash{box-shadow:0 0 0 2px var(--line-blue)}
+  .cp-ghost{transition:none}
+  .cp-dlg,.cp-dlg-card{animation:none}
 }

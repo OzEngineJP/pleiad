@@ -2135,16 +2135,11 @@
         "auto": "オンになると自動で進みます。"
       },
       "operating": "あなたが操作中",
-      "operatingNote": "Chrome のウィンドウで操作して、終わったら「Claude に戻す」を押してください。",
-      "operatingByDevice": "別の端末で操作しています。終わったら「Claude に戻す」を押してください。",
       "operate": "Chrome で操作する",
       "operateHere": "この端末で操作する",
       "operateOnPc": "PC で操作する",
       "waitingCurrent": "このウィンドウを開きます",
-      "operatingOnDevice": "右の「Chrome のウィンドウ」で操作して、終わったら「Claude に戻す」を押してください。",
       "noWindow": "Chrome のウィンドウを開けませんでした",
-      "resume": "Claude に戻す",
-      "resumeContinue": "Claude に戻して続ける",
       "decline": "断る",
       "failed": "操作できませんでした: {{error}}",
       "done": {
@@ -4848,9 +4843,6 @@
     "switchFailed": "プロフィールを切り替えられませんでした"
   },
   "chromeControl": {
-    "status": { "running": "{{name}} が操作中", "idle": "待機中", "paused": "あなたが操作中", "pausedPc": "PC で操作中", "stopped": "止めました" },
-    "stop": "止める",
-    "takeOver": "引き継ぐ",
     "takeOverPc": "PC で操作する",
     "resume": "{{name}} に戻す",
     "failed": "操作できませんでした",
@@ -4865,39 +4857,22 @@
     "entryState": { "requested": "あなたへの依頼待ち", "paused": "あなたが Chrome を操作中", "working": "{{name}} が Chrome を操作中" },
     "openExternal": "既定のブラウザーで開く",
     "chromeWindow": {
-      "windowActions": "Chrome のウィンドウの操作",
-      "windowNumber": "ウィンドウ {{n}}",
-      "childUntitled": "子の会話",
-      "childWaiting": "依頼待ち",
       "panel": "Chrome のウィンドウ",
-      "screen": "{{name}} の Chrome のウィンドウの映像（見るだけ）",
-      "viewOnly": "見るだけ · 操作は引き継いでから",
       "suspended": "映像を止めています",
-      "connecting": "接続しています…",
-      "ended": "Chrome のウィンドウが閉じました",
       "none": "この会話には Chrome のウィンドウがありません",
       "failed": "Chrome のウィンドウの映像を開けませんでした。",
-      "screenOperating": "{{name}} の Chrome のウィンドウの映像（この端末で操作中）",
       "screenUnified": "この会話の Chrome の画面",
-      "deviceNote": "パスワード管理・パスキーは、この端末からは使えません",
       "inputFailed": "Chrome のウィンドウへ送れませんでした",
       "closeShown": "表示中のウィンドウを閉じる", "closeFailed": "Chrome のウィンドウを閉じられませんでした",
       "closeAsk": "ウィンドウを閉じますか？", "closeAskNumber": "ウィンドウ {{n}} を閉じますか？", "closeYes": "閉じる",
       "closeRiskHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。",
       "closeRiskWaiting": "このウィンドウは、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。",
-      "switchLabel": "ウィンドウ", "follow": "エージェントを追う", "pinned": "固定中", "pinFailed": "ウィンドウを切り替えられませんでした。",
-      "convSwitchLabel": "会話とウィンドウ", "thisConversation": "この会話", "openConversation": "会話を開く",
-      "tabsLabel": "タブ", "tabUntitled": "無題", "closeTab": "{{title}} を閉じる", "closeTabFailed": "タブを閉じられませんでした",
+      "pinFailed": "ウィンドウを切り替えられませんでした。",
+      "openConversation": "会話を開く",
       "operateHere": "この端末で操作する", "operatingOnPc": "PC で操作中",
-      "chipAgentRunning": "{{name}} が操作中", "chipAgentIdle": "{{name}} が最後に操作",
       "profileActions": "Chrome のプロフィール"
     },
-    "video": { "lag": "映像が遅れています", "stale": "つなぎ直しています" },
-    "remote": {
-      "textLabel": "ページへ入力する文字",
-      "textPlaceholder": "ページに入力する文字",
-      "textSend": "入力"
-    }
+    "video": { "lag": "映像が遅れています", "stale": "つなぎ直しています" }
   },
   "nav": {
     "token": {

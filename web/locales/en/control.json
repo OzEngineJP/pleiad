@@ -11,7 +11,7 @@
   "resume": "Let agent continue",
   "stop": "Stop",
   "browser": "Browser",
-  "backToConversation": "‹ Back to conversation",
+  "openScreen": "Open screen",
   "tabCount": "{{count}} tabs",
   "passwordNote": "Password managers and passkeys aren't available from this device",
   "keyboardInput": "Type on the page",

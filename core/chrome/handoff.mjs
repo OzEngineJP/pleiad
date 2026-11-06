@@ -69,7 +69,7 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
     open.set(sessionId, h);
     h.answer = askPermission({
       kind: 'tool', toolName: 'ply_browser', input: { reason, message }, title: titleFor({ reason, message, sessionId }), sessionId,
-      browserHandoff: { ...browserHandoff, turnLive: turnLive(sessionId), windowTitle: null, by: null },
+      browserHandoff: { ...browserHandoff, windowTitle: null, by: null },
       outlivesTurn: true,
       signal: turnSignal(sessionId),
       onOpen: card => {
@@ -251,10 +251,8 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
       });
     },
 
-    /** ターンの始まり・終わり。開いている依頼のカードのボタン（Claude に戻す／戻して続ける）を替える。終わりでは置いた答えを捨てる */
+    /** ターンの始まり・終わり。終わりでは置いた答えを捨てる */
     turnChanged(sessionId, live) {
-      const h = open.get(sessionId);
-      if (h) patch(h, { turnLive: Boolean(live) });
       if (!live) unclaimed.delete(sessionId);
     },
 

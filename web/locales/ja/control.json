@@ -11,7 +11,7 @@
   "resume": "任せる",
   "stop": "止める",
   "browser": "ブラウザー",
-  "backToConversation": "‹ 会話に戻る",
+  "openScreen": "画面を開く",
   "tabCount": "{{count}} 個のタブ",
   "passwordNote": "パスワード管理・パスキーは、この端末からは使えません",
   "keyboardInput": "ページに文字を入力",

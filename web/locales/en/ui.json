@@ -2177,16 +2177,11 @@
         "auto": "It continues automatically once it is on."
       },
       "operating": "You are operating",
-      "operatingNote": "Work in the Chrome window, then press \"Return to Claude\" when you are done.",
-      "operatingByDevice": "Another device is operating. Press \"Return to Claude\" when you are done.",
       "operate": "Operate in Chrome",
       "operateHere": "Operate on this device",
       "operateOnPc": "Operate on the PC",
       "waitingCurrent": "this window opens",
-      "operatingOnDevice": "Work in the Chrome window on the right, then press \"Return to Claude\" when you are done.",
       "noWindow": "Couldn't open the Chrome window",
-      "resume": "Return to Claude",
-      "resumeContinue": "Return to Claude and continue",
       "decline": "Decline",
       "failed": "Could not do that: {{error}}",
       "done": {
@@ -4959,9 +4954,6 @@
     "switchFailed": "Couldn't switch the profile"
   },
   "chromeControl": {
-    "status": { "running": "{{name}} is operating", "idle": "Idle", "paused": "You are operating", "pausedPc": "Operating on the PC", "stopped": "Stopped" },
-    "stop": "Stop",
-    "takeOver": "Take over",
     "takeOverPc": "Operate on the PC",
     "resume": "Hand back to {{name}}",
     "failed": "Could not do that.",
@@ -4976,39 +4968,22 @@
     "entryState": { "requested": "Waiting for your help", "paused": "You are operating Chrome", "working": "{{name}} is operating Chrome" },
     "openExternal": "Open in default browser",
     "chromeWindow": {
-      "windowActions": "Chrome window actions",
-      "windowNumber": "Window {{n}}",
-      "childUntitled": "Child conversation",
-      "childWaiting": "Waiting for you",
       "panel": "Chrome window",
-      "screen": "Video of {{name}}'s Chrome window (view only)",
-      "viewOnly": "View only · take over to use it",
       "suspended": "Video paused",
-      "connecting": "Connecting…",
-      "ended": "The Chrome window was closed",
       "none": "This conversation has no Chrome window",
       "failed": "Couldn't open the Chrome window video.",
-      "screenOperating": "Video of {{name}}'s Chrome window (operating from this device)",
       "screenUnified": "This conversation's Chrome screen",
-      "deviceNote": "Password managers and passkeys can't be used from this device",
       "inputFailed": "Couldn't send that to the Chrome window",
       "closeShown": "Close the window being shown", "closeFailed": "Couldn't close the Chrome window",
       "closeAsk": "Close this window?", "closeAskNumber": "Close window {{n}}?", "closeYes": "Close",
       "closeRiskHuman": "You have taken over this window. Closing it ends what you are doing midway.",
       "closeRiskWaiting": "This window is waiting for you (to sign in, for example). If you close it, the request goes unanswered.",
-      "switchLabel": "Windows", "follow": "Follow the agent", "pinned": "Pinned", "pinFailed": "Couldn't switch windows.",
-      "convSwitchLabel": "Conversations and windows", "thisConversation": "This conversation", "openConversation": "Open conversation",
-      "tabsLabel": "Tabs", "tabUntitled": "Untitled", "closeTab": "Close {{title}}", "closeTabFailed": "Couldn't close the tab.",
+      "pinFailed": "Couldn't switch windows.",
+      "openConversation": "Open conversation",
       "operateHere": "Operate on this device", "operatingOnPc": "Operating on the PC",
-      "chipAgentRunning": "{{name}} is operating", "chipAgentIdle": "{{name}} operated last",
       "profileActions": "Chrome profiles"
     },
-    "video": { "lag": "The video is lagging", "stale": "Reconnecting" },
-    "remote": {
-      "textLabel": "Text to type into the page",
-      "textPlaceholder": "Text for the page",
-      "textSend": "Send"
-    }
+    "video": { "lag": "The video is lagging", "stale": "Reconnecting" }
   },
   "nav": {
     "token": {
