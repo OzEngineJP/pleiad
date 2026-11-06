@@ -881,6 +881,9 @@ const SUITES = [
   // --- A4 Pleiad のページ ---
 
   // --- A5 タブの情報とアドレスバー ---
+  './unit/address-input.mjs',
+  './unit/chrome-tab-info.mjs',
+  './unit/search-provider.mjs',
 
   // --- A6 タブごとの持ち手と大きさ ---
 
