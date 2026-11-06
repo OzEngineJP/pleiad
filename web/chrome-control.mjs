@@ -8,6 +8,120 @@
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
 
+/** Called only by the unified browser; legacy control remains unchanged. */
+export function ensureBrowserControlStyles() {
+  if (document.getElementById('browser-control-styles')) return;
+  const style = el('style'); style.id = 'browser-control-styles';
+  style.textContent = `
+.b2-control{position:relative;flex:0 1 84px;min-width:26px;container-type:inline-size;width:84px}
+.b2-control[hidden],.b2-pop[hidden],.b2-strip[hidden],.b2-full[hidden],.b2-sheet[hidden],.b2-fallback[hidden]{display:none!important}
+.b2-chip{display:flex;align-items:center;justify-content:center;gap:6px;height:26px;width:100%;border:0;border-radius:13px;background:transparent;color:var(--ink);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.b2-chip:hover,.b2-chip[aria-expanded=true]{background:var(--surface-2)}
+.b2-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink-blue);flex:none}
+.b2-dot[hidden]{display:none}
+.b2-dot[data-holder=human]{background:var(--ink-strong)}.b2-dot[data-waiting=true]{background:var(--ink-mark)}
+.b2-tab-dot{margin-inline-start:5px;vertical-align:middle}
+.b2-pop{position:fixed;z-index:90;width:256px;box-sizing:border-box;padding:14px;border-radius:12px;background:var(--surface-paper);box-shadow:0 8px 28px var(--shadow);color:var(--ink);text-align:left;font-size:13px}
+.b2-pop-title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}.b2-pop-sub{margin:4px 0 12px 15px;color:var(--ink-weak);font-size:12px;line-height:1.65}
+.b2-actions{display:flex;justify-content:flex-end;gap:8px}.b2-action{border:0;border-radius:var(--r-pill,16px);background:var(--surface-2);color:var(--ink);padding:6px 13px;font:inherit;cursor:pointer}.b2-action.primary{color:var(--ink-blue);background:var(--fill-blue,var(--surface-2))}
+.b2-strip{display:flex;align-items:center;gap:10px;width:100%;height:52px;border:0;border-radius:var(--r-m,10px);padding:6px;background:var(--surface-2);color:var(--ink);font:inherit;cursor:pointer;text-align:left}
+.b2-thumb{width:60px;height:40px;object-fit:cover;border-radius:8px;background:var(--surface-1);flex:none}.b2-strip-info{flex:1;min-width:0}.b2-domain{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.b2-strip-status{display:flex;align-items:center;gap:5px;margin-top:3px;font-size:12px;color:var(--ink-weak)}.b2-count{display:grid;place-items:center;min-width:20px;height:20px;border-radius:5px;background:var(--surface-1);font-size:11px}.b2-chevron{width:22px;text-align:center;color:var(--ink-weak)}
+.b2-full{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;background:var(--surface-1);transform:translateY(100%);transition:transform 260ms var(--ease-out,ease-out)}.b2-full[data-open=true]{transform:translateY(0)}.b2-full-close{align-self:flex-start;min-height:44px;margin:0 8px;background:transparent;border:0;color:var(--ink);font:inherit;cursor:pointer}.b2-full-content{flex:1;min-height:0;display:flex;flex-direction:column}
+.b2-input-surface{position:relative;overflow:hidden;touch-action:none;outline:none}.b2-input-surface:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}.b2-ripple{position:absolute;pointer-events:none;width:28px;height:28px;margin:-14px;border-radius:50%;box-shadow:0 0 0 2px var(--line-blue);animation:b2-ripple 550ms var(--ease-out,ease-out) forwards;z-index:3}
+@keyframes b2-ripple{from{opacity:.8;transform:scale(.4)}to{opacity:0;transform:scale(1.6)}}
+.b2-phone-input{position:absolute;z-index:4;border:0;padding:0;margin:0;resize:none;opacity:.01;background:transparent;color:transparent;caret-color:transparent;font-size:16px;pointer-events:none;outline:none}
+.b2-fallback{position:fixed;z-index:96;left:8px;right:8px;bottom:8px;display:flex;gap:8px;padding:8px;border-radius:12px;background:var(--surface-1);box-shadow:0 8px 28px var(--shadow)}.b2-fallback input{min-width:0;flex:1;font:inherit;font-size:16px;color:var(--ink);background:var(--surface-2);border:0;padding:10px;border-radius:8px}
+.b2-sheet{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-end;justify-content:center;background:var(--surface-veil)}.b2-sheet-body{width:min(100%,480px);max-height:70dvh;overflow:auto;padding:20px;box-sizing:border-box;border-radius:16px 16px 0 0;background:var(--surface-1);color:var(--ink);box-shadow:0 -8px 28px var(--shadow)}.b2-sheet-title{font-size:16px;font-weight:600;margin:0 0 12px}.b2-sheet-message{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}.b2-sheet-option{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px}.b2-sheet input[type=text]{box-sizing:border-box;width:100%;font:inherit;font-size:16px;padding:10px;margin:10px 0}.b2-sheet-error{color:var(--ink-strong);font-size:13px;margin:8px 0}
+@container(max-width:40px){.b2-chip-label{display:none}}
+@media(prefers-reduced-motion:reduce){.b2-full{transition:none}.b2-ripple{animation:none;opacity:.7}}
+`;
+  document.head.append(style);
+}
+
+/** Mount inside the address-bar slot; update from chromeControl + tab:holder. */
+export function createControlBadge({ mount, onStop = () => {}, onResume = () => {} } = {}) {
+  ensureBrowserControlStyles();
+  const root = el('div', 'b2-control'), button = el('button', 'b2-chip'), dot = el('span', 'b2-dot'), label = el('span', 'b2-chip-label');
+  const popup = el('div', 'b2-pop'), heading = el('div', 'b2-pop-title'), stateDot = el('span', 'b2-dot'), title = el('span');
+  const subtitle = el('p', 'b2-pop-sub'), actions = el('div', 'b2-actions'), action = el('button', 'b2-action');
+  button.type = action.type = 'button'; button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-expanded', 'false');
+  dot.setAttribute('aria-hidden', 'true'); stateDot.setAttribute('aria-hidden', 'true');
+  heading.append(stateDot, title); actions.append(action); popup.append(heading, subtitle, actions);
+  popup.setAttribute('role', 'dialog'); popup.hidden = true; button.append(dot, label); root.append(button); document.body.append(popup); mount?.append(root);
+  let state = {}, pending = false;
+  const close = (restore = false) => { popup.hidden = true; button.setAttribute('aria-expanded', 'false'); if (restore) button.focus(); };
+  const outside = event => { if (!root.contains(event.target) && !popup.contains(event.target)) close(); };
+  const key = event => { if (event.key === 'Escape' && !popup.hidden) { event.stopPropagation(); close(true); } };
+  const place = () => { const rect = button.getBoundingClientRect(); popup.style.top = `${rect.bottom + 8}px`; popup.style.left = `${Math.max(8, Math.min(innerWidth - 264, rect.right - 256))}px`; };
+  document.addEventListener('pointerdown', outside); document.addEventListener('keydown', key); window.addEventListener('resize', close);
+  button.addEventListener('click', () => { const open = popup.hidden; popup.hidden = !open; button.setAttribute('aria-expanded', String(open)); if (open) { place(); action.focus(); } });
+  action.addEventListener('click', async () => {
+    if (pending) return; pending = true; action.disabled = true;
+    try { await (state.holder === 'human' || state.paused ? onResume() : onStop()); close(true); }
+    catch { subtitle.textContent = t('control:failed'); }
+    finally { pending = false; action.disabled = false; }
+  });
+  function update(next = {}) {
+    state = next;
+    root.hidden = !next.agentUsed;
+    const human = next.holder === 'human', name = next.name || 'Claude';
+    label.textContent = human ? t('control:you') : name;
+    title.textContent = human ? t('control:humanOperating') : next.paused ? t('control:stopped') : next.waiting ? t('control:waiting') : t('control:agentOperating', { name });
+    subtitle.textContent = human ? t('control:returnsAfterIdle') : next.paused ? t('control:resumeHint', { name }) : t('control:touchHint');
+    button.setAttribute('aria-label', title.textContent); popup.setAttribute('aria-label', title.textContent);
+    action.textContent = human || next.paused ? t('control:resume') : t('control:stop');
+    action.classList.toggle('primary', human || !!next.paused);
+    for (const node of [dot, stateDot]) { node.dataset.holder = human ? 'human' : 'ai'; node.dataset.waiting = String(!!next.waiting); }
+    if (root.hidden) close();
+  }
+  update();
+  return { element: root, update, close, destroy() { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); window.removeEventListener('resize', close); root.remove(); popup.remove(); } };
+}
+
+/** Mount beside a tab title; active means the agent is currently operating this tab. */
+export function createTabActivityDot({ mount } = {}) {
+  ensureBrowserControlStyles();
+  const element = el('span', 'b2-dot b2-tab-dot'); element.hidden = true; element.setAttribute('aria-hidden', 'true'); mount?.append(element);
+  return { element, update({ active = false, holder = 'ai', waiting = false } = {}) { element.hidden = !active && holder !== 'human'; element.dataset.holder = holder; element.dataset.waiting = String(waiting); } };
+}
+
+/** Supply browser content (tabs/address/frame). Mount the strip above the phone composer. */
+export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = () => {}, onClose = () => {} } = {}) {
+  ensureBrowserControlStyles();
+  const element = el('button', 'b2-strip'), thumb = el('img', 'b2-thumb'), info = el('span', 'b2-strip-info'), domain = el('div', 'b2-domain');
+  const status = el('div', 'b2-strip-status'), dot = el('span', 'b2-dot'), statusText = el('span'), count = el('span', 'b2-count'), arrow = el('span', 'b2-chevron', '⌃');
+  thumb.alt = ''; dot.setAttribute('aria-hidden', 'true'); arrow.setAttribute('aria-hidden', 'true'); element.type = 'button'; element.setAttribute('aria-expanded', 'false');
+  status.append(dot, statusText); info.append(domain, status); element.append(thumb, info, count, arrow); mount?.append(element);
+  const fullscreen = el('div', 'b2-full'), back = el('button', 'b2-full-close', t('control:backToConversation')), body = el('div', 'b2-full-content');
+  back.type = 'button'; fullscreen.hidden = true; fullscreen.setAttribute('role', 'dialog'); fullscreen.setAttribute('aria-label', t('control:browser'));
+  if (backMount) { back.textContent = '‹'; back.setAttribute('aria-label', t('control:backToConversation')); back.style.fontSize = '24px'; back.style.minWidth = '36px'; backMount.append(back); fullscreen.append(body); }
+  else fullscreen.append(back, body);
+  document.body.append(fullscreen);
+  let placeholder = null, timer = null, ticker = null, openState = false;
+  function close() {
+    if (!openState) return; openState = false; fullscreen.dataset.open = 'false'; element.setAttribute('aria-expanded', 'false');
+    clearTimeout(timer); timer = setTimeout(() => { if (openState) return; fullscreen.hidden = true; if (placeholder && content) { placeholder.replaceWith(content); placeholder = null; } onClose(); element.focus(); }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 260);
+  }
+  function open() {
+    if (openState) return; openState = true; clearTimeout(timer);
+    if (content && !placeholder) { placeholder = document.createComment('browser-position'); content.replaceWith(placeholder); body.append(content); }
+    fullscreen.hidden = false; fullscreen.getBoundingClientRect(); fullscreen.dataset.open = 'true'; element.setAttribute('aria-expanded', 'true'); back.focus(); onOpen();
+  }
+  const key = event => { if (event.key === 'Escape' && openState) { event.stopPropagation(); close(); } };
+  fullscreen.addEventListener('keydown', key); back.addEventListener('click', close); element.addEventListener('click', open);
+  return { element, fullscreen, back, open, close,
+    update({ url = '', tabs = 0, holder = 'ai', name = 'Claude', image = null, remaining = null, last = null, pinned = false } = {}) {
+      try { domain.textContent = new URL(url).hostname || t('control:browser'); } catch { domain.textContent = t('control:browser'); }
+      count.textContent = String(tabs); count.setAttribute('aria-label', t('control:tabCount', { count: tabs }));
+      clearInterval(ticker); ticker = null;
+      const deadline = !pinned && holder === 'human' ? Number.isFinite(last) ? last + 60_000 : Number.isFinite(remaining) ? Date.now() + remaining * 1000 : null : null;
+      const renderStatus = () => { statusText.textContent = holder === 'human' ? deadline == null ? t('control:humanOperating') : t('control:returnsIn', { seconds: Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) }) : t('control:agentOperating', { name }); };
+      renderStatus(); if (deadline != null) ticker = setInterval(renderStatus, 1000);
+      dot.dataset.holder = holder; if (image) thumb.src = image; else thumb.removeAttribute('src');
+    },
+    destroy() { clearTimeout(timer); clearInterval(ticker); if (placeholder && content) placeholder.replaceWith(content); back.remove(); element.remove(); fullscreen.remove(); } };
+}
+
 export const CONTROL_STATES = ['running', 'idle', 'stopped', 'paused'];
 
 /** 状態の一行の語（running は {{name}} が操作中。リモートの端末で PC が引き継いでいる間は「PC で操作中」）。state が無ければ null */

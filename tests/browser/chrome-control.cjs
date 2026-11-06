@@ -165,5 +165,23 @@ async page => {
   // 後片付け: パネルを閉じる
   await page.keyboard.press('Escape').catch(() => {});
   if (await page.locator('#filePreview[data-panel="chrome-window"]').isVisible()) await page.locator('#browserEntry').click();
+  // Unified components are mounted independently of the legacy panel assembly.
+  const unified = await page.evaluate(async () => {
+    const { createControlBadge, createPhoneBrowserStrip } = await import('/chrome-control.mjs');
+    const mount = document.createElement('div'); document.body.append(mount);
+    const calls = [], badge = createControlBadge({ mount, onStop: () => calls.push('stop'), onResume: () => calls.push('resume') });
+    const chip = badge.element.querySelector('button'), values = [];
+    values.push(badge.element.hidden);
+    badge.update({ agentUsed: true, name: 'Claude' }); chip.click();
+    document.querySelector('.b2-pop:not([hidden]) button').click(); await Promise.resolve();
+    values.push(calls.join() === 'stop');
+    badge.update({ agentUsed: true, holder: 'human' }); chip.click();
+    document.querySelector('.b2-pop:not([hidden]) button').click(); await Promise.resolve();
+    values.push(calls.join() === 'stop,resume');
+    const strip = createPhoneBrowserStrip({ mount }); strip.update({ url: 'https://example.com/', tabs: 3, holder: 'human', remaining: 42 });
+    values.push(strip.element.textContent.includes('42') && strip.element.textContent.includes('example.com') && strip.element.textContent.includes('3'));
+    strip.destroy(); badge.destroy(); mount.remove(); return values;
+  });
+  check(unified.every(Boolean), 'unified badge: hidden before agent use, stop/resume, phone strip domain/tab count/remaining seconds');
   return results.join('\n');
 }
