@@ -1,13 +1,13 @@
-# 0293 人が触ったタブは人の操作になり、60 秒触らなければ AI に戻す。右のパネルとスマホの映像から操作できるようにする
+# 0296 人が触ったタブは人の操作になり、60 秒触らなければ AI に戻す。右のパネルとスマホの映像から操作できるようにする
 
 - 状態: 提案（仮番号。main に入れる直前に振り直す）
-- 関連: [ADR 0291](0291-one-chrome-window-per-conversation.md)、[ADR 0148](0148-agent-browser-in-chrome.md)（一部置換）、[ADR 0154](0154-agent-window-hidden-off-screen.md)、[ADR 0294](0294-screencast-ack-paced-quality.md)
+- 関連: [ADR 0294](0294-one-chrome-window-per-conversation.md)、[ADR 0148](0148-agent-browser-in-chrome.md)（一部置換）、[ADR 0154](0154-agent-window-hidden-off-screen.md)、[ADR 0297](0297-screencast-ack-paced-quality.md)
 
 ## 状況
 
 ADR 0148 では、右のパネルの映像は見るだけで、人が操作するときは「引き継ぐ」でその窓の AI を止め、PC の Chrome の窓を前に出していた。止めた窓は人が戻すまで止まったままで、時間では戻さなかった（「人が離れた後にエージェントが入力の途中のフォームを送りかねない」）。PC の上で人が触ったことを `GetLastInputInfo` で見て止める自動の一時停止は、窓を画面の外に置いたときに外した（ADR 0154）。
 
-ADR 0291 で、右のパネルが会話の Chrome のウィンドウそのものになり、ファイルや新しいタブも同じタブに並ぶ。承認したモックでは、次のように決めた。
+ADR 0294 で、右のパネルが会話の Chrome のウィンドウそのものになり、ファイルや新しいタブも同じタブに並ぶ。承認したモックでは、次のように決めた。
 
 - 人がタブに触ると、そのタブは人の操作になる。60 秒触らなければ AI に戻る。
 - 「引き継ぐ」はやめる。
@@ -34,7 +34,7 @@ ADR 0291 で、右のパネルが会話の Chrome のウィンドウそのもの
    - 門は**通してよいものの一覧**（`core/chrome/tab-holder.mjs` の `HUMAN_TAB_READS`。一覧と選んだ理由はそこに書く）。初めは断るものの一覧（`OPERATES`：入力・`Runtime.evaluate`・`callFunctionOn`・移動）にしていたが、本物の Chrome で `Runtime.compileScript` と `runScript`・`DOM.setOuterHTML`（`<img onerror>`）・`Page.addScriptToEvaluateOnNewDocument`（`runImmediately`）がすり抜け、ページにコードを動かさせられた（2026-11-06）。ページにコードを動かさせる道は多く、断る一覧では塞ぎ切れない。
    - `Runtime.evaluate`・`callFunctionOn` は読むためでも断る（ページの world でコードが動く）。購読（`enable`）は、要求を止める `Fetch`・スクリプトを止める `Debugger`・見た目を変える `Overlay`・`Emulation` を除く。人の操作のタブを閉じる（`Target.closeTarget`）・そのタブのある窓の大きさを変える（`Browser.setContentsSize`）も断る。
    - ページからの頼みの binding（`plyPage`）と入力欄の位置の binding（`plyInput`）は、どのタブでも AI に足させない・外させない。足せると、ページの頼みの中身を AI が横から受け取れる。
-   - 実装の間は旗が on の画面だけ人の操作に移し、旗が off なら門の振る舞いは前のまま（一時停止の間は、中継が会話のコマンドを全部断る）だった。ADR 0291 の段階 C1 で旗を外し、端末からの「操作する」もタブを人の操作にする形にした（`browser.chromeTakeOver` の by: device）。
+   - 実装の間は旗が on の画面だけ人の操作に移し、旗が off なら門の振る舞いは前のまま（一時停止の間は、中継が会話のコマンドを全部断る）だった。ADR 0294 の段階 C1 で旗を外し、端末からの「操作する」もタブを人の操作にする形にした（`browser.chromeTakeOver` の by: device）。
    - 断るときの文: 「人がこのタブを操作しています。終わるまで、このタブには触らないでください。ほかのタブで続けるか、待ってから snapshot を撮り直してください。」
    - 人の操作の始まりと終わりは、AI の次のコマンドの応答に一度だけ添えて伝える。
 4. **60 秒で AI に戻す。** 人の操作のタブで、最後に触ってから 60 秒たったら AI に戻す。
@@ -51,7 +51,7 @@ ADR 0291 で、右のパネルが会話の Chrome のウィンドウそのもの
 ### 2. 右のパネルの映像から操作する
 
 - PC の右のパネルの映像も、スマホと同じく入力を送る（今は見るだけ）。座標の直し方（`toPageCoords`）とキーの割り当ては、今のスマホの映像のものを使う。
-- 入力を送った画面を「最後に触った画面」として覚え、ページのメニューやダイアログはその画面にだけ出す（ADR 0292 の 2 の 6）。
+- 入力を送った画面を「最後に触った画面」として覚え、ページのメニューやダイアログはその画面にだけ出す（ADR 0295 の 2 の 6）。
 
 ### 3. ページの大きさ
 

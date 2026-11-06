@@ -133,7 +133,7 @@ body.file-preview-wide .file-preview-resize{display:none}
   .file-preview-foot{padding:10px 0 max(10px,env(safe-area-inset-bottom))}
 }
 
-/* ---- 会話の Chrome の窓の映像（data-mode=browser。web/chrome-panel.mjs・web/browser-unify.mjs、ADR 0291）。
+/* ---- 会話の Chrome の窓の映像（data-mode=browser。web/chrome-panel.mjs・web/browser-unify.mjs、ADR 0294）。
    見出しと道具の列は右パネルの頭（web/browser-unify.mjs）が持つので、枠の部品は隠す */
 .file-preview[data-mode=browser] .file-preview-path:empty{display:none}
 .file-preview[data-mode=browser] .file-preview-head{display:none}

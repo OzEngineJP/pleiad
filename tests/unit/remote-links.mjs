@@ -86,6 +86,6 @@ export default async function (t) {
   t.ok('殻の知らせは画面の辞書と同じ文言（ja・en）',
     ['ja', 'en'].every(l => str(res(l), 'link_host_only') === ui[l].timeline.link.hostOnly) && str(res('ja'), 'sheet_close') && str(res('en'), 'sheet_close'));
 
-  // ---- 「ブラウザーで開く」は写しの口（/visualization-snapshot）を使わない（ADR 0291 の 6）
+  // ---- 「ブラウザーで開く」は写しの口（/visualization-snapshot）を使わない（ADR 0294 の 6）
   t.ok('画面は写しの URL を作らない', !/visualization-snapshot/.test(read('web/file-preview.mjs')));
 }

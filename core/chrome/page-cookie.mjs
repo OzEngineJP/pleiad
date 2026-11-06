@@ -1,4 +1,4 @@
-// ファイルのページの Cookie（pleiad_pages）を Chrome に入れる（ADR 0292 の 2 の 2）。中継の移動の検査の口（page-policy.mjs）の connected・beforeOpen から呼ぶ。
+// ファイルのページの Cookie（pleiad_pages）を Chrome に入れる（ADR 0295 の 2 の 2）。中継の移動の検査の口（page-policy.mjs）の connected・beforeOpen から呼ぶ。
 // 入れる時点は、上りにつながるたびと、Pleiad のページを開く前。値はログに書かない。
 // 実機（Chrome 156、2026-11-06）: ブラウザーの単位の Storage.setCookies が入るのは CDP の既定の context（Target.getBrowserContexts の defaultBrowserContextId）だけで、
 // ほかのプロフィールの browserContextId を渡すと「Failed to find browser context」になる。ほかのプロフィールのタブには、そのタブのセッションの Network.setCookie で入れる（sessionCookie）。

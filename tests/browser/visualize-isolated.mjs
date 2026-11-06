@@ -1,4 +1,4 @@
-// 隔離の origin の可視化（ADR 0292 の 3。core/isolated-routes.mjs）を実ブラウザーで見る。
+// 隔離の origin の可視化（ADR 0295 の 3。core/isolated-routes.mjs）を実ブラウザーで見る。
 //   - 本体に見立てた 127.0.0.1 のページが、sandbox の iframe で /viz/<束>/<入口>?embed=conversation を開く
 //   - 束の中の相対パスの画像・fetch が読め、localStorage は落ちずに使え（枠の中だけの置き場）、高さが親へ届く
 //   - 束の外（本体の port）・確認の要る外のサイトは CSP で止まり、止まった外のサイトは親へ知らせる

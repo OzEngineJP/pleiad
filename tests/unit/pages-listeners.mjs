@@ -1,4 +1,4 @@
-// ファイルのページと隔離の 2 つのリスナー（ADR 0292 の 1・2。core/page-listener.mjs・pages-server.mjs・isolated-server.mjs・browser-unify-listeners.mjs）と、
+// ファイルのページと隔離の 2 つのリスナー（ADR 0295 の 1・2。core/page-listener.mjs・pages-server.mjs・isolated-server.mjs・browser-unify-listeners.mjs）と、
 // サーバー（いつも 2 つの port が立ち、中身の無い /_pleiad/ は 404 を返す。中身は A3・A4）。
 import fs from 'node:fs/promises';
 import http from 'node:http';

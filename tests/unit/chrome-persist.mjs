@@ -304,7 +304,7 @@ export default async function (t) {
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
 
-    // ===== 5. 「PC で操作する」のまま更新を越える: 窓は見せたまま・paused（by: pc）に戻り、そのタブはエージェントに触らせない。「任せる」で隠して AI に戻す（ADR 0167・0293）=====
+    // ===== 5. 「PC で操作する」のまま更新を越える: 窓は見せたまま・paused（by: pc）に戻り、そのタブはエージェントに触らせない。「任せる」で隠して AI に戻す（ADR 0167・0296）=====
     {
       await clearChildren();
       const chrome = await startFakeChrome({ permission: 'auto' });

@@ -107,7 +107,7 @@ export default async function (t) {
     chrome.browser.screencastFrame(opened);
     const frame = await until(() => remote.frames.find(f => f.kind === 'screencast' && f.type === 'frame'), 10000, 'frame');
     t.ok('フレームは source: chrome 付きで、見ている端末にだけ届く', frame.source === 'chrome' && frame.sessionId === id && !late.frames.some(f => f.kind === 'screencast') && !c.events.some(e => e.type === 'frame'));
-    // 映像への入力は見ている端末から受ける（触れたタブは人の操作になる。ADR 0293 の 1）
+    // 映像への入力は見ている端末から受ける（触れたタブは人の操作になる。ADR 0296 の 1）
     const input = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
     t.ok('入力は view-only で断らない', input.code !== 'view-only', JSON.stringify(input));
     const hostWatch = await c.cmd('browserScreencast', { sessionId: id, source: 'chrome', width: 400, height: 300 });

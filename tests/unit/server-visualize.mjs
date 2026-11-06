@@ -32,7 +32,7 @@ export default async function(t) {
     assert.equal(saved.presents[1].mode,'wide');
     t.ok('作業場所外の HTML を会話に配信し、再開・削除後も各版を保存',true);
 
-    // 「ブラウザーで開く」は隔離の origin の束（/viz/<hash>/）を開く。内蔵ブラウザー向けの写し（/visualization-snapshot・openVisualization）は無くした（ADR 0291 の 6）
+    // 「ブラウザーで開く」は隔離の origin の束（/viz/<hash>/）を開く。内蔵ブラウザー向けの写し（/visualization-snapshot・openVisualization）は無くした（ADR 0294 の 6）
     assert(saved.presents[0].id, '新しい可視化の記録は id を持つ');
     const auth = { headers:{ cookie:`agent_host_token=${server.token}` } };
     const retired = await fetch(`http://127.0.0.1:${server.port}/visualization-snapshot?sessionId=${id}&id=${saved.presents[0].id}`, auth);

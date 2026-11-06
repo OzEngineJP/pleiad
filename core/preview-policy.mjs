@@ -1,4 +1,4 @@
-// プレビューの CSP と確認（ADR 0292 の 3 の 2・3）。会話の枠の srcdoc（web/visualize-document.mjs）と、
+// プレビューの CSP と確認（ADR 0295 の 3 の 2・3）。会話の枠の srcdoc（web/visualize-document.mjs）と、
 // 隔離の origin の応答のヘッダー（core/isolated-routes.mjs）が同じ決まりで CSP を作る。
 // previewPolicy / previewCsp の本体は web/browser-confirm-policy.mjs に置いたまま、ここから再輸出する。
 // 画面のコードは web/ の下しか配られない（core/server.mjs）ので、本体を core/ へ移すと画面が読めなくなる。どちらも DOM を使わない純粋な関数。
@@ -20,7 +20,7 @@ const SELF_DIRECTIVES = ['script-src', 'style-src', 'img-src', 'font-src', 'conn
 /**
  * 隔離の応答の CSP（ヘッダー）。プレビューの CSP に、その束（鍵）のパスだけを読み先として足す。
  * self は束（鍵）のパスで終わる出どころ（例: `http://localhost:` と port の `*` の後に `/viz/<ハッシュ>/`）。port は * にする
- * （端末のプロキシの 2 つ目のリスナーを通ると port が変わる。ADR 0292 の 5 の 3）。
+ * （端末のプロキシの 2 つ目のリスナーを通ると port が変わる。ADR 0295 の 5 の 3）。
  * WASM（束の中の .wasm）を動かすため script-src に 'wasm-unsafe-eval' を足す（eval は足さない）
  */
 export function isolatedCsp(policy, { sandbox, self }) {

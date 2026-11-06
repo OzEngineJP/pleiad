@@ -1,4 +1,4 @@
-// タブの favicon を中継のプロセスが取りに行く HTTP（core/chrome/tab-info.mjs。ADR 0291）。
+// タブの favicon を中継のプロセスが取りに行く HTTP（core/chrome/tab-info.mjs。ADR 0294）。
 // ページは favicon の URL を好きに書けるので、そのまま取りに行くと、手元やネットワークの中のアドレス
 // （loopback・private・link-local・この PC の別のアドレス・Pleiad の port）へ中継から要求を出せてしまう。
 // ここでは名前を解決した後の IP を検査し、検査した IP へそのまま繋ぐ（解決し直さないので、DNS の付け替えでも抜けられない）。

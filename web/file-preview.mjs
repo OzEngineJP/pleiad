@@ -33,7 +33,7 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
 /**
  * showMenu は web/client.mjs の右クリックメニュー（1 つを共有する）。cmd はサーバーへのコマンド。
  * osActions() はサーバーのある PC の画面から見ているか（OS の操作を出してよいか。判定はサーバー）。
- * ファイル・可視化のクリックは Pleiad のページ（会話の Chrome のタブ。configureBrowserUnify。ADR 0291）で開く。
+ * ファイル・可視化のクリックは Pleiad のページ（会話の Chrome のタブ。configureBrowserUnify。ADR 0294）で開く。
  * ページの口がまだ無い間（サーバーの hostCapabilities が届く前）は右パネルで開く（HTML は原文）
  */
 export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false }) {

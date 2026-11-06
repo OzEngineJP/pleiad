@@ -349,12 +349,12 @@ const chromeWindowCloser = chromeRelay ? createChromeWindowCloser({ relay: chrom
   dataDir: store.dataDir, record: recordChromeWindowClose, log: line => console.log(`  ${line}`) }) : null;
 // 人への依頼のカードは、この引き継ぐ・戻すの変化で「あなたが操作中」になり、戻したときに決着する
 chromeHandoffs?.useControl(chromeControl);
-// 端末・映像から人が持ったタブ（ADR 0293 の 1）も、hand_to_user の「あなたが操作中」と「Claude に戻す」の決着に使う
+// 端末・映像から人が持ったタブ（ADR 0296 の 1）も、hand_to_user の「あなたが操作中」と「Claude に戻す」の決着に使う
 if (chromeRelay) chromeHandoffs?.useHolders({
   held: sessionId => chromeRelay.unify.tabHolder.held(sessionId),
   onChange: fn => chromeRelay.onTabEvent((type, payload) => { if (type === 'tab:holder') fn(payload?.sessionId); }),
 });
-// 操作の前の門（core/chrome/tab-holder.mjs）が、hand_to_user の頼みの最中かを読めるように渡す（ADR 0293 の 1。既定の門は使わない）
+// 操作の前の門（core/chrome/tab-holder.mjs）が、hand_to_user の頼みの最中かを読めるように渡す（ADR 0296 の 1。既定の門は使わない）
 chromeRelay?.unify.tabHolder.attach?.({ handoffs: chromeHandoffs });
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay, { dataDir: store.dataDir }) : null;
@@ -431,11 +431,11 @@ const lastAutoCompaction = new Map();
 const forking = new Set(); // Separate ownership: a running turn retains its own lock.
 const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
-// ページからの頼みの検査と、テーマ・言語のページへの知らせ（ADR 0292 の 2 の 6）。下で作る（savePref が先に呼ばれても困らないよう let で置く）
+// ページからの頼みの検査と、テーマ・言語のページへの知らせ（ADR 0295 の 2 の 6）。下で作る（savePref が先に呼ばれても困らないよう let で置く）
 let pageRequests = null;
 // 既定のブラウザーでフォルダーのページを開くときの 1 回だけの入場券（core/page-tickets.mjs）
 const pageTickets = createPageTickets();
-// 可視化の束（相対の資源を含めて隔離の origin で配る。ADR 0292 の 3）を置くデータの置き場
+// 可視化の束（相対の資源を含めて隔離の origin で配る。ADR 0295 の 3）を置くデータの置き場
 const VIZ_BUNDLE_DIR = store.dataDir;
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
@@ -2417,7 +2417,7 @@ async function startPageListeners() {
     pagePorts = Object.freeze({ main: server.address().port, ...listeners.ports });
     chromeRelay?.setPagePorts(pagePorts);
     chromeRelay?.setPageCookie(pagesCookie(TOKEN));
-    remote.setPagePorts(pagePorts);   // スマホの道（端末のプロキシの 2 つ目・隔離の行き先。ADR 0292 の 5）
+    remote.setPagePorts(pagePorts);   // スマホの道（端末のプロキシの 2 つ目・隔離の行き先。ADR 0295 の 5）
     pagesLog(`pages http://localhost:${pagePorts.pages}/ isolated http://localhost:${pagePorts.isolated}/`);
   } catch (error) {
     console.error('  [pages] could not start the page listeners:', String(error?.message ?? error));
@@ -2441,7 +2441,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
   if (!isReviewMode() && await botHost?.handleHttp(req, res)) return;
-  // Pleiad のページの本体の入口（画面の iframe。ADR 0292 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない。旗が off なら今のまま（下の 401・404）
+  // Pleiad のページの本体の入口（画面の iframe。ADR 0295 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない。旗が off なら今のまま（下の 401・404）
   if (pagesRoutes && url.pathname.startsWith(PAGES_PATH)) {
     for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.setHeader('allow', 'GET, HEAD'); return sendStatus(req, res, 405, 'method not allowed'); }
@@ -9735,7 +9735,7 @@ wss.on("connection", (ws, req) => {
           return await viaOp('files.listDirs', { path: msg.args?.path, files: msg.args?.files === true });
 
 
-        // 会話の Chrome の窓の映像を見る・操作する（core/browser-screencast.mjs、ADR 0291・0294）
+        // 会話の Chrome の窓の映像を見る・操作する（core/browser-screencast.mjs、ADR 0294・0297）
         case 'browserScreencast': case 'browserScreencastStop': case 'browserScreencastAck': case 'browserScreencastInput': {
           if (!screencastClients.has(ws)) screencastClients.set(ws, { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } });
           const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local,
@@ -9774,7 +9774,7 @@ wss.on("connection", (ws, req) => {
         case 'chromeCloseWindow': return await viaOp('browser.chromeCloseWindow');
         case 'chromePinWindow': return await viaOp('browser.chromePinWindow');
         case 'chromeCloseTab': return await viaOp('browser.chromeCloseTab');
-        // openDefault は許した拡張子のファイルを既定のアプリで（ADR 0291 の 3）。拡張子はリンクを解いた実体で見る
+        // openDefault は許した拡張子のファイルを既定のアプリで（ADR 0294 の 3）。拡張子はリンクを解いた実体で見る
         case "resolvePath": case "revealPath": case "openPath": case "openDefault": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
@@ -10383,11 +10383,11 @@ const listening = new Promise(resolve => server.once('listening', resolve));
 portDeadline = Date.now() + PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
-// 中継の移動の検査が本体の port を知る（ページのリスナーが立つ前から、本体の port を断る手当てを効かせる。ADR 0292 の 4）
+// 中継の移動の検査が本体の port を知る（ページのリスナーが立つ前から、本体の port を断る手当てを効かせる。ADR 0295 の 4）
 chromeRelay?.setPagePorts({ main: server.address().port });
 // ファイルのページと隔離のリスナー。待たない（覚えた port を前のサーバーが放すのを待つことがある）
 void startPageListeners();
-// 前の版が可視化を内蔵ブラウザーで開くために書いた写し（visualization-snapshots/。ADR 0291 の 6 で無くした）を消す。待たない・失敗しても続ける
+// 前の版が可視化を内蔵ブラウザーで開くために書いた写し（visualization-snapshots/。ADR 0294 の 6 で無くした）を消す。待たない・失敗しても続ける
 void fs.rm(path.join(store.dataDir, "visualization-snapshots"), { recursive: true, force: true }).catch(() => {});
 // 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）
 for (const { card, source, ctx } of adopting) {

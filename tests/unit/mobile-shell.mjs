@@ -87,7 +87,7 @@ export default async function (t) {
 
   // ---- 平文はループバックだけ・バックアップしない
   const nsc = read(`${APP}/res/xml/network_security_config.xml`);
-  t.ok('network_security_config: 既定は平文禁止、127.0.0.1 と localhost（隔離の origin。ADR 0292 §5.3）だけ許す（サブドメインなし）',
+  t.ok('network_security_config: 既定は平文禁止、127.0.0.1 と localhost（隔離の origin。ADR 0295 §5.3）だけ許す（サブドメインなし）',
     /<base-config cleartextTrafficPermitted="false">/.test(nsc)
       && /<domain-config cleartextTrafficPermitted="true">\s*<domain includeSubdomains="false">127\.0\.0\.1<\/domain>\s*<domain includeSubdomains="false">localhost<\/domain>\s*<\/domain-config>/.test(nsc)
       && (nsc.match(/<domain /g) ?? []).length === 2 && !/src="user"/.test(nsc));

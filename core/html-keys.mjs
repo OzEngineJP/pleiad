@@ -1,8 +1,8 @@
-// HTML のファイルを隔離の origin で読ませる鍵（ADR 0292 の 3 の 1）。ファイルのページの api/html-key（core/pages-routes.mjs）が出し、
+// HTML のファイルを隔離の origin で読ませる鍵（ADR 0295 の 3 の 1）。ファイルのページの api/html-key（core/pages-routes.mjs）が出し、
 // 隔離の /f/<鍵>/…（core/isolated-routes.mjs）が引く。サーバーが 1 つだけ作り、両方へ同じものを渡す（core/server.mjs）。
 // 鍵は 128 ビットの乱数で、HTML のファイルのフォルダーに結ぶ（鍵で読めるのはそのフォルダーの下だけ）。
 // サーバーの中のメモリだけに持ち、24 時間かサーバーの終わり（close）で消える。
-// 「一度だけ読み込む」は、その一度の許可（https の出どころ）を載せた別の鍵で読み直す（ADR 0292 の 3 の 3）。
+// 「一度だけ読み込む」は、その一度の許可（https の出どころ）を載せた別の鍵で読み直す（ADR 0295 の 3 の 3）。
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { externalOrigin } from './preview-policy.mjs';

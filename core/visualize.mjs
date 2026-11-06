@@ -26,7 +26,7 @@ export async function prepareVisualization(ref, access) {
 
 // Serialize snapshots in response order, and drain before turnEnd. A missing or
 // rejected file gets a durable error card, rather than a disappearing reference.
-// dataDir はブラウザーの一本化の旗が on のときだけ入る（可視化の束の置き場。ADR 0292 の 3 の 4）。入るときは、HTML と同じフォルダーの
+// dataDir はブラウザーの一本化の旗が on のときだけ入る（可視化の束の置き場。ADR 0295 の 3 の 4）。入るときは、HTML と同じフォルダーの
 // 下のファイルを束にして viz-blobs/ に書き、行に bundle を載せる（core/viz-bundle.mjs）。束を作れなくても可視化は出す（bundle 無し）
 export function createVisualizationCollector({ access, publish, dataDir = null }) {
   let text = '', chain = Promise.resolve(), count = 0;

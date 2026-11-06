@@ -1,7 +1,7 @@
 // utilityProcess（core/server.mjs）からの「サーバーのある PC で開く」依頼を main の shell で実行する。
 // 相手は core/os-open.mjs の parentPortOpener。許可範囲（作業ディレクトリ・添付・生成画像）と接続元の判定はサーバーが済ませている。
 // main は範囲を知らないので、ここでは形だけを確かめ直す: 絶対パス・UNC でない・実在・「開く」は HTML のファイルだけ・
-// 「既定のアプリで開く」は許した拡張子のファイルだけ（一覧は core/os-open.mjs の DEFAULT_APP_EXTENSIONS。ADR 0291 の 3）。
+// 「既定のアプリで開く」は許した拡張子のファイルだけ（一覧は core/os-open.mjs の DEFAULT_APP_EXTENSIONS。ADR 0294 の 3）。
 //   { type:'os-open', id, action:'reveal'|'open'|'default', path } -> { type:'os-open', id, ok, code?, detail? }
 // 本体は画面の言語を知らないので、失敗は code で返し、文言はサーバーが辞書から引く（core/os-open.mjs の bridgeError）。
 const path = require('node:path');

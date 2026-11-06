@@ -1,8 +1,8 @@
-// エージェントの Chrome の窓の映像（docs/inapp-browser.md「リモートから見る」、ADR 0148「右パネルは見るだけの映像」・ADR 0154・ADR 0294）。
+// エージェントの Chrome の窓の映像（docs/inapp-browser.md「リモートから見る」、ADR 0148「右パネルは見るだけの映像」・ADR 0154・ADR 0297）。
 //
 // 会話の範囲の「今のタブ」（エージェントが最後にコマンドを送ったタブ。無ければ窓の最初のタブ。core/chrome/relay.mjs の view.current）に、
 // 中継自身のセッション（エージェントのものとは別）を付け、タブの focus emulation を保たせて（host.focus）Page.startScreencast を回す。
-//   - 映像の段ごとに 1 つのセッション（ADR 0294 §3）。見る人の段が違うと、段ごとの画質・大きさの screencast を同じタブへ並べて回す。
+//   - 映像の段ごとに 1 つのセッション（ADR 0297 §3）。見る人の段が違うと、段ごとの画質・大きさの screencast を同じタブへ並べて回す。
 //     段の一覧は hub が setFormats で渡す（formats: [{ tier, quality, maxWidth, maxHeight }]）。段ごとのセッションを開けない
 //     Chrome では、見ている人の一番低い段の 1 つにそろえる（multi: false を返す）。フレームは stream（段）つきで流す
 //   - 見る人がいる間だけ付け、いなくなったら（stop）止めて focus emulation の理由（relay の view.focus）も手放す。focus emulation 自体は relay が 1 タブ 1 セッションで持ち、
@@ -22,7 +22,7 @@
 //   - focus emulation の理由は、映像の見張り（watch）ごとの札で数える（relay の view.focus の owner）。閉じてすぐ開き直しても、古い見張りの「手放す」が新しい見張りの理由を消さない
 // core/browser-screencast.mjs の createScreencastHub の bridge の形（ready・request・ack・onFrame・onState・onEnded・onAway）に、
 // 段の口（setFormats）と止まった絵の口（capture）を足した形で使う。
-// 見る側の入力（タップ・文字）は、中継のタブごとの持ち手（relay.unify.tabHolder。ADR 0293）があれば入力の口のセッションで今のタブへ送り、そのタブを人の操作にする。
+// 見る側の入力（タップ・文字）は、中継のタブごとの持ち手（relay.unify.tabHolder。ADR 0296）があれば入力の口のセッションで今のタブへ送り、そのタブを人の操作にする。
 // ページの大きさは見る人と持ち手から決める（core/chrome/viewport.mjs）。移動は受けない。URL は状態に載せない。
 // 持ち手の無い形（中継を渡さない。試験だけ）では見るだけで、入力は view-only で断る。operate(sessionId, viewport) の間は、
 // ページの大きさを端末の映像の箱に合わせる（Emulation.setDeviceMetricsOverride。operate(sessionId, null) で clearDeviceMetricsOverride）。タブの列の × で、タブを閉じられる（closeTab）。
@@ -47,7 +47,7 @@ export function chromeScreencastSettings({ width, height, scale, quality } = {})
  * @param [deps.relay] core/chrome/relay.mjs の中継（unify.tabHolder・onTabEvent）。無ければ映像は見るだけ（入力は断る。本番はいつも渡す）
  */
 export function createChromeScreencast({ host, relay = null, log = () => {} } = {}) {
-  const unified = !!relay?.unify?.tabHolder;   // タブごとの持ち手（relay.unify.tabHolder）があれば、映像から入力し、ページの大きさを見る人に合わせる（ADR 0293・0294）
+  const unified = !!relay?.unify?.tabHolder;   // タブごとの持ち手（relay.unify.tabHolder）があれば、映像から入力し、ページの大きさを見る人に合わせる（ADR 0296・0297）
   const viewers = new Map();
   const watches = new Map();   // 会話の id -> { formats: Map<段の鍵, 撮る形>, views: Map<段の鍵, セッション>, view（代表。入力・大きさ）, tabId, generation, queue, suspended, announced, metrics, pin, known, multi }
   const lastFrames = new Map(); // 人が窓を直接閉じたときの最後の映像（JPEG）。一時停止中も更新しない

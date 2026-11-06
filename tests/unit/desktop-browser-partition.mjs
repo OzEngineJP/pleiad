@@ -1,4 +1,4 @@
-// 前の版の内蔵ブラウザーの保存領域の掃除（desktop/browser-partition-cleanup.cjs。ADR 0291 の 6）。
+// 前の版の内蔵ブラウザーの保存領域の掃除（desktop/browser-partition-cleanup.cjs。ADR 0294 の 6）。
 // 一時の userData に前の版の Partitions/pleiad-browser を作り、偽の session で起動を何回か繰り返す
 //   - 1 回目: session を開かずにフォルダーを消し、印を書く。2 回目からは何もしない
 //   - 保存領域が無い（新しく入れた）: 印だけ書く

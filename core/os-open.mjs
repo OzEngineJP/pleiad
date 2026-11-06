@@ -1,4 +1,4 @@
-// サーバーのある PC で「エクスプローラーで表示」「ブラウザーで開く」「既定のアプリで開く」を実行する（docs/design-system.md「ファイルの操作」・ADR 0291 の 3）。
+// サーバーのある PC で「エクスプローラーで表示」「ブラウザーで開く」「既定のアプリで開く」を実行する（docs/design-system.md「ファイルの操作」・ADR 0294 の 3）。
 //
 // 判定はサーバー（core/server.mjs の revealPath / openPath / openDefault）、実行は OS 側。ここに来るのは、許可範囲の中にあると
 // 確かめ、実体を解決した後の絶対パスだけ。それでも次を守る:
@@ -16,7 +16,7 @@ import { getMainPort } from './main-port.mjs';
 export const OPENABLE = /\.html?$/i;
 
 /**
- * 「既定のアプリで開く」で開いてよい拡張子（ADR 0291 の 3）。一覧はここ 1 つだけで、サーバーと desktop/file-bridge.cjs の両方が使う。
+ * 「既定のアプリで開く」で開いてよい拡張子（ADR 0294 の 3）。一覧はここ 1 つだけで、サーバーと desktop/file-bridge.cjs の両方が使う。
  * 足すのは、既定のアプリで開いても中身が実行されない種類だけ。.js .py .ps1 .bat .cmd .vbs .wsf .hta .reg .url .lnk .scr .com
  * .exe .msi .jar などは入れない。マクロを含みうる .docm .xlsm .pptm も入れない。HTML は「ブラウザーで開く」（OPENABLE）の側
  */

@@ -95,7 +95,7 @@ export default async function (t) {
   assert.ok(!/<a [^>]*tc-link/.test(renderToolCall('Bash', { command: 'curl https://example.com' }).outerHTML), '取得以外の見出しは動詞だけ');
   t.ok('取得のカードの見出しに URL のリンクを戻す（http(s) 以外はリンクにしない）', true);
 
-  // ---- 行き先の一行・メニュー（リンクは既定のブラウザーで開く。内蔵ブラウザーは無くした。ADR 0291 の 5）----
+  // ---- 行き先の一行・メニュー（リンクは既定のブラウザーで開く。内蔵ブラウザーは無くした。ADR 0294 の 5）----
   const href = 'https://example.com/a';
   assert.deepEqual(statusParts({ href }), ['既定のブラウザーで開く', 'example.com/a']);
   t.ok('行き先の一行: 既定のブラウザーで開くと、スキームを省いた URL', true);

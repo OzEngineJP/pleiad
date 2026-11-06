@@ -1,7 +1,7 @@
 // Chrome の操作待ちの台帳（core/chrome/handoff.mjs。ADR 0148・0168）。偽の askPermission・接続・第 6 段の control で、サーバーも Chrome も立てない。
 //   - connect は 1 会話に 1 枚（ターンが走っている間だけ。ターンの外の接続では出さない）。状態の変化は update で届く。つながったら決着する
 //   - ask は開いている依頼があれば新しく出さない。接続が無ければ接続の案内に読み替える。一時停止中（第 6 段の paused）なら「あなたが操作中」から
-//   - 端末・映像から人が持ったタブ（useHolders）でも「あなたが操作中」になり、全部 AI に戻ったら決着する（ADR 0293 の 1）
+//   - 端末・映像から人が持ったタブ（useHolders）でも「あなたが操作中」になり、全部 AI に戻ったら決着する（ADR 0296 の 1）
 //   - wait は sliceMs で waiting（カードは残る）、signal で aborted。ターンの中で誰にも返していない答えは次の wait が返し、ターンの終わりで捨てる
 //   - ターンの外で戻した・つながった → 「続けてください」が 1 回だけ。busy・断った・中断のときは送らない
 import { readFileSync } from 'node:fs';

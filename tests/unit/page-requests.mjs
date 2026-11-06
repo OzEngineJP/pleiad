@@ -1,4 +1,4 @@
-// Pleiad のページから Pleiad への頼み（ADR 0292 の 2 の 5・6）: 中継の口（core/chrome/page-bridge.mjs）と検査（core/page-requests.mjs）。
+// Pleiad のページから Pleiad への頼み（ADR 0295 の 2 の 5・6）: 中継の口（core/chrome/page-bridge.mjs）と検査（core/page-requests.mjs）。
 //   - 形の検査: 知っている種類と欄だけを写す・会話の違う頼み・形の外を捨てる
 //   - パスの検査し直し（ADR 0050）: 検査した実体のパスに置き換える・検査で断られたら捨てる・use-file はファイルだけ
 //   - 中継の口: ファイルのページのタブにだけ binding を足す・主フレームの既定の world のファイルのページからの呼び出しだけ・
@@ -11,7 +11,7 @@ import { createPageBridge, BINDING, WORLD, RATE_LIMIT, PAYLOAD_LIMIT } from '../
 import { checkShape, createPageRequests, TEXT_LIMIT } from '../../core/page-requests.mjs';
 
 export const name = 'page-requests';
-export const title = 'ページから Pleiad への頼み（ADR 0292 の 2 の 6）: 形とパスの検査・人の操作のタブだけ・主フレームのページだけ・結果と env の知らせ（偽の Chrome）';
+export const title = 'ページから Pleiad への頼み（ADR 0295 の 2 の 6）: 形とパスの検査・人の操作のタブだけ・主フレームのページだけ・結果と env の知らせ（偽の Chrome）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {

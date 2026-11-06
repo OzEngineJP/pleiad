@@ -2,7 +2,7 @@
 // サーバーと同じく、台帳を先に作って中継へ渡し、control を後から useControl で差し込む。カードのボタンは ops（browser.chromeTakeOver・chromeResume）を呼ぶ。
 //   - カードの「Chrome で操作する」→ 引き継ぐ → カードが「あなたが操作中」（by: pc）。「Claude に戻す」→ 戻す → カードが決着し、待っていた hand_to_user が resumed を受ける
 //   - 人がパネルから先に「PC で操作する」を押していたら、hand_to_user は「お願い」を出さずに「あなたが操作中」から待つ
-//   - 「この端末で操作する」はタブを人の操作にするだけで会話を paused にしない（ADR 0293）ので、カードの状態は替えない（頼みの終わりは人の「終わった」か AI の待ちの終わり）
+//   - 「この端末で操作する」はタブを人の操作にするだけで会話を paused にしない（ADR 0296）ので、カードの状態は替えない（頼みの終わりは人の「終わった」か AI の待ちの終わり）
 //   - ターンが終わっていたら、戻したときに「続けてください」がちょうど 1 回
 import { WebSocket } from 'ws';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';

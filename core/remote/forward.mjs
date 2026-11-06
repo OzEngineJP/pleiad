@@ -25,7 +25,7 @@ const DROP_RESPONSE = new Set([
 const WS_RELEASE_BELOW = 64 * 1024;
 const WS_PAUSE_ABOVE = 256 * 1024;
 
-/** ADR 0292 §5。圧縮された本体で上限を逃れないよう、ページの転送は identity にする。 */
+/** ADR 0295 §5。圧縮された本体で上限を逃れないよう、ページの転送は identity にする。 */
 export function pageResponseLimit(path, isolated = false) {
   let p;
   try { p = decodeURIComponent(new URL(path, 'http://host.invalid').pathname); } catch { return 0; }
@@ -127,7 +127,7 @@ export function forwardStream(stream, { target, token, device = null, pagePorts 
     const headers = requestHeaders(head.headers);
     if (limit) headers['accept-encoding'] = 'identity';
     // このヘッダーは端末の HTTP 要求からは通さず、認証済みチャネルの頭からだけ作る。
-    // ファイルページの api/env と CSP を端末の origin にするための情報（ADR 0292 §5）。
+    // ファイルページの api/env と CSP を端末の origin にするための情報（ADR 0295 §5）。
     if (!isolated && limit && ports) headers['x-pleiad-page-ports'] = JSON.stringify(ports);
     // ファイルのページの出どころ（Sec-Fetch-Site）は、ページの道だけ通す。ホストの入口が same-origin・none のほかを断る（core/page-auth.mjs）
     if (!isolated && limit) { const site = fetchSiteOf(head.headers); if (site) headers['sec-fetch-site'] = site; }

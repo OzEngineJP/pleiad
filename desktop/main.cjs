@@ -22,7 +22,7 @@ const { createLoginItem, attachLoginItem, launchedHidden } = require('./login-it
 // 窓ごとのオリジンの表と、ほかのホストへつなぐ端末の窓（docs/remote.md §7。desktop/remote-windows.cjs）
 const { createWindowTrust } = require('./window-trust.cjs');
 const { createRemoteWindows } = require('./remote-windows.cjs');
-// 前の版の内蔵ブラウザーの保存領域を 1 回だけ消す（desktop/browser-partition-cleanup.cjs、ADR 0291 の 6）
+// 前の版の内蔵ブラウザーの保存領域を 1 回だけ消す（desktop/browser-partition-cleanup.cjs、ADR 0294 の 6）
 const { clearOldBrowserPartition } = require('./browser-partition-cleanup.cjs');
 const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 const { applyLoginShellEnv } = require('./shell-env.cjs');

@@ -1,4 +1,4 @@
-// ファイルのページのリスナー（http://localhost:<pages port>。ADR 0292 の 1・2）。
+// ファイルのページのリスナー（http://localhost:<pages port>。ADR 0295 の 1・2）。
 // /_pleiad/ の下だけを、ページの Cookie で認証してから core/pages-routes.mjs へ渡す（中身は A4）。
 import { startPageListener, sendStatus } from './page-listener.mjs';
 import { PAGES_PATH, PAGES_COOKIE, pageRequestOk, pagesSecret } from './page-auth.mjs';

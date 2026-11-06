@@ -7,7 +7,7 @@ const blocked = code => ({ kind: 'blocked', code });
 const network = value => /^[\\/]{2}/.test(value);
 
 /**
- * Resolve explicit path notation before considering URLs or search (ADR 0291 §2).
+ * Resolve explicit path notation before considering URLs or search (ADR 0294 §2).
  * Bare words remain search terms: ./ or .\ makes a relative
  * path unambiguous without sending a failed path lookup to a search provider.
  * This is lexical classification only; use resolveAddressInput before opening.

@@ -1,4 +1,4 @@
-// 可視化の束（ADR 0292 の 3 の 4。core/viz-bundle.mjs）と、記録の行の束（core/history.mjs）と、束を作る集め役（core/visualize.mjs）。
+// 可視化の束（ADR 0295 の 3 の 4。core/viz-bundle.mjs）と、記録の行の束（core/history.mjs）と、束を作る集め役（core/visualize.mjs）。
 //   - HTML と同じフォルダーの下を束にする。ドットで始まる名前・node_modules・ジャンクションは入れない。データ置き場の中のものは入れない（ADR 0050）
 //   - 上限（200 ファイル・32 MiB・1 ファイル 8 MiB）を超えたら HTML だけの束にして、行に理由を残す
 //   - 中身は sha256 の名前で 1 つだけ。目録のハッシュが束のハッシュ。名前と中身が合わない目録は読まない

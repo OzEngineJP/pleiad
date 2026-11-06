@@ -24,7 +24,7 @@ export function isolateFrame(frame) {
   return frame;
 }
 
-// 隔離の origin（ADR 0292 の 3）。画面の起動がサーバーの hostCapabilities から port と「一度だけ読み込む」の印の頼み方を渡す。
+// 隔離の origin（ADR 0295 の 3）。画面の起動がサーバーの hostCapabilities から port と「一度だけ読み込む」の印の頼み方を渡す。
 // 渡されるまでと、束の無い記録は srcdoc で描く（相対パスの画像・fetch は読めない）
 let isolated = null;
 /** @param {{ port: number, mintOnce?: (origins: string[]) => Promise<string|null> } | null} options */
@@ -84,7 +84,7 @@ export function visualizationFrame(content, title, { fill = false, conversation 
     confirmedPreview(frame, srcdoc);
     return frame;
   }
-  // 隔離の origin の応答のヘッダーの sandbox と同じ（ADR 0292 の 3）。allow-same-origin は付けない
+  // 隔離の origin の応答のヘッダーの sandbox と同じ（ADR 0295 の 3）。allow-same-origin は付けない
   frame.setAttribute('sandbox', 'allow-scripts allow-downloads allow-forms');
   confirmedPreview(frame, async (policy, once) => {
     const theme = document.documentElement?.dataset?.theme;

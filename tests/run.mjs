@@ -114,7 +114,7 @@ const SUITES = [
   './unit/chrome-window-shots.mjs',
   './unit/chrome-close-confirm.mjs',
   './unit/chrome-panel-lifecycle.mjs',
-  // スマホで端末内のページを描いている間は Chrome の映像を止め、外したら映し直す（ADR 0292 の追記 2）
+  // スマホで端末内のページを描いている間は Chrome の映像を止め、外したら映し直す（ADR 0295 の追記 2）
   './unit/browser-unify-local-pause.mjs',
   './unit/chrome-window-switch.mjs',
   './unit/chrome-pill-resume.mjs',
@@ -857,7 +857,7 @@ const SUITES = [
   './unit/remote-links.mjs',
   './unit/desktop-external-link.mjs',
 
-  // ==== ブラウザーの一本化（ADR 0291〜0294、temporary/browser-unify-plan.md）。段ごとの区画。各段は自分の区画の下にだけ足す（並列の衝突を避ける）====
+  // ==== ブラウザーの一本化（ADR 0294〜0297、temporary/browser-unify-plan.md）。段ごとの区画。各段は自分の区画の下にだけ足す（並列の衝突を避ける）====
   // --- S0（差し込み口） ---
   // 映像の座標の変換の引っ越し（web/page-coords.mjs）・ページの port の認証（core/page-auth.mjs）・2 つのリスナー（Host・GET だけ・::1・旗・port の引き継ぎ）
   './unit/page-coords.mjs',
@@ -869,7 +869,7 @@ const SUITES = [
   './unit/pages-listeners.mjs',
 
   // --- A1 映像 ---
-  // 映像の返事ごとの 1 枚と 7 段（ADR 0294）: 見る人ごとの ack・印の時間 S・段の上下・still・stale・lag（偽の Chrome・偽の見る人 2 つ）
+  // 映像の返事ごとの 1 枚と 7 段（ADR 0297）: 見る人ごとの ack・印の時間 S・段の上下・still・stale・lag（偽の Chrome・偽の見る人 2 つ）
   './unit/screencast-pacing.mjs',
 
   // --- A2 ページの Cookie と中継の範囲 ---

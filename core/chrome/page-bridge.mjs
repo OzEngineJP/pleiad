@@ -1,7 +1,7 @@
-// 中継（core/chrome/relay.mjs）の、Pleiad のページから Pleiad への頼み（plyPage の binding）を受ける口（ADR 0292 の 2 の 5・6）。
+// 中継（core/chrome/relay.mjs）の、Pleiad のページから Pleiad への頼み（plyPage の binding）を受ける口（ADR 0295 の 2 の 5・6）。
 //   - ファイルのページ（http://localhost:<pages port>/_pleiad/s/<その会話の id>/…）のタブにだけ、中継自身のセッションで Runtime.addBinding（plyPage）を足す
 //   - 頼みを受けるのは、呼んだのが主フレームの既定の world（ページ自身。iframe・隔離した world でない）で、そのフレームの origin がファイルのページで、
-//     そのタブを人が操作中（ADR 0293。core/chrome/tab-holder.mjs）のときだけ。人が操作中のタブでは、AI の Runtime.evaluate を中継の門が断るので、
+//     そのタブを人が操作中（ADR 0296。core/chrome/tab-holder.mjs）のときだけ。人が操作中のタブでは、AI の Runtime.evaluate を中継の門が断るので、
 //     AI はページを通して頼みを偽れない。AI の操作のタブから届いた頼みは捨てる
 //   - 形とパスの検査は attach で受けた accept（core/page-requests.mjs）がする。accept が無ければ全部捨てる（つなぎ忘れは断る側に倒す）
 //   - 通った頼みは 'tab:page-request' で出す（{ sessionId, targetId, by, request }。by は最後に触った画面）

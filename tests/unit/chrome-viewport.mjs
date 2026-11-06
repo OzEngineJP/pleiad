@@ -1,8 +1,8 @@
-// タブのページの大きさの決め方（core/chrome/viewport.mjs、ADR 0293 の 3）: 4 つの順・モバイルの表示・既定の窓
+// タブのページの大きさの決め方（core/chrome/viewport.mjs、ADR 0296 の 3）: 4 つの順・モバイルの表示・既定の窓
 import { decideViewport, BASE_VIEWPORT } from '../../core/chrome/viewport.mjs';
 
 export const name = 'chrome-viewport';
-export const title = 'タブのページの大きさの決め方（ADR 0293 の 3）: スマホで操作中 > PC の右の欄 > スマホで見る > AI だけ';
+export const title = 'タブのページの大きさの決め方（ADR 0296 の 3）: スマホで操作中 > PC の右の欄 > スマホで見る > AI だけ';
 
 const same = (got, want) => JSON.stringify(got) === JSON.stringify(want);
 

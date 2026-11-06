@@ -715,7 +715,7 @@ Electron 本体の更新で切れた通話・computer use は、次の起動で�
 
 ### 会話のブラウザー（承認済み（2026-11-06））
 
-会話の右の欄は、その会話の Chrome のウィンドウだけを表示する。Web・ファイル・フォルダー・可視化・git・プラグイン・新しいタブを同じタブの列に並べ、人とエージェントが同じページを使う。承認した形は以下の本文に定める。動きと認証は [会話のブラウザー](inapp-browser.md)、決定の理由は [ADR 0291](adr/0291-one-chrome-window-per-conversation.md)〜[0294](adr/0294-screencast-ack-paced-quality.md) にある。
+会話の右の欄は、その会話の Chrome のウィンドウだけを表示する。Web・ファイル・フォルダー・可視化・git・プラグイン・新しいタブを同じタブの列に並べ、人とエージェントが同じページを使う。承認した形は以下の本文に定める。動きと認証は [会話のブラウザー](inapp-browser.md)、決定の理由は [ADR 0294](adr/0294-one-chrome-window-per-conversation.md)〜[0297](adr/0297-screencast-ack-paced-quality.md) にある。
 
 #### PC のタブとアドレスバー
 

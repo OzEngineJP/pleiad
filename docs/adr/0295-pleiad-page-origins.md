@@ -1,11 +1,11 @@
-# 0292 Pleiad のページを、本体の画面と別の 2 つの origin（ファイルのページ・隔離）から配る
+# 0295 Pleiad のページを、本体の画面と別の 2 つの origin（ファイルのページ・隔離）から配る
 
 - 状態: 提案（仮番号。main に入れる直前に振り直す）
-- 関連: [ADR 0291](0291-one-chrome-window-per-conversation.md)、[ADR 0009](0009-sandboxed-html-with-scripts.md)・[ADR 0042](0042-preview-loads-external-by-default.md)（一部置換）、[ADR 0050](0050-local-file-access.md)、[ADR 0010](0010-os-actions-only-on-host-screen.md)、[ADR 0115](0115-records-in-sqlite.md)、[ADR 0148](0148-agent-browser-in-chrome.md)、[ADR 0151](0151-zero-downtime-update.md)、[ADR 0167](0167-chrome-connection-held-across-updates.md)
+- 関連: [ADR 0294](0294-one-chrome-window-per-conversation.md)、[ADR 0009](0009-sandboxed-html-with-scripts.md)・[ADR 0042](0042-preview-loads-external-by-default.md)（一部置換）、[ADR 0050](0050-local-file-access.md)、[ADR 0010](0010-os-actions-only-on-host-screen.md)、[ADR 0115](0115-records-in-sqlite.md)、[ADR 0148](0148-agent-browser-in-chrome.md)、[ADR 0151](0151-zero-downtime-update.md)、[ADR 0167](0167-chrome-connection-held-across-updates.md)
 
 ## 状況
 
-ADR 0291 で、ファイル・フォルダー・git・プラグイン・新しいタブを、Chrome のタブに出す Pleiad のページにした。HTML のファイルと可視化も、同じ Chrome のタブで開く。
+ADR 0294 で、ファイル・フォルダー・git・プラグイン・新しいタブを、Chrome のタブに出す Pleiad のページにした。HTML のファイルと可視化も、同じ Chrome のタブで開く。
 
 - 本体の画面（`127.0.0.1:<port>`。既定 7420）は、トークン 1 つですべての操作に届く（`core/server.mjs` の `tokenOk`、Cookie の `agent_host_token`）。Chrome は AI が操作するブラウザーで、利用者のプロフィールの Cookie を使う。本体の画面のトークンが Chrome に入ると、AI が Pleiad を丸ごと操作できてしまう（自分への許可を自分で承認する、など）。今の中継（`core/chrome/relay.mjs` の `safeUrl`）は http のループバックを止めないので、利用者が Chrome で本体の画面を開いたことがあれば、今でもこの道が開いている。
 - Cookie は port を区別しない。`127.0.0.1:A` の Cookie は `127.0.0.1:B` にも送られる。SameSite も port を区別しない（`localhost:A` と `localhost:B` は同じ site）。
@@ -27,7 +27,7 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
 - 名前を `localhost` にするのは、本体（`127.0.0.1`）と Cookie の置き場を分けるためである。`127.0.0.1` の別 port にすると、本体の Cookie が届く。
 - どちらのリスナーも、`Host` が `localhost:<その port>` のときだけ答える（DNS rebinding を防ぐ）。受けるのは GET と HEAD だけ。
 - port はデータの置き場の `page-ports.json`（`{ pages, isolated }`）に覚え、次の起動でも同じ port を試す。取れなければ新しい port にし、開いている Pleiad のページのタブを中継が新しい URL へ移す。無停止の更新（ADR 0151）では、新しいサーバーが同じ port を引き継ぐ。試験用に `AGENT_HOST_PAGES_PORT`・`AGENT_HOST_ISOLATED_PORT`（`0` で空いた port）を足す。環境変数で決めた port は覚えない。
-- 2 つのリスナーと本体の `/_pleiad/` は常に立てる（実装の間は旗 `AGENT_HOST_BROWSER_UNIFY=on` のときだけ立て、ADR 0291 の段階 C1 で旗を外した）。立った port は能力の `browserUnify`（`{ pages, isolated }`）で画面へ知らせる。
+- 2 つのリスナーと本体の `/_pleiad/` は常に立てる（実装の間は旗 `AGENT_HOST_BROWSER_UNIFY=on` のときだけ立て、ADR 0294 の段階 C1 で旗を外した）。立った port は能力の `browserUnify`（`{ pages, isolated }`）で画面へ知らせる。
 
 ### 2. ファイルのページ
 
@@ -44,7 +44,7 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
    - Cookie だけでは、要求の出どころを区別できない。`SameSite=Strict` でも、`localhost` の別の port のページ（利用者の dev サーバー・sandbox の無い応答）からの要求には付く。`localhost` の port 違いは同じ site だからである（2026-11-06 に実機の Chrome で確かめた）。
    - そこで、ファイルのページの入口と本体の `/_pleiad/` の入口は、`Sec-Fetch-Site` が `same-origin`（ページ自身）か `none`（アドレスバー・中継の移動）のときだけ通し、`same-site`・`cross-site` は 401 にする（2026-11-06 の追加の決定。`core/page-auth.mjs` の `fetchSiteOk`）。
      - 見出しの無い要求（ブラウザーでない取得）は Cookie の検査だけで通す。Chrome は `localhost` への要求にいつも付ける。
-   - 既定のブラウザーでフォルダーのページを開くとき（ADR 0291 の 3 の 1）は、既定のブラウザーがこの Cookie を持たない。ホストの画面の `openPath` だけが 1 回だけ使える入場券を作り、`/_pleiad/enter?ticket=<券>` を OS に開かせる（2026-11-06 の追加の決定。`core/page-tickets.mjs`）。
+   - 既定のブラウザーでフォルダーのページを開くとき（ADR 0294 の 3 の 1）は、既定のブラウザーがこの Cookie を持たない。ホストの画面の `openPath` だけが 1 回だけ使える入場券を作り、`/_pleiad/enter?ticket=<券>` を OS に開かせる（2026-11-06 の追加の決定。`core/page-tickets.mjs`）。
      - ファイルのページの port は、券が生きていて（作ってから 60 秒・1 回だけ）、`Sec-Fetch-Site` が `none` か無い GET のときだけ、同じ属性の `pleiad_pages` を置き、券を作ったときに決めた行き先へ 303 で移す。行き先は URL から受けない。
      - 券は 32 バイトの乱数で、メモリだけに置き、20 枚までにする。ログに券と行き先を書かない。届くのは、Chrome のタブと同じファイルのページの GET だけである。
 3. **画面の iframe での資格**（Chrome が無い会話・スマホの手元の描画・LAN のブラウザー）: 同じページを本体の origin の同じパス（`http://127.0.0.1:<port>/_pleiad/s/…`）でも配り、本体の Cookie で認証する（2026-11-06 の追加の決定）。ページのコードは同じで、相対の URL で API を呼ぶ。
@@ -58,7 +58,7 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
 6. **ページから Pleiad への頼み**（行の ⋯・右クリック・書き込みを伴う操作）
    - Chrome のタブでは、中継がそのタブにだけ `Runtime.addBinding`（名前 `plyPage`）を足す。iframe では親へ `postMessage` で送り、親が送り元を確かめる。
    - 頼みは「この行のメニューを開きたい」「このファイルを会話で使いたい」「この差分をコミットしたい」のような**頼み**で、受けた Pleiad の画面がメニューや確認を描き、人が押してから今の WS の操作で実行する。
-   - ページから届いた頼みは、そのタブを人が操作中（ADR 0293）のときだけ受ける。人が操作中のタブでは、AI の `Runtime.evaluate` などの操作は中継が断る。このため AI はページを通して頼みを偽れない。
+   - ページから届いた頼みは、そのタブを人が操作中（ADR 0296）のときだけ受ける。人が操作中のタブでは、AI の `Runtime.evaluate` などの操作は中継が断る。このため AI はページを通して頼みを偽れない。
    - 頼みに載ったパスは、サーバーで検査し直す。
 
 ### 3. 隔離した origin（可視化・HTML のファイル）
@@ -108,7 +108,7 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
    - iOS は `HostViewController.swift` の `decidePolicyFor` で、`http://localhost:<p2>` の子フレームを許す。`LinkPolicy` は、隔離の URL を「ホストだけのリンク」として断らないようにする。
    - Android は `network_security_config` の平文の許可に `localhost` を足し、`HostActivity.kt` の `shouldOverrideUrlLoading` で同じ子フレームを許す。
    - デスクトップのリモートの窓（`core/remote/device-proxy.mjs`）も同じ作りにする。
-4. Web のページと HTML のファイルのタブは、スマホでも映像のままにする（ADR 0294）。中継を通る映像の量には、今は上限を置かず、測ってから決める（2026-11-06 の追加の決定）。
+4. Web のページと HTML のファイルのタブは、スマホでも映像のままにする（ADR 0297）。中継を通る映像の量には、今は上限を置かず、測ってから決める（2026-11-06 の追加の決定）。
 
 ## 理由
 

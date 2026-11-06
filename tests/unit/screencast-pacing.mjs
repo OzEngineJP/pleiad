@@ -1,11 +1,11 @@
-// 映像の返事ごとの 1 枚と 7 段（ADR 0294・core/browser-screencast.mjs の hub）。
+// 映像の返事ごとの 1 枚と 7 段（ADR 0297・core/browser-screencast.mjs の hub）。
 //   - フレームが届いたら見る人を待たずに撮影元へすぐ ack を返し、見る人ごとに「返事のたびに最新の 1 枚」を送る
 //   - 印（mark）とフレームの返事の差 S の中央値で段が上下する（>50ms で 3 枚で下げる・≤25ms で 5 枚で上げる）
 //   - 上げて失敗した段は 30 秒上げない・段 0 でも遅い → lag・返事が 3 秒来ない → stale・300 ms で最上段の 1 枚
 import { createScreencastHub, SCREENCAST_TIERS } from '../../core/browser-screencast.mjs';
 
 export const name = 'screencast-pacing';
-export const title = '映像の返事ごとの 1 枚と 7 段（ADR 0294）: 見る人ごとの ack・印の時間 S・段の上下・30 秒・still・stale・lag';
+export const title = '映像の返事ごとの 1 枚と 7 段（ADR 0297）: 見る人ごとの ack・印の時間 S・段の上下・30 秒・still・stale・lag';
 
 /** 手で進める時計とタイマー */
 function clock(start = 1000) {

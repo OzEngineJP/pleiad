@@ -1,6 +1,6 @@
 // 会話の頭の行の、右パネルを開くアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」）。
 //   - プラグイン（#contextEntry）: 件数は画面に出さず、title と読み上げの名前にだけ入れる。「変更あり」は右上の点
-//   - ブラウザー（#browserEntry）: 会話の右の欄（会話の Chrome のタブ。ADR 0291）を開閉する。
+//   - ブラウザー（#browserEntry）: 会話の右の欄（会話の Chrome のタブ。ADR 0294）を開閉する。
 //     近道は Ctrl+Shift+B（macOS は ⌘⇧B）
 import { t } from './i18n.mjs';
 // i18n-dynamic: tabs:address.openPanel
@@ -119,7 +119,7 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
       const icon = browserIcon('panel'); icon.classList.add('i'); button.querySelector('svg')?.replaceWith(icon); button.dataset.unifiedIcon = 'true';
     }
     announceChange(id, state);
-    // Chrome が無い会話では Pleiad のページだけを出すので「ブラウザー」と呼ばない（ADR 0291 の 4 の 2）
+    // Chrome が無い会話では Pleiad のページだけを出すので「ブラウザー」と呼ばない（ADR 0294 の 4 の 2）
     const label = open() ? t('tabs:address.closePanel') : pagesOnly() ? t('tabs:address.openPagePanel') : t('tabs:address.openPanel');
     button.title = `${label}（${browserShortcutLabel(mac)}）`;
     button.setAttribute('aria-label', label);

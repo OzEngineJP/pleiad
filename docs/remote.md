@@ -619,7 +619,7 @@ iOS も A 案にした（2026-10-06、[ADR 0144](adr/0144-ios-remote-core-in-swi
 - 移したもの: `X25519.kt`（JCA の `XDH` だけ。生の鍵は noise.mjs と同じ PKCS#8 / SPKI の前置きで出し入れ。RFC 7748 のベクトルで確かめる）、`Noise.kt`、`Frames.kt`、`Channel.kt`（1 本のスレッドの `Loop` に閉じ込める。Node のイベントループの代わり）、`RelaySocket.kt`（OkHttp 4.12.0。届いた順に溜め、聞き手を付けてから流す）、`Pairing.kt`、`DeviceLink.kt`、`DeviceProxy.kt` + `WebSocketFrames.kt`（127.0.0.1 の HTTP/1.1 と RFC 6455 の小さなサーバー。認証・`Host` の照合・GET/HEAD だけ・案内のページはデスクトップと同じ。HTTP の応答はどれも `Connection: close`）、`RemoteDevice.kt`（`hosts.json` はデスクトップと同じ形、秘密は `secrets.bin` に封じる）
 - 試験（`cd mobile/android && ./gradlew :remote-core:test`、JDK 17 以上。`mobile/node_modules` と `cap sync` の生成物が無い checkout・worktree では `:app` の設定評価が `cordova.variables.gradle` が無くて落ちるので `--configure-on-demand` を付ける。2026-10-01）: ベクトル（cacophony の IK / IKpsk2、Pleiad の導出、フレーム 17 例）、メモリの管でつないだチャネル（窓より大きい本文・大きい WebSocket のメッセージ）、**Node の本物の中継と fake のホストとの往復**（`InteropTest`。`mobile/scripts/fake-host.mjs` を子プロセスで立て、ペアリング・プロキシの認証と防火壁・`/ws` の `ready` とコマンド・900 KB のメッセージ・取り消しまで。`node` が無ければ飛ばす）。`npm test` の `mobile-shell` は plyRemote の形・平文の許可・版の固定・殻の辞書を見る
 - 資格情報: `noBackupFilesDir/remote/`。秘密は Android Keystore の AES-256-GCM の鍵で封じる（`KeystoreCipher`）。Keystore の鍵はバックアップされないので `allowBackup=false` と data extraction rules でバックアップ・端末の移行から外す
-- 平文: `network_security_config` で `127.0.0.1` と `localhost` だけ（ループバックのプロキシと、試験で `adb reverse` した中継。`localhost` は可視化を描く隔離の origin の 2 つ目の待ち受け、[ADR 0292](adr/0292-pleiad-page-origins.md) §5.3）。利用者の入れた CA は信じない
+- 平文: `network_security_config` で `127.0.0.1` と `localhost` だけ（ループバックのプロキシと、試験で `adb reverse` した中継。`localhost` は可視化を描く隔離の origin の 2 つ目の待ち受け、[ADR 0295](adr/0295-pleiad-page-origins.md) §5.3）。利用者の入れた CA は信じない
 - 待ち受けのポート（2026-10-09）: `DeviceProxy.bindListener` が `reuseAddress = true` で前回のポートを取り直す（iOS の `SO_REUSEADDR` と同じ。付けないと、閉じた直後の再起動で TIME_WAIT が残り、別のポートに落ちてオリジンが変わり、`agent-host-current` などの localStorage が消えて新しい会話が開いていた）。それでも取れなければ 250 ms 置きに 6 回やり直し、それでもだめなら今まで通り空きポートへ落ちる
 - 殻の画面（`mobile/www/`）: ホスト一覧（状態・最後に使った時刻・「…」で名前を変える / 削除）、「ホストを追加」（ML Kit の `scan()` で QR、カメラの許可を求め、Google のスキャナーのモジュールが無ければ入れ始める。貼り付けも可）、ペアリング中は確認コード 6 桁と「やめる」。`pleiad://pair?...` のリンク（端末のカメラで QR を開いたとき）でも開き、そのときとペアリング済みのホストのときは先に確かめる。文言は殻の辞書 `mobile/www/i18n.js`（ja / en）、ネイティブは失敗を決まったコードで返して殻が訳す
 - ホストの窓（`HostActivity`）: Capacitor の入らない素の WebView で `http://127.0.0.1:<p>/?token=…` を開く。入れるのは `window.plyRemote` だけで、`WebViewCompat.addDocumentStartJavaScript` と `addWebMessageListener` をどちらもプロキシのオリジンに限り、受け口は本体フレームからのメッセージだけを受ける。形は `{ hostId, hostName, relay, device, shell: 'mobile', status(), onStatus(fn), retry(), backToHosts(), closeWindow(), setTheme(dark, { top, bottom }) }`（`closeWindow` = `backToHosts`。凍結し再定義できない。`setTheme` は画面の配色と上端・下端の地の色 `#rrggbb` を殻へ知らせる口）。帯のバッジはこれでデスクトップと同じ部品が動く
@@ -685,7 +685,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 ページの返送量は、ファイルのページと API が 8 MiB、raw の取得と隔離の資源が 32 MiB までにする。ホストの接続口と端末内プロキシの両方で検査し、超えた応答は止める。暗号化したまま運ぶ中継サーバーは本文を解釈せず、既存のフレームの大きさと接続の認証を検査する。
 
-Chrome の映像と入力は、既存の暗号化された WebSocket の道を使う。見る画面ごとに返事待ちの 1 枚だけを送り、古い映像を最新で置き換える。画質は 7 段で自動調整し、遅い端末がほかの端末を待たせない。映像だけの帯域の上限はまだ設けず、送信量を記録する（[ADR 0294](adr/0294-screencast-ack-paced-quality.md)）。
+Chrome の映像と入力は、既存の暗号化された WebSocket の道を使う。見る画面ごとに返事待ちの 1 枚だけを送り、古い映像を最新で置き換える。画質は 7 段で自動調整し、遅い端末がほかの端末を待たせない。映像だけの帯域の上限はまだ設けず、送信量を記録する（[ADR 0297](adr/0297-screencast-ack-paced-quality.md)）。
 
 スマホの会話の上にはホスト名・アドレス・タブの数・⋮ の帯を出す。タブの数から縮小画像の一覧を開く。人が入力や移動でタブに触ったら、そのタブだけ人の操作にする。最後の操作から 60 秒で戻し、`hand_to_user` の依頼中と PC の窓を出している間は戻さない。「止める」は会話全体に効く。
 

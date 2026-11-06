@@ -95,7 +95,7 @@ export const browserOps = [
     id: 'browser.chromeNavigate',
     summary: 'agent:ops.browser.chromeNavigate.summary',
     risk: 'write',
-    riskReason: 'Navigation from the conversation address bar is a human action (ADR 0293); it is unavailable on agent surfaces',
+    riskReason: 'Navigation from the conversation address bar is a human action (ADR 0296); it is unavailable on agent surfaces',
     input: z.object({
       sessionId: sessionIdShape,
       targetId: z.string().min(1).max(200).optional().describe('agent:ops.browser.chromePinWindow.tabId'),

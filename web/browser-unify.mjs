@@ -8,7 +8,7 @@ import { openExternalLink } from './link-open.mjs';
 /** メニューの行のアイコン（タブの列・アドレスバーと同じ線の絵） */
 const menuIcon = kind => { const svg = browserIcon(kind); svg.classList.add('i'); return svg; };
 
-// Right-pane browser styles; injected once when the host reports browserUnify (always, since ADR 0291 stage C1).
+// Right-pane browser styles; injected once when the host reports browserUnify (always, since ADR 0294 stage C1).
 const css = `
 .bu-chrome{--bu-frame:var(--surface-3);--bu-bar:var(--surface-1);--bu-omni:var(--surface-2);color:var(--ink);flex:none;min-width:0}
 [data-theme=dark] .bu-chrome{--bu-frame:var(--surface-0);--bu-bar:var(--surface-3);--bu-omni:var(--surface-paper)}
@@ -284,7 +284,7 @@ export function createBrowserUnify(deps = {}) {
   }
   /**
    * Chrome の無い会話の右の欄（web/page-frame.mjs の 1 枚の iframe）の頭。アドレスバーと同じ形（ツリー・区切り・プレビュー／原文）で、
-   * タブの列・件数・新しいタブは出さない（ADR 0291 の 4 の 2）。戻る・進むはその iframe の中の履歴だけ（Navigation API）。Web の URL は既定のブラウザーへ
+   * タブの列・件数・新しいタブは出さない（ADR 0294 の 4 の 2）。戻る・進むはその iframe の中の履歴だけ（Navigation API）。Web の URL は既定のブラウザーへ
    */
   function frameBar(frame, { sessionId }) {
     const closePanel = () => deps.preview?.close?.();
@@ -371,7 +371,7 @@ export function createBrowserUnify(deps = {}) {
       if (!caps?.browserUnify) return;
       if (!enabled) {
         enabled = true; const style = document.createElement('style'); style.dataset.browserUnify = ''; style.textContent = css; document.head.append(style); document.body.classList.add('browser-unify');
-        // 札は止める・任せるだけ（映像に触れるだけでは引き継がない。ADR 0293）
+        // 札は止める・任せるだけ（映像に触れるだけでは引き継がない。ADR 0296）
         badge = createControlBadge({ onStop:() => cmd('chromeStop', { sessionId:session() }), onResume:() => cmd('chromeResume', { sessionId:session() }) });
         chrome()?.useInput?.({ phone:() => phoneQuery.matches });
         chrome()?.onOpenChange(attach); chrome()?.onTargetChange(attach); chrome()?.onTabChange?.(paint);

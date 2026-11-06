@@ -1,4 +1,4 @@
-// 既定のアプリで開く（ADR 0291 の 3・ADR 0010）: 許す拡張子の一覧が 1 つだけで、サーバー（core/os-open.mjs・WS の openDefault）と
+// 既定のアプリで開く（ADR 0294 の 3・ADR 0010）: 許す拡張子の一覧が 1 つだけで、サーバー（core/os-open.mjs・WS の openDefault）と
 // デスクトップ版の本体（desktop/file-bridge.cjs）の両方がそれで検査すること。リンク・ジャンクションは実体の名前で決めること。
 // OS の窓は開かない（起動は組み立てと偽の起動器で確かめ、サーバーは AGENT_HOST_OS_OPEN=dry で起動する）。
 import assert from 'node:assert/strict';
@@ -18,7 +18,7 @@ const { checkRequest, createFileHandler } = require('../../desktop/file-bridge.c
 export const name = 'os-open';
 export const title = '既定のアプリで開く: 許す拡張子の一覧（サーバーと本体で同じ）・実体で判断・ホストの画面だけ・連打の制限';
 
-// ADR 0291 の 3 の一覧
+// ADR 0294 の 3 の一覧
 const ADR_LIST = ['.txt', '.md', '.pdf', '.rtf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.csv', '.tsv',
   '.log', '.json', '.jsonl', '.yaml', '.yml', '.xml', '.toml', '.ini',
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.heic', '.tiff',
@@ -33,7 +33,7 @@ export default async function (t) {
   assert.deepEqual([...DEFAULT_APP_EXTENSIONS].sort(), [...ADR_LIST].sort());
   assert(Object.isFrozen(DEFAULT_APP_EXTENSIONS));
   assert(DEFAULT_APP_EXTENSIONS.every(ext => /^\.[a-z0-9]+$/.test(ext)), '小文字の . 付きだけ');
-  t.ok('一覧は ADR 0291 の 3 の文書・文字のデータ・画像・音・動画の 38 種と同じで、凍らせてある', true, `${DEFAULT_APP_EXTENSIONS.length} 種`);
+  t.ok('一覧は ADR 0294 の 3 の文書・文字のデータ・画像・音・動画の 38 種と同じで、凍らせてある', true, `${DEFAULT_APP_EXTENSIONS.length} 種`);
 
   for (const ext of DANGEROUS) assert.equal(defaultAppAllowed(`C:\\w\\a${ext}`), false, ext);
   assert(DANGEROUS.every(ext => !DEFAULT_APP_EXTENSIONS.includes(ext)));

@@ -1,4 +1,4 @@
-// 隔離の origin の中身（ADR 0292 の 3。core/isolated-routes.mjs・html-keys.mjs）。
+// 隔離の origin の中身（ADR 0295 の 3。core/isolated-routes.mjs・html-keys.mjs）。
 //   - /viz/<束のハッシュ>/<相対パス>: 目録から引いた中身を、応答のヘッダーの CSP（sandbox・束のパスだけの読み先）で返す。
 //     入口は ?embed= で会話の枠と同じ包み（meta の CSP は書かない）。?once=<印> の出どころだけ足す
 //   - /f/<鍵>/<相対パス>: HTML のファイルのフォルダーの下だけ。外・ドットで始まる名前・データ置き場・期限切れの鍵は 404

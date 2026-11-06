@@ -1,4 +1,4 @@
-// タブのページの大きさの決め方（ADR 0293 の 3）。中継は Emulation.setDeviceMetricsOverride で、タブのページの大きさを次の順に決める。
+// タブのページの大きさの決め方（ADR 0296 の 3）。中継は Emulation.setDeviceMetricsOverride で、タブのページの大きさを次の順に決める。
 //   1. 人がスマホで操作しているタブ: そのスマホの幅（モバイルの表示。mobile: true と端末の倍率）
 //   2. それ以外で、PC の右の欄が開いているとき: パネルの幅と高さを等倍で
 //   3. それ以外で、スマホが AI の操作を見ているとき: 既定の幅のまま、高さだけ映像の枠の比に伸ばす
@@ -17,7 +17,7 @@ const size = (box, { wMin, wMax, hMin, hMax, sMin = 1, sMax = 3, scale = 1 }) =>
     : null;
 
 /**
- * タブのページの大きさを決める（ADR 0293 の 3 の順）。
+ * タブのページの大きさを決める（ADR 0296 の 3 の順）。
  * @param {object} input
  * @param [input.operating] 人がスマホで操作している映像の箱（{ width, height, scale }。tab-holder の viewport）。無ければ次の順へ
  * @param [input.panel]     PC の右の欄が開いているときの欄の大きさ（{ width, height }）

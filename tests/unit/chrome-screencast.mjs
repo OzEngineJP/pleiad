@@ -93,7 +93,7 @@ export default async function (t) {
     t.ok('state: 操作中の印・タブ数・撮影を断っていない・タブの並びと題（URL は載せない）', JSON.stringify(watched.state) === JSON.stringify({ tabId: first, agent: true, suspended: false, tabs: 1, pinnedWindowId: null, pinnedTabId: null,
       agentTabId: first, list: [{ tabId: first, windowId: windowOf(first), title: 'about:blank' }] }) && !JSON.stringify(watched.state).includes('url'), JSON.stringify(watched.state));
 
-    // ---- フレームと ack（ADR 0294: 撮影元へはすぐ返し、見る人ごとに返事ごとの 1 枚）----
+    // ---- フレームと ack（ADR 0297: 撮影元へはすぐ返し、見る人ごとに返事ごとの 1 枚）----
     const frameId = fake.screencastFrame(first);
     await until(() => messages.some(m => m.type === 'frame'));
     const frame = messages.find(m => m.type === 'frame');

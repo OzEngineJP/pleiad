@@ -137,7 +137,7 @@ export async function recordPresent(sessionId, payload) {
     path: payload.path ?? null,
     // id は可視化を後から指すため（隔離の origin の束・ファイルのページの一覧）。以前の記録は at で指す
     ...(payload.kind === 'visualization' ? { id: crypto.randomUUID(), mode: payload.mode, error: payload.error, reference: payload.reference } : {}),
-    // 可視化の束（core/visualize.mjs が載せる。ADR 0292 の 3 の 4）。隔離の origin が /viz/<hash>/ で配る
+    // 可視化の束（core/visualize.mjs が載せる。ADR 0295 の 3 の 4）。隔離の origin が /viz/<hash>/ で配る
     ...(payload.kind === 'visualization' && cleanBundle(payload.bundle) ? { bundle: cleanBundle(payload.bundle) } : {}),
     // 誰が置いたか。人間の添付と AI の提示は同じ流れに並ぶので、履歴でも区別できるようにする
     by: payload.by === "human" ? "human" : "ai",
@@ -173,7 +173,7 @@ export async function recordPresent(sessionId, payload) {
   return record;
 }
 
-// 束の無い可視化の行（束を持つ前の版の記録）は、読むときに HTML だけの束を書いて付ける（ADR 0292 の 3 の 4）。
+// 束の無い可視化の行（束を持つ前の版の記録）は、読むときに HTML だけの束を書いて付ける（ADR 0295 の 3 の 4）。
 // 記録の行は書き換えない（付けるのは返す写し）。同じ中身は書き直さないよう、中身のハッシュで覚えておく。
 // 書いた束は記録に名前が出ないので、起動の片付けの猶予（1 時間）を過ぎれば消え、次に読むときにまた書く
 const legacyBundles = new Map();

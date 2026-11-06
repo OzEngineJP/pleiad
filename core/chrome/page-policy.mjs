@@ -1,4 +1,4 @@
-// 中継（core/chrome/relay.mjs）の移動の検査と、エージェントのコマンドの前後のふるい（ADR 0292 の 2 の 4）。
+// 中継（core/chrome/relay.mjs）の移動の検査と、エージェントのコマンドの前後のふるい（ADR 0295 の 2 の 4）。
 //   - 本体の port は、どのホスト名でも断る（Page.navigate・タブを開く・ページの中の JS の移動とサブリソース）。ports().main が分かれば、いつも検査する
 //   - ファイルのページの port は localhost のその会話の /_pleiad/s/<会話 id>/ と共有の資材（/_pleiad/assets/・/_pleiad/vendor/）だけ、隔離の port は localhost だけを通す（その port がまだ無ければ何もしない）
 //   - エージェントに pleiad_* の Cookie を見せない・2 つの port の Cookie を読み書きさせない

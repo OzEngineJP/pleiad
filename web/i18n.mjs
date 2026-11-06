@@ -15,7 +15,7 @@ import { isMac, parseShortcut, shortcutLabel, shortcutAria } from './keyboard.mj
 export const LOCALES = ['ja', 'en'];
 export const FALLBACK = 'en';
 export const STORE_KEY = 'agent-host-lang';
-// pages・tabs・control はブラウザーの一本化（ADR 0291〜0294）の文言
+// pages・tabs・control はブラウザーの一本化（ADR 0294〜0297）の文言
 const NAMESPACES = ['ui', 'channels', 'pages', 'tabs', 'control'];
 const isNode = Boolean(globalThis.process?.versions?.node);
 

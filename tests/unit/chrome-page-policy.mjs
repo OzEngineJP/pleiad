@@ -1,4 +1,4 @@
-// 中継の移動の検査とコマンドの前後のふるい（core/chrome/page-policy.mjs、ADR 0292 の 4）。
+// 中継の移動の検査とコマンドの前後のふるい（core/chrome/page-policy.mjs、ADR 0295 の 4）。
 //   - 移動の検査の表: 本体の port はどのホスト名でも断る・ファイルのページはその会話の localhost だけ・隔離は localhost だけ・ほかの localhost の port は通す
 //   - 止めた要求（JS の移動・サブリソース）: 同じ表で失敗させる。旗が off（port は main だけ）でも本体の port は止める
 //   - Cookie: pleiad_* を結果とイベントから除き、Pleiad の port・名前・パスの読み書きを断る

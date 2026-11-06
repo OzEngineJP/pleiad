@@ -1,4 +1,4 @@
-// 端末から PC の Chrome の窓を操作する（「この端末で操作する」。by: 'device'。ADR 0293）と、ビューアの⋯「Chrome で開く」（openForConversation）。偽の Chrome・偽の OS の層。
+// 端末から PC の Chrome の窓を操作する（「この端末で操作する」。by: 'device'。ADR 0296）と、ビューアの⋯「Chrome で開く」（openForConversation）。偽の Chrome・偽の OS の層。
 //   - core/chrome/input.mjs の変換は決まった CDP の形になる
 //   - 端末が「この端末で操作する」を押すと、見ているタブをその端末の人の操作にする（core/chrome/tab-holder.mjs の touch）。窓は見せず、映像も止めず、
 //     会話の一時停止もしない。ページの大きさは端末の映像の箱にする（映像の側が持ち手を見て決める）。任せると AI に戻し、大きさも戻す
@@ -18,7 +18,7 @@ import { inputCommands, deviceViewport, deviceMetrics } from '../../core/chrome/
 import { browserOps } from '../../core/ops/browser.mjs';
 
 export const name = 'chrome-device';
-export const title = '端末から Chrome の窓を操作する（ADR 0293）: 入力の変換・この端末で操作するは見ているタブだけを端末の人の操作にする・窓は見せず映像も会話も止めない・ページの大きさを合わせて戻す・PC の窓を出している所へ後から押したほうは今の状態を返す・Chrome で開く（偽の Chrome・偽の OS の層）';
+export const title = '端末から Chrome の窓を操作する（ADR 0296）: 入力の変換・この端末で操作するは見ているタブだけを端末の人の操作にする・窓は見せず映像も会話も止めない・ページの大きさを合わせて戻す・PC の窓を出している所へ後から押したほうは今の状態を返す・Chrome で開く（偽の Chrome・偽の OS の層）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {

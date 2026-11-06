@@ -43,6 +43,6 @@ HTML の iframe と応答の Content Security Policy（CSP）は `sandbox allow-
 
 ## ページの配信
 
-ファイルのページは `/_pleiad/s/<会話>/<file|dir>` で配り、取得には既存のファイルの検査を使う。Chrome では派生 Cookie を使うページ専用の出どころ、Chrome が無い会話とスマホでは本体と同じ出どころを使う。URL に本体の鍵を付けない。入口の Host・Cookie・`Sec-Fetch-Site` の検査は [ADR 0292](adr/0292-pleiad-page-origins.md) に従う。
+ファイルのページは `/_pleiad/s/<会話>/<file|dir>` で配り、取得には既存のファイルの検査を使う。Chrome では派生 Cookie を使うページ専用の出どころ、Chrome が無い会話とスマホでは本体と同じ出どころを使う。URL に本体の鍵を付けない。入口の Host・Cookie・`Sec-Fetch-Site` の検査は [ADR 0295](adr/0295-pleiad-page-origins.md) に従う。
 
 git・プラグイン・新しいタブも同じ Pleiad のページとして開く。git の差分はファイルの原文とは別に読み、取得時刻と再読み込みを出す。PR の表示は [git の PR](git-panel-pr.md) を参照。

@@ -1,4 +1,4 @@
-// タブごとの持ち手（core/chrome/tab-holder.mjs、ADR 0293 の 1）と、中継の門への効き方（偽の Chrome）。
+// タブごとの持ち手（core/chrome/tab-holder.mjs、ADR 0296 の 1）と、中継の門への効き方（偽の Chrome）。
 //   - 人がタブを触るとそのタブは人の操作: 読むだけのコマンド（HUMAN_TAB_READS）のほかは HUMAN_MESSAGE で断る。ほかのタブは通る
 //   - 最後に触ってから 60 秒で AI に戻す。hand_to_user の間と「PC で操作する」（pinned）の間は戻さない
 //   - 戻した直後の最初の操作のコマンドは 1 回だけ RESNAPSHOT_MESSAGE で断る（snapshot の撮り直し）
@@ -7,7 +7,7 @@ import { agent, rig } from '../lib/chrome-relay-rig.mjs';
 import { createTabHolder, PAUSED_MESSAGE, HUMAN_MESSAGE, RESNAPSHOT_MESSAGE } from '../../core/chrome/tab-holder.mjs';
 
 export const name = 'chrome-tab-holder';
-export const title = 'タブごとの持ち手（ADR 0293 の 1）: 人の操作・60 秒・戻した後の 1 回の断り・hand_to_user の間は戻さない・止めるとの重なり（偽の時計・偽の Chrome）';
+export const title = 'タブごとの持ち手（ADR 0296 の 1）: 人の操作・60 秒・戻した後の 1 回の断り・hand_to_user の間は戻さない・止めるとの重なり（偽の時計・偽の Chrome）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {

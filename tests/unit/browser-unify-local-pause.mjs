@@ -1,4 +1,4 @@
-// スマホで Pleiad のページを端末内で描いている間（chrome-panel の mountPage。web/browser-unify.mjs が置く）は、下の映像を止める（ADR 0292 の追記 2）
+// スマホで Pleiad のページを端末内で描いている間（chrome-panel の mountPage。web/browser-unify.mjs が置く）は、下の映像を止める（ADR 0295 の追記 2）
 //   - 置いたら browserScreencastStop を 1 回送る。置き換えても送り直さない
 //   - 置いている間は、箱の大きさが変わっても・つなぎ直しても映し直さない
 //   - 外したら映し直す。閉じるときに止める依頼を重ねて送らない

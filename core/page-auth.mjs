@@ -1,4 +1,4 @@
-// Pleiad のページ（/_pleiad/…）の 2 つの入口の認証（ADR 0292 の 2）。純粋な関数だけ。
+// Pleiad のページ（/_pleiad/…）の 2 つの入口の認証（ADR 0295 の 2）。純粋な関数だけ。
 //   - ファイルのページの port（localhost:<pages port>）: ページの Cookie（pleiad_pages）。値は HMAC(本体のトークン, "pleiad-pages") で、本体のトークンそのものは Chrome に入れない
 //   - 本体の port の /_pleiad/（画面の iframe）: 本体の Cookie（agent_host_token）だけ。?token= は受けない（iframe の URL にトークンを載せない）
 // どちらの入口も、core/pages-routes.mjs へ渡す前にここで通す（A2・A4 は入口を触らない）。

@@ -18,7 +18,7 @@
 //   - 範囲のタブが window.open の popup で開いた別窓にも、同じ置き方を当てる（scope.adoptPopup）
 // 引き継ぎ（一時停止。ADR 0148・0154。状態機械は core/chrome/control.mjs）: pause() の間は、エージェントのコマンドを全部 PAUSED_MESSAGE で断る
 // （人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。unpause() で解く。Chrome との接続が切れたときも解く。
-// ADR 0293 からは、人の操作はタブごとの持ち手（tab-holder.mjs）で断る。一時停止に入るのは、前の版から持ち越した引き継ぎ（restore の paused）だけで、
+// ADR 0296 からは、人の操作はタブごとの持ち手（tab-holder.mjs）で断る。一時停止に入るのは、前の版から持ち越した引き継ぎ（restore の paused）だけで、
 // 呼び手は「任せる」（control の resume）か窓を閉じる操作で unpause() する。pause() を呼ぶ本番の呼び手は無い（restore は印を直に戻す。試験が一時停止の扱いを確かめるために残す）。
 //   - pause に入るときに、エージェントのブラウザーとタブの接続を切る（上りのセッションを外し、ws を 1000 で閉じる）。Chrome からの通知（Network の postData・Fetch.requestPaused など）が
 //     エージェントへ流れ続けず、エージェントの Fetch の横取りが人のページを固めないため。戻した後は agent-browser がつなぎ直す（つなぎ直した接続のコマンドは全部断る）
@@ -34,14 +34,14 @@
 //     縛りの無いエージェントの接続は切らない（次の createTarget で黙って窓を開き直す。ADR 0154）
 // 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・エージェントが最後に触れたタブ（「今のタブ」）・
 // タブの題（右パネルのタブの列。見ている端末にだけ送る）・操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
-// ブラウザーの一本化（ADR 0291〜0294）の口: 移動の検査とコマンドの前後のふるい（page-policy.mjs）・操作の前の門（tab-holder.mjs）・
+// ブラウザーの一本化（ADR 0294〜0297）の口: 移動の検査とコマンドの前後のふるい（page-policy.mjs）・操作の前の門（tab-holder.mjs）・
 // タブの情報（tab-info.mjs）・ページからの頼み（page-bridge.mjs）。出来事は onTabEvent(fn) に 1 本で出す（TAB_EVENTS）。setPagePorts でサーバーの port を受ける
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { createChromeWindows } from './windows.mjs';
 import { CARRY_MAX_BYTES } from './link-wire.mjs';
-// ブラウザーの一本化（ADR 0291〜0294）の 4 つの口。試験では hooks で差し替える
+// ブラウザーの一本化（ADR 0294〜0297）の 4 つの口。試験では hooks で差し替える
 import { createPagePolicy, safeUrl } from './page-policy.mjs';
 import { createTabHolder, PAUSED_MESSAGE, HUMAN_MESSAGE } from './tab-holder.mjs';
 import { createTabInfo } from './tab-info.mjs';
@@ -150,7 +150,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   const carryListeners = new Set();
   const changeListeners = new Set(), tapListeners = new Set(), lostListeners = new Set();
   const fire = (set, ...args) => { for (const fn of [...set]) { try { fn(...args); } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); } } };
-  // ---- ブラウザーの一本化の口（ADR 0291〜0294） ----
+  // ---- ブラウザーの一本化の口（ADR 0294〜0297） ----
   let pagePorts = null;        // サーバーの 3 つの port（setPagePorts）。{ main, pages, isolated }
   let pageCookie = null;       // ファイルのページの Cookie（setPageCookie。ログに書かない）
   const tabEventListeners = new Set();
@@ -1071,7 +1071,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       }
       case 'Target.closeTarget': {
         const tab = mine(state, client, params.targetId);
-        // 人の操作のタブは閉じさせない（ADR 0293 の 1）
+        // 人の操作のタブは閉じさせない（ADR 0296 の 1）
         if (tabHolder.holder?.(entry.id, tab.targetId)?.holder === 'human') throw new RelayError(HUMAN_MESSAGE);
         tab.agentClosed = true;
         return state.cdp.send(method, { targetId: params.targetId });

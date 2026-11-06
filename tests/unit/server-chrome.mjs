@@ -191,7 +191,7 @@ export default async function (t) {
       const noSize = await fail(u.cmd('chromeTakeOver', { sessionId: turn.sessionId, by: 'device' }));
       t.ok('by: device で大きさが無ければ INVALID（画面の言語の字）', noSize?.code === 'INVALID' && /映像の箱の大きさ/.test(noSize.message), JSON.stringify(noSize));
       const device = await ask('chromeTakeOver', { sessionId: turn.sessionId, by: 'device', width: 390, height: 700, scale: 2 });
-      // 端末からの操作は会話の一時停止にしない。今のタブの持ち手が人（by: device）になる（ADR 0293 の 1）
+      // 端末からの操作は会話の一時停止にしない。今のタブの持ち手が人（by: device）になる（ADR 0296 の 1）
       t.ok('リモートの端末から by: device で引き継ぐ → 一時停止にはせず、今のタブを人が持つ', device.ok === true && device.result.state !== 'paused', JSON.stringify(device));
       const back = await ask('chromeResume', { sessionId: turn.sessionId });
       t.ok('端末から戻す → 一時停止が解け、by は null', back.ok === true && back.result.state !== 'paused' && back.result.by === null, JSON.stringify(back));

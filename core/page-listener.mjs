@@ -1,4 +1,4 @@
-// ファイルのページと隔離の origin のリスナーの共通の土台（ADR 0292 の 1）。core/pages-server.mjs・core/isolated-server.mjs が使う。
+// ファイルのページと隔離の origin のリスナーの共通の土台（ADR 0295 の 1）。core/pages-server.mjs・core/isolated-server.mjs が使う。
 //   - 127.0.0.1 と ::1 の同じ port に bind する（Chrome は localhost を ::1 から試すことがある）。AGENT_HOST_BIND で本体を LAN に開いていても、ここはループバックだけ
 //   - Host が localhost:<その port> のときだけ答える（DNS rebinding を防ぐ。違えば 421）。受けるのは GET と HEAD だけ（ほかは 405）
 //   - どの応答にも Referrer-Policy: no-referrer と X-Content-Type-Options: nosniff を付ける

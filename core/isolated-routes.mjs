@@ -1,4 +1,4 @@
-// 隔離の origin の中身（ADR 0292 の 3）。資格を持たない（Cookie を見ない）。URL の中の推し量れない鍵だけで読ませる。
+// 隔離の origin の中身（ADR 0295 の 3）。資格を持たない（Cookie を見ない）。URL の中の推し量れない鍵だけで読ませる。
 //   - /viz/<束のハッシュ>/<相対パス>: 可視化の束（core/viz-bundle.mjs の viz-blobs/）。入口の HTML は ?embed= のとき会話の枠と同じ包み
 //     （基礎のスタイル・高さの知らせ）で返す。?once=<印> は「一度だけ読み込む」の出どころ（10 分。createOnceTokens）
 //   - /f/<鍵>/<相対パス>: HTML のファイル（core/html-keys.mjs）。鍵のフォルダーの下だけ。読むたびに ADR 0050 の検査をかける
@@ -13,7 +13,7 @@ import { blobPath, readManifest, sweepVizBlobs, isHash } from './viz-bundle.mjs'
 import { HTML_SANDBOX, VIZ_SANDBOX, createOnceTokens, isolatedHeaders, previewPolicy } from './preview-policy.mjs';
 import { LINK_BRIDGE, STORAGE_SHIM, VIOLATION_BRIDGE, visualizationDocument } from '../web/visualize-document.mjs';
 
-// 上限は Pleiad のページ（ADR 0292 の 2 の 1）と同じ: 文字は 8 MiB、ほかは 32 MiB
+// 上限は Pleiad のページ（ADR 0295 の 2 の 1）と同じ: 文字は 8 MiB、ほかは 32 MiB
 const TEXT_LIMIT = 8 * 1024 * 1024;
 const FILE_LIMIT = 32 * 1024 * 1024;
 const MANIFEST_CACHE = 64;

@@ -7423,7 +7423,7 @@ function applyTheme(mode) {
   for (const b of $("themeSeg").querySelectorAll("button")) b.classList.toggle("on", b.dataset.theme === m);
   paintTitleBar();
   paintShellTheme();
-  // 旗が on: 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0292）
+  // 旗が on: 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295）
   if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
 }
 
@@ -7834,7 +7834,7 @@ let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry�
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
 const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
-// 会話の右の欄（ADR 0291〜0294）。サーバーの hostCapabilities.browserUnify（ページと隔離の origin の口）が届いてから読む
+// 会話の右の欄（ADR 0294〜0297）。サーバーの hostCapabilities.browserUnify（ページと隔離の origin の口）が届いてから読む
 let browserUnifyLoad = null;
 const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
   controlStore:chromeControlStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer'), osActions:() => state.osActions === true })));
@@ -7851,7 +7851,7 @@ const filePreview = setupFilePreview({
 });
 // 頭の行の右の欄のボタンと近道（web/header-entries.mjs）。会話を開いていない間は出さない
 // 右の欄の開け閉め。Chrome の窓かタブがあればその窓を映す。つないであって窓がまだ無ければ、新しいタブ（Pleiad の新しいタブのページ）で窓を作る
-// （ADR 0291 の 4 の 5 と同じ。Chrome の窓はいつもタブを 1 つ持つ）。Chrome が無ければ、新しいタブのページを 1 枚の iframe で出す
+// （ADR 0294 の 4 の 5 と同じ。Chrome の窓はいつもタブを 1 つ持つ）。Chrome が無ければ、新しいタブのページを 1 枚の iframe で出す
 // （4 の 2。git・プラグイン・作業フォルダーへの入口はこのページだけ。5 の 5）
 let chromeLink = null;   // 中継の接続の状態（chromeBrowser の便り。ホストの PC の画面だけに届く）
 const rightPane = {
@@ -10495,7 +10495,7 @@ function connect() {
         browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
         remoteSettings.setHostScreen(state.osActions);
-        // 可視化を隔離の origin（ADR 0292 の 3）の localhost で描く。隔離のリスナーはループバックだけで待つので、LAN のブラウザーの画面では使わず srcdoc で描く
+        // 可視化を隔離の origin（ADR 0295 の 3）の localhost で描く。隔離のリスナーはループバックだけで待つので、LAN のブラウザーの画面では使わず srcdoc で描く
         // （端末のアプリは端末の中のプロキシの port が来る）
         const loopbackScreen = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
         configureIsolatedOrigin(c?.browserUnify?.isolated && loopbackScreen ? { port: c.browserUnify.isolated,

@@ -1,7 +1,7 @@
-// エージェントの Chrome の窓の映像を、見ている端末へ配る（ADR 0148・0291・0294）。撮影元は core/chrome/screencast.mjs（bridge）。
+// エージェントの Chrome の窓の映像を、見ている端末へ配る（ADR 0148・0294・0297）。撮影元は core/chrome/screencast.mjs（bridge）。
 //   - createScreencastHub: 会話ごとに見ている端末を束ね、フレームを配る。見る端末がいなくなったら止める
 //   - screencastCommand: WS のコマンド（args.source === 'chrome'）を hub と bridge へ渡す
-// 映像の送り方（ADR 0294。ADR 0148 の画質の選び方を置き換える）:
+// 映像の送り方（ADR 0297。ADR 0148 の画質の選び方を置き換える）:
 //   - フレームが届いたら、見ている端末を待たずにすぐ撮影元へ ack を返す（Chrome は ack のあと次を出す。返事を待つと 5 fps を超えない）
 //   - 見る人（接続）ごとに「届いていない 1 枚」だけを持つ。見る人の返事（browserScreencastAck）が来たら、そのときの最新の 1 枚をすぐ送る。
 //     返事を待つ間に届いたフレームは最新で上書きする。遅い端末は自分の分だけ fps が下がり、ほかの見る人には響かない
@@ -52,7 +52,7 @@ export async function screencastCommand({ command, args = {}, local, client, chr
   }
 }
 
-/** 映像の段（k は見る人の映像の枠〔表示の大きさ × 画素の倍率〕に掛ける大きさ、q は JPEG の画質）。およその中身の量の順（ADR 0294 §3） */
+/** 映像の段（k は見る人の映像の枠〔表示の大きさ × 画素の倍率〕に掛ける大きさ、q は JPEG の画質）。およその中身の量の順（ADR 0297 §3） */
 export const SCREENCAST_TIERS = [
   { k: 0.4, q: 30 }, { k: 0.4, q: 55 },
   { k: 0.67, q: 30 }, { k: 0.67, q: 55 }, { k: 0.67, q: 80 },

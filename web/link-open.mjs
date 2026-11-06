@@ -1,6 +1,6 @@
 // Shared destination for external links from the app (conversation, work dialog, side panel documents) and preview frames.
 // They always go to the default browser: on the desktop host screen through the shell (ply:open-external, which also
-// takes http for localhost), elsewhere as a new tab. Pleiad's own pages open in the conversation's Chrome tab (ADR 0291).
+// takes http for localhost), elsewhere as a new tab. Pleiad's own pages open in the conversation's Chrome tab (ADR 0294).
 /** デスクトップ版のホストの画面か（殻が既定のブラウザーへ渡す口を持つ）。リモートの窓は持たない */
 export const desktopHost = () => typeof window !== 'undefined' && typeof window.plyDesktop?.openExternal === 'function' && !window.plyRemote;
 

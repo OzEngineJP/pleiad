@@ -1,4 +1,4 @@
-// 内蔵ブラウザー（ADR 0041。ADR 0291 の 6 で無くした）の保存領域 persist:pleiad-browser を、新しい版の起動で 1 回だけ消す。
+// 内蔵ブラウザー（ADR 0041。ADR 0294 の 6 で無くした）の保存領域 persist:pleiad-browser を、新しい版の起動で 1 回だけ消す。
 //   - userData/Partitions/pleiad-browser のフォルダーを消す。session は開かない（開くと Chromium が中のファイルを掴み、Windows では消せなくなる）
 //   - 済んだら userData/browser-partition-cleared に印を書き、次の起動からは何もしない（保存領域が無かったときも印を書く）
 //   - フォルダーを消せなかった（Windows で使用中など）ときは、1 回目に限り session.clearStorageData() で Cookie・保存領域だけ消し、

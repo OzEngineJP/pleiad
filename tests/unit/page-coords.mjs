@@ -1,4 +1,4 @@
-// 映像の座標の変換（web/page-coords.mjs）。前の内蔵ブラウザーの全面の表示から引っ越した前後で同じ値を返す（ADR 0291 の 5 の 2）。
+// 映像の座標の変換（web/page-coords.mjs）。前の内蔵ブラウザーの全面の表示から引っ越した前後で同じ値を返す（ADR 0294 の 5 の 2）。
 // 下の期待値は、引っ越す前の関数で出したもの。
 import fs from 'node:fs';
 import path from 'node:path';

@@ -1,4 +1,4 @@
-// ファイルのページの Cookie を Chrome に入れる（core/chrome/page-cookie.mjs、ADR 0292 の 2 の 2）。
+// ファイルのページの Cookie を Chrome に入れる（core/chrome/page-cookie.mjs、ADR 0295 の 2 の 2）。
 //   - 形: localhost の host-only・Path=/_pleiad/・HttpOnly・SameSite=Strict・ファイルのページの port（sourcePort）。値は本体のトークンから導いた値で、トークンそのものではない
 //   - 時点: つながったとき（ブラウザーの単位の Storage.setCookies）・ファイルのページを開く前・タブのセッション（Network.setCookie）
 //   - 旗が off（cookie が null）・port が立っていないときは何もしない。失敗しても投げず、ログに値を書かない

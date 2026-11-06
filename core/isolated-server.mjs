@@ -1,4 +1,4 @@
-// 隔離の origin のリスナー（http://localhost:<isolated port>。ADR 0292 の 1・3）。
+// 隔離の origin のリスナー（http://localhost:<isolated port>。ADR 0295 の 1・3）。
 // 可視化と HTML のファイルの中身を出す。Cookie は見ない（URL の鍵だけ）。中身は core/isolated-routes.mjs（A3）。
 import { startPageListener } from './page-listener.mjs';
 

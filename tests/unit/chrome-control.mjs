@@ -8,7 +8,7 @@ import { createChromeWindows } from '../../core/chrome/windows.mjs';
 import { createChromeControl } from '../../core/chrome/control.mjs';
 
 export const name = 'chrome-control';
-export const title = 'エージェントの Chrome の窓の止める・PC で操作する・任せる（ADR 0148・0154・0293）: 状態機械・人の操作のタブの断り・映像を断る・止めて人の送信で解く・窓を見える形に戻して前に出す／画面の外へ戻す・窓が閉じられた／Chrome が閉じた・持ち越した一時停止・押した位置（偽の OS の層と偽の Chrome）';
+export const title = 'エージェントの Chrome の窓の止める・PC で操作する・任せる（ADR 0148・0154・0296）: 状態機械・人の操作のタブの断り・映像を断る・止めて人の送信で解く・窓を見える形に戻して前に出す／画面の外へ戻す・窓が閉じられた／Chrome が閉じた・持ち越した一時停止・押した位置（偽の OS の層と偽の Chrome）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {

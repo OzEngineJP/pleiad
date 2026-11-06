@@ -126,7 +126,7 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
     const hint = el('div', 'cp-hint'); hint.setAttribute('role', 'status');
     const ghost = el('img', 'cp-ghost'); ghost.alt = ''; ghost.draggable = false; ghost.setAttribute('aria-hidden', 'true');   // ウィンドウを替える間、前の絵を重ねて溶かす
     const pinMark = el('span', 'cp-pin'); pinMark.setAttribute('role', 'img'); pinMark.setAttribute('aria-label', t('browser.chromeWindow.pinned')); pinMark.title = t('browser.chromeWindow.pinned'); pinMark.append(pinIcon());
-    // 遅れ・途切れの札（ADR 0294 §5。起きたときだけ出す。札の見た目は承認済みモック v6 の pill と灰色の幕）
+    // 遅れ・途切れの札（ADR 0297 §5。起きたときだけ出す。札の見た目は承認済みモック v6 の pill と灰色の幕）
     const pill = { position: 'absolute', background: 'rgba(15,19,48,.78)', color: '#f4f6ff', borderRadius: '999px', fontSize: '12px', padding: '2px 10px', zIndex: '2' };
     const lag = el('div', 'cp-lag', t('browser.video.lag')); lag.hidden = true;
     Object.assign(lag.style, pill, { left: '10px', top: '10px' });
@@ -681,7 +681,7 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
     },
     /**
      * スマホで端末内に描く Pleiad のページ（web/browser-unify.mjs）。映像の箱いっぱいに重ね、置いている間は映像を絵として読ませない。null で外す。
-     * 置いている間は下の映像（見えない）を止めて通信と電池を使わない。外したら映し直す（ADR 0292 の追記 2）
+     * 置いている間は下の映像（見えない）を止めて通信と電池を使わない。外したら映し直す（ADR 0295 の追記 2）
      */
     mountPage(node) {
       if (!parts) { parts = build(); root = parts.node; }

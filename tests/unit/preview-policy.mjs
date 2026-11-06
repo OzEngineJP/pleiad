@@ -1,4 +1,4 @@
-// プレビューの CSP と確認（ADR 0292 の 3 の 2・3。core/preview-policy.mjs）。
+// プレビューの CSP と確認（ADR 0295 の 3 の 2・3。core/preview-policy.mjs）。
 //   - core/ から読む previewPolicy / previewCsp は web/browser-confirm-policy.mjs と同じ関数（会話の枠と隔離の応答が同じ決まりで作る）
 //   - 作る CSP の文字列は今までと同じ（設定の 3 つの形で固定する）
 //   - 隔離の応答の CSP: sandbox・束（鍵）のパスだけの読み先・WASM・埋め込める親。eval は足さない

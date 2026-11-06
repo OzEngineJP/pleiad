@@ -1,11 +1,11 @@
-# 0294 映像は見る人の返事ごとに最新の 1 枚を送り、かかった時間で画質と大きさを 7 段で変える
+# 0297 映像は見る人の返事ごとに最新の 1 枚を送り、かかった時間で画質と大きさを 7 段で変える
 
 - 状態: 提案（仮番号。main に入れる直前に振り直す）
-- 関連: [ADR 0291](0291-one-chrome-window-per-conversation.md)、[ADR 0293](0293-human-touch-takes-tab.md)、[ADR 0148](0148-agent-browser-in-chrome.md)（一部置換）、[ADR 0154](0154-agent-window-hidden-off-screen.md)
+- 関連: [ADR 0294](0294-one-chrome-window-per-conversation.md)、[ADR 0296](0296-human-touch-takes-tab.md)、[ADR 0148](0148-agent-browser-in-chrome.md)（一部置換）、[ADR 0154](0154-agent-window-hidden-off-screen.md)
 
 ## 状況
 
-ADR 0291 で、Web のページのタブは、PC の右のパネルでもスマホでも Chrome の映像で見て、そのまま操作する（ADR 0293）。今の映像は遅く、操作に向かない。
+ADR 0294 で、Web のページのタブは、PC の右のパネルでもスマホでも Chrome の映像で見て、そのまま操作する（ADR 0296）。今の映像は遅く、操作に向かない。
 
 - 映像の中継（`core/browser-screencast.mjs` の hub）は、フレームの間に 200 ms（画質「低」は 500 ms）の間隔を置き、見ている全員の返事を待ってから Chrome に返事（`Page.screencastFrameAck`）を返す。このため 5 fps を超えない。
 - 実測では、届いたらすぐ返事を返せば 60 fps 出る。Chrome は返事が無いと 3 枚で止まる。
@@ -64,7 +64,7 @@ ADR 0291 で、Web のページのタブは、PC の右のパネルでもスマ�
 
 ### 6. 変えないもの
 
-- `desktop/browser-screencast.cjs`（内蔵ブラウザーの映像）は変えない。内蔵ブラウザーをやめるときに消える（ADR 0291）。
+- `desktop/browser-screencast.cjs`（内蔵ブラウザーの映像）は変えない。内蔵ブラウザーをやめるときに消える（ADR 0294）。
 - focus emulation の持ち方（ADR 0154）は変えない。
 
 ## 理由
@@ -78,7 +78,7 @@ ADR 0291 で、Web のページのタブは、PC の右のパネルでもスマ�
 
 - `core/browser-screencast.mjs`（hub の返事・見る人ごとの 1 枚・段・印）と `core/chrome/screencast.mjs`（段ごとのセッション・`captureScreenshot`）を変える。
 - `web/screencast-frame.mjs`（印への返事・灰色の表示・遅れの札）、`web/chrome-panel.mjs`（画質のボタンを消す）を変える。端末のアプリは Web の画面を使うので、ネイティブの変更は要らない。
-- 画質の文言（`quality` 系）を ui.json から消し、`browser.video.*` を ui.json に足す（タブの列・札の文言は別の名前空間。ADR 0291 の 6）。
+- 画質の文言（`quality` 系）を ui.json から消し、`browser.video.*` を ui.json に足す（タブの列・札の文言は別の名前空間。ADR 0294 の 6）。
 - ADR 0148 の映像の画質の選び方を置き換える。
 
 ### 実機の確かめ（2026-11-25、Chrome 143・headless）

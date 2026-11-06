@@ -25,7 +25,7 @@ export function fileSlots({ file = null, osActions = false } = {}) {
 }
 
 /**
- * 会話の Chrome の窓の映像（web/chrome-panel.mjs。ADR 0291）。見出しの行は広げると閉じるだけ、道具の列は窓の側が渡す
+ * 会話の Chrome の窓の映像（web/chrome-panel.mjs。ADR 0294）。見出しの行は広げると閉じるだけ、道具の列は窓の側が渡す
  */
 export function chromeSlots({ label = '', toolbar = [] } = {}) {
   return { mode: 'browser', label, kind: '', head: ['wide', 'close'], views: false, toolbar, aside: false, note: '', footer: null };

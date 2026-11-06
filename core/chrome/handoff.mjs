@@ -4,7 +4,7 @@
 //     確認なしのモードの会話（autoConsent）は Pleiad の中の許可（consent）を飛ばす。トグル（setup）はどのモードでも人が「オンにしてつなぐ」を押す（ADR 0218）
 //   - 人への依頼（ask）: ログイン・CAPTCHA・2 段階認証・支払いなど。ply_browser の hand_to_user から出す。
 //     「PC で操作する」→「Claude に戻す」は core/chrome/control.mjs が持ち、ここは control の変化を見て決着させる。
-//     「この端末で操作する」・映像に触れた（ADR 0293 の 1）は、タブの持ち手（core/chrome/tab-holder.mjs）が人になる。
+//     「この端末で操作する」・映像に触れた（ADR 0296 の 1）は、タブの持ち手（core/chrome/tab-holder.mjs）が人になる。
 //     持ち手の変化（useHolders）も見て、人の操作のタブがあれば「あなたが操作中」、全部 AI に戻ったら（「Claude に戻す」の releaseAll）決着させる
 // 待ちは askPermission の outlivesTurn（ターンが終わっても残る。ADR 0168）で出す。カードの id は替えず、中身は onOpen の update で差し替える。
 // 会話ごとに開いている依頼は 1 つまで。決着したとき、待っている hand_to_user があればそこへ答え、無くてターンが走っていれば次の wait のために置き、

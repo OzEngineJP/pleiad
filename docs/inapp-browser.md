@@ -2,7 +2,7 @@
 
 会話の右の欄は、その会話の Chrome のウィンドウを表示する。Web・ファイル・フォルダー・可視化・git・プラグイン・新しいタブを、同じタブの列で開く。人とエージェントが同じタブを見る。別の会話・委譲した子・bot と、普段使う Chrome の窓は混ぜない。
 
-画面の形は [デザインシステム](design-system.md#会話のブラウザー承認済み2026-11-06)、決定の理由は [ADR 0291](adr/0291-one-chrome-window-per-conversation.md)〜[0294](adr/0294-screencast-ack-paced-quality.md) にある。右の欄を広げると会話に重ねて表示し、閉じると会話へ戻る。
+画面の形は [デザインシステム](design-system.md#会話のブラウザー承認済み2026-11-06)、決定の理由は [ADR 0294](adr/0294-one-chrome-window-per-conversation.md)〜[0297](adr/0297-screencast-ack-paced-quality.md) にある。右の欄を広げると会話に重ねて表示し、閉じると会話へ戻る。
 
 ## タブとアドレスバー
 

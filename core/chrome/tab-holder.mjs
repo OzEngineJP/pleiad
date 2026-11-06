@@ -1,4 +1,4 @@
-// 中継（core/chrome/relay.mjs）の、エージェントの操作（OPERATES）の前の門（ADR 0293 の 1）。
+// 中継（core/chrome/relay.mjs）の、エージェントの操作（OPERATES）の前の門（ADR 0296 の 1）。
 // タブごとに操作の持ち手（ai / human）・人の操作の始まり・どの画面から触ったか・最後に触った時刻を持つ。
 //   - 人がタブに触るとそのタブは人の操作になり、そのタブへのエージェントのコマンドは、読むだけのもの（HUMAN_TAB_READS）のほかは HUMAN_MESSAGE で断る
 //     （ほかのタブの操作は通る。同じウィンドウの別のタブでエージェントは続けられる）
@@ -17,7 +17,7 @@ export const HUMAN_MESSAGE = 'A person is operating this tab. Do not touch it un
 export const RESNAPSHOT_MESSAGE = 'A person has touched this tab. Take a fresh snapshot before operating it. / 人が触った後です。snapshot を撮り直してから操作してください';
 
 /**
- * 人の操作のタブでもエージェントに通すコマンド（通してよいものの一覧。ADR 0293 の 1）。ここに無いものは全部 HUMAN_MESSAGE で断る。
+ * 人の操作のタブでもエージェントに通すコマンド（通してよいものの一覧。ADR 0296 の 1）。ここに無いものは全部 HUMAN_MESSAGE で断る。
  * 断るものの一覧にしないのは、ページにコードを動かさせる道が多いため（Runtime.compileScript・runScript、DOM.setOuterHTML の
  * `<img onerror>`、Page.addScriptToEvaluateOnNewDocument の runImmediately。2026-11-06 に本物の Chrome で通ることを確かめた）。
  * 選び方: agent-browser の snapshot・screenshot・タブの URL と題の読み取り・つなぎ直しを壊さない、読むだけのもの。
@@ -48,7 +48,7 @@ export const HUMAN_TAB_READS = Object.freeze(new Set([
 /** 人の操作のタブでも通すコマンドか（HUMAN_TAB_READS か、購読を外す 〜.disable） */
 export const readsOnly = method => typeof method === 'string' && (HUMAN_TAB_READS.has(method) || /^[A-Za-z]+\.disable$/.test(method));
 
-/** 人の操作から AI に戻すまでの、最後に触ってからの時間（ADR 0293 の 1 の 4） */
+/** 人の操作から AI に戻すまでの、最後に触ってからの時間（ADR 0296 の 1 の 4） */
 export const HUMAN_TIMEOUT_MS = 60_000;
 /** hand_to_user の頼みの最中に、時間で戻すかを見直す周期 */
 export const DEFER_RECHECK_MS = 5_000;
