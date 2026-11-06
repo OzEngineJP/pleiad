@@ -1,22 +1,109 @@
-import { createBrowserUnifyWs, isBrowserUnifyCommand } from '../../core/browser-unify-ws.mjs';
-import { COMMANDS } from '../../core/protocol.mjs';
-import { commandAllowed, COMMAND_ACCESS } from '../../core/review-mode.mjs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createBrowserUnifyWs } from '../../core/browser-unify-ws.mjs';
+import { registry } from '../../core/ops/index.mjs';
+import { addressCrumbs } from '../../web/address-bar.mjs';
+import { startServer } from '../lib/server.mjs';
+import { open } from '../lib/ws-client.mjs';
 
 export const name = 'browser-unify-ws';
-export const title = 'ブラウザーの一本化の WS のコマンド（vizOnce: 可視化の「一度だけ読み込む」の印）';
-
-export default async function (t) {
-  const asked = [];
-  const ws = createBrowserUnifyWs({ isolatedRoutes: { once: origins => { asked.push(origins); return origins.length ? 'TOKEN123456A' : null; } } });
-  const got = await ws.handle({ command: 'vizOnce', args: { origins: ['https://cdn.example'] } });
-  t.ok('vizOnce は隔離の経路の once に出どころを渡し、印を返す', got.token === 'TOKEN123456A' && asked[0][0] === 'https://cdn.example');
-  const refused = await Promise.all([{}, { origins: 'https://a.example' }, { origins: [1] }, { origins: Array(51).fill('https://a.example') }, { origins: ['x'.repeat(2049)] }]
-    .map(args => ws.handle({ command: 'vizOnce', args }).then(() => null, e => e.code)));
-  t.ok('形の違う origins（無い・文字列・数・51 個・長すぎ）は INVALID で断る', refused.every(code => code === 'INVALID') && asked.length === 1);
-  const none = await createBrowserUnifyWs({}).handle({ command: 'vizOnce', args: { origins: ['https://a.example'] } });
-  t.ok('隔離の経路が無ければ印は null（画面は srcdoc で描く）', none.token === null);
-  const unknown = await ws.handle({ command: 'nope', args: {} }).then(() => null, e => e.code);
-  t.ok('知らないコマンドは UNKNOWN_COMMAND', unknown === 'UNKNOWN_COMMAND' && !isBrowserUnifyCommand('nope'));
-  t.ok('vizOnce は protocol の COMMANDS にあり、審査モードでは断る（振り分けに載っている）',
-    isBrowserUnifyCommand('vizOnce') && COMMANDS.has('vizOnce') && COMMAND_ACCESS.vizOnce === false && !commandAllowed('vizOnce'));
+export const title = 'Conversation tab privacy, address policy and human navigation';
+export default async function(t) {
+  const origins = [];
+  const isolated = createBrowserUnifyWs({ isolatedRoutes:{ once:value => { origins.push(value); return 'once-token'; } } });
+  t.ok('vizOnce continues to issue isolated-page grants', (await isolated.handle({ command:'vizOnce', args:{ origins:['https://cdn.example'] } })).token === 'once-token' && origins.length === 1);
+  for (const args of [{}, { origins:'https://a.example' }, { origins:[1] }, { origins:Array(51).fill('https://a.example') }, { origins:['x'.repeat(2049)] }]) {
+    const code = await isolated.handle({ command:'vizOnce', args }).then(() => null, error => error.code);
+    t.ok('invalid isolated-page grant inputs are rejected', code === 'INVALID');
+  }
+  t.ok('unknown commands fail explicitly', await isolated.handle({command:'unknown'}).then(() => false, error => error.code === 'UNKNOWN_COMMAND'));
+  t.ok('unavailable isolated listener returns no grant', (await createBrowserUnifyWs().handle({command:'vizOnce',args:{origins:[]}})).token === null);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-b1-'));
+  let ws;
+  try {
+    const work = path.join(root, 'work'), dataDir = path.join(root, 'data'), profile = path.join(root, 'profile');
+    await Promise.all([work, dataDir, profile].map(dir => fs.mkdir(dir)));
+    const file = path.join(work, 'notes.md'); await fs.writeFile(file, '# Notes');
+    await fs.writeFile(path.join(profile, 'Preferences'), JSON.stringify({ default_search_provider_data:{ url:'https://search.example/?q={searchTerms}' } }));
+    let emit, detached = 0, touched = [], calls = [], opened = [];
+    const tabs = [{ sessionId:'one', targetId:'a', windowId:1, url:'https://example.com/', title:'One' }];
+    const relay = {
+      onTabEvent(fn) { emit = fn; return () => { emit = null; }; },
+      unify:{ tabInfo:{ list:id => id === 'one' ? tabs : [] }, tabHolder:{ touch:detail => touched.push(detail) } },
+      async openForConversation(id, url) { opened.push({ id, url }); return { targetId:'new-tab' }; },
+      view:{ async closeTab(id, targetId) { calls.push(['close', id, targetId]); }, async attach() { return {
+        async send(method, params) { calls.push([method, params]); return method === 'Page.getNavigationHistory' ? { currentIndex:1, entries:[{ id:10 }, { id:20 }, { id:30 }] } : {}; },
+        async detach() { detached++; },
+      }; } },
+    };
+    const messages = [[], [], [], []];
+    const clients = messages.map(list => ({ readyState:1, OPEN:1, send:message => list.push(JSON.parse(message)) }));
+    const authenticated = new Set(clients.slice(0, 3)), watching = new Map([[clients[0], 'one'], [clients[1], 'two'], [clients[3], 'one']]);
+    ws = createBrowserUnifyWs({ relay, mask:text => text.replaceAll('Private', '[masked]'), clients:() => authenticated, watching:client => watching.get(client), cwd:() => work, access:() => ({ dataDir }), profileDir:() => profile, ports:() => ({ pages:12345 }) });
+    emit('tab:info', tabs[0]);
+    t.ok('tab metadata goes only to the authenticated watcher', messages[0].length === 1 && messages.slice(1).every(list => !list.length));
+    t.ok('tab payload is an event', messages[0][0].kind === 'event' && messages[0][0].event.type === 'tab:info');
+    ws.snapshot(clients[0], 'one'); ws.snapshot(clients[1], 'one'); ws.snapshot(clients[3], 'one');
+    t.ok('reconnect snapshot obeys the same watcher and auth checks', messages[0].at(-1).event.reset && messages[0].at(-1).event.tabs.length === 1 && messages.slice(1).every(list => !list.length));
+    tabs[0].title='Private'; emit('tab:info', tabs[0]); ws.snapshot(clients[0], 'one');
+    t.ok('updates and reconnect snapshots use the existing secret masking boundary', messages[0].at(-2).event.title === '[masked]' && messages[0].at(-1).event.tabs[0].title === '[masked]');
+    watching.set(clients[0], 'two'); emit('tab:info', { ...tabs[0], title:'Private' });
+    t.ok('switching conversations immediately stops old tab events', messages[0].length === 4);
+    t.ok('screen identities are stable and distinct', ws.clientId(clients[0]) === ws.clientId(clients[0]) && ws.clientId(clients[0]) !== ws.clientId(clients[1]));
+    watching.set(clients[0], 'one'); watching.set(clients[1], 'one');
+    const before = messages.map(list => list.length);
+    emit('tab:page-request', {sessionId:'one',by:ws.clientId(clients[0]),request:{type:'use'}});
+    t.ok('page requests go only to their last touching screen', messages[0].length === before[0]+1 && messages[1].length === before[1]);
+    emit('tab:page-request', {sessionId:'one',request:{type:'use'}});
+    t.ok('page requests without a destination are never broadcast', messages[0].length === before[0]+1 && messages[1].length === before[1]);
+    const suggestion = await ws.handle({ command:'chromeAddress', args:{ sessionId:'one', input:path.join(work, 'no') } });
+    t.ok('partial paths suggest inspected files', suggestion.suggestions.some(row => row.path === file));
+    const missing = await ws.handle({command:'chromeAddress', args:{sessionId:'one',input:path.join(work,'missing.md')}});
+    t.ok('a missing filename has an explanation before navigation', missing.reason === 'not-found' && !missing.suggestions.length);
+    await ws.navigate({ sessionId:'one', targetId:'a', input:file }, { by:'screen:1' });
+    const destination = new URL(calls.at(-1)[1].url);
+    t.ok('file navigation uses the conversation page and encoded absolute path', destination.port === '12345' && destination.pathname === '/_pleiad/s/one/file' && destination.searchParams.get('path') === file);
+    t.ok('navigation marks this tab as human before sending CDP', touched.at(-1).targetId === 'a' && touched.at(-1).by === 'screen:1');
+    await ws.navigate({ sessionId:'one', targetId:'a', input:'two words' });
+    t.ok('search uses the selected Chrome profile provider', calls.at(-1)[1].url === 'https://search.example/?q=two%20words');
+    const count = calls.length;
+    let blocked = false;
+    try { await ws.navigate({ sessionId:'one', targetId:'a', input:path.join(work, 'missing.md') }); } catch (error) { blocked = error.code === 'not-found'; }
+    t.ok('missing paths give a reason and never become searches', blocked && calls.length === count);
+    try { await ws.navigate({ sessionId:'two', targetId:'a', action:'reload' }); } catch {}
+    t.ok('another conversation cannot operate the target', calls.length === count);
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'back' });
+    t.ok('back follows this tab navigation history', calls.at(-1)[0] === 'Page.navigateToHistoryEntry' && calls.at(-1)[1].entryId === 10);
+    await ws.navigate({ sessionId:'one', action:'new' });
+    t.ok('new tabs belong to the conversation and are human-held', opened.at(-1).url.endsWith('/_pleiad/s/one/new') && touched.at(-1).targetId === 'new-tab');
+    t.ok('temporary CDP sessions are detached', detached === 3);
+    await ws.navigate({sessionId:'one',action:'new',input:file}, {by:'screen:1'});
+    t.ok('modified folder clicks may open the chosen location in a new tab', new URL(opened.at(-1).url).searchParams.get('path') === file);
+    await ws.navigate({sessionId:'one',input:'about:blank'});
+    t.ok('blank addresses work with no previous target', opened.at(-1).url.endsWith('/new') && calls.at(-1)[1].url === 'about:blank');
+    tabs[0].page={kind:'file',path:file};
+    await ws.navigate({sessionId:'one',targetId:'a',action:'view',view:'source'});
+    t.ok('view changes persist in the page URL before painting', calls.at(-1)[1].expression.includes('history.replaceState') && calls.at(-1)[1].expression.includes('source'));
+    const agent = await registry.invoke({ by:'agent', via:'mcp', sessionId:'one', mode:{ scope:'full', autonomy:'never' } }, 'browser.chromeNavigate', { sessionId:'one', input:'example.com' }, { chromeNavigate:() => { throw new Error('must not run'); } });
+    t.ok('navigation is absent from agent surfaces', !agent.ok);
+    t.ok('Windows breadcrumbs preserve drive roots and absolute destinations', addressCrumbs('D:\\work\\notes.md').map(item => item.path).join('|') === 'D:\\|D:\\work|D:\\work\\notes.md');
+    t.ok('POSIX breadcrumbs preserve absolute destinations', addressCrumbs('/work/notes.md').at(-1).path === '/work/notes.md');
+    ws.close(); t.ok('relay subscription can be removed', emit === null);
+    for (const flag of ['off', 'on']) {
+      const server = await startServer({dataDir:path.join(root, 'server-' + flag), env:{AGENT_HOST_BACKENDS:'fake', AGENT_HOST_BROWSER_UNIFY:flag}});
+      let screen;
+      try {
+        screen = await open(server);
+        const caps = await screen.cmd('hostCapabilities');
+        t.ok('server exposes browser capabilities only with flag ' + flag, Boolean(caps.browserUnify) === (flag === 'on'));
+        const address = await screen.cmd('chromeAddress', {sessionId:'one',input:''}, {ms:5000}).then(value => ({value}), error => ({code:error.code}));
+        t.ok('address requests always receive an explicit response with flag ' + flag, flag === 'on' ? Array.isArray(address.value?.suggestions) : address.code === 'UNSUPPORTED');
+        if (flag === 'on') {
+          await screen.cmd('watchSession', {sessionId:'one'});
+          t.ok('real server sends a reconnect snapshot to the watching socket', screen.events.some(event => event.type === 'tab:info' && event.sessionId === 'one' && event.reset));
+        }
+      } finally { screen?.close(); await server.stop(); }
+    }
+  } finally { ws?.close(); await fs.rm(root, { recursive:true, force:true }); }
 }

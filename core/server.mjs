@@ -169,7 +169,7 @@ import { createApprovalIds } from './approval-id.mjs';
 import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
 import { chromeLinkEnabled, openChromeLink, shutdownHolderIfIdle } from './chrome/link.mjs';
-import { chromeHomes } from './chrome/locate.mjs';
+import { chromeHomes, readLastUsedProfile } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
 import { createChromeHandoffs } from './chrome/handoff.mjs';
@@ -2382,7 +2382,22 @@ const pagesRoutes = BROWSER_UNIFY ? createPagesRoutes({ ops: (caller, id, input)
   visualizations: async sessionId => visualizationLinksOf((await pageTranscript(sessionId)).presents, pagePorts?.isolated),
   gitTimeline: async sessionId => timelineOf((await pageTranscript(sessionId)).messages) }) : null;
 const isolatedRoutes = BROWSER_UNIFY ? createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, fileAccessFor, ports: () => pagePorts, log: pagesLog }) : null;
-const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, log: pagesLog }) : null;
+const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, log: pagesLog,
+  mask: message => secretMasker.json(message),
+  clients: () => runtime.sockets, watching: client => watching.get(client), access: fileAccessFor,
+  cwd: async id => {
+    const cached = store.peek(id)?.cwd;
+    if (cached) return cached;
+    const backend = await resolveBackendForSession(id);
+    return (await backend?.getSession(id).catch(() => null))?.cwd;
+  },
+  profileDir: async id => {
+    const chosen = chromeProfiles?.current(id);
+    const home = chromeHomes().find(item => item.browser === (chosen?.browser ?? 'chrome'));
+    if (!home) return null;
+    const dir = chosen?.dir ?? await readLastUsedProfile(home.userDataDir);
+    return dir ? path.join(home.userDataDir, dir) : null;
+  } }) : null;
 
 /** ファイルのページと隔離のリスナーを立て、port を中継へ渡す（旗が on のときだけ。待ち受けの後に呼ぶ） */
 async function startPageListeners() {
@@ -5660,6 +5675,7 @@ function opsDeps(lng = currentLocale()) {
     chrome: opsChrome,
     hostBrowser: opsHostBrowser,
     chromeControl: opsChromeControl,
+    chromeNavigate: browserUnifyWs ? args => browserUnifyWs.navigate(args) : null,
     chromeProfiles: opsChromeProfiles,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
     mcp: opsMcp,
@@ -9168,7 +9184,7 @@ wss.on("connection", (ws, req) => {
         : Object.fromEntries(Object.entries(second ?? {}).filter(([, v]) => v !== null && v !== undefined));
       // 操作が投げても必ず返事をする。返事が無いと画面の cmd は待ち続け、一覧の取り直し（refresh）が後の分まで止まる
       try {
-        const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, { ...opsDeps(locale.lang), scanLock: wsScanLock });
+        const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, { ...opsDeps(locale.lang), scanLock: wsScanLock, ...(browserUnifyWs ? { chromeNavigate: args => browserUnifyWs.navigate(args, { by:browserUnifyWs.clientId(ws) }) } : {}) });
         return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code === FAILED ? undefined : r.code, r.issues ? { issues: r.issues } : undefined);
       } catch (err) {
         console.error(`  [command ${msg.command}]`, String(err?.stack ?? err));
@@ -9189,6 +9205,10 @@ wss.on("connection", (ws, req) => {
         }
       }
       switch (msg.command) {
+        case 'chromeAddress':
+          return reply(false, 'UNSUPPORTED', 'UNSUPPORTED');
+        case 'chromeNavigate':
+          return await viaOp('browser.chromeNavigate');
         case 'listMcpConfig':
           return await viaOp('mcp.nativeList');
         case 'readMcpServer':
@@ -9608,6 +9628,7 @@ wss.on("connection", (ws, req) => {
         case "watchSession": {
           const { sessionId } = msg.args ?? {};
           if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
+          browserUnifyWs?.snapshot(ws, sessionId);
           return reply(true, "ok");
         }
 
@@ -9632,6 +9653,7 @@ wss.on("connection", (ws, req) => {
           // 以後の流れはこの会話の分だけが届き、読み出しの間に来た分は streamCursor で重複を除く
           if (msg.args?.watch) {
             if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
+            browserUnifyWs?.snapshot(ws, sessionId);
           }
           if (!sessionId) return reply(true, { messages: [], presents: [] });
           // Hold the reference even if the turn ends during the asynchronous reads.
@@ -9757,6 +9779,7 @@ wss.on("connection", (ws, req) => {
           const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local, hub: screencastHub, bridge: screencastBridge,
             chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,
             client: screencastClients.get(ws),
+            screenId: browserUnifyWs?.clientId(ws),
             snapshotFile: async ({ sessionId, id, at, allow }) => {
               const record = await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at });
               if (!record) return null;
@@ -9909,7 +9932,7 @@ wss.on("connection", (ws, req) => {
 
         // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
         case 'invoke': {
-          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, opsDeps(locale.lang));
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, { ...opsDeps(locale.lang), ...(browserUnifyWs ? { chromeNavigate: args => browserUnifyWs.navigate(args, { by:browserUnifyWs.clientId(ws) }) } : {}) });
           return r.ok ? reply(true, r.result) : reply(false, r.error, r.code, r.issues ? { issues: r.issues } : undefined);
         }
 

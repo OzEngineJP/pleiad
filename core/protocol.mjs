@@ -247,6 +247,8 @@ export const COMMANDS = new Set([
   'chromeStop',              // 止める: 接続を閉じ、次の人の送信まで再接続を断る（stopped）
   'chromeOpen',              // { sessionId, url } -> { sessionId, targetId }。ビューアの⋯「Chrome で開く」。会話の窓に開く（つながっていなければ許可を待つ）。ホストの PC の画面だけ
   'chromeCloseWindow',       // { sessionId, windowId? } -> { closed }。会話の専用窓を閉じ、最後の画面を残す。windowId があればそのウィンドウだけ（複数あるとき）。画面とリモートの端末から
+  'chromeNavigate',
+  'chromeAddress',
   'chromePinWindow',         // { sessionId, windowId|null, tabId? } -> { pinnedWindowId, pinnedTabId }。右パネルの映像に映すウィンドウ・タブを固定する・解く（null）。固定は会話に 1 つで、chromeWindow イベントの pinnedWindowId で全部の端末に配る。映像を見ている間だけ
   'chromeCloseTab',          // { sessionId, tabId } -> {}。端末が引き継いでいる間に、タブの列の × でタブを閉じる（最後のタブは閉じない）
   // ブラウザーの一本化（旗が on のときだけ。core/browser-unify-ws.mjs）
@@ -350,4 +352,8 @@ export const EVENTS = new Set([
   "chromeTap",
   // { windows, operating } 会話の Chrome の窓（エージェント専用の窓）の有無と、エージェントが操作中か（右パネルの Chrome の入口。リモートの端末にも流す。sessionId は会話）
   "chromeWindow",
+  "tab:info",
+  "tab:holder",
+  "tab:page-request",
+  "tab:viewport",
 ]);

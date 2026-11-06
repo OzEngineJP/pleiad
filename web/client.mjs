@@ -3427,6 +3427,7 @@ function syncOutboxRows(messages) {
 }
 
 function onEvent(ev, replay = false) {
+  if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   // スレッドが動いた・投稿が増えた・既読が進んだ: 脇のスレッドの行を読み直す（まとめて 1 回）
   if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();
@@ -7842,7 +7843,7 @@ const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
 // ブラウザーの一本化（ADR 0291〜0294）の右の欄。旗が on のサーバー（hostCapabilities.browserUnify がある）のときだけ読む。off なら読まない
 let browserUnifyLoad = null;
-const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state })));
+const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview })));
 // ホストの画面（デスクトップ版）は plyDesktop.browser のページそのもの。それ以外の端末（リモートの窓・LAN のブラウザー）は、
 // ホストの内蔵ブラウザーの映像を同じ部品で見る（web/remote-browser.mjs。ホストが映像を送れる＝pcBrowser の間だけ。docs/inapp-browser.md）
 const remoteBrowser = browserPanelAvailable() ? null : createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null });
@@ -7886,6 +7887,7 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPa
   getChromeState: id => chromeControlStore.get(id).state,
   waiting: handoffWaiting, announce,
   chromeAvailable: () => state.hostCaps?.chromeWindow === true,
+  unified: () => Boolean(state.hostCaps?.browserUnify),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
 // 前の回に見ていた場所は、会話を開く（select が残す）前に読んでおく（起動時に Channels の面の位置を戻す）
@@ -10601,8 +10603,14 @@ chromePanel = setupChromePanel({ cmd, preview: filePreview, browser: browserPane
   menuItems: id => (window.plyRemote && actionsFor(chromeControlStore.get(id).state).includes('takeOver')
     ? [{ label: t('chromeControl.takeOverPc'), onClick: () => cmd('chromeTakeOver', { sessionId: id }).catch(error => notify(error?.message || t('chromeControl.failed'))) }] : []),
   openConversation: async id => { await select(id); if (state.current === id) chromePanel?.open($('browserEntry')); } });
+document.addEventListener('ply-browser-toggle', event => {
+  if (!state.hostCaps?.browserUnify) return;
+  if (chromePanel?.isOpen() && chromePanel.sessionId === event.detail?.sessionId) chromePanel.close();
+  else chromePanel?.open(event.target, { target:event.detail?.sessionId });
+});
 chromePanel.onOpenChange(() => { browserEntry?.paint(); browserPanel?.refreshTabs(); });
 browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === true,
+  unified: () => Boolean(state.hostCaps?.browserUnify),
   chromeOpen: () => chromePanel?.isOpen() === true,
   chromeCount: () => chromeWindows.count(state.current) + childChromeWindowCount(),
   chromeOperating: () => chromeWindows.operating(state.current),
@@ -10626,7 +10634,11 @@ $('chromeBanner').append(chromeControlView.banner);
 chromeProfilePill = setupChromeProfilePill({
   slot: chromePanel.profileSlot,
   cmd: (command, args) => cmd(command, args),
-  showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts),
+  showMenu: (x, y, items, title, opts) => {
+    const anchor = state.hostCaps?.browserUnify && document.querySelector('.bu-more');
+    const box = anchor?.getBoundingClientRect();
+    showMenu(box ? box.left : x, box ? box.bottom + 4 : y, items, title, opts);
+  },
   getSessionId: () => chromeTarget(),
   getPrefs: () => state.prefs,
   getHostCaps: () => state.hostCaps,

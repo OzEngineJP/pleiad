@@ -1,1 +1,41 @@
-{}
+{
+  "strip": {
+    "label": "Browser tabs",
+    "new": "New tab",
+    "close": "Close {{title}}",
+    "count": "{{count}} tabs"
+  },
+  "address": {
+    "back": "Back",
+    "forward": "Forward",
+    "reload": "Reload",
+    "conversation": "Back to conversation",
+    "tree": "Folder tree",
+    "edit": "Enter a URL, path or search",
+    "view": "File view",
+    "preview": "Preview",
+    "source": "Source",
+    "showSource": "Show source",
+    "locations": { "git": "Changes", "plugins": "Plugins", "attachment": "Attachments", "new": "Enter a URL, path or search" },
+    "more": "More",
+    "closePanel": "Close panel",
+    "openPanel": "Open browser",
+    "failed": "Could not open this address. Check your input.",
+    "reasons": {
+      "empty-input": "Enter a URL, path or search.",
+      "invalid-path": "Enter an absolute path or start a relative path with ./",
+      "network-path": "Network paths cannot be opened.",
+      "different-host": "Enter a path on this PC.",
+      "cwd-unknown": "The conversation working directory is unknown. Enter an absolute path.",
+      "invalid-url": "This URL cannot be opened.",
+      "not-found": "File or folder not found.",
+      "ENOENT": "File or folder not found.",
+      "forbidden": "Files in this location cannot be opened.",
+      "access-denied": "You do not have permission to read files here.",
+      "protected-data": "The Pleiad data folder cannot be opened.",
+      "not-file": "Choose a file or folder.",
+      "NO_WINDOW": "This tab was closed. Choose another tab.",
+      "UNSUPPORTED": "Connect to Chrome to open this address."
+    }
+  }
+}

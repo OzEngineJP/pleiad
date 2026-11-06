@@ -3,10 +3,12 @@
 //   - ブラウザー（#browserEntry）: ホストではビューアと Chrome、リモートでは窓がある会話の Chrome を開閉する。
 //     近道は Ctrl+Shift+B（macOS は ⌘⇧B）。内蔵ブラウザーのページにフォーカスがあるときは main が拾って知らせる
 import { t } from './i18n.mjs';
+// i18n-dynamic: tabs:address.openPanel
 import { runMark } from './arc.mjs';
 // i18n-dynamic: browser.entryState
 // i18n-dynamic: browser.chromeWindow.entry
 import { isComposingKey } from './keyboard.mjs';
+import { browserIcon } from './tab-strip.mjs';
 
 const CTX_KINDS = ['instruction', 'skill', 'mcp'];
 // 実際に渡ったものだけ数える。除外・重複・未対応・接続できなかった MCP は数に入れない
@@ -90,7 +92,7 @@ export const browserViewToOpen = ({ viewer = false, chrome = false, urgent = fal
  */
 export function setupBrowserEntry({ button, browser, preview, chrome = () => null, windows = null, getSessionId = () => null,
   getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false,
-  mac = isMac(), bridge = null, blocked = () => false, mark: makeMark = runMark, announce = () => {} }) {
+  unified = () => false, mac = isMac(), bridge = null, blocked = () => false, mark: makeMark = runMark, announce = () => {} }) {
   if (!button) return null;
   if (!browser && !windows) { button.hidden = true; return null; }
   button.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+B' : 'Control+Shift+B');
@@ -122,12 +124,15 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   function paint() {
     const id = activeId();
     const hasWindow = Boolean(id && chromeAvailable() && windows?.has(id));
-    button.hidden = !viewable() && !hasWindow;
+    button.hidden = unified() ? !id : !viewable() && !hasWindow;
     if (hasWindow) button.setAttribute('data-mobile-chrome', ''); else button.removeAttribute('data-mobile-chrome');
     if (button.hidden) return;
     const state = currentMark();
+    if (unified() && !button.dataset.unifiedIcon) {
+      const icon = browserIcon('panel'); icon.classList.add('i'); button.querySelector('svg')?.replaceWith(icon); button.dataset.unifiedIcon = 'true';
+    }
     if (id) announceChange(id, state);
-    const label = [t('browser.unifiedEntryLabel'), state ? t(`browser.entryState.${state}`, { name: getAgentName() || 'Claude' }) : ''].filter(Boolean).join(' · ');
+    const label = unified() ? t(open() ? 'tabs:address.closePanel' : 'tabs:address.openPanel') : [t('browser.unifiedEntryLabel'), state ? t(`browser.entryState.${state}`, { name: getAgentName() || 'Claude' }) : ''].filter(Boolean).join(' · ');
     button.title = `${label}（${browserShortcutLabel(mac)}）`;
     button.setAttribute('aria-label', label);
     button.setAttribute('aria-expanded', String(open()));
@@ -144,13 +149,13 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   /** 開いたときだけ、Chrome の動き・依頼待ちを優先する。開いている間の切り替えはタブから行う */
   function toggle(anchor = button) {
     if (open()) {
-      preview.close(false);
+      if (unified() && chromeOpen()) chrome()?.close(); else preview.close(false);
       anchor.focus({ preventScroll: true });
     } else {
       const id = activeId();
       const state = id ? getChromeState(id) : 'idle';
       const urgent = id && (waiting(id) || windows?.operating(id) || state === 'running' || state === 'paused');
-      const view = browserViewToOpen({ viewer: viewable(), chrome: chromeAvailable() && !!id, urgent, last: lastView.get(id) });
+      const view = unified() ? 'chrome' : browserViewToOpen({ viewer: viewable(), chrome: chromeAvailable() && !!id, urgent, last: lastView.get(id) });
       if (view === 'chrome') chrome()?.open(anchor);
       else if (view === 'viewer') { preview.openBrowser(anchor); browser.open(); }
       if (id && view) lastView.set(id, view);

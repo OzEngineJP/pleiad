@@ -94,6 +94,27 @@ function profileError(ctx, error) {
 
 export const browserOps = [
   defineOp({
+    id: 'browser.chromeNavigate',
+    summary: 'agent:ops.browser.chromeNavigate.summary',
+    risk: 'write',
+    riskReason: 'Navigation from the conversation address bar is a human action (ADR 0293); it is unavailable on agent surfaces',
+    input: z.object({
+      sessionId: sessionIdShape,
+      targetId: z.string().min(1).max(200).optional().describe('agent:ops.browser.chromePinWindow.tabId'),
+      action: z.enum(['navigate', 'new', 'back', 'forward', 'reload', 'close', 'view', 'tree']).default('navigate').describe('agent:ops.browser.chromeNavigate.action'),
+      input: z.string().max(8192).optional().describe('agent:ops.browser.chromeOpen.url'),
+      view: z.enum(['preview', 'source']).optional().describe('agent:ops.browser.chromeNavigate.view'),
+    }),
+    output: z.object({ targetId:z.string().nullable().optional() }),
+    surfaces: { ui:true, mcp:false, cli:false },
+    legacyCommand: 'chromeNavigate',
+    handler: (ctx, args) => {
+      if (ctx.principal.by !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      if (!ctx.chromeNavigate) unavailable(ctx);
+      return ctx.chromeNavigate(args);
+    },
+  }),
+  defineOp({
     id: 'browser.chromeStatus',
     summary: 'agent:ops.browser.chromeStatus.summary',
     risk: 'read',

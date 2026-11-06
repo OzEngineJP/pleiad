@@ -113,8 +113,9 @@ export function applySlots(parts, config) {
   parts.kind.hidden = !config.kind;
   parts.actions.replaceChildren(...pick(config.head));
   // タブの列（内蔵ブラウザーだけ）
-  if (parts.tabs) parts.tabs.hidden = !config.tabs;
-  parts.switcher.hidden = !config.views;
+  const unifiedChrome = document.body?.classList.contains('browser-unify') && parts.panel.dataset.panel === 'chrome-window';
+  if (parts.tabs) parts.tabs.hidden = unifiedChrome || !config.tabs;
+  parts.switcher.hidden = unifiedChrome || !config.views;
   parts.tools.replaceChildren(...pick(config.toolbar));
   parts.toolbar.hidden = !config.views && !config.toolbar?.length;
   // パスの行は「パス」を押したときだけ開く。「パス」が無いモードでは必ず閉じる

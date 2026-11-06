@@ -899,7 +899,6 @@ const SUITES = [
   // favicon の取得の行き先の検査（名前解決の後の IP・リダイレクトの先・手元の host・Pleiad の port）
   './unit/icon-fetch.mjs',
   './unit/session-files.mjs',
-  './unit/browser-unify-ws.mjs',
   './unit/search-provider.mjs',
 
   // --- A6 タブごとの持ち手と大きさ ---
@@ -917,6 +916,8 @@ const SUITES = [
   './unit/os-open.mjs',
 
   // --- B（組 B） ---
+  './unit/browser-unify-ws.mjs',
+  './unit/browser-unify-tabs.mjs',
 
 
   // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
