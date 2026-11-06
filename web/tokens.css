@@ -49,6 +49,7 @@
   --ink-blue:#3a499e;         /* リンク・今いる枝・既定から外れた設定 */
   --ink-unread:#5665cd;       /* 完了・未確認の静止した丸。明暗テーマ共通 */
   --ink-mark:#aa2678;         /* 差し色。「あなたを待っている」にだけ使う。他の意味に流用しない */
+  --ink-danger:#b2303e;       /* 消す・元に戻せない操作の確定（削除…・消す）。--diff-del-ink と同じ赤を ink の族へ（ADR 0291） */
   --ink-qr:#0f1330;           /* ペアリングの QR の点。明暗テーマによらず濃い（白い地の上で読ませる） */
 
   /* -- 線（line）。会話の筋・枝・フォーカスの輪・光の走り。枠を引くためのものではない -- */
@@ -136,7 +137,7 @@
     --surface-veil:rgba(0,0,0,.55);
     --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
     --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
-    --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;
+    --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
     --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
     --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
     --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
@@ -157,7 +158,7 @@
   --surface-veil:rgba(0,0,0,.55);
   --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
   --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
-  --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;
+  --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
   --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
   --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
   --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;

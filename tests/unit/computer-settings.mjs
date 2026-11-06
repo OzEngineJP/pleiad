@@ -139,7 +139,7 @@ export default async function (t) {
   if (!hadCss) globalThis.CSS = { escape: v => String(v) };
   const OR1 = { id: 'k1', provider: 'openrouter', label: '', lastCheck: { ok: true, at: '2026-10-07T00:00:00.000Z' } };
   const CB = { id: 'k2', provider: 'custom', label: '社内' };
-  let list = { migration: { state: 'done' }, storage: 'safeStorage', keys: [OR1, CB], uses: { voice: null, 'judge:jev': null, 'computer:decider': null } };
+  let list = { migration: { state: 'done' }, storage: 'safeStorage', keys: [OR1, CB], uses: { voice: null, 'judge:routing': null, 'computer:decider': null } };
   const keyCalls = [];
   const opened = [];
   try {

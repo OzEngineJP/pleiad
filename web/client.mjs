@@ -7365,7 +7365,7 @@ async function toggleRetry(card, root, button) {
     const task = taskById(taskId);
     const routing = task?.routing ?? cardRouting.get(card);
     for (const b of new Set((data.candidates ?? []).map(c => c.backend).filter(b => b && !state.vocab.has(b)))) await loadVocab(b).catch(() => {});
-    const panel = retryPanel({ candidates: retryCandidates(data.candidates, routing, data.tiers), running: TASK_LIVE.has(task?.status),
+    const panel = retryPanel({ candidates: retryCandidates(data.candidates, routing, (data.settings?.levels ?? []).map(l => l.id)), running: TASK_LIVE.has(task?.status),
       names: routingNames, logo: routingLogo,
       run: (args) => cmd('retryAgentTask', { taskId, ...args }),
       close: (result) => {

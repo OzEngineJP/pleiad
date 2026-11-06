@@ -122,7 +122,7 @@ try {
   check((await text(page, '#voicePanel')).includes('通話は使えません'), '通話: 「使わない」にすると通話は使えない');
   check(!(await fs.promises.readFile(path.join(dataDir, 'voice-secrets.json'), 'utf8')).includes('"openrouter"'), '通話: 古い置き場の通話のキーも消える（古い版も送らない）');
 
-  // 委譲: 自動選択（Jev・Qwen）はどちらも OpenRouter のキー 1 つ
+  // 委譲: 自動選択の判定は OpenRouter のキー 1 つ
   await tab(page, 'delegationTab');
   check((await page.locator('#delegationPanel .rt-key').count()) === 1 && (await text(page, '#delegationPanel')).includes('委譲先の自動選択に使うキー') && !(await text(page, '#delegationPanel')).includes('Cerebras'),
     '委譲: 自動選択の「使うキー」は OpenRouter の 1 つだけで、Cerebras は出ない');

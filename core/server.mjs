@@ -23,8 +23,8 @@ import { createShots as createComputerShots } from './computer-use/shots.mjs';
 import { parentPortComputer, fakeComputerDriver } from './computer-use/driver.mjs';
 import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync, statSync } from 'node:fs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
-import { judgeDifficulty, normalizeKey, SERVICES as ROUTING_JUDGE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
+import { DIFFICULTIES, SIGNALS, kindOrder, levelOrder, kindAt, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
+import { judgeDifficulty, normalizeKey, JUDGE_USE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
 import { createGitActivity } from './git-activity.mjs';
@@ -1659,19 +1659,20 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
 // ply_delegate の host に書けるホスト（端末側・ホスト側の両方がオンのもの。オフラインの印つき）。無ければ host の引数自体を出さない
 hosts: () => remoteDelegation?.describe() ?? [],
 // backend に書けるエージェントは、有効なもの（AGENT_HOST_BACKENDS）
-backends: () => listBackends().map(b => b.id) });
+backends: () => listBackends().map(b => b.id),
+// ply_delegate の kind に書ける作業の種類（設定 › 委譲で利用者が直せるので、都度設定から引く）
+kinds: () => routingSettingsCache.kinds });
 
 // ---- 委譲先の自動選択 ------------------------------------------------------
 // 設定は prefs.json の delegationRouting（未設定の項目は既定値）。自動選択に使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
-// （uses の judge:jev。Jev・Qwen のどちらも OpenRouter で同じキー）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
-// 前の版の Cerebras の自動選択の項目（judgeByKind の cerebras・escalateToCerebras）は読むときに Qwen の名前へ直し、次に保存するときに書き直す（ADR 0177）
+// （uses の judge:routing。判定のモデルは OpenRouter でキーは 1 つ）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
+// 前の版の判定の項目（judgeByKind・escalateToQwen・escalateToCerebras）とクリエイティブの段（tv）は読むときに今の形へ直し、次に保存するときに書き直す
 let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
 // Pleiad の指示（core/ply-instructions.mjs）。prefs.json の plyInstructions。まだ無ければ前の版の addedContext（委譲の指示のスイッチ）から作る
 let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext, currentLocale()); })();
 /** 設定 › コンテキストの「Pleiad の指示」。文は画面の言語。委譲と連動の項目は今の委譲先の自動選択の有無を反映する */
 const plyInstructionsState = () => plyInstructionsScreen(plyInstructionsCache, currentLocale(), { routing: routingSettingsCache.enabled });
-const ROUTING_SERVICES = [...new Set(Object.values(JUDGE_SERVICE))];
-const routingEndpoint = service => apiKeys.useEndpoint(`judge:${ROUTING_JUDGE[service]}`);
+const routingEndpoint = () => apiKeys.useEndpoint(JUDGE_USE);
 /** API キー・割り当てが変わったとき（core/api-keys.mjs の onChange）。使う側の画面と通話のキーを更新する */
 function apiKeysChanged(change = {}) {
   emitGlobal({ type: 'apiKeysChanged', autoPlus: change.autoPlus === true, sessionId: null });
@@ -1710,7 +1711,7 @@ const routingUsage = createUsageMonitor({
   backends: listBackends,
   installed: id => installation(id).installed,
   read: providerQuota,
-  candidates: () => [...new Set(TIERS.flatMap(tier => routingSettingsCache.tiers[tier] ?? []))],
+  candidates: () => [...new Set(levelOrder(routingSettingsCache).flatMap(level => routingSettingsCache.tiers[level] ?? []))],
   modelKnown: (b, model) => validModel(b, model, process.cwd()),
   // 一覧をまだ引いていないバックエンド（agy はログインの確認で一覧を覚える）だけ、確かめ直す。
   // 確かめられたら 30 分は繰り返さない。未ログイン・失敗なら次の取り直し（5 分後）でまた確かめる
@@ -1731,7 +1732,8 @@ const ROUTING_USAGE_AUTO = process.env.AGENT_HOST_ROUTING_USAGE !== 'off';
  * cwd は委譲先の作業場所（モデルの一覧は場所の設定で変わりうるので、選んだモデルをそこで確かめ直す）
  */
 async function routeDelegation(args, lng, cwd) {
-  if (!KINDS.includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng) }));
+  const settings = routingSettingsCache;
+  if (!kindOrder(settings).includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng, settings.kinds) }));
   if (args.backend !== undefined) {
     if (args.account === undefined) return { ...args, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model }) };
     // 依頼元が選んだアカウント（ADR 0205・0222）。公式で走らせるので、モデルは公式の一覧で決めて使用枠を見る
@@ -1746,13 +1748,15 @@ async function routeDelegation(args, lng, cwd) {
   }
   // account は委譲先を固定したときだけ（自動の振り分けはアカウントも使用量で選ぶ）
   if (args.account !== undefined) throw new Error(agentT(lng, 'routing.accountPinOnly'));
-  const settings = routingSettingsCache;
   if (!settings.enabled) throw new Error(agentT(lng, 'routing.backendRequired', { backends: listBackends().map(b => b.id).join(', ') }));
   if (args.model !== undefined || args.effort !== undefined) throw new Error(agentT(lng, 'routing.pinOnly'));
-  // 依頼文は自動選択のモデルへ送る前に確かめる（agentTasks と同じ上限）
+  // 依頼文は判定のモデルへ送る前に確かめる（agentTasks と同じ上限）
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
+  const kindEntry = kindAt(settings, args.kind);
+  const kindDict = agentT(lng, `bridge.kinds.${args.kind}`);
+  const kindDesc = kindEntry?.desc || (kindDict === `bridge.kinds.${args.kind}` ? '' : kindDict) || kindEntry?.name || '';
   const [judged] = await Promise.all([
-    judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToQwen, endpointOf: routingEndpoint }),
+    judgeDifficulty({ kind: args.kind, kindDesc, task: args.task, judge: settings.judge, endpointOf: routingEndpoint }),
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
@@ -1825,9 +1829,8 @@ async function delegationRoutingState() {
   const prefs = await store.getPrefs();
   const conversationEfforts = Object.fromEntries(listBackends().map(b => [b.id, prefs.backends?.[b.id]?.effort ?? '']));
   const credit = await apiKeys.plusCredit().catch(() => null);
-  const keyChoice = Object.fromEntries(await Promise.all(ROUTING_SERVICES.map(async s => [s, await keyChoiceInfo(`judge:${ROUTING_JUDGE[s]}`)])));
-  return { settings, defaults: normalizeSettings({}), kinds: KINDS, judges: JUDGES, tiers: TIERS, signals: SIGNALS, conversationEfforts,
-    keys: Object.fromEntries(ROUTING_SERVICES.map(s => [s, keyChoice[s] ?? { via: null, hasKey: false, keyRef: null, plus: null }])),
+  return { settings, defaults: normalizeSettings({}), difficulties: DIFFICULTIES, signals: SIGNALS, conversationEfforts,
+    key: await keyChoiceInfo(JUDGE_USE),
     // 中継が credit_exhausted を返した月の状態（{ resetAt } か null。仮想のキー plus の判定を止めている間だけ値がある）
     limit: credit,
     storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
@@ -3828,8 +3831,8 @@ async function applyRoutingSettings(patch) {
   if (efforts) raw.efforts = efforts; else delete raw.efforts;
   const previous = routingSettingsCache;
   const known = routingUsage.snapshot();
-  const oldCandidates = new Set(TIERS.flatMap(tier => previous.tiers[tier] ?? []));
-  const missingCandidate = TIERS.flatMap(tier => settings.tiers[tier] ?? []).some(candidate => {
+  const oldCandidates = new Set(levelOrder(previous).flatMap(level => previous.tiers[level] ?? []));
+  const missingCandidate = levelOrder(settings).flatMap(level => settings.tiers[level] ?? []).some(candidate => {
     if (oldCandidates.has(candidate)) return false;
     const parsed = parseCandidate(candidate);
     return !parsed || !Object.hasOwn(known[parsed.backend]?.models ?? {}, parsed.model);
@@ -3849,7 +3852,7 @@ async function applyRoutingSettings(patch) {
 async function dropAccountCandidates(id) {
   if (!id) return;
   const tiers = routingSettingsCache.tiers;
-  const changed = Object.fromEntries(TIERS.flatMap(tier => {
+  const changed = Object.fromEntries(levelOrder(routingSettingsCache).flatMap(tier => {
     const list = tiers[tier] ?? [];
     const kept = list.filter(c => parseCandidate(c)?.account !== id);
     return kept.length === list.length ? [] : [[tier, kept]];
@@ -9462,7 +9465,7 @@ wss.on("connection", (ws, req) => {
         }
         case 'deleteApiKey':
           return reply(true, await apiKeys.remove(String(msg.args?.id ?? '')));
-        // { use: voice | judge:jev | computer:decider, id: キーの id | null（使わない）}
+        // { use: voice | judge:routing | computer:decider, id: キーの id | null（使わない）}
         case 'setApiKeyUse':
           return reply(true, await apiKeys.setUse(String(msg.args?.use ?? ''), msg.args?.id ?? null));
         // 移行の案内。{ keep: キーの id }（ほかの同じプロバイダーのキーをまとめる）か { keep: null }（このままにする）。どちらでも案内は二度と出ない
@@ -9472,10 +9475,10 @@ wss.on("connection", (ws, req) => {
         case 'setDelegationRoutingKey':
         case 'deleteDelegationRoutingKey': {
           const service = String(msg.args?.service ?? '');
-          if (!ROUTING_SERVICES.includes(service)) throw new Error(t('routing.key.unknownService', { service }));
+          if (service !== JUDGE_SERVICE) throw new Error(t('routing.key.unknownService', { service }));
           const key = msg.command === 'setDelegationRoutingKey' ? normalizeKey(msg.args?.key) : null;
           if (msg.command === 'setDelegationRoutingKey' && !key) throw new Error(t('routing.key.invalid'));
-          await legacyUseKey(`judge:${ROUTING_JUDGE[service]}`, service, key);
+          await legacyUseKey(JUDGE_USE, service, key);
           return reply(true, await delegationRoutingState());
         }
         case 'setVoiceKey':

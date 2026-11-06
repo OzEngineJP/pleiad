@@ -39,6 +39,7 @@
     "ui:routing.judge.jev",
     "ui:routing.judge.qwen",
     "ui:routing.settings.addInput",
+    "ui:routing.settings.service.openrouter",
     "ui:apiKeys.add.providers.openrouter.name",
     "ui:saved.reason.contextChanged",
     "ui:sessionContext.hooks.ms",

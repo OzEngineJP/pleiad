@@ -1272,13 +1272,15 @@
       "outOfRange": "{{key}} must be between {{min}} and {{max}}.",
       "notObject": "{{key}} has an invalid form.",
       "unknownKind": "{{key}} has an unknown kind: {{kind}}",
-      "unknownJudge": "Invalid auto-select for {{kind}}: {{judge}}",
-      "unknownTier": "Unknown tier: {{tier}}",
-      "badCandidates": "Invalid candidates for {{tier}} (backend:model, no duplicates, up to 20).",
-      "badRow": "Invalid tiers for {{kind}} (three: low, mid, high).",
-      "badEfforts": "Invalid thinking effort settings for {{tier}}.",
-      "badEffortKey": "Invalid thinking effort target for {{tier}} (* for the tier default, backend:model for a candidate): {{key}}",
-      "badEffort": "Invalid thinking effort for {{tier}} (low, medium, high, xhigh, max, or empty to follow the conversation default): {{value}}"
+      "badJudge": "Invalid judging model: {{judge}}",
+      "badLevels": "Invalid level list (1-10 items; id: up to 40 chars of letters, digits, _ or -; name: up to 80 chars; no duplicates).",
+      "badKinds": "Invalid work kind list (1-30 items; id: up to 40 chars starting lowercase then letters, digits or _; name: up to 80 chars; description: up to 300 chars; no duplicates).",
+      "unknownLevel": "Unknown level: {{level}}",
+      "badCandidates": "Invalid candidates for \"{{level}}\" (backend:model, no duplicates, up to 20).",
+      "badRow": "Invalid levels for \"{{kind}}\" (three: low, mid, high).",
+      "badEfforts": "Invalid thinking effort settings for \"{{level}}\".",
+      "badEffortKey": "Invalid thinking effort target for \"{{level}}\" (* for the level default, backend:model for a candidate): {{key}}",
+      "badEffort": "Invalid thinking effort for \"{{level}}\" (low, medium, high, xhigh, max, or empty to follow the conversation default): {{value}}"
     },
     "key": {
       "unknownService": "Unknown service for automatic delegate selection: {{service}}",

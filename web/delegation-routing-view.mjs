@@ -21,10 +21,14 @@ const known = (prefix, value) => {
   const text = t(key);
   return text === key ? String(value ?? '') : text;
 };
-export const kindText = kind => known('routing.kind', kind);
+// kind の見せ方は name（設定の作業の種類の名前。新しい記録に乗る routing.kindName）→ 辞書 → id
+export const kindText = (kind, name = null) => name || known('routing.kind', kind);
 export const difficultyText = d => known('routing.difficulty', d);
-export const tierText = tier => known('routing.tier', tier);
-export const tierShortText = tier => known('routing.tierShort', tier);
+// レベル（旧「段」）の見せ方は name（設定のレベルの名前。新しい記録に乗る routing.tierName / baseTierName）→ 辞書 → id
+export const tierText = (tier, name = null) => name || known('routing.tier', tier);
+export const tierShortText = (tier, name = null) => name || known('routing.tierShort', tier);
+/** 記録のレベルの見せ方（routing.tierName は新しい記録、無い古い記録は辞書→id） */
+export const recordTierText = (routing, key = 'tier') => tierText(routing?.[key], routing?.[`${key}Name`] ?? null);
 export const judgeText = judge => known('routing.judge', judge);
 export const signalText = signal => known('routing.signal', signal);
 // i18n-dynamic: routing.unavailable.
@@ -101,15 +105,15 @@ export function routingLine(routing, names = defaultNames) {
   // 依頼元が子の設定を替えた（ADR 0134）。行き先は新しい委譲先、元の委譲先を添える
   const changed = routing.changed?.from ? [t('routing.line.changedByParent', { from: targetText(routing.changed.from, names) })] : [];
   if (!isAutoRouting(routing)) {
-    const head = t('routing.line.pinned', { kind: kindText(routing.kind), target: targetText(routing.target, names) });
+    const head = t('routing.line.pinned', { kind: kindText(routing.kind, routing.kindName), target: targetText(routing.target, names) });
     return [head, ...(routing.selectedWithLowHeadroom ? [lowHeadroomText(routing.selectedWithLowHeadroom)] : []), ...changed].join(t('routing.line.join'));
   }
-  if (changed.length) return [t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) }), ...changed].join(t('routing.line.join'));
-  const head = t('routing.line.head', { kind: kindText(routing.kind), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
+  if (changed.length) return [t('routing.line.head', { kind: kindText(routing.kind, routing.kindName), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) }), ...changed].join(t('routing.line.join'));
+  const head = t('routing.line.head', { kind: kindText(routing.kind, routing.kindName), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
   const notes = [];
   const low = routing.selectedWithLowHeadroom;
   if (low) notes.push(lowHeadroomText(low));
-  if (routing.baseTier && routing.tier && ['t1', 't2', 't3', 't4'].indexOf(routing.tier) < ['t1', 't2', 't3', 't4'].indexOf(routing.baseTier))
+  if (routing.baseTier && routing.tier && tierBelow(routing.tier, routing.baseTier, routing.tierIndex, routing.baseTierIndex))
     notes.push(t('routing.line.selectedLower'));
   const first = routing.skipped?.[0];
   if (first && !low && !notes.length) notes.push(skippedPhrase(first, names));
@@ -140,16 +144,21 @@ export function yesSignals(routing) {
   return Object.entries(routing?.signals ?? {}).filter(([, v]) => v === true).map(([k]) => signalText(k));
 }
 
-/** 段の一言。表の段から上げたときはそれも */
+/** レベルの前後（弱い方が小さい index）。記録に index が無い古いものは、旧「段」の順で読み替える */
+const LEGACY_TIER_ORDER = ['t1', 't2', 't3', 't4'];
+const tierBelow = (tier, base, tierIndex, baseIndex) =>
+  tierIndex != null && baseIndex != null ? tierIndex < baseIndex : LEGACY_TIER_ORDER.indexOf(tier) < LEGACY_TIER_ORDER.indexOf(base);
+
+/** レベルの一言。表のレベルから上げたときはそれも */
 // i18n-dynamic: routing.detail.tierRaised
 // i18n-dynamic: routing.detail.tierLowered
 export function tierLine(routing) {
   if (!routing?.tier) return '';
   if (routing.baseTier && routing.baseTier !== routing.tier) {
-    const lower = ['t1', 't2', 't3', 't4'].indexOf(routing.tier) < ['t1', 't2', 't3', 't4'].indexOf(routing.baseTier);
-    return t(lower ? 'routing.detail.tierLowered' : 'routing.detail.tierRaised', { tier: tierText(routing.tier), base: tierText(routing.baseTier) });
+    const lower = tierBelow(routing.tier, routing.baseTier, routing.tierIndex, routing.baseTierIndex);
+    return t(lower ? 'routing.detail.tierLowered' : 'routing.detail.tierRaised', { tier: recordTierText(routing), base: recordTierText(routing, 'baseTier') });
   }
-  return tierText(routing.tier);
+  return recordTierText(routing);
 }
 
 /**
@@ -163,7 +172,7 @@ export function effortLine(routing) {
   const key = routing?.effortSource;
   if (!key) return effort ?? '';
   const line = (name, vars = {}) => t(`routing.detail.effortLine.${name}`, { value: effort ?? '', ...vars });
-  const main = key === 'tier' ? line('tier', { tier: tierText(routing.effortTier ?? routing.tier) })
+  const main = key === 'tier' ? line('tier', { tier: tierText(routing.effortTier ?? routing.tier, routing.effortTierName ?? (routing.effortTier ? null : routing.tierName)) })
     : key === 'override' ? line('override')
     : key === 'conversation' ? (effort ? line('conversation') : line('conversationUnset'))
     : key === 'model' ? line('model')
@@ -189,7 +198,7 @@ export function compactionLine(compaction) {
  * やり直しに出す候補。今使えるもので、元の委譲先（エージェント・モデル・アカウント）を除く。元の段から上へ、次に下の段の順（段の中は設定の順）。
  * candidates は delegationRouting の candidates（候補はアカウント 1 つの単位。ADR 0264）、tiers は段の並び
  */
-export function retryCandidates(candidates, routing, tiers = ['t1', 't2', 't3', 't4', 'tv']) {
+export function retryCandidates(candidates, routing, tiers = ['t1', 't2', 't3', 't4']) {
   const from = routing?.target ?? null;
   const at = Math.max(0, tiers.indexOf(routing?.tier ?? routing?.baseTier));
   const order = [...tiers.slice(at), ...tiers.slice(0, at).reverse()];
@@ -224,7 +233,7 @@ export function parseRoutingFailure(text) {
       (skipped.at(-1).accounts ??= []).push({ label, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
       continue;
     }
-    const m = /^- ([a-z]+(?:@[A-Za-z0-9_-]+)?:\S+)(?: \[([^\]]+)\])? \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?(?: until (\S+))?\s*$/.exec(line);
+    const m = /^- ([a-z]+(?:@[A-Za-z0-9_-]+)?:\S+)(?: \[([^\]]+)\])? \(([^)]+)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?(?: until (\S+))?\s*$/.exec(line);
     if (!m) continue;
     const [, candidate, accountLabel, tier, reason, detail, label, used, pace, until] = m;
     const window = used != null || pace != null ? { label: label ?? '', ...(used != null ? { usedPercent: Number(used) } : {}), ...(pace != null ? { pace: Number(pace) } : {}) } : null;

@@ -1,4 +1,4 @@
-// 委譲先の自動選択をサーバー全体で確かめる。自動選択のモデルは手元の偽の Jev（OpenRouter の decisions の形）、
+// 委譲先の自動選択をサーバー全体で確かめる。難しさを判定するモデルは手元の偽物（OpenRouter の decisions の形）、
 // 委譲先は偽の agy（tests/lib/fake-agy.mjs。使用量とモデル一覧を返す）。本物の自動選択のサービス・LLM へは送らない
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -17,7 +17,7 @@ const SIGNALS = ['diagnose', 'choose', 'long_procedure', 'many_parts', 'writes_s
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-routing-'));
   const KEY = 'sk-or-routing-test-SECRET-9f3a';
-  // 偽の OpenRouter（Jev の decisions と Qwen の chat/completions）。依頼文に FAIL を含めば 500 を返す
+  // 偽の OpenRouter（decisions）。依頼文に FAIL を含めば 500 を返す。判定は 1 つのモデルだけ（ほかへは聞き直さない）
   const jevCalls = [];
   const jev = http.createServer((req, res) => {
     const chunks = [];
@@ -66,14 +66,15 @@ export default async function (t) {
       if (state.candidates.find(x => x.candidate === 'antigravity:gemini-3.8-flash-high')?.usable) break;
       await sleep(100);
     }
-    t.ok('設定は既定値（有効）で、9 種類・段・自動選択の一覧を返す', state.settings.enabled === true && state.kinds.length === 9 && state.tiers.join() === 't1,t2,t3,t4,tv'
-      && state.judges.join() === 'jev,qwen,none' && state.settings.judgeByKind.visual === 'none');
+    t.ok('設定は既定値（有効）で、9 種類・レベル・判定のモデルを返す', state.settings.enabled === true && state.settings.kinds.length === 9
+      && state.settings.levels.map(l => l.id).join() === 't1,t2,t3,t4' && state.settings.judge === 'perplexity/pplx-decider-v1.2'
+      && state.defaults.judge === 'perplexity/pplx-decider-v1.2' && !Object.hasOwn(state.settings.tiers, 'tv'));
     const gem = state.candidates.find(x => x.candidate === 'antigravity:gemini-3.8-flash-high');
     t.ok('候補ごとに今の使用量と使えるかどうかを返す（agy の使用量を定期的に取っている）', gem?.usable === true && gem.windows.length === 2 && gem.checkedAt
       && state.candidates.find(x => x.candidate === 'claude:opus').reason === 'unavailable', JSON.stringify(gem));
     t.ok('今の一覧に無い候補・使えないバックエンドを知らせる', state.warnings.some(w => w.candidate === 'codex:gpt-6-sol' && w.reason === 'unavailable')
       && state.warnings.some(w => w.candidate === 'antigravity:claude-opus-4-6-thinking' && w.reason === 'model_unknown'));
-    t.ok('キーは未登録（自動選択のキーは OpenRouter の 1 つだけ）', state.keys.openrouter.hasKey === false && Object.keys(state.keys).join() === 'openrouter');
+    t.ok('キーは未登録（判定に使うキーは 1 つ）', state.key.hasKey === false);
 
     // ---- kind の検査
     const noKind = await call(null, { task: 'echo:X' });
@@ -96,20 +97,20 @@ export default async function (t) {
     await c.cmd('setDelegationRoutingKey', { service: 'nope', key: 'x' }).then(() => t.ok('知らないサービスは断る', false), () => t.ok('知らないサービスは断る', true));
     await c.cmd('setDelegationRoutingKey', { service: 'openrouter', key: 'has space' }).then(() => t.ok('形の悪いキーは断る', false), () => t.ok('形の悪いキーは断る', true));
     state = await c.cmd('setDelegationRoutingKey', { service: 'openrouter', key: KEY });
-    t.ok('キーの登録後も画面へは hasKey だけ', state.keys.openrouter.hasKey === true && !JSON.stringify(state).includes(KEY));
+    t.ok('キーの登録後も画面へは hasKey だけ', state.key.hasKey === true && !JSON.stringify(state).includes(KEY));
     const auto = await call(sid, { kind: 'trivial', task: 'agy-auto-task' });
     const r = auto.data?.routing;
-    t.ok('Jev の手がかりから難しさを出し、段・委譲先を選ぶ', !auto.isError && r.judge === 'jev' && r.fallback === null && r.difficulty === 'low' && r.tier === 't1'
+    t.ok('判定のモデルの手がかりから難しさを出し、段・委譲先を選ぶ', !auto.isError && r.judge === 'perplexity/pplx-decider-v1.2' && r.fallback === null && r.difficulty === 'low' && r.tier === 't1'
       && Object.keys(r.signals).length === 6 && r.probabilities.diagnose === 0.01 && r.usageAt, auto.text.slice(0, 300));
     const sent = jevCalls.at(-1);
-    t.ok('Jev へは kind と依頼文だけを、キーを付けて送る', sent.url === '/api/alpha/decisions' && sent.auth === `Bearer ${KEY}` && sent.body.state.kind === 'trivial'
+    t.ok('判定のモデルへは kind と依頼文だけを、キーを付けて送る', sent.url === '/api/alpha/decisions' && sent.auth === `Bearer ${KEY}` && sent.body.state.kind === 'trivial'
       && sent.body.state.task === 'agy-auto-task' && !JSON.stringify(sent.body).includes('usage'));
     const beforeFail = jevCalls.length;
     const failed = await call(sid, { kind: 'trivial', task: 'agy-auto FAIL' });
     t.ok('Jev が失敗したら mid で続け、理由を残す（http_500）', !failed.isError && failed.data.routing.fallback === 'http_500' && failed.data.routing.difficulty === 'mid');
     const second = jevCalls.slice(beforeFail);
-    t.ok('Jev が失敗したら同じキーで OpenRouter の Qwen に聞き直す（Cerebras へは直に送らない）', second.length === 2 && second[1].url === '/api/v1/chat/completions'
-      && second[1].auth === `Bearer ${KEY}` && second[1].body.model === 'qwen/qwen3.8-27b' && second[1].body.provider.order.join() === 'cerebras', JSON.stringify(second.map(x => x.url)));
+    t.ok('失敗してもほかのモデルには聞き直さない（送るのは 1 回だけ。前の版の Qwen への聞き直しは廃止）', second.length === 1 && second[0].url === '/api/alpha/decisions',
+      JSON.stringify(second.map(x => x.url)));
 
     // ---- 固定
     const pinned = await call(sid, { kind: 'review', backend: 'fake', task: 'echo:PINNED' });
@@ -178,7 +179,7 @@ export default async function (t) {
     // ---- 全部だめ・無効
     await c.cmd('setDelegationRouting', { settings: { avoidPercent: 0 } }).then(() => t.ok('不正な設定は断る', false), e => t.ok('不正な設定は断る', /avoidPercent/.test(e.message), e.message));
     state = await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['claude:haiku'], t2: ['claude:sonnet'], t3: ['codex:gpt-6-sol'], t4: ['claude:opus'] } } });
-    t.ok('設定は prefs に重ねて保存し、既定で補う', state.settings.tiers.t1.join() === 'claude:haiku' && state.settings.tiers.tv.join() === 'codex:gpt-6-astra' && state.settings.avoidPercent === 80);
+    t.ok('設定は prefs に重ねて保存し、既定で補う', state.settings.tiers.t1.join() === 'claude:haiku' && state.settings.tiers.t4.join() === 'claude:opus' && state.settings.avoidPercent === 80 && !Object.hasOwn(state.settings.tiers, 'tv'));
     const none = await call(sid, { kind: 'trivial', task: 'agy-none' });
     t.ok('全部の候補がだめならエラー（線と飛ばした候補の理由つき）', none.isError && none.text.includes('線 80%')
       && none.text.includes('claude:haiku (t1): unavailable') && none.text.includes('claude:opus (t4): unavailable') && none.text.includes('backend'), none.text);
@@ -194,7 +195,7 @@ export default async function (t) {
     state = await c.cmd('deleteDelegationRoutingKey', { service: 'openrouter' });
     const before = jevCalls.length;
     const gone = await call(sid, { kind: 'trivial', task: 'agy-after-delete' });
-    t.ok('キーを消せば送らない', state.keys.openrouter.hasKey === false && gone.data?.routing?.fallback === 'no_key' && jevCalls.length === before);
+    t.ok('キーを消せば送らない', state.key.hasKey === false && gone.data?.routing?.fallback === 'no_key' && jevCalls.length === before);
     const files = [JSON.stringify(readAgentTasks(scratch)), JSON.stringify(readSessions(scratch)), await fs.readFile(path.join(scratch, 'prefs.json'), 'utf8').catch(() => '')];
     t.ok('キーをタスク・会話の記録・設定に書かない', files.every(f => !f.includes(KEY)) && files[0].includes('"routing"'));
     t.ok('キーをサーバーのログに出さない', !server.tail(200).includes(KEY));

@@ -1,8 +1,8 @@
 // 委譲先の自動選択（core/delegation-routing.mjs・delegation-judges.mjs・delegation-usage.mjs）。
 // 自動選択のモデルは偽の fetch とだけ話す（本物の OpenRouter へは送らない）。LLM は呼ばない
-import { KINDS, JUDGES, SIGNALS, DEFAULTS, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, pickAccount, sameIdentity, tierAccounts, candidateId,
+import { KINDS, SIGNALS, DEFAULTS, DEFAULT_JUDGE, DECISION_THRESHOLD, levelOrder, kindOrder, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, pickAccount, sameIdentity, tierAccounts, candidateId,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
-import { askJev, askQwen, judgeDifficulty, normalizeKey, TASK_LIMIT, JEV_MODEL, QWEN_MODEL } from '../../core/delegation-judges.mjs';
+import { askJudge, judgeDifficulty, normalizeKey, TASK_LIMIT, JUDGE_USE, JUDGE_SERVICE } from '../../core/delegation-judges.mjs';
 import { createUsageMonitor, REFRESH_MS, STALE_MS } from '../../core/delegation-usage.mjs';
 import { claudeQuota, codexQuota } from '../../core/usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
@@ -41,7 +41,7 @@ const withOz = normalizeSettings({ tiers: Object.fromEntries(Object.entries(DEFA
   [tier, list.flatMap(c => c.startsWith('claude:') ? [c, c.replace('claude:', 'claude@acct-oz:')] : [c])])) });
 const target = r => r.ok ? `${r.routing.target.backend}:${r.routing.target.model}${r.routing.target.account !== null ? '@' + (r.routing.target.account || 'main') : ''}` : 'none';
 const byDifficulty = { low: zero, mid: { ...zero, diagnose: true }, high: { ...zero, security_gate: true } };
-const routeAt = (kind, difficulty, usage, s = settings) => route({ kind, judged: { judge: 'jev', signals: byDifficulty[difficulty], probabilities: null, fallback: null }, settings: s, usage, now: NOW });
+const routeAt = (kind, difficulty, usage, s = settings) => route({ kind, judged: { judge: DEFAULT_JUDGE, signals: byDifficulty[difficulty], probabilities: null, fallback: null }, settings: s, usage, now: NOW });
 
 // 偽の fetch。呼ばれた要求を残し、reply(url, body) の値を応答にする
 function fakeFetch(reply) {
@@ -58,31 +58,42 @@ function fakeFetch(reply) {
   fn.calls = calls;
   return fn;
 }
-const jevAnswer = p => ({ answers: Object.fromEntries(SIGNALS.map(k => [k, { type: 'noul', noul: p[k] ?? 0 }])) });
-const qwenAnswer = signals => ({ choices: [{ message: { content: null, tool_calls: [{ type: 'function', function: { name: 'routing_v3', arguments: JSON.stringify({ signals }) } }] } }] });
+const judgeAnswer = p => ({ answers: Object.fromEntries(SIGNALS.map(k => [k, { type: 'noul', noul: p[k] ?? 0 }])) });
 
 export default async function (t) {
   // ---- 設定
-  t.ok('未設定なら既定値（既定で有効、ux_* と visual は自動選択しない）', settings.enabled === true && settings.judgeByKind.ux_new === 'none' && settings.judgeByKind.review === 'jev'
+  t.ok('未設定なら既定値（既定で有効・判定は既定のモデル・レベルと種類は既定）', settings.enabled === true && settings.judge === DEFAULT_JUDGE
+    && levelOrder(settings).join() === 't1,t2,t3,t4' && kindOrder(settings).join() === KINDS.join()
     && JSON.stringify(settings.tiers) === JSON.stringify(DEFAULTS.tiers) && settings.avoidPercent === 80 && settings.paceLimit === 1.2 && !Object.hasOwn(settings, 'staleMinutes'));
-  const partial = normalizeSettings({ judgeByKind: { design: 'qwen' }, tiers: { t4: ['claude:fable'] }, avoidPercent: 70 });
-  t.ok('一部だけの設定は既定で補う', partial.judgeByKind.design === 'qwen' && partial.judgeByKind.review === 'jev' && partial.tiers.t4.join() === 'claude:fable' && partial.tiers.t1.length === 2 && partial.avoidPercent === 70);
-  const rejects = [{ nope: 1 }, { enabled: 'yes' }, { avoidPercent: 0 }, { paceLimit: 'x' }, { judgeByKind: { design: 'gpt' } }, { judgeByKind: { cooking: 'jev' } },
-    { tiers: { t9: [] } }, { tiers: { t1: ['no-colon'] } }, { tiers: { t1: ['claude:haiku', 'claude:haiku'] } }, { table: { design: ['t1', 't2'] } }, { table: { design: ['t1', 't2', 't7'] } }];
+  const partial = normalizeSettings({ judge: 'someone/other-model', tiers: { t4: ['claude:fable'] }, avoidPercent: 70 });
+  t.ok('一部だけの設定は既定で補う', partial.judge === 'someone/other-model' && partial.tiers.t4.join() === 'claude:fable' && partial.tiers.t1.length === 2 && partial.avoidPercent === 70);
+  const rejects = [{ nope: 1 }, { enabled: 'yes' }, { avoidPercent: 0 }, { paceLimit: 'x' }, { judge: 'has space' }, { judge: 42 },
+    { levels: [] }, { levels: [{ id: 'x y', name: '' }] }, { levels: [{ id: 'a', name: '' }, { id: 'a', name: '' }] },
+    { kinds: [] }, { kinds: [{ id: 'Bad', name: '', desc: '' }] }, { kinds: [{ id: 'a', name: '', desc: '' }, { id: 'a', name: '', desc: '' }] },
+    { tiers: { t9: [] } }, { tiers: { t1: ['no-colon'] } }, { tiers: { t1: ['claude:haiku', 'claude:haiku'] } }, { table: { design: ['t1', 't2'] } }, { table: { design: ['t1', 't2', 't7'] } }, { table: { cooking: ['t1', 't1', 't1'] } }];
   t.ok('画面からの保存（strict）は不正な値を断る', rejects.every(raw => { try { normalizeSettings(raw, { strict: true }); return false; } catch (e) { return e instanceof RoutingSettingsError && typeof e.code === 'string'; } }));
   t.ok('読むとき（strict でない）は不正な項目だけ既定に戻す', normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).avoidPercent === 80 && normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).paceLimit === 2);
   t.ok('保存済みの prefs に古い staleMinutes が残っていても、読むときはエラーにせず読み捨てる', !Object.hasOwn(normalizeSettings({ staleMinutes: 30 }), 'staleMinutes'));
   t.ok('外した項目（staleMinutes）が prefs に残っていても、画面からの保存（strict）は断らない', !Object.hasOwn(normalizeSettings({ staleMinutes: 30, avoidPercent: 70 }, { strict: true }), 'staleMinutes'));
-  // Cerebras の直の自動選択（2026-10-09 に廃止、ADR 0177）の保存済みの設定は Qwen の名前で読み、画面からの保存（strict）も断らない
-  const legacy = { judgeByKind: { design: 'cerebras', review: 'jev' }, escalateToCerebras: true };
+  // 利用者が作るレベルと種類: 順は配列の順、表の無い種類は 中1つ上・高2つ上 で補う
+  const custom = normalizeSettings({ levels: [{ id: 'lite', name: '軽い' }, { id: 'strong', name: '強い' }], kinds: [{ id: 'my_kind', name: '自分の種類', desc: '説明' }] }, { strict: true });
+  t.ok('レベルと種類は利用者の並びで持ち、表の無い種類は 中1つ上・高2つ上', levelOrder(custom).join() === 'lite,strong' && custom.kinds[0].name === '自分の種類'
+    && custom.table.my_kind.join() === 'strong,strong,strong' && custom.tiers.lite.join() === '' && custom.efforts.strong['*'] === undefined);
+  t.ok('レベルを増やすと種類の表の行はそのレベルで読める', normalizeSettings({ levels: [{ id: 'a', name: '' }, { id: 'b', name: '' }, { id: 'c', name: '' }] }).table.review.join() === 'b,c,c');
+  // 前の版（種類ごとの判定・迷ったら Qwen・創作の段 tv）の保存済みの設定は、判定 1 つと最後のレベルへ畳む（ADR。元の値は変えない）
+  const legacy = { judgeByKind: { design: 'cerebras', review: 'none' }, escalateToCerebras: true, tiers: { tv: ['codex:gpt-6-astra'] }, table: { visual: ['tv', 'tv', 'tv'] }, efforts: { tv: { '*': '' } } };
   const migrated = migrateLegacySettings(legacy);
-  t.ok('前の版の judgeByKind の cerebras と escalateToCerebras を qwen・escalateToQwen へ直す（元の値は変えない）', migrated.changed && migrated.raw.judgeByKind.design === 'qwen' && migrated.raw.judgeByKind.review === 'jev'
-    && migrated.raw.escalateToQwen === true && !Object.hasOwn(migrated.raw, 'escalateToCerebras') && legacy.judgeByKind.design === 'cerebras' && legacy.escalateToCerebras === true);
-  t.ok('今の名前があればそちらを残し、直すものが無ければ changed は false', migrateLegacySettings({ escalateToCerebras: true, escalateToQwen: false }).raw.escalateToQwen === false
-    && migrateLegacySettings({ escalateToQwen: true, judgeByKind: { design: 'jev' } }).changed === false && migrateLegacySettings(null).changed === false);
+  t.ok('判定を使う種類があれば judge は既定のモデル、古い項目と tv は畳む', migrated.changed && migrated.raw.judge === DEFAULT_JUDGE
+    && !Object.hasOwn(migrated.raw, 'judgeByKind') && !Object.hasOwn(migrated.raw, 'escalateToCerebras')
+    && migrated.raw.tiers.t4.join() === 'codex:gpt-6-astra' && !Object.hasOwn(migrated.raw.tiers, 'tv')
+    && migrated.raw.table.visual.join() === 't4,t4,t4' && !Object.hasOwn(migrated.raw.efforts, 'tv') && legacy.escalateToCerebras === true);
+  t.ok('全部「しない」なら judge は none。今の judge があればそちらを残し、直すものが無ければ changed は false',
+    migrateLegacySettings({ judgeByKind: { a: 'none', b: 'none' } }).raw.judge === 'none'
+    && migrateLegacySettings({ judge: 'x/y', judgeByKind: { design: 'jev' } }).raw.judge === 'x/y'
+    && migrateLegacySettings({ judge: 'none' }).changed === false && migrateLegacySettings(null).changed === false);
   const legacyRead = normalizeSettings(legacy, { strict: true });
-  t.ok('前の版の設定は読むときも strict の保存でも Qwen として扱う（unknownKey にしない）', legacyRead.judgeByKind.design === 'qwen' && legacyRead.escalateToQwen === true && !Object.hasOwn(legacyRead, 'escalateToCerebras')
-    && normalizeSettings({}).escalateToQwen === false && JUDGES.join() === 'jev,qwen,none');
+  t.ok('前の版の設定は読むときも strict の保存でも今の形に畳む（unknownKey にしない）', legacyRead.judge === DEFAULT_JUDGE
+    && !Object.hasOwn(legacyRead, 'judgeByKind') && !Object.hasOwn(legacyRead, 'escalateToCerebras') && !Object.hasOwn(legacyRead.tiers, 'tv'));
   t.ok('候補の id は backend:model（model の中の : はそのまま）', parseCandidate('codex:gpt-6-sol').model === 'gpt-6-sol' && parseCandidate('x:a:b').model === 'a:b' && !parseCandidate('claude') && !parseCandidate(':m') && !parseCandidate('claude: x'));
   t.ok('アカウントは backend@<id>:model。書かなければ account は null（ログイン中）', parseCandidate('claude:sonnet').account === null
     && (c => c.backend === 'claude' && c.model === 'sonnet' && c.account === 'acct-p')(parseCandidate('claude@acct-p:sonnet'))
@@ -148,27 +159,27 @@ export default async function (t) {
     && !s2.routing.selectedWithLowHeadroom && s2.routing.skipped.length === 1 && s2.routing.skipped[0].candidate === 'claude:opus'
     && s2.routing.skipped[0].account === '' && s2.routing.skipped[0].reason === 'quota_high', JSON.stringify(s2.routing));
   const s2plain = routeAt('design', 'high', S2);
-  t.ok('S2: 段に oz が無ければ、ほかのアカウントへ落とさず、余裕の少ないログイン中の Opus を選んで記録する', target(s2plain) === 'claude:opus@main'
-    && s2plain.routing.selectedWithLowHeadroom?.reason === 'quota_high', JSON.stringify(s2plain.routing));
+  t.ok('S2: 段に oz が無ければ、ほかのアカウントへ落とさず、同じ段の次の候補（旧 tv から畳んだ gpt-6-astra）へ', target(s2plain) === 'codex:gpt-6-astra'
+    && s2plain.routing.skipped.length === 2 && s2plain.routing.skipped.every(s => s.reason === 'quota_high'), JSON.stringify(s2plain.routing));
   t.ok('S3: investigate・中 → Codex が週次 92% なので Sonnet（ログイン中）', target(routeAt('investigate', 'mid', S3)) === 'claude:sonnet@main');
-  t.ok('S3: visual は tv だけを見て、線を超えていても選ぶ', target(routeAt('visual', 'mid', S3)) === 'codex:gpt-6-astra'
-    && routeAt('visual', 'mid', S3).routing.selectedWithLowHeadroom.reason === 'quota_high');
+  t.ok('S3: visual は t4（創作の段は廃止）。ログイン中の Opus に余裕があればそこへ', DEFAULTS.table.visual.join() === 't4,t4,t4'
+    && target(routeAt('visual', 'mid', S3)) === 'claude:opus@main');
   const newUx = routeAt('ux_new', 'mid', S1);
-  t.ok('ux_new は既定で t4（Opus が先頭）へ行き、tv には行かない', DEFAULTS.table.ux_new.join() === 't4,t4,t4' && newUx.routing.tier === 't4'
-    && target(newUx).startsWith('claude:opus') && DEFAULTS.table.visual.join() === 'tv,tv,tv', JSON.stringify(newUx.routing));
+  t.ok('ux_new は既定で t4（Opus が先頭）へ行く', DEFAULTS.table.ux_new.join() === 't4,t4,t4' && newUx.routing.tier === 't4'
+    && target(newUx).startsWith('claude:opus'), JSON.stringify(newUx.routing));
   t.ok('S4: investigate・中 → Codex gpt-6-sol', target(routeAt('investigate', 'mid', S4)) === 'codex:gpt-6-sol');
   t.ok('S4: design・高 → oz の方が空いていても、段の順のとおりログイン中の Opus（5 時間 96% は後回しにしない）', target(routeAt('design', 'high', S4, withOz)) === 'claude:opus@main');
   const s3m = routeAt('mechanical', 'mid', S3);
   t.ok('記録: 種類・難しさ・段・自動選択のモデル・取得時刻', s3m.routing.mode === 'auto' && s3m.routing.kind === 'mechanical' && s3m.routing.difficulty === 'mid' && s3m.routing.tier === 't2'
-    && s3m.routing.baseTier === 't2' && s3m.routing.judge === 'jev' && s3m.routing.usageAt === new Date(NOW - 60_000).toISOString() && s3m.routing.fallback === null);
+    && s3m.routing.baseTier === 't2' && s3m.routing.judge === DEFAULT_JUDGE && s3m.routing.usageAt === new Date(NOW - 60_000).toISOString() && s3m.routing.fallback === null);
   const stale = { ...S1, antigravity: { ...S1.antigravity, checkedAt: NOW - STALE_MS - 60_000 } };
   const st = routeAt('trivial', 'low', stale);
   t.ok('取得間隔の 3 倍（STALE_MS）を超えた使用量は usage_stale で飛ばし、次の候補（Haiku）へ', target(st) === 'claude:haiku@main' && st.routing.skipped[0].reason === 'usage_stale');
   t.ok('usageAt は選んだ候補の取得時刻（飛ばした古い候補の時刻ではない）。飛ばした候補には各自の取得時刻', st.routing.usageAt === new Date(NOW - 60_000).toISOString()
     && st.routing.skipped[0].checkedAt === new Date(NOW - STALE_MS - 60_000).toISOString());
-  const again = route({ kind: 'trivial', judged: { judge: 'jev', signals: zero }, settings, usage: S1, now: NOW, rejected: { 'antigravity:gemini-3.8-flash-high': 'model_unknown' } });
+  const again = route({ kind: 'trivial', judged: { judge: DEFAULT_JUDGE, signals: zero }, settings, usage: S1, now: NOW, rejected: { 'antigravity:gemini-3.8-flash-high': 'model_unknown' } });
   t.ok('選んだ後の確かめで落ちた候補（rejected）は理由を付けて飛ばし、次の候補へ', target(again) === 'claude:haiku@main' && again.routing.skipped[0].reason === 'model_unknown');
-  const rejectedClaude = route({ kind: 'design', judged: { judge: 'jev', signals: byDifficulty.high }, settings: withOz, usage: S1, now: NOW,
+  const rejectedClaude = route({ kind: 'design', judged: { judge: DEFAULT_JUDGE, signals: byDifficulty.high }, settings: withOz, usage: S1, now: NOW,
     rejected: { 'claude:opus': 'model_unknown' } });
   t.ok('モデルの再確認で落ちたのはその候補（そのアカウント）の行だけで、同じ段の次の候補（oz の Opus）へ進む', target(rejectedClaude) === 'claude:opus@acct-oz'
     && rejectedClaude.routing.skipped.length === 1 && rejectedClaude.routing.skipped[0].account === '' && rejectedClaude.routing.skipped[0].reason === 'model_unknown',
@@ -325,58 +336,43 @@ export default async function (t) {
   t.ok('登録に無いアカウント（消したアカウント・登録の無いエージェント）の候補を知らせる', warnAccounts.some(w => w.candidate === 'claude@acct-gone:haiku' && w.reason === 'no_account')
     && warnAccounts.some(w => w.candidate === 'codex@acct-x:gpt-6-luna' && w.reason === 'no_account') && !warnAccounts.some(w => w.candidate === 'claude@acct-oz:haiku'), JSON.stringify(warnAccounts));
 
-  // ---- 自動選択のモデル（偽の HTTP）
+  // ---- 自動選択のモデル（偽の HTTP）。判定は 1 つのモデルだけ（前の版の「もう一方を試す」「迷ったら聞き直す」は廃止）
   const KEY = 'sk-or-test-SECRET-123';
-  const jev = fakeFetch(() => ({ json: jevAnswer({ diagnose: 0.49, choose: 0.31, long_procedure: 0.9, many_parts: 0.1, writes_shared: 0.02, security_gate: 0.18 }) }));
+  t.ok('判定のモデルの置き場は uses の judge:routing・サービスは openrouter', JUDGE_USE === 'judge:routing' && JUDGE_SERVICE === 'openrouter');
+  const http = fakeFetch(() => ({ json: judgeAnswer({ diagnose: 0.49, choose: 0.31, long_procedure: 0.9, many_parts: 0.1, writes_shared: 0.02, security_gate: 0.18 }) }));
   const long = 'x'.repeat(TASK_LIMIT + 500);
-  const a = await askJev({ kind: 'implement', task: long, key: KEY, fetch: jev });
-  const sent = jev.calls[0];
-  t.ok('Jev: decisions へ Noul 6 つ（v3 の文面と false 側）を送る', sent.url.endsWith('/alpha/decisions') && sent.body.model === JEV_MODEL
+  const a = await askJudge({ kind: 'implement', kindDesc: '実装する作業', task: long, model: DEFAULT_JUDGE, key: KEY, fetch: http });
+  const sent = http.calls[0];
+  t.ok('判定: decisions へ Noul 6 つ（v3 の文面と false 側）を送る', sent.url.endsWith('/alpha/decisions') && sent.body.model === DEFAULT_JUDGE
     && Object.keys(sent.body.questions).join() === SIGNALS.join() && sent.body.questions.diagnose.type === 'noul' && sent.body.questions.choose.criteria.false === 'The statement for choose is false for this task.', sent.url);
-  t.ok('Jev: 送るのは kind と長さで切った依頼文だけ', sent.body.state.kind === 'implement' && sent.body.state.task.length === TASK_LIMIT && Object.keys(sent.body.state).sort().join() === 'instructions,kind,task'
+  t.ok('判定: 送るのは kind・その説明・長さで切った依頼文だけ', sent.body.state.kind === 'implement' && sent.body.state.kind_description === '実装する作業'
+    && sent.body.state.task.length === TASK_LIMIT && Object.keys(sent.body.state).sort().join() === 'instructions,kind,kind_description,task'
     && sent.init.headers.Authorization === `Bearer ${KEY}` && sent.init.redirect === 'manual');
-  t.ok('Jev: はいの確率を手がかりごとの閾値で真偽にする', a.signals.diagnose === false && a.signals.choose === true && a.signals.long_procedure === true && a.signals.security_gate === false && a.probabilities.diagnose === 0.49);
-  t.ok('Jev: 閾値 ± 0.15 以内の確率があれば迷ったとみなす', a.unsure === true && (await askJev({ kind: 'implement', task: 'x', key: KEY, fetch: fakeFetch(() => ({ json: jevAnswer({ diagnose: 1, choose: 1, long_procedure: 1, many_parts: 1, writes_shared: 1, security_gate: 1 }) })) })).unsure === false);
-  const qw = fakeFetch(() => ({ json: qwenAnswer({ ...zero, many_parts: true }) }));
-  const c = await askQwen({ kind: 'review', task: long, key: KEY, fetch: qw });
-  const qs = qw.calls[0];
-  t.ok('Qwen: OpenRouter の chat/completions へ qwen3.8-27b・推論なし・Cerebras を先に（受けなければほかの provider）', qs.url.endsWith('/v1/chat/completions') && qs.url.startsWith(sent.url.slice(0, sent.url.indexOf('/alpha/')))
-    && qs.body.model === QWEN_MODEL && qs.body.reasoning.effort === 'none' && qs.body.temperature === 0 && qs.body.provider.order.join() === 'cerebras' && qs.body.provider.allow_fallbacks === true
-    && qs.body.provider.require_parameters === true && qs.init.headers.Authorization === `Bearer ${KEY}` && qs.init.redirect === 'manual', qs.url);
-  t.ok('Qwen: strict な関数 1 つを必ず呼ばせ、その引数で 6 つの真偽を受け取る（依頼文は長さで切る）', qs.body.tools.length === 1 && qs.body.tools[0].function.strict === true
-    && qs.body.tool_choice.function.name === qs.body.tools[0].function.name && qs.body.tools[0].function.parameters.properties.signals.required.join() === SIGNALS.join()
-    && !('response_format' in qs.body) && qs.body.messages[0].content.endsWith('x'.repeat(TASK_LIMIT)) && !qs.body.messages[0].content.includes('x'.repeat(TASK_LIMIT + 1))
-    && c.signals.many_parts === true && c.signals.diagnose === false && !('probabilities' in c));
-  const inContent = await askQwen({ kind: 'review', task: 'x', key: KEY, fetch: fakeFetch(() => ({ json: { choices: [{ message: { content: JSON.stringify({ signals: { ...zero, choose: true } }) } }] } })) });
-  t.ok('Qwen: 関数の呼び出しでなく本文で返した答えも、同じ形なら受け取る', inContent.signals.choose === true);
-  const code = async (fn, reply) => { try { await fn({ kind: 'review', task: 'x', key: KEY, fetch: fakeFetch(reply) }); return 'ok'; } catch (e) { return e.message; } };
-  t.ok('応答の形が違えば bad_response', await code(askJev, () => ({ json: { answers: {} } })) === 'bad_response' && await code(askQwen, () => ({ json: qwenAnswer({ diagnose: true }) })) === 'bad_response'
-    && await code(askQwen, () => ({ json: { choices: [{ message: { tool_calls: [{ function: { name: 'routing_v3', arguments: '{not json' } }] } }] } })) === 'bad_response'
-    && await code(askJev, () => ({ json: 'not json' })) === 'bad_response');
-  t.ok('HTTP の失敗は http_<status>、時間切れは timeout、つながらなければ network', await code(askJev, () => ({ status: 429, json: { error: KEY } })) === 'http_429'
-    && await code(askJev, () => Object.assign(new Error('t'), { name: 'TimeoutError' })) === 'timeout' && await code(askQwen, () => new Error('ECONNREFUSED')) === 'network');
+  t.ok('判定: 説明が無ければ kind_description は送らない', (await (async () => { const f = fakeFetch(() => ({ json: judgeAnswer({}) })); await askJudge({ kind: 'review', task: 'x', model: DEFAULT_JUDGE, key: KEY, fetch: f });
+    return !Object.hasOwn(f.calls[0].body.state, 'kind_description'); })()));
+  t.ok(`判定: はいの確率を ${DECISION_THRESHOLD} で真偽にする（どの手がかりも同じ線）`, a.signals.diagnose === false && a.signals.choose === false
+    && a.signals.long_procedure === true && a.signals.security_gate === false && a.probabilities.diagnose === 0.49
+    && (await askJudge({ kind: 'x', task: 'x', model: DEFAULT_JUDGE, key: KEY, fetch: fakeFetch(() => ({ json: judgeAnswer({ diagnose: 0.5 }) })) })).signals.diagnose === true);
+  const code = async (fn, reply) => { try { await fn({ kind: 'review', task: 'x', model: DEFAULT_JUDGE, key: KEY, fetch: fakeFetch(reply) }); return 'ok'; } catch (e) { return e.message; } };
+  t.ok('応答の形が違えば bad_response', await code(askJudge, () => ({ json: { answers: {} } })) === 'bad_response'
+    && await code(askJudge, () => ({ json: judgeAnswer({ diagnose: 'yes' }) })) === 'bad_response'
+    && await code(askJudge, () => ({ json: judgeAnswer({ diagnose: 1.5 }) })) === 'bad_response'
+    && await code(askJudge, () => ({ json: 'not json' })) === 'bad_response');
+  t.ok('HTTP の失敗は http_<status>、時間切れは timeout、つながらなければ network', await code(askJudge, () => ({ status: 429, json: { error: KEY } })) === 'http_429'
+    && await code(askJudge, () => Object.assign(new Error('t'), { name: 'TimeoutError' })) === 'timeout' && await code(askJudge, () => new Error('ECONNREFUSED')) === 'network');
   const keys = values => async service => values[service];
-  const jevOk = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 1 }) } : { json: qwenAnswer({ ...zero, choose: true }) });
-  const none = await judgeDifficulty({ kind: 'visual', task: 'x', judge: 'none', keyOf: keys({ openrouter: KEY }), fetch: jevOk });
-  t.ok('自動選択しない種類は送らず judge_none', none.judge === 'none' && none.signals === null && none.fallback === 'judge_none' && jevOk.calls.length === 0);
-  const noKeys = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({}), fetch: jevOk });
-  t.ok('キーが無ければ外へは何も送らず no_key（難しさは mid）', noKeys.judge === 'none' && noKeys.fallback === 'no_key' && jevOk.calls.length === 0);
-  const qwenDown = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 1 }) } : { status: 502, json: {} });
-  const other = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'qwen', keyOf: keys({ openrouter: KEY }), fetch: qwenDown });
-  t.ok('Qwen を選んだ種類で Qwen が使えなければ、同じキーで Jev を試す', other.judge === 'jev' && other.fallback === 'http_502' && other.signals.diagnose === true && qwenDown.calls.length === 2);
-  const failing = fakeFetch(url => url.includes('decisions') ? { status: 503, json: {} } : { json: qwenAnswer(zero) });
-  const fb = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({ openrouter: KEY }), fetch: failing });
-  t.ok('Jev が HTTP で失敗 → Qwen の答えを使い、失敗の理由を残す', fb.judge === 'qwen' && fb.fallback === 'http_503' && fb.signals.diagnose === false);
-  const allDown = fakeFetch(() => ({ status: 503, json: {} }));
-  const both = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({ openrouter: KEY }), fetch: allDown });
-  t.ok('どちらも使えなければ判定なし（mid）で最初の理由', both.judge === 'none' && both.signals === null && both.fallback === 'http_503');
-  const unsure = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 0.55 }) } : { json: qwenAnswer({ ...zero, many_parts: true }) });
-  const esc = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', escalate: true, keyOf: keys({ openrouter: KEY }), fetch: unsure });
-  t.ok('「Jev が迷ったら Qwen」: 迷ったときは Qwen の答えを使い、Jev の確率も残す', esc.judge === 'qwen' && esc.escalated === true && esc.signals.many_parts === true && esc.probabilities.diagnose === 0.55);
-  const noEsc = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', escalate: false, keyOf: keys({ openrouter: KEY }), fetch: unsure });
-  t.ok('既定（OFF）では Jev の答えのまま', noEsc.judge === 'jev' && noEsc.signals.diagnose === true && unsure.calls.filter(x => x.url.includes('chat')).length === 1);
-  const locked = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: async () => { throw new Error(KEY); }, fetch: jevOk });
-  t.ok('キーを読めなければ key_unreadable（キーの中身をどこにも出さない）', locked.fallback === 'key_unreadable' && !JSON.stringify([none, noKeys, other, fb, both, esc, locked]).includes(KEY));
+  const judgeOk = fakeFetch(() => ({ json: judgeAnswer({ diagnose: 1 }) }));
+  const none = await judgeDifficulty({ kind: 'visual', task: 'x', judge: 'none', keyOf: keys({ openrouter: KEY }), fetch: judgeOk });
+  t.ok('判定しない（judge: none）なら送らず judge_none', none.judge === 'none' && none.signals === null && none.fallback === 'judge_none' && judgeOk.calls.length === 0);
+  const noKeys = await judgeDifficulty({ kind: 'review', task: 'x', judge: DEFAULT_JUDGE, keyOf: keys({}), fetch: judgeOk });
+  t.ok('キーが無ければ外へは何も送らず no_key（難しさは mid）', noKeys.judge === 'none' && noKeys.fallback === 'no_key' && judgeOk.calls.length === 0);
+  const ok = await judgeDifficulty({ kind: 'review', kindDesc: 'レビュー', task: 'x', judge: DEFAULT_JUDGE, keyOf: keys({ openrouter: KEY }), fetch: judgeOk });
+  t.ok('答えが返れば judge はモデルの id・確率も残す', ok.judge === DEFAULT_JUDGE && ok.signals.diagnose === true && ok.probabilities.diagnose === 1 && ok.fallback === null && judgeOk.calls.length === 1);
+  const failing = fakeFetch(() => ({ status: 503, json: {} }));
+  const fb = await judgeDifficulty({ kind: 'review', task: 'x', judge: DEFAULT_JUDGE, keyOf: keys({ openrouter: KEY }), fetch: failing });
+  t.ok('モデルが使えなければ判定なし（mid）で理由を残す。ほかのモデルには聞き直さない（1 回だけ送る）', fb.judge === 'none' && fb.signals === null && fb.fallback === 'http_503' && failing.calls.length === 1);
+  const locked = await judgeDifficulty({ kind: 'review', task: 'x', judge: DEFAULT_JUDGE, keyOf: async () => { throw new Error(KEY); }, fetch: judgeOk });
+  t.ok('キーを読めなければ key_unreadable（キーの中身をどこにも出さない）', locked.fallback === 'key_unreadable' && !JSON.stringify([none, noKeys, ok, fb, locked]).includes(KEY));
   t.ok('キーの形の検査', normalizeKey('  abc  ') === 'abc' && normalizeKey('') === null && normalizeKey('a b') === null && normalizeKey('x'.repeat(501)) === null);
 
   // ---- 使用量の取り置き
@@ -464,17 +460,17 @@ export default async function (t) {
 
   // ---- 子の思考の強さ（ADR 0164）
   const strictFails = (raw, code) => { try { normalizeSettings(raw, { strict: true }); return false; } catch (e) { return e instanceof RoutingSettingsError && e.code === code; } };
-  t.ok('強さの既定: 段 1 low・段 2 medium・段 3 medium・段 4 high・創作は会話の既定（空）', JSON.stringify(settings.efforts)
-    === '{"t1":{"*":"low"},"t2":{"*":"medium"},"t3":{"*":"medium"},"t4":{"*":"high"},"tv":{"*":""}}' && JSON.stringify(DEFAULTS.efforts) === JSON.stringify(settings.efforts));
+  t.ok('強さの既定: 段 1 low・段 2 medium・段 3 medium・段 4 high', JSON.stringify(settings.efforts)
+    === '{"t1":{"*":"low"},"t2":{"*":"medium"},"t3":{"*":"medium"},"t4":{"*":"high"}}' && JSON.stringify(DEFAULTS.efforts) === JSON.stringify(settings.efforts));
   t.ok('強さの語彙は弱い順に low・medium・high・xhigh・max', EFFORT_LEVELS.join() === 'low,medium,high,xhigh,max');
   const withTiers = normalizeSettings({ tiers: { t3: ['claude:sonnet', 'codex:gpt-6-sol'] }, efforts: { t3: { '*': 'high', 'claude:sonnet': 'low', 'codex:gpt-6-sol': '' } } }, { strict: true });
   t.ok('段の既定と候補の id ごとの上書きを読む（空は会話の既定に従う）。書かなかった段は既定のまま', withTiers.efforts.t3['*'] === 'high' && withTiers.efforts.t3['claude:sonnet'] === 'low'
-    && withTiers.efforts.t3['codex:gpt-6-sol'] === '' && withTiers.efforts.t4['*'] === 'high' && withTiers.efforts.tv['*'] === '');
+    && withTiers.efforts.t3['codex:gpt-6-sol'] === '' && withTiers.efforts.t4['*'] === 'high');
   t.ok('段に無い候補の上書きは持ち越さない（外した候補・段にまだ無い候補）', normalizeSettings({ efforts: { t3: { 'claude:opus': 'high' } } }, { strict: true }).efforts.t3['claude:opus'] === undefined);
   t.ok('段の既定を書かない行は組み込みの段の既定で補う', normalizeSettings({ tiers: { t3: ['claude:sonnet'] }, efforts: { t3: { 'claude:sonnet': 'max' } } }, { strict: true }).efforts.t3['*'] === 'medium');
   t.ok('保存（strict）は形だけを見て断る: 語彙の外の強さ・候補でない対象・知らない段・形の違う値・多すぎる対象',
     strictFails({ efforts: { t3: { '*': 'extreme' } } }, 'badEffort') && strictFails({ efforts: { t3: { '*': 1 } } }, 'badEffort') && strictFails({ efforts: { t3: { nope: 'low' } } }, 'badEffortKey')
-    && strictFails({ efforts: { t9: { '*': 'low' } } }, 'unknownTier') && strictFails({ efforts: [] }, 'notObject') && strictFails({ efforts: { t3: 'low' } }, 'badEfforts')
+    && strictFails({ efforts: { t9: { '*': 'low' } } }, 'unknownLevel') && strictFails({ efforts: [] }, 'notObject') && strictFails({ efforts: { t3: 'low' } }, 'badEfforts')
     && strictFails({ efforts: { t3: Object.fromEntries(Array.from({ length: 41 }, (_, i) => [`claude:m${i}`, 'low'])) } }, 'badEfforts'));
   t.ok('モデルが持つかどうかは保存では見ない（xhigh を持たないモデルの候補にも書ける）', normalizeSettings({ tiers: { t2: ['claude:haiku'] }, efforts: { t2: { 'claude:haiku': 'xhigh' } } }, { strict: true }).efforts.t2['claude:haiku'] === 'xhigh');
   const lenient = normalizeSettings({ efforts: { t3: { '*': 'extreme' }, t9: { '*': 'low' }, t4: { '*': 'low' } } });

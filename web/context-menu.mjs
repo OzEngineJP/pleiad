@@ -65,7 +65,7 @@ export function createContextMenu() {
         input.onkeydown = e => { if (isComposingKey(e)) return; if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) { close(true); item.input.onCommit(v); } } };
         panel.append(input); continue;
       }
-      const row = el('button', 'li' + (item.checked ? ' on' : '') + (item.note ? ' has-note' : ''));
+      const row = el('button', 'li' + (item.checked ? ' on' : '') + (item.danger ? ' danger' : '') + (item.note ? ' has-note' : ''));
       row.type = 'button'; row.setAttribute('role', item.radio ? 'menuitemradio' : 'menuitem');
       if (item.radio) row.setAttribute('aria-checked', String(!!item.checked));
       // 今は押せない項目（タイトル行の「…」のタイトルを生成: 生成中・未送信など）

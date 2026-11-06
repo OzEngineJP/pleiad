@@ -22,6 +22,8 @@ export default async function(t) {
   }
 }
 
+const JUDGE_MODEL = 'perplexity/pplx-decider-v1.2';
+
 async function japaneseCases(t) {
   const names = { backend: id => ({ codex: 'Codex', claude: 'Claude Code' })[id] ?? id, model: (_b, m) => ({ sonnet: 'Sonnet', 'gpt-6-sol': 'gpt-6-sol' })[m] ?? m };
   const routing = { mode: 'auto', kind: 'implement', judge: 'jev', signals: { diagnose: false, choose: true, long_procedure: false, many_parts: false, writes_shared: true, security_gate: false },
@@ -31,7 +33,7 @@ async function japaneseCases(t) {
   assert.equal(routingLine({ ...routing, skipped: [] }, names), '実装・中 → Codex gpt-6-sol');
   assert.equal(routingLine({ ...routing, selectedWithLowHeadroom: { reason: 'quota_high', window: { label: '週次', usedPercent: 83 }, avoidPercent: 70 } }, names),
     '実装・中 → Codex gpt-6-sol · 使用量が多いが選んだ（週次 83%・線 70%）');
-  assert.equal(routingLine({ ...routing, baseTier: 't4', tier: 't3', skipped: [] }, names), '実装・中 → Codex gpt-6-sol · 下の段から選んだ');
+  assert.equal(routingLine({ ...routing, baseTier: 't4', tier: 't3', skipped: [] }, names), '実装・中 → Codex gpt-6-sol · 下のレベルから選んだ');
   assert.equal(skippedPhrase({ candidate: 'claude:sonnet', reason: 'pace_high', window: { label: '週次', pace: 1.83 } }, names), 'Sonnet は週次のペースが 1.83 倍で飛ばした');
   assert.equal(skippedPhrase({ candidate: 'claude:sonnet', reason: 'unavailable' }, names), 'Sonnet は使えないため飛ばした');
   // 上限で止まった枠は、日次・週次が 0% でも止まっている。いつまで飛ばすかを出す（Issue #111）
@@ -52,8 +54,8 @@ async function japaneseCases(t) {
   assert.equal(fallbackText('http_503'), 'HTTP 503');
   assert.equal(fallbackText('something_new'), 'something_new', '知らない理由はコードのまま');
   assert.deepEqual(yesSignals(routing), ['やり方の選択', '共有物への書き込み']);
-  assert.equal(tierLine({ ...routing, tier: 't4' }), '段 4（表では 段 3。余裕ありの候補が無く上げた）');
-  assert.equal(tierLine({ ...routing, baseTier: 't4' }), '段 3（表では 段 4。下の段から選んだ）');
+  assert.equal(tierLine({ ...routing, tier: 't4' }), 'レベル 4（表では レベル 3。余裕ありの候補が無く上げた）');
+  assert.equal(tierLine({ ...routing, baseTier: 't4' }), 'レベル 3（表では レベル 4。下のレベルから選んだ）');
   t.ok('難しさを決めたモデルの一行（使ったモデル・もう一方に落ちた・聞き直した・自動選択しない・失敗）と手がかり・段', true);
 
   assert.equal(isAutoRouting(routing), true);
@@ -76,7 +78,7 @@ async function japaneseCases(t) {
       windows: [{ label: '週次', usedPercent: 12.4 }, { label: '5時間', usedPercent: null }] },
     { candidate: 'claude@blocked:opus', backend: 'claude', model: 'opus', tiers: ['t4'], usable: false, reason: 'quota_full', scoped: true, account: 'blocked', accountLabel: 'blocked',
       windows: [{ label: '5時間', usedPercent: 100 }] },
-    { candidate: 'codex:gpt-6-astra', backend: 'codex', model: 'gpt-6-astra', tiers: ['tv'], usable: true, windows: [] },
+    { candidate: 'codex:gpt-6-astra', backend: 'codex', model: 'gpt-6-astra', tiers: ['t4'], usable: true, windows: [] },
   ];
   assert.deepEqual(retryCandidates(cands, routing).map(c => c.candidate), ['claude:sonnet', 'claude:opus', 'claude@work:opus', 'codex:gpt-6-astra', 'antigravity:gemini-3.8-flash-high'],
     '使えるものだけ・元の委譲先を除く・元の段から上、次に下');
@@ -139,9 +141,9 @@ async function japaneseCases(t) {
   assert.ok(!routingDetail(routing, { names }).textContent.includes('圧縮の閾値'), '閾値の記録が無い（オフ・Claude 以外）なら出さない');
   t.ok('委譲の内訳に、子の自動圧縮の閾値と内訳（固定の部分・空き・出どころ）を出す', true);
 
-  const defaults = { judgeByKind: { trivial: 'jev', visual: 'none' }, tiers: { t1: ['a:b'], t2: ['c:d'] }, avoidPercent: 80 };
-  assert.deepEqual(diffFromDefaults({ trivial: 'qwen', visual: 'none' }, defaults.judgeByKind), { trivial: 'qwen' });
-  assert.equal(diffFromDefaults({ trivial: 'jev', visual: 'none' }, defaults.judgeByKind), null, '全部既定なら null（既定に戻す）');
+  const defaults = { judge: JUDGE_MODEL, tiers: { t1: ['a:b'], t2: ['c:d'] }, avoidPercent: 80 };
+  assert.equal(diffFromDefaults('x/y', defaults.judge), 'x/y');
+  assert.equal(diffFromDefaults(JUDGE_MODEL, defaults.judge), null, '既定と同じなら null（既定に戻す）');
   assert.deepEqual(diffFromDefaults({ t1: ['a:b'], t2: ['d:e', 'c:d'] }, defaults.tiers), { t2: ['d:e', 'c:d'] });
   t.ok('設定は既定と違う項目だけを送る（既定値を凍らせない）', true);
 
@@ -152,12 +154,13 @@ async function japaneseCases(t) {
 }
 
 /**
- * 設定 › 委譲の段の候補のアカウント（ADR 0264）。候補の名前「Sonnet · personal」・そのアカウントだけの使用量・段の上の「使う / 使わない」・
- * 使えないアカウントの「ログインし直す」・追加のメニュー（エージェント ▸ モデル ▸ アカウント、打ち込んだ後のアカウント）
+ * 設定 › 委譲のレベルの候補のアカウント（ADR 0264）。候補の名前「Sonnet · personal」・そのアカウントだけの使用量・
+ * 使えないアカウントの「ログインし直す」・追加のメニュー（エージェント ▸ モデル ▸ アカウント、打ち込んだ後のアカウント）。
+ * 段の上の「使う / 使わない」の行は廃止
  */
 async function accountPanel(t) {
-  const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToQwen: false, tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] },
-    avoidPercent: 80, paceLimit: 1.5 };
+  const defaults = { enabled: true, judge: JUDGE_MODEL, levels: [{ id: 't1', name: '' }], kinds: [{ id: 'implement', name: '', desc: '' }],
+    tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] }, efforts: { t1: { '*': 'low' } }, avoidPercent: 80, paceLimit: 1.5 };
   const settings = { ...structuredClone(defaults), tiers: { t1: ['claude:sonnet', 'claude@acct-p:sonnet', 'claude@acct-s:opus', 'codex:gpt-6-sol'] } };
   const candidates = [
     { candidate: 'claude:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: '', accountLabel: null, windows: [{ label: '週次', usedPercent: 21 }] },
@@ -168,9 +171,9 @@ async function accountPanel(t) {
   const accounts = { claude: [{ account: '', name: null, ready: true }, { account: 'acct-p', name: 'personal', ready: true }, { account: 'acct-s', name: 'work', ready: false },
     { account: 'acct-w', name: 'team', ready: true }] };
   const sent = [];
-  const state = () => structuredClone({ settings, defaults, kinds: ['implement'], judges: ['jev', 'qwen', 'none'], tiers: ['t1'], candidates, accounts,
-    keys: { openrouter: { hasKey: true } }, storage: { encrypted: true } });
+  const state = () => structuredClone({ settings, defaults, key: { hasKey: true, via: 'key' }, candidates, warnings: [], accounts, storage: { encrypted: true } });
   const cmd = async (name, args) => {
+    if (name === 'invoke') return { keys: [] };
     if (name === 'setDelegationRouting') { sent.push(args.settings); if (args.settings.tiers) settings.tiers = { ...settings.tiers, ...args.settings.tiers }; }
     return state();
   };
@@ -199,29 +202,23 @@ async function accountPanel(t) {
       && relogin.getAttribute('aria-label') === 'work にログインし直す（設定 › エージェント設定）', rows[2].querySelector('small').textContent);
     relogin.onclick();
     t.ok('「ログインし直す」はそのエージェントのそのアカウントを開く', JSON.stringify(opened) === '[["claude","acct-s"]]');
-    const use = root.querySelector('.rt-acct-use');
-    const groups = use.querySelectorAll('.rt-acct-g');
-    t.ok('段の上の 1 行: アカウントのあるエージェントだけ、使う（段にある）と使わないを並べる',
-      root.querySelectorAll('.rt-acct-use').length === 1 && use.getAttribute('aria-label') === 'Claude のアカウント'
-      && groups.length === 2 && groups[0].textContent === '使うログイン中のアカウント·personal·work' && groups[1].textContent === '使わないteam'
-      && groups[1].classList.contains('unused') && use.querySelectorAll('.v')[2].classList.contains('na'), use.textContent);
-    t.ok('段の上の 1 行に押せる部品は無い', use.querySelectorAll('button').length === 0 && use.querySelectorAll('input').length === 0);
+    t.ok('廃止した「使う / 使わない」の行は出さない', !root.querySelector('.rt-acct-use'));
 
-    // 追加のメニュー: エージェント ▸ モデル ▸ アカウント。段にもうある組み合わせは出さない
+    // 追加のメニュー: エージェント ▸ モデル ▸ アカウント。レベルにもうある組み合わせは出さない
     const anchor = { getBoundingClientRect: () => ({ left: 0, bottom: 0 }) };
     root.querySelector('.rt-add').onclick({ currentTarget: anchor });
     await new Promise(r => setImmediate(r));
     const top = menus.at(-1).items;
     const claude = top.find(i => i.label === 'Claude').sub();
-    t.ok('モデルの一覧は、まだ段に無いアカウントが残るモデルだけ', claude.map(i => i.label).join(',') === 'Sonnet,Opus,Haiku');
+    t.ok('モデルの一覧は、まだレベルに無いアカウントが残るモデルだけ', claude.map(i => i.label).join(',') === 'Sonnet,Opus,Haiku');
     const sonnetAccounts = claude[0].sub();
-    t.ok('アカウントの段: 段にある組み合わせを除き、使えないアカウントに理由を添える', sonnetAccounts.map(i => i.label).join(',') === 'work,team'
+    t.ok('アカウントの段: レベルにある組み合わせを除き、使えないアカウントに理由を添える', sonnetAccounts.map(i => i.label).join(',') === 'work,team'
       && sonnetAccounts[0].hint === '認証情報なし' && !sonnetAccounts[1].hint);
     sonnetAccounts[1].onClick();
     await new Promise(r => setImmediate(r));
-    t.ok('アカウントを選ぶと「backend@account:model」で段の末尾に足す', sent.at(-1)?.tiers?.t1?.at(-1) === 'claude@acct-w:sonnet', JSON.stringify(sent.at(-1)));
+    t.ok('アカウントを選ぶと「backend@account:model」でレベルの末尾に足す', sent.at(-1)?.tiers?.t1?.at(-1) === 'claude@acct-w:sonnet', JSON.stringify(sent.at(-1)));
     const codex = top.find(i => i.label === 'Codex').sub();
-    t.ok('アカウントの無いエージェントは 2 段のまま（もう段にあるモデルは出さない）', codex.length === 1 && codex[0].disabled && !codex[0].sub);
+    t.ok('アカウントの無いエージェントは 2 段のまま（もうレベルにあるモデルは出さない）', codex.length === 1 && codex[0].disabled && !codex[0].sub);
 
     root.querySelector('.rt-add').onclick({ currentTarget: anchor });
     await new Promise(r => setImmediate(r));
@@ -299,106 +296,88 @@ function failure(t, names) {
 
 /** 設定 › 委譲のスイッチの直下: 効いていない理由だけを出す（平常時・オフのときは何も出さない） */
 async function effectiveLines(t) {
-  const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToQwen: false, tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] },
-    avoidPercent: 80, paceLimit: 1.5 };
+  const defaults = { enabled: true, judge: JUDGE_MODEL, levels: [{ id: 't1', name: '' }], kinds: [{ id: 'implement', name: '', desc: '' }],
+    tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] }, efforts: { t1: { '*': 'low' } }, avoidPercent: 80, paceLimit: 1.5 };
   let settings = structuredClone(defaults), hasKey = false, usable = false;
-  const state = () => structuredClone({ settings, defaults, kinds: ['implement'], judges: ['jev', 'qwen', 'none'], tiers: ['t1'],
+  const state = () => structuredClone({ settings, defaults, key: { hasKey, via: hasKey ? 'key' : null },
     candidates: [{ candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t1'], usable, reason: usable ? null : 'unavailable', detail: 'disabled', windows: [] }],
-    keys: { openrouter: { hasKey } }, storage: { encrypted: true } });
+    warnings: [], accounts: {}, storage: { encrypted: true } });
   const root = el('div'), tab = el('button');
   const saved = document.getElementById;
   document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
   try {
-    const ui = setupDelegationSettings({ cmd: async () => state(), page() {}, showMenu() {}, labelOf: id => id, logo: () => el('span'), modelsOf: async () => ({}), modelName: () => '' });
+    const ui = setupDelegationSettings({ cmd: async name => name === 'invoke' ? { keys: [] } : state(), page() {}, showMenu() {}, labelOf: id => id, logo: () => el('span'), modelsOf: async () => ({}), modelName: () => '' });
     await ui.refresh();
     const eff = root.querySelector('.rt-eff');
     t.ok('キーが無い・使える候補が無い: スイッチの直下に ⚠ の行が 2 つと直す入口', eff && !eff.hidden && eff.querySelectorAll('p').length === 2
       && eff.querySelectorAll('button').length === 2 && eff.textContent.includes('⚠'));
-    t.ok('自動選択の表の下の同じ警告は出さない', !root.querySelector('.rt-judges').textContent.includes('⚠'));
+    t.ok('難しさの判定の面の下の同じ警告は出さない', !root.querySelector('.rt-judges').textContent.includes('⚠'));
     hasKey = true; usable = true;
     await ui.refresh();
     t.ok('平常時は何も出さない', root.querySelector('.rt-eff').hidden === true);
     hasKey = false; settings.enabled = false;
     await ui.refresh();
     t.ok('スイッチがオフなら何も出さない', root.querySelector('.rt-eff').hidden === true);
-    settings.enabled = true; usable = false;
+    settings.enabled = true; usable = false; hasKey = true;
     await ui.refresh();
-    const detail = root.querySelector('.rt-advanced').textContent;
-    t.ok('詳しい設定の候補の「使えない」に中身を添える', detail.includes('使えない（無効）'));
+    t.ok('キーはあっても使える候補が無ければ 1 行', root.querySelector('.rt-eff').querySelectorAll('p').length === 1);
+    const detail = root.querySelector('.rt-advanced');
+    detail.open = true;
+    t.ok('詳しい設定の候補の「使えない」に中身を添える', detail.textContent.includes('使えない（無効）'));
   } finally {
     document.getElementById = saved;
   }
 }
 
-/** 設定 › 委譲の自動選択の面。押したボタンにフォーカスが残っていても、選び直しが画面に出てフォーカスが戻る */
+/** 設定 › 委譲の難しさの判定の面（1 つのモデル・しないも可）。選び直しは先に画面へ出し、失敗したら巻き戻す */
 async function judgePanel(t) {
-  const judgeDefaults = { implement: 'jev', review: 'jev' };
-  const defaults = { enabled: true, judgeByKind: judgeDefaults, escalateToQwen: false, tiers: { t1: ['claude:haiku'] }, table: { implement: ['t1', 't1', 't1'], review: ['t1', 't1', 't1'] },
-    avoidPercent: 80, paceLimit: 1.5 };
+  const defaults = { enabled: true, judge: JUDGE_MODEL, levels: [{ id: 't1', name: '' }], kinds: [{ id: 'implement', name: '', desc: '' }],
+    tiers: { t1: ['claude:haiku'] }, table: { implement: ['t1', 't1', 't1'] }, efforts: { t1: { '*': 'low' } }, avoidPercent: 80, paceLimit: 1.5 };
   let settings = structuredClone(defaults);
   let candidates = [{ candidate: 'claude:haiku', backend: 'claude', usable: true, checkedAt: '2026-09-27T00:00:00Z', windows: [] }];
-  const state = () => structuredClone({ settings, defaults, kinds: ['implement', 'review'], judges: ['jev', 'qwen', 'none'], tiers: ['t1'], candidates,
-    keys: { openrouter: { hasKey: true } }, storage: { encrypted: true } });
+  const state = () => structuredClone({ settings, defaults, key: { hasKey: true, via: 'key' }, candidates,
+    warnings: [], accounts: {}, storage: { encrypted: true }, conversationEfforts: {}, difficulties: ['low', 'mid', 'high'], signals: [] });
   const releases = [], sent = [];
   const cmd = async (name, args) => {
+    if (name === 'invoke') return { keys: [] };
     if (name === 'setDelegationRouting') {
       sent.push(args.settings);
       await new Promise((resolve, reject) => { releases.push({ resolve, reject }); });
-      const { judgeByKind, ...rest } = args.settings;
-      if (judgeByKind !== undefined) settings.judgeByKind = { ...judgeDefaults, ...(judgeByKind ?? {}) };
-      Object.assign(settings, rest);
+      Object.assign(settings, Object.fromEntries(Object.entries(args.settings).map(([k, v]) => [k, v === null ? defaults[k] : v])));
     }
     return state();
   };
+  const menus = [];
   const root = el('div'), tab = el('button');
   const saved = { getElementById: document.getElementById, activeElement: document.activeElement, focus: N.prototype.focus };
   document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
   N.prototype.focus = function () { if (!this.disabled) document.activeElement = this; };
   try {
-    const ui = setupDelegationSettings({ cmd, page() {}, showMenu() {}, labelOf: id => id, logo: () => el('span'), modelsOf: async () => ({}), modelName: () => '' });
+    const ui = setupDelegationSettings({ cmd, page() {}, showMenu: (x, y, items, title) => menus.push({ items, title }), labelOf: id => id, logo: () => el('span'), modelsOf: async () => ({}), modelName: () => '' });
     await ui.refresh();
-    // 並びで引く（種類の行 × 自動選択のボタン、聞き直しは面の最初の入力欄）
-    const control = key => {
-      if (key === 'escalate') return root.querySelector('.rt-judges').querySelector('input');
-      const [kind, judge] = key.split(':');
-      const row = root.querySelectorAll('.rt-judge-row')[['implement', 'review'].indexOf(kind)];
-      return row.querySelector('.rt-seg').children[['jev', 'qwen', 'none'].indexOf(judge)];
-    };
     const tick = () => new Promise(r => setImmediate(r));
-
-    // クリックでボタンにフォーカスが移る（Chromium）。その状態で保存が返ってくる
-    const qwen = control('implement:qwen');
-    document.activeElement = qwen;
-    qwen.onclick();
-    t.ok('押した瞬間に選択が変わり、ほかの自動選択も押せる', control('implement:qwen').classList.contains('on') && !control('review:none').disabled);
-    control('review:none').onclick();
-    t.ok('保存中の次の変更もすぐ表示し、送信は最初の保存を待つ', control('review:none').classList.contains('on') && sent.length === 1);
+    const pill = () => root.querySelector('.rt-judge-row').querySelector('button');
+    t.ok('判定は 1 つのモデル（既定 pplx-decider）を 1 つの pill で選ぶ', pill() && pill().querySelector('.ef-v').textContent.includes(JUDGE_MODEL));
+    const anchor = { getBoundingClientRect: () => ({ left: 0, bottom: 0 }) };
+    pill().onclick({ currentTarget: anchor });
+    const menu = menus.at(-1).items;
+    t.ok('メニューは既定のモデルと「しない」（前の版の 2 モデル・聞き直しは無い）',
+      menu.length === 3 && menu[0].label === JUDGE_MODEL && menu[2].label === 'しない' && menu[0].checked === true, JSON.stringify(menu.map(i => i.label)));
+    menu[2].onClick();
+    t.ok('「しない」を選ぶとすぐ画面に出て、保存は judge: none', pill().querySelector('.ef-v').textContent.includes('しない') && sent.length === 1 && sent[0].judge === 'none', JSON.stringify(sent));
     releases.shift().resolve(); await tick();
-    t.ok('2 件目は 1 件目の完了後に送る', sent.length === 2 && sent[1].judgeByKind.review === 'none');
-    releases.shift().resolve(); await tick();
-    const after = control('implement:qwen');
-    t.ok('押した自動選択に選択が移る', after.classList.contains('on') && after.getAttribute('aria-pressed') === 'true'
-      && !control('implement:jev').classList.contains('on') && settings.judgeByKind.implement === 'qwen' && settings.judgeByKind.review === 'none');
+    t.ok('保存が返っても「しない」のまま', pill().querySelector('.ef-v').textContent.includes('しない') && settings.judge === 'none');
 
-    // 別の画面から変わった（delegationRoutingChanged）ときも、フォーカスが面の中にあっても描き直す
-    settings.judgeByKind.review = 'jev';
-    await ui.refresh();
-    t.ok('フォーカスが面の中にあっても、届いた設定を描き直す', control('review:jev').classList.contains('on'));
-
-    const box = control('escalate');
-    document.activeElement = box;
-    box.checked = true;
-    box.onchange();
-    releases.shift().resolve(); await tick();
-    t.ok('聞き直しのチェックも保存して描き直し、フォーカスを戻す', control('escalate').checked === true && settings.escalateToQwen === true && document.activeElement === control('escalate'));
-    control('review:none').onclick();
-    t.ok('失敗する保存も先に画面へ反映する', control('review:none').classList.contains('on'));
+    // 失敗する保存も先に画面へ反映し、失敗したら巻き戻す
+    pill().onclick({ currentTarget: anchor });
+    menus.at(-1).items[0].onClick(); // 既定のモデルへ戻す（既定なので null を送る）
     releases.shift().reject(new Error('denied')); await tick();
-    t.ok('保存に失敗した値だけを巻き戻し、理由を 1 行に出す', control('review:jev').classList.contains('on') && root.querySelector('.rm-state').textContent.includes('denied'));
+    t.ok('保存に失敗した値だけを巻き戻し、理由を 1 行に出す', pill().querySelector('.ef-v').textContent.includes('しない')
+      && root.querySelector('.rm-state').textContent.includes('denied'), root.querySelector('.rm-state').textContent);
 
-    const row = root.querySelector('.rt-cand-row');
     const input = root.querySelector('.rt-number').querySelector('input');
     input.value = '73'; document.activeElement = input;
+    const row = root.querySelector('.rt-cand-row');
     candidates = [{ ...candidates[0], usable: false, reason: 'quota_high' }];
     await ui.event({ type: 'delegationRoutingChanged', change: 'usage' });
     t.ok('使用量だけの知らせで候補の行・入力とフォーカスを保ち、使えるかどうかだけを変える',

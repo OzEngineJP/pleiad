@@ -112,6 +112,8 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pop .head+.head,.pop .sec+.head,.pop .li+.head{margin-top:6px}
 .pop .li{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:5px 10px;border-radius:var(--r-s);cursor:pointer;color:var(--ink);background:transparent;min-width:0}
 .pop .li:hover{background:var(--surface-hover)}
+.pop .li.danger{color:var(--ink-danger);font-weight:600}
+.pop .li.danger .hint{color:var(--ink-danger);font-weight:400}
 .pop .li:disabled{color:var(--ink-weak);cursor:default;background:transparent}
 .pop .li.on{background:var(--surface-sel)}
 .pop .li.on::before{content:"✓";font-size:10px;color:var(--ink-blue)}

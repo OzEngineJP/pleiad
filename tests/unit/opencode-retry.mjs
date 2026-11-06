@@ -2,7 +2,7 @@
 // 出来事の写し替え（retrying / running・待っても通らない上限）・振り分けで上限に当たっている委譲先を外して戻す（checkCandidate・route の blocked）
 import { createTurnMapper, retryOf, errorOf } from '../../core/backends/opencode-normalize.mjs';
 import { checkBackendEvent } from '../../core/backends/contract.mjs';
-import { normalizeSettings, checkCandidate, route, candidateStates } from '../../core/delegation-routing.mjs';
+import { normalizeSettings, checkCandidate, route, candidateStates, DEFAULT_JUDGE } from '../../core/delegation-routing.mjs';
 
 export const name = 'opencode-retry';
 export const title = 'OpenCode の上限と再試行の待ち: retry の読み方・解除時刻・写し替え・振り分けで外して戻す';
@@ -69,7 +69,7 @@ export default async function (t) {
   slots.set('opencode:big-pickle:', { reason: 'retry_waiting', until });
   const held = checkCandidate('opencode:big-pickle', { usage, settings, now: NOW, blocked });
   t.ok('振り分け: 再試行を待っている委譲先は外す（理由と戻る見込み）', held.ok === false && held.reason === 'retry_waiting' && held.until === until, JSON.stringify(held));
-  const judged = { judge: 'jev', signals: null, probabilities: null, fallback: null };
+  const judged = { judge: DEFAULT_JUDGE, signals: null, probabilities: null, fallback: null };
   const routed = route({ kind: 'implement', judged, settings, usage, now: NOW, blocked });
   const skip = routed.routing.skipped.find(s => s.candidate === 'opencode:big-pickle');
   t.ok('振り分け: route は次の候補を選び、skipped に理由と until（ISO）を載せる', routed.ok && routed.routing.target.backend === 'claude'
