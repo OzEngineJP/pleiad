@@ -26,7 +26,7 @@ async function rig({ now = () => Date.now() } = {}) {
   const desktop = fakeChromeOs({ chrome });
   const connection = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: desktop, pollMs: 20 });
   const relay = createChromeRelay({ connection, os: desktop, locate: { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true }, now });
-  const screencast = createChromeScreencast({ host: relay.view });
+  const screencast = createChromeScreencast({ host: relay.view, relay });
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-chrome-close-'));
   const records = [], cards = [], openCards = new Set();
   let recordHook = null;

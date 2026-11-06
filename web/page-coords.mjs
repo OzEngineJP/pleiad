@@ -9,6 +9,16 @@ export function containRect(box, natural) {
   return { left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2, width, height };
 }
 
+/**
+ * フレームの metadata（deviceWidth / deviceHeight / offsetTop は DIP）を、ページのレイアウトの CSS px に直す。
+ * viewport の meta の無いページをモバイルの表示（mobile: true）で描くと、ページの倍率（pageScaleFactor）が 1 より小さくなる。
+ * CDP の入力・入力欄の位置・エージェントが押した点は、レイアウトの CSS px で数える
+ */
+export function pageMetadata(metadata = {}) {
+  const scale = metadata.pageScaleFactor > 0 ? metadata.pageScaleFactor : 1;
+  return { ...metadata, deviceWidth: metadata.deviceWidth / scale, deviceHeight: metadata.deviceHeight / scale, offsetTop: (Number(metadata.offsetTop) || 0) / scale };
+}
+
 /** 表示上の点（clientX/Y）をページの CSS px へ。画像の外なら null。metadata はフレームの deviceWidth / deviceHeight / offsetTop */
 export function toPageCoords(point, rect, metadata) {
   if (!rect.width || !rect.height || !metadata?.deviceWidth || !metadata?.deviceHeight) return null;

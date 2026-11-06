@@ -21,7 +21,7 @@ export default async function (t) {
     } };
   const bridge = createChromeScreencast({ host, relay }), hub = createScreencastHub({ bridge, source: 'chrome' });
   const messages = [], phoneMessages = [], pc = { send: message => messages.push(message) }, phone = { send: message => phoneMessages.push(message) };
-  const cmd = (client, input, tabId = 'T', local = true) => screencastCommand({ command: 'browserScreencastInput', args: { source: 'chrome', sessionId: 's', tabId, input }, local, chrome: { hub, bridge }, client });
+  const cmd = (client, input, tabId = 'T') => screencastCommand({ command: 'browserScreencastInput', args: { source: 'chrome', sessionId: 's', tabId, input }, chrome: { hub, bridge }, client });
   const metrics = () => calls.filter(call => call.method === 'Emulation.setDeviceMetricsOverride').at(-1)?.params;
   try {
     await hub.watch(pc, 's', { width: 560, height: 700 });
@@ -32,10 +32,10 @@ export default async function (t) {
     const before = calls.length;
     t.ok('違うタブから遅れて来た入力を断る', (await cmd(pc, { type: 'text', text: 'bad' }, 'old')).code === 'no-tab' && calls.length === before);
     await hub.watch(phone, 's', { device: 'phone', width: 360, height: 640, scale: 2 });
-    await cmd(phone, { type: 'text', text: '日本語' }, 'T', false);
+    await cmd(phone, { type: 'text', text: '日本語' }, 'T');
     t.ok('スマホで触った後はスマホの幅を優先', metrics().width === 360 && metrics().mobile && metrics().deviceScaleFactor === 2);
     await hub.watch(phone, 's', { device: 'phone', width: 360, height: 300, scale: 2 });
-    await cmd(phone, { type: 'tap', x: 10, y: 20 }, 'T', false);
+    await cmd(phone, { type: 'tap', x: 10, y: 20 }, 'T');
     await hub.watch(phone, 's', { device: 'phone', width: 360, height: 640, scale: 2 });
     t.ok('キーボードを開いて触った後に閉じたら、触らなくてもスマホの今の高さへ戻す', metrics().width === 360 && metrics().height === 640);
     events.at(-1)('Page.javascriptDialogOpening', { type: 'confirm', message: '続ける？' });

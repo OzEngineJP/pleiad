@@ -18,15 +18,11 @@
 /**
  * WS のコマンドを処理する（core/server.mjs から呼ぶ）。戻り値は { ok, result } か { ok: false, code }。
  * 映像はエージェントの Chrome の窓だけ（args.source === 'chrome'、chrome = { hub, bridge }）。ホストの画面もリモートも見られる。
- * 入力は bridge.unified（タブの持ち手がある）ならどの端末からも、
- * 無ければリモートの端末からだけ受け、端末が引き継いでいる間かは bridge（core/chrome/screencast.mjs）が決める（それ以外は view-only）。
- * 入力は、その会話を見ている接続からだけ。
+ * 入力はどの端末からも受け、触ったタブを人の操作にする（ADR 0296。bridge は core/chrome/screencast.mjs）。その会話を見ている接続からだけ。
  */
-export async function screencastCommand({ command, args = {}, local, client, chrome = null }) {
+export async function screencastCommand({ command, args = {}, client, chrome = null }) {
   if (args.source !== 'chrome' || !chrome?.hub || !chrome.bridge?.ready) return { ok: false, code: 'unavailable' };
   const { hub, bridge } = chrome;
-  if (command === 'browserScreencastInput' && local && !bridge.unified) return { ok: false, code: 'view-only' };
-  if (command === 'browserScreencast' && (args.url != null || args.visualization)) return { ok: false, code: 'view-only' };
   const sessionId = args.sessionId;
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) return { ok: false, code: 'invalid-session' };
   try {
@@ -48,7 +44,7 @@ export async function screencastCommand({ command, args = {}, local, client, chr
     }
   } catch (error) {
     const code = String(error?.message ?? '');
-    return { ok: false, code: ['invalid-url', 'invalid-input', 'not-watching', 'no-window', 'view-only', 'no-tab'].includes(code) ? code : 'failed' };
+    return { ok: false, code: ['invalid-input', 'not-watching', 'no-window', 'no-tab'].includes(code) ? code : 'failed' };
   }
 }
 

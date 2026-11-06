@@ -4920,8 +4920,6 @@ const opsChrome = chromeConnection ? {
   closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
   // 右パネルの映像に映すウィンドウを固定する・解く（core/chrome/screencast.mjs の pin）
   pinWindow: chromeScreencast ? async (sessionId, windowId, tabId = null) => { const result = await chromeScreencast.request('pin', sessionId, { windowId, tabId }); return { pinnedWindowId: result.pinnedWindowId, pinnedTabId: result.pinnedTabId ?? null }; } : null,
-  // 端末が引き継いでいる間に、タブの列の × でタブを閉じる（core/chrome/screencast.mjs の closeTab）
-  closeTab: chromeScreencast ? (sessionId, tabId) => chromeScreencast.request('closeTab', sessionId, { tabId }) : null,
   windows: async parentId => {
     const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
       sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle', waiting: id => Boolean(chromeHandoffs?.current?.(id)) });
@@ -9783,7 +9781,7 @@ wss.on("connection", (ws, req) => {
         // 会話の Chrome の窓の映像を見る・操作する（core/browser-screencast.mjs、ADR 0294・0297）
         case 'browserScreencast': case 'browserScreencastStop': case 'browserScreencastAck': case 'browserScreencastInput': {
           if (!screencastClients.has(ws)) screencastClients.set(ws, { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } });
-          const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local,
+          const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {},
             chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,
             client: screencastClients.get(ws) });
           // i18n-dynamic: server:remoteBrowser.
@@ -9818,7 +9816,6 @@ wss.on("connection", (ws, req) => {
         case 'chromeStop': return await viaOp('browser.chromeStop');
         case 'chromeCloseWindow': return await viaOp('browser.chromeCloseWindow');
         case 'chromePinWindow': return await viaOp('browser.chromePinWindow');
-        case 'chromeCloseTab': return await viaOp('browser.chromeCloseTab');
         // openDefault は許した拡張子のファイルを既定のアプリで（ADR 0294 の 3）。拡張子はリンクを解いた実体で見る
         case "resolvePath": case "revealPath": case "openPath": case "openDefault": {
           const hostAction = msg.command !== 'resolvePath';

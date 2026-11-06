@@ -250,26 +250,6 @@ export const browserOps = [
     },
   }),
   defineOp({
-    id: 'browser.chromeCloseTab',
-    summary: 'agent:ops.browser.chromeCloseTab.summary',
-    risk: 'write',
-    riskReason: 'Closes one tab of the Chrome window of the conversation while the person operates it from a remote device (never the last tab); the agent is paused and nothing else is touched. Screen and remote devices only (not on MCP or CLI)',
-    input: z.object({ sessionId: sessionIdShape, tabId: z.string().min(1).max(200).describe('agent:ops.browser.chromeCloseTab.tabId') }),
-    output: z.object({}),
-    surfaces: { ui: true, mcp: false, cli: false },
-    legacyCommand: 'chromeCloseTab',
-    handler: async (ctx, { sessionId, tabId }) => {
-      const chrome = mustBeSupported(ctx);
-      if (!chrome.closeTab) unavailable(ctx);
-      try { return await chrome.closeTab(sessionId, tabId); }
-      catch (error) {
-        const code = String(error?.message ?? '');
-        if (['not-watching', 'no-tab', 'last-tab', 'view-only'].includes(code)) throw new OpError('INVALID', agentT(ctx.locale, `ops.errors.chromeCloseTab.${code === 'not-watching' ? 'notWatching' : code === 'no-tab' ? 'noTab' : code === 'last-tab' ? 'lastTab' : 'viewOnly'}`));
-        throw error;
-      }
-    },
-  }),
-  defineOp({
     id: 'browser.chromeWindows',
     summary: 'agent:ops.browser.chromeWindows.summary',
     risk: 'read',

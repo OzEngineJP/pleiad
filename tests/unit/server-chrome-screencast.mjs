@@ -8,7 +8,7 @@ import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 export const name = 'server-chrome-screencast';
-export const title = 'Chrome の窓の映像（サーバー越し）: chromeWindow イベントがホストの画面にもリモートの端末にも届く・接続の直後に今の分・hostCapabilities.chromeWindow・source: chrome の映像と view-only（偽の Chrome・parentPort の身代わり。ADR 0148 第 5 段）';
+export const title = 'Chrome の窓の映像（サーバー越し）: chromeWindow イベントがホストの画面にもリモートの端末にも届く・接続の直後に今の分・hostCapabilities.chromeWindow・source: chrome の映像と入力（偽の Chrome・parentPort の身代わり。ADR 0294・0296）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const until = async (cond, ms = 10000, what = '') => {
@@ -109,7 +109,7 @@ export default async function (t) {
     t.ok('フレームは source: chrome 付きで、見ている端末にだけ届く', frame.source === 'chrome' && frame.sessionId === id && !late.frames.some(f => f.kind === 'screencast') && !c.events.some(e => e.type === 'frame'));
     // 映像への入力は見ている端末から受ける（触れたタブは人の操作になる。ADR 0296 の 1）
     const input = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
-    t.ok('入力は view-only で断らない', input.code !== 'view-only', JSON.stringify(input));
+    t.ok('見ている端末の入力を受ける', input.ok === true, JSON.stringify(input));
     const hostWatch = await c.cmd('browserScreencast', { sessionId: id, source: 'chrome', width: 400, height: 300 });
     const sourceless = await c.cmd('browserScreencast', { sessionId: id, width: 400, height: 300 }).then(() => null, e => e.code);
     t.ok('ホストの画面（local）からも source: chrome で見られる（source の無い映像は無い: unavailable）', typeof hostWatch.tabId === 'string' && sourceless === 'unavailable', String(sourceless));
@@ -142,8 +142,6 @@ export default async function (t) {
       t.ok('リモートの端末から tabId でタブを固定できる（そのタブの窓が pinnedWindowId で配られる）', tabPin.ok === true && tabPin.result?.pinnedTabId === second
         && await until(() => chrome.browser.screencasting(second), 10000, 'tab pinned'), JSON.stringify(tabPin));
       await remote.ask('chromePinWindow', { sessionId: id, windowId: null });
-      const viewOnlyClose = await remote.ask('chromeCloseTab', { sessionId: id, tabId: second });
-      t.ok('端末で操作していない間の chromeCloseTab は断る（タブは残る）', viewOnlyClose.ok === false && chrome.browser.targets().some(x => x.targetId === second), JSON.stringify(viewOnlyClose));
       const closeOne = await remote.ask('chromeCloseWindow', { sessionId: id, windowId: hostEvent.windowIds[0] });
       t.ok('windowId を付けた chromeCloseWindow は、そのウィンドウだけ閉じて、もう一方は残る',
         closeOne.ok === true && closeOne.result?.closed === true && await until(() => !chrome.browser.targets().some(x => x.targetId === opened) && chrome.browser.targets().some(x => x.targetId === second), 10000, 'one closed')

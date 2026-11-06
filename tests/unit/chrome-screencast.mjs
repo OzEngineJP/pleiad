@@ -7,7 +7,7 @@ import { createChromeScreencast, chromeScreencastSettings } from '../../core/chr
 import { createScreencastHub, screencastCommand } from '../../core/browser-screencast.mjs';
 
 export const name = 'chrome-screencast';
-export const title = 'Chrome の窓の映像: 今のタブへの付け外し・ack の間引き・見る人がいなくなったら止めて focus emulation を外す（ターンの分は残す）・タブが替わったら付け替える・撮影を断つ間は流さない・見るだけ（ADR 0148 第 5 段）';
+export const title = 'Chrome の窓の映像: 今のタブへの付け外し・ack の間引き・見る人がいなくなったら止めて focus emulation を外す（ターンの分は残す）・タブが替わったら付け替える・撮影を断つ間は流さない・固定とタブの列（ADR 0294・0296）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {
@@ -70,7 +70,7 @@ export default async function (t) {
       && JSON.stringify(relay.view.tabs('s1')) === JSON.stringify([{ targetId: first, windowId: windowOf(first) }]) && relay.view.summary('s1').operating === true);
     t.ok('relay.view: 窓の無い会話は空', relay.view.summary('nobody').tabs === 0 && relay.view.current('nobody') === null && relay.view.tabs('nobody').length === 0);
 
-    const bridge = createChromeScreencast({ host: relay.view });
+    const bridge = createChromeScreencast({ host: relay.view, relay });
     const hub = createScreencastHub({ bridge, source: 'chrome' });
     const messages = [];
     const client = { send: message => messages.push(message) };
@@ -88,8 +88,8 @@ export default async function (t) {
       watched.tabId === first && fake.screencasting(first) && fake.screencastParams(first)?.maxWidth === Math.round(480 * 2 * 0.67) && fake.screencastParams(first)?.maxHeight === Math.round(320 * 2 * 0.67) && fake.screencastParams(first)?.quality === 55,
       JSON.stringify([watched, fake.screencastParams(first)]));
     const view = fake.sessions().find(s => s.targetId === first && s.screencast);
-    t.ok('映像のセッションは、エージェントのセッションとも、focus emulation を持つ中継のセッションとも別（映像のセッションは focus emulation を触らない）',
-      sessionsOf(first).length === before + 1 && !!view && view.id !== sid1 && !view.fe && sessionsOf(first).filter(s => s.fe).length === 1 && fake.focusEmulated(first));
+    t.ok('映像のセッションと入力の口のセッションは、エージェントのセッションとも、focus emulation を持つ中継のセッションとも別（映像のセッションは focus emulation を触らない）',
+      sessionsOf(first).length === before + 2 && !!view && view.id !== sid1 && !view.fe && sessionsOf(first).filter(s => s.fe).length === 1 && fake.focusEmulated(first));
     t.ok('state: 操作中の印・タブ数・撮影を断っていない・タブの並びと題（URL は載せない）', JSON.stringify(watched.state) === JSON.stringify({ tabId: first, agent: true, suspended: false, tabs: 1, pinnedWindowId: null, pinnedTabId: null,
       agentTabId: first, list: [{ tabId: first, windowId: windowOf(first), title: 'about:blank' }] }) && !JSON.stringify(watched.state).includes('url'), JSON.stringify(watched.state));
 
@@ -163,7 +163,7 @@ export default async function (t) {
       await hub.unwatch(client, 's1');
       t.ok('見る人がいなくなると、screencast を止めて映像のセッションを外す（ターンも無いので focus emulation も外れる）',
         await until(() => !fake.screencasting(first) && !fake.focusEmulated(first)) && !fake.sessions().some(s => s.id === view.id), JSON.stringify(fake.sessions()));
-      t.ok('見る人がいなくなった会話は、ハブも手放す', hub.sessions().length === 0 && bridge.watching().length === 0);
+      t.ok('見る人がいなくなった会話は、ハブも手放す', hub.sessions().length === 0);
       // ターンの間に見て、やめる: ターンの分は残る
       await relay.endpoint('s1');
       await until(() => fake.focusEmulated(first));
@@ -175,18 +175,16 @@ export default async function (t) {
       t.ok('ターンが終わると、どちらの理由も無いので外れる', await until(() => !fake.focusEmulated(first)));
     }
 
-    // ---- 見るだけ: 入力・移動・URL を断る。ホストの画面（local）でも見られる ----
+    // ---- WS のコマンド: ホストの画面からも見られる。移動のコマンドは無い ----
     {
       const host = { hub, bridge };
-      const run = (command, args, local = true) => screencastCommand({ command, args: { sessionId: 's1', source: 'chrome', ...args }, local, hub: null, bridge: null, chrome: host, client, snapshotFile: async () => null });
-      t.ok('ホストの画面（local）からも Chrome の窓の映像を見始められる', (await run('browserScreencast', { width: 400, height: 300 }, true)).ok === true);
-      t.ok('タブの持ち手の無い映像（relay を渡さない）では、ホストの画面からの入力は view-only で断る。移動のコマンドはもう無い（unknown）', (await run('browserScreencastInput', { input: { type: 'tap', x: 1, y: 1 } })).code === 'view-only'
-        && (await run('browserScreencastNav', { action: 'reload' })).code === 'unknown');
-      t.ok('url・可視化を開く指定も断る', (await run('browserScreencast', { url: 'https://example.com/' })).code === 'view-only' && (await run('browserScreencast', { visualization: { id: 'x' } })).code === 'view-only');
-      const nobody = await screencastCommand({ command: 'browserScreencast', args: { sessionId: 'nobody', source: 'chrome' }, local: true, chrome: host, client });
+      const run = (command, args) => screencastCommand({ command, args: { sessionId: 's1', source: 'chrome', ...args }, chrome: host, client });
+      t.ok('ホストの画面からも Chrome の窓の映像を見始められる', (await run('browserScreencast', { width: 400, height: 300 })).ok === true);
+      t.ok('移動のコマンドは無い（unknown。移動はアドレスバーの chromeNavigate）', (await run('browserScreencastNav', { action: 'reload' })).code === 'unknown');
+      const nobody = await screencastCommand({ command: 'browserScreencast', args: { sessionId: 'nobody', source: 'chrome' }, chrome: host, client });
       t.ok('窓の無い会話は code: no-window', nobody.ok === false && nobody.code === 'no-window', JSON.stringify(nobody));
-      t.ok('Chrome の窓の映像が無いホスト（chrome が null）では unavailable', (await screencastCommand({ command: 'browserScreencast', args: { sessionId: 's1', source: 'chrome' }, local: true, chrome: null, client })).code === 'unavailable');
-      t.ok('source なし（内蔵ブラウザーの映像）はもう無い（unavailable）', (await screencastCommand({ command: 'browserScreencast', args: { sessionId: 's1' }, local: true, chrome: host, client })).code === 'unavailable');
+      t.ok('Chrome の窓の映像が無いホスト（chrome が null）では unavailable', (await screencastCommand({ command: 'browserScreencast', args: { sessionId: 's1', source: 'chrome' }, chrome: null, client })).code === 'unavailable');
+      t.ok('source なし（内蔵ブラウザーの映像）はもう無い（unavailable）', (await screencastCommand({ command: 'browserScreencast', args: { sessionId: 's1' }, chrome: host, client })).code === 'unavailable');
       t.ok('停止も ack も source で選ぶ', (await run('browserScreencastStop', {})).ok === true && (await run('browserScreencastAck', { seq: 1 })).ok === true);
       await sleep(50);
     }
@@ -224,7 +222,7 @@ async function fresh() {
   const tab = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
   r.relay.endTurn('s1');
   await until(() => !r.fake.focusEmulated(tab));
-  const bridge = createChromeScreencast({ host: r.relay.view });
+  const bridge = createChromeScreencast({ host: r.relay.view, relay: r.relay });
   const hub = createScreencastHub({ bridge, source: 'chrome' });
   const messages = [];
   const client = { send: message => messages.push(message) };
@@ -377,16 +375,14 @@ async function scenarios(t) {
       t.ok('固定したウィンドウが閉じたら固定が解け、残ったウィンドウを映す（onPin も届く）',
         await until(() => x.bridge.pinned('s1') === null && x.fake.screencasting(second)) && pins.length > before && pins.at(-1)[1] === null, JSON.stringify(pins));
 
-      // PC で引き継いでいる間（映像を止めている）は切り替えない。端末が引き継いでいる間は切り替えられる
+      // 「PC で操作する」の間（映像を止めている）は切り替えない。戻せば切り替えられる
       await x.bridge.suspend('s1');
       const operating = await x.bridge.request('pin', 's1', { windowId: w2 }).then(() => null, error => error.message);
-      t.ok('PC で引き継いでいる間（撮影を断っている）は切り替えを断る（operating）', operating === 'operating', String(operating));
+      t.ok('「PC で操作する」の間（撮影を断っている）は切り替えを断る（operating）', operating === 'operating', String(operating));
       await x.bridge.resume('s1');
-      await x.bridge.operate('s1', { width: 400, height: 300, scale: 1 });
-      const onDevice = await x.bridge.request('pin', 's1', { windowId: w2 }).then(result => result.pinnedWindowId, error => error.message);
-      t.ok('端末が引き継いでいる間は切り替えられる', onDevice === w2, String(onDevice));
+      const resumed = await x.bridge.request('pin', 's1', { windowId: w2 }).then(result => result.pinnedWindowId, error => error.message);
+      t.ok('断りを戻せば切り替えられる', resumed === w2, String(resumed));
       await x.bridge.request('pin', 's1', { windowId: null });
-      await x.bridge.operate('s1', null);
 
       // 見るのをやめれば固定も消える（パネルを閉じる = 次に開くと追う側から）
       await x.bridge.request('pin', 's1', { windowId: w2 });
@@ -398,7 +394,7 @@ async function scenarios(t) {
     } finally { await x.done(); }
   }
 
-  // ---- 6. タブの列: タブの固定・題・端末が引き継いでいる間に開いたタブへ移る・閉じたら開いた元へ戻る・× で閉じる ----
+  // ---- 6. タブの列: タブの固定・題・人が操作しているタブから開いたタブへ移る・閉じたら開いた元へ戻る ----
   {
     const x = await fresh();
     try {
@@ -408,7 +404,7 @@ async function scenarios(t) {
       t.ok('relay.view.items: タブの並び・題・窓・開いた元（URL は載せない）',
         JSON.stringify(x.r.relay.view.items('s1')) === JSON.stringify([{ targetId: x.tab, windowId: w1, title: 'about:blank', openerId: null }, { targetId: shop, windowId: w1, title: 'shop.example/', openerId: x.tab }]), JSON.stringify(x.r.relay.view.items('s1')));
       await x.hub.watch(x.client, 's1', size);
-      t.ok('見ている間に開いたタブ（見るだけの間）へは移らない', await until(() => x.fake.screencasting(x.tab)) && !x.fake.screencasting(shop));
+      t.ok('AI のタブから開いたタブへは移らない', await until(() => x.fake.screencasting(x.tab)) && !x.fake.screencasting(shop));
 
       const pinnedTab = await x.bridge.request('pin', 's1', { windowId: null, tabId: shop });
       t.ok('タブを固定すると、そのタブへ付け替わる（pinnedTabId・pinnedWindowId が載る）',
@@ -420,45 +416,27 @@ async function scenarios(t) {
       x.fake.navigateUser(shop, 'https://shop.example/cart');
       t.ok('タブの題が替わると、状態を送り直す', await until(() => x.messages.slice(n).some(m => m.type === 'state' && m.state.list.find(item => item.tabId === shop)?.title === 'shop.example/cart')));
 
-      // 見るだけの間は × で閉じられない
-      const viewOnly = await x.bridge.request('closeTab', 's1', { tabId: shop }).then(() => null, error => error.message);
-      t.ok('見るだけの間はタブを閉じられない（view-only）', viewOnly === 'view-only');
-
-      // 端末が引き継ぐ: ページが開いたタブへ移り、閉じたら開いた元へ戻る
+      // 人がタブに触る（ADR 0296）: そのタブでページが開いたタブへ移り、閉じたら開いた元へ戻る
       await x.bridge.request('pin', 's1', { windowId: null });
       await until(() => x.fake.screencasting(x.tab));
-      await x.bridge.operate('s1', { width: 400, height: 300, scale: 1 });
+      x.r.relay.unify.tabHolder.touch({ sessionId: 's1', targetId: x.tab, by: 'device', viewport: { width: 400, height: 300, scale: 1 } });
       const google = x.fake.windowOpen(x.tab, 'https://accounts.example/');
-      t.ok('端末が引き継いでいる間にページが開いたタブへ、映像が移る（自動の固定）',
+      t.ok('人が操作しているタブからページが開いたタブへ、映像が移る（自動の固定）',
         await until(() => x.fake.screencasting(google) && !x.fake.screencasting(x.tab)) && await until(() => x.messages.some(m => m.type === 'state' && m.state.tabId === google && m.state.pinnedTabId === google)));
-      t.ok('移った先のタブも、ページの大きさを端末に合わせる', r_metrics(x, google));
       const popup = x.fake.windowOpen(google, 'https://popup.example/', { popup: true });
-      t.ok('開いたタブがさらに別窓のポップアップを開くと、そちらへ移る', await until(() => x.fake.screencasting(popup)) && await until(() => x.bridge.pinned('s1') === x.fake.targets().find(target => target.targetId === popup)?.windowId));
+      t.ok('自動で移ったタブがさらに別窓のポップアップを開くと、そちらへ移る', await until(() => x.fake.screencasting(popup)) && await until(() => x.bridge.pinned('s1') === x.fake.targets().find(target => target.targetId === popup)?.windowId));
       x.fake.closeTab(popup);
       t.ok('ポップアップが閉じたら、開いた元のタブへ戻る', await until(() => x.fake.screencasting(google) && x.bridge.pinned('s1') === w1));
       x.fake.closeTab(google);
       t.ok('自動で移ったタブが閉じたら、その前（エージェントを追う）へ戻る', await until(() => x.fake.screencasting(x.tab) && x.bridge.pinned('s1') === null) && x.messages.filter(m => m.type === 'state').at(-1)?.state.pinnedTabId === null);
 
-      // × で閉じる: 映しているタブを閉じたら、開いた元のタブを固定する
-      await x.bridge.request('pin', 's1', { windowId: null, tabId: shop });
-      await until(() => x.fake.screencasting(shop));
-      await x.bridge.request('closeTab', 's1', { tabId: shop });
-      t.ok('× で映しているタブを閉じると、開いた元のタブを映す', await until(() => !x.fake.targets().some(target => target.targetId === shop) && x.fake.screencasting(x.tab)));
-      const last = await x.bridge.request('closeTab', 's1', { tabId: x.tab }).then(() => null, error => error.message);
-      t.ok('最後のタブは閉じない（last-tab）', last === 'last-tab' && x.fake.targets().some(target => target.targetId === x.tab));
-
-      // 引き継ぎが終わったら、自動で移った分の固定は外す
-      const again = x.fake.windowOpen(x.tab, 'https://accounts.example/');
-      await until(() => x.fake.screencasting(again));
-      await x.bridge.operate('s1', null);
-      t.ok('引き継ぎが終わると、自動で移った固定を外して、エージェントを追う側へ戻る', await until(() => x.fake.screencasting(x.tab) && x.bridge.pinned('s1') === null));
+      // AI に戻した後は、開いたタブへ移らない
+      x.r.relay.unify.tabHolder.releaseAll('s1');
+      const later = x.fake.windowOpen(x.tab, 'https://later.example/');
+      await until(() => x.r.relay.view.items('s1').some(item => item.targetId === later));
+      await sleep(100);
+      t.ok('AI に戻したタブから開いたタブへは移らない', x.fake.screencasting(x.tab) && !x.fake.screencasting(later) && x.bridge.pinned('s1') === null);
       await x.hub.unwatch(x.client, 's1');
     } finally { await x.done(); }
   }
-}
-
-/** そのタブの映像のセッションに、端末の大きさ（Emulation.setDeviceMetricsOverride）を当てたか */
-function r_metrics(x, targetId) {
-  const view = x.fake.sessions().find(s => s.targetId === targetId && s.screencast);
-  return Boolean(view) && x.r.chrome.calls.some(c => c.method === 'Emulation.setDeviceMetricsOverride' && c.sessionId === view.id);
 }

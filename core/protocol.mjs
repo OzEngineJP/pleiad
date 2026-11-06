@@ -225,7 +225,7 @@ export const COMMANDS = new Set([
   "createStatus",    // { status }。空のグループを作る（statuses.json にある限り存在する）
   "lineage",         // { sessionId } -> 同じ根を持つセッション群（分岐の筋を描く材料）
   // エージェントの Chrome の窓の映像を見る・操作する（core/browser-screencast.mjs、core/chrome/screencast.mjs）。どれも args.source: 'chrome'。
-  // ホストの画面もリモートの端末も受ける。入力を受けるかは core/browser-screencast.mjs の screencastCommand（受けなければ code: view-only、窓が無ければ no-window）
+  // ホストの画面もリモートの端末も受ける。入力は core/browser-screencast.mjs の screencastCommand（窓が無ければ no-window）
   'browserScreencast',       // { sessionId, tabId?, width, height, scale, device? } -> { tabId, state }。見始める
   'browserScreencastStop',   // { sessionId } -> {}。見るのをやめる（見る端末がいなくなれば止める）
   'browserScreencastAck',    // { sessionId, seq, mark? } -> {}。そのフレーム（mark なら印）を描き終えた（次のフレームを許す）
@@ -247,7 +247,6 @@ export const COMMANDS = new Set([
   'chromeNavigate',
   'chromeAddress',
   'chromePinWindow',         // { sessionId, windowId|null, tabId? } -> { pinnedWindowId, pinnedTabId }。右パネルの映像に映すウィンドウ・タブを固定する・解く（null）。固定は会話に 1 つで、chromeWindow イベントの pinnedWindowId で全部の端末に配る。映像を見ている間だけ
-  'chromeCloseTab',          // { sessionId, tabId } -> {}。端末が引き継いでいる間に、タブの列の × でタブを閉じる（最後のタブは閉じない）
   // ブラウザーの一本化（旗が on のときだけ。core/browser-unify-ws.mjs）
   'vizOnce',                 // { origins: string[] } -> { token: string|null }。可視化の「一度だけ読み込む」の印（隔離の origin の ?once=。10 分）。https の出どころが 1 つも無ければ null
   'pageResult',              // { sessionId, targetId?, requestId, ok, result?, error? } -> { delivered }。ページからの書き込みの頼み（worktree）の結果をページへ返す（pleiad:page-result）。その会話を見ている接続だけ

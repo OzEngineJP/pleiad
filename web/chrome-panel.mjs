@@ -22,7 +22,7 @@ import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { notify } from './file-actions.mjs';
 import { createFrameSink, createScreencastInput } from './screencast-frame.mjs';
-import { containRect, toPageCoords, toPageDelta } from './page-coords.mjs';
+import { containRect, pageMetadata, toPageCoords, toPageDelta } from './page-coords.mjs';
 import { createWindowSwitch, createTabStrip, createCloseDialog, pinIcon } from './chrome-window-switch.mjs';
 import { browserIcon } from './tab-strip.mjs';
 
@@ -703,14 +703,14 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
     /** ページの CSS px の点を画面の点へ（ページから頼まれたメニューの位置）。映像がまだ無ければ映像の箱の中央 */
     toScreen(point) {
       if (!parts) return null;
-      const box = parts.screen.getBoundingClientRect(), width = Number(frameMeta?.deviceWidth), height = Number(frameMeta?.deviceHeight), top = Number(frameMeta?.offsetTop) || 0;
+      const meta = pageMetadata(frameMeta ?? {}), box = parts.screen.getBoundingClientRect(), width = Number(meta.deviceWidth), height = Number(meta.deviceHeight), top = meta.offsetTop;
       const rect = containRect(parts.img.getBoundingClientRect(), { width:parts.img.naturalWidth || width, height:parts.img.naturalHeight || height });
       if (!rect.width || !(width > 0) || !(height > 0) || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return { x:box.left + box.width / 2, y:box.top + box.height / 2 };
       return { x:rect.left + point.x / width * rect.width, y:rect.top + (point.y + top) / (height + top) * rect.height };
     },
-    /** 映像の元のページの大きさ（CSS 画素。最後のフレームの metadata）。まだ無ければ null */
+    /** 映像の元のページの大きさ（レイアウトの CSS 画素。最後のフレームの metadata）。まだ無ければ null */
     frameSize() {
-      const width = Number(frameMeta?.deviceWidth), height = Number(frameMeta?.deviceHeight);
+      const meta = pageMetadata(frameMeta ?? {}), width = Number(meta.deviceWidth), height = Number(meta.deviceHeight);
       return width > 0 && height > 0 ? { width, height } : null;
     },
     get statusSlot() { if (!parts) { parts = build(); root = parts.node; } return holderSlot ?? parts.slot; },

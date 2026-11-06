@@ -3,7 +3,7 @@
 // フレームは WS の screencast メッセージ（{ seq, data（JPEG の base64）, metadata }）。ホストは ack を受けるまで次を出さないので、
 // 描き終えた（load）ときに onAck(seq) を呼ぶ。
 
-import { containRect, toPageCoords, toPageDelta } from './page-coords.mjs';
+import { containRect, pageMetadata, toPageCoords, toPageDelta } from './page-coords.mjs';
 import { createPhoneInput } from './phone-input.mjs';
 import { ensureBrowserControlStyles } from './chrome-control.mjs';
 
@@ -21,10 +21,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
   let zoom = 1, panX = 0, panY = 0, keyboardPan = 0, pendingTap = null, tapTimer = null, lastTap = 0, lastTapPoint = null;
   let gesture = null, longTimer = null, pinch = null, alive = true;
   const pointers = new Map(), disposers = [];
-  // Mobile pages without a viewport meta are painted at a page scale below one.
-  // CDP input and field rectangles still use layout CSS pixels.
-  const metadata = () => { const value = getFrame?.()?.metadata ?? {}, scale = value.pageScaleFactor > 0 ? value.pageScaleFactor : 1;
-    return { ...value, deviceWidth: value.deviceWidth / scale, deviceHeight: value.deviceHeight / scale, offsetTop: (value.offsetTop || 0) / scale }; };
+  const metadata = () => pageMetadata(getFrame?.()?.metadata ?? {});   // CDP の入力と入力欄の位置はレイアウトの CSS px
   const rect = () => containRect(img.getBoundingClientRect(), { width: img.naturalWidth || metadata().deviceWidth, height: img.naturalHeight || metadata().deviceHeight });
   const coords = event => toPageCoords({ x: event.clientX, y: event.clientY }, rect(), metadata());
   const listen = (node, type, handler, options) => { node.addEventListener(type, handler, options); disposers.push(() => node.removeEventListener(type, handler, options)); };
