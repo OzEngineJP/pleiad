@@ -11,21 +11,49 @@ export function supportsUsage(version) {
   return major > 1 || (major === 1 && (minor > 1 || (minor === 1 && patch >= 11)));
 }
 
+// agy は時刻の無いリセットを 1970-01-01（epoch 0）で返す（1.5.2）。過去の時刻として扱わず「不明」にする
+const resetOf = value => (Date.parse(value) > 0 ? value : null);
+const fractionOf = bucket => {
+  const fraction = number(bucket?.remaining_fraction);
+  return fraction != null && fraction >= 0 && fraction <= 1 ? fraction : null;
+};
+// モデルの段（「Gemini 3.8 Flash (Low)」の「(Low)」、id の -low など）を外した系統の名前
+const familyOf = bucket => String(bucket?.name ?? '').replace(/\s*[（(][^（）()]*[）)]\s*$/, '')
+  || String(bucket?.id ?? '').replace(/-(?:minimal|low|medium|high|max)$/i, '');
+
+/**
+ * agy の使用枠（`/usage --output-format json`）。形は 2 つある:
+ *   期間ごとのバケット … グループ（'Gemini Models' など）ごとに window が 5h・weekly のバケット。1 バケット 1 行
+ *   モデルごとのバケット（1.5.2）… 'All Models' の 1 グループに、モデルと段ごとのバケット（window が無く、id・name がある）。
+ *     段を外した系統ごとに 1 行へまとめる（残りはいちばん少ないもの、リセットはいちばん早いもの）。group も系統の名前にし、
+ *     チップ（web/header-usage.mjs の windowsForModel）と振り分け（core/delegation-routing.mjs の windowsFor）がモデルの系統の行を選べるようにする
+ */
 export function antigravityQuota(result) {
   if (result?.status !== 'SUCCESS' || result.num_turns !== 0 || result.command?.name !== 'usage'
     || !Array.isArray(result.command.data?.groups)) throw new Error(t('antigravity.usage.badResponse'));
-  const windows = result.command.data.groups.flatMap(group => (Array.isArray(group?.buckets) ? group.buckets : []).map(bucket => {
-    const fraction = number(bucket?.remaining_fraction);
-    const used = fraction != null && fraction <= 1 ? (1 - fraction) * 100 : null;
-    const minutes = bucket?.window === '5h' ? 300 : bucket?.window === 'weekly' ? 10080 : null;
-    const period = minutes === 300 ? t('antigravity.usage.fiveHours') : minutes === 10080 ? t('antigravity.usage.weekly') : bucket?.name || t('antigravity.usage.unknownPeriod');
-    // group は画面（web/header-usage.mjs）がグループごとにまとめるための名前。label には同じ名前を頭に付けてある
-    const name = group.name || t('antigravity.usage.model');
-    return { ...usageWindow(`${name} · ${period}`, used, bucket?.reset_time, minutes), group: name };
-  }));
-  return { windows, message: windows.length
-    ? t('antigravity.usage.shared')
-    : t('antigravity.usage.none') };
+  const windows = [], families = new Map();
+  for (const group of result.command.data.groups) {
+    for (const bucket of Array.isArray(group?.buckets) ? group.buckets : []) {
+      const minutes = bucket?.window === '5h' ? 300 : bucket?.window === 'weekly' ? 10080 : null;
+      const family = !bucket?.window && familyOf(bucket);
+      if (family) {
+        if (!families.has(family)) { families.set(family, { family, fraction: null, reset: null }); windows.push(families.get(family)); }
+        const row = families.get(family), fraction = fractionOf(bucket), reset = resetOf(bucket.reset_time);
+        if (fraction != null && (row.fraction == null || fraction < row.fraction)) row.fraction = fraction;
+        if (reset && (!row.reset || Date.parse(reset) < Date.parse(row.reset))) row.reset = reset;
+        continue;
+      }
+      const fraction = fractionOf(bucket);
+      const period = minutes === 300 ? t('antigravity.usage.fiveHours') : minutes === 10080 ? t('antigravity.usage.weekly') : bucket?.name || t('antigravity.usage.unknownPeriod');
+      // group は画面（web/header-usage.mjs）がグループごとにまとめるための名前。label には同じ名前を頭に付けてある
+      const name = group.name || t('antigravity.usage.model');
+      windows.push({ ...usageWindow(`${name} · ${period}`, fraction == null ? null : (1 - fraction) * 100, resetOf(bucket?.reset_time), minutes), group: name });
+    }
+  }
+  const list = windows.map(w => (w.family
+    ? { ...usageWindow(w.family, w.fraction == null ? null : (1 - w.fraction) * 100, w.reset, null), group: w.family } : w));
+  return { windows: list, message: !list.length ? t('antigravity.usage.none')
+    : families.size ? t('antigravity.usage.perModel') : t('antigravity.usage.shared') };
 }
 
 // Never expose stderr: authentication errors can contain credentials/URLs.

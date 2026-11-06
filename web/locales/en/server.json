@@ -864,6 +864,7 @@
       "unknownPeriod": "Unknown period",
       "model": "Model",
       "shared": "Usage is shared within the same model group. Both the 5-hour and weekly limits apply.",
+      "perModel": "Model usage is split into three pools: Gemini Pro, Gemini Flash, and Claude/GPT. Each has a 5-hour and a weekly limit. Each row shows the limit closest to being reached for that model.",
       "none": "Antigravity returned no usage. Check your sign-in status and plan.",
       "timeout": "Timed out while getting usage.",
       "tooLarge": "The usage response is too large.",

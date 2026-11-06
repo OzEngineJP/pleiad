@@ -147,6 +147,14 @@ export default async function (t) {
   t.ok('Antigravity: 専用の枠は識別語が全部入るモデルだけ', windowsFor('antigravity', 'gemini-3.8-flash-high', aq2.windows).map(w => w.group).join() === 'Gemini Models,Gemini Models'
     && windowsFor('antigravity', 'gemini-4-argon-high', aq2.windows).map(w => w.group).join() === 'Gemini 4 Argon'
     && windowsFor('antigravity', 'claude-sonnet-5-5-high', aq2.windows).map(w => w.group).join() === 'Claude and GPT models');
+  // 1.5.2 の形（'All Models' の 1 グループにモデルと段ごとのバケット）は系統ごとの行になり、モデルの系統の行だけが効く
+  const aq3 = antigravityQuota({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [{ name: 'All Models', buckets: [
+    'Gemini 4 Argon', 'Gemini 3.8 Flash', 'Gemini 3.7 Flash', 'Claude Opus 5.5', 'Claude Sonnet 5.5',
+  ].flatMap(name => ['Low', 'High'].map(tier => ({ name: `${name} (${tier})`, remaining_fraction: 1, reset_time: '1970-01-01T00:00:00Z' }))) }] } } });
+  t.ok('Antigravity: モデルごとの枠はモデルの系統の行', windowsFor('antigravity', 'gemini-3.8-flash-high', aq3.windows).map(w => w.group).join() === 'Gemini 3.8 Flash'
+    && windowsFor('antigravity', 'gemini-4-argon-low', aq3.windows).map(w => w.group).join() === 'Gemini 4 Argon'
+    && windowsFor('antigravity', 'claude-opus-5-5-high', aq3.windows).map(w => w.group).join() === 'Claude Opus 5.5'
+    && windowsFor('antigravity', 'gemini-3.1-pro-high', aq3.windows).length === 0);
 
   // ---- 振り分け（検証の場面 S1〜S4 と同じ答え。temporary の policy.mjs の自己テスト）
   t.ok('S1: 種類 trivial・低 → Antigravity Gemini Flash', target(routeAt('trivial', 'low', S1)) === 'antigravity:gemini-3.8-flash-high');

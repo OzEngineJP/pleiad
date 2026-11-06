@@ -29,6 +29,25 @@ export default async function(t) {
   assert.match(antigravityQuota(payload([])).message, /返されません/);
   t.ok('共有グループ・期間・欠損・上限到達を区別し、モデルの回答を使用枠として扱わない', true);
 
+  // 1.5.2 の形: 'All Models' の 1 グループに、モデルと段ごとのバケット（window が無い）。リセットは 1970-01-01（時刻なし）
+  const tiered = (name, id, fractions, reset = '1970-01-01T00:00:00Z') => Object.entries(fractions)
+    .map(([tier, remaining_fraction]) => ({ id: `${id}-${tier.toLowerCase()}`, name: `${name} (${tier})`, remaining_fraction, reset_time: reset }));
+  const perModel = antigravityQuota({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [{ name: 'All Models', buckets: [
+    ...tiered('Gemini 3.8 Flash', 'gemini-3.8-flash', { High: 1, Medium: .4, Low: 1 }),
+    ...tiered('Gemini 3.1 Pro', 'gemini-3.1-pro', { Low: 1, High: 1 }),
+    ...tiered('Claude Opus 5.5', 'claude-opus-5-5', { Max: .9, High: .9 }, '2030-01-02T00:00:00Z'),
+    { id: 'claude-opus-5-5-low', name: 'Claude Opus 5.5 (Low)', remaining_fraction: .9, reset_time: '2030-01-01T00:00:00Z' },
+    { id: 'gemini-9-medium', remaining_fraction: 'x' },
+  ] }] } } });
+  assert.deepEqual(perModel.windows.map(w => w.label), ['Gemini 3.8 Flash', 'Gemini 3.1 Pro', 'Claude Opus 5.5', 'gemini-9']);
+  assert.deepEqual(perModel.windows.map(w => w.group), perModel.windows.map(w => w.label));
+  assert.deepEqual(perModel.windows.map(w => w.remainingPercent), [40, 100, 90, null]);
+  assert.deepEqual(perModel.windows.map(w => w.resetsAt), [null, null, '2030-01-01T00:00:00.000Z', null]);
+  assert.ok(perModel.windows.every(w => w.minutes === null));
+  assert.match(perModel.message, /3 つに分かれ/);
+  assert.equal(antigravityQuota(payload([{ window: '5h', remaining_fraction: 1, reset_time: '1970-01-01T00:00:00Z' }])).windows[0].resetsAt, null);
+  t.ok('モデルごとのバケットは段を外した系統ごとに 1 行（残りの最小・最早のリセット）。1970-01-01 のリセットは不明', true);
+
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-agy-usage-'));
   const fake = path.resolve('tests/lib/fake-agy.mjs');
   let server, client;
