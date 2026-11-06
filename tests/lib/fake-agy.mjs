@@ -107,7 +107,9 @@ if (argv.includes("models")) {
   // 本物は起動のたびにログへ選ばれているモデルの表示名を書く（Pleiad はここから既定を読む）。
   // FAKE_AGY_DEFAULT_LABEL が空なら書かない（既定が分からない場合の再現）
   const logFile = flag("--log-file");
-  const label = process.env.FAKE_AGY_DEFAULT_LABEL ?? "Fake Flash (High)";
+  // FAKE_AGY_DEFAULT_LABEL_FILE があれば、その中身を既定にする（起動後に agy 側の既定が変わった場合の再現。tests/unit/server-agy-default-model.mjs）
+  const labelFile = process.env.FAKE_AGY_DEFAULT_LABEL_FILE;
+  const label = (labelFile && fs.existsSync(labelFile) ? fs.readFileSync(labelFile, "utf8").trim() : null) ?? process.env.FAKE_AGY_DEFAULT_LABEL ?? "Fake Flash (High)";
   if (logFile && label) fs.writeFileSync(logFile, `I0923 03:02:52.462073       1 model_config_manager.go:327] Propagating selected model override to backend: label="${label}"` + NL);
   process.exit(0);
 }
