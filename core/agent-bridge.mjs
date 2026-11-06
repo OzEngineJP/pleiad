@@ -15,12 +15,13 @@ const tool = (name, description, properties, required = []) => ({ name, descript
  * kinds は設定の作業の種類（{ id, name, desc }。利用者が直せるので、エージェントが書く id と説明はここから引く）。
  * desc が空の内蔵の種類は辞書の説明、辞書にも無ければ名前か id
  */
-export const kindList = (locale, kinds = DEFAULT_KINDS) => kinds.map(k => {
+export const kindDescription = (locale, k) => {
   const desc = k.desc || agentT(locale, `bridge.kinds.${k.id}`);
-  return `- ${k.id}: ${desc === `bridge.kinds.${k.id}` ? (k.name || k.id) : desc}`;
-}).join('\n');
+  return desc === `bridge.kinds.${k.id}` ? (k.name || k.id) : desc;
+};
+export const kindList = (locale, kinds = DEFAULT_KINDS) => kinds.map(k => `- ${k.id}: ${kindDescription(locale, k)}`).join('\n');
 const hostList = (locale, hosts) => hosts.map(h => (h.online ? h.name : `${h.name} (${agentT(locale, 'bridge.hostOffline')})`)).join(', ');
-const delegateDescription = (locale, hosts = [], kinds = DEFAULT_KINDS) => [agentT(locale, 'bridge.tools.ply_delegate'), agentT(locale, 'bridge.title'), agentT(locale, 'bridge.kindsIntro'), kindList(locale, kinds), agentT(locale, 'bridge.kindBoundaries'),
+const delegateDescription = (locale, hosts = [], kinds = DEFAULT_KINDS) => [agentT(locale, 'bridge.tools.ply_delegate'), agentT(locale, 'bridge.title'), agentT(locale, 'bridge.kindsIntro'), kindList(locale, kinds),
   ...(hosts.length ? [agentT(locale, 'bridge.hosts', { hosts: hostList(locale, hosts) })] : [])].join('\n');
 /**
  * ツールの定義。説明は会話の言語。名前と引数（inputSchema）は言語に依らない。

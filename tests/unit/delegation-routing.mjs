@@ -341,15 +341,13 @@ export default async function (t) {
   t.ok('判定のモデルの置き場は uses の judge:routing・サービスは openrouter', JUDGE_USE === 'judge:routing' && JUDGE_SERVICE === 'openrouter');
   const http = fakeFetch(() => ({ json: judgeAnswer({ diagnose: 0.49, choose: 0.31, long_procedure: 0.9, many_parts: 0.1, writes_shared: 0.02, security_gate: 0.18 }) }));
   const long = 'x'.repeat(TASK_LIMIT + 500);
-  const a = await askJudge({ kind: 'implement', kindDesc: '実装する作業', task: long, model: DEFAULT_JUDGE, key: KEY, fetch: http });
+  const a = await askJudge({ kind: '実装', task: long, model: DEFAULT_JUDGE, key: KEY, fetch: http });
   const sent = http.calls[0];
   t.ok('判定: decisions へ Noul 6 つ（v3 の文面と false 側）を送る', sent.url.endsWith('/alpha/decisions') && sent.body.model === DEFAULT_JUDGE
     && Object.keys(sent.body.questions).join() === SIGNALS.join() && sent.body.questions.diagnose.type === 'noul' && sent.body.questions.choose.criteria.false === 'The statement for choose is false for this task.', sent.url);
-  t.ok('判定: 送るのは kind・その説明・長さで切った依頼文だけ', sent.body.state.kind === 'implement' && sent.body.state.kind_description === '実装する作業'
-    && sent.body.state.task.length === TASK_LIMIT && Object.keys(sent.body.state).sort().join() === 'instructions,kind,kind_description,task'
+  t.ok('判定: 送るのは種類の名前・長さで切った依頼文と固定の判定指示だけ', sent.body.state.kind === '実装'
+    && sent.body.state.task.length === TASK_LIMIT && Object.keys(sent.body.state).sort().join() === 'instructions,kind,task'
     && sent.init.headers.Authorization === `Bearer ${KEY}` && sent.init.redirect === 'manual');
-  t.ok('判定: 説明が無ければ kind_description は送らない', (await (async () => { const f = fakeFetch(() => ({ json: judgeAnswer({}) })); await askJudge({ kind: 'review', task: 'x', model: DEFAULT_JUDGE, key: KEY, fetch: f });
-    return !Object.hasOwn(f.calls[0].body.state, 'kind_description'); })()));
   t.ok(`判定: はいの確率を ${DECISION_THRESHOLD} で真偽にする（どの手がかりも同じ線）`, a.signals.diagnose === false && a.signals.choose === false
     && a.signals.long_procedure === true && a.signals.security_gate === false && a.probabilities.diagnose === 0.49
     && (await askJudge({ kind: 'x', task: 'x', model: DEFAULT_JUDGE, key: KEY, fetch: fakeFetch(() => ({ json: judgeAnswer({ diagnose: 0.5 }) })) })).signals.diagnose === true);
@@ -366,7 +364,7 @@ export default async function (t) {
   t.ok('判定しない（judge: none）なら送らず judge_none', none.judge === 'none' && none.signals === null && none.fallback === 'judge_none' && judgeOk.calls.length === 0);
   const noKeys = await judgeDifficulty({ kind: 'review', task: 'x', judge: DEFAULT_JUDGE, keyOf: keys({}), fetch: judgeOk });
   t.ok('キーが無ければ外へは何も送らず no_key（難しさは mid）', noKeys.judge === 'none' && noKeys.fallback === 'no_key' && judgeOk.calls.length === 0);
-  const ok = await judgeDifficulty({ kind: 'review', kindDesc: 'レビュー', task: 'x', judge: DEFAULT_JUDGE, keyOf: keys({ openrouter: KEY }), fetch: judgeOk });
+  const ok = await judgeDifficulty({ kind: 'review', task: 'x', judge: DEFAULT_JUDGE, keyOf: keys({ openrouter: KEY }), fetch: judgeOk });
   t.ok('答えが返れば judge はモデルの id・確率も残す', ok.judge === DEFAULT_JUDGE && ok.signals.diagnose === true && ok.probabilities.diagnose === 1 && ok.fallback === null && judgeOk.calls.length === 1);
   const failing = fakeFetch(() => ({ status: 503, json: {} }));
   const fb = await judgeDifficulty({ kind: 'review', task: 'x', judge: DEFAULT_JUDGE, keyOf: keys({ openrouter: KEY }), fetch: failing });

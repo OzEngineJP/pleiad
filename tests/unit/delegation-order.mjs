@@ -68,6 +68,7 @@ export default async function (t) {
   // 実際の共通メニューを開き、無効な項目を飛ばしてフォーカスする。
   const menuSaved = { body: document.body, add: document.addEventListener, remove: document.removeEventListener,
     active: document.activeElement, query: N.prototype.querySelectorAll, rect: N.prototype.getBoundingClientRect, focus: N.prototype.focus,
+    closest: N.prototype.closest,
     width: globalThis.innerWidth, height: globalThis.innerHeight };
   const listeners = new Map();
   document.body = el('div');
@@ -75,8 +76,11 @@ export default async function (t) {
   document.removeEventListener = type => listeners.delete(type);
   N.prototype.focus = function () { if (!this.disabled) document.activeElement = this; };
   N.prototype.getBoundingClientRect = () => ({ width: 200, height: 180 });
+  N.prototype.closest = function (selector) { for (let node = this; node; node = node.parent) if (node.matches(selector)) return node; return null; };
   N.prototype.querySelectorAll = function (selector) {
-    return selector === ':scope > button, :scope > input' ? this.children.filter(row => ['BUTTON', 'INPUT'].includes(row.tagName)) : menuSaved.query.call(this, selector);
+    return selector === ':scope > button, :scope > input, :scope > .menu-row > .li'
+      ? this.children.flatMap(row => row.matches('.menu-row') ? row.children.filter(c => c.matches('.li')) : ['BUTTON', 'INPUT'].includes(row.tagName) ? [row] : [])
+      : menuSaved.query.call(this, selector);
   };
   globalThis.innerWidth = 800; globalThis.innerHeight = 600;
   const contextMenu = createContextMenu();
@@ -88,16 +92,48 @@ export default async function (t) {
       { label: 'down', onClick: () => chosen++ }, { label: 'last', onClick: () => chosen++ },
     ]);
     const focused = () => document.activeElement.textContent;
-    const key = key => listeners.get('keydown')({ key, target: document.activeElement, preventDefault() {} });
+    const key = key => listeners.get('keydown')({ key, target: document.activeElement, preventDefault() {}, stopImmediatePropagation() {} });
     t.ok('先頭が無効の移動メニューは、最初の有効な項目にフォーカスする', focused() === 'down');
     key('ArrowDown'); t.ok('矢印で無効な項目を飛ばし、有効な項目だけを移動する', focused() === 'last');
     key('Home'); t.ok('Home は無効な先頭項目を飛ばし、項目確定前は保存しない', focused() === 'down' && chosen === 0);
     key('End'); document.activeElement.onclick();
     t.ok('確定した項目だけを一度呼び、元の取っ手へ戻る', chosen === 1 && document.activeElement === opener);
+    contextMenu.open(20, 30, [
+      { label: 'level 1', onClick: () => chosen++, action: { label: 'level 1 actions', sub: () => [{ label: 'delete', danger: true, onClick: () => chosen += 10 }] } },
+      { label: 'add', onClick: () => chosen++ },
+    ]);
+    const panel = document.body.lastChild, group = panel.querySelector('.menu-row');
+    const [row, action] = group.children;
+    Object.defineProperty(row, 'nextElementSibling', { value: action });
+    Object.defineProperty(action, 'previousElementSibling', { value: row });
+    t.ok('レベル行の選択と操作ボタンは別々に名前を持つ', document.activeElement === row && action.getAttribute('aria-label') === 'level 1 actions');
+    key('ArrowRight');
+    t.ok('右矢印で選択を変えずに行の操作へ届く', document.activeElement === action && chosen === 1);
+    action.onclick();
+    t.ok('行の操作は見出しのない子メニューを開く', document.body.children.length === 2 && !document.body.lastChild.querySelector('.head') && document.activeElement.classList.contains('danger'));
+    key('Escape');
+    t.ok('Esc は子だけを閉じて操作ボタンへ戻る', document.body.children.length === 1 && document.activeElement === action);
+    key('ArrowDown');
+    t.ok('操作ボタンから下矢印で次の行へ届く', focused() === 'add');
+    key('Home'); row.onclick();
+    t.ok('レベル行は操作を開かず選択し、親メニューを閉じる', chosen === 2 && document.body.children.length === 0 && document.activeElement === opener);
+    let moves = 0, currentOpener = opener, update;
+    const levels = () => [{ key: 'level-id', label: `level ${moves + 1}`, action: {
+      label: `level ${moves + 1} actions`, sub: () => [{ label: 'up', keepOpen: true, onClick: () => {
+        moves++; currentOpener = el('button'); currentOpener.isConnected = true; update(levels());
+      } }],
+    } }];
+    update = contextMenu.open(20, 30, levels(), null, { opener: () => currentOpener });
+    document.body.lastChild.querySelector('.menu-action').onclick();
+    document.activeElement.onclick(); document.activeElement.onclick();
+    t.ok('移動後に名前が変わっても同じ行の子メニューとフォーカスを保ち、続けて移動できる', moves === 2 && document.body.children.length === 2 && focused() === 'up' && document.body.firstChild.querySelector('.menu-action').getAttribute('aria-expanded') === 'true');
+    key('Escape'); key('Escape');
+    t.ok('描き直された開き元にも Esc で戻れる', document.body.children.length === 0 && document.activeElement === currentOpener && currentOpener !== opener);
   } finally {
     contextMenu.close();
     document.body = menuSaved.body; document.addEventListener = menuSaved.add; document.removeEventListener = menuSaved.remove;
     document.activeElement = menuSaved.active; N.prototype.querySelectorAll = menuSaved.query; N.prototype.getBoundingClientRect = menuSaved.rect; N.prototype.focus = menuSaved.focus;
+    if (menuSaved.closest) N.prototype.closest = menuSaved.closest; else delete N.prototype.closest;
     for (const [key, value] of [['innerWidth', menuSaved.width], ['innerHeight', menuSaved.height]]) {
       if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
     }

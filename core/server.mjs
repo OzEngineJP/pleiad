@@ -16,7 +16,7 @@ import { historyGaveUp, readWithRetry, transientStorageError } from './history-r
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createSettingApprovals } from './setting-approvals.mjs';
 import { createWaitingCards } from './waiting-cards.mjs';
-import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
+import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList, kindDescription } from './agent-bridge.mjs';
 import { createComputerBridge, COMPUTER_MCP_PATH } from './computer-bridge.mjs';
 import { createComputerLock } from './computer-use/lock.mjs';
 import { createShots as createComputerShots } from './computer-use/shots.mjs';
@@ -1753,10 +1753,11 @@ async function routeDelegation(args, lng, cwd) {
   // 依頼文は判定のモデルへ送る前に確かめる（agentTasks と同じ上限）
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
   const kindEntry = kindAt(settings, args.kind);
-  const kindDict = agentT(lng, `bridge.kinds.${args.kind}`);
-  const kindDesc = kindEntry?.desc || (kindDict === `bridge.kinds.${args.kind}` ? '' : kindDict) || kindEntry?.name || '';
+  const row = settings.table[args.kind];
+  const sameLevel = row.length === 3 && row.every(level => level === row[0]);
   const [judged] = await Promise.all([
-    judgeDifficulty({ kind: args.kind, kindDesc, task: args.task, judge: settings.judge, endpointOf: routingEndpoint }),
+    sameLevel ? { judge: 'none', signals: null, probabilities: null, fallback: 'same_level' }
+      : judgeDifficulty({ kind: kindEntry?.name || args.kind, task: args.task, judge: settings.judge, endpointOf: routingEndpoint }),
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
@@ -1830,6 +1831,7 @@ async function delegationRoutingState() {
   const conversationEfforts = Object.fromEntries(listBackends().map(b => [b.id, prefs.backends?.[b.id]?.effort ?? '']));
   const credit = await apiKeys.plusCredit().catch(() => null);
   return { settings, defaults: normalizeSettings({}), difficulties: DIFFICULTIES, signals: SIGNALS, conversationEfforts,
+    kindDescriptions: Object.fromEntries(settings.kinds.map(k => [k.id, kindDescription(currentLocale(), k)])),
     key: await keyChoiceInfo(JUDGE_USE),
     // 中継が credit_exhausted を返した月の状態（{ resetAt } か null。仮想のキー plus の判定を止めている間だけ値がある）
     limit: credit,

@@ -99,10 +99,11 @@ export default async function (t) {
     return state();
   };
   const root = el('div'), tab = el('button');
-  const saved = { getElementById: document.getElementById, addEventListener: document.addEventListener, removeEventListener: document.removeEventListener, activeElement: document.activeElement, focus: N.prototype.focus };
+  const saved = { getElementById: document.getElementById, addEventListener: document.addEventListener, removeEventListener: document.removeEventListener, activeElement: document.activeElement, focus: N.prototype.focus, rect: N.prototype.getBoundingClientRect };
   document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
   document.addEventListener = () => {}; document.removeEventListener = () => {};
   N.prototype.focus = function () { if (!this.disabled) document.activeElement = this; };
+  N.prototype.getBoundingClientRect = () => ({ left: 0, bottom: 0 });
   try {
     const ui = setupDelegationSettings({ cmd, page() {},
       showMenu: (_x, _y, items) => {   // 見出しの pill のメニューを root の中へ出す身代わり（context-menu は使わない）
@@ -123,7 +124,7 @@ export default async function (t) {
     t.ok('強さを持たないモデルは選択を出さず「調整なし」（警告は出さない）', effortOf(rows1[1]).textContent.includes('調整なし')
       && !effortOf(rows1[1]).querySelector('button') && !root.textContent.includes('⚠'));
     // 見出しの pill でレベル 2 へ
-    head().querySelector('.ef-btn').onclick({ currentTarget: { getBoundingClientRect: () => ({ left: 0, bottom: 0 }) } });
+    head().querySelector('.ef-btn').onclick();
     root.querySelectorAll('.li').find(b => b.querySelector('.lbl').textContent === 'レベル 2').onclick();
     const rows = tierOf().querySelectorAll('.rt-cand-row');
     t.ok('レベル 2 の候補の行の右に強さの欄。選べる候補は「思考 medium レベルの既定」', rows.length === 3 && effortOf(rows[2]).textContent === '思考mediumレベルの既定');
@@ -180,5 +181,7 @@ export default async function (t) {
     document.addEventListener = saved.addEventListener; document.removeEventListener = saved.removeEventListener;
     document.activeElement = saved.activeElement;
     N.prototype.focus = saved.focus;
+    if (saved.rect) N.prototype.getBoundingClientRect = saved.rect;
+    else delete N.prototype.getBoundingClientRect;
   }
 }

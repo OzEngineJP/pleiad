@@ -6,7 +6,7 @@
 //   選ぶまでは何も送らない。未登録ならその場で登録でき（登録先は API キー）、キーは返ってこない（hasKey と keyRef だけ）。送る内容の 1 行
 // - 「詳しい設定」（details）: 見出しのプルダウンで選んだレベルの候補（並べ替え・追加・外す、各候補の今の使用量と使えるかどうか、
 //   レベルの既定と候補ごとの思考の強さ。承認済み 2026-10-08・ADR 0164）。レベルの名前の変更・並べ替え・追加・削除（移し先つきの
-//   その場の確認）は見出しの ⋯ メニュー（承認済み 2026-11、モック temporary/mockups/delegation-routing-editable-v2.html）。
+//   その場の確認）はプルダウンの各レベルの行の ⋯ メニュー（docs/design-system.md「設定 › 委譲」）。
 //   作業の種類 × 難しさの表（種類の追加・名前と AI に渡す説明の編集・削除）・使用量の方針。
 //   アカウントを登録したエージェントの候補は「エージェント・モデル・アカウント」の単位（「Sonnet · personal」）で、
 //   追加はエージェント ▸ モデル ▸ アカウント（承認済み 2026-10-24・ADR 0264）
@@ -87,9 +87,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const pending = [];
   let saving = false, refreshSerial = 0, orderFocus = '', advancedDirty = false;
   // レベルと作業の種類の編集の状態。描き直しても続く（selLv: 候補を出しているレベル）
-  const ui = { selLv: null, renLv: false, delLv: null, delTo: null, openKind: null, delKind: null, reopenMenu: '' };
+  const ui = { selLv: null, renLv: false, delLv: null, delTo: null, openKind: null, delKind: null };
   // 自動選択の面で押した部品（描き直したときにフォーカスを戻す）
-  let judgeFocus = '';
+  let judgeFocus = '', levelMenu = null;
   const names = { backend: id => labelOf(id), model: (backend, model) => modelName(backend, model) || model };
 
   // ---- 設定の中のレベル・作業の種類 ----
@@ -256,18 +256,21 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   /** 「段の既定」と同じ pill + メニュー。focusKey で描き直しの後にフォーカスを戻す */
   function pillMenu({ shown, items, title, focusKey = '', ariaLabel = '', ariaDescribedBy = '' }) {
     const b = button('', e => {
+      b.focus({ preventScroll: true });
       const r = e.currentTarget.getBoundingClientRect();
-      showMenu(r.left, r.bottom + 4, items, title);
+      showMenu(r.left, r.bottom + 4, items, title, { onClose: () => b.setAttribute('aria-expanded', 'false') });
+      b.setAttribute('aria-expanded', 'true');
     }, 'ef-btn');
     b.dataset.focusKey = focusKey;
     b.setAttribute('aria-haspopup', 'menu');
     if (ariaLabel) b.setAttribute('aria-label', ariaLabel);
     if (ariaDescribedBy) b.setAttribute('aria-describedby', ariaDescribedBy);
     b.append(el('span', 'ef-v', shown), chev());
+    b.setAttribute('aria-expanded', 'false');
     return b;
   }
   const chev = () => {
-    const s = el('span', 'chev');
+    const s = el('span', 'ef-chev');
     s.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     return s;
   };
@@ -408,11 +411,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     out.push(policy);
     advancedBody.replaceChildren(...out);
     if (focused) [...advancedBody.querySelectorAll('button')].find(b => b.dataset?.fk === focused)?.focus({ preventScroll: true });
-    // 移動の続け押し：メニューを押した ⋯ をもう一度開く（メニューの項目は閉じるときにフォーカスが戻る）
-    if (ui.reopenMenu) {
-      const key = ui.reopenMenu; ui.reopenMenu = '';
-      const anchor = advancedBody.querySelector(`[data-fk="${key}"]`);
-      if (anchor?.dataset.lvMenu) openLevelMenu(anchor);
+    if (levelMenu) {
+      advancedBody.querySelector('[data-fk="lvsel"]')?.setAttribute('aria-expanded', 'true');
+      levelMenu(levelSelectItems());
     }
   }
   function stateOf(candidate) { return data.candidates.find(c => c.candidate === candidate) ?? null; }
@@ -488,13 +489,13 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     }
   }
 
-  // ---- レベル（候補を出しているレベル + ⋯ の操作）
-  /** レベルの候補のブロック。見出しは「選ぶ pill + ⋯（名前を変更・移動・追加・削除）+ レベルの既定」 */
+  // ---- レベル（選択肢の行ごとの ⋯ で名前の変更・移動・削除）
+  /** レベルの候補のブロック。見出しは「選ぶ pill + レベルの既定」 */
   function levelBlock(lv) {
     const block = el('div', 'rt-tier');
     if (lv) block.dataset.tier = lv;
     const list = data.settings.tiers[lv] ?? [];
-    const i = levelAt(lv), n = levels().length;
+    const i = levelAt(lv);
     const head = el('div', 'rt-tier-head');
     if (ui.renLv && lv) {
       // 名前の変更：見出しの pill と同じ大きさの入力欄。Enter / 外すで確定（空なら変えない）、Esc でやめる
@@ -510,26 +511,23 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
           const next = levels().map(l => l.id === lv ? { ...l, name: v } : l);
           ui.renLv = false;
           saveLevels(next);
-        } else { ui.renLv = false; paintAdvanced(); }
+        } else ui.renLv = false;
+        paintAdvanced();
+        advancedBody.querySelector('[data-fk="lvsel"]')?.focus({ preventScroll: true });
       };
-      input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); commit(true); } else if (e.key === 'Escape') { e.preventDefault(); commit(false); } };
+      input.onkeydown = e => {
+        if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); commit(e.key === 'Enter'); }
+      };
       input.onblur = () => commit(true);
       head.append(input);
       queueMicrotask(() => { input.focus({ preventScroll: true }); input.select(); });
     } else if (lv) {
-      const sel = pillMenu({ shown: levelName(lv), focusKey: 'lvsel', ariaLabel: t('routing.settings.levelSelect', { name: levelName(lv) }),
-        title: t('routing.settings.levelMenuTitle'),
-        items: levels().map((l, j) => ({ label: l.name || t('routing.settings.levelName', { n: j + 1 }), hint: String(j + 1), checked: l.id === lv,
-          onClick: () => { ui.selLv = l.id; ui.delLv = null; paintAdvanced(); advancedBody.querySelector('[data-focus-key="lvsel"]')?.focus({ preventScroll: true }); } })) });
+      const sel = pillMenu({ shown: levelName(lv), focusKey: 'lvsel', ariaLabel: t('routing.settings.levelSelect', { name: levelName(lv) }) });
+      sel.dataset.fk = 'lvsel';
+      sel.onclick = () => openLevelSelect(sel);
       sel.dataset.lvSel = '1';
       head.append(sel);
-      const dots = button('', e => openLevelMenu(e.currentTarget), 'btn btn-icon rt-move');
-      dots.dataset.fk = 'lvmenu'; dots.dataset.lvMenu = '1';
-      dots.setAttribute('aria-label', t('routing.settings.levelActions', { name: levelName(lv) }));
-      dots.setAttribute('aria-haspopup', 'menu');
-      dots.title = dots.getAttribute('aria-label');
-      dots.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
-      head.append(dots, levelEffortSelect(lv, list));
+      head.append(levelEffortSelect(lv, list));
     } else {
       head.append(el('span', 'rt-tier-name', t('routing.settings.levelEmpty')));
     }
@@ -569,34 +567,45 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     block.append(add);
     return block;
   }
-  /** ⋯ のメニュー：名前を変更・上へ・下へ・＋レベルを追加・削除…（最後の 1 つは消せない） */
-  function openLevelMenu(anchor) {
-    const lv = selLevel();
-    const i = levelAt(lv), n = levels().length;
+  /** 一覧の行で選択、右の ⋯ でそのレベルを編集する。追加は一覧の末尾 */
+  function openLevelSelect(anchor) {
     const r = anchor.getBoundingClientRect();
+    anchor.focus({ preventScroll: true });
     anchor.setAttribute('aria-expanded', 'true');
-    showMenu(r.left, r.bottom + 4, [
-      { label: t('routing.settings.levelRename'), disabled: !lv, onClick: () => { ui.renLv = true; ui.delLv = null; paintAdvanced(); } },
-      { label: t('routing.settings.levelUp'), disabled: !lv || i <= 0, onClick: () => moveLevel(-1) },
-      { label: t('routing.settings.levelDown'), disabled: !lv || i < 0 || i >= n - 1, onClick: () => moveLevel(1) },
-      { sep: true },
-      { label: t('routing.settings.levelAdd'), disabled: n >= LEVELS_MAX, onClick: () => addLevel() },
+    levelMenu = showMenu(r.left, r.bottom + 4, levelSelectItems(), null, {
+      opener: () => advancedBody.querySelector('[data-fk="lvsel"]'),
+      onClose: () => { levelMenu = null; advancedBody.querySelector('[data-fk="lvsel"]')?.setAttribute('aria-expanded', 'false'); },
+    });
+  }
+  function levelSelectItems() {
+    return [
+      ...levels().map(l => ({ key: l.id, label: levelName(l.id), checked: l.id === selLevel(),
+        onClick: () => { ui.selLv = l.id; ui.delLv = null; paintAdvanced(); advancedBody.querySelector('[data-fk="lvsel"]')?.focus({ preventScroll: true }); },
+        action: { label: t('routing.settings.levelActions', { name: levelName(l.id) }), sub: () => levelActions(l.id) } })),
+      { sep: true }, { label: t('routing.settings.levelAdd'), disabled: levels().length >= LEVELS_MAX, onClick: addLevel },
+    ];
+  }
+  function levelActions(lv) {
+    const i = levelAt(lv), n = levels().length;
+    return [
+      { label: t('routing.settings.levelRename'), onClick: () => { ui.selLv = lv; ui.renLv = true; ui.delLv = null; paintAdvanced(); } },
+      { label: t('routing.settings.levelUp'), disabled: i <= 0, keepOpen: true, onClick: () => moveLevel(lv, -1) },
+      { label: t('routing.settings.levelDown'), disabled: i >= n - 1, keepOpen: true, onClick: () => moveLevel(lv, 1) },
       { sep: true },
       { label: t('routing.settings.levelDelete'), disabled: !lv || n < 2, danger: true, onClick: () => {
-        ui.delLv = lv; ui.renLv = false;
+        ui.selLv = lv; ui.delLv = lv; ui.renLv = false;
         ui.delTo = (levels()[i + 1] ?? levels()[i - 1])?.id ?? null;
         paintAdvanced();
         advancedBody.querySelector('.mp-confirm .btn')?.focus({ preventScroll: true });
       } },
-    ], t('routing.settings.levelActionsTitle'), { onClose: () => anchor.setAttribute('aria-expanded', 'false') });
+    ];
   }
-  function moveLevel(d) {
-    const lv = selLevel(), i = levelAt(lv), j = i + d;
+  function moveLevel(lv, d) {
+    const i = levelAt(lv), j = i + d;
     if (i < 0 || j < 0 || j >= levels().length) return;
     const next = [...levels()];
     const [x] = next.splice(i, 1); next.splice(j, 0, x);
     announceOrder(t('routing.settings.levelMoved', { name: levelName(lv), position: j + 1 }));
-    ui.reopenMenu = 'lvmenu';
     saveLevels(next);
   }
   function addLevel() {
@@ -631,7 +640,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       box.append(line);
     }
     const acts = el('span', 'acts');
-    acts.append(button(t('routing.settings.delCancel'), () => { ui.delLv = null; paintAdvanced(); advancedBody.querySelector('[data-fk="lvmenu"]')?.focus({ preventScroll: true }); }),
+    acts.append(button(t('routing.settings.delCancel'), () => { ui.delLv = null; paintAdvanced(); advancedBody.querySelector('[data-fk="lvsel"]')?.focus({ preventScroll: true }); }),
       button(t('routing.settings.delYes'), () => deleteLevel(lv, to), 'btn danger'));
     box.append(acts);
     return box;
@@ -782,11 +791,11 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       saveKinds(kinds().map(x => x.id === k.id ? { ...x, name: v } : x));
     };
     nameField.append(nameIn);
-    // AI に渡す説明（判定のモデルへ送る。空なら辞書の説明・名前）。字数は打つたびに足す
+    // 委譲を依頼する AI に渡す説明（空なら辞書の説明・名前）。字数は打つたびに足す
     const descField = el('label', 'mp-field');
     descField.append(el('span', null, t('routing.settings.kindDesc')));
     const area = el('textarea');
-    area.rows = 2; area.maxLength = KIND_DESC_MAX; area.value = k.desc ?? '';
+    area.rows = 2; area.maxLength = KIND_DESC_MAX; area.value = k.desc || data.kindDescriptions?.[k.id] || '';
     area.dataset.fk = `kdesc:${k.id}`;
     const countId = `rt-kind-cnt-${k.id}`;
     area.setAttribute('aria-describedby', countId);

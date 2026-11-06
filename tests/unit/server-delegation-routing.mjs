@@ -69,6 +69,8 @@ export default async function (t) {
     t.ok('設定は既定値（有効）で、9 種類・レベル・判定のモデルを返す', state.settings.enabled === true && state.settings.kinds.length === 9
       && state.settings.levels.map(l => l.id).join() === 't1,t2,t3,t4' && state.settings.judge === 'perplexity/pplx-decider-v1.2'
       && state.defaults.judge === 'perplexity/pplx-decider-v1.2' && !Object.hasOwn(state.settings.tiers, 'tv'));
+    t.ok('編集画面に、依頼元の AI が使う既定の説明を返す', state.kindDescriptions.implement.includes('仕様')
+      && state.kindDescriptions.implement.includes('形') && Object.values(state.kindDescriptions).every(desc => desc.length > 0 && desc.length <= 300));
     const gem = state.candidates.find(x => x.candidate === 'antigravity:gemini-3.8-flash-high');
     t.ok('候補ごとに今の使用量と使えるかどうかを返す（agy の使用量を定期的に取っている）', gem?.usable === true && gem.windows.length === 2 && gem.checkedAt
       && state.candidates.find(x => x.candidate === 'claude:opus').reason === 'unavailable', JSON.stringify(gem));
@@ -104,7 +106,20 @@ export default async function (t) {
       && Object.keys(r.signals).length === 6 && r.probabilities.diagnose === 0.01 && r.usageAt, auto.text.slice(0, 300));
     const sent = jevCalls.at(-1);
     t.ok('判定のモデルへは kind と依頼文だけを、キーを付けて送る', sent.url === '/api/alpha/decisions' && sent.auth === `Bearer ${KEY}` && sent.body.state.kind === 'trivial'
-      && sent.body.state.task === 'agy-auto-task' && !JSON.stringify(sent.body).includes('usage'));
+      && sent.body.state.task === 'agy-auto-task' && Object.keys(sent.body.state).sort().join() === 'instructions,kind,task');
+    // 名前は判定に使うが、種類の説明は依頼元だけに渡す。
+    await c.cmd('setDelegationRouting', { settings: { kinds: state.settings.kinds.map(k => k.id === 'trivial' ? { ...k, name: '短い作業', desc: 'PRIVATE_KIND_DESCRIPTION' } : k) } });
+    await call(sid, { kind: 'trivial', task: 'agy-named-kind' });
+    t.ok('判定には種類の名前を送り、説明を送らない', jevCalls.at(-1).body.state.kind === '短い作業'
+      && !JSON.stringify(jevCalls.at(-1).body).includes('PRIVATE_KIND_DESCRIPTION'));
+    const beforeSkip = jevCalls.length;
+    await c.cmd('setDelegationRouting', { settings: { table: { trivial: ['t1', 't1', 't1'] } } });
+    const skipped = await call(sid, { kind: 'trivial', task: 'agy-same-level' });
+    t.ok('3 つのレベルが同じなら判定を送らず、理由と選んだレベルを記録する', !skipped.isError && jevCalls.length === beforeSkip
+      && skipped.data.routing.judge === 'none' && skipped.data.routing.fallback === 'same_level' && skipped.data.routing.signals === null
+      && skipped.data.routing.probabilities === null && skipped.data.routing.baseTier === 't1');
+    t.ok('判定の省略理由は保存したタスクにも残る', (await c.cmd('agentTasks')).find(x => x.taskId === skipped.data.taskId)?.routing?.fallback === 'same_level');
+    await c.cmd('setDelegationRouting', { settings: { kinds: null, table: null } });
     const beforeFail = jevCalls.length;
     const failed = await call(sid, { kind: 'trivial', task: 'agy-auto FAIL' });
     t.ok('Jev が失敗したら mid で続け、理由を残す（http_500）', !failed.isError && failed.data.routing.fallback === 'http_500' && failed.data.routing.difficulty === 'mid');

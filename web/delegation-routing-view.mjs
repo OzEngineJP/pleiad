@@ -108,8 +108,8 @@ export function routingLine(routing, names = defaultNames) {
     const head = t('routing.line.pinned', { kind: kindText(routing.kind, routing.kindName), target: targetText(routing.target, names) });
     return [head, ...(routing.selectedWithLowHeadroom ? [lowHeadroomText(routing.selectedWithLowHeadroom)] : []), ...changed].join(t('routing.line.join'));
   }
-  if (changed.length) return [t('routing.line.head', { kind: kindText(routing.kind, routing.kindName), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) }), ...changed].join(t('routing.line.join'));
-  const head = t('routing.line.head', { kind: kindText(routing.kind, routing.kindName), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
+  const head = t(routing.fallback === 'same_level' ? 'routing.line.pinned' : 'routing.line.head', { kind: kindText(routing.kind, routing.kindName), difficulty: difficultyText(routing.difficulty), target: targetText(routing.target, names) });
+  if (changed.length) return [head, ...changed].join(t('routing.line.join'));
   const notes = [];
   const low = routing.selectedWithLowHeadroom;
   if (low) notes.push(lowHeadroomText(low));
@@ -128,6 +128,7 @@ function lowHeadroomText(low) {
 /** 難しさを決めたモデルの一行（どのモデルの答えを使ったか・使えなかった理由） */
 export function judgeLine(routing) {
   if (!routing) return '';
+  if (routing.fallback === 'same_level') return t('routing.detail.judgeSameLevel');
   if (!routing.judge || routing.judge === 'none') {
     return !routing.fallback || routing.fallback === 'judge_none' ? t('routing.detail.judgeNone')
       : t('routing.detail.judgeUnavailable', { reason: fallbackText(routing.fallback) });
@@ -389,9 +390,10 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
   root.setAttribute('aria-label', t('routing.detail.label'));
   const facts = el('dl', 'rt-facts');
   const yes = yesSignals(routing);
-  facts.append(fact(t('routing.detail.kind'), kindText(routing.kind)), fact(t('routing.detail.difficulty'), difficultyText(routing.difficulty)),
-    fact(t('routing.detail.tier'), tierLine(routing)), fact(t('routing.detail.judge'), judgeLine(routing)),
-    fact(t('routing.detail.signals'), yes.length ? fmt.list(yes) : t('routing.detail.noSignals')));
+  facts.append(fact(t('routing.detail.kind'), kindText(routing.kind, routing.kindName)));
+  if (routing.fallback !== 'same_level') facts.append(fact(t('routing.detail.difficulty'), difficultyText(routing.difficulty)));
+  facts.append(fact(t('routing.detail.tier'), tierLine(routing)), fact(t('routing.detail.judge'), judgeLine(routing)));
+  if (routing.fallback !== 'same_level') facts.append(fact(t('routing.detail.signals'), yes.length ? fmt.list(yes) : t('routing.detail.noSignals')));
   const effort = effortLine(routing);
   if (effort) facts.append(fact(t('routing.detail.effort'), effort));
   const threshold = compactionLine(compaction);

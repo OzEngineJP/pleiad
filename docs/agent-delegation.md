@@ -74,7 +74,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 **流れ**（`backend` が無いとき。`core/server.mjs` の `routeDelegation`。選んだ後は、書いた `backend` と同じく承認の強さの判定・承認カードを通る）:
 
 1. **難しさを決めるモデルは 1 つ。** 設定の `judge`（2026-11-06、[ADR 0291](adr/0291-delegation-routing-user-levels.md)。前の版の種類ごとの自動選択 `judgeByKind` と「Jev が迷ったら Qwen」は廃止）。`none` なら難しさはいつも `mid`。
-2. **難しさの手がかりを得る。** 判定のモデルへ送るのは `kind`・その説明（`desc`。空なら辞書の説明）・依頼文（`task`。8,000 文字で切る）だけ。`context`・使用量・振り分けの表・会話の記録は送らない。答えは 6 つの手がかりの真偽。
+2. **難しさの手がかりを得る。** 作業の種類の低・中・高がすべて同じレベルなら判定を呼ばず、`judge: 'none'`・`fallback: 'same_level'` を記録する。それ以外では判定のモデルへ `kind` の名前（名前が空なら id）・依頼文（`task`。8,000 文字で切る）と固定の判定指示を送る。種類の説明・`context`・使用量・振り分けの表・会話の記録は送らない。答えは 6 つの手がかりの真偽。
    - 既定は OpenRouter `POST https://openrouter.ai/api/alpha/decisions`、`perplexity/pplx-decider-v1.2`、Noul 6 つ。はいの確率はすべて 0.5 の閾値で真偽にする（`DECISION_THRESHOLD`。前の版の手がかりごとの閾値は廃止）。問いの文面（英語）は `core/delegation-judges.mjs` の `QUESTIONS`。Noul の false 側は「The statement for <id> is false for this task.」。
    - 時間切れは 1 回 3 秒（Pleiad Plus 経由は 8 秒）。判定が失敗・使えなければ別のモデルは試さず難しさ `mid` で続ける。`fallback` に理由のコード: `no_key` `key_unreadable` `timeout` `network` `http_<status>` `bad_response` `judge_none`（判定しない設定）、Plus 経由では `rate_limited` `credit_exhausted` `not_plus` `account_disabled` `unauthenticated` `upstream_error` など中継の `code`。
 3. **難しさの規則（v3・規則 A）。** `security_gate` → `high`。それ以外は `diagnose` `choose` `long_procedure` `many_parts` のはいの数 0 → `low`、1〜2 → `mid`、3〜4 → `high`。`writes_shared` がはいで `low` なら `mid`。
@@ -151,7 +151,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
   "judge": "perplexity/pplx-decider-v1.2",   // 難しさを決めるモデル 1 つ。"none" は判定しない
   "avoidPercent": 80, "paceLimit": 1.2,
   "levels": [{ "id": "t1", "name": "" }, { "id": "t2", "name": "" }, { "id": "t3", "name": "" }, { "id": "t4", "name": "" }],  // 利用者が足せる・名前・順。弱い方から強い方
-  "kinds": [{ "id": "trivial", "name": "", "desc": "" }, …],   // 利用者が足せる。desc は判定のモデルへ渡す説明
+  "kinds": [{ "id": "trivial", "name": "", "desc": "" }, …],   // 利用者が足せる。desc は依頼元の AI へ渡す説明（判定のモデルへは送らない）
   "tiers": { "t1": ["antigravity:gemini-3.8-flash-high", "claude:haiku"], … },   // 候補は "backend:model" か "backend@acct-…:model"
   "table": { "trivial": ["t1", "t1", "t2"], … },                               // low・mid・high のレベル
   "efforts": { "t1": { "*": "low" }, "t2": { "*": "medium" }, "t3": { "*": "medium", "claude:sonnet": "high" }, "t4": { "*": "high" } } } // 子の思考の強さ

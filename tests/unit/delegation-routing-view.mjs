@@ -49,7 +49,11 @@ async function japaneseCases(t) {
   assert.equal(judgeLine({ ...routing, judge: 'qwen', fallback: 'http_503' }), 'Qwen · Jev: HTTP 503');
   assert.equal(judgeLine({ ...routing, judge: 'jev', fallback: 'timeout' }), 'Jev · Qwen: 時間切れ');
   assert.equal(judgeLine({ ...routing, judge: 'qwen', escalated: true }), 'Qwen（Jev が迷ったので聞き直した）');
-  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'judge_none' }), '自動選択しない種類（難しさは中）');
+  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'judge_none' }), '判定しない（難しさは中）');
+  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'same_level' }), '難しさによらず同じレベルのため、判定を省略');
+  const sameLevel = { ...routing, judge: 'none', fallback: 'same_level', skipped: [] };
+  assert.equal(routingLine(sameLevel, names), '実装 → Codex gpt-6-sol');
+  assert.ok(!routingDetail(sameLevel, { names }).textContent.includes('難しさ中'), '判定を省略した会話に難しさを判定したような表示を出さない');
   assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'no_key' }), '自動選択できなかった: キーが無い（難しさは中）');
   assert.equal(fallbackText('http_503'), 'HTTP 503');
   assert.equal(fallbackText('something_new'), 'something_new', '知らない理由はコードのまま');
