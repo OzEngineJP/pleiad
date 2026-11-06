@@ -873,6 +873,8 @@ const SUITES = [
   './unit/pages-listeners.mjs',
 
   // --- A1 映像 ---
+  // 映像の返事ごとの 1 枚と 7 段（ADR 0294）: 見る人ごとの ack・印の時間 S・段の上下・still・stale・lag（偽の Chrome・偽の見る人 2 つ）
+  './unit/screencast-pacing.mjs',
 
   // --- A2 ページの Cookie と中継の範囲 ---
 

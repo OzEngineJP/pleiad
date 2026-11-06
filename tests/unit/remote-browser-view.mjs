@@ -8,7 +8,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { createScreencastHub, screencastCommand, parentPortScreencast, QUALITY } from '../../core/browser-screencast.mjs';
+import { createScreencastHub, screencastCommand, parentPortScreencast, SCREENCAST_TIERS } from '../../core/browser-screencast.mjs';
 import { COMMANDS, SCREENCAST } from '../../core/protocol.mjs';
 import { framesPerSecond, panelStateOf } from '../../web/remote-browser.mjs';
 import { containRect, toPageCoords, toPageDelta } from '../../web/page-coords.mjs';
@@ -95,50 +95,36 @@ function fakePanel() {
 }
 
 export default async function (t) {
-  // ---- 間引き: 端末が描き終えるまで・最短の間隔までは ack を返さない
+  // ---- 送り方（ADR 0294）: 撮影元へはすぐ ack、見る人ごとに返事ごとの 1 枚（印つき）
   {
     const c = clock(), bridge = fakeBridge();
     const hub = createScreencastHub({ bridge, ...c });
     const phone = client();
-    const started = await hub.watch(phone, 's1', { width: 390, height: 700, scale: 3, quality: 'auto' });
-    t.ok('見始めると main に start を頼む（端末の倍率は画質の上限で丸める）',
-      bridge.requests[0][0] === 'start' && bridge.requests[0][2].options.scale === QUALITY.auto.maxScale && started.tabId === 't1');
+    const started = await hub.watch(phone, 's1', { width: 390, height: 700, scale: 3 });
+    t.ok('見始めると main に start を頼む（端末の倍率と箱・最初の段の画質）',
+      bridge.requests[0][0] === 'start' && bridge.requests[0][2].options.scale === 2 && bridge.requests[0][2].options.quality === SCREENCAST_TIERS[3].q && started.tabId === 't1');
     bridge.frame('s1', 7, 'A'.repeat(4000));
     const sent = phone.got.at(-1);
-    t.ok('フレームは見ている端末へ WS の screencast で届く', sent.kind === SCREENCAST && sent.type === 'frame' && sent.seq === 1 && sent.metadata.deviceWidth === 390);
-    c.advance(1000);
-    t.ok('端末が描き終えるまでは次のフレームを許さない', bridge.acks.length === 0);
-    hub.received(phone, 's1', 1);
-    t.ok('描き終えて最短の間隔（auto は 200ms）が過ぎていれば ack を返す', bridge.acks.length === 1 && bridge.acks[0][1] === 7);
+    t.ok('フレームは印（mark）の直後に WS の screencast で届く', phone.got.at(-2).type === 'mark' && phone.got.at(-2).seq === sent.seq
+      && sent.kind === SCREENCAST && sent.type === 'frame' && sent.seq === 1 && sent.metadata.deviceWidth === 390);
+    t.ok('見る人を待たず、届いたらすぐ撮影元へ ack を返す', bridge.acks.length === 1 && bridge.acks[0][1] === 7);
     bridge.frame('s1', 8);
-    hub.received(phone, 's1', 2);
-    t.ok('すぐに描き終えても最短の間隔までは待つ', bridge.acks.length === 1);
-    c.advance(QUALITY.auto.minInterval);
-    t.ok('間隔が過ぎたら ack', bridge.acks.length === 2 && bridge.acks[1][1] === 8);
-    bridge.frame('s1', 9);
-    c.advance(2999);
-    t.ok('端末から返事が無くても 3 秒までは待つ', bridge.acks.length === 2);
-    c.advance(1);
-    t.ok('3 秒で次を許す（返事の落ちた端末で止まらない）', bridge.acks.length === 3);
+    t.ok('見る人の返事を待つ間に届いたフレームは、新しい方で上書きする（まだ 1 枚だけ届いている）', phone.got.filter(m => m.type === 'frame').length === 1);
+    hub.received(phone, 's1', 1, { mark: true });
+    hub.received(phone, 's1', 1);
+    t.ok('返事（印 → フレーム）のあとは、そのときの最新の 1 枚をすぐ送る', phone.got.at(-1).type === 'frame' && phone.got.at(-1).seq === 2);
     const stats = hub.stats('s1');
-    t.ok('送った枚数と大きさを数える', stats.frames === 3 && stats.maxBytes === 3000, JSON.stringify(stats));
+    t.ok('届いた枚数と大きさを数える', stats.frames === 2 && stats.maxBytes === 3000, JSON.stringify(stats));
 
-    // 画質「低」は 500ms
-    await hub.watch(phone, 's1', { width: 390, height: 700, quality: 'low' });
-    bridge.frame('s1', 10); hub.received(phone, 's1', 4);
-    c.advance(QUALITY.low.minInterval - 1);
-    const before = bridge.acks.length;
-    c.advance(1);
-    t.ok('画質「低」は最短 500ms 間隔', bridge.acks.length === before + 1);
-
-    // 2 台目: 片方が描き終えても、もう片方を待つ
+    // 2 台目が遅くても、速い方の届く間隔は変わらない
     const tablet = client();
     await hub.watch(tablet, 's1', { width: 800, height: 1000 });
-    bridge.frame('s1', 11);
-    hub.received(phone, 's1', 5); c.advance(600);
-    t.ok('見ている端末みなが描き終えるまで待つ', bridge.acks.length === before + 1);
-    hub.received(tablet, 's1', 5); c.advance(1);
-    t.ok('みなが描き終えたら ack', bridge.acks.length === before + 2);
+    for (let id = 9; id <= 11; id++) {
+      bridge.frame('s1', id);
+      hub.received(phone, 's1', phone.got.at(-1).seq, { mark: true });
+      hub.received(phone, 's1', phone.got.at(-1).seq);
+    }
+    t.ok('遅い端末は自分の分だけ遅くなり、速い端末には響かない', phone.got.filter(m => m.type === 'frame').length === 5 && tablet.got.filter(m => m.type === 'frame').length <= 2);
 
     // 止める条件
     bridge.requests.length = 0;

@@ -95,7 +95,18 @@ async page => {
   const ack = (await sent('browserScreencastAck')).find((x) => x.args.seq === 7).args;
   check(ack.source === 'chrome' && ack.sessionId === sessionId, 'ack carries source chrome');
   check((await page.locator('.cp-frame').getAttribute('src')).startsWith('data:image/jpeg;base64,'), 'the frame is drawn');
-  check(/fps/.test(await page.locator('.cp-fps').textContent()), 'footer shows fps');
+  check(!/fps/.test(await page.locator('.cp-fps').textContent()), 'footer does not show fps');
+  // 印（mark）にはすぐ返事を返す（フレームを待たない）
+  await page.evaluate(([id]) => window.__deliver({ kind: 'screencast', source: 'chrome', type: 'mark', sessionId: id, seq: 20 }), [sessionId]);
+  await page.waitForFunction(() => window.__sent.some((x) => x.command === 'browserScreencastAck' && x.args.seq === 20 && x.args.mark === true));
+  check(true, 'a mark is answered immediately');
+  // 遅れ・途切れの札は video メッセージのときだけ出る
+  check(await page.locator('.cp-lag').isHidden() && await page.locator('.cp-stale').isHidden(), 'no badges while the video is fine');
+  await page.evaluate(([id]) => window.__deliver({ kind: 'screencast', source: 'chrome', type: 'video', sessionId: id, lag: true, stale: true }), [sessionId]);
+  await page.locator('.cp-lag').waitFor({ state: 'visible' });
+  check((await page.locator('.cp-lag').textContent()).includes('映像が遅れています') && (await page.locator('.cp-stale').textContent()).includes('つなぎ直しています'), 'lag and stale badges show');
+  await page.evaluate(([id]) => window.__deliver({ kind: 'screencast', source: 'chrome', type: 'video', sessionId: id, lag: false, stale: false }), [sessionId]);
+  await page.locator('.cp-lag').waitFor({ state: 'hidden' });
   const before = await page.locator('.cp-frame').getAttribute('src');
   await page.evaluate(([id]) => window.__deliver({ kind: 'screencast', type: 'frame', sessionId: id, seq: 9, data: 'AAAA', metadata: {} }), [sessionId]);
   await page.waitForTimeout(150);

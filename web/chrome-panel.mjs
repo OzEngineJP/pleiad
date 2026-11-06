@@ -97,7 +97,7 @@ export function createWindowTable() {
  */
 export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null, closeRisk = () => null, paused = () => false, children = () => [],
   waiting: waitingFor = () => false, canOperateHere = () => false, operateHere = null, menuItems = () => [], openConversation = null } = {}) {
-  let root = null, parts = null, sessionId = null, owner = null, state = null, frameMeta = null, quality = 'auto', ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
+  let root = null, parts = null, sessionId = null, owner = null, state = null, frameMeta = null, video = { lag: false, stale: false }, ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
   let optimisticTab = null, pendingPin = null, tabSig = '', lastTabIds = null, targetListeners = new Set();   // optimisticTab: 押した直後のタブの固定。pendingPin: 会話を替えてから固定するウィンドウ
   let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, operating = false, waiting = null, closing = false, optimistic = null, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown, lastAgent, switchSig = '';   // optimistic: 押した直後（サーバーの知らせの前）の固定。hold: 閉じたウィンドウを薄くして残している間。waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
   const alwaysHint = touch ?? (() => { try { return matchMedia('(hover: none), (pointer: coarse)').matches; } catch { return false; } });
@@ -118,8 +118,17 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     const hint = el('div', 'cp-hint'); hint.setAttribute('role', 'status');
     const ghost = el('img', 'cp-ghost'); ghost.alt = ''; ghost.draggable = false; ghost.setAttribute('aria-hidden', 'true');   // ウィンドウを替える間、前の絵を重ねて溶かす
     const pinMark = el('span', 'cp-pin'); pinMark.setAttribute('role', 'img'); pinMark.setAttribute('aria-label', t('browser.chromeWindow.pinned')); pinMark.title = t('browser.chromeWindow.pinned'); pinMark.append(pinIcon());
+    // 遅れ・途切れの札（ADR 0294 §5。起きたときだけ出す。札の見た目は承認済みモック v6 の pill と灰色の幕）
+    const pill = { position: 'absolute', background: 'rgba(15,19,48,.78)', color: '#f4f6ff', borderRadius: '999px', fontSize: '12px', padding: '2px 10px', zIndex: '2' };
+    const lag = el('div', 'cp-lag', t('browser.video.lag')); lag.hidden = true;
+    Object.assign(lag.style, pill, { left: '10px', top: '10px' });
+    const stale = el('div', 'cp-stale'); stale.hidden = true;
+    Object.assign(stale.style, { position: 'absolute', inset: '0', display: 'grid', placeItems: 'center', background: 'rgba(236,238,244,.55)', backdropFilter: 'grayscale(1)', zIndex: '2' });
+    const staleText = el('span', 'cp-stale-text', t('browser.video.stale'));
+    Object.assign(staleText.style, { background: 'rgba(15,19,48,.78)', color: '#f4f6ff', borderRadius: '999px', fontSize: '13px', padding: '4px 14px' });
+    stale.append(staleText);
     const screen = el('div', 'cp-screen'); screen.tabIndex = 0; screen.setAttribute('role', 'img');
-    screen.append(img, ghost, pinMark, veil, hint);
+    screen.append(img, ghost, pinMark, veil, lag, stale, hint);
     const switcher = createWindowSwitch({ t, getName: () => nameOf(), onPick: (windowId, owner) => (owner && owner !== sessionId ? retarget(owner, { pin: windowId }) : pick(windowId)), onPickConv: id => retarget(id), onFollow: () => followAgent() });
     const tabs = createTabStrip({ t, getName: () => nameOf(), onPick: pickTab, onClose: closeTab });
     const dialog = createCloseDialog({ t });
@@ -152,7 +161,9 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     const note = el('p', 'cp-note weak small', t('browser.chromeWindow.deviceNote')); note.hidden = true;
     const node = el('div', 'cp');
     node.append(switcher.root, tabs.root, screen, empty, text, note, foot, dialog.root);
-    const sink = createFrameSink({ img, onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, source: 'chrome', seq }).catch(() => {}); } });
+    const sink = createFrameSink({ img,
+      onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, source: 'chrome', seq }).catch(() => {}); },
+      onMark: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, source: 'chrome', seq, mark: true }).catch(() => {}); } });
     const fit = metadata => {
       // 映像の箱を窓の縦横比に合わせる（余白のない映像にする）。最初のフレームと、窓の形が変わったときだけ
       const w = Number(metadata?.deviceWidth), h = Number(metadata?.deviceHeight);
@@ -224,7 +235,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
       if (event.key === 'Enter') { event.preventDefault(); sendText(true); }
       else if (event.key === 'Backspace' && !textInput.value) { event.preventDefault(); send({ type: 'key', key: 'Backspace' }); }
     });
-    return { node, slot, profileSlot, windowMenu, screen, img, ghost, pinMark, switcher, tabs, dialog, veil, veilText, here, hint, empty, text, textInput, note, foot, status, sink, fit, touched: false };
+    return { node, slot, profileSlot, windowMenu, screen, img, ghost, pinMark, switcher, tabs, dialog, veil, veilText, here, hint, empty, text, textInput, note, foot, status, sink, fit, lag, stale, touched: false };
   }
 
   const nameOf = (id = sessionId) => getAgentName(id) || 'Claude';
@@ -464,9 +475,11 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     const noWindow = !windows.has(sessionId) && !connecting;
     parts.screen.hidden = noWindow; parts.empty.hidden = !noWindow;
     parts.empty.textContent = waiting?.sessionId === sessionId ? waiting.text : t('browser.chromeWindow.none');
+    if (parts.lag) parts.lag.hidden = !video.lag || ended;
+    if (parts.stale) parts.stale.hidden = !video.stale || ended;
     if (ended) parts.status.textContent = t('browser.chromeWindow.ended');
     else if (!parts.sink.frame) parts.status.textContent = connecting || windows.has(sessionId) ? t('browser.chromeWindow.connecting') : '';
-    else parts.status.textContent = state?.suspended ? '' : t('browser.chromeWindow.fps', { fps: parts.sink.fps() });
+    else parts.status.textContent = '';
     paintHint();
     paintSwitch();
   }
@@ -478,7 +491,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     connecting = true;
     // 映像の高さは窓の形で決まる（箱は映像の縦横比に合わせる）ので、高さで縛らないよう、画面の高さまで許す
     const result = await cmd('browserScreencast', {
-      sessionId, source: 'chrome', quality,
+      sessionId, source: 'chrome',
       width: Math.round(box.width) || 480, height: Math.max(Math.round(box.height), Math.round(window.innerHeight * 0.9)) || 320,
       scale: window.devicePixelRatio || 1,
     });
@@ -636,6 +649,8 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
         cmd('browserScreencastAck', { sessionId, source: 'chrome', seq: message.seq }).catch(() => {});
       }
       else if (message.type === 'frame' && typeof message.data === 'string') { fadeOutGhost(); frameMeta = message.metadata ?? null; parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); }
+      else if (message.type === 'mark') parts.sink.push(message);
+      else if (message.type === 'video') { video = { lag: message.lag === true, stale: message.stale === true }; paint(); }
       else if (message.type === 'state') {
         state = message.state;
         if (optimisticTab && state?.pinnedTabId === optimisticTab.tabId) optimisticTab = null;
