@@ -68,6 +68,14 @@ const css = `
 @media(max-width:600px){.bu-tabs{display:none}.bu-toolbar{height:48px}.browser-unify #filePreview[data-panel=chrome-window]{border-radius:0}}
 `;
 
+// i18n-dynamic: tabs:address.locations.
+/** スマホの帯の名前。Pleiad のページはホスト名（localhost）でなく、ファイル・フォルダーの名前かページの名前。Web は空（ホスト名を出す） */
+export function pageName(tab) {
+  const page = tab?.page; if (!page?.kind) return '';
+  if (['file', 'dir'].includes(page.kind)) return String(page.path ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || page.path || '';
+  return t(`tabs:address.locations.${page.kind}`, { defaultValue:tab.title || '' });
+}
+
 /**
  * 旗が on の右の欄（タブの列・アドレスバー・札・タブの活動の点・スマホの帯）。web/client.mjs が旗が on のときだけ読む。
  * deps:
@@ -159,10 +167,25 @@ export function createBrowserUnify(deps = {}) {
     const want = phoneQuery.matches && c.agentUsed && tabs().length > 0 && !chrome()?.isOpen?.() && !!composer;
     if (want && !phoneStrip) {
       stripHolder = document.createElement('div'); stripHolder.className = 'bu-phone-strip'; composer.prepend(stripHolder);
-      phoneStrip = createPhoneBrowserStrip({ mount:stripHolder, onActivate:() => chrome()?.open?.() });
+      phoneStrip = createPhoneBrowserStrip({ mount:stripHolder, onActivate:() => chrome()?.open?.(), onResume:() => cmd('chromeResume', { sessionId:session() }) });
     }
     if (stripHolder) stripHolder.hidden = !want;
-    if (want) phoneStrip.update({ url:c.tab?.url ?? '', tabs:tabs().length, holder, name:c.name, image:chrome()?.frameImage ?? null, last:c.held.last ?? null, pinned:!!c.held.pinned });
+    if (!want) return;
+    const image = chrome()?.frameImage ?? stripThumb(c.sessionId, c.tab);
+    phoneStrip.update({ url:c.tab?.url ?? '', title:pageName(c.tab), tabs:tabs().length, holder, name:c.name, image, last:c.held.last ?? null, pinned:!!c.held.pinned });
+  }
+  /** 帯の小さな絵: 右の欄を閉じている間は映像が無いので、タブを撮った絵を使う。同じタブは 15 秒に 1 回まで */
+  const thumbs = new Map();
+  function stripThumb(sessionId, tab) {
+    if (!sessionId || !tab?.targetId) return null;
+    const key = `${sessionId}\n${tab.targetId}`, held = thumbs.get(key);
+    if (!held || (!held.pending && Date.now() - held.at > 15_000)) {
+      const next = { at:Date.now(), pending:true, src:held?.src ?? null }; thumbs.set(key, next);
+      cmd('chromeAddress', { sessionId, input:'', targetId:tab.targetId, thumbnail:true }).then(result => {
+        if (result?.data) next.src = `data:image/jpeg;base64,${result.data}`;
+      }).catch(() => {}).finally(() => { next.pending = false; next.at = Date.now(); if (next.src && thumbs.get(key) === next) paintControl(); });
+    }
+    return thumbs.get(key).src;
   }
   function paint() { const tab = current(); strip.update(tabs(), tab?.targetId); address.show(tab, tabs().length); paintControl(); }
   function attach() {

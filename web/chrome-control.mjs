@@ -7,6 +7,7 @@
 // 状態は core/chrome/control.mjs の 4 つ（running・idle・stopped・paused）。色は既存のトークンだけ。動きは --dur・--ease-out（動きを減らす設定では入れ替えだけ）。
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
+import { chevRightIcon } from './icons.mjs';
 
 /** Called only by the unified browser; legacy control remains unchanged. */
 export function ensureBrowserControlStyles() {
@@ -24,8 +25,9 @@ export function ensureBrowserControlStyles() {
 .b2-pop{position:fixed;z-index:90;width:256px;box-sizing:border-box;padding:14px;border-radius:12px;background:var(--surface-paper);box-shadow:0 8px 28px var(--shadow);color:var(--ink);text-align:left;font-size:13px}
 .b2-pop-title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}.b2-pop-sub{margin:4px 0 12px 15px;color:var(--ink-weak);font-size:12px;line-height:1.65}
 .b2-actions{display:flex;justify-content:flex-end;gap:8px}.b2-action{border:0;border-radius:var(--r-pill,16px);background:var(--surface-2);color:var(--ink);padding:6px 13px;font:inherit;cursor:pointer}.b2-action.primary{color:var(--ink-blue);background:var(--fill-blue,var(--surface-2))}
-.b2-strip{display:flex;align-items:center;gap:10px;width:100%;height:52px;border:0;border-radius:var(--r-m,10px);padding:6px;background:var(--surface-2);color:var(--ink);font:inherit;cursor:pointer;text-align:left}
-.b2-thumb{width:60px;height:40px;object-fit:cover;border-radius:8px;background:var(--surface-1);flex:none}.b2-strip-info{flex:1;min-width:0}.b2-domain{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.b2-strip-status{display:flex;align-items:center;gap:5px;margin-top:3px;font-size:12px;color:var(--ink-weak)}.b2-count{display:grid;place-items:center;min-width:20px;height:20px;border-radius:5px;background:var(--surface-1);font-size:11px}.b2-chevron{width:22px;text-align:center;color:var(--ink-weak)}
+.b2-strip{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;height:52px;border-radius:var(--r-m,10px);padding:0 6px;background:var(--surface-2);color:var(--ink);font-size:14px}
+.b2-strip-open{display:flex;align-items:center;gap:10px;flex:1;min-width:0;height:100%;border:0;padding:0;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left}.b2-strip-resume{flex:none;font-size:13px;padding:6px 14px}.b2-strip-resume[hidden],.b2-chevron[hidden]{display:none}
+.b2-thumb{width:60px;height:40px;object-fit:cover;object-position:top;border-radius:8px;background:var(--surface-paper);flex:none}.b2-strip-info{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px;line-height:1.25}.b2-domain{font-size:13px;font-weight:600;color:var(--ink-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.b2-strip-status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-weak)}.b2-count{flex:none;box-sizing:border-box;display:grid;place-items:center;min-width:20px;height:20px;padding:0 3px;border:2px solid currentColor;border-radius:5px;font-size:11px;font-weight:700;line-height:1;color:var(--ink)}.b2-chevron{display:grid;place-items:center;width:22px;height:22px;flex:none;margin-right:2px;color:var(--ink-weak)}.b2-chevron svg{width:18px;height:18px}
 .b2-full{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;background:var(--surface-1);transform:translateY(100%);transition:transform 260ms var(--ease-out,ease-out)}.b2-full[data-open=true]{transform:translateY(0)}.b2-full-close{align-self:flex-start;min-height:44px;margin:0 8px;background:transparent;border:0;color:var(--ink);font:inherit;cursor:pointer}.b2-full-content{flex:1;min-height:0;display:flex;flex-direction:column}
 .b2-input-surface{position:relative;overflow:hidden;touch-action:none;outline:none}.b2-input-surface:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}.b2-ripple{position:absolute;pointer-events:none;width:28px;height:28px;margin:-14px;border-radius:50%;box-shadow:0 0 0 2px var(--line-blue);animation:b2-ripple 550ms var(--ease-out,ease-out) forwards;z-index:3}
 @keyframes b2-ripple{from{opacity:.8;transform:scale(.4)}to{opacity:0;transform:scale(1.6)}}
@@ -86,13 +88,17 @@ export function createTabActivityDot({ mount } = {}) {
 }
 
 /** Supply browser content (tabs/address/frame). Mount the strip above the phone composer. */
-/** onActivate: 帯を押したときに全画面へ移さず、呼び出し側が開く（旗が on の右の欄。web/browser-unify.mjs） */
-export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = () => {}, onClose = () => {}, onActivate = null } = {}) {
+/** onActivate: 帯を押したときに全画面へ移さず、呼び出し側が開く（旗が on の右の欄。web/browser-unify.mjs）。
+ *  onResume: 人が操作している間は「›」の代わりに「任せる」を出す（モックの §1） */
+export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = () => {}, onClose = () => {}, onActivate = null, onResume = null } = {}) {
   ensureBrowserControlStyles();
-  const element = el('button', 'b2-strip'), thumb = el('img', 'b2-thumb'), info = el('span', 'b2-strip-info'), domain = el('div', 'b2-domain');
-  const status = el('div', 'b2-strip-status'), dot = el('span', 'b2-dot'), statusText = el('span'), count = el('span', 'b2-count'), arrow = el('span', 'b2-chevron', '⌃');
-  thumb.alt = ''; dot.setAttribute('aria-hidden', 'true'); arrow.setAttribute('aria-hidden', 'true'); element.type = 'button'; element.setAttribute('aria-expanded', 'false');
-  status.append(dot, statusText); info.append(domain, status); element.append(thumb, info, count, arrow); mount?.append(element);
+  const element = el('div', 'b2-strip'), opener = el('button', 'b2-strip-open'), thumb = el('img', 'b2-thumb'), info = el('span', 'b2-strip-info'), domain = el('span', 'b2-domain');
+  const status = el('span', 'b2-strip-status'), dot = el('span', 'b2-dot'), statusText = el('span'), count = el('span', 'b2-count'), arrow = el('span', 'b2-chevron');
+  const resume = el('button', 'b2-action primary b2-strip-resume', t('control:resume'));
+  arrow.innerHTML = chevRightIcon;
+  thumb.alt = ''; dot.setAttribute('aria-hidden', 'true'); arrow.setAttribute('aria-hidden', 'true'); opener.type = resume.type = 'button'; opener.setAttribute('aria-expanded', 'false'); resume.hidden = true;
+  status.append(dot, statusText); info.append(domain, status); opener.append(thumb, info, count, arrow); element.append(opener, resume); mount?.append(element);
+  resume.addEventListener('click', async () => { resume.disabled = true; try { await onResume?.(); } catch {} finally { resume.disabled = false; } });
   const fullscreen = el('div', 'b2-full'), back = el('button', 'b2-full-close', t('control:backToConversation')), body = el('div', 'b2-full-content');
   back.type = 'button'; fullscreen.hidden = true; fullscreen.setAttribute('role', 'dialog'); fullscreen.setAttribute('aria-label', t('control:browser'));
   if (backMount) { back.textContent = '‹'; back.setAttribute('aria-label', t('control:backToConversation')); back.style.fontSize = '24px'; back.style.minWidth = '36px'; backMount.append(back); fullscreen.append(body); }
@@ -100,19 +106,22 @@ export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = ()
   document.body.append(fullscreen);
   let placeholder = null, timer = null, ticker = null, openState = false;
   function close() {
-    if (!openState) return; openState = false; fullscreen.dataset.open = 'false'; element.setAttribute('aria-expanded', 'false');
-    clearTimeout(timer); timer = setTimeout(() => { if (openState) return; fullscreen.hidden = true; if (placeholder && content) { placeholder.replaceWith(content); placeholder = null; } onClose(); element.focus(); }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 260);
+    if (!openState) return; openState = false; fullscreen.dataset.open = 'false'; opener.setAttribute('aria-expanded', 'false');
+    clearTimeout(timer); timer = setTimeout(() => { if (openState) return; fullscreen.hidden = true; if (placeholder && content) { placeholder.replaceWith(content); placeholder = null; } onClose(); opener.focus(); }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 260);
   }
   function open() {
     if (openState) return; openState = true; clearTimeout(timer);
     if (content && !placeholder) { placeholder = document.createComment('browser-position'); content.replaceWith(placeholder); body.append(content); }
-    fullscreen.hidden = false; fullscreen.getBoundingClientRect(); fullscreen.dataset.open = 'true'; element.setAttribute('aria-expanded', 'true'); back.focus(); onOpen();
+    fullscreen.hidden = false; fullscreen.getBoundingClientRect(); fullscreen.dataset.open = 'true'; opener.setAttribute('aria-expanded', 'true'); back.focus(); onOpen();
   }
   const key = event => { if (event.key === 'Escape' && openState) { event.stopPropagation(); close(); } };
-  fullscreen.addEventListener('keydown', key); back.addEventListener('click', close); element.addEventListener('click', () => onActivate ? onActivate() : open());
+  fullscreen.addEventListener('keydown', key); back.addEventListener('click', close); opener.addEventListener('click', () => onActivate ? onActivate() : open());
   return { element, fullscreen, back, open, close,
-    update({ url = '', tabs = 0, holder = 'ai', name = 'Claude', image = null, remaining = null, last = null, pinned = false } = {}) {
-      try { domain.textContent = new URL(url).hostname || t('control:browser'); } catch { domain.textContent = t('control:browser'); }
+    /** title: Pleiad のページのタブはホスト名（localhost）でなく、ファイルの名前やページの名前を出す */
+    update({ url = '', title = '', tabs = 0, holder = 'ai', name = 'Claude', image = null, remaining = null, last = null, pinned = false } = {}) {
+      if (title) domain.textContent = title;
+      else try { domain.textContent = new URL(url).hostname || t('control:browser'); } catch { domain.textContent = t('control:browser'); }
+      const human = holder === 'human' && !!onResume; resume.hidden = !human; arrow.hidden = human;
       count.textContent = String(tabs); count.setAttribute('aria-label', t('control:tabCount', { count: tabs }));
       clearInterval(ticker); ticker = null;
       const deadline = !pinned && holder === 'human' ? Number.isFinite(last) ? last + 60_000 : Number.isFinite(remaining) ? Date.now() + remaining * 1000 : null : null;
