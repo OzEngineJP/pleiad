@@ -2,6 +2,8 @@
 //   - ファイルのページの port（localhost:<pages port>）: ページの Cookie（pleiad_pages）。値は HMAC(本体のトークン, "pleiad-pages") で、本体のトークンそのものは Chrome に入れない
 //   - 本体の port の /_pleiad/（画面の iframe）: 本体の Cookie（agent_host_token）だけ。?token= は受けない（iframe の URL にトークンを載せない）
 // どちらの入口も、core/pages-routes.mjs へ渡す前にここで通す（A2・A4 は入口を触らない）。
+// どちらの入口も Sec-Fetch-Site が same-origin か none（アドレスバー・CDP の移動）のときだけ通す。Chrome は localhost の port 違いを
+// same-site と数え、SameSite=Strict の Cookie も送る。隔離の origin や手元のほかのサーバー（localhost:5173 など）からの要求を、ここで断る。
 import crypto from 'node:crypto';
 
 export const PAGES_PATH = '/_pleiad/';
@@ -54,10 +56,19 @@ export function mainCookieOk(cookieHeader, token, name = MAIN_COOKIE) {
 }
 
 /**
- * 入口ごとの検査。via は 'pages'（ファイルのページの port）か 'main'（本体の port）。ほかは通さない
- * @param {{ via: 'pages'|'main', cookie?: string, token: string }} request
+ * 要求の出どころ（Sec-Fetch-Site）が Pleiad のページ自身かアドレスバーか。same-site・cross-site は断る。
+ * 見出しが無いもの（ブラウザーでない取得。Chrome は localhost へはいつも付ける）は通す
  */
-export function pageRequestOk({ via, cookie, token }) {
+export function fetchSiteOk(site) {
+  return site === undefined || site === 'same-origin' || site === 'none';
+}
+
+/**
+ * 入口ごとの検査。via は 'pages'（ファイルのページの port）か 'main'（本体の port）。ほかは通さない
+ * @param {{ via: 'pages'|'main', cookie?: string, token: string, site?: string }} request site は Sec-Fetch-Site の値
+ */
+export function pageRequestOk({ via, cookie, token, site }) {
+  if (!fetchSiteOk(site)) return false;
   if (via === 'pages') return pagesCookieOk(cookie, token);
   if (via === 'main') return mainCookieOk(cookie, token);
   return false;

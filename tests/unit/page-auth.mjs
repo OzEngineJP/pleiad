@@ -1,7 +1,7 @@
 // Pleiad のページの 2 つの入口の認証（core/page-auth.mjs）と旗（core/browser-unify-flag.mjs）。純粋な関数だけを見る。
 import crypto from 'node:crypto';
 import {
-  MAIN_COOKIE, PAGES_COOKIE, PAGES_PATH, mainCookieOk, pageRequestOk, pagesCookie, pagesCookieOk, pagesSecret, readCookies, sameSecret,
+  MAIN_COOKIE, PAGES_COOKIE, PAGES_PATH, fetchSiteOk, mainCookieOk, pageRequestOk, pagesCookie, pagesCookieOk, pagesSecret, readCookies, sameSecret,
 } from '../../core/page-auth.mjs';
 import { BROWSER_UNIFY_ENV, browserUnifyOn } from '../../core/browser-unify-flag.mjs';
 
@@ -44,6 +44,16 @@ export default async function (t) {
     && !pageRequestOk({ via: 'main', cookie: `${PAGES_COOKIE}=${secret}`, token })
     && !pageRequestOk({ via: 'main', cookie: undefined, token })
     && !pageRequestOk({ via: 'other', cookie: `${MAIN_COOKIE}=${token}; ${PAGES_COOKIE}=${secret}`, token }));
+
+  t.ok('Sec-Fetch-Site は same-origin・none・無しだけ通す（localhost の port 違いは same-site なので Cookie が合っても断る）',
+    fetchSiteOk(undefined) && fetchSiteOk('same-origin') && fetchSiteOk('none')
+    && !fetchSiteOk('same-site') && !fetchSiteOk('cross-site') && !fetchSiteOk('') && !fetchSiteOk('Same-Origin')
+    && pageRequestOk({ via: 'pages', cookie: `${PAGES_COOKIE}=${secret}`, token, site: 'same-origin' })
+    && pageRequestOk({ via: 'pages', cookie: `${PAGES_COOKIE}=${secret}`, token, site: 'none' })
+    && !pageRequestOk({ via: 'pages', cookie: `${PAGES_COOKIE}=${secret}`, token, site: 'same-site' })
+    && !pageRequestOk({ via: 'pages', cookie: `${PAGES_COOKIE}=${secret}`, token, site: 'cross-site' })
+    && pageRequestOk({ via: 'main', cookie: `${MAIN_COOKIE}=${token}`, token, site: 'same-origin' })
+    && !pageRequestOk({ via: 'main', cookie: `${MAIN_COOKIE}=${token}`, token, site: 'same-site' }));
 
   t.ok('旗は AGENT_HOST_BROWSER_UNIFY が on のときだけ（前後の空白・大小文字は見ない）',
     BROWSER_UNIFY_ENV === 'AGENT_HOST_BROWSER_UNIFY'

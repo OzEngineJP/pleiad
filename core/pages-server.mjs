@@ -15,7 +15,7 @@ export function startPagesServer({ port = 0, waitMs = 0, token, routes, hosts, l
     name: 'pages', port, waitMs, hosts, log,
     handle(req, res, { url }) {
       if (!url.pathname.startsWith(PAGES_PATH)) return sendStatus(req, res, 404, 'not found');
-      if (!pageRequestOk({ via: 'pages', cookie: req.headers.cookie, token })) return sendStatus(req, res, 401, 'unauthorized');
+      if (!pageRequestOk({ via: 'pages', cookie: req.headers.cookie, token, site: req.headers['sec-fetch-site'] })) return sendStatus(req, res, 401, 'unauthorized');
       return routes.handle(req, res, { url, via: 'pages' });
     },
   });

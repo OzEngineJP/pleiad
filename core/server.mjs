@@ -2403,7 +2403,7 @@ const server = http.createServer(async (req, res) => {
   if (pagesRoutes && url.pathname.startsWith(PAGES_PATH)) {
     for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.setHeader('allow', 'GET, HEAD'); return sendStatus(req, res, 405, 'method not allowed'); }
-    if (!pageRequestOk({ via: 'main', cookie: req.headers.cookie, token: TOKEN })) return sendStatus(req, res, 401, 'unauthorized');
+    if (!pageRequestOk({ via: 'main', cookie: req.headers.cookie, token: TOKEN, site: req.headers['sec-fetch-site'] })) return sendStatus(req, res, 401, 'unauthorized');
     try { return await pagesRoutes.handle(req, res, { url, via: 'main' }); }
     catch (error) { pagesLog(`request failed: ${String(error?.message ?? error)}`); return sendStatus(req, res, 500, 'internal error'); }
   }

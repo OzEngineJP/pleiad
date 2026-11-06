@@ -116,6 +116,10 @@ async function serverChecks(t) {
     const withCookie = await request({ port: pages.port, pathname: '/_pleiad/s/a/b', headers: { cookie: `${PAGES_COOKIE}=${pagesSecret(token)}` } });
     t.ok('ファイルのページの port: ページの Cookie が合えば中身へ渡す（via: pages）', withCookie.body === 'stub' && calls.length === 1
       && calls[0].via === 'pages' && calls[0].url.pathname === '/_pleiad/s/a/b');
+    const site = value => request({ port: pages.port, pathname: '/_pleiad/s/a/b', headers: { cookie: `${PAGES_COOKIE}=${pagesSecret(token)}`, 'sec-fetch-site': value } });
+    const [sameOrigin, none, sameSite, crossSite] = await Promise.all(['same-origin', 'none', 'same-site', 'cross-site'].map(site));
+    t.ok('ファイルのページの port: Sec-Fetch-Site が same-site・cross-site なら Cookie が合っても 401（隔離の origin・手元のほかのサーバーから）',
+      sameOrigin.body === 'stub' && none.body === 'stub' && sameSite.status === 401 && crossSite.status === 401 && calls.length === 3);
 
     const stubPages = await startPagesServer({ token, routes: createPagesRoutes() });
     try {
@@ -215,6 +219,8 @@ async function hostChecks(t, scratch) {
     const mainPost = await request({ port: on.port, pathname: '/_pleiad/s/a/b', method: 'POST', host: `127.0.0.1:${on.port}`, headers: { cookie: `${MAIN_COOKIE}=${on.token}` } });
     t.ok('本体の port の /_pleiad/: 本体の Cookie で 404・?token= だけでは 401・POST は 405', mainRes.status === 404 && common(mainRes)
       && mainQuery.status === 401 && mainPost.status === 405);
+    const mainSameSite = await request({ port: on.port, pathname: '/_pleiad/s/a/b', host: `127.0.0.1:${on.port}`, headers: { cookie: `${MAIN_COOKIE}=${on.token}`, 'sec-fetch-site': 'same-site' } });
+    t.ok('本体の port の /_pleiad/: Sec-Fetch-Site が same-site なら本体の Cookie でも 401', mainSameSite.status === 401);
   } finally {
     client?.close();
     await on.stop();
