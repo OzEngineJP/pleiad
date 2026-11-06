@@ -10,6 +10,7 @@
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
+import { markdownToDoc, docToMarkdown, snapshotEditing, restoreEditing, backspaceAtStart, caret } from '../../web/md-doc.mjs';
 import { createSessionLoads } from '../../web/session-stream.mjs';
 import { createComposerWait } from '../../web/composer-wait.mjs';
 import { createComposerAttachments } from '../../web/composer/attachments.mjs';
@@ -65,6 +66,13 @@ export default async function (t) {
   const state = { current: 'old', busy: false, loadingSession: null, drafts: new Map(), attached: [], sessions: [], messages: [], presents: [],
     pendingPerms: new Map(), cwd: '', homeDir: 'C:/home', backendId: 'fake', prefs: {}, draft: {}, mode: 'default', runningIds: new Set(), stopping: new Set(), worktree: {} };
   const storage = new Map();
+  let restoredDraft = null;
+  const editor = (overrides = {}) => ({
+    attachmentKeys: () => new Set(), hasAttachment: () => false,
+    snapshotEditing: () => snapshotEditing(restoreEditing($('prompt').value, restoredDraft?.text === $('prompt').value ? restoredDraft.editing : undefined)),
+    restoreDraft: (text, editing) => { $('prompt').value = text; restoredDraft = { text, editing }; },
+    ...overrides,
+  });
   // client.mjs の saveDraft・loadDraft・submit などをここで走らせる。そこから新しいモジュールの定数を引いたら、身代わりを足す
   const context = vm.createContext({
     voiceUi: { sync() {} },
@@ -103,7 +111,7 @@ export default async function (t) {
     shellComposer: { active: false, blocked: false, draftText: () => prompt.value, reset: noop },
     completionNotifications: { requestPermission: noop }, slashSkills: { close: noop }, uiLang: 'ja', attachmentLine: (l, p) => p,
     // 入力欄の編集欄（web/md-editor.mjs）と添付（文中の札・送っている途中）。このテストでは添付は使わない
-    composerEditor: { attachmentKeys: () => new Set(), hasAttachment: () => false }, chatAttach: null, composerShellMode: null,
+    composerEditor: editor(), chatAttach: null, composerShellMode: null,
     uploadBlockReason: () => null, orderedAttachments: () => state.attached.slice(), attachedKey: p => `p:${p}`, notify: noop, flashAttachEntry: noop,
     receipts: new Map(), saveReceipts: noop, messageRow: () => true, ensureMessageRow: noop, markDelivery: noop,
     createComposerWait,
@@ -137,10 +145,20 @@ export default async function (t) {
   const type = (text) => { if (prompt.readOnly || prompt.disabled) return false; prompt.value += text; run('saveDraft()'); return true; };
 
   // ---------------------------------------------------------------- 作っている間に書いた字
-  prompt.value = '前の会話の下書き';
+  const exited = backspaceAtStart({ blocks: markdownToDoc('> 引用\n> 本文'), sel: caret(1, 0) });
+  const priorText = docToMarkdown(exited.blocks), priorEditing = snapshotEditing(exited.blocks);
+  context.composerEditor.restoreDraft(priorText, priorEditing);
+  await run('saveDraft()');
+  const priorSaved = calls.filter(c => c.command === 'saveDraft' && c.args.sessionId === 'old').at(-1)?.args;
+  t.ok('下書き保存は本文と2編集行の境界情報を一緒に渡す', priorSaved?.text === priorText && JSON.stringify(priorSaved.editing) === JSON.stringify(priorEditing));
+  prompt.value = ''; restoredDraft = null;
+  run('loadDraft()');
+  t.ok('下書き復元は編集APIへ境界情報を渡し2行を保つ', prompt.value === priorText && restoreEditing(prompt.value, restoredDraft.editing).length === 2);
   state.drafts.set('', { text: '古い仮置き', attached: [] });
   const making = run('startNew()');
   t.ok('別の会話から移ったら欄を空にする', prompt.value === '');
+  const parked = state.drafts.get('old');
+  t.ok('新規開始時も前の会話の本文と編集境界を退避する', parked?.text === priorText && JSON.stringify(parked.editing) === JSON.stringify(priorEditing) && JSON.parse(storage.get('drafts')).some(([id, d]) => id === 'old' && d.editing?.rows.length === 2));
   t.ok('作り始めても欄は書ける（無効にも readonly にもしない）', !prompt.disabled && !prompt.readOnly && !$('cbox').hasAttribute('aria-busy'));
   type('あ');
   await reply('newSession', { sessionId: 'new' });
@@ -209,8 +227,8 @@ export default async function (t) {
   // ---------------------------------------------------------------- 新しい会話を作っている間に始めた添付（会話ができても消えず、送信を止め、できた会話の本文の位置に入る）
   const resolved = [], pendingTouched = [], notices = [];
   let inserted = 0;
-  context.composerEditor = { attachmentKeys: () => new Set(), hasAttachment: () => true, insertAttachment: () => { inserted++; return 'inserted'; },
-    updatePending: (pid) => pendingTouched.push(pid), resolvePending: (pid, path) => resolved.push({ pid, path }), refresh: noop };
+  context.composerEditor = editor({ hasAttachment: () => true, insertAttachment: () => { inserted++; return 'inserted'; },
+    updatePending: (pid) => pendingTouched.push(pid), resolvePending: (pid, path) => resolved.push({ pid, path }), refresh: noop });
   context.chatAttach.bind(context.composerEditor, prompt);
   context.sys = (text) => notices.push(text);
   context.notify = noop;
@@ -259,7 +277,7 @@ export default async function (t) {
   // ---------------------------------------------------------------- 文中の添付（ADR 0060）: 本文の印はそのまま送り、文中に無い添付だけ末尾に足す
   const A = 'C:\\up\\a.png', B = 'C:\\up\\b.md';
   state.attached = [{ path: B, name: 'b.md', kind: 'file', mime: '' }, { path: A, name: 'a.png', kind: 'image', mime: 'image/png' }];
-  context.composerEditor = { attachmentKeys: () => new Set([context.attachedKey(A)]) };   // a.png だけ文中に置いてある
+  context.composerEditor = editor({ attachmentKeys: () => new Set([context.attachedKey(A)]) });   // a.png だけ文中に置いてある
   context.orderedAttachments = () => [state.attached[1], state.attached[0]];             // 文中の位置の順（文中のものが先）
   prompt.value = `# 見出し\n[添付] ${A}\n説明`;
   const before = calls.filter(c => c.command === 'sendMessage').length;
@@ -320,7 +338,7 @@ export default async function (t) {
 
   // ---------------------------------------------------------------- 作成中に作業場所を選ぶ（新しい会話への反映・送信予約）
   context.orderedAttachments = () => state.attached.slice();
-  context.composerEditor = { attachmentKeys: () => new Set(), hasAttachment: () => false };
+  context.composerEditor = editor();
   // 1. 作成中に作業場所を選んだら、できた会話に setTurnSettings で反映され、その後の送信もその場所で走る
   state.cwd = 'C:/home';
   state.attached = [];
