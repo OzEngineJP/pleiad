@@ -897,6 +897,8 @@ const SUITES = [
   './unit/chrome-viewport.mjs',
 
   // --- A7 スマホの道 ---
+  './unit/remote-forward-pages.mjs',
+  './unit/device-proxy-pages.mjs',
 
   // --- A8 既定のアプリで開く ---
   // 許す拡張子の一覧（サーバーと本体で同じ）・リンクとジャンクションは実体で判断・ホストの画面だけ・10 秒に 5 回

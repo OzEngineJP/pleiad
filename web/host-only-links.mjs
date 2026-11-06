@@ -6,11 +6,13 @@ import { t } from './i18n.mjs';
 const LOOPBACK_V4 = /^127(?:\.\d{1,3}){3}$/;
 
 /** href がループバックの http(s) で、この画面のオリジンではないか。hostname は URL が正規化したもの（10 進の IPv4 なども 127.x になる） */
-export function isHostOnlyUrl(href, pageOrigin) {
+export function isHostOnlyUrl(href, pageOrigin, isolatedOrigin = null) {
   let u;
   try { u = new URL(href, pageOrigin); } catch { return false; }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
   if (u.origin === pageOrigin) return false;
+  if (u.origin === isolatedOrigin && u.protocol === 'http:' && u.hostname === 'localhost' && !u.username && !u.password &&
+      (u.pathname.startsWith('/viz/') || u.pathname.startsWith('/f/'))) return false;
   const h = u.hostname.toLowerCase().replace(/\.$/, '');
   return h === 'localhost' || h.endsWith('.localhost') || LOOPBACK_V4.test(h) || h === '0.0.0.0'
     || h === '[::1]' || h === '[::]' || /^\[::ffff:(?:127\.|7f)/.test(h);
@@ -21,11 +23,11 @@ export function isHostOnlyUrl(href, pageOrigin) {
  * onHostScreen() が true（サーバーのある PC の画面）なら何もしない。iframe の中のリンクはここに来ない。
  * choose(href) が true を返したら（ホストの内蔵ブラウザーのタブで開いた。web/client.mjs の chooseRemote）知らせは出さない
  */
-export function watchHostOnlyLinks({ onHostScreen, notify, choose = () => false, root = document, origin = () => location.origin }) {
+export function watchHostOnlyLinks({ onHostScreen, notify, choose = () => false, root = document, origin = () => location.origin, isolatedOrigin = () => null }) {
   const handler = event => {
     if (event.defaultPrevented || (event.type === 'auxclick' && event.button !== 1) || onHostScreen()) return;
     const a = event.target?.closest?.('a[href]');
-    if (!a || !isHostOnlyUrl(a.getAttribute('href'), origin())) return;
+    if (!a || !isHostOnlyUrl(a.getAttribute('href'), origin(), isolatedOrigin())) return;
     event.preventDefault();
     if (!choose(new URL(a.getAttribute('href'), origin()).href)) notify(t('timeline.link.hostOnly'));
   };

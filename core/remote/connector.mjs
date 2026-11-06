@@ -153,6 +153,7 @@ export function createRemoteHost({
   const limits = { maxDevices: reviewLimits.maxDevices ?? INVITE_MAX_DEVICES, perHour: reviewLimits.perHour ?? INVITE_MAX_PER_HOUR };
   const store = createRemoteStore({ dataDir, cipher });
   let cfg = { enabled: false, relayUrl: '', secret: '', hostName: os.hostname(), relayUrlFromEnv: false, secretFromEnv: false, plusConnect: false };
+  let pagePorts = null;
   let identity = null;
   let plusHostState = null;   // この PC の Pleiad Plus への登録の状態（core/plus/hosts.mjs が setPlusHostState で渡す）
   let offer = null;                // { secret, psk, ticketHash, expiresAt, timer }
@@ -559,7 +560,7 @@ export function createRemoteHost({
           if (!agent || !current) return s.reset(RESET_CODE.FORBIDDEN);
           return agent.attach(s, { id: deviceId, name: current.name, platform: current.platform });
         }
-        forwardStream(s, { target, token, device: { id: deviceId, platform: device.platform } });
+        forwardStream(s, { target, token, device: { id: deviceId, platform: device.platform }, pagePorts });
       });
       ch.on('close', err => closeWs(ws, err?.code === 'revoked' ? HOST_CLOSE.UNAUTHORIZED : err?.code === 'shutdown' ? HOST_CLOSE.SHUTDOWN : 1000));
       ws.on('close', () => {
@@ -1004,8 +1005,10 @@ export function createRemoteHost({
     },
     status,
     /** ファイルのページと隔離の port（{ main, pages, isolated }。ブラウザーの一本化の旗が on のときだけ server が呼ぶ。ADR 0292 の 5）。
-     *  スマホの道で /_pleiad/ と隔離へ通すために A7 が使う。S0 では何もしない */
-    setPagePorts(ports) { void ports; },
+     *  スマホの道で /_pleiad/ と隔離へ通す。null で無効に戻す */
+    setPagePorts(ports) {
+      pagePorts = ports && Number.isInteger(ports.isolated) && ports.isolated > 0 && ports.isolated <= 65535 ? { ...ports } : null;
+    },
 
     /** { enabled?, relayUrl?, enrollSecret?, hostName?, plusConnect? }。enrollSecret は undefined なら残し、'' か null で消す。 */
     async setSettings(args = {}) {
