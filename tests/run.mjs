@@ -879,6 +879,12 @@ const SUITES = [
   // --- A2 ページの Cookie と中継の範囲 ---
 
   // --- A3 可視化と HTML のファイル ---
+  // プレビューの CSP（core と web で同じ関数・文字列は今までと同じ）・隔離の応答の CSP・「一度だけ読み込む」の印
+  './unit/preview-policy.mjs',
+  // 可視化の束（同じフォルダーの下・除くもの・上限・同じ中身は 1 つ・片付け・前の版の記録・集め役）
+  './unit/viz-bundle.mjs',
+  // 隔離の origin の /viz/ と /f/（ヘッダーの CSP・フォルダーの外・鍵の期限・一度だけの印）と、旗が on の実際のサーバー
+  './unit/isolated-routes.mjs',
 
   // --- A4 Pleiad のページ ---
 

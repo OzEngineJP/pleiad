@@ -26,11 +26,22 @@ export function confirmedPreview(frame, render) {
   draw(frame, record);
   return frame;
 }
+// render は文字列（srcdoc に入れる文書）か、{ src }（隔離の origin の URL。web/visualize-frame.mjs）か、そのどちらかの Promise を返す。
+// 2 つ目の引数は「一度だけ読み込む」で足した出どころ（隔離の origin は URL の ?once= の印にして渡す）
 function draw(frame, record) {
   const policy = previewPolicy(getPrefs(), [...record.once]);
   record.policy = JSON.stringify(policy);
   record.violations.clear(); record.bar?.remove(); record.bar = null;
-  frame.srcdoc = record.render(policy);
+  const drawn = record.render(policy, [...record.once]);
+  if (typeof drawn === 'string') { frame.srcdoc = drawn; return; }
+  const turn = record.turn = (record.turn ?? 0) + 1;
+  Promise.resolve(drawn).then(result => {
+    if (record.turn !== turn) return;
+    if (typeof result === 'string') { frame.srcdoc = result; return; }
+    if (typeof result?.src !== 'string') return;
+    frame.removeAttribute('srcdoc');
+    frame.src = result.src;
+  }, () => {});
 }
 export function refreshPreviewConfirmation() {
   for (const frame of document.querySelectorAll('iframe.visualize-frame')) {

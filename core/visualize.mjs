@@ -6,6 +6,7 @@ import { visualizeReferences } from '../web/visualize-reference.mjs';
 import { visualizationDocument, VISUALIZE_CSP } from '../web/visualize-document.mjs';
 import { previewCsp, previewPolicy } from '../web/browser-confirm-policy.mjs';
 import { t } from './i18n.mjs';
+import { collectBundle } from './viz-bundle.mjs';
 
 // Visualize の案内（エージェントに渡す）。会話の言語ごとの本文: en は skills/visualize/SKILL.md、ja は SKILL.ja.md。
 // 1 つの文書として長く、表示の約束（参照の形式・特殊な印）をそのまま保つ必要があるので、辞書ではなく Skill の形のファイルで持つ
@@ -28,9 +29,9 @@ export async function prepareVisualization(ref, access) {
 
 // Serialize snapshots in response order, and drain before turnEnd. A missing or
 // rejected file gets a durable error card, rather than a disappearing reference.
-// dataDir はブラウザーの一本化の旗が on のときだけ入る（可視化の束の置き場。ADR 0292 の 3。束を作るのは A3。S0 では使わない）
+// dataDir はブラウザーの一本化の旗が on のときだけ入る（可視化の束の置き場。ADR 0292 の 3 の 4）。入るときは、HTML と同じフォルダーの
+// 下のファイルを束にして viz-blobs/ に書き、行に bundle を載せる（core/viz-bundle.mjs）。束を作れなくても可視化は出す（bundle 無し）
 export function createVisualizationCollector({ access, publish, dataDir = null }) {
-  void dataDir;
   let text = '', chain = Promise.resolve(), count = 0;
   function end() {
     const refs = visualizeReferences(text); text = '';
@@ -42,6 +43,10 @@ export function createVisualizationCollector({ access, publish, dataDir = null }
         try {
           if (overLimit) throw new Error(t('filePreview.visualize.tooMany', { max: 32 }));
           payload = await prepareVisualization(ref, access);
+          if (dataDir) {
+            try { payload.bundle = await collectBundle(payload.path, access, { dataDir, entryBody: payload.content }); }
+            catch { /* 束は無しで出す（枠は srcdoc のまま） */ }
+          }
         }
         catch (e) { payload = { kind: 'visualization', caption: ref.value?.title ?? t('filePreview.visualize.caption'), error: String(e.message) }; }
         await publish({ ...payload, reference: ref.raw });
