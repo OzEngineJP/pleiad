@@ -91,6 +91,7 @@ export function createTabActivityDot({ mount } = {}) {
 /** Supply browser content (tabs/address/frame). Mount the strip above the phone composer. */
 /** onActivate: 帯を押したときに全画面へ移さず、呼び出し側が開く（旗が on の右の欄。web/browser-unify.mjs）。
  *  onResume: 人が操作している間は「›」の代わりに「任せる」を出す（モックの §1） */
+const BLANK_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = () => {}, onClose = () => {}, onActivate = null, onResume = null } = {}) {
   ensureBrowserControlStyles();
   const element = el('div', 'b2-strip'), opener = el('button', 'b2-strip-open'), thumb = el('img', 'b2-thumb'), info = el('span', 'b2-strip-info'), domain = el('span', 'b2-domain');
@@ -128,7 +129,8 @@ export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = ()
       const deadline = !pinned && holder === 'human' ? Number.isFinite(last) ? last + 60_000 : Number.isFinite(remaining) ? Date.now() + remaining * 1000 : null : null;
       const renderStatus = () => { statusText.textContent = holder === 'human' ? deadline == null ? t('control:humanOperating') : t('control:returnsIn', { seconds: Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) }) : t('control:agentOperating', { name }); };
       renderStatus(); if (deadline != null) ticker = setInterval(renderStatus, 1000);
-      dot.dataset.holder = holder; if (image) thumb.src = image; else thumb.removeAttribute('src');
+      // 絵が無いときは透明の絵にする（Chrome は src を外した img に壊れた絵の印を出す）
+      dot.dataset.holder = holder; const next = image || BLANK_IMAGE; if (thumb.getAttribute('src') !== next) thumb.src = next;
     },
     destroy() { clearTimeout(timer); clearInterval(ticker); if (placeholder && content) placeholder.replaceWith(content); back.remove(); element.remove(); fullscreen.remove(); } };
 }

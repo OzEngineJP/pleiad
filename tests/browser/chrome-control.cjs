@@ -180,8 +180,13 @@ async page => {
     values.push(calls.join() === 'stop,resume');
     const strip = createPhoneBrowserStrip({ mount }); strip.update({ url: 'https://example.com/', tabs: 3, holder: 'human', remaining: 42 });
     values.push(strip.element.textContent.includes('42') && strip.element.textContent.includes('example.com') && strip.element.textContent.includes('3'));
+    // 絵が無くなっても src を外さない（外すと Chrome は壊れた絵の印を出す）。透明の絵にする
+    const thumb = strip.element.querySelector('.b2-thumb');
+    strip.update({ url: 'https://example.com/', tabs: 3, image: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' });
+    strip.update({ url: 'https://example.com/', tabs: 3, image: null });
+    values.push(/^data:image\/gif;base64,R0lGODlhAQABAAAAACH5/.test(thumb.getAttribute('src') ?? ''));
     strip.destroy(); badge.destroy(); mount.remove(); return values;
   });
-  check(unified.every(Boolean), 'unified badge: hidden before agent use, stop/resume, phone strip domain/tab count/remaining seconds');
+  check(unified.every(Boolean), 'unified badge: hidden before agent use, stop/resume, phone strip domain/tab count/remaining seconds/blank thumbnail');
   return results.join('\n');
 }
