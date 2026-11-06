@@ -354,13 +354,15 @@ export default async function (t) {
   {
     const r = await rig();
     try {
+      // 一時停止は前の版から持ち越したものだけ（restore の paused）
+      await r.relay.restore({ v: 1, entries: [{ id: 'c2', key: 'c'.repeat(48), stopped: false, paused: { at: 1, by: 'pc' } }] });
       const seen = [];
       r.relay.onCarry((carry, options) => seen.push({ marks: carry.entries.map(e => `${e.id}:${e.stopped}:${!!e.paused}`).join(','), now: options?.now === true }));
       await r.relay.endpoint('c1');
       r.relay.stop('c1');
-      t.ok('止めた印が替わった carry は now: true で預ける', seen.at(-1)?.now === true && /c1:true/.test(seen.at(-1)?.marks), JSON.stringify(seen));
-      r.relay.pause('c1');
-      t.ok('一時停止の印が替わった carry も now: true', seen.at(-1)?.now === true && /c1:true:true/.test(seen.at(-1)?.marks), JSON.stringify(seen.at(-1)));
+      t.ok('止めた印が替わった carry は now: true で預ける', seen.at(-1)?.now === true && /c1:true/.test(seen.at(-1)?.marks) && /c2:false:true/.test(seen.at(-1)?.marks), JSON.stringify(seen));
+      t.ok('持ち越した一時停止を解くと、unpause は始まりの時刻を返す', r.relay.unpause('c2') === 1 && r.relay.unpause('c2') === null);
+      t.ok('一時停止の印が替わった carry も now: true', seen.at(-1)?.now === true && /c2:false:false/.test(seen.at(-1)?.marks), JSON.stringify(seen.at(-1)));
     } finally { await r.stop(); }
     const r2 = await rig();
     try {

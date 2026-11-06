@@ -385,6 +385,7 @@ export default async function (t) {
         b.control.state('conv-5b').state === 'paused' && b.control.state('conv-5b').since === pausedAt && b.captureLog.includes('suspend:conv-5b'), JSON.stringify([b.control.state('conv-5b'), b.captureLog]));
       t.ok('前の版の一時停止: 窓は見える形のまま', shown().length === 1 && tabsIn(chrome, windowId).length === 1);
       const pagesBefore = chrome.browser.targets().filter(x => x.type === 'page').length;
+      b.relay.unify.tabHolder.touch({ sessionId: 'conv-5b', targetId: tabId });   // 一時停止はタブの持ち手より先に断る
       const ag2 = await agent(url);
       const replies = [];
       replies.push(await ag2.cmd('Target.getTargets'));
@@ -393,6 +394,14 @@ export default async function (t) {
       replies.push(await ag2.cmd('Target.attachToTarget', { targetId: tabId, flatten: true }));
       t.ok('前の版の一時停止: つなぎ直したエージェントのコマンドは全部 PAUSED で断られる（人の窓へ通らない）',
         replies.every(r => r.error?.message === PAUSED_MESSAGE) && tabsIn(chrome, windowId).length === 1 && chrome.browser.targets().filter(x => x.type === 'page').length === pagesBefore, JSON.stringify(replies));
+      const revealsBefore = os.calls('reveal').length;
+      const pressed = await b.control.takeOver('conv-5b');
+      t.ok('前の版の一時停止: その間に PC で操作するを押しても今の状態を返すだけ（窓を出し直さない）', pressed.state === 'paused' && os.calls('reveal').length === revealsBefore, JSON.stringify(pressed));
+      os.opts.concealFails = true;
+      const stuck = await b.control.resume('conv-5b');
+      t.ok('前の版の一時停止: 窓を隠せなければ解かない（conceal-failed）', stuck.state === 'paused' && stuck.error === 'conceal-failed' && b.relay.state('conv-5b').paused !== null, JSON.stringify(stuck));
+      os.opts.concealFails = false;
+      b.relay.unify.tabHolder.forget({ sessionId: 'conv-5b', targetId: tabId });
       await b.control.resume('conv-5b');
       ag2.close();
       const ag3 = await agent(url);

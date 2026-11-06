@@ -2,13 +2,13 @@ import { WebSocket } from 'ws';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
-import { createChromeRelay, PAUSED_MESSAGE } from '../../core/chrome/relay.mjs';
+import { createChromeRelay } from '../../core/chrome/relay.mjs';
 import { HUMAN_MESSAGE, RESNAPSHOT_MESSAGE } from '../../core/chrome/tab-holder.mjs';
 import { createChromeWindows } from '../../core/chrome/windows.mjs';
 import { createChromeControl } from '../../core/chrome/control.mjs';
 
 export const name = 'chrome-control';
-export const title = 'エージェントの Chrome の窓の止める・PC で操作する・任せる（ADR 0148・0154・0296）: 状態機械・人の操作のタブの断り・映像を断る・止めて人の送信で解く・窓を見える形に戻して前に出す／画面の外へ戻す・窓が閉じられた／Chrome が閉じた・持ち越した一時停止・押した位置（偽の OS の層と偽の Chrome）';
+export const title = 'エージェントの Chrome の窓の止める・PC で操作する・任せる（ADR 0148・0154・0296）: 状態機械・人の操作のタブの断り・映像を断る・止めて人の送信で解く・窓を見える形に戻して前に出す／画面の外へ戻す・窓が閉じられた／Chrome が閉じた・押した位置（偽の OS の層と偽の Chrome）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {
@@ -436,28 +436,4 @@ export default async function (t) {
     } finally { await r.stop(); }
   }
 
-  // ===== 18. 前の版から持ち越した一時停止（中継の paused。ADR 0167 の carry）: paused として見せ、任せるで窓を隠してから解く =====
-  {
-    const r = await rig();
-    try {
-      r.os.setForeground('pleiad-window');
-      const a = await r.agent('one');
-      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
-      const hw = () => hwndOf(r, tabInfo(r, created.result.targetId).windowId);
-      r.relay.pause('one', 2_000_000);   // 持ち越しと同じ形の一時停止を作る（本番では restore だけが入れる）
-      t.ok('持ち越した一時停止は paused（by は pc、since はその時刻）・映像を断つ', r.control.state('one').state === 'paused' && r.control.state('one').by === 'pc' && r.control.state('one').since === 2_000_000 && suspendedNow(r), JSON.stringify(r.control.state('one')));
-      const b = await r.agent('one');
-      t.ok('持ち越した一時停止の間はエージェントのコマンドを全部 PAUSED_MESSAGE で断る', (await b.cmd('Browser.getVersion')).error?.message === PAUSED_MESSAGE);
-      const pressed = await r.control.takeOver('one');
-      t.ok('その間に PC で操作するを押しても今の状態を返すだけ（窓を出さない）', pressed.state === 'paused' && r.os.calls('reveal').length === 0);
-      r.os.opts.concealFails = true;
-      const stuck = await r.control.resume('one');
-      t.ok('窓を隠せなければ解かない（conceal-failed）', stuck.state === 'paused' && stuck.error === 'conceal-failed' && r.relay.state('one').paused !== null);
-      r.os.opts.concealFails = false;
-      const back = await r.control.resume('one');
-      t.ok('任せるで窓を隠してから解く（撮影の断りも解く）', back.state === 'running' && back.error === null && r.relay.state('one').paused === null && concealedOk(hw()) && !suspendedNow(r), JSON.stringify(back));
-      const c = await r.agent('one');
-      t.ok('解いた後はコマンドが通る', !(await c.cmd('Browser.getVersion')).error);
-    } finally { await r.stop(); }
-  }
 }

@@ -138,25 +138,4 @@ export default async function (t) {
     }
   }
 
-  // ===== 4. 「止める」（entry.paused）は持ち手に関係なく全部断る（偽の中継） =====
-  {
-    const r = await rig();
-    let a;
-    try {
-      a = await agent(await r.relay.endpoint('one'));
-      const t1 = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
-      const s1 = (await a.cmd('Target.attachToTarget', { targetId: t1, flatten: true })).result.sessionId;
-      r.relay.unify.tabHolder.touch({ sessionId: 'one', targetId: t1 });
-      r.relay.pause('one', 1);
-      await a.closed;
-      t.ok('止めている間はエージェントの接続を切る（一時停止が持ち手に優先）', true);
-      const b = await agent(await r.relay.endpoint('one'));
-      const every = await Promise.all([b.cmd('Browser.getVersion'), b.cmd('Target.getTargets'), b.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1, y: 1 }, s1)]);
-      t.ok('つなぎ直した接続のコマンドは全部 PAUSED_MESSAGE で断る', every.every(m => m.error?.message === PAUSED_MESSAGE));
-      b.close();
-    } finally {
-      a?.close();
-      await r.stop();
-    }
-  }
 }
