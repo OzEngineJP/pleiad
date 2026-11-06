@@ -23,6 +23,8 @@ export const OPENABLE = /\.html?$/i;
 export const DEFAULT_APP_EXTENSIONS = Object.freeze([
   // 文書
   '.txt', '.md', '.pdf', '.rtf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.csv', '.tsv',
+  // 文字のデータ（開くと中身を見せるだけ）
+  '.log', '.json', '.jsonl', '.yaml', '.yml', '.xml', '.toml', '.ini',
   // 画像
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.heic', '.tiff',
   // 音・動画

@@ -18,8 +18,9 @@ const { checkRequest, createFileHandler } = require('../../desktop/file-bridge.c
 export const name = 'os-open';
 export const title = '既定のアプリで開く: 許す拡張子の一覧（サーバーと本体で同じ）・実体で判断・ホストの画面だけ・連打の制限';
 
-// ADR 0291 の 3 の最初の一覧
+// ADR 0291 の 3 の一覧
 const ADR_LIST = ['.txt', '.md', '.pdf', '.rtf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.csv', '.tsv',
+  '.log', '.json', '.jsonl', '.yaml', '.yml', '.xml', '.toml', '.ini',
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.heic', '.tiff',
   '.mp3', '.wav', '.flac', '.m4a', '.ogg', '.mp4', '.mov', '.webm', '.mkv'];
 // 既定のアプリで開くと中身が実行されうるもの・マクロを含みうるもの・ブラウザーの側のもの
@@ -32,7 +33,7 @@ export default async function (t) {
   assert.deepEqual([...DEFAULT_APP_EXTENSIONS].sort(), [...ADR_LIST].sort());
   assert(Object.isFrozen(DEFAULT_APP_EXTENSIONS));
   assert(DEFAULT_APP_EXTENSIONS.every(ext => /^\.[a-z0-9]+$/.test(ext)), '小文字の . 付きだけ');
-  t.ok('一覧は ADR 0291 の 3 の文書・画像・音・動画の 30 種と同じで、凍らせてある', true, `${DEFAULT_APP_EXTENSIONS.length} 種`);
+  t.ok('一覧は ADR 0291 の 3 の文書・文字のデータ・画像・音・動画の 38 種と同じで、凍らせてある', true, `${DEFAULT_APP_EXTENSIONS.length} 種`);
 
   for (const ext of DANGEROUS) assert.equal(defaultAppAllowed(`C:\\w\\a${ext}`), false, ext);
   assert(DANGEROUS.every(ext => !DEFAULT_APP_EXTENSIONS.includes(ext)));
