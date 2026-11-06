@@ -1,4 +1,65 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+
+/// IPv6 half of the localhost page listener. The UI listener keeps its IPv4-only origin.
+private final class PageIPv6Listener {
+    private let lock = NSLock()
+    private var fd: Int32
+    init(port: Int) throws {
+        let s = Darwin.socket(AF_INET6, SOCK_STREAM, 0)
+        guard s >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        var one: Int32 = 1
+        _ = setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
+        guard setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, &one, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+            let code = errno
+            Darwin.close(s)
+            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
+        var addr = sockaddr_in6()
+        addr.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        addr.sin6_family = sa_family_t(AF_INET6)
+        addr.sin6_port = UInt16(port).bigEndian
+        addr.sin6_addr = in6addr_loopback
+        let rc = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(s, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) }
+        }
+        guard rc == 0, Darwin.listen(s, 64) == 0 else {
+            let code = errno
+            Darwin.close(s)
+            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
+        fd = s
+    }
+    func accept() throws -> TcpSocket {
+        while true {
+            lock.lock()
+            guard fd >= 0 else { lock.unlock(); throw StateError(description: "listener closed") }
+            var p = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let rc = Darwin.poll(&p, 1, 250)
+            let failed = rc < 0 || p.revents & Int16(POLLERR | POLLHUP | POLLNVAL) != 0
+            let s = !failed && rc > 0 && p.revents & Int16(POLLIN) != 0 ? Darwin.accept(fd, nil, nil) : -1
+            let code = errno
+            lock.unlock()
+            if s >= 0 {
+                var one: Int32 = 1
+                _ = setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+                let socket = TcpSocket(s)
+                socket.setNoDelay()
+                return socket
+            }
+            if failed || rc > 0 {
+                if rc < 0 && code == EINTR { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+            }
+        }
+    }
+    func close() {
+        lock.lock(); defer { lock.unlock() }
+        if fd >= 0 { Darwin.close(fd); fd = -1 }
+    }
+}
+#endif
 
 // Swift port of core/remote/device-proxy.mjs and DeviceProxy.kt (docs/remote.md §7.1・§7.4・§8.3 option A, ADR 0144):
 // one per host, listening on 127.0.0.1, carrying the WebView's HTTP and /ws over the DeviceLink channel. The UI is the
@@ -106,8 +167,13 @@ public final class DeviceProxy {
     public let token: String = Base64URL.encode(randomBytes(32))
     private let lock = NSLock()
     private var _port = 0
+    private var _isolatedPort = 0
     private var _creds: HostCreds
     private var server: TcpListener?
+    private var isolatedServer: TcpListener?
+    #if canImport(Darwin)
+    private var isolatedIPv6: PageIPv6Listener?
+    #endif
     private var sockets: [ObjectIdentifier: TcpSocket] = [:]
     private var _closed = false
     public let staticCache: StaticCache?
@@ -146,6 +212,8 @@ public final class DeviceProxy {
     }
 
     public var port: Int { lock.lock(); defer { lock.unlock() }; return _port }
+    public var isolatedPort: Int { lock.lock(); defer { lock.unlock() }; return _isolatedPort }
+    private var pagePorts: JSON { ["main": .int(Int64(port)), "pages": .int(Int64(port)), "isolated": .int(Int64(isolatedPort))] }
     public var creds: HostCreds { lock.lock(); defer { lock.unlock() }; return _creds }
     public var closed: Bool { lock.lock(); defer { lock.unlock() }; return _closed }
 
@@ -169,13 +237,36 @@ public final class DeviceProxy {
         server = ss
         _port = ss.port
         lock.unlock()
-        spawn("pleiad-proxy-accept") { [weak self] in self?.acceptLoop(ss) }
+        spawn("pleiad-proxy-accept") { [weak self] in self?.acceptLoop { try ss.accept() } }
+    }
+
+    private func serveIsolated(_ want: Int) throws {
+        for attempt in 0..<6 {
+            let ss = try listen(attempt == 0 ? want : 0)
+            #if canImport(Darwin)
+            var v6: PageIPv6Listener?
+            do { v6 = try PageIPv6Listener(port: ss.port) }
+            catch let error as POSIXError where [.EAFNOSUPPORT, .EPROTONOSUPPORT, .EADDRNOTAVAIL].contains(error.code) {
+                v6 = nil
+            } catch {
+                ss.close()
+                if attempt == 5 { throw error }
+                continue
+            }
+            lock.lock(); isolatedIPv6 = v6; lock.unlock()
+            if let v6 { spawn("pleiad-pages-ipv6") { [weak self] in self?.acceptLoop({ try v6.accept() }, isolated: true) } }
+            #endif
+            lock.lock(); isolatedServer = ss; _isolatedPort = ss.port; lock.unlock()
+            spawn("pleiad-pages-accept") { [weak self] in self?.acceptLoop({ try ss.accept() }, isolated: true) }
+            return
+        }
     }
 
     /// Listen and start connecting. Blocking (binds the socket); call off the main thread.
     @discardableResult
     public func start() throws -> DeviceProxy {
         serve(try listen(wantPort))
+        do { try serveIsolated(0) } catch { log("remote proxy: isolated pages unavailable (\(error))") }
         link.start()
         return self
     }
@@ -186,14 +277,29 @@ public final class DeviceProxy {
     public func resumeForeground() throws -> Bool {
         if closed { return false }
         let old = port
+        let oldIsolated = isolatedPort
         lock.lock()
         let prev = server
         server = nil
+        let prevIsolated = isolatedServer
+        isolatedServer = nil
+        #if canImport(Darwin)
+        let prevIPv6 = isolatedIPv6
+        isolatedIPv6 = nil
+        #endif
         lock.unlock()
         prev?.close()
+        prevIsolated?.close()
+        #if canImport(Darwin)
+        prevIPv6?.close()
+        #endif
         serve(try listen(old))
+        do { try serveIsolated(oldIsolated) } catch {
+            lock.lock(); _isolatedPort = 0; lock.unlock()
+            log("remote proxy: isolated pages unavailable (\(error))")
+        }
         link.checkNow()
-        return port != old
+        return port != old || isolatedPort != oldIsolated
     }
 
     /// The relay the record points at moved (config refresh): hand the link the new credentials without forcing a retry.
@@ -214,23 +320,31 @@ public final class DeviceProxy {
         if _closed { lock.unlock(); return }
         _closed = true
         let s = server
+        let isolated = isolatedServer
+        #if canImport(Darwin)
+        let v6 = isolatedIPv6
+        #endif
         let open = Array(sockets.values)
         sockets = [:]
         lock.unlock()
         link.stop()
         s?.close()
+        isolated?.close()
+        #if canImport(Darwin)
+        v6?.close()
+        #endif
         for c in open { c.close() }
     }
 
-    private func acceptLoop(_ ss: TcpListener) {
+    private func acceptLoop(_ accept: () throws -> TcpSocket, isolated: Bool = false) {
         while !closed {
-            guard let s = try? ss.accept() else { break }
+            guard let s = try? accept() else { break }
             lock.lock()
             if _closed { lock.unlock(); s.close(); break }
             sockets[ObjectIdentifier(s)] = s
             lock.unlock()
             spawn("pleiad-proxy-conn") { [weak self] in
-                self?.handle(s)
+                self?.handle(s, isolated: isolated)
                 self?.forget(s)
                 s.close()
             }
@@ -360,29 +474,50 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         }
     }
 
-    private func handle(_ s: TcpSocket) {
+    private static func pagePath(_ path: String) -> String? {
+        guard path.hasPrefix("/"), !path.hasPrefix("//"), !path.contains("\\"),
+              let u = URL(string: path, relativeTo: URL(string: "http://host.invalid")!)?.absoluteURL,
+              u.host == "host.invalid" else { return nil }
+        return (u.path as NSString).standardizingPath
+    }
+
+    public static func isIsolatedPagePath(_ path: String) -> Bool {
+        guard let p = pagePath(path) else { return false }
+        return p.hasPrefix("/viz/") || p.hasPrefix("/f/")
+    }
+
+    static func pageResponseLimit(_ path: String, isolated: Bool = false) -> Int {
+        if isolated { return 32 * 1024 * 1024 }
+        guard let p = pagePath(path), p.hasPrefix("/_pleiad/") else { return 0 }
+        return (p.hasSuffix("/api/raw") ? 32 : 8) * 1024 * 1024
+    }
+
+    private func handle(_ s: TcpSocket, isolated: Bool = false) {
         s.setReadTimeout(ms: 30_000)
         let input = SocketReader(s)
         let out = Out(s)
         guard let head = try? HttpHead.read(input) else { return }
         let req = Request(method: head.startLine[0].uppercased(), target: head.startLine[1], headers: head.headers)
-        if req.headers["host"] != "127.0.0.1:\(port)" { return writeSimple(out, 403, "text/plain; charset=utf-8", Bytes("forbidden".utf8)) }
+        let expectedHost = isolated ? "localhost:\(isolatedPort)" : "127.0.0.1:\(port)"
+        if req.headers["host"] != expectedHost { return writeSimple(out, 403, "text/plain; charset=utf-8", Bytes("forbidden".utf8)) }
         guard let (path, restQuery, qToken) = splitTarget(req.target) else { return writeSimple(out, 400, nil, []) }
+        guard DeviceProxy.pagePath(path) != nil else { return writeSimple(out, 400, nil, []) }
         let forwardPath = restQuery.isEmpty ? path : "\(path)?\(restQuery)"
         let isUpgrade = (req.headers["upgrade"] ?? "").lowercased() == "websocket"
+        if isolated && (isUpgrade || !DeviceProxy.isIsolatedPagePath(path)) { return writeSimple(out, 403, nil, []) }
         if isUpgrade {
             if path != "/ws" { return writeSimple(out, 404, nil, []) }
             if !tokenEq(qToken) { return writeSimple(out, 401, nil, []) }
             return handleWs(s, input, out, req, forwardPath)
         }
-        let queryOk = tokenEq(qToken)
-        if !queryOk && !tokenEq(tokenFromCookie(req.headers["cookie"])) {
+        let queryOk = !isolated && DeviceProxy.pageResponseLimit(path) == 0 && tokenEq(qToken)
+        if !isolated && !queryOk && !tokenEq(tokenFromCookie(req.headers["cookie"])) {
             return writeSimple(out, 401, "text/plain; charset=utf-8", Bytes(texts.tokenRequired().utf8))
         }
         if req.method != "GET" && req.method != "HEAD" {
             return writeSimple(out, 405, "text/plain; charset=utf-8", Bytes("method not allowed".utf8), [("Allow", "GET, HEAD")])
         }
-        handleHttp(s, out, req, path, restQuery, queryOk)
+        handleHttp(s, out, req, path, restQuery, queryOk, isolated: isolated)
     }
 
     private func awaitChannel(_ q: BlockingQueue<Ev>) -> (Channel?, LinkUnavailable?) {
@@ -477,12 +612,12 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         try? out.flush()
     }
 
-    private func handleHttp(_ s: TcpSocket, _ out: Out, _ req: Request, _ path: String, _ restQuery: String, _ queryOk: Bool) {
+    private func handleHttp(_ s: TcpSocket, _ out: Out, _ req: Request, _ path: String, _ restQuery: String, _ queryOk: Bool, isolated: Bool = false) {
         let forwardPath = restQuery.isEmpty ? path : "\(path)?\(restQuery)"
         let q = BlockingQueue<Ev>()
         let (readyCh, readyErr) = awaitChannel(q)
         guard let ch = readyCh else { return unavailable(out, req, readyErr?.state ?? "offline", nil) }
-        if let cache = staticCache, restQuery.isEmpty {
+        if !isolated, let cache = staticCache, restQuery.isEmpty {
             let pageLoad = path == "/" || path == "/index.html"
             if let file = localBundle(cache, ch, pageLoad: pageLoad)?.files[pageLoad ? "/index.html" : path] {
                 return writeLocal(out, req, file, queryOk)
@@ -490,10 +625,14 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         }
         var headers = [String: JSON]()
         for (k, v) in req.headers where DeviceProxy.PASS_REQUEST.contains(k) { headers[k] = .string(v) }
-        let head: JSON = ["method": .string(req.method), "path": .string(forwardPath), "headers": .object(headers)]
+        let limit = DeviceProxy.pageResponseLimit(path, isolated: isolated)
+        if limit > 0 { headers["accept-encoding"] = .string("identity") }
+        var fields: [String: JSON] = ["method": .string(req.method), "path": .string(forwardPath), "headers": .object(headers), "pagePorts": pagePorts]
+        if isolated { fields["destination"] = .string("isolated") }
+        let requestHead = JSON.object(fields)
         loop.post {
             do {
-                let st = try ch.openHttp(head)
+                let st = try ch.openHttp(requestHead)
                 let l = StreamListener()
                 l.onResponse = { q.put(.response($0)) }
                 l.onData = { q.put(.data($0, $1)) }
@@ -509,11 +648,18 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         guard case .opened(let opened, let openErr) = q.take() else { return }
         guard let stream = opened else { return unavailable(out, req, "offline", openErr.map { "\($0)" }) }
         var headersSent = false
+        var received = 0
         do {
             while true {
                 guard let ev = q.poll(10 * 60 * 1000) else { break }
                 switch ev {
                 case .response(let h):
+                    if limit > 0 && req.method != "HEAD" {
+                        for (k, v) in h["headers"]?.object ?? [:] {
+                            if k.lowercased() == "content-length" && (Int(v.text) ?? 0) > limit { throw StateError(description: "page response too large") }
+                            if k.lowercased() == "content-encoding" && v.text != "identity" { throw StateError(description: "compressed page response") }
+                        }
+                    }
                     var status = Int(h["status"]?.int ?? 502)
                     if !(100...599).contains(status) { status = 502 }
                     var text = "HTTP/1.1 \(status) \(DeviceProxy.REASONS[status] ?? "")\r\n"
@@ -530,6 +676,8 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
                     headersSent = true
                 case .data(let chunk, let release):
                     defer { release() }
+                    received += chunk.count
+                    if limit > 0 && received > limit { throw StateError(description: "page response too large") }
                     try out.write(chunk)
                     if q.isEmpty { try out.flush() }
                 case .end:
@@ -548,6 +696,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         } catch {
             // The WebView cancelled the load: drop the stream too, and return the credit of anything still queued
             loop.post { if !stream.destroyed { stream.reset(ResetCode.CANCEL) } }
+            if !headersSent { writeSimple(out, 502, "text/plain; charset=utf-8", Bytes("bad gateway".utf8)) }
             for ev in q.drain() { ev.release() }
         }
     }
@@ -560,7 +709,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         guard let ch = awaitChannel(q).0 else { return writeSimple(out, 502, nil, []) }
         let protocols = (req.headers["sec-websocket-protocol"] ?? "").split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let head: JSON = ["path": .string(forwardPath), "protocols": .array(protocols.map { .string($0) })]
+        let head: JSON = ["path": .string(forwardPath), "protocols": .array(protocols.map { .string($0) }), "pagePorts": pagePorts]
         loop.post {
             do {
                 let st = try ch.openWs(head)

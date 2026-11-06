@@ -885,6 +885,8 @@ const SUITES = [
   // --- A6 タブごとの持ち手と大きさ ---
 
   // --- A7 スマホの道 ---
+  './unit/remote-forward-pages.mjs',
+  './unit/device-proxy-pages.mjs',
 
   // --- A8 既定のアプリで開く ---
 

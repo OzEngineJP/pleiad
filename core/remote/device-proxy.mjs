@@ -21,6 +21,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { RESET_CODE } from './frames.mjs';
 import { DeviceLink } from './device-link.mjs';
 import { StaticCache } from './static-cache.mjs';
+import { isIsolatedPagePath, pageResponseLimit } from './forward.mjs';
 import { t, currentLocale } from '../i18n.mjs';
 
 export const PROXY_COOKIE = 'pleiad_remote_token';
@@ -95,11 +96,13 @@ export class DeviceProxy extends EventEmitter {
     this.creds = creds;
     this.wantPort = Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 0;
     this.port = 0;
+    this.isolatedPort = 0;
+    this.isolatedServers = [];
     this.token = crypto.randomBytes(32).toString('base64url');
     this.requestWaitMs = requestWaitMs;
     this.log = log;
     this.link = new DeviceLink({ creds, keyPair, app, name, shell, backoff, connectTimeoutMs, channelOptions, log, via: via ?? creds.via, getIdToken, getTicket, onReadmit });
-    this.link.on('status', s => this.emit('status', { ...s, port: this.port }));
+    this.link.on('status', s => this.emit('status', { ...s, port: this.port, isolatedPort: this.isolatedPort }));
     this.staticCache = staticCacheFile ? new StaticCache({ file: staticCacheFile, log }) : null;
     this.staticCheck = null;   // 最後の読み込みで確かめた束（Promise<束 | null>）。読み込みの後の静的ファイルはこれを使う
     this.server = http.createServer((req, res) => this.#onRequest(req, res));
@@ -110,7 +113,8 @@ export class DeviceProxy extends EventEmitter {
     this.closed = false;
   }
 
-  get status() { return { ...this.link.status, port: this.port }; }
+  get status() { return { ...this.link.status, port: this.port, isolatedPort: this.isolatedPort }; }
+  get pagePorts() { return { main: this.port, pages: this.port, isolated: this.isolatedPort }; }
   /** 窓が開く URL（トークン付き。記録やログに出さない）。 */
   get url() { return `http://127.0.0.1:${this.port}/?token=${this.token}`; }
 
@@ -130,6 +134,20 @@ export class DeviceProxy extends EventEmitter {
       await listen(0);
     }
     this.port = this.server.address().port;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        const port = await this.#listenIsolated('127.0.0.1', 0);
+        try { await this.#listenIsolated('::1', port); }
+        catch (e) { if (!['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EPROTONOSUPPORT'].includes(e.code)) throw e; }
+        this.isolatedPort = port;
+        break;
+      } catch (e) {
+        await Promise.all(this.isolatedServers.splice(0).map(s => new Promise(resolve => s.close(resolve))));
+        if (e.code === 'EADDRINUSE' && attempt < 5) continue;
+        this.log(`remote proxy: isolated pages unavailable (${e.code})`);
+        break;
+      }
+    }
     this.link.start();
     return this;
   }
@@ -144,7 +162,26 @@ export class DeviceProxy extends EventEmitter {
     for (const ws of this.wss.clients) ws.terminate();
     for (const s of this.sockets) s.destroy();
     this.server.closeAllConnections?.();
-    await new Promise(res => this.server.close(() => res()));
+    await Promise.all([this.server, ...this.isolatedServers].map(server => {
+      server.closeAllConnections?.();
+      return new Promise(res => server.close(() => res()));
+    }));
+  }
+
+  async #listenIsolated(host, port) {
+    const server = http.createServer((req, res) => this.#onRequest(req, res, true));
+    server.on('connection', socket => {
+      this.sockets.add(socket);
+      socket.once('close', () => this.sockets.delete(socket));
+    });
+    server.on('upgrade', (_req, socket) => socket.destroy());
+    server.on('clientError', (_err, socket) => socket.destroy());
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen({ host, port, ipv6Only: true }, () => { server.off('error', reject); resolve(); });
+    });
+    this.isolatedServers.push(server);
+    return server.address().port;
   }
 
   // ── 照合 ──
@@ -174,15 +211,17 @@ export class DeviceProxy extends EventEmitter {
 
   // ── HTTP ──
 
-  async #onRequest(req, res) {
+  async #onRequest(req, res, isolated = false) {
     this.sockets.add(req.socket);
     req.socket.once('close', () => this.sockets.delete(req.socket));
-    if (!this.#hostOk(req)) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('forbidden'); }
+    if (isolated ? req.headers.host !== `localhost:${this.isolatedPort}` : !this.#hostOk(req)) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('forbidden'); }
     const url = this.#parse(req);
     if (!url) { res.writeHead(400); return res.end(); }
+    if (isolated && !isIsolatedPagePath(req.url)) { res.writeHead(403); return res.end(); }
+    const limit = pageResponseLimit(url.pathname, isolated);
     const viaQuery = url.searchParams.get('token');
-    const queryOk = tokenEq(viaQuery, this.token);
-    if (!queryOk && !tokenEq(tokenFromCookie(req.headers.cookie), this.token)) {
+    const queryOk = !isolated && !limit && tokenEq(viaQuery, this.token);
+    if (!isolated && !queryOk && !tokenEq(tokenFromCookie(req.headers.cookie), this.token)) {
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
       return res.end(t('remote.device.tokenRequired'));
     }
@@ -202,7 +241,7 @@ export class DeviceProxy extends EventEmitter {
     if (res.destroyed) return;
 
     // 画面の殻は端末に持った束から返す（§8.6）。束に無いもの・束が使えないときは下でホストへ流す
-    if (this.staticCache && [...url.searchParams.keys()].every(k => k === 'token')) {
+    if (!isolated && this.staticCache && [...url.searchParams.keys()].every(k => k === 'token')) {
       const pageLoad = url.pathname === '/' || url.pathname === '/index.html';
       if (pageLoad || !this.staticCheck) this.staticCheck = this.staticCache.check(ch);
       const bundle = await this.staticCheck;
@@ -219,14 +258,25 @@ export class DeviceProxy extends EventEmitter {
 
     const headers = {};
     for (const [k, v] of Object.entries(req.headers)) if (PASS_REQUEST.has(k)) headers[k] = Array.isArray(v) ? v.join(', ') : v;
-    try { stream = ch.openHttp({ method, path: this.#forwardPath(url), headers }); }
+    if (limit) headers['accept-encoding'] = 'identity';
+    try { stream = ch.openHttp({ method, path: this.#forwardPath(url), headers, pagePorts: this.pagePorts, ...(isolated ? { destination: 'isolated' } : {}) }); }
     catch (e) { return this.#unavailable(req, res, e); }
+    let received = 0;
+    const tooLarge = () => {
+      finished = true;
+      stream.reset(RESET_CODE.FORBIDDEN);
+      if (res.headersSent) res.destroy();
+      else { res.writeHead(502); res.end('response too large'); }
+    };
     stream.on('response', head => {
+      if (finished) return;
       const out = {};
       for (const [k, v] of Object.entries(head?.headers ?? {})) {
         const key = k.toLowerCase();
         if (!DROP_RESPONSE.has(key) && !key.startsWith('proxy-')) out[key] = v;
       }
+      if (limit && method !== 'HEAD' && (Number(out['content-length']) > limit ||
+        (out['content-encoding'] && out['content-encoding'] !== 'identity'))) return tooLarge();
       if (queryOk) out['set-cookie'] = `${PROXY_COOKIE}=${encodeURIComponent(this.token)}; HttpOnly; SameSite=Strict; Path=/`;
       const status = Number.isInteger(head?.status) && head.status >= 100 && head.status <= 599 ? head.status : 502;
       try { res.writeHead(status, out); } catch { res.writeHead(status, queryOk ? { 'set-cookie': out['set-cookie'] } : {}); }
@@ -240,11 +290,14 @@ export class DeviceProxy extends EventEmitter {
     res.on('finish', returnWindow);
     res.on('close', returnWindow);
     stream.on('data', (chunk, release) => {
-      if (res.destroyed) return release();
+      if (finished || res.destroyed) return release();
+      received += chunk.length;
+      if (limit && received > limit) { release(); return tooLarge(); }
       if (res.write(chunk)) release(); else waiting.push(release);
     });
-    stream.on('end', () => { finished = true; res.end(); });
+    stream.on('end', () => { if (!finished) { finished = true; res.end(); } });
     stream.on('reset', code => {
+      if (finished) return;
       finished = true;
       if (res.headersSent) return res.destroy();
       if (code === RESET_CODE.FORBIDDEN) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('forbidden'); }
@@ -278,7 +331,7 @@ export class DeviceProxy extends EventEmitter {
 
     const protocols = String(req.headers['sec-websocket-protocol'] ?? '').split(',').map(s => s.trim()).filter(Boolean);
     let stream;
-    try { stream = ch.openWs({ path: this.#forwardPath(url), protocols }); }
+    try { stream = ch.openWs({ path: this.#forwardPath(url), protocols, pagePorts: this.pagePorts }); }
     catch { return refuse(502, 'Bad Gateway'); }
     socket.once('close', () => { if (!stream.destroyed && !stream.accepted) stream.reset(RESET_CODE.CANCEL); });
     // 受け付け（WS_ACCEPT）と最初のメッセージ（ready）は同じ読み出しで届く。窓の WebSocket ができるまで溜めておく
