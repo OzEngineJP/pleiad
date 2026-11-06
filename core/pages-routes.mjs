@@ -10,6 +10,7 @@ import { sendStatus } from './page-listener.mjs';
  * @param [deps.fileRoots]         (sessions) => プレビューのツリーの基準（読み取りの許可には使わない。ADR 0050）
  * @param [deps.fileAccessFor]     (sessionId) => ファイルの読み取りの範囲（inspectFile に渡す。審査モードは confine 付き）
  * @param [deps.resolveSessionFile] ({ path, sessionId, at, base }, sessions, roots) => 会話の中のファイル参照の絶対パス
+ * @param [deps.htmlKeys]          HTML のファイルの鍵（core/html-keys.mjs。api/html-key が issue を呼ぶ。隔離の中身と同じもの）
  * @param [deps.ports]             () => { main, pages, isolated }（CSP の frame-src・frame-ancestors に使う）
  * @param [deps.log]               ログの 1 行
  * @returns {{ handle(req, res, { url: URL, via: 'pages'|'main' }): any }}

@@ -412,6 +412,7 @@ import { startBrowserUnifyListeners } from './browser-unify-listeners.mjs';
 import { createBrowserUnifyWs, isBrowserUnifyCommand } from './browser-unify-ws.mjs';
 import { createPagesRoutes } from './pages-routes.mjs';
 import { createIsolatedRoutes } from './isolated-routes.mjs';
+import { createHtmlKeys } from './html-keys.mjs';
 import { PAGES_PATH, pageRequestOk, pagesCookie } from './page-auth.mjs';
 import { COMMON_HEADERS, sendStatus } from './page-listener.mjs';
 
@@ -2354,9 +2355,10 @@ const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 // 旗が off なら作らない。port はリスナーが立ってから入る（startPageListeners）
 let pagePorts = null, pageListeners = null;
 const pagesLog = line => console.log(`  [pages] ${line}`);
+const htmlKeys = BROWSER_UNIFY ? createHtmlKeys({ log: pagesLog }) : null;   // HTML のファイルの鍵。ファイルのページが出し、隔離が引く
 const pagesRoutes = BROWSER_UNIFY ? createPagesRoutes({ ops: (caller, id, input) => opsRegistry.invoke(caller, id, input, opsDeps()),
-  store, fileRoots, fileAccessFor, resolveSessionFile, ports: () => pagePorts, log: pagesLog }) : null;
-const isolatedRoutes = BROWSER_UNIFY ? createIsolatedRoutes({ dataDir: store.dataDir, ports: () => pagePorts, log: pagesLog }) : null;
+  store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, ports: () => pagePorts, log: pagesLog }) : null;
+const isolatedRoutes = BROWSER_UNIFY ? createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, ports: () => pagePorts, log: pagesLog }) : null;
 const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, log: pagesLog }) : null;
 
 /** ファイルのページと隔離のリスナーを立て、port を中継へ渡す（旗が on のときだけ。待ち受けの後に呼ぶ） */
@@ -10259,6 +10261,7 @@ function shutdownServer({ stopHeld = false } = {}) {
     server.closeAllConnections?.();
     // ファイルのページと隔離のリスナーも放す（新しいサーバーが同じ port を取る）
     if (pageListeners) await Promise.race([pageListeners.close(), new Promise(resolve => setTimeout(resolve, 1000))]).catch(() => {});
+    htmlKeys?.close();
     await mainLink?.close?.().catch(error => console.error('main link shutdown failed:', error?.code ?? error?.message ?? error));
     // bot の DB（別のファイル）とデータ置き場の DB の接続を閉じてから、ロックを放す（次のサーバーが取ってすぐ開く）
     await botHost?.close?.();
