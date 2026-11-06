@@ -56,7 +56,7 @@ const css = `
 .bu-tab-pick .b2-tab-dot{flex:none}
 .bu-tab.bu-flash{animation:bu-flash .9s ease-out}@keyframes bu-flash{0%,40%{background:color-mix(in srgb,var(--line-blue) 22%,transparent)}}
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
-.bu-phone-strip{padding:0 12px 6px}.bu-phone-strip[hidden]{display:none}
+.bu-phone-strip{padding:0 0 6px}.bu-phone-strip[hidden]{display:none}
 @media(max-width:600px){.bu-tabs{display:none}.bu-toolbar{height:48px}.browser-unify #filePreview[data-panel=chrome-window]{border-radius:0}}
 `;
 
@@ -146,11 +146,11 @@ export function createBrowserUnify(deps = {}) {
     if (!enabled) return;
     const c = control(), holder = c.held.holder === 'human' ? 'human' : 'ai';
     badge?.update({ agentUsed:c.agentUsed, holder, paused:c.store === 'paused', waiting:c.store !== 'running', name:c.name });
-    // スマホ: 右の欄を閉じている間、入力欄の上に帯（押すと右の欄を開く）
+    // スマホ: 右の欄を閉じている間、入力欄の上に帯（押すと右の欄を開く）。入力欄は履歴に重ねてあるので、帯は入力欄の中の先頭に置く
     const composer = deps.composer?.();
     const want = phoneQuery.matches && c.agentUsed && tabs().length > 0 && !chrome()?.isOpen?.() && !!composer;
     if (want && !phoneStrip) {
-      stripHolder = document.createElement('div'); stripHolder.className = 'bu-phone-strip'; composer.before(stripHolder);
+      stripHolder = document.createElement('div'); stripHolder.className = 'bu-phone-strip'; composer.prepend(stripHolder);
       phoneStrip = createPhoneBrowserStrip({ mount:stripHolder, onActivate:() => chrome()?.open?.() });
     }
     if (stripHolder) stripHolder.hidden = !want;

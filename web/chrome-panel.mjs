@@ -464,7 +464,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
   }
 
   function showHint() {
-    if (!parts || operating) return;
+    if (!parts || operating || inputOptions) return;
     clearTimeout(hintTimer);
     parts.hint.textContent = t('browser.chromeWindow.viewOnly');
     parts.hint.dataset.shown = '';
@@ -472,9 +472,9 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
   }
   function hideHint() { if (!parts || pinned()) return; delete parts.hint.dataset.shown; parts.hint.textContent = ''; }
   const pinned = () => parts?.touched || alwaysHint();
-  /** タッチでは常に出す。それ以外は押したときだけ（フレームのたびの描き直しで、出している案内を消さない） */
+  /** タッチでは常に出す。それ以外は押したときだけ（フレームのたびの描き直しで、出している案内を消さない）。旗が on なら映像から操作できるので出さない */
   function paintHint() {
-    if (operating && parts) { clearTimeout(hintTimer); delete parts.hint.dataset.shown; parts.hint.textContent = ''; return; }
+    if ((operating || inputOptions) && parts) { clearTimeout(hintTimer); delete parts.hint.dataset.shown; parts.hint.textContent = ''; return; }
     if (!parts || !pinned()) return;
     parts.hint.textContent = t('browser.chromeWindow.viewOnly'); parts.hint.dataset.shown = '';
   }
