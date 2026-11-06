@@ -7839,6 +7839,9 @@ let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry�
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
 const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
+// ブラウザーの一本化（ADR 0291〜0294）の右の欄。旗が on のサーバー（hostCapabilities.browserUnify がある）のときだけ読む。off なら読まない
+let browserUnifyLoad = null;
+const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state })));
 // ホストの画面（デスクトップ版）は plyDesktop.browser のページそのもの。それ以外の端末（リモートの窓・LAN のブラウザー）は、
 // ホストの内蔵ブラウザーの映像を同じ部品で見る（web/remote-browser.mjs。ホストが映像を送れる＝pcBrowser の間だけ。docs/inapp-browser.md）
 const remoteBrowser = browserPanelAvailable() ? null : createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null });
@@ -10450,6 +10453,7 @@ function connect() {
         remoteBrowser?.reconnected();
         chromePanel?.reconnected();
         announceBrowserAvailability(); browserPanel.refreshTabs(); chromeProfilePill?.refresh();
+        if (c?.browserUnify) loadBrowserUnify().then((unify) => unify.capsChanged(c)).catch(() => {});
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
