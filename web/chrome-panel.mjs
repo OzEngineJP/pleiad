@@ -97,6 +97,7 @@ export function createWindowTable() {
  */
 export function setupChromePanel({ cmd, preview, browser = null, showMenu = null, session = () => null, getAgentName = () => 'Claude', windows = createWindowTable(), touch = null, closeRisk = () => null, paused = () => false, children = () => [],
   waiting: waitingFor = () => false, canOperateHere = () => false, operateHere = null, menuItems = () => [], openConversation = null } = {}) {
+  let unifiedHeader = null, holderSlot = null; const tabListeners = new Set();
   let root = null, parts = null, sessionId = null, owner = null, state = null, frameMeta = null, video = { lag: false, stale: false }, ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
   let optimisticTab = null, pendingPin = null, tabSig = '', lastTabIds = null, targetListeners = new Set();   // optimisticTab: 押した直後のタブの固定。pendingPin: 会話を替えてから固定するウィンドウ
   let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, operating = false, waiting = null, closing = false, optimistic = null, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown, lastAgent, switchSig = '';   // optimistic: 押した直後（サーバーの知らせの前）の固定。hold: 閉じたウィンドウを薄くして残している間。waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
@@ -160,6 +161,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     text.append(textInput, textSend);
     const note = el('p', 'cp-note weak small', t('browser.chromeWindow.deviceNote')); note.hidden = true;
     const node = el('div', 'cp');
+    if (unifiedHeader) { node.classList.add('bu-panel'); node.append(unifiedHeader); }
     node.append(switcher.root, tabs.root, screen, empty, text, note, foot, dialog.root);
     const sink = createFrameSink({ img,
       onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, source: 'chrome', seq }).catch(() => {}); },
@@ -391,6 +393,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
   }
 
   function paintSwitch() {
+    for (const listener of tabListeners) listener();
     if (!parts) return;
     const id = sessionId;
     const rows = id ? windows.list(id) : [];
@@ -549,7 +552,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
   function open(element = null, { target = null } = {}) {
     const current = session();
     const id = target ?? current;
-    if (!current || !id || (!browser?.available() && !windows.has(id))) return;
+    if (!current || !id || (!unifiedHeader && !browser?.available() && !windows.has(id))) return;
     if (isOpen() && owner === current) {
       // 同じ会話のパネルが開いていて、別の会話を指したら映す会話だけ替える
       if (target != null && target !== sessionId) { retarget(target); return; }
@@ -597,10 +600,29 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
     open, toggle, close, isOpen, openWaiting,
     /** ⋯「Chrome で開く」が失敗した。待っていたパネルは閉じる */
     cancelWaiting() { if (waiting && isOpen() && waiting.sessionId === sessionId) close(); waiting = null; },
-    /** 状態の一行を差し込む口。第 6 段が自分の部品（role=status の一行とボタン）を渡す。null で空に戻す */
+    /** タブ列とアドレスバーを映像の上へ置き、状態表示の挿入口をバーへ移す。 */
+    mountBrowserChrome(node, slot) {
+      if (!parts) { parts = build(); root = parts.node; }
+      unifiedHeader = node; holderSlot = slot;
+      root.classList.add('bu-panel'); root.prepend(node);
+      if (parts.slot.childNodes.length) holderSlot.append(...parts.slot.childNodes);
+    },
+    browserMenuItems(anchor) {
+      const items = [...(sessionId ? menuItems(sessionId) ?? [] : [])];
+      const profile = parts?.profileSlot.querySelector('button');
+      if (profile) items.push({ label:t('browser.chromeWindow.profileActions'), onClick:() => profile.click() });
+      if (sessionId && owner && sessionId !== owner && openConversation) {
+        const id = sessionId; items.push({ label:t('browser.chromeWindow.openConversation'), onClick:() => openConversation(id) });
+      }
+      items.push({ label:t('browser.chromeWindow.closeShown'), disabled:!windows.list(sessionId).length || closing, onClick:() => askClose(anchor) });
+      return items;
+    },
+    get tabId() { return shownTab(); },
+    onTabChange(fn) { tabListeners.add(fn); },
+    /** 状態表示と操作ボタンを差し込む。null で空に戻す。 */
     mountStatus(node) {
       if (!parts) { parts = build(); root = parts.node; }
-      parts.slot.replaceChildren(...(node ? [node] : []));
+      (holderSlot ?? parts.slot).replaceChildren(...(node ? [node] : []));
     },
     /** 映像の上に重ねる層（web/chrome-control.mjs の overlay）。映像の箱（position: relative）の中へ置く。null で外す */
     mountOverlay(node) {
@@ -613,7 +635,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
       const width = Number(frameMeta?.deviceWidth), height = Number(frameMeta?.deviceHeight);
       return width > 0 && height > 0 ? { width, height } : null;
     },
-    get statusSlot() { if (!parts) { parts = build(); root = parts.node; } return parts.slot; },
+    get statusSlot() { if (!parts) { parts = build(); root = parts.node; } return holderSlot ?? parts.slot; },
     /** 第 10 段がプロフィール pill を差し込む口。Chrome のタブの道具の列に置く */
     get profileSlot() { if (!parts) { parts = build(); root = parts.node; } return parts.profileSlot; },
     windows,

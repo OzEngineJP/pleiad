@@ -191,6 +191,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, viewpo
     });
   }
   function paintTabs() {
+    if (hooks.unified?.()) { tabsRow.hidden = true; return; }
     const chromeSelected = hooks.chromeOpen();
     const chromeAvailable = hooks.chromeAvailable();
     const items = state.tabs.map(tab => ({ tab, chrome: false }));

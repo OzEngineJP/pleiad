@@ -753,6 +753,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "browser.chromeNavigate",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeNavigate",
+      "input": "b2ac0d8a8eac"
+    },
+    {
       "id": "browser.chromeOpen",
       "risk": "write",
       "riskOf": false,

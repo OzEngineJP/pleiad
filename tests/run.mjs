@@ -899,7 +899,6 @@ const SUITES = [
   // favicon の取得の行き先の検査（名前解決の後の IP・リダイレクトの先・手元の host・Pleiad の port）
   './unit/icon-fetch.mjs',
   './unit/session-files.mjs',
-  './unit/browser-unify-ws.mjs',
   './unit/search-provider.mjs',
 
   // --- A6 タブごとの持ち手と大きさ ---
@@ -921,6 +920,8 @@ const SUITES = [
   // 形とパスの検査し直し・ファイルのページのタブの主フレームの既定の world だけ・人の操作のタブだけ（AI の evaluate の頼みを捨てる）・結果と env は隔離した world から
   './unit/page-requests.mjs',
   './unit/browser-unify-b3.mjs',
+  './unit/browser-unify-ws.mjs',
+  './unit/browser-unify-tabs.mjs',
 
   // --- B2 映像からの操作・スマホの入力 ---
   './unit/phone-input.mjs',
