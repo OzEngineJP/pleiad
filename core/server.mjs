@@ -9850,8 +9850,8 @@ wss.on("connection", (ws, req) => {
             if (!hostAction && args.lenient === true) return reply(true, { path: resolved.path, cwd: resolved.cwd ?? null });
             const { file, stat } = await inspectFile(resolved.path, fileAccess);
             const directory = stat.isDirectory();
-            // defaultAppAllowed: 「既定のアプリで開く」を出してよいか（検査した実体の名前で決める。core/os-open.mjs）
-            if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file', defaultAppAllowed: !directory && defaultAppAllowed(file) });
+            // defaultAppAllowed: 「既定のアプリで開く」を出してよいか（旗が on のときだけ。検査した実体の名前で決める。core/os-open.mjs）
+            if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file', ...(BROWSER_UNIFY ? { defaultAppAllowed: !directory && defaultAppAllowed(file) } : {}) });
             // フォルダーの「既定のブラウザーで開く」: フォルダーのページを、入場券を付けた URL で既定のブラウザーに開く（旗が on でページの port があるとき）
             if (msg.command === 'openPath' && directory && pageTickets && pagePorts?.pages && args.returnPath !== true) {
               if (!osActionAllowed()) return reply(false, t('files.tooMany'));

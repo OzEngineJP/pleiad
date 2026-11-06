@@ -31,7 +31,8 @@ export function tabIcon(tab) {
   return icon;
 }
 
-export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {} } = {}) {
+/** decorate(tab, pick): タブの題の横に足すもの（旗が on の活動の点。web/browser-unify.mjs） */
+export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {}, decorate = () => {} } = {}) {
   const root = document.createElement('div'); root.className = 'bu-tabs'; root.setAttribute('role', 'tablist'); root.setAttribute('aria-label', t('tabs:strip.label'));
   const add = browserButton('plus', t('tabs:strip.new'), onNew); add.classList.add('bu-new');
   let tabs = [], selected = null;
@@ -46,7 +47,7 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       pick.setAttribute('aria-selected', String(tab.targetId === selected)); pick.tabIndex = tab.targetId === selected || (!selected && index === 0) ? 0 : -1;
       pick.title = tab.title || tab.page?.path || tab.url || t('tabs:strip.new');
       const icon = tabIcon(tab);
-      const title = document.createElement('span'); title.className = 'bu-tab-title'; title.textContent = pick.title; pick.append(icon, title);
+      const title = document.createElement('span'); title.className = 'bu-tab-title'; title.textContent = pick.title; pick.append(icon, title); decorate(tab, pick);
       pick.onclick = () => onPick(tab);
       pick.onkeydown = event => {
         let at = tabs.findIndex(row => row.targetId === tab.targetId);

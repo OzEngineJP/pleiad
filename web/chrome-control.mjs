@@ -86,7 +86,8 @@ export function createTabActivityDot({ mount } = {}) {
 }
 
 /** Supply browser content (tabs/address/frame). Mount the strip above the phone composer. */
-export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = () => {}, onClose = () => {} } = {}) {
+/** onActivate: 帯を押したときに全画面へ移さず、呼び出し側が開く（旗が on の右の欄。web/browser-unify.mjs） */
+export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = () => {}, onClose = () => {}, onActivate = null } = {}) {
   ensureBrowserControlStyles();
   const element = el('button', 'b2-strip'), thumb = el('img', 'b2-thumb'), info = el('span', 'b2-strip-info'), domain = el('div', 'b2-domain');
   const status = el('div', 'b2-strip-status'), dot = el('span', 'b2-dot'), statusText = el('span'), count = el('span', 'b2-count'), arrow = el('span', 'b2-chevron', '⌃');
@@ -108,7 +109,7 @@ export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = ()
     fullscreen.hidden = false; fullscreen.getBoundingClientRect(); fullscreen.dataset.open = 'true'; element.setAttribute('aria-expanded', 'true'); back.focus(); onOpen();
   }
   const key = event => { if (event.key === 'Escape' && openState) { event.stopPropagation(); close(); } };
-  fullscreen.addEventListener('keydown', key); back.addEventListener('click', close); element.addEventListener('click', open);
+  fullscreen.addEventListener('keydown', key); back.addEventListener('click', close); element.addEventListener('click', () => onActivate ? onActivate() : open());
   return { element, fullscreen, back, open, close,
     update({ url = '', tabs = 0, holder = 'ai', name = 'Claude', image = null, remaining = null, last = null, pinned = false } = {}) {
       try { domain.textContent = new URL(url).hostname || t('control:browser'); } catch { domain.textContent = t('control:browser'); }

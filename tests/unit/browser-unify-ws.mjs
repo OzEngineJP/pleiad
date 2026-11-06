@@ -69,6 +69,11 @@ export default async function(t) {
     const env = await paged.handle({ command:'pageEnv', args:{ theme:'dark' }, client:clients[0] });
     const badTheme = await paged.handle({ command:'pageEnv', args:{ theme:'neon' } }).then(() => null, error => error.code);
     t.ok('pageEnv passes only known themes to the file pages', env.tabs === 2 && envs.length === 1 && envs[0].theme === 'dark' && badTheme === 'INVALID');
+    const holding = [];
+    const heldRelay = { onTabEvent:() => () => {}, unify:{ tabInfo:{ list:() => [] }, tabHolder:{ held:id => id === 'one' ? [{ targetId:'a', holder:'human', by:'screen:1', since:1, last:2, pinned:false, viewport:null }] : [] } } };
+    const heldClient = { readyState:1, OPEN:1, send:message => holding.push(JSON.parse(message).event) };
+    createBrowserUnifyWs({ relay:heldRelay, clients:() => new Set([heldClient]), watching:() => 'one' }).snapshot(heldClient, 'one');
+    t.ok('the reconnect snapshot also tells the human-held tabs after the tab list', holding.length === 2 && holding[0].reset && holding[1].type === 'tab:holder' && holding[1].targetId === 'a' && holding[1].holder === 'human' && holding[1].sessionId === 'one');
     const unwired = await createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client) }).handle({ command:'pageResult', args:reply, client:clients[0] });
     t.ok('without page requests the result is simply not delivered', unwired.delivered === false);
     const suggestion = await ws.handle({ command:'chromeAddress', args:{ sessionId:'one', input:path.join(work, 'no') } });

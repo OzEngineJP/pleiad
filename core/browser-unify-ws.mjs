@@ -88,6 +88,8 @@ export function createBrowserUnifyWs(deps = {}) {
     snapshot(client, sessionId) {
       if (!allowed(client, sessionId)) return;
       send(client, { type: 'tab:info', sessionId, reset: true, tabs: relay?.unify.tabInfo.list(sessionId) ?? [] });
+      // 開き直した画面にも、人の操作中のタブの札を出す（AI のタブは送らない。画面は tab:info の reset で持ち手を忘れる）
+      for (const held of relay?.unify.tabHolder?.held?.(sessionId) ?? []) send(client, { ...held, type: 'tab:holder', sessionId });
     },
     close() { unsubscribe?.(); },
     async handle({ command, args, client }) {

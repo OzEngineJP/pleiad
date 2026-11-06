@@ -3540,7 +3540,7 @@ function onEvent(ev, replay = false) {
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
   // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
-  if (ev.type === 'chromeBrowser') { browserSettings.chromeEvent(ev); return; }
+  if (ev.type === 'chromeBrowser') { chromeLink = ev.state ?? null; browserSettings.chromeEvent(ev); return; }
   // エージェントの Chrome の窓の状態（会話ごと。running・idle・stopped・paused）と、エージェントが押した位置。右パネルの「Chrome の窓」が置き場から引く（web/chrome-control.mjs）
   if (ev.type === 'chromeControl' || ev.type === 'chromeTap') { chromeControlStore.event(ev); if (ev.type === 'chromeControl') refreshTaskChromeWindows(); return; }
   // 会話の Chrome の窓の有無と、エージェントが操作中か（リモートの端末にも届く）
@@ -7431,6 +7431,8 @@ function applyTheme(mode) {
   for (const b of $("themeSeg").querySelectorAll("button")) b.classList.toggle("on", b.dataset.theme === m);
   paintTitleBar();
   paintShellTheme();
+  // 旗が on: 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0292）
+  if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); }
 }
 
 /**
@@ -7843,7 +7845,8 @@ const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
 // ブラウザーの一本化（ADR 0291〜0294）の右の欄。旗が on のサーバー（hostCapabilities.browserUnify がある）のときだけ読む。off なら読まない
 let browserUnifyLoad = null;
-const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview })));
+const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
+  controlStore:chromeControlStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer') })));
 // ホストの画面（デスクトップ版）は plyDesktop.browser のページそのもの。それ以外の端末（リモートの窓・LAN のブラウザー）は、
 // ホストの内蔵ブラウザーの映像を同じ部品で見る（web/remote-browser.mjs。ホストが映像を送れる＝pcBrowser の間だけ。docs/inapp-browser.md）
 const remoteBrowser = browserPanelAvailable() ? null : createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null });
@@ -8881,6 +8884,65 @@ function jumpToConversation({ uuid, toolId }) {
   const row = target.closest('.mw') ?? target;
   if (animated) setTimeout(() => nav.scrollToRow(row, 90), 320); else nav.scrollToRow(row, 90);
   return true;
+}
+/**
+ * 旗が on: ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
+ * タブを開けるのは Chrome につながっているか、その会話にもうタブがあるとき。それ以外は右パネルの iframe で開く（web/page-frame.mjs）
+ */
+let chromeLink = null, filePagesConnected = false;
+function connectFilePages(unify) {
+  if (filePagesConnected) return;
+  filePagesConnected = true;
+  filePreview.configureBrowserUnify({
+    caps: () => state.hostCaps?.browserUnify ?? null,
+    connected: (id) => chromeLink === 'connected' || unify.tabsOf(id).length > 0,
+    tabs: (id) => unify.tabsOf(id),
+    openTab: (args) => unify.openTab(args),
+    focusTab: (tab, id) => unify.focusTab(tab, id),
+    flashTab: (tab, id) => unify.flashTab(tab, id),
+    onRequest: (request) => handlePageRequest(request, { sessionId: request?.sessionId }),
+  });
+}
+/**
+ * ファイルのページからの頼み（web/pages/bridge.mjs の request）。ページは書き込まず、ここで Pleiad の画面の操作にする。
+ * 入力欄・会話の場所に触る頼みは今の会話の分だけ。worktree の頼みは戻り値・例外をページへ返す（web/browser-unify.mjs・web/page-frame.mjs）
+ */
+async function handlePageRequest(request, { sessionId } = {}) {
+  const here = typeof sessionId === 'string' && sessionId === state.current;
+  const path = typeof request?.path === 'string' && request.path ? request.path : null;
+  switch (request?.type) {
+    case 'file-menu':
+      if (!path || !Number.isFinite(request.x) || !Number.isFinite(request.y)) return false;
+      await filePreview.menu(request.x, request.y, { path, kind: request.kind === 'directory' ? 'directory' : 'file', sessionId, ...(typeof request.base === 'string' ? { base: request.base } : {}) });
+      return true;
+    case 'use-file': {
+      if (!here || !path) return false;
+      const where = await cmd('resolvePath', { path, sessionId });
+      if (sessionId !== state.current || !where?.path) return false;
+      if (!attachHostFiles([{ path: where.path, name: where.path.split(/[\\/]/).at(-1), mime: '' }])) return false;
+      $('prompt').focus();
+      return true;
+    }
+    case 'use-text':
+      if (!here || typeof request.text !== 'string') return false;
+      useGitText(request.text);
+      return true;
+    case 'jump':
+      return here && jumpToConversation(request.event ?? {});
+    case 'worktree':
+      return pageWorktree(request);
+  }
+  return false;
+}
+/** git のページの「残っている worktree」の操作。右パネルの git と同じ worktreeOps を通す。取り込みを頼む先は知っている会話だけ */
+async function pageWorktree({ action, id, kept, row, ask, ref }) {
+  const known = (sessionId) => typeof sessionId === 'string' && state.sessions.some((s) => s.id === sessionId);
+  if (action === 'keep' && typeof id === 'string') { await worktreeOps.keep(id, kept === true); return true; }
+  if (action === 'ask' && row && known(row.mergeSessionId)) return worktreeOps.ask(row);
+  if (action === 'unask' && known(ask?.sessionId) && typeof ask.messageId === 'string') return worktreeOps.unask(ask);
+  if (action === 'archive' && typeof row?.id === 'string') return worktreeOps.archive(row);
+  if (action === 'restore' && row && (ref == null || typeof ref === 'string')) return worktreeOps.restore(row, ref);
+  throw new Error('unavailable');
 }
 /** 「会話で使う」: 入力欄の末尾へ字を足す */
 function useGitText(text) {
@@ -10450,8 +10512,9 @@ function connect() {
         browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
         remoteSettings.setHostScreen(state.osActions);
-        // 可視化を隔離の origin（ADR 0292 の 3）で描くのはホストの画面だけ。ほかの画面と旗が off のときは今のまま srcdoc で描く
-        configureIsolatedOrigin(state.osActions && c?.browserUnify?.isolated ? { port: c.browserUnify.isolated,
+        // 旗が on なら、可視化を隔離の origin（ADR 0292 の 3）で描く。LAN の端末はその画面のホスト名、Android アプリは転送した localhost の port で開く。
+        // 旗が off のときは今のまま srcdoc で描く
+        configureIsolatedOrigin(c?.browserUnify?.isolated ? { port: c.browserUnify.isolated,
           mintOnce: (origins) => cmd("vizOnce", { origins }).then((r) => r?.token ?? null) } : null);
         filePreview.osChanged();
         syncAttachButton();
@@ -10459,7 +10522,12 @@ function connect() {
         remoteBrowser?.reconnected();
         chromePanel?.reconnected();
         announceBrowserAvailability(); browserPanel.refreshTabs(); chromeProfilePill?.refresh();
-        if (c?.browserUnify) loadBrowserUnify().then((unify) => unify.capsChanged(c)).catch(() => {});
+        if (c?.browserUnify) loadBrowserUnify().then((unify) => {
+          unify.capsChanged(c);
+          connectFilePages(unify);
+          cmd('pageEnv', { theme: document.documentElement.dataset.theme ?? 'auto' }).catch(() => {});
+          if (state.osActions) cmd('chromeStatus').then((status) => { chromeLink = status?.state ?? null; }, () => {});
+        }).catch(() => {});
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
