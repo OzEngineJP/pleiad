@@ -44,9 +44,26 @@ export default async function(t) {
   assert.deepEqual(perModel.windows.map(w => w.remainingPercent), [40, 100, 90, null]);
   assert.deepEqual(perModel.windows.map(w => w.resetsAt), [null, null, '2030-01-01T00:00:00.000Z', null]);
   assert.ok(perModel.windows.every(w => w.minutes === null));
-  assert.match(perModel.message, /3 つに分かれ/);
+  assert.match(perModel.message, /上限にいちばん近い値/);
   assert.equal(antigravityQuota(payload([{ window: '5h', remaining_fraction: 1, reset_time: '1970-01-01T00:00:00Z' }])).windows[0].resetsAt, null);
   t.ok('モデルごとのバケットは段を外した系統ごとに 1 行（残りの最小・最早のリセット）。1970-01-01 のリセットは不明', true);
+
+  // リセットは残りがいちばん少ない段の時刻（ほかの段の早いリセットで回復を早く見せない）。段の語でない括弧は系統の一部。
+  // 名前のある段と id だけの段は id で 1 行にまとめ、表示は名前から取る。数値の reset_time も時刻として読む
+  const mixed = antigravityQuota({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [{ name: 'All Models', buckets: [
+    { id: 'gemini-3.6-flash-high', name: 'Gemini 3.6 Flash (High)', remaining_fraction: 0, reset_time: '2030-02-01T00:00:00Z' },
+    { id: 'gemini-3.6-flash-low', name: 'Gemini 3.6 Flash (Low)', remaining_fraction: 1, reset_time: '2030-01-15T00:00:00Z' },
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', remaining_fraction: .8 },
+    { id: 'gemini-3-pro-high', name: 'Gemini 3 Pro (High)', remaining_fraction: .6 },
+    { id: 'gemini-3.7-flash-high', remaining_fraction: .3, reset_time: Date.parse('2030-03-01T00:00:00Z') },
+    { id: 'gemini-3.7-flash-low', name: 'Gemini 3.7 Flash (Low)', remaining_fraction: 1, reset_time: 0 },
+  ] }] } } });
+  assert.deepEqual(mixed.windows.map(w => w.label), ['Gemini 3.6 Flash', 'Gemini 3 Pro (Preview)', 'Gemini 3 Pro', 'Gemini 3.7 Flash']);
+  assert.deepEqual(mixed.windows.map(w => w.remainingPercent), [0, 80, 60, 30]);
+  assert.deepEqual(mixed.windows.map(w => w.resetsAt), ['2030-02-01T00:00:00.000Z', null, null, '2030-03-01T00:00:00.000Z']);
+  assert.equal(antigravityQuota(payload([{ window: '5h', remaining_fraction: 1, reset_time: Date.parse('2030-01-01T00:00:00Z') }])).windows[0].resetsAt, '2030-01-01T00:00:00.000Z');
+  assert.equal(antigravityQuota(payload([{ window: '5h', remaining_fraction: 1, reset_time: 0 }])).windows[0].resetsAt, null);
+  t.ok('系統の行のリセットは残りが最小の段の時刻・段の語でない括弧は残す・id だけの段も同じ行・数値の時刻も読む', true);
 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-agy-usage-'));
   const fake = path.resolve('tests/lib/fake-agy.mjs');

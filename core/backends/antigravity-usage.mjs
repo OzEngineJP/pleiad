@@ -11,21 +11,29 @@ export function supportsUsage(version) {
   return major > 1 || (major === 1 && (minor > 1 || (minor === 1 && patch >= 11)));
 }
 
-// agy は時刻の無いリセットを 1970-01-01（epoch 0）で返す（1.5.2）。過去の時刻として扱わず「不明」にする
-const resetOf = value => (Date.parse(value) > 0 ? value : null);
+// agy は時刻の無いリセットを 1970-01-01（epoch 0）で返す（1.5.2）。過去の時刻として扱わず「不明」にする。数値の時刻も受ける
+const resetTime = value => new Date(value).getTime();
+const resetOf = value => (resetTime(value) > 0 ? value : null);
 const fractionOf = bucket => {
   const fraction = number(bucket?.remaining_fraction);
   return fraction != null && fraction >= 0 && fraction <= 1 ? fraction : null;
 };
-// モデルの段（「Gemini 3.8 Flash (Low)」の「(Low)」、id の -low など）を外した系統の名前
-const familyOf = bucket => String(bucket?.name ?? '').replace(/\s*[（(][^（）()]*[）)]\s*$/, '')
-  || String(bucket?.id ?? '').replace(/-(?:minimal|low|medium|high|max)$/i, '');
+// モデルの段（「Gemini 3.8 Flash (Low)」の「(Low)」、id の -low など）を外した系統。段の語のほかの括弧（「(Preview)」など）は系統の一部として残す。
+// まとめる鍵は id から（名前のある段と id だけの段を 1 行にする）、表示は名前から取る
+const TIER = 'minimal|low|medium|high|max';
+const familyName = bucket => String(bucket?.name ?? '').replace(new RegExp(`\\s*[（(]\\s*(?:${TIER})\\s*[）)]\\s*$`, 'i'), '').trim();
+const familyKey = bucket => String(bucket?.id ?? '').replace(new RegExp(`-(?:${TIER})$`, 'i'), '') || familyName(bucket);
+// 系統の行は、残りがいちばん少ない段の値とリセットを使う（別の段のリセットを使うと回復を早く見せる）。同じ残りなら有効な時刻のうちいちばん早いもの
+function mergeTier(row, fraction, reset) {
+  if (!row.seen || (fraction != null && (row.fraction == null || fraction < row.fraction))) return Object.assign(row, { seen: true, fraction, reset });
+  if (fraction === row.fraction && reset && (!row.reset || resetTime(reset) < resetTime(row.reset))) row.reset = reset;
+}
 
 /**
  * agy の使用枠（`/usage --output-format json`）。形は 2 つある:
  *   期間ごとのバケット … グループ（'Gemini Models' など）ごとに window が 5h・weekly のバケット。1 バケット 1 行
  *   モデルごとのバケット（1.5.2）… 'All Models' の 1 グループに、モデルと段ごとのバケット（window が無く、id・name がある）。
- *     段を外した系統ごとに 1 行へまとめる（残りはいちばん少ないもの、リセットはいちばん早いもの）。group も系統の名前にし、
+ *     段を外した系統ごとに 1 行へまとめる（残りはいちばん少ない段の値、リセットはその段の時刻）。group も系統の名前にし、
  *     チップ（web/header-usage.mjs の windowsForModel）と振り分け（core/delegation-routing.mjs の windowsFor）がモデルの系統の行を選べるようにする
  */
 export function antigravityQuota(result) {
@@ -35,12 +43,12 @@ export function antigravityQuota(result) {
   for (const group of result.command.data.groups) {
     for (const bucket of Array.isArray(group?.buckets) ? group.buckets : []) {
       const minutes = bucket?.window === '5h' ? 300 : bucket?.window === 'weekly' ? 10080 : null;
-      const family = !bucket?.window && familyOf(bucket);
-      if (family) {
-        if (!families.has(family)) { families.set(family, { family, fraction: null, reset: null }); windows.push(families.get(family)); }
-        const row = families.get(family), fraction = fractionOf(bucket), reset = resetOf(bucket.reset_time);
-        if (fraction != null && (row.fraction == null || fraction < row.fraction)) row.fraction = fraction;
-        if (reset && (!row.reset || Date.parse(reset) < Date.parse(row.reset))) row.reset = reset;
+      const key = !bucket?.window && familyKey(bucket);
+      if (key) {
+        if (!families.has(key)) { families.set(key, { family: null, key, fraction: null, reset: null }); windows.push(families.get(key)); }
+        const row = families.get(key);
+        row.family ||= familyName(bucket);
+        mergeTier(row, fractionOf(bucket), resetOf(bucket.reset_time));
         continue;
       }
       const fraction = fractionOf(bucket);
@@ -50,8 +58,8 @@ export function antigravityQuota(result) {
       windows.push({ ...usageWindow(`${name} · ${period}`, fraction == null ? null : (1 - fraction) * 100, resetOf(bucket?.reset_time), minutes), group: name });
     }
   }
-  const list = windows.map(w => (w.family
-    ? { ...usageWindow(w.family, w.fraction == null ? null : (1 - w.fraction) * 100, w.reset, null), group: w.family } : w));
+  const list = windows.map(w => (w.key
+    ? { ...usageWindow(w.family || w.key, w.fraction == null ? null : (1 - w.fraction) * 100, w.reset, null), group: w.family || w.key } : w));
   return { windows: list, message: !list.length ? t('antigravity.usage.none')
     : families.size ? t('antigravity.usage.perModel') : t('antigravity.usage.shared') };
 }
