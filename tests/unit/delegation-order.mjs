@@ -76,7 +76,7 @@ export default async function (t) {
   N.prototype.focus = function () { if (!this.disabled) document.activeElement = this; };
   N.prototype.getBoundingClientRect = () => ({ width: 200, height: 180 });
   N.prototype.querySelectorAll = function (selector) {
-    return selector === ':scope > button, :scope > input' ? this.children.filter(row => ['BUTTON', 'INPUT'].includes(row.tagName)) : menuSaved.query.call(this, selector);
+    return selector.startsWith(':scope > button, :scope > input') ? this.children.filter(row => ['BUTTON', 'INPUT'].includes(row.tagName)) : menuSaved.query.call(this, selector);
   };
   globalThis.innerWidth = 800; globalThis.innerHeight = 600;
   const contextMenu = createContextMenu();
