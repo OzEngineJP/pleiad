@@ -115,7 +115,7 @@ body.channels:not(.settings) .channels-view{display:flex;flex-direction:column;p
 /* 700px 以下で引き出しを開くハンバーガー（#openSidebar と同じ出し方。広い画面の開閉は P の印 #sideMark が持つ） */
 #chOpenSidebar{display:none}
 @media (max-width:700px){
-  #chOpenSidebar{display:inline-flex;margin-left:-4px}
+  #chOpenSidebar{display:inline-flex;width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit);margin-left:-2px}   /* 44px。頭の左の余白（10px）と合わせて画面の左端から 8px（#openSidebar と同じ。hover の丸が端に触れない） */
   .channels-view .top.bot-top{padding:10px 18px 0}
 }
 /* 脇のスレッドの行の「分岐」の札（枝のスレッド） */

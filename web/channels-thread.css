@@ -186,5 +186,5 @@
   .th-subs{margin:0 10px 2px}
   .th-band-tokens{position:relative;flex:none}
   .th-tok-aux{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}   /* 数字だけ見せる。語は読み上げに残す */
-  .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-4px}
+  .deck[data-deck=solo] .th-side{display:inline-flex;width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit);margin-left:2px}   /* 44px。頭の左の余白（6px）と合わせて左端から 8px（#openSidebar と同じ） */
 }

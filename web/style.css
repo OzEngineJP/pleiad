@@ -2218,15 +2218,15 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   /* 指への追従中だけ遷移を外す（ADR 0262）。確定後は通常の --dur / --ease-out に戻す。 */
   :root.side-dragging body:not(.settings) > #sidebar{visibility:visible;transition:none}
   :root.side-dragging body:not(.settings) > .side-veil{transition:none;pointer-events:auto}
-  /* 引き出しの見出し: 左は P の印（.side-pm の重ね置き）、右端は通知と ✕（どちらも 44px、✕ は引き出しの右端から 4px） */
-  #sidebar header{padding:9px 4px 4px}
+  /* 引き出しの見出し: 左は P の印（.side-pm の重ね置き）、右端は通知と ✕（どちらも 44px、✕ は引き出しの右端から 8px。hover の丸が端に触れない） */
+  #sidebar header{padding:9px 8px 4px}
   #sidebar header .btn-icon{width:44px;height:44px;min-width:44px;min-height:44px}
   #closeSidebar .ic-side{display:none}
   #closeSidebar .ic-x{display:block}
   /* 設定の帯では「← 会話に戻る」が左端に来るので P の印は出さない（広い画面は出したまま） */
   body.settings #sidebar > .side-pm{display:none}
-  /* 開くボタンは常に（広い画面の「閉じている間だけ」ではない）。top の左端に揃え、44px の箱ごと中に収める（hover の地が欠けない） */
-  #openSidebar{display:inline-flex;margin-left:-4px}
+  /* 開くボタンは常に（広い画面の「閉じている間だけ」ではない）。44px の丸を画面の左端から 8px 離す（hover の丸が端に触れない。引き出しの ✕ と同じ） */
+  #openSidebar{display:inline-flex;margin-left:4px}
   /* 引き出しの下端のアカウントと設定の一行（60px）。丸は 30px で名の左に入れる（重ね置きの #sideAvatar は出さない） */
   .side-foot{height:60px;padding:0 4px 0 6px}
   .side-me{height:44px;display:flex;align-items:center;gap:10px;padding:0 12px 0 10px}
