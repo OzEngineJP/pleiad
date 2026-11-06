@@ -21,10 +21,11 @@
 1. 会話ごとに Chrome のウィンドウを 1 つ持ち、人と AI が同じタブを使う。誰が開いたタブかは区別しない。人が開いたタブも、可視化の「広げる」で開いたタブも、AI がそのまま読んで操作できる。ほかの会話・bot からは見えず、利用者の普段の Chrome の窓には触れない（今の中継の範囲。ADR 0148）。
 2. 右の欄（スマホでは入力欄の上の帯と全画面）は、そのウィンドウのタブだけを出す。種類の切り替え（`web/side-panel.mjs` のモード `file`・`visualization`・`browser`・`custom` と `parts.switcher`）はなくす。ファイル・フォルダー・git の変更・プラグイン・新しいタブも、Web のページと同じ列のタブにする。中身は Pleiad が配るページで、origin と認証は ADR 0292 で決める。
 3. 物理的には今のまま 1 タブ 1 窓（`core/chrome/windows.mjs`。裏のタブは描画が止まるため）。「会話のウィンドウ」と「タブの列」は、Pleiad がその会話の窓の集まりを 1 つのウィンドウとして描くものである。タブの並び順は開いた順で、Pleiad が覚える。
+4. 窓を画面の外に置く扱い（ADR 0154）は変えない。macOS で窓が隠れない今の動きもそのままにし、最後の確かめの段（V）で実機で見る（2026-11-06 の追加の決定）。
 
 ### 2. タブの列とアドレスバーは Pleiad が CDP の情報から描く
 
-1. 映像（ADR 0294）に映るのはページの中身だけ。タブの列・アドレスバー・題・favicon・読み込み中は、中継が CDP から集めた情報で Pleiad が描く。並びは Chrome と同じにする。PC は上にタブの列（favicon・題・×・末尾に＋）、その下に 戻る・進む・再読み込み・アドレスバー・⋮。スマホは上にアドレスバー（Web はホストだけ）・タブの数・⋮ で、タブの数を押すとサムネイルの一覧。タブの幅・縮み方・狭いときの省き方の順は、モック v6 の決定のとおりにする（docs/design-system.md に書く）。
+1. 映像（ADR 0294）に映るのはページの中身だけ。タブの列・アドレスバー・題・favicon・読み込み中は、中継が CDP から集めた情報で Pleiad が描く。並びは Chrome と同じにする。PC は上にタブの列（favicon・題・×・末尾に＋）、その下に 戻る・進む・再読み込み・アドレスバー・⋮。スマホは上にアドレスバー（Web はホストだけ）・タブの数・⋮ で、タブの数を押すとサムネイルの一覧。サムネイルは、Web のタブも Pleiad のページのタブも、そのタブのスクリーンショット（`Page.captureScreenshot`）を縮めたものにする（2026-11-06 の追加の決定）。タブの幅・縮み方・狭いときの省き方の順は、モック v6 の決定のとおりにする（docs/design-system.md に書く）。
 2. 中継は会話の範囲のタブごとに、自分の CDP セッション（`Target.attachToTarget`、flatten）を持ち、次の情報を集める。エージェントの接続とは別のセッションで、エージェントのコマンドには混ぜない。
    - URL と題: `Target.targetInfoChanged`。
    - 読み込み中: `Page.frameStartedLoading` / `Page.frameStoppedLoading`（主フレーム）。
@@ -54,7 +55,7 @@
 ### 4. Chrome が無い会話
 
 1. 「Chrome が無い」とは、中継の接続（`core/chrome/connection.mjs`）が `connected` でないことを指す。Chrome が入っていない、許可していない、`unsupported`、つなぎかけ、のどれでも同じに扱う。
-2. このときの右の欄は、ブラウザーとしては出さない。ファイル・フォルダー・git・プラグインのページだけを、右の欄に iframe で 1 枚ずつ出す。タブの列は出さず、アドレスバーの形（ツリー・区切り・プレビュー／原文）は残す。
+2. このときの右の欄は、ブラウザーとしては出さない。ファイル・フォルダー・git・プラグインのページだけを、右の欄に iframe で 1 枚ずつ出す。タブの列は出さず、アドレスバーの形（ツリー・区切り・プレビュー／原文）は残す。iframe には Chrome をつなぐ案内を出さない（2026-11-06 の追加の決定）。iframe のページは本体の origin の `/_pleiad/` から配る（ADR 0292 の 2 の 3）。
 3. Web のリンクは既定のブラウザーへ開く（スマホではその端末の既定のブラウザー）。可視化の「広げる」は、PC では会話の中で広げ、スマホでは全画面にする。「既定のブラウザーで開く」は PC だけで、隔離した origin の URL を開く（ADR 0292）。
 4. 接続が `connected` になった後に開いたファイルは、Chrome のタブで開く。iframe で出していたものを自動でタブへ移すことはしない。ファイルのリンクを押しただけで、Chrome をつなぐ・許可を求めることもしない。
 5. 接続が `connected` で、その会話の窓がまだ無いときは、ファイルのリンクを押すと窓を作ってタブを開く（ADR 0148 の `openForConversation`）。
@@ -70,14 +71,19 @@
 3. 既定のブラウザーへ http の URL を渡す口は、今は内蔵ブラウザーの `openExternal` の動作だけが持っている。これを専用の IPC `ply:open-external` に置き換える（中の検査は今の `external()` のまま）。
 4. **移行**
    - prefs の `linkOpen` は読み飛ばし、`defineSetting` から外す。保存されている値は次に設定を書いたときに落ちる。
-   - 内蔵ブラウザーの保存領域 `persist:pleiad-browser`（ログインの Cookie など）は、新しい版の最初の起動で 1 回だけ消す（`session.clearStorageData()` の後に `Partitions/pleiad-browser` を消す）。持ち主の居ないログインの情報を残さないためである。リリースノートに「内蔵ブラウザーのログインは引き継がれません」と書く。
+   - 内蔵ブラウザーの保存領域 `persist:pleiad-browser`（ログインの Cookie など）は、新しい版の最初の起動で 1 回だけ消す（`session.clearStorageData()` の後に `Partitions/pleiad-browser` を消す）。持ち主の居ないログインの情報を残さないためである。リリースノートに「内蔵ブラウザーのログインは引き継がれません」と書く（2026-11-06 に確定）。
    - 更新の引き継ぎ（ADR 0167）にある内蔵ブラウザーのタブの写しは、新しい版では読まずに捨てる。
    - 地球のボタン（スレッドの頭）と Ctrl+Shift+B は、右の欄の開け閉めにする。
 5. 会話の見出しのアイコンは、右の欄を開け閉めするアイコン 1 つにまとめる。git・プラグイン・作業フォルダーへは、＋の新しいタブから行く。
 
 ### 6. 文言
 
-- すべて `web/locales/{ja,en}/` に置く。新しい鍵は `browser.tabs.*`（タブの列・一覧）、`browser.address.*`（アドレスバー・候補・断る理由）、`browser.control.*`（札・ポップ・帯。ADR 0293）、`browser.video.*`（遅れ・途切れ。ADR 0294）、`pages.*`（ADR 0292 の Pleiad のページ。新しい名前空間 `pages.json`）。
+- すべて `web/locales/{ja,en}/` に置く。名前空間を 3 つ足す（2026-11-06 の追加の決定。並べて作る段どうしが ui.json の同じ所を書かないため）。
+  - `tabs`（`tabs.json`）: `tabs:strip.*`（タブの列・一覧）、`tabs:address.*`（アドレスバー・候補・断る理由）。
+  - `control`（`control.json`）: `control:*`（札・ポップ・帯。ADR 0293）。
+  - `pages`（`pages.json`）: ADR 0292 の Pleiad のページの文言。
+  - 映像の `browser.video.*`（遅れ・途切れ。ADR 0294）は ui.json に置く。
+  - 案の段で `browser.tabs.*`・`browser.address.*`・`browser.control.*` と書いていた鍵は、それぞれ `tabs:strip.*`・`tabs:address.*`・`control:*` に読み替える。
 - 承認された語: 「画面を開く」「映像が遅れています」「つなぎ直しています」「ファイルを選ぶ」「任せる」。操作中のカードの説明文は消し、「Claude のウィンドウ」「あなたのタブ」は使わない。エージェントの名前が入るところは `{{name}}` で受け、「Claude」を直書きしない。
 - エクスプローラーの語は OS で替える。`files.menu.revealFile` などは、macOS 用の別の鍵（「Finder で表示」）を持つ。
 - 消すのは、内蔵ブラウザーだけが使う鍵である（`browser.*` のビューアの鍵、`settings.browser.linkOpen.*`、`timeline.link` のシートの鍵、`ops.browser.openFile.*`）。残すのは `settings.browser.confirm.*`（可視化と HTML のファイルに効く）と `timeline.link.hostOnly` など。

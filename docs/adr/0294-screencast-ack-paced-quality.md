@@ -78,5 +78,5 @@ ADR 0291 で、Web のページのタブは、PC の右のパネルでもスマ�
 
 - `core/browser-screencast.mjs`（hub の返事・見る人ごとの 1 枚・段・印）と `core/chrome/screencast.mjs`（段ごとのセッション・`captureScreenshot`）を変える。
 - `web/screencast-frame.mjs`（印への返事・灰色の表示・遅れの札）、`web/chrome-panel.mjs`（画質のボタンを消す）を変える。端末のアプリは Web の画面を使うので、ネイティブの変更は要らない。
-- 画質の文言（`quality` 系）を ui.json から消し、`browser.video.*` を足す。
+- 画質の文言（`quality` 系）を ui.json から消し、`browser.video.*` を ui.json に足す（タブの列・札の文言は別の名前空間。ADR 0291 の 6）。
 - ADR 0148 の映像の画質の選び方を置き換える。

@@ -26,7 +26,8 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
 - ファイルのページと隔離は、本体とは別のリスナーにし、`127.0.0.1` と `::1` に bind する（Chrome は `localhost` を `::1` から試すことがある）。`AGENT_HOST_BIND` で本体を LAN に開いていても、この 2 つはループバックだけで待つ。
 - 名前を `localhost` にするのは、本体（`127.0.0.1`）と Cookie の置き場を分けるためである。`127.0.0.1` の別 port にすると、本体の Cookie が届く。
 - どちらのリスナーも、`Host` が `localhost:<その port>` のときだけ答える（DNS rebinding を防ぐ）。受けるのは GET と HEAD だけ。
-- port はデータの置き場に覚え、次の起動でも同じ port を試す。取れなければ新しい port にし、開いている Pleiad のページのタブを中継が新しい URL へ移す。無停止の更新（ADR 0151）では、新しいサーバーが同じ port を引き継ぐ。試験用に `AGENT_HOST_PAGES_PORT`・`AGENT_HOST_ISOLATED_PORT`（`0` で空いた port）を足す。
+- port はデータの置き場の `page-ports.json`（`{ pages, isolated }`）に覚え、次の起動でも同じ port を試す。取れなければ新しい port にし、開いている Pleiad のページのタブを中継が新しい URL へ移す。無停止の更新（ADR 0151）では、新しいサーバーが同じ port を引き継ぐ。試験用に `AGENT_HOST_PAGES_PORT`・`AGENT_HOST_ISOLATED_PORT`（`0` で空いた port）を足す。環境変数で決めた port は覚えない。
+- 実装の間は旗 `AGENT_HOST_BROWSER_UNIFY=on` のときだけ 2 つのリスナーと本体の `/_pleiad/` を立てる（既定は off で今の動きのまま）。立った port は能力の `browserUnify`（`{ pages, isolated }`）で画面へ知らせる。
 
 ### 2. ファイルのページ
 
@@ -37,8 +38,11 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
 2. **Chrome のタブでの資格**: 中継が CDP（`Storage.setCookies`。中継自身の接続で）で、Cookie `pleiad_pages` を入れる。属性は `localhost`、`Path=/_pleiad/`、`HttpOnly`、`SameSite=Strict`。
    - 値は本体のトークンから導いた別の値（HMAC(本体のトークン, "pleiad-pages")）。本体のトークンそのものは Chrome に入れない。本体のトークンが同じ間は値も変わらないので、更新をまたいでも入れ直さずに済む。
    - 入れる時点は、接続のたびと、Pleiad のページを開く前。URL に資格を載せないのは、Chrome の履歴と同期に残るためである。
+   - `Storage.setCookies` で入れた Cookie が、会話のプロフィールのタブの `localhost` の要求に付くことは、中継の作りに取りかかる段（A2）の最初に実機で確かめ直す（2026-11-06 の追加の決定）。付かなければ、この 2 の 2 を見直す。
    - この Cookie で届くのは、ファイルのページの GET だけである。本体の操作・WS・外で開く操作には届かない。
-3. **画面の iframe での資格**（Chrome が無い会話・スマホの手元の描画・LAN のブラウザー）: 同じページを本体の origin の同じパス（`http://127.0.0.1:<port>/_pleiad/s/…`）でも配り、本体の Cookie で認証する。ページのコードは同じで、相対の URL で API を呼ぶ。
+3. **画面の iframe での資格**（Chrome が無い会話・スマホの手元の描画・LAN のブラウザー）: 同じページを本体の origin の同じパス（`http://127.0.0.1:<port>/_pleiad/s/…`）でも配り、本体の Cookie で認証する（2026-11-06 の追加の決定）。ページのコードは同じで、相対の URL で API を呼ぶ。
+   - 本体の入口が受けるのは本体の Cookie だけで、URL の `?token=` は受けない。GET と HEAD のほかは 405 にする。
+   - 本体の origin で動くのは Pleiad のページのコードだけである。利用者の HTML と可視化は、iframe でも隔離した origin（下の 3）から読む。
 4. **中で動くのは Pleiad のコードだけ。** 利用者のファイルの中身は文字として描く。Markdown は今と同じく `renderMarkdown` で消毒して描く。HTML・SVG のスクリプトは、この origin では動かさない（HTML は下の 3 の隔離の iframe、SVG は `<img>` で描く）。
    - 応答の CSP は `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src http://localhost:<isolated port>; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`。
    - `frame-ancestors` は、ファイルのページの port では `'none'`、本体の port では `'self'` にする。
@@ -64,7 +68,7 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
    - 「一度だけ読み込む」は、その一度の許可を載せた別の鍵（HTML）か、問い合わせの印（可視化。`?once=<短い乱数>`。サーバーのメモリで 10 分）で読み直す。
    - 止めた出どころは `securitypolicyviolation` を親へ伝える小さな橋で数える（今の `VIOLATION_BRIDGE`）。この橋は、サーバーが応答の頭に差し込む。
 4. **可視化の束の保存**
-   - 束: `visualize{"path":…}` が指す HTML（今と同じく UTF-8・1 MiB まで）と、同じフォルダーの下のファイルである。ドットで始まるもの・`node_modules` は除き、ADR 0050 の検査をかける。束全体で 200 ファイル・32 MiB までとし、超えたら HTML だけの束にして、カードに「資源は含めていません」と出す。
+   - 束: `visualize{"path":…}` が指す HTML（今と同じく UTF-8・1 MiB まで）と、同じフォルダーの下のファイルである。ドットで始まるもの・`node_modules` は除き、ADR 0050 の検査をかける。束全体で 200 ファイル・32 MiB、1 ファイル 8 MiB までとし（2026-11-06 の追加の決定）、超えたら HTML だけの束にして、カードに「資源は含めていません」と出す。
    - 中身は内容のハッシュで `viz-blobs/<sha256>` に 1 ファイルずつ書く（書いたら変えない）。束の一覧は、可視化の記録の行に持つ。データの置き場の書き込みの許可の一覧（`tests/data-writes-allowlist.mjs`）に `viz-blobs/` を足す。
    - 記録から消えた束のファイルは、起動時の片付けで消す。
    - 前の版の記録（中身を行に持つもの）は、読むときに HTML だけの束として扱い、そのとき blob を書く。`visualization-snapshots/` の写しは作らなくなり、残っている分は今の片付け（1 日）で消える。
@@ -86,7 +90,7 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
 ### 5. リモートとスマホ
 
 1. **ファイルのページ**: スマホは映像にせず、端末の中で直接描く。本体の origin の `/_pleiad/s/…` を、今の端末のプロキシ → Noise → `forward.mjs` の道で読む（上の 2 の 3）。新しいリスナーは要らない。
-2. **「中継の側でも認証と大きさの上限」の置き場**: 中継のサーバー（`relay/server.mjs`）は暗号文しか見えないので、ここでは検査できない。かける場所は道の両端である。
+2. **「中継の側でも認証と大きさの上限」の置き場**: 中継のサーバー（`relay/server.mjs`）は暗号文しか見えないので、ここでは検査できない。かける場所は道の両端で、両方にかける（2026-11-06 の追加の決定）。
    - ホストの側（`core/remote/forward.mjs`）: `/_pleiad/` を許す道に足す。ペアリング済みの端末の流れだけを本体へ渡す（今と同じ）。応答の本体を数え、テキストの API は 8 MiB、`api/raw` は 32 MiB を超えたら流れを切る（本体の検査に任せきりにしない）。
    - 端末の側（`device-proxy.mjs`・`DeviceProxy.kt`・`DeviceProxy.swift`）: `/_pleiad/` を GET・HEAD だけ通す。受けた本体を同じ上限で数えて切る。
 3. **隔離の origin**: 端末のプロキシに 2 つ目のリスナー `localhost:<p2>` を足し、`/viz/…` と `/f/…` だけを、ホストの隔離の port へ送る。
