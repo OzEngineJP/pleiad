@@ -32,6 +32,7 @@ export default async function (t) {
     t.ok('移動の検査の既定は safeUrl', policy.allowUrl('https://a.example/', {}) === true && policy.allowUrl('chrome://settings', {}) === false);
     t.ok('前後のふるいの既定は素通し・要求は止めない・確認の Fetch のまま', policy.before({ params }) === params && policy.after({ result }) === result && policy.request({}) === null
       && policy.intercepts === false && JSON.stringify(policy.fetchPatterns([{ urlPattern: '*' }])) === '[{"urlPattern":"*"}]');
+    t.ok('つながった・開く前の口の既定は何もしない', policy.connected({ send: () => { throw new Error('x'); } }) === undefined && policy.beforeOpen({ send: () => { throw new Error('x'); } }) === undefined);
     const holder = createTabHolder();
     t.ok('門の既定は一時停止の間だけ断る', holder.gate({ paused: { at: 1 } }) === PAUSED_MESSAGE && holder.gate({ paused: null }) === null);
     const info = createTabInfo(), bridge = createPageBridge();
@@ -41,12 +42,18 @@ export default async function (t) {
 
   // ---- 差し替えた口が呼ばれる
   {
-    const seen = { allow: [], before: [], after: [], request: [], gate: [], added: [], changed: [], removed: [], forget: [], ports: [] };
+    const seen = { allow: [], before: [], after: [], request: [], gate: [], added: [], changed: [], removed: [], forget: [], ports: [], connected: [], beforeOpen: [], cookies: [] };
     let emitInfo = null, blockGate = false, intercepts = false;
     const hooks = {
-      pagePolicy: ({ ports }) => ({
+      pagePolicy: ({ ports, cookie }) => ({
         allowUrl(url, context) { seen.allow.push({ url, ...context }); seen.ports.push(ports()); return safeUrl(url) && !url.includes('deny.example'); },
-        before({ method, params }) { seen.before.push(method); return method === 'Runtime.evaluate' && params.expression === 'swap-me' ? { ...params, expression: 'document.title' } : params; },
+        async connected({ send }) { seen.connected.push((await send('Browser.getVersion', {})).product ?? null); },
+        async beforeOpen({ sessionId, url, send }) {
+          seen.cookies.push(cookie());
+          seen.beforeOpen.push({ sessionId, url, targets: (await send('Target.getTargets', {})).targetInfos?.length ?? null });
+          if (url.includes('throw.example')) throw new Error('boom');
+        },
+        async before({ method, params }) { seen.before.push(method); return method === 'Runtime.evaluate' && params.expression === 'swap-me' ? { ...params, expression: 'document.title' } : params; },
         after({ method, result }) { seen.after.push(method); return method === 'Runtime.evaluate' ? { ...result, filtered: true } : result; },
         get intercepts() { return intercepts; },
         fetchPatterns: patterns => patterns,
@@ -67,8 +74,11 @@ export default async function (t) {
       const events = [];
       const off = r.relay.onTabEvent((type, payload) => events.push([type, payload]));
       r.relay.setPagePorts({ main: 7420, pages: 7421, isolated: 7422 });
+      r.relay.setPageCookie({ name: 'pleiad_pages', value: 'v', path: '/_pleiad/' });
+      t.ok('4 つの口の実体を relay.unify で外から読める', ['pagePolicy', 'tabHolder', 'tabInfo', 'pageBridge'].every(k => r.relay.unify[k] && typeof r.relay.unify[k] === 'object'));
       a = await agent(await r.relay.endpoint('one'));
       await a.cmd('Target.setDiscoverTargets', { discover: true });
+      t.ok('上りにつながると connected が呼ばれ、中継自身の接続でブラウザーの単位のコマンドを送れる', await until(() => seen.connected.length === 1 && typeof seen.connected[0] === 'string'), JSON.stringify(seen.connected));
 
       const deniedCreate = await a.cmd('Target.createTarget', { url: 'https://deny.example/' });
       t.ok('createTarget は移動の検査の口を通る（via: create）', deniedCreate.error?.message === 'navigation denied' && seen.allow.some(x => x.via === 'create' && x.sessionId === 'one'));
@@ -76,6 +86,11 @@ export default async function (t) {
 
       const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
       const tabId = created.result?.targetId;
+      t.ok('about:blank を開くときは開く前の口を呼ばない', seen.beforeOpen.length === 0);
+      const withUrl = await a.cmd('Target.createTarget', { url: 'https://open.example/' });
+      t.ok('URL を開く createTarget は、開く前の口を待ってから開く（会話の id・URL・中継の接続・Cookie が読める）', !withUrl.error && seen.beforeOpen.some(x => x.sessionId === 'one' && x.url === 'https://open.example/' && typeof x.targets === 'number')
+        && seen.cookies.at(-1)?.value === 'v', JSON.stringify(seen.beforeOpen));
+      if (withUrl.result?.targetId) await a.cmd('Target.closeTarget', { targetId: withUrl.result.targetId });
       t.ok('タブが範囲に入ると tabInfo.added（会話の id・targetId・targetInfo・attach）', await until(() => seen.added.some(tab => tab.targetId === tabId))
         && (() => { const tab = seen.added.find(x => x.targetId === tabId); return tab.sessionId === 'one' && tab.info?.targetId === tabId && typeof tab.attach === 'function'; })());
       const handle = seen.added.find(x => x.targetId === tabId);
@@ -110,6 +125,8 @@ export default async function (t) {
       intercepts = false;
 
       // 人がビューアから開く
+      const opened = await r.relay.openForConversation('one', 'https://throw.example/').then(() => true, () => false);
+      t.ok('人が開くときも開く前の口を通り、口が投げても開く', opened && seen.beforeOpen.some(x => x.url === 'https://throw.example/'));
       await r.relay.openForConversation('one', 'https://deny.example/').then(() => t.ok('人が開く移動も検査の口を通る（via: open）', false), error => t.ok('人が開く移動も検査の口を通る（via: open）', /denied/.test(error.message) && seen.allow.some(x => x.via === 'open')));
 
       emitInfo('tab:info', { sessionId: 'one', targetId: tabId });

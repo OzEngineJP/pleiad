@@ -412,7 +412,7 @@ import { startBrowserUnifyListeners } from './browser-unify-listeners.mjs';
 import { createBrowserUnifyWs, isBrowserUnifyCommand } from './browser-unify-ws.mjs';
 import { createPagesRoutes } from './pages-routes.mjs';
 import { createIsolatedRoutes } from './isolated-routes.mjs';
-import { PAGES_PATH, pageRequestOk } from './page-auth.mjs';
+import { PAGES_PATH, pageRequestOk, pagesCookie } from './page-auth.mjs';
 import { COMMON_HEADERS, sendStatus } from './page-listener.mjs';
 
 const PORT = Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
@@ -2368,6 +2368,7 @@ async function startPageListeners() {
     pageListeners = listeners;
     pagePorts = Object.freeze({ main: server.address().port, ...listeners.ports });
     chromeRelay?.setPagePorts(pagePorts);
+    chromeRelay?.setPageCookie(pagesCookie(TOKEN));
     pagesLog(`pages http://localhost:${pagePorts.pages}/ isolated http://localhost:${pagePorts.isolated}/`);
   } catch (error) {
     console.error('  [pages] could not start the page listeners:', String(error?.message ?? error));
@@ -10387,6 +10388,8 @@ const listening = new Promise(resolve => server.once('listening', resolve));
 portDeadline = Date.now() + PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
+// 中継の移動の検査が本体の port を知る（旗に依らない。本体の port を断る手当ては旗に関係なく効かせる。ADR 0292 の 4）
+chromeRelay?.setPagePorts({ main: server.address().port });
 // ブラウザーの一本化: ファイルのページと隔離のリスナー（旗が on のときだけ）。待たない（覚えた port を前のサーバーが放すのを待つことがある）
 if (BROWSER_UNIFY) void startPageListeners();
 // 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）

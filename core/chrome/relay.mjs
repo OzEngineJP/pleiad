@@ -145,10 +145,11 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   const changeListeners = new Set(), tapListeners = new Set(), lostListeners = new Set();
   const fire = (set, ...args) => { for (const fn of [...set]) { try { fn(...args); } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); } } };
   // ---- ブラウザーの一本化の口（ADR 0291〜0294） ----
-  let pagePorts = null;        // サーバーの 3 つの port（setPagePorts）。{ main, pages, isolated }
+  let pagePorts = null;        // サーバーの 3 つの port（setPagePorts）。{ main, pages, isolated }。main は旗に依らず入る
+  let pageCookie = null;       // ファイルのページの Cookie（setPageCookie。旗が on のときだけ入る。ログに書かない）
   const tabEventListeners = new Set();
   const emitTab = (type, payload) => { if (TAB_EVENTS.includes(type)) fire(tabEventListeners, type, payload); };
-  const pagePolicy = (hooks.pagePolicy ?? createPagePolicy)({ ports: () => pagePorts, log });
+  const pagePolicy = (hooks.pagePolicy ?? createPagePolicy)({ ports: () => pagePorts, cookie: () => pageCookie, log });
   const tabHolder = (hooks.tabHolder ?? createTabHolder)({ emit: emitTab, now, log });
   const tabInfo = (hooks.tabInfo ?? createTabInfo)({ emit: emitTab, log });
   const pageBridge = (hooks.pageBridge ?? createPageBridge)({ emit: emitTab, ports: () => pagePorts, log });
@@ -164,6 +165,12 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   };
   /** 移動を通すか（口が投げたら通さない） */
   const allowUrl = (url, context) => { try { return pagePolicy.allowUrl(url, context) === true; } catch { return false; } };
+  /** 中継自身の接続（ブラウザーの単位）でコマンドを送る口。移動の検査の口の connected・beforeOpen に渡す */
+  const browserSend = state => (method, params) => state.cdp.send(method, params);
+  /** タブを開く前に、移動の検査の口に支度させる（ページの Cookie）。口が投げても開くのは止めない */
+  const prepareOpen = (state, sessionId, url) => Promise.resolve()
+    .then(() => pagePolicy.beforeOpen?.({ sessionId, url, send: browserSend(state) }))
+    .catch(error => log(`chrome-relay: pagePolicy failed: ${error?.message ?? error}`));
   /** 中継のセッションをタブに付けて要求を止めるか（確認が ON か、口が止めたい） */
   const intercepting = () => confirm || pagePolicy.intercepts === true;
   const changed = entry => { fire(changeListeners, entry.id); carryChanged(); };
@@ -249,6 +256,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const stale = staleSessions; staleSessions = [];
       for (const sessionId of stale) cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});   // 前のサーバーの確認の Fetch は、答える相手が居ない
       await cdp.send('Target.setDiscoverTargets', { discover: true });
+      // 移動の検査の口に、つながったことを知らせる（ページの Cookie を入れる）。待たない・口が投げてもつなぐのは止めない
+      Promise.resolve().then(() => pagePolicy.connected?.({ send: browserSend(state) }))
+        .catch(error => log(`chrome-relay: pagePolicy failed: ${error?.message ?? error}`));
       // Chrome は、すでに発見中の接続（更新を越えて接続の子が持ち続ける接続）への setDiscoverTargets では既存のタブの targetCreated を送り直さない（実機）。
       // 持ち越した窓のタブは、今あるタブを自分で引いて会話の範囲に戻す（イベントが来ても state.tabs で重ならない）
       if (state.windows.size) {
@@ -876,7 +886,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (!list.length || !list.every(ok)) throw denied('cookie');
     }
     // コマンドの前のふるい（既定は素通し）
-    forward = pagePolicy.before({ sessionId: client.entry.id, targetId: tab.targetId, method, params: forward });
+    forward = await pagePolicy.before({ sessionId: client.entry.id, targetId: tab.targetId, method, params: forward });
     const op = operates ? ++tab.ops : 0;
     if (operates) {
       // 確認を ON にした直後でも、中継のセッションの準備（Page と Fetch）が済むまで移動を待たせる
@@ -887,7 +897,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     const commits = tab.commits;
     let result = await state.cdp.send(method, forward, sessionId, { timeoutMs: commandTimeoutMs });
     // コマンドの後のふるい（既定は素通し）
-    result = pagePolicy.after({ sessionId: client.entry.id, targetId: tab.targetId, method, params: forward, result });
+    result = await pagePolicy.after({ sessionId: client.entry.id, targetId: tab.targetId, method, params: forward, result });
     // 押した位置（右パネルの輪）。座標だけで、URL・題は渡さない
     if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed' && Number.isFinite(params.x) && Number.isFinite(params.y)) {
       fire(tapListeners, { sessionId: tab.entry.id, x: params.x, y: params.y, windowId: tab.windowId });
@@ -968,6 +978,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     const first = client.placeholder === true && !client.created && url === 'about:blank' && !tabsOf(state, entry).length;
     client.created = true;
     const direct = url === 'about:blank' || !confirm;
+    if (url !== 'about:blank') await prepareOpen(state, entry.id, url);
     const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url: direct ? url : 'about:blank', entryId: entry.id });
     const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
     const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: 'about:blank', attached: false, canAccessOpener: false }, { windowId });
@@ -1100,6 +1111,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false, lastUsedAt: now() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
       noteUsed(entry);
       const state = up && !up.cdp.closed ? up : await bind(await connection.demand({ signal }));
+      await prepareOpen(state, entry.id, url);
       const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url, entryId: entry.id });
       const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
       const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url, attached: false, canAccessOpener: false }, { windowId });
@@ -1445,6 +1457,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     },
     /** サーバーの 3 つの port（{ main, pages, isolated }。立っていない port は null）。移動の検査の口が読む */
     setPagePorts(ports) { pagePorts = ports ? Object.freeze({ main: ports.main ?? null, pages: ports.pages ?? null, isolated: ports.isolated ?? null }) : null; },
+    /** ファイルのページの Cookie（core/page-auth.mjs の pagesCookie の形）。移動の検査の口が接続のたびと開く前に入れる */
+    setPageCookie(cookie) { pageCookie = cookie ? Object.freeze({ ...cookie }) : null; },
+    /** 4 つの口の実体（{ pagePolicy, tabHolder, tabInfo, pageBridge }）。口を持つ段が足した呼び口へ、中継を変えずに外から届くため */
+    get unify() { return { pagePolicy, tabHolder, tabInfo, pageBridge }; },
     /** タブの出来事（TAB_EVENTS の名前）。fn(type, payload) */
     onTabEvent(fn) { tabEventListeners.add(fn); return () => tabEventListeners.delete(fn); },
     get port() { return address?.port ?? null; },
