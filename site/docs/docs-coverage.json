@@ -103,7 +103,6 @@
     "setting:externalSitePermissions": "reference/settings",
     "setting:instructionBudget": "reference/settings",
     "setting:launchAtLogin": "reference/settings",
-    "setting:linkOpen": "reference/settings",
     "setting:locale": "reference/settings",
     "setting:memoryLearnAt": "reference/settings",
     "setting:memoryLearnBackend": "reference/settings",

@@ -34,7 +34,7 @@ ADR 0291 で、右のパネルが会話の Chrome のウィンドウそのもの
    - 門は**通してよいものの一覧**（`core/chrome/tab-holder.mjs` の `HUMAN_TAB_READS`。一覧と選んだ理由はそこに書く）。初めは断るものの一覧（`OPERATES`：入力・`Runtime.evaluate`・`callFunctionOn`・移動）にしていたが、本物の Chrome で `Runtime.compileScript` と `runScript`・`DOM.setOuterHTML`（`<img onerror>`）・`Page.addScriptToEvaluateOnNewDocument`（`runImmediately`）がすり抜け、ページにコードを動かさせられた（2026-11-06）。ページにコードを動かさせる道は多く、断る一覧では塞ぎ切れない。
    - `Runtime.evaluate`・`callFunctionOn` は読むためでも断る（ページの world でコードが動く）。購読（`enable`）は、要求を止める `Fetch`・スクリプトを止める `Debugger`・見た目を変える `Overlay`・`Emulation` を除く。人の操作のタブを閉じる（`Target.closeTarget`）・そのタブのある窓の大きさを変える（`Browser.setContentsSize`）も断る。
    - ページからの頼みの binding（`plyPage`）と入力欄の位置の binding（`plyInput`）は、どのタブでも AI に足させない・外させない。足せると、ページの頼みの中身を AI が横から受け取れる。
-   - 人の操作に移すのは旗が on の画面だけなので、旗が off なら門の振る舞いは今のまま（一時停止の間は、中継が会話のコマンドを全部断る）。
+   - 実装の間は旗が on の画面だけ人の操作に移し、旗が off なら門の振る舞いは前のまま（一時停止の間は、中継が会話のコマンドを全部断る）だった。ADR 0291 の段階 C1 で旗を外し、端末からの「操作する」もタブを人の操作にする形にした（`browser.chromeTakeOver` の by: device）。
    - 断るときの文: 「人がこのタブを操作しています。終わるまで、このタブには触らないでください。ほかのタブで続けるか、待ってから snapshot を撮り直してください。」
    - 人の操作の始まりと終わりは、AI の次のコマンドの応答に一度だけ添えて伝える。
 4. **60 秒で AI に戻す。** 人の操作のタブで、最後に触ってから 60 秒たったら AI に戻す。

@@ -1319,7 +1319,7 @@ AI が `set_status` で状態を変えたときは、その会話 1 本だけが
 ## 5. lint で縛るルール
 
 `node tests/lint-design.mjs <file...> [--strict] [--json] [--selftest]`。`npm test` の `design-lint`（`tests/unit/design-lint.mjs`）が
-`web/` の CSS の全部（`tokens.css`・`style.css` から `compaction.css`・`remote-browser.css`・`chrome-panel.css` まで、26 本）と `web/index.html` を `--strict` で検査し、違反があれば落ちる。
+`web/` の CSS の全部（`tokens.css`・`style.css` から `compaction.css`・`chrome-panel.css` まで、25 本）と `web/index.html` を `--strict` で検査し、違反があれば落ちる。
 `web/` の `.mjs`（`locales/`・`vendor/` を除く）も渡す。中身は検査せず、`quiet-blue` がクラスの組み合わせを拾うためだけに読む。
 CSS を足したら、`tests/unit/design-lint.mjs` の `FILES` にも足す（承認済み（2026-10-22）、[ADR 0252](adr/0252-composer-column-and-header.md)）。
 
