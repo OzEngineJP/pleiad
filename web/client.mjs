@@ -193,8 +193,10 @@ async function refreshSchedules() {
 function restoreScheduled(entry) {
   if (state.current !== entry.sessionId) return;
   const prompt = entry.args?.prompt ?? '';
-  const current = $('prompt').value;
-  $('prompt').value = current.trim() ? `${prompt}\n\n${current}` : prompt;
+  const field = $('prompt');
+  const current = field.value;
+  if (current.trim()) field.setRangeText(`${prompt}\n\n`, 0, 0);
+  else field.value = prompt;
   for (const a of entry.args?.attachments ?? []) {
     if (!attachedByPath(a.path)) state.attached.push({ path: a.path, name: a.name ?? shortPath(a.path), kind: 'file', mime: a.mime ?? '', from: 'host' });
   }
@@ -8936,7 +8938,8 @@ async function pageWorktree({ action, id, kept, row, ask, ref }) {
 /** 「会話で使う」: 入力欄の末尾へ字を足す */
 function useGitText(text) {
   const field = $('prompt');
-  field.value = field.value ? `${field.value}${String.fromCharCode(10)}${text}` : text;
+  const end = field.value.length;
+  field.setRangeText(`${end ? String.fromCharCode(10) : ''}${text}`, end, end);
   field.dispatchEvent(new Event('input', { bubbles: true }));
   if (!narrowView.matches) field.focus();
 }

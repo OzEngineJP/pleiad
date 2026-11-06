@@ -2,9 +2,9 @@ import {
   markdownToDoc, docToMarkdown, caret, enter, backspaceAtStart, insertText, insertPlain,
   applyTriggers, snapshotEditing, restoreEditing, replaceMarkdownRange, mergeEditingContent,
   docStructure, editingNode, createHistory, posToOffset, offsetToPos, selectionMarkdown,
-  deleteSelection, deleteAtEnd, pasteText, toggleMark, newAtom, insertAtom, removeAtoms, normalizeFences,
+  deleteSelection, deleteAtEnd, pasteText, toggleMark, newAtom, insertAtom, removeAtoms, normalizeFences, indentList, renumber,
 } from '../../web/md-doc.mjs';
-import { normalizeEditingState } from '../../web/md-editing-state.mjs';
+import { textHash, normalizeEditingState } from '../../web/md-editing-state.mjs';
 import { parseDrafts, serializeDrafts } from '../../web/channels/ch-attach-model.mjs';
 import { lineIndent } from '../../web/md-structure.mjs';
 
@@ -110,6 +110,65 @@ export default async function (t) {
   for (const text of ['>','-','1.','> ', '- ', '1. ', '> > ', '> - ', '- a\n  > b', '> # heading', '- > ### heading', '> ```js\n> body\n> ```', '- ```js\n  code\n  ```', '    code', '- a\n  continuation', '> - a\n>   b', '- > - a\n  >   b']) {
     const blocks = markdownToDoc(text), saved = snapshotEditing(blocks);
     t.ok('正規の空行・入れ子・コードprefixを検証して復元: ' + JSON.stringify(text), !!saved && docToMarkdown(restoreEditing(text, saved)) === text);
+  }
+  for (const before of ['> '.repeat(40) + 'x', '> '.repeat(50_000) + 'x']) {
+    for (const matching of [false, true]) {
+      const text = matching ? 'a\n' + before + '\nb' : 'a\nb';
+      const invalid = { v: 1, length: text.length, hash: textHash(text), rows: [
+        { at: 0, kind: 'p', marker: '' }, { at: before.length + 3, kind: 'p', marker: '', before },
+      ] };
+      t.ok('巨大または曖昧な不正境界を本文一致に関わらず拒否', normalizeEditingState(text, invalid) === null);
+    }
+  }
+  const pendingThenQuote = insertText(enter(insertPlain(st(''), '>')), '> ');
+  const committedAfterPending = applyTriggers(pendingThenQuote, ' ').state;
+  t.ok('未確定行の次で確定した引用だけ装飾する', bars(committedAfterPending).join() === '0,1');
+  for (const marker of ['>', '-', '1.']) {
+    const pending = insertPlain(st(''), marker);
+    for (const prefix of ['queued\n', 'queued\n\n']) {
+      const next = replaceMarkdownRange(pending, prefix, 0, 0);
+      t.ok('改行で終わる先頭挿入は元行の未確定状態を移す: ' + marker,
+        md(next) === prefix + marker && next.blocks.at(-1).kind === 'p' && next.blocks.at(-1).marker === '' && bars(next).every(n => n === 0));
+      t.ok('先頭挿入後の未確定状態を保存復元', restoreEditing(md(next), snapshotEditing(next.blocks)).at(-1).kind === 'p');
+    }
+  }
+  for (const text of [
+    '- A\n- B\n  > > x\n  > > y',
+    '- A\n- B\n  > > > x\n  > > > y',
+    '> - A\n> - B\n>   > > x\n>   > > y',
+    '- A\n- B\n  - C\n    > > x\n    > > y',
+  ]) {
+    const exited = backspaceAtStart(st(text, text.split('\n').length - 1));
+    const indented = indentList(select(exited, 1), 1), S = docStructure(indented.blocks);
+    const parentItem = S.info[1].marks.filter(m => m.node.t === 'item').at(-1).node;
+    let n = S.info.at(-1).node, retained = false;
+    while (n) { retained ||= n === parentItem; n = n.parent; }
+    t.ok('字下げ後の解除行と境界は移動した項目に所属: ' + JSON.stringify(text), retained && indented.blocks.length === exited.blocks.length);
+    const savedIndent = snapshotEditing(indented.blocks), restoredIndent = restoreEditing(md(indented), savedIndent);
+    t.ok('字下げの保存復元は編集行と境界も保持', docToMarkdown(restoredIndent) === md(indented) && JSON.stringify(snapshotEditing(restoredIndent)) === JSON.stringify(savedIndent));
+    const outdented = indentList(select(indented, 1), -1);
+    t.ok('Shift+Tabで本文と境界を同じ位置へ戻す', md(outdented) === md(exited));
+  }
+  const numbered = backspaceAtStart(st('8. A\n9. B\n   > > x\n   > > y', 3));
+  numbered.blocks[0] = { ...numbered.blocks[0], marker: '9. ' };
+  renumber(numbered.blocks);
+  t.ok('番号が9から10へ増えると境界も1桁広がる', md(numbered) === '9. A\n10. B\n    > > x\n    > \n    > y');
+  numbered.blocks[0] = { ...numbered.blocks[0], marker: '8. ' };
+  renumber(numbered.blocks);
+  t.ok('番号が10から9へ減ると境界も1桁戻る', md(numbered) === '8. A\n9. B\n   > > x\n   > \n   > y');
+  for (const [text, changed, expected] of [
+    ['> 8. A\n> 9. B\n>    > > x\n>    > > y', [[0, '8.']], '> 9. A\n> 10. B\n>     > > x\n>     > \n>     > y'],
+    ['8. A\n9. B\n\n   8. C\n   9. D\n      > > x\n      > > y', [[0, '8.'], [3, '8.']], '9. A\n10. B\n\n    9. C\n    10. D\n        > > x\n        > \n        > y'],
+  ]) {
+    const s = backspaceAtStart(st(text, text.split('\n').length - 1)), original = md(s);
+    for (const [i, from] of changed) s.blocks[i] = { ...s.blocks[i], marker: s.blocks[i].marker.replace(from, '9.') };
+    renumber(s.blocks);
+    t.ok('引用内・複数段の番号の桁幅変更を境界へ反映', md(s) === expected);
+    const saved = snapshotEditing(s.blocks);
+    t.ok('複数段の桁幅変更後も編集情報を復元', JSON.stringify(snapshotEditing(restoreEditing(md(s), saved))) === JSON.stringify(saved));
+    for (const [i, from] of changed) s.blocks[i] = { ...s.blocks[i], marker: s.blocks[i].marker.replace('9.', from) };
+    renumber(s.blocks);
+    t.ok('複数段の番号を狭めると元の境界へ戻る', md(s) === original);
   }
   const unchanged = structuredClone(s.blocks);
   normalizeFences(unchanged);

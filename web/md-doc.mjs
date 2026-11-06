@@ -387,7 +387,8 @@ export function editingNode(blocks, S, b, li) {
   for (let node = li.node; node && node.t !== 'root'; node = node.parent) {
     if (node.t !== 'bq' && node.t !== 'item') continue;
     const bi = S.idx[node.start], opener = S.info[bi]?.marks.find(m => m.node === node && m.opened);
-    const pending = opener && opener.end > (blocks[bi]?.marker.length ?? 0);
+    const owned = li.marks.some(m => m.node === node && m.end > 0 && m.end <= b.marker.length);
+    const pending = !owned && opener && opener.end > (blocks[bi]?.marker.length ?? 0);
     const unownedBlank = node.t === 'item' && li.role === 'blank' && !li.marks.some(m => m.node === node && m.end > 0 && m.end <= b.marker.length);
     if (pending || unownedBlank) accepted = node.t === 'item' ? node.parent.parent : node.parent;
   }
@@ -431,7 +432,8 @@ export function replaceMarkdownRange(st, value, start, end, opts = {}) {
     const outside = rowEnd < start || l.start >= end;
     const inside = start >= l.start + l.marker.length && start <= rowEnd && !(start === 0 && end === text.length);
     if (!outside && !inside) continue;
-    const at = l.start >= end && l.start > start ? l.start + delta : l.start;
+    const movedStart = l.start === start && start === end && value.endsWith('\n');
+    const at = l.start >= end && (l.start > start || movedStart) ? l.start + delta : l.start;
     const oldBoundary = l.start - (l.before?.length ?? -1) - 1;
     const boundaryUntouched = l.before !== undefined && (end <= oldBoundary || start >= l.start);
     preserved.set(at, { kind: st.blocks[l.b].kind, marker: l.marker, ...(boundaryUntouched ? { before: l.before } : {}) });
@@ -668,15 +670,17 @@ function shiftRun(marker, p, delta) {
   return marker.slice(0, p) + ' '.repeat(Math.max(0, width + delta)) + marker.slice(q);
 }
 
-/** 項目 item の範囲で、その項目の記号を持つ行（空行・遅延の続きは除く）。{ i: ブロックの添字, k: 記号の並びの中の項目の位置 } */
+/** 項目 item の記号を持つ編集行と出力境界。空の編集行・遅延の続きは除く。field は字下げを持つ marker / breakBefore。 */
 function itemLines(S, blocks, item) {
   const out = [];
   for (let ln = item.start; ln <= item.end; ln++) {
-    const i = S.idx[ln], li = S.info[i];
-    if (!li || li.role === 'blank' || li.role === 'lazy') continue;
-    const own = ownMarks(li, blocks[i]);
+    const separator = S.idx[ln] === null;
+    const i = separator ? S.idx[ln + 1] : S.idx[ln], li = S.lines[ln];
+    if (!li || (!separator && li.role === 'blank') || li.role === 'lazy') continue;
+    const field = separator ? 'breakBefore' : 'marker';
+    const own = li.marks.filter(m => m.end <= (blocks[i]?.[field]?.length ?? 0));
     const k = own.findIndex((m) => m.node === item);
-    if (k >= 0) out.push({ i, k, li, own });
+    if (k >= 0) out.push({ i, k, li, own, field });
   }
   return out;
 }
@@ -687,7 +691,7 @@ function itemLines(S, blocks, item) {
  */
 export function renumber(blocks) {
   const S = docStructure(blocks);
-  const edits = [];   // { i, p, del, ins }（ブロックの記号の中の文字の位置）
+  const edits = [];   // { i, field = 'marker', p, del, ins }（記号または出力境界の中の位置）
   const walk = (node) => {
     for (const c of node.children) {
       if (c.t === 'list' && c.ordered) {
@@ -704,9 +708,9 @@ export function renumber(blocks) {
           if (!d) return;
           for (const l of lines) {
             if (l === open) continue;
-            const at = l.own[l.k].at, mk = blocks[l.i].marker;
-            if (d > 0) edits.push({ i: l.i, p: at, del: 0, ins: ' '.repeat(d) });
-            else edits.push({ i: l.i, p: at, del: Math.min(-d, /^ */.exec(mk.slice(at))[0].length), ins: '' });
+            const at = l.own[l.k].at, mk = blocks[l.i][l.field];
+            if (d > 0) edits.push({ i: l.i, field: l.field, p: at, del: 0, ins: ' '.repeat(d) });
+            else edits.push({ i: l.i, field: l.field, p: at, del: Math.min(-d, /^ */.exec(mk.slice(at))[0].length), ins: '' });
           }
         });
       }
@@ -719,9 +723,12 @@ export function renumber(blocks) {
   const byBlock = new Map();
   for (const e of edits) (byBlock.get(e.i) ?? byBlock.set(e.i, []).get(e.i)).push(e);
   for (const [i, list] of byBlock) {
-    let marker = blocks[i].marker;
-    for (const e of list.sort((a, b) => b.p - a.p)) marker = marker.slice(0, e.p) + e.ins + marker.slice(e.p + e.del);
-    blocks[i] = { ...blocks[i], marker };
+    const block = { ...blocks[i] };
+    for (const e of list.sort((a, b) => b.p - a.p)) {
+      const field = e.field ?? 'marker', value = block[field];
+      block[field] = value.slice(0, e.p) + e.ins + value.slice(e.p + e.del);
+    }
+    blocks[i] = block;
   }
   return true;
 }
@@ -776,10 +783,10 @@ export function indentList(st, dir) {
       const h = holder(l);
       if (h < -1 || (dir < 0 && !l.own.some((x) => x.node === list.parent))) continue;
       const b = next.blocks[l.i];
-      let marker = shiftRun(b.marker, h >= 0 ? l.own[h].end : 0, delta);
+      let marker = shiftRun(b[l.field], h >= 0 ? l.own[h].end : 0, delta);
       // 深くした番号の項目は、新しいリストの 1 番から（入る先に番号のリストがあれば、振り直しがそろえる）
-      if (dir > 0 && l.i === i && list.ordered) marker = marker.replace(/\d{1,9}(?=[.)][ \t]*$)/, '1');
-      next.blocks[l.i] = { ...b, marker };
+      if (dir > 0 && l.i === i && l.field === 'marker' && list.ordered) marker = marker.replace(/\d{1,9}(?=[.)][ \t]*$)/, '1');
+      next.blocks[l.i] = { ...b, [l.field]: marker };
       moved.add(l.i);
     }
     any = true;

@@ -1,7 +1,7 @@
 // Versioned, optional composer state. Markdown remains the transport format.
 // A boundary is a serialization separator, never an editable or hidden DOM row.
 const KINDS = new Set(['p', 'h', 'ul', 'ol', 'quote', 'cont', 'code', 'att']);
-const boundary = /^(?:[ \t]*>[ \t]?)*[ \t]*$/;
+const invalidBoundary = /[^ \t>]/;
 // Consume only container syntax, never ordinary text. A code row owns only its
 // outer containers; fence characters and language names remain visible content.
 function validMarker(kind, marker) {
@@ -39,7 +39,7 @@ export function normalizeEditingState(text, state) {
     if (!row || !Number.isInteger(row.at) || !KINDS.has(row.kind) || typeof row.marker !== 'string') return null;
     const before = row.before;
     if (before !== undefined) {
-      if (!rows.length || typeof before !== 'string' || !boundary.test(before) || before.length > text.length || text.slice(at, at + before.length + 1) !== before + '\n') return null;
+      if (!rows.length || typeof before !== 'string' || before.length > text.length - at || text.slice(at, at + before.length + 1) !== before + '\n' || invalidBoundary.test(before)) return null;
       at += before.length + 1;
     }
     if (row.at !== at || at > text.length) return null;

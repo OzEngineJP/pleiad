@@ -9,8 +9,10 @@
 //   5. 日本語入力: 変換中は整えない・強調の直後で始めても外に入る
 async page => {
   const results = [];
+  const stable = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
   const check = (name, got, want) => {
-    if (JSON.stringify(got) !== JSON.stringify(want)) throw Error(`${name}: got=${JSON.stringify(got)} want=${JSON.stringify(want)}`);
+    if (stable(got) !== stable(want)) throw Error(`${name}: got=${JSON.stringify(got)} want=${JSON.stringify(want)}`);
     results.push(name);
   };
   const K = page.keyboard;
@@ -78,11 +80,11 @@ async page => {
   await K.press('Control+End'); await K.type('after');
   check('閉じの後ろにも書ける', await val(), '```\nconst a = 1;\nconst b = 2;\n```\nafter');
   await reset(); await K.type('12345'); await K.press('Home'); await K.press('Shift+End');
-  await page.waitForTimeout(150);
+  await page.waitForFunction(() => { const b = document.querySelector('.md-bar'); return b && !b.hidden; });
   check('範囲選択で書式バー', await page.evaluate(() => { const b = document.querySelector('.md-bar'); return Boolean(b && !b.hidden); }), true);
   await page.click('.md-bar-b');
   check('書式バーの太字', await val(), '**12345**');
-  await K.press('End'); await page.waitForTimeout(150);
+  await K.press('End'); await page.waitForFunction(() => document.querySelector('.md-bar').hidden);
   check('選択を外すと書式バーは消える', await page.evaluate(() => document.querySelector('.md-bar').hidden), true);
 
   // ---------------------------------------------------------------- 1b. 箇条書き・引用の続き（承認済み 2026-10-09）
@@ -110,7 +112,7 @@ async page => {
   // 「> 」だけの行を挟まないと、次の行は内側の引用の続き（CommonMark の遅延の続き）になる
   check('空の深い引用の Enter は 1 段戻る（区切りの「> 」の行を挟む）', await val(), '> a\n> > b\n> > c\n> \n> ');
   await K.press('Enter');
-  check('最後の段の空の引用の Enter は抜ける', [await val(), await kinds()], ['> a\n> > b\n> > c\n> \n', 'quote,quote,quote,quote,p']);
+  check('最後の段の空の引用の Enter は抜ける', [await val(), await kinds(), await page.evaluate(() => document.querySelector('#prompt').editor.getState().sel.s)], ['> a\n> > b\n> > c\n> \n\n', 'quote,quote,quote,quote,p,p', { b: 5, v: 0 }]);
   await reset(); await setText('＞ x'); await K.press('End'); await K.press('Enter'); await K.type('y');
   check('全角の ＞ は引用にしない（履歴と同じ CommonMark の読み方）', [await val(), await kinds()], ['＞ x\ny', 'p,p']);
   await reset(); await K.type('- [ ] todo'); await K.press('Enter'); await K.type('next');
@@ -155,7 +157,7 @@ async page => {
   await reset(); await K.type('- a'); await K.press('Shift+Enter'); await K.type('b');
   await page.evaluate(() => document.querySelector('#prompt').editor?.refresh?.());
   await K.press('Home'); await K.press('Backspace');
-  check('続きの行の行頭の Backspace は本文の行に戻る', [await val(), await kinds()], ['- a\nb', 'ul,p']);
+  check('続きの行の行頭の Backspace は同じ編集行で本文へ戻り、送信原文だけを区切る', [await val(), await kinds()], ['- a\n\nb', 'ul,p']);
   await reset(); await K.type('- a'); await K.press('Enter'); await K.type('b'); await K.press('Control+z');
   check('Ctrl+Z は自動で入れた記号だけ戻す', await val(), '- a\n- ');
   await K.press('Control+z');
@@ -326,12 +328,13 @@ async page => {
   await reset();
 
   // ---------------------------------------------------------------- 6. 貼り付け・往復・打鍵の重さ・変換の後始末
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await K.type('x');
-  await page.evaluate(async () => {
-    await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob(['<h1 style="color:red">Big</h1><div>line2</div><img src="https://example.com/t.png">'], { type: 'text/html' }) })]);
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.setData('text/html', '<h1 style="color:red">Big</h1><div>line2</div><img src="https://example.com/t.png">');
+    document.querySelector('#prompt').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   });
-  await K.press('Control+v'); await page.waitForTimeout(300);
+  await page.waitForTimeout(300);
   check('HTML だけの貼り付けは Markdown として入る（要素・外の画像・style は入らない。ADR 0141）',
     await page.evaluate(() => ({ v: document.querySelector('#prompt').value, img: document.querySelectorAll('#prompt img[src^="http"]').length, h1: document.querySelectorAll('#prompt h1').length })),
     { v: 'x\n# Big\nline2', img: 0, h1: 0 });
@@ -355,7 +358,7 @@ async page => {
   await K.press('b'); await page.waitForTimeout(50);
   const oneKey = await page.evaluate(() => window.__reads);
   const rereads = await page.evaluate(() => { const p = document.querySelector('#prompt'); const before = window.__reads; for (let i = 0; i < 5; i++) { p.value; p.selectionStart; p.selectionEnd; } return window.__reads - before; });
-  await page.evaluate(() => window.__restoreReads());
+  await page.evaluate(() => { window.__restoreReads(); });
   check('1 打鍵で DOM を読む回数は行数（300）に比例しない', oneKey < 50, true);
   check('DOM が変わらなければ value・選択の読み取りで DOM を読み直さない', rereads, 0);
   await reset();
