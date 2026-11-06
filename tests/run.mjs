@@ -879,6 +879,7 @@ const SUITES = [
   // --- A3 可視化と HTML のファイル ---
 
   // --- A4 Pleiad のページ ---
+  './unit/pages-routes.mjs',
 
   // --- A5 タブの情報とアドレスバー ---
 

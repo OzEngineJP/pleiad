@@ -1,1 +1,29 @@
-{}
+{
+  "newTab": "New tab",
+  "fetched": "Retrieved {{time}} · {{size}}",
+  "name": "Name", "size": "Size", "modified": "Modified",
+  "fileMenu": "File menu", "useFile": "Use in this conversation", "download": "Download",
+  "emptyFolder": "This folder is empty.", "expandFolder": "Expand {{name}}", "more": "Show more",
+  "source": "Source", "sourceLimit": "Showing lines {{from}}–{{to}} of {{total}}.",
+  "tableLimit": "Showing up to 500 rows and 100 columns.",
+  "previous": "Previous page", "next": "Next page", "pdfPage": "Page {{page}} / {{total}}", "pdfText": "Page text",
+  "errors": {
+    "not-found": "File not found.", "session-not-found": "Conversation not found.",
+    "access-denied": "This file cannot be displayed.", "protected-data": "This file cannot be displayed.",
+    "network-path": "Network paths cannot be displayed.", "different-host": "Choose a path on this computer.",
+    "cwd-unknown": "The working folder is unknown. Use an absolute path.", "not-file": "Choose a file or folder.",
+    "invalid-path": "Check the file path.", "over-limit": "This file exceeds the preview size limit.",
+    "unsupported": "This format cannot be previewed.", "unavailable": "The preview is unavailable. Open it again.",
+    "read-failed": "Could not load this page. Open it again."
+  },
+  "new": {
+    "changes": "{{count}} changed files",
+    "conversation": "This conversation", "git": "git", "plugins": "Plugins", "recent": "Recent files", "folders": "Working folders",
+    "emptyRecent": "Files opened in this conversation appear here.", "emptyFolders": "No working folder yet.",
+    "sources": { "read": "Read", "edited": "Edited", "attached": "Attached", "opened": "Opened" }
+  },
+  "plugins": {
+    "instruction": "Instructions", "skill": "Skills", "mcp": "Connections", "empty": "No items were loaded for this conversation.",
+    "status": { "supplied": "Loaded", "conditional": "Conditional", "shadowed": "Another item takes precedence", "connected": "Connected", "standby": "Standby", "starting": "Connecting", "pending": "Pending", "needs-auth": "Authentication required", "failed": "Connection failed", "removed": "Disabled in this conversation" }
+  }
+}
