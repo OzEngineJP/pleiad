@@ -73,8 +73,6 @@ try {
     timeoutMs: 60_000 });
   const url = `http://127.0.0.1:${server.port}/?token=${server.token}`;
   const admin = await open({ port: server.port, token: server.token });
-  // 「アカウントを管理」の開き先を外のブラウザーへ（偽の main が PLUS_EXTERNAL_CAPTURE に記録する）
-  await admin.cmd('setPref', { key: 'linkOpen', value: 'external' });
   // 偽のマイクはエコー除去の制約を受け付けないので切る（voice-call.mjs と同じ）
   await admin.cmd('invoke', { op: 'settings.set', args: { key: 'voice', value: { echoCancellation: false, ackPhrase: false, narration: false } } });
   browser = await chromium.launch({ executablePath: chromiumPath(),

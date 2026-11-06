@@ -43,6 +43,8 @@ import { createWebhookReceiver } from './routines/webhook.mjs';
 import { createBrainStore } from './brain/store.mjs';
 import { createPulse } from './brain/pulse.mjs';
 import { createWakes } from './brain/wakes.mjs';
+import { OpError } from './ops/registry.mjs';
+import { agentT } from './i18n.mjs';
 
 export function createBotHost(deps) {
   const { store, dataDir, emitGlobal } = deps;
@@ -61,10 +63,31 @@ export function createBotHost(deps) {
   // 気がかりの「起こしてほしい条件」に当たる投稿は、心拍を早める（pulse は下で作る。投稿が来る頃には出来ている）
   const noteBrain = (post, channel) => { try { pulse?.onPosted(post, channel); } catch (e) { console.error('  pulse:', String(e?.message ?? e)); } };
   const noteEpisode = (post) => { try { episodes.onPosted(post); } catch (e) { console.error('  memory episode:', String(e?.message ?? e)); } };
+  const readOnly = () => new OpError('READ_ONLY', agentT(deps.currentLocale?.() ?? 'ja', 'server:session.deletedBotReadOnly'));
+  const withPost = async (args, author, fn) => {
+    const channel = await channels.get({ channelId: args.channelId });
+    const thread = args.threadId ? await channels.threads.get(channel.id, args.threadId) : null;
+    const liveIds = [];
+    for (const id of Object.keys(thread?.sessions ?? {})) if (await bots.get({ botId: id })) liveIds.push(id);
+    const ids = new Set(liveIds);
+    if (channel.kind === 'dm' && channel.botId) ids.add(channel.botId);
+    if (args.to) ids.add(args.to);
+    for (const id of await channels.mentionsOf(args.text ?? '', author)) {
+      if (id === 'here' || id === 'everyone') for (const bot of await bots.list()) { if (!bot.plain && (id === 'everyone' || channel.members?.includes(bot.id))) ids.add(bot.id); }
+      else if (id !== 'you') ids.add(id);
+    }
+    if (thread?.deletedBot && !ids.size && author?.kind !== 'system') throw readOnly();
+    const releases = [];
+    try {
+      for (const id of ids) releases.push(bots.acquire(id));
+      return await fn();
+    } finally { for (const release of releases) release(); }
+  };
   const channels = createChannelService({
     // 組み込みの bot（plain。チャンネルのスレッドの「bot なし」）は名前で呼べない（@ の候補・一時チャットの宛先に入れない。ADR 0157）
     dir: path.join(dataDir, 'channels'), emit, listBots: async () => (await bots.list()).filter((b) => !b.plain),
-    hooks: { posted: async (...args) => { noteEpisode(args[0]); noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); },
+    hooks: { withPost,
+      posted: async (...args) => withPost(args[0], args[0].author, async () => { noteEpisode(args[0]); noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); }),
       edited: async (...args) => { noteEpisode(args[0]); return bots.noteShown(...args); },
       removed: noteEpisode, reacted: lazy(() => dispatch.onReacted), stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
   });
@@ -72,15 +95,18 @@ export function createBotHost(deps) {
   const brain = createBrainStore({ dataDir, emit });
   let pulse, wakes;
   // bot を消したら、その bot の思考の流れ・気がかり・予約も消す
-  host.botRemoved = (botId) => { brain.clear(botId); wakes?.clear(botId); };
+  host.botRemoved = (botId) => { brain.purgeBot(botId); wakes?.clear(botId); };
   // ---- bots（S2）
   const bots = createBotService({ dataDir, channels, host, emit });
   // ---- memory（S3）
-  const memory = createMemoryService({ dataDir, channels, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
+  const memory = createMemoryService({ dataDir, channels, emit, withLayer: (layer, fn) => layer === 'user' ? fn() : bots.withActivity(layer, fn), localeOf: () => deps.currentLocale?.() ?? 'ja' });
   let learner;
   const episodes = createEpisodes({ channels, bots, summarize: (args) => learner.summarizeEpisode(args), localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- dispatch（S4）
   const dispatch = createDispatcher({ channels, bots, memory, episodes, brain, host, emit });
+  host.refuseBotRemoval = async botId => {
+    if (await dispatch.deletionBlocked(botId)) throw new OpError('CANNOT_DELETE', agentT(deps.currentLocale?.() ?? 'ja', 'server:session.deleteQueued'));
+  };
   // bots.overview の restingUntil（使用量の上限で休憩中。ADR 0119）は dispatch が持つ
   host.restingUntil = (bot) => dispatch.restingUntil(bot);
   // ---- routines（R1）
@@ -96,6 +122,20 @@ export function createBotHost(deps) {
   wakes = createWakes({ dataDir, channels, bots, dispatch, budget: dispatch.budget, clock: routinesClock, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
+  host.botRoutines = () => routines.list();
+  host.cleanupBot = async (botId) => {
+    const bot = await bots.get({ botId });
+    for (const thread of await channels.threads.list()) if (thread.sessions?.[botId] || thread.digest?.[botId]) {
+      await channels.threads.update(thread.channelId, thread.threadId, { deletedBot: { id: botId, name: bot.name }, sessions: { [botId]: null }, digest: { [botId]: null } });
+    }
+    for (const r of await routines.list()) if (r.botId === botId) await routines.pause({ routineId: r.id });
+    await dispatch.cleanupBot(botId);
+    await memory.purgeBot(botId);
+    await host.botRemoved(botId);
+    for (const c of await channels.list({ archived: true })) {
+      if (c.members?.includes(botId)) await channels.update({ channelId: c.id, members: c.members.filter(id => id !== botId) }, { kind: 'system' });
+    }
+  };
 
   const services = [channels, bots, memory, dispatch, routines, webhook, learner, episodes, pulse, wakes];
   // つなぎ目は、bot の側の失敗でターン・承認・起動を巻き込まない
@@ -108,13 +148,18 @@ export function createBotHost(deps) {
   };
 
   return {
+    withPost,
+    acquireBot: (botId) => bots.acquire(botId),
     opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }), threadBudget: guard('threadBudget', (args) => dispatch.threadBudget(args), null),
       // スレッドの bot の会話の設定（channels.threadSettings）。失敗は呼び出し側へ返す（画面が理由を出す）
-      threadSettings: (args) => dispatch.threadSettings(args),
+      threadSettings: (args) => withPost(args, { kind: 'human' }, () => dispatch.threadSettings(args)),
       // スレッドを投稿のところで分ける（channels.branchThread）。失敗は呼び出し側へ返す（画面が一行で知らせる）
-      branchThread: (args) => dispatch.branchThread(args),
+      branchThread: (args) => withPost(args, { kind: 'human' }, () => dispatch.branchThread(args)),
       // スレッドの投稿を送り直す（channels.resend）
-      resendThread: (args) => dispatch.resendThread(args),
+      resendThread: async (args) => {
+        const post = await channels.getPost({ channelId: args.channelId, postId: args.postId });
+        return withPost({ ...args, threadId: post?.threadId ?? post?.id }, { kind: 'human' }, () => dispatch.resendThread(args));
+      },
       // 送信待ちの投稿（channels.pending・channels.withdrawPending）
       pendingPosts: (args) => dispatch.pendingPosts(args),
       withdrawPending: (args) => dispatch.withdrawPending(args) }),

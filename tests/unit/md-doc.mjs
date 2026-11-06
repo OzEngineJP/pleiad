@@ -345,12 +345,12 @@ export default async function (t) {
     && kinds(st("・a")) === "p");
   t.ok("行の途中の ・ の Enter は右を次の行へ（・ を付けて）", md(enter(st("・ab", 0, 2))) === "・a\n・b");
   t.ok("全角の ＞ は引用にしない（CommonMark と同じ。往復で文字は変わらない）", kinds(st("＞ a")) === "p" && kinds(st("> ＞ b")) === "quote" && md(st("＞ a\n> ＞ b")) === "＞ a\n> ＞ b");
-  t.ok("入れ子の引用の Enter は同じ深さで続く・空の行は 1 段戻り（上が本文なら間に空の引用の行を挟む）、最後の 1 段で抜ける", (() => {
+  t.ok("入れ子の引用の Enter は同じ深さで続く・空の行は 1 段戻り（上が本文なら間に空の引用の行を挟む）、最後の 1 段も次の行へ進む", (() => {
     const a = enter(st("> > a", 0, 5));
     const b = enter({ blocks: a.blocks, sel: caret(1, 0) });
     const c = enter({ blocks: b.blocks, sel: caret(2, 0) });
     return md(a) === "> > a\n> > " && md(b) === "> > a\n> \n> " && kinds(b) === "quote,quote,quote" && at(b) === "2:0"
-      && md(c) === "> > a\n> \n" && kinds(c) === "quote,quote,p";
+      && md(c) === "> > a\n> \n\n" && kinds(c) === "quote,quote,p,p" && at(c) === "3:0";
   })());
   t.ok("引用の行頭で > を打つと 1 段深くなる・全角の ＞ は引用にならない", (() => {
     const run = (text) => ({ text, marks: [] });
@@ -365,7 +365,7 @@ export default async function (t) {
     const c = enter({ blocks: a.blocks, sel: caret(1, 4) });
     const d = enter({ blocks: doc("- a\n  - [ ] "), sel: caret(1, 4) });
     return md(a) === "- [ ] 牛乳\n- [ ] " && at(a) === "1:4" && md(b) === "- [x] パン\n- [ ] " && md(c) === "- [ ] 牛乳\n\n" && kinds(c) === "ul,p,p"
-      && md(d) === "- a\n- [ ] " && at(d) === "1:4";
+      && md(d) === "- a\n  - \n- [ ] " && at(d) === "2:4";
   })());
   t.ok("チェック欄の途中は [ ] を付けて割る・[ ] の中の Enter は付けずに割る", md(enter(st("- [ ] ab", 0, 5))) === "- [ ] a\n- [ ] b" && md(enter(st("- [ ] ab", 0, 2))) === "- [ \n- ] ab");
   t.ok("Tab: 前の項目の中身の桁へ（その子になる。番号は 1 から）・Shift+Tab で戻る・最初の項目は動かない・本文の行・最上段の Shift+Tab は null", (() => {
@@ -402,7 +402,7 @@ export default async function (t) {
     const split = doc("1. a\n- x\n7. b");
     renumber(split);
     const pasted = pasteText(st("", 0, 0), "1. a\n3. b\n9. c", { resolve });
-    return md(mid) === "1. a\n2. \n3. b\n4. c" && md(del) === "1. a\nb\n2. c" && md(del2) === "1. a\n2. c" && md(start) === "5. a\n6. \n7. b"
+    return md(mid) === "1. a\n2. \n3. b\n4. c" && md(del) === "1. a\n\nb\n\n3. c" && md(del2) === "1. a\n2. c" && md(start) === "5. a\n6. \n7. b"
       && sub === true && docToMarkdown(split) === "1. a\n- x\n7. b" && md(pasted) === "1. a\n3. b\n9. c";
   })());
   t.ok("番号: 入れ子のリストはそのリストの中だけ数える・親の次の項目の下のリストは自分の最初の数から", (() => {

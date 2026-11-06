@@ -39,6 +39,10 @@ const num = (v, fallback) => (Number.isFinite(v) && v >= 0 ? v : fallback);
 /** patch を検査して現在の値へ重ねる（知らない欄は捨てる） */
 export function applyThreadPatch(current, patch, now) {
   const next = structuredClone(current);
+  if (patch.deletedBot !== undefined) {
+    if (!patch.deletedBot?.id || typeof patch.deletedBot.name !== 'string') throw new Error('deletedBot must identify the deleted bot');
+    next.deletedBot = { id: patch.deletedBot.id, name: patch.deletedBot.name };
+  }
   if (patch.sessions && typeof patch.sessions === 'object') {
     for (const [botId, sessionId] of Object.entries(patch.sessions)) {
       if (typeof sessionId === 'string' && sessionId) next.sessions[botId] = sessionId;

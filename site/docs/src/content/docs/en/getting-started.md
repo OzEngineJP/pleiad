@@ -52,3 +52,9 @@ The first time you launch Pleiad, a "Welcome to Pleiad" screen appears.
 Then just write what you want in the message box and send it. For actions that need care — changing files, running commands — an approval prompt appears (answer with "Allow", "Always allow", or "Deny").
 
 You can change the agent and working directory in the conversation at any time. You can also add agents and sign in later under Settings › "Agents".
+
+## Delete a bot you created
+
+On the bot's page, press the "⋯" next to "Open DM" and choose "Delete bot…". You can also right-click the bot in the sidebar. Review what will be deleted and which conversations will be kept, then press "Delete". Built-in bots cannot be deleted.
+
+Deleting a bot removes its settings, activity notes, and dedicated memories, and pauses its routines. Shared memories about you are kept. Past conversations remain available under temporary chats for reading, but you cannot send more messages to them. If work, approval, or sending is pending, wait for it to finish before deleting the bot. Deletion cannot be undone.

@@ -107,6 +107,11 @@ export function createWakes({ dataDir, channels, bots, dispatch, budget, clock, 
 
   /** 同じ会話へ起こす予約の組（時刻の順）を、1 回で起こす */
   async function fireGroup(list) {
+    if (bots.withActivity) return bots.withActivity(list[0].botId, () => fireGroupOwned(list));
+    return fireGroupOwned(list);
+  }
+
+  async function fireGroupOwned(list) {
     const head = list[0];
     const bot = await bots.get({ botId: head.botId }).catch(() => null);
     if (!bot) { for (const w of list) drop(w, 'nobot'); return false; }

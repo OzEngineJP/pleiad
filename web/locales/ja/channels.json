@@ -1,4 +1,18 @@
 {
+  "botDelete": {
+    "menu": "bot を削除…",
+    "more": "bot のメニュー",
+    "title": "「{{name}}」を削除",
+    "irreversible": "元に戻せません。",
+    "remove": "人格・動かし方・活動メモと、この bot だけの記憶を削除します。",
+    "shared": "共通の「あなたについて」は残ります。",
+    "conversations": "会話 {{count}} 件は残り、一時チャットから閲覧できます。",
+    "routines": "ルーティン {{count}} 件は一時停止します。",
+    "cancel": "やめる",
+    "confirm": "削除する",
+    "deleting": "削除中…",
+    "failed": "削除できませんでした: {{error}}"
+  },
   "plain": { "name": "エージェント" },
   "homeDest": { "none": "bot なし" },
   "side": {
@@ -160,7 +174,7 @@
     "noReplies": "返信はまだありません",
     "entry": {
       "toc": "このスレッドの目次",
-      "browser": "内蔵ブラウザー"
+      "browser": "ブラウザー"
     },
     "composer": {
       "placeholder": "スレッドに返信",

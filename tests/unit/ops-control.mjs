@@ -33,7 +33,7 @@ export default async function (t) {
   await fs.writeFile(path.join(dataDir, 'claude-accounts.json'), JSON.stringify({ accounts: [{ id: 'a1', name: 'main', token: MARKER }] }));
   await fs.writeFile(path.join(dataDir, 'prefs.json'), JSON.stringify({
     agentSitePermissions: [{ origin: 'https://a.example', mode: 'always', token: MARKER, apiKey: MARKER }],
-    computerUse: { enabled: true, secret: MARKER }, delegationRouting: { enabled: false, apiKey: MARKER }, linkOpen: 'external',
+    computerUse: { enabled: true, secret: MARKER }, delegationRouting: { enabled: false, apiKey: MARKER }, memoryLearnAt: '03:30',
   }));
 
   // MCP・Hooks の秘密（ADR 0095）: 各エージェントの設定ファイル（使い捨ての home）の env・引数・ヘッダー・Hook のコマンドと、Pleiad の登録の引数
@@ -268,12 +268,12 @@ export default async function (t) {
     t.ok('画面の setPref（昔のコマンド）は settings.set を通り、prefs と settingsChanged が届く（by: human）', (await c.cmd('prefs')).confirmAgentSites === true
       && c.events.some((e) => e.type === 'settingsChanged' && e.keys?.join() === 'confirmAgentSites' && e.by === 'human'));
     t.ok('画面の setPref の失敗: 知らないキー・不正な値は拒否される', await c.cmd('setPref', { key: 'nope', value: 1 }).then(() => false, (e) => e.code === 'SETTING_NOT_FOUND')
-      && await c.cmd('setPref', { key: 'linkOpen', value: 'javascript:' }).then(() => false, (e) => e.code === 'INVALID'));
-    const wrote2 = await api(bound(ask), 'POST', '/api/ops/settings.set', { key: 'linkOpen', value: 'inapp', reason: 'テスト' });
-    t.ok('write の設定は ask の会話の agent も承認なしで書ける（settings.set）', wrote2.status === 200 && wrote2.body.result.changed === true && (await c.cmd('prefs')).linkOpen === 'inapp');
-    t.ok('配信: settingsChanged が by: agent・via・どの会話かつきで届く', c.events.some((e) => e.type === 'settingsChanged' && e.keys?.join() === 'linkOpen' && e.by === 'agent' && e.via === 'cli' && e.bySession === ask.sessionId));
+      && await c.cmd('setPref', { key: 'memoryLearnAt', value: 'javascript:' }).then(() => false, (e) => e.code === 'INVALID'));
+    const wrote2 = await api(bound(ask), 'POST', '/api/ops/settings.set', { key: 'memoryLearnAt', value: '02:00', reason: 'テスト' });
+    t.ok('write の設定は ask の会話の agent も承認なしで書ける（settings.set）', wrote2.status === 200 && wrote2.body.result.changed === true && (await c.cmd('prefs')).memoryLearnAt === '02:00');
+    t.ok('配信: settingsChanged が by: agent・via・どの会話かつきで届く', c.events.some((e) => e.type === 'settingsChanged' && e.keys?.join() === 'memoryLearnAt' && e.by === 'agent' && e.via === 'cli' && e.bySession === ask.sessionId));
     t.ok('記録: 呼んだ会話の変更の記録に、設定の前後と理由が残る（by: agent）', (await api(cli, 'POST', '/api/ops/sessions.get', { sessionId: ask.sessionId })).body.result.changes
-      .some((x) => x.field === 'setting' && x.by === 'agent' && x.bySession === ask.sessionId && x.reason === 'テスト' && x.to?.key === 'linkOpen' && x.from?.value === '"external"'));
+      .some((x) => x.field === 'setting' && x.by === 'agent' && x.bySession === ask.sessionId && x.reason === 'テスト' && x.to?.key === 'memoryLearnAt' && x.from?.value === '"03:30"'));
     t.ok('human-only（承認モード）は set でも agent に NOT_FOUND 系。承認モードは変わらない', (await api(bound(bypass), 'POST', '/api/ops/settings.set', { key: 'mode', value: 'bypass' })).body.code === 'SETTING_NOT_FOUND');
     t.ok('束縛されない CLI が確認を切る（関所を緩める）と NEEDS_UI。prefs は変わらない', (await api(cli, 'POST', '/api/ops/settings.set', { key: 'confirmAgentSites', value: false })).body.code === 'NEEDS_UI'
       && (await c.cmd('prefs')).confirmAgentSites === true);
@@ -294,7 +294,7 @@ export default async function (t) {
       && (await api(cli, 'POST', '/api/ops/sessions.get', { sessionId: bypass.sessionId })).body.result.changes.some((x) => x.field === 'setting' && x.to?.key === 'confirmAgentSites'));
     t.ok('context.default は設定の一覧から書け、配信の無かった設定にも settingsChanged が届く', (await api(bound(bypass), 'POST', '/api/ops/settings.set', { key: 'context.default', value: { kind: 'skill', value: { owner: 'native', user: { sources: ['common'], excludePaths: [] }, directory: { sources: ['common'], excludePaths: [] } } } })).body.ok === true
       && c.events.some((e) => e.type === 'settingsChanged' && e.keys?.join() === 'context.default'));
-    await c.cmd('setPref', { key: 'linkOpen', value: 'external' });
+    await c.cmd('setPref', { key: 'memoryLearnAt', value: '03:30' });
 
     // ---- MCP・Hooks の操作（ADR 0095）: 画面の昔のコマンドは同じ操作を通り、agent には秘密を伏せ、guarded は承認カード
     const legacyList = await c.cmd('listPlyMcp', {});
@@ -360,8 +360,8 @@ export default async function (t) {
     const firstUuid = read.body.result.messages[0].uuid;
     t.ok('sessions.read は messageId の前後（uuid で指す）', (await api(cli, 'POST', '/api/ops/sessions.read', { sessionId: ask.sessionId, messageId: firstUuid, before: 0, after: 0 })).body.result.messages.length === 1);
     t.ok('sessions.get / read の無い会話は 404 SESSION_NOT_FOUND', (await api(cli, 'POST', '/api/ops/sessions.get', { sessionId: 'nope' })).body.code === 'SESSION_NOT_FOUND' && (await api(cli, 'POST', '/api/ops/sessions.read', { sessionId: 'nope' })).status === 404);
-    const setting = await api(cli, 'POST', '/api/ops/settings.get', { key: 'linkOpen' });
-    t.ok('settings.get は実際の prefs の値を返す', setting.body.result.value === 'external' && setting.body.result.default === 'inapp');
+    const setting = await api(cli, 'POST', '/api/ops/settings.get', { key: 'memoryLearnAt' });
+    t.ok('settings.get は実際の prefs の値を返す', setting.body.result.value === '03:30' && setting.body.result.default === '02:00');
     t.ok('settings.get: 承認モードの既定は agent に出ない（human-only）。human（WS）には出る', (await api(cli, 'POST', '/api/ops/settings.get', { key: 'mode' })).body.code === 'SETTING_NOT_FOUND'
       && (await c.cmd('invoke', { op: 'settings.get', args: { key: 'mode' } })).key === 'mode');
     t.ok('settings.get: 自動圧縮・コンテキストの既定・委譲の振り分け（秘密以外）が読める', ['compaction.auto', 'context.default', 'delegationRouting', 'computerUse'].every(() => true)

@@ -17,7 +17,8 @@
    4. 未訳。ja 以外の値に日本語が入っている、または ja と同じ値のまま → 失敗。
       固有名などは tests/i18n-allow.json の sameAsJa に「名前空間:キー」で許す。文字（\p{L}）を含まない値は数えない。
    5. キーの存在と未使用。コード中の静的な t('キー') と data-i18n* 属性のキーが ja にあること。
-      名前空間を書かないキーは置き場で決まる: web/ → ui、core/ → server、desktop/ → desktop、bin/（CLI）→ agent。
+      名前空間を書かないキーは置き場で決まる: web/pages/ → pages、web/ → ui、core/ → server、desktop/ → desktop、bin/（CLI）→ agent。
+      Pleiad のページ（web/pages/）は t('pages:…') を包んだ text('…') で引くので、そこでだけ text('…') もキーとして拾う。
       ほかの名前空間は 'agent:キー' のように書く。辞書にあってどこからも使われないキーも失敗。
       組み立てるキーは、同じファイルに `// i18n-dynamic: 接頭辞` の印を書けば、その接頭辞で始まるキーを使用済みとみなす。
    6. 自己診断（--selftest。npm test でも回す）。
@@ -41,7 +42,7 @@ const EXT = new Set([...JS_EXT, '.html', '.css']);
 /* 日本語を数えない場所（理由は冒頭） */
 const EXCLUDE = [/^web\/emoji\.mjs$/, /^core\/backends\/fake\.mjs$/, /^web\/locales\//];
 /* 名前空間を書かないキーの既定 */
-const DEFAULT_NS = [[/^web\//, 'ui'], [/^core\//, 'server'], [/^desktop\//, 'desktop'], [/^bin\//, 'agent']];
+const DEFAULT_NS = [[/^web\/pages\//, 'pages'], [/^web\//, 'ui'], [/^core\//, 'server'], [/^desktop\//, 'desktop'], [/^bin\//, 'agent']];
 
 export const JP = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
 const IGNORE_MARK = /i18n-ignore\b(?:\s*:\s*(.*?))?\s*(?:\*\/|-->)?\s*$/;
@@ -178,8 +179,8 @@ export function scanJs(text, lineOffset = 0) {
       if (isConsole) consoleDepth++;
       push('(');
       i++;
-      // t('…') と i18n.t('…')。ほかの名前の t は数えない
-      pendingCall = callee === 't' ? { callee: member ? '.t' : 't', first: true } : null;
+      // t('…') と i18n.t('…')。ほかの名前の t は数えない。text('…') は web/pages/ でだけ使う（scanFile で絞る）
+      pendingCall = callee === 't' ? { callee: member ? '.t' : 't', first: true } : callee === 'text' && !member ? { callee: 'text', first: true } : null;
       continue;
     }
     if (ch === ')') {
@@ -302,7 +303,7 @@ export function scanFile(name, text) {
   // 使っているキー
   const ns = DEFAULT_NS.find(([re]) => re.test(name))?.[1] ?? 'ui';
   const used = [];
-  for (const c of r.calls) used.push({ file: name, line: c.line, ...splitKey(c.arg, c.callee === 'agentT' ? 'agent' : ns) });
+  for (const c of r.calls) if (c.callee !== 'text' || ns === 'pages') used.push({ file: name, line: c.line, ...splitKey(c.arg, c.callee === 'agentT' ? 'agent' : ns) });
   const attrKeys = r.keys ?? [];
   // JS の中の data-i18n*="…"（innerHTML で組む塊）と dataset.i18n* = '…'
   if (ext !== '.html') for (const l of r.literals) for (const m of l.text.matchAll(/data-i18n(?:-[\w-]+)?=\\?["']([\w.:-]+)\\?["']/g)) attrKeys.push({ line: l.line, key: m[1] });
@@ -572,6 +573,10 @@ export function selftest(log = console.log) {
       const r = scanFile('web/a.mjs', "t('a.b'); i18n.t(\"server:c\", { n }); x.innerHTML = '<p data-i18n=\"d.e\"></p>'; t(`f.${x}`); at('no');");
       const s = scanFile('core/a.mjs', "t('g');");
       return JSON.stringify(r.used.map((u) => `${u.ns}:${u.key}`)) === JSON.stringify(['ui:a.b', 'server:c', 'ui:d.e']) && s.used[0].ns === 'server';
+    }],
+    ['web/pages/ では text() も pages のキーとして拾い、ほかの置き場の text() は拾わない', () => {
+      const p = scanFile('web/pages/a.mjs', "text('a.b'); t('ui:c'); x.text('no');").used.map((u) => `${u.ns}:${u.key}`).join(',');
+      return p === 'pages:a.b,ui:c' && scanFile('web/a.mjs', "text('a.b');").used.length === 0;
     }],
     ['基準より増えたら落ち、基準に無いファイルも落ちる', () => {
       const p = checkBaseline({ 'web/a.mjs': 3, 'web/b.mjs': 1 }, { 'web/a.mjs': 2 });

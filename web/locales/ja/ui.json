@@ -1,4 +1,5 @@
 {
+  "deletedBotReadOnly": "閲覧用 — この bot は削除されました。続けて送信できません。",
   "taskChrome": { "view": "Chrome のウィンドウを見る", "close": "子の Chrome のウィンドウを閉じる", "confirmClose": "ウィンドウを閉じる", "confirmHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。閉じますか？", "confirmWaiting": "このウィンドウは、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。閉じますか？", "unknown": "プロフィール未確認", "running": "作業中", "paused": "引き継ぎ中", "stopped": "停止中", "idle": "待機中" },
   "pending": {
     "moving": "移動中",
@@ -527,15 +528,8 @@
       "fullAccess": "つないだ端末は、この PC でできることがすべてできます"
     },
     "browser": {
-      "description": "会話やプレビューのリンクを開く場所、外部の読み込みの確認を選びます。",
-      "descriptionRemote": "外部の読み込みの確認を選びます。リンクの開き先は PC（ホスト）の画面で選びます。",
-      "linkOpen": {
-        "title": "リンクの開き先",
-        "inapp": "内蔵ブラウザー",
-        "external": "既定のブラウザー",
-        "note": "内蔵ブラウザーは会話の右に開き、HTML ファイルもここで開きます。既定のブラウザーを選ぶと、HTML ファイルも既定のブラウザーで開きます。ログインはこのアプリの中に残ります。",
-        "shortcuts": "{{key}}+クリックと中クリックは、いつも既定のブラウザーで開きます。右クリックでどちらでも選べます。"
-      },
+      "description": "外部の読み込みの確認と、エージェントが使う Chrome を設定します。",
+      "descriptionRemote": "外部の読み込みの確認を選びます。エージェントが使う Chrome は PC（ホスト）の画面で設定します。",
       "saveFailed": "保存できませんでした: {{error}}",
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
       "profiles": {
@@ -608,8 +602,8 @@
       },
       "confirm": {
         "title": "外部の読み込み",
-        "scope": "可視化・HTML のプレビュー・内蔵ブラウザーで開いた PC の HTML ファイルで、「常に」許可したサイトのほかからの読み込み（画像・スクリプト・通信など）を止めます。Web のページと、既定のブラウザーで開いた HTML ファイルには効きません。すべての画面で共通の設定です。",
-        "scopeRemote": "可視化と、ホストの内蔵ブラウザーで開いた HTML ファイルで、「常に」許可したサイトのほかからの読み込み（画像・スクリプト・通信など）を止めます。Web のページと、既定のブラウザーで開いた HTML ファイルには効きません。すべての画面で共通の設定です。",
+        "scope": "可視化と、右の欄で開いた HTML ファイルで、「常に」許可したサイトのほかからの読み込み（画像・スクリプト・通信など）を止めます。Web のページと、既定のブラウザーで開いた HTML ファイルには効きません。すべての画面で共通の設定です。",
+        "scopeRemote": "可視化と、右の欄で開いた HTML ファイルで、「常に」許可したサイトのほかからの読み込み（画像・スクリプト・通信など）を止めます。Web のページと、既定のブラウザーで開いた HTML ファイルには効きません。すべての画面で共通の設定です。",
         "agentTitle": "エージェントのサイト利用",
         "external": "外部の読み込みの前に確認",
         "agent": "エージェントがサイトを使う前に確認",
@@ -1175,7 +1169,6 @@
     "besideChat": "会話と並べて表示",
     "backToChat": "会話へ戻る",
     "closePreview": "プレビューを閉じる",
-    "visualPanel": "可視化のプレビュー",
     "loading": "読み込み中…",
     "status": {
       "directory_other": "ディレクトリ · {{count}} 項目",
@@ -1202,17 +1195,6 @@
       "text": "このページのテキスト"
     },
     "visual": {
-      "source": "可視化の原文",
-      "title": "可視化",
-      "save": "会話に残っている HTML を保存",
-      "status": "保存済みの可視化",
-      "statusTitle": "この回答に保存された内容です。ホスト上のファイルの現在の内容ではありません。",
-      "note": "会話に保存された時点の写しです。今のファイルは「元のファイルを開く」で見られます。",
-      "noOrigin": "会話に保存された表示",
-      "savedAt": "{{time}} に保存した表示",
-      "browserTitle": "会話に保存された写しを新しいタブで開きます（元のファイルではありません）",
-      "originTitle": "元のファイルの今の内容を、このパネルで開きます",
-      "popupBlocked": "新しいタブを開けませんでした。ブラウザーがポップアップを止めていないか確かめてください。",
       "actions": "この可視化の操作"
     },
     "dir": {
@@ -1236,8 +1218,7 @@
     "someImages": "一部の画像を表示できません。",
     "original": "原文",
     "mode": {
-      "file": "ファイル",
-      "visualization": "可視化"
+      "file": "ファイル"
     }
   },
   "sessionContext": {
@@ -2832,21 +2813,17 @@
   "files": {
     "menu": {
       "openInPreview": "プレビューで開く",
-      "viewSource": "原文を見る",
-      "openInBrowser": "ブラウザーで開く",
       "revealFile": "エクスプローラーで表示",
       "revealFolder": "エクスプローラーで開く",
+      "revealFinder": "Finder で表示",
+      "openDefault": "既定のアプリで開く",
       "copyPath": "パスをコピー",
       "copyRelative": "相対パスをコピー",
       "save": "保存",
-      "use": "会話で使う",
-      "copyOriginPath": "元のパスをコピー",
-      "openOrigin": "元のファイルを開く",
-      "saveHtml": "HTML を保存"
+      "use": "会話で使う"
     },
     "actionsFor": "{{name}} の操作",
     "currentActions": "このファイルの操作",
-    "browserTitle": "ブラウザーで開きます",
     "revealTitle": "この PC のエクスプローラーで、ファイルを選んだ状態で開きます",
     "copiedPath": "パスをコピーしました",
     "copiedRelative": "相対パスをコピーしました",
@@ -2868,17 +2845,9 @@
     "link": {
       "blocked": "安全でないリンクのため無効化",
       "hostOnly": "localhost のリンクはホストの PC でだけ開けます。",
-      "openSheet": "リンクの開き先",
-      "openOnDeviceSub": "この端末の既定のブラウザー",
-      "openInApp": "内蔵ブラウザーで開く",
-      "chooseDest": "開き先を選ぶ",
       "copy": "リンクをコピー",
       "copied": "リンクをコピーしました",
-      "copyFailed": "コピーできませんでした",
-      "clickHint": "クリック",
-      "ctrlClickHint": "{{key}}+クリック",
-      "ctrlHint": "· {{key}} で既定",
-      "close": "閉じる"
+      "copyFailed": "コピーできませんでした"
     },
     "present": {
       "height": {
@@ -2895,9 +2864,13 @@
       "namedVisualization": "可視化: {{title}}",
       "copyPath": "パスをコピー",
       "download": "HTML を保存",
-      "browser": "ブラウザーで開く",
       "widen": "広げる",
       "narrow": "元の幅に戻す",
+      "resourcesOmitted": "画像などの関連ファイルは含めていません。",
+      "resourcesTooMany": "関連ファイルの数が上限を超えたため、HTML だけを保存しています。",
+      "resourcesTooLarge": "関連ファイルの合計サイズが上限を超えたため、HTML だけを保存しています。",
+      "resourceTooLarge": "サイズの大きい関連ファイルがあるため、HTML だけを保存しています。",
+      "resourcesLegacy": "以前の記録のため、画像などの関連ファイルは含めていません。",
       "truncated": "大きすぎるため省略されました",
       "badImage": "表示できない画像です",
       "loadingBody": "読み込んでいます…",
@@ -4895,68 +4868,26 @@
     "duration": { "minutes": "{{m}} 分 {{s}} 秒", "seconds": "{{s}} 秒" }
   },
   "browser": {
-    "panel": "ブラウザー",
     "unifiedEntryLabel": "ブラウザー",
     "entryState": { "requested": "あなたへの依頼待ち", "paused": "あなたが Chrome を操作中", "working": "{{name}} が Chrome を操作中" },
-    "tabs": "ブラウザーのタブ",
-    "newTab": "新しいタブ",
-    "untitled": "新しいタブ",
-    "closeTab": "タブを閉じる: {{title}}",
-    "back": "戻る",
-    "forward": "進む",
-    "reload": "再読み込み",
-    "stop": "読み込みを止める",
-    "loading": "読み込み中",
-    "address": "アドレス",
-    "addressPlaceholder": "URL を入力",
     "openExternal": "既定のブラウザーで開く",
-    "actions": "ブラウザーの操作",
-    "menu": {
-      "devtools": "DevTools",
-      "detach": "別のウィンドウに出す",
-      "openInChrome": "Chrome で開く（エージェントのウィンドウへ）",
-      "clearSiteData": "このサイトのデータを消す"
-    },
-    "kind": {
-      "secure": "安全な接続（https）",
-      "local": "この PC（localhost）",
-      "insecure": "暗号化されていない接続",
-      "file": "PC のファイル"
-    },
-    "empty": {
-      "title": "URL を入力して開きます",
-      "hint": "localhost:5173 のようにこの PC の URL は http で、それ以外は https で開きます。"
-    },
-    "invalid": "開けない URL です。http・https の URL か、localhost:5173 のように入力してください。",
-    "externalUnavailable": "このページは既定のブラウザーで開けません。",
-    "externalTooMany": "続けて開きすぎています。少し待ってからもう一度押してください。",
-    "siteDataCleared": "このサイトのデータを消しました。",
-    "failed": "ブラウザーの操作に失敗しました。",
-    "reloaded": "読み直しました",
     "chromeWindow": {
-      "tab": "{{name}} の Chrome",
-      "fixedTab": "{{name}} の Chrome（閉じられません）",
       "windowActions": "Chrome のウィンドウの操作",
       "windowNumber": "ウィンドウ {{n}}",
       "childUntitled": "子の会話",
       "childWaiting": "依頼待ち",
-      "windowCount": "{{n}} ウィンドウ",
       "panel": "Chrome のウィンドウ",
-      "entry": "{{name}} の Chrome のウィンドウ",
-      "entryWorking": "{{name}} の Chrome のウィンドウ · 操作中",
       "screen": "{{name}} の Chrome のウィンドウの映像（見るだけ）",
       "viewOnly": "見るだけ · 操作は引き継いでから",
       "suspended": "映像を止めています",
       "connecting": "接続しています…",
-      "fps": "映像 · {{fps}} fps",
       "ended": "Chrome のウィンドウが閉じました",
       "none": "この会話には Chrome のウィンドウがありません",
       "failed": "Chrome のウィンドウの映像を開けませんでした。",
       "screenOperating": "{{name}} の Chrome のウィンドウの映像（この端末で操作中）",
+      "screenUnified": "この会話の Chrome の画面",
       "deviceNote": "パスワード管理・パスキーは、この端末からは使えません",
       "inputFailed": "Chrome のウィンドウへ送れませんでした",
-      "waitingPermission": "Chrome の許可を待っています",
-      "openFailed": "Chrome で開けませんでした",
       "closeShown": "表示中のウィンドウを閉じる", "closeFailed": "Chrome のウィンドウを閉じられませんでした",
       "closeAsk": "ウィンドウを閉じますか？", "closeAskNumber": "ウィンドウ {{n}} を閉じますか？", "closeYes": "閉じる",
       "closeRiskHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。",
@@ -4968,19 +4899,11 @@
       "chipAgentRunning": "{{name}} が操作中", "chipAgentIdle": "{{name}} が最後に操作",
       "profileActions": "Chrome のプロフィール"
     },
+    "video": { "lag": "映像が遅れています", "stale": "つなぎ直しています" },
     "remote": {
-      "screen": "ブラウザーの画面",
-      "connectedFps": "接続中 · {{fps}} fps",
-      "connecting": "接続しています…",
-      "ended": "ブラウザーのタブが閉じました",
-      "quality": "画質: {{level}}",
-      "qualityAuto": "自動",
-      "qualityLow": "低",
-      "textInput": "文字入力",
       "textLabel": "ページへ入力する文字",
       "textPlaceholder": "ページに入力する文字",
-      "textSend": "入力",
-      "failed": "ブラウザーを開けませんでした。"
+      "textSend": "入力"
     }
   },
   "nav": {

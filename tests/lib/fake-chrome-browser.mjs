@@ -5,7 +5,12 @@
 //   - Fetch.enable したセッションがあるタブの移動は、Fetch.requestPaused で止まり continueRequest / failRequest を待つ（主フレームの Document だけ）。
 //     止められた移動はエラーのページ（chrome-error://chromewebdata/。frameNavigated の unreachableUrl）に移り、targetInfo の URL は断られた URL になる（実機と同じ）
 //   - 履歴（Page.getNavigationHistory・navigateToHistoryEntry）。履歴の移動は bfcache の復元として扱い、要求を出さない（Fetch で止まらない。served に残らない）
-//   - window.open（windowOpen）で開いたタブの最初の要求は止まらない（実機と同じ。served に残る）
+//   - window.open（windowOpen）で開いたタブの最初の要求は、開いた元のタブの Fetch では止まらない（実機と同じ。served に残る）。
+//     ブラウザーの単位の Fetch.enable（sessionId なし）の patterns に当たれば、その接続へ sessionId なしの Fetch.requestPaused で止まる（frameId は開いたタブ。実機 Chrome 156）。
+//     ブラウザーの単位の Fetch は、主フレームの移動（navigate）にも効く（タブの Fetch の後に聞く）
+//   - cross-site の iframe（crossSiteFrame）。タブのセッションが Target.setAutoAttach していれば、そのセッションへ子のセッション（type: iframe）を
+//     attachedToTarget で付け、waitForDebuggerOnStart なら Runtime.runIfWaitingForDebugger まで待つ。iframe の要求（frameFetch）はタブのセッションの Fetch では止まらず、
+//     子のセッションの Fetch の patterns に当たれば止まる（実機）
 //   - 窓は位置・大きさ（bounds。DIP）を持つ。createTarget の newWindow は left・top・width・height を守り、popup の窓は既定で左上（0,0・324×298）に出る（実機）。
 //     窓ができたら onWindow の聞き手に知らせる（偽の OS の層が、その窓の HWND を作る）。windowTitle は窓の最後のタブの題（Chrome の窓の題は「<題> - Google Chrome」）
 //   - launchWindow は chrome.exe --new-window の窓（URL は題に nonce を持つ data: のページ。題は <title> から取る）
@@ -38,6 +43,8 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   const pausedFetch = new Map(); // requestId -> resolve(decision)
   const served = [];
   const autoAttachCalls = [];
+  const frames = new Map();      // iframe の targetId -> { targetId, tabId, url }
+  const browserFetch = new Map(); // socket -> ブラウザーの単位の Fetch の patterns
   let windowSeq = 100, requestSeq = 0, contextSeq = 0, entrySeq = 0;
   const contexts = new Set(['CTX-DEFAULT']);   // プロフィールごとの browserContextId（launchWindow の profileDir で増える）
   let contextIgnored = false;    // createTarget の browserContextId を無視する（Chrome が別のプロフィールに開いたときの確かめ）
@@ -86,16 +93,34 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   for (const tab of userTabs) newTarget({ url: tab.url, title: tab.title, windowId: userWindow });
   newTarget({ url: 'chrome-extension://fake/background.js', title: 'Service Worker', windowId: null, type: 'service_worker' });
 
-  /** Fetch で止める（そのタブで Fetch.enable したセッションの順に聞く）。'continue' か 'fail' */
-  async function intercept(t, url, redirectedRequestId) {
-    for (const s of sessionsOf(t).filter(x => x.fetch)) {
+  /** Fetch の patterns に当たるか（urlPattern の * だけの glob・resourceType） */
+  const globRe = glob => new RegExp(`^${String(glob).split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+  const matches = (patterns, url, resourceType) => (patterns ?? [{ urlPattern: '*' }]).some(p => globRe(p.urlPattern ?? '*').test(url) && (!p.resourceType || p.resourceType === resourceType));
+  /** ブラウザーの単位の Fetch で止める（当たる接続の順）。'continue' か 'fail' */
+  async function interceptBrowser(frameId, url, resourceType = 'Document') {
+    for (const [socket, patterns] of [...browserFetch]) {
+      if (!matches(patterns, url, resourceType)) continue;
       const requestId = `interception-job-${++requestSeq}.0`;
       const decision = await new Promise(resolve => {
         pausedFetch.set(requestId, resolve);
-        send(s.socket, { method: 'Fetch.requestPaused', sessionId: s.id, params: { requestId, request: { url, method: 'GET', headers: {} }, frameId: t.targetId, resourceType: 'Document', ...(redirectedRequestId ? { redirectedRequestId } : {}) } });
+        send(socket, { method: 'Fetch.requestPaused', params: { requestId, request: { url, method: 'GET', headers: {} }, frameId, resourceType } });
       });
       if (decision === 'fail') return 'fail';
     }
+    return 'continue';
+  }
+
+  /** Fetch で止める（そのタブで Fetch.enable したセッションの順に聞き、次にブラウザーの単位の Fetch）。'continue' か 'fail' */
+  async function intercept(t, url, redirectedRequestId, resourceType = 'Document') {
+    for (const s of sessionsOf(t).filter(x => x.fetch && (resourceType === 'Document' || matches(x.patterns, url, resourceType)))) {
+      const requestId = `interception-job-${++requestSeq}.0`;
+      const decision = await new Promise(resolve => {
+        pausedFetch.set(requestId, resolve);
+        send(s.socket, { method: 'Fetch.requestPaused', sessionId: s.id, params: { requestId, request: { url, method: 'GET', headers: {} }, frameId: t.targetId, resourceType, ...(redirectedRequestId ? { redirectedRequestId } : {}) } });
+      });
+      if (decision === 'fail') return 'fail';
+    }
+    if (resourceType === 'Document') return interceptBrowser(t.targetId, url);
     return 'continue';
   }
 
@@ -152,16 +177,50 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
 
   /** ページの window.open。同じ窓（popup なら新しい窓）に openerId 付きのタブを作り、最初の要求は止めずに出す（実機と同じ） */
   function windowOpen(openerId, url, { popup = false } = {}) {
-    const opener = targets.get(openerId);
+    const opener = targets.get(openerId) ?? targets.get(frames.get(openerId)?.tabId);   // iframe から開いたときは、その iframe のタブの窓・プロフィール
     if (!opener) throw new Error('no opener');
     const t = newTarget({ url: 'about:blank', title: '', windowId: popup ? newWindow('normal', POPUP_BOUNDS) : opener.windowId, openerId, browserContextId: opener.browserContextId });
-    setImmediate(() => {
+    setImmediate(async () => {
+      if (!targets.has(t.targetId)) return;
+      if (await interceptBrowser(t.targetId, url) === 'fail') { if (targets.has(t.targetId)) commitError(t, url); return; }
       if (!targets.has(t.targetId)) return;
       served.push(url);
       t.url = url; t.title = pageFor(url).title;
       toDiscovering('Target.targetInfoChanged', { targetInfo: info(t) });
     });
     return t.targetId;
+  }
+
+  /** タブに cross-site の iframe を置く。自動 attach しているセッションへ子のセッションを付け、止めて付いた子が走らせるまで待つ。iframe の targetId を返す */
+  async function crossSiteFrame(tabId, url) {
+    const t = targets.get(tabId);
+    if (!t) throw new Error('no tab');
+    const frame = { targetId: hex(), tabId, url };
+    frames.set(frame.targetId, frame);
+    const waits = [];
+    for (const parent of sessionsOf(t).filter(x => x.autoAttach?.autoAttach)) {
+      const id = hex();
+      const waiting = parent.autoAttach.waitForDebuggerOnStart === true;
+      const child = { id, targetId: frame.targetId, socket: parent.socket, fetch: false, fe: false, frame: true, parent: parent.id };
+      if (waiting) waits.push(new Promise(resolve => { child.run = resolve; }));
+      sessions.set(id, child);
+      send(parent.socket, { method: 'Target.attachedToTarget', sessionId: parent.id, params: { sessionId: id, targetInfo: { targetId: frame.targetId, type: 'iframe', title: url, url, attached: true, canAccessOpener: false, browserContextId: t.browserContextId }, waitingForDebugger: waiting } });
+    }
+    await Promise.race([Promise.all(waits), new Promise(resolve => setTimeout(resolve, 3000))]);
+    return frame.targetId;
+  }
+  /** iframe の中の要求（fetch・XHR）。子のセッションの Fetch の patterns に当たれば止まる。'continue' か 'fail'（通れば served に残す） */
+  async function frameFetch(frameId, url, resourceType = 'XHR') {
+    for (const s of [...sessions.values()].filter(x => x.frame && x.targetId === frameId && x.fetch && matches(x.patterns, url, resourceType))) {
+      const requestId = `interception-job-${++requestSeq}.0`;
+      const decision = await new Promise(resolve => {
+        pausedFetch.set(requestId, resolve);
+        send(s.socket, { method: 'Fetch.requestPaused', sessionId: s.id, params: { requestId, request: { url, method: 'GET', headers: {} }, frameId, resourceType } });
+      });
+      if (decision === 'fail') return 'fail';
+    }
+    served.push(url);
+    return 'continue';
   }
 
   const box = i => { const y = 20 + 30 * i; return [8, y, 108, y, 108, y + 24, 8, y + 24]; };
@@ -235,11 +294,30 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'Browser.setContentsSize': return {};
       case 'Browser.close': return {};
       case 'Storage.getCookies': case 'Network.getAllCookies': return { cookies: [{ name: 'session', value: 'secret-cookie', domain: 'bank.example' }] };
+      case 'Fetch.enable': browserFetch.set(socket, params.patterns ?? [{ urlPattern: '*' }]); return {};
+      case 'Fetch.disable': browserFetch.delete(socket); return {};
+      case 'Fetch.continueRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('continue'); return {}; }
+      case 'Fetch.failRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('fail'); return {}; }
       default: throw { code: -32601, message: `'${method}' wasn't found` };
     }
   }
 
+  /** iframe の子のセッションのコマンド（Fetch・自動 attach・走らせる） */
+  function frameCommand(s, method, params) {
+    if (!frames.has(s.targetId)) throw { code: -32602, message: 'Target closed' };
+    switch (method) {
+      case 'Fetch.enable': s.fetch = true; s.patterns = params.patterns ?? null; return {};
+      case 'Fetch.disable': s.fetch = false; return {};
+      case 'Fetch.continueRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('continue'); return {}; }
+      case 'Fetch.failRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('fail'); return {}; }
+      case 'Target.setAutoAttach': s.autoAttach = { ...params }; return {};
+      case 'Runtime.runIfWaitingForDebugger': s.ran = true; s.run?.(); return {};
+      default: return {};
+    }
+  }
+
   async function sessionCommand(socket, s, method, params) {
+    if (s.frame) return frameCommand(s, method, params);
     const t = targets.get(s.targetId);
     if (!t) throw { code: -32602, message: 'Target closed' };
     switch (method) {
@@ -274,8 +352,9 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'Page.startScreencast': s.screencast = { ...params }; if (screencastStartDelayMs) await new Promise(resolve => setTimeout(resolve, screencastStartDelayMs)); return {};
       case 'Page.stopScreencast': s.screencast = null; return {};
       case 'Page.screencastFrameAck': return {};
-      case 'Fetch.enable': if (fetchEnableDelayMs) await new Promise(resolve => setTimeout(resolve, fetchEnableDelayMs)); s.fetch = true; return {};
+      case 'Fetch.enable': if (fetchEnableDelayMs) await new Promise(resolve => setTimeout(resolve, fetchEnableDelayMs)); s.fetch = true; s.patterns = params.patterns ?? null; return {};
       case 'Fetch.disable': s.fetch = false; return {};
+      case 'Target.setAutoAttach': s.autoAttach = { ...params }; return {};   // autoAttachCalls はブラウザー全体の分だけ
       case 'Fetch.continueRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('continue'); return {}; }
       case 'Fetch.failRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('fail'); return {}; }
       case 'Network.getCookies': return { cookies: [{ name: 'page', value: 'page-cookie', domain: new URL(t.url.startsWith('http') ? t.url : 'http://blank').hostname }] };
@@ -304,6 +383,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       });
       socket.on('close', () => {
         discovering.delete(socket);
+        browserFetch.delete(socket);
         for (const s of [...sessions.values()]) if (s.socket === socket) { sessions.delete(s.id); if (s.fe) { const t = targets.get(s.targetId); if (t) t.focusOn = false; } }
         for (const [id, resolve] of [...pausedFetch]) { pausedFetch.delete(id); resolve('continue'); }
       });
@@ -313,7 +393,15 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     autoAttachCalls,
     windows: () => [...windows].map(([windowId, w]) => ({ windowId, state: w.state, bounds: { ...w.bounds } })),
     targets: () => [...targets.values()].map(t => ({ ...t })),
-    sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch, fe: s.fe, screencast: Boolean(s.screencast) })),
+    sessions: () => [...sessions.values()].map(s => ({ id: s.id, targetId: s.targetId, fetch: s.fetch, fe: s.fe, screencast: Boolean(s.screencast), patterns: s.patterns ?? null, autoAttach: s.autoAttach ?? null, frame: s.frame === true, parent: s.parent ?? null, ran: s.ran === true })),
+    /** ブラウザーの単位の Fetch の patterns（付けている接続ごと） */
+    browserFetch: () => [...browserFetch.values()].map(patterns => patterns.map(p => ({ ...p }))),
+    crossSiteFrame,
+    frameFetch,
+    /** タブの全部のセッションへイベントを流す（Network のイベントに載る Cookie の値を試す） */
+    emitToTab(targetId, method, params) { const t = targets.get(targetId); if (t) emit(t, method, params); },
+    /** ページのサブリソースの要求（主フレーム。タブのセッションの Fetch の patterns に当たれば止まる）。'continue' か 'fail' */
+    subresource(targetId, url, resourceType = 'Script') { const t = targets.get(targetId); return t ? intercept(t, url, null, resourceType) : null; },
     /** Page.startScreencast の応答を ms 遅らせる（始まった印は先に付く） */
     delayScreencastStart(ms) { screencastStartDelayMs = ms; },
     /** そのタブで Page.startScreencast を回しているセッションが今あるか */

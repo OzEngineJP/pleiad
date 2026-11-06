@@ -6,6 +6,7 @@ import { downsample, floatTo16BitPcm, rms, s16leToFloat32 } from '../../web/voic
 import { createPlayer } from '../../web/voice/player.mjs';
 import { createCallEngine } from '../../web/voice/engine.mjs';
 import { captureErrorReason } from '../../web/voice/capture.mjs';
+import { createChatVoiceSender } from '../../web/voice/chat-send.mjs';
 import { normalizeSentence } from '../../web/voice/reading-mark.mjs';
 import { tokensOf } from '../../web/voice/live-bubble.mjs';
 import { createLink, BINARY_AUDIO } from '../../web/voice/link.mjs';
@@ -35,6 +36,24 @@ class FakeContext {
 const pcm = (samples) => new Uint8Array(samples * 2);
 
 export default async function (t) {
+  {
+    const row = { id: 'voice-chat', deletedBot: { id: 'gone', name: 'ソラ' } };
+    const state = { current: row.id, sessions: [row], cwd: '', mode: 'default' };
+    let sent = 0, placed = 0, claims = 0, onSettings = async () => {};
+    const send = createChatVoiceSender({ state, cmd: async () => { sent++; }, randomId: () => 'voice-message', freshId: () => 'fresh',
+      ensureSession: async () => row.id, settingsSettled: () => onSettings(), place: () => { placed++; },
+      delivery: { claim: () => { claims++; }, release() {} } });
+    const denied = async (to) => { try { await send('続けて送る', to); return false; } catch { return true; } };
+    t.ok('閲覧用会話へ音声を送らず、送信中の発言も描かない', await denied() && sent === 0 && claims === 0 && placed === 0);
+    t.ok('通話終了後の宛先指定でも閲覧用会話には音声を送らない', await denied({ sessionId: row.id }) && sent === 0);
+    delete row.deletedBot;
+    onSettings = async () => { row.deletedBot = { id: 'gone', name: 'ソラ' }; };
+    t.ok('音声送信の設定保存を待つ間に削除されたら送らない', await denied() && sent === 0 && claims === 0 && placed === 0);
+    delete row.deletedBot;
+    onSettings = async () => {};
+    await send('生存会話への声');
+    t.ok('生存会話の音声送信は維持する', sent === 1 && placed === 1 && claims === 1);
+  }
   // ---- 送信ゲート
   {
     const gate = createSendGate();

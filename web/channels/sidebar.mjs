@@ -221,8 +221,8 @@ export function createSidebar(host, getTabs) {
       node.append(av, nm);
       // 押すと DM（bot と 1 対 1 のチャンネル）。bot のページは右クリック・DM の見出しから
       node.addEventListener('click', () => navigate(b.dmChannelId ? { kind: 'channel', id: b.dmChannelId } : { kind: 'bot', id: b.id }));
-      node.addEventListener('contextmenu', (e) => { e.preventDefault(); botMenu(b, e.clientX, e.clientY); });
-      node.botMenu = (x, y) => botMenu(b, x, y);
+      node.addEventListener('contextmenu', (e) => { e.preventDefault(); botMenu(b, e.clientX, e.clientY, node); });
+      node.botMenu = (x, y) => botMenu(b, x, y, node);
       return node;
     });
     if (over) {
@@ -285,10 +285,11 @@ export function createSidebar(host, getTabs) {
     if (typeof ResizeObserver === 'function') new ResizeObserver(() => paintBots()).observe(strip);
   }
 
-  function botMenu(b, x, y) {
+  function botMenu(b, x, y, opener) {
     host.showMenu?.(x, y, [
       ...(b.dmChannelId ? [{ label: t('channels:side.openDm'), onClick: () => navigate({ kind: 'channel', id: b.dmChannelId }) }] : []),
       { label: t('channels:side.openBot'), onClick: () => navigate({ kind: 'bot', id: b.id }) },
+      ...(!b.plain ? [{ sep: true }, { label: t('channels:botDelete.menu'), danger: true, onClick: () => host.deleteBot(b, opener) }] : []),
     ], b.name);
   }
 

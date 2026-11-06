@@ -93,12 +93,9 @@ export default async function(t) {
     await c.cmd('setPref', { key: 'backend', value: 'codex' });
     await c.cmd('setPref', { key: 'model', value: 'fast', backend: 'fake' });
     await c.cmd('setPref', { key: 'mode', value: 'default', backend: 'fake' });
-    // リンクの開き先（設定 › ブラウザー。docs/inapp-browser.md）: inapp / external だけを保存する
-    const linkPrefs = await c.cmd('setPref', { key: 'linkOpen', value: 'external' });
-    const badLink = await c.cmd('setPref', { key: 'linkOpen', value: 'javascript:' }).then(() => null, e => e);
-    const linkBack = await c.cmd('setPref', { key: 'linkOpen', value: 'inapp' });
-    t.ok('linkOpen pref saves inapp/external and rejects other values',
-      linkPrefs.linkOpen === 'external' && linkBack.linkOpen === 'inapp' && /linkOpen/.test(String(badLink?.message)));
+    // 無くした設定（linkOpen。内蔵ブラウザーと一緒に無くした）は知らないキーとして断る
+    const retiredLink = await c.cmd('setPref', { key: 'linkOpen', value: 'external' }).then(() => null, e => e);
+    t.ok('the retired linkOpen pref is rejected as an unknown setting', retiredLink?.code === 'SETTING_NOT_FOUND' && !('linkOpen' in await c.cmd('prefs')), String(retiredLink?.code));
     const initialBrowserPrefs = await c.cmd('prefs');
     t.ok('browser confirmation is OFF until explicitly set', !initialBrowserPrefs.confirmExternalLoads && !initialBrowserPrefs.confirmAgentSites);
     const externalSites = [{ origin: 'https://assets.example', mode: 'always' }, { origin: 'https://ask.example', mode: 'ask' }];

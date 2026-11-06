@@ -1,0 +1,43 @@
+{
+  "strip": {
+    "label": "ブラウザーのタブ",
+    "new": "新しいタブ",
+    "close": "{{title}} を閉じる",
+    "closeTab": "タブを閉じる",
+    "count": "{{count}} 個のタブ"
+  },
+  "address": {
+    "back": "戻る",
+    "forward": "進む",
+    "reload": "再読み込み",
+    "conversation": "会話へ戻る",
+    "tree": "フォルダーツリー",
+    "edit": "URL・パス・検索語を入力",
+    "view": "ファイルの表示",
+    "preview": "プレビュー",
+    "source": "原文",
+    "showSource": "原文を表示",
+    "locations": { "git": "変更", "plugins": "プラグイン", "attachment": "添付", "new": "URL・パスを入力、または検索" },
+    "more": "その他",
+    "closePanel": "パネルを閉じる",
+    "openPanel": "ブラウザーを開く",
+    "openPagePanel": "パネルを開く",
+    "failed": "開けませんでした。入力したアドレスを確認してください。",
+    "reasons": {
+      "empty-input": "URL・パス・検索語を入力してください。",
+      "invalid-path": "絶対パスか、./ で始まるパスを入力してください。",
+      "network-path": "ネットワーク上のパスは開けません。",
+      "different-host": "この PC のパスを入力してください。",
+      "cwd-unknown": "この会話の作業場所が分からないため、絶対パスを入力してください。",
+      "invalid-url": "この URL は開けません。",
+      "not-found": "ファイルまたはフォルダーが見つかりません。",
+      "ENOENT": "ファイルまたはフォルダーが見つかりません。",
+      "forbidden": "この場所のファイルは開けません。",
+      "access-denied": "この場所のファイルを読む権限がありません。",
+      "protected-data": "Pleiad のデータフォルダーは開けません。",
+      "not-file": "ファイルまたはフォルダーを指定してください。",
+      "NO_WINDOW": "このタブは閉じられました。別のタブを選んでください。",
+      "UNSUPPORTED": "Chrome に接続してから開いてください。"
+    }
+  }
+}

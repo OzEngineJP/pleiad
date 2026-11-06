@@ -1,18 +1,49 @@
-// サーバーのある PC で「エクスプローラーで表示」「ブラウザーで開く」を実行する（docs/design-system.md「ファイルの操作」）。
+// サーバーのある PC で「エクスプローラーで表示」「ブラウザーで開く」「既定のアプリで開く」を実行する（docs/design-system.md「ファイルの操作」・ADR 0294 の 3）。
 //
-// 判定はサーバー（core/server.mjs の revealPath / openPath）、実行は OS 側。ここに来るのは、許可範囲の中にあると
+// 判定はサーバー（core/server.mjs の revealPath / openPath / openDefault）、実行は OS 側。ここに来るのは、許可範囲の中にあると
 // 確かめ、実体を解決した後の絶対パスだけ。それでも次を守る:
 //   - シェルを通さない（cmd /c start は & ^ % を含むパスでコマンドが注入される）。引数はそのまま 1 つで渡す
-//   - 「開く」は HTML だけ。既定のアプリで開くと .bat .lnk などはそのまま実行されてしまう
+//   - 「ブラウザーで開く」は HTML だけ。「既定のアプリで開く」は DEFAULT_APP_EXTENSIONS の拡張子だけ。
+//     既定のアプリで開くと .bat .lnk .js などはそのまま実行されてしまう
 //   - 起動するプログラムは絶対パスで指す（作業ディレクトリに置かれた explorer.exe を拾わない）
 //   - 短い時間に何度も呼ばせない（AI の出力経由で画面を操作させる類の誤用にも強くする）
-// デスクトップ版（Electron）では本体の shell.showItemInFolder / shell.openPath に頼む（desktop/file-bridge.cjs）。
+// デスクトップ版（Electron）では本体の shell.showItemInFolder / shell.openPath に頼む（desktop/file-bridge.cjs。同じ一覧をここから読む）。
 import { detach } from './process.mjs';
 import path from 'node:path';
 import { t } from './i18n.mjs';
 import { getMainPort } from './main-port.mjs';
 
 export const OPENABLE = /\.html?$/i;
+
+/**
+ * 「既定のアプリで開く」で開いてよい拡張子（ADR 0294 の 3）。一覧はここ 1 つだけで、サーバーと desktop/file-bridge.cjs の両方が使う。
+ * 足すのは、既定のアプリで開いても中身が実行されない種類だけ。.js .py .ps1 .bat .cmd .vbs .wsf .hta .reg .url .lnk .scr .com
+ * .exe .msi .jar などは入れない。マクロを含みうる .docm .xlsm .pptm も入れない。HTML は「ブラウザーで開く」（OPENABLE）の側
+ */
+export const DEFAULT_APP_EXTENSIONS = Object.freeze([
+  // 文書
+  '.txt', '.md', '.pdf', '.rtf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.csv', '.tsv',
+  // 文字のデータ（開くと中身を見せるだけ）
+  '.log', '.json', '.jsonl', '.yaml', '.yml', '.xml', '.toml', '.ini',
+  // 画像
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.heic', '.tiff',
+  // 音・動画
+  '.mp3', '.wav', '.flac', '.m4a', '.ogg', '.mp4', '.mov', '.webm', '.mkv',
+]);
+const DEFAULT_APP_SET = new Set(DEFAULT_APP_EXTENSIONS);
+
+/**
+ * 既定のアプリで開いてよいファイルの名前か。名前だけを見る（フォルダーかどうか・リンクの実体は呼び出し側が実体を解決してから渡す）。
+ * 最後の拡張子で決める（a.pdf.exe は .exe）。大文字小文字は区別しない。
+ * 名前の見かけと開かれる物がずれる形は断る: NTFS の代替ストリーム（a.txt:x.exe）、末尾の . と空白（Windows が落として別の名前で開く）
+ */
+export function defaultAppAllowed(file) {
+  if (typeof file !== 'string' || !file || /[\u0000-\u001f]/.test(file)) return false;
+  const name = file.split(/[\\/]/).pop();
+  if (!name || name.includes(':') || /[.\s]$/.test(name)) return false;
+  const dot = name.lastIndexOf('.');
+  return dot > 0 && DEFAULT_APP_SET.has(name.slice(dot).toLowerCase());
+}
 
 /**
  * 接続が「サーバーのある PC の画面」から来たか。ループバックからで、中継（プロキシ）を通っていないもの。
@@ -27,13 +58,15 @@ export function isLocalRequest(req) {
 
 /**
  * 起動する内容を組み立てる（起動はしない。テストはここを見る）。
- * @param {'reveal'|'open'} action reveal はファイルを選んだ状態でフォルダーを開く（フォルダーはその中を開く）。open は HTML を既定のブラウザーで
+ * @param {'reveal'|'open'|'default'} action reveal はファイルを選んだ状態でフォルダーを開く（フォルダーはその中を開く）。open は HTML を既定のブラウザーで。
+ *   default は許した拡張子（DEFAULT_APP_EXTENSIONS）のファイルを既定のアプリで（起動の形は open と同じ。OS の関連付けで開く）
  * @returns {{ command:string, args:string[], options:object }}
  */
 export function launchPlan(action, file, { directory = false, platform = process.platform, env = process.env } = {}) {
   if (typeof file !== 'string' || !file || /[\u0000-\u001f"]/.test(file)) throw new Error(t('files.invalidPath'));
   if (action === 'open' && (directory || !OPENABLE.test(file))) throw new Error(t('files.htmlOnly'));
-  if (action !== 'open' && action !== 'reveal') throw new Error('unknown action');
+  if (action === 'default' && (directory || !defaultAppAllowed(file))) throw new Error(t('files.typeNotAllowed'));
+  if (action !== 'open' && action !== 'reveal' && action !== 'default') throw new Error('unknown action');
   const detached = { detached: true, stdio: 'ignore', shell: false, windowsHide: false };
   if (platform === 'win32') {
     const target = file.replaceAll('/', '\\');
@@ -84,7 +117,8 @@ export function createRateLimit({ limit = 5, windowMs = 10_000, now = () => Date
 }
 
 const BRIDGE_ERRORS = { 'invalid-path': () => t('files.invalidPath'), 'not-found': () => t('files.notFound'),
-  'not-file': () => t('files.notFileOrFolder'), 'html-only': () => t('files.htmlOnly') };
+  'not-file': () => t('files.notFileOrFolder'), 'html-only': () => t('files.htmlOnly'),
+  'type-not-allowed': () => t('files.typeNotAllowed') };
 /** 本体（desktop/file-bridge.cjs）が返した失敗の文言 */
 export function bridgeError({ code, detail } = {}) {
   if (Object.hasOwn(BRIDGE_ERRORS, code)) return BRIDGE_ERRORS[code]();

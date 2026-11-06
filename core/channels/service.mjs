@@ -461,7 +461,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
           // ターンの投稿に入った返事も、新しい投稿と同じく posted へ渡す（@ をここで解く。extra.filled）。決めたのが dispatch でない置き換え（進捗）は渡さない
           if (claim !== undefined) {
             const extra = { filled: true, ...(Array.isArray(hold) ? { hold: [...hold], checked: true } : {}), ...(origin ? { origin: clone(origin) } : {}), ...(bySession ? { bySession } : {}) };
-            Promise.resolve().then(() => hooks.posted?.(clone(saved), clone(channel), extra)).catch((e) => console.error('  channels: posted の後処理に失敗:', String(e?.message ?? e)));
+            await Promise.resolve().then(() => hooks.posted?.(clone(saved), clone(channel), extra)).catch((e) => console.error('  channels: posted の後処理に失敗:', String(e?.message ?? e)));
           }
           return saved;
         }
@@ -488,7 +488,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         if (th?.stopped) emitThread(await threadStore.update(channelId, threadId, { stopped: null }));
       }
       const extra = { ...(Array.isArray(hold) ? { hold: [...hold], checked: true } : {}), ...(origin ? { origin: clone(origin) } : {}), ...(bySession ? { bySession } : {}) };
-      Promise.resolve().then(() => hooks.posted?.(clone(saved), clone(updated), extra)).catch((e) => console.error('  channels: posted の後処理に失敗:', String(e?.message ?? e)));
+      await Promise.resolve().then(() => hooks.posted?.(clone(saved), clone(updated), extra)).catch((e) => console.error('  channels: posted の後処理に失敗:', String(e?.message ?? e)));
       return saved;
     },
 
@@ -616,6 +616,16 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         return thread;
       },
     },
+  };
+  const post = service.post;
+  service.post = (args, author) => hooks.withPost ? hooks.withPost(args, author, () => post(args, author)) : post(args, author);
+  const edit = service.edit;
+  service.edit = async (args, author) => {
+    if (hooks.withPost && (args.text !== undefined || args.attachments !== undefined)) {
+      const row = await service.getPost({ channelId: args.channelId, postId: args.postId });
+      return hooks.withPost({ ...args, threadId: row.threadId ?? row.id }, author, () => edit(args, author));
+    }
+    return edit(args, author);
   };
   return service;
 }

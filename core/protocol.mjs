@@ -23,7 +23,7 @@ export const READY = "ready";   // { protocolVersion, version（アプリの版�
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";
-// PC の内蔵ブラウザー・エージェントの Chrome の窓の画面（browserScreencast で見ている接続だけへ）。{ source?: 'chrome'（Chrome の窓。無ければ内蔵ブラウザー）, type: frame|state|ended, sessionId, seq?, data?（JPEG の base64）, metadata?, state?, reason? }
+// エージェントの Chrome の窓の画面（browserScreencast で見ている接続だけへ）。{ source: 'chrome', type: frame|state|ended|mark|video, sessionId, seq?, data?（JPEG の base64）, metadata?, state?, reason? }
 export const SCREENCAST = "screencast";
 
 // client -> server
@@ -187,8 +187,8 @@ export const COMMANDS = new Set([
   "hostCapabilities", // {} -> { osActions, hostName }。この接続がサーバーのある PC の画面からか（OS の操作を出してよいか・添付の出どころを選ばせるか）
   "resolvePath",      // { path, sessionId?, at?, base?, lenient? } -> { path（実体）, cwd, kind: file|directory }。lenient は読まずに在り処と cwd だけ（無くてもよい）
   "revealPath",       // { path, sessionId?, at?, base? } -> { path }。エクスプローラーでファイルを選んだ状態で開く（フォルダーはその中）。遠隔の接続は断る
-  "openPath",         // 同上。HTML だけ。returnPath:true なら検査済みの実体パスを返し、OS では開かない。遠隔の接続は断る
-  "openVisualization", // { sessionId, id? | at?, returnPath? } -> { path }。写しを書き、returnPath:true なら開かずに返す。遠隔の接続は断る
+  "openPath",         // 同上。HTML だけ（フォルダーはフォルダーのページ）。遠隔の接続は断る
+  "openDefault",      // 同上。既定のアプリで開く。許した拡張子（core/os-open.mjs の DEFAULT_APP_EXTENSIONS）のファイルだけ。遠隔の接続は断る
   "backends",        // 使えるバックエンドの一覧（capabilities / toolHints 付き）
   "authStatus",      // { backend } -> { supported, loggedIn?, account?, detail?, cliPath?（ホームは ~）, cliVersion?, expired?（会話で 401 を受けた。ADR 0212） }
   "authLogin",       // { backend }。URL は auth イベントで出る
@@ -224,13 +224,12 @@ export const COMMANDS = new Set([
   "setStatusIcon",   // { status, icon }。空なら「なし」（既定）に戻す
   "createStatus",    // { status }。空のグループを作る（statuses.json にある限り存在する）
   "lineage",         // { sessionId } -> 同じ根を持つセッション群（分岐の筋を描く材料）
-  // リモートの画面から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）。リモートの接続からだけ使える（core/browser-screencast.mjs）
-  'browserScreencast',       // { sessionId, url? | visualization?: { id?, at? }, width, height, scale, quality: auto|low } -> { tabId, state }。見始める（url があれば新しいタブ）
+  // エージェントの Chrome の窓の映像を見る・操作する（core/browser-screencast.mjs、core/chrome/screencast.mjs）。どれも args.source: 'chrome'。
+  // ホストの画面もリモートの端末も受ける。入力を受けるかは core/browser-screencast.mjs の screencastCommand（受けなければ code: view-only、窓が無ければ no-window）
+  'browserScreencast',       // { sessionId, tabId?, width, height, scale, device? } -> { tabId, state }。見始める
   'browserScreencastStop',   // { sessionId } -> {}。見るのをやめる（見る端末がいなくなれば止める）
-  'browserScreencastAck',    // { sessionId, seq } -> {}。そのフレームを描き終えた（次のフレームを許す）
-  'browserScreencastInput',  // { sessionId, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}
-  'browserScreencastNav',    // { sessionId, action: back|forward|reload|stop|open, url? } -> {}
-  // どれも args.source: 'chrome' でエージェントの Chrome の窓の映像（core/chrome/screencast.mjs）を選ぶ。ホストの画面もリモートの端末も受け、見るだけ（Input・Nav は code: view-only、窓が無ければ no-window）
+  'browserScreencastAck',    // { sessionId, seq, mark? } -> {}。そのフレーム（mark なら印）を描き終えた（次のフレームを許す）
+  'browserScreencastInput',  // { sessionId, tabId?, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}
   // コンピューターの操作（docs/computer-use.md）。ホストの OS を操作する命令ではなく止める側なので、リモートの端末からも受ける
   'computerStop',            // { sessionId } -> { stopped }。その会話の走っているターン（貸している先の子のターンも）に止めた印を付け、main へ computer-stop を送る
   // エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*）
@@ -244,10 +243,15 @@ export const COMMANDS = new Set([
   'chromeTakeOver',          // 引き継ぐ: 窓を見える形に戻して前に出し、エージェントのコマンドを断る（paused）。{ by: 'device', width, height, scale } は端末から操作する（窓は出さない）。fromPc: true は PC の引き継ぎを端末へ移す
   'chromeResume',            // 戻す: 窓を画面の外の見えない窓に戻し、paused を解く（会話に「あなたが引き継ぎ · Claude に戻しました」の行）
   'chromeStop',              // 止める: 接続を閉じ、次の人の送信まで再接続を断る（stopped）
-  'chromeOpen',              // { sessionId, url } -> { sessionId, targetId }。ビューアの⋯「Chrome で開く」。会話の窓に開く（つながっていなければ許可を待つ）。ホストの PC の画面だけ
   'chromeCloseWindow',       // { sessionId, windowId? } -> { closed }。会話の専用窓を閉じ、最後の画面を残す。windowId があればそのウィンドウだけ（複数あるとき）。画面とリモートの端末から
+  'chromeNavigate',
+  'chromeAddress',
   'chromePinWindow',         // { sessionId, windowId|null, tabId? } -> { pinnedWindowId, pinnedTabId }。右パネルの映像に映すウィンドウ・タブを固定する・解く（null）。固定は会話に 1 つで、chromeWindow イベントの pinnedWindowId で全部の端末に配る。映像を見ている間だけ
   'chromeCloseTab',          // { sessionId, tabId } -> {}。端末が引き継いでいる間に、タブの列の × でタブを閉じる（最後のタブは閉じない）
+  // ブラウザーの一本化（旗が on のときだけ。core/browser-unify-ws.mjs）
+  'vizOnce',                 // { origins: string[] } -> { token: string|null }。可視化の「一度だけ読み込む」の印（隔離の origin の ?once=。10 分）。https の出どころが 1 つも無ければ null
+  'pageResult',              // { sessionId, targetId?, requestId, ok, result?, error? } -> { delivered }。ページからの書き込みの頼み（worktree）の結果をページへ返す（pleiad:page-result）。その会話を見ている接続だけ
+  'pageEnv',                 // { theme: auto|light|dark } -> { tabs }。画面のテーマの変化をファイルのページのタブへ知らせる（pleiad:env）
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。
@@ -347,4 +351,8 @@ export const EVENTS = new Set([
   "chromeTap",
   // { windows, operating } 会話の Chrome の窓（エージェント専用の窓）の有無と、エージェントが操作中か（右パネルの Chrome の入口。リモートの端末にも流す。sessionId は会話）
   "chromeWindow",
+  "tab:info",
+  "tab:holder",
+  "tab:page-request",
+  "tab:viewport",
 ]);

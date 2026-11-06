@@ -12,7 +12,7 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 
 利用者が CLI を管理する。下表は確認した範囲であり、上限は設けない（[ADR 0037](adr/0037-manage-external-agent-versions.md)）。
 
-内蔵ブラウザー操作用の agent-browser は **0.38.1** を同梱する。エージェントの CLI と異なり、Pleiad がこの版を固定して配る（[ADR 0043](adr/0043-agent-browser-via-per-session-cdp-relay.md)）。
+会話の Chrome の操作用の agent-browser は **0.38.1** を同梱する。エージェントの CLI と異なり、Pleiad がこの版を固定して配る（[ADR 0043](adr/0043-agent-browser-via-per-session-cdp-relay.md)）。
 
 | バックエンド | つなぎ方 | 検証した版 | 最低の版 | 頼っている非公開のもの |
 |---|---|---|---|---|
@@ -22,7 +22,7 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 | OpenCode | `opencode serve`（v2 HTTP/SSE・plugin） | CLI 2.0.32（v2 の接続・MCP・承認・Hooks・指示分離。[ADR 0232](adr/0232-opencode-v2-http-plugin-contract.md)） | 2.0.32（v2） | v2 のイベント形と plugin の hook、停止中の履歴・v1 移行の確認に読む `opencode.db` の `session_message`・旧 `message` / `part` 等 |
 | Grok Build | `grok`（ACP） | CLI 1.0.62（ACP・途中送信・画像ファイルの読み取り。機能の範囲は [backends.md](backends.md#grok-build)） | なし | ACP のイベント・`_x.ai/session/usage` の応答の形。ネイティブの会話ファイルは直接読まない |
 | Devin | `devin`（ACP） | CLI 3000.11.92（Pleiad 指示・委譲・ACP 接続の実機検証。[ADR 0223](adr/0223-devin-acp-backend.md)） | なし | ACP のイベント形と、圧縮区切りの取得における `devin/sessions/cli/sessions.db`（`sessions` 表の `main_chain_id`、`message_nodes` 表のノード鎖・継続ノードと `metadata.summarized_from` 等） |
-| 内蔵ブラウザー操作 | `agent-browser` と会話別 CDP 中継 | 0.38.1（同梱） | 同梱版を使用 | なし |
+| 会話の Chrome の操作 | `agent-browser` と会話別 CDP 中継 | 0.38.1（同梱） | 同梱版を使用 | なし |
 
 2026-10-22 に Windows x64 の手元の版を見直した。Codex 0.160.0・OpenCode 2.0.32・Devin 3000.11.92・Grok 1.0.62 は記録の版と同じ。Claude 2.1.303 / SDK 0.3.288 は実サービスで承認待ちを A → B に付け直し、同じ承認 ID が 1 回だけ戻り、許可後の完了・使用量が 1 回だけ保存され、履歴が読めることを確認した。CLI のログインは変更していない。保持役に載せる下限は 2.1.284 のまま。
 
@@ -741,7 +741,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 | 完了 | `result` の `status`（SUCCESS / ERROR / CANCELED / INTERRUPTED / INVALID / WAITING / RUNNING） |
 | 使用量 | `result.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`。`total_tokens` = 4 つの和なので、どれも他を含まない）。usage の出来事には Claude・Codex と同じ形にそろえて渡す: `inputTokens` = input + cache_read（入力はキャッシュ読みを含み、`cachedTokens` = cache_read はその内訳）、`outputTokens` = output + thinking。そろえる前（〜2026-10-04）の記録は `cachedTokens` が `inputTokens` を超えるので、読む側は `inputWithCache`（`core/usage.mjs`）で足して読み、キャッシュの割合が 100% に張り付かないようにする |
 | 一覧・履歴 | **無し** → Pleiad が控える（§下） |
-| タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界調査)） |
+| タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界)） |
 | モード | **`--dangerously-skip-permissions` の 1 つだけ**（§下） |
 | モデル・effort | `--model` だけを渡す。**起動時のみ**（liveModel / liveMode は `impossible`。画面へは `false`）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`）を選ぶことと同じなので、段は同じ系統の id に解決して `--model` に載せ、`--effort` と同時には渡さない（agy 1.2.8 で確認。`core/backends/antigravity-models.mjs`） |
 | 認証 | **端末でのサインインが要る**（Pleiad からは回せない。§下） |

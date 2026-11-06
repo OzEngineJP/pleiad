@@ -10,6 +10,18 @@ import org.junit.Test
 class LinkPolicyTest {
     private val proxy = 51234
 
+    @Test fun isolatedPagesOnlyOnThisProxysLocalhostPort() {
+        val isolated = 51235
+        assertTrue(LinkPolicy.isIsolatedPage("http", "localhost", isolated, "/viz/key/index.html", false, isolated))
+        assertTrue(LinkPolicy.isIsolatedPage("http", "localhost", isolated, "/f/key/a.html", false, isolated))
+        assertFalse(LinkPolicy.isIsolatedPage("http", "127.0.0.1", isolated, "/viz/key/index.html", false, isolated))
+        assertFalse(LinkPolicy.isIsolatedPage("http", "localhost", isolated + 1, "/viz/key/index.html", false, isolated))
+        assertFalse(LinkPolicy.isIsolatedPage("http", "localhost", isolated, "/api/env", false, isolated))
+        assertFalse(LinkPolicy.isIsolatedPage("http", "localhost", isolated, "/f/key/a.html", true, isolated))
+        assertEquals(LinkTarget.BLOCKED, LinkPolicy.classify("http", "localhost", isolated, "/viz/key/index.html", false, proxy, isolated))
+        assertEquals(LinkTarget.HOST_ONLY, LinkPolicy.classify("http", "localhost", isolated + 1, "/viz/key/index.html", false, proxy, isolated))
+    }
+
     private fun of(url: String): LinkTarget {
         val u = URI(url)
         return LinkPolicy.classify(u.scheme, u.host, u.port, u.path, u.rawUserInfo != null, proxy)

@@ -9,7 +9,6 @@
 //     invoke(op, args)              … 操作の一覧（cmd('invoke', { op, args }) の短縮。失敗は throw）
 //     state                         … client の state（読むだけ。current・sessions・runningIds・waitingIds など）
 //     filePreview                   … web/file-preview.mjs の返り。open(ref, element)・openPanel・close・panelOpen
-//     browser                       … 内蔵ブラウザーの部品（web/browser-panel.mjs の返り。ホストの内蔵ブラウザーを見られない画面では available() が false。スレッドの見出しの入口が使う）
 //     permissionCard(ev, into)      … 承認のカードを入れ物へ描く（client.mjs の permissionCard。質問は質問のカード。決着は resolvePermission と同じ）
 //     openSession(id)               … Chats の会話を開く（Chats のタブへ戻して select）
 //     openThread(channelId, threadId, { postId }?) … スレッドを開く（postId があれば着いたその投稿へ送って輪を付ける。通知の一覧の飛び先）。setupChannels が足す（部品の openThread へ配る）。呼ぶのは W2（要約の行・「スレッドで返信」）、受けるのは W3
@@ -30,6 +29,7 @@ import { createSideTabs } from './side-tabs.mjs';
 import { createFeed } from './feed.mjs';
 import { createSidebar } from './sidebar.mjs';
 import { createThread } from './thread.mjs';
+import { createBotDelete } from './bot-delete.mjs';
 
 /** WS の出来事のうち、この画面が受けるもの（core/protocol.mjs の EVENTS）。ほかの出来事も部品の onEvent には全部届く（permission など） */
 export const CHANNEL_EVENTS = new Set([
@@ -41,6 +41,7 @@ import { createRoutineSheet } from './routine-sheet.mjs';
 
 export function setupChannels(host) {
   const parts = [];
+  parts.push(createBotDelete(host));
   // 見ている場所（web/view-address.mjs）。部品が host.noteView で知らせ、Channels の側へ戻ったときに知らせ直せるよう最後の 1 つを持つ
   let lastView = null;
   const noteOuter = host.noteView;

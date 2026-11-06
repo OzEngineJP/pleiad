@@ -12,7 +12,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { assertNotGuarded } from './test-guard.mjs';
-import { dbPath, createDb, transaction, sessionTable, taskTable, usageTable, conversationTable, threadTable, memoryStateTable } from './db.mjs';
+import { dbPath, createDb, checkDb, loadSqlite, transaction, sessionTable, taskTable, usageTable, conversationTable, threadTable, memoryStateTable } from './db.mjs';
 
 // 形式 1 の JSON。channels/threads.json と memory/learn-state.json は 0.6.0（形式 1 のまま）が書いていた（スレッドの状態・夜の整理の進み）。
 // 置き場からの相対パス（写しの中でも同じ相対パスに置く）
@@ -186,4 +186,70 @@ export function writeSchemaFile(dir, schema) {
     fs.writeFileSync(tmp, JSON.stringify({ schema }) + '\n', 'utf8');
     fs.renameSync(tmp, file);
   } finally { fs.rmSync(tmp, { force: true }); }
+}
+
+/** 形式 2 → 3。旧ログは形式番号を確定するまで残し、中断後も旧ログから取り込み直せる。 */
+export function migrateSchema2To3(dir, { now = new Date(), afterMemoryImport, afterMemoryCommit, remove = file => fs.rmSync(file, { force: true }) } = {}) {
+  assertNotGuarded(dir, 'migrate memory in');
+  const reason = checkDb(dbPath(dir));
+  if (reason) throw new Error(`pleiad.db: ${reason}`);
+  const log = path.join(dir, 'memory', 'log.jsonl');
+  const original = exists(log) ? fs.readFileSync(log) : null;
+  const records = [];
+  const revisions = new Set();
+  const lines = original?.toString('utf8').split('\n') ?? [];
+  for (const [index, line] of lines.entries()) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      if (!Number.isInteger(row.rev) || row.rev < 1 || typeof row.op !== 'string' || revisions.has(row.rev)) throw new Error('invalid memory history');
+      revisions.add(row.rev);
+      records.push(row);
+    } catch (e) {
+      // 旧版と同じく末尾の書きかけだけは読み飛ばす。途中の破損を黙って落とさない。
+      if (index !== lines.length - 1 || !(e instanceof SyntaxError)) throw e;
+    }
+  }
+  let backup = path.join(dir, `backup-schema2-${stamp(now)}`);
+  for (let n = 2; exists(backup); n++) backup = path.join(dir, `backup-schema2-${stamp(now)}-${n}`);
+  fs.mkdirSync(backup, { recursive: true });
+  const db = new (loadSqlite().DatabaseSync)(dbPath(dir));
+  try {
+    // VACUUM INTO は WAL の確定済みの行も含む一貫した写しを作る。
+    db.prepare('VACUUM INTO ?').run(path.join(backup, 'pleiad.db'));
+    if (exists(path.join(dir, 'data-schema.json'))) fs.copyFileSync(path.join(dir, 'data-schema.json'), path.join(backup, 'data-schema.json'));
+    if (original) { fs.mkdirSync(path.join(backup, 'memory')); fs.writeFileSync(path.join(backup, 'memory', 'log.jsonl'), original); }
+    if (original) transaction(db, () => {
+      const table = memoryStateTable(db);
+      // 番号更新前の中断では旧版が追記した可能性がある。旧ログ全体を再び正本として読む。
+      table.save([
+        ...Object.keys(table.ofKind('memory.log')).map(id => ['memory.log', id, undefined]),
+        ...records.map(row => ['memory.log', String(row.rev), row]),
+        ['memory.log.meta', 'migrated', true],
+        ['memory.log.meta', 'legacyHash', crypto.createHash('sha256').update(original).digest('hex')],
+      ]);
+      afterMemoryImport?.(db);
+      const restored = Object.values(table.ofKind('memory.log')).sort((a, b) => a.rev - b.rev);
+      if (!isDeepStrictEqual(restored, [...records].sort((a, b) => a.rev - b.rev))) throw new Error('read-back differs from memory/log.jsonl');
+    });
+    afterMemoryCommit?.();
+    writeSchemaFile(dir, 3);
+    if (original) remove(log);
+    return { backup, counts: { memoryHistory: records.length } };
+  } finally { db.close(); }
+}
+
+/** 番号確定後の片付けを再開する。移行後の予期しない旧ログ追記は保全して停止する。 */
+export function finishMemoryLogMigration(dir, { remove = file => fs.rmSync(file, { force: true }) } = {}) {
+  const log = path.join(dir, 'memory', 'log.jsonl');
+  if (!exists(log)) return;
+  const db = new (loadSqlite().DatabaseSync)(dbPath(dir), { readOnly: true });
+  try {
+    const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_state'").get();
+    if (!hasTable) return;
+    const meta = id => db.prepare("SELECT value FROM memory_state WHERE kind='memory.log.meta' AND id=?").get(id)?.value;
+    if (meta('migrated') !== 'true') return;
+    if (crypto.createHash('sha256').update(fs.readFileSync(log)).digest('hex') !== JSON.parse(meta('legacyHash') ?? 'null')) throw new Error('memory/log.jsonl changed after migration; preserve and reconcile the history');
+    remove(log);
+  } finally { db.close(); }
 }

@@ -87,9 +87,10 @@ export default async function (t) {
 
   // ---- 平文はループバックだけ・バックアップしない
   const nsc = read(`${APP}/res/xml/network_security_config.xml`);
-  t.ok('network_security_config: 既定は平文禁止、127.0.0.1 だけ許す（サブドメインなし）',
-    /<base-config cleartextTrafficPermitted="false">/.test(nsc) && /<domain-config cleartextTrafficPermitted="true">\s*<domain includeSubdomains="false">127\.0\.0\.1<\/domain>\s*<\/domain-config>/.test(nsc)
-      && (nsc.match(/<domain /g) ?? []).length === 1 && !/src="user"/.test(nsc));
+  t.ok('network_security_config: 既定は平文禁止、127.0.0.1 と localhost（隔離の origin。ADR 0295 §5.3）だけ許す（サブドメインなし）',
+    /<base-config cleartextTrafficPermitted="false">/.test(nsc)
+      && /<domain-config cleartextTrafficPermitted="true">\s*<domain includeSubdomains="false">127\.0\.0\.1<\/domain>\s*<domain includeSubdomains="false">localhost<\/domain>\s*<\/domain-config>/.test(nsc)
+      && (nsc.match(/<domain /g) ?? []).length === 2 && !/src="user"/.test(nsc));
   const manifest = read(`${APP}/AndroidManifest.xml`);
   t.ok('Manifest: networkSecurityConfig・allowBackup=false・HostActivity は外から開けない',
     /android:networkSecurityConfig="@xml\/network_security_config"/.test(manifest) && /android:allowBackup="false"/.test(manifest)

@@ -1,5 +1,5 @@
 import { N } from '../lib/dom-stub.mjs';
-import { createChromeControlView, createChromeControlStore, statusText, actionsFor, durationText, renderChromeHandoverLine, renderChromeClosedLine, setChromeHandoverAgentName, CONTROL_STATES } from '../../web/chrome-control.mjs';
+import { createChromeControlView, createChromeControlStore, createControlBadge, statusText, actionsFor, durationText, renderChromeHandoverLine, renderChromeClosedLine, setChromeHandoverAgentName, CONTROL_STATES } from '../../web/chrome-control.mjs';
 import { renderPresent } from '../../web/render.mjs';
 import * as history from '../../core/history.mjs';
 
@@ -22,6 +22,22 @@ export default async function (t) {
   let reply = async () => ({});
   const errors = [];
   const view = createChromeControlView({ run: async action => { calls.push(action); return reply(action); }, getName: () => 'Claude', onError: (error, action) => errors.push(`${action}:${error.message}`) });
+  // ---- 札: 窓の大きさが変わったら閉じるだけで、札に焦点を移さない（スマホではキーボードが開くと窓が縮み、ページの欄から焦点が外れてキーボードが閉じた）
+  {
+    const oldDoc = globalThis.document, oldWindow = globalThis.window, oldFocus = N.prototype.focus;
+    const doc = new N('document'); Object.assign(doc, { createElement: tag => new N(tag), getElementById: () => null, head: new N('head'), body: new N('body') });
+    const win = new N('window');
+    globalThis.document = doc; globalThis.window = win;
+    N.prototype.focus = function () { doc.activeElement = this; };
+    try {
+      const badge = createControlBadge({ mount: new N('div') }), field = new N('textarea');
+      badge.update({ agentUsed: true, name: 'Claude' }); field.focus();
+      for (const fn of win.on?.resize ?? []) fn({ type: 'resize' });
+      t.ok('窓の大きさが変わっても札に焦点を移さない', doc.activeElement === field);
+      badge.destroy();
+    } finally { globalThis.document = oldDoc; globalThis.window = oldWindow; N.prototype.focus = oldFocus; }
+  }
+
   t.ok('状態が無いうちは隠れている', view.root.hidden === true && view.banner.hidden === true && view.state() === null);
   t.ok('状態の一行は role=status。役割の無い div（root）に aria-label を付けない', view.root.querySelector('.cc-status').getAttribute('role') === 'status' && view.root.getAttribute('role') === undefined && view.root.getAttribute('aria-label') === undefined);
   view.apply({ state: 'running', since: null });
