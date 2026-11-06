@@ -1,5 +1,6 @@
 {
   "newTab": "新しいタブ",
+  "gitTitle": "{{folder}} の変更", "gitFetched": "{{time}} に取得", "reload": "再読み込み",
   "fetched": "{{time}} に取得 · {{size}}",
   "name": "名前", "size": "大きさ", "modified": "更新日時",
   "fileMenu": "ファイルのメニュー", "useFile": "この会話で使う", "download": "ダウンロード",

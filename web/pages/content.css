@@ -13,7 +13,9 @@
 .git-page-tools{display:flex;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line);gap:8px;margin-bottom:12px}
 .git-page-tools>.gp-prs{flex-basis:100%}
 .git-page-tools>.gp-tabs{flex:1;width:auto;min-width:0}
-.git-page-tools>.btn{margin-left:auto}
+.git-page-branch{flex-basis:100%;min-width:0;padding-top:4px}
+.git-page-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:16px;color:var(--ink-weak);font-size:var(--fs-s)}
+.git-page-foot[hidden]{display:none}
 .git-page .i{width:16px;height:16px;display:inline-block;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.7;flex-shrink:0}
 .git-page .btn-icon{display:inline-flex;align-items:center;justify-content:center;padding:6px}
 .git-page .grow,.git-page .sp{flex:1}

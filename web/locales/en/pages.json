@@ -1,5 +1,6 @@
 {
   "newTab": "New tab",
+  "gitTitle": "Changes in {{folder}}", "gitFetched": "Fetched at {{time}}", "reload": "Reload",
   "fetched": "Retrieved {{time}} · {{size}}",
   "name": "Name", "size": "Size", "modified": "Modified",
   "fileMenu": "File menu", "useFile": "Use in this conversation", "download": "Download",

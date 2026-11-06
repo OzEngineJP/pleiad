@@ -1,4 +1,5 @@
 import { setupGitPanel } from '../git-panel.mjs';
+import { fmt } from '../i18n.mjs';
 import { api, node, query, request, requestResult, sessionId, text } from './bridge.mjs';
 
 // Keep the existing graph, keyboard navigation, worktrees and diff controls.
@@ -7,6 +8,9 @@ let holder, panel;
 export async function renderGit(root) {
   if (holder) { root.append(holder); panel.reload(); return; }
   holder = node('div', 'git-page'); holder.id = 'filePreview';
+  // The address bar shows "<folder> › changes"; the branch stays in the page head and the fetch time at the foot.
+  const branch = node('div', 'git-page-branch'), foot = node('div', 'git-page-foot'), fetched = node('span'), reload = node('button', 'btn btn-line', text('reload'));
+  reload.type = 'button'; reload.addEventListener('click', () => panel.reload()); foot.append(fetched, reload); foot.hidden = true;
   let worktreeRows = [];
   const commands = { gitPanel:'changes', gitDiff:'diff', gitCommit:'commit', gitHistory:'history', gitWorktrees:'worktrees', gitWorktree:'worktree', gitPrs:'prs' };
   const cmd = (command, args) => {
@@ -53,12 +57,16 @@ export async function renderGit(root) {
     },
     preview:{
       panelOpen:() => true,
-      openPanel:({ body, head, toolbar }) => {
-        const tools = node('div', 'git-page-tools'); tools.append(...toolbar);
-        for (const { node:control } of head) tools.append(control);
-        holder.replaceChildren(tools, body);
+      openPanel:({ body, toolbar }) => {
+        const tools = node('div', 'git-page-tools'); tools.append(branch, ...toolbar);
+        holder.replaceChildren(tools, body, foot);
       },
-      updatePanel:(_key, { title }) => { document.title = `${typeof title === 'string' ? title : title.textContent} · Pleiad`; },
+      updatePanel:(_key, { title, subtitle, at }) => {
+        branch.replaceChildren(typeof title === 'string' ? document.createTextNode(title) : title);
+        const folder = String(subtitle ?? '').split(/[\\/]/).filter(Boolean).at(-1);
+        document.title = `${folder ? text('gitTitle', { folder }) : text('new.git')} · Pleiad`;
+        foot.hidden = !at; if (at) fetched.textContent = text('gitFetched', { time:fmt.time(at) });
+      },
       close:() => { location.href = `/_pleiad/s/${encodeURIComponent(sessionId)}/new`; },
     },
   });
