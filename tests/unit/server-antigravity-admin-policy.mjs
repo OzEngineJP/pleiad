@@ -1,4 +1,4 @@
-// 組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が要審査・「MCP サーバー プレビュー」が無効）で動く agy を、
+// 組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が要審査・「MCP サーバー」が無効）で動く agy を、
 // 黙って普通の完了にせず、画面・控え・委譲の結果に出す（docs/multi-backend.md §2.8「組織の管理ポリシー」・issue #169）。
 // 本物の agy は使わない（tests/lib/fake-agy.mjs の FAKE_AGY_ADMIN_REVIEW・FAKE_AGY_MCP_DISABLED と admin-denied の台本。形は実機 1.5 系の観測）
 import fs from 'node:fs/promises';
@@ -42,22 +42,22 @@ export default async function (t) {
     const args = JSON.parse(await fs.readFile(argsFile, 'utf8'))[0];
     t.ok('Pleiad は確認なしで動かすよう渡し、カスタムエージェント（中継の MCP）を使う', args.includes('--dangerously-skip-permissions') && args.includes('--agent'), JSON.stringify(args));
     const result = denied.events.find(e => e.type === 'turnResult');
-    t.ok('空の SUCCESS と denied_actions は普通の完了にせず失敗にし、拒否された操作と管理者に頼む設定を書く', result?.outcome === 'error'
-      && result.error.includes('RunCommand') && result.error.includes('「ターミナル自動実行モード」') && result.error.includes('「ファイル アクセス ポリシーの外部」')
-      && result.error.includes('AI デベロッパー ツール'), JSON.stringify(result));
+    t.ok('空の SUCCESS と denied_actions は普通の完了にせず失敗にし、拒否された操作と管理者に頼む設定と値を書く', result?.outcome === 'error'
+      && result.error.includes('RunCommand') && result.error.includes('「ターミナル自動実行モード」を「常に続行」') && result.error.includes('「ファイル アクセス ポリシーの外部」を「許可」')
+      && result.error.includes('Gemini Enterprise › 設定 › AI デベロッパー ツール › セキュリティ'), JSON.stringify(result));
     const tool = denied.events.find(e => e.type === 'tool.result');
     t.ok('ERROR のツールの段を失敗したツールとして出し、agy の文面に案内を添える', tool?.isError === true && tool.text.includes('permission check failed')
       && tool.text.includes('組織の管理ポリシー') && tool.text.includes('「ターミナル自動実行モード」'), JSON.stringify(tool));
     t.ok('拒否として集める印（rejection）を付ける', tool?.rejection?.kind === 'policy' && tool.rejection.via === 'antigravity' && tool.rejection.tool === 'run_command'
       && tool.rejection.command === 'echo hi' && tool.rejection.raw.startsWith('permission check failed'), JSON.stringify(tool?.rejection));
     const body = textOf(denied);
-    t.ok('Pleiad の MCP に接続が無いことを、最初の result の後ろに知らせる（MCP サーバー プレビューを名前で）', body.includes('Pleiad からの知らせ')
-      && body.includes('「MCP サーバー プレビュー」') && denied.events.findIndex(e => e.type === 'text.delta') < denied.events.findIndex(e => e.type === 'turnResult'), body);
+    t.ok('Pleiad の MCP に接続が無いことを、最初の result の後ろに知らせる（「MCP サーバー」と許可するサーバーの構成を名前で）', body.includes('Pleiad からの知らせ')
+      && body.includes('「MCP サーバー」を有効に') && body.includes('許可するサーバーの構成') && !body.includes('プレビュー') && denied.events.findIndex(e => e.type === 'text.delta') < denied.events.findIndex(e => e.type === 'turnResult'), body);
     t.ok('拒否で失敗にしたターンには、要確認のモードの知らせを重ねない', !body.includes('request-review'), body);
     const loaded = await client.cmd('loadSession', { sessionId: denied.sessionId });
     const assistant = loaded.messages.find(m => m.role === 'assistant');
     t.ok('控えに失敗したツールと知らせが残る', assistant?.toolCalls?.[0]?.name === 'run_command' && assistant.toolCalls[0].result?.isError === true
-      && assistant.text?.includes('「MCP サーバー プレビュー」'), JSON.stringify(assistant));
+      && assistant.text?.includes('「MCP サーバー」'), JSON.stringify(assistant));
 
     const again = await client.runTurn({ prompt: 'こんにちは', sessionId: denied.sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
     t.ok('知らせは同じ agy で 1 度だけ（次のターンには足さない）', again.outcome === 'ok' && !textOf(again).includes('Pleiad からの知らせ'), textOf(again));
@@ -66,7 +66,7 @@ export default async function (t) {
     const fresh = await client.runTurn({ prompt: 'こんにちは', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
     const freshBody = textOf(fresh);
     t.ok('返答の後ろに、要確認のモード（request-review）と MCP の知らせを足す', fresh.outcome === 'ok' && freshBody.startsWith('了解: こんにちは')
-      && freshBody.includes('request-review') && freshBody.includes('「ターミナル自動実行モード」') && freshBody.includes('「MCP サーバー プレビュー」'), freshBody);
+      && freshBody.includes('request-review') && freshBody.includes('「ターミナル自動実行モード」') && freshBody.includes('「MCP サーバー」'), freshBody);
     const replied = await client.runTurn({ prompt: 'admin-denied-reply', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
     t.ok('拒否の後に返答があれば、ターンは普通の完了のまま（拒否はツールの失敗で出る）', replied.outcome === 'ok'
       && replied.events.some(e => e.type === 'tool.result' && e.rejection?.kind === 'policy'), JSON.stringify(replied.events.find(e => e.type === 'turnResult')));
@@ -93,10 +93,11 @@ export default async function (t) {
 
     // ---- 管理ポリシーの無い agy: MCP を起こしたので何も足さない
     dataDir = path.join(tmp, 'data-plain');
-    host = await startServer({ dataDir, timeoutMs: 30_000, env: { AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: FAKE_AGY } });
+    // 確認が要るか分からない permission_mode（「サンドボックスで続行」のときの実機の値は見ていない）では、モードの知らせを出さない
+    host = await startServer({ dataDir, timeoutMs: 30_000, env: { AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: FAKE_AGY, FAKE_AGY_PERMISSION_MODE: 'proceed-in-sandbox' } });
     client = await open({ ...host, autoAllow: true });
     const plain = await client.runTurn({ prompt: 'こんにちは', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
-    t.ok('MCP に接続があり skip のモードなら、知らせを足さない', plain.outcome === 'ok' && textOf(plain) === '了解: こんにちは', textOf(plain));
+    t.ok('MCP に接続があり、確認の要ると分かっているモードでなければ、知らせを足さない', plain.outcome === 'ok' && textOf(plain) === '了解: こんにちは', textOf(plain));
   } finally {
     client?.close();
     await host?.stop();

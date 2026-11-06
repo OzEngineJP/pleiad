@@ -774,23 +774,25 @@ always-proceed のまま）読むだけになる。そこで定義に `tools` �
 名前を書ける範囲と、`tools: "*"` を採らない理由は `core/backends/antigravity-context.mjs` の `TOOLS`。
 
 **組織の管理ポリシー**（issue #169）: 組織のアカウント（Gemini Enterprise）でログインした agy では、
-管理者の設定（Gemini Enterprise の設定 › AI デベロッパー ツール › セキュリティ）が
+管理者の設定（Gemini Enterprise › 設定 › AI デベロッパー ツール › セキュリティ。英語の画面は Settings › AI developer tools › Security）が
 `--dangerously-skip-permissions` より優先される。実機（agy 1.5 系）で確かめた形:
 
-- 「ターミナル自動実行モード」が「要審査」だと、`init` の `permission_mode` が `request-review` になる（skip のときは `always-proceed`）
+- 「ターミナル自動実行モード」（値は「要審査」「サンドボックスで続行」「常に続行」）が「要審査」だと、`init` の `permission_mode` が `request-review` になる
+  （skip のときは `always-proceed`。「サンドボックスで続行」のときの値は見ていない）
 - 確認の要るツールは、確認を出せないまま拒否される。段は `ACTIVE` の後に output 無しの `ERROR` と
   `tool_info.error`（`type: "TOOL_ERROR"`、文面は `permission check failed … user denied permission …`）で来る
 - ターンの `result` は `status: "SUCCESS"`・`response: ""`・`denied_actions: [{ action, display_name }]`
-- 「MCP サーバー プレビュー」が無効のとき、カスタムエージェントに書いた中継（ply_context・ply_agents など）が起動されない。
-  stream-json には何も出ない（理由がこの設定だというのは推測）
+- 「ファイル アクセス ポリシーの外部」（値は「許可しない」「常に確認する」「許可」）が「常に確認する」だと、作業場所の外のファイルの操作も確認を出せないまま拒否されると見ている（実機では確かめていない）
+- 「MCP サーバー」が無効のとき、カスタムエージェントに書いた中継（ply_context・ply_agents など）が起動されない。
+  stream-json には何も出ない（理由がこの設定だというのは推測。許可するサーバーの構成に中継が無いときも同じになると見ている）
 
 Pleiad は黙って普通の完了にせず、次のように出す（`core/backends/antigravity.mjs`）:
 
 - `ERROR`（または `tool_info.error` のある完了）の段は、失敗したツール（`isError`）として画面と控えに出す。
-  拒否の文面なら、管理者に頼む設定（「ターミナル自動実行モード」「ファイル アクセス ポリシーの外部」）を添え、
+  拒否の文面なら、管理者に頼む設定と値（「ターミナル自動実行モード」を「常に続行」、「ファイル アクセス ポリシーの外部」を「許可」）を添え、
   `rejection`（`kind: "policy"`・`via: "antigravity"`）を付けて委譲の結果に集める
 - 返答が空のまま `denied_actions` のある `SUCCESS` は、失敗のターンにする。理由に拒否された操作と頼む設定を書く
-- その agy の最初の成功した `result` で 1 度だけ、`permission_mode` が skip の値でない（確認なしで渡したのに）とき、
+- その agy の最初の成功した `result` で 1 度だけ、確認なしで渡したのに `permission_mode` が確認の要ると分かっている値（`request-review`）のとき、
   または中継に渡したトークンで Pleiad の MCP の口へ 1 度も接続が来ていないとき（`core/mcp-contact.mjs`）、
   返答の後ろに「Pleiad からの知らせ」を引用の段落で足す。本文に入るので控えと委譲の結果にも残る。
   保持役から付け直した agy（サーバーの入れ替え）と、口を持たないプロセス（`core/server.mjs` を読まずにバックエンドだけを使う試験など）では

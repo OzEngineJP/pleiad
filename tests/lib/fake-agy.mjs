@@ -140,8 +140,9 @@ function emitInit() {
     init: {
       cwd: process.cwd(),
       tools: ["run_command", "read_file"],
-      // 組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が要審査）は skip より勝つ（実機 1.5 系で確認）。FAKE_AGY_ADMIN_REVIEW=1 で真似る
-      permission_mode: process.env.FAKE_AGY_ADMIN_REVIEW === "1" ? "request-review" : has("--dangerously-skip-permissions") ? "skip" : (flag("--mode") ?? "default"),
+      // 組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が要審査）は skip より勝つ（実機 1.5 系で確認）。FAKE_AGY_ADMIN_REVIEW=1 で真似る。
+      // FAKE_AGY_PERMISSION_MODE は任意の値（「サンドボックスで続行」など、確認が要るか分からない値）を返す
+      permission_mode: process.env.FAKE_AGY_ADMIN_REVIEW === "1" ? "request-review" : process.env.FAKE_AGY_PERMISSION_MODE ? process.env.FAKE_AGY_PERMISSION_MODE : has("--dangerously-skip-permissions") ? "skip" : (flag("--mode") ?? "default"),
       model: flag("--model") ?? "fake-antigravity-1",
       agent: flag("--agent") ?? "default",
     },
@@ -194,7 +195,7 @@ if (process.env.FAKE_AGY_AGENT_FILE) {
 
 /**
  * 起動した MCP。{ name, call(method, params) }。最初のプロンプトで 1 回だけ起こす（runTurn）。
- * FAKE_AGY_MCP_DISABLED=1 なら起こさない（組織の管理ポリシーで「MCP サーバー プレビュー」が無効の agy。実機 1.5 系では中継に initialize も来なかった）
+ * FAKE_AGY_MCP_DISABLED=1 なら起こさない（組織の管理ポリシーで「MCP サーバー」が無効の agy。実機 1.5 系では中継に initialize も来なかった）
  */
 let mcpServers = null;
 let mcpStart = null;

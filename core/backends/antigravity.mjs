@@ -222,8 +222,11 @@ function turnResultFor(result, { finishedReply = false } = {}) {
 /** 確認を出せずに拒否されたツールの文面（実機の `tool_info.error.message`。組織の管理ポリシーの「要審査」など） */
 const DENIED_RE = /permission check failed|denied permission/i;
 
-/** Pleiad が `--dangerously-skip-permissions` で渡したときに、init が返すはずの permission_mode。これ以外なら管理側の設定が勝っている */
-const SKIP_MODES = new Set(["skip", "always-proceed", "bypass", "bypasspermissions", "yolo"]);
+/**
+ * 確認なしで渡したのに init が返したら、管理側の設定（「ターミナル自動実行モード」が「要審査」）が勝っていると分かる permission_mode（実機 1.5 系で確認）。
+ * 知らない値（「サンドボックスで続行」のときなど）は確認が要るとは限らないので知らせない
+ */
+const REVIEW_MODES = new Set(["request-review"]);
 
 /** 中継に渡したトークン（antigravity-context.mjs の prepareAgent の env）。1 本でも口へ来れば、agy は Pleiad の MCP を起こしている */
 const RELAY_AUTH_KEYS = ["PLY_CONTEXT_AUTHORIZATION", "PLY_AGENTS_AUTHORIZATION", "PLY_COMPUTER_AUTHORIZATION", "PLY_BROWSER_AUTHORIZATION", "PLY_CONTROL_AUTHORIZATION"];
@@ -237,7 +240,7 @@ const relayTokens = (env) => RELAY_AUTH_KEYS.map((k) => env?.[k]).filter((v) => 
 function adminNotice(session, { askedSkip, deniedTurn }) {
   const parts = [];
   const mode = String(session.permissionMode ?? "");
-  if (!session.reviewNoticed && askedSkip && mode && !SKIP_MODES.has(mode.toLowerCase())) {
+  if (!session.reviewNoticed && askedSkip && REVIEW_MODES.has(mode.toLowerCase())) {
     session.reviewNoticed = true;
     if (!deniedTurn) parts.push(t("antigravity.admin.reviewMode", { mode, ask: t("antigravity.admin.askTools") }));
   }
