@@ -11,6 +11,7 @@ import { setupChromeProfilePill } from './chrome-profile-pill.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { setupComputerSettings } from './computer-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
+import { configureIsolatedOrigin } from './visualize-frame.mjs';
 import { configureLinkOpen } from './link-open.mjs';
 import { setupLinkMenu } from './link-menu.mjs';
 import { download, notify, copyPathText } from './file-actions.mjs';
@@ -10447,6 +10448,9 @@ function connect() {
         browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
         remoteSettings.setHostScreen(state.osActions);
+        // 可視化を隔離の origin（ADR 0292 の 3）で描くのはホストの画面だけ。ほかの画面と旗が off のときは今のまま srcdoc で描く
+        configureIsolatedOrigin(state.osActions && c?.browserUnify?.isolated ? { port: c.browserUnify.isolated,
+          mintOnce: (origins) => cmd("vizOnce", { origins }).then((r) => r?.token ?? null) } : null);
         filePreview.osChanged();
         syncAttachButton();
         renderAttached();

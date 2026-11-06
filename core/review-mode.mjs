@@ -99,6 +99,8 @@ export const COMMAND_REFUSE = [
   'browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav', 'computerStop',
   'chromeStatus', 'chromeConnect', 'chromeDisconnect', 'chromeRaiseDialog', 'chromeConsent', 'chromeEnable', 'chromeTakeOver', 'chromeResume', 'chromeStop',
   'chromeOpen', 'chromeCloseWindow', 'chromePinWindow', 'chromeCloseTab',
+  // 断ると、可視化の「一度だけ読み込む」は会話の中身の srcdoc で描く（web/visualize-frame.mjs）
+  'vizOnce',
 ];
 
 /** 全命令 → 通すか。載っていない命令は undefined（断る） */

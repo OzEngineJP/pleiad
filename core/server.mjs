@@ -2382,7 +2382,7 @@ const pagesRoutes = BROWSER_UNIFY ? createPagesRoutes({ ops: (caller, id, input)
   visualizations: async sessionId => visualizationLinksOf((await pageTranscript(sessionId)).presents, pagePorts?.isolated),
   gitTimeline: async sessionId => timelineOf((await pageTranscript(sessionId)).messages) }) : null;
 const isolatedRoutes = BROWSER_UNIFY ? createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, fileAccessFor, ports: () => pagePorts, log: pagesLog }) : null;
-const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, log: pagesLog }) : null;
+const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, log: pagesLog }) : null;
 
 /** ファイルのページと隔離のリスナーを立て、port を中継へ渡す（旗が on のときだけ。待ち受けの後に呼ぶ） */
 async function startPageListeners() {

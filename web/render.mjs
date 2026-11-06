@@ -656,8 +656,8 @@ export function renderPresent(ev) {
       if (lazyContent) {
         const hold = lazyHold();
         body.append(hold);
-        loadWhenNear(hold, e, (text) => hold.replaceWith(visualizationFrame(text, e.caption, { conversation: true })));
-      } else body.append(visualizationFrame(e.content ?? '', e.caption, { conversation: true }));
+        loadWhenNear(hold, e, (text) => hold.replaceWith(visualizationFrame(text, e.caption, { conversation: true, bundle: e.bundle })));
+      } else body.append(visualizationFrame(e.content ?? '', e.caption, { conversation: true, bundle: e.bundle }));
       // 本文が印のままの提示は、保存・サイドパネル・ブラウザーで開くを押したときに本文を取ってから渡す
       const withContent = (use) => lazyContent ? fetchPresentBody(e, 'content').then(use).catch(() => {}) : use(e.content ?? '');
       const controls = el('span', 'present-tools');

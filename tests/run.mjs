@@ -899,6 +899,7 @@ const SUITES = [
   // favicon の取得の行き先の検査（名前解決の後の IP・リダイレクトの先・手元の host・Pleiad の port）
   './unit/icon-fetch.mjs',
   './unit/session-files.mjs',
+  './unit/browser-unify-ws.mjs',
   './unit/search-provider.mjs',
 
   // --- A6 タブごとの持ち手と大きさ ---

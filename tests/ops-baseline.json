@@ -75,7 +75,8 @@
     "browserScreencastStop": "stream",
     "browserScreencastAck": "stream",
     "browserScreencastInput": "stream",
-    "browserScreencastNav": "stream"
+    "browserScreencastNav": "stream",
+    "vizOnce": "ui-internal"
   },
   "todoMax": 0,
   "setPrefAllowed": 3

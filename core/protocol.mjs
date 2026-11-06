@@ -249,6 +249,8 @@ export const COMMANDS = new Set([
   'chromeCloseWindow',       // { sessionId, windowId? } -> { closed }。会話の専用窓を閉じ、最後の画面を残す。windowId があればそのウィンドウだけ（複数あるとき）。画面とリモートの端末から
   'chromePinWindow',         // { sessionId, windowId|null, tabId? } -> { pinnedWindowId, pinnedTabId }。右パネルの映像に映すウィンドウ・タブを固定する・解く（null）。固定は会話に 1 つで、chromeWindow イベントの pinnedWindowId で全部の端末に配る。映像を見ている間だけ
   'chromeCloseTab',          // { sessionId, tabId } -> {}。端末が引き継いでいる間に、タブの列の × でタブを閉じる（最後のタブは閉じない）
+  // ブラウザーの一本化（旗が on のときだけ。core/browser-unify-ws.mjs）
+  'vizOnce',                 // { origins: string[] } -> { token: string|null }。可視化の「一度だけ読み込む」の印（隔離の origin の ?once=。10 分）。https の出どころが 1 つも無ければ null
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。
