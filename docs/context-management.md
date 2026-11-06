@@ -18,7 +18,7 @@
   //       user:      { sources: ["common"|"claude"|"codex"], excludePaths: [...] } | null,   // home の探索。対応を終えたエージェントの探索元（RETIRED_SOURCES）は読んだところで落とす
   //       directory: { sources: [...], excludePaths: [...] } | null,                                   // Git ルート〜作業場所の探索
   //       disabled?: ["名前"],            // 外部 MCP だけ。名前で外す（同じ設定ファイルの他の登録は残す）
-  //       prefer?:   { "名前": "設定ファイル" } }  // 外部 MCP だけ。同じ名前の定義が複数あるときに使う方（無ければ先に見つかった方）
+  //       prefer?:   { "名前": "設定ファイル" } }  // 外部 MCP と Skills（SKILL.md）。同じ名前の定義が複数あるときに使う方（無ければ先に見つかった方）
   ```
 - **追加ルート（探す場所を足す）は種類ごと**（2026-09-27、[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)）。足した場所はその種類だけを、その範囲の探す形式（`sources`）で、プロジェクトと同じ置き方（`AGENTS.md`・`.claude/`・`.codex/`・`.agents/skills`・`.mcp.json`）で探す。見つかった行には `root`（足した場所）が付き、画面は「追加した場所」として分ける。既定の追加ルートの行はユーザーの範囲（`scope: 'user'`）、場所の追加ルートの行は作業場所の範囲。
 - **種類ごとに継承する。** 作業場所に一番近い（深い）上書きを持つ場所の値、無ければ既定。追加ルートも種類ごとに同じ（`roots[kind]` を持つ一番近い場所）。場所の上書きを消す（「全体の設定に戻す」。上の場所に上書きがあれば「上のフォルダーの設定に戻す」）と上の値に戻る。画面では「全体の設定どおり／<親の場所> の設定どおり／このフォルダーだけの設定」。
@@ -64,7 +64,7 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 出典：[Agent Skills 実装ガイド](https://agentskills.io/client-implementation/adding-skills-support)、[Claude memory](https://code.claude.com/docs/en/memory#agentsmd)、[Claude MCP](https://code.claude.com/docs/en/mcp)、[Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 
 - 同じ実体ファイル・同じ適用範囲は1行にまとめ、複数の出典を保持する。
-- 同じ本文でも適用範囲が異なれば残す。別定義の同名 Skill / MCP は統合せず競合候補として表示する。
+- 同じ本文でも適用範囲が異なれば残す。別定義の同名 Skill / MCP は統合しない。使うのは選んだ定義（`prefer`）、無ければ先に見つかった方（ユーザー → 作業場所）で、残りは `shadowed`（`shadowedBy: 'choice'`）にする（Skill は [ADR 0290](adr/0290-skill-name-conflict-choice.md)、承認（2026-11-06））。「/」の候補（`skillList()`）も同じ定義を出す。
 - 指示本文と Skill 本文はテキストとして返す。画面は Skill の frontmatter を表に起こし、残りを markdown として描く。
 - Claude の rules（`.claude/rules/` の下の `.md`。下位フォルダーも探す）は、frontmatter の `paths` が無ければ同じ場所の `CLAUDE.md` と同じ範囲の指示の行になる。`paths`（glob の配列、または `,` 区切りの文字列）があれば行の状態を `conditional` とし、`paths` と glob の起点 `pathsBase`（プロジェクトは `.claude` のある場所、ユーザーの rules は `null` = 会話の作業場所）を返す。glob は `**`・`*`・`?`・`{a,b}` を扱い、win32 では大文字小文字を区別しない。frontmatter や `paths` が解釈できなければ診断にする。rules の中の `@path` の参照先は同じ `paths` を引き継ぐ。
 - Claude の独立した行の `@path` / `@"path with spaces"` は参照を追う。深さ5まで、循環は診断する。複雑な inline import の解決は未対応。
@@ -83,7 +83,7 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 - `setContextSettings`：1 か所だけ変えて即時保存し、`contextSettings` と同じ形（と `place`）を返す。`{ place: null | パス, kind, value: K | null }`（場所で `null` は既定に戻す）、`{ place, kind?, roots: [...] | null }`（`kind` を省くと 3 種すべて）、`{ place, add: true }` / `{ place, remove: true }`（右パネルの「全体の設定に戻す」は `remove`）。
 - `scanContext { cwd, place?: "default", scope?: "user" }`：保存済み設定から候補・出典・診断・探索場所・根（`home` / `root`）・MCP 設定ファイルごとの登録の書き出し（`configs`）を返す。`place: "default"` は場所の上書きを使わず既定だけで探す。`scope: "user"` はユーザーの範囲（home と既定の追加ルート）だけを探す（設定の画面のユーザーの段。作業場所のファイルを混ぜない）。同一接続の重複スキャンは拒否する。
 - `agentMcp { cwd }`：各エージェント（Claude・Codex）の設定に登録されている外部 MCP。探索の設定に関係なく読むだけ（接続・起動しない）。設定の「エージェントに任せる」と会話の右パネルが見比べに使う。
-- `slashSkills { cwd }`：同じ探索結果から、入力欄の先頭 `/` に出すスキルだけを名前順に返す（`skillList()`）。各項目は `{ name, description, hint, from }`。同名は先に見つかった置き場所だけを返し、除外・shadowed は含めない。`hint` は frontmatter の `argument-hint`、または引数の定義から作る。
+- `slashSkills { cwd }`：同じ探索結果から、入力欄の先頭 `/` に出すスキルだけを名前順に返す（`skillList()`）。各項目は `{ name, description, hint, from }`。同名は選んだ定義（`prefer`）、無ければ先に見つかった置き場所だけを返し、除外・shadowed は含めない。`hint` は frontmatter の `argument-hint`、または引数の定義から作る。
 - `sessionContext { sessionId }`：その会話の読み込み記録・担当・固定の有無と、固定された会話だけ行う今のファイルとの突き合わせ（`changed`）、Pleiad が入れた指示（`added`）を返す。詳細は `docs/context-runtime.md`。
 - `plyInstructions {}` / `setPlyInstructions { action, … }`：Pleiad の指示の一覧（画面の言語の文・項目ごとと合計のトークン数）と、足す・編集・スイッチ・削除・既定に戻す・並べ替え。`docs/context-runtime.md`「Pleiad の指示」。
 - `listMcpConfig { cwd, format, scope }`：保存先・リビジョン・登録名のみを返す。

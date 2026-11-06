@@ -1308,7 +1308,9 @@
       "manualOnly": "明示したときだけ",
       "notOffered_other": "案内していないもの {{count}} 件",
       "usedMark": "使った",
-      "noneOffered": "案内した Skill はありません"
+      "noneOffered": "案内した Skill はありません",
+      "choice": "同じ名前の定義が {{n}} つ · {{place}}の方を使用（{{by}}）",
+      "nextTurn": "次のターンから{{place}}の方を使います"
     },
     "reason": {
       "conditional": "{{paths}} に当たるファイルを扱うときだけ",

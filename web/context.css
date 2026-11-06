@@ -229,6 +229,11 @@
 .scx-item .p{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .scx-item .acts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
 .scx-item .acts .btn{padding:3px 10px;font-size:var(--fs-s)}
+/* 同じ名前の Skill の定義: どれを使ったかの 1 行と［変更］、その下の選択肢（ADR 0290） */
+.scx-item .ln{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;font-size:var(--fs-xs);color:var(--ink);overflow-wrap:anywhere}
+.scx-item .ln .btn{padding:0 8px;font-size:var(--fs-xs);color:var(--ink-blue)}
+.scx-item .cx-choice{margin:6px 0 0}
+.scx-item .cx-choice label>span:not(.cx-mono){flex:none}
 .scx-notice{display:flex;flex-direction:column;gap:8px;padding:12px 14px;background:var(--surface-paper);border-radius:var(--r-m)}
 .scx-notice p{margin:0;line-height:1.7}
 .scx-notice .acts{display:flex;flex-wrap:wrap;gap:6px}

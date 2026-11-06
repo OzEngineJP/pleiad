@@ -449,14 +449,18 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     const preferred = new Set(entries.filter(e => e.kind === 'mcp' && e.origins[0].source === 'ply' && e.status === 'candidate').map(e => e.name));
     for (const e of entries) if (e.kind === 'mcp' && e.origins[0].source !== 'ply' && e.status === 'candidate' && preferred.has(e.name)) { e.status = 'shadowed'; e.shadowedBy = 'ply'; }
   }
-  // 同じ名前の外部 MCP が複数あるときは 1 つだけ使う。選んだ定義（prefer: 名前 → 設定ファイル）があればそれ、無ければ先に見つかったもの
-  const byName = new Map();
-  for (const e of entries) if (e.kind === 'mcp' && e.status === 'candidate') byName.set(e.name, [...(byName.get(e.name) ?? []), e]);
-  for (const [name, list] of byName) {
-    if (list.length < 2) continue;
-    const want = plan.mcp?.prefer?.[name];
-    const chosen = (want && list.find(e => e.origins.some(o => pathKey(o.path) === pathKey(want)))) ?? list[0];
-    for (const e of list) if (e !== chosen) { e.status = 'shadowed'; e.shadowedBy = 'choice'; }
+  // 同じ名前の外部 MCP・Skill が複数あるときは 1 つだけ使う。選んだ定義（prefer: 名前 → 設定ファイル。Skills は SKILL.md）があればそれ、
+  // 無ければ先に見つかったもの（ユーザー → 作業場所の順）。以前は Skills を実行時に「同名の Skill があります」で止めていた（ADR 0290）。
+  // 同じ実体（リンクなど）は別の定義と数えない。残った方は実行時に duplicate として一度だけ渡す
+  for (const kind of ['mcp', 'skill']) {
+    const byName = new Map();
+    for (const e of entries) if (e.kind === kind && e.status === 'candidate') byName.set(e.name, [...(byName.get(e.name) ?? []), e]);
+    for (const [name, list] of byName) {
+      if (kind === 'mcp' ? list.length < 2 : new Set(list.map(e => pathKey(e.realPath))).size < 2) continue;
+      const want = plan[kind]?.prefer?.[name];
+      const chosen = (want && list.find(e => e.origins.some(o => pathKey(o.path) === pathKey(want)))) ?? list[0];
+      for (const e of list) if (e !== chosen && (kind === 'mcp' || pathKey(e.realPath) !== pathKey(chosen.realPath))) { e.status = 'shadowed'; e.shadowedBy = 'choice'; }
+    }
   }
   for (const item of entries) {
     if (item.status !== 'candidate') continue;
@@ -486,7 +490,7 @@ export function skillList(report) {
   const byName = new Map();
   for (const e of report.entries ?? []) {
     if (e.kind !== 'skill' || e.status !== 'candidate') continue;
-    // 同名は先頭が候補。隠された置き場所の文は出さない
+    // 同名は探索が選んだ 1 つだけが candidate に残る（選んだ定義か、先に見つかったもの。右パネル・渡す定義と同じ）。同じ実体の重なりは先頭
     if (byName.has(e.name)) continue;
     byName.set(e.name, {
       name: e.name,

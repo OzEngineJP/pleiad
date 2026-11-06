@@ -59,7 +59,8 @@ export default async function(t) {
     t.ok('AGENTS.override.md の優先を可視化', scan.entries.some(e => e.path === path.join(repo, 'AGENTS.md') && e.status === 'shadowed'));
     t.ok('除外された参照先を展開しない', scan.entries.some(e => e.path === path.join(repo, 'shared.md') && e.status === 'excluded'));
     t.ok('子階層を全体へ混ぜない', !scan.entries.some(e => e.path.includes(`${path.sep}nested${path.sep}`)));
-    t.ok('複数行 frontmatter と同名 Skill 競合を保持', scan.entries.some(e => e.description === 'multiline description\n' && e.conflicts.length === 1));
+    // 同じ名前の Skill は 1 つだけを使う（先に見つかったユーザーの方）。この場所の方は止めずに「使わなかった定義」として残す（ADR 0290）
+    t.ok('複数行 frontmatter を読み、同名 Skill はユーザーの方を使う', scan.entries.some(e => e.description === 'multiline description\n' && e.status === 'shadowed' && e.shadowedBy === 'choice') && scan.entries.some(e => e.kind === 'skill' && e.description === 'personal' && e.status === 'candidate'));
     t.ok('同じ Skill の別経路を実体パスでまとめる', scan.entries.filter(e => e.kind === 'skill' && e.scope === 'directory').length === 1 && scan.entries.find(e => e.kind === 'skill' && e.scope === 'directory').origins.length === 3);
     // 入力欄の「/」の候補。探索結果からスキルだけを、名前で 1 件にまとめて返す
     const skills = skillList(scan);
@@ -132,6 +133,7 @@ export default async function(t) {
     const before = JSON.stringify(await settings.get(child));
     await settings.set({ place: child, kind: 'skill', value: { ...defaultKind(), owner: 'always' } }).then(() => t.ok('不正な担当は拒否', false), () => t.ok('不正な担当は拒否', true));
     await settings.set({ place: child, kind: 'skill', value: { ...defaultKind(), disabled: ['x'] } }).then(() => t.ok('名前で外すのは外部 MCP だけ', false), () => t.ok('名前で外すのは外部 MCP だけ', true));
+    await settings.set({ place: child, kind: 'instruction', value: { ...defaultKind(), prefer: { x: 'a' } } }).then(() => t.ok('指示には同名の選択を持たない', false), () => t.ok('指示には同名の選択を持たない', true));
     t.ok('不正設定で保存済み設定を壊さない', JSON.stringify(await settings.get(child)) === before);
     const dataDir = path.join(tmp, 'server-data');
     server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake' } }); client = await open(server);

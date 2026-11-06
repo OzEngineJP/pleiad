@@ -218,15 +218,22 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots')));
     return p;
   }
-  /** 指示・Skills の行（ユーザーの範囲で見つかったもの）。スイッチはユーザーの除外（excludePaths）を出し入れする */
+  /**
+   * 指示・Skills の行（ユーザーの範囲で見つかったもの）。スイッチはユーザーの除外（excludePaths）を出し入れする。
+   * Skills は名前ごとに 1 行（同じ名前の定義が複数あっても使うのは 1 つ。外部 MCP のカードと同じ形。ADR 0290）
+   */
   function documentRows(list, kind) {
     // 外したファイルは探索が出典ごとに別の行で返すので、同じ行（id）は 1 つにする
     const seen = new Set();
-    const entries = (scan?.entries ?? []).filter(e => e.kind === kind && !seen.has(e.id) && seen.add(e.id));
+    const all = (scan?.entries ?? []).filter(e => e.kind === kind && !seen.has(e.id) && seen.add(e.id));
+    const byName = new Map();
+    for (const e of all) { const key = kind === 'skill' ? e.name : e.id; byName.set(key, [...(byName.get(key) ?? []), e]); }
+    const entries = [...byName.values()].map(group => ({ ...(group.find(e => e.status === 'candidate') ?? group[0]), group }));
     if (!entries.length) { list.append(el('p', 'cx-empty', kind === 'skill' ? t('context.skill.none') : t('context.instruction.none'))); return; }
     const shown = kind === 'skill' && !expanded.has(kind) ? entries.slice(0, SHOWN) : entries;
     for (const entry of shown) {
-      const off = entry.status === 'excluded';
+      const off = entry.group.every(e => e.status === 'excluded');
+      const usable = skillChoices(entry);
       const row = el('div', 'cx-row' + (off ? ' off' : ''));
       const open = button('', 'cx-open');
       open.setAttribute('aria-expanded', String(opened.has(entry.id)));
@@ -234,7 +241,10 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       body.append(el('span', 'nm', entry.name));
       const where = kind === 'skill' ? parent(parent(entry.path)) : parent(entry.path);
       const note = entry.status === 'shadowed' ? t('context.row.shadowed') : entry.status === 'conditional' ? t('context.row.conditional', { paths: entry.paths.join(', ') }) : '';
-      body.append(el('span', 'p', [short(where), entry.root ? t('context.roots.extra') : '', note].filter(Boolean).join(' · ')));
+      const want = info().kinds.skill.value.prefer?.[entry.name];
+      body.append(el('span', 'p', usable
+        ? t('sessionContext.skill.choice', { n: usable.length, place: short(where), by: want && pathKey(want) === pathKey(entry.path) ? t('sessionContext.mcp.byPrefer') : t('sessionContext.mcp.byFirst') })
+        : [short(where), entry.root ? t('context.roots.extra') : '', note].filter(Boolean).join(' · ')));
       open.append(body);
       open.onclick = () => { if (opened.has(entry.id)) opened.delete(entry.id); else opened.add(entry.id); renderCard(kind); };
       // 指示の行の右端の量（渡す本文の見積もり。core/context-scan.mjs の tokens。ADR 0056）
@@ -242,9 +252,10 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       const sw = button('', 'cx-sw');
       sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(!off));
       sw.setAttribute('aria-label', kind === 'skill' ? t('context.row.offerAria', { name: entry.name }) : t('context.row.provideAria', { name: entry.name }));
-      sw.onclick = () => { sw.setAttribute('aria-checked', String(off)); work(() => saveKind(kind, v => toggleExclude(v, entry, off))); };
+      sw.onclick = () => { sw.setAttribute('aria-checked', String(off)); work(() => saveKind(kind, v => { for (const e of entry.group) toggleExclude(v, e, off); })); };
       row.append(open, ...(tokens ? [tokens] : []), sw);
       list.append(row);
+      if (usable) list.append(skillChoice(entry, usable));
       if (opened.has(entry.id)) {
         const peek = peekDocument(entry, { short });
         if (entry.root) peek.append(rootActs(kind, entry.root));
@@ -252,6 +263,26 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       }
     }
     if (shown.length < entries.length) list.append(button(t('context.showAll', { n: entries.length }), 'btn cx-more-rows', () => { expanded.add(kind); renderCard(kind); }));
+  }
+  /** 同じ名前の Skill の、選べる定義（中身の実体が 2 つ以上あるとき）。無ければ null */
+  function skillChoices(entry) {
+    if (entry.kind !== 'skill') return null;
+    const real = new Map();
+    for (const e of entry.group.filter(e => e.status === 'candidate' || e.shadowedBy === 'choice')) if (!real.has(pathKey(e.realPath ?? e.path))) real.set(pathKey(e.realPath ?? e.path), e);
+    return real.size > 1 ? [...real.values()] : null;
+  }
+  /** どちらの定義を使うかの選択肢（外部 MCP のカードの choices と同じ形）。全体の設定の prefer に保存する */
+  function skillChoice(entry, usable) {
+    const box = el('div', 'cx-choice'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('mcp.choice.aria', { name: entry.name }));
+    box.append(el('span', null, t('mcp.choice.lead')));
+    for (const e of usable) {
+      const label = el('label'), input = el('input');
+      input.type = 'radio'; input.name = `skill-choice-${entry.name}`; input.checked = e.status === 'candidate';
+      input.onchange = () => work(() => saveKind('skill', v => { v.prefer = { ...(v.prefer ?? {}), [entry.name]: e.path }; }));
+      label.append(input, document.createTextNode(short(parent(parent(e.path)))), el('span', 'cx-mono', entry.name));
+      box.append(label);
+    }
+    return box;
   }
 
   // ---------------------------------------------------------------- 探す場所を足す（種類ごと。ユーザーの段）

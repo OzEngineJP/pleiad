@@ -1334,7 +1334,9 @@
       "notOffered_one": "{{count}} not offered",
       "notOffered_other": "{{count}} not offered",
       "usedMark": "used",
-      "noneOffered": "No skills offered"
+      "noneOffered": "No skills offered",
+      "choice": "{{n}} definitions share this name · using the one in {{place}} ({{by}})",
+      "nextTurn": "The one in {{place}} will be used from the next turn"
     },
     "reason": {
       "conditional": "Only when working with files matching {{paths}}",
