@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyAddressInput as classify, resolveAddressInput, formatFileAddress } from '../../core/address-input.mjs';
+import { classifyAddressInput as classify, resolveAddressInput } from '../../core/address-input.mjs';
 
 export const name = 'address-input';
 export const title = 'Address classification and host file policy';
@@ -53,12 +53,10 @@ export default async function(t) {
     const result = classify(input, options);
     t.ok(input, result.kind === kind && (result.path ?? result.url ?? result.query ?? result.code) === expected, JSON.stringify(result));
   }
-  t.ok('desktop absolute path', formatFileAddress('D:\\work\\docs\\a.md', { ...win }) === 'D:\\work\\docs\\a.md');
-  t.ok('phone relative path', formatFileAddress('D:\\work\\docs\\a.md', { ...win, mobile: true }) === '.\\docs\\a.md');
-  t.ok('phone outside cwd', formatFileAddress('/other/a', { ...unix, mobile: true }) === '../other/a');
+  // The address bar shows and edits the absolute path on PC and phone alike (ADR 0294 2.5), so what it shows can be submitted unchanged
   for (const [file, options] of [['D:\\work\\docs\\a.md', win], ['D:\\work\\notes', win], ['/work/docs/a.md', unix], ['/work/notes', unix], ['/other/a', unix], ['/work', unix], ['C:\\other\\a', win]]) {
-    const result = classify(formatFileAddress(file, { ...options, mobile: true }), options);
-    t.ok('phone address can be submitted unchanged', result.kind === 'path' && result.path === file);
+    const result = classify(file, options);
+    t.ok('absolute address can be submitted unchanged', result.kind === 'path' && result.path === file);
   }
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-address-'));
   try {
