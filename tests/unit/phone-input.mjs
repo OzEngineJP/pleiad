@@ -70,5 +70,8 @@ export default async function (t) {
     pointer('pointerdown', 60, 3000); pointer('pointerdown', 160, 3010, 2); pointer('pointermove', 260, 3020, 2);
     pointer('pointerup', 60, 3030); pointer('pointerup', 260, 3040, 2);
     t.ok('2 本指の拡大は遠隔のページを操作しない', video.zoom === 2 && gestures.length === 0);
+    let held = false;
+    surface.dispatchEvent({ type: 'mousedown', target: image, button: 0, preventDefault() { held = true; } });
+    t.ok('指を離した後の互換の mousedown で、重ねた入力欄から焦点を外さない', held);
   } finally { video?.destroy(); phone?.destroy(); globalThis.document = oldDoc; globalThis.window = oldWindow; globalThis.visualViewport = oldViewport; globalThis.innerHeight = oldHeight; N.prototype.focus = oldFocus; if (oldBlur) N.prototype.blur = oldBlur; else delete N.prototype.blur; }
 }

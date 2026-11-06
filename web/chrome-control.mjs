@@ -53,10 +53,12 @@ export function createControlBadge({ mount, onStop = () => {}, onResume = () => 
   popup.setAttribute('role', 'dialog'); popup.hidden = true; button.append(dot, label); root.append(button); document.body.append(popup); mount?.append(root);
   let state = {}, pending = false;
   const close = (restore = false) => { popup.hidden = true; button.setAttribute('aria-expanded', 'false'); if (restore) button.focus(); };
+  // 窓の大きさが変わったら閉じるだけ（札へ戻さない。スマホではキーボードが開くと窓が縮み、ページの欄から札へ移ってキーボードが閉じた）
+  const shrink = () => close();
   const outside = event => { if (!root.contains(event.target) && !popup.contains(event.target)) close(); };
   const key = event => { if (event.key === 'Escape' && !popup.hidden) { event.stopPropagation(); close(true); } };
   const place = () => { const rect = button.getBoundingClientRect(); popup.style.top = `${rect.bottom + 8}px`; popup.style.left = `${Math.max(8, Math.min(innerWidth - 264, rect.right - 256))}px`; };
-  document.addEventListener('pointerdown', outside); document.addEventListener('keydown', key); window.addEventListener('resize', close);
+  document.addEventListener('pointerdown', outside); document.addEventListener('keydown', key); window.addEventListener('resize', shrink);
   button.addEventListener('click', () => { const open = popup.hidden; popup.hidden = !open; button.setAttribute('aria-expanded', String(open)); if (open) { place(); action.focus(); } });
   action.addEventListener('click', async () => {
     if (pending) return; pending = true; action.disabled = true;
@@ -78,7 +80,7 @@ export function createControlBadge({ mount, onStop = () => {}, onResume = () => 
     if (root.hidden) close();
   }
   update();
-  return { element: root, update, close, destroy() { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); window.removeEventListener('resize', close); root.remove(); popup.remove(); } };
+  return { element: root, update, close, destroy() { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); window.removeEventListener('resize', shrink); root.remove(); popup.remove(); } };
 }
 
 /** Mount beside a tab title; active means the agent is currently operating this tab. */

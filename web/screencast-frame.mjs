@@ -89,6 +89,8 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
     if (phone) { flushTap(); pendingTap = { type: 'tap', ...point }; tapTimer = setTimeout(flushTap, 280); }
     else dispatch({ type: 'tap', ...point });
   };
+  // スマホでは指を離した後の互換の mousedown が映像に入力を移し、ページの欄に重ねた入力（beforeTap で入れた）からキーボードが閉じる
+  listen(surface, 'mousedown', event => { if (phone) event.preventDefault(); });
   listen(surface, 'pointerup', event => finish(event)); listen(surface, 'pointercancel', event => finish(event, true));
   listen(surface, 'wheel', event => { const point = coords(event); if (!point) return; event.preventDefault(); if (zoom > 1) { panX -= event.deltaX; panY -= event.deltaY; transform(); } else dispatch({ type: 'scroll', ...point, dx: toPageDelta(event.deltaX, rect(), metadata()), dy: toPageDelta(event.deltaY, rect(), metadata()) }); }, { passive: false });
   listen(surface, 'contextmenu', event => { const point = coords(event); if (!point) return; event.preventDefault(); if (!phone) dispatch({ type: 'context', ...point }); });
