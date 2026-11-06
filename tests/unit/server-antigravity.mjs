@@ -139,8 +139,9 @@ export default async function (t) {
     t.ok("agy 起動引数に --print-timeout が渡される",
       timeoutIdx >= 0 && /^\d/.test(String(sessionArgs[timeoutIdx + 1] ?? "")),
       JSON.stringify(sessionArgs.slice(timeoutIdx, timeoutIdx + 2)));
-    t.ok("既定のモデル・段のままなら --model も --effort も渡さない",
-      !sessionArgs.includes("--model") && !sessionArgs.includes("--effort"), JSON.stringify(sessionArgs));
+    // 「既定」でも覚えた既定のモデルを明示する。省くと agy はその時点の自分の既定を使い、画面の「既定（モデル名）」とずれる（issue #161）
+    t.ok("既定のモデル・段のままなら、既定のモデルを --model に渡し、--effort は渡さない",
+      sessionArgs[sessionArgs.indexOf("--model") + 1] === "fake-flash-high" && !sessionArgs.includes("--effort"), JSON.stringify(sessionArgs));
     const sessionEvents = first.events.filter((e) => e.type === "session");
     t.ok("id 確定の session は first 付きで1本だけ",
       sessionEvents.length === 1 && sessionEvents[0].first === true,

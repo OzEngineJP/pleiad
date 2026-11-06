@@ -546,6 +546,7 @@ Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-r
 **codex の実行ファイル**は `AGENT_HOST_CODEX_BIN`（既定 `codex`）。
 **agy の実行ファイル**は `AGENT_HOST_AGY_BIN`（既定 `agy`）。
 **agy の `--print-timeout`** は `AGENT_HOST_AGY_PRINT_TIMEOUT`（既定 `24h`。Go の duration 文字列。§2.8）。
+**agy のモデル一覧を古いとみなすまで**は `AGENT_HOST_AGY_MODELS_TTL_MS`（既定 5 分。§2.8）。
 
 ### 2.7 ターンの外: 会話に残る裏の作業（2026-09）
 
@@ -695,6 +696,10 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 - `agy models` の出力は `id<TAB>表示名`（例 `gemini-3.8-flash-high<TAB>Gemini 3.8 Flash (High)`）。段違いは別の id で並ぶ（1.2.8 で確認）。
   既定のモデルは設定ファイルに出ない。agy は起動のたびにログへ `Propagating selected model override to backend: label="…"` を書くので、
   Pleiad は `agy --log-file <一時ファイル> models` で呼び、その label を既定として読む（公開の口ではないので、取れなければ「既定（agy の設定）」）
+- 「既定」（モデル `''`）のターンでも、読んだ既定のモデル（`models[""].resolvesTo`）を `--model` で明示する（`agyTarget`）。
+  省くと agy はその時点の自分の既定を使い、Pleiad が読んだ後に agy 側で既定が変わると、画面の「既定（モデル名）」・使用量の枠と別のモデルで走って別の枠が減る（issue #161）。
+  既定が読めていなければ何も渡さない。読んだ一覧は `AGENT_HOST_AGY_MODELS_TTL_MS`（既定 5 分）を過ぎると、一覧を読んだとき（`models()`）に裏で `agy models` を引き直す
+  （一度も引けていなければ起こさない）。`--model` は起動時にしか渡せないので、渡すモデルが変われば同じ会話の agy を起こし直す（`--conversation` で続く）
 - 1.2.8 では `agy -p "/model"` などの slash コマンドは**通常のプロンプトとして LLM に送られる**（changelog 1.1.11 の「quota を使わずに答える」は当てはまらなかった。実測）。調べるのに使わない
 - サブコマンドは `agent(s)` / `models` / `mcp` / `plugin` / `remote-control` / `update` /
   `changelog` / `install` / `help`。**会話を列挙するものが無い**

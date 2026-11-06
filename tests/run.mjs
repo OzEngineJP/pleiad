@@ -791,6 +791,7 @@ const SUITES = [
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
   // 本物の agy も Google のログインも要らない
   './unit/server-antigravity.mjs',
+  './unit/server-agy-default-model.mjs',
   // 控えはターンの途中から書く: 途中の書き込み・失敗／中断で残る・uuid が変わらない・forget した控えを作り直さない・書き込みは 1 本ずつ
   './unit/antigravity-partial-transcript.mjs',
   // 裏へ回ったコマンド: 落とす先の選び方（agy の直下の子だけ）と、server 越しに一覧へ出して止める

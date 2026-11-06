@@ -165,6 +165,16 @@ function release(conversationId, session) {
 /** 直近に引けたモデル一覧。`agy models` は認証が要るので、引けたときだけ覚える。 */
 let modelCache = null;
 
+/** modelCache を引いた時刻と、取り直しの途中の印（同時に 2 本起こさない）。 */
+let modelCacheAt = 0;
+let modelRefresh = null;
+
+/**
+ * 覚えた一覧を古いとみなすまでの ms。agy の既定（/model の選択）や一覧は Pleiad の外で変わるので、
+ * これを過ぎた一覧を読んだら裏で引き直す（refreshStaleModels。issue #161）
+ */
+const MODELS_TTL_MS = Number(process.env.AGENT_HOST_AGY_MODELS_TTL_MS ?? 5 * 60_000);
+
 /** ログインを 2 本同時に走らせないための印。 */
 let pendingAuth = null;
 
@@ -232,13 +242,16 @@ const digest = (value) => (value == null ? null : crypto.createHash("sha256").up
  * 起動時にしか渡せないもの（Pleiad のコンテキスト・ブラウザー・Hooks・ply_computer・ply_control・bot の人格）の印。起動時と違う渡し方になる次のターンは agy を起こし直す。
  * トークンを含むものは頭の文字列ではなくダイジェストで持つ: 保持役に載せた agy の札（server の takeCard）にそのまま置いても秘密が出ず、付け直した先が同じ印で比べられる
  */
-function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey = null, browserKey, controlKey, botKey, secretsKey = null, useAgent = false }) {
+function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey = null, browserKey, controlKey, botKey, secretsKey = null, useAgent = false, target = {} }) {
   return { context: digest(contextKey), shape: contextShape ?? null, browser: browserEnv?.AGENT_BROWSER_CONFIG ?? null, hooks: hooksShape ?? null,
     computer: digest(computerKey), agents: digest(agentsKey), browserTool: digest(browserKey), control: digest(controlKey), bot: botKey ?? null,
     // custom: カスタムエージェント（agent.md）で動いているか。ターンが注入で読み替える口の判定にも使う（agent.md の本文は再開で持ち越されるため印に入れない）
     custom: useAgent ? 1 : 0,
     // 秘密情報と変数（ADR 0217）。値はハッシュだけ（札に残る）。無い会話は今までと同じ印
-    ...(secretsKey ? { secrets: digest(secretsKey) } : {}) };
+    ...(secretsKey ? { secrets: digest(secretsKey) } : {}),
+    // 渡す --model / --effort（agyTarget）も起動時にしか渡せない。モデルを選び直した・覚えた既定が変わったら起こし直す（issue #161）。
+    // 何も渡さない会話は今までと同じ印
+    ...(target.model || target.effort ? { target: [target.model ?? null, target.effort ?? null] } : {}) };
 }
 /**
  * agy 自身が認証・接続先に読む環境変数（Gemini CLI と同じ名前）。秘密情報と変数に同じ名前があっても agy のプロセスには入れない
@@ -285,6 +298,7 @@ export const backend = {
    * 既定のモデルは `agy models` を起こしたときのログから読む（listModels）。一覧を引けていなければ「既定（agy の設定）」だけ
    */
   async models() {
+    refreshStaleModels();
     return modelCache ?? buildAgyModels([], null);
   },
 
@@ -442,7 +456,9 @@ export const backend = {
     const computerInstructions = computerPrompt(computerRuntime, { locale: contextRuntime?.locale ?? locale, agent: 'antigravity' });
     const agentPrompt = [contextRuntime?.prompt, browserInstructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n');
     const useAgent = Boolean(contextRuntime || browserInstructions || agentRuntime || computerRuntime || controlRuntime || secretsRuntime?.instructions || botInstructions);
-    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey, browserKey, controlKey, botKey, secretsKey, useAgent });
+    // --model と --effort は同時に渡さない。段は同じ系統の段違いの id に解決し、「既定」は覚えた既定のモデルを明示する（antigravity-models.mjs）
+    const target = agyTarget(model, effortFor(effort), modelCache ?? {});
+    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey, browserKey, controlKey, botKey, secretsKey, useAgent, target });
     if (session && !sameKeys(session.keys, keys)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session && !adopt;
@@ -473,8 +489,7 @@ export const backend = {
       session = new AgySession({
         cwd,
         conversationId,
-        // --model と --effort は同時に渡さない。段は同じ系統の段違いの id に解決する（antigravity-models.mjs）
-        ...agyTarget(model, effortFor(effort), modelCache ?? {}),
+        ...target,
         mode: m.flag,
         skipPermissions: Boolean(m.skip),
         // agy のヘッドレスは cwd だけではワークスペースを設定しないため、--add-dir で渡す
@@ -1029,6 +1044,18 @@ export async function stopHeldAgy() {
 function rememberModels(list) {
   if (!list?.rows?.length) return;
   modelCache = buildAgyModels(list.rows, list.defaultLabel);
+  modelCacheAt = Date.now();
+}
+
+/**
+ * 覚えた一覧が MODELS_TTL_MS より古ければ、裏で `agy models` を引き直す（待たない。今の呼び出しには覚えた一覧を返す）。
+ * 引き直しに失敗したら前の一覧を残し、次の MODELS_TTL_MS まで試さない。
+ * 一度も引けていないときは起こさない（ログインの確認・使用量の warm が引く。未ログインの agy を繰り返し起こさない）。
+ * 画面はモデルのメニューを開くたびに一覧を取り直す（web の revalidateVocab）ので、次に開いたときに新しい既定が出る
+ */
+function refreshStaleModels() {
+  if (!modelCache || modelRefresh || Date.now() - modelCacheAt < MODELS_TTL_MS) return;
+  modelRefresh = listModels().then(rememberModels, () => { modelCacheAt = Date.now(); }).finally(() => { modelRefresh = null; });
 }
 
 // サーバが終わったら、サーバーの子として起こした agy を道連れにする（保持役の子には触れない。新しいサーバーが起動で拾う。ADR 0270）。
