@@ -141,7 +141,12 @@ export function createBrowserUnify(deps = {}) {
   }
   async function pick(tab) {
     active = tab.targetId; overview.hidden = true; paint();
-    try { await cmd('chromePinWindow', { sessionId:session(), windowId:tab.windowId ?? null, tabId:tab.targetId }); } catch (error) { failed(error); }
+    // スマホが手元に描くページの間は映像を止めているので固定しない
+    if (local?.targetId === tab.targetId) return;
+    // 映していない間（パネルが閉じている・映し直している）は、パネルが映し始めてから固定する
+    const pin = { windowId:tab.windowId ?? null, tabId:tab.targetId };
+    if (chrome()?.pinTab) { await chrome().pinTab(session(), pin); return; }
+    await cmd('chromePinWindow', { sessionId:session(), ...pin }).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
   }
   /** 札・点・帯の元。agentUsed: この会話のエージェントがブラウザーを使っている（使っていなければ札も点も出さない） */
   function control() {

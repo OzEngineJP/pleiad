@@ -2,6 +2,7 @@
 //   - 置いたら browserScreencastStop を 1 回送る。置き換えても送り直さない
 //   - 置いている間は、箱の大きさが変わっても・つなぎ直しても映し直さない
 //   - 外したら映し直す。閉じるときに止める依頼を重ねて送らない
+//   - タブの列で選んだタブは、映していない間（閉じている・止めている）は固定せず、映し始めてから固定する
 import { setupChromePanel, createWindowTable } from '../../web/chrome-panel.mjs';
 import { N } from '../lib/dom-stub.mjs';
 
@@ -75,6 +76,31 @@ export default async function (t) {
       r.panel.mountPage(new N('iframe'));
       await flush();
       t.ok('パネルが開いていない間に置いても、何も送らない', r.commands.length === 0);
+    }
+    // タブの列で選んだタブの固定（pinTab）。映像を見ていない会話は固定できない（サーバーが not-watching で断る）ので、映し始めてから送る
+    {
+      const r = rig();
+      const pins = () => r.commands.filter(([name]) => name === 'chromePinWindow').map(([, args]) => args.tabId);
+      r.windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
+      await r.panel.pinTab('conv', { windowId: 7, tabId: 'T2' });
+      t.ok('パネルが閉じている間に選んだタブは、まだ固定しない', pins().length === 0);
+      r.panel.open();
+      await flush();
+      const names = r.commands.map(([name]) => name);
+      t.ok('パネルを開いて映し始めてから、選んだタブを固定する', pins().join() === 'T2' && names.indexOf('browserScreencast') < names.indexOf('chromePinWindow'), JSON.stringify(names));
+      await r.panel.pinTab('conv', { windowId: 7, tabId: 'T3' });
+      t.ok('映している間に選んだタブは、すぐ固定する', pins().join() === 'T2,T3');
+      r.panel.mountPage(new N('iframe'));
+      await flush();
+      await r.panel.pinTab('conv', { windowId: 7, tabId: 'T4' });
+      t.ok('端末内のページで映像を止めている間は、固定しない', pins().join() === 'T2,T3');
+      r.panel.mountPage(null);
+      await flush();
+      t.ok('端末内のページを外して映し直してから、選んだタブを固定する', pins().join() === 'T2,T3,T4' && r.count('browserScreencast') === 2);
+      await r.panel.pinTab('other', { windowId: 9, tabId: 'X' });
+      r.panel.close(); r.panel.open();
+      await flush();
+      t.ok('ほかの会話のタブは、この会話を映し始めても固定しない', !pins().includes('X'));
     }
   } finally {
     globalThis.requestAnimationFrame = old.raf; N.prototype.getBoundingClientRect = old.rect; N.prototype.toggleAttribute = old.toggle;

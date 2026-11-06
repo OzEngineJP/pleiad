@@ -106,7 +106,7 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
   let root = null, parts = null, sessionId = null, owner = null, state = null, frameMeta = null, video = { lag: false, stale: false }, ended = false, connecting = false, hintTimer = 0, observer = null, lastBox = null, resizeTimer = 0;
   // スマホで端末内のページを置いて、映像を止めている間（mountPage）
   let pagePaused = false;
-  let optimisticTab = null, pendingPin = null, tabSig = '', lastTabIds = null, targetListeners = new Set();   // optimisticTab: 押した直後のタブの固定。pendingPin: 会話を替えてから固定するウィンドウ
+  let optimisticTab = null, pendingPin = null, pendingTab = null, tabSig = '', lastTabIds = null, targetListeners = new Set();   // optimisticTab: 押した直後のタブの固定。pendingPin: 会話を替えてから固定するウィンドウ
   let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, operating = false, waiting = null, closing = false, optimistic = null, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown, lastAgent, switchSig = '';   // optimistic: 押した直後（サーバーの知らせの前）の固定。hold: 閉じたウィンドウを薄くして残している間。waiting: ⋯「Chrome で開く」で、窓ができるのを待っている会話と字
   const alwaysHint = touch ?? (() => { try { return matchMedia('(hover: none), (pointer: coarse)').matches; } catch { return false; } });
 
@@ -528,6 +528,13 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
     const want = pendingPin;
     pendingPin = null;
     if (want?.sessionId === sessionId && windows.ids(sessionId).includes(want.windowId)) pick(want.windowId);
+    // タブの列で選んだタブ（映していない間に選んだ）は、映し始めてから固定する
+    const tab = pendingTab;
+    pendingTab = null;
+    if (tab?.sessionId === sessionId) sendTabPin(tab);
+  }
+  function sendTabPin({ sessionId: id, windowId, tabId }) {
+    return cmd('chromePinWindow', { sessionId: id, windowId, tabId }).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
   }
 
   function watchSize() {
@@ -558,6 +565,7 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
   function show(id, element) {
     if (!parts) { parts = build(); root = parts.node; }
     if (sessionId && sessionId !== id) stopWatching();
+    if (pendingTab?.sessionId !== id) pendingTab = null;   // 開く前にタブの列で選んだタブは残す（start が固定する）
     owner = session(); sessionId = id; state = null; frameMeta = null; ended = false;
     hold = null; optimistic = null; optimisticTab = null; pendingPin = null; lastShown = undefined; lastAgent = undefined; switchSig = ''; tabSig = ''; lastTabIds = null;
     clearTimeout(holdTimer); endFade();
@@ -621,6 +629,16 @@ export function setupChromePanel({ cmd, preview, showMenu = null, session = () =
 
   return {
     open, toggle, close, isOpen, openWaiting,
+    /**
+     * タブの列（web/browser-unify.mjs）で選んだタブを映すよう固定する。映していない間（パネルが閉じている・開いた直後・
+     * スマホの端末内のページで映像を止めている）は、映し始めてから固定する（映像を見ていない会話は固定できない）
+     */
+    pinTab(id, { windowId = null, tabId }) {
+      const pin = { sessionId: id, windowId, tabId };
+      if (isOpen() && sessionId === id && !pagePaused && !connecting && !ended && state) { pendingTab = null; return sendTabPin(pin); }
+      pendingTab = pin;
+      return Promise.resolve();
+    },
     /** ⋯「Chrome で開く」が失敗した。待っていたパネルは閉じる */
     cancelWaiting() { if (waiting && isOpen() && waiting.sessionId === sessionId) close(); waiting = null; },
     /** タブ列とアドレスバーを映像の上へ置き、状態表示の挿入口をバーへ移す。 */
