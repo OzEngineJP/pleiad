@@ -4,9 +4,7 @@
 // 状態を読む操作（chromeStatus）だけが AI・CLI にも出る。つなぐ・切る・確認を前に出すは、設定 › ブラウザーの画面の操作で、
 // ホストの PC の画面だけから呼べる（エージェントがつなぐ道は core の接続の案内 chromeConnection.demand が持つ）。
 // 引き継ぐ（chromeTakeOver）は by: 'device' でリモートの端末から操作する（窓は PC に見せず、端末の映像の箱の大きさでページを描き、映像のセッションで入力を送る）。
-// ビューアの⋯「Chrome で開く（エージェントの窓へ）」（chromeOpen）は、会話の窓に URL を開く。ホストの PC の画面だけ。エージェントには知らせない。
 // 許可（chromeConsent）・オンにしてつなぐ（chromeEnable）は、会話の接続のカードのボタン（ADR 0218）。人が押すので、画面とリモートの端末から呼べる（MCP・CLI には出さない）。
-// openFile は、リモートの端末が PC の HTML をホストの内蔵ブラウザーのタブに開く（見るのは browserScreencast。ホストの窓は前に出さず、ホストの画面で選んでいるタブも替えない）。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
@@ -93,6 +91,27 @@ function profileError(ctx, error) {
 }
 
 export const browserOps = [
+  defineOp({
+    id: 'browser.chromeNavigate',
+    summary: 'agent:ops.browser.chromeNavigate.summary',
+    risk: 'write',
+    riskReason: 'Navigation from the conversation address bar is a human action (ADR 0296); it is unavailable on agent surfaces',
+    input: z.object({
+      sessionId: sessionIdShape,
+      targetId: z.string().min(1).max(200).optional().describe('agent:ops.browser.chromePinWindow.tabId'),
+      action: z.enum(['navigate', 'new', 'back', 'forward', 'reload', 'close', 'view', 'tree']).default('navigate').describe('agent:ops.browser.chromeNavigate.action'),
+      input: z.string().max(8192).optional().describe('agent:ops.browser.chromeNavigate.input'),
+      view: z.enum(['preview', 'source']).optional().describe('agent:ops.browser.chromeNavigate.view'),
+    }),
+    output: z.object({ targetId:z.string().nullable().optional() }),
+    surfaces: { ui:true, mcp:false, cli:false },
+    legacyCommand: 'chromeNavigate',
+    handler: (ctx, args) => {
+      if (ctx.principal.by !== 'human') throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      if (!ctx.chromeNavigate) unavailable(ctx);
+      return ctx.chromeNavigate(args);
+    },
+  }),
   defineOp({
     id: 'browser.chromeStatus',
     summary: 'agent:ops.browser.chromeStatus.summary',
@@ -258,51 +277,6 @@ export const browserOps = [
     output: z.array(z.object({ sessionId: z.string(), taskId: z.string().nullable(), title: z.string().nullable(), windows: z.number(), profile: profileRefShape.nullable(), profileName: z.string().nullable(), state: z.string(), waiting: z.boolean().optional() })),
     surfaces: { ui: true, mcp: false, cli: false },
     handler: (ctx, { sessionId }) => mustBeSupported(ctx).windows(sessionId),
-  }),
-  defineOp({
-    id: 'browser.chromeOpen',
-    summary: 'agent:ops.browser.chromeOpen.summary',
-    risk: 'write',
-    riskReason: 'Opens a web page the user chose in the Chrome window of the conversation (waiting for Chrome to allow the connection if needed); the agent is not told and nothing is granted. Only the host PC\'s screen can call it (not on MCP or CLI)',
-    input: z.object({
-      sessionId: sessionIdShape,
-      url: z.string().min(1).max(8192).describe('agent:ops.browser.chromeOpen.url'),
-    }),
-    output: z.object({ sessionId: z.string(), targetId: z.string() }),
-    surfaces: { ui: true, mcp: false, cli: false },
-    hostScreenOnly: true,
-    legacyCommand: 'chromeOpen',
-    handler: async (ctx, { sessionId, url }) => {
-      const chrome = mustBeSupported(ctx);
-      if (!/^https?:\/\//i.test(url)) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.chromeOpenUrl'));
-      if (!chrome.open) unavailable(ctx);
-      const { targetId } = await chrome.open(sessionId, url);
-      return { sessionId, targetId };
-    },
-  }),
-  // リモートの端末（PC のリモートの窓・スマホ・Web）が、PC のファイル（HTML）をホストの内蔵ブラウザーに開く。
-  // 範囲の検査は /file-preview と同じで、読み込みの確認はホストの画面が file: のタブに掛けているものがそのまま効く。開くだけで、見るのは端末の browserScreencast（tabId）
-  defineOp({
-    id: 'browser.openFile',
-    summary: 'agent:ops.browser.openFile.summary',
-    risk: 'write',
-    riskReason: 'Adds a tab for an HTML file the conversation can already preview (same path checks as /file-preview, and the external-load confirmation of the host screen applies) to the host built-in browser so a remote device can watch it; nothing is written and no window is brought to the front. Screen and remote devices only (not on MCP or CLI)',
-    input: z.object({
-      sessionId: sessionIdShape,
-      path: z.string().min(1).max(4096).describe('agent:ops.browser.openFile.path'),
-      at: z.string().max(100).optional().describe('agent:ops.browser.openFile.at'),
-      base: z.string().max(4096).optional().describe('agent:ops.browser.openFile.base'),
-    }),
-    output: z.object({ tabId: z.string().describe('agent:ops.browser.openFile.tabId') }),
-    surfaces: { ui: true, mcp: false, cli: false },
-    handler: async (ctx, { sessionId, path, at, base }) => {
-      if (!ctx.hostBrowser) throw new OpError('UNSUPPORTED', agentT(ctx.locale, 'ops.errors.hostBrowserUnsupported'));
-      try { return { tabId: (await ctx.hostBrowser.openFile({ sessionId, path, at, base })).tabId }; }
-      catch (error) {
-        if (error?.userMessage) throw new OpError('INVALID', error.message);
-        throw error;
-      }
-    },
   }),
   // Chrome のプロフィール（第 10 段。docs/inapp-browser.md「プロフィール」）。本体は core/chrome/profile-choice.mjs（ply_browser の list_browser_profiles・use_browser_profile もここを通る）。
   // 画面・端末は会話を指定して、エージェントは自分の会話だけ。名前は ADR 0091 の追記で残した browser.listProfiles・browser.useProfile

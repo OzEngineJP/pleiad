@@ -54,24 +54,5 @@ async function({ usage, update } = {}) {
   close.click(); await wait();
   check(pop.hidden && document.activeElement === opener, 'Close returns to the actual entry');
   usage.open(opener); await wait();
-  if (!sheet) {
-    const { createBrowserPanel } = await import('/browser-panel.mjs');
-    const commands = [], state = { tabs: [], current: null };
-    const bridge = { async command(action) { commands.push(action); return action === 'freeze' ? {} : state; }, layout() {}, onState() {} };
-    const browser = createBrowserPanel({ bridge, showMenu() {} });
-    const host = document.createElement('div'), rect = pop.getBoundingClientRect();
-    Object.assign(host.style, { position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`, visibility: 'hidden' });
-    host.append(browser.body); Object.assign(browser.body.style, { width: '100%', height: '100%', visibility: 'visible' });
-    document.body.append(host);
-    try {
-      browser.show(); await wait();
-      check(commands.includes('freeze'), 'Body popover freezes an intersecting native browser view');
-      pop.querySelector('.usage-pop-close').click(); await wait();
-      check(commands.includes('unfreeze'), 'Closing popover restores the native browser view');
-      const mark = commands.length;
-      usage.open(opener); await wait();
-      check(commands.slice(mark).includes('freeze'), 'Reopening popover is observed at its new body location');
-    } finally { browser.hide(); host.remove(); }
-  }
   return { results, viewport: [innerWidth, innerHeight], sheet: !!sheet };
 }

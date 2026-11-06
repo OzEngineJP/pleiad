@@ -185,15 +185,21 @@ function exclusive(work) {
 // セッション個別の設定とは別に、「次に新しく始めるときの既定」を覚える。
 // 一度 auto を選んだ人に毎回選び直させない。
 
+// 前の版にあって無くした設定（linkOpen は内蔵ブラウザーと一緒に無くした。ADR 0294 の 5）。読むときは見せず、次に setPref で書くときに落とす
+const RETIRED_PREFS = ["linkOpen"];
+
 /** 既定値。ユーザーが一度も選んでいなければこれが使われる。 */
 export async function getPrefs() {
-  return { ...(await prefs.read()) };
+  const all = { ...(await prefs.read()) };
+  for (const key of RETIRED_PREFS) delete all[key];
+  return all;
 }
 
 /** 既定を上書きする。人間が明示的に選んだときだけ呼ぶ。 */
 export async function setPref(key, value, backendId) {
   return exclusive(async () => {
     const all = await prefs.read();
+    for (const retired of RETIRED_PREFS) delete all[retired];
     if (value === null || value === undefined) delete all[key];
     else all[key] = value;
     // account はエージェントごとの新しい会話の既定のアカウント（ADR 0222）

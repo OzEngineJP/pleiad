@@ -126,24 +126,24 @@ export default async function (t) {
     && (await registry.invoke(agent('me'), 'sessions.list', {}, { ...deps, modeOf: async () => ({ scope: 'readonly', autonomy: 'ask' }) })).ok);
 
   // ---- 設定
-  const prefs = { linkOpen: 'external', agentSitePermissions: [{ origin: 'https://a.example', mode: 'always', token: 'SECRET-X' }], mode: 'bypass' };
+  const prefs = { memoryLearnAt: '03:30', agentSitePermissions: [{ origin: 'https://a.example', mode: 'always', token: 'SECRET-X' }], mode: 'bypass' };
   const sdeps = { locale: 'ja', prefs: async () => prefs, compactionSettings: () => ({ enabled: false, minTokens: 200000 }) };
   const listed = (await registry.invoke(agent(undefined), 'settings.list', {}, sdeps)).result.settings.map((s) => s.key);
-  t.ok('settings.list は agent から human-only（承認モード）を除く。human には出す', !listed.includes('mode') && listed.includes('linkOpen') && listed.includes('compaction.auto')
+  t.ok('settings.list は agent から human-only（承認モード）を除く。human には出す', !listed.includes('mode') && listed.includes('memoryLearnAt') && listed.includes('compaction.auto')
     && (await registry.invoke(human, 'settings.list', {}, sdeps)).result.settings.some((s) => s.key === 'mode'));
   t.ok('settings.list は prefix で絞る', (await registry.invoke(human, 'settings.list', { prefix: 'compaction.' }, sdeps)).result.settings.map((s) => s.key).join() === 'compaction.auto');
   const hidden = await registry.invoke(agent(undefined), 'settings.get', { key: 'mode' }, sdeps);
   const unknownKey = await registry.invoke(agent(undefined), 'settings.get', { key: 'nothing' }, sdeps);
   t.ok('agent が human-only の設定を引くと、無い設定と同じ SETTING_NOT_FOUND', hidden.code === 'SETTING_NOT_FOUND' && unknownKey.code === 'SETTING_NOT_FOUND' && hidden.error.replace('mode', 'X') === unknownKey.error.replace('nothing', 'X'));
   t.ok('human は承認モードの既定を読める', (await registry.invoke(human, 'settings.get', { key: 'mode' }, sdeps)).result.value === 'bypass');
-  const got1 = await registry.invoke(agent(undefined), 'settings.get', { key: 'linkOpen' }, sdeps);
-  t.ok('settings.get は現在値・既定値・危険度・読むだけか（書ける設定は false）を返す', got1.result.value === 'external' && got1.result.default === 'inapp' && got1.result.risk === 'write' && got1.result.readOnly === false);
+  const got1 = await registry.invoke(agent(undefined), 'settings.get', { key: 'memoryLearnAt' }, sdeps);
+  t.ok('settings.get は現在値・既定値・危険度・読むだけか（書ける設定は false）を返す', got1.result.value === '03:30' && got1.result.default === '02:00' && got1.result.risk === 'write' && got1.result.readOnly === false);
   t.ok('未設定は既定値を返す', (await registry.invoke(agent(undefined), 'settings.get', { key: 'locale' }, sdeps)).result.value === 'auto');
   t.ok('モジュールが持つ値（自動圧縮）はその値を返す', (await registry.invoke(agent(undefined), 'settings.get', { key: 'compaction.auto' }, sdeps)).result.value.minTokens === 200000);
   const masked = await registry.invoke(agent(undefined), 'settings.get', { key: 'agentSitePermissions' }, sdeps);
   t.ok('秘密らしい名前の欄は伏せて返す（最後の網）', !JSON.stringify(masked.result).includes('SECRET-X') && masked.result.value[0].token === '••••');
-  const sch = await registry.invoke(agent(undefined), 'settings.schema', { key: 'linkOpen' }, sdeps);
-  t.ok('settings.schema は JSON Schema と既定値を返す', sch.result.settings[0].schema.enum.join() === 'inapp,external' && sch.result.settings[0].default === 'inapp');
+  const sch = await registry.invoke(agent(undefined), 'settings.schema', { key: 'locale' }, sdeps);
+  t.ok('settings.schema は JSON Schema と既定値を返す', sch.result.settings[0].schema.enum.join() === 'auto,ja,en' && sch.result.settings[0].default === 'auto');
   t.ok('settings.schema は key を省くと全部（agent には human-only を除く）', (await registry.invoke(agent(undefined), 'settings.schema', {}, sdeps)).result.settings.length === settings.length - settings.filter((s) => s.risk === 'human-only').length);
 
   // 広げる向きだけ guarded（settings.set の規則。書く側の検査は ops-settings）

@@ -147,7 +147,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       else if (g.branch && g.head) meta.push(`<span>${esc(t('git.unpushed'))}</span>`);
       title.innerHTML = `<span class="bn">${branchIcon}<span>${esc(branchLabel(g))}</span></span>${g.linked ? `<span class="git-tag">${esc(t('git.worktree'))}</span>` : ''}${meta.length ? `<span class="meta">${meta.join('<span aria-hidden="true">·</span>')}</span>` : ''}`;
     } else title.textContent = t('git.panel');
-    preview.updatePanel(KEY, { title, subtitle: g?.root ?? '' });
+    preview.updatePanel(KEY, { title, subtitle: g?.root ?? '', at: st.at });
     const when = st.at ? t('git.reloadAt', { time: fmt.time(st.at) }) : t('git.reload');
     reloadBtn.title = when; reloadBtn.setAttribute('aria-label', t('git.reload'));
   }

@@ -7,13 +7,16 @@ export const title = '右パネル「Chrome の窓」の見始め: 窓がまだ�
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 
-function rig({ remote = false } = {}) {
+function rig() {
   const commands = [];
   const windows = createWindowTable();
   let panelOpen = false;
   const preview = { openPanel: () => { panelOpen = true; }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } };
   const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return name === 'browserScreencast' ? { state: { suspended: false } } : {}; },
-    preview, browser: remote ? null : { available: () => true }, session: () => 'conv', windows });
+    preview, session: () => 'conv', windows });
+  // 右パネルにはいつもタブ列とアドレスバーがある（web/browser-unify.mjs）ので、窓が無くても開ける
+  const header = new N('div'), slot = new N('div');
+  panel.mountBrowserChrome(header, slot);
   const starts = () => commands.filter(([name]) => name === 'browserScreencast').length;
   const frame = seq => panel.onMessage({ source: 'chrome', sessionId: 'conv', type: 'frame', seq, data: 'AAAA', metadata: { deviceWidth: 390, deviceHeight: 700 } });
   return { panel, windows, commands, starts, frame };
@@ -76,16 +79,7 @@ export default async function (t) {
       t.ok('映像が止まったあとの open は、見直す', r.starts() === 2);
     }
 
-    // ビューアの無い端末（リモート）: 窓が無くなると入口のボタンが消えるので、パネルも閉じる
-    {
-      const r = rig({ remote: true });
-      r.windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
-      r.panel.open();
-      await flush();
-      r.frame(1);
-      r.panel.windowEvent({ sessionId: 'conv', windows: 0 });
-      t.ok('リモートでは、窓が閉じるとパネルも閉じる', r.panel.isOpen() === false);
-    }
+    // 窓が閉じても、タブ列とアドレスバーから開き直せるので、パネルは残る（PC もリモートも）
     {
       const r = rig();
       r.windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
@@ -93,7 +87,7 @@ export default async function (t) {
       await flush();
       r.frame(1);
       r.panel.windowEvent({ sessionId: 'conv', windows: 0 });
-      t.ok('ホスト（ビューアのある画面）では、固定タブなのでパネルは残り、閉じた表示になる', r.panel.isOpen() === true);
+      t.ok('窓が閉じても、パネルは残り、閉じた表示になる', r.panel.isOpen() === true);
     }
 
     // 狭いパネルで「止める」「引き継ぐ」を切らない: 折り返せる（nowrap + overflow:hidden で切っていた）

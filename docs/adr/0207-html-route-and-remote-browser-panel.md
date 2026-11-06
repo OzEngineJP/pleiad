@@ -1,6 +1,6 @@
 # ADR 0207: HTML の開き先を 1 つの規則にし、リモートはホストの内蔵ブラウザーの映像を右パネルの「ブラウザー」で見る
 
-- 状態: 承認（2026-10-14）
+- 状態: 承認（2026-10-14）。置換（0294・0295）: HTML とカードは会話の Chrome のタブで開き、リモートの端末の内蔵ブラウザーのパネルはやめる
 - 日付: 2026-10-14
 - 関連: [inapp-browser.md](../inapp-browser.md)「リモートから見る」、[file-preview.md](../file-preview.md)「HTML の開き先」、[design-system.md](../design-system.md)「リモートの端末の『ブラウザー』」、[visualize.md](../visualize.md)、[ADR 0079](0079-html-opens-in-inapp-browser.md)（開き先の部分を置換）、[ADR 0041](0041-inapp-browser-beside-conversation.md)、[ADR 0148](0148-agent-browser-in-chrome.md)
 

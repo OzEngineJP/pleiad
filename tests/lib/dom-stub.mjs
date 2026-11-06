@@ -84,6 +84,7 @@ export class N {
   }
   contains(n) { for (let x = n; x; x = x.parent) if (x === this) return true; return false; }
   get firstChild() { return this.children[0]; }
+  get childNodes() { return this.children; }
   get lastChild() { return this.children[this.children.length - 1]; }
   get parentNode() { return this.parent; }
   get childElementCount() { return this.children.filter((c) => c instanceof N).length; }

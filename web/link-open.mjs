@@ -1,42 +1,17 @@
 // Shared destination for external links from the app (conversation, work dialog, side panel documents) and preview frames.
-// On the desktop host screen the setting "リンクの開き先" (docs/inapp-browser.md, ADR 0041) sends them to the
-// in-app browser; Ctrl/⌘+click and middle click always go to the default browser.
-// Elsewhere the browser opens a tab; Electron's setWindowOpenHandler routes https to the OS browser.
-import { browserPanelAvailable, openInBrowserPanel } from './browser-panel.mjs';
-import { linkOpenTarget } from './browser-address.mjs';
+// They always go to the default browser: on the desktop host screen through the shell (ply:open-external, which also
+// takes http for localhost), elsewhere as a new tab. Pleiad's own pages open in the conversation's Chrome tab (ADR 0294).
+/** デスクトップ版のホストの画面か（殻が既定のブラウザーへ渡す口を持つ）。リモートの窓は持たない */
+export const desktopHost = () => typeof window !== 'undefined' && typeof window.plyDesktop?.openExternal === 'function' && !window.plyRemote;
 
-let getPrefs = () => ({});
-let chooseRemote = () => false;
-/**
- * client.mjs passes the current prefs (linkOpen) and, for screens other than the host's, the chooser that shows
- * "open in the built-in browser / open in the default browser / copy" (web/link-sheet.mjs). It returns true when it took the link.
- */
-export function configureLinkOpen({ getPrefs: read, chooseRemote: choose } = {}) {
-  if (typeof read === 'function') getPrefs = read;
-  if (typeof choose === 'function') chooseRemote = choose;
-}
-
-/** 設定の画面が開いているか。その間は内蔵ブラウザーのパネルを開けない（web/file-preview.mjs が body.settings で閉じる） */
-const settingsOpen = () => globalThis.document?.body?.classList?.contains('settings') === true;
-
-/**
- * external: 既定のブラウザーへ（Ctrl/⌘+クリック・中クリック・右クリックのメニュー）。inapp: 設定によらず内蔵ブラウザーへ（右クリックのメニュー）。
- * どちらも無いときは設定に従う
- */
-export function openExternalLink(url, { newWindow = true, external = false, inapp = false, direct = false } = {}) {
+/** 既定のブラウザーで開く。http/https だけ（ユーザー名・パスワード付きは断る） */
+export function openExternalLink(url) {
   let parsed;
   try { parsed = new URL(url); } catch { return false; }
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return false;
-  // direct: the chooser already picked this device
-  if (!direct && chooseRemote(parsed.href, () => openExternalLink(parsed.href, { newWindow, external, inapp, direct: true }))) return true;
-  // 設定の画面では内蔵ブラウザーへ回さず既定のブラウザーで開く（external と同じ）
-  if (settingsOpen()) external = true;
-  const available = browserPanelAvailable();
-  if (!external && (inapp ? available : linkOpenTarget({ available, prefs: getPrefs() }) === 'inapp') &&
-      openInBrowserPanel(parsed.href, { newTab: true })) return true;
-  // The desktop window refuses new windows and only passes https on; the browser bridge also takes http (localhost).
-  if (available) {
-    window.plyDesktop.browser.command('openExternal', { url: parsed.href }).catch(() => {});
+  // The desktop window refuses new windows and only passes https on; the shell's open-external also takes http (localhost).
+  if (desktopHost()) {
+    Promise.resolve(window.plyDesktop.openExternal(parsed.href)).catch(() => {});
     return true;
   }
   const link = document.createElement('a');
@@ -51,11 +26,6 @@ export function openExternalLink(url, { newWindow = true, external = false, inap
 /** 近道の説明に出す修飾キーの名前（macOS は ⌘） */
 export const modifierKey = () => (typeof navigator !== 'undefined' && /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl');
 
-/** 押すと今の設定で内蔵ブラウザーに開くか（external は Ctrl/⌘+クリック・中クリック）。内蔵ブラウザーの無い画面・リモートの画面は false */
-export function opensInApp({ external = false } = {}) {
-  return !external && !settingsOpen() && linkOpenTarget({ available: browserPanelAvailable(), prefs: getPrefs() }) === 'inapp';
-}
-
 /** アプリの中の外部リンク（http/https）。文中の URL・名前付きのリンク・取得の見出し。ファイルリンクは含まない（target が無い） */
 export const APP_LINK = 'a.md-link[target="_blank"]';
 export function appLinkOf(node) {
@@ -67,9 +37,7 @@ export function handlePreviewLinkMessage(event) {
   if (event.data?.type !== 'ply-preview-open-link' || typeof event.data.url !== 'string' ||
       typeof event.data.newWindow !== 'boolean') return false;
   for (const frame of document.querySelectorAll('iframe.visualize-frame')) {
-    if (frame.contentWindow === event.source) {
-      return openExternalLink(event.data.url, { newWindow: event.data.newWindow, external: event.data.external === true });
-    }
+    if (frame.contentWindow === event.source) return openExternalLink(event.data.url);
   }
   return false;
 }
@@ -85,10 +53,7 @@ if (typeof window !== 'undefined' && window.addEventListener) {
     const link = conversationLink(event);
     if (!link) return;
     event.preventDefault();
-    const external = event.ctrlKey || event.metaKey;
-    // The work dialog is modal: close it before the side panel takes the page (same as file links)
-    if (opensInApp({ external })) link.closest('dialog[open]')?.close();
-    openExternalLink(link.href, { newWindow: true, external });
+    openExternalLink(link.href);
   });
   // Middle click fires auxclick, not click
   document.addEventListener('auxclick', event => {
@@ -96,6 +61,6 @@ if (typeof window !== 'undefined' && window.addEventListener) {
     const link = conversationLink(event);
     if (!link) return;
     event.preventDefault();
-    openExternalLink(link.href, { newWindow: true, external: true });
+    openExternalLink(link.href);
   });
 }

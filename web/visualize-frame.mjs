@@ -2,7 +2,6 @@
 // allow-same-origin: the surrounding app carries authenticated cookies.
 import { t } from './i18n.mjs';
 import { visualizationDocument } from './visualize-document.mjs';
-import './link-open.mjs';
 import { confirmedPreview, currentPreviewPolicy } from './preview-confirm.mjs';
 export { VISUALIZE_CSP, visualizationDocument } from './visualize-document.mjs';
 
@@ -25,14 +24,77 @@ export function isolateFrame(frame) {
   return frame;
 }
 
+// 隔離の origin（ADR 0295 の 3）。画面の起動がサーバーの hostCapabilities から port と「一度だけ読み込む」の印の頼み方を渡す。
+// 渡されるまでと、束の無い記録は srcdoc で描く（相対パスの画像・fetch は読めない）
+let isolated = null;
+/** @param {{ port: number, mintOnce?: (origins: string[]) => Promise<string|null> } | null} options */
+export function configureIsolatedOrigin(options) {
+  isolated = Number.isInteger(options?.port) && options.port > 0 && options.port <= 65535 ? { port: options.port, mintOnce: options.mintOnce ?? null } : null;
+}
+let visualizationTabs = null;
+export function configureVisualizationTabs(options) { visualizationTabs = options; }
+/** Returns false only when the no-Chrome layout must handle the expansion. */
+export function openVisualizationTab(bundle, element, title = '') {
+  const tabs = visualizationTabs;
+  const sessionId = tabs?.sessionId?.(element);
+  const url = isolatedVisualizationUrl(bundle, { embed:'tab', host:'localhost', title });
+  if (!sessionId || !url || !tabs.connected?.(sessionId) || !tabs.openTab) return false;
+  try { Promise.resolve(tabs.openTab({ sessionId, url, reuse:false })).catch(error => tabs.onError?.(error)); }
+  catch (error) { tabs.onError?.(error); }
+  return true;
+}
+export function visualizationBundleNotice(bundle) {
+  if (!bundle?.htmlOnly) return '';
+  const reasons = {
+    'too-many-files': t('timeline.present.resourcesTooMany'),
+    'too-large': t('timeline.present.resourcesTooLarge'),
+    'file-too-large': t('timeline.present.resourceTooLarge'),
+    legacy: t('timeline.present.resourcesLegacy'),
+  };
+  return Object.hasOwn(reasons, bundle.reason) ? reasons[bundle.reason] : t('timeline.present.resourcesOmitted');
+}
+const BUNDLE_HASH = /^[0-9a-f]{64}$/;
+/**
+ * 束の URL（隔離の origin の /viz/<束のハッシュ>/<入口>）。隔離の origin が無い・束の形が違うときは null。
+ * embed: conversation（会話の枠）| panel（右の欄）| tab（別のタブ。高さの知らせ・橋を入れない）
+ * ホストは画面の名前によらず localhost（リスナーも端末のプロキシも Host が localhost:<port> のときだけ答える。127.0.0.1 は 421）
+ * title: 別のタブの題（タブの列とアドレスバーはページの <title> を読む。可視化の中身はふつう <title> を持たない）
+ */
+export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = 'localhost', title = '' } = {}) {
+  if (!isolated || !BUNDLE_HASH.test(bundle?.hash ?? '') || typeof bundle.entry !== 'string' || !bundle.entry) return null;
+  if (!['conversation', 'panel', 'tab'].includes(embed) || bundle.entry.split('/').some(part => !part || part === '.' || part === '..' || /[\\\x00-\x1f]/.test(part))) return null;
+  const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
+  const params = new URLSearchParams({ embed });
+  if (['light', 'dark'].includes(theme)) params.set('theme', theme);
+  if (once) params.set('once', once);
+  if (embed === 'tab' && title) params.set('title', String(title).slice(0, 200));
+  return `http://${host}:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
+}
+
 // fill: the frame gets its height from the container (the preview panel), so the
 // iframe's own height report is ignored instead of clamping it to 900px.
-export function visualizationFrame(content, title, { fill = false, conversation = false } = {}) {
+// bundle: 記録の行の束（core/viz-bundle.mjs）。隔離の origin があれば、束を URL で読ませる（相対パスの画像・fetch・WASM が効く）
+export function visualizationFrame(content, title, { fill = false, conversation = false, bundle = null } = {}) {
   const frame = document.createElement('iframe');
   frame.className = fill ? 'visualize-frame visualize-fill' : 'visualize-frame';
   isolateFrame(frame);
   frame.title = title || t('timeline.present.kind.visualization');
-  confirmedPreview(frame, policy => visualizationDocument(content, { theme: document.documentElement?.dataset?.theme, policy, conversation }));
+  const srcdoc = policy => visualizationDocument(content, { theme: document.documentElement?.dataset?.theme, policy, conversation });
+  if (!isolatedVisualizationUrl(bundle)) {
+    confirmedPreview(frame, srcdoc);
+    return frame;
+  }
+  // 隔離の origin の応答のヘッダーの sandbox と同じ（ADR 0295 の 3）。allow-same-origin は付けない
+  frame.setAttribute('sandbox', 'allow-scripts allow-downloads allow-forms');
+  confirmedPreview(frame, async (policy, once) => {
+    const theme = document.documentElement?.dataset?.theme;
+    const embed = conversation ? 'conversation' : 'panel';
+    if (!once.length) return { src: isolatedVisualizationUrl(bundle, { embed, theme }) };
+    // 「一度だけ読み込む」はサーバーに印を作らせて URL に載せる。作れなければ、会話の中身を srcdoc で描く（束の中の他のファイルは読めない）
+    const token = await Promise.resolve(isolated?.mintOnce?.(once)).catch(() => null);
+    const src = typeof token === 'string' && token ? isolatedVisualizationUrl(bundle, { embed, theme, once: token }) : null;
+    return src ? { src } : srcdoc(policy);
+  });
   return frame;
 }
 

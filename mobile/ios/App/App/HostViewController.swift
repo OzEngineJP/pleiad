@@ -250,7 +250,10 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
 
     private func originOf(_ u: URL) -> String { "\(u.scheme?.lowercased() ?? ""):\u{2f}/\(u.host ?? ""):\(u.port ?? -1)" }
     private func linkTarget(_ u: URL) -> LinkTarget {
-        LinkPolicy.classify(scheme: u.scheme, host: u.host, port: u.port, path: u.path, hasUserInfo: u.user != nil || u.password != nil,
+        if let isolatedPort = proxy?.isolatedPort, isolatedPort > 0,
+           u.scheme == "http", u.host == "localhost", u.port == isolatedPort, u.user == nil, u.password == nil,
+           DeviceProxy.isIsolatedPagePath(u.path) { return .blocked }
+        return LinkPolicy.classify(scheme: u.scheme, host: u.host, port: u.port, path: u.path, hasUserInfo: u.user != nil || u.password != nil,
                             proxyPort: proxy?.port ?? -1)
     }
 
@@ -271,6 +274,9 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
         }
         if originOf(u) == origin { return decisionHandler(.allow) }
         let mainFrame = action.targetFrame?.isMainFrame ?? true
+        if !mainFrame, let isolatedPort = proxy?.isolatedPort, isolatedPort > 0,
+           u.scheme == "http", u.host == "localhost", u.port == isolatedPort, u.user == nil, u.password == nil,
+           DeviceProxy.isIsolatedPagePath(u.path) { return decisionHandler(.allow) }
         if !mainFrame, ["about", "blob", "data"].contains(u.scheme?.lowercased() ?? "") { return decisionHandler(.allow) }
         if mainFrame { openOutside(u) }
         decisionHandler(.cancel)

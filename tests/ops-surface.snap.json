@@ -753,19 +753,19 @@
       "input": "25c7d85c859a"
     },
     {
-      "id": "browser.chromeOpen",
+      "id": "browser.chromeNavigate",
       "risk": "write",
       "riskOf": false,
       "scope": "global",
       "modeGate": true,
-      "hostScreenOnly": true,
+      "hostScreenOnly": false,
       "surfaces": {
         "ui": true,
         "mcp": false,
         "cli": false
       },
-      "legacyCommand": "chromeOpen",
-      "input": "e312d5bb93ff"
+      "legacyCommand": "chromeNavigate",
+      "input": "7debcb2dfe03"
     },
     {
       "id": "browser.chromePinWindow",
@@ -896,21 +896,6 @@
       },
       "legacyCommand": null,
       "input": "c72e5204555a"
-    },
-    {
-      "id": "browser.openFile",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": false
-      },
-      "legacyCommand": null,
-      "input": "2f0580b7a23c"
     },
     {
       "id": "browser.useProfile",
@@ -5201,15 +5186,6 @@
       "prefKeys": []
     },
     {
-      "key": "linkOpen",
-      "risk": "write",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "linkOpen"
-      ]
-    },
-    {
       "key": "locale",
       "risk": "write",
       "riskOf": false,
@@ -5449,13 +5425,6 @@
       "agent-bound-ask": "guarded=ask",
       "agent-bound-never-full": "guarded=allow",
       "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
-    },
-    "linkOpen": {
-      "human": "write=allow",
-      "agent-unbound": "write=allow",
-      "agent-bound-ask": "write=allow",
-      "agent-bound-never-full": "write=allow",
-      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
     "locale": {
       "human": "write=allow",

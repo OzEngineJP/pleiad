@@ -210,14 +210,20 @@ export const DATA_WRITES = [
   { file: 'core/chrome/window-shots.mjs', sites: 1, targets: [
     { name: 'uploads/chrome-window/<会話の SHA-256>/<元のファイル名>', limit: '分岐した会話へ 1 枚ずつ複製（元の 1 枚は close-window.mjs の MAX_IMAGE=10MiB 以下）。会話の削除で消す', reason: '分岐した会話の閉じた窓の静止画。元の会話を消してもパスが残るよう、複製を持たせる（ADR 0115）' },
   ] },
+  { file: 'core/chrome/input.mjs', sites: 1, targets: [
+    { name: '(置き場の外) os.tmpdir() の pleiad-browser-input-*/<ファイル名>', limit: '1 回の選択で合計 8 MiB まで。失敗したらすぐ、入力を閉じたら消す', reason: 'スマホの映像からファイルの選択に渡すファイル（DOM.setFileInputFiles はパスしか受けない）。データ置き場には書かない' },
+  ] },
+  { file: 'core/browser-unify-listeners.mjs', sites: 1, targets: [
+    { name: 'page-ports.json', limit: '固定（{ pages, isolated }）', reason: 'ファイルのページと隔離のリスナーの port（ADR 0295）。次の起動でも同じ port を試し、開いたページのタブの URL を変えないための控え。port が変わったときだけ書く' },
+  ] },
   { file: 'core/context-bases.mjs', sites: 1, targets: [
     { name: 'context-bases.json', limit: 'CONTEXT_BASES_LIMIT=50 件（作業場所 × モデル）', reason: '委譲の子の固定の部分（最初のリクエストの文脈）の直近の値。自動圧縮の閾値の見積もり（ADR 0166）' },
   ] },
   { file: 'core/context-runtime.mjs', sites: 1, targets: [
     { name: 'context-snapshots/<hash>.txt', limit: '内容アドレス。同じ中身は 1 つ（flag wx）', reason: '会話に固定した指示の本文。書き換えない' },
   ] },
-  { file: 'core/visualize.mjs', sites: 1, targets: [
-    { name: 'visualization-snapshots/<key>.html', limit: '1 つ 1 ファイル。24 時間で掃除する', reason: '可視化の写し。書き換えない' },
+  { file: 'core/viz-bundle.mjs', sites: 2, targets: [
+    { name: 'viz-blobs/<sha256>（一時ファイル <sha256>.<乱数>.tmp から名前を変える）', limit: '内容アドレス。束は 200 ファイル・32 MiB・1 ファイル 8 MiB まで。同じ中身は 1 つ', reason: '可視化の束の中身と目録（ADR 0295 の 3 の 4）。書き換えない。記録に名前が出ないものは起動の片付けで消す' },
   ] },
   { file: 'core/agent-browser.mjs', sites: 3, targets: [
     { name: 'agent-browser/<hash>/agent-browser.json', limit: '固定（{ cdp }）', reason: 'エージェントのブラウザー（Chrome の中継）の接続先。ターンごとに上書き' },
@@ -252,6 +258,9 @@ export const DATA_WRITES = [
   ] },
   { file: 'desktop/main.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData/update-restart-notice', limit: '固定の 1 文字', reason: 'Electron の入れ替えで接続が切れた画面へ、更新が理由だと次の起動で知らせる' },
+  ] },
+  { file: 'desktop/browser-partition-cleanup.cjs', sites: 1, targets: [
+    { name: '(置き場の外) Electron の userData/browser-partition-cleared', limit: '固定の小ささ（{ done, attempts }）', reason: '前の版の内蔵ブラウザーの保存領域を消した印。2 回目の起動から何もしないため（ADR 0294 の 6）' },
   ] },
   { file: 'desktop/update-log.cjs', sites: 2, targets: [
     { name: '(置き場の外) Electron の userData の logs/updater.log と、1 世代前の updater.log.old', limit: 'MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: '更新ライブラリーの記録。1 行ずつ追記し、回すときは名前を替えるだけ', appendOnly: true },

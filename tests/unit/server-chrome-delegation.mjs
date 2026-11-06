@@ -52,7 +52,7 @@ export default async function (t) {
     for (const title of ['窓 A', '窓 B']) await run({ sessionId: parent,
       prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task: `echo:${title}`, title }) });
     tasks = await wait(async () => { const rows = await c.cmd('agentTasks'); const children = rows.filter(row => row.parentSessionId === parent); return children.length === 2 && children.every(row => row.sessionId) ? children : null; });
-    for (const row of tasks) await c.cmd('chromeOpen', { sessionId: row.sessionId, url: `https://site.example/${row.taskId}` });
+    for (const row of tasks) await c.cmd('chromeNavigate', { sessionId: row.sessionId, action: 'new', input: `https://site.example/${row.taskId}` });
     const listed = await c.cmd('invoke', { op: 'browser.chromeWindows', args: { sessionId: parent } });
     assert.deepEqual(listed.map(row => row.taskId).sort(), tasks.map(row => row.taskId).sort());
     assert(listed.every(row => row.windows === 1), JSON.stringify(listed));

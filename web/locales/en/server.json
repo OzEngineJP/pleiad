@@ -1043,8 +1043,7 @@
       "htmlRequired": "Specify an HTML file for the visualization.",
       "notUtf8": "Cannot read the visualization as UTF-8 HTML.",
       "tooMany": "Up to {{max}} visualizations per turn.",
-      "caption": "Visualization",
-      "snapshotNotFound": "The visualization saved in this conversation can't be found."
+      "caption": "Visualization"
     }
   },
   "usage": {
@@ -1132,6 +1131,7 @@
   "files": {
     "remoteOnly": "This action is only available on the PC running the server. Use Save or Copy path instead.",
     "htmlOnly": "Only HTML files can be opened in a browser.",
+    "typeNotAllowed": "This type of file can't be opened in its default app, because opening it could run its contents.",
     "tooMany": "Too many open requests in a row. Wait a moment and try again.",
     "invalidPath": "This path can't be opened.",
     "notFound": "File not found.",
@@ -1372,7 +1372,7 @@
   },
   "remoteBrowser": {
     "remote-only": "Use the built-in browser in the right panel on this PC.",
-    "unavailable": "This PC can't use the built-in browser (desktop app only).",
+    "unavailable": "Chrome isn't connected, so the Chrome window can't be shown.",
     "invalid-session": "Open a conversation first.",
     "not-found": "Couldn't find the saved visualization.",
     "invalid-url": "Can't open this URL.",

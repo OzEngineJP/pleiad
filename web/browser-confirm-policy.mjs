@@ -1,4 +1,6 @@
 // Shared by the renderer and snapshot responses. Only exact HTTPS origins enter CSP.
+// The server builds the isolated origin's header CSP from these too (core/preview-policy.mjs re-exports them;
+// the browser can only load modules under web/, so the functions stay here).
 import { parseProfileKey } from './chrome-profile-model.mjs';
 
 export function externalOrigin(value) {
