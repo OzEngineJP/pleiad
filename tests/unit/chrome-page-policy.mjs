@@ -3,6 +3,8 @@
 //   - 止めた要求（JS の移動・サブリソース）: 同じ表で失敗させる。旗が off（port は main だけ）でも本体の port は止める
 //   - Cookie: pleiad_* を結果とイベントから除き、Pleiad の port・名前・パスの読み書きを断る
 //   - 偽の Chrome の上の中継: 本体の port への Page.navigate・人やページの JS の移動・ほかの会話のページ・旗が off のとき
+//   - 中継の安全の手当て（A9）: エージェントへ送るイベントの Set-Cookie・タブのセッションの Cookie・後から決まった port・確認は主フレームの Document だけ・
+//     window.open の最初の要求（ブラウザーの単位の Fetch）・cross-site の iframe の要求（子のセッションの Fetch）
 import { agent, rig } from '../lib/chrome-relay-rig.mjs';
 import { createPagePolicy, pleiadVerdict, safeUrl } from '../../core/chrome/page-policy.mjs';
 
@@ -141,6 +143,45 @@ export default async function (t) {
     t.ok('WebSocket の手前の見出しからも除く', !JSON.stringify(ws).includes('SECRET'));
     const other = { result: { value: 'pleiad_pages=SECRET' } };
     t.ok('Network・Fetch のほかのイベントはそのまま', policy.event({ method: 'Runtime.consoleAPICalled', params: other }) === other);
+
+    // 応答の Set-Cookie（Chrome は複数の Set-Cookie を改行でつなぐ）
+    const setCookie = policy.event({ method: 'Network.responseReceivedExtraInfo', params: {
+      requestId: '2', statusCode: 200,
+      headers: { 'Set-Cookie': 'pleiad_pages=SECRET; Path=/_pleiad/; HttpOnly\napp=v; Path=/', 'content-type': 'text/html' },
+      headersText: 'HTTP/1.1 200 OK\r\nSet-Cookie: pleiad_pages=SECRET; Path=/_pleiad/\r\nset-cookie: app=v\r\nContent-Type: text/html\r\n\r\n',
+      blockedCookies: [{ blockedReasons: ['SameSiteStrict'], cookieLine: 'pleiad_pages=SECRET; Path=/_pleiad/', cookie: { name: 'pleiad_pages', value: 'SECRET' } }, { blockedReasons: ['SecureOnly'], cookieLine: 'app=v' }],
+      exemptedCookies: [{ exemptionReason: 'x', cookieLine: ' pleiad_main=SECRET', cookie: { name: 'pleiad_main', value: 'SECRET' } }],
+    } });
+    t.ok('responseReceivedExtraInfo の Set-Cookie の見出し・headersText・blockedCookies・exemptedCookies から pleiad_* を除く（ほかの Cookie は残す）',
+      !JSON.stringify(setCookie).includes('SECRET') && setCookie.headers['Set-Cookie'] === 'app=v; Path=/' && setCookie.headers['content-type'] === 'text/html'
+      && setCookie.headersText.includes('set-cookie: app=v') && setCookie.headersText.includes('Content-Type: text/html') && setCookie.blockedCookies.length === 1 && setCookie.exemptedCookies.length === 0
+      && setCookie.statusCode === 200, JSON.stringify(setCookie));
+    const onlyPleiad = policy.event({ method: 'Network.responseReceivedExtraInfo', params: { headers: { 'set-cookie': 'pleiad_pages=SECRET' } } });
+    t.ok('pleiad_* だけの Set-Cookie は見出しごと除く', !('set-cookie' in onlyPleiad.headers));
+    const leaks = [
+      ['Network.responseReceived', { response: { headers: { 'Set-Cookie': 'pleiad_pages=SECRET' }, headersText: 'Set-Cookie: pleiad_pages=SECRET\r\n' } }],
+      ['Network.requestWillBeSent', { request: { headers: {} }, redirectResponse: { headers: { 'set-cookie': 'pleiad_pages=SECRET' }, requestHeaders: { Cookie: 'pleiad_pages=SECRET' } } }],
+      ['Network.webSocketHandshakeResponseReceived', { response: { headers: { 'Set-Cookie': 'pleiad_pages=SECRET' }, requestHeadersText: 'Cookie: pleiad_pages=SECRET\r\n' } }],
+      ['Network.responseReceivedEarlyHints', { headers: { 'Set-Cookie': 'pleiad_pages=SECRET' } }],
+      ['Fetch.requestPaused', { request: { headers: { Cookie: 'pleiad_pages=SECRET' } }, responseHeaders: [{ name: 'Set-Cookie', value: 'pleiad_pages=SECRET' }, { name: 'Content-Type', value: 'text/html' }] }],
+      ['Fetch.authRequired', { request: { headers: { cookie: 'pleiad_pages=SECRET' } } }],
+      ['Audits.issueAdded', { issue: { code: 'CookieIssue', details: { cookieIssueDetails: { rawCookieLine: 'pleiad_pages=SECRET; SameSite=Strict', cookieWarningReasons: [] } } } }],
+    ];
+    const leaked = leaks.filter(([method, params]) => JSON.stringify(policy.event({ method, params })).includes('SECRET')).map(([method]) => method);
+    t.ok(`ほかの値の載る所（${leaks.length} 種）からも除く: 応答・リダイレクト・WebSocket・Early Hints・Fetch の応答の段・認証・Audits`, leaked.length === 0, leaked.join(', '));
+    const paused = policy.event({ method: 'Fetch.requestPaused', params: { responseHeaders: [{ name: 'Set-Cookie', value: 'pleiad_pages=SECRET' }, { name: 'Content-Type', value: 'text/html' }] } });
+    t.ok('Fetch の見出しの列はほかの見出しを残す', JSON.stringify(paused.responseHeaders) === '[{"name":"Content-Type","value":"text/html"}]');
+
+    // 中継に渡す Fetch の patterns
+    t.ok('iframe の子に付ける patterns は Pleiad の 3 つの port（全部の種類）', JSON.stringify(policy.childPatterns()) === JSON.stringify([MAIN, PAGES, ISOLATED].map(port => ({ urlPattern: `*:${port}/*`, requestStage: 'Request' }))));
+    t.ok('ブラウザーの単位の patterns は 3 つの port の Document だけ', JSON.stringify(policy.browserPatterns()) === JSON.stringify([MAIN, PAGES, ISOLATED].map(port => ({ urlPattern: `*:${port}/*`, resourceType: 'Document', requestStage: 'Request' }))));
+    const noPorts = createPagePolicy({ ports: () => null });
+    t.ok('port が決まる前は、子にもブラウザーの単位にも付けない', noPorts.childPatterns().length === 0 && noPorts.browserPatterns().length === 0);
+    const web = createPagePolicy({ ports: () => ({ main: 443, pages: null, isolated: null }) });
+    t.ok('80・443 はブラウザーの単位に付けない（利用者のタブの全部の移動を止めない）', web.browserPatterns().length === 0);
+    t.ok('wantsCookie はファイルのページの URL だけ（Cookie があるとき）', !policy.wantsCookie(`http://localhost:${PAGES}/_pleiad/s/${ME}/file`)
+      && createPagePolicy({ ports: () => ON, cookie: () => ({ name: 'pleiad_pages', value: 'v', path: '/_pleiad/' }) }).wantsCookie(`http://localhost:${PAGES}/_pleiad/s/${ME}/file`)
+      && !createPagePolicy({ ports: () => ON, cookie: () => ({ name: 'pleiad_pages', value: 'v', path: '/_pleiad/' }) }).wantsCookie('https://example.com/'));
   }
 
   // ---- ページの Cookie を入れる口（connected・beforeOpen・tabCookie）
@@ -207,6 +248,98 @@ export default async function (t) {
       const setCalls = r.chrome.calls.slice(before).filter(c => c.method === 'Storage.setCookies' && !c.sessionId);
       t.ok('ファイルのページを開く前に、中継の接続で Storage.setCookies を送る', !opened.error && setCalls.length === 1 && setCalls[0].params.cookies?.[0]?.url === `http://localhost:${PAGES}/_pleiad/`, JSON.stringify(opened));
       t.ok('中継のログに Cookie の値を書かない', !r.logs.some(line => line.includes('SECRET')));
+    } finally {
+      a?.close();
+      await r.stop();
+    }
+  }
+
+  // ---- 中継の安全の手当て（A9）。port は中継の setPagePorts から読む（サーバーと同じ組み立て）
+  {
+    const r = await rig({ hooks: { pagePolicy: createPagePolicy } });
+    const COOKIE = { name: 'pleiad_pages', value: 'SECRET', path: '/_pleiad/', httpOnly: true, sameSite: 'Strict' };
+    let a;
+    try {
+      a = await agent(await r.relay.endpoint(ME));
+      await a.cmd('Target.setDiscoverTargets', { discover: true });
+      const tabId = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const sid = (await a.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result?.sessionId;
+      await sleep(100);
+      const internalOf = id => r.fake.sessions().find(s => s.targetId === id && !s.frame && s.patterns?.some(p => p.urlPattern === '*' && p.resourceType === 'Document'));
+      t.ok('port が決まる前（確認も OFF）は、タブに中継のセッションを付けない', !internalOf(tabId) && r.fake.browserFetch().length === 0);
+
+      // 3. 後から決まった port
+      r.relay.setPagePorts(ON);
+      t.ok('port が決まると、もう開いているタブにも中継のセッションと 3 つの port の Fetch が付く', await until(() => [MAIN, PAGES, ISOLATED].every(port => internalOf(tabId)?.patterns.some(p => p.urlPattern === `*:${port}/*`))), JSON.stringify(r.fake.sessions()));
+      t.ok('ブラウザーの単位の Fetch も 3 つの port の Document で付く', await until(() => r.fake.browserFetch().length === 1 && r.fake.browserFetch()[0].length === 3 && r.fake.browserFetch()[0].every(p => p.resourceType === 'Document')));
+      t.ok('中継のセッションは cross-site の iframe を止めて自動 attach する', await until(() => internalOf(tabId)?.autoAttach?.autoAttach === true && internalOf(tabId).autoAttach.waitForDebuggerOnStart === true && internalOf(tabId).autoAttach.flatten === true));
+      r.relay.setPagePorts({ main: MAIN, pages: PAGES, isolated: ISOLATED + 1 });
+      t.ok('port が替わると、タブの Fetch とブラウザーの単位の Fetch を新しい port で付け直す', await until(() => internalOf(tabId)?.patterns.some(p => p.urlPattern === `*:${ISOLATED + 1}/*`) && !internalOf(tabId).patterns.some(p => p.urlPattern === `*:${ISOLATED}/*`)
+        && r.fake.browserFetch()[0]?.some(p => p.urlPattern === `*:${ISOLATED + 1}/*`)));
+      r.relay.setPagePorts(ON);
+      await until(() => internalOf(tabId)?.patterns.some(p => p.urlPattern === `*:${ISOLATED}/*`) && r.fake.browserFetch()[0]?.some(p => p.urlPattern === `*:${ISOLATED}/*`));
+
+      // 2. タブのセッションでページの Cookie
+      r.relay.setPageCookie(COOKIE);
+      const internalSid = internalOf(tabId)?.id;
+      t.ok('ページの Cookie が決まると、もう開いているタブの中継のセッションで Network.setCookie を入れる（既定の context でないプロフィール）', await until(() => r.chrome.calls.some(c => c.method === 'Network.setCookie' && c.sessionId === internalSid && c.params.name === 'pleiad_pages')));
+      const cookieCalls = () => r.chrome.calls.filter(c => c.method === 'Network.setCookie' && c.sessionId === internalSid).length;
+      const n0 = cookieCalls();
+      const own = await a.cmd('Page.navigate', { url: `http://localhost:${PAGES}/_pleiad/s/${ME}/file?path=a.md` }, sid);
+      const navAt = r.chrome.calls.findIndex(c => c.method === 'Page.navigate' && c.params.url?.includes('/_pleiad/s/'));
+      const cookieAt = r.chrome.calls.findLastIndex((c, i) => i < navAt && c.method === 'Network.setCookie' && c.sessionId === internalSid);
+      t.ok('ファイルのページへ Page.navigate する前に、タブのセッションで Cookie を入れ直す', !own.error && cookieCalls() > n0 && cookieAt >= 0 && cookieAt < navAt, JSON.stringify(own));
+      const fresh = await a.cmd('Target.createTarget', { url: `http://localhost:${PAGES}/_pleiad/s/${ME}/dir` });
+      const freshInternal = await until(() => internalOf(fresh.result?.targetId)) ? internalOf(fresh.result.targetId).id : null;
+      t.ok('ファイルのページを新しいタブで開くときも、タブのセッションで Cookie を入れてから移す', !fresh.error && Boolean(freshInternal)
+        && r.chrome.calls.some(c => c.method === 'Network.setCookie' && c.sessionId === freshInternal) && await until(() => r.fake.targets().find(x => x.targetId === fresh.result.targetId)?.url?.includes('/_pleiad/s/')), JSON.stringify(fresh));
+
+      // 1. エージェントへ送るイベントの Cookie の値
+      a.raw.length = 0;
+      r.fake.emitToTab(tabId, 'Network.responseReceivedExtraInfo', { requestId: 'r1', statusCode: 200, headers: { 'Set-Cookie': 'pleiad_pages=SECRET; Path=/_pleiad/\napp=v', 'X-Mark': 'seen' }, headersText: 'HTTP/1.1 200 OK\r\nSet-Cookie: pleiad_pages=SECRET\r\nX-Mark: seen\r\n', blockedCookies: [{ cookieLine: 'pleiad_pages=SECRET', blockedReasons: [] }] });
+      r.fake.emitToTab(tabId, 'Network.requestWillBeSentExtraInfo', { requestId: 'r1', headers: { Cookie: 'pleiad_pages=SECRET; app=v' }, associatedCookies: [{ blockedReasons: [], cookie: { name: 'pleiad_pages', value: 'SECRET' } }] });
+      t.ok('エージェントへ送る Network のイベントから Set-Cookie・Cookie の pleiad_* を除く（ほかの見出しは届く）', await until(() => a.raw.filter(x => x.includes('"r1"')).length === 2)
+        && !a.raw.some(x => x.includes('SECRET')) && a.raw.some(x => x.includes('X-Mark') && x.includes('app=v')), a.raw.join('\n').slice(0, 400));
+
+      // 4. 確認が ON: 主フレームの Document の移動だけを聞く
+      r.relay.setConfirm(true);
+      await a.cmd('Page.navigate', { url: 'https://site.example/' }, sid);
+      const askedBefore = r.asked.length;
+      const script = await r.fake.subresource(tabId, `http://localhost:${ISOLATED}/viz/k/app.js`, 'Script');
+      t.ok('確認が ON でも、口の patterns で止めたサブリソース（Pleiad の port の script）は確認を聞かずに通す', script === 'continue' && r.asked.length === askedBefore, JSON.stringify({ script, asked: r.asked.length - askedBefore }));
+      t.ok('確認が ON の主フレームの別の origin への移動は今まで通り聞く', !(await a.cmd('Page.navigate', { url: 'https://other.example/' }, sid)).error && r.asked.length === askedBefore + 1);
+      r.relay.setConfirm(false);
+
+      // 6. cross-site の iframe
+      const frameId = await r.fake.crossSiteFrame(tabId, 'https://evil.example/frame');
+      const child = r.fake.sessions().find(s => s.frame && s.targetId === frameId && s.parent === internalOf(tabId)?.id);
+      t.ok('cross-site の iframe に付いた子に Fetch（Pleiad の port だけ）と自動 attach を付けてから走らせる', Boolean(child) && child.ran && child.fetch && child.autoAttach?.autoAttach === true
+        && child.patterns?.length === 3 && child.patterns.every(p => /^\*:\d+\/\*$/.test(p.urlPattern) && !p.resourceType), JSON.stringify(child));
+      t.ok('iframe から本体の port への要求は失敗する', await r.fake.frameFetch(frameId, `http://localhost:${MAIN}/api/sessions`) === 'fail' && !r.fake.served.includes(`http://localhost:${MAIN}/api/sessions`));
+      t.ok('iframe からほかの会話のファイルのページへの要求も失敗する', await r.fake.frameFetch(frameId, `http://localhost:${PAGES}/_pleiad/s/conv-b/file`, 'Document') === 'fail');
+      t.ok('iframe からほかの所（dev サーバー・外のサイト）への要求は止めない', await r.fake.frameFetch(frameId, 'http://localhost:5173/x') === 'continue' && await r.fake.frameFetch(frameId, 'https://cdn.example/a.js', 'Script') === 'continue');
+      const agentChild = a.raw.some(x => x.includes(frameId));
+      t.ok('中継の子のセッションはエージェントに見せない', !agentChild);
+
+      // 5. window.open の最初の要求
+      r.fake.windowOpen(tabId, `http://localhost:${MAIN}/`);
+      r.fake.windowOpen(tabId, `http://localhost:${PAGES}/_pleiad/s/conv-b/file`);
+      r.fake.windowOpen(frameId, `http://127.0.0.1:${MAIN}/api/token`);
+      await sleep(300);
+      t.ok('会話のタブ（と、その cross-site の iframe）から window.open した最初の要求で、本体の port・ほかの会話のページへ届かない', !r.fake.served.some(url => url === `http://localhost:${MAIN}/` || url.includes('/s/conv-b/') || url.includes('/api/token')), JSON.stringify(r.fake.served.slice(-6)));
+      r.fake.windowOpen(tabId, `http://localhost:${PAGES}/_pleiad/s/${ME}/file?path=b.md`);
+      t.ok('この会話のファイルのページへの window.open は届く', await until(() => r.fake.served.includes(`http://localhost:${PAGES}/_pleiad/s/${ME}/file?path=b.md`)));
+      const userTab = r.fake.targets().find(x => x.url === 'https://mail.example/inbox').targetId;
+      r.fake.windowOpen(userTab, `http://localhost:${MAIN}/`);
+      t.ok('利用者のタブからの window.open（会話の外）は止めない', await until(() => r.fake.served.includes(`http://localhost:${MAIN}/`)));
+      const userNav = await r.fake.navigateUser(userTab, `http://localhost:${MAIN}/?user`);
+      t.ok('利用者のタブの本体の port への移動も止めない（ブラウザーの単位の Fetch は会話の外を通す）', !userNav?.errorText && r.fake.served.includes(`http://localhost:${MAIN}/?user`), JSON.stringify(userNav));
+      t.ok('止めた要求を残さない', await until(() => r.fake.pausedCount() === 0));
+      t.ok('中継のログに Cookie の値を書かない', !r.logs.some(line => line.includes('SECRET')));
+      // 中継を閉じる（Chrome との接続は残る。接続の子が更新を越えて持つのと同じ）
+      a.close(); a = null;
+      r.relay.close();
+      t.ok('中継を閉じると、ブラウザーの単位の Fetch を外す（利用者のタブの要求を止めたままにしない）', await until(() => r.fake.browserFetch().length === 0));
     } finally {
       a?.close();
       await r.stop();

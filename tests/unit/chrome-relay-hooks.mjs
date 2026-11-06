@@ -43,7 +43,7 @@ export default async function (t) {
 
   // ---- 差し替えた口が呼ばれる
   {
-    const seen = { allow: [], before: [], after: [], request: [], gate: [], added: [], changed: [], removed: [], forget: [], ports: [], connected: [], beforeOpen: [], cookies: [] };
+    const seen = { allow: [], before: [], after: [], request: [], gate: [], added: [], changed: [], removed: [], forget: [], rebind: [], ports: [], connected: [], beforeOpen: [], cookies: [] };
     let emitInfo = null, blockGate = false, intercepts = false;
     const hooks = {
       pagePolicy: ({ ports, cookie }) => ({
@@ -63,6 +63,7 @@ export default async function (t) {
       tabHolder: () => ({
         gate({ method, paused }) { seen.gate.push(method); return paused ? PAUSED_MESSAGE : blockGate ? 'HELD-BY-HUMAN' : null; },
         forget(gone) { seen.forget.push(gone.targetId); },
+        rebind(from, to) { seen.rebind.push([from, to]); },
       }),
       tabInfo: ({ emit }) => {
         emitInfo = emit;
@@ -137,6 +138,8 @@ export default async function (t) {
 
       await a.cmd('Target.closeTarget', { targetId: tabId });
       t.ok('タブが無くなると tabInfo.removed と tabHolder.forget', await until(() => seen.removed.includes(tabId) && seen.forget.includes(tabId)));
+      r.relay.rebind('one', 'one-native');
+      t.ok('会話の id が決まると tabHolder.rebind（前の id・後の id）', JSON.stringify(seen.rebind) === '[["one","one-native"]]');
     } finally {
       a?.close();
       await r.stop();

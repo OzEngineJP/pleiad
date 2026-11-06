@@ -11,6 +11,8 @@ export const PLEIAD_COOKIE_PREFIX = 'pleiad_';
 const COOKIE_READS = new Set(['Network.getCookies']);
 const COOKIE_WRITES = new Set(['Network.setCookie', 'Network.setCookies', 'Network.deleteCookies']);
 const DEFAULT_PORTS = { 'http:': 80, 'https:': 443, 'ws:': 80, 'wss:': 443 };
+/** Cookie の値が載りうるイベントの domain（event で見る） */
+const EVENT_DOMAINS = ['Network.', 'Fetch.', 'Audits.'];
 
 /** http(s)（認証情報なし）と about:blank だけ */
 export function safeUrl(value) {
@@ -79,42 +81,91 @@ function stripHeader(value) {
   const kept = String(value).split(';').map(part => part.trim()).filter(part => part && !part.startsWith(PLEIAD_COOKIE_PREFIX));
   return kept.length ? kept.join('; ') : null;
 }
+/** Set-Cookie の行が pleiad_* を入れるものか（名前の前の空白は読み飛ばす） */
+const setsPleiad = line => String(line).trimStart().startsWith(PLEIAD_COOKIE_PREFIX);
+/** Set-Cookie の見出しの値（Chrome は複数の行を改行でつなぐ）から pleiad_* の行を除く（全部消えたら null） */
+function stripSetCookie(value) {
+  const kept = String(value).split('\n').filter(line => line.trim() && !setsPleiad(line));
+  return kept.length ? kept.join('\n') : null;
+}
+/** 見出しの写し。要求の Cookie と応答の Set-Cookie から pleiad_* を除く（名前は大文字小文字を問わない） */
 function stripHeaders(headers) {
   if (!headers || typeof headers !== 'object') return headers;
   const out = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() !== 'cookie') { out[key] = value; continue; }
-    const kept = stripHeader(value);
+    const name = key.toLowerCase();
+    if (name !== 'cookie' && name !== 'set-cookie') { out[key] = value; continue; }
+    const kept = name === 'cookie' ? stripHeader(value) : stripSetCookie(value);
     if (kept !== null) out[key] = kept;
   }
   return out;
 }
+/** Fetch の見出しの列（[{ name, value }]）の写し */
+function stripHeaderEntries(list) {
+  return list.flatMap(item => {
+    const name = String(item?.name ?? '').toLowerCase();
+    if (name !== 'cookie' && name !== 'set-cookie') return [item];
+    const kept = name === 'cookie' ? stripHeader(item.value) : stripSetCookie(item.value);
+    return kept === null ? [] : [{ ...item, value: kept }];
+  });
+}
 
-/** 生の見出しの文（"Cookie: a=1; pleiad_pages=…\r\n"）の Cookie の行から pleiad_* を除く */
+/** 生の見出しの文（"Cookie: a=1; pleiad_pages=…\r\n"・"Set-Cookie: pleiad_pages=…\r\n"）の Cookie・Set-Cookie の行から pleiad_* を除く */
 function stripHeadersText(text) {
-  return String(text).split('\r\n').flatMap(line => {
+  return String(text).split(/\r?\n/).flatMap(line => {
     const at = line.indexOf(':');
-    if (at < 0 || line.slice(0, at).trim().toLowerCase() !== 'cookie') return [line];
+    const name = at < 0 ? '' : line.slice(0, at).trim().toLowerCase();
+    if (name === 'set-cookie') return setsPleiad(line.slice(at + 1)) ? [] : [line];
+    if (name !== 'cookie') return [line];
     const kept = stripHeader(line.slice(at + 1));
     return kept === null ? [] : [`${line.slice(0, at)}: ${kept}`];
   }).join('\r\n');
 }
 
+/** 応答（Network.Response・WebSocketResponse）の写し。応答の見出しと、載っていれば要求の見出し */
+function stripResponse(response) {
+  if (!response || typeof response !== 'object') return response;
+  const out = { ...response };
+  if (out.headers) out.headers = stripHeaders(out.headers);
+  if (typeof out.headersText === 'string') out.headersText = stripHeadersText(out.headersText);
+  if (out.requestHeaders) out.requestHeaders = stripHeaders(out.requestHeaders);
+  if (typeof out.requestHeadersText === 'string') out.requestHeadersText = stripHeadersText(out.requestHeadersText);
+  return out;
+}
+
+/** 断った・除外した Cookie の列（blockedCookies・exemptedCookies）から pleiad_* を除く */
+function stripCookieLines(list) {
+  return list.filter(item => {
+    const name = item?.cookie?.name;
+    if (typeof name === 'string' && name.startsWith(PLEIAD_COOKIE_PREFIX)) return false;
+    return !(typeof item?.cookieLine === 'string' && setsPleiad(item.cookieLine));
+  });
+}
+
 /**
- * Network・Fetch のイベントから、要求に付いた Cookie の pleiad_* を除いた写し。
- * Cookie の値が載る所: requestWillBeSentExtraInfo の headers・associatedCookies、responseReceived の response.requestHeaders(Text)、
- * requestWillBeSent・requestPaused・webSocketWillSendHandshakeRequest の request.headers
+ * Network・Fetch・Audits のイベントから、pleiad_* の Cookie の値を除いた写し。値が載る所（Chrome 156）:
+ *   - 要求の Cookie: requestWillBeSent・requestPaused・authRequired・webSocketWillSendHandshakeRequest の request.headers、
+ *     requestWillBeSentExtraInfo の headers・associatedCookies、responseReceived・requestWillBeSent の redirectResponse・
+ *     webSocketHandshakeResponseReceived の response.requestHeaders(Text)
+ *   - 応答の Set-Cookie: responseReceivedExtraInfo の headers・headersText・blockedCookies・exemptedCookies、
+ *     responseReceived・redirectResponse・webSocketHandshakeResponseReceived の response.headers(Text)、responseReceivedEarlyHints の headers、
+ *     requestPaused（応答の段）の responseHeaders
+ *   - Audits.issueAdded の Cookie の問題の rawCookieLine（Chrome が読めなかった Set-Cookie の行）
  */
 function stripEvent(params) {
   const out = { ...params };
   if (out.headers) out.headers = stripHeaders(out.headers);
+  if (typeof out.headersText === 'string') out.headersText = stripHeadersText(out.headersText);
   if (Array.isArray(out.associatedCookies)) out.associatedCookies = stripCookies(out.associatedCookies);
+  if (Array.isArray(out.blockedCookies)) out.blockedCookies = stripCookieLines(out.blockedCookies);
+  if (Array.isArray(out.exemptedCookies)) out.exemptedCookies = stripCookieLines(out.exemptedCookies);
+  if (Array.isArray(out.responseHeaders)) out.responseHeaders = stripHeaderEntries(out.responseHeaders);
   if (out.request && typeof out.request === 'object' && out.request.headers) out.request = { ...out.request, headers: stripHeaders(out.request.headers) };
-  if (out.response && typeof out.response === 'object') {
-    const response = { ...out.response };
-    if (response.requestHeaders) response.requestHeaders = stripHeaders(response.requestHeaders);
-    if (typeof response.requestHeadersText === 'string') response.requestHeadersText = stripHeadersText(response.requestHeadersText);
-    out.response = response;
+  if (out.response) out.response = stripResponse(out.response);
+  if (out.redirectResponse) out.redirectResponse = stripResponse(out.redirectResponse);
+  const cookieIssue = out.issue?.details?.cookieIssueDetails;
+  if (cookieIssue && typeof cookieIssue.rawCookieLine === 'string' && (setsPleiad(cookieIssue.rawCookieLine) || cookieIssue.rawCookieLine.includes(PLEIAD_COOKIE_PREFIX))) {
+    out.issue = { ...out.issue, details: { ...out.issue.details, cookieIssueDetails: { ...cookieIssue, rawCookieLine: '' } } };
   }
   return out;
 }
@@ -136,8 +187,10 @@ const refused = () => new PolicyError('Pleiad\'s own cookies are not available t
  *   - request({ sessionId, targetId, url, resourceType, frameId }): 止めた要求を 'block' で失敗させる。null なら今の扱い（確認）へ
  *   - connected({ send }): 上りにつながった（つなぎ直しのたび）。send(method, params) は中継自身の接続のブラウザーの単位のコマンド。中継は待たない
  *   - beforeOpen({ sessionId, url, send }): タブを開く前（Target.createTarget・人が開く）。中継は終わるのを待ってから開く
- *   - event({ sessionId, method, params }): エージェントへ送るイベントの params（Cookie の見出しから pleiad_* を除く）。中継はまだ呼んでいない（親に口を頼む）
- *   - tabCookie(send): タブのセッションでページの Cookie を入れる（既定の context でないプロフィールのタブ）。中継はまだ呼んでいない（親に口を頼む）
+ *   - event({ sessionId, method, params }): エージェントへ送るイベントの params（Cookie・Set-Cookie の見出しから pleiad_* を除く）
+ *   - tabCookie(send): タブのセッションでページの Cookie を入れる（既定の context でないプロフィールのタブ）。中継はタブに自分のセッションを付けたときと、ファイルのページへ移す前に呼ぶ
+ *   - wantsCookie(url): その URL へ移す前にページの Cookie を入れるか
+ *   - childPatterns(): iframe・popup の子のセッションの Fetch の patterns。browserPatterns(): ブラウザーの単位の Fetch の patterns（popup の最初の要求）
  *   before・after・beforeOpen は Promise を返してもよい。どの口も投げたら中継はログに書いて続ける（allowUrl は通さない、before はエージェントへ断る）
  */
 export function createPagePolicy({ ports = () => null, cookie = () => null, log = () => {} } = {}) {
@@ -182,9 +235,19 @@ export function createPagePolicy({ ports = () => null, cookie = () => null, log 
       return pageCookie.beforeOpen({ url, send }).then(() => undefined);
     },
     event({ method, params }) {
-      if (typeof method !== 'string' || !(method.startsWith('Network.') || method.startsWith('Fetch.')) || !params || typeof params !== 'object') return params;
+      if (typeof method !== 'string' || !EVENT_DOMAINS.some(prefix => method.startsWith(prefix)) || !params || typeof params !== 'object') return params;
       return stripEvent(params);
     },
     tabCookie: send => pageCookie.sessionCookie(send),
+    wantsCookie: url => pageCookie.wanted(url),
+    /** iframe・popup の子のセッションの Fetch の patterns（Pleiad の port だけ。port を知らなければ空） */
+    childPatterns() { return this.fetchPatterns([]); },
+    /**
+     * ブラウザーの単位の Fetch の patterns。window.open の最初の要求は開いた元のタブの Fetch で止まらない（実機）ので、
+     * Pleiad の port への主フレームの移動だけをブラウザーの単位で止める。80・443 は '*' になり利用者の全部の移動を止めるので入れない
+     */
+    browserPatterns() {
+      return known().filter(port => port !== 80 && port !== 443).map(port => ({ urlPattern: `*:${port}/*`, resourceType: 'Document', requestStage: 'Request' }));
+    },
   };
 }
