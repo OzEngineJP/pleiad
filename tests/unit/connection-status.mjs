@@ -195,6 +195,60 @@ export default async function (t) {
     t.ok('「サイドバーを開く」に data-i18n-aria-label を置かない（訳し直すと件数の無い名前に戻っていた）', tag && !/data-i18n-aria-label/.test(tag) && /data-i18n-title="app\.openSidebarTitle"/.test(tag));
     t.ok('起動時に件数なしの名前を書く（applyDom の直後）', /applyDom\(document\);[\s\S]{0,200}paintOpenSidebar\(\$\("openSidebar"\), \{\}, t\);/.test(client));
   }
+  // ---- 閉じたレール（P の印・レール・下端。docs/design-system.md「脇」）
+  {
+    const html = await fs.readFile(new URL('../../web/index.html', import.meta.url), 'utf8');
+    const css = await fs.readFile(new URL('../../web/style.css', import.meta.url), 'utf8');
+    const client = await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+    const side = await fs.readFile(new URL('../../web/side.mjs', import.meta.url), 'utf8');
+    const chSide = await fs.readFile(new URL('../../web/channels/sidebar.mjs', import.meta.url), 'utf8');
+    const chIndex = await fs.readFile(new URL('../../web/channels/index.mjs', import.meta.url), 'utf8');
+    const pm = /<button[^>]*id="sideMark"[^>]*>/.exec(html)?.[0] ?? '';
+    t.ok('P の印は脇の左上のボタン（pm-mk の P と pm-op の開く印の 2 枚）。字のロゴは置かない',
+      pm && /class="side-pm"/.test(pm) && /role="img"/.test(pm) && /aria-label="Pleiad"/.test(pm)
+        && /<svg class="pm-mk"/.test(html) && /class="i pm-op"/.test(html) && !/brand-wordmark|class="wm"/.test(html));
+    t.ok('P の印の名前は件数を入れて書くので data-i18n-aria-label を置かない', !/data-i18n-aria-label/.test(pm));
+    const rail = /<nav[^>]*id="sideRail"[\s\S]*?<\/nav>/.exec(html)?.[0] ?? '';
+    t.ok('レールは 検索・ルーティン・設定 の 3 つ（下は Plus の丸 #sideAvatar）',
+      /id="railSearch"/.test(rail) && /id="railRoutines"/.test(rail) && /id="railSettings"/.test(rail) && /id="sideAvatar"/.test(html));
+    t.ok('閉じている間だけレールが出る（--rail-w:52px・脇は visibility で隠し、子で戻す）',
+      /--rail-w:52px/.test(css) && /:root\.side-closed body:not\(\.settings\)\{--side-col:var\(--rail-w\)\}/.test(css)
+        && /:root\.side-closed body:not\(\.settings\) > #sidebar\{visibility:hidden\}/.test(css)
+        && /#sidebar > :is\(\.side-pm,\.side-rail,\.side-avb\)\{visibility:visible\}/.test(css));
+    t.ok('閉じた P に載せる・焦点で開く印（pm-op）に替わる',
+      /\.side-pm:is\(:hover,:focus-visible,:active\) \.pm-mk\{display:none\}/.test(css)
+        && /\.side-pm:is\(:hover,:focus-visible,:active\) \.pm-op\{display:block\}/.test(css));
+    t.ok('開いている P は押せない（pointer-events を切った名札の絵）', /\.side-pm\{[^}]*pointer-events:none/.test(css));
+    const foot = /<footer[^>]*class="side-foot"[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
+    const sideHeader = /<aside id="sidebar">[\s\S]*?<header>[\s\S]*?<\/header>/.exec(html)?.[0] ?? '';
+    t.ok('下端の一行は、左に Pleiad Plus の丸と名・右端に設定（#settings はヘッダーには無い）',
+      /id="sidePlus"/.test(foot) && /id="sidePlusAv"/.test(foot) && /id="sidePlusName"/.test(foot) && /id="settings"/.test(foot)
+        && !/id="settings"/.test(sideHeader));
+    t.ok('閉じるボタンは通知の右（#notifBell の次が #closeSidebar）。引き出しは ✕（ic-x）',
+      /id="notifBell"[\s\S]{0,600}id="closeSidebar"/.test(html) && /ic-side/.test(html) && /ic-x/.test(html)
+        && /#closeSidebar \.ic-x\{display:none\}/.test(css) && /#closeSidebar \.ic-x\{display:block\}/.test(css));
+    t.ok('開閉・狭い画面・設定の出入りで P・レール・Plus の押し方と名前を塗り直す（paintSideChrome）',
+      /function paintSideChrome\(\)/.test(client) && /paintSideChrome\(\);/.test(client)
+        && /pm\.tabIndex = closed \? 0 : -1|pm\.tabIndex = 0/.test(client)
+        && /paintOpenSidebar\(pm, lastAttention, t\)/.test(client));
+    t.ok('レールの検索は脇を開いて検索欄へ、ルーティンは脇を開いてルーティンの見出しを開いて指す',
+      /\$\("railSearch"\)\.onclick[\s\S]{0,120}side\.focusSearch\(\)/.test(client)
+        && /\$\("railRoutines"\)\.onclick[\s\S]{0,160}focusKey\("c:routines"\)/.test(client));
+    t.ok('ルーティンの見出しを外から開ける（openRoutines → setRoutinesOpen）。木の項目を指す focusKey',
+      /openRoutines\(\)\s*\{\s*setRoutinesOpen\(true\)\s*;?\s*\}/.test(chSide)
+        && /openRoutines\(\)\s*\{\s*each\('openRoutines'\)\s*;?\s*\}/.test(chIndex)
+        && /focusKey\(key\)/.test(side) && /'c:routines'/.test(chSide));
+    t.ok('Plus の丸・名は status で塗り、3 つの状態（頭文字・人の形・出さない）を持つ',
+      /function paintSideFoot\(\)/.test(client) && /plus-off/.test(client) && /signedIn/.test(client)
+        && /#sidebar\.plus-off \.side-me\{visibility:hidden\}/.test(css) && /#sidebar\.plus-off \.side-avb\{display:none\}/.test(css));
+    t.ok('「ログインが要る」は下端とレールの設定の両方に点を付ける（syncAuthDot）',
+      /function syncAuthDot\(\)/.test(client) && /\$\("settingsAuthDot"\)\.hidden = \$\("railAuthDot"\)\.hidden/.test(client)
+        && /id="settingsAuthDot"/.test(html) && /id="railAuthDot"/.test(html));
+    const ja = JSON.parse(await fs.readFile(new URL('../../web/locales/ja/ui.json', import.meta.url), 'utf8'));
+    const en = JSON.parse(await fs.readFile(new URL('../../web/locales/en/ui.json', import.meta.url), 'utf8'));
+    t.ok('レールの検索の title の鍵（app.searchTitle）は日英にある',
+      ja.app.searchTitle && en.app.searchTitle && ja.app.searchTitle.includes('{{key}}'));
+  }
   // ---- サーバーの /auth-check
   {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-host-auth-check-'));

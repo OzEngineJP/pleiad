@@ -2731,6 +2731,7 @@
     "closeSidebarTitle": "Close sidebar ({{key}})",
     "closeSidebar": "Close sidebar",
     "search": "Search conversations",
+    "searchTitle": "Search conversations ({{key}})",
     "filterTitle": "Filter by working directory, status, or agent",
     "filterOutside": "This conversation doesn't match the filters",
     "clearFilter": "Clear filters",

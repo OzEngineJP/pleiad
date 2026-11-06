@@ -2670,6 +2670,7 @@
     "closeSidebarTitle": "サイドバーを閉じる（{{key}}）",
     "closeSidebar": "サイドバーを閉じる",
     "search": "会話を検索",
+    "searchTitle": "会話を検索（{{key}}）",
     "filterTitle": "作業ディレクトリ・状態・エージェントで絞る",
     "filterOutside": "この会話はフィルター対象外です",
     "clearFilter": "絞り込みを解除",

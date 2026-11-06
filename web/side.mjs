@@ -1658,6 +1658,17 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     },
     /** 検索欄へ移る（Ctrl+Shift+F）。語が入っていれば全選択 */
     focusSearch() { searchBox.focus(); searchBox.select(); },
+    /** 指定の項目（data-key）を指して一覧へ入る（閉じたレールの「ルーティン」など）。無ければ先頭の項目。見つかったら true */
+    focusKey(key) {
+      const items = treeItems();
+      const item = items.find((n) => n.dataset.key === key) ?? entryItem(items);
+      if (!item) return false;
+      activeKey = item.dataset.key;
+      keyboard = true;
+      root.focus();
+      paintActive(true);
+      return item.dataset.key === key;
+    },
     /** この状態で新しいセッション（見出しのメニューから。見出しの ＋ と同じ） */
     newIn(status) { onNew?.({ status, cwd: filter.dir ?? cwdNow?.() ?? "", backend: filter.backends.length === 1 ? filter.backends[0] : undefined }); },
     /** グループのアイコン選択を開く（右クリックのメニューから。見出しのアイコンを押したのと同じ） */
