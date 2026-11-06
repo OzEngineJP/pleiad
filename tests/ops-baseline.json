@@ -50,6 +50,7 @@
     "resolvePath": "ui-internal",
     "revealPath": "host-screen-only",
     "openPath": "host-screen-only",
+    "openDefault": "host-screen-only",
     "openVisualization": "host-screen-only",
     "authLogin": "human-only",
     "authLogout": "human-only",

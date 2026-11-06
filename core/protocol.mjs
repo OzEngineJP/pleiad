@@ -188,6 +188,7 @@ export const COMMANDS = new Set([
   "resolvePath",      // { path, sessionId?, at?, base?, lenient? } -> { path（実体）, cwd, kind: file|directory }。lenient は読まずに在り処と cwd だけ（無くてもよい）
   "revealPath",       // { path, sessionId?, at?, base? } -> { path }。エクスプローラーでファイルを選んだ状態で開く（フォルダーはその中）。遠隔の接続は断る
   "openPath",         // 同上。HTML だけ。returnPath:true なら検査済みの実体パスを返し、OS では開かない。遠隔の接続は断る
+  "openDefault",      // 同上。既定のアプリで開く。許した拡張子（core/os-open.mjs の DEFAULT_APP_EXTENSIONS）のファイルだけ。遠隔の接続は断る
   "openVisualization", // { sessionId, id? | at?, returnPath? } -> { path }。写しを書き、returnPath:true なら開かずに返す。遠隔の接続は断る
   "backends",        // 使えるバックエンドの一覧（capabilities / toolHints 付き）
   "authStatus",      // { backend } -> { supported, loggedIn?, account?, detail?, cliPath?（ホームは ~）, cliVersion?, expired?（会話で 401 を受けた。ADR 0212） }

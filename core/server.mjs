@@ -51,7 +51,7 @@ import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
 import { createStaticBundle } from './static-bundle.mjs';
 import { BUNDLE_PATH } from './remote/static-bundle.mjs';
-import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
+import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE, defaultAppAllowed } from './os-open.mjs';
 import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure, PreviewError } from './file-preview.mjs';
 import { windowShotGuard } from './chrome/window-shots.mjs';
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9780,7 +9780,8 @@ wss.on("connection", (ws, req) => {
         case 'chromeCloseWindow': return await viaOp('browser.chromeCloseWindow');
         case 'chromePinWindow': return await viaOp('browser.chromePinWindow');
         case 'chromeCloseTab': return await viaOp('browser.chromeCloseTab');
-        case "resolvePath": case "revealPath": case "openPath": {
+        // openDefault は許した拡張子のファイルを既定のアプリで（ADR 0291 の 3）。拡張子はリンクを解いた実体で見る
+        case "resolvePath": case "revealPath": case "openPath": case "openDefault": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
           try {
@@ -9794,9 +9795,10 @@ wss.on("connection", (ws, req) => {
             const directory = stat.isDirectory();
             if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file' });
             if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, t('files.htmlOnly'));
+            if (msg.command === 'openDefault' && (directory || !defaultAppAllowed(file))) return reply(false, t('files.typeNotAllowed'));
             if (!osActionAllowed()) return reply(false, t('files.tooMany'));
             if (msg.command !== 'openPath' || args.returnPath !== true) {
-              await openOnHost(msg.command === 'openPath' ? 'open' : 'reveal', file, { directory });
+              await openOnHost({ openPath: 'open', openDefault: 'default' }[msg.command] ?? 'reveal', file, { directory });
             }
             return reply(true, { path: file, cwd: resolved.cwd ?? null });
           } catch (error) {
