@@ -85,7 +85,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `thinking.start` | `{ }` | `content_block_start(thinking)` |
 | `thinking.delta` | `{ text?, estimatedTokens? }` | `thinking_delta` |
 | `tool.start` | `{ id, name, input, at, startedAt?, shell? }` `shell: true` は、名前でシェルのツールと見分けられない呼び出し（ACP の自由な題。Devin の `kind: "execute"`）がシェルのコマンドであること。名前で見分けるものは、エージェントの記述（`core/backends/agents.mjs`）の `shellTools` に書く（`core/shell-tools.mjs`）。`at` はサーバーが受けた時刻（epoch ms）。バックエンドは出さず、server の `makeEmit` が 1 か所で付ける（すでに数の `at` があれば上書きしない）。実行中のスナップショット（`stream.events`）にも同じ値が残るので、開き直し・再接続の再生でも、画面は走っているツールの経過と見出しの経過を本当の開始から数える（端末の時計とのずれは `ready` の `now` で補う）。`startedAt` はバックエンドが申告した開始（Codex の `startedAtMs`。推定で埋めない） | `assistant` の `tool_use` |
-| `tool.result` | `{ id, text, isError, truncated, rejection?, images?, computer? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める。`images` は結果の画像（Codex の画像生成と、`ply_computer` のスクリーンショット）。`computer` は `ply_computer` の印の行の中身（[computer-use.md](computer-use.md)「tool.start / tool.result」。3 つのバックエンドが印から作り、名前も `mcp__ply_computer__<ツール>` にそろえる） | `user` の `tool_result` |
+| `tool.result` | `{ id, text, isError, truncated, rejection?, images?, computer? }` `rejection` は実行前に拒否されたコマンドの構造（Codex と Antigravity。§2.5「Codex の実行前の拒否」・§2.8「組織の管理ポリシー」）。server が委譲の結果に集める。`images` は結果の画像（Codex の画像生成と、`ply_computer` のスクリーンショット）。`computer` は `ply_computer` の印の行の中身（[computer-use.md](computer-use.md)「tool.start / tool.result」。3 つのバックエンドが印から作り、名前も `mcp__ply_computer__<ツール>` にそろえる） | `user` の `tool_result` |
 | `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"preparing"\|"retrying"\|"idle", label?, retry? }`（preparing は送信の準備。CLI の起動・履歴の再生・設定の適用など、送る前に数秒かかるもの。retrying は上限・一時的な失敗のあと再試行を待っている。`retry: { attempt, next, message, reason, limit }`、next は次の再試行の epoch ms。人の応答待ちの waiting とは別。ADR 0229） | `system/status`, `session_state_changed` |
 | `turnResult` | `{ outcome: "ok"\|"error"\|"aborted"\|"limited", turns?, costUsd?, error?, resetsAt?, window?, scope? }`（costUsd はこのターンの分。aborted には server が中断の理由 `reason` を足す。バックエンドは出さない。limited は使用量の上限で止まった。resetsAt は解ける時刻の epoch ms で、分からなければ出さない。window は止まった枠の名前（Claude の `five_hour` など）、scope: "account" はその枠がアカウント全体に効く（モデルを替えても通らない）。ADR 0229） | `result` |
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
@@ -749,8 +749,8 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 
 ```jsonc
 {"event":"init","conversation_id":"…","init":{"cwd","tools","permission_mode","model","agent"}}
-{"event":"step_update","step_update":{"conversation_id","step_index","state":"ACTIVE|DONE","step_type","text_delta"}}
-{"event":"result","result":{"conversation_id","status","response","error","duration_seconds","num_turns","usage"}}
+{"event":"step_update","step_update":{"conversation_id","step_index","state":"ACTIVE|DONE|ERROR","step_type","text_delta","tool_info":{"name","parameters","output","error"}}}
+{"event":"result","result":{"conversation_id","status","response","error","duration_seconds","num_turns","usage","denied_actions"}}
 ```
 
 **承認を持てない**: ターン中の対話承認は**公式に非対応**。許可が取れないツールは soft-deny され
@@ -772,6 +772,30 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 書き込み系ツールを一切持たず、`--dangerously-skip-permissions` を付けても（`permission_mode` は
 always-proceed のまま）読むだけになる。そこで定義に `tools` を明示する。
 名前を書ける範囲と、`tools: "*"` を採らない理由は `core/backends/antigravity-context.mjs` の `TOOLS`。
+
+**組織の管理ポリシー**（issue #169）: 組織のアカウント（Gemini Enterprise）でログインした agy では、
+管理者の設定（Gemini Enterprise の設定 › AI デベロッパー ツール › セキュリティ）が
+`--dangerously-skip-permissions` より優先される。実機（agy 1.5 系）で確かめた形:
+
+- 「ターミナル自動実行モード」が「要審査」だと、`init` の `permission_mode` が `request-review` になる（skip のときは `always-proceed`）
+- 確認の要るツールは、確認を出せないまま拒否される。段は `ACTIVE` の後に output 無しの `ERROR` と
+  `tool_info.error`（`type: "TOOL_ERROR"`、文面は `permission check failed … user denied permission …`）で来る
+- ターンの `result` は `status: "SUCCESS"`・`response: ""`・`denied_actions: [{ action, display_name }]`
+- 「MCP サーバー プレビュー」が無効のとき、カスタムエージェントに書いた中継（ply_context・ply_agents など）が起動されない。
+  stream-json には何も出ない（理由がこの設定だというのは推測）
+
+Pleiad は黙って普通の完了にせず、次のように出す（`core/backends/antigravity.mjs`）:
+
+- `ERROR`（または `tool_info.error` のある完了）の段は、失敗したツール（`isError`）として画面と控えに出す。
+  拒否の文面なら、管理者に頼む設定（「ターミナル自動実行モード」「ファイル アクセス ポリシーの外部」）を添え、
+  `rejection`（`kind: "policy"`・`via: "antigravity"`）を付けて委譲の結果に集める
+- 返答が空のまま `denied_actions` のある `SUCCESS` は、失敗のターンにする。理由に拒否された操作と頼む設定を書く
+- その agy の最初の成功した `result` で 1 度だけ、`permission_mode` が skip の値でない（確認なしで渡したのに）とき、
+  または中継に渡したトークンで Pleiad の MCP の口へ 1 度も接続が来ていないとき（`core/mcp-contact.mjs`）、
+  返答の後ろに「Pleiad からの知らせ」を引用の段落で足す。本文に入るので控えと委譲の結果にも残る。
+  保持役から付け直した agy（サーバーの入れ替え）では MCP の接続を見ない（前のサーバーが受けた接続は分からない）
+
+要審査のツールを Pleiad の承認カードへ出す道（ACP など）は issue #170 で調べる。
 
 **一覧と履歴を Pleiad が控える**（`core/backends/antigravity-store.mjs`）:
 gemini では本体が書いた記録を**読んだ**が、agy には読めるものが無い

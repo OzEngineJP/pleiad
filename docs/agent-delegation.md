@@ -420,6 +420,7 @@ Codex の履歴が大きすぎて読めない・30 秒で応答が無い（`core
 
 Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の安全判定で一部のコマンドをプロセスを作る前に拒否する（`blocked by policy` など。削除に限らず `Stop-Process`・`Start-Process` なども）。
 この拒否はアイテムにならず、通知にも `thread/read` にも出ないので、Pleiad は Codex の rollout から拾う（docs/multi-backend.md「Codex の実行前の拒否」、[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)）。
+Antigravity（agy）は、組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が「要審査」など）で確認を出せずに拒否されたツールを `rejection` にする（`via: "antigravity"`・`kind: "policy"`・`command` はコマンドかファイルのパス。docs/multi-backend.md §2.8「組織の管理ポリシー」）。
 委譲の子で拾ったものは、`execute` がターンの `tool.result` の `rejection` から集め、タスクの行の `rejections` に保存する。
 
 ```json
@@ -439,7 +440,7 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 ]
 ```
 
-- `via`: `code_mode`（custom tool の `exec` の中の `tools.exec_command`、またはその続きを待つ `wait`）/ `direct`（`exec_command` を直接）。
+- `via`: `code_mode`（custom tool の `exec` の中の `tools.exec_command`、またはその続きを待つ `wait`）/ `direct`（`exec_command` を直接）/ `antigravity`（agy。`shell`・`callId`・`turnId` は `null`）。
 - `kind`: `policy`（ポリシーの拒否。`reason` は Codex の理由）/ `spawn`（プロセス作成の失敗。同じ形に包まれて来る）/ `other`。`command` は描かれたコマンドを `[shell, -Command, script]` に戻せれば script、戻せなければ描かれた文字列。分からなければ `null`。
 - `approvalRequested`: 同じターンで同じ call id の承認を求められたか。`never` の拒否は承認を経ないので、今は `false` になる。
 - 依頼元は別のエージェント・別の提供元のモデルのこともあるので、`command`・`reason`・`raw` は形で秘密を伏せてから 300 字で切る（`core/redact.mjs`。URL の userinfo とクエリの値、`Bearer …`、`sk-…`、`ghp_…`・`github_pat_…` などの既知のトークン、`password=` などの名前付きの値）。形を知らない秘密は残りうる。子の会話の画面は今までどおり伏せない。

@@ -25,6 +25,8 @@
 //   {"event":"init","conversation_id":…,"init":{"cwd","tools","permission_mode","model","agent"}}
 //   {"event":"step_update","step_update":{"conversation_id","step_index","state","step_type",…}}
 //   {"event":"result","result":{"conversation_id","status","response","duration_seconds","num_turns","usage"}}
+// 組織の管理ポリシーで動く agy（実機 1.5 系）では、init の permission_mode が request-review、拒否されたツールの
+// step_update が state "ERROR" と tool_info.error、result に denied_actions が付く（antigravity.mjs の adminNotice）
 //
 // 実行ファイルは AGENT_HOST_AGY_BIN。既定は `agy`。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";

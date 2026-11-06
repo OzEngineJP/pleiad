@@ -89,6 +89,7 @@ import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstru
 import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
+import { noteMcpContact } from './mcp-contact.mjs';
 import { createContextSession } from './context-session.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
 import { createApiKeys, ApiKeyError, USES as API_KEY_USES } from './api-keys.mjs';
@@ -1090,7 +1091,7 @@ const agentConnections = new Map();
 const taskExecutions = new Map();
 // ターンから ctx を引く（札を作るとき。無停止の更新 2b-4）
 const turnContexts = new WeakMap();
-// 実行前に拒否されたコマンド（Codex。core/backends/codex-rejections.mjs）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
+// 実行前に拒否されたコマンド（Codex の core/backends/codex-rejections.mjs・Antigravity の組織の管理ポリシー）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
 // 依頼元は別のエージェント・別の提供元のモデルのこともあるので、command・reason・raw は形で秘密を伏せて切る
 const REJECTION_TEXT_MAX = 300;
 const pick = (v, max = 100) => (typeof v === 'string' && v ? v.slice(0, max) : null);
@@ -2430,11 +2431,14 @@ async function startPageListeners() {
   }
 }
 
+const AGY_RELAY_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH];
 const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, SHELL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   // 審査モード（ADR 0172）: エージェントの MCP・CLI の口・webhook は閉じる（fake の台本は ply_* のツールを使えないが、口そのものも無い）
   if (isReviewMode() && REVIEW_CLOSED_PATHS.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) { res.writeHead(404); return res.end(); }
+  // agy が中継を起こしたか（組織の管理ポリシーで MCP が止められたことに気づく。core/mcp-contact.mjs）
+  if (AGY_RELAY_PATHS.includes(url.pathname)) noteMcpContact(req.headers.authorization);
   if (url.pathname === AGENTS_MCP_PATH) return agentBridge.handle(req, res);
   if (url.pathname === CONTEXT_MCP_PATH) return contextBridge.handle(req, res);
   if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return computerBridge.handle(req, res);
@@ -3626,7 +3630,7 @@ function makeEmit(turn) {
       }
     }
     if (turn.retryEpisode && ['text.delta', 'thinking.delta', 'tool.start'].includes(event?.type)) { turn.retry = null; turn.retryEpisode = null; }
-    // 委譲の子で、バックエンドが実行前に拒否されたコマンドを知らせた（Codex。tool.result の rejection）。依頼元へ返す結果に集める
+    // 委譲の子で、バックエンドが実行前に拒否されたコマンドを知らせた（Codex・Antigravity。tool.result の rejection）。依頼元へ返す結果に集める
     if (event?.type === "tool.result" && event.rejection && typeof event.rejection === "object") {
       taskExecutions.get(turn.info.sessionId)?.rejections.push(event.rejection);
     }
