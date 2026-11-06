@@ -35,6 +35,7 @@ export default async function (t) {
     t.ok('つながった・開く前の口の既定は何もしない', policy.connected({ send: () => { throw new Error('x'); } }) === undefined && policy.beforeOpen({ send: () => { throw new Error('x'); } }) === undefined);
     const holder = createTabHolder();
     t.ok('門の既定は一時停止の間だけ断る', holder.gate({ paused: { at: 1 } }) === PAUSED_MESSAGE && holder.gate({ paused: null }) === null);
+    t.ok('門の attach の既定は何もしない（hand_to_user の台帳を受けるだけ）', holder.attach({ handoffs: { current: () => { throw new Error('x'); } } }) === undefined);
     const info = createTabInfo(), bridge = createPageBridge();
     t.ok('タブの情報・頼みの既定は何もしない', ['added', 'changed', 'removed'].every(k => typeof info[k] === 'function' && typeof bridge[k] === 'function' && info[k]({}) === undefined && bridge[k]({}) === undefined));
     t.ok('出来事の名前は 4 つ', JSON.stringify(TAB_EVENTS) === JSON.stringify(['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport']));

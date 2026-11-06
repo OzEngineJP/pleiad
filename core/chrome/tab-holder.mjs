@@ -12,11 +12,13 @@ export const PAUSED_MESSAGE = 'The user is operating the Chrome window now (paus
  * @returns 中継が呼ぶ口
  *   - gate({ sessionId, targetId, method, paused }): 断る文（エージェントへ返る）か null。paused は会話の一時停止（entry.paused）
  *   - forget({ sessionId, targetId }): タブが無くなった
+ *   - attach({ handoffs }): サーバーが起動のときに 1 回呼ぶ。handoffs は core/chrome/handoff.mjs の台帳（current(sessionId) で hand_to_user の頼みの最中か）。既定は何もしない
  */
 export function createTabHolder({ emit = () => {}, now = Date.now, log = () => {} } = {}) {
   void emit; void now; void log;
   return {
     gate: ({ paused }) => (paused ? PAUSED_MESSAGE : null),
     forget: () => {},
+    attach: () => {},
   };
 }

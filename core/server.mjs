@@ -353,6 +353,8 @@ const chromeWindowCloser = chromeRelay ? createChromeWindowCloser({ relay: chrom
   dataDir: store.dataDir, record: recordChromeWindowClose, log: line => console.log(`  ${line}`) }) : null;
 // 人への依頼のカードは、この引き継ぐ・戻すの変化で「あなたが操作中」になり、戻したときに決着する
 chromeHandoffs?.useControl(chromeControl);
+// 操作の前の門（core/chrome/tab-holder.mjs）が、hand_to_user の頼みの最中かを読めるように渡す（ADR 0293 の 1。既定の門は使わない）
+chromeRelay?.unify.tabHolder.attach?.({ handoffs: chromeHandoffs });
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay, { dataDir: store.dataDir }) : null;
 // その会話の agent-browser の置き場を今は触れないか: ターンが走っている（ID 確定前の id も）・中継でターンの印が付いている・人が引き継いでいる（ADR 0180）
