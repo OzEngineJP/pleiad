@@ -92,7 +92,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
 
   function entryOf(sessionId) { return sessions.get(sessionId) ?? null; }
   const deliver = (client, message) => { try { client.send(message); } catch {} };
-  const syncViewers = (sessionId, entry) => bridge.setViewers?.(sessionId, [...entry.clients.values()].map(viewer => ({ device: viewer.device, box: viewer.box })));
+  const syncViewers = (sessionId, entry) => bridge.setViewers?.(sessionId, [...entry.clients].map(([client, viewer]) => ({ client, device: viewer.device, box: viewer.box })));
   bridge.onInteraction?.((sessionId, message, owner = null) => {
     const entry = entryOf(sessionId);
     if (!entry) return;

@@ -524,7 +524,9 @@ export function createChromeScreencast({ host, relay = null, log = () => {} } = 
     if (!unified || !watch.inputView || !watch.tabId) return;
     const list = viewers.get(sessionId) ?? [];
     const holder = relay.unify.tabHolder.holder(sessionId, watch.tabId);
-    const viewport = decideViewport({ operating: holder?.holder === 'human' && holder.by === 'device' ? holder.viewport : null,
+    // 操作中のスマホの箱が変わった（キーボードを閉じた）ら今の箱で。触ったときの箱のままだと、次に触るまで縮んだまま
+    const typing = list.find(viewer => viewer.device === 'phone' && viewer.client && viewer.client === watch.inputClient)?.box;
+    const viewport = decideViewport({ operating: holder?.holder === 'human' && holder.by === 'device' ? typing ?? holder.viewport : null,
       panel: list.find(viewer => viewer.device !== 'phone')?.box,
       watching: list.find(viewer => viewer.device === 'phone')?.box });
     const { source, ...metrics } = viewport;

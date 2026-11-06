@@ -34,6 +34,10 @@ export default async function (t) {
     await hub.watch(phone, 's', { device: 'phone', width: 360, height: 640, scale: 2 });
     await cmd(phone, { type: 'text', text: '日本語' }, 'T', false);
     t.ok('スマホで触った後はスマホの幅を優先', metrics().width === 360 && metrics().mobile && metrics().deviceScaleFactor === 2);
+    await hub.watch(phone, 's', { device: 'phone', width: 360, height: 300, scale: 2 });
+    await cmd(phone, { type: 'tap', x: 10, y: 20 }, 'T', false);
+    await hub.watch(phone, 's', { device: 'phone', width: 360, height: 640, scale: 2 });
+    t.ok('キーボードを開いて触った後に閉じたら、触らなくてもスマホの今の高さへ戻す', metrics().width === 360 && metrics().height === 640);
     events.at(-1)('Page.javascriptDialogOpening', { type: 'confirm', message: '続ける？' });
     t.ok('シートは最後に入力した接続だけへ送る', phoneMessages.some(message => message.interaction?.type === 'dialog') && !messages.some(message => message.interaction?.type === 'dialog'));
     blockTap = true;
