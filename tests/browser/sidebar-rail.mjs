@@ -6,7 +6,7 @@
 //   - Ctrl+B で閉じ・開き。レールの検索は開いて検索欄に焦点、ルーティンは開いてルーティンの見出しを開いて木の項目を指す
 //   - 下端は左に Plus の丸と名・右端に設定。Plus が使えなければ左を出さず設定だけ
 //   狭い画面（360）:
-//   - ハンバーガー（#openSidebar）は左端で hover の地が欠けない。開くと引き出しの右上に ✕、押すと閉じる
+//   - ハンバーガー（#openSidebar）は左端から 8px 離れ、hover の丸が端に触れない。開くと引き出しの右上に ✕、押すと閉じる
 // 実行: node tests/browser/sidebar-rail.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる）
 // 本物のサーバー（fake のバックエンド・一時のデータ置き場・別ポート）だけと話す
 import fs from 'node:fs';
@@ -173,7 +173,7 @@ try {
       const r = b.getBoundingClientRect();
       return { left: r.left, w: r.width, display: getComputedStyle(b).display };
     });
-    check(ham.display !== 'none' && ham.left >= 0 && ham.w >= 40, 'ハンバーガーは 44px で左端に全体が見える', ham);
+    check(ham.display !== 'none' && ham.left >= 8 && ham.w >= 40, 'ハンバーガーは 44px で左端から 8px 離れる', ham);
     // 開くと引き出しの右上に ✕（ic-side は隠す）
     await page.locator('#openSidebar').click();
     await page.waitForFunction(() => document.documentElement.classList.contains('side-open'));
@@ -186,7 +186,7 @@ try {
       return { displayX: getComputedStyle(c.querySelector('.ic-x')).display, displaySide: getComputedStyle(c.querySelector('.ic-side')).display,
         edge: side.right - r.right, w: r.width };
     });
-    check(x.displayX === 'block' && x.displaySide === 'none' && x.edge < 10 && x.w >= 40, '引き出しの右上の端に ✕（44px・右端から 4px）', x);
+    check(x.displayX === 'block' && x.displaySide === 'none' && x.edge >= 8 && x.edge < 12 && x.w >= 40, '引き出しの右上の端に ✕（44px・右端から 8px）', x);
     // 引き出しの見出しに P の印と下端の一行
     check(await page.evaluate(() => {
       const pm = document.getElementById('sideMark');
