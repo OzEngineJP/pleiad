@@ -1,5 +1,5 @@
 // タブごとの持ち手（core/chrome/tab-holder.mjs、ADR 0293 の 1）と、中継の門への効き方（偽の Chrome）。
-//   - 人がタブを触るとそのタブは人の操作: エージェントの操作（OPERATES）は HUMAN_MESSAGE で断る。読むコマンド・ほかのタブは通る
+//   - 人がタブを触るとそのタブは人の操作: 読むだけのコマンド（HUMAN_TAB_READS）のほかは HUMAN_MESSAGE で断る。ほかのタブは通る
 //   - 最後に触ってから 60 秒で AI に戻す。hand_to_user の間と「PC で操作する」（pinned）の間は戻さない
 //   - 戻した直後の最初の操作のコマンドは 1 回だけ RESNAPSHOT_MESSAGE で断る（snapshot の撮り直し）
 //   - 「任せる」（releaseAll）・「止める」（entry.paused）との重なり
@@ -101,13 +101,37 @@ export default async function (t) {
       const held = await a.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1, y: 1, button: 'left', clickCount: 1 }, s1);
       t.ok('人の操作のタブへの Input.dispatchMouseEvent は上りへ送らず「人がこのタブを操作しています」が返る', held.error?.message === HUMAN_MESSAGE && !r.chrome.calls.some(c => c.method === 'Input.dispatchMouseEvent'), JSON.stringify(held));
       t.ok('読むコマンドは通る（snapshot など）', !(await a.cmd('Accessibility.getFullAXTree', {}, s1)).error);
+      const reads = await Promise.all(['Page.captureScreenshot', 'DOM.getDocument', 'Page.enable', 'Runtime.enable', 'Fetch.disable', 'Runtime.runIfWaitingForDebugger'].map(m => a.cmd(m, {}, s1)));
+      t.ok('通してよい一覧（screenshot・DOM を読む・購読・自動 attach の続き）は通る', reads.every(m => !m.error), JSON.stringify(reads.filter(m => m.error)));
+      // 一覧の外は全部断る（2026-11-06 に本物の Chrome で、断る一覧の門をすり抜けてページにコードを動かさせた道を含む）
+      const writes = [
+        ['Runtime.evaluate', { expression: '1' }], ['Runtime.callFunctionOn', { functionDeclaration: 'function(){}' }],
+        ['Runtime.compileScript', { expression: '1', sourceURL: '', persistScript: true }], ['Runtime.runScript', { scriptId: '1' }],
+        ['DOM.setOuterHTML', { nodeId: 1, outerHTML: '<img src=x onerror=1>' }], ['DOM.setAttributeValue', { nodeId: 1, name: 'onclick', value: '1' }],
+        ['Page.addScriptToEvaluateOnNewDocument', { source: '1', runImmediately: true }], ['Page.navigate', { url: 'about:blank' }],
+        ['Fetch.enable', {}], ['Debugger.enable', {}], ['Emulation.setDeviceMetricsOverride', { width: 1, height: 1, deviceScaleFactor: 1, mobile: false }],
+        ['Network.getCookies', {}], ['Runtime.addBinding', { name: 'other' }],
+      ];
+      const before = r.chrome.calls.length;
+      const refused = await Promise.all(writes.map(([m, p]) => a.cmd(m, p, s1)));
+      t.ok('一覧の外（evaluate・callFunctionOn・compileScript・runScript・setOuterHTML・addScriptToEvaluateOnNewDocument など）は上りへ送らず断る',
+        refused.every(m => m.error?.message === HUMAN_MESSAGE) && !r.chrome.calls.slice(before).some(c => writes.some(([m]) => m === c.method)),
+        JSON.stringify(refused.map((m, i) => [writes[i][0], m.error?.message?.slice(0, 20) ?? 'passed']).filter(([, m]) => m !== HUMAN_MESSAGE.slice(0, 20))));
+      t.ok('人の操作のタブは閉じさせない', (await a.cmd('Target.closeTarget', { targetId: t1 })).error?.message === HUMAN_MESSAGE);
       t.ok('ほかのタブへの操作は通る', !(await a.cmd('Runtime.evaluate', { expression: '1' }, s2)).error);
+      const binding = await Promise.all([a.cmd('Runtime.addBinding', { name: 'plyPage' }, s2), a.cmd('Runtime.addBinding', { name: 'plyInput', executionContextName: 'ply-input' }, s2), a.cmd('Runtime.removeBinding', { name: 'plyPage' }, s2)]);
+      t.ok('中継の口の binding（plyPage・plyInput）は、AI の操作のタブでもエージェントに足させない・外させない', binding.every(m => /binding denied/.test(m.error?.message ?? '')), JSON.stringify(binding));
+      t.ok('ほかの名前の binding は AI の操作のタブで足せる', !(await a.cmd('Runtime.addBinding', { name: 'mine' }, s2)).error);
       t.ok('tab:holder の出来事が届く', events.some(e => e[0] === 'tab:holder' && e[1].targetId === t1 && e[1].holder === 'human'));
 
       r.relay.unify.tabHolder.releaseAll('one');
       const first = await a.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: 2, y: 2, button: 'left', clickCount: 1 }, s1);
       t.ok('戻した直後の最初の操作は撮り直しを求めて 1 回だけ断る', first.error?.message === RESNAPSHOT_MESSAGE);
       t.ok('次からは通る', !(await a.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: 2, y: 2, button: 'left', clickCount: 1 }, s1)).error);
+      r.relay.unify.tabHolder.touch({ sessionId: 'one', targetId: t1 });
+      r.relay.unify.tabHolder.release('one', t1);
+      t.ok('戻した直後でも、撮り直しの読むコマンドは断らない（1 回の断りは操作のときだけ）', !(await a.cmd('Accessibility.getFullAXTree', {}, s1)).error
+        && (await a.cmd('Runtime.evaluate', { expression: '1' }, s1)).error?.message === RESNAPSHOT_MESSAGE);
     } finally {
       a?.close();
       await r.stop();

@@ -5,7 +5,7 @@
 import { agent, rig } from '../lib/chrome-relay-rig.mjs';
 import { safeUrl, PAUSED_MESSAGE, TAB_EVENTS } from '../../core/chrome/relay.mjs';
 import { safeUrl as policySafeUrl, createPagePolicy } from '../../core/chrome/page-policy.mjs';
-import { PAUSED_MESSAGE as holderPaused, createTabHolder } from '../../core/chrome/tab-holder.mjs';
+import { PAUSED_MESSAGE as holderPaused, createTabHolder, readsOnly } from '../../core/chrome/tab-holder.mjs';
 import { createTabInfo } from '../../core/chrome/tab-info.mjs';
 import { createPageBridge } from '../../core/chrome/page-bridge.mjs';
 
@@ -43,7 +43,7 @@ export default async function (t) {
 
   // ---- 差し替えた口が呼ばれる
   {
-    const seen = { allow: [], before: [], after: [], request: [], gate: [], added: [], changed: [], removed: [], forget: [], rebind: [], ports: [], connected: [], beforeOpen: [], cookies: [] };
+    const seen = { allow: [], before: [], after: [], request: [], gate: [], operates: [], added: [], changed: [], removed: [], forget: [], rebind: [], ports: [], connected: [], beforeOpen: [], cookies: [] };
     let emitInfo = null, blockGate = false, intercepts = false;
     const hooks = {
       pagePolicy: ({ ports, cookie }) => ({
@@ -61,7 +61,7 @@ export default async function (t) {
         request({ url }) { seen.request.push(url); return url.includes('blocked.example') ? 'block' : null; },
       }),
       tabHolder: () => ({
-        gate({ method, paused }) { seen.gate.push(method); return paused ? PAUSED_MESSAGE : blockGate ? 'HELD-BY-HUMAN' : null; },
+        gate({ method, paused, operates }) { seen.gate.push(method); if (operates) seen.operates.push(method); return paused ? PAUSED_MESSAGE : blockGate && !readsOnly(method) ? 'HELD-BY-HUMAN' : null; },
         forget(gone) { seen.forget.push(gone.targetId); },
         rebind(from, to) { seen.rebind.push([from, to]); },
       }),
@@ -106,11 +106,11 @@ export default async function (t) {
       const swapped = await a.cmd('Runtime.evaluate', { expression: 'swap-me' }, sid);
       t.ok('前のふるいで変えた引数が上りへ届き、後のふるいで変えた結果が返る', swapped.result?.result?.type === 'string' && swapped.result?.filtered === true
         && r.chrome.calls.some(c => c.method === 'Runtime.evaluate' && c.params.expression === 'document.title'), JSON.stringify(swapped));
-      t.ok('操作（OPERATES）は門を通る。読むだけのコマンドは門を通らない', seen.gate.includes('Runtime.evaluate') && !(await a.cmd('Accessibility.getFullAXTree', {}, sid)).error && !seen.gate.includes('Accessibility.getFullAXTree'));
+      t.ok('コマンドは全部門を通り、操作（OPERATES）には operates の印が付く', seen.operates.includes('Runtime.evaluate') && !(await a.cmd('Accessibility.getFullAXTree', {}, sid)).error && seen.gate.includes('Accessibility.getFullAXTree') && !seen.operates.includes('Accessibility.getFullAXTree'));
       blockGate = true;
       const held = await a.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1, y: 1, button: 'left', clickCount: 1 }, sid);
       t.ok('門が断った操作は上りへ送らず、門の文が返る', held.error?.message === 'HELD-BY-HUMAN' && !r.chrome.calls.some(c => c.method === 'Input.dispatchMouseEvent'));
-      t.ok('門が断っても読むコマンドは通る', !(await a.cmd('Accessibility.getFullAXTree', {}, sid)).error);
+      t.ok('門が読むだけのコマンドを通せば通る', !(await a.cmd('Accessibility.getFullAXTree', {}, sid)).error);
       blockGate = false;
 
       // 確認が OFF でも、口が要求を止めたいなら中継のセッションを付けて聞く

@@ -1,7 +1,7 @@
 // 中継（core/chrome/relay.mjs）の、エージェントの操作（OPERATES）の前の門（ADR 0293 の 1）。
 // タブごとに操作の持ち手（ai / human）・人の操作の始まり・どの画面から触ったか・最後に触った時刻を持つ。
-//   - 人がタブに触るとそのタブは人の操作になり、そのタブへのエージェントの操作のコマンドは HUMAN_MESSAGE で断る
-//     （読むコマンド・ほかのタブの操作は通る。同じウィンドウの別のタブでエージェントは続けられる）
+//   - 人がタブに触るとそのタブは人の操作になり、そのタブへのエージェントのコマンドは、読むだけのもの（HUMAN_TAB_READS）のほかは HUMAN_MESSAGE で断る
+//     （ほかのタブの操作は通る。同じウィンドウの別のタブでエージェントは続けられる）
 //   - AI に戻すのは、最後に触ってから 60 秒・「任せる」（releaseAll）・「PC で操作する」の窓を画面の外へ戻したとき。
 //     AI が hand_to_user で人に頼んでいる間（handoffs.current）と、PC の窓を出している間（pinned）は時間では戻さない
 //   - 戻した直後のそのタブへの最初の操作のコマンドは 1 回だけ RESNAPSHOT_MESSAGE で断る
@@ -17,6 +17,38 @@ export const HUMAN_MESSAGE = 'A person is operating this tab. Do not touch it un
 // i18n-ignore: 同上。人の操作から戻した直後の最初の操作を 1 回だけ断る文
 export const RESNAPSHOT_MESSAGE = 'A person has touched this tab. Take a fresh snapshot before operating it. / 人が触った後です。snapshot を撮り直してから操作してください';
 
+/**
+ * 人の操作のタブでもエージェントに通すコマンド（通してよいものの一覧。ADR 0293 の 1）。ここに無いものは全部 HUMAN_MESSAGE で断る。
+ * 断るものの一覧にしないのは、ページにコードを動かさせる道が多いため（Runtime.compileScript・runScript、DOM.setOuterHTML の
+ * `<img onerror>`、Page.addScriptToEvaluateOnNewDocument の runImmediately。2026-11-06 に本物の Chrome で通ることを確かめた）。
+ * 選び方: agent-browser の snapshot・screenshot・タブの URL と題の読み取り・つなぎ直しを壊さない、読むだけのもの。
+ *   - ページの見た目・DOM・JS の状態・要求を変えない。ページにコードを動かさせない（Runtime.evaluate・callFunctionOn は読むためでも断る）
+ *   - 出来事の購読（enable）は、要求を止める Fetch・スクリプトを止める Debugger・見た目を変える Overlay・Emulation を除く。
+ *     Network.enable は agent-browser が attach のときに送るので通す（Cookie の値は中継の pagePolicy.event が除く）
+ *   - 購読を外す（〜.disable）・持っている参照を捨てる（releaseObject）は、ページに何もしないので通す
+ *   - Target.setAutoAttach・Runtime.runIfWaitingForDebugger は、iframe・worker の自動 attach の続き（止めたまま付いた子を走らせないと、人のページが固まる）
+ *   - Page.bringToFront は中継が Chrome へ送らずに成功で返す（窓は前面を取らない）
+ * Cookie・ストレージ・応答の本文の読み取りは、snapshot と screenshot に要らないので入れない。
+ */
+export const HUMAN_TAB_READS = Object.freeze(new Set([
+  // 出来事の購読
+  'Page.enable', 'Runtime.enable', 'DOM.enable', 'CSS.enable', 'Accessibility.enable', 'Network.enable', 'Log.enable', 'Inspector.enable',
+  // 自動 attach の続き
+  'Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger',
+  // 画面と配置
+  'Page.captureScreenshot', 'Page.getLayoutMetrics', 'Page.getFrameTree', 'Page.getNavigationHistory', 'Page.bringToFront',
+  // アクセシビリティの木（snapshot）
+  'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree', 'Accessibility.getRootAXNode', 'Accessibility.getChildAXNodes', 'Accessibility.queryAXTree',
+  // DOM を読む
+  'DOM.getDocument', 'DOM.describeNode', 'DOM.querySelector', 'DOM.querySelectorAll', 'DOM.getBoxModel', 'DOM.getContentQuads',
+  'DOM.getAttributes', 'DOM.getOuterHTML', 'DOM.requestChildNodes', 'DOM.resolveNode', 'DOM.getNodeForLocation', 'DOM.pushNodesByBackendIdsToFrontend',
+  'DOM.getFrameOwner', 'DOMSnapshot.captureSnapshot', 'CSS.getComputedStyleForNode',
+  // 参照を捨てる
+  'Runtime.releaseObject', 'Runtime.releaseObjectGroup',
+]));
+/** 人の操作のタブでも通すコマンドか（HUMAN_TAB_READS か、購読を外す 〜.disable） */
+export const readsOnly = method => typeof method === 'string' && (HUMAN_TAB_READS.has(method) || /^[A-Za-z]+\.disable$/.test(method));
+
 /** 人の操作から AI に戻すまでの、最後に触ってからの時間（ADR 0293 の 1 の 4） */
 export const HUMAN_TIMEOUT_MS = 60_000;
 /** hand_to_user の頼みの最中に、時間で戻すかを見直す周期 */
@@ -31,7 +63,9 @@ export const DEFER_RECHECK_MS = 5_000;
  * @param [deps.timeoutMs] 人の操作から AI に戻す時間（既定 60 秒。試験が短くするためのもの）
  * @param [deps.recheckMs] hand_to_user の最中の見直しの周期（既定 5 秒。試験用）
  * @returns 中継が呼ぶ口
- *   - gate({ sessionId, targetId, method, paused }): 断る文（エージェントへ返る）か null。paused は会話の一時停止（entry.paused）
+ *   - gate({ sessionId, targetId, method, paused, operates }): 断る文（エージェントへ返る）か null。paused は会話の一時停止（entry.paused）。
+ *     中継はタブのセッションのコマンド全部で呼ぶ。人の操作のタブは readsOnly(method) のほかを断る。
+ *     operates はエージェントの操作（中継の OPERATES）か。戻した直後の 1 回の断りは操作のときだけ（撮り直しの snapshot は通す）
  *   - forget({ sessionId, targetId }): タブが無くなった。targetId が無ければ会話の持ち手を全部捨てる
  *   - attach({ handoffs }): サーバーが起動のときに 1 回呼ぶ。handoffs は core/chrome/handoff.mjs の台帳（current(sessionId) で hand_to_user の頼みの最中か）
  *   人の側の呼び口（control・組 B が relay.unify.tabHolder で呼ぶ）:
@@ -115,12 +149,12 @@ export function createTabHolder({ emit = () => {}, now = Date.now, log = () => {
 
   return {
     // ---- 中継が呼ぶ口
-    gate({ sessionId, targetId, paused }) {
+    gate({ sessionId, targetId, method, paused, operates = true }) {
       expire();   // 期限の見直し（時計が進んだ分）
       if (paused) return PAUSED_MESSAGE;
       const tab = tabsOf(sessionId)?.get(targetId);
-      if (tab?.holder === 'human') return HUMAN_MESSAGE;
-      if (tab?.resnapshot) { tab.resnapshot = false; return RESNAPSHOT_MESSAGE; }
+      if (tab?.holder === 'human') return readsOnly(method) ? null : HUMAN_MESSAGE;
+      if (operates && tab?.resnapshot) { tab.resnapshot = false; return RESNAPSHOT_MESSAGE; }
       return null;
     },
     forget({ sessionId, targetId }) {

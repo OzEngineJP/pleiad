@@ -41,7 +41,7 @@ import { createChromeWindows } from './windows.mjs';
 import { CARRY_MAX_BYTES } from './link-wire.mjs';
 // ブラウザーの一本化（ADR 0291〜0294）の 4 つの口。既定の実装は今の動きのまま（旗が off でも on でも、置き換えるまでは変わらない）
 import { createPagePolicy, safeUrl } from './page-policy.mjs';
-import { createTabHolder, PAUSED_MESSAGE } from './tab-holder.mjs';
+import { createTabHolder, PAUSED_MESSAGE, HUMAN_MESSAGE } from './tab-holder.mjs';
 import { createTabInfo } from './tab-info.mjs';
 import { createPageBridge } from './page-bridge.mjs';
 
@@ -62,6 +62,8 @@ const OPERATES = /^(Input\.|Runtime\.(evaluate|callFunctionOn)$|Page\.(navigate|
  * ほかのコマンドは全部、印を付ける（DOM の書き換え・runScript・Debugger などでも移動はできるため。ターンの終わりで外れる）
  */
 const PASSIVE = /(\.enable|\.disable)$|^(Runtime\.runIfWaitingForDebugger|Target\.setAutoAttach)$/;
+/** 中継の口が使う binding の名前（page-bridge.mjs の plyPage・input.mjs の plyInput）。エージェントには足させない・外させない */
+const RESERVED_BINDINGS = new Set(['plyPage', 'plyInput']);
 /** 確認のセッションとその子の iframe に付ける自動 attach（子は止めたまま付き、Fetch を付けてから走らせる） */
 const CHILD_AUTO_ATTACH = Object.freeze({ autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
 
@@ -958,11 +960,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     if (SESSION_DENIED.has(method) || SESSION_DENIED_DOMAINS.some(prefix => method.startsWith(prefix))) throw denied('browser command');
     let forward = params;
     if (method === 'Page.navigate' && !allowUrl(params.url, { sessionId: client.entry.id, via: 'navigate' })) throw denied('navigation');
-    // 操作の前の門（既定は一時停止の間だけ断る。上の live と同じ）。待ちの後、送る直前にもう一度見る
+    // ページからの頼みと入力欄の位置の binding は中継のものだけ。エージェントが同じ名前を足すと、ページの頼みの中身を横から受け取れる（どのタブでも断る）
+    if ((method === 'Runtime.addBinding' || method === 'Runtime.removeBinding') && RESERVED_BINDINGS.has(params.name)) throw denied('binding');
+    // 操作の前の門（core/chrome/tab-holder.mjs）。コマンド全部を通す: 人の操作のタブでは読むだけのもの（通してよい一覧）のほかを断る。
+    // 一時停止の間は全部断る（上の live と同じ）。待ちの後、送る直前にもう一度見る
     const operates = OPERATES.test(method);
     const held = () => {
-      if (!operates) return;
-      const message = tabHolder.gate({ sessionId: client.entry.id, targetId: tab.targetId, method, paused: client.entry.paused });
+      const message = tabHolder.gate({ sessionId: client.entry.id, targetId: tab.targetId, method, paused: client.entry.paused, operates });
       if (message) throw new RelayError(message);
     };
     held();
@@ -1063,7 +1067,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         if (!rec || rec.client !== client) throw denied('session');
         return state.cdp.send(method, { sessionId: params.sessionId });
       }
-      case 'Target.closeTarget': mine(state, client, params.targetId).agentClosed = true; return state.cdp.send(method, { targetId: params.targetId });
+      case 'Target.closeTarget': {
+        const tab = mine(state, client, params.targetId);
+        // 人の操作のタブは閉じさせない（ADR 0293 の 1）
+        if (tabHolder.holder?.(entry.id, tab.targetId)?.holder === 'human') throw new RelayError(HUMAN_MESSAGE);
+        tab.agentClosed = true;
+        return state.cdp.send(method, { targetId: params.targetId });
+      }
       case 'Target.activateTarget': mine(state, client, params.targetId); return {};   // bringToFront と同じ。範囲の外の targetId は断る（上の mine）
       case 'Browser.getWindowForTarget': {
         if (!params.targetId) throw denied('target');
@@ -1073,6 +1083,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       case 'Browser.getWindowBounds':
       case 'Browser.setContentsSize':
         if (!entry.windows.has(params.windowId)) throw denied('window');
+        // 人の操作のタブのある窓の大きさは変えさせない（人の見ているページの大きさが変わる）
+        if (method === 'Browser.setContentsSize' && tabsOf(state, entry).some(tab => tab.windowId === params.windowId && tabHolder.holder?.(entry.id, tab.targetId)?.holder === 'human')) throw new RelayError(HUMAN_MESSAGE);
         return state.cdp.send(method, params);
       case 'Target.createTarget': return { targetId: await createTab(state, client, params) };
       default: throw denied('browser command');
