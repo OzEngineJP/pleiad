@@ -23,9 +23,6 @@ export function openExternalLink(url) {
   return true;
 }
 
-/** 近道の説明に出す修飾キーの名前（macOS は ⌘） */
-export const modifierKey = () => (typeof navigator !== 'undefined' && /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl');
-
 /** アプリの中の外部リンク（http/https）。文中の URL・名前付きのリンク・取得の見出し。ファイルリンクは含まない（target が無い） */
 export const APP_LINK = 'a.md-link[target="_blank"]';
 export function appLinkOf(node) {
