@@ -72,7 +72,7 @@
 3. 既定のブラウザーへ http の URL を渡す口は、今は内蔵ブラウザーの `openExternal` の動作だけが持っている。これを専用の IPC `ply:open-external` に置き換える（中の検査は今の `external()` のまま）。
 4. **移行**
    - prefs の `linkOpen` は読み飛ばし、`defineSetting` から外す。保存されている値は次に設定を書いたときに落ちる。
-   - 内蔵ブラウザーの保存領域 `persist:pleiad-browser`（ログインの Cookie など）は、新しい版の最初の起動で 1 回だけ消す（`session.clearStorageData()` の後に `Partitions/pleiad-browser` を消す）。持ち主の居ないログインの情報を残さないためである。リリースノートに「内蔵ブラウザーのログインは引き継がれません」と書く（2026-11-06 に確定）。
+   - 内蔵ブラウザーの保存領域 `persist:pleiad-browser`（ログインの Cookie など）は、新しい版の最初の起動で 1 回だけ消す（session を開かずに `Partitions/pleiad-browser` を消す。先に `session.clearStorageData()` で開くと Chromium が中のファイルを掴み、Windows では `EPERM` で消えなかった（2026-11-06 の確かめ）。消せなかったときだけ `clearStorageData()` で中身を消し、次の起動でフォルダーを消し直す。印は `userData/browser-partition-cleared`。`desktop/browser-partition-cleanup.cjs`）。持ち主の居ないログインの情報を残さないためである。リリースノートに「内蔵ブラウザーのログインは引き継がれません」と書く（2026-11-06 に確定）。
    - 更新の引き継ぎ（ADR 0167）にある内蔵ブラウザーのタブの写しは、新しい版では読まずに捨てる。写しはサーバーのメモリ（前の `core/browser-viewer.mjs`）にあり、新しい版のサーバーは受け口を持たないので、前の main の報告は読まれずに消える。
    - 地球のボタン（スレッドの頭）と Ctrl+Shift+B は、右の欄の開け閉めにする。
 5. 会話の見出しのアイコンは、右の欄を開け閉めするアイコン 1 つにまとめる。git・プラグイン・作業フォルダーへは、＋の新しいタブから行く。

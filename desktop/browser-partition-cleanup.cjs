@@ -1,7 +1,8 @@
 // 内蔵ブラウザー（ADR 0041。ADR 0291 の 6 で無くした）の保存領域 persist:pleiad-browser を、新しい版の起動で 1 回だけ消す。
-//   - Cookie・保存領域を session.clearStorageData() で消してから、userData/Partitions/pleiad-browser のフォルダーを消す
+//   - userData/Partitions/pleiad-browser のフォルダーを消す。session は開かない（開くと Chromium が中のファイルを掴み、Windows では消せなくなる）
 //   - 済んだら userData/browser-partition-cleared に印を書き、次の起動からは何もしない（保存領域が無かったときも印を書く）
-//   - フォルダーを消せなかった（Windows で使用中など）ときは、次の起動でフォルダーだけを消し直す（session は開かない）。MAX_ATTEMPTS 回で諦めて印を書く
+//   - フォルダーを消せなかった（Windows で使用中など）ときは、1 回目に限り session.clearStorageData() で Cookie・保存領域だけ消し、
+//     次の起動でフォルダーを消し直す（session は開かない）。MAX_ATTEMPTS 回で諦めて印を書く
 //   - どこで失敗しても投げない（起動を止めない）
 const fs = require('node:fs');
 const path = require('node:path');
@@ -30,16 +31,6 @@ async function clearOldBrowserPartition({ userData, session, log = () => {}, tim
     try { fs.writeFileSync(marker, JSON.stringify({ done, attempts }), 'utf8'); } catch (error) { log(`marker could not be saved: ${error.message}`); }
   };
   if (!fs.existsSync(dir)) { write(true); return { state: 'done', attempts }; }
-  // 2 回目からは session を開かない（開くと Chromium がフォルダーの中のファイルを掴み、消せなくなる）
-  if (attempts === 1) {
-    try {
-      let timer;
-      await Promise.race([
-        session.fromPartition(PARTITION).clearStorageData(),
-        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timed out')), timeoutMs); }),
-      ]).finally(() => clearTimeout(timer));
-    } catch (error) { log(`clearStorageData failed: ${error?.message ?? error}`); }
-  }
   try {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   } catch (error) { log(`partition folder could not be removed: ${error.message}`); }
@@ -48,6 +39,16 @@ async function clearOldBrowserPartition({ userData, session, log = () => {}, tim
     if (!gone) log(`gave up removing the partition folder after ${attempts} attempts`);
     write(true);
     return { state: 'done', attempts };
+  }
+  // 消せなかった: ログインの情報だけでも先に消す。2 回目からは開かない（開いたままだと、また消せない）
+  if (attempts === 1) {
+    try {
+      let timer;
+      await Promise.race([
+        session.fromPartition(PARTITION).clearStorageData(),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timed out')), timeoutMs); }),
+      ]).finally(() => clearTimeout(timer));
+    } catch (error) { log(`clearStorageData failed: ${error?.message ?? error}`); }
   }
   write(false);
   return { state: 'retry', attempts };
