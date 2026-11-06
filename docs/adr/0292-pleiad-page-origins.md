@@ -125,3 +125,13 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
 - `web/visualize-frame.mjs`・`web/visualize-document.mjs`・`web/preview-confirm.mjs` は、srcdoc をやめて隔離の URL を iframe の src にする。高さの通知（120〜900px）とリンクの橋は、サーバーが差し込む橋に移す。
 - ADR 0009 の決定のうち、「CSP を HTML の内容より前に置く（meta）」「srcdoc の iframe」「可視化は allow-scripts だけ」を一部置き換える。HTML のファイルは allow-scripts だけのまま。ADR 0042 の確認の設定は、ヘッダーの CSP に効かせる形で続く。
 - 文書: visualize.md・file-preview.md・remote.md・docs/design.md（リスナーの一覧）・AGENTS.md の環境変数の表。
+
+## 追記（2026-11-06）: 端末の入口の検査・スマホの端末内の描画・ファイルのページの頭のパス
+
+1. **端末のプロキシの入口**: 端末のプロキシ（`core/remote/device-proxy.mjs`・`DeviceProxy.kt`・`DeviceProxy.swift`）も、ファイルのページの要求は `Sec-Fetch-Site` が `same-origin`・`none`・無しのときだけ通し、ほかは 403 にする。通した値はホストへの転送の頭に載せ、`forward.mjs` はページの道でだけ本体へ渡す（知らない値は `cross-site` として渡し、ホストの入口で断られる）。隔離の入口は対象外（sandbox の枠からの要求は設計上 `cross-site`）。
+2. **スマホの端末内の描画**: 旗が on のとき、スマホではファイル・フォルダー・git・プラグインのタブを、同じ口の `/_pleiad/s/<sid>/<page>` を iframe にして映像の枠の上に重ねて描く（上の 5 の 1）。
+   - タブ・題・履歴は Chrome のタブを正とする。ページの中で別のファイルやフォルダーへ移ったら Chrome のタブをそのパスへ移し、戻る・進むで Chrome のタブが移ったら iframe の場所を置き換える。
+   - ページからの依頼（メニュー・保存など）は、デスクトップの `createPageFrame` と同じ検査（`web/page-frame.mjs` の `pageRequestOf`）で受け、セッションとタブの合わないものは捨てる。
+   - ツリーはページの上に重ねて出し、アドレスバーのツリーのボタンで開く。「原文を表示」は ⋮ のメニューに置く。リモートの端末では OS の操作（エクスプローラーで表示・既定のアプリで開く）は出ない。
+   - Web のページと HTML のファイルのタブは映像のまま（上の 5 の 4）。端末内で描いている間も映像の流れは止めない（今の制約）。
+3. **ファイルのページの頭のパス**: 会話の作業場所の中のファイルは作業場所からの相対パス、外のファイルは絶対パスを出す。題（ツールチップ）には常に絶対パスを出す。
