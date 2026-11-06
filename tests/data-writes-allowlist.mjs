@@ -221,6 +221,9 @@ export const DATA_WRITES = [
   { file: 'core/visualize.mjs', sites: 1, targets: [
     { name: 'visualization-snapshots/<key>.html', limit: '1 つ 1 ファイル。24 時間で掃除する', reason: '可視化の写し。書き換えない' },
   ] },
+  { file: 'core/viz-bundle.mjs', sites: 2, targets: [
+    { name: 'viz-blobs/<sha256>（一時ファイル <sha256>.<乱数>.tmp から名前を変える）', limit: '内容アドレス。束は 200 ファイル・32 MiB・1 ファイル 8 MiB まで。同じ中身は 1 つ', reason: '可視化の束の中身と目録（ADR 0292 の 3 の 4）。書き換えない。記録に名前が出ないものは起動の片付けで消す' },
+  ] },
   { file: 'core/agent-browser.mjs', sites: 3, targets: [
     { name: 'agent-browser/<hash>/agent-browser.json', limit: '固定（{ cdp }）', reason: 'エージェントのブラウザー（Chrome の中継）の接続先。ターンごとに上書き' },
     { name: '(置き場の外) %TEMP%/ply-ab-<hash> の <セッション名>.config・<セッション名>.ply-prestart', limit: '固定（16 桁の指紋・pid）', reason: 'Windows で agent-browser のデーモンを先に起こすとき（ADR 0285）の、CLI が見る設定の指紋と、先に起こした印。デーモンを起こすたびに上書き' },
