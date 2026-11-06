@@ -7,7 +7,7 @@ import { t } from './i18n.mjs';
 import { browserPanelAvailable } from './browser-panel.mjs';
 import { linkOpenTarget } from './browser-address.mjs';
 import { linkChoices } from './link-sheet.mjs';
-import { appLinkOf, openExternalLink, modifierKey } from './link-open.mjs';
+import { appLinkOf, openExternalLink, modifierKey, browserUnifyEnabled } from './link-open.mjs';
 import { notify } from './file-actions.mjs';
 
 /**
@@ -15,7 +15,8 @@ import { notify } from './file-actions.mjs';
  * リモートの localhost は端末では開けないので、シートを挟まずホストの内蔵ブラウザー（'inapp'）。
  * ctrl は Ctrl/⌘ を押しているか（ホストの画面では既定のブラウザー）
  */
-export function linkDestination({ href, ctrl = false, prefs, inAppAvailable = false, hostScreen = false, pcBrowser = false, pageOrigin }) {
+export function linkDestination({ href, ctrl = false, prefs, inAppAvailable = false, hostScreen = false, pcBrowser = false, pageOrigin, unify = browserUnifyEnabled() }) {
+  if (unify) return 'external';
   const choices = linkChoices({ url: href, pageOrigin, hostScreen, pcBrowser });
   if (choices) return choices.pcOnly ? 'inapp' : 'choose';
   if (ctrl) return 'external';
@@ -26,7 +27,7 @@ export function linkDestination({ href, ctrl = false, prefs, inAppAvailable = fa
 export function statusParts({ href, dest, key = 'Ctrl', ctrl = false, inAppSetting = false, hostScreen = false }) {
   const label = dest === 'inapp' ? t('timeline.link.openInApp')
     : dest === 'choose' ? t('timeline.link.chooseDest') : t('browser.openExternal');
-  const hint = hostScreen && inAppSetting && !ctrl ? t('timeline.link.ctrlHint', { key }) : '';
+  const hint = dest === 'inapp' && hostScreen && inAppSetting && !ctrl ? t('timeline.link.ctrlHint', { key }) : '';
   return [label, href.replace(/^https?:\/\//i, ''), hint];
 }
 
@@ -35,8 +36,9 @@ export function statusParts({ href, dest, key = 'Ctrl', ctrl = false, inAppSetti
  * （内蔵ブラウザーの無い画面・ホストの内蔵ブラウザーを見られないリモート）。act は { openInApp, openExternal, openHere, openRemote, copy }
  * （リモートの画面は openRemote = ホストの内蔵ブラウザーのタブ、openHere = この端末の既定のブラウザー。localhost は前者だけ）
  */
-export function linkMenuItems({ href, prefs, inAppAvailable = false, hostScreen = false, pcBrowser = false, pageOrigin, key = 'Ctrl', act }) {
+export function linkMenuItems({ href, prefs, inAppAvailable = false, hostScreen = false, pcBrowser = false, pageOrigin, key = 'Ctrl', act, unify = browserUnifyEnabled() }) {
   const copy = { label: t('timeline.link.copy'), onClick: act.copy };
+  if (unify) return [{ label: t('browser.openExternal'), onClick: act.openExternal }, { sep: true }, copy];
   const choices = linkChoices({ url: href, pageOrigin, hostScreen, pcBrowser });
   if (choices) {
     return [

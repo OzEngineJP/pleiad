@@ -5,6 +5,7 @@
 // 出さないだけでなく、サーバーも断る（core/server.mjs の revealPath / openPath）。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
+import { folderIcon, openInBrowserIcon, copyIcon, downloadIcon, fileIcon } from './icons.mjs';
 
 /** サーバーが許可範囲を検査して返した実体パスを file: URL にする。 */
 export function fileUrl(path) {
@@ -41,9 +42,28 @@ const isHtml = path => /\.html?$/i.test(String(path ?? ''));
  *   current は右パネルに今出ているファイル（「プレビューで開く」「原文を見る」を出さない）。
  *   htmlBrowser は HTML をブラウザーで開けるか（PC の画面とリモートの端末。開けない端末は原文だけ）
  */
-export function fileMenuItems(target, { osActions, htmlBrowser = osActions, current = false, canUse = true, run }) {
+export function fileMenuItems(target, { osActions, htmlBrowser = osActions, current = false, canUse = true, run, unify = false, defaultAppAllowed = false, platform = globalThis.navigator?.platform ?? '' }) {
   const directory = target.kind === 'directory';
-  const item = (label, action) => ({ label, onClick: () => run(action) });
+  const item = (label, action) => {
+    if (!unify) return { label, onClick: () => run(action) };
+    const icon = el('span');
+    icon.innerHTML = ({ reveal:folderIcon, external:openInBrowserIcon, default:openInBrowserIcon,
+      copy:copyIcon, copyRelative:copyIcon, save:downloadIcon, use:fileIcon })[action];
+    return { label, icon, onClick: () => run(action) };
+  };
+  if (unify) {
+    const mac = /Mac|darwin/i.test(platform);
+    const groups = [
+      [
+        osActions && item(mac ? t('files.menu.revealFinder') : directory ? t('files.menu.revealFolder') : t('files.menu.revealFile'), 'reveal'),
+        osActions && (directory || isHtml(target.path)) && item(t('browser.openExternal'), 'external'),
+        osActions && !directory && defaultAppAllowed && item(t('files.menu.openDefault'), 'default'),
+      ],
+      [item(t('files.menu.copyPath'), 'copy'), item(t('files.menu.copyRelative'), 'copyRelative')],
+      [!directory && item(t('files.menu.save'), 'save'), canUse && item(t('files.menu.use'), 'use')],
+    ].map(group => group.filter(Boolean)).filter(group => group.length);
+    return groups.flatMap((group, i) => i ? [{ sep: true }, ...group] : group);
+  }
   // HTML は「ブラウザーで開く」が先頭（開き先は web/file-preview.mjs の htmlRoute）。右パネルで見るのは原文だけ（docs/file-preview.md）
   const html = !directory && isHtml(target.path);
   const browser = htmlBrowser && html;
@@ -86,7 +106,8 @@ export function visualizationMenuItems({ origin = null } = {}, { osActions, canU
  * 写しは origin（元のパス）が分かるときだけ元のパスの操作を、html（会話に残っている中身）が手元にあるときだけ原文と保存を出す。
  * run(action) は web/file-preview.mjs
  */
-export function browserTabMenuItems(kind, { origin = null, hasHtml = true } = {}, { osActions, canUse = true, run }) {
+export function browserTabMenuItems(kind, { origin = null, hasHtml = true, path = '', directory = false } = {}, { osActions, canUse = true, run, unify = false, ...env }) {
+  if (unify && kind !== 'snapshot') return fileMenuItems({ path, kind: directory ? 'directory' : 'file' }, { ...env, osActions, canUse, run, unify });
   const item = (label, action) => ({ label, onClick: () => run(action) });
   const snapshot = kind === 'snapshot';
   const groups = snapshot ? [

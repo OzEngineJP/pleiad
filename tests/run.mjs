@@ -917,6 +917,7 @@ const SUITES = [
   './unit/os-open.mjs',
 
   // --- B（組 B） ---
+  './unit/browser-unify-b3.mjs',
 
 
   // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
