@@ -79,7 +79,7 @@ export default async function(t) {
     }
     t.ok('隔離は WebSocket を通さない', (await run('/ws', { destination: 'isolated' }, { kind: 'ws' })).code === RESET_CODE.FORBIDDEN);
     t.ok('不明な行き先を断る', (await run('/_pleiad/s/s1/files', { destination: 'other' })).code === RESET_CODE.FORBIDDEN);
-    t.ok('ページの port が未設定なら旗 off の道へ足さない',
+    t.ok('ホストのページの port が無ければ、ページの道へ通さない',
       (await run('/_pleiad/s/s1/files', {}, { pagePorts: null })).code === RESET_CODE.FORBIDDEN &&
       (await run('/viz/key/x', { destination: 'isolated' }, { pagePorts: null })).code === RESET_CODE.FORBIDDEN);
     t.ok('ページの変更系メソッドを断る', (await run('/_pleiad/s/s1/files', { method: 'POST' })).code === RESET_CODE.FORBIDDEN);
@@ -104,10 +104,11 @@ export default async function(t) {
     const caps = await readCaps(pagePorts, localPorts);
     t.ok('ホストの機能応答の port を端末の待ち受けに直す', caps.caps.result.browserUnify.pages === localPorts.main &&
       caps.caps.result.browserUnify.isolated === localPorts.isolated);
-    t.ok('旗 off の転送は応答の port を変えない',
+    t.ok('ホストのページの port が無い転送は、応答の port を変えない',
       (await readCaps(null, localPorts)).caps.result.browserUnify.isolated === pagePorts.isolated);
-    t.ok('端末の隔離待ち受けが無ければ新機能を案内しない',
-      !(await readCaps(pagePorts, { main: 51234, isolated: 0 })).caps.result.browserUnify);
+    const old = (await readCaps(pagePorts, { main: 51234, isolated: 0 })).caps.result.browserUnify;
+    t.ok('端末の隔離待ち受けが無い（古いアプリ）ときも右の欄の Chrome は案内し、ファイルのページの port だけを空にする',
+      !!old && old.pages === null && old.isolated === null, JSON.stringify(old));
   } finally {
     for (const ws of wss.clients) ws.terminate();
     await new Promise(resolve => wss.close(resolve));

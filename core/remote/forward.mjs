@@ -213,8 +213,9 @@ function forwardWs(stream, path, protocols, { host, port }, token, device, ports
       try {
         const msg = JSON.parse(buf.toString('utf8'));
         if (msg.kind === 'response' && msg.result?.browserUnify) {
-          if (ports) msg.result.browserUnify = { ...msg.result.browserUnify, pages: ports.pages, isolated: ports.isolated };
-          else delete msg.result.browserUnify;
+          // 端末に隔離の待ち受けが無い（古いアプリ）ときも、右の欄の Chrome は案内する。ファイルのページの port だけを空にし、
+          // 画面は前のファイルの描き方と srcdoc の可視化に戻る（web/file-preview.mjs・web/page-frame.mjs）
+          msg.result.browserUnify = { ...msg.result.browserUnify, pages: ports?.pages ?? null, isolated: ports?.isolated ?? null };
           buf = Buffer.from(JSON.stringify(msg));
         }
       } catch { /* JSON 以外のメッセージはそのまま通す */ }
