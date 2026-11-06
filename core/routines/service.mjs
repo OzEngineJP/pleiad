@@ -93,7 +93,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
 
   async function needBot(botId) {
     const bot = typeof botId === 'string' && botId ? await bots.get({ botId }).catch(() => null) : null;
-    if (!bot) throw new RoutineError('BOT_NOT_FOUND', { id: String(botId) });
+    if (!bot || bot.deletionPending) throw new RoutineError('BOT_NOT_FOUND', { id: String(botId) });
     return bot;
   }
   async function needChannel(channelId) {
@@ -339,7 +339,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
     },
 
     async resume({ routineId }) {
-      need(routineId);
+      await needBot(need(routineId).botId);
       // 止めていた間の予定は数えない（再開した時刻から数え直す）
       const updated = await wrap(() => store.update(routineId, (r) => ({ ...r, paused: false, armedAt: clk.now() })));
       arm(routineId);
@@ -395,5 +395,17 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
     /** 画面・診断用: 今走っているか */
     isRunning: (routineId) => runner.isRunning(routineId),
   };
+  if (bots.withActivity) {
+    for (const name of ['create', 'update', 'resume']) {
+      const operation = service[name];
+      service[name] = async (input, ...args) => {
+        const oldId = input.routineId ? need(input.routineId).botId : null;
+        const oldExists = oldId && await bots.get({ botId: oldId });
+        const ids = new Set([input.botId, oldExists || name === 'resume' ? oldId : null].filter(Boolean));
+        const enter = (list) => list.length ? bots.withActivity(list[0], () => enter(list.slice(1))) : operation(input, ...args);
+        return enter([...ids]);
+      };
+    }
+  }
   return service;
 }

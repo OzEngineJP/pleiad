@@ -103,6 +103,7 @@ export function normalizeBot(raw, now = Date.now()) {
     createdAt: num(raw.createdAt, now), updatedAt: num(raw.updatedAt, num(raw.createdAt, now)),
     // 組み込みの bot（チャンネルのスレッドの「bot なし」。人格・記憶・心拍を持たず、名前で呼べない。ADR 0157）
     ...(raw.plain === true ? { plain: true } : {}),
+    ...(raw.deletionPending === true ? { deletionPending: true } : {}),
   };
 }
 

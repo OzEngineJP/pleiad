@@ -254,7 +254,9 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
   }
 
   return {
-    run, dryRun, onTurnEnd, onPermission, settleLost,
+    run: (routine, options) => bots.withActivity ? bots.withActivity(routine.botId, () => run(routine, options)) : run(routine, options),
+    dryRun: (routine, options) => bots.withActivity ? bots.withActivity(routine.botId, () => dryRun(routine, options)) : dryRun(routine, options),
+    onTurnEnd, onPermission, settleLost,
     isRunning: (routineId) => running.has(routineId),
     open() { closed = false; },
     stop() {

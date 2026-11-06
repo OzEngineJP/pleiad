@@ -135,6 +135,7 @@
     }
   },
   "session": {
+    "deletedBotReadOnly": "This bot was deleted. This conversation is read only and cannot be continued.",
     "running": "This session is running.",
     "required": "A session is required.",
     "notFound": "Session not found.",
@@ -144,6 +145,8 @@
     "cannotDeleteBusy": "A session that is running or has queued messages cannot be deleted.",
     "onlyUnsentDeletable": "Only unsent sessions can be deleted.",
     "deleteBusy": "A session that is running or being prepared, or that is waiting for an approval or background work, cannot be deleted. Stop it or wait for it to finish, then delete it.",
+    "botDeleteBusy": "This bot is working, waiting for approval, or preparing background work. Wait for it to finish before deleting it.",
+    "botDeleting": "This bot is being deleted. Wait for deletion to finish before using it.",
     "deleteQueued": "A session with queued or scheduled messages cannot be deleted. Cancel them, then delete it.",
     "deleteChildren": "A session whose delegated work has not finished cannot be deleted. Wait for the work to finish or stop it, then delete it.",
     "deleteBot": "A bot's session cannot be deleted.",
@@ -1115,10 +1118,10 @@
   "data": {
     "schemaUnreadable": "Cannot determine the saved data format. Check data-schema.json.",
     "schemaMismatch": "This saved data uses a different format. Use a newer version of Pleiad that supports it. The data was not changed.",
-    "migrationFailed": "Could not migrate the saved data to the new format ({{reason}}). The original data was not changed. This version cannot start until this is resolved; keep using the previous version or contact support.",
+    "migrationFailed": "Could not migrate the saved data to the new format ({{reason}}). Startup has stopped. Preserve the data folder and the pre-migration copy, then resolve the cause and restart or contact support.",
     "migrated": "Migrated the saved data to the new format (SQLite). A copy from before the migration is in {{backup}}.",
     "locked": "This data folder is in use by another Pleiad process (PID {{pid}}). Opening the same data folder from two processes can corrupt records (for example, a deleted conversation coming back as a fragment), so this process will not start. Quit the other one and start again (folder: {{dir}}).",
-    "dbInvalid": "The saved data format is 2, but the database (pleiad.db) cannot be used ({{reason}}). Starting with an empty database would lose records, so this process will not start. The data was not changed. Check the data folder and the pre-migration copy (backup-schema1-*)."
+    "dbInvalid": "The database (pleiad.db) cannot be used ({{reason}}). Starting with an empty database would lose records, so this process will not start. The data was not changed. Check the data folder and the pre-migration copy."
   },
   "update": {
     "preparing": "Preparing an update. Wait a moment and try again."

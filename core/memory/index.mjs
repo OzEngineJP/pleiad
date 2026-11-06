@@ -198,6 +198,11 @@ export function createMemoryIndex({ file, loadSqlite = defaultLoadSqlite, log = 
     },
 
     get: (id) => byId.get(id) ?? null,
+    async reset() {
+      db?.close(); db = null; state = 'unknown'; stale = false;
+      entries = []; byId.clear();
+      for (const suffix of ['', '-wal', '-shm', '-journal']) await fs.unlink(`${file}${suffix}`).catch(e => { if (e.code !== 'ENOENT') throw e; });
+    },
     close() { try { db?.close(); } catch { /* 閉じられなくてもよい */ } db = null; state = 'unknown'; stale = false; },
   };
 }

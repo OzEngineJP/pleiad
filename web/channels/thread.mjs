@@ -109,6 +109,7 @@ export function createThread(host) {
     lang: () => document.documentElement.lang || undefined,
   });
   // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。先頭に宛先のチップ
+  let voiceView = null;
   const composer = createThreadComposer({
     host,
     bucket: () => S.channelId,
@@ -118,7 +119,7 @@ export function createThread(host) {
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => send(draft),
     dest: () => destOptions(),
-    onDestChange: () => paintPlaceholder(),
+    onDestChange: () => { paintPlaceholder(); composer.setDisabled(Boolean(S.channel?.archivedAt || (threadReadOnly() && !composer.dest?.bot)), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived')); },
     settings: (botId) => botSettings(botId),
     schedules: () => (host.state?.schedules ?? []).filter((r) => r.kind === 'post' && r.channelId === S.channelId && r.threadId === S.threadId).sort((a, b) => a.at - b.at),
     pending: () => S.pending.map((x) => ({ id: x.postId, text: S.index.get(x.postId)?.text ?? '' })).filter((x) => x.text),
@@ -178,8 +179,9 @@ export function createThread(host) {
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
   // 通話モードの差し込み口（スレッド。承認済み 2026-10-06）。契約は web/voice/index.mjs の冒頭。入力欄・見出し・面へは、ここの 1 か所だけで繋ぐ
-  host.voice?.mount({
+  voiceView = host.voice?.mount({
     id: 'thread',
+    canStart: () => Boolean(S.threadId && !S.channel?.archivedAt && (!threadReadOnly() || composer.dest?.bot)),
     header: head.el.querySelector('.th-entries'), headerBefore: head.tocButton,
     composer: composer.voiceSlot(),
     main: root, log, overlay: root, replyScope: () => log,
@@ -287,6 +289,9 @@ export function createThread(host) {
     for (const p of S.posts) if (p.turn?.botId && LIVE.has(p.state) && !p.deletedAt && !ids.includes(p.turn.botId)) ids.push(p.turn.botId);
     return ids.map((id) => S.bots.get(id) ?? { id, name: t('channels:feed.unknownBot'), icon: '🤖' });
   };
+  function threadReadOnly() {
+    return Boolean(S.thread?.deletedBot && !Object.keys(S.thread.sessions ?? {}).some(id => S.bots.has(id)));
+  }
   function candidates() {
     const live = new Set(liveBots().map((b) => b.id));
     return [
@@ -305,6 +310,7 @@ export function createThread(host) {
     return (last && S.bots.get(last.author.botId)) || memberBots()[0] || null;
   }
   function paintPlaceholder() {
+    voiceView?.refresh();
     const live = liveBots();
     // 送信の近道は、指で使う画面には出さない（Chats の入力欄と同じ）
     const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
@@ -627,7 +633,7 @@ export function createThread(host) {
       refreshPending();
       toBottom();
       for (const sid of new Set([...windows.values()].map((w) => w.sessionId))) tools.refresh(sid, { force: true });
-      composer.setDisabled(Boolean(S.channel?.archivedAt), t('channels:feed.archived'));
+      composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || S.channel?.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived'));
       composer.refresh();
       composer.syncEdit();
       markSelected();
@@ -665,6 +671,7 @@ export function createThread(host) {
 
   // ---------------------------------------------------------------- 操作
   async function send({ text, attachments, confirmedWake, to, clientId, at }) {
+    if (threadReadOnly() && !to) { composer.edit.end({ restore: true }); throw new Error(t('ui:deletedBotReadOnly')); }
     // 「bot なし」でエージェントだけ選んだまま送る: 先にそのエージェントで会話を作る（投稿で作ると bot の既定のエージェントになる）
     const plainTo = to && isPlain(to) && plainBackend && !plainSession(to) ? to : null;
     if (plainTo) {
@@ -721,9 +728,9 @@ export function createThread(host) {
       },
       source: received ? () => showSource(p, more ?? anchor) : null,
       // ここから分岐: 根からこの投稿までを写した新しいスレッド（bot の会話もこの手前で分ける）
-      fork: S.channel?.kind === 'dm' || p.state === 'working' ? null : () => branchFrom(p),
+      fork: threadReadOnly() || S.channel?.kind === 'dm' || p.state === 'working' ? null : () => branchFrom(p),
       // 編集して再送信・再送信: あなたの返信だけ（根は分岐して送る）
-      ...(p.author?.kind === 'human' && p.threadId && S.channel?.kind !== 'dm' ? { edit: () => beginResend(p, true), resend: () => beginResend(p, false) } : {}),
+      ...(!threadReadOnly() && p.author?.kind === 'human' && p.threadId && S.channel?.kind !== 'dm' ? { edit: () => beginResend(p, true), resend: () => beginResend(p, false) } : {}),
     });
     more?.setAttribute('aria-expanded', 'true');
     node?.classList.add('menu-open');
@@ -767,6 +774,7 @@ export function createThread(host) {
   }
   /** 編集して再送信（edit）・再送信。後ろに消えるもの（投稿・作業中の返事）があれば入力欄の上の帯に出す。押した時点では何も消さない */
   function beginResend(p, edit) {
+    if (threadReadOnly()) return;
     const found = resendTarget(p.id);
     if (!found) return;
     const { tail } = found;
@@ -775,18 +783,21 @@ export function createThread(host) {
   }
   const attachmentOf = (a) => ({ path: a.path, name: a.name, mime: a.mime ?? '' });
   async function doResend(p, body, stopRunning) {
+    if (threadReadOnly()) return false;
     try {
       await host.invoke('channels.resend', { channelId: S.channelId, postId: p.id, text: body.text, stopRunning, clientId: resendId(), ...(body.attachments?.length ? { attachments: body.attachments } : {}) });
       return true;
     } catch (err) { composer.say(t('channels:thread.resend.failed', { error: err?.message ?? String(err) }), true); return false; }
   }
   async function resendSend({ id, text, tail }) {
+    if (threadReadOnly()) return false;
     const p = S.index.get(id);
     if (!p) { composer.edit.targetLost(); return false; }
     return doResend(p, composer.attach.compose(text), tail.running);
   }
   /** 分岐して送る: H の直前で分けた新しいスレッドに、新しい本文（と添付）を書く。移る前に入力欄を編集前の書きかけへ戻す（元のスレッドの下書きになる） */
   async function resendBranch({ id, text }) {
+    if (threadReadOnly()) return false;
     const idx = S.posts.findIndex((x) => x.id === id);
     if (idx <= 0) { composer.edit.targetLost(); return false; }
     const body = composer.attach.compose(text);
@@ -844,6 +855,7 @@ export function createThread(host) {
 
   // ---------------------------------------------------------------- 分岐（ADR 0157 の 4.4）
   async function branchFrom(p) {
+    if (threadReadOnly()) return;
     try {
       const made = await host.invoke('channels.branchThread', { channelId: S.channelId, threadId: S.threadId, atPostId: p.id });
       document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id: made.channelId, threadId: made.threadId } }));
@@ -1026,6 +1038,8 @@ export function createThread(host) {
       const idle = S.thread?.state !== 'idle' && ev.thread.state === 'idle';
       const retitled = (S.thread?.title ?? '') !== (ev.thread.title ?? '');
       S.thread = ev.thread;
+      if (threadReadOnly()) composer.edit.end({ restore: true });
+      composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || S.channel?.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived'));
       if (retitled) paintHead();
       paintBand();
       paintPlaceholder();
@@ -1036,7 +1050,7 @@ export function createThread(host) {
     channelsChanged(ev) {
       if (!S.channelId) return;
       if (ev.removed === S.channelId) { close(); return; }
-      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); paintBand(); composer.setDisabled(Boolean(ev.channel.archivedAt), t('channels:feed.archived')); }
+      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); paintBand(); composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || ev.channel.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived')); }
     },
     botsChanged(ev) {
       if (ev.removed) S.bots.delete(ev.removed);

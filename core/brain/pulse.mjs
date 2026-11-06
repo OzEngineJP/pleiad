@@ -181,7 +181,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
   async function beat(botId, { force = false } = {}) {
     if (running.has(botId)) return { botId, ran: false, skipped: 'running' };
     running.add(botId);
-    try { return await runBeat(botId, { force }); }
+    try { return await (bots.withActivity ? bots.withActivity(botId, () => runBeat(botId, { force })) : runBeat(botId, { force })); }
     catch (e) { log(`beat of ${botId} failed:`, errText(e)); return { botId, ran: false, error: errText(e) }; }
     finally { running.delete(botId); }
   }
@@ -313,12 +313,16 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     const at = now();
     for (const bot of await bots.list()) {
       if (closed) return;
-      if (!bot.pulse?.on) continue;
+      if (!bot.pulse?.on || bot.deletionPending) continue;
+      let release;
+      try { release = bots.acquire?.(bot.id); } catch { continue; }
+      try {
       const state = brain.state(bot.id);
       if (state.paused) continue;
       if (state.nextAt == null) { brain.setState(bot.id, { nextAt: at + everyOf(bot), cursorAt: at }); continue; }
       // PC が止まっていた間に溜まった心拍は、最新の 1 回だけ（nextAt を 1 回進めるだけで、溜まった分は走らない）
       if (state.nextAt <= at && !running.has(bot.id)) await enqueue(() => beat(bot.id));
+      } finally { release?.(); }
     }
   }
 
@@ -336,7 +340,10 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     if (closed || !post || post.deletedAt || channel?.kind !== 'channel' || post.author?.kind === 'system') return;
     (async () => {
       for (const bot of await bots.list()) {
-        if (!bot.pulse?.on || !channel.members?.includes(bot.id) || (post.author?.kind === 'bot' && post.author.botId === bot.id)) continue;
+        if (!bot.pulse?.on || bot.deletionPending || !channel.members?.includes(bot.id) || (post.author?.kind === 'bot' && post.author.botId === bot.id)) continue;
+        let release;
+        try { release = bots.acquire?.(bot.id); } catch { continue; }
+        try {
         const state = brain.state(bot.id);
         if (state.paused) continue;
         const event = { threadId: post.threadId ?? post.id, text: post.text };
@@ -344,6 +351,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
         // 起こしてほしい条件に当たった: 次の心拍を早める。間隔の下限は守る（前の心拍から floorMs 後より早くはしない）
         const soonest = Math.max(now(), (state.lastBeatAt ?? 0) + floorMs);
         if (state.nextAt == null || state.nextAt > soonest) brain.setState(bot.id, { nextAt: soonest, reservedAt: soonest });
+        } finally { release?.(); }
       }
     })().catch((e) => log('could not check the wake conditions:', errText(e)));
   }
@@ -361,7 +369,11 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
   return {
     beat, status, onPosted, tick,
-    pause: (botId, paused) => brain.setState(botId, { paused: Boolean(paused), ...(paused ? {} : { nextAt: now() + 60_000 }) }),
+    pause: (botId, paused) => {
+      const release = bots.acquire?.(botId);
+      try { return brain.setState(botId, { paused: Boolean(paused), ...(paused ? {} : { nextAt: now() + 60_000 }) }); }
+      finally { release?.(); }
+    },
     isRunning: (botId) => running.has(botId),
     async start() { closed = false; arm(); },
     stop() { closed = true; if (timer) clock.clearTimer(timer); timer = null; },

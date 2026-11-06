@@ -111,6 +111,10 @@ export function createBotPage(host) {
   nameIn.placeholder = t('channels:bot.namePlaceholder');
   const sub = el('div', 'bp-sub');
   const dmBtn = el('button', 'btn bp-dm');
+  const moreBtn = el('button', 'btn bp-more', '⋯');
+  moreBtn.type = 'button';
+  moreBtn.setAttribute('aria-label', t('channels:botDelete.more'));
+  moreBtn.setAttribute('aria-haspopup', 'menu');
   dmBtn.type = 'button';
   dmBtn.append(glyph(REPLY), t('channels:bot.openDm'));
   const createBtn = el('button', 'btn btn-primary bp-create', t('channels:bot.createButton'));
@@ -118,7 +122,7 @@ export function createBotPage(host) {
   const idBox = el('div', 'bp-id');
   idBox.append(nameIn, sub);
   const head = el('div', 'bp-head');
-  head.append(av, imagePick, imageInput, idBox, el('span', 'bp-spacer'), dmBtn, createBtn);
+  head.append(av, imagePick, imageInput, idBox, el('span', 'bp-spacer'), dmBtn, moreBtn, createBtn);
 
   const err = el('p', 'bp-err');
   err.setAttribute('role', 'alert');
@@ -128,6 +132,7 @@ export function createBotPage(host) {
   accountWarn.setAttribute('role', 'status');
   accountWarn.hidden = true;
   const notice = el('p', 'bp-gone');
+  notice.tabIndex = -1;
   notice.hidden = true;
 
   // 人格
@@ -527,6 +532,7 @@ export function createBotPage(host) {
     root.classList.toggle('is-new', creating);
     root.classList.toggle('is-gone', S.gone);
     show(dmBtn, !creating);
+    show(moreBtn, !creating && !S.bot?.plain);
     show(createBtn, creating);
     show(folderTitle, !creating);
     show(folderBox, !creating);
@@ -778,6 +784,10 @@ export function createBotPage(host) {
     update({ sendToOthers: next });
   });
   dmBtn.addEventListener('click', () => { if (S.bot?.dmChannelId) navigate({ kind: 'channel', id: S.bot.dmChannelId }); });
+  moreBtn.addEventListener('click', () => {
+    const r = moreBtn.getBoundingClientRect();
+    host.showMenu?.(r.left, r.bottom, [{ label: t('channels:botDelete.menu'), danger: true, onClick: () => host.deleteBot(S.bot, moreBtn) }], S.bot?.name);
+  });
   createBtn.addEventListener('click', create);
 
   // ---------------------------------------------------------------- 読み込み

@@ -1,4 +1,5 @@
 {
+  "deletedBotReadOnly": "閲覧用 — この bot は削除されました。続けて送信できません。",
   "taskChrome": { "view": "Chrome のウィンドウを見る", "close": "子の Chrome のウィンドウを閉じる", "confirmClose": "ウィンドウを閉じる", "confirmHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。閉じますか？", "confirmWaiting": "このウィンドウは、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。閉じますか？", "unknown": "プロフィール未確認", "running": "作業中", "paused": "引き継ぎ中", "stopped": "停止中", "idle": "待機中" },
   "pending": {
     "moving": "移動中",

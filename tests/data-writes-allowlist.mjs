@@ -25,9 +25,10 @@ export const DATA_WRITES = [
   { file: 'core/atomic-file.mjs', sites: 2, targets: [
     { name: '(呼び出し側の書き込み先)', limit: '呼び出し側の許可に従う（writeAtomic は共通の土台）', reason: '一時ファイルに書いてから置き換える共通の部品。自分では書き先を決めない' },
   ] },
-  { file: 'core/schema-migration.mjs', sites: 3, targets: [
+  { file: 'core/schema-migration.mjs', sites: 5, targets: [
     { name: 'data-schema.json', limit: '固定（{ schema: N }）', reason: '形式番号。移行の最後に 1 回だけ書く' },
     { name: 'backup-schema1-<日時>/（移行前の JSON と形式番号の写し）', limit: '移行 1 回につき JSON 5 つまで。移行前の大きさのまま増えない', reason: '移行前のデータの写し（docs/desktop-releases.md「適用とデータ保護」）。書き換えない。自動では消さない' },
+    { name: 'backup-schema2-<日時>/（pleiad.db・data-schema.json・memory/log.jsonl の写し）', limit: '移行の試行ごとに最大3ファイル。移行開始時の大きさで固定し、その後は書き換えない', reason: '形式2→3の照合・復旧用の写し。追加した2箇所は形式番号のコピーと旧記憶履歴の保存。DBはVACUUM INTOで写し、以後の履歴更新はmemory_stateの行で行う（docs/migrations/bot-delete/migration-plan.md）' },
   ] },
   { file: 'core/review-mode.mjs', sites: 1, targets: [
     { name: 'review-data.json', limit: '固定（{ review, createdAt }）', reason: '審査モード（ADR 0172）の置き場の印。空の置き場に起動のとき 1 回だけ書く' },

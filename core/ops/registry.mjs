@@ -266,6 +266,16 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
    *         承認待ち { ok: true, pending: true, result: { status: 'pending', code: 'PENDING_APPROVAL', requestId, message }, decision: 'ask' }
    */
   async function invoke(principal, id, args, deps = {}) {
+    try {
+      return principal.by === 'agent' && principal.sessionId && deps.withSessionWrite
+        ? await deps.withSessionWrite(principal.sessionId, () => invokeUnchecked(principal, id, args, deps))
+        : await invokeUnchecked(principal, id, args, deps);
+    } catch (err) {
+      if (err instanceof OpError) return { ok: false, code: err.code, error: err.message };
+      throw err;
+    }
+  }
+  async function invokeUnchecked(principal, id, args, deps = {}) {
     const locale = deps.locale;
     const failure = (code, params, extra) => ({ ok: false, code, error: agentT(locale, `ops.errors.${code}`, params), ...extra });
     const notFound = () => failure('NOT_FOUND', { id: String(id) });
@@ -307,7 +317,9 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
       if (risk !== 'read') await deps.audit?.({ op: op.id, risk, reason: verdict.reason, actor, sessionScope: op.scope });
       try {
         // 画面（人）には、画面が読む全量の形を返せる（uiHandler）。AI・CLI は handler の、件数と字数に上限のある形（ADR 0091 追記）
-        const result = await (op.uiHandler && principal.by === 'human' ? op.uiHandler(ctx, parsed.data) : op.handler(ctx, parsed.data));
+        const handle = () => op.uiHandler && principal.by === 'human' ? op.uiHandler(ctx, parsed.data) : op.handler(ctx, parsed.data);
+        const result = principal.by === 'agent' && sessionId && deps.withSessionWrite
+          ? await deps.withSessionWrite(sessionId, handle) : await handle();
         return { ok: true, result: op.humanSecretOutput && principal.by === 'human' && principal.via === 'ui' ? result : maskOutput(result ?? null), decision: verdict.decision };
       } catch (err) {
         if (err instanceof OpError) return { ok: false, code: err.code, error: err.message, decision: verdict.decision };

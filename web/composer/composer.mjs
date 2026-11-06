@@ -72,7 +72,7 @@ export function composerEls(prefix, root = document) {
  * @param {() => void} o.onSubmit 送信（Ctrl/⌘+Enter・送信ボタン）
  * @param {() => void} [o.onSchedule] 送信の日時の面を開く（Ctrl/⌘+Shift+Enter）
  */
-export function createComposer({ els, prefix = '', t, attach, isPlain = () => false, wait, keys = [], onSubmit, onSchedule = () => {} }) {
+export function createComposer({ els, prefix = '', t, attach, isPlain = () => false, wait, keys = [], canSubmit = () => true, onSubmit, onSchedule = () => {} }) {
   const prompt = els.prompt;
   const parts = {};
   const att = createComposerAttachments(attach);
@@ -93,9 +93,10 @@ export function createComposer({ els, prefix = '', t, attach, isPlain = () => fa
   }
 
   // 発言を編集して送り直している間（useEdit）は、送信も Ctrl/⌘+Enter も「送り直す」、Ctrl/⌘+Shift+Enter は「分岐して送る」（日時の予約は使わない）
-  els.composer.onsubmit = (e) => { e.preventDefault(); if (parts.edit?.active) parts.edit.send(); else onSubmit(); };
+  els.composer.onsubmit = (e) => { e.preventDefault(); if (!canSubmit()) return; if (parts.edit?.active) parts.edit.send(); else onSubmit(); };
   prompt.onkeydown = (e) => {
     if (isComposingKey(e)) return;
+    if (!canSubmit() && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); return; }
     for (const take of keys) if (take(e)) return;
     if (parts.edit?.key(e)) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (e.shiftKey) onSchedule(); else onSubmit(); }

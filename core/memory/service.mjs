@@ -55,7 +55,7 @@ const clip = (entry) => {
   return { ...entry, text: `${text.join('')}…` };
 };
 
-export function createMemoryService({ dataDir, channels = null, emit = () => {}, now = Date.now, localeOf = () => 'ja', loadSqlite, log = () => {} } = {}) {
+export function createMemoryService({ dataDir, channels = null, emit = () => {}, now = Date.now, localeOf = () => 'ja', loadSqlite, log = () => {}, withLayer = (_layer, fn) => fn() } = {}) {
   const dir = path.join(dataDir, 'memory');
   const titleOf = (layer) => (layer === USER_LAYER ? agentT(localeOf(), 'memory.title.user') : agentT(localeOf(), 'memory.title.bot'));
   const store = createMemoryStore({ dir, now, titleOf });
@@ -106,12 +106,21 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   };
   const bump = (key) => { if (key) userWrites.set(key, (userWrites.get(key) ?? 0) + 1); };
 
-  return {
+  const service = {
+    async purgeBot(botId) {
+      needLayer(botId);
+      if (botId === USER_LAYER) throw new Error('cannot purge shared memory');
+      await catchUp();
+      await store.purgeLayer(botId);
+      await index.reset();
+      indexed = null;
+      announce(botId);
+    },
     dataDir, emit, now,
     store, index,
     // 起動では正本を読むだけ（索引は最初の検索・末尾の組み立てで作る。bot を使わない人の置き場に索引のファイルを作らない）
     async start() { await catchUp(); },
-    stop() { index.close(); started = false; indexed = null; },
+    stop() { index.close(); store.close(); started = false; indexed = null; },
 
     async list({ layer } = {}) {
       await catchUp();
@@ -224,4 +233,20 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       return { notes, memRev: rev, delivered, snapshotDue: false };
     },
   };
+  let operations = Promise.resolve();
+  for (const [name, operation] of Object.entries(service)) {
+    if (['rev', 'stop', 'now', 'emit'].includes(name) || typeof operation !== 'function') continue;
+    service[name] = (...args) => {
+      const execute = async () => {
+        if (['write', 'edit', 'forget', 'unforget'].includes(name)) await catchUp();
+        const layer = name === 'write' ? args[0]?.layer : ['edit', 'forget', 'unforget'].includes(name)
+          ? (store.get(args[0]?.id) ?? store.forgottenEntry(args[0]?.id))?.layer : null;
+        return layer ? withLayer(layer, () => operation(...args)) : operation(...args);
+      };
+      const run = operations.then(execute, execute);
+      operations = run.catch(() => {});
+      return run;
+    };
+  }
+  return service;
 }

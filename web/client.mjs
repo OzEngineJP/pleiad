@@ -1266,7 +1266,7 @@ function openMessageMenu({ m, part = false }, at = {}) {
   const canFork = Boolean(target) && capsOf(activeBackendId()).fork !== false;
   const command = kind === 'cmd' ? m.shellCommand?.() : null;
   const plan = messageMenuPlan({ kind, part, canFork, shell: Boolean(command), source: kind === 'user', editable: Boolean(m.dataset.uuid) });
-  const busy = state.busy;
+  const busy = state.busy || Boolean(retiredHere());
   const run = {
     copy: () => copyToClipboard(messageCopyText(m), owner.querySelector(':scope > .who .who-copy')),
     toComposer: () => copyShellToComposer(command),
@@ -1688,13 +1688,13 @@ function commandMsg(m) {
   // ホストで走らせる会話は、渡す前なら行ごとに「渡さない」を選べる。渡さなかった行は「{agent} に渡していない」で残る（ADR 0055）
   const agent = labelOf(m.backend ?? activeBackendId()) || 'AI';
   if (m.kind === 'shell') {
-    const label = m.kept ? t('chat.shell.kept', { agent }) : m.pending ? (m.skip ? t('chat.shell.skipped', { agent }) : t('chat.shell.pending', { agent })) : t('chat.system.handedTo', { agent });
+    const label = retiredHere() && m.pending ? t('ui:deletedBotReadOnly') : m.kept ? t('chat.shell.kept', { agent }) : m.pending ? (m.skip ? t('chat.shell.skipped', { agent }) : t('chat.shell.pending', { agent })) : t('chat.system.handedTo', { agent });
     who.firstChild.append(' · ', el('span', 'handed', label));
-    if (m.pending && m.runId && capsOf(m.backend ?? activeBackendId()).shell === 'host') who.firstChild.append(shellSkipButton(m));
+    if (!retiredHere() && m.pending && m.runId && capsOf(m.backend ?? activeBackendId()).shell === 'host') who.firstChild.append(shellSkipButton(m));
   }
   // 操作は ⋯ のメニュー（コピー・`!` は「入力欄に写す」・ここから分岐）。走らせ直した行の内容は、その時点の行から読む
   node.commandText = () => (m.runId ? shellRows.get(m.runId)?.m : null)?.command ?? m.command ?? '';
-  node.shellCommand = () => { const x = (m.runId ? shellRows.get(m.runId)?.m : null) ?? m; return x.kind === 'shell' && x.command && !x.running ? x.command : null; };
+  node.shellCommand = () => { const x = (m.runId ? shellRows.get(m.runId)?.m : null) ?? m; return !retiredHere() && x.kind === 'shell' && x.command && !x.running ? x.command : null; };
   const parts = commandParts(m, { onStop: m.runId ? () => cmd('stopShell', { runId: m.runId }).catch(() => {}) : null });
   // 0 以外の終了コードが分かるときだけ、行の面を一段上げる（ツールの失敗と同じ語彙。design-system「システム側のメッセージ」）
   if (shellFailed(m)) { const box = el('div', 'cmd-box'); box.append(...parts); node.append(who, box); }
@@ -1710,6 +1710,7 @@ function commandMsg(m) {
  * 書きかけがある・使えない会話では、`! コマンド` の文として後ろに足す
  */
 function copyShellToComposer(command) {
+  if (retiredHere()) return;
   if (!shellComposer.copy(command)) return copyToComposer(`! ${command}`);
   const prompt = $('prompt');
   prompt.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1727,6 +1728,7 @@ function shellSkipButton(m) {
   const b = el('button', 'who-act', m.skip ? t('chat.shell.unskip') : t('chat.shell.skip'));
   b.type = 'button';
   b.onclick = async () => {
+    if (retiredHere()) return;
     const sessionId = state.current;
     b.disabled = true;
     try {
@@ -4035,7 +4037,8 @@ async function fetchBulk(url) {
 
 /** 今の会話が対応を終えたエージェントのものなら、続けられない理由（core/backends/index.mjs の RETIRED） */
 function retiredHere() {
-  return state.sessions.find((x) => x.id === state.current)?.retired ?? null;
+  const session = state.sessions.find((x) => x.id === state.current);
+  return session?.deletedBot ? t('deletedBotReadOnly') : session?.retired ?? null;
 }
 
 function activeBackendId() {
@@ -5626,7 +5629,8 @@ $('resumeAll').onclick = async () => {
   const failed = [];
   for (const id of ids) {
     // 押した後に別の所（入力欄の再開・別の端末）で続いた会話は飛ばす。失敗には数えない
-    if (!isInterrupted(state.sessions.find(s => s.id === id)) || resuming.has(id)) continue;
+    const session = state.sessions.find(s => s.id === id);
+    if (session?.deletedBot || !isInterrupted(session) || resuming.has(id)) continue;
     await resumeSession(id).catch(e => { if (e.code !== 'NOT_INTERRUPTED') failed.push(e); });
   }
   $('resumeAll').disabled = false;
@@ -7966,6 +7970,7 @@ const browserSettings = setupBrowserSettings({ available: browserPanelAvailable(
 const voiceWraps = new WeakMap();
 voiceUi.mount({
   id: 'chat',
+  canStart: () => !retiredHere(),
   header: document.querySelector('body > main > header.top'), headerBefore: $('tocEntry'),
   composer: chatComposer.voiceSlot(),
   main: document.querySelector('body > main'), log: $('log'), overlay: $('logFrame'), replyScope: () => $('log'),
@@ -8522,7 +8527,7 @@ function rowMenu(s, x, y, lead = []) {
     ] },
     // 会話の設定を誰がいつ変えたか（AI が変えた状態・タイトルもここで辿れる。会話の中には行を出さない。ADR 0067）
     { label: t("changeLog.menu"), onClick: () => showChangeLog(s) },
-    ...(capsOf(s.backend).fork === false ? [] : [{ label: t("session.menu.forkTail"), onClick: () => forkTail(s.id) }]),
+    ...(capsOf(s.backend).fork === false ? [] : [{ label: t("session.menu.forkTail"), disabled: Boolean(s.deletedBot), onClick: () => forkTail(s.id) }]),
     ...groupItems(s),
     { sep: true },
     { label: t("session.menu.mode"), pending: !vocab && waitingVisible, hint: vocab?.modes[mode]?.label ?? mode, sub: () =>
@@ -10183,6 +10188,11 @@ function stoppingHere() {
 /** 実行状態から見た目を合わせる。走っている本数ではなく「この画面が走っているか」で決める。 */
 function syncRunState() {
   const here = isRunningHere();
+  const deletedBot = state.sessions.find(x => x.id === state.current)?.deletedBot;
+  $('deletedBotNotice').hidden = !deletedBot;
+  $('deletedBotNotice').textContent = deletedBot ? t('deletedBotReadOnly') : '';
+  $('composer').hidden = Boolean(deletedBot);
+  voiceUi.sync();
   nav.syncRunning();
   // エージェント・作業ディレクトリは実行中も次のターンの分を予約できる（チップは無効にしない）
   // 作ったばかりの会話（freshSessionId）を開いている間は押せる（送信を予約する。submit）

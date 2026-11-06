@@ -2125,6 +2125,7 @@ function controlRuntimeFor(turn) {
 // 保持役があればジョブは保持役の子に載り、サーバーを入れ替えても続く（ADR 0270 段 2a。core/ply-shell-held.mjs）
 const shellJobHolder = createPlyShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
 const shellBridge = createShellBridge({
+  withSessionWrite: withWritableSession,
   askPermission: request => askPermission(request),
   holder: shellJobHolder,
   onJobStart: (sessionId, job) => {
@@ -2595,6 +2596,7 @@ function sessionRow(b, s, extra = {}) {
     unsent: extra.unsent ?? false,
     // bot の会話（Chats の一覧には出さない。あなた待ちの間だけ出る。ADR 0109）。bot でなければ null
     bot: extra.bot ? { botId: extra.bot.botId, kind: extra.bot.kind, channelId: extra.bot.channelId ?? null, threadId: extra.bot.threadId ?? null } : null,
+    deletedBot: extra.deletedBot ?? null,
     hasDraft: Boolean(extra.draft?.text || extra.draft?.attached?.length),
     historyCount: (extra.history ?? []).length,
     // 人が host で作業ディレクトリを変えたなら sidecar が正本（ネイティブは古い cwd を返しうる）。
@@ -3894,7 +3896,8 @@ async function applyBrowserPref(key, value) {
 }
 
 /** 会話を分ける。fork コマンドと sessions.fork が同じ経路を通る。actor は変更の記録の主体（無ければ人間） */
-async function forkConversation({ sessionId, upToMessageId, beforeMessageId, title, reason, backend: given }, actor) {
+async function forkConversation(args, actor) { return withWritableSession(args.sessionId, () => forkWritableConversation(args, actor)); }
+async function forkWritableConversation({ sessionId, upToMessageId, beforeMessageId, title, reason, backend: given }, actor) {
   const running = runtime.turns.get(sessionId);
   if (!sessionId || forking.has(sessionId) || switching.has(sessionId) && !running) throw new Error(t('session.preparingFork'));
   forking.add(sessionId);
@@ -3943,7 +3946,8 @@ async function forkConversation({ sessionId, upToMessageId, beforeMessageId, tit
  *   中断の印と止めたもの（中断した位置が消える）・圧縮の記録のうち切り口より後
  * 提示（添付・可視化）は conversations.mjs の rewind が切る。下書きには触らない
  */
-async function rewindConversation({ sessionId, beforeMessageId, stopRunning = false }) {
+async function rewindConversation(args) { return withWritableSession(args.sessionId, () => rewindWritableConversation(args)); }
+async function rewindWritableConversation({ sessionId, beforeMessageId, stopRunning = false }) {
   if (!sessionId) throw new Error(t('session.required'));
   const running = runtime.turns.get(sessionId);
   if (forking.has(sessionId) || switching.has(sessionId) && !running) throw new Error(t('session.preparingRewind'));
@@ -4339,17 +4343,17 @@ async function deleteUnsentSessionOf(args) {
  * 委譲の子として終わっていない・委譲した子が終わっていない（完了の通知がまだ届いていないものを含む）・送信待ちや送信予定がある会話と、bot の会話
  */
 const deleteRefusal = (message) => Object.assign(new Error(message), { code: 'CANNOT_DELETE' });
-async function refuseDelete(sessionId) {
+async function refuseDelete(sessionId, { bot = false } = {}) {
   if (!sessionId) throw new Error(t('session.required'));
   const meta = await store.get(sessionId);
   // bot の会話は Channels のスレッド・DM・ルーティンが持つ（一覧にも出ない）。隠れた会話は host.deleteHidden が片付ける（ADR 0127）
-  if (meta.bot) throw deleteRefusal(t('session.deleteBot'));
+  if (meta.bot && !bot) throw deleteRefusal(t('session.deleteBot'));
   if (sessionBusy(sessionId) || [...runtime.waiting.values()].some(w => w.payload?.sessionId === sessionId && !(w.outlivesTurn && w.origin === sessionId && !blocksTurn(w)))
       || runtime.background.get(sessionId)?.tasks?.length || shellRuns.runningIn(sessionId) || shellBridge.running(sessionId)
       || (agentTasks?.running() ?? []).some(r => r.sessionId === sessionId)) throw deleteRefusal(t('session.deleteBusy'));
   if ((agentTasks?.running() ?? []).some(r => r.parentSessionId === sessionId)) throw deleteRefusal(t('session.deleteChildren'));
   if ((await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))
-      || schedule.list().some(row => row.sessionId === sessionId && row.kind === 'send')) throw deleteRefusal(t('session.deleteQueued'));
+      || schedule.list().some(row => (row.sessionId === sessionId && row.kind === 'send') || (meta.bot && row.kind === 'post' && row.channelId === meta.bot.channelId && row.threadId === meta.bot.threadId))) throw deleteRefusal(t('session.deleteQueued'));
 }
 
 /**
@@ -4425,7 +4429,7 @@ async function compactionBackend(sessionId) {
  * 圧縮は冪等なので、付け直すより中断してやり直す方が安い。中断の記録（interrupted）は recoverInterruptedTurns が残している
  */
 async function redoInterruptedCompactions(resuming = new Set()) {
-  const rows = Object.entries(await store.getAll()).filter(([, meta]) => meta?.compacting);
+  const rows = Object.entries(await store.getAll()).filter(([, meta]) => meta?.compacting && !meta.deletedBot);
   for (const [id, meta] of rows) {
     if (resuming.has(id)) continue;
     const trigger = typeof meta.compacting?.trigger === 'string' ? meta.compacting.trigger : 'auto';
@@ -4438,7 +4442,8 @@ async function redoInterruptedCompactions(resuming = new Set()) {
   }
 }
 
-async function requestCompaction(args) {
+async function requestCompaction(args) { return withWritableSession(args?.sessionId, () => requestWritableCompaction(args)); }
+async function requestWritableCompaction(args) {
   const sessionId = args?.sessionId;
   compactionScheduler.cancel(sessionId);
   const backend = await compactionBackend(sessionId);
@@ -4475,7 +4480,8 @@ async function setConversationAutoCompactionOf(args) {
 }
 
 /** 会話の題を考えてもらう（sessions.suggestTitle。WS の suggestTitle の中身）。会話は変えない */
-async function suggestTitleOf(args) {
+async function suggestTitleOf(args) { return withWritableSession(args?.sessionId, () => suggestWritableTitleOf(args)); }
+async function suggestWritableTitleOf(args) {
   const { sessionId } = args ?? {};
   if (!sessionId) throw new Error(t('session.required'));
   const backend = await resolveBackendForSession(sessionId);
@@ -4554,7 +4560,8 @@ async function providerUsageOf(args, { force = false } = {}) {
  * 会話へ発言を送る（送信待ちに積む）。画面の送信（WS の sendMessage）と、別の会話からの送信（sessions.send。ADR 0104）が同じ経路を通る。
  * 走っている会話では送信待ちのまま順番を待つ（途中送信できるエージェントは渡す）。rewind は画面だけ（同じ会話の中で発言の手前まで巻き戻す。ADR 0102）
  */
-async function acceptMessage(sessionId, messageId, args, { rewind } = {}) {
+async function acceptMessage(sessionId, messageId, args, options) { return withWritableSession(sessionId, () => acceptWritableMessage(sessionId, messageId, args, options)); }
+async function acceptWritableMessage(sessionId, messageId, args, { rewind } = {}) {
   compactionScheduler.cancel(sessionId);
   if (rewind) {
     // 受け付け済みの再送（応答が届かず送り直した同じ messageId）は、巻き戻し直さない（もう巻き戻してある）
@@ -5162,7 +5169,8 @@ const opsShell = {
     return { backend: backend?.id ?? null, cwd: meta?.cwd ?? null, title: await conversationTitleOf(sessionId).catch(() => '') };
   },
   // 人の `!` と同じ。承認モードは掛けない（AI の呼び出しは操作の一覧の guarded で聞く）。送信待ちにも送り直しの控えにも積まない
-  run: async ({ sessionId, runId, command, cwd: asked }) => {
+  run: async (args) => withWritableSession(args.sessionId, () => opsShell.runWritable(args)),
+  runWritable: async ({ sessionId, runId, command, cwd: asked }) => {
     const backend = sessionId ? refuseRetired(await resolveBackendForSession(sessionId)) : null;
     if (!backend) throw new Error(t('session.notFound'));
     if (!shellMode(backend)) throw Object.assign(new Error(t('shell.unavailable')), { code: 'SHELL_UNAVAILABLE' });
@@ -5183,6 +5191,9 @@ const opsShell = {
   stop: (runId) => ({ stopped: shellRuns.stop(runId) }),
   // 行ごとの「渡さない」（ADR 0055）。ホストで走らせる会話だけ。Codex は結果がエージェントの会話に入っていて外せない
   skip: async ({ sessionId, runId, skip }) => {
+    return withWritableSession(sessionId, () => opsShell.skipWritable({ sessionId, runId, skip }));
+  },
+  skipWritable: async ({ sessionId, runId, skip }) => {
     const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
     if (!backend) throw new Error(t('session.notFound'));
     try {
@@ -5208,7 +5219,8 @@ const opsSessionWork = {
     return { title: await conversationTitleOf(sessionId).catch(() => ''), from: { backend: source.id, mode, position: source.modes()[mode] ?? null },
       to: target ? { backend: target.id, label: target.label ?? target.id, mode: toMode, position: target.modes()[toMode] ?? null } : null };
   },
-  switchBackend: async (sessionId, targetId) => {
+  switchBackend: (sessionId, targetId) => withWritableSession(sessionId, () => opsSessionWork.switchWritableBackend(sessionId, targetId)),
+  switchWritableBackend: async (sessionId, targetId) => {
     if (runtime.turns.has(sessionId) || switching.has(sessionId) || forking.has(sessionId)) throw new Error(t('session.finishBeforeSwitch'));
     compactionScheduler.cancel(sessionId);
     switching.add(sessionId);
@@ -5530,6 +5542,7 @@ async function routeSettingNotice(notice) {
 function opsDeps(lng = currentLocale()) {
   return {
     locale: lng,
+    withSessionWrite: withWritableSession,
     app: opsApp,
     sessions: opsSessions,
     limitResume: {
@@ -7080,6 +7093,7 @@ botHost = createBotHost({
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
+  refuseBotDelete: id => refuseDelete(id, { bot: true }),
   // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。走っていれば次のターンから（nextSettings）
   reserveTurnSettings: (args) => reserveTurnSettings(args),
   // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
@@ -7091,7 +7105,11 @@ botHost = createBotHost({
   // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
   deleteHidden: async id => {
     if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;
-    if (!await deleteHiddenConversation(id, getBackend)) return false;
+    if (!await conversation(id)) { await store.removeSession(id); return true; }
+    if (!await deleteHiddenConversation(id, getBackend)) {
+      // ネイティブ削除に対応しないエージェントでは、非表示の印を保持する。続行は永続の閲覧用状態で拒否する。
+      return Boolean((await store.get(id)).deletedBot);
+    }
     await store.removeSession(id);
     return true;
   },
@@ -7114,7 +7132,7 @@ for (const b of listBackends()) {
 async function runTurn(args, onStarted = () => {}, hooks = {}) {
   const releaseUpdateGate = updateGate.enter();
   try {
-    return await runTurnInternal(args, onStarted, hooks);
+    return await withWritableSession(args.sessionId, () => runTurnInternal(args, onStarted, hooks));
   } finally { releaseUpdateGate(); }
 }
 
@@ -8543,7 +8561,8 @@ async function compactionStartFailed(sessionId, trigger, err) {
   } catch (saveError) { console.error('  圧縮失敗の記録に失敗:', String(saveError?.message ?? saveError)); }
   emitGlobal({ type: 'compaction', sessionId, ...entry });
 }
-async function compactConversation(sessionId, trigger = 'manual') {
+async function compactConversation(sessionId, trigger = 'manual') { return withWritableSession(sessionId, () => compactWritableConversation(sessionId, trigger)); }
+async function compactWritableConversation(sessionId, trigger = 'manual') {
   const backend = await compactionBackend(sessionId);
   if (!backend?.capabilities?.compact) throw Object.assign(new Error(t('compaction.unsupported')), { code: 'UNSUPPORTED' });
   if (sessionBusy(sessionId)) {
@@ -8812,7 +8831,8 @@ const resumeRunning = () => Object.assign(new Error(t('resume.running')), { code
  * 送り直すものが無ければ理由ごとの文を、普通の送信（sendMessage と同じ送信待ち）で送る。文は会話の言語で、見える発言になる。
  * 実行中（準備中・切り替え・分岐を含む。先頭が送信待ち・送信中も）の会話と、中断していない会話は断る
  */
-async function resumeSession(sessionId, { onSettled } = {}) {
+async function resumeSession(sessionId, options) { return withWritableSession(sessionId, () => resumeWritableSession(sessionId, options)); }
+async function resumeWritableSession(sessionId, { onSettled } = {}) {
   if (!sessionId || typeof sessionId !== 'string' || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   if (resuming.has(sessionId) || sessionBusy(sessionId)) throw resumeRunning();
   const oldLimit = limitStates.get(sessionId);
@@ -8874,7 +8894,20 @@ async function resumeSession(sessionId, { onSettled } = {}) {
  * 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
  * 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
  */
-async function acceptSend(sessionId, messageId, args) {
+async function withWritableSession(sessionId, fn) {
+  if (!sessionId) return fn();
+  const meta = await store.get(sessionId);
+  if (meta.deletedBot) throw new OpError('READ_ONLY', t('session.deletedBotReadOnly'));
+  // 夜の共通記憶整理だけは bot 定義を持たない内部会話。一般の不明な bot は許可しない。
+  const internalLearner = meta.bot?.botId === 'b_learner' && meta.bot.kind === 'learner' && meta.bot.channelId === null && meta.bot.threadId === null;
+  let release;
+  try { release = meta.bot?.botId && !internalLearner ? botHost.acquireBot(meta.bot.botId) : () => {}; }
+  catch (err) { if (err.code) throw new OpError(err.code, err.message); throw err; }
+  try { return await fn(); } finally { release(); }
+}
+
+async function acceptSend(sessionId, messageId, args) { return withWritableSession(sessionId, () => acceptWritableSend(sessionId, messageId, args)); }
+async function acceptWritableSend(sessionId, messageId, args) {
   if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)?.reason !== 'limit'
     && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
   return outbox.accept(sessionId, messageId, args);
@@ -8977,6 +9010,9 @@ async function sendScheduledNow(row) {
 /** 予定を置く。会話ごと・全体の数を絞り、同じ messageId の置き直しは 1 件のまま（二重の予定を作らない） */
 /** スレッドへの返信の予定（channels.schedulePost。kind 'post'）。人の投稿として、同じ clientId で 1 回だけ投稿する */
 async function schedulePost(input) {
+  return botHost.withPost(input, { kind: 'human' }, () => scheduleWritablePost(input));
+}
+async function scheduleWritablePost(input) {
   const channels = botHost?.opsDeps().channels;
   if (!channels) throw new Error(t('schedule.notFound'));
   const root = await channels.getPost({ channelId: input.channelId, postId: input.threadId });
@@ -9000,7 +9036,8 @@ async function fireScheduledPost(row) {
 const postScheduled = (row) => botHost.opsDeps().channels.post({ channelId: row.channelId, threadId: row.threadId, text: row.args.prompt,
   ...(row.args.attachments?.length ? { attachments: row.args.attachments } : {}), ...(row.args.to ? { to: row.args.to } : {}), clientId: row.clientId }, { kind: 'human' });
 
-async function scheduleSendMessage(input, by = 'human') {
+async function scheduleSendMessage(input, by = 'human') { return withWritableSession(input.sessionId, () => scheduleWritableSendMessage(input, by)); }
+async function scheduleWritableSendMessage(input, by = 'human') {
   const { sessionId } = input ?? {};
   if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   const row = buildSendRow({ ...input, sessionId, by });
@@ -9611,7 +9648,7 @@ wss.on("connection", (ws, req) => {
             const savedCompactions = sidecar.compactions ?? [];
             // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
-            const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
+            const compactionData = { deletedBot: sidecar.deletedBot ?? null, compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff),
               rebuilds: sidecar.rebuilds ?? [] };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。

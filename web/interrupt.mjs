@@ -123,7 +123,7 @@ export function resumeVisible({ interrupted, running, waiting, text, attached })
  */
 export function updateInterrupted(sessions, dismissedAt = 0, { startedAt } = {}) {
   const before = startedAt === undefined ? Infinity : Number(startedAt);
-  const list = (sessions ?? []).filter((s) => isInterrupted(s) && reasonOf(s.interrupted) === "update" && !s.delegation
+  const list = (sessions ?? []).filter((s) => !s.deletedBot && isInterrupted(s) && reasonOf(s.interrupted) === "update" && !s.delegation
     && Number(s.interrupted.at) < before);
   const maxAt = list.reduce((m, s) => Math.max(m, Number(s.interrupted.at) || 0), 0);
   return { ids: list.map((s) => s.id), maxAt, show: list.length > 0 && maxAt > (Number(dismissedAt) || 0) };

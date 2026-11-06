@@ -22,6 +22,7 @@
 //                 persistMarks = 行が描き直される場所（印を付け直す。rowKey = 行の識別子。画面を開いている間だけ覚える）。
 //                 createRow・place・markHost は、聞き取れなかった行（view.mjs の createListenFail。吹き出しではなく面を塗らない 1 行）も使う（見た目は voice.css の .vc-ghost）
 //   target()      見ている先 { kind: 'chat', sessionId } | { kind: 'thread', channelId, threadId } | null
+//   canStart?()   false なら通話を始めず、実行中の通話も送信待ちの言葉を捨てて終える（閲覧用など）
 //   send(text)    まとめ待ちを終えた 1 通を、いまの送信の経路（会話へは sendMessage で会話の行に置く、スレッドへは channels.post）へ。失敗したら投げる。
 //                 index.mjs が直列に呼ぶ（前の送信が済むまで次を呼ばない）。入力欄は通さない。会話の id を返す口（{ sessionId, messageId }）なら、
 //                 messageId が「AI に渡しました」になったとき（delivery.mjs の ply:voice-delivered）に受け取りの一言の時計を始める。何も返さない口（スレッド）は、送れた時点で渡ったとする
@@ -99,6 +100,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
 
   const supported = () => Boolean(navigator.mediaDevices?.getUserMedia && globalThis.AudioWorkletNode && globalThis.AudioContext);
   const usable = () => available() && supported();
+  const canStart = (rec) => rec.slot.canStart?.() !== false;
 
   // ---- 状態の表示
   const msOf = (rec) => {
@@ -114,7 +116,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     const base = msOf(rec);
     const ms = base === 'speaking' && engine.bargeActive ? 'speaking-live' : base;   // 読み上げ中でも聞いている（話すと止まる）
     const time = on ? fmtTime(Math.floor((now() - engine.startedAt) / 1000)) : '';
-    rec.call.el.hidden = !usable();
+    rec.call.el.hidden = !usable() || !canStart(rec);
     rec.call.paint({ on, time });
     const root = rec.slot.composer.root;
     const wasShown = root.classList.contains('vc-in-call') || root.classList.contains('vc-deny');
@@ -181,7 +183,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
 
   // ---- 通話の開始・終了
   async function start(rec) {
-    if (!usable()) return;
+    if (!usable() || !canStart(rec)) return;
     if (active && active !== rec) engine.end('switch');
     active = rec;
     deniedRec = null; deniedReason = null;
@@ -240,6 +242,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
   /** 見ている会話が別のものに変わったら通話を終える。新しい会話の id が決まっただけなら、読み上げる会話の対象を更新する */
   function watchTarget() {
     if (!active || !engine.active) return;
+    if (!canStart(active)) { engine.cancelTurn(); engine.end('readonly'); return; }
     const key = keyOf(active.slot.target());
     if (key === startedKey) return;
     const was = startedKey;
@@ -299,6 +302,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
 
   /** まとめ待ちを終えた 1 通。吹き出しは確定の字にして、会話へは直列のキューで送る（本物の行が現れたら吹き出しは消える） */
   function onTurn(rec, text, ended = false) {
+    if (!canStart(rec)) return;
     if (ended) { onLeaveTurn(rec, text); return; }
     rec.cut = false;
     rec.board.turnSent();   // 次の発言を送った: 読み上げの失敗の一行は消える
@@ -306,7 +310,10 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     const bubble = rec.live.row;
     engine.noteSent(true);
     say(t('voice.live.sent'));
-    sendQueue.push(() => rec.slot.send(text)).then(
+    sendQueue.push(() => {
+      if (!canStart(rec)) throw new Error(t('ui:deletedBotReadOnly'));
+      return rec.slot.send(text);
+    }).then(
       (result) => {
         noteHanded(result);
         sounds.play('sent');
@@ -447,7 +454,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
       paint(rec);
       return {
         /** 通話ボタンを出す・隠す（ホストの対応が分かったとき） */
-        refresh: () => paint(rec),
+        refresh: () => { watchTarget(); paint(rec); },
         destroy() {
           if (active === rec) engine.end('destroy');
           rows.disconnect();
@@ -460,6 +467,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     },
     /** 設定（設定 › 通話・キー）が変わった（changed: true。キー不足・上限の一行が消える）・ホストの対応が分かった */
     refresh({ changed = false } = {}) { loadSettings(); if (changed) fixed('fixed-settings'); paintAll(); },
+    sync() { watchTarget(); paintAll(); },
     /** 通話中か */
     get active() { return engine.active; },
   };
