@@ -1035,16 +1035,28 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .body h2{font-size:1.2em}
 .body h3{font-size:1.06em}
 .body :is(h4,h5,h6){font-size:1em;color:var(--ink-weak)}
-.body :is(ul,ol){margin:0 0 .8em;padding-left:1.6em}
-.body li{margin:.15em 0}
-.body li>:is(ul,ol){margin:.2em 0}
+/* リストの字下げと記号は入力欄の行と同じ決まり（web/md-structure.mjs の listClass・markerExtra、tokens.css の --md-list-*）。
+   1 段目 1.5em・項目の中の入れ子は 1 段ごとに +1.2em。2 桁以上の番号は、記号の幅（--mk 字。web/render.mjs が付ける）だけ足して字に重ねない。
+   字の幅は最低 12 字を残し、深い入れ子（.md-scroll）はその中だけ横へ送る。承認済み（2026-11-06、ADR 0292・docs/design-system.md「Markdown のリストと引用」） */
+.body :is(ul,ol){--mk:0;margin:0 0 .8em;padding-left:calc(var(--md-list-indent) + var(--mk) * 1ch)}
+.body li{margin:.15em 0;min-width:12ch}
+.body li>:is(ul,ol){margin:.2em 0;padding-left:calc(var(--md-list-step) + var(--mk) * 1ch)}
+:is(ul,ol).md-disc{list-style-type:disc}
+:is(ul,ol).md-circle{list-style-type:circle}
+:is(ul,ol).md-square{list-style-type:square}
+:is(ul,ol).md-decimal{list-style-type:decimal}
+@counter-style md-paren{system:extends decimal;suffix:") "}
+:is(ul,ol).md-paren{list-style-type:md-paren}
+.md-scroll{max-width:100%;overflow-x:auto;margin:0 0 .8em;border-radius:var(--r-s)}
+.md-scroll>:last-child{margin-bottom:0}
+.md-scroll:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
 .body li::marker{color:var(--ink-weak)}
 .body hr{border:0;height:1px;background:var(--surface-3);margin:1.4em 0}
-/* 発言の引用は入力欄の引用（.md-b.md-quote）と同じ左の縦線: 面は敷かず、2px の --line-strong と弱い字。線は ::before（border-left は one-sided-line）。
-   入れ子は 1 段ごとに 16px（字下げ 12px ＋ 4px）右へ。Channels の投稿・スレッドの作業ログも同じ（docs/design-system.md「発言の引用」） */
-:is(.body,.post-body,.th-log-text) blockquote{position:relative;margin:0 0 .8em;padding:2px 0 2px 12px;color:var(--ink-weak)}
+/* 発言の引用は入力欄の引用の行（.md-b[data-q]）と同じ左の縦線: 面は敷かず、2px の --line-strong と弱い字。線は ::before（border-left は one-sided-line）。
+   入れ子は 1 段ごとに 16px（字下げ 12px ＋ 4px。tokens.css の --md-quote-*）右へ。段の数に上限は無い。Channels の投稿・スレッドの作業ログも同じ（docs/design-system.md「発言の引用」） */
+:is(.body,.post-body,.th-log-text) blockquote{position:relative;margin:0 0 .8em;padding:2px 0 2px var(--md-quote-indent);color:var(--ink-weak)}
 :is(.body,.post-body,.th-log-text) blockquote::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(var(--line-strong),var(--line-strong));pointer-events:none}
-:is(.body,.post-body,.th-log-text) blockquote blockquote{margin:.4em 0 .4em 4px}
+:is(.body,.post-body,.th-log-text) blockquote blockquote{margin:.4em 0 .4em var(--md-quote-nest)}
 /* 引用の中の最初と最後の段の余白を溜めない（入れ子の数だけ下に空いていた） */
 :is(.body,.post-body,.th-log-text) blockquote>:first-child{margin-top:0}
 :is(.body,.post-body,.th-log-text) blockquote>:last-child{margin-bottom:0}
@@ -1325,7 +1337,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 字の欄（web/md-editor.mjs）。Markdown をその場で整える編集欄。1 行から始め、中身に合わせて伸ばす。上限はマウス 10 行・タッチ 6 行で、
    その先は中でスクロール（client.mjs の fitPrompt が max-height を決める）。1 行 = 1 ブロック（.md-b）。記号は見せず、種類は見た目で表す */
 :is(#prompt,#thPrompt){position:relative;width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;line-height:1.6;
-  overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;min-height:calc(1.6em + 12px);
+  overflow-y:auto;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;min-height:calc(1.6em + 12px);
   scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent;outline:none;cursor:text}
 :is(#prompt,#thPrompt):focus{outline:none}
 :is(#prompt,#thPrompt)[aria-disabled=true]{cursor:not-allowed}
@@ -1395,25 +1407,36 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cg-take svg.i{width:15px;height:15px}
 @media (prefers-reduced-motion:reduce){.recall-row,.composer-ghost{transition:none}:is(#prompt,#thPrompt).recall-swap,.recall-row.loading svg.i,.recall-pos.bump,.recall-conv.enter{animation:none}
   .cg-key.nudge{animation-name:cg-nudge-still}}
-.md-b{min-height:1.6em;margin:0}
+/* 行の飾りは web/md-editor.mjs の decorate が、文書の構造（web/md-structure.mjs。履歴と同じ解析）から行ごとに付ける（ADR 0292）。
+   --md-ind は中身の始まり、--md-mk-at は項目の中身の始まり（記号 data-mk・data-bt はその手前に右寄せ。2 桁以上の番号も字に重ならない）、
+   --md-bar-img / --md-bar-pos は引用の線（引用ごとに 1 本、その引用の手前の字下げの位置）、data-q は引用の中、data-pos はコードの角。
+   見出しとコードは字の大きさが変わるので、字下げは欄の字で固めた長さ（--md-em・--md-ch）で数え、履歴と同じ幅にする。値は tokens.css の --md-list-* と同じ。
+   深い入れ子でも字は最低 12 字を残し、欄が横へ送れる */
+@property --md-em{syntax:'<length>';inherits:true;initial-value:14px}
+@property --md-ch{syntax:'<length>';inherits:true;initial-value:7px}
+:is(#prompt,#thPrompt){--md-em:1em;--md-ch:1ch;--md-list-indent:calc(1.5 * var(--md-em));--md-list-step:calc(1.2 * var(--md-em))}
+.md-b{--md-ind:0px;--md-mk-at:0px;--md-bar-img:none;--md-bar-pos:0 0;position:relative;min-height:1.6em;margin:0;padding-left:var(--md-ind);min-width:calc(var(--md-ind) + 12ch)}
 .md-b.md-h{font-weight:600;line-height:1.4;margin:.35em 0 .1em}
 .md-b.md-h[data-l="1"]{font-size:1.35em}
 .md-b.md-h[data-l="2"]{font-size:1.2em}
 .md-b.md-h[data-l="3"]{font-size:1.06em}
 .md-b.md-h[data-l="4"]{font-size:1em;color:var(--ink-weak)}
-.md-b.md-ul,.md-b.md-ol{position:relative;padding-left:calc(1.5em + var(--ind,0) * 1.2em)}
-.md-b.md-ul::before,.md-b.md-ol::before{content:attr(data-mk);position:absolute;left:calc(.4em + var(--ind,0) * 1.2em);color:var(--ink-weak);font-variant-numeric:tabular-nums;pointer-events:none;user-select:none}
-.md-b.md-cont{padding-left:calc(1.5em + var(--ind,0) * 1.2em)}
-/* 引用は面でなく左の縦線で見せる（--surface-paper は入力欄の地とほぼ同じで見えない）。深さごとに 16px 間隔で 1 本ずつ。線は行の背景なので行の間で切れない */
-.md-b.md-quote{position:relative;padding:0 12px 0 calc(12px + (var(--q,1) - 1) * 16px);color:var(--ink-weak)}
-/* 線の幅（深さ）は --q を幅にだけ使う。--q は画面側が行ごとに付ける値で、トークンではないので background の中に置かない（design-lint の unknown-token） */
-.md-b.md-quote::before{content:"";position:absolute;left:0;top:0;bottom:0;width:calc(var(--q,1) * 16px);background:repeating-linear-gradient(to right,var(--line-strong) 0 2px,transparent 2px 16px);pointer-events:none}
-.md-b.md-quote:not(.md-quote + .md-quote){padding-top:2px}
-.md-b.md-quote:not(:has(+ .md-quote)){padding-bottom:2px}
-.md-b.md-code{font:var(--fs-s)/1.7 var(--font-mono);background:var(--surface-paper);padding:0 14px;white-space:pre-wrap;tab-size:2}
-.md-b.md-code[data-pos^="top"]{border-top-left-radius:var(--r-s);border-top-right-radius:var(--r-s);padding-top:6px;color:var(--ink-weak)}
+.md-b[data-mk]::before{content:attr(data-mk);position:absolute;top:0;left:var(--md-mk-at);transform:translateX(calc(-100% - .45em));color:var(--ink-weak);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;user-select:none}
+/* 箇条書きの記号は字でなく形で描く（字の • ◦ ▪ は書体で小さく、履歴の list-style の ● ○ ■ と大きさが合わない）。大きさは欄の字で固め、1 行目の真ん中に置く */
+.md-b[data-bt]::before{content:"";width:calc(.36 * var(--md-em));height:calc(.36 * var(--md-em));margin-top:calc(.5lh - .18 * var(--md-em));background:currentColor;border-radius:50%;transform:translateX(calc(-100% - .55 * var(--md-em)))}
+.md-b[data-bt="circle"]::before{background:radial-gradient(closest-side,transparent calc(100% - 1.6px),currentColor calc(100% - 1px))}
+.md-b[data-bt="square"]::before{border-radius:0}
+/* 引用は面でなく左の縦線で見せる（--surface-paper は入力欄の地とほぼ同じで見えない）。線は行の背景なので行の間で切れない */
+.md-b[data-q]{color:var(--ink-weak)}
+.md-b[data-q]::after{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--md-ind);background-image:var(--md-bar-img);background-position:var(--md-bar-pos);background-size:2px 100%;background-repeat:no-repeat;pointer-events:none}
+/* コードの面は中身の始まりから敷く（字下げは外の余白）。記号と引用の線は、その分だけ左へ戻して置く */
+.md-b.md-code{font:var(--fs-s)/1.7 var(--font-mono);background:var(--surface-paper);margin-left:var(--md-ind);padding:0 14px;min-width:calc(12ch + 28px);white-space:pre-wrap;tab-size:2}
+.md-b.md-code[data-mk]::before{left:calc(var(--md-mk-at) - var(--md-ind))}
+.md-b.md-code[data-q]::after{left:calc(-1 * var(--md-ind))}
+.md-b.md-code[data-pos^="top"]{border-top-left-radius:var(--r-s);border-top-right-radius:var(--r-s);padding-top:6px}
+.md-b.md-code[data-pos^="top"][data-mk]::before{top:6px}
 .md-b.md-code[data-pos$="bottom"]{border-bottom-left-radius:var(--r-s);border-bottom-right-radius:var(--r-s);padding-bottom:6px}
-.md-b.md-code[data-pos="bottom"]{color:var(--ink-weak)}
+.md-b.md-code[data-fence]{color:var(--ink-weak)}
 :is(#prompt,#thPrompt) strong{color:var(--ink-strong);font-weight:650}
 :is(#prompt,#thPrompt) code{background:var(--surface-2);border-radius:var(--r-s);padding:.05em .4em;font:.92em var(--font-mono)}
 .md-b.md-code code{background:none;padding:0}

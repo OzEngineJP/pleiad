@@ -96,7 +96,7 @@ async page => {
   };
   try {
   const old = await current();
-  await page.getByRole('button', { name: '新しいセッション（絞り込みの条件を引き継ぐ）' }).click();
+  await page.getByRole('button', { name: '新しいチャット', exact: true }).click();
   await page.waitForFunction(old => localStorage.getItem('agent-host-current') !== old, old);
   await send('echo:前提のコード\n```js\nconst greeting = "<こんにちは>";\nconsole.log(greeting);\n```');
   const source = await current();

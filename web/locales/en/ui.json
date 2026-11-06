@@ -2926,6 +2926,9 @@
       "copyFailed": "Couldn't copy",
       "selected": "Code selected. Press Ctrl+C / ⌘C to copy"
     },
+    "md": {
+      "scroll": "Deeply nested content (scrolls horizontally)"
+    },
     "link": {
       "blocked": "Disabled because the link is unsafe",
       "hostOnly": "localhost links open only on the host's PC.",

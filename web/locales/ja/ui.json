@@ -2862,6 +2862,9 @@
       "copyFailed": "コピーできませんでした",
       "selected": "コードを選択しました。Ctrl+C / ⌘C でコピー"
     },
+    "md": {
+      "scroll": "深い入れ子（横にスクロールできます）"
+    },
     "link": {
       "blocked": "安全でないリンクのため無効化",
       "hostOnly": "localhost のリンクはホストの PC でだけ開けます。",

@@ -96,6 +96,9 @@
   --font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,"Yu Gothic UI","Hiragino Sans","Noto Sans JP",monospace;
   --fs-xs:11px;--fs-s:12px;--fs:14px;--fs-l:15px;--fs-xl:18px;
   --lh:1.6;
+  /* Markdown のリストと引用の字下げ。入力欄の行と履歴の <ul>/<ol>/<blockquote> が同じ値を同じ数え方で足す（web/md-structure.mjs の indentCss）。
+     リストは 1 段目 1.5em・2 段目から 1 段ごとに +1.2em、引用は 12px・入れ子 1 段ごとに +4px。承認済み（2026-11-06、ADR 0292） */
+  --md-list-indent:1.5em;--md-list-step:1.2em;--md-quote-indent:12px;--md-quote-nest:4px;
   /* 役割の大きさ。部品は段（--fs-*）ではなく役割で指す。PC は上の段と同じ値で、700px 以下だけ下の @media で上げる。
      ポップ・メニューは本文の子とは限らないので :root に置く。承認済み（2026-10-23、ADR 0256・docs/design-system.md「スマホの大きさの段階」） */
   --fs-body:var(--fs);        /* 本文・入力欄 */
