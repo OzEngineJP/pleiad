@@ -245,7 +245,7 @@ export const settings = [
   defineSetting({ key: 'delegationRouting', sync: false, summary: S('delegationRouting'), risk: 'guarded', prefKeys: ['delegationRouting'],
     schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: ROUTING_DEFAULTS, read: (ctx) => ctx.routingSettings?.(),
     normalize: async (ctx, patch) => {
-      // 前の版の Cerebras の自動選択の項目は Qwen の名前へ直して重ねる（core/server.mjs の applyRoutingSettings と同じ。ADR 0177）
+      // 前の版の項目（種類ごとの判定・Qwen/Cerebras への切り替え・クリエイティブの段 tv）は、読むときに今の形へ直して重ねる（core/server.mjs の applyRoutingSettings と同じ）
       const raw = { ...migrateRoutingSettings((await prefs(ctx)).delegationRouting ?? {}).raw };
       for (const [key, value] of Object.entries(migrateRoutingSettings(patch).raw)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
       for (const key of ROUTING_RETIRED_KEYS) delete raw[key];

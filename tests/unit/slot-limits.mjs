@@ -92,7 +92,7 @@ export default async function test(t) {
   const routed = createSlotLimits({ now: () => now });
   routed.record({ backend: 'devin', model: 'swe-2-high', account: slotAccount(false, 'acct-parent'), resetsAt: Date.parse('2026-10-21T18:01:00Z') });
   const blocked = (b, m, a) => { const s = routed.get(b, m, a); return s ? { reason: 'recently_limited', until: s.until } : null; };
-  const settings = normalizeSettings({ enabled: true, tiers: { t1: [], t2: [], t3: ['devin:swe-2-high'], t4: [], tv: [] } });
+  const settings = normalizeSettings({ enabled: true, tiers: { t1: [], t2: [], t3: ['devin:swe-2-high'], t4: [] } });
   const usage = { devin: { available: true, accountable: false, checkedAt: now - 1000, models: { 'swe-2-high': true },
     windows: [{ label: 'day', minutes: 1440, usedPercent: 0 }, { label: 'week', minutes: 10080, usedPercent: 0 }] } };
   const check = checkCandidate('devin:swe-2-high', { usage, settings, now, blocked });

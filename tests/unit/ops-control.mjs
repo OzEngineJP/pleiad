@@ -29,7 +29,7 @@ export default async function (t) {
   await fs.mkdir(dataDir, { recursive: true });
   // 秘密の場所に目印を入れておく。どの read 操作の返りにも出ないこと（T6）
   await fs.writeFile(path.join(dataDir, 'mcp-secrets.json'), JSON.stringify({ version: 1, secrets: { 'mcp:x:static': MARKER } }));
-  await fs.writeFile(path.join(dataDir, 'compat-endpoint-secrets.json'), JSON.stringify({ 'delegation-routing:jev': { key: MARKER } }));
+  await fs.writeFile(path.join(dataDir, 'compat-endpoint-secrets.json'), JSON.stringify({ 'delegation-routing:openrouter': { key: MARKER } }));
   await fs.writeFile(path.join(dataDir, 'claude-accounts.json'), JSON.stringify({ accounts: [{ id: 'a1', name: 'main', token: MARKER }] }));
   await fs.writeFile(path.join(dataDir, 'prefs.json'), JSON.stringify({
     agentSitePermissions: [{ origin: 'https://a.example', mode: 'always', token: MARKER, apiKey: MARKER }],

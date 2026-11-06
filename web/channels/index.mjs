@@ -29,6 +29,7 @@ import { createSideTabs } from './side-tabs.mjs';
 import { createFeed } from './feed.mjs';
 import { createSidebar } from './sidebar.mjs';
 import { createThread } from './thread.mjs';
+import { createBotDelete } from './bot-delete.mjs';
 
 /** WS の出来事のうち、この画面が受けるもの（core/protocol.mjs の EVENTS）。ほかの出来事も部品の onEvent には全部届く（permission など） */
 export const CHANNEL_EVENTS = new Set([
@@ -40,6 +41,7 @@ import { createRoutineSheet } from './routine-sheet.mjs';
 
 export function setupChannels(host) {
   const parts = [];
+  parts.push(createBotDelete(host));
   // 見ている場所（web/view-address.mjs）。部品が host.noteView で知らせ、Channels の側へ戻ったときに知らせ直せるよう最後の 1 つを持つ
   let lastView = null;
   const noteOuter = host.noteView;

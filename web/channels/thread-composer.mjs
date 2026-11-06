@@ -129,6 +129,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   }
 
   const c = createComposer({
+    canSubmit: () => !disabled,
     els, prefix: PREFIX, t,
     attach: {
       host, bucket, owner: () => draftKey ?? '', accepts: () => !disabled, say, adopt,

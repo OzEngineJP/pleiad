@@ -18,9 +18,9 @@ export default async function (t) {
   const stored = structuredClone(defaults);
   let via = null;
   const state = () => structuredClone({
-    settings: stored, defaults, kinds: [], judges: [], tiers: ['t1'], candidates: [],
+    settings: stored, defaults, difficulties: ['low', 'mid', 'high'], signals: [], candidates: [], warnings: [], accounts: {},
     conversationEfforts: {}, storage: { encrypted: true },
-    keys: { openrouter: { via, hasKey: Boolean(via), keyRef: null, plus: PLUS } },
+    key: { via, hasKey: Boolean(via), keyRef: null, plus: PLUS },
   });
   const keyList = { keys: [], uses: {}, migration: { state: 'done' }, storage: { encrypted: true }, virtual: [], guide: null };
   const sent = [];
@@ -57,7 +57,7 @@ export default async function (t) {
 
     // 登録欄を開いたまま Pleiad Plus の行を選ぶ
     await row('Pleiad Plus').onclick();
-    t.ok('選ぶと setApiKeyUse に judge:jev / plus が送られる', JSON.stringify(sent.at(-1)) === JSON.stringify({ use: 'judge:jev', id: 'plus' }));
+    t.ok('選ぶと setApiKeyUse に judge:routing / plus が送られる', JSON.stringify(sent.at(-1)) === JSON.stringify({ use: 'judge:routing', id: 'plus' }));
     t.ok('登録欄を開いたまま選んでも、登録欄は畳まれる', !root.querySelector('.rt-key-form'));
     t.ok('印が Pleiad Plus に動く（描き直しが飛ばされない）', row('Pleiad Plus').getAttribute('aria-checked') === 'true');
   } finally {

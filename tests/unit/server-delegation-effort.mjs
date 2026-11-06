@@ -14,7 +14,8 @@ export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-routing-effort-'));
   const quota = path.join(scratch, 'quota.json');
   await fs.writeFile(quota, JSON.stringify({ windows: [{ label: 'week', usedPercent: 5, minutes: 10080, resetsAt: new Date(Date.now() + 6 * 86400_000).toISOString() }] }));
-  // 会話の既定（設定 › エージェント設定の強さ）は fake が high。tv は「会話の既定に従う」なので、これが子に届く
+  // 会話の既定（設定 › エージェント設定の強さ）は fake が high。「会話の既定に従う」の段は、これが子に届く
+  // （前の版のクリエイティブの段 tv は、読むとき最後のレベル t4 へ畳む）
   await fs.writeFile(path.join(scratch, 'prefs.json'), JSON.stringify({ backends: { fake: { effort: 'high' } },
     delegationRouting: { tiers: { t1: ['fake:fast'], t2: ['fake:tiny'], t3: ['fake:smart'], t4: ['fake:smart'], tv: ['fake:smart'] } } }));
   const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_QUOTA: quota, AGENT_HOST_ROUTING_USAGE: 'on' } });
@@ -45,8 +46,8 @@ export default async function (t) {
       await sleep(100);
     }
     // ---- 状態: 既定値・候補ごとの強さの持ち方・会話の既定
-    t.ok('既定の強さ: 段 1 = low・段 2 = medium・段 3 = medium・段 4 = high・創作 = 会話の既定', JSON.stringify(state.defaults.efforts)
-      === '{"t1":{"*":"low"},"t2":{"*":"medium"},"t3":{"*":"medium"},"t4":{"*":"high"},"tv":{"*":""}}', JSON.stringify(state.defaults.efforts));
+    t.ok('既定の強さ: 段 1 = low・段 2 = medium・段 3 = medium・段 4 = high', JSON.stringify(state.defaults.efforts)
+      === '{"t1":{"*":"low"},"t2":{"*":"medium"},"t3":{"*":"medium"},"t4":{"*":"high"}}', JSON.stringify(state.defaults.efforts));
     t.ok('何も保存していなければ設定も既定のまま', JSON.stringify(state.settings.efforts) === JSON.stringify(state.defaults.efforts));
     const cap = id => state.candidates.find(x => x.candidate === id)?.effort;
     t.ok('候補ごとに、そのモデルが持つ強さを返す（持たないモデルは空）', cap('fake:fast')?.levels.join() === 'low,medium,high' && cap('fake:tiny')?.levels.length === 0
@@ -67,8 +68,8 @@ export default async function (t) {
     t.ok('強さを持たないモデル（Tiny）には送らない。記録は「調整なし」（none）で、警告も出さない', !none.isError && none.data.routing.tier === 't2' && none.data.routing.target.effort === null
       && none.data.routing.effortSource === 'none' && (await c.cmd('agentTasks')).find(x => x.taskId === none.data.taskId)?.effort === '', none.text.slice(0, 300));
     const tv = await call(sid, { kind: 'visual', task: 'echo:TV' });
-    t.ok('創作（tv）は会話の既定に従う（今は high）。記録の強さは走る値', tv.data?.routing?.tier === 'tv' && tv.data.routing.effortSource === 'conversation'
-      && tv.data.routing.target.effort === 'high' && !('effortTier' in tv.data.routing), tv.text.slice(0, 300));
+    t.ok('創作の種類は最後のレベル（段 4）の既定で走る（旧 tv は畳まれた）。記録の強さは走る値', tv.data?.routing?.tier === 't4' && tv.data.routing.effortSource === 'tier'
+      && tv.data.routing.target.effort === 'high' && tv.data.routing.effortTier === 't4', tv.text.slice(0, 300));
 
     // ---- 設定を変える: 段の既定・上書き・合わせ
     state = await save({ efforts: { t3: { '*': 'max' } } });
@@ -103,7 +104,7 @@ export default async function (t) {
     // ---- 保存の検査（形だけ）
     await rejects({ efforts: { t3: { '*': 'extreme' } } }, /不正/, '知らない強さは断る');
     await rejects({ efforts: { t3: { 'nope': 'low' } } }, /不正/, '候補の形でない対象は断る');
-    await rejects({ efforts: { t9: { '*': 'low' } } }, /知らない段/, '知らない段は断る');
+    await rejects({ efforts: { t9: { '*': 'low' } } }, /知らないレベル/, '知らないレベルは断る');
     await rejects({ efforts: ['low'] }, /形が不正/, '形の違う値は断る');
     await rejects({ efforts: { t3: 'low' } }, /形が不正/, '段の中が形の違う値なら断る');
     state = await save({ efforts: { t3: { '*': 'xhigh', 'claude:sonnet': 'medium' } } });

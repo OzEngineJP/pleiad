@@ -789,6 +789,7 @@ const SUITES = [
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
   // 本物の agy も Google のログインも要らない
   './unit/server-antigravity.mjs',
+  './unit/server-agy-default-model.mjs',
   // 控えはターンの途中から書く: 途中の書き込み・失敗／中断で残る・uuid が変わらない・forget した控えを作り直さない・書き込みは 1 本ずつ
   './unit/antigravity-partial-transcript.mjs',
   // 裏へ回ったコマンド: 落とす先の選び方（agy の直下の子だけ）と、server 越しに一覧へ出して止める
@@ -939,6 +940,9 @@ const SUITES = [
   './unit/store-load-races.mjs',
   // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・Antigravity は yolo だけ・削除
   './unit/ops-bots.mjs',
+  './unit/bot-delete.mjs',
+  './unit/bot-delete-guards.mjs',
+  './unit/bot-delete-migration.mjs',
   // bot の人格の文（毎ターン同じバイト列）・フォルダーの渡し方・3 つのバックエンドへの渡し方・agy の起こし直しの判定
   './unit/bot-instructions.mjs',
   // --- memory (S3) ---

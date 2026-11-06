@@ -16,15 +16,15 @@ import { historyGaveUp, readWithRetry, transientStorageError } from './history-r
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createSettingApprovals } from './setting-approvals.mjs';
 import { createWaitingCards } from './waiting-cards.mjs';
-import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
+import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList, kindDescription } from './agent-bridge.mjs';
 import { createComputerBridge, COMPUTER_MCP_PATH } from './computer-bridge.mjs';
 import { createComputerLock } from './computer-use/lock.mjs';
 import { createShots as createComputerShots } from './computer-use/shots.mjs';
 import { parentPortComputer, fakeComputerDriver } from './computer-use/driver.mjs';
 import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync, statSync } from 'node:fs';
-import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
-import { judgeDifficulty, normalizeKey, SERVICES as ROUTING_JUDGE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
+import { DIFFICULTIES, SIGNALS, kindOrder, levelOrder, kindAt, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
+import { judgeDifficulty, normalizeKey, JUDGE_USE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
 import { createGitActivity } from './git-activity.mjs';
@@ -1677,19 +1677,20 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
 // ply_delegate の host に書けるホスト（端末側・ホスト側の両方がオンのもの。オフラインの印つき）。無ければ host の引数自体を出さない
 hosts: () => remoteDelegation?.describe() ?? [],
 // backend に書けるエージェントは、有効なもの（AGENT_HOST_BACKENDS）
-backends: () => listBackends().map(b => b.id) });
+backends: () => listBackends().map(b => b.id),
+// ply_delegate の kind に書ける作業の種類（設定 › 委譲で利用者が直せるので、都度設定から引く）
+kinds: () => routingSettingsCache.kinds });
 
 // ---- 委譲先の自動選択 ------------------------------------------------------
 // 設定は prefs.json の delegationRouting（未設定の項目は既定値）。自動選択に使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
-// （uses の judge:jev。Jev・Qwen のどちらも OpenRouter で同じキー）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
-// 前の版の Cerebras の自動選択の項目（judgeByKind の cerebras・escalateToCerebras）は読むときに Qwen の名前へ直し、次に保存するときに書き直す（ADR 0177）
+// （uses の judge:routing。判定のモデルは OpenRouter でキーは 1 つ）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
+// 前の版の判定の項目（judgeByKind・escalateToQwen・escalateToCerebras）とクリエイティブの段（tv）は読むときに今の形へ直し、次に保存するときに書き直す
 let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
 // Pleiad の指示（core/ply-instructions.mjs）。prefs.json の plyInstructions。まだ無ければ前の版の addedContext（委譲の指示のスイッチ）から作る
 let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext, currentLocale()); })();
 /** 設定 › コンテキストの「Pleiad の指示」。文は画面の言語。委譲と連動の項目は今の委譲先の自動選択の有無を反映する */
 const plyInstructionsState = () => plyInstructionsScreen(plyInstructionsCache, currentLocale(), { routing: routingSettingsCache.enabled });
-const ROUTING_SERVICES = [...new Set(Object.values(JUDGE_SERVICE))];
-const routingEndpoint = service => apiKeys.useEndpoint(`judge:${ROUTING_JUDGE[service]}`);
+const routingEndpoint = () => apiKeys.useEndpoint(JUDGE_USE);
 /** API キー・割り当てが変わったとき（core/api-keys.mjs の onChange）。使う側の画面と通話のキーを更新する */
 function apiKeysChanged(change = {}) {
   emitGlobal({ type: 'apiKeysChanged', autoPlus: change.autoPlus === true, sessionId: null });
@@ -1728,7 +1729,7 @@ const routingUsage = createUsageMonitor({
   backends: listBackends,
   installed: id => installation(id).installed,
   read: providerQuota,
-  candidates: () => [...new Set(TIERS.flatMap(tier => routingSettingsCache.tiers[tier] ?? []))],
+  candidates: () => [...new Set(levelOrder(routingSettingsCache).flatMap(level => routingSettingsCache.tiers[level] ?? []))],
   modelKnown: (b, model) => validModel(b, model, process.cwd()),
   // 一覧をまだ引いていないバックエンド（agy はログインの確認で一覧を覚える）だけ、確かめ直す。
   // 確かめられたら 30 分は繰り返さない。未ログイン・失敗なら次の取り直し（5 分後）でまた確かめる
@@ -1749,7 +1750,8 @@ const ROUTING_USAGE_AUTO = process.env.AGENT_HOST_ROUTING_USAGE !== 'off';
  * cwd は委譲先の作業場所（モデルの一覧は場所の設定で変わりうるので、選んだモデルをそこで確かめ直す）
  */
 async function routeDelegation(args, lng, cwd) {
-  if (!KINDS.includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng) }));
+  const settings = routingSettingsCache;
+  if (!kindOrder(settings).includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng, settings.kinds) }));
   if (args.backend !== undefined) {
     if (args.account === undefined) return { ...args, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model }) };
     // 依頼元が選んだアカウント（ADR 0205・0222）。公式で走らせるので、モデルは公式の一覧で決めて使用枠を見る
@@ -1764,13 +1766,16 @@ async function routeDelegation(args, lng, cwd) {
   }
   // account は委譲先を固定したときだけ（自動の振り分けはアカウントも使用量で選ぶ）
   if (args.account !== undefined) throw new Error(agentT(lng, 'routing.accountPinOnly'));
-  const settings = routingSettingsCache;
   if (!settings.enabled) throw new Error(agentT(lng, 'routing.backendRequired', { backends: listBackends().map(b => b.id).join(', ') }));
   if (args.model !== undefined || args.effort !== undefined) throw new Error(agentT(lng, 'routing.pinOnly'));
-  // 依頼文は自動選択のモデルへ送る前に確かめる（agentTasks と同じ上限）
+  // 依頼文は判定のモデルへ送る前に確かめる（agentTasks と同じ上限）
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
+  const kindEntry = kindAt(settings, args.kind);
+  const row = settings.table[args.kind];
+  const sameLevel = row.length === 3 && row.every(level => level === row[0]);
   const [judged] = await Promise.all([
-    judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToQwen, endpointOf: routingEndpoint }),
+    sameLevel ? { judge: 'none', signals: null, probabilities: null, fallback: 'same_level' }
+      : judgeDifficulty({ kind: kindEntry?.name || args.kind, task: args.task, judge: settings.judge, endpointOf: routingEndpoint }),
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
@@ -1843,9 +1848,9 @@ async function delegationRoutingState() {
   const prefs = await store.getPrefs();
   const conversationEfforts = Object.fromEntries(listBackends().map(b => [b.id, prefs.backends?.[b.id]?.effort ?? '']));
   const credit = await apiKeys.plusCredit().catch(() => null);
-  const keyChoice = Object.fromEntries(await Promise.all(ROUTING_SERVICES.map(async s => [s, await keyChoiceInfo(`judge:${ROUTING_JUDGE[s]}`)])));
-  return { settings, defaults: normalizeSettings({}), kinds: KINDS, judges: JUDGES, tiers: TIERS, signals: SIGNALS, conversationEfforts,
-    keys: Object.fromEntries(ROUTING_SERVICES.map(s => [s, keyChoice[s] ?? { via: null, hasKey: false, keyRef: null, plus: null }])),
+  return { settings, defaults: normalizeSettings({}), difficulties: DIFFICULTIES, signals: SIGNALS, conversationEfforts,
+    kindDescriptions: Object.fromEntries(settings.kinds.map(k => [k.id, kindDescription(currentLocale(), k)])),
+    key: await keyChoiceInfo(JUDGE_USE),
     // 中継が credit_exhausted を返した月の状態（{ resetAt } か null。仮想のキー plus の判定を止めている間だけ値がある）
     limit: credit,
     storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
@@ -2138,6 +2143,7 @@ function controlRuntimeFor(turn) {
 // 保持役があればジョブは保持役の子に載り、サーバーを入れ替えても続く（ADR 0270 段 2a。core/ply-shell-held.mjs）
 const shellJobHolder = createPlyShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
 const shellBridge = createShellBridge({
+  withSessionWrite: withWritableSession,
   askPermission: request => askPermission(request),
   holder: shellJobHolder,
   onJobStart: (sessionId, job) => {
@@ -2666,6 +2672,7 @@ function sessionRow(b, s, extra = {}) {
     unsent: extra.unsent ?? false,
     // bot の会話（Chats の一覧には出さない。あなた待ちの間だけ出る。ADR 0109）。bot でなければ null
     bot: extra.bot ? { botId: extra.bot.botId, kind: extra.bot.kind, channelId: extra.bot.channelId ?? null, threadId: extra.bot.threadId ?? null } : null,
+    deletedBot: extra.deletedBot ?? null,
     hasDraft: Boolean(extra.draft?.text || extra.draft?.attached?.length),
     historyCount: (extra.history ?? []).length,
     // 人が host で作業ディレクトリを変えたなら sidecar が正本（ネイティブは古い cwd を返しうる）。
@@ -3906,8 +3913,8 @@ async function applyRoutingSettings(patch) {
   if (efforts) raw.efforts = efforts; else delete raw.efforts;
   const previous = routingSettingsCache;
   const known = routingUsage.snapshot();
-  const oldCandidates = new Set(TIERS.flatMap(tier => previous.tiers[tier] ?? []));
-  const missingCandidate = TIERS.flatMap(tier => settings.tiers[tier] ?? []).some(candidate => {
+  const oldCandidates = new Set(levelOrder(previous).flatMap(level => previous.tiers[level] ?? []));
+  const missingCandidate = levelOrder(settings).flatMap(level => settings.tiers[level] ?? []).some(candidate => {
     if (oldCandidates.has(candidate)) return false;
     const parsed = parseCandidate(candidate);
     return !parsed || !Object.hasOwn(known[parsed.backend]?.models ?? {}, parsed.model);
@@ -3927,7 +3934,7 @@ async function applyRoutingSettings(patch) {
 async function dropAccountCandidates(id) {
   if (!id) return;
   const tiers = routingSettingsCache.tiers;
-  const changed = Object.fromEntries(TIERS.flatMap(tier => {
+  const changed = Object.fromEntries(levelOrder(routingSettingsCache).flatMap(tier => {
     const list = tiers[tier] ?? [];
     const kept = list.filter(c => parseCandidate(c)?.account !== id);
     return kept.length === list.length ? [] : [[tier, kept]];
@@ -3966,7 +3973,8 @@ async function applyBrowserPref(key, value) {
 }
 
 /** 会話を分ける。fork コマンドと sessions.fork が同じ経路を通る。actor は変更の記録の主体（無ければ人間） */
-async function forkConversation({ sessionId, upToMessageId, beforeMessageId, title, reason, backend: given }, actor) {
+async function forkConversation(args, actor) { return withWritableSession(args.sessionId, () => forkWritableConversation(args, actor)); }
+async function forkWritableConversation({ sessionId, upToMessageId, beforeMessageId, title, reason, backend: given }, actor) {
   const running = runtime.turns.get(sessionId);
   if (!sessionId || forking.has(sessionId) || switching.has(sessionId) && !running) throw new Error(t('session.preparingFork'));
   forking.add(sessionId);
@@ -4015,7 +4023,8 @@ async function forkConversation({ sessionId, upToMessageId, beforeMessageId, tit
  *   中断の印と止めたもの（中断した位置が消える）・圧縮の記録のうち切り口より後
  * 提示（添付・可視化）は conversations.mjs の rewind が切る。下書きには触らない
  */
-async function rewindConversation({ sessionId, beforeMessageId, stopRunning = false }) {
+async function rewindConversation(args) { return withWritableSession(args.sessionId, () => rewindWritableConversation(args)); }
+async function rewindWritableConversation({ sessionId, beforeMessageId, stopRunning = false }) {
   if (!sessionId) throw new Error(t('session.required'));
   const running = runtime.turns.get(sessionId);
   if (forking.has(sessionId) || switching.has(sessionId) && !running) throw new Error(t('session.preparingRewind'));
@@ -4411,17 +4420,17 @@ async function deleteUnsentSessionOf(args) {
  * 委譲の子として終わっていない・委譲した子が終わっていない（完了の通知がまだ届いていないものを含む）・送信待ちや送信予定がある会話と、bot の会話
  */
 const deleteRefusal = (message) => Object.assign(new Error(message), { code: 'CANNOT_DELETE' });
-async function refuseDelete(sessionId) {
+async function refuseDelete(sessionId, { bot = false } = {}) {
   if (!sessionId) throw new Error(t('session.required'));
   const meta = await store.get(sessionId);
   // bot の会話は Channels のスレッド・DM・ルーティンが持つ（一覧にも出ない）。隠れた会話は host.deleteHidden が片付ける（ADR 0127）
-  if (meta.bot) throw deleteRefusal(t('session.deleteBot'));
+  if (meta.bot && !bot) throw deleteRefusal(t('session.deleteBot'));
   if (sessionBusy(sessionId) || [...runtime.waiting.values()].some(w => w.payload?.sessionId === sessionId && !(w.outlivesTurn && w.origin === sessionId && !blocksTurn(w)))
       || runtime.background.get(sessionId)?.tasks?.length || shellRuns.runningIn(sessionId) || shellBridge.running(sessionId)
       || (agentTasks?.running() ?? []).some(r => r.sessionId === sessionId)) throw deleteRefusal(t('session.deleteBusy'));
   if ((agentTasks?.running() ?? []).some(r => r.parentSessionId === sessionId)) throw deleteRefusal(t('session.deleteChildren'));
   if ((await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))
-      || schedule.list().some(row => row.sessionId === sessionId && row.kind === 'send')) throw deleteRefusal(t('session.deleteQueued'));
+      || schedule.list().some(row => (row.sessionId === sessionId && row.kind === 'send') || (meta.bot && row.kind === 'post' && row.channelId === meta.bot.channelId && row.threadId === meta.bot.threadId))) throw deleteRefusal(t('session.deleteQueued'));
 }
 
 /**
@@ -4497,7 +4506,7 @@ async function compactionBackend(sessionId) {
  * 圧縮は冪等なので、付け直すより中断してやり直す方が安い。中断の記録（interrupted）は recoverInterruptedTurns が残している
  */
 async function redoInterruptedCompactions(resuming = new Set()) {
-  const rows = Object.entries(await store.getAll()).filter(([, meta]) => meta?.compacting);
+  const rows = Object.entries(await store.getAll()).filter(([, meta]) => meta?.compacting && !meta.deletedBot);
   for (const [id, meta] of rows) {
     if (resuming.has(id)) continue;
     const trigger = typeof meta.compacting?.trigger === 'string' ? meta.compacting.trigger : 'auto';
@@ -4510,7 +4519,8 @@ async function redoInterruptedCompactions(resuming = new Set()) {
   }
 }
 
-async function requestCompaction(args) {
+async function requestCompaction(args) { return withWritableSession(args?.sessionId, () => requestWritableCompaction(args)); }
+async function requestWritableCompaction(args) {
   const sessionId = args?.sessionId;
   compactionScheduler.cancel(sessionId);
   const backend = await compactionBackend(sessionId);
@@ -4547,7 +4557,8 @@ async function setConversationAutoCompactionOf(args) {
 }
 
 /** 会話の題を考えてもらう（sessions.suggestTitle。WS の suggestTitle の中身）。会話は変えない */
-async function suggestTitleOf(args) {
+async function suggestTitleOf(args) { return withWritableSession(args?.sessionId, () => suggestWritableTitleOf(args)); }
+async function suggestWritableTitleOf(args) {
   const { sessionId } = args ?? {};
   if (!sessionId) throw new Error(t('session.required'));
   const backend = await resolveBackendForSession(sessionId);
@@ -4626,7 +4637,8 @@ async function providerUsageOf(args, { force = false } = {}) {
  * 会話へ発言を送る（送信待ちに積む）。画面の送信（WS の sendMessage）と、別の会話からの送信（sessions.send。ADR 0104）が同じ経路を通る。
  * 走っている会話では送信待ちのまま順番を待つ（途中送信できるエージェントは渡す）。rewind は画面だけ（同じ会話の中で発言の手前まで巻き戻す。ADR 0102）
  */
-async function acceptMessage(sessionId, messageId, args, { rewind } = {}) {
+async function acceptMessage(sessionId, messageId, args, options) { return withWritableSession(sessionId, () => acceptWritableMessage(sessionId, messageId, args, options)); }
+async function acceptWritableMessage(sessionId, messageId, args, { rewind } = {}) {
   compactionScheduler.cancel(sessionId);
   if (rewind) {
     // 受け付け済みの再送（応答が届かず送り直した同じ messageId）は、巻き戻し直さない（もう巻き戻してある）
@@ -5203,7 +5215,8 @@ const opsShell = {
     return { backend: backend?.id ?? null, cwd: meta?.cwd ?? null, title: await conversationTitleOf(sessionId).catch(() => '') };
   },
   // 人の `!` と同じ。承認モードは掛けない（AI の呼び出しは操作の一覧の guarded で聞く）。送信待ちにも送り直しの控えにも積まない
-  run: async ({ sessionId, runId, command, cwd: asked }) => {
+  run: async (args) => withWritableSession(args.sessionId, () => opsShell.runWritable(args)),
+  runWritable: async ({ sessionId, runId, command, cwd: asked }) => {
     const backend = sessionId ? refuseRetired(await resolveBackendForSession(sessionId)) : null;
     if (!backend) throw new Error(t('session.notFound'));
     if (!shellMode(backend)) throw Object.assign(new Error(t('shell.unavailable')), { code: 'SHELL_UNAVAILABLE' });
@@ -5224,6 +5237,9 @@ const opsShell = {
   stop: (runId) => ({ stopped: shellRuns.stop(runId) }),
   // 行ごとの「渡さない」（ADR 0055）。ホストで走らせる会話だけ。Codex は結果がエージェントの会話に入っていて外せない
   skip: async ({ sessionId, runId, skip }) => {
+    return withWritableSession(sessionId, () => opsShell.skipWritable({ sessionId, runId, skip }));
+  },
+  skipWritable: async ({ sessionId, runId, skip }) => {
     const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
     if (!backend) throw new Error(t('session.notFound'));
     try {
@@ -5249,7 +5265,8 @@ const opsSessionWork = {
     return { title: await conversationTitleOf(sessionId).catch(() => ''), from: { backend: source.id, mode, position: source.modes()[mode] ?? null },
       to: target ? { backend: target.id, label: target.label ?? target.id, mode: toMode, position: target.modes()[toMode] ?? null } : null };
   },
-  switchBackend: async (sessionId, targetId) => {
+  switchBackend: (sessionId, targetId) => withWritableSession(sessionId, () => opsSessionWork.switchWritableBackend(sessionId, targetId)),
+  switchWritableBackend: async (sessionId, targetId) => {
     if (runtime.turns.has(sessionId) || switching.has(sessionId) || forking.has(sessionId)) throw new Error(t('session.finishBeforeSwitch'));
     compactionScheduler.cancel(sessionId);
     switching.add(sessionId);
@@ -5571,6 +5588,7 @@ async function routeSettingNotice(notice) {
 function opsDeps(lng = currentLocale()) {
   return {
     locale: lng,
+    withSessionWrite: withWritableSession,
     app: opsApp,
     sessions: opsSessions,
     limitResume: {
@@ -7120,6 +7138,7 @@ botHost = createBotHost({
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
+  refuseBotDelete: id => refuseDelete(id, { bot: true }),
   // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。走っていれば次のターンから（nextSettings）
   reserveTurnSettings: (args) => reserveTurnSettings(args),
   // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
@@ -7131,7 +7150,11 @@ botHost = createBotHost({
   // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
   deleteHidden: async id => {
     if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;
-    if (!await deleteHiddenConversation(id, getBackend)) return false;
+    if (!await conversation(id)) { await store.removeSession(id); return true; }
+    if (!await deleteHiddenConversation(id, getBackend)) {
+      // ネイティブ削除に対応しないエージェントでは、非表示の印を保持する。続行は永続の閲覧用状態で拒否する。
+      return Boolean((await store.get(id)).deletedBot);
+    }
     await store.removeSession(id);
     return true;
   },
@@ -7154,7 +7177,7 @@ for (const b of listBackends()) {
 async function runTurn(args, onStarted = () => {}, hooks = {}) {
   const releaseUpdateGate = updateGate.enter();
   try {
-    return await runTurnInternal(args, onStarted, hooks);
+    return await withWritableSession(args.sessionId, () => runTurnInternal(args, onStarted, hooks));
   } finally { releaseUpdateGate(); }
 }
 
@@ -8585,7 +8608,8 @@ async function compactionStartFailed(sessionId, trigger, err) {
   } catch (saveError) { console.error('  圧縮失敗の記録に失敗:', String(saveError?.message ?? saveError)); }
   emitGlobal({ type: 'compaction', sessionId, ...entry });
 }
-async function compactConversation(sessionId, trigger = 'manual') {
+async function compactConversation(sessionId, trigger = 'manual') { return withWritableSession(sessionId, () => compactWritableConversation(sessionId, trigger)); }
+async function compactWritableConversation(sessionId, trigger = 'manual') {
   const backend = await compactionBackend(sessionId);
   if (!backend?.capabilities?.compact) throw Object.assign(new Error(t('compaction.unsupported')), { code: 'UNSUPPORTED' });
   if (sessionBusy(sessionId)) {
@@ -8854,7 +8878,8 @@ const resumeRunning = () => Object.assign(new Error(t('resume.running')), { code
  * 送り直すものが無ければ理由ごとの文を、普通の送信（sendMessage と同じ送信待ち）で送る。文は会話の言語で、見える発言になる。
  * 実行中（準備中・切り替え・分岐を含む。先頭が送信待ち・送信中も）の会話と、中断していない会話は断る
  */
-async function resumeSession(sessionId, { onSettled } = {}) {
+async function resumeSession(sessionId, options) { return withWritableSession(sessionId, () => resumeWritableSession(sessionId, options)); }
+async function resumeWritableSession(sessionId, { onSettled } = {}) {
   if (!sessionId || typeof sessionId !== 'string' || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   if (resuming.has(sessionId) || sessionBusy(sessionId)) throw resumeRunning();
   const oldLimit = limitStates.get(sessionId);
@@ -8916,7 +8941,20 @@ async function resumeSession(sessionId, { onSettled } = {}) {
  * 中断した会話に新しい指示を送ったら、中断で保留になった未送信を先に並びのまま送り直す（再開と同じ）。
  * 戻さないと新しい指示は保留の後ろで順番を待ち続ける。画面は「保留中の N 件の後にこの指示で続けます」と出している
  */
-async function acceptSend(sessionId, messageId, args) {
+async function withWritableSession(sessionId, fn) {
+  if (!sessionId) return fn();
+  const meta = await store.get(sessionId);
+  if (meta.deletedBot) throw new OpError('READ_ONLY', t('session.deletedBotReadOnly'));
+  // 夜の共通記憶整理だけは bot 定義を持たない内部会話。一般の不明な bot は許可しない。
+  const internalLearner = meta.bot?.botId === 'b_learner' && meta.bot.kind === 'learner' && meta.bot.channelId === null && meta.bot.threadId === null;
+  let release;
+  try { release = meta.bot?.botId && !internalLearner ? botHost.acquireBot(meta.bot.botId) : () => {}; }
+  catch (err) { if (err.code) throw new OpError(err.code, err.message); throw err; }
+  try { return await fn(); } finally { release(); }
+}
+
+async function acceptSend(sessionId, messageId, args) { return withWritableSession(sessionId, () => acceptWritableSend(sessionId, messageId, args)); }
+async function acceptWritableSend(sessionId, messageId, args) {
   if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)?.reason !== 'limit'
     && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
   return outbox.accept(sessionId, messageId, args);
@@ -9019,6 +9057,9 @@ async function sendScheduledNow(row) {
 /** 予定を置く。会話ごと・全体の数を絞り、同じ messageId の置き直しは 1 件のまま（二重の予定を作らない） */
 /** スレッドへの返信の予定（channels.schedulePost。kind 'post'）。人の投稿として、同じ clientId で 1 回だけ投稿する */
 async function schedulePost(input) {
+  return botHost.withPost(input, { kind: 'human' }, () => scheduleWritablePost(input));
+}
+async function scheduleWritablePost(input) {
   const channels = botHost?.opsDeps().channels;
   if (!channels) throw new Error(t('schedule.notFound'));
   const root = await channels.getPost({ channelId: input.channelId, postId: input.threadId });
@@ -9042,7 +9083,8 @@ async function fireScheduledPost(row) {
 const postScheduled = (row) => botHost.opsDeps().channels.post({ channelId: row.channelId, threadId: row.threadId, text: row.args.prompt,
   ...(row.args.attachments?.length ? { attachments: row.args.attachments } : {}), ...(row.args.to ? { to: row.args.to } : {}), clientId: row.clientId }, { kind: 'human' });
 
-async function scheduleSendMessage(input, by = 'human') {
+async function scheduleSendMessage(input, by = 'human') { return withWritableSession(input.sessionId, () => scheduleWritableSendMessage(input, by)); }
+async function scheduleWritableSendMessage(input, by = 'human') {
   const { sessionId } = input ?? {};
   if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   const row = buildSendRow({ ...input, sessionId, by });
@@ -9524,7 +9566,7 @@ wss.on("connection", (ws, req) => {
         }
         case 'deleteApiKey':
           return reply(true, await apiKeys.remove(String(msg.args?.id ?? '')));
-        // { use: voice | judge:jev | computer:decider, id: キーの id | null（使わない）}
+        // { use: voice | judge:routing | computer:decider, id: キーの id | null（使わない）}
         case 'setApiKeyUse':
           return reply(true, await apiKeys.setUse(String(msg.args?.use ?? ''), msg.args?.id ?? null));
         // 移行の案内。{ keep: キーの id }（ほかの同じプロバイダーのキーをまとめる）か { keep: null }（このままにする）。どちらでも案内は二度と出ない
@@ -9534,10 +9576,10 @@ wss.on("connection", (ws, req) => {
         case 'setDelegationRoutingKey':
         case 'deleteDelegationRoutingKey': {
           const service = String(msg.args?.service ?? '');
-          if (!ROUTING_SERVICES.includes(service)) throw new Error(t('routing.key.unknownService', { service }));
+          if (service !== JUDGE_SERVICE) throw new Error(t('routing.key.unknownService', { service }));
           const key = msg.command === 'setDelegationRoutingKey' ? normalizeKey(msg.args?.key) : null;
           if (msg.command === 'setDelegationRoutingKey' && !key) throw new Error(t('routing.key.invalid'));
-          await legacyUseKey(`judge:${ROUTING_JUDGE[service]}`, service, key);
+          await legacyUseKey(JUDGE_USE, service, key);
           return reply(true, await delegationRoutingState());
         }
         case 'setVoiceKey':
@@ -9670,7 +9712,7 @@ wss.on("connection", (ws, req) => {
             const savedCompactions = sidecar.compactions ?? [];
             // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
-            const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
+            const compactionData = { deletedBot: sidecar.deletedBot ?? null, compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff),
               rebuilds: sidecar.rebuilds ?? [] };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。

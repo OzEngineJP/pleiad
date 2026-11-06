@@ -1,5 +1,5 @@
 // 設定 › 委譲「委譲先の自動選択に使うキー」の画面が読む形（core/server.mjs の delegationRoutingState）。
-// data.keys.openrouter に { via, hasKey, keyRef, plus } が乗る。状態ごとの plus の中身と、キーの値・ID トークンが出ないことを確かめる。
+// data.key に { via, hasKey, keyRef, plus } が乗る。状態ごとの plus の中身と、キーの値・ID トークンが出ないことを確かめる。
 // 偽の Plus（tests/lib/fake-plus.mjs）だけと話す。ログインは plus-main-port が拾う外に開く URL を fetch で辿る。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -24,7 +24,7 @@ export default async function (t) {
     env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: capture } });
   const c = await open({ port: server.port, token: server.token });
   const routing = () => c.cmd('delegationRouting');
-  const plusOf = async () => (await routing()).keys?.openrouter?.plus ?? null;
+  const plusOf = async () => (await routing()).key?.plus ?? null;
   /** 外に開こうとした URL（ログインのページ）を辿ってログインを終わらせる */
   let externalSeen = 0;
   async function login(account) {
@@ -50,7 +50,7 @@ export default async function (t) {
   try {
     // ---- ログインしていない: via・hasKey は空、plus は「選べない」状態 ----
     {
-      const k = (await routing()).keys?.openrouter;
+      const k = (await routing()).key;
       const p = k?.plus;
       t.ok('未ログイン: via・hasKey・keyRef は空', k.via === null && k.hasKey === false && k.keyRef === null);
       t.ok('未ログイン: signedIn:false・status/email は無い（ログインへの案内が要る）', p && p.signedIn === false && p.status === null && p.email === null);
@@ -61,7 +61,7 @@ export default async function (t) {
     // ---- ログイン（plus）→ 自動で両方に plus が選ばれる ----
     await login(PLUS_ACCOUNT);
     {
-      const k = (await routing()).keys?.openrouter;
+      const k = (await routing()).key;
       const p = k?.plus;
       t.ok('plus: メールと status が返る', p.email === 'user@example.com' && p.status === 'plus' && p.signedIn === true);
       t.ok('plus: 選んでいる印は via:plus（両方に自動で選ぶ）。keyRef は null', k.via === 'plus' && k.keyRef === null);
@@ -72,8 +72,8 @@ export default async function (t) {
     // ---- OpenRouter のキーを登録して選ぶ → via: key ----
     {
       const added = await c.cmd('setApiKey', { provider: 'openrouter', key: KEY });
-      await c.cmd('setApiKeyUse', { use: 'judge:jev', id: added.id });
-      const k = (await routing()).keys?.openrouter;
+      await c.cmd('setApiKeyUse', { use: 'judge:routing', id: added.id });
+      const k = (await routing()).key;
       t.ok('OpenRouter: via:key・keyRef は選んだ id', k.via === 'key' && k.keyRef === added.id && k.hasKey === true);
     }
 
@@ -102,10 +102,10 @@ export default async function (t) {
     // ---- ログアウト → plus を選んでいても印は残り、効き目は「キーが無い」 ----
     await logout();
     await login(PLUS_ACCOUNT);
-    await c.cmd('setApiKeyUse', { use: 'judge:jev', id: 'plus' });
+    await c.cmd('setApiKeyUse', { use: 'judge:routing', id: 'plus' });
     await logout();
     {
-      const k = (await routing()).keys?.openrouter;
+      const k = (await routing()).key;
       const p = k?.plus;
       t.ok('ログアウト: plus の印は残る（via:plus）・送れないので hasKey:false（キーが無いと同じ）', k.via === 'plus' && k.hasKey === false);
       t.ok('ログアウト: signedIn:false・status は前のまま残らない', p.signedIn === false && p.status === null);

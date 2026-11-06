@@ -87,7 +87,7 @@ function outputBuffer() {
   };
 }
 
-export function createShellBridge({ askPermission, onJobStart = () => {}, onJobEnd = () => {}, now = Date.now, holder = null } = {}) {
+export function createShellBridge({ askPermission, onJobStart = () => {}, onJobEnd = () => {}, now = Date.now, holder = null, withSessionWrite = (_id, fn) => fn() } = {}) {
   const sessions = new Map();   // sessionId -> Map(jobId -> job)
 
   const jobsOf = (sessionId) => { if (!sessions.has(sessionId)) sessions.set(sessionId, new Map()); return sessions.get(sessionId); };
@@ -176,6 +176,11 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
 
   async function call(binding, name, args, { locale, signal }) {
     const owner = await binding.owner();
+    const invoke = () => callOwned(owner, name, args, { locale, signal });
+    return name === 'run' || name === 'start' ? withSessionWrite(owner.sessionId, invoke) : invoke();
+  }
+
+  async function callOwned(owner, name, args, { locale, signal }) {
     const lng = locale;
     const map = jobsOf(owner.sessionId);
     if (name === 'run' || name === 'start') {

@@ -7,7 +7,7 @@ import fsSync from 'node:fs';
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { ROOT } from '../lib/server.mjs';
-import { ensureDataSchema, ensureDataSchemaSync, openData } from '../../core/data-schema.mjs';
+import { ensureDataSchema, ensureDataSchemaSync, openData, DATA_SCHEMA } from '../../core/data-schema.mjs';
 import { dbPath, openReadOnly } from '../../core/db.mjs';
 import { readSessions, readAgentTasks, readUsage, readConversationIndex } from '../lib/data-store.mjs';
 
@@ -66,8 +66,8 @@ export default async function (t) {
       const before = await snapshot(dir);
       const result = ensureDataSchemaSync(dir);
       const label = pretty ? '整形済み' : 'compact';
-      t.ok(`${label}: 移行して形式番号を 2 にする`, result?.counts?.sessions === 6 && result.counts.tasks === 2 && result.counts.usage === 2 && result.counts.conversations === 1
-        && JSON.parse(await read(path.join(dir, 'data-schema.json'))).schema === 2, JSON.stringify(result));
+      t.ok(`${label}: 移行して形式番号を現行形式 にする`, result?.counts?.sessions === 6 && result.counts.tasks === 2 && result.counts.usage === 2 && result.counts.conversations === 1
+        && JSON.parse(await read(path.join(dir, 'data-schema.json'))).schema === DATA_SCHEMA, JSON.stringify(result));
       t.ok(`${label}: 会話の記録は読み戻して元と同じ（report.entries の組み直し・null・空・日本語・\ を含む）`, sameJson(readSessions(dir), sessions()));
       t.ok(`${label}: 委譲のタスク・使用量・会話の索引も同じ`, sameJson(readAgentTasks(dir), tasks()) && sameJson(readUsage(dir), usage()) && sameJson(readConversationIndex(dir), conversations()));
       const names = await backups(dir);
@@ -138,15 +138,15 @@ export default async function (t) {
     // ---- 形式番号の扱い
     {
       const dir = await tmp('fresh');
-      t.ok('新しい置き場は移行せず、形式番号 2 を書く', (await ensureDataSchema(dir)) === null && JSON.parse(await read(path.join(dir, 'data-schema.json'))).schema === 2 && (await backups(dir)).length === 0);
+      t.ok('新しい置き場は移行せず、現行形式番号 を書く', (await ensureDataSchema(dir)) === null && JSON.parse(await read(path.join(dir, 'data-schema.json'))).schema === DATA_SCHEMA && (await backups(dir)).length === 0);
       const legacy = await tmp('no-schema-file');
       await fs.writeFile(path.join(legacy, 'sessions.json'), JSON.stringify(sessions()));
       t.ok('形式番号が無い置き場（導入前の版）も、JSON があれば形式 1 として移行する', (await ensureDataSchema(legacy))?.counts?.sessions === 6 && readSessions(legacy).b?.title === '題2');
       const future = await tmp('future');
-      await fs.writeFile(path.join(future, 'data-schema.json'), '{"schema":3}');
+      await fs.writeFile(path.join(future, 'data-schema.json'), '{"schema":4}');
       await fs.writeFile(path.join(future, 'sessions.json'), '{"keep":{"title":"x"}}');
       const rejected = await ensureDataSchema(future).then(() => null, e => e);
-      t.ok('新しい版の形式（3）は開かない。データには触れない', /別の形式/.test(rejected?.message ?? '') && (await read(path.join(future, 'sessions.json'))) === '{"keep":{"title":"x"}}' && !(await read(dbPath(future))));
+      t.ok('新しい版の形式（4）は開かない。データには触れない', /別の形式/.test(rejected?.message ?? '') && (await read(path.join(future, 'sessions.json'))) === '{"keep":{"title":"x"}}' && !(await read(dbPath(future))));
       const broken = await tmp('broken');
       await fs.writeFile(path.join(broken, 'data-schema.json'), '{}');
       t.ok('壊れた形式番号では黙って作り直さない', await ensureDataSchema(broken).then(() => false, () => true));
@@ -155,7 +155,7 @@ export default async function (t) {
       await seed(migrated);
       await ensureDataSchema(migrated);
       const schema = JSON.parse(await read(path.join(migrated, 'data-schema.json'))).schema;
-      t.ok('移行後の形式番号は 2。形式 1 を前提にした古い版（schema !== 1 で止まる）は起動できない', schema === 2 && schema !== 1);
+      t.ok('移行後の形式番号は現行形式。形式 1 を前提にした古い版（schema !== 1 で止まる）は起動できない', schema === DATA_SCHEMA && schema !== 1);
     }
 
     // ---- 形式 2 なのに DB が使えないときは、空の DB を作って起動せず、止める
@@ -190,7 +190,7 @@ export default async function (t) {
       // 新しい置き場だけが DB を作ってよい
       const fresh = await tmp('fresh-db');
       await ensureDataSchema(fresh);
-      t.ok('新しい置き場（JSON も DB も無い）は DB を作り、そのうえで形式番号を 2 にする', !!(await read(dbPath(fresh))) && JSON.parse(await read(path.join(fresh, 'data-schema.json'))).schema === 2 && (await ensureDataSchema(fresh)) === null);
+      t.ok('新しい置き場（JSON も DB も無い）は DB を作り、そのうえで形式番号を現行形式 にする', !!(await read(dbPath(fresh))) && JSON.parse(await read(path.join(fresh, 'data-schema.json'))).schema === DATA_SCHEMA && (await ensureDataSchema(fresh)) === null);
       const orphan = await tmp('db-only-bad');
       await fs.writeFile(dbPath(orphan), 'junk');
       t.ok('形式番号が無く DB だけがあるときは、使える DB でなければ新規作成せずに止める', await ensureDataSchema(orphan).then(() => false, () => true) && !(await read(path.join(orphan, 'data-schema.json'))));
@@ -210,13 +210,13 @@ export default async function (t) {
       t.ok('保存できなかった項目があれば、突き合わせで移行を止める', /usage\.json/.test(error?.message ?? '') && /read-back differs/.test(error.message) && !!(await read(path.join(dropped, 'usage.json'))) && (await backups(dropped)).length === 0);
     }
 
-    // ---- 形式番号を 2 にしたあと、元の JSON を外せなくても、起動は止めず、次の起動で外し直す
+    // ---- 形式番号を現行形式 にしたあと、元の JSON を外せなくても、起動は止めず、次の起動で外し直す
     {
       const dir = await tmp('cleanup-resume');
       await seed(dir);
       const refuse = file => { if (/sessions\.json$|usage\.json$/.test(file)) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' }); return fsSync.rmSync(file, { force: true }); };
       const result = await ensureDataSchema(dir, { remove: refuse });
-      t.ok('元の JSON を外せなくても、移行は成功して起動は止めない（形式番号は 2）', result?.counts?.sessions === 6 && JSON.parse(await read(path.join(dir, 'data-schema.json'))).schema === 2
+      t.ok('元の JSON を外せなくても、移行は成功して起動は止めない（形式番号は現行形式）', result?.counts?.sessions === 6 && JSON.parse(await read(path.join(dir, 'data-schema.json'))).schema === DATA_SCHEMA
         && !!(await read(path.join(dir, 'sessions.json'))) && !(await read(path.join(dir, 'agent-tasks.json'))), JSON.stringify(result));
       const again = await ensureDataSchema(dir, { remove: () => { throw new Error('still locked'); } });
       t.ok('次の起動（形式 2）でまた外そうとし、外せなくても止めない', again === null && !!(await read(path.join(dir, 'sessions.json'))));
@@ -294,7 +294,7 @@ export default async function (t) {
       // この 2 つだけがある置き場（会話などの JSON が無い）も移行する
       const only = await tmp('v060-only-bot-files');
       await put(only, 'channels/threads.json', threadsFile());
-      t.ok('threads.json だけがある置き場も移行する（形式番号は 2、DB に 3 行）', (await ensureDataSchema(only))?.counts?.threads === 3 && rowsOf(only).threads.length === 3 && JSON.parse(await read(path.join(only, 'data-schema.json'))).schema === 2);
+      t.ok('threads.json だけがある置き場も移行する（形式番号は現行形式、DB に 3 行）', (await ensureDataSchema(only))?.counts?.threads === 3 && rowsOf(only).threads.length === 3 && JSON.parse(await read(path.join(only, 'data-schema.json'))).schema === DATA_SCHEMA);
       // 無ければ何もしない
       const none = await tmp('v060-no-bot-files');
       await seed(none);

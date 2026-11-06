@@ -32,7 +32,7 @@ export default async function (t) {
     prefs: async () => ({}),
     delegation: {
       routing: async () => ({ settings: { enabled: true }, warnings: [], candidates: [],
-        keys: { openrouter: { via: 'plus', hasKey: false, keyRef: null, plus: plusRow() }, other: { via: null, hasKey: false, keyRef: null, plus: null } } }),
+        key: { via: 'plus', hasKey: false, keyRef: null, plus: plusRow() } }),
     },
   };
   const run = (p, id, args = {}) => registry.invoke(p, id, args, deps);
@@ -53,6 +53,6 @@ export default async function (t) {
   t.ok('voice.status（画面）: 今のまま返す', (await run(human, 'voice.status')).result.plus.email === EMAIL);
 
   const routing = await run(mcp, 'delegation.routing');
-  t.ok('delegation.routing: agent には keys の Plus の行のメールを出さない（plus が null の行はそのまま）',
-    routing.ok && !leaks(routing.result) && routing.result.keys.openrouter.plus.email === '••••' && routing.result.keys.other.plus === null);
+  t.ok('delegation.routing: agent には key の Plus の行のメールを出さない',
+    routing.ok && !leaks(routing.result) && routing.result.key.plus.email === '••••');
 }

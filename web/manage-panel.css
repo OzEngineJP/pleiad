@@ -111,7 +111,19 @@
 /* 思考の強さの選択（設定 › API キーの「使うキー」と同じ pill + リストボックス）。既定から外した値は青い字 */
 .ef-wrap{position:relative;display:inline-flex;max-width:100%}
 .ef-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 10px 4px 12px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font-size:var(--fs-s);line-height:1.5;text-align:left;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
-.rt-tier-head .ef-btn{background:var(--surface-paper)}
+.rt-tier-head .ef-btn,.rt-judge-row .ef-btn{background:var(--surface-paper)}
+/* レベルの見出しは「選ぶ pill + レベルの既定」。既定は右端へ */
+.rt-tier-head>.ef-wrap{margin-left:auto}
+/* レベルの名前を直す欄（見出しのプルダウンと同じ大きさの pill） */
+.rt-lv-in{width:min(16em,100%);min-width:0;padding:4px 12px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink);font-size:var(--fs-s);font-weight:600;line-height:1.5;border:0}
+.rt-lv-in:focus{outline:2px solid var(--line-blue);outline-offset:0}
+/* 確かめ（.mp-confirm）を面の中に出すときは紙の色（面と同じ色では見えないため） */
+.mp-panel .mp-confirm{background:var(--surface-paper)}
+.mp-confirm .q{flex-basis:100%;color:var(--ink);font-size:var(--fs-s)}
+.mp-confirm .to{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;flex:1 1 240px;min-width:0;font-size:var(--fs-s);color:var(--ink-weak)}
+.mp-confirm .to .ef-btn{background:var(--surface-1)}
+.mp-confirm .acts{display:flex;gap:4px;margin-left:auto}
+.rt-tier .mp-confirm{margin:0 0 6px}
 .ef-btn:hover,.ef-btn[aria-expanded=true]{background:var(--surface-2)}
 .ef-l{color:var(--ink-weak)}
 .ef-v{font-weight:600}
@@ -142,8 +154,23 @@
 .rt-table{margin:0}
 .rt-table th,.rt-table td{padding:4px 10px}
 .rt-table tbody th{text-align:left;font-weight:400;color:var(--ink);background:transparent;white-space:normal}
-.rt-table tbody tr:nth-child(even) th{background:var(--surface-2)}
+/* 表の縞は「作業の種類」の偶数行（行に ev を付けて塗る。nth-child だと、開いた欄の行が挟まるたびにずれる） */
+.rt-table tbody tr:not(.ev) td{background:transparent}
+.rt-table tbody tr.ev>*{background:var(--surface-2)}
 .rt-cell{min-width:3em;padding:3px 10px;font-size:var(--fs-s);color:var(--ink)}
+/* 表の種類の名前（押すと下に名前と説明の欄が開く。閉じた見た目は今の文字のまま） */
+.rt-kind{display:block;width:calc(100% + 12px);margin:-2px -6px;padding:2px 6px;border-radius:var(--r-s);background:transparent;text-align:left;color:var(--ink);font-weight:400;cursor:pointer}
+.rt-kind:hover,.rt-kind:focus-visible{background:var(--surface-3)}
+.rt-kind[aria-expanded=true]{font-weight:600}
+.rt-kind-ed>td{padding:0 10px 12px}
+.rt-kind-ed .mp-field{margin-top:6px}
+.rt-kind-ed .mp-field>span{font-size:var(--fs-s);color:var(--ink-weak);margin-bottom:4px}
+.rt-kind-ed textarea{display:block;width:100%;min-width:0;padding:8px 14px;border-radius:var(--r-m);background:var(--surface-paper);color:var(--ink);line-height:var(--lh);resize:none;overflow:hidden}
+.rt-kind-ed :is(input,textarea):focus{outline:2px solid var(--line-blue);outline-offset:0}
+.rt-kind-ed .rt-count{display:block;text-align:right}
+.rt-kind-foot{margin:2px 0 0 -12px}
+.rt-kind-foot .btn{font-size:var(--fs-s)}
+.rt-kind-ed .mp-confirm{margin:6px 0 0}
 .rt-policy{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 16px}
 .rt-policy .mp-field{margin-top:6px}
 .rt-number-row{display:flex;align-items:center;gap:8px}
@@ -252,6 +279,8 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .inx.done .inx-h .rm-nm { color:var(--ink-weak); }
 @media (prefers-reduced-motion:reduce) { .inx-h .rm-end svg { transition:none; } }
 .btn.rm-danger { color:var(--ink-strong); font-weight:600; }
+/* 消す操作の確定（設定 › 委譲のレベル・作業の種類の削除）。メニューの .li.danger（style.css）と同じ赤 */
+.btn.danger { color:var(--ink-danger); font-weight:600; }
 .rm-strong { color:var(--ink-strong); font-weight:600; }
 /* ＋ の流れのダイアログ（端末を追加: アプリを入れる › つなぎ方 › つなぐ。PC を追加 は › 完了 まで）。戻る・次へ・やめるはどの段でも同じ位置 */
 .rm-wiz { position:fixed; inset:0; margin:auto; width:min(540px,calc(100vw - 32px)); min-height:min(420px,calc(100dvh - 48px)); max-height:calc(100dvh - 48px); overflow:auto;

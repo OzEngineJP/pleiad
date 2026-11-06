@@ -1,5 +1,5 @@
 // 仮想のキー「Pleiad Plus」（core/api-keys.mjs の plus。docs/plus.md「キー無しの機能」）。
-// 値を持たない・judge:jev と voice にだけ選べる・useEndpoint の表・ログイン時の自動の選択・中継の credit_exhausted の記憶。
+// 値を持たない・judge:routing と voice にだけ選べる・useEndpoint の表・ログイン時の自動の選択・中継の credit_exhausted の記憶。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,7 +45,7 @@ export default async function (t) {
       const session = fakeSession();
       const { apiKeys, secrets } = wire(d, { session });
       await apiKeys.init();
-      t.ok('judge:jev と voice に plus を選べる', (await apiKeys.setUse('judge:jev', 'plus')).id === 'plus' && (await apiKeys.setUse('voice', 'plus')).id === 'plus');
+      t.ok('judge:routing と voice に plus を選べる', (await apiKeys.setUse('judge:routing', 'plus')).id === 'plus' && (await apiKeys.setUse('voice', 'plus')).id === 'plus');
       const err = await rejects(apiKeys.setUse('computer:decider', 'plus'));
       t.ok('computer:decider には選べない（UNSUPPORTED_USE）', err instanceof ApiKeyError && err.code === 'UNSUPPORTED_USE');
       const list = await apiKeys.list();
@@ -71,24 +71,24 @@ export default async function (t) {
       const { apiKeys } = wire(d, { session, env: { AGENT_HOST_OPENROUTER_API: 'https://or.test/api' } });
       await apiKeys.init();
       const { id } = await apiKeys.add({ provider: 'openrouter', label: 'x', key: A });
-      t.ok('選んでいなければ useEndpoint は null', (await apiKeys.useEndpoint('judge:jev')) === null && (await apiKeys.useEndpoint('voice')) === null);
-      await apiKeys.setUse('judge:jev', id);
-      const ep = await apiKeys.useEndpoint('judge:jev');
-      t.ok('OpenRouter のキー（judge:jev）: kind=openrouter・AGENT_HOST_OPENROUTER_API の送り先・キーの Bearer',
+      t.ok('選んでいなければ useEndpoint は null', (await apiKeys.useEndpoint('judge:routing')) === null && (await apiKeys.useEndpoint('voice')) === null);
+      await apiKeys.setUse('judge:routing', id);
+      const ep = await apiKeys.useEndpoint('judge:routing');
+      t.ok('OpenRouter のキー（judge:routing）: kind=openrouter・AGENT_HOST_OPENROUTER_API の送り先・キーの Bearer',
         ep.kind === 'openrouter' && ep.baseUrl === 'https://or.test/api' && (await ep.authorization()) === `Bearer ${A}`);
       await apiKeys.setUse('voice', id);
       const vep = await apiKeys.useEndpoint('voice');
       t.ok('OpenRouter のキー（voice）: kind=openrouter・voice の送り先・キーの Bearer',
         vep.kind === 'openrouter' && vep.baseUrl === 'https://openrouter.ai/api/v1' && (await vep.authorization()) === `Bearer ${A}`);
-      await apiKeys.setUse('judge:jev', 'plus');
+      await apiKeys.setUse('judge:routing', 'plus');
       await apiKeys.setUse('voice', 'plus');
-      const jep = await apiKeys.useEndpoint('judge:jev'), pep = await apiKeys.useEndpoint('voice');
-      t.ok('plus（judge:jev）: kind=plus・<PLUS_API>/v1/proxy/openrouter・ID トークンの Bearer',
+      const jep = await apiKeys.useEndpoint('judge:routing'), pep = await apiKeys.useEndpoint('voice');
+      t.ok('plus（judge:routing）: kind=plus・<PLUS_API>/v1/proxy/openrouter・ID トークンの Bearer',
         jep.kind === 'plus' && jep.baseUrl === `${API}/v1/proxy/openrouter` && (await jep.authorization()) === 'Bearer tok-1');
       t.ok('plus（voice）: <PLUS_API>/v1/proxy/voice。AGENT_HOST_OPENROUTER_API は効かない',
         pep.baseUrl === `${API}/v1/proxy/voice` && !pep.baseUrl.includes('or.test'));
       t.ok('authorization は呼ぶたびに ID トークンを取る（force で取り直し）', (await jep.authorization({ force: true })) === 'Bearer tok-2' && session.calls.forced === 1);
-      t.ok('hasUse は endpoint があるときだけ true（値は読まない）', (await apiKeys.hasUse('voice')) === true && (await apiKeys.hasUse('judge:jev')) === true);
+      t.ok('hasUse は endpoint があるときだけ true（値は読まない）', (await apiKeys.hasUse('voice')) === true && (await apiKeys.hasUse('judge:routing')) === true);
 
       for (const [label, over] of [
         ['ログアウト', { signedIn: false }],
@@ -98,7 +98,7 @@ export default async function (t) {
         ['maintenance', { state: 'maintenance' }],
       ]) {
         session.set(over);
-        t.ok(`${label} なら useEndpoint は null（キーが無いのと同じ扱い）`, (await apiKeys.useEndpoint('judge:jev')) === null && (await apiKeys.hasUse('judge:jev')) === false);
+        t.ok(`${label} なら useEndpoint は null（キーが無いのと同じ扱い）`, (await apiKeys.useEndpoint('judge:routing')) === null && (await apiKeys.hasUse('judge:routing')) === false);
         session.set({ signedIn: true, available: true, state: 'on', account: { status: 'plus' } });
       }
       const failing = fakeSession();
@@ -119,26 +119,26 @@ export default async function (t) {
       const { apiKeys } = wire(d, { session, events });
       await apiKeys.init();
       t.ok('両方とも「使わない」でログイン → 両方に plus を選び { uses, autoPlus } を出す',
-        (await apiKeys.plusSignedIn()) === true && (await apiKeys.list()).uses['judge:jev'] === 'plus' && (await apiKeys.list()).uses.voice === 'plus'
-          && events.some((c) => c.autoPlus === true && c.uses?.join() === 'judge:jev,voice'));
+        (await apiKeys.plusSignedIn()) === true && (await apiKeys.list()).uses['judge:routing'] === 'plus' && (await apiKeys.list()).uses.voice === 'plus'
+          && events.some((c) => c.autoPlus === true && c.uses?.join() === 'judge:routing,voice'));
       t.ok('もう選んでいるなら何もしない（2 回目は emit しない）', (await apiKeys.plusSignedIn()) === false);
       const d2 = await fresh();
       const w2 = wire(d2, { session });
       await w2.apiKeys.init();
       const { id } = await w2.apiKeys.add({ provider: 'openrouter', label: 'x', key: A });
       await w2.apiKeys.setUse('voice', id);
-      t.ok('片方でもキーを選んでいれば自動の選択は何もしない', (await w2.apiKeys.plusSignedIn()) === false && (await w2.apiKeys.list()).uses['judge:jev'] === null);
+      t.ok('片方でもキーを選んでいれば自動の選択は何もしない', (await w2.apiKeys.plusSignedIn()) === false && (await w2.apiKeys.list()).uses['judge:routing'] === null);
       const d3 = await fresh();
       const w3 = wire(d3, { session });
       await w3.apiKeys.init();
-      await w3.apiKeys.setUse('judge:jev', 'plus');
+      await w3.apiKeys.setUse('judge:routing', 'plus');
       session.set({ signedIn: false });
-      t.ok('ログアウトしても plus の選択は消えない', (await w3.apiKeys.list()).uses['judge:jev'] === 'plus');
+      t.ok('ログアウトしても plus の選択は消えない', (await w3.apiKeys.list()).uses['judge:routing'] === 'plus');
       // 台帳に残る: 読み込み直しても plus のまま
       const w4 = wire(d3, { session });
       await w4.apiKeys.init();
-      t.ok('plus の選択は api-keys.json に残り、読み込み直しても続く', JSON.parse(await fs.readFile(path.join(d3, 'api-keys.json'), 'utf8')).uses['judge:jev'] === 'plus'
-        && (await w4.apiKeys.list()).uses['judge:jev'] === 'plus');
+      t.ok('plus の選択は api-keys.json に残り、読み込み直しても続く', JSON.parse(await fs.readFile(path.join(d3, 'api-keys.json'), 'utf8')).uses['judge:routing'] === 'plus'
+        && (await w4.apiKeys.list()).uses['judge:routing'] === 'plus');
     }
 
     // ---- credit_exhausted の記憶（判定と通話で共有）
@@ -146,8 +146,8 @@ export default async function (t) {
       const session = fakeSession();
       const { apiKeys } = wire(await fresh(), { session });
       await apiKeys.init();
-      await apiKeys.setUse('judge:jev', 'plus');
-      const ep = await apiKeys.useEndpoint('judge:jev');
+      await apiKeys.setUse('judge:routing', 'plus');
+      const ep = await apiKeys.useEndpoint('judge:routing');
       // 中継が credit_exhausted を返した直後は、アカウントもその月の枠を使い切った表示になっている
       session.set({ account: { status: 'plus', usage: { credits: 100 }, limits: { creditsPerMonth: 100 } } });
       const future = new Date(Date.now() + 86400_000).toISOString();

@@ -102,7 +102,7 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `bots.update` | write（範囲を広げる向き・心拍を入れる／間隔を縮める向き（`pulse`）・AI が人格か画像アイコンを変えるのは `riskOf` で guarded） | 名前・絵文字の `icon`・画像の `iconImage`（元画像のパス。`null` で画像を外して絵文字に戻す）・人格（AI が変えるのは bot 自身の人格も承認。外から来た文に押された bot が自分の人格を書き換える足場を作らない）・backend（次の新しい会話から。モデル・エフォートは既定に戻り、承認モードは同じ id があれば保つ）・モデル・エフォート・`folders`（置き換え）・`sendToOthers`・`sendTargets`（置き換え）。広げる向き = フォルダーを足す・`ro` を `rw` にする・送る先を足す・`sendToOthers` を ON にする・承認モードが強くなる backend へ変える |
 | `bots.setMode` | human-only | 承認モード（`mode`）だけ |
 | `bots.setAccount` | human-only・画面だけ（MCP・CLI の口なし） | `{ botId, account }` → `bots.get` と同じ形。bot のエージェントのアカウント（`account`。`''` = ログイン中）だけ。そのエージェントに登録の無い id・使えない（トークン・資格情報の無い）アカウントは `INVALID`。`bots.update` では変わらない。[ADR 0224](adr/0224-bot-account.md) |
-| `bots.delete` | guarded | 会話は消さず bot の印だけ外し（Chats の一覧に戻る）、DM のチャンネルは archive |
+| `bots.delete` | guarded | 専用記憶・活動メモ・予約を消し、ルーティンは一時停止。会話本文は閲覧用として一時チャットに保持し、DM は archive。実行・承認待ち・通常投稿の配送待ちは拒否（承認済み 2026-11-06、[ADR 0293](adr/0293-bot-deletion-readonly.md)） |
 | `brain.view` | read | `{ botId?, limit?, before? }` → `{ botId, pulse, status, stream, loops, closed, total }`。`status` は心拍の状態（`on`・`paused`・`running`・`nextAt`・`lastBeatAt`・`drives`・家のチャンネル・予算の残り）、`stream` は活動メモ（新しい順）、`loops` は開いている気がかり。bot に束縛された主体は自分の bot だけ（`botId` を省くと自分） |
 | `brain.loopAdd` / `loopResolve` | write | 気がかり（200 字まで・起こす条件 `wakeOn`・期限 `due`）を足す・解決（`resolved`）か手放す（`dropped`）。自分の分だけ。外から来た会話（`taint`）で足した気がかりには印が付く |
 | `brain.pause` | write（AI が `paused: false` で起こすのは `riskOf` で guarded） | 心拍を止める（眠らせる）・再開する |

@@ -282,19 +282,18 @@
     "hostOffline": "offline",
     "hosts": "Write a Pleiad host's name in host to hand the work to that host (its AI works on that host's PC). Available hosts: {{hosts}}. cwd and isolate are interpreted with the host's paths and rules (omit cwd for the host's home folder). Omit backend and the host chooses the agent. Approvals for the host's child also appear in this conversation (the user answers them; you cannot). A request to an offline host fails immediately. ply_task_status, ply_task_wait, ply_task_send and ply_task_cancel work on the host's task with the same taskId (send only a message to a host task). account is an agent account on this PC, so it cannot be combined with host. Omit host to run it on this PC.",
     "invalidTool": "Invalid tool or arguments.",
-    "kindsIntro": "kind (the kind of work):",
+    "kindsIntro": "kind (type of task):",
     "kinds": {
       "trivial": "one step, nothing to check (fixed text replacement, moving files).",
       "mechanical": "several fixed steps whose result is checked by commands or comparison (running tests and summarizing, collecting logs, bulk replacement by one rule, scripted browser steps).",
-      "investigate": "the deliverable is facts, causes, or a description of the current state.",
-      "implement": "a change whose spec is already decided, even if it touches a screen.",
-      "review": "checking a diff or deliverable.",
+      "investigate": "the deliverable is facts, causes, or a description of the current state. Includes finding causes, but not choosing a recommendation or approach.",
+      "implement": "a change whose spec and form are already decided, including screens, diagrams, charts, and screen mockups.",
+      "review": "checking a diff or deliverable, without finding causes or choosing a recommendation or approach.",
       "design": "the deliverable is a recommendation, plan, or chosen approach (even if most of the work is gathering facts).",
-      "ux_change": "changing how an existing screen looks or flows, where the child decides the form; not complex.",
-      "ux_new": "a brand-new screen or product UX, or a complex UX rework.",
-      "visual": "advanced creative work where the visual quality decides the result: 3D modeling, vectorizing generated images, illustrations, logos."
-    },
-    "kindBoundaries": "Boundaries: if the form of the screen is already decided, implement; if the child decides the form, ux_change. If the deliverable is a recommendation or chosen approach, design, even when most of the work is research. Checking only is review; finding a cause is investigate. Diagrams, charts, and screen mockups are not visual: implement if the form is decided, ux_change / ux_new if the child decides the form."
+      "ux_change": "changing how an existing screen looks or flows, where the child decides the form; not complex. Includes diagrams, charts, and screen mockups whose form the child decides.",
+      "ux_new": "a brand-new screen or product UX, or a complex UX rework. Includes diagrams, charts, and screen mockups whose form the child decides.",
+      "visual": "advanced creative work where visual quality decides the result: 3D modeling, vectorizing generated images, illustrations, logos. Excludes diagrams, charts, and screen mockups."
+    }
   },
   "delegation": {
     "notRunning": "This conversation is not running.",

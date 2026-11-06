@@ -67,6 +67,7 @@ export default async function (t) {
   const storage = new Map();
   // client.mjs の saveDraft・loadDraft・submit などをここで走らせる。そこから新しいモジュールの定数を引いたら、身代わりを足す
   const context = vm.createContext({
+    voiceUi: { sync() {} },
     // Chats の面か（web/channels/index.mjs）と、見ている場所のアドレス（web/view-address.mjs）。会話を開くと残す。このテストの対象外
     channelsUi: { tab: 'chats', onEvent: () => false }, viewAddress: { note: () => {} },
     // まだ送っていない会話の宛先のチップ（web/composer/home-dest.mjs）。このテストは bot なし（ふつうの会話）だけ

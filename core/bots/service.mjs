@@ -22,7 +22,7 @@
 //   setAccount({ botId, account }, author): Promise<Bot>           … bot のエージェントのアカウント（'' = ログイン中）。human-only の操作から（ADR 0224）。
 //                                                   登録の無い id・使えないアカウントは断る（host.accountList）。既存の会話（capabilities.accounts を持つ backend）も揃える。
 //                                                   update で backend を替えると '' に戻る（アカウントはエージェントごと）
-//   remove({ botId }, author): Promise<void>      … DM のチャンネルは archive。会話は消さず、bot の印を外して Chats の一覧に戻す
+//   remove({ botId }, author): Promise<void>      … DM は archive。会話は閲覧用として Chats に残す。専用情報の片付け後に本体を消す（ADR 0293）
 //   usage({ botId }): Promise<{ weekTokens: number, cacheRatio: number|null }>   … 使用量の記録（DB の usage_records）を sessionId で引く
 //   overview({ botId? }): Promise<(Bot & { usage, state })[]>      … bots.list / get の返り。state は 'working' | 'waiting' | 'idle'
 //   --- S4（dispatch）・host が使う口
@@ -48,6 +48,7 @@ import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem
 import { createBotSessions, defaultMode, botTurnSetup, botInstructions } from './sessions.mjs';
 import { referencedSessions, shownTo } from './send-targets.mjs';
 import { looserThanDefault } from './approval.mjs';
+import { agentT } from '../i18n.mjs';
 
 const WEEK_MS = 7 * 24 * 3600_000;
 const DEFAULT_ICON = '🤖';
@@ -71,6 +72,22 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
   const store = createBotStore({ file: path.join(dataDir ?? '', 'bots.json') });
   const sessions = host ? createBotSessions({ host, now }) : null;
   const locks = new Map();          // 同じ bot への DM の作成を重ねない
+  const deleting = new Set();
+  const activity = new Map();
+  const busy = (key = 'botDeleteBusy') => {
+    const locale = host?.currentLocale?.() ?? 'ja';
+    return new BotError('CANNOT_DELETE', key === 'botDeleting'
+      ? agentT(locale, 'server:session.botDeleting') : agentT(locale, 'server:session.botDeleteBusy'));
+  };
+  // 受付から保存まで保持する。削除側は待たずに断るので、入れ子の受付でもデッドロックしない。
+  const acquire = (botId) => {
+    const bot = getBot(botId);
+    if (deleting.has(botId) || bot.deletionPending) throw busy('botDeleting');
+    activity.set(botId, (activity.get(botId) ?? 0) + 1);
+    let released = false;
+    return () => { if (!released) { released = true; const n = activity.get(botId) - 1; if (n) activity.set(botId, n); else activity.delete(botId); } };
+  };
+  const withActivity = async (botId, fn) => { const release = acquire(botId); try { return await fn(); } finally { release(); } };
   const once = (key, fn) => { const running = locks.get(key); if (running) return running; const p = fn().finally(() => locks.delete(key)); locks.set(key, p); return p; };
   const log = (...a) => console.error('  bots:', ...a);
 
@@ -83,11 +100,13 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
   const iconUploadDir = path.join(dataDir, 'uploads', 'bot-icon-upload');
   const ownIcon = (file) => typeof file === 'string' && path.dirname(file) === iconDir;
   const removeFile = async (file) => {
+    let failure;
     for (const delay of [0, 80, 250, 700]) {
       if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
       try { await fs.unlink(file); return; }
-      catch (e) { if (e.code === 'ENOENT') return; if (!['EBUSY', 'EACCES', 'EPERM'].includes(e.code)) throw e; }
+      catch (e) { if (e.code === 'ENOENT') return; if (!['EBUSY', 'EACCES', 'EPERM'].includes(e.code)) throw e; failure = e; }
     }
+    throw failure;
   };
   async function makeIcon(source, botId) {
     const { file, stat } = await inspectFile(source, { dataDir, uploadDir: path.join(dataDir, 'uploads') }).catch(() => { throw invalid('iconImage: file cannot be read'); });
@@ -111,7 +130,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
   async function sessionIdsOf(botId) {
     if (!host?.store?.getAll) return [];
     const all = await host.store.getAll();
-    return Object.entries(all).filter(([, v]) => v?.bot?.botId === botId).map(([id]) => id);
+    return Object.entries(all).filter(([, v]) => v?.bot?.botId === botId || v?.deletedBot?.id === botId).map(([id]) => id);
   }
 
   async function checkFolders(list) {
@@ -466,17 +485,31 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       requireStore();
       const bot = getBot(botId);
       if (bot.plain) throw invalid('the built-in agent cannot be removed');
-      const ids = await sessionIdsOf(botId);
-      await store.remove(botId);
-      await removeIcon(bot.iconImage);
-      send({ type: 'botsChanged', removed: botId });
-      if (bot.dmChannelId && typeof channels?.archive === 'function') {
-        await channels.archive({ channelId: bot.dmChannelId, on: true }, { kind: 'system' }).catch((e) => log('could not archive the DM channel:', String(e?.message ?? e)));
-      }
-      // その bot の思考の流れ・気がかりは消す（心拍の状態は bot ごとの 1 行なので、残っても害は無い。ADR 0126）
-      try { host?.botRemoved?.(botId); } catch (e) { log('could not clear the inner life of a removed bot:', String(e?.message ?? e)); }
-      // 会話は消さない。bot の印を外して Chats の一覧に戻す（履歴は残る）
-      for (const id of ids) await host.store.setSessionData(id, 'bot', null, { durable: true }).catch(() => {});
+      if (deleting.has(botId)) throw busy('botDeleting');
+      if (activity.has(botId)) throw busy();
+      deleting.add(botId);
+      try {
+        const ids = await sessionIdsOf(botId);
+        await host?.refuseBotRemoval?.(botId);
+        for (const id of ids) await host?.refuseBotDelete?.(id);
+        await store.update(botId, b => ({ ...b, deletionPending: true }));
+        for (const id of ids) {
+          const meta = await host.store.get(id);
+          if (['learner', 'pulse'].includes(meta.bot?.kind)) {
+            await host.store.setSessionData(id, 'deletedBot', { id: botId, name: bot.name }, { durable: true });
+            if (!await host.deleteHidden?.(id)) throw new Error('could not remove an internal bot conversation');
+          } else {
+            await host.store.setSessionData(id, 'deletedBot', { id: botId, name: bot.name }, { durable: true });
+            await host.store.setSessionData(id, 'bot', null, { durable: true });
+          }
+        }
+        await host?.cleanupBot?.(botId);
+        if (bot.dmChannelId && typeof channels?.archive === 'function') await channels.archive({ channelId: bot.dmChannelId, on: true }, { kind: 'system' });
+        await removeIcon(bot.iconImage);
+        await store.remove(botId);
+        send({ type: 'botsChanged', removed: botId });
+        host?.emit?.({ type: 'sessionsChanged' });
+      } finally { deleting.delete(botId); }
     },
 
     async usage({ botId }) {
@@ -494,15 +527,30 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const states = host?.runtime ? await stateByBot() : new Map();
       // restingUntil: 使用量の上限で休憩中なら解除の時刻（ms）。画面は作業中・あなた待ちを優先し、それ以外を「休憩中」と出す（ADR 0119）
       return Promise.all(bots.map(async (bot) => ({ ...bot, usage: await usageFor(bot, byBot), state: states.get(bot.id) ?? 'idle', restingUntil: host?.restingUntil?.(bot) ?? null,
+        ...(botId ? { deletion: await service.deletionInfo({ botId }) } : {}),
         sendTargetDetails: await Promise.all(bot.sendTargets.map(async (sessionId) => ({ sessionId,
           title: (await host?.store?.get?.(sessionId))?.title || sessionId, source: bot.sendTargetSources?.[sessionId] ?? 'manual' }))) })));
     },
 
-    ensureDm,
+    async deletionInfo({ botId }) {
+      const ids = await sessionIdsOf(botId);
+      let blockedReason = deleting.has(botId) ? busy('botDeleting').message : activity.has(botId) ? busy().message : null;
+      try { await host?.refuseBotRemoval?.(botId); } catch (e) { blockedReason = e.message; }
+      let conversations = 0;
+      for (const id of ids) {
+        const meta = await host.store.get(id);
+        if (!['learner', 'pulse'].includes(meta.bot?.kind)) conversations++;
+        try { await host?.refuseBotDelete?.(id); } catch (e) { blockedReason = e.message; }
+      }
+      return { conversations, routines: (await host?.botRoutines?.() ?? []).filter(r => r.botId === botId).length, blockedReason };
+    },
+    acquire,
+    withActivity,
+    ensureDm: (args) => withActivity(args.botId, () => ensureDm(args)),
 
     async ensureDmSession({ botId }) {
       if (!sessions) throw new Error('bots: ensureDmSession needs the host');
-      return once(`dmsession:${botId}`, async () => {
+      return withActivity(botId, () => once(`dmsession:${botId}`, async () => {
         let bot = await ensureDm({ botId });
         if (bot.dmSessionId) {
           const meta = await host.store.get(bot.dmSessionId).catch(() => null);
@@ -515,12 +563,12 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         bot = await store.update(botId, (b) => ({ ...b, dmSessionId: made.sessionId, updatedAt: now() }));
         send({ type: 'botsChanged', bot });
         return { sessionId: made.sessionId, created: true };
-      });
+      }));
     },
 
     async createSession({ botId, channel = null, threadId = null, kind, routineId, rootText = '', backend = null, cwd = null }) {
       if (!sessions) throw new Error('bots: createSession needs the host');
-      return sessions.create({ bot: getBot(botId), channel, threadId, kind, routineId, rootText, backend, cwd });
+      return withActivity(botId, () => sessions.create({ bot: getBot(botId), channel, threadId, kind, routineId, rootText, backend, cwd }));
     },
 
     async turnSetup(turn) {
@@ -529,5 +577,10 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     },
     instructions: botInstructions,
   };
+  for (const name of ['update', 'setMode', 'setAccount', 'addSendTargets']) {
+    if (!service[name]) continue;
+    const fn = service[name];
+    service[name] = (args, ...rest) => withActivity(args.botId, () => fn(args, ...rest));
+  }
   return service;
 }

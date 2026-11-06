@@ -137,6 +137,8 @@ const errText = (e) => String(e?.message ?? e);
 
 export function createDispatcher({ channels, bots, memory, episodes, brain = null, host, emit = () => {}, now = Date.now } = {}) {
   const inbox = createInboxStore({ dir: channels?.dir ?? path.join(host?.dataDir ?? '.', 'channels'), now });
+  const addInbox = inbox.add;
+  inbox.add = args => bots.withActivity ? bots.withActivity(args.botId, () => addInbox(args)) : addInbox(args);
   const active = new Map();        // sessionId → ターンの記録（begin から onTurnEnd まで）
   const starting = new Map();      // sessionId → 自分が始めたターンのうち、まだ turnExtras に届いていないもの
   const liveSteers = new Map();    // 途中送信の item id → 「渡った」合図を待っているもの
@@ -377,7 +379,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const before = page?.posts ?? [];
     const upto = before.findIndex((p) => p.id === postId);
     const last = (upto >= 0 ? before.slice(0, upto) : before).findLast((p) => !p.deletedAt && p.author?.kind === 'bot' && p.author.botId);
-    if (last) return last.author.botId;
+    if (last && await getBot(last.author.botId)) return last.author.botId;
     const known = Object.keys((page?.threads?.[0] ?? await channels.threads.get(channelId, threadId).catch(() => null))?.sessions ?? {});
     return known.length === 1 ? known[0] : null;
   }
@@ -779,6 +781,11 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
    * talkingTo: 聞こえた投稿が誰との話の続きか（bot の id。自分なら残さない。ADR 0128 の追記）
    */
   async function wake({ botId, channel, threadId, post, approved = false, heard = false, talkingTo = null }) {
+    if (bots.withActivity) return bots.withActivity(botId, () => wakeOwned({ botId, channel, threadId, post, approved, heard, talkingTo }));
+    return wakeOwned({ botId, channel, threadId, post, approved, heard, talkingTo });
+  }
+
+  async function wakeOwned({ botId, channel, threadId, post, approved, heard, talkingTo }) {
     const bot = await getBot(botId);
     if (!bot) return null;
     // 使用量の上限で休憩中なら配らない（解除の後にもう一度呼んでもらう）。その場所で初めてなら知らせる（聞こえただけの投稿では知らせない）
@@ -1721,6 +1728,14 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   return {
+    async deletionBlocked(botId) {
+      if ([...starting.values()].some(x => x.botId === botId)) return true;
+      return (await inbox.list()).some(x => x.botId === botId && (x.status === 'delivering' || (x.status === 'pending' && !x.reaction?.quiet)));
+    },
+    async cleanupBot(botId) {
+      const rows = (await inbox.list()).filter(x => x.botId === botId);
+      if (rows.length) await inbox.remove(rows.map(x => x.id));
+    },
     channels, bots, memory, host, emit, now, inbox, budget,
     start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, creditedFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread, pendingPosts, withdrawPending,
     /** テスト・診断用: 走っている bot のターンの数 */

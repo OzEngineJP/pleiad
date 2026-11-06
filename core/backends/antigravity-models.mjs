@@ -107,14 +107,16 @@ export function buildAgyModels(rows, defaultLabel = null) {
 
 /**
  * 実際に agy へ渡す `--model` / `--effort`。**両方は渡さない**（冒頭のコメント）。
- *   - 段の指定が無い: `--model`（'' なら何も渡さず agy の既定）
+ *   - 段の指定が無い: `--model`。'' なら一覧の既定（resolvesTo）を明示して渡す。省くと agy はその時点の自分の既定を使い、
+ *     Pleiad が覚えた既定より後に agy 側で既定が変わっていると、画面の「既定（モデル名）」・使用量の枠と別のモデルで走る（issue #161）。
+ *     既定が分からなければ何も渡さない（agy の既定）
  *   - 段の指定がある: 同じ系統の段違いの id を `--model` に。段の無いモデル・系統に無い段なら段を捨てる
  *   - 一覧に無い（一覧を引けていない・既定が分からない）: model があればそれだけ。model も無ければ `--effort` だけ
  *     （agy は素の --effort を選ばれているモデルに当てる。changelog 1.1.10）
  * @returns {{ model?: string, effort?: string }}
  */
 export function agyTarget(model, effort, models) {
-  const m = model || undefined;
+  const m = model || models?.[""]?.resolvesTo || undefined;
   if (!effort) return { model: m };
   const id = model || models?.[""]?.resolvesTo || "";
   const entry = id ? models?.[id] : null;

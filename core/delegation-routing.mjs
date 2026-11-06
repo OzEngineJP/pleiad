@@ -14,14 +14,24 @@ import { EFFORT_LEVELS, fitEffort } from '../web/delegation-effort.mjs';
 
 export { EFFORT_LEVELS, fitEffort };
 
+// 既定の作業の種類の id（エージェントが ply_delegate の kind に書く値）。利用者は設定 › 委譲で種類を足したり変えたりできるので、
+// 有効な種類の一覧はここではなく設定の kinds を見る（normalizeSettings の out.kinds）
 export const KINDS = Object.freeze(['trivial', 'mechanical', 'investigate', 'implement', 'review', 'design', 'ux_change', 'ux_new', 'visual']);
 export const DIFFICULTIES = Object.freeze(['low', 'mid', 'high']);
-export const TIERS = Object.freeze(['t1', 't2', 't3', 't4', 'tv']);
-/** 上がっていく段の順。tv（クリエイティブ）はこの列に入らず、上がらない */
-const LADDER = ['t1', 't2', 't3', 't4'];
-export const JUDGES = Object.freeze(['jev', 'qwen', 'none']);
+/** 既定のレベル（旧「段」の t1〜t4。上が強い順。name '' は画面が「レベル <順>」に直す。クリエイティブの段 tv は廃止（ADR。候補は最後のレベルへ）） */
+export const DEFAULT_LEVELS = Object.freeze(['t1', 't2', 't3', 't4'].map(id => Object.freeze({ id, name: '' })));
+/** 既定の作業の種類（name '' は辞書の表示名・desc '' は辞書の説明） */
+export const DEFAULT_KINDS = Object.freeze(KINDS.map(id => Object.freeze({ id, name: '', desc: '' })));
+/** 難しさを判定する既定のモデル（OpenRouter の decisions。core/delegation-judges.mjs） */
+export const DEFAULT_JUDGE = 'perplexity/pplx-decider-v1.2';
+/** 作業の種類の id（エージェントが kind に書く値。小文字で始まる） */
+export const KIND_ID = /^[a-z][a-z0-9_]{0,39}$/;
+/** レベルの id */
+export const LEVEL_ID = /^[A-Za-z0-9_-]{1,40}$/;
+/** 判定に使うモデルの id の形（OpenRouter の「製作者/名前」） */
+const JUDGE_ID = /^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,199}$/;
 
-// 難しさの手がかり（v3）。英語の文面がそのまま自動選択のモデルへの問いになる。閾値は Jev の「はい」の確率を真偽に分ける線
+// 難しさの手がかり（v3）。英語の文面がそのまま判定のモデルへの問いになる。閾値は「はい」の確率を真偽に分ける線
 export const SIGNALS = Object.freeze(['diagnose', 'choose', 'long_procedure', 'many_parts', 'writes_shared', 'security_gate']);
 export const QUESTIONS = Object.freeze({
   diagnose: 'The task is to find the cause of a bug, failure, or unexpected behavior, and the cause is not already stated in the request. Reading documents, listing facts, or reviewing against given criteria is not this.',
@@ -31,35 +41,34 @@ export const QUESTIONS = Object.freeze({
   writes_shared: 'The task writes to something shared, production, public, or external (shared documents or databases, deployed services, pushes, messages to people), or deletes data that cannot be restored. Local files and local commits do not count.',
   security_gate: 'The result is the final check on security, privacy, or safety, such as a security review before release or a change to safety requirements.',
 });
-export const JEV_THRESHOLDS = Object.freeze({ diagnose: 0.5, choose: 0.31, long_procedure: 0.685, many_parts: 0.68, writes_shared: 0.5, security_gate: 0.19 });
-/** 「Jev が迷った」とみなす幅（閾値 ± これ） */
-export const JEV_UNSURE_BAND = 0.15;
+/** 「はい」の確率を真偽に分ける線（どの手がかりも同じ値。前の版の手がかりごとの線は、迷った確率を別のモデルに聞き直すしくみと一緒に廃止） */
+export const DECISION_THRESHOLD = 0.5;
 
 export const DEFAULTS = Object.freeze({
   enabled: true,
-  judgeByKind: Object.freeze({ trivial: 'jev', mechanical: 'jev', investigate: 'jev', implement: 'jev', review: 'jev',
-    design: 'jev', ux_change: 'none', ux_new: 'none', visual: 'none' }),
-  escalateToQwen: false,
+  judge: DEFAULT_JUDGE,
+  levels: DEFAULT_LEVELS,
+  kinds: DEFAULT_KINDS,
   avoidPercent: 80,
   paceLimit: 1.2,
+  // レベルごとの候補（レベルの id → backend:model・backend@account:model の並び）。クリエイティブの段にあった候補は最後のレベルの末尾へ
   tiers: Object.freeze({
     t1: Object.freeze(['antigravity:gemini-3.8-flash-high', 'claude:haiku']),
     t2: Object.freeze(['antigravity:gemini-3.8-flash-high', 'codex:gpt-6-luna', 'antigravity:claude-opus-4-6-thinking', 'claude:sonnet']),
     t3: Object.freeze(['codex:gpt-6-sol', 'claude:sonnet']),
-    t4: Object.freeze(['claude:opus', 'claude:fable']),
-    tv: Object.freeze(['codex:gpt-6-astra']),
+    t4: Object.freeze(['claude:opus', 'claude:fable', 'codex:gpt-6-astra']),
   }),
+  // 作業の種類の id → [低, 中, 高] のレベルの id
   table: Object.freeze({
     trivial: Object.freeze(['t1', 't1', 't2']), mechanical: Object.freeze(['t1', 't2', 't3']),
     investigate: Object.freeze(['t2', 't3', 't4']), implement: Object.freeze(['t2', 't3', 't4']), review: Object.freeze(['t2', 't3', 't4']),
     design: Object.freeze(['t3', 't4', 't4']), ux_change: Object.freeze(['t4', 't4', 't4']),
-    ux_new: Object.freeze(['t4', 't4', 't4']), visual: Object.freeze(['tv', 'tv', 'tv']),
+    ux_new: Object.freeze(['t4', 't4', 't4']), visual: Object.freeze(['t4', 't4', 't4']),
   }),
-  // 段ごとの子の思考の強さ（ADR 0164）。'*' は段の既定、候補の id（backend:model）はその候補だけの上書き。'' は会話の既定に従う。
-  // 創作（tv）は強さの当たりが未確認なので会話の既定に従う
+  // レベルごとの子の思考の強さ（ADR 0164）。'*' はレベルの既定、候補の id（backend:model）はその候補だけの上書き。'' は会話の既定に従う
   efforts: Object.freeze({
     t1: Object.freeze({ '*': 'low' }), t2: Object.freeze({ '*': 'medium' }), t3: Object.freeze({ '*': 'medium' }),
-    t4: Object.freeze({ '*': 'high' }), tv: Object.freeze({ '*': '' }),
+    t4: Object.freeze({ '*': 'high' }),
   }),
 });
 /** 週次の枠のペース（使用率 ÷ 経過率）を見始める経過率（%） */
@@ -90,10 +99,20 @@ export function candidateId(backend, model, account = null) {
   return account ? `${backend}@${account}:${model}` : `${backend}:${model}`;
 }
 
-/** 段に入っているアカウント（backend ごとの Set。ログイン中は ''）。アカウントを持てるエージェントの、自動の選択の対象 */
+/** 設定の levels の順（弱い → 強い）。読み替えに使う */
+export const levelOrder = settings => (settings?.levels ?? DEFAULTS.levels).map(l => l.id);
+/** 設定の kinds の id の配列（表の行の順） */
+export const kindOrder = settings => (settings?.kinds ?? DEFAULTS.kinds).map(k => k.id);
+/** 作業の種類の設定行。無ければ null */
+export const kindAt = (settings, id) => (settings?.kinds ?? []).find(k => k.id === id) ?? null;
+/** 新しい id（衝突しない形。画面が種類・レベルを足すときに使う） */
+export const newKindId = settings => { const taken = new Set(kindOrder(settings)); let id; do { id = `k_${Math.random().toString(36).slice(2, 8)}`; } while (taken.has(id)); return id; };
+export const newLevelId = settings => { const taken = new Set(levelOrder(settings)); let id; do { id = `l_${Math.random().toString(36).slice(2, 8)}`; } while (taken.has(id)); return id; };
+
+/** レベルに入っているアカウント（backend ごとの Set。ログイン中は ''）。アカウントを持てるエージェントの、自動の選択の対象 */
 export function tierAccounts(settings, backend) {
   const out = new Set();
-  for (const tier of TIERS) for (const c of settings?.tiers?.[tier] ?? []) {
+  for (const list of Object.values(settings?.tiers ?? {})) for (const c of list) {
     const parsed = parseCandidate(c);
     if (parsed?.backend === backend) out.add(parsed.account ?? '');
   }
@@ -106,24 +125,42 @@ export class RoutingSettingsError extends Error {
 }
 
 /** 設定から外した項目。前の版で保存した prefs に残っていても、保存（strict）で断らずに読み捨てる */
-export const RETIRED_KEYS = Object.freeze(['staleMinutes']);
+export const RETIRED_KEYS = Object.freeze(['staleMinutes', 'judgeByKind', 'escalateToQwen', 'escalateToCerebras']);
+
+const isPlain = v => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 /**
- * 前の版の Cerebras の自動選択の設定を、OpenRouter の Qwen の名前へ直す（Cerebras の直の経路は 2026-10-09 に廃止。ADR 0177）。
- * judgeByKind の cerebras は qwen に、escalateToCerebras は escalateToQwen に（両方あれば今の名前を残す）。changed は直したか
+ * 前の版の設定を今の形へ直す。changed は直したか。
+ *   judgeByKind・escalateToQwen・escalateToCerebras … 種類ごとの判定モデルと「迷ったら Qwen」。判定は 1 つのモデル（既定 pplx）に
+ *     まとまったので、判定を使う種類が 1 つでもあれば judge を既定に、全部「しない」なら 'none' にする（古い Cerebras の名もここで畳む）
+ *   tiers.tv・table の tv・efforts.tv … クリエイティブの段。候補は最後のレベル（t4）の末尾へ、表の tv は t4 へ
+ *   なお、固定の段・種類（KINDS・TIERS）への保存値が無いときの補いは normalizeSettings がやる（levels・kinds が無ければ既定）
  */
 export function migrateLegacySettings(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { raw, changed: false };
   const out = { ...raw };
   let changed = false;
-  if (Object.hasOwn(out, 'escalateToCerebras')) {
-    if (out.escalateToQwen === undefined) out.escalateToQwen = out.escalateToCerebras;
-    delete out.escalateToCerebras;
+  if (Object.hasOwn(out, 'judgeByKind') || Object.hasOwn(out, 'escalateToQwen') || Object.hasOwn(out, 'escalateToCerebras')) {
+    if (out.judge === undefined) {
+      const judges = isPlain(out.judgeByKind) ? Object.values(out.judgeByKind) : [];
+      out.judge = judges.some(v => typeof v === 'string' && v !== 'none') ? DEFAULTS.judge : 'none';
+    }
+    delete out.judgeByKind; delete out.escalateToQwen; delete out.escalateToCerebras;
     changed = true;
   }
-  const byKind = out.judgeByKind;
-  if (byKind && typeof byKind === 'object' && !Array.isArray(byKind) && Object.values(byKind).includes('cerebras')) {
-    out.judgeByKind = Object.fromEntries(Object.entries(byKind).map(([kind, judge]) => [kind, judge === 'cerebras' ? 'qwen' : judge]));
+  const tiers = out.tiers;
+  if (isPlain(tiers) && Object.hasOwn(tiers, 'tv')) {
+    out.tiers = { ...tiers, t4: [...new Set([...(Array.isArray(tiers.t4) ? tiers.t4 : []), ...(Array.isArray(tiers.tv) ? tiers.tv : [])])] };
+    delete out.tiers.tv;
+    changed = true;
+  }
+  if (isPlain(out.table) && Object.values(out.table).some(row => Array.isArray(row) && row.includes('tv'))) {
+    out.table = Object.fromEntries(Object.entries(out.table).map(([kind, row]) => [kind, Array.isArray(row) ? row.map(tier => tier === 'tv' ? 't4' : tier) : row]));
+    changed = true;
+  }
+  if (isPlain(out.efforts) && Object.hasOwn(out.efforts, 'tv')) {
+    out.efforts = { ...out.efforts };
+    delete out.efforts.tv;
     changed = true;
   }
   return { raw: out, changed };
@@ -133,18 +170,33 @@ export function migrateLegacySettings(raw) {
  * prefs.json の delegationRouting を、既定値で補った完全な形にする。
  * strict なら不正な値を RoutingSettingsError で断る（画面からの保存）。そうでなければ不正な項目だけ既定に戻す（読むとき）
  */
+/** levels・kinds の 1 項目。形が合わなければ null（strict ではなく読むときは飛ばす） */
+const levelOf = v => isPlain(v) && typeof v.id === 'string' && LEVEL_ID.test(v.id) && typeof v.name === 'string' && v.name.length <= 80 ? { id: v.id, name: v.name } : null;
+const kindOf = v => isPlain(v) && typeof v.id === 'string' && KIND_ID.test(v.id) && typeof v.name === 'string' && v.name.length <= 80
+  && typeof v.desc === 'string' && v.desc.length <= 300 ? { id: v.id, name: v.name, desc: v.desc } : null;
+
+/** 作業の種類 × 難しさの既定の行（設定にその種類の行が無いときの補い。追加した種類は 中1つ上・高2つ上） */
+function defaultTableRow(kind, levels) {
+  const ids = new Set(levels.map(l => l.id));
+  const row = DEFAULTS.table[kind];
+  if (row && row.every(tier => ids.has(tier))) return [...row];
+  const at = i => levels[Math.min(i, levels.length - 1)].id;
+  return [at(1), at(2), at(3)];
+}
+
 export function normalizeSettings(raw, { strict = false } = {}) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? migrateLegacySettings(raw).raw : {};
   const fail = (code, detail) => { if (strict) throw new RoutingSettingsError(code, detail); };
-  const out = { enabled: DEFAULTS.enabled, judgeByKind: { ...DEFAULTS.judgeByKind }, escalateToQwen: DEFAULTS.escalateToQwen,
-    avoidPercent: DEFAULTS.avoidPercent, paceLimit: DEFAULTS.paceLimit,
-    tiers: Object.fromEntries(Object.entries(DEFAULTS.tiers).map(([k, v]) => [k, [...v]])),
-    table: Object.fromEntries(Object.entries(DEFAULTS.table).map(([k, v]) => [k, [...v]])),
-    efforts: Object.fromEntries(Object.entries(DEFAULTS.efforts).map(([k, v]) => [k, { ...v }])) };
+  const out = { enabled: DEFAULTS.enabled, judge: DEFAULTS.judge,
+    levels: DEFAULTS.levels.map(l => ({ ...l })), kinds: DEFAULTS.kinds.map(k => ({ ...k })),
+    avoidPercent: DEFAULTS.avoidPercent, paceLimit: DEFAULTS.paceLimit, tiers: {}, table: {}, efforts: {} };
   for (const key of Object.keys(src)) if (!Object.hasOwn(out, key) && !RETIRED_KEYS.includes(key)) fail('unknownKey', { key });
-  for (const key of ['enabled', 'escalateToQwen']) {
-    if (src[key] === undefined) continue;
-    if (typeof src[key] === 'boolean') out[key] = src[key]; else fail('notBoolean', { key });
+  if (src.enabled !== undefined) {
+    if (typeof src.enabled === 'boolean') out.enabled = src.enabled; else fail('notBoolean', { key: 'enabled' });
+  }
+  if (src.judge !== undefined) {
+    if (src.judge === 'none' || (typeof src.judge === 'string' && JUDGE_ID.test(src.judge))) out.judge = src.judge;
+    else fail('badJudge', { judge: String(src.judge).slice(0, 60) });
   }
   const numbers = { avoidPercent: [1, 100], paceLimit: [0.1, 10] };
   for (const [key, [min, max]] of Object.entries(numbers)) {
@@ -152,64 +204,90 @@ export function normalizeSettings(raw, { strict = false } = {}) {
     const v = src[key];
     if (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max) out[key] = v; else fail('outOfRange', { key, min, max });
   }
-  if (src.judgeByKind !== undefined) {
-    if (!src.judgeByKind || typeof src.judgeByKind !== 'object' || Array.isArray(src.judgeByKind)) fail('notObject', { key: 'judgeByKind' });
-    else for (const [kind, judge] of Object.entries(src.judgeByKind)) {
-      if (!KINDS.includes(kind)) fail('unknownKind', { key: 'judgeByKind', kind });
-      else if (!JUDGES.includes(judge)) fail('unknownJudge', { kind, judge: String(judge) });
-      else out.judgeByKind[kind] = judge;
+  // レベル（旧「段」）と作業の種類は利用者が並べる。配列の順が強さ・表の行の順。形の違う項目は読むとき飛ばす
+  if (src.levels !== undefined) {
+    if (!Array.isArray(src.levels) || !src.levels.length || src.levels.length > 10) fail('badLevels');
+    else {
+      const seen = new Set(), levels = [];
+      for (const item of src.levels) {
+        const level = levelOf(item);
+        if (!level || seen.has(level.id)) { fail('badLevels'); continue; }
+        seen.add(level.id); levels.push(level);
+      }
+      if (levels.length) out.levels = levels;
     }
   }
+  if (src.kinds !== undefined) {
+    if (!Array.isArray(src.kinds) || !src.kinds.length || src.kinds.length > 30) fail('badKinds');
+    else {
+      const seen = new Set(), kinds = [];
+      for (const item of src.kinds) {
+        const kind = kindOf(item);
+        if (!kind || seen.has(kind.id)) { fail('badKinds'); continue; }
+        seen.add(kind.id); kinds.push(kind);
+      }
+      if (kinds.length) out.kinds = kinds;
+    }
+  }
+  const levelIds = new Set(levelOrder(out)), kindIds = new Set(kindOrder(out));
   if (src.tiers !== undefined) {
-    if (!src.tiers || typeof src.tiers !== 'object' || Array.isArray(src.tiers)) fail('notObject', { key: 'tiers' });
-    else for (const [tier, list] of Object.entries(src.tiers)) {
-      if (!TIERS.includes(tier)) { fail('unknownTier', { tier }); continue; }
-      if (!Array.isArray(list) || list.length > 20 || list.some(c => !parseCandidate(c)) || new Set(list).size !== list.length) { fail('badCandidates', { tier }); continue; }
-      out.tiers[tier] = [...list];
+    if (!isPlain(src.tiers)) fail('notObject', { key: 'tiers' });
+    else for (const [level, list] of Object.entries(src.tiers)) {
+      if (!levelIds.has(level)) { fail('unknownLevel', { level }); continue; }
+      if (!Array.isArray(list) || list.length > 20 || list.some(c => !parseCandidate(c)) || new Set(list).size !== list.length) { fail('badCandidates', { level }); continue; }
+      out.tiers[level] = [...list];
     }
   }
   if (src.table !== undefined) {
-    if (!src.table || typeof src.table !== 'object' || Array.isArray(src.table)) fail('notObject', { key: 'table' });
+    if (!isPlain(src.table)) fail('notObject', { key: 'table' });
     else for (const [kind, row] of Object.entries(src.table)) {
-      if (!KINDS.includes(kind)) { fail('unknownKind', { key: 'table', kind }); continue; }
-      if (!Array.isArray(row) || row.length !== 3 || row.some(tier => !TIERS.includes(tier))) { fail('badRow', { kind }); continue; }
+      if (!kindIds.has(kind)) { fail('unknownKind', { key: 'table', kind }); continue; }
+      if (!Array.isArray(row) || row.length !== 3 || row.some(level => !levelIds.has(level))) { fail('badRow', { kind }); continue; }
       out.table[kind] = [...row];
     }
   }
   if (src.efforts !== undefined) {
     if (!isPlain(src.efforts)) fail('notObject', { key: 'efforts' });
-    else for (const [tier, row] of Object.entries(src.efforts)) {
-      if (!TIERS.includes(tier)) { fail('unknownTier', { tier }); continue; }
-      if (!isPlain(row) || Object.keys(row).length > 40) { fail('badEfforts', { tier }); continue; }
-      const next = { ...out.efforts[tier] };
+    else for (const [level, row] of Object.entries(src.efforts)) {
+      if (!levelIds.has(level)) { fail('unknownLevel', { level }); continue; }
+      if (!isPlain(row) || Object.keys(row).length > 40) { fail('badEfforts', { level }); continue; }
+      // 行に無い項目（'*' を含む）はそのレベルの組み込みの既定から補う。利用者のレベルに既定は無い（空）
+      const next = { ...(DEFAULTS.efforts[level] ?? {}) };
       for (const [key, value] of Object.entries(row)) {
         // 保存では形だけを見る。そのモデルが持つ強さかは、子を作るときに合わせる（モデルの一覧は場所・ログインで変わる）
-        if (key !== '*' && !parseCandidate(key)) { fail('badEffortKey', { tier, key: key.slice(0, 80) }); continue; }
-        if (value !== '' && !EFFORT_LEVELS.includes(value)) { fail('badEffort', { tier, value: String(value).slice(0, 40) }); continue; }
+        if (key !== '*' && !parseCandidate(key)) { fail('badEffortKey', { level, key: key.slice(0, 80) }); continue; }
+        if (value !== '' && !EFFORT_LEVELS.includes(value)) { fail('badEffort', { level, value: String(value).slice(0, 40) }); continue; }
         next[key] = value;
       }
-      out.efforts[tier] = next;
+      out.efforts[level] = next;
     }
   }
-  // 段から外した候補の上書きは持ち越さない（外して入れ直した候補に前の上書きが付かない）
-  for (const tier of TIERS) for (const key of Object.keys(out.efforts[tier])) if (key !== '*' && !out.tiers[tier].includes(key)) delete out.efforts[tier][key];
+  // 設定に無いレベル・種類は既定で補う（レベルの候補は空、種類の行は 中1つ上・高2つ上）
+  for (const level of out.levels) {
+    if (!Array.isArray(out.tiers[level.id])) out.tiers[level.id] = [...(DEFAULTS.tiers[level.id] ?? [])];
+    if (!isPlain(out.efforts[level.id])) out.efforts[level.id] = { ...(DEFAULTS.efforts[level.id] ?? {}) };
+  }
+  for (const kind of out.kinds) if (!Array.isArray(out.table[kind.id])) out.table[kind.id] = defaultTableRow(kind.id, out.levels);
+  // レベルから外した候補の上書きは持ち越さない（外して入れ直した候補に前の上書きが付かない）
+  for (const level of out.levels) for (const key of Object.keys(out.efforts[level.id])) if (key !== '*' && !out.tiers[level.id].includes(key)) delete out.efforts[level.id][key];
   return out;
 }
-const isPlain = v => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 /**
- * 保存する delegationRouting の efforts から、段に無い候補の上書きと、既定と同じ段の行を落とす。
+ * 保存する delegationRouting の efforts から、レベルに無い候補の上書きと、既定と同じレベルの行を落とす。
  * 保存の形（raw）は利用者が変えた項目だけなので、外した候補の上書きを残さない。空になれば undefined
  */
 export function pruneEfforts(rawEfforts, settings) {
   if (!isPlain(rawEfforts)) return undefined;
   const out = {};
-  for (const [tier, row] of Object.entries(rawEfforts)) {
-    if (!TIERS.includes(tier) || !isPlain(row)) continue;
-    const kept = Object.fromEntries(Object.entries(row).filter(([key]) => key === '*' || (settings.tiers[tier] ?? []).includes(key)));
-    const merged = { ...DEFAULTS.efforts[tier], ...kept };
-    const sameAsDefault = Object.keys(merged).length === Object.keys(DEFAULTS.efforts[tier]).length && Object.entries(DEFAULTS.efforts[tier]).every(([k, v]) => merged[k] === v);
-    if (!sameAsDefault) out[tier] = kept;
+  for (const level of settings.levels) {
+    const row = rawEfforts[level.id];
+    if (!isPlain(row)) continue;
+    const kept = Object.fromEntries(Object.entries(row).filter(([key]) => key === '*' || (settings.tiers[level.id] ?? []).includes(key)));
+    const base = DEFAULTS.efforts[level.id] ?? {};
+    const merged = { ...base, ...kept };
+    const sameAsDefault = Object.keys(merged).length === Object.keys(base).length && Object.entries(base).every(([k, v]) => merged[k] === v);
+    if (!sameAsDefault) out[level.id] = kept;
   }
   return Object.keys(out).length ? out : undefined;
 }
@@ -467,10 +545,10 @@ export function decideEffort({ settings, tier, candidate, capability }) {
   return { send: effort, effort, source: own !== undefined ? 'override' : 'tier', tier, ...(effort !== wanted ? { asked: wanted } : {}) };
 }
 
-/** 強さを引く段。やり直し（人が選んだ候補）は元の段にその候補があればそれ、無ければ候補が入っている最初の段、どこにも無ければ null */
+/** 強さを引くレベル。やり直し（人が選んだ候補）は元のレベルにその候補があればそれ、無ければ候補が入っている最初のレベル、どこにも無ければ null */
 export function effortTierFor({ settings, candidate, preferred = null }) {
   if (preferred && (settings.tiers[preferred] ?? []).includes(candidate)) return preferred;
-  return TIERS.find(tier => (settings.tiers[tier] ?? []).includes(candidate)) ?? null;
+  return levelOrder(settings).find(level => (settings.tiers[level] ?? []).includes(candidate)) ?? null;
 }
 
 /**
@@ -489,31 +567,37 @@ export function manualRouting({ kind, candidate, check, of, from, effortTier = n
 }
 
 /**
- * 段・候補を選ぶ。judged は判定の結果 { judge, signals, probabilities, fallback }（signals が null なら難しさは mid）。
+ * レベル・候補を選ぶ。judged は判定の結果 { judge, signals, probabilities, fallback }（signals が null なら難しさは mid）。
  * rejected は、選んだ後の確かめで落ちた候補と理由（{ 'codex:gpt-6-sol': 'model_unknown' }。server が委譲先の cwd で
  * モデルを確かめ直し、だめなら足して選び直す）。
+ * レベルは設定の levels の順（弱い → 強い）。表のレベルから上へ順に試し、全部だめなら下のレベルも強い順に戻る。
  * 選べれば { ok: true, routing }、全部だめなら { ok: false, routing }（target は null）。
  * usageAt は選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）
  */
 export function route({ kind, judged = {}, settings, usage, now = Date.now(), rejected = {}, blocked }) {
   const difficulty = judged.signals ? difficultyOf(judged.signals) : 'mid';
-  const base = settings.table[kind][DIFFICULTIES.indexOf(difficulty)];
-  const index = LADDER.indexOf(base);
-  const sequence = base === 'tv' ? ['tv'] : LADDER.slice(index);
+  const order = levelOrder(settings);
+  const kindName = kindAt(settings, kind)?.name || null;
+  const levels = new Map((settings?.levels ?? []).map((l, i) => [l.id, { name: l.name, index: i }]));
+  const info = level => levels.get(level) ?? null;
+  const base = settings.table[kind]?.[DIFFICULTIES.indexOf(difficulty)] ?? order.at(-1);
+  const index = Math.max(0, order.indexOf(base));
   const skipped = [];
   const seen = [];
   const iso = v => v == null ? null : new Date(v).toISOString();
   const routing = target => {
     const times = seen.filter(v => v != null);
-    return { mode: 'auto', kind, judge: judged.judge ?? 'none', signals: judged.signals ?? null, probabilities: judged.probabilities ?? null,
-      difficulty, baseTier: base, tier: target?.tier ?? null, target: target ? { backend: target.backend, model: target.model, account: target.account,
+    const baseInfo = info(base), targetInfo = target ? info(target.tier) : null;
+    return { mode: 'auto', kind, ...(kindName ? { kindName } : {}), judge: judged.judge ?? 'none', signals: judged.signals ?? null, probabilities: judged.probabilities ?? null,
+      difficulty, baseTier: base, ...(baseInfo ? { baseTierName: baseInfo.name, baseTierIndex: baseInfo.index } : {}),
+      tier: target?.tier ?? null, ...(targetInfo ? { tierName: targetInfo.name, tierIndex: targetInfo.index } : {}),
+      target: target ? { backend: target.backend, model: target.model, account: target.account,
         ...(target.accountLabel ? { accountLabel: target.accountLabel } : {}) } : null,
       // 選んだ候補に効いた枠の今の使用率（委譲カードの内訳に出す。飛ばした候補は skipped[].window）
       ...(target?.windows ? { targetWindows: target.windows } : {}),
       ...(target?.deferred ? { selectedWithLowHeadroom: { reason: target.reason,
         ...(target.window ? { window: target.window } : {}), avoidPercent: settings.avoidPercent } } : {}),
-      skipped, usageAt: target ? iso(target.checkedAt) : times.length ? iso(Math.min(...times)) : null, fallback: judged.fallback ?? null,
-      ...(judged.escalated ? { escalated: true } : {}) };
+      skipped, usageAt: target ? iso(target.checkedAt) : times.length ? iso(Math.min(...times)) : null, fallback: judged.fallback ?? null };
   };
   const soft = [];
   // アカウントを持つ候補（アカウントを書いた候補・登録のあるエージェントの候補）は、飛ばした行にアカウントを添える
@@ -529,7 +613,9 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
       if (check.ok && !check.deferred) return { tier, backend: parsed.backend, model: parsed.model, ...check };
       if (check.deferred) localSoft.push({ tier, candidate, check });
       const scoped = scopedOf(parsed);
-      skipped.push({ candidate, tier, ...(scoped ? { account: check.account ?? parsed.account ?? '', accountLabel: check.accountLabel ?? null } : {}),
+      const level = info(tier);
+      skipped.push({ candidate, tier, ...(level ? { tierName: level.name, tierIndex: level.index } : {}),
+        ...(scoped ? { account: check.account ?? parsed.account ?? '', accountLabel: check.accountLabel ?? null } : {}),
         reason: check.reason, ...(check.detail ? { detail: check.detail } : {}), ...(check.until ? { until: iso(check.until) } : {}), ...(check.window ? { window: check.window } : {}),
         ...(scoped && check.windows?.length ? { windows: check.windows } : {}),
         ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });
@@ -546,12 +632,12 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
     const { backend, model } = parseCandidate(candidate);
     return { tier, backend, model, ...check };
   };
-  for (const tier of sequence) {
+  for (const tier of order.slice(index)) {
     const target = inspect(tier, false);
     if (target) return { ok: true, routing: routing(target) };
   }
   if (soft.length) return { ok: true, routing: routing(pickSoft(soft.filter(s => s.tier === soft[0].tier))) };
-  for (const tier of (base === 'tv' ? [] : LADDER.slice(0, index).reverse())) {
+  for (const tier of order.slice(0, index).reverse()) {
     const target = inspect(tier, true);
     if (target) return { ok: true, routing: routing(target) };
   }
@@ -564,7 +650,8 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
  * （account・accountLabel。ログイン中は ''）
  */
 export function candidateStates({ settings, usage, now = Date.now(), blocked }) {
-  const ids = [...new Set(TIERS.flatMap(tier => settings.tiers[tier] ?? []))];
+  const order = levelOrder(settings);
+  const ids = [...new Set(order.flatMap(level => settings.tiers[level] ?? []))];
   return ids.map(candidate => {
     const parsed = parseCandidate(candidate);
     const check = checkCandidate(candidate, { usage, settings, now, blocked });
@@ -574,7 +661,7 @@ export function candidateStates({ settings, usage, now = Date.now(), blocked }) 
     const at = row && Object.hasOwn(row, 'checkedAt') ? row.checkedAt : entry?.checkedAt;
     return { candidate, backend: parsed?.backend ?? null, model: parsed?.model ?? null,
       ...(scoped ? { scoped: true, account: parsed.account ?? '', accountLabel: row?.label ?? null } : { account: check.ok ? check.account ?? null : null }),
-      tiers: TIERS.filter(tier => (settings.tiers[tier] ?? []).includes(candidate)),
+      tiers: order.filter(level => (settings.tiers[level] ?? []).includes(candidate)),
       usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}),
       ...(check.until ? { until: new Date(check.until).toISOString() } : {}),
       ...(check.window ? { window: check.window } : {}),
@@ -596,7 +683,7 @@ export function formatSkippedCandidates(skipped) {
 /** 設定の検証で知らせること（今のモデル一覧に無い候補・使えないバックエンド・登録に無いアカウント）。黙って消さない */
 export function settingsWarnings({ settings, usage }) {
   const out = [];
-  for (const candidate of [...new Set(TIERS.flatMap(tier => settings.tiers[tier] ?? []))]) {
+  for (const candidate of [...new Set(Object.values(settings.tiers ?? {}).flat())]) {
     const parsed = parseCandidate(candidate);
     const entry = usage?.[parsed.backend];
     const missingAccount = Array.isArray(entry?.accounts) ? !entry.accounts.some(a => a.account === (parsed.account ?? '')) : Boolean(parsed.account);

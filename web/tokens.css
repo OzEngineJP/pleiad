@@ -49,6 +49,7 @@
   --ink-blue:#3a499e;         /* リンク・今いる枝・既定から外れた設定 */
   --ink-unread:#5665cd;       /* 完了・未確認の静止した丸。明暗テーマ共通 */
   --ink-mark:#aa2678;         /* 差し色。「あなたを待っている」にだけ使う。他の意味に流用しない */
+  --ink-danger:#b2303e;       /* 消す・元に戻せない操作の確定（削除…・消す）。--diff-del-ink と同じ赤を ink の族へ（ADR 0291） */
   --ink-qr:#0f1330;           /* ペアリングの QR の点。明暗テーマによらず濃い（白い地の上で読ませる） */
 
   /* -- 線（line）。会話の筋・枝・フォーカスの輪・光の走り。枠を引くためのものではない -- */
@@ -95,6 +96,9 @@
   --font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,"Yu Gothic UI","Hiragino Sans","Noto Sans JP",monospace;
   --fs-xs:11px;--fs-s:12px;--fs:14px;--fs-l:15px;--fs-xl:18px;
   --lh:1.6;
+  /* Markdown のリストと引用の字下げ。入力欄の行と履歴の <ul>/<ol>/<blockquote> が同じ値を同じ数え方で足す（web/md-structure.mjs の indentCss）。
+     リストは 1 段目 1.5em・2 段目から 1 段ごとに +1.2em、引用は 12px・入れ子 1 段ごとに +4px。承認済み（2026-11-06、ADR 0292） */
+  --md-list-indent:1.5em;--md-list-step:1.2em;--md-quote-indent:12px;--md-quote-nest:4px;
   /* 役割の大きさ。部品は段（--fs-*）ではなく役割で指す。PC は上の段と同じ値で、700px 以下だけ下の @media で上げる。
      ポップ・メニューは本文の子とは限らないので :root に置く。承認済み（2026-10-23、ADR 0256・docs/design-system.md「スマホの大きさの段階」） */
   --fs-body:var(--fs);        /* 本文・入力欄 */
@@ -136,7 +140,7 @@
     --surface-veil:rgba(0,0,0,.55);
     --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
     --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
-    --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;
+    --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
     --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
     --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
     --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
@@ -157,7 +161,7 @@
   --surface-veil:rgba(0,0,0,.55);
   --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
   --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
-  --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;
+  --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
   --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
   --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
   --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;

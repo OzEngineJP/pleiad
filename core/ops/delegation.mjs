@@ -243,17 +243,15 @@ export const delegationOps = [
       limit: z.number().int().min(1).max(PAGE_MAX).optional().describe(D('routing', 'limit')),
       cursor: z.string().max(400).optional().describe(D('routing', 'cursor')),
     }),
-    output: z.object({ settings: z.unknown(), warnings: z.array(z.unknown()), keys: z.record(z.string(), z.object({ hasKey: z.boolean(), keyRef: z.string().nullable().optional() })), total: z.number().int(), candidates: z.array(z.unknown()), next: z.string().nullable() }),
+    output: z.object({ settings: z.unknown(), warnings: z.array(z.unknown()), key: z.object({ via: z.string().nullable(), hasKey: z.boolean(), keyRef: z.string().nullable().optional(), plus: z.unknown().optional() }).nullable(), total: z.number().int(), candidates: z.array(z.unknown()), next: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['delegation', 'routing'] } },
     legacyCommand: 'delegationRouting',
     handler: async (ctx, { refresh, ...page }) => {
       const state = await fromHost(() => ctx.delegation.routing({ refresh }));
       const { total, items, next } = pageOf(ctx, state.candidates ?? [], page);
-      // keys の各行の plus は Plus の行（メールを含む）。agent には名指しする欄を伏せる（core/ops/plus.mjs）
-      const keys = state.keys && typeof state.keys === 'object'
-        ? Object.fromEntries(Object.entries(state.keys).map(([s, k]) => [s, k && typeof k === 'object' && 'plus' in k ? { ...k, plus: plusIdentityShown(ctx, k.plus) } : k]))
-        : state.keys;
-      return { settings: state.settings, warnings: state.warnings ?? [], keys, total, candidates: items, next };
+      // key.plus は Plus の行（メールを含む）。agent には名指しする欄を伏せる（core/ops/plus.mjs）
+      const key = state.key && typeof state.key === 'object' ? { ...state.key, plus: plusIdentityShown(ctx, state.key.plus) } : (state.key ?? null);
+      return { settings: state.settings, warnings: state.warnings ?? [], key, total, candidates: items, next };
     },
     uiHandler: (ctx, { refresh }) => fromHost(() => ctx.delegation.routing({ refresh })),
   }),
