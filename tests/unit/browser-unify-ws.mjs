@@ -57,6 +57,20 @@ export default async function(t) {
     t.ok('page requests go only to their last touching screen', messages[0].length === before[0]+1 && messages[1].length === before[1]);
     emit('tab:page-request', {sessionId:'one',request:{type:'use'}});
     t.ok('page requests without a destination are never broadcast', messages[0].length === before[0]+1 && messages[1].length === before[1]);
+    const results = [], envs = [];
+    const paged = createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client),
+      pageRequests:{ result:async reply => { results.push(reply); return true; }, env:async change => { envs.push(change); return 2; } } });
+    const reply = { sessionId:'one', targetId:'a', requestId:'req-12345678', ok:true, result:{ kept:true } };
+    const delivered = await paged.handle({ command:'pageResult', args:reply, client:clients[0] });
+    t.ok('pageResult hands the screen result to the page requests', delivered.delivered === true && results.length === 1 && results[0].requestId === 'req-12345678' && results[0].result.kept === true);
+    const refusedBy = async (client, args) => paged.handle({ command:'pageResult', args, client }).then(() => null, error => error.code);
+    const refusals = [await refusedBy(clients[2], reply), await refusedBy(clients[3], reply), await refusedBy(clients[0], { ...reply, sessionId:'two' })];
+    t.ok('pageResult is refused unless the connection is authenticated and watching that conversation', refusals.every(code => code === 'INVALID') && results.length === 1);
+    const env = await paged.handle({ command:'pageEnv', args:{ theme:'dark' }, client:clients[0] });
+    const badTheme = await paged.handle({ command:'pageEnv', args:{ theme:'neon' } }).then(() => null, error => error.code);
+    t.ok('pageEnv passes only known themes to the file pages', env.tabs === 2 && envs.length === 1 && envs[0].theme === 'dark' && badTheme === 'INVALID');
+    const unwired = await createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client) }).handle({ command:'pageResult', args:reply, client:clients[0] });
+    t.ok('without page requests the result is simply not delivered', unwired.delivered === false);
     const suggestion = await ws.handle({ command:'chromeAddress', args:{ sessionId:'one', input:path.join(work, 'no') } });
     t.ok('partial paths suggest inspected files', suggestion.suggestions.some(row => row.path === file));
     const missing = await ws.handle({command:'chromeAddress', args:{sessionId:'one',input:path.join(work,'missing.md')}});

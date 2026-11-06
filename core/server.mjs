@@ -346,7 +346,7 @@ if (chromeRelay && chromeOs) {
 }
 // 会話の Chrome の窓の映像（右パネルの「Chrome の窓」。ホストの画面もリモートの端末も見られる。見るだけ。core/chrome/screencast.mjs、ADR 0148）。
 // 内蔵ブラウザーの映像（上の screencastHub）とは別のハブで、WS のコマンドは args.source === 'chrome' で選ぶ
-const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, log: line => console.log(`  ${line}`) }) : null;
+const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, relay: chromeRelay, log: line => console.log(`  ${line}`) }) : null;
 const chromeScreencastHub = chromeScreencast ? createScreencastHub({ bridge: chromeScreencast, source: 'chrome' }) : null;
 // エージェントの Chrome の窓の止める・引き継ぐ・戻す（core/chrome/control.mjs、ADR 0148・0154）。戻したときの会話の行は recordChromeHandover
 const chromeControl = chromeRelay ? createChromeControl({ relay: chromeRelay, os: chromeOs, capture: chromeScreencast, log: line => console.log(`  ${line}`), record: ({ sessionId, seconds }) => recordChromeHandover(sessionId, seconds) }) : null;
@@ -414,6 +414,8 @@ import { browserUnifyOn } from './browser-unify-flag.mjs';
 import { startBrowserUnifyListeners } from './browser-unify-listeners.mjs';
 import { createBrowserUnifyWs, isBrowserUnifyCommand } from './browser-unify-ws.mjs';
 import { createPagesRoutes } from './pages-routes.mjs';
+import { createPageRequests } from './page-requests.mjs';
+import { createPageTickets } from './page-tickets.mjs';
 import { createIsolatedRoutes } from './isolated-routes.mjs';
 import { createHtmlKeys } from './html-keys.mjs';
 import { PAGES_PATH, pageRequestOk, pagesCookie } from './page-auth.mjs';
@@ -432,6 +434,10 @@ const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
 // ブラウザーの一本化（ADR 0291〜0294）の旗。off のあいだは、ページの口・リスナー・WS の口をどれも作らない（今の動きのまま）
 const BROWSER_UNIFY = browserUnifyOn(process.env);
+// ページからの頼みの検査と、テーマ・言語のページへの知らせ（ADR 0292 の 2 の 6）。旗が on のとき下で作る（savePref が先に呼ばれても困らないよう let で置く）
+let pageRequests = null;
+// 既定のブラウザーでフォルダーのページを開くときの 1 回だけの入場券（core/page-tickets.mjs）。旗が off なら作らない
+const pageTickets = BROWSER_UNIFY ? createPageTickets() : null;
 // 可視化の束（相対の資源を含めて隔離の origin で配る。ADR 0292 の 3）を置くデータの置き場。旗が off なら束を作らない
 const VIZ_BUNDLE_DIR = BROWSER_UNIFY ? store.dataDir : null;
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
@@ -2354,6 +2360,9 @@ async function resolveSessionFile({ path: requested, sessionId, at, base }, sess
 
 // サーバーのある PC で開く（エクスプローラー・既定のブラウザー）。デスクトップ版は本体に頼む。連打は断る
 const openOnHost = defaultOpener();
+// ループバックの URL を既定のブラウザーで開く（main が居れば main の shell。npm start のように main の下でなければ OS に直に頼む）
+const openUrlDirect = createExternalOpener({ mainPort: { postMessage: () => false, hosted: true }, log: line => console.log(`  [open-url] ${line}`) });
+const openUrlOnHost = url => openExternal(url) || openUrlDirect(url);
 const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 
 // ブラウザーの一本化: Pleiad のページの中身（core/pages-routes.mjs）・隔離の中身（core/isolated-routes.mjs）・WS の口（core/browser-unify-ws.mjs）。
@@ -2376,13 +2385,15 @@ function pageTranscript(sessionId) {
   while (pageTranscripts.size > 20) pageTranscripts.delete(pageTranscripts.keys().next().value);
   return promise;
 }
+pageRequests = BROWSER_UNIFY ? createPageRequests({ relay: chromeRelay ?? null, store, fileAccessFor, fileRoots, resolveSessionFile, log: pagesLog }) : null;
+void pageRequests?.env({ lang: locale.lang });
 const pagesRoutes = BROWSER_UNIFY ? createPagesRoutes({ ops: (caller, id, input) => opsRegistry.invoke(caller, id, input, opsDeps()),
-  store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, ports: () => pagePorts, log: pagesLog,
+  store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, ports: () => pagePorts, log: pagesLog, env: () => pageRequests.envOf(),
   recentFiles: async sessionId => recentFilesOf(await pageTranscript(sessionId)),
   visualizations: async sessionId => visualizationLinksOf((await pageTranscript(sessionId)).presents, pagePorts?.isolated),
   gitTimeline: async sessionId => timelineOf((await pageTranscript(sessionId)).messages) }) : null;
 const isolatedRoutes = BROWSER_UNIFY ? createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, fileAccessFor, ports: () => pagePorts, log: pagesLog }) : null;
-const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, log: pagesLog,
+const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, pageRequests, log: pagesLog,
   mask: message => secretMasker.json(message),
   clients: () => runtime.sockets, watching: client => watching.get(client), access: fileAccessFor,
   cwd: async id => {
@@ -2403,7 +2414,7 @@ const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay
 async function startPageListeners() {
   try {
     const listeners = await startBrowserUnifyListeners({ dataDir: store.dataDir, env: process.env, token: TOKEN, waitMs: waitsForPort() ? PORT_WAIT_MS : 0,
-      pagesRoutes, isolatedRoutes, log: pagesLog });
+      pagesRoutes, isolatedRoutes, tickets: pageTickets, log: pagesLog });
     if (shuttingDown) return void listeners.close();
     pageListeners = listeners;
     pagePorts = Object.freeze({ main: server.address().port, ...listeners.ports });
@@ -3213,6 +3224,8 @@ async function savePref(key, value, backendId, { quiet = false } = {}) {
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
   locale = localeInfo(prefs, localeEnv());
   setLocale(locale.lang);
+  // 開いているファイルのページへも言語を知らせる（旗が off なら作らない）
+  void pageRequests?.env({ lang: locale.lang });
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
   mainPort.postMessage({ type: "locale", locale: locale.lang });
   // quiet は起動時の移行など、利用者の操作でない保存（画面へ流さない。ADR 0268）
@@ -9198,14 +9211,16 @@ wss.on("connection", (ws, req) => {
       // ブラウザーの一本化の WS のコマンド（旗が on のときだけ。core/browser-unify-ws.mjs）
       if (browserUnifyWs && isBrowserUnifyCommand(msg.command)) {
         try {
-          return reply(true, await browserUnifyWs.handle({ command: msg.command, args: msg.args ?? {}, local,
-            client: { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } } }));
+          // client は接続そのもの（pageResult が「この会話を見ている接続か」を確かめる）
+          return reply(true, await browserUnifyWs.handle({ command: msg.command, args: msg.args ?? {}, local, client: ws }));
         } catch (err) {
           return reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
         }
       }
       switch (msg.command) {
         case 'chromeAddress':
+        case 'pageResult':
+        case 'pageEnv':
           return reply(false, 'UNSUPPORTED', 'UNSUPPORTED');
         case 'chromeNavigate':
           return await viaOp('browser.chromeNavigate');
@@ -9835,7 +9850,17 @@ wss.on("connection", (ws, req) => {
             if (!hostAction && args.lenient === true) return reply(true, { path: resolved.path, cwd: resolved.cwd ?? null });
             const { file, stat } = await inspectFile(resolved.path, fileAccess);
             const directory = stat.isDirectory();
-            if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file' });
+            // defaultAppAllowed: 「既定のアプリで開く」を出してよいか（検査した実体の名前で決める。core/os-open.mjs）
+            if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file', defaultAppAllowed: !directory && defaultAppAllowed(file) });
+            // フォルダーの「既定のブラウザーで開く」: フォルダーのページを、入場券を付けた URL で既定のブラウザーに開く（旗が on でページの port があるとき）
+            if (msg.command === 'openPath' && directory && pageTickets && pagePorts?.pages && args.returnPath !== true) {
+              if (!osActionAllowed()) return reply(false, t('files.tooMany'));
+              const sessionId = typeof args.sessionId === 'string' && Object.hasOwn(sessions, args.sessionId) ? args.sessionId : null;
+              if (!sessionId) return reply(false, t('files.htmlOnly'));
+              const ticket = pageTickets.issue(`/_pleiad/s/${encodeURIComponent(sessionId)}/dir?${new URLSearchParams({ path: file })}`);
+              if (process.env.AGENT_HOST_OS_OPEN !== 'dry') openUrlOnHost(`http://localhost:${pagePorts.pages}/_pleiad/enter?ticket=${ticket}`);
+              return reply(true, { path: file, cwd: resolved.cwd ?? null });
+            }
             if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, t('files.htmlOnly'));
             if (msg.command === 'openDefault' && (directory || !defaultAppAllowed(file))) return reply(false, t('files.typeNotAllowed'));
             if (!osActionAllowed()) return reply(false, t('files.tooMany'));

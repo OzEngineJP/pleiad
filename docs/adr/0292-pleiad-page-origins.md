@@ -44,6 +44,9 @@ ADR 0291 で、ファイル・フォルダー・git・プラグイン・新し�
    - Cookie だけでは、要求の出どころを区別できない。`SameSite=Strict` でも、`localhost` の別の port のページ（利用者の dev サーバー・sandbox の無い応答）からの要求には付く。`localhost` の port 違いは同じ site だからである（2026-11-06 に実機の Chrome で確かめた）。
    - そこで、ファイルのページの入口と本体の `/_pleiad/` の入口は、`Sec-Fetch-Site` が `same-origin`（ページ自身）か `none`（アドレスバー・中継の移動）のときだけ通し、`same-site`・`cross-site` は 401 にする（2026-11-06 の追加の決定。`core/page-auth.mjs` の `fetchSiteOk`）。
      - 見出しの無い要求（ブラウザーでない取得）は Cookie の検査だけで通す。Chrome は `localhost` への要求にいつも付ける。
+   - 既定のブラウザーでフォルダーのページを開くとき（ADR 0291 の 3 の 1）は、既定のブラウザーがこの Cookie を持たない。ホストの画面の `openPath` だけが 1 回だけ使える入場券を作り、`/_pleiad/enter?ticket=<券>` を OS に開かせる（2026-11-06 の追加の決定。`core/page-tickets.mjs`）。
+     - ファイルのページの port は、券が生きていて（作ってから 60 秒・1 回だけ）、`Sec-Fetch-Site` が `none` か無い GET のときだけ、同じ属性の `pleiad_pages` を置き、券を作ったときに決めた行き先へ 303 で移す。行き先は URL から受けない。
+     - 券は 32 バイトの乱数で、メモリだけに置き、20 枚までにする。ログに券と行き先を書かない。届くのは、Chrome のタブと同じファイルのページの GET だけである。
 3. **画面の iframe での資格**（Chrome が無い会話・スマホの手元の描画・LAN のブラウザー）: 同じページを本体の origin の同じパス（`http://127.0.0.1:<port>/_pleiad/s/…`）でも配り、本体の Cookie で認証する（2026-11-06 の追加の決定）。ページのコードは同じで、相対の URL で API を呼ぶ。
    - 本体の入口が受けるのは本体の Cookie だけで、URL の `?token=` は受けない。GET と HEAD のほかは 405 にする。
    - 本体の origin で動くのは Pleiad のページのコードだけである。利用者の HTML と可視化は、iframe でも隔離した origin（下の 3）から読む。

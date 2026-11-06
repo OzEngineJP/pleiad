@@ -98,9 +98,11 @@ export const COMMAND_REFUSE = [
   'uploadCheck', 'uploadStart', 'uploadChunk', 'uploadFinish', 'uploadCancel',
   'browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav', 'computerStop',
   'chromeStatus', 'chromeConnect', 'chromeDisconnect', 'chromeRaiseDialog', 'chromeConsent', 'chromeEnable', 'chromeTakeOver', 'chromeResume', 'chromeStop',
-  'chromeOpen', 'chromeCloseWindow', 'chromePinWindow', 'chromeCloseTab',
+  'chromeOpen', 'chromeCloseWindow', 'chromePinWindow', 'chromeCloseTab', 'chromeNavigate', 'chromeAddress',
   // 断ると、可視化の「一度だけ読み込む」は会話の中身の srcdoc で描く（web/visualize-frame.mjs）
   'vizOnce',
+  // ファイルのページの頼みの結果・テーマの知らせ（審査モードでは会話の Chrome を使わない）
+  'pageResult', 'pageEnv',
 ];
 
 /** 全命令 → 通すか。載っていない命令は undefined（断る） */

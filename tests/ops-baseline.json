@@ -77,7 +77,9 @@
     "browserScreencastInput": "stream",
     "browserScreencastNav": "stream",
     "vizOnce": "ui-internal",
-    "chromeAddress": "ui-internal"
+    "chromeAddress": "ui-internal",
+    "pageResult": "ui-internal",
+    "pageEnv": "ui-internal"
   },
   "todoMax": 0,
   "setPrefAllowed": 3

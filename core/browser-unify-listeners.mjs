@@ -44,13 +44,14 @@ export async function writePagePorts(dataDir, ports) {
  * @param {number} [options.waitMs]   覚えた port が塞がっていたら待つ上限（無停止の更新で前のサーバーが放すのを待つ）
  * @param options.pagesRoutes         core/pages-routes.mjs の createPagesRoutes の返り値
  * @param options.isolatedRoutes      core/isolated-routes.mjs の createIsolatedRoutes の返り値
+ * @param [options.tickets]           既定のブラウザーで開くときの入場券（core/page-tickets.mjs）
  * @returns {Promise<{ ports: { pages: number, isolated: number }, close: () => Promise<void> }>}
  */
-export async function startBrowserUnifyListeners({ dataDir, env = process.env, token, waitMs = 0, pagesRoutes, isolatedRoutes, hosts, log = () => {} }) {
+export async function startBrowserUnifyListeners({ dataDir, env = process.env, token, waitMs = 0, pagesRoutes, isolatedRoutes, tickets = null, hosts, log = () => {} }) {
   const saved = await readPagePorts(dataDir);
   const fromEnv = Object.fromEntries(Object.entries(KEYS).map(([key, name]) => [key, envPort(env?.[name])]));
   const pick = key => fromEnv[key] ?? saved[key] ?? 0;
-  const pages = await startPagesServer({ port: pick('pages'), waitMs, token, routes: pagesRoutes, hosts, log });
+  const pages = await startPagesServer({ port: pick('pages'), waitMs, token, routes: pagesRoutes, tickets, hosts, log });
   let isolated;
   try {
     isolated = await startIsolatedServer({ port: pick('isolated'), waitMs, routes: isolatedRoutes, hosts, log });

@@ -253,6 +253,8 @@ export const COMMANDS = new Set([
   'chromeCloseTab',          // { sessionId, tabId } -> {}。端末が引き継いでいる間に、タブの列の × でタブを閉じる（最後のタブは閉じない）
   // ブラウザーの一本化（旗が on のときだけ。core/browser-unify-ws.mjs）
   'vizOnce',                 // { origins: string[] } -> { token: string|null }。可視化の「一度だけ読み込む」の印（隔離の origin の ?once=。10 分）。https の出どころが 1 つも無ければ null
+  'pageResult',              // { sessionId, targetId?, requestId, ok, result?, error? } -> { delivered }。ページからの書き込みの頼み（worktree）の結果をページへ返す（pleiad:page-result）。その会話を見ている接続だけ
+  'pageEnv',                 // { theme: auto|light|dark } -> { tabs }。画面のテーマの変化をファイルのページのタブへ知らせる（pleiad:env）
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。

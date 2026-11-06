@@ -11,6 +11,7 @@ import { createPagesRoutes } from '../../core/pages-routes.mjs';
 import { createIsolatedRoutes } from '../../core/isolated-routes.mjs';
 import { PAGE_PORTS_FILE, envPort, readPagePorts, startBrowserUnifyListeners, writePagePorts } from '../../core/browser-unify-listeners.mjs';
 import { MAIN_COOKIE, PAGES_COOKIE, pagesSecret } from '../../core/page-auth.mjs';
+import { ENTER_PATH, MAX_TICKETS, createPageTickets } from '../../core/page-tickets.mjs';
 import { waitFor } from '../lib/holder-harness.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
@@ -129,6 +130,41 @@ async function serverChecks(t) {
       await stubPages.close();
     }
 
+    // 入場券（既定のブラウザーでフォルダーのページを開く）: 1 回だけ・60 秒・OS からの起動だけ・行き先は券を作ったときのもの
+    let clock = 1_000;
+    const tickets = createPageTickets({ now: () => clock });
+    const entered = await startPagesServer({ token, routes, tickets });
+    try {
+      const enter = (ticket, headers = {}) => request({ port: entered.port, pathname: `${ENTER_PATH}?ticket=${ticket}&next=/evil`, headers });
+      const first = tickets.issue('/_pleiad/s/one/dir?path=D%3A%5Cwork');
+      const ok = await enter(first, { 'sec-fetch-site': 'none' });
+      const cookie = String(ok.headers['set-cookie'] ?? '');
+      t.ok('入場券: 生きた券は 303 で券を作ったときの行き先へ移し（URL の next は見ない）、ページの Cookie を HttpOnly・Strict・/_pleiad/ で置く',
+        ok.status === 303 && ok.headers.location === '/_pleiad/s/one/dir?path=D%3A%5Cwork' && cookie.startsWith(`${PAGES_COOKIE}=${pagesSecret(token)};`)
+        && /HttpOnly/.test(cookie) && /SameSite=Strict/.test(cookie) && /Path=\/_pleiad\//.test(cookie));
+      const again = await enter(first);
+      t.ok('入場券: 使った券は 2 回目は 401（Cookie を置かない）', again.status === 401 && !again.headers['set-cookie']);
+      const fromPage = tickets.issue('/_pleiad/s/one/dir');
+      const sameSite = await enter(fromPage, { 'sec-fetch-site': 'same-site' });
+      const crossSite = await enter(tickets.issue('/_pleiad/s/one/dir'), { 'sec-fetch-site': 'cross-site' });
+      t.ok('入場券: ほかのページからの移動（same-site・cross-site）では使えない', sameSite.status === 401 && crossSite.status === 401 && !sameSite.headers['set-cookie']);
+      const late = tickets.issue('/_pleiad/s/one/dir');
+      clock += 60_001;
+      const expired = await enter(late);
+      const forged = await enter('0'.repeat(64));
+      const noRoutes = calls.length;
+      t.ok('入場券: 60 秒を過ぎた券・作っていない券は 401。入口は中身（routes）へ渡さない', expired.status === 401 && forged.status === 401 && noRoutes === calls.length);
+      const many = Array.from({ length: MAX_TICKETS + 1 }, () => tickets.issue('/_pleiad/s/one/dir'));
+      t.ok('入場券: 持つのは 20 枚までで、古いものから捨てる', tickets.take(many[0]) === null && tickets.take(many.at(-1)) === '/_pleiad/s/one/dir');
+      let refused = 0;
+      for (const next of ['/x', 'http://evil/_pleiad/', '/_pleiad/enter?ticket=a', null]) { try { tickets.issue(next); } catch { refused++; } }
+      t.ok('入場券: 行き先は /_pleiad/ の下だけ（入口そのものは行き先にしない）', refused === 4);
+      const plain = await request({ port: pages.port, pathname: `${ENTER_PATH}?ticket=${tickets.issue('/_pleiad/s/one/dir')}` });
+      t.ok('入場券: 券の台帳を渡していないリスナーは入口を開かない', plain.status === 401);
+    } finally {
+      await entered.close();
+    }
+
     const iso = await request({ port: isolated.port, pathname: '/viz/abc/index.html' });
     const isoWrongHost = await request({ port: isolated.port, host: `127.0.0.1:${isolated.port}` });
     t.ok('隔離の port: S0 は 404 を返すだけで、Host の検査と共通のヘッダーは同じ', iso.status === 404 && common(iso) && isoWrongHost.status === 421);
@@ -198,9 +234,12 @@ async function hostChecks(t, scratch) {
   }
 
   // 旗が on: 2 つの port が立ち、本体の /_pleiad/ は本体の Cookie だけで答える
-  const onDir = path.join(scratch, 'on');
+  const onDir = path.join(scratch, 'on'), work = path.join(scratch, 'work');
+  await fs.mkdir(path.join(work, 'sub'), { recursive: true });
+  for (const name of ['doc.pdf', 'run.bat']) await fs.writeFile(path.join(work, name), 'x');
   await fs.mkdir(onDir);
-  const on = await startServer({ dataDir: onDir, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_BROWSER_UNIFY: 'on' } });
+  await fs.writeFile(path.join(onDir, 'sessions.json'), JSON.stringify({ fixture: { cwd: work, backend: 'fake' } }));
+  const on = await startServer({ dataDir: onDir, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_BROWSER_UNIFY: 'on', AGENT_HOST_OS_OPEN: 'dry' } });
   client = null;
   try {
     client = await open({ port: on.port, token: on.token });
@@ -221,6 +260,15 @@ async function hostChecks(t, scratch) {
       && mainQuery.status === 401 && mainPost.status === 405);
     const mainSameSite = await request({ port: on.port, pathname: '/_pleiad/s/a/b', host: `127.0.0.1:${on.port}`, headers: { cookie: `${MAIN_COOKIE}=${on.token}`, 'sec-fetch-site': 'same-site' } });
     t.ok('本体の port の /_pleiad/: Sec-Fetch-Site が same-site なら本体の Cookie でも 401', mainSameSite.status === 401);
+
+    // resolvePath の defaultAppAllowed（タブのメニューの「既定のアプリで開く」）と、フォルダーの「既定のブラウザーで開く」
+    const [pdf, bat, dir] = await Promise.all(['doc.pdf', 'run.bat', 'sub'].map(p => client.cmd('resolvePath', { path: p, sessionId: 'fixture' })));
+    t.ok('resolvePath: 検査した実体の名前で defaultAppAllowed を返す（.pdf は true・.bat とフォルダーは false）',
+      pdf.defaultAppAllowed === true && bat.defaultAppAllowed === false && dir.defaultAppAllowed === false && dir.kind === 'directory');
+    const opened = await client.cmd('openPath', { path: 'sub', sessionId: 'fixture' });
+    const noSession = await client.cmd('openPath', { path: path.join(work, 'sub') }).then(() => 'opened', e => e.message);
+    t.ok('openPath: 旗が on ならフォルダーをフォルダーのページで既定のブラウザーに開く（会話の無いフォルダーは今のとおり断る）',
+      opened.path === await fs.realpath(path.join(work, 'sub')) && noSession !== 'opened');
   } finally {
     client?.close();
     await on.stop();

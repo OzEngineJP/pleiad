@@ -3,7 +3,9 @@ import { classifyAddressInput, resolveAddressInput } from './address-input.mjs';
 import { listTreeFolder } from './file-preview.mjs';
 import { readSearchProvider, searchUrl } from './chrome/search-provider.mjs';
 
-export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress']);
+// pageResult: 画面が確認と書き込みを終えた、ページからの頼み（worktree）の結果をページへ返す（core/page-requests.mjs の result）
+// pageEnv: 画面のテーマの変化をファイルのページへ知らせる（言語はサーバーの既定なので savePref が知らせる）
+export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress', 'pageResult', 'pageEnv']);
 export const isBrowserUnifyCommand = command => BROWSER_UNIFY_COMMANDS.has(command);
 
 /** Only authenticated connections explicitly watching this conversation receive tab data. */
@@ -88,7 +90,17 @@ export function createBrowserUnifyWs(deps = {}) {
       send(client, { type: 'tab:info', sessionId, reset: true, tabs: relay?.unify.tabInfo.list(sessionId) ?? [] });
     },
     close() { unsubscribe?.(); },
-    async handle({ command, args }) {
+    async handle({ command, args, client }) {
+      if (command === 'pageResult') {
+        // 頼みは、その会話を見ている画面（by）にだけ届けている。見ていない接続からの結果は受けない
+        if (!args || typeof args !== 'object' || !allowed(client, args.sessionId)) fail('INVALID');
+        const { sessionId, targetId, requestId, ok, result, error } = args;
+        return { delivered: await (deps.pageRequests?.result({ sessionId, targetId, requestId, ok, result, error }) ?? false) };
+      }
+      if (command === 'pageEnv') {
+        if (!['auto', 'light', 'dark'].includes(args?.theme)) fail('INVALID');
+        return { tabs: await (deps.pageRequests?.env({ theme: args.theme }) ?? 0) };
+      }
       if (command === 'vizOnce') {
         const origins = args?.origins;
         if (!Array.isArray(origins) || origins.length > 50 || !origins.every(o => typeof o === 'string' && o.length <= 2048)) fail('INVALID');
