@@ -55,7 +55,6 @@ enum ShellTexts {
     static var backToHosts: String { pick("Back to hosts", "ホスト一覧に戻る") }
     static var hostOpenFailed: String { pick("Couldn't open this host. Go back and try again.", "このホストを開けませんでした。戻ってもう一度試してください。") }
     static var linkHostOnly: String { pick("localhost links open only on the host's PC.", "localhost のリンクはホストの PC でだけ開けます。") }
-    static var sheetClose: String { pick("Close", "閉じる") }
     static var scanCancel: String { pick("Cancel", "キャンセル") }
     static var scanHint: String { pick("Point the camera at the QR code on the host", "ホストに出ている QR コードにカメラを向けてください") }
 }

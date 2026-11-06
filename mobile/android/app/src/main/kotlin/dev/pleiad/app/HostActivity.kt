@@ -20,9 +20,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -55,10 +53,9 @@ import java.util.concurrent.Executors
  * a menu or the drawer); if nobody calls preventDefault(), the app goes to the background like any root screen. It does
  * not go back to the host list (the host name under the title does that). Leaving the window closes the host's proxy.
  *
- * Links (docs/remote.md §8.5): a new window the page asks for (target=_blank, window.open) becomes a bare WebView whose
- * first navigation decides where it goes (LinkPolicy): a visualization's saved copy on the proxy shows in a sheet over the
- * page (the proxy's cookie lives only in this app, so the device's browser would get a 401); a web page goes to the
- * device's browser; localhost is the host's PC, so it only shows a short notice. The page itself stays where it is.
+ * Links (docs/remote.md §8.5): a new window the page asks for (target=_blank, window.open) becomes a bare WebView that is
+ * never shown; its first navigation decides where it goes (LinkPolicy): a web page goes to the device's browser; localhost
+ * is the host's PC, so it only shows a short notice; anything else does not open. The page itself stays where it is.
  */
 class HostActivity : ComponentActivity() {
     companion object {
@@ -74,9 +71,8 @@ class HostActivity : ComponentActivity() {
     private lateinit var hostId: String
     private var proxy: DeviceProxy? = null
     private var web: WebView? = null
-    /** The window the page opened last (not yet placed), and the sheet it shows in once it holds a snapshot. */
+    /** The window the page opened last, until its first navigation is routed (place). */
     private var popup: WebView? = null
-    private var sheet: LinearLayout? = null
     private lateinit var root: FrameLayout
     private lateinit var frame: FrameLayout
     private lateinit var topBand: View
@@ -229,12 +225,12 @@ class HostActivity : ComponentActivity() {
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
                 if (!isUserGesture) return false
                 closePopup()
-                val p = newPopup(px.port)
+                val p = newPopup()
                 popup = p
                 (resultMsg.obj as WebView.WebViewTransport).webView = p
                 resultMsg.sendToTarget()
                 // A window that never goes anywhere (the page gave up) is dropped
-                root.postDelayed({ if (popup === p && sheet == null) closePopup() }, 10_000)   // p is not attached: its own post would wait
+                root.postDelayed({ if (popup === p) closePopup() }, 10_000)   // p is not attached: its own post would wait
                 return true
             }
         }
@@ -307,15 +303,13 @@ class HostActivity : ComponentActivity() {
     }
 
     /**
-     * A window the page opened. Nothing of the host UI goes in: no plyRemote, no downloads, no further windows (a
-     * target=_blank inside navigates this one and is routed like the rest). Scripts run for the snapshot, which the host
-     * serves with `Content-Security-Policy: sandbox allow-scripts` (an opaque origin, docs/visualize.md).
+     * A window the page opened, only to learn where it goes: it never loads a page. Nothing of the host UI goes in:
+     * no plyRemote, no scripts, no downloads, no further windows.
      */
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun newPopup(proxyPort: Int): WebView {
+    private fun newPopup(): WebView {
         val p = WebView(this)
         p.settings.apply {
-            javaScriptEnabled = true
+            javaScriptEnabled = false
             domStorageEnabled = false
             allowFileAccess = false
             allowContentAccess = false
@@ -327,68 +321,29 @@ class HostActivity : ComponentActivity() {
         p.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 if (!request.isForMainFrame) return false
-                return !place(view, request.url)
+                place(view, request.url)
+                return true
             }
 
             // Some WebView versions start a new window's first page without asking shouldOverrideUrlLoading
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                if (url == "about:blank" || (view === popup && sheet != null)) return
-                if (!place(view, Uri.parse(url))) view.stopLoading()
-            }
-        }
-        p.webChromeClient = object : WebChromeClient() {
-            override fun onReceivedTitle(view: WebView, title: String?) {
-                if (view === popup) sheet?.findViewWithTag<TextView>("title")?.text = title ?: ""
+                if (url == "about:blank") return
+                view.stopLoading()
+                place(view, Uri.parse(url))
             }
         }
         return p
     }
 
-    /** true = load it here (the snapshot, shown in the sheet). Otherwise it went outside, and a window that only carried it goes away. */
-    private fun place(view: WebView, u: Uri): Boolean {
-        if (linkTarget(u) == LinkTarget.SNAPSHOT) {
-            if (view === popup && sheet == null) showSheet(view)
-            return view === popup
-        }
+    /** The popup's first navigation: it goes outside (or nowhere), and the window that only carried it goes away. */
+    private fun place(view: WebView, u: Uri) {
         openOutside(u)
-        if (view === popup && sheet == null) root.post { if (popup === view && sheet == null) closePopup() }
-        return false
-    }
-
-    /** The snapshot over the page (inside the bars, like the page), with its title and a close button. Back closes it too. */
-    private fun showSheet(p: WebView) {
-        val dark = isNight()
-        val paper = (topBand.background as? android.graphics.drawable.ColorDrawable)?.color ?: if (dark) Color.rgb(0x1b, 0x1c, 0x23) else Color.WHITE
-        val ink = if (Color.luminance(paper) < 0.4f) Color.rgb(0xdf, 0xe3, 0xf2) else Color.rgb(0x1c, 0x22, 0x47)
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            setBackgroundColor(paper)
-            setPadding(40, 8, 16, 8)
-            addView(TextView(this@HostActivity).apply {
-                tag = "title"; setTextColor(ink); textSize = 16f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(Button(this@HostActivity, null, android.R.attr.borderlessButtonStyle).apply {
-                setText(R.string.sheet_close); setTextColor(ink); isAllCaps = false
-                setOnClickListener { closePopup() }
-            })
-        }
-        val s = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(paper)
-            isClickable = true   // taps do not fall through to the page
-            addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(p, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        }
-        sheet = s
-        frame.addView(s, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        if (view === popup) root.post { if (popup === view) closePopup() }
     }
 
     private fun closePopup() {
         val p = popup ?: return
         popup = null
-        sheet?.let { frame.removeView(it) }
-        sheet = null
         (p.parent as? ViewGroup)?.removeView(p)
         p.destroy()
     }
@@ -517,7 +472,6 @@ class HostActivity : ComponentActivity() {
     }
 
     private fun offerBack() {
-        if (sheet != null) return closePopup()
         val w = web ?: return backToList()
         w.evaluateJavascript("(() => { try { return !window.dispatchEvent(new CustomEvent('plyremote:back', { cancelable: true })); } catch (e) { return false; } })()") { result ->
             if (result != "true") moveTaskToBack(true)

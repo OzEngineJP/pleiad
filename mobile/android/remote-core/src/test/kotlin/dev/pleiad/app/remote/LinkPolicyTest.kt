@@ -27,8 +27,9 @@ class LinkPolicyTest {
         return LinkPolicy.classify(u.scheme, u.host, u.port, u.path, u.rawUserInfo != null, proxy)
     }
 
-    @Test fun snapshotOnTheProxyOnly() {
-        assertEquals(LinkTarget.SNAPSHOT, of("http://127.0.0.1:$proxy/visualization-snapshot?sessionId=s&id=i"))
+    @Test fun theProxysPagesDoNotOpen() {
+        // The retired saved-copy route of an older host included
+        assertEquals(LinkTarget.BLOCKED, of("http://127.0.0.1:$proxy/visualization-snapshot?sessionId=s&id=i"))
         assertEquals(LinkTarget.BLOCKED, of("http://127.0.0.1:$proxy/"))
         assertEquals(LinkTarget.BLOCKED, of("http://127.0.0.1:$proxy/local-file?path=x"))
         assertEquals(LinkTarget.BLOCKED, of("http://127.0.0.1:$proxy/visualization-snapshot/x"))

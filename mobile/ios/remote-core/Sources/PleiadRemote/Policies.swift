@@ -3,19 +3,15 @@
 // desktop/remote-windows.cjs (linkTarget) and web/host-only-links.mjs (isHostOnlyUrl).
 
 public enum LinkTarget: Equatable {
-    /// The host's saved copy of a visualization on this window's proxy: shown in the app (the proxy's cookie is here only)
-    case snapshot
     /// A web page: the device's default browser
     case external
     /// localhost / loopback: it means the host's PC, but on this device it would open the device itself
     case hostOnly
-    /// Anything else (other schemes, credentials in the URL, other pages of the proxy): nothing opens
+    /// Anything else (other schemes, credentials in the URL, pages of this window's proxy): nothing opens
     case blocked
 }
 
 public enum LinkPolicy {
-    public static let SNAPSHOT_PATH = "/visualization-snapshot"
-
     private static func isLoopbackV4(_ h: String) -> Bool {
         let parts = h.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 4, parts[0] == "127" else { return false }
@@ -38,9 +34,8 @@ public enum LinkPolicy {
         if s != "http" && s != "https" { return .blocked }
         guard let host, !host.isEmpty, !hasUserInfo else { return .blocked }
         let effectivePort = port ?? (s == "https" ? 443 : 80)
-        if s == "http" && host == "127.0.0.1" && effectivePort == proxyPort {
-            return path == SNAPSHOT_PATH ? .snapshot : .blocked
-        }
+        // The host UI's own pages (the proxy's cookie lives only in this app)
+        if s == "http" && host == "127.0.0.1" && effectivePort == proxyPort { return .blocked }
         return isLoopbackHost(host) ? .hostOnly : .external
     }
 }

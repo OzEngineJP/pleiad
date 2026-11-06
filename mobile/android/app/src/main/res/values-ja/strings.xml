@@ -28,7 +28,6 @@
     <string name="host_open_failed">このホストを開けませんでした。戻ってもう一度試してください。</string>
     <!-- ホストの窓のリンク（web/locales/ja/ui.json の timeline.link.hostOnly と同じ文言） -->
     <string name="link_host_only">localhost のリンクはホストの PC でだけ開けます。</string>
-    <string name="sheet_close">閉じる</string>
     <!-- 離れていても届く通知（ADR 0086）。web/locales/ja と同じ文言。ホストは起きたことを送り、ここで文面を組み立てる -->
     <string name="notify_channel_attention">要対応</string>
     <string name="notify_channel_attention_desc">承認・質問・失敗した作業</string>

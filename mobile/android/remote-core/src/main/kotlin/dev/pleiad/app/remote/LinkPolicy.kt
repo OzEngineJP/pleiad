@@ -5,18 +5,15 @@ package dev.pleiad.app.remote
 // Pure: the app passes the pieces of android.net.Uri, the JVM tests pass strings.
 
 enum class LinkTarget {
-    /** The host's saved copy of a visualization on this window's proxy: shown in the app (the proxy's cookie is here only) */
-    SNAPSHOT,
     /** A web page: the device's default browser */
     EXTERNAL,
     /** localhost / loopback: it means the host's PC, but on this device it would open the device itself */
     HOST_ONLY,
-    /** Anything else (other schemes, credentials in the URL, other pages of the proxy): nothing opens */
+    /** Anything else (other schemes, credentials in the URL, pages of this window's proxy): nothing opens */
     BLOCKED,
 }
 
 object LinkPolicy {
-    const val SNAPSHOT_PATH = "/visualization-snapshot"
     private val LOOPBACK_V4 = Regex("^127(\\.\\d{1,3}){3}$")
 
     fun isLoopbackHost(host: String?): Boolean {
@@ -40,9 +37,8 @@ object LinkPolicy {
         // The app owns this origin. It is an iframe target, never an external host-PC link.
         if (isIsolatedPage(s, host, port, path, hasUserInfo, isolatedPort)) return LinkTarget.BLOCKED
         val effectivePort = if (port == -1) (if (s == "https") 443 else 80) else port
-        if (s == "http" && host == "127.0.0.1" && effectivePort == proxyPort) {
-            return if (path == SNAPSHOT_PATH) LinkTarget.SNAPSHOT else LinkTarget.BLOCKED
-        }
+        // The host UI's own pages (the proxy's cookie lives only in this app)
+        if (s == "http" && host == "127.0.0.1" && effectivePort == proxyPort) return LinkTarget.BLOCKED
         return if (isLoopbackHost(host)) LinkTarget.HOST_ONLY else LinkTarget.EXTERNAL
     }
 }
