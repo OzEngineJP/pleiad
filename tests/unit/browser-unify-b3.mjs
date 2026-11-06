@@ -90,6 +90,8 @@ export default async function(t) {
   configureVisualizationTabs({ sessionId:() => 's1', connected:() => true, openTab:args => viz.push(args) });
   assert.equal(openVisualizationTab(bundle, {}), true); await Promise.resolve();
   assert.match(viz[0].url, /\?embed=tab$/); assert.equal(viz[0].reuse, false);
+  assert.equal(openVisualizationTab(bundle, {}, '月ごとの売上'), true); await Promise.resolve();
+  assert.match(viz[1].url, /\?embed=tab&title=%E6%9C%88/, '広げたタブの題は可視化の見出し');
   assert.match(visualizationBundleNotice(bundle), /合計サイズ/);
   assert.equal(visualizationBundleNotice({ ...bundle, reason:'constructor' }), '画像などの関連ファイルは含めていません。');
   configureVisualizationTabs({ sessionId:() => 's1', connected:() => false, openTab:args => viz.push(args) });

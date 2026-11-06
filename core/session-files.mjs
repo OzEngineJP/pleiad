@@ -52,7 +52,8 @@ export function visualizationLinksOf(presents, isolatedPort, limit = 20) {
     const bundle = row?.kind === 'visualization' && !row.error ? row.bundle : null;
     if (!bundle || !/^[0-9a-f]{64}$/.test(bundle.hash ?? '') || typeof bundle.entry !== 'string' || !bundle.entry) continue;
     const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
-    out.push({ title: String(row.caption ?? row.path ?? bundle.entry).slice(0, 200), url: `http://localhost:${isolatedPort}/viz/${bundle.hash}/${entry}?embed=tab` });
+    const title = String(row.caption ?? row.path ?? bundle.entry).slice(0, 200);
+    out.push({ title, url: `http://localhost:${isolatedPort}/viz/${bundle.hash}/${entry}?${new URLSearchParams({ embed: 'tab', title })}` });
     if (out.length === limit) break;
   }
   return out;

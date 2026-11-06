@@ -41,9 +41,9 @@ export default async function (t) {
     { kind: 'visualization', caption: '形違い', bundle: { hash: 'zz', entry: 'index.html' } },
   ];
   const links = visualizationLinksOf(rows, 49199);
-  t.ok('束のある可視化を新しい順に、隔離の origin の別のタブの URL にする（入口の名前は区切りごとに符号化）',
+  t.ok('束のある可視化を新しい順に、隔離の origin の別のタブの URL にする（入口の名前は区切りごとに符号化。題はタブの <title> に使う）',
     links.length === 2 && links[0].title === '/w/report.html'
-    && links[0].url === `http://localhost:49199/viz/${HASH2}/sub%20dir/%E3%83%AC%E3%83%9D%E3%83%BC%E3%83%88.html?embed=tab`
-    && links[1].url === `http://localhost:49199/viz/${HASH}/index.html?embed=tab`);
+    && links[0].url === `http://localhost:49199/viz/${HASH2}/sub%20dir/%E3%83%AC%E3%83%9D%E3%83%BC%E3%83%88.html?embed=tab&title=%2Fw%2Freport.html`
+    && links[1].url === `http://localhost:49199/viz/${HASH}/index.html?embed=tab&title=%E5%8F%A4%E3%81%84%E5%9B%B3`);
   t.ok('隔離の port がまだ無ければ空', visualizationLinksOf(rows, undefined).length === 0 && visualizationLinksOf(rows, 0).length === 0);
 }

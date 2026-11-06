@@ -675,7 +675,7 @@ export function renderPresent(ev) {
       const widen = tool('', '');
       wireWiden(card, widen);
       widen.addEventListener('click', event => {
-        if (openVisualizationTab(e.bundle, widen)) { event.stopImmediatePropagation(); return; }
+        if (openVisualizationTab(e.bundle, widen, e.caption ?? '')) { event.stopImmediatePropagation(); return; }
         if (globalThis.matchMedia?.('(max-width: 760px)').matches) {
           event.stopImmediatePropagation();
           return withContent(content => widen.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,

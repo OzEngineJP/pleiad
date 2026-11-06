@@ -81,6 +81,10 @@ async function routeChecks(t, scratch) {
       && conv.headers['referrer-policy'] === 'no-referrer' && conv.headers['x-content-type-options'] === 'nosniff' && conv.headers['cache-control'] === 'no-store');
     const tab = await request({ port, pathname: viz('chart.html?embed=tab'), headers: { 'sec-fetch-dest': 'document' } });
     t.ok('別のタブ（embed=tab）は高さの知らせも橋も入れない', tab.status === 200 && !tab.body.includes('ply-visualize-height') && !tab.body.includes('ply-preview-blocked'));
+    const titled = await request({ port, pathname: viz(`chart.html?embed=tab&title=${encodeURIComponent('売上 <b>')}`), headers: { 'sec-fetch-dest': 'document' } });
+    const framedTitle = await request({ port, pathname: viz('chart.html?embed=panel&title=x'), headers: { 'sec-fetch-dest': 'iframe' } });
+    t.ok('別のタブは題を包みの <title> にする（エスケープする）。枠の中では付けない',
+      titled.body.includes('<title>売上 &#60;b&#62;</title>') && !framedTitle.body.includes('<title>x</title>'));
     const page2 = await request({ port, pathname: viz('page2.html'), headers: { 'sec-fetch-dest': 'iframe' } });
     t.ok('束の中の別の HTML（枠の中で開いた）には、頭に保存庫の代わりと橋を差し込む', page2.status === 200 && page2.body.startsWith('<script>') && page2.body.includes('ply-preview-open-link') && page2.body.endsWith('<p>two</p>'));
     const raw = await request({ port, pathname: viz('chart.html'), headers: { 'sec-fetch-dest': 'document' } });

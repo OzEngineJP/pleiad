@@ -34,10 +34,10 @@ export function configureIsolatedOrigin(options) {
 let visualizationTabs = null;
 export function configureVisualizationTabs(options) { visualizationTabs = options; }
 /** Returns false only when the no-Chrome layout must handle the expansion. */
-export function openVisualizationTab(bundle, element) {
+export function openVisualizationTab(bundle, element, title = '') {
   const tabs = visualizationTabs;
   const sessionId = tabs?.sessionId?.(element);
-  const url = isolatedVisualizationUrl(bundle, { embed:'tab', host:'localhost' });
+  const url = isolatedVisualizationUrl(bundle, { embed:'tab', host:'localhost', title });
   if (!sessionId || !url || !tabs.connected?.(sessionId) || !tabs.openTab) return false;
   try { Promise.resolve(tabs.openTab({ sessionId, url, reuse:false })).catch(error => tabs.onError?.(error)); }
   catch (error) { tabs.onError?.(error); }
@@ -58,14 +58,16 @@ const BUNDLE_HASH = /^[0-9a-f]{64}$/;
  * 束の URL（隔離の origin の /viz/<束のハッシュ>/<入口>）。隔離の origin が無い・束の形が違うときは null。
  * embed: conversation（会話の枠）| panel（右の欄）| tab（別のタブ。高さの知らせ・橋を入れない）
  * ホストは画面の名前によらず localhost（リスナーも端末のプロキシも Host が localhost:<port> のときだけ答える。127.0.0.1 は 421）
+ * title: 別のタブの題（タブの列とアドレスバーはページの <title> を読む。可視化の中身はふつう <title> を持たない）
  */
-export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = 'localhost' } = {}) {
+export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = 'localhost', title = '' } = {}) {
   if (!isolated || !BUNDLE_HASH.test(bundle?.hash ?? '') || typeof bundle.entry !== 'string' || !bundle.entry) return null;
   if (!['conversation', 'panel', 'tab'].includes(embed) || bundle.entry.split('/').some(part => !part || part === '.' || part === '..' || /[\\\x00-\x1f]/.test(part))) return null;
   const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
   const params = new URLSearchParams({ embed });
   if (['light', 'dark'].includes(theme)) params.set('theme', theme);
   if (once) params.set('once', once);
+  if (embed === 'tab' && title) params.set('title', String(title).slice(0, 200));
   return `http://${host}:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
 }
 

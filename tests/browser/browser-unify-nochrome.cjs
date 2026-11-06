@@ -51,7 +51,7 @@
   const bundle = { hash:'a'.repeat(64), entry:'index.html', htmlOnly:true, reason:'legacy' };
   const card = renderPresent({ kind:'visualization', caption:'グラフ', content:'<p>グラフ</p>', bundle }); log.append(card);
   card.querySelector('.visualize-widen').click(); await tick();
-  check(state.calls.at(-1)[1].url.endsWith('?embed=tab'), 'widen opens isolated tab');
+  check(state.calls.at(-1)[1].url.endsWith('?embed=tab&title=%E3%82%B0%E3%83%A9%E3%83%95'), 'widen opens isolated tab titled with the caption');
   check(!card.classList.contains('visualize-widened'), 'connected widen does not widen in conversation');
   check(card.textContent.includes('関連ファイル'), 'HTML-only bundle notice');
   check(!card.querySelector('.visualize-open-browser'), 'one expand action on unified card');

@@ -146,7 +146,9 @@ export function createIsolatedRoutes(deps = {}) {
       if (content !== null) {
         const inFrame = embed !== 'tab' && framed(req);
         const theme = url.searchParams.get('theme');
-        body = Buffer.from(visualizationDocument(content, { theme: ['light', 'dark'].includes(theme) ? theme : '', policy, meta: false,
+        // 別のタブは包みの <title> を付ける（タブの列の題。web/visualize-frame.mjs の isolatedVisualizationUrl）
+        const title = embed === 'tab' ? (url.searchParams.get('title') ?? '').slice(0, 200) : '';
+        body = Buffer.from(visualizationDocument(content, { theme: ['light', 'dark'].includes(theme) ? theme : '', policy, meta: false, title,
           storage: true, resize: inFrame, conversation: embed === 'conversation' }), 'utf8');
       }
     }
