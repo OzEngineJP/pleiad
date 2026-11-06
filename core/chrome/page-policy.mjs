@@ -1,6 +1,6 @@
 // 中継（core/chrome/relay.mjs）の移動の検査と、エージェントのコマンドの前後のふるい（ADR 0292 の 2 の 4）。
 //   - 本体の port は、どのホスト名でも断る（Page.navigate・タブを開く・ページの中の JS の移動とサブリソース）。ports().main が分かれば、いつも検査する
-//   - ファイルのページの port は localhost のその会話の /_pleiad/s/<会話 id>/ だけ、隔離の port は localhost だけを通す（その port がまだ無ければ何もしない）
+//   - ファイルのページの port は localhost のその会話の /_pleiad/s/<会話 id>/ と共有の資材（/_pleiad/assets/・/_pleiad/vendor/）だけ、隔離の port は localhost だけを通す（その port がまだ無ければ何もしない）
 //   - エージェントに pleiad_* の Cookie を見せない・2 つの port の Cookie を読み書きさせない
 // 中継は会話の窓のタブのことしか渡さない。URL と Cookie の値はログに書かない。
 import { PAGES_PATH } from '../page-auth.mjs';
@@ -30,6 +30,9 @@ function parts(value) {
   } catch { return null; }
 }
 
+/** ファイルのページが読む共有の資材（Pleiad の公開のモジュール・スタイル・辞書と PDF の viewer。会話の中身を持たない。core/pages-routes.mjs の asset） */
+const SHARED_PAGES_PATHS = [`${PAGES_PATH}assets/`, `${PAGES_PATH}vendor/`];
+
 /** ファイルのページのパスが、この会話の /_pleiad/s/<会話 id>/ の下か */
 function ownPagesPath(path, sessionId) {
   if (typeof sessionId !== 'string' || !sessionId) return false;
@@ -53,7 +56,7 @@ export function pleiadVerdict(value, { ports, sessionId } = {}) {
   // 本体の port は、ホスト名に依らず断る（127.0.0.1・localhost・[::1]・0.0.0.0・*.localhost・127.0.0.0/8・ループバックを指す DNS の名前）
   if (ports.main && url.port === ports.main) return false;
   const exact = url.protocol === 'http:' && url.host === 'localhost';
-  if (ports.pages && url.port === ports.pages) return exact && ownPagesPath(url.path, sessionId);
+  if (ports.pages && url.port === ports.pages) return exact && (ownPagesPath(url.path, sessionId) || SHARED_PAGES_PATHS.some(prefix => url.path.startsWith(prefix)));
   if (ports.isolated && url.port === ports.isolated) return exact;
   return null;
 }

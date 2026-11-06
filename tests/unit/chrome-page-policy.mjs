@@ -44,6 +44,10 @@ export default async function (t) {
       [`http://localhost:${PAGES}/_pleiad/s/${ME}x/file`, false], [`http://localhost:${PAGES}/_pleiad/s/x/../conv-b/file`, false],
       [`http://localhost:${PAGES}/_pleiad/s/${ME}/../conv-b/file`, false], [`http://localhost:${PAGES}/_pleiad/s/${ME}/%2e%2e/conv-b/file`, false],
       [`http://localhost:${PAGES}/`, false], [`http://localhost:${PAGES}/favicon.ico`, false],
+      // ファイルのページが読む共有の資材（会話に依らない）は通す。資材の外へ出るパス・違う名前は断る
+      [`http://localhost:${PAGES}/_pleiad/assets/pages/app.mjs`, true], [`http://localhost:${PAGES}/_pleiad/vendor/i18next.mjs`, true],
+      [`http://localhost:${PAGES}/_pleiad/assets/../s/conv-b/file`, false], [`http://localhost:${PAGES}/_pleiad/assets/%2e%2e/s/conv-b/file`, false],
+      [`http://localhost:${PAGES}/_pleiad/assetsx/a.mjs`, false], [`http://127.0.0.1:${PAGES}/_pleiad/assets/pages/app.mjs`, false],
       [`http://127.0.0.1:${PAGES}/_pleiad/s/${ME}/file`, false], [`http://[::1]:${PAGES}/_pleiad/s/${ME}/file`, false], [`http://0.0.0.0:${PAGES}/_pleiad/s/${ME}/file`, false],
       [`http://localhost.:${PAGES}/_pleiad/s/${ME}/file`, false], [`https://localhost:${PAGES}/_pleiad/s/${ME}/file`, false], [`http://a.localhost:${PAGES}/_pleiad/s/${ME}/file`, false],
       // 隔離: localhost だけ（パスは問わない）
@@ -91,6 +95,8 @@ export default async function (t) {
     t.ok('ほかの会話のファイルのページ・違う名前の 2 つの port への要求は失敗させる', req(`http://localhost:${PAGES}/_pleiad/s/conv-b/api/raw?path=a.png`, ME, 'Image') === 'block'
       && req(`http://127.0.0.1:${PAGES}/_pleiad/s/${ME}/file`) === 'block' && req(`http://127.0.0.1:${ISOLATED}/viz/x/`) === 'block');
     t.ok('この会話のファイルのページ・隔離への要求は止めない', req(`http://localhost:${PAGES}/_pleiad/s/${ME}/api/raw?path=a.png`, ME, 'Image') === null && req(`http://localhost:${ISOLATED}/viz/x/a.js`, ME, 'Script') === null);
+    t.ok('ファイルのページのスクリプト・スタイル（共有の資材）は止めない', req(`http://localhost:${PAGES}/_pleiad/assets/pages/app.mjs`, ME, 'Script') === null
+      && req(`http://localhost:${PAGES}/_pleiad/assets/tokens.css`, ME, 'Stylesheet') === null && req(`http://localhost:${PAGES}/_pleiad/vendor/i18next.mjs`, ME, 'Script') === null);
     t.ok('既定の port（80・443）なら pattern は * にする', JSON.stringify(createPagePolicy({ ports: () => ({ main: 80 }) }).fetchPatterns([])) === '[{"urlPattern":"*","requestStage":"Request"}]');
   }
 
