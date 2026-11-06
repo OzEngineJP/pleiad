@@ -534,8 +534,8 @@
       "fullAccess": "A connected device can do everything this PC can"
     },
     "browser": {
-      "description": "Choose where links in conversations and previews open, and whether to confirm external loads.",
-      "descriptionRemote": "Choose whether to confirm external loads. Where links open is chosen on the PC (host) screen.",
+      "description": "Choose whether to confirm external loads, and set up the Chrome that agents use.",
+      "descriptionRemote": "Choose whether to confirm external loads. The Chrome that agents use is set up on the PC (host) screen.",
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
       "profiles": {

@@ -7,6 +7,8 @@
   const { renderPresent, renderMarkdown, renderToolCall } = await import('/render.mjs');
   const { userBodyHtml } = await import('/user-message.mjs');
   const { configureIsolatedOrigin } = await import('/visualize-frame.mjs');
+  // 会話のリンクの click を受ける口。画面では client.mjs が（link-menu.mjs を通して）読み込む
+  await import('/link-open.mjs');
   location.hash = '';
   document.documentElement.classList.add('side-closed');
   document.body.innerHTML = '<aside id="sidebar"></aside><main><div id="log"></div></main>';

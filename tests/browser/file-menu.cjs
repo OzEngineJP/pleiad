@@ -11,7 +11,7 @@
   for (const entry of ['tab-more', 'tab-contextmenu', 'directory-row']) {
     state.menu.close();
     if (entry === 'directory-row') await preview.menu(320, 100, target);
-    else state.menu.open(320, 100, preview.tabMenu({ file:target }), target.path);
+    else state.menu.open(320, 100, preview.tabMenu({ page:target }), target.path);
     check(JSON.stringify(rows()) === JSON.stringify(expected), entry + ' same order');
   }
   const calls = state.calls.length;

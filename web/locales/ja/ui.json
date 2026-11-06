@@ -528,8 +528,8 @@
       "fullAccess": "つないだ端末は、この PC でできることがすべてできます"
     },
     "browser": {
-      "description": "会話やプレビューのリンクを開く場所、外部の読み込みの確認を選びます。",
-      "descriptionRemote": "外部の読み込みの確認を選びます。リンクの開き先は PC（ホスト）の画面で選びます。",
+      "description": "外部の読み込みの確認と、エージェントが使う Chrome を設定します。",
+      "descriptionRemote": "外部の読み込みの確認を選びます。エージェントが使う Chrome は PC（ホスト）の画面で設定します。",
       "saveFailed": "保存できませんでした: {{error}}",
       "agentOperation": { "title": "エージェントの操作", "bundled": "agent-browser {{version}} · 同梱" },
       "profiles": {

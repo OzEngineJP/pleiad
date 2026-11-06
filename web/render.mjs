@@ -201,7 +201,7 @@ function fileAnchor(ref, inner, extra = "") {
 }
 
 /**
- * 文中の URL のリンク。押すと設定「リンクの開き先」に従う（web/link-open.mjs）。u は bareUrl / wholeUrl が通したもの、
+ * 文中の URL のリンク。押すと既定のブラウザーで開く（web/link-open.mjs）。u は bareUrl / wholeUrl が通したもの、
  * inner はエスケープ済みの HTML。字が URL そのものなので、名前で偽る余地は無い
  */
 function urlAnchor(u, inner, extra = "") {
@@ -992,7 +992,7 @@ function drawWebFetch(card, head, inp) {
   if (u === null) {
     if (raw.trim()) head.append(codeSpan(clip(raw, 160), "tc-main"));
   } else {
-    // md-link: 会話の文中の URL と同じく、押すと設定「リンクの開き先」に従う（web/link-open.mjs）
+    // md-link: 会話の文中の URL と同じく、押すと既定のブラウザーで開く（web/link-open.mjs）
     const a = el("a", "md-link tc-main tc-link", clip(raw, 160));
     a.setAttribute("href", u); // 絶対 http(s) かつ safeUrl を通ったものだけ
     a.setAttribute("target", "_blank");
