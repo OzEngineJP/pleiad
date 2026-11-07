@@ -2,8 +2,8 @@
 import {
   markdownToDoc, docToMarkdown, classifyLine, parseInline, serializeRuns, sliceRaw, fenceRoles, ensureShape,
   caret, deleteSelection, insertText, insertPlain, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom, atomKeys,
-  pasteText, pasteRich, removeAtomsTidy, normalizeFences, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
-  posToOffset, offsetToPos, runsText, runsLength, normalizeAttachmentPath, docLayout, memoRaw, renumber, indentList,
+  pasteText, pasteRich, removeAtomsTidy, normalizeRows, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
+  posToOffset, offsetToPos, runsText, runsLength, normalizeAttachmentPath, docLayout, renumber, indentList,
 } from "../../web/md-doc.mjs";
 import { codeFenceMask } from "../../web/render.mjs";
 
@@ -52,9 +52,11 @@ export default async function (t) {
   const roleSamples = ["```js\na\n```\nb", "```\nopen", "~~~\nx\n~~~\n```\ny\n```", "  ```\n  z\n  ```", "````\n```\n````"];
   t.ok("fenceRoles は web/render.mjs の codeFenceMask と同じ範囲を返す",
     roleSamples.every(s => JSON.stringify(fenceRoles(s.split("\n")).map(Boolean)) === JSON.stringify(codeFenceMask(s.split("\n")))));
-  t.ok("フェンスの外の行は分類し直し、中に入った行は code にする（normalizeFences）", (() => {
+  t.ok("本文の行の ``` はフェンスにしない（字のまま送る）・開きのフェンスを消すと、コードの行は読み直し、残った ``` から後ろがコードになる（normalizeRows）", (() => {
     const s = st("a\n- b\nc"); s.blocks[0].runs = [{ text: "```", marks: [] }];
-    return normalizeFences(s.blocks) && kinds(s) === "code,code,code" && (() => { s.blocks[0].runs = []; return normalizeFences(s.blocks) && kinds(s) === "p,ul,p"; })();
+    const p = !normalizeRows(s.blocks) && kinds(s) === "p,ul,cont" && md(s) === "\\```\n- b\n  c";
+    const f = st("```\nx\n```\nc"); f.blocks[0].runs = [];
+    return p && normalizeRows(f.blocks) && kinds(f) === "p,p,code,code" && md(f) === "\nx\n```\nc";
   })());
 
   // ------------------------------------------------------------ インライン
@@ -99,7 +101,7 @@ export default async function (t) {
   play("# Hi");
   t.ok("整えた後の文字を打つと、元に戻すはその文字から", md(cur) === "# Hi" && md(h.undo()) === "# ");
   const symbols = h.undo();
-  t.ok("もう一度で、整える前の記号のまま（行の種類は本文。勝手に見出しに戻らない）", md(symbols) === "# " && kinds(symbols) === "p");
+  t.ok("もう一度で、整える前の記号のまま（行の種類は本文。勝手に見出しに戻らない）", md(symbols) === "\\# " && kinds(symbols) === "p");
   const redone = h.redo();
   t.ok("やり直しで整えた状態へ", kinds(redone) === "h" && md(h.redo()) === "# Hi");
   t.ok("戻した後に打つと、やり直しの先は捨てる", (() => { h.undo(); h.push(st("x"), "type"); return h.redo() === null; })());
@@ -115,7 +117,7 @@ export default async function (t) {
   // ------------------------------------------------------------ Enter
   let s = enter(st("- a", 0, 3));
   t.ok("箇条書きの Enter は次の行も箇条書き・番号は 1 つ進む・空の項目で抜ける", md(s) === "- a\n- " && at(s) === "1:0" && md(enter(st("1. a", 0, 4))) === "1. a\n2. "
-    && md(enter(st("- a\n- ", 1, 0))) === "- a\n\n" && kinds(enter(st("- a\n- ", 1, 0))) === "ul,p" && at(enter(st("- a\n- ", 1, 0))) === "1:0");
+    && md(enter(st("- a\n- ", 1, 0))) === "- a\n" && kinds(enter(st("- a\n- ", 1, 0))) === "ul,p" && at(enter(st("- a\n- ", 1, 0))) === "1:0");
   t.ok("引用の Enter は引用のまま・見出しの Enter は本文の行", md(enter(st("> a", 0, 3))) === "> a\n> " && kinds(enter(st("## a", 0, 4))) === "h,p");
   t.ok("行の途中の Enter は割る（書式は引き継ぐ）", md(enter(st("**ab**", 0, 1))) === "**a**\n**b**" && md(enter(st("- ab", 0, 1))) === "- a\n- b");
   t.ok("見出しの頭の Enter は上に空行を足す", md(enter(st("## a", 0, 0))) === "\n## a");
@@ -150,7 +152,7 @@ export default async function (t) {
   })());
   t.ok("行の途中に入れると前後に割る（後ろの行は同じ種類）", (() => {
     const x = insertAtom(st("- abcd", 0, 2), atom);
-    return md(x) === `- ab\n[添付] ${P}\n- cd` && kinds(x) === "ul,att,ul" && at(x) === "2:0";
+    return md(x) === `- ab\n\n[添付] ${P}\n- cd` && kinds(x) === "ul,att,ul" && at(x) === "2:0";
   })());
   t.ok("行末・行頭・コードの中（閉じの後ろ）", (() => {
     const end = insertAtom(st("ab", 0, 2), atom), head = insertAtom(st("ab", 0, 0), atom);
@@ -233,12 +235,6 @@ export default async function (t) {
     const blocks = doc("# H\n**ab**cd\n- x"), lay = docLayout(blocks);
     return posToOffset(blocks, { b: 1, v: 3 }, lay) === posToOffset(blocks, { b: 1, v: 3 }) && JSON.stringify(offsetToPos(blocks, 9, lay)) === JSON.stringify(offsetToPos(blocks, 9));
   })());
-  t.ok("memoRaw は同じブロックの raw を使い回し、normalizeFences に渡しても結果は同じ", (() => {
-    const cache = new WeakMap(), raw = memoRaw(cache);
-    const a = doc("x\n```\ny\n```"), b = doc("x\n```\ny\n```");
-    const c1 = normalizeFences(a, { resolve, raw }), c2 = normalizeFences(b, { resolve });
-    return raw(a[0]) === "x" && cache.has(a[0]) && c1 === c2 && JSON.stringify(a) === JSON.stringify(b);
-  })());
   t.ok("履歴はブロックを共有しても、配列の差し替えに影響されない（元に戻すで前の状態が返る）", (() => {
     const hh = createHistory({ now: () => 0 });
     hh.reset(st("a\nb"));
@@ -294,7 +290,23 @@ export default async function (t) {
   })());
   t.ok("pasteRich: コードの行はコードのまま（フェンスの中の空行・字下げ）。リスト・引用・表は平文の行の規則どおり", (() => {
     const r = rich("", 0, 0, [{ md: "```sh" }, { md: "a" }, { md: "" }, { md: "  b" }, { md: "```" }, { md: "> 引" }, { md: "| a | b |" }]);
-    return kinds(r) === "code,code,code,code,code,quote,p" && md(r) === "```sh\na\n\n  b\n```\n> 引\n| a | b |";
+    // 表の行は引用の段落の遅延の続き（平文で貼っても同じ）。行は自分の `>` を持つ
+    return kinds(r) === "code,code,code,code,code,quote,quote" && md(r) === "```sh\na\n\n  b\n```\n> 引\n> | a | b |";
+  })());
+  t.ok("貼った行は、キャレットのあった行の入れ物（引用・項目）の中に入る。自分の記号を持つ行はその構造を足す（ADR 0301）", (() => {
+    const q = pasteText(st("> 引用", 0, 3), "x\ny");
+    const e = pasteText(st("> ", 0, 0), "x\n- y\n\nz");
+    const i = pasteText(st("- a", 0, 1), "x\n> y");
+    const h = rich("> ", 0, 0, [{ md: "# 見" }, { md: "本文" }]);
+    const r = pasteText(st("> ab", 0, 1), "x\ny");
+    return md(q) === "> 引用x\n> y" && kinds(q) === "quote,quote" && md(e) === "> x\n> - y\n>\n> z" && kinds(e) === "quote,ul,quote"
+      && md(i) === "- ax\n  > y" && kinds(i) === "ul,quote" && md(h) === "> # 見\n> 本文" && kinds(h) === "h,quote"
+      && md(r) === "> ax\n> yb" && at(r) === "1:1";
+  })());
+  t.ok("引用の中に貼って Enter すると、引用のまま次の行（貼った行が引用の外に出ない）", (() => {
+    const p = pasteText(st("> a", 0, 1), "x\ny");
+    const e = enter(p);
+    return md(e) === "> ax\n> y\n> " && kinds(e) === "quote,quote,quote" && at(e) === "2:0";
   })());
   t.ok("pasteRich: 空の並びは何も変えない", md(rich("x", 0, 1, [])) === "x");
 
@@ -349,8 +361,8 @@ export default async function (t) {
     const a = enter(st("> > a", 0, 5));
     const b = enter({ blocks: a.blocks, sel: caret(1, 0) });
     const c = enter({ blocks: b.blocks, sel: caret(1, 0) });
-    return md(a) === "> > a\n> > " && md(b) === "> > a\n> \n> " && kinds(b) === "quote,quote" && at(b) === "1:0"
-      && md(c) === "> > a\n\n" && kinds(c) === "quote,p" && at(c) === "1:0";
+    return md(a) === "> > a\n> > " && md(b) === "> > a\n> " && kinds(b) === "quote,quote" && at(b) === "1:0"
+      && md(c) === "> > a\n" && kinds(c) === "quote,p" && at(c) === "1:0";
   })());
   t.ok("引用の行頭で > を打つと 1 段深くなる・全角の ＞ は引用にならない", (() => {
     const run = (text) => ({ text, marks: [] });
@@ -364,7 +376,7 @@ export default async function (t) {
     const b = enter(st("- [x] パン", 0, 8));
     const c = enter({ blocks: a.blocks, sel: caret(1, 4) });
     const d = enter({ blocks: doc("- a\n  - [ ] "), sel: caret(1, 4) });
-    return md(a) === "- [ ] 牛乳\n- [ ] " && at(a) === "1:4" && md(b) === "- [x] パン\n- [ ] " && md(c) === "- [ ] 牛乳\n\n" && kinds(c) === "ul,p"
+    return md(a) === "- [ ] 牛乳\n- [ ] " && at(a) === "1:4" && md(b) === "- [x] パン\n- [ ] " && md(c) === "- [ ] 牛乳\n" && kinds(c) === "ul,p"
       && md(d) === "- a\n- [ ] " && at(d) === "1:4";
   })());
   t.ok("チェック欄の途中は [ ] を付けて割る・[ ] の中の Enter は付けずに割る", md(enter(st("- [ ] ab", 0, 5))) === "- [ ] a\n- [ ] b" && md(enter(st("- [ ] ab", 0, 2))) === "- [ \n- ] ab");
@@ -406,9 +418,9 @@ export default async function (t) {
       && sub === true && docToMarkdown(split) === "1. a\n- x\n7. b" && md(pasted) === "1. a\n3. b\n9. c";
   })());
   t.ok("番号: 入れ子のリストはそのリストの中だけ数える・親の次の項目の下のリストは自分の最初の数から", (() => {
-    const blocks = doc("1. a\n   1. x\n   3. y\n2. b\n   3. z");
+    const blocks = doc("1. a\n   1. x\n   3. y\n2. b\n\n   3. z");
     const changed = renumber(blocks);
-    return changed && docToMarkdown(blocks) === "1. a\n   1. x\n   2. y\n2. b\n   3. z";
+    return changed && docToMarkdown(blocks) === "1. a\n   1. x\n   2. y\n2. b\n\n   3. z";
   })());
   t.ok("番号: 桁が増えたら項目の中の行の字下げもずらす（項目の中に残す）", (() => {
     const blocks = doc(Array.from({ length: 9 }, (_, i) => `${i + 1}. a`).join("\n") + "\n9. b\n   c");
@@ -426,12 +438,12 @@ export default async function (t) {
     const next = enter({ blocks: doc("1. ab\n   cd"), sel: caret(1, 2) });
     const out = enter({ blocks: enter(st("- ab", 0, 3), { soft: true }).blocks, sel: caret(1, 0) });
     const more = enter({ blocks: doc("- ab\n  cd"), sel: caret(1, 2) }, { soft: true });
-    return md(next) === "1. ab\n   cd\n2. " && kinds(next) === "ol,cont,ol" && md(out) === "- ab\n\n" && kinds(out) === "ul,p" && md(more) === "- ab\n  cd\n  " && kinds(more) === "ul,cont,cont";
+    return md(next) === "1. ab\n   cd\n2. " && kinds(next) === "ol,cont,ol" && md(out) === "- ab\n" && kinds(out) === "ul,p" && md(more) === "- ab\n  cd\n  " && kinds(more) === "ul,cont,cont";
   })());
   t.ok("Shift+Enter: 引用は引用のまま続く（空で Enter すると抜ける）・本文の行は普通の改行", (() => {
     const q = enter(st("> a", 0, 3), { soft: true });
     const p = enter(st("ab", 0, 1), { soft: true });
-    return md(q) === "> a\n> " && kinds(q) === "quote,quote" && md(p) === "a\nb" && kinds(p) === "p,p" && md(enter({ blocks: q.blocks, sel: caret(1, 0) })) === "> a\n\n";
+    return md(q) === "> a\n> " && kinds(q) === "quote,quote" && md(p) === "a\nb" && kinds(p) === "p,p" && md(enter({ blocks: q.blocks, sel: caret(1, 0) })) === "> a\n";
   })());
   t.ok("続きの行の行頭の Backspace は本文の行に戻る・入れ子の項目と引用は 1 段ずつ外す", kinds(backspaceAtStart({ blocks: doc("- a\n  b"), sel: caret(1, 0) })) === "ul,p"
     && md(backspaceAtStart({ blocks: doc("- a\n  - b"), sel: caret(1, 0) })) === "- a\n  b" && kinds(backspaceAtStart({ blocks: doc("- a\n  - b"), sel: caret(1, 0) })) === "ul,cont"
@@ -448,33 +460,34 @@ export default async function (t) {
   t.ok("箇条書きと番号を交互に入れ子にしても項目・2 字と 4 字とタブの字下げを親の中身の桁で読む", kindsOf("- a\n  1. b\n     - c\n       1. d") === "ul,ol,ul,ol"
     && kindsOf("- a\n    - b") === "ul,ul" && kindsOf("- a\n\t- b") === "ul,ul" && kindsOf("1. a\n  - b") === "ol,ul");
   t.ok("項目の中の段落・引用・見出し・コード（フェンス・字下げ）は項目の中の行", kindsOf("- a\n\n  p\n  > q\n  # h\n  ```\n  x\n  ```") === "ul,p,cont,quote,h,code,code,code,p*"
-    && kindsOf("- a\n\n      code") === "ul,p,code");
+    && kindsOf("- a\n\n      code") === "ul,code" && md(st("- a\n\n      code")) === "- a\n\n      code");
   t.ok("項目の中のコードの行の記号（字下げ）は記号として持つ・Enter で同じ字下げの行が続く", (() => {
     const s = st("- a\n  ```\n  x\n  ```", 2, 1);
     const e = enter(s);
     return s.blocks[2].marker === "  " && runsText(s.blocks[2].runs) === "x" && md(e) === "- a\n  ```\n  x\n  \n  ```" && kinds(e) === "ul,code,code,code,code,p*";
   })());
   t.ok("7 段の引用も引用の行", kindsOf("> > > > > > > a") === "quote" && md(st("> > > > > > > a")) === "> > > > > > > a");
-  t.ok("項目の中で、段落が親へ戻る（字下げを浅くした続きの行）", kindsOf("- a\n  - b\n\n  c") === "ul,ul,p,cont");
+  t.ok("項目の中で、段落が親へ戻る（字下げを浅くした続きの行）", kindsOf("- a\n  - b\n\n  c") === "ul,ul,cont" && md(st("- a\n  - b\n\n  c")) === "- a\n  - b\n\n  c");
   t.ok("項目の中で # ・ - ・ > を打つと項目の中の見出し・入れ子の項目・引用になる", (() => {
     const run = (text) => ({ text, marks: [] });
     const fire = (head) => applyTriggers({ blocks: [{ kind: "ul", marker: "- ", runs: [run("a")] }, { kind: "cont", marker: "  ", runs: [run(head)] }], sel: caret(1, head.length) }, " ");
     const h = fire("# "), u = fire("- "), q = fire("> ");
-    return md(h.state) === "- a\n  # " && kinds(h.state) === "ul,h" && md(u.state) === "- a\n  - " && kinds(u.state) === "ul,ul" && md(q.state) === "- a\n  > " && kinds(q.state) === "ul,quote";
+    return md(h.state) === "- a\n  # " && kinds(h.state) === "ul,h" && md(u.state) === "- a\n\n  - " && kinds(u.state) === "ul,ul" && md(q.state) === "- a\n  > " && kinds(q.state) === "ul,quote";
   })());
-  t.ok("段落の続きの 2. は項目にしない（CommonMark では 1 以外の番号は段落を打ち切れない）", (() => {
+  t.ok("本文の次の行の 2. も項目になり、送るときは区切りの空行を挟む（行が正。履歴でも番号のリスト）", (() => {
     const run = (text) => ({ text, marks: [] });
-    return applyTriggers({ blocks: [{ kind: "p", marker: "", runs: [run("a")] }, { kind: "p", marker: "", runs: [run("2. ")] }], sel: caret(1, 3) }, " ") === null
-      && applyTriggers({ blocks: [{ kind: "p", marker: "", runs: [run("a")] }, { kind: "p", marker: "", runs: [run("1. ")] }], sel: caret(1, 3) }, " ")?.kind === "block";
+    const two = applyTriggers({ blocks: [{ kind: "p", marker: "", runs: [run("a")] }, { kind: "p", marker: "", runs: [run("2. ")] }], sel: caret(1, 3) }, " ");
+    const one = applyTriggers({ blocks: [{ kind: "p", marker: "", runs: [run("a")] }, { kind: "p", marker: "", runs: [run("1. ")] }], sel: caret(1, 3) }, " ");
+    return two?.kind === "block" && kinds(two.state) === "p,ol" && md(two.state) === "a\n\n2. " && one?.kind === "block" && md(one.state) === "a\n\n1. ";
   })());
   t.ok("項目の下の空行 1 つ・2 つのどちらでも、次の項目は同じリスト（番号は続く）", (() => {
     const one = doc("1. a\n\n5. b"), two = doc("1. a\n\n\n5. b");
     renumber(one); renumber(two);
     return docToMarkdown(one) === "1. a\n\n2. b" && docToMarkdown(two) === "1. a\n\n\n2. b";
   })());
-  t.ok("親の項目が消えた続きの行は、構造に合わせて読み直す（normalizeFences）", (() => {
+  t.ok("親の項目が消えた続きの行は、構造に合わせて読み直す（normalizeRows。中身の頭の空白は送らない）", (() => {
     const s = st("- a\n  b");
     s.blocks[0] = { kind: "p", marker: "", runs: [{ text: "a", marks: [] }] };
-    return normalizeFences(s.blocks) && kinds(s) === "p,p" && md(s) === "a\n  b";
+    return normalizeRows(s.blocks) && kinds(s) === "p,p" && md(s) === "a\nb";
   })());
 }

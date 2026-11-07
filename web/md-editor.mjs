@@ -15,10 +15,10 @@ import { attachmentHtml } from './user-message.mjs';
 import { richFromClipboard } from './html-paste.mjs';
 import { baseName } from './file-reference.mjs';
 import {
-  markdownToDoc, docToMarkdown, layoutMarkdown, snapshotEditing, restoreEditing, replaceMarkdownRange, editingNode, mergeRuns, runsText, runsLength, newMark, normalizeFences, ensureShape, emptyBlock,
+  markdownToDoc, docToMarkdown, layoutMarkdown, snapshotEditing, restoreEditing, replaceMarkdownRange, mergeRuns, runsText, runsLength, newMark, normalizeRows, ensureShape, emptyBlock,
   caret, isCollapsed, orderSel, deleteSelection, insertText, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom,
   atomKey, atomKeys, normalizeAttachmentPath, pasteText, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
-  posToOffset, offsetToPos, insertPlain, docLayout, memoRaw, pasteRich, removeAtomsTidy, indentList, docStructure,
+  posToOffset, offsetToPos, insertPlain, docLayout, pasteRich, removeAtomsTidy, indentList, rowTree,
 } from './md-doc.mjs';
 import { lineIndent, indentCss, itemMarker, itemBullet } from './md-structure.mjs';
 
@@ -112,13 +112,14 @@ export function createMarkdownEditor(root, o) {
   function readBlock(div) {
     const kind = KINDS.has(div.dataset.k) ? div.dataset.k : 'p';
     if (kind === 'att') {
-      return { kind, marker: '', runs: [], ...(div.dataset.breakBefore !== undefined ? { breakBefore: div.dataset.breakBefore } : {}), raw: div.dataset.raw ?? '', ...(div.dataset.path ? { path: div.dataset.path } : {}), ...(div.dataset.pid ? { pid: div.dataset.pid } : {}) };
+      return { kind, marker: '', runs: [], ...(div.dataset.src ? { src: JSON.parse(div.dataset.src) } : {}), ...(div.dataset.breakBefore !== undefined ? { breakBefore: div.dataset.breakBefore } : {}), raw: div.dataset.raw ?? '', ...(div.dataset.path ? { path: div.dataset.path } : {}), ...(div.dataset.pid ? { pid: div.dataset.pid } : {}) };
     }
     const runs = [];
     walk(div, [], runs);
     let merged = mergeRuns(runs);
     if (kind === 'code') merged = mergeRuns(merged.map(r => ({ text: r.text, marks: [] })));
     const b = { kind, marker: div.dataset.m ?? '', runs: merged };
+    if (div.dataset.src) b.src = JSON.parse(div.dataset.src);
     if (div.dataset.pad !== undefined && !runsLength(merged)) b.pad = true;
     if (div.dataset.breakBefore !== undefined) b.breakBefore = div.dataset.breakBefore;
     return b;
@@ -136,7 +137,7 @@ export function createMarkdownEditor(root, o) {
   // DOM の変化は MutationObserver で知る。records は takeRecords() で同期に取れるので、読む直前に取り込めば、input の直後でも古い写しを返さない。
   // 返すブロックは共有なので、読み取り専用として扱う（書き換える操作は必ず写しを取ってから: md-doc.mjs の各操作）
   let divCache = new WeakMap(), docBlocks = null, docLayoutCache = null, docMd = null, docAtoms = null, cachedPlain = false;
-  const layoutMemo = new WeakMap(), rawMemo = new WeakMap(), rawOf = memoRaw(rawMemo), keyMemo = new WeakMap();
+  const layoutMemo = new WeakMap(), keyMemo = new WeakMap();
   const observer = new MutationObserver((records) => invalidate(records));
   function invalidate(records) {
     if (!records.length) return;
@@ -165,7 +166,7 @@ export function createMarkdownEditor(root, o) {
     observer.takeRecords();   // 読むときに付けた印（data-mid）の分は捨てる
     return docBlocks;
   }
-  const layout = () => docLayoutCache ??= docLayout(readDoc(), layoutMemo);
+  const layout = () => docLayoutCache ??= docLayout(readDoc(), layoutMemo, { plain: cachedPlain });
   const markdownNow = () => docMd ??= layoutMarkdown(layout());
   const atomsNow = () => { const blocks = readDoc(); return docAtoms ??= atomKeys(blocks); };
 
@@ -251,7 +252,7 @@ export function createMarkdownEditor(root, o) {
   const endSel = (blocks) => { const b = blocks.length - 1; return caret(b, blocks[b].kind === 'att' ? 0 : runsLength(blocks[b].runs)); };
 
   const getState = () => {
-    const blocks = readDoc().slice();   // 共有の配列は書き換えない（normalizeFences などが要素を差し替える）
+    const blocks = readDoc().slice();   // 共有の配列は書き換えない（normalizeRows などが要素を差し替える）
     const sel = getSel() ?? (lastSel && lastSel.s.b < blocks.length ? lastSel : endSel(blocks));
     return { blocks, sel };
   };
@@ -358,6 +359,7 @@ export function createMarkdownEditor(root, o) {
     div.dataset.k = b.kind;
     if (b.marker) div.dataset.m = b.marker;
     if (b.pad) div.dataset.pad = '';
+    if (b.src) div.dataset.src = JSON.stringify(b.src);
     if (b.breakBefore !== undefined) div.dataset.breakBefore = b.breakBefore;
     if (b.kind === 'att') {
       div.contentEditable = 'false';
@@ -374,20 +376,22 @@ export function createMarkdownEditor(root, o) {
   }
 
   const keyOf = (b) => {
-    if (b.kind === 'att') return `att|${JSON.stringify(b.breakBefore)}|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`;
+    const src = b.src ? `${b.src.id}:${b.src.i}` : '';
+    if (b.kind === 'att') return `att|${src}|${JSON.stringify(b.breakBefore)}|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`;
     const body = () => { let k = keyMemo.get(b); if (k === undefined) { k = `|${JSON.stringify(b.runs.map(r => [r.text, r.marks.map(m => [m.id, m.t, m.d, m.url])]))}`; keyMemo.set(b, k); } return k; };
-    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}|${JSON.stringify(b.breakBefore)}${body()}`;
+    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}|${src}|${JSON.stringify(b.breakBefore)}${body()}`;
   };
 
   // ---- 行の飾り（字下げ・項目の記号・引用の線・コードの角）。どれも前後の行で決まる（親の項目・番号・引用の深さ）ので、
-  // 行の中身とは別に、文書の構造（md-structure.mjs。履歴の web/render.mjs と同じ解析と同じ決まり）から毎回つける。
+  // 行の中身とは別に、行の記号を上から読んだ入れ物（md-doc.mjs の rowTree。遅延の続きは使わない。ADR 0301）から毎回つける。
+  // 字下げ・記号の決まりは履歴と同じ（md-structure.mjs の lineIndent・itemMarker）。
   // 中身（子の要素）には触らず属性だけを替えるので、キャレット・選択・IME の途中の字は動かない
   const decoKey = new WeakMap();
   const CODE_ROLES = new Set(['fence-open', 'code', 'fence-close', 'icode']);
   const BAR = 'linear-gradient(var(--line-strong),var(--line-strong))';
-  function decoOf(b, li, prevCode, code, nextCode, blocks, S) {
+  function decoOf(b, li, prevCode, code, nextCode) {
     if (!li) return { key: '' };
-    const at = lineIndent(editingNode(blocks, S, b, li));
+    const at = lineIndent(li.node);
     const d = { ind: indentCss(at), mkAt: '', mk: '', bt: '', bars: '', barPos: '', q: at.bars.length, pos: '', fence: false };
     // 行で始まる項目のうち、一番内側のものの記号を、その項目の中身の手前に置く（"- - a" は内側の記号だけ）
     const item = li.marks.findLast((m) => m.node.t === 'item' && m.opened && m.end <= b.marker.length)?.node;
@@ -405,10 +409,10 @@ export function createMarkdownEditor(root, o) {
   const setData = (div, name, v) => { if (v) div.dataset[name] = v; else delete div.dataset[name]; };
   function decorate(blocks = readDoc()) {
     const divs = blockDivs();
-    const S = docStructure(blocks, rawOf);
+    const S = rowTree(blocks, layoutMemo);
     const codeOf = (i) => { const li = S.info[i]; return li && CODE_ROLES.has(li.role) ? li.node : null; };
     divs.forEach((div, i) => {
-      const d = decoOf(blocks[i], S.info[i], codeOf(i - 1), codeOf(i), codeOf(i + 1), blocks, S);
+      const d = decoOf(blocks[i], S.info[i], codeOf(i - 1), codeOf(i), codeOf(i + 1));
       if (decoKey.get(div) === d.key) return;
       decoKey.set(div, d.key);
       setVar(div, '--md-ind', d.ind);
@@ -493,7 +497,7 @@ export function createMarkdownEditor(root, o) {
     clearAtomSel();
     // 操作の結果を構造に合わせて読み直す（親の項目を消した子・字下げを変えた行の種類）。キャレットも同じ字の上に置き直す
     next = { ...next, blocks: next.blocks.slice(), sel: { ...next.sel, s: { ...next.sel.s }, e: { ...next.sel.e } } };
-    normalizeFences(next.blocks, { resolve, plain: plain(), raw: rawOf, sel: next.sel });
+    normalizeRows(next.blocks, { resolve, plain: plain(), sel: next.sel });
     fixPids(next.blocks);
     paint(next.blocks);
     if (hasFocus()) { setDomSel(next.sel, next.sel.after); reveal(next.sel); } else lastSel = next.sel;
@@ -525,7 +529,7 @@ export function createMarkdownEditor(root, o) {
       if (trig) {
         history.push(st, 'type');
         st = trig.state;
-        normalizeFences(st.blocks, { resolve, raw: rawOf, sel: st.sel });
+        normalizeRows(st.blocks, { resolve, sel: st.sel });
         fixPids(st.blocks);
         paint(st.blocks);
         setDomSel(st.sel, st.sel.after);
@@ -537,7 +541,7 @@ export function createMarkdownEditor(root, o) {
       }
     }
     outside = null;
-    if (normalizeFences(st.blocks, { resolve, plain: plain(), raw: rawOf, sel: st.sel })) { paint(st.blocks); if (hasFocus()) setDomSel(st.sel); }
+    if (normalizeRows(st.blocks, { resolve, plain: plain(), sel: st.sel })) { paint(st.blocks); if (hasFocus()) setDomSel(st.sel); }
     else decorate(st.blocks);
     history.push(st, reason);
     syncEmpty();

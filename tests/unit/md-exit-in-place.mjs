@@ -1,6 +1,6 @@
 import {
   markdownToDoc, docToMarkdown, caret, enter, backspaceAtStart, deleteAtEnd,
-  insertText, applyTriggers, docStructure, editingNode, snapshotEditing, restoreEditing,
+  insertText, applyTriggers, rowTree, snapshotEditing, restoreEditing,
   createHistory, deleteSelection, pasteText,
 } from '../../web/md-doc.mjs';
 import { parseStructure, lineIndent } from '../../web/md-structure.mjs';
@@ -19,7 +19,7 @@ const depth = node => { let q = 0, item = 0; for (; node; node = node.parent) { 
 export default async function(t) {
   for (const mark of ['>', '-', '1.']) {
     const first = type(start(''), mark + ' a'), continued = enter(first), out = enter(continued);
-    t.ok(`${mark} の Enter×2 は2編集行・同じ行頭・境界付き本文`, out.blocks.length === 2 && out.blocks[1].kind === 'p' && out.blocks[1].breakBefore === '' && out.sel.s.b === 1 && out.sel.s.v === 0);
+    t.ok(`${mark} の Enter×2 は2編集行・同じ行頭・境界付き本文`, out.blocks.length === 2 && out.blocks[1].kind === 'p' && md(out) === `${mark} a\n` && out.sel.s.b === 1 && out.sel.s.v === 0);
     t.ok(`${mark} の空行Enterと行頭Backspaceは同じ状態`, JSON.stringify(out) === JSON.stringify(backspaceAtStart(continued)));
     const typed = type(out, 'b');
     t.ok(`${mark} の解除後の文字は送信でも構造の外`, md(typed) === `${mark} a\n\nb` && depth(parseStructure(md(typed).split('\n')).lines.at(-1).node).join() === '0,0');
@@ -41,20 +41,19 @@ export default async function(t) {
     let s = start(seed); s.sel = caret(s.blocks.length - 1, 1);
     const continued = enter(s), out = enter(continued), b = out.blocks.at(-1);
     t.ok(`${seed} は空の子項目を残さず同じ行で一段解除`, out.blocks.length === continued.blocks.length && b.marker === marker && b.kind === kind && out.sel.s.b === continued.sel.s.b);
-    const structure = docStructure(out.blocks), index = out.blocks.length - 1;
-    const node = editingNode(out.blocks, structure, b, structure.info[index]);
+    const node = rowTree(out.blocks).info[out.blocks.length - 1].node;
     const typed = type(out, 'c'), parsed = parseStructure(md(typed).split('\n'));
     t.ok(`${seed} の空行と入力後と送信で深さが一致`, lineIndent(node).bars.length === wantDepth[0] && depth(parsed.lines.at(-1).node).join() === wantDepth.join());
     const restored = restoreEditing(md(out), snapshotEditing(out.blocks));
     t.ok(`${seed} の空行の深さを保存復元`, restored.length === out.blocks.length && restored.at(-1).marker === marker && md(type({ blocks: restored, sel: out.sel }, 'c')) === md(typed));
   }
   let deep = enter({ ...start('> > a'), sel: caret(0, 1) }); deep = enter(deep); deep = enter(deep);
-  t.ok('二重引用を続けて解除すると古い引用境界も解除する', md(type(deep, 'b')) === '> > a\n\nb' && deep.blocks.length === 2 && deep.blocks[1].breakBefore === '');
+  t.ok('二重引用を続けて解除すると古い引用境界も解除する', md(type(deep, 'b')) === '> > a\n\nb' && deep.blocks.length === 2 && deep.blocks[1].kind === 'p');
   let quotedList = enter({ ...start('> - a'), sel: caret(0, 1) }); quotedList = enter(quotedList); quotedList = enter(quotedList);
   t.ok('引用内リストはリスト→引用→本文の順で解除する', md(type(quotedList, 'b')) === '> - a\n\nb' && quotedList.blocks.length === 2 && quotedList.blocks[1].kind === 'p');
   const heading = type(enter(enter(type(start(''), '> a'))), '# title');
   const unheaded = backspaceAtStart({ ...heading, sel: caret(1, 0) });
-  t.ok('解除後の本文を見出しにして戻しても元の引用外に留まる', heading.blocks[1].kind === 'h' && md(unheaded) === '> a\n\ntitle' && unheaded.blocks[1].breakBefore === '');
+  t.ok('解除後の本文を見出しにして戻しても元の引用外に留まる', heading.blocks[1].kind === 'h' && md(unheaded) === '> a\n\ntitle' && unheaded.blocks[1].kind === 'p');
   const soft = enter(enter({ ...start('> a'), sel: caret(0, 1) }), { soft: true });
   t.ok('空引用のShift+Enterは従来どおり次の行へ進む', md(soft) === '> a\n\n' && soft.blocks.length === 3 && soft.sel.s.b === 2);
   for (const raw of ['> a\nb', '- a\nb', '1. a\nb', '> > a\n> b', '> a\n\nb', '- a\n\n', '> - a\n> \n> b']) {
