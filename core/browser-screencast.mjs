@@ -290,17 +290,17 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     return { multi:false, formats:null, shared:options, sharp:entry.wantedSharp };
   }
 
-  /** 打ち切り後は新しい中身・タブ・閲覧者で再開する。要求中の復元画像は再開のきっかけにしない。 */
+  /** 中身の変更は失敗回数を保って 1 回だけ再開する。要求中の復元画像では再開しない。 */
   function resumeRetries(entry) {
     if (!entry.retryPaused || entry.syncing) return false;
     entry.retryPaused = false;
-    entry.retryFailures = 0;
     // 直前の失敗で決めた期限は、変更が来ても短縮しない。
     return true;
   }
 
   function retryContextChanged(entry) {
     entry.retryRevision += 1;
+    entry.retryFailures = 0;
     return resumeRetries(entry);
   }
 
@@ -320,6 +320,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     if (entry.retryAt > now()) { armRetry(sessionId, entry); return Promise.resolve(); }
     clearTimer(entry.retryTimer); entry.retryTimer = null;
     let revision = entry.retryRevision;
+    let failures = entry.retryFailures;
     const run = async () => {
       do {
         entry.resync = false;
@@ -327,6 +328,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
         const changed = next.multi !== entry.multi || JSON.stringify(next.multi ? next.formats : next.shared) !== JSON.stringify(entry.multi ? entry.formats : entry.shared);
         if (changed || entry.retryNeeded) {
           revision = entry.retryRevision;
+          failures = entry.retryFailures;
           entry.transition = next;
           if (next.multi) {
             const answer = await bridge.setFormats(sessionId, next.formats);
@@ -361,7 +363,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
       entry.transition = null;
       entry.retryNeeded = true;
       if (entryOf(sessionId) === entry && entry.clients.size) {
-        entry.retryFailures = Math.min(FORMAT_FAILURE_LIMIT, entry.retryFailures + 1);
+        entry.retryFailures = Math.min(FORMAT_FAILURE_LIMIT, failures + 1);
         entry.retryAt = now() + Math.min(FORMAT_RETRY_MAX_MS, FORMAT_RETRY_MS * 2 ** (entry.retryFailures - 1));
         // 配信を復元できたら一定回数で保つ。復元も失敗して無配信なら、待ちの上限を保って復旧を続ける。
         const contextChanged = entry.retryRevision !== revision;

@@ -147,8 +147,31 @@ export async function checkScreencastRecovery(createBridge, createHub, t) {
   for(const multi of [true,false]) {
     const r=await rig(multi), client={send(m){if(m.type==='frame')queueMicrotask(()=>r.hub.received(client,'s',m.seq));}};
     try {
+      await r.hub.watch(client,'s',{width:400,height:400});await r.advance(300);r.failRestore=1000;
+      for(let i=0;i<6000;i++){await r.advance(20);r.emit(`moving-${i}`);await r.flush();}
+      const down=r.starts.filter(s=>s.quality===55&&s.at>0), gaps=down.slice(1).map((s,i)=>s.at-down[i].at);
+      t.ok(`${multi?'段別':'共有'}: 動くページでも連続失敗の回数を保ち、打ち切り後は 8 秒間隔の単発試行にする`,down.length===18&&gaps.every((gap,i)=>gap===[1000,2000,4000][i]||(i>=3&&gap===8000)));
+    } finally {await r.hub.unwatch(client,'s');await r.close();}
+  }
+  for(const multi of [true,false]) {
+    const r=await rig(multi), client={send(m){if(m.type==='frame')queueMicrotask(()=>r.hub.received(client,'s',m.seq));}};
+    try {
+      await r.hub.watch(client,'s',{width:400,height:400});r.fail=1000;await r.advance(15300);
+      r.emit('one-change');await r.flush();await r.advance(68000);
+      const top=r.starts.filter(s=>s.quality===80);
+      t.ok(`${multi?'段別':'共有'}: 打ち切り後の中身の変更 1 回は新しい 5 回の予算を作らない`,top.length===6&&top[5].at-top[4].at===8000);
+      r.tab('B');await r.flush();await r.advance(9000);
+      const reset=r.starts.filter(s=>s.quality===80);
+      t.ok(`${multi?'段別':'共有'}: タブの変更では要求中の失敗の待ちを守り、その後は 1 秒から再試行する`,reset.length===9&&reset[7].at-reset[6].at===8000&&reset[8].at-reset[7].at===1000,JSON.stringify(reset));
+    } finally {await r.hub.unwatch(client,'s');await r.close();}
+  }
+  for(const multi of [true,false]) {
+    const r=await rig(multi), client={send(m){if(m.type==='frame')queueMicrotask(()=>r.hub.received(client,'s',m.seq));}};
+    try {
       await r.hub.watch(client,'s',{width:400,height:400});r.fail=1000;r.failRestore=1000;await r.advance(60300);
       t.ok(`${multi?'段別':'共有'}: 復元にも失敗して配信が無い場合は待ちの上限を保って復旧を続ける`,r.running().length===0&&r.starts.filter(s=>s.quality===80).length>5&&r.starts.length<30);
+      const top=r.starts.filter(s=>s.quality===80), gaps=top.slice(1).map((s,i)=>s.at-top[i].at);
+      t.ok(`${multi?'段別':'共有'}: 無配信からの復旧要求も 1・2・4 秒の後は常に 8 秒間隔にする`,gaps.length>=5&&gaps.every((gap,i)=>gap===[1000,2000,4000][i]||(i>=3&&gap===8000)));
       r.fail=0;r.failRestore=0;await r.advance(8000);
       t.ok(`${multi?'段別':'共有'}: 復元失敗が長く続いても映像を自動復旧できる`,r.running().length===1&&r.running()[0].format.quality===80);
     } finally {await r.hub.unwatch(client,'s');await r.close();}
