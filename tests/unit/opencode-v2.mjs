@@ -24,7 +24,10 @@ export default async function(t) {
     if(tail==='inbox'&&method==='GET')return {data:inbox.get(sid)??[]};
     if(method==='GET'&&['permission','form'].includes(tail)) {
       if(pendingFailure)throw new Error('Temporary lookup failure');
-      return {data:sid==='child'?[tail==='permission'?{id:'permission_child',sessionID:sid,action:'shell',resources:['echo'],save:[]}:{id:'form_child',sessionID:sid,fields:[{key:'choice',title:'Choose',type:'string',custom:false,options:[{label:'Visible, choice',value:'wire-value'}]}]}]:[]};
+      return {data:sid==='child'?[tail==='permission'?{id:'permission_child',sessionID:sid,action:'shell',resources:['echo'],save:[]}:{id:'form_child',sessionID:sid,fields:[{key:'choice',title:'Choose',type:'string',custom:false,options:[{label:'Visible, choice',value:'wire-value'}]}]},
+        {id:'form_child2',sessionID:sid,fields:[
+          {key:'pick',title:'Pick',type:'string',custom:false,options:[{label:'b',value:'a'},{label:'Other',value:'b'}]},
+          {key:'tags',title:'Tags',type:'multiselect',custom:false,options:[{label:'x,y',value:'x,y'},{label:'z',value:'z'}]}]}]:[]};
     }
     if(tail==='prompt') {
       const receipt={id:body.id,sessionID:sid,time:{created:new Date(1000).toISOString()},type:'user',delivery:body.delivery};
@@ -82,6 +85,10 @@ export default async function(t) {
   assert.deepEqual(calls.at(-1).body,{answer:{choice:'wire-value'}});
   await protocol.request('POST','/question/form_child/reply',{body:{answers:[['wire-value']]}});
   assert.deepEqual(calls.at(-1).body,{answer:{choice:'wire-value'}});
+  // 送られた文字列が別の選択肢の label と同じでも、value の一致を優先して誤変換しない（'b' → 'b' であって 'a' ではない）
+  // 複数選択の回答は、カンマ入りの value も要素の境界を保ったまま返る
+  await protocol.request('POST','/question/form_child2/reply',{body:{answers:[['b'],['x,y','z']]}});
+  assert.deepEqual(calls.at(-1).body,{answer:{pick:'b',tags:['x,y','z']}});
   pendingFailure=true;await assert.rejects(protocol.request('GET','/permission'),/lookup failure/);pendingFailure=false;
   t.ok('Reconnect discovers children recursively, restores requests, maps choice values and propagates failed lookups',true);
 

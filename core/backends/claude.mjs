@@ -441,8 +441,9 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
 
   // AskUserQuestion のように、承認そのものではなく**回答**を運ぶツールがある。
   // host は正規形（answers など）で返してくるので、ここで SDK の updatedInput へ戻す。
+  // 複数選択の回答は配列で届くことがあるが、SDK の出力仕様はカンマ区切りの文字列なので結合する
   const extra = {
-    ...(answer.answers ? { answers: answer.answers } : {}),
+    ...(answer.answers ? { answers: Object.fromEntries(Object.entries(answer.answers).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : v])) } : {}),
     ...(answer.annotations ? { annotations: answer.annotations } : {}),
     ...(answer.response ? { response: answer.response } : {}),
   };

@@ -753,12 +753,16 @@ export const backend = {
       const answer = await askPermission({ toolName: 'question', input: {}, sessionId, toolUseID: p.tool?.callID ?? null, signal: signal?.signal, canAlways: false, kind: 'question', questions })
         .catch(() => ({ allow: false }));
       if (!answer?.allow) return reply(`/question/${p.id}/reject`);
-      // 単一選択の回答はカンマで切らない（選択肢のラベルにカンマが入りうる。複数選択はカンマ区切りのまま）
+      // 回答はそのまま届ける（選択肢の value はカンマ・前後の空白を含みうる）。
+      // 複数選択は画面が配列で送る（要素の境界を保つ）。文字列で届く古い経路は従来どおりカンマで切る
       const answers = questions.map((q) => {
-        const raw = String(answer?.answers?.[q.question] ?? '');
-        if (q.multiSelect) return raw.split(',').map((s) => s.trim()).filter(Boolean);
-        const v = raw.trim();
-        return v ? [v] : [];
+        const raw = answer?.answers?.[q.question];
+        if (q.multiSelect) {
+          if (Array.isArray(raw)) return raw.map(String);
+          return String(raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+        }
+        if (Array.isArray(raw)) return raw.length ? [String(raw[0])] : [];
+        return raw == null || raw === '' ? [] : [String(raw)];
       });
       await reply(`/question/${p.id}/reply`, { answers });
     }

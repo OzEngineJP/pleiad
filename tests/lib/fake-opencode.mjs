@@ -331,9 +331,18 @@ async function run(s, user, text, { system = null } = {}) {
       else { t.done('asked\n', { exit: 0 }); reply = `allowed (${answer.reply})`; }
     } else if (text.startsWith('question')) {
       // question-custom: 本物のフォームと同じく、ラベル（カンマ入り）とは別の value を持つ custom:false の選択肢
-      const closed = text.startsWith('question-custom');
-      const answer = await ask(s, 'question.asked', { questions: [closed
+      // question-multi: 複数選択。カンマ入りの value の境界を確かめる
+      // question-space: 前後に空白を持つ value。trim されずに届くか確かめる
+      // question-collide: 送られた文字列が別の選択肢の label と同じ（'b' は 1 つ目の label・2 つ目の value）
+      const variant = ['custom', 'multi', 'space', 'collide'].find((v) => text.startsWith(`question-${v}`));
+      const answer = await ask(s, 'question.asked', { questions: [variant === 'custom'
         ? { question: 'Search providers?', header: 'Web', custom: false, options: [{ label: 'Allow search via Exa, Firecrawl', value: 'allow' }, { label: 'Disable web search', value: 'disable' }] }
+        : variant === 'multi'
+        ? { question: 'Which tags?', header: 'Tags', multiple: true, custom: false, options: [{ label: 'one, two', value: 'one,two' }, { label: 'three', value: 'three' }] }
+        : variant === 'space'
+        ? { question: 'Pick one?', header: 'Pad', custom: false, options: [{ label: 'padded', value: ' a ' }, { label: 'plain', value: 'b' }] }
+        : variant === 'collide'
+        ? { question: 'Collide?', header: 'Col', custom: false, options: [{ label: 'b', value: 'a' }, { label: 'Other', value: 'b' }] }
         : { question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'warm' }, { label: 'Blue' }] }] });
       reply = answer.rejected ? 'question rejected' : `answers: ${JSON.stringify(answer.answers)}`;
     } else if (text.startsWith('mcp:')) {

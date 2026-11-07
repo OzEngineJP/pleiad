@@ -929,9 +929,10 @@ function toUserInputResponse(questions, answers) {
   const out = {};
   for (const q of questions ?? []) {
     const raw = answers?.[q.question];
-    const picked = typeof raw === "string" && raw.trim()
-      ? raw.split(",").map((s) => s.trim()).filter(Boolean)
-      : [];
+    const picked = Array.isArray(raw) ? raw.map(String)
+      : typeof raw === "string" && raw.trim()
+        ? raw.split(",").map((s) => s.trim()).filter(Boolean)
+        : [];
     out[q.id] = { answers: picked };
   }
   return { answers: out };

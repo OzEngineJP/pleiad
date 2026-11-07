@@ -2465,10 +2465,10 @@ function questionCard(ev, into = null) {
     for (const q of qs) {
       const set = picked.get(q.question);
       const free = notes.get(q.question);
-      // 複数選択はカンマ区切り。SDK の出力仕様に合わせる
+      // 複数選択は配列のまま（選択肢の value にカンマが入りうる。単一は従来どおり文字列で）
       const parts = [...(set ?? [])];
       if (free) parts.push(free);
-      if (parts.length) out[q.question] = parts.join(", ");
+      if (parts.length) out[q.question] = q.multiSelect ? parts : parts.join(", ");
     }
     return out;
   }
@@ -2513,7 +2513,8 @@ function questionCard(ev, into = null) {
     const summary = answers
       ? qs.map((q) => {
           const byKey = new Map((q.options ?? []).map((o) => [String(o.value ?? o.label ?? ""), o.label ?? ""]));
-          const shown = String(answers[q.question] ?? "").split(", ").map((v) => byKey.get(v) ?? v).join(", ");
+          const raw = answers[q.question];
+          const shown = (Array.isArray(raw) ? raw : String(raw ?? "").split(", ")).map((v) => byKey.get(v) ?? v).join(", ");
           return `${q.header || q.question}: ${shown}`;
         }).join(" / ")
       : t("chat.ask.skipped");

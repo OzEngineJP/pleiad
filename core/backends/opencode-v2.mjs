@@ -215,7 +215,11 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
       const answer={};
       for(let i=0;i<f.fields.length;i++) {
         const field=f.fields[i], values=body.answers?.[i] ?? [];
-        const selected = values.map(v => field.options?.find(o => (o.label ?? String(o.value)) === v || String(o.value) === v)?.value ?? v);
+        // 選択肢の value と先に全部照合し、無ければ label で引く（value が別の選択肢の label と同じことがある）
+        const selected = values.map(v => {
+          const hit = field.options?.find(o => String(o.value) === v) ?? field.options?.find(o => (o.label ?? String(o.value)) === v);
+          return hit?.value ?? v;
+        });
         let v=field.type==='multiselect'?selected:selected.join(', ');
         if(field.type==='boolean') {
           if(!/^(true|false|yes|no|はい|いいえ|1|0)$/i.test(v))throw new Error('Invalid boolean form answer');
