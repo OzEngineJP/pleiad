@@ -474,6 +474,21 @@ export default async function (t) {
     const h = fire("# "), u = fire("- "), q = fire("> ");
     return md(h.state) === "- a\n  # " && kinds(h.state) === "ul,h" && md(u.state) === "- a\n\n  - " && kinds(u.state) === "ul,ul" && md(q.state) === "- a\n  > " && kinds(q.state) === "ul,quote";
   })());
+  t.ok("項目の頭の中身の頭で > ・ - ・ 1. を打つと Space で確定する（# は字のまま。ADR 0301）", (() => {
+    const row = (text) => { const s = typeAll(st(""), text).s; return `${kinds(s)}|${md(s)}`; };
+    return row("- > a") === "quote|- > a" && row("- - a") === "ul|- - a" && row("- 1. a") === "ol|- 1. a"
+      && row("1. > a") === "quote|1. > a" && row("1. - a") === "ul|1. - a" && row("- > - a") === "ul|- > - a"
+      && row("- # a") === "ul|- \\# a" && row("- ```") === "ul|- \\```";
+  })());
+  t.ok("項目の頭で確定した引用は、Enter で続き、空の行の Enter・行頭の Backspace で一段ずつ外れる", (() => {
+    const q = typeAll(st(""), "- > a").s, e1 = enter(q), e2 = enter(e1), bs = backspaceAtStart({ ...q, sel: caret(0, 0) });
+    return md(e1) === "- > a\n  > " && kinds(e1) === "quote,quote" && md(e2) === "- > a\n  " && kinds(e2) === "quote,cont" && at(e2) === "1:0"
+      && md(bs) === "- a" && kinds(bs) === "ul";
+  })());
+  t.ok("項目の中身の頭の空白は送らず、行頭の記号は残る", (() => {
+    const s = typeAll(st(""), "-   a").s, n = typeAll(enter(s), "b").s;
+    return kinds(s) === "ul" && md(s) === "- a" && md(n) === "- a\n- b" && kinds(n) === "ul,ul";
+  })());
   t.ok("本文の次の行の 2. も項目になり、送るときは区切りの空行を挟む（行が正。履歴でも番号のリスト）", (() => {
     const run = (text) => ({ text, marks: [] });
     const two = applyTriggers({ blocks: [{ kind: "p", marker: "", runs: [run("a")] }, { kind: "p", marker: "", runs: [run("2. ")] }], sel: caret(1, 3) }, " ");

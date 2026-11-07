@@ -1337,7 +1337,7 @@ function inlinePattern(prefix, ch) {
 
 /**
  * 字を 1 つ打った直後に整える。ch は打った字、キャレットは打った字の直後。整えたら { state, kind }、無ければ null。
- *   行頭 `# `・`- `・`1. `・`> ` で行の種類（項目の中の行・引用の行でも。入れ子の項目・引用・項目の中の見出しになる）、行頭の ``` でコードブロック（閉じも足す）。
+ *   行頭 `# `・`- `・`1. `・`> ` で行の種類（項目の中の行・引用の行でも。入れ子の項目・引用・項目の中の見出しになる。項目の頭の行の中身の頭では `# ` 以外）、行頭の ``` でコードブロック（閉じも足す）。
  *   行の種類は、履歴と同じ構造の読み方でその種類になるときだけ変える（段落の続きの `2. ` は項目にならないので変えない）
  *   `code`・**太字**・*斜体*・[文字](URL) は閉じた字を打った時点で
  */
@@ -1348,10 +1348,12 @@ export function applyTriggers(st, ch, { plain = false } = {}) {
   if (!blk || blk.kind === 'att' || blk.kind === 'code') return null;
   const text = runsText(blk.runs);
   const lineStart = blk.kind === 'p' || blk.kind === 'cont' || blk.kind === 'quote';
-  if (lineStart && ch === ' ') {
+  // 項目の頭の行の中身の頭でも、`> `・`- `・`1. ` は Space で確定する（`- > a` の引用・`- - a` の入れ子の項目。ADR 0301）
+  const itemHead = blk.kind === 'ul' || blk.kind === 'ol';
+  if ((lineStart || itemHead) && ch === ' ') {
     const head = text.slice(0, v);
     const m = BLOCK_TRIGGER.exec(head);
-    if (m && serializeRuns(sliceRuns(blk.runs, 0, v)) === head) {
+    if (m && (lineStart || head[0] !== '#') && serializeRuns(sliceRuns(blk.runs, 0, v)) === head) {
       const next = clone(st);
       const kind = head[0] === '#' ? 'h' : head[0] === '>' ? 'quote' : /\d/.test(head[0]) ? 'ol' : 'ul';
       const nb = { ...blk, kind, marker: blk.marker + head, runs: sliceRuns(blk.runs, v) };
