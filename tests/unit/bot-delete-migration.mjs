@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { createDb, dbPath, openReadOnly, memoryStateTable } from '../../core/db.mjs';
 import { ensureDataSchemaSync, DATA_SCHEMA } from '../../core/data-schema.mjs';
 import { createMemoryStore } from '../../core/memory/store.mjs';
@@ -31,7 +32,11 @@ export default async function(t) {
     const source = (await fs.readFile(new URL('../../core/data-schema.mjs', import.meta.url), 'utf8'))
       .replace('export const DATA_SCHEMA = 3;', 'export const DATA_SCHEMA = 2;')
       .replace(/from '(\.\/[^']+)'/g, (_all, relative) => `from '${new URL(relative, new URL('../../core/data-schema.mjs', import.meta.url)).href}'`);
-    const oldStart = target => spawnSync(process.execPath, ['--input-type=module', '-e', `const {ensureDataSchemaSync}=await import('data:text/javascript;base64,${Buffer.from(source).toString('base64')}');ensureDataSchemaSync(${JSON.stringify(target)});`], { encoding: 'utf8' });
+    // 一時のファイルから読む。data: URL だと、エラーの見出しと stack の行ごとに URL（約 8 KB）が載り、macOS のパイプへの
+    // stderr は非同期なので、子は 8192 バイトを書いたところで終わる（後ろの拒否の文が届かない）
+    const oldModule = path.join(root, 'data-schema-v2.mjs');
+    await fs.writeFile(oldModule, source);
+    const oldStart = target => spawnSync(process.execPath, ['--input-type=module', '-e', `const {ensureDataSchemaSync}=await import(${JSON.stringify(pathToFileURL(oldModule).href)});ensureDataSchemaSync(${JSON.stringify(target)});`], { encoding: 'utf8' });
     const before = await fs.readFile(path.join(dir, 'memory/log.jsonl'));
     const result = ensureDataSchemaSync(dir);
     t.ok('写しの履歴は元とバイト一致し、形式2の番号とDBも退避', (await fs.readFile(path.join(result.backup, 'memory/log.jsonl'))).equals(before)

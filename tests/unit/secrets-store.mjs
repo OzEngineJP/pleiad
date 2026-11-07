@@ -22,10 +22,15 @@ export const name = 'secrets-store';
 export const title = '秘密情報と変数の置き場: 値を出さない・使えない名前・渡す場所の勝ち負け・worktree・.env・origin の照合・伏せる・Claude のシェルへ渡すファイル';
 
 const rejects = async (p) => { try { await p; return null; } catch (e) { return e; } };
-/** プロセスのコマンドライン（Windows は Win32_Process.CommandLine、それ以外は /proc/<pid>/cmdline） */
+/** プロセスのコマンドライン（Windows は Win32_Process.CommandLine、macOS は ps（/proc が無い）、それ以外は /proc/<pid>/cmdline） */
 const commandLineOf = async (pid) => {
   if (process.platform === 'win32') {
     const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: 'utf8', timeout: 30_000 });
+    return r.status === 0 ? String(r.stdout).trim() : null;
+  }
+  if (process.platform === 'darwin') {
+    // -ww で幅に切らず、引数を全部出す（改行は \012 と出る）
+    const r = spawnSync('ps', ['-ww', '-o', 'args=', '-p', String(pid)], { encoding: 'utf8', timeout: 30_000 });
     return r.status === 0 ? String(r.stdout).trim() : null;
   }
   return fs.readFile(`/proc/${pid}/cmdline`, 'utf8').then((s) => s.replace(/\0/g, ' ').trim(), () => null);

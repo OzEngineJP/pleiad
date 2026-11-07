@@ -49,8 +49,15 @@ export default async function(t) {
     t.ok('走っている委譲は running に載る（題・状態・依頼元・子の会話）', row?.title === 'slow child' && Boolean(row.sessionId), JSON.stringify(row));
     t.ok('running の行は依頼文・振り分けの記録・結果を持たない', row && !('task' in row) && !('routing' in row) && !('result' in row) && !('context' in row), JSON.stringify(Object.keys(row ?? {})));
 
-    // 子のターンが走っている間の 4 秒ごとの定期便。中身が変わらなければ送らない
-    await sleep(1500);
+    // 子のターンが走っている間の 4 秒ごとの定期便。中身が変わらなければ送らない。
+    // 窓は、子が待ちに入り（台本 slow は activity を出して中断を待つ）、最後に届いた running が今の中身と同じになってから開く。
+    // 負荷の下では子の始まりの出来事が親のターンの終わりの配信より後に来て、行の lastActivityAt が配信なしで進む。
+    // 次の定期便がそれを 1 回送るのは中身が変わったからで正しい（core/agent-tasks.mjs の running）ので、窓に入れない
+    await c.waitFor((e) => e.sessionId === row.sessionId && e.type === 'activity', { ms: 30_000 });
+    const body = ({ type: _type, ...work } = {}) => JSON.stringify(work);
+    let settled = false;
+    for (let i = 0; i < 150 && !(settled = body(c.events.findLast((e) => e.type === 'running')) === JSON.stringify(await c.cmd('running'))); i++) await sleep(100);
+    t.ok('窓の前に、最後に届いた running が今の中身に追いつく（子の始まりの分も配り終えた）', settled);
     const from = c.mark();
     await sleep(9000);
     const polls = c.since(from).filter((e) => e.type === 'running');
