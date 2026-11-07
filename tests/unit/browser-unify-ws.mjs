@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createBrowserUnifyWs } from '../../core/browser-unify-ws.mjs';
+import { createBrowserUnifyWs, BROWSER_UNIFY_COMMANDS } from '../../core/browser-unify-ws.mjs';
+import { COMMANDS } from '../../core/protocol.mjs';
 import { createHtmlKeys } from '../../core/html-keys.mjs';
 import { registry } from '../../core/ops/index.mjs';
 import { addressCrumbs } from '../../web/address-bar.mjs';
@@ -20,6 +21,8 @@ export default async function(t) {
     t.ok('invalid isolated-page grant inputs are rejected', code === 'INVALID');
   }
   t.ok('unknown commands fail explicitly', await isolated.handle({command:'unknown'}).then(() => false, error => error.code === 'UNKNOWN_COMMAND'));
+  // コマンドの一覧（core/protocol.mjs）に無いものは接続の入口で落ちて返事が来ない。handle だけの試験では見えないので両方を突き合わせる
+  t.ok('every browser-unify command is registered in the wire protocol', [...BROWSER_UNIFY_COMMANDS].every(command => COMMANDS.has(command)));
   t.ok('unavailable isolated listener returns no grant', (await createBrowserUnifyWs().handle({command:'vizOnce',args:{origins:[]}})).token === null);
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-b1-')));
   let ws;

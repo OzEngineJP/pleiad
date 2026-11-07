@@ -251,6 +251,7 @@ export const COMMANDS = new Set([
   'vizOnce',                 // { origins: string[] } -> { token: string|null }。可視化の「一度だけ読み込む」の印（隔離の origin の ?once=。10 分）。https の出どころが 1 つも無ければ null
   'pageResult',              // { sessionId, targetId?, requestId, ok, result?, error? } -> { delivered }。ページからの書き込みの頼み（worktree）の結果をページへ返す（pleiad:page-result）。その会話を見ている接続だけ
   'pageEnv',                 // { theme: auto|light|dark } -> { tabs }。画面のテーマの変化をファイルのページのタブへ知らせる（pleiad:env）
+  'pageOpen',                // { sessionId, kind, path?|hash?|entry?, title?, line?, once? } -> { kind, url, ... }。ページ・HTML・可視化の開く先をサーバーが決める（ADR 0295 の 7）
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。
