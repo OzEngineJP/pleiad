@@ -32,8 +32,9 @@ export default async function(t) {
     const source = (await fs.readFile(new URL('../../core/data-schema.mjs', import.meta.url), 'utf8'))
       .replace('export const DATA_SCHEMA = 3;', 'export const DATA_SCHEMA = 2;')
       .replace(/from '(\.\/[^']+)'/g, (_all, relative) => `from '${new URL(relative, new URL('../../core/data-schema.mjs', import.meta.url)).href}'`);
-    // 一時のファイルから読む。data: URL だと、エラーの見出しと stack の行ごとに URL（約 8 KB）が載り、macOS のパイプへの
-    // stderr は非同期なので、子は 8192 バイトを書いたところで終わる（後ろの拒否の文が届かない）
+    // 一時のファイルから読む。data: URL だと、エラーの見出しと stack の行ごとに URL（約 8 KB）が載り、出力が約 16 KB になる。
+    // spawnSync の子の stderr はソケットで、書き込みは非同期。macOS の送り口は 8192 バイトなので、子が例外で終わると
+    // 先頭の 8192 バイトしか届かない（後ろの拒否の文が届かない）
     const oldModule = path.join(root, 'data-schema-v2.mjs');
     await fs.writeFile(oldModule, source);
     const oldStart = target => spawnSync(process.execPath, ['--input-type=module', '-e', `const {ensureDataSchemaSync}=await import(${JSON.stringify(pathToFileURL(oldModule).href)});ensureDataSchemaSync(${JSON.stringify(target)});`], { encoding: 'utf8' });
