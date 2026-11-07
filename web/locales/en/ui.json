@@ -4469,6 +4469,7 @@
     "openExperimental": "Open Experimental",
     "running": "Rebuilding context from records…",
     "done": "Rebuilt context from records",
+    "recovered": "Couldn't continue the previous conversation, so its record moved to a new one and the message was sent again",
     "failed": "Could not rebuild, so resumed from the previous context",
     "tokens": "· handed over {{tokens}} tokens",
     "show": "What was handed over",

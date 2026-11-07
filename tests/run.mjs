@@ -794,6 +794,8 @@ const SUITES = [
   './unit/server-antigravity.mjs',
   './unit/server-antigravity-admin-policy.mjs',
   './unit/server-agy-default-model.mjs',
+  // 思考の署名が通らなくなった会話: 記録を新しい会話へ引き継いで一度だけ送り直す・また断られたら「失敗」で止まる（docs/multi-backend.md §2.8）
+  './unit/server-agy-thought-signature.mjs',
   // 控えはターンの途中から書く: 途中の書き込み・失敗／中断で残る・uuid が変わらない・forget した控えを作り直さない・書き込みは 1 本ずつ
   './unit/antigravity-partial-transcript.mjs',
   // 裏へ回ったコマンド: 落とす先の選び方（agy の直下の子だけ）と、server 越しに一覧へ出して止める

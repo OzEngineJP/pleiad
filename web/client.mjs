@@ -670,13 +670,14 @@ function compactionBoundary(entry) {
 }
 /**
  * 「記録から組み立て直しました」の区切り（ADR 0287）。畳んだときは 1 行、開くと渡した内訳（発言・索引・直近のやりとりの数と
- * ファイル・コマンドの先頭のいくつか）と、「渡した全文を開く」（handoff-<sha>.json。Pleiad の記録の写し）を出す
+ * ファイル・コマンドの先頭のいくつか）と、「渡した全文を開く」（handoff-<sha>.json。Pleiad の記録の写し）を出す。
+ * エージェントが前の会話を受け付けず、記録を新しい会話へ引き継いで送り直した区切り（kind: recover。docs/multi-backend.md §2.8）は、その旨の 1 行にする
  */
 function rebuildBoundary(entry) {
   const m = el('div', 'm compaction-boundary rebuild-boundary');
   const line = el('div', 'boundary-line');
   // i18n-dynamic: contextRebuild.
-  line.append(el('strong', null, t(entry.phase === 'failed' ? 'contextRebuild.failed' : 'contextRebuild.done')));
+  line.append(el('strong', null, t(entry.phase === 'failed' ? 'contextRebuild.failed' : entry.kind === 'recover' ? 'contextRebuild.recovered' : 'contextRebuild.done')));
   if (entry.phase === 'complete') {
     if (Number.isFinite(entry.beforeTokens) && Number.isFinite(entry.afterTokens))
       line.append(el('span', 'boundary-tokens', t('compaction.tokenChange', { before: compactNumber(entry.beforeTokens), after: compactNumber(entry.afterTokens) })));
@@ -700,6 +701,8 @@ function rebuildBoundary(entry) {
   row(t('contextRebuild.rows.reports'), stats.reports);
   row(t('contextRebuild.rows.presents'), stats.presents);
   row(t('contextRebuild.rows.turns'), stats.turns);
+  // 内訳も全文も無い区切り（記録の写しを渡さなかった）は 1 行だけ
+  if (!rows.childElementCount && !entry.ref) return m;
   details.append(el('summary', null, t('contextRebuild.show')), rows);
   if (entry.ref) {
     const open = el('button', 'rebuild-open', t('contextRebuild.openFull'));

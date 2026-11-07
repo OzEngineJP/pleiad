@@ -89,9 +89,10 @@ const forgotten = new Set();
  * `messages` は正規化済みの NormalizedMessage（history.mjs と同じ形）。
  * 同じ uuid が既にあれば差し替える（ターンの途中の書き直しでも二重にならない）。
  * `create: false` なら、控えが無いときに作らない（再開した会話の途中の書き込み。forget した控えを作り直さない）。
+ * `drop` の uuid の発言は控えから外す（agy が何も実行せずに断ったターンの発言。送り直しで二重に入らないように。runTurn）。
  */
-export function appendMessages(conversationId, { cwd, messages, create = true, turnResult = null }) {
-  if (!conversationId || !messages?.length) return Promise.resolve();
+export function appendMessages(conversationId, { cwd, messages = [], create = true, turnResult = null, drop = [] }) {
+  if (!conversationId || (!messages?.length && !drop?.length && !turnResult)) return Promise.resolve();
   return serial(conversationId, async () => {
     if (forgotten.has(String(conversationId))) return;
     const now = new Date().toISOString();
@@ -103,11 +104,12 @@ export function appendMessages(conversationId, { cwd, messages, create = true, t
     if (cwd) record.cwd = cwd;
     record.lastModified = now;
 
-    for (const message of messages) {
+    for (const message of messages ?? []) {
       const at = message.uuid ? record.messages.findIndex((m) => m.uuid === message.uuid) : -1;
       if (at >= 0) record.messages[at] = message;
       else record.messages.push(message);
     }
+    if (drop?.length) record.messages = record.messages.filter((m) => !drop.includes(m.uuid));
     // 生の result.status は会話本文・使用量には残らない。終わりの経路を会話ごとに少数だけ控える。
     if (turnResult) {
       const previous = record.turnResults ?? [];
@@ -152,7 +154,9 @@ export async function listRecords({ limit = 100 } = {}) {
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     const record = await read(name.slice(0, -".json".length));
-    if (!record) continue;
+    // 発言の無い控え（最初のターンを agy が何も実行せずに断った会話）は出さない。引き継ぎの送り直しで起こした会話なら
+    // 採用も戻っている（conversations.mjs）ので、一覧に別の会話として出てしまう。Pleiad で始めた会話は sidecar の行で出る
+    if (!record || !record.messages.length) continue;
     rows.push(toRow(record));
   }
   return rows

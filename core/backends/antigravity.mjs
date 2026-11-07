@@ -26,6 +26,7 @@ import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
+import { undelivered } from "./undelivered.mjs";
 import { agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
@@ -261,6 +262,18 @@ function turnResultFor(result, { finishedReply = false } = {}) {
   };
 }
 
+/**
+ * agy が何も実行せずに断ったターンか（docs/multi-backend.md §2.8「思考の署名が通らない会話」）。
+ * 再開した会話で、前のターンの思考の署名を API が受け付けないと、step を 1 つも始めないまま
+ * `INVALID_ARGUMENT (code 400): Invalid thought signature.` の ERROR だけが返る（実機の記録）。同じ会話へ何度送っても同じく断られる。
+ * step が始まった・本文が出たターンは、何かを実行したかもしれないので当てない
+ */
+function rejectedBeforeRun(result, { steps = 0, sawText = false } = {}) {
+  return String(result?.status ?? "").toUpperCase() === "ERROR"
+    && /invalid thought signature/i.test(String(result?.error ?? ""))
+    && steps === 0 && !sawText && !String(result?.response ?? "").trim();
+}
+
 /** 確認を出せずに拒否されたツールの文面（実機の `tool_info.error.message`。組織の管理ポリシーの「要審査」など） */
 const DENIED_RE = /permission check failed|denied permission/i;
 
@@ -449,6 +462,7 @@ export const backend = {
     const toolCalls = [];          // 控えに残すツール呼び出し
     let settle = null;
     let failed = null;
+    let retracted = false;         // agy が何も実行せずに断った（rejectedBeforeRun）。発言を控えから外す
     let resultTrace = null;        // 終了経路と生の status。本文や usage だけでは後から分からない
     let timedOut = false;          // agy が出力を打ち切った（下の onPrintTimeout）
     const started = new Map();     // tool.start を出した step -> { name, input }
@@ -498,8 +512,9 @@ export const backend = {
     let queued = false;            // 積んだまま、まだ始まっていない書き込みがある（次のを積まない。始まるときに最新を読む）
     let final = null;              // 終わりに書く分（畳んだ後に遅れて届いた出来事を混ぜない）
     let textTimer = null;
+    const userUuid = () => `${conversationId}:u${sentAt}`;
     const snapshot = (at) => [
-      ...(sent === null ? [] : [{ role: "user", text: sent, uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() }]),
+      ...(sent === null || retracted ? [] : [{ role: "user", text: sent, uuid: userUuid(), at: new Date(sentAt).toISOString() }]),
       // uuid はターンの間変えない（送信の時刻から作る）。変えると控えにも写しの会話（core/conversations.mjs の mergeMessages）にも二重に並ぶ
       ...(text || toolCalls.length ? [{
         role: "assistant", text, uuid: `${conversationId}:a${sentAt}`, at: new Date(at).toISOString(),
@@ -514,7 +529,7 @@ export const backend = {
         queued = false;
         const messages = final?.messages ?? snapshot(Date.now());
         return transcript.appendMessages(conversationId, { cwd, messages, create: final?.create ?? !resumed,
-          ...(final?.turnResult ? { turnResult: final.turnResult } : {}) });
+          ...(final?.turnResult ? { turnResult: final.turnResult } : {}), ...(final?.drop ? { drop: final.drop } : {}) });
       }).catch((err) => console.error("  agy の控えを書けなかった:", String(err?.message ?? err)));
       return writes;
     };
@@ -529,7 +544,9 @@ export const backend = {
       clearTimeout(textTimer);
       if (final || !delivered) return writes;
       final = { messages: snapshot(Date.now()), create: ok || !resumed,
-        turnResult: resultTrace ? { sentAt, at: new Date().toISOString(), ...resultTrace } : null };
+        turnResult: resultTrace ? { sentAt, at: new Date().toISOString(), ...resultTrace } : null,
+        // 何も実行せずに断られたターンの発言は、途中（session.prompt の直後・init）で書いた分も外す。送り直しで二重に入らない
+        ...(retracted ? { drop: [userUuid()] } : {}) };
       return save({ last: true });
     };
 
@@ -755,6 +772,17 @@ export const backend = {
           resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
             ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}),
             ...(deniedActions.length ? { denied: deniedActions.length } : {}), ...(total && (counted || usageFresh) ? { usage: total } : {}) };
+          if (outcome.outcome === "error" && !deniedTurn && rejectedBeforeRun(r, { steps: started.size, sawText })) {
+            // 何も実行していないので、送信待ちは「失敗」にする（undelivered。「2 回届くことがあります」にしない）。
+            // 再開した会話は同じ会話へ送っても断られ続けるので、作り直す印（nativeUnusable）を付けて返す。
+            // conversations.mjs の wrapped.runTurn が記録を新しい会話へ引き継いで 1 回だけ送り直すので、ここでは失敗を出さない
+            // （作り直せなければ server が失敗を出す）。新しい会話で断られたときは作り直さず、そのまま失敗にする
+            retracted = true;
+            failed = Object.assign(undelivered(new Error(outcome.error)), { retracted: [userUuid()] }, resumed ? { nativeUnusable: true } : {});
+            clearBehind();
+            if (!resumed) out(outcome);
+            return settle?.();
+          }
           if (outcome.outcome === "error") failed = new Error(outcome.error);
           clearBehind();
           out(outcome);
@@ -908,6 +936,8 @@ export const backend = {
       const aborted = Boolean(signal?.signal?.aborted);
       if (aborted) resultTrace ??= { source: "abort", status: null, outcome: "aborted" };
       await seal({ ok: !aborted && !failed });
+      // 断られた会話のプロセスは次のターンに使い回さない（作り直す会話・送り直しは新しく起こす）
+      if (retracted) { session.kill(); release(conversationId, session); }
 
       if (aborted) {
         emit({ type: "turnResult", outcome: "aborted" });
@@ -1220,4 +1250,4 @@ process.once("exit", () => {
   pids.forget(...gone);
 });
 
-export { MODES, TOOL_HINTS, botSessionKey, turnResultFor, usageFor, usageTotal, usageDelta, usageBaseOf };
+export { MODES, TOOL_HINTS, botSessionKey, rejectedBeforeRun, turnResultFor, usageFor, usageTotal, usageDelta, usageBaseOf };
