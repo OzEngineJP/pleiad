@@ -31,6 +31,7 @@ import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
 import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { t, agentT } from "../i18n.mjs";
+import { mcpContacted, mcpContactsWatched } from "../mcp-contact.mjs";
 import { createLoginWatch, loginTimeoutError } from "../auth/login-watch.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -73,6 +74,10 @@ const STOP_WAIT_MS = Number(process.env.AGENT_HOST_AGY_STOP_WAIT_MS ?? 15_000);
  * つまり plan / accept-edits を選べるようにすると、「モードを選んだのにエージェントが
  * 黙って何もできない」だけになる。**選べる形で出さない**。
  * 同じ理由で「都度確認」も無い（聞くと言って聞かないものを作らない）。
+ *
+ * **組織の管理ポリシーは skip より強い。** Gemini Enterprise の管理者が確認を求める設定にしていると、
+ * `--dangerously-skip-permissions` を付けても init の `permission_mode` は `request-review` になり、
+ * 確認の要るツールは拒否される。黙らせずに知らせる（下の adminNotice。docs/multi-backend.md §2.8「組織の管理ポリシー」）
  *
  * [antigravity-cli#548]: https://github.com/google-antigravity/antigravity-cli/issues/548
  */
@@ -212,6 +217,38 @@ function turnResultFor(result, { finishedReply = false } = {}) {
     type: "turnResult", outcome: "error", turns: result?.num_turns ?? 1,
     error: String(result?.error || t("antigravity.errors.endedWith", { status: status ?? t("antigravity.errors.unknownStatus") })),
   };
+}
+
+/** 確認を出せずに拒否されたツールの文面（実機の `tool_info.error.message`。組織の管理ポリシーの「要審査」など） */
+const DENIED_RE = /permission check failed|denied permission/i;
+
+/**
+ * 確認なしで渡したのに init が返したら、管理側の設定（「ターミナル自動実行モード」が「要審査」）が勝っていると分かる permission_mode（実機 1.5 系で確認）。
+ * 知らない値（「サンドボックスで続行」のときなど）は確認が要るとは限らないので知らせない
+ */
+const REVIEW_MODES = new Set(["request-review"]);
+
+/** 中継に渡したトークン（antigravity-context.mjs の prepareAgent の env）。1 本でも口へ来れば、agy は Pleiad の MCP を起こしている */
+const RELAY_AUTH_KEYS = ["PLY_CONTEXT_AUTHORIZATION", "PLY_AGENTS_AUTHORIZATION", "PLY_COMPUTER_AUTHORIZATION", "PLY_BROWSER_AUTHORIZATION", "PLY_CONTROL_AUTHORIZATION"];
+const relayTokens = (env) => RELAY_AUTH_KEYS.map((k) => env?.[k]).filter((v) => typeof v === "string" && /^Bearer [a-f0-9]{64}$/.test(v));
+
+/**
+ * agy の最初の result で 1 度だけ出す、組織の管理ポリシーの知らせ（無ければ ""）。
+ * 確認の要るモードで動いている・中継に 1 度も接続が無い、のどちらか（両方なら両方）。
+ * 拒否で失敗にしたターン（deniedTurn）は失敗の理由に案内を書くので、モードの分は重ねない
+ */
+function adminNotice(session, { askedSkip, deniedTurn }) {
+  const parts = [];
+  const mode = String(session.permissionMode ?? "");
+  if (!session.reviewNoticed && askedSkip && REVIEW_MODES.has(mode.toLowerCase())) {
+    session.reviewNoticed = true;
+    if (!deniedTurn) parts.push(t("antigravity.admin.reviewMode", { mode, ask: t("antigravity.admin.askTools") }));
+  }
+  if (!session.mcpChecked && session.mcpTokens?.length && mcpContactsWatched()) {
+    session.mcpChecked = true;
+    if (!session.mcpTokens.some(mcpContacted)) parts.push(t("antigravity.admin.mcpMissing", { ask: t("antigravity.admin.askMcp") }));
+  }
+  return parts.map((body) => `> ${t("antigravity.admin.notice", { body })}`).join("\n>\n");
 }
 
 /**
@@ -502,6 +539,8 @@ export const backend = {
       session.home = plan && agent ? agent.home : null;
       session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
       session.keys = keys;
+      // agy が Pleiad の MCP を起こしたかを見るトークン（adminNotice）。付け直しでは見ない（前のサーバーが受けた接続は分からない）
+      session.mcpTokens = useAgent && agent ? relayTokens(agent.env) : [];
     }
 
     // opts は feedLine から来る（付け直しの再生の行は { replay: true }。server の makeEmit が画面へ流さず、実行中のスナップショットとメモリの状態だけを作る）
@@ -516,6 +555,8 @@ export const backend = {
           const isNew = !conversationId;
           conversationId = id;
           live.set(id, session);
+          // 組織の管理ポリシーが skip より勝っていれば request-review などになる（adminNotice）
+          if (ev.init?.permission_mode) session.permissionMode = String(ev.init.permission_mode).slice(0, 100);
           if (isNew) {
             // **これを出さないと web が id を受け取れない。**`first: true` は
             // 「id が確定した最初の1本」の印で、再開ターンでは出さない
@@ -558,9 +599,12 @@ export const backend = {
               : params ?? prev?.input ?? {};
             const output = s.tool_info?.output;
             const state = String(s.state ?? "").toUpperCase();
+            // 拒否・失敗したツールは output 無しの ERROR と tool_info.error で来る（組織の管理ポリシーの「要審査」など。実機で確認）
+            const toolError = s.tool_info?.error;
+            const failedStep = state !== "ACTIVE" && (state === "ERROR" || Boolean(toolError));
             // 知らない state・state 無しでも取りこぼさない: output があれば完了、無ければ開始
             const done = state === "ACTIVE" ? false
-              : state === "DONE" ? true
+              : state === "DONE" || failedStep ? true
               : output !== undefined && output !== null && output !== "";
 
             if (!started.has(id)) {
@@ -582,11 +626,19 @@ export const backend = {
             }
             if (!done) return;
             dropBehind(id, out);
-            const raw = typeof output === "string" ? output : JSON.stringify(output ?? "");
+            const errorText = failedStep ? String(toolError?.message ?? toolError?.type ?? (typeof toolError === "string" ? toolError : "")) : "";
+            const raw = failedStep && (output === undefined || output === null || output === "") ? errorText
+              : typeof output === "string" ? output : JSON.stringify(output ?? "");
             // ply_computer: 画像を退避した行を除き、印の行から images と computer を作る。控えにもその形で残す（読み直しで印を読み直さない）
-            const r = computer ? computerResult(raw, cut) : cut(raw);
-            const isError = computer ? computerFailed(r.computer) : false;
-            out({ type: "tool.result", id, ...r, isError });
+            const cutResult = computer ? computerResult(raw, cut) : cut(raw);
+            // 確認を出せずに拒否された: 管理者に頼む設定を添え、委譲の結果へ拒否として集める（server が tool.result の rejection を拾う）
+            const denied = failedStep && DENIED_RE.test(errorText);
+            const r = denied ? { ...cutResult, text: `${cutResult.text}\n\n${t("antigravity.admin.toolDenied", { ask: t("antigravity.admin.askTools") })}` } : cutResult;
+            const isError = failedStep || (computer ? computerFailed(r.computer) : false);
+            const rejection = denied ? { tool: name, kind: "policy", via: "antigravity",
+              command: String(input?.CommandLine ?? input?.AbsolutePath ?? input?.TargetFile ?? input?.Path ?? "") || null,
+              reason: t("antigravity.admin.reason"), raw: errorText.slice(0, 1000) } : null;
+            out({ type: "tool.result", id, ...r, isError, ...(rejection ? { rejection } : {}) });
             toolCalls.push({ id, name, input, result: { ...r, isError } });
             save();
             return;
@@ -606,12 +658,28 @@ export const backend = {
             return new Promise((resolve) => setTimeout(() => resolve(handle({ ...ev, [LATE]: true }, opts)), EMPTY_SUCCESS_GRACE_MS));
           }
           conversationId ||= r.conversation_id || null;
+          // 返答の無いまま拒否された操作だけが残った SUCCESS は、普通の完了にしない（組織の管理ポリシー。docs/multi-backend.md §2.8）
+          const deniedActions = Array.isArray(r.denied_actions) ? r.denied_actions : [];
+          const deniedTurn = deniedActions.length > 0 && !sawText && !r.response && String(r.status ?? "").toUpperCase() === "SUCCESS";
+          // agy の最初の result で 1 度だけ、管理ポリシーの知らせを返答の後ろに足す（本文として控えにも残る。付け直しの再生では足さない）
+          // 認証の失敗などで終わったターンは見ない（中継を起こす前に終わる。次の成功したターンで見る）
+          const notice = opts?.replay || String(r.status ?? "").toUpperCase() !== "SUCCESS" ? "" : adminNotice(session, { askedSkip: Boolean(m.skip), deniedTurn });
+          if (notice) {
+            const add = `${text ? "\n\n" : ""}${notice}`;
+            if (!sawText) { sawText = true; out({ type: "activity", state: "writing" }); }
+            text += add;
+            out({ type: "text.delta", text: add });
+          }
           if (sawText) out({ type: "text.end" });
           const usage = usageFor(r.usage);
           if (usage) out(usage);
-          const outcome = turnResultFor(r, { finishedReply });
+          const actions = deniedActions.map((a) => String(a?.display_name ?? a?.action ?? "").slice(0, 100)).filter(Boolean);
+          const outcome = deniedTurn ? { type: "turnResult", outcome: "error", turns: r.num_turns ?? 1,
+            error: t("antigravity.admin.deniedTurn", { actions: [...new Set(actions)].join(", "), ask: t("antigravity.admin.askTools") }) }
+            : turnResultFor(r, { finishedReply });
           resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
-            ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}) };
+            ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}),
+            ...(deniedActions.length ? { denied: deniedActions.length } : {}) };
           if (outcome.outcome === "error") failed = new Error(outcome.error);
           clearBehind();
           out(outcome);
