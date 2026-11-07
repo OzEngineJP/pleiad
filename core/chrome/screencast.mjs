@@ -448,9 +448,15 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
     // A delayed packet from the previous tab must never reach the newly selected tab.
     if (context.tabId !== watch.tabId) throw new Error('no-tab');
     const scale = watch.pageScaleFactor || 1;
-    const commands = inputCommands(value, watch.viewport ? { width: watch.viewport.width / scale, height: watch.viewport.height / scale } : {});
+    const dims = watch.viewport ? { width: watch.viewport.width / scale, height: watch.viewport.height / scale } : {};
+    const commands = inputCommands(value, dims);
     const sheet = ['dialog', 'field', 'select', 'files'].includes(value?.type);
-    if (!commands.length && !sheet) throw new Error('invalid-input');
+    // 読むための問い合わせ（copy は選択、menu は点の下のもの、cursor はカーソルだけ）
+    const query = ['copy', 'menu', 'cursor'].includes(value?.type);
+    if (!commands.length && !sheet && !query) throw new Error('invalid-input');
+    const point = Number.isFinite(value?.x) && Number.isFinite(value?.y)
+      ? { x: Math.min(dims.width ?? 1600, Math.max(0, value.x)), y: Math.min(dims.height ?? 2400, Math.max(0, value.y)) } : null;
+    if (value?.type === 'menu' && !point) throw new Error('invalid-input');
     // Chrome holds the triggering input response until its modal dialog is answered.
     // The answer must bypass that response's queue, while still checking the watched tab.
     if (value?.type === 'dialog') {
@@ -459,12 +465,22 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
         viewport: context.device === 'phone' ? context.viewport : null });
       return {};
     }
+    // カーソルは見た目の問い合わせ。順番待ちに入れず、人の操作にもしない（映像の上を通るだけで AI を止めない。ADR 0296）
+    if (value?.type === 'cursor') {
+      const info = point && watch.pageInput ? await watch.pageInput.input({ type: 'cursor', ...point }).catch(() => null) : null;
+      return { info: info ?? null };
+    }
     const run = watch.queue.then(async () => {
       if (watches.get(sessionId) !== watch || watch.tabId !== context.tabId || !watch.inputView) throw new Error('no-tab');
       watch.inputClient = context.client;
       if (sheet && !await watch.pageInput.input(value)) throw new Error('invalid-input');
       relay.unify.tabHolder.touch({ sessionId, targetId: watch.tabId, by: context.device === 'phone' ? 'device' : 'pc',
         viewport: context.device === 'phone' ? context.viewport : null });
+      // コピー・右クリックのメニューは選択や点の下のものを読んで返す（ページの値は問い合わせの中に留める）
+      if (query) {
+        const probe = value.type === 'menu' ? { type: 'inspect', ...point } : { type: 'selection' };
+        return { info: watch.pageInput ? await watch.pageInput.input(probe).catch(() => null) : null };
+      }
       // Dispatch the first tap against the geometry that produced the frame. Resize after it.
       for (const [method, params] of commands) await watch.inputView.send(method, params);
       if (value?.type === 'tap' && context.device === 'phone') await watch.pageInput.afterTap().catch(() => {});

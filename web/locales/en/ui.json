@@ -4982,7 +4982,8 @@
       "pinFailed": "Couldn't switch windows.",
       "openConversation": "Open conversation",
       "operateHere": "Operate on this device", "operatingOnPc": "Operating on the PC",
-      "profileActions": "Chrome profiles"
+      "profileActions": "Chrome profiles",
+      "menu": { "copy": "Copy", "cut": "Cut", "copyLink": "Copy link", "openLink": "Open link", "selectAll": "Select all", "copyFailed": "Couldn't copy" }
     },
     "video": { "lag": "The video is lagging", "stale": "Reconnecting" }
   },
