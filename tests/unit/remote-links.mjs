@@ -1,9 +1,9 @@
 // リモート（スマホ・デスクトップ版のリモートの窓・LAN のブラウザー）でリンクを押したときの行き先（docs/remote.md §8.5）。
 //   - web/host-only-links.mjs: localhost・ループバックは、サーバーのある PC の画面でなければ開かずに知らせる
-//   - desktop/remote-windows.cjs の linkTarget: 写し（アプリの中の窓）・Web（既定のブラウザー）・localhost（知らせだけ）・それ以外
-//   - Android の殻（HostActivity・LinkPolicy）: 新しい窓を殻が受けて振り分ける取り決めを文字列で。規則そのものは
-//     mobile/android の LinkPolicyTest（Gradle）が同じ表で確かめる
-//   - web/file-preview.mjs: リモートの窓では「ブラウザーで開く」が写しの URL を直接渡す
+//   - desktop/remote-windows.cjs の linkTarget: Web（既定のブラウザー）・localhost（知らせだけ）・それ以外（プロキシのページも開かない）
+//   - Android・iOS の殻（HostActivity・HostViewController・LinkPolicy）: 新しい窓を殻が受けて振り分ける取り決めを文字列で。規則そのものは
+//     mobile/android の LinkPolicyTest（Gradle）と mobile/ios の PolicyTests（swift test）が同じ表で確かめる
+//   - web/file-preview.mjs: 「ブラウザーで開く」は写しの口（/visualization-snapshot）を使わない（ADR 0294 の 6）
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { isHostOnlyUrl, watchHostOnlyLinks } from '../../web/host-only-links.mjs';
 
 export const name = 'remote-links';
-export const title = 'リモートのリンク: localhost は知らせるだけ・写しはアプリの中・Web は端末のブラウザー';
+export const title = 'リモートのリンク: localhost は知らせるだけ・Web は端末のブラウザー・プロキシのページは開かない（アプリの中の窓は無い）';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -78,13 +78,23 @@ export default async function (t) {
   t.ok('受けた窓にはホストの画面の口を入れない（plyRemote・ダウンロード・さらに窓を開く）',
     popup.length > 0 && !/injectRemote|addDocumentStartJavaScript|setDownloadListener/.test(popup) && /setSupportMultipleWindows\(false\)/.test(popup)
       && /allowFileAccess = false/.test(popup));
-  t.ok('振り分けは LinkPolicy（写しはシート、Web は ACTION_VIEW、localhost は知らせ）',
-    /LinkPolicy\.classify\(/.test(host) && /LinkTarget\.SNAPSHOT/.test(host) && /Intent\.ACTION_VIEW/.test(host) && /R\.string\.link_host_only/.test(host));
+  t.ok('受けた窓はページを読まない（スクリプトも切る）。最初の行き先を振り分けたら捨てる',
+    /javaScriptEnabled = false/.test(popup) && /private fun place\(view: WebView, u: Uri\) \{\s*openOutside\(u\)\s*if \(view === popup\) root\.post \{ if \(popup === view\) closePopup\(\) \}/.test(host));
+  t.ok('振り分けは LinkPolicy（Web は ACTION_VIEW、localhost は知らせ）。アプリの中の写しのシートは無い',
+    /LinkPolicy\.classify\(/.test(host) && /Intent\.ACTION_VIEW/.test(host) && /R\.string\.link_host_only/.test(host)
+      && !/SNAPSHOT|showSheet|sheet_close/.test(host));
   const ui = { ja: JSON.parse(read('web/locales/ja/ui.json')), en: JSON.parse(read('web/locales/en/ui.json')) };
   const res = lang => read(`mobile/android/app/src/main/res/${lang === 'ja' ? 'values-ja' : 'values'}/strings.xml`);
   const str = (xml, key) => xml.match(new RegExp(`<string name="${key}">([^<]*)</string>`))?.[1]?.replace(/\\'/g, "'");
   t.ok('殻の知らせは画面の辞書と同じ文言（ja・en）',
-    ['ja', 'en'].every(l => str(res(l), 'link_host_only') === ui[l].timeline.link.hostOnly) && str(res('ja'), 'sheet_close') && str(res('en'), 'sheet_close'));
+    ['ja', 'en'].every(l => str(res(l), 'link_host_only') === ui[l].timeline.link.hostOnly) && !/sheet_close/.test(res('ja') + res('en')));
+
+  // ---- iOS の殻（HostViewController・LinkPolicy）
+  const ios = read('mobile/ios/App/App/HostViewController.swift');
+  const policy = read('mobile/ios/remote-core/Sources/PleiadRemote/Policies.swift');
+  t.ok('iOS も新しい窓の行き先が分かれば外へ振り分けるだけ。アプリの中の写しのシートは無い',
+    /createWebViewWith[\s\S]*?if let u = action\.request\.url, !u\.absoluteString\.isEmpty, u\.absoluteString != "about:blank" \{\s*openOutside\(u\)\s*return nil/.test(ios)
+      && !/snapshot|showSheet|sheetClose/i.test(ios) && !/snapshot|SNAPSHOT_PATH/.test(policy) && !/sheetClose/.test(read('mobile/ios/App/App/ShellTexts.swift')));
 
   // ---- 「ブラウザーで開く」は写しの口（/visualization-snapshot）を使わない（ADR 0294 の 6）
   t.ok('画面は写しの URL を作らない', !/visualization-snapshot/.test(read('web/file-preview.mjs')));

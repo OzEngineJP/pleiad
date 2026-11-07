@@ -8,7 +8,7 @@ export const title = 'Chrome の窓を閉じる前の確かめ: 引き継ぎ中�
 
 const words = { 'pending.cancel': 'やめる', 'taskChrome.confirmClose': 'ウィンドウを閉じる', 'taskChrome.confirmHuman': '引き継ぎ中です', 'taskChrome.confirmWaiting': '待っています',
   'taskChrome.view': '見る', 'taskChrome.close': '閉じる', 'taskChrome.running': '作業中', 'taskChrome.paused': '引き継ぎ中',
-  'browser.chromeWindow.windowActions': 'ウィンドウの操作', 'browser.chromeWindow.closeShown': '表示中のウィンドウを閉じる', 'browser.chromeWindow.windowNumber': 'ウィンドウ' };
+  'browser.chromeWindow.closeShown': '表示中のウィンドウを閉じる' };
 const tr = key => words[key] ?? key;
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const el = (tag, cls = null, value = '') => ({ tag, className: cls, textContent: value, children: [], disabled: false,
@@ -66,14 +66,15 @@ export default async function (t) {
   try {
     const rig = risk => {
       const commands = [], menus = [], windows = createWindowTable();
-      let toolbar = null, body = null, open = false;
-      const preview = { openPanel: opts => { toolbar = opts.toolbar; body = opts.body; open = true; }, panelOpen: () => open, close: () => { open = false; } };
+      let body = null, open = false;
+      const preview = { openPanel: opts => { body = opts.body; open = true; }, panelOpen: () => open, close: () => { open = false; } };
       windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
       const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return name === 'browserScreencast' ? { state: {} } : {}; },
-        preview, browser: { available: () => true }, session: () => 'conv', windows, closeRisk: () => risk, showMenu: (x, y, items, title) => menus.push({ items, title }) });
+        preview, session: () => 'conv', windows, closeRisk: () => risk });
       panel.open();
       const dialog = () => body.querySelector('.cp-dlg');
-      return { commands, menus, dialog, press: () => toolbar.at(-1).onclick(), closes: () => commands.filter(([name]) => name === 'chromeCloseWindow'),
+      // ⋯ はアドレスバーのメニュー（web/browser-unify.mjs）が browserMenuItems の行を出す
+      return { commands, menus, dialog, press: () => menus.push({ items: panel.browserMenuItems(null) }), closes: () => commands.filter(([name]) => name === 'chromeCloseWindow'),
         card: () => body.querySelector('.cp-dlg-card'), no: () => body.querySelector('.btn-quiet'), yes: () => body.querySelector('.cp-dlg-yes'), note: () => body.querySelector('.cp-dlg-n') };
     };
     for (const risk of ['human', 'waiting', null]) {
@@ -106,19 +107,21 @@ export default async function (t) {
         r.closes().length === 1 && r.closes()[0][1].sessionId === 'conv' && !('windowId' in r.closes()[0][1]) && r.dialog().hidden === true);
     }
 
-    // ⋯ の一覧に子の窓の行は足さない（子の Chrome は上の列の会話の題で映す。web/chrome-window-switch.mjs の試験）
+    // 子の会話の Chrome を映している間の ⋯ は「会話を開く」と閉じる（子の窓の行・「ウィンドウ n · 表示中」の行は無い）
     {
-      const menus = [], windows = createWindowTable();
-      let toolbar = null, open = false;
-      const rows = [{ sessionId: 'conv', taskId: null, title: null, windows: 1, state: 'idle' }, { sessionId: 'a', taskId: 'ta', title: '調査', windows: 2, profileName: '仕事', state: 'running', waiting: true }];
-      const preview = { openPanel: opts => { toolbar = opts.toolbar; open = true; }, panelOpen: () => open, close: () => { open = false; } };
+      const windows = createWindowTable(), opened = [];
+      let open = false;
+      const preview = { openPanel: () => { open = true; }, panelOpen: () => open, close: () => { open = false; } };
       windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
-      const panel = setupChromePanel({ cmd: async name => (name === 'browserScreencast' ? { state: {} } : {}), preview, browser: { available: () => true }, session: () => 'conv', windows,
-        showMenu: (x, y, items, title) => menus.push({ items, title }), children: () => rows });
-      panel.open();
+      windows.apply({ sessionId: 'a', windows: 2, windowIds: [8, 9], currentWindowId: 8 });
+      const panel = setupChromePanel({ cmd: async name => (name === 'browserScreencast' ? { state: {} } : {}), preview, session: () => 'conv', windows,
+        openConversation: id => opened.push(id) });
+      panel.open(null, { target: 'a' });
       await flush();
-      toolbar.at(-1).onclick();
-      t.ok('子の窓があっても、⋯ は閉じるだけ（子の窓の行・「ウィンドウ n · 表示中」の行は無い）', menus[0].items.length === 1 && menus[0].items[0].label === '表示中のウィンドウを閉じる', JSON.stringify(menus[0].items.map(i => i.label)));
+      const items = panel.browserMenuItems(null);
+      t.ok('子の会話を映している間の ⋯ は「会話を開く」と「表示中のウィンドウを閉じる」だけ', items.length === 2 && items[1].label === '表示中のウィンドウを閉じる', JSON.stringify(items.map(i => i.label)));
+      items[0].onClick();
+      t.ok('「会話を開く」は映している子の会話を開く', opened.length === 1 && opened[0] === 'a');
     }
   } finally {
     globalThis.requestAnimationFrame = old.raf; N.prototype.getBoundingClientRect = old.rect; N.prototype.toggleAttribute = old.toggle; globalThis.window = old.window;

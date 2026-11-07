@@ -1,7 +1,7 @@
 // ファイルのページの Cookie を Chrome に入れる（core/chrome/page-cookie.mjs、ADR 0295 の 2 の 2）。
 //   - 形: localhost の host-only・Path=/_pleiad/・HttpOnly・SameSite=Strict・ファイルのページの port（sourcePort）。値は本体のトークンから導いた値で、トークンそのものではない
 //   - 時点: つながったとき（ブラウザーの単位の Storage.setCookies）・ファイルのページを開く前・タブのセッション（Network.setCookie）
-//   - 旗が off（cookie が null）・port が立っていないときは何もしない。失敗しても投げず、ログに値を書かない
+//   - cookie が null（ページの port が立たなかった）・port が立っていないときは何もしない。失敗しても投げず、ログに値を書かない
 import { createPageCookie, isPagesUrl, pageCookieParam } from '../../core/chrome/page-cookie.mjs';
 import { pagesCookie, pagesSecret } from '../../core/page-auth.mjs';
 
@@ -18,7 +18,7 @@ export default async function (t) {
     t.ok('localhost の host-only（url で入れ、domain を付けない）・Path・HttpOnly・Strict・port', param.url === `http://localhost:${PAGES}/_pleiad/` && !('domain' in param)
       && param.path === '/_pleiad/' && param.httpOnly === true && param.sameSite === 'Strict' && param.sourcePort === PAGES && param.sourceScheme === 'NonSecure' && !('expires' in param));
     t.ok('値は本体のトークンから導いた値で、トークンそのものではない', param.name === 'pleiad_pages' && param.value === pagesSecret(TOKEN) && param.value !== TOKEN && !JSON.stringify(param).includes(TOKEN));
-    t.ok('旗が off（cookie が null）・port が無い・壊れた port なら null', pageCookieParam({ cookie: null, pages: PAGES }) === null && pageCookieParam({ cookie: pagesCookie(TOKEN), pages: null }) === null
+    t.ok('cookie が null・port が無い・壊れた port なら null', pageCookieParam({ cookie: null, pages: PAGES }) === null && pageCookieParam({ cookie: pagesCookie(TOKEN), pages: null }) === null
       && pageCookieParam({ cookie: pagesCookie(TOKEN), pages: 0 }) === null && pageCookieParam({ cookie: pagesCookie(TOKEN), pages: '7431' }) === null && pageCookieParam({ cookie: { name: 'x' }, pages: PAGES }) === null);
     t.ok('ファイルのページの URL の見分け', isPagesUrl(`http://localhost:${PAGES}/_pleiad/s/a/file`, PAGES) && !isPagesUrl(`http://localhost:${PAGES}/`, PAGES) && !isPagesUrl(`http://127.0.0.1:${PAGES}/_pleiad/s/a/`, PAGES)
       && !isPagesUrl(`http://localhost:${PAGES + 1}/_pleiad/s/a/`, PAGES) && !isPagesUrl('nope', PAGES) && !isPagesUrl(`http://localhost:${PAGES}/_pleiad/s/a/`, null));
@@ -47,7 +47,7 @@ export default async function (t) {
     t.ok('send が無ければ何もしない', (await jar.connected({})) === false && (await jar.connected()) === false && (await jar.sessionCookie(null)) === false);
 
     cookie = null;
-    t.ok('旗が off（cookie が null）なら何もしない', (await jar.connected({ send })) === false && (await jar.beforeOpen({ url: `http://localhost:${PAGES}/_pleiad/s/a/file`, send })) === false
+    t.ok('cookie が null（ページの port が立たなかった）なら何もしない', (await jar.connected({ send })) === false && (await jar.beforeOpen({ url: `http://localhost:${PAGES}/_pleiad/s/a/file`, send })) === false
       && !jar.wanted(`http://localhost:${PAGES}/_pleiad/s/a/`) && calls.length === 2);
     cookie = pagesCookie(TOKEN); ports = null;
     t.ok('port が分かる前は何もしない', (await jar.connected({ send })) === false && calls.length === 2);

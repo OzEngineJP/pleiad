@@ -14,7 +14,7 @@ import { createChromeControl } from '../../core/chrome/control.mjs';
 import { createChromeScreencast } from '../../core/chrome/screencast.mjs';
 import { createScreencastHub } from '../../core/browser-screencast.mjs';
 import { HUMAN_MESSAGE } from '../../core/chrome/tab-holder.mjs';
-import { inputCommands, deviceViewport, deviceMetrics } from '../../core/chrome/input.mjs';
+import { inputCommands, deviceViewport } from '../../core/chrome/input.mjs';
 import { browserOps } from '../../core/ops/browser.mjs';
 
 export const name = 'chrome-device';
@@ -105,7 +105,6 @@ export default async function (t) {
     const v = deviceViewport({ width: 100.4, height: 9999, scale: 5 });
     t.ok('端末の箱の大きさは範囲に丸める（幅 240〜1600・高さ 240〜2400・倍率 1〜3）', v.width === 240 && v.height === 2400 && v.scale === 3, JSON.stringify(v));
     t.ok('大きさが数でなければ null（引き継げない）', deviceViewport({ width: 'x', height: 700 }) === null && deviceViewport() === null);
-    t.ok('ページの大きさのコマンドは mobile: false（meta の無いページで座標がずれない）', JSON.stringify(deviceMetrics({ width: 390, height: 700, scale: 2 })) === JSON.stringify({ width: 390, height: 700, deviceScaleFactor: 2, mobile: false }));
   }
 
   // ===== 2. 「この端末で操作する」: 見ているタブだけを端末の人の操作にする。窓は見せず・映像は止めず・会話も止めず・ページの大きさは端末の箱 =====

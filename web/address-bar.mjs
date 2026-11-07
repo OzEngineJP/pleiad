@@ -156,13 +156,10 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
       crumbs.title = label;
     } else {
       let text = tab?.page?.path ?? tab?.url ?? '';
-      if (mobile() && file && cwd()) {
-        const base = cwd().replace(/[\\/]$/, ''), normalized = text.replaceAll('\\', '/'), prefix = base.replaceAll('\\', '/') + '/';
-        if (normalized.toLowerCase().startsWith(prefix.toLowerCase())) text = './' + text.slice(prefix.length);
-      }
       if (mobile() && !file) { try { text = new URL(text).host; } catch {} }
       if (mobile() && file) {
-        const name = text.split(/[\\/]/).at(-1), label = document.createElement('span'); label.className = 'bu-phone-filename'; label.textContent = name;
+        // The phone is narrow, so it shows "… › name". Tapping edits the full absolute path, the same as on PC (ADR 0294 2.5).
+        const name = text.split(/[\\/]/).filter(Boolean).at(-1) ?? text, label = document.createElement('span'); label.className = 'bu-phone-filename'; label.textContent = name;
         crumbs.append(document.createTextNode(text !== name ? '… › ' : ''), label);
       } else crumbs.textContent = text;
       crumbs.title = tab?.page?.path ?? tab?.url ?? '';

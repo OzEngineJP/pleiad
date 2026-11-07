@@ -7,7 +7,7 @@ export const title = "モデル選択";
 export default async function (t, ctx) {
   const c = await ctx.open({ autoAllow: true });
   try {
-    const models = await c.cmd("models");
+    const models = await c.cmd("models", { backend: "claude" });   // Claude の会話で確かめる（サーバーの既定のエージェントに左右されない）
     t.ok("models が返る", Object.keys(models).length >= 3,
          Object.keys(models).map((k) => k || "(既定)").join(", "));
 
@@ -20,7 +20,7 @@ export default async function (t, ctx) {
     for (const want of ["haiku", "sonnet"]) {
       last = await c.runTurn({
         prompt: "Reply with exactly: OK",
-        sessionId: null, cwd: ctx.work, model: want, mode: "default",
+        sessionId: null, backend: "claude", cwd: ctx.work, model: want, mode: "default",
       });
       t.ok(`model=${want} が実際に使われる`, String(last.initModel).includes(want),
            `解決されたモデル=${last.initModel}`);

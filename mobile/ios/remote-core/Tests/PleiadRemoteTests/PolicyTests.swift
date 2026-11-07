@@ -12,8 +12,9 @@ final class LinkPolicyTests: XCTestCase {
                                    hasUserInfo: u.user != nil || u.password != nil, proxyPort: proxy)
     }
 
-    func testSnapshotOnTheProxyOnly() {
-        XCTAssertEqual(.snapshot, of("http://127.0.0.1:\(proxy)/visualization-snapshot?sessionId=s&id=i"))
+    func testTheProxysPagesDoNotOpen() {
+        // The retired saved-copy route of an older host included
+        XCTAssertEqual(.blocked, of("http://127.0.0.1:\(proxy)/visualization-snapshot?sessionId=s&id=i"))
         XCTAssertEqual(.blocked, of("http://127.0.0.1:\(proxy)/"))
         XCTAssertEqual(.blocked, of("http://127.0.0.1:\(proxy)/local-file?path=x"))
         XCTAssertEqual(.blocked, of("http://127.0.0.1:\(proxy)/visualization-snapshot/x"))

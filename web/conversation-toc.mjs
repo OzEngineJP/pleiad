@@ -41,8 +41,8 @@ const collapse = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 const usable = (node) => !node.parentElement?.closest('button,summary,.code-copy');
 
 /**
- * @param {{ thread:HTMLElement, log:HTMLElement, nav:object, preview:object, narrow:MediaQueryList, button:HTMLElement, entriesOf?:Function }} o
- *   preview は web/file-preview.mjs の返り値（openPanel・close・panelOpen）。button は見出しの目次のボタン
+ * @param {{ thread:HTMLElement, log:HTMLElement, nav:object, preview:object, narrow:MediaQueryList, button?:HTMLElement, entriesOf?:Function }} o
+ *   preview は web/file-preview.mjs の返り値（openPanel・close・panelOpen）。button は見出しの目次のボタン（Chats の会話は #tocEntry、チャンネルのスレッドは .th-toc）
  *   entriesOf は項目の作り方（既定は Chats の会話の筋）。チャンネルのスレッドは投稿の列から作る（web/channels/thread.mjs）:
  *   ({ turns, kinds, turnInfo }) → { kind: 'user'|'answer'|'tool', turn, row, el, bodies?, at, pending? }[]（bodies は探す対象の要素）
  */
@@ -353,10 +353,10 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     search({ select: false });
   }
   function open(source) {
-    opener = source ?? (narrow.matches ? document.activeElement : button);
+    opener = source ?? (narrow.matches || !button ? document.activeElement : button);
     if (opened) { input.focus(); input.select(); return; }
     opened = true;
-    button.setAttribute('aria-expanded', 'true');
+    button?.setAttribute('aria-expanded', 'true');
     if (narrow.matches) openSheet(); else {
       preview.openPanel({ key: KEY, title: t('nav.toc.title'), body: root, label: t('nav.toc.title'), element: button, width: PANEL_WIDTH, onClose: cleanup });
     }
@@ -376,7 +376,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     opened = false;
     carried = false;
     clearMarks();
-    button.setAttribute('aria-expanded', 'false');
+    button?.setAttribute('aria-expanded', 'false');
   }
   const isOpen = () => opened;
 
@@ -466,7 +466,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     event.preventDefault();
     if (event.key === 'ArrowUp' && i === 0) input.focus(); else rows[Math.max(0, Math.min(rows.length - 1, i + (event.key === 'ArrowDown' ? 1 : -1)))].focus();
   });
-  button.addEventListener('click', () => { if (opened) close(); else open(button); });
+  button?.addEventListener('click', () => { if (opened) close(); else open(button); });
 
   // 会話が変わった（発言の増減・ターンの終わり）とき、開いていれば一覧を取り直す。閉じていれば次に開くときに作る
   let refreshTimer = 0;
@@ -479,7 +479,7 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
   }).observe(thread, { childList: true });
   nav.onUpdate(() => {
     const has = nav.turns().length > 0;
-    if (button.hidden === has) button.hidden = !has;
+    if (button && button.hidden === has) button.hidden = !has;
     if (opened) paintCurrent();
   });
 

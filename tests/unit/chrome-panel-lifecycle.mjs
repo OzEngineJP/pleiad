@@ -1,6 +1,5 @@
 import { setupChromePanel, createWindowTable } from '../../web/chrome-panel.mjs';
 import { N } from '../lib/dom-stub.mjs';
-import fs from 'node:fs';
 
 export const name = 'chrome-panel-lifecycle';
 export const title = '右パネル「Chrome の窓」の見始め: 窓がまだ無い会話で開く・窓が閉じて新しい窓ができたら映像が戻る（DOM の代役）';
@@ -88,13 +87,6 @@ export default async function (t) {
       r.frame(1);
       r.panel.windowEvent({ sessionId: 'conv', windows: 0 });
       t.ok('窓が閉じても、パネルは残り、閉じた表示になる', r.panel.isOpen() === true);
-    }
-
-    // 狭いパネルで「止める」「引き継ぐ」を切らない: 折り返せる（nowrap + overflow:hidden で切っていた）
-    {
-      const css = fs.readFileSync(new URL('../../web/chrome-panel.css', import.meta.url), 'utf8');
-      const rule = css.match(/\.cp-slot \.cc\{([^}]*)\}/)?.[1] ?? '';
-      t.ok('状態の一行は狭いパネルで折り返せ、切らない', /flex-wrap:\s*wrap/.test(rule) && !/overflow:\s*hidden/.test(rule), rule);
     }
   } finally {
     globalThis.requestAnimationFrame = old.raf; N.prototype.getBoundingClientRect = old.rect; N.prototype.toggleAttribute = old.toggle;

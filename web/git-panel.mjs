@@ -883,13 +883,11 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     preview.openPanel({
       key: KEY, title: t('git.panel'), subtitle: '', label: t('git.panel'), element: opener, body: root,
       head: [{ node: reloadBtn }], toolbar: [prs.el, tabs],
-      onClose: () => { opener?.setAttribute?.('aria-expanded', 'false'); onOpenChange(false); },
+      onClose: () => { opener?.setAttribute?.('aria-expanded', 'false'); },
     });
-    onOpenChange(true);
     paint();
     load();
   }
-  let onOpenChange = () => {};
 
   function toggle(element, options) {
     if (isOpen()) preview.close(true); else open(element, options);
@@ -916,7 +914,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (!(/Mac/.test(navigator.platform) ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
     if (document.body.classList.contains('settings') || document.querySelector('dialog[open]') || !canOpen()) return;
     e.preventDefault();
-    toggle(document.getElementById('gitEntry'));
+    toggle(null);
   });
 
   return {
@@ -925,6 +923,5 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     reset() { target = null; resetFor(null); if (isOpen()) preview.close(false); },
     /** 会話の今の状態が変わった（ターンの終わり）。開いていれば取り直す */
     changed() { if (isOpen()) load(); },
-    onOpenChange(fn) { onOpenChange = fn; },
   };
 }

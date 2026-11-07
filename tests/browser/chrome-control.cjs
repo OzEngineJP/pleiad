@@ -1,6 +1,7 @@
 // playwright-cli run-code --filename=tests/browser/chrome-control.cjs
-// 右パネル「Chrome の窓」へ差し込んだ状態の一行・止める・引き継ぐ・戻す（web/chrome-control.mjs。ADR 0148・0154）: 状態ごとの字とボタン・押した位置の輪・
-// 一時停止中の帯（会話の側）・撮影を断つ幕は映像の側の 1 つだけ・窓が無くなっても一時停止中は戻せる・会話の引き継ぎの行・動きを減らす設定・狭い幅。
+// 右の欄の Chrome の映像に重ねる層と、会話の側の一時停止の帯（web/chrome-control.mjs。ADR 0148・0154・0296）: 古い状態の一行が残っていない・押した位置の輪・
+// 一時停止中の帯と戻すボタン・撮影を断つ幕は映像の側の 1 つだけ・窓が無くなっても一時停止中は戻せる・会話の引き継ぎの行・動きを減らす設定・狭い幅・スマホの帯の読み上げ。
+// 誰が操作中かと止める・任せるはアドレスバーの札（tests/browser/browser-unify-tabs.cjs）。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (token chrome-control-test, port 7435, AGENT_HOST_LOCALE=ja). Never run against live data.
 // Chrome の窓の知らせ・映像・状態はサーバーに無い（偽の Chrome が要る）ので、ページの中で届いたことにする（WebSocket の onmessage で配り、送るコマンドは send を包んで控えて応答を作る）。
 async page => {
@@ -59,23 +60,21 @@ async page => {
   const sessionId = await page.evaluate(() => localStorage.getItem('agent-host-current'));
   check(!!sessionId, 'a conversation exists');
 
-  // ============ 1. 窓があるとき、パネルの差し込み口に状態の一行が入る
+  // ============ 1. 窓があるとき、映像の上に層が重なる。古い状態の一行（止める・引き継ぐ）は無い
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 1, operating: false }), sessionId);
   await page.locator('#browserEntry').click();
   await page.locator('#filePreview[data-panel="chrome-window"]').waitFor();
   await page.locator('.cp-screen').waitFor();
-  check(await page.locator('.cp-slot .cc').count() === 1, 'the status row is mounted in the slot');
-  check((await page.locator('.cp-slot .cc-text').textContent()) === '待機中' && (await page.locator('.cp-slot .cc-btn:visible').allTextContents()).join() === '引き継ぐ', 'with a window and no news yet: idle, take over only');
   check(await page.locator('.cp-screen .cc-overlay').count() === 1, 'the overlay sits on top of the video');
   check(await page.locator('#chromeBanner .cc-banner').count() === 1 && await page.locator('#chromeBanner .cc-banner').isHidden(), 'the banner is in the conversation side and hidden');
+  const oldRow = () => page.locator('.cc, .cc-status, .cc-text').count();
+  const oldButtons = () => page.locator('#filePreview button:visible', { hasText: /^(止める|引き継ぐ)$/ }).count();
+  check(await oldRow() === 0 && await oldButtons() === 0, 'no old status row and no stop / take-over buttons in the panel');
 
-  // ============ 2. running: 「… が操作中」と止める・引き継ぐ。role=status
+  // ============ 2. running でも古い一行は出ない（誰が操作中かはアドレスバーの札）
   await control(sessionId, 'running');
-  await page.locator('.cp-slot .cc').waitFor({ state: 'visible' });
-  check(/が操作中$/.test((await page.locator('.cp-slot .cc-text').textContent()).trim()), 'running: the agent is operating');
-  check(await page.locator('.cp-slot .cc-status').getAttribute('role') === 'status', 'the line is role=status');
-  const shown = async () => (await page.locator('.cp-slot .cc-btn:visible').allTextContents());
-  check((await shown()).join() === '止める,引き継ぐ', `running buttons: ${(await shown()).join()}`);
+  await page.waitForTimeout(100);
+  check(await oldRow() === 0 && await oldButtons() === 0 && await page.locator('#chromeBanner .cc-banner').isHidden(), 'running: no old row, no banner');
 
   // ============ 3. 押した位置の輪（映像の元の大きさが分かるとき、割合で置く）
   await page.evaluate(([id, data]) => window.__deliver({ kind: 'screencast', source: 'chrome', type: 'frame', sessionId: id, seq: 1, data, metadata: { deviceWidth: 1000, deviceHeight: 500 } }), [sessionId, PNG]);
@@ -91,24 +90,21 @@ async page => {
   await page.evaluate(() => window.__event({ type: 'chromeTap', sessionId: 'someone-else', x: 1, y: 1 }));
   check(await page.locator('.cp-screen .cc-ring').count() === 0, 'taps of other conversations are ignored');
 
-  // ============ 4. 引き継ぐ → paused（帯・戻すだけ・映像の幕は映像の側の 1 つだけ）
-  await page.locator('.cp-slot .cc-btn', { hasText: '引き継ぐ' }).click();
-  await page.waitForFunction(() => window.__sent.some((x) => x.command === 'chromeTakeOver'));
-  check((await sent('chromeTakeOver'))[0].args.sessionId === sessionId, 'the button sends chromeTakeOver for this conversation');
+  // ============ 4. paused（帯と戻すボタン・映像の幕は映像の側の 1 つだけ）
   await control(sessionId, 'paused', 1);
   await page.locator('#chromeBanner .cc-banner').waitFor({ state: 'visible' });
   check((await page.locator('#chromeBanner .cc-banner-text').textContent()) === '一時停止中 · あなたが Chrome で操作しています', 'the banner text');
-  check(await page.locator('#chromeBanner .cc-banner').getAttribute('role') === null && await page.locator('.cp-slot .cc').getAttribute('aria-label') === null, 'the banner has no role (no double reading) and the row div has no aria-label');
-  check((await page.locator('.cp-slot .cc-text').textContent()) === 'あなたが操作中', 'paused: you are operating');
-  check((await shown()).length === 1 && /に戻す$/.test((await shown())[0]), `paused: only the hand-back button (${(await shown()).join()})`);
+  check(await page.locator('#chromeBanner .cc-banner').getAttribute('role') === null, 'the banner has no role (the address-bar badge says the same)');
+  check(/に戻す$/.test(await page.locator('#chromeBanner .cc-banner .cc-btn').textContent()) && await oldRow() === 0, 'paused: the banner has the hand-back button, and there is still no old row');
   // 撮影を断つ幕は映像の側（server が suspended を送る）。こちらの層は幕を持たない
   await page.evaluate((id) => window.__deliver({ kind: 'screencast', source: 'chrome', type: 'state', sessionId: id, state: { tabId: 'T1', agent: false, suspended: true, tabs: 1 } }), sessionId);
   await page.locator('.cp-veil').waitFor({ state: 'visible' });
   check(await page.locator('.cp-veil').count() === 1 && await page.locator('.cc-veil').count() === 0, 'one veil only (the video side)');
   check((await page.locator('.cp-veil').textContent()).includes('映像を止めています'), 'the veil says the video is stopped');
   // 窓が無くなっても、一時停止中は戻せる
+  // 右の欄の入口は窓が無くても出たまま（見出しのアイコンは 1 つ）。知らせが届くのを少し待つ
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 0, operating: false }), sessionId);
-  await page.locator('#browserEntry').waitFor({ state: 'hidden' });
+  await page.waitForTimeout(200);
   check(await page.locator('#chromeBanner .cc-banner').isVisible(), 'the banner stays while paused even if the window is gone');
   await page.locator('#chromeBanner .cc-banner .cc-btn').click();
   await page.waitForFunction(() => window.__sent.some((x) => x.command === 'chromeResume'));
@@ -117,22 +113,18 @@ async page => {
   await page.locator('#chromeBanner .cc-banner').waitFor({ state: 'hidden' });
   check(true, 'the banner goes away when resumed');
 
-  // ============ 5. 窓が戻ると一行も戻る。止める・待機中・止めた後
+  // ============ 5. 窓が戻る。止めた後・待機中も帯は出ない。ほかの会話の一時停止も出ない
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 1, operating: false }), sessionId);
   await page.locator('#browserEntry').waitFor({ state: 'visible' });
   // ビューアの無い端末では、窓が無くなったときにパネルも閉じる。窓が戻っても閉じたままなので、入口から開き直す
   if (await page.locator('#browserEntry').getAttribute('aria-expanded') !== 'true') await page.locator('#browserEntry').click();
-  await page.locator('.cp-slot').waitFor({ state: 'visible' });
-  check((await shown()).join() === '止める,引き継ぐ', 'back to running buttons');
-  await page.locator('.cp-slot .cc-btn', { hasText: '止める' }).click();
-  await page.waitForFunction(() => window.__sent.some((x) => x.command === 'chromeStop'));
+  await page.locator('.cp-screen').waitFor({ state: 'visible' });
   await control(sessionId, 'stopped');
-  check((await page.locator('.cp-slot .cc-text').textContent()) === '止めました' && (await shown()).join() === '引き継ぐ', 'stopped: only take over');
+  check(await page.locator('#chromeBanner .cc-banner').isHidden(), 'stopped: no banner');
   await control(sessionId, 'idle');
-  check((await page.locator('.cp-slot .cc-text').textContent()) === '待機中' && (await shown()).join() === '引き継ぐ', 'idle: only take over');
-  // ほかの会話の状態は出ない
+  check(await page.locator('#chromeBanner .cc-banner').isHidden(), 'idle: no banner');
   await page.evaluate(() => window.__event({ type: 'chromeControl', sessionId: 'someone-else', state: 'paused', since: 1 }));
-  check(await page.locator('#chromeBanner .cc-banner').isHidden() && (await page.locator('.cp-slot .cc-text').textContent()) === '待機中', 'other conversations do not change this one');
+  check(await page.locator('#chromeBanner .cc-banner').isHidden(), 'other conversations do not change this one');
 
   // ============ 6. 会話の中の行（引き継いで戻した）
   await page.evaluate((id) => window.__event({ type: 'present', sessionId: id, kind: 'chromeHandover', chromeHandover: { seconds: 72 }, by: 'ai', at: new Date().toISOString() }), sessionId);
@@ -149,18 +141,21 @@ async page => {
   check(await page.locator('.cp-screen .cc-ring').evaluate((el) => getComputedStyle(el).animationName === 'cc-ring-hold'), 'reduced motion: the ring only fades');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
 
-  // ============ 8. 狭い幅(360px): 一行とボタンが収まる
+  // ============ 8. 狭い幅(360px): 一時停止の帯と戻すボタンが収まる
   await page.setViewportSize({ width: 360, height: 760 });
+  await control(sessionId, 'paused', 1);
+  await page.locator('#chromeBanner .cc-banner').waitFor({ state: 'visible' });
   await page.waitForTimeout(300);
-  const box = await page.locator('.cp-slot .cc').boundingBox();
-  check(!!box && box.width <= 360, `the status row fits 360px (${box?.width})`);
-  check(await page.locator('.cp-slot .cc').evaluate((el) => el.scrollWidth <= el.clientWidth + 1), 'the row does not overflow');
+  const box = await page.locator('#chromeBanner .cc-banner').boundingBox();
+  check(!!box && box.width <= 360, `the banner fits 360px (${box?.width})`);
+  check(await page.locator('#chromeBanner .cc-banner').evaluate((el) => el.scrollWidth <= el.clientWidth + 1), 'the banner does not overflow');
+  await control(sessionId, 'running');
   await page.setViewportSize({ width: 1280, height: 800 });
 
-  // ============ 9. 窓が無くなって一時停止でもなければ、一行は隠れ、差し込み口は場所を取らない
+  // ============ 9. 窓が無くなって一時停止でもなければ、帯は隠れたまま
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 0, operating: false }), sessionId);
-  await page.waitForFunction(() => document.querySelector('.cp-slot .cc')?.hidden === true);
-  check(await page.locator('.cp-slot').evaluate((el) => getComputedStyle(el).display === 'none'), 'the slot takes no room while the row is hidden');
+  await page.waitForTimeout(200);
+  check(await page.locator('#chromeBanner .cc-banner').isHidden(), 'no window and not paused: no banner');
 
   // 後片付け: パネルを閉じる
   await page.keyboard.press('Escape').catch(() => {});
@@ -178,8 +173,13 @@ async page => {
     badge.update({ agentUsed: true, holder: 'human' }); chip.click();
     document.querySelector('.b2-pop:not([hidden]) button').click(); await Promise.resolve();
     values.push(calls.join() === 'stop,resume');
-    const strip = createPhoneBrowserStrip({ mount }); strip.update({ url: 'https://example.com/', tabs: 3, holder: 'human', remaining: 42 });
+    let activated = 0;
+    const strip = createPhoneBrowserStrip({ mount, onActivate: () => { activated++; } }); strip.update({ url: 'https://example.com/', tabs: 3, holder: 'human', remaining: 42 });
     values.push(strip.element.textContent.includes('42') && strip.element.textContent.includes('example.com') && strip.element.textContent.includes('3'));
+    // 帯の押し口は「画面を開く」と読み、ドメインと状態を説明に結ぶ。押すと onActivate（右の欄の映像を開く）
+    const opener = strip.element.querySelector('.b2-strip-open');
+    values.push(opener.getAttribute('aria-label') === '画面を開く' && document.getElementById(opener.getAttribute('aria-describedby'))?.textContent.includes('example.com') && !opener.hasAttribute('aria-expanded'));
+    opener.click(); values.push(activated === 1);
     // 絵が無くなっても src を外さない（外すと Chrome は壊れた絵の印を出す）。透明の絵にする
     const thumb = strip.element.querySelector('.b2-thumb');
     strip.update({ url: 'https://example.com/', tabs: 3, image: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' });
@@ -187,6 +187,6 @@ async page => {
     values.push(/^data:image\/gif;base64,R0lGODlhAQABAAAAACH5/.test(thumb.getAttribute('src') ?? ''));
     strip.destroy(); badge.destroy(); mount.remove(); return values;
   });
-  check(unified.every(Boolean), 'unified badge: hidden before agent use, stop/resume, phone strip domain/tab count/remaining seconds/blank thumbnail');
+  check(unified.every(Boolean), `unified badge: hidden before agent use, stop/resume, phone strip domain/tab count/remaining seconds/Open screen label/activate/blank thumbnail (${JSON.stringify(unified)})`);
   return results.join('\n');
 }

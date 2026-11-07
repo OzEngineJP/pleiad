@@ -24,16 +24,39 @@ async function until(check, ms = 3000) { const end = Date.now() + ms; while (!ch
 async function rig({ now = () => Date.now() } = {}) {
   const chrome = await startFakeChrome();
   const desktop = fakeChromeOs({ chrome });
-  const connection = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: desktop, pollMs: 20 });
-  const relay = createChromeRelay({ connection, os: desktop, locate: { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true }, now });
-  const screencast = createChromeScreencast({ host: relay.view });
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-chrome-close-'));
   const records = [], cards = [], openCards = new Set();
   let recordHook = null;
-  const closer = createChromeWindowCloser({ relay, screencast, handoffs: { forget: id => { cards.push(id); openCards.delete(id); }, current: id => openCards.has(id) ? { reason: 'login' } : null }, dataDir,
-    record: async (id, payload) => { await recordHook?.(id); records.push({ id, ...payload }); }, now });
-  return { chrome, desktop, connection, relay, screencast, dataDir, records, cards, openCards, closer, now, setRecordHook: hook => { recordHook = hook; },
-    async stop() { closer.stop(); screencast.close(); relay.close(); await connection.close(); await chrome.stop(); await fs.rm(dataDir, { recursive: true, force: true }); } };
+  // Chrome との接続は更新を越えて残る（本番では保持役の接続の子が持つ）
+  const connection = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: desktop, pollMs: 20 });
+  const released = [];
+  const build = () => {
+    const relay = createChromeRelay({ connection, os: desktop, locate: { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true }, now });
+    const screencast = createChromeScreencast({ host: relay.view, relay });
+    const closer = createChromeWindowCloser({ relay, screencast, handoffs: { forget: id => { cards.push(id); openCards.delete(id); }, current: id => openCards.has(id) ? { reason: 'login' } : null }, dataDir,
+      record: async (id, payload) => { await recordHook?.(id); records.push({ id, ...payload }); }, now });
+    return { relay, screencast, closer };
+  };
+  const r = { chrome, desktop, connection, ...build(), dataDir, records, cards, openCards, now, setRecordHook: hook => { recordHook = hook; },
+    /**
+     * 前の版（会話の一時停止の形の引き継ぎ）から、id の会話を一時停止のまま更新した形にする。
+     * 本番と同じく、carry に一時停止の印を載せてサーバーを入れ替え（窓は残す）、新しい中継で restore・rejoin する
+     */
+    async restartPaused(id) {
+      const carry = r.relay.snapshot();
+      carry.entries.find(item => item.id === id).paused = { at: now(), by: 'pc' };
+      r.closer.stop(); r.screencast.close(); r.relay.releaseForRestart();
+      released.push(r.relay);
+      Object.assign(r, build());
+      await r.relay.restore(carry);
+      await r.relay.rejoin();
+    },
+    async stop() {
+      r.closer.stop(); r.screencast.close(); r.relay.close(); await r.connection.close();
+      for (const item of released) await item.close();
+      await chrome.stop(); await fs.rm(dataDir, { recursive: true, force: true });
+    } };
+  return r;
 }
 
 export default async function (t) {
@@ -49,14 +72,14 @@ export default async function (t) {
     t.ok('Page.captureScreenshot が Target.closeTarget より先で、他人のタブを閉じない', calls.indexOf('Page.captureScreenshot') < calls.indexOf('Target.closeTarget') && !r.chrome.browser.targets().some(x => x.targetId === first.targetId) && r.chrome.browser.targets().length >= 2);
     t.ok('閉じた後、会話の端点とターンは残り、次に使うと新しい窓が黙って開く', r.relay.state('one')?.turn === true && (await r.relay.openForConversation('one', 'https://next.test/')).targetId !== one.targetId);
 
-    r.relay.pause('one');
+    await r.restartPaused('one');
     const paused = await r.closer.close('one', { by: 'human' });
     t.ok('一時停止中でも閉じられ、カードと一時停止を片付ける', paused.closed && !r.relay.state('one')?.paused && r.cards.includes('one') && r.records.at(-1)?.chromeClosed?.by === 'human');
     t.ok('引き継ぎ中に人が閉じても、窓の静止画は撮らず保存もしない', !r.records.at(-1)?.path && !r.chrome.calls.slice(-6).some(c => c.method === 'Page.captureScreenshot'));
 
     // 人が引き継いでいる最中・人への依頼の待ちの最中は、エージェント（子の窓なら親）が閉じられない
     const busy = await r.relay.openForConversation('busy', 'https://busy.test/');
-    r.relay.pause('busy');
+    await r.restartPaused('busy');
     const busyCalls = r.chrome.calls.length;
     const heldHuman = await r.closer.close('busy').then(() => null, error => error);
     t.ok('人が引き継いでいる窓は、エージェントが閉じようとすると BUSY（human）で断られ、窓・撮影・行は変わらない',
@@ -81,12 +104,12 @@ export default async function (t) {
       && (await fs.readFile(r.records.find(x => x.id === 'two').path)).toString() === 'last-frame');
 
     const held = await r.relay.openForConversation('held', 'https://held.test/');
+    await r.restartPaused('held');
     await r.screencast.request('start', 'held');
-    r.chrome.browser.screencastFrame(held.targetId, { data: Buffer.from('before-handover').toString('base64') });
+    r.chrome.browser.screencastFrame(held.targetId, { data: Buffer.from('while-paused').toString('base64') });
     await until(() => Boolean(r.screencast.lastFrame('held')));
-    r.relay.pause('held');
     r.chrome.browser.closeWindow(r.relay.view.tabs('held')[0].windowId);
-    t.ok('引き継ぎ中に人が × で閉じたときは、引き継ぎ前の映像も静止画にしない', await until(() => r.records.some(x => x.id === 'held')) && !r.records.find(x => x.id === 'held').path);
+    t.ok('持ち越した一時停止の間に人が × で閉じたときは、その間の映像も静止画にしない', await until(() => r.records.some(x => x.id === 'held')) && !r.records.find(x => x.id === 'held').path);
 
     let startRecord, finishRecord;
     const recording = new Promise(resolve => { startRecord = resolve; });
@@ -124,15 +147,15 @@ export default async function (t) {
     try {
       let panelOpen = false, body = null;
       const commands = [];
-      let menuItems = [];
       const windows = createWindowTable();
       windows.apply({ sessionId: 'panel', windows: 1, windowIds: [41], currentWindowId: 41 });
       t.ok('窓の一覧は実際の窓と表示中の印を保持する', windows.count('panel') === 1 && windows.list('panel')[0].current);
       const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return { closed: true }; },
-        showMenu: (_x, _y, items) => { menuItems = items; },
-        preview: { openPanel: (options) => { panelOpen = true; body = options.body; options.toolbar[2].getBoundingClientRect = () => ({ left:0, bottom:0 }); options.toolbar[2].onclick(); }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
+        preview: { openPanel: (options) => { panelOpen = true; body = options.body; }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } },
         session: () => 'panel', windows });
       panel.open();
+      // ⋯ はアドレスバーのメニュー（web/browser-unify.mjs）が browserMenuItems の行を出す
+      const menuItems = panel.browserMenuItems(null);
       menuItems.find(item => item.label === '表示中のウィンドウを閉じる').onClick();
       t.ok('⋯ の「表示中のウィンドウを閉じる」は、確かめを出すまで chromeCloseWindow を送らない', !commands.some(([name]) => name === 'chromeCloseWindow'));
       body.querySelector('.cp-dlg-yes').onclick();
@@ -230,7 +253,7 @@ export default async function (t) {
       // 引き継ぎ中の一部の窓はエージェントが閉じられない。人が閉じても引き継ぎは続く
       const c = await r.relay.openForConversation('multi', 'https://multi-c.test/');
       const wc = winOf(c.targetId);
-      r.relay.pause('multi');
+      await r.restartPaused('multi');
       const refused = await r.closer.close('multi', { windowId: wb }).then(() => null, error => error);
       t.ok('引き継ぎ中の窓は、エージェントが 1 つだけ閉じようとしても BUSY で断られる', refused?.code === 'BUSY' && r.relay.view.tabs('multi').length === 2);
       const human = await r.closer.close('multi', { by: 'human', windowId: wc });
@@ -268,7 +291,7 @@ export default async function (t) {
 
         await idle.relay.openForConversation('idle-paused', 'https://paused.test/');
         idle.relay.endTurn('idle-paused');
-        idle.relay.pause('idle-paused');
+        await idle.restartPaused('idle-paused');
         clock.value += 24 * HOUR + 1;
         t.ok('人が引き継いでいる会話の窓は閉じない', JSON.stringify(await idle.closer.sweepIdle()) === '[]' && idle.relay.state('idle-paused')?.paused);
         idle.relay.unpause('idle-paused');

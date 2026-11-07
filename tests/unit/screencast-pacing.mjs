@@ -1,11 +1,11 @@
 // 映像の返事ごとの 1 枚と 7 段（ADR 0297・core/browser-screencast.mjs の hub）。
 //   - フレームが届いたら見る人を待たずに撮影元へすぐ ack を返し、見る人ごとに「返事のたびに最新の 1 枚」を送る
 //   - 印（mark）とフレームの返事の差 S の中央値で段が上下する（>50ms で 3 枚で下げる・≤25ms で 5 枚で上げる）
-//   - 上げて失敗した段は 30 秒上げない・段 0 でも遅い → lag・返事が 3 秒来ない → stale・300 ms で最上段の 1 枚
+//   - 上げて失敗した段は 30 秒上げない・段 0 でも遅い → lag・返事が 3 秒来ない → stale・300 ms 静まれば最上段を保つ
 import { createScreencastHub, SCREENCAST_TIERS } from '../../core/browser-screencast.mjs';
 
 export const name = 'screencast-pacing';
-export const title = '映像の返事ごとの 1 枚と 7 段（ADR 0297）: 見る人ごとの ack・印の時間 S・段の上下・30 秒・still・stale・lag';
+export const title = '映像の返事ごとの 1 枚と 7 段（ADR 0297）: 見る人ごとの ack・印の時間 S・段の上下・静止時の最上段・stale・lag';
 
 /** 手で進める時計とタイマー */
 function clock(start = 1000) {
@@ -27,16 +27,15 @@ function clock(start = 1000) {
   };
 }
 
-/** 段ごとのセッションに分かれる偽の bridge（setFormats・capture あり） */
+/** 段ごとのセッションに分かれる偽の bridge */
 function fakeBridge({ multi = true } = {}) {
   const on = {};
-  const requests = [], acks = [], formats = [], captures = [];
+  const requests = [], acks = [], formats = [];
   return {
-    ready: true, requests, acks, formats, captures,
+    ready: true, requests, acks, formats,
     request: async (action, sessionId, args) => { requests.push([action, sessionId, args]); return action === 'start' ? { tabId: 't1', state: { tabId: 't1' } } : {}; },
     ack: (sessionId, frameId, stream) => acks.push([sessionId, frameId, stream]),
     setFormats: async (sessionId, list) => { formats.push(list); return { multi }; },
-    capture: async (sessionId, options) => { captures.push(options); return { data: 'U1RJaWw=' }; },
     onFrame: fn => { on.frame = fn; }, onState: fn => { on.state = fn; }, onEnded: fn => { on.ended = fn; }, onAway: fn => { on.away = fn; },
     frame: (sessionId, id, { stream = 3, data = 'QUJD', metadata = { deviceWidth: 400 } } = {}) => on.frame(sessionId, { id, stream, data, metadata }),
     state: (sessionId, state) => on.state(sessionId, state),
@@ -47,11 +46,13 @@ const client = () => { const got = []; return { got, send: message => got.push(m
 const frames = c => c.got.filter(m => m.type === 'frame');
 const videos = c => c.got.filter(m => m.type === 'video');
 /** 印の返事 → フレームの返事（S = gap ms）を順に返す */
-function ackRound(hub, c, sessionId, c2, gap = 10) {
+async function ackRound(hub, c, sessionId, c2, gap = 10) {
   const seq = frames(c).at(-1).seq;
   hub.received(c, sessionId, seq, { mark: true });
   c2.advance(gap);
   hub.received(c, sessionId, seq);
+  // 次の画像は、段の張り直し要求が完了してから届く。
+  await new Promise(resolve => setImmediate(resolve));
 }
 
 export default async function (t) {
@@ -76,7 +77,7 @@ export default async function (t) {
     // 遅い人が返さない間も、速い人には毎回新しい 1 枚が届く
     for (let id = 2; id <= 4; id++) {
       bridge.frame('s1', id, { stream: 3 });
-      ackRound(hub, fast, 's1', c);
+      await ackRound(hub, fast, 's1', c);
     }
     t.ok('遅い見る人が返事を返さなくても、速い見る人は届くたびに新しい 1 枚をもらう（遅い人の分だけ fps が下がる）',
       frames(fast).length === 4 && frames(slow).length === 1 && frames(fast).at(-1).seq === fast.got.at(-1).seq);
@@ -100,7 +101,7 @@ export default async function (t) {
     const v = client();
     await hub.watch(v, 's1', { width: 400, height: 300, scale: 1 });
     const tier = () => bridge.formats.at(-1)?.[0]?.tier ?? 3;
-    const put = async (gap, n = 1) => { for (let i = 0; i < n; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); ackRound(hub, v, 's1', c, gap); } };
+    const put = async (gap, n = 1) => { for (let i = 0; i < n; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); await ackRound(hub, v, 's1', c, gap); } };
 
     await put(60, 3);
     t.ok('S の直近 3 枚の中央値が 50 ms を超えると 1 段下げる（段の一覧が変わる）',
@@ -121,31 +122,33 @@ export default async function (t) {
     t.ok('30 秒すぎればまた上げられる', bridge.formats.at(-1)?.[0]?.tier === 3, JSON.stringify(bridge.formats.at(-1)));
   }
 
-  // ---- 遅れの札（lag）・途切れ（stale）・止まった絵の 1 枚（still） ----
+  // ---- 遅れの札（lag）・途切れ（stale）・静止時の最上段 ----
   {
     const c = clock(), bridge = fakeBridge();
     const hub = createScreencastHub({ bridge, ...c });
     const v = client();
     await hub.watch(v, 's1', { width: 400, height: 300, scale: 1 });
 
-    // 300 ms フレームが届かなければ、最上段の 1 枚を 1 回だけ撮って送る
+    // 300 ms 静まれば最上段へ切り替え、その screencast の画像を送る
     bridge.frame('s1', 1, { stream: 3 });
-    ackRound(hub, v, 's1', c);
+    await ackRound(hub, v, 's1', c);
     c.advance(300);
     await Promise.resolve(); await new Promise(r => setImmediate(r));
-    const still = frames(v).at(-1);
-    t.ok('300 ms で最上段（quality 80）の 1 枚を 1 回撮って送る', bridge.captures.length === 1 && bridge.captures[0].quality === 80 && still.still === true && still.data === 'U1RJaWw=');
+    bridge.frame('s1', 2, { stream:6, data:'SHARP' });
+    const sharp = frames(v).at(-1);
+    t.ok('300 ms で最上段（quality 80）の screencast へ切り替える', bridge.formats.at(-1)?.[0]?.tier === 6 && sharp.data === 'SHARP');
+    const changes = bridge.formats.length;
     c.advance(600);
-    t.ok('ページが変わるまではもう撮らない', bridge.captures.length === 1);
-    hub.received(v, 's1', still.seq, { mark: true }); hub.received(v, 's1', still.seq);
-    bridge.frame('s1', 2, { stream: 3 });   // ページが変わった
+    t.ok('ページが変わるまでは張り直さない', bridge.formats.length === changes);
+    hub.received(v, 's1', sharp.seq, { mark: true }); hub.received(v, 's1', sharp.seq);
+    bridge.frame('s1', 3, { stream:6, data:'UPDATE' });
     hub.received(v, 's1', frames(v).at(-1).seq, { mark: true }); hub.received(v, 's1', frames(v).at(-1).seq);
     c.advance(300);
     await new Promise(r => setImmediate(r));
-    t.ok('ページが変われば、次に止まったときまた撮る', bridge.captures.length === 2);
+    t.ok('単発の変更は最上段のまま届ける', bridge.formats.length === changes && frames(v).at(-1).data === 'UPDATE');
 
     // 返事が 3 秒来ない → stale。返事が戻れば下りる
-    bridge.frame('s1', 3, { stream: 3 });
+    bridge.frame('s1', 4, { stream:6, data:'NEXT' });
     c.advance(3000);
     await new Promise(r => setImmediate(r));
     t.ok('返事が 3 秒来なければ stale を知らせる', videos(v).at(-1)?.stale === true, JSON.stringify(videos(v)));
@@ -153,27 +156,29 @@ export default async function (t) {
     hub.received(v, 's1', frames(v).at(-1).seq);
     t.ok('返事が戻れば stale は下りる', videos(v).at(-1)?.stale === false);
 
-    // 段 0 まで下げても遅い → lag
+    // 変更が続けば通信量に応じた段へ戻る。その後段 0 まで下げても遅い → lag
+    bridge.frame('s1', 5, { stream:6, data:'MOTION_1' }); await ackRound(hub, v, 's1', c);
+    bridge.frame('s1', 6, { stream:6, data:'MOTION_2' }); await ackRound(hub, v, 's1', c);
     const tier = () => bridge.formats.at(-1)?.[0]?.tier ?? 3;
     for (let round = 0; round < 4; round++) {
-      for (let i = 0; i < 3; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); ackRound(hub, v, 's1', c, 70); }
+      for (let i = 0; i < 3; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); await ackRound(hub, v, 's1', c, 70); }
     }
     t.ok('段 0 でも S の中央値が 50 ms を超え続けると lag を知らせる', videos(v).at(-1)?.lag === true, JSON.stringify(videos(v).at(-1)));
-    for (let i = 0; i < 3; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); ackRound(hub, v, 's1', c, 10); }
+    for (let i = 0; i < 3; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); await ackRound(hub, v, 's1', c, 10); }
     t.ok('S が戻れば lag は下りる', videos(v).at(-1)?.lag === false);
   }
 
-  // ---- 段ごとに分けられない撮影（内蔵ブラウザー）: 一番低い段にそろえる ----
+  // ---- 段ごとに分けられない撮影: 動作中は一番低い段にそろえる ----
   {
     const c = clock(), bridge = fakeBridge();
-    delete bridge.setFormats; delete bridge.capture;   // 段ごとの口が無い bridge（parentPort）
+    delete bridge.setFormats;   // 段ごとの口が無い bridge（parentPort）
     const hub = createScreencastHub({ bridge, ...c });
     const v = client();
     await hub.watch(v, 's1', { width: 400, height: 300, scale: 1 });
     bridge.frame('s1', 1, { data: 'QUJD' });
     t.ok('段ごとに分けられなくても、返事ごとの 1 枚と印は同じ（撮影元へもすぐ ack）',
       bridge.acks.length === 1 && v.got.map(m => m.type).join(',') === 'mark,frame');
-    for (let i = 0; i < 3; i++) { bridge.frame('s1', 2 + i, {}); ackRound(hub, v, 's1', c, 70); }
+    for (let i = 0; i < 3; i++) { bridge.frame('s1', 2 + i, {}); await ackRound(hub, v, 's1', c, 70); }
     const restarts = bridge.requests.filter(([a]) => a === 'start');
     t.ok('段が下がったら、一番低い段の画質で撮り直す（start を掛け直す。大きさは端末の箱のまま）',
       restarts.length >= 2 && restarts.at(-1)[2].options.quality === SCREENCAST_TIERS[2].q && restarts.at(-1)[2].options.width === 400, JSON.stringify(restarts.at(-1)?.[2].options));

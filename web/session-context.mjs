@@ -31,7 +31,6 @@ import { unifySessionBox, unifyConfirmPanel, resetPlan, unsupportedAgentText } f
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
 const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills', mcp: 'MCP' };
-const COUNTED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'standby', 'starting', 'connected'] };
 // backend-allow: 読み込み元（core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
 const SOURCE = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', devin: 'Devin', antigravity: 'Antigravity', grok: 'Grok', common: t('sessionContext.source.common'), ply: 'Pleiad' };
 const GROUPS = ['user', 'dir', 'extra'];
@@ -76,25 +75,6 @@ const managed = (info, kind) => info?.report?.status !== 'native' && (info.owner
 /** Pleiad の指示の記録 1 件。前の版の記録（{ id: 'delegation', variant, text }）も読む */
 const addedItem = a => ({ ...a, inserted: a.inserted ?? Boolean(a.variant), name: a.name ?? t('sessionContext.added.delegation') });
 
-/** 札の文言。「指示 2 · Skills 14 · MCP 3（1 件つながらない）」「MCP はエージェント任せ」、Pleiad の指示を入れていれば「Pleiad の指示 3」 */
-export function chipText(info) {
-  const report = info?.report;
-  if (!report) return '';
-  const parts = [], natives = [];
-  for (const kind of Object.keys(WORD)) {
-    if (!managed(info, kind)) { natives.push(WORD[kind]); continue; }
-    const rows = (report.entries ?? []).filter(e => e.kind === kind);
-    const n = rows.filter(e => COUNTED[kind].includes(e.status)).length;
-    if (kind !== 'mcp') { parts.push(`${WORD[kind]} ${n}`); continue; }
-    const bad = rows.filter(e => e.status === 'needs-auth' || e.status === 'failed').length;
-    parts.push(bad ? t('sessionContext.chip.mcpBad', { n, bad }) : `MCP ${n}`);
-  }
-  if (natives.length) parts.push(t('sessionContext.chip.native', { kinds: natives.join(t('sessionContext.chip.join')) }));
-  const added = (info.added ?? []).map(addedItem).filter(a => a.inserted).length;
-  if (added) parts.push(t('sessionContext.chip.added', { n: added }));
-  return parts.join(' · ');
-}
-
 /**
  * 作業場所の面の一言。here は contextSettings の今の場所（places の current）。
  * このフォルダーだけの上書きがあれば「このフォルダーだけの設定 · n 項目」、上の場所の上書きに従っていれば「<場所> の設定どおり」
@@ -113,7 +93,7 @@ export function placeStatus(here) {
 // i18n-dynamic: sessionContext.added.reason.
 // i18n-dynamic: sessionContext.amount.part.
 // i18n-dynamic: sessionContext.findings.scope.
-export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET, askReview = null, onStateChange = () => {} }) {
+export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET, askReview = null }) {
   const logins = new Map();     // MCP 名 -> ログインの進み具合（ブラウザで続けてください… / ログインしました）
   const agentCache = new Map(); // cwd -> agentMcp の結果
   const backendCache = new Map(); // backends の能力。会話の担当の選択に使う
@@ -177,13 +157,6 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     return row;
   }
   function retryPart(part) { part.stale = true; refresh(); }
-  function entryState() {
-    const data = info();
-    if (!data?.report || managed(data, 'instruction')) return '';
-    const part = nativeCache.get(`${cwdOf(data)}|${session()?.backend ?? ''}`);
-    return !part ? '' : part.error ? 'nativeError' : (!part.pending && !Array.isArray(part.value?.entries)) ? 'nativeUnknown'
-      : part.pending ? (part.value ? 'refreshing' : 'loading') : '';
-  }
 
   // ---------------------------------------------------------------- 描画
   let shownFor = null;
@@ -1157,11 +1130,6 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     for (const cache of [nativeCache, findingsCache]) for (const part of cache.values()) if (!part.pending) part.stale = true;
     preview.openPanel({ key: KEY, title, subtitle: data.report ? subtitle(data) : '', body: render(), label: title, element: chip,
       onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; unifying = false; } });
-    onStateChange();
-  }
-  function toggle(element) {
-    if (preview.panelOpen(KEY)) preview.close();
-    else open(element);
   }
   /** 記録が変わったとき（ターンの開始・読み込み直し・外す）。開いていれば描き直す */
   function refresh() {
@@ -1170,7 +1138,6 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const data = info() ?? {};
       preview.updatePanel(KEY, { subtitle: data.report ? subtitle(data) : '', body: render() });
     }
-    onStateChange();
   }
-  return { open, toggle, refresh, entryState, isOpen: () => preview.panelOpen(KEY) };
+  return { open, refresh, isOpen: () => preview.panelOpen(KEY) };
 }

@@ -68,13 +68,3 @@ export async function resolveAddressInput(input, { access, ...options } = {}) {
     return { kind: 'path', path: file, page: stat.isDirectory() ? 'dir' : 'file' };
   } catch (error) { return blocked(previewFailure(error).code); }
 }
-
-/** Desktop edits the absolute path; phones show the path from the conversation cwd. */
-export function formatFileAddress(file, { cwd, mobile = false, platform = process.platform } = {}) {
-  const paths = platform === 'win32' ? path.win32 : path.posix;
-  if (!mobile || !cwd) return paths.normalize(file);
-  const relative = paths.relative(cwd, file);
-  if (!relative) return '.';
-  if (paths.isAbsolute(relative) || /^\.\.(?:[\\/]|$)/.test(relative)) return relative;
-  return `.${paths.sep}${relative}`;
-}

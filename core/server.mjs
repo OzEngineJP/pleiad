@@ -2455,8 +2455,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
   if (!isReviewMode() && await botHost?.handleHttp(req, res)) return;
-  // Pleiad のページの本体の入口（画面の iframe。ADR 0295 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない。旗が off なら今のまま（下の 401・404）
-  if (pagesRoutes && url.pathname.startsWith(PAGES_PATH)) {
+  // Pleiad のページの本体の入口（画面の iframe。ADR 0295 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない
+  if (url.pathname.startsWith(PAGES_PATH)) {
     for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.setHeader('allow', 'GET, HEAD'); return sendStatus(req, res, 405, 'method not allowed'); }
     if (!pageRequestOk({ via: 'main', cookie: req.headers.cookie, token: TOKEN, site: req.headers['sec-fetch-site'] })) return sendStatus(req, res, 401, 'unauthorized');
@@ -3221,7 +3221,7 @@ async function savePref(key, value, backendId, { quiet = false } = {}) {
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
   locale = localeInfo(prefs, localeEnv());
   setLocale(locale.lang);
-  // 開いているファイルのページへも言語を知らせる（旗が off なら作らない）
+  // 開いているファイルのページへも言語を知らせる（起動の途中で、まだ作っていなければ飛ばす）
   void pageRequests?.env({ lang: locale.lang });
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
   mainPort.postMessage({ type: "locale", locale: locale.lang });
@@ -4925,9 +4925,7 @@ const opsChrome = chromeConnection ? {
   enable: () => chromeConnection.enable(),
   closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
   // 右パネルの映像に映すウィンドウを固定する・解く（core/chrome/screencast.mjs の pin）
-  pinWindow: chromeScreencast ? async (sessionId, windowId, tabId = null) => { const result = await chromeScreencast.request('pin', sessionId, { windowId, tabId }); return { pinnedWindowId: result.pinnedWindowId, pinnedTabId: result.pinnedTabId ?? null }; } : null,
-  // 端末が引き継いでいる間に、タブの列の × でタブを閉じる（core/chrome/screencast.mjs の closeTab）
-  closeTab: chromeScreencast ? (sessionId, tabId) => chromeScreencast.request('closeTab', sessionId, { tabId }) : null,
+  pinWindow: chromeScreencast ? (sessionId, windowId, tabId = null) => chromeScreencast.request('pin', sessionId, { windowId, tabId }) : null,
   windows: async parentId => {
     const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
       sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle', waiting: id => Boolean(chromeHandoffs?.current?.(id)) });
@@ -9212,7 +9210,7 @@ wss.on("connection", (ws, req) => {
     let releaseUpdateGate;
     try {
       releaseUpdateGate = updateGate.enter();
-      // ブラウザーの一本化の WS のコマンド（旗が on のときだけ。core/browser-unify-ws.mjs）
+      // ブラウザーの一本化の WS のコマンド（core/browser-unify-ws.mjs）
       if (isBrowserUnifyCommand(msg.command)) {
         try {
           // client は接続そのもの（pageResult が「この会話を見ている接続か」を確かめる）
@@ -9795,7 +9793,7 @@ wss.on("connection", (ws, req) => {
         // 会話の Chrome の窓の映像を見る・操作する（core/browser-screencast.mjs、ADR 0294・0297）
         case 'browserScreencast': case 'browserScreencastStop': case 'browserScreencastAck': case 'browserScreencastInput': {
           if (!screencastClients.has(ws)) screencastClients.set(ws, { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } });
-          const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local,
+          const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {},
             chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,
             client: screencastClients.get(ws) });
           // i18n-dynamic: server:remoteBrowser.
@@ -9830,7 +9828,6 @@ wss.on("connection", (ws, req) => {
         case 'chromeStop': return await viaOp('browser.chromeStop');
         case 'chromeCloseWindow': return await viaOp('browser.chromeCloseWindow');
         case 'chromePinWindow': return await viaOp('browser.chromePinWindow');
-        case 'chromeCloseTab': return await viaOp('browser.chromeCloseTab');
         // openDefault は許した拡張子のファイルを既定のアプリで（ADR 0294 の 3）。拡張子はリンクを解いた実体で見る
         case "resolvePath": case "revealPath": case "openPath": case "openDefault": {
           const hostAction = msg.command !== 'resolvePath';

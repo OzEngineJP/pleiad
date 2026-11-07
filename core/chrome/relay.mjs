@@ -16,17 +16,12 @@
 //   - エージェントのターンの間、会話の窓のタブすべてに中継の自分のセッションで Emulation.setFocusEmulationEnabled(true) を保つ（隠した窓の描画・入力を保つため）。
 //     エージェントのセッションの付け外しでは切れない。ターンが終わったら外す
 //   - 範囲のタブが window.open の popup で開いた別窓にも、同じ置き方を当てる（scope.adoptPopup）
-// 引き継ぎ（一時停止。ADR 0148・0154。状態機械は core/chrome/control.mjs）: pause() の間は、エージェントのコマンドを全部 PAUSED_MESSAGE で断る
-// （人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。unpause() で解く。Chrome との接続が切れたときも解く。
-// ADR 0296 からは、人の操作はタブごとの持ち手（tab-holder.mjs）で断る。一時停止に入るのは、前の版から持ち越した引き継ぎ（restore の paused）だけで、
-// 呼び手は「任せる」（control の resume）か窓を閉じる操作で unpause() する。pause() を呼ぶ本番の呼び手は無い（restore は印を直に戻す。試験が一時停止の扱いを確かめるために残す）。
-//   - pause に入るときに、エージェントのブラウザーとタブの接続を切る（上りのセッションを外し、ws を 1000 で閉じる）。Chrome からの通知（Network の postData・Fetch.requestPaused など）が
-//     エージェントへ流れ続けず、エージェントの Fetch の横取りが人のページを固めないため。戻した後は agent-browser がつなぎ直す（つなぎ直した接続のコマンドは全部断る）
-//   - 一時停止の間は、タブを「エージェントが動かしている」と見なさない（人の移動をサイトの利用の確認にかけない）。確認の待ちも取り下げる
+// 一時停止（entry.paused。状態機械は core/chrome/control.mjs）: 前の版（ADR 0148・0154 の、会話ごとの引き継ぎ）から更新を越えて持ち越した引き継ぎだけが入る（restore の paused）。
+// ADR 0296 からは、人の操作はタブごとの持ち手（tab-holder.mjs）で断り、新しく一時停止に入る経路は無い。
+// 一時停止の間は、エージェントのコマンドを全部 PAUSED_MESSAGE で断る（人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。
+// 呼び手は「任せる」（control の resume）か窓を閉じる操作で unpause() する。Chrome との接続が切れたとき・窓が無くなったときも解く。
+//   - 一時停止の間は、タブを「エージェントが動かしている」と見なさない（人の移動をサイトの利用の確認にかけない）
 //   - 会話の範囲の上りへの送信は、送る直前にもう一度一時停止を見る（確認の待ちの後ろに並んだコマンドが、一時停止の後に届かないように）
-//   - 引き継ぐ時に、エージェントの各セッション（タブ・iframe・worker）へ、外す前に Runtime.terminateExecution を送って、そのセッションが始めて今走っているスクリプトを止める。
-//     実機（Chrome 154）で、効くのは**そのスクリプトを始めたのと同じセッション**からだけだった（別のセッションから送ると、走っている無限ループには応答もしない・止まらない）。
-//     だから中継自身の一時のセッションではなく、エージェントのセッションに送る。エージェントのセッションを通さずに走っているスクリプト（ページ自身のもの）・エージェントが待っている Promise・タイマーは止まらない
 //   - onChange(fn): 会話の状態（ターンの間か・止めた・一時停止）が変わるたびに sessionId を渡す。onTap(fn): エージェントが押した位置（Input.dispatchMouseEvent の mousePressed）
 //   - onTabsLost(fn): 会話のタブが、エージェントが閉じたのでなく全部無くなった（窓を閉じる操作・人が窓を閉じた・Chrome が切れた）ときに sessionId を渡す。
 //     agent-browser は --pin-tab で消えたタブに縛られたまま、次の open からも tab_gone で断り続ける。聞き手（core/agent-browser.mjs）が縛りの記録を消して true を返したら、
@@ -1176,30 +1171,6 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
    * 走っているスクリプトを止める。接続を切るので、Chrome からの通知（Network.requestWillBeSent の postData・Fetch.requestPaused など）はエージェントへ流れず、
    * エージェントが付けていた Fetch の横取りもセッションごと外れる（人のページが固まらない）。戻した後は agent-browser がつなぎ直す
    */
-  function suspendAgent(entry) {
-    for (const client of [...entry.clients]) {
-      if (up) {
-        for (const sessionId of [...client.sessions]) {
-          const rec = up.sessions.get(sessionId);
-          if (!rec || rec.client !== client) { client.sessions.delete(sessionId); continue; }
-          // 走っているスクリプトを止める（そのセッションが始めたものにだけ効く）。外す前に送る（同じ接続の上で順に届く）
-          up.cdp.send('Runtime.terminateExecution', {}, sessionId, { timeoutMs: 2000 }).catch(() => {});
-          const top = rec.parent == null;
-          forgetSession(up, sessionId);
-          if (top) up.cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
-        }
-      }
-      client.paused.clear();
-      try { client.ws.close(1000, 'paused'); } catch { /* 閉じていてもよい */ }
-    }
-    if (!up) return;
-    for (const tab of tabsOf(up, entry)) {
-      tab.active = false; tab.approved.clear(); tab.denial = null;
-      tab.controller.abort(); tab.controller = new AbortController();
-    }
-    refreshOperating(entry);
-  }
-
   /** 会話のタブの確認の待ちを取り下げ、エージェントが動かしている印を外す（ターンの終わり・止める） */
   function settleEntry(entry) {
     const wasTurn = entry.turn;
@@ -1273,17 +1244,6 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       byKey.set(entry.key, entry);
       entry.stopped = false;
       changed(entry);
-    },
-    /** 引き継ぎ（一時停止）にする。接続は切らず、以後のコマンドを PAUSED_MESSAGE で断る。at は一時停止の始まり（戻したときの経過時間に使う） */
-    pause(sessionId, at = Date.now(), { by, viewport } = {}) {
-      const entry = entries.get(sessionId);
-      if (!entry || entry.paused) return false;
-      // by・viewport は引き継ぎの印として carry に載り、更新を越えて残る（端末が引き継いでいる印）
-      entry.paused = { at, ...(typeof by === 'string' ? { by } : {}), ...(viewport ? { viewport: { ...viewport } } : {}) };
-      noteUsed(entry);
-      suspendAgent(entry);
-      changed(entry);
-      return true;
     },
     /**
      * 引き継いでいる間に人が窓を作り替えた（タブを引き離して新しい窓にした・窓ごと閉じた）のを、戻す前に取り込む: タブごとの今の窓を引き直し、

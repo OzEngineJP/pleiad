@@ -1045,7 +1045,6 @@ export function createThread(host) {
       paintPlaceholder();
       syncSubs();
       paintPendingPerms();
-      if (idle) head.setSession(activeSession(), { force: true });   // ターンが終わったら git の変更の有無を取り直す
     },
     channelsChanged(ev) {
       if (!S.channelId) return;

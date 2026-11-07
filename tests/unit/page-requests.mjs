@@ -243,7 +243,7 @@ export default async function (t) {
     await s.call(request, 11);
     await sleep(5);
     t.ok('外した後の呼び出しは捨てる', count() === afterMove);
-    t.ok('ファイルのページの port が無い（旗が off）なら何も付けない', (() => { pages = null; const s4 = stubTab({ targetId: 'T4' }); bridge.added(s4.tab); return s4.sent.length === 0 && !bridge.tabs().some(x => x.targetId === 'T4'); })());
+    t.ok('ファイルのページの port が無いなら何も付けない', (() => { pages = null; const s4 = stubTab({ targetId: 'T4' }); bridge.added(s4.tab); return s4.sent.length === 0 && !bridge.tabs().some(x => x.targetId === 'T4'); })());
     pages = PAGES;
   }
 

@@ -1004,7 +1004,7 @@ export function createRemoteHost({
       return apply();
     },
     status,
-    /** ファイルのページと隔離の port（{ main, pages, isolated }。ブラウザーの一本化の旗が on のときだけ server が呼ぶ。ADR 0295 の 5）。
+    /** ファイルのページと隔離の port（{ main, pages, isolated }。server がリスナーを立てた後に呼ぶ。ADR 0295 の 5）。
      *  スマホの道で /_pleiad/ と隔離へ通す。null で無効に戻す */
     setPagePorts(ports) {
       pagePorts = ports && Number.isInteger(ports.isolated) && ports.isolated > 0 && ports.isolated <= 65535 ? { ...ports } : null;

@@ -402,7 +402,7 @@ async page => {
     const t = document.getElementById('chThread').getBoundingClientRect(), c = document.getElementById('thComposer').getBoundingClientRect();
     return { w: t.width, l: t.left, deck: document.getElementById('chDeck').dataset.deck, side: getComputedStyle(document.getElementById('chThreadOpenSidebar')).display,
       overflow: document.documentElement.scrollWidth > innerWidth || document.querySelector('#chThread .th-log').scrollWidth > document.querySelector('#chThread .th-log').clientWidth,
-      composerInView: c.bottom <= innerHeight + 1 && c.left >= 0 && c.right <= innerWidth, git: getComputedStyle(document.querySelector('.th-git')).display };
+      composerInView: c.bottom <= innerHeight + 1 && c.left >= 0 && c.right <= innerWidth };
   });
   check(narrow.deck === 'solo' && near(narrow.w, 360, 1) && narrow.l >= 0 && narrow.side !== 'none', 'at 360px the thread is the whole screen and offers the sidebar button');
   check(!narrow.overflow && narrow.composerInView, 'nothing overflows sideways and the composer stays on screen');

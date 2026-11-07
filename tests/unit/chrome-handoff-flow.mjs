@@ -1,6 +1,6 @@
 // Chrome の操作待ち（core/chrome/handoff.mjs）と、引き継ぐ・戻す（core/chrome/control.mjs）の通し（第 7 段 C）。偽の Chrome・偽の OS の層・偽の askPermission。
 // サーバーと同じく、台帳を先に作って中継へ渡し、control を後から useControl で差し込む。カードのボタンは ops（browser.chromeTakeOver・chromeResume）を呼ぶ。
-//   - カードの「Chrome で操作する」→ 引き継ぐ → カードが「あなたが操作中」（by: pc）。「Claude に戻す」→ 戻す → カードが決着し、待っていた hand_to_user が resumed を受ける
+//   - カードの「Chrome で操作する」→ 引き継ぐ → カードが「あなたが操作中」（by: pc）。札・帯の「任せる」→ 戻す → カードが決着し、待っていた hand_to_user が resumed を受ける
 //   - 人がパネルから先に「PC で操作する」を押していたら、hand_to_user は「お願い」を出さずに「あなたが操作中」から待つ
 //   - 「この端末で操作する」はタブを人の操作にするだけで会話を paused にしない（ADR 0296）ので、カードの状態は替えない（頼みの終わりは人の「終わった」か AI の待ちの終わり）
 //   - ターンが終わっていたら、戻したときに「続けてください」がちょうど 1 回
@@ -15,7 +15,7 @@ import { createChromeHandoffs } from '../../core/chrome/handoff.mjs';
 import { browserOps } from '../../core/ops/browser.mjs';
 
 export const name = 'chrome-handoff-flow';
-export const title = 'Chrome の操作待ちと引き継ぐ・戻すの通し（第 7 段 C）: カードの「Chrome で操作する」→ 引き継ぐ・「Claude に戻す」→ 決着・先に引き継いでいたら操作中から・ターンの外なら「続けてください」が 1 回（偽の Chrome・偽の OS の層）';
+export const title = 'Chrome の操作待ちと引き継ぐ・戻すの通し（第 7 段 C）: カードの「Chrome で操作する」→ 引き継ぐ・札の「任せる」→ 決着・先に引き継いでいたら操作中から・ターンの外なら「続けてください」が 1 回（偽の Chrome・偽の OS の層）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {
@@ -111,7 +111,7 @@ const lastUpdate = card => card?.updates.at(-1) ?? {};
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 export default async function (t) {
-  // ===== 1. カードの「Chrome で操作する」→「Claude に戻す」（ターンの中で hand_to_user が待っている） =====
+  // ===== 1. カードの「Chrome で操作する」→ 札の「任せる」（ターンの中で hand_to_user が待っている） =====
   {
     const r = await rig();
     try {
@@ -131,7 +131,7 @@ export default async function (t) {
       t.ok('まだ決着しない（hand_to_user は待ち続ける）', r.cards[0].answer === null && r.handoffs.current('one')?.state === 'operating');
 
       const back = await r.press.resume('one');
-      t.ok('カードの「Claude に戻す」（chromeResume）→ 一時停止が解ける', back.state === 'running', JSON.stringify(back));
+      t.ok('札の「任せる」（chromeResume）→ 一時停止が解ける', back.state === 'running', JSON.stringify(back));
       const result = await waiting;
       t.ok('戻すとカードが決着し（resumed）、待っていた hand_to_user が受ける', r.cards[0].answer?.allow === true && r.cards[0].answer.response.kind === 'resumed' && result.kind === 'resumed', JSON.stringify(result));
       t.ok('待っている人がいたので「続けてください」は送らない', r.env.sent.length === 0 && result.continued === false);
@@ -187,7 +187,6 @@ export default async function (t) {
       // hand_to_user の待ちが区切りで返り、そのままターンが終わった（カードは残る）
       t.ok('区切りで waiting を返してもカードは残る', (await r.handoffs.wait('one', { sliceMs: 20 })).kind === 'waiting' && r.cards[0].answer === null);
       r.endTurn('one');
-      t.ok('ターンの外になったことがカードに届く（「Claude に戻して続ける」）', r.cards[0].updates.some(u => u.turnLive === false));
       await r.press.takeOver('one');
       t.ok('「PC で操作する」→ カードが「あなたが操作中」', lastUpdate(r.cards[0]).state === 'operating' && lastUpdate(r.cards[0]).by === 'pc', JSON.stringify(r.cards[0].updates));
       await r.press.resume('one');

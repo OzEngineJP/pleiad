@@ -1,69 +1,14 @@
-// 会話の頭の行の、右パネルを開くアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」）。
-//   - プラグイン（#contextEntry）: 件数は画面に出さず、title と読み上げの名前にだけ入れる。「変更あり」は右上の点
-//   - ブラウザー（#browserEntry）: 会話の右の欄（会話の Chrome のタブ。ADR 0294）を開閉する。
-//     近道は Ctrl+Shift+B（macOS は ⌘⇧B）
+// 会話の頭の行の、右の欄を開け閉めするアイコンボタン（#browserEntry。docs/design-system.md「会話の頭の行のアイコン」）。
+// 右の欄の入口はこの 1 つだけ（ADR 0294 の 5 の 5。目次の虫眼鏡は別の機能で、その左に並ぶ）。会話の右の欄（会話の Chrome のタブ）を開閉する。
+// 近道は Ctrl+Shift+B（macOS は ⌘⇧B）
 import { t } from './i18n.mjs';
 // i18n-dynamic: tabs:address.openPanel
-import { runMark } from './arc.mjs';
 // i18n-dynamic: browser.entryState
 import { isComposingKey } from './keyboard.mjs';
 import { browserIcon } from './tab-strip.mjs';
 
-const CTX_KINDS = ['instruction', 'skill', 'mcp'];
-// 実際に渡ったものだけ数える。除外・重複・未対応・接続できなかった MCP は数に入れない
-const CTX_LOADED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'connected'] };
-// Pleiad が担当する種類だけ数える（エージェント任せの種類は Pleiad が中身を把握していない）
-export const contextTotal = (report) => CTX_KINDS.filter((kind) => report?.owners?.[kind] === 'ply')
-  .reduce((sum, kind) => sum + (report.entries ?? []).filter((e) => e.kind === kind && CTX_LOADED[kind].includes(e.status)).length, 0);
 // エージェント任せの会話（と、Pleiad 担当を受け取れなかった antigravity の会話）
 export const isManagedContext = (report) => Boolean(report) && report.status !== 'native';
-
-/**
- * プラグインの入口の名前。report は会話のコンテキストの報告、summary は札と同じ要約（指示 2 · Skills 9 · MCP 1）、
- * changed は次の送信で読み直す変更があるか。件数は Pleiad が管理している会話でだけ入れる
- */
-export function contextEntryText({ report, summary = '', changed = false, status = '' }) {
-  const managed = isManagedContext(report);
-  let title = [report ? t('session.context.titleWith', { summary }) : t('session.context.title'), changed ? t('session.context.changed') : ''].filter(Boolean).join(' · ');
-  let label = [t('session.context.label'), managed ? String(contextTotal(report)) : '', changed ? t('session.context.changed') : ''].filter(Boolean).join(' ');
-  const state = contextStatusText(status);
-  if (state) {
-    const partial = status === 'nativeUnknown' || status === 'nativeError';
-    title = [partial ? title : t('session.context.title'), state, !partial && changed ? t('session.context.changed') : ''].filter(Boolean).join(' · ');
-    label = [t('session.context.label'), state, changed ? t('session.context.changed') : ''].filter(Boolean).join(' · ');
-  }
-  return { title, label, changed: !!changed };
-}
-
-const contextStatusText = status => ({
-  loading: t('sessionContext.state.loading'), refreshing: t('sessionContext.state.refreshing'),
-  error: t('sessionContext.state.error'), nativeError: t('sessionContext.state.nativeError'), nativeUnknown: t('sessionContext.state.nativeUnknown'),
-})[status] ?? '';
-
-/** プラグインの入口に名前と「変更あり」の点を当てる。点（.entry-dot）は変更がある間だけ DOM に置く */
-export function paintContextEntry(button, { visible, report, summary, changed, status = '' }) {
-  button.hidden = !visible;
-  if (!visible) return;
-  const text = contextEntryText({ report, summary, changed, status });
-  button.title = text.title;
-  button.setAttribute('aria-label', text.label);
-  button.dataset.contextStatus = contextStatusText(status);
-  button.querySelector('.entry-context-state')?.remove();
-  if (status) {
-    const mark = status === 'loading' || status === 'refreshing' ? runMark() : document.createElement('span');
-    mark.classList.add('entry-context-state');
-    if (status === 'error' || status === 'nativeError' || status === 'nativeUnknown') mark.textContent = '!';
-    mark.setAttribute('aria-hidden', 'true');
-    button.append(mark);
-  }
-  const dot = button.querySelector('.entry-dot');
-  if (text.changed && !dot) {
-    const mark = document.createElement('span');
-    mark.className = 'entry-dot';
-    mark.setAttribute('aria-hidden', 'true');
-    button.append(mark);
-  } else if (!text.changed && dot) dot.remove();
-}
 
 const isMac = () => typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 /** 右の欄の近道か（Ctrl+Shift+B、macOS は ⌘⇧B）。IME の変換中は奪わない */

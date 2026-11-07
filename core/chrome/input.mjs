@@ -69,13 +69,6 @@ export function deviceViewport({ width, height, scale } = {}) {
   };
 }
 
-/**
- * 端末に合わせるページの大きさのコマンド（Emulation.setDeviceMetricsOverride の引数）。
- * mobile: true にしない: viewport の meta の無いページは 980px のレイアウトを縮めて映す（ページの倍率が 1 でなくなる）ので、映像の座標と
- * Input.dispatchMouseEvent の座標がずれて押しが外れる。false なら、レイアウトの幅 = 映像の幅 = 端末の箱の幅で、換算に倍率が入らない
- */
-export const deviceMetrics = viewport => ({ width: viewport.width, height: viewport.height, deviceScaleFactor: viewport.scale, mobile: false });
-
 // Isolated world only: no values (especially passwords), URLs, or page script objects leave this world.
 function fieldProbe() {
   if (globalThis.__plyInput) { globalThis.__plyInput.refresh(); return; }

@@ -15,7 +15,7 @@ async page => {
   const toEnd = async () => { await page.evaluate(() => { const log = document.querySelector('#log'); log.scrollTop = log.scrollHeight; }); await page.waitForTimeout(250); };
   const panel = async open => {
     const shown = await page.evaluate(() => document.body.classList.contains('file-preview-open'));
-    if (shown !== open) await page.locator('#contextEntry').click();
+    if (shown !== open) await page.locator('#browserEntry').click();
     await page.waitForTimeout(400);
   };
   // 入力欄の高さ・#log の末尾の余白・末尾の行と、入力欄の見える部品の位置

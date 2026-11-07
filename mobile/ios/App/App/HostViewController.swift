@@ -16,10 +16,8 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
     private var origin = ""
     private var receiver = ""
     private var hello = false
+    /// The window the page opened last, until its first navigation is routed (place). It is never shown.
     private var popup: WKWebView?
-    private var sheet: UIView?
-    private var sheetTitle: UILabel?
-    private var titleWatch: NSKeyValueObservation?
     private var downloads: [ObjectIdentifier: URL] = [:]
     private var downloadTasks: [ObjectIdentifier: WKDownload] = [:]
     private var exportDirectory: URL?
@@ -314,7 +312,7 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
             return nil
         }
         guard webView === web, !left else { return nil }
-        if let u = action.request.url, !u.absoluteString.isEmpty, u.absoluteString != "about:blank", linkTarget(u) != .snapshot {
+        if let u = action.request.url, !u.absoluteString.isEmpty, u.absoluteString != "about:blank" {
             openOutside(u)
             return nil
         }
@@ -324,11 +322,8 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
         p.navigationDelegate = self
         p.uiDelegate = self
         popup = p
-        titleWatch = p.observe(\.title) { [weak self] v, _ in
-            if v === self?.popup { self?.sheetTitle?.text = v.title }
-        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self, weak p] in
-            if let self, let p, self.popup === p, self.sheet == nil { self.closePopup() }
+            if let self, let p, self.popup === p { self.closePopup() }
         }
         return p
     }
@@ -339,64 +334,15 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
     private func place(_ p: WKWebView, _ action: WKNavigationAction) -> WKNavigationActionPolicy {
         guard let u = action.request.url else { return .cancel }
         if !(action.targetFrame?.isMainFrame ?? true) || u.absoluteString == "about:blank" { return .allow }
-        if linkTarget(u) == .snapshot {
-            if p === popup && sheet == nil { showSheet(p) }
-            return p === popup ? .allow : .cancel
-        }
         openOutside(u)
-        if p === popup && sheet == nil {
-            DispatchQueue.main.async { [weak self] in if let self, self.popup === p, self.sheet == nil { self.closePopup() } }
+        if p === popup {
+            DispatchQueue.main.async { [weak self] in if let self, self.popup === p { self.closePopup() } }
         }
         return .cancel
     }
-    private func showSheet(_ p: WKWebView) {
-        let paper = topBand.backgroundColor ?? (dark ? HostViewController.darkPaper : .white)
-        let ink = HostViewController.luminance(paper) < 0.4
-            ? UIColor(red: 0xdf / 255.0, green: 0xe3 / 255.0, blue: 0xf2 / 255.0, alpha: 1)
-            : UIColor(red: 0x1c / 255.0, green: 0x22 / 255.0, blue: 0x47 / 255.0, alpha: 1)
-        let title = UILabel()
-        title.textColor = ink
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.lineBreakMode = .byTruncatingTail
-        title.text = p.title
-        var cfg = UIButton.Configuration.plain()
-        cfg.title = ShellTexts.sheetClose
-        cfg.baseForegroundColor = ink
-        let close = UIButton(configuration: cfg, primaryAction: UIAction { [weak self] _ in self?.closePopup() })
-        close.setContentHuggingPriority(.required, for: .horizontal)
-        let bar = UIStackView(arrangedSubviews: [title, close])
-        bar.alignment = .center
-        bar.spacing = 8
-        bar.isLayoutMarginsRelativeArrangement = true
-        bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 8)
-        let s = UIStackView(arrangedSubviews: [bar, p])
-        s.axis = .vertical
-        s.backgroundColor = paper
-        s.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(s)
-        NSLayoutConstraint.activate([
-            s.topAnchor.constraint(equalTo: content.topAnchor),
-            s.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            s.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            s.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-        ])
-        sheet = s
-        sheetTitle = title
-    }
-
-    private static func luminance(_ c: UIColor) -> CGFloat {
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        c.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return 0.2126 * r + 0.7152 * g + 0.0722 * b
-    }
-
     private func closePopup() {
         guard let p = popup else { return }
         popup = nil
-        titleWatch = nil
-        sheet?.removeFromSuperview()
-        sheet = nil
-        sheetTitle = nil
         p.stopLoading()
         p.removeFromSuperview()
     }

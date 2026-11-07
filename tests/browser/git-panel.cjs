@@ -20,7 +20,7 @@ async (page) => {
   await page.locator('#cwdPop .cpath').press('Enter');
   await page.locator('#prompt').fill('echo:git panel');
   await page.locator('#send').click();
-  await page.locator('#gitEntry').waitFor({ state: 'visible' });
+  await page.locator('#cwdChip .git-br:not([hidden])').waitFor({ state: 'attached' });   // git の状態が届くと入力欄のチップにブランチが出る
   await page.waitForFunction(() => !document.querySelector('#send').disabled);
   await page.waitForTimeout(1500);   // 会話の id が付いて git の状態が揃うまで（揃う途中で開くとパネルは閉じる）
   await page.waitForFunction(() => !document.querySelector('#send').disabled);

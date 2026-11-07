@@ -1,7 +1,7 @@
-// エージェントの Chrome の窓の「状態の一行」と止める・引き継ぐ・戻す（docs/design-system.md「Chrome の窓の状態の一行」、ADR 0148・0154）。
-//   - createChromeControlView: 状態の一行（role=status。ボタンは「止める」「引き継ぐ」「Claude に戻す」）・一時停止中の帯（会話の中）・
-//     映像の上に重ねる、エージェントが押した位置の輪。単体で描けて試せる。右パネルの「Chrome の窓」へは web/chrome-panel.mjs の mountStatus（root）・mountOverlay（overlay）で差し込む。
-//     撮影を断っている間の薄い幕と「映像を止めています」は映像の側（web/chrome-panel.mjs の .cp-veil）が出す（二重にしない）
+// エージェントの Chrome の窓を誰が操作しているかの表示（docs/design-system.md「Chrome の窓」、ADR 0148・0154・0296）。
+//   - createControlBadge・createTabActivityDot・createPhoneBrowserStrip: アドレスバーの札とポップ・タブの点・スマホの入力欄の上の帯（web/browser-unify.mjs が置く）
+//   - createChromeControlView: 一時停止中の帯（会話の中）と、映像の上に重ねる、エージェントが押した位置の輪。単体で描けて試せる。
+//     輪は web/chrome-panel.mjs の mountOverlay で映像の箱へ差し込む。撮影を断っている間の薄い幕は映像の側（web/chrome-panel.mjs の .cp-veil）が出す（二重にしない）
 //   - chromeControlStore: サーバーの chromeControl・chromeTap イベント（会話ごと）の置き場。右パネルが会話の状態を引く・聞く
 //   - renderChromeHandoverLine: 引き継いで戻したときの会話の行（present kind: 'chromeHandover'）
 // 状態は core/chrome/control.mjs の 4 つ（running・idle・stopped・paused）。色は既存のトークンだけ。動きは --dur・--ease-out（動きを減らす設定では入れ替えだけ）。
@@ -15,7 +15,7 @@ export function ensureBrowserControlStyles() {
   const style = el('style'); style.id = 'browser-control-styles';
   style.textContent = `
 .b2-control{position:relative;flex:0 1 84px;min-width:26px;width:84px}
-.b2-control[hidden],.b2-pop[hidden],.b2-strip[hidden],.b2-full[hidden],.b2-sheet[hidden],.b2-fallback[hidden],.b2-phone-note[hidden]{display:none!important}
+.b2-control[hidden],.b2-pop[hidden],.b2-strip[hidden],.b2-sheet[hidden],.b2-fallback[hidden],.b2-phone-note[hidden]{display:none!important}
 .b2-chip{display:flex;align-items:center;justify-content:center;gap:6px;height:26px;width:100%;border:0;border-radius:13px;background:transparent;color:var(--ink);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
 .b2-chip:hover,.b2-chip[aria-expanded=true]{background:var(--surface-2)}
 .b2-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink-blue);flex:none}
@@ -28,14 +28,13 @@ export function ensureBrowserControlStyles() {
 .b2-strip{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;height:52px;border-radius:var(--r-m,10px);padding:0 6px;background:var(--surface-2);color:var(--ink);font-size:14px}
 .b2-strip-open{display:flex;align-items:center;gap:10px;flex:1;min-width:0;height:100%;border:0;padding:0;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left}.b2-strip-resume{flex:none;font-size:13px;padding:6px 14px}.b2-strip-resume[hidden],.b2-chevron[hidden]{display:none}
 .b2-thumb{width:60px;height:40px;object-fit:cover;object-position:top;border-radius:8px;background:var(--surface-paper);flex:none}.b2-strip-info{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px;line-height:1.25}.b2-domain{font-size:13px;font-weight:600;color:var(--ink-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.b2-strip-status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-weak)}.b2-count{flex:none;box-sizing:border-box;display:grid;place-items:center;min-width:20px;height:20px;padding:0 3px;border:2px solid currentColor;border-radius:5px;font-size:11px;font-weight:700;line-height:1;color:var(--ink)}.b2-chevron{display:grid;place-items:center;width:22px;height:22px;flex:none;margin-right:2px;color:var(--ink-weak)}.b2-chevron svg{width:18px;height:18px}
-.b2-full{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;background:var(--surface-1);transform:translateY(100%);transition:transform 260ms var(--ease-out,ease-out)}.b2-full[data-open=true]{transform:translateY(0)}.b2-full-close{align-self:flex-start;min-height:44px;margin:0 8px;background:transparent;border:0;color:var(--ink);font:inherit;cursor:pointer}.b2-full-content{flex:1;min-height:0;display:flex;flex-direction:column}
 .b2-input-surface{position:relative;overflow:hidden;touch-action:none;outline:none}.b2-input-surface:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}.b2-ripple{position:absolute;pointer-events:none;width:28px;height:28px;margin:-14px;border-radius:50%;box-shadow:0 0 0 2px var(--line-blue);animation:b2-ripple 550ms var(--ease-out,ease-out) forwards;z-index:3}
 @keyframes b2-ripple{from{opacity:.8;transform:scale(.4)}to{opacity:0;transform:scale(1.6)}}
 .b2-phone-input{position:absolute;z-index:4;border:0;padding:0;margin:0;resize:none;opacity:.01;background:transparent;color:transparent;caret-color:transparent;font-size:16px;pointer-events:none;outline:none}
 .b2-phone-note{position:fixed;z-index:96;left:8px;right:8px;bottom:8px;padding:6px 10px;border-radius:8px;background:var(--surface-1);box-shadow:0 4px 16px var(--shadow);color:var(--ink-weak);font-size:12px;line-height:1.5;text-align:center;pointer-events:none}
 .b2-fallback{position:fixed;z-index:96;left:8px;right:8px;bottom:8px;display:flex;gap:8px;padding:8px;border-radius:12px;background:var(--surface-1);box-shadow:0 8px 28px var(--shadow)}.b2-fallback input{min-width:0;flex:1;font:inherit;font-size:16px;color:var(--ink);background:var(--surface-2);border:0;padding:10px;border-radius:8px}
 .b2-sheet{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-end;justify-content:center;background:var(--surface-veil)}.b2-sheet-body{width:min(100%,480px);max-height:70dvh;overflow:auto;padding:20px;box-sizing:border-box;border-radius:16px 16px 0 0;background:var(--surface-1);color:var(--ink);box-shadow:0 -8px 28px var(--shadow)}.b2-sheet-title{font-size:16px;font-weight:600;margin:0 0 12px}.b2-sheet-message{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}.b2-sheet-option{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px}.b2-sheet input[type=text]{box-sizing:border-box;width:100%;font:inherit;font-size:16px;padding:10px;margin:10px 0}.b2-sheet-error{color:var(--ink-strong);font-size:13px;margin:8px 0}
-@media(prefers-reduced-motion:reduce){.b2-full{transition:none}.b2-ripple{animation:none;opacity:.7}}
+@media(prefers-reduced-motion:reduce){.b2-ripple{animation:none;opacity:.7}}
 `;
   document.head.append(style);
 }
@@ -94,37 +93,24 @@ export function createTabActivityDot({ mount } = {}) {
   return { element, update({ active = false, holder = 'ai', waiting = false } = {}) { element.hidden = !active && holder !== 'human'; element.dataset.holder = holder; element.dataset.waiting = String(waiting); } };
 }
 
-/** Supply browser content (tabs/address/frame). Mount the strip above the phone composer. */
-/** onActivate: 帯を押したときに全画面へ移さず、呼び出し側が開く（旗が on の右の欄。web/browser-unify.mjs）。
+/** スマホの入力欄の上の帯。onActivate: 帯を押したときに呼び出し側が右の欄を開く（web/browser-unify.mjs）。
  *  onResume: 人が操作している間は「›」の代わりに「任せる」を出す（モックの §1） */
 const BLANK_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
-export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = () => {}, onClose = () => {}, onActivate = null, onResume = null } = {}) {
+let stripCount = 0;
+export function createPhoneBrowserStrip({ mount, onActivate = () => {}, onResume = null } = {}) {
   ensureBrowserControlStyles();
   const element = el('div', 'b2-strip'), opener = el('button', 'b2-strip-open'), thumb = el('img', 'b2-thumb'), info = el('span', 'b2-strip-info'), domain = el('span', 'b2-domain');
   const status = el('span', 'b2-strip-status'), dot = el('span', 'b2-dot'), statusText = el('span'), count = el('span', 'b2-count'), arrow = el('span', 'b2-chevron');
   const resume = el('button', 'b2-action primary b2-strip-resume', t('control:resume'));
   arrow.innerHTML = chevRightIcon;
-  thumb.alt = ''; dot.setAttribute('aria-hidden', 'true'); arrow.setAttribute('aria-hidden', 'true'); opener.type = resume.type = 'button'; opener.setAttribute('aria-expanded', 'false'); resume.hidden = true;
+  thumb.alt = ''; dot.setAttribute('aria-hidden', 'true'); arrow.setAttribute('aria-hidden', 'true'); opener.type = resume.type = 'button'; resume.hidden = true;
+  // 帯の字（ページの名前・誰が操作中か）は見出しの代わりに読ませ、押すと何が起きるかを名前にする
+  opener.setAttribute('aria-label', t('control:openScreen')); info.id = `b2-strip-${++stripCount}`; opener.setAttribute('aria-describedby', info.id);
   status.append(dot, statusText); info.append(domain, status); opener.append(thumb, info, count, arrow); element.append(opener, resume); mount?.append(element);
   resume.addEventListener('click', async () => { resume.disabled = true; try { await onResume?.(); } catch {} finally { resume.disabled = false; } });
-  const fullscreen = el('div', 'b2-full'), back = el('button', 'b2-full-close', t('control:backToConversation')), body = el('div', 'b2-full-content');
-  back.type = 'button'; fullscreen.hidden = true; fullscreen.setAttribute('role', 'dialog'); fullscreen.setAttribute('aria-label', t('control:browser'));
-  if (backMount) { back.textContent = '‹'; back.setAttribute('aria-label', t('control:backToConversation')); back.style.fontSize = '24px'; back.style.minWidth = '36px'; backMount.append(back); fullscreen.append(body); }
-  else fullscreen.append(back, body);
-  document.body.append(fullscreen);
-  let placeholder = null, timer = null, ticker = null, openState = false;
-  function close() {
-    if (!openState) return; openState = false; fullscreen.dataset.open = 'false'; opener.setAttribute('aria-expanded', 'false');
-    clearTimeout(timer); timer = setTimeout(() => { if (openState) return; fullscreen.hidden = true; if (placeholder && content) { placeholder.replaceWith(content); placeholder = null; } onClose(); opener.focus(); }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 260);
-  }
-  function open() {
-    if (openState) return; openState = true; clearTimeout(timer);
-    if (content && !placeholder) { placeholder = document.createComment('browser-position'); content.replaceWith(placeholder); body.append(content); }
-    fullscreen.hidden = false; fullscreen.getBoundingClientRect(); fullscreen.dataset.open = 'true'; opener.setAttribute('aria-expanded', 'true'); back.focus(); onOpen();
-  }
-  const key = event => { if (event.key === 'Escape' && openState) { event.stopPropagation(); close(); } };
-  fullscreen.addEventListener('keydown', key); back.addEventListener('click', close); opener.addEventListener('click', () => onActivate ? onActivate() : open());
-  return { element, fullscreen, back, open, close,
+  opener.addEventListener('click', () => onActivate());
+  let ticker = null;
+  return { element,
     /** title: Pleiad のページのタブはホスト名（localhost）でなく、ファイルの名前やページの名前を出す */
     update({ url = '', title = '', tabs = 0, holder = 'ai', name = 'Claude', image = null, remaining = null, last = null, pinned = false } = {}) {
       if (title) domain.textContent = title;
@@ -138,28 +124,10 @@ export function createPhoneBrowserStrip({ mount, content, backMount, onOpen = ()
       // 絵が無いときは透明の絵にする（Chrome は src を外した img に壊れた絵の印を出す）
       dot.dataset.holder = holder; const next = image || BLANK_IMAGE; if (thumb.getAttribute('src') !== next) thumb.src = next;
     },
-    destroy() { clearTimeout(timer); clearInterval(ticker); if (placeholder && content) placeholder.replaceWith(content); back.remove(); element.remove(); fullscreen.remove(); } };
+    destroy() { clearInterval(ticker); element.remove(); } };
 }
 
 export const CONTROL_STATES = ['running', 'idle', 'stopped', 'paused'];
-
-/** 状態の一行の語（running は {{name}} が操作中。リモートの端末で PC が引き継いでいる間は「PC で操作中」）。state が無ければ null */
-export function statusText(state, name, error = null, { by = null, remote = false } = {}) {
-  if (error === 'conceal-failed') return t('chromeControl.error.concealFailed');
-  if (state === 'running') return t('chromeControl.status.running', { name });
-  if (state === 'idle') return t('chromeControl.status.idle');
-  if (state === 'paused') return remote && by === 'pc' ? t('chromeControl.status.pausedPc') : t('chromeControl.status.paused');
-  if (state === 'stopped') return t('chromeControl.status.stopped');
-  return null;
-}
-
-/** 状態ごとに出すボタン（上から順）。止めた・待機中は「引き継ぐ」だけ。一時停止中は「戻す」だけ（待機中の「Chrome で開く」は「引き継ぐ」に一本化。ADR 0154） */
-export function actionsFor(state) {
-  if (state === 'running') return ['stop', 'takeOver'];
-  if (state === 'paused') return ['resume'];
-  if (state === 'idle' || state === 'stopped') return ['takeOver'];
-  return [];
-}
 
 /** 経過時間（1 分 12 秒・45 秒） */
 export function durationText(seconds) {
@@ -173,40 +141,28 @@ const RING_MS = 700;
 
 /**
  * @param {object} o
- * @param {(action: 'takeOver'|'resume'|'stop') => Promise<any>} o.run  押されたときに呼ぶ（browser.chromeTakeOver・chromeResume・chromeStop の呼び出し）
- * @param {() => string} [o.getName]  エージェントの名前（「Claude が操作中」「Claude に戻す」）
- * @param {(error: Error, action: string) => void} [o.onError]
- * @returns {{ root: HTMLElement, banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null, error?: string|null}|null) => void,
+ * @param {() => Promise<any>} o.resume  帯の「{{name}} に戻す」を押したときに呼ぶ（browser.chromeResume）
+ * @param {() => string} [o.getName]  エージェントの名前（「Claude に戻す」）
+ * @param {(error: Error) => void} [o.onError]
+ * @returns {{ banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null, error?: string|null}|null) => void,
  *            ring: (x: number, y: number, size?: {width: number, height: number}) => void, state: () => string|null, refresh: () => void }}
  */
-export function createChromeControlView({ run, getName = () => 'Claude', onError = () => {}, remote = () => false } = {}) {
+export function createChromeControlView({ resume, getName = () => 'Claude', onError = () => {} } = {}) {
   let current = null, showBanner = true;
   let busy = false;
-  const root = el('div', 'cc'); root.hidden = true;
-  const status = el('span', 'cc-status'); status.setAttribute('role', 'status');
-  const dot = el('span', 'cc-dot'); dot.setAttribute('aria-hidden', 'true');
-  const text = el('span', 'cc-text');
-  status.append(dot, text);
-  const buttons = new Map();
-  const labels = { stop: () => t('chromeControl.stop'), takeOver: () => t('chromeControl.takeOver'), resume: () => t('chromeControl.resume', { name: getName() }) };
-  const act = action => {
+  const label = () => t('chromeControl.resume', { name: getName() });
+  const act = () => {
     if (busy) return;
     busy = true; paint();
-    Promise.resolve().then(() => run(action)).catch(error => onError(error, action)).finally(() => { busy = false; paint(); });
+    Promise.resolve().then(() => resume()).catch(error => onError(error)).finally(() => { busy = false; paint(); });
   };
-  for (const action of ['stop', 'takeOver', 'resume']) {
-    const b = el('button', 'btn cc-btn', labels[action]()); b.type = 'button';
-    b.hidden = true; b.onclick = () => act(action);
-    buttons.set(action, b);
-  }
-  root.append(status, ...buttons.values());
 
   // 一時停止中の帯（会話の中。「一時停止中 · あなたが Chrome で操作しています」）
-  // 帯は role=status にしない（状態の一行が同じことを読み上げるので、二重にしない）
+  // 帯は role=status にしない（アドレスバーの札が同じことを示すので、二重にしない）
   const banner = el('div', 'cc-banner'); banner.hidden = true;
   const bannerText = el('span', 'cc-banner-text');
-  const bannerBtn = el('button', 'btn cc-btn', labels.resume()); bannerBtn.type = 'button';
-  bannerBtn.onclick = () => act('resume');
+  const bannerBtn = el('button', 'btn cc-btn', label()); bannerBtn.type = 'button';
+  bannerBtn.onclick = act;
   banner.append(bannerText, bannerBtn);
 
   // 映像の上に重ねる層（親が position: relative の枠に入れる）。押した位置の輪だけを出す
@@ -214,20 +170,11 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
 
   function paint() {
     const state = current?.state ?? null;
-    root.hidden = !state;
-    root.dataset.state = state ?? '';
     banner.hidden = state !== 'paused' || !showBanner;
     overlay.dataset.state = state ?? '';
     if (!state) return;
-    text.textContent = statusText(state, getName(), current.error, { by: current.by, remote: remote() === true });
-    const allowed = actionsFor(state);
-    for (const [action, b] of buttons) {
-      b.hidden = !allowed.includes(action);
-      b.textContent = labels[action]();
-      b.disabled = busy;
-    }
     bannerText.textContent = current.error === 'conceal-failed' ? t('chromeControl.error.concealFailed') : t('chromeControl.banner');
-    bannerBtn.textContent = labels.resume(); bannerBtn.disabled = busy;
+    bannerBtn.textContent = label(); bannerBtn.disabled = busy;
   }
 
   /** 押した位置に輪を出す。(x, y) は押した位置（ページの CSS 画素）、size は映像の元のページの大きさ。大きさが分からなければ出さない（位置を偽らない） */
@@ -242,7 +189,7 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
   }
 
   return {
-    root, banner, overlay, ring,
+    banner, overlay, ring,
     /** banner: 会話の中の一時停止の帯を出すか（右パネルが子の会話を映している間は、帯の会話と状態の会話が違うので出さない） */
     apply(next, { banner = true } = {}) { showBanner = banner; current = next && CONTROL_STATES.includes(next.state) ? { state: next.state, since: next.since ?? null, error: next.error ?? null, by: next.by ?? null } : null; paint(); },
     state: () => current?.state ?? null,

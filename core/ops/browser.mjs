@@ -235,7 +235,8 @@ export const browserOps = [
     riskReason: 'Chooses which of the Chrome windows or tabs of the conversation the video in the right panel shows (null follows the tab the agent used last); it only changes what the person sees and never touches the agent or the windows. Screen and remote devices only (not on MCP or CLI)',
     input: z.object({ sessionId: sessionIdShape, windowId: windowIdShape.nullable().describe('agent:ops.browser.chromePinWindow.windowId'),
       tabId: z.string().min(1).max(200).nullable().optional().describe('agent:ops.browser.chromePinWindow.tabId') }),
-    output: z.object({ pinnedWindowId: z.number().nullable(), pinnedTabId: z.string().nullable().optional() }),
+    output: z.object({ pinnedWindowId: z.number().nullable(), pinnedTabId: z.string().nullable().optional(),
+      state: z.object({ sequence:z.number().int().positive(), tabId:z.string().nullable() }).passthrough().optional() }),
     surfaces: { ui: true, mcp: false, cli: false },
     legacyCommand: 'chromePinWindow',
     handler: async (ctx, { sessionId, windowId, tabId }) => {
@@ -245,26 +246,6 @@ export const browserOps = [
       catch (error) {
         const code = String(error?.message ?? '');
         if (code === 'not-watching' || code === 'no-window' || code === 'no-tab' || code === 'operating') throw new OpError('INVALID', agentT(ctx.locale, `ops.errors.chromePin.${code === 'not-watching' ? 'notWatching' : code === 'operating' ? 'operating' : 'noWindow'}`));
-        throw error;
-      }
-    },
-  }),
-  defineOp({
-    id: 'browser.chromeCloseTab',
-    summary: 'agent:ops.browser.chromeCloseTab.summary',
-    risk: 'write',
-    riskReason: 'Closes one tab of the Chrome window of the conversation while the person operates it from a remote device (never the last tab); the agent is paused and nothing else is touched. Screen and remote devices only (not on MCP or CLI)',
-    input: z.object({ sessionId: sessionIdShape, tabId: z.string().min(1).max(200).describe('agent:ops.browser.chromeCloseTab.tabId') }),
-    output: z.object({}),
-    surfaces: { ui: true, mcp: false, cli: false },
-    legacyCommand: 'chromeCloseTab',
-    handler: async (ctx, { sessionId, tabId }) => {
-      const chrome = mustBeSupported(ctx);
-      if (!chrome.closeTab) unavailable(ctx);
-      try { return await chrome.closeTab(sessionId, tabId); }
-      catch (error) {
-        const code = String(error?.message ?? '');
-        if (['not-watching', 'no-tab', 'last-tab', 'view-only'].includes(code)) throw new OpError('INVALID', agentT(ctx.locale, `ops.errors.chromeCloseTab.${code === 'not-watching' ? 'notWatching' : code === 'no-tab' ? 'noTab' : code === 'last-tab' ? 'lastTab' : 'viewOnly'}`));
         throw error;
       }
     },

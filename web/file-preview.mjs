@@ -624,14 +624,14 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     const base = anchor.closest('.file-preview-document') ? file?.path : undefined;
     activate(ref, anchor, base);
   });
-  // 可視化のカードの「ブラウザーで開く」: 隔離オリジンの写しを会話の Chrome のタブで開く。Chrome が無ければ、狭い画面は右パネル・広い画面はカードの拡大
+  // 可視化のカードの「広げる」: 隔離オリジンの写しを会話の Chrome のタブで開く。Chrome が無ければ、狭い画面と右の欄を開いている間は右の欄・それ以外はカードの拡大
   document.addEventListener('ply-visualize-browser', event => {
     const d = event.detail;
     if (!d || !event.target?.isConnected) return;
     const sessionId = getContext(event.target)?.sessionId;
     const url = isolatedVisualizationUrl(d.bundle, { embed:'tab', host:'localhost' });
     if (url && unified?.connected?.(sessionId) && unified.openTab) return Promise.resolve(unified.openTab({ sessionId, url, reuse:false })).catch(failed);
-    if (mobile.matches) return openPanel({ key:'visualization', title:d.title, body:visualizationFrame(d.content, d.title, { fill:true, bundle:d.bundle }), element:event.target });
+    if (mobile.matches || !panel.hidden) return openPanel({ key:'visualization', title:d.title, body:visualizationFrame(d.content, d.title, { fill:true, bundle:d.bundle }), element:event.target });
     event.target.closest('.present-visualization')?.querySelector('.visualize-widen')?.click();
   });
   document.addEventListener('keydown', event => {

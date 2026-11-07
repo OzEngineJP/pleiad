@@ -55,7 +55,7 @@
       "same": "この会話はすでに『{{name}}』（{{dir}}）を使っています。"
     },
     "handToUser": {
-      "description": "ブラウザーの操作を人に任せ、戻ってくるまで待つ。ログイン・CAPTCHA・2 段階認証・支払い・個人情報の入力の手前で、自分で入力せずに呼ぶ。Chrome の許可を待っている・人が操作中で agent-browser が失敗したときにも呼ぶ。人が「Claude に戻す」を押すと返る。「まだ待っています」が返ったら、待つならもう一度呼ぶ（Chrome を使わずに進められるなら、そうしてよい）。",
+      "description": "ブラウザーの操作を人に任せ、戻ってくるまで待つ。ログイン・CAPTCHA・2 段階認証・支払い・個人情報の入力の手前で、自分で入力せずに呼ぶ。Chrome の許可を待っている・人が操作中で agent-browser が失敗したときにも呼ぶ。人が「任せる」か「Claude に戻す」で操作を戻すと返る。「まだ待っています」が返ったら、待つならもう一度呼ぶ（Chrome を使わずに進められるなら、そうしてよい）。",
       "messageDescription": "人に伝えること（何をしてほしいか。例: example.com にログインしてください）。",
       "resumed": "人が操作を終えて戻しました（{{detail}}）。ページの状態が変わっています。agent-browser snapshot -i からやり直してください。",
       "connected": "Chrome につながりました。もう一度 agent-browser を実行してください。",
@@ -982,7 +982,6 @@
       "chromeUnsupported": "エージェントのブラウザー（Chrome）は、この OS・この環境ではまだ使えません。",
       "chromeNoWindow": "引き継げる Chrome のウィンドウがありません（この会話はまだブラウザーを使っていないか、ウィンドウが閉じられています）。",
       "chromePin": { "notWatching": "Chrome の映像を見ていないので、ウィンドウを固定できません。", "noWindow": "そのウィンドウ・タブはもうありません。", "operating": "PC で操作している間は、映すウィンドウを切り替えられません。" },
-      "chromeCloseTab": { "notWatching": "Chrome の映像を見ていないので、タブを閉じられません。", "noTab": "そのタブはもうありません。", "lastTab": "最後のタブは閉じられません。", "viewOnly": "タブを閉じられるのは、この端末で操作している間だけです。" },
       "chromeDeviceSize": "端末から操作するときは、映像の箱の大きさ（width・height）を指定してください。",
       "chromeProfileOwnSession": "エージェントが切り替えられるのは、自分の会話の Chrome のプロフィールだけです。sessionId を省いてください。",
       "chromeProfileBusy": {
@@ -1366,7 +1365,6 @@
       "chromeControl": { "sessionId": "会話の id。", "state": "ウィンドウの状態。running（エージェントのターンの間）・idle（待機中）・stopped（止めた）・paused（人が引き継いでいる）。", "since": "paused の始まりの時刻（ミリ秒）。paused でなければ null。", "error": "戻せなかった理由。conceal-failed は、ウィンドウを画面の外へ隠せなかったので一時停止のままにしたこと。無ければ null。", "by": "paused のとき、誰が操作しているか。pc（PC の画面）・device（リモートの端末）。paused でなければ null。" },
       "chromeCloseWindow": { "summary": "この会話の専用 Chrome のウィンドウを閉じ、最後の画面を会話に残す。windowId を渡すと、複数あるウィンドウのうちそのウィンドウだけを閉じる。画面とリモートの端末からだけ呼べる。", "windowId": "閉じるウィンドウの id（chromeWindow イベントの windowIds にあるもの）。省くと会話のウィンドウすべて。" },
       "chromePinWindow": { "summary": "右パネルの Chrome の映像に映すウィンドウを固定する。windowId が null なら固定を解き、エージェントが最後に使ったウィンドウを追う。固定は会話に 1 つで、映像を見ている間だけ有効。エージェントの操作には影響しない。画面とリモートの端末からだけ呼べる。", "windowId": "映すウィンドウの id（chromeWindow イベントの windowIds にあるもの）。", "tabId": "映すタブの id（映像の状態の list にあるもの）。渡すとそのタブを固定する。" },
-      "chromeCloseTab": { "summary": "端末が Chrome のウィンドウを引き継いでいる間に、その会話のタブを 1 つ閉じる（最後のタブは閉じない）。画面とリモートの端末からだけ呼べる。", "tabId": "閉じるタブの id（映像の状態の list にあるもの）。" },
       "chromeWindows": { "summary": "この会話と直接委譲した子の開いている Chrome のウィンドウを返す。画面のウィンドウの一覧に使う。" },
       "chromeNavigate": { "summary": "会話のブラウザーで移動する", "action": "移動・履歴・タブ・ファイル表示の操作", "input": "アドレスバーに入れた URL・パス・検索語（navigate のとき）", "view": "ファイルの表示方法（プレビューまたは原文）" },
       "listProfiles": { "summary": "この PC の Chrome のプロフィールの一覧（表示名・フォルダー名・設定のメモ）と、会話の今のプロフィール・今切り替えられない理由を返す。メールアドレスなどのアカウントの情報は読まない。", "profiles": "プロフィール。browser（chrome）・dir（フォルダー名）・name（表示名）・note（設定 › ブラウザーのメモ。無ければ空）。", "current": "会話の今のプロフィール（browser・dir）。まだ決まっていなければ null（最初のウィンドウは Chrome の最後に使ったプロフィールで開く）。会話を指定しなければ null。", "busy": "今切り替えられない理由。operating（エージェントが操作中）・waiting（人への依頼の待ち）・human（人がウィンドウを引き継いでいる）。切り替えられれば null。" },

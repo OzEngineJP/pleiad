@@ -1,4 +1,4 @@
-// ファイルのページと隔離の 2 つのリスナーを起こし、port をデータの置き場に覚える（ADR 0295 の 1）。旗が on のときだけ core/server.mjs が呼ぶ。
+// ファイルのページと隔離の 2 つのリスナーを起こし、port をデータの置き場に覚える（ADR 0295 の 1）。core/server.mjs が待ち受けの後に呼ぶ。
 //   - port は page-ports.json に覚え、次の起動でも同じ port を試す（開いているページのタブの URL を変えないため）。取れなければ新しい port にして覚え直す
 //   - 環境変数 AGENT_HOST_PAGES_PORT・AGENT_HOST_ISOLATED_PORT が先（試験用。0 で空いた port）。環境変数で決めた port は覚えない
 import fs from 'node:fs/promises';

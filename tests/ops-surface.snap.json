@@ -663,21 +663,6 @@
       "input": "f08816c821a8"
     },
     {
-      "id": "browser.chromeCloseTab",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": false
-      },
-      "legacyCommand": "chromeCloseTab",
-      "input": "6290c3ff07c7"
-    },
-    {
       "id": "browser.chromeCloseWindow",
       "risk": "write",
       "riskOf": false,

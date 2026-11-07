@@ -4,7 +4,7 @@ import { delegateResult, delegateTaskId, isPlyDelegateToolName } from './delegat
 import { isComposingKey, shortcutLabel } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
-import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
+import { isManagedContext, setupBrowserEntry } from './header-entries.mjs';
 import { setupChromePanel, createWindowTable } from './chrome-panel.mjs';
 import { setupChromeProfilePill } from './chrome-profile-pill.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
@@ -118,7 +118,7 @@ import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
   resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, versionReload } from './interrupt.mjs';
 import { setupContext } from './context.mjs';
-import { setupSessionContext, chipText } from './session-context.mjs';
+import { setupSessionContext } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
 import { renderOutbox } from './outbox.mjs';
 import { injectTaskInstructions, waitsForNextTurn } from './task-instructions.mjs';
@@ -135,7 +135,7 @@ import { createConversationToc } from './conversation-toc.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
-import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName, setChromeClosedSession, actionsFor } from './chrome-control.mjs';
+import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
 const outboxes = new Map();
@@ -445,12 +445,12 @@ const state = {
   submitting: false,       // 新規セッションを送った直後（id が決まるまで）
   messages: [],        // 今のセッションの履歴（loadSession の messages）。長い会話は末尾の窓だけ（ADR 0182）
   base: 0,             // messages[0] の通し番号。画面の行の印 m:<通し番号> とサーバーの添字はこの値で揃える
-  contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。タイトル行の入口と筋の一行に使う
+  contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。右パネル「この会話のコンテキスト」と「…」の変更ありの点に使う
   contextInfoId: null, // 上の記録がどのセッションのものか
   // worktree（ADR 0136）。worktreeCheck の結果（今の場所・作成できるか・同じリポジトリに書き込み中の別の会話）。
   // 「このまま元の場所で始める」を選んだ会話×場所は stay（今回だけ。メモリだけで、送ったら外す）
   worktree: createAuxSlot(),   // worktreeCheck の答え（web/composer-aux.mjs。確認中・失敗・確定を区別する）
-  git: { ...createAuxSlot(), fetchKey: null, sessionId: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。頭の行のアイコン・入力欄のブランチ・「…」のメニューに使う
+  git: { ...createAuxSlot(), fetchKey: null, sessionId: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。入力欄のブランチ・「…」のメニューに使う
   presents: [],
   presentBase: 0,      // presents[0] の通し番号（p:<通し番号>）
   earlierCalls: [],    // 窓の手前にあるサブエージェントの呼び出しの要約（サーバーが運ぶ。subagentCalls）。作業ダイアログの過去の一覧が使う
@@ -2672,9 +2672,10 @@ function browserHandoffCard(ev, into = null) {
   // 接続の案内は承認（承認を待っている）、人への依頼は Chrome の操作待ち
   head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), handoffMark(t, ev.browserHandoff)));
   const actions = el("div", "card-actions");
-  // リモートの端末では「この端末で操作する」（右パネルの Chrome の窓で操作する）を足す
+  // リモートの端末では「この端末で操作する」（右の欄の Chrome の映像で操作する）を足す。人が操作している間の「画面を開く」は右の欄にその会話の映像を開く
   const operateHere = window.plyRemote ? async (target) => (await chromePanel?.measure(null, { target })) ?? null : null;
-  const view = browserHandoffView(ev, { el, t, cmd, operateHere, spinner: runMark, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
+  const openScreen = (target) => chromePanel?.open(null, { target });
+  const view = browserHandoffView(ev, { el, t, cmd, operateHere, openScreen, spinner: runMark, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
   head.append(el("span", "desc", view.summary()));
   card.append(head, view.body, actions);
   placeCard(m, ev, into);
@@ -3626,7 +3627,7 @@ function onEvent(ev, replay = false) {
         state.messages = []; state.base = 0; state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
         state.rebuilds = []; state.rebuildPhase = null;
         paintContextStrip();
-        refreshContextEntry().catch(() => {});
+        refreshContextInfo().catch(() => {});
       }
       return refresh();
     // Claude Agent SDK の取得の状態（ADR 0208）。prompt は、同意が無いまま Claude の会話を始めようとした（取得の案内を開く）
@@ -3889,7 +3890,7 @@ function onEvent(ev, replay = false) {
       // 新しい記録はこの直後の contextUsage で届く。ここでは「変更あり」の印だけ先に消す
       if (state.contextInfo && state.contextInfoId === ev.sessionId) {
         state.contextInfo = { ...state.contextInfo, changed: { differs: false, paths: [], files: [] } };
-        paintContextEntry();
+        paintHeaderEntries();
         sessionContext.refresh();
       }
       return;
@@ -3903,7 +3904,7 @@ function onEvent(ev, replay = false) {
       state.contextInfo = { ...prev, pending: false, error: false, report: ev.report, owners: ev.report?.owners, pinned: isManagedContext(ev.report), changed: { differs: false, paths: [], files: [] },
         plyParts: ev.plyParts ?? prev?.plyParts ?? null };
       state.contextInfoId = id;
-      paintContextEntry();
+      paintHeaderEntries();
       sessionContext.refresh();
       return;
     }
@@ -5893,7 +5894,6 @@ async function refreshTaskChromeWindows(sessionId = state.current) {
   for (const row of chromeWindowRows) if (row.taskId) taskChromeRows.set(row.taskId, row);
   paintDelegateCards();
   browserEntry?.paint();
-  chromePanel?.refresh();   // 右パネルの上の列（窓のある子の会話の題）
 }
 /**
  * Channels のスレッドが見ている bot の会話（子孫まで）の委譲の行。Chats の会話の分（taskCards.rows）とは別に持つので、Chats の会話を切り替えても消えない。
@@ -7432,7 +7432,7 @@ function applyTheme(mode) {
   for (const b of $("themeSeg").querySelectorAll("button")) b.classList.toggle("on", b.dataset.theme === m);
   paintTitleBar();
   paintShellTheme();
-  // 旗が on: 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295）
+  // 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295。browserUnify を返す本体だけ）
   if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
 }
 
@@ -8084,7 +8084,7 @@ function openLightbox(src, caption, path, origin) {
   d.querySelector(".lb-path-text").title = path ?? "";
   d.querySelector(".lb-panel").hidden = !path;
   d.querySelector(".lb-reveal").hidden = !path || state.osActions !== true;
-  // 既定のアプリで開く: 旗が on のホストの画面で、実体（添付なら uploads の中のファイル）が許した種類のときだけ。サーバーに聞いてから出す
+  // 既定のアプリで開く: ホストの画面で、実体（添付なら uploads の中のファイル）が許した種類のときだけ。サーバーに聞いてから出す
   const openDefault = d.querySelector(".lb-default");
   openDefault.hidden = true;
   const asked = lightboxFile;
@@ -8672,20 +8672,12 @@ function openContextPage() {
   onboarding.open('context');
   context.openPage();
 }
-/** タイトル行の右の入口。押すと右パネル「この会話のコンテキスト」を開閉する。セッションを選んでいないときは出さない */
-function paintContextEntry() {
+/** 頭の行の右の欄のボタンと「…」の点を描き直す。会話が替わったとき・読み込み記録が届いたとき */
+function paintHeaderEntries() {
   chromePanel?.reset(); browserEntry?.paint(); paintChromeControl();   // 会話が替わった
-  paintContextEntryStatus();
-}
-function paintContextEntryStatus() {
-  const data = state.contextInfoId === state.current ? state.contextInfo : null;
-  paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: data?.report,
-    status: !data ? 'loading' : data.error ? 'error' : data.pending ? (data.report ? 'refreshing' : 'loading') : sessionContext.entryState(),
-    summary: chipText(data), changed: !!data?.changed?.differs });
-  for (const hint of document.querySelectorAll('.context-entry-status')) hint.textContent = $('contextEntry').dataset.contextStatus || '';
   paintMoreEntry();
 }
-/** 「…」の右上の変更ありの点。700px 以下で移したプラグイン・git の状態を見る。 */
+/** 「…」の右上の変更ありの点。700px 以下の「…」のメニューにあるプラグイン・git の状態を見る。 */
 function paintMoreEntry() {
   const button = $('sessionMore');
   const changed = narrowView.matches && !!state.current && (!!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0);
@@ -8695,57 +8687,40 @@ function paintMoreEntry() {
   button.setAttribute('aria-label', changed ? `${t('session.more')} · ${t('session.context.changed')}` : t('session.more'));
 }
 /** 今のセッションの読み込み記録を取り直す。固定された会話ではサーバが今のファイルと突き合わせる */
-let contextEntryRequest = 0;
-async function refreshContextEntry({ force = false } = {}) {
+let contextInfoRequest = 0;
+async function refreshContextInfo({ force = false } = {}) {
   const id = state.current;
   if (!id) {
     state.contextInfo = null;
     state.contextInfoId = null;
   } else if (force || state.contextInfoId !== id) {
-    const request = ++contextEntryRequest;
+    const request = ++contextInfoRequest;
     const pending = { ...(state.contextInfoId === id ? state.contextInfo : null), pending: true, error: false };
     state.contextInfo = pending;
     state.contextInfoId = id;
-    paintContextEntry();
+    paintHeaderEntries();
     sessionContext.refresh();
     try {
       const info = await cmd('sessionContext', { sessionId: id });
-      if (state.current !== id || contextEntryRequest !== request) return state.contextInfo;
+      if (state.current !== id || contextInfoRequest !== request) return state.contextInfo;
       // 取得中に届いたターンの報告は新しい。付随情報だけ応答から補う。
       const live = state.contextInfo;
       state.contextInfo = !live?.report || live.report === pending.report ? info ?? {} : { ...live, ...info, pending: false, error: false,
         report: live.report, owners: live.owners, pinned: live.pinned, changed: live.changed, plyParts: live.plyParts ?? info?.plyParts };
     } catch {
-      if (state.current !== id || contextEntryRequest !== request) return state.contextInfo;
+      if (state.current !== id || contextInfoRequest !== request) return state.contextInfo;
       state.contextInfo = { ...state.contextInfo, pending: false, error: true };
     }
   } else return state.contextInfo;
-  paintContextEntry();
+  paintHeaderEntries();
   sessionContext.refresh();
   return state.contextInfo;
 }
 
 // ---------------------------------------------------------------- git の状態（ADR 0085）
-// 頭の行のアイコン（コミットしていない変更があれば右上の点）・入力欄の作業場所のチップのブランチ・狭い画面の「…」の項目。
+// 入力欄の作業場所のチップのブランチ・狭い画面の「…」の項目と変更ありの点。
 // 取り直しは、会話・作業場所が変わったとき、会話を開いたとき、ターンの終わり、パネルの再読み込み。git が無い・git 管理外は null（何も出さない）
 let gitPanel = null;
-function paintGitEntry() {
-  const button = $('gitEntry');
-  const data = state.current ? state.git.data : null;
-  paintMoreEntry();
-  button.hidden = !data;
-  if (!data) return;
-  const dirty = data.dirty > 0;
-  const label = dirty ? t('git.entryChanged') : t('git.entry');
-  button.title = label;
-  button.setAttribute('aria-label', label);
-  const open = Boolean(gitPanel?.isOpen());
-  button.classList.toggle('on', open);
-  button.setAttribute('aria-expanded', String(open));
-  const dot = button.querySelector('.entry-dot');
-  if (dirty && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
-  else if (!dirty && dot) dot.remove();
-}
 async function refreshGit({ force = false } = {}) {
   const sessionId = state.current ?? null;
   const s = state.sessions.find(x => x.id === sessionId);
@@ -8764,7 +8739,7 @@ async function refreshGit({ force = false } = {}) {
   if (!settleAux(state.git, ticket, result)) return;
   paintGit();
 }
-function paintGit() { paintGitEntry(); controls.paint(); }
+function paintGit() { paintMoreEntry(); controls.paint(); }
 
 // ---------------------------------------------------------------- worktree（ADR 0089）
 const normDir = (p) => String(p ?? '').replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
@@ -8879,7 +8854,7 @@ function jumpToConversation({ uuid, toolId }) {
   return true;
 }
 /**
- * 旗が on: ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
+ * ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
  * タブを開けるのは Chrome につながっているか、その会話にもうタブがあるとき。それ以外は右パネルの iframe で開く（web/page-frame.mjs）
  */
 let filePagesConnected = false;
@@ -9012,7 +8987,7 @@ function syncTitleControls() {
   $("titleWand").disabled = !on || busy || s?.unsent || caps.suggestTitle === false;
   // この会話の操作（脇の行の「…」と同じメニュー）。一覧に載っている会話だけ
   $("sessionMore").hidden = !s;
-  paintContextEntry();
+  paintHeaderEntries();
 }
 function selectedMode(s, bid, modes, chosen = null) {
   const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {};
@@ -9915,7 +9890,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     for (const node of added) node.animate([{ opacity: .15 }, { opacity: 1 }], { duration: motionDuration(420), easing: EASING });
   }
   // この会話が読み込んだ記録。取り直しは待たない（固定された会話では今のファイルとの突き合わせが入る）
-  refreshContextEntry({ force: true }).catch(() => {});
+  refreshContextInfo({ force: true }).catch(() => {});
   refreshGit({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
   if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
@@ -10629,22 +10604,19 @@ const shellComposer = chatComposer.useShell({
 const context = setupContext({ button: $('openContext'), cmd,
   show: () => onboarding.page('context'), recentPlaces: cwdOptions, backends: () => state.backends, getPrefs: () => state.prefs,
   openDelegation: () => { $('delegationTab').click(); $('delegationTab').focus(); } });
-// 会話の右パネル「この会話のコンテキスト」。札とタイトル行の入口から開く
+// 会話の右パネル「この会話のコンテキスト」。「…」のメニュー（700px 以下・タッチの画面）から開く
 const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   session: () => state.sessions.find(s => s.id === state.current) ?? null,
   info: () => (state.contextInfoId === state.current ? state.contextInfo : null),
-  refreshInfo: (force) => refreshContextEntry({ force }), onStateChange: paintContextEntryStatus,
+  refreshInfo: (force) => refreshContextInfo({ force }),
   openSettings: () => openContextPage(), labelOf,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
-$('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
-// 会話の目次と検索（右パネル。狭い画面は下からのシート）。会話の画面にいるときの Ctrl+F（macOS は ⌘F）でも開く
+// 会話の目次と検索（右パネル。狭い画面は下からのシート）。見出しの虫眼鏡と、会話の画面にいるときの Ctrl+F（macOS は ⌘F）で開く
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
-// 会話の右パネル「git」（ADR 0085）。頭の行のアイコン・返答の下の要約行・委譲カードの「変更」・狭い画面の「…」から開く
+// 会話の右パネル「git」（ADR 0085）。返答の下の要約行・委譲カードの「変更」・狭い画面の「…」・近道（Ctrl+Shift+G）から開く
 gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),
   jump: jumpToConversation, use: useGitText, worktrees: worktreeOps, canOpen: () => Boolean(state.current && state.git.data),
   onState: (git, { foreign }) => { if (!foreign) { state.git.data = git; state.git.dataOwner = ''; state.git.status = 'confirmed'; paintGit(); } } });
-gitPanel.onOpenChange(paintGitEntry);
-$('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
 // 会話の右パネル「Chrome の窓」（ADR 0148 第 5 段）。窓のある会話の頭の行の入口から開く。映像は見るだけ（ホストの画面もリモートの端末も）
 /** 右パネルの Chrome が映している会話（開いていなければ今の会話）。状態の一行・引き継ぎ・押した位置の輪はこの会話に向く */
 function chromeTarget() { return (chromePanel?.isOpen() && chromePanel.sessionId) || state.current || null; }
@@ -10657,17 +10629,13 @@ async function takeOverOnDevice(id, { fromPc = false } = {}) {
   return cmd('chromeTakeOver', { sessionId: id, by: 'device', ...size, ...(fromPc ? { fromPc: true } : {}) });
 }
 chromePanel = setupChromePanel({ cmd, preview: filePreview,
-  showMenu: (x, y, items, title) => showMenu(x, y, items, title),
-  session: () => state.current ?? null, getAgentName: id => chromeAgentName(id), windows: chromeWindows,
-  children: () => chromeWindowRows,
+  session: () => state.current ?? null, windows: chromeWindows,
   closeRisk: id => closeRiskOf({ state: chromeControlStore.get(id).state, waiting: handoffWaiting(id) }),
-  paused: id => chromeControlStore.get(id).state === 'paused',
-  waiting: id => handoffWaiting(id),
   // PC で操作している間のリモートの端末: 幕に「この端末で操作する」（PC の窓を隠して端末へ移す）
   canOperateHere: id => Boolean(window.plyRemote) && chromeControlStore.get(id).state === 'paused' && chromeControlStore.get(id).by === 'pc',
   operateHere: id => takeOverOnDevice(id, { fromPc: true }),
   // リモートの端末の「引き継ぐ」は端末で操作するので、PC で操作するのは ⋯ から
-  menuItems: id => (window.plyRemote && actionsFor(chromeControlStore.get(id).state).includes('takeOver')
+  menuItems: id => (window.plyRemote && chromeControlStore.get(id).state !== 'paused'
     ? [{ label: t('chromeControl.takeOverPc'), onClick: () => cmd('chromeTakeOver', { sessionId: id }).catch(error => notify(error?.message || t('chromeControl.failed'))) }] : []),
   openConversation: async id => { await select(id); if (state.current === id) chromePanel?.open($('browserEntry')); } });
 document.addEventListener('ply-browser-toggle', event => {
@@ -10675,17 +10643,13 @@ document.addEventListener('ply-browser-toggle', event => {
   else chromePanel?.open(event.target, { target:event.detail?.sessionId });
 });
 chromePanel.onOpenChange(() => { browserEntry?.paint(); });
-// エージェントの Chrome の窓の状態の一行・止める・引き継ぐ・戻す（web/chrome-control.mjs。ADR 0154）。状態の一行は右パネルの映像の上の差し込み口、押した位置の輪は映像の上、
-// 一時停止中の帯は会話の側（入力欄の上）。撮影を断っている間の幕は映像の側が出す。窓があるか一時停止中の会話だけに出す
+// エージェントの Chrome の一時停止中の帯と押した位置の輪（web/chrome-control.mjs。ADR 0154）。誰が操作中かと止める・任せるはアドレスバーの札（ADR 0296）。
+// 押した位置の輪は映像の上、一時停止中の帯は会話の側（入力欄の上）。撮影を断っている間の幕は映像の側が出す。窓があるか一時停止中の会話だけに出す
 chromeControlView = createChromeControlView({
   getName: () => chromeAgentName(chromeTarget()),
-  remote: () => Boolean(window.plyRemote),
-  // リモートの端末の「引き継ぐ」は、この端末で操作する（PC で操作するのは ⋯ の「PC で操作する」）
-  run: (action) => (action === 'takeOver' && window.plyRemote ? takeOverOnDevice(chromeTarget())
-    : cmd({ takeOver: 'chromeTakeOver', resume: 'chromeResume', stop: 'chromeStop' }[action], { sessionId: chromeTarget() })),
+  resume: () => cmd('chromeResume', { sessionId: chromeTarget() }),
   onError: (error) => notify(error?.message || t('chromeControl.failed')),
 });
-chromePanel.mountStatus(chromeControlView.root);
 chromePanel.mountOverlay(chromeControlView.overlay);
 $('chromeBanner').append(chromeControlView.banner);
 chromeProfilePill = setupChromeProfilePill({
@@ -10711,20 +10675,17 @@ function paintChromeControl() {
   const id = chromeTarget();
   const row = id ? chromeControlStore.get(id) : null;
   chromeControlView?.apply(row && (row.state === 'paused' || chromeWindows.has(id)) ? row : null, { banner: id === state.current });
-  // 端末から操作する（by: 'device' の一時停止）間は、リモートの端末の映像から入力を送る（ホストの画面は見るだけのまま）
-  chromePanel?.setOperating(Boolean(window.plyRemote) && row?.state === 'paused' && row.by === 'device');
   chromeProfilePill?.onStateChange();
 }
 chromeControlStore.onChange((id) => { if (id === state.current || id === chromePanel.sessionId) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); } });
 chromeControlStore.onTap((tap) => { if (tap.sessionId === chromeTarget() && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
-// 右パネルが映す会話を替えた（子の会話の Chrome を映した・戻した・閉じた）: 状態の一行とプロフィールをその会話に合わせる
+// 右パネルが映す会話を替えた（子の会話の Chrome を映した・戻した・閉じた）: 一時停止の帯とプロフィールをその会話に合わせる
 chromePanel.onTargetChange(() => { paintChromeControl(); chromeProfilePill?.refresh(); });
 document.addEventListener('ply-git-open', (event) => {
   const sessionId = event.detail?.sessionId ?? null;
   if (!sessionId && !state.current) return;
-  // 返答の下の 1 行（detail.turn）と委譲カードから開いたら「この会話の間」、頭のアイコン・近道からは「コミットしていない分」
+  // 返答の下の 1 行（detail.turn）と委譲カードから開いたら「この会話の間」、近道からは「コミットしていない分」
   gitPanel.open(event.target.closest?.('button') ?? null, { sessionId, range: 'session' });
-  paintGitEntry();
 });
 document.addEventListener('keydown', event => {
   const mac = /Mac/.test(navigator.platform);
@@ -10888,8 +10849,8 @@ function openConversationMenu(s, r) {
   const used = headerUsage.currentPercent();
   const supported = capsOf(s.backend).compact;
   const items = conversationMenuItems({
-    plugins: !$('contextEntry').hidden && { label: t('session.context.label'), onClick: () => sessionContext.open($('sessionMore')) },
-    git: !$('gitEntry').hidden && { label: $('gitEntry').getAttribute('aria-label'), onClick: () => gitPanel?.open($('sessionMore')) },
+    plugins: Boolean(state.current) && { label: t('session.context.label'), onClick: () => sessionContext.open($('sessionMore')) },
+    git: Boolean(state.current && state.git.data) && { label: state.git.data.dirty > 0 ? t('git.entryChanged') : t('git.entry'), onClick: () => gitPanel?.open($('sessionMore')) },
     browser: browserEntry?.available() && { label: chromeLink === 'connected' || chromeWindows.has(state.current) ? t('browser.unifiedEntryLabel') : (rightPane.isOpen() ? t('tabs:address.closePanel') : t('tabs:address.openPagePanel')), onClick: () => browserEntry.toggle($('sessionMore')) },
     usage: { label: t('usage.header.title'), hint: used == null ? null : () => menuMeter(used), onClick: () => headerUsage.open($('sessionMore')) },
     compact: { label: t('compaction.short'), disabled: !supported,

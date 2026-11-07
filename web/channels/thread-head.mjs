@@ -1,11 +1,11 @@
-// スレッドの見出し（.th-top）。左に「# チャンネル名 › スレッドの題」、右に Chats の頭と同じ入口（目次・git・内蔵ブラウザー）と閉じる ✕。
+// スレッドの見出し（.th-top）。左に「# チャンネル名 › スレッドの題」、右に入口（目次・右の欄）と閉じる ✕。
 // 左にチャンネルの流れが見えている間（split）はチャンネル名を出さず「› スレッドの題」だけ（CSS が .deck[data-deck] で出し分ける）。
-// 入口は右パネルの道具: 目次は会話と同じ目次と検索（web/conversation-toc.mjs）、git は bot の会話の作業場所の git（既存の ply-git-open）、
-// 内蔵ブラウザーは右パネルのブラウザー。どれも bot の会話（そのスレッドで最後に動いた bot）を基準にする。
+// 入口は右パネルの道具: 目次は会話と同じ目次と検索（web/conversation-toc.mjs）、右の欄は Chats の頭と同じ開け閉め（ADR 0294）。
+// どちらも bot の会話（そのスレッドで最後に動いた bot）を基準にする。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { shortcutLabel } from '../keyboard.mjs';
-import { closeIcon, branchIcon } from '../icons.mjs';
+import { closeIcon } from '../icons.mjs';
 import { browserIcon } from '../tab-strip.mjs';
 
 const TOC_PATH = 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1';
@@ -24,7 +24,7 @@ const svgButton = (cls, label, paths) => {
 
 /**
  * @param {object} o
- * @param {object} o.host  web/channels/index.mjs の host（cmd・filePreview・openSidebar）
+ * @param {object} o.host  web/channels/index.mjs の host（openSidebar）
  * @param {() => void} o.onClose  ✕
  * @param {() => void} o.onBack  チャンネル名（流れに戻る）
  * @param {(button: HTMLElement) => void} o.onToc  目次
@@ -105,16 +105,6 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   toc.setAttribute('aria-expanded', 'false');
   toc.onclick = () => onToc(toc);
 
-  const git = el('button', 'btn btn-icon th-git');
-  git.type = 'button';
-  git.hidden = true;
-  git.innerHTML = branchIcon;
-  git.onclick = () => {
-    if (!sessionId) return;
-    // 右パネルの git（web/git-panel.mjs）。会話を指して開く既存の入口（委譲のカードの「変更」と同じ）
-    git.dispatchEvent(new CustomEvent('ply-git-open', { bubbles: true, detail: { sessionId } }));
-  };
-
   const browser = svgButton('th-browser', t('channels:thread.entry.browser'), GLOBE_PATHS);
   browser.setAttribute('aria-pressed', 'false');
   // ブラウザーの部品（web/browser-unify.mjs）がホストの caps を受けて使えるようになってから出す（ply-browser-availability で知らせる）
@@ -141,24 +131,13 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   close.onclick = onClose;
 
   const entries = el('div', 'th-entries');
-  entries.append(toc, git, browser);
+  entries.append(toc, browser);
   head.append(side, crumb, entries, close);
 
-  // 右パネルの開閉に合わせて、押されている印・git の「開いている」を合わせる
-  new MutationObserver(() => { paintBrowser(); paintGit(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  // 右パネルの開閉に合わせて、押されている印を合わせる
+  new MutationObserver(paintBrowser).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
-  let sessionId = null, ticket = 0, gitData = null;
-  function paintGit() {
-    git.hidden = !gitData;
-    if (!gitData) return;
-    const dirty = gitData.dirty > 0;
-    const label = dirty ? t('git.entryChanged') : t('git.entry');
-    git.title = label;
-    git.setAttribute('aria-label', label);
-    const dot = git.querySelector('.entry-dot');
-    if (dirty && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); git.append(mark); }
-    else if (!dirty && dot) dot.remove();
-  }
+  let sessionId = null;
 
   return {
     el: head,
@@ -171,18 +150,8 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
       title.textContent = text || t('channels:thread.untitled');
       title.title = text || '';
     },
-    /** git の入口は、作業場所が git のときだけ出す（Chats の頭と同じ）。会話が変わったときと、ターンが終わったときに取り直す */
-    async setSession(id, { force = false } = {}) {
-      if (id === sessionId && !force) return;
-      if (id !== sessionId) { gitData = null; paintGit(); }
-      sessionId = id;
-      if (!id) return;
-      const mine = ++ticket;
-      const res = await host.cmd('gitStatus', { sessionId: id, fresh: force }).catch(() => null);
-      if (mine !== ticket) return;
-      gitData = res?.git ?? null;
-      paintGit();
-    },
+    /** 右の欄の開け閉めが指す bot の会話 */
+    setSession(id) { sessionId = id; },
     paintBrowser,
   };
 }

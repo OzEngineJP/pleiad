@@ -39,10 +39,12 @@ export default async function (t, ctx) {
          hist?.presents?.length ? `${hist.presents.length} 件` : "このセッションには無し");
 
     // cwd を指定しない新規セッションはホームディレクトリが自動設定される
-    const defSession = await c.cmd("newSession", {});
-    t.ok("cwd 未指定の新規セッションはホームディレクトリになる", samePath(defSession.cwd, os.homedir()), defSession.cwd);
+    // newSession は { sessionId } だけを返すので、cwd は一覧から読む
+    const defSession = await c.cmd("newSession", { backend: "claude" });
+    const defCwd = (await c.cmd("listSessions")).find((s) => s.id === defSession.sessionId)?.cwd;
+    t.ok("cwd 未指定の新規セッションはホームディレクトリになる", samePath(defCwd, os.homedir()), defCwd ?? "(一覧に無い)");
 
-    // 承認が要るツール（Write）を踏ませ、present も出させる。
+    // 承認が要るツール（Write）を踏ませ、状態も変えさせる（AI から出す present のツールは廃止した。ADR 0008）。
     // 絶対パスで指示する。相対パスにするとモデルが勝手に絶対化して行き先がぶれ、
     // 「システムが cwd を守っているか」ではなく「モデルのパス推測」を測ることになる。
     const outFile = path.join(ctx.work, "smoke-out.md");
@@ -50,17 +52,15 @@ export default async function (t, ctx) {
       prompt:
         `次を順にやって。説明は最短でよい。\n` +
         `1. Write ツールで ${outFile} に "# smoke v1" と1行だけ書く\n` +
-        `2. present ツールで kind:"text" として "承認フロー往復OK" を表示する\n` +
-        `3. set_status ツールで状態を「v1検証」にする`,
+        `2. set_status ツールで状態を「v1検証」にする`,
       sessionId: null,
+      backend: "claude",   // Claude の会話で確かめる（サーバーの既定のエージェントに左右されない）
       cwd: ctx.work,
       mode: "default",   // 承認フローを見るテストなので、全体の既定に左右されないよう明示する
     });
 
     t.ok("permission イベントが飛ぶ", turn.permissions.length > 0,
          turn.permissions.map((p) => p.toolName).join(", ") || "来なかった");
-    const present = turn.events.find((e) => e.type === "present");
-    t.ok("present イベントが飛ぶ", Boolean(present), present ? `kind=${present.kind}` : "来なかった");
     const status = turn.events.find((e) => e.type === "status");
     t.ok("status イベントが飛ぶ", Boolean(status), status?.status ?? "来なかった");
 
@@ -68,10 +68,6 @@ export default async function (t, ctx) {
     t.ok("新規セッションの id が確定する", Boolean(newId), newId ?? "");
 
     if (newId) {
-      const back = await c.cmd("loadSession", { sessionId: newId });
-      t.ok("新規セッションの present が永続化されている",
-           (back?.presents?.length ?? 0) > 0, `${back?.presents?.length ?? 0} 件`);
-
       const after = await c.cmd("listSessions");
       const me = after.find((s) => s.id === newId);
       t.ok("状態が一覧に反映される", me?.status === "v1検証", me?.status ?? "(なし)");

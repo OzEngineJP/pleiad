@@ -71,5 +71,17 @@ async (page) => {
   await page.setViewportSize({ width: 700, height: 800 });
   await page.waitForTimeout(300);
   check(!(await geo()).shown, '幅 700px では「広げる」を出さない');
+
+  // 6. 右の欄を開いている間（会話の列に広げる余地が無い）は、右の欄に映す（Chrome につながっていないとき。ADR 0294 の 3）
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await settle();
+  if ((await geo()).widened) { await button.focus(); await page.keyboard.press('Enter'); await settle(); }
+  await page.locator('#browserEntry').click();
+  await page.waitForTimeout(600);
+  await button.focus();
+  await page.keyboard.press('Enter');
+  await page.locator('#filePreview .visualize-fill').waitFor();
+  const inPane = await geo();
+  check(!inPane.widened, `右の欄を開いている間は、列の中では広げずに右の欄に映す（${JSON.stringify(inPane)}）`);
   return { passed: true, checks: results };
 }

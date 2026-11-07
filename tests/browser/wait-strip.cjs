@@ -19,7 +19,7 @@ async page => {
   };
   const panel = async open => {
     const shown = await page.evaluate(() => !!document.body.classList.contains('file-preview-open'));
-    if (shown !== open) await page.locator('#contextEntry').click();
+    if (shown !== open) await page.locator('#browserEntry').click();
     await page.waitForTimeout(400);
   };
   const measure = () => page.evaluate(() => {

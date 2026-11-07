@@ -3,13 +3,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { containRect, toPageCoords, toPageDelta } from '../../web/page-coords.mjs';
+import { containRect, pageMetadata, toPageCoords, toPageDelta } from '../../web/page-coords.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = p => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 export const name = 'page-coords';
-export const title = '映像の座標の変換（web/page-coords.mjs）: 引っ越しの前後で同じ値・使う側の import';
+export const title = '映像の座標の変換（web/page-coords.mjs）: 引っ越しの前後で同じ値・ページの倍率で割る・使う側の import';
 
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 const sameRect = (a, b) => ['left', 'top', 'width', 'height'].every(k => near(a[k], b[k]));
@@ -46,6 +46,15 @@ export default async function (t) {
     t.ok(`#${i} ページの点`, coords === null ? page === null : page?.x === coords.x && page?.y === coords.y, JSON.stringify(page));
     t.ok(`#${i} 移動量`, near(toPageDelta(37, got, meta), delta));
   });
+
+  // フレームの metadata は DIP。viewport の meta の無いページ（980 px の幅を 0.4 倍で見せる）では、CDP の入力の座標（レイアウトの CSS px）へ倍率で割って直す
+  const wide = pageMetadata({ deviceWidth: 393, deviceHeight: 700, offsetTop: 0, pageScaleFactor: 0.4010204076766968 });
+  const tap = toPageCoords({ x: 270, y: 36 }, { left: 0, top: 0, width: 393, height: 700 }, wide);
+  t.ok('倍率 0.4 のページでは、映像の (270, 36) がレイアウトの (673, 90) になる（実機の Chrome で 8 列の格子の 13 番に当たった点）', tap?.x === 673 && tap?.y === 90, JSON.stringify(tap));
+  t.ok('倍率 1・倍率の無い metadata はそのまま', JSON.stringify(pageMetadata({ deviceWidth: 390, deviceHeight: 700, offsetTop: 56, pageScaleFactor: 1 })) === JSON.stringify({ deviceWidth: 390, deviceHeight: 700, offsetTop: 56, pageScaleFactor: 1 })
+    && pageMetadata({ deviceWidth: 390, deviceHeight: 700 }).deviceWidth === 390 && pageMetadata({}).offsetTop === 0);
+  t.ok('移動量も倍率で割る', near(toPageDelta(10, { left: 0, top: 0, width: 393, height: 700 }, wide), 10 / 0.4010204076766968));
+  t.ok('screencast-frame.mjs・chrome-panel.mjs は metadata を pageMetadata で直してから使う', /pageMetadata\(getFrame/.test(read('web/screencast-frame.mjs')) && (read('web/chrome-panel.mjs').match(/pageMetadata\(frameMeta/g) ?? []).length >= 2);
 
   // 使う側は page-coords.mjs から読む
   t.ok('chrome-panel.mjs は page-coords.mjs から読む', /from '\.\/page-coords\.mjs'/.test(read('web/chrome-panel.mjs')));
