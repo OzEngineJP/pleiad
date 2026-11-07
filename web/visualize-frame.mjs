@@ -38,18 +38,13 @@ export function configureIsolatedOrigin(options) {
 let visualizationTabs = null;
 export function configureVisualizationTabs(options) { visualizationTabs = options; }
 /** Returns false only when the no-Chrome layout must handle the expansion. */
-export function openVisualizationTab(bundle, element, title = '') {
+export function openVisualizationTab(bundle, element, title = '', path = '') {
   const tabs = visualizationTabs;
   const sessionId = tabs?.sessionId?.(element);
   if (!sessionId || !tabs.connected?.(sessionId) || !tabs.openTab) return false;
-  // 開く先はサーバーが決める（pageOpen → 束の印の出どころ）。頼めない環境（古い本体・試験）は自分で組み立てる
-  try {
-    const open = Promise.resolve(tabs.openPage?.({ sessionId, kind:'viz', hash:bundle?.hash, entry:bundle?.entry, title }))
-      .then(result => result?.url, () => null)
-      .then(url => url ?? isolatedVisualizationUrl(bundle, { embed:'tab', title }))
-      .then(url => (url ? tabs.openTab({ sessionId, url, reuse:false }) : null));
-    Promise.resolve(open).catch(error => tabs.onError?.(error));
-  } catch (error) { tabs.onError?.(error); }
+  // 開く先はサーバーが決める（pageOpen → 束の印の出どころ）。束・入口・題・元のファイルは一度だけ渡す
+  try { Promise.resolve(tabs.openTab({ sessionId, kind:'viz', vizHash:bundle?.hash, entry:bundle?.entry, title, path })).catch(error => tabs.onError?.(error)); }
+  catch (error) { tabs.onError?.(error); }
   return true;
 }
 export function visualizationBundleNotice(bundle) {

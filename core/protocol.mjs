@@ -252,6 +252,8 @@ export const COMMANDS = new Set([
   'pageResult',              // { sessionId, targetId?, requestId, ok, result?, error? } -> { delivered }。ページからの書き込みの頼み（worktree）の結果をページへ返す（pleiad:page-result）。その会話を見ている接続だけ
   'pageEnv',                 // { theme: auto|light|dark } -> { tabs }。画面のテーマの変化をファイルのページのタブへ知らせる（pleiad:env）
   'pageOpen',                // { sessionId, kind, path?|hash?|entry?, title?, line?, once? } -> { kind, url, ... }。ページ・HTML・可視化の開く先をサーバーが決める（ADR 0295 の 7）
+  'pageResolve',             // { sessionId, url } -> { kind, path?|hash?, entry? }。隔離の origin の URL を開いている対象へ戻す（ページ内の移動の追跡と監視の取り直し）
+  'pageWatch',               // { sessionId, path, kind? } -> { removed }。閉じたタブのファイル・フォルダーの見張りを外す
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。
@@ -355,4 +357,8 @@ export const EVENTS = new Set([
   "tab:holder",
   "tab:page-request",
   "tab:viewport",
+  // { path } 開いているファイル・フォルダーが変わった（core/page-watch.mjs → browser-unify-ws）。その会話を見ている画面と、同じファイルを出しているタブへ
+  "page:changed",
+  // { ports, previous } ページ・隔離の port が替わった（再起動・ポートの移り）。見ている画面は残ったタブの URL を付け替える
+  "page:moved",
 ]);

@@ -13,7 +13,7 @@ import { el, chevron, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { terminalView, updateTerminal } from "./terminal.mjs";
 import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
-import { copyIcon, downloadIcon, moreIcon, openInBrowserIcon } from './icons.mjs';
+import { copyIcon, downloadIcon, moreIcon, panelIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
@@ -598,12 +598,12 @@ export function renderPresent(ev) {
       // 「ページで開く」は別のボタン: 会話の Chrome のタブへ、無ければ右の欄へ映す（ADR 0295 の 4。狭い画面は右の欄）
       const widen = tool('', '');
       wireWiden(card, widen);
-      const open = tool(openInBrowserIcon, t('timeline.present.open'));
+      const open = tool(panelIcon, t('timeline.present.open'), 'visualize-open');
       open.addEventListener('click', event => {
-        if (openVisualizationTab(e.bundle, open, e.caption ?? '')) { event.stopImmediatePropagation(); return; }
+        if (openVisualizationTab(e.bundle, open, e.caption ?? '', e.path)) { event.stopImmediatePropagation(); return; }
         event.stopImmediatePropagation();
         return withContent(content => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
-          detail:{ content, title:e.caption ?? '', bundle:e.bundle } })));
+          detail:{ content, title:e.caption ?? '', bundle:e.bundle, path:e.path ?? '' } })));
       }, { capture:true });
       const notice = visualizationBundleNotice(e.bundle);
       if (notice) body.append(el('p', 'present-note', notice));

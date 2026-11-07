@@ -55,7 +55,7 @@ export function createBrowserTree({ host, open, menu, notify = () => {} }) {
     resize.setAttribute('aria-valuenow', String(Math.round(width)));
   }
   function width(value) { prefs.width = Math.max(160, Math.min(320, host.clientWidth * .4, value)); save(); layout(); }
-  function toggle(value) { if (narrow) overlay = value ?? !overlay; else { prefs.open = value ?? !prefs.open; save(); } layout(); if (!root.hidden) tree.focus(); }
+  function toggle(value) { if (!path) { layout(); return; } if (narrow) overlay = value ?? !overlay; else { prefs.open = value ?? !prefs.open; save(); } layout(); if (!root.hidden) tree.focus(); }
   resize.onkeydown = event => { if (['ArrowLeft', 'ArrowRight'].includes(event.key)) { event.preventDefault(); width(prefs.width + (event.key === 'ArrowLeft' ? -16 : 16)); } };
   resize.onpointerdown = event => { if (event.button !== 0) return; resize.setPointerCapture(event.pointerId); event.preventDefault(); };
   resize.onpointermove = event => { if (resize.hasPointerCapture(event.pointerId)) width(event.clientX - host.getBoundingClientRect().left); };
@@ -68,7 +68,7 @@ export function createBrowserTree({ host, open, menu, notify = () => {} }) {
       sessionId = id; loaded = null; overlay = false; prefs = { open:true, width:208 };
       try { const saved = JSON.parse(localStorage.getItem(key())); if (typeof saved?.open === 'boolean') prefs.open = saved.open; if (Number.isFinite(saved?.width)) prefs.width = saved.width; } catch {}
     }
-    const next = ['file', 'dir', 'viz'].includes(tab?.page?.kind) ? tab.page.path : null;
+    const next = ['file', 'dir', 'viz', 'html'].includes(tab?.page?.kind) && tab.page.path ? tab.page.path : null;
     path = next; layout();
     if (!path || loaded === path) return;
     loaded = path; const ticket = ++generation;

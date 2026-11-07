@@ -2,13 +2,13 @@ import path from 'node:path';
 import { classifyAddressInput, resolveAddressInput } from './address-input.mjs';
 import { inspectFile, listTreeFolder } from './file-preview.mjs';
 import { isHash } from './viz-bundle.mjs';
-import { fileMark, vizMark } from './isolated-origins.mjs';
+import { fileMark, vizMark, LOCALHOST_MARK } from './isolated-origins.mjs';
 import { readSearchProvider, searchUrl } from './chrome/search-provider.mjs';
 
 // pageResult: 画面が確認と書き込みを終えた、ページからの頼み（worktree）の結果をページへ返す（core/page-requests.mjs の result）
 // pageEnv: 画面のテーマの変化をファイルのページへ知らせる（言語はサーバーの既定なので savePref が知らせる）
 // pageOpen: ページ・HTML・可視化の開く先をサーバーが決める（ADR 0295 の 7。画面は port や URL を組み立てない）
-export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress', 'pageResult', 'pageEnv', 'pageOpen']);
+export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress', 'pageResult', 'pageEnv', 'pageOpen', 'pageResolve', 'pageWatch']);
 export const isBrowserUnifyCommand = command => BROWSER_UNIFY_COMMANDS.has(command);
 
 /** Only authenticated connections explicitly watching this conversation receive tab data. */
@@ -101,11 +101,64 @@ export function createBrowserUnifyWs(deps = {}) {
       const files = await deps.isolatedRoutes?.manifest?.(hash);
       const rel = files && manifestRel(files, typeof input?.entry === 'string' && input.entry ? input.entry.replaceAll('\\', '/') : 'index.html');
       if (!rel) fail('NOT_FOUND');
+      // 元のファイル・題は呼び手（カード）から届く表示用の情報。アドレスバーとタブの題に使う
+      const source = typeof input?.path === 'string' && input.path ? input.path.slice(0, 4096) : undefined;
       const params = new URLSearchParams({ embed: 'tab', ...(title ? { title } : {}) });
-      return { kind: 'viz', hash, entry: rel,
+      return { kind: 'viz', hash, entry: rel, title: title || rel, path: source,
         url: `http://${vizMark(hash)}.localhost:${ports.isolated}/viz/${hash}/${rel.split('/').map(encodeURIComponent).join('/')}?${params}` };
     }
     fail('INVALID');
+  }
+
+  /**
+   * 隔離の origin の URL を、開いている対象（ファイルのパス・束）へ戻す（pageResolve）。
+   * ページ内の移動で親が受け取った URL を確かめ、ファイルなら変化の見張りにも登り直す
+   */
+  async function resolvePageLocation(sessionId, raw) {
+    let parsed;
+    try { parsed = new URL(String(raw ?? '')); } catch { fail('INVALID'); }
+    const isolated = deps.ports?.().isolated;
+    if (!isolated || parsed.protocol !== 'http:' || parsed.port !== String(isolated)) fail('INVALID');
+    if (!(parsed.hostname === 'localhost' || LOCALHOST_MARK.test(parsed.hostname))) fail('INVALID');
+    const parts = parsed.pathname.split('/').slice(1).map(part => { try { return decodeURIComponent(part); } catch { return null; } });
+    if (parts.some(part => part === null)) fail('INVALID');
+    if (parts[0] === 'viz' && isHash(parts[1] ?? '')) {
+      const hash = parts[1];
+      if (parsed.hostname !== 'localhost' && parsed.hostname !== `${vizMark(hash)}.localhost`) fail('INVALID');
+      const files = await deps.isolatedRoutes?.manifest?.(hash).catch(() => null);
+      if (!files) fail('NOT_FOUND');
+      const entry = manifestRel(files, parts.slice(2).join('/') || 'index.html');
+      if (!entry) fail('NOT_FOUND');
+      return { kind: 'viz', hash, entry };
+    }
+    if (parts[0] === 'f' && /^[A-Za-z0-9_-]{40,8192}$/.test(parts[1] ?? '')) {
+      const held = deps.htmlKeys?.resolve?.(parts[1]);
+      if (!held?.root) fail('NOT_FOUND');
+      if (held.sessionId && held.sessionId !== sessionId) fail('INVALID');
+      if (parsed.hostname !== 'localhost' && parsed.hostname !== `${fileMark(deps.secret, held.root)}.localhost`) fail('INVALID');
+      const rel = parts.slice(2).filter(part => part && part !== '.' && part !== '..');
+      const file = path.join(held.root, ...rel);
+      if (rel.length && file !== held.root && !file.startsWith(held.root + path.sep)) fail('INVALID');
+      const access = await deps.access?.(sessionId) ?? null;
+      const checked = await inspectFile(rel.length ? file : path.join(held.root, held.entry), access ?? {}).catch(() => null);
+      if (!checked || checked === 'denied' || !checked.stat?.isFile?.()) fail('NOT_FOUND');
+      deps.pageWatch?.add(sessionId, checked.file, 'file');
+      return { kind: 'html', path: checked.file };
+    }
+    fail('NOT_FOUND');
+  }
+  /** 隔離の /f/<鍵>/… の URL が出しているファイルのパス（pageChanged で中身と比べる）。鍵が開けなければ null */
+  function htmlTabPath(raw) {
+    let parsed;
+    try { parsed = new URL(String(raw ?? '')); } catch { return null; }
+    const isolated = deps.ports?.().isolated;
+    if (!isolated || parsed.port !== String(isolated)) return null;
+    const parts = parsed.pathname.split('/').slice(1).map(part => { try { return decodeURIComponent(part); } catch { return null; } });
+    if (parts[0] !== 'f' || !/^[A-Za-z0-9_-]{40,8192}$/.test(parts[1] ?? '')) return null;
+    const held = deps.htmlKeys?.resolve?.(parts[1]);
+    if (!held?.root) return null;
+    const rel = parts.slice(2).filter(part => part && part !== '.' && part !== '..');
+    return path.join(held.root, ...(rel.length ? rel : [held.entry]));
   }
   async function navigate(args, { by = null } = {}) {
     const { sessionId, targetId, action = 'navigate', input } = args;
@@ -133,17 +186,16 @@ export function createBrowserUnifyWs(deps = {}) {
         const history = await attached.send('Page.getNavigationHistory');
         const entry = history.entries[history.currentIndex + (action === 'back' ? -1 : 1)];
         if (entry) await attached.send('Page.navigateToHistoryEntry', { entryId: entry.id });
-      } else if (action === 'tree' || action === 'view') {
+      } else if (action === 'view') {
         const tab = relay.unify.tabInfo.list(sessionId).find(tab => tab.targetId === targetId);
         if (tab?.page?.kind !== 'file') fail('INVALID');
-        const detail = action === 'tree' ? { type: 'tree' } : { type: 'view', view: args.view === 'source' ? 'source' : 'preview' };
-        const expression = action === 'view'
-          ? `(() => { const url = new URL(location.href); url.searchParams.set('view', ${JSON.stringify(detail.view)}); history.replaceState(null, '', url); window.dispatchEvent(new CustomEvent('pleiad:page-command',{detail:${JSON.stringify(detail)}})); })()`
-          : `window.dispatchEvent(new CustomEvent('pleiad:page-command',{detail:${JSON.stringify(detail)}}))`;
-        await attached.send('Runtime.evaluate', { expression });
+        const detail = { type: 'view', view: args.view === 'source' ? 'source' : 'preview' };
+        await attached.send('Runtime.evaluate', { expression:
+          `(() => { const url = new URL(location.href); url.searchParams.set('view', ${JSON.stringify(detail.view)}); history.replaceState(null, '', url); window.dispatchEvent(new CustomEvent('pleiad:page-command',{detail:${JSON.stringify(detail)}})); })()` });
       } else fail('INVALID');
     } finally { await attached.detach(); }
-    return {};
+    // どのタブへ届けたかを応答に入れる（画面は移動後のタブの情報を知る。新規は上で返す）
+    return { targetId };
   }
   return {
     navigate, clientId,
@@ -155,7 +207,22 @@ export function createBrowserUnifyWs(deps = {}) {
       const target = process.platform === 'win32' ? norm(filePath).toLowerCase() : norm(filePath);
       const same = value => (process.platform === 'win32' ? norm(value).toLowerCase() : norm(value)) === target;
       for (const tab of relay?.unify.tabInfo.list(sessionId) ?? []) {
-        if (!['file', 'dir'].includes(tab.page?.kind) || !same(tab.page?.path)) continue;
+        if (!['file', 'dir', 'html'].includes(tab.page?.kind)) continue;
+        if (tab.page.kind === 'html') {
+          // 隔離の /f/<鍵>/ のタブ: 鍵を開いて中身のパスと比べる。人が操作中のタブは画面の「更新を表示」に任せる
+          const shown = htmlTabPath(tab.url);
+          if (!shown || !same(shown)) continue;
+          if (relay?.unify.tabHolder?.holder?.(sessionId, tab.targetId)?.holder === 'human') continue;
+          void (async () => {
+            try {
+              const attached = await relay.view.attach(sessionId, tab.targetId, () => {});
+              try { await attached.send('Runtime.evaluate', { expression: 'location.reload()' }); }
+              finally { await attached.detach(); }
+            } catch { /* タブは既に無い・まだページを読んでいない */ }
+          })();
+          continue;
+        }
+        if (!same(tab.page?.path)) continue;
         // 読み直すか「更新を表示」を出すかはページが決める（web/pages/app.mjs。触っていなければ読み直す）
         void (async () => {
           try {
@@ -174,7 +241,10 @@ export function createBrowserUnifyWs(deps = {}) {
     async portsChanged({ previous = {} } = {}) {
       const ports = deps.ports?.() ?? {};
       if (relay?.migratePageTabs && typeof deps.movedUrl === 'function') {
-        try { await relay.migratePageTabs(deps.movedUrl); }
+        try {
+          const result = await relay.migratePageTabs(deps.movedUrl);
+          if (result) deps.log?.(`page tabs: migrated ${result.moved ?? 0}, failed ${result.failed ?? 0}${result.reasons?.length ? ` (${result.reasons.slice(0, 3).join('; ')})` : ''}`);
+        }
         catch (error) { deps.log?.(`page tabs: migrate failed: ${String(error?.message ?? error)}`); }
       }
       for (const client of deps.clients?.() ?? []) {
@@ -210,6 +280,15 @@ export function createBrowserUnifyWs(deps = {}) {
         // 開く先はサーバーが決める。その会話を見ている画面だけが頼める（allowed は見ている会話かを確かめる）
         if (!args || typeof args !== 'object' || !allowed(client, args.sessionId)) fail('INVALID');
         return openTarget(args.sessionId, args);
+      }
+      if (command === 'pageResolve') {
+        if (!args || typeof args !== 'object' || !allowed(client, args.sessionId)) fail('INVALID');
+        return resolvePageLocation(args.sessionId, args.url);
+      }
+      if (command === 'pageWatch') {
+        if (!args || typeof args !== 'object' || !allowed(client, args.sessionId) || typeof args.path !== 'string' || !args.path) fail('INVALID');
+        deps.pageWatch?.remove?.(args.sessionId, args.path, args.kind === 'dir' ? 'dir' : 'file');
+        return { removed: true };
       }
       if (command !== 'chromeAddress') fail('UNKNOWN_COMMAND');
       if (typeof args?.input !== 'string' || args.input.length > 8192 || typeof args.sessionId !== 'string' || !args.sessionId) fail('INVALID');

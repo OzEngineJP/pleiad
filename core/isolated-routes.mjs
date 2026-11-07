@@ -189,6 +189,9 @@ export function createIsolatedRoutes(deps = {}) {
       self: [`http://localhost:*/f/${key}/`, `http://*.localhost:*/f/${key}/`] });
     if (isHtml(checked.file)) {
       const charset = htmlCharset(raw);
+      // ?view=source は原文を text/plain で返す（アドレスバーの「原文」の表示。橋は差し込まない）
+      if (url.searchParams.get('view') === 'source')
+        return send(req, res, { headers: { ...security, 'content-type': `text/plain; charset=${charset ?? 'utf-8'}`, 'cache-control': 'no-store' }, body: raw });
       return send(req, res, { headers: { ...security, 'content-type': charset ? `text/html; charset=${charset}` : 'text/html', 'cache-control': 'no-store' },
         body: withHead(raw, framed(req)) });
     }

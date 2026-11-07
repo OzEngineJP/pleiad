@@ -1560,8 +1560,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
      * 移したタブは targetInfoChanged → tabInfo.changed が URL と印を報せる
      */
     async migratePageTabs(move) {
-      if (typeof move !== 'function' || !up || up.cdp.closed) return { moved: 0 };
-      let moved = 0;
+      if (typeof move !== 'function' || !up || up.cdp.closed) return { moved: 0, failed: 0 };
+      let moved = 0, failed = 0;
+      const reasons = [];
       for (const tab of [...up.tabs.values()]) {
         const next = move(tab.info?.url ?? '');
         if (typeof next !== 'string' || !next || next === tab.info?.url) continue;
@@ -1569,9 +1570,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
           const own = await ownSession(up, tab, () => {});
           try { await own.send('Page.navigate', { url: next }); } finally { await own.detach(); }
           moved++;
-        } catch { /* 移している間に消えたタブは飛ばす */ }
+        } catch (error) { failed++; if (reasons.length < 3) reasons.push(String(error?.message ?? error)); }
       }
-      return { moved };
+      return { moved, failed, reasons };
     },
     /** ファイルのページの Cookie（core/page-auth.mjs の pagesCookie の形）。移動の検査の口が接続のたびと開く前に入れる */
     setPageCookie(cookie) {

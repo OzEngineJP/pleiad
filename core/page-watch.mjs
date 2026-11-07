@@ -48,10 +48,23 @@ export function createPageWatch({ watch = (dir, listener) => fs.watch(dir, liste
     }
   }
 
+  /** 上限に達したとき、いちばん古い対象を外す（閉じたタブの見張りが残っていても、新しい対象を止めない） */
+  function evictOldest() {
+    for (const [dirKey, dir] of watched) {
+      const oldest = dir.targets.keys().next().value;
+      if (oldest == null) continue;
+      const timer = pending.get(oldest);
+      if (timer) { clearTimeout(timer); pending.delete(oldest); }
+      dir.targets.delete(oldest); tracked--;
+      if (!dir.targets.size) drop(dirKey);
+      return;
+    }
+  }
+
   function ensure(dirPath) {
     const dirKey = norm(dirPath);
     const held = watched.get(dirKey);
-    if (held) return held;
+    if (held) { watched.delete(dirKey); watched.set(dirKey, held); return held; }   // 使ったフォルダーを新しい方へ
     let watcher = null;
     try { watcher = watch(dirPath, (type, name) => onEvent(dirKey, type, name)); }
     catch { return null; }
@@ -91,11 +104,11 @@ export function createPageWatch({ watch = (dir, listener) => fs.watch(dir, liste
       const targetKey = isDir ? `${norm(dirPath)}\u0000dir` : norm(filePath);
       let entry = dir.targets.get(targetKey);
       if (!entry) {
-        if (tracked >= MAX_TRACKED) return;
+        if (tracked >= MAX_TRACKED) evictOldest();
         entry = { path: filePath, sessions: new Set(), dir: isDir };
         dir.targets.set(targetKey, entry);
         tracked++;
-      }
+      } else { dir.targets.delete(targetKey); dir.targets.set(targetKey, entry); }   // 使った対象を新しい方へ（上限は古い方から外す）
       entry.sessions.add(sessionId);
     },
     remove(sessionId, filePath, kind = 'file') {

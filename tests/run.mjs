@@ -931,6 +931,8 @@ const SUITES = [
   './unit/browser-unify-b3.mjs',
   './unit/browser-unify-ws.mjs',
   './unit/browser-unify-tabs.mjs',
+  // 画面内ページのタブ（web/page-tabs.mjs）: サーバーが決める開く先・ページ内移動・更新の扱い・鍵と見張りの取り直し。Pleiad 印の分類（P9）
+  './unit/browser-unify-pages.mjs',
   './unit/browser-pages-w1.mjs',
 
   // --- B2 映像からの操作・スマホの入力 ---

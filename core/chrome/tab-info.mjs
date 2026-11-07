@@ -18,10 +18,16 @@ export function pleiadPage(url, sessionId, { pages, isolated } = {}) {
     if (value.protocol !== 'http:') return null;
     const host = value.hostname.toLowerCase(), port = Number(value.port || 80);
     if (['localhost', '127.0.0.1', '[::1]'].includes(host)) {
-      if (!Number.isInteger(pages) || pages < 1 || port !== pages) return null;
       const match = /^\/_pleiad\/s\/([^/]+)\/(file|dir|git|plugins|new|attachment)$/.exec(value.pathname);
-      if (!match || decodeURIComponent(match[1]) !== sessionId) return null;
-      return { kind: match[2], path: value.searchParams.get('path') };
+      if (Number.isInteger(pages) && pages > 0 && port === pages && match && decodeURIComponent(match[1]) === sessionId)
+        return { kind: match[2], path: value.searchParams.get('path') };
+      // 直書きの localhost の隔離の port もアプリのページ（スマホの中継・デバッグが印の無い形で開く。中身は URL の鍵が守る）
+      if (Number.isInteger(isolated) && isolated > 0 && port === isolated) {
+        const seg = value.pathname.split('/');
+        if (seg[1] === 'viz' && /^[0-9a-f]{64}$/.test(seg[2] ?? '')) return { kind: 'viz', hash: seg[2] };
+        if (seg[1] === 'f' && seg[2]) return { kind: 'html', title: value.searchParams.get('title') };
+      }
+      return null;
     }
     // アプリの専用の出どころ（<印>.localhost。core/isolated-origins.mjs）のタブは、アプリのページとして印す。
     // 印はアプリの名前なので会話の id は載らない（見せる題はタブの題・?title=。中身は URL の鍵が守る）

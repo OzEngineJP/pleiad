@@ -5,7 +5,6 @@
 /* ---------- パネルの中身 ---------- */
 .file-preview[data-panel="chrome-window"] .file-preview-content{background:var(--surface-paper);border-radius:var(--r-l)}
 .file-preview[data-panel="chrome-window"] .file-preview-toolbar{align-items:center;gap:6px;min-height:36px}
-.file-preview[data-panel="chrome-window"] .cp-slot{flex:1;min-width:0}
 .cp-profile-slot{display:inline-flex;align-items:center;min-width:0;flex-shrink:1}
 .cp-profile-slot:empty{display:none}
 .cp-profile-btn{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font-size:var(--fs-s);line-height:1;max-width:160px;min-width:0;flex:0 1 auto;border:0;cursor:pointer;user-select:none;transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
@@ -30,9 +29,6 @@
   .cp-profile-btn{max-width:90px;padding:0 4px;gap:2px}
 }
 .cp{display:flex;flex-direction:column;gap:8px;padding:8px}
-/* 状態の一行の差し込み口（第 6 段の web/chrome-control.mjs）。空の間は場所を取らない */
-.cp-slot:empty,.cp-slot:not(:has(> :not([hidden]))){display:none}
-.cp-slot{min-width:0}
 .cp-screen{position:relative;flex:none;width:100%;aspect-ratio:5 / 4;border-radius:var(--r-m);background:var(--surface-1);overflow:hidden;
   user-select:none;-webkit-user-select:none;cursor:default;touch-action:pan-y}
 .cp-screen[hidden]{display:none}

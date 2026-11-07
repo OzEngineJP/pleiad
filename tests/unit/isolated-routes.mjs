@@ -157,6 +157,11 @@ async function routeChecks(t, scratch) {
     t.ok('/f/<鍵>/ は入口の HTML をアプリの sandbox のヘッダーで返し、枠の中なら橋を差し込む',
       file.status === 200 && csp(file).startsWith(`sandbox ${APP_SANDBOX}; `)
       && directive(file, 'img-src').startsWith(`img-src http://localhost:*/f/${key}/ http://*.localhost:*/f/${key}/ `) && file.body.includes('ply-preview-blocked') && file.body.endsWith('</html>'));
+    const fileSource = await request({ port, pathname: `/f/${key}/?view=source`, headers: { 'sec-fetch-dest': 'iframe' } });
+    const sjisSource = await request({ port, pathname: `/f/${key}/sjis.html?view=source` });
+    t.ok('?view=source は橋を差し込まず原文を text/plain で返す（アドレスバーの「原文」の表示。charset は文書のもの）',
+      fileSource.status === 200 && fileSource.headers['content-type'] === 'text/plain; charset=utf-8' && fileSource.body === html && !fileSource.body.includes('ply-preview-blocked')
+      && sjisSource.headers['content-type'] === 'text/plain; charset=Shift_JIS' && sjisSource.raw.includes(Buffer.from([0x95, 0x5c])));
     const fileAsset = await request({ port, pathname: `/f/${key}/assets/a.png` });
     t.ok('鍵のフォルダーの下のファイルは読める', fileAsset.status === 200 && fileAsset.body === 'PNG' && fileAsset.headers['content-type'] === 'image/png');
     const sjis = await request({ port, pathname: `/f/${key}/sjis.html` });

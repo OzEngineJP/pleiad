@@ -60,7 +60,8 @@ export function createHtmlKeys({ secret = null, now = Date.now, log = () => {}, 
       const payload = { v: VERSION, sid: sessionId, root: path.dirname(file), entry: path.basename(file), iat: now(),
         once: [...new Set((Array.isArray(once) ? once : []).slice(0, MAX_ONCE).map(externalOrigin).filter(Boolean))] };
       prune();
-      const digest = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('base64url');
+      // 使い回しの要約は発行時刻を含めない（iat は閉じる文の中だけ。同じファイルには残り 1 時間以上あれば同じ鍵を返す）
+      const digest = crypto.createHash('sha256').update(JSON.stringify({ ...payload, iat: 0 })).digest('base64url');
       const held = issued.get(digest);
       if (held && !payload.once.length && held.until - now() >= REUSE_MIN_MS) return held.key;
       while (issued.size >= max) issued.delete(issued.keys().next().value);

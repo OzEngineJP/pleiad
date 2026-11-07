@@ -188,6 +188,7 @@ HTML・可視化のタブは、画面を作る W1 と隔離配信を作る W2 �
 - `page:moved {sessionId,from,to}` は現在の URL と履歴を差し替える。入力済みの画面は「更新を表示」を押して確認するまで残す。
 - `page:changed {sessionId,path}` は、未操作なら読み直し、操作後なら「更新を表示」を出す。
 - W1 の実装は `web/page-tabs.mjs` と `web/browser-unify.mjs`。試験だけ `tests/lib/page-open-w1.mjs` を依存として渡す。本番は `pageOpen` コマンドを呼び、代わりの URL へ逃がさない。W2 がコマンドを追加すれば、試験用の注入を使わず接続できる。
+- サーバーの入れ替えで線を張り直したあとは、画面はまず見ている会話を `watchSession` で登録し直してから、ファイル・フォルダー・HTML・可視化のタブの `pageOpen` を取り直す（逆の順では、その接続が会話を見ているとサーバーが分かる前の `pageOpen` が INVALID で落ちる）。隔離の URL を開くたびにも `pageResolve` で確かめ、引けなければ同じ道で取り直す。
 - 隔離された HTML の操作検出には `web/pages/activity.mjs` の `installPageActivity` を W2 のページへ載せる（モジュールを配るか、同関数を橋へ組み込む）。親の load 時の `pleiad:page-activity-init` に対し、クリック・選択・スクロール・入力の最初の変化を `pleiad:page-activity {input:boolean}` で親へ返す。親 window を照合し、応答先は受信した正確な origin に限定する。W1 も iframe の window と返却 URL の origin を照合する。この橋はアプリ操作の命令を受けない。
 
 W2 の取り込み前には、本番の HTML・可視化の新しいタブを開くコマンドと隔離側の操作通知は未接続である。W1 の実ブラウザー試験は別 origin のページへ同じ橋を載せ、入力の保持と更新の確認を検証する。

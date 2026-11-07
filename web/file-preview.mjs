@@ -50,7 +50,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     sessionGeneration++;
     unified = options;
     configureVisualizationTabs(options ? { connected: options.connected, openTab: options.openTab,
-      openPage: args => cmd('pageOpen', args), sessionId:element => getContext(element)?.sessionId, onError:failed } : null);
+      sessionId:element => getContext(element)?.sessionId, onError:failed } : null);
     if (!options) { openPage = null; return; }
     openPage = createFilePageRouter({ ...options, cmd, resolved: rememberFile,
       getGeneration:() => sessionGeneration });
@@ -629,8 +629,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     const d = event.detail;
     if (!d || !event.target?.isConnected) return;
     const sessionId = getContext(event.target)?.sessionId;
-    const url = isolatedVisualizationUrl(d.bundle, { embed:'tab' });
-    if (url && unified?.connected?.(sessionId) && unified.openTab) return Promise.resolve(unified.openTab({ sessionId, url, reuse:false })).catch(failed);
+    if (unified?.connected?.(sessionId) && unified.openTab)
+      return Promise.resolve(unified.openTab({ sessionId, kind:'viz', vizHash:d.bundle?.hash, entry:d.bundle?.entry, title:d.title, path:d.path ?? '' })).catch(failed);
     return openPanel({ key:'visualization', title:d.title, body:visualizationFrame(d.content, d.title, { fill:true, bundle:d.bundle }), element:event.target });
   });
   document.addEventListener('keydown', event => {

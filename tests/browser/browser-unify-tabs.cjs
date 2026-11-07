@@ -141,5 +141,12 @@ window.ready=true;
       await Promise.all(delivered); await discovery.detach(); await Promise.all(livePages.map(target=>target.close()));
       await new Promise(resolve=>web.close(resolve));
     }
+    // つなぎ直し: 見張りの登録（watchSession）が鍵の取り直し（pageOpen）より先に線へ出る。逆だと再発行が INVALID で落ちる
+    await page.evaluate(() => ui.openTab({ sessionId:'one', kind:'file', path:'D:/docs/file.md' }));
+    await page.evaluate(() => { window.sent.length = 0; chromeFixture.change?.({ type:'reconnected' }); });
+    await page.waitForFunction(() => window.sent.some(c => c.command === 'pageOpen'), null, { timeout:5000 }).catch(() => {});
+    const order = await page.evaluate(() => window.sent.map(c => c.command));
+    check('reconnect re-registers the session watch before reissuing page keys',
+      order.indexOf('watchSession') !== -1 && order.indexOf('pageOpen') !== -1 && order.indexOf('watchSession') < order.indexOf('pageOpen'), order.join(','));
   } finally { await page.close(); await new Promise(resolve => server.close(resolve)); }
 };

@@ -51,7 +51,7 @@ window.addEventListener('pleiad:refresh', render);
 // 人が触っていなければそのまま読み直し、触っていれば「更新を表示」を出す（読んでいる所・入力を消さない）
 let touched = false, pending = null;
 const applyChange = () => { snapshot = undefined; pending?.remove(); pending = null; touched = false; return render(); };
-for (const name of ['pointerdown', 'keydown', 'input', 'selectstart', 'copy']) {
+for (const name of ['pointerdown', 'keydown', 'scroll', 'input', 'selectstart', 'copy']) {
   document.addEventListener(name, () => { touched = true; }, { capture:true, passive:true });
 }
 window.addEventListener('pleiad:page-command', event => {

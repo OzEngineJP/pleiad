@@ -8,10 +8,13 @@ export const title = '隔離したプレビューのリンクを親で確認し�
 
 export default function(t) {
   const sent=[]; const handlers={};
-  const location={hash:''};
+  const links=()=>sent.filter(m=>m.type==='ply-preview-open-link');
+  const location={hash:'',href:'http://iso.localhost/',protocol:'http:',assign(){},reload(){}};
   const child={
     URL, location, window:{}, parent:{postMessage:data=>sent.push(data)},
-    document:{addEventListener:(name,fn)=>{handlers[name]=fn;}},
+    document:{title:'',addEventListener:(name,fn)=>{handlers[name]=fn;}},
+    history:{pushState(){},replaceState(){},back(){},forward(){}},
+    addEventListener:(name,fn)=>{handlers[`win:${name}`]=fn;},
   };
   vm.runInNewContext(LINK_BRIDGE.replace(/^<script>|<\/script>$/g,''),child);
   const anchor=(href,target='')=>({getAttribute:()=>href,target});
@@ -21,26 +24,26 @@ export default function(t) {
     return stopped;
   };
   assert(dispatch('https://example.com/page','_blank'));
-  assert.equal(sent.length,1);
-  assert.equal(sent[0].url,'https://example.com/page');
-  assert.equal(sent[0].newWindow,true);
+  assert.equal(links().length,1);
+  assert.equal(links()[0].url,'https://example.com/page');
+  assert.equal(links()[0].newWindow,true);
   assert(dispatch('https://example.com/self','_self'));
-  assert.equal(sent[1].newWindow,false);
+  assert.equal(links()[1].newWindow,false);
   assert(dispatch('#section','_blank'));
   assert.equal(location.hash,'#section');
-  assert.equal(sent.length,2);
+  assert.equal(links().length,2);
   assert(dispatch('javascript:alert(1)'));
-  assert.equal(sent.length,2);
+  assert.equal(links().length,2);
   child.window.open('http://example.com/','_blank');
-  assert.equal(sent[2].url,'http://example.com/');
-  assert.equal(sent[2].external,false);
-  assert.equal(sent[0].external,false,'ふつうのクリックは開き先の設定に従う');
+  assert.equal(links()[2].url,'http://example.com/');
+  assert.equal(links()[2].external,false);
+  assert.equal(links()[0].external,false,'ふつうのクリックは開き先の設定に従う');
   assert(dispatch('https://example.com/ctrl','',{ctrlKey:true}));
-  assert.equal(sent[3].external,true,'Ctrl/⌘+クリックは既定のブラウザー');
+  assert.equal(links()[3].external,true,'Ctrl/⌘+クリックは既定のブラウザー');
   assert(dispatch('https://example.com/middle','',{type:'auxclick',button:1}));
-  assert.equal(sent[4].external,true,'中クリックは既定のブラウザー');
+  assert.equal(links()[4].external,true,'中クリックは既定のブラウザー');
   assert(!dispatch('https://example.com/right','',{type:'auxclick',button:2}));
-  assert.equal(sent.length,5,'右クリックは拾わない');
+  assert.equal(links().length,5,'右クリックは拾わない');
   assert(!visualizationDocument('x',{resize:false}).includes('ply-preview-open-link'));
   t.ok('リンクと window.open を通知し、同一ページのアンカーは枠内で動かす',true);
 

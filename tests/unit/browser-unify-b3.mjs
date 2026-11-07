@@ -62,14 +62,15 @@ export default async function(t) {
   const viz = [];
   configureVisualizationTabs({ sessionId:() => 's1', connected:() => true, openTab:args => viz.push(args) });
   assert.equal(openVisualizationTab(bundle, {}), true); await new Promise(resolve => setTimeout(resolve));
-  assert.match(viz[0].url, /\?embed=tab$/); assert.equal(viz[0].reuse, false);
-  assert.equal(openVisualizationTab(bundle, {}, '月ごとの売上'), true); await new Promise(resolve => setTimeout(resolve));
-  assert.match(viz[1].url, /\?embed=tab&title=%E6%9C%88/, '広げたタブの題は可視化の見出し');
+  assert.equal(viz.length, 1); assert.equal(viz[0].sessionId, 's1'); assert.equal(viz[0].kind, 'viz');
+  assert.equal(viz[0].vizHash, bundle.hash); assert.equal(viz[0].entry, bundle.entry);
+  assert.equal(openVisualizationTab(bundle, {}, '月ごとの売上', 'D:/work/sales.html'), true); await new Promise(resolve => setTimeout(resolve));
+  assert.equal(viz.length, 2); assert.equal(viz[1].title, '月ごとの売上'); assert.equal(viz[1].path, 'D:/work/sales.html', '元のファイルをページタブへ渡す（アドレスバーとツリー用）');
   assert.match(visualizationBundleNotice(bundle), /合計サイズ/);
   assert.equal(visualizationBundleNotice({ ...bundle, reason:'constructor' }), '画像などの関連ファイルは含めていません。');
   configureVisualizationTabs({ sessionId:() => 's1', connected:() => false, openTab:args => viz.push(args) });
-  assert.equal(openVisualizationTab(bundle, {}), false, 'Chrome がつながっていなければ開かない（呼び出し元が既定のブラウザーへ回す）');
+  assert.equal(openVisualizationTab(bundle, {}), false, '右の欄が無ければ開かない（呼び出し元がフォールバックへ回す）');
   assert.equal(visualizationBundleNotice({ ...bundle, htmlOnly:false }), '');
   configureIsolatedOrigin(null); configureVisualizationTabs(null);
-  t.ok('Web は既定ブラウザー。可視化は隔離 URL の新しいタブへ。LAN は端末から届くホスト名', true);
+  t.ok('Web は既定ブラウザー。可視化はサーバーが決める隔離 URL のページタブへ。LAN は端末から届くホスト名', true);
 }

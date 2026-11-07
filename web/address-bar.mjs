@@ -14,7 +14,7 @@ export function addressCrumbs(file) {
   return crumbs;
 }
 
-export const hasFileViews = tab => tab?.page?.kind === 'file' && /\.(?:md|markdown|html?|csv|tsv|svg)$/i.test(tab.page.path ?? '');
+export const hasFileViews = tab => (tab?.page?.kind === 'file' && /\.(?:md|markdown|html?|csv|tsv|svg)$/i.test(tab.page.path ?? '')) || tab?.page?.kind === 'html';
 
 export function createAddressBar({ navigate = async () => {}, suggest = async () => ({}), cwd = () => '', onMenu = () => {}, onTabs = () => {}, onClose = () => {}, onDisplay = null, mobile = () => matchMedia('(max-width: 600px)').matches } = {}) {
   const root = document.createElement('div'); root.className = 'bu-toolbar';
@@ -154,11 +154,12 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
       const label = t(`tabs:address.locations.${kind}`);
       // アプリのタブは題をパンの列に足す（HTML は ?title=、可視化は開いた束の題）
       const named = kind === 'attachment' && file ? tab.page.path.split(/[\\/]/).at(-1)
-        : kind === 'html' && tab.page.title ? tab.page.title : '';
+        : kind === 'html' && tab.page.title ? tab.page.title
+        : kind === 'viz' ? (tab.page.title || tab.title || '') : '';
       crumbs.append(document.createTextNode(label + (named ? ` › ${named}` : '')));
       crumbs.title = label;
     } else {
-      let text = tab?.page?.path ?? (tab?.page?.kind === 'viz' ? tab.title : tab?.url) ?? '';
+      let text = tab?.page?.path ?? tab?.url ?? '';
       if (mobile() && !file) { try { text = new URL(text).host; } catch {} }
       if (mobile() && file) {
         // The phone is narrow, so it shows "… › name". Tapping edits the full absolute path, the same as on PC (ADR 0294 2.5).

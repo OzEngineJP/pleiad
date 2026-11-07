@@ -49,17 +49,22 @@
   check(state.calls.some(([name]) => name === 'focus') && state.calls.some(([name]) => name === 'flash'), 'existing tab focused and flashed');
   configureIsolatedOrigin({ port:8125 });
   const bundle = { hash:'a'.repeat(64), entry:'index.html', htmlOnly:true, reason:'legacy' };
-  const card = renderPresent({ kind:'visualization', caption:'グラフ', content:'<p>グラフ</p>', bundle }); log.append(card);
+  const card = renderPresent({ kind:'visualization', caption:'グラフ', content:'<p>グラフ</p>', bundle, path:'D:/work/chart.html' }); log.append(card);
   card.querySelector('.visualize-widen').click(); await tick();
-  check(state.calls.at(-1)[1].url.endsWith('?embed=tab&title=%E3%82%B0%E3%83%A9%E3%83%95'), 'widen opens isolated tab titled with the caption');
-  check(!card.classList.contains('visualize-widened'), 'connected widen does not widen in conversation');
+  check(card.classList.contains('visualize-widened'), 'widen expands in conversation');
+  card.querySelector('.visualize-widen').click(); await tick();
+  check(!card.classList.contains('visualize-widened'), 'widen restores the width');
+  card.querySelector('.visualize-open').click(); await tick();
+  const openViz = state.calls.filter(([name]) => name === 'openTab').at(-1)?.[1];
+  check(openViz?.kind === 'viz' && openViz.vizHash === bundle.hash && openViz.entry === 'index.html'
+    && openViz.title === 'グラフ' && openViz.path === 'D:/work/chart.html', 'open sends bundle, entry, title and source path to a page tab');
   check(card.textContent.includes('関連ファイル'), 'HTML-only bundle notice');
   check(!card.querySelector('.visualize-open-browser'), 'one expand action on unified card');
   state.connected = false;
-  preview.close(); card.querySelector('.visualize-widen').click(); await tick();
+  preview.close(); card.querySelector('.visualize-open').click(); await tick();
   if (matchMedia('(max-width:760px)').matches) {
-    check(preview.panelOpen('visualization') && document.querySelector('.visualize-fill').src.includes(':8125/viz/'), 'phone expands isolated visualization into full-screen panel');
-  } else check(card.classList.contains('visualize-widened'), 'no-Chrome desktop expands in conversation');
+    check(preview.panelOpen('visualization') && document.querySelector('.visualize-fill').src.includes(':8125/viz/'), 'phone opens isolated visualization into full-screen panel');
+  } else check(preview.panelOpen('visualization'), 'no-Chrome opens the visualization panel');
   const beforePending = state.calls.filter(([name]) => name === 'openTab').length;
   preview.close(); state.pendingResolve = true;
   link.click(); await tick(); state.sessionId = 'other'; preview.sessionChanged('other');

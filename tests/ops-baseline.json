@@ -78,7 +78,9 @@
     "chromeAddress": "ui-internal",
     "pageResult": "ui-internal",
     "pageEnv": "ui-internal",
-    "pageOpen": "ui-internal"
+    "pageOpen": "ui-internal",
+    "pageResolve": "ui-internal",
+    "pageWatch": "ui-internal"
   },
   "todoMax": 0,
   "setPrefAllowed": 3

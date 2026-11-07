@@ -110,7 +110,11 @@ export function createBrowserUnify(deps = {}) {
   const rows = new Map(), holders = new Map(); let active = null, enabled = false, pagePort = null, order = 0;
   const orders = new Map();
   const session = () => chrome()?.sessionId ?? state.current;
-  const pages = createPageTabs({ pageOpen:input => (deps.pageOpen ?? (args => cmd('pageOpen', args)))(input), origin:location.origin, changed:() => { if (enabled) paint(); } });
+  const pages = createPageTabs({ pageOpen:input => (deps.pageOpen ?? (args => cmd('pageOpen', args)))(input), origin:location.origin, changed:() => { if (enabled) paint(); },
+    // 「触った」はページが送る活動だけでなく、映像側の持ち手も数える（Chrome の映像のタブを人が操作中なら、戻ったときの上書きも「触った」）
+    touched:tab => holderOf(tab.sessionId, tab.chromeId ?? tab.targetId).holder === 'human',
+    release:tab => { if (['file', 'dir', 'html'].includes(tab.page?.kind) && tab.page.path) cmd('pageWatch', { sessionId:tab.sessionId, path:tab.page.path, kind:tab.page.kind === 'dir' ? 'dir' : 'file' }).catch(() => {}); },
+    onError:error => failed(error) });
   const allTabs = id => { const local = pages.list(id), linked = new Set(local.map(tab => tab.chromeId).filter(Boolean)); const merged = [...local, ...(rows.get(id) ?? []).filter(tab => !linked.has(tab.targetId))];
     for (const tab of merged) { const key = `${id}:${tab.targetId}`; if (!orders.has(key)) orders.set(key, ++order); }
     return merged.sort((a,b) => orders.get(`${id}:${a.targetId}`) - orders.get(`${id}:${b.targetId}`)); };
@@ -147,7 +151,12 @@ export function createBrowserUnify(deps = {}) {
         }
       }
       else if (viz) { kind = 'viz'; vizHash = viz[1]; entry = decodeURIComponent(viz[2]); title = parsed.searchParams.get('title'); }
-      else if (isolatedHost && /^\/f\//.test(parsed.pathname)) { kind = 'html'; url = parsed.href; title = parsed.searchParams.get('title'); }
+      else if (isolatedHost && /^\/f\//.test(parsed.pathname)) {
+        kind = 'html'; url = parsed.href; title = parsed.searchParams.get('title');
+        // 鍵を開いて中身のファイルを引く（アドレスバーのパンくず・ツリー・変化の見張り。pageResolve はサーバーが登り直す）
+        const resolved = await cmd('pageResolve', { sessionId, url:parsed.href }).catch(() => null);
+        if (resolved?.kind === 'html') path = resolved.path;
+      }
       else if (/^(?:[a-z]:[\\/]|[./~])/i.test(input)) { const resolved = await cmd('resolvePath', { sessionId, path:input }); kind = resolved.kind === 'directory' ? 'dir' : 'file'; path = resolved.path; }
       else return null;
     }
@@ -176,17 +185,38 @@ export function createBrowserUnify(deps = {}) {
         const opened = await openInput(args.input, sessionId, tab); if (opened) return opened;
         if (!discard(tab)) return tab;
         const result = await cmd('chromeNavigate', { sessionId, targetId:tab.chromeId, action:tab.chromeId ? 'navigate' : 'new', input:args.input });
-        if (!result?.targetId) throw new Error('NO_WINDOW');
-        const remote = (rows.get(sessionId) ?? []).find(item => item.targetId === result.targetId) ?? { sessionId, targetId:result.targetId, url:args.input, title:args.input };
+        // 移動は既存タブに届いていれば targetId の返らない古い応答でも同じタブ（P1）。新規は返る ID が要る
+        const targetId = result?.targetId ?? tab.chromeId;
+        if (!targetId) throw new Error('NO_WINDOW');
+        const remote = (rows.get(sessionId) ?? []).find(item => item.targetId === targetId) ?? { sessionId, targetId, url:args.input, title:args.input };
         rows.set(sessionId, [...(rows.get(sessionId) ?? []).filter(item => item.targetId !== remote.targetId), remote]);
         frames.get(tab.targetId)?.frame.remove(); frames.delete(tab.targetId); pages.close(tab);
         await pick(remote); return remote;
       }
+      if (action === 'view' && tab.page?.kind === 'html') {
+        // 隔離の HTML のプレビュー/原文は ?view= の張り直し（映像の中のタブは同じ URL へ移す）
+        pages.view(tab, args.view);
+        if (tab.mode === 'chrome' && tab.chromeId) await cmd('chromeNavigate', { sessionId, targetId:tab.chromeId, action:'navigate', input:tab.url });
+        return {};
+      }
       if (tab.mode !== 'chrome') {
         if (action === 'reload') { if (discard(tab)) pages.reload(tab); return {}; }
         if (action === 'view') { const here = frames.get(tab.targetId); if (here) pageCommand(here, { type:'view', view:args.view }); return {}; }
-        if (action === 'back' || action === 'forward') { if (discard(tab)) pages.travel(tab, action === 'back' ? -1 : 1); return {}; }
+        if (action === 'back' || action === 'forward') {
+          // 隔離の origin のページは、中の文書の履歴を動かす（戻る/進むの印は LINK_BRIDGE の報告で決まる）
+          const here = frames.get(tab.targetId);
+          if (here && ['html', 'viz'].includes(tab.page?.kind)) { pageCommand(here, { type:action }); return {}; }
+          if (discard(tab)) pages.travel(tab, action === 'back' ? -1 : 1); return {};
+        }
       }
+    }
+    // 端末内タブでない HTML の Chrome タブ（リモート・エージェントの窓）も ?view= で原文を出せる
+    if (action === 'view' && !tab?.local && tab?.page?.kind === 'html' && tab.url) {
+      const at = new URL(tab.url);
+      if (args.view === 'source') at.searchParams.set('view', 'source'); else at.searchParams.delete('view');
+      const moved = await cmd('chromeNavigate', { sessionId, targetId:tab.targetId, action:'navigate', input:at.href });
+      if (moved?.targetId) await pick(tabs().find(item => item.targetId === moved.targetId) ?? { targetId:moved.targetId });
+      return moved;
     }
     const result = await cmd('chromeNavigate', { sessionId, targetId:tab?.chromeId ?? (tab?.local ? undefined : tab?.targetId), action, ...args,
       ...(tab?.local && args.targetId ? { targetId:tab.chromeId } : {}) });
@@ -220,7 +250,8 @@ export function createBrowserUnify(deps = {}) {
       tab.mode = 'page'; await pick(tab); return;
     }
     if (!tab.local) return;
-    const isolated = tab.page.kind === 'viz' || /\.html?$/i.test(tab.page.path ?? '');
+    // 隔離の origin のページ（可視化・HTML のファイル）は鍵・束の印の URL のまま映像へ開く（P9）
+    const isolated = ['viz', 'html'].includes(tab.page?.kind) || /\.html?$/i.test(tab.page?.path ?? '');
     let input = isolated ? tab.url : tab.page.path;
     if (!input && tab.page.kind !== 'new') {
       if (!pagePort) throw new Error('NO_WINDOW');
@@ -316,7 +347,11 @@ export function createBrowserUnify(deps = {}) {
   const pageHost = document.createElement('div'); pageHost.className = 'bu-page-host';
   const frames = new Map(); let local = null, explorer = null;
   const update = document.createElement('button'); update.type = 'button'; update.className = 'bu-page-update'; update.hidden = true;
-  update.textContent = t('tabs:display.update'); update.onclick = () => { const tab = current(); if (discard(tab)) pages.reload(tab); };
+  update.textContent = t('tabs:display.update');
+  // 「更新を表示」: 画面の中のページを読み直す。映像の中に居る HTML のタブは、そちらの Chrome のタブも読み直す（P10）
+  update.onclick = () => { const tab = current(); if (!discard(tab)) return;
+    if (tab?.mode === 'chrome' && tab.chromeId) cmd('chromeNavigate', { sessionId:tab.sessionId, targetId:tab.chromeId, action:'reload' }).catch(failed);
+    pages.reload(tab); };
   const updateBar = document.createElement('div'); updateBar.className = 'bu-page-update-bar'; updateBar.hidden = true;
   const updateNotice = document.createElement('span'); updateNotice.setAttribute('role', 'status');
   updateBar.append(updateNotice, update); root.append(updateBar);
@@ -328,7 +363,8 @@ export function createBrowserUnify(deps = {}) {
       menu:(item, x, y) => { const target = { page:{ path:item.id, kind:item.kind === 'directory' ? 'dir' : 'file' } };
         showMenu(x, y, [{ label:t('tabs:tree.new'), onClick:() => navigate('new', { input:item.id }).catch(failed) }, ...tabMenu(target)]); }, notify });
     explorer?.show(tab, sessionId);
-    update.hidden = updateBar.hidden = !tab?.local || !tab.pending;
+    // 映像の中のファイル・フォルダーのページは、映像の中のバーが受け持つ（HTML は中にバーを出せないので、ここに出す。P10）
+    update.hidden = updateBar.hidden = !tab?.local || !tab.pending || (tab.mode === 'chrome' && tab.page?.kind !== 'html');
     updateNotice.textContent = update.hidden ? '' : t('tabs:display.updated');
     for (const [id, entry] of frames) entry.frame.hidden = id !== tab?.targetId || tab?.mode === 'chrome';
     if (!tab?.local) { local = null; chrome()?.mountPage?.(null); return; }
@@ -338,7 +374,7 @@ export function createBrowserUnify(deps = {}) {
       frame.setAttribute('referrerpolicy', 'no-referrer'); frame.src = tab.url;
       entry = { frame, sessionId, targetId:tab.targetId, url:tab.url, reload:tab.reload, tab };
       frames.set(tab.targetId, entry); pageHost.append(frame);
-      frame.addEventListener('load', () => followLocal(entry));
+      frame.addEventListener('load', () => { followLocal(entry); probeLocal(entry); });
     } else if ((!tab.pending && entry.url !== tab.url) || entry.reload !== tab.reload) {
       entry.url = tab.url; entry.reload = tab.reload; entry.frame.src = tab.url;
     }
@@ -365,17 +401,71 @@ export function createBrowserUnify(deps = {}) {
       for (const type of ['pointerdown', 'scroll', 'selectionchange', 'input', 'change']) win.document.addEventListener(type, touch, { capture:true, passive:true });
     } catch { /* Isolated pages report activity through their own bridge. */ }
   }
-  function pageCommand(entry, command) { entry.frame.contentWindow?.postMessage({ type:'pleiad:page-command', command }, location.origin); }
+  /** 読み込んだ隔離のページの URL をサーバーへ確かめる。期限切れの鍵・消えた束は開き直して見張りを戻す（P6） */
+  async function probeLocal(entry) {
+    const tab = entry.tab;
+    if (!frames.has(entry.targetId) || !['html', 'viz'].includes(tab.page?.kind)) return;
+    try { await cmd('pageResolve', { sessionId:entry.sessionId, url:entry.url }); }
+    catch { try { await pages.reissue(tab); } catch (error) { failed(error); } }
+  }
+  /** ページの URL（/_pleiad/…）を画面と同じ出どころへ写す。映像の中の移動を、リンクした端末内タブへ戻すときに使う */
+  function mirrorUrl(raw) {
+    try {
+      const at = new URL(raw);
+      if (!/^\/_pleiad\/s\//.test(at.pathname)) return null;
+      return new URL(at.pathname + at.search, location.origin).href;
+    } catch { return null; }
+  }
+  /** 映像の中の移動（tab:info）で、リンクした端末内タブの題・戻る/進む・対象を追い直す（P4）。HTML は鍵からサーバーが元のファイルを引く */
+  function syncLinkedPage(tab, event) {
+    if (event.url) tab.chromeUrl = event.url;
+    if (typeof event.title === 'string' && event.title) tab.title = event.title;
+    if (typeof event.loading === 'boolean') tab.loading = event.loading;
+    if (typeof event.canGoBack === 'boolean') tab.canGoBack = event.canGoBack;
+    if (typeof event.canGoForward === 'boolean') tab.canGoForward = event.canGoForward;
+    if (!('page' in event)) return;
+    const page = event.page;
+    if (page?.kind === 'html' && event.url) {
+      void cmd('pageResolve', { sessionId:tab.sessionId, url:event.url }).then(resolved => {
+        if (resolved?.kind !== 'html' || tab.chromeId !== event.targetId) return;
+        tab.page = { ...tab.page, kind:'html', path:resolved.path, ...(page.title ? { title:page.title } : {}) };
+        tab.url = event.url;
+        if (tab.history?.length) tab.history[tab.position] = { ...tab.history[tab.position], url:tab.url, path:resolved.path };
+        paint();
+      }).catch(() => {});
+      return;
+    }
+    if (page?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', vizHash:page.hash };
+    else if (page) tab.page = { ...tab.page, ...page };
+    else tab.page = null;
+    const local = event.url && mirrorUrl(event.url);
+    if (local && tab.mode === 'chrome' && local !== tab.url) {
+      tab.url = local;
+      if (tab.history?.length) tab.history[tab.position] = { ...tab.history[tab.position], url:tab.url };
+    }
+  }
+  function pageCommand(entry, command) { entry.frame.contentWindow?.postMessage({ type:'pleiad:page-command', command }, new URL(entry.url).origin); }
   async function localRequest(event) {
     const entry = [...frames.values()].find(item => event.source === item.frame.contentWindow);
     if (!entry || event.origin !== new URL(entry.url).origin) return;
     if (event.data?.type === 'pleiad:page-activity') { pages.activity(entry.tab, event.data.input === true); explorer?.dismiss(); return; }
+    if (event.data?.type === 'ply-preview-location' && typeof event.data.href === 'string') {
+      // ページの中の移動の報告（LINK_BRIDGE）。アドレス・履歴・見張りを出している文書に追い直す（P3）
+      let at;
+      try { at = new URL(event.data.href); } catch { return; }
+      if (at.origin !== event.origin) return;
+      entry.url = at.href;
+      const resolved = await cmd('pageResolve', { sessionId:entry.sessionId, url:at.href }).catch(() => null);
+      pages.locate(entry.tab, { url:at.href, title:typeof event.data.title === 'string' ? event.data.title : null, resolved });
+      return;
+    }
     if (event.data?.type === 'ply-preview-open-link' && typeof event.data.url === 'string') {
       // 隔離のページの中のリンク（LINK_BRIDGE から）。Pleiad のページはタブで開き、外の URL は新しい Chrome のタブ（画面の中）へ
       let link;
       try { link = new URL(event.data.url); } catch { return; }
       if (!/^https?:$/.test(link.protocol) || link.username || link.password) return;
-      if (await openInput(link.href, entry.sessionId, event.data.newWindow === true ? null : entry.tab).catch(() => null)) return;
+      // 新しい窓・Ctrl/中クリックは新しいタブで開く。同じタブの移動は今のタブを差し替える（P5）
+      if (await openInput(link.href, entry.sessionId, (event.data.newWindow === true || event.data.external === true) ? null : entry.tab).catch(() => null)) return;
       const result = await cmd('chromeNavigate', { sessionId:entry.sessionId, action:'new', input:link.href }).catch(() => null);
       if (result?.targetId && entry.sessionId === session()) await pick(tabs().find(item => item.targetId === result.targetId) ?? { targetId:result.targetId });
       return;
@@ -455,6 +545,16 @@ export function createBrowserUnify(deps = {}) {
         chrome()?.onOpenChange(attach);
         chrome()?.onTargetChange(attach);
         chrome()?.onTabChange?.(event => {
+          // つなぎ直し（サーバーの入れ替え）で、ファイル・フォルダー・HTML・可視化のページの見張りと鍵を取り直す（P6）。
+          // 先に watchSession を送り直す（こちらの接続が見ている会話と分かってから pageOpen を投げる。貼り直したばかりの線では登録がまだ無い）
+          if (event?.type === 'reconnected') void (async () => {
+            for (const id of pages.sessionIds()) {
+              const list = pages.list(id).filter(tab => tab.local && ['file', 'dir', 'html', 'attachment', 'viz'].includes(tab.page?.kind));
+              if (!list.length) continue;
+              await cmd('watchSession', { sessionId:id }).catch(() => {});
+              for (const tab of list) pages.reissue(tab).catch(failed);
+            }
+          })();
           if (!current()?.local && (event?.type === 'state' || event?.type === 'reconnected'
             || (event?.type === 'pin-failed' && active?.targetId === event.tabId
               && (!event.sessionId || event.sessionId === active.sessionId)))) active = null;
@@ -482,7 +582,13 @@ export function createBrowserUnify(deps = {}) {
         if (event.reset) { list = event.tabs ?? []; holders.delete(event.sessionId); }
         else if (event.removed) { for (const tab of pages.list(event.sessionId)) if (tab.chromeId === event.targetId) { delete tab.chromeId; tab.mode = 'page'; } list = list.filter(tab => tab.targetId !== event.targetId); holders.get(event.sessionId)?.delete(event.targetId); }
         else { const at = list.findIndex(tab => tab.targetId === event.targetId); list = [...list]; if (at < 0) list.push(event); else list[at] = event; }
-        rows.set(event.sessionId, list); if (event.sessionId === session()) paint();
+        rows.set(event.sessionId, list);
+        // 映像の中の移動を、リンクした端末内タブへ追い直す（P4）
+        for (const info of event.reset ? (event.tabs ?? []) : [event]) {
+          if (info.removed) continue;
+          for (const tab of pages.list(event.sessionId)) if (tab.chromeId === info.targetId) syncLinkedPage(tab, info);
+        }
+        if (event.sessionId === session()) paint();
       } else if (event.type === 'tab:holder') {
         if (!holders.has(event.sessionId)) holders.set(event.sessionId, new Map());
         if (event.holder === 'human') holders.get(event.sessionId).set(event.targetId, event); else holders.get(event.sessionId).delete(event.targetId);
