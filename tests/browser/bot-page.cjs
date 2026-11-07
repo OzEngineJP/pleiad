@@ -57,6 +57,8 @@ async page => {
   await page.waitForSelector('#botView:not(.is-new) .bp-dm:not([hidden])');
   const owl = await waitBot('Owl', b => b.mode === 'auto', '作った bot が承認モード auto で保存される');
   check(owl.persona === '落ち着いた口調で、結論から短く。' && owl.dmChannelId, '作ると人格が保存され、DM のチャンネルができる');
+  check(owl.icon === '' && await page.locator('#botView .bp-av').textContent() === 'O', '新規アイコンは未設定で、名前の先頭文字が出る');
+  check(await page.locator('#botView .bp-av .bp-av-edit[aria-hidden="true"]').count() === 1 && await page.locator('#botView .bp-av button').count() === 0, '鉛筆は常時表示する飾りで、アバターが単一のボタン');
   check(await page.locator('#botName').inputValue() === 'Owl' && await page.locator('#botView .bp-folders').isVisible() && await page.locator('#botView .bp-memory').isVisible(), '作った後は、その bot のページ（フォルダーと記憶がある）');
   check(await page.locator('#botView .bp-usage').innerText().then(s => s.includes('今週')), '今週の使用量を静かに出す');
   await shot('02-created');
@@ -69,11 +71,15 @@ async page => {
   await page.locator('#botPersona').blur();
   await waitBot('Owl2', b => b.persona === '推測は推測と書く。', '人格は離れたときに保存される');
   await page.locator('#botView .bp-av').click();
+  await page.getByRole('button', { name: '絵文字を選ぶ', exact: true }).click();
   await page.waitForSelector('#iconPop:not([hidden])');
+  await page.waitForTimeout(100);
+  check(await page.locator('#iconPop').isVisible(), '選択面のクリックが外側の閉じる処理へ伝わらず、絵文字を選べる');
   const emoji = await page.locator('#iconPop .egrid button').first().textContent();
   await page.locator('#iconPop .egrid button').first().click();
   const withIcon = await waitBot('Owl2', b => b.icon === emoji.trim(), 'アイコンを絵文字ピッカーで選ぶと保存される');
   check(await page.locator('#botView .bp-av').textContent() === withIcon.icon, 'アイコンが頭に出る');
+  check(await page.locator('#botView .bp-av').evaluate(n => n === document.activeElement), '選択して保存・再描画した後もアバターに焦点が戻る');
   await page.locator('#botModelChip').click();
   const modelKeys = await page.locator('#botModelPop [data-key^="model:"]').evaluateAll(n => n.map(x => x.dataset.key));
   check(modelKeys.length >= 2, '入力欄と同じモデルの面が開く');

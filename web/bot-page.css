@@ -21,10 +21,21 @@
 .bp-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
 .bp-id{min-width:0}
 .bp-spacer{flex:1}
-.bp-av{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:30px;line-height:1;background:var(--surface-1);
+.bp-av{position:relative;width:56px;height:56px;padding:0;border-radius:50%;display:grid;place-items:center;flex:none;font-size:30px;line-height:1;background:var(--surface-1);
   cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
 .bp-av:hover{background:var(--surface-2)}
-.bp-image-pick{font-size:var(--fs-s);white-space:nowrap}
+.bp-av-icon,.bp-av-face{width:100%;height:100%;border-radius:inherit;display:grid;place-items:center}
+.bp-av-face.bot-icon-initial{font-size:24px}
+.bp-av-edit{position:absolute;right:-2px;bottom:-2px;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:var(--surface-2);color:var(--ink-weak);box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
+.bp-av-edit svg.i{width:13px;height:13px}
+.bp-icon-dialog{position:fixed;inset:0;margin:auto;box-sizing:border-box;width:300px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);overflow:auto;border:0;padding:16px;border-radius:var(--r-m);background:var(--surface-paper);color:var(--ink);box-shadow:0 8px 28px var(--shadow)}
+.bp-icon-dialog::backdrop{background:var(--surface-veil)}
+.bp-icon-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.bp-icon-head .btn-icon{width:44px;height:44px}
+.bp-icon-choice{display:block;width:100%;min-height:44px;text-align:left;padding:10px 12px;border:0;background:transparent;color:inherit;border-radius:var(--r-s);font:inherit;font-size:var(--fs-ui);cursor:pointer}
+.bp-icon-choice:hover{background:var(--surface-hover)}
+.bp-icon-choice[aria-pressed=true]{background:var(--surface-sel)}
+.bp-icon-help{margin:8px 12px;color:var(--ink-weak);font-size:var(--fs-s)}
 .bp-name{display:block;font:700 20px/1.4 var(--font);color:var(--ink);padding:2px 8px;margin-left:-8px;border-radius:var(--r-s);width:min(100%,12em);outline:none;background:transparent}
 .bp-name:hover,.bp-name:focus{background:var(--surface-1)}
 .bp-name::placeholder{color:var(--ink-weak);font-weight:400}

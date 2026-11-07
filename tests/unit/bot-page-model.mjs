@@ -64,7 +64,7 @@ export default async function (t) {
   t.ok('出どころ（無い）: none', sourceView(undefined).kind === 'none');
 
   const d = newDraft('claude', CLAUDE);
-  t.ok('作る画面の下書き: 既定のアイコンと承認モード', d.isNew && d.icon === '🤖' && d.mode === 'default' && d.backend === 'claude' && d.name === '');
+  t.ok('作る画面の下書き: 既定のアイコンと承認モード', d.isNew && d.icon === '' && d.mode === 'default' && d.backend === 'claude' && d.name === '');
 
   const f = [{ path: 'D:/dev/a', access: 'rw' }, { path: 'D:/dev/b', access: 'ro' }];
   t.ok('フォルダー: 読み書き/読み取りを切り替える', JSON.stringify(toggleAccess(f, 'D:/dev/a').map((x) => x.access)) === '["ro","ro"]' && toggleAccess(f, 'D:/dev/b')[1].access === 'rw');

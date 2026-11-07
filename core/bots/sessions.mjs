@@ -106,7 +106,7 @@ const takesAccount = (backend) => Boolean(backend?.capabilities?.accounts);
 
 /** 会話の題。通知・承認カードに出る名前: 「🦉 Owl · #checkout-perf › <根の投稿の頭>」（DM は「🦉 Owl」） */
 export function sessionTitle(bot, channel, rootText) {
-  const who = `${bot.icon} ${bot.name}`;
+  const who = bot.icon ? `${bot.icon} ${bot.name}` : bot.name;
   if (!channel || channel.kind === 'dm') return who;
   const head = clip(rootText, 40);
   return `${who} · #${channel.name}${head ? ` › ${head}` : ''}`;

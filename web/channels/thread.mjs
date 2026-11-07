@@ -287,7 +287,7 @@ export function createThread(host) {
   const liveBots = () => {
     const ids = [];
     for (const p of S.posts) if (p.turn?.botId && LIVE.has(p.state) && !p.deletedAt && !ids.includes(p.turn.botId)) ids.push(p.turn.botId);
-    return ids.map((id) => S.bots.get(id) ?? { id, name: t('channels:feed.unknownBot'), icon: '🤖' });
+    return ids.map((id) => S.bots.get(id) ?? { id, name: t('channels:feed.unknownBot'), icon: '' });
   };
   function threadReadOnly() {
     return Boolean(S.thread?.deletedBot && !Object.keys(S.thread.sessions ?? {}).some(id => S.bots.has(id)));
@@ -297,7 +297,7 @@ export function createThread(host) {
     return [
       { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
       { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
-      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', iconImage: b.iconImage, backend: b.backend ?? null,
+      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon, iconImage: b.iconImage, backend: b.backend ?? null,
         // i18n-dynamic: channels:feed.botState.
         hint: live.has(b.id) ? t(`channels:feed.botState.${S.posts.findLast((p) => p.turn?.botId === b.id && LIVE.has(p.state))?.state ?? 'working'}`) : '' })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
@@ -330,7 +330,7 @@ export function createThread(host) {
   function destOptions() {
     const stateOf = new Map();
     for (const p of S.posts) if (p.turn?.botId && LIVE.has(p.state) && !p.deletedAt) stateOf.set(p.turn.botId, p.state);
-    const asBot = (id) => ({ ...(S.bots.get(id) ?? { id, name: t('channels:feed.unknownBot'), icon: '🤖' }), state: stateOf.get(id) ?? 'idle' });
+    const asBot = (id) => ({ ...(S.bots.get(id) ?? { id, name: t('channels:feed.unknownBot'), icon: '' }), state: stateOf.get(id) ?? 'idle' });
     const threadIds = Object.keys(S.thread?.sessions ?? {}).filter((id) => S.bots.has(id));
     const others = memberBots().filter((b) => !threadIds.includes(b.id)).map((b) => asBot(b.id));
     const live = liveBots();

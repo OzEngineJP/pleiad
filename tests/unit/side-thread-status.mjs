@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
 import { createSide } from '../../web/side.mjs';
+import { sessionTitle } from '../../core/bots/sessions.mjs';
 
 export const name = 'side-thread-status';
 export const title = '脇の木: 会話のドラッグ・スレッドのメニュー・畳み・待ち・フィルター';
@@ -61,6 +62,32 @@ const dragEvent = (type, store = {}) => ({
 });
 
 export default async function (t) {
+  const sideSource = (await fs.readFile(new URL('../../web/side.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const titleContext = vm.createContext({
+    directory: { bots: new Map(), channels: new Map() },
+    el: (tag, cls, text = '') => { const n = new N(tag); n.className = cls; n.textContent = text; return n; },
+    botIcon: () => new N('span'), t: (key) => key,
+  });
+  vm.runInContext(sideSource.slice(sideSource.indexOf('  function botTitle(s)'), sideSource.indexOf('  function forkMark()')), titleContext);
+  const channel = { id: 'c1', kind: 'channel', name: 'dev' };
+  for (const icon of ['', '🦉', '👩🏽‍💻']) {
+    const bot = { id: 'b1', name: 'Owl', icon };
+    const title = sessionTitle(bot, channel, '本文の先頭 › 続き');
+    t.ok('sessionTitle は未設定なら名前から始まり、絵文字があれば保持する', title === `${icon ? `${icon} ` : ''}Owl · #dev › 本文の先頭 › 続き`);
+    t.ok('DM の題名にも不要な空白を加えない', sessionTitle(bot, { kind: 'dm' }) === (icon ? `${icon} Owl` : 'Owl'));
+    for (const loaded of [false, true]) {
+      titleContext.directory.bots = new Map(loaded ? [[bot.id, bot]] : []);
+      titleContext.directory.channels = new Map(loaded ? [[channel.id, channel]] : []);
+      const s = { title, bot: { botId: bot.id, channelId: channel.id, kind: 'thread' } };
+      t.ok('会話一覧は辞書の読込前後とも本文の先頭を題名にする', titleContext.botTitle(s) === '本文の先頭 › 続き');
+      const mark = titleContext.botChannelMark(s);
+      t.ok('会話一覧は辞書が未読込でも題名からチャンネル名を復元する', mark.children.at(-1).textContent === '#dev');
+    }
+    titleContext.directory.bots.clear();
+    t.ok('本文のない会話は題名から bot 名を復元する', titleContext.botTitle({ title: sessionTitle(bot), bot: { botId: bot.id } }) === 'Owl');
+  }
+  t.ok('先頭空白のある未設定アイコンの旧題名も復元する', titleContext.botTitle({ title: ' Owl · #dev › 以前の会話', bot: { botId: 'b1' } }) === '以前の会話');
+
   // ---- 描画とドラッグ（web/side.mjs を実際に走らせる）
   const dom = installDom();
   try {
