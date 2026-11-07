@@ -211,7 +211,7 @@
 | O22 | computer use の `turns`・`holder`・`lenders`・`queue`・`armed` と driver の `pending` | `computer-use/lock.mjs:25-29`・`driver.mjs:26` | `endTurn` `server.mjs:5266` | 捨てる | M37 |
 | O23 | fake のバックエンドの `sessions`・`shells`・`terminals` | `backends/fake.mjs:58`・`:62-63` | 全部 | 捨てる | 会話をプロセスのメモリに持つ（`:7-8`）ので、サーバーをまたげない。付け直しの台本は別のプロセスの偽の CLI で走らせる（§6 の 2b-5） |
 | O24 | Codex の `CodexRpc`（`pending`・`threads`・`claims`・`held`・`parents`・`agents`）と `codex.mjs` の `trackers`・`liveSubagents` | `codex-rpc.mjs:55-71`・`codex.mjs:503-508`・`:967` | | 再生 | 段階 3（design.md §4.4。親子は `thread/read` の `parentThreadId` から引き直す） |
-| O25 | agy の `live`（会話ごとのプロセス）と `pids.json` | `antigravity.mjs:105`・`antigravity-pids.mjs:26` | `reap` `:80-100` | 保存済み | 段階 3。**済（agy。[stage3-agy.md](stage3-agy.md)）**: 保持役の子は pid を持たず `pids.json` に控えないので、`owner` の書き換えは要らない（`reap` は付け直した agy に触れない）。idle の子は `releaseIdle`・`sweepIdle` で止める |
+| O25 | agy の `live`（会話ごとのプロセス）と `pids.json` | `antigravity.mjs:105`・`antigravity-pids.mjs:26` | `reap` `:80-100` | 保存済み | 段階 3。**済（agy。[stage3-agy.md](stage3-agy.md)）**: 保持役の子は pid を持たず `pids.json` に控えないので、`owner` の書き換えは要らない（`reap` は付け直した agy に触れない）。idle の子は次の起動の `sweepIdleAtStart`（`sweepIdle`）と、待ったまま時間が過ぎたときの `armIdle` で止める |
 
 ---
 
@@ -364,7 +364,7 @@ handOffTurn(key)                                     … 旧サーバーの口�
 | X2 | 5153 `runtimeContext.close()` | ply_context の口と外部 MCP を閉じる | 口の束縛（トークン）は閉じない。外部 MCP の子はプロセスと一緒に止まる（R15） |
 | X3 | `claude.mjs:1054` `flag.dispose()` | フラグ設定のファイルを消す | 消さない（O4） |
 | X4 | 1872-1875 の `exit`（`shellRuns.stopAll`・`botHost.stop`・`removeControlFile`・`mainLink.dispose`） | 終わりに止める・消す | `control.json` は自分の pid のものだけ消す作り（そのまま）。`!` の行は段階 3 まで止まる |
-| X5 | `antigravity.mjs:786` の `exit` | agy を全部止める | 段階 3。**済（agy。[stage3-agy.md](stage3-agy.md)）**: 手を離した子は止めず、idle の子は止める（`HolderClient.sendBatch` の 1 回の書き込み）。引き継ぎでは `handoverRun.stash` の先頭の `releaseIdle` |
+| X5 | `antigravity.mjs:786` の `exit` | agy を全部止める | 段階 3。**済（agy。[stage3-agy.md](stage3-agy.md)）**: 保持役の子は止めない（アプリの終了の `stopHeldAgy` だけが止める）。idle の子は次の起動が止める（`sweepIdleAtStart`） |
 | X6 | `computerLock`（M37） | ターンの終わりにロックを解く | 手を離す前に `stopAll('update')` |
 
 ---

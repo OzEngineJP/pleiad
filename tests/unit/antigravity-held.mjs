@@ -111,7 +111,11 @@ export default async function (t) {
       };
       const runAdopt = async ({ acked, userText = 'adopt me', drop = [], resumed = true }) => {
         const messageStore = { events: [] };
-        if (userText !== null) await transcript.appendMessages(conversationId, { cwd: scratch, messages: [{ role: 'user', text: userText, uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() }] });
+        // 再開した会話は前のターンの累計を控えに持つ（agy の usage は会話の累計。差を使用量にする）
+        const before = { sentAt: sentAt - 60_000, at: new Date(sentAt - 60_000).toISOString(), source: 'result', status: 'SUCCESS', outcome: 'ok',
+          usage: { input_tokens: 2, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0 } };
+        if (userText !== null) await transcript.appendMessages(conversationId, { cwd: scratch, messages: [{ role: 'user', text: userText, uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() }],
+          turnResult: resumed ? before : null });
         const { source, calls } = sourceOf({ acked });
         const control = { onReady() {}, touch() {} };
         const ac = new AbortController();
@@ -134,7 +138,7 @@ export default async function (t) {
         assert.deepEqual(events.filter(([e]) => e.type === 'tool.result').map(([e]) => e.text), ['out-x'], 'ツールの結果は 1 回');
         assert.equal(events.filter(([e]) => e.type === 'text.delta').map(([e]) => e.text).join(''), '前置き。終わり。');
         assert.deepEqual(events.filter(([e]) => e.type === 'turnResult').map(([e]) => e.outcome), ['ok'], 'turnResult は 1 回');
-        assert.equal(events.filter(([e]) => e.type === 'usage').length, 1, '使用量は 1 回');
+        assert.deepEqual(events.filter(([e]) => e.type === 'usage').map(([e]) => [e.inputTokens, e.outputTokens]), [[3, 2]], '使用量は 1 回で、前のターンの累計との差');
         assert.equal(calls.labels.at(-1), null, '終わったら札を外す');
         assert.deepEqual(calls.unmarks, ['turn'], '終わったら印を外す');
         assert.equal(control.holder, null, '終わったら札の口を外す');

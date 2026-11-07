@@ -103,6 +103,7 @@ export default async function (t) {
       (await Promise.all([{ name: 'a b' }, { name: 'あなた' }, { name: 'X', icon: 'x' }, { name: 'X', backend: 'nope' }, { name: 'X', backend: 'claude', model: 'bad' }, { name: 'X', backend: 'claude', effort: 'bad' }]
         .map((a) => call(human, 'bots.create', a)))).every((r) => !r.ok && r.code === 'INVALID'));
     t.ok('バックエンドを省くと既定（先頭）', (await call(human, 'bots.create', { name: 'Default' })).result.backend === 'claude');
+    t.ok('アイコンを省いて作ると未設定', (await f.service.list()).find((b) => b.name === 'Default').icon === '');
 
     // ---- AI が作る: 承認が要る
     const asking = { ...agent('ask'), mode: MODES.ask };
@@ -242,6 +243,10 @@ export default async function (t) {
     const oversized = path.join(uploadDir, 'oversized.png');
     await fs.writeFile(oversized, Buffer.concat([png, Buffer.alloc(1024 * 1024)]));
     t.ok('1MiB を超える画像は拒む', (await call(human, 'bots.update', { botId: owl, iconImage: oversized })).code === 'INVALID');
+    t.ok('画像の失敗で以前の絵文字を失わない', (await f.service.get({ botId: owl })).icon === '🦉');
+    const reset = await call(human, 'bots.update', { botId: owl, icon: '', iconImage: null });
+    t.ok('既存の更新操作で未設定へ戻せる', reset.ok && reset.result.icon === '' && !reset.result.iconImage);
+    await call(human, 'bots.update', { botId: owl, icon: '🦉' });
     t.ok('名前を変えると DM のチャンネルの表示名も揃える', calls.update.some((u) => u.channelId === `c_dm_${owl}` && u.name === 'NightOwl'));
     t.ok('モデル・エフォートの変更が今ある会話に反映される', sessions[sess.sessionId].model === 'm-x' && sessions[sess.sessionId].effort === 'high');
     t.ok('ほかの bot の名前への変更は BOT_NAME_TAKEN', (await call(asking, 'bots.update', { botId: owl, name: 'fox' })).code === 'BOT_NAME_TAKEN');

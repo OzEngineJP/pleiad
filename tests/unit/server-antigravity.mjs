@@ -226,6 +226,11 @@ export default async function (t) {
     t.ok("同じ会話で続きが流れる", textOf(second) === "了解: つづき", JSON.stringify(textOf(second)));
     const after = JSON.parse(await fs.readFile(path.join(dataDir, "antigravity", `${sid}.json`), "utf8"));
     t.ok("控えが積み増される", after.messages.length === 4, `${after.messages.length} 件`);
+    // agy の usage は会話の累計（fake-agy は 2 ターン目に 22・14・6・4）。前のターンの累計（控えのターンの記録）との差を使用量にする
+    t.ok("再開ターンの usage は前のターンの累計との差",
+      second.events.filter((e) => e.type === "usage").map((e) => [e.inputTokens, e.outputTokens, e.cachedTokens]).join("|") === "13,10,2"
+        && after.turnResults?.at(-1)?.usage?.input_tokens === 22,
+      JSON.stringify({ usage: second.events.filter((e) => e.type === "usage"), trace: after.turnResults?.at(-1) ?? null }));
 
     // ---- 入力欄の `!`。Pleiad が実行し、結果を次の発言の前に agy へ渡す（ADR 0054・0281）。
     const shellFrom = c.mark();
@@ -333,6 +338,43 @@ export default async function (t) {
     t.ok("落として aborted になる",
       c.since(mark).some((e) => e.type === "turnResult" && e.outcome === "aborted"),
       JSON.stringify(c.since(mark).filter((e) => e.type === "turnResult")));
+
+    // ---- 使用量。agy の usage は会話の累計で、--conversation で起こし直した別のプロセスでも続きから数える（fake-agy も会話 id ごとにファイルで持つ）。
+    // プロセスを替えても、次のターンはそのターンの分（控えに残した前のターンの累計との差）だけを記録する
+    const usageOf = (turn) => turn.events.filter((e) => e.type === "usage").map((e) => [e.inputTokens, e.outputTokens, e.cachedTokens].join(",")).join("|");
+    const counted = await c.runTurn({ prompt: "数える", sessionId: null, cwd: ROOT, backend: "antigravity", mode: "yolo" }, { ms: 60_000 });
+    const countedSid = counted.sessionId;
+    const lastTrace = async () => JSON.parse(await fs.readFile(path.join(dataDir, "antigravity", `${countedSid}.json`), "utf8")).turnResults.at(-1);
+    const countedSecond = await c.runTurn({ prompt: "数える 2", sessionId: countedSid, cwd: ROOT }, { ms: 60_000 });
+    t.ok("同じプロセスの 2 ターン目はそのターンの分", usageOf(countedSecond) === "13,10,2" && (await lastTrace())?.usage?.input_tokens === 22,
+      JSON.stringify({ usage: usageOf(countedSecond), trace: await lastTrace() }));
+    // 中断で agy を落とす（result の無いまま。累計は進まない）
+    const slowCount = async () => (await fs.readFile(promptLog, "utf8").catch(() => "")).split("\n").filter((line) => line.includes("slow")).length;
+    const slowBefore = await slowCount();
+    const killFrom = c.mark();
+    c.cmd("runTurn", { prompt: "slow", sessionId: countedSid, cwd: ROOT }).catch(() => {});
+    for (let i = 0; i < 200 && (await slowCount()) === slowBefore; i++) await new Promise((r) => setTimeout(r, 50));
+    await c.cmd("abort", { sessionId: countedSid });
+    await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === countedSid, { ms: 60_000, from: killFrom });
+    const argsMark = (await readJson(argsFile, "[]")).length;
+    const countedResumed = await c.runTurn({ prompt: "数える 3", sessionId: countedSid, cwd: ROOT }, { ms: 60_000 });
+    const resumedArgs = (await readJson(argsFile, "[]")).slice(argsMark).filter((a) => a.some((x) => x.startsWith("--print")));
+    t.ok("落とした agy を --conversation で起こし直す",
+      countedResumed.outcome === "ok" && resumedArgs.length === 1 && resumedArgs[0][resumedArgs[0].indexOf("--conversation") + 1] === countedSid,
+      JSON.stringify(resumedArgs));
+    // 新しいプロセスの累計は 33（前のプロセスの 22 の続き）。差の 11（入力はキャッシュ読みを足して 13）だけを記録する
+    t.ok("agy のプロセスを替えても、次のターンの使用量はそのターンの分だけ",
+      usageOf(countedResumed) === "13,10,2" && (await lastTrace())?.usage?.input_tokens === 33,
+      JSON.stringify({ usage: usageOf(countedResumed), trace: await lastTrace() }));
+    // agy が累計を 0 から数え直した（前のターンの累計より減った）ら、差にせず、その累計をこのターンの分として記録する
+    const countedReset = await c.runTurn({ prompt: "usage-reset", sessionId: countedSid, cwd: ROOT }, { ms: 60_000 });
+    t.ok("累計が減ったら、差にせず累計をそのまま使う",
+      usageOf(countedReset) === "13,10,2" && (await lastTrace())?.usage?.input_tokens === 11,
+      JSON.stringify({ usage: usageOf(countedReset), trace: await lastTrace() }));
+    const countedAfterReset = await c.runTurn({ prompt: "数える 4", sessionId: countedSid, cwd: ROOT }, { ms: 60_000 });
+    t.ok("数え直した後は、新しい累計を基準に差を取る",
+      usageOf(countedAfterReset) === "13,10,2" && (await lastTrace())?.usage?.input_tokens === 22,
+      JSON.stringify({ usage: usageOf(countedAfterReset), trace: await lastTrace() }));
 
     // ---- 渡った合図を出せない backend（traits.promptDelivery = false）:
     // 発言を受け取ったかもしれないまま無出力で終わったとき、failed（再開で自動再送）にせず結果不明（unknown）にする。

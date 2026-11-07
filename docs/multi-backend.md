@@ -85,7 +85,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `thinking.start` | `{ }` | `content_block_start(thinking)` |
 | `thinking.delta` | `{ text?, estimatedTokens? }` | `thinking_delta` |
 | `tool.start` | `{ id, name, input, at, startedAt?, shell? }` `shell: true` は、名前でシェルのツールと見分けられない呼び出し（ACP の自由な題。Devin の `kind: "execute"`）がシェルのコマンドであること。名前で見分けるものは、エージェントの記述（`core/backends/agents.mjs`）の `shellTools` に書く（`core/shell-tools.mjs`）。`at` はサーバーが受けた時刻（epoch ms）。バックエンドは出さず、server の `makeEmit` が 1 か所で付ける（すでに数の `at` があれば上書きしない）。実行中のスナップショット（`stream.events`）にも同じ値が残るので、開き直し・再接続の再生でも、画面は走っているツールの経過と見出しの経過を本当の開始から数える（端末の時計とのずれは `ready` の `now` で補う）。`startedAt` はバックエンドが申告した開始（Codex の `startedAtMs`。推定で埋めない） | `assistant` の `tool_use` |
-| `tool.result` | `{ id, text, isError, truncated, rejection?, images?, computer? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める。`images` は結果の画像（Codex の画像生成と、`ply_computer` のスクリーンショット）。`computer` は `ply_computer` の印の行の中身（[computer-use.md](computer-use.md)「tool.start / tool.result」。3 つのバックエンドが印から作り、名前も `mcp__ply_computer__<ツール>` にそろえる） | `user` の `tool_result` |
+| `tool.result` | `{ id, text, isError, truncated, rejection?, images?, computer? }` `rejection` は実行前に拒否されたコマンドの構造（Codex と Antigravity。§2.5「Codex の実行前の拒否」・§2.8「組織の管理ポリシー」）。server が委譲の結果に集める。`images` は結果の画像（Codex の画像生成と、`ply_computer` のスクリーンショット）。`computer` は `ply_computer` の印の行の中身（[computer-use.md](computer-use.md)「tool.start / tool.result」。3 つのバックエンドが印から作り、名前も `mcp__ply_computer__<ツール>` にそろえる） | `user` の `tool_result` |
 | `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"preparing"\|"retrying"\|"idle", label?, retry? }`（preparing は送信の準備。CLI の起動・履歴の再生・設定の適用など、送る前に数秒かかるもの。retrying は上限・一時的な失敗のあと再試行を待っている。`retry: { attempt, next, message, reason, limit }`、next は次の再試行の epoch ms。人の応答待ちの waiting とは別。ADR 0229） | `system/status`, `session_state_changed` |
 | `turnResult` | `{ outcome: "ok"\|"error"\|"aborted"\|"limited", turns?, costUsd?, error?, resetsAt?, window?, scope? }`（costUsd はこのターンの分。aborted には server が中断の理由 `reason` を足す。バックエンドは出さない。limited は使用量の上限で止まった。resetsAt は解ける時刻の epoch ms で、分からなければ出さない。window は止まった枠の名前（Claude の `five_hour` など）、scope: "account" はその枠がアカウント全体に効く（モデルを替えても通らない）。ADR 0229） | `result` |
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
@@ -547,6 +547,7 @@ Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-r
 **agy の実行ファイル**は `AGENT_HOST_AGY_BIN`（既定 `agy`）。
 **agy の `--print-timeout`** は `AGENT_HOST_AGY_PRINT_TIMEOUT`（既定 `24h`。Go の duration 文字列。§2.8）。
 **agy のモデル一覧を古いとみなすまで**は `AGENT_HOST_AGY_MODELS_TTL_MS`（既定 5 分。§2.8）。
+**次の発言を待つ agy を止めるまで**は `AGENT_HOST_AGY_IDLE_MS`（既定 30 分。`0` で止めない。§2.8「待っている agy を時間で止める」）。
 
 ### 2.7 ターンの外: 会話に残る裏の作業（2026-09）
 
@@ -738,7 +739,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 | 承認 | **無し**（§下） |
 | 中断 | **無し** → プロセスを落とす。会話は `--conversation` で拾い直せる |
 | 完了 | `result` の `status`（SUCCESS / ERROR / CANCELED / INTERRUPTED / INVALID / WAITING / RUNNING） |
-| 使用量 | `result.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`。`total_tokens` = 4 つの和なので、どれも他を含まない）。usage の出来事には Claude・Codex と同じ形にそろえて渡す: `inputTokens` = input + cache_read（入力はキャッシュ読みを含み、`cachedTokens` = cache_read はその内訳）、`outputTokens` = output + thinking。そろえる前（〜2026-10-04）の記録は `cachedTokens` が `inputTokens` を超えるので、読む側は `inputWithCache`（`core/usage.mjs`）で足して読み、キャッシュの割合が 100% に張り付かないようにする |
+| 使用量 | `result.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`。`input_tokens` はキャッシュ読みを含まず、`total_tokens` = input + output + thinking。agy 1.5.2 で実測）。**値は agy の会話の始まりからの累計**で、`--conversation` で起こし直した別のプロセスでも続きから数える。Pleiad はそのターンの生の累計を控えのターンの記録（`turnResults` の `usage`。`core/backends/antigravity-store.mjs`）に残し、次のターンは控えにある前のターン（送信の時刻が前で最も新しいもの）の累計との差をそのターンの使用量にする。控えから読むので、サーバーの再起動・保持役の付け直し・プロセスの入れ替えを挟んでも基準が残り、同じ result を読み直しても差は変わらない。新しい agy の会話は 0 を基準にする。基準の無い再開（控えに累計を残す前から続く会話の、最初の 1 ターン）は多めに数えないよう使用量を出さず、累計だけを控えて次のターンの基準にする。どれかの値が前のターンの累計より減っていたら、agy が数え直したとみなし、その累計をそのままそのターンの分にする。全部 0 の result（打ち切りなど）は使用量を出さず、再開では基準にもしない（`core/backends/antigravity.mjs` の `usageDelta`・`usageBaseOf`）。usage の出来事には Claude・Codex と同じ形にそろえて渡す: `inputTokens` = input + cache_read（入力はキャッシュ読みを含み、`cachedTokens` = cache_read はその内訳）、`outputTokens` = output + thinking。そろえる前（〜2026-10-04）の記録は `cachedTokens` が `inputTokens` を超えるので、読む側は `inputWithCache`（`core/usage.mjs`）で足して読み、キャッシュの割合が 100% に張り付かないようにする |
 | 一覧・履歴 | **無し** → Pleiad が控える（§下） |
 | タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界)） |
 | モード | **`--dangerously-skip-permissions` の 1 つだけ**（§下） |
@@ -749,8 +750,8 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 
 ```jsonc
 {"event":"init","conversation_id":"…","init":{"cwd","tools","permission_mode","model","agent"}}
-{"event":"step_update","step_update":{"conversation_id","step_index","state":"ACTIVE|DONE","step_type","text_delta"}}
-{"event":"result","result":{"conversation_id","status","response","error","duration_seconds","num_turns","usage"}}
+{"event":"step_update","step_update":{"conversation_id","step_index","state":"ACTIVE|DONE|ERROR","step_type","text_delta","tool_info":{"name","parameters","output","error"}}}
+{"event":"result","result":{"conversation_id","status","response","error","duration_seconds","num_turns","usage","denied_actions"}}
 ```
 
 **承認を持てない**: ターン中の対話承認は**公式に非対応**。許可が取れないツールは soft-deny され
@@ -773,6 +774,33 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 always-proceed のまま）読むだけになる。そこで定義に `tools` を明示する。
 名前を書ける範囲と、`tools: "*"` を採らない理由は `core/backends/antigravity-context.mjs` の `TOOLS`。
 
+**組織の管理ポリシー**（issue #169）: 組織のアカウント（Gemini Enterprise）でログインした agy では、
+管理者の設定（Gemini Enterprise › 設定 › AI デベロッパー ツール › セキュリティ。英語の画面は Settings › AI developer tools › Security）が
+`--dangerously-skip-permissions` より優先される。実機（agy 1.5 系）で確かめた形:
+
+- 「ターミナル自動実行モード」（値は「要審査」「サンドボックスで続行」「常に続行」）が「要審査」だと、`init` の `permission_mode` が `request-review` になる
+  （skip のときは `always-proceed`。「サンドボックスで続行」のときの値は見ていない）
+- 確認の要るツールは、確認を出せないまま拒否される。段は `ACTIVE` の後に output 無しの `ERROR` と
+  `tool_info.error`（`type: "TOOL_ERROR"`、文面は `permission check failed … user denied permission …`）で来る
+- ターンの `result` は `status: "SUCCESS"`・`response: ""`・`denied_actions: [{ action, display_name }]`
+- 「ファイル アクセス ポリシーの外部」（値は「許可しない」「常に確認する」「許可」）が「常に確認する」だと、作業場所の外のファイルの操作も確認を出せないまま拒否されると見ている（実機では確かめていない）
+- 「MCP サーバー」が無効のとき、カスタムエージェントに書いた中継（ply_context・ply_agents など）が起動されない。
+  stream-json には何も出ない（理由がこの設定だというのは推測。許可するサーバーの構成に中継が無いときも同じになると見ている）
+
+Pleiad は黙って普通の完了にせず、次のように出す（`core/backends/antigravity.mjs`）:
+
+- `ERROR`（または `tool_info.error` のある完了）の段は、失敗したツール（`isError`）として画面と控えに出す。
+  拒否の文面なら、管理者に頼む設定と値（「ターミナル自動実行モード」を「常に続行」、「ファイル アクセス ポリシーの外部」を「許可」）を添え、
+  `rejection`（`kind: "policy"`・`via: "antigravity"`）を付けて委譲の結果に集める
+- 返答が空のまま `denied_actions` のある `SUCCESS` は、失敗のターンにする。理由に拒否された操作と頼む設定を書く
+- その agy の最初の成功した `result` で 1 度だけ、確認なしで渡したのに `permission_mode` が確認の要ると分かっている値（`request-review`）のとき、
+  または中継に渡したトークンで Pleiad の MCP の口へ 1 度も接続が来ていないとき（`core/mcp-contact.mjs`）、
+  返答の後ろに「Pleiad からの知らせ」を引用の段落で足す。本文に入るので控えと委譲の結果にも残る。
+  保持役から付け直した agy（サーバーの入れ替え）と、口を持たないプロセス（`core/server.mjs` を読まずにバックエンドだけを使う試験など）では
+  MCP の接続を見ない（前のサーバーが受けた接続・ほかのプロセスの口に来た接続は分からない）
+
+要審査のツールを Pleiad の承認カードへ出す道（ACP など）は issue #170 で調べる。
+
 **一覧と履歴を Pleiad が控える**（`core/backends/antigravity-store.mjs`）:
 gemini では本体が書いた記録を**読んだ**が、agy には読めるものが無い
 （会話を列挙するサブコマンドが無く、`conversation_summaries.db` は非公開スキーマの SQLite）。
@@ -784,6 +812,31 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
 （中断の印は sidecar の `interrupted`）。書き込みは会話ごとに 1 本ずつで、`runTurn` は積んだ分を書き終えてから返る。
 再開した会話の途中と失敗の書き込みは、控えが無ければ作らない（forget した控えを作り直さない）。
 控えなので agy 側で消えた会話が残りうる。`--conversation` が撥ねられた時点で落とす。
+
+**思考の署名が通らない会話**（2026-11）: 再開した会話が、step を 1 つも出さず本文も無いまま `result` の
+`status: "ERROR"`・`error: "INVALID_ARGUMENT (code 400): Invalid thought signature."` で終わり、何度送っても同じ失敗を繰り返すことがある（agy 1.5 系で観測）。
+会話の中に残る思考の署名（thought signature）が、送り先の検証に通らなくなったもの。会話を作ってから再開するまでに agy の認証の方式
+（個人の Google アカウントと Google Cloud の認証）が変わったことが最も考えやすい原因（推論）。同じ認証のままモデルの段・系統を変えて再開しても起きないことは実機で確かめた。
+一度こうなった会話は同じ会話のままでは戻らないので:
+
+- **見分け方は狭くする**（`rejectedBeforeRun`。`core/backends/antigravity.mjs`）: `status` が ERROR・`error` に `Invalid thought signature`（大小文字は見ない）・
+  そのターンに step が 1 つも始まっていない・本文が無い、が全部揃ったときだけ。ほかの 400（モデルの id の誤りなど）や step の後の同じ失敗では、
+  agy の中の文脈を黙って捨てないよう、今までどおりの失敗にする（渡った合図が無ければ結果不明）
+- **当たったら、そのターンの発言を控えから外す**（`appendMessages` の `drop`）。agy を落として手を離し、error の `turnResult` は出さずに
+  `undelivered`・`retracted`（外した発言の uuid）、再開した会話なら `nativeUnusable` の印を付けたエラーを投げる
+- **再開した会話なら、記録を新しい会話へ引き継いで一度だけ送り直す**: `core/conversations.mjs` の `wrapped.runTurn` が `nativeUnusable` を見て
+  `markForRebuild(id, { kind: 'recover' })`（ネイティブだけの会話は先にホスト管理へ変える）を立て、もう一度 `runOnce` を呼ぶ。巻き戻しの拒否
+  （`rewindRejected`。[message-fork.md](message-fork.md)）と同じ形。引き継ぎは記録から組み立て直す機能（[ADR 0287](adr/0287-context-rebuild-at-boundaries.md)）が入っていればその包み、
+  切れていれば今の JSON の写し。どちらでも新しい会話を採用したところで区切り `recover`（「前の会話を続けられなかったため、記録を新しい会話へ引き継いで、もう一度送りました」）を残す
+- **二重にしない**: 断られた発言は控えにも、ターンの途中に取り込んだ記録（`retracted` の uuid）にも残さない。引き継ぎの中では、送った発言は末尾の
+  「今のユーザーのメッセージ」としてだけ入り、会話の記録には送った原文で 1 回だけ並ぶ
+- **また断られたら「失敗」で止める**: 送り直しは新しい会話なので `nativeUnusable` は付かない。新しい会話の最初の発言で同じ断りが来たら（作り直した会話もまた断られた・
+  新しく始めた会話がいきなり断られた）、`undelivered` のまま投げ、送信待ちは「失敗」になる（何も実行していないと分かっているので「結果不明」にしない）。
+  「失敗」は利用者が再送・再開を選ぶまで送り直さないので、同じ会話へ送り続けない。作り直した会話の控えは空なので採用を戻し（空の控えは一覧に出さない）、
+  次の送信も記録からの引き継ぎで始める
+- **印で分ける**: エージェントの id は比べない。ほかのエージェントでも、何も実行する前に会話そのものが使えなくなったと分かる失敗に
+  `nativeUnusable`（と `undelivered`・`retracted`）を付ければ同じ道を通る
+- 失うもの: agy の中にだけあった文脈（ツールの結果の全文・思考）は、Pleiad の記録からの引き継ぎに置き換わる。文言が変われば当たらなくなり、今までどおりの結果不明に戻る
 
 **ログインの導線**: Pleiad は OAuth を回さず、**端末で叩くコマンドを案内して、終わるのを見張る**。
 
@@ -823,8 +876,24 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
   控えには起こした Pleiad の pid（`owner`）も残し、**それが生きているうちは触らない**
 - **保持役に載せた agy は、この掃除の対象に入らない**（無停止の更新 段階 3。`core/backends/antigravity-held.mjs`・[stage3-agy.md](zero-downtime-update/stage3-agy.md)）。
   `AGENT_HOST_AGY_HOLDER`（既定は実行場所の置き場があるとき on）で、会話ごとの agy が保持役の子になり、サーバーが入れ替わっても走り続けて、新しいサーバーが付け直す。
-  保持役の子は pid を控えず、終了時（`process.once("exit")`）は手を離していない子だけを止める。ターンの間の子（idle）は引き継ぎのとき旧サーバーが止め、
-  落ちた後は次の起動の最初の保持役の使用が止める
+  保持役の子は pid を控えず、終了時（`process.once("exit")`）は止めない（アプリの終了だけが止める）。ターンの間の子（idle）は、
+  サーバーを止めた・更新した・落ちた後の次の起動が止める（`restoreAdoptedTurns` の後の `sweepIdleAtStart`。付け直すターンの子は残す）
+
+**待っている agy を時間で止める**（2026-11、`core/backends/antigravity.mjs` の `armIdle`）:
+ターンを終えた agy は、次の発言を待って会話のあいだ生きる（保持役の子も同じ。上）。長く生かすと、ログインの切り替えが戻る。
+
+- 実機（1.5.2・macOS）の観測: 動いている agy は、資格情報を**起動の時にだけ**キーチェーンから読み、以後はメモリのトークンを
+  約 1 時間ごとに更新して**キーチェーンへ書き戻す**。走っている間に読み直さない。切り替える前から生きている agy が、
+  切り替えた後のログインを古い方の資格情報で上書きし、次に起きた agy は古い方で動く（agy の不具合。Pleiad からは直せない）
+- そこで、ターンの終わりに `AGENT_HOST_AGY_IDLE_MS`（既定 30 分）のタイマーを付け、次のターンがその agy を取ったら外す。
+  過ぎたら落とし、エージェント定義の置き場も片付ける（`releaseConversation` と同じ道）。次のターンは `--conversation` で起こし直す（会話は続く）。ターンの間は止めない
+- 値は setTimeout の上限（2^31−1 ms。約 24.8 日）まで。超える値・`Infinity` は `0` と同じく止めない（そのまま渡すと 1 ms になり、ターンのたびに止まる。`idleDelay`）
+- タイマーはサーバーのメモリにある。保持役に載せた idle の agy は、サーバーを止めた・更新した後に誰のタイマーも持たないので、次の起動が止める（上。[stage3-agy.md](zero-downtime-update/stage3-agy.md) §3.3）
+- **既定を 30 分にした理由**: 拾いたいのは、数時間〜数日待ったままの agy だけで、書き戻しの間隔（約 1 時間）より短ければ足りる。
+  Pleiad のコンテキストの接続の待機（`WARM_IDLE_MS`、10 分。`core/context-connections.mjs`）には合わせない。
+  10 分では、少し間を空けて続ける会話のたびに起こし直しになり、起動を待たせる
+- 残り: 走っているターン（と、30 分より短い間に切り替えたとき）は避けられない。端末で動かしている agy も同じ。
+  切り替えた後に古い方へ戻ったら、走っている agy を止めてからログインし直す
 
 **裏へ回ったコマンド**（2026-10、`core/backends/antigravity-background.mjs`）:
 agy 1.3.4 の `run_command` は、`WaitMsBeforeAsync`（20 秒）たっても終わらないコマンドを裏へ回し、モデルは終わるまで待ち続ける

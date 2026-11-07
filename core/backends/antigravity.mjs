@@ -26,11 +26,13 @@ import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
+import { undelivered } from "./undelivered.mjs";
 import { agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
 import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { t, agentT } from "../i18n.mjs";
+import { mcpContacted, mcpContactsWatched } from "../mcp-contact.mjs";
 import { createLoginWatch, loginTimeoutError } from "../auth/login-watch.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -61,6 +63,28 @@ const BACKGROUND_AFTER_MS = Number(process.env.AGENT_HOST_AGY_BACKGROUND_MS ?? 3
 /** 裏のコマンドを落とした後、agy の DONE を待つ上限 */
 const STOP_WAIT_MS = Number(process.env.AGENT_HOST_AGY_STOP_WAIT_MS ?? 15_000);
 
+/** setTimeout が受ける最大の遅れ（2^31−1 ms。約 24.8 日）。これを超える値と Infinity を、Node は 1 ms にする */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * AGENT_HOST_AGY_IDLE_MS の値を、タイマーに渡す ms にする。止めないときは null（`0` 以下・数でない・setTimeout の上限を超える・Infinity）。
+ * 上限を超えた値をそのまま渡すと 1 ms になり、ターンのたびに止まって起こし直しになる。大きい値を入れた人の意図（止めない）に合わせる
+ */
+export function idleDelay(value) {
+  const ms = Number(value);
+  return Number.isFinite(ms) && ms > 0 && ms <= MAX_TIMER_MS ? ms : null;
+}
+
+/**
+ * ターンを終えて次の発言を待つ agy を止めるまでの ms（`0` 以下・setTimeout の上限を超える値で止めない。idleDelay）。次のターンは `--conversation` で起こし直す。
+ * 動いている agy は起動の時にしかキーチェーンの資格情報を読まず、1 時間ごとにメモリのトークンを更新して書き戻す。
+ * ログインを切り替えた後も、前から生きている agy が古い方の資格情報で上書きし、切り替えが戻る（docs/multi-backend.md §2.8）。
+ * 既定を 30 分にしたのは、極端に長く残る agy（数時間〜数日）だけを拾えればよいため。
+ * 10 分（Pleiad のコンテキストの接続の WARM_IDLE_MS）だと、少し間を空けて続ける会話のたびに起こし直しになり、起動を待たせる。
+ * 30 分なら、書き戻しの間隔（1 時間）より短く、普通の会話の間では起こし直さない
+ */
+const IDLE_MS = idleDelay(process.env.AGENT_HOST_AGY_IDLE_MS ?? 30 * 60_000);
+
 /**
  * 承認モード。**`yolo` の 1 つだけ**にしてある。
  *
@@ -73,6 +97,10 @@ const STOP_WAIT_MS = Number(process.env.AGENT_HOST_AGY_STOP_WAIT_MS ?? 15_000);
  * つまり plan / accept-edits を選べるようにすると、「モードを選んだのにエージェントが
  * 黙って何もできない」だけになる。**選べる形で出さない**。
  * 同じ理由で「都度確認」も無い（聞くと言って聞かないものを作らない）。
+ *
+ * **組織の管理ポリシーは skip より強い。** Gemini Enterprise の管理者が確認を求める設定にしていると、
+ * `--dangerously-skip-permissions` を付けても init の `permission_mode` は `request-review` になり、
+ * 確認の要るツールは拒否される。黙らせずに知らせる（下の adminNotice。docs/multi-backend.md §2.8「組織の管理ポリシー」）
  *
  * [antigravity-cli#548]: https://github.com/google-antigravity/antigravity-cli/issues/548
  */
@@ -158,8 +186,28 @@ async function reportHookRuns(session, hooksRuntime, emit) {
 }
 
 function release(conversationId, session) {
+  disarmIdle(session);
   if (conversationId && live.get(conversationId) === session) live.delete(conversationId);
   if (session?.pid) pids.forget(session.pid);
+}
+
+/** 次のターンを待ち始めた agy に、IDLE_MS で止めるタイマーを付ける。止めた後の次のターンは起こし直す（会話は --conversation で続く） */
+function armIdle(conversationId, session) {
+  disarmIdle(session);
+  if (IDLE_MS === null || !conversationId || !session?.proc || live.get(conversationId) !== session) return;
+  session.idleTimer = setTimeout(() => {
+    session.idleTimer = null;
+    if (live.get(conversationId) !== session) return;
+    try { session.kill(); } catch {}
+    release(conversationId, session);
+  }, IDLE_MS);
+  session.idleTimer.unref?.();
+}
+
+function disarmIdle(session) {
+  if (!session?.idleTimer) return;
+  clearTimeout(session.idleTimer);
+  session.idleTimer = null;
 }
 
 /** 直近に引けたモデル一覧。`agy models` は認証が要るので、引けたときだけ覚える。 */
@@ -215,8 +263,52 @@ function turnResultFor(result, { finishedReply = false } = {}) {
 }
 
 /**
- * `result.usage` -> Pleiad の usage イベント。
- * agy の usage は分けて数える（total_tokens = input + output + thinking + cache_read）。Claude・Codex と同じく
+ * agy が何も実行せずに断ったターンか（docs/multi-backend.md §2.8「思考の署名が通らない会話」）。
+ * 再開した会話で、前のターンの思考の署名を API が受け付けないと、step を 1 つも始めないまま
+ * `INVALID_ARGUMENT (code 400): Invalid thought signature.` の ERROR だけが返る（実機の記録）。同じ会話へ何度送っても同じく断られる。
+ * step が始まった・本文が出たターンは、何かを実行したかもしれないので当てない
+ */
+function rejectedBeforeRun(result, { steps = 0, sawText = false } = {}) {
+  return String(result?.status ?? "").toUpperCase() === "ERROR"
+    && /invalid thought signature/i.test(String(result?.error ?? ""))
+    && steps === 0 && !sawText && !String(result?.response ?? "").trim();
+}
+
+/** 確認を出せずに拒否されたツールの文面（実機の `tool_info.error.message`。組織の管理ポリシーの「要審査」など） */
+const DENIED_RE = /permission check failed|denied permission/i;
+
+/**
+ * 確認なしで渡したのに init が返したら、管理側の設定（「ターミナル自動実行モード」が「要審査」）が勝っていると分かる permission_mode（実機 1.5 系で確認）。
+ * 知らない値（「サンドボックスで続行」のときなど）は確認が要るとは限らないので知らせない
+ */
+const REVIEW_MODES = new Set(["request-review"]);
+
+/** 中継に渡したトークン（antigravity-context.mjs の prepareAgent の env）。1 本でも口へ来れば、agy は Pleiad の MCP を起こしている */
+const RELAY_AUTH_KEYS = ["PLY_CONTEXT_AUTHORIZATION", "PLY_AGENTS_AUTHORIZATION", "PLY_COMPUTER_AUTHORIZATION", "PLY_BROWSER_AUTHORIZATION", "PLY_CONTROL_AUTHORIZATION"];
+const relayTokens = (env) => RELAY_AUTH_KEYS.map((k) => env?.[k]).filter((v) => typeof v === "string" && /^Bearer [a-f0-9]{64}$/.test(v));
+
+/**
+ * agy の最初の result で 1 度だけ出す、組織の管理ポリシーの知らせ（無ければ ""）。
+ * 確認の要るモードで動いている・中継に 1 度も接続が無い、のどちらか（両方なら両方）。
+ * 拒否で失敗にしたターン（deniedTurn）は失敗の理由に案内を書くので、モードの分は重ねない
+ */
+function adminNotice(session, { askedSkip, deniedTurn }) {
+  const parts = [];
+  const mode = String(session.permissionMode ?? "");
+  if (!session.reviewNoticed && askedSkip && REVIEW_MODES.has(mode.toLowerCase())) {
+    session.reviewNoticed = true;
+    if (!deniedTurn) parts.push(t("antigravity.admin.reviewMode", { mode, ask: t("antigravity.admin.askTools") }));
+  }
+  if (!session.mcpChecked && session.mcpTokens?.length && mcpContactsWatched()) {
+    session.mcpChecked = true;
+    if (!session.mcpTokens.some(mcpContacted)) parts.push(t("antigravity.admin.mcpMissing", { ask: t("antigravity.admin.askMcp") }));
+  }
+  return parts.map((body) => `> ${t("antigravity.admin.notice", { body })}`).join("\n>\n");
+}
+
+/**
+ * `result.usage`（またはその差）-> Pleiad の usage イベント。
+ * agy の usage は分けて数える（input_tokens はキャッシュ読みを含まない。total_tokens = input + output + thinking）。Claude・Codex と同じく
  * 「入力はキャッシュ読みを含み、cachedTokens はその内訳」「出力は考えた分を含む」にそろえる。
  * そろえないと、入力よりキャッシュ読みが大きくなって、キャッシュの割合が 100% に張り付く。
  */
@@ -230,6 +322,31 @@ function usageFor(usage) {
     outputTokens: n(usage.output_tokens) + n(usage.thinking_tokens),
     cachedTokens: cached,
   };
+}
+
+const USAGE_KEYS = ["input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens"];
+/** `result.usage` の数（agy の会話の始まりからの累計。1.5.2 で実測）。無ければ null */
+function usageTotal(usage) {
+  if (!usage || typeof usage !== "object") return null;
+  return Object.fromEntries(USAGE_KEYS.map((key) => [key, Number.isFinite(usage[key]) && usage[key] > 0 ? usage[key] : 0]));
+}
+/**
+ * このターンの分 = 累計 - 前のターンの累計（base）。base が分からなければ null（多めに数えない）。
+ * どれかが前より減っていたら、agy が数え直した（会話が変わった）とみなして累計をそのまま使う
+ */
+function usageDelta(total, base) {
+  if (!total || !base) return null;
+  if (USAGE_KEYS.some((key) => total[key] < base[key])) return total;
+  return Object.fromEntries(USAGE_KEYS.map((key) => [key, total[key] - base[key]]));
+}
+/**
+ * 前のターンの累計。控えのターンの記録（turnResults）に、このターンより前に送った分で残した最後のもの。
+ * 同じ送信の時刻（付け直し・再生で読み直す同じターン）は除くので、同じ result を何度読んでも差は変わらない
+ */
+function usageBaseOf(record, sentAt) {
+  let base = null;
+  for (const r of record?.turnResults ?? []) if (r?.usage && r.sentAt < sentAt && (!base || r.sentAt > base.sentAt)) base = r;
+  return base ? usageTotal(base.usage) : null;
 }
 
 const toolName = (name) => (name && Object.hasOwn(TOOL_HINTS, name) ? name : name || "tool");
@@ -336,6 +453,8 @@ export const backend = {
     let conversationId = sessionId ?? null;
     // 再開した会話の途中の書き込みでは控えを作らない（--conversation が撥ねられて forget した控えを作り直さない）
     const resumed = k ? Boolean(k.resumed) : Boolean(sessionId);
+    // agy の usage は会話の累計なので、前のターンの累計（控えのターンの記録）との差を使用量にする
+    const usageBase = resumed ? usageBaseOf(await transcript.getRecord(sessionId).catch(() => null), sentAt) : null;
     let sawText = false;
     let text = "";                 // 控えに残す本文
     let finishedReply = false;     // agent_response の DONE。途中までの文とは分ける
@@ -343,6 +462,7 @@ export const backend = {
     const toolCalls = [];          // 控えに残すツール呼び出し
     let settle = null;
     let failed = null;
+    let retracted = false;         // agy が何も実行せずに断った（rejectedBeforeRun）。発言を控えから外す
     let resultTrace = null;        // 終了経路と生の status。本文や usage だけでは後から分からない
     let timedOut = false;          // agy が出力を打ち切った（下の onPrintTimeout）
     const started = new Map();     // tool.start を出した step -> { name, input }
@@ -392,8 +512,9 @@ export const backend = {
     let queued = false;            // 積んだまま、まだ始まっていない書き込みがある（次のを積まない。始まるときに最新を読む）
     let final = null;              // 終わりに書く分（畳んだ後に遅れて届いた出来事を混ぜない）
     let textTimer = null;
+    const userUuid = () => `${conversationId}:u${sentAt}`;
     const snapshot = (at) => [
-      ...(sent === null ? [] : [{ role: "user", text: sent, uuid: `${conversationId}:u${sentAt}`, at: new Date(sentAt).toISOString() }]),
+      ...(sent === null || retracted ? [] : [{ role: "user", text: sent, uuid: userUuid(), at: new Date(sentAt).toISOString() }]),
       // uuid はターンの間変えない（送信の時刻から作る）。変えると控えにも写しの会話（core/conversations.mjs の mergeMessages）にも二重に並ぶ
       ...(text || toolCalls.length ? [{
         role: "assistant", text, uuid: `${conversationId}:a${sentAt}`, at: new Date(at).toISOString(),
@@ -408,7 +529,7 @@ export const backend = {
         queued = false;
         const messages = final?.messages ?? snapshot(Date.now());
         return transcript.appendMessages(conversationId, { cwd, messages, create: final?.create ?? !resumed,
-          ...(final?.turnResult ? { turnResult: final.turnResult } : {}) });
+          ...(final?.turnResult ? { turnResult: final.turnResult } : {}), ...(final?.drop ? { drop: final.drop } : {}) });
       }).catch((err) => console.error("  agy の控えを書けなかった:", String(err?.message ?? err)));
       return writes;
     };
@@ -423,12 +544,15 @@ export const backend = {
       clearTimeout(textTimer);
       if (final || !delivered) return writes;
       final = { messages: snapshot(Date.now()), create: ok || !resumed,
-        turnResult: resultTrace ? { sentAt, at: new Date().toISOString(), ...resultTrace } : null };
+        turnResult: resultTrace ? { sentAt, at: new Date().toISOString(), ...resultTrace } : null,
+        // 何も実行せずに断られたターンの発言は、途中（session.prompt の直後・init）で書いた分も外す。送り直しで二重に入らない
+        ...(retracted ? { drop: [userUuid()] } : {}) };
       return save({ last: true });
     };
 
     // 生きているプロセスを使い回す。落ちていれば立て直す（会話は --conversation で拾える）
     let session = !adopt && conversationId ? live.get(conversationId) : null;
+    disarmIdle(session);
     if (session && !session.proc) { live.delete(conversationId); session = null; }
     // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
     // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
@@ -502,6 +626,8 @@ export const backend = {
       session.home = plan && agent ? agent.home : null;
       session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
       session.keys = keys;
+      // agy が Pleiad の MCP を起こしたかを見るトークン（adminNotice）。付け直しでは見ない（前のサーバーが受けた接続は分からない）
+      session.mcpTokens = useAgent && agent ? relayTokens(agent.env) : [];
     }
 
     // opts は feedLine から来る（付け直しの再生の行は { replay: true }。server の makeEmit が画面へ流さず、実行中のスナップショットとメモリの状態だけを作る）
@@ -516,6 +642,8 @@ export const backend = {
           const isNew = !conversationId;
           conversationId = id;
           live.set(id, session);
+          // 組織の管理ポリシーが skip より勝っていれば request-review などになる（adminNotice）
+          if (ev.init?.permission_mode) session.permissionMode = String(ev.init.permission_mode).slice(0, 100);
           if (isNew) {
             // **これを出さないと web が id を受け取れない。**`first: true` は
             // 「id が確定した最初の1本」の印で、再開ターンでは出さない
@@ -558,9 +686,12 @@ export const backend = {
               : params ?? prev?.input ?? {};
             const output = s.tool_info?.output;
             const state = String(s.state ?? "").toUpperCase();
+            // 拒否・失敗したツールは output 無しの ERROR と tool_info.error で来る（組織の管理ポリシーの「要審査」など。実機で確認）
+            const toolError = s.tool_info?.error;
+            const failedStep = state !== "ACTIVE" && (state === "ERROR" || Boolean(toolError));
             // 知らない state・state 無しでも取りこぼさない: output があれば完了、無ければ開始
             const done = state === "ACTIVE" ? false
-              : state === "DONE" ? true
+              : state === "DONE" || failedStep ? true
               : output !== undefined && output !== null && output !== "";
 
             if (!started.has(id)) {
@@ -582,11 +713,19 @@ export const backend = {
             }
             if (!done) return;
             dropBehind(id, out);
-            const raw = typeof output === "string" ? output : JSON.stringify(output ?? "");
+            const errorText = failedStep ? String(toolError?.message ?? toolError?.type ?? (typeof toolError === "string" ? toolError : "")) : "";
+            const raw = failedStep && (output === undefined || output === null || output === "") ? errorText
+              : typeof output === "string" ? output : JSON.stringify(output ?? "");
             // ply_computer: 画像を退避した行を除き、印の行から images と computer を作る。控えにもその形で残す（読み直しで印を読み直さない）
-            const r = computer ? computerResult(raw, cut) : cut(raw);
-            const isError = computer ? computerFailed(r.computer) : false;
-            out({ type: "tool.result", id, ...r, isError });
+            const cutResult = computer ? computerResult(raw, cut) : cut(raw);
+            // 確認を出せずに拒否された: 管理者に頼む設定を添え、委譲の結果へ拒否として集める（server が tool.result の rejection を拾う）
+            const denied = failedStep && DENIED_RE.test(errorText);
+            const r = denied ? { ...cutResult, text: `${cutResult.text}\n\n${t("antigravity.admin.toolDenied", { ask: t("antigravity.admin.askTools") })}` } : cutResult;
+            const isError = failedStep || (computer ? computerFailed(r.computer) : false);
+            const rejection = denied ? { tool: name, kind: "policy", via: "antigravity",
+              command: String(input?.CommandLine ?? input?.AbsolutePath ?? input?.TargetFile ?? input?.Path ?? "") || null,
+              reason: t("antigravity.admin.reason"), raw: errorText.slice(0, 1000) } : null;
+            out({ type: "tool.result", id, ...r, isError, ...(rejection ? { rejection } : {}) });
             toolCalls.push({ id, name, input, result: { ...r, isError } });
             save();
             return;
@@ -606,12 +745,44 @@ export const backend = {
             return new Promise((resolve) => setTimeout(() => resolve(handle({ ...ev, [LATE]: true }, opts)), EMPTY_SUCCESS_GRACE_MS));
           }
           conversationId ||= r.conversation_id || null;
+          // 返答の無いまま拒否された操作だけが残った SUCCESS は、普通の完了にしない（組織の管理ポリシー。docs/multi-backend.md §2.8）
+          const deniedActions = Array.isArray(r.denied_actions) ? r.denied_actions : [];
+          const deniedTurn = deniedActions.length > 0 && !sawText && !r.response && String(r.status ?? "").toUpperCase() === "SUCCESS";
+          // agy の最初の result で 1 度だけ、管理ポリシーの知らせを返答の後ろに足す（本文として控えにも残る。付け直しの再生では足さない）
+          // 認証の失敗などで終わったターンは見ない（中継を起こす前に終わる。次の成功したターンで見る）
+          const notice = opts?.replay || String(r.status ?? "").toUpperCase() !== "SUCCESS" ? "" : adminNotice(session, { askedSkip: Boolean(m.skip), deniedTurn });
+          if (notice) {
+            const add = `${text ? "\n\n" : ""}${notice}`;
+            if (!sawText) { sawText = true; out({ type: "activity", state: "writing" }); }
+            text += add;
+            out({ type: "text.delta", text: add });
+          }
           if (sawText) out({ type: "text.end" });
-          const usage = usageFor(r.usage);
+          // 新しい agy の会話（再開でない・別の会話になった）は 0 から数える。基準の無い再開（更新前から続く会話）は出さない。
+          // 全部 0 は数えていない result（打ち切りなど）なので、出さず、再開では基準にもしない
+          const total = usageTotal(r.usage);
+          const usageFresh = !resumed || conversationId !== sessionId;
+          const counted = total && USAGE_KEYS.some((key) => total[key]);
+          const usage = counted ? usageFor(usageDelta(total, usageFresh ? usageTotal({}) : usageBase)) : null;
           if (usage) out(usage);
-          const outcome = turnResultFor(r, { finishedReply });
+          const actions = deniedActions.map((a) => String(a?.display_name ?? a?.action ?? "").slice(0, 100)).filter(Boolean);
+          const outcome = deniedTurn ? { type: "turnResult", outcome: "error", turns: r.num_turns ?? 1,
+            error: t("antigravity.admin.deniedTurn", { actions: [...new Set(actions)].join(", "), ask: t("antigravity.admin.askTools") }) }
+            : turnResultFor(r, { finishedReply });
           resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
-            ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}) };
+            ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}),
+            ...(deniedActions.length ? { denied: deniedActions.length } : {}), ...(total && (counted || usageFresh) ? { usage: total } : {}) };
+          if (outcome.outcome === "error" && !deniedTurn && rejectedBeforeRun(r, { steps: started.size, sawText })) {
+            // 何も実行していないので、送信待ちは「失敗」にする（undelivered。「2 回届くことがあります」にしない）。
+            // 再開した会話は同じ会話へ送っても断られ続けるので、作り直す印（nativeUnusable）を付けて返す。
+            // conversations.mjs の wrapped.runTurn が記録を新しい会話へ引き継いで 1 回だけ送り直すので、ここでは失敗を出さない
+            // （作り直せなければ server が失敗を出す）。新しい会話で断られたときは作り直さず、そのまま失敗にする
+            retracted = true;
+            failed = Object.assign(undelivered(new Error(outcome.error)), { retracted: [userUuid()] }, resumed ? { nativeUnusable: true } : {});
+            clearBehind();
+            if (!resumed) out(outcome);
+            return settle?.();
+          }
           if (outcome.outcome === "error") failed = new Error(outcome.error);
           clearBehind();
           out(outcome);
@@ -765,6 +936,8 @@ export const backend = {
       const aborted = Boolean(signal?.signal?.aborted);
       if (aborted) resultTrace ??= { source: "abort", status: null, outcome: "aborted" };
       await seal({ ok: !aborted && !failed });
+      // 断られた会話のプロセスは次のターンに使い回さない（作り直す会話・送り直しは新しく起こす）
+      if (retracted) { session.kill(); release(conversationId, session); }
 
       if (aborted) {
         emit({ type: "turnResult", outcome: "aborted" });
@@ -787,6 +960,8 @@ export const backend = {
       await seal({ ok: false });
       // 保持役の子はターンが終わっても会話のあいだ生きる（idle）。札と印を外し、付け直す対象から外す
       session.held?.endTurn();
+      // 次の発言を待つ agy は IDLE_MS で止める（保持役の子も同じ）
+      armIdle(conversationId, session);
       if (control) { control.handle = null; control.steer = null; control.holder = null; control.backendCard = null; }
     }
 
@@ -1029,7 +1204,7 @@ async function agyPidOf(session) {
 
 /**
  * アプリの終了で、保持役の agy（idle の子も、走っている子も）を止める（server の stopHeldChildren）。更新・落ちたときは呼ばない
- * （保持役の子は残り、新しいサーバーが起動で拾う。idle の子は次の起動の最初の保持役の使用が止める。sweepIdle）
+ * （保持役の子は残り、新しいサーバーが起動で拾う。idle の子は次の起動が止める。antigravity-held.mjs の sweepIdleAtStart）
  */
 export async function stopHeldAgy() {
   for (const [id, session] of [...live]) {
@@ -1075,4 +1250,4 @@ process.once("exit", () => {
   pids.forget(...gone);
 });
 
-export { MODES, TOOL_HINTS, botSessionKey, turnResultFor, usageFor };
+export { MODES, TOOL_HINTS, botSessionKey, rejectedBeforeRun, turnResultFor, usageFor, usageTotal, usageDelta, usageBaseOf };

@@ -38,6 +38,7 @@ const FOLDER_ADD = ['M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a
 const LOCK = ['M7 11V8a5 5 0 0 1 10 0v3', 'M6 11h12v9H6z'];
 const REPLY = ['M9 14L4 9l5-5', 'M4 9h10a6 6 0 0 1 6 6v3'];
 const CLOSE = ['M6 6l12 12M18 6L6 18'];
+const PENCIL = ['m15 4 5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14z'];
 
 function glyph(paths, cls = 'i') {
   const svg = svgEl('svg', { class: cls, viewBox: '0 0 24 24', 'aria-hidden': 'true' });
@@ -97,10 +98,31 @@ export function createBotPage(host) {
   av.type = 'button';
   av.setAttribute('aria-label', t('channels:bot.iconLabel'));
   av.title = t('channels:bot.iconLabel');
+  av.setAttribute('aria-haspopup', 'dialog');
+  const avatar = el('span', 'bp-av-icon');
+  const badge = el('span', 'bp-av-edit');
+  badge.setAttribute('aria-hidden', 'true');
+  badge.append(glyph(PENCIL));
+  av.append(avatar, badge);
   const imageInput = el('input');
   imageInput.type = 'file'; imageInput.accept = '.png,.jpg,.jpeg,.webp'; imageInput.hidden = true;
-  const imagePick = el('button', 'btn bp-image-pick', t('channels:bot.imagePick'));
+  const iconDialog = el('dialog', 'bp-icon-dialog');
+  iconDialog.setAttribute('aria-label', t('channels:bot.iconLabel'));
+  const iconClose = el('button', 'btn btn-icon');
+  iconClose.type = 'button';
+  iconClose.setAttribute('aria-label', t('channels:bot.iconClose'));
+  iconClose.append(glyph(CLOSE));
+  const iconTitle = el('div', 'bp-icon-head');
+  iconTitle.append(el('strong', null, t('channels:bot.iconTitle')), iconClose);
+  const unset = el('button', 'bp-icon-choice', t('channels:bot.iconUnset'));
+  const emojiPick = el('button', 'bp-icon-choice', t('channels:bot.emojiPick'));
+  const imagePick = el('button', 'bp-icon-choice');
   imagePick.type = 'button';
+  const imageRemove = el('button', 'bp-icon-choice', t('channels:bot.imageRemove'));
+  unset.type = emojiPick.type = imageRemove.type = 'button';
+  const imageHelp = el('p', 'bp-icon-help', t('channels:bot.imageHelp'));
+  iconDialog.append(iconTitle, unset, emojiPick, imagePick, imageRemove, imageHelp);
+  root.append(iconDialog);
   const nameIn = el('input', 'bp-name');
   nameIn.id = 'botName';
   nameIn.type = 'text';
@@ -122,7 +144,7 @@ export function createBotPage(host) {
   const idBox = el('div', 'bp-id');
   idBox.append(nameIn, sub);
   const head = el('div', 'bp-head');
-  head.append(av, imagePick, imageInput, idBox, el('span', 'bp-spacer'), dmBtn, moreBtn, createBtn);
+  head.append(av, imageInput, idBox, el('span', 'bp-spacer'), dmBtn, moreBtn, createBtn);
 
   const err = el('p', 'bp-err');
   err.setAttribute('role', 'alert');
@@ -258,7 +280,7 @@ export function createBotPage(host) {
     render: () => { askQuota(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
   const modePanel = place(panel(modeChip, modePop, { width: 360, align: 'right', render: paintModePop }));
   const addPanel = place(panel(addBtn, addPop, { width: 360, render: renderAddPop, when: () => !unlimited(), onHide: () => { addPop.replaceChildren(); } }));
-  const closePanels = () => { modelPanel.hide(false); modePanel.hide(false); addPanel.hide(false); closeEmojiPicker(); };
+  const closePanels = () => { modelPanel.hide(false); modePanel.hide(false); addPanel.hide(false); closeEmojiPicker(); if (iconDialog.open) iconDialog.close(); };
 
   // ---------------------------------------------------------------- 語彙（バックエンドごとの承認モード・モデル・エフォート）
   async function vocabOf(backend, model = '') {
@@ -368,7 +390,7 @@ export function createBotPage(host) {
   function paintHead() {
     const cur = vm();
     if (!cur) return;
-    av.replaceChildren(...botIcon(cur, '').childNodes);
+    paintAvatar();
     if (document.activeElement !== nameIn) nameIn.value = cur.name ?? '';
     // 「Claude · Opus 5.5 · 作業中」
     const parts = [];
@@ -643,7 +665,12 @@ export function createBotPage(host) {
     paintRun();
   }
 
+  let imageBusy = false;
+  let createBusy = false;
+  const paintBusy = () => { av.disabled = imageBusy || createBusy; createBtn.disabled = imageBusy || createBusy; };
+
   async function create() {
+    if (imageBusy || createBusy) return;
     const d = S.draft;
     if (!d) return;
     const name = nameIn.value.trim();
@@ -651,7 +678,8 @@ export function createBotPage(host) {
     d.persona = persona.value;
     if (!name) { setError(t('channels:bot.nameRequired')); nameIn.focus(); return; }
     setError('');
-    createBtn.disabled = true;
+    createBusy = true;
+    paintBusy();
     try {
       const args = { name, icon: d.icon, backend: d.backend, ...(d.iconImage ? { iconImage: d.iconImage } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}), ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) };
       let bot = await host.invoke('bots.create', args);
@@ -662,7 +690,8 @@ export function createBotPage(host) {
     } catch (e) {
       setError(t('channels:bot.createFailed', { error: message(e) }));
     } finally {
-      createBtn.disabled = false;
+      createBusy = false;
+      paintBusy();
     }
   }
 
@@ -732,34 +761,59 @@ export function createBotPage(host) {
   }
 
   // ---------------------------------------------------------------- 入力
+  function paintAvatar() {
+    avatar.replaceChildren(botIcon(vm(), 'bp-av-face'));
+  }
+  const restoreAvatarFocus = () => { if (!root.hidden) av.focus({ preventScroll: true }); };
+  iconDialog.addEventListener('close', restoreAvatarFocus);
+  iconClose.onclick = () => iconDialog.close();
+  iconDialog.addEventListener('click', (e) => { if (e.target === iconDialog) { const r = iconDialog.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) iconDialog.close(); } });
+  unset.onclick = () => { iconDialog.close(); update({ icon: '', iconImage: null }); };
+  imageRemove.onclick = () => { iconDialog.close(); update({ iconImage: null }); };
+  emojiPick.onclick = (e) => {
+    e.stopPropagation();
+    iconDialog.close();
+    openEmojiPicker({ anchor: av, current: vm()?.icon, title: t('channels:bot.emojiPick'),
+      onPick: (emoji) => update({ icon: emoji, iconImage: null }), onClose: restoreAvatarFocus });
+  };
   av.addEventListener('click', (e) => {
     e.stopPropagation();   // 脇の document の click が、開いたばかりのピッカーを閉じないように（web/side.mjs の closePops）
-    openEmojiPicker({
-      anchor: av, current: vm()?.icon, title: t('channels:bot.iconLabel'),
-      onPick: (emoji) => update({ icon: emoji, iconImage: null }),
-    });
+    imagePick.textContent = vm()?.iconImage ? t('channels:bot.imageChange') : t('channels:bot.imagePick');
+    imageRemove.hidden = !vm()?.iconImage;
+    unset.setAttribute('aria-pressed', String(!vm()?.icon && !vm()?.iconImage));
+    iconDialog.showModal();
+    unset.focus();
   });
-  imagePick.addEventListener('click', () => imageInput.click());
+  imagePick.addEventListener('click', () => { iconDialog.close(); imageInput.click(); });
   imageInput.addEventListener('change', async () => {
     const file = imageInput.files?.[0];
     imageInput.value = '';
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) { setError(t('channels:bot.imageTooLarge')); return; }
     if (!/\.(png|jpe?g|webp)$/i.test(file.name)) { setError(t('channels:bot.imageType')); return; }
-    imagePick.disabled = true;
+    const target = vm();
+    const targetId = S.id;
+    const stillHere = () => S.id === targetId && (!target?.isNew || S.draft === target);
+    if (imageBusy || createBusy) return;
+    imageBusy = true;
+    paintBusy();
     try {
-      const iconFile = await resizeIcon(file);
+      let iconFile;
+      try { iconFile = await resizeIcon(file); }
+      catch { if (stillHere()) setError(t('channels:bot.imageReadFailed')); return; }
       if (iconFile.size > 1024 * 1024) { setError(t('channels:bot.imageOutputTooLarge')); return; }
       const upload = await sendAttachment({ cmd: host.cmd, file: iconFile, sessionId: 'bot-icon-upload' });
-      if (upload?.path) await update({ iconImage: upload.path });
-    } catch (e) { setError(t('channels:bot.saveFailed', { error: message(e) })); }
-    finally { imagePick.disabled = false; }
+      if (upload?.path && stillHere()) await update({ iconImage: upload.path });
+    } catch (e) { if (stillHere()) setError(t('channels:bot.saveFailed', { error: message(e) })); }
+    finally { imageBusy = false; paintBusy(); if (stillHere()) restoreAvatarFocus(); }
   });
+
+  nameIn.addEventListener('input', () => { if (S.draft) { S.draft.name = nameIn.value; paintAvatar(); } });
 
   const commitName = async () => {
     const cur = vm();
     const name = nameIn.value.trim();
-    if (S.draft) { S.draft.name = name; return; }
+    if (S.draft) { S.draft.name = name; paintAvatar(); return; }
     if (!cur || name === cur.name) { nameIn.value = cur?.name ?? ''; return; }
     if (!name) { nameIn.value = cur.name; return; }
     await update({ name });

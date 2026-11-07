@@ -89,6 +89,7 @@ import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstru
 import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
+import { noteMcpContact, watchMcpContacts } from './mcp-contact.mjs';
 import { createContextSession } from './context-session.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
 import { createApiKeys, ApiKeyError, USES as API_KEY_USES } from './api-keys.mjs';
@@ -122,6 +123,7 @@ import { stopHeldAppServer } from './backends/codex-held.mjs';
 import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart } from './backends/claude-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
 import { stopHeldAgy } from './backends/antigravity.mjs';
+import { sweepIdleAtStart } from './backends/antigravity-held.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
@@ -1092,7 +1094,7 @@ const agentConnections = new Map();
 const taskExecutions = new Map();
 // ターンから ctx を引く（札を作るとき。無停止の更新 2b-4）
 const turnContexts = new WeakMap();
-// 実行前に拒否されたコマンド（Codex。core/backends/codex-rejections.mjs）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
+// 実行前に拒否されたコマンド（Codex の core/backends/codex-rejections.mjs・Antigravity の組織の管理ポリシー）を依頼元へ返す形（docs/agent-delegation.md「実行前に拒否されたコマンド」）。
 // 依頼元は別のエージェント・別の提供元のモデルのこともあるので、command・reason・raw は形で秘密を伏せて切る
 const REJECTION_TEXT_MAX = 300;
 const pick = (v, max = 100) => (typeof v === 'string' && v ? v.slice(0, max) : null);
@@ -2432,11 +2434,15 @@ async function startPageListeners() {
   }
 }
 
+const AGY_RELAY_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH];
+watchMcpContacts();
 const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, SHELL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   // 審査モード（ADR 0172）: エージェントの MCP・CLI の口・webhook は閉じる（fake の台本は ply_* のツールを使えないが、口そのものも無い）
   if (isReviewMode() && REVIEW_CLOSED_PATHS.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) { res.writeHead(404); return res.end(); }
+  // agy が中継を起こしたか（組織の管理ポリシーで MCP が止められたことに気づく。core/mcp-contact.mjs）
+  if (AGY_RELAY_PATHS.includes(url.pathname)) noteMcpContact(req.headers.authorization);
   if (url.pathname === AGENTS_MCP_PATH) return agentBridge.handle(req, res);
   if (url.pathname === CONTEXT_MCP_PATH) return contextBridge.handle(req, res);
   if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return computerBridge.handle(req, res);
@@ -3628,7 +3634,7 @@ function makeEmit(turn) {
       }
     }
     if (turn.retryEpisode && ['text.delta', 'thinking.delta', 'tool.start'].includes(event?.type)) { turn.retry = null; turn.retryEpisode = null; }
-    // 委譲の子で、バックエンドが実行前に拒否されたコマンドを知らせた（Codex。tool.result の rejection）。依頼元へ返す結果に集める
+    // 委譲の子で、バックエンドが実行前に拒否されたコマンドを知らせた（Codex・Antigravity。tool.result の rejection）。依頼元へ返す結果に集める
     if (event?.type === "tool.result" && event.rejection && typeof event.rejection === "object") {
       taskExecutions.get(turn.info.sessionId)?.rejections.push(event.rejection);
     }
@@ -6433,6 +6439,12 @@ const outbox = createMessageQueue({
 const restoredCards = waitingCards.load();
 if (restoredCards.size) console.log(`  前の起動が残した承認・質問のカード ${restoredCards.size} 件を読んだ`);
 const adopting = await restoreAdoptedTurns();
+// 前のサーバーが保持役に残した idle の agy（ターンを終えて札も印も無い子）を止める。付け直したターンの子（札と印がある）には触れない。
+// 待つ agy を止めるタイマーは前のサーバーのメモリにあったので、ここで止めないと agy を使わない間ずっと残る（core/backends/antigravity-held.mjs の sweepIdleAtStart）
+{
+  const stoppedAgy = await sweepIdleAtStart({ dataDir: store.dataDir }).catch(err => { console.error('  前のサーバーが残した agy を片付けられませんでした:', String(err?.message ?? err)); return []; });
+  if (stoppedAgy.length) console.log(`  前のサーバーが残した待機中の agy ${stoppedAgy.length} 件を止めた`);
+}
 // 付け直さない会話のカードは、ここで取り下げを会話へ届ける（黙って消さない）。付け直すターンの分は、記録の再生が終わってから
 await withdrawRestoredCards(adopting);
 // 前のサーバーが保持役に残した外部の stdio MCP も拾う（ADR 0270 段 2c。core/context-mcp-held.mjs）。規則 ③: 起動の処理が復元の処理。

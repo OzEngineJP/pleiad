@@ -39,7 +39,7 @@ export default async function (t) {
     t.ok('名前: 空・前後の空白・空白を含む・@ や句読点・長すぎる・予約名を断る',
       ['', ' a', 'a b', 'a@b', 'a,b', 'a。', 'あ'.repeat(33), 'you', 'あなた', 'YOU', 'here', 'everyone', 'ＨＥＲＥ'].every((n) => nameProblem(n) !== null));
     t.ok('名前: 普通の名前・日本語・絵文字を含まない記号は通る', ['Owl', 'ふくろう', 'bot-1', 'レビュアー_2'].every((n) => nameProblem(n) === null));
-    t.ok('アイコン: 絵文字 1 つだけ', iconProblem('🦉') === null && iconProblem('') !== null && iconProblem('🦉🦊') !== null && iconProblem('a') !== null);
+    t.ok('アイコン: 未設定または絵文字 1 つ', iconProblem('🦉') === null && iconProblem('') === null && iconProblem('🦉🦊') !== null && iconProblem('a') !== null);
     t.ok('人格: 上限を超えると断る', personaProblem('あ'.repeat(PERSONA_MAX_CHARS)) === null && personaProblem('あ'.repeat(PERSONA_MAX_CHARS + 1)) !== null);
 
     // ---- update は直列化の中で現在の値を読む
@@ -53,10 +53,15 @@ export default async function (t) {
     const race = await Promise.all(['Hawk', 'hawk', 'ＨＡＷＫ'].map((n, i) => code(() => store.put(bot(`b_h${i}`, n)))));
     t.ok('同じ名前の同時の作成は 1 つだけ通る', race.filter((r) => r === null).length === 1 && race.filter((r) => r === 'BOT_NAME_TAKEN').length === 2, race.join());
 
+    await store.update('b_1', (b) => ({ ...b, icon: '' }));
+    await store.update('b_2', (b) => ({ ...b, icon: '🤖' }));
+
     // ---- 読み直し（再起動）
     const again = createBotStore({ file });
     await again.load();
     t.ok('読み直しても同じ', again.list().length === store.list().length && again.get('b_2').persona === 'a12345');
+
+    t.ok('再起動後も未設定と既存の明示的なロボットを区別して保つ', again.get('b_1').icon === '' && again.get('b_2').icon === '🤖');
 
     // ---- 削除
     t.ok('remove は消した bot を返し、無ければ null', (await again.remove('b_1'))?.id === 'b_1' && (await again.remove('b_1')) === null && again.get('b_1') === null);
@@ -128,7 +133,7 @@ export default async function (t) {
     // ---- 整え方（古い・足りない欄・知らない欄）
     t.ok('id か name が無い行は捨てる', normalizeBot({ name: 'x' }) === null && normalizeBot({ id: 'b' }) === null && normalizeBot(null) === null);
     const n = normalizeBot({ id: 'b_x', name: 'X', extra: 1, sendTargets: ['s', 's', 1, ''], folders: [{ path: '/a' }, '/a/', { path: '/b', access: 'ro' }] }, 5);
-    t.ok('足りない欄は既定・知らない欄は捨てる・sendToOthers の既定は true', n.icon === '🤖' && n.persona === '' && n.sendToOthers === true && n.dmSessionId === null && n.createdAt === 5 && !('extra' in n));
+    t.ok('足りない欄は既定・知らない欄は捨てる・sendToOthers の既定は true', n.icon === '' && n.persona === '' && n.sendToOthers === true && n.dmSessionId === null && n.createdAt === 5 && !('extra' in n));
     t.ok('sendTargets は文字列だけ・重複なし', n.sendTargets.length === 1 && n.sendTargets[0] === 's');
     t.ok('sendToOthers: false は保たれる', normalizeBot({ id: 'b', name: 'n', sendToOthers: false }).sendToOthers === false);
     t.ok('bot のアカウント（ADR 0224）: 無い・文字列でない古い行は \'\'（ログイン中）、id は保たれる',

@@ -41,7 +41,7 @@ export function authorInfo(author, ctx) {
     }
     case 'bot': {
       const bot = ctx.bots.get(author.botId);
-      return { kind: 'bot', name: bot?.name ?? t('channels:feed.unknownBot'), avatar: bot?.icon || '🤖', backend: bot?.backend ?? null, you: false };
+      return { kind: 'bot', name: bot?.name ?? t('channels:feed.unknownBot'), avatar: bot?.icon ?? '', backend: bot?.backend ?? null, you: false };
     }
     case 'agent': {
       // 別の会話の AI が書いた投稿。名前は Chats の「別の会話の AI が送った発言」と同じ言い方（ADR 0157・0104）

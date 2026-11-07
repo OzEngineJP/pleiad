@@ -247,11 +247,13 @@ export function createSidebar(host, getTabs) {
       const av = el('span', 'av');
       av.setAttribute('aria-hidden', 'true');
       av.append(icon(ICONS.plus));
-      add.append(av, el('span', 'nm', ''));
+      add.append(av);
       add.addEventListener('click', () => navigate({ kind: 'bot', id: 'new' }));
       nodes.push(add);
     }
     strip.replaceChildren(...nodes);
+    strip.classList.toggle('is-empty', S.loaded && !bots.length);
+    if (S.loaded && !bots.length) strip.prepend(el('span', 'bt-empty', t('channels:side.botsEmpty')));
     stripAt = Math.min(stripAt, Math.max(0, nodes.length - 1));
     nodes.forEach((n, i) => { n.tabIndex = i === stripAt ? 0 : -1; });
     if (hadFocus) nodes[stripAt]?.focus({ preventScroll: true });

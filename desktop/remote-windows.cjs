@@ -198,6 +198,7 @@ function createRemoteWindows(deps) {
         }
       } catch {}
     }
+    await agentBridge?.refresh();
     pushHosts();
   }
   const opening = new Map();       // hostId -> Promise（2 度押しで 2 枚開かない）
@@ -212,6 +213,8 @@ function createRemoteWindows(deps) {
       const d = createRemoteDevice({
         dir: remoteDir,
         cipher: safeStorageCipher({ safeStorage, platform }), app: app.getVersion(), name: os.hostname(), platform: 'desktop',
+        // Plus 経由の PC への AI の線（docs/remote.md §4.5）。Plus を使わない設定の間は張らない（窓の一覧も Plus の PC を出さない）
+        plusAuth: hostId => (readRemoteSettings(remoteDir).plus?.use !== false ? plusAuthFor(hostId) : null),
       });
       d.on('status', onStatus);
       d.on('agent-state', pushHosts);
@@ -241,6 +244,37 @@ function createRemoteWindows(deps) {
   }
   /** その鍵の端末の券 { relay, admission }（無ければ null） */
   const deviceTicket = async (hostId, keyPair) => (await plusTickets()).issue({ purpose: 'device', keyPair, hostId });
+
+  /** Plus 経由の線（窓のプロキシと AI の線）が中継へつなぐのに要るもの。worker が無ければ null */
+  function plusAuthFor(hostId) {
+    if (!workerRequest) return null;
+    const getIdToken = async ({ force = false } = {}) => {
+      const r = await workerRequest('plus-token', { force });
+      if (!r?.ok) throw Object.assign(new Error(r?.error || 'not signed in'), { code: 'not-signed-in' });
+      return r.idToken;
+    };
+    // 中継の券（role:device）。426 は線を 'update' で止める
+    const getTicket = async ({ keyPair }) => {
+      try { return (await deviceTicket(hostId, keyPair))?.relay ?? null; }
+      catch (e) { throw e?.status === 426 ? Object.assign(new Error(e.message), { code: 'update' }) : e; }
+    };
+    // 中継のトークンの出し直し（許可済みの鍵だけ。窓は出ない）。もう一度の許可が要る・取り消された・別のアカウントは
+    // err.code のまま投げ、線がその状態で止まる（device-link.mjs）
+    const onReadmit = async () => {
+      const tokRes = await workerRequest('plus-token', { force: true });
+      const plusRes = await workerRequest('plus-hosts', { fresh: true });
+      const ph = plusRes?.hosts?.find(h => h.hostId === hostId);
+      if (!tokRes?.ok || !ph) return null;
+      const d = await device();
+      await d.admit({
+        hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
+        idToken: tokRes.idToken, ticketFor: kp => deviceTicket(hostId, kp), uid: tokRes.uid, mode: 'admit',
+      });
+      pushHosts();
+      return { ...(await d.store.credentials(hostId, 'plus')), via: 'plus' };
+    };
+    return { getIdToken, getTicket, onReadmit };
+  }
 
   function onStatus(s) {
     if (s.state === 'connected') connectedAt.set(s.hostId, Date.now());
@@ -378,35 +412,13 @@ function createRemoteWindows(deps) {
   async function createHostWindow(hostId, sessionId = null, preferredVia = null) {
     const d = await device();
     // まだ許可されていない Plus の PC は、画面が確認コードを出して相手の PC の承認を待つ流れ（ply:hosts-admit）を先に通す
-    const rec = (await d.list()).find(h => h.hostId === hostId && (!preferredVia || h.via === preferredVia));
+    // つなぎ方を指定しないときは、AI の線と同じ規則で選ぶ（own を先に。core/remote/device.mjs の pickHostRecord）
+    const rows = await d.list();
+    const rec = preferredVia ? rows.find(h => h.hostId === hostId && h.via === preferredVia) : d.pickHostRecord(rows, hostId);
     if (!rec) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
 
     const via = rec.via ?? 'own';
-    const getIdToken = (via === 'plus' && workerRequest) ? async ({ force = false } = {}) => {
-      const r = await workerRequest('plus-token', { force });
-      if (!r?.ok) throw Object.assign(new Error(r?.error || 'not signed in'), { code: 'not-signed-in' });
-      return r.idToken;
-    } : null;
-    // 中継の券（role:device）。426 は線を 'update' で止める
-    const getTicket = (via === 'plus' && workerRequest) ? async ({ keyPair }) => {
-      try { return (await deviceTicket(hostId, keyPair))?.relay ?? null; }
-      catch (e) { throw e?.status === 426 ? Object.assign(new Error(e.message), { code: 'update' }) : e; }
-    } : null;
-    // 中継のトークンの出し直し（許可済みの鍵だけ。窓は出ない）。もう一度の許可が要る・取り消された・別のアカウントは
-    // err.code のまま投げ、線がその状態で止まる（device-link.mjs）
-    const onReadmit = (via === 'plus' && workerRequest) ? async () => {
-      const tokRes = await workerRequest('plus-token', { force: true });
-      const plusRes = await workerRequest('plus-hosts', { fresh: true });
-      const ph = plusRes?.hosts?.find(h => h.hostId === hostId);
-      if (!tokRes?.ok || !ph) return null;
-      await d.admit({
-        hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
-        idToken: tokRes.idToken, ticketFor: kp => deviceTicket(hostId, kp), uid: tokRes.uid, mode: 'admit',
-      });
-      pushHosts();
-      return { ...(await d.store.credentials(hostId, 'plus')), via: 'plus' };
-    } : null;
-
+    const { getIdToken = null, getTicket = null, onReadmit = null } = (via === 'plus' ? plusAuthFor(hostId) : null) ?? {};
     const proxy = await d.open(hostId, { via, relayUrl: rec.relayUrl, getIdToken, getTicket, onReadmit });
     const name = displayName(rec);
     const origin = `http://127.0.0.1:${proxy.port}`;
@@ -564,6 +576,7 @@ function createRemoteWindows(deps) {
           idToken: tokRes.idToken, ticketFor: kp => deviceTicket(hostId, kp), uid: tokRes.uid, mode: 'pair', signal: ctl.signal,
           onCode: code => { if (!sender.isDestroyed()) sender.send('ply:hosts-code', formatCode(code)); },
         });
+        await agentBridge?.refresh();
         pushHosts();
         return { ok: true, host: hostRow({ ...rec, state: 'closed' }) };
       } catch (e) { pushHosts(); return { ...fail(e), ...(e?.reason ? { reason: e.reason } : {}) }; }

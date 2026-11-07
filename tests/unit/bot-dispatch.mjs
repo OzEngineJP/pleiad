@@ -1574,7 +1574,10 @@ export default async function (t) {
     const j2 = await until(async () => {
       const r = await second.call('channels.read', { channelId: dev.id, threadId: rootJ.id });
       const posts = r.posts.filter((p) => p.turn?.botId === owl.id);
-      return posts.some((p) => p.text === '落とす前にたまった投稿' && p.state === 'done') ? { r, posts } : null;
+      // 投稿の確定後にスレッドの状態が更新されるので、復元・配り直しの完了をすべて待つ。
+      const stopped = posts.some((p) => p.id === jRead.posts.find((x) => x.turn?.botId === owl.id).id && p.state === 'stopped');
+      const delivered = posts.some((p) => p.text === '落とす前にたまった投稿' && p.state === 'done');
+      return stopped && delivered && r.threads[0].state === 'idle' ? { r, posts } : null;
     }, { label: '再起動後に配り直す' });
     t.ok('再起動: 落ちたときの作業中の印は stopped になり、たまっていた pending の出来事は新しいターンで配り直される', j2.posts.some((p) => p.id === jRead.posts.find((x) => x.turn?.botId === owl.id).id && p.state === 'stopped')
       && j2.r.threads[0].state === 'idle', JSON.stringify(j2.posts.map((p) => [p.state, p.text])));

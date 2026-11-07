@@ -78,6 +78,18 @@ async function japaneseCases(t) {
   assert.equal(groupsOf([five, week], now).others, 0);
   t.ok('枠の名前の括弧書きとグループ名を外し、Antigravity はいちばん使っているグループだけを出す', true);
 
+  // 1.5.2 の形（'All Models' の中のモデルごとのバケット）は、系統の名前の行になり、モデルの系統の行だけを選ぶ
+  const perModel = antigravityQuota({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [{ name: 'All Models', buckets: [
+    'Gemini 4 Argon', 'Gemini 3.8 Flash', 'Gemini 3.7 Flash', 'Gemini 3.1 Pro', 'Claude Opus 5.5', 'Claude Sonnet 5.5',
+  ].flatMap((name, i) => ['Low', 'High'].map(tier => ({ name: `${name} (${tier})`, remaining_fraction: [1, .75, .5, .5, .25, 0][i], reset_time: '1970-01-01T00:00:00Z' }))) }] } } });
+  assert.equal(perModel.windows.length, 6);
+  assert.deepEqual(windowsForModel(perModel.windows, 'gemini-3.8-flash-medium').map(w => w.label), ['Gemini 3.8 Flash']);
+  assert.deepEqual(windowsForModel(perModel.windows, 'gemini-3.1-pro-high').map(w => w.label), ['Gemini 3.1 Pro']);
+  assert.deepEqual(windowsForModel(perModel.windows, 'claude-sonnet-5-5-max').map(w => w.label), ['Claude Sonnet 5.5']);
+  assert.equal(shortLabel(perModel.windows[1]), 'Gemini 3.8 Flash');
+  assert.equal(usedOf(perModel.windows[1], now), 25);
+  t.ok('Antigravity のモデルごとの枠は、チップがモデルの系統の行だけを出す（リセットの時刻が無くても値を出す）', true);
+
   // ---- アカウントの行の週の使用量（入力欄と bot のページのアカウントの節。ADR 0224）
   const later = new Date(Date.now() + 86400_000).toISOString();
   const weekly = (used, extra = {}) => ({ label: '週次（7日間）', minutes: 10080, usedPercent: used, resetsAt: later, ...extra });

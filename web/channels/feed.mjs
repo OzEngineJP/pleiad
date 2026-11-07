@@ -101,7 +101,7 @@ export function createFeed(host) {
     return [
       { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
       { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
-      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon || '🤖', iconImage: b.iconImage, backend: b.backend ?? null, hint: stateHint(b) })),
+      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon, iconImage: b.iconImage, backend: b.backend ?? null, hint: stateHint(b) })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
     ];
   }

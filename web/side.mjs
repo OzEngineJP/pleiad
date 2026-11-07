@@ -499,7 +499,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const when = el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified));
     r.append(glyph, title, when);
     if (s.thread && s.bot?.botId) {
-      const av = botIcon(directory.bots.get(s.bot.botId), 'av xs', '🤖');
+      const av = botIcon(directory.bots.get(s.bot.botId), 'av xs');
       av.setAttribute("aria-hidden", "true");
       r.insertBefore(av, when);
     }
@@ -764,8 +764,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
   /** 会話の題「🦉 Owl · #checkout-perf › 頭」を { bot, channel, head } に分ける（DM は「🦉 Owl」だけ） */
   function botTitleParts(s) {
-    const m = /^\S+\s+(.*?)(?: · #(.*?))?(?: › (.*))?$/su.exec(String(s.title ?? ""));
-    return { bot: m?.[1] ?? "", channel: m?.[2] ?? "", head: m?.[3] ?? "" };
+    const m = /^(.*?)(?: · #(.*?))?(?: › (.*))?$/su.exec(String(s.title ?? "").trim());
+    const bot = (m?.[1] ?? "").replace(/^\S+\s+/u, "");
+    return { bot, channel: m?.[2] ?? "", head: m?.[3] ?? "" };
   }
   /** bot の会話の印: bot のアイコンと #チャンネル（DM なら「DM」）。行の時刻の前に置く */
   function botChannelMark(s) {
@@ -774,7 +775,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const mark = el("span", "row-ch");
     // スレッドの行は、話している bot がいればそのアイコン（人だけのスレッドはアイコンを出さない）。名前は一覧から（題から推さない）
     if (!s.thread || s.bot.botId) {
-      const av = botIcon(bot, 'av xs', s.thread ? '🤖' : String(s.title ?? '').split(/\s/, 1)[0] || '🤖');
+      const av = botIcon(bot, 'av xs');
       av.setAttribute("aria-hidden", "true");
       mark.append(av);
     }

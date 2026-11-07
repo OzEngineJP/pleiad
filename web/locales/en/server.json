@@ -823,7 +823,7 @@
     },
     "description": "Uses your Google AI Pro / Ultra plan.",
     "modes": {
-      "yolo": "Never asks. Allows every tool (in headless mode agy silently rejects tools otherwise)."
+      "yolo": "Never asks. Allows every tool (in headless mode agy silently rejects tools otherwise; an organization admin policy that requires confirmation takes precedence)."
     },
     "truncated": "… (truncated)",
     "errors": {
@@ -840,6 +840,16 @@
       "backgroundNotFound": "The background command's process was not found under agy (nothing was stopped)",
       "backgroundAmbiguous": "{{count}} processes match the background command, so none was chosen (nothing was stopped)",
       "backgroundStopFailed": "Could not stop the background command: {{why}}"
+    },
+    "admin": {
+      "toolDenied": "agy denied this tool. Your organization's admin policy may require confirmation for it (Pleiad runs agy without confirmations, but the admin settings take precedence). {{ask}}",
+      "deniedTurn": "agy denied these actions and ended without a reply: {{actions}}. Your organization's admin policy may require confirmation for them. {{ask}}",
+      "reviewMode": "This agy runs in a mode that requires confirmation ({{mode}}) because of your organization's admin policy. Pleiad asks agy to run without confirmations, but the admin settings take precedence, so tools that need confirmation are silently denied. {{ask}}",
+      "mcpMissing": "This agy never connected to Pleiad's MCP servers (ply_context, ply_agents, and so on). Your organization's admin policy may have disabled MCP servers. Pleiad's instructions, Skills, delegation, and other Pleiad tools are unavailable in this conversation. {{ask}}",
+      "askTools": "Ask your organization's admin to set, in Gemini Enterprise › Settings › AI developer tools › Security, \"Terminal auto-execution mode\" to \"Always proceed\" and \"Outside of file access policy\" to \"Allow\" (with \"Require review\" or \"Always ask\", agy run by Pleiad cannot show the confirmation and denies the action).",
+      "askMcp": "Ask your organization's admin to enable \"MCP servers\" in Gemini Enterprise › Settings › AI developer tools › Security. If an \"Allowed server configuration\" is set, ask them to also allow Pleiad's relays (servers named ply_context, ply_agents, and so on).",
+      "reason": "May have been denied by your organization's admin policy",
+      "notice": "Notice from Pleiad: {{body}}"
     },
     "auth": {
       "notLoggedInTurn": "You are not signed in to Antigravity. Run this command in a terminal to sign in.",
@@ -867,6 +877,7 @@
       "unknownPeriod": "Unknown period",
       "model": "Model",
       "shared": "Usage is shared within the same model group. Both the 5-hour and weekly limits apply.",
+      "perModel": "Each row shows the limit closest to being reached for that model.",
       "none": "Antigravity returned no usage. Check your sign-in status and plan.",
       "timeout": "Timed out while getting usage.",
       "tooLarge": "The usage response is too large.",

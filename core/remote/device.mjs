@@ -33,6 +33,17 @@ const secretKeyOf = (hostId, via = 'own') => via === 'plus' ? `host-plus:${hostI
 const pendingKeyOf = hostId => `host-plus-pending:${hostId}`;
 const keyText = k => Buffer.from(k).toString('base64url');
 
+/**
+ * 同じ hostId に自分の中継（own）と Pleiad Plus（plus）の両方の記録があるとき、どちらでつなぐか（docs/remote.md §4.5「端末の線」）。
+ * own を先にする: 自分の中継は Plus のサインイン・中継の券に頼らないので、Plus を使わない設定やサインインが切れた間もつながる。
+ * 使えない記録（usable が false。取り消し済み・Plus を使えない間の plus など）は飛ばし、残った方を使う。
+ * via を指定しない窓（desktop/remote-windows.cjs の createHostWindow）と AI の線（agentOpen）が同じ規則で選ぶ
+ */
+export function pickHostRecord(records, hostId, { usable = () => true } = {}) {
+  const mine = records.filter(h => h.hostId === hostId && usable(h));
+  return mine.find(h => (h.via ?? 'own') === 'own') ?? mine.find(h => h.via === 'plus') ?? null;
+}
+
 function publicRecord(h) {
   return {
     hostId: h.hostId, hostName: h.hostName ?? '', label: h.label ?? '', relayUrl: h.relayUrl,
@@ -342,11 +353,17 @@ export async function admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair, 
   }
 }
 
-export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name = '', platform = 'desktop', proxyOptions = {}, log = () => {} }) {
+/**
+ * plusAuth(hostId) は、Plus 経由（via: 'plus'）の AI の線が中継へつなぐのに要るもの { getIdToken, getTicket, onReadmit } を返す
+ * （窓のプロキシに渡すものと同じ。desktop/remote-windows.cjs）。Plus を使えない間（使わない設定・worker が無い）は null を返し、
+ * その間は plus の記録に AI の線を張らない
+ */
+export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name = '', platform = 'desktop', proxyOptions = {}, plusAuth = null, log = () => {} }) {
   const store = createDeviceStore({ dir, cipher });
   const events = new EventEmitter();
   const proxies = new Map();   // hostId -> Promise<DeviceProxy>
-  const agents = new Map();    // hostId -> { link: DeviceLink, agent: AgentLink }。この PC の AI からホストへ任せる線（取り消されていないホストすべて。窓を開かなくても持つ）
+  const agents = new Map();    // hostId -> { via, link: DeviceLink, agent: AgentLink }。この PC の AI からホストへ任せる線（取り消されていないホストすべて。窓を開かなくても持つ）
+  const agentOpening = new Map();   // hostId -> Promise（同じホストへ二重に張らない）
 
   /** ホストごとの画面の殻の束（docs/remote.md §8.6）。忘れたホストの分は remove で消す */
   const staticCacheFile = hostId => path.join(dir, 'static', `${hostId}.bin`);
@@ -356,7 +373,8 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     return Promise.all(hosts.map(async h => {
       const px = proxies.has(h.hostId) ? await proxies.get(h.hostId).catch(() => null) : null;
       const st = px?.status;
-      const ag = agents.get(h.hostId);
+      const entry = agents.get(h.hostId);
+      const ag = entry && entry.via === (h.via ?? 'own') ? entry : null;   // 線は 1 ホスト 1 本。張った方の記録にだけ状態を付ける
       return { ...h, open: Boolean(px), state: st?.state ?? (h.revokedAt ? 'revoked' : h.reapproveAt ? 'reapprove' : 'closed'), ...(st?.hostName ? { hostName: st.hostName } : {}),
         ...(ag ? { agent: ag.agent.status, agentLinkState: ag.link.state } : {}) };
     }));
@@ -395,25 +413,47 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
 
   // ---- この PC の AI からホストへ任せる線（docs/remote.md §4.5、ADR 0146）。端末の main が持ち、ローカルのサーバーとは parentPort の橋で話す
 
-  /** ホストの線を張る（窓のプロキシとは別のチャネル）。取り消し済み・資格が無いホストは張らない。張った AgentLink を返す */
-  async function agentOpen(hostId) {
-    if (agents.has(hostId)) return agents.get(hostId).agent;
-    const creds = await store.credentials(hostId);
-    if (!creds || creds.revokedAt) return null;
-    if (agents.has(hostId)) return agents.get(hostId).agent;
-    const keyPair = await store.keyFor(hostId);
-    const link = new DeviceLink({ creds, keyPair, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log, ...(proxyOptions.backoff ? { backoff: proxyOptions.backoff } : {}),
-      ...(proxyOptions.connectTimeoutMs ? { connectTimeoutMs: proxyOptions.connectTimeoutMs } : {}) });
-    const agent = new AgentLink({ link, log, ...(proxyOptions.agentRequestTimeoutMs ? { requestTimeoutMs: proxyOptions.agentRequestTimeoutMs } : {}) });
-    link.on('status', s => {
-      if (s.state === 'connected') store.updateHost(hostId, { lastConnectedAt: new Date().toISOString(), revokedAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) }).catch(() => {});
-      if (s.state === 'revoked') store.updateHost(hostId, { revokedAt: new Date().toISOString() }).catch(() => {});
-    });
-    agent.on('state', st => events.emit('agent-state', { hostId, ...st }));
-    agents.set(hostId, { link, agent });
-    agent.start();
-    link.start();
-    return agent;
+  /** Plus 経由の線に要るもの（無ければ null。Plus を使えない間） */
+  const plusAuthFor = hostId => (plusAuth ? plusAuth(hostId) ?? null : null);
+  /** AI の線に使える記録か。取り消し済みは使わない。plus は Plus を使える間だけ */
+  const agentUsable = h => !h.revokedAt && ((h.via ?? 'own') === 'own' || Boolean(plusAuthFor(h.hostId)));
+
+  /**
+   * ホストの線を張る（窓のプロキシとは別のチャネル）。記録は pickHostRecord で選び、その via の資格と鍵を使う。
+   * 張ってある線の via が選んだ記録と違えば張り直す（Plus だけだった PC を自分の中継でもペアリングしたときなど）。
+   * 使える記録が無ければ閉じて null。張った AgentLink を返す
+   */
+  function agentOpen(hostId) {
+    if (agentOpening.has(hostId)) return agentOpening.get(hostId);
+    const run = (async () => {
+      const rec = pickHostRecord(await store.hosts(), hostId, { usable: agentUsable });
+      const via = rec?.via ?? 'own';
+      const cur = agents.get(hostId);
+      if (cur && rec && cur.via === via) return cur.agent;
+      if (cur) await agentClose(hostId);
+      if (!rec) return null;
+      const creds = await store.credentials(hostId, via);
+      if (!creds) return null;
+      const keyPair = await store.keyFor(hostId, via);
+      const auth = via === 'plus' ? plusAuthFor(hostId) ?? {} : {};
+      const link = new DeviceLink({ creds: { ...creds, via }, keyPair, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log, via,
+        getIdToken: auth.getIdToken ?? null, getTicket: auth.getTicket ?? null, onReadmit: auth.onReadmit ?? null,
+        ...(proxyOptions.backoff ? { backoff: proxyOptions.backoff } : {}),
+        ...(proxyOptions.connectTimeoutMs ? { connectTimeoutMs: proxyOptions.connectTimeoutMs } : {}) });
+      const agent = new AgentLink({ link, log, ...(proxyOptions.agentRequestTimeoutMs ? { requestTimeoutMs: proxyOptions.agentRequestTimeoutMs } : {}) });
+      link.on('status', s => {
+        if (s.state === 'connected') store.updateHost(hostId, { lastConnectedAt: new Date().toISOString(), revokedAt: null, reapproveAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) }, via).catch(() => {});
+        if (s.state === 'revoked') store.updateHost(hostId, { revokedAt: new Date().toISOString() }, via).catch(() => {});
+        if (s.state === 'reapprove') store.updateHost(hostId, { reapproveAt: new Date().toISOString() }, via).catch(() => {});
+      });
+      agent.on('state', st => events.emit('agent-state', { hostId, ...st }));
+      agents.set(hostId, { via, link, agent });
+      agent.start();
+      link.start();
+      return agent;
+    })().finally(() => agentOpening.delete(hostId));
+    agentOpening.set(hostId, run);
+    return run;
   }
 
   async function agentClose(hostId) {
@@ -425,15 +465,15 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     events.emit('agent-state', { hostId, state: 'offline', allowed: false, hostName: '' });
   }
 
-  /** hosts.json のホストに合わせて線を張る・閉じる（起動のとき・ホストが増減したとき）。任せられるかはホストの許可が決める（ADR 0239） */
+  /** hosts.json のホストに合わせて線を張る・閉じる・張り直す（起動のとき・ホストが増減したとき）。任せられるかはホストの許可が決める（ADR 0239） */
   async function agentSync() {
     const hosts = await store.hosts();
-    const want = new Set(hosts.filter(h => !h.revokedAt).map(h => h.hostId));
-    for (const id of [...agents.keys()]) if (!want.has(id)) await agentClose(id);
-    for (const id of want) await agentOpen(id).catch(e => log(`remote agent: ${e.message}`));
+    const ids = new Set(hosts.map(h => h.hostId));
+    for (const id of [...agents.keys()]) if (!ids.has(id)) await agentClose(id);
+    for (const id of ids) await agentOpen(id).catch(e => log(`remote agent: ${e.message}`));
   }
 
-  /** 資格を作り直したホストの、開いているプロキシ（同じ via のもの）と線を新しい資格と鍵で張り直す */
+  /** 資格を作り直したホストの、開いているプロキシと線（どちらも同じ via のもの）を新しい資格と鍵で張り直す */
   async function reconnect(hostId, via, keyPair) {
     const creds = await store.credentials(hostId, via);
     if (!creds) return;
@@ -441,7 +481,8 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       const px = await proxies.get(hostId).catch(() => null);
       if (px && px.link.via === via) px.retryNow({ ...creds, via }, keyPair);
     }
-    if (via === 'own' && agents.has(hostId)) agents.get(hostId).link.retryNow(creds, keyPair);
+    const entry = agents.get(hostId);
+    if (entry && entry.via === via) entry.link.retryNow({ ...creds, via }, keyPair);
   }
 
   async function close(hostId) {
@@ -476,7 +517,8 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     async rename(hostId, label, via = 'own') { return store.updateHost(hostId, { label: cleanLabel(label) }, via); },
     /** ペアリングを忘れる（ホストの端末一覧からは消えない。ホストで取り消す）。 */
     async remove(hostId, via = 'own') {
-      await close(hostId); await agentClose(hostId);
+      await close(hostId);
+      if (agents.get(hostId)?.via === via) await agentClose(hostId);
       const remaining = (await store.hosts()).filter(h => h.hostId === hostId && (h.via ?? 'own') !== via);
       if (!remaining.length) {
         await fs.rm(staticCacheFile(hostId), { force: true }).catch(() => {});
@@ -519,8 +561,15 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       if (mode === 'pair') await reconnect(hostId, 'plus', used);
       return rec;
     },
+    /** その via の窓のプロキシと AI の線だけを閉じる（記録は残す。Plus を使わない設定にしたとき。desktop/remote-windows.cjs） */
+    async disconnect(hostId, via) {
+      const px = proxies.has(hostId) ? await proxies.get(hostId).catch(() => null) : null;
+      if (px && px.link.via === via) await close(hostId);
+      if (agents.get(hostId)?.via === via) await agentClose(hostId);
+    },
     async closeAll() { await Promise.all([...proxies.keys()].map(close)); await Promise.all([...agents.keys()].map(agentClose)); },
     agentSync,
+    pickHostRecord,
     /** 張ってある線（無ければ null） */
     agent: hostId => agents.get(hostId)?.agent ?? null,
   };

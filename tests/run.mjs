@@ -98,6 +98,7 @@ const SUITES = [
   './unit/activity-strip.mjs',
   // mark 型ロゴの文書内シンボル化（web/brand-marks.mjs）: <use> の参照・1 回だけの取得・シンボルの登録・失敗後の取り直し
   './unit/brand-marks.mjs',
+  './unit/bot-icon.mjs',
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）
   './unit/agent-browser-env.mjs',
   './unit/agent-browser-lifetime.mjs',
@@ -725,6 +726,8 @@ const SUITES = [
   './unit/restart-cards.mjs',
   // 段 3: 委譲の子（保持役のターン）の実行の控えが続き、結果の確定と完了通知は 1 回だけ
   './unit/restart-delegation.mjs',
+  // 段階 3: 保持役に載せた、次の発言を待つ agy は起こし直しの起動で止める（ターン中の agy は付け直す）
+  './unit/restart-agy-idle.mjs',
   './unit/adopt-agy.mjs',
   './unit/adopt-claude.mjs',
   './unit/adopt-codex.mjs',
@@ -789,7 +792,10 @@ const SUITES = [
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
   // 本物の agy も Google のログインも要らない
   './unit/server-antigravity.mjs',
+  './unit/server-antigravity-admin-policy.mjs',
   './unit/server-agy-default-model.mjs',
+  // 思考の署名が通らなくなった会話: 記録を新しい会話へ引き継いで一度だけ送り直す・また断られたら「失敗」で止まる（docs/multi-backend.md §2.8）
+  './unit/server-agy-thought-signature.mjs',
   // 控えはターンの途中から書く: 途中の書き込み・失敗／中断で残る・uuid が変わらない・forget した控えを作り直さない・書き込みは 1 本ずつ
   './unit/antigravity-partial-transcript.mjs',
   // 裏へ回ったコマンド: 落とす先の選び方（agy の直下の子だけ）と、server 越しに一覧へ出して止める
@@ -807,6 +813,7 @@ const SUITES = [
   './unit/antigravity-onboarding.mjs',
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
   './unit/antigravity-pids.mjs',
+  './unit/antigravity-idle.mjs',
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
   // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
   './unit/relay.mjs',
@@ -829,6 +836,7 @@ const SUITES = [
   './unit/remote-agent.mjs',
   // 端末の AI からホストへ任せる往復（端末のローカルのサーバー → main の橋の身代わり → 中継 → ホスト）: 委譲・完了通知・承認の中継と答え・オフライン・追いつき・取り消し
   './unit/remote-agent-e2e.mjs',
+  './unit/remote-agent-plus.mjs',
   // ホストに任せたタスクの写し（agent-tasks の host の行）の台帳の規則: adopt の検査・mirror・止める予定・並列の中断・追えなくなった行の復帰・子孫
   './unit/agent-tasks-remote.mjs',
   './unit/agent-tasks-remote-notices.mjs',

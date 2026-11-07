@@ -97,7 +97,7 @@ export function sourceView(src, { channels = new Map(), bots = new Map(), sessio
 
 /** 作る画面の下書きの初期値。backend は呼び出し側が決める（利用できる最初のもの） */
 export function newDraft(backend, modes) {
-  return { name: '', icon: '🤖', persona: '', backend, model: '', effort: '', mode: validMode(modes, 'default'), isNew: true };
+  return { name: '', icon: '', persona: '', backend, model: '', effort: '', mode: validMode(modes, 'default'), isNew: true };
 }
 
 /** フォルダー 1 行の読み書きを切り替えた新しい配列（bots.update の folders は置き換え） */
