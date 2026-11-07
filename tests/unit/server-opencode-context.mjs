@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
-import { parseJsonc, mergeConfig, stripOwned } from '../../core/backends/opencode-context.mjs';
+import { parseJsonc, mergeConfig, stripOwned, managedLaunch } from '../../core/backends/opencode-context.mjs';
 
 export const name = 'server-opencode-context';
 export const title = 'OpenCode に Pleiad のコンテキスト（指示・Skills・外部 MCP）を、そのターンだけの専用のサーバーで渡す';
@@ -116,6 +116,23 @@ export default async function (t) {
     const gone = async () => (await launches()).slice(1).every((x) => !alive(x.pid));
     for (let n = 0; n < 200 && !(await gone()); n++) await new Promise((r) => setTimeout(r, 50));
     t.ok('どのターンの後も、専用のサーバーは残らない', await gone());
+
+    // ---- websearch の既定: 利用者が書いていなければ差し、書いていれば差さない
+    // （未設定だと OpenCode がプロバイダー選択のフォームを出す。OPENCODE_CONFIG_CONTENT は全体・作業場所の設定より先に効くので、
+    //   差し込みは利用者の設定が両方に無いときだけ）
+    const homeSrc = path.join(tmp, 'home-src');
+    const launchOf = (over) => managedLaunch({ owners: {}, cwd, dataDir: path.join(tmp, over.dir), source: over.source ?? path.join(cfg, 'opencode'), homeSource: homeSrc, dataHome: path.join(tmp, over.dir, 'data-home'), ...(over.cwd ? { cwd: over.cwd } : {}) });
+    const noCfg = await launchOf({ dir: 'd1' });
+    t.ok('websearch: 利用者の設定が無ければ既定（random）を差す', noCfg.config.websearch?.provider === 'random', JSON.stringify(noCfg.config.websearch));
+    const cwd2 = path.join(tmp, 'repo2');
+    await fs.mkdir(path.join(cwd2, '.git'), { recursive: true });
+    await write(path.join(cwd2, 'opencode.json'), JSON.stringify({ websearch: false }));
+    const off = await launchOf({ dir: 'd2', cwd: cwd2 });
+    t.ok('websearch: 作業場所の設定（websearch:false）があれば差さない', off.config.websearch === false, JSON.stringify(off.config.websearch));
+    const cfg2 = path.join(tmp, 'cfg2', 'opencode');
+    await write(path.join(cfg2, 'opencode.json'), JSON.stringify({ websearch: { provider: 'mine' } }));
+    const userCfg = await launchOf({ dir: 'd3', source: cfg2 });
+    t.ok('websearch: 全体の設定があれば差さない', userCfg.config.websearch === undefined, JSON.stringify(userCfg.config.websearch));
   } finally {
     client?.close(); await host?.stop();
     for (const x of await launches()) if (alive(x.pid)) { try { process.kill(x.pid); } catch { /* 終わっている */ } }

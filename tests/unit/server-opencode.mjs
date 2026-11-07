@@ -102,6 +102,36 @@ export default async function (t) {
     const card = asked.at(-1);
     t.ok('質問: 質問のカードに選択肢が載り、答えが OpenCode に返る', card?.kind === 'question' && card.questions?.[0]?.options?.map((o) => o.label).join() === 'Red,Blue'
       && text(q).includes('answers: [["Blue"]]'), JSON.stringify({ card, text: text(q) }));
+    // 本物のフォームの選択肢は、ラベル（カンマ入り）とは別の value を持つ。画面は value で答える
+    answers.push({ allow: true, answers: { 'Search providers?': 'allow' } });
+    const qv = await c.runTurn({ sessionId: sid, prompt: 'question-custom' });
+    const vcard = asked.at(-1);
+    t.ok('質問: 選択肢の value と custom:false が画面へ届き、value の回答がそのまま OpenCode に返る',
+      vcard?.kind === 'question' && vcard.questions?.[0]?.custom === false && vcard.questions?.[0]?.options?.[0]?.value === 'allow'
+      && text(qv).includes('answers: [["allow"]]'), JSON.stringify({ card: vcard, text: text(qv) }));
+    // ラベルの文字列で答える経路（value を知らない前の画面）も、単一選択はカンマで切らずにラベルから value へ引き直す
+    answers.push({ allow: true, answers: { 'Search providers?': 'Allow search via Exa, Firecrawl' } });
+    const ql = await c.runTurn({ sessionId: sid, prompt: 'question-custom' });
+    t.ok('質問: カンマ入りのラベルの回答も、切らずに value へ引き直して返る', text(ql).includes('answers: [["allow"]]'), text(ql));
+    // 複数選択は画面が配列で送る。カンマ入りの value も要素の境界を保って返る
+    answers.push({ allow: true, answers: { 'Which tags?': ['one,two', 'three'] } });
+    const qm = await c.runTurn({ sessionId: sid, prompt: 'question-multi' });
+    t.ok('質問: 複数選択の配列の回答は、カンマ入りの value も切れずに返る', text(qm).includes('answers: [["one,two","three"]]'), text(qm));
+    // 古い画面は文字列で送る。従来どおりカンマで切る（後方互換）
+    answers.push({ allow: true, answers: { 'Which tags?': 'one,two, three' } });
+    const qm2 = await c.runTurn({ sessionId: sid, prompt: 'question-multi' });
+    t.ok('質問: 複数選択の文字列の回答は、従来どおりカンマで切って返る', text(qm2).includes('answers: [["one","two","three"]]'), text(qm2));
+    // 単一選択は trim しない（value が前後の空白を持ちうる）。配列で届いても先頭要素で落ちない
+    answers.push({ allow: true, answers: { 'Pick one?': ' a ' } });
+    const qs2 = await c.runTurn({ sessionId: sid, prompt: 'question-space' });
+    t.ok('質問: 単一選択の回答は前後の空白を残してそのまま返る', text(qs2).includes('answers: [[" a "]]'), text(qs2));
+    answers.push({ allow: true, answers: { 'Pick one?': [' a ', 'extra'] } });
+    const qs3 = await c.runTurn({ sessionId: sid, prompt: 'question-space' });
+    t.ok('質問: 単一選択へ配列で届いた回答は先頭の要素で返る', text(qs3).includes('answers: [[" a "]]'), text(qs3));
+    // 送られた value が別の選択肢の label と同じときは、value の一致を優先する（'b' は 1 つ目の label・2 つ目の value）
+    answers.push({ allow: true, answers: { 'Collide?': 'b' } });
+    const qc = await c.runTurn({ sessionId: sid, prompt: 'question-collide' });
+    t.ok('質問: 回答が別の選択肢のラベルと同じでも、value の一致を優先して返る', text(qc).includes('answers: [["b"]]'), text(qc));
 
     // ---- Pleiad の MCP の中継（ply_agents）: この会話の口へ振り分ける
     const mcp = await c.runTurn({ sessionId: sid, prompt: `mcp:${JSON.stringify({ server: 'ply_agents', tool: 'ply_task_list', arguments: {} })}`, mode: 'full' });
