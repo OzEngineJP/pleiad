@@ -59,7 +59,9 @@ export async function startPageListener({ name, port: wanted = 0, waitMs = 0, re
   let boundPort = 0;
   const onRequest = (req, res) => {
     for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
-    if (!hostCheck(req.headers.host, boundPort)) return sendStatus(req, res, 421, 'misdirected request');
+    // Host は HTTP/1.1 で 1 つだけ。2 つ来たとき node は先頭を取るが、どれを採ったか分からないまま通さない
+    const hostHeaders = req.rawHeaders.filter(header => header.toLowerCase() === 'host');
+    if (hostHeaders.length !== 1 || !hostCheck(req.headers.host, boundPort)) return sendStatus(req, res, 421, 'misdirected request');
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('allow', 'GET, HEAD');
       return sendStatus(req, res, 405, 'method not allowed');
