@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-module.exports = async function browserUnifyTabs({ browser, check, screenshots, mockShots, unifySource }) {
+module.exports = async function browserUnifyTabs({ browser, check, screenshots, mockShots, unifySource, panelSource, hubSource }) {
   const repo = path.resolve(__dirname, '../..');
   const sample = await fs.readFile(path.join(repo, 'docs/file-preview.md'), 'utf8');
   const fixture = String.raw`<!doctype html><html lang="ja" data-theme="light"><meta charset="utf-8">
@@ -32,6 +32,7 @@ window.ready=true;
   const server = http.createServer(async (req, res) => {
     try {
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      if (pathname === '/web/chrome-panel.mjs' && panelSource) { res.setHeader('Content-Type', 'text/javascript'); res.end(panelSource); return; }
       if (pathname === '/web/browser-unify.mjs' && unifySource) { res.setHeader('Content-Type', 'text/javascript'); res.end(unifySource); return; }
       if (pathname === '/fixture') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(fixture); return; }
       if (pathname === '/favicon.ico') { res.setHeader('Content-Type', 'image/png'); res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1sAAAAASUVORK5CYII=', 'base64')); return; }
@@ -56,6 +57,35 @@ window.ready=true;
     await page.goto(`http://127.0.0.1:${server.address().port}/fixture`);
     try { await page.waitForFunction(() => window.ready, null, {timeout:10000}); }
     catch (error) { throw new Error(errors.join('; ') || error.message); }
+    const jpeg = await page.evaluate(async () => {
+      const source = document.createElement('canvas'); source.width = source.height = 800;
+      const reduced = document.createElement('canvas'); reduced.width = reduced.height = 268;
+      const context = source.getContext('2d'), small = reduced.getContext('2d');
+      const paint = (x, size = 1) => {
+        context.fillStyle = '#fff'; context.fillRect(0,0,800,800);
+        context.fillStyle = '#222'; context.font = '16px sans-serif'; context.fillText('Document preview',20,30);
+        if (x !== null) { context.fillStyle = '#000'; context.fillRect(x,100,size,size); }
+        small.drawImage(source,0,0,268,268);
+        return { low:reduced.toDataURL('image/jpeg',0.55).split(',')[1], sharp:source.toDataURL('image/jpeg',0.8).split(',')[1] };
+      };
+      const original = paint(null);
+      for (let size = 1; size <= 3; size++) for (let x = 100; x < 110; x++) {
+        const updated = paint(x,size);
+        if (original.low !== updated.low || original.sharp === updated.sharp) continue;
+        const pixels = async data => {
+          const image = new Image(); image.src = 'data:image/jpeg;base64,' + data; await image.decode();
+          context.drawImage(image,0,0); return context.getImageData(0,0,800,800).data;
+        };
+        const a = await pixels(original.sharp), b = await pixels(updated.sharp);
+        return { low:original.low, sharp:original.sharp, updatedSharp:updated.sharp, differentPixels:a.some((value,index) => value !== b[index]),
+          metadata:{deviceWidth:800,deviceHeight:800,pageScaleFactor:1,offsetTop:0,scrollOffsetX:0,scrollOffsetY:0} };
+      }
+      throw new Error('Chrome did not produce the reduced JPEG collision');
+    });
+    check('Chrome produces equal reduced JPEGs whose decoded sharp pixels differ', jpeg.differentPixels);
+    const { checkScreencastSharp } = await import(pathToFileURL(path.join(repo, 'tests/lib/screencast-sharp.mjs')).href);
+    const { createScreencastHub } = await import(hubSource ? 'data:text/javascript;base64,' + Buffer.from(hubSource).toString('base64') : pathToFileURL(path.join(repo, 'core/browser-screencast.mjs')).href);
+    await checkScreencastSharp(createScreencastHub, {ok:check}, jpeg);
     check('flag off does not mount the new browser or its styles', await page.locator('.bu-chrome').count() === 0 && await page.locator('style[data-browser-unify]').count() === 0);
     await page.evaluate(() => enable());
     await page.waitForFunction(() => document.querySelector('.bu-toolbar')?.clientWidth === 560);
@@ -206,6 +236,61 @@ window.ready=true;
     check('failed pin restores the video address and selected tab', await page.locator('.bu-crumbs').innerText() === 'https://github.com/tekalu1/pleiad' && await page.locator('[data-target=web] [aria-selected=true]').count() === 1);
     await page.evaluate(() => ui.navigate('reload'));
     check('failed pin reload operates on the video tab', await page.evaluate(() => sent.at(-1).args.targetId === 'web'));
+    {
+      await page.setViewportSize({width:360,height:720});
+      const race = await page.evaluate(async () => {
+        const { setupChromePanel, createWindowTable } = await import('/web/chrome-panel.mjs');
+        const { createBrowserUnify } = await import('/web/browser-unify.mjs');
+        const host = document.createElement('div'); host.style.cssText = 'position:fixed;inset:0;width:360px;display:flex;flex-direction:column'; document.body.append(host);
+        const windows = createWindowTable(); windows.apply({sessionId:'one',windows:1,windowIds:[1],currentWindowId:1});
+        let opened = false, closePanel, serverTab = 'file', watching = false;
+        const pins = [], calls = [], tick = () => new Promise(resolve => setTimeout(resolve, 0));
+        const state = tabId => panel.onMessage({source:'chrome',sessionId:'one',type:'state',state:{tabId}});
+        const panel = setupChromePanel({ session:() => 'one', windows,
+          preview:{ panelOpen:() => opened, openPanel(options) { opened = true; closePanel = options.onClose; host.append(options.body); }, close() { opened = false; closePanel?.(); } },
+          async cmd(name, args) {
+            calls.push({name,args});
+            if (name === 'browserScreencast') {
+              watching = true; state(serverTab);
+              panel.onMessage({source:'chrome',sessionId:'one',type:'frame',seq:calls.length,data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1sAAAAASUVORK5CYII=',metadata:{deviceWidth:400,deviceHeight:300}});
+              return {state:{tabId:serverTab}};
+            }
+            if (name === 'browserScreencastStop') watching = false;
+            if (name === 'chromePinWindow') return new Promise(resolve => pins.push(() => { if (watching) { serverTab = args.tabId; state(serverTab); } resolve({}); }));
+            return {};
+          } });
+        const component = createBrowserUnify({state:{current:'one'},chrome:() => panel,cmd:async () => ({})});
+        const tabs = [...rows, {...rows[1],targetId:'web2',url:'https://example.org/second'}];
+        component.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs}); component.capsChanged({browserUnify:true});
+        const local = () => host.querySelectorAll('iframe.bu-local-page').length;
+        const address = () => host.querySelector('.bu-crumbs').textContent;
+        const at = domain => address().includes(domain);
+        const stops = () => calls.filter(call => call.name === 'browserScreencastStop').length;
+        panel.open(); await tick();
+        const before = stops(); component.focusTab(tabs[1], 'one'); await tick();
+        state('file'); await tick();
+        const waiting = watching && !local() && at('github.com') && stops() === before;
+        pins.shift()(); await tick();
+        const confirmed = watching && !local() && panel.tabId === 'web' && at('github.com');
+        component.focusTab(tabs[0], 'one'); await tick();
+        const back = local() === 1;
+        component.focusTab(tabs[1], 'one'); await tick();
+        component.focusTab(tabs[2], 'one'); await tick();
+        state('web'); await tick();
+        const reordered = watching && !local() && at('example.org');
+        pins.shift()(); await tick();
+        const oldCompleted = watching && !local() && at('example.org');
+        pins.shift()(); await tick();
+        const latestCompleted = watching && panel.tabId === 'web2' && at('example.org');
+        component.focusTab(tabs[1], 'one'); await tick();
+        component.focusTab(tabs[2], 'one'); await tick();
+        pins.pop()(); await tick(); pins.pop()(); await tick();
+        const reverseCompleted = watching && panel.tabId === 'web2' && at('example.org');
+        panel.close(); host.remove();
+        return {waiting,confirmed,back,reordered,oldCompleted,latestCompleted,reverseCompleted};
+      });
+      for (const [label, result] of Object.entries(race)) check('phone in-flight switch: ' + label, result);
+    }
     if (!unifySource) {
       await page.setViewportSize({width:360,height:720});
       const integration = await page.evaluate(async () => {

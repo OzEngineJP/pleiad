@@ -113,9 +113,24 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     const stream = entry.streams.get(streamKey) ?? { frameSeq: 0, latest: null };
     const format = JSON.stringify(entry.multi ? entry.formats.find(f => f.tier === streamKey) : entry.shared);
     // 比べるのは同じ形式の連続した screencast の中身。captureScreenshot は解像度・圧縮が違うので比べない。
-    // 時間で捨てると、文字入力などの本当の更新も失う。判定できない絵は通す。
+    // 縮小・JPEG で消える更新もあるので、再送を省いても鮮明な絵は確認し直す。
     if (format && frame.data && stream.latest?.data === frame.data && stream.format === format && stream.tabId === entry.state?.tabId
-      && sameViewport(stream.latest.metadata, frame.metadata)) return;
+      && sameViewport(stream.latest.metadata, frame.metadata)) {
+      const probe = entry.stillProbe;
+      let consumed = false;
+      if (probe?.generation === entry.tabGeneration && probe.sequences.get(streamKey) === stream.frameSeq) {
+        const duplicates = (probe.duplicates.get(streamKey) ?? 0) + 1;
+        probe.duplicates.set(streamKey, duplicates);
+        consumed = probe.pending || (probe.unchanged && duplicates === 1);
+      }
+      for (const [client, viewer] of entry.clients) {
+        if (keyOf(entry, viewer.tier) !== streamKey) continue;
+        if (consumed) continue;
+        viewer.stillSent = false;
+        armStill(client, sessionId, entry, viewer);
+      }
+      return;
+    }
     stream.frameSeq += 1;
     stream.latest = frame;
     stream.format = format;
@@ -167,6 +182,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     const seq = ++entry.seq;
     viewer.pending = { seq, markAt: null, still: Boolean(still) };
     if (!still) viewer.sent = { key, frameSeq: stream.frameSeq };
+    viewer.showingStill = Boolean(still);
     clearTimer(viewer.stillTimer); viewer.stillTimer = null;
     armStale(client, sessionId, entry, viewer);
     deliver(client, { kind: 'screencast', ...tag, type: 'mark', sessionId, seq });
@@ -198,10 +214,10 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     deliver(client, { kind: 'screencast', ...tag, type: 'video', sessionId, ...flags });
   }
 
-  /** ページが変わらずフレームが来ない間、300 ms おいて最上段の 1 枚を 1 回だけ撮る（止まった絵を鮮明に） */
+  /** 300 ms 静まったら鮮明な絵を確認する。同じ鮮明な絵は再送しない。 */
   function armStill(client, sessionId, entry, viewer) {
     clearTimer(viewer.stillTimer); viewer.stillTimer = null;
-    if (!canCapture || viewer.stillSent || viewer.pending) return;
+    if (!canCapture || viewer.stillSent || viewer.pending || viewer.checkingStill) return;
     viewer.stillTimer = setTimer(() => {
       viewer.stillTimer = null;
       if (viewer.pending || viewer.stillSent || entryOf(sessionId) !== entry || !entry.clients.has(client)) return;
@@ -209,16 +225,46 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
       const stream = entry.streams.get(key);
       const atSeq = stream?.frameSeq ?? 0;
       viewer.stillSent = true;
-      const dims = tierFormat(TOP_TIER, viewer.box);
-      Promise.resolve(bridge.capture(sessionId, { quality: dims.quality, maxWidth: dims.maxWidth, maxHeight: dims.maxHeight }))
+      viewer.checkingStill = true;
+      const probe = captureStill(sessionId, entry);
+      probe.promise
         .then(shot => {
           if (!shot?.data || viewer.pending || entryOf(sessionId) !== entry || !entry.clients.has(client)) return;
           if (keyOf(entry, viewer.tier) !== key || entry.tabGeneration !== generation
-            || (entry.streams.get(key)?.frameSeq ?? 0) !== atSeq) return;   // 待つ間にページ・段・タブが変わった
-          send(client, sessionId, entry, viewer, { data: shot.data });
+            || (entry.streams.get(key)?.frameSeq ?? 0) !== atSeq || (probe.sequences.get(key) ?? 0) !== atSeq) {
+            viewer.stillSent = false;
+            return;   // 待つ間にページ・段・タブが変わった。撮影後に合流した端末にも古い絵を送らない。
+          }
+          if (viewer.lastSharp?.data !== shot.data || viewer.lastSharp.generation !== generation || !viewer.showingStill) {
+            viewer.lastSharp = { data:shot.data, generation };
+            send(client, sessionId, entry, viewer, { data: shot.data });
+          }
+          // 変わった撮影の反響も 1 回は確認する。変わらない確認撮影の次の重複 1 枚だけを消費して収束する。
+          // 反響が来なくても消費は 1 枚限り。次の重複で再確認でき、中身・位置が違う絵は常に通す。
+          if ((probe.duplicates.get(key) ?? 0) > (probe.unchanged ? 1 : 0)) viewer.stillSent = false;
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => { viewer.checkingStill = false; armStill(client, sessionId, entry, viewer); });
     }, STILL_MS);
+  }
+
+  // 撮影と反響の消費は会話で共有する。端末ごとに撮ると互いの反響で撮り直しが続く。
+  function captureStill(sessionId, entry) {
+    const generation = entry.tabGeneration;
+    if (entry.stillProbe?.pending && entry.stillProbe.generation === generation) return entry.stillProbe;
+    const formats = [...entry.clients.values()].map(viewer => tierFormat(TOP_TIER, viewer.box));
+    const options = { quality:SCREENCAST_TIERS[TOP_TIER].q,
+      maxWidth:Math.max(...formats.map(format => format.maxWidth)), maxHeight:Math.max(...formats.map(format => format.maxHeight)) };
+    const context = JSON.stringify([generation, options]);
+    const probe = { generation, pending:true, duplicates:new Map(), unchanged:false,
+      sequences:new Map([...entry.streams].map(([key, stream]) => [key, stream.frameSeq])) };
+    entry.stillProbe = probe;
+    probe.promise = Promise.resolve(bridge.capture(sessionId, options)).then(shot => {
+      probe.unchanged = Boolean(shot?.data && entry.lastSharp?.context === context && entry.lastSharp.data === shot.data);
+      if (shot?.data && entry.tabGeneration === generation) entry.lastSharp = { context, data:shot.data };
+      return shot;
+    }).finally(() => { probe.pending = false; });
+    return probe;
   }
 
   /** S を記録し、中央値で段を動かす。段を変えたら測った S は捨てる */

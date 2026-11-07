@@ -134,6 +134,78 @@ export default async function (t) {
       t.ok('閉じたときに待っていた切り替えは、開き直しても送らない', !r.commands.some(([name, args]) => name === 'chromePinWindow' && args.tabId === 'STALE'));
       r.panel.close();
     }
+    {
+      const observer = globalThis.ResizeObserver, timeout = globalThis.setTimeout, rect = N.prototype.getBoundingClientRect;
+      let resized, restart, width = 400;
+      globalThis.ResizeObserver = class { constructor(fn) { resized = fn; } observe() {} disconnect() {} };
+      globalThis.setTimeout = (fn, ms, ...args) => ms === 350 ? (restart = fn, 1) : timeout(fn, ms, ...args);
+      N.prototype.getBoundingClientRect = () => ({ left:0, top:0, right:width, bottom:300, width, height:300 });
+      try {
+        const r = rig({ holdPin:true }), events = [];
+        r.windows.apply({ sessionId:'conv', windows:1, windowIds:[7], currentWindowId:7 });
+        r.panel.open(); await flush();
+        r.panel.onTabChange(event => { if (event?.type === 'state') events.push(r.panel.tabId); });
+        const pin = r.panel.pinTab('conv', { tabId:'T2' });
+        width = 600; resized(); restart(); await flush();
+        r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T1' } });
+        t.ok('切り替え要求中に映像の枠が変わっても、古い状態を確定しない', events.length === 0 && r.count('browserScreencast') === 2);
+        r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T2' } });
+        r.pins[0].resolve({}); await pin;
+        t.ok('サイズ変更をまたいだ要求も、対象の状態と完了がそろえば確定する', events.length === 1 && events[0] === 'T2');
+        r.panel.close();
+      } finally {
+        globalThis.ResizeObserver = observer; globalThis.setTimeout = timeout; N.prototype.getBoundingClientRect = rect;
+      }
+    }
+    {
+      const r = rig({ holdPin:true }), events = [];
+      r.windows.apply({ sessionId:'conv', windows:1, windowIds:[7], currentWindowId:7 });
+      r.panel.open(); await flush();
+      r.panel.onTabChange(event => { if (event?.type === 'state') events.push(r.panel.tabId); });
+      const same = r.panel.pinTab('conv', { tabId:'T1' });
+      r.pins[0].resolve({}); await same;
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'EXTERNAL' } });
+      t.ok('既に表示中のタブの固定が通知なしで成功しても、その後の別経路の変更を受け取る', events.at(-1) === 'EXTERNAL');
+      const first = r.panel.pinTab('conv', { tabId:'T2' });
+      const second = r.panel.pinTab('conv', { tabId:'T3' });
+      r.pins[2].reject(new Error('no-tab')); await second;
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T2' } });
+      r.pins[1].resolve({}); await first;
+      t.ok('最新要求が失敗したら、先に送った有効な要求の表示状態を受け入れる', r.panel.tabId === 'T2' && events.at(-1) === 'T2');
+      r.panel.close();
+    }
+    {
+      const r = rig({ holdPin:true }), events = [];
+      r.windows.apply({ sessionId:'conv', windows:1, windowIds:[7], currentWindowId:7 });
+      r.panel.open(); await flush();
+      r.panel.onTabChange(event => { if (event?.type === 'state') events.push(r.panel.tabId); });
+      const first = r.panel.pinTab('conv', { tabId:'T2' });
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T1' } });
+      t.ok('送信後の切り替え待ちに古い状態が届いても、確定を知らせない', events.length === 0);
+      const second = r.panel.pinTab('conv', { tabId:'T3' });
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T2' } });
+      r.pins[0].resolve({}); await first;
+      t.ok('続けて選んだ後で前の要求の状態と応答が届いても、今の選択を確定しない', events.length === 0);
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T3' } });
+      t.ok('対象タブの知らせも要求が完了するまでは確定しない', events.length === 0);
+      r.pins[1].resolve({}); await second;
+      t.ok('今の要求の完了と対象の状態がそろったら 1 回だけ確定する', events.length === 1 && events[0] === 'T3');
+      r.panel.close();
+    }
+    {
+      const r = rig({ holdPin:true }), events = [];
+      r.windows.apply({ sessionId:'conv', windows:1, windowIds:[7], currentWindowId:7 });
+      r.panel.open(); await flush();
+      r.panel.onTabChange(event => { if (event?.type === 'state') events.push(r.panel.tabId); });
+      const oldPin = r.panel.pinTab('conv', { tabId:'T2' });
+      const newPin = r.panel.pinTab('conv', { tabId:'T3' });
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T3' } });
+      r.pins[1].resolve({}); await newPin;
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T2' } });
+      r.pins[0].resolve({}); await oldPin;
+      t.ok('新しい要求の確定後に前の要求の知らせが届いても、タブと確定通知を戻さない', r.panel.tabId === 'T3' && events.length === 1 && events[0] === 'T3');
+      r.panel.close();
+    }
     for (const change of ['reopen', 'retarget', 'reconnect']) {
       const r = rig({ holdStart:true }), events = [];
       r.panel.onTabChange(event => { if (event?.type === 'state') events.push(event); });

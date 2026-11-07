@@ -154,7 +154,7 @@ export function createBrowserUnify(deps = {}) {
         : cmd('chromePinWindow', { sessionId:selection.sessionId, ...pin });
       paint();
       await pending;
-      if (active === selection && chrome()?.tabId === tab.targetId) { active = null; paint(); }
+      if (!chrome()?.pinTab && active === selection && chrome()?.tabId === tab.targetId) { active = null; paint(); }
     } catch (error) {
       if (active === selection) { active = null; paint(); }
       notify(error?.message || t('browser.chromeWindow.pinFailed'));

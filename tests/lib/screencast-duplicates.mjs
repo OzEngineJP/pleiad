@@ -1,7 +1,7 @@
 // 手動時計で、撮影の応答と screencast の到着順を独立に動かす。
 export async function checkScreencastDuplicates(createHub, t) {
   const metadata = { deviceWidth:400, deviceHeight:300, pageScaleFactor:1, offsetTop:0, scrollOffsetX:0, scrollOffsetY:0 };
-  const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+  const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
   async function rig({ multi = false } = {}) {
     let time = 1000, receive, state, captures = 0, finish, id = 0, tier = 3;
     const timers = new Set(), messages = [], acks = [];
@@ -42,8 +42,8 @@ export async function checkScreencastDuplicates(createHub, t) {
       r.advance(300); r.advance(delay); r.frame();
       await r.finish();
       t.ok(`撮影応答前の同一画像（${delay} ms 後）でも鮮明な 1 枚を捨てない`, r.frames().at(-1)?.still === true && r.frames().length === 2);
-      r.ack(); r.advance(500); r.frame(); r.advance(1000);
-      t.ok(`遅い重複（${delay} ms）を再送せず、撮影も繰り返さない`, r.captures === 1 && r.frames().length === 2 && r.acks.length === 3);
+      r.ack(); r.advance(500); r.frame(); await r.finish(); r.advance(1000);
+      t.ok(`遅い重複（${delay} ms）を再送せず、確認撮影を含めて 2 回で止まる`, r.captures === 2 && r.frames().length === 2 && r.acks.length === 3);
       await r.close();
     }
     {
@@ -59,8 +59,8 @@ export async function checkScreencastDuplicates(createHub, t) {
       for (let i = 0; i < 4; i++) { r.frame('CHANGE_' + i); r.ack(); }
       t.ok('速い返事で画質の段が 3 から 4 へ替わる', r.tier === 4);
       r.frame('TIER_4'); r.ack(); r.advance(300); r.frame('TIER_4'); await r.finish(); r.ack();
-      r.advance(500); r.frame('TIER_4'); r.advance(1500);
-      t.ok('画質変更で画像のバイトが変わっても、新しい段で撮影は 1 回で止まる', r.captures === 1 && r.frames().at(-1)?.still);
+      r.advance(500); r.frame('TIER_4'); await r.finish(); r.advance(1500);
+      t.ok('画質変更で画像のバイトが変わっても、新しい段で確認撮影を含めて 2 回で止まる', r.captures === 2 && r.frames().at(-1)?.still);
       await r.close();
     }
     {

@@ -150,7 +150,9 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
   // スマホで端末内のページを置いて、映像を止めている間（mountPage）
   let pagePaused = false;
   let watchGeneration = 0, pinGeneration = 0, stateVersion = 0;
-  let pendingTab = null, targetListeners = new Set();   // pendingTab: 映していない間にタブの列で選んだタブ（映し始めてから固定する）
+  let pendingTab = null, pinRequest = null, targetListeners = new Set();   // 開始待ちのタブと、送信後の完了待ちを分ける
+  const inFlightPins = new Set();
+  let confirmedPin = false;
   let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, closing = false, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown;   // hold: 閉じたウィンドウを薄くして残している間
 
   function build() {
@@ -223,7 +225,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
   /** 映す会話を替える（会話は移らない） */
   function retarget(id) {
     if (!parts || !isOpen() || !id || id === sessionId) return;
-    watchGeneration++; pinGeneration++; pendingTab = null;
+    watchGeneration++; pinGeneration++; pendingTab = null; pinRequest = null;
     const old = sessionId;
     if (old && !pagePaused) cmd('browserScreencastStop', { sessionId: old, source: 'chrome' }).catch(() => {});
     pagePaused = false;   // 新しい会話の映像は受ける（端末内のページを置くなら browser-unify がまた mountPage する）
@@ -312,7 +314,10 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
 
   async function start() {
     if (!sessionId || pagePaused) return;
+    const previousGeneration = watchGeneration;
     const id = sessionId, generation = ++watchGeneration, version = stateVersion;
+    for (const pin of inFlightPins) if (pin.generation === previousGeneration && pin.sessionId === id) pin.generation = generation;
+    if (pinRequest?.generation === previousGeneration && pinRequest.sessionId === id) pinRequest.generation = generation;
     const box = parts.screen.getBoundingClientRect();
     lastBox = { width: box.width, height: box.height };
     connecting = true;
@@ -335,16 +340,38 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     const tab = pendingTab;
     pendingTab = null;
     if (!pagePaused && tab?.sessionId === sessionId) sendTabPin(tab);
-    else if (!pagePaused && result?.state) for (const listener of tabListeners) listener({ type:'state' });
+    else if (!pagePaused && !pinRequest && result?.state) for (const listener of tabListeners) listener({ type:'state' });
     paint();
   }
   function sendTabPin({ sessionId: id, windowId, tabId }) {
     const request = ++pinGeneration, generation = watchGeneration;
-    return cmd('chromePinWindow', { sessionId: id, windowId, tabId }).catch(error => {
-      if (request !== pinGeneration || generation !== watchGeneration || sessionId !== id || pagePaused || !isOpen()) return;
+    const pin = { request, generation, sessionId:id, tabId, completed:false, confirmed:state?.tabId === tabId };
+    confirmedPin = false;
+    pinRequest = pin;
+    inFlightPins.add(pin);
+    return cmd('chromePinWindow', { sessionId: id, windowId, tabId }).then(() => {
+      if (!currentPin(pin)) return;
+      pin.completed = true;
+      confirmTabPin();
+    }).catch(error => {
+      if (!currentPin(pin)) return;
+      pinRequest = null;
+      confirmedPin = false;
       for (const listener of tabListeners) listener({ type:'pin-failed', sessionId:id, tabId });
       notify(error?.message || t('browser.chromeWindow.pinFailed'));
-    });
+    }).finally(() => inFlightPins.delete(pin));
+  }
+  function currentPin(pin) {
+    return pinRequest === pin && pin.request === pinGeneration && pin.generation === watchGeneration
+      && sessionId === pin.sessionId && !pagePaused && isOpen();
+  }
+  function confirmTabPin() {
+    const pin = pinRequest;
+    if (!pin || !currentPin(pin) || !pin.completed || !pin.confirmed || state?.tabId !== pin.tabId) return;
+    pinRequest = null;
+    confirmedPin = true;
+    for (const listener of tabListeners) listener({ type:'state' });
+    paint();
   }
 
   function watchSize() {
@@ -362,6 +389,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
 
   function stopWatching() {
     watchGeneration++; pinGeneration++;
+    pinRequest = null;
     observer?.disconnect(); observer = null;
     clearTimeout(resizeTimer); clearTimeout(holdTimer);
     hold = null; lastShown = undefined;
@@ -431,13 +459,14 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
      */
     pinTab(id, { windowId = null, tabId }) {
       pinGeneration++;
+      pinRequest = null;
       const pin = { sessionId: id, windowId, tabId };
       if (isOpen() && sessionId === id && !pagePaused && !connecting && !ended && state) { pendingTab = null; return sendTabPin(pin); }
       pendingTab = pin;
       return Promise.resolve();
     },
     /** 端末内のタブを選び直したら、映像の開始待ちの選択を取り消す。 */
-    cancelTabPin() { pendingTab = null; pinGeneration++; },
+    cancelTabPin() { pendingTab = null; pinRequest = null; pinGeneration++; },
     /** タブ列とアドレスバーを映像の上へ置き、状態表示の挿入口をバーへ移す。 */
     mountBrowserChrome(node, slot) {
       if (!parts) { parts = build(); root = parts.node; }
@@ -552,9 +581,15 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
       }
       else if (message.type === 'state') {
         stateVersion++;
+        // 古い要求の完了が後から届いても、最後に選んだタブを戻さない。
+        if ((pinRequest || confirmedPin) && message.state?.tabId !== pinRequest?.tabId && [...inFlightPins].some(pin => pin.request !== pinGeneration
+          && pin.generation === watchGeneration && pin.sessionId === sessionId && pin.tabId === message.state?.tabId)) return;
         if (unifiedInput && state?.tabId && message.state?.tabId !== state.tabId) unifiedInput.reset();
         state = message.state;
-        if (!pendingTab && !pagePaused) for (const listener of tabListeners) listener({ type:'state' });
+        if (pinRequest && currentPin(pinRequest)) {
+          pinRequest.confirmed = state?.tabId === pinRequest.tabId;
+          confirmTabPin();
+        } else if (!pendingTab && !pagePaused) for (const listener of tabListeners) listener({ type:'state' });
         paint();
       }
       else if (message.type === 'ended') { ended = true; paint(); }
@@ -576,7 +611,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     /** 接続し直したら見続ける（サーバーは接続が切れた端末を外している） */
     reconnected() {
       watchGeneration++; pinGeneration++;
-      pendingTab = null;
+      pendingTab = null; pinRequest = null;
       const paused = pagePaused;
       state = null;
       for (const listener of tabListeners) listener({ type:'reconnected' });
