@@ -163,3 +163,20 @@ public func evaluateDialogCandidate(texts: [String], buttonLabels: [(index: Int,
     )
 }
 
+// ---- Chrome へのアクセシビリティ有効化の要求を繰り返さない判定（テスト可能な純関数） ----------
+
+/**
+ * 同じ Chrome のプロセスへ、アクセシビリティの有効化（AXManualAccessibility・AXEnhancedUserInterface の設定）をもう一度要求するか。
+ * Chrome は AXEnhancedUserInterface を受けるたび、前の予約を取り消して 2 秒後の有効化を入れ直す。
+ * 短い間隔で繰り返し送ると有効化がいつまでも始まらず、ページの中身（WebArea）が見えないままになる。
+ *   - previousAccepted: このプロセスへ送った前の要求（AXEnhancedUserInterface の設定）が受理されたか。初めての要求なら nil
+ *   - sameInstance: 前に要求したアプリと同じ起動の実体か（呼び出し側が NSRunningApplication の isTerminated・launchDate で確かめる）
+ *   - secondsSince: 前の要求から経った秒数
+ *   - retryAfterSeconds: 受理されなかった要求を送り直すまでの最短の間隔（Chrome の 2 秒の予約より長い）
+ */
+public func shouldRequestAppAccessibility(previousAccepted: Bool?, sameInstance: Bool, secondsSince: TimeInterval, retryAfterSeconds: TimeInterval = 3) -> Bool {
+    guard let accepted = previousAccepted, sameInstance else { return true }
+    if accepted { return false }
+    return secondsSince >= retryAfterSeconds
+}
+

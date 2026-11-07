@@ -75,10 +75,47 @@ enum Chrome {
         return (val as! AXUIElement)
     }
 
-    private static func enableAppAccessibility(_ pid: pid_t) {
+    // プロセスごとの有効化の要求の記録（pid → 最後の要求。プロセスの終了・PID の再利用は launchDate で区別する）
+    private static var accessibilityRequests: [pid_t: (application: NSRunningApplication, at: Date, accepted: Bool, count: Int)] = [:]
+
+    /**
+     * Chrome に AXManualAccessibility・AXEnhancedUserInterface を設定する。
+     * 同じ起動の実体へは、受理された要求を送り直さない（Chrome は受けるたびに有効化の予約を取り消して 2 秒先へ入れ直すので、
+     * 繰り返すとページの中身がいつまでも見えない。shouldRequestAppAccessibility）。戻り値は診断用
+     * （要求したか・属性設定の戻り値・このプロセスへの累計の回数）で、chromeEnableStep の応答に載せて CI の記録へ残す。
+     */
+    @discardableResult
+    private static func enableAppAccessibility(_ pid: pid_t) -> [String: Any] {
+        guard let application = NSRunningApplication(processIdentifier: pid), !application.isTerminated else {
+            return ["requested": false, "reason": "no-app"]
+        }
+        let now = Date()
+        let previous = accessibilityRequests[pid]
+        let sameInstance = previous.map { !$0.application.isTerminated && $0.application.launchDate == application.launchDate } ?? false
+        let since = previous.map { now.timeIntervalSince($0.at) } ?? 0
+        guard shouldRequestAppAccessibility(previousAccepted: previous?.accepted, sameInstance: sameInstance, secondsSince: since) else {
+            return [
+                "requested": false,
+                "reason": previous?.accepted == true ? "accepted" : "recent",
+                "sinceMs": Int(since * 1000),
+                "count": previous?.count ?? 0
+            ]
+        }
+        if accessibilityRequests.count > 128 {
+            accessibilityRequests = accessibilityRequests.filter { !$0.value.application.isTerminated }
+        }
         let app = AXUIElementCreateApplication(pid)
-        _ = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-        _ = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        let manual = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        let enhanced = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        let count = (accessibilityRequests[pid]?.count ?? 0) + 1
+        accessibilityRequests[pid] = (application: application, at: now, accepted: enhanced == .success, count: count)
+        return [
+            "requested": true,
+            "manual": Int(manual.rawValue),
+            "enhanced": Int(enhanced.rawValue),
+            "accepted": enhanced == .success,
+            "count": count
+        ]
     }
 
     private static func registerWindow(pid: pid_t, element: AXUIElement) -> String {
@@ -524,15 +561,28 @@ enum Chrome {
         let score: Int
     }
 
-    private static func scanRemoteDebuggingCheckboxes(in root: AXUIElement) -> (best: CheckboxMatch?, all: [[String: Any]]) {
+    // scanRemoteDebuggingCheckboxes の探索の記録（落ちたときに原因を分ける診断。chromeEnableStep の応答に載る）
+    private struct CheckboxScan {
+        let best: CheckboxMatch?
+        let all: [[String: Any]]
+        let visited: Int      // 調べた要素の数（上限 5000 に達していれば探し切れていない）
+        let webAreas: Int     // 窓の中の AXWebArea の数（0 ならページの中身がアクセシビリティに出ていない）
+        let maxDepth: Int     // 実際に潜った深さ（上限 35）
+    }
+
+    private static func scanRemoteDebuggingCheckboxes(in root: AXUIElement) -> CheckboxScan {
         var matches: [CheckboxMatch] = []
         var all: [[String: Any]] = []
         var visited = 0
+        var webAreas = 0
+        var maxDepth = 0
 
         func walk(_ node: AXUIElement, parent: AXUIElement?, grandparent: AXUIElement?, depth: Int) {
             if depth > 35 || visited > 5000 { return }
             visited += 1
+            if depth > maxDepth { maxDepth = depth }
             let role = axString(node, kAXRoleAttribute as String) ?? ""
+            if role == "AXWebArea" { webAreas += 1 }
             if role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton" {
                 let domId = axString(node, "AXDOMIdentifier") ?? axString(node, kAXIdentifierAttribute as String) ?? ""
                 var titleElemText = ""
@@ -568,9 +618,11 @@ enum Chrome {
                 let label = !domId.isEmpty ? domId : (!ownText.isEmpty ? ownText : parentText)
                 all.append([
                     "domId": domId,
+                    "role": role,
                     "checked": val != 0,
                     "enabled": enabled,
                     "score": score,
+                    "depth": depth,
                     "label": String(label.prefix(80))
                 ])
                 if score >= 100 {
@@ -591,7 +643,7 @@ enum Chrome {
 
         walk(root, parent: nil, grandparent: nil, depth: 0)
         let best = matches.max(by: { $0.score < $1.score })
-        return (best, all)
+        return CheckboxScan(best: best, all: all, visited: visited, webAreas: webAreas, maxDepth: maxDepth)
     }
 
     private static func postKeyToPid(_ pid: pid_t, code: Int) {
@@ -631,31 +683,40 @@ enum Chrome {
         }
         let targetUrl = (args["url"] as? String) ?? "chrome://inspect/#remote-debugging"
         let marker = (args["marker"] as? String) ?? ""
-        enableAppAccessibility(entry.pid)
+        let axEnable = enableAppAccessibility(entry.pid)
         let title = axString(entry.element, kAXTitleAttribute as String) ?? ""
         let stillOnMarker = !marker.isEmpty ? title.contains(marker) : title.contains("PLY-ENABLE-")
 
         // 1. すでに遷移していてリモートデバッグのチェックボックスが見えていれば、有効化を待ってトグルする
         let scan = scanRemoteDebuggingCheckboxes(in: entry.element)
+        // 応答へ診断（有効化の要求の結果と、候補を探した深さ・数・窓の中の WebArea の有無）を添える
+        func diag(_ dict: [String: Any]) -> [String: Any] {
+            var out = dict
+            out["axEnable"] = axEnable
+            out["scanVisited"] = scan.visited
+            out["scanWebAreas"] = scan.webAreas
+            out["scanDepth"] = scan.maxDepth
+            return out
+        }
         if !stillOnMarker, let found = scan.best {
             if !found.enabled {
-                return ["state": "checkbox-disabled", "label": found.label, "title": title, "checkboxes": scan.all]
+                return diag(["state": "checkbox-disabled", "label": found.label, "title": title, "checkboxes": scan.all])
             }
             if found.checked {
-                return ["state": "already-on", "checked": true, "label": found.label, "title": title, "checkboxes": scan.all]
+                return diag(["state": "already-on", "checked": true, "label": found.label, "title": title, "checkboxes": scan.all])
             }
             // 方法 1: チェックボックス自身に kAXPressAction
             let err1 = AXUIElementPerformAction(found.checkbox, kAXPressAction as CFString)
             usleep(250_000)
             if scanRemoteDebuggingCheckboxes(in: entry.element).best?.checked == true {
-                return ["state": "toggled", "checked": true, "method": "ax-press-checkbox", "axError": Int(err1.rawValue), "label": found.label, "title": title]
+                return diag(["state": "toggled", "checked": true, "method": "ax-press-checkbox", "axError": Int(err1.rawValue), "label": found.label, "title": title])
             }
             // 方法 2: 親の label 要素に kAXPressAction
             if let parent = found.parent {
                 _ = AXUIElementPerformAction(parent, kAXPressAction as CFString)
                 usleep(250_000)
                 if scanRemoteDebuggingCheckboxes(in: entry.element).best?.checked == true {
-                    return ["state": "toggled", "checked": true, "method": "ax-press-label", "label": found.label, "title": title]
+                    return diag(["state": "toggled", "checked": true, "method": "ax-press-label", "label": found.label, "title": title])
                 }
             }
             // 方法 3: フォーカスして Space キーを送る
@@ -664,7 +725,7 @@ enum Chrome {
             postKeyToPid(entry.pid, code: kVK_Space)
             usleep(250_000)
             let after3 = scanRemoteDebuggingCheckboxes(in: entry.element).best?.checked == true
-            return [
+            return diag([
                 "state": after3 ? "toggled" : "toggle-pending",
                 "checked": after3,
                 "method": "focus-space",
@@ -672,7 +733,7 @@ enum Chrome {
                 "label": found.label,
                 "title": title,
                 "checkboxes": scan.all
-            ]
+            ])
         }
 
         // 2. まだ遷移していない（または遷移指示がある）ならアドレス欄から遷移する
@@ -690,7 +751,7 @@ enum Chrome {
             try? InputDriver.shared.text(["text": targetUrl])
             usleep(80_000)
             postHidKey(kVK_Return)
-            return ["state": "navigated-active", "prevFrontPid": Int(prevFrontPid), "title": title]
+            return diag(["state": "navigated-active", "prevFrontPid": Int(prevFrontPid), "title": title])
         }
 
         if doNavigate {
@@ -708,12 +769,12 @@ enum Chrome {
                 _ = AXUIElementPerformAction(bar, kAXConfirmAction as CFString)
                 postKeyToPid(entry.pid, code: kVK_Return)
                 postHidKey(kVK_Return)
-                return ["state": "navigated-bg", "prevFrontPid": Int(prevFrontPid), "title": title]
+                return diag(["state": "navigated-bg", "prevFrontPid": Int(prevFrontPid), "title": title])
             }
-            return ["state": "no-address-bar", "prevFrontPid": Int(prevFrontPid), "title": title]
+            return diag(["state": "no-address-bar", "prevFrontPid": Int(prevFrontPid), "title": title])
         }
 
-        return ["state": "waiting", "title": title, "stillOnMarker": stillOnMarker, "checkboxes": scan.all]
+        return diag(["state": "waiting", "title": title, "stillOnMarker": stillOnMarker, "checkboxes": scan.all])
     }
 
     // ---- 窓の操作（前に出す・閉じる・位置と大きさ・ディスプレイ） ------------------------------
@@ -815,7 +876,7 @@ enum Chrome {
         guard trusted else { return ["trusted": false, "trees": []] }
         var trees: [[String: Any]] = []
         for pid in browserPids() {
-            enableAppAccessibility(pid)
+            let axEnable = enableAppAccessibility(pid)
             let appElem = AXUIElementCreateApplication(pid)
             var visited = 0
             func dumpNode(_ node: AXUIElement, depth: Int) -> [String: Any] {
@@ -840,7 +901,7 @@ enum Chrome {
                 return d
             }
             let wins = axChildren(appElem, kAXWindowsAttribute as String).map { dumpNode($0, depth: 0) }
-            trees.append(["pid": Int(pid), "windows": wins])
+            trees.append(["pid": Int(pid), "windows": wins, "axEnable": axEnable])
         }
         return ["trusted": true, "trees": trees]
     }
