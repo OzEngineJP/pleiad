@@ -23,7 +23,7 @@ export default async function (t) {
     const at = lineIndent(editingNode(pending.blocks, S, pending.blocks[0], S.info[0]));
     t.ok(`${marker} は確定前に字下げ・引用線を付けない`, !at.bars.length && at.l1 === 0 && at.ln === 0 && at.mk === 0 && md(pending) === marker, JSON.stringify(at));
     const spaced = insertText(pending, ' '), committed = applyTriggers(spaced, ' ')?.state;
-    t.ok(`${marker} は Space で確定し、空行も次の Enter で1行進む`, committed && shape(committed) !== 'p' && enter(committed).sel.s.b === 1);
+    t.ok(`${marker} は Space で確定し、空行の Enter は同じ行で解除する`, committed && shape(committed) !== 'p' && shape(enter(committed)) === 'p' && enter(committed).sel.s.b === 0);
     const saved = snapshotEditing(pending.blocks);
     t.ok(`${marker} の確定前状態を復元できる`, shape({ blocks: restoreEditing(md(pending), saved) }) === 'p');
   }

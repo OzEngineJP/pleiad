@@ -109,10 +109,10 @@ async page => {
   // 線は引用ごとに 1 本（::after の背景の層）。幅は中身の始まり（12px、入れ子は 12 + 4 + 12 = 28px。tokens.css の --md-quote-*）
   check('引用の行に深さの数だけ縦線が付く（computed style・面は敷かない・行の間で切れない）', await page.evaluate(() => [...document.querySelectorAll('#prompt .md-b[data-q]')].map(b => { const c = getComputedStyle(b), l = getComputedStyle(b, '::after'); return [l.backgroundImage.split('linear-gradient').length - 1, l.width, c.backgroundColor, c.marginTop, c.marginBottom].join('/'); })), ['1/12px/rgba(0, 0, 0, 0)/0px/0px', '2/28px/rgba(0, 0, 0, 0)/0px/0px', '2/28px/rgba(0, 0, 0, 0)/0px/0px']);
   await K.press('Enter'); await K.press('Enter');
-  // 「> 」だけの行を挟まないと、次の行は内側の引用の続き（CommonMark の遅延の続き）になる
-  check('空の深い引用の Enter は 1 段戻る（区切りの「> 」の行を挟む）', await val(), '> a\n> > b\n> > c\n> \n> ');
+  // 送信用の「> 」の区切りは編集行を増やさない。
+  check('空の深い引用の Enter は同じ行で1段戻り、送信本文を区切る', await val(), '> a\n> > b\n> > c\n> \n> ');
   await K.press('Enter');
-  check('最後の段の空の引用の Enter は抜ける', [await val(), await kinds(), await page.evaluate(() => document.querySelector('#prompt').editor.getState().sel.s)], ['> a\n> > b\n> > c\n> \n\n', 'quote,quote,quote,quote,p,p', { b: 5, v: 0 }]);
+  check('最後の段の空の引用の Enter は同じ行で抜ける', [await val(), await kinds(), await page.evaluate(() => document.querySelector('#prompt').editor.getState().sel.s)], ['> a\n> > b\n> > c\n\n', 'quote,quote,quote,p', { b: 3, v: 0 }]);
   await reset(); await setText('＞ x'); await K.press('End'); await K.press('Enter'); await K.type('y');
   check('全角の ＞ は引用にしない（履歴と同じ CommonMark の読み方）', [await val(), await kinds()], ['＞ x\ny', 'p,p']);
   await reset(); await K.type('- [ ] todo'); await K.press('Enter'); await K.type('next');

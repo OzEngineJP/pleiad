@@ -254,7 +254,7 @@ function* serializedRows(blocks) {
 
 /**
  * ブロックの並びの構造。info[i] はブロック i の行の情報（md-structure.mjs の行。Markdown に出ないブロックは null）、idx[行] はブロックの添字。
- * 中身の無い箇条書き・番号・引用の行は、中身があるものとして読む（CommonMark では空の項目は段落を打ち切れないが、打っている途中の行は項目として扱う）
+ * 空の構造行も段落を終える行として読む。確定した記号は編集行が別に保持する。
  */
 export function docStructure(blocks, raw = blockRaw) {
   const idx = [], src = [];
@@ -262,7 +262,12 @@ export function docStructure(blocks, raw = blockRaw) {
     if (idx.length && before !== undefined) { idx.push(null); src.push(before); }
     idx.push(i);
     const r = raw(b);
-    src.push(r + ((b.kind === 'ul' || b.kind === 'ol' || b.kind === 'quote') && !runsLength(b.runs) && /[ \t]$/.test(r) ? 'x' : ''));
+    if ((b.kind === 'ul' || b.kind === 'ol') && !runsLength(b.runs) && /[ \t]$/.test(r)) {
+      // 空の確定項目は段落を開始できるが、その空行で段落を終える。
+      // 仮の本文だけを置くと、後続行がその項目の lazy continuation になってしまう。
+      src.push(r + 'x');
+      idx.push(null); src.push(r.replace(/[^> \t]/g, ' '));
+    } else src.push(r);
   }
   const { root, lines } = parseStructure(src);
   const info = blocks.map(() => null);
@@ -270,8 +275,8 @@ export function docStructure(blocks, raw = blockRaw) {
   return { root, lines, info, idx };
 }
 
-/** 行の入れ物の記号のうち、ブロックの記号（marker）の中に収まるもの（外から内へ） */
-export const ownMarks = (li, b) => (li ? li.marks.filter((m) => m.end <= b.marker.length) : []);
+/** 行の入れ物の記号のうち、ブロックの記号（marker）の中に収まるもの（外から内へ）。空行上の幅0の項目継続は、その行が持つ記号ではない。 */
+export const ownMarks = (li, b) => (li ? li.marks.filter((m) => m.end <= b.marker.length && m.end > m.at) : []);
 
 /** 文字の位置 upto の桁（タブは 4 の倍数へ進む） */
 function columnOf(text, upto) {
@@ -342,7 +347,7 @@ function agrees(b, li, text) {
   const n = b.marker.length;
   if (b.kind === 'h') return li.role === 'heading' && n <= li.at && /#[ \t]+$/.test(b.marker) && ownMarks(li, b).length === li.marks.length;
   let k = -1;
-  li.marks.forEach((m, j) => { if (minEnd(text, m) <= n) k = j; });
+  li.marks.forEach((m, j) => { if (m.end > m.at && minEnd(text, m) <= n) k = j; });
   const m = li.marks[k];
   if (!m || n > m.end) return false;
   if (m.node.t === 'bq') return b.kind === 'quote';
@@ -796,6 +801,43 @@ export function indentList(st, dir) {
   return next;
 }
 
+/** Enter と行頭 Backspace で現在行の構造を一段解除する。送信用の区切りは編集行を増やさない。 */
+function releaseStructure(next, b) {
+  const blk = next.blocks[b], S = docStructure(next.blocks);
+  const own = ownMarks(S.info[b], blk);
+  const n = blk.kind === 'h' ? own.length : Math.max(0, own.length - 1);
+  let marker = blk.marker.slice(0, own[n - 1]?.end ?? 0);
+  let kind = kindOfMarks(own, n, marker);
+  // 空の子項目は親の次の項目へ戻す。元の空項目は残さない。
+  if ((blk.kind === 'ul' || blk.kind === 'ol') && !runsLength(blk.runs) && own[n - 1]?.node.t === 'item') {
+    const parent = own[n - 1].node, seg = itemSegOf(S, next.blocks, parent);
+    if (seg !== null) {
+      marker = contPrefix(blockRaw(blk), own, n - 1) + nextItemSeg(seg);
+      kind = parent.parent.ordered ? 'ol' : 'ul';
+    }
+  }
+  next.blocks[b] = { ...blk, kind, marker };
+  // 見出しの解除は入れ物の深さを変えず、以前の段落境界も引き継ぐ。
+  if (blk.kind !== 'h') delete next.blocks[b].breakBefore;
+  // 空行の直後に文字を入れても、解除した構造の続きへ戻らないようにする。
+  const probe = next.blocks.slice();
+  if (!runsLength(probe[b].runs)) probe[b] = { ...probe[b], runs: plainRun('x') };
+  let depth = 0;
+  for (let node = docStructure(probe).info[b]?.node; node; node = node.parent) {
+    if (node.t === 'bq' || node.t === 'item') depth++;
+  }
+  if (n < own.length && depth > n) next.blocks[b].breakBefore = contPrefix(blockRaw(blk), own, n);
+  // 解除で段落ができた場合も、次の確定済み番号項目を保つ。
+  const following = next.blocks[b + 1];
+  if (following && !agrees(following, docStructure(next.blocks).info[b + 1], blockRaw(following))) {
+    const marks = ownMarks(S.info[b + 1], following);
+    next.blocks[b + 1] = { ...following, breakBefore: contPrefix(blockRaw(following), marks, Math.max(0, marks.length - 1)) };
+  }
+  next.sel = caret(b, 0);
+  renumber(next.blocks);
+  return next;
+}
+
 // ------------------------------------------------------------------ Enter
 /** soft: Shift+Enter（項目の中の改行）。plain: 整形しない平文の間 */
 export function enter(st, { plain = false, soft = false } = {}) {
@@ -822,9 +864,7 @@ export function enter(st, { plain = false, soft = false } = {}) {
     next.sel = caret(b + 1, at);
     return finish();
   };
-  /**
-   * 空の行の Enter でも 1 行進む。今の空行を区切りにして、次の行を 1 段浅くする。
-   */
+  /** 空の引用の Shift+Enter は、従来どおり区切りの次の行へ進む。 */
   const leave = (upto) => {
     const marker = contPrefix(raw, own, upto);
     next.blocks[b] = { ...blk, kind: marker ? contKind(own, upto) : 'p', marker, runs: [] };
@@ -834,7 +874,7 @@ export function enter(st, { plain = false, soft = false } = {}) {
   };
   if (!plain && blk.kind === 'cont') {
     if (soft) return insertBelow('cont', blk.marker, right, 0);
-    if (!blk.runs.length) return leave(own.length - 1);
+    if (!blk.runs.length) return releaseStructure(next, b);
     // 項目の中の続きの行で Enter: 一番内側の項目の次の項目を始める
     const k = own.findLastIndex((m) => m.node.t === 'item');
     const seg = k >= 0 ? itemSegOf(S, next.blocks, own[k].node) : null;
@@ -860,19 +900,16 @@ export function enter(st, { plain = false, soft = false } = {}) {
     const check = blk.kind === 'ul' ? RE_CHECK.exec(runsText(blk.runs))?.[0] : null;
     const carry = check && v >= check.length ? '[ ] ' : '';
     if (carry ? runsText(blk.runs).length === check.length : !blk.runs.length) {
-      const n = own.length;
-      // 空の項目: 親の項目の中にあれば、親の次の項目にする（1 段戻す）。そうでなければ一番内側の入れ物から抜ける
-      const parentAt = n >= 2 && blk.kind !== 'quote' && own[n - 2].node.t === 'item' ? n - 2 : -1;
-      if (parentAt >= 0) {
-        const parent = own[parentAt].node, seg = itemSegOf(S, next.blocks, parent);
-        if (seg !== null) {
-          blk.runs = [];
-          next.blocks.splice(b + 1, 0, { kind: parent.parent.ordered ? 'ol' : 'ul', marker: contPrefix(raw, own, parentAt) + nextItemSeg(seg), runs: plainRun(carry) });
-          next.sel = caret(b + 1, carry.length);
-          return finish();
+      if (!soft) {
+        blk.runs = [];
+        const released = releaseStructure(next, b);
+        if (carry && (released.blocks[b].kind === 'ul' || released.blocks[b].kind === 'ol')) {
+          released.blocks[b].runs = plainRun(carry);
+          released.sel = caret(b, carry.length);
         }
+        return released;
       }
-      return leave(Math.max(0, n - 1));
+      return leave(Math.max(0, own.length - 1));
     }
     const { kind, marker } = nextLineOf(next.blocks, b, S);
     return insertBelow(kind, marker, mergeRuns([...plainRun(carry), ...right]), carry.length);
@@ -905,29 +942,7 @@ export function backspaceAtStart(st) {
   const { b } = next.sel.s;
   const blk = next.blocks[b];
   if (blk.kind === 'h' || blk.kind === 'ul' || blk.kind === 'ol' || blk.kind === 'quote' || blk.kind === 'cont') {
-    const S = docStructure(next.blocks);
-    const own = ownMarks(S.info[b], blk);
-    const n = blk.kind === 'h' ? own.length : Math.max(0, own.length - 1);
-    const marker = blk.marker.slice(0, own[n - 1]?.end ?? 0);
-    next.blocks[b] = { ...blk, kind: kindOfMarks(own, n, marker), marker };
-    // Ask the common parser whether future text would be a lazy continuation.
-    // A nested item's first row can become its parent's continuation without a separator.
-    const probe = next.blocks.slice();
-    if (!runsLength(probe[b].runs)) probe[b] = { ...probe[b], runs: plainRun('x') };
-    let depth = 0;
-    for (let node = docStructure(probe).info[b]?.node; node; node = node.parent) {
-      if (node.t === 'bq' || node.t === 'item') depth++;
-    }
-    if (n < own.length && depth > n) next.blocks[b].breakBefore = contPrefix(blockRaw(blk), own, n);
-    // A following committed ordered item may no longer interrupt the new paragraph.
-    const following = next.blocks[b + 1];
-    if (following && !agrees(following, docStructure(next.blocks).info[b + 1], blockRaw(following))) {
-      const marks = ownMarks(S.info[b + 1], following);
-      next.blocks[b + 1] = { ...following, breakBefore: contPrefix(blockRaw(following), marks, Math.max(0, marks.length - 1)) };
-    }
-    next.sel = caret(b, 0);
-    renumber(next.blocks);
-    return next;
+    return releaseStructure(next, b);
   }
   if (b === 0) return next;
   const prev = next.blocks[b - 1];

@@ -115,7 +115,7 @@ export default async function (t) {
   // ------------------------------------------------------------ Enter
   let s = enter(st("- a", 0, 3));
   t.ok("箇条書きの Enter は次の行も箇条書き・番号は 1 つ進む・空の項目で抜ける", md(s) === "- a\n- " && at(s) === "1:0" && md(enter(st("1. a", 0, 4))) === "1. a\n2. "
-    && md(enter(st("- a\n- ", 1, 0))) === "- a\n\n" && kinds(enter(st("- a\n- ", 1, 0))) === "ul,p,p" && at(enter(st("- a\n- ", 1, 0))) === "2:0");
+    && md(enter(st("- a\n- ", 1, 0))) === "- a\n\n" && kinds(enter(st("- a\n- ", 1, 0))) === "ul,p" && at(enter(st("- a\n- ", 1, 0))) === "1:0");
   t.ok("引用の Enter は引用のまま・見出しの Enter は本文の行", md(enter(st("> a", 0, 3))) === "> a\n> " && kinds(enter(st("## a", 0, 4))) === "h,p");
   t.ok("行の途中の Enter は割る（書式は引き継ぐ）", md(enter(st("**ab**", 0, 1))) === "**a**\n**b**" && md(enter(st("- ab", 0, 1))) === "- a\n- b");
   t.ok("見出しの頭の Enter は上に空行を足す", md(enter(st("## a", 0, 0))) === "\n## a");
@@ -345,12 +345,12 @@ export default async function (t) {
     && kinds(st("・a")) === "p");
   t.ok("行の途中の ・ の Enter は右を次の行へ（・ を付けて）", md(enter(st("・ab", 0, 2))) === "・a\n・b");
   t.ok("全角の ＞ は引用にしない（CommonMark と同じ。往復で文字は変わらない）", kinds(st("＞ a")) === "p" && kinds(st("> ＞ b")) === "quote" && md(st("＞ a\n> ＞ b")) === "＞ a\n> ＞ b");
-  t.ok("入れ子の引用の Enter は同じ深さで続く・空の行は 1 段戻り（上が本文なら間に空の引用の行を挟む）、最後の 1 段も次の行へ進む", (() => {
+  t.ok("入れ子の引用の Enter は同じ深さで続く・空の行は同じ行で一段ずつ解除する", (() => {
     const a = enter(st("> > a", 0, 5));
     const b = enter({ blocks: a.blocks, sel: caret(1, 0) });
-    const c = enter({ blocks: b.blocks, sel: caret(2, 0) });
-    return md(a) === "> > a\n> > " && md(b) === "> > a\n> \n> " && kinds(b) === "quote,quote,quote" && at(b) === "2:0"
-      && md(c) === "> > a\n> \n\n" && kinds(c) === "quote,quote,p,p" && at(c) === "3:0";
+    const c = enter({ blocks: b.blocks, sel: caret(1, 0) });
+    return md(a) === "> > a\n> > " && md(b) === "> > a\n> \n> " && kinds(b) === "quote,quote" && at(b) === "1:0"
+      && md(c) === "> > a\n\n" && kinds(c) === "quote,p" && at(c) === "1:0";
   })());
   t.ok("引用の行頭で > を打つと 1 段深くなる・全角の ＞ は引用にならない", (() => {
     const run = (text) => ({ text, marks: [] });
@@ -364,8 +364,8 @@ export default async function (t) {
     const b = enter(st("- [x] パン", 0, 8));
     const c = enter({ blocks: a.blocks, sel: caret(1, 4) });
     const d = enter({ blocks: doc("- a\n  - [ ] "), sel: caret(1, 4) });
-    return md(a) === "- [ ] 牛乳\n- [ ] " && at(a) === "1:4" && md(b) === "- [x] パン\n- [ ] " && md(c) === "- [ ] 牛乳\n\n" && kinds(c) === "ul,p,p"
-      && md(d) === "- a\n  - \n- [ ] " && at(d) === "2:4";
+    return md(a) === "- [ ] 牛乳\n- [ ] " && at(a) === "1:4" && md(b) === "- [x] パン\n- [ ] " && md(c) === "- [ ] 牛乳\n\n" && kinds(c) === "ul,p"
+      && md(d) === "- a\n- [ ] " && at(d) === "1:4";
   })());
   t.ok("チェック欄の途中は [ ] を付けて割る・[ ] の中の Enter は付けずに割る", md(enter(st("- [ ] ab", 0, 5))) === "- [ ] a\n- [ ] b" && md(enter(st("- [ ] ab", 0, 2))) === "- [ \n- ] ab");
   t.ok("Tab: 前の項目の中身の桁へ（その子になる。番号は 1 から）・Shift+Tab で戻る・最初の項目は動かない・本文の行・最上段の Shift+Tab は null", (() => {
@@ -426,7 +426,7 @@ export default async function (t) {
     const next = enter({ blocks: doc("1. ab\n   cd"), sel: caret(1, 2) });
     const out = enter({ blocks: enter(st("- ab", 0, 3), { soft: true }).blocks, sel: caret(1, 0) });
     const more = enter({ blocks: doc("- ab\n  cd"), sel: caret(1, 2) }, { soft: true });
-    return md(next) === "1. ab\n   cd\n2. " && kinds(next) === "ol,cont,ol" && md(out) === "- ab\n\n" && kinds(out) === "ul,p,p" && md(more) === "- ab\n  cd\n  " && kinds(more) === "ul,cont,cont";
+    return md(next) === "1. ab\n   cd\n2. " && kinds(next) === "ol,cont,ol" && md(out) === "- ab\n\n" && kinds(out) === "ul,p" && md(more) === "- ab\n  cd\n  " && kinds(more) === "ul,cont,cont";
   })());
   t.ok("Shift+Enter: 引用は引用のまま続く（空で Enter すると抜ける）・本文の行は普通の改行", (() => {
     const q = enter(st("> a", 0, 3), { soft: true });
