@@ -5,7 +5,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 export const name = 'server-session-changes';
-export const title = '変更の記録（sessionChanges）: 時刻・誰が・前 → 後・理由を古い順に返す。人が変えた状態には AI の印（statusByAi）を付けない（ADR 0067）';
+export const title = '変更の記録（sessionChanges）: 時刻・誰が・前 → 後・理由を古い順に返す。一覧に現在の状態を返す（ADR 0067）';
 
 export default async function (t) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-host-changes-'));
@@ -21,7 +21,7 @@ export default async function (t) {
     t.ok('状態・タイトルの変更が古い順に並ぶ', status.length === 2 && changes.some(x => x.field === 'title') && status[0].to === '進行中' && status[1].to === '保留');
     t.ok('前の値・誰が・理由のキーが付く', status[1].from === '進行中' && status[1].by === 'human' && status[1].reasonKey === 'menu');
     const row = (await c.cmd('listSessions')).find(s => s.id === sessionId);
-    t.ok('人が変えた状態には AI の印を付けない', row.status === '保留' && row.statusByAi === null);
+    t.ok('一覧に現在の状態を返す', row.status === '保留');
     let refused = false;
     await c.cmd('sessionChanges', {}).catch(() => { refused = true; });
     t.ok('会話の指定が無ければ断る', refused);

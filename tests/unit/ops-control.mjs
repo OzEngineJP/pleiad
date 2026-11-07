@@ -147,7 +147,8 @@ export default async function (t) {
     // 状態
     const setStatus = await api(bound(ask), 'POST', '/api/ops/sessions.setStatus', { status: '進行中', reason: 'テスト' });
     const statusRow = (await c.cmd('listSessions')).find((s) => s.id === ask.sessionId);
-    t.ok('sessions.setStatus: 状態が変わり、一覧の「AI が変更」の印（statusByAi）になる', setStatus.status === 200 && statusRow.status === '進行中' && statusRow.statusByAi?.reason === 'テスト', JSON.stringify(statusRow?.statusByAi));
+    const statusChange = (await c.cmd('sessionChanges', { sessionId: ask.sessionId })).changes.findLast(x => x.field === 'status');
+    t.ok('sessions.setStatus: 状態が変わり、変更の記録に変更者と理由が残る', setStatus.status === 200 && statusRow.status === '進行中' && statusChange?.by === 'agent' && statusChange.reason === 'テスト', JSON.stringify(statusChange));
 
     // ---- 権限の配線（会話の承認モード → policy）
     const guard = (s) => api(bound(s), 'POST', '/api/ops/probe.guarded', {});

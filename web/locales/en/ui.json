@@ -1842,9 +1842,6 @@
     "empty": "No changes recorded",
     "failed": "Couldn't load the change history: {{error}}",
     "none": "none",
-    "aiMark": "AI",
-    "aiTitle": "Changed by AI",
-    "aiTitleReason": "Changed by AI: {{reason}}",
     "field": {
       "status": "Status",
       "title": "Title",

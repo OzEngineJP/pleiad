@@ -1,4 +1,4 @@
-import { changeRows, byText, aiMarkTitle } from '../../web/change-log.mjs';
+import { changeRows, byText } from '../../web/change-log.mjs';
 
 export const name = 'change-log';
 export const title = '変更の記録: 新しい順・項目の絞り込み・誰がの訳・理由の言語（ADR 0067）';
@@ -22,5 +22,4 @@ export default async function (t) {
     && agentRows[1].reason === '依頼元の AI が変更' && agentRows[0].from === 'なし' && agentRows[1].to === 'Codex' && agentRows[1].from === 'fake', JSON.stringify(agentRows));
   t.ok('AI が変えた行にだけ ai の印', rows.filter(r => r.ai).length === 2 && rows.at(-1).ai === false);
   t.ok('理由は今の言語の文（キーがあれば辞書）', rows.at(-1).reason === '手動で変更' && rows[1].reason === '待ち');
-  t.ok('AI の印の title は理由を添える', aiMarkTitle({ reason: '待ち' }) === 'AI が変更: 待ち' && aiMarkTitle({}) === 'AI が変更');
 }

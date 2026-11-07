@@ -1802,9 +1802,6 @@
     "empty": "記録された変更はありません",
     "failed": "変更の記録を読めませんでした: {{error}}",
     "none": "なし",
-    "aiMark": "AI",
-    "aiTitle": "AI が変更",
-    "aiTitleReason": "AI が変更: {{reason}}",
     "field": {
       "status": "状態",
       "title": "タイトル",

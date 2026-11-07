@@ -1,5 +1,5 @@
 // 会話の変更の記録（会話の記録の history。時刻・誰が・前 → 後・理由）。脇の会話の行の ⋯ / 右クリックの「変更の記録」から開く。
-// 会話の中には設定の変化を知らせる行を出さない（ADR 0067）。「AI が変えた」ことだけは、ここと脇の行の小さな「AI」の印で辿れる。
+// 会話の中には設定の変化を知らせる行を出さない（ADR 0067）。変更者と理由はこの記録で確認する。
 // 行の組み立て（changeRows）は DOM に触れない（tests/unit/change-log.mjs から直接呼ぶ）。
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
@@ -29,12 +29,6 @@ export function changeRows(changes) {
     by: c.by, byText: byText(c.by), ai: c.by === 'ai' || c.by === 'agent', reason: savedReason(c),
   })).reverse();
 }
-
-/** 脇の行の状態の語に添える「AI」の印の title（理由があれば添える） */
-export const aiMarkTitle = (change) => {
-  const reason = savedReason(change);
-  return reason ? t('changeLog.aiTitleReason', { reason }) : t('changeLog.aiTitle');
-};
 
 let open = null;
 
