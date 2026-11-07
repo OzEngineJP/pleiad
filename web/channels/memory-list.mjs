@@ -75,12 +75,12 @@ export function createMemoryList(host, { lookup, openSource }) {
       box.textContent = entry.by?.kind === 'human' ? t('channels:memory.source.written') : t('channels:memory.source.none');
     } else {
       const v = sourceView(first, lookup());
-      const where = v.where.type === 'dm' ? t('channels:memory.source.dm', { name: [v.where.iconImage ? '' : v.where.icon, v.where.name].filter(Boolean).join(' ') })
+      const where = v.where.type === 'dm' ? t('channels:memory.source.dm', { name: v.where.name })
         : v.where.type === 'chat' ? (v.where.name ? t('channels:memory.source.chat', { title: v.where.name }) : t('channels:memory.source.chatGone'))
         : v.where.name ? `#${v.where.name}` : t('channels:memory.source.channelGone');
       const when = v.date ?? t('channels:memory.source.today');
       const text = t('channels:memory.source.line', { where, when });
-      const image = v.where.iconImage ? botIcon(v.where, 'src-bot-icon') : null;
+      const image = v.where.type === 'dm' ? botIcon(v.where, 'src-bot-icon') : null;
       if (v.target) {
         const link = el('button', 'src-link', text);
         if (image) link.prepend(image);

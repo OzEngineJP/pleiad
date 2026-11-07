@@ -76,6 +76,9 @@ body.channels.home-split:not(.settings) .channels-view::after{content:"";positio
 .bt.add .av,.bt.more .av{background:transparent;color:var(--ink-weak);font-size:var(--fs-s);font-weight:600}
 .bt.add:hover .av,.bt.more:hover .av{color:var(--ink)}
 .bt.add .av svg.i{width:16px;height:16px}
+.bt.add{width:44px;height:44px;padding:0;display:grid;place-items:center}
+.botstrip.is-empty{align-items:center;justify-content:space-between;min-height:44px}
+.bt-empty{padding:4px 10px;color:var(--ink-weak);font-size:var(--fs-s)}
 /* 「+N」のメニューの行の bot のアイコン。絵文字も画像（.bot-icon-image）も同じ円に収め、行の高さをそろえる */
 .pop .li .bt-menu-av{flex:none;width:18px;height:18px;display:inline-grid;place-items:center;border-radius:50%;overflow:hidden;font-size:14px;line-height:1}
 .bt .ring{position:absolute;inset:-3px;width:36px;height:36px;color:var(--ink-blue);pointer-events:none}

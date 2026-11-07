@@ -98,6 +98,7 @@ function placePicker(p, anchor, within) {
  * @param {(() => void)|null} [options.onReset] 既定に戻すボタンを押したときのコールバック（省略時はボタンなし）
  * @param {string} [options.current] 現在選ばれている絵文字（格子で .on を付ける）
  * @param {string} [options.title] 見出しの文言（省略時は見出しなし）
+ * @param {() => void} [options.onClose] 閉じた後の焦点を呼び出し元へ戻すためのコールバック
  * @param {string} [options.resetLabel] リセットボタンのラベル（既定: t("sidebar.emoji.reset")）
  * @param {string} [options.resetHint] リセットボタンの補足（既定: t("sidebar.emoji.folder")）
  * @param {string} [options.resetIcon] リセットボタンのアイコン path（既定: FOLDER）
@@ -112,6 +113,7 @@ export async function openEmojiPicker({
   resetLabel,
   resetHint,
   resetIcon = FOLDER,
+  onClose,
 }) {
   if (!anchor) return;
   closeEmojiPicker();
@@ -137,6 +139,7 @@ export async function openEmojiPicker({
     if (activePicker === self) {
       activePicker = null;
     }
+    onClose?.();
   };
 
   const choose = (e) => {

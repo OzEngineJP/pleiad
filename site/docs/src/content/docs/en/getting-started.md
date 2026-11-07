@@ -53,6 +53,12 @@ Then just write what you want in the message box and send it. For actions that n
 
 You can change the agent and working directory in the conversation at any time. You can also add agents and sign in later under Settings › "Agents".
 
+## Change a bot’s icon
+
+On the bot’s page, press the round icon with the pencil badge. Choose "Not set", "Choose emoji", or "Choose image". An unset icon shows the first character of the name. Images can be PNG, JPEG, or WebP, up to 10 MB.
+
+When an image is set, use the same round icon to change or remove it. Choosing an emoji or "Not set" removes the image. "Remove image" removes only the image and restores the previous emoji or the first character of the name.
+
 ## Delete a bot you created
 
 On the bot's page, press the "⋯" next to "Open DM" and choose "Delete bot…". You can also right-click the bot in the sidebar. Review what will be deleted and which conversations will be kept, then press "Delete". Built-in bots cannot be deleted.

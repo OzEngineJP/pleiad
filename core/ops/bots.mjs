@@ -99,7 +99,7 @@ export const botOps = [
       const plan = await ctx.bots.planCreate(args).catch(() => null);
       return {
         before: null, loosens: Boolean(plan?.loosens),
-        rows: [{ path: 'name', before: null, after: args.name }, { path: 'icon', before: null, after: args.icon ?? '🤖' },
+        rows: [{ path: 'name', before: null, after: args.name }, { path: 'icon', before: null, after: args.icon ?? '' },
           ...(args.backend ? [{ path: 'backend', before: null, after: args.backend }] : []),
           ...(plan ? [{ path: 'mode', before: null, after: plan.label }] : []),
           ...(args.persona ? [{ path: 'persona', before: null, after: clip(args.persona) }] : [])],
