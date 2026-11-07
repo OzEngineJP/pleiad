@@ -77,7 +77,8 @@
     "vizOnce": "ui-internal",
     "chromeAddress": "ui-internal",
     "pageResult": "ui-internal",
-    "pageEnv": "ui-internal"
+    "pageEnv": "ui-internal",
+    "pageOpen": "ui-internal"
   },
   "todoMax": 0,
   "setPrefAllowed": 3
