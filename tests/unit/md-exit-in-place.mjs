@@ -9,6 +9,7 @@ import { textHash } from '../../web/md-editing-state.mjs';
 export const name = 'md-exit-in-place';
 export const title = '空の構造行を同じ行で解除し、入力・結合・保存で深さを保つ';
 const md = s => docToMarkdown(s.blocks);
+const shape = s => s.blocks.map(b => b.kind).join(',');
 const start = text => ({ blocks: markdownToDoc(text), sel: caret(0, 0) });
 const type = (s, text) => {
   for (const ch of text) { s = insertText(s, ch); s = applyTriggers(s, ch)?.state ?? s; }
@@ -55,7 +56,22 @@ export default async function(t) {
   const unheaded = backspaceAtStart({ ...heading, sel: caret(1, 0) });
   t.ok('解除後の本文を見出しにして戻しても元の引用外に留まる', heading.blocks[1].kind === 'h' && md(unheaded) === '> a\n\ntitle' && unheaded.blocks[1].kind === 'p');
   const soft = enter(enter({ ...start('> a'), sel: caret(0, 1) }), { soft: true });
-  t.ok('空引用のShift+Enterは従来どおり次の行へ進む', md(soft) === '> a\n\n' && soft.blocks.length === 3 && soft.sel.s.b === 2);
+  t.ok('空引用のShift+Enterも引用の行を足す（ADR 0301）', md(soft) === '> a\n> \n> ' && shape(soft) === 'quote,quote,quote' && soft.sel.s.b === 2);
+  // 打鍵: 字・'\n' Enter・'\r' Shift+Enter・'\b' 行頭の Backspace
+  const keys = (seq) => { let s = start(''); for (const k of seq) s = k === '\n' ? enter(s) : k === '\r' ? enter(s, { soft: true }) : k === '\b' ? backspaceAtStart(s) : type(s, k); return s; };
+  for (const [seq, want, kinds, label] of [
+    ['> a\n\n\bb', '> ab', 'quote', 'Enter Enter Backspace b は前の引用の行につながる'],
+    ['> a\r\r\bb', '> a\n> \nb', 'quote,quote,p', 'Shift+Enter Shift+Enter Backspace b は引用の外'],
+    ['> a\r\r\b\bb', '> a\n> b', 'quote,quote', 'Shift+Enter Shift+Enter Backspace Backspace b は空の引用の行に入る'],
+    ['> \r\r', '> \n> \n> ', 'quote,quote,quote', '空の引用だけでも Shift+Enter は引用の行を足す'],
+    ['- > a\r\r', '- > a\n  > \n  > ', 'quote,quote,quote', '項目の中の空の引用も Shift+Enter で引用の行を足す'],
+    ['- \r\rx', '- \n  x', 'ul,cont', '空の項目の頭の後の空の続きの行では、Shift+Enter をもう一度押しても空行を足さない'],
+  ]) {
+    const s = keys(seq);
+    t.ok(`${label} ${JSON.stringify(seq)}`, md(s) === want && shape(s) === kinds, JSON.stringify([md(s), shape(s)]));
+  }
+  const head = keys('- \r');
+  t.ok('空の項目の頭に戻って Shift+Enter を押しても空行を 2 つにしない', md(enter({ ...head, sel: caret(0, 0) }, { soft: true })) === md(head));
   for (const raw of ['> a\nb', '- a\nb', '1. a\nb', '> > a\n> b', '> a\n\nb', '- a\n\n', '> - a\n> \n> b']) {
     t.ok(`既存原文を読むだけでは変更しない ${JSON.stringify(raw)}`, docToMarkdown(markdownToDoc(raw)) === raw);
   }

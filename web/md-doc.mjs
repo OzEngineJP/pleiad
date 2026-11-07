@@ -967,14 +967,10 @@ export function enter(st, { plain = false, soft = false } = {}) {
     next.sel = caret(b + 1, at);
     return finish();
   };
-  /** 空の引用の Shift+Enter は、従来どおり区切りの次の行へ進む。 */
-  const leave = (upto) => {
-    const marker = contPrefix(raw, own, upto);
-    next.blocks[b] = { ...blk, kind: marker ? contKind(own, upto) : 'p', marker, runs: [] };
-    next.blocks.splice(b + 1, 0, { kind: next.blocks[b].kind, marker, runs: [] });
-    next.sel = caret(b + 1, 0);
-    return finish();
-  };
+  // 項目の頭の行は空行を 1 つまでしか持てない（CommonMark: 項目は空行 2 つで始められない）。空の頭の後の空の続きの行に、もう 1 つ足さない
+  const emptyHead = (x) => (x?.kind === 'ul' || x?.kind === 'ol') && !runsLength(x.runs);
+  const blankCont = (x) => x?.kind === 'cont' && !runsLength(x.runs);
+  if (!plain && soft && ((blankCont(blk) && emptyHead(next.blocks[b - 1])) || (emptyHead(blk) && blankCont(next.blocks[b + 1])))) return cur;
   if (!plain && blk.kind === 'cont') {
     if (soft) return insertBelow('cont', blk.marker, right, 0);
     if (!blk.runs.length) return releaseStructure(next, b);
@@ -1002,17 +998,15 @@ export function enter(st, { plain = false, soft = false } = {}) {
     // チェック欄（- [ ] ）は、次の項目も未チェックの [ ] から始める
     const check = blk.kind === 'ul' ? RE_CHECK.exec(runsText(blk.runs))?.[0] : null;
     const carry = check && v >= check.length ? '[ ] ' : '';
-    if (carry ? runsText(blk.runs).length === check.length : !blk.runs.length) {
-      if (!soft) {
-        blk.runs = [];
-        const released = releaseStructure(next, b);
-        if (carry && (released.blocks[b].kind === 'ul' || released.blocks[b].kind === 'ol')) {
-          released.blocks[b].runs = plainRun(carry);
-          released.sel = caret(b, carry.length);
-        }
-        return released;
+    // 空の行の Enter は一段外す。空の引用の行の Shift+Enter は、ほかの引用の行と同じく次の引用の行を足す（ADR 0301）
+    if (!soft && (carry ? runsText(blk.runs).length === check.length : !blk.runs.length)) {
+      blk.runs = [];
+      const released = releaseStructure(next, b);
+      if (carry && (released.blocks[b].kind === 'ul' || released.blocks[b].kind === 'ol')) {
+        released.blocks[b].runs = plainRun(carry);
+        released.sel = caret(b, carry.length);
       }
-      return leave(Math.max(0, own.length - 1));
+      return released;
     }
     const { kind, marker } = nextLineOf(next.blocks, b, S);
     return insertBelow(kind, marker, mergeRuns([...plainRun(carry), ...right]), carry.length);
