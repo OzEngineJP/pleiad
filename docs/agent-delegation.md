@@ -98,7 +98,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    - `pace_high`: 週次の枠のペース（使用率 ÷ 経過率）が 1.2 を超える。経過率はリセット時刻と期間から出し、20% 未満は見ない。
    - `pace_unknown`: 経過率が出せない週次の枠で、使用率が 20% × 1.2 = 24% を超える（24% 以下なら、経過率がいくつでもペースで落ちないので通す）。
    - リセット時刻を過ぎた枠は、使い直しが始まっているので使用率 0 とみなす。
-   - 候補に効く枠: claude は 5 時間・週次と、そのモデルの系統の週次（`seven_day_opus` など。`seven_day_oauth_apps` も念のため全モデルに効かせる）。codex は主の枠と、名前がそのモデルに当たる追加の枠。antigravity はモデル名の語をいちばん多く含むグループ（`gemini-*` → Gemini のグループ、`claude-*` / `gpt-*` → Claude and GPT のグループ）。ただし専用のグループ（`Gemini 4 Argon` など）は、系統・汎用の語を除いた名前の語がすべてモデルの id に含まれるときだけ当たる。グループが見つからなければ `usage_unknown`。
+   - 候補に効く枠: claude は 5 時間・週次と、そのモデルの系統の週次（`seven_day_opus` など。`seven_day_oauth_apps` も念のため全モデルに効かせる）。codex は主の枠と、名前がそのモデルに当たる追加の枠。antigravity はモデル名の語をいちばん多く含むグループ（`gemini-*` → Gemini のグループ、`claude-*` / `gpt-*` → Claude and GPT のグループ）。ただし専用のグループ（`Gemini 4 Argon` など）は、系統・汎用の語を除いた名前の語がすべてモデルの id に含まれるときだけ当たる。agy 1.5.2 の形（`All Models` の 1 グループに、モデルと段ごとの枠）では、段を外したモデルの系統ごとの行がそれぞれ 1 グループになり、モデルの系統の行が当たる（`gemini-3.8-flash-high` → `Gemini 3.8 Flash`）。グループが見つからなければ `usage_unknown`。
 6. **アカウント。** 候補ごとにアカウントが決まっているので、振り分けはアカウントの間で釣り合わせない（2026-10-24、[ADR 0264](adr/0264-delegation-account-scope.md)。前の版の「余裕のあるアカウントを使用量で選ぶ」・同じ人の重複のまとめ・`lower_priority` は無くした）。ログイン中のアカウントが登録したアカウントと同じ人（**組織（`.claude.json` の `oauthAccount.organizationUuid`）とメールアドレスの両方が分かって一致する**。`sameIdentity`）なら、画面は「ログイン中のアカウント（<表示名>）」と書くだけで、候補は別々のまま。
 7. **レベルを選ぶ。** 表のレベル（`baseTier`）から上へ、各レベルの候補を左から見て余裕ありを先に選ぶ。無ければ表のレベルから上へ 1 レベルずつ余裕が少ない候補を選ぶ。同じレベルでは使用量が分かるもの（`usage_unknown` / `usage_stale` 以外）→ 5 時間以外の効く枠の最大使用率が低い順 → 週次のペースが低い順 → 5 時間の使用率が低い順 → レベルの候補の順。表のレベルから上がすべて使えないときは 1 レベルずつ下り、各レベルで余裕あり、次に余裕が少ない候補を選ぶ。見たすべてのレベルで全候補が使えないときだけエラー。エラー文は後回しの線と Claude のアカウントごとの理由を含む。行は言語によらない `- <候補の id> [アカウントの表示名] (レベル): 理由 (中身) 枠 使用率% pace ペース` の形（アカウントの無い候補は角括弧なし。ログイン中のアカウントの候補は `[login]`）にし、画面はこの行を読む。
 8. 選んだ backend / model / account で子の会話を作る（`prepare`）。**自動で選んだ子は親の会話の接続先を継がず公式で走る**（候補を公式の使用枠で選んでいるため）。アカウントは選んだ候補のもの（`''` はログイン中）。選んだ候補のモデルは、委譲先の作業場所（`cwd`）で一覧にあるかを確かめ直し、無ければ `model_unknown` として次の候補から選び直す。それでも子の会話を作る時点で使えなければ、既定に落とさずエラー。子の思考の強さも、このとき段・候補から決める（次の節）。
@@ -420,6 +420,7 @@ Codex の履歴が大きすぎて読めない・30 秒で応答が無い（`core
 
 Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の安全判定で一部のコマンドをプロセスを作る前に拒否する（`blocked by policy` など。削除に限らず `Stop-Process`・`Start-Process` なども）。
 この拒否はアイテムにならず、通知にも `thread/read` にも出ないので、Pleiad は Codex の rollout から拾う（docs/multi-backend.md「Codex の実行前の拒否」、[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)）。
+Antigravity（agy）は、組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が「要審査」など）で確認を出せずに拒否されたツールを `rejection` にする（`via: "antigravity"`・`kind: "policy"`・`command` はコマンドかファイルのパス。docs/multi-backend.md §2.8「組織の管理ポリシー」）。
 委譲の子で拾ったものは、`execute` がターンの `tool.result` の `rejection` から集め、タスクの行の `rejections` に保存する。
 
 ```json
@@ -439,7 +440,7 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 ]
 ```
 
-- `via`: `code_mode`（custom tool の `exec` の中の `tools.exec_command`、またはその続きを待つ `wait`）/ `direct`（`exec_command` を直接）。
+- `via`: `code_mode`（custom tool の `exec` の中の `tools.exec_command`、またはその続きを待つ `wait`）/ `direct`（`exec_command` を直接）/ `antigravity`（agy。`shell`・`callId`・`turnId` は `null`）。
 - `kind`: `policy`（ポリシーの拒否。`reason` は Codex の理由）/ `spawn`（プロセス作成の失敗。同じ形に包まれて来る）/ `other`。`command` は描かれたコマンドを `[shell, -Command, script]` に戻せれば script、戻せなければ描かれた文字列。分からなければ `null`。
 - `approvalRequested`: 同じターンで同じ call id の承認を求められたか。`never` の拒否は承認を経ないので、今は `false` になる。
 - 依頼元は別のエージェント・別の提供元のモデルのこともあるので、`command`・`reason`・`raw` は形で秘密を伏せてから 300 字で切る（`core/redact.mjs`。URL の userinfo とクエリの値、`Bearer …`、`sk-…`、`ghp_…`・`github_pat_…` などの既知のトークン、`password=` などの名前付きの値）。形を知らない秘密は残りうる。子の会話の画面は今までどおり伏せない。

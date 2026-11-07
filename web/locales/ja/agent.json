@@ -355,7 +355,7 @@
     "noticeWorkspaceGone": "作業場所: worktree {{branch}}（片付け済み）",
     "noticeWorkspaceUnknown": "作業場所: worktree {{branch}}（状態を確かめられません。{{path}} を見てください）",
     "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n",
-    "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定など）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
+    "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定・組織の管理ポリシーなど）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
     "noticeRejection": "- {{command}}（{{reason}}）",
     "noticeLimit": "使用量の上限で止まりました。{{time}} に解除される見込みです。解除の後に ply_task_send で続けるか、待てないなら ply_delegate で別の委譲先に任せ直してください。",
     "noticeLimitUnknown": "使用量の上限で止まりました。解除の時刻は分かりません。時間を置いて ply_task_send で続けるか、ply_delegate で別の委譲先に任せ直してください。",

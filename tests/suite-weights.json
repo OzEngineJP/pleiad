@@ -308,6 +308,7 @@
     "server-agent-tasks": 26304,
     "server-agy-context": 4511,
     "server-antigravity": 13807,
+    "server-antigravity-admin-policy": 5000,
     "server-api-keys": 1062,
     "server-background": 8918,
     "server-boot-env": 2842,
