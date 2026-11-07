@@ -56,8 +56,13 @@ export function pleiadVerdict(value, { ports, sessionId } = {}) {
   // 本体の port は、ホスト名に依らず断る（127.0.0.1・localhost・[::1]・0.0.0.0・*.localhost・127.0.0.0/8・ループバックを指す DNS の名前）
   if (ports.main && url.port === ports.main) return false;
   const exact = url.protocol === 'http:' && url.host === 'localhost';
-  if (ports.pages && url.port === ports.pages) return exact && (ownPagesPath(url.path, sessionId) || SHARED_PAGES_PATHS.some(prefix => url.path.startsWith(prefix)));
-  if (ports.isolated && url.port === ports.isolated) return exact;
+  if (ports.pages && url.port === ports.pages) {
+    // ファイルのページは localhost だけ。アプリの出どころの名前（<印>.localhost）で pages を指すものは断る
+    if (url.host.endsWith('.localhost')) return false;
+    return exact && (ownPagesPath(url.path, sessionId) || SHARED_PAGES_PATHS.some(prefix => url.path.startsWith(prefix)));
+  }
+  // 隔離の port は localhost と、アプリごとの専用の出どころ（<印>.localhost。core/isolated-origins.mjs）を通す
+  if (ports.isolated && url.port === ports.isolated) return url.protocol === 'http:' && (url.host === 'localhost' || url.host.endsWith('.localhost'));
   return null;
 }
 

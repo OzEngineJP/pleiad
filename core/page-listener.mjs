@@ -51,13 +51,15 @@ function closeAll(servers) {
  * @param {number} [options.retryMs]                待つ間の試し直しの間隔
  * @param {(req, res, { url }) => any} options.handle Host・メソッドを通った要求（共通のヘッダーは付けてある）
  * @param {string[]} [options.hosts]                bind する先（試験用。既定は 127.0.0.1 と ::1）
+ * @param {(header: string|undefined, port: number) => boolean} [options.hostCheck]
+ *        Host の見出しの検査（既定は localhost:<port> と同じ。隔離のリスナーは <印>.localhost:<port> も通す。core/isolated-origins.mjs）
  * @returns {Promise<{ port: number, hosts: string[], close: () => Promise<void> }>}
  */
-export async function startPageListener({ name, port: wanted = 0, waitMs = 0, retryMs = 40, handle, hosts = LOOPBACK, log = () => {}, now = Date.now }) {
+export async function startPageListener({ name, port: wanted = 0, waitMs = 0, retryMs = 40, handle, hosts = LOOPBACK, hostCheck = hostOk, log = () => {}, now = Date.now }) {
   let boundPort = 0;
   const onRequest = (req, res) => {
     for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
-    if (!hostOk(req.headers.host, boundPort)) return sendStatus(req, res, 421, 'misdirected request');
+    if (!hostCheck(req.headers.host, boundPort)) return sendStatus(req, res, 421, 'misdirected request');
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('allow', 'GET, HEAD');
       return sendStatus(req, res, 405, 'method not allowed');

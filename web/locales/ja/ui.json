@@ -2854,6 +2854,7 @@
       "download": "HTML を保存",
       "widen": "広げる",
       "narrow": "元の幅に戻す",
+      "open": "ページで開く",
       "resourcesOmitted": "画像などの関連ファイルは含めていません。",
       "resourcesTooMany": "関連ファイルの数が上限を超えたため、HTML だけを保存しています。",
       "resourcesTooLarge": "関連ファイルの合計サイズが上限を超えたため、HTML だけを保存しています。",

@@ -1554,6 +1554,25 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       callHook('tabInfo', () => tabInfo.setPagePorts?.(next ?? {}));   // ファイルのページの印（page）と、favicon を取りに行かない port
       refreshInterception(up);   // 後から決まった port を、もう開いているタブの Fetch にも効かせる
     },
+    /**
+     * port が替わった・サーバーが入れ替わったあと、残っているタブを新しい URL へ移す（ADR 0295 の 7 の 1）。
+     * move(url) は新しい URL か null（core/isolated-origins.mjs の movedPageUrl。サーバーが鍵と秘密を持つので外から渡す）。
+     * 移したタブは targetInfoChanged → tabInfo.changed が URL と印を報せる
+     */
+    async migratePageTabs(move) {
+      if (typeof move !== 'function' || !up || up.cdp.closed) return { moved: 0 };
+      let moved = 0;
+      for (const tab of [...up.tabs.values()]) {
+        const next = move(tab.info?.url ?? '');
+        if (typeof next !== 'string' || !next || next === tab.info?.url) continue;
+        try {
+          const own = await ownSession(up, tab, () => {});
+          try { await own.send('Page.navigate', { url: next }); } finally { await own.detach(); }
+          moved++;
+        } catch { /* 移している間に消えたタブは飛ばす */ }
+      }
+      return { moved };
+    },
     /** ファイルのページの Cookie（core/page-auth.mjs の pagesCookie の形）。移動の検査の口が接続のたびと開く前に入れる */
     setPageCookie(cookie) {
       const next = cookie ? Object.freeze({ ...cookie }) : null;

@@ -1,4 +1,4 @@
-import { page, query, api, loadContent, initializeEnv, errorView, openFile } from './bridge.mjs';
+import { page, query, api, loadContent, initializeEnv, errorView, openFile, node, button, text } from './bridge.mjs';
 import { renderFile } from './file.mjs';
 import { renderDirectory } from './dir.mjs';
 import { renderGit } from './git.mjs';
@@ -35,4 +35,21 @@ document.addEventListener('click', event => {
   else if (link.protocol === 'file:') { event.preventDefault(); openFile(decodeURIComponent(link.pathname)); }
 });
 window.addEventListener('pleiad:refresh', render);
+
+// 開いているファイル・フォルダーが変わった（page:changed → pleiad:page-command {type:'changed'}。ADR 0295 の 6）。
+// 人が触っていなければそのまま読み直し、触っていれば「更新を表示」を出す（読んでいる所・入力を消さない）
+let touched = false, pending = null;
+const applyChange = () => { snapshot = undefined; pending?.remove(); pending = null; touched = false; return render(); };
+for (const name of ['pointerdown', 'keydown', 'input', 'selectstart', 'copy']) {
+  document.addEventListener(name, () => { touched = true; }, { capture:true, passive:true });
+}
+window.addEventListener('pleiad:page-command', event => {
+  if (event.detail?.type !== 'changed' || !['file', 'dir', 'git', 'attachment'].includes(page)) return;
+  if (!touched) { void applyChange().catch(error => errorView(root, error)); return; }
+  if (pending?.isConnected) return;
+  pending = node('div', 'page-changed');
+  pending.append(node('span', '', text('updated.body')), button(text('updated.show'), () => { void applyChange().catch(error => errorView(root, error)); }));
+  document.body.append(pending);
+});
+
 try { await initializeEnv(); await render(); } catch (error) { errorView(root, error); root.setAttribute('aria-busy', 'false'); }

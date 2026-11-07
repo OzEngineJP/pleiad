@@ -13,7 +13,7 @@ import { el, chevron, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { terminalView, updateTerminal } from "./terminal.mjs";
 import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
-import { copyIcon, downloadIcon, moreIcon } from './icons.mjs';
+import { copyIcon, downloadIcon, moreIcon, openInBrowserIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
@@ -594,17 +594,16 @@ export function renderPresent(ev) {
         controls.append(b);
         return b;
       };
-      // 左端は「広げる / 元の幅に戻す」（列の幅を越えて本文の領域の右端まで。web/visualize-widen.mjs、ADR 0252）
+      // 「広げる / 元の幅に戻す」はその場で広げるだけ（列の幅を越えて本文の領域の右端まで。web/visualize-widen.mjs、ADR 0252）。
+      // 「ページで開く」は別のボタン: 会話の Chrome のタブへ、無ければ右の欄へ映す（ADR 0295 の 4。狭い画面は右の欄）
       const widen = tool('', '');
       wireWiden(card, widen);
-      widen.addEventListener('click', event => {
-        if (openVisualizationTab(e.bundle, widen, e.caption ?? '')) { event.stopImmediatePropagation(); return; }
-        // 狭い画面と、右の欄を開いている間（会話の列に広げる余地が無い）は、右の欄に映す（ADR 0294 の 3）
-        if (globalThis.matchMedia?.('(max-width: 760px)').matches || (paneOpen() && !card.classList.contains('visualize-widened'))) {
-          event.stopImmediatePropagation();
-          return withContent(content => widen.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
-            detail:{ content, title:e.caption ?? '', bundle:e.bundle } })));
-        }
+      const open = tool(openInBrowserIcon, t('timeline.present.open'));
+      open.addEventListener('click', event => {
+        if (openVisualizationTab(e.bundle, open, e.caption ?? '')) { event.stopImmediatePropagation(); return; }
+        event.stopImmediatePropagation();
+        return withContent(content => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
+          detail:{ content, title:e.caption ?? '', bundle:e.bundle } })));
       }, { capture:true });
       const notice = visualizationBundleNotice(e.bundle);
       if (notice) body.append(el('p', 'present-note', notice));

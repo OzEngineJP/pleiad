@@ -3431,6 +3431,15 @@ function syncOutboxRows(messages) {
 
 function onEvent(ev, replay = false) {
   if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
+  // 開いているファイルが変わった・ページの port が替わった（ADR 0295 の 6・8）。右の欄のページは filePreview が、端末内のページは browser-unify がページへ届ける
+  if (ev.type === 'page:changed') { filePreview.pageChanged?.(ev); loadBrowserUnify().then(ui => ui.onEvent(ev)).catch(() => {}); return; }
+  if (ev.type === 'page:moved') {
+    const port = ev.ports?.isolated;
+    if (Number.isInteger(port) && ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)) {
+      configureIsolatedOrigin({ port, mintOnce: origins => cmd('vizOnce', { origins }).then(r => r?.token ?? null) });
+    }
+    loadBrowserUnify().then(ui => ui.onEvent(ev)).catch(() => {}); return;
+  }
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   // スレッドが動いた・投稿が増えた・既読が進んだ: 脇のスレッドの行を読み直す（まとめて 1 回）
   if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();

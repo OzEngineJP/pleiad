@@ -9,6 +9,7 @@
   "source": "原文", "sourceLimit": "全 {{total}} 行のうち {{from}}〜{{to}} 行を表示しています。",
   "tableLimit": "表は先頭の 500 行・100 列まで表示しています。",
   "blocked": { "count_other": "外部の読み込みを {{count}} 件止めています", "loadOnce": "一度だけ読み込む" },
+  "updated": { "body": "開いているページの内容が更新されました。", "show": "更新を表示" },
   "previous": "前のページ", "next": "次のページ", "pdfPage": "{{page}} / {{total}} ページ", "pdfText": "ページのテキスト",
   "errors": {
     "not-found": "ファイルが見つかりません。", "session-not-found": "会話が見つかりません。",

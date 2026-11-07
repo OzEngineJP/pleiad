@@ -3,6 +3,8 @@
 // 読めるかどうかは pages-routes がファイルの検査（ADR 0050）で決める。ここに出ても読める権利にはならない。
 
 // Claude Code のツールの名前。ほかのバックエンドは toolHints の shape（read・write・edit）で見分ける（web/render.mjs と同じ）
+import { vizMark } from './isolated-origins.mjs';
+
 const NAMED = { Read: 'read', Write: 'edited', Edit: 'edited', MultiEdit: 'edited', NotebookEdit: 'edited' };
 const SHAPED = { read: 'read', write: 'edited', edit: 'edited' };
 const FILE_KEYS = ['file_path', 'notebook_path', 'path', 'AbsolutePath', 'TargetFile'];
@@ -53,7 +55,8 @@ export function visualizationLinksOf(presents, isolatedPort, limit = 20) {
     if (!bundle || !/^[0-9a-f]{64}$/.test(bundle.hash ?? '') || typeof bundle.entry !== 'string' || !bundle.entry) continue;
     const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
     const title = String(row.caption ?? row.path ?? bundle.entry).slice(0, 200);
-    out.push({ title, url: `http://localhost:${isolatedPort}/viz/${bundle.hash}/${entry}?${new URLSearchParams({ embed: 'tab', title })}` });
+    // アプリの専用の出どころ（v<束の印>.localhost。core/isolated-origins.mjs）
+    out.push({ title, url: `http://${vizMark(bundle.hash)}.localhost:${isolatedPort}/viz/${bundle.hash}/${entry}?${new URLSearchParams({ embed: 'tab', title })}` });
     if (out.length === limit) break;
   }
   return out;

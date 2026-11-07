@@ -6,12 +6,18 @@ import crypto from 'node:crypto';
 import { externalOrigin, previewCsp, previewPolicy } from '../web/browser-confirm-policy.mjs';
 export { externalOrigin, previewCsp, previewPolicy };
 
-/** 可視化の sandbox（応答のヘッダーと iframe の側の両方に書く）。allow-same-origin・allow-modals・allow-popups・allow-top-navigation は付けない */
-export const VIZ_SANDBOX = 'allow-scripts allow-downloads allow-forms';
-/** HTML のファイルの sandbox（2026-11-06 の追加の決定） */
-export const HTML_SANDBOX = 'allow-scripts';
-/** 埋め込める親（会話の画面の本体の port と、ファイルのページの port） */
-export const FRAME_ANCESTORS = 'http://127.0.0.1:* http://localhost:*';
+/**
+ * アプリ（可視化・HTML のファイル）の sandbox（応答のヘッダーと iframe の側の両方に書く）。
+ * アプリごとの専用の出どころ（<印>.localhost。core/isolated-origins.mjs）で動くので allow-same-origin を付け、
+ * 相対の資源・fetch・localStorage・フォーム・別タブ（popup は sandbox を引き継ぐ）をふつうのページと同じにする。
+ * 人を惑わす残りだけ止める: 親（Pleiad の画面）の移動（allow-top-navigation は付けない）と、
+ * 画面の外へのダウンロードの自動の連打以外の権限は Permissions-Policy で止める
+ */
+export const APP_SANDBOX = 'allow-scripts allow-same-origin allow-downloads allow-forms allow-modals allow-popups allow-pointer-lock';
+export const VIZ_SANDBOX = APP_SANDBOX;
+export const HTML_SANDBOX = APP_SANDBOX;
+/** 埋め込める親（会話の画面の本体の port と、ファイルのページの port と、アプリ同士の専用の出どころ） */
+export const FRAME_ANCESTORS = 'http://127.0.0.1:* http://localhost:* http://*.localhost:*';
 export const PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=()';
 
 // 束の中のファイルを読む指示。srcdoc では読む先が無かったので、プレビューの CSP には無い
@@ -19,19 +25,24 @@ const SELF_DIRECTIVES = ['script-src', 'style-src', 'img-src', 'font-src', 'conn
 
 /**
  * 隔離の応答の CSP（ヘッダー）。プレビューの CSP に、その束（鍵）のパスだけを読み先として足す。
- * self は束（鍵）のパスで終わる出どころ（例: `http://localhost:` と port の `*` の後に `/viz/<ハッシュ>/`）。port は * にする
- * （端末のプロキシの 2 つ目のリスナーを通ると port が変わる。ADR 0295 の 5 の 3）。
+ * self は束（鍵）のパスで終わる出どころの列（例: `http://localhost:` と port の `*` の後に `/viz/<ハッシュ>/`、と印の付いた出どころ）。
+ * port は * にする（端末のプロキシの 2 つ目のリスナーを通ると port が変わる。ADR 0295 の 5 の 3）。
+ * フォームは自分の origin と、読み込みを許した出どころへ出せる（ふつうのページと同じ）。
  * WASM（束の中の .wasm）を動かすため script-src に 'wasm-unsafe-eval' を足す（eval は足さない）
  */
 export function isolatedCsp(policy, { sandbox, self }) {
+  const selves = (Array.isArray(self) ? self : [self]).filter(Boolean);
   const directives = previewCsp(policy).split('; ').map(directive => {
     const [name, ...sources] = directive.split(' ');
-    if (!SELF_DIRECTIVES.includes(name) || !self) return directive;
+    if (!SELF_DIRECTIVES.includes(name) || !selves.length) return directive;
     const kept = sources.filter(source => source !== "'none'");
     if (name === 'script-src') kept.push("'wasm-unsafe-eval'");
-    return [name, self, ...kept].join(' ');
+    return [name, ...selves, ...kept].join(' ');
   });
-  return `sandbox ${sandbox}; ${directives.join('; ')}; frame-ancestors ${FRAME_ANCESTORS}`;
+  const remote = (directives.find(directive => directive.startsWith('connect-src ')) ?? '')
+    .split(' ').slice(1).filter(source => !selves.includes(source) && source !== "'none'");
+  const rest = directives.filter(directive => !directive.startsWith('form-action'));
+  return `sandbox ${sandbox}; ${rest.join('; ')}; form-action 'self'${remote.length ? ` ${remote.join(' ')}` : ''}; frame-ancestors ${FRAME_ANCESTORS}`;
 }
 
 /** 隔離の応答に付けるヘッダー（Referrer-Policy・nosniff は core/page-listener.mjs が全部の応答に付ける） */
@@ -40,7 +51,7 @@ export function isolatedHeaders({ policy, sandbox, self }) {
     'content-security-policy': isolatedCsp(policy, { sandbox, self }),
     'cross-origin-resource-policy': 'cross-origin',
     'permissions-policy': PERMISSIONS_POLICY,
-    // 枠の中は opaque origin なので、束の中の fetch・module・WASM は別 origin の読み込みになる。資格は送らせない（Cookie を使わない）
+    // 束の中の fetch・module・WASM が隔離の port の別の origin（印の違い・localhost 直）を読むとき用。資格は送らせない（Cookie を使わない）
     'access-control-allow-origin': '*',
   };
 }

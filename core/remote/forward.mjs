@@ -162,7 +162,8 @@ function forwardHttp(stream, method, path, headers, { host, port }, token, limit
     const out = responseHeaders(res.headers);
     if (limit && ports && typeof out['content-security-policy'] === 'string') {
       out['content-security-policy'] = out['content-security-policy'].split(/(\s+|;)/).map(source =>
-        source === `http://localhost:${pagePorts.isolated}` ? `http://localhost:${ports.isolated}` : source).join('');
+        source === `http://localhost:${pagePorts.isolated}` ? `http://localhost:${ports.isolated}`
+          : source === `http://*.localhost:${pagePorts.isolated}` ? `http://*.localhost:${ports.isolated}` : source).join('');
     }
     stream.respond({ status: res.statusCode ?? 502, headers: out }).catch(() => {});
     let received = 0;

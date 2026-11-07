@@ -895,6 +895,8 @@ const SUITES = [
   './unit/viz-bundle.mjs',
   // 隔離の origin の /viz/ と /f/（ヘッダーの CSP・フォルダーの外・鍵の期限・一度だけの印）と、実際のサーバー
   './unit/isolated-routes.mjs',
+  // アプリの専用の出どころ（page-secrets・印・Host の検査・URL の付け替え）と開いているファイルの見張り
+  './unit/isolated-origins.mjs',
 
   // --- A4 Pleiad のページ ---
   './unit/pages-routes.mjs',

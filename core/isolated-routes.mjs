@@ -4,14 +4,14 @@
 //   - /f/<鍵>/<相対パス>: HTML のファイル（core/html-keys.mjs）。鍵のフォルダーの下だけ。読むたびに ADR 0050 の検査をかける
 // 応答のヘッダーの CSP（sandbox を含む）は応答ごとに設定から作る（core/preview-policy.mjs）。枠の中の HTML には、
 // 止めた出どころを親へ伝える橋とリンクの橋を、サーバーが頭に差し込む（枠の中で開いたときだけ。Sec-Fetch-Dest で見分ける）。
-// sandbox に allow-same-origin が無いと localStorage が例外を投げるので、HTML にはいつもメモリーの代わり（STORAGE_SHIM）も差し込む。
+// 出どころはアプリごとの <印>.localhost（core/isolated-origins.mjs）で、localStorage などはその origin の中で本物が効く
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sendStatus } from './page-listener.mjs';
 import { inspectFile, readBounded } from './file-preview.mjs';
 import { blobPath, readManifest, sweepVizBlobs, isHash } from './viz-bundle.mjs';
 import { HTML_SANDBOX, VIZ_SANDBOX, createOnceTokens, isolatedHeaders, previewPolicy } from './preview-policy.mjs';
-import { LINK_BRIDGE, STORAGE_SHIM, VIOLATION_BRIDGE, visualizationDocument } from '../web/visualize-document.mjs';
+import { LINK_BRIDGE, VIOLATION_BRIDGE, visualizationDocument } from '../web/visualize-document.mjs';
 
 // 上限は Pleiad のページ（ADR 0295 の 2 の 1）と同じ: 文字は 8 MiB、ほかは 32 MiB
 const TEXT_LIMIT = 8 * 1024 * 1024;
@@ -54,14 +54,14 @@ function htmlCharset(body) {
 
 /**
  * 文書の頭（doctype の後ろ）へ差し込む。doctype より前に置くと互換モードになる。
- * 保存庫の代わり（STORAGE_SHIM）はいつも、橋は枠の中で開いたときだけ（別のタブで開いたものは知らせる親がいない）
+ * 橋は枠の中で開いたときだけ（別のタブで開いたものは知らせる親がいない）
  */
 function withHead(body, inFrame) {
+  if (!inFrame) return body;
   // latin1 で読むと 1 バイトが 1 文字になり、文字の位置がそのままバイトの位置になる（UTF-8 の BOM は 3 文字）
   const doctype = /^(?:\xEF\xBB\xBF)?\s*<!doctype[^>]*>/i.exec(body.subarray(0, 4096).toString('latin1'));
   const at = doctype ? doctype[0].length : 0;
-  const head = STORAGE_SHIM + (inFrame ? VIOLATION_BRIDGE + LINK_BRIDGE : '');
-  return Buffer.concat([body.subarray(0, at), Buffer.from(head, 'utf8'), body.subarray(at)]);
+  return Buffer.concat([body.subarray(0, at), Buffer.from(VIOLATION_BRIDGE + LINK_BRIDGE, 'utf8'), body.subarray(at)]);
 }
 
 /** 枠の中で開いたか（Chrome は Sec-Fetch-Dest を付ける。付けないものは枠として扱い、橋を入れる） */
@@ -125,7 +125,8 @@ export function createIsolatedRoutes(deps = {}) {
     const file = found && blobPath(dataDir, found.sha);
     if (!file) return sendStatus(req, res, 404, 'not found');
     const policy = previewPolicy(await prefs(), onceFrom(url));
-    const security = isolatedHeaders({ policy, sandbox: VIZ_SANDBOX, self: `http://localhost:*/viz/${hash}/` });
+    const security = isolatedHeaders({ policy, sandbox: VIZ_SANDBOX,
+      self: [`http://localhost:*/viz/${hash}/`, `http://*.localhost:*/viz/${hash}/`] });
     const type = typeOf(found.rel);
     if (!isHtml(found.rel)) {
       // 中身の名前（sha256）が変わらない限り同じ中身。確かめ直しだけで返せるようにする
@@ -149,7 +150,7 @@ export function createIsolatedRoutes(deps = {}) {
         // 別のタブは包みの <title> を付ける（タブの列の題。web/visualize-frame.mjs の isolatedVisualizationUrl）
         const title = embed === 'tab' ? (url.searchParams.get('title') ?? '').slice(0, 200) : '';
         body = Buffer.from(visualizationDocument(content, { theme: ['light', 'dark'].includes(theme) ? theme : '', policy, meta: false, title,
-          storage: true, resize: inFrame, conversation: embed === 'conversation' }), 'utf8');
+          resize: inFrame, conversation: embed === 'conversation' }), 'utf8');
       }
     }
     const charset = body ? 'utf-8' : htmlCharset(raw);
@@ -177,7 +178,8 @@ export function createIsolatedRoutes(deps = {}) {
     let raw;
     try { raw = await readBounded(checked.file, limit); } catch { return sendStatus(req, res, 413, 'too large'); }
     const policy = previewPolicy(await prefs(), [...held.once, ...onceFrom(url)]);
-    const security = isolatedHeaders({ policy, sandbox: HTML_SANDBOX, self: `http://localhost:*/f/${key}/` });
+    const security = isolatedHeaders({ policy, sandbox: HTML_SANDBOX,
+      self: [`http://localhost:*/f/${key}/`, `http://*.localhost:*/f/${key}/`] });
     if (isHtml(checked.file)) {
       const charset = htmlCharset(raw);
       return send(req, res, { headers: { ...security, 'content-type': charset ? `text/html; charset=${charset}` : 'text/html', 'cache-control': 'no-store' },
@@ -195,6 +197,8 @@ export function createIsolatedRoutes(deps = {}) {
     },
     /** 「一度だけ読み込む」の印を作る（画面が認証された WS で頼む。core/server.mjs が口を作る）。https の出どころが無ければ null */
     once: origins => onceTokens.mint(origins),
+    /** 束の目録（pageOpen が入口の在否を確かめる。core/browser-unify-ws.mjs） */
+    manifest,
     sweep,
     close() { if (timer) clearTimeout(timer); onceTokens.clear(); manifests.clear(); },
   };

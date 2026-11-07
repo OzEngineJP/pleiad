@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { inspectFile, readPreview, listTreeFolder, previewFailure, FILE_LIMIT } from './file-preview.mjs';
 import { readLocalFile } from './local-files.mjs';
 import { currentLocale } from './i18n.mjs';
+import { fileMark } from './isolated-origins.mjs';
 
 const web = fileURLToPath(new URL('../web/', import.meta.url));
 const pdf = path.dirname(fileURLToPath(import.meta.resolve('pdfjs-dist/package.json')));
@@ -37,7 +38,7 @@ export function createPagesRoutes(deps = {}) {
     const isolated = Number(ports().isolated);
     return {
       'cache-control':'private, no-store', 'referrer-policy':'no-referrer', 'x-content-type-options':'nosniff',
-      'content-security-policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src ${isolated > 0 ? `http://localhost:${isolated}` : "'none'"}; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors ${via === 'main' ? "'self'" : "'none'"}`,
+      'content-security-policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src ${isolated > 0 ? `http://localhost:${isolated} http://*.localhost:${isolated}` : "'none'"}; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors ${via === 'main' ? "'self'" : "'none'"}`,
     };
   }
   function send(req, res, via, status, body, extra = {}) {
@@ -107,6 +108,7 @@ export function createPagesRoutes(deps = {}) {
         }
         case 'api/preview': {
           const ref = await resolve();
+          if (q.get('resource') !== '1') deps.watch?.add(sessionId, ref.file, ref.stat.isDirectory() ? 'dir' : 'file');
           const result = await readPreview(ref.file, roots, { access, resource:q.get('resource') === '1' });
           // API errors and unsupported content use codes; translations belong to the page.
           if (result.kind === 'unsupported') { delete result.reason; result.reasonCode = result.size > (result.downloadable ? 8 * 1024 * 1024 : FILE_LIMIT) ? 'over-limit' : 'unsupported'; }
@@ -130,6 +132,7 @@ export function createPagesRoutes(deps = {}) {
         }
         case 'api/tree': {
           const ref = await resolve();
+          deps.watch?.add(sessionId, ref.file, 'dir');
           const offset = Number(q.get('offset') ?? 0);
           if (!Number.isSafeInteger(offset) || offset < 0) throw fault('invalid-path');
           json(req, res, via, await listTreeFolder(ref.file, { access, offset })); break;
@@ -140,8 +143,14 @@ export function createPagesRoutes(deps = {}) {
           if (ref.stat.size > 8 * 1024 * 1024) throw fault('over-limit', 413);
           // once: https origins the person allowed to load one time (core/html-keys.mjs keeps only external origins).
           const key = await deps.htmlKeys?.issue({ sessionId, path:ref.file, once:q.getAll('once').slice(0, 50), access });
-          if (!key || !ports().isolated || !view.isolated) throw fault('unavailable', 503);
-          json(req, res, via, { url:`http://localhost:${view.isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(ref.file))}` }); break;
+          if (!key || !ports().isolated || !view.isolated || !deps.secret) throw fault('unavailable', 503);
+          deps.watch?.add(sessionId, ref.file, 'file');
+          // アプリの専用の出どころ（f<フォルダーの印>.localhost。core/isolated-origins.mjs）。localStorage などはその origin の中で効く。
+          // 端末（スマホの道の port）は <印>.localhost を名前解決できないので localhost のまま（その origin 内の保存は端末では分けない）
+          const marked = view.isolated === ports().isolated;
+          const mark = fileMark(deps.secret, path.dirname(ref.file));
+          const host = marked ? `${mark}.localhost` : 'localhost';
+          json(req, res, via, { url:`http://${host}:${view.isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(ref.file))}`, mark }); break;
         }
         case 'api/git': {
           const kind = q.get('kind') ?? 'changes';
@@ -250,8 +259,12 @@ export function createPagesRoutes(deps = {}) {
           for (const item of (await deps.visualizations?.(sessionId) ?? []).slice(0, 20)) {
             try {
               const target = new URL(item.url);
-              if (target.origin !== `http://localhost:${ports().isolated}` || target.username || target.password || !view.isolated) continue;
+              // 可視化の出どころは束の印の <印>.localhost（古い localhost の形も受ける）。port は見ている側のものへ付け替える。
+              // 端末の port なら名前は localhost へ戻す（<印>.localhost は端末から名前解決できない）
+              const marked = target.hostname === 'localhost' || /^[a-z0-9][a-z0-9-]{0,61}\.localhost$/.test(target.hostname);
+              if (target.protocol !== 'http:' || !marked || Number(target.port || 80) !== ports().isolated || target.username || target.password || !view.isolated) continue;
               target.port = String(view.isolated);   // the device proxy's isolated port when viewed from a phone
+              if (view.isolated !== ports().isolated) target.hostname = 'localhost';
               visualizations.push({ title:String(item.title ?? ''), url:target.href });
             } catch { /* Only this conversation's host supplies visualization links. */ }
           }

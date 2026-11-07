@@ -91,19 +91,21 @@ export function createFilePageRouter({ cmd, frame, caps, connected = () => false
     const sessionId = context.sessionId;
     if (!caps()?.pages || !sessionId) return false;
     const generation = getGeneration();
-    const where = await cmd('resolvePath', { ...context, path: ref.path });
+    // 開く先はサーバーが決める（pageOpen。パスの確かめもその中で済む）。頼めない環境は従来どおり resolvePath で確かめる
+    const opened = await cmd('pageOpen', { sessionId, kind:'file', path:ref.path, ...(ref.line ? { line:ref.line } : {}) }).catch(() => null);
+    const where = opened?.path ? { path:opened.path, kind:opened.kind === 'dir' ? 'directory' : 'file', cwd:opened.cwd ?? context.cwd }
+      : await cmd('resolvePath', { ...context, path:ref.path });
     if (generation !== getGeneration() || !caps()?.pages) return false;
     resolved(where);
-    const page = where.kind === 'directory' ? 'dir' : 'file';
     const params = new URLSearchParams({ path: where.path });
     if (ref.line) params.set('line', String(ref.line));
-    const suffix = `/_pleiad/s/${encodeURIComponent(sessionId)}/${page}?${params}`;
+    const suffix = opened?.suffix ?? `/_pleiad/s/${encodeURIComponent(sessionId)}/${where.kind === 'directory' ? 'dir' : 'file'}?${params}`;
     if (connected(sessionId) && openTab) {
       const existing = tabs(sessionId).find(tab => samePath(tab.path ?? tab.page?.path ?? tab.file?.path, where.path));
       if (existing && focusTab) {
         await focusTab(existing, sessionId); flashTab?.(existing, sessionId); return true;
       }
-      await openTab({ sessionId, url: `http://localhost:${caps().pages}${suffix}`, path: where.path, kind: where.kind, reuse: true });
+      await openTab({ sessionId, url: opened?.url ?? `http://localhost:${caps().pages}${suffix}`, path: where.path, kind: where.kind, reuse: true });
       return true;
     }
     return frame.open(suffix, { sessionId, title: where.path, heading: pageHeading(where.path, where.cwd), element });

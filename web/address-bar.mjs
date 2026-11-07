@@ -145,14 +145,17 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
         if (index < all.length - 1) { const sep = document.createElement('span'); sep.className = 'bu-separator'; sep.textContent = '›'; crumbs.append(sep); }
         if (index === 0) { const dots = document.createElement('span'); dots.className = 'bu-ellipsis'; dots.textContent = '…'; dots.hidden = true; crumbs.append(dots); }
       });
-    } else if (['git', 'plugins', 'new', 'attachment'].includes(tab?.page?.kind)) {
+    } else if (['git', 'plugins', 'new', 'attachment', 'viz', 'html'].includes(tab?.page?.kind)) {
       const kind = tab.page.kind;
       if (kind === 'git' && cwd()) {
         const folder = document.createElement('button'); folder.type = 'button'; folder.className = 'bu-crumb'; folder.textContent = cwd().split(/[\\/]/).filter(Boolean).at(-1); folder.onclick = event => { event.stopPropagation(); if (mobile()) edit(); else run('navigate', {input:cwd()}); };
         crumbs.append(folder, document.createTextNode(' › '));
       }
       const label = t(`tabs:address.locations.${kind}`);
-      crumbs.append(document.createTextNode(label + (kind === 'attachment' && file ? ' › ' + tab.page.path.split(/[\\/]/).at(-1) : '')));
+      // アプリのタブは題をパンの列に足す（HTML は ?title=、可視化は開いた束の題）
+      const named = kind === 'attachment' && file ? tab.page.path.split(/[\\/]/).at(-1)
+        : kind === 'html' && tab.page.title ? tab.page.title : '';
+      crumbs.append(document.createTextNode(label + (named ? ` › ${named}` : '')));
       crumbs.title = label;
     } else {
       let text = tab?.page?.path ?? tab?.url ?? '';

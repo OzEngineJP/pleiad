@@ -17,7 +17,7 @@
     "preview": "プレビュー",
     "source": "原文",
     "showSource": "原文を表示",
-    "locations": { "git": "変更", "plugins": "プラグイン", "attachment": "添付", "new": "URL・パスを入力、または検索" },
+    "locations": { "viz": "可視化", "html": "HTML", "git": "変更", "plugins": "プラグイン", "attachment": "添付", "new": "URL・パスを入力、または検索" },
     "more": "その他",
     "closePanel": "パネルを閉じる",
     "openPanel": "ブラウザーを開く",
