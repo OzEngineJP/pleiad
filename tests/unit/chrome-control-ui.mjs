@@ -36,8 +36,7 @@ export default async function (t) {
       let activated = 0;
       const strip = createPhoneBrowserStrip({ mount, onActivate: () => { activated++; } });
       const opener = strip.element.querySelector('.b2-strip-open');
-      const described = opener.getAttribute('aria-describedby');
-      t.ok('スマホの帯の押し口は「画面を開く」と読み、ドメインと状態の欄を説明に結ぶ', opener.getAttribute('aria-label') === '画面を開く' && !!described && strip.element.querySelector('.b2-strip-info').id === described, JSON.stringify({ label: opener.getAttribute('aria-label'), described }));
+      t.ok('スマホの帯はブラウザーの入口だけを読み上げる', opener.textContent === 'ブラウザーを開く' && !strip.element.querySelector('.b2-strip-info'));
       t.ok('スマホの帯は開閉の状態を持たない（aria-expanded を付けない）', opener.getAttribute('aria-expanded') === undefined);
       opener.onclick?.(); for (const fn of opener.on?.click ?? []) fn({ type: 'click' });
       t.ok('帯を押すと onActivate を呼ぶ', activated === 1, String(activated));

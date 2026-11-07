@@ -4,6 +4,7 @@ const paths = {
   back: 'm14 5-7 7 7 7', forward: 'm10 5 7 7-7 7', reload: 'M20 10a8 8 0 1 0-1 8M20 4v6h-6',
   close: 'm6 6 12 12M6 18 18 6', plus: 'M12 5v14M5 12h14',
   file: 'M14 2H6v20h12V6l-4-4v5h5M9 12h6M9 16h6', dir: 'M3 6h7l2 3h9v11H3z',
+  viz: 'M4 19V9m8 10V3m8 16v-7M2 21h20',
   web: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z',
   tree: 'M4 3v14h6M4 8h6M13 6h7v4h-7zM13 15h7v4h-7z',
   source: 'm8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 20', preview: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
@@ -25,15 +26,15 @@ export function browserButton(kind, label, run) {
 
 export function tabIcon(tab) {
   let icon = browserIcon(tab.page?.kind ?? 'web');
-  if (typeof tab.favicon === 'string' && /^data:image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml|x-icon|vnd.microsoft.icon);base64,/i.test(tab.favicon) && tab.favicon.length <= 87520) {
+  if (!tab.page && typeof tab.favicon === 'string' && /^data:image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml|x-icon|vnd.microsoft.icon);base64,/i.test(tab.favicon) && tab.favicon.length <= 87520) {
     icon = document.createElement('img'); icon.src = tab.favicon; icon.alt = '';
   }
   icon.classList.add('bu-favicon'); icon.classList.toggle('bu-loading', tab.loading === true);
   return icon;
 }
 
-/** decorate(tab, pick): タブの題の横に足すもの（活動の点。web/browser-unify.mjs）。label(tab): タブの題（既定はページの題） */
-export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {}, decorate = () => {},
+/** Accessible tab list with one roving keyboard focus. */
+export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {},
   label = tab => tab.title || tab.page?.path || tab.url || t('tabs:strip.new') } = {}) {
   const root = document.createElement('div'); root.className = 'bu-tabs'; root.setAttribute('role', 'tablist'); root.setAttribute('aria-label', t('tabs:strip.label'));
   const add = browserButton('plus', t('tabs:strip.new'), onNew); add.classList.add('bu-new');
@@ -49,7 +50,7 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       pick.setAttribute('aria-selected', String(tab.targetId === selected)); pick.tabIndex = tab.targetId === selected || (!selected && index === 0) ? 0 : -1;
       pick.title = label(tab);
       const icon = tabIcon(tab);
-      const title = document.createElement('span'); title.className = 'bu-tab-title'; title.textContent = pick.title; pick.append(icon, title); decorate(tab, pick);
+      const title = document.createElement('span'); title.className = 'bu-tab-title'; title.textContent = pick.title; pick.append(icon, title);
       pick.onclick = () => onPick(tab);
       pick.onkeydown = event => {
         let at = tabs.findIndex(row => row.targetId === tab.targetId);

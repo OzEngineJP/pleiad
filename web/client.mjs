@@ -3430,7 +3430,7 @@ function syncOutboxRows(messages) {
 }
 
 function onEvent(ev, replay = false) {
-  if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
+  if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport', 'page:moved', 'page:changed'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   // スレッドが動いた・投稿が増えた・既読が進んだ: 脇のスレッドの行を読み直す（まとめて 1 回）
   if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();
@@ -7433,7 +7433,7 @@ function applyTheme(mode) {
   paintTitleBar();
   paintShellTheme();
   // 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295。browserUnify を返す本体だけ）
-  if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
+  if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
 }
 
 /**
@@ -7864,15 +7864,14 @@ const filePreview = setupFilePreview({
 // （4 の 2。git・プラグイン・作業フォルダーへの入口はこのページだけ。5 の 5）
 let chromeLink = null;   // 中継の接続の状態（chromeBrowser の便り。ホストの PC の画面だけに届く）
 const rightPane = {
-  isOpen: () => chromePanel?.isOpen() === true || filePreview.panelOpen('page-frame'),
-  close() { if (chromePanel?.isOpen()) chromePanel.close(); else if (filePreview.panelOpen('page-frame')) filePreview.close(); },
+  isOpen: () => chromePanel?.isOpen() === true,
+  close() { if (chromePanel?.isOpen()) chromePanel.close(); },
   open(anchor) {
     const id = state.current; if (!id) return;
     loadBrowserUnify().then(unify => {
       if (state.current !== id) return;
       if (chromeWindows.has(id) || unify.tabsOf(id).length) chromePanel?.open(anchor);
-      else if (chromeLink === 'connected') unify.openTab({ sessionId: id }).catch(error => notify(error?.message || t('tabs:address.failed')));
-      else filePreview.pageFrame?.open(`/_pleiad/s/${encodeURIComponent(id)}/new`, { sessionId: id, title: t('tabs:strip.new'), element: anchor });
+      else unify.openTab({ sessionId: id }).catch(error => notify(error?.message || t('tabs:address.failed')));
       browserEntry?.paint();
     });
   },
@@ -8854,8 +8853,7 @@ function jumpToConversation({ uuid, toolId }) {
   return true;
 }
 /**
- * ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
- * タブを開けるのは Chrome につながっているか、その会話にもうタブがあるとき。それ以外は右パネルの iframe で開く（web/page-frame.mjs）
+ * ファイル・フォルダー・git のページを、Chrome の接続にかかわらず画面内のタブへつなぐ。
  */
 let filePagesConnected = false;
 function connectFilePages(unify) {
@@ -8863,13 +8861,11 @@ function connectFilePages(unify) {
   filePagesConnected = true;
   filePreview.configureBrowserUnify({
     caps: () => state.hostCaps?.browserUnify ?? null,
-    connected: (id) => chromeLink === 'connected' || unify.tabsOf(id).length > 0,
+    connected: () => true,
     tabs: (id) => unify.tabsOf(id),
     openTab: (args) => unify.openTab(args),
     focusTab: (tab, id) => unify.focusTab(tab, id),
     flashTab: (tab, id) => unify.flashTab(tab, id),
-    onRequest: (request) => handlePageRequest(request, { sessionId: request?.sessionId }),
-    pageBar: (frame, context) => unify.frameBar(frame, context),
   });
 }
 /**

@@ -1,4 +1,18 @@
 {
+  "display": {
+    "page": "ページ",
+    "chrome": "Chrome の映像",
+    "updated": "ファイルが更新されました",
+    "update": "更新を表示",
+    "discard": "入力を破棄して再読み込みしますか？",
+    "resume": "AI の操作を再開",
+    "copyTitle": "タイトルをコピー"
+  },
+  "tree": {
+    "close": "ツリーを閉じる",
+    "width": "ツリーの幅",
+    "new": "新しいタブで開く"
+  },
   "strip": {
     "label": "ブラウザーのタブ",
     "new": "新しいタブ",
@@ -17,7 +31,12 @@
     "preview": "プレビュー",
     "source": "原文",
     "showSource": "原文を表示",
-    "locations": { "git": "変更", "plugins": "プラグイン", "attachment": "添付", "new": "URL・パスを入力、または検索" },
+    "locations": {
+      "git": "変更",
+      "plugins": "プラグイン",
+      "attachment": "添付",
+      "new": "URL・パスを入力、または検索"
+    },
     "more": "その他",
     "closePanel": "パネルを閉じる",
     "openPanel": "ブラウザーを開く",

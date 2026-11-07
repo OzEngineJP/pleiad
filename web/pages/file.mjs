@@ -1,6 +1,5 @@
 import { markdownContent, parseTable } from '../file-preview-content.mjs';
 import { node, text, button, query, api, metadata, pageUrl, request, errorView } from './bridge.mjs';
-import { renderTree } from './dir.mjs';
 import { htmlFrame } from './html-once.mjs';
 
 let controller;
@@ -59,7 +58,6 @@ export async function renderFile(root, file) {
   controller = new AbortController(); const { signal } = controller;
   root.append(metadata(file));
   const body = node('div', 'file-body'); root.append(body);
-  const tree = document.querySelector('#tree'); tree.hidden = true;
   let source = query.get('view') === 'source', paintNumber = 0;
   async function paint() {
     const generation = ++paintNumber, content = node('div');
@@ -112,10 +110,6 @@ export async function renderFile(root, file) {
   window.addEventListener('pleiad:page-command', async event => {
     const command = event.detail ?? {};
     if (command.type === 'view') { source = command.view === 'source'; try { await paint(); } catch (error) { errorView(body, error); } }
-    if (command.type === 'tree') { tree.hidden = command.open == null ? !tree.hidden : !command.open; if (!tree.hidden) await renderTree(tree, file.tree, file.path); }
   }, { signal });
-  // ツリーはページの上に重ねる。外を押すか Escape で閉じる
-  document.addEventListener('pointerdown', event => { if (!tree.hidden && !tree.contains(event.target)) tree.hidden = true; }, { signal });
-  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !tree.hidden) tree.hidden = true; }, { signal });
   await paint();
 }

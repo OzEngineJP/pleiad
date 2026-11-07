@@ -4,7 +4,7 @@ import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { markdownContent, parseTable } from './file-preview-content.mjs';
 import { visualizationFrame, isolatedVisualizationUrl, configureVisualizationTabs } from './visualize-frame.mjs';
-import { createPageFrame, createFilePageRouter } from './page-frame.mjs';
+import { createFilePageRouter } from './page-frame.mjs';
 import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon, locateIcon, collapseAllIcon } from './icons.mjs';
 import { fileMenuItems, copyPathText, relativeTo, samePath, notify, download } from './file-actions.mjs';
 import { applySlots, fileSlots, customSlots, gitSlots, chromeSlots, subtitleFor } from './side-panel.mjs';
@@ -33,11 +33,11 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
 /**
  * showMenu は web/client.mjs の右クリックメニュー（1 つを共有する）。cmd はサーバーへのコマンド。
  * osActions() はサーバーのある PC の画面から見ているか（OS の操作を出してよいか。判定はサーバー）。
- * ファイル・可視化のクリックは Pleiad のページ（会話の Chrome のタブ。configureBrowserUnify。ADR 0294）で開く。
+ * ファイル・可視化のクリックは Pleiad のページ（画面内のタブ。configureBrowserUnify。ADR 0294）で開く。
  * ページの口がまだ無い間（サーバーの hostCapabilities が届く前）は右パネルで開く（HTML は原文）
  */
 export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false }) {
-  let unified = null, pageFrame = null, openPage = null;
+  let unified = null, openPage = null;
   let sessionGeneration = 0;
   const resolvedFiles = new Map();
   const rememberFile = where => {
@@ -45,20 +45,14 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     resolvedFiles.set(where.path, where);
   };
   const unifiedEnabled = () => !!unified?.caps?.()?.pages;
-  /** B1 supplies the conversation's tabs and can wrap the fallback in its address bar.
-   * onFileMenu receives a validated iframe request with coordinates in the app. */
+  /** Connect file links to the screen-owned page tabs. */
   function configureBrowserUnify(options) {
     sessionGeneration++;
-    pageFrame?.dispose();
     unified = options;
     configureVisualizationTabs(options ? { connected: options.connected, openTab: options.openTab,
       sessionId:element => getContext(element)?.sessionId, onError:failed } : null);
-    if (!options) { pageFrame = openPage = null; return; }
-    pageFrame = createPageFrame({ preview: options.pagePreview ?? { openPanel }, getSessionId: () => getContext(null)?.sessionId, wrap: options.pageBar,
-      onRequest: request => request.type === 'file-menu'
-        ? options.onFileMenu ? options.onFileMenu(request) : menu(request.x, request.y, { ...request, element: pageFrame.frame })
-        : options.onRequest?.(request) });
-    openPage = createFilePageRouter({ ...options, cmd, frame: pageFrame, resolved: rememberFile,
+    if (!options) { openPage = null; return; }
+    openPage = createFilePageRouter({ ...options, cmd, resolved: rememberFile,
       getGeneration:() => sessionGeneration });
   }
   const panel = el('aside', 'file-preview'); panel.id = 'filePreview'; panel.hidden = true;
@@ -114,7 +108,9 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   const treeRoot = el('div', 'tree file-preview-tree');
   treePane.append(treeHeader, treeRoot);
   const content = el('div', 'file-preview-content'); content.setAttribute('aria-label', t('filePreview.contents')); content.tabIndex = 0;
-  bodyLayout.append(treePane, content);
+  // Keep page browsing contexts connected when another panel is displayed.
+  const browserContent = el('div', 'file-preview-content file-preview-browser-content'); browserContent.hidden = true;
+  bodyLayout.append(treePane, content, browserContent);
   const tree = createTree(treeRoot, {
     nodes: [],
     render(node, row) {
@@ -245,7 +241,9 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * 部品の出し入れは必ずここを通す。モードを変える関数の中で hidden を書き足さない
    */
   function show(extra = {}) {
-    applySlots(parts, { ...slots(), ...extra });
+    const browser = custom?.key === 'chrome-window';
+    content.hidden = browser; browserContent.hidden = !browser;
+    applySlots({ ...parts, content:browser ? browserContent : content }, { ...slots(), ...extra });
     if (file) reveal.textContent = file.kind === 'directory' ? t('files.menu.revealFolder') : t('files.menu.revealFile');
   }
   const clearCurrent = () => document.querySelectorAll('.file-link[aria-current]').forEach(node => node.removeAttribute('aria-current'));
@@ -474,12 +472,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   /** 開いている自前の中身を差し替える（スクロール位置は保つ）。別の中身・閉じているときは何もしない */
   function updatePanel(key, { title, subtitle, body, status: statusText } = {}) {
     if (panel.hidden || custom?.key !== key) return false;
-    const top = content.scrollTop;
+    const target = key === 'chrome-window' ? browserContent : content;
+    const top = target.scrollTop;
     if (title !== undefined) { if (title && typeof title === 'object') name.replaceChildren(title); else name.textContent = title; }
     if (subtitle !== undefined) path.textContent = subtitle;
     if (statusText !== undefined) status.textContent = statusText;
-    if (body) content.replaceChildren(body);
-    content.scrollTop = top;
+    if (body && target.firstChild !== body) target.replaceChildren(body);
+    target.scrollTop = top;
     return true;
   }
   function open(ref, element, base) {
@@ -653,9 +652,6 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   new MutationObserver(() => { if (!panel.hidden && document.body.classList.contains('settings')) close(false); }).observe(document.body,{attributes:true,attributeFilter:['class']});
   return { close, layout, openPanel, updatePanel, panelOpen: key => !panel.hidden && custom?.key === key,
     configureBrowserUnify, tabMenu,
-    pageEnvChanged: env => pageFrame?.envChanged(env),
-    pageCommand: command => pageFrame?.command(command),
-    get pageFrame() { return pageFrame; },
     /** 右パネルでファイルを開く（拡大表示の「右パネルで開く」） */
     open: (ref, element) => activate(ref, element),
     /** ファイルの操作メニュー（拡大表示・会話の画像） */

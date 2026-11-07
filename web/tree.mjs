@@ -49,7 +49,7 @@ function chevron() {
  *   scrollX は名前を省略せず横にスクロールする使い手（呼び出し側の CSS で行を伸ばす）。選んだ・送った行の名前が見える
  *   よう横位置も合わせ（scrollLeftFor）、すべて畳むと左端へ戻す。無ければ横には触らない
  */
-export function createTree(root, { nodes = [], open = [], empty = t("common.noMatch"), render, onSelect, onOpen, onContext,
+export function createTree(root, { nodes = [], open = [], empty = t("common.noMatch"), render, onSelect, onActivate, onOpen, onContext,
   onLoad, onMore, loading = t("pending.loading"), failed = "", moreLabel = (n) => String(n.more), scrollX = false } = {}) {
   const prefix = `tree${++seq}`;
   const opened = new Set(open);                       // 開いている節の id。呼び出し側が state() で持ち出せる。setNodes でも消さない
@@ -69,7 +69,7 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
     }
   }
   /** 開ける節か。まだ読んでいない（lazy）フォルダーも含む */
-  const branch = (n) => Boolean(n.lazy || n.children?.length);
+  const branch = (n) => Boolean(n.branch || n.lazy || n.children?.length);
   // 絞り込み中は祖先を全部開く。元の開閉は opened に残したままにして、解除で戻す
   const expanded = (n) => branch(n) && (filter ? true : opened.has(n.id));
 
@@ -143,8 +143,9 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
       chev.onclick = (e) => { e.stopPropagation(); toggle(n); };
       row.append(chev);
       if (render) render(n, row); else row.append(el("span", "nm", n.name));
-      row.onclick = () => select(n);                   // 単押しは選択だけ。開閉は chevron かダブルクリック
-      row.ondblclick = () => toggle(n);
+      row.onclick = event => { select(n); if (onActivate) { if (branch(n)) toggle(n); else onActivate(n, event); } };
+      row.onauxclick = event => { if (onActivate && event.button === 1 && !branch(n)) { event.preventDefault(); select(n); onActivate(n, event); } };                   // 単押しは選択だけ。開閉は chevron かダブルクリック
+      row.ondblclick = () => { if (!onActivate) toggle(n); };
       if (onContext) row.oncontextmenu = (e) => {
         e.preventDefault();
         select(n, false);
@@ -263,9 +264,9 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
   }
 
   /** すべて畳む。一番上の節（根）だけ開いたまま残し、根の直下が並ぶ */
-  function collapseAll() {
+  function collapseAll({ keepRoots = true } = {}) {
     opened.clear();
-    for (const n of list) if (branch(n)) opened.add(n.id);
+    if (keepRoots) for (const n of list) if (branch(n)) opened.add(n.id);
     redraw();
     if (scrollX) root.scrollLeft = 0;
   }
@@ -311,6 +312,7 @@ export function createTree(root, { nodes = [], open = [], empty = t("common.noMa
       if (contextFromKeyboard()) e.preventDefault();
       return;
     }
+    if (onActivate && e.key === 'Enter' && selected && !selected.action) { e.preventDefault(); if (branch(selected)) toggle(selected); else onActivate(selected, e); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const order = [...rows.keys()];
     if (!order.length) return;

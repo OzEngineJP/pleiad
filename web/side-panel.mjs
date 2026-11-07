@@ -87,5 +87,5 @@ export function applySlots(parts, config) {
   parts.footActions.replaceChildren(...pick(config.footer));
   if (config.status !== undefined) parts.status.textContent = config.status;
   if (config.statusTitle !== undefined) parts.status.title = config.statusTitle;
-  if (config.body) parts.content.replaceChildren(config.body);
+  if (config.body && parts.content.firstChild !== config.body) parts.content.replaceChildren(config.body);
 }
