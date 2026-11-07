@@ -134,5 +134,25 @@ final class ProtocolTests: XCTestCase {
         XCTAssertFalse(outside.canAllow)
         XCTAssertEqual(outside.reason, "not-dialog")
     }
+
+    func testShouldRequestAppAccessibilitySuppressesRepeats() {
+        // 初めての要求・別の起動の実体（pid の使い回しを含む）は必ず送る
+        XCTAssertTrue(shouldRequestAppAccessibility(previousAccepted: nil, sameInstance: true, secondsSince: 0))
+        XCTAssertTrue(shouldRequestAppAccessibility(previousAccepted: true, sameInstance: false, secondsSince: 0))
+        XCTAssertTrue(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: false, secondsSince: 0.1))
+
+        // 受理された要求は、同じ起動の実体へは繰り返さない（何秒経っても）
+        XCTAssertFalse(shouldRequestAppAccessibility(previousAccepted: true, sameInstance: true, secondsSince: 0))
+        XCTAssertFalse(shouldRequestAppAccessibility(previousAccepted: true, sameInstance: true, secondsSince: 60))
+
+        // 受理されなかった要求は、Chrome の有効化の遅れ（約 2 秒）より長い間隔を置いてからだけ送り直す
+        XCTAssertFalse(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: true, secondsSince: 0.1))
+        XCTAssertFalse(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: true, secondsSince: 2.9))
+        XCTAssertTrue(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: true, secondsSince: 3))
+        XCTAssertTrue(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: true, secondsSince: 3.5))
+        // 間隔は引数で変えられる
+        XCTAssertFalse(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: true, secondsSince: 4, retryAfterSeconds: 5))
+        XCTAssertTrue(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: true, secondsSince: 5, retryAfterSeconds: 5))
+    }
 }
 

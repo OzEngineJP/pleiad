@@ -1270,6 +1270,77 @@ export default async function (t) {
       raised?.ok === true && await core.yieldForeground(agentRef, { to: fgBefore }) === true);
     t.ok('mac.cjs: closeAgent でエージェントの窓を閉じる', await core.closeAgent(agentRef) === true);
   }
+  {
+    // ===== mac.cjs: トグルを入れても DevToolsActivePort の待ち受けが始まらないときは ok にしない（active-port-timeout）=====
+    // steps は chromeEnableStep が順に返す答え（最後は使い回す）。liveAfterToggle なら、トグルが入った後にだけ待ち受けが始まる
+    const makeMac = (steps, { liveAfterToggle = false } = {}) => {
+      const windows = [];
+      const calls = [];
+      let stepCalls = 0;
+      let portLive = false;
+      const helper = {
+        async call(op, args = {}) {
+          calls.push({ op, args });
+          switch (op) {
+            case 'chromeWindows': return { windows: windows.map(w => ({ ...w })), trusted: true };
+            case 'chromeEnableStep': {
+              const step = steps[Math.min(stepCalls++, steps.length - 1)];
+              if (liveAfterToggle && (step?.state === 'toggled' || step?.state === 'already-on')) portLive = true;
+              return step;
+            }
+            case 'chromeClose': return { ok: true };
+            case 'foreground': return { app: { pid: 99, bundleId: 'com.apple.TextEdit', name: 'TextEdit' } };
+            case 'activate': return { activated: true };
+            default: return {};
+          }
+        },
+      };
+      const macOs = createMacChromeOs({
+        helper,
+        env: { HOME: '/Users/alice', AGENT_HOST_CHROME_USER_DATA: '/tmp/ply-mac-ud-x' },
+        exists: p => p === '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        readFile: () => {
+          if (!portLive) throw new Error('ENOENT');   // DevToolsActivePort は書かれない
+          return '9222\n/devtools/browser/11111111-2222-3333-4444-555555555555\n';
+        },
+        probePort: async () => portLive,
+        sleep: async () => {},
+        timing: { portWaitMs: 60, pollMs: 1 },
+        spawn: (exe, args) => {
+          const m = (args.find(a => a.startsWith('data:text/html,')) ?? '').match(/<title>([^<]+)<\/title>/);
+          if (m) windows.push({ id: 'ax-700-1', pid: 700, exe: 'Google Chrome', title: m[1], x: 0, y: 0, width: 800, height: 800, minimized: false, visible: true });
+          return { on() {}, unref() {} };
+        },
+      });
+      return { macOs, calls };
+    };
+    {
+      const { macOs, calls } = makeMac([{ state: 'toggled', checked: true, title: 'Inspect with Chrome Developer Tools' }]);
+      const res = await macOs.enableRemoteDebugging({ profileDir: 'Default' });
+      t.ok('mac.cjs: トグルを入れても待ち受けが始まらなければ active-port-timeout（ok ではない。窓は閉じる）',
+        res.ok === false && res.reason === 'active-port-timeout' && calls.some(c => c.op === 'chromeClose'), JSON.stringify(res));
+      t.ok('mac.cjs: 記録に step ごとの時刻・実際の間隔・helper の応答とポートを待った記録が残る',
+        Array.isArray(res.diag?.steps) && res.diag.steps.length >= 1
+        && typeof res.diag.steps[0].at === 'string' && typeof res.diag.steps[0].gapMs === 'number'
+        && res.diag.steps[0].step?.state === 'toggled' && res.diag.portWait?.listening === false && res.diag.portWait?.ms >= 0,
+        JSON.stringify(res.diag));
+    }
+    {
+      const { macOs } = makeMac([{ state: 'already-on', checked: true, title: 'Inspect with Chrome Developer Tools' }]);
+      const res = await macOs.enableRemoteDebugging({ profileDir: 'Default' });
+      t.ok('mac.cjs: already-on でも待ち受けが始まらなければ active-port-timeout', res.ok === false && res.reason === 'active-port-timeout', JSON.stringify(res));
+    }
+    {
+      const { macOs } = makeMac(
+        [{ state: 'toggled', checked: true, title: 'Inspect', axEnable: { requested: false, reason: 'accepted', count: 1 } }],
+        { liveAfterToggle: true },
+      );
+      const res = await macOs.enableRemoteDebugging({ profileDir: 'Default' });
+      t.ok('mac.cjs: 待ち受けが始まれば ok で、記録に helper の AX 要求の結果が残る',
+        res.ok === true && res.diag?.portWait?.listening === true && res.diag?.steps?.[0]?.step?.axEnable?.reason === 'accepted',
+        JSON.stringify(res.diag));
+    }
+  }
   // ===== Chrome の確認を押す・トグルを入れる（ADR 0218）。UI Automation（PowerShell）は偽の uia で置き換える =====
   {
     const w = fakeWin32();

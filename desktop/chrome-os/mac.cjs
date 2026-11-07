@@ -200,19 +200,27 @@ function createMacChromeOs({
   }
 
   async function enableRemoteDebugging({ browser, profileDir = 'Default', userDataDir = null } = {}) {
+    // 落ちたときに原因を分けられる記録。step は helper の返事そのまま（アクセシビリティの要求の結果・
+    // 見つけた候補・探した深さと数・WebArea の有無）。結果に載せて、scripts/verify-chrome-mac.mjs が VERIFY_OUT_DIR の JSON へ残す
+    const diag = {
+      timing: { pollMs: time.pollMs, findSetupMs: time.findSetupMs, toggleMs: time.toggleMs, portWaitMs: time.portWaitMs },
+      findSetup: { attempts: 0 },
+      steps: [],
+      portWait: null,
+    };
     const targetDir = resolveUserDataDir(userDataDir);
-    if (userDataDir != null && !targetDir) return { ok: false, reason: 'invalid-user-data-dir' };
-    if (await isActivePortListening(targetDir)) return { ok: true };
+    if (userDataDir != null && !targetDir) return { ok: false, reason: 'invalid-user-data-dir', diag };
+    if (await isActivePortListening(targetDir)) return { ok: true, diag };
 
     let resolvedBrowser = null;
     let browserRef = browser;
     if (browser != null) {
       resolvedBrowser = typeof browser.id === 'string' ? browsers.get(browser.id) : null;
-      if (!resolvedBrowser) return { ok: false, reason: 'invalid-browser' };
+      if (!resolvedBrowser) return { ok: false, reason: 'invalid-browser', diag };
     } else {
       browserRef = locateBrowser({ product: 'chrome' });
       if (browserRef) resolvedBrowser = browsers.get(browserRef.id);
-      if (!resolvedBrowser) return { ok: false, reason: 'browser-not-found' };
+      if (!resolvedBrowser) return { ok: false, reason: 'browser-not-found', diag };
     }
 
     const prof = typeof profileDir === 'string' && PROFILE_DIR.test(profileDir) ? profileDir : 'Default';
@@ -231,18 +239,22 @@ function createMacChromeOs({
       nonce,
       userDataDir: customDir,
     });
-    if (!launched?.ok) return { ok: false, reason: launched?.reason ?? 'launch-failed' };
+    if (!launched?.ok) return { ok: false, reason: launched?.reason ?? 'launch-failed', diag };
 
     // 1. 開いた設定用の窓を題のマーカーで見つける
     let setupId = null;
-    const findDeadline = Date.now() + time.findSetupMs;
+    const findStart = Date.now();
+    const findDeadline = findStart + time.findSetupMs;
     while (Date.now() < findDeadline) {
+      diag.findSetup.attempts += 1;
       const res = await callHelper('chromeWindows', {});
       const hit = res?.windows?.find(w => typeof w.title === 'string' && w.title.includes(marker));
       if (hit?.id) { setupId = String(hit.id); break; }
       await sleep(time.pollMs);
     }
-    if (!setupId) return { ok: false, reason: 'window-not-found' };
+    diag.findSetup.ms = Date.now() - findStart;
+    diag.findSetup.windowId = setupId;
+    if (!setupId) return { ok: false, reason: 'window-not-found', diag };
 
     try {
       // 2. chrome://inspect/#remote-debugging へ遷移し、チェックボックスをオンにする
@@ -252,6 +264,7 @@ function createMacChromeOs({
       let lastLogKey = '';
       const start = Date.now();
       const deadline = start + time.toggleMs;
+      let prevStepAt = 0;
       while (Date.now() < deadline) {
         const elapsed = Date.now() - start;
         const shouldActivate = navigated && !activated && stillOnMarker && elapsed >= time.activateAfterMs;
@@ -263,6 +276,9 @@ function createMacChromeOs({
           navigate: !navigated,
           activateFallback: shouldActivate,
         });
+        const now = Date.now();
+        diag.steps.push({ at: new Date(now).toISOString(), elapsedMs: now - start, gapMs: prevStepAt ? now - prevStepAt : 0, step });
+        prevStepAt = now;
         const logKey = `${step?.state}:${step?.title}:${step?.checked}:${step?.checkboxes?.length ?? 0}`;
         if (logKey !== lastLogKey) {
           log(`enableStep (${elapsed}ms): ${JSON.stringify(step)}`);
@@ -275,16 +291,20 @@ function createMacChromeOs({
         if (step?.state === 'navigated-bg' || step?.state === 'navigated-active' || step?.state === 'navigated-hotkey') {
           navigated = true;
         } else if (step?.state === 'already-on' || (step?.state === 'toggled' && step?.checked !== false)) {
-          const portDeadline = Date.now() + time.portWaitMs;
+          // オンにできても待ち受けが始まらなければ失敗（DevToolsActivePort が無いのに接続が進むと、下流で別の失敗になる）
+          const portStart = Date.now();
+          const portDeadline = portStart + time.portWaitMs;
+          let listening = false;
           while (Date.now() < portDeadline) {
-            if (await isActivePortListening(targetDir)) return { ok: true };
+            if (await isActivePortListening(targetDir)) { listening = true; break; }
             await sleep(time.pollMs);
           }
-          return { ok: true };
+          diag.portWait = { ms: Date.now() - portStart, listening, state: step?.state };
+          return listening ? { ok: true, diag } : { ok: false, reason: 'active-port-timeout', diag };
         }
         await sleep(time.pollMs);
       }
-      return { ok: false, reason: 'toggle-timeout' };
+      return { ok: false, reason: 'toggle-timeout', diag };
     } finally {
       await callHelper('chromeClose', { id: setupId });
       if (prevFrontPid > 0) await callHelper('activate', { pid: prevFrontPid });

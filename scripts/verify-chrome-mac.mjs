@@ -27,6 +27,8 @@ const { prepareAgentBrowserBin, commandName } = require('../desktop/agent-browse
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = process.env.VERIFY_OUT_DIR || path.join(os.tmpdir(), `ply-chrome-mac-out-${Date.now()}`);
 const HELPER_BIN = process.env.VERIFY_HELPER_BIN || path.join(ROOT, 'desktop', 'computer', 'mac', 'dist', 'pleiad-computer-helper');
+// 確かめる Chrome の実行ファイル（無ければ CI と同じ既定。ほかの版を試すときだけ VERIFY_CHROME_BIN を付ける）
+const CHROME_BIN = process.env.VERIFY_CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -99,9 +101,21 @@ async function main() {
   let conn = null;
   let relay = null;
   let testServer = null;
-  const userDataDir = await fs.mkdtemp(path.join('/tmp', 'ply-chrome-ud-'));
-  const dataDir = await fs.mkdtemp(path.join('/tmp', 'ply-data-'));
+  // 作業の一時フォルダーは OUT_DIR の下（終わりに消す）。このスクリプトが起こした Chrome の pid だけを覚えて、終わりにそれだけを止める
+  const userDataDir = await fs.mkdtemp(path.join(OUT_DIR, 'chrome-ud-'));
+  const dataDir = await fs.mkdtemp(path.join(OUT_DIR, 'data-'));
   process.env.AGENT_HOST_CHROME_USER_DATA = userDataDir;
+  const launchedChromePids = new Set();
+  const trackChrome = child => { if (child?.pid) launchedChromePids.add(child.pid); return child; };
+
+  results.chromeBin = CHROME_BIN;
+  results.chromeBinFromEnv = Boolean(process.env.VERIFY_CHROME_BIN);
+  const swvers = await runCmd('/usr/bin/sw_vers', [], { timeoutMs: 5000 });
+  results.macos = Object.fromEntries(swvers.stdout.split('\n').map(line => {
+    const i = line.indexOf(':');
+    return i < 0 ? null : [line.slice(0, i).trim(), line.slice(i + 1).trim()];
+  }).filter(Boolean));
+  log(`macOS: ${JSON.stringify(results.macos)}, OUT_DIR=${OUT_DIR}`);
 
   try {
     // ---- Stage 1: Helper & TCC Accessibility 確認 -----------------------------------------------
@@ -138,6 +152,8 @@ async function main() {
       helper,
       env: process.env,
       log: l => log(`[mac-os] ${l}`),
+      // mac.cjs が開く設定用の窓の Chrome（起動したプロセスはそのまま終わることが多いが、起こしたことは覚えておく）
+      spawn: (command, args, options) => trackChrome(spawn(command, args, options)),
     });
     attachChromeOs(worker, { chromeOs: macOs, log: l => log(`[attach] ${l}`) });
     const osClient = parentPortChromeOs(port, { timeoutMs: 20_000, readyWaitMs: 5000 });
@@ -150,25 +166,28 @@ async function main() {
     log(`Located browser: ${JSON.stringify(browser)}`);
     if (!browser) throw new Error('Google Chrome not found on runner');
 
-    const chromeBin = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const chromeBin = CHROME_BIN;
     const verOut = await runCmd(chromeBin, ['--version']);
-    log(`Google Chrome version: ${verOut.stdout || verOut.stderr}`);
+    log(`Google Chrome version: ${verOut.stdout || verOut.stderr} (${chromeBin})`);
     results.chromeVersion = verOut.stdout;
 
     log(`Launching initial Google Chrome window with --user-data-dir=${userDataDir}`);
-    chromeProc = spawn(chromeBin, [
+    chromeProc = trackChrome(spawn(chromeBin, [
       `--user-data-dir=${userDataDir}`,
       '--profile-directory=Default',
       '--no-first-run',
       '--no-default-browser-check',
       'about:blank',
-    ], { detached: true, stdio: 'ignore' });
+    ], { detached: true, stdio: 'ignore' }));
     chromeProc.unref();
 
     // 最初の窓が立ち上がるのを待つ
     let initialWindows = [];
-    const waitWinEnd = Date.now() + 15_000;
+    let windowPolls = 0;
+    const waitWinStart = Date.now();
+    const waitWinEnd = waitWinStart + 15_000;
     while (Date.now() < waitWinEnd) {
+      windowPolls += 1;
       const snap = await osClient.snapshotWindows();
       if (Array.isArray(snap) && snap.length > 0) {
         initialWindows = snap;
@@ -176,6 +195,7 @@ async function main() {
       }
       await sleep(300);
     }
+    const initialWindowWait = { ms: Date.now() - waitWinStart, polls: windowPolls };
     log(`Initial Chrome windows: ${JSON.stringify(initialWindows)}`);
     const portBefore = await readActivePort(userDataDir);
     log(`DevToolsActivePort before enableRemoteDebugging: ${JSON.stringify(portBefore)}`);
@@ -192,18 +212,27 @@ async function main() {
       userDataDir,
     });
     const enableElapsedMs = Date.now() - enableStart;
-    log(`enableRemoteDebugging result (${enableElapsedMs}ms): ${JSON.stringify(enableRes)}`);
+    const { diag: enableDiag, ...enableSummary } = enableRes ?? {};
+    log(`enableRemoteDebugging result (${enableElapsedMs}ms): ${JSON.stringify(enableSummary)}`);
 
     // DevToolsActivePort が書かれるのを確かめる
     let activePort = null;
-    const waitPortEnd = Date.now() + 5000;
+    let portPolls = 0;
+    const waitPortStart = Date.now();
+    const waitPortEnd = waitPortStart + 5000;
     while (Date.now() < waitPortEnd) {
+      portPolls += 1;
       activePort = await readActivePort(userDataDir);
       if (activePort) break;
       await sleep(200);
     }
+    const activePortWait = { ms: Date.now() - waitPortStart, polls: portPolls };
     const udEntries = await fs.readdir(userDataDir).catch(() => []);
     log(`userDataDir entries after enableRemoteDebugging: ${JSON.stringify(udEntries)}`);
+    // 層が集めた記録（step ごとの時刻と間隔・helper の応答）は単体の JSON でも残す（results.json の enableRes にも入る）
+    if (enableDiag) {
+      await fs.writeFile(path.join(OUT_DIR, 'enable-diag.json'), JSON.stringify(enableDiag, null, 2));
+    }
     if (!enableRes?.ok || !activePort) {
       const failAx = await helper.call('chromeDumpAx', { maxDepth: 15 }).catch(e => ({ error: e.message }));
       await fs.writeFile(path.join(OUT_DIR, 'ax-enable-failed.json'), JSON.stringify(failAx, null, 2));
@@ -217,12 +246,14 @@ async function main() {
       activePort,
       udEntries,
       initialWindows,
+      initialWindowWait,
+      activePortWait,
       windowsAfterEnable,
     };
     log(`ActivePort after enableRemoteDebugging: ${JSON.stringify(activePort)}, windowsAfterEnable=${JSON.stringify(windowsAfterEnable)}`);
 
     if (!activePort) {
-      throw new Error(`DevToolsActivePort was not written after enableRemoteDebugging: ${JSON.stringify(enableRes)}`);
+      throw new Error(`DevToolsActivePort was not written after enableRemoteDebugging: ${JSON.stringify(enableSummary)}`);
     }
 
     // ---- Stage 3: core/chrome/connection.mjs で接続 + findPermissionDialog + allowPermission ------
@@ -423,10 +454,14 @@ async function main() {
     try { await conn?.close?.(); } catch {}
     try { await testServer?.close?.(); } catch {}
     try { helper?.stop?.(); } catch {}
-    if (chromeProc?.pid) {
-      try { process.kill(chromeProc.pid, 'SIGTERM'); } catch {}
+    // 自分が起こした Chrome（とその子）だけを止める。killall は利用者の Chrome も止めるので使わない
+    for (const pid of launchedChromePids) {
+      try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch {} }
     }
-    await runCmd('/usr/bin/killall', ['Google Chrome'], { timeoutMs: 5000 }).catch(() => {});
+    // Chrome が完全に終わるのを少し待ってから、作業の一時フォルダーを消す（証拠の OUT_DIR にプロファイルを残さない）
+    if (launchedChromePids.size) await sleep(1000);
+    await fs.rm(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 }).catch(() => {});
+    await fs.rm(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 }).catch(() => {});
   }
 
   const allOk = results.stages.permissions?.ok === true &&
