@@ -356,7 +356,7 @@
     "noticeWorkspaceGone": "Workspace: worktree {{branch}} (cleaned up)",
     "noticeWorkspaceUnknown": "Workspace: worktree {{branch}} (state unknown; look at {{path}})",
     "noticeRetry": "The user retried {{of}} with another delegate.\n",
-    "noticeRejections": "Commands rejected before running (for example by Codex's own safety check): {{count}}\n{{items}}\nRead them all in rejections from ply_task_status.",
+    "noticeRejections": "Commands rejected before running (for example by Codex's own safety check or an organization's admin policy): {{count}}\n{{items}}\nRead them all in rejections from ply_task_status.",
     "noticeRejection": "- {{command}} ({{reason}})",
     "noticeLimit": "Stopped at a usage limit. It is expected to reset at {{time}}. After that, continue with ply_task_send, or if you cannot wait, hand the task to another delegate with ply_delegate.",
     "noticeLimitUnknown": "Stopped at a usage limit. The reset time is unknown. Continue later with ply_task_send, or hand the task to another delegate with ply_delegate.",
