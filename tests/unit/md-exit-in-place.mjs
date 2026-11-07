@@ -82,6 +82,12 @@ export default async function(t) {
   // 引用の中の `>` だけの行は、引用の中の項目を閉じない（CommonMark と同じ）
   const inQuote = markdownToDoc('> - a\n>\n>   b'), rows = rowTree(inQuote).info, read = parseStructure('> - a\n>\n>   b'.split('\n')).lines;
   t.ok('引用の中の `>` だけの行の後も、項目の続きの行は項目の中', depth(rows[2].node).join() === '1,1' && depth(read[2].node).join() === '1,1', JSON.stringify([depth(rows[2].node), depth(read[2].node)]));
+  // 項目と子の間で Enter×2 を押してやめた行の下の中身は、項目の字下げを外して一緒に出す。残すと字を打ったときにこの行が外へ飛ぶ
+  for (const [seed, want] of [['- a\n  - b', '- a\n\nb\n- b'], ['- a\n  b', '- a\n\nb\nb']]) {
+    const out = enter(enter({ ...start(seed), sel: caret(0, 1) })), typed = type(out, 'b');
+    const lines = parseStructure(md(typed).split('\n')).lines;
+    t.ok(`${JSON.stringify(seed)} の項目と中身の間でやめた行に打っても、行は項目の外のまま`, md(typed) === want && typed.blocks[1].kind === 'p' && depth(rowTree(typed.blocks).info[1].node).join() === '0,0' && depth(lines[2].node).join() === '0,0', md(typed));
+  }
   for (const raw of ['> a\nb', '- a\nb', '1. a\nb', '> > a\n> b', '> a\n\nb', '- a\n\n', '> - a\n> \n> b']) {
     t.ok(`既存原文を読むだけでは変更しない ${JSON.stringify(raw)}`, docToMarkdown(markdownToDoc(raw)) === raw);
   }

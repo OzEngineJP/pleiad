@@ -935,6 +935,14 @@ function releaseStructure(next, b) {
       kind = parent.parent.ordered ? 'ol' : 'ul';
     }
   }
+  // 項目をやめた行の下にあるその項目の中身（子の項目・続きの行）は、項目の字下げを外して一緒に出す。
+  // Markdown は項目と子の間に段落を置けないので、残すと後でこの行に字を打ったときに外へ飛ぶ
+  const gone = own[n]?.node.t === 'item' && !(kind === 'ul' || kind === 'ol') ? own[n].node : null;
+  for (let k = b + 1; gone && k < next.blocks.length; k++) {
+    const x = next.blocks[k], m = S.info[k]?.marks.find((y) => y.node === gone);
+    if (!m) break;
+    if (m.end > m.at && m.end <= x.marker.length) next.blocks[k] = { ...x, marker: x.marker.slice(0, m.at) + x.marker.slice(m.end) };
+  }
   next.blocks[b] = { ...blk, kind, marker };
   next.sel = caret(b, 0);
   renumber(next.blocks);
