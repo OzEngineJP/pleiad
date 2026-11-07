@@ -22,7 +22,11 @@ export const pageUrl = (kind, path, extra = {}) => {
   const q = new URLSearchParams(extra); if (path != null) q.set('path', path);
   return `${prefix}${kind}${q.size ? `?${q}` : ''}`;
 };
-export const openFile = (path, kind = 'file') => { location.href = pageUrl(kind === 'directory' ? 'dir' : kind, path); };
+export const openFile = (path, kind = 'file') => {
+  const url = pageUrl(kind === 'directory' ? 'dir' : kind, path);
+  if (parent !== window) parent.postMessage({ type:'pleiad:page-open', sessionId, url }, location.origin);
+  else location.href = url;
+};
 export async function api(name, params = {}) {
   const q = new URLSearchParams(params);
   const res = await fetch(`${prefix}api/${name}${q.size ? `?${q}` : ''}`, { credentials:'same-origin', cache:'no-store' });

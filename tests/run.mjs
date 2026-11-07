@@ -930,6 +930,7 @@ const SUITES = [
   './unit/browser-unify-b3.mjs',
   './unit/browser-unify-ws.mjs',
   './unit/browser-unify-tabs.mjs',
+  './unit/browser-pages-w1.mjs',
 
   // --- B2 映像からの操作・スマホの入力 ---
   './unit/phone-input.mjs',
