@@ -112,7 +112,7 @@ export function createMarkdownEditor(root, o) {
   function readBlock(div) {
     const kind = KINDS.has(div.dataset.k) ? div.dataset.k : 'p';
     if (kind === 'att') {
-      return { kind, marker: '', runs: [], ...(div.dataset.src ? { src: JSON.parse(div.dataset.src) } : {}), ...(div.dataset.breakBefore !== undefined ? { breakBefore: div.dataset.breakBefore } : {}), raw: div.dataset.raw ?? '', ...(div.dataset.path ? { path: div.dataset.path } : {}), ...(div.dataset.pid ? { pid: div.dataset.pid } : {}) };
+      return { kind, marker: '', runs: [], ...(div.dataset.src ? { src: JSON.parse(div.dataset.src) } : {}), raw: div.dataset.raw ?? '', ...(div.dataset.path ? { path: div.dataset.path } : {}), ...(div.dataset.pid ? { pid: div.dataset.pid } : {}) };
     }
     const runs = [];
     walk(div, [], runs);
@@ -121,7 +121,6 @@ export function createMarkdownEditor(root, o) {
     const b = { kind, marker: div.dataset.m ?? '', runs: merged };
     if (div.dataset.src) b.src = JSON.parse(div.dataset.src);
     if (div.dataset.pad !== undefined && !runsLength(merged)) b.pad = true;
-    if (div.dataset.breakBefore !== undefined) b.breakBefore = div.dataset.breakBefore;
     return b;
   }
 
@@ -360,7 +359,6 @@ export function createMarkdownEditor(root, o) {
     if (b.marker) div.dataset.m = b.marker;
     if (b.pad) div.dataset.pad = '';
     if (b.src) div.dataset.src = JSON.stringify(b.src);
-    if (b.breakBefore !== undefined) div.dataset.breakBefore = b.breakBefore;
     if (b.kind === 'att') {
       div.contentEditable = 'false';
       div.dataset.raw = b.raw ?? '';
@@ -377,9 +375,9 @@ export function createMarkdownEditor(root, o) {
 
   const keyOf = (b) => {
     const src = b.src ? `${b.src.id}:${b.src.i}` : '';
-    if (b.kind === 'att') return `att|${src}|${JSON.stringify(b.breakBefore)}|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`;
+    if (b.kind === 'att') return `att|${src}|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`;
     const body = () => { let k = keyMemo.get(b); if (k === undefined) { k = `|${JSON.stringify(b.runs.map(r => [r.text, r.marks.map(m => [m.id, m.t, m.d, m.url])]))}`; keyMemo.set(b, k); } return k; };
-    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}|${src}|${JSON.stringify(b.breakBefore)}${body()}`;
+    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}|${src}${body()}`;
   };
 
   // ---- 行の飾り（字下げ・項目の記号・引用の線・コードの角）。どれも前後の行で決まる（親の項目・番号・引用の深さ）ので、

@@ -13,7 +13,6 @@
 //   marker 行頭の記号と字下げ（`## `・`  - `・`3. `・`> > `・`> # `・cont は項目の中身の始まりまでの空白）。p は ''、code は外側の分だけ
 //   runs   インラインの並び [{ text, marks: [{ id, t: 'strong'|'em'|'code'|'link', d?, url? }] }]。code の行は印の無い 1 つの run
 //   att    添付の 1 行（原子）。raw は送る 1 行（`[添付] パス`）、path は解決済みのパス、pid は送っている途中の仮の ID
-//   breakBefore 直前にシリアライズする段落境界（外側の引用・字下げだけ）。編集行やカーソル位置を増やさない
 //   pad    添付の前後・閉じたコードブロックの後ろに、キャレットを置くために足した空行。空のうちは Markdown に出さない
 // 位置: { b: ブロックの添字, v: ブロックの見える文字の中の位置 }（記号・区切りは数えない）。選択は { s, e }（s ≤ e）
 //
@@ -665,7 +664,6 @@ export function normalizeRows(blocks, { resolve = () => null, plain = false, sel
         const v = fit.shift === 'raw' ? vOfRaw(nb, rawOffsetOf(b, sel[k].v)) : sel[k].v + fit.shift;
         sel[k] = { b: i, v: nb.kind === 'att' ? 0 : Math.min(v, runsLength(nb.runs)) };
       }
-      if (b.breakBefore !== undefined && nb.breakBefore === undefined) nb.breakBefore = b.breakBefore;
       blocks[i] = nb;
       changed = true;
     }
@@ -690,7 +688,7 @@ export function deleteSelection(st) {
   const { s, e } = next.sel;
   const bs = next.blocks[s.b], be = next.blocks[e.b];
   if (s.b === e.b) {
-    if (bs.kind === 'att') { removeAtomAt(next.blocks, s.b); ensureShape(next.blocks); next.sel = caret(Math.min(s.b, next.blocks.length - 1), 0); return next; }
+    if (bs.kind === 'att') { next.blocks.splice(s.b, 1); ensureShape(next.blocks); next.sel = caret(Math.min(s.b, next.blocks.length - 1), 0); return next; }
     bs.runs = mergeRuns([...sliceRuns(bs.runs, 0, s.v), ...sliceRuns(bs.runs, e.v)]);
     next.sel = caret(s.b, s.v);
     return next;
@@ -703,7 +701,7 @@ export function deleteSelection(st) {
     // コードの行と本文の行をつなぐときは、つないだ側の種類に合わせて文字にそろえる
     if (bs.kind === 'code') merged.runs = plainRun(runsText(head) + (be.kind === 'code' ? runsText(tail) : (e.v === 0 ? be.marker : '') + serializeRuns(tail)));
     else if (be.kind === 'code') merged.runs = mergeRuns([...head, ...plainRun(runsText(tail))]);
-  } else if (tail) merged = { ...be, runs: tail, marker: e.v === 0 ? be.marker : '', ...(be.breakBefore === undefined && bs.breakBefore !== undefined ? { breakBefore: bs.breakBefore } : {}) };
+  } else if (tail) merged = { ...be, runs: tail, marker: e.v === 0 ? be.marker : '' };
   else if (head) merged = { ...bs, runs: head };
   else merged = null;
   const at = s.b;
@@ -935,7 +933,6 @@ function releaseStructure(next, b) {
     }
   }
   next.blocks[b] = { ...blk, kind, marker };
-  if (blk.kind !== 'h') delete next.blocks[b].breakBefore;
   next.sel = caret(b, 0);
   renumber(next.blocks);
   return next;
@@ -1044,7 +1041,7 @@ export function backspaceAtStart(st) {
   if (b === 0) return next;
   const prev = next.blocks[b - 1];
   if (prev.kind === 'att') {
-    removeAtomAt(next.blocks, b - 1);
+    next.blocks.splice(b - 1, 1);
     ensureShape(next.blocks);
     next.sel = caret(Math.min(b - 1, next.blocks.length - 1), 0);
     return next;
@@ -1069,7 +1066,7 @@ export function deleteAtEnd(st) {
   const after = next.blocks[b + 1];
   const here = next.blocks[b];
   if (after.kind === 'att') {
-    removeAtomAt(next.blocks, b + 1);
+    next.blocks.splice(b + 1, 1);
     ensureShape(next.blocks);
     next.sel = caret(b, next.sel.s.v);
     return next;
@@ -1105,11 +1102,9 @@ export function insertAtom(st, atom) {
     next.blocks.splice(at, 0, atom);
   } else if (!blk.runs.length) {
     at = b;
-    if (blk.breakBefore !== undefined) atom = { ...atom, breakBefore: blk.breakBefore };
     next.blocks.splice(b, 1, atom);
   } else if (v === 0) {
     at = b;
-    if (blk.breakBefore !== undefined) { atom = { ...atom, breakBefore: blk.breakBefore }; delete blk.breakBefore; }
     next.blocks.splice(b, 0, atom);
   } else if (v >= runsLength(blk.runs)) {
     at = b + 1;
@@ -1131,15 +1126,6 @@ export function insertAtom(st, atom) {
   return next;
 }
 
-// Removing an atom does not remove the paragraph boundary it temporarily owns.
-function removeAtomAt(blocks, i) {
-  const before = blocks[i].breakBefore, following = blocks[i + 1];
-  if (before !== undefined && following && following.breakBefore === undefined) {
-    blocks[i + 1] = { ...following, breakBefore: before, pad: undefined };
-  }
-  blocks.splice(i, 1);
-}
-
 /** 条件に合う添付を外す */
 export function removeAtoms(st, pred) {
   const next = clone(st);
@@ -1149,7 +1135,7 @@ export function removeAtoms(st, pred) {
     const b = next.blocks[i];
     if (b.kind !== 'att' || !pred(b)) continue;
     if (i < at) shift++;
-    removeAtomAt(next.blocks, i);
+    next.blocks.splice(i, 1);
   }
   ensureShape(next.blocks);
   const idx = Math.max(0, Math.min(at - shift, next.blocks.length - 1));
@@ -1242,7 +1228,6 @@ function spliceParsed(cur, parsed, { plain = false, resolve = () => null, rich =
   const firstIdx = seq.length;
   // 貼った行は編集した行（読み込んだ元の文字 src は持たない）
   seq.push(...intoContainer(clone(parsed).map(({ src: _, ...x }) => x), pre, contKind(own, own.length)));
-  if (blk.breakBefore !== undefined) seq[0].breakBefore = blk.breakBefore;
   // 空の頭の行は貼った先頭の行と一体（記号ごと置き換える）。中身のある行なら、貼った先頭の行の中身を後ろにつなぐ
   if (firstIdx === 1 && seq[1].kind !== 'att' && seq[0].kind !== 'att' && !(inCode) && (!rich || firstKind === 'p')) {
     seq[0] = { ...seq[0], runs: mergeRuns([...seq[0].runs, ...seq[1].runs]) };
@@ -1361,7 +1346,7 @@ export function applyTriggers(st, ch, { plain = false } = {}) {
   if (lineStart && ch === '`' && text.slice(0, v) === '```') {
     const next = clone(st);
     const own = ownMarks(rowTree(st.blocks).info[b], blk), inner = contPrefix(blockRaw(blk), own);
-    next.blocks[b] = { ...codeBlock('```' + text.slice(v), blk.marker), ...(blk.breakBefore !== undefined ? { breakBefore: blk.breakBefore } : {}) };
+    next.blocks[b] = codeBlock('```' + text.slice(v), blk.marker);
     next.blocks.splice(b + 1, 0, codeBlock('', inner), codeBlock('```', inner));
     ensureShape(next.blocks);
     next.sel = caret(b, 3);

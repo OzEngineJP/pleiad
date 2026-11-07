@@ -58,7 +58,7 @@ export default async function (t) {
   const multiline = replaceMarkdownRange(s, 'new\nline', offset, offset + 1);
   t.ok('範囲APIの複数行置換でも境界を編集行へ戻さない', md(multiline) === '> a\n\nnew\nline' && multiline.blocks.length === 3 && shape(multiline) === 'quote,p,p');
   const removeBoundary = replaceMarkdownRange(s, '', 4, 5);
-  t.ok('原文APIで区切りを明示削除すれば通常の原文として扱う', md(removeBoundary) === '> a\nb' && !removeBoundary.blocks.some(b => b.breakBefore !== undefined));
+  t.ok('原文APIで区切りを明示削除すれば通常の原文として扱う', md(removeBoundary) === '> a\nb' && shape(removeBoundary) === 'quote,quote');
   const replaceAll = replaceMarkdownRange(s, '> pasted\n> quote', 0, raw.length);
   t.ok('原文全置換は旧編集状態を持ち越さない', md(replaceAll) === '> pasted\n> quote' && shape(replaceAll) === 'quote,quote');
   const prepended = replaceMarkdownRange(s, 'queued\n\n', 0, 0);
