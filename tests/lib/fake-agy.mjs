@@ -321,6 +321,32 @@ async function runTurn(text) {
   // 前置きの無い複数段落のプロンプト（候補作りなどの別経路）はそのまま
   const hasPreamble = /Pleiad が追加した指示|Pleiad の委譲ツール|の指示（適用範囲[:：]|instructions \(|Pleiad instructions/.test(wire.slice(0, wire.lastIndexOf("\n\n")));
   if (hasPreamble && wire.includes("\n\n")) text = wire.slice(wire.lastIndexOf("\n\n") + 2);
+
+  // 思考の署名が通らなくなった会話（docs/multi-backend.md §2.8「思考の署名が通らない会話」）。実機の記録と同じく、
+  // step を 1 つも出さずに INVALID_ARGUMENT の ERROR だけを返す。FAKE_AGY_SIGNATURE_DIR に会話の id の印（poison-signature で置く）か
+  // all の印（poison-signature-all。新しい会話も含めて全部）があれば、どの発言にもそう返す
+  const signatureDir = process.env.FAKE_AGY_SIGNATURE_DIR;
+  if (signatureDir && (fs.existsSync(path.join(signatureDir, conversationId)) || fs.existsSync(path.join(signatureDir, "all")))) {
+    return send({ event: "result", result: {
+      conversation_id: conversationId, status: "ERROR", response: "", error: "INVALID_ARGUMENT (code 400): Invalid thought signature.",
+      duration_seconds: 0, num_turns: 0,
+      usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
+    } });
+  }
+  if (signatureDir && (text === "poison-signature" || text === "poison-signature-all")) {
+    fs.mkdirSync(signatureDir, { recursive: true });
+    fs.writeFileSync(path.join(signatureDir, text === "poison-signature" ? conversationId : "all"), "");
+    return answer(`署名を壊した: ${text}`);
+  }
+  // 同じ断りが step の始まった後に来る形（作り直さない側の確かめ）
+  if (text === "signature-after-step") {
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "tool", tool_name: "read_file", tool_info: { parameters: { path: "x" } } });
+    return send({ event: "result", result: {
+      conversation_id: conversationId, status: "ERROR", response: "", error: "INVALID_ARGUMENT (code 400): Invalid thought signature.",
+      duration_seconds: 0.1, num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 1 },
+    } });
+  }
   // wire-has:<探す文字列> は、前置きを含む届いた本文にその文字列があるかを返す（返答の切り詰めで落ちないように 1 語だけ返す）
   if (text.startsWith("wire-has:")) return answer(wire.includes(text.slice("wire-has:".length)) ? "wire-has:yes" : "wire-has:no");
 
@@ -491,7 +517,9 @@ async function runTurn(text) {
       event: "result",
       result: {
         conversation_id: conversationId, status: "ERROR", response: "",
-        error: "agy が失敗した", duration_seconds: 0, num_turns: 1,
+        // fail-400 は思考の署名ではない INVALID_ARGUMENT（作り直さない側の確かめ）
+        error: text === "fail-400" ? "INVALID_ARGUMENT (code 400): Request contains an invalid argument." : "agy が失敗した",
+        duration_seconds: 0, num_turns: 1,
         usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
       },
     });

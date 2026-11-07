@@ -874,10 +874,24 @@ export function wrapBackend(native) {
     return true;
   };
   // 巻き戻した次のターン。resumeDropsTurn が拒否したら（切り口が合わない。拒否の文面には依らず、バックエンドが rewindRejected を付けたもの）、
-  // ホスト管理に落として一度だけやり直す。拒否は繰り返し再試行しない（SDK の注意）。拒否はプロンプトを渡す前に起きるので、やり直しても二重に送らない
+  // ホスト管理に落として一度だけやり直す。拒否は繰り返し再試行しない（SDK の注意）。拒否はプロンプトを渡す前に起きるので、やり直しても二重に送らない。
+  // ネイティブの会話がもう使えない（バックエンドが nativeUnusable を付けた。agy の思考の署名が通らない会話。docs/multi-backend.md §2.8）ときも同じ形で、
+  // 記録を新しいネイティブの会話へ引き継いで一度だけやり直す（区切りの印 recover）。断りは何も実行する前に起き、発言はバックエンドが控えから外している。
+  // やり直しは新しい会話なので同じ印は付かず、また断られたらそのまま失敗になる（送信待ちの「失敗」。同じ会話へ送り続けない）
   wrapped.runTurn = async (args) => {
     try { return await runOnce(args); }
     catch (error) {
+      const recover = error?.nativeUnusable && args.sessionId
+        ? await wrapped.markForRebuild(args.sessionId, { kind: 'recover' }).catch((e) => {
+          // i18n-ignore: サーバーのログ
+          console.error("  conversations: 使えない会話を作り直す印を付けられなかった:", String(e?.message ?? e).slice(0, 200));
+          return false;
+        }) : false;
+      if (recover) {
+        // i18n-ignore: サーバーのログ
+        console.error("  conversations: ネイティブの会話が使えないので、記録を新しい会話へ引き継いでやり直す:", String(error.message).slice(0, 200));
+        return runOnce(args);
+      }
       if (!error?.rewindRejected || !args.sessionId) throw error;
       console.error("  rewind: 巻き戻しを拒否されたのでホスト管理に落とす:", String(error.message).slice(0, 200));
       await becomeHostManaged(args.sessionId, await conversation(args.sessionId), await wrapped.getMessages(args.sessionId, { fullResults: true }),
@@ -1003,8 +1017,12 @@ export function wrapBackend(native) {
             // 実測は次のターンの contextWindow で後から置き換える。それまでは試し（context-rebuild-probe.md）の 0.70 トークン/字で見積もる
             afterTokens: Math.max(1, Math.round(context.length * 0.70)), afterEstimated: true };
         } catch (e) {
-          await reportRebuild({ kind, phase: 'failed', reason: String(e?.message ?? e) });
-          if (rebuildMark.from) {
+          // 使えなくなった会話の作り直し（recover）は、前の会話へ戻れない。失敗の区切りは出さず、下の JSON の写しで新しい会話へ引き継ぐ
+          if (kind === 'recover') {
+            // i18n-ignore: サーバーのログ
+            console.error("  conversations: 作り直す会話の組み立てに失敗したので、記録の写しで引き継ぐ:", String(e?.message ?? e).slice(0, 200));
+          } else await reportRebuild({ kind, phase: 'failed', reason: String(e?.message ?? e) });
+          if (rebuildMark.from && kind !== 'recover') {
             // 放置後の送信の区切り: 組み立てられなかったので、捨てる前の会話へ戻してそのまま続ける
             r.nativeId = rebuildMark.from;
             r.base = rebuildMark.base;
@@ -1030,11 +1048,14 @@ export function wrapBackend(native) {
         prompt = agentT(args.locale, 'handoff.prompt', { ref, context, prompt: String(args.prompt ?? '') });
         r.injected = prompt;
         r.original = String(args.prompt ?? "");
+        // 使えなくなった会話の作り直し（recover）は、記録から組み立て直す機能を切っていても区切りを残す（新しい会話になったことを 1 行で知らせる）
+        if (rebuildMark?.kind === 'recover' && !pendingRebuildComplete) pendingRebuildComplete = { kind: 'recover', phase: 'complete', ref };
       }
     }
     // このターンの中で初めて nativeId を採用したか（ターン前に nativeId が無かった）。採用した id の transcript が無ければ戻す（finally）
     const before = { nativeId: r.nativeId, segments: r.segments?.length ?? 0 };
     let turnFailed = false;
+    let turnError = null;
     try {
       return await native.runTurn({ ...args, prompt, sessionId: r.nativeId, ...(rewind ? { rewind } : {}),
         hostSessionId: id, hostBackend: wrapped,
@@ -1056,9 +1077,16 @@ export function wrapBackend(native) {
       });
     } catch (e) {
       turnFailed = true;
+      turnError = e;
       throw e;
     } finally {
       await checkpoint;
+      // 何も実行せずに断られたターンの発言（バックエンドが控えから外し、retracted で返す）は、ターンの途中に会話を読んだ取り込み
+      // （getMessages の mergeMessages）で記録に入っていても外す。送り直しの引き継ぎと画面に二重に並ばない
+      if (Array.isArray(turnError?.retracted) && turnError.retracted.length) {
+        const gone = new Set(turnError.retracted.flatMap((uuid) => [uuid, ...(r.nativeId ? [`${native.id}:${r.nativeId}:${uuid}`] : [])]));
+        r.messages = [...r.messages.slice(0, r.base), ...r.messages.slice(r.base).filter((m) => !gone.has(m.uuid))];
+      }
       // ターンの後の取り込み。一時的な SQLite のエラー（Codex の `(code: 1546) disk I/O error`）なら間を空けて読み直し、
       // それでも読めなければ取り込みはこの回は見送る（ターンを失敗にしない。次に会話を読むとき getMessages が取り込む）。
       // 2026-09-27 以降、作業と報告を終えた Codex の委譲の子が、ここで投げたエラーで「失敗」になっていた（core/history-retry.mjs）
