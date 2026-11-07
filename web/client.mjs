@@ -2395,7 +2395,8 @@ function questionCard(ev, into = null) {
   card.append(head);
 
   // question文字列をキーに答えを集める（SDK の answers がその形）
-  const picked = new Map();   // question -> Set<label>
+  // 選択肢は value を返す（無ければ label。ラベルにカンマが入ると区切りが壊れるので、value があるものは value で）
+  const picked = new Map();   // question -> Set<選択肢の value（無ければ label）>
   const notes = new Map();    // question -> 自由記述
 
   for (const q of qs) {
@@ -2406,17 +2407,19 @@ function questionCard(ev, into = null) {
 
     const opts = el("div", "opts");
     for (const o of q.options ?? []) {
+      const key = String(o.value ?? o.label ?? "");
       const b = el("button", "opt");
       b.type = "button";
+      b.dataset.v = key;
       b.append(el("span", "opt-label", o.label ?? ""));
       if (o.description) b.append(el("span", "opt-desc", o.description));
       b.onclick = () => {
         const set = picked.get(q.question) ?? new Set();
-        if (multi) { set.has(o.label) ? set.delete(o.label) : set.add(o.label); }
-        else { set.clear(); set.add(o.label); }
+        if (multi) { set.has(key) ? set.delete(key) : set.add(key); }
+        else { set.clear(); set.add(key); }
         picked.set(q.question, set);
         for (const other of opts.querySelectorAll(".opt")) {
-          other.classList.toggle("on", set.has(other.querySelector(".opt-label")?.textContent));
+          other.classList.toggle("on", set.has(other.dataset.v));
         }
         sync();
       };
@@ -2436,12 +2439,15 @@ function questionCard(ev, into = null) {
     }
     box.append(opts);
 
-    // 「その他」は選択肢に含めない決まりなので、こちらで用意する
-    const other = document.createElement("input");
-    other.className = "other";
-    other.placeholder = t("chat.ask.other");
-    other.oninput = () => { notes.set(q.question, other.value.trim()); sync(); };
-    box.append(other);
+    // 「その他」は選択肢に含めない決まりなので、こちらで用意する。
+    // custom: false の選択肢フォームは自由入力を受け付けない（送っても拒否される）ので、入れ口を出さない
+    if (!(q.custom === false && (q.options ?? []).length)) {
+      const other = document.createElement("input");
+      other.className = "other";
+      other.placeholder = t("chat.ask.other");
+      other.oninput = () => { notes.set(q.question, other.value.trim()); sync(); };
+      box.append(other);
+    }
     card.append(box);
   }
 
@@ -2505,7 +2511,11 @@ function questionCard(ev, into = null) {
     for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
     head.querySelector(".card-kind").textContent = t("chat.ask.done");
     const summary = answers
-      ? qs.map((q) => `${q.header || q.question}: ${answers[q.question]}`).join(" / ")
+      ? qs.map((q) => {
+          const byKey = new Map((q.options ?? []).map((o) => [String(o.value ?? o.label ?? ""), o.label ?? ""]));
+          const shown = String(answers[q.question] ?? "").split(", ").map((v) => byKey.get(v) ?? v).join(", ");
+          return `${q.header || q.question}: ${shown}`;
+        }).join(" / ")
       : t("chat.ask.skipped");
     actions.replaceChildren(el("span", "res", summary));
     activity.afterPermission();

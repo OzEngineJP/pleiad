@@ -419,7 +419,8 @@ function questionsOf(list) {
     question: String(q.question ?? ''),
     header: q.header ?? null,
     multiSelect: Boolean(q.multiple),
-    options: (q.options ?? []).map((o) => ({ label: String(o.label ?? ''), description: o.description ?? null })),
+    custom: q.custom === undefined ? undefined : Boolean(q.custom),
+    options: (q.options ?? []).map((o) => ({ label: String(o.label ?? ''), ...(o.value === undefined ? {} : { value: String(o.value) }), description: o.description ?? null })),
   }));
 }
 
@@ -752,7 +753,13 @@ export const backend = {
       const answer = await askPermission({ toolName: 'question', input: {}, sessionId, toolUseID: p.tool?.callID ?? null, signal: signal?.signal, canAlways: false, kind: 'question', questions })
         .catch(() => ({ allow: false }));
       if (!answer?.allow) return reply(`/question/${p.id}/reject`);
-      const answers = questions.map((q) => String(answer?.answers?.[q.question] ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+      // 単一選択の回答はカンマで切らない（選択肢のラベルにカンマが入りうる。複数選択はカンマ区切りのまま）
+      const answers = questions.map((q) => {
+        const raw = String(answer?.answers?.[q.question] ?? '');
+        if (q.multiSelect) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+        const v = raw.trim();
+        return v ? [v] : [];
+      });
       await reply(`/question/${p.id}/reply`, { answers });
     }
     function onEvent(event) {

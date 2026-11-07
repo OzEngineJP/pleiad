@@ -24,7 +24,7 @@ export default async function(t) {
     if(tail==='inbox'&&method==='GET')return {data:inbox.get(sid)??[]};
     if(method==='GET'&&['permission','form'].includes(tail)) {
       if(pendingFailure)throw new Error('Temporary lookup failure');
-      return {data:sid==='child'?[tail==='permission'?{id:'permission_child',sessionID:sid,action:'shell',resources:['echo'],save:[]}:{id:'form_child',sessionID:sid,fields:[{key:'choice',title:'Choose',type:'string',options:[{label:'Visible',value:'wire-value'}]}]}]:[]};
+      return {data:sid==='child'?[tail==='permission'?{id:'permission_child',sessionID:sid,action:'shell',resources:['echo'],save:[]}:{id:'form_child',sessionID:sid,fields:[{key:'choice',title:'Choose',type:'string',custom:false,options:[{label:'Visible, choice',value:'wire-value'}]}]}]:[]};
     }
     if(tail==='prompt') {
       const receipt={id:body.id,sessionID:sid,time:{created:new Date(1000).toISOString()},type:'user',delivery:body.delivery};
@@ -74,8 +74,13 @@ export default async function(t) {
   const permissions=await protocol.request('GET','/permission');
   assert(permissions.some(p=>p.sessionID==='child'));
   assert(events.some(e=>e.type==='pleiad.child'&&e.properties.childId==='grandchild'));
-  await protocol.request('GET','/question');
-  await protocol.request('POST','/question/form_child/reply',{body:{answers:[['Visible']]}});
+  const pendingQuestions=await protocol.request('GET','/question');
+  assert.equal(pendingQuestions[0].questions[0].options[0].value,'wire-value');
+  assert.equal(pendingQuestions[0].questions[0].custom,false);
+  // 回答はラベルままでも value でも、その選択肢の value として返る（ラベルにカンマが入っていても切らない）
+  await protocol.request('POST','/question/form_child/reply',{body:{answers:[['Visible, choice']]}});
+  assert.deepEqual(calls.at(-1).body,{answer:{choice:'wire-value'}});
+  await protocol.request('POST','/question/form_child/reply',{body:{answers:[['wire-value']]}});
   assert.deepEqual(calls.at(-1).body,{answer:{choice:'wire-value'}});
   pendingFailure=true;await assert.rejects(protocol.request('GET','/permission'),/lookup failure/);pendingFailure=false;
   t.ok('Reconnect discovers children recursively, restores requests, maps choice values and propagates failed lookups',true);

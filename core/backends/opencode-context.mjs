@@ -129,6 +129,16 @@ async function absoluteInstructions(list, cwd) {
 
 const sigOf = (owners) => ['instruction', 'skill', 'mcp'].map((k) => (owners?.[k] === 'ply' ? k[0] : '-')).join('');
 
+/** 全体の設定の置き場（写し元）に websearch の設定があるか。あれば既定の差し込みはしない */
+async function globalWebsearch(source) {
+  const dir = source ?? opencodeConfigHome();
+  for (const name of GLOBAL_CONFIG_FILES) {
+    const config = await readConfig(path.join(dir, name));
+    if (config?.websearch !== undefined) return true;
+  }
+  return false;
+}
+
 /**
  * 全体の設定の置き場を写す（担当の組み合わせごとに 1 つ。<データ置き場>/opencode/managed/<組み合わせ>/opencode）。ターンごとに作り直す。
  * 設定ファイルは担当の種類のキーを外して書き、フォルダーは junction でつなぐ（中身は写さない）。戻りは XDG_CONFIG_HOME に渡す置き場
@@ -221,6 +231,8 @@ export async function managedLaunch({ owners, cwd, dataDir, source, dataHome = p
     const paths = [...(config.skills?.paths ?? []).map((p) => (typeof p === 'string' && !path.isAbsolute(p) && !p.startsWith('~/') ? path.join(cwd, p) : p)), ...await projectSkillDirs(cwd)];
     if (paths.length) config = { ...config, skills: { ...(config.skills ?? {}), paths } };
   }
+  // websearch の既定は、利用者が作業場所・全体の設定に書いていなければ差す（未設定だとプロバイダー選択のフォームが出る）
+  if (config.websearch === undefined && !(await globalWebsearch(source))) config = { ...config, websearch: { provider: 'random' } };
   const env = {
     XDG_CONFIG_HOME: configHome,
     OPENCODE_CONFIG_DIR:path.join(configHome,'opencode'),OPENCODE_CONFIG:'',
