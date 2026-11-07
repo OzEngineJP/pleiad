@@ -88,6 +88,24 @@ export default async function(t) {
     const lines = parseStructure(md(typed).split('\n')).lines;
     t.ok(`${JSON.stringify(seed)} の項目と中身の間でやめた行に打っても、行は項目の外のまま`, md(typed) === want && typed.blocks[1].kind === 'p' && depth(rowTree(typed.blocks).info[1].node).join() === '0,0' && depth(lines[2].node).join() === '0,0', md(typed));
   }
+  // 中身の無い項目の頭へ改行を貼っても、頭と子の間に空の行を作らない（空の行が項目を閉じ、子が外へ出る。Shift+Enter と同じ）
+  for (const seed of ['- a\n  - b', '1. a\n   - b']) {
+    const head = enter({ ...start(seed), sel: caret(0, 1) }), pasted = pasteText(head, '\n'), typed = type(pasted, 'b');
+    const rows = rowTree(typed.blocks).info;
+    t.ok(`${JSON.stringify(seed)} の空の項目の頭へ改行を貼って打っても、子の項目は子のまま`, typed.blocks.length === 3 && depth(rows[2].node).join() === '0,2', md(typed));
+  }
+  // 空の行に項目の頭の行を Delete でつなぐと、その項目の中身は字下げを外して一緒に出る（前の項目の中身にならない）。
+  // 項目の行につなぐときは、中身はつないだ項目の中身のまま
+  {
+    const row = (kind, marker, text) => ({ kind, marker, runs: text ? [{ text, marks: [] }] : [] });
+    const blank = { blocks: [row('ol', '> 1. ', 'a'), row('ul', '>    - ', 'qa'), row('cont', '>    ', ''), row('ul', '>    - ', ''), row('cont', '>      ', 'z')], sel: caret(0, 0) };
+    const joined = deleteAtEnd({ ...blank, sel: caret(2, 0) }), typed = type({ ...joined, sel: caret(2, 0) }, '.');
+    const rows = rowTree(typed.blocks).info;
+    const shown = (s) => s.blocks.map((x) => x.marker + x.runs.map((r) => r.text).join('')).join('|');
+    t.ok('空の続きの行に空の項目の頭をつなぐと、項目の中身は外へ出て、空の行に打っても動かない', shown(joined) === '> 1. a|>    - qa|>    |>    z' && shown(typed) === '> 1. a|>    - qa|>    .|>    z' && depth(rows[3].node).join() === '1,1' && md(typed) === '> 1. a\n>    - qa\n>\n>    .\n>    z', JSON.stringify([shown(joined), md(typed)]));
+    const item = deleteAtEnd({ ...start('- a\n- \n  z'), sel: caret(0, 1) });
+    t.ok('項目の行に空の項目の頭をつなぐと、中身はつないだ項目の中身のまま', md(item) === '- a\n  z', md(item));
+  }
   for (const raw of ['> a\nb', '- a\nb', '1. a\nb', '> > a\n> b', '> a\n\nb', '- a\n\n', '> - a\n> \n> b']) {
     t.ok(`既存原文を読むだけでは変更しない ${JSON.stringify(raw)}`, docToMarkdown(markdownToDoc(raw)) === raw);
   }

@@ -950,6 +950,15 @@ export function indentList(st, dir) {
   return next;
 }
 
+/** 無くなる項目 gone の中身の行（from 行目から続く、その項目の字下げを持つ行）から、項目の字下げを外す。S は無くす前に読んだ rowTree */
+function takeOut(blocks, S, from, gone) {
+  for (let k = from; k < blocks.length; k++) {
+    const x = blocks[k], m = S.info[k]?.marks.find((y) => y.node === gone);
+    if (!m) break;
+    if (m.end > m.at && m.end <= x.marker.length) blocks[k] = { ...x, marker: x.marker.slice(0, m.at) + x.marker.slice(m.end) };
+  }
+}
+
 /** Enter と行頭 Backspace で現在行の構造を一段解除する（その場で。ADR 0300）。前後の行との区切りは、送るときに行から作る（ADR 0301） */
 function releaseStructure(next, b) {
   const blk = next.blocks[b], S = rowTree(next.blocks);
@@ -967,12 +976,7 @@ function releaseStructure(next, b) {
   }
   // 項目をやめた行の下にあるその項目の中身（子の項目・続きの行）は、項目の字下げを外して一緒に出す。
   // Markdown は項目と子の間に段落を置けないので、残すと後でこの行に字を打ったときに外へ飛ぶ
-  const gone = own[n]?.node.t === 'item' && !(kind === 'ul' || kind === 'ol') ? own[n].node : null;
-  for (let k = b + 1; gone && k < next.blocks.length; k++) {
-    const x = next.blocks[k], m = S.info[k]?.marks.find((y) => y.node === gone);
-    if (!m) break;
-    if (m.end > m.at && m.end <= x.marker.length) next.blocks[k] = { ...x, marker: x.marker.slice(0, m.at) + x.marker.slice(m.end) };
-  }
+  if (own[n]?.node.t === 'item' && !(kind === 'ul' || kind === 'ol')) takeOut(next.blocks, S, b + 1, own[n].node);
   next.blocks[b] = { ...blk, kind, marker };
   next.sel = caret(b, 0);
   renumber(next.blocks);
@@ -1119,6 +1123,12 @@ export function deleteAtEnd(st) {
   const runs = here.kind === 'code' || after.kind === 'code'
     ? plainRun(runsText(here.runs) + runsText(after.runs))
     : mergeRuns([...here.runs, ...after.runs]);
+  // 空の行（引用・続きの行・段落）に項目の頭の行をつなぐと、その項目は無くなる。中身の行は字下げを外して一緒に出す（内側の項目から）。
+  // 残すと、空の行は項目を閉じないので前の項目の中身になり、後でこの行に字を打ったときに外へ飛ぶ
+  if ((after.kind === 'ul' || after.kind === 'ol') && blankRow({ ...here, runs })) {
+    const S = rowTree(next.blocks);
+    for (const m of (S.info[b + 1]?.marks ?? []).filter((y) => y.opened && y.node.t === 'item').reverse()) takeOut(next.blocks, S, b + 2, m.node);
+  }
   next.blocks.splice(b, 2, { ...here, kind: here.kind === 'att' ? 'p' : here.kind, runs, pad: undefined });
   ensureShape(next.blocks);
   next.sel = caret(b, at);
@@ -1279,6 +1289,10 @@ function spliceParsed(cur, parsed, { plain = false, resolve = () => null, rich =
   } else if (firstIdx === 1 && inCode) {
     seq[0] = { ...seq[0], runs: plainRun(runsText(seq[0].runs) + runsText(seq[1].runs)) };
     seq.splice(1, 1);
+  }
+  // 中身の無い項目の頭のすぐ下の空の行は、項目を閉じて下の行（子の項目など）を外へ出すので作らない（Shift+Enter と同じ。ADR 0301）
+  if (!plain && firstIdx === 1 && (seq[0].kind === 'ul' || seq[0].kind === 'ol') && !runsLength(seq[0].runs)) {
+    while (seq.length > 1 && blankRow(seq[1])) seq.splice(1, 1);
   }
   let caretAt = seq.length - 1;
   let caretV = seq.at(-1).kind === 'att' ? 0 : runsLength(seq.at(-1).runs);
