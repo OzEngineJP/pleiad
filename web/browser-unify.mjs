@@ -383,7 +383,7 @@ export function createBrowserUnify(deps = {}) {
         enabled = true; const style = document.createElement('style'); style.dataset.browserUnify = ''; style.textContent = css; document.head.append(style); document.body.classList.add('browser-unify');
         // 札は止める・任せるだけ（映像に触れるだけでは引き継がない。ADR 0296）
         badge = createControlBadge({ onStop:() => cmd('chromeStop', { sessionId:session() }), onResume:() => cmd('chromeResume', { sessionId:session() }) });
-        chrome()?.useInput?.({ phone:() => phoneQuery.matches });
+        chrome()?.useInput?.({ phone:() => phoneQuery.matches, showMenu });
         chrome()?.onOpenChange(open => { if (!open) { active = null; awaitingState = true; } attach(); });
         chrome()?.onTargetChange(attach);
         chrome()?.onTabChange?.(event => {

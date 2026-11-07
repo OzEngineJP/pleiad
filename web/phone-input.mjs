@@ -25,7 +25,7 @@ export function fieldAt(fields, point) {
 }
 
 /** Receive field/sheet events; reset on target changes, destroy on close. */
-export function createPhoneInput({ surface, send = () => {}, getRect = () => surface?.getBoundingClientRect(), getKeyboardRect = getRect, getMetadata = () => ({}), onPan = () => {}, phone = true, onError = () => {} } = {}) {
+export function createPhoneInput({ surface, send = () => {}, getRect = () => surface?.getBoundingClientRect(), getKeyboardRect = getRect, getMetadata = () => ({}), onPan = () => {}, phone = true, onError = () => {}, onCopy = null } = {}) {
   // The caller can construct the part before mounting its surface.
   if (!surface) return { focus() {}, blur() {}, beforeTap() { return true; }, receive() {}, reset() {}, destroy() {} };
   ensureBrowserControlStyles();
@@ -64,8 +64,19 @@ export function createPhoneInput({ surface, send = () => {}, getRect = () => sur
     });
     listen(input, 'keydown', event => {
       event.stopPropagation(); if (event.isComposing || composition.composing || event.keyCode === 229) return;
+      // ⌘/Ctrl の操作（すべて選択・コピー・切り取り）は欄に効かせずページへ送る。V は欄への paste イベントが引き受ける
+      const accel = event.ctrlKey || event.metaKey;
+      if (accel) {
+        const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+        if (key === 'a' || key === 'c' || key === 'x') {
+          event.preventDefault();   // 欄の sentinel が手元のクリップボードへ入らないよう、copy・cut を抑える
+          if (key === 'a') post({ type: 'key', key: 'a', modifiers: ['accel'] });
+          else onCopy?.(key === 'x');
+        }
+        return;
+      }
       if (['Enter', 'Tab', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backspace', 'Delete'].includes(event.key)) {
-        event.preventDefault(); post({ type: 'key', key: event.key });
+        event.preventDefault(); post({ type: 'key', key: event.key, ...(event.shiftKey ? { modifiers: ['shift'] } : {}) });
       }
     });
   }

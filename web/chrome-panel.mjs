@@ -202,10 +202,16 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
   function ensureInput() {
     if (!inputOptions || unifiedInput || !parts) return;
     unifiedInput = createScreencastInput({ surface: parts.screen, img: parts.img, getFrame: () => parts.sink.frame, phone: inputOptions.phone(),
+      showMenu: inputOptions.showMenu,
       send: input => {
         const id = sessionId;
         if (!id || ended) return Promise.reject(new Error(t('browser.chromeWindow.inputFailed')));
         return cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: state?.tabId ?? undefined, input });
+      },
+      openLink: url => {
+        const id = sessionId;
+        if (id) return cmd('chromeNavigate', { sessionId: id, targetId: state?.tabId ?? undefined, action: 'navigate', input: url }).catch(() => {});
+        return Promise.resolve();
       },
       onError: error => notify(error?.message || t('browser.chromeWindow.inputFailed')) });
   }

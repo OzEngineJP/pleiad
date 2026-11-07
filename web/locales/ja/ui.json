@@ -4872,7 +4872,8 @@
       "pinFailed": "ウィンドウを切り替えられませんでした。",
       "openConversation": "会話を開く",
       "operateHere": "この端末で操作する", "operatingOnPc": "PC で操作中",
-      "profileActions": "Chrome のプロフィール"
+      "profileActions": "Chrome のプロフィール",
+      "menu": { "copy": "コピー", "cut": "切り取り", "copyLink": "リンクをコピー", "openLink": "リンクを開く", "selectAll": "すべて選択", "copyFailed": "コピーできませんでした" }
     },
     "video": { "lag": "映像が遅れています", "stale": "つなぎ直しています" }
   },
