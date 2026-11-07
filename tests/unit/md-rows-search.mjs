@@ -12,7 +12,7 @@
 import {
   restoreEditing, offsetToPos, docToMarkdown, markdownToDoc, caret, createHistory, normalizeRows, applyTriggers, insertText,
   enter, backspaceAtStart, deleteAtEnd, deleteSelection, pasteText, pasteRich, indentList, isCollapsed, runsLength, runsText,
-  snapshotEditing, rowTree,
+  snapshotEditing, rowTree, serializeRuns,
 } from "../../web/md-doc.mjs";
 import { writeFileSync } from "node:fs";
 import { parseStructure, lineIndent, containersOf } from "../../web/md-structure.mjs";
@@ -113,8 +113,9 @@ function observe(blocks) {
 // キャレットを置く空行（pad）は、空のうちは Markdown に出ない
 const isPad = (b) => !!b.pad && b.kind !== "att" && !runsLength(b.runs);
 const rowKey = (b) => `${b.kind}|${b.marker}|${b.kind === "att" ? b.raw : runsText(b.runs)}|${b.pad ? 1 : 0}`;
-// 下書きは送る Markdown から読み直す（ADR 0301）。中身の頭の空白は送らない（md-rows-serialize と同じ比べ方）。空の pad は比べない
-const draftKey = (b) => `${b.kind}|${b.marker}|${b.kind === "att" ? b.raw : b.kind === "code" ? runsText(b.runs) : runsText(b.runs).replace(/^[ \t]+/, "")}`;
+// 下書きは送る Markdown から読み直す（ADR 0301）。中身の頭の空白は送らない（md-rows-serialize と同じ比べ方）。空の pad は比べない。
+// 中身は Markdown の字で比べる。行の中の飾り（字のまま打った `` `b` `` が読み直すとコードになる・空白で終わる太字）は行の入れ物と別の話
+const draftKey = (b) => `${b.kind}|${b.marker}|${b.kind === "att" ? b.raw : b.kind === "code" ? runsText(b.runs) : serializeRuns(b.runs).replace(/^[ \t]+/, "")}`;
 const shownOf = (o) => o.rows.filter((r) => !r.pad).map((r) => r.shown?.join(",") ?? "-").join(" ");
 const mismatch = (r) => r.text.trim() && r.shown && r.sent && r.kind !== "code" && r.shown.join() !== r.sent.join();
 

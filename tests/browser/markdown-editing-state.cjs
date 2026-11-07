@@ -4,7 +4,7 @@ async page => {
   const stable = x => JSON.stringify(x, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v);
   const check = (name, got, want = true) => checks.push({ name, passed: stable(got) === stable(want), got, want });
   const snap = async name => {
-    const x = await page.evaluate(() => { const p = document.querySelector('#prompt'); return { raw: p.value, state: p.editor.getState(), rows: [...p.children].map(b => ({ kind: b.dataset.k, text: b.textContent, q: b.dataset.q ?? null, boundary: b.dataset.breakBefore ?? null, indent: b.style.getPropertyValue('--md-ind'), h: b.getBoundingClientRect().height })), offset: [p.selectionStart, p.selectionEnd] }; });
+    const x = await page.evaluate(async () => { const p = document.querySelector('#prompt'); const { posToOffset } = await import('/md-doc.mjs'), st0 = p.editor.getState(), lines0 = p.value.split('\n'); const lineAt = i => p.value.slice(0, posToOffset(st0.blocks, { b: i, v: 0 })).split('\n').length - 1; const sepOf = i => (i > 0 && lineAt(i) - lineAt(i - 1) > 1 ? lines0[lineAt(i) - 1] : null); return { raw: p.value, state: p.editor.getState(), rows: [...p.children].map((b, i) => ({ kind: b.dataset.k, text: b.textContent, q: b.dataset.q ?? null, boundary: sepOf(i), indent: b.style.getPropertyValue('--md-ind'), h: b.getBoundingClientRect().height })), offset: [p.selectionStart, p.selectionEnd] }; });
     evidence.push({ name, ...x }); return x;
   };
   const ready = async () => { await page.waitForTimeout(1400); await page.evaluate(() => { for (const b of document.querySelectorAll('dialog[open] button')) if (b.textContent === 'あとで') b.click(); }); await page.waitForTimeout(800); };
