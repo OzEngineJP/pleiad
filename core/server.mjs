@@ -2631,13 +2631,6 @@ function interruptedOf(value) {
       model: value.model ?? null } : {}) };
 }
 
-/** 状態を最後に変えたのが AI（host のツールの ai・操作の一覧の agent。ADR 0081）なら { reason, reasonKey?, reasonParams? }、そうでなければ null */
-function statusChangedByAi(history) {
-  const row = [...(history ?? [])].reverse().find(h => h?.field === "status");
-  if (row?.by !== "ai" && row?.by !== "agent") return null;
-  return { reason: row.reason ?? null, ...(row.reasonKey ? { reasonKey: row.reasonKey, ...(row.reasonParams ? { reasonParams: row.reasonParams } : {}) } : {}) };
-}
-
 /**
  * エージェントのネイティブな行（無ければ null）と sidecar の行を、一覧の 1 行に合わせる。
  *
@@ -2666,8 +2659,6 @@ function sessionRow(b, s, extra = {}) {
     // 事前定義なし。使われた時点で存在する
     status: (b.capabilities?.tag && s ? s.tag : extra.status ?? s?.tag) ?? null,
     statusChangedAt: extra.statusChangedAt ?? null,
-    // 状態を最後に変えたのが AI のときだけ、その理由（画面が小さな「AI」の印を出す）。人が変えていれば null
-    statusByAi: statusChangedByAi(extra.history),
     completedAt: extra.completedAt ?? null,
     contextWindow: extra.contextWindow ?? null,
     compactionAt: compactionScheduler.get(s?.sessionId ?? extra.id),

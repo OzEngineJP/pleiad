@@ -382,8 +382,6 @@ body.settings #sidebar .side-foot #settings{background:var(--surface-paper);colo
 .row-st{flex:none;white-space:nowrap}
 .row-from{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row-when{font-family:var(--font-mono);flex:none}
-/* 状態を最後に変えたのが AI のときだけ付く小さな印（理由は title）。誰がいつ変えたかは行のメニューの「変更の記録」 */
-.row-ai{flex:none;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:10px;line-height:15px;font-weight:600;letter-spacing:0}
 .pending-row .row-t,.pending-row .row-cwd{color:var(--ink-weak)}
 .pending-delete{opacity:.55}
 .pending-status>:not(.pending-label){opacity:.55}

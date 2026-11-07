@@ -83,7 +83,6 @@ export default async function (t) {
     compactionScheduler: { get: () => null },
     interruptedOf: () => null,
     agentLocaleOf: () => null,
-    statusChangedByAi: () => null,
     toMs: (v) => (typeof v === "number" ? v : null),
     HIDDEN_BOT_KINDS,
   });

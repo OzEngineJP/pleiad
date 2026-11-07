@@ -6671,14 +6671,15 @@ function hostStaleSoon(at) {
 /**
  * ホストに任せたタスクの詳細（docs/remote.md §4.5「経過の読み出し」）。子の会話はホストにあるので、端末のサーバーが /agent 越しに読み、
  * 手元の委譲と同じ筋（readonlyThread）で描く。読み出しは詳細を開いている間だけ（refreshDetail の読み直しに乗る）。続きは cursor から、
- * 終わったタスクは 1 回読んで止まる。読めないホスト（古い版・許可が無い）や読めなかったときは、依頼と結果の 2 つの箱に戻して 1 行添える
+ * 終わったタスクは 1 回読んで止まる。読めないホスト（古い版・許可が無い）や読めなかったときも同じ筋で、端末の台帳にある分（依頼と、
+ * 便りで写した結果）だけを描いて、理由やオフラインはシステムの行・活動の行で添える
  */
 async function hostTaskThread(item) {
   const view = bg.view;
   const held = view.host ??= { base: 0, messages: [], sigs: [], total: 0, userCount: null, instructions: [], descendantsOmitted: 0, ok: false, lastOk: 0 };
-  // 読み出しを知らない古いホストは、ready の view で先に分かる（読み出しの往復を待たずに、今の 2 つの箱）
+  // 読み出しを知らない古いホストは、ready の view で先に分かる（読み出しの往復を待たずに、台帳の分だけの筋）
   const info = hostInfo(item.host.hostId);
-  if (!held.ok && info?.online && info.view !== true) return hostTaskBoxes(item, t('dialog.work.readFailed', { error: t('dialog.work.hostViewUnsupported') }));
+  if (!held.ok && info?.online && info.view !== true) return ledgerThread(item, t('dialog.work.readFailed', { error: t('dialog.work.hostViewUnsupported') }));
   const args = { taskId: item.taskId, hostId: item.host.hostId };
   const cursor = held.ok ? hostViewCursor(held) : null;
   const r = await cmd('invoke', { op: 'delegation.hostView', args: cursor ? { ...args, cursor } : args }).catch(() => ({ state: 'failed' }));
@@ -6701,14 +6702,14 @@ async function hostTaskThread(item) {
     clearTimeout(view.treeTimer);
     if (running && !item.live && !item.hostDescendant) view.treeTimer = setTimeout(() => { if (bg.view === view && $('workDialog').open) refreshDetail(); }, 4000);
   } else if (r.state === 'offline' && !held.ok) {
-    // まだ一度も読めていないうちにオフライン（端末の再起動の後など）。端末の台帳にある依頼と結果の 2 つの箱に、オフラインの 1 行を添える
+    // まだ一度も読めていないうちにオフライン（端末の再起動の後など）。台帳の分だけの筋に、走っているタスクならオフラインの活動の行（衛星の印）を付ける
     const until = r.since ?? item.hostUntil;
-    return hostTaskBoxes(item, until ? t('dialog.work.hostOfflineBoxesUntil', { time: clockOf(until) }) : t('dialog.work.hostOfflineBoxes'));
+    return ledgerThread(item, null, { hostOffline: item.live ? { time: clockOf(until) } : null });
   } else if (r.state !== 'offline' && (!held.ok || r.state === 'unsupported' || r.state === 'denied')) {
-    // 読めない（古いホスト・許可が無い・読めなかった）。今の 2 つの箱に戻し、読めなかった旨の 1 行
+    // 読めない（古いホスト・許可が無い・読めなかった）。台帳の分だけの筋に、読めなかった旨の 1 行
     held.ok = false;
     const why = r.state === 'unsupported' ? t('dialog.work.hostViewUnsupported') : r.state === 'denied' ? t('dialog.work.hostViewDenied') : hostViewError(r);
-    return hostTaskBoxes(item, t('dialog.work.readFailed', { error: why }));
+    return ledgerThread(item, t('dialog.work.readFailed', { error: why }));
   }
   const offline = item.live && (item.hostOffline || r.state === 'offline');
   const until = (r.state === 'offline' ? r.since : null) ?? item.hostUntil ?? held.lastOk;
@@ -6757,19 +6758,16 @@ const HOST_VIEW_ERRORS = {
 };
 const hostViewError = (r) => (HOST_VIEW_ERRORS[r?.code] ?? (() => t('dialog.work.hostViewFailed')))();
 
-/** 経過を読めないホストの詳細: 依頼と結果（ホストの便りで写した分）の 2 つの箱。note は読めなかった理由・オフラインの 1 行 */
-async function hostTaskBoxes(item, note) {
+/**
+ * 経過を読めないホストの詳細: 端末の台帳にある分（依頼と、ホストの便りで写した結果）だけを、手元の委譲と同じ筋（readonlyThread）で描く。
+ * 結果は 1 つの AI の発言として、note は読めなかった理由の 1 行（システムの行）、hostOffline は走っているタスクのオフラインの活動の行
+ */
+async function ledgerThread(item, note, { hostOffline = null } = {}) {
   const r = await cmd('invoke', { op: 'delegation.status', args: { taskId: item.taskId } }).catch(() => null);
-  const th = el('div', 'thread bg-thread bg-host-task');
-  if (note) th.append(el('div', 'work-head', note));
-  const section = (label, text) => {
-    const box = el('div', 'rt-request');
-    const body = el('div', 'rt-request-text');
-    body.innerHTML = plainTextHtml(String(text ?? '').trim() || '—', { paths: false });
-    box.append(el('div', 'rt-request-label', label), body);
-    return box;
-  };
-  th.append(section(t('dialog.work.request'), item.request), section(t('dialog.work.hostResult'), r?.result));
+  const at = Number.isFinite(r?.updatedAt) ? new Date(r.updatedAt).toISOString() : null;
+  const messages = r?.result?.trim() ? [{ role: 'assistant', text: r.result, at, backend: r.backend ?? item.backend }] : [];
+  const th = readonlyThread(messages, { backend: item.backend, prompt: item.request, live: item.live, item, hostOffline });
+  if (note) th.append(wrap(el('div', 'm sys', note)));
   if (item.error) th.append(wrap(el('div', 'm sys', item.error)));
   return th;
 }

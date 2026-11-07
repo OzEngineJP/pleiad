@@ -719,6 +719,7 @@ const SUITES = [
   './unit/restart-mode.mjs',
   // 段 2b: Devin・Grok の ACP の子を保持役に載せ、普通に止めて起こし直してもターン・承認・途中送信が続く
   './unit/restart-acp.mjs',
+  './unit/acp-prompt-card.mjs',
   // 段 2b: Codex のターン専用の app-server（Pleiad がコンテキストを持つ会話）も、普通に止めて起こし直してもターンが続く
   './unit/restart-codex-turn.mjs',
   // 段 2c: 外部の stdio MCP を保持役に載せ、普通に止めて起こし直しても子と中の状態が残る（initialize は送り直さない）
@@ -770,7 +771,7 @@ const SUITES = [
   './unit/server-ux.mjs',
   // 送った会話の削除（sessions.delete。ADR 0147）: 片付けるデータ・ネイティブの会話は残す・断る条件・承認カード・委譲の親子
   './unit/server-session-delete.mjs',
-  // 変更の記録: sessionChanges の返す形と、statusByAi（AI が状態を変えたときだけ印。人が変えたら null）
+  // 変更の記録: sessionChanges の返す時刻・変更者・内容・理由
   './unit/server-session-changes.mjs',
   // 最近の場所の候補: Pleiadで使った実在フォルダーのみ・委譲やネイティブ一覧や消えた場所を除外
   './unit/cwd-recent-places.mjs',

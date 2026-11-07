@@ -43,7 +43,7 @@
 - 端末側のタスクは、手元の完了通知の仕組みで依頼元の会話に届く。無音・コマンドの通知（ホストの子が黙っている・長いコマンド）は、初版ではホスト側の便りに含めない。
 - docs/remote.md の §1・§4.2・§9・§11-8、docs/agent-delegation.md、docs/design.md の human-only の一覧を更新する。ADR 0013・0082・0094 には、この ADR を指す追記を 1 行足す。
 - 端末とホストの版が合わないとき、古い方は `/agent` を知らない（RESET 3）。端末は「ホストが未対応」として扱い、手元の委譲は影響を受けない。
-- `/agent` に `view`・`viewed` の便りが増える（ホスト: `core/remote/agent-port.mjs`・`agent-view.mjs`。端末: `agent-link.mjs`・`agent-service.mjs`・`core/remote-delegation.mjs`・操作 `delegation.hostView`）。`AGENT_PROTO` は上げず、`ready` に `view` を足して見分ける（読み出しを知らない新しい端末 → 古いホストは `view` が無いので今の 2 つの箱、古い端末 → 新しいホストは `view` を使わないだけ）。
+- `/agent` に `view`・`viewed` の便りが増える（ホスト: `core/remote/agent-port.mjs`・`agent-view.mjs`。端末: `agent-link.mjs`・`agent-service.mjs`・`core/remote-delegation.mjs`・操作 `delegation.hostView`）。`AGENT_PROTO` は上げず、`ready` に `view` を足して見分ける（読み出しを知らない新しい端末 → 古いホストは `view` が無いので台帳の分だけの筋に「読めなかった」の 1 行（2026-11-08 に「依頼と結果の 2 つの箱」から手元の委譲と同じ部品へ揃えた）、古い端末 → 新しいホストは `view` を使わないだけ）。
 
 ## 採らなかった案
 
