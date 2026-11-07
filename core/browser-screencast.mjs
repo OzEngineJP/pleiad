@@ -61,6 +61,9 @@ const FAST_MS = 25;      // S の中央値がこれ以下なら 1 段上げる�
 const STILL_MS = 300;    // 静まってから最上段へ切り替えるまで
 const STALE_MS = 3000;   // 返事が来なくなってから「つなぎ直しています」とするまで
 const RETRY_BLOCK_MS = 30_000;   // 上げて失敗した段へ、もう一度上げるまでの間隔
+const FORMAT_RETRY_MS = 1000;
+const FORMAT_RETRY_MAX_MS = 8000;
+const FORMAT_FAILURE_LIMIT = 5;
 const sameViewport = (a, b) => Number.isFinite(a?.deviceWidth) && Number.isFinite(a?.deviceHeight) && Number.isFinite(b?.deviceWidth) && Number.isFinite(b?.deviceHeight)
   && ['deviceWidth', 'deviceHeight', 'pageScaleFactor', 'offsetTop', 'scrollOffsetX', 'scrollOffsetY'].every(key => Number.isFinite(a[key]) && a[key] === b[key]);
 
@@ -135,6 +138,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     entry.statsAt = now();
     entry.firstAt ??= entry.statsAt;
     if (config !== entry) return; // 開始の応答より先に来た絵は、成功を確かめてから送る。
+    if (resumeRetries(entry)) void syncFormats(sessionId, entry);
     entry.changedAt = now();
     for (const [client, viewer] of entry.clients) {
       if (keyOf(entry, tierOf(entry, viewer)) !== streamKey) continue;
@@ -157,6 +161,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
       }
       entry.firstSharp = true;
       entry.motionAt = null;
+      if (retryContextChanged(entry)) void syncFormats(sessionId, entry);
     }
     entry.state = state;
     for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', ...tag, type: 'state', sessionId, state });
@@ -285,17 +290,43 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     return { multi:false, formats:null, shared:options, sharp:entry.wantedSharp };
   }
 
-  /** 張り直しは直列に行う。失敗時は bridge が前の配信を復元し、ここでは成功済みの状態を保って再試行する。 */
+  /** 打ち切り後は新しい中身・タブ・閲覧者で再開する。要求中の復元画像は再開のきっかけにしない。 */
+  function resumeRetries(entry) {
+    if (!entry.retryPaused || entry.syncing) return false;
+    entry.retryPaused = false;
+    entry.retryFailures = 0;
+    // 直前の失敗で決めた期限は、変更が来ても短縮しない。
+    return true;
+  }
+
+  function retryContextChanged(entry) {
+    entry.retryRevision += 1;
+    return resumeRetries(entry);
+  }
+
+  function armRetry(sessionId, entry) {
+    if (entry.retryPaused || entry.retryTimer || entryOf(sessionId) !== entry || !entry.clients.size) return;
+    entry.retryTimer = setTimer(() => {
+      entry.retryTimer = null;
+      void syncFormats(sessionId, entry);
+    }, Math.max(0, entry.retryAt - now()));
+  }
+
+  /** 張り直しは直列に行う。すべての呼び出し経路で、失敗後の再試行の期限を守る。 */
   function syncFormats(sessionId, entry) {
     if (entryOf(sessionId) !== entry || !entry.clients.size) return Promise.resolve();
     if (entry.syncing) { entry.resync = true; return entry.syncing; }
+    if (entry.retryPaused) return Promise.resolve();
+    if (entry.retryAt > now()) { armRetry(sessionId, entry); return Promise.resolve(); }
     clearTimer(entry.retryTimer); entry.retryTimer = null;
+    let revision = entry.retryRevision;
     const run = async () => {
       do {
         entry.resync = false;
         let next = desiredFormats(entry);
         const changed = next.multi !== entry.multi || JSON.stringify(next.multi ? next.formats : next.shared) !== JSON.stringify(entry.multi ? entry.formats : entry.shared);
         if (changed || entry.retryNeeded) {
+          revision = entry.retryRevision;
           entry.transition = next;
           if (next.multi) {
             const answer = await bridge.setFormats(sessionId, next.formats);
@@ -305,6 +336,8 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
               await bridge.request('start', sessionId, { options:next.shared });
             }
           } else await bridge.request('start', sessionId, { options:next.shared });
+          entry.retryFailures = 0;
+          entry.retryAt = 0;
         }
         if (entryOf(sessionId) !== entry) return;
         const wasSharp = entry.sharp;
@@ -324,11 +357,17 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
       } while (entry.resync && entry.clients.size && entryOf(sessionId) === entry);
     };
     // 送信・ack からの再入でも、要求中であることを先に確定する。
-    entry.syncing = Promise.resolve().then(run).catch(() => {
+    entry.syncing = Promise.resolve().then(run).catch(error => {
       entry.transition = null;
       entry.retryNeeded = true;
       if (entryOf(sessionId) === entry && entry.clients.size) {
-        entry.retryTimer = setTimer(() => { entry.retryTimer = null; void syncFormats(sessionId, entry); }, 1000);
+        entry.retryFailures = Math.min(FORMAT_FAILURE_LIMIT, entry.retryFailures + 1);
+        entry.retryAt = now() + Math.min(FORMAT_RETRY_MAX_MS, FORMAT_RETRY_MS * 2 ** (entry.retryFailures - 1));
+        // 配信を復元できたら一定回数で保つ。復元も失敗して無配信なら、待ちの上限を保って復旧を続ける。
+        const contextChanged = entry.retryRevision !== revision;
+        entry.retryPaused = !contextChanged && entry.retryFailures >= FORMAT_FAILURE_LIMIT && error?.screencastRestored !== false;
+        if (contextChanged) entry.retryFailures = 0;
+        armRetry(sessionId, entry);
       }
     }).finally(() => { entry.syncing = null; });
     return entry.syncing;
@@ -337,6 +376,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
   function dropViewer(client, sessionId, entry, viewer) {
     clearTimer(viewer.staleTimer);
     entry.clients.delete(client);
+    retryContextChanged(entry);
     if (entry.dialog?.owner === client) {
       entry.dialog.owner = null;
       for (const remaining of entry.clients.keys()) deliver(remaining, { kind: 'screencast', ...tag, type: 'interaction', sessionId, interaction: entry.dialog.message });
@@ -361,10 +401,12 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     const created = !entry;
     if (!entry) {
       entry = { clients: new Map(), seq: 0, streams: new Map(), state: null, stats: { frames: 0, bytes: 0, maxBytes: 0 }, firstAt: null, statsAt: null,
-        multi: splitTiers, formats: null, shared: null, sharp:false, wantedSharp:false, firstSharp:true, motionAt:null, quietTimer:null, changedAt:now() };
+        multi: splitTiers, formats: null, shared: null, sharp:false, wantedSharp:false, firstSharp:true, motionAt:null, quietTimer:null, changedAt:now(),
+        retryAt:0, retryFailures:0, retryPaused:false, retryRevision:0 };
       sessions.set(sessionId, entry);
     }
     const previous = entry.clients.get(client);
+    if (!previous || JSON.stringify(previous.box) !== JSON.stringify(box) || previous.device !== (device === 'phone' ? 'phone' : 'pc')) retryContextChanged(entry);
     const viewer = previous ?? { tier: START_TIER, samples: [], blocked: new Map(), raised: null,
       pending: null, sent: null, lag: false, stale: false, staleTimer: null,
       sentFlags: null };

@@ -213,9 +213,10 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
       catch (error) {
         watch.formats = previous;
         if (watches.get(sessionId) !== watch) throw error;
-        try { await syncStreams(sessionId, watch, watch.tabId, watch.generation); }
+        let restored = false;
+        try { await syncStreams(sessionId, watch, watch.tabId, watch.generation); restored = watch.views.size > 0; }
         catch (restoreError) { log(`chrome-screencast: restore failed: ${restoreError?.message ?? restoreError}`); }
-        throw error;
+        throw Object.assign(new Error(error?.message ?? String(error), { cause:error }), { screencastRestored:restored });
       }
     });
     watch.queue = run.catch(() => {});
