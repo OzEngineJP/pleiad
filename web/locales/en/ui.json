@@ -5011,6 +5011,7 @@
     },
     "toc": {
       "title": "Contents",
+      "entry": "Search this conversation ({{key}})",
       "close": "Close (Esc)",
       "search": "Search this conversation",
       "prevHit": "Previous match (Shift+Enter)",

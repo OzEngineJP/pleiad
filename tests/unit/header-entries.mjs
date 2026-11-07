@@ -1,14 +1,14 @@
 // 会話の頭の行のアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」、web/header-entries.mjs）。
 //   - 右の欄（会話の Chrome のウィンドウ）の近道の判定（Ctrl+Shift+B・macOS は ⌘⇧B・IME の変換中は奪わない）
 //   - 右の欄のボタンは会話を開いている間だけ出し、押すと開け閉めする
-//   - 頭の行のアイコンは右の欄のボタン 1 つだけ（目次・プラグイン・git の入口は置かない。ADR 0294）
+//   - 頭の行の並び（目次・右の欄のボタンが同じ 30px のアイコンボタン。プラグイン・git の入口は置かない。ADR 0294）
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { N, installDomStub } from '../lib/dom-stub.mjs';
 import { isManagedContext, isBrowserShortcut, browserShortcutLabel, browserEntryMark, setupBrowserEntry } from '../../web/header-entries.mjs';
 
 export const name = 'header-entries';
-export const title = '会話の頭の行: 右の欄のボタン 1 つ・近道と開け閉め';
+export const title = '会話の頭の行: 目次と右の欄のボタン・近道と開け閉め';
 
 export default async function (t) {
   // ---- Pleiad が担当した記録か（エージェント任せの会話は読み込み記録を固定しない）
@@ -92,13 +92,19 @@ export default async function (t) {
   const html = fs.readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
   const start = html.indexOf('<header class="top">');
   const header = html.slice(start, html.indexOf('</header>', start));
-  assert.doesNotMatch(header, /id="(tocEntry|contextEntry|gitEntry)"/, '目次・プラグイン・git の入口は頭の行に置かない（＋の新しいタブから行く）');
-  assert.match(header, /class="btn btn-icon" id="browserEntry"/, '右の欄のボタンは 30px のアイコンボタン');
+  assert.doesNotMatch(header, /id="(contextEntry|gitEntry)"/, 'プラグイン・git の入口は頭の行に置かない（＋の新しいタブから行く）');
+  const order = ['id="tocEntry"', 'id="browserEntry"'].map((id) => header.indexOf(id));
+  assert(order[0] > 0 && order[0] < order[1], '目次・右の欄のボタンの順');
+  for (const id of ['tocEntry', 'browserEntry']) assert.match(header, new RegExp(`class="btn btn-icon" id="${id}"`), `${id} は 30px のアイコンボタン`);
+  assert.match(header, /id="tocEntry" hidden aria-controls="filePreview" aria-expanded="false" aria-keyshortcuts="Control\+F"/, '目次は発言がある会話でだけ出し、開閉の ARIA と Ctrl+F を持つ');
+  const client = fs.readFileSync(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+  assert.match(client, /createConversationToc\(\{[^}]*button: \$\('tocEntry'\)/, '目次のボタンを目次につなぐ');
+  assert.match(client, /headerBefore: \$\('tocEntry'\)/, '通話のボタンは目次の前（通話・目次・右の欄の順）');
   assert.match(header, /id="browserEntry" hidden/, 'ブラウザーは使える画面でだけ出す（既定は隠す）');
   assert.doesNotMatch(header, /id="chromeEntry"/, '頭の行のブラウザー入口は地球の一つ');
   assert.match(header, /id="browserEntry"[^>]*aria-controls="filePreview" aria-expanded="false"/, '開閉の ARIA を揃える');
   const css = fs.readFileSync(new URL('../../web/style.css', import.meta.url), 'utf8');
   assert.match(css, /\.entry-dot\{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;color:var\(--ink-strong\);background:currentColor;box-shadow:0 0 0 2px var\(--surface-paper\)/);
   assert.doesNotMatch(css, /\.ctxlink\.ply/, 'Pleiad が管理しているときの青い字はやめた');
-  t.ok('頭の行: アイコンは右の欄のボタン 1 つだけ、変更ありの点は 7px の強い字', true);
+  t.ok('頭の行: 通話・目次・右の欄のボタンを同じアイコンボタンで並べ、変更ありの点は 7px の強い字', true);
 }

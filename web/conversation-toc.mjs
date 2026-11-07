@@ -42,7 +42,7 @@ const usable = (node) => !node.parentElement?.closest('button,summary,.code-copy
 
 /**
  * @param {{ thread:HTMLElement, log:HTMLElement, nav:object, preview:object, narrow:MediaQueryList, button?:HTMLElement, entriesOf?:Function }} o
- *   preview は web/file-preview.mjs の返り値（openPanel・close・panelOpen）。button はスレッドの頭の目次のボタン（チャンネルだけ。Chats の会話の見出しには置かず、Ctrl+F で開く）
+ *   preview は web/file-preview.mjs の返り値（openPanel・close・panelOpen）。button は見出しの目次のボタン（Chats の会話は #tocEntry、チャンネルのスレッドは .th-toc）
  *   entriesOf は項目の作り方（既定は Chats の会話の筋）。チャンネルのスレッドは投稿の列から作る（web/channels/thread.mjs）:
  *   ({ turns, kinds, turnInfo }) → { kind: 'user'|'answer'|'tool', turn, row, el, bodies?, at, pending? }[]（bodies は探す対象の要素）
  */

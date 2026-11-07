@@ -7963,7 +7963,7 @@ const voiceWraps = new WeakMap();
 voiceUi.mount({
   id: 'chat',
   canStart: () => !retiredHere(),
-  header: document.querySelector('body > main > header.top'), headerBefore: $('browserEntry'),
+  header: document.querySelector('body > main > header.top'), headerBefore: $('tocEntry'),
   composer: chatComposer.voiceSlot(),
   main: document.querySelector('body > main'), log: $('log'), overlay: $('logFrame'), replyScope: () => $('log'),
   tail: {
@@ -10608,8 +10608,8 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   refreshInfo: (force) => refreshContextInfo({ force }),
   openSettings: () => openContextPage(), labelOf,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
-// 会話の目次と検索（右パネル。狭い画面は下からのシート）。会話の画面にいるときの Ctrl+F（macOS は ⌘F）で開く
-const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, onOpen: loadAllOlder });
+// 会話の目次と検索（右パネル。狭い画面は下からのシート）。見出しの虫眼鏡と、会話の画面にいるときの Ctrl+F（macOS は ⌘F）で開く
+const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
 // 会話の右パネル「git」（ADR 0085）。返答の下の要約行・委譲カードの「変更」・狭い画面の「…」・近道（Ctrl+Shift+G）から開く
 gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),
   jump: jumpToConversation, use: useGitText, worktrees: worktreeOps, canOpen: () => Boolean(state.current && state.git.data),

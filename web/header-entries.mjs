@@ -1,5 +1,5 @@
 // 会話の頭の行の、右の欄を開け閉めするアイコンボタン（#browserEntry。docs/design-system.md「会話の頭の行のアイコン」）。
-// 頭の行のアイコンはこの 1 つだけ（ADR 0294 の 5 の 5）。会話の右の欄（会話の Chrome のタブ）を開閉する。
+// 右の欄の入口はこの 1 つだけ（ADR 0294 の 5 の 5。目次の虫眼鏡は別の機能で、その左に並ぶ）。会話の右の欄（会話の Chrome のタブ）を開閉する。
 // 近道は Ctrl+Shift+B（macOS は ⌘⇧B）
 import { t } from './i18n.mjs';
 // i18n-dynamic: tabs:address.openPanel

@@ -4899,6 +4899,7 @@
     },
     "toc": {
       "title": "目次",
+      "entry": "会話内を検索（{{key}}）",
       "close": "閉じる（Esc）",
       "search": "会話内を検索",
       "prevHit": "前の一致（Shift+Enter）",
