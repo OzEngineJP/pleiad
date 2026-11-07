@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-module.exports = async function browserUnifyTabs({ browser, check, screenshots, mockShots }) {
+module.exports = async function browserUnifyTabs({ browser, check, screenshots, mockShots, unifySource }) {
   const repo = path.resolve(__dirname, '../..');
   const sample = await fs.readFile(path.join(repo, 'docs/file-preview.md'), 'utf8');
   const fixture = String.raw`<!doctype html><html lang="ja" data-theme="light"><meta charset="utf-8">
@@ -20,9 +20,9 @@ import { renderFile } from '/web/pages/file.mjs';
 window.sent=[]; window.notices=[]; window.pageRequests=[];
 window.filePath='D:/dev/pleiad/docs/file-preview.md';
 window.rows=[{sessionId:'one',targetId:'file',windowId:1,title:'file-preview.md',url:'http://localhost/_pleiad/s/one/file?path='+encodeURIComponent(filePath),page:{kind:'file',path:filePath},canGoBack:true},{sessionId:'one',targetId:'web',windowId:1,title:'GitHub · Pleiad',url:'https://github.com/tekalu1/pleiad',favicon:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="gray"/></svg>')}];
-window.chromeFixture={sessionId:'one',tabId:'file',mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(){},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true}};
+window.chromeFixture={sessionId:'one',tabId:'file',mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true}};
 window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,controlStore:{get:()=>({state:window.agentState||'idle'})},composer:()=>document.querySelector('#composer'),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
-async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){chromeFixture.tabId=args.tabId;chromeFixture.change?.()}return {}},
+async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});chromeFixture.tabId=args.tabId;chromeFixture.change?.({type:'state'})}return {}},
 showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');if(item.icon)b.append(item.icon.cloneNode(true));b.append(document.createTextNode(item.label));b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
 window.resetRows=()=>ui.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows});resetRows();
 window.enable=()=>ui.capsChanged({browserUnify:true});
@@ -32,6 +32,7 @@ window.ready=true;
   const server = http.createServer(async (req, res) => {
     try {
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      if (pathname === '/web/browser-unify.mjs' && unifySource) { res.setHeader('Content-Type', 'text/javascript'); res.end(unifySource); return; }
       if (pathname === '/fixture') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(fixture); return; }
       if (pathname === '/favicon.ico') { res.setHeader('Content-Type', 'image/png'); res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1sAAAAASUVORK5CYII=', 'base64')); return; }
       if (pathname.startsWith('/site') || pathname.startsWith('/_pleiad/s/one/file')) {
@@ -159,6 +160,99 @@ window.ready=true;
     await page.evaluate(() => { window.agentState = 'idle'; chromeFixture.isOpen = () => false; chromeFixture.change(); });
     await page.locator('.bu-count').click(); check('phone tab overview shows two thumbnails', await page.locator('.bu-card').count() === 2 && await page.locator('.bu-card-label .bu-favicon').count() === 2 && await page.locator('.bu-overview-new').count() === 1); await shot('360-tabs'); await page.locator('.bu-count').click();
     await page.evaluate(() => document.documentElement.dataset.theme='dark'); await shot('360-dark');
+    // 列からの選択とは別の経路（固定の解除・ポップアップ・再接続）の確定通知。
+    await page.evaluate(async () => {
+      chromeFixture.isOpen = () => true;
+      await ui.focusTab(rows[0], 'one');
+      chromeFixture.tabId = 'web'; chromeFixture.change({type:'state'});
+    });
+    check('confirmed external tab replaces the phone local page and address', await local.count() === 0 && await page.locator('.bu-crumbs').innerText() === 'github.com');
+    await page.evaluate(() => ui.navigate('reload'));
+    check('reload operates on the externally confirmed video tab', await page.evaluate(() => sent.at(-1).args.targetId === 'web'));
+    await page.evaluate(async () => {
+      await ui.focusTab(rows[0], 'one');
+      chromeFixture.isOpen = () => false; chromeFixture.tabId = null; chromeFixture.openChange(false);
+      chromeFixture.tabId = 'web'; chromeFixture.isOpen = () => true; chromeFixture.openChange(true); chromeFixture.change({type:'state'});
+    });
+    check('closing and reopening follows the new video without a stale file overlay', await local.count() === 0 && await page.locator('.bu-crumbs').innerText() === 'github.com');
+    await page.evaluate(async () => {
+      await ui.focusTab(rows[0], 'one');
+      chromeFixture.tabId = null; chromeFixture.change({type:'reconnected'});
+    });
+    check('reconnect removes the local file while awaiting authoritative state', await local.count() === 0);
+    await page.evaluate(() => { chromeFixture.tabId = 'web'; chromeFixture.change({type:'state'}); });
+    check('reconnect uses the confirmed video address', await page.locator('.bu-crumbs').innerText() === 'github.com');
+    await page.evaluate(async () => {
+      await ui.focusTab(rows[0], 'one');
+      window.delayPin = true;
+      window.switching = ui.focusTab(rows[1], 'one');
+    });
+    check('pending phone switch from local file to video keeps the requested address', await local.count() === 0 && await page.locator('.bu-crumbs').innerText() === 'github.com');
+    await page.evaluate(async () => { finishPin(); await switching; delayPin = false; await ui.focusTab(rows[0], 'one'); });
+    check('phone returns from confirmed video to local file at 360px', await local.count() === 1 && await page.locator('.bu-crumbs').getAttribute('title') === 'D:/dev/pleiad/docs/file-preview.md');
+    await page.setViewportSize({width:1280,height:720});
+    await page.evaluate(async () => {
+      chromeFixture.tabId = 'web'; chromeFixture.change({type:'state'});
+      window.switching = ui.focusTab(rows[0], 'one');
+    });
+    // 一度確定してから、失敗する別の切り替えを送る。
+    await page.evaluate(async () => {
+      await switching;
+      chromeFixture.tabId = 'web'; chromeFixture.change({type:'state'});
+      delayPin = true; window.switching = ui.focusTab(rows[0], 'one');
+    });
+    check('pending desktop pin keeps the selected file until the command completes', (await page.locator('.bu-crumbs').innerText()).endsWith('file-preview.md'));
+    await page.evaluate(async () => { failPin(new Error('operating')); await switching; delayPin = false; });
+    check('failed pin restores the video address and selected tab', await page.locator('.bu-crumbs').innerText() === 'https://github.com/tekalu1/pleiad' && await page.locator('[data-target=web] [aria-selected=true]').count() === 1);
+    await page.evaluate(() => ui.navigate('reload'));
+    check('failed pin reload operates on the video tab', await page.evaluate(() => sent.at(-1).args.targetId === 'web'));
+    if (!unifySource) {
+      await page.setViewportSize({width:360,height:720});
+      const integration = await page.evaluate(async () => {
+        const { setupChromePanel, createWindowTable } = await import('/web/chrome-panel.mjs');
+        const { createBrowserUnify } = await import('/web/browser-unify.mjs');
+        const host = document.createElement('div'); document.body.append(host);
+        const windows = createWindowTable(); windows.apply({sessionId:'one',windows:1,windowIds:[1],currentWindowId:1});
+        let opened = false, closePanel, finishStart, serverTab = 'file';
+        const calls = [], tick = () => new Promise(resolve => setTimeout(resolve, 0));
+        const panel = setupChromePanel({ session:() => 'one', windows,
+          preview:{ panelOpen:() => opened, openPanel(options) { opened = true; closePanel = options.onClose; host.append(options.body); }, close() { opened = false; closePanel?.(); } },
+          async cmd(name, args) {
+            calls.push({name,args});
+            if (name === 'browserScreencast') {
+              panel.onMessage({source:'chrome',sessionId:'one',type:'state',state:{tabId:serverTab}});
+              panel.onMessage({source:'chrome',sessionId:'one',type:'frame',seq:calls.length,data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1sAAAAASUVORK5CYII=',metadata:{deviceWidth:400,deviceHeight:300}});
+              return new Promise(resolve => { finishStart = () => resolve({state:{tabId:serverTab}}); });
+            }
+            if (name === 'chromePinWindow') { serverTab = args.tabId; panel.onMessage({source:'chrome',sessionId:'one',type:'state',state:{tabId:serverTab}}); }
+            return {};
+          } });
+        const component = createBrowserUnify({ state:{current:'one'}, chrome:() => panel, cmd:async () => ({}) });
+        component.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows}); component.capsChanged({browserUnify:true});
+        const file = () => host.querySelectorAll('iframe.bu-local-page').length;
+        const address = () => host.querySelector('.bu-crumbs').textContent;
+        panel.open(); await tick();
+        await component.focusTab(rows[1], 'one'); await tick();
+        const waiting = file() === 0 && address() === 'github.com';
+        finishStart(); await tick();
+        const confirmed = file() === 0 && address() === 'github.com' && panel.tabId === 'web';
+        await component.focusTab(rows[0], 'one'); await tick();
+        const back = file() === 1;
+        const before = calls.filter(c => c.name === 'chromePinWindow').length;
+        await component.focusTab(rows[1], 'one'); await component.focusTab(rows[0], 'one');
+        finishStart(); await tick();
+        const cancelled = file() === 1 && address().endsWith('file-preview.md') && calls.filter(c => c.name === 'chromePinWindow').length === before;
+        panel.reconnected(); await tick(); finishStart(); await tick();
+        const reconnected = file() === 0 && panel.tabId === 'web' && address() === 'github.com';
+        panel.close(); host.remove();
+        return {waiting,confirmed,back,cancelled,reconnected};
+      });
+      check('real panel retains the requested phone tab when old state arrives before the start response', integration.waiting);
+      check('real panel confirms the video target after starting and pinning', integration.confirmed);
+      check('real panel returns from video to a local file', integration.back);
+      check('selecting a local file cancels a queued video switch', integration.cancelled);
+      check('real panel reconnect resumes video and removes the obsolete local overlay', integration.reconnected);
+    }
     await page.setViewportSize({width:1280,height:720}); await shot('1280-dark');
     const badges = await page.evaluate(async () => {
       const { createControlBadge } = await import('/web/chrome-control.mjs');

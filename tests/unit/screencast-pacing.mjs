@@ -138,7 +138,6 @@ export default async function (t) {
     c.advance(600);
     t.ok('ページが変わるまではもう撮らない', bridge.captures.length === 1);
     hub.received(v, 's1', still.seq, { mark: true }); hub.received(v, 's1', still.seq);
-    await new Promise(r => setTimeout(r, 35));   // capture echo の実時間判定窓（30 ms）を過ぎてから次のページ変更を送る
     bridge.frame('s1', 2, { stream: 3 });   // ページが変わった
     hub.received(v, 's1', frames(v).at(-1).seq, { mark: true }); hub.received(v, 's1', frames(v).at(-1).seq);
     c.advance(300);
@@ -146,7 +145,6 @@ export default async function (t) {
     t.ok('ページが変われば、次に止まったときまた撮る', bridge.captures.length === 2);
 
     // 返事が 3 秒来ない → stale。返事が戻れば下りる
-    await new Promise(r => setTimeout(r, 35));
     bridge.frame('s1', 3, { stream: 3 });
     c.advance(3000);
     await new Promise(r => setImmediate(r));

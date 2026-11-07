@@ -62,7 +62,7 @@ const STILL_MS = 300;    // フレームが届かなくなってから最上段�
 const STALE_MS = 3000;   // 返事が来なくなってから「つなぎ直しています」とするまで
 const RETRY_BLOCK_MS = 30_000;   // 上げて失敗した段へ、もう一度上げるまでの間隔
 const sameViewport = (a, b) => Number.isFinite(a?.deviceWidth) && Number.isFinite(a?.deviceHeight) && Number.isFinite(b?.deviceWidth) && Number.isFinite(b?.deviceHeight)
-  && ['deviceWidth', 'deviceHeight', 'pageScaleFactor', 'offsetTop', 'scrollOffsetX', 'scrollOffsetY'].every(key => a[key] === b[key]);
+  && ['deviceWidth', 'deviceHeight', 'pageScaleFactor', 'offsetTop', 'scrollOffsetX', 'scrollOffsetY'].every(key => Number.isFinite(a[key]) && a[key] === b[key]);
 
 const clampDim = value => Math.round(Math.min(1920, Math.max(200, Number.isFinite(value) ? value : 800)));
 const median = values => {
@@ -111,22 +111,15 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     bridge.ack(sessionId, frame.id, frame.stream);
     const streamKey = streamKeyOf(entry, frame);
     const stream = entry.streams.get(streamKey) ?? { frameSeq: 0, latest: null };
-    const echoes = [...entry.clients.values()].filter(viewer => viewer.captureEchoPending && Date.now() <= viewer.captureEchoDeadline
-      && keyOf(entry, viewer.tier) === streamKey && sameViewport(viewer.captureEchoMeta, frame.metadata));
-    if (echoes.length) {
-      // Page.captureScreenshot also produces one unchanged screencast frame in Chrome (6–18 ms later).
-      // Only consume it when CDP's viewport and scroll offsets still match; a real scroll during capture remains a page change.
-      // Consume before advancing frameSeq, or the capture response would drop its still as stale.
-      for (const viewer of echoes) {
-        viewer.captureEchoPending = false;
-      }
-      return;
-    }
-    for (const viewer of entry.clients.values()) if (viewer.captureEchoPending && keyOf(entry, viewer.tier) === streamKey) {
-      viewer.captureEchoPending = false;
-    }
+    const format = JSON.stringify(entry.multi ? entry.formats.find(f => f.tier === streamKey) : entry.shared);
+    // 比べるのは同じ形式の連続した screencast の中身。captureScreenshot は解像度・圧縮が違うので比べない。
+    // 時間で捨てると、文字入力などの本当の更新も失う。判定できない絵は通す。
+    if (format && frame.data && stream.latest?.data === frame.data && stream.format === format && stream.tabId === entry.state?.tabId
+      && sameViewport(stream.latest.metadata, frame.metadata)) return;
     stream.frameSeq += 1;
     stream.latest = frame;
+    stream.format = format;
+    stream.tabId = entry.state?.tabId;
     entry.streams.set(streamKeyOf(entry, frame), stream);
     entry.stats.frames++;
     entry.stats.bytes += Math.floor(frame.data.length * 3 / 4);
@@ -134,13 +127,18 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     entry.statsAt = now();
     entry.firstAt ??= entry.statsAt;
     for (const [client, viewer] of entry.clients) {
-      viewer.stillSent = false;   // ページが変わったので、また止まれば撮る
-      if (keyOf(entry, viewer.tier) === streamKeyOf(entry, frame)) send(client, sessionId, entry, viewer);
+      if (keyOf(entry, viewer.tier) !== streamKey) continue;
+      viewer.stillSent = false;   // この段のページが変わったので、また止まれば撮る
+      send(client, sessionId, entry, viewer);
     }
   });
   bridge.onState((sessionId, state) => {
     const entry = entryOf(sessionId);
     if (!entry) return;
+    if (entry.state?.tabId !== state?.tabId) {
+      entry.tabGeneration = (entry.tabGeneration ?? 0) + 1;
+      for (const stream of entry.streams.values()) stream.format = null;
+    }
     entry.state = state;
     for (const client of entry.clients.keys()) deliver(client, { kind: 'screencast', ...tag, type: 'state', sessionId, state });
   });
@@ -207,19 +205,16 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     viewer.stillTimer = setTimer(() => {
       viewer.stillTimer = null;
       if (viewer.pending || viewer.stillSent || entryOf(sessionId) !== entry || !entry.clients.has(client)) return;
-      const stream = entry.streams.get(keyOf(entry, viewer.tier));
+      const key = keyOf(entry, viewer.tier), generation = entry.tabGeneration;
+      const stream = entry.streams.get(key);
       const atSeq = stream?.frameSeq ?? 0;
       viewer.stillSent = true;
       const dims = tierFormat(TOP_TIER, viewer.box);
-      viewer.captureEchoPending = true;
-      viewer.captureEchoMeta = stream?.latest?.metadata ?? null;
-      // Chrome emits the duplicate screenshot frame within about 6–18 ms. Bound the match by wall time,
-      // so fake/paused timer clocks cannot make a later genuine frame look like a capture echo.
-      viewer.captureEchoDeadline = Date.now() + 30;
       Promise.resolve(bridge.capture(sessionId, { quality: dims.quality, maxWidth: dims.maxWidth, maxHeight: dims.maxHeight }))
         .then(shot => {
           if (!shot?.data || viewer.pending || entryOf(sessionId) !== entry || !entry.clients.has(client)) return;
-          if ((entry.streams.get(keyOf(entry, viewer.tier))?.frameSeq ?? 0) !== atSeq) return;   // 待つ間にページが変わった
+          if (keyOf(entry, viewer.tier) !== key || entry.tabGeneration !== generation
+            || (entry.streams.get(key)?.frameSeq ?? 0) !== atSeq) return;   // 待つ間にページ・段・タブが変わった
           send(client, sessionId, entry, viewer, { data: shot.data });
         })
         .catch(() => {});
@@ -321,7 +316,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     const previous = entry.clients.get(client);
     const viewer = previous ?? { tier: START_TIER, samples: [], blocked: new Map(), raised: null,
       pending: null, sent: null, lag: false, stale: false, staleTimer: null, stillTimer: null, stillSent: false,
-      captureEchoPending: false, captureEchoDeadline: 0, sentFlags: null };
+      sentFlags: null };
     viewer.box = box;
     viewer.device = device === 'phone' ? 'phone' : 'pc';
     entry.clients.set(client, viewer);

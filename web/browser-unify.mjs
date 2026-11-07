@@ -111,10 +111,10 @@ const pageKey = href => { try { const url = new URL(href); return `${url.pathnam
  */
 export function createBrowserUnify(deps = {}) {
   const { cmd, state = {}, chrome = () => null, showMenu = () => {}, notify = () => {}, osActions = () => false } = deps;
-  const rows = new Map(), holders = new Map(); let active = null, enabled = false;
+  const rows = new Map(), holders = new Map(); let active = null, enabled = false, awaitingState = false;
   const session = () => chrome()?.sessionId ?? state.current;
   const tabs = () => rows.get(session()) ?? [];
-  const current = () => tabs().find(tab => tab.targetId === active) ?? tabs().find(tab => tab.targetId === chrome()?.tabId) ?? tabs()[0] ?? null;
+  const current = () => tabs().find(tab => active?.sessionId === session() && tab.targetId === active.targetId) ?? tabs().find(tab => tab.targetId === chrome()?.tabId) ?? tabs()[0] ?? null;
   const holderOf = (sessionId, targetId) => holders.get(sessionId)?.get(targetId) ?? { holder:'ai' };
   const phoneQuery = matchMedia('(max-width: 600px)');
   const failed = error => notify(t(`tabs:address.reasons.${error?.code ?? error?.message}`, { defaultValue:t('tabs:address.failed') }));
@@ -140,13 +140,25 @@ export function createBrowserUnify(deps = {}) {
     return result;
   }
   async function pick(tab) {
-    active = tab.targetId; overview.hidden = true; paint();
+    const selection = active = { sessionId:session(), targetId:tab.targetId };
+    overview.hidden = true;
     // スマホが手元に描くページの間は映像を止めているので固定しない
-    if (local?.targetId === tab.targetId) return;
+    if (enabled && phoneQuery.matches && chrome()?.isOpen?.() && localPageUrl(tab, selection.sessionId)) {
+      chrome()?.cancelTabPin?.(); paint(); return;
+    }
     // 映していない間（パネルが閉じている・映し直している）は、パネルが映し始めてから固定する
     const pin = { windowId:tab.windowId ?? null, tabId:tab.targetId };
-    if (chrome()?.pinTab) { await chrome().pinTab(session(), pin); return; }
-    await cmd('chromePinWindow', { sessionId:session(), ...pin }).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
+    try {
+      // 端末内のページを外すと映像の開始が走る。先に切り替えを予約し、開始時の古いタブ情報で選択を戻さない。
+      const pending = chrome()?.pinTab ? chrome().pinTab(selection.sessionId, pin)
+        : cmd('chromePinWindow', { sessionId:selection.sessionId, ...pin });
+      paint();
+      await pending;
+      if (active === selection && chrome()?.tabId === tab.targetId) { active = null; paint(); }
+    } catch (error) {
+      if (active === selection) { active = null; paint(); }
+      notify(error?.message || t('browser.chromeWindow.pinFailed'));
+    }
   }
   /** 札・点・帯の元。agentUsed: この会話のエージェントがブラウザーを使っている（使っていなければ札も点も出さない） */
   function control() {
@@ -246,7 +258,7 @@ export function createBrowserUnify(deps = {}) {
   let local = null;
   function paintLocal() {
     const tab = current(), sessionId = session();
-    const url = enabled && phoneQuery.matches && chrome()?.isOpen?.() ? localPageUrl(tab, sessionId) : null;
+    const url = enabled && (!awaitingState || active) && phoneQuery.matches && chrome()?.isOpen?.() ? localPageUrl(tab, sessionId) : null;
     if (!url) { if (local) { local = null; chrome()?.mountPage?.(null); } return; }
     if (local?.sessionId === sessionId && local.targetId === tab.targetId) {
       // 戻る・進む・アドレスバーで Chrome のタブが別のページへ移った
@@ -371,7 +383,16 @@ export function createBrowserUnify(deps = {}) {
         // 札は止める・任せるだけ（映像に触れるだけでは引き継がない。ADR 0296）
         badge = createControlBadge({ onStop:() => cmd('chromeStop', { sessionId:session() }), onResume:() => cmd('chromeResume', { sessionId:session() }) });
         chrome()?.useInput?.({ phone:() => phoneQuery.matches });
-        chrome()?.onOpenChange(attach); chrome()?.onTargetChange(attach); chrome()?.onTabChange?.(paint);
+        chrome()?.onOpenChange(open => { if (!open) { active = null; awaitingState = true; } attach(); });
+        chrome()?.onTargetChange(attach);
+        chrome()?.onTabChange?.(event => {
+          if (event?.type === 'reconnected') awaitingState = true;
+          if (event?.type === 'state') awaitingState = false;
+          if (event?.type === 'state' || event?.type === 'reconnected'
+            || (event?.type === 'pin-failed' && active?.targetId === event.tabId
+              && (!event.sessionId || event.sessionId === active.sessionId))) active = null;
+          paint();
+        });
         deps.controlStore?.onChange?.(id => { if (id === session()) paint(); });
         phoneQuery.addEventListener?.('change', () => { paintControl(); paintLocal(); });
         window.addEventListener('message', localRequest);

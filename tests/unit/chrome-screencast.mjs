@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { checkScreencastDuplicates } from '../lib/screencast-duplicates.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
@@ -53,37 +54,7 @@ export default async function (t) {
     t.ok('設定: 大きすぎる・小さすぎる値は範囲に丸める', big.maxWidth === 1920 && big.maxHeight === 200 && big.quality === 80, JSON.stringify(big));
   }
 
-  // ---- Page.captureScreenshot が発生させる screencast の echo は、静止画を撮り直さない ----
-  {
-    let onFrame, captures = 0;
-    const bridge = {
-      onFrame(fn) { onFrame = fn; }, onState() {}, onEnded() {}, ack() {},
-      async request() { return { tabId:'tab' }; },
-      capture() {
-        captures++;
-        setTimeout(() => onFrame('s', { id:captures, data:'ECHO', metadata:{ deviceWidth:400, deviceHeight:300, pageScaleFactor:1, offsetTop:0, scrollOffsetX:0, scrollOffsetY:0 } }), 10);
-        return Promise.resolve({ data:'STILL' });
-      },
-    };
-    const hub = createScreencastHub({ bridge, source:'chrome' });
-    const messages = [], client = { send(message) { messages.push(message); } };
-    await hub.watch(client, 's', { width:400, height:300 });
-    onFrame('s', { id:0, data:'PAGE', metadata:{ deviceWidth:400, deviceHeight:300, pageScaleFactor:1, offsetTop:0, scrollOffsetX:0, scrollOffsetY:0 } });
-    const first = messages.find(message => message.type === 'frame');
-    hub.received(client, 's', first.seq, { mark:true }); hub.received(client, 's', first.seq);
-    await sleep(350);
-    t.ok('静止画の直後に来る同一画面の Chrome frame は数えず、撮った 1 枚を表示する', captures === 1
-      && messages.filter(message => message.type === 'frame').length === 2
-      && messages.at(-1)?.type === 'frame' && messages.at(-1)?.data === 'STILL' && messages.at(-1)?.still === true,
-      JSON.stringify({ captures, frames:messages.filter(message => message.type === 'frame').map(message => ({ data:message.data, still:message.still })) }));
-    const still = messages.at(-1);
-    hub.received(client, 's', still.seq, { mark:true }); hub.received(client, 's', still.seq);
-    await sleep(350);
-    t.ok('撮った 1 枚への返事後も、ページが変わるまで次の撮影を始めない', captures === 1, String(captures));
-    onFrame('s', { id:99, data:'SCROLL', metadata:{ scrollOffsetY:10 } });
-    t.ok('撮影中に実際のスクロールが起きたフレームは echo として捨てない', messages.some(message => message.type === 'frame' && message.data === 'SCROLL'));
-    await hub.unwatch(client, 's');
-  }
+  await checkScreencastDuplicates(createScreencastHub, t);
 
   const r = await rig();
   let a1 = null;
