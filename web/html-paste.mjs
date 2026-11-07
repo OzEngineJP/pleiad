@@ -126,7 +126,7 @@ export function htmlToRich(html, { parse = parseHtml, maxImages = PASTE_IMAGE_MA
   function blocks(children, ctx) {
     const out = [];
     let cur = [];
-    let lastWasPara = false;
+    let last = null;
 
     const lineItems = () => {
       const groups = [];
@@ -148,13 +148,16 @@ export function htmlToRich(html, { parse = parseHtml, maxImages = PASTE_IMAGE_MA
       while (res.at(-1)?.md === '') res.pop();
       return res;
     };
-    const emit = (items, para = false) => {
+    // kind: 'p'（<p>）・'line'（div・br・表の字の行）・'bq'（引用）・'list'（リスト）・'block'（見出し・pre）
+    const emit = (items, kind = 'line') => {
       if (!items.length) return;
-      if (para && lastWasPara && out.length && out.at(-1).md && items[0].md !== undefined) out.push({ md: '' });   // <p> と <p> の間は空行
+      // 引用・リストのすぐ後の字の行は、Markdown では前の段落の続き（遅延の続き）に読まれて中へ入る。続く引用も 1 つにつながる。空行で切る
+      const lazy = (last === 'bq' || last === 'list') && (kind === 'p' || kind === 'line' || (kind === 'bq' && last === 'bq'));
+      if (((kind === 'p' && last === 'p') || lazy) && out.length && out.at(-1).md && items[0].md !== undefined) out.push({ md: '' });   // <p> と <p> の間は空行
       out.push(...items);
-      lastWasPara = para;
+      last = kind;
     };
-    const flush = (para = false) => { emit(lineItems(), para); };
+    const flush = (kind = 'line') => { emit(lineItems(), kind); };
 
     const run = (text, ctx2) => {
       if (!text) return;
@@ -171,32 +174,32 @@ export function htmlToRich(html, { parse = parseHtml, maxImages = PASTE_IMAGE_MA
       if (/^H[1-6]$/.test(tag)) {
         flush();
         const { text, found } = inlineOf(n, ctx2);
-        emit([...(text ? [{ md: `${'#'.repeat(Number(tag[1]))} ${text}` }] : []), ...found]);
+        emit([...(text ? [{ md: `${'#'.repeat(Number(tag[1]))} ${text}` }] : []), ...found], 'block');
         if (text) structure = true;
         return;
       }
-      if (tag === 'UL' || tag === 'OL') { flush(); emit(list(n, ctx2)); return; }
+      if (tag === 'UL' || tag === 'OL') { flush(); emit(list(n, ctx2), 'list'); return; }
       if (tag === 'LI') {   // リストの外に切り出された li
         flush();
         const li = item(n, '- ', ctx2);
         if (li.some((x) => x.md)) structure = true;
-        emit(li);
+        emit(li, 'list');
         return;
       }
       if (tag === 'BLOCKQUOTE') {
         flush();
         const sub = blocks(n.childNodes, ctx2).map((x) => (x.md === undefined || x.raw ? x : { md: x.md ? `> ${x.md}` : '>' }));
         if (sub.some((x) => x.md)) structure = true;
-        emit(sub);
+        emit(sub, 'bq');
         return;
       }
-      if (tag === 'PRE') { flush(); emit(fence(n)); return; }
+      if (tag === 'PRE') { flush(); emit(fence(n), 'block'); return; }
       if (tag === 'TABLE') { flush(); emit(table(n, ctx2)); return; }
       if (tag === 'HR') { flush(); return; }
       if (tag === 'P') {
         flush();
         for (const c of n.childNodes) visit(c, ctx2);
-        flush(true);
+        flush('p');
         return;
       }
       if (BLOCK.test(tag) || /^(?:TR|TD|TH|THEAD|TBODY|TFOOT|DL)$/.test(tag)) {
