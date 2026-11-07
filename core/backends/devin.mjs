@@ -431,13 +431,14 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
             check();
             prompting = true;
+            // 再起動直後から応答を拾えるよう、最初の札に要求の id を含める。
+            promptId = typeof client.newId === 'function' ? client.newId() : null;
             // 札を先に置き、印を打ってから書く（落ちたとき、新しいサーバーがこのターンを拾えるように）
             bindHolder();
             await new Promise(resolve => setImmediate(resolve));
             held?.markTurn();
             // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
             emit({ type: 'activity', state: 'thinking' });
-            promptId = typeof client.newId === 'function' ? client.newId() : null;
             response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0, ...(promptId ? { id: promptId } : {}) });
             sent = true; onPromptDelivered?.(initialNativeId);
             control?.onReady?.();
