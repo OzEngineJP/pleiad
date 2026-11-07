@@ -1,6 +1,20 @@
 {
-  "version": "0.42.0-beta.18",
+  "version": "0.42.0-beta.19",
   "releases": [
+    {
+      "version": "0.42.0-beta.19",
+      "date": "2026-11-07",
+      "title": "Pleiad Plus だけでつないだ PC へ、AI から作業を任せられるようにしました",
+      "sections": [
+        {
+          "title": "リモートの PC",
+          "items": [
+            "Pleiad Plus だけでペアリングした PC が、ウィンドウでは開けるのに、AI の委譲（ply_delegate の host）では「オフラインです」と断られていました。Plus でつないだ PC にも AI 用の線を張り、ほかの PC と同じように作業を任せられるようにしました。",
+            "同じ PC を自分の中継と Plus の両方でつないでいるときは、Plus のサインインに頼らない自分の中継を先に使います。Plus を使わない設定にしている間は、Plus だけでつないだ PC へは AI 用の線を張りません。"
+          ]
+        }
+      ]
+    },
     {
       "version": "0.42.0-beta.18",
       "date": "2026-11-07",
