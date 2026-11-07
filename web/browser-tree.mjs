@@ -48,7 +48,7 @@ export function createBrowserTree({ host, open, menu, notify = () => {} }) {
     const visible = !!path && (narrow ? overlay : prefs.open);
     root.hidden = !visible; host.querySelector('.bu-tree')?.setAttribute('aria-expanded', String(visible)); root.classList.toggle('bu-tree-overlay', narrow);
     host.querySelector('.bu-tree')?.setAttribute('aria-controls', root.id);
-    const width = Math.max(160, Math.min(prefs.width, 320, narrow ? 320 : host.clientWidth * .4));
+    const width = narrow ? Math.min(280, host.clientWidth - 48) : Math.max(160, Math.min(prefs.width, 320, host.clientWidth * .4));
     root.style.width = `${width}px`; host.style.setProperty('--bu-tree-width', visible && !narrow ? `${width}px` : '0px');
     resize.hidden = narrow; close.hidden = !narrow;
     resize.setAttribute('aria-valuemin', '160'); resize.setAttribute('aria-valuemax', String(Math.min(320, host.clientWidth * .4)));
