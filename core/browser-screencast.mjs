@@ -61,6 +61,8 @@ const FAST_MS = 25;      // S の中央値がこれ以下なら 1 段上げる�
 const STILL_MS = 300;    // フレームが届かなくなってから最上段の 1 枚を撮るまで
 const STALE_MS = 3000;   // 返事が来なくなってから「つなぎ直しています」とするまで
 const RETRY_BLOCK_MS = 30_000;   // 上げて失敗した段へ、もう一度上げるまでの間隔
+const sameViewport = (a, b) => Number.isFinite(a?.deviceWidth) && Number.isFinite(a?.deviceHeight) && Number.isFinite(b?.deviceWidth) && Number.isFinite(b?.deviceHeight)
+  && ['deviceWidth', 'deviceHeight', 'pageScaleFactor', 'offsetTop', 'scrollOffsetX', 'scrollOffsetY'].every(key => a[key] === b[key]);
 
 const clampDim = value => Math.round(Math.min(1920, Math.max(200, Number.isFinite(value) ? value : 800)));
 const median = values => {
@@ -107,7 +109,22 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     if (!entry || !frame || typeof frame.data !== 'string') return;
     // 撮影元へはすぐ返事を返す（見る人を待たない。Chrome は返事が無いと 3 枚で止まる）
     bridge.ack(sessionId, frame.id, frame.stream);
-    const stream = entry.streams.get(streamKeyOf(entry, frame)) ?? { frameSeq: 0, latest: null };
+    const streamKey = streamKeyOf(entry, frame);
+    const stream = entry.streams.get(streamKey) ?? { frameSeq: 0, latest: null };
+    const echoes = [...entry.clients.values()].filter(viewer => viewer.captureEchoPending && Date.now() <= viewer.captureEchoDeadline
+      && keyOf(entry, viewer.tier) === streamKey && sameViewport(viewer.captureEchoMeta, frame.metadata));
+    if (echoes.length) {
+      // Page.captureScreenshot also produces one unchanged screencast frame in Chrome (6–18 ms later).
+      // Only consume it when CDP's viewport and scroll offsets still match; a real scroll during capture remains a page change.
+      // Consume before advancing frameSeq, or the capture response would drop its still as stale.
+      for (const viewer of echoes) {
+        viewer.captureEchoPending = false;
+      }
+      return;
+    }
+    for (const viewer of entry.clients.values()) if (viewer.captureEchoPending && keyOf(entry, viewer.tier) === streamKey) {
+      viewer.captureEchoPending = false;
+    }
     stream.frameSeq += 1;
     stream.latest = frame;
     entry.streams.set(streamKeyOf(entry, frame), stream);
@@ -194,6 +211,11 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
       const atSeq = stream?.frameSeq ?? 0;
       viewer.stillSent = true;
       const dims = tierFormat(TOP_TIER, viewer.box);
+      viewer.captureEchoPending = true;
+      viewer.captureEchoMeta = stream?.latest?.metadata ?? null;
+      // Chrome emits the duplicate screenshot frame within about 6–18 ms. Bound the match by wall time,
+      // so fake/paused timer clocks cannot make a later genuine frame look like a capture echo.
+      viewer.captureEchoDeadline = Date.now() + 30;
       Promise.resolve(bridge.capture(sessionId, { quality: dims.quality, maxWidth: dims.maxWidth, maxHeight: dims.maxHeight }))
         .then(shot => {
           if (!shot?.data || viewer.pending || entryOf(sessionId) !== entry || !entry.clients.has(client)) return;
@@ -298,7 +320,8 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     }
     const previous = entry.clients.get(client);
     const viewer = previous ?? { tier: START_TIER, samples: [], blocked: new Map(), raised: null,
-      pending: null, sent: null, lag: false, stale: false, staleTimer: null, stillTimer: null, stillSent: false, sentFlags: null };
+      pending: null, sent: null, lag: false, stale: false, staleTimer: null, stillTimer: null, stillSent: false,
+      captureEchoPending: false, captureEchoDeadline: 0, sentFlags: null };
     viewer.box = box;
     viewer.device = device === 'phone' ? 'phone' : 'pc';
     entry.clients.set(client, viewer);

@@ -23,7 +23,7 @@ window.rows=[{sessionId:'one',targetId:'file',windowId:1,title:'file-preview.md'
 window.chromeFixture={sessionId:'one',tabId:'file',mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(){},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true}};
 window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,controlStore:{get:()=>({state:window.agentState||'idle'})},composer:()=>document.querySelector('#composer'),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
 async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){chromeFixture.tabId=args.tabId;chromeFixture.change?.()}return {}},
-showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');b.textContent=item.label;b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
+showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');if(item.icon)b.append(item.icon.cloneNode(true));b.append(document.createTextNode(item.label));b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
 window.resetRows=()=>ui.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows});resetRows();
 window.enable=()=>ui.capsChanged({browserUnify:true});
 await renderFile(document.querySelector('#content'),{name:'file-preview.md',path:filePath,kind:'markdown',fetchedAt:'2026-11-06T03:30:00Z',size:18022,text:__SAMPLE__});
@@ -100,6 +100,10 @@ window.ready=true;
     await page.evaluate(() => { rows.splice(2); resetRows(); });
     await page.locator('[data-target=web] .bu-tab-pick').click();
     check('web tab shows the URL on desktop', await page.locator('.bu-crumbs').innerText() === 'https://github.com/tekalu1/pleiad');
+    await page.locator('.bu-more').click();
+    check('close panel menu uses the rounded window with a top tab row', await page.locator('#menu button').filter({hasText:'パネルを閉じる'}).locator('svg path').getAttribute('d') === 'M7 4h10a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4ZM3 9.5h18M10.5 4v5.5');
+    await shot('1280-panel-menu');
+    await page.locator('#menu').evaluate(node => { node.hidden = true; });
     const menuLabels = () => page.locator('#menu button').allInnerTexts();
     await page.locator('[data-target=web] .bu-tab-pick').click({button:'right'});
     check('web tab right click offers reload and close, and no outside action off the host screen', JSON.stringify(await menuLabels()) === JSON.stringify(['再読み込み', 'タブを閉じる']));
@@ -140,8 +144,12 @@ window.ready=true;
     await page.waitForTimeout(100); check('local page requests for another conversation are ignored', await page.evaluate(() => pageRequests.length === 1));
     const before = await page.evaluate(() => sent.length); await page.locator('.bu-tree').click();
     check('phone tree on a local page stays on the device', await page.evaluate(n => !sent.slice(n).some(item => item.args?.action === 'tree'), before));
-    await page.evaluate(() => { chromeFixture.tabId = 'web'; chromeFixture.change(); });
-    check('web tabs stay as video on the phone', await local.count() === 0);
+    await page.locator('.bu-count').click();
+    await page.locator('.bu-card').nth(1).locator('.bu-card-pick').click();
+    check('phone tab list switches from the local file page to the web video immediately', await local.count() === 0 && await page.locator('.bu-crumbs').innerText() === 'github.com');
+    await page.locator('.bu-count').click();
+    await page.locator('.bu-card').first().locator('.bu-card-pick').click();
+    check('phone tab list switches back from the web video to the local file page', await local.count() === 1 && await local.evaluate(node => new URL(node.src).pathname === '/_pleiad/s/one/file'));
     await page.evaluate(() => { chromeFixture.tabId = 'file'; chromeFixture.isOpen = () => false; chromeFixture.change(); });
     check('closed panel shows no local page', await local.count() === 0);
     await page.evaluate(() => { window.agentState = 'paused'; chromeFixture.change(); });

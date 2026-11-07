@@ -7,7 +7,7 @@ const paths = {
   web: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z',
   tree: 'M4 3v14h6M4 8h6M13 6h7v4h-7zM13 15h7v4h-7z',
   source: 'm8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 20', preview: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
-  more: 'M12 4v.01M12 12v.01M12 20v.01', panel: 'M3 4h18v16H3zM14 4v16',
+  more: 'M12 4v.01M12 12v.01M12 20v.01', panel: 'M7 4h10a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4ZM3 9.5h18M10.5 4v5.5',
   git: 'M6 3v12a4 4 0 0 0 8 0V9M6 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4M14 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4',
   plugins: 'M9 3v4M15 3v4M6 7h12v4a6 6 0 0 1-12 0zM12 17v4',
   profile: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0', chat: 'M4 5h16v11H9l-5 4z', window: 'M3 4h18v16H3zM3 9h18',
@@ -16,7 +16,7 @@ const paths = {
 export function browserIcon(kind) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', kind === 'more' ? '4' : '1.7'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round'); svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('stroke-width', kind === 'more' ? '4' : kind === 'panel' ? '1.6' : '1.7'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round'); svg.setAttribute('aria-hidden', 'true');
   const p = document.createElementNS(svg.namespaceURI, 'path'); p.setAttribute('d', paths[kind] ?? paths.file); svg.append(p); return svg;
 }
 export function browserButton(kind, label, run) {

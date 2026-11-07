@@ -114,7 +114,7 @@ export function createBrowserUnify(deps = {}) {
   const rows = new Map(), holders = new Map(); let active = null, enabled = false;
   const session = () => chrome()?.sessionId ?? state.current;
   const tabs = () => rows.get(session()) ?? [];
-  const current = () => tabs().find(tab => tab.targetId === (chrome()?.tabId ?? active)) ?? tabs()[0] ?? null;
+  const current = () => tabs().find(tab => tab.targetId === active) ?? tabs().find(tab => tab.targetId === chrome()?.tabId) ?? tabs()[0] ?? null;
   const holderOf = (sessionId, targetId) => holders.get(sessionId)?.get(targetId) ?? { holder:'ai' };
   const phoneQuery = matchMedia('(max-width: 600px)');
   const failed = error => notify(t(`tabs:address.reasons.${error?.code ?? error?.message}`, { defaultValue:t('tabs:address.failed') }));
