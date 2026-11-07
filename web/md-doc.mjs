@@ -19,7 +19,7 @@
 // 操作はどれも状態 { blocks, sel } を受けて新しい状態を返す（元は変えない）。DOM との結び付けは md-editor.mjs。
 import { editingState, textHash } from './md-editing-state.mjs';
 import { parseStructure, codeRoles, prefixEnd, containersOf } from './md-structure.mjs';
-import { createMatcher, sepBetween, escapeContent, unescapeContent } from './md-rows.mjs';
+import { createMatcher, sepBetween, escapeContent, unescapeContent, RE_HR } from './md-rows.mjs';
 import { ATTACHMENT_LINE, ATTACHMENT_MARKS, attachmentLine, normalizeAttachmentPath } from './timeline.mjs';
 
 export { attachmentLine, normalizeAttachmentPath };
@@ -245,15 +245,36 @@ const codeBlock = (line, marker = '') => ({ kind: 'code', marker, runs: plainRun
 // 読み込んだ Markdown は、どの行も変えないうちは元の文字のまま送る（ブロックの src。遅延の続き・余分な空白・区切りをそのまま残す）
 
 /** 行の文字と、見える位置から文字の位置への写し。位置は base + after[v]（after が無ければ base + v） */
-function rowLine(b, plain = false) {
+function rowLine(b, plain = false, lead = false) {
   if (b.kind === 'att') { const raw = b.raw ?? ''; return { text: raw, base: 0, after: null, len: raw.length }; }
   if (b.kind === 'code') return { text: b.marker + runsText(b.runs), base: b.marker.length, after: null, len: runsLength(b.runs) };
   const s = serializeRunsMapped(b.runs), len = runsLength(b.runs);
   if (plain) return { text: b.marker + s.text, base: b.marker.length, after: s.after, len };
-  const k = /^[ \t]*/.exec(s.text)[0].length;
+  // lead: 頭の空白も残す（段落の続きの行だけ。leadLine）
+  const k = /^[ \t]*/.exec(s.text)[0].length, keep = lead ? k : 0;
   const e = escapeContent(s.text.slice(k), b.kind, b.marker);
-  const after = s.after.map((o) => (o <= k ? 0 : o - k + (e.esc && o - k > e.p ? 1 : 0)));
-  return { text: b.marker + e.text, base: b.marker.length, after, len };
+  const after = s.after.map((o) => (o <= k ? Math.min(o, keep) : o - k + keep + (e.esc && o - k > e.p ? 1 : 0)));
+  return { text: b.marker + s.text.slice(0, keep) + e.text, base: b.marker.length, after, len };
+}
+
+/**
+ * 段落の続きの行（手前の段落と同じ入れ物の中で、新しい入れ物を開かない本文・引用の行）は、中身の頭の空白も送る（貼った字の字下げを残す）。
+ * CommonMark は段落の続きの行の頭の空白で構造を変えない（字下げのコードは段落を打ち切れない。頭の記号は逃がしてある）。
+ * ほかの行の頭の空白は、字下げのコード・項目の中身に読まれるので送らない。A は手前の行まで読んだ結果、prev はその行の文字、L は頭の空白を除いた行の文字。
+ * 字のまま送る区切り線・表・setext の下線（行の読み方では段落、履歴では別の物）に関わる行は、頭の空白を送らない
+ */
+const RE_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
+function leadLine(m, A, b, L, prev) {
+  if (!A || A.role !== 'para' || prev == null || (b.kind !== 'p' && b.kind !== 'quote') || blankRow(b)) return L;
+  const before = prev.slice(A.end).trim(), own = L.text.slice(b.marker.length).trim();
+  if (RE_HR.test(before) || RE_UNDERLINE.test(before) || before.includes('|') || RE_UNDERLINE.test(own) || own.includes('|')) return L;
+  const K = rowLine(b, false, true);
+  if (K.text === L.text) return L;
+  for (const t of [L.text, K.text]) {
+    const B = m.peek(t, b.kind);
+    if (B.role !== 'para' || B.opens || B.kept !== A.path.length || B.path.length !== A.path.length) return L;
+  }
+  return K;
 }
 
 /** 行の文字（memo は WeakMap。ブロックは作った後に書き換えない） */
@@ -315,12 +336,13 @@ function eachLine(blocks, m, line, emit) {
   const rows = [];
   blocks.forEach((b, i) => { if (!omitted(b)) rows.push(i); });
   const at = (k) => blocks[rows[k]];
-  let A = null;
+  let A = null, prev = null;
   rows.forEach((bi, j) => {
-    const b = blocks[bi], L = line(b);
+    const b = blocks[bi];
     const sep = sepBefore(m, A, j, rows.length, (k) => line(at(k)).text, (k) => at(k).kind, (k) => blankRow(at(k)));
-    if (sep !== null) emit({ sep, r: m.step(sep, 'sep') });
-    A = m.step(L.text, b.kind);
+    if (sep !== null) { A = m.step(sep, 'sep'); prev = sep; emit({ sep, r: A }); }
+    const L = leadLine(m, A, b, line(b), prev);
+    A = m.step(L.text, b.kind); prev = L.text;
     emit({ bi, line: L, r: A });
   });
 }
@@ -447,7 +469,8 @@ function candidate(text, li, { resolve = () => null } = {}) {
   }
   const rest = text.slice(end), k = /^[ \t]*/.exec(rest)[0].length;
   const u = unescapeContent(rest.slice(k), kind, marker);
-  return { kind, marker, runs: parseInline(u.text), c0: end + k, esc: u.esc, p: u.p };
+  // lead: 段落の続きの行なら中身に残す頭の空白（markdownToDoc が leadLine で決める）
+  return { kind, marker, runs: parseInline(u.text), c0: end + k, esc: u.esc, p: u.p, ...(k && (kind === 'p' || kind === 'quote') ? { lead: { runs: parseInline(rest.slice(0, k) + u.text), k } } : {}) };
 }
 
 let docSeq = 0;
@@ -465,23 +488,30 @@ export function markdownToDoc(md, opts = {}) {
   const m = createMatcher(), out = [];
   const textOf = (j) => (C[j] ? rowLine(C[j]).text : lines[j]);
   const kindOf = (j) => C[j]?.kind ?? 'p';
-  let P = null, absorbed = false, pre;
+  let P = null, prevText = null, absorbed = false, pre;
   for (let j = 0; j < lines.length; j++) {
     let b = C[j];
     if (!b) {
       if (!absorbed) {
         const sep = sepBefore(m, P, j, lines.length, (k) => (k === j ? lines[j] : textOf(k)), kindOf, (k) => !C[k] || k === j);
-        if (sep !== null) { m.step(sep, 'sep'); pre = lines[j]; absorbed = true; continue; }
+        if (sep !== null) { P = m.step(sep, 'sep'); prevText = sep; pre = lines[j]; absorbed = true; continue; }
       }
       const B = m.peek(lines[j], 'p'), marker = canonical(B.path);
       b = { kind: kindOfPath(B.path), marker, runs: [], c0: lines[j].length };
       C[j] = b;
     }
     absorbed = false;
+    if (b.lead) {
+      const { lead } = b;
+      delete b.lead;
+      const wide = { ...b, runs: lead.runs }, L = rowLine(wide);
+      if (leadLine(m, P, wide, L, prevText) !== L) { b = Object.assign(wide, { c0: b.c0 - lead.k, p: b.p + lead.k }); C[j] = b; }
+    }
     b.src = { line: lines[j], c0: b.c0, ...(b.esc ? { esc: true, p: b.p } : {}), ...(pre !== undefined ? { pre } : {}) };
     delete b.c0; delete b.esc; delete b.p;
     pre = undefined;
-    P = m.step(rowLine(b).text, b.kind);
+    prevText = leadLine(m, P, b, rowLine(b), prevText).text;
+    P = m.step(prevText, b.kind);
     out.push(b);
   }
   const id = `${Date.now().toString(36)}.${++docSeq}`;

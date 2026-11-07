@@ -505,4 +505,21 @@ export default async function (t) {
     s.blocks[0] = { kind: "p", marker: "", runs: [{ text: "a", marks: [] }] };
     return normalizeRows(s.blocks) && kinds(s) === "p,p" && md(s) === "a\nb";
   })());
+  // 段落の続きの行の頭の空白（貼った字の字下げ）は送る。段落の頭・区切り線の後・項目の後では送らない（字下げのコード・項目の中身に読まれる）
+  t.ok("段落の続きの行の頭の空白は送り、構造の変わる所では送らない", (() => {
+    const rows = (...xs) => ({ blocks: xs.map(([kind, marker, text]) => ({ kind, marker, runs: [{ text, marks: [] }] })), sel: caret(0, 0) });
+    const code = pasteText(st(""), "function f() {\n    return 1;\n}");
+    const edited = insertText({ ...code, sel: caret(2, 1) }, "x");
+    const quote = pasteText(typeAll(st(""), "> ").s, "a\n  b");
+    const back = doc("a\n    b");
+    return md(code) === "function f() {\n    return 1;\n}" && kinds(code) === "p,p,p"
+      && md(edited) === "function f() {\n    return 1;\n}x"
+      && md(quote) === "> a\n>   b" && kinds(quote) === "quote,quote"
+      && runsText(back[1].runs) === "    b"
+      && md(rows(["p", "", "a"], ["p", "", "    b"])) === "a\n    b"
+      && md(rows(["p", "", "a"], ["p", "", "  - b"])) === "a\n  \\- b"
+      && md(rows(["p", "", "  a"])) === "a"
+      && md(rows(["p", "", "***"], ["p", "", "    b"])) === "***\nb"
+      && md(rows(["ul", "- ", "a"], ["p", "", "    b"])) === "- a\n\nb";
+  })());
 }
