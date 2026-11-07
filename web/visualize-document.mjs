@@ -22,16 +22,21 @@ const CONVERSATION_FADE = `<script>(()=>{const root=document.documentElement;con
 // external: Ctrl/⌘+click or middle click (auxclick) asks for the default browser (ADR 0041).
 export const LINK_BRIDGE = `<script>(()=>{const sameOrigin=raw=>{try{return location.protocol.startsWith('http')&&new URL(raw||'',location.href).origin===location.origin}catch{return false}};const send=(url,newWindow,external)=>{try{const parsed=new URL(url);if(parsed.protocol!=='http:'&&parsed.protocol!=='https:')return;parent.postMessage({type:'ply-preview-open-link',url:parsed.href,newWindow,external},'*')}catch{}};const onLink=(event,middle)=>{if(middle&&event.button!==1)return;const link=event.target.closest?.('a[href]');if(!link)return;const raw=link.getAttribute('href');if(raw?.startsWith('#')){if(middle)return;event.preventDefault();location.hash=raw;return}if(!middle&&!event.ctrlKey&&!event.metaKey&&link.target!=='_blank'&&sameOrigin(raw))return;event.preventDefault();if(!/^https?:\\/\\//i.test(raw||''))return;const external=middle||!!event.ctrlKey||!!event.metaKey;send(raw,link.target==='_blank'||external,external)};document.addEventListener('click',event=>onLink(event,false),true);document.addEventListener('auxclick',event=>onLink(event,true),true);window.open=(url,target)=>{send(url,target==='_blank',false);return null}})()</script>`;
 
+// The local page tab's counterpart of web/pages/activity.mjs, inlined: the isolated origin
+// cannot import the app's modules, and the CSP here only allows inline scripts.
+// Reports interaction to the parent once it announces itself with pleiad:page-activity-init.
+export const ACTIVITY_BRIDGE = `<script>(()=>{if(parent===window)return;let receiver=null,touched=false,dirty=false;const send=()=>{if(receiver)parent.postMessage({type:'pleiad:page-activity',input:dirty},receiver)};const activity=event=>{if(!event.isTrusted)return;const input=event.type==='input'||event.type==='change';if(touched&&(!input||dirty))return;touched=true;dirty=dirty||input;send()};const init=event=>{if(event.source!==parent||event.data?.type!=='pleiad:page-activity-init'||!/^https?:\\/\\//.test(event.origin))return;receiver=event.origin;if(touched)send()};for(const type of['pointerdown','scroll','selectionchange','input','change'])document.addEventListener(type,activity,{capture:true,passive:true});addEventListener('message',init)})()</script>`;
+
 // resize: false for a document opened on its own (a browser tab): nobody listens
 // for its height, so it gets no reporting script at all.
 // title: the tab's name when opened on its own. Escaped; it comes from the model.
 const escapeText = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 // meta: false when the response header already carries the policy (the isolated origin). A meta CSP is
 // intersected with the header and would block the bundle's own files.
-export function visualizationDocument(content, { theme = '', resize = true, title = '', policy = {}, conversation = false, meta = true } = {}) {
+export function visualizationDocument(content, { theme = '', resize = true, title = '', policy = {}, conversation = false, meta = true, activity = false } = {}) {
   const scheme = ['light', 'dark'].includes(theme) ? `:root{color-scheme:${theme}}` : '';
   // Place policy before ALL model content, even full documents with an existing
   // head, scripts or meta refresh. Nothing from the model enters the parent DOM.
-  return `<!doctype html><html><head><meta charset="utf-8">${meta ? `<meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">` : ''}${resize ? VIOLATION_BRIDGE : ''}<meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}${conversation && resize ? CONVERSATION_STYLE : ''}</style>${resize ? LINK_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}${conversation && resize ? CONVERSATION_FADE : ''}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8">${meta ? `<meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">` : ''}${resize || activity ? VIOLATION_BRIDGE : ''}<meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}${conversation && resize ? CONVERSATION_STYLE : ''}</style>${resize || activity ? LINK_BRIDGE : ''}${activity ? ACTIVITY_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}${conversation && resize ? CONVERSATION_FADE : ''}</body></html>`;
 }
 

@@ -108,6 +108,9 @@ function fieldProbe() {
   const selected = () => {
     const el = document.activeElement;
     if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && typeof el.selectionStart === 'number' && el.selectionStart != null) {
+      // パスワードの欄（type=password・autocomplete が password のもの）は選んだ文字を出さない（Chrome の Ctrl+C と同じ守り。切り取りで消すのは許す）
+      if (el instanceof HTMLInputElement && (el.type === 'password' || /password/i.test(el.autocomplete ?? '')))
+        return { text: '', editable: !el.readOnly && !el.disabled };
       const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : el.selectionStart;
       return { text: String(el.value ?? '').slice(el.selectionStart, Math.min(end, el.selectionStart + 20000)), editable: !el.readOnly && !el.disabled };
     }

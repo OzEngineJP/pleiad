@@ -83,8 +83,9 @@ const css = `
 /** スマホの帯の名前。Pleiad のページはホスト名（localhost）でなく、ファイル・フォルダーの名前かページの名前。Web は空（ホスト名を出す） */
 export function pageName(tab) {
   const page = tab?.page; if (!page?.kind) return '';
-  if (['file', 'dir'].includes(page.kind) || (page.kind === 'viz' && page.path)) return String(page.path ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || page.path || '';
+  if ((['file', 'dir', 'html'].includes(page.kind) || page.kind === 'viz') && page.path) return String(page.path ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || page.path || '';
   if (page.kind === 'viz') return tab.title ?? '';
+  if (page.kind === 'html') return page.title || tab.title || '';
   return t(`tabs:address.locations.${page.kind}`, { defaultValue:tab.title || '' });
 }
 
@@ -123,7 +124,7 @@ export function createBrowserUnify(deps = {}) {
    * Web のページは「既定のブラウザーで開く」（URL）。リモートの画面では外で開く操作を出さない（ADR 0010。モック v6 の 9）
    */
   const tabMenu = tab => {
-    const page = tab?.page?.path && ['file', 'dir', 'viz'].includes(tab.page.kind) ? { path:tab.page.path, kind:tab.page.kind === 'dir' ? 'directory' : 'file' } : null;
+    const page = tab?.page?.path && ['file', 'dir', 'viz', 'html'].includes(tab.page.kind) ? { path:tab.page.path, kind:tab.page.kind === 'dir' ? 'directory' : 'file' } : null;
     if (page) return deps.preview?.tabMenu?.({ ...tab, page }) ?? [];
     if (tab?.page?.kind === 'viz') return [{ label:t('tabs:display.copyTitle'), onClick:async () => { try { await navigator.clipboard.writeText(tab.title ?? ''); notify(t('timeline.code.copied')); } catch { notify(t('timeline.code.copyFailed')); } } }];
     if (tab?.page || !/^https?:\/\//i.test(tab?.url ?? '') || !osActions()) return [];
@@ -131,11 +132,13 @@ export function createBrowserUnify(deps = {}) {
   };
   const discard = tab => !tab?.dirty || (deps.confirm ?? globalThis.confirm)(t('tabs:display.discard'));
   async function openInput(input, sessionId, replace = null) {
-    let kind, path, vizHash, entry, title, line;
+    let kind, path, vizHash, entry, title, line, url;
     if (input) {
       let parsed; try { parsed = new URL(input, location.origin); } catch {}
+      // 隔離の origin の名前（localhost と <印>.localhost。core/isolated-origins.mjs）
+      const isolatedHost = parsed && (parsed.hostname === 'localhost' || /^[a-z0-9][a-z0-9-]{0,61}\.localhost$/i.test(parsed.hostname));
       const page = parsed && (parsed.origin === location.origin || (parsed.hostname === 'localhost' && parsed.port === String(pagePort))) && /^\/_pleiad\/s\/([^/]+)\/(file|dir|git|plugins|new|attachment)$/.exec(parsed.pathname);
-      const viz = parsed && /^\/viz\/([0-9a-f]{64})\/(.+)$/.exec(parsed.pathname);
+      const viz = isolatedHost && /^\/viz\/([0-9a-f]{64})\/(.+)$/.exec(parsed.pathname);
       if (page && decodeURIComponent(page[1]) === sessionId) {
         kind = page[2]; path = parsed.searchParams.get('path'); line = parsed.searchParams.get('line');
         if (path && ['file', 'dir'].includes(kind)) {
@@ -143,14 +146,15 @@ export function createBrowserUnify(deps = {}) {
           path = resolved.path; kind = resolved.kind === 'directory' ? 'dir' : 'file';
         }
       }
-      else if (viz && parsed.hostname === 'localhost') { kind = 'viz'; vizHash = viz[1]; entry = decodeURIComponent(viz[2]); title = parsed.searchParams.get('title'); }
+      else if (viz) { kind = 'viz'; vizHash = viz[1]; entry = decodeURIComponent(viz[2]); title = parsed.searchParams.get('title'); }
+      else if (isolatedHost && /^\/f\//.test(parsed.pathname)) { kind = 'html'; url = parsed.href; title = parsed.searchParams.get('title'); }
       else if (/^(?:[a-z]:[\\/]|[./~])/i.test(input)) { const resolved = await cmd('resolvePath', { sessionId, path:input }); kind = resolved.kind === 'directory' ? 'dir' : 'file'; path = resolved.path; }
       else return null;
     }
     const existing = path && pages.list(sessionId).find(tab => tab !== replace && samePath(tab.page.path, path));
     if (existing) { if (sessionId === session()) await pick(existing); return existing; }
     if (replace && !discard(replace)) return replace;
-    const tab = await pages.open({ sessionId, kind:kind ?? 'new', path, vizHash, entry, title, line }, replace);
+    const tab = await pages.open({ sessionId, kind:kind ?? 'new', path, vizHash, entry, title, line, url }, replace);
     tab.mode = 'page'; if (sessionId === session()) await pick(tab); return tab;
   }
   async function navigate(action, args = {}) {
@@ -204,7 +208,14 @@ export function createBrowserUnify(deps = {}) {
     if (mode === 'page') {
       if (!tab.local) {
         if (!tab.page) return;
-        const original = tab; tab = await pages.open({ sessionId:session(), ...tab.page }); tab.chromeId = original.targetId; tab.chromeUrl = tab.url;
+        const original = tab, request = { sessionId:session(), ...tab.page, title:tab.page.title ?? tab.title };
+        // 隔離の origin のタブは URL の形から開き直す。可視化は束の入口（sub.html など）を、HTML のファイルは鍵の URL を引き継ぐ
+        if (tab.page.kind === 'viz') {
+          const seg = /^\/viz\/[0-9a-f]{64}\/(.+)$/.exec(new URL(tab.url).pathname);
+          if (seg) request.entry = decodeURIComponent(seg[1]);
+        }
+        if (tab.page.kind === 'html') request.url = tab.url;
+        tab = await pages.open(request); tab.chromeId = original.targetId; tab.chromeUrl = tab.url;
       }
       tab.mode = 'page'; await pick(tab); return;
     }
@@ -359,6 +370,16 @@ export function createBrowserUnify(deps = {}) {
     const entry = [...frames.values()].find(item => event.source === item.frame.contentWindow);
     if (!entry || event.origin !== new URL(entry.url).origin) return;
     if (event.data?.type === 'pleiad:page-activity') { pages.activity(entry.tab, event.data.input === true); explorer?.dismiss(); return; }
+    if (event.data?.type === 'ply-preview-open-link' && typeof event.data.url === 'string') {
+      // 隔離のページの中のリンク（LINK_BRIDGE から）。Pleiad のページはタブで開き、外の URL は新しい Chrome のタブ（画面の中）へ
+      let link;
+      try { link = new URL(event.data.url); } catch { return; }
+      if (!/^https?:$/.test(link.protocol) || link.username || link.password) return;
+      if (await openInput(link.href, entry.sessionId, event.data.newWindow === true ? null : entry.tab).catch(() => null)) return;
+      const result = await cmd('chromeNavigate', { sessionId:entry.sessionId, action:'new', input:link.href }).catch(() => null);
+      if (result?.targetId && entry.sessionId === session()) await pick(tabs().find(item => item.targetId === result.targetId) ?? { targetId:result.targetId });
+      return;
+    }
     if (event.origin !== location.origin || entry.sessionId !== session()) return;
     if (event.data?.type === 'pleiad:page-open' && event.data.sessionId === entry.sessionId) {
       if (entry !== local) return;
@@ -450,7 +471,12 @@ export function createBrowserUnify(deps = {}) {
     envChanged(env) { pageEnv = env; for (const entry of frames.values()) entry.frame.contentWindow?.postMessage({ type:'pleiad:env', env }, new URL(entry.url).origin); },
     onEvent(event) {
       document.dispatchEvent(new CustomEvent('ply-tab-event', { detail:event }));
-      if (['page:moved', 'page:changed'].includes(event.type)) { pages.event(event); return; }
+      if (['page:moved', 'page:changed'].includes(event.type)) {
+        // 端末内のページ: ページの port が替わったことを openInput が知るように持ち、隔離の origin の URL はページの一覧が張り直す。
+        // Chrome のタブは本体（relay.migratePageTabs）が付け替え、tab:info が届いて列が直る
+        if (event.type === 'page:moved') pagePort = event.ports?.pages ?? pagePort;
+        pages.event(event); return;
+      }
       if (event.type === 'tab:info') {
         let list = rows.get(event.sessionId) ?? [];
         if (event.reset) { list = event.tabs ?? []; holders.delete(event.sessionId); }
@@ -462,19 +488,6 @@ export function createBrowserUnify(deps = {}) {
         if (event.holder === 'human') holders.get(event.sessionId).set(event.targetId, event); else holders.get(event.sessionId).delete(event.targetId);
         if (event.sessionId === session()) paint();
       } else if (event.type === 'tab:page-request') pageRequest(event);
-      else if (event.type === 'page:changed') {
-        // 端末内のページがそのファイルを出していれば知らせる（読み直すかはページが決める。Chrome のタブは本体が届ける）
-        const entry = local;
-        if (entry && event.sessionId === entry.sessionId && typeof event.path === 'string') {
-          let at; try { at = new URL(entry.frame.contentWindow?.location?.href ?? entry.url, location.origin); } catch { at = null; }
-          const shown = at?.origin === location.origin ? at.searchParams.get('path') : null;
-          const norm = value => String(value ?? '').replaceAll('\\', '/');
-          const target = norm(event.path).toLowerCase();
-          if (shown && (norm(shown).toLowerCase() === target || norm(shown) === norm(event.path))) pageCommand(entry, { type:'changed' });
-        }
-      }
-      // page:moved: 端末内のページは本体と同じ出どころ（/_pleiad/…。port は入っていない）なので張り直しは要らない。
-      // Chrome のタブは本体（relay.migratePageTabs）が付け替え、tab:info が届いて列が直る
     },
   };
 }

@@ -47,13 +47,11 @@ export function fileMark(secret, root) {
   return `f${mac.update(`file-root:${normalizeRoot(root)}`).digest('hex').slice(0, 16)}`;
 }
 
-/** Host の見出しが localhost:<port> か <印>.localhost:<port> か（大小文字は見ない。ページの port は localhost だけ） */
+/** Host の見出しが localhost:<port> か <印>.localhost:<port> か（大小文字は見ない。ページの port は localhost だけ）。port は 10 進の数字だけ（0x・空白・+・.0・e0 は通さない） */
 export function isolatedHostOk(header, port) {
   if (typeof header !== 'string') return false;
-  const host = header.toLowerCase();
-  if (host === `localhost:${port}`) return true;
-  const at = host.lastIndexOf(':');
-  return at > 0 && Number(host.slice(at + 1)) === port && LOCALHOST_MARK.test(host.slice(0, at));
+  const match = /^(.+):(\d{1,5})$/.exec(header.toLowerCase());
+  return !!match && match[2] === String(port) && (match[1] === 'localhost' || LOCALHOST_MARK.test(match[1]));
 }
 
 /** アプリの出どころと URL */

@@ -132,7 +132,7 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     count.textContent = String(total); count.setAttribute('aria-label', t('tabs:strip.count', { count: total }));
     if (!input.hidden) return;
     back.disabled = !tab?.canGoBack; forward.disabled = !tab?.canGoForward; reload.disabled = !tab;
-    const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = !['file', 'dir'].includes(tab?.page?.kind) && !(tab?.page?.kind === 'viz' && file);
+    const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = !['file', 'dir', 'html'].includes(tab?.page?.kind) && !(tab?.page?.kind === 'viz' && file);
     crumbs.hidden = false; crumbs.replaceChildren();
     if (file && tab.page.kind !== 'attachment' && !mobile()) {
       const all = addressCrumbs(tab.page.path);

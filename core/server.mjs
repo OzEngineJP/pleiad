@@ -2405,7 +2405,7 @@ const pagesRoutes = createPagesRoutes({ ops: (caller, id, input) => opsRegistry.
   recentFiles: async sessionId => recentFilesOf(await pageTranscript(sessionId)),
   visualizations: async sessionId => visualizationLinksOf((await pageTranscript(sessionId)).presents, pagePorts?.isolated),
   gitTimeline: async sessionId => timelineOf((await pageTranscript(sessionId)).messages) });
-const isolatedRoutes = createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, fileAccessFor, ports: () => pagePorts, log: pagesLog });
+const isolatedRoutes = createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, secret: pageSecrets.key, fileAccessFor, ports: () => pagePorts, log: pagesLog });
 const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, pageRequests, log: pagesLog,
   htmlKeys, secret: pageSecrets.key, pageWatch,
   // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る

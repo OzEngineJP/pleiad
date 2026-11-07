@@ -11,7 +11,8 @@ import { sendStatus } from './page-listener.mjs';
 import { inspectFile, readBounded } from './file-preview.mjs';
 import { blobPath, readManifest, sweepVizBlobs, isHash } from './viz-bundle.mjs';
 import { HTML_SANDBOX, VIZ_SANDBOX, createOnceTokens, isolatedHeaders, previewPolicy } from './preview-policy.mjs';
-import { LINK_BRIDGE, VIOLATION_BRIDGE, visualizationDocument } from '../web/visualize-document.mjs';
+import { fileMark, vizMark } from './isolated-origins.mjs';
+import { ACTIVITY_BRIDGE, LINK_BRIDGE, VIOLATION_BRIDGE, visualizationDocument } from '../web/visualize-document.mjs';
 
 // 上限は Pleiad のページ（ADR 0295 の 2 の 1）と同じ: 文字は 8 MiB、ほかは 32 MiB
 const TEXT_LIMIT = 8 * 1024 * 1024;
@@ -61,7 +62,7 @@ function withHead(body, inFrame) {
   // latin1 で読むと 1 バイトが 1 文字になり、文字の位置がそのままバイトの位置になる（UTF-8 の BOM は 3 文字）
   const doctype = /^(?:\xEF\xBB\xBF)?\s*<!doctype[^>]*>/i.exec(body.subarray(0, 4096).toString('latin1'));
   const at = doctype ? doctype[0].length : 0;
-  return Buffer.concat([body.subarray(0, at), Buffer.from(VIOLATION_BRIDGE + LINK_BRIDGE, 'utf8'), body.subarray(at)]);
+  return Buffer.concat([body.subarray(0, at), Buffer.from(VIOLATION_BRIDGE + LINK_BRIDGE + ACTIVITY_BRIDGE, 'utf8'), body.subarray(at)]);
 }
 
 /** 枠の中で開いたか（Chrome は Sec-Fetch-Dest を付ける。付けないものは枠として扱い、橋を入れる） */
@@ -77,13 +78,14 @@ const framed = req => {
  * @param [deps.htmlKeys]      HTML のファイルの鍵（core/html-keys.mjs。/f/<鍵>/… が resolve を呼ぶ。ファイルのページと同じもの）
  * @param [deps.ports]         () => { main, pages, isolated }
  * @param [deps.fileAccessFor] (sessionId) => ファイルの検査の範囲（core/server.mjs の fileAccessFor）。鍵に access が無いときに使う。無ければ { dataDir }
+ * @param [deps.secret]        page-secrets の key（Buffer。/f/<鍵>/ のフォルダーの印 fileMark を Host と突き合わせる。無ければ印付きの /f/ は断る）
  * @param [deps.log]           ログの 1 行
  * @param [deps.sweepDelayMs]  起動からこの後に束の片付けを 1 回する（null なら片付けない。試験用）
  * @param [deps.now]           時計（試験用）
  * @returns {{ handle(req, res, { url: URL }): any, once(origins: string[]): string|null, sweep(): Promise<object>, close(): void }}
  */
 export function createIsolatedRoutes(deps = {}) {
-  const { dataDir = null, store = null, htmlKeys = null, fileAccessFor = null, log = () => {}, now = Date.now } = deps;
+  const { dataDir = null, store = null, htmlKeys = null, fileAccessFor = null, secret = null, log = () => {}, now = Date.now } = deps;
   const onceTokens = createOnceTokens({ now });
   const manifests = new Map();
   const sweep = () => (dataDir ? sweepVizBlobs({ dataDir, now, log }) : Promise.resolve({ removed: 0, kept: 0 }));
@@ -150,7 +152,7 @@ export function createIsolatedRoutes(deps = {}) {
         // 別のタブは包みの <title> を付ける（タブの列の題。web/visualize-frame.mjs の isolatedVisualizationUrl）
         const title = embed === 'tab' ? (url.searchParams.get('title') ?? '').slice(0, 200) : '';
         body = Buffer.from(visualizationDocument(content, { theme: ['light', 'dark'].includes(theme) ? theme : '', policy, meta: false, title,
-          resize: inFrame, conversation: embed === 'conversation' }), 'utf8');
+          resize: inFrame, conversation: embed === 'conversation', activity: embed === 'tab' && framed(req) }), 'utf8');
       }
     }
     const charset = body ? 'utf-8' : htmlCharset(raw);
@@ -158,11 +160,16 @@ export function createIsolatedRoutes(deps = {}) {
     return send(req, res, { headers: { ...security, 'content-type': charset ? `text/html; charset=${charset}` : 'text/html', 'cache-control': 'no-store' }, body });
   }
 
-  async function serveFile(req, res, url, key, rest) {
-    const held = htmlKeys?.resolve?.(key);
+  async function serveFile(req, res, url, key, rest, held = null) {
+    held ??= htmlKeys?.resolve?.(key);
     const segments = rest.length === 0 || (rest.length === 1 && rest[0] === '') ? [] : relativeSegments(rest);
     // ドットで始まる名前（.env・.git など）は鍵のフォルダーの下でも出さない
     if (!held || !segments || segments.some(part => part.startsWith('.'))) return sendStatus(req, res, 404, 'not found');
+    // 会話を消したら鍵は効かない（消した会話のファイルを、残った URL から読めない）。peek は get（load）のあとで確かめる
+    if (held.sessionId && typeof store?.get === 'function' && typeof store?.peek === 'function') {
+      const alive = await store.get(held.sessionId).then(() => store.peek(held.sessionId) !== null, () => false);
+      if (!alive) return sendStatus(req, res, 404, 'not found');
+    }
     const parts = segments.length ? segments : [held.entry];
     const access = held.access ?? fileAccessFor?.(held.sessionId) ?? { dataDir };
     let checked, root;
@@ -191,8 +198,20 @@ export function createIsolatedRoutes(deps = {}) {
   return {
     async handle(req, res, { url }) {
       const [, area, key, ...rest] = url.pathname.split('/');
-      if (area === 'viz' && key && dataDir) return serveViz(req, res, url, key, rest);
-      if (area === 'f' && key) return serveFile(req, res, url, key, rest);
+      // Host の印（<印>.localhost）と中身を結び付ける: /viz/<ハッシュ>/ は束の印、/f/<鍵>/ は鍵のフォルダーの印だけ。
+      // 違う印の出どころで中身を動かせないようにする（localStorage・Cookie は印ごとに分かれる。ADR 0295 の 3・6）。
+      // 印なしの localhost は端末（スマホ・リモートのプロキシ）の道として残す（ADR 0295 の 9。共有の origin であることは ADR に書く）
+      const name = String(req.headers.host ?? '').toLowerCase().replace(/:\d{1,5}$/, '');
+      if (area === 'viz' && key && dataDir) {
+        if (name !== 'localhost' && name !== `${vizMark(key)}.localhost`) return sendStatus(req, res, 404, 'not found');
+        return serveViz(req, res, url, key, rest);
+      }
+      if (area === 'f' && key) {
+        const held = htmlKeys?.resolve?.(key);
+        if (!held) return sendStatus(req, res, 404, 'not found');
+        if (name !== 'localhost' && (!secret || name !== `${fileMark(secret, held.root)}.localhost`)) return sendStatus(req, res, 404, 'not found');
+        return serveFile(req, res, url, key, rest, held);
+      }
       return sendStatus(req, res, 404, 'not found');
     },
     /** 「一度だけ読み込む」の印を作る（画面が認証された WS で頼む。core/server.mjs が口を作る）。https の出どころが無ければ null */

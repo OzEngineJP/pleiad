@@ -52,6 +52,12 @@ export default async function (t) {
       && !isolatedHostOk('127.0.0.1:8080', 8080) && !isolatedHostOk('localhost.evil.com:8080', 8080)
       && !isolatedHostOk(undefined, 8080) && !isolatedHostOk(`${vizMark(hash)}.localhost`, 8080)
       && !isolatedHostOk('localhost:80x', 8080));
+    t.ok('port は 10 進の数字だけ（0x・空白・+・.0・指数・8 進っぽい形は断る）',
+      !isolatedHostOk('localhost:0x1f90', 8080) && !isolatedHostOk('localhost: 8080', 8080)
+      && !isolatedHostOk('localhost:8080 ', 8080) && !isolatedHostOk('localhost:+8080', 8080)
+      && !isolatedHostOk('localhost:8080.0', 8080) && !isolatedHostOk('localhost:8.08e3', 8080)
+      && !isolatedHostOk('localhost:08080', 8080) && !isolatedHostOk('localhost:0x8080', 0x8080)
+      && isolatedHostOk('localhost:8080', 8080) && !isolatedHostOk('localhost:8080', 80800));
 
     // port が替わった URL の付け替え（movedPageUrl）。from は列でも受ける
     const secret = crypto.randomBytes(32);
