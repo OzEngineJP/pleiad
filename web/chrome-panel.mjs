@@ -152,7 +152,6 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
   let watchGeneration = 0, pinGeneration = 0, stateVersion = 0;
   let pendingTab = null, pinRequest = null, targetListeners = new Set();   // 開始待ちのタブと、送信後の完了待ちを分ける
   const inFlightPins = new Set();
-  let confirmedPin = false;
   let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, closing = false, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown;   // hold: 閉じたウィンドウを薄くして残している間
 
   function build() {
@@ -335,7 +334,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     // 閉じる・再接続・端末内の表示へ移る前の応答は、今の選択に混ぜない。
     if (generation !== watchGeneration || sessionId !== id || pagePaused || !isOpen()) return;
     connecting = false; ended = false;
-    if (result?.state && version === stateVersion) state = result.state;
+    if (Number.isSafeInteger(result?.state?.sequence) || version === stateVersion) acceptState(result?.state);
     // タブの列で選んだタブ（映していない間に選んだ）は、映し始めてから固定する
     const tab = pendingTab;
     pendingTab = null;
@@ -345,33 +344,45 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
   }
   function sendTabPin({ sessionId: id, windowId, tabId }) {
     const request = ++pinGeneration, generation = watchGeneration;
-    const pin = { request, generation, sessionId:id, tabId, completed:false, confirmed:state?.tabId === tabId };
-    confirmedPin = false;
+    const pin = { request, generation, sessionId:id, tabId };
     pinRequest = pin;
     inFlightPins.add(pin);
-    return cmd('chromePinWindow', { sessionId: id, windowId, tabId }).then(() => {
-      if (!currentPin(pin)) return;
-      pin.completed = true;
-      confirmTabPin();
+    return cmd('chromePinWindow', { sessionId: id, windowId, tabId }).then(result => {
+      if (!livePin(pin)) return;
+      // 前の要求の応答も、より新しいサーバー状態なら保存する。表示の選択とは別に持つ。
+      const changed = acceptState(result?.state);
+      if (currentPin(pin)) {
+        pinRequest = null;
+        announceState();   // 別端末に上書きされ、対象が違っていても成功応答で要求は終わる。
+      } else if (!pinRequest && changed) announceState();
+      paint();
     }).catch(error => {
       if (!currentPin(pin)) return;
       pinRequest = null;
-      confirmedPin = false;
       for (const listener of tabListeners) listener({ type:'pin-failed', sessionId:id, tabId });
+      announceState();
+      paint();
       notify(error?.message || t('browser.chromeWindow.pinFailed'));
     }).finally(() => inFlightPins.delete(pin));
   }
   function currentPin(pin) {
-    return pinRequest === pin && pin.request === pinGeneration && pin.generation === watchGeneration
-      && sessionId === pin.sessionId && !pagePaused && isOpen();
+    return pinRequest === pin && pin.request === pinGeneration && livePin(pin);
   }
-  function confirmTabPin() {
-    const pin = pinRequest;
-    if (!pin || !currentPin(pin) || !pin.completed || !pin.confirmed || state?.tabId !== pin.tabId) return;
-    pinRequest = null;
-    confirmedPin = true;
+  function livePin(pin) {
+    return pin.generation === watchGeneration && sessionId === pin.sessionId && !pagePaused && isOpen();
+  }
+  function announceState() {
+    if (pendingTab || pinRequest || pagePaused || !state) return;
     for (const listener of tabListeners) listener({ type:'state' });
-    paint();
+  }
+  function acceptState(next) {
+    if (!next) return false;
+    if (Number.isSafeInteger(state?.sequence)
+      && (!Number.isSafeInteger(next.sequence) || next.sequence <= state.sequence)) return false;
+    if (unifiedInput && state?.tabId && next.tabId !== state.tabId) unifiedInput.reset();
+    state = next;
+    stateVersion++;
+    return true;
   }
 
   function watchSize() {
@@ -580,16 +591,8 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
         if (unifiedInput && message.interaction && (!tabId || tabId === state?.tabId)) unifiedInput.receive(message.interaction);
       }
       else if (message.type === 'state') {
-        stateVersion++;
-        // 古い要求の完了が後から届いても、最後に選んだタブを戻さない。
-        if ((pinRequest || confirmedPin) && message.state?.tabId !== pinRequest?.tabId && [...inFlightPins].some(pin => pin.request !== pinGeneration
-          && pin.generation === watchGeneration && pin.sessionId === sessionId && pin.tabId === message.state?.tabId)) return;
-        if (unifiedInput && state?.tabId && message.state?.tabId !== state.tabId) unifiedInput.reset();
-        state = message.state;
-        if (pinRequest && currentPin(pinRequest)) {
-          pinRequest.confirmed = state?.tabId === pinRequest.tabId;
-          confirmTabPin();
-        } else if (!pendingTab && !pagePaused) for (const listener of tabListeners) listener({ type:'state' });
+        if (!acceptState(message.state)) return;
+        announceState();
         paint();
       }
       else if (message.type === 'ended') { ended = true; paint(); }

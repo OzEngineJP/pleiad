@@ -235,7 +235,8 @@ export const browserOps = [
     riskReason: 'Chooses which of the Chrome windows or tabs of the conversation the video in the right panel shows (null follows the tab the agent used last); it only changes what the person sees and never touches the agent or the windows. Screen and remote devices only (not on MCP or CLI)',
     input: z.object({ sessionId: sessionIdShape, windowId: windowIdShape.nullable().describe('agent:ops.browser.chromePinWindow.windowId'),
       tabId: z.string().min(1).max(200).nullable().optional().describe('agent:ops.browser.chromePinWindow.tabId') }),
-    output: z.object({ pinnedWindowId: z.number().nullable(), pinnedTabId: z.string().nullable().optional() }),
+    output: z.object({ pinnedWindowId: z.number().nullable(), pinnedTabId: z.string().nullable().optional(),
+      state: z.object({ sequence:z.number().int().positive(), tabId:z.string().nullable() }).passthrough().optional() }),
     surfaces: { ui: true, mcp: false, cli: false },
     legacyCommand: 'chromePinWindow',
     handler: async (ctx, { sessionId, windowId, tabId }) => {

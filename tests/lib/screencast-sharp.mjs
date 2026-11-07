@@ -1,110 +1,109 @@
-// These JPEGs have identical reduced images but different decoded sharp pixels.
-// The browser suite also creates the pair with Chrome's canvas encoder.
-import fs from 'node:fs/promises';
-
-export async function checkScreencastSharp(createHub, t, fixture) {
-  const pair = fixture ?? JSON.parse(await fs.readFile(new URL('../fixtures/screencast-fine-detail.json', import.meta.url), 'utf8'));
-  const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
-  async function rig(echoDelay = null, viewers = 1, captureDelay = 100) {
-    let time = 1000, receive, hub, current = pair.sharp, captures = 0, id = 0, tiers = [3];
-    const timers = new Set(), frames = [];
-    const clock = { now:() => time, setTimer(fn, ms) { const timer = { fn, at:time + ms }; timers.add(timer); return timer; }, clearTimer(timer) { timers.delete(timer); } };
-    const frame = (data = pair.low) => { for (const stream of [...tiers]) receive('s', { id:++id, stream, data, metadata:pair.metadata }); };
-    hub = createHub({ ...clock, bridge:{
-      onFrame(fn) { receive = fn; }, onState() {}, onEnded() {}, ack() {},
-      async request() { return { state:{ tabId:'tab' } }; }, async setFormats(_id, formats) { tiers = formats.map(format => format.tier); return { multi:true }; },
-      capture() {
-        captures++; const data = current;
-        if (echoDelay !== null) clock.setTimer(() => frame(), echoDelay);
-        return new Promise(resolve => clock.setTimer(() => resolve({ data }), captureDelay));
+// 同じ縮小 JPEG になる実画像を使い、止まった後は高画質の screencast 自体が変更を運ぶことを確かめる。
+export async function checkScreencastSharp(createHub, t, images = null) {
+  const pair = images ?? JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../fixtures/screencast-fine-detail.json', import.meta.url), 'utf8'));
+  const flush = async () => { for (let i=0;i<16;i++) await Promise.resolve(); };
+  async function rig({viewers=1, multi=true, initialState=true, restartDelay=0, scale=1}={}) {
+    let time=1000, receive, state, formats=[], current=pair.sharp, id=0, captures=0, changes=0;
+    const timers=new Set(), clients=[], histories=[];
+    const clock={now:()=>time,setTimer(fn,ms){const timer={fn,at:time+ms};timers.add(timer);return timer;},clearTimer(timer){timers.delete(timer);}};
+    const emit=(data,stream=formats[0]?.tier ?? 3,metadata=pair.metadata,tabId)=>receive('s',{id:++id,stream,data,metadata,format:formats.find(f=>f.tier===stream),...(tabId?{tabId}:{})});
+    const initial=()=>{for (const f of formats) emit(f.quality===80 && f.maxWidth>=400 ? current : pair.low, f.tier);};
+    const restart=list=>{formats=list;changes++;clock.setTimer(initial,restartDelay);};
+    const bridge={onFrame(fn){receive=fn;},onState(fn){state=fn;},onEnded(){},ack(){},
+      async request(action,argsId,{options}={}) {
+        if(action==='start') {
+          const s=Math.max(1,Math.min(2,options.scale ?? 1));
+          restart(options.formats ?? [{tier:0,quality:options.quality,maxWidth:Math.round(Math.max(200,Math.min(1920,options.width*s))),maxHeight:Math.round(Math.max(200,Math.min(1920,options.height*s)))}]);
+          if(initialState) state('s',{tabId:'A',sequence:1});
+          return {state:{tabId:'A',sequence:1}};
+        }
       },
-    } });
-    const clients = [], histories = [], held = new Set(), fast = new Set();
-    async function watch() {
-      const history = [];
-      const client = { send(message) { if (message.type === 'frame') { history.push(message); if (clients.indexOf(client) === 0) frames.push(message); if (fast.has(client)) hub.received(client, 's', message.seq, { mark:true }); if (!held.has(client)) queueMicrotask(() => hub.received(client, 's', message.seq)); } } };
-      clients.push(client);
-      histories.push(history);
-      await hub.watch(client, 's', { width:400 + 100 * clients.length, height:400, device:'phone' });
+      // 旧実装にも damage を与え、撮影ごとに反響2枚が返る条件で循環を検出する。
+      capture(){captures++;clock.setTimer(()=>emit(pair.low),10);clock.setTimer(()=>emit(pair.low),20);return Promise.resolve({data:current});},
+      ...(multi?{async setFormats(_id,list){restart(list);return {multi:true};}}:{}),
+    };
+    const hub=createHub({bridge,...clock});
+    async function add(width=400) {
+      const history=[];
+      const c={hold:false,fast:false,send(m){if(m.type==='frame'){history.push(m);if(!c.hold)queueMicrotask(()=>{if(c.fast)hub.received(c,'s',m.seq,{mark:true});hub.received(c,'s',m.seq);});}}};
+      clients.push(c);histories.push(history);await hub.watch(c,'s',{width,height:400,scale});return c;
     }
-    for (let i = 0; i < viewers; i++) await watch();
+    for(let n=0;n<viewers;n++) await add();
     async function advance(ms) {
-      const end = time + ms;
-      await flush();
-      for (;;) {
-        const due = [...timers].filter(timer => timer.at <= end).sort((a,b) => a.at - b.at)[0];
-        if (!due) break;
-        timers.delete(due); time = due.at; due.fn(); await flush();
-      }
-      time = end; await flush();
+      const end=time+ms;await flush();let guard=0;
+      for(;;){const timer=[...timers].filter(t=>t.at<=end).sort((a,b)=>a.at-b.at)[0];if(!timer)break;
+        if(++guard>10000)throw new Error('静止中のタイマーが収束しない');timers.delete(timer);time=timer.at;timer.fn();await flush();}
+      time=end;await flush();
     }
-    frame(); await flush();
-    return { advance, frame, frames, watch, histories, hold(index) { held.add(clients[index]); },
-      fast(index) { fast.add(clients[index]); }, get tiers() { return tiers; },
-      ack(index) { held.delete(clients[index]); hub.received(clients[index], 's', histories[index].at(-1).seq); },
-      get captures() { return captures; }, update() { current = pair.updatedSharp; }, close:() => Promise.all(clients.map(client => hub.unwatch(client, 's'))) };
+    return {advance,emit,add,hub,clients,histories,
+      update(){current=pair.updatedSharp;initial();}, damage:initial,
+      tab(tabId){state('s',{tabId,sequence:++id+10});initial();},
+      state:(tabId,sequence)=>state('s',{tabId,sequence}),
+      get captures(){return captures;},get changes(){return changes;},get formats(){return formats;},
+      close:()=>Promise.all(clients.map(c=>hub.unwatch(c,'s')))};
   }
-  {
-    const r = await rig(); await r.advance(1400); r.update(); r.frame(); await r.advance(2000);
-    t.ok('same reduced JPEG still refreshes a genuinely changed sharp JPEG without an earlier capture echo', r.frames.at(-1)?.data === pair.updatedSharp && r.captures === 2);
-    t.ok('fine update does not resend the reduced JPEG', r.frames.filter(frame => !frame.still).length === 1);
-    await r.close();
-  }
-  for (const delay of [10, 450, 1500]) {
-    const r = await rig(delay); await r.advance(8000);
-    t.ok(`real JPEG capture echoes at ${delay}ms converge within two captures`, r.captures >= 1 && r.captures <= 2 && r.frames.length === 2 && r.frames.at(-1)?.data === pair.sharp);
-    const before = r.captures; r.update(); r.frame(); await r.advance(8000);
-    t.ok(`fine JPEG update after ${delay}ms echoes reaches the viewer with at most two further captures`, r.frames.at(-1)?.data === pair.updatedSharp && r.captures > before && r.captures <= before + 2);
-    await r.close();
-  }
-  {
-    const r = await rig(); await r.advance(500); r.frame(); await r.advance(500);
-    t.ok('an unchanged verification neither resends the sharp JPEG nor keeps capturing', r.captures === 2 && r.frames.length === 2);
-    r.update(); r.frame(); await r.advance(1000);
-    const consumed = r.captures;
-    r.frame(); await r.advance(1000);
-    t.ok('if a capture has no echo, only one subsequent duplicate can be consumed and the following one recovers', consumed === 2 && r.frames.at(-1)?.data === pair.updatedSharp && r.captures === 3);
+  for(const multi of [true,false]) for(const viewers of [1,2]) {
+    const r=await rig({multi,viewers});await r.advance(1000);
+    t.ok(`${multi?'段別':'共有'}/${viewers}台: 静まったら最上段の実 JPEG が全員に届く`,r.histories.every(h=>h.at(-1)?.data===pair.sharp));
+    const before=r.changes, frames=r.histories.map(h=>h.length);
+    await r.advance(60_000);
+    t.ok(`${multi?'段別':'共有'}/${viewers}台: 静止60秒で撮影0回・張り直し0回・再送0枚`,r.captures===0 && r.changes===before && r.histories.every((h,i)=>h.length===frames[i]));
+    r.update();await r.advance(1000);
+    t.ok(`${multi?'段別':'共有'}/${viewers}台: 低画質では同じになる最後の細かい変更も全員に届く`,r.histories.every(h=>h.at(-1)?.data===pair.updatedSharp));
+    t.ok(`${multi?'段別':'共有'}/${viewers}台: 単発の細かい変更で段を戻さず追加撮影もしない`,r.captures===0 && r.changes===before);
+    for(const delay of [10,45,500,1500]){await r.advance(delay);r.damage();r.damage();}
+    await r.advance(1000);
+    t.ok(`${multi?'段別':'共有'}/${viewers}台: 遅い重複と重複2枚で静止中の処理が増えない`,r.changes===before && r.captures===0);
     await r.close();
   }
   {
-    const r = await rig(10, 2); await r.advance(8000);
-    t.ok('two viewers share capture echoes and stop within two captures', r.captures <= 2 && r.frames.length === 2);
-    await r.watch(); await r.advance(8000);
-    const before = r.captures;
-    await r.advance(8000);
-    t.ok('a later viewer does not make existing viewers capture each other repeatedly', r.captures === before && before <= 4);
-    r.update(); r.frame(); await r.advance(8000);
-    t.ok('a fine JPEG update with three viewers converges within two further captures', r.frames.at(-1)?.data === pair.updatedSharp && r.captures <= before + 2);
+    const r=await rig({multi:false,scale:0.75});await r.advance(1000);
+    t.ok('表示倍率が1未満の共有配信でもChromeの撮影寸法と一致して鮮明な絵が届く',r.histories[0].at(-1)?.data===pair.sharp);
     await r.close();
   }
   {
-    const r = await rig(10, 2); r.hold(0); await r.advance(500);
-    r.update(); r.frame(); await r.advance(1000);
-    t.ok('a fast viewer receives a fine update while another still has an unacknowledged sharp image', r.histories[1].at(-1)?.data === pair.updatedSharp);
-    r.ack(0); await r.advance(8000);
-    t.ok('a slow viewer receives the newer sharp image even when shared verification finds it unchanged', r.histories.every(history => history.at(-1)?.data === pair.updatedSharp));
-    const before = r.captures; await r.advance(8000);
-    t.ok('different acknowledgement speeds still converge after the sharp update', r.captures === before);
+    const r=await rig({initialState:false});await r.advance(0);r.damage();r.damage();await r.advance(1000);
+    t.ok('最初の状態通知より早い重複でも例外にならず最上段へ移る',r.histories[0].at(-1)?.data===pair.sharp && r.captures===0);
+    await r.close();
+  }
+  for(const restartDelay of [10,500]) {
+    const r=await rig({restartDelay});await r.advance(300);r.update();await r.advance(restartDelay+1000);
+    t.ok(`張り直しの途中に更新しても、最初の絵が${restartDelay}ms後に届いたとき本物の変更を捨てない`,r.histories[0].at(-1)?.data===pair.updatedSharp);
+    const before=r.changes;await r.advance(10000);
+    t.ok(`張り直しの応答が${restartDelay}msでも静止中は収束する`,r.changes===before && r.captures===0);
     await r.close();
   }
   {
-    const r = await rig(null, 1, 1000); await r.advance(350);
-    r.update(); r.frame(pair.sharp); await r.advance(50); await r.watch(); await r.advance(1000);
-    t.ok('a viewer joining after a newer screencast frame never receives the earlier in-flight sharp image', !r.histories[1].some(frame => frame.still && frame.data === pair.sharp));
-    await r.advance(4000);
-    t.ok('a rejected shared capture is retried for the new frame', r.histories.every(history => history.at(-1)?.data === pair.updatedSharp));
+    const r=await rig();await r.advance(1000);r.update();await r.advance(20);
+    r.emit(pair.sharp,6);await r.advance(20);
+    t.ok('高画質で変更が続いたら通信量に応じた段へ戻す',r.formats[0].tier===3);
+    await r.advance(1000);
+    t.ok('動きが止まれば再び最上段へ移り、1回の動きで切り替えは最大3回',r.formats[0].tier===6 && r.changes<=4);
+    const before=r.changes;r.tab('B');await r.advance(1000);
+    t.ok('タブ切り替え後の最初の絵で低画質へ戻さず、静止中の切り替えも増えない',r.changes===before);
+    await r.add(600);await r.advance(1000);
+    t.ok('静止中の追加閲覧者にも鮮明な絵が届く',r.histories.every(h=>h.at(-1)?.data===pair.updatedSharp));
     await r.close();
+    const next=await rig();await next.advance(1000);
+    t.ok('最後の閲覧者が閉じて開き直した後も最上段へ移る',next.histories[0].at(-1)?.data===pair.sharp && next.captures===0);
+    await next.close();
   }
   {
-    const r = await rig(10, 2); r.fast(0);
-    for (let i = 0; i < 5; i++) { r.frame(i % 2 ? pair.low : pair.sharp); await r.advance(1); }
-    r.frame(); await r.advance(1);
-    t.ok('viewers can use distinct quality tiers during sharp verification', new Set(r.tiers).size === 2);
-    await r.advance(8000); const before = r.captures;
-    r.update(); r.frame(); await r.advance(8000);
-    t.ok('capture echoes across distinct quality tiers converge and preserve the fine update', r.captures <= before + 2 && r.histories.every(history => history.at(-1)?.data === pair.updatedSharp));
-    const after = r.captures; await r.advance(8000);
-    t.ok('distinct quality tiers do not restart capture after settling', r.captures === after);
+    const r=await rig();await r.advance(0);r.clients[0].fast=true;
+    for(let n=0;n<15;n++){r.emit(`moving-${n}`);await r.advance(10);}
+    t.ok('通信が速ければ動作中にも最上段へ上がる',r.formats[0].tier===6);
+    r.emit(pair.sharp,6);await r.advance(0);
+    const lower=await r.add();await r.advance(0);await r.advance(1000);
+    t.ok('既存の最上段を保ったまま静止しても、低い段の閲覧者へ鮮明な画像を渡す',r.histories[1].at(-1)?.data===pair.sharp);
+    const before=r.changes;await r.add();await r.advance(60_000);
+    t.ok('動作中も最上段だった場合、同寸法の追加閲覧者へ画像を渡し、余計に張り直さない',r.histories[2].at(-1)?.data===pair.sharp && r.changes===before);
+    void lower;await r.close();
+  }
+  {
+    const r=await rig();await r.advance(1000);
+    r.emit(pair.updatedSharp,6,pair.metadata,'B');await r.advance(0);
+    r.state('B',2);await r.advance(0);await r.add();await r.advance(60_000);
+    t.ok('新タブの画像が状態より先でも、状態確定後の全閲覧者と追加閲覧者に届く',r.histories.every(h=>h.at(-1)?.data===pair.updatedSharp));
     await r.close();
   }
 }

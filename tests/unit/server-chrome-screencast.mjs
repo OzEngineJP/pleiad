@@ -125,6 +125,8 @@ export default async function (t) {
       const target = hostEvent.windowIds[0];
       const pinAnswer = await remote.ask('chromePinWindow', { sessionId: id, windowId: target });
       t.ok('リモートの端末から chromePinWindow で固定できる', pinAnswer.ok === true && pinAnswer.result?.pinnedWindowId === target, JSON.stringify(pinAnswer));
+      t.ok('実サーバーの切り替え応答にも確定したタブと状態の番号が残る', pinAnswer.result?.state?.tabId === opened
+        && Number.isSafeInteger(pinAnswer.result?.state?.sequence) && pinAnswer.result.state.sequence > watch.result.state.sequence, JSON.stringify(pinAnswer));
       t.ok('固定は、ホストの画面にも後から接続した端末にも chromeWindow の pinnedWindowId で届く',
         await until(() => c.events.filter(e => e.type === 'chromeWindow').at(-1)?.pinnedWindowId === target && late.windowEvents().at(-1)?.pinnedWindowId === target, 10000, 'pinned'));
       t.ok('固定したウィンドウのタブを映している', await until(() => chrome.browser.screencasting(opened) && !chrome.browser.screencasting(second), 10000, 'pinned screencast'));
@@ -141,6 +143,8 @@ export default async function (t) {
       const tabPin = await remote.ask('chromePinWindow', { sessionId: id, windowId: null, tabId: second });
       t.ok('リモートの端末から tabId でタブを固定できる（そのタブの窓が pinnedWindowId で配られる）', tabPin.ok === true && tabPin.result?.pinnedTabId === second
         && await until(() => chrome.browser.screencasting(second), 10000, 'tab pinned'), JSON.stringify(tabPin));
+      t.ok('別の端末からの解除をまたいでも、応答の最新状態は単調に増える', notWatching.result?.state?.sequence > pinAnswer.result.state.sequence
+        && tabPin.result?.state?.sequence > notWatching.result.state.sequence && tabPin.result.state.tabId === second);
       await remote.ask('chromePinWindow', { sessionId: id, windowId: null });
       const closeOne = await remote.ask('chromeCloseWindow', { sessionId: id, windowId: hostEvent.windowIds[0] });
       t.ok('windowId を付けた chromeCloseWindow は、そのウィンドウだけ閉じて、もう一方は残る',

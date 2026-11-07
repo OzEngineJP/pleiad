@@ -4919,7 +4919,7 @@ const opsChrome = chromeConnection ? {
   enable: () => chromeConnection.enable(),
   closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
   // 右パネルの映像に映すウィンドウを固定する・解く（core/chrome/screencast.mjs の pin）
-  pinWindow: chromeScreencast ? async (sessionId, windowId, tabId = null) => { const result = await chromeScreencast.request('pin', sessionId, { windowId, tabId }); return { pinnedWindowId: result.pinnedWindowId, pinnedTabId: result.pinnedTabId ?? null }; } : null,
+  pinWindow: chromeScreencast ? (sessionId, windowId, tabId = null) => chromeScreencast.request('pin', sessionId, { windowId, tabId }) : null,
   windows: async parentId => {
     const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
       sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle', waiting: id => Boolean(chromeHandoffs?.current?.(id)) });

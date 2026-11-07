@@ -111,6 +111,7 @@ const pageKey = href => { try { const url = new URL(href); return `${url.pathnam
  */
 export function createBrowserUnify(deps = {}) {
   const { cmd, state = {}, chrome = () => null, showMenu = () => {}, notify = () => {}, osActions = () => false } = deps;
+  // active は端末内のページ、または切り替えの応答待ちの選択だけ。確定した映像の対象は chrome().tabId が持つ。
   const rows = new Map(), holders = new Map(); let active = null, enabled = false, awaitingState = false;
   const session = () => chrome()?.sessionId ?? state.current;
   const tabs = () => rows.get(session()) ?? [];

@@ -1,5 +1,4 @@
 import { WebSocket } from 'ws';
-import { checkScreencastDuplicates } from '../lib/screencast-duplicates.mjs';
 import { checkScreencastSharp } from '../lib/screencast-sharp.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
@@ -55,7 +54,6 @@ export default async function (t) {
     t.ok('設定: 大きすぎる・小さすぎる値は範囲に丸める', big.maxWidth === 1920 && big.maxHeight === 200 && big.quality === 80, JSON.stringify(big));
   }
 
-  await checkScreencastDuplicates(createScreencastHub, t);
   await checkScreencastSharp(createScreencastHub, t);
 
   const r = await rig();
@@ -95,7 +93,7 @@ export default async function (t) {
     const view = fake.sessions().find(s => s.targetId === first && s.screencast);
     t.ok('映像のセッションと入力の口のセッションは、エージェントのセッションとも、focus emulation を持つ中継のセッションとも別（映像のセッションは focus emulation を触らない）',
       sessionsOf(first).length === before + 2 && !!view && view.id !== sid1 && !view.fe && sessionsOf(first).filter(s => s.fe).length === 1 && fake.focusEmulated(first));
-    t.ok('state: 操作中の印・タブ数・撮影を断っていない・タブの並びと題（URL は載せない）', JSON.stringify(watched.state) === JSON.stringify({ tabId: first, agent: true, suspended: false, tabs: 1, pinnedWindowId: null, pinnedTabId: null,
+    t.ok('state: 操作中の印・タブ数・撮影を断っていない・タブの並びと題（URL は載せない）', Number.isSafeInteger(watched.state.sequence) && JSON.stringify(watched.state) === JSON.stringify({ sequence: watched.state.sequence, tabId: first, agent: true, suspended: false, tabs: 1, pinnedWindowId: null, pinnedTabId: null,
       agentTabId: first, list: [{ tabId: first, windowId: windowOf(first), title: 'about:blank' }] }) && !JSON.stringify(watched.state).includes('url'), JSON.stringify(watched.state));
 
     // ---- フレームと ack（ADR 0297: 撮影元へはすぐ返し、見る人ごとに返事ごとの 1 枚）----
@@ -108,8 +106,8 @@ export default async function (t) {
     t.ok('見る人の返事を待たず、届いたらすぐ Chrome へ ack を返す（映像のセッションから）',
       await until(() => r.chrome.calls.some(c => c.method === 'Page.screencastFrameAck' && c.params.sessionId === frameId && c.sessionId === view.id)),
       JSON.stringify({ calls: r.chrome.calls.filter(c => c.method === 'Page.screencastFrameAck'), view: view?.id, frameId }));
-    const slow = fake.screencastFrame(first);
-    await sleep(400);
+    const slow = fake.screencastFrame(first, { data:'REVG' });
+    await sleep(100);
     t.ok('見る人の返事を待つ間に届いたフレームは最新で上書き（まだ 1 枚だけ届いている）', messages.filter(m => m.type === 'frame').length === 1);
     hub.received(client, 's1', frame.seq, { mark: true });
     hub.received(client, 's1', frame.seq);
@@ -123,7 +121,7 @@ export default async function (t) {
     const sid2 = (await a1.cmd('Target.attachToTarget', { targetId: second, flatten: true })).result.sessionId;
     await a1.cmd('Runtime.evaluate', { expression: '1' }, sid1);
     t.ok('エージェントが前のタブにコマンドを送ると、映像はそこへ戻る（今のタブ = 最後にコマンドを送ったタブ）', await until(() => fake.screencasting(first) && !fake.screencasting(second)));
-    const frameAfter = fake.screencastFrame(first);
+    const frameAfter = fake.screencastFrame(first, { data:'R0hJ' });
     hub.received(client, 's1', messages.filter(m => m.type === 'frame').at(-1).seq, { mark: true });
     hub.received(client, 's1', messages.filter(m => m.type === 'frame').at(-1).seq);
     t.ok('付け替えた先でフレームが流れる', frameAfter !== null && await until(() => messages.filter(m => m.type === 'frame').length === 3));
@@ -172,7 +170,11 @@ export default async function (t) {
       // ターンの間に見て、やめる: ターンの分は残る
       await relay.endpoint('s1');
       await until(() => fake.focusEmulated(first));
-      await hub.watch(client, 's1', { width: 400, height: 300 });
+      const reopened = await hub.watch(client, 's1', { width: 400, height: 300 });
+      const sequences = messages.filter(m => m.type === 'state').map(m => m.state.sequence);
+      t.ok('状態通知と開始応答の順番の番号は、タブ移動・停止・再開をまたいで増える', sequences.length > 3
+        && sequences.every((seq, index) => Number.isSafeInteger(seq) && (!index || seq > sequences[index - 1]))
+        && reopened.state.sequence > watched.state.sequence && reopened.state.sequence >= sequences.at(-1));
       await hub.unwatch(client, 's1');
       await sleep(100);
       t.ok('ターンの間に見てやめても、ターンの分の focus emulation は残る（理由を数える）', fake.focusEmulated(first) && !fake.screencasting(first));

@@ -5,6 +5,7 @@
 //   - タブの列で選んだタブは、映していない間（閉じている・止めている）は固定せず、映し始めてから固定する
 import { setupChromePanel, createWindowTable } from '../../web/chrome-panel.mjs';
 import { N } from '../lib/dom-stub.mjs';
+import { checkTabState } from '../lib/tab-state.mjs';
 
 export const name = 'browser-unify-local-pause';
 export const title = 'スマホで端末内のページを描いている間は Chrome の映像を止め、外したら映し直す（DOM の代役）';
@@ -37,6 +38,7 @@ export default async function (t) {
   N.prototype.toggleAttribute = function (name, on) { if (on) this.setAttribute(name, ''); else this.removeAttribute(name); };
   globalThis.window = { innerHeight: 800, devicePixelRatio: 1 };
   try {
+    await checkTabState(setupChromePanel, createWindowTable, t);
     {
       const r = rig();
       r.windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
@@ -116,7 +118,7 @@ export default async function (t) {
       r.windows.apply({ sessionId:'conv', windows:1, windowIds:[7], currentWindowId:7 });
       await r.panel.pinTab('conv', { tabId:'T2' });
       r.panel.open(); await flush();
-      t.ok('切り替え待ちの映像開始では、開始前のタブを確定通知しない', !events.some(e => e.type === 'state'));
+      t.ok('切り替え失敗後は、映像開始時の状態を確定する', events.some(e => e.type === 'state'));
       t.ok('開始後に送った切り替えが失敗したら、待っているタブを知らせる', events.some(e => e.type === 'pin-failed' && e.tabId === 'T2'));
       events.length = 0;
       await r.panel.pinTab('conv', { tabId:'T3' });
@@ -199,10 +201,10 @@ export default async function (t) {
       r.panel.onTabChange(event => { if (event?.type === 'state') events.push(r.panel.tabId); });
       const oldPin = r.panel.pinTab('conv', { tabId:'T2' });
       const newPin = r.panel.pinTab('conv', { tabId:'T3' });
-      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T3' } });
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T3', sequence:3 } });
       r.pins[1].resolve({}); await newPin;
-      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T2' } });
-      r.pins[0].resolve({}); await oldPin;
+      r.panel.onMessage({ source:'chrome', sessionId:'conv', type:'state', state:{ tabId:'T2', sequence:2 } });
+      r.pins[0].resolve({ state:{tabId:'T2',sequence:2} }); await oldPin;
       t.ok('新しい要求の確定後に前の要求の知らせが届いても、タブと確定通知を戻さない', r.panel.tabId === 'T3' && events.length === 1 && events[0] === 'T3');
       r.panel.close();
     }

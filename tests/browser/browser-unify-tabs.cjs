@@ -43,7 +43,7 @@ window.ready=true;
       if (pathname === '/vendor/i18next.mjs') file = path.join(repo, 'node_modules/i18next/dist/esm/i18next.js');
       else {
         file = path.resolve(repo, '.' + pathname);
-        if (!file.startsWith(path.join(repo, 'web') + path.sep)) { res.writeHead(404); res.end(); return; }
+        if (!file.startsWith(path.join(repo, 'web') + path.sep) && pathname !== '/tests/lib/tab-state.mjs') { res.writeHead(404); res.end(); return; }
       }
       res.setHeader('Content-Type', file.endsWith('.css') ? 'text/css' : file.endsWith('.json') ? 'application/json' : 'text/javascript');
       res.end(await fs.readFile(file));
@@ -86,6 +86,15 @@ window.ready=true;
     const { checkScreencastSharp } = await import(pathToFileURL(path.join(repo, 'tests/lib/screencast-sharp.mjs')).href);
     const { createScreencastHub } = await import(hubSource ? 'data:text/javascript;base64,' + Buffer.from(hubSource).toString('base64') : pathToFileURL(path.join(repo, 'core/browser-screencast.mjs')).href);
     await checkScreencastSharp(createScreencastHub, {ok:check}, jpeg);
+    await require('./screencast-sharp.cjs')({browser,check,createScreencastHub});
+    const tabChecks = await page.evaluate(async () => {
+      const {checkTabState} = await import('/tests/lib/tab-state.mjs');
+      const {setupChromePanel, createWindowTable} = await import('/web/chrome-panel.mjs');
+      const checks=[];
+      await checkTabState(setupChromePanel, createWindowTable, {ok:(label,pass)=>checks.push({label,pass})});
+      return checks;
+    });
+    for (const result of tabChecks) check(result.label, result.pass);
     check('flag off does not mount the new browser or its styles', await page.locator('.bu-chrome').count() === 0 && await page.locator('style[data-browser-unify]').count() === 0);
     await page.evaluate(() => enable());
     await page.waitForFunction(() => document.querySelector('.bu-toolbar')?.clientWidth === 560);
@@ -243,9 +252,9 @@ window.ready=true;
         const { createBrowserUnify } = await import('/web/browser-unify.mjs');
         const host = document.createElement('div'); host.style.cssText = 'position:fixed;inset:0;width:360px;display:flex;flex-direction:column'; document.body.append(host);
         const windows = createWindowTable(); windows.apply({sessionId:'one',windows:1,windowIds:[1],currentWindowId:1});
-        let opened = false, closePanel, serverTab = 'file', watching = false;
+        let opened = false, closePanel, serverTab = 'file', watching = false, sequence = 1;
         const pins = [], calls = [], tick = () => new Promise(resolve => setTimeout(resolve, 0));
-        const state = tabId => panel.onMessage({source:'chrome',sessionId:'one',type:'state',state:{tabId}});
+        const state = (tabId, version=sequence) => panel.onMessage({source:'chrome',sessionId:'one',type:'state',state:{tabId,sequence:version}});
         const panel = setupChromePanel({ session:() => 'one', windows,
           preview:{ panelOpen:() => opened, openPanel(options) { opened = true; closePanel = options.onClose; host.append(options.body); }, close() { opened = false; closePanel?.(); } },
           async cmd(name, args) {
@@ -253,10 +262,14 @@ window.ready=true;
             if (name === 'browserScreencast') {
               watching = true; state(serverTab);
               panel.onMessage({source:'chrome',sessionId:'one',type:'frame',seq:calls.length,data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1sAAAAASUVORK5CYII=',metadata:{deviceWidth:400,deviceHeight:300}});
-              return {state:{tabId:serverTab}};
+              return {state:{tabId:serverTab,sequence}};
             }
             if (name === 'browserScreencastStop') watching = false;
-            if (name === 'chromePinWindow') return new Promise(resolve => pins.push(() => { if (watching) { serverTab = args.tabId; state(serverTab); } resolve({}); }));
+            if (name === 'chromePinWindow') {
+              serverTab = args.tabId;
+              const confirmed = {tabId:serverTab,sequence:++sequence};
+              return new Promise(resolve => pins.push(() => { if (watching) state(confirmed.tabId,confirmed.sequence); resolve({state:confirmed}); }));
+            }
             return {};
           } });
         const component = createBrowserUnify({state:{current:'one'},chrome:() => panel,cmd:async () => ({})});
@@ -268,7 +281,7 @@ window.ready=true;
         const stops = () => calls.filter(call => call.name === 'browserScreencastStop').length;
         panel.open(); await tick();
         const before = stops(); component.focusTab(tabs[1], 'one'); await tick();
-        state('file'); await tick();
+        state('file',1); await tick();
         const waiting = watching && !local() && at('github.com') && stops() === before;
         pins.shift()(); await tick();
         const confirmed = watching && !local() && panel.tabId === 'web' && at('github.com');
@@ -276,7 +289,7 @@ window.ready=true;
         const back = local() === 1;
         component.focusTab(tabs[1], 'one'); await tick();
         component.focusTab(tabs[2], 'one'); await tick();
-        state('web'); await tick();
+        state('web',2); await tick();
         const reordered = watching && !local() && at('example.org');
         pins.shift()(); await tick();
         const oldCompleted = watching && !local() && at('example.org');
