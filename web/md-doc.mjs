@@ -626,7 +626,10 @@ function fitRow(m, b, resolve) {
   }
   // 字の無い行は空行。種類と記号は、空行が続けている入れ物から（読み込んだときと同じ）
   if (blankRow(b)) {
-    const kind = kindOfPath(B.path), mk = canonical(B.path);
+    const kind = kindOfPath(B.path);
+    // 項目を始める行（`- > ` の空の引用）は Markdown でも空行ではない。記号はそのまま（読み込んだときと同じ）
+    if (B.marks.some((x) => x.item && x.opened)) return kind === b.kind ? { b } : { b: { ...b, kind } };
+    const mk = canonical(B.path);
     return kind === b.kind && mk === b.marker ? { b } : { b: { ...b, kind, marker: mk } };
   }
   if (b.kind === 'p') return { b: fixed };
@@ -661,7 +664,7 @@ export function normalizeRows(blocks, { resolve = () => null, plain = false, sel
     if (nb !== b) {
       if (sel) for (const k of ['s', 'e']) {
         if (sel[k].b !== i) continue;
-        const v = fit.shift === 'raw' ? vOfRaw(nb, rawOffsetOf(b, sel[k].v)) : sel[k].v + fit.shift;
+        const v = fit.shift === 'raw' ? vOfRaw(nb, rawOffsetOf(b, sel[k].v)) : sel[k].v + (fit.shift ?? 0);
         sel[k] = { b: i, v: nb.kind === 'att' ? 0 : Math.min(v, runsLength(nb.runs)) };
       }
       blocks[i] = nb;
@@ -968,6 +971,9 @@ export function enter(st, { plain = false, soft = false } = {}) {
   const emptyHead = (x) => (x?.kind === 'ul' || x?.kind === 'ol') && !runsLength(x.runs);
   const blankCont = (x) => x?.kind === 'cont' && !runsLength(x.runs);
   if (!plain && soft && ((blankCont(blk) && emptyHead(next.blocks[b - 1])) || (emptyHead(blk) && blankCont(next.blocks[b + 1])))) return cur;
+  // 空の頭の下に中身（子の項目）があるときも足さない。空行が項目を閉じ、下の行が外へ出てしまう
+  const head = emptyHead(blk) ? li?.marks.findLast((m) => m.opened && m.node.t === 'item')?.node : null;
+  if (!plain && soft && head && S.info[b + 1]?.marks.some((m) => m.node === head)) return cur;
   if (!plain && blk.kind === 'cont') {
     if (soft) return insertBelow('cont', blk.marker, right, 0);
     if (!blk.runs.length) return releaseStructure(next, b);

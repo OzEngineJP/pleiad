@@ -541,6 +541,8 @@ const SUITES = [
   './unit/claude-rewind.mjs',
   './unit/md-doc.mjs',
   './unit/md-rows-serialize.mjs',
+  // 打鍵の並びの総当たりとでたらめ（ADR 0301）。MD_ROWS_SEARCH=full で手元の長い探索
+  './unit/md-rows-search.mjs',
   './unit/md-exit-in-place.mjs',
   './unit/md-editing-state.mjs',
   // 貼り付けの HTML → 入力欄の形（ADR 0141）: 書式・リスト・引用・コード・リンク・表・画像の振り分け・構造の無い HTML は対象外・往復

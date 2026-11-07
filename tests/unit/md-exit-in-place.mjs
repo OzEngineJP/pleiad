@@ -1,7 +1,7 @@
 import {
   markdownToDoc, docToMarkdown, caret, enter, backspaceAtStart, deleteAtEnd,
   insertText, applyTriggers, rowTree, snapshotEditing, restoreEditing,
-  createHistory, deleteSelection, pasteText,
+  createHistory, deleteSelection, pasteText, normalizeRows,
 } from '../../web/md-doc.mjs';
 import { parseStructure, lineIndent } from '../../web/md-structure.mjs';
 import { textHash } from '../../web/md-editing-state.mjs';
@@ -72,6 +72,16 @@ export default async function(t) {
   }
   const head = keys('- \r');
   t.ok('空の項目の頭に戻って Shift+Enter を押しても空行を 2 つにしない', md(enter({ ...head, sel: caret(0, 0) }, { soft: true })) === md(head));
+  // 空の頭の下に子の項目があるとき、空行を足すと項目が閉じて子が外へ出るので、Shift+Enter は何もしない
+  const parent = { ...start('- \n  - q'), sel: caret(0, 0) }, softParent = enter(parent, { soft: true });
+  t.ok('子のある空の項目の頭の Shift+Enter は空行を足さず、子の深さを変えない', md(softParent) === '- \n  - q' && depth(parseStructure(md(softParent).split('\n')).lines[1].node).join() === '0,2', md(softParent));
+  // 項目の頭で打った `> ` は、行をそろえ直しても記号が `- > ` のまま（空の引用でも Markdown の空行ではない）
+  const quoteHead = type(start(''), '- > ');
+  normalizeRows(quoteHead.blocks, { sel: quoteHead.sel });
+  t.ok('項目の頭の `> ` は、行をそろえ直しても記号とキャレットを保つ', md(quoteHead) === '- > ' && shape(quoteHead) === 'quote' && quoteHead.sel.s.v === 0, JSON.stringify([md(quoteHead), quoteHead.sel]));
+  // 引用の中の `>` だけの行は、引用の中の項目を閉じない（CommonMark と同じ）
+  const inQuote = markdownToDoc('> - a\n>\n>   b'), rows = rowTree(inQuote).info, read = parseStructure('> - a\n>\n>   b'.split('\n')).lines;
+  t.ok('引用の中の `>` だけの行の後も、項目の続きの行は項目の中', depth(rows[2].node).join() === '1,1' && depth(read[2].node).join() === '1,1', JSON.stringify([depth(rows[2].node), depth(read[2].node)]));
   for (const raw of ['> a\nb', '- a\nb', '1. a\nb', '> > a\n> b', '> a\n\nb', '- a\n\n', '> - a\n> \n> b']) {
     t.ok(`既存原文を読むだけでは変更しない ${JSON.stringify(raw)}`, docToMarkdown(markdownToDoc(raw)) === raw);
   }

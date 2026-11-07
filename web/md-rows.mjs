@@ -54,7 +54,6 @@ export function createMatcher({ tree = false } = {}) {
     let fn = fence, ic = icode;
     let p = 0, c = 0, k = 0, kept = -1, opens = 0, role = null;
     const marks = [];
-    const blankLine = isBlank(line);
     // 1. 開いている入れ物を続ける（遅延の続きは無い）
     for (; k < S.length; k++) {
       const e = S[k];
@@ -67,7 +66,8 @@ export function createMatcher({ tree = false } = {}) {
         marks.push({ k, at: np, end: p, opened: false });
         continue;
       }
-      if (blankLine) {
+      // 外の引用の記号の後ろが空なら空行（`>` だけの行も、引用の中の項目を閉じない）
+      if (isBlank(line.slice(p))) {
         // 中身の無い項目は、すぐ下の字下げのそろった空行を 1 つだけ持てる（Shift+Enter の行。CommonMark は閉じるが、空行なので見え方は同じ）
         if (!e.filled) {
           if (!(row === e.start + 1 && indent >= e.need)) break;
