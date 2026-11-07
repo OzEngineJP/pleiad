@@ -726,6 +726,8 @@ const SUITES = [
   './unit/restart-cards.mjs',
   // 段 3: 委譲の子（保持役のターン）の実行の控えが続き、結果の確定と完了通知は 1 回だけ
   './unit/restart-delegation.mjs',
+  // 段階 3: 保持役に載せた、次の発言を待つ agy は起こし直しの起動で止める（ターン中の agy は付け直す）
+  './unit/restart-agy-idle.mjs',
   './unit/adopt-agy.mjs',
   './unit/adopt-claude.mjs',
   './unit/adopt-codex.mjs',
@@ -809,6 +811,7 @@ const SUITES = [
   './unit/antigravity-onboarding.mjs',
   // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
   './unit/antigravity-pids.mjs',
+  './unit/antigravity-idle.mjs',
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
   // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
   './unit/relay.mjs',

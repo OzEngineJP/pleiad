@@ -547,6 +547,7 @@ Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-r
 **agy の実行ファイル**は `AGENT_HOST_AGY_BIN`（既定 `agy`）。
 **agy の `--print-timeout`** は `AGENT_HOST_AGY_PRINT_TIMEOUT`（既定 `24h`。Go の duration 文字列。§2.8）。
 **agy のモデル一覧を古いとみなすまで**は `AGENT_HOST_AGY_MODELS_TTL_MS`（既定 5 分。§2.8）。
+**次の発言を待つ agy を止めるまで**は `AGENT_HOST_AGY_IDLE_MS`（既定 30 分。`0` で止めない。§2.8「待っている agy を時間で止める」）。
 
 ### 2.7 ターンの外: 会話に残る裏の作業（2026-09）
 
@@ -850,8 +851,24 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
   控えには起こした Pleiad の pid（`owner`）も残し、**それが生きているうちは触らない**
 - **保持役に載せた agy は、この掃除の対象に入らない**（無停止の更新 段階 3。`core/backends/antigravity-held.mjs`・[stage3-agy.md](zero-downtime-update/stage3-agy.md)）。
   `AGENT_HOST_AGY_HOLDER`（既定は実行場所の置き場があるとき on）で、会話ごとの agy が保持役の子になり、サーバーが入れ替わっても走り続けて、新しいサーバーが付け直す。
-  保持役の子は pid を控えず、終了時（`process.once("exit")`）は手を離していない子だけを止める。ターンの間の子（idle）は引き継ぎのとき旧サーバーが止め、
-  落ちた後は次の起動の最初の保持役の使用が止める
+  保持役の子は pid を控えず、終了時（`process.once("exit")`）は止めない（アプリの終了だけが止める）。ターンの間の子（idle）は、
+  サーバーを止めた・更新した・落ちた後の次の起動が止める（`restoreAdoptedTurns` の後の `sweepIdleAtStart`。付け直すターンの子は残す）
+
+**待っている agy を時間で止める**（2026-11、`core/backends/antigravity.mjs` の `armIdle`）:
+ターンを終えた agy は、次の発言を待って会話のあいだ生きる（保持役の子も同じ。上）。長く生かすと、ログインの切り替えが戻る。
+
+- 実機（1.5.2・macOS）の観測: 動いている agy は、資格情報を**起動の時にだけ**キーチェーンから読み、以後はメモリのトークンを
+  約 1 時間ごとに更新して**キーチェーンへ書き戻す**。走っている間に読み直さない。切り替える前から生きている agy が、
+  切り替えた後のログインを古い方の資格情報で上書きし、次に起きた agy は古い方で動く（agy の不具合。Pleiad からは直せない）
+- そこで、ターンの終わりに `AGENT_HOST_AGY_IDLE_MS`（既定 30 分）のタイマーを付け、次のターンがその agy を取ったら外す。
+  過ぎたら落とし、エージェント定義の置き場も片付ける（`releaseConversation` と同じ道）。次のターンは `--conversation` で起こし直す（会話は続く）。ターンの間は止めない
+- 値は setTimeout の上限（2^31−1 ms。約 24.8 日）まで。超える値・`Infinity` は `0` と同じく止めない（そのまま渡すと 1 ms になり、ターンのたびに止まる。`idleDelay`）
+- タイマーはサーバーのメモリにある。保持役に載せた idle の agy は、サーバーを止めた・更新した後に誰のタイマーも持たないので、次の起動が止める（上。[stage3-agy.md](zero-downtime-update/stage3-agy.md) §3.3）
+- **既定を 30 分にした理由**: 拾いたいのは、数時間〜数日待ったままの agy だけで、書き戻しの間隔（約 1 時間）より短ければ足りる。
+  Pleiad のコンテキストの接続の待機（`WARM_IDLE_MS`、10 分。`core/context-connections.mjs`）には合わせない。
+  10 分では、少し間を空けて続ける会話のたびに起こし直しになり、起動を待たせる
+- 残り: 走っているターン（と、30 分より短い間に切り替えたとき）は避けられない。端末で動かしている agy も同じ。
+  切り替えた後に古い方へ戻ったら、走っている agy を止めてからログインし直す
 
 **裏へ回ったコマンド**（2026-10、`core/backends/antigravity-background.mjs`）:
 agy 1.3.4 の `run_command` は、`WaitMsBeforeAsync`（20 秒）たっても終わらないコマンドを裏へ回し、モデルは終わるまで待ち続ける
