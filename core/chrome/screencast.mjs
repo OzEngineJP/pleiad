@@ -150,13 +150,20 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
       if (token.active) onViewEvent(sessionId, watch, generation, key, method, params, targetId, format);
     });
     view.streamToken = token;
-    if (watches.get(sessionId) !== watch || watch.generation !== generation) { await view.detach().catch(() => {}); return false; }
+    if (watches.get(sessionId) !== watch || watch.generation !== generation) { token.active = false; await view.detach().catch(() => {}); return false; }
     try {
       await view.send('Page.startScreencast', screencastParams(format));
       view.format = format;
     } catch (error) {
+      token.active = false;
       await view.detach().catch(() => {});
       throw error;
+    }
+    if (watches.get(sessionId) !== watch || watch.generation !== generation) {
+      token.active = false;
+      await view.send('Page.stopScreencast').catch(() => {});
+      await view.detach().catch(() => {});
+      return false;
     }
     watch.views.set(key, view);
     watch.view ??= view;
@@ -167,7 +174,7 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
   async function syncStreams(sessionId, watch, targetId, generation) {
     const wanted = watch.formats;
     for (const key of [...watch.views.keys()]) if (!wanted.has(key)) await detachView(watch, key, sessionId);
-    let failed = false;
+    let failed = null;
     for (const [key, format] of wanted) {
       const view = watch.views.get(key);
       if (view) {
@@ -175,13 +182,13 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
         if (!same) {
           await detachView(watch, key, sessionId);
           try { await attachStream(sessionId, watch, targetId, key, format, generation); }
-          catch { failed = true; }
+          catch (error) { failed = error; break; }
         }
         continue;
       }
       if (watches.get(sessionId) !== watch || watch.generation !== generation) return;
       try { await attachStream(sessionId, watch, targetId, key, format, generation); }
-      catch { failed = true; break; }
+      catch (error) { failed = error; break; }
     }
     // 2 つ目以降のセッションが付けられない（この Chrome は段ごとに分けられない）: 一番低い段の 1 つにそろえる
     if (failed && watch.views.size && wanted.size > 1 && watch.multi !== false) {
@@ -189,8 +196,30 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
       const lowest = [...wanted.values()].reduce((a, b) => (a.tier <= b.tier ? a : b));
       watch.formats = new Map([[lowest.tier, lowest]]);
       for (const key of [...watch.views.keys()]) if (key !== lowest.tier) await detachView(watch, key, sessionId);
-      if (!watch.views.has(lowest.tier)) await attachStream(sessionId, watch, targetId, lowest.tier, lowest, generation).catch(() => {});
+      if (!watch.views.has(lowest.tier)) await attachStream(sessionId, watch, targetId, lowest.tier, lowest, generation);
+      return;
     }
+    if (failed) throw failed;
+  }
+
+  // 設定の変更は会話ごとに直列化する。失敗した設定を確定せず、前の配信を復元して呼び出し元へ失敗を返す。
+  function changeFormats(sessionId, watch, formats) {
+    const run = watch.queue.then(async () => {
+      if (watches.get(sessionId) !== watch) throw new Error('not-watching');
+      const previous = watch.formats;
+      watch.formats = formats;
+      if (!watch.tabId) return;
+      try { await syncStreams(sessionId, watch, watch.tabId, watch.generation); }
+      catch (error) {
+        watch.formats = previous;
+        if (watches.get(sessionId) !== watch) throw error;
+        try { await syncStreams(sessionId, watch, watch.tabId, watch.generation); }
+        catch (restoreError) { log(`chrome-screencast: restore failed: ${restoreError?.message ?? restoreError}`); }
+        throw error;
+      }
+    });
+    watch.queue = run.catch(() => {});
+    return run;
   }
 
   async function attachTo(sessionId, watch, targetId) {
@@ -299,16 +328,8 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
       : new Map([[0, { tier: 0, ...chromeScreencastSettings(options) }]]);
     let watch = watches.get(sessionId);
     if (watch) {
-      watch.formats = formats;
       // 大きさ・画質が替わった・段が替わった: 順に揃え直す
-      if (watch.tabId) {
-        const run = watch.queue.then(async () => {
-          if (watches.get(sessionId) !== watch || !watch.tabId) return;
-          await syncStreams(sessionId, watch, watch.tabId, watch.generation);
-        });
-        watch.queue = run.catch(() => {});
-        await run.catch(() => {});
-      }
+      await changeFormats(sessionId, watch, formats);
     } else {
       watch = { formats, views: new Map(), view: null, tabId: null, generation: 0, queue: Promise.resolve(), suspended: false, announced: false, pin: null, multi: true, known: new Set(itemsOf(sessionId).map(item => item.targetId)) };
       watches.set(sessionId, watch);
@@ -335,13 +356,7 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
     const next = new Map((Array.isArray(formats) ? formats : []).map(format => [format.tier ?? 0,
       { tier: format.tier ?? 0, quality: Math.round(clamp(format.quality, 20, 100, 55)), maxWidth: Math.round(clamp(format.maxWidth, 100, 4096, 800)), maxHeight: Math.round(clamp(format.maxHeight, 100, 4096, 800)) }]));
     if (!next.size) return Promise.resolve({ multi: watch.multi !== false });
-    watch.formats = next;
-    const run = watch.queue.then(async () => {
-      if (watches.get(sessionId) !== watch || !watch.tabId) return;
-      await syncStreams(sessionId, watch, watch.tabId, watch.generation);
-    });
-    watch.queue = run.catch(() => {});
-    return run.then(() => ({ multi: watch.multi !== false }), () => ({ multi: watch.multi !== false }));
+    return changeFormats(sessionId, watch, next).then(() => ({ multi: watch.multi !== false }));
   }
 
   /** 映すタブ（tabId）・ウィンドウ（windowId）を固定する・解いて今のタブを追う（どちらも null）。映像の見張りが無い間は固定しない */

@@ -33,8 +33,15 @@ module.exports = async function checkSharpChrome({browser, check, createScreenca
   try {
     bridge=createChromeScreencast({host,relay:{onTabEvent:()=>()=>{},unify:{tabHolder:{holder:()=>null}}}});
     hub=createScreencastHub({bridge});
+    await pages.get('A').evaluate(()=>{window.repaint=setInterval(()=>{const c=document.querySelector('canvas').getContext('2d');c.fillStyle='white';c.fillRect(0,0,800,800);},80);});
     const first=await add();
     check('Chrome: quiet stream becomes quality 80',await until(()=>high() && first.frames.length>=2));
+    await sleep(500);
+    const duplicateIdle={starts:starts(),sent:first.frames.length,raw:raw.length};
+    await sleep(1200);
+    check('Chrome: repeated identical Canvas repaint still produces source frames',raw.length>=duplicateIdle.raw+3 && raw.slice(duplicateIdle.raw).every(f=>f.data===raw[duplicateIdle.raw-1].data));
+    check('Chrome: identical Canvas repaint at sharp quality causes no resend or restart',high() && starts()===duplicateIdle.starts && first.frames.length===duplicateIdle.sent);
+    await pages.get('A').evaluate(()=>clearInterval(window.repaint));
     await sleep(500);const idle={starts:starts(),raw:raw.length,sent:first.frames.length};
     await sleep(1500);
     check('Chrome: idle produces no extra frames or restarts and no screenshots',starts()===idle.starts && raw.length===idle.raw && first.frames.length===idle.sent && !commands.some(c=>c.method==='Page.captureScreenshot'));

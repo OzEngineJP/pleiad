@@ -101,38 +101,41 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
   /** 段ごとのセッションに分かれている間は段が流れの鍵、そろえるときは 'shared' */
   const keyOf = (entry, tier) => (entry.multi ? tier : 'shared');
   const tierOf = (entry, viewer) => entry.sharp ? TOP_TIER : viewer.tier;
-  const streamKeyOf = (entry, frame) => (entry.multi ? frame.stream : 'shared');
 
   bridge.onFrame((sessionId, frame) => {
     const entry = entryOf(sessionId);
     if (!entry || !frame || typeof frame.data !== 'string') return;
     // 撮影元へはすぐ返事を返す（見る人を待たない。Chrome は返事が無いと 3 枚で止まる）
     bridge.ack(sessionId, frame.id, frame.stream);
-    const streamKey = streamKeyOf(entry, frame);
-    if (entry.multi && !entry.formats?.some(f => f.tier === streamKey)) return;
+    // 変更しない撮影元の絵は、別の段の張り直しを待たずに送り続ける。
+    const candidates = (frame.format ? [entry, entry.transition] : [entry.transition, entry]).filter(Boolean);
+    const config = candidates.find(candidate => {
+      const expected = candidate.multi ? candidate.formats?.find(f => f.tier === frame.stream)
+        : candidate.shared && { quality:candidate.shared.quality, maxWidth:clampDim(candidate.shared.width * Math.max(1, Math.min(2, candidate.shared.scale))), maxHeight:clampDim(candidate.shared.height * Math.max(1, Math.min(2, candidate.shared.scale))) };
+      return expected && (!frame.format || ['quality','maxWidth','maxHeight'].every(key => frame.format[key] === expected[key]));
+    });
+    if (!config) return;
+    const streamKey = config.multi ? frame.stream : 'shared';
     const stream = entry.streams.get(streamKey) ?? { frameSeq: 0, latest: null };
-    const format = JSON.stringify(entry.multi ? entry.formats.find(f => f.tier === streamKey) : entry.shared);
-    const sharedScale = entry.shared ? Math.max(1, Math.min(2, entry.shared.scale)) : 1;
-    const expected = entry.multi ? entry.formats.find(f => f.tier === streamKey)
-      : {quality:entry.shared.quality,maxWidth:clampDim(entry.shared.width * sharedScale),maxHeight:clampDim(entry.shared.height * sharedScale)};
-    if (frame.format && !['quality','maxWidth','maxHeight'].every(key => frame.format[key] === expected[key])) return;
+    const format = JSON.stringify(config.multi ? config.formats.find(f => f.tier === streamKey) : config.shared);
     const tabId = frame.tabId ?? entry.state?.tabId;
     // 重複は再送しない。静止中も最上段の screencast が生きているので、細かい更新を低画質との比較で失うことはない。
     if (format && frame.data && stream.latest?.data === frame.data && stream.format === format && stream.tabId === tabId
       && sameViewport(stream.latest.metadata, frame.metadata)) {
-      armQuiet(sessionId, entry);
       return;
     }
     stream.frameSeq += 1;
     stream.latest = frame;
     stream.format = format;
     stream.tabId = tabId;
-    entry.streams.set(streamKeyOf(entry, frame), stream);
+    entry.streams.set(streamKey, stream);
     entry.stats.frames++;
     entry.stats.bytes += Math.floor(frame.data.length * 3 / 4);
     entry.stats.maxBytes = Math.max(entry.stats.maxBytes, Math.floor(frame.data.length * 3 / 4));
     entry.statsAt = now();
     entry.firstAt ??= entry.statsAt;
+    if (config !== entry) return; // 開始の応答より先に来た絵は、成功を確かめてから送る。
+    entry.changedAt = now();
     for (const [client, viewer] of entry.clients) {
       if (keyOf(entry, tierOf(entry, viewer)) !== streamKey) continue;
       send(client, sessionId, entry, viewer);
@@ -180,13 +183,12 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     const key = keyOf(entry, tierOf(entry, viewer));
     const stream = entry.streams.get(key);
     const format = JSON.stringify(entry.multi ? entry.formats?.find(f => f.tier === key) : entry.shared);
-    const frame = stream?.format === format ? stream.latest : null;
+    const frame = stream && stream.format === format ? stream.latest : null;
     if (!frame || (stream.tabId && entry.state?.tabId && stream.tabId !== entry.state.tabId)
       || (viewer.sent?.key === key && viewer.sent.frameSeq === stream.frameSeq)) return;
     const seq = ++entry.seq;
     viewer.pending = { seq, markAt: null, sharp: entry.sharp };
     viewer.sent = { key, frameSeq: stream.frameSeq, seq };
-    clearTimer(entry.quietTimer); entry.quietTimer = null;
     armStale(client, sessionId, entry, viewer);
     deliver(client, { kind: 'screencast', ...tag, type: 'mark', sessionId, seq });
     deliver(client, { kind: 'screencast', ...tag, type: 'frame', sessionId, seq, data: frame.data, metadata: frame.metadata ?? {} });
@@ -220,16 +222,14 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
   /** 300 ms 静まったら、会話の映像そのものを最上段にする。遅い端末の返事はほかの端末を待たせない。 */
   function armQuiet(sessionId, entry) {
     clearTimer(entry.quietTimer); entry.quietTimer = null;
-    if (entry.sharp || !entry.clients.size) return;
+    if (entry.wantedSharp || !entry.clients.size) return;
     entry.quietTimer = setTimer(() => {
       entry.quietTimer = null;
       if (entryOf(sessionId) === entry && entry.clients.size) setSharp(sessionId, entry, true);
-    }, STILL_MS);
+    }, Math.max(0, entry.changedAt + STILL_MS - now()));
   }
   function setSharp(sessionId, entry, sharp) {
-    entry.sharp = sharp;
-    entry.firstSharp = true;
-    entry.motionAt = null;
+    entry.wantedSharp = sharp;
     void syncFormats(sessionId, entry);
     for (const [client, viewer] of entry.clients) send(client, sessionId, entry, viewer);
     if (!sharp) armQuiet(sessionId, entry);
@@ -265,48 +265,73 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     armQuiet(sessionId, entry);
   }
 
-  /** 見ている人の段の一覧を、bridge の撮影の口へ反映する */
-  async function syncFormats(sessionId, entry) {
-    if (entryOf(sessionId) !== entry || !entry.clients.size) return;
-    if (entry.multi) {
+  /** 次に使う設定。要求中も、配信に成功した設定は entry に残しておく。 */
+  function desiredFormats(entry, multi = entry.multi) {
+    if (multi) {
       const formats = new Map();   // 段 -> その段の最大の枠
       for (const viewer of entry.clients.values()) {
-        const tier = tierOf(entry, viewer), f = tierFormat(tier, viewer.box);
+        const tier = entry.wantedSharp ? TOP_TIER : viewer.tier, f = tierFormat(tier, viewer.box);
         const cur = formats.get(tier);
         formats.set(tier, cur ? { tier, quality: f.quality, maxWidth: Math.max(cur.maxWidth, f.maxWidth), maxHeight: Math.max(cur.maxHeight, f.maxHeight) } : f);
       }
-      const next = [...formats.values()].sort((a, b) => a.tier - b.tier);
-      if (JSON.stringify(next) === JSON.stringify(entry.formats)) return;
-      // 続けて使う同じ撮影元だけを保持する。いったん止めた段の古い絵は再利用しない。
-      for (const [key, stream] of entry.streams) {
-        if (!entry.formats?.some(f => f.tier === key && JSON.stringify(f) === JSON.stringify(next.find(n => n.tier === key)))) stream.format = null;
-        if (!next.some(f => f.tier === key)) stream.format = null;
-      }
-      entry.formats = next;
-      if (entry.sharp) { entry.firstSharp = true; entry.motionAt = null; }
-      const answer = await bridge.setFormats(sessionId, next).catch(() => null);
-      if (entryOf(sessionId) === entry && answer?.multi === false) {   // 段ごとに分けられなかった: 一番低い段にそろえる
-        entry.multi = false;
-        await syncShared(sessionId, entry);
-      }
-      return;
+      return { multi:true, formats:[...formats.values()].sort((a, b) => a.tier - b.tier), shared:null, sharp:entry.wantedSharp };
     }
-    await syncShared(sessionId, entry);
-  }
-  /** 段ごとに分けられない撮影（分けられなかった中継）は、一番低い段の画質にそろえる（大きさは端末の箱のまま） */
-  async function syncShared(sessionId, entry) {
-    if (entryOf(sessionId) !== entry || !entry.clients.size) return;
     let lowest = null;
     for (const viewer of entry.clients.values()) if (!lowest || viewer.tier < lowest.tier) lowest = viewer;
-    if (!lowest) return;
-    const tier = tierOf(entry, lowest);
-    const boxes = entry.sharp ? [...entry.clients.values()] : [lowest];
+    const tier = entry.wantedSharp ? TOP_TIER : lowest.tier;
+    const boxes = entry.wantedSharp ? [...entry.clients.values()] : [lowest];
     const options = { width:Math.max(...boxes.map(v => v.box.width)), height:Math.max(...boxes.map(v => v.box.height)),
       scale:Math.max(...boxes.map(v => v.box.scale)), quality: SCREENCAST_TIERS[tier].q };
-    if (JSON.stringify(options) === JSON.stringify(entry.shared)) return;
-    for (const stream of entry.streams.values()) stream.format = null;
-    entry.shared = options;
-    await bridge.request('start', sessionId, { options }).catch(() => {});
+    return { multi:false, formats:null, shared:options, sharp:entry.wantedSharp };
+  }
+
+  /** 張り直しは直列に行う。失敗時は bridge が前の配信を復元し、ここでは成功済みの状態を保って再試行する。 */
+  function syncFormats(sessionId, entry) {
+    if (entryOf(sessionId) !== entry || !entry.clients.size) return Promise.resolve();
+    if (entry.syncing) { entry.resync = true; return entry.syncing; }
+    clearTimer(entry.retryTimer); entry.retryTimer = null;
+    const run = async () => {
+      do {
+        entry.resync = false;
+        let next = desiredFormats(entry);
+        const changed = next.multi !== entry.multi || JSON.stringify(next.multi ? next.formats : next.shared) !== JSON.stringify(entry.multi ? entry.formats : entry.shared);
+        if (changed || entry.retryNeeded) {
+          entry.transition = next;
+          if (next.multi) {
+            const answer = await bridge.setFormats(sessionId, next.formats);
+            if (answer?.multi === false) {
+              next = desiredFormats(entry, false);
+              entry.transition = next;
+              await bridge.request('start', sessionId, { options:next.shared });
+            }
+          } else await bridge.request('start', sessionId, { options:next.shared });
+        }
+        if (entryOf(sessionId) !== entry) return;
+        const wasSharp = entry.sharp;
+        Object.assign(entry, next);
+        for (const [key, stream] of entry.streams) {
+          const active = next.multi ? next.formats.find(f => f.tier === key) : key === 'shared' && next.shared;
+          if (!active || stream.format !== JSON.stringify(active)) stream.format = null;
+        }
+        entry.transition = null;
+        entry.retryNeeded = false;
+        if (changed || wasSharp !== entry.sharp) {
+          // 開始の応答までに最初の絵を受けた場合、その次の変更から動きを数える。
+          entry.firstSharp = ![...entry.streams.values()].some(s => s.format === JSON.stringify(next.multi ? next.formats.find(f => f.tier === TOP_TIER) : next.shared));
+          entry.motionAt = null;
+        }
+        for (const [client, viewer] of entry.clients) send(client, sessionId, entry, viewer);
+      } while (entry.resync && entry.clients.size && entryOf(sessionId) === entry);
+    };
+    // 送信・ack からの再入でも、要求中であることを先に確定する。
+    entry.syncing = Promise.resolve().then(run).catch(() => {
+      entry.transition = null;
+      entry.retryNeeded = true;
+      if (entryOf(sessionId) === entry && entry.clients.size) {
+        entry.retryTimer = setTimer(() => { entry.retryTimer = null; void syncFormats(sessionId, entry); }, 1000);
+      }
+    }).finally(() => { entry.syncing = null; });
+    return entry.syncing;
   }
 
   function dropViewer(client, sessionId, entry, viewer) {
@@ -323,6 +348,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     const entry = entryOf(sessionId);
     if (!entry) return;
     clearTimer(entry.quietTimer);
+    clearTimer(entry.retryTimer);
     for (const viewer of entry.clients.values()) clearTimer(viewer.staleTimer);
     sessions.delete(sessionId);
     Promise.resolve(bridge.setViewers?.(sessionId, [])).catch(() => {});
@@ -335,7 +361,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     const created = !entry;
     if (!entry) {
       entry = { clients: new Map(), seq: 0, streams: new Map(), state: null, stats: { frames: 0, bytes: 0, maxBytes: 0 }, firstAt: null, statsAt: null,
-        multi: splitTiers, formats: null, shared: null, sharp:false, firstSharp:true, motionAt:null, quietTimer:null };
+        multi: splitTiers, formats: null, shared: null, sharp:false, wantedSharp:false, firstSharp:true, motionAt:null, quietTimer:null, changedAt:now() };
       sessions.set(sessionId, entry);
     }
     const previous = entry.clients.get(client);
@@ -357,10 +383,13 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
       } else if (entry.multi) {
         result = { tabId: entry.state?.tabId ?? null, state: entry.state };
         await syncFormats(sessionId, entry);
-      } else {
+      } else if (created) {
         const options = { tabId, width: box.width, height: box.height, scale: box.scale, quality: SCREENCAST_TIERS[lowestTierOf(entry)].q };
         entry.shared = { width: box.width, height: box.height, scale: box.scale, quality: SCREENCAST_TIERS[lowestTierOf(entry)].q };
         result = await bridge.request('start', sessionId, { options });
+      } else {
+        result = { tabId:entry.state?.tabId ?? null, state:entry.state };
+        await syncFormats(sessionId, entry);
       }
     } catch (error) {
       dropViewer(client, sessionId, entry, viewer);
@@ -370,7 +399,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     if (result?.state && (!Number.isSafeInteger(entry.state?.sequence)
       || result.state.sequence > entry.state.sequence)) entry.state = result.state;
     if (entry.fields) deliver(client, { kind: 'screencast', ...tag, type: 'interaction', sessionId, interaction: entry.fields });
-    if (!entry.multi) void syncShared(sessionId, entry);   // 分けられない撮影は全員の段でそろえ直す
+    if (!entry.multi) void syncFormats(sessionId, entry);   // 分けられない撮影は全員の段でそろえ直す
     send(client, sessionId, entry, viewer);
     armQuiet(sessionId, entry);
     return { tabId: result?.tabId ?? null, state: entry.state };

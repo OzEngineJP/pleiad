@@ -46,11 +46,13 @@ const client = () => { const got = []; return { got, send: message => got.push(m
 const frames = c => c.got.filter(m => m.type === 'frame');
 const videos = c => c.got.filter(m => m.type === 'video');
 /** 印の返事 → フレームの返事（S = gap ms）を順に返す */
-function ackRound(hub, c, sessionId, c2, gap = 10) {
+async function ackRound(hub, c, sessionId, c2, gap = 10) {
   const seq = frames(c).at(-1).seq;
   hub.received(c, sessionId, seq, { mark: true });
   c2.advance(gap);
   hub.received(c, sessionId, seq);
+  // 次の画像は、段の張り直し要求が完了してから届く。
+  await new Promise(resolve => setImmediate(resolve));
 }
 
 export default async function (t) {
@@ -75,7 +77,7 @@ export default async function (t) {
     // 遅い人が返さない間も、速い人には毎回新しい 1 枚が届く
     for (let id = 2; id <= 4; id++) {
       bridge.frame('s1', id, { stream: 3 });
-      ackRound(hub, fast, 's1', c);
+      await ackRound(hub, fast, 's1', c);
     }
     t.ok('遅い見る人が返事を返さなくても、速い見る人は届くたびに新しい 1 枚をもらう（遅い人の分だけ fps が下がる）',
       frames(fast).length === 4 && frames(slow).length === 1 && frames(fast).at(-1).seq === fast.got.at(-1).seq);
@@ -99,7 +101,7 @@ export default async function (t) {
     const v = client();
     await hub.watch(v, 's1', { width: 400, height: 300, scale: 1 });
     const tier = () => bridge.formats.at(-1)?.[0]?.tier ?? 3;
-    const put = async (gap, n = 1) => { for (let i = 0; i < n; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); ackRound(hub, v, 's1', c, gap); } };
+    const put = async (gap, n = 1) => { for (let i = 0; i < n; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); await ackRound(hub, v, 's1', c, gap); } };
 
     await put(60, 3);
     t.ok('S の直近 3 枚の中央値が 50 ms を超えると 1 段下げる（段の一覧が変わる）',
@@ -129,7 +131,7 @@ export default async function (t) {
 
     // 300 ms 静まれば最上段へ切り替え、その screencast の画像を送る
     bridge.frame('s1', 1, { stream: 3 });
-    ackRound(hub, v, 's1', c);
+    await ackRound(hub, v, 's1', c);
     c.advance(300);
     await Promise.resolve(); await new Promise(r => setImmediate(r));
     bridge.frame('s1', 2, { stream:6, data:'SHARP' });
@@ -155,14 +157,14 @@ export default async function (t) {
     t.ok('返事が戻れば stale は下りる', videos(v).at(-1)?.stale === false);
 
     // 変更が続けば通信量に応じた段へ戻る。その後段 0 まで下げても遅い → lag
-    bridge.frame('s1', 5, { stream:6, data:'MOTION_1' }); ackRound(hub, v, 's1', c);
-    bridge.frame('s1', 6, { stream:6, data:'MOTION_2' }); ackRound(hub, v, 's1', c);
+    bridge.frame('s1', 5, { stream:6, data:'MOTION_1' }); await ackRound(hub, v, 's1', c);
+    bridge.frame('s1', 6, { stream:6, data:'MOTION_2' }); await ackRound(hub, v, 's1', c);
     const tier = () => bridge.formats.at(-1)?.[0]?.tier ?? 3;
     for (let round = 0; round < 4; round++) {
-      for (let i = 0; i < 3; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); ackRound(hub, v, 's1', c, 70); }
+      for (let i = 0; i < 3; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); await ackRound(hub, v, 's1', c, 70); }
     }
     t.ok('段 0 でも S の中央値が 50 ms を超え続けると lag を知らせる', videos(v).at(-1)?.lag === true, JSON.stringify(videos(v).at(-1)));
-    for (let i = 0; i < 3; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); ackRound(hub, v, 's1', c, 10); }
+    for (let i = 0; i < 3; i++) { bridge.frame('s1', bridge.acks.length + 1, { stream: tier() }); await ackRound(hub, v, 's1', c, 10); }
     t.ok('S が戻れば lag は下りる', videos(v).at(-1)?.lag === false);
   }
 
@@ -176,7 +178,7 @@ export default async function (t) {
     bridge.frame('s1', 1, { data: 'QUJD' });
     t.ok('段ごとに分けられなくても、返事ごとの 1 枚と印は同じ（撮影元へもすぐ ack）',
       bridge.acks.length === 1 && v.got.map(m => m.type).join(',') === 'mark,frame');
-    for (let i = 0; i < 3; i++) { bridge.frame('s1', 2 + i, {}); ackRound(hub, v, 's1', c, 70); }
+    for (let i = 0; i < 3; i++) { bridge.frame('s1', 2 + i, {}); await ackRound(hub, v, 's1', c, 70); }
     const restarts = bridge.requests.filter(([a]) => a === 'start');
     t.ok('段が下がったら、一番低い段の画質で撮り直す（start を掛け直す。大きさは端末の箱のまま）',
       restarts.length >= 2 && restarts.at(-1)[2].options.quality === SCREENCAST_TIERS[2].q && restarts.at(-1)[2].options.width === 400, JSON.stringify(restarts.at(-1)?.[2].options));

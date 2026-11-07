@@ -3,24 +3,29 @@ export async function checkScreencastSharp(createHub, t, images = null) {
   const pair = images ?? JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../fixtures/screencast-fine-detail.json', import.meta.url), 'utf8'));
   const flush = async () => { for (let i=0;i<16;i++) await Promise.resolve(); };
   async function rig({viewers=1, multi=true, initialState=true, restartDelay=0, scale=1}={}) {
-    let time=1000, receive, state, formats=[], current=pair.sharp, id=0, captures=0, changes=0;
+    let time=1000, receive, state, formats=[], current=pair.sharp, id=0, captures=0, changes=0, running=false, waiting=false;
     const timers=new Set(), clients=[], histories=[];
     const clock={now:()=>time,setTimer(fn,ms){const timer={fn,at:time+ms};timers.add(timer);return timer;},clearTimer(timer){timers.delete(timer);}};
     const emit=(data,stream=formats[0]?.tier ?? 3,metadata=pair.metadata,tabId)=>receive('s',{id:++id,stream,data,metadata,format:formats.find(f=>f.tier===stream),...(tabId?{tabId}:{})});
     const initial=()=>{for (const f of formats) emit(f.quality===80 && f.maxWidth>=400 ? current : pair.low, f.tier);};
-    const restart=list=>{formats=list;changes++;clock.setTimer(initial,restartDelay);};
+    const restart=list=>{
+      changes++;running=false;waiting=true;
+      return new Promise(resolve=>{const start=()=>{formats=list;running=true;waiting=false;initial();resolve();};if(restartDelay)clock.setTimer(start,restartDelay);else queueMicrotask(start);});
+    };
     const bridge={onFrame(fn){receive=fn;},onState(fn){state=fn;},onEnded(){},ack(){},
       async request(action,argsId,{options}={}) {
         if(action==='start') {
           const s=Math.max(1,Math.min(2,options.scale ?? 1));
-          restart(options.formats ?? [{tier:0,quality:options.quality,maxWidth:Math.round(Math.max(200,Math.min(1920,options.width*s))),maxHeight:Math.round(Math.max(200,Math.min(1920,options.height*s)))}]);
+          const list=options.formats ?? [{tier:0,quality:options.quality,maxWidth:Math.round(Math.max(200,Math.min(1920,options.width*s))),maxHeight:Math.round(Math.max(200,Math.min(1920,options.height*s)))}];
+          if(!changes){formats=list;changes++;running=true;clock.setTimer(initial,0);}
+          else await restart(list);
           if(initialState) state('s',{tabId:'A',sequence:1});
           return {state:{tabId:'A',sequence:1}};
         }
       },
       // 旧実装にも damage を与え、撮影ごとに反響2枚が返る条件で循環を検出する。
       capture(){captures++;clock.setTimer(()=>emit(pair.low),10);clock.setTimer(()=>emit(pair.low),20);return Promise.resolve({data:current});},
-      ...(multi?{async setFormats(_id,list){restart(list);return {multi:true};}}:{}),
+      ...(multi?{async setFormats(_id,list){await restart(list);return {multi:true};}}:{}),
     };
     const hub=createHub({bridge,...clock});
     async function add(width=400) {
@@ -36,11 +41,36 @@ export async function checkScreencastSharp(createHub, t, images = null) {
       time=end;await flush();
     }
     return {advance,emit,add,hub,clients,histories,
-      update(){current=pair.updatedSharp;initial();}, damage:initial,
+      update(){current=pair.updatedSharp;if(running)initial();}, damage:initial,
       tab(tabId){state('s',{tabId,sequence:++id+10});initial();},
       state:(tabId,sequence)=>state('s',{tabId,sequence}),
-      get captures(){return captures;},get changes(){return changes;},get formats(){return formats;},
+      get captures(){return captures;},get changes(){return changes;},get formats(){return formats;},get waiting(){return waiting;},
+      set restartDelay(ms){restartDelay=ms;},
       close:()=>Promise.all(clients.map(c=>hub.unwatch(c,'s')))};
+  }
+  for(const multi of [true,false]) {
+    const r=await rig({multi});await r.advance(0);
+    for(let n=0;n<3;n++){await r.advance(80);r.damage();}
+    await r.advance(59);const beforeDeadline=r.formats[0].quality;
+    await r.advance(1);
+    t.ok(`${multi?'段別':'共有'}: 重複が届いても299msまでは低い段、300msで最上段になる`,beforeDeadline===55 && r.formats[0].quality===80);
+    for(let n=0;n<50;n++){await r.advance(80);r.damage();}
+    t.ok(`${multi?'段別':'共有'}: 80msごとの同じ描画でも最後の内容変更から300msで最上段になる`,r.formats[0].quality===80 && r.histories[0].at(-1)?.data===pair.sharp);
+    const before=r.changes, sent=r.histories[0].length;
+    for(let n=0;n<100;n++){await r.advance(80);r.damage();}
+    t.ok(`${multi?'段別':'共有'}: 最上段の同じ描画が続いても再送・張り直し・撮影を増やさない`,r.changes===before && r.histories[0].length===sent && r.captures===0);
+    await r.close();
+  }
+  for(const key of ['deviceWidth','deviceHeight','pageScaleFactor','offsetTop','scrollOffsetX','scrollOffsetY']) {
+    const r=await rig();await r.advance(1000);
+    const before=r.histories[0].length, moved={...pair.metadata,[key]:pair.metadata[key]+1};
+    r.emit(pair.sharp,6,moved);await r.advance(0);
+    t.ok(`同じ画像でも${key}が変われば位置情報とともに送る`,r.histories[0].length===before+1 && r.histories[0].at(-1)?.metadata[key]===moved[key]);
+    await r.advance(400);
+    const sent=r.histories[0].length, unknown={...moved};delete unknown[key];
+    r.emit(pair.sharp,6,unknown);await r.advance(0);
+    t.ok(`${key}が不明な同じ画像を重複として捨てない`,r.histories[0].length===sent+1 && !(key in r.histories[0].at(-1).metadata));
+    await r.close();
   }
   for(const multi of [true,false]) for(const viewers of [1,2]) {
     const r=await rig({multi,viewers});await r.advance(1000);
@@ -66,11 +96,15 @@ export async function checkScreencastSharp(createHub, t, images = null) {
     t.ok('最初の状態通知より早い重複でも例外にならず最上段へ移る',r.histories[0].at(-1)?.data===pair.sharp && r.captures===0);
     await r.close();
   }
-  for(const restartDelay of [10,500]) {
-    const r=await rig({restartDelay});await r.advance(300);r.update();await r.advance(restartDelay+1000);
-    t.ok(`張り直しの途中に更新しても、最初の絵が${restartDelay}ms後に届いたとき本物の変更を捨てない`,r.histories[0].at(-1)?.data===pair.updatedSharp);
+  for(const multi of [true,false]) for(const restartDelay of [10,500]) {
+    const r=await rig({multi,restartDelay});await r.advance(300);
+    const beforeFrames=r.histories[0].length;
+    r.update();await r.advance(restartDelay-1);
+    t.ok(`${multi?'段別':'共有'}: 張り直し要求を${restartDelay}ms保留する間は新形式の絵を出さない`,r.waiting && r.histories[0].length===beforeFrames);
+    await r.advance(1001);
+    t.ok(`${multi?'段別':'共有'}: 張り直しの要求が${restartDelay}ms後に完了した最初の絵が最新の内容になる`,!r.waiting && r.histories[0].at(-1)?.data===pair.updatedSharp);
     const before=r.changes;await r.advance(10000);
-    t.ok(`張り直しの応答が${restartDelay}msでも静止中は収束する`,r.changes===before && r.captures===0);
+    t.ok(`${multi?'段別':'共有'}: 張り直しの応答が${restartDelay}msでも静止中は収束する`,r.changes===before && r.captures===0);
     await r.close();
   }
   {
@@ -98,6 +132,16 @@ export async function checkScreencastSharp(createHub, t, images = null) {
     const before=r.changes;await r.add();await r.advance(60_000);
     t.ok('動作中も最上段だった場合、同寸法の追加閲覧者へ画像を渡し、余計に張り直さない',r.histories[2].at(-1)?.data===pair.sharp && r.changes===before);
     void lower;await r.close();
+  }
+  {
+    const r=await rig();await r.advance(0);r.clients[0].fast=true;
+    for(let n=0;n<15;n++){r.emit(`moving-${n}`);await r.advance(10);}
+    await r.add();await r.advance(0);
+    r.restartDelay=500;
+    const adding=r.add(700);await r.advance(0);
+    r.emit(pair.updatedSharp,6);await r.advance(0);
+    t.ok('別の段の張り直し要求中も、設定が変わらない段の最新画像を待たせない',r.waiting && r.histories[0].at(-1)?.data===pair.updatedSharp);
+    await r.advance(2000);await adding;await r.close();
   }
   {
     const r=await rig();await r.advance(1000);

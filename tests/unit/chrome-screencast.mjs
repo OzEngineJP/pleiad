@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { checkScreencastSharp } from '../lib/screencast-sharp.mjs';
+import { checkScreencastRecovery } from '../lib/screencast-recovery.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
@@ -55,6 +56,7 @@ export default async function (t) {
   }
 
   await checkScreencastSharp(createScreencastHub, t);
+  await checkScreencastRecovery(createChromeScreencast, createScreencastHub, t);
 
   const r = await rig();
   let a1 = null;
