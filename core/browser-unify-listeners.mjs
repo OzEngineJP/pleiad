@@ -66,6 +66,11 @@ export async function startBrowserUnifyListeners({ dataDir, env = process.env, t
   }
   return {
     ports,
+    /** 前回までの port（替わったものだけ）。残ったタブの URL を張り直す根拠（core/isolated-origins.mjs の movedPageUrl） */
+    previous: {
+      pages: saved.pages && saved.pages !== ports.pages ? saved.pages : null,
+      isolated: saved.isolated && saved.isolated !== ports.isolated ? saved.isolated : null,
+    },
     close: () => Promise.all([pages.close(), isolated.close()]).then(() => {}),
   };
 }

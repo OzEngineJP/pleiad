@@ -6,7 +6,7 @@
 
 ファイルのページは Markdown・画像・SVG・CSV/TSV・コード・テキスト・PDF を表示する。プレビューと行番号付きの原文を切り替え、行指定・保存・パスのコピー・会話で使う操作を備える。Office 文書は変換せず保存を案内する。PDF の表示資源はローカルに配り、開いたときだけ読み込む。
 
-ファイルは表示した時点の内容を読む。取得時刻を出し、再読み込みは人の明示操作にする。同じ実体パスをもう一度開くと、そのタブを選ぶだけで読み直さない。遅れて届いた取得結果が別のファイルを上書きしないよう、取り消しと世代番号を使う。
+ファイルは表示した時点の内容を読む。取得時刻を出し、再読み込みは人の明示操作にする。同じ実体パスをもう一度開くと、そのタブを選ぶだけで読み直さない。遅れて届いた取得結果が別のファイルを上書きしないよう、取り消しと世代番号を使う。開いているファイル・フォルダーがディスク上で変わると、まだページに触れていなければそのまま読み直し、触れていれば「更新を表示」を出して人の操作を待つ（読んでいる所・入力を消さない。`core/page-watch.mjs` → `page:changed` → `pleiad:page-command`、web/pages/app.mjs）。
 
 | 内容 | 上限 |
 |---|---|
@@ -29,9 +29,9 @@
 
 HTML のファイルは Pleiad の外枠の中で、別の出どころの iframe として実行する。Chrome のタブのアドレスと履歴には外枠の URL を残し、資源を読む鍵を表へ出さない。原文と描画を切り替えられる。Chrome が無い会話も、同じ外枠と隔離した iframe を使う。
 
-HTML の鍵は 128 bit の乱数で、元の HTML のフォルダーに結び付ける。隔離のリスナーの `/f/<鍵>/<相対パス>` から読み、要求ごとに実パスとファイルの検査を行う。鍵はメモリーだけに持ち、24 時間またはサーバーの再起動で失効する。現在のファイルを読むので、保存済みの [可視化の束](visualize.md#保存する束) とは別である。
+HTML の鍵は、フォルダー・入口・会話・「一度だけ読み込む」の出どころを AES-256-GCM で閉じた自己完結の文で、元の HTML のフォルダーに結び付ける。隔離のリスナーの `/f/<鍵>/<相対パス>` から読み、要求ごとに実パスとファイルの検査を行う。期限は 24 時間。秘密は `page-secrets.json` にあるので、サーバーの入れ替えをまたいでも引ける。現在のファイルを読むので、保存済みの [可視化の束](visualize.md#保存する束) とは別である。
 
-HTML の iframe と応答の Content Security Policy（CSP）は `sandbox allow-scripts` にし、`allow-same-origin` を付けない。保存領域・親画面・ポップアップ・上位ページの移動などへ権限を渡さない。外部の読み込みの確認は [可視化](visualize.md#外部の読み込みと隔離) と共通にする。Markdown は安全な要素へ絞り、SVG は画像として読む。
+HTML の iframe はアプリごとの専用の出どころ `f<フォルダーの印>.localhost`（`core/isolated-origins.mjs`。フォルダーの HMAC。パスは出さない）で動き、応答の CSP と iframe の sandbox は `allow-scripts allow-same-origin allow-downloads allow-forms allow-modals allow-popups allow-pointer-lock`（`APP_SANDBOX`）。`allow-same-origin` が付くので localStorage・相対パスの資源・fetch はその origin の中で本物が効く。上位ページの移動（`allow-top-navigation`）は渡さず、camera・microphone・geolocation・clipboard は Permissions-Policy で止める。外部の読み込みの確認は [可視化](visualize.md#外部の読み込みと隔離) と共通にする。Markdown は安全な要素へ絞り、SVG は画像として読む。
 
 ## ファイルのメニュー
 

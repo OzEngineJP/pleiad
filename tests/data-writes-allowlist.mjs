@@ -216,6 +216,9 @@ export const DATA_WRITES = [
   { file: 'core/browser-unify-listeners.mjs', sites: 1, targets: [
     { name: 'page-ports.json', limit: '固定（{ pages, isolated }）', reason: 'ファイルのページと隔離のリスナーの port（ADR 0295）。次の起動でも同じ port を試し、開いたページのタブの URL を変えないための控え。port が変わったときだけ書く' },
   ] },
+  { file: 'core/isolated-origins.mjs', sites: 1, targets: [
+    { name: 'page-secrets.json', limit: '固定（32 バイトの key 1 つ）', reason: 'アプリの出どころの印と HTML の鍵を閉じる秘密（ADR 0295 の 3）。無い・壊れているときに作り直すだけで、通常は読むだけ' },
+  ] },
   { file: 'core/context-bases.mjs', sites: 1, targets: [
     { name: 'context-bases.json', limit: 'CONTEXT_BASES_LIMIT=50 件（作業場所 × モデル）', reason: '委譲の子の固定の部分（最初のリクエストの文脈）の直近の値。自動圧縮の閾値の見積もり（ADR 0166）' },
   ] },

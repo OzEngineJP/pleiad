@@ -1,5 +1,6 @@
-// Interactive documents always have an opaque sandbox origin. Never add
-// allow-same-origin: the surrounding app carries authenticated cookies.
+// srcdoc で描く写しは不透明な sandbox の出どころ（allow-same-origin は付けない。周りの画面は資格を持つ）。
+// 隔離の origin の束は、アプリごとの専用の出どころ（v<束の印>.localhost）で開く（allow-same-origin が付き、
+// localStorage・fetch・相対パスが効く。core/isolated-origins.mjs・core/preview-policy.mjs の APP_SANDBOX）
 import { t } from './i18n.mjs';
 import { visualizationDocument } from './visualize-document.mjs';
 import { confirmedPreview, currentPreviewPolicy } from './preview-confirm.mjs';
@@ -15,8 +16,11 @@ if (typeof window !== 'undefined' && window.addEventListener) window.addEventLis
   }
 });
 
+/** 応答のヘッダーの CSP の sandbox と同じ（core/preview-policy.mjs の APP_SANDBOX）。アプリの専用の出どころで動く */
+export const APP_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-downloads allow-forms allow-modals allow-popups allow-pointer-lock';
+
 /** Scripts run, but in an opaque origin with no referrer or device permissions.
- * Shared by visualizations and the HTML file preview. */
+ * Shared by srcdoc visualizations and previews without an isolated origin. */
 export function isolateFrame(frame) {
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.setAttribute('referrerpolicy', 'no-referrer');
@@ -37,10 +41,15 @@ export function configureVisualizationTabs(options) { visualizationTabs = option
 export function openVisualizationTab(bundle, element, title = '') {
   const tabs = visualizationTabs;
   const sessionId = tabs?.sessionId?.(element);
-  const url = isolatedVisualizationUrl(bundle, { embed:'tab', host:'localhost', title });
-  if (!sessionId || !url || !tabs.connected?.(sessionId) || !tabs.openTab) return false;
-  try { Promise.resolve(tabs.openTab({ sessionId, url, reuse:false })).catch(error => tabs.onError?.(error)); }
-  catch (error) { tabs.onError?.(error); }
+  if (!sessionId || !tabs.connected?.(sessionId) || !tabs.openTab) return false;
+  // 開く先はサーバーが決める（pageOpen → 束の印の出どころ）。頼めない環境（古い本体・試験）は自分で組み立てる
+  try {
+    const open = Promise.resolve(tabs.openPage?.({ sessionId, kind:'viz', hash:bundle?.hash, entry:bundle?.entry, title }))
+      .then(result => result?.url, () => null)
+      .then(url => url ?? isolatedVisualizationUrl(bundle, { embed:'tab', title }))
+      .then(url => (url ? tabs.openTab({ sessionId, url, reuse:false }) : null));
+    Promise.resolve(open).catch(error => tabs.onError?.(error));
+  } catch (error) { tabs.onError?.(error); }
   return true;
 }
 export function visualizationBundleNotice(bundle) {
@@ -54,13 +63,17 @@ export function visualizationBundleNotice(bundle) {
   return Object.hasOwn(reasons, bundle.reason) ? reasons[bundle.reason] : t('timeline.present.resourcesOmitted');
 }
 const BUNDLE_HASH = /^[0-9a-f]{64}$/;
+/** 束の印の出どころの名前（core/isolated-origins.mjs の vizMark と同じ）。アプリごとの origin になる */
+export const visualizationHost = hash => `v${String(hash ?? '').toLowerCase().slice(0, 24)}.localhost`;
+
 /**
  * 束の URL（隔離の origin の /viz/<束のハッシュ>/<入口>）。隔離の origin が無い・束の形が違うときは null。
  * embed: conversation（会話の枠）| panel（右の欄）| tab（別のタブ。高さの知らせ・橋を入れない）
- * ホストは画面の名前によらず localhost（リスナーも端末のプロキシも Host が localhost:<port> のときだけ答える。127.0.0.1 は 421）
+ * ホストは束の印の <印>.localhost（リスナーも端末のプロキシも localhost と <印>.localhost の Host にだけ答える。
+ * host: 'localhost' は入れ替え前の形・試験用）
  * title: 別のタブの題（タブの列とアドレスバーはページの <title> を読む。可視化の中身はふつう <title> を持たない）
  */
-export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = 'localhost', title = '' } = {}) {
+export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = null, title = '' } = {}) {
   if (!isolated || !BUNDLE_HASH.test(bundle?.hash ?? '') || typeof bundle.entry !== 'string' || !bundle.entry) return null;
   if (!['conversation', 'panel', 'tab'].includes(embed) || bundle.entry.split('/').some(part => !part || part === '.' || part === '..' || /[\\\x00-\x1f]/.test(part))) return null;
   const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
@@ -68,7 +81,7 @@ export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', 
   if (['light', 'dark'].includes(theme)) params.set('theme', theme);
   if (once) params.set('once', once);
   if (embed === 'tab' && title) params.set('title', String(title).slice(0, 200));
-  return `http://${host}:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
+  return `http://${host ?? visualizationHost(bundle.hash)}:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
 }
 
 // fill: the frame gets its height from the container (the preview panel), so the
@@ -84,8 +97,8 @@ export function visualizationFrame(content, title, { fill = false, conversation 
     confirmedPreview(frame, srcdoc);
     return frame;
   }
-  // 隔離の origin の応答のヘッダーの sandbox と同じ（ADR 0295 の 3）。allow-same-origin は付けない
-  frame.setAttribute('sandbox', 'allow-scripts allow-downloads allow-forms');
+  // 隔離の origin の応答のヘッダーの sandbox と同じ（APP_SANDBOX。アプリの専用の出どころなので allow-same-origin が付く）
+  frame.setAttribute('sandbox', APP_FRAME_SANDBOX);
   confirmedPreview(frame, async (policy, once) => {
     const theme = document.documentElement?.dataset?.theme;
     const embed = conversation ? 'conversation' : 'panel';

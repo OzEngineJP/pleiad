@@ -2917,6 +2917,7 @@
       "copyPath": "Copy path",
       "download": "Save HTML",
       "widen": "Widen",
+      "open": "Open as page",
       "narrow": "Back to normal width",
       "resourcesOmitted": "Related files, such as images, are not included.",
       "resourcesTooMany": "Only HTML was saved because there were too many related files.",

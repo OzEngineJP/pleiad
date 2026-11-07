@@ -1,11 +1,14 @@
 import path from 'node:path';
 import { classifyAddressInput, resolveAddressInput } from './address-input.mjs';
-import { listTreeFolder } from './file-preview.mjs';
+import { inspectFile, listTreeFolder } from './file-preview.mjs';
+import { isHash } from './viz-bundle.mjs';
+import { fileMark, vizMark } from './isolated-origins.mjs';
 import { readSearchProvider, searchUrl } from './chrome/search-provider.mjs';
 
 // pageResult: 画面が確認と書き込みを終えた、ページからの頼み（worktree）の結果をページへ返す（core/page-requests.mjs の result）
 // pageEnv: 画面のテーマの変化をファイルのページへ知らせる（言語はサーバーの既定なので savePref が知らせる）
-export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress', 'pageResult', 'pageEnv']);
+// pageOpen: ページ・HTML・可視化の開く先をサーバーが決める（ADR 0295 の 7。画面は port や URL を組み立てない）
+export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress', 'pageResult', 'pageEnv', 'pageOpen']);
 export const isBrowserUnifyCommand = command => BROWSER_UNIFY_COMMANDS.has(command);
 
 /** Only authenticated connections explicitly watching this conversation receive tab data. */
@@ -44,6 +47,65 @@ export function createBrowserUnifyWs(deps = {}) {
     if (resolved.kind === 'path') return pageUrl(sessionId, resolved.page, resolved.path);
     if (resolved.kind === 'search') return searchUrl(resolved.query, await readSearchProvider(await deps.profileDir?.(sessionId)));
     return resolved.url;
+  }
+  /** 束の目録の相対パスを、登録の通りの綴りに直す（大小文字は 1 つに決まるときだけ。core/isolated-routes.mjs と同じ規則） */
+  const manifestRel = (files, rel) => {
+    if (Object.hasOwn(files, rel)) return rel;
+    const matches = Object.keys(files).filter(key => key.toLowerCase() === rel.toLowerCase());
+    return matches.length === 1 ? matches[0] : null;
+  };
+  const PAGE_KINDS = new Set(['file', 'dir', 'git', 'plugins', 'new', 'attachment']);
+  /**
+   * 「開く先」を決める（pageOpen）。返り値:
+   *   - ページ:   { kind, path?, suffix, url }。url はファイルのページの port の URL、suffix は Chrome の無い画面が
+   *     本体と同じ出どころで使う /_pleiad/…
+   *   - HTML:    { kind:'html', path, key, url }。url はフォルダーの印の出どころ（f<印>.localhost）
+   *   - 可視化:  { kind:'viz', hash, entry, url }。url は束の印の出どころ（v<印>.localhost）
+   * ページの対象は変化の見張り（core/page-watch.mjs）に登録する（開いたファイルが変わったら page:changed）
+   */
+  async function openTarget(sessionId, input) {
+    const ports = deps.ports?.() ?? {};
+    if (!ports.pages || !ports.isolated) fail('UNSUPPORTED');
+    const kind = typeof input?.kind === 'string' ? input.kind : '';
+    const title = typeof input?.title === 'string' ? input.title.slice(0, 200) : '';
+    if (PAGE_KINDS.has(kind) || kind === 'html') {
+      let file = null, page = kind, cwd = null;
+      if (kind === 'html' || ['file', 'dir', 'attachment'].includes(kind)) {
+        const opts = await options(sessionId);
+        const resolved = await resolveAddressInput(typeof input?.path === 'string' ? input.path : '', opts);
+        if (resolved.kind === 'blocked') fail(resolved.code);
+        if (resolved.kind !== 'path') fail('INVALID');
+        file = resolved.path;
+        cwd = opts?.cwd ?? null;
+        if (kind !== 'attachment' && kind !== 'html') page = resolved.page;
+      }
+      if (kind === 'html') {
+        const access = await deps.access?.(sessionId) ?? null;
+        const checked = await inspectFile(file, access ?? {});
+        if (checked === 'denied' || !/\.html?$/i.test(checked.file)) fail('INVALID');
+        const key = deps.htmlKeys?.issue({ sessionId, path: checked.file, once: Array.isArray(input?.once) ? input.once.slice(0, 50) : [] });
+        if (!key || !deps.secret) fail('UNAVAILABLE');
+        deps.pageWatch?.add(sessionId, checked.file, 'file');
+        const suffix = title ? `?title=${encodeURIComponent(title)}` : '';
+        return { kind: 'html', path: checked.file, key, cwd: cwd ?? undefined,
+          url: `http://${fileMark(deps.secret, path.dirname(checked.file))}.localhost:${ports.isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(checked.file))}${suffix}` };
+      }
+      if (file) deps.pageWatch?.add(sessionId, file, page === 'dir' ? 'dir' : 'file');
+      const url = new URL(pageUrl(sessionId, page, file));
+      if (/^\d{1,9}$/.test(String(input?.line ?? ''))) url.searchParams.set('line', String(input.line));
+      return { kind: page, path: file ?? undefined, cwd: cwd ?? undefined, suffix: `${url.pathname}${url.search}`, url: url.href };
+    }
+    if (kind === 'viz') {
+      const hash = typeof input?.hash === 'string' ? input.hash.toLowerCase() : '';
+      if (!isHash(hash)) fail('INVALID');
+      const files = await deps.isolatedRoutes?.manifest?.(hash);
+      const rel = files && manifestRel(files, typeof input?.entry === 'string' && input.entry ? input.entry.replaceAll('\\', '/') : 'index.html');
+      if (!rel) fail('NOT_FOUND');
+      const params = new URLSearchParams({ embed: 'tab', ...(title ? { title } : {}) });
+      return { kind: 'viz', hash, entry: rel,
+        url: `http://${vizMark(hash)}.localhost:${ports.isolated}/viz/${hash}/${rel.split('/').map(encodeURIComponent).join('/')}?${params}` };
+    }
+    fail('INVALID');
   }
   async function navigate(args, { by = null } = {}) {
     const { sessionId, targetId, action = 'navigate', input } = args;
@@ -85,6 +147,42 @@ export function createBrowserUnifyWs(deps = {}) {
   }
   return {
     navigate, clientId,
+    /** 追っていたファイルが変わった（core/page-watch.mjs の emit から）。その会話を見ている画面と、そのファイルを出しているタブへだけ */
+    pageChanged(sessionId, filePath) {
+      if (typeof sessionId !== 'string' || !sessionId || typeof filePath !== 'string' || !filePath) return;
+      for (const client of deps.clients?.() ?? []) if (allowed(client, sessionId)) send(client, { type: 'page:changed', sessionId, path: filePath });
+      const norm = value => String(value ?? '').replaceAll('\\', '/');
+      const target = process.platform === 'win32' ? norm(filePath).toLowerCase() : norm(filePath);
+      const same = value => (process.platform === 'win32' ? norm(value).toLowerCase() : norm(value)) === target;
+      for (const tab of relay?.unify.tabInfo.list(sessionId) ?? []) {
+        if (!['file', 'dir'].includes(tab.page?.kind) || !same(tab.page?.path)) continue;
+        // 読み直すか「更新を表示」を出すかはページが決める（web/pages/app.mjs。触っていなければ読み直す）
+        void (async () => {
+          try {
+            const attached = await relay.view.attach(sessionId, tab.targetId, () => {});
+            try { await attached.send('Runtime.evaluate', { expression: `window.dispatchEvent(new CustomEvent('pleiad:page-command',{detail:${JSON.stringify({ type: 'changed' })}}))` }); }
+            finally { await attached.detach(); }
+          } catch { /* タブは既に無い・まだページを読んでいない */ }
+        })();
+      }
+    },
+    /**
+     * pages・isolated の port が替わった・サーバーが入れ替わった（server.mjs の startPageListeners から）。
+     * Chrome に残っているタブを新しい URL へ移し（core/chrome/relay.mjs の migratePageTabs）、
+     * 見ている画面へ今の port と前の port を知らせる（画面の中の枠・リンクは画面が張り直す）
+     */
+    async portsChanged({ previous = {} } = {}) {
+      const ports = deps.ports?.() ?? {};
+      if (relay?.migratePageTabs && typeof deps.movedUrl === 'function') {
+        try { await relay.migratePageTabs(deps.movedUrl); }
+        catch (error) { deps.log?.(`page tabs: migrate failed: ${String(error?.message ?? error)}`); }
+      }
+      for (const client of deps.clients?.() ?? []) {
+        if (!deps.watching?.(client)) continue;
+        send(client, { type: 'page:moved', ports: { pages: ports.pages ?? null, isolated: ports.isolated ?? null },
+          previous: { pages: previous.pages ?? [], isolated: previous.isolated ?? [] } });
+      }
+    },
     snapshot(client, sessionId) {
       if (!allowed(client, sessionId)) return;
       send(client, { type: 'tab:info', sessionId, reset: true, tabs: relay?.unify.tabInfo.list(sessionId) ?? [] });
@@ -107,6 +205,11 @@ export function createBrowserUnifyWs(deps = {}) {
         const origins = args?.origins;
         if (!Array.isArray(origins) || origins.length > 50 || !origins.every(o => typeof o === 'string' && o.length <= 2048)) fail('INVALID');
         return { token: deps.isolatedRoutes?.once(origins) ?? null };
+      }
+      if (command === 'pageOpen') {
+        // 開く先はサーバーが決める。その会話を見ている画面だけが頼める（allowed は見ている会話かを確かめる）
+        if (!args || typeof args !== 'object' || !allowed(client, args.sessionId)) fail('INVALID');
+        return openTarget(args.sessionId, args);
       }
       if (command !== 'chromeAddress') fail('UNKNOWN_COMMAND');
       if (typeof args?.input !== 'string' || args.input.length > 8192 || typeof args.sessionId !== 'string' || !args.sessionId) fail('INVALID');

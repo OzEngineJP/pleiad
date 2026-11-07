@@ -52,7 +52,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     pageFrame?.dispose();
     unified = options;
     configureVisualizationTabs(options ? { connected: options.connected, openTab: options.openTab,
-      sessionId:element => getContext(element)?.sessionId, onError:failed } : null);
+      openPage: args => cmd('pageOpen', args), sessionId:element => getContext(element)?.sessionId, onError:failed } : null);
     if (!options) { pageFrame = openPage = null; return; }
     pageFrame = createPageFrame({ preview: options.pagePreview ?? { openPanel }, getSessionId: () => getContext(null)?.sessionId, wrap: options.pageBar,
       onRequest: request => request.type === 'file-menu'
@@ -624,15 +624,15 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     const base = anchor.closest('.file-preview-document') ? file?.path : undefined;
     activate(ref, anchor, base);
   });
-  // 可視化のカードの「広げる」: 隔離オリジンの写しを会話の Chrome のタブで開く。Chrome が無ければ、狭い画面と右の欄を開いている間は右の欄・それ以外はカードの拡大
+  // 可視化のカードの「ページで開く」: 隔離オリジンの写し（アプリ専用の出どころ v<印>.localhost）を会話の Chrome のタブで開く。
+  // Chrome が無ければ右の欄へ（その場で広げるのは別の「広げる」ボタン。web/render.mjs・ADR 0295 の 4）
   document.addEventListener('ply-visualize-browser', event => {
     const d = event.detail;
     if (!d || !event.target?.isConnected) return;
     const sessionId = getContext(event.target)?.sessionId;
-    const url = isolatedVisualizationUrl(d.bundle, { embed:'tab', host:'localhost' });
+    const url = isolatedVisualizationUrl(d.bundle, { embed:'tab' });
     if (url && unified?.connected?.(sessionId) && unified.openTab) return Promise.resolve(unified.openTab({ sessionId, url, reuse:false })).catch(failed);
-    if (mobile.matches || !panel.hidden) return openPanel({ key:'visualization', title:d.title, body:visualizationFrame(d.content, d.title, { fill:true, bundle:d.bundle }), element:event.target });
-    event.target.closest('.present-visualization')?.querySelector('.visualize-widen')?.click();
+    return openPanel({ key:'visualization', title:d.title, body:visualizationFrame(d.content, d.title, { fill:true, bundle:d.bundle }), element:event.target });
   });
   document.addEventListener('keydown', event => {
     if (panel.hidden || isComposingKey(event) || event.defaultPrevented || document.querySelector('dialog[open]')) return;
@@ -655,6 +655,15 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     configureBrowserUnify, tabMenu,
     pageEnvChanged: env => pageFrame?.envChanged(env),
     pageCommand: command => pageFrame?.command(command),
+    /** 開いているファイルが変わった（page:changed）。右の欄のページがそのファイルなら知らせる（読み直すかはページが決める） */
+    pageChanged({ sessionId, path }) {
+      if (!pageFrame?.frame?.isConnected || !path) return;
+      try {
+        const at = new URL(pageFrame.frame.src, location.href);
+        const session = /^\/_pleiad\/s\/([^/]+)\//.exec(at.pathname)?.[1];
+        if (at.origin === location.origin && decodeURIComponent(session ?? '') === sessionId && samePath(at.searchParams.get('path'), path)) pageFrame.command({ type:'changed' });
+      } catch { /* 枠の URL が読めない */ }
+    },
     get pageFrame() { return pageFrame; },
     /** 右パネルでファイルを開く（拡大表示の「右パネルで開く」） */
     open: (ref, element) => activate(ref, element),

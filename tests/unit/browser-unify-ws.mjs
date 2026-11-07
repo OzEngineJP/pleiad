@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createBrowserUnifyWs } from '../../core/browser-unify-ws.mjs';
+import { createHtmlKeys } from '../../core/html-keys.mjs';
 import { registry } from '../../core/ops/index.mjs';
 import { addressCrumbs } from '../../web/address-bar.mjs';
 import { startServer } from '../lib/server.mjs';
@@ -104,6 +106,57 @@ export default async function(t) {
     tabs[0].page={kind:'file',path:file};
     await ws.navigate({sessionId:'one',targetId:'a',action:'view',view:'source'});
     t.ok('view changes persist in the page URL before painting', calls.at(-1)[1].expression.includes('history.replaceState') && calls.at(-1)[1].expression.includes('source'));
+
+    // pageOpen: 開く先はサーバーが決める（ADR 0295 の 7）。ページは pages の port、HTML と可視化は印の出どころ
+    const secret = crypto.randomBytes(32);
+    const htmlKeys = createHtmlKeys({ secret });
+    const watches = [];
+    const hash = 'b'.repeat(64);
+    const openWs = createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client),
+      ports:() => ({ pages:12345, isolated:23456 }), cwd:() => work, access:() => ({ dataDir }),
+      htmlKeys, secret, pageWatch:{ add:(...args) => watches.push(args) },
+      isolatedRoutes:{ manifest:async h => h === hash ? { 'index.html':{ sha:'0'.repeat(64) } } : null } });
+    const htmlFile = path.join(work, 'page.html'); await fs.writeFile(htmlFile, '<p>h</p>');
+    const page = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'file', path:file }, client:clients[0] });
+    t.ok('ページは pages の port の URL（画面が組み立てない）。開いたファイルは変化の見張りに登る',
+      page.kind === 'file' && page.path === file && page.url === `http://localhost:12345${page.suffix}`
+      && page.suffix.startsWith('/_pleiad/s/one/file?path=') && watches.some(w => w[0] === 'one' && w[1] === file));
+    const html = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'html', path:htmlFile }, client:clients[0] });
+    const htmlUrl = html?.url ? new URL(html.url) : null;
+    t.ok('HTML はフォルダーの印の出どころの /f/<鍵>/（鍵は引け、フォルダーは印と同じ）',
+      htmlUrl && /^f[0-9a-f]{16}\.localhost$/.test(htmlUrl.hostname) && htmlUrl.port === '23456'
+      && htmlUrl.pathname.startsWith('/f/') && htmlUrl.pathname.endsWith('/page.html')
+      && htmlKeys.resolve(decodeURIComponent(htmlUrl.pathname.split('/')[2]))?.root === work);
+    const viz = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'viz', hash }, client:clients[0] });
+    t.ok('可視化は束の印の出どころの /viz/<ハッシュ>/<入口>（入口は目録で確かめる）',
+      viz.url === `http://v${hash.slice(0, 24)}.localhost:23456/viz/${hash}/index.html?embed=tab`);
+    const badViz = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'viz', hash:'0'.repeat(64) }, client:clients[0] }).then(() => null, e => e.code);
+    const badKind = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'exec' }, client:clients[0] }).then(() => null, e => e.code);
+    const stranger = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'file', path:file }, client:clients[2] }).then(() => null, e => e.code);
+    const otherSession = await openWs.handle({ command:'pageOpen', args:{ sessionId:'two', kind:'file', path:file }, client:clients[0] }).then(() => null, e => e.code);
+    t.ok('目録に無い束・知らない kind・見ていない接続・ほかの会話は断る',
+      badViz === 'NOT_FOUND' && badKind === 'INVALID' && stranger === 'INVALID' && otherSession === 'INVALID');
+
+    // page:changed（変わったファイルを見ている画面と、そのファイルを出しているタブへ）
+    const marks = messages.map(list => list.length);
+    ws.pageChanged('one', file);
+    t.ok('page:changed はその会話を見ている認証済みの画面へだけ（0 と 1 は見ている・3 は認証されていない）',
+      messages[0].length === marks[0] + 1 && messages[0].at(-1).event.type === 'page:changed' && messages[0].at(-1).event.path === file
+      && messages[1].length === marks[1] + 1 && messages[1].at(-1).event.type === 'page:changed' && messages[3].length === marks[3]);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    t.ok('そのファイルを出しているタブへはページへ「changed」を届ける', calls.some(call => call[0] === 'Runtime.evaluate' && String(call[1]?.expression).includes('"changed"')));
+    ws.pageChanged('one', path.join(work, 'other.md'));
+    t.ok('ほかのファイルはタブへ届けない（画面へだけ）', calls.filter(call => String(call[1]?.expression ?? '').includes('"changed"')).length === 1);
+
+    // page:moved（port が替わった。見ている画面へ今と前の port を知らせ、残ったタブは本体が付け替える）
+    const moved = [];
+    const movedWs = createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client), ports:() => ({ pages:5001, isolated:5002 }),
+      relay:{ onTabEvent:() => () => {}, migratePageTabs:async fn => { moved.push(fn('http://localhost:4333/viz/x')); return { moved:1 }; }, unify:{ tabInfo:{ list:() => [] } } },
+      movedUrl:url => url === 'http://localhost:4333/viz/x' ? 'http://v1.localhost:5002/viz/x' : null });
+    await movedWs.portsChanged({ previous:{ pages:[12345], isolated:[23456] } });
+    t.ok('port が替わると残ったタブを付け替え、見ている画面へ今と前の port を知らせる',
+      moved.length === 1 && messages[0].at(-1).event.type === 'page:moved' && messages[0].at(-1).event.ports.isolated === 5002
+      && messages[0].at(-1).event.previous.isolated[0] === 23456);
     const agent = await registry.invoke({ by:'agent', via:'mcp', sessionId:'one', mode:{ scope:'full', autonomy:'never' } }, 'browser.chromeNavigate', { sessionId:'one', input:'example.com' }, { chromeNavigate:() => { throw new Error('must not run'); } });
     t.ok('navigation is absent from agent surfaces', !agent.ok);
     t.ok('Windows breadcrumbs preserve drive roots and absolute destinations', addressCrumbs('D:\\work\\notes.md').map(item => item.path).join('|') === 'D:\\|D:\\work|D:\\work\\notes.md');

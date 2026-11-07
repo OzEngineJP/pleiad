@@ -17,7 +17,7 @@
     "preview": "Preview",
     "source": "Source",
     "showSource": "Show source",
-    "locations": { "git": "Changes", "plugins": "Plugins", "attachment": "Attachments", "new": "Enter a URL, path or search" },
+    "locations": { "viz": "Visualization", "html": "HTML", "git": "Changes", "plugins": "Plugins", "attachment": "Attachments", "new": "Enter a URL, path or search" },
     "more": "More",
     "closePanel": "Close panel",
     "openPanel": "Open browser",

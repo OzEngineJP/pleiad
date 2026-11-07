@@ -23,6 +23,7 @@ import { DeviceLink } from './device-link.mjs';
 import { StaticCache } from './static-cache.mjs';
 import { isIsolatedPagePath, pageResponseLimit } from './forward.mjs';
 import { fetchSiteOk } from '../page-auth.mjs';
+import { isolatedHostOk } from '../isolated-origins.mjs';
 import { t, currentLocale } from '../i18n.mjs';
 
 export const PROXY_COOKIE = 'pleiad_remote_token';
@@ -215,7 +216,7 @@ export class DeviceProxy extends EventEmitter {
   async #onRequest(req, res, isolated = false) {
     this.sockets.add(req.socket);
     req.socket.once('close', () => this.sockets.delete(req.socket));
-    if (isolated ? req.headers.host !== `localhost:${this.isolatedPort}` : !this.#hostOk(req)) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('forbidden'); }
+    if (isolated ? !isolatedHostOk(req.headers.host, this.isolatedPort) : !this.#hostOk(req)) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('forbidden'); }
     const url = this.#parse(req);
     if (!url) { res.writeHead(400); return res.end(); }
     if (isolated && !isIsolatedPagePath(req.url)) { res.writeHead(403); return res.end(); }

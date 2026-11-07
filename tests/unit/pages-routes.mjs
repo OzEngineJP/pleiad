@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { createPagesRoutes } from '../../core/pages-routes.mjs';
 import { resolveReference, PreviewError } from '../../core/file-preview.mjs';
 
@@ -52,6 +53,7 @@ export async function createFixture() {
     ports:() => ({ main:0, pages:0, isolated:49199 }), env:() => env,
     recentFiles:id => id === 'alpha' ? [{ path:path.join(cwd, 'README.md'), source:'edited' }, { path:path.join(dataDir, 'secret.json'), source:'read' }, { path:path.join(uploadDir, 'beta.txt'), source:'attached' }] : [],
     htmlKeys:{ issue:async args => { issued.push(args); return 'fixture-key'; } },
+    secret:crypto.randomBytes(32),
     visualizations:id => id === 'alpha' ? [{ title:'図', url:'http://localhost:49199/viz/abc/index.html?embed=tab' }, { title:'外', url:'http://localhost:5173/viz/abc/index.html' }] : [],
     ops:async (actor, id, input) => {
       calls.push({ actor, id, input });
@@ -114,7 +116,7 @@ export default async function (t) {
     const raw = await fetch(f.url('api/raw', { path:'index.html' }));
     t.ok('HTML の原本を同じ origin で実行しない', raw.headers.get('content-type') === 'application/octet-stream' && raw.headers.get('content-disposition').startsWith('attachment') && raw.headers.get('content-security-policy').includes('sandbox'));
     const key = await get('api/html-key', { path:'index.html' });
-    t.ok('HTML は A3 の鍵と隔離 URL を返す', key.body.url === 'http://localhost:49199/f/fixture-key/index.html' && f.issued[0].sessionId === 'alpha');
+    t.ok('HTML は A3 の鍵とフォルダーの印の出どころの隔離 URL を返す', /^http:\/\/f[0-9a-f]{16}\.localhost:49199\/f\/fixture-key\/index\.html$/.test(key.body.url) && f.issued[0].sessionId === 'alpha');
     t.ok('鍵に会話のファイルの検査の範囲を渡す（隔離の側も同じ範囲で読む）', f.issued[0].access?.dataDir === f.dataDir && Array.isArray(f.issued[0].once) && f.issued[0].once.length === 0);
     const onceParams = new URLSearchParams([['path', 'index.html'], ...Array.from({ length:60 }, (_, i) => ['once', `https://cdn${i}.example`])]);
     await fetch(`${f.origin}/_pleiad/s/alpha/api/html-key?${onceParams}`);

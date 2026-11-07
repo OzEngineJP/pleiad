@@ -84,13 +84,13 @@ export default async function(t) {
   assert.equal(linkMenuItems({ act:{} }).length, 3);
   configureIsolatedOrigin({ port:8125 });
   const bundle = { hash:'a'.repeat(64), entry:'図/index.html', htmlOnly:true, reason:'too-large' };
-  assert.match(isolatedVisualizationUrl(bundle), /^http:\/\/localhost:8125\/viz\//, '画面が 127.0.0.1 でも隔離は localhost（Host の検査に通る名前）');
+  assert.match(isolatedVisualizationUrl(bundle), /^http:\/\/v[0-9a-f]{24}\.localhost:8125\/viz\//, '画面が 127.0.0.1 でも隔離は束の印の localhost の出どころ（Host の検査に通る名前）');
   assert.equal(isolatedVisualizationUrl({ ...bundle, entry:'../x' }), null);
   const viz = [];
   configureVisualizationTabs({ sessionId:() => 's1', connected:() => true, openTab:args => viz.push(args) });
-  assert.equal(openVisualizationTab(bundle, {}), true); await Promise.resolve();
+  assert.equal(openVisualizationTab(bundle, {}), true); await new Promise(resolve => setTimeout(resolve));
   assert.match(viz[0].url, /\?embed=tab$/); assert.equal(viz[0].reuse, false);
-  assert.equal(openVisualizationTab(bundle, {}, '月ごとの売上'), true); await Promise.resolve();
+  assert.equal(openVisualizationTab(bundle, {}, '月ごとの売上'), true); await new Promise(resolve => setTimeout(resolve));
   assert.match(viz[1].url, /\?embed=tab&title=%E6%9C%88/, '広げたタブの題は可視化の見出し');
   assert.match(visualizationBundleNotice(bundle), /合計サイズ/);
   assert.equal(visualizationBundleNotice({ ...bundle, reason:'constructor' }), '画像などの関連ファイルは含めていません。');

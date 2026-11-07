@@ -32,13 +32,13 @@ Codex の専用形式も同じ経路で受け取る。
 
 ## 表示と操作
 
-会話の可視化のカードは、保存した束を隔離の iframe で表示する。「広げる」は同じ束を会話の Chrome のタブで開く。Web・ファイル・git・プラグインと同じタブの列に並び、元のファイルを読み直すことはない。Chrome が無い会話でも、会話内の iframe で表示できる。LAN のブラウザーの画面（`AGENT_HOST_BIND`）では隔離のリスナーに届かないので、srcdoc の iframe で描く。sandbox に `allow-same-origin` を付けないので Pleiad の画面の document には触れないが、束の同じフォルダーの資源・相対パスの fetch・WASM は読めない。本体は既定では LAN に待ち受けず、この画面は環境変数で開いた人にだけあるので、隔離の origin から配る形は採らなかった（ADR 0295 の「現在の制約」）。
+会話の可視化のカードは、保存した束を隔離の iframe で表示する。出どころは束ごとの専用の origin `v<束の印>.localhost`（`core/isolated-origins.mjs`。束のハッシュの先頭 24 字）なので、相対パスの資源・fetch・WASM・localStorage はその origin の中で本物が効く。カードの操作は 2 つに分かれ、「広げる」はその場で会話の列を越えて横へ広げ、「ページで開く」は同じ束を会話の Chrome のタブ（無ければ右の欄）へ映す。Web・ファイル・git・プラグインと同じタブの列に並び、元のファイルを読み直すことはない。Chrome が無い会話でも、会話内の iframe で表示できる。LAN のブラウザーの画面（`AGENT_HOST_BIND`）では隔離のリスナーに届かないので、srcdoc の iframe で描く。sandbox に `allow-same-origin` を付けないので Pleiad の画面の document には触れないが、束の同じフォルダーの資源・相対パスの fetch・WASM は読めない。本体は既定では LAN に待ち受けず、この画面は環境変数で開いた人にだけあるので、隔離の origin から配る形は採らなかった（ADR 0295 の「現在の制約」）。
 
 可視化の保存は HTML を渡す。束全体を ZIP などにはまとめない。元の在り処が分かるときはパスのコピー・元のファイルを開く・会話で使う操作も出す。元のファイルを開く操作は現在のファイルを読み、保存した写しと区別する。元の在り処が無い記録では、その操作を出さない。表示とカードの規則は [デザインシステム](design-system.md#可視化のカード承認済み2026-11-06) を参照。
 
 ## 外部の読み込みと隔離
 
-可視化は Pleiad 本体・ファイルのページと異なる出どころから配り、認証 Cookie を使わない。iframe と応答の CSP は `sandbox allow-scripts allow-downloads allow-forms` にし、`allow-same-origin`・`allow-modals`・`allow-popups`・`allow-top-navigation` を付けない。単独で開いても不透明な出どころで実行し、親画面や Pleiad の保存領域へ届かせない。HTML のファイルは `allow-scripts` だけにする。
+可視化は Pleiad 本体・ファイルのページと異なる出どころ（束ごとの `<印>.localhost`）から配り、認証 Cookie を使わない。iframe と応答の CSP は `sandbox allow-scripts allow-same-origin allow-downloads allow-forms allow-modals allow-popups allow-pointer-lock`（`APP_SANDBOX`）にし、`allow-top-navigation` を付けない。アプリごとの専用の出どころで動くので `allow-same-origin` を付け、ほかのアプリや Pleiad の保存領域へは届かせない。HTML のファイルも同じ sandbox（フォルダーの印の出どころ）。srcdoc の写しは従来どおり不透明な出どころの `allow-scripts` だけにする。
 
 外部の読み込みの確認は既定 OFF で、HTTPS の資源を許す。ON のときは、許可した HTTPS の出どころ以外を止める。「読み込む」はその表示だけの一時の許可にする。HTML は新しい鍵、可視化は 10 分だけ有効なメモリー上の `once` の鍵を使い、恒久的な設定へ保存しない。HTTP だけの資源には「読み込む」を出さない。
 

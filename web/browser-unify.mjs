@@ -416,6 +416,19 @@ export function createBrowserUnify(deps = {}) {
         if (event.holder === 'human') holders.get(event.sessionId).set(event.targetId, event); else holders.get(event.sessionId).delete(event.targetId);
         if (event.sessionId === session()) paint();
       } else if (event.type === 'tab:page-request') pageRequest(event);
+      else if (event.type === 'page:changed') {
+        // 端末内のページがそのファイルを出していれば知らせる（読み直すかはページが決める。Chrome のタブは本体が届ける）
+        const entry = local;
+        if (entry && event.sessionId === entry.sessionId && typeof event.path === 'string') {
+          let at; try { at = new URL(entry.frame.contentWindow?.location?.href ?? entry.url, location.origin); } catch { at = null; }
+          const shown = at?.origin === location.origin ? at.searchParams.get('path') : null;
+          const norm = value => String(value ?? '').replaceAll('\\', '/');
+          const target = norm(event.path).toLowerCase();
+          if (shown && (norm(shown).toLowerCase() === target || norm(shown) === norm(event.path))) pageCommand(entry, { type:'changed' });
+        }
+      }
+      // page:moved: 端末内のページは本体と同じ出どころ（/_pleiad/…。port は入っていない）なので張り直しは要らない。
+      // Chrome のタブは本体（relay.migratePageTabs）が付け替え、tab:info が届いて列が直る
     },
   };
 }

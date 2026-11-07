@@ -138,6 +138,41 @@ ADR 0294 で、ファイル・フォルダー・git・プラグイン・新し�
 3. **ファイルのページの頭のパス**: 会話の作業場所の中のファイルは作業場所からの相対パス、外のファイルは絶対パスを出す。題（ツールチップ）には常に絶対パスを出す。
    - 2026-11-07 に ADR 0294 の 2 の 5（アドレスバーは絶対パス）で置き換えた。スマホも絶対パスを出す。
 
+## 追記（2026-11-08）: アプリごとの専用の出どころ・ページの変化・残ったタブの張り直し
+
+### 6. アプリごとの専用の出どころ（`<印>.localhost`）
+
+隔離の origin は 1 つ（`localhost:<isolated port>`）から、アプリごとの `<印>.localhost:<isolated port>` に分ける（`core/isolated-origins.mjs`）。
+
+- ブラウザーは `<名前>.localhost` をいつもループバックへ解決する（公開の DNS では作れない）。印ごとに別の origin になるので、アプリ同士は localStorage・IndexedDB・Cookie を分けられる。`localhost`（印無し）も受ける（端末のプロキシと古い形。下の 9）
+- 印はアプリごとに決まり、サーバーの入れ替えをまたいでも同じ（そのアプリの保存が残る）
+  - 可視化: `v<束のハッシュの先頭 24 字>`（束の中身が同じなら同じ印）
+  - HTML のファイル: `f<HMAC-SHA256(秘密, "file-root:<フォルダー>") の先頭 16 字（hex）>`（フォルダーのパスは出さない）
+- 印の元の秘密は `page-secrets.json`（32 バイト。`core/isolated-origins.mjs` の `loadPageSecrets`）に置き、無ければ作る。壊れていれば作り直す（古い印と鍵は効かなくなる）
+- 隔離のリスナーは `Host` が `localhost:<port>` か `<印>.localhost:<port>` のときだけ答える（`page-listener.mjs` の `hostCheck`）。ほかは 421
+- sandbox は `allow-scripts allow-same-origin allow-downloads allow-forms allow-modals allow-popups allow-pointer-lock` にする（`APP_SANDBOX`。core/preview-policy.mjs）。専用の出どころで動くので `allow-same-origin` を付け、相対の資源・fetch・localStorage・フォーム・別タブをふつうのページと同じにする。`allow-top-navigation` は付けない（親の Pleiad の画面を動かせない）。権限は `permissions-policy` で camera・microphone・geolocation・clipboard を止める
+- これに伴い、opaque origin 向けの storage の代役（`STORAGE_SHIM`）は廃止した。応答の CSP の自己の読み先は `http://localhost:*/<道>/` と `http://*.localhost:*/<道>/` の両方を足す（端末のプロキシで port が替わるため port は `*`）
+- 「隔離の応答で sandbox の無いものからの要求には pleiad_pages が付く」点は変わらないので、2 の `Sec-Fetch-Site` の検査の線はそのまま要る
+
+### 7. 開く先はサーバーが決める（pageOpen）・残ったタブの張り直し
+
+- 画面は port やアプリの URL を組み立てない。WS の `pageOpen`（`core/browser-unify-ws.mjs`）が、対象（file・dir・git・plugins・new・attachment・html・viz）を確かめて、今の port の URL を返す。HTML は鍵を出し `f<印>.localhost` の URL を、可視化は目録で入口を確かめて `v<印>.localhost` の URL を返す。その会話を見ている画面だけが頼める
+- port が替わることがある（覚えた port が塞がっていた・衝突）。「かつて Pleiad のリスナーだった port」（このプロセスで替わる前・前回の起動のもの）を `earlierPagePorts` に保ち、Chrome に残ったタブの URL を中継が `Page.navigate` で新しい URL へ移す（`relay.migratePageTabs` ← `core/isolated-origins.mjs` の `movedPageUrl`）
+  - 移すのは、あの port を持つ URL だけ（ほかの localhost の port のページは触らない）
+  - `/viz/<ハッシュ>/…` は束の印の出どころへ組み直す。`/f/<鍵>/…` は鍵を引いてフォルダーが分かるものだけ印の出どころへ組み直す（期限切れ・別の秘密で閉じた鍵は移さない）
+  - 画面には `page:moved` で今と前の port を知らせ、画面の中の枠・リンクは画面が張り直す（端末内のページは本体と同じ出どころなので張り直しは要らない）
+
+### 8. 開いているファイルの変化（page:changed）
+
+- 開いたファイル・フォルダーは `core/page-watch.mjs` がフォルダーごとの `fs.watch` で見張る（150 フォルダー・600 対象まで。250 ms でまとめる）。登録は会話ごとで、同じファイルを 2 会話で開いていてもそれぞれへ届く
+- 変わったら `page:changed`（会話 id とパスだけ。中身・差分は送らない）を、その会話を見ている認証済みの画面へ送り、そのファイルを出している Chrome のタブへは `Runtime.evaluate` で `pleiad:page-command {type:'changed'}` を届ける。右の欄・端末内のページにも同じ命令を `postMessage` で届ける
+- 読み直すかどうかはページが決める（`web/pages/app.mjs`）。人が触っていなければそのまま読み直し、触っていれば「更新を表示」を出して人の操作まで待つ（読んでいる所・入力を消さない）
+
+### 9. 端末（スマホの道）と印の出どころ
+
+- 端末のプロキシの隔離の入口は `<印>.localhost:<p2>` も受ける（`device-proxy.mjs` の `isolatedHostOk`）
+- ただしスマホのブラウザー・WebView は `<印>.localhost` を名前解決できないので、端末の port に付け替える URL（`api/html-key`・`api/recent` の可視化）の名前は `localhost` のままにする（`pages-routes.mjs`）。端末ではアプリ同士の保存は分かれないが、URL の鍵の検査は変わらない
+
 ## 現在の制約（2026-11-06）
 
 1. **LAN のブラウザーの画面の可視化**: `AGENT_HOST_BIND` で本体を LAN に開き、別の PC のブラウザーで `http://<LAN のアドレス>:<port>/` を開いた画面では、可視化を隔離の origin で描かず、srcdoc の iframe で描く（`web/client.mjs` の `loopbackScreen`。`web/visualize-frame.mjs` の `isolatedVisualizationUrl` が null を返す）。

@@ -27,18 +27,23 @@ export default async function (t) {
 
   const self = 'http://localhost:*/viz/' + 'a'.repeat(64) + '/';
   const viz = core.isolatedCsp({ confirm: true }, { sandbox: core.VIZ_SANDBOX, self });
-  t.ok('隔離の CSP は sandbox で始まり、allow-same-origin を含まない', viz.startsWith('sandbox allow-scripts allow-downloads allow-forms; ') && !viz.includes('allow-same-origin'));
-  t.ok('束のパスだけを読み先に足す（img・connect・script・frame など。none を置き換える）',
+  t.ok('隔離の CSP はアプリの sandbox（専用の出どころで動くので allow-same-origin を含む。top-navigation は付けない）で始まる',
+    viz.startsWith(`sandbox ${core.APP_SANDBOX}; `) && viz.includes('allow-same-origin') && !viz.includes('allow-top-navigation'));
+  t.ok('束のパスだけを読み先に足す（img・connect・script・frame など。none を置き換える）。読み先は localhost と印の出どころの列でも足せる',
     directive(viz, 'img-src') === `img-src ${self} data: blob:` && directive(viz, 'connect-src') === `connect-src ${self}`
     && directive(viz, 'frame-src') === `frame-src ${self}` && directive(viz, 'worker-src') === `worker-src ${self} blob:`);
+  const marked = core.isolatedCsp({ confirm: true }, { sandbox: core.VIZ_SANDBOX, self: [self, 'http://*.localhost:*/viz/x/'] });
+  t.ok('self の列は出どころの列になる', directive(marked, 'connect-src') === `connect-src ${self} http://*.localhost:*/viz/x/`);
   t.ok("script-src に 'wasm-unsafe-eval' を足し、'unsafe-eval' は足さない",
     directive(viz, 'script-src') === `script-src ${self} 'unsafe-inline' 'wasm-unsafe-eval'` && !viz.includes("'unsafe-eval'"));
-  t.ok('default-src・object-src・base-uri・form-action は none のまま、埋め込める親は本体とファイルのページ',
+  t.ok('default-src・object-src・base-uri は none のまま。form-action は自分と許した出どころ。埋め込める親は本体・ファイルのページ・アプリ同士',
     directive(viz, 'default-src') === "default-src 'none'" && directive(viz, 'object-src') === "object-src 'none'"
-    && directive(viz, 'form-action') === "form-action 'none'" && viz.endsWith('; frame-ancestors http://127.0.0.1:* http://localhost:*'));
+    && directive(viz, 'base-uri') === "base-uri 'none'" && directive(viz, 'form-action') === "form-action 'self'"
+    && viz.endsWith('; frame-ancestors http://127.0.0.1:* http://localhost:* http://*.localhost:*'));
   const open = core.isolatedCsp({}, { sandbox: core.HTML_SANDBOX, self: 'http://localhost:*/f/k/' });
-  t.ok('確認なしなら https: も残し、HTML のファイルは sandbox allow-scripts だけ',
-    open.startsWith('sandbox allow-scripts; ') && directive(open, 'connect-src') === 'connect-src http://localhost:*/f/k/ https:');
+  t.ok('確認なしなら https: も残し、form-action にも https: が出る',
+    open.startsWith(`sandbox ${core.APP_SANDBOX}; `) && directive(open, 'connect-src') === 'connect-src http://localhost:*/f/k/ https:'
+    && directive(open, 'form-action') === "form-action 'self' https:");
   const headers = core.isolatedHeaders({ policy: {}, sandbox: core.VIZ_SANDBOX, self });
   t.ok('隔離の応答のヘッダー（CORP cross-origin・Permissions-Policy・資格なしの CORS）',
     headers['cross-origin-resource-policy'] === 'cross-origin' && headers['permissions-policy'] === core.PERMISSIONS_POLICY
