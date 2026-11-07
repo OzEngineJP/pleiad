@@ -11,6 +11,7 @@
 //
 // 使い方: AGENT_HOST_AGY_BIN="node tests/lib/fake-agy.mjs" で antigravity-cli.mjs から起動される。
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { randomUUID } from "node:crypto";
@@ -152,6 +153,15 @@ function emitInit() {
 const step = (body) => send({ event: "step_update", step_update: { conversation_id: conversationId, ...body } });
 
 let stepIndex = 0;
+// usage は agy の会話ごとの累計で、本物は --conversation で起こし直した別のプロセスでも続きから数える（1.5.2 で実測）。
+// ここでも会話 id ごとにファイルでターンの数を持つ。会話の agy のホーム（HOME）は試験でも利用者の本物なので、置き場は試験のデータ置き場の下
+const usageFile = () => path.join(process.env.AGENT_HOST_DATA || os.tmpdir(), "fake-agy-usage", `${conversationId}.json`);
+function usageTurns() {
+  try { return JSON.parse(fs.readFileSync(usageFile(), "utf8")).turns ?? 0; } catch { return 0; }
+}
+function setUsageTurns(turns) {
+  try { fs.mkdirSync(path.dirname(usageFile()), { recursive: true }); fs.writeFileSync(usageFile(), JSON.stringify({ turns })); } catch {}
+}
 
 // ---- カスタムエージェント（`--agent`）--------------------------------------
 //
@@ -532,12 +542,15 @@ async function runTurn(text) {
   // 会話には出さない step（実機では user_input が DONE だけで来る）
   step({ step_index: ++stepIndex, state: "DONE", step_type: "user_input" });
 
+  // 本物と同じく、usage は会話の累計（1 ターン 11・7・3・2 ずつ増える）。usage-reset は累計を 0 から数え直す（agy が数え直したときの扱いの試験）
+  const n = text.startsWith("usage-reset") ? 1 : usageTurns() + 1;
+  setUsageTurns(n);
   send({
     event: "result",
     result: {
       conversation_id: conversationId, status: "SUCCESS", response: body,
       duration_seconds: 0.2, num_turns: 1,
-      usage: { input_tokens: 11, output_tokens: 7, thinking_tokens: 3, cache_read_tokens: 2, total_tokens: 23 },
+      usage: { input_tokens: 11 * n, output_tokens: 7 * n, thinking_tokens: 3 * n, cache_read_tokens: 2 * n, total_tokens: 21 * n },
     },
   });
 }

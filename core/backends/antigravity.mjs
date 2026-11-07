@@ -252,8 +252,8 @@ function adminNotice(session, { askedSkip, deniedTurn }) {
 }
 
 /**
- * `result.usage` -> Pleiad の usage イベント。
- * agy の usage は分けて数える（total_tokens = input + output + thinking + cache_read）。Claude・Codex と同じく
+ * `result.usage`（またはその差）-> Pleiad の usage イベント。
+ * agy の usage は分けて数える（input_tokens はキャッシュ読みを含まない。total_tokens = input + output + thinking）。Claude・Codex と同じく
  * 「入力はキャッシュ読みを含み、cachedTokens はその内訳」「出力は考えた分を含む」にそろえる。
  * そろえないと、入力よりキャッシュ読みが大きくなって、キャッシュの割合が 100% に張り付く。
  */
@@ -267,6 +267,31 @@ function usageFor(usage) {
     outputTokens: n(usage.output_tokens) + n(usage.thinking_tokens),
     cachedTokens: cached,
   };
+}
+
+const USAGE_KEYS = ["input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens"];
+/** `result.usage` の数（agy の会話の始まりからの累計。1.5.2 で実測）。無ければ null */
+function usageTotal(usage) {
+  if (!usage || typeof usage !== "object") return null;
+  return Object.fromEntries(USAGE_KEYS.map((key) => [key, Number.isFinite(usage[key]) && usage[key] > 0 ? usage[key] : 0]));
+}
+/**
+ * このターンの分 = 累計 - 前のターンの累計（base）。base が分からなければ null（多めに数えない）。
+ * どれかが前より減っていたら、agy が数え直した（会話が変わった）とみなして累計をそのまま使う
+ */
+function usageDelta(total, base) {
+  if (!total || !base) return null;
+  if (USAGE_KEYS.some((key) => total[key] < base[key])) return total;
+  return Object.fromEntries(USAGE_KEYS.map((key) => [key, total[key] - base[key]]));
+}
+/**
+ * 前のターンの累計。控えのターンの記録（turnResults）に、このターンより前に送った分で残した最後のもの。
+ * 同じ送信の時刻（付け直し・再生で読み直す同じターン）は除くので、同じ result を何度読んでも差は変わらない
+ */
+function usageBaseOf(record, sentAt) {
+  let base = null;
+  for (const r of record?.turnResults ?? []) if (r?.usage && r.sentAt < sentAt && (!base || r.sentAt > base.sentAt)) base = r;
+  return base ? usageTotal(base.usage) : null;
 }
 
 const toolName = (name) => (name && Object.hasOwn(TOOL_HINTS, name) ? name : name || "tool");
@@ -373,6 +398,8 @@ export const backend = {
     let conversationId = sessionId ?? null;
     // 再開した会話の途中の書き込みでは控えを作らない（--conversation が撥ねられて forget した控えを作り直さない）
     const resumed = k ? Boolean(k.resumed) : Boolean(sessionId);
+    // agy の usage は会話の累計なので、前のターンの累計（控えのターンの記録）との差を使用量にする
+    const usageBase = resumed ? usageBaseOf(await transcript.getRecord(sessionId).catch(() => null), sentAt) : null;
     let sawText = false;
     let text = "";                 // 控えに残す本文
     let finishedReply = false;     // agent_response の DONE。途中までの文とは分ける
@@ -671,7 +698,12 @@ export const backend = {
             out({ type: "text.delta", text: add });
           }
           if (sawText) out({ type: "text.end" });
-          const usage = usageFor(r.usage);
+          // 新しい agy の会話（再開でない・別の会話になった）は 0 から数える。基準の無い再開（更新前から続く会話）は出さない。
+          // 全部 0 は数えていない result（打ち切りなど）なので、出さず、再開では基準にもしない
+          const total = usageTotal(r.usage);
+          const usageFresh = !resumed || conversationId !== sessionId;
+          const counted = total && USAGE_KEYS.some((key) => total[key]);
+          const usage = counted ? usageFor(usageDelta(total, usageFresh ? usageTotal({}) : usageBase)) : null;
           if (usage) out(usage);
           const actions = deniedActions.map((a) => String(a?.display_name ?? a?.action ?? "").slice(0, 100)).filter(Boolean);
           const outcome = deniedTurn ? { type: "turnResult", outcome: "error", turns: r.num_turns ?? 1,
@@ -679,7 +711,7 @@ export const backend = {
             : turnResultFor(r, { finishedReply });
           resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
             ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}),
-            ...(deniedActions.length ? { denied: deniedActions.length } : {}) };
+            ...(deniedActions.length ? { denied: deniedActions.length } : {}), ...(total && (counted || usageFresh) ? { usage: total } : {}) };
           if (outcome.outcome === "error") failed = new Error(outcome.error);
           clearBehind();
           out(outcome);
@@ -1143,4 +1175,4 @@ process.once("exit", () => {
   pids.forget(...gone);
 });
 
-export { MODES, TOOL_HINTS, botSessionKey, turnResultFor, usageFor };
+export { MODES, TOOL_HINTS, botSessionKey, turnResultFor, usageFor, usageTotal, usageDelta, usageBaseOf };
