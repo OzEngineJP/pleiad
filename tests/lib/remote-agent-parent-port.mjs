@@ -5,6 +5,8 @@
 // 環境変数:
 //   FAKE_REMOTE_DEVICE_DIR   端末の置き場（hosts.json・secrets.json。テストが createRemoteDevice でペアリングしてから起こす）
 //   FAKE_REMOTE_DEVICE_NAME  端末の名前（ホストの端末一覧に出るものはペアリング時に決まる。ここは HELLO の名前）
+//   FAKE_REMOTE_DEVICE_PLUS_ID_TOKEN  Plus 経由（via: 'plus'）の記録の線が中継へ出す ID トークン（偽の Plus が出したもの）。
+//                            無ければ本物の main の「Plus を使えない間」と同じに、plus の記録には線を張らない
 // ホストの一覧の変更（増減・名前）は、本物の窓の IPC の代わりに hosts.json を見て拾う（テストが createDeviceStore の updateHost で書く）。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +20,7 @@ const toWorker = message => { for (const fn of listeners) fn({ data: message });
 const device = createRemoteDevice({
   dir, app: 'test', name: process.env.FAKE_REMOTE_DEVICE_NAME || 'laptop-test', platform: 'desktop',
   proxyOptions: { backoff: { minMs: 100, maxMs: 400, stableMs: 500 }, connectTimeoutMs: 5000 },
+  plusAuth: process.env.FAKE_REMOTE_DEVICE_PLUS_ID_TOKEN ? () => ({ getIdToken: async () => process.env.FAKE_REMOTE_DEVICE_PLUS_ID_TOKEN }) : null,
 });
 const service = createRemoteAgentService({ getDevice: async () => device, post: toWorker, log: line => console.log(`  [remote-agent] ${line}`) });
 process.parentPort = {

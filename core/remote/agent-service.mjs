@@ -33,8 +33,10 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
   /** サーバーが知る「ホストの一覧」。線を張っているホスト（取り消されていないもの）が状態を持つ */
   async function hostsView() {
     const d = await device();
-    const rows = await d.list();
-    return rows.map(h => ({
+    // 同じホストに own と plus の記録があっても 1 行にする（線は 1 本。張った方の記録が状態を持つ。device.mjs の pickHostRecord）
+    const byId = new Map();
+    for (const h of await d.list()) if (!byId.has(h.hostId) || (h.agent && !byId.get(h.hostId).agent)) byId.set(h.hostId, h);
+    return [...byId.values()].map(h => ({
       hostId: h.hostId, name: displayName(h), hostName: h.hostName ?? '',
       state: h.agent?.state ?? 'offline', allowed: h.agent?.allowed === true, view: h.agent?.view === true, features: h.agent?.features ?? null,
     }));

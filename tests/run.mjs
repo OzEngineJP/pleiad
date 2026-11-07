@@ -837,6 +837,7 @@ const SUITES = [
   './unit/remote-agent.mjs',
   // 端末の AI からホストへ任せる往復（端末のローカルのサーバー → main の橋の身代わり → 中継 → ホスト）: 委譲・完了通知・承認の中継と答え・オフライン・追いつき・取り消し
   './unit/remote-agent-e2e.mjs',
+  './unit/remote-agent-plus.mjs',
   // ホストに任せたタスクの写し（agent-tasks の host の行）の台帳の規則: adopt の検査・mirror・止める予定・並列の中断・追えなくなった行の復帰・子孫
   './unit/agent-tasks-remote.mjs',
   './unit/agent-tasks-remote-notices.mjs',
