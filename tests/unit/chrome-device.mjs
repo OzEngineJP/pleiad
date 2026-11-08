@@ -1,7 +1,7 @@
 // 端末から PC の Chrome の窓を操作する（「この端末で操作する」。by: 'device'。ADR 0296）と、ビューアの⋯「Chrome で開く」（openForConversation）。偽の Chrome・偽の OS の層。
 //   - core/chrome/input.mjs の変換は決まった CDP の形になる
 //   - 端末が「この端末で操作する」を押すと、見ているタブをその端末の人の操作にする（core/chrome/tab-holder.mjs の touch）。窓は見せず、映像も止めず、
-//     会話の一時停止もしない。ページの大きさは端末の映像の箱にする（映像の側が持ち手を見て決める）。任せると AI に戻し、大きさも戻す
+//     会話の一時停止もしない。ページの大きさは見る・操作するのどれでも変えない（AI が決めた大きさの実ページをそのまま操作する）。任せると AI に戻す
 //   - 「PC で操作する」の窓を出している所へ端末が後から押しても今の状態を返すだけ。fromPc のときは PC の窓を隠してから端末へ移す
 //   - openForConversation は接続が無ければ Chrome の許可を待つ（接続の案内のカードは出さない）。開いたタブを今のタブにする
 import { WebSocket } from 'ws';
@@ -13,12 +13,12 @@ import { createChromeWindows } from '../../core/chrome/windows.mjs';
 import { createChromeControl } from '../../core/chrome/control.mjs';
 import { createChromeScreencast } from '../../core/chrome/screencast.mjs';
 import { createScreencastHub } from '../../core/browser-screencast.mjs';
-import { HUMAN_MESSAGE } from '../../core/chrome/tab-holder.mjs';
+import { HUMAN_MESSAGE, RESNAPSHOT_MESSAGE } from '../../core/chrome/tab-holder.mjs';
 import { inputCommands, deviceViewport } from '../../core/chrome/input.mjs';
 import { browserOps } from '../../core/ops/browser.mjs';
 
 export const name = 'chrome-device';
-export const title = '端末から Chrome の窓を操作する（ADR 0296）: 入力の変換・この端末で操作するは見ているタブだけを端末の人の操作にする・窓は見せず映像も会話も止めない・ページの大きさを合わせて戻す・PC の窓を出している所へ後から押したほうは今の状態を返す・Chrome で開く（偽の Chrome・偽の OS の層）';
+export const title = '端末から Chrome の窓を操作する（ADR 0296）: 入力の変換・この端末で操作するは見ているタブだけを端末の人の操作にする・窓は見せず映像も会話も止めない・ページの大きさは見る・操作するのどれでも変えない・PC の窓を出している所へ後から押したほうは今の状態を返す・Chrome で開く（偽の Chrome・偽の OS の層）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {
@@ -85,8 +85,8 @@ const concealed = (r, targetId) => {
   const h = r.os.hwnds().find(x => x.windowId === windowId);
   return h?.concealed === true && h.alpha === 0;
 };
-/** mark より後に送ったページの大きさのうち最後のもの */
-const lastMetrics = (r, mark = 0) => r.chrome.calls.slice(mark).filter(c => c.method === 'Emulation.setDeviceMetricsOverride').at(-1)?.params ?? null;
+/** mark より後に送った、ページの大きさを触る呼び出し（override・戻す口・窓の大きさ） */
+const sizeCalls = (r, mark = 0) => r.chrome.calls.slice(mark).filter(c => /^(Emulation\.(set|clear)DeviceMetricsOverride|Browser\.setContentsSize)$/.test(c.method));
 const DEVICE = { width: 390, height: 700, scale: 2 };
 
 export default async function (t) {
@@ -119,8 +119,14 @@ export default async function (t) {
       const sidOther = (await a.cmd('Target.attachToTarget', { targetId: other, flatten: true })).result.sessionId;
       await a.cmd('Page.getFrameTree', {}, sid);   // 今のタブを 1 つ目に戻す
       await until(() => r.relay.view.current('one') === tab);
+      // AI が自分でページの大きさを決めた（agent-browser の set viewport。中継のセッション経由）
+      const windowId = r.fake.targets().find(x => x.targetId === tab)?.windowId;
+      await a.cmd('Browser.setContentsSize', { windowId, width: 1200, height: 800 });
+      const mark0 = r.chrome.calls.length;
       await r.hub.watch(r.client, 'one', { device: 'phone', ...DEVICE, quality: 'auto' });
       t.ok('映像を見始めた（中継自身のセッション）', await until(() => r.fake.screencasting(tab)));
+      t.ok('見始めるだけではページの大きさを変えない（AI が決めた大きさを押し戻さない・override も戻す口も窓の大きさも送らない）',
+        sizeCalls(r, mark0).length === 0, JSON.stringify(sizeCalls(r, mark0).map(c => c.method)));
 
       const invalid = await r.control.takeOver('one', { by: 'device' }).then(() => null, error => error);
       t.ok('端末の箱の大きさが無ければ INVALID（人の操作にしない・接続も切らない）', invalid?.code === 'INVALID' && r.control.state('one').state === 'running' && r.held('one', tab).holder === 'ai' && a.ws.readyState === 1, JSON.stringify(invalid?.code));
@@ -135,12 +141,55 @@ export default async function (t) {
       const held1 = (await a.cmd('Runtime.evaluate', { expression: '1' }, sid)).error?.message;
       const passed = (await a.cmd('Runtime.evaluate', { expression: '1' }, sidOther)).error;
       t.ok('エージェントの接続は切らない。そのタブへの操作は断り、ほかのタブは通る', a.ws.readyState === 1 && held1 === HUMAN_MESSAGE && !passed, JSON.stringify([held1, passed]));
-      t.ok('ページの大きさを端末の箱にする', await until(() => lastMetrics(r, mark)?.width === 390 && lastMetrics(r, mark)?.deviceScaleFactor === 2), JSON.stringify(lastMetrics(r, mark)));
+      t.ok('端末の人の操作でもページの大きさを変えない（AI が決めた大きさの実ページをそのまま操作する）',
+        sizeCalls(r, mark).length === 0, JSON.stringify(sizeCalls(r, mark).map(c => c.method)));
+
+      // 端末の箱が変わった（回転）: ページの大きさはやはり変えない
+      const markRot = r.chrome.calls.length;
+      await r.control.takeOver('one', { by: 'device', width: 700, height: 390, scale: 2 });
+      t.ok('回転してもページの大きさを変えない', sizeCalls(r, markRot).length === 0, JSON.stringify(sizeCalls(r, markRot).map(c => c.method)));
 
       const mark2 = r.chrome.calls.length;
       const back = await r.control.resume('one');
       t.ok('任せる → そのタブを AI に戻す（窓は隠れたまま）', back.state === 'running' && r.held('one', tab).holder === 'ai' && concealed(r, tab), JSON.stringify(back));
-      t.ok('任せるとページの大きさを見ているだけの大きさへ戻す', await until(() => lastMetrics(r, mark2) && lastMetrics(r, mark2).width !== 390), JSON.stringify(lastMetrics(r, mark2)));
+      t.ok('任せるときもページの大きさを触らない（戻す override も戻す口も窓の大きさも送らない）', sizeCalls(r, mark2).length === 0, JSON.stringify(sizeCalls(r, mark2).map(c => c.method)));
+      const read = (await a.cmd('Page.captureScreenshot', {}, sid)).error;
+      t.ok('戻した直後でも、読むだけのコマンドは通る（新しい画面を撮れる）', !read);
+      const firstOp = (await a.cmd('Runtime.evaluate', { expression: '1' }, sid)).error?.message;
+      t.ok('戻した直後の最初の操作は RESNAPSHOT で断る（新しい画面を撮らせる）', firstOp === RESNAPSHOT_MESSAGE, JSON.stringify(firstOp));
+      t.ok('その次の操作は通る', !(await a.cmd('Runtime.evaluate', { expression: '2' }, sid)).error);
+
+      // AI が自分で新しい大きさを決め直したあと、見る人が居なくなっても、その大きさを人の古い値・既定値へ戻さない
+      await a.cmd('Browser.setContentsSize', { windowId, width: 620, height: 720 });
+      await a.cmd('Emulation.setDeviceMetricsOverride', { width: 300, height: 500, deviceScaleFactor: 1, mobile: false }, sid);
+      const markAi = r.chrome.calls.length;
+      await r.hub.unwatch(r.client, 'one');   // 最後の見る人（入力の口のセッションを外す）
+      t.ok('AI が決め直した大きさを、最後の見る人がやめても人の古い値へ戻さない（窓にも emulation にも触らない）',
+        sizeCalls(r, markAi).length === 0, JSON.stringify(sizeCalls(r, markAi).map(c => c.method)));
+
+      // 閲覧の増減・リサイズ・スマホの箱の変化・やめる・見直す — どれもページの大きさを変えない
+      const mark3 = r.chrome.calls.length;
+      const pcClient = { send() {} };
+      await r.hub.watch(pcClient, 'one', { width: 560, height: 700, quality: 'auto' });          // PC の欄も開く
+      await r.hub.watch(r.client, 'one', { device: 'phone', width: 700, height: 390, scale: 2, quality: 'auto' });   // スマホが回転した箱で見直す
+      await r.hub.watch(pcClient, 'one', { width: 640, height: 700, quality: 'auto' });          // PC の欄のリサイズ
+      await r.hub.unwatch(pcClient, 'one');
+      await r.hub.unwatch(r.client, 'one');                                                    // 最後の見る人もやめる（入力の口のセッションを外す）
+      await r.hub.watch(r.client, 'one', { width: 560, height: 700, quality: 'auto' });          // 見直す
+      t.ok('見る人の増減・リサイズ・やめる・見直す — どれもページの大きさを変えない（override・戻す口・窓の大きさを触らない）',
+        sizeCalls(r, mark3).length === 0, JSON.stringify(sizeCalls(r, mark3).map(c => c.method)));
+
+      // 別の会話からの閲覧も、お互いのページの大きさを変えない
+      const b = await r.agent('two');
+      const tab2 = (await b.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      await until(() => r.relay.view.current('two') === tab2);
+      const mark4 = r.chrome.calls.length;
+      const client2 = { send() {} };
+      await r.hub.watch(client2, 'two', { device: 'phone', ...DEVICE, quality: 'auto' });
+      await until(() => r.fake.screencasting(tab2));
+      await r.hub.unwatch(client2, 'two');
+      t.ok('ほかの会話の閲覧もページの大きさを変えない', sizeCalls(r, mark4).length === 0,
+        JSON.stringify(sizeCalls(r, mark4).map(c => c.method)));
     } finally { await r.stop(); }
   }
 
@@ -185,8 +234,10 @@ export default async function (t) {
       t.ok('映像を見ていなくても端末の人の操作にできる', r.held('one', tab).holder === 'human' && r.held('one', tab).viewport?.width === 400, JSON.stringify(r.held('one', tab)));
       const mark = r.chrome.calls.length;
       await r.hub.watch(r.client, 'one', { device: 'phone', width: 400, height: 640, scale: 1, quality: 'auto' });
-      t.ok('見始めると、ページの大きさを端末の箱に合わせる', await until(() => lastMetrics(r, mark)?.width === 400), JSON.stringify(lastMetrics(r, mark)));
+      t.ok('端末の人の操作のまま見始めても、ページの大きさを変えない', sizeCalls(r, mark).length === 0, JSON.stringify(sizeCalls(r, mark).map(c => c.method)));
+      const mark2 = r.chrome.calls.length;
       await r.hub.unwatch(r.client, 'one');
+      t.ok('そのまま見るのをやめても、ページの大きさを触らない（override・戻す口・窓の大きさを送らない）', sizeCalls(r, mark2).length === 0, JSON.stringify(sizeCalls(r, mark2).map(c => c.method)));
       await r.control.resume('one');
       t.ok('見ていない間に任せても AI に戻る', r.held('one', tab).holder === 'ai');
     } finally { await r.stop(); }
