@@ -102,6 +102,8 @@ class DeviceProxy(
         private const val MAX_HEAD = 32 * 1024
         private const val BIND_ATTEMPTS = 6
         private const val BIND_RETRY_MS = 250L
+        /** How long close() waits for the accept loops to leave (see close()). */
+        private const val ACCEPT_JOIN_NS = 1_000_000_000L
         internal fun normalizedPagePath(path: String): String? = try {
             val uri = java.net.URI(path).normalize()
             if (!path.startsWith("/") || uri.rawAuthority != null || uri.isAbsolute) null
@@ -149,6 +151,8 @@ class DeviceProxy(
     private var server: ServerSocket? = null
     private val isolatedServers = mutableListOf<ServerSocket>()
     private val sockets = ConcurrentHashMap.newKeySet<Socket>()
+    /** The threads running acceptLoop (one per listener). close() waits for them, see below. */
+    private val acceptors = ConcurrentHashMap.newKeySet<Thread>()
     @Volatile var closed = false; private set
     val staticCache = staticCacheFile?.let { StaticCache(it, log) }
     private class StaticCheck { val done = java.util.concurrent.CountDownLatch(1); @Volatile var bundle: StaticBundle? = null }
@@ -172,12 +176,12 @@ class DeviceProxy(
         val ss = bindListener(lo)
         server = ss
         port = ss.localPort
-        pool.execute { acceptLoop(ss) }
+        startAcceptor(ss)
         try {
             val listeners = bindIsolatedListeners(lo)
             isolatedServers.addAll(listeners)
             isolatedPort = listeners.first().localPort
-            for (listener in listeners) pool.execute { acceptLoop(listener, true) }
+            for (listener in listeners) startAcceptor(listener, true)
         } catch (e: IOException) { log("remote proxy: isolated pages unavailable (${e.message})") }
         link.start()
         return this
@@ -244,8 +248,27 @@ class DeviceProxy(
         link.stop()
         try { server?.close() } catch (_: IOException) {}
         for (ss in isolatedServers) try { ss.close() } catch (_: IOException) {}
+        // A thread parked in accept() still holds the listening socket (the JDK's poll keeps the fd), so a
+        // connection arriving just after close() can be accepted and the port stays open until that accept returns.
+        // Wait for the accept loops to leave, so close() really released the ports before it returns. Bounded: a
+        // stuck accept must not hold the caller (it is woken by the close above, or by the next connection).
+        val deadline = System.nanoTime() + ACCEPT_JOIN_NS
+        for (t in acceptors) {
+            val leftMs = (deadline - System.nanoTime()) / 1_000_000
+            if (leftMs <= 0) break
+            try { t.join(leftMs) } catch (_: InterruptedException) { Thread.currentThread().interrupt(); break }
+        }
         for (s in sockets) try { s.close() } catch (_: IOException) {}
         sockets.clear()
+    }
+
+    /** Run acceptLoop on the shared pool, remembering the thread so close() can wait for it. */
+    private fun startAcceptor(ss: ServerSocket, isolated: Boolean = false) {
+        pool.execute {
+            val me = Thread.currentThread()
+            acceptors.add(me)
+            try { acceptLoop(ss, isolated) } finally { acceptors.remove(me) }
+        }
     }
 
     private fun acceptLoop(ss: ServerSocket, isolated: Boolean = false) {
