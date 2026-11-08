@@ -1,5 +1,9 @@
 import { t } from '../i18n.mjs';
 
+// 文言の保険。「quota exhausted」に加え、日次の実文言は quota と exhausted の間に "has been" が入る。
+// 間は "has been" だけに限り、離れた語の組み合わせまでは広げない。
+const USAGE_EXHAUSTED_TEXT = /\busage balance exhausted\b|\bcredit balance is too low\b|\binsufficient[ _](?:balance|funds|credits?|quota)\b|\b(?:usage limit|quota)(?: has been)? (?:reached|exceeded|exhausted)\b/i;
+
 /** Classify known provider failures without exposing RPC messages or data. */
 export function acpRequestFailure(error, agent, fallback) {
   const data = error?.data;
@@ -7,7 +11,9 @@ export function acpRequestFailure(error, agent, fallback) {
     .filter(value => typeof value === 'string').map(value => value.slice(0, 16_384)).join('\n');
   const status = [error?.code, data?.status, data?.statusCode, data?.httpStatus];
   let message = fallback;
-  if (/\busage balance exhausted\b|\bcredit balance is too low\b|\binsufficient[ _](?:balance|funds|credits?|quota)\b|\b(?:usage limit|quota) (?:reached|exceeded|exhausted)\b/i.test(text)) {
+  // cognition.ai/errorKind は Cognition（Devin）の構造化種別。resource_exhausted は rate limit と日次クォータ枯渇の両方。
+  // 実文言は "quota" と "exhausted" が離れるので、種別を先に見る。他プロバイダの data にはこのキーは無い。
+  if (data?.['cognition.ai/errorKind'] === 'resource_exhausted' || USAGE_EXHAUSTED_TEXT.test(text)) {
     message = t('acp.errors.usageExhausted', { agent });
   } else if (status.includes(402) || /\b(?:status(?: code)?\s*[:=]?\s*402|402 Payment Required)\b/i.test(text)) {
     message = t('acp.errors.paymentRequired', { agent });
@@ -46,14 +52,19 @@ function absoluteAt(message, now) {
   return Number.isFinite(at) ? at : null;
 }
 
-// Cognition が再試行可能と明示した rate limit を limited にする（Issue #111）。
+// Cognition が再試行可能と明示した上限を limited にする（Issue #111）。
+// 上限は、文言の rate limit か、errorKind が resource_exhausted のとき。後者は rate limit と日次クォータ枯渇の
+// 両方を含む種別で、日次の文言には "rate limit" が無い。種別の値は message に無く data にしか無いので、
+// 文言へ resource_exhausted を足さず構造化フィールドを見る（別の errorKind を足すときもここを足す）。
 // 解除の見込みは、相対（N seconds・N minute(s)・N hours N minutes）と併記の時刻（at HH:MM UTC）の遅い方。時刻だけでも読む。
 // 見込みは下限で、次の試行では後ろへずれる（同じ枠の再発で保留を延ばすのは core/slot-limits.mjs）。
-// どちらも読めない文面は、解除時刻の分からない limited（resetsAt: null）。error にすると枠が止まらず、自動の振り分けが同じ枠を選び直す
+// どちらも読めない文面（日次クォータ枯渇は時刻を持たない）は、解除時刻の分からない limited（resetsAt: null）。
+// 下流の slot-limits が 30 分保留とバックオフを置く。error にすると枠が止まらず、自動の振り分けが同じ枠を選び直す
 export function acpTurnLimit(error, now = Date.now()) {
   if (error?.data?.['cognition.ai/retryable'] !== true) return null;
   const message = typeof error?.message === 'string' ? error.message.slice(0, 16_384) : '';
-  if (!/\brate[ _-]?limit(?:ed|[ _-]exceeded)?\b/i.test(message)) return null;
+  const resourceExhausted = error?.data?.['cognition.ai/errorKind'] === 'resource_exhausted';
+  if (!resourceExhausted && !/\brate[ _-]?limit(?:ed|[ _-]exceeded)?\b/i.test(message)) return null;
   if (!Number.isFinite(now) || !Number.isFinite(new Date(now + MAX_TURN_LIMIT_WINDOW_MS).getTime()) || !Number.isFinite(new Date(now).getTime())) return null;
   const rel = relativeMs(message);
   const abs = absoluteAt(message, now);
