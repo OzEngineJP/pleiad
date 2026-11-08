@@ -16,23 +16,10 @@ import { createHtmlKeys } from '../../core/html-keys.mjs';
 import { collectBundle } from '../../core/viz-bundle.mjs';
 
 const require = createRequire(import.meta.url);
-const playwrightCandidates = [process.env.PW_CORE,
-  path.join(path.dirname(process.execPath), 'node_modules/@playwright/cli/node_modules/playwright-core'),
-  process.env.APPDATA && path.join(process.env.APPDATA, 'npm/node_modules/@playwright/cli/node_modules/playwright-core'),
-  'playwright-core'].filter(Boolean);
-let playwrightCore;
-for (const candidate of playwrightCandidates) {
-  try { playwrightCore = candidate === 'playwright-core' ? require.resolve(candidate) : require.resolve(candidate); break; } catch {}
-}
-if (!playwrightCore) throw new Error('playwright-core is unavailable; set PW_CORE to its installed package path');
-const { chromium } = require(playwrightCore);
-
-async function chromiumPath() {
-  if (process.env.PW_CHROMIUM) return process.env.PW_CHROMIUM;
-  const base = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), process.platform === 'win32' ? 'AppData/Local/ms-playwright' : '.cache/ms-playwright');
-  const dirs = (await fs.readdir(base)).filter(n => n.startsWith('chromium_headless_shell-')).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
-  return path.join(base, dirs[0], 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
-}
+const playwright = process.env.VISUALIZE_CARD_MOUSE_PLAYWRIGHT_PACKAGE
+  ? createRequire(process.env.VISUALIZE_CARD_MOUSE_PLAYWRIGHT_PACKAGE)('playwright-core')
+  : require('playwright-core');
+const { chromium } = playwright;
 
 let failures = 0;
 const ok = (name, cond, extra = '') => { console.log(`  ${cond ? 'OK' : 'NG'}  ${name}${cond ? '' : `  — ${extra}`}`); if (!cond) failures++; };
@@ -88,7 +75,8 @@ window.ready = true;
   await new Promise(resolve => main.listen(0, '127.0.0.1', resolve));
   const mainPort = main.address().port;
 
-  browser = await chromium.launch({ executablePath: await chromiumPath() });
+  browser = await chromium.launch({ headless: true,
+    ...(process.env.VISUALIZE_CARD_MOUSE_CHROME ? { executablePath: process.env.VISUALIZE_CARD_MOUSE_CHROME } : {}) });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
