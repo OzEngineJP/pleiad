@@ -633,8 +633,6 @@ export const backend = {
     // opts は feedLine から来る（付け直しの再生の行は { replay: true }。server の makeEmit が画面へ流さず、実行中のスナップショットとメモリの状態だけを作る）
     const handle = (ev, opts) => {
       const out = (event) => emit(event, opts?.replay ? { replay: true } : undefined);
-      // Step updates without a history entry still show that the child is active.
-      out({ type: 'task.activity', output: true });
       switch (ev?.event) {
         case "init": {
           const id = ev.conversation_id ?? ev.init?.conversation_id ?? null;
@@ -658,6 +656,10 @@ export const backend = {
         }
 
         case "step_update": {
+          // Step updates without a history entry still show that the child is active.
+          // 握手（init）や終了の制御（result）では出さない。委譲の「仕事を始める前に断られた」（ADR 0302）の untouched は、
+          // この出来事を仕事の痕跡として数えるので、制御の往復だけで立つと任せ直せなくなる
+          out({ type: 'task.activity', output: true });
           const s = ev.step_update ?? {};
           if (s.step_type === "agent_response") {
             if (String(s.state ?? "").toUpperCase() === "DONE" && (replyTextSinceTool.trim() || String(s.text_delta ?? '').trim())) finishedReply = true;

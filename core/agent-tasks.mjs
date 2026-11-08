@@ -29,6 +29,8 @@ const LOG_MAX = 64 * 1024;
 const NOTICED_MAX = 50;
 // 1 タスクに持つ実行前の拒否（rejections）の上限。超えた分は捨て、rejectionsDropped に数だけ残す
 const MAX_REJECTIONS = 50;
+// 自動の振り分けの子が仕事を始める前に断られたときの、任せ直しの上限（ADR 0302。2 回の任せ直し = 合計 3 候補まで）
+const REROUTE_MAX = 2;
 // 子が返答を終えて裏の作業だけを待つ間の、最初の知らせまでの猶予（docs/agent-delegation.md「子に残った裏の作業」）。
 // すぐ終わる裏の作業（短いサブエージェントなど）のたびに、依頼元のターンを起こさない。知らせ直す周期がこれより短ければ周期に合わせる
 const BACKGROUND_FIRST_MS = 60_000;
@@ -117,6 +119,9 @@ export function finalReply(messages) {
 // この一覧は実行中の作業を表示するための写し。更新は作業件数を待たず、DB と保持役の記録から通常起動で復元する（ADR 0270）。
 // 受理の前（送ったかどうか分からない短い間）だけ settling に残す。受理の後は送り直さないので二重には届かない。
 export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, childSteerable = async () => false, steer = async () => 'requeue', changed = () => {}, waiting = () => false, accepted = () => {}, anchorProbe = () => null,
+  // 自動の振り分けの子が仕事を始める前に断られたとき、次の候補で新しい子の会話を作る口（ADR 0302）。
+  // (task, failed: { outcome, error }) → prepare の戻り値と同じ形、次の候補が無ければ null
+  reroute = async () => null,
   // リモートのホストに任せたタスクの写し（row.host を持つ行。docs/agent-delegation.md「リモートのホストへ任せる」）: 今、依頼元の会話に中継された承認を待っているか・ホストのタスクを止める口
   remoteWaiting = () => false, cancelHost = async () => {},
   // コンピューターの操作のロックを待っているか（docs/computer-use.md「ロック・待ち・止めた印」）。承認待ちではないので status: waiting にはせず、沈黙の通知にだけ数えない
@@ -511,10 +516,33 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         activeInstructionIds = instructionIds;
         const finish = adopted;
         adopted = null;
-        const result = finish ? await finish(structuredClone(r), controller.signal)
+        let result = finish ? await finish(structuredClone(r), controller.signal)
           : await execute(structuredClone(r), prompt, controller.signal,
             { messageId: instructionIds.length ? `task-send-${instructionIds[0]}` : undefined });
         if (halted()) return;
+        // 自動の振り分けの子が、仕事を始める前に断られた（error / limited で touched が無い）→ 次の候補へ任せ直す（ADR 0302）。
+        // 対象は最初の回（最初の依頼の本文）だけ。追加指示・付け直した回・固定/手動の振り分け・ホストのタスク・requeue・中断は対象外。
+        // 痕跡（返答・思考・ツール・作業の出来事）が 1 つでもあれば仕事が重複するので任せ直さない。経過時間は見ない
+        for (let reroutes = 0; !finish && !instructionIds.length && !r.host && r.routing?.mode === 'auto'
+            && (result?.outcome === 'error' || result?.outcome === 'limited') && result?.touched === false
+            && !controller.signal.aborted && !halted() && reroutes < REROUTE_MAX; reroutes += 1) {
+          const next = await reroute(structuredClone(r), { outcome: result.outcome, error: result.error ?? null }).catch(() => null);
+          if (!next?.sessionId) break;
+          const previous = r.sessionId;
+          // タスクの記録を新しい会話・委譲先・振り分けへ書き換える。保存できなければ任せ直しをやめ、作った子を巻き戻す
+          try { await commit(r.taskId, row => {
+            row.sessionId = next.sessionId;
+            row.backend = next.backend; row.model = next.model; row.effort = next.effort;
+            row.mode = next.mode; row.cwd = next.cwd;
+            if (next.routing) row.routing = next.routing;
+          }, 'run.reroute'); }
+          catch { await rollback({ sessionId: next.sessionId }).catch(() => {}); break; }
+          bySession.delete(previous); bySession.set(r.sessionId, r);
+          // 交換で役目を終えた子の実行資材（ブラウザーのデーモンなど）を片付ける。会話そのものは失敗の経緯として残す
+          try { ended(previous); } catch (e) { report({ event: 'unexpected', operation: 'reroute.ended', taskId: r.taskId, code: e?.code ?? null }); }
+          result = await execute(structuredClone(r), prompt, controller.signal, {});
+          if (halted()) return;
+        }
         if (result?.requeue) {
           await record(r.taskId, row => { row.queue.unshift(...(instructionIds.length ? instructionIds.map(instructionId => ({ instructionId })) : prompt ? [prompt] : [])); for (const id of instructionIds) setInstruction(row, id, 'queued'); row.status = 'queued'; }, 'run.requeue');
           activeInstructionIds = undefined; requeued = true;

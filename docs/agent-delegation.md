@@ -136,6 +136,14 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 固定（`mode: "pinned"`）の `target` は実際に使う値（モデルが既定に戻った、継いだアカウント、段のアカウントから選び直したアカウント、`account` で選んだアカウント）で書く。
 後で規則を見直すため、失敗はタスクの `status`（`failed`）と `routing` で数えられる。人が別の候補でやり直したことは、やり直したタスクの `routing.retry`（`of` が元のタスク、`from` が元の委譲先）で数え、元のタスクの `routing` と `of` で結び付ける。集計の画面はまだ無い。
 
+**仕事を始める前に断られた委譲の任せ直し**（[ADR 0302](adr/0302-delegation-prework-reroute.md)）:
+
+- 自動の振り分け（`routing.mode: 'auto'`）の最初の回だけ、子が `error` / `limited` で終わり、ターンが**何も仕事をしていなければ**、同じタスクのまま次の候補へ任せ直す。「仕事をした」の印は実行の控えの `touched`（`text.delta` / `thinking.delta` / `tool.start` / `tool.result` / `task.activity` / `task.command` と、作業を意味する `activity`（`writing`・`running`・`compacting`・`waiting`・`retrying`）のどれかが来たら立つ。`thinking`・`preparing`・`idle`・`stopping` の稼働表示は受理の合図で仕事の痕跡ではないので数えない）。**経過時間は目印に使わない**（短時間でもプロンプトが届き副作用が起きていれば任せ直さない）。
+- 任せ直しは失敗した候補を `rejected`（理由 `rejected_before_work`）に足して `route()` を呼び直す。`blocked: slotBlocked` はそのまま効くので、`limited` で記録済みの委譲先は `recently_limited` でも外れる。同じ候補は二度選ばない。上限は 2 回の任せ直し（合計 3 候補）。候補が尽きた・上限に達した・任せ直せる失敗でないときは、今までどおり失敗として届ける。
+- 任せ直すと同じ依頼の本文で新しい子の会話を作り、タスクの記録（`sessionId`・`backend`・`model`・`effort`・`mode`・`cwd`・`routing`）を新しい子へ書き換える。worktree は作り直さずタスクのものを継ぐ（片付け済みなら `execute` の `renewTaskWorktree` が作り直す）。失敗した子の会話は消さず、`delegation` に `superseded: <新しい sessionId>` を添えて残し、`ended` で実行資材（ブラウザーのデーモンなど）を片付ける。
+- 失敗した回は `routing.attempts` に `{ target: { backend, model, account }, sessionId, outcome, error }` を足していく（`error` は完了通知に載せるのと同じ伏せ済みの文言）。タスクの行・`ply_task_status`・新しい子の会話の `routing` に同じ `attempts` が残る。完了通知には任せ直しが起きたときだけ `agent:delegation.noticeReroutedError` / `noticeReroutedLimited` の 1 行（元の委譲先・理由・実際に走った委譲先）を添える。
+- 対象外: 固定・手動の振り分け（`mode` が `auto` 以外）、追加指示（`ply_task_send`）の回、付け直したターン（`adoptRun`）、`requeue`・`aborted`・取り消し、ホストに任せたタスク（`row.host`）、`prepare` の時点で落ちたもの（preflight の `rejected` の仕組みの側）。
+
 **別の候補でやり直す**（委譲カードの操作。画面は design-system.md「委譲カード」、WebSocket の `retryAgentTask { taskId, candidate, account?, stop?, approved? }`。`core/server.mjs` の `retryAgentTask`）:
 - 自動で選んだ委譲のカードからだけ出す。候補は設定 › 委譲と同じ一覧（`delegationRouting` の `candidates`）のうち、余裕あり・余裕が少ないもの（使用量の取り置きで確かめる）。アカウントは候補の id に含む（`claude@acct-…:opus`。2026-10-24）。元の委譲先と同じ backend・model・account の組だけ除く。サーバーでもアカウントを含めて確かめ、使えない・元と同じ・形が不正なら断る。前の版の画面が送る `account` は候補の id に畳んで受ける
 - 同じ依頼（`task` と `context`）で**新しいタスク**を作る。元のタスクは書き換えない。タスクは最初の `context` を持つ（タスクの記録の `context`。一覧・`ply_task_status` には載せない）。`context` を持つ前に作ったタスクは `task` だけを渡す
