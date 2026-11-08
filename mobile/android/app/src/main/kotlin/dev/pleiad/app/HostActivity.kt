@@ -97,6 +97,9 @@ class HostActivity : ComponentActivity() {
     @Volatile private var origin = ""
     /** The load-error retry has fired once already (no retry loops). */
     private var retried = false
+    /** The in-flight main-frame load ended in a network error: the onPageFinished that follows belongs to the error
+     *  page, not a delivered page, and must not clear what the retry still owes. */
+    private var mainLoadFailed = false
     private var notifyPermissionCallback: ((Boolean) -> Unit)? = null
     private val askNotifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         notifyPermissionCallback?.invoke(granted)
@@ -221,20 +224,31 @@ class HostActivity : ComponentActivity() {
                 return true
             }
 
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                // A real navigation begins: whatever the previous load ended in no longer applies. The error page
+                // itself does not start a page — its only callback is onPageFinished.
+                mainLoadFailed = false
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
-                // A page that got as far as finishing received whatever &open= it carried (an unavailable page keeps
-                // it in its own meta-refresh URL), so nothing is owed any more; a later failure gets a fresh retry.
-                openParam = null
-                retried = false
+                // A failed load finishes too — with the error page, and before our queued retry runs. That finish
+                // must not clear the &open= the retry still owes nor reset `retried`; only a real page's finish does.
+                if (!mainLoadFailed) {
+                    openParam = null
+                    retried = false
+                }
                 progress.visibility = View.GONE
             }
 
             // The proxy the load talked to can die under it (a window that finished while this one was opening —
             // before leases, the cause of ERR_EMPTY_RESPONSE on a notification tap; still possible via sign-out /
-            // unpairing). Reopen (or reuse) the proxy and load it once more, re-sending an &open= the page never got.
+            // unpairing). Reopen (or reuse) the proxy and load it once more, re-sending the &open= the page never got.
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (!request.isForMainFrame || retried || error.errorCode !in RETRYABLE_ERRORS) return
+                if (!request.isForMainFrame) return
+                mainLoadFailed = true
+                if (retried || error.errorCode !in RETRYABLE_ERRORS) return
                 retried = true
+                val owed = openParam   // what this failed load was carrying: the retry resends it as its own &open=
                 worker.execute {
                     val px = try { device.open(hostId, route, this@HostActivity) } catch (_: Exception) { null } ?: return@execute
                     runOnUiThread {
@@ -245,7 +259,8 @@ class HostActivity : ComponentActivity() {
                             this@HostActivity.origin = newOrigin
                             injectRemote(view, newOrigin, px)
                         }
-                        view.loadUrl(px.url + (openParam?.let { "&open=" + Uri.encode(it) } ?: ""))
+                        progress.visibility = View.VISIBLE
+                        view.loadUrl(px.url + (owed?.let { "&open=" + Uri.encode(it) } ?: ""))
                     }
                 }
             }

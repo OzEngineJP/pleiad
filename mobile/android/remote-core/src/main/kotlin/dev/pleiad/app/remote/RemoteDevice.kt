@@ -379,15 +379,19 @@ class RemoteDevice(
 
     fun proxy(hostId: String): DeviceProxy? = synchronized(proxyLock) { proxies[hostId] }
 
-    fun updatePlusRelay(relayUrl: String) = synchronized(proxyLock) {
-        store.updatePlusRelay(relayUrl)
-        for ((hostId, px) in proxies) if (px.creds.via == "plus") {
-            store.credentials(hostId, "plus")?.let(px::updateCredentials)
-        }
+    fun updatePlusRelay(relayUrl: String) {
+        store.updatePlusRelay(relayUrl)   // the store serializes itself
+        // updateCredentials → link.retryNow belongs off the lock: an open() can hold proxyLock while it binds,
+        // and callers may not be on a worker. The proxy may already be closed — skip it.
+        val targets = synchronized(proxyLock) { proxies.values.filter { it.creds.via == "plus" } }
+        for (px in targets) if (!px.closed) store.credentials(px.creds.hostId, "plus")?.let(px::updateCredentials)
     }
 
-    fun retryPausedPlus() = synchronized(proxyLock) {
-        for (px in proxies.values) if (px.creds.via == "plus" && px.link.state == "paused") px.link.retryNow()
+    fun retryPausedPlus() {
+        val paused = synchronized(proxyLock) {
+            proxies.values.filter { it.creds.via == "plus" && !it.closed && it.link.state == "paused" }
+        }
+        for (px in paused) if (!px.closed) px.link.retryNow()
     }
 
     private fun staticCacheFile(hostId: String) = File(store.dir, "static/$hostId.bin")
