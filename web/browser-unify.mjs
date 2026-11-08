@@ -81,7 +81,7 @@ const css = `
 `;
 
 // i18n-dynamic: tabs:address.locations.
-/** スマホの帯の名前。Pleiad のページはホスト名（localhost）でなく、ファイル・フォルダーの名前かページの名前。Web は空（ホスト名を出す） */
+/** アドレスバーと一覧の題。Pleiad のページはホスト名でなく、ファイル・フォルダーの名前かページの名前。Web は空（ホスト名を出す） */
 export function pageName(tab) {
   const page = tab?.page; if (!page?.kind) return '';
   if ((['file', 'dir', 'html'].includes(page.kind) || page.kind === 'viz') && page.path) return String(page.path ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || page.path || '';
@@ -208,20 +208,15 @@ export function createBrowserUnify(deps = {}) {
         if (action === 'back' || action === 'forward') {
           // 隔離の origin のページは、親が持つ文書の中の履歴（histTrail）を動かす。枠の中の history は
           // 鍵の替わり・読み直し・つなぎ直しで失われるので頼らない（指摘 1）。
-          // 橋のある文書は中で場所を差し替える（location.replace。上の画面の履歴を伸ばさない）。
-          // 原文（text/plain。橋が無い）や # の違いは paintLocal の src の張り直しに任せる（指摘 8）
+          // 枠の中の履歴は使わず、橋のない文書も含めて親が持つ履歴 URL を読み直す。
           const here = frames.get(tab.targetId);
           if (here && ['html', 'viz'].includes(tab.page?.kind)) {
             const dir = action === 'back' ? -1 : 1;
             const target = pages.histPeek(tab, dir);
             if (target) {
-              const isSource = u => { try { return new URL(u).searchParams.get('view') === 'source'; } catch { return false; } };
-              // 両端とも橋のある文書のときだけ中で差し替える。原文（橋が無い）へは paintLocal の src に任せる
-              if (!isSource(here.url) && !isSource(target)) {
-                pageCommand(here, { type:'navigate', url:target });
-                here.url = target; here.pendingNav = target;
-                // 橋が届かない文書（消えたファイル・壊れたページ）なら枠を直接張り直す
-              }
+
+              // Navigation uses the parent-owned URL so missing bridges and source documents work too.
+              here.url = target; here.pendingNav = null; here.frame.src = target;
               pages.histGo(tab, dir);
               return {};
             }
@@ -352,7 +347,7 @@ export function createBrowserUnify(deps = {}) {
     // 人が触っているタブは会話ごとに数える（anyHuman）。PC は別のタブを見ていても「AI に戻す」は消えない（ADR 0296）。
     // スマホは「II あなたが操作中 [AI に戻す]」を人のタブを開いている間だけ出す（一覧を開いている間も出さない。承認済み 2026-11-08）
     const shown = phoneQuery.matches ? (c.held.holder === 'human' && overview.hidden) : (c.anyHuman && c.store !== 'paused');
-    badge?.update({ visible:(!c.tab?.local || c.tab.mode === 'chrome') && shown });
+    badge?.update({ visible:shown });
   }
   function paint() { const tab = current(); strip.update(tabs(), tab?.targetId); address.show(tab, tabs().length); paintControl(); paintLocal(); deps.onTabsChange?.(); }
   const pageHost = document.createElement('div'); pageHost.className = 'bu-page-host';
@@ -418,7 +413,6 @@ export function createBrowserUnify(deps = {}) {
       for (const type of ['pointerdown', 'scroll', 'selectionchange', 'input', 'change']) win.document.addEventListener(type, touch, { capture:true, passive:true });
     } catch { /* Isolated pages report activity through their own bridge. */ }
   }
-  /** 読み込んだ隔離のページの URL をサーバーへ確かめる。期限切れの鍵・消えた束は開き直して見張りを戻す（P6） */
   /** ページの URL（/_pleiad/…）を画面と同じ出どころへ写す。映像の中の移動を、リンクした端末内タブへ戻すときに使う */
   function mirrorUrl(raw) {
     try {

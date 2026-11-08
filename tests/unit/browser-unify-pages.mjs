@@ -142,6 +142,23 @@ export default async function(t) {
       errors.length === 1 && errors[0][0] === 'NOT_FOUND');
   }
 
+  // ---- HTML の鍵が期限切れになってから再読み込みしたら、新しい鍵を発行する ----
+  {
+    const requests = [];
+    const { tabs } = setup({ pageOpen:async request => { requests.push(request);
+      return { kind:'html', url:`http://f0123456789abcde.localhost:5002/f/${String(requests.length).padStart(43, 'K')}/a.html`, path:request.path };
+    } });
+    const tab = await tabs.open({ sessionId:'s1', kind:'html', path:'D:/w/a.html' });
+    const original = tab.url;
+    tab.keyIssuedAt = Date.now() - 24 * 60 * 60 * 1000;
+    tabs.reload(tab);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(requests.length, 2);
+    assert.notEqual(tab.url, original);
+    assert.equal(tab.keyIssuedAt > Date.now() - 1000, true);
+    t.ok('期限切れの HTML 鍵は再読み込み時に取り直して新しい URL を読む', requests.length === 2 && tab.url !== original && tab.keyIssuedAt > Date.now() - 1000);
+  }
+
   // ---- 文書の中の履歴（histGo。親が URL を出し、枠の中の history には頼らない。指摘 1） ----
   {
     const { tabs } = setup({ pageOpen: async () => ({ kind:'html', url:`http://f0123456789abcde.localhost:9999/f/${'K'.repeat(43)}/a.html`, path:'D:/w/a.html' }) });

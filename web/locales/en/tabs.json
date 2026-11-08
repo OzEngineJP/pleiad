@@ -18,7 +18,8 @@
     "new": "New tab",
     "close": "Close {{title}}",
     "closeTab": "Close tab",
-    "count": "{{count}} tabs"
+    "count_one": "Open browser ({{count}} tab)",
+    "count_other": "Open browser ({{count}} tabs)"
   },
   "address": {
     "back": "Back",

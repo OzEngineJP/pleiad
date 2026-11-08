@@ -4955,7 +4955,7 @@
     "resume": "Return to AI",
     "failed": "Could not do that.",
     "banner": "Paused · you are operating Chrome",
-    "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press hand back again" },
+    "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press Return to AI again." },
     "handover": "You took over · returned to AI · {{duration}}",
     "closed": { "agent": "{{name}} closed the window", "human": "The Chrome window closed", "idle": "The Chrome window closed after 24 hours without use", "image": "Last image of the closed window" },
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }

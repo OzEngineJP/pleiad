@@ -233,6 +233,10 @@ export default async function (t) {
       await r.conn.connect();
       await until(() => r.conn.state().state === 'connected');
       const t1 = await r.tab('one');
+      r.relay.unify.tabHolder.touch({ sessionId:'one', targetId:t1, by:'device' });
+      t.ok('hand_to_user の依頼が無くても人が触ったタブは人の操作中になる', await until(() => r.relay.unify.tabHolder.holder('one', t1).holder === 'human', 1500));
+      await r.press.resume('one');
+      t.ok('依頼カードが無い場合も chromeResume で人のタブを AI に戻す', await until(() => r.relay.unify.tabHolder.holder('one', t1).holder === 'ai', 1500));
       r.handoffs.ask('one', { reason: 'login', message: 'ログインしてください' });
       const waiting = r.handoffs.wait('one');
       // 端末の人が映像の上で触った（「この端末で操作する」と同じ持ち手の口。会話は一時停止しない）

@@ -6,6 +6,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { createPagesRoutes } from '../../core/pages-routes.mjs';
 import { resolveReference, PreviewError } from '../../core/file-preview.mjs';
+import { createPageWatch } from '../../core/page-watch.mjs';
 
 export const name = 'pages-routes';
 export const title = 'Pleiad のページ: 会話の範囲・読み取り API・CSP・上限・共通の資材';
@@ -42,6 +43,7 @@ export async function createFixture() {
   await fs.writeFile(path.join(uploadDir, 'beta.txt'), 'attachment beta');
   const sessions = { alpha:{ title:'ブラウザー統合', cwd }, beta:{ cwd:scratch }, review:{ cwd } };
   const calls = [], issued = [], watched = [];
+  const pageWatch = createPageWatch({ watch:() => ({ close() {} }) });
   const env = { lang:'ja', theme:'light' };
   const deps = {
     store:{ getAll:async () => sessions, getPrefs:async () => ({ theme:env.theme }) },
@@ -53,7 +55,7 @@ export async function createFixture() {
     ports:() => ({ main:0, pages:0, isolated:49199 }), env:() => env,
     recentFiles:id => id === 'alpha' ? [{ path:path.join(cwd, 'README.md'), source:'edited' }, { path:path.join(dataDir, 'secret.json'), source:'read' }, { path:path.join(uploadDir, 'beta.txt'), source:'attached' }] : [],
     htmlKeys:{ issue:async args => { issued.push(args); return 'fixture-key'; } },
-    watch:{ add:(...args) => watched.push(args) },
+    watch:{ add:(...args) => { watched.push(args); pageWatch.add(...args); } },
     secret:crypto.randomBytes(32),
     visualizations:id => id === 'alpha' ? [{ title:'図', url:'http://localhost:49199/viz/abc/index.html?embed=tab' }, { title:'外', url:'http://localhost:5173/viz/abc/index.html' }] : [],
     ops:async (actor, id, input) => {
@@ -77,8 +79,8 @@ export async function createFixture() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const url = (route, params = {}, id = 'alpha') => `${origin}/_pleiad/s/${id}/${route}?${new URLSearchParams(params)}`;
-  const close = async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive:true, force:true }); };
-  return { cwd, scratch, dataDir, uploadDir, origin, url, close, calls, issued, watched, env, sessions };
+  const close = async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); pageWatch.close(); await fs.rm(scratch, { recursive:true, force:true }); };
+  return { cwd, scratch, dataDir, uploadDir, origin, url, close, calls, issued, watched, env, sessions, pageWatch };
 }
 
 export default async function (t) {
@@ -98,6 +100,29 @@ export default async function (t) {
     t.ok('ページ API はタブの所有者をファイル見張りへ渡す',
       f.watched.some(args => args[1] === path.join(f.cwd, 'README.md') && args[3] === 'screen:1/page:preview')
       && f.watched.some(args => args[1] === f.cwd && args[3] === 'screen:1/page:tree'));
+    f.pageWatch.removeClient('screen:1');
+    f.pageWatch.removeClient('·');
+    const oldLocation = globalThis.location, oldFetch = globalThis.fetch, oldWindow = globalThis.window, oldMatchMedia = globalThis.matchMedia;
+    try {
+      globalThis.location = new URL(f.url('file', { path:path.join(f.cwd, 'README.md'), watchOwner:'screen:1/page:real' }));
+      globalThis.fetch = (input, init) => oldFetch(new URL(input, f.origin), init);
+      globalThis.window = { addEventListener() {} };
+      globalThis.matchMedia = () => ({ matches:false, addEventListener() {} });
+      const bridgeUrl = new URL('../../web/pages/bridge.mjs', import.meta.url); bridgeUrl.searchParams.set('test', String(Date.now()));
+      const bridge = await import(bridgeUrl.href);
+      const response = await bridge.api('preview', { path:path.join(f.cwd, 'README.md'), content:'raw' });
+      t.ok('実ページの bridge.api → api/preview が URL の watchOwner を送り、タブ終了で見張りを外す',
+        response.kind === 'markdown' && f.watched.some(args => args[1] === path.join(f.cwd, 'README.md') && args[3] === 'screen:1/page:real')
+        && f.pageWatch.stats().targets === 1);
+      f.pageWatch.remove('alpha', path.join(f.cwd, 'README.md'), 'file', 'screen:1/page:real');
+      t.ok('ページのタブを閉じると、そのタブが作った見張りが 0 件になる', f.pageWatch.stats().targets === 0);
+      globalThis.location = new URL(f.url('file', { path:path.join(f.cwd, 'README.md'), watchOwner:'screen:2/page:real' }));
+      const otherBridgeUrl = new URL('../../web/pages/bridge.mjs', import.meta.url); otherBridgeUrl.searchParams.set('test', String(Date.now() + 1));
+      const otherBridge = await import(otherBridgeUrl.href);
+      await otherBridge.api('preview', { path:path.join(f.cwd, 'README.md'), content:'raw' });
+      f.pageWatch.removeClient('screen:2');
+      t.ok('画面を閉じるとその画面のページが作った見張りも 0 件になる', f.pageWatch.stats().targets === 0);
+    } finally { globalThis.location = oldLocation; globalThis.fetch = oldFetch; globalThis.window = oldWindow; globalThis.matchMedia = oldMatchMedia; }
     for (const route of ['api/preview', 'api/raw', 'api/tree', 'api/html-key']) {
       const denied = await get(route, { path:path.join(f.dataDir, 'secret.json') });
       t.ok(`${route}: 保護されたデータを表示しない`, denied.status === 403 && denied.body.error.code === 'protected-data' && !JSON.stringify(denied.body).includes('not public'));

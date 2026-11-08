@@ -173,7 +173,9 @@ window.ready=true;
     await page.locator('.b2-control .b2-action').click();
     check('badge resume sends chromeResume for the conversation', (await page.evaluate(() => window.sent)).some(c => c.command === 'chromeResume' && c.args.sessionId === 'one'));
     await page.evaluate(() => ui.focusTab(window.openedPageTab, 'one'));
-    check('local page keeps the badge hidden (no video to return to)', await page.locator('.b2-control').isHidden());
+    check('the conversation badge stays visible on a local page while another tab is human-held', await page.locator('.b2-control').isVisible());
+    await page.evaluate(() => { document.documentElement.dataset.theme='dark'; ui.envChanged({theme:'dark'}); });
+    await shot('1280-dark-held-local');
     await page.setViewportSize({ width:360, height:720 });
     await page.evaluate(() => { chromeFixture.opened = false; ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again' }); entry.paint(); });
     // スマホの頭の行の [N]（承認済み 2026-11-08）: 入力欄の上の帯はやめ、タブの数の四角が入口
@@ -187,6 +189,7 @@ window.ready=true;
     check('the header count opens the human-held tab first', true);
     check('the held row shows II + 「あなたが操作中」 + 「AI に戻す」 under the address bar',
       await page.locator('.b2-control').isVisible() && await page.locator('.b2-control .b2-pause').count() === 1 && (await page.locator('.b2-control').textContent()).includes('あなたが操作中'));
+    await shot('360-dark-held-row');
     await page.evaluate(() => { window.sent.length = 0; });
     await page.locator('.b2-control .b2-action').click();
     check('the held row returns control to the AI', (await page.evaluate(() => window.sent)).some(c => c.command === 'chromeResume' && c.args.sessionId === 'one'));

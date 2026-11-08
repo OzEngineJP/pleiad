@@ -63,6 +63,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     if (replace && tab.page?.path && (!page.path || !samePath(tab.page.path, page.path))) release?.(tab);
     Object.assign(tab, { url:page.url, title:page.title, page:tabPage(page), origin:page.origin,
       request:{ sessionId, kind, path, vizHash:vizHash ?? hash, entry }, touched:false, dirty:false, pending:false });
+    if (page.kind === 'html') tab.keyIssuedAt = Date.now();
     tab.history.splice(++tab.position); tab.history.push(page);
     tab.canGoBack = tab.position > 0; tab.canGoForward = false;
     if (replace) { tab.histTrail = [page.url]; tab.histPos = 0; }   // 別の文書に替わる: 文書の中の履歴は張り直す（前の文書の場所を残さない）
@@ -70,7 +71,13 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     changed(tab); return tab;
   }
   function activity(tab, input = false) { tab.touched = true; if (input) tab.dirty = true; }
-  function reload(tab) { tab.pending = false; tab.touched = false; tab.dirty = false; tab.reload = (tab.reload ?? 0) + 1; changed(tab); }
+  function reload(tab) {
+    if (tab.page?.kind === 'html' && Date.now() - (tab.keyIssuedAt ?? 0) >= 24 * 60 * 60 * 1000) {
+      void reissue(tab).catch(error => onError?.(error, tab));
+      return;
+    }
+    tab.pending = false; tab.touched = false; tab.dirty = false; tab.reload = (tab.reload ?? 0) + 1; changed(tab);
+  }
   /** ファイルの表示（プレビュー/原文）。隔離の HTML は ?view= で同じ文書の別の出し方を読ませる（core/isolated-routes.mjs） */
   function view(tab, name) {
     const next = name === 'source' ? 'source' : 'preview';
@@ -159,6 +166,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     const at = new URL(opened.url, origin);
     const was = tab.url;
     applyOpened(tab, opened, at);
+    if (tab.page?.kind === 'html') tab.keyIssuedAt = Date.now();
     // 戻ってきた URL が同じなら読み直さない（鍵・見張りはサーバー側で戻った。つなぎ直しで触っていないタブを毎回読み直さない。指摘 9）
     if (isTouched(tab)) { tab.pending = true; changed(tab); }
     else if (tab.url !== was) reload(tab); else changed(tab);

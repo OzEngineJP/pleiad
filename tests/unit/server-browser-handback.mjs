@@ -1,16 +1,23 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
+import { createRequire } from 'node:module';
 import WebSocket from 'ws';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
+import { browserHandoffView } from '../../web/browser-handoff-card.mjs';
 
 export const name = 'server-browser-handback';
 export const title = 'hand_to_user → 人が触ったタブ → chromeResume（サーバー越し）: 依頼のカード・「あなたが操作中」・人のタブを全部 AI に戻す releaseAll・待ちの決着（偽の Chrome・fake バックエンド。ADR 0148・0296）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const require = createRequire(import.meta.url);
+const cardElement = (tag, className = null, textContent = '') => ({ tag, className, textContent, children:[], disabled:false,
+  append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; },
+  setAttribute() {}, removeAttribute() {}, click() { return this.onclick?.(); } });
 const until = async (cond, ms = 10000, what = '') => {
   const end = Date.now() + ms;
   for (;;) {
@@ -99,8 +106,49 @@ export default async function (t) {
     t.ok('別のタブを表示して人が触っても、そのタブもエージェントのページ操作から保護される', Boolean(blockedSecond.error), JSON.stringify(blockedSecond));
 
     // 「AI に戻す」（chromeResume）: 人の操作のタブを全部 AI に戻し、hand_to_user の待ちを決着させる
-    const resume = await c.cmd('chromeResume', { sessionId: id });
-    t.ok('chromeResume は今の状態（ターンの最中なので running）を返す', resume?.state === 'running' || resume?.state === 'idle', JSON.stringify(resume));
+    const cardCommands = [];
+    if (process.env.SERVER_BROWSER_HANDBACK_BROWSER === '1') {
+      const { chromium } = require(process.env.PW_CORE || 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core');
+      const cardSource = await fs.readFile(path.join(ROOT, 'web', 'browser-handoff-card.mjs'), 'utf8');
+      const cardServer = http.createServer(async (req, res) => {
+        if (req.url === '/browser-handoff-card.mjs') { res.setHeader('Content-Type', 'text/javascript'); res.end(cardSource); return; }
+        if (req.url === '/cmd' && req.method === 'POST') {
+          const parts = [];
+          for await (const part of req) parts.push(part);
+          const { name, args } = JSON.parse(Buffer.concat(parts).toString('utf8'));
+          cardCommands.push([name, args]);
+          try { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(await c.cmd(name, args))); }
+          catch (error) { res.writeHead(500); res.end(JSON.stringify({ message:error.message })); }
+          return;
+        }
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(`<main id="card"></main><script type="module">
+          import { browserHandoffView } from '/browser-handoff-card.mjs';
+          const el=(tag,cls,text='')=>{const node=document.createElement(tag);if(cls)node.className=cls;if(text)node.textContent=text;return node};
+          const t=key=>key==='tabs:display.resume'?'AI に戻す':key==='chat.browserHandoff.operating'?'あなたが操作中':key;
+          const view=browserHandoffView({id:${JSON.stringify(asked.id)},sessionId:${JSON.stringify(id)},browserHandoff:{...${JSON.stringify(asked.browserHandoff)},state:'operating',by:'pc'}},{el,t,cmd:async(name,args)=>{const response=await fetch('/cmd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,args})});if(!response.ok)throw new Error('command failed');return response.json()}});
+          document.querySelector('#card').append(view.body,...view.buttons);
+        </script>`);
+      });
+      await new Promise(resolve => cardServer.listen(0, '127.0.0.1', resolve));
+      let browser;
+      try {
+        browser = await chromium.launch({ headless:true, ...(process.env.PW_CHROMIUM ? { executablePath:process.env.PW_CHROMIUM } : {}) });
+        const page = await browser.newPage({ viewport:{width:1280,height:720} });
+        await page.goto(`http://127.0.0.1:${cardServer.address().port}/`);
+        await page.getByRole('button', { name:'AI に戻す' }).click();
+      } finally {
+        await browser?.close();
+        await new Promise(resolve => cardServer.close(resolve));
+      }
+    } else {
+      const card = browserHandoffView({ id:asked.id, sessionId:id, browserHandoff: { ...asked.browserHandoff, state:'operating', by:'pc' } }, {
+        el:cardElement, t:key => key === 'tabs:display.resume' ? 'AI に戻す' : key === 'chat.browserHandoff.operating' ? 'あなたが操作中' : key,
+        cmd:(name, args) => { cardCommands.push([name, args]); return c.cmd(name, args); },
+      });
+      await card.buttons.at(-1).click();
+    }
+    t.ok('カードのボタン操作は実サーバーの chromeResume を呼ぶ', cardCommands.length === 1 && cardCommands[0][0] === 'chromeResume' && cardCommands[0][1].sessionId === id, JSON.stringify(cardCommands));
     const settled = await c.waitFor(e => e.type === 'permissionSettled' && e.id === asked.id, { from, ms: 10000 });
     t.ok('戻すと複数の人のタブが全部 AI に戻り、依頼のカードが決着する', settled.allow === true, JSON.stringify(settled));
     const refreshFirst = await a.cmd('Page.navigate', { url: 'https://example.invalid/returned-first' }, attachedFirst.result?.sessionId);

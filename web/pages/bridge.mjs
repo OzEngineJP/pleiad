@@ -29,6 +29,9 @@ export const openFile = (path, kind = 'file') => {
 };
 export async function api(name, params = {}) {
   const q = new URLSearchParams(params);
+  // Each page API read belongs to the tab that opened this page. The server
+  // uses this owner to release file watches when the tab closes.
+  if (query.has('watchOwner') && !q.has('watchOwner')) q.set('watchOwner', query.get('watchOwner'));
   const res = await fetch(`${prefix}api/${name}${q.size ? `?${q}` : ''}`, { credentials:'same-origin', cache:'no-store' });
   const result = await res.json();
   if (!res.ok) throw Object.assign(new Error(result.error?.code ?? 'read-failed'), { code:result.error?.code ?? 'read-failed' });

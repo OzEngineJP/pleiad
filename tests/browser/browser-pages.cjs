@@ -25,8 +25,10 @@ await openFile('D:/work/docs/plan.md'); window.ready=true;
 </script>`;
   const pageContent = `<!doctype html><html lang="ja"><meta charset="utf-8"><link rel="stylesheet" href="/web/tokens.css"><style>body{margin:0;padding:32px 40px;color:var(--ink);background:var(--surface-paper);font:14px/1.8 system-ui}h1{font-size:24px}input{font:inherit;color:inherit;background:var(--surface-paper);border:1px solid var(--line);padding:8px}main{max-width:680px}li{padding:5px}html{height:100%}body{min-height:1300px} @media(max-width:600px){body{padding:20px}}</style><main><h1>ブラウザーをひとつに</h1><p>ファイル・フォルダー・可視化を、会話の右側で確認できます。</p><h2>ファイルを開く</h2><ul><li>左のツリーから資料を選ぶ</li><li>タブを切り替えて見比べる</li><li>変更が届いたら内容を確認する</li></ul><label>メモ <input aria-label="メモ"></label><p id="count"></p></main><script>window.loads=Date.now();addEventListener('message',e=>{if(e.data?.type==='pleiad:env')document.documentElement.dataset.theme=e.data.env.theme;const c=e.data;if(c?.type==='pleiad:page-command'){if(c.command?.type==='reload')location.reload();else if(c.command?.type==='navigate')location.replace(c.command.url)}});</script><script type="module">import {installPageActivity} from "/web/pages/activity.mjs";installPageActivity();</script>`;
   const tree = [{id:'D:/work',name:'work',kind:'directory',children:[{id:'D:/work/docs',name:'docs',kind:'directory',open:true,children:[{id:'D:/work/docs/plan.md',name:'plan.md',kind:'file'},{id:'D:/work/docs/report.html',name:'report.html',kind:'file'},{id:'D:/work/docs/notes.md',name:'notes.md',kind:'file'}]},{id:'D:/work/src',name:'src',kind:'directory'}]}];
+  const previewOwners=[];
   const server=http.createServer(async(req,res)=>{try{
     const url=new URL(req.url,'http://localhost'); let p=url.pathname;
+    if(p.endsWith('/api/preview'))previewOwners.push(url.searchParams.get('watchOwner'));
     if(p.startsWith('/_pleiad/assets/'))p=p.replace('/_pleiad/assets/','/web/');
     if(p.endsWith('/api/env')){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({theme:'dark',lang:'ja'}))}
     if(p.endsWith('/api/preview')){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({path:url.searchParams.get('path'),name:'actual.md',kind:'markdown',size:100,fetchedAt:new Date().toISOString(),text:'# Actual file page\n\n[Related](./related.md)'}))}
@@ -42,7 +44,7 @@ await openFile('D:/work/docs/plan.md'); window.ready=true;
   const page=await browser.newPage({viewport:{width:1280,height:800}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   const shot=async name=>{if(screenshots){await fs.mkdir(screenshots,{recursive:true});await page.screenshot({path:path.join(screenshots,`${name}.png`),animations:'allow'})}};
   try{
-    await page.goto(`http://127.0.0.1:${server.address().port}/fixture`);
+    await page.goto(`http://localhost:${server.address().port}/fixture`);
     try{await page.waitForFunction(()=>window.ready,null,{timeout:12000})}catch(e){throw Error(errors.join(';')||e.message)}
     await page.frameLocator('.bu-local-page:not([hidden])').locator('h1').waitFor();
     await page.locator('.bu-explorer-list .tree-row').first().waitFor();
@@ -125,6 +127,7 @@ await openFile('D:/work/docs/plan.md'); window.ready=true;
     check('navigating a local page to the web selects the Chrome tab',await page.evaluate(()=>!ui.tabsOf('one').find(t=>t.targetId==='ai-file').local&&document.querySelector('.bu-local-page:not([hidden])')===null));
     await page.evaluate(()=>openFile('D:/work/docs/actual.md'));
     await page.frameLocator('.bu-local-page:not([hidden])').locator('h1').filter({hasText:'Actual file page'}).waitFor();
+    check('the real app.mjs → bridge.api → api/preview path carries its tab owner',previewOwners.some(owner=>/^screen:one\/page:/.test(owner)));
     check('real file renderer has no nested tree and applies dark colors',await page.frameLocator('.bu-local-page:not([hidden])').locator('#tree').count()===0&&await page.frameLocator('.bu-local-page:not([hidden])').locator('html').getAttribute('data-theme')==='dark');
     await shot('360-dark-real-file');
     await page.frameLocator('.bu-local-page:not([hidden])').getByRole('link',{name:'Related',exact:true}).click();

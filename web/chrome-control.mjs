@@ -1,5 +1,5 @@
 // エージェントの Chrome の窓を誰が操作しているかの表示（docs/design-system.md「Chrome の窓」、ADR 0148・0154・0296）。
-//   - createControlBadge: アドレスバーのすぐ下の再開操作（web/browser-unify.mjs が置く。スマホは「II あなたが操作中 [AI に戻す]」の 1 行）
+//   - createControlBadge: アドレスバーのすぐ下に出す、人のタブがある間の「AI に戻す」（web/browser-unify.mjs が置く）
 //   - createChromeControlView: 一時停止中の帯（会話の中）と、映像の上に重ねる、エージェントが押した位置の輪。単体で描けて試せる。
 //     輪は web/chrome-panel.mjs の mountOverlay で映像の箱へ差し込む。撮影を断っている間の薄い幕は映像の側（web/chrome-panel.mjs の .cp-veil）が出す（二重にしない）
 //   - chromeControlStore: サーバーの chromeControl・chromeTap イベント（会話ごと）の置き場。右パネルが会話の状態を引く・聞く
