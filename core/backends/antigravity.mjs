@@ -25,6 +25,7 @@ import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
+import { writeAtomic } from "../atomic-file.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
 import { undelivered } from "./undelivered.mjs";
 import { agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
@@ -212,6 +213,8 @@ function disarmIdle(session) {
 
 /** 直近に引けたモデル一覧。`agy models` は認証が要るので、引けたときだけ覚える。 */
 let modelCache = null;
+/** 一覧の写し（AGENT_HOST_DATA/antigravity/models.json）の読み込み。全員が同じ 1 本を待つ */
+let modelsCacheLoad = null;
 
 /** ログインを 2 本同時に走らせないための印。 */
 let pendingAuth = null;
@@ -431,8 +434,29 @@ export const backend = {
    */
   async models() {
     // `agy models` は未ログインだと OAuth を待つ（headless の保証が無い）ので、受動の一覧では起こさない。
-    // 引き直しは対話的文脈（auth.status の probe / login の signedIn）だけ
+    // 引き直しは対話的文脈（auth.status の probe / login の signedIn）だけ。
+    // 受動では agy を起こさないが、前に取れた一覧の写し（認証の証拠ではない）で
+    // 再起動直後も保存済みの明示モデル・エフォート（models[id].efforts）を戻す
+    if (modelCache === null) await loadModelsCache();
     return modelCache ?? buildAgyModels([], null);
+  },
+
+  // 一覧を引けていない間（受動では `agy models` を起こさない）は、保存済みの明示モデルを
+  // 「一覧に無い」で既定へ戻さない（claude.mjs の validModel と同じ考え。不実な id は CLI が断る）。
+  // 一覧（メモリか写し）があるあとは一覧どおりに見る
+  async validModel(model) {
+    if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;
+    if (!model) return true;
+    if (modelCache === null) await loadModelsCache();
+    if (modelCache !== null) return Object.hasOwn(modelCache, model);
+    return /^[\w.\-\[\]]+$/.test(model);
+  },
+
+  // 一覧が無い（このプロセスで未取得・写しも無い）ときだけ止める。
+  // 段はモデル id に入るので、検査を省いて別の強さで黙って走らせない。一覧確認（状態を再確認）が直し口
+  async requireModelCatalog() {
+    await loadModelsCache();
+    if (modelCache === null) throw new Error(t('antigravity.models.checkNeeded'));
   },
 
   /**
@@ -440,6 +464,9 @@ export const backend = {
    * agy は 1 回ごとに会話を履歴に残すので、使い捨てのホームで起こす（antigravity-suggest.mjs）
    */
   async suggestNext({ prompt, signal }) {
+    // 未ログインが確定している間は新規起動しない（`--print` の headless 保証内でも、起動ごとに使い捨ての会話履歴を書くため。
+    // 確定していない間は従来どおり試す——保証内の機能を無用に止めない）
+    if (authGuess === 'out') return null;
     return runAgySuggestion({ prompt, model: suggestModel(await backend.models()), signal });
   },
 
@@ -1056,17 +1083,18 @@ export const backend = {
         return { loggedIn: false, account: null, unconfirmed: true, detail: t("antigravity.auth.unconfirmed") };
       }
       try {
-        rememberModels(await listModels());
+        await rememberModels(await listModels());
         authGuess = 'in';
         return { loggedIn: true, account: t("antigravity.auth.account"), detail: t("antigravity.auth.detail") };
       } catch (err) {
         const message = String(err?.message ?? err);
-        if (/sign in/i.test(message)) {
+        if (AUTH_REQUIRED.test(message)) {
           authGuess = 'out';
           return { loggedIn: false, account: null, detail: t("antigravity.auth.notLoggedIn") };
         }
-        // 落ちた理由が分からないときは「ログインしていない」と断定しない（見通しも変えない）
-        return { loggedIn: false, account: null, detail: message.slice(0, 200) };
+        // 落ちた理由が分からないときは「ログインしていない」と断定しない（見通しも変えない）。
+        // 生の stderr（URL・パスを含みうる）は detail に出さず、確かめられなかった固定の文言だけ
+        return { loggedIn: false, account: null, unconfirmed: true, detail: t("antigravity.auth.unconfirmed") };
       }
     },
 
@@ -1148,7 +1176,7 @@ const AGY_MODELS_MAX_CHARS = 128 * 1024;
 /** ログイン済みか。`agy models` が通れば通っている（資格情報は OS の資格情報ストアにあり読めない）。 */
 async function signedIn() {
   try {
-    rememberModels(await listModels());
+    await rememberModels(await listModels());
     authGuess = 'in';
     return true;
   } catch {
@@ -1261,10 +1289,63 @@ export async function stopHeldAgy() {
   }
 }
 
-/** 引けた一覧だけを覚える（失敗は覚えない。前に引けた一覧を残す） */
-function rememberModels(list) {
+/** 引けた一覧だけを覚える（失敗は覚えない。前に引けた一覧を残す）。写しも置き換える */
+async function rememberModels(list) {
   if (!list?.rows?.length) return;
-  modelCache = buildAgyModels(list.rows, list.defaultLabel);
+  modelCache = buildAgyModels(list.rows, list.defaultLabel);   // lazy load の中の古い写しは、代入前の null 判定で上書きされない
+  await persistModelsCache(list);
+}
+
+// ---- 一覧の写し（AGENT_HOST_DATA/antigravity/models.json） ---------------------------
+// 明示の probe・ログインで `agy models` が取れたときだけ書く補助の控え。再起動のあと `agy models` を
+// 起こさずに models()（id・段の efforts）を戻し、保存済みの明示モデルとエフォートを失わないため。
+// **ログインの証拠には使わない**（写しがあるのは「昔取れた」だけ。authGuess は動かさない）。
+// 行数・各 id/label の長さ・ファイルの大きさに固定の上限を持つ 1 ファイル（表・形式番号は増やさない）
+const MODELS_CACHE_MAX_ROWS = 64;
+const MODELS_CACHE_MAX_ID = 128;
+const MODELS_CACHE_MAX_LABEL = 256;
+const MODELS_CACHE_MAX_BYTES = 64 * 1024;
+
+function modelsCacheFile() { return path.join(transcript.dir(), 'models.json'); }
+
+/** 写しの中身の検査。形・長さの合わないものは「写しが無い」と同じに扱う（破損で壊れないように） */
+function cacheRowsOf(raw) {
+  if (!raw || !Array.isArray(raw.rows)) return null;
+  const rows = raw.rows.slice(0, MODELS_CACHE_MAX_ROWS)
+    .filter((r) => r && typeof r.id === 'string' && r.id.length > 0 && r.id.length <= MODELS_CACHE_MAX_ID
+      && typeof r.label === 'string' && r.label.length > 0 && r.label.length <= MODELS_CACHE_MAX_LABEL)
+    .map((r) => ({ id: r.id, label: r.label }));
+  if (!rows.length) return null;
+  return { rows, defaultLabel: typeof raw.defaultLabel === 'string' && raw.defaultLabel.length > 0 && raw.defaultLabel.length <= MODELS_CACHE_MAX_LABEL ? raw.defaultLabel : null };
+}
+
+function loadModelsCache() {
+  modelsCacheLoad ??= (async () => {
+    try {
+      const file = modelsCacheFile();
+      if ((await fs.promises.stat(file)).size > MODELS_CACHE_MAX_BYTES) return;   // 上限超えは読まない
+      const cached = cacheRowsOf(JSON.parse(await fs.promises.readFile(file, 'utf8')));
+      if (!cached) return;
+      const built = buildAgyModels(cached.rows, cached.defaultLabel);
+      // 読み込みの途中で明示の probe が新しい一覧を入れても、古い写しで上書きしない（代入前に null を確かめる）
+      if (Object.keys(built).length > 1 && modelCache === null) modelCache = built;   // '' だけなら写し無しと同じ
+    } catch { /* 無い・壊れている → 空のまま */ }
+  })();
+  return modelsCacheLoad;
+}
+
+async function persistModelsCache(list) {
+  try {
+    const rows = (list.rows ?? []).slice(0, MODELS_CACHE_MAX_ROWS)
+      .map((r) => ({ id: String(r.id ?? '').slice(0, MODELS_CACHE_MAX_ID), label: String(r.label ?? '').slice(0, MODELS_CACHE_MAX_LABEL) }))
+      .filter((r) => r.id && r.label);
+    if (!rows.length) return;
+    const defaultLabel = typeof list.defaultLabel === 'string' ? list.defaultLabel.slice(0, MODELS_CACHE_MAX_LABEL) : null;
+    const data = JSON.stringify({ rows, defaultLabel });
+    if (Buffer.byteLength(data, 'utf8') > MODELS_CACHE_MAX_BYTES) return;
+    await fs.promises.mkdir(transcript.dir(), { recursive: true });
+    await writeAtomic(modelsCacheFile(), data);
+  } catch { /* 写しが書けなくても動きは変わらない */ }
 }
 
 // `agy models` は受動では引き直さない（未ログインだと OAuth を待つ。headless 保証が無い）。

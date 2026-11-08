@@ -99,6 +99,11 @@ let authorized = !needsAuth;
 // `agy models` は別のサブコマンド（ヘッドレスではない）。ログイン判定がここを通る。
 // 本物は未ログインだと「Please sign in …」で落ち、ログイン済みなら 1 行 1 モデルを出す
 if (argv.includes("models")) {
+  // 未認証以外の失敗の再現（タイムアウト・内部エラーなど、「Please sign in」でない落ち方）
+  if (process.env.FAKE_AGY_MODELS_FAIL === "1") {
+    process.stderr.write("Error: agy internal failure while listing models https://accounts.example.invalid/" + NL);
+    process.exit(1);
+  }
   if (process.env.FAKE_AGY_NEEDS_AUTH === "1" && !signedIn()) {
     process.stderr.write("Error: Please sign in to view available models. Launch the CLI without arguments to sign in." + NL);
     process.exit(1);

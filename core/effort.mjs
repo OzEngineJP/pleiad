@@ -58,7 +58,11 @@ export async function effortCapability(backend, model = '', cwd) {
 
 export async function validateEffort(backend, value, model, cwd, endpoint = null) {
   if (value === '') return value;
-  if (typeof value !== 'string' || !Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value))
+  if (typeof value !== 'string') throw new Error(t('effort.unavailable'));
+  if (!Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value)) {
+    // 一覧そのものが無い backend は「分からない」で止める（モデル id に段が入ると別の強さで動くため。既知の一覧での未対応は従来どおり）
+    if (!endpoint) await backend.requireModelCatalog?.(cwd);
     throw new Error(t('effort.unavailable'));
+  }
   return value;
 }
