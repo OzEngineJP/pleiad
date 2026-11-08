@@ -55,7 +55,7 @@
       "same": "This conversation already uses \"{{name}}\" ({{dir}})."
     },
     "handToUser": {
-      "description": "Hand browser control to the user and wait until they hand it back. Call it, without typing anything yourself, right before login, CAPTCHA, two-factor authentication, payment or entering personal information. Also call it when agent-browser fails because Chrome is waiting for permission or the user is operating. It returns when the user hands control back (\"Return to AI\"). If it returns \"still waiting\", call it again to keep waiting (or proceed without Chrome if you can).",
+      "description": "Hand browser control to the user and wait. Call it, without typing anything yourself, right before login, CAPTCHA, two-factor authentication, payment or entering personal information. Also call it when agent-browser fails because Chrome is waiting for permission or the user is operating. The call returns when the user presses \"Return to AI\" in Pleiad. If it returns \"still waiting\", call it again to keep waiting (or proceed without Chrome if you can).",
       "messageDescription": "What to tell the user (what you need them to do, e.g. log in to example.com).",
       "resumed": "The user finished and handed control back ({{detail}}). The page has changed. Start over from agent-browser snapshot -i.",
       "connected": "Chrome is connected. Run agent-browser again.",

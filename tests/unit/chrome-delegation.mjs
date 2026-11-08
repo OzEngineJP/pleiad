@@ -75,9 +75,10 @@ export default async function (t) {
   assert.deepEqual(taskGroups.tasks(taskGroup, 'b').map(task => task.current), [false, true], '操作する窓が次の子に替われば current も替わる');
   await handoffCard.buttons.at(-1).onclick();
   handoffCard.update({ state: 'operating' });
+  await handoffCard.buttons.at(-2).onclick();
   await handoffCard.buttons.at(-1).onclick();
-  assert.deepEqual(commands, [['chromeTakeOver', { sessionId: 'a' }], ['openScreen', 'a']]);
-  t.ok('親の 1 枚のカードに 2 つの作業を並べ、引き継ぎと「画面を開く」を子の会話へ向ける', true);
+  assert.deepEqual(commands, [['chromeTakeOver', { sessionId: 'a' }], ['openScreen', 'a'], ['chromeResume', { sessionId: 'a' }]]);
+  t.ok('親の 1 枚のカードは子の窓を開き、人の操作中は画面を開く・AI に戻すを別々に実行する', true);
 
   let chromeLine = null;
   const card = { querySelector(selector) { return selector === ':scope > .tc-task-chrome' ? chromeLine : selector === ':scope > .tc-details' ? { after(line) { chromeLine = line; } } : null; } };

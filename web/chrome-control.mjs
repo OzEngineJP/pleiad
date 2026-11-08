@@ -19,7 +19,7 @@ export function ensureBrowserControlStyles() {
 .b2-actions{display:flex;justify-content:flex-end;gap:8px}.b2-action.primary{color:var(--ink-blue);background:var(--fill-blue,var(--surface-2))}
 .b2-action:hover{background:var(--surface-2)}
 .b2-pause,.b2-grow{display:none}
-/* スマホは「II あなたが操作中 [AI に戻す]」の 1 行（承認済み 2026-11-08。temporary/mockups/phone-browser-header.html の .bu-held） */
+/* On phones, use one row: pause mark, “You are in control”, and “Return to AI” (approved 2026-11-08; temporary/mockups/phone-browser-header.html .bu-held). */
 @media(max-width:600px){
  .b2-control{justify-content:flex-start;gap:8px;padding:0 6px 0 14px;min-height:44px;box-sizing:border-box;font-size:13px;color:var(--ink);border-bottom:1px solid var(--line)}
  .b2-control .b2-pause{display:block;position:relative;width:14px;height:14px;flex:none}

@@ -63,7 +63,7 @@ const css = `
 .bu-tight>.bu-forward:disabled{display:none}
 .bu-mobile>.bu-icon:not(.bu-conversation):not(.bu-more){display:none}.bu-mobile .bu-conversation{display:inline-flex}.bu-mobile .bu-count{display:block;width:20px;height:20px;padding:0;border:1.7px solid var(--ink-weak);margin:0 7px;border-radius:4px;font-size:12px;line-height:16px}.bu-phone-filename{font-weight:600}
 .bu-mobile .bu-omni{height:34px;margin:0 2px}.bu-mobile .bu-crumbs{font-size:13px;text-overflow:ellipsis;display:block;line-height:34px}
-/* 頭の行の [N]（.entry-tabn）と同じ規則: 2 桁は 11px・字間 -0.3px、100 以上は ∞（モック 02） */
+/* Match the header tab count: 11px and -0.3px letter spacing for two digits; infinity from 100 tabs (mockup 02). */
 .bu-mobile .bu-count.two{font-size:11px;letter-spacing:-.3px}.bu-mobile .bu-count.sym{font-size:15px;line-height:15.6px}
 .bu-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;background:var(--surface-0);padding:16px;overflow:auto;max-height:70dvh}
 .bu-card{position:relative;min-width:0;overflow:hidden;border-radius:var(--r-m);background:var(--surface-paper)}.bu-card.on{outline:2px solid var(--line-blue)}

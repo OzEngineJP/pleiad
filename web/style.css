@@ -2410,10 +2410,10 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (max-width:600px){
   main > .top #browserEntry{display:inline-flex!important}
   main > .top #browserEntry > svg.i{display:none}
-  #browserEntry .entry-tabn{display:grid;place-items:center;width:20px;height:20px;border:1.7px solid var(--ink-weak);border-radius:4px;font-size:12px;line-height:16px;color:var(--ink)}
+  #browserEntry .entry-tabn{display:grid;place-items:center;width:20px;height:20px;border:1.7px solid var(--line);border-radius:4px;font-size:12px;line-height:16px;color:var(--ink)} /* allow-border: タブ数の四角は数字の字形 */
   #browserEntry .entry-tabn.two{font-size:11px;letter-spacing:-.3px}
   #browserEntry .entry-tabn.sym{font-size:15px;line-height:15.6px}
-  #browserEntry.on .entry-tabn{border-color:var(--ink-blue);color:var(--ink-blue)}
+  #browserEntry.on .entry-tabn{border-color:var(--line-blue);color:var(--ink-blue)} /* allow-border: 選択中のタブ数の四角は数字の字形 */
   main > .top .entry-run.run,main > .top .entry-paused{top:3px;right:3px}
 }
 
