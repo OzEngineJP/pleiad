@@ -34,13 +34,13 @@ export function tabIcon(tab) {
   return icon;
 }
 
-/** Accessible tab list with one roving keyboard focus. */
-export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {},
+/** Accessible tab list with one roving keyboard focus. externalNew: ＋を列の外へ出す（右端に固定する用に add を返す） */
+export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = () => {}, onMenu = () => {}, externalNew = false,
   label = tab => tab.title || tab.page?.path || tab.url || t('tabs:strip.new') } = {}) {
   const root = document.createElement('div'); root.className = 'bu-tabs'; root.setAttribute('role', 'tablist'); root.setAttribute('aria-label', t('tabs:strip.label'));
   const add = browserButton('plus', t('tabs:strip.new'), onNew); add.classList.add('bu-new');
   let tabs = [], selected = null;
-  function fit() { root.classList.toggle('bu-favicons', (root.clientWidth - 46) / Math.max(tabs.length, 1) < 64); }
+  function fit() { root.classList.toggle('bu-favicons', (root.clientWidth - (externalNew ? 14 : 46)) / Math.max(tabs.length, 1) < 64); }
   function update(next = [], current = null) {
     tabs = next; selected = current;
     const focused = root.contains(document.activeElement) ? document.activeElement.closest('[data-target]')?.dataset.target : null;
@@ -52,11 +52,11 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       pick.title = label(tab);
       const icon = tabIcon(tab);
       const title = document.createElement('span'); title.className = 'bu-tab-title'; title.textContent = pick.title;
-      // エージェントの印（inapp-browser.md。操作中は弧、そうでなければ点）
-      if (tab.agent) {
+      // エージェントの印（inapp-browser.md。操作中だけ弧。最後に操作した idle の点は出さない）
+      if (tab.agent && tab.agentRunning) {
         const mark = document.createElement('span'); mark.className = 'bu-agent'; mark.setAttribute('aria-hidden', 'true');
-        mark.append(tab.agentRunning ? runMark() : Object.assign(document.createElement('span'), { className: 'cp-sw-dot' }));
-        pick.setAttribute('aria-label', `${pick.title}, ${t(tab.agentRunning ? 'browser.chromeWindow.chipAgentRunning' : 'browser.chromeWindow.chipAgentIdle', { name: tab.agentName ?? 'Claude' })}`);
+        mark.append(runMark());
+        pick.setAttribute('aria-label', `${pick.title}, ${t('browser.chromeWindow.chipAgentRunning', { name: tab.agentName ?? 'Claude' })}`);
         pick.append(icon, mark, title);
       } else pick.append(icon, title);
       pick.onclick = () => onPick(tab);
@@ -72,9 +72,9 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       };
       const close = browserButton('close', t('tabs:strip.close', { title: pick.title }), () => onClose(tab)); close.classList.add('bu-tab-close');
       item.classList.toggle('on', tab.targetId === selected); item.append(pick, close); return item;
-    }), add);
+    }), ...(externalNew ? [] : [add]));
     fit(); if (focused) [...root.querySelectorAll('[data-target]')].find(row => row.dataset.target === focused)?.querySelector('[role=tab]')?.focus();
   }
   const observer = new ResizeObserver(fit); observer.observe(root);
-  return { root, update, destroy() { observer.disconnect(); } };
+  return { root, add, update, destroy() { observer.disconnect(); } };
 }

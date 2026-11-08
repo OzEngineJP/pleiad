@@ -579,7 +579,7 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 /* 紙の角。左上は脇の面に、右上は並べたプレビューの面に接するので丸める。閉じても脇の面（レール）が残るので角は変わらない。
    窓の縁に接する角は立てる（丸めると縁に欠けが出る） */
 :root.desktop body > main{--paper-tl:var(--r-l);--paper-tr:0px;border-radius:var(--paper-tl) var(--paper-tr) 0 0}
-:root.desktop body.file-preview-open > main{--paper-tr:var(--r-l)}
+:root.desktop body.file-preview-open > main{--paper-tr:0px}
 /* 帯は脇と同じ面のまま。閉じても左の 52px にレールが残るので、帯・紙の角は開いているときと同じにする。
    --bar-end は帯の右端の色。窓のボタンの地として client.mjs の paintTitleBar が読んで OS へ送る */
 .titlebar{--bar-end:var(--surface-0)}

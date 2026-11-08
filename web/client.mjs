@@ -10666,7 +10666,6 @@ async function takeOverOnDevice(id, { fromPc = false } = {}) {
 }
 chromePanel = setupChromePanel({ cmd, preview: filePreview,
   session: () => state.current ?? null, windows: chromeWindows,
-  closeRisk: id => closeRiskOf({ state: chromeControlStore.get(id).state, waiting: handoffWaiting(id) }),
   // PC で操作している間のリモートの端末: 幕に「この端末で操作する」（PC の窓を隠して端末へ移す）
   canOperateHere: id => Boolean(window.plyRemote) && chromeControlStore.get(id).state === 'paused' && chromeControlStore.get(id).by === 'pc',
   operateHere: id => takeOverOnDevice(id, { fromPc: true }),

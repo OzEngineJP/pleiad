@@ -18,6 +18,7 @@
     "new": "New tab",
     "close": "Close {{title}}",
     "closeTab": "Close tab",
+    "closeList": "Close tab list",
     "open_one": "Open browser ({{count}} tab)",
     "open_other": "Open browser ({{count}} tabs)"
   },
