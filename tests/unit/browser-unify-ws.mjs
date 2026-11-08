@@ -7,8 +7,8 @@ import { COMMANDS } from '../../core/protocol.mjs';
 import { createHtmlKeys } from '../../core/html-keys.mjs';
 import { registry } from '../../core/ops/index.mjs';
 import { addressCrumbs } from '../../web/address-bar.mjs';
-import { startServer } from '../lib/server.mjs';
-import { open } from '../lib/ws-client.mjs';
+import { startServer, ROOT } from '../lib/server.mjs';
+import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'browser-unify-ws';
 export const title = 'Conversation tab privacy, address policy and human navigation';
@@ -265,6 +265,34 @@ export default async function(t) {
         t.ok('address requests always receive an explicit response', Array.isArray(address.value?.suggestions));
         await screen.cmd('watchSession', {sessionId:'one'});
         t.ok('real server sends a reconnect snapshot to the watching socket', screen.events.some(event => event.type === 'tab:info' && event.sessionId === 'one' && event.reset));
+        // 実サーバーの辿り方（core/server.mjs の descendants = 直接の子だけ・delegation.mjs と同じ確かめ）:
+        // 親を見ている画面へは直接の子のタブが届き、孫・関係の無い会話は届かない
+        const ply = (name, args) => `ply:${JSON.stringify({ name, arguments: args })}`;
+        const run = async args => {
+          for (let i = 0; i < 100; i++) {
+            try { return await screen.runTurn(args); }
+            catch (error) { if (!String(error.message).includes('切り替え中') || i === 99) throw error; await sleep(50); }
+          }
+        };
+        const tasksOf = async parent => {
+          const rows = await screen.cmd('agentTasks');
+          return rows.filter(row => row.parentSessionId === parent && row.sessionId);
+        };
+        const parent = (await run({ backend:'fake', cwd:ROOT, prompt:'echo:parent' })).sessionId;
+        await run({ sessionId:parent, prompt:ply('ply_delegate', { kind:'mechanical', backend:'fake', task:'echo:child', title:'child' }) });
+        let child = null;
+        for (let i = 0; i < 200 && !child; i++) { child = (await tasksOf(parent))[0] ?? null; if (!child) await sleep(50); }
+        await run({ sessionId:parent, prompt:ply('ply_task_send', { taskId:child.taskId,
+          message:ply('ply_delegate', { kind:'mechanical', backend:'fake', task:'echo:grandchild', title:'grandchild' }) }) });
+        let grandchild = null;
+        for (let i = 0; i < 200 && !grandchild; i++) { grandchild = (await tasksOf(child.sessionId))[0] ?? null; if (!grandchild) await sleep(50); }
+        const other = (await run({ backend:'fake', cwd:ROOT, prompt:'echo:other' })).sessionId;
+        const from = screen.events.length;
+        await screen.cmd('watchSession', { sessionId:parent });
+        const resets = screen.events.slice(from).filter(event => event.type === 'tab:info' && event.reset).map(event => event.sessionId);
+        t.ok('実サーバー: 直接の子だけが届き、孫・無関係な会話は届かない',
+          resets.includes(parent) && resets.includes(child.sessionId) && !resets.includes(grandchild.sessionId) && !resets.includes(other),
+          `resets=${JSON.stringify(resets)} parent=${parent} child=${child.sessionId} grandchild=${grandchild.sessionId} other=${other}`);
       } finally { screen?.close(); await server.stop(); }
     }
   } finally { ws?.close(); await fs.rm(root, { recursive:true, force:true }); }

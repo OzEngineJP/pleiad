@@ -4976,6 +4976,7 @@
       "closeRiskHuman": "You have taken over this window. Closing it ends what you are doing midway.",
       "closeRiskWaiting": "This window is waiting for you (to sign in, for example). If you close it, the request goes unanswered.",
       "pinFailed": "Couldn't switch windows.",
+      "reasons": { "no-tab": "That tab has already been closed.", "no-window": "This conversation has no Chrome window yet.", "not-watching": "You aren't viewing the browser. Open it again.", "operating": "Can't switch while someone is operating." },
       "windowNumber": "Window {{n}}", "switchLabel": "Windows", "convSwitchLabel": "Conversations and windows",
       "thisConversation": "This conversation", "childUntitled": "Child conversation", "childWaiting": "Waiting for you",
       "follow": "Follow the agent", "pinned": "Pinned",

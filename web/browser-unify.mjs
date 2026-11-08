@@ -1,4 +1,4 @@
-import { t } from './i18n.mjs';
+import { t, has } from './i18n.mjs';
 import { createTabStrip, browserButton, browserIcon, tabIcon } from './tab-strip.mjs';
 import { createWindowSwitch } from './chrome-window-switch.mjs';
 import { createAddressBar, hasFileViews } from './address-bar.mjs';
@@ -79,14 +79,14 @@ const css = `
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
 .bu-agent{display:grid;place-items:center;flex:none;width:14px;height:14px}
 .bu-agent .run{transform:scale(.75)}
-.cp-sw{display:grid;grid-template-rows:0fr;visibility:hidden;flex:none;transition:grid-template-rows var(--dur) var(--ease-out),visibility 0s linear var(--dur)}
+.cp-sw{display:grid;grid-template-rows:0fr;visibility:hidden;flex:none;min-width:0;transition:grid-template-rows var(--dur) var(--ease-out),visibility 0s linear var(--dur)}
 .cp-sw[data-open]{grid-template-rows:1fr;visibility:visible;transition-delay:0s;background:var(--bu-frame)}
-.cp-sw-in{overflow:hidden;min-height:0}
-.cp-sw-row{display:flex;align-items:center;gap:4px;padding:0 8px 0 12px}
-.cp-sw-list{position:relative;display:flex;gap:2px;flex:1;min-width:0;padding:3px;overflow-x:auto;scrollbar-width:none;border-radius:var(--r-m);background:var(--surface-1)}
+.cp-sw-in{overflow:hidden;min-height:0;min-width:0}
+.cp-sw-row{display:flex;align-items:center;gap:4px;min-width:0;height:40px;padding:0 6px 0 8px}
+.cp-sw-list{position:relative;display:flex;gap:2px;flex:1;min-width:0;padding:2px;overflow-x:auto;scrollbar-width:none;border-radius:999px;background:var(--surface-3)}
 .cp-sw-list::-webkit-scrollbar{display:none}
-.cp-sw-pad{position:absolute;left:0;top:3px;width:44px;height:24px;border-radius:var(--r-m);background:var(--surface-paper);pointer-events:none;transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
-.cp-sw-chip{position:relative;flex:none;display:flex;align-items:center;justify-content:center;gap:2px;width:44px;height:24px;padding:0;border:0;border-radius:var(--r-m);background:none;color:var(--ink-weak);font:inherit;font-size:11px;cursor:pointer;transition:width var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.cp-sw-pad{position:absolute;left:0;top:2px;width:44px;height:24px;border-radius:999px;background:var(--surface-paper);box-shadow:0 1px 2px var(--shadow);pointer-events:none;transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
+.cp-sw-chip{position:relative;flex:none;display:flex;align-items:center;justify-content:center;gap:2px;min-width:44px;height:24px;padding:0;border:0;border-radius:999px;background:none;color:var(--ink-weak);font:inherit;font-size:12px;cursor:pointer;transition:opacity var(--dur) var(--ease-out),color var(--dur-fast) var(--ease-out)}
 .cp-sw-chip:hover:not(:disabled){color:var(--ink)}
 .cp-sw-chip[aria-selected="true"]{color:var(--ink)}
 .cp-sw-chip:disabled{cursor:default}
@@ -99,7 +99,7 @@ const css = `
 .cp-sw-chip[data-agent][data-idle] .cp-sw-ag::after{content:"";display:block;width:6px;height:6px;border-radius:50%;color:var(--ink-weak);background:currentColor}
 .cp-sw-dot{display:block;width:6px;height:6px;border-radius:50%;color:var(--ink-weak);background:currentColor}
 .cp-sw-dot.wait{color:var(--ink-mark)}
-.cp-sw-chip.cp-sw-conv{width:auto;max-width:160px;padding:0 8px;gap:5px}
+.cp-sw-chip.cp-sw-conv{min-width:0;width:auto;max-width:160px;padding:0 10px;gap:5px}
 .cp-sw-chip + .cp-sw-conv{margin-left:5px}
 .cp-sw-conv[data-on]{color:var(--ink)}
 .cp-sw-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
@@ -109,16 +109,14 @@ const css = `
 .cp-sw-chip.flash{animation:cp-sw-flash 700ms var(--ease-out)}
 @keyframes cp-sw-flash{0%{box-shadow:0 0 0 3px var(--line-blue)}100%{box-shadow:0 0 0 3px transparent}}
 .cp-sw[data-paused] .cp-sw-chip:not(.cp-sw-conv){opacity:.45}
-.cp-sw-follow{flex:none;position:relative;width:30px;height:30px;color:var(--ink-weak)}
+.cp-sw-follow{flex:none;position:relative;width:32px;height:32px;color:var(--ink-weak)}
 .cp-sw-follow svg{width:17px;height:17px}
 .cp-sw-follow.on{color:var(--ink-blue)}
 .cp-sw-follow[data-away]{color:var(--ink)}
 .cp-sw-follow.flash::after{content:"";position:absolute;inset:0;border-radius:50%;animation:cp-sw-flash 700ms var(--ease-out);pointer-events:none}
 @media (pointer:coarse),(max-width:520px){
-  .cp-sw-chip,.cp-sw-pad{height:34px}
-  .cp-sw-chip{width:50px}
-  .cp-sw-pad{width:50px}
-  .cp-sw-chip.cp-sw-conv{width:auto}
+  .cp-sw-chip,.cp-sw-pad{height:30px}
+  .cp-sw-chip{min-width:50px}
   .cp-sw-follow{width:40px;height:40px}
 }
 @media (prefers-reduced-motion:reduce){
@@ -183,6 +181,9 @@ export function createBrowserUnify(deps = {}) {
   const holderOf = (sessionId, targetId) => holderStore.holderOf(sessionId, targetId);
   const phoneQuery = matchMedia('(max-width: 600px)');
   const failed = error => notify(t(`tabs:address.reasons.${error?.code ?? error?.message}`, { defaultValue:t('tabs:address.failed') }));
+  /** 窓・タブの切り替えの失敗。サーバーの code（no-tab などの生の字）を画面へ出さず、理由の文か既定の文にする */
+  // i18n-dynamic: browser.chromeWindow.reasons.
+  const pinFailed = error => { const key = `browser.chromeWindow.reasons.${error?.code ?? error?.message}`; notify(has(key) ? t(key) : t('browser.chromeWindow.pinFailed')); };
   /**
    * タブの ⋮ と右クリックの今のタブの操作。ファイル・フォルダーのページはファイルの操作（web/file-preview.mjs の tabMenu）、
    * Web のページは「既定のブラウザーで開く」（URL）。リモートの画面では外で開く操作を出さない（ADR 0010。モック v6 の 9）
@@ -303,7 +304,7 @@ export function createBrowserUnify(deps = {}) {
       const pin = { windowId:tab.windowId ?? null, tabId:tab.chromeId ?? tab.targetId };
       const pending = chrome()?.pinTab ? chrome().pinTab(selection.sessionId, pin) : cmd('chromePinWindow', { sessionId:selection.sessionId, ...pin });
       paint(); await pending;
-    } catch (error) { notify(error?.message || t('browser.chromeWindow.pinFailed')); }
+    } catch (error) { pinFailed(error); }
   }
   async function display(mode) {
     let tab = current(); if (!tab) return;
@@ -420,7 +421,7 @@ export function createBrowserUnify(deps = {}) {
     active = null;
     if (id !== session()) chrome()?.open?.(null, { target: id });
     const pin = { windowId, tabId: null };
-    (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
+    (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => pinFailed(error));
   }
   /** 会話の題のチップ: 会話は移らず、映像だけその会話の Chrome へ替える */
   function onPickConv(id) { if (id && id !== session()) { active = null; chrome()?.open?.(null, { target: id }); } }
@@ -430,13 +431,13 @@ export function createBrowserUnify(deps = {}) {
     if (!id || switchDisabled(id)) return;
     if (pinnedAny(id)) {
       const pin = { windowId: null, tabId: null };
-      (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
+      (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => pinFailed(error));
       switcher.flashFollow();
     } else {
       const shown = shownWindow(id);
       if (shown == null) return;
       const pin = { windowId: shown, tabId: null };
-      (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
+      (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => pinFailed(error));
     }
   }
   const switcher = createWindowSwitch({ t, getName: () => deps.agentName?.(session()) ?? 'Claude', onPick, onPickConv, onFollow });
@@ -719,7 +720,7 @@ export function createBrowserUnify(deps = {}) {
         else {
           const pin = { windowId:held.windowId ?? null, tabId:held.chromeId ?? held.targetId };
           try { await (chrome()?.pinTab ? chrome().pinTab(sessionId, pin) : cmd('chromePinWindow', { sessionId, ...pin })); }
-          catch (error) { notify(error?.message || t('browser.chromeWindow.pinFailed')); }
+          catch (error) { pinFailed(error); }
         }
         open(); return;
       }
@@ -735,7 +736,7 @@ export function createBrowserUnify(deps = {}) {
         else {
           const pin = { windowId:tab.windowId ?? null, tabId:tab.chromeId ?? tab.targetId };
           try { await (chrome()?.pinTab ? chrome().pinTab(sessionId, pin) : cmd('chromePinWindow', { sessionId, ...pin })); }
-          catch (error) { notify(error?.message || t('browser.chromeWindow.pinFailed')); }
+          catch (error) { pinFailed(error); }
         }
         open(); return;
       }
@@ -743,10 +744,12 @@ export function createBrowserUnify(deps = {}) {
       else await cmd('chromeNavigate', { sessionId, action:'new' }).catch(failed);
       open();
     },
-    /** 見ている会話が替わった。ビューアを開いたままタブの無い会話へ移ったときも空のタブを作る */
+    /** 見ている会話が替わった。欄を開いたままタブの無い会話へ移ったときだけ、空のタブを作る（inapp-browser.md 32 行） */
     sessionChanged(id) {
       if (!enabled || typeof id !== 'string' || !id) return;
-      if (!allTabs(id).length && !windowsTbl?.has?.(id)) void cmd('watchSession', { sessionId:id }).catch(() => {}).then(() => openInput(null, id).catch(() => {}));
+      const needTab = () => chrome()?.isOpen?.() === true && !allTabs(id).length && !windowsTbl?.has?.(id);
+      // watchSession の返事を待ってからもう一度確かめる（先に tab:info の棚が届くことがある）
+      if (needTab()) void cmd('watchSession', { sessionId:id }).catch(() => {}).then(() => { if (needTab()) return openInput(null, id).catch(() => {}); });
       paint();
     },
     /** 会話の一覧（上の列の題・子の窓）が変わった。描き直す */

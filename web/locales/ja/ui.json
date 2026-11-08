@@ -4865,6 +4865,7 @@
       "closeRiskHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。",
       "closeRiskWaiting": "このウィンドウは、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。",
       "pinFailed": "ウィンドウを切り替えられませんでした。",
+      "reasons": { "no-tab": "そのタブはもう閉じられています。", "no-window": "この会話にはまだ Chrome のウィンドウがありません。", "not-watching": "ブラウザーを見ていません。開き直してください。", "operating": "操作している間は切り替えられません。" },
       "windowNumber": "ウィンドウ {{n}}", "switchLabel": "ウィンドウ", "convSwitchLabel": "会話とウィンドウ",
       "thisConversation": "この会話", "childUntitled": "子の会話", "childWaiting": "依頼待ち",
       "follow": "エージェントを追う", "pinned": "固定中",

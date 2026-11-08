@@ -28,15 +28,16 @@ window.holderStore=createTabHolderStore();
 window.windowTable=createWindowTable();
 window.convRows=[];
 window.waitingIds=new Set(); window.deviceOpIds=new Set();
-window.chromeFixture={sessionId:'one',tabId:'file',opened:false,pins:[],scState:null,isOpen(){return this.opened},open(el,opts={}){this.opened=true;(this.opens??=[]).push(opts.target??null);if(opts.target)this.sessionId=opts.target},async pinTab(id,pin){this.pins.push({sessionId:id,...pin});sent.push({command:'chromePinWindow',args:{sessionId:id,...pin}});if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});if(pin.tabId)chromeFixture.tabId=pin.tabId;chromeFixture.change?.({type:'state'})},cancelTabPin(){this.pins.push({cancelled:true});sent.push({command:'chromePinWindow',args:{sessionId:this.sessionId,windowId:null,tabId:null}})},get screencastState(){return this.scState},get hold(){return null},mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true;this.opened=false}};
-window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,controlStore:{get:id=>({state:(window.agentStates?.[id])??window.agentState??'idle',by:window.agentBy??null})},holderStore,onTabsChange:()=>window.entry?.paint(),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
+window.chromeFixture={sessionId:'one',tabId:'file',opened:false,pins:[],scState:null,isOpen(){return this.opened},open(el,opts={}){this.opened=true;(this.opens??=[]).push(opts.target??null);if(opts.target)this.sessionId=opts.target},async pinTab(id,pin){this.pins.push({sessionId:id,...pin});sent.push({command:'chromePinWindow',args:{sessionId:id,...pin}});if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});if(pin.tabId)chromeFixture.tabId=pin.tabId;chromeFixture.change?.({type:'state'})},cancelTabPin(){this.cancelTabPinCalls=(this.cancelTabPinCalls??0)+1},get screencastState(){return this.scState},get hold(){return null},mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true;this.opened=false}};
+window.st={current:'one',cwd:'D:/dev/pleiad'};
+window.ui=createBrowserUnify({state:window.st,chrome:()=>chromeFixture,controlStore:{get:id=>({state:(window.agentStates?.[id])??window.agentState??'idle',by:window.agentBy??null})},holderStore,onTabsChange:()=>window.entry?.paint(),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
   windows:windowTable,conversations:()=>window.convRows,waiting:id=>window.waitingIds.has(id),deviceOperating:id=>window.deviceOpIds.has(id),agentName:()=>'Claude',
 async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});chromeFixture.tabId=args.tabId;chromeFixture.change?.({type:'state'})}if(command==='pageOpen')return {kind:args.kind==='dir'?'dir':'file',url:'/site/'+encodeURIComponent(args.path??'page'),path:args.path};return {}},
 showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');if(item.icon)b.append(item.icon.cloneNode(true));b.append(document.createTextNode(item.label));b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
 window.resetRows=()=>ui.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows});resetRows();
 window.enable=()=>ui.capsChanged({browserUnify:true});
 // 頭の行の入口（web/header-entries.mjs と本物と同じ配線。スマホの [N] は openEntry → browser-unify の openEntry）
-window.entry=setupBrowserEntry({button:document.querySelector('#browserEntry'),chrome:()=>chromeFixture,windows:{has:()=>false,operating:()=>window.agentOperating===true},getSessionId:()=>'one',chromeAvailable:()=>true,getChromeState:()=>window.agentState||'idle',humanHeld:id=>holderStore.anyHuman(id),mobile:()=>matchMedia('(max-width:600px)').matches,tabs:id=>ui.tabsOf(id),openEntry:id=>ui.openEntry(id)});
+window.entry=setupBrowserEntry({button:document.querySelector('#browserEntry'),chrome:()=>chromeFixture,windows:{has:()=>false,operating:()=>window.agentOperating===true},getSessionId:()=>window.entrySid||'one',chromeAvailable:()=>true,getChromeState:()=>window.agentState||'idle',humanHeld:id=>holderStore.anyHuman(id),mobile:()=>matchMedia('(max-width:600px)').matches,tabs:id=>ui.tabsOf(id),openEntry:id=>ui.openEntry(id)});
 holderStore.onChange(()=>window.entry?.paint());
 matchMedia('(max-width:600px)').addEventListener('change',()=>window.entry?.paint());
 await renderFile(document.querySelector('#content'),{name:'file-preview.md',path:filePath,kind:'markdown',fetchedAt:'2026-11-06T03:30:00Z',size:18022,text:__SAMPLE__});
@@ -246,6 +247,21 @@ window.ready=true;
     await page.evaluate(() => { chromeFixture.opened = false; chromeFixture.pins = []; });
     await page.evaluate(() => ui.openEntry('one'));
     check('opening the entry while the agent operates follows the agent (no pin)', await page.evaluate(() => chromeFixture.opened && chromeFixture.pins.length === 0));
+    // 欄が閉じているまま会話が変わっても空のタブを足さない（前の仕様 32 行）。タブの数はスマホの [N] で出るので 360px で確かめる
+    await page.setViewportSize({ width:360, height:720 });
+    await page.evaluate(() => { chromeFixture.opened = false; window.st.current = 'two'; window.entrySid = 'two'; window.sent.length = 0; ui.sessionChanged('two'); });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
+    check('a closed pane adds no empty tab when the conversation changes', !(await page.evaluate(() => window.sent.some(c => c.command === 'pageOpen'))) && (await page.evaluate(() => ui.tabsOf('two').length)) === 0,
+      `sent=${JSON.stringify(await page.evaluate(() => window.sent.map(c => c.command)))} tabs=${await page.evaluate(() => ui.tabsOf('two').length)}`);
+    await page.evaluate(() => window.entry.paint());
+    check('the header count stays 0 for a conversation with no tabs', (await page.locator('#browserEntry .entry-tabn').textContent()) === '0');
+    // 欄を開いていれば、watchSession の返事のあと空のタブが 1 つ立つ
+    await page.evaluate(() => { chromeFixture.opened = true; ui.sessionChanged('two'); });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 80)));
+    check('an open pane makes one empty tab when the conversation changes', (await page.evaluate(() => ui.tabsOf('two').length)) === 1 && (await page.locator('#browserEntry .entry-tabn').textContent()) === '1',
+      `tabs=${await page.evaluate(() => ui.tabsOf('two').length)} tabn=${await page.locator('#browserEntry .entry-tabn').textContent()}`);
+    await page.evaluate(() => { window.st.current = 'one'; window.entrySid = null; chromeFixture.sessionId = 'one'; chromeFixture.tabId = 'c1'; window.sent.length = 0; ui.sessionChanged('one'); window.entry.paint(); });
+    await page.setViewportSize({ width:1280, height:720 });
     await shot('1280-light-conv-chips');
     await page.setViewportSize({ width:360, height:720 });
     await shot('360-light-conv-chips');
