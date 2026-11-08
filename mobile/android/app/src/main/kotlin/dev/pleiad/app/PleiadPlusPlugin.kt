@@ -21,7 +21,9 @@ class PleiadPlusPlugin : Plugin() {
     override fun load() {
         plus.onChanged = {
             notifyListeners("state", JSObject(plus.stateJson().toString()))
-            (context.applicationContext as PleiadApp).device.retryPausedPlus()
+            // emit() can run on the caller's thread — load() is called on the main thread (a WebView reload
+            // re-runs start() → emit() there). The proxy-table snapshot must not run on the main thread.
+            worker.execute { (context.applicationContext as PleiadApp).device.retryPausedPlus() }
         }
         plus.start()
     }

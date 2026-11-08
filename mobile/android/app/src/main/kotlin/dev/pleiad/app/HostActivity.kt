@@ -16,6 +16,7 @@ import android.webkit.CookieManager
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -51,7 +52,8 @@ import java.util.concurrent.Executors
  *
  * Back button / edge swipe: first offered to the page as a cancelable `plyremote:back` event (so it can close a dialog,
  * a menu or the drawer); if nobody calls preventDefault(), the app goes to the background like any root screen. It does
- * not go back to the host list (the host name under the title does that). Leaving the window closes the host's proxy.
+ * not go back to the host list (the host name under the title does that). Leaving the window drops its hold on the
+ * host's proxy; the proxy closes when the last window holding it leaves (RemoteDevice's leases).
  *
  * Links (docs/remote.md §8.5): a new window the page asks for (target=_blank, window.open) becomes a bare WebView that is
  * never shown; its first navigation decides where it goes (LinkPolicy): a web page goes to the device's browser; localhost
@@ -65,6 +67,12 @@ class HostActivity : ComponentActivity() {
         const val EXTRA_OPEN_SESSION = "open"
         private const val BRIDGE = "plyRemoteBridge"
         private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "pleiad-host").also { it.isDaemon = true } }
+        /** Main-frame failures where a proxy (re)open can help: the proxy stopped listening (ERR_EMPTY_RESPONSE,
+         *  ERR_CONNECTION_REFUSED — both reported as ERROR_CONNECT — and the neighbouring transport errors). */
+        private val RETRYABLE_ERRORS = setOf(
+            WebViewClient.ERROR_UNKNOWN, WebViewClient.ERROR_HOST_LOOKUP, WebViewClient.ERROR_CONNECT,
+            WebViewClient.ERROR_IO, WebViewClient.ERROR_TIMEOUT,
+        )
     }
 
     private val device get() = (application as PleiadApp).device
@@ -81,6 +89,17 @@ class HostActivity : ComponentActivity() {
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     /** The conversation a tapped notification wants, until the page can be told. */
     private var pendingOpen: String? = null
+    /** The conversation still owed to the page (an &open= the first load carried but the page never received). */
+    private var openParam: String? = null
+    /** The route the window's proxy was opened with (a re-open after a load error keeps it). */
+    private var route = "own"
+    /** The proxy origin this WebView was set up for (a re-opened proxy can bind a new port). */
+    @Volatile private var origin = ""
+    /** The load-error retry has fired once already (no retry loops). */
+    private var retried = false
+    /** The in-flight main-frame load ended in a network error: the onPageFinished that follows belongs to the error
+     *  page, not a delivered page, and must not clear what the retry still owes. */
+    private var mainLoadFailed = false
     private var notifyPermissionCallback: ((Boolean) -> Unit)? = null
     private val askNotifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         notifyPermissionCallback?.invoke(granted)
@@ -141,8 +160,10 @@ class HostActivity : ComponentActivity() {
                 // The route: the caller's (the host list chose it), else the open proxy's, else own, else Plus (HostRoute.reopen).
                 // Never a fixed "own": a host paired only with Plus would not open, and a Plus window would be closed for own.
                 val via = intent.getStringExtra(EXTRA_VIA) ?: device.routeFor(hostId) ?: "own"
+                route = via
                 ResumeStore(this).remember(hostId, via)
-                val px = device.open(hostId, via)
+                // This window holds the proxy it is given: a window finishing after this must not close it under us
+                val px = device.open(hostId, via, this@HostActivity)
                 runOnUiThread { if (!isFinishing && !isDestroyed) showHost(px) }
             } catch (e: Exception) {
                 runOnUiThread { showError(getString(R.string.host_open_failed)) }
@@ -170,6 +191,7 @@ class HostActivity : ComponentActivity() {
     private fun showHost(px: DeviceProxy) {
         proxy = px
         val origin = "http://127.0.0.1:${px.port}"
+        this.origin = origin
         val w = WebView(this)
         web = w
         w.settings.apply {
@@ -195,15 +217,52 @@ class HostActivity : ComponentActivity() {
         w.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
-                if ("${u.scheme}://${u.authority}" == origin) return false
-                if (!request.isForMainFrame && LinkPolicy.isIsolatedPage(u.scheme, u.host, u.port, u.path, u.userInfo != null, px.isolatedPort)) return false
+                if ("${u.scheme}://${u.authority}" == this@HostActivity.origin) return false
+                if (!request.isForMainFrame && LinkPolicy.isIsolatedPage(u.scheme, u.host, u.port, u.path, u.userInfo != null, this@HostActivity.proxy?.isolatedPort ?: -1)) return false
                 // Links out of the host UI (docs, OAuth pages to copy a code from) open in the browser
                 if (request.isForMainFrame) openOutside(u)
                 return true
             }
 
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                // A real navigation begins: whatever the previous load ended in no longer applies. The error page
+                // itself does not start a page — its only callback is onPageFinished.
+                mainLoadFailed = false
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
+                // A failed load finishes too — with the error page, and before our queued retry runs. That finish
+                // must not clear the &open= the retry still owes nor reset `retried`; only a real page's finish does.
+                if (!mainLoadFailed) {
+                    openParam = null
+                    retried = false
+                }
                 progress.visibility = View.GONE
+            }
+
+            // The proxy the load talked to can die under it (a window that finished while this one was opening —
+            // before leases, the cause of ERR_EMPTY_RESPONSE on a notification tap; still possible via sign-out /
+            // unpairing). Reopen (or reuse) the proxy and load it once more, re-sending the &open= the page never got.
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (!request.isForMainFrame) return
+                mainLoadFailed = true
+                if (retried || error.errorCode !in RETRYABLE_ERRORS) return
+                retried = true
+                val owed = openParam   // what this failed load was carrying: the retry resends it as its own &open=
+                worker.execute {
+                    val px = try { device.open(hostId, route, this@HostActivity) } catch (_: Exception) { null } ?: return@execute
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        proxy = px
+                        val newOrigin = "http://127.0.0.1:${px.port}"
+                        if (newOrigin != this@HostActivity.origin) {
+                            this@HostActivity.origin = newOrigin
+                            injectRemote(view, newOrigin, px)
+                        }
+                        progress.visibility = View.VISIBLE
+                        view.loadUrl(px.url + (owed?.let { "&open=" + Uri.encode(it) } ?: ""))
+                    }
+                }
             }
         }
         w.webChromeClient = object : WebChromeClient() {
@@ -247,10 +306,11 @@ class HostActivity : ComponentActivity() {
             } catch (_: Exception) {}
         }
         frame.addView(w, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        // A tapped notification names the conversation: the page opens it after it is ready (?open=, taken once)
-        val open = pendingOpen?.let { "&open=" + Uri.encode(it) } ?: ""
+        // A tapped notification names the conversation: the page opens it after it is ready (?open=, taken once).
+        // It stays owed (openParam) until a main frame actually finishes, so an error retry can send it again.
+        openParam = pendingOpen
         pendingOpen = null
-        w.loadUrl(px.url + open)
+        w.loadUrl(px.url + (openParam?.let { "&open=" + Uri.encode(it) } ?: ""))
     }
 
     /** A notification for this host was tapped while this window exists: tell the page, or keep it for when it is up. */
@@ -490,7 +550,9 @@ class HostActivity : ComponentActivity() {
         closePopup()
         web?.let { (it.parent as? ViewGroup)?.removeView(it); it.destroy() }
         web = null
-        if (isFinishing) worker.execute { device.close(hostId) }
+        // Only this window's own hold is dropped: a proxy another window already took keeps living until its
+        // last holder leaves (unpairing / sign-out close it outright — RemoteDevice.remove / closeAll)
+        if (isFinishing) worker.execute { device.release(this@HostActivity) }
         super.onDestroy()
     }
 }
