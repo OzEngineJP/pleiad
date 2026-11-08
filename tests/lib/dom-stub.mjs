@@ -55,6 +55,7 @@ export class N {
   getAttribute(k) { return this.attrs[k]; }
   hasAttribute(k) { return k in this.attrs; }
   removeAttribute(k) { delete this.attrs[k]; }
+  toggleAttribute(k, force) { const on = force === undefined ? !(k in this.attrs) : !!force; if (on) this.attrs[k] = ''; else delete this.attrs[k]; return on; }
   // 置いた場所も大きさも無いので、位置を動かす呼び出しは受けるだけ
   scrollIntoView() {}
   focus() {}
