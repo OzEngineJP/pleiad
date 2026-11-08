@@ -9,9 +9,10 @@ async page => {
     await page.waitForFunction(() => !document.querySelector('#cbox').hasAttribute('aria-busy'));
   };
   const snap = async (name, selector = '#prompt') => {
-    const x = await page.evaluate(selector => {
+    const x = await page.evaluate(async selector => {
       const p = document.querySelector(selector);
-      return { raw: p.value, state: p.editor.getState(), editing: p.editor.snapshotEditing(), rows: [...p.children].map(r => ({ kind: r.dataset.k, q: +(r.dataset.q ?? 0), boundary: r.dataset.breakBefore ?? null })) };
+      const { posToOffset } = await import('/md-doc.mjs'), st0 = p.editor.getState(), lines0 = p.value.split('\n'); const lineAt = i => p.value.slice(0, posToOffset(st0.blocks, { b: i, v: 0 })).split('\n').length - 1; const sepOf = i => (i > 0 && lineAt(i) - lineAt(i - 1) > 1 ? lines0[lineAt(i) - 1] : null);
+      return { raw: p.value, state: p.editor.getState(), editing: p.editor.snapshotEditing(), rows: [...p.children].map((r, i) => ({ kind: r.dataset.k, q: +(r.dataset.q ?? 0), boundary: sepOf(i) })) };
     }, selector);
     evidence.push({ name, ...x }); return x;
   };
@@ -108,7 +109,10 @@ async page => {
     const at = raw.includes('```') ? raw.indexOf('\nx\n') + 2 : raw.includes('`code`') ? raw.indexOf('code') + 4 : raw.length;
     await page.evaluate(([raw, at]) => { const p = document.querySelector('#prompt'); p.value = raw; p.focus(); p.setSelectionRange(at, at); }, [raw, at]);
     await K.type('z');
-    check('見出し・コード・装飾を編集しても別段落のlazy continuationを保持 ' + raw, (await snap('無関係な原文を保持')).raw, raw.slice(0, at) + 'z' + raw.slice(at));
+    // 編集した後は、どの行も自分の入れ物の記号を全部持って送る（ADR 0301 の S1）。履歴での見え方は元と同じ
+    const typedRaw = raw.slice(0, at) + 'z' + raw.slice(at), sent = (await snap('無関係な原文を保持')).raw;
+    const sameView = await page.evaluate(async ([a, b]) => { const { renderMarkdown } = await import('/render.mjs'); return renderMarkdown(a) === renderMarkdown(b); }, [sent, typedRaw]);
+    check('見出し・コード・装飾を編集すると、引用の続きの行は記号を付けて送り、見え方は変えない ' + raw, [sent, sameView], [typedRaw.replace('> a\nb', '> a\n> b'), true]);
   }
 
   const suffix = Date.now().toString().slice(-7);
@@ -122,7 +126,7 @@ async page => {
   assertRestored('別チャンネルから戻っても境界と2編集行を保持', feedTyped, await snap('チャンネル復元', '#chFeedComposerInput'));
   await show(ch.id, root.id); await page.waitForSelector('#thPrompt');
   const thread = await base('1.', '#thPrompt'); await K.type('b'); const threadTyped = await snap('スレッド入力', '#thPrompt');
-  check('チャンネルとスレッドで同じ解除規則', [feed.rows.length, feed.rows[1].boundary, thread.rows.length, thread.rows[1].boundary], [2, '', 2, '']);
+  check('チャンネルとスレッドで同じ解除規則', [feed.rows.length, feedTyped.rows[1].boundary, thread.rows.length, threadTyped.rows[1].boundary], [2, '', 2, '']);
   await page.waitForTimeout(2500); await page.reload(); await ready();
   await show(ch.id, root.id); await page.waitForSelector('#thPrompt'); await page.waitForTimeout(700);
   assertRestored('スレッド下書きを再読込しても行数と境界を保持', threadTyped, await snap('スレッド復元', '#thPrompt'));

@@ -61,7 +61,8 @@ async page => {
   await reset(); await K.type('# '); await K.type('Head');
   check('見出し', [await val(), (await html()).startsWith('<div class="md-b md-h">Head</div>')], ['# Head', true]);
   await K.press('Control+z'); await K.press('Control+z');
-  check('元に戻す 2 回で記号のままの行', [await val(), await kinds()], ['# ', 'p']);
+  // 記号のままの行は字として送る（\ を付けないと空の見出しに読まれる。ADR 0301）
+  check('元に戻す 2 回で記号のままの行', [await val(), await kinds()], ['\\# ', 'p']);
   await K.press('Control+Shift+z'); await K.press('Control+Shift+z');
   check('やり直しで見出しへ', await val(), '# Head');
   await reset(); await K.type('## Title'); await K.press('Home'); await K.press('Backspace');
@@ -109,10 +110,10 @@ async page => {
   // 線は引用ごとに 1 本（::after の背景の層）。幅は中身の始まり（12px、入れ子は 12 + 4 + 12 = 28px。tokens.css の --md-quote-*）
   check('引用の行に深さの数だけ縦線が付く（computed style・面は敷かない・行の間で切れない）', await page.evaluate(() => [...document.querySelectorAll('#prompt .md-b[data-q]')].map(b => { const c = getComputedStyle(b), l = getComputedStyle(b, '::after'); return [l.backgroundImage.split('linear-gradient').length - 1, l.width, c.backgroundColor, c.marginTop, c.marginBottom].join('/'); })), ['1/12px/rgba(0, 0, 0, 0)/0px/0px', '2/28px/rgba(0, 0, 0, 0)/0px/0px', '2/28px/rgba(0, 0, 0, 0)/0px/0px']);
   await K.press('Enter'); await K.press('Enter');
-  // 送信用の「> 」の区切りは編集行を増やさない。
-  check('空の深い引用の Enter は同じ行で1段戻り、送信本文を区切る', await val(), '> a\n> > b\n> > c\n> \n> ');
+  // 1 段の空の行そのものが内側の引用を切るので、区切りの行は足さない（ADR 0301）
+  check('空の深い引用の Enter は同じ行で1段戻り、送信本文を区切る', await val(), '> a\n> > b\n> > c\n> ');
   await K.press('Enter');
-  check('最後の段の空の引用の Enter は同じ行で抜ける', [await val(), await kinds(), await page.evaluate(() => document.querySelector('#prompt').editor.getState().sel.s)], ['> a\n> > b\n> > c\n\n', 'quote,quote,quote,p', { b: 3, v: 0 }]);
+  check('最後の段の空の引用の Enter は同じ行で抜ける', [await val(), await kinds(), await page.evaluate(() => document.querySelector('#prompt').editor.getState().sel.s)], ['> a\n> > b\n> > c\n', 'quote,quote,quote,p', { b: 3, v: 0 }]);
   await reset(); await setText('＞ x'); await K.press('End'); await K.press('Enter'); await K.type('y');
   check('全角の ＞ は引用にしない（履歴と同じ CommonMark の読み方）', [await val(), await kinds()], ['＞ x\ny', 'p,p']);
   await reset(); await K.type('- [ ] todo'); await K.press('Enter'); await K.type('next');
@@ -120,7 +121,8 @@ async page => {
   await setText('- [x] done'); await K.press('Enter');
   check('- [x] の次は - [ ]', await val(), '- [x] done\n- [ ] ');
   await K.press('Enter');
-  check('チェック欄だけの項目で Enter すると抜ける（前に空行を挟む）', await val(), '- [x] done\n\n');
+  // 空の行は段落ではないので、項目との間に区切りの空行は要らない（ADR 0301）
+  check('チェック欄だけの項目で Enter すると抜ける', await val(), '- [x] done\n');
   await reset(); await K.type('- a'); await K.press('Enter'); await K.type('b'); await K.press('Tab');
   check('箇条書きの Tab は字下げ', [await val(), await page.evaluate(() => document.activeElement.id)], ['- a\n  - b', 'prompt']);
   await K.press('Shift+Tab');
@@ -307,9 +309,10 @@ async page => {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Input.imeSetComposition', { text: '#', selectionStart: 1, selectionEnd: 1 });
   await cdp.send('Input.imeSetComposition', { text: '# ', selectionStart: 2, selectionEnd: 2 });
-  check('変換中は見出しにならない', [await val(), await kinds()], ['# ', 'p']);
+  // 見出しにならない行の # は字として送る（ADR 0301）
+  check('変換中は見出しにならない', [await val(), await kinds()], ['\\# ', 'p']);
   await cdp.send('Input.insertText', { text: '# ' }); await page.waitForTimeout(100);
-  check('確定しても整えない', [await val(), await kinds()], ['# ', 'p']);
+  check('確定しても整えない', [await val(), await kinds()], ['\\# ', 'p']);
   await reset(); await K.type('**b**');
   await cdp.send('Input.imeSetComposition', { text: 'あ', selectionStart: 1, selectionEnd: 1 });
   await cdp.send('Input.insertText', { text: '亜' }); await page.waitForTimeout(150);
