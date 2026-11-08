@@ -2174,6 +2174,7 @@
         "auto": "It continues automatically once it is on."
       },
       "operating": "You are operating",
+      "returnHint": "Press “Return to AI” when you are done.",
       "operate": "Operate in Chrome",
       "operateHere": "Operate on this device",
       "operateOnPc": "Operate on the PC",
@@ -2182,12 +2183,12 @@
       "decline": "Decline",
       "failed": "Could not do that: {{error}}",
       "done": {
-        "resumed": "Done · Handed back to Claude",
-        "resumedContinued": "Done · Asked Claude to continue",
+        "resumed": "Done · Returned to AI",
+        "resumedContinued": "Done · Asked AI to continue",
         "connected": "Done · Chrome is connected",
-        "connectedContinued": "Done · Chrome is connected; asked Claude to continue",
+        "connectedContinued": "Done · Chrome is connected; asked AI to continue",
         "connectedAuto": "Automatic (no-confirmation mode) · Chrome is connected",
-        "connectedAutoContinued": "Automatic (no-confirmation mode) · Chrome is connected; asked Claude to continue",
+        "connectedAutoContinued": "Automatic (no-confirmation mode) · Chrome is connected; asked AI to continue",
         "declined": "Declined",
         "aborted": "Stopped"
       }
@@ -2911,6 +2912,7 @@
       "copyPath": "Copy path",
       "download": "Save HTML",
       "widen": "Widen",
+      "open": "Open as page",
       "narrow": "Back to normal width",
       "resourcesOmitted": "Related files, such as images, are not included.",
       "resourcesTooMany": "Only HTML was saved because there were too many related files.",
@@ -4950,11 +4952,11 @@
   },
   "chromeControl": {
     "takeOverPc": "Operate on the PC",
-    "resume": "Hand back to {{name}}",
+    "resume": "Return to AI",
     "failed": "Could not do that.",
     "banner": "Paused · you are operating Chrome",
-    "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press hand back again" },
-    "handover": "You took over · handed back to {{name}} · {{duration}}",
+    "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press Return to AI again." },
+    "handover": "You took over · returned to AI · {{duration}}",
     "closed": { "agent": "{{name}} closed the window", "human": "The Chrome window closed", "idle": "The Chrome window closed after 24 hours without use", "image": "Last image of the closed window" },
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
   },
@@ -4976,7 +4978,8 @@
       "pinFailed": "Couldn't switch windows.",
       "openConversation": "Open conversation",
       "operateHere": "Operate on this device", "operatingOnPc": "Operating on the PC",
-      "profileActions": "Chrome profiles"
+      "profileActions": "Chrome profiles",
+      "menu": { "copy": "Copy", "cut": "Cut", "copyLink": "Copy link", "openLink": "Open link", "selectAll": "Select all", "copyFailed": "Couldn't copy" }
     },
     "video": { "lag": "The video is lagging", "stale": "Reconnecting" }
   },

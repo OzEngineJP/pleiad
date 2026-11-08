@@ -11,6 +11,9 @@ import path from 'node:path';
 import { createIsolatedRoutes, relativeSegments } from '../../core/isolated-routes.mjs';
 import { startIsolatedServer } from '../../core/isolated-server.mjs';
 import { createHtmlKeys } from '../../core/html-keys.mjs';
+import { APP_SANDBOX } from '../../core/preview-policy.mjs';
+import { fileMark, vizMark } from '../../core/isolated-origins.mjs';
+import crypto from 'node:crypto';
 import { collectBundle } from '../../core/viz-bundle.mjs';
 import { waitFor } from '../lib/holder-harness.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
@@ -63,19 +66,27 @@ async function routeChecks(t, scratch) {
   const bundle = await collectBundle(entry, access, { dataDir, entryBody: html });
   let prefs = {};
   let clock = Date.now();
-  const htmlKeys = createHtmlKeys({ now: () => clock });
-  const routes = createIsolatedRoutes({ dataDir, store: { getPrefs: async () => prefs }, htmlKeys, fileAccessFor: () => access, sweepDelayMs: null, now: () => clock });
+  const secret = crypto.randomBytes(32);
+  const sessions = new Set(['s1']);
+  const store = {
+    getPrefs: async () => prefs,
+    get: async id => { if (!sessions.has(id)) throw new Error('no such session'); return { id }; },
+    peek: id => (sessions.has(id) ? { id } : null),
+  };
+  const htmlKeys = createHtmlKeys({ secret, now: () => clock });
+  const routes = createIsolatedRoutes({ dataDir, store, htmlKeys, secret, fileAccessFor: () => access, sweepDelayMs: null, now: () => clock });
   const server = await startIsolatedServer({ routes });
   const port = server.port;
   const viz = rest => `/viz/${bundle.hash}/${rest}`;
   try {
     const conv = await request({ port, pathname: viz('chart.html?embed=conversation&theme=dark') });
-    t.ok('入口は会話の枠と同じ包みで、CSP は応答のヘッダー（sandbox・allow-same-origin なし）だけ',
-      conv.status === 200 && csp(conv).startsWith('sandbox allow-scripts allow-downloads allow-forms; ') && !csp(conv).includes('allow-same-origin')
+    t.ok('入口は会話の枠と同じ包みで、CSP は応答のヘッダー（アプリの sandbox・専用の出どころなので allow-same-origin あり）だけ',
+      conv.status === 200 && csp(conv).startsWith(`sandbox ${APP_SANDBOX}; `) && csp(conv).includes('allow-same-origin')
       && !conv.body.includes('http-equiv="Content-Security-Policy"') && conv.body.includes('ply-visualize-height') && conv.body.includes('color-scheme:dark')
-      && conv.body.includes('ply-preview-blocked') && conv.body.includes("'localStorage'") && conv.headers['content-type'] === 'text/html; charset=utf-8');
-    t.ok('読み先は束のパスだけ（img・connect）。ほかの束・本体の port は入らない',
-      directive(conv, 'img-src') === `img-src http://localhost:*/viz/${bundle.hash}/ https: data: blob:` && directive(conv, 'connect-src') === `connect-src http://localhost:*/viz/${bundle.hash}/ https:`);
+      && conv.body.includes('ply-preview-blocked') && !conv.body.includes("'localStorage'") && conv.headers['content-type'] === 'text/html; charset=utf-8');
+    t.ok('読み先は束のパスだけ（img・connect。localhost と印の出どころの両方）。ほかの束・本体の port は入らない',
+      directive(conv, 'img-src') === `img-src http://localhost:*/viz/${bundle.hash}/ http://*.localhost:*/viz/${bundle.hash}/ https: data: blob:`
+      && directive(conv, 'connect-src') === `connect-src http://localhost:*/viz/${bundle.hash}/ http://*.localhost:*/viz/${bundle.hash}/ https:`);
     t.ok('ヘッダー: CORP cross-origin・Permissions-Policy・no-referrer・nosniff・HTML は保存しない',
       conv.headers['cross-origin-resource-policy'] === 'cross-origin' && /camera=\(\)/.test(conv.headers['permissions-policy'])
       && conv.headers['referrer-policy'] === 'no-referrer' && conv.headers['x-content-type-options'] === 'nosniff' && conv.headers['cache-control'] === 'no-store');
@@ -86,9 +97,9 @@ async function routeChecks(t, scratch) {
     t.ok('別のタブは題を包みの <title> にする（エスケープする）。枠の中では付けない',
       titled.body.includes('<title>売上 &#60;b&#62;</title>') && !framedTitle.body.includes('<title>x</title>'));
     const page2 = await request({ port, pathname: viz('page2.html'), headers: { 'sec-fetch-dest': 'iframe' } });
-    t.ok('束の中の別の HTML（枠の中で開いた）には、頭に保存庫の代わりと橋を差し込む', page2.status === 200 && page2.body.startsWith('<script>') && page2.body.includes('ply-preview-open-link') && page2.body.endsWith('<p>two</p>'));
+    t.ok('束の中の別の HTML（枠の中で開いた）には、頭に橋を差し込む', page2.status === 200 && page2.body.startsWith('<script>') && page2.body.includes('ply-preview-open-link') && page2.body.endsWith('<p>two</p>'));
     const raw = await request({ port, pathname: viz('chart.html'), headers: { 'sec-fetch-dest': 'document' } });
-    t.ok('枠の外で開いた HTML は橋を入れず、doctype の後ろに保存庫の代わりだけ', raw.body.startsWith('<!doctype html><script>') && !raw.body.includes('ply-preview-blocked'));
+    t.ok('枠の外で開いた HTML はそのまま（橋も保存庫の代わりも入れない）', raw.body === html && !raw.body.includes('ply-preview-blocked'));
 
     const png = await request({ port, pathname: viz('assets/a.png') });
     const cached = await request({ port, pathname: viz('assets/a.png'), headers: { 'if-none-match': png.headers.etag } });
@@ -109,7 +120,22 @@ async function routeChecks(t, scratch) {
     t.ok('相対パスの部分の検査', JSON.stringify(relativeSegments(['a', 'b%20c'])) === '["a","b c"]' && relativeSegments(['..']) === null
       && relativeSegments(['a', '']) === null && relativeSegments(['C:']) === null && relativeSegments(['a%00']) === null);
     const wrongHost = await request({ port, pathname: viz('chart.html'), host: `127.0.0.1:${port}` });
-    t.ok('Host が localhost:<port> でなければ 421（リスナー）', wrongHost.status === 421);
+    const markedHost = await request({ port, pathname: viz('chart.html'), host: `${vizMark(bundle.hash)}.localhost:${port}` });
+    const forgedHost = await request({ port, pathname: viz('chart.html'), host: `evil.example:${port}` });
+    const otherPort = await request({ port, pathname: viz('chart.html'), host: `${vizMark(bundle.hash)}.localhost:${port + 1}` });
+    t.ok('Host は localhost:<port> か <印>.localhost:<port>（印の出どころ）。それ以外・違う port は 421（リスナー）',
+      wrongHost.status === 421 && markedHost.status === 200 && forgedHost.status === 421 && otherPort.status === 421);
+
+    // Host の印と中身の結び付け: 別の印の出どころでは中身を動かせない（localStorage・Cookie は印ごとに分かれる）
+    const otherMark = `v${'1'.repeat(24)}`;   // 別の束の印の形（LOCALHOST_MARK は通るが、この束の印ではない）
+    const [bAtA, evilMark, fileAtVizMark] = await Promise.all([
+      request({ port, pathname: viz('chart.html'), host: `${otherMark}.localhost:${port}` }),
+      request({ port, pathname: viz('chart.html'), host: `evil.localhost:${port}` }),
+      request({ port, pathname: viz('chart.html'), host: `${fileMark(secret, work)}.localhost:${port}` }),
+    ]);
+    t.ok('束は自分の印（vizMark(ハッシュ)）の出どころでだけ返す。別の束の印・勝手な印・フォルダーの印は 404（印なし localhost は端末の道として残る）',
+      bAtA.status === 404 && evilMark.status === 404 && fileAtVizMark.status === 404 && markedHost.status === 200
+      && (await request({ port, pathname: viz('chart.html') })).status === 200);
 
     // 確認あり: 許した出どころと、一度だけの印の出どころだけ
     prefs = { confirmExternalLoads: true, externalSitePermissions: [{ origin: 'https://always.example', mode: 'always' }] };
@@ -126,11 +152,16 @@ async function routeChecks(t, scratch) {
     // HTML のファイル（/f/<鍵>/）
     t.ok('鍵は絶対パスの HTML のファイルにだけ出す', htmlKeys.issue({ path: path.join(work, 'assets', 'd.json') }) === null && htmlKeys.issue({ path: 'chart.html' }) === null);
     const key = htmlKeys.issue({ sessionId: 's1', path: entry });
-    t.ok('同じファイルにもう一度出すと同じ鍵（22 文字）', /^[A-Za-z0-9_-]{22}$/.test(key) && htmlKeys.issue({ sessionId: 's1', path: entry }) === key);
+    t.ok('同じファイルにもう一度出すと同じ鍵（AES-GCM で閉じた文。経路に載せられる形）', /^[A-Za-z0-9_-]{40,}$/.test(key) && htmlKeys.issue({ sessionId: 's1', path: entry }) === key);
     const file = await request({ port, pathname: `/f/${key}/` });
-    t.ok('/f/<鍵>/ は入口の HTML を sandbox allow-scripts のヘッダーで返し、枠の中なら橋を差し込む',
-      file.status === 200 && csp(file).startsWith('sandbox allow-scripts; ') && !csp(file).includes('allow-forms')
-      && directive(file, 'img-src').startsWith(`img-src http://localhost:*/f/${key}/ `) && file.body.includes('ply-preview-blocked') && file.body.endsWith('</html>'));
+    t.ok('/f/<鍵>/ は入口の HTML をアプリの sandbox のヘッダーで返し、枠の中なら橋を差し込む',
+      file.status === 200 && csp(file).startsWith(`sandbox ${APP_SANDBOX}; `)
+      && directive(file, 'img-src').startsWith(`img-src http://localhost:*/f/${key}/ http://*.localhost:*/f/${key}/ `) && file.body.includes('ply-preview-blocked') && file.body.endsWith('</html>'));
+    const fileSource = await request({ port, pathname: `/f/${key}/?view=source`, headers: { 'sec-fetch-dest': 'iframe' } });
+    const sjisSource = await request({ port, pathname: `/f/${key}/sjis.html?view=source` });
+    t.ok('?view=source は橋を差し込まず原文を text/plain で返す（アドレスバーの「原文」の表示。charset は文書のもの）',
+      fileSource.status === 200 && fileSource.headers['content-type'] === 'text/plain; charset=utf-8' && fileSource.body === html && !fileSource.body.includes('ply-preview-blocked')
+      && sjisSource.headers['content-type'] === 'text/plain; charset=Shift_JIS' && sjisSource.raw.includes(Buffer.from([0x95, 0x5c])));
     const fileAsset = await request({ port, pathname: `/f/${key}/assets/a.png` });
     t.ok('鍵のフォルダーの下のファイルは読める', fileAsset.status === 200 && fileAsset.body === 'PNG' && fileAsset.headers['content-type'] === 'image/png');
     const sjis = await request({ port, pathname: `/f/${key}/sjis.html` });
@@ -148,12 +179,42 @@ async function routeChecks(t, scratch) {
     t.ok('「一度だけ読み込む」は別の鍵で、その鍵だけが出どころ（https）を持つ',
       onceKey !== key && directive(onceFile, 'img-src').includes('https://o.example') && !csp(onceFile).includes('p.example') && !csp(plainFile).includes('o.example'));
     prefs = {};
+
+    // HTML のファイルの印と中身の結び付け: 鍵のフォルダーの印（fileMark）の出どころでだけ返す
+    const folderMark = fileMark(secret, work);
+    const [fOwn, fWrongFolder, fVizMark, fEvil] = await Promise.all([
+      request({ port, pathname: `/f/${key}/`, host: `${folderMark}.localhost:${port}` }),
+      request({ port, pathname: `/f/${key}/`, host: `${fileMark(secret, outside)}.localhost:${port}` }),
+      request({ port, pathname: `/f/${key}/`, host: `${vizMark(bundle.hash)}.localhost:${port}` }),
+      request({ port, pathname: `/f/${key}/`, host: `evil.localhost:${port}` }),
+    ]);
+    t.ok('HTML のファイルは鍵のフォルダーの印の出どころでだけ返す。別のフォルダーの印・束の印・勝手な印は 404',
+      fOwn.status === 200 && fWrongFolder.status === 404 && fVizMark.status === 404 && fEvil.status === 404);
+
+    // 会話を消したら鍵は効かない（残った URL から消した会話のファイルを読めない）
+    const liveKey = htmlKeys.issue({ sessionId: 'gone', path: entry });
+    t.ok('消えた会話の鍵は 404（発行した時点で会話が無い）',
+      (await request({ port, pathname: `/f/${liveKey}/` })).status === 404);
+    const doomed = htmlKeys.issue({ sessionId: 's2', path: entry });
+    sessions.add('s2');
+    const before = await request({ port, pathname: `/f/${doomed}/` });
+    sessions.delete('s2');
+    const after = await request({ port, pathname: `/f/${doomed}/` });
+    t.ok('会話を消したあとは、その会話の鍵（残った URL）も 404', before.status === 200 && after.status === 404);
     clock += 24 * 60 * 60 * 1000;
     const expired = await request({ port, pathname: `/f/${key}/` });
     t.ok('鍵は 24 時間で消える', expired.status === 404 && htmlKeys.resolve(key) === null);
     const fresh = htmlKeys.issue({ sessionId: 's1', path: entry });
     htmlKeys.close();
-    t.ok('サーバーの終わり（close）で鍵は全部消える', fresh !== key && htmlKeys.resolve(fresh) === null);
+    t.ok('鍵は自己完結の文: close（使い回しの控えを捨てる）の後も引ける。別の issuer は別の秘密なら引けない',
+      htmlKeys.resolve(fresh)?.entry === 'chart.html' && createHtmlKeys({ now: () => clock }).resolve(fresh) === null);
+    const restartSecret = crypto.randomBytes(32);
+    const first = createHtmlKeys({ secret: restartSecret, now: () => clock });
+    const restartKey = first.issue({ sessionId: 's1', path: entry });
+    first.close();
+    const restarted = createHtmlKeys({ secret: restartSecret, now: () => clock });   // サーバーの入れ替え（秘密は page-secrets.json に残る）
+    t.ok('同じ秘密の issuer なら、入れ替わったあとも鍵は引ける（残ったタブがそのまま読める）',
+      restarted.resolve(restartKey)?.root === path.dirname(entry) && restarted.resolve(restartKey)?.entry === 'chart.html');
   } finally {
     routes.close();
     await server.close();

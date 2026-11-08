@@ -6,7 +6,7 @@
 // 決着（戻した・つながった・断った・中断）はサーバーの permissionSettled で届き、畳む字は settledLine が決める。
 // リモートの端末（client が operateHere を渡す）では「Chrome で操作する」を「この端末で操作する」（右の欄の Chrome の映像で操作する。by: 'device'）と
 // 「PC で操作する」に分ける（第 7 段）。
-// 人が操作している間のカードは記録に徹し、「あなたが操作中」と「画面を開く」だけにする。任せるのは札・帯・⋮（ADR 0294 の 6・0296）。
+// 人が操作している間のカードは「あなたが操作中」・頼まれた本文・「画面を開く」・「AI に戻す」を出す（戻す入口はどの画面からも届く。ADR 0296）。
 
 const CHROME_INSPECT_ADDRESS = 'chrome://inspect/#remote-debugging';
 // i18n-dynamic: ui:chat.browserHandoff.
@@ -160,9 +160,12 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
     const lead = el('div', 'bh-lead');
     if (h.state === 'operating') {
       lead.textContent = t(`${K}operating`);
-      // 人が操作している間も、頼まれたこと（asked のときと同じ本文）を任せるまで出し続ける
-      body.replaceChildren(lead, ...(h.message ? [el('p', 'bh-message', h.message)] : []));
-      buttons = openScreen ? [button(t('control:openScreen'), () => openScreen(targetSessionId()))] : [];
+      // 人が操作している間も、頼まれたこと（asked のときと同じ本文）と戻す案内を出し続ける
+      body.replaceChildren(lead, ...(h.message ? [el('p', 'bh-message', h.message)] : []), note(t(`${K}returnHint`)));
+      buttons = [
+        ...(openScreen ? [button(t('control:openScreen'), () => openScreen(targetSessionId()), 'btn btn-quiet')] : []),
+        // 「AI に戻す」は人のタブを全部 AI に戻す（releaseAll はサーバー側）
+        button(t('tabs:display.resume'), () => cmd('chromeResume', { sessionId: targetSessionId() }), 'btn btn-primary')];
     } else {
       lead.textContent = t(`${K}askedLead`, { reason: reasonLabel(t, h.reason) });
       body.replaceChildren(lead);

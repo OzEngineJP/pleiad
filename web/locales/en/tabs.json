@@ -1,10 +1,25 @@
 {
+  "display": {
+    "page": "Page",
+    "chrome": "Chrome video",
+    "updated": "The file has changed",
+    "update": "Show update",
+    "discard": "Discard your input and reload?",
+    "resume": "Return to AI",
+    "copyTitle": "Copy title"
+  },
+  "tree": {
+    "close": "Close tree",
+    "width": "Tree width",
+    "new": "Open in new tab"
+  },
   "strip": {
     "label": "Browser tabs",
     "new": "New tab",
     "close": "Close {{title}}",
     "closeTab": "Close tab",
-    "count": "{{count}} tabs"
+    "count_one": "Open browser ({{count}} tab)",
+    "count_other": "Open browser ({{count}} tabs)"
   },
   "address": {
     "back": "Back",
@@ -17,7 +32,14 @@
     "preview": "Preview",
     "source": "Source",
     "showSource": "Show source",
-    "locations": { "git": "Changes", "plugins": "Plugins", "attachment": "Attachments", "new": "Enter a URL, path or search" },
+    "locations": {
+      "viz": "Visualization",
+      "html": "HTML",
+      "git": "Changes",
+      "plugins": "Plugins",
+      "attachment": "Attachments",
+      "new": "Enter a URL, path or search"
+    },
     "more": "More",
     "closePanel": "Close panel",
     "openPanel": "Open browser",

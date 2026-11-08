@@ -135,7 +135,7 @@ import { createConversationToc } from './conversation-toc.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
-import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
+import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
 const outboxes = new Map();
@@ -3442,6 +3442,15 @@ function syncOutboxRows(messages) {
 
 function onEvent(ev, replay = false) {
   if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
+  // 開いているファイルが変わった・ページの port が替わった（ADR 0295 の 6・8）。画面の中のタブは browser-unify がページへ届ける
+  if (ev.type === 'page:changed') { loadBrowserUnify().then(ui => ui.onEvent(ev)).catch(() => {}); return; }
+  if (ev.type === 'page:moved') {
+    const port = ev.ports?.isolated;
+    if (Number.isInteger(port) && ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)) {
+      configureIsolatedOrigin({ port, mintOnce: origins => cmd('vizOnce', { origins }).then(r => r?.token ?? null) });
+    }
+    loadBrowserUnify().then(ui => ui.onEvent(ev)).catch(() => {}); return;
+  }
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   // スレッドが動いた・投稿が増えた・既読が進んだ: 脇のスレッドの行を読み直す（まとめて 1 回）
   if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();
@@ -7442,7 +7451,7 @@ function applyTheme(mode) {
   paintTitleBar();
   paintShellTheme();
   // 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295。browserUnify を返す本体だけ）
-  if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
+  if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
 }
 
 /**
@@ -7586,6 +7595,8 @@ let sidebarMoving;
 // 開閉は side-open で持ち、覚えない（広い画面の好み side-closed はそのまま残す）。会話を選ぶ・幕を押す・Esc で閉じる
 const narrowView = matchMedia("(max-width:700px)");
 narrowView.addEventListener('change', syncStripVisible);
+// 頭の行の [N] の幅（アドレスバー・札のスマホ判定と同じ 600px。web/browser-unify.mjs の phoneQuery）
+const phoneEntryView = matchMedia("(max-width:600px)");
 const drawerOpen = () => document.documentElement.classList.contains("side-open");
 
 // タップの中では開閉の印（side-open・aria-expanded）だけを付け、動き（--dur）を次のフレームから始める。
@@ -7853,9 +7864,13 @@ let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry�
 const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
 // 会話の右の欄（ADR 0294〜0297）。サーバーの hostCapabilities.browserUnify（ページと隔離の origin の口）が届いてから読む
-let browserUnifyLoad = null;
-const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
-  controlStore:chromeControlStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer'), osActions:() => state.osActions === true })));
+let browserUnifyLoad = null, browserUnifyUi = null;
+// タブの持ち手の置き場（web/chrome-control.mjs。会話に人が触っているタブがあるか。頭の行の印と右の欄の札が同じ置き場を見る。ADR 0296）
+const tabHolderStore = createTabHolderStore();
+const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => (browserUnifyUi = m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
+  controlStore:chromeControlStore, holderStore:tabHolderStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest,
+  // タブの列を描き直したら、頭の行の [N] も数を追う（スマホの入口。承認済み 2026-11-08）
+  onTabsChange:() => browserEntry?.paint(), osActions:() => state.osActions === true }))));
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
@@ -7873,15 +7888,14 @@ const filePreview = setupFilePreview({
 // （4 の 2。git・プラグイン・作業フォルダーへの入口はこのページだけ。5 の 5）
 let chromeLink = null;   // 中継の接続の状態（chromeBrowser の便り。ホストの PC の画面だけに届く）
 const rightPane = {
-  isOpen: () => chromePanel?.isOpen() === true || filePreview.panelOpen('page-frame'),
-  close() { if (chromePanel?.isOpen()) chromePanel.close(); else if (filePreview.panelOpen('page-frame')) filePreview.close(); },
+  isOpen: () => chromePanel?.isOpen() === true,
+  close() { if (chromePanel?.isOpen()) chromePanel.close(); },
   open(anchor) {
     const id = state.current; if (!id) return;
     loadBrowserUnify().then(unify => {
       if (state.current !== id) return;
       if (chromeWindows.has(id) || unify.tabsOf(id).length) chromePanel?.open(anchor);
-      else if (chromeLink === 'connected') unify.openTab({ sessionId: id }).catch(error => notify(error?.message || t('tabs:address.failed')));
-      else filePreview.pageFrame?.open(`/_pleiad/s/${encodeURIComponent(id)}/new`, { sessionId: id, title: t('tabs:strip.new'), element: anchor });
+      else unify.openTab({ sessionId: id }).catch(error => notify(error?.message || t('tabs:address.failed')));
       browserEntry?.paint();
     });
   },
@@ -7889,9 +7903,15 @@ const rightPane = {
 browserEntry = setupBrowserEntry({ button: $('browserEntry'),
   chrome: () => rightPane, windows: chromeWindows, pagesOnly: () => chromeLink !== 'connected' && !chromeWindows.has(state.current), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   getChromeState: id => chromeControlStore.get(id).state,
+  humanHeld: id => tabHolderStore.anyHuman(id),
   waiting: handoffWaiting, announce,
   chromeAvailable: () => state.hostCaps?.chromeWindow === true,
+  // スマホは窓のアイコンでなくタブの数の四角（承認済み 2026-11-08）。押すと人の操作中・最後に見たタブを全画面で開く（数が 0 でもファイル・フォルダー・git の入口として出す）
+  mobile: () => phoneEntryView.matches,
+  tabs: id => browserUnifyUi?.tabsOf(id) ?? (chromeWindows.has(id) ? [{ targetId: 'window' }] : []),
+  openEntry: id => { loadBrowserUnify().then(ui => ui.openEntry(id)).catch(error => notify(error?.message || t('tabs:address.failed'))); },
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
+phoneEntryView.addEventListener('change', () => browserEntry?.paint());
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
 // 前の回に見ていた場所は、会話を開く（select が残す）前に読んでおく（起動時に Channels の面の位置を戻す）
 const savedView = readAddress(localStorage);
@@ -8863,8 +8883,7 @@ function jumpToConversation({ uuid, toolId }) {
   return true;
 }
 /**
- * ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
- * タブを開けるのは Chrome につながっているか、その会話にもうタブがあるとき。それ以外は右パネルの iframe で開く（web/page-frame.mjs）
+ * ファイル・フォルダー・git のページを、Chrome の接続にかかわらず画面内のタブへつなぐ。
  */
 let filePagesConnected = false;
 function connectFilePages(unify) {
@@ -8872,13 +8891,11 @@ function connectFilePages(unify) {
   filePagesConnected = true;
   filePreview.configureBrowserUnify({
     caps: () => state.hostCaps?.browserUnify ?? null,
-    connected: (id) => chromeLink === 'connected' || unify.tabsOf(id).length > 0,
+    connected: () => true,
     tabs: (id) => unify.tabsOf(id),
     openTab: (args) => unify.openTab(args),
     focusTab: (tab, id) => unify.focusTab(tab, id),
     flashTab: (tab, id) => unify.flashTab(tab, id),
-    onRequest: (request) => handlePageRequest(request, { sessionId: request?.sessionId }),
-    pageBar: (frame, context) => unify.frameBar(frame, context),
   });
 }
 /**
@@ -10482,7 +10499,7 @@ function connect() {
       folderUpload?.online();
       for (const wake of [...onlineWaiters]) wake();
       // Chrome の窓の表はつなぎ直しで作り直す（サーバーは続けて今の分を送る）
-      chromeWindows.clear(); chromeControlStore.clear(); browserEntry?.paint(); paintChromeControl();
+      chromeWindows.clear(); chromeControlStore.clear(); tabHolderStore.clear(); browserEntry?.paint(); paintChromeControl();
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
@@ -10687,6 +10704,8 @@ function paintChromeControl() {
   chromeProfilePill?.onStateChange();
 }
 chromeControlStore.onChange((id) => { if (id === state.current || id === chromePanel.sessionId) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); } });
+// 人がタブを触った／AI に戻った: 頭の行の印（⏸）を更新する。右の欄の札・帯は browser-unify の paint が描く
+tabHolderStore.onChange((id) => { if (id === state.current) browserEntry?.paint(); });
 chromeControlStore.onTap((tap) => { if (tap.sessionId === chromeTarget() && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
 // 右パネルが映す会話を替えた（子の会話の Chrome を映した・戻した・閉じた）: 一時停止の帯とプロフィールをその会話に合わせる
 chromePanel.onTargetChange(() => { paintChromeControl(); chromeProfilePill?.refresh(); });

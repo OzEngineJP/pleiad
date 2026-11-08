@@ -162,31 +162,19 @@ async page => {
   if (await page.locator('#filePreview[data-panel="chrome-window"]').isVisible()) await page.locator('#browserEntry').click();
   // Unified components are mounted independently of the legacy panel assembly.
   const unified = await page.evaluate(async () => {
-    const { createControlBadge, createPhoneBrowserStrip } = await import('/chrome-control.mjs');
+    const { createControlBadge } = await import('/chrome-control.mjs');
     const mount = document.createElement('div'); document.body.append(mount);
-    const calls = [], badge = createControlBadge({ mount, onStop: () => calls.push('stop'), onResume: () => calls.push('resume') });
-    const chip = badge.element.querySelector('button'), values = [];
-    values.push(badge.element.hidden);
-    badge.update({ agentUsed: true, name: 'Claude' }); chip.click();
-    document.querySelector('.b2-pop:not([hidden]) button').click(); await Promise.resolve();
-    values.push(calls.join() === 'stop');
-    badge.update({ agentUsed: true, holder: 'human' }); chip.click();
-    document.querySelector('.b2-pop:not([hidden]) button').click(); await Promise.resolve();
-    values.push(calls.join() === 'stop,resume');
-    let activated = 0;
-    const strip = createPhoneBrowserStrip({ mount, onActivate: () => { activated++; } }); strip.update({ url: 'https://example.com/', tabs: 3, holder: 'human', remaining: 42 });
-    values.push(strip.element.textContent.includes('42') && strip.element.textContent.includes('example.com') && strip.element.textContent.includes('3'));
-    // 帯の押し口は「画面を開く」と読み、ドメインと状態を説明に結ぶ。押すと onActivate（右の欄の映像を開く）
-    const opener = strip.element.querySelector('.b2-strip-open');
-    values.push(opener.getAttribute('aria-label') === '画面を開く' && document.getElementById(opener.getAttribute('aria-describedby'))?.textContent.includes('example.com') && !opener.hasAttribute('aria-expanded'));
-    opener.click(); values.push(activated === 1);
-    // 絵が無くなっても src を外さない（外すと Chrome は壊れた絵の印を出す）。透明の絵にする
-    const thumb = strip.element.querySelector('.b2-thumb');
-    strip.update({ url: 'https://example.com/', tabs: 3, image: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' });
-    strip.update({ url: 'https://example.com/', tabs: 3, image: null });
-    values.push(/^data:image\/gif;base64,R0lGODlhAQABAAAAACH5/.test(thumb.getAttribute('src') ?? ''));
-    strip.destroy(); badge.destroy(); mount.remove(); return values;
+    const calls = [], values = [];
+    const badge = createControlBadge({ mount, onResume: () => calls.push('resume') });
+    values.push(badge.element.hidden === true);
+    badge.update({ visible: true });
+    const btn = badge.element.querySelector('.b2-action');
+    values.push(badge.element.hidden === false && badge.element.textContent.includes('あなたが操作中') && btn.textContent === 'AI に戻す');
+    values.push(badge.element.querySelector('.b2-pause') !== null && badge.element.querySelector('.b2-grow') !== null);
+    btn.click(); await Promise.resolve();
+    values.push(calls.join() === 'resume');
+    badge.destroy(); mount.remove(); return values;
   });
-  check(unified.every(Boolean), `unified badge: hidden before agent use, stop/resume, phone strip domain/tab count/remaining seconds/Open screen label/activate/blank thumbnail (${JSON.stringify(unified)})`);
+  check(unified.every(Boolean), `unified badge: hidden before visible, 「あなたが操作中」+「AI に戻す」, II mark, resume (${JSON.stringify(unified)})`);
   return results.join('\n');
 }

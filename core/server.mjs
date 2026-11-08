@@ -420,6 +420,8 @@ import { createPageRequests } from './page-requests.mjs';
 import { createPageTickets } from './page-tickets.mjs';
 import { createIsolatedRoutes } from './isolated-routes.mjs';
 import { createHtmlKeys } from './html-keys.mjs';
+import { loadPageSecrets, movedPageUrl } from './isolated-origins.mjs';
+import { createPageWatch } from './page-watch.mjs';
 import { PAGES_PATH, pageRequestOk, pagesCookie } from './page-auth.mjs';
 import { COMMON_HEADERS, sendStatus } from './page-listener.mjs';
 
@@ -2376,16 +2378,29 @@ const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 // port はリスナーが立ってから入る（startPageListeners）
 let pagePorts = null, pageListeners = null;
 const pagesLog = line => console.log(`  [pages] ${line}`);
-const htmlKeys = createHtmlKeys({ log: pagesLog });   // HTML のファイルの鍵。ファイルのページが出し、隔離が引く
+// アプリの出どころの印と HTML の鍵を閉じる秘密（page-secrets.json。無ければ作る）
+const pageSecrets = await loadPageSecrets(store.dataDir, { log: pagesLog });
+const htmlKeys = createHtmlKeys({ secret: pageSecrets.key, log: pagesLog });   // HTML のファイルの鍵。ファイルのページが出し、隔離が引く
+// 開かれているファイル・フォルダーの変化を、その会話を見ている画面へ知らせる（page:changed）
+const pageWatch = createPageWatch({ emit: (sessionId, file) => browserUnifyWs.pageChanged(sessionId, file) });
 // 会話の記録（発言・ツールの呼び出し・present の行）。ファイルのページの最近のファイル・可視化・git のグラフから発言への移動に使う
 // 新しいタブは最近のファイルと可視化を 1 回の api/recent で読むので、同じ会話の読み込みを 2 秒だけ使い回す
 const pageTranscripts = new Map();
+const vizSourceIndex = new Map();
 function pageTranscript(sessionId) {
   const held = pageTranscripts.get(sessionId);
   if (held && Date.now() - held.at < 2_000) return held.promise;
   const promise = (async () => {
     const backend = await resolveBackendForSession(sessionId).catch(() => null);
     const got = await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [], presents: [] }));
+    let index = vizSourceIndex.get(sessionId);
+    if (!index) { index = new Map(); vizSourceIndex.set(sessionId, index); }
+    for (const present of got.presents ?? []) {
+      const hash = present?.kind === 'visualization' && !present.error ? present.bundle?.hash : null;
+      if (typeof hash === 'string' && hash) index.set(hash, { path:present.path ?? null, caption:present.caption ?? null });
+    }
+    while (index.size > 500) index.delete(index.keys().next().value);
+    while (vizSourceIndex.size > 20) vizSourceIndex.delete(vizSourceIndex.keys().next().value);
     return { ...got, toolHints: backend?.toolHints ?? {}, actor: backend?.label ?? backend?.id };
   })();
   pageTranscripts.set(sessionId, { at: Date.now(), promise });
@@ -2395,12 +2410,22 @@ function pageTranscript(sessionId) {
 pageRequests = createPageRequests({ relay: chromeRelay ?? null, store, fileAccessFor, fileRoots, resolveSessionFile, log: pagesLog });
 void pageRequests.env({ lang: locale.lang });
 const pagesRoutes = createPagesRoutes({ ops: (caller, id, input) => opsRegistry.invoke(caller, id, input, opsDeps()),
-  store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, ports: () => pagePorts, log: pagesLog, env: () => pageRequests.envOf(),
+  store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, secret: pageSecrets.key, watch: pageWatch, ports: () => pagePorts, log: pagesLog, env: () => pageRequests.envOf(),
   recentFiles: async sessionId => recentFilesOf(await pageTranscript(sessionId)),
   visualizations: async sessionId => visualizationLinksOf((await pageTranscript(sessionId)).presents, pagePorts?.isolated),
   gitTimeline: async sessionId => timelineOf((await pageTranscript(sessionId)).messages) });
-const isolatedRoutes = createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, fileAccessFor, ports: () => pagePorts, log: pagesLog });
+const isolatedRoutes = createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, secret: pageSecrets.key, fileAccessFor, ports: () => pagePorts, log: pagesLog });
 const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, pageRequests, log: pagesLog,
+  htmlKeys, secret: pageSecrets.key, pageWatch,
+  // 可視化の束を開いた元のファイルは、クライアントの送った値でなく会話の記録の行から決める（pageOpen の応答の path）
+  vizSource: async (sessionId, hash) => {
+    const indexed = vizSourceIndex.get(sessionId)?.get(hash);
+    if (indexed) return indexed;
+    await pageTranscript(sessionId);
+    return vizSourceIndex.get(sessionId)?.get(hash) ?? null;
+  },
+  // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る
+  movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
   mask: message => secretMasker.json(message),
   clients: () => runtime.sockets, watching: client => watching.get(client), access: fileAccessFor,
   cwd: async id => {
@@ -2417,17 +2442,27 @@ const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports:
     return dir ? path.join(home.userDataDir, dir) : null;
   } });
 
+/** かつて Pleiad のリスナーだった port（このプロセスで替わる前・前回の起動のもの。残ったタブの張り直しにだけ使う） */
+let earlierPagePorts = { pages: [], isolated: [] };
+
 /** ファイルのページと隔離のリスナーを立て、port を中継へ渡す（待ち受けの後に呼ぶ） */
 async function startPageListeners() {
   try {
     const listeners = await startBrowserUnifyListeners({ dataDir: store.dataDir, env: process.env, token: TOKEN, waitMs: waitsForPort() ? PORT_WAIT_MS : 0,
       pagesRoutes, isolatedRoutes, tickets: pageTickets, log: pagesLog });
     if (shuttingDown) return void listeners.close();
+    const before = pagePorts;
     pageListeners = listeners;
     pagePorts = Object.freeze({ main: server.address().port, ...listeners.ports });
+    earlierPagePorts = {
+      pages: [...new Set([before?.pages, listeners.previous?.pages, ...earlierPagePorts.pages].filter(v => Number.isInteger(v) && v !== pagePorts.pages))],
+      isolated: [...new Set([before?.isolated, listeners.previous?.isolated, ...earlierPagePorts.isolated].filter(v => Number.isInteger(v) && v !== pagePorts.isolated))],
+    };
     chromeRelay?.setPagePorts(pagePorts);
     chromeRelay?.setPageCookie(pagesCookie(TOKEN));
     remote.setPagePorts(pagePorts);   // スマホの道（端末のプロキシの 2 つ目・隔離の行き先。ADR 0295 の 5）
+    // 残ったタブを新しい URL へ移し、開いている画面へ今の port を知らせる（Chrome がまだ無ければ中身は何もしない）
+    await browserUnifyWs.portsChanged({ previous: earlierPagePorts });
     pagesLog(`pages http://localhost:${pagePorts.pages}/ isolated http://localhost:${pagePorts.isolated}/`);
   } catch (error) {
     console.error('  [pages] could not start the page listeners:', String(error?.message ?? error));
@@ -4476,6 +4511,9 @@ async function deleteSessionOf(sessionId) {
     pushNotifier.viewed(sessionId);
     void inboxSources.sessionRemoved(sessionId);
     releaseAgentConnection(sessionId);
+    pageWatch.removeSession(sessionId);   // ファイルの変化の見張りの登録（page:changed）も消す
+    pageTranscripts.delete(sessionId);
+    vizSourceIndex.delete(sessionId);
     const cleanups = [
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),
@@ -5928,6 +5966,7 @@ function attach(ws) {
 
 function detach(ws) {
   if (!runtime.sockets.delete(ws)) return;
+  browserUnifyWs.screenClosed?.(ws);   // 切れた画面ぶんのファイルの見張りを外す（page:changed の owner）
   if (runtime.sockets.size > 0) return;          // まだ別のタブが居る
   if (runtime.turns.size === 0 && blockingWaits().length === 0) return;
 
@@ -10386,6 +10425,7 @@ function shutdownServer({ stopHeld = false } = {}) {
     // ファイルのページと隔離のリスナーも放す（新しいサーバーが同じ port を取る）
     if (pageListeners) await Promise.race([pageListeners.close(), new Promise(resolve => setTimeout(resolve, 1000))]).catch(() => {});
     htmlKeys.close();
+    pageWatch.close();
     await mainLink?.close?.().catch(error => console.error('main link shutdown failed:', error?.code ?? error?.message ?? error));
     // bot の DB（別のファイル）とデータ置き場の DB の接続を閉じてから、ロックを放す（次のサーバーが取ってすぐ開く）
     await botHost?.close?.();

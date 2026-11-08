@@ -98,7 +98,7 @@ ADR 0294 で、ファイル・フォルダー・git・プラグイン・新し�
 
 ### 5. リモートとスマホ
 
-1. **ファイルのページ**: スマホは映像にせず、端末の中で直接描く。本体の origin の `/_pleiad/s/…` を、今の端末のプロキシ → Noise → `forward.mjs` の道で読む（上の 2 の 3）。新しいリスナーは要らない。
+1. **ファイルのページ**: PC・スマホとも利用者のページは端末の中で直接描く。本体の origin の `/_pleiad/s/…` を、今の端末のプロキシ → Noise → `forward.mjs` の道で読む（上の 2 の 3）。新しいリスナーは要らない。
 2. **「中継の側でも認証と大きさの上限」の置き場**: 中継のサーバー（`relay/server.mjs`）は暗号文しか見えないので、ここでは検査できない。かける場所は道の両端で、両方にかける（2026-11-06 の追加の決定）。
    - ホストの側（`core/remote/forward.mjs`）: `/_pleiad/` を許す道に足す。ペアリング済みの端末の流れだけを本体へ渡す（今と同じ）。応答の本体を数え、テキストの API は 8 MiB、`api/raw` は 32 MiB を超えたら流れを切る（本体の検査に任せきりにしない）。
    - 端末の側（`device-proxy.mjs`・`DeviceProxy.kt`・`DeviceProxy.swift`）: `/_pleiad/` を GET・HEAD だけ通す。受けた本体を同じ上限で数えて切る。
@@ -108,7 +108,7 @@ ADR 0294 で、ファイル・フォルダー・git・プラグイン・新し�
    - iOS は `HostViewController.swift` の `decidePolicyFor` で、`http://localhost:<p2>` の子フレームを許す。`LinkPolicy` は、隔離の URL を「ホストだけのリンク」として断らないようにする。
    - Android は `network_security_config` の平文の許可に `localhost` を足し、`HostActivity.kt` の `shouldOverrideUrlLoading` で同じ子フレームを許す。
    - デスクトップのリモートの窓（`core/remote/device-proxy.mjs`）も同じ作りにする。
-4. Web のページと HTML のファイルのタブは、スマホでも映像のままにする（ADR 0297）。中継を通る映像の量には、今は上限を置かず、測ってから決める（2026-11-06 の追加の決定）。
+4. エージェントが開いた Web のページは映像で表示する。利用者が開く HTML・可視化は端末内で描き、明示的に「Chrome の映像」を選んだときだけ映像にする（ADR 0297）。中継を通る映像の量には、今は上限を置かず、測ってから決める（2026-11-06 の追加の決定）。
 
 ## 理由
 
@@ -129,14 +129,47 @@ ADR 0294 で、ファイル・フォルダー・git・プラグイン・新し�
 ## 追記（2026-11-06）: 端末の入口の検査・スマホの端末内の描画・ファイルのページの頭のパス
 
 1. **端末のプロキシの入口**: 端末のプロキシ（`core/remote/device-proxy.mjs`・`DeviceProxy.kt`・`DeviceProxy.swift`）も、ファイルのページの要求は `Sec-Fetch-Site` が `same-origin`・`none`・無しのときだけ通し、ほかは 403 にする。通した値はホストへの転送の頭に載せ、`forward.mjs` はページの道でだけ本体へ渡す（知らない値は `cross-site` として渡し、ホストの入口で断られる）。隔離の入口は対象外（sandbox の枠からの要求は設計上 `cross-site`）。
-2. **スマホの端末内の描画**: スマホではファイル・フォルダー・git・プラグインのタブを、同じ口の `/_pleiad/s/<sid>/<page>` を iframe にして映像の枠の上に重ねて描く（上の 5 の 1）。
-   - タブ・題・履歴は Chrome のタブを正とする。ページの中で別のファイルやフォルダーへ移ったら Chrome のタブをそのパスへ移し、戻る・進むで Chrome のタブが移ったら iframe の場所を置き換える。
-   - スマホのタブ一覧で人が選んだタブは、映像を止めている間も現在の表示として優先する。端末内のページから Web の映像タブへ、また端末内のページへ戻る操作で、映像を再開・停止できる。
-   - ページからの依頼（メニュー・保存など）は、デスクトップの `createPageFrame` と同じ検査（`web/page-frame.mjs` の `pageRequestOf`）で受け、セッションとタブの合わないものは捨てる。
-   - ツリーはページの上に重ねて出し、アドレスバーのツリーのボタンで開く。「原文を表示」は ⋮ のメニューに置く。リモートの端末では OS の操作（エクスプローラーで表示・既定のアプリで開く）は出ない。
-   - Web のページと HTML のファイルのタブは映像のまま（上の 5 の 4）。端末内で描いている間は、下の映像（見えない）の流れを止め（`browserScreencastStop`）、映像のタブへ戻ったら映し直す（`web/chrome-panel.mjs` の `mountPage`。C1 で足した）。タブの帯と題は映像の流れではなく `tab:info` の知らせから描くので、止めている間も動く。
+2. **端末内の描画（v8 で置換）**: PC・スマホとも利用者が開くページを iframe で描く。通常のファイル・フォルダー・git・プラグインは本体の `/_pleiad/s/<sid>/<page>`、HTML・可視化は下記 `pageOpen` の URL を使う。
+   - タブ・題・履歴は端末が持つ。Chrome に同じタブを作るのは「Chrome の映像」を選んだときだけ。ページへ戻すと保持した iframe を表示する。
+   - ページの要求は `web/page-frame.mjs` の `pageRequestOf` で種類と会話を検査し、親で送信元の window と origin を照合する。通常ページだけがファイル操作を要求できる。
+   - ツリーは画面側で描く。右の欄が 640px 以上なら横、狭ければ重ねる。画面内のページを表示中は映像の配信を止め、映像を選んだら再開する。
 3. **ファイルのページの頭のパス**: 会話の作業場所の中のファイルは作業場所からの相対パス、外のファイルは絶対パスを出す。題（ツールチップ）には常に絶対パスを出す。
    - 2026-11-07 に ADR 0294 の 2 の 5（アドレスバーは絶対パス）で置き換えた。スマホも絶対パスを出す。
+
+## 追記（2026-11-08）: アプリごとの専用の出どころ・ページの変化・残ったタブの張り直し
+
+### 6. アプリごとの専用の出どころ（`<印>.localhost`）
+
+隔離の origin は 1 つ（`localhost:<isolated port>`）から、アプリごとの `<印>.localhost:<isolated port>` に分ける（`core/isolated-origins.mjs`）。
+
+- ブラウザーは `<名前>.localhost` をいつもループバックへ解決する（公開の DNS では作れない）。印ごとに別の origin になるので、アプリ同士は localStorage・IndexedDB・Cookie を分けられる。`localhost`（印無し）も受ける（端末のプロキシと古い形。下の 9）
+- 印はアプリごとに決まり、サーバーの入れ替えをまたいでも同じ（そのアプリの保存が残る）
+  - 可視化: `v<束のハッシュの先頭 24 字>`（束の中身が同じなら同じ印）
+  - HTML のファイル: `f<HMAC-SHA256(秘密, "file-root:<フォルダー>") の先頭 16 字（hex）>`（フォルダーのパスは出さない）
+- 印の元の秘密は `page-secrets.json`（32 バイト。`core/isolated-origins.mjs` の `loadPageSecrets`）に置き、無ければ作る。壊れていれば作り直す（古い印と鍵は効かなくなる）
+- 隔離のリスナーは `Host` が `localhost:<port>` か `<印>.localhost:<port>` のときだけ答える（`page-listener.mjs` の `hostCheck`）。ほかは 421
+- sandbox は `allow-scripts allow-same-origin allow-downloads allow-forms allow-modals allow-popups allow-pointer-lock` にする（`APP_SANDBOX`。core/preview-policy.mjs）。専用の出どころで動くので `allow-same-origin` を付け、相対の資源・fetch・localStorage・フォーム・別タブをふつうのページと同じにする。`allow-top-navigation` は付けない（親の Pleiad の画面を動かせない）。権限は `permissions-policy` で camera・microphone・geolocation・clipboard を止める
+- これに伴い、opaque origin 向けの storage の代役（`STORAGE_SHIM`）は廃止した。応答の CSP の自己の読み先は `http://localhost:*/<道>/` と `http://*.localhost:*/<道>/` の両方を足す（端末のプロキシで port が替わるため port は `*`）
+- 「隔離の応答で sandbox の無いものからの要求には pleiad_pages が付く」点は変わらないので、2 の `Sec-Fetch-Site` の検査の線はそのまま要る
+
+### 7. 開く先はサーバーが決める（pageOpen）・残ったタブの張り直し
+
+- 画面は port やアプリの URL を組み立てない。WS の `pageOpen`（`core/browser-unify-ws.mjs`）が、対象（file・dir・git・plugins・new・attachment・html・viz）を確かめて、今の port の URL を返す。HTML は鍵を出し `f<印>.localhost` の URL を、可視化は目録で入口を確かめて `v<印>.localhost` の URL を返す。その会話を見ている画面だけが頼める
+- port が替わることがある（覚えた port が塞がっていた・衝突）。「かつて Pleiad のリスナーだった port」（このプロセスで替わる前・前回の起動のもの）を `earlierPagePorts` に保ち、Chrome に残ったタブの URL を中継が `Page.navigate` で新しい URL へ移す（`relay.migratePageTabs` ← `core/isolated-origins.mjs` の `movedPageUrl`）
+  - 移すのは、あの port を持つ URL だけ（ほかの localhost の port のページは触らない）
+  - `/viz/<ハッシュ>/…` は束の印の出どころへ組み直す。`/f/<鍵>/…` は鍵を引いてフォルダーが分かるものだけ印の出どころへ組み直す（期限切れ・別の秘密で閉じた鍵は移さない）
+  - 画面には `page:moved` で今と前の port を知らせ、画面の中の枠・リンクは画面が張り直す（端末内のページは本体と同じ出どころなので張り直しは要らない）
+
+### 8. 開いているファイルの変化（page:changed）
+
+- 開いたファイル・フォルダーは `core/page-watch.mjs` がフォルダーごとの `fs.watch` で見張る（150 フォルダー・600 対象まで。250 ms でまとめる）。登録は会話ごとで、同じファイルを 2 会話で開いていてもそれぞれへ届く
+- 変わったら `page:changed`（会話 id とパスだけ。中身・差分は送らない）を、その会話を見ている認証済みの画面へ送り、そのファイルを出している Chrome のタブへは `Runtime.evaluate` で `pleiad:page-command {type:'changed'}` を届ける。右の欄・端末内のページにも同じ命令を `postMessage` で届ける
+- 読み直すかどうかはページが決める（`web/pages/app.mjs`）。人が触っていなければそのまま読み直し、触っていれば「更新を表示」を出して人の操作まで待つ（読んでいる所・入力を消さない）
+
+### 9. 端末（スマホの道）と印の出どころ
+
+- 端末のプロキシの隔離の入口は `<印>.localhost:<p2>` も受ける（`device-proxy.mjs` の `isolatedHostOk`）
+- ただしスマホのブラウザー・WebView は `<印>.localhost` を名前解決できないので、端末の port に付け替える URL（`api/html-key`・`api/recent` の可視化）の名前は `localhost` のままにする（`pages-routes.mjs`）。端末ではアプリ同士の保存は分かれないが、URL の鍵の検査は変わらない
 
 ## 現在の制約（2026-11-06）
 
@@ -146,3 +179,16 @@ ADR 0294 で、ファイル・フォルダー・git・プラグイン・新し�
    - 起きること: 束の同じフォルダーの資源（相対パスの画像・CSS・スクリプト）・相対パスの fetch・WASM・localStorage は読めない（隔離の前と同じ）。会話の中の HTML の本文と、外部の読み込みの確認（ADR 0042）は今までどおり動く。「ブラウザーで開く」は会話の中の拡大になる（会話の Chrome のタブには開かない）。
    - 直さない理由: 隔離の origin から配る形を 2 つ調べ、採らなかった。(1) 本体の port に可視化の専用の道を作り、sandbox を二重にかける。(2) 隔離のリスナーを LAN にも開き、別の `Host` を受ける。どちらもファイルの中身を配る口を LAN に増やし、この ADR の 1 の線（本体だけを LAN に開く）を変える。本体は既定では LAN に待ち受けず（`AGENT_HOST_BIND` の既定は `127.0.0.1`）、この画面は環境変数で開いた人にだけある。スマホ・リモートの窓は端末のプロキシの `localhost` で隔離の origin を使えるので、今の形にとどめる。
    - スマホのアプリとデスクトップのリモートの窓は対象外（端末のプロキシの `localhost:<p2>` で隔離の origin を使う。上の 5 の 3）。
+
+## v8 の画面と配信の約束（2026-11-07）
+
+HTML・可視化のタブは、画面を作る W1 と隔離配信を作る W2 の境界を次のように分ける。この節が旧来の HTML の外枠 URL・opaque origin・スマホだけの端末内描画に優先する。鍵・CSP・リモートの配信変更は W2 の実装で合わせる。
+
+- `pageOpen({sessionId, kind:'file'|'viz', path?, vizHash?, entry?})` は `{url,title,path?,kind,origin}` を返す。W1 は HTML・可視化の URL を組み立てず、ページでも Chrome でも返却 URL を使う。
+- `page:moved {ports:{pages,isolated}, previous:{pages[],isolated[]}}` は、今の port と「かつて Pleiad のリスナーだった port」の一覧を知らせる（会話 id は持たない。全画面へ届く）。画面は現在の URL と履歴の中で前の port を持つものを今の port へ差し替える。入力済みの画面は「更新を表示」を押して確認するまで残す。
+- `page:changed {sessionId,path}` は、未操作なら読み直し、操作後なら「更新を表示」を出す。
+- W1 の実装は `web/page-tabs.mjs` と `web/browser-unify.mjs`。試験だけ `tests/lib/page-open.mjs` を依存として渡す。本番は `pageOpen` コマンドを呼び、代わりの URL へ逃がさない。W2 がコマンドを追加すれば、試験用の注入を使わず接続できる。
+- サーバーの入れ替えで線を張り直したあとは、画面はまず見ている会話を `watchSession` で登録し直してから、ファイル・フォルダー・HTML・可視化のタブの `pageOpen` を取り直す（逆の順では、その接続が会話を見ているとサーバーが分かる前の `pageOpen` が INVALID で落ちる）。隔離の URL を開くたびにも `pageResolve` で確かめ、引けなければ同じ道で取り直す。
+- 隔離された HTML の操作検出には `web/pages/activity.mjs` の `installPageActivity` を W2 のページへ載せる（モジュールを配るか、同関数を橋へ組み込む）。親の load 時の `pleiad:page-activity-init` に対し、クリック・選択・スクロール・入力の最初の変化を `pleiad:page-activity {input:boolean}` で親へ返す。親 window を照合し、応答先は受信した正確な origin に限定する。W1 も iframe の window と返却 URL の origin を照合する。この橋はアプリ操作の命令を受けない。
+
+W2 の取り込み前には、本番の HTML・可視化の新しいタブを開くコマンドと隔離側の操作通知は未接続である。W1 の実ブラウザー試験は別 origin のページへ同じ橋を載せ、入力の保持と更新の確認を検証する。

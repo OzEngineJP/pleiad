@@ -22,9 +22,16 @@ export const pageUrl = (kind, path, extra = {}) => {
   const q = new URLSearchParams(extra); if (path != null) q.set('path', path);
   return `${prefix}${kind}${q.size ? `?${q}` : ''}`;
 };
-export const openFile = (path, kind = 'file') => { location.href = pageUrl(kind === 'directory' ? 'dir' : kind, path); };
+export const openFile = (path, kind = 'file') => {
+  const url = pageUrl(kind === 'directory' ? 'dir' : kind, path);
+  if (parent !== window) parent.postMessage({ type:'pleiad:page-open', sessionId, url }, location.origin);
+  else location.href = url;
+};
 export async function api(name, params = {}) {
   const q = new URLSearchParams(params);
+  // Each page API read belongs to the tab that opened this page. The server
+  // uses this owner to release file watches when the tab closes.
+  if (query.has('watchOwner') && !q.has('watchOwner')) q.set('watchOwner', query.get('watchOwner'));
   const res = await fetch(`${prefix}api/${name}${q.size ? `?${q}` : ''}`, { credentials:'same-origin', cache:'no-store' });
   const result = await res.json();
   if (!res.ok) throw Object.assign(new Error(result.error?.code ?? 'read-failed'), { code:result.error?.code ?? 'read-failed' });

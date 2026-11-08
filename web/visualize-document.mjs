@@ -1,7 +1,8 @@
 // 可視化の文書（枠の srcdoc・保存する HTML・サーバーが別タブへ返す写し）の組み立て。
-// DOM も i18n も使わない（サーバーの core/server.mjs からも読む）。
-// Interactive documents always have an opaque sandbox origin. Never add
-// allow-same-origin: the surrounding app carries authenticated cookies.
+// DOM も i18n も使わない（サーバーの core/isolated-routes.mjs からも読む）。
+// srcdoc で描く写しは不透明な sandbox の出どころ（allow-same-origin は付けない。周りの画面は資格を持つ）。
+// 隔離の origin へ置いたものは、アプリごとの専用の出どころ（<印>.localhost。core/isolated-origins.mjs）で
+// 本物の origin として動く（localStorage・fetch・相対パスが効く）。保存する HTML は単体でも同じ CSP を持つ
 import { previewCsp } from './browser-confirm-policy.mjs';
 export const VISUALIZE_CSP = previewCsp();
 export const VIOLATION_BRIDGE = `<script>document.addEventListener('securitypolicyviolation',event=>{if(event.disposition==='enforce'&&/^https?:\\/\\//i.test(event.blockedURI))parent.postMessage({type:'ply-preview-blocked',url:event.blockedURI},'*')})</script>`;
@@ -19,23 +20,30 @@ const CONVERSATION_FADE = `<script>(()=>{const root=document.documentElement;con
 // A bundle served from the isolated origin (core/isolated-routes.mjs) follows its own relative links inside the frame;
 // a srcdoc frame has no http location, so every link still goes through the parent.
 // external: Ctrl/⌘+click or middle click (auxclick) asks for the default browser (ADR 0041).
-export const LINK_BRIDGE = `<script>(()=>{const sameOrigin=raw=>{try{return location.protocol.startsWith('http')&&new URL(raw||'',location.href).origin===location.origin}catch{return false}};const send=(url,newWindow,external)=>{try{const parsed=new URL(url);if(parsed.protocol!=='http:'&&parsed.protocol!=='https:')return;parent.postMessage({type:'ply-preview-open-link',url:parsed.href,newWindow,external},'*')}catch{}};const onLink=(event,middle)=>{if(middle&&event.button!==1)return;const link=event.target.closest?.('a[href]');if(!link)return;const raw=link.getAttribute('href');if(raw?.startsWith('#')){if(middle)return;event.preventDefault();location.hash=raw;return}if(!middle&&!event.ctrlKey&&!event.metaKey&&link.target!=='_blank'&&sameOrigin(raw))return;event.preventDefault();if(!/^https?:\\/\\//i.test(raw||''))return;const external=middle||!!event.ctrlKey||!!event.metaKey;send(raw,link.target==='_blank'||external,external)};document.addEventListener('click',event=>onLink(event,false),true);document.addEventListener('auxclick',event=>onLink(event,true),true);window.open=(url,target)=>{send(url,target==='_blank',false);return null}})()</script>`;
+// The location report keeps the parent's address bar, history and file watching in step with
+// in-page navigation (relative links, hash changes, back/forward, pushState).
+// pleiad:page-command lets the parent drive the frame: 'reload' reloads the current document
+// (keeping its URL and hash), 'navigate' replaces the location with a parent-owned history URL
+// (the parent keeps the in-document history; the frame's own history is not relied on).
+// ply-preview-point reports whether the pointer is over this document: the parent's :hover does
+// not reach ancestors of a cross-origin frame, so the card's tools key off it (web/style.css .point).
+export const LINK_BRIDGE = `<script>(()=>{const sameOrigin=raw=>{try{return location.protocol.startsWith('http')&&new URL(raw||'',location.href).origin===location.origin}catch{return false}};const send=(url,newWindow,external)=>{try{const parsed=new URL(url,location.href);if(parsed.protocol!=='http:'&&parsed.protocol!=='https:')return;parent.postMessage({type:'ply-preview-open-link',url:parsed.href,newWindow,external},'*')}catch{}};const report=(replace)=>{try{parent.postMessage({type:'ply-preview-location',href:location.href,title:document.title,replace:replace===true},'*')}catch{}};const onLink=(event,middle)=>{if(middle&&event.button!==1)return;const link=event.target.closest?.('a[href]');if(!link)return;const raw=link.getAttribute('href');if(raw?.startsWith('#')){if(middle)return;event.preventDefault();location.hash=raw;return}if(!middle&&!event.ctrlKey&&!event.metaKey&&link.target!=='_blank'&&sameOrigin(raw))return;event.preventDefault();const external=middle||!!event.ctrlKey||!!event.metaKey;send(raw,link.target==='_blank'||external,external)};document.addEventListener('click',event=>onLink(event,false),true);document.addEventListener('auxclick',event=>onLink(event,true),true);window.open=(url,target)=>{if((target||'_blank')==='_self'){try{location.assign(new URL(url,location.href).href)}catch{}return null}send(url,true,false);return null};addEventListener('popstate',()=>report());addEventListener('hashchange',()=>report());for(const name of['pushState','replaceState']){const orig=history[name];history[name]=function(){const out=orig.apply(this,arguments);report(name==='replaceState');return out}}addEventListener('load',()=>report());const point=over=>{try{parent.postMessage({type:'ply-preview-point',over},'*')}catch{}};document.addEventListener('mouseover',e=>{if(!e.relatedTarget)point(true)});document.addEventListener('mouseout',e=>{if(!e.relatedTarget)point(false)});document.addEventListener('pointerout',e=>{if(!e.relatedTarget)point(false)});document.addEventListener('pointermove',()=>point(true),{once:true,passive:true});addEventListener('message',event=>{const c=event.data;if(event.source!==parent||c?.type!=='pleiad:page-command')return;const type=c.command?.type;if(type==='reload')location.reload();else if(type==='navigate'&&sameOrigin(c.command?.url))location.replace(c.command.url)})})()</script>`;
 
-// The isolated origin (core/isolated-routes.mjs) serves documents under a sandbox without allow-same-origin, where
-// touching localStorage / sessionStorage throws. Many generated pages read them at startup and stop there, so the
-// isolated responses replace a throwing store with one kept in memory for the page's lifetime (nothing is shared or kept).
-export const STORAGE_SHIM = `<script>(()=>{for(const name of['localStorage','sessionStorage']){try{void window[name].length}catch{const data=new Map();const store={get length(){return data.size},key:i=>[...data.keys()][i]??null,getItem:k=>data.has(String(k))?data.get(String(k)):null,setItem:(k,v)=>{data.set(String(k),String(v))},removeItem:k=>{data.delete(String(k))},clear:()=>{data.clear()}};try{Object.defineProperty(window,name,{value:store,configurable:true})}catch{}}}})()</script>`;
+// The local page tab's counterpart of web/pages/activity.mjs, inlined: the isolated origin
+// cannot import the app's modules, and the CSP here only allows inline scripts.
+// Reports interaction to the parent once it announces itself with pleiad:page-activity-init.
+export const ACTIVITY_BRIDGE = `<script>(()=>{if(parent===window)return;let receiver=null,touched=false,dirty=false;const send=()=>{if(receiver)parent.postMessage({type:'pleiad:page-activity',input:dirty},receiver)};const activity=event=>{if(!event.isTrusted)return;const input=event.type==='input'||event.type==='change';if(touched&&(!input||dirty))return;touched=true;dirty=dirty||input;send()};const init=event=>{if(event.source!==parent||event.data?.type!=='pleiad:page-activity-init'||!/^https?:\\/\\//.test(event.origin))return;receiver=event.origin;if(touched)send()};for(const type of['pointerdown','scroll','selectionchange','input','change'])document.addEventListener(type,activity,{capture:true,passive:true});addEventListener('message',init)})()</script>`;
 
 // resize: false for a document opened on its own (a browser tab): nobody listens
 // for its height, so it gets no reporting script at all.
 // title: the tab's name when opened on its own. Escaped; it comes from the model.
 const escapeText = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 // meta: false when the response header already carries the policy (the isolated origin). A meta CSP is
-// intersected with the header and would block the bundle's own files. storage: put STORAGE_SHIM first (the isolated origin).
-export function visualizationDocument(content, { theme = '', resize = true, title = '', policy = {}, conversation = false, meta = true, storage = false } = {}) {
+// intersected with the header and would block the bundle's own files.
+export function visualizationDocument(content, { theme = '', resize = true, title = '', policy = {}, conversation = false, meta = true, activity = false } = {}) {
   const scheme = ['light', 'dark'].includes(theme) ? `:root{color-scheme:${theme}}` : '';
   // Place policy before ALL model content, even full documents with an existing
   // head, scripts or meta refresh. Nothing from the model enters the parent DOM.
-  return `<!doctype html><html><head><meta charset="utf-8">${storage ? STORAGE_SHIM : ''}${meta ? `<meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">` : ''}${resize ? VIOLATION_BRIDGE : ''}<meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}${conversation && resize ? CONVERSATION_STYLE : ''}</style>${resize ? LINK_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}${conversation && resize ? CONVERSATION_FADE : ''}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8">${meta ? `<meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">` : ''}${resize || activity ? VIOLATION_BRIDGE : ''}<meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}${conversation && resize ? CONVERSATION_STYLE : ''}</style>${resize || activity ? LINK_BRIDGE : ''}${activity ? ACTIVITY_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}${conversation && resize ? CONVERSATION_FADE : ''}</body></html>`;
 }
 

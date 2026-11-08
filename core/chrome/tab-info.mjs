@@ -1,5 +1,6 @@
 import net from 'node:net';
 import { createIconFetch } from './icon-fetch.mjs';
+import { LOCALHOST_MARK } from '../isolated-origins.mjs';
 
 export const FAVICON_MAX_BYTES = 64 * 1024;
 const CACHE_ORIGINS = 128;
@@ -11,14 +12,30 @@ const titleExpression = 'document.title';
 const markerTitle = (url, title) => (!url || url.startsWith('data:')) && /^PLY-[0-9a-f]+$/.test(title);
 
 /** Pleiad pages use kind icons and paths, never an icon resource request. */
-export function pleiadPage(url, sessionId, { pages } = {}) {
+export function pleiadPage(url, sessionId, { pages, isolated } = {}) {
   try {
     const value = new URL(url);
-    if (value.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(value.hostname)) return null;
-    if (!Number.isInteger(pages) || pages < 1 || Number(value.port || 80) !== pages) return null;
-    const match = /^\/_pleiad\/s\/([^/]+)\/(file|dir|git|plugins|new|attachment)$/.exec(value.pathname);
-    if (!match || decodeURIComponent(match[1]) !== sessionId) return null;
-    return { kind: match[2], path: value.searchParams.get('path') };
+    if (value.protocol !== 'http:') return null;
+    const host = value.hostname.toLowerCase(), port = Number(value.port || 80);
+    if (['localhost', '127.0.0.1', '[::1]'].includes(host)) {
+      const match = /^\/_pleiad\/s\/([^/]+)\/(file|dir|git|plugins|new|attachment)$/.exec(value.pathname);
+      if (Number.isInteger(pages) && pages > 0 && port === pages && match && decodeURIComponent(match[1]) === sessionId)
+        return { kind: match[2], path: value.searchParams.get('path') };
+      // 直書きの localhost の隔離の port もアプリのページ（スマホの中継・デバッグが印の無い形で開く。中身は URL の鍵が守る）
+      if (Number.isInteger(isolated) && isolated > 0 && port === isolated) {
+        const seg = value.pathname.split('/');
+        if (seg[1] === 'viz' && /^[0-9a-f]{64}$/.test(seg[2] ?? '')) return { kind: 'viz', hash: seg[2] };
+        if (seg[1] === 'f' && seg[2]) return { kind: 'html', title: value.searchParams.get('title') };
+      }
+      return null;
+    }
+    // アプリの専用の出どころ（<印>.localhost。core/isolated-origins.mjs）のタブは、アプリのページとして印す。
+    // 印はアプリの名前なので会話の id は載らない（見せる題はタブの題・?title=。中身は URL の鍵が守る）
+    if (!Number.isInteger(isolated) || port !== isolated || !LOCALHOST_MARK.test(host)) return null;
+    const seg = value.pathname.split('/');
+    if (seg[1] === 'viz' && /^[0-9a-f]{64}$/.test(seg[2] ?? '')) return { kind: 'viz', hash: seg[2] };
+    if (seg[1] === 'f' && seg[2]) return { kind: 'html', title: value.searchParams.get('title') };
+    return null;
   } catch { return null; }
 }
 

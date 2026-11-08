@@ -1,5 +1,5 @@
 // エージェントの Chrome の窓を誰が操作しているかの表示（docs/design-system.md「Chrome の窓」、ADR 0148・0154・0296）。
-//   - createControlBadge・createTabActivityDot・createPhoneBrowserStrip: アドレスバーの札とポップ・タブの点・スマホの入力欄の上の帯（web/browser-unify.mjs が置く）
+//   - createControlBadge: アドレスバーのすぐ下に出す、人のタブがある間の「AI に戻す」（web/browser-unify.mjs が置く）
 //   - createChromeControlView: 一時停止中の帯（会話の中）と、映像の上に重ねる、エージェントが押した位置の輪。単体で描けて試せる。
 //     輪は web/chrome-panel.mjs の mountOverlay で映像の箱へ差し込む。撮影を断っている間の薄い幕は映像の側（web/chrome-panel.mjs の .cp-veil）が出す（二重にしない）
 //   - chromeControlStore: サーバーの chromeControl・chromeTap イベント（会話ごと）の置き場。右パネルが会話の状態を引く・聞く
@@ -7,27 +7,27 @@
 // 状態は core/chrome/control.mjs の 4 つ（running・idle・stopped・paused）。色は既存のトークンだけ。動きは --dur・--ease-out（動きを減らす設定では入れ替えだけ）。
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { chevRightIcon } from './icons.mjs';
 
 /** Called only by the unified browser; legacy control remains unchanged. */
 export function ensureBrowserControlStyles() {
   if (document.getElementById('browser-control-styles')) return;
   const style = el('style'); style.id = 'browser-control-styles';
   style.textContent = `
-.b2-control{position:relative;flex:0 1 84px;min-width:26px;width:84px}
-.b2-control[hidden],.b2-pop[hidden],.b2-strip[hidden],.b2-sheet[hidden],.b2-fallback[hidden],.b2-phone-note[hidden]{display:none!important}
-.b2-chip{display:flex;align-items:center;justify-content:center;gap:6px;height:26px;width:100%;border:0;border-radius:13px;background:transparent;color:var(--ink);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
-.b2-chip:hover,.b2-chip[aria-expanded=true]{background:var(--surface-2)}
-.b2-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink-blue);flex:none}
-.b2-dot[hidden]{display:none}
-.b2-dot[data-holder=human]{background:var(--ink-strong)}.b2-dot[data-waiting=true]{background:var(--ink-mark)}
-.b2-tab-dot{margin-inline-start:5px;vertical-align:middle}
-.b2-pop{position:fixed;z-index:90;width:256px;box-sizing:border-box;padding:14px;border-radius:12px;background:var(--surface-paper);box-shadow:0 8px 28px var(--shadow);color:var(--ink);text-align:left;font-size:13px}
-.b2-pop-title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}.b2-pop-sub{margin:4px 0 12px 15px;color:var(--ink-weak);font-size:12px;line-height:1.65}
-.b2-actions{display:flex;justify-content:flex-end;gap:8px}.b2-action{border:0;border-radius:var(--r-pill,16px);background:var(--surface-2);color:var(--ink);padding:6px 13px;font:inherit;cursor:pointer}.b2-action.primary{color:var(--ink-blue);background:var(--fill-blue,var(--surface-2))}
-.b2-strip{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;height:52px;border-radius:var(--r-m,10px);padding:0 6px;background:var(--surface-2);color:var(--ink);font-size:14px}
-.b2-strip-open{display:flex;align-items:center;gap:10px;flex:1;min-width:0;height:100%;border:0;padding:0;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left}.b2-strip-resume{flex:none;font-size:13px;padding:6px 14px}.b2-strip-resume[hidden],.b2-chevron[hidden]{display:none}
-.b2-thumb{width:60px;height:40px;object-fit:cover;object-position:top;border-radius:8px;background:var(--surface-paper);flex:none}.b2-strip-info{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px;line-height:1.25}.b2-domain{font-size:13px;font-weight:600;color:var(--ink-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.b2-strip-status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-weak)}.b2-count{flex:none;box-sizing:border-box;display:grid;place-items:center;min-width:20px;height:20px;padding:0 3px;border:2px solid currentColor;border-radius:5px;font-size:11px;font-weight:700;line-height:1;color:var(--ink)}.b2-chevron{display:grid;place-items:center;width:22px;height:22px;flex:none;margin-right:2px;color:var(--ink-weak)}.b2-chevron svg{width:18px;height:18px}
+ .b2-control{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:4px 12px;font-size:12px;color:var(--ink-weak)}
+.b2-control[hidden],.b2-sheet[hidden],.b2-fallback[hidden],.b2-phone-note[hidden]{display:none!important}
+.b2-action{border:0;border-radius:var(--r-pill);background:none;color:var(--ink-blue);padding:6px 10px;font:inherit;cursor:pointer}
+.b2-actions{display:flex;justify-content:flex-end;gap:8px}.b2-action.primary{color:var(--ink-blue);background:var(--fill-blue,var(--surface-2))}
+.b2-action:hover{background:var(--surface-2)}
+.b2-pause,.b2-grow{display:none}
+/* On phones, use one row: pause mark, “You are in control”, and “Return to AI” (approved 2026-11-08; temporary/mockups/phone-browser-header.html .bu-held). */
+@media(max-width:600px){
+ .b2-control{justify-content:flex-start;gap:8px;padding:0 6px 0 14px;min-height:44px;box-sizing:border-box;font-size:13px;color:var(--ink);border-bottom:1px solid var(--line)}
+ .b2-control .b2-pause{display:block;position:relative;width:14px;height:14px;flex:none}
+ .b2-control .b2-pause::before,.b2-control .b2-pause::after{content:"";position:absolute;top:3px;width:2px;height:8px;border-radius:1px;background:currentColor}
+ .b2-control .b2-pause::before{left:4px}.b2-control .b2-pause::after{right:4px}
+ .b2-control .b2-grow{display:block;flex:1}
+ .b2-control .b2-action{height:36px;padding:0 14px;border:1px solid var(--line);background:var(--surface-paper);color:var(--ink);font-weight:600}
+}
 .b2-input-surface{position:relative;overflow:hidden;touch-action:none;outline:none}.b2-input-surface:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}.b2-ripple{position:absolute;pointer-events:none;width:28px;height:28px;margin:-14px;border-radius:50%;box-shadow:0 0 0 2px var(--line-blue);animation:b2-ripple 550ms var(--ease-out,ease-out) forwards;z-index:3}
 @keyframes b2-ripple{from{opacity:.8;transform:scale(.4)}to{opacity:0;transform:scale(1.6)}}
 .b2-phone-input{position:absolute;z-index:4;border:0;padding:0;margin:0;resize:none;opacity:.01;background:transparent;color:transparent;caret-color:transparent;font-size:16px;pointer-events:none;outline:none}
@@ -39,92 +39,17 @@ export function ensureBrowserControlStyles() {
   document.head.append(style);
 }
 
-/** Mount inside the address-bar slot; update from chromeControl + tab:holder. */
-export function createControlBadge({ mount, onStop = () => {}, onResume = () => {} } = {}) {
+/** A return action appears only while a person is operating the video.
+ *  構成は「II（.b2-pause）・あなたが操作中・押し広げ（.b2-grow）・AI に戻す」。
+ *  PC は従来どおり右寄せの小さな札。スマホはアドレスバーのすぐ下の 1 行（.b2-pause の II と押し広げが出る。承認済み 2026-11-08） */
+export function createControlBadge({ mount, onResume = () => {} } = {}) {
   ensureBrowserControlStyles();
-  const root = el('div', 'b2-control'), button = el('button', 'b2-chip'), dot = el('span', 'b2-dot'), label = el('span', 'b2-chip-label');
-  const popup = el('div', 'b2-pop'), heading = el('div', 'b2-pop-title'), stateDot = el('span', 'b2-dot'), title = el('span');
-  const subtitle = el('p', 'b2-pop-sub'), actions = el('div', 'b2-actions'), action = el('button', 'b2-action');
-  button.type = action.type = 'button'; button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-expanded', 'false');
-  dot.setAttribute('aria-hidden', 'true'); stateDot.setAttribute('aria-hidden', 'true');
-  heading.append(stateDot, title); actions.append(action); popup.append(heading, subtitle, actions);
-  popup.setAttribute('role', 'dialog'); popup.hidden = true; button.append(dot, label); root.append(button); document.body.append(popup); mount?.append(root);
-  let state = {}, pending = false;
-  const close = (restore = false) => { popup.hidden = true; button.setAttribute('aria-expanded', 'false'); if (restore) button.focus(); };
-  // 窓の大きさが変わったら閉じるだけ（札へ戻さない。スマホではキーボードが開くと窓が縮み、ページの欄から札へ移ってキーボードが閉じた）
-  const shrink = () => close();
-  // 名前が収まらない幅では点だけにする（途中で切れた名前を出さない。名前の長さは担当ごとに違うので幅の閾値では決めない）
-  const fit = () => { label.hidden = false; label.hidden = button.scrollWidth > button.clientWidth; };
-  const sizes = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
-  sizes?.observe(root);
-  const outside = event => { if (!root.contains(event.target) && !popup.contains(event.target)) close(); };
-  const key = event => { if (event.key === 'Escape' && !popup.hidden) { event.stopPropagation(); close(true); } };
-  const place = () => { const rect = button.getBoundingClientRect(); popup.style.top = `${rect.bottom + 8}px`; popup.style.left = `${Math.max(8, Math.min(innerWidth - 264, rect.right - 256))}px`; };
-  document.addEventListener('pointerdown', outside); document.addEventListener('keydown', key); window.addEventListener('resize', shrink);
-  button.addEventListener('click', () => { const open = popup.hidden; popup.hidden = !open; button.setAttribute('aria-expanded', String(open)); if (open) { place(); action.focus(); } });
-  action.addEventListener('click', async () => {
-    if (pending) return; pending = true; action.disabled = true;
-    try { await (state.holder === 'human' || state.paused ? onResume() : onStop()); close(true); }
-    catch { subtitle.textContent = t('control:failed'); }
-    finally { pending = false; action.disabled = false; }
-  });
-  function update(next = {}) {
-    state = next;
-    root.hidden = !next.agentUsed;
-    const human = next.holder === 'human', name = next.name || 'Claude';
-    label.textContent = human ? t('control:you') : name;
-    title.textContent = human ? t('control:humanOperating') : next.paused ? t('control:stopped') : next.waiting ? t('control:waiting') : t('control:agentOperating', { name });
-    subtitle.textContent = human ? t('control:returnsAfterIdle') : next.paused ? t('control:resumeHint', { name }) : t('control:touchHint');
-    button.setAttribute('aria-label', title.textContent); popup.setAttribute('aria-label', title.textContent);
-    action.textContent = human || next.paused ? t('control:resume') : t('control:stop');
-    action.classList.toggle('primary', human || !!next.paused);
-    for (const node of [dot, stateDot]) { node.dataset.holder = human ? 'human' : 'ai'; node.dataset.waiting = String(!!next.waiting); }
-    if (root.hidden) close();
-    fit();
-  }
-  update();
-  return { element: root, update, close, destroy() { sizes?.disconnect(); document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); window.removeEventListener('resize', shrink); root.remove(); popup.remove(); } };
-}
-
-/** Mount beside a tab title; active means the agent is currently operating this tab. */
-export function createTabActivityDot({ mount } = {}) {
-  ensureBrowserControlStyles();
-  const element = el('span', 'b2-dot b2-tab-dot'); element.hidden = true; element.setAttribute('aria-hidden', 'true'); mount?.append(element);
-  return { element, update({ active = false, holder = 'ai', waiting = false } = {}) { element.hidden = !active && holder !== 'human'; element.dataset.holder = holder; element.dataset.waiting = String(waiting); } };
-}
-
-/** スマホの入力欄の上の帯。onActivate: 帯を押したときに呼び出し側が右の欄を開く（web/browser-unify.mjs）。
- *  onResume: 人が操作している間は「›」の代わりに「任せる」を出す（モックの §1） */
-const BLANK_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
-let stripCount = 0;
-export function createPhoneBrowserStrip({ mount, onActivate = () => {}, onResume = null } = {}) {
-  ensureBrowserControlStyles();
-  const element = el('div', 'b2-strip'), opener = el('button', 'b2-strip-open'), thumb = el('img', 'b2-thumb'), info = el('span', 'b2-strip-info'), domain = el('span', 'b2-domain');
-  const status = el('span', 'b2-strip-status'), dot = el('span', 'b2-dot'), statusText = el('span'), count = el('span', 'b2-count'), arrow = el('span', 'b2-chevron');
-  const resume = el('button', 'b2-action primary b2-strip-resume', t('control:resume'));
-  arrow.innerHTML = chevRightIcon;
-  thumb.alt = ''; dot.setAttribute('aria-hidden', 'true'); arrow.setAttribute('aria-hidden', 'true'); opener.type = resume.type = 'button'; resume.hidden = true;
-  // 帯の字（ページの名前・誰が操作中か）は見出しの代わりに読ませ、押すと何が起きるかを名前にする
-  opener.setAttribute('aria-label', t('control:openScreen')); info.id = `b2-strip-${++stripCount}`; opener.setAttribute('aria-describedby', info.id);
-  status.append(dot, statusText); info.append(domain, status); opener.append(thumb, info, count, arrow); element.append(opener, resume); mount?.append(element);
-  resume.addEventListener('click', async () => { resume.disabled = true; try { await onResume?.(); } catch {} finally { resume.disabled = false; } });
-  opener.addEventListener('click', () => onActivate());
-  let ticker = null;
-  return { element,
-    /** title: Pleiad のページのタブはホスト名（localhost）でなく、ファイルの名前やページの名前を出す */
-    update({ url = '', title = '', tabs = 0, holder = 'ai', name = 'Claude', image = null, remaining = null, last = null, pinned = false } = {}) {
-      if (title) domain.textContent = title;
-      else try { domain.textContent = new URL(url).hostname || t('control:browser'); } catch { domain.textContent = t('control:browser'); }
-      const human = holder === 'human' && !!onResume; resume.hidden = !human; arrow.hidden = human;
-      count.textContent = String(tabs); count.setAttribute('aria-label', t('control:tabCount', { count: tabs }));
-      clearInterval(ticker); ticker = null;
-      const deadline = !pinned && holder === 'human' ? Number.isFinite(last) ? last + 60_000 : Number.isFinite(remaining) ? Date.now() + remaining * 1000 : null : null;
-      const renderStatus = () => { statusText.textContent = holder === 'human' ? deadline == null ? t('control:humanOperating') : t('control:returnsIn', { seconds: Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) }) : t('control:agentOperating', { name }); };
-      renderStatus(); if (deadline != null) ticker = setInterval(renderStatus, 1000);
-      // 絵が無いときは透明の絵にする（Chrome は src を外した img に壊れた絵の印を出す）
-      dot.dataset.holder = holder; const next = image || BLANK_IMAGE; if (thumb.getAttribute('src') !== next) thumb.src = next;
-    },
-    destroy() { clearInterval(ticker); element.remove(); } };
+  const element = el('div', 'b2-control'), pause = el('span', 'b2-pause'), label = el('span', '', t('control:humanOperating')), grow = el('span', 'b2-grow');
+  pause.setAttribute('aria-hidden', 'true');
+  const resume = el('button', 'b2-action', t('tabs:display.resume')); resume.type = 'button'; element.hidden = true;
+  resume.onclick = async () => { resume.disabled = true; try { await onResume(); } finally { resume.disabled = false; } };
+  element.append(pause, label, grow, resume); mount?.append(element);
+  return { element, update({ visible = false } = {}) { element.hidden = !visible; }, destroy() { element.remove(); } };
 }
 
 export const CONTROL_STATES = ['running', 'idle', 'stopped', 'paused'];
@@ -141,8 +66,8 @@ const RING_MS = 700;
 
 /**
  * @param {object} o
- * @param {() => Promise<any>} o.resume  帯の「{{name}} に戻す」を押したときに呼ぶ（browser.chromeResume）
- * @param {() => string} [o.getName]  エージェントの名前（「Claude に戻す」）
+ * @param {() => Promise<any>} o.resume  帯の「AI に戻す」を押したときに呼ぶ（browser.chromeResume。人のタブを全部戻すのはサーバー側）
+ * @param {() => string} [o.getName]  エージェントの名前（行・記録のための呼び名。戻すボタンの語は「AI に戻す」で固定）
  * @param {(error: Error) => void} [o.onError]
  * @returns {{ banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null, error?: string|null}|null) => void,
  *            ring: (x: number, y: number, size?: {width: number, height: number}) => void, state: () => string|null, refresh: () => void }}
@@ -226,7 +151,7 @@ export function createChromeControlStore() {
   };
 }
 
-/** 今の会話のエージェントの名前（会話の行の「Claude に戻しました」。web/client.mjs が入れる） */
+/** 今の会話のエージェント名（閉じた行に使う。web/client.mjs が入れる） */
 let agentName = () => 'Claude';
 export const setChromeHandoverAgentName = fn => { if (typeof fn === 'function') agentName = fn; };
 // 閉じた窓の静止画は、持ち主の会話を見ている要求にだけサーバーが見せる（core/chrome/window-shots.mjs）。今見ている会話の id を渡す
@@ -239,11 +164,11 @@ const handIcon = () => {
   return svg;
 };
 
-/** 引き継いで戻したときの会話の行（present kind: 'chromeHandover'。chromeHandover: { seconds }）。「あなたが引き継ぎ · Claude に戻しました · 1 分 12 秒」 */
+/** 引き継いで戻したときの会話の行（present kind: 'chromeHandover'。chromeHandover: { seconds }）。「あなたが引き継ぎ · AI に戻しました · 1 分 12 秒」 */
 export function renderChromeHandoverLine(ev) {
   const row = el('div', 'cc-line');
   const icon = el('span', 'cc-line-ic'); icon.setAttribute('aria-hidden', 'true'); icon.append(handIcon());
-  row.append(icon, el('span', 'cc-line-t', t('chromeControl.handover', { name: agentName(), duration: durationText(ev?.chromeHandover?.seconds) })));
+  row.append(icon, el('span', 'cc-line-t', t('chromeControl.handover', { duration: durationText(ev?.chromeHandover?.seconds) })));
   return row;
 }
 
@@ -265,6 +190,62 @@ export function renderChromeClosedLine(ev) {
     box.append(shot);
   }
   return box;
+}
+
+/**
+ * タブごとの持ち手（tab:holder イベント）の置き場。会話に「人が触っているタブ」があるかを会話単位で答える（ADR 0296）。
+ * 見ているタブの持ち手だけで判断すると、別のタブを開いたときに「AI に戻す」が消えるので、会話の全部のタブで持つ。
+ * tab:info の棚と揃える: 棚から消えたタブ・棚の張り替え（reset）では、その会話の持ち手も捨てる
+ */
+export function createTabHolderStore() {
+  const tabs = new Map();   // sessionId -> Map<targetId, { holder, by, pinned }>
+  const listeners = new Set();
+  const human = entry => entry?.holder === 'human';
+  const countHuman = map => { let n = 0; for (const e of map?.values() ?? []) if (human(e)) n++; return n; };
+  const fire = (sessionId, any) => { for (const fn of [...listeners]) { try { fn(sessionId, any); } catch { /* 聞き手の失敗は置き場を壊さない */ } } };
+  return {
+    event(ev) {
+      const sessionId = ev?.sessionId;
+      if (!sessionId) return;
+      if (ev.type === 'tab:info') {
+        if (ev.reset === true) {
+          // 棚の張り替え。会話の持ち手は全部捨てる
+          const map = tabs.get(sessionId);
+          if (!map?.size) return;
+          const was = countHuman(map) > 0;
+          tabs.delete(sessionId);
+          if (was) fire(sessionId, false);
+          return;
+        }
+        if (ev.removed === true && ev.targetId) {
+          // 棚から消えたタブの持ち手も消す（普通の題・URL の便りでは触らない）
+          const map = tabs.get(sessionId);
+          if (!map?.has(ev.targetId)) return;
+          const was = human(map.get(ev.targetId));
+          map.delete(ev.targetId); if (!map.size) tabs.delete(sessionId);
+          if (was && countHuman(map) === 0) fire(sessionId, false);
+        }
+        return;
+      }
+      if (ev.type !== 'tab:holder' || !ev.targetId) return;
+      let map = tabs.get(sessionId);
+      if (!map) { map = new Map(); tabs.set(sessionId, map); }
+      const before = countHuman(map) > 0;
+      if (ev.holder === 'human') map.set(ev.targetId, { holder: 'human', by: ev.by ?? null, pinned: ev.pinned === true });
+      else { map.delete(ev.targetId); if (!map.size) tabs.delete(sessionId); }
+      const after = countHuman(map) > 0;
+      if (before !== after) fire(sessionId, after);
+    },
+    /** 会話に人が触っているタブがあるか（見ているタブとは無関係） */
+    anyHuman: sessionId => countHuman(tabs.get(sessionId)) > 0,
+    /** タブの今の持ち手（無ければ ai） */
+    holderOf: (sessionId, targetId) => tabs.get(sessionId)?.get(targetId) ?? { holder: 'ai', by: null, pinned: false },
+    /** 人が触っているタブの一覧（{ targetId, holder, by, pinned }） */
+    held: sessionId => [...(tabs.get(sessionId) ?? new Map())].filter(([, e]) => human(e)).map(([targetId, e]) => ({ targetId, ...e })),
+    onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    /** 全部の会話の持ち手を捨てる（接続し直したとき。サーバーは続けて今の分を送る） */
+    clear() { const had = [...tabs.entries()].filter(([, map]) => countHuman(map) > 0).map(([id]) => id); tabs.clear(); for (const id of had) fire(id, false); },
+  };
 }
 
 export const chromeControlStore = createChromeControlStore();

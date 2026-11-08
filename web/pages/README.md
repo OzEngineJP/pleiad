@@ -72,6 +72,6 @@ iframe は同じ origin の親から対応する message を送る。
 | --- | --- | --- |
 | `pleiad:env` | `{theme?,lang?}` | `{type:'pleiad:env',env}` |
 | `pleiad:page-command` | `{type:'view',view:'source'|'preview'}` | `{type:'pleiad:page-command',command}` |
-| `pleiad:page-command` | `{type:'tree',open?:boolean}` | 同上 |
+| `pleiad:page-command` | `{type:'changed'}` | 同上 |
 
 テーマと言語はページを再取得せずに更新する。ファイル本文のスナップショットも再利用する。

@@ -99,7 +99,7 @@
       "unknown": "This host is not paired"
     }
   },
-  "chromePill": { "resume": "You are in control · Return to {{agent}}" },
+  "chromePill": { "resume": "You are in control · Return to AI" },
   "computer": {
     "overlay": {
       "who": "{{agent}} is using your computer",

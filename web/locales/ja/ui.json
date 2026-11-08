@@ -2132,6 +2132,7 @@
         "auto": "オンになると自動で進みます。"
       },
       "operating": "あなたが操作中",
+      "returnHint": "終わったら「AI に戻す」を押してください",
       "operate": "Chrome で操作する",
       "operateHere": "この端末で操作する",
       "operateOnPc": "PC で操作する",
@@ -2140,12 +2141,12 @@
       "decline": "断る",
       "failed": "操作できませんでした: {{error}}",
       "done": {
-        "resumed": "済み · Claude に戻しました",
-        "resumedContinued": "済み · Claude に続けるよう送りました",
+        "resumed": "済み · AI に戻しました",
+        "resumedContinued": "済み · AI に続けるよう送りました",
         "connected": "済み · Chrome につながりました",
-        "connectedContinued": "済み · Chrome につながったので、Claude に続けるよう送りました",
+        "connectedContinued": "済み · Chrome につながったので、AI に続けるよう送りました",
         "connectedAuto": "確認なしのため自動 · Chrome につながりました",
-        "connectedAutoContinued": "確認なしのため自動 · Chrome につながったので、Claude に続けるよう送りました",
+        "connectedAutoContinued": "確認なしのため自動 · Chrome につながったので、AI に続けるよう送りました",
         "declined": "断りました",
         "aborted": "中断しました"
       }
@@ -2848,6 +2849,7 @@
       "download": "HTML を保存",
       "widen": "広げる",
       "narrow": "元の幅に戻す",
+      "open": "ページで開く",
       "resourcesOmitted": "画像などの関連ファイルは含めていません。",
       "resourcesTooMany": "関連ファイルの数が上限を超えたため、HTML だけを保存しています。",
       "resourcesTooLarge": "関連ファイルの合計サイズが上限を超えたため、HTML だけを保存しています。",
@@ -4839,11 +4841,11 @@
   },
   "chromeControl": {
     "takeOverPc": "PC で操作する",
-    "resume": "{{name}} に戻す",
+    "resume": "AI に戻す",
     "failed": "操作できませんでした",
     "banner": "一時停止中 · あなたが Chrome で操作しています",
-    "error": { "concealFailed": "ウィンドウを隠せなかったので、一時停止のままです。もう一度「戻す」を押してください" },
-    "handover": "あなたが引き継ぎ · {{name}} に戻しました · {{duration}}",
+    "error": { "concealFailed": "ウィンドウを隠せなかったので、一時停止のままです。もう一度「AI に戻す」を押してください" },
+    "handover": "あなたが引き継ぎ · AI に戻しました · {{duration}}",
     "closed": { "agent": "{{name}} がウィンドウを閉じました", "human": "Chrome のウィンドウが閉じました", "idle": "24 時間使われなかったので Chrome のウィンドウを閉じました", "image": "閉じたウィンドウの最後の画面" },
     "duration": { "minutes": "{{m}} 分 {{s}} 秒", "seconds": "{{s}} 秒" }
   },
@@ -4865,7 +4867,8 @@
       "pinFailed": "ウィンドウを切り替えられませんでした。",
       "openConversation": "会話を開く",
       "operateHere": "この端末で操作する", "operatingOnPc": "PC で操作中",
-      "profileActions": "Chrome のプロフィール"
+      "profileActions": "Chrome のプロフィール",
+      "menu": { "copy": "コピー", "cut": "切り取り", "copyLink": "リンクをコピー", "openLink": "リンクを開く", "selectAll": "すべて選択", "copyFailed": "コピーできませんでした" }
     },
     "video": { "lag": "映像が遅れています", "stale": "つなぎ直しています" }
   },

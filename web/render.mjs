@@ -13,7 +13,7 @@ import { el, chevron, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { terminalView, updateTerminal } from "./terminal.mjs";
 import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
-import { copyIcon, downloadIcon, moreIcon } from './icons.mjs';
+import { copyIcon, downloadIcon, moreIcon, panelIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
@@ -573,6 +573,7 @@ export function renderPresent(ev) {
     if (e.error) body.append(el('div', 'present-note', e.error));
     else {
       card.classList.add('visualize-seamless');
+      card.addEventListener('pointerleave', () => card.classList.remove('point'));
       card.setAttribute('aria-label', t('timeline.present.namedVisualization', { title: e.caption || kindLabel(kind) }));
       cap.remove();
       const lazyContent = isLazy(e, 'content');
@@ -594,17 +595,16 @@ export function renderPresent(ev) {
         controls.append(b);
         return b;
       };
-      // 左端は「広げる / 元の幅に戻す」（列の幅を越えて本文の領域の右端まで。web/visualize-widen.mjs、ADR 0252）
+      // 「広げる / 元の幅に戻す」はその場で広げるだけ（列の幅を越えて本文の領域の右端まで。web/visualize-widen.mjs、ADR 0252）。
+      // 「ページで開く」は別のボタン: 会話の Chrome のタブへ、無ければ右の欄へ映す（ADR 0295 の 4。狭い画面は右の欄）
       const widen = tool('', '');
       wireWiden(card, widen);
-      widen.addEventListener('click', event => {
-        if (openVisualizationTab(e.bundle, widen, e.caption ?? '')) { event.stopImmediatePropagation(); return; }
-        // 狭い画面と、右の欄を開いている間（会話の列に広げる余地が無い）は、右の欄に映す（ADR 0294 の 3）
-        if (globalThis.matchMedia?.('(max-width: 760px)').matches || (paneOpen() && !card.classList.contains('visualize-widened'))) {
-          event.stopImmediatePropagation();
-          return withContent(content => widen.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
-            detail:{ content, title:e.caption ?? '', bundle:e.bundle } })));
-        }
+      const open = tool(panelIcon, t('timeline.present.open'), 'visualize-open');
+      open.addEventListener('click', event => {
+        if (openVisualizationTab(e.bundle, open, e.caption ?? '', e.path)) { event.stopImmediatePropagation(); return; }
+        event.stopImmediatePropagation();
+        return withContent(content => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
+          detail:{ content, title:e.caption ?? '', bundle:e.bundle, path:e.path ?? '' } })));
       }, { capture:true });
       const notice = visualizationBundleNotice(e.bundle);
       if (notice) body.append(el('p', 'present-note', notice));
@@ -710,10 +710,12 @@ const clip = (s, n) => {
 
 /** パスは末尾側が知りたい情報なので、先頭を省いて末尾 keep 段だけ見せる */
 function shortPath(p, keep = 2) {
-  const s = String(p ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  const raw = String(p ?? "").trim();
+  const separator = /^[a-z]:\\/i.test(raw) || raw.includes("\\") ? "\\" : "/";
+  const s = raw.replace(/[\\/]+$/, "");
   if (!s) return "";
-  const parts = s.split("/").filter(Boolean);
-  return parts.length <= keep ? s : "…/" + parts.slice(-keep).join("/");
+  const parts = s.split(/[\\/]/).filter(Boolean);
+  return parts.length <= keep ? s : `…${separator}${parts.slice(-keep).join(separator)}`;
 }
 
 const lineCount = (s) => (String(s ?? "") ? String(s).split("\n").length : 0);

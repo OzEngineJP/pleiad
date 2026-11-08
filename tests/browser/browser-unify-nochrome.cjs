@@ -26,20 +26,18 @@
   const preview = setupFilePreview({ getContext:() => ({ sessionId:state.sessionId }), cmd, useFile:() => {}, osActions:() => state.host,
     showMenu:(...args) => menu.open(...args) });
   preview.configureBrowserUnify({ caps:() => ({ pages:8124 }), connected:() => state.connected, tabs:() => state.tabs,
-    openTab:args => { state.calls.push(['openTab', args]); if (args.path) state.tabs.push({ id:'tab1', path:args.path }); },
+    openTab:args => { state.calls.push(['openTab', args]); if (args.path) state.tabs.push({ id:'tab'+state.tabs.length, local:true, page:{path:args.path} }); },
     focusTab:tab => state.calls.push(['focus', tab]), flashTab:tab => state.calls.push(['flash', tab]) });
   state.preview = preview; state.menu = menu;
   const tick = () => new Promise(resolve => setTimeout(resolve, 30));
   const link = log.querySelector('[data-file-path]');
   link.click(); await tick();
-  check(document.querySelectorAll('iframe.page-frame').length === 1, 'file opens one iframe');
-  check(document.querySelector('iframe.page-frame').src.includes('/_pleiad/s/b3/file?'), 'same Pleiad page');
+  check(state.tabs.length === 1 && state.tabs[0].page.path.endsWith('file-preview.md'), 'file opens a page tab without Chrome');
   const attachment = log.querySelector('.msg-att-file');
   check(attachment, 'attachment renderer emits a file badge'); attachment.click(); await tick();
-  check(document.querySelectorAll('iframe.page-frame').length === 1, 'attachment replaces iframe');
-  check(document.querySelector('iframe.page-frame').src.includes('report.html'), 'attachment path routed');
+  check(state.tabs.length === 2 && state.tabs[1].page.path.endsWith('report.html'), 'attachment opens a second page tab');
   log.querySelector('.tc-file').click(); await tick();
-  check(!state.calls.some(([name]) => /connect|openTab/.test(name)), 'no Chrome connection or tab request');
+  check(!state.calls.some(([name]) => /connect|chromeNavigate/.test(name)), 'no Chrome connection or target request');
   const original = HTMLAnchorElement.prototype.click;
   let external = '';
   HTMLAnchorElement.prototype.click = function() { if (!this.className && this.target === '_blank') external = this.href; else original.call(this); };
@@ -47,25 +45,31 @@
   check(external === 'https://example.test/', 'Web link opens outside without chooser');
   state.connected = true;
   link.click(); await tick(); link.click(); await tick();
-  check(state.calls.filter(([name]) => name === 'openTab').length === 1, 'canonical file reuses Chrome tab');
+  check(state.calls.filter(([name]) => name === 'openTab').length === 2, 'canonical file reuses its page tab');
   check(state.calls.some(([name]) => name === 'focus') && state.calls.some(([name]) => name === 'flash'), 'existing tab focused and flashed');
   configureIsolatedOrigin({ port:8125 });
   const bundle = { hash:'a'.repeat(64), entry:'index.html', htmlOnly:true, reason:'legacy' };
-  const card = renderPresent({ kind:'visualization', caption:'グラフ', content:'<p>グラフ</p>', bundle }); log.append(card);
+  const card = renderPresent({ kind:'visualization', caption:'グラフ', content:'<p>グラフ</p>', bundle, path:'D:/work/chart.html' }); log.append(card);
   card.querySelector('.visualize-widen').click(); await tick();
-  check(state.calls.at(-1)[1].url.endsWith('?embed=tab&title=%E3%82%B0%E3%83%A9%E3%83%95'), 'widen opens isolated tab titled with the caption');
-  check(!card.classList.contains('visualize-widened'), 'connected widen does not widen in conversation');
+  check(card.classList.contains('visualize-widened'), 'widen expands in conversation');
+  card.querySelector('.visualize-widen').click(); await tick();
+  check(!card.classList.contains('visualize-widened'), 'widen restores the width');
+  card.querySelector('.visualize-open').click(); await tick();
+  const openViz = state.calls.filter(([name]) => name === 'openTab').at(-1)?.[1];
+  check(openViz?.kind === 'viz' && openViz.vizHash === bundle.hash && openViz.entry === 'index.html'
+    && openViz.title === 'グラフ' && openViz.path === 'D:/work/chart.html', 'open sends bundle, entry, title and source path to a page tab');
   check(card.textContent.includes('関連ファイル'), 'HTML-only bundle notice');
   check(!card.querySelector('.visualize-open-browser'), 'one expand action on unified card');
   state.connected = false;
-  preview.close(); card.querySelector('.visualize-widen').click(); await tick();
+  preview.close(); card.querySelector('.visualize-open').click(); await tick();
   if (matchMedia('(max-width:760px)').matches) {
-    check(preview.panelOpen('visualization') && document.querySelector('.visualize-fill').src.includes(':8125/viz/'), 'phone expands isolated visualization into full-screen panel');
-  } else check(card.classList.contains('visualize-widened'), 'no-Chrome desktop expands in conversation');
+    check(preview.panelOpen('visualization') && document.querySelector('.visualize-fill').src.includes(':8125/viz/'), 'phone opens isolated visualization into full-screen panel');
+  } else check(preview.panelOpen('visualization'), 'no-Chrome opens the visualization panel');
+  const beforePending = state.calls.filter(([name]) => name === 'openTab').length;
   preview.close(); state.pendingResolve = true;
   link.click(); await tick(); state.sessionId = 'other'; preview.sessionChanged('other');
   state.pendingResolve = false; state.finishResolve(); await tick();
-  check(!document.querySelector('iframe.page-frame'), 'late file does not open in another conversation');
+  check(state.calls.filter(([name]) => name === 'openTab').length === beforePending, 'late file does not open in another conversation');
   state.sessionId = 'b3'; preview.sessionChanged('b3');
   const pendingMenu = preview.menu(200, 100, { path:'D:/work/docs/file-preview.md' });
   await pendingMenu;

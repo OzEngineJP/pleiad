@@ -4,11 +4,11 @@
   "fetched": "Retrieved {{time}} · {{size}}",
   "name": "Name", "size": "Size", "modified": "Modified",
   "fileMenu": "File menu", "useFile": "Use in this conversation", "download": "Download",
-  "emptyFolder": "This folder is empty.", "expandFolder": "Expand {{name}}", "more": "Show more",
-  "treeLocate": "Show open file", "treeCollapseAll": "Collapse all",
+  "emptyFolder": "This folder is empty.",
   "source": "Source", "sourceLimit": "Showing lines {{from}}–{{to}} of {{total}}.",
   "tableLimit": "Showing up to 500 rows and 100 columns.",
   "blocked": { "count_one": "Blocked {{count}} external load", "count_other": "Blocked {{count}} external loads", "loadOnce": "Load once" },
+  "updated": { "body": "This page was updated on disk.", "show": "Show update" },
   "previous": "Previous page", "next": "Next page", "pdfPage": "Page {{page}} / {{total}}", "pdfText": "Page text",
   "errors": {
     "not-found": "File not found.", "session-not-found": "Conversation not found.",

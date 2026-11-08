@@ -101,8 +101,8 @@ export const COMMAND_REFUSE = [
   'chromeCloseWindow', 'chromePinWindow', 'chromeNavigate', 'chromeAddress',
   // 断ると、可視化の「一度だけ読み込む」は会話の中身の srcdoc で描く（web/visualize-frame.mjs）
   'vizOnce',
-  // ファイルのページの頼みの結果・テーマの知らせ（審査モードでは会話の Chrome を使わない）
-  'pageResult', 'pageEnv',
+  // ファイルのページの頼みの結果・テーマの知らせ・開く先の決定・隔離 URL の解決・見張りの解放（審査モードでは会話の Chrome を使わない）
+  'pageResult', 'pageEnv', 'pageOpen', 'pageResolve', 'pageWatch',
 ];
 
 /** 全命令 → 通すか。載っていない命令は undefined（断る） */

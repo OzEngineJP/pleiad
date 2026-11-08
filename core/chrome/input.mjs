@@ -11,8 +11,13 @@ export const KEYS = {
   ArrowUp: { code: 'ArrowUp', keyCode: 38 },
   ArrowRight: { code: 'ArrowRight', keyCode: 39 },
   ArrowDown: { code: 'ArrowDown', keyCode: 40 },
+  a: { code: 'KeyA', keyCode: 65 },
 };
 const clamp = (value, min, max, fallback) => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+// 修飾キーのビット（CDP の modifiers）。accel は端末の ⌘/Ctrl を受け、Chrome のある OS 側へ合わせる
+const MOD_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
+const ACCEL_BIT = process.platform === 'darwin' ? MOD_BITS.meta : MOD_BITS.ctrl;
+const modifiersOf = list => (Array.isArray(list) ? list : []).reduce((bits, name) => bits | (name === 'accel' ? ACCEL_BIT : MOD_BITS[name] ?? 0), 0);
 
 /** 端末からの入力を CDP のコマンドの列にする。座標はページの CSS px（端末が表示の倍率から変換済み）。知らない入力は空 */
 export function inputCommands(input, { width = 1600, height = 2400 } = {}) {
@@ -32,11 +37,15 @@ export function inputCommands(input, { width = 1600, height = 2400 } = {}) {
       return [['Input.dispatchMouseEvent', { type: input.phase === 'start' ? 'mousePressed' : input.phase === 'end' ? 'mouseReleased' : 'mouseMoved',
         x, y, button: 'left', buttons: input.phase === 'end' ? 0 : 1, ...(input.phase === 'move' ? {} : { clickCount: 1 }) }]];
     }
-    case 'tap': return [
-      ['Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 }],
-      ['Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }],
-      ['Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }],
-    ];
+    case 'tap': {
+      // clicks: 2 回・3 回押し（語・行の選択）。Chrome は clickCount を見て続けた押しとして扱う
+      const clicks = Math.round(clamp(input.clicks, 1, 3, 1));
+      return [
+        ['Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 }],
+        ['Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: clicks }],
+        ['Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: clicks }],
+      ];
+    }
     case 'scroll': {
       const deltaX = clamp(input.dx, -4000, 4000, 0), deltaY = clamp(input.dy, -4000, 4000, 0);
       if (!deltaX && !deltaY) return [];
@@ -49,7 +58,10 @@ export function inputCommands(input, { width = 1600, height = 2400 } = {}) {
     case 'key': {
       const key = KEYS[input.key];
       if (!key) return [];
-      const base = { key: input.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode };
+      const modifiers = modifiersOf(input.modifiers);
+      // 英字のキーは修飾キーと一緒の操作（Ctrl+A など）だけを受ける。文字は type:'text' で送る
+      if (input.key.length === 1 && !modifiers) return [];
+      const base = { key: input.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, ...(modifiers ? { modifiers } : {}) };
       return [
         ['Input.dispatchKeyEvent', { type: key.text ? 'keyDown' : 'rawKeyDown', ...base, ...(key.text ? { text: key.text, unmodifiedText: key.text } : {}) }],
         ['Input.dispatchKeyEvent', { type: 'keyUp', ...base }],
@@ -91,6 +103,19 @@ function fieldProbe() {
   let animation = null;
   const schedule = () => { if (!scheduled) { scheduled = true; animation = requestAnimationFrame(publish); } };
   const mutations = new MutationObserver(schedule), sizes = new ResizeObserver(schedule);
+  // ページの選択。入力欄の選択は document の選択に入らないので、フォーカスのある欄から値を切り出す。
+  // editable は「切り取りで消せるか」（読み取り専用・無効の欄は消せない）。値そのものは持ち出さない
+  const selected = () => {
+    const el = document.activeElement;
+    if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && typeof el.selectionStart === 'number' && el.selectionStart != null) {
+      // パスワードの欄（type=password・autocomplete が password のもの）は選んだ文字を出さない（Chrome の Ctrl+C と同じ守り。切り取りで消すのは許す）
+      if (el instanceof HTMLInputElement && (el.type === 'password' || /password/i.test(el.autocomplete ?? '')))
+        return { text: '', editable: !el.readOnly && !el.disabled };
+      const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : el.selectionStart;
+      return { text: String(el.value ?? '').slice(el.selectionStart, Math.min(end, el.selectionStart + 20000)), editable: !el.readOnly && !el.disabled };
+    }
+    return { text: String(window.getSelection?.() ?? '').slice(0, 20000), editable: !!el?.isContentEditable };
+  };
   globalThis.__plyInput = {
     refresh: publish,
     dispose() {
@@ -112,6 +137,29 @@ function fieldProbe() {
       }
       if (node instanceof HTMLInputElement && node.type === 'file') { node.click(); return true; }
       return false;
+    },
+    // 今の選択（コピー・切り取り）。text と editable だけ
+    selection() { return selected(); },
+    // 点の下のもの（右クリックのメニュー）: 選択・編集できるか・リンク。ページの値・URL は持ち出さない
+    inspect(x, y) {
+      const at = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null;
+      const anchor = at?.closest?.('a[href]');
+      const href = anchor && /^https?:$/i.test(anchor.protocol) ? anchor.href : null;
+      return { ...selected(), link: typeof href === 'string' ? href.slice(0, 2000) : null };
+    },
+    // 点の下のもののカーソル（hover のたびに読む軽い口）。computed が auto のとき、Chrome がヒットテストで
+    // 出す形を近似する: 欄・編集できる領域・選べる本文は I 形。ボタン・リンクの文字は矢印（リンクは UA の pointer）
+    cursorAt(x, y) {
+      const at = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null;
+      if (!at) return { cursor: 'auto' };
+      const style = getComputedStyle(at);
+      let name = style.cursor;
+      if (name === 'auto') {
+        const directText = [...(at.childNodes ?? [])].some(node => node.nodeType === 3 && node.textContent.trim());
+        if (at.isContentEditable || /^(input|textarea)$/i.test(at.tagName ?? '')
+          || (directText && style.userSelect !== 'none' && !at.closest('a,button,select,label,summary,[role="button"],[onclick]'))) name = 'text';
+      }
+      return { cursor: typeof name === 'string' && /^[a-z-]+$/i.test(name) ? name : 'auto' };
     },
   };
   addEventListener('scroll', schedule, true); addEventListener('resize', schedule);
@@ -190,6 +238,15 @@ export function createPageInput({ send, emit = () => {} }) {
           await send('DOM.setFileInputFiles', { backendNodeId: chooser, files: paths }); chooser = null;
         } catch (error) { await fs.rm(dir, { recursive: true, force: true }); uploads.delete(dir); throw error; }
         return true;
+      }
+      // 読むための問い合わせ（コピーの選択・右クリックのメニュー・カーソル）。式はここで決めた 3 つだけで、端末の文字は式に入らない
+      if (['selection', 'inspect', 'cursor'].includes(value?.type) && contextId != null) {
+        const point = Number.isFinite(value.x) && Number.isFinite(value.y) ? `${Math.round(value.x)},${Math.round(value.y)}` : null;
+        const expression = value.type === 'selection' ? 'globalThis.__plyInput.selection()'
+          : point && (value.type === 'cursor' ? `globalThis.__plyInput.cursorAt(${point})` : `globalThis.__plyInput.inspect(${point})`);
+        if (!expression) return null;
+        const result = await send('Runtime.evaluate', { expression, contextId, returnByValue: true });
+        return result?.result?.value ?? null;
       }
       return false;
     },

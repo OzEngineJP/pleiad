@@ -241,7 +241,7 @@ export const COMMANDS = new Set([
   'chromeEnable',            // {} -> { ok, reason }。接続のカードの「オンにしてつなぐ」（Chrome のリモート デバッグを Pleiad が入れる。ADR 0218）。画面とリモートの端末から
   // エージェントの Chrome の窓の操作（core/chrome/control.mjs）。{ sessionId } -> { sessionId, state: running|idle|stopped|paused, since, error, by }。変わったら chromeControl イベント。画面とリモートの端末から
   'chromeTakeOver',          // 引き継ぐ: 窓を見える形に戻して前に出し、エージェントのコマンドを断る（paused）。{ by: 'device', width, height, scale } は端末から操作する（窓は出さない）。fromPc: true は PC の引き継ぎを端末へ移す
-  'chromeResume',            // 戻す: 窓を画面の外の見えない窓に戻し、paused を解く（会話に「あなたが引き継ぎ · Claude に戻しました」の行）
+  'chromeResume',            // Return control to the agent and resolve any pending hand_to_user request.
   'chromeStop',              // 止める: 接続を閉じ、次の人の送信まで再接続を断る（stopped）
   'chromeCloseWindow',       // { sessionId, windowId? } -> { closed }。会話の専用窓を閉じ、最後の画面を残す。windowId があればそのウィンドウだけ（複数あるとき）。画面とリモートの端末から
   'chromeNavigate',
@@ -251,6 +251,9 @@ export const COMMANDS = new Set([
   'vizOnce',                 // { origins: string[] } -> { token: string|null }。可視化の「一度だけ読み込む」の印（隔離の origin の ?once=。10 分）。https の出どころが 1 つも無ければ null
   'pageResult',              // { sessionId, targetId?, requestId, ok, result?, error? } -> { delivered }。ページからの書き込みの頼み（worktree）の結果をページへ返す（pleiad:page-result）。その会話を見ている接続だけ
   'pageEnv',                 // { theme: auto|light|dark } -> { tabs }。画面のテーマの変化をファイルのページのタブへ知らせる（pleiad:env）
+  'pageOpen',                // { sessionId, kind, path?|hash?|entry?, title?, line?, once? } -> { kind, url, ... }。ページ・HTML・可視化の開く先をサーバーが決める（ADR 0295 の 7）
+  'pageResolve',             // { sessionId, url } -> { kind, path?|hash?, entry? }。隔離の origin の URL を開いている対象へ戻す（ページ内の移動の追跡と監視の取り直し）
+  'pageWatch',               // { sessionId, path, kind? } -> { removed }。閉じたタブのファイル・フォルダーの見張りを外す
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。
@@ -354,4 +357,8 @@ export const EVENTS = new Set([
   "tab:holder",
   "tab:page-request",
   "tab:viewport",
+  // { path } 開いているファイル・フォルダーが変わった（core/page-watch.mjs → browser-unify-ws）。その会話を見ている画面と、同じファイルを出しているタブへ
+  "page:changed",
+  // { ports, previous } ページ・隔離の port が替わった（再起動・ポートの移り）。見ている画面は残ったタブの URL を付け替える
+  "page:moved",
 ]);

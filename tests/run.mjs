@@ -128,6 +128,8 @@ const SUITES = [
   './unit/chrome-screencast.mjs',
   // Chrome の窓の映像（サーバー越し）: chromeWindow イベントがホストの画面にもリモートの端末にも届く・接続の直後に今の分・hostCapabilities.chromeWindow・source: chrome の映像と view-only（偽の Chrome・parentPort の身代わり）
   './unit/server-chrome-screencast.mjs',
+  // hand_to_user → 人が触ったタブ → 「AI に戻す」（サーバー越し）: 依頼のカード・「あなたが操作中」・人のタブを全部戻す releaseAll・待ちの決着（偽の Chrome・fake バックエンド。ADR 0148・0296）
+  './unit/server-browser-handback.mjs',
   // 会話ごとの専用の Chrome の窓（ADR 0154）: chrome.exe の最初の窓・画面の外の隠した窓・前面を返す・窓だけ閉じられた／Chrome が閉じた・popup・bringToFront の握りつぶし・focus emulation（ターンの間だけ）（偽の OS の層・偽の Chrome）
   './unit/chrome-windows.mjs',
   // エージェントの Chrome の窓の止める・引き継ぐ・戻す（ADR 0148・0154）: 状態機械・一時停止中の断り・映像を断る・止めて人の送信で解く・窓を見える形に戻して前に出す／画面の外へ戻す・窓が閉じられた／Chrome が閉じた・押した位置（偽の OS の層・偽の Chrome）
@@ -901,6 +903,8 @@ const SUITES = [
   './unit/viz-bundle.mjs',
   // 隔離の origin の /viz/ と /f/（ヘッダーの CSP・フォルダーの外・鍵の期限・一度だけの印）と、実際のサーバー
   './unit/isolated-routes.mjs',
+  // アプリの専用の出どころ（page-secrets・印・Host の検査・URL の付け替え）と開いているファイルの見張り
+  './unit/isolated-origins.mjs',
 
   // --- A4 Pleiad のページ ---
   './unit/pages-routes.mjs',
@@ -934,11 +938,17 @@ const SUITES = [
   './unit/browser-unify-b3.mjs',
   './unit/browser-unify-ws.mjs',
   './unit/browser-unify-tabs.mjs',
+  // 画面内ページのタブ（web/page-tabs.mjs）: サーバーが決める開く先・ページ内移動・更新の扱い・鍵と見張りの取り直し。Pleiad 印の分類（P9）
+  './unit/browser-unify-pages.mjs',
+  './unit/visualize-card-mouse.mjs',
+  './unit/browser-pages.mjs',
 
   // --- B2 映像からの操作・スマホの入力 ---
   './unit/phone-input.mjs',
   './unit/chrome-input.mjs',
   './unit/browser-unify-input.mjs',
+  // --- W3 映像の触り心地: 選択・コピー・右クリックのメニュー・カーソル ---
+  './unit/browser-video-input.mjs',
 
   // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
   // つなぎ目（core/bots-host.mjs）と土台: 空のままでは何も変えない・例外を出さない・使用量の sessionId・fake の台本の包み外し

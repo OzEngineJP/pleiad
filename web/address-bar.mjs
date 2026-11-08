@@ -14,9 +14,9 @@ export function addressCrumbs(file) {
   return crumbs;
 }
 
-export const hasFileViews = tab => tab?.page?.kind === 'file' && /\.(?:md|markdown|html?|csv|tsv|svg)$/i.test(tab.page.path ?? '');
+export const hasFileViews = tab => (tab?.page?.kind === 'file' && /\.(?:md|markdown|html?|csv|tsv|svg)$/i.test(tab.page.path ?? '')) || tab?.page?.kind === 'html';
 
-export function createAddressBar({ navigate = async () => {}, suggest = async () => ({}), cwd = () => '', onMenu = () => {}, onTabs = () => {}, onClose = () => {}, mobile = () => matchMedia('(max-width: 600px)').matches } = {}) {
+export function createAddressBar({ navigate = async () => {}, suggest = async () => ({}), cwd = () => '', onMenu = () => {}, onTabs = () => {}, onClose = () => {}, onDisplay = null, mobile = () => matchMedia('(max-width: 600px)').matches } = {}) {
   const root = document.createElement('div'); root.className = 'bu-toolbar';
   const back = browserButton('back', t('tabs:address.back'), () => run('back'));
   const forward = browserButton('forward', t('tabs:address.forward'), () => run('forward'));
@@ -32,8 +32,6 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   for (const [button, key] of [[preview, 'preview'], [source, 'source']]) {
     const label = document.createElement('span'); label.textContent = t(`tabs:address.${key}`); button.append(label); views.append(button);
   }
-  // The tab-control status component owns this slot's contents and actions.
-  const holderSlot = document.createElement('div'); holderSlot.className = 'bu-holder-slot'; holderSlot.dataset.slot = 'tab-holder';
   const input = document.createElement('input'); input.className = 'bu-address-input'; input.type = 'text'; input.autocomplete = 'off'; input.spellcheck = false;
   input.setAttribute('aria-label', t('tabs:address.edit')); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('enterkeyhint', 'go'); input.hidden = true;
   const list = document.createElement('div'); list.className = 'bu-suggestions'; list.hidden = true; list.setAttribute('role', 'listbox');
@@ -41,8 +39,10 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   const count = document.createElement('button'); count.type = 'button'; count.className = 'bu-count'; count.onclick = onTabs;
   const menu = browserButton('more', t('tabs:address.more'), () => onMenu(menu, { viewHidden: views.hidden, view, tab }));
   menu.classList.add('bu-more');
-  omni.append(tree, crumbs, views, holderSlot, input); root.append(conversation, back, forward, reload, omni, count, menu, list, error);
-  let tab = null, view = 'preview', ticket = 0, timer = 0, active = -1, suggestions = [], blockedInput = null;
+  const display = document.createElement('button'); display.type = 'button'; display.className = 'bu-display';
+  display.setAttribute('aria-haspopup', 'menu'); display.onclick = () => onDisplay?.(display, tab);
+  omni.append(tree, crumbs, views, input); root.append(conversation, back, forward, reload, omni, display, count, menu, list, error);
+  let tab = null, view = 'preview', ticket = 0, timer = 0, active = -1, suggestions = [], blockedInput = null, lastTotal = 0;
   const savedViews = new Map();
   const reason = code => t(`tabs:address.reasons.${code}`, { defaultValue: t('tabs:address.failed') });
   function failed(e) { error.textContent = reason(e?.code ?? e?.message); error.hidden = false; }
@@ -56,8 +56,8 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   }
   function edit() {
     if (!input.hidden) return;
-    ticket++; clearTimeout(timer); suggestions = []; blockedInput = null; active = -1; list.hidden = true; error.hidden = true; crumbs.hidden = true; tree.hidden = true; views.hidden = true; holderSlot.hidden = true;
-    input.hidden = false; input.value = tab?.page?.path ?? (tab?.page?.kind === 'new' ? '' : tab?.url ?? ''); input.focus(); input.select();
+    ticket++; clearTimeout(timer); suggestions = []; blockedInput = null; active = -1; list.hidden = true; error.hidden = true; crumbs.hidden = true; tree.hidden = true; views.hidden = true;
+    input.hidden = false; input.value = tab?.page?.path ?? (tab?.page?.kind === 'viz' ? tab.title : tab?.page?.kind === 'new' ? '' : tab?.url ?? ''); input.focus(); input.select();
     root.classList.add('bu-editing');
   }
   function cancel() { ticket++; clearTimeout(timer); input.hidden = true; list.hidden = true; error.hidden = true; root.classList.remove('bu-editing'); show(tab); }
@@ -99,7 +99,7 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     }
   };
   root.addEventListener('focusout', () => setTimeout(() => { if (!input.hidden && !root.contains(document.activeElement)) cancel(); }, 0));
-  omni.onclick = event => { if (event.target === omni || event.target === crumbs || event.target.closest('.bu-separator,.bu-ellipsis') || (mobile() && !holderSlot.contains(event.target) && !tree.contains(event.target))) edit(); };
+  omni.onclick = event => { if (event.target === omni || event.target === crumbs || event.target.closest('.bu-separator,.bu-ellipsis') || (mobile() && !tree.contains(event.target))) edit(); };
   crumbs.onkeydown = event => { if (event.target === crumbs && ['Enter', ' '].includes(event.key)) { event.preventDefault(); edit(); } };
   function fit() {
     if (!input.hidden) return;
@@ -107,7 +107,7 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     // Without a tab there is nothing to switch, so the view buttons stay out.
     if (!tab) { views.hidden = true; return; }
     const file = Boolean(tab.page?.path), isFile = hasFileViews(tab);
-    views.classList.remove('bu-icons'); holderSlot.classList.remove('bu-dot'); views.hidden = !isFile || mobile();
+    views.classList.remove('bu-icons'); views.hidden = !isFile || mobile();
     const items = [...crumbs.children]; for (const item of items) item.hidden = false;
     crumbs.classList.add('bu-measure');
     const ellipsis = crumbs.querySelector('.bu-ellipsis'); if (ellipsis) ellipsis.hidden = true;
@@ -119,21 +119,25 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
       if (crumbs.scrollWidth > crumbs.clientWidth) views.classList.add('bu-icons');
       if (crumbs.scrollWidth > crumbs.clientWidth && folders.length > 2) hide(folders.at(-2));
       if (crumbs.scrollWidth > crumbs.clientWidth) views.hidden = true;
-      if (crumbs.scrollWidth > crumbs.clientWidth) holderSlot.classList.add('bu-dot');
     }
     crumbs.classList.remove('bu-measure');
   }
-  function show(next, total = Number(count.textContent) || 0) {
+  function show(next, total = lastTotal) {
     const changed = tab?.targetId !== next?.targetId;
     tab = next; if (changed && !input.hidden) { cancel(); return; }
     const saved = savedViews.get(tab?.targetId);
     if (saved && saved.url === tab?.url) view = saved.view;
     else { try { view = new URL(tab?.url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch { view = 'preview'; } }
-    count.textContent = String(total); count.setAttribute('aria-label', t('tabs:strip.count', { count: total }));
+    display.hidden = !onDisplay || !tab; display.textContent = t(tab?.local && tab.mode !== 'chrome' ? 'tabs:display.page' : 'tabs:display.chrome') + ' ⌄';
+    lastTotal = total;
+    // 頭の行の [N]（.entry-tabn）と同じ規則: 100 以上は ∞（読み上げの名には実数）、2 桁は字を詰める（承認済み 2026-11-08）
+    count.textContent = total > 99 ? '∞' : String(total);
+    count.classList.toggle('two', total >= 10 && total <= 99); count.classList.toggle('sym', total > 99);
+    count.setAttribute('aria-label', t('tabs:strip.count', { count: total }));
     if (!input.hidden) return;
     back.disabled = !tab?.canGoBack; forward.disabled = !tab?.canGoForward; reload.disabled = !tab;
-    const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = tab?.page?.kind !== 'file';
-    holderSlot.hidden = false; crumbs.hidden = false; crumbs.replaceChildren();
+    const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = !['file', 'dir', 'html'].includes(tab?.page?.kind) && !(tab?.page?.kind === 'viz' && file);
+    crumbs.hidden = false; crumbs.replaceChildren();
     if (file && tab.page.kind !== 'attachment' && !mobile()) {
       const all = addressCrumbs(tab.page.path);
       all.forEach((part, index) => {
@@ -145,14 +149,18 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
         if (index < all.length - 1) { const sep = document.createElement('span'); sep.className = 'bu-separator'; sep.textContent = '›'; crumbs.append(sep); }
         if (index === 0) { const dots = document.createElement('span'); dots.className = 'bu-ellipsis'; dots.textContent = '…'; dots.hidden = true; crumbs.append(dots); }
       });
-    } else if (['git', 'plugins', 'new', 'attachment'].includes(tab?.page?.kind)) {
+    } else if (['git', 'plugins', 'new', 'attachment', 'viz', 'html'].includes(tab?.page?.kind)) {
       const kind = tab.page.kind;
       if (kind === 'git' && cwd()) {
         const folder = document.createElement('button'); folder.type = 'button'; folder.className = 'bu-crumb'; folder.textContent = cwd().split(/[\\/]/).filter(Boolean).at(-1); folder.onclick = event => { event.stopPropagation(); if (mobile()) edit(); else run('navigate', {input:cwd()}); };
         crumbs.append(folder, document.createTextNode(' › '));
       }
       const label = t(`tabs:address.locations.${kind}`);
-      crumbs.append(document.createTextNode(label + (kind === 'attachment' && file ? ' › ' + tab.page.path.split(/[\\/]/).at(-1) : '')));
+      // アプリのタブは題をパンの列に足す（HTML は ?title=、可視化は開いた束の題）
+      const named = kind === 'attachment' && file ? tab.page.path.split(/[\\/]/).at(-1)
+        : kind === 'html' && tab.page.title ? tab.page.title
+        : kind === 'viz' ? (tab.page.title || tab.title || '') : '';
+      crumbs.append(document.createTextNode(label + (named ? ` › ${named}` : '')));
       crumbs.title = label;
     } else {
       let text = tab?.page?.path ?? tab?.url ?? '';
@@ -162,12 +170,11 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
         const name = text.split(/[\\/]/).filter(Boolean).at(-1) ?? text, label = document.createElement('span'); label.className = 'bu-phone-filename'; label.textContent = name;
         crumbs.append(document.createTextNode(text !== name ? '… › ' : ''), label);
       } else crumbs.textContent = text;
-      crumbs.title = tab?.page?.path ?? tab?.url ?? '';
+      crumbs.title = text;
     }
     preview.classList.toggle('on', view === 'preview'); source.classList.toggle('on', view === 'source');
     preview.setAttribute('aria-pressed', String(view === 'preview')); source.setAttribute('aria-pressed', String(view === 'source')); fit();
   }
   const observer = new ResizeObserver(() => { if (input.hidden) show(tab); }); observer.observe(root);
-  const statusObserver = new MutationObserver(fit); statusObserver.observe(holderSlot, {childList:true, subtree:true, characterData:true});
-  return { root, holderSlot, show, edit, setView, destroy() { observer.disconnect(); statusObserver.disconnect(); clearTimeout(timer); ++ticket; } };
+  return { root, show, edit, setView, destroy() { observer.disconnect(); clearTimeout(timer); ++ticket; } };
 }
