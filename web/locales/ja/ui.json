@@ -83,6 +83,7 @@
       "episodeSummaryNote": "自動整理がオンのときだけ動きます。入切は自動整理を止めても残ります",
       "status": {
         "off": "オフ",
+        "offSub": "保存済みの記憶はそのまま使えます",
         "running": "整理しています",
         "authWait": "ログインを待っています",
         "authWaitSub": "{{agent}} にログインすると再開します",

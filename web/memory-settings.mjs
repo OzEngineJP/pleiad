@@ -44,12 +44,14 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
     if (document.activeElement !== timeIn) timeIn.value = typeof p.memoryLearnAt === 'string' ? p.memoryLearnAt : '02:00';
   }
 
-  /** 最後に走った様子の短い文（raw のエラー文は出さない。failed・paused・next はパネル側の状態が担うのでここでは抜く） */
+  /** 最後に走った様子の短い文（raw のエラー文は出さない。failed・paused・next・skipped はパネル側の状態が担うのでここでは抜く。
+      skipped の運用カウンタは OFF 期間の古い印が ON の補足に残り誤解を生むので出さない。履歴は API（learnStatus.skip）に残る） */
   function subParts(view) {
+    if (view.mode === 'off') return [t('settings.memory.status.offSub')];
     const parts = [];
     const lv = status ? learnStatusView(status) : null;
     if (lv) {
-      const KEEP = new Set(['ran', 'ranNone', 'never', 'more', 'deferred', 'skipped']);
+      const KEEP = new Set(['ran', 'ranNone', 'never', 'more', 'deferred']);
       for (const { key, params = {} } of lv.parts) {
         if (!KEEP.has(key)) continue;
         parts.push(t(`channels:memory.learn.${key}`, { ...params, ...(params.reasonKey ? { reason: t(`channels:memory.learn.reason.${params.reasonKey}`) } : {}) }));

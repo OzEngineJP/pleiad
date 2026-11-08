@@ -29,7 +29,7 @@ Below the switches, a status line shows what the organizer is doing.
 - **On**: waiting for the next scheduled run. "Organize now" runs it once right away.
 - **Organizing**: it's running now.
 - **Failed / Stopped**: waiting to retry after a failure, or stopped — by a problem such as authentication or by the retry limit. "Try again" restarts it.
-- **Waiting for sign-in**: the agent used for organization is signed out. After signing in, resume with "Try again" (a stopped state does not come back from signing in alone).
+- **Waiting for sign-in**: the agent used for organization is signed out — sign in to continue. If organization has stopped after a failure, resume with "Try again" after signing in (a stopped state does not come back from signing in alone).
 - **Connection unconfirmed**: Pleiad couldn't tell passively whether the agent is connected. A connection check that may open a sign-in screen only happens when you press "Check connection".
 
 The bot page's "Memory" heading also shows "Auto-organize: … ›", which opens this settings page.

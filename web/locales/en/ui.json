@@ -83,6 +83,7 @@
       "episodeSummaryNote": "Only runs while automatic organization is on. The switch is kept even if you turn organization off",
       "status": {
         "off": "Off",
+        "offSub": "Saved memories stay available",
         "running": "Organizing",
         "authWait": "Waiting for sign-in",
         "authWaitSub": "Resumes when you sign in to {{agent}}",
