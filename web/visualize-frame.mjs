@@ -76,8 +76,7 @@ export const visualizationHost = hash => `v${String(hash ?? '').toLowerCase().sl
 /**
  * 束の URL（隔離の origin の /viz/<束のハッシュ>/<入口>）。隔離の origin が無い・束の形が違うときは null。
  * embed: conversation（会話の枠）| panel（右の欄）| tab（別のタブ。高さの知らせ・橋を入れない）
- * ホストは束の印の <印>.localhost（リスナーも端末のプロキシも localhost と <印>.localhost の Host にだけ答える。
- * host: 'localhost' は入れ替え前の形・試験用）
+ * PC は束の印の <印>.localhost、リモート画面は端末の隔離リスナーが受ける localhost を使う。
  * title: 別のタブの題（タブの列とアドレスバーはページの <title> を読む。可視化の中身はふつう <title> を持たない）
  */
 export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = null, title = '' } = {}) {
@@ -88,7 +87,8 @@ export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', 
   if (['light', 'dark'].includes(theme)) params.set('theme', theme);
   if (once) params.set('once', once);
   if (embed === 'tab' && title) params.set('title', String(title).slice(0, 200));
-  return `http://${host ?? visualizationHost(bundle.hash)}:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
+  const hostname = host ?? (globalThis.window?.plyRemote ? 'localhost' : visualizationHost(bundle.hash));
+  return `http://${hostname}:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
 }
 
 // fill: the frame gets its height from the container (the preview panel), so the

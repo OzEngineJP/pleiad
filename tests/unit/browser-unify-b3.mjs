@@ -58,6 +58,21 @@ export default async function(t) {
   configureIsolatedOrigin({ port:8125 });
   const bundle = { hash:'a'.repeat(64), entry:'図/index.html', htmlOnly:true, reason:'too-large' };
   assert.match(isolatedVisualizationUrl(bundle), /^http:\/\/v[0-9a-f]{24}\.localhost:8125\/viz\//, '画面が 127.0.0.1 でも隔離は束の印の localhost の出どころ（Host の検査に通る名前）');
+  const previousWindow = globalThis.window;
+  try {
+    globalThis.window = { plyRemote: {} };
+    for (const embed of ['conversation', 'panel', 'tab']) {
+      const remoteUrl = new URL(isolatedVisualizationUrl(bundle, { embed, theme:'dark' }));
+      assert.equal(remoteUrl.origin, 'http://localhost:8125', '端末の可視化は許可済み localhost と端末の隔離 port で読む');
+      assert.equal(remoteUrl.searchParams.get('embed'), embed);
+      assert.equal(remoteUrl.searchParams.get('theme'), 'dark');
+      assert.match(remoteUrl.pathname, /%E5%9B%B3\/index.html$/);
+    }
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+  assert.match(isolatedVisualizationUrl(bundle), /^http:\/\/v[a-f0-9]{24}\.localhost:8125\//, 'PC はページ別の origin を維持する');
   assert.equal(isolatedVisualizationUrl({ ...bundle, entry:'../x' }), null);
   const viz = [];
   configureVisualizationTabs({ sessionId:() => 's1', connected:() => true, openTab:args => viz.push(args) });

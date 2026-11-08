@@ -684,7 +684,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 隔離した HTML と可視化は、端末内にも別のリスナーを立てる。許すのは `/viz/` と `/f/` だけで、任意の URL やポートを中継しない。端末とホストの両方で転送先を検査し、本体の Cookie を隔離の入口へ渡さない。ページ内のポートは端末内の値へ置き換え、CSP も合わせる。
 
-ホストの側の隔離の出どころはアプリごとの `<印>.localhost`（`core/isolated-origins.mjs`）だが、スマホのブラウザー・WebView は `<印>.localhost` を名前解決できないので、端末へ渡す URL の名前は `localhost` のままにする（`api/html-key`・`api/recent` が端末の port に付け替えるときに戻す。端末内ではアプリ同士の保存は分かれないが、URL の鍵の検査は変わらない）。端末内の入口は `localhost:<p2>` と `<印>.localhost:<p2>` の Host だけを受け、応答の CSP に `http://*.localhost:<port>` が含まれるときも端末内の port に書き換える。
+ホストの側の隔離の出どころはアプリごとの `<印>.localhost`（`core/isolated-origins.mjs`）だが、スマホへ渡す URL の名前は `localhost` にし、port は端末内の隔離リスナーの値にする。会話・右パネルの可視化 iframe、`pageOpen` の HTML・可視化の応答、`api/html-key`・`api/recent` に同じ原則を適用する。WebSocket の応答は対応する `pageOpen` の要求と照合し、ホストの隔離リスナーを指す `/f/`・`/viz/` の URL だけを変換する。外部 URL や本体の URL は変えない。端末内ではアプリ同士の保存は分かれないが、URL の鍵の検査は変わらない。Android・iOS の端末内の入口は `localhost:<p2>` の Host だけを受ける。応答の CSP に `http://*.localhost:<port>` が含まれるときも端末内の port に書き換える。
 
 ページの返送量は、ファイルのページと API が 8 MiB、raw の取得と隔離の資源が 32 MiB までにする。ホストの接続口と端末内プロキシの両方で検査し、超えた応答は止める。暗号化したまま運ぶ中継サーバーは本文を解釈せず、既存のフレームの大きさと接続の認証を検査する。
 

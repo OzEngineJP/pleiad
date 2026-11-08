@@ -10,6 +10,7 @@ import http from 'node:http';
 import WebSocket from 'ws';
 import { RESET_CODE } from './frames.mjs';
 import { AGENT_PATH } from './agent-protocol.mjs';
+import { LOCALHOST_MARK } from '../isolated-origins.mjs';
 
 const COOKIE_NAME = 'agent_host_token';
 /** 端末から通す要求のヘッダー（小文字）。これ以外は捨てる。 */
@@ -24,6 +25,7 @@ const DROP_RESPONSE = new Set([
 ]);
 const WS_RELEASE_BELOW = 64 * 1024;
 const WS_PAUSE_ABOVE = 256 * 1024;
+const MAX_PAGE_REQUESTS = 256;
 
 /** ADR 0295 §5。圧縮された本体で上限を逃れないよう、ページの転送は identity にする。 */
 export function pageResponseLimit(path, isolated = false) {
@@ -135,7 +137,7 @@ export function forwardStream(stream, { target, token, device = null, pagePorts 
     return forwardHttp(stream, method, checked.path, headers, dest, isolated ? null : token, limit, pagePorts, ports);
   }
   if (isolated || !checked || checked.pathname !== '/ws') return stream.reset(RESET_CODE.FORBIDDEN);
-  return forwardWs(stream, checked.path, head.protocols, target(), token, device, ports, validPort(pagePorts?.isolated));
+  return forwardWs(stream, checked.path, head.protocols, target(), token, device, ports, pagePorts);
 }
 
 function forwardHttp(stream, method, path, headers, { host, port }, token, limit, pagePorts, ports) {
@@ -179,7 +181,9 @@ function forwardHttp(stream, method, path, headers, { host, port }, token, limit
   req.end();
 }
 
-function forwardWs(stream, path, protocols, { host, port }, token, device, ports, pagesEnabled) {
+function forwardWs(stream, path, protocols, { host, port }, token, device, ports, hostPagePorts) {
+  const pagesEnabled = validPort(hostPagePorts?.isolated);
+  const pageRequests = new Set();
   const sep = path.includes('?') ? '&' : '?';
   const url = `ws://${host.includes(':') ? `[${host}]` : host}:${port}${path}${sep}token=${encodeURIComponent(token)}`;
   const list = Array.isArray(protocols) ? protocols.filter(p => typeof p === 'string' && /^[\x21-\x7e]{1,64}$/.test(p)).slice(0, 8) : [];
@@ -219,6 +223,13 @@ function forwardWs(stream, path, protocols, { host, port }, token, device, ports
           msg.result.browserUnify = { ...msg.result.browserUnify, pages: ports?.pages ?? null, isolated: ports?.isolated ?? null };
           buf = Buffer.from(JSON.stringify(msg));
         }
+        if (msg.kind === 'response' && pageRequests.delete(msg.id) && ['html', 'viz'].includes(msg.result?.kind)) {
+          const next = deviceIsolatedUrl(msg.result.url, hostPagePorts.isolated, ports?.isolated);
+          if (next !== msg.result.url) {
+            msg.result.url = next;
+            buf = Buffer.from(JSON.stringify(msg));
+          }
+        }
       } catch { /* JSON 以外のメッセージはそのまま通す */ }
     }
     inflight += buf.length;
@@ -235,6 +246,16 @@ function forwardWs(stream, path, protocols, { host, port }, token, device, ports
   // 端末 → ホスト。ローカルへの送りが溜まっていないときに窓を返す（§4.3）
   stream.on('message', (data, text, release) => {
     if (local.readyState !== WebSocket.OPEN) { release(); return; }
+    if (pagesEnabled && text) {
+      try {
+        const msg = JSON.parse(data.toString('utf8'));
+        if (msg.kind === 'command' && msg.command === 'pageOpen' &&
+          (typeof msg.id === 'string' && msg.id.length <= 200 || Number.isSafeInteger(msg.id))) {
+          if (pageRequests.size >= MAX_PAGE_REQUESTS) pageRequests.delete(pageRequests.values().next().value);
+          pageRequests.add(msg.id);
+        }
+      } catch { /* JSON 以外はそのまま通す */ }
+    }
     local.send(text ? data.toString('utf8') : data, { binary: !text });
     const tryRelease = () => {
       if (local.readyState !== WebSocket.OPEN || local.bufferedAmount < WS_RELEASE_BELOW) release();
@@ -248,4 +269,17 @@ function forwardWs(stream, path, protocols, { host, port }, token, device, ports
     }
     stream.close(sendableCode(code), reason).catch(() => {});
   });
+}
+
+/** 許可済みの隔離ページだけを端末内の入口に直す。外部 URL と本体の URL は変えない。 */
+function deviceIsolatedUrl(value, hostPort, devicePort) {
+  if (typeof value !== 'string' || !validPort(devicePort)) return value;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' || url.username || url.password || Number(url.port || 80) !== hostPort ||
+      !(url.hostname === 'localhost' || LOCALHOST_MARK.test(url.hostname)) || !isIsolatedPagePath(url.pathname)) return value;
+    url.hostname = 'localhost';
+    url.port = String(devicePort);
+    return url.href;
+  } catch { return value; }
 }

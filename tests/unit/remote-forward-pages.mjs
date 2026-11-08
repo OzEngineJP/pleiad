@@ -3,6 +3,7 @@ import { EventEmitter, once } from 'node:events';
 import { WebSocketServer } from 'ws';
 import { forwardStream, pageResponseLimit } from '../../core/remote/forward.mjs';
 import { RESET_CODE } from '../../core/remote/frames.mjs';
+import { fileMark, vizMark } from '../../core/isolated-origins.mjs';
 
 export const name = 'remote-forward-pages';
 export const title = 'スマホのページ転送: 行き先・認証・Cookie の隔離・応答上限';
@@ -44,7 +45,13 @@ export default async function(t) {
   const target = () => ({ host: '127.0.0.1', port: server.address().port });
   const pagePorts = { main: target().port, pages: 7421, isolated: isolatedServer.address().port };
   const wss = new WebSocketServer({ server });
-  wss.on('connection', ws => ws.send(JSON.stringify({ kind: 'response', result: { browserUnify: { pages: pagePorts.pages, isolated: pagePorts.isolated } } })));
+  wss.on('connection', ws => {
+    ws.send(JSON.stringify({ kind: 'response', result: { browserUnify: { pages: pagePorts.pages, isolated: pagePorts.isolated } } }));
+    ws.on('message', data => {
+      const msg = JSON.parse(data.toString());
+      ws.send(JSON.stringify({ kind:'response', id:msg.id, result:msg.args.reply }));
+    });
+  });
   const localPorts = { main: 51234, isolated: 51235 };
   const run = async (path, extra = {}, options = {}) => {
     const stream = new Stream({ method: 'GET', path, ...extra }, options.kind);
@@ -109,6 +116,44 @@ export default async function(t) {
     const old = (await readCaps(pagePorts, { main: 51234, isolated: 0 })).caps.result.browserUnify;
     t.ok('端末の隔離待ち受けが無い（古いアプリ）ときも右の欄の Chrome は案内し、ファイルのページの port だけを空にする',
       !!old && old.pages === null && old.isolated === null, JSON.stringify(old));
+    const readPage = async (reply, { command = 'pageOpen', devicePorts = localPorts, hostPorts = pagePorts } = {}) => {
+      const stream = new Stream({ path:'/ws', pagePorts:devicePorts }, 'ws');
+      stream.accept = () => {
+        stream.emit('message', Buffer.from(JSON.stringify({ kind:'command', id:'page-1', command, args:{ reply } })), true, () => {});
+        return Promise.resolve();
+      };
+      stream.send = data => {
+        const message = JSON.parse(data);
+        if (message.id === 'page-1') { stream.reply = message.result; stream.reset(RESET_CODE.CANCEL); }
+        return Promise.resolve();
+      };
+      forwardStream(stream, { target, token:'host-ui', pagePorts:hostPorts });
+      let timer;
+      try {
+        await Promise.race([stream.done, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('page response timeout')), 5000); timer.unref(); })]);
+        return stream.reply;
+      } finally { clearTimeout(timer); if (!stream.destroyed) stream.reset(RESET_CODE.CANCEL); }
+    };
+    for (const kind of ['html', 'viz']) {
+      const prefix = kind === 'html' ? 'f' : 'viz';
+      const mark = kind === 'html' ? fileMark(Buffer.alloc(32, 1), 'app') : vizMark('a'.repeat(64));
+      const source = `http://${mark}.localhost:${pagePorts.isolated}/${prefix}/key/index.html?theme=dark#part`;
+      const reply = { kind, url:source, title:'page' };
+      const device = await readPage(reply);
+      t.ok(`${kind} の pageOpen 応答は端末の localhost と隔離 port に変換する`,
+        device.url === `http://localhost:${localPorts.isolated}/${prefix}/key/index.html?theme=dark#part` && device.kind === kind && device.title === 'page');
+      t.ok(`${kind} の無関係な操作応答・旧端末・ホストの port 不明時には URL を変えない`,
+        (await readPage(reply, { command:'other' })).url === source &&
+        (await readPage(reply, { devicePorts:{ main:51234, isolated:0 } })).url === source &&
+        (await readPage(reply, { hostPorts:null })).url === source);
+    }
+    for (const url of [
+      'https://example.test/viz/key/index.html',
+      `http://outside.test:${pagePorts.isolated}/viz/key/index.html`,
+      `http://localhost:${pagePorts.isolated}/api/env`,
+      `http://v${'a'.repeat(24)}.localhost:1/viz/key/index.html`,
+      `http://localhost:${localPorts.isolated}/viz/key/index.html`,
+    ]) t.ok('許可された隔離の URL 以外を変換しない', (await readPage({ kind:'viz', url })).url === url, url);
   } finally {
     for (const ws of wss.clients) ws.terminate();
     await new Promise(resolve => wss.close(resolve));
