@@ -60,11 +60,11 @@ const css = `
 .bu-suggestions,.bu-address-error{position:absolute;z-index:20;top:43px;left:8px;right:8px;background:var(--surface-paper);border-radius:var(--r-m);box-shadow:0 4px 16px var(--shadow);padding:6px}
 .bu-suggestion{display:block;width:100%;text-align:left;padding:8px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:var(--r-s)}.bu-suggestion:hover,.bu-suggestion[aria-selected=true]{background:var(--surface-2)}
 .bu-address-error{color:var(--ink-danger);font-size:13px;padding:10px 14px}.bu-conversation,.bu-count{display:none}
+.tabn-badge{position:relative;display:grid;place-items:center;width:20px;height:20px;flex:none;padding:0;border:0;background:transparent;font-size:12px;line-height:16px;color:var(--ink-weak)}
+.tabn-badge>svg{position:absolute;inset:0;width:20px;height:20px;overflow:visible}.tabn-badge>svg rect{stroke:currentColor}.tabn-value{position:relative;z-index:1}
 .bu-tight>.bu-forward:disabled{display:none}
-.bu-mobile>.bu-icon:not(.bu-conversation):not(.bu-more){display:none}.bu-mobile .bu-conversation{display:inline-flex}.bu-mobile .bu-count{display:block;width:20px;height:20px;padding:0;border:1.7px solid var(--ink-weak);margin:0 7px;border-radius:4px;font-size:12px;line-height:16px}.bu-phone-filename{font-weight:600}
+.bu-mobile>.bu-icon:not(.bu-conversation):not(.bu-more){display:none}.bu-mobile .bu-conversation{display:inline-flex}.bu-mobile .bu-count{display:block;margin:0 7px}.bu-mobile .bu-count.tabn-badge{display:grid;color:var(--ink-weak)}.bu-phone-filename{font-weight:600}
 .bu-mobile .bu-omni{height:34px;margin:0 2px}.bu-mobile .bu-crumbs{font-size:13px;text-overflow:ellipsis;display:block;line-height:34px}
-/* Match the header tab count: 11px and -0.3px letter spacing for two digits; infinity from 100 tabs (mockup 02). */
-.bu-mobile .bu-count.two{font-size:11px;letter-spacing:-.3px}.bu-mobile .bu-count.sym{font-size:15px;line-height:15.6px}
 .bu-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;background:var(--surface-0);padding:16px;overflow:auto;max-height:70dvh}
 .bu-card{position:relative;min-width:0;overflow:hidden;border-radius:var(--r-m);background:var(--surface-paper)}.bu-card.on{outline:2px solid var(--line-blue)}
 .bu-card-pick{width:100%;text-align:left;padding:0 10px 10px!important}.bu-card-preview{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;margin-bottom:8px}.bu-card-label{display:flex;gap:6px;align-items:center;padding-right:16px}.bu-card-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.bu-card-close{position:absolute;right:4px;bottom:4px;width:24px;height:24px}.bu-overview-new{grid-column:1/-1;justify-self:center}

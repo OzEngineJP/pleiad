@@ -18,10 +18,12 @@
     "new": "New tab",
     "close": "Close {{title}}",
     "closeTab": "Close tab",
-    "count_one": "Open browser ({{count}} tab)",
-    "count_other": "Open browser ({{count}} tabs)"
+    "open_one": "Open browser ({{count}} tab)",
+    "open_other": "Open browser ({{count}} tabs)"
   },
   "address": {
+    "openTabs_one": "Open tab list ({{count}} tab)",
+    "openTabs_other": "Open tab list ({{count}} tabs)",
     "back": "Back",
     "forward": "Forward",
     "reload": "Reload",

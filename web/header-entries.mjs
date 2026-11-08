@@ -6,10 +6,11 @@
 import { t } from './i18n.mjs';
 // i18n-dynamic: tabs:address.openPanel
 // i18n-dynamic: browser.entryState
-// i18n-dynamic: tabs:strip.count
+// i18n-dynamic: tabs:strip.open
 import { isComposingKey } from './keyboard.mjs';
 import { browserIcon } from './tab-strip.mjs';
 import { runMark } from './arc.mjs';
+import { tabCountBadge } from './tab-count-badge.mjs';
 
 // エージェント任せの会話（と、Pleiad 担当を受け取れなかった antigravity の会話）
 export const isManagedContext = (report) => Boolean(report) && report.status !== 'native';
@@ -41,7 +42,8 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
   const activeId = () => getSessionId() ?? null;
   const open = () => chrome()?.isOpen() === true;
   // スマホのタブの数の四角。中身は数・100 以上は ∞・0 は「0」（0 でも隠さない。ファイル・フォルダー・git の入口でもある）
-  const tabn = document.createElement('span'); tabn.className = 'entry-tabn'; tabn.setAttribute('aria-hidden', 'true');
+  const tabn = tabCountBadge('entry-tabn'); tabn.setAttribute('aria-hidden', 'true');
+  const tabnValue = tabn.querySelector('.tabn-value');
   button.append(tabn);
 
   /** いまの会話の角の印（requested / paused / working / ''）。Chrome のタブの印も同じものを読む */
@@ -69,17 +71,17 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
     if (button.hidden) return;
     const state = currentMark();
     if (!button.dataset.unifiedIcon) {
-      const icon = browserIcon('panel'); icon.classList.add('i'); button.querySelector('svg')?.replaceWith(icon); button.dataset.unifiedIcon = 'true';
+      const icon = browserIcon('panel'); icon.classList.add('i'); button.querySelector('svg.i')?.replaceWith(icon); button.dataset.unifiedIcon = 'true';
     }
     announceChange(id, state);
     const onPhone = mobile();
     const count = onPhone ? tabs(id)?.length ?? 0 : 0;
     // 2 桁は字を詰める。100 以上は ∞（読み上げの名には実数を入れる。モック 02・04）
-    tabn.textContent = count > 99 ? '∞' : String(count);
+    tabnValue.textContent = count > 99 ? '∞' : String(count);
     tabn.classList.toggle('two', count >= 10 && count <= 99);
     tabn.classList.toggle('sym', count > 99);
     // Chrome が無い会話では Pleiad のページだけを出すので「ブラウザー」と呼ばない（ADR 0294 の 4 の 2）
-    const label = onPhone ? t('tabs:strip.count', { count })
+    const label = onPhone ? t('tabs:strip.open', { count })
       : open() ? t('tabs:address.closePanel') : pagesOnly() ? t('tabs:address.openPagePanel') : t('tabs:address.openPanel');
     button.title = onPhone ? label : `${label}（${browserShortcutLabel(mac)}）`;
     button.setAttribute('aria-label', label);

@@ -189,6 +189,17 @@ window.ready=true;
     check('the header count opens the human-held tab first', true);
     check('the held row shows II + 「あなたが操作中」 + 「AI に戻す」 under the address bar',
       await page.locator('.b2-control').isVisible() && await page.locator('.b2-control .b2-pause').count() === 1 && (await page.locator('.b2-control').textContent()).includes('あなたが操作中'));
+    await page.evaluate(() => { document.documentElement.dataset.theme='light'; ui.envChanged({theme:'light'}); });
+    const badges = await page.evaluate(() => ['#browserEntry .entry-tabn', '.bu-count'].map(selector => {
+      const element = document.querySelector(selector), rect = element.querySelector('svg rect');
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+      return { width:box.width, height:box.height, color:style.color, stroke:rect.getAttribute('stroke'), strokeWidth:rect.getAttribute('stroke-width'), radius:rect.getAttribute('rx') };
+    }));
+    check('phone header and address counts share 20px SVG badges and ink-weak color', badges.length === 2
+      && badges.every(badge => badge.width === 20 && badge.height === 20 && badge.stroke === 'currentColor' && badge.strokeWidth === '1.7' && badge.radius === '4')
+      && badges[0].color === badges[1].color, JSON.stringify(badges));
+    await shot('360-light-tab-count');
+    await page.evaluate(() => { document.documentElement.dataset.theme='dark'; ui.envChanged({theme:'dark'}); });
     await shot('360-dark-held-row');
     await page.evaluate(() => { window.sent.length = 0; });
     await page.locator('.b2-control .b2-action').click();

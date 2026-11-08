@@ -18,9 +18,10 @@
     "new": "新しいタブ",
     "close": "{{title}} を閉じる",
     "closeTab": "タブを閉じる",
-    "count_other": "ブラウザーを開く（{{count}} 個のタブ）"
+    "open_other": "ブラウザーを開く（{{count}} 個のタブ）"
   },
   "address": {
+    "openTabs_other": "タブ一覧を開く（{{count}} 個）",
     "back": "戻る",
     "forward": "進む",
     "reload": "再読み込み",

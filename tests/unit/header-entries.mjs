@@ -4,6 +4,7 @@
 //   - 頭の行の並び（目次・右の欄のボタンが同じ 30px のアイコンボタン。プラグイン・git の入口は置かない。ADR 0294）
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
+import { t as translate, setLanguage } from '../../web/i18n.mjs';
 import { N, installDomStub } from '../lib/dom-stub.mjs';
 import { isManagedContext, isBrowserShortcut, browserShortcutLabel, browserEntryMark, setupBrowserEntry } from '../../web/header-entries.mjs';
 
@@ -11,6 +12,18 @@ export const name = 'header-entries';
 export const title = '会話の頭の行: 目次と右の欄のボタン・近道と開け閉め・角の印（人が触っているタブがあれば ⏸、エージェントの操作中は弧）';
 
 export default async function (t) {
+  {
+    await setLanguage('ja');
+    assert.equal(translate('tabs:strip.open', { count:2 }), 'ブラウザーを開く（2 個のタブ）');
+    assert.equal(translate('tabs:address.openTabs', { count:2 }), 'タブ一覧を開く（2 個）');
+    await setLanguage('en');
+    assert.equal(translate('tabs:strip.open', { count:1 }), 'Open browser (1 tab)');
+    assert.equal(translate('tabs:strip.open', { count:2 }), 'Open browser (2 tabs)');
+    assert.equal(translate('tabs:address.openTabs', { count:1 }), 'Open tab list (1 tab)');
+    assert.equal(translate('tabs:address.openTabs', { count:2 }), 'Open tab list (2 tabs)');
+    await setLanguage('ja');
+    t.ok('ヘッダーとアドレスバーで、操作先に合う日本語・英語の読み上げ名を使う', true);
+  }
   // ---- Pleiad が担当した記録か（エージェント任せの会話は読み込み記録を固定しない）
   assert.equal(isManagedContext({ status: 'ply', owners: {}, entries: [] }), true);
   assert.equal(isManagedContext({ status: 'native', owners: {}, entries: [] }), false);
@@ -139,7 +152,7 @@ export default async function (t) {
       openEntry: id => opened.push(id),
       chrome: () => ({ isOpen: () => openState, open: () => { openState = true; }, close: () => { openState = false; closed.push('x'); } }) });
     const tabn = entryButton.querySelector('.entry-tabn');
-    t.ok('スマホはタブの数の四角を出す（窓のアイコンではない）', tabn && tabn.textContent === '3');
+    t.ok('スマホは共有の SVG 枠と数字でタブ数を出す', tabn && tabn.textContent === '3' && tabn.querySelector('svg')?.children[0]?.getAttribute('stroke') === 'currentColor');
     t.ok('読み上げの名は実数（aria-label に数を入れる）', (entryButton.getAttribute('aria-label') ?? '').includes('3'));
     entry.toggle();
     t.ok('押すと openEntry が開く（人のタブ・最後のタブの優先は browser-unify 側）', opened.join() === 'a' && openState === false);

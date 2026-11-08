@@ -677,6 +677,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .entry-run.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 /* スマホの頭の行の [N]（承認済み 2026-11-08。temporary/mockups/phone-browser-header.html）: 窓のアイコンの代わりにタブの数の四角 */
 .entry-tabn{display:none}
+.tabn-badge{position:relative;display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;background:transparent;font-size:12px;line-height:16px;color:var(--ink-weak)}
+.tabn-badge>svg{position:absolute;inset:0;width:20px;height:20px;overflow:visible}
+.tabn-badge>svg rect{stroke:currentColor}
+.tabn-value{position:relative;z-index:1}
 .entry-paused{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
 /* II の 2 本の棒は離して読める形にする（承認済み 2026-11-08。密着すると点に見える） */
 .entry-paused::before,.entry-paused::after{content:"";position:absolute;top:3px;width:2px;height:8px;border-radius:1px;background:currentColor}
@@ -2410,10 +2414,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (max-width:600px){
   main > .top #browserEntry{display:inline-flex!important}
   main > .top #browserEntry > svg.i{display:none}
-  #browserEntry .entry-tabn{display:grid;place-items:center;width:20px;height:20px;border:1.7px solid var(--line);border-radius:4px;font-size:12px;line-height:16px;color:var(--ink)} /* allow-border: タブ数の四角は数字の字形 */
-  #browserEntry .entry-tabn.two{font-size:11px;letter-spacing:-.3px}
-  #browserEntry .entry-tabn.sym{font-size:15px;line-height:15.6px}
-  #browserEntry.on .entry-tabn{border-color:var(--line-blue);color:var(--ink-blue)} /* allow-border: 選択中のタブ数の四角は数字の字形 */
+  #browserEntry .entry-tabn{display:grid}
   main > .top .entry-run.run,main > .top .entry-paused{top:3px;right:3px}
 }
 

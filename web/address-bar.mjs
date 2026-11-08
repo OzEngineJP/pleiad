@@ -1,4 +1,5 @@
 import { t } from './i18n.mjs';
+import { tabCountBadge } from './tab-count-badge.mjs';
 import { browserButton } from './tab-strip.mjs';
 
 // i18n-dynamic: tabs:address.reasons.
@@ -36,7 +37,8 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   input.setAttribute('aria-label', t('tabs:address.edit')); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('enterkeyhint', 'go'); input.hidden = true;
   const list = document.createElement('div'); list.className = 'bu-suggestions'; list.hidden = true; list.setAttribute('role', 'listbox');
   const error = document.createElement('div'); error.className = 'bu-address-error'; error.setAttribute('role', 'status'); error.hidden = true;
-  const count = document.createElement('button'); count.type = 'button'; count.className = 'bu-count'; count.onclick = onTabs;
+  const count = tabCountBadge('bu-count', 'button'); count.onclick = onTabs;
+  const countValue = count.querySelector('.tabn-value');
   const menu = browserButton('more', t('tabs:address.more'), () => onMenu(menu, { viewHidden: views.hidden, view, tab }));
   menu.classList.add('bu-more');
   const display = document.createElement('button'); display.type = 'button'; display.className = 'bu-display';
@@ -131,9 +133,9 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     display.hidden = !onDisplay || !tab; display.textContent = t(tab?.local && tab.mode !== 'chrome' ? 'tabs:display.page' : 'tabs:display.chrome') + ' ⌄';
     lastTotal = total;
     // 頭の行の [N]（.entry-tabn）と同じ規則: 100 以上は ∞（読み上げの名には実数）、2 桁は字を詰める（承認済み 2026-11-08）
-    count.textContent = total > 99 ? '∞' : String(total);
+    countValue.textContent = total > 99 ? '∞' : String(total);
     count.classList.toggle('two', total >= 10 && total <= 99); count.classList.toggle('sym', total > 99);
-    count.setAttribute('aria-label', t('tabs:strip.count', { count: total }));
+    count.setAttribute('aria-label', t('tabs:address.openTabs', { count: total }));
     if (!input.hidden) return;
     back.disabled = !tab?.canGoBack; forward.disabled = !tab?.canGoForward; reload.disabled = !tab;
     const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = !['file', 'dir', 'html'].includes(tab?.page?.kind) && !(tab?.page?.kind === 'viz' && file);
