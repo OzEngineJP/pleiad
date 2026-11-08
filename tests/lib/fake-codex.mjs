@@ -894,9 +894,9 @@ async function handle(method, params) {
       const data = [...threads.values()]
         .filter((t) => !t.ephemeral && (parent ? t.parentThreadId === parent : !t.parentThreadId))
         .sort((a, b) => dir * (a.updatedAt - b.updatedAt))
-        .slice(0, params?.limit ?? 100)
         .map((t) => wire(t, false));
-      return { data, nextCursor: null };
+      // Already sorted by updatedAt; page() must not reverse it again.
+      return page(data, { ...params, sortDirection: 'asc' }, 100);
     }
 
     case "thread/read": {

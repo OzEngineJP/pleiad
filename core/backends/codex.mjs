@@ -33,6 +33,7 @@ import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { COMPUTER_CALL_TIMEOUT_SEC, codexComputerConfig, codexComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, mcpText } from "./computer-delivery.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
 import { readThread } from "./codex-history.mjs";
+import { listThreads } from './codex-list.mjs';
 import { BROWSER_SERVER } from "../browser-bridge.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
@@ -2179,8 +2180,8 @@ const backend = {
   // ---- セッション管理 -----------------------------------------------------
 
   async listSessions({ limit = 100 } = {}) {
-    const res = await rpc.request("thread/list", { limit, sortDirection: "desc" });
-    return (res?.data ?? []).map(toRow).filter(Boolean);
+    const rows = await listThreads(rpc, { limit, sortDirection: "desc" });
+    return rows.map(toRow).filter(Boolean);
   },
 
   async getSession(sessionId) {

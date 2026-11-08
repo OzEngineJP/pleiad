@@ -54,7 +54,8 @@ const HOLD = Symbol("hold");
  * どの依頼の答えが捨てられたかは分からないので、当てはまるものを全部失敗にする（ページ読みは小さくして読み直す。codex-history.mjs）
  */
 const mayBeLarge = (method, params) =>
-  method === "thread/items/list"
+  method === "thread/list"
+  || method === "thread/items/list"
   || (method === "thread/turns/list" && params?.itemsView !== "notLoaded")
   || (method === "thread/read" && params?.includeTurns === true)
   || ((method === "thread/resume" || method === "thread/fork") && params?.excludeTurns !== true);

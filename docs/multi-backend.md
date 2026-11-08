@@ -1058,6 +1058,10 @@ core は圧縮の開始・完了・失敗を `compaction`、文脈量を `contex
 
 ## Codex の履歴の読み出し（2026-10-12）
 
+Codex の会話一覧は `core/backends/codex-list.mjs` の `listThreads` で読む。`thread/list` のプレビューも大きくなり、100 件の応答が保持役の上限を超える場合がある。最初は依頼された件数で読み、`LINE_OVERFLOW` なら同じ cursor から件数を半分にして再取得する。成功したページの `nextCursor` で必要な件数まで読み、減らした件数を接続ごとに覚える。1 件でも超えた場合と 30 秒応答が無い場合は失敗にして、サーバーが持つ会話の記録から一覧を組み立てる。上限超過を待ち続けると、すべてのエージェントの一覧を待つ画面の初期化や新規会話の作成も止まる。
+
+保持役の 16 MiB は通信方式の制約ではなく、出力の蓄積・JSON の解析・記録でメモリを際限なく使わないための既定値である。16 という境界値を選ぶ測定上の根拠は残っていない。読み手はこの値を前提とせず、保持役が通知する上限超過を処理する。上限を引き上げるだけでは、件数やプレビューが増えたときに再発する。
+
 Codex の会話の履歴（`getMessages`・`getCompactions`・`getSubagentMessages`・巻き戻し・子の一覧）は `core/backends/codex-history.mjs` の `readThread` で読む。返す形は `thread/read { includeTurns: true }` と同じ（`thread.turns[].items[]`）。
 
 **問題.** `thread/read { includeTurns: true }` は会話を 1 行の応答で丸ごと返す。画像を作った会話は、1 枚につき 1.6 MB ほどの base64（`imageGeneration` の `result`）を抱える。14 枚で 22 MB を超え、保持役の 1 行の上限（16 MiB。`core/holder/protocol.mjs` の `DEFAULT_MAX_LINE_BYTES`）で捨てられた。`getMessages` には時間切れが無かったので、Pleiad は応答を待ち続けた。会話が開けず、`ply_task_send` の追加の指示が届かず、終わった子が「実行中」のまま残った（2026-10-11）。`thread/resume`・`thread/fork` も、既定では会話の中身ごと返すので同じだった。
@@ -1076,7 +1080,7 @@ Codex の会話の履歴（`getMessages`・`getCompactions`・`getSubagentMessag
 - 会話を開くと `getMessages` の直後に `getCompactions` が同じ会話を読む。5 秒以内なら、直前に読んだものを使う（2 度読まない）。
 - `thread/resume`・`thread/fork` には `excludeTurns: true` を付ける。知らない版に撥ねられたら、以後は付けない。
 
-**保持役が行を捨てたとき.** 保持役は `overflow { id, reason: "line", bytes }` を送る（捨てた行の依頼の id は分からない）。`HeldAppServer` は自分の子の `reason: "line"` だけを `CodexRpc` に渡す。`CodexRpc` は、大きな答えになりうる待っている依頼をすぐ失敗にする（`LINE_OVERFLOW`）。対象は `thread/items/list`、`itemsView` が `notLoaded` でない `thread/turns/list`、中身つきの `thread/read`、`excludeTurns` の無い `thread/resume`・`thread/fork`。巻き添えで失敗したページ読みは、小さくして読み直すので害が無い。時間切れには `RPC_TIMEOUT` を付ける。
+**保持役が行を捨てたとき.** 保持役は `overflow { id, reason: "line", bytes }` を送る（捨てた行の依頼の id は分からない）。`HeldAppServer` は自分の子の `reason: "line"` だけを `CodexRpc` に渡す。`CodexRpc` は、大きな答えになりうる待っている依頼をすぐ失敗にする（`LINE_OVERFLOW`）。対象は `thread/list`、`thread/items/list`、`itemsView` が `notLoaded` でない `thread/turns/list`、中身つきの `thread/read`、`excludeTurns` の無い `thread/resume`・`thread/fork`。巻き添えで失敗したページ読みは、小さくして読み直すので害が無い。時間切れには `RPC_TIMEOUT` を付ける。
 
 **読めないとき.** ターンの後の取り込みと委譲の結果の読み出しは、この 2 つの失敗（`historyGaveUp`）でターンや委譲を失敗にしない（docs/agent-delegation.md「履歴が一時的に読めないとき」）。
 

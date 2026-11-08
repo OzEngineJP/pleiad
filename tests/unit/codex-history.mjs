@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events';
 import { CodexRpc } from '../../core/backends/codex-rpc.mjs';
 import { HeldAppServer, CODEX_CHILD } from '../../core/backends/codex-held.mjs';
 import { readThread, stripImageData, resetHistoryState, HISTORY_TIMEOUT_MS, LINE_OVERFLOW, RPC_TIMEOUT } from '../../core/backends/codex-history.mjs';
+import { listThreads } from '../../core/backends/codex-list.mjs';
 
 export const name = 'codex-history';
 export const title = 'Codex の履歴の読み出し: 画像の base64 を運ばないページ読み・上限超えと時間切れで待ち続けない・保持役の overflow で依頼を失敗にする';
@@ -194,6 +195,7 @@ export default async function (t) {
     await rpc.start();
     const settle = p => p.then(v => ({ v }), e => ({ e }));
     const asks = {
+      list: settle(rpc.request('thread/list', { limit: 100 })),
       full: settle(rpc.request('thread/read', { threadId: 'T', includeTurns: true })),
       meta: settle(rpc.request('thread/read', { threadId: 'T' })),
       items: settle(rpc.request('thread/items/list', { threadId: 'T', limit: 32 })),
@@ -204,7 +206,7 @@ export default async function (t) {
     await tick();
     const started = Date.now();
     state.sink.overflow({ id: CODEX_CHILD, reason: 'line', bytes: 23_000_000 });
-    for (const key of ['full', 'items', 'resumeAll']) {
+    for (const key of ['list', 'full', 'items', 'resumeAll']) {
       const { e } = await asks[key];
       assert.equal(e?.code, LINE_OVERFLOW, `${key} は失敗にする`);
       assert.equal(e.bytes, 23_000_000);
@@ -219,13 +221,45 @@ export default async function (t) {
     assert.deepEqual((await asks.meta).v, { thread: { id: 'T' } });
     assert.deepEqual((await asks.turns).v, { data: [] });
     assert.deepEqual((await asks.resume).v, { thread: { id: 'T' } });
-    t.ok('保持役が長すぎる行を捨てたら、大きな答えになりうる依頼（中身つきの thread/read・items/list・excludeTurns の無い resume）だけをすぐ失敗にする', true);
+    t.ok('保持役が長すぎる行を捨てたら、大きな答えになりうる依頼（thread/list・中身つきの thread/read・items/list・excludeTurns の無い resume）だけをすぐ失敗にする', true);
 
     const keep = setTimeout(() => {}, 5000);   // 時間切れの timer は unref なので、待つ間プロセスを生かしておく
     const timedOut = await rpc.request('thread/read', { threadId: 'T' }, 20).then(() => null, e => e);
     clearTimeout(keep);
     assert.equal(timedOut?.code, RPC_TIMEOUT, '時間切れには RPC_TIMEOUT');
     t.ok('依頼の時間切れは code: RPC_TIMEOUT で失敗にする（履歴の読み出しが言葉を直す）', true);
+  }
+
+  // The list is part of screen initialization for every backend. Large Codex
+  // previews must not block that initialization or the refresh before sending.
+  {
+    const rows = Array.from({ length: 21 }, (_, i) => ({ id: `thread-${i}`, preview: 'x'.repeat(1000) }));
+    const calls = [];
+    const rpc = {
+      async request(method, params, timeout) {
+        assert.equal(method, 'thread/list');
+        assert.equal(timeout, HISTORY_TIMEOUT_MS);
+        assert.equal(params.sortDirection, 'desc');
+        calls.push({ ...params });
+        const start = Number(params.cursor ?? 0);
+        if (params.limit > 2) throw Object.assign(new Error('oversize list'), { code: LINE_OVERFLOW });
+        const data = rows.slice(start, start + params.limit);
+        return { data, nextCursor: start + data.length < rows.length ? String(start + data.length) : null };
+      },
+    };
+    assert.deepEqual(await listThreads(rpc, { limit: 19, sortDirection: 'desc' }), rows.slice(0, 19));
+    assert.deepEqual(calls.slice(0, 4).map(p => [p.cursor, p.limit]), [[null, 19], [null, 9], [null, 4], [null, 2]]);
+    assert.equal(calls.at(-1).limit, 1);
+    calls.length = 0;
+    assert.deepEqual(await listThreads(rpc, { limit: 30, sortDirection: 'desc' }), rows);
+    assert.equal(calls[0].limit, 2, 'the next refresh reuses the reduced page size');
+    for (const code of [LINE_OVERFLOW, RPC_TIMEOUT]) {
+      const fail = { request: async () => { throw Object.assign(new Error(code), { code }); } };
+      await assert.rejects(listThreads(fail, { limit: 1 }), { code });
+    }
+    const repeated = { request: async () => ({ data: [rows[0]], nextCursor: 'same' }) };
+    assert.deepEqual(await listThreads(repeated), [rows[0]], 'a repeated cursor cannot loop forever or duplicate rows');
+    t.ok('large thread lists retry smaller pages at the same cursor, preserve the requested count and stop on timeout', true);
   }
 
   // ---- 6. HeldAppServer は自分の子の reason: line だけを渡す

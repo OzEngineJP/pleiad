@@ -27,7 +27,12 @@ export const HOLDER_RANGE = [HOLDER_PROTOCOL, HOLDER_PROTOCOL];
 export const HOLDER_FILE_VERSION = 1;
 
 export const POLICIES = ['claude-control', 'jsonrpc', 'none'];
-/** 子の 1 行の上限（超えた行は捨てて overflow）。パイプの 1 行の上限はその 4 倍（JSON の包み・エスケープの分） */
+/**
+ * 子の 1 行の上限（超えた行は捨てて overflow）。通信方式の限界ではなく、子の出力を蓄えて解析・記録するメモリの保護。
+ * 16 MiB は既定の運用値で、16 という境界に意味はない。読み手はこの値以下を前提にせず、overflow を失敗として扱い、
+ * 一覧・履歴は小さなページで再取得する。保持役の maxLineBytes で試験時に小さくできる。
+ * パイプの 1 行の上限はその 4 倍（JSON の包み・エスケープの分）。
+ */
 export const DEFAULT_MAX_LINE_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_MAX_FRAME_BYTES = 64 * 1024 * 1024;
 export const HELLO_MAX_BYTES = 64 * 1024;
