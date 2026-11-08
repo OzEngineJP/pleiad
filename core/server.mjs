@@ -2428,6 +2428,20 @@ const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports:
   movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
   mask: message => secretMasker.json(message),
   clients: () => runtime.sockets, watching: client => watching.get(client), access: fileAccessFor,
+  // タブ情報の届け先を「見ている会話とその子孫」へ広げる（inapp-browser.md。委譲の連鎖は delegatedChromeWindows と同じ確かめ方）
+  descendants: id => {
+    const out = [], seen = new Set([id]);
+    for (let frontier = [id]; frontier.length;) {
+      const next = [];
+      for (const parent of frontier) {
+        for (const row of agentTasks?.rowsWhere(r => r.parentSessionId === parent && r.sessionId && !seen.has(r.sessionId) && store.peek(r.sessionId)?.delegation?.taskId === r.taskId) ?? []) {
+          seen.add(row.sessionId); out.push(row.sessionId); next.push(row.sessionId);
+        }
+      }
+      frontier = next;
+    }
+    return out;
+  },
   cwd: async id => {
     const cached = store.peek(id)?.cwd;
     if (cached) return cached;

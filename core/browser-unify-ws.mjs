@@ -25,7 +25,13 @@ export function createBrowserUnifyWs(deps = {}) {
     const message = JSON.stringify({ kind: 'event', event });
     client.send(deps.mask ? deps.mask(message) : message);
   };
-  const allowed = (client, id) => Boolean(id && deps.clients?.().has(client) && deps.watching?.(client) === id);
+  // タブ情報の届け先は「見ている会話とその子孫」（inapp-browser.md。親が子の Chrome を会話を移らずに見る）
+  const scope = client => {
+    const id = deps.watching?.(client);
+    if (typeof id !== 'string' || !id) return [];
+    return [id, ...(deps.descendants?.(id) ?? []).filter(value => typeof value === 'string' && value && value !== id)];
+  };
+  const allowed = (client, id) => Boolean(id && deps.clients?.().has(client) && scope(client).includes(id));
   const unsubscribe = relay?.onTabEvent((type, payload) => {
     if (!['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(type)) return;
     for (const client of deps.clients?.() ?? []) {
@@ -275,9 +281,12 @@ export function createBrowserUnifyWs(deps = {}) {
     },
     snapshot(client, sessionId) {
       if (!allowed(client, sessionId)) return;
-      send(client, { type: 'tab:info', sessionId, reset: true, tabs: relay?.unify.tabInfo.list(sessionId) ?? [] });
-      // 開き直した画面にも、人の操作中のタブの札を出す（AI のタブは送らない。画面は tab:info の reset で持ち手を忘れる）
-      for (const held of relay?.unify.tabHolder?.held?.(sessionId) ?? []) send(client, { ...held, type: 'tab:holder', sessionId });
+      // 見ている会話に続けて子孫それぞれの一覧を送る（親の画面の列が子のタブを出せるように）
+      for (const id of scope(client)) {
+        send(client, { type: 'tab:info', sessionId: id, reset: true, tabs: relay?.unify.tabInfo.list(id) ?? [] });
+        // 開き直した画面にも、人の操作中のタブの札を出す（AI のタブは送らない。画面は tab:info の reset で持ち手を忘れる）
+        for (const held of relay?.unify.tabHolder?.held?.(id) ?? []) send(client, { ...held, type: 'tab:holder', sessionId: id });
+      }
     },
     /** 画面の接続が切れた: その画面の持ち主ぶんの見張りを外す（ほかの画面の分は残る。server.mjs の detach から） */
     screenClosed(client) {

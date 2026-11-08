@@ -3567,7 +3567,7 @@ function onEvent(ev, replay = false) {
   // エージェントの Chrome の窓の状態（会話ごと。running・idle・stopped・paused）と、エージェントが押した位置。右パネルの「Chrome の窓」が置き場から引く（web/chrome-control.mjs）
   if (ev.type === 'chromeControl' || ev.type === 'chromeTap') { chromeControlStore.event(ev); if (ev.type === 'chromeControl') refreshTaskChromeWindows(); return; }
   // 会話の Chrome の窓の有無と、エージェントが操作中か（リモートの端末にも届く）
-  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { browserEntry?.paint(); paintChromeControl(); refreshTaskChromeWindows(); } return; }
+  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { browserEntry?.paint(); paintChromeControl(); refreshTaskChromeWindows(); browserUnifyUi?.conversationsChanged?.(); } return; }
   if (ev.type === 'chromeProfile') { chromeProfilePill?.onProfileEvent(ev); refreshTaskChromeWindows(); return; }
   // 次のメッセージの候補（どの会話のものも覚える。開いている会話なら出す）。発言が入った会話の候補は捨てる
   if (ev.type === 'promptSuggestion' && ev.sessionId) {
@@ -4033,7 +4033,7 @@ const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
  */
 function cmd(command, args = {}, { timeoutMs = 0, bulk = false } = {}) {
   const id = String(++seq);
-  return new Promise((res, rej) => {
+  const sent = new Promise((res, rej) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return rej(new Error(t("app.notConnected")));
     if (!timeoutMs) { pending.set(id, { res, rej }); }
     else {
@@ -4043,6 +4043,10 @@ function cmd(command, args = {}, { timeoutMs = 0, bulk = false } = {}) {
     }
     ws.send(JSON.stringify({ kind: "command", command, id, args, ...(bulk ? { bulk: true } : {}) }));
   });
+  // この端末が「端末で操作」で引き継いだ会話を覚える（上の列の切り替えは、自分が操作している間は押せる。inapp-browser.md）
+  if (command === 'chromeTakeOver' && args?.by === 'device' && typeof args?.sessionId === 'string') sent.then(() => deviceOperating.add(args.sessionId), () => {});
+  else if (command === 'chromeResume' && typeof args?.sessionId === 'string') sent.then(() => deviceOperating.delete(args.sessionId), () => {});
+  return sent;
 }
 
 /** WS の外に置かれた返事を取る（同じ源なのでクッキーのトークンで通る） */
@@ -5912,6 +5916,7 @@ async function refreshTaskChromeWindows(sessionId = state.current) {
   taskChromeRows.clear();
   chromeWindowRows = Array.isArray(rows) ? rows : [];
   for (const row of chromeWindowRows) if (row.taskId) taskChromeRows.set(row.taskId, row);
+  browserUnifyUi?.conversationsChanged?.();
   paintDelegateCards();
   browserEntry?.paint();
 }
@@ -7867,8 +7872,12 @@ let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   //
 let browserUnifyLoad = null, browserUnifyUi = null;
 // タブの持ち手の置き場（web/chrome-control.mjs。会話に人が触っているタブがあるか。頭の行の印と右の欄の札が同じ置き場を見る。ADR 0296）
 const tabHolderStore = createTabHolderStore();
+// この端末が「端末で操作」（chromeTakeOver by:'device'）で引き継いでいる会話（ほかの端末の操作中と区別する。上の列の切り替えが押せる）
+const deviceOperating = new Set();
 const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => (browserUnifyUi = m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
   controlStore:chromeControlStore, holderStore:tabHolderStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest,
+  // 上の列: 窓の表・窓のある子の一覧・依頼待ち・この端末が端末で操作しているか（inapp-browser.md「見るウィンドウを選ぶ」）
+  windows:chromeWindows, conversations:() => chromeWindowRows, waiting:handoffWaiting, deviceOperating:id => deviceOperating.has(id),
   // タブの列を描き直したら、頭の行の [N] も数を追う（スマホの入口。承認済み 2026-11-08）
   onTabsChange:() => browserEntry?.paint(), osActions:() => state.osActions === true }))));
 const filePreview = setupFilePreview({
@@ -7894,7 +7903,8 @@ const rightPane = {
     const id = state.current; if (!id) return;
     loadBrowserUnify().then(unify => {
       if (state.current !== id) return;
-      if (chromeWindows.has(id) || unify.tabsOf(id).length) chromePanel?.open(anchor);
+      // 入口を押したときの規則（inapp-browser.md 32 行）: 操作中・依頼待ち・あなたが操作中なら Chrome のタブ、それ以外は最後に見た方
+      if (chromeWindows.has(id) || unify.tabsOf(id).length) unify.openEntry(id, anchor).catch(error => notify(error?.message || t('tabs:address.failed')));
       else unify.openTab({ sessionId: id }).catch(error => notify(error?.message || t('tabs:address.failed')));
       browserEntry?.paint();
     });
@@ -8703,7 +8713,7 @@ function openContextPage() {
 }
 /** 頭の行の右の欄のボタンと「…」の点を描き直す。会話が替わったとき・読み込み記録が届いたとき */
 function paintHeaderEntries() {
-  chromePanel?.reset(); browserEntry?.paint(); paintChromeControl();   // 会話が替わった
+  chromePanel?.reset(); browserUnifyUi?.sessionChanged?.(state.current); browserEntry?.paint(); paintChromeControl();   // 会話が替わった
   paintMoreEntry();
 }
 /** 「…」の右上の変更ありの点。700px 以下の「…」のメニューにあるプラグイン・git の状態を見る。 */
@@ -10499,7 +10509,7 @@ function connect() {
       folderUpload?.online();
       for (const wake of [...onlineWaiters]) wake();
       // Chrome の窓の表はつなぎ直しで作り直す（サーバーは続けて今の分を送る）
-      chromeWindows.clear(); chromeControlStore.clear(); tabHolderStore.clear(); browserEntry?.paint(); paintChromeControl();
+      chromeWindows.clear(); chromeControlStore.clear(); tabHolderStore.clear(); deviceOperating.clear(); browserEntry?.paint(); paintChromeControl();
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
@@ -10703,7 +10713,11 @@ function paintChromeControl() {
   chromeControlView?.apply(row && (row.state === 'paused' || chromeWindows.has(id)) ? row : null, { banner: id === state.current });
   chromeProfilePill?.onStateChange();
 }
-chromeControlStore.onChange((id) => { if (id === state.current || id === chromePanel.sessionId) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); } });
+chromeControlStore.onChange((id) => {
+  const ctl = chromeControlStore.get(id);
+  if (ctl.state !== 'paused' || ctl.by !== 'device') deviceOperating.delete(id);   // 引き継ぎが解けた・ほかへ移った
+  if (id === state.current || id === chromePanel.sessionId) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); }
+});
 // 人がタブを触った／AI に戻った: 頭の行の印（⏸）を更新する。右の欄の札・帯は browser-unify の paint が描く
 tabHolderStore.onChange((id) => { if (id === state.current) browserEntry?.paint(); });
 chromeControlStore.onTap((tap) => { if (tap.sessionId === chromeTarget() && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });

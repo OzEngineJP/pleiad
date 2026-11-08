@@ -1,4 +1,5 @@
 import { t } from './i18n.mjs';
+import { runMark } from './arc.mjs';
 
 const paths = {
   back: 'm14 5-7 7 7 7', forward: 'm10 5 7 7-7 7', reload: 'M20 10a8 8 0 1 0-1 8M20 4v6h-6',
@@ -50,7 +51,14 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       pick.setAttribute('aria-selected', String(tab.targetId === selected)); pick.tabIndex = tab.targetId === selected || (!selected && index === 0) ? 0 : -1;
       pick.title = label(tab);
       const icon = tabIcon(tab);
-      const title = document.createElement('span'); title.className = 'bu-tab-title'; title.textContent = pick.title; pick.append(icon, title);
+      const title = document.createElement('span'); title.className = 'bu-tab-title'; title.textContent = pick.title;
+      // エージェントの印（inapp-browser.md。操作中は弧、そうでなければ点）
+      if (tab.agent) {
+        const mark = document.createElement('span'); mark.className = 'bu-agent'; mark.setAttribute('aria-hidden', 'true');
+        mark.append(tab.agentRunning ? runMark() : Object.assign(document.createElement('span'), { className: 'cp-sw-dot' }));
+        pick.setAttribute('aria-label', `${pick.title}, ${t(tab.agentRunning ? 'browser.chromeWindow.chipAgentRunning' : 'browser.chromeWindow.chipAgentIdle', { name: tab.agentName ?? 'Claude' })}`);
+        pick.append(icon, mark, title);
+      } else pick.append(icon, title);
       pick.onclick = () => onPick(tab);
       pick.onkeydown = event => {
         let at = tabs.findIndex(row => row.targetId === tab.targetId);

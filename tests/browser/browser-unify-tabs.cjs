@@ -19,13 +19,18 @@ module.exports = async function browserUnifyTabs({ browser, check, screenshots, 
 import { createBrowserUnify } from '/web/browser-unify.mjs';
 import { setupBrowserEntry } from '/web/header-entries.mjs';
 import { createTabHolderStore } from '/web/chrome-control.mjs';
+import { createWindowTable } from '/web/chrome-panel.mjs';
 import { renderFile } from '/web/pages/file.mjs';
 window.sent=[]; window.notices=[]; window.pageRequests=[];
 window.filePath='D:/dev/pleiad/docs/file-preview.md';
 window.rows=[{sessionId:'one',targetId:'file',windowId:1,title:'file-preview.md',url:'http://localhost/_pleiad/s/one/file?path='+encodeURIComponent(filePath),page:{kind:'file',path:filePath},canGoBack:true},{sessionId:'one',targetId:'web',windowId:1,title:'GitHub · Pleiad',url:'https://github.com/tekalu1/pleiad',favicon:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="gray"/></svg>')}];
 window.holderStore=createTabHolderStore();
-window.chromeFixture={sessionId:'one',tabId:'file',opened:false,isOpen(){return this.opened},open(){this.opened=true},mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true;this.opened=false}};
-window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,controlStore:{get:()=>({state:window.agentState||'idle'})},holderStore,onTabsChange:()=>window.entry?.paint(),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
+window.windowTable=createWindowTable();
+window.convRows=[];
+window.waitingIds=new Set(); window.deviceOpIds=new Set();
+window.chromeFixture={sessionId:'one',tabId:'file',opened:false,pins:[],scState:null,isOpen(){return this.opened},open(el,opts={}){this.opened=true;(this.opens??=[]).push(opts.target??null);if(opts.target)this.sessionId=opts.target},async pinTab(id,pin){this.pins.push({sessionId:id,...pin});sent.push({command:'chromePinWindow',args:{sessionId:id,...pin}});if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});if(pin.tabId)chromeFixture.tabId=pin.tabId;chromeFixture.change?.({type:'state'})},cancelTabPin(){this.pins.push({cancelled:true});sent.push({command:'chromePinWindow',args:{sessionId:this.sessionId,windowId:null,tabId:null}})},get screencastState(){return this.scState},get hold(){return null},mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true;this.opened=false}};
+window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,controlStore:{get:id=>({state:(window.agentStates?.[id])??window.agentState??'idle',by:window.agentBy??null})},holderStore,onTabsChange:()=>window.entry?.paint(),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
+  windows:windowTable,conversations:()=>window.convRows,waiting:id=>window.waitingIds.has(id),deviceOperating:id=>window.deviceOpIds.has(id),agentName:()=>'Claude',
 async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});chromeFixture.tabId=args.tabId;chromeFixture.change?.({type:'state'})}if(command==='pageOpen')return {kind:args.kind==='dir'?'dir':'file',url:'/site/'+encodeURIComponent(args.path??'page'),path:args.path};return {}},
 showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');if(item.icon)b.append(item.icon.cloneNode(true));b.append(document.createTextNode(item.label));b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
 window.resetRows=()=>ui.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows});resetRows();
@@ -210,5 +215,43 @@ window.ready=true;
     await page.evaluate(() => ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again' }));
     check('badge goes away once no human tab remains', await page.locator('.b2-control').isHidden());
     await shot('handback-entries');
+
+    // ---- 上の列（会話の題のチップ・窓の番号・追う）: 親から子の Chrome を会話を移らずに見る（8e2bd1ab^ 269-291 行）
+    await page.evaluate(() => {
+      chromeFixture.sessionId = 'one'; chromeFixture.opened = true; chromeFixture.pins = [];
+      window.agentStates = { one:'running', 'one/child':'running' };
+      windowTable.apply({ sessionId:'one', windows:2, windowIds:[1,2], currentWindowId:1, pinnedWindowId:null, operating:true });
+      windowTable.apply({ sessionId:'one/child', windows:2, windowIds:[9,10], currentWindowId:9, pinnedWindowId:null, operating:true });
+      window.convRows = [{ sessionId:'one/child', taskId:'t1', title:'子の作業', windows:2, state:'running', waiting:false }];
+      ui.onEvent({ type:'tab:info', sessionId:'one/child', reset:true, tabs:[{ sessionId:'one/child', targetId:'c1', windowId:9, title:'Child tab', url:'https://child.example/' }] });
+      ui.conversationsChanged();
+    });
+    check('the top row shows 「この会話」 plus a child conversation chip', await page.locator('.cp-sw[data-open]').count() === 1
+      && await page.locator('.cp-sw-conv').count() === 2
+      && (await page.locator('.cp-sw-conv').first().textContent()).includes('この会話')
+      && (await page.locator('.cp-sw-conv').nth(1).textContent()).includes('子の作業'));
+    check('numbered window chips mark the windows the agent is on', await page.locator('.cp-sw-chip:not(.cp-sw-conv)').count() === 4 && await page.locator('.cp-sw-chip[data-agent]').count() === 2);
+    await page.locator('.cp-sw-conv').nth(1).click();
+    await page.evaluate(() => ui.conversationsChanged());
+    check('clicking the child chip retargets the panel without leaving the conversation', await page.evaluate(() => chromeFixture.sessionId === 'one/child' && chromeFixture.opens.at(-1) === 'one/child' && document.querySelectorAll('.cp-sw-conv')[1].hasAttribute('data-on')));
+    check('the strip then shows the child tabs', await page.locator('.bu-tab').count() === 1 && (await page.locator('.bu-tab .bu-tab-title').textContent()).includes('Child tab'));
+    await page.locator('.cp-sw-chip:not(.cp-sw-conv)').nth(3).click();
+    check('clicking a window chip pins that child window', await page.evaluate(() => chromeFixture.pins.at(-1)?.sessionId === 'one/child' && chromeFixture.pins.at(-1)?.windowId === 10 && chromeFixture.pins.at(-1)?.tabId === null));
+    await page.evaluate(() => { windowTable.apply({ sessionId:'one/child', windows:2, windowIds:[9,10], currentWindowId:9, pinnedWindowId:10, operating:true }); ui.conversationsChanged(); });
+    await page.locator('.cp-sw-follow').click();
+    check('「エージェントを追う」 releases the pin', await page.evaluate(() => chromeFixture.pins.at(-1)?.windowId === null && chromeFixture.pins.at(-1)?.tabId === null));
+    await page.evaluate(() => { chromeFixture.scState = { agentTabId:'c1', tabId:'c1' }; ui.conversationsChanged(); });
+    check('the tab the agent is on carries the running mark', await page.locator('.bu-tab .bu-agent').count() === 1);
+    // 入口を押したとき（32 行）: 操作中なら Chrome のタブを開いて追う（固定を足さない）
+    await page.evaluate(() => { chromeFixture.opened = false; chromeFixture.pins = []; });
+    await page.evaluate(() => ui.openEntry('one'));
+    check('opening the entry while the agent operates follows the agent (no pin)', await page.evaluate(() => chromeFixture.opened && chromeFixture.pins.length === 0));
+    await shot('1280-light-conv-chips');
+    await page.setViewportSize({ width:360, height:720 });
+    await shot('360-light-conv-chips');
+    await page.evaluate(() => { document.documentElement.dataset.theme='dark'; ui.envChanged({theme:'dark'}); });
+    await shot('360-dark-conv-chips');
+    await page.evaluate(() => { document.documentElement.dataset.theme='light'; ui.envChanged({theme:'light'}); });
+    await page.setViewportSize({ width:1280, height:720 });
   } finally { await page.close(); await new Promise(resolve => server.close(resolve)); }
 };

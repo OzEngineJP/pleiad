@@ -16,6 +16,7 @@ import { createFrameSink, createScreencastInput } from './screencast-frame.mjs';
 import { containRect, pageMetadata } from './page-coords.mjs';
 import { browserIcon } from './tab-strip.mjs';
 import { runMark } from './arc.mjs';
+import { pinIcon } from './chrome-window-switch.mjs';
 
 /** 右の欄の ⋮ の行のアイコン（web/browser-unify.mjs のメニューと同じ線の絵） */
 const menuIcon = kind => { const svg = browserIcon(kind); svg.classList.add('i'); return svg; };
@@ -175,8 +176,9 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     const staleText = el('span', 'cp-stale-text', t('browser.video.stale'));
     Object.assign(staleText.style, { background: 'rgba(15,19,48,.78)', color: '#f4f6ff', borderRadius: '999px', fontSize: '13px', padding: '4px 14px' });
     stale.append(staleText);
+    const pin = el('div', 'cp-pin'); pin.setAttribute('aria-hidden', 'true'); pin.append(pinIcon());
     const screen = el('div', 'cp-screen'); screen.tabIndex = 0; screen.setAttribute('role', 'img');
-    screen.append(img, ghost, veil, lag, stale);
+    screen.append(img, ghost, veil, lag, stale, pin);
     const dialog = createCloseDialog({ t });
     const empty = el('div', 'cp-empty'); empty.hidden = true;
     // 第 10 段のプロフィール pill をここへ差し込む。空の間は幅を取らない。
@@ -309,6 +311,8 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     parts.empty.textContent = t('browser.chromeWindow.none');
     parts.lag.hidden = !video.lag || ended;
     parts.stale.hidden = !video.stale || ended;
+    // 固定中は映像の左上にピンの印（人の固定・タブの列で選んだタブの固定・送った直後の待ちを含む）
+    parts.screen.toggleAttribute('data-pinned', pinnedNow() != null || state?.pinnedWindowId != null || state?.pinnedTabId != null || pendingTab != null || pinRequest != null);
     for (const listener of tabListeners) listener();
     // 映すウィンドウが替わる（エージェントが別のウィンドウへ移った）ときは前の絵を重ねて溶かす。最初の描画・閉じたウィンドウの保持中は溶かさない
     const shown = shownNow();
@@ -502,6 +506,8 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     get tabId() { return state?.tabId ?? null; },
     /** 映像の今の状態（タブの並び・エージェントの今のタブ agentTabId・映しているタブ tabId）。まだ無ければ null */
     get screencastState() { return state; },
+    /** 見ているウィンドウが閉じて薄く残している間の情報（{ windowId, number, index }。上の列の幽霊チップ） */
+    get hold() { return hold; },
     /** 映像からの入力を使う（{ phone: () => スマホか }） */
     useInput(options) { if (inputOptions) return; inputOptions = options; ensureInput(); },
     onTabChange(fn) { tabListeners.add(fn); },

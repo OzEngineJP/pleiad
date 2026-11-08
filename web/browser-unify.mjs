@@ -1,5 +1,6 @@
 import { t } from './i18n.mjs';
 import { createTabStrip, browserButton, browserIcon, tabIcon } from './tab-strip.mjs';
+import { createWindowSwitch } from './chrome-window-switch.mjs';
 import { createAddressBar, hasFileViews } from './address-bar.mjs';
 import { createControlBadge, createTabHolderStore } from './chrome-control.mjs';
 import { pageRequestOf, framePoint } from './page-frame.mjs';
@@ -76,6 +77,55 @@ const css = `
 .browser-unify .bu-panel>.cp-screen{flex:1;min-height:0;border:0;border-radius:0;margin:0 0 0 var(--bu-tree-width)}
 .bu-tab.bu-flash{animation:bu-flash .9s ease-out}@keyframes bu-flash{0%,40%{background:color-mix(in srgb,var(--line-blue) 22%,transparent)}}
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
+.bu-agent{display:grid;place-items:center;flex:none;width:14px;height:14px}
+.bu-agent .run{transform:scale(.75)}
+.cp-sw{display:grid;grid-template-rows:0fr;visibility:hidden;flex:none;transition:grid-template-rows var(--dur) var(--ease-out),visibility 0s linear var(--dur)}
+.cp-sw[data-open]{grid-template-rows:1fr;visibility:visible;transition-delay:0s;background:var(--bu-frame)}
+.cp-sw-in{overflow:hidden;min-height:0}
+.cp-sw-row{display:flex;align-items:center;gap:4px;padding:0 8px 0 12px}
+.cp-sw-list{position:relative;display:flex;gap:2px;flex:1;min-width:0;padding:3px;overflow-x:auto;scrollbar-width:none;border-radius:var(--r-m);background:var(--surface-1)}
+.cp-sw-list::-webkit-scrollbar{display:none}
+.cp-sw-pad{position:absolute;left:0;top:3px;width:44px;height:24px;border-radius:var(--r-m);background:var(--surface-paper);pointer-events:none;transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
+.cp-sw-chip{position:relative;flex:none;display:flex;align-items:center;justify-content:center;gap:2px;width:44px;height:24px;padding:0;border:0;border-radius:var(--r-m);background:none;color:var(--ink-weak);font:inherit;font-size:11px;cursor:pointer;transition:width var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.cp-sw-chip:hover:not(:disabled){color:var(--ink)}
+.cp-sw-chip[aria-selected="true"]{color:var(--ink)}
+.cp-sw-chip:disabled{cursor:default}
+.cp-sw-chip.ghost{opacity:.35;pointer-events:none}
+.cp-sw-chip:focus-visible,.cp-sw-follow:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
+.cp-sw-num{min-width:0;line-height:1}
+.cp-sw-ag{display:grid;place-items:center;width:0;height:14px;transform:scale(0);transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
+.cp-sw-chip[data-agent] .cp-sw-ag{width:14px;transform:scale(1)}
+.cp-sw-ag .run{transform:scale(.75)}
+.cp-sw-chip[data-agent][data-idle] .cp-sw-ag::after{content:"";display:block;width:6px;height:6px;border-radius:50%;color:var(--ink-weak);background:currentColor}
+.cp-sw-dot{display:block;width:6px;height:6px;border-radius:50%;color:var(--ink-weak);background:currentColor}
+.cp-sw-dot.wait{color:var(--ink-mark)}
+.cp-sw-chip.cp-sw-conv{width:auto;max-width:160px;padding:0 8px;gap:5px}
+.cp-sw-chip + .cp-sw-conv{margin-left:5px}
+.cp-sw-conv[data-on]{color:var(--ink)}
+.cp-sw-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
+.cp-sw-cm{display:grid;place-items:center;flex:none;width:10px;height:14px}
+.cp-sw-cm:empty{display:none}
+.cp-sw-cm .run{transform:scale(.75)}
+.cp-sw-chip.flash{animation:cp-sw-flash 700ms var(--ease-out)}
+@keyframes cp-sw-flash{0%{box-shadow:0 0 0 3px var(--line-blue)}100%{box-shadow:0 0 0 3px transparent}}
+.cp-sw[data-paused] .cp-sw-chip:not(.cp-sw-conv){opacity:.45}
+.cp-sw-follow{flex:none;position:relative;width:30px;height:30px;color:var(--ink-weak)}
+.cp-sw-follow svg{width:17px;height:17px}
+.cp-sw-follow.on{color:var(--ink-blue)}
+.cp-sw-follow[data-away]{color:var(--ink)}
+.cp-sw-follow.flash::after{content:"";position:absolute;inset:0;border-radius:50%;animation:cp-sw-flash 700ms var(--ease-out);pointer-events:none}
+@media (pointer:coarse),(max-width:520px){
+  .cp-sw-chip,.cp-sw-pad{height:34px}
+  .cp-sw-chip{width:50px}
+  .cp-sw-pad{width:50px}
+  .cp-sw-chip.cp-sw-conv{width:auto}
+  .cp-sw-follow{width:40px;height:40px}
+}
+@media (prefers-reduced-motion:reduce){
+  .cp-sw,.cp-sw-pad,.cp-sw-chip,.cp-sw-ag{transition:none}
+  .cp-sw-chip.flash,.cp-sw-follow.flash::after{animation:none}
+  .cp-sw-chip.flash{box-shadow:0 0 0 2px var(--line-blue)}
+}
 .cp-screen>.bu-page-host{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;z-index:5;background:var(--surface-paper)}
 @media(max-width:600px){.bu-tabs{display:none}.bu-toolbar{height:48px}.browser-unify #filePreview[data-panel=chrome-window]{border-radius:0}}
 `;
@@ -105,9 +155,16 @@ export function tabLabel(tab) {
  *   - holderStore: web/chrome-control.mjs の createTabHolderStore（タブの持ち手。頭の行の印と同じ置き場を頭の行と分け合う。無ければ自分で持つ）
  *   - onPageRequest(request, { sessionId, targetId }): ファイルのページからの頼み（tab:page-request）。worktree の頼みは戻り値・例外をページへ返す
  *   - onTabsChange(): タブの列を描き直したとき（頭の行の [N] が数を追う）
+ *   - windows: web/chrome-panel.mjs の createWindowTable（上の列の番号・エージェントのいる窓・固定）。無ければ上の列は出ない
+ *   - conversations(): browser.chromeWindows の行（この会話と窓のある直接の子。上の列の題のチップ）
+ *   - waiting(id): その会話にブラウザーの依頼が来ている（題のチップの印の色の点・入口の「依頼待ちなら Chrome のタブ」）
+ *   - deviceOperating(id): この端末が「端末で操作」で引き継いでいる（自分が操作している間は切り替えられる）
  */
 export function createBrowserUnify(deps = {}) {
   const { cmd, state = {}, chrome = () => null, showMenu = () => {}, notify = () => {}, osActions = () => false } = deps;
+  // 上の列（会話の題・ウィンドウの番号）の元: chromeWindow イベントの表と、窓のある子の会話の一覧（browser.chromeWindows の行）
+  const windowsTbl = deps.windows ?? null;
+  const convIds = () => new Set([state.current, ...(deps.conversations?.() ?? []).map(row => row?.sessionId).filter(Boolean)]);
   // active は端末内のページ、または切り替えの応答待ちの選択だけ。確定した映像の対象は chrome().tabId が持つ。
   // タブの持ち手は会話ごとの置き場（holderStore。頭の行の印と同じものを見る。ADR 0296）
   const rows = new Map(), holderStore = deps.holderStore ?? createTabHolderStore(); let active = null, enabled = false, pagePort = null, order = 0;
@@ -322,7 +379,104 @@ export function createBrowserUnify(deps = {}) {
     if (!phoneQuery.matches) items.push({ sep:true }, { label:t('tabs:address.closePanel'), icon:icon('panel'), onClick:close });
     const box = anchor.getBoundingClientRect(); showMenu(box.left, box.bottom + 4, items);
   }
-  const root = document.createElement('div'); root.className = 'bu-chrome'; root.append(strip.root, address.root);
+  // ---- 上の列（会話の題・ウィンドウの番号・「エージェントを追う」。inapp-browser.md「見るウィンドウを選ぶ」） ----
+  /** 切り替えられない間: PC で引き継いでいる・ほかの端末が操作している。会話の題のチップはいつも押せる */
+  const switchDisabled = id => {
+    const row = deps.controlStore?.get?.(id) ?? {};
+    return row.state === 'paused' && !(row.by === 'device' && deps.deviceOperating?.(id) === true);
+  };
+  const pinnedWindowOf = id => { const pin = windowsTbl?.pinned?.(id); return pin != null && (windowsTbl?.ids?.(id) ?? []).includes(pin) ? pin : null; };
+  const pinnedAny = id => pinnedWindowOf(id) != null || (id === session() && (chrome()?.screencastState?.pinnedWindowId != null || chrome()?.screencastState?.pinnedTabId != null));
+  /** 映像に映っているウィンドウ。閉じたウィンドウを薄くして残している間は、それ */
+  const shownWindow = id => {
+    if (id === session()) {
+      const hold = chrome()?.hold;
+      if (hold?.windowId != null) return hold.windowId;
+      const live = chrome()?.screencastState;
+      const row = (live?.list ?? []).find(item => item.tabId === live?.tabId);
+      if (Number.isSafeInteger(row?.windowId)) return row.windowId;
+    }
+    return pinnedWindowOf(id) ?? windowsTbl?.current?.(id) ?? (windowsTbl?.ids?.(id) ?? [])[0] ?? null;
+  };
+  /** 上の列に出す会話: この会話と、窓のある直接の子の会話（映している子は窓が無くても）。2 つ以上のときだけ */
+  function convList() {
+    const owner = state.current, shown = session();
+    if (!owner) return [];
+    const list = [{ sessionId: owner, label: t('browser.chromeWindow.thisConversation'), waits: false }];
+    for (const row of deps.conversations?.() ?? []) {
+      if (!row?.taskId || !row.sessionId || row.sessionId === owner) continue;
+      if (!(row.windows > 0) && row.sessionId !== shown) continue;
+      list.push({ sessionId: row.sessionId, label: row.title || t('browser.chromeWindow.childUntitled'), waits: row.waiting === true });
+    }
+    if (shown && !list.some(conv => conv.sessionId === shown)) list.push({ sessionId: shown, label: t('browser.chromeWindow.childUntitled'), waits: false });
+    if (list.length < 2) return [];
+    return list.map(conv => ({ sessionId: conv.sessionId, label: conv.label, agent: deps.agentName?.(conv.sessionId), current: conv.sessionId === shown,
+      mark: conv.waits || deps.waiting?.(conv.sessionId) === true ? 'wait' : windowsTbl?.operating?.(conv.sessionId) || deps.controlStore?.get?.(conv.sessionId)?.state === 'running' ? 'run' : null }));
+  }
+  /** 番号のチップ: その会話を映してからそのウィンドウを固定する（固定は会話に 1 つ。映し始めの固定はパネルの pinTab が受け持つ） */
+  function onPick(windowId, ownerId) {
+    const id = ownerId ?? session();
+    if (!id || !Number.isSafeInteger(windowId) || switchDisabled(id) || !(windowsTbl?.ids?.(id) ?? []).includes(windowId)) return;
+    active = null;
+    if (id !== session()) chrome()?.open?.(null, { target: id });
+    const pin = { windowId, tabId: null };
+    (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
+  }
+  /** 会話の題のチップ: 会話は移らず、映像だけその会話の Chrome へ替える */
+  function onPickConv(id) { if (id && id !== session()) { active = null; chrome()?.open?.(null, { target: id }); } }
+  /** 「エージェントを追う」。追っている間に押すと、今映っているウィンドウを固定する */
+  function onFollow() {
+    const id = session();
+    if (!id || switchDisabled(id)) return;
+    if (pinnedAny(id)) {
+      const pin = { windowId: null, tabId: null };
+      (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
+      switcher.flashFollow();
+    } else {
+      const shown = shownWindow(id);
+      if (shown == null) return;
+      const pin = { windowId: shown, tabId: null };
+      (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => notify(error?.message || t('browser.chromeWindow.pinFailed')));
+    }
+  }
+  const switcher = createWindowSwitch({ t, getName: () => deps.agentName?.(session()) ?? 'Claude', onPick, onPickConv, onFollow });
+  let lastAgentWin;
+  /** 上の列を描く（チップの並び・印・追う・固定の印） */
+  function paintSwitch() {
+    if (!enabled) return;
+    const shown = session();
+    const convs = convList();
+    const rows = shown ? windowsTbl?.list?.(shown) ?? [] : [];
+    const known = rows.length > 0 && rows.every(row => row.windowId !== null);
+    const shownWin = shown ? shownWindow(shown) : null, agentWin = shown ? windowsTbl?.current?.(shown) ?? null : null;
+    const items = known && (rows.length >= 2 || !convs.length) ? rows.map(row => ({ windowId: row.windowId, number: row.number, selected: row.windowId === shownWin, agent: row.windowId === agentWin, ghost: false, sessionId: shown })) : [];
+    const hold = shown === chrome()?.sessionId ? chrome()?.hold : null;
+    if (items.length && hold) items.splice(Math.min(hold.index, items.length), 0, { windowId: hold.windowId, number: hold.number, selected: true, agent: false, ghost: true, sessionId: shown });
+    // ほかの会話のウィンドウ（2 つ以上ある分）も、その会話の題の後ろに番号で出す
+    for (const conv of convs) {
+      if (conv.sessionId === shown) continue;
+      const others = windowsTbl?.list?.(conv.sessionId) ?? [];
+      if (others.length < 2 || !others.every(row => row.windowId !== null)) continue;
+      const otherAgent = windowsTbl?.current?.(conv.sessionId), otherRunning = windowsTbl?.operating?.(conv.sessionId) === true;
+      for (const row of others) items.push({ windowId: row.windowId, number: row.number, selected: false, agent: row.windowId === otherAgent, running: otherRunning, ghost: false, sessionId: conv.sessionId });
+    }
+    // 会話の題が選ばれているのは、映している会話に番号のチップが無いとき（あれば番号のチップに敷きがある）
+    const targetHasNumbers = items.some(item => item.sessionId === shown);
+    for (const conv of convs) conv.selected = conv.current && !targetHasNumbers;
+    // エージェントが別のウィンドウへ移ったら、そのチップの印が移って 1 回光る
+    const flashId = lastAgentWin !== undefined && agentWin !== lastAgentWin && agentWin != null ? agentWin : null;
+    lastAgentWin = agentWin;
+    const pinned = shown ? pinnedAny(shown) === true : false;
+    const live = chrome()?.screencastState;
+    const away = pinned && (pinnedWindowOf(shown) !== agentWin || (live?.pinnedTabId != null && live?.tabId !== live?.agentTabId));
+    const running = shown ? windowsTbl?.operating?.(shown) === true : false;
+    const disabled = shown ? switchDisabled(shown) : false;
+    const firstOpen = convs.length >= 2 || items.length >= 2;
+    switcher.paint({ items, convs, agentRunning: running, pinned, away, disabled, flashId, followHere: firstOpen || tabs().length < 2 });
+    // 「追う」は見えている最初の列の右端（上の列が閉じていてタブの列だけならタブの列）
+    if (!firstOpen && tabs().length >= 2 && switcher.follow.parentNode !== strip.root) strip.root.append(switcher.follow);
+  }
+  const root = document.createElement('div'); root.className = 'bu-chrome'; root.append(switcher.root, strip.root, address.root);
   const overview = document.createElement('div'); overview.className = 'bu-overview'; overview.hidden = true; root.append(overview);
   let badge = null;
   async function showOverview() {
@@ -349,7 +503,13 @@ export function createBrowserUnify(deps = {}) {
     const shown = phoneQuery.matches ? (c.held.holder === 'human' && overview.hidden) : (c.anyHuman && c.store !== 'paused');
     badge?.update({ visible:shown });
   }
-  function paint() { const tab = current(); strip.update(tabs(), tab?.targetId); address.show(tab, tabs().length); paintControl(); paintLocal(); deps.onTabsChange?.(); }
+  function paint() {
+    const tab = current(), shown = session(), live = chrome()?.screencastState;
+    const running = shown ? windowsTbl?.operating?.(shown) === true : false;
+    // タブのチップのエージェントの印（弧/点。エージェントの今のタブは映像の状態が持つ）
+    const items = tabs().map(row => row.local || live?.agentTabId == null ? row : { ...row, agent: row.targetId === live.agentTabId, agentRunning: running, agentName: deps.agentName?.(shown) });
+    strip.update(items, tab?.targetId); address.show(tab, items.length); paintControl(); paintLocal(); paintSwitch(); deps.onTabsChange?.();
+  }
   const pageHost = document.createElement('div'); pageHost.className = 'bu-page-host';
   const frames = new Map(); let local = null, explorer = null;
   const update = document.createElement('button'); update.type = 'button'; update.className = 'bu-page-update'; update.hidden = true;
@@ -544,27 +704,53 @@ export function createBrowserUnify(deps = {}) {
       await pick(tab); chrome()?.open?.();
     },
     /**
-     * スマホの頭の行の [N]（承認済み 2026-11-08。temporary/mockups/phone-browser-header.html）。
-     * 人が操作中のタブを先に、無ければ最後に見ていたタブを全画面で開く。タブが無ければ新しいタブを開く。
-     * 開いたブラウザーの中の [N] が一覧を開く（頭の行の [N] と最初の動作はわざと違う）
+     * 欄の入口（地球ボタン・スマホの [N]。inapp-browser.md「入口を押したとき」）。
+     * 操作中・依頼待ち・あなたが操作中なら Chrome のタブ（映像・既定はエージェントを追う。人の持つタブがあればそちら）。
+     * それ以外は会話で最後に見た方を開く。タブが無ければ空の新しいタブ。開いている間の状態変化では切り替えない（ここは閉じているときだけ呼ばれる）
      */
-    async openEntry(sessionId) {
-      const list = allTabs(sessionId);
+    async openEntry(sessionId, anchor = null) {
+      const list = allTabs(sessionId), same = sessionId === session();
       const held = list.find(item => holderOf(sessionId, item.chromeId ?? item.targetId).holder === 'human');
-      const tab = held ?? (sessionId === session() ? current() : list.find(item => item.targetId === chrome()?.tabId) ?? list[0] ?? null);
+      const row = deps.controlStore?.get?.(sessionId) ?? {};
+      const open = () => chrome()?.open?.(anchor, same ? {} : { target:sessionId });
+      // 人の持つタブ（あなたが操作中）→ そのタブを映す
+      if (held) {
+        if (same) await pick(held);
+        else {
+          const pin = { windowId:held.windowId ?? null, tabId:held.chromeId ?? held.targetId };
+          try { await (chrome()?.pinTab ? chrome().pinTab(sessionId, pin) : cmd('chromePinWindow', { sessionId, ...pin })); }
+          catch (error) { notify(error?.message || t('browser.chromeWindow.pinFailed')); }
+        }
+        open(); return;
+      }
+      // エージェントが操作中・依頼待ち・（PC/端末の）引き継ぎ中 → Chrome のタブを開いて追う（固定は解かない。会話の watch が持つ既定）
+      if (row.state === 'running' || row.state === 'paused' || deps.waiting?.(sessionId) === true || windowsTbl?.operating?.(sessionId)) {
+        if (same) { active = null; chrome()?.cancelTabPin?.(); }
+        open(); return;
+      }
+      // それ以外は最後に見た方
+      const tab = same ? current() : list.find(item => item.targetId === chrome()?.tabId) ?? list[0] ?? null;
       if (tab) {
-        if (sessionId === session()) await pick(tab);
+        if (same) await pick(tab);
         else {
           const pin = { windowId:tab.windowId ?? null, tabId:tab.chromeId ?? tab.targetId };
           try { await (chrome()?.pinTab ? chrome().pinTab(sessionId, pin) : cmd('chromePinWindow', { sessionId, ...pin })); }
           catch (error) { notify(error?.message || t('browser.chromeWindow.pinFailed')); }
         }
-        chrome()?.open?.(null, sessionId === session() ? {} : { target:sessionId }); return;
+        open(); return;
       }
-      if (sessionId === session()) await openInput(null, sessionId);
+      if (same) await openInput(null, sessionId);
       else await cmd('chromeNavigate', { sessionId, action:'new' }).catch(failed);
-      chrome()?.open?.(null, sessionId === session() ? {} : { target:sessionId });
+      open();
     },
+    /** 見ている会話が替わった。ビューアを開いたままタブの無い会話へ移ったときも空のタブを作る */
+    sessionChanged(id) {
+      if (!enabled || typeof id !== 'string' || !id) return;
+      if (!allTabs(id).length && !windowsTbl?.has?.(id)) void cmd('watchSession', { sessionId:id }).catch(() => {}).then(() => openInput(null, id).catch(() => {}));
+      paint();
+    },
+    /** 会話の一覧（上の列の題・子の窓）が変わった。描き直す */
+    conversationsChanged() { if (enabled) paint(); },
     /** タブの列のタブを一瞬光らせる（もう開いていたファイル） */
     flashTab(tab, sessionId) {
       if (sessionId !== session()) return;
@@ -600,7 +786,7 @@ export function createBrowserUnify(deps = {}) {
               && (!event.sessionId || event.sessionId === active.sessionId)))) active = null;
           paint();
         });
-        deps.controlStore?.onChange?.(id => { if (id === session()) paint(); });
+        deps.controlStore?.onChange?.(id => { if (id === session() || convIds().has(id)) paint(); });
         phoneQuery.addEventListener?.('change', () => { paintControl(); paintLocal(); });
         window.addEventListener('message', event => { localRequest(event).catch(failed); });
         document.dispatchEvent(new CustomEvent('ply-browser-availability'));
@@ -629,10 +815,10 @@ export function createBrowserUnify(deps = {}) {
           if (info.removed) continue;
           for (const tab of pages.list(event.sessionId)) if (tab.chromeId === info.targetId) syncLinkedPage(tab, info);
         }
-        if (event.sessionId === session()) paint();
+        if (event.sessionId === session() || convIds().has(event.sessionId)) paint();
       } else if (event.type === 'tab:holder') {
         holderStore.event(event);
-        if (event.sessionId === session()) paint();
+        if (event.sessionId === session() || convIds().has(event.sessionId)) paint();
       } else if (event.type === 'tab:page-request') pageRequest(event);
     },
   };

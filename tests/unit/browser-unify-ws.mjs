@@ -225,6 +225,34 @@ export default async function(t) {
     t.ok('navigation is absent from agent surfaces', !agent.ok);
     t.ok('Windows breadcrumbs preserve drive roots and absolute destinations', addressCrumbs('D:\\work\\notes.md').map(item => item.path).join('|') === 'D:\\|D:\\work|D:\\work\\notes.md');
     t.ok('POSIX breadcrumbs preserve absolute destinations', addressCrumbs('/work/notes.md').at(-1).path === '/work/notes.md');
+
+    // 親が子の Chrome を見る: タブ情報は「見ている会話とその子孫」へ届く（inapp-browser.md。委譲カード・題のチップの元）
+    const childTabs = [{ sessionId:'one/child', targetId:'c1', windowId:9, url:'https://child.example/', title:'Child' }];
+    let famEmit = null;
+    const famMessages = [];
+    const famClient = { readyState:1, OPEN:1, send:message => famMessages.push(JSON.parse(message).event) };
+    const famWatching = new Map([[famClient, 'one']]);
+    const fam = createBrowserUnifyWs({ relay:{ onTabEvent(fn) { famEmit = fn; return () => { famEmit = null; }; },
+        unify:{ tabInfo:{ list:id => id === 'one' ? tabs : id === 'one/child' ? childTabs : [] },
+          tabHolder:{ held:id => id === 'one/child' ? [{ targetId:'c1', holder:'human', by:'device', since:1, last:2, pinned:false, viewport:null }] : [] } } },
+      clients:() => new Set([famClient]), watching:client => famWatching.get(client), descendants:id => id === 'one' ? ['one/child'] : [] });
+    fam.snapshot(famClient, 'one');
+    t.ok('snapshot は見ている会話と子孫それぞれの reset と人の持ち手を送る',
+      famMessages.filter(e => e.type === 'tab:info' && e.reset).map(e => e.sessionId).join(',') === 'one,one/child'
+      && famMessages.some(e => e.type === 'tab:holder' && e.sessionId === 'one/child' && e.targetId === 'c1'));
+    famMessages.length = 0;
+    famEmit('tab:info', { ...childTabs[0], title:'Renamed' });
+    famEmit('tab:holder', { sessionId:'one/child', targetId:'c1', holder:'human' });
+    famEmit('tab:info', { sessionId:'two', targetId:'x', windowId:1, url:'https://x/', title:'X' });
+    t.ok('子孫の tab:info・tab:holder は親画面へ届き、無関係な会話は届かない',
+      famMessages.filter(e => e.sessionId === 'one/child').length === 2 && !famMessages.some(e => e.sessionId === 'two'));
+    famWatching.set(famClient, 'two'); famMessages.length = 0;
+    famEmit('tab:info', { ...childTabs[0], title:'Again' });
+    t.ok('見ている会話を替えると子孫の届け先も替わる', famMessages.length === 0);
+    famWatching.set(famClient, 'one');
+    const famWatch = await fam.handle({ command:'pageWatch', args:{ sessionId:'one/child', path:file, kind:'file' }, client:famClient }).catch(e => e.code);
+    t.ok('見ている会話の子孫へのページの操作も受け付ける', famWatch?.removed === true);
+    fam.close();
     ws.close(); t.ok('relay subscription can be removed', emit === null);
     {
       const server = await startServer({dataDir:path.join(root, 'server'), env:{AGENT_HOST_BACKENDS:'fake'}});
