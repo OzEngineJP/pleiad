@@ -82,6 +82,15 @@ export class N {
     for (const c of n) c.parent = p;
     p.children.splice(i, 0, ...n);
   }
+  after(...n) {
+    const p = this.parent;
+    if (!p) return;
+    const i = p.children.indexOf(this);
+    for (const c of n) c.parent = p;
+    p.children.splice(i + 1, 0, ...n);
+  }
+  // 本物の element.click() と同じく onclick へ流す（伝播は持たない）
+  click() { return this.onclick?.(); }
   contains(n) { for (let x = n; x; x = x.parent) if (x === this) return true; return false; }
   get firstChild() { return this.children[0]; }
   get childNodes() { return this.children; }

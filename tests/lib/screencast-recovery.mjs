@@ -25,7 +25,10 @@ export async function checkScreencastRecovery(createBridge, createHub, t) {
       }};
     const bridge=createBridge({host,relay:{onTabEvent:()=>()=>{},unify:{tabHolder:{holder:()=>null}}}});
     const hub=createHub({bridge:multi?bridge:{...bridge,setFormats:undefined},now:()=>clock,setTimer(fn,ms){const timer={fn,at:clock+ms};timers.add(timer);return timer;},clearTimer(timer){timers.delete(timer);}});
-    const flush=async()=>{for(let n=0;n<150;n++)await Promise.resolve();};
+    // 要求の途中解決が実のタスクへ回ることがある（dispose 内の動的 import・worker で前に走った suite の残り）。
+    // await Promise.resolve() だけの繰り返しは、その間ずっとマイクロタスクを詰めたままなので実のタスクへ譲れず、
+    // タブ付け替えの途中が期限切れのまま残る（CI の /tab の揺れ）。tests/lib/fake-clock.mjs と同じく、実のイベントループを回す。
+    const flush=async()=>{for(let n=0;n<4;n++)await new Promise(resolve=>setImmediate(resolve));};
     const advance=async ms=>{const end=clock+ms;await flush();let guard=0;for(;;){const timer=[...timers].filter(t=>t.at<=end).sort((a,b)=>a.at-b.at)[0];if(!timer)break;if(++guard>1000)throw Error('retry loop');timers.delete(timer);clock=timer.at;timer.fn();await flush();}clock=end;await flush();};
     return {bridge,hub,attempts,starts,advance,flush,set fail(n){fail=n;},set failRestore(n){failRestore=n;},
       later(fn,ms){timers.add({fn,at:clock+ms});},
