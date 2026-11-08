@@ -30,6 +30,11 @@ export default defineConfig({
           items: [{ autogenerate: { directory: "agents" } }],
         },
         {
+          label: "記憶",
+          translations: { en: "Memory" },
+          items: [{ label: "記憶", translations: { en: "Memory" }, slug: "memory" }],
+        },
+        {
           label: "リファレンス",
           translations: { en: "Reference" },
           items: [{ autogenerate: { directory: "reference" } }],

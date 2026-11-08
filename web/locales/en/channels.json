@@ -281,8 +281,7 @@
       "hint": "This bot can send instructions to other chats. It can only send to chats you pointed it to and chats it made itself."
     },
     "memory": {
-      "title": "Memory",
-      "auto": "Learned automatically from all your chats"
+      "title": "Memory"
     },
     "brain": {
       "title": "Activity notes",
@@ -345,6 +344,13 @@
     "removed": "This bot was deleted"
   },
   "memory": {
+    "route": {
+      "open": "Auto-organize ›",
+      "off": "Auto-organize: off ›",
+      "running": "Auto-organize: running ›",
+      "failed": "Auto-organize: failed ›",
+      "next": "Auto-organize: next {{at}} ›"
+    },
     "new": "Newly learned",
     "faded": "Faded",
     "fadedTitle": "An old memory that has grown weak. It is no longer given at the start of a conversation, but a search still finds it (it is not deleted)",
@@ -368,6 +374,8 @@
       "failed": "failed ({{error}})",
       "skipped": "skipped {{n}} scheduled runs ({{reason}})",
       "reason": {
+        "off": "organization off",
+        "halted": "stopped after failures",
         "paused": "paused",
         "failed": "waiting after a failure"
       },

@@ -54,10 +54,10 @@
       "remote": "リモート",
       "plus": "Pleiad Plus",      "about": "アプリ情報・更新",
       "delegation": "委譲",
+      "memory": "記憶",
       "autoCompaction": "自動圧縮",
       "browser": "ブラウザー",
-      "computer": "コンピューターの操作",
-      "experimental": "試験的な機能"
+      "computer": "コンピューターの操作"
     },
     "input": {
       "historyRecall": {
@@ -74,12 +74,48 @@
     "usage": {
       "refresh": "更新"
     },
+    "memory": {
+      "general": "全般",
+      "bot": "bot",
+      "autoLearn": "記憶の自動整理",
+      "learnAt": "整理する時刻",
+      "episodeSummary": "bot との会話を要約して引き継ぐ",
+      "episodeSummaryNote": "自動整理がオンのときだけ動きます。入切は自動整理を止めても残ります",
+      "status": {
+        "off": "オフ",
+        "running": "整理しています",
+        "authWait": "ログインを待っています",
+        "authWaitSub": "{{agent}} にログインすると再開します",
+        "authWaitStoppedSub": "{{agent}} にログインしたあと「もう一度」で再開します",
+        "unconfirmed": "接続状態は未確認",
+        "unconfirmedSub": "{{agent}} に繋がっているか、確かめていません",
+        "halted": "止まっています",
+        "haltedSub": "認証などの問題か再試行の上限で、自動の再試行をやめました",
+        "failed": "失敗しました",
+        "retryAt": "{{when}} に再試行",
+        "waiting": "オン",
+        "loadFailed": "状態を読み込めませんでした"
+      },
+      "act": {
+        "now": "今すぐ整理",
+        "retry": "もう一度",
+        "login": "ログイン",
+        "check": "接続を確認",
+        "skipped": "自動整理がオフなので走りませんでした",
+        "skippedRunning": "いま整理を走らせています",
+        "failed": "操作できませんでした",
+        "saveFailed": "保存できませんでした"
+      }
+    },
     "agents": {
       "recheck": "状態を再確認",
       "notInstalled": "未インストール",
       "statusError": "見られない: {{error}}",
       "loginUnsupported": "ログインを扱えない",
       "loginPending": "ログインを待っている",
+      "unconfirmed": "未確認",
+      "checkStatus": "状態を確認",
+      "checkFailed": "確かめられませんでした",
       "loggedIn": "ログイン済み",
       "loggedOut": "未ログイン",
       "stateOn": "ログイン中",
@@ -4339,7 +4375,7 @@
     "saved": "保存しました",
     "saveFailed": "保存できませんでした：{{error}}",
     "autoCompactionOff": "「会話の区切りで、記録から組み立て直す」が入っているため、放置した会話の自動圧縮は止まっています",
-    "openExperimental": "試験的な機能を開く",
+    "openMemory": "記憶の設定を開く",
     "running": "記録から組み立て直しています…",
     "done": "記録から組み立て直しました",
     "recovered": "前の会話を続けられなかったため、記録を新しい会話へ引き継いで、もう一度送りました",

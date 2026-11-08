@@ -114,6 +114,7 @@
       <button type="button" id="apiKeysTab" aria-controls="apiKeysPanel" data-i18n="settings.nav.apiKeys"></button>
       <button type="button" id="usageTab" aria-controls="usagePanel" data-i18n="settings.nav.usage"></button>
       <button type="button" id="delegationTab" aria-controls="delegationPanel" data-i18n="settings.nav.delegation"></button>
+      <button type="button" id="memoryTab" aria-controls="memoryPanel" data-i18n="settings.nav.memory"></button>
       <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
       <button type="button" id="inputTab" aria-controls="inputPanel" data-i18n="settings.nav.input"></button>
       <button type="button" id="openContext" aria-controls="contextPanel" data-i18n="settings.nav.context"></button>
@@ -126,7 +127,6 @@
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <!-- Pleiad Plus（web/plus-settings.mjs）。status.available === false のときは出さない。モバイルの殻では購入の導線だけ隠す -->
       <button type="button" id="plusTab" aria-controls="plusPanel" data-i18n="settings.nav.plus" hidden></button>
-      <button type="button" id="experimentalTab" aria-controls="experimentalPanel" data-i18n="settings.nav.experimental"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
     <div class="pop" id="iconPop" hidden></div>
@@ -319,6 +319,26 @@
         </section>
         <!-- 委譲先の自動選択。中身は web/delegation-settings.mjs が作る -->
         <section id="delegationPanel" data-i18n-aria-label="settings.nav.delegation" hidden></section>
+        <!-- 記憶（docs/design-system.md「設定 › 記憶」。全般 = 「試験的な機能」から移した設定、bot = 記憶の自動整理。中身の状態・操作は web/memory-settings.mjs） -->
+        <section id="memoryPanel" data-i18n-aria-label="settings.nav.memory" hidden>
+          <h3 data-i18n="settings.memory.general"></h3>
+          <div class="mp-feature">
+            <div class="rm-switch"><label class="rm-switch-label" for="contextRebuildEnabled" data-i18n="contextRebuild.name"></label><button type="button" class="cx-sw" id="contextRebuildEnabled" role="switch" data-i18n-aria-label="contextRebuild.name"></button></div>
+            <p class="mp-note" data-i18n="contextRebuild.description"></p>
+            <p class="mp-note" id="contextRebuildSaved" role="status" aria-live="polite"></p>
+          </div>
+          <h3 data-i18n="settings.memory.bot"></h3>
+          <div class="mp-feature">
+            <div class="rm-switch"><label class="rm-switch-label" for="memoryAutoLearn" data-i18n="settings.memory.autoLearn"></label><button type="button" class="cx-sw" id="memoryAutoLearn" role="switch" data-i18n-aria-label="settings.memory.autoLearn"></button></div>
+            <div class="memory-learn-dependent" id="memoryLearnDependent">
+              <div class="rm-switch"><label class="rm-switch-label" for="memoryLearnAt" data-i18n="settings.memory.learnAt"></label><input type="time" class="mem-time" id="memoryLearnAt" data-i18n-aria-label="settings.memory.learnAt"></div>
+              <div class="rm-switch"><label class="rm-switch-label" for="memoryEpisodeSummary" data-i18n="settings.memory.episodeSummary"></label><button type="button" class="cx-sw" id="memoryEpisodeSummary" role="switch" data-i18n-aria-label="settings.memory.episodeSummary"></button></div>
+              <p class="mp-note" data-i18n="settings.memory.episodeSummaryNote"></p>
+            </div>
+            <div class="mem-status" id="memoryLearnStatus" role="status" aria-live="polite"><strong id="memoryLearnStatusText"></strong><span class="mp-note" id="memoryLearnStatusSub"></span></div><div class="mem-actions" id="memoryLearnActions"></div>
+            <p class="mp-note" id="memoryLearnSaved" role="status" aria-live="polite"></p>
+          </div>
+        </section>
         <section id="apiKeysPanel" data-i18n-aria-label="settings.nav.apiKeys" hidden></section>
         <section id="setupPanel" data-i18n-aria-label="settings.nav.agents">
           <div id="settingsAgentSlot">
@@ -385,7 +405,7 @@
             <!-- 「記録から組み立て直す」が入っている間だけ出す、自動圧縮が止まる理由（ADR 0287） -->
             <div class="mp-note auto-compaction-off" id="autoCompactionOffNote" hidden>
               <span data-i18n="contextRebuild.autoCompactionOff"></span>
-              <button type="button" id="autoCompactionOpenExperimental" data-i18n="contextRebuild.openExperimental"></button>
+              <button type="button" id="autoCompactionOpenMemory" data-i18n="contextRebuild.openMemory"></button>
             </div>
             <section class="mp-panel auto-compaction-minimum">
               <label for="autoCompactionMin" data-i18n="compaction.minSize"></label>
@@ -421,14 +441,6 @@
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
         <!-- 中身は web/plus-settings.mjs が作る -->
         <section id="plusPanel" data-i18n-aria-label="settings.nav.plus" hidden></section>
-        <!-- 試験的な機能（ADR 0287。「会話の区切りで、記録から組み立て直す」） -->
-        <section id="experimentalPanel" data-i18n-aria-label="settings.nav.experimental" hidden>
-          <div class="mp-feature">
-            <div class="rm-switch"><label class="rm-switch-label" for="contextRebuildEnabled" data-i18n="contextRebuild.name"></label><button type="button" class="cx-sw" id="contextRebuildEnabled" role="switch" data-i18n-aria-label="contextRebuild.name"></button></div>
-            <p class="mp-note" data-i18n="contextRebuild.description"></p>
-            <p class="mp-note" id="contextRebuildSaved" role="status" aria-live="polite"></p>
-          </div>
-        </section>
       </div>
     </section>
 

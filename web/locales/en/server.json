@@ -856,6 +856,7 @@
       "account": "Google account",
       "detail": "Antigravity (uses your subscription)",
       "notLoggedIn": "Not signed in to agy (run agy in a terminal to sign in).",
+      "unconfirmed": "Connection not confirmed (choose \"Check connection\" to verify).",
       "loginRunning": "Sign-in is already in progress.",
       "alreadyLoggedIn": "Already signed in.",
       "runCommand": "Run this command in a terminal and follow the prompts to sign in to Google. (Antigravity sign-in only works from a terminal. This updates automatically when you finish.)",

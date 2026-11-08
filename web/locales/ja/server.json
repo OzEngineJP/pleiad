@@ -854,6 +854,7 @@
       "account": "Google アカウント",
       "detail": "Antigravity（サブスクの枠を使う）",
       "notLoggedIn": "agy にログインしていない（端末で agy を実行してログイン）",
+      "unconfirmed": "接続しているか確認できていません（確かめるには［接続を確認］）",
       "loginRunning": "ログインが既に走っている",
       "alreadyLoggedIn": "すでにログインしている",
       "runCommand": "このコマンドを端末で実行し、画面の案内に沿って Google にログインしてください。（Antigravity のログインは端末からしか行えません。終わるとここが自動で切り替わります）",

@@ -136,10 +136,11 @@
 .mem-err[hidden]{display:none}
 .mem-undo{display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 8px}
 .mem-undo[hidden]{display:none}
-/* 夜の整理の様子の 1 行と、記憶の種類の札・薄れた記憶（ADR 0118） */
-.mem-learn{margin:0 8px 6px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
-.mem-learn.warn{color:var(--ink-strong)}
-.mem-learn[hidden]{display:none}
+/* 記憶の見出しの右: 自動整理の短い状態と、設定 › 記憶 への導線（memory-list.mjs の route。長い状態の 1 行は設定側へ移した） */
+.mem-route{margin-left:auto;background:none;border:0;padding:0;color:var(--ink-weak);font-size:var(--fs-xs);font-weight:400;cursor:pointer;font-family:var(--font)}
+.mem-route:hover{color:var(--ink-blue);text-decoration:underline}
+.mem-route.warn{color:var(--ink-strong)}
+.mem-route[hidden]{display:none}
 .mem .mem-kind{display:inline-block;padding:0 6px;margin-right:2px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:var(--fs-xs);line-height:1.6;vertical-align:1px}
 .mem.faded .tx-text{color:var(--ink-weak)}
 

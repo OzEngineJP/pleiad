@@ -384,3 +384,14 @@ button.rm-row.inx-h:disabled:hover { background:none; }
   .rm-tabrow .rm-add { margin-left:0; }
 }
 @media (prefers-reduced-motion:reduce) { .rm-spin, .rm-skel { animation:none; } .rm-todo .rm-n { transition:none; } }
+
+/* 設定 › 記憶 › bot（web/memory-settings.mjs）。自動整理が OFF の間は、従う設定（時刻・要約）を薄くして押せなくする。
+   状態の 1 行は太字の状態＋注記＋操作（今すぐ整理・もう一度・ログイン・接続を確認）。生のエラー文は出さない */
+.memory-learn-dependent{transition:opacity var(--dur-fast) var(--ease-out)}
+.memory-learn-dependent.off-part{opacity:.55}
+.memory-learn-dependent.off-part .rm-switch,.memory-learn-dependent.off-part .mp-note{pointer-events:none}
+.mem-time{max-width:125px;min-height:36px;background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r-s);padding:4px 8px;font:400 13px/1 var(--font);color:var(--ink)}
+.mem-status{display:flex;flex-direction:column;gap:6px;margin-top:14px}
+.mem-status.warn strong{color:var(--ink-strong)}
+.mem-status .mp-note{margin-top:0}
+.mem-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}

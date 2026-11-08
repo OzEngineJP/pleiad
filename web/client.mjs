@@ -33,6 +33,7 @@ import { setupUsage, createUsageSource } from './usage.mjs';
 import { setupHeaderUsage, weekUsage } from './header-usage.mjs';
 import { contextMetrics, conversationMenuItems, menuMeter, createConversationSheet, renderContextUsage } from './conversation-usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
+import { setupMemorySettings } from "./memory-settings.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupAgentAccounts, createAccountRequestCache, composerAccount } from './agent-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
@@ -461,7 +462,7 @@ const state = {
   turnClosed: false,   // text.end が来た。続くツール呼び出しは同じ発言に入り、次の本文は新しい発言になる
   streamEl: null,      // 追記中の本文
   thinkEl: null,       // 追記中の thinking 要素（平文が来たときだけ作る）
-  auth: new Map(),         // backendId -> authStatus の戻り（{ supported, loggedIn, account?, detail?, pending? }）
+  auth: new Map(),         // backendId -> authStatus の戻り（{ supported, loggedIn, account?, detail?, pending?, unconfirmed? }。unconfirmed は受動では分からない = 未ログインと断定しない）
   authUrl: new Map(),      // backendId -> { url, message } ログインの途中で出た URL
   authNote: new Map(),     // backendId -> 直前のログインの時間切れ・失敗の一文（カードの中に出す。次のログインで消える。ADR 0243）
   busy: false,             // 枝の動きの最中。重ねて動かさない
@@ -803,7 +804,7 @@ function paintAutoCompactionSettings() {
 }
 /**
  * 「会話の区切りで、記録から組み立て直す」が入っている間は、放置後の圧縮の面（全体の入切・最小サイズ・エージェントごとの行・決まり）を
- * 止まった見た目にして触れなくし、理由と試験的な機能への入口を出す（ADR 0287）。委譲の子の自動圧縮の設定は別の仕組みなので触れるまま
+ * 止まった見た目にして触れなくし、理由と設定 › 記憶への入口を出す（ADR 0287）。委譲の子の自動圧縮の設定は別の仕組みなので触れるまま
  */
 function paintAutoCompactionOff() {
   const off = state.prefs.contextRebuild === true;
@@ -824,9 +825,18 @@ function paintAutoCompactionOff() {
   for (const input of agents.querySelectorAll('input,button')) input.disabled = off;
   $('autoCompactionRules').classList.toggle('off-part', off);
 }
-/** 「試験的な機能」のページ（ADR 0287）。スイッチは prefs.contextRebuild を映す */
-function paintExperimental() {
+// 設定 › 記憶 のページ（全般 = 「試験的な機能」から移した設定・bot = web/memory-settings.mjs）
+let memorySettings = null;
+
+/** 設定 › 記憶 › 全般（ADR 0287。「試験的な機能」から移設。スイッチは prefs.contextRebuild を映す） */
+function paintMemoryGeneral() {
   $('contextRebuildEnabled').setAttribute('aria-checked', String(state.prefs.contextRebuild === true));
+}
+
+/** 設定 › 記憶 を開く（bot の記憶欄の導線・自動圧縮の注記から）。状態は開くたびに読み直す */
+function openMemorySettings() {
+  onboarding.open('memory');
+  memorySettings?.refresh();
 }
 /**
  * エージェントごとの行。会話を離れた後の自動の圧縮の行を持つエージェント（記述の idleCompaction が自分の id）は入切と待ち時間、
@@ -3500,7 +3510,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); paintExperimental(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); paintMemoryGeneral(); memorySettings?.refresh(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
@@ -4299,11 +4309,14 @@ function renderAuth() {
     head.append(backendLogo(b.id, b.label), el("span", "agent-name", b.label));
     const text = st.installed === false ? t("settings.agents.notInstalled") : !st.supported ? (st.error ? t("settings.agents.statusError", { error: st.error }) : t("settings.agents.loginUnsupported"))
       : st.pending ? t("settings.agents.loginPending")
+      : st.checkFailed ? t("settings.agents.checkFailed")
+      : st.unconfirmed ? t("settings.agents.unconfirmed")
       : st.loggedIn ? t("settings.agents.stateOn")
       : t("settings.agents.loggedOut");
     const stEl = el("span", "agent-state", text);
-    if (st.detail && st.loggedIn) stEl.title = st.detail;
-    if (st.installed === false || !st.supported || (!st.loggedIn && !st.pending)) stEl.classList.add("out");
+    if (st.detail && (st.loggedIn || st.unconfirmed)) stEl.title = st.detail;
+    // 未確認（受動で分からない）は「切れている」と断定しないので out にしない
+    if (st.installed === false || !st.supported || (!st.loggedIn && !st.pending && !st.unconfirmed)) stEl.classList.add("out");
     else if (st.pending) { stEl.classList.add("wait", "spin"); stEl.prepend(runMark()); }
     head.append(stEl);
     const actions = el("div", "agent-actions");
@@ -4327,15 +4340,24 @@ function renderAuth() {
       actions.append(note);
     } else if (st.supported) {
       const loggedIn = st.loggedIn;
-      const btn = el("button", "btn", loggedIn ? t("settings.agents.signOut") : t("settings.agents.signIn"));
+      const btn = el("button", "btn", loggedIn ? t("settings.agents.signOut") : st.unconfirmed ? t("settings.agents.checkStatus") : t("settings.agents.signIn"));
       btn.type = "button";
       btn.dataset.act = "login";
       btn.onclick = (e) => {
         e.stopPropagation();
         if (loggedIn) authLogout(b);
+        else if (st.unconfirmed) checkAuthNow(b);
         else { authFocus = { agent: b.id, pending: true }; authLogin(b); }
       };
       actions.append(btn);
+      // ログイン済みでも［状態を確認］を残す: 受動の確認では接続やモデルが空のまま残ることがあるため、人の明示操作で確かめ直せる入口にする
+      if (loggedIn) {
+        const check = el("button", "btn", t("settings.agents.checkStatus"));
+        check.type = "button";
+        check.dataset.act = "check";
+        check.onclick = (e) => { e.stopPropagation(); checkAuthNow(b); };
+        actions.append(check);
+      }
     }
     // アカウントと接続先。持っているものだけ（アカウントのみのエージェントは「アカウント」）。1 つの面に両方を縦に並べる
     const accounts = b.capabilities?.accounts && st.installed !== false;
@@ -4396,7 +4418,7 @@ function renderAuth() {
     const pend = st.pending && state.authUrl.get(b.id);
     const links = pend && authLinks(pend.url);
     if (links) card.append(links);
-    if (st.installed !== false && st.supported && !st.loggedIn && !st.pending) need.push(b.label);
+    if (st.installed !== false && st.supported && !st.loggedIn && !st.pending && !st.unconfirmed) need.push(b.label);
 
     const box = authUrlBox(b.id);
     if (box) card.append(box);
@@ -4552,6 +4574,23 @@ function authLogin(b, { fromRow = false } = {}) {
     .then(() => { if (failure) throw failure; return result; });
   if (!fromRow) done.catch(() => {});
   return done;
+}
+
+/**
+ * ［状態を確認］（受動で分からない接続を、明示の操作で確かめる）。
+ * probe:true で CLI を起こしてよいのはこの明示操作だけ（通常の refreshAuth・設定の表示・定期の確認では付けない）
+ */
+async function checkAuthNow(b) {
+  try {
+    const st = await cmd("authStatus", { backend: b.id, probe: true });
+    if (st) state.auth.set(b.id, st);
+  } catch {
+    // 確かめる呼び出し自体が失敗（CLI の起動失敗・切れた接続）。生の文は出さず固定の一文だけ添え、
+    // 前の状態と supported は消さないので［状態を確認］［ログイン］の入口は残る
+    state.auth.set(b.id, { ...(state.auth.get(b.id) ?? {}), checkFailed: true });
+  }
+  renderAuth();
+  onboarding?.paint();
 }
 
 /** カードに出す時間切れ・失敗の一文 */
@@ -7964,6 +8003,8 @@ const channelsUi = setupChannels({
   usageOf: (backend) => usageSource.get(backend),
   onUsage: (fn) => usageSource.onResult(fn),
   openUsage: () => { onboarding.open('usage'); $('usageTab').click(); },
+  // bot の記憶欄の「自動整理: …」から、全 bot 共通の 設定 › 記憶 へ
+  openMemory: () => openMemorySettings(),
   // 送信の日時の面の一言（窓を閉じても動き続けるか・ホストの時刻帯）。会話の入力欄と同じ材料
   scheduleEnvironment: async () => {
     const status = await cmd('remoteStatus').catch(() => null);
@@ -9207,7 +9248,7 @@ async function runRefresh(listed) {
   state.statuses = applyPendingStatuses(statuses);
   state.prefs = prefs ?? {};
   paintAutoCompactionSettings();
-  paintExperimental();
+  paintMemoryGeneral();
   browserSettings.paint();
   computerSettings.paint();
   refreshPreviewConfirmation();
@@ -9672,6 +9713,7 @@ async function openFromNotification(target) {
 function openSettingsPage(page) {
   onboarding.open(page);
   if (page === 'remote') remoteSettings.refresh();
+  if (page === 'memory') memorySettings?.refresh();
 }
 
 /**
@@ -10779,7 +10821,7 @@ $('autoCompactionPanel').addEventListener('click', (event) => {
   button.setAttribute('aria-checked', String(button.getAttribute('aria-checked') !== 'true'));
   saveAutoCompactionSettings();
 });
-// 「試験的な機能」の入切（ADR 0287）。次の区切りから効く。自動圧縮のページの理由の文からの入口
+// 設定 › 記憶 › 全般 の入切（ADR 0287。旧「試験的な機能」から移設）。次の区切りから効く。自動圧縮のページの理由の文からの入口
 $('contextRebuildEnabled').onclick = async () => {
   const next = $('contextRebuildEnabled').getAttribute('aria-checked') !== 'true';
   $('contextRebuildEnabled').setAttribute('aria-checked', String(next));
@@ -10791,7 +10833,9 @@ $('contextRebuildEnabled').onclick = async () => {
     $('contextRebuildSaved').textContent = t('contextRebuild.saveFailed', { error: String(error?.message ?? error) });
   }
 };
-$('autoCompactionOpenExperimental').onclick = () => onboarding.open('experimental');
+$('autoCompactionOpenMemory').onclick = () => openMemorySettings();
+// 記憶のページを開いたら状態を読み直す（札の切り替え自体は onboarding の page() が受け持つ）
+$('memoryTab').addEventListener('click', () => memorySettings?.refresh());
 // 止めるのは今見ているセッションだけ。他のセッションは走らせたままにする
 $("abort").onclick = () => {
   const sessionId = state.current;
@@ -10952,7 +10996,7 @@ $("titleWand").onclick = async () => {
 
 const onboarding = setupOnboarding({ cmd, refreshAuth,
   getAuth: () => new Map([...state.auth].map(([id, st]) => [id, authCancelling.has(id) ? { ...st, cancelling: true } : st])),
-  authLogin, cancelLogin, authUrlBox,
+  authLogin, checkAuth: (agent) => checkAuthNow(agent), cancelLogin, authUrlBox,
   authLinks: (id) => (state.auth.get(id)?.pending && state.authUrl.get(id) ? authLinks(state.authUrl.get(id).url) : null),
   authNote: (id) => state.authNote.get(id) ?? '', folderBrowser, onClose: () => side.redraw(),
   begin: async (settings, prompt) => {
@@ -10962,6 +11006,21 @@ const onboarding = setupOnboarding({ cmd, refreshAuth,
     $("prompt").value = prompt;
     $("prompt").dispatchEvent(new Event("input", { bubbles: true }));
   },
+});
+// 設定 › 記憶 › bot（web/memory-settings.mjs。自動整理の入切・時刻・要約と、状態・明示操作。［ログイン］はエージェント設定へ移す）
+memorySettings = setupMemorySettings({
+  cmd: (command, args) => cmd(command, args),
+  invoke: (op, args = {}) => cmd('invoke', { op, args }),
+  getPrefs: () => state.prefs,
+  getAuth: (id) => state.auth.get(id),
+  setAuth: (id, st) => { if (id) { state.auth.set(id, st); renderAuth(); } },
+  // 記憶の整理に使うエージェント（memoryLearnBackend は心拍と共用。core の learn.mjs と同じ解決順: 空なら会話の既定、それも無ければ先頭。
+  // 明示の id が残って消えた（stale）ときは core もそこで失敗するので、別のエージェントの認証を当てない = null）
+  learnBackend: () => {
+    const wanted = state.prefs.memoryLearnBackend || state.prefs.backend;
+    return wanted ? state.backends.find((b) => b.id === wanted) ?? null : state.backends[0] ?? null;
+  },
+  onLogin: (b) => { if (b) { authLogin(b); onboarding.open('setup'); } },
 });
 // 実行中でも更新できる（ADR 0036）。確認の段で止まる作業を並べ、「中断して更新」で全部を reason update で中断してから保存へ進む。
 // 下の flush の count > 0 の断りは、中断が済んだ後の安全網（サーバーの更新ロックも残る）

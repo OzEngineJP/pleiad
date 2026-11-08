@@ -2,19 +2,21 @@
 // 各行に本文と出どころ（押すとその投稿・会話へ）と［直す］［忘れる］。凝った編集画面は作らず、その場で書き換える。
 // 忘れたら 12 秒の「元に戻す」の帯（memory.forget は墓石を残すので、戻すのは memory.unforget）。
 // 操作はすべて memory.* の op を host.invoke で呼ぶ。更新は memoryChanged（呼び出し側が refresh する）。
-// 頭に夜の整理の様子の 1 行（memory.learnStatus。最後に走った時刻・覚えた件数・飛ばした回数と理由・失敗・次の予定。ADR 0118）。
+// 頭の「自動整理: …」は設定 › 記憶 への導線（host.openMemory。長い状態の 1 行は設定側へ移した。docs/design-system.md「設定 › 記憶」）。
 // 各行に種類の札（約束・やめたこと…）と、薄れた記憶（会話の始まりには渡さないが、探せば出る）の印。
-// i18n-dynamic: channels:memory.learn.
+// i18n-dynamic: channels:memory.route.
 // i18n-dynamic: channels:memory.kind.
 //
-//   createMemoryList(host, { lookup, openSource }) → { el, setBot(bot), refresh(layer?), layers() }
+//   createMemoryList(host, { lookup, openSource }) → { el, route, setBot(bot), refresh(layer?), layers() }
+//     route … 「自動整理: …」の導線ボタン（bot のページの見出しへ置く。memory.learnStatus から短い状態を出す）
 //     lookup() … { channels: Map<id, Channel>, bots: Map<id, Bot>, sessions: Map<id, session> }（出どころの字に使う）
 //     openSource(target) … 出どころを開く（{ channelId, threadId?, postId? } か { sessionId }）
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { isComposingKey } from '../keyboard.mjs';
-import { sourceView, learnStatusView } from './bot-model.mjs';
+import { sourceView } from './bot-model.mjs';
 import { botIcon } from './bot-icon.mjs';
+import { learnEnabledOf, learnRouteView } from '../memory-model.mjs';
 
 export const UNDO_MS = 12000;
 const FADE_MS = 240;
@@ -43,8 +45,11 @@ export function createMemoryList(host, { lookup, openSource }) {
   const note = el('p', 'mem-err');
   note.setAttribute('role', 'alert');
   note.hidden = true;
-  const learnLine = el('p', 'mem-learn');
-  learnLine.hidden = true;
+  // 記憶の見出しの右へ置く導線（押すと設定 › 記憶）。短い状態だけ出す
+  const route = el('button', 'mem-route');
+  route.type = 'button';
+  route.hidden = true;
+  route.onclick = () => host.openMemory?.();
   let learnSeq = 0;
 
   for (const key of ['user', 'own']) {
@@ -57,7 +62,7 @@ export function createMemoryList(host, { lookup, openSource }) {
     core.setAttribute('aria-label', '');
     groups[key] = { head, title, meta, core };
   }
-  root.append(learnLine, groups.user.head, groups.user.core, groups.own.head, groups.own.core, note, undo);
+  root.append(groups.user.head, groups.user.core, groups.own.head, groups.own.core, note, undo);
   groups.own.head.classList.add('second');
 
   const layerId = (key) => (key === 'user' ? 'user' : S.bot?.id);
@@ -186,25 +191,21 @@ export function createMemoryList(host, { lookup, openSource }) {
 
   function paint() { paintGroup('user'); paintGroup('own'); }
 
-  // ---------------------------------------------------------------- 夜の整理の様子
-  function paintLearn(status) {
-    const view = learnStatusView(status);
-    learnLine.hidden = !view;
-    if (!view) return;
-    const parts = view.parts.map(({ key, params = {} }) => t(`channels:memory.learn.${key}`, {
-      ...params, ...(params.reasonKey ? { reason: t(`channels:memory.learn.reason.${params.reasonKey}`) } : {}),
-    }));
-    learnLine.textContent = `${t('channels:memory.learn.label')}: ${parts.join(' · ')}`;
-    learnLine.classList.toggle('warn', view.warn);
+  // ---------------------------------------------------------------- 「自動整理: …」の導線（設定 › 記憶 へ）
+  function paintRoute(status) {
+    const view = learnRouteView(status, { enabled: learnEnabledOf(status, host.state?.prefs) });
+    route.hidden = false;
+    route.textContent = t(`channels:memory.route.${view.key}`, view.params);
+    route.classList.toggle('warn', view.key === 'failed');
   }
 
   async function loadLearn() {
     const seq = ++learnSeq;
     try {
       const status = await host.invoke('memory.learnStatus', {});
-      if (seq === learnSeq) paintLearn(status);
+      if (seq === learnSeq) paintRoute(status);
     } catch {
-      if (seq === learnSeq) paintLearn(null);   // 様子が読めなくても記憶の一覧は使える
+      if (seq === learnSeq) paintRoute(null);   // 様子が読めなくても記憶の一覧は使える（導線は出す）
     }
   }
 
@@ -293,6 +294,7 @@ export function createMemoryList(host, { lookup, openSource }) {
 
   return {
     el: root,
+    route,
     /** 見せる bot を替える（null で空に）。層の写しは読み直す */
     setBot(bot) {
       if (S.bot?.id === bot?.id) {
@@ -308,7 +310,7 @@ export function createMemoryList(host, { lookup, openSource }) {
       showError('');
       paint();
       if (bot) { load('user'); load('own'); loadLearn(); }
-      else { learnSeq++; learnLine.hidden = true; }
+      else { learnSeq++; route.hidden = true; }
     },
     /** 層を読み直す（memoryChanged）。layer を省けば両方。直している間は本文を上書きしないよう、描き直しは直し終えてから */
     refresh(layer) {

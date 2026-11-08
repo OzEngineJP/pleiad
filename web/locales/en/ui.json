@@ -54,10 +54,10 @@
       "remote": "Remote",
       "plus": "Pleiad Plus",      "about": "About & updates",
       "delegation": "Delegation",
+      "memory": "Memory",
       "autoCompaction": "Auto compaction",
       "browser": "Browser",
-      "computer": "Computer use",
-      "experimental": "Experimental"
+      "computer": "Computer use"
     },
     "input": {
       "historyRecall": {
@@ -74,12 +74,48 @@
     "usage": {
       "refresh": "Refresh"
     },
+    "memory": {
+      "general": "General",
+      "bot": "Bots",
+      "autoLearn": "Automatic memory organization",
+      "learnAt": "Organize at",
+      "episodeSummary": "Summarize and hand off bot conversations",
+      "episodeSummaryNote": "Only runs while automatic organization is on. The switch is kept even if you turn organization off",
+      "status": {
+        "off": "Off",
+        "running": "Organizing",
+        "authWait": "Waiting for sign-in",
+        "authWaitSub": "Resumes when you sign in to {{agent}}",
+        "authWaitStoppedSub": "Sign in to {{agent}}, then press Try again to resume",
+        "unconfirmed": "Connection unconfirmed",
+        "unconfirmedSub": "Haven't checked whether {{agent}} is connected",
+        "halted": "Stopped",
+        "haltedSub": "Automatic retry stopped — by a problem such as authentication or by the retry limit",
+        "failed": "Failed",
+        "retryAt": "Retrying at {{when}}",
+        "waiting": "On",
+        "loadFailed": "Couldn't load status"
+      },
+      "act": {
+        "now": "Organize now",
+        "retry": "Try again",
+        "login": "Sign in",
+        "check": "Check connection",
+        "skipped": "Skipped — automatic organization is off",
+        "skippedRunning": "Already organizing",
+        "failed": "Couldn't complete the action",
+        "saveFailed": "Couldn't save"
+      }
+    },
     "agents": {
       "recheck": "Recheck status",
       "notInstalled": "Not installed",
       "statusError": "Couldn't check: {{error}}",
       "loginUnsupported": "Sign-in isn't supported",
       "loginPending": "Waiting for sign-in",
+      "unconfirmed": "Unconfirmed",
+      "checkStatus": "Check status",
+      "checkFailed": "Couldn't check",
       "loggedIn": "Signed in",
       "loggedOut": "Not signed in",
       "stateOn": "Signed in",
@@ -4450,7 +4486,7 @@
     "saved": "Saved",
     "saveFailed": "Could not save: {{error}}",
     "autoCompactionOff": "Idle auto compaction is stopped while \"Rebuild context from records at conversation boundaries\" is on",
-    "openExperimental": "Open Experimental",
+    "openMemory": "Open memory settings",
     "running": "Rebuilding context from records…",
     "done": "Rebuilt context from records",
     "recovered": "Couldn't continue the previous conversation, so its record moved to a new one and the message was sent again",
