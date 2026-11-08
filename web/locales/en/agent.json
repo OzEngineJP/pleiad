@@ -957,7 +957,8 @@
       },
       "authStatus": {
         "summary": "Return whether you are logged in to an agent (installed, logged in). No email address or token is returned. Login and logout are for the screen only.",
-        "backend": "Agent id. Omit for the default agent."
+        "backend": "Agent id. Omit for the default agent.",
+        "probe": "true launches the CLI to check interactively (explicit human action only; never on passive refreshes or periodic checks)."
       }
     },
     "errors": {
@@ -1768,7 +1769,10 @@
         "confirm": "An AI is rewriting a memory that a person wrote."
       },
       "learnStatus": {
-        "summary": "When the nightly memory organizer last ran, its result and the next run, and how many times and why it did not run."
+        "summary": "When the automatic memory organizer last ran, its result and the next run, and how many times and why it did not run (also reports enabled, episode summaries, running, failure and halted)."
+      },
+      "learnNow": {
+        "summary": "Run the automatic memory organizer once now (also clears a halted state to retry. Does nothing while automatic organization is off)."
       },
       "forget": {
         "summary": "Forget one memory line. The same content cannot be written again later. Needs the user's approval.",
@@ -1956,9 +1960,11 @@
     "shellTool": "The shell tool each agent uses. Per agent id, native (the agent's own) or ply (only Pleiad's ply_shell, with the agent's own shell tool turned off). Agents that can turn theirs off have the nativeShellOff capability.",
     "instructionBudget": "The guideline for the amount of instructions you wrote (tokens; the right panel's \"Instruction amount\"). null means the default.",
     "backend": "The default agent for new conversations.",
-    "memoryLearnBackend": "Agent for nightly memory organization. Empty follows the conversation default.",
-    "memoryLearnAt": "Local time for nightly memory organization (HH:MM).",
-    "memoryLearnPaused": "Pause nightly memory organization.",
+    "memoryLearnBackend": "Agent for automatic memory organization. Empty follows the conversation default.",
+    "memoryLearnAt": "Local time for automatic memory organization (HH:MM).",
+    "memoryLearnPaused": "Pause automatic memory organization (the older stop flag; memoryAutoLearn takes precedence when set).",
+    "memoryAutoLearn": "Whether automatic memory organization runs (reading conversations at a set time and writing memories) (true / false, default false). Toggling does not change the memories themselves.",
+    "memoryEpisodeSummary": "Whether quiet bot conversations are summarized and handed off (true / false, default false). Only applies while automatic organization is on.",
     "composer": {
       "historyRecall": "Whether pressing Up at the start of the message box recalls sent messages (true / false).",
       "suggestions": "Whether a predicted next message is shown in the empty message box after a reply (true / false). Only honored by agents that can produce it (capability promptSuggestions); where Pleiad generates it after the turn, making it spends a little usage."
@@ -1971,7 +1977,7 @@
     "compaction": {
       "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent). delegatedHeadroom is the room for a delegated Claude child: it is compacted once its context passes its fixed part (the size of its first request) plus this many tokens (0 = off, otherwise 30000 to 1000000)."
     },
-    "contextRebuild": "Experimental (ADR 0287). At conversation boundaries (after idle time, agent switches), hands over a handoff rebuilt from Pleiad's records instead of a summary (true / false). While on, idle auto compaction is stopped.",
+    "contextRebuild": "At conversation boundaries (after idle time, agent switches), hands over a handoff rebuilt from Pleiad's records instead of a summary (true / false; ADR 0287). While on, idle auto compaction is stopped.",
     "confirmAgentSites": "Whether to confirm before the agent's browser opens a new site.",
     "confirmExternalLoads": "Whether to confirm before external loads.",
     "chromeAutoAllow": "Whether Pleiad answers Chrome's \"Allow remote debugging?\" prompt (default true). It answers only for connections a person allowed on the card and for conversations in a no-confirmation mode. Turning it on needs the user's approval.",

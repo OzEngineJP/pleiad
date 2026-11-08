@@ -856,6 +856,7 @@
       "account": "Google account",
       "detail": "Antigravity (uses your subscription)",
       "notLoggedIn": "Not signed in to agy (run agy in a terminal to sign in).",
+      "unconfirmed": "Connection not confirmed (choose \"Check connection\" to verify).",
       "loginRunning": "Sign-in is already in progress.",
       "alreadyLoggedIn": "Already signed in.",
       "runCommand": "Run this command in a terminal and follow the prompts to sign in to Google. (Antigravity sign-in only works from a terminal. This updates automatically when you finish.)",
@@ -868,7 +869,8 @@
       "defaultNote": "Uses your agy settings as is.",
       "unknownDefault": "Default (agy settings)",
       "unknownDefaultNote": "Uses your agy settings as is (Pleiad cannot read them).",
-      "effortReason": "The agy default model is unknown, so choose a model to pick an effort."
+      "effortReason": "The agy default model is unknown, so choose a model to pick an effort.",
+      "checkNeeded": "Antigravity's model list has not been verified yet, so the saved effort cannot be applied. In Settings > Agents, recheck Antigravity's status, then send again."
     },
     "usage": {
       "badResponse": "The usage response has an invalid format.",

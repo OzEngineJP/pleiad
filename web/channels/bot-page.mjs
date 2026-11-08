@@ -243,7 +243,7 @@ export function createBotPage(host) {
   const brainBlk = el('div', 'bp-blk bp-brain-blk');
   brainBlk.append(brain.el);
   const memHead = el('h4', null, t('channels:bot.memory.title'));
-  memHead.append(el('span', 'r', t('channels:bot.memory.auto')));
+  memHead.append(memory.route);   // 「自動整理: …」= 設定 › 記憶 への導線（memory-list.mjs が短い状態を出す）
   const memBlk = el('div', 'bp-blk bp-memory');
   memBlk.append(memHead, memory.el);
   const usage = el('div', 'bp-usage');

@@ -96,8 +96,9 @@ export default async function (t) {
       Object.keys(modes).join(",") === "yolo" && Boolean(modes.yolo?.label),
       Object.keys(modes).join(","));
 
-    // ---- ログイン判定。`agy models` に聞く（資格情報は OS の資格情報ストアにあって読めない）
-    const auth = await c.cmd("authStatus", { backend: "antigravity" });
+    // ---- ログイン判定。`agy models` に聞く（資格情報は OS の資格情報ストアにあって読めない）。
+    //      受動の authStatus は agy を起こさない（unconfirmed を返す）ので、明示の再確認（probe）で引く
+    const auth = await c.cmd("authStatus", { backend: "antigravity", probe: true });
     t.ok("models が引けたらログイン済みと分かる",
       auth.supported === true && auth.installed === true && auth.loggedIn === true,
       JSON.stringify(auth));

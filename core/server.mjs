@@ -226,7 +226,8 @@ const homeShort = (p) => { const home = os.homedir(); return home && String(p).s
 /** ログインの状態を受けたあと: アカウントを覚え、ログインしていなければ期限切れの印を消す */
 function noteAuth(id, status) {
   if (status?.loggedIn && status.account) authAccounts.set(id, String(status.account));
-  if (status && status.loggedIn === false && !status.pending) authExpired.delete(id);
+  // unconfirmed（受動で未確認）は「未ログインが確定」ではないので期限切れの印を消さない
+  if (status && status.loggedIn === false && !status.pending && !status.unconfirmed) authExpired.delete(id);
   return status;
 }
 
@@ -2942,7 +2943,10 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
   // 互換の接続先では公式の既定（prefs）を持ち込まない（段の意味が接続先ごとに違う）
   const value = asked ?? current.effort ?? (endpoint ? '' : prefs.backends?.[backend.id]?.effort) ?? '';
   if (asked !== undefined) return validateEffort(backend, value, model, cwd, endpoint);
-  return Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value) ? value : '';
+  if (Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value)) return value;
+  // 一覧そのものが無い backend では、覚えている段を「一覧に無い」と黙って落とさない（別の強さで動くため。明示の一覧確認で直せる）
+  if (!endpoint && value !== '') await backend.requireModelCatalog?.(cwd);
+  return '';
 }
 
 /**
@@ -4802,7 +4806,7 @@ const opsAgents = {
     return { backend: backend.id, efforts: await effortOptions(backend, model ?? '', cwd, row) };
   },
   // 認証はエージェントごとに持ち方が違う。持たないものは supported:false を返す（web はボタンごと隠す）
-  authStatus: async (id) => {
+  authStatus: async (id, probe = false) => {
     const backend = await pickBackend(null, id);
     const installed = installation(backend.id);
     // Claude Agent SDK の取得の状態（Claude だけ。配布物は SDK を持たない。ADR 0208）。CLI の有無・ログインと別に出す
@@ -4812,7 +4816,7 @@ const opsAgents = {
     const cli = await backend.cliInfo?.().catch(() => null);
     const where = cli?.path ? { cliPath: homeShort(cli.path), ...(cli.version ? { cliVersion: String(cli.version) } : {}) } : {};
     if (!backend.auth?.status) return { backend: backend.id, status: { supported: false, ...where, ...sdk } };
-    const auth = noteAuth(backend.id, await backend.auth.status());
+    const auth = noteAuth(backend.id, await backend.auth.status({ probe }));
     // 期限切れ（会話で 401 を受けた）。CLI はログイン済みを返したままなので、Pleiad が覚えている印で出す
     const expired = auth.loggedIn && authExpired.has(backend.id) ? { expired: true } : {};
     return { backend: backend.id, status: { supported: true, ...installed, ...auth, ...where, ...expired, ...sdk } };
@@ -10064,7 +10068,7 @@ wss.on("connection", (ws, req) => {
         case "completeSetup": {
           const backend = await pickBackend(null, msg.args?.backend);
           if (!installation(backend.id).installed) throw new Error(t('agents.installRequired'));
-          if (backend.auth?.status && !(await backend.auth.status()).loggedIn) throw new Error(t('agents.checkLogin'));
+          if (backend.auth?.status && !(await backend.auth.status({ probe: true })).loggedIn) throw new Error(t('agents.checkLogin'));
           const { cwd } = await resolveCwd(null, msg.args?.cwd, backend);
           const saved = { seen: true, setupComplete: true, backend: backend.id, cwd: path.resolve(cwd) };
           await fs.mkdir(store.dataDir, { recursive: true });

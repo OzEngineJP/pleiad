@@ -108,7 +108,7 @@
         }
       },
       "legacyCommand": "authStatus",
-      "input": "42de447790d5"
+      "input": "c13252477b0d"
     },
     {
       "id": "agents.efforts",
@@ -2862,6 +2862,26 @@
       "input": "a2135a18629b"
     },
     {
+      "id": "memory.learnNow",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "learn-now"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "memory.learnStatus",
       "risk": "read",
       "riskOf": false,
@@ -5180,6 +5200,26 @@
       ]
     },
     {
+      "key": "memoryAutoLearn",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "memoryAutoLearn",
+        "memoryLearnFrom",
+        "memoryLearnPaused"
+      ]
+    },
+    {
+      "key": "memoryEpisodeSummary",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "memoryEpisodeSummary"
+      ]
+    },
+    {
       "key": "memoryLearnAt",
       "risk": "write",
       "riskOf": false,
@@ -5412,6 +5452,20 @@
       "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
     },
     "locale": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "memoryAutoLearn": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "memoryEpisodeSummary": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
       "agent-bound-ask": "write=allow",
@@ -6189,6 +6243,11 @@
       "positional": [
         "id"
       ]
+    },
+    {
+      "id": "memory.learnNow",
+      "path": "memory learn-now",
+      "positional": []
     },
     {
       "id": "memory.learnStatus",

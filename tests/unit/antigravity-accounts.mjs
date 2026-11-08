@@ -41,7 +41,7 @@ export default async function run(t) {
     t.ok('Rejection reads no credential, starts no CLI or login flow, writes no account files and never contacts the holder', true);
 
     const usage = await backend.usage();
-    assert.deepEqual(Object.keys(usage).sort(), ['message', 'windows']);
+    assert.deepEqual(Object.keys(usage).sort(), ['attempted', 'message', 'windows']);
     assert.equal(usage.windows.length, 3);
     assert.equal(usage.windows[2].usedPercent, 100);
     assert.equal(typeof usage.message, 'string');

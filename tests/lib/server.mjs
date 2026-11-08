@@ -78,7 +78,7 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
   // 夜の記憶整理（core/memory/learn.mjs）は、起動のときに一度「追いつく」実行をし、そのときの会話・投稿を読んで隠れた learner 会話を作る。
   // 負荷で起動直後の読み取りが遅れると、テストが投稿した直後や runTurn の最中にその会話が走り、その session イベントを
   // ws-client.runTurn が自分の会話と取り違える（会話が control-info の返事でなく {"memories":[]} になる）。テストの server は止めておく。
-  // 確かめるテストは prefs.json に memoryLearnPaused: false を置いてから起動する。
+  // 確かめるテストは prefs.json に memoryAutoLearn: true を置いてから起動する。
   // 次の発言の候補（core/prompt-suggestions.mjs）も止めておく（ターンのたびに候補を作る裏の 1 回が、ターンや保持役の数え方の試験に混ざる）。
   // 確かめるテスト（server-prompt-suggestions）は起動後に設定でオンにする
   // 本物のデータ置き場（PLEIAD_TEST_GUARD_HOME。tests/lib/test-env.mjs）には、prefs.json を置くことも、サーバーを立てることもしない
@@ -87,9 +87,9 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
     const file = path.join(dataDir, "prefs.json");
     let prefs = {};
     try { prefs = JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* 無ければ空から */ }
-    if (prefs.memoryLearnPaused === undefined || prefs.composerSuggestions === undefined) {
+    if (prefs.memoryAutoLearn === undefined || prefs.composerSuggestions === undefined) {
       fs.mkdirSync(dataDir, { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ memoryLearnPaused: true, composerSuggestions: false, ...prefs }));
+      fs.writeFileSync(file, JSON.stringify({ memoryAutoLearn: false, composerSuggestions: false, ...prefs }));
     }
   }
   const childEnv = {

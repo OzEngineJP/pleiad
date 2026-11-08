@@ -86,19 +86,19 @@ export const agentOps = [
     id: 'agents.authStatus',
     summary: 'agent:ops.agents.authStatus.summary',
     risk: 'read',
-    input: z.object({ backend: backend('authStatus') }),
-    output: z.object({ backend: z.string(), supported: z.boolean(), installed: z.boolean().optional(), loggedIn: z.boolean().optional(), pending: z.boolean().optional(),
+    input: z.object({ backend: backend('authStatus'), probe: z.boolean().optional().describe('agent:ops.agents.authStatus.probe') }),
+    output: z.object({ backend: z.string(), supported: z.boolean(), installed: z.boolean().optional(), loggedIn: z.boolean().optional(), pending: z.boolean().optional(), unconfirmed: z.boolean().optional(),
       // Claude だけ: Agent SDK を取り終えているか（配布物は SDK を持たず、人が設定で取得を押す。ADR 0208）
       sdkReady: z.boolean().optional() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['agents', 'auth'] } },
     legacyCommand: 'authStatus',
-    handler: async (ctx, { backend: id }) => {
-      const got = await fromHost(() => ctx.agents.authStatus(id));
+    handler: async (ctx, { backend: id, probe }) => {
+      const got = await fromHost(() => ctx.agents.authStatus(id, probe === true && ctx.principal?.by === 'human'));
       const s = got.status;
       return { backend: got.backend, supported: s.supported === true, ...(typeof s.installed === 'boolean' ? { installed: s.installed } : {}),
-        ...(typeof s.loggedIn === 'boolean' ? { loggedIn: s.loggedIn } : {}), ...(s.pending === true ? { pending: true } : {}),
+        ...(typeof s.loggedIn === 'boolean' ? { loggedIn: s.loggedIn } : {}), ...(s.pending === true ? { pending: true } : {}), ...(s.unconfirmed === true ? { unconfirmed: true } : {}),
         ...(typeof s.sdk?.ready === 'boolean' ? { sdkReady: s.sdk.ready } : {}) };
     },
-    uiHandler: async (ctx, { backend: id }) => (await fromHost(() => ctx.agents.authStatus(id))).status,
+    uiHandler: async (ctx, { backend: id, probe }) => (await fromHost(() => ctx.agents.authStatus(id, probe === true))).status,
   }),
 ];

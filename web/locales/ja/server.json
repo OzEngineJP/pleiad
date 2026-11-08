@@ -854,6 +854,7 @@
       "account": "Google アカウント",
       "detail": "Antigravity（サブスクの枠を使う）",
       "notLoggedIn": "agy にログインしていない（端末で agy を実行してログイン）",
+      "unconfirmed": "接続しているか確認できていません（確かめるには［接続を確認］）",
       "loginRunning": "ログインが既に走っている",
       "alreadyLoggedIn": "すでにログインしている",
       "runCommand": "このコマンドを端末で実行し、画面の案内に沿って Google にログインしてください。（Antigravity のログインは端末からしか行えません。終わるとここが自動で切り替わります）",
@@ -866,7 +867,8 @@
       "defaultNote": "agy の設定をそのまま使う",
       "unknownDefault": "既定（agy の設定）",
       "unknownDefaultNote": "agy の設定をそのまま使う（Pleiad からは読めない）",
-      "effortReason": "agy の既定のモデルが分からないため、段はモデルを選ぶと選べます"
+      "effortReason": "agy の既定のモデルが分からないため、段はモデルを選ぶと選べます",
+      "checkNeeded": "Antigravity のモデル一覧がまだ確認できていないため、覚えている強さを適用できません。設定 › エージェント設定 で Antigravity の「状態を確認」を押してから、もう一度送ってください。"
     },
     "usage": {
       "badResponse": "使用枠の応答形式が不正です",

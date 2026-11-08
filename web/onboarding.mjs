@@ -2,14 +2,14 @@ import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
 // ページを足したら、下の `$('<名前>Tab').onclick = () => page('<名>')` も足す（無いと札は出るが切り替わらない）
-const pages = [['setup', 'setupTab', 'setupPanel'], ['apiKeys', 'apiKeysTab', 'apiKeysPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['input', 'inputTab', 'inputPanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['notify', 'notifyTab', 'notifyPanel'], ['voice', 'voiceTab', 'voicePanel'], ['remote', 'remoteTab', 'remotePanel'], ['plus', 'plusTab', 'plusPanel'], ['experimental', 'experimentalTab', 'experimentalPanel'], ['updates', 'updatesTab', 'updatesPanel']];
+const pages = [['setup', 'setupTab', 'setupPanel'], ['apiKeys', 'apiKeysTab', 'apiKeysPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['input', 'inputTab', 'inputPanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['notify', 'notifyTab', 'notifyPanel'], ['voice', 'voiceTab', 'voicePanel'], ['remote', 'remoteTab', 'remotePanel'], ['plus', 'plusTab', 'plusPanel'], ['memory', 'memoryTab', 'memoryPanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
 // A failed status check is not evidence that the account is unconfigured.
 export function shouldShowOnboarding(status, auth) {
   if (!status.seen && !status.setupComplete) return true;
   return status.agents.length === 0 || status.agents.every(agent => {
     const account = auth.get(agent.id);
-    return !agent.installed || account?.supported === true && account.loggedIn === false && !account.pending;
+    return !agent.installed || account?.supported === true && account.loggedIn === false && !account.pending && !account.unconfirmed;
   });
 }
 
@@ -18,7 +18,7 @@ export function shouldShowOnboarding(status, auth) {
  * authLinks(id) はログインを待っている間の開く・写す入口（web/auth-links.mjs。URL が届くまでは null）、cancelLogin(agent) は［やめる］、
  * authNote(id) は直前のログインの時間切れ・失敗の一文（ADR 0243）
  */
-export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, cancelLogin, authLinks, authNote, authUrlBox, begin, folderBrowser, onClose }) {
+export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, checkAuth, cancelLogin, authLinks, authNote, authUrlBox, begin, folderBrowser, onClose }) {
   const $ = id => document.getElementById(id);
   const welcome = $('onboardingDialog');
   let status = null, selected = '', checked = false, locked = false;
@@ -155,6 +155,19 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, cancelLo
           stateEl.append(wait, stop);
           const links = authLinks?.(agent.id);
           if (links) { links.className = 'ob-links'; info.append(links); }
+        } else if (st?.unconfirmed) {
+          // 受動では分からない（agy のような CLI を確かめに起こさないため）。未ログインとは言わない。明示の［状態を確認］だけ確かめる
+          const name = document.createElement('span');
+          name.textContent = t('settings.agents.unconfirmed');
+          stateEl.append(name);
+          if (!globalThis.window?.plyRemote && checkAuth) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn';
+            btn.textContent = t('settings.agents.checkStatus');
+            btn.onclick = e => { e.stopPropagation(); btn.disabled = true; checkAuth(agent); };
+            stateEl.append(btn);
+          }
         } else if (globalThis.window?.plyRemote) {
           // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）
           stateEl.textContent = t('remote.loginOnHostShort');
@@ -188,7 +201,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, cancelLo
       const live = $('onboardingLive');
       for (const agent of agents) {
         const st = auth.get(agent.id);
-        const said = st?.pending ? t('settings.agents.loginPending') : st?.loggedIn ? t('settings.agents.loggedIn') : t('settings.agents.loggedOut');
+        const said = st?.pending ? t('settings.agents.loginPending') : st?.unconfirmed ? t('settings.agents.unconfirmed') : st?.loggedIn ? t('settings.agents.loggedIn') : t('settings.agents.loggedOut');
         if (spoken.has(agent.id) && spoken.get(agent.id) !== said && live) live.textContent = `${agent.label}: ${said}`;
         spoken.set(agent.id, said);
       }
@@ -225,7 +238,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, cancelLo
   $('appearanceTab').onclick = () => page('appearance');
   $('inputTab').onclick = () => page('input');
   $('autoCompactionTab').onclick = () => page('autoCompaction');
-  $('experimentalTab').onclick = () => page('experimental');
+  $('memoryTab').onclick = () => page('memory');
   $('browserTab').onclick = () => page('browser');
   $('computerTab').onclick = () => page('computer');
   $('backToChat').onclick = () => close();
