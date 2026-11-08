@@ -97,7 +97,7 @@
       "unknown": "このホストはペアリングされていません"
     }
   },
-  "chromePill": { "resume": "あなたが操作中 · {{agent}} に戻す" },
+  "chromePill": { "resume": "あなたが操作中 · AI に戻す" },
   "computer": {
     "overlay": {
       "who": "{{agent}} が操作中",

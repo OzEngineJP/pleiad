@@ -148,5 +148,28 @@ window.ready=true;
     const order = await page.evaluate(() => window.sent.map(c => c.command));
     check('reconnect re-registers the session watch before reissuing page keys',
       order.indexOf('watchSession') !== -1 && order.indexOf('pageOpen') !== -1 && order.indexOf('watchSession') < order.indexOf('pageOpen'), order.join(','));
+
+    // ---- 人が触っているタブがある間の戻す入口（ADR 0296）: 見ているタブとは無関係に会話ごと
+    const third = await page.evaluate(() => {
+      ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third', url:'https://example.net/' });
+      ui.onEvent({ type:'tab:holder', sessionId:'one', targetId:'web', holder:'human', by:'device' });
+      chromeFixture.tabId='web2'; ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again', url:'https://example.net/' });
+      return document.querySelectorAll('.bu-tab').length;
+    });
+    check('badge shows 「AI に戻す」 while another tab is viewed (any tab of the conversation is human-held)',
+      third === 3 && await page.locator('.b2-control').isVisible() && (await page.locator('.b2-control .b2-action').textContent()).includes('AI に戻す'));
+    await page.evaluate(() => { window.sent.length = 0; });
+    await page.locator('.b2-control .b2-action').click();
+    check('badge resume sends chromeResume for the conversation', (await page.evaluate(() => window.sent)).some(c => c.command === 'chromeResume' && c.args.sessionId === 'one'));
+    await page.evaluate(() => { chromeFixture.tabId='file'; ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'file', title:'file-preview.md' }); });
+    check('local page keeps the badge hidden (no video to return to)', await page.locator('.b2-control').isHidden());
+    await page.setViewportSize({ width:360, height:720 });
+    await page.evaluate(() => ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again' }));
+    check('phone strip keeps 「AI に戻す」 while the right pane is closed',
+      await page.locator('.bu-phone-strip').isVisible() && await page.locator('.b2-strip-resume').isVisible() && (await page.locator('.b2-strip-resume').textContent()).includes('AI に戻す'));
+    await page.setViewportSize({ width:1280, height:720 });
+    await page.evaluate(() => { ui.onEvent({ type:'tab:holder', sessionId:'one', targetId:'web', holder:'ai' }); ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again' }); });
+    check('badge goes away once no human tab remains', await page.locator('.b2-control').isHidden());
+    await shot('handback-entries');
   } finally { await page.close(); await new Promise(resolve => server.close(resolve)); }
 };

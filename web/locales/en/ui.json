@@ -2174,6 +2174,7 @@
         "auto": "It continues automatically once it is on."
       },
       "operating": "You are operating",
+      "returnHint": "Press “Return to AI” when you are done.",
       "operate": "Operate in Chrome",
       "operateHere": "Operate on this device",
       "operateOnPc": "Operate on the PC",
@@ -4951,7 +4952,7 @@
   },
   "chromeControl": {
     "takeOverPc": "Operate on the PC",
-    "resume": "Hand back to {{name}}",
+    "resume": "Return to AI",
     "failed": "Could not do that.",
     "banner": "Paused · you are operating Chrome",
     "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press hand back again" },

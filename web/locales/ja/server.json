@@ -225,7 +225,7 @@
     "receiptMismatch": "この承認の受領証が合いません。カードを開き直してください",
     "remoteOffline": "{{host}} がオフラインのため、答えを送れません。つながり直すと送れます。",
     "alreadyResolved": "この承認はすでに処理されています",
-    "browserHandoffAllow": "Chrome の操作待ちは「許可」では進みません。Chrome で操作して、アドレスバーの札の「任せる」か、一時停止中の帯の「Claude に戻す」を押してください"
+    "browserHandoffAllow": "Chrome の操作待ちは「許可」では進みません。Chrome で操作してから「AI に戻す」を押してください"
   },
   "title": {
     "unsupported": "このエージェントはタイトル生成に対応していません",

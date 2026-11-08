@@ -1,10 +1,10 @@
 import { N } from '../lib/dom-stub.mjs';
-import { createChromeControlView, createChromeControlStore, createControlBadge, createPhoneBrowserStrip, durationText, renderChromeHandoverLine, renderChromeClosedLine, setChromeHandoverAgentName, CONTROL_STATES } from '../../web/chrome-control.mjs';
+import { createChromeControlView, createChromeControlStore, createTabHolderStore, createControlBadge, createPhoneBrowserStrip, durationText, renderChromeHandoverLine, renderChromeClosedLine, setChromeHandoverAgentName, CONTROL_STATES } from '../../web/chrome-control.mjs';
 import { renderPresent } from '../../web/render.mjs';
 import * as history from '../../core/history.mjs';
 
 export const name = 'chrome-control-ui';
-export const title = 'エージェントの Chrome の窓の状態（web/chrome-control.mjs）: 一時停止中の帯と戻すボタン・押した位置の輪・スマホの帯の読み上げ・状態の置き場・会話の引き継ぎの行・記録（DOM の代役。ADR 0148・0154・0294）';
+export const title = 'エージェントの Chrome の窓の状態（web/chrome-control.mjs）: 一時停止中の帯と「AI に戻す」・押した位置の輪・スマホの帯の読み上げ・状態の置き場・タブの持ち手の置き場（会話ごと）・会話の引き継ぎの行・記録（DOM の代役。ADR 0148・0154・0294・0296）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -54,7 +54,7 @@ export default async function (t) {
   t.ok('待機中・止めた後も帯は出さない', view.banner.hidden === true);
 
   view.apply({ state: 'paused', since: 1 });
-  t.ok('一時停止中の帯（会話の中）に文と戻すボタン。帯は role=status にしない（札と二重に読み上げない）', view.banner.hidden === false && view.banner.getAttribute('role') === undefined && view.banner.textContent.includes('一時停止中 · あなたが Chrome で操作') && view.banner.querySelector('button').textContent === 'Claude に戻す', view.banner.textContent);
+  t.ok('一時停止中の帯（会話の中）に文と戻すボタン。帯は role=status にしない（札と二重に読み上げない）', view.banner.hidden === false && view.banner.getAttribute('role') === undefined && view.banner.textContent.includes('一時停止中 · あなたが Chrome で操作') && view.banner.querySelector('button').textContent === 'AI に戻す', view.banner.textContent);
   t.ok('映像の上の層は読み上げない。一時停止中も幕は足さない（二重にしない）', view.overlay.querySelector('.cc-veil') === null && view.overlay.getAttribute('aria-hidden') === 'true');
   view.apply({ state: 'paused', since: 1 }, { banner: false });
   t.ok('右の欄が別の会話を映している間は帯を出さない', view.banner.hidden === true);
@@ -62,7 +62,7 @@ export default async function (t) {
   const resume = view.banner.querySelector('button');
   resume.onclick();
   await sleep(5);
-  t.ok('帯の「Claude に戻す」は resume を呼ぶ', calls.join() === 'resume', calls.join());
+  t.ok('帯の「AI に戻す」は resume を呼ぶ', calls.join() === 'resume', calls.join());
 
   // 押している間は二重に押せない・失敗は onError
   let release;
@@ -84,13 +84,10 @@ export default async function (t) {
   view.apply({ state: 'bogus' });
   t.ok('知らない状態は隠す', view.banner.hidden === true && view.state() === null);
 
-  // 名前が替わったら描き直す
-  let name = 'Codex';
-  const named = createChromeControlView({ resume: async () => {}, getName: () => name });
+  // 戻す先はエージェントの名前でなく「AI」（どのエージェントでも同じ語。札・カード・帯と揃える）
+  const named = createChromeControlView({ resume: async () => {} });
   named.apply({ state: 'paused', since: 1 });
-  t.ok('エージェントの名前が入る', named.banner.querySelector('button').textContent === 'Codex に戻す');
-  name = 'Claude'; named.refresh();
-  t.ok('refresh で名前を取り直す', named.banner.querySelector('button').textContent === 'Claude に戻す');
+  t.ok('戻すボタンはどのエージェントでも「AI に戻す」', named.banner.querySelector('button').textContent === 'AI に戻す');
 
   // ---- 押した位置の輪
   view.ring(250, 100, { width: 1000, height: 400 });
@@ -158,4 +155,42 @@ export default async function (t) {
   t.ok('ほかの kind には載せない', !('chromeHandover' in other));
   const savedClose = await history.recordPresent(id, { kind: 'chromeClosed', chromeClosed: { by: 'agent' }, path: 'C:/shot.png' });
   t.ok('静止画は present にパスと閉じた人の印だけを保存し、画像本体は DB に入れない', savedClose.path === 'C:/shot.png' && savedClose.chromeClosed.by === 'agent' && !savedClose.dataUri);
+
+  // ---- タブの持ち手の置き場（会話ごとの「人が触っているタブがあるか」。ADR 0296）
+  const holders = createTabHolderStore();
+  const holderSeen = [];
+  holders.onChange((sessionId, anyHuman) => holderSeen.push(`${sessionId}:${anyHuman}`));
+  t.ok('知らない会話は人のタブ無し・知らないタブは ai', holders.anyHuman('a') === false && holders.holderOf('a', 'T1').holder === 'ai');
+  holders.event({ type: 'tab:holder', sessionId: 'a', targetId: 'T1', holder: 'human', by: 'device' });
+  t.ok('1 枚でも人が触れば anyHuman', holders.anyHuman('a') === true && holders.holderOf('a', 'T1').by === 'device');
+  t.ok('別のタブを見ていても会話の anyHuman は同じ（タブの選択とは無関係）', holders.anyHuman('a') === true);
+  holders.event({ type: 'tab:holder', sessionId: 'a', targetId: 'T1', holder: 'human', by: 'device' });
+  t.ok('同じ便りの繰り返しでは知らせない', holderSeen.join() === 'a:true', holderSeen.join());
+  holders.event({ type: 'tab:holder', sessionId: 'a', targetId: 'T2', holder: 'human' });
+  holders.event({ type: 'tab:holder', sessionId: 'a', targetId: 'T1', holder: 'ai' });
+  t.ok('1 枚戻しても別の人のタブが残れば anyHuman のまま', holders.anyHuman('a') === true && holderSeen.join() === 'a:true', holderSeen.join());
+  holders.event({ type: 'tab:holder', sessionId: 'a', targetId: 'T2', holder: 'ai' });
+  t.ok('最後の人のタブが戻れば anyHuman が false へ', holders.anyHuman('a') === false && holderSeen.join() === 'a:true,a:false', holderSeen.join());
+  holders.event({ type: 'tab:holder', sessionId: 'b', targetId: 'T9', holder: 'human' });
+  t.ok('別の会話とは混ざらない', holders.anyHuman('a') === false && holders.anyHuman('b') === true);
+  // タブの棚（tab:info）から消えたタブの持ち手は捨てる。普通のタブの便り（題・URL の更新）は持ち手を触らない
+  holders.event({ type: 'tab:info', sessionId: 'b', targetId: 'T9', title: 'ページ' });
+  t.ok('題・URL の便りでは持ち手は消えない', holders.anyHuman('b') === true);
+  holders.event({ type: 'tab:info', sessionId: 'b', targetId: 'T9', removed: true });
+  t.ok('棚から消えたタブの持ち手も消す（anyHuman が残らない）', holders.anyHuman('b') === false && holders.holderOf('b', 'T9').holder === 'ai');
+  holders.event({ type: 'tab:holder', sessionId: 'b', targetId: 'T9', holder: 'human' });
+  holders.event({ type: 'tab:info', sessionId: 'b', reset: true });
+  t.ok('棚の reset は会話の持ち手を全部捨てる', holders.anyHuman('b') === false);
+  // 便りの見直し: 人が触ったタブのまま残すのは by/pinned だけでなく targetId ごと
+  holders.event({ type: 'tab:holder', sessionId: 'c', targetId: 'T1', holder: 'human', pinned: true });
+  holders.event({ type: 'tab:holder', sessionId: 'c', targetId: 'T2', holder: 'human' });
+  t.ok('pinned とそうでない持ち手は別のタブとして数える', holders.held('c').length === 2);
+  holders.event({ type: 'tab:holder', sessionId: 'c', targetId: 'T1', holder: 'ai' });
+  t.ok('pinned のタブを戻しても残りは消えない', holders.anyHuman('c') === true && holders.holderOf('c', 'T1').holder === 'ai');
+  // targetId が無い・知らない形の便りは捨てる
+  holders.event({ type: 'tab:holder', sessionId: 'c' });
+  holders.event({ type: 'tab:holder', targetId: 'T9', holder: 'human' });
+  t.ok('会話・タブの id の無い便りは捨てる', holders.held('c').length === 1);
+  holders.clear();
+  t.ok('clear は全部捨てて聞き手へ', holders.anyHuman('c') === false && holderSeen.at(-1) === 'c:false', holderSeen.join());
 }

@@ -6,6 +6,7 @@ import { t } from './i18n.mjs';
 // i18n-dynamic: browser.entryState
 import { isComposingKey } from './keyboard.mjs';
 import { browserIcon } from './tab-strip.mjs';
+import { runMark } from './arc.mjs';
 
 // エージェント任せの会話（と、Pleiad 担当を受け取れなかった antigravity の会話）
 export const isManagedContext = (report) => Boolean(report) && report.status !== 'native';
@@ -30,7 +31,7 @@ export const browserEntryMark = ({ requested = false, paused = false, working = 
  */
 export function setupBrowserEntry({ button, chrome = () => null, windows = null, getSessionId = () => null,
   getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false, pagesOnly = () => false,
-  mac = isMac(), blocked = () => false, announce = () => {} }) {
+  humanHeld = () => false, mac = isMac(), blocked = () => false, announce = () => {} }) {
   if (!button) return null;
   button.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+B' : 'Control+Shift+B');
   const activeId = () => getSessionId() ?? null;
@@ -40,7 +41,9 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
   function currentMark() {
     const id = activeId();
     if (!id || !chromeAvailable()) return '';
-    return browserEntryMark({ requested: Boolean(waiting(id)), paused: getChromeState(id) === 'paused',
+    return browserEntryMark({ requested: Boolean(waiting(id)),
+      // 人が触っているタブは一時停止と同じ印。会話に 1 枚でもあれば出す（どのタブを見ているかは聞かない。ADR 0296）
+      paused: getChromeState(id) === 'paused' || Boolean(humanHeld(id)),
       working: Boolean(windows?.operating(id) || getChromeState(id) === 'running') });
   }
 
@@ -75,8 +78,9 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
     // （右の欄の印の角に弧を重ねると「›」に見える）
     const shown = open() ? '' : state;
     if (shown) {
-      const mark = document.createElement('span');
-      mark.classList.add('entry-browser-mark', `entry-${shown}`);
+      // 動いている印は弧（web/arc.mjs の runMark）。CSS は .entry-run.run に当たる
+      const mark = shown === 'working' ? runMark() : document.createElement('span');
+      mark.classList.add('entry-browser-mark', shown === 'working' ? 'entry-run' : `entry-${shown}`);
       mark.setAttribute('aria-hidden', 'true');
       button.append(mark);
     }

@@ -8,7 +8,7 @@ import { N, installDomStub } from '../lib/dom-stub.mjs';
 import { isManagedContext, isBrowserShortcut, browserShortcutLabel, browserEntryMark, setupBrowserEntry } from '../../web/header-entries.mjs';
 
 export const name = 'header-entries';
-export const title = '会話の頭の行: 目次と右の欄のボタン・近道と開け閉め';
+export const title = '会話の頭の行: 目次と右の欄のボタン・近道と開け閉め・角の印（人が触っているタブがあれば ⏸、エージェントの操作中は弧）';
 
 export default async function (t) {
   // ---- Pleiad が担当した記録か（エージェント任せの会話は読み込み記録を固定しない）
@@ -86,6 +86,34 @@ export default async function (t) {
     t.ok('人の操作中になったら別の文を一度読み上げる', said.length === 2 && /entryState\.paused|操作中/.test(said[1]), JSON.stringify(said));
     state = 'running'; entry.paint();
     t.ok('エージェントの操作中（working）は読み上げない', said.length === 2);
+  }
+
+  // ---- 角の印: 人が触っているタブがあれば ⏸（一時停止と同じ印。見ているタブとは無関係。ADR 0296）
+  {
+    let held = false, state = 'idle', operating = false;
+    const entryButton = new N('button');
+    const entry = setupBrowserEntry({ button: entryButton, mac: false, getSessionId: () => 'a', chromeAvailable: () => true,
+      windows: { has: () => true, operating: () => operating }, getChromeState: () => state, humanHeld: () => held });
+    t.ok('人のタブも一時停止も無ければ印は無し', entry.currentMark() === '');
+    held = true; entry.paint();
+    t.ok('会話に人が触っているタブがあれば paused の印（どのタブを見ているかは聞かない）', entry.currentMark() === 'paused');
+    state = 'running'; operating = true; entry.paint();
+    t.ok('人のタブとエージェントの操作が重なっても ⏸ が先（requested > paused > working）', entry.currentMark() === 'paused');
+    held = false; entry.paint();
+    t.ok('人のタブが無くなれば印は working に戻る', entry.currentMark() === 'working');
+    state = 'paused'; entry.paint();
+    t.ok('一時停止も同じ ⏸ の印', entry.currentMark() === 'paused');
+  }
+
+  // ---- 動いている印は弧（runMark）。entry-run.run の形で CSS が当たる
+  {
+    const entryButton = new N('button');
+    const entry = setupBrowserEntry({ button: entryButton, mac: false, getSessionId: () => 'a', chromeAvailable: () => true,
+      windows: { has: () => true, operating: () => true }, getChromeState: () => 'running' });
+    const mark = entryButton.querySelector('.entry-browser-mark');
+    t.ok('エージェントの操作中は弧（.entry-run.run + svg）を角に置く', mark && mark.classList.contains('run') && mark.classList.contains('entry-run') && mark.tagName === 'SPAN' && mark.querySelector('svg'), entryButton.outerHTML);
+    entry.paint();
+    t.ok('再描画でも印は 1 つだけ', entryButton.querySelectorAll('.entry-browser-mark').length === 1);
   }
 
   // ---- 頭の行の並び

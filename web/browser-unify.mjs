@@ -1,7 +1,7 @@
 import { t } from './i18n.mjs';
 import { createTabStrip, browserButton, browserIcon, tabIcon } from './tab-strip.mjs';
 import { createAddressBar, hasFileViews } from './address-bar.mjs';
-import { createControlBadge, createPhoneBrowserStrip } from './chrome-control.mjs';
+import { createControlBadge, createPhoneBrowserStrip, createTabHolderStore } from './chrome-control.mjs';
 import { pageRequestOf, framePoint } from './page-frame.mjs';
 import { samePath } from './file-actions.mjs';
 import { createPageTabs } from './page-tabs.mjs';
@@ -101,13 +101,15 @@ export function tabLabel(tab) {
  *   - cmd・state・chrome（web/chrome-panel.mjs）・showMenu・notify
  *   - preview: web/file-preview.mjs（タブの ⋮ と右クリックのファイルの操作 tabMenu）。osActions(): サーバーのある PC の画面か（外で開く操作を出す）
  *   - controlStore: web/chrome-control.mjs の chromeControlStore（エージェントが動いているか・止めたか）
+ *   - holderStore: web/chrome-control.mjs の createTabHolderStore（タブの持ち手。頭の行の印と同じ置き場を頭の行と分け合う。無ければ自分で持つ）
  *   - onPageRequest(request, { sessionId, targetId }): ファイルのページからの頼み（tab:page-request）。worktree の頼みは戻り値・例外をページへ返す
  *   - composer(): スマホの帯を置く入力欄（その上に置く）
  */
 export function createBrowserUnify(deps = {}) {
   const { cmd, state = {}, chrome = () => null, showMenu = () => {}, notify = () => {}, osActions = () => false } = deps;
   // active は端末内のページ、または切り替えの応答待ちの選択だけ。確定した映像の対象は chrome().tabId が持つ。
-  const rows = new Map(), holders = new Map(); let active = null, enabled = false, pagePort = null, order = 0;
+  // タブの持ち手は会話ごとの置き場（holderStore。頭の行の印と同じものを見る。ADR 0296）
+  const rows = new Map(), holderStore = deps.holderStore ?? createTabHolderStore(); let active = null, enabled = false, pagePort = null, order = 0;
   const orders = new Map();
   const session = () => chrome()?.sessionId ?? state.current;
   const pages = createPageTabs({ pageOpen:input => (deps.pageOpen ?? (args => cmd('pageOpen', args)))(input), origin:location.origin, changed:() => { if (enabled) paint(); },
@@ -120,7 +122,7 @@ export function createBrowserUnify(deps = {}) {
     return merged.sort((a,b) => orders.get(`${id}:${a.targetId}`) - orders.get(`${id}:${b.targetId}`)); };
   const tabs = () => allTabs(session());
   const current = () => tabs().find(tab => active?.sessionId === session() && tab.targetId === active.targetId) ?? tabs().find(tab => tab.targetId === chrome()?.tabId) ?? tabs()[0] ?? null;
-  const holderOf = (sessionId, targetId) => holders.get(sessionId)?.get(targetId) ?? { holder:'ai' };
+  const holderOf = (sessionId, targetId) => holderStore.holderOf(sessionId, targetId);
   const phoneQuery = matchMedia('(max-width: 600px)');
   const failed = error => notify(t(`tabs:address.reasons.${error?.code ?? error?.message}`, { defaultValue:t('tabs:address.failed') }));
   /**
@@ -283,12 +285,13 @@ export function createBrowserUnify(deps = {}) {
     if (tab.chromeUrl && tab.chromeUrl !== tab.url) await cmd('chromeNavigate', { sessionId:session(), targetId:tab.chromeId, action:'navigate', input });
     tab.chromeUrl = tab.url; tab.mode = 'chrome'; await pick(tab);
   }
-  /** 映像の操作状態。agentUsed: この会話のエージェントがブラウザーを使っている（使っていなければ入口を出さない） */
+  /** 映像の操作状態。agentUsed: この会話のエージェントがブラウザーを使っている（使っていなければ入口を出さない）。anyHuman: 会話に人が触っているタブがある（見ているタブとは無関係） */
   function control() {
     const sessionId = session(), tab = current(), agentTab = chrome()?.screencastState?.agentTabId ?? null;
     const store = deps.controlStore?.get?.(sessionId)?.state ?? 'idle';
+    const anyHuman = holderStore.anyHuman(sessionId);
     const held = tab ? holderOf(sessionId, tab.chromeId ?? tab.targetId) : { holder:'ai' };
-    return { sessionId, tab, held, agentTab, store, agentUsed:store !== 'idle' || agentTab != null };
+    return { sessionId, tab, held, agentTab, store, anyHuman, agentUsed:store !== 'idle' || agentTab != null };
   }
   const strip = createTabStrip({ label:tabLabel, onPick:pick, onClose:tab => navigate('close', { targetId:tab.targetId }).catch(failed), onNew:() => navigate('new').catch(failed),
     // タブの右クリック: 今のタブの操作、その下に再読み込み・タブを閉じる（モック v6 の「タブを右クリック」。題は付けない）
@@ -345,11 +348,12 @@ export function createBrowserUnify(deps = {}) {
   /** 映像の再開操作とスマホの入口を今の状態にする */
   function paintControl() {
     if (!enabled) return;
-    const c = control(), holder = c.held.holder === 'human' ? 'human' : 'ai';
-    badge?.update({ visible:(!c.tab?.local || c.tab.mode === 'chrome') && holder === 'human' && c.store !== 'paused', holder });
+    // 人が触っているタブは会話ごとに数える（anyHuman）。別のタブを見ていても「AI に戻す」は消えない（ADR 0296）
+    const c = control();
+    badge?.update({ visible:(!c.tab?.local || c.tab.mode === 'chrome') && c.anyHuman && c.store !== 'paused' });
     // スマホ: 右の欄を閉じている間、入力欄の上に帯（押すと右の欄を開く）。入力欄は履歴に重ねてあるので、帯は入力欄の中の先頭に置く
     const composer = deps.composer?.();
-    const want = phoneQuery.matches && c.agentUsed && tabs().length > 0 && !chrome()?.isOpen?.() && !!composer;
+    const want = phoneQuery.matches && (c.agentUsed || c.anyHuman) && tabs().length > 0 && !chrome()?.isOpen?.() && !!composer;
     if (want && !phoneStrip) {
       stripHolder = document.createElement('div'); stripHolder.className = 'bu-phone-strip'; composer.prepend(stripHolder);
       phoneStrip = createPhoneBrowserStrip({ mount:stripHolder, onActivate:() => chrome()?.open?.(), onResume:() => cmd('chromeResume', { sessionId:session() }).catch(failed) });
@@ -359,7 +363,7 @@ export function createBrowserUnify(deps = {}) {
     const banner = document.getElementById('chromeBanner');
     if (banner) banner.hidden = want;
     if (!want) return;
-    phoneStrip.update({ waiting:c.held.pinned === true });
+    phoneStrip.update({ waiting:c.anyHuman });
   }
   function paint() { const tab = current(); strip.update(tabs(), tab?.targetId); address.show(tab, tabs().length); paintControl(); paintLocal(); }
   const pageHost = document.createElement('div'); pageHost.className = 'bu-page-host';
@@ -607,9 +611,10 @@ export function createBrowserUnify(deps = {}) {
         pages.event(event); return;
       }
       if (event.type === 'tab:info') {
+        holderStore.event(event);   // 棚と持ち手を揃える（消えたタブ・張り替えでは持ち手も捨てる）
         let list = rows.get(event.sessionId) ?? [];
-        if (event.reset) { list = event.tabs ?? []; holders.delete(event.sessionId); }
-        else if (event.removed) { for (const tab of pages.list(event.sessionId)) if (tab.chromeId === event.targetId) { delete tab.chromeId; tab.mode = 'page'; } list = list.filter(tab => tab.targetId !== event.targetId); holders.get(event.sessionId)?.delete(event.targetId); }
+        if (event.reset) list = event.tabs ?? [];
+        else if (event.removed) { for (const tab of pages.list(event.sessionId)) if (tab.chromeId === event.targetId) { delete tab.chromeId; tab.mode = 'page'; } list = list.filter(tab => tab.targetId !== event.targetId); }
         else { const at = list.findIndex(tab => tab.targetId === event.targetId); list = [...list]; if (at < 0) list.push(event); else list[at] = event; }
         rows.set(event.sessionId, list);
         // 映像の中の移動を、リンクした端末内タブへ追い直す（P4）
@@ -619,8 +624,7 @@ export function createBrowserUnify(deps = {}) {
         }
         if (event.sessionId === session()) paint();
       } else if (event.type === 'tab:holder') {
-        if (!holders.has(event.sessionId)) holders.set(event.sessionId, new Map());
-        if (event.holder === 'human') holders.get(event.sessionId).set(event.targetId, event); else holders.get(event.sessionId).delete(event.targetId);
+        holderStore.event(event);
         if (event.sessionId === session()) paint();
       } else if (event.type === 'tab:page-request') pageRequest(event);
     },

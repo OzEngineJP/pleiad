@@ -85,6 +85,10 @@ async function rig({ permission = 'auto' } = {}) {
   const relay = createChromeRelay({ connection: conn, os: os_, locate, scope, handoff: handoffs, turnLive: () => env.live, turnSignal: () => turn.signal });
   const control = createChromeControl({ relay, os: os_ });
   handoffs.useControl(control);
+  handoffs.useHolders({
+    held: sessionId => relay.unify.tabHolder.held(sessionId),
+    onChange: fn => relay.onTabEvent((type, payload) => { if (type === 'tab:holder') fn(payload?.sessionId); }),
+  });
   // カードのボタンが呼ぶ ops（WS の chromeTakeOver・chromeResume と同じ handler）
   const ctx = { locale: 'ja', chrome: { status: () => conn.state() }, chromeControl: control };
   const press = {
@@ -219,6 +223,29 @@ export default async function (t) {
       t.ok('差し込み直すと、次の引き継ぎから「あなたが操作中」になる', lastUpdate(r.cards[0]).state === 'operating');
       await r.press.resume('one');
       t.ok('戻すと決着する', r.cards[0].answer?.response?.kind === 'resumed');
+    } finally { await r.stop(); }
+  }
+
+  // ===== 5. 人が触ったタブが複数あっても、「AI に戻す」（chromeResume）で全部 AI に戻る（ADR 0296） =====
+  {
+    const r = await rig();
+    try {
+      await r.conn.connect();
+      await until(() => r.conn.state().state === 'connected');
+      const t1 = await r.tab('one');
+      r.handoffs.ask('one', { reason: 'login', message: 'ログインしてください' });
+      const waiting = r.handoffs.wait('one');
+      // 端末の人が映像の上で触った（「この端末で操作する」と同じ持ち手の口。会話は一時停止しない）
+      r.relay.unify.tabHolder.touch({ sessionId: 'one', targetId: t1, by: 'device' });
+      t.ok('タブを人が触るとカードは「あなたが操作中」（by: device）', await until(() => lastUpdate(r.cards[0]).state === 'operating' && lastUpdate(r.cards[0]).by === 'device', 1500), JSON.stringify(r.cards[0].updates));
+      const t2 = await r.tab('one');
+      r.relay.unify.tabHolder.touch({ sessionId: 'one', targetId: t2, by: 'device' });
+      t.ok('2 枚目のタブも人の持ち手', await until(() => r.relay.unify.tabHolder.held('one').length === 2, 1500));
+      await r.press.resume('one');
+      t.ok('「AI に戻す」は人のタブを全部 AI に戻す（releaseAll。いま見ているタブだけでない）', await until(() => r.relay.unify.tabHolder.held('one').length === 0, 1500)
+        && r.relay.unify.tabHolder.holder('one', t1).holder === 'ai' && r.relay.unify.tabHolder.holder('one', t2).holder === 'ai');
+      const result = await waiting;
+      t.ok('全部戻るとカードが決着し（resumed）、待っていた hand_to_user が受ける', r.cards[0].answer?.allow === true && result.kind === 'resumed', JSON.stringify(result));
     } finally { await r.stop(); }
   }
 }

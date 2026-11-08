@@ -2132,6 +2132,7 @@
         "auto": "オンになると自動で進みます。"
       },
       "operating": "あなたが操作中",
+      "returnHint": "終わったら「AI に戻す」を押してください",
       "operate": "Chrome で操作する",
       "operateHere": "この端末で操作する",
       "operateOnPc": "PC で操作する",
@@ -4840,7 +4841,7 @@
   },
   "chromeControl": {
     "takeOverPc": "PC で操作する",
-    "resume": "{{name}} に戻す",
+    "resume": "AI に戻す",
     "failed": "操作できませんでした",
     "banner": "一時停止中 · あなたが Chrome で操作しています",
     "error": { "concealFailed": "ウィンドウを隠せなかったので、一時停止のままです。もう一度「戻す」を押してください" },

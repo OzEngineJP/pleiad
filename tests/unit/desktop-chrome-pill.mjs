@@ -48,7 +48,7 @@ export default async function (t) {
   };
   const screen = { getDisplayMatching: () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }) };
   const pill = attachChromePill(worker, { electron: { BrowserWindow: class extends Window { constructor(options) { super(options); windows.push(this); } }, ipcMain, screen }, os,
-    t: (_key, { agent }) => `あなたが操作中 · ${agent} に戻す`, tickMs: 10, snapshotMs: 10, busyMs: 80 });
+    t: () => 'あなたが操作中 · AI に戻す', tickMs: 10, snapshotMs: 10, busyMs: 80 });
   const state = (sessionId, value, by = 'pc', refs = [{ id: sessionId === 's' ? 'a' : 'b' }], agent = 'Claude', since = 100) =>
     worker.emit('message', { type: 'chrome-pill-state', sessionId, state: value, by, refs, agent, since });
   state('s', 'running');
@@ -61,7 +61,7 @@ export default async function (t) {
   const w = windows[0];
   t.ok('前面の Chrome の上端にピルを出す', w.visible && w.bounds.x === 2070 && w.bounds.y === 40, JSON.stringify(w?.bounds));
   t.ok('別の窓にし、撮影から外し、フォーカスを取らずクリックを受ける', w.options.focusable === false && w.options.alwaysOnTop === true && w.protected === true && w.topLevel === 'screen-saver' && w.file.endsWith('chrome-pill.html'));
-  t.ok('agent 名を文言に使い、初回の出現を描画側へ知らせる', w.messages.at(-1)?.message.label === 'あなたが操作中 · Codex に戻す' && w.messages.at(-1)?.message.enter === true);
+  t.ok('文言はどのエージェントでも「AI に戻す」、初回の出現を描画側へ知らせる', w.messages.at(-1)?.message.label === 'あなたが操作中 · AI に戻す' && w.messages.at(-1)?.message.enter === true);
   rects.set('a', { x: -1140, y: 140, width: 700, height: 600 });
   await new Promise(resolve => setTimeout(resolve, 30));
   t.ok('窓の移動と大きさの変更に追従する', w.bounds.x === -970 && w.bounds.y === 140 && w.bounds.width === 360, JSON.stringify(w.bounds));

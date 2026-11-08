@@ -67,8 +67,8 @@ const RING_MS = 700;
 
 /**
  * @param {object} o
- * @param {() => Promise<any>} o.resume  帯の「{{name}} に戻す」を押したときに呼ぶ（browser.chromeResume）
- * @param {() => string} [o.getName]  エージェントの名前（「Claude に戻す」）
+ * @param {() => Promise<any>} o.resume  帯の「AI に戻す」を押したときに呼ぶ（browser.chromeResume。人のタブを全部戻すのはサーバー側）
+ * @param {() => string} [o.getName]  エージェントの名前（行・記録のための呼び名。戻すボタンの語は「AI に戻す」で固定）
  * @param {(error: Error) => void} [o.onError]
  * @returns {{ banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null, error?: string|null}|null) => void,
  *            ring: (x: number, y: number, size?: {width: number, height: number}) => void, state: () => string|null, refresh: () => void }}
@@ -191,6 +191,62 @@ export function renderChromeClosedLine(ev) {
     box.append(shot);
   }
   return box;
+}
+
+/**
+ * タブごとの持ち手（tab:holder イベント）の置き場。会話に「人が触っているタブ」があるかを会話単位で答える（ADR 0296）。
+ * 見ているタブの持ち手だけで判断すると、別のタブを開いたときに「AI に戻す」が消えるので、会話の全部のタブで持つ。
+ * tab:info の棚と揃える: 棚から消えたタブ・棚の張り替え（reset）では、その会話の持ち手も捨てる
+ */
+export function createTabHolderStore() {
+  const tabs = new Map();   // sessionId -> Map<targetId, { holder, by, pinned }>
+  const listeners = new Set();
+  const human = entry => entry?.holder === 'human';
+  const countHuman = map => { let n = 0; for (const e of map?.values() ?? []) if (human(e)) n++; return n; };
+  const fire = (sessionId, any) => { for (const fn of [...listeners]) { try { fn(sessionId, any); } catch { /* 聞き手の失敗は置き場を壊さない */ } } };
+  return {
+    event(ev) {
+      const sessionId = ev?.sessionId;
+      if (!sessionId) return;
+      if (ev.type === 'tab:info') {
+        if (ev.reset === true) {
+          // 棚の張り替え。会話の持ち手は全部捨てる
+          const map = tabs.get(sessionId);
+          if (!map?.size) return;
+          const was = countHuman(map) > 0;
+          tabs.delete(sessionId);
+          if (was) fire(sessionId, false);
+          return;
+        }
+        if (ev.removed === true && ev.targetId) {
+          // 棚から消えたタブの持ち手も消す（普通の題・URL の便りでは触らない）
+          const map = tabs.get(sessionId);
+          if (!map?.has(ev.targetId)) return;
+          const was = human(map.get(ev.targetId));
+          map.delete(ev.targetId); if (!map.size) tabs.delete(sessionId);
+          if (was && countHuman(map) === 0) fire(sessionId, false);
+        }
+        return;
+      }
+      if (ev.type !== 'tab:holder' || !ev.targetId) return;
+      let map = tabs.get(sessionId);
+      if (!map) { map = new Map(); tabs.set(sessionId, map); }
+      const before = countHuman(map) > 0;
+      if (ev.holder === 'human') map.set(ev.targetId, { holder: 'human', by: ev.by ?? null, pinned: ev.pinned === true });
+      else { map.delete(ev.targetId); if (!map.size) tabs.delete(sessionId); }
+      const after = countHuman(map) > 0;
+      if (before !== after) fire(sessionId, after);
+    },
+    /** 会話に人が触っているタブがあるか（見ているタブとは無関係） */
+    anyHuman: sessionId => countHuman(tabs.get(sessionId)) > 0,
+    /** タブの今の持ち手（無ければ ai） */
+    holderOf: (sessionId, targetId) => tabs.get(sessionId)?.get(targetId) ?? { holder: 'ai', by: null, pinned: false },
+    /** 人が触っているタブの一覧（{ targetId, holder, by, pinned }） */
+    held: sessionId => [...(tabs.get(sessionId) ?? new Map())].filter(([, e]) => human(e)).map(([targetId, e]) => ({ targetId, ...e })),
+    onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    /** 全部の会話の持ち手を捨てる（接続し直したとき。サーバーは続けて今の分を送る） */
+    clear() { const had = [...tabs.entries()].filter(([, map]) => countHuman(map) > 0).map(([id]) => id); tabs.clear(); for (const id of had) fire(id, false); },
+  };
 }
 
 export const chromeControlStore = createChromeControlStore();

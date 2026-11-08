@@ -135,7 +135,7 @@ import { createConversationToc } from './conversation-toc.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
-import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
+import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
 const outboxes = new Map();
@@ -7852,8 +7852,10 @@ const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
 // 会話の右の欄（ADR 0294〜0297）。サーバーの hostCapabilities.browserUnify（ページと隔離の origin の口）が届いてから読む
 let browserUnifyLoad = null;
+// タブの持ち手の置き場（web/chrome-control.mjs。会話に人が触っているタブがあるか。頭の行の印と右の欄の札・スマホの帯が同じ置き場を見る。ADR 0296）
+const tabHolderStore = createTabHolderStore();
 const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
-  controlStore:chromeControlStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer'), osActions:() => state.osActions === true })));
+  controlStore:chromeControlStore, holderStore:tabHolderStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer'), osActions:() => state.osActions === true })));
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
@@ -7886,6 +7888,7 @@ const rightPane = {
 browserEntry = setupBrowserEntry({ button: $('browserEntry'),
   chrome: () => rightPane, windows: chromeWindows, pagesOnly: () => chromeLink !== 'connected' && !chromeWindows.has(state.current), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   getChromeState: id => chromeControlStore.get(id).state,
+  humanHeld: id => tabHolderStore.anyHuman(id),
   waiting: handoffWaiting, announce,
   chromeAvailable: () => state.hostCaps?.chromeWindow === true,
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
@@ -10476,7 +10479,7 @@ function connect() {
       folderUpload?.online();
       for (const wake of [...onlineWaiters]) wake();
       // Chrome の窓の表はつなぎ直しで作り直す（サーバーは続けて今の分を送る）
-      chromeWindows.clear(); chromeControlStore.clear(); browserEntry?.paint(); paintChromeControl();
+      chromeWindows.clear(); chromeControlStore.clear(); tabHolderStore.clear(); browserEntry?.paint(); paintChromeControl();
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
@@ -10681,6 +10684,8 @@ function paintChromeControl() {
   chromeProfilePill?.onStateChange();
 }
 chromeControlStore.onChange((id) => { if (id === state.current || id === chromePanel.sessionId) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); } });
+// 人がタブを触った／AI に戻った: 頭の行の印（⏸）を更新する。右の欄の札・帯は browser-unify の paint が描く
+tabHolderStore.onChange((id) => { if (id === state.current) browserEntry?.paint(); });
 chromeControlStore.onTap((tap) => { if (tap.sessionId === chromeTarget() && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
 // 右パネルが映す会話を替えた（子の会話の Chrome を映した・戻した・閉じた）: 一時停止の帯とプロフィールをその会話に合わせる
 chromePanel.onTargetChange(() => { paintChromeControl(); chromeProfilePill?.refresh(); });
