@@ -133,12 +133,12 @@ export default async function (t) {
   // ---- 会話の引き継ぎの行（present kind: chromeHandover）
   setChromeHandoverAgentName(() => 'Claude');
   const line = renderChromeHandoverLine({ kind: 'chromeHandover', chromeHandover: { seconds: 72 } });
-  t.ok('「あなたが引き継ぎ · Claude に戻しました · 1 分 12 秒」', line.textContent === 'あなたが引き継ぎ · Claude に戻しました · 1 分 12 秒', line.textContent);
+  t.ok('会話の行も「AI に戻しました」と表示する', line.textContent === 'あなたが引き継ぎ · AI に戻しました · 1 分 12 秒', line.textContent);
   t.ok('印は読み上げない', line.querySelector('.cc-line-ic').getAttribute('aria-hidden') === 'true');
   t.ok('秒が無ければ 0 秒', renderChromeHandoverLine({ kind: 'chromeHandover' }).textContent.endsWith('0 秒'));
   t.ok('renderPresent が行へ回す（カードにしない）', renderPresent({ kind: 'chromeHandover', chromeHandover: { seconds: 5 } }).className === 'cc-line');
   setChromeHandoverAgentName(() => 'Codex');
-  t.ok('名前は今の会話のエージェント', renderChromeHandoverLine({ chromeHandover: { seconds: 1 } }).textContent.includes('Codex に戻しました'));
+  t.ok('戻した会話の行はエージェント名に依存しない', renderChromeHandoverLine({ chromeHandover: { seconds: 1 } }).textContent === 'あなたが引き継ぎ · AI に戻しました · 1 秒');
   const closed = renderChromeClosedLine({ kind: 'chromeClosed', chromeClosed: { by: 'agent' }, path: 'C:/shot.png' });
   t.ok('閉じた行は今のエージェント名と静止画を示す', closed.textContent.includes('Codex がウィンドウを閉じました') && closed.querySelector('img')?.src?.includes('shot.png'));
   t.ok('人が × で閉じたときの行は画像がなくても残る', renderPresent({ kind: 'chromeClosed', chromeClosed: { by: 'human' } }).textContent.includes('Chrome のウィンドウが閉じました'));

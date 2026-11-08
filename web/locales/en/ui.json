@@ -2183,12 +2183,12 @@
       "decline": "Decline",
       "failed": "Could not do that: {{error}}",
       "done": {
-        "resumed": "Done · Handed back to Claude",
-        "resumedContinued": "Done · Asked Claude to continue",
+        "resumed": "Done · Returned to AI",
+        "resumedContinued": "Done · Asked AI to continue",
         "connected": "Done · Chrome is connected",
-        "connectedContinued": "Done · Chrome is connected; asked Claude to continue",
+        "connectedContinued": "Done · Chrome is connected; asked AI to continue",
         "connectedAuto": "Automatic (no-confirmation mode) · Chrome is connected",
-        "connectedAutoContinued": "Automatic (no-confirmation mode) · Chrome is connected; asked Claude to continue",
+        "connectedAutoContinued": "Automatic (no-confirmation mode) · Chrome is connected; asked AI to continue",
         "declined": "Declined",
         "aborted": "Stopped"
       }
@@ -4956,7 +4956,7 @@
     "failed": "Could not do that.",
     "banner": "Paused · you are operating Chrome",
     "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press hand back again" },
-    "handover": "You took over · handed back to {{name}} · {{duration}}",
+    "handover": "You took over · returned to AI · {{duration}}",
     "closed": { "agent": "{{name}} closed the window", "human": "The Chrome window closed", "idle": "The Chrome window closed after 24 hours without use", "image": "Last image of the closed window" },
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
   },

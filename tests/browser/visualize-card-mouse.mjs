@@ -9,17 +9,27 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { createIsolatedRoutes } from '../../core/isolated-routes.mjs';
 import { startIsolatedServer } from '../../core/isolated-server.mjs';
 import { createHtmlKeys } from '../../core/html-keys.mjs';
 import { collectBundle } from '../../core/viz-bundle.mjs';
 
 const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PW_CORE || 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core');
+const playwrightCandidates = [process.env.PW_CORE,
+  path.join(path.dirname(process.execPath), 'node_modules/@playwright/cli/node_modules/playwright-core'),
+  process.env.APPDATA && path.join(process.env.APPDATA, 'npm/node_modules/@playwright/cli/node_modules/playwright-core'),
+  'playwright-core'].filter(Boolean);
+let playwrightCore;
+for (const candidate of playwrightCandidates) {
+  try { playwrightCore = candidate === 'playwright-core' ? require.resolve(candidate) : require.resolve(candidate); break; } catch {}
+}
+if (!playwrightCore) throw new Error('playwright-core is unavailable; set PW_CORE to its installed package path');
+const { chromium } = require(playwrightCore);
 
 async function chromiumPath() {
   if (process.env.PW_CHROMIUM) return process.env.PW_CHROMIUM;
-  const base = path.join(os.homedir(), 'AppData/Local/ms-playwright');
+  const base = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), process.platform === 'win32' ? 'AppData/Local/ms-playwright' : '.cache/ms-playwright');
   const dirs = (await fs.readdir(base)).filter(n => n.startsWith('chromium_headless_shell-')).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
   return path.join(base, dirs[0], 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
 }
@@ -32,11 +42,11 @@ const dataDir = path.join(scratch, 'data');
 const work = path.join(scratch, 'work');
 await fs.mkdir(work, { recursive: true });
 await fs.mkdir(dataDir);
-const repo = path.resolve(new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), '../..');
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 let main, isolated, browser;
 try {
-  const entryHtml = `<!doctype html><html><body style="margin:0"><h1 id="title">chart</h1><div style="height:300px;background:#3c4a9e"></div></body></html>`;
+  const entryHtml = `<!doctype html><html><body style="margin:0"><h1 id="title">chart</h1><a href="#part">Part</a><div id="part" style="height:300px;background:#3c4a9e"></div></body></html>`;
   const entry = path.join(work, 'chart.html');
   await fs.writeFile(entry, entryHtml);
   const bundle = await collectBundle(entry, { dataDir }, { dataDir, entryBody: entryHtml });
@@ -57,7 +67,9 @@ import { configureIsolatedOrigin, configureVisualizationTabs } from '/web/visual
 window.opened = [];
 configureIsolatedOrigin({ port: ${isolated.port} });
 configureVisualizationTabs({ sessionId: () => 'one', connected: () => true, openTab: args => window.opened.push(args) });
-const card = renderPresent({ kind:'visualization', caption:'chart', content:'<p>chart</p>', bundle:${JSON.stringify({ hash: bundle.hash, entry: 'chart.html' })}, path:'D:/work/chart.html' });
+window.locationReports = [];
+addEventListener('message', event => { if (event.data?.type === 'ply-preview-location') window.locationReports.push(event.data); });
+const card = renderPresent({ kind:'visualization', caption:'chart', content:'<p>chart</p>', bundle:${JSON.stringify({ hash: bundle.hash, entry: 'chart.html' })}, path:${JSON.stringify(entry)} });
 document.querySelector('#body').append(card);
 window.card = card;
 window.ready = true;
@@ -86,6 +98,17 @@ window.ready = true;
   await frame.waitFor();
   ok('カードの iframe は隔離の origin（cross-origin）', (await frame.getAttribute('src')).includes(`:${isolated.port}/viz/${bundle.hash}/`));
   await page.frameLocator('.visualize-seamless iframe.visualize-frame').locator('h1').waitFor();
+  await page.waitForTimeout(200);
+  let reportCount = await page.evaluate(() => window.locationReports.length);
+  ok('初回読み込みは場所を 1 度だけ報告する', reportCount === 1, String(reportCount));
+  await page.frameLocator('.visualize-seamless iframe.visualize-frame').locator('a[href="#part"]').click();
+  await page.waitForFunction(() => window.locationReports.length >= 2);
+  const fragmentReport = await page.evaluate(() => window.locationReports.at(-1));
+  ok('ページ内 # リンクは戻る対象として報告する', fragmentReport.replace === false && fragmentReport.href.endsWith('#part'), JSON.stringify(fragmentReport));
+  await page.frameLocator('.visualize-seamless iframe.visualize-frame').locator('body').evaluate(() => history.replaceState({}, '', '#replaced'));
+  await page.waitForFunction(() => window.locationReports.length >= 3);
+  const replaceReport = await page.evaluate(() => window.locationReports.at(-1));
+  ok('replaceState だけは現在の場所を置き換える', replaceReport.replace === true && replaceReport.href.endsWith('#replaced'), JSON.stringify(replaceReport));
 
   const geo = () => page.evaluate(() => {
     const card = document.querySelector('.visualize-seamless');
@@ -105,6 +128,20 @@ window.ready = true;
   let g = await geo();
   ok('枠の上の実マウスで .point が付き、操作列が出る（opacity 1・pointer-events auto）', g.point && g.opacity === '1' && g.pe === 'auto', JSON.stringify(g));
 
+  const cardBox = await page.locator('.visualize-seamless').boundingBox();
+  const toolbarBox = await page.locator('.visualize-open').boundingBox();
+  await page.mouse.move(toolbarBox.x + toolbarBox.width / 2, toolbarBox.y + toolbarBox.height / 2);
+  await page.waitForTimeout(120); // Let the iframe's pointer-out debounce finish while the toolbar remains hovered.
+  await page.mouse.move(cardBox.x + cardBox.width + 24, toolbarBox.y + toolbarBox.height / 2);
+  await page.waitForFunction(() => !document.querySelector('.visualize-seamless')?.classList.contains('point'), null, { timeout: 5000 });
+  await page.waitForTimeout(300);
+  g = await geo();
+  ok('操作列から 1 歩でカードの外へ出ると .point が外れ、操作列が隠れる', !g.point && g.opacity === '0', JSON.stringify(g));
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForFunction(() => document.querySelector('.visualize-seamless')?.classList.contains('point'), null, { timeout: 5000 });
+  await page.waitForTimeout(400);
+  g = await geo();
+
   // 「広げる」を実クリック（当たり先は iframe でなくボタン）
   const narrow = g.width;
   await page.mouse.click(g.x, g.y);
@@ -122,7 +159,7 @@ window.ready = true;
   await page.waitForFunction(() => window.opened.length === 1, null, { timeout: 5000 });
   const opened = await page.evaluate(() => window.opened[0]);
   ok('「ページで開く」は右の欄へ（kind:viz・束・入口・元パスを渡す）',
-    opened.kind === 'viz' && opened.vizHash === bundle.hash && opened.entry === 'chart.html' && opened.path === 'D:/work/chart.html', JSON.stringify(opened));
+    opened.kind === 'viz' && opened.vizHash === bundle.hash && opened.entry === 'chart.html' && opened.path === entry, JSON.stringify(opened));
 
   // キーボード: フォーカス + Enter でも広げる（変わらない）
   await page.locator('.visualize-widen').focus();
@@ -146,7 +183,7 @@ window.ready = true;
 } finally {
   await browser?.close();
   await isolated?.close?.();
-  main?.close();
+  if (main?.listening) await new Promise(resolve => main.close(resolve));
   await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
 }
 console.log(failures ? `NG ${failures}` : 'OK');

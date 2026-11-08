@@ -152,7 +152,7 @@ export function createChromeControlStore() {
   };
 }
 
-/** 今の会話のエージェントの名前（会話の行の「Claude に戻しました」。web/client.mjs が入れる） */
+/** 今の会話のエージェント名（閉じた行に使う。web/client.mjs が入れる） */
 let agentName = () => 'Claude';
 export const setChromeHandoverAgentName = fn => { if (typeof fn === 'function') agentName = fn; };
 // 閉じた窓の静止画は、持ち主の会話を見ている要求にだけサーバーが見せる（core/chrome/window-shots.mjs）。今見ている会話の id を渡す
@@ -165,11 +165,11 @@ const handIcon = () => {
   return svg;
 };
 
-/** 引き継いで戻したときの会話の行（present kind: 'chromeHandover'。chromeHandover: { seconds }）。「あなたが引き継ぎ · Claude に戻しました · 1 分 12 秒」 */
+/** 引き継いで戻したときの会話の行（present kind: 'chromeHandover'。chromeHandover: { seconds }）。「あなたが引き継ぎ · AI に戻しました · 1 分 12 秒」 */
 export function renderChromeHandoverLine(ev) {
   const row = el('div', 'cc-line');
   const icon = el('span', 'cc-line-ic'); icon.setAttribute('aria-hidden', 'true'); icon.append(handIcon());
-  row.append(icon, el('span', 'cc-line-t', t('chromeControl.handover', { name: agentName(), duration: durationText(ev?.chromeHandover?.seconds) })));
+  row.append(icon, el('span', 'cc-line-t', t('chromeControl.handover', { duration: durationText(ev?.chromeHandover?.seconds) })));
   return row;
 }
 

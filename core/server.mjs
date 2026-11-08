@@ -2386,12 +2386,21 @@ const pageWatch = createPageWatch({ emit: (sessionId, file) => browserUnifyWs.pa
 // 会話の記録（発言・ツールの呼び出し・present の行）。ファイルのページの最近のファイル・可視化・git のグラフから発言への移動に使う
 // 新しいタブは最近のファイルと可視化を 1 回の api/recent で読むので、同じ会話の読み込みを 2 秒だけ使い回す
 const pageTranscripts = new Map();
+const vizSourceIndex = new Map();
 function pageTranscript(sessionId) {
   const held = pageTranscripts.get(sessionId);
   if (held && Date.now() - held.at < 2_000) return held.promise;
   const promise = (async () => {
     const backend = await resolveBackendForSession(sessionId).catch(() => null);
     const got = await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [], presents: [] }));
+    let index = vizSourceIndex.get(sessionId);
+    if (!index) { index = new Map(); vizSourceIndex.set(sessionId, index); }
+    for (const present of got.presents ?? []) {
+      const hash = present?.kind === 'visualization' && !present.error ? present.bundle?.hash : null;
+      if (typeof hash === 'string' && hash) index.set(hash, { path:present.path ?? null, caption:present.caption ?? null });
+    }
+    while (index.size > 500) index.delete(index.keys().next().value);
+    while (vizSourceIndex.size > 20) vizSourceIndex.delete(vizSourceIndex.keys().next().value);
     return { ...got, toolHints: backend?.toolHints ?? {}, actor: backend?.label ?? backend?.id };
   })();
   pageTranscripts.set(sessionId, { at: Date.now(), promise });
@@ -2410,8 +2419,10 @@ const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports:
   htmlKeys, secret: pageSecrets.key, pageWatch,
   // 可視化の束を開いた元のファイルは、クライアントの送った値でなく会話の記録の行から決める（pageOpen の応答の path）
   vizSource: async (sessionId, hash) => {
-    const row = (await pageTranscript(sessionId)).presents?.find?.(p => p?.kind === 'visualization' && !p.error && p?.bundle?.hash === hash);
-    return row ? { path: row.path ?? null, caption: row.caption ?? null } : null;
+    const indexed = vizSourceIndex.get(sessionId)?.get(hash);
+    if (indexed) return indexed;
+    await pageTranscript(sessionId);
+    return vizSourceIndex.get(sessionId)?.get(hash) ?? null;
   },
   // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る
   movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
@@ -4495,6 +4506,8 @@ async function deleteSessionOf(sessionId) {
     void inboxSources.sessionRemoved(sessionId);
     releaseAgentConnection(sessionId);
     pageWatch.removeSession(sessionId);   // ファイルの変化の見張りの登録（page:changed）も消す
+    pageTranscripts.delete(sessionId);
+    vizSourceIndex.delete(sessionId);
     const cleanups = [
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),

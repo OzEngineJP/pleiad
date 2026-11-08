@@ -41,7 +41,7 @@ export async function createFixture() {
   await fs.writeFile(path.join(uploadDir, 'alpha.txt'), 'attachment alpha');
   await fs.writeFile(path.join(uploadDir, 'beta.txt'), 'attachment beta');
   const sessions = { alpha:{ title:'ブラウザー統合', cwd }, beta:{ cwd:scratch }, review:{ cwd } };
-  const calls = [], issued = [];
+  const calls = [], issued = [], watched = [];
   const env = { lang:'ja', theme:'light' };
   const deps = {
     store:{ getAll:async () => sessions, getPrefs:async () => ({ theme:env.theme }) },
@@ -53,6 +53,7 @@ export async function createFixture() {
     ports:() => ({ main:0, pages:0, isolated:49199 }), env:() => env,
     recentFiles:id => id === 'alpha' ? [{ path:path.join(cwd, 'README.md'), source:'edited' }, { path:path.join(dataDir, 'secret.json'), source:'read' }, { path:path.join(uploadDir, 'beta.txt'), source:'attached' }] : [],
     htmlKeys:{ issue:async args => { issued.push(args); return 'fixture-key'; } },
+    watch:{ add:(...args) => watched.push(args) },
     secret:crypto.randomBytes(32),
     visualizations:id => id === 'alpha' ? [{ title:'図', url:'http://localhost:49199/viz/abc/index.html?embed=tab' }, { title:'外', url:'http://localhost:5173/viz/abc/index.html' }] : [],
     ops:async (actor, id, input) => {
@@ -77,7 +78,7 @@ export async function createFixture() {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const url = (route, params = {}, id = 'alpha') => `${origin}/_pleiad/s/${id}/${route}?${new URLSearchParams(params)}`;
   const close = async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive:true, force:true }); };
-  return { cwd, scratch, dataDir, uploadDir, origin, url, close, calls, issued, env, sessions };
+  return { cwd, scratch, dataDir, uploadDir, origin, url, close, calls, issued, watched, env, sessions };
 }
 
 export default async function (t) {
@@ -92,6 +93,11 @@ export default async function (t) {
     t.ok('フォルダーの一覧とツリーの読み取り', dir.body.kind === 'directory' && dir.body.items.some(i => i.name === 'notes'));
     const tree = await get('api/tree', { path:f.cwd });
     t.ok('遅延ツリー API は共通の検査とページングを使う', tree.status === 200 && tree.body.children.some(i => i.name === 'README.md'));
+    await get('api/preview', { path:path.join(f.cwd, 'README.md'), watchOwner:'screen:1/page:preview' });
+    await get('api/tree', { path:f.cwd, watchOwner:'screen:1/page:tree' });
+    t.ok('ページ API はタブの所有者をファイル見張りへ渡す',
+      f.watched.some(args => args[1] === path.join(f.cwd, 'README.md') && args[3] === 'screen:1/page:preview')
+      && f.watched.some(args => args[1] === f.cwd && args[3] === 'screen:1/page:tree'));
     for (const route of ['api/preview', 'api/raw', 'api/tree', 'api/html-key']) {
       const denied = await get(route, { path:path.join(f.dataDir, 'secret.json') });
       t.ok(`${route}: 保護されたデータを表示しない`, denied.status === 403 && denied.body.error.code === 'protected-data' && !JSON.stringify(denied.body).includes('not public'));

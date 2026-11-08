@@ -156,7 +156,7 @@ export function createBrowserUnify(deps = {}) {
       else if (isolatedHost && /^\/f\//.test(parsed.pathname)) {
         kind = 'html'; url = parsed.href; title = parsed.searchParams.get('title');
         // 鍵を開いて中身のファイルを引く（アドレスバーのパンくず・ツリー・変化の見張り。pageResolve はサーバーが登り直す）
-        const resolved = await cmd('pageResolve', { sessionId, url:parsed.href, tab:replace?.targetId }).catch(() => null);
+        const resolved = await cmd('pageResolve', { sessionId, url:parsed.href }).catch(() => null);
         if (resolved?.kind === 'html') path = resolved.path;
       }
       else if (/^(?:[a-z]:[\\/]|[./~])/i.test(input)) { const resolved = await cmd('resolvePath', { sessionId, path:input }); kind = resolved.kind === 'directory' ? 'dir' : 'file'; path = resolved.path; }
@@ -220,13 +220,12 @@ export function createBrowserUnify(deps = {}) {
                 pageCommand(here, { type:'navigate', url:target });
                 here.url = target; here.pendingNav = target;
                 // 橋が届かない文書（消えたファイル・壊れたページ）なら枠を直接張り直す
-                setTimeout(() => { const e = frames.get(tab.targetId); if (e === here && e.pendingNav === target) { e.pendingNav = null; e.frame.src = target; } }, 800);
               }
               pages.histGo(tab, dir);
               return {};
             }
           }
-          if (discard(tab)) pages.travel(tab, action === 'back' ? -1 : 1); return {};
+          if (discard(tab)) await pages.travel(tab, action === 'back' ? -1 : 1); return {};
         }
       }
     }
@@ -396,7 +395,7 @@ export function createBrowserUnify(deps = {}) {
       frame.setAttribute('referrerpolicy', 'no-referrer'); frame.src = tab.url;
       entry = { frame, sessionId, targetId:tab.targetId, url:tab.url, reload:tab.reload, tab };
       frames.set(tab.targetId, entry); pageHost.append(frame);
-      frame.addEventListener('load', () => { followLocal(entry); probeLocal(entry); });
+      frame.addEventListener('load', () => { followLocal(entry); });
     } else if ((!tab.pending && entry.url !== tab.url) || entry.reload !== tab.reload) {
       const same = entry.url === tab.url;
       entry.url = tab.url; entry.reload = tab.reload;
@@ -430,12 +429,6 @@ export function createBrowserUnify(deps = {}) {
     } catch { /* Isolated pages report activity through their own bridge. */ }
   }
   /** 読み込んだ隔離のページの URL をサーバーへ確かめる。期限切れの鍵・消えた束は開き直して見張りを戻す（P6） */
-  async function probeLocal(entry) {
-    const tab = entry.tab;
-    if (!frames.has(entry.targetId) || !['html', 'viz'].includes(tab.page?.kind)) return;
-    try { await cmd('pageResolve', { sessionId:entry.sessionId, url:entry.url, tab:entry.targetId }); }
-    catch { try { await pages.reissue(tab); } catch (error) { failed(error); } }
-  }
   /** ページの URL（/_pleiad/…）を画面と同じ出どころへ写す。映像の中の移動を、リンクした端末内タブへ戻すときに使う */
   function mirrorUrl(raw) {
     try {
@@ -482,14 +475,20 @@ export function createBrowserUnify(deps = {}) {
       let at;
       try { at = new URL(event.data.href); } catch { return; }
       if (at.origin !== event.origin) return;
-      entry.url = at.href; entry.pendingNav = null;   // 文書の中の履歴を移した届いた（戻る/進むの待ち合わせ）
+      if (entry.resolvingUrl === at.href || entry.lastResolvedUrl === at.href) return;
+      entry.resolvingUrl = at.href;
+      entry.url = at.href; entry.pendingNav = null;
       const before = entry.tab.page?.path;
       const resolved = await cmd('pageResolve', { sessionId:entry.sessionId, url:at.href, tab:entry.targetId }).catch(() => null);
+      if (entry.resolvingUrl === at.href) entry.resolvingUrl = null;
+      if (entry.url !== at.href) return;
+      entry.lastResolvedUrl = at.href;
       // 別のファイルへ移った: 前のファイルのこのタブぶんの見張りを外す（ほかの画面・タブが見ている分は残る。指摘 3）
-      if (resolved?.kind === 'html' && before && resolved.path && !samePath(before, resolved.path)) {
+      const nextPath = resolved?.kind === 'html' ? resolved.path : null;
+      if (before && (!nextPath || !samePath(before, nextPath))) {
         cmd('pageWatch', { sessionId:entry.sessionId, path:before, kind:'file', tab:entry.targetId }).catch(() => {});
       }
-      pages.locate(entry.tab, { url:at.href, title:typeof event.data.title === 'string' ? event.data.title : null, resolved, sameDocument:event.data.sameDocument === true });
+      pages.locate(entry.tab, { url:at.href, title:typeof event.data.title === 'string' ? event.data.title : null, resolved, sameDocument:event.data.replace === true });
       return;
     }
     if (event.data?.type === 'ply-preview-open-link' && typeof event.data.url === 'string') {

@@ -573,6 +573,7 @@ export function renderPresent(ev) {
     if (e.error) body.append(el('div', 'present-note', e.error));
     else {
       card.classList.add('visualize-seamless');
+      card.addEventListener('pointerleave', () => card.classList.remove('point'));
       card.setAttribute('aria-label', t('timeline.present.namedVisualization', { title: e.caption || kindLabel(kind) }));
       cap.remove();
       const lazyContent = isLazy(e, 'content');
@@ -709,10 +710,12 @@ const clip = (s, n) => {
 
 /** パスは末尾側が知りたい情報なので、先頭を省いて末尾 keep 段だけ見せる */
 function shortPath(p, keep = 2) {
-  const s = String(p ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  const raw = String(p ?? "").trim();
+  const separator = /^[a-z]:\\/i.test(raw) || raw.includes("\\") ? "\\" : "/";
+  const s = raw.replace(/[\\/]+$/, "");
   if (!s) return "";
-  const parts = s.split("/").filter(Boolean);
-  return parts.length <= keep ? s : "…/" + parts.slice(-keep).join("/");
+  const parts = s.split(/[\\/]/).filter(Boolean);
+  return parts.length <= keep ? s : `…${separator}${parts.slice(-keep).join(separator)}`;
 }
 
 const lineCount = (s) => (String(s ?? "") ? String(s).split("\n").length : 0);

@@ -150,7 +150,7 @@ export default async function(t) {
 
     // pageResolve: 隔離の URL を開いている対象へ戻す（ページ内の移動の追跡。ファイルなら見張りも登り直す）
     const watchesBefore = watches.length;
-    const resolve = await openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:html.url }, client:clients[0] });
+    const resolve = await openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:html.url, tab:'page:resolve' }, client:clients[0] });
     t.ok('pageResolve は鍵の URL から中身のファイルを引き、変化の見張りへ登り直す',
       resolve.kind === 'html' && resolve.path === htmlFile && watches.length === watchesBefore + 1);
     const vizResolve = await openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://localhost:23456/viz/${hash}/index.html` }, client:clients[0] });
@@ -178,9 +178,12 @@ export default async function(t) {
     ]);
     await fs.writeFile(path.join(work, 'other.htm'), '<p>h</p>');
     const htmOk = await openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://${mark}:23456/f/${encodeURIComponent(key)}/other.htm` }, client:clients[0] });
+    await fs.mkdir(path.join(work, 'nested', '.hidden'), { recursive:true });
+    await fs.writeFile(path.join(work, 'nested', '.hidden', 'x.html'), '<h1>hidden</h1>');
+    const encodedDotPath = await openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://${mark}:23456/f/${encodeURIComponent(key)}/nested%5C.hidden%5Cx.html` }, client:clients[0] }).then(() => null, e => e.code);
     t.ok('pageResolve は .env・.md・ドットで始まるフォルダー・画像・無いファイルを断り、.htm は引く',
       envFile === 'NOT_FOUND' && mdFile === 'NOT_FOUND' && dotDir === 'NOT_FOUND' && pngFile === 'NOT_FOUND' && htmMissing === 'NOT_FOUND'
-      && htmOk.kind === 'html' && htmOk.path === path.join(work, 'other.htm'));
+      && htmOk.kind === 'html' && htmOk.path === path.join(work, 'other.htm') && encodedDotPath === 'NOT_FOUND');
 
     // pageOpen・pageResolve・pageWatch はタブの id を見張りの持ち主（owner）として渡す（指摘 3）
     watches.length = 0; removed.length = 0;

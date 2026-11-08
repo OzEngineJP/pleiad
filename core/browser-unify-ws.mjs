@@ -37,11 +37,12 @@ export function createBrowserUnifyWs(deps = {}) {
   async function options(sessionId) {
     return { cwd: await deps.cwd?.(sessionId), access: await deps.access?.(sessionId) };
   }
-  function pageUrl(sessionId, page, file) {
+  function pageUrl(sessionId, page, file, owner = null) {
     const port = deps.ports?.().pages;
     if (!port) fail('UNSUPPORTED');
     const url = new URL(`http://localhost:${port}/_pleiad/s/${encodeURIComponent(sessionId)}/${page}`);
     if (file) url.searchParams.set('path', file);
+    if (owner && owner !== '·') url.searchParams.set('watchOwner', owner);
     return url.href;
   }
   async function destination(sessionId, input) {
@@ -94,7 +95,7 @@ export function createBrowserUnifyWs(deps = {}) {
           url: `http://${fileMark(deps.secret, path.dirname(checked.file))}.localhost:${ports.isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(checked.file))}${suffix}` };
       }
       if (file) deps.pageWatch?.add(sessionId, file, page === 'dir' ? 'dir' : 'file', owner);
-      const url = new URL(pageUrl(sessionId, page, file));
+      const url = new URL(pageUrl(sessionId, page, file, owner));
       if (/^\d{1,9}$/.test(String(input?.line ?? ''))) url.searchParams.set('line', String(input.line));
       return { kind: page, path: file ?? undefined, cwd: cwd ?? undefined, suffix: `${url.pathname}${url.search}`, url: url.href };
     }
@@ -117,7 +118,7 @@ export function createBrowserUnifyWs(deps = {}) {
    * 隔離の origin の URL を、開いている対象（ファイルのパス・束）へ戻す（pageResolve）。
    * ページ内の移動で親が受け取った URL を確かめ、ファイルなら変化の見張りにも登り直す
    */
-  async function resolvePageLocation(sessionId, raw, owner = '·') {
+  async function resolvePageLocation(sessionId, raw, owner = null) {
     let parsed;
     try { parsed = new URL(String(raw ?? '')); } catch { fail('INVALID'); }
     const isolated = deps.ports?.().isolated;
@@ -158,9 +159,10 @@ export function createBrowserUnifyWs(deps = {}) {
         process.platform === 'win32' ? root.toLowerCase() : root,
         process.platform === 'win32' ? real.toLowerCase() : real);
       if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) fail('NOT_FOUND');
+      if (inside.split(/[\\/]/).some(part => part.startsWith('.'))) fail('NOT_FOUND');
       // 開いている対象として追うのは HTML の文書だけ（.md や画像を「そのファイルのページ」として登録しない）
       if (!checked.stat?.isFile?.() || !/\.html?$/i.test(checked.file)) fail('NOT_FOUND');
-      deps.pageWatch?.add(sessionId, checked.file, 'file', owner);
+      if (owner) deps.pageWatch?.add(sessionId, checked.file, 'file', owner);
       return { kind: 'html', path: checked.file };
     }
     fail('NOT_FOUND');
@@ -306,7 +308,7 @@ export function createBrowserUnifyWs(deps = {}) {
       }
       if (command === 'pageResolve') {
         if (!args || typeof args !== 'object' || !allowed(client, args.sessionId)) fail('INVALID');
-        return resolvePageLocation(args.sessionId, args.url, ownerOf(client, args.tab));
+        return resolvePageLocation(args.sessionId, args.url, typeof args.tab === 'string' && args.tab ? ownerOf(client, args.tab) : null);
       }
       if (command === 'pageWatch') {
         if (!args || typeof args !== 'object' || !allowed(client, args.sessionId) || typeof args.path !== 'string' || !args.path) fail('INVALID');

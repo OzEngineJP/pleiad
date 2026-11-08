@@ -108,7 +108,7 @@ export function createPagesRoutes(deps = {}) {
         }
         case 'api/preview': {
           const ref = await resolve();
-          if (q.get('resource') !== '1') deps.watch?.add(sessionId, ref.file, ref.stat.isDirectory() ? 'dir' : 'file');
+          if (q.get('resource') !== '1') deps.watch?.add(sessionId, ref.file, ref.stat.isDirectory() ? 'dir' : 'file', q.get('watchOwner') || undefined);
           const result = await readPreview(ref.file, roots, { access, resource:q.get('resource') === '1' });
           // API errors and unsupported content use codes; translations belong to the page.
           if (result.kind === 'unsupported') { delete result.reason; result.reasonCode = result.size > (result.downloadable ? 8 * 1024 * 1024 : FILE_LIMIT) ? 'over-limit' : 'unsupported'; }
@@ -132,7 +132,7 @@ export function createPagesRoutes(deps = {}) {
         }
         case 'api/tree': {
           const ref = await resolve();
-          deps.watch?.add(sessionId, ref.file, 'dir');
+          deps.watch?.add(sessionId, ref.file, 'dir', q.get('watchOwner') || undefined);
           const offset = Number(q.get('offset') ?? 0);
           if (!Number.isSafeInteger(offset) || offset < 0) throw fault('invalid-path');
           json(req, res, via, await listTreeFolder(ref.file, { access, offset })); break;
@@ -144,7 +144,7 @@ export function createPagesRoutes(deps = {}) {
           // once: https origins the person allowed to load one time (core/html-keys.mjs keeps only external origins).
           const key = await deps.htmlKeys?.issue({ sessionId, path:ref.file, once:q.getAll('once').slice(0, 50), access });
           if (!key || !ports().isolated || !view.isolated || !deps.secret) throw fault('unavailable', 503);
-          deps.watch?.add(sessionId, ref.file, 'file');
+          deps.watch?.add(sessionId, ref.file, 'file', q.get('watchOwner') || undefined);
           // アプリの専用の出どころ（f<フォルダーの印>.localhost。core/isolated-origins.mjs）。localStorage などはその origin の中で効く。
           // 端末（スマホの道の port）は <印>.localhost を名前解決できないので localhost のまま（その origin 内の保存は端末では分けない）
           const marked = view.isolated === ports().isolated;

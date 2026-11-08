@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { createPageTabs } from '../../web/page-tabs.mjs';
 import { pleiadPage } from '../../core/chrome/tab-info.mjs';
 import { hasFileViews } from '../../web/address-bar.mjs';
+import { createPageWatch } from '../../core/page-watch.mjs';
 
 export const name = 'browser-unify-pages';
 export const title = '画面内ページのタブ: サーバーが決める開く先・ページ内移動・更新の扱い・鍵と見張りの取り直し';
@@ -222,6 +223,53 @@ export default async function(t) {
   }
 
   // ---- pleiadPage: Chrome のタブをアプリのページと分ける（P9） ----
+  {
+    const requests = [];
+    const { tabs } = setup({ pageOpen: request => new Promise(resolve => {
+      requests.push(request);
+      setTimeout(() => resolve({ kind:'file', path:request.path, suffix:`/_pleiad/s/s1/file?path=${encodeURIComponent(request.path)}` }), request.path.endsWith('a.md') ? 15 : 1);
+    }) });
+    const [a, b] = await Promise.all([
+      tabs.open({ sessionId:'s1', kind:'file', path:'D:/w/a.md' }),
+      tabs.open({ sessionId:'s1', kind:'file', path:'D:/w/b.md' }),
+    ]);
+    assert.equal(requests[0].tab, a.targetId);
+    assert.equal(requests[1].tab, b.targetId);
+    assert.notEqual(a.targetId, b.targetId);
+    t.ok('同時に開いたタブは pageOpen の所有者番号と一致する', requests[0].tab === a.targetId && requests[1].tab === b.targetId && a.targetId !== b.targetId);
+  }
+
+  {
+    const { tabs, releases } = setup({ pageOpen:async request => ({ kind:'file', path:request.path,
+      suffix:`/_pleiad/s/s1/file?path=${encodeURIComponent(request.path)}` }) });
+    const tab = await tabs.open({ sessionId:'s1', kind:'file', path:'D:/w/a.md' });
+    await tabs.open({ sessionId:'s1', kind:'file', path:'D:/w/b.md' }, tab);
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0], tab);
+    tabs.close(tab);
+    assert.equal(releases.length, 2);
+    t.ok('同じタブで別ファイルへ移ると前の見張りを外し、閉じると現在の見張りも外す', releases.length === 2 && releases.every(item => item === tab));
+  }
+
+  {
+    const watch = createPageWatch({ watch:() => ({ close() {} }) });
+    const tabs = createPageTabs({ origin:ORIGIN,
+      pageOpen:async request => { watch.add(request.sessionId, request.path, 'file', `screen:1/${request.tab}`);
+        return { kind:'file', path:request.path, suffix:`/_pleiad/s/${request.sessionId}/file?path=${encodeURIComponent(request.path)}` }; },
+      release:tab => watch.remove(tab.sessionId, tab.page.path, 'file', `screen:1/${tab.targetId}`) });
+    const first = await tabs.open({ sessionId:'s1', kind:'file', path:'D:/w/first.md' });
+    assert.equal(watch.stats().targets, 1);
+    tabs.close(first);
+    assert.equal(watch.stats().targets, 0);
+    const second = await tabs.open({ sessionId:'s1', kind:'file', path:'D:/w/second.md' });
+    assert.equal(watch.stats().targets, 1);
+    watch.removeClient('screen:1');
+    assert.equal(watch.stats().targets, 0);
+    t.ok('タブを閉じる操作と画面終了の両方で実際の見張り数が 0 になる', watch.stats().targets === 0);
+    tabs.close(second);
+    watch.close();
+  }
+
   {
     const ports = { pages:8000, isolated:9000 };
     assert.equal(pleiadPage(`http://localhost:9000/viz/${VIZ_HASH}/index.html`, 's1', ports)?.kind, 'viz');

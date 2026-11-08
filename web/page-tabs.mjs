@@ -3,10 +3,10 @@ import { samePath } from './file-actions.mjs';
 /** Screen-owned pages. Chrome targets are attached only by an explicit display change. */
 export function createPageTabs({ pageOpen, origin, changed = () => {}, touched = null, release = null, onError = null }) {
   const sessions = new Map(); let serial = 0;
+  const MARK = /^[a-z0-9][a-z0-9-]{0,61}\.localhost$/;
   const list = id => sessions.get(id) ?? [];
   // 隔離の origin（<印>.localhost:<port>。core/isolated-origins.mjs）。URL はサーバーが pageOpen で決める。
   // 画面が自分で作るのは本体と同じ出どころのページ（/_pleiad/…）だけ
-  const MARK = /^[a-z0-9][a-z0-9-]{0,61}\.localhost$/;
   /** 「触った」の判定（読み位置・入力を捨てるか）。既定はページが送る活動の印。画面は Chrome の映像の持ち手も足せる */
   const isTouched = tab => (touched ? touched(tab) : false) || tab.touched || tab.dirty;
   /** 履歴・タブにつけるページの印。可視化は束の場所（hash・entry）、HTML は題も持つ（アドレスバーが出す） */
@@ -28,37 +28,39 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
   };
   async function open(input, replace = null) {
     const { sessionId, kind = 'new', path, vizHash, hash, entry } = input;
-    const targetId = replace?.targetId ?? `page:${serial + 1}`;
+    const targetId = replace?.targetId ?? input.targetId ?? `page:${++serial}`;
     let page;
-    if (kind === 'viz' || kind === 'html' || (kind === 'file' && /\.html?$/i.test(path ?? ''))) {
-      let opened;
-      if (kind === 'html' && input.url) {
-        // 隔離の /f/<鍵>/ の URL をそのまま開く（中のリンク・Chrome のタブを「ページ」へ戻すとき。鍵は URL の中。path は pageResolve が確かめたもの）
-        const at = new URL(input.url, origin);
-        if (at.hostname !== 'localhost' && !MARK.test(at.hostname.toLowerCase())) throw new Error('invalid-url');
-        opened = { kind: 'html', url: at.href, path };
-      } else {
-        // 開く先はサーバーが決める（core/browser-unify-ws.mjs の pageOpen。可視化は hash、HTML のファイルは kind:'html'）。
-        // tab は変化の見張りの持ち主（core/page-watch.mjs の owner。タブを閉じた・タブの中で移ったときにその分だけ外す）
-        const request = kind === 'viz'
-          ? { sessionId, kind: 'viz', hash: String(vizHash ?? hash ?? ''), tab: targetId, ...(entry ? { entry } : {}), ...(input.title ? { title: input.title } : {}), ...(input.path ? { path: input.path } : {}) }
-          : { sessionId, kind: 'html', path, tab: targetId, ...(input.title ? { title: input.title } : {}) };
-        opened = await pageOpen(request);
-      }
-      const url = new URL(opened?.url ?? '', origin);
+    if (kind === 'viz' || (kind === 'html' && path && !input.url) || ['file', 'dir'].includes(kind)) {
+      // 開く先はサーバーが決める（core/browser-unify-ws.mjs の pageOpen。可視化は hash、HTML のファイルは kind:'html'）。
+      // tab は変化の見張りの持ち主（core/page-watch.mjs の owner。タブを閉じた・タブの中で移ったときにその分だけ外す）
+      const request = kind === 'viz'
+        ? { sessionId, kind: 'viz', hash: String(vizHash ?? hash ?? ''), tab: targetId, ...(entry ? { entry } : {}), ...(input.title ? { title: input.title } : {}), ...(input.path ? { path: input.path } : {}) }
+        : { sessionId, kind:kind === 'file' && /\.html?$/i.test(path ?? '') ? 'html' : kind, path, tab: targetId, ...(input.title ? { title: input.title } : {}) };
+      const opened = await pageOpen(request);
+      const url = new URL(opened?.suffix || opened?.url || '', origin);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('invalid-url');
-      if (!['viz', 'html'].includes(opened?.kind)) throw new Error('invalid-url');
+      if (!['viz', 'html', 'file', 'dir', 'git', 'plugins', 'new', 'attachment'].includes(opened?.kind)) throw new Error('invalid-url');
       page = { url: url.href, origin: url.origin, kind: opened.kind, path: opened.path,
         vizHash: opened.hash ?? (kind === 'viz' ? vizHash ?? hash : undefined), entry: opened.entry ?? entry,
         title: opened.title ?? input.title ?? url.searchParams.get('title') ?? '' };
     } else {
-      if (!['file', 'dir', 'git', 'plugins', 'new', 'attachment'].includes(kind)) throw new Error('invalid-url');
-      const url = new URL(`/_pleiad/s/${encodeURIComponent(sessionId)}/${kind}`, origin);
-      if (path) url.searchParams.set('path', path);
-      if (input.line) url.searchParams.set('line', input.line);
-      page = { url: url.href, origin, kind, path, title: input.title ?? '' };
+      if (kind === 'html') {
+        let url;
+        try { url = new URL(input.url); } catch { throw new Error('invalid-url'); }
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
+          || !(url.hostname === 'localhost' || MARK.test(url.hostname.toLowerCase()))
+          || !/^\/f\/[A-Za-z0-9_-]{40,8192}\//.test(url.pathname)) throw new Error('invalid-url');
+        page = { url:url.href, origin:url.origin, kind:'html', path, title:input.title ?? url.searchParams.get('title') ?? '' };
+      } else {
+        if (!['file', 'dir', 'git', 'plugins', 'new', 'attachment'].includes(kind)) throw new Error('invalid-url');
+        const url = new URL(`/_pleiad/s/${encodeURIComponent(sessionId)}/${kind}`, origin);
+        if (path) url.searchParams.set('path', path);
+        if (input.line) url.searchParams.set('line', input.line);
+        page = { url: url.href, origin, kind, path, title: input.title ?? '' };
+      }
     }
-    const tab = replace ?? { targetId:`page:${++serial}`, sessionId, local:true, mode:'page', history:[], position:-1, histTrail:[page.url], histPos:0 };
+    const tab = replace ?? { targetId, sessionId, local:true, mode:'page', history:[], position:-1, histTrail:[page.url], histPos:0 };
+    if (replace && tab.page?.path && (!page.path || !samePath(tab.page.path, page.path))) release?.(tab);
     Object.assign(tab, { url:page.url, title:page.title, page:tabPage(page), origin:page.origin,
       request:{ sessionId, kind, path, vizHash:vizHash ?? hash, entry }, touched:false, dirty:false, pending:false });
     tab.history.splice(++tab.position); tab.history.push(page);
@@ -92,14 +94,14 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     const trail = tab.histTrail ?? (tab.histTrail = [tab.url]);
     let pos = tab.histPos ?? trail.length - 1;
     if (sameDocument) {
-      // 同じ文書の中の報告（ハッシュの変化・replaceState。橋が sameDocument を付ける）は履歴に積まず
+      // replaceState の報告（橋が sameDocument を付ける）は履歴に積まず
       // その場の URL を書き換えるだけ。触った・未確定の印は消さない（押せる「戻る」の偽物を生まない。指摘 2）
       trail[pos] = url; tab.histPos = pos;
       tab.url = url;
       try { tab.view = new URL(url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch {}
       if (title) { tab.title = title; if (tab.page) tab.page.title = title; }
       if (resolved?.kind === 'html') { tab.page = { ...tab.page, kind:'html', path:resolved.path }; if (tab.request) tab.request.path = resolved.path; }
-      else if (resolved?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', vizHash:resolved.hash, entry:resolved.entry };
+      else if (resolved?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', path:resolved.path, vizHash:resolved.hash, entry:resolved.entry };
       if (tab.history?.length) tab.history[tab.position] = { ...tab.history[tab.position], url:tab.url, title:tab.title,
         kind:tab.page?.kind, path:tab.page?.path, vizHash:tab.page?.vizHash, entry:tab.page?.entry };
       changed(tab);
@@ -115,7 +117,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     try { tab.view = new URL(url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch {}
     if (title) { tab.title = title; if (tab.page) tab.page.title = title; }
     if (resolved?.kind === 'html') { tab.page = { ...tab.page, kind:'html', path:resolved.path }; if (tab.request) tab.request.path = resolved.path; }
-    else if (resolved?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', vizHash:resolved.hash, entry:resolved.entry };
+    else if (resolved?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', path:resolved.path, vizHash:resolved.hash, entry:resolved.entry };
     tab.touched = false; tab.dirty = false; tab.pending = false;
     if (tab.history?.length) tab.history[tab.position] = { ...tab.history[tab.position], url:tab.url, title:tab.title,
       kind:tab.page?.kind, path:tab.page?.path, vizHash:tab.page?.vizHash, entry:tab.page?.entry };
@@ -198,6 +200,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
   }
   function travel(tab, direction) {
     const position = tab.position + direction, page = tab.history[position]; if (!page) return;
+    if (tab.page?.path && (!page.path || !samePath(tab.page.path, page.path))) release?.(tab);
     tab.position = position; Object.assign(tab, { url:page.url, title:page.title, origin:page.origin, page:tabPage(page), touched:false, dirty:false, pending:false });
     // 別の文書に移る: 文書の中の履歴はその文書ので張り直す（前の文書の場所を残すと、戻る/進むが別の文書の場所を指す）
     tab.histTrail = [page.url]; tab.histPos = 0;
