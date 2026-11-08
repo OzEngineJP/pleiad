@@ -7584,6 +7584,8 @@ let sidebarMoving;
 // 開閉は side-open で持ち、覚えない（広い画面の好み side-closed はそのまま残す）。会話を選ぶ・幕を押す・Esc で閉じる
 const narrowView = matchMedia("(max-width:700px)");
 narrowView.addEventListener('change', syncStripVisible);
+// 頭の行の [N] の幅（アドレスバー・札のスマホ判定と同じ 600px。web/browser-unify.mjs の phoneQuery）
+const phoneEntryView = matchMedia("(max-width:600px)");
 const drawerOpen = () => document.documentElement.classList.contains("side-open");
 
 // タップの中では開閉の印（side-open・aria-expanded）だけを付け、動き（--dur）を次のフレームから始める。
@@ -7851,11 +7853,13 @@ let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry�
 const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
 // 会話の右の欄（ADR 0294〜0297）。サーバーの hostCapabilities.browserUnify（ページと隔離の origin の口）が届いてから読む
-let browserUnifyLoad = null;
-// タブの持ち手の置き場（web/chrome-control.mjs。会話に人が触っているタブがあるか。頭の行の印と右の欄の札・スマホの帯が同じ置き場を見る。ADR 0296）
+let browserUnifyLoad = null, browserUnifyUi = null;
+// タブの持ち手の置き場（web/chrome-control.mjs。会話に人が触っているタブがあるか。頭の行の印と右の欄の札が同じ置き場を見る。ADR 0296）
 const tabHolderStore = createTabHolderStore();
-const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
-  controlStore:chromeControlStore, holderStore:tabHolderStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer'), osActions:() => state.osActions === true })));
+const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => (browserUnifyUi = m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
+  controlStore:chromeControlStore, holderStore:tabHolderStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest,
+  // タブの列を描き直したら、頭の行の [N] も数を追う（スマホの入口。承認済み 2026-11-08）
+  onTabsChange:() => browserEntry?.paint(), osActions:() => state.osActions === true }))));
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
@@ -7891,7 +7895,12 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'),
   humanHeld: id => tabHolderStore.anyHuman(id),
   waiting: handoffWaiting, announce,
   chromeAvailable: () => state.hostCaps?.chromeWindow === true,
+  // スマホは窓のアイコンでなくタブの数の四角（承認済み 2026-11-08）。押すと人の操作中・最後に見たタブを全画面で開く（数が 0 でもファイル・フォルダー・git の入口として出す）
+  mobile: () => phoneEntryView.matches,
+  tabs: id => browserUnifyUi?.tabsOf(id) ?? (chromeWindows.has(id) ? [{ targetId: 'window' }] : []),
+  openEntry: id => { loadBrowserUnify().then(ui => ui.openEntry(id)).catch(error => notify(error?.message || t('tabs:address.failed'))); },
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
+phoneEntryView.addEventListener('change', () => browserEntry?.paint());
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
 // 前の回に見ていた場所は、会話を開く（select が残す）前に読んでおく（起動時に Channels の面の位置を戻す）
 const savedView = readAddress(localStorage);

@@ -64,7 +64,7 @@ export default async function (t) {
     t.ok('閉じているときに押すと、押した所を起点に右の欄を開く', isOpen && openedAt === menuAnchor && entryButton.getAttribute('aria-expanded') === 'true');
     entry.toggle(menuAnchor);
     t.ok('開いているときに押すと閉じ、押した所へ焦点を戻す', !isOpen && closed === 1 && focused === 1 && entryButton.getAttribute('aria-expanded') === 'false');
-    t.ok('Chrome の窓のある会話はスマホのメニューの印を付ける', entryButton.hasAttribute('data-mobile-chrome'));
+    t.ok('スマホの帯をやめたので、窓の有無の印は付けない（入口は [N]）', !entryButton.hasAttribute('data-mobile-chrome'));
   }
 
   // ---- 依頼待ち・人の操作中が「変わった」ときだけ一度読み上げる
@@ -114,6 +114,49 @@ export default async function (t) {
     t.ok('エージェントの操作中は弧（.entry-run.run + svg）を角に置く', mark && mark.classList.contains('run') && mark.classList.contains('entry-run') && mark.tagName === 'SPAN' && mark.querySelector('svg'), entryButton.outerHTML);
     entry.paint();
     t.ok('再描画でも印は 1 つだけ', entryButton.querySelectorAll('.entry-browser-mark').length === 1);
+  }
+
+  // ---- 角の印: 依頼待ちは色の点でなく、人の操作と同じ II の丸に寄せる（承認済み 2026-11-08）
+  {
+    let waiting = false;
+    const entryButton = new N('button');
+    const entry = setupBrowserEntry({ button: entryButton, mac: false, getSessionId: () => 'a', chromeAvailable: () => true,
+      windows: { has: () => true, operating: () => false }, waiting: () => waiting });
+    waiting = true; entry.paint();
+    const mark = entryButton.querySelector('.entry-browser-mark');
+    t.ok('依頼待ちの間は II の丸（色の点は出さない）', mark && mark.classList.contains('entry-paused') && entryButton.querySelector('.entry-requested') === null);
+    t.ok('読み上げの判定は変わらない（requested のまま）', entry.currentMark() === 'requested');
+  }
+
+  // ---- スマホの頭の行の [N]（承認済み 2026-11-08。temporary/mockups/phone-browser-header.html）: タブの数の四角を出し、押すとタブを全画面で開く
+  {
+    let mobile = true, count = 3, openState = false, held = false;
+    const opened = [], closed = [];
+    const entryButton = new N('button'); entryButton.hidden = false;
+    const entry = setupBrowserEntry({ button: entryButton, mac: false, getSessionId: () => 'a', chromeAvailable: () => true,
+      windows: { has: () => false, operating: () => false }, mobile: () => mobile, humanHeld: () => held,
+      tabs: () => Array.from({ length: count }, (_, i) => ({ targetId: `T${i}` })),
+      openEntry: id => opened.push(id),
+      chrome: () => ({ isOpen: () => openState, open: () => { openState = true; }, close: () => { openState = false; closed.push('x'); } }) });
+    const tabn = entryButton.querySelector('.entry-tabn');
+    t.ok('スマホはタブの数の四角を出す（窓のアイコンではない）', tabn && tabn.textContent === '3');
+    t.ok('読み上げの名は実数（aria-label に数を入れる）', (entryButton.getAttribute('aria-label') ?? '').includes('3'));
+    entry.toggle();
+    t.ok('押すと openEntry が開く（人のタブ・最後のタブの優先は browser-unify 側）', opened.join() === 'a' && openState === false);
+    count = 12; entry.paint();
+    t.ok('2 桁は字を詰める（two の印）', tabn.textContent === '12' && tabn.classList.contains('two'));
+    count = 120; entry.paint();
+    t.ok('100 以上は ∞ を出し、読み上げは実数', tabn.textContent === '∞' && tabn.classList.contains('sym') && (entryButton.getAttribute('aria-label') ?? '').includes('120'));
+    count = 0; entry.paint();
+    t.ok('タブが 0 でも「0」を出して消えない（ファイル・git への入口でもある）', tabn.textContent === '0' && entryButton.hidden === false);
+    held = true; openState = false; entry.paint();
+    t.ok('人のタブがある間は II の丸を出す', entryButton.querySelector('.entry-browser-mark')?.classList.contains('entry-paused') === true);
+    openState = true; entry.paint();
+    t.ok('ブラウザーを開いている間は角の印を出さない（中の UI が状態を見せる）', entryButton.querySelector('.entry-browser-mark') === null);
+    entry.toggle();
+    t.ok('開いているときに押すと閉じる（閉じる動作は PC と同じ）', closed.length === 1);
+    mobile = false; openState = false; count = 4; entry.paint(); entry.toggle();
+    t.ok('PC では押すと従来どおり右の欄を開く（openEntry は呼ばない）', opened.length === 1 && openState === true);
   }
 
   // ---- 頭の行の並び

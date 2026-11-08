@@ -42,7 +42,7 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   const display = document.createElement('button'); display.type = 'button'; display.className = 'bu-display';
   display.setAttribute('aria-haspopup', 'menu'); display.onclick = () => onDisplay?.(display, tab);
   omni.append(tree, crumbs, views, input); root.append(conversation, back, forward, reload, omni, display, count, menu, list, error);
-  let tab = null, view = 'preview', ticket = 0, timer = 0, active = -1, suggestions = [], blockedInput = null;
+  let tab = null, view = 'preview', ticket = 0, timer = 0, active = -1, suggestions = [], blockedInput = null, lastTotal = 0;
   const savedViews = new Map();
   const reason = code => t(`tabs:address.reasons.${code}`, { defaultValue: t('tabs:address.failed') });
   function failed(e) { error.textContent = reason(e?.code ?? e?.message); error.hidden = false; }
@@ -122,14 +122,18 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     }
     crumbs.classList.remove('bu-measure');
   }
-  function show(next, total = Number(count.textContent) || 0) {
+  function show(next, total = lastTotal) {
     const changed = tab?.targetId !== next?.targetId;
     tab = next; if (changed && !input.hidden) { cancel(); return; }
     const saved = savedViews.get(tab?.targetId);
     if (saved && saved.url === tab?.url) view = saved.view;
     else { try { view = new URL(tab?.url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch { view = 'preview'; } }
     display.hidden = !onDisplay || !tab; display.textContent = t(tab?.local && tab.mode !== 'chrome' ? 'tabs:display.page' : 'tabs:display.chrome') + ' ⌄';
-    count.textContent = String(total); count.setAttribute('aria-label', t('tabs:strip.count', { count: total }));
+    lastTotal = total;
+    // 頭の行の [N]（.entry-tabn）と同じ規則: 100 以上は ∞（読み上げの名には実数）、2 桁は字を詰める（承認済み 2026-11-08）
+    count.textContent = total > 99 ? '∞' : String(total);
+    count.classList.toggle('two', total >= 10 && total <= 99); count.classList.toggle('sym', total > 99);
+    count.setAttribute('aria-label', t('tabs:strip.count', { count: total }));
     if (!input.hidden) return;
     back.disabled = !tab?.canGoBack; forward.disabled = !tab?.canGoForward; reload.disabled = !tab;
     const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = !['file', 'dir', 'html'].includes(tab?.page?.kind) && !(tab?.page?.kind === 'viz' && file);

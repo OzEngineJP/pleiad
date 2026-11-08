@@ -1,5 +1,5 @@
 // エージェントの Chrome の窓を誰が操作しているかの表示（docs/design-system.md「Chrome の窓」、ADR 0148・0154・0296）。
-//   - createControlBadge・createPhoneBrowserStrip: 映像の再開操作とスマホの入口（web/browser-unify.mjs が置く）
+//   - createControlBadge: アドレスバーのすぐ下の再開操作（web/browser-unify.mjs が置く。スマホは「II あなたが操作中 [AI に戻す]」の 1 行）
 //   - createChromeControlView: 一時停止中の帯（会話の中）と、映像の上に重ねる、エージェントが押した位置の輪。単体で描けて試せる。
 //     輪は web/chrome-panel.mjs の mountOverlay で映像の箱へ差し込む。撮影を断っている間の薄い幕は映像の側（web/chrome-panel.mjs の .cp-veil）が出す（二重にしない）
 //   - chromeControlStore: サーバーの chromeControl・chromeTap イベント（会話ごと）の置き場。右パネルが会話の状態を引く・聞く
@@ -14,13 +14,20 @@ export function ensureBrowserControlStyles() {
   const style = el('style'); style.id = 'browser-control-styles';
   style.textContent = `
  .b2-control{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:4px 12px;font-size:12px;color:var(--ink-weak)}
-.b2-control[hidden],.b2-strip[hidden],.b2-sheet[hidden],.b2-fallback[hidden],.b2-phone-note[hidden]{display:none!important}
+.b2-control[hidden],.b2-sheet[hidden],.b2-fallback[hidden],.b2-phone-note[hidden]{display:none!important}
 .b2-action{border:0;border-radius:var(--r-pill);background:none;color:var(--ink-blue);padding:6px 10px;font:inherit;cursor:pointer}
 .b2-actions{display:flex;justify-content:flex-end;gap:8px}.b2-action.primary{color:var(--ink-blue);background:var(--fill-blue,var(--surface-2))}
 .b2-action:hover{background:var(--surface-2)}
-.b2-strip{display:flex;align-items:center;gap:8px;min-height:44px;font-size:13px;color:var(--ink)}
-.b2-strip-open{min-height:44px;border:0;background:none;color:inherit;font:inherit;cursor:pointer}
-.b2-strip-resume[hidden]{display:none}
+.b2-pause,.b2-grow{display:none}
+/* スマホは「II あなたが操作中 [AI に戻す]」の 1 行（承認済み 2026-11-08。temporary/mockups/phone-browser-header.html の .bu-held） */
+@media(max-width:600px){
+ .b2-control{justify-content:flex-start;gap:8px;padding:0 6px 0 14px;min-height:44px;box-sizing:border-box;font-size:13px;color:var(--ink);border-bottom:1px solid var(--line)}
+ .b2-control .b2-pause{display:block;position:relative;width:14px;height:14px;flex:none}
+ .b2-control .b2-pause::before,.b2-control .b2-pause::after{content:"";position:absolute;top:3px;width:2px;height:8px;border-radius:1px;background:currentColor}
+ .b2-control .b2-pause::before{left:4px}.b2-control .b2-pause::after{right:4px}
+ .b2-control .b2-grow{display:block;flex:1}
+ .b2-control .b2-action{height:36px;padding:0 14px;border:1px solid var(--line);background:var(--surface-paper);color:var(--ink);font-weight:600}
+}
 .b2-input-surface{position:relative;overflow:hidden;touch-action:none;outline:none}.b2-input-surface:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}.b2-ripple{position:absolute;pointer-events:none;width:28px;height:28px;margin:-14px;border-radius:50%;box-shadow:0 0 0 2px var(--line-blue);animation:b2-ripple 550ms var(--ease-out,ease-out) forwards;z-index:3}
 @keyframes b2-ripple{from{opacity:.8;transform:scale(.4)}to{opacity:0;transform:scale(1.6)}}
 .b2-phone-input{position:absolute;z-index:4;border:0;padding:0;margin:0;resize:none;opacity:.01;background:transparent;color:transparent;caret-color:transparent;font-size:16px;pointer-events:none;outline:none}
@@ -32,25 +39,17 @@ export function ensureBrowserControlStyles() {
   document.head.append(style);
 }
 
-/** A return action appears only while a person is operating the video. */
+/** A return action appears only while a person is operating the video.
+ *  構成は「II（.b2-pause）・あなたが操作中・押し広げ（.b2-grow）・AI に戻す」。
+ *  PC は従来どおり右寄せの小さな札。スマホはアドレスバーのすぐ下の 1 行（.b2-pause の II と押し広げが出る。承認済み 2026-11-08） */
 export function createControlBadge({ mount, onResume = () => {} } = {}) {
   ensureBrowserControlStyles();
-  const element = el('div', 'b2-control'), label = el('span', '', t('control:humanOperating'));
+  const element = el('div', 'b2-control'), pause = el('span', 'b2-pause'), label = el('span', '', t('control:humanOperating')), grow = el('span', 'b2-grow');
+  pause.setAttribute('aria-hidden', 'true');
   const resume = el('button', 'b2-action', t('tabs:display.resume')); resume.type = 'button'; element.hidden = true;
   resume.onclick = async () => { resume.disabled = true; try { await onResume(); } finally { resume.disabled = false; } };
-  element.append(label, resume); mount?.append(element);
+  element.append(pause, label, grow, resume); mount?.append(element);
   return { element, update({ visible = false } = {}) { element.hidden = !visible; }, destroy() { element.remove(); } };
-}
-
-/** One entry to reopen the browser; explicit handovers retain their return action. */
-export function createPhoneBrowserStrip({ mount, onActivate = () => {}, onResume = () => {} } = {}) {
-  ensureBrowserControlStyles();
-  const element = el('div', 'b2-strip'), opener = el('button', 'b2-strip-open', t('tabs:address.openPanel'));
-  const resume = el('button', 'b2-action b2-strip-resume', t('tabs:display.resume'));
-  opener.type = resume.type = 'button'; resume.hidden = true;
-  opener.onclick = onActivate; resume.onclick = async () => { resume.disabled = true; try { await onResume(); } finally { resume.disabled = false; } };
-  element.append(opener, resume); mount?.append(element);
-  return { element, update({ waiting = false } = {}) { resume.hidden = !waiting; }, destroy() { element.remove(); } };
 }
 
 export const CONTROL_STATES = ['running', 'idle', 'stopped', 'paused'];

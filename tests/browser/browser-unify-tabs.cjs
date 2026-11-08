@@ -13,19 +13,27 @@ module.exports = async function browserUnifyTabs({ browser, check, screenshots, 
 <link rel="stylesheet" href="/web/tokens.css"><link rel="stylesheet" href="/web/pages/pages.css"><link rel="stylesheet" href="/web/pages/content.css">
 <style>body{display:flex;min-height:100vh;background:var(--surface-0)}#conversation{flex:1;min-width:0;padding:36px;font-size:14px}#panel{width:560px;flex:none;min-width:0;background:var(--surface-paper);height:100vh;display:flex;flex-direction:column;overflow:hidden}#page{overflow:auto;flex:1}#page main{padding:16px 28px}#page .metadata{font-size:11px}#tree{display:none}.i{width:18px;height:18px}#menu{position:fixed;z-index:50;background:var(--surface-paper);box-shadow:0 4px 16px var(--shadow);padding:6px;border-radius:8px}#menu button{display:block;width:100%;text-align:left}#menu[hidden]{display:none}@media(max-width:600px){#conversation{display:none}#panel{width:100%}#page main{padding:16px 20px}}</style>
 <section id="conversation"><h3>ブラウザーの一本化</h3><p>確認のために、計画と実際のページを開いてください。</p><div id="chromeBanner"><div class="cc-banner">一時停止中</div></div><div id="composer"></div></section>
+<header id="top"><button type="button" class="btn btn-icon" id="browserEntry" hidden><svg class="i" viewBox="0 0 24 24"></svg></button></header>
 <aside id="panel"><div id="page"><aside id="tree" hidden></aside><main id="content"></main></div></aside><div id="menu" hidden></div>
 <script type="module">
 import { createBrowserUnify } from '/web/browser-unify.mjs';
+import { setupBrowserEntry } from '/web/header-entries.mjs';
+import { createTabHolderStore } from '/web/chrome-control.mjs';
 import { renderFile } from '/web/pages/file.mjs';
 window.sent=[]; window.notices=[]; window.pageRequests=[];
 window.filePath='D:/dev/pleiad/docs/file-preview.md';
 window.rows=[{sessionId:'one',targetId:'file',windowId:1,title:'file-preview.md',url:'http://localhost/_pleiad/s/one/file?path='+encodeURIComponent(filePath),page:{kind:'file',path:filePath},canGoBack:true},{sessionId:'one',targetId:'web',windowId:1,title:'GitHub · Pleiad',url:'https://github.com/tekalu1/pleiad',favicon:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="gray"/></svg>')}];
-window.chromeFixture={sessionId:'one',tabId:'file',mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true}};
-window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,controlStore:{get:()=>({state:window.agentState||'idle'})},composer:()=>document.querySelector('#composer'),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
-async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});chromeFixture.tabId=args.tabId;chromeFixture.change?.({type:'state'})}return {}},
+window.holderStore=createTabHolderStore();
+window.chromeFixture={sessionId:'one',tabId:'file',opened:false,isOpen(){return this.opened},open(){this.opened=true},mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true;this.opened=false}};
+window.ui=createBrowserUnify({state:{current:'one',cwd:'D:/dev/pleiad'},chrome:()=>chromeFixture,controlStore:{get:()=>({state:window.agentState||'idle'})},holderStore,onTabsChange:()=>window.entry?.paint(),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
+async cmd(command,args){sent.push({command,args});if(command==='chromeAddress')return {suggestions:args.input.includes('missing')?[]:[{path:filePath}]};if(command==='chromeNavigate'&&args.input?.includes('missing'))throw {code:'not-found'};if(command==='chromePinWindow'){if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});chromeFixture.tabId=args.tabId;chromeFixture.change?.({type:'state'})}if(command==='pageOpen')return {kind:args.kind==='dir'?'dir':'file',url:'/site/'+encodeURIComponent(args.path??'page'),path:args.path};return {}},
 showMenu(x,y,items){const menu=document.querySelector('#menu');menu.hidden=false;menu.style.left=Math.min(x,innerWidth-180)+'px';menu.style.top=y+'px';menu.replaceChildren(...items.filter(i=>!i.sep).map(item=>{const b=document.createElement('button');if(item.icon)b.append(item.icon.cloneNode(true));b.append(document.createTextNode(item.label));b.disabled=!!item.disabled;b.onclick=()=>{menu.hidden=true;item.onClick()};return b}))}});
 window.resetRows=()=>ui.onEvent({type:'tab:info',sessionId:'one',reset:true,tabs:rows});resetRows();
 window.enable=()=>ui.capsChanged({browserUnify:true});
+// 頭の行の入口（web/header-entries.mjs と本物と同じ配線。スマホの [N] は openEntry → browser-unify の openEntry）
+window.entry=setupBrowserEntry({button:document.querySelector('#browserEntry'),chrome:()=>chromeFixture,windows:{has:()=>false,operating:()=>window.agentOperating===true},getSessionId:()=>'one',chromeAvailable:()=>true,getChromeState:()=>window.agentState||'idle',humanHeld:id=>holderStore.anyHuman(id),mobile:()=>matchMedia('(max-width:600px)').matches,tabs:id=>ui.tabsOf(id),openEntry:id=>ui.openEntry(id)});
+holderStore.onChange(()=>window.entry?.paint());
+matchMedia('(max-width:600px)').addEventListener('change',()=>window.entry?.paint());
 await renderFile(document.querySelector('#content'),{name:'file-preview.md',path:filePath,kind:'markdown',fetchedAt:'2026-11-06T03:30:00Z',size:18022,text:__SAMPLE__});
 window.ready=true;
 </script></html>`.replace('__SAMPLE__', JSON.stringify(sample).replaceAll('<', '\\u003c'));
@@ -142,7 +150,7 @@ window.ready=true;
       await new Promise(resolve=>web.close(resolve));
     }
     // つなぎ直し: 見張りの登録（watchSession）が鍵の取り直し（pageOpen）より先に線へ出る。逆だと再発行が INVALID で落ちる
-    await page.evaluate(() => ui.openTab({ sessionId:'one', kind:'file', path:'D:/docs/file.md' }));
+    await page.evaluate(async () => { window.openedPageTab = await ui.openTab({ sessionId:'one', kind:'file', path:'D:/docs/file.md' }); });
     await page.evaluate(() => { window.sent.length = 0; chromeFixture.change?.({ type:'reconnected' }); });
     await page.waitForFunction(() => window.sent.some(c => c.command === 'pageOpen'), null, { timeout:5000 }).catch(() => {});
     const order = await page.evaluate(() => window.sent.map(c => c.command));
@@ -150,25 +158,42 @@ window.ready=true;
       order.indexOf('watchSession') !== -1 && order.indexOf('pageOpen') !== -1 && order.indexOf('watchSession') < order.indexOf('pageOpen'), order.join(','));
 
     // ---- 人が触っているタブがある間の戻す入口（ADR 0296）: 見ているタブとは無関係に会話ごと
-    const third = await page.evaluate(() => {
+    const third = await page.evaluate(async () => {
+      resetRows();   // 実機 Chrome の確認で棚を空にしたので、file・web の 2 枚を戻す（計: ファイルのページ + 3 枚）
       ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third', url:'https://example.net/' });
       ui.onEvent({ type:'tab:holder', sessionId:'one', targetId:'web', holder:'human', by:'device' });
-      chromeFixture.tabId='web2'; ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again', url:'https://example.net/' });
+      // web2 を見る（ファイルのページを開いている選択を映像のタブへ切り替える）
+      await ui.focusTab({ targetId:'web2' }, 'one');
       return document.querySelectorAll('.bu-tab').length;
     });
     check('badge shows 「AI に戻す」 while another tab is viewed (any tab of the conversation is human-held)',
-      third === 3 && await page.locator('.b2-control').isVisible() && (await page.locator('.b2-control .b2-action').textContent()).includes('AI に戻す'));
+      third === 4 && await page.locator('.b2-control').isVisible() && (await page.locator('.b2-control .b2-action').textContent()).includes('AI に戻す'),
+      `tabs=${third} visible=${await page.locator('.b2-control').isVisible()} action=${await page.locator('.b2-control .b2-action').textContent()}`);
     await page.evaluate(() => { window.sent.length = 0; });
     await page.locator('.b2-control .b2-action').click();
     check('badge resume sends chromeResume for the conversation', (await page.evaluate(() => window.sent)).some(c => c.command === 'chromeResume' && c.args.sessionId === 'one'));
-    await page.evaluate(() => { chromeFixture.tabId='file'; ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'file', title:'file-preview.md' }); });
+    await page.evaluate(() => ui.focusTab(window.openedPageTab, 'one'));
     check('local page keeps the badge hidden (no video to return to)', await page.locator('.b2-control').isHidden());
     await page.setViewportSize({ width:360, height:720 });
-    await page.evaluate(() => ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again' }));
-    check('phone strip keeps 「AI に戻す」 while the right pane is closed',
-      await page.locator('.bu-phone-strip').isVisible() && await page.locator('.b2-strip-resume').isVisible() && (await page.locator('.b2-strip-resume').textContent()).includes('AI に戻す'));
+    await page.evaluate(() => { chromeFixture.opened = false; ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again' }); entry.paint(); });
+    // スマホの頭の行の [N]（承認済み 2026-11-08）: 入力欄の上の帯はやめ、タブの数の四角が入口
+    check('no browser strip above the composer', await page.locator('.bu-phone-strip,.b2-strip').count() === 0);
+    check('the header shows the tab count as a square', await page.locator('#browserEntry').isVisible() && (await page.locator('#browserEntry .entry-tabn').textContent()) === '4',
+      `entry=${await page.locator('#browserEntry').isVisible()} tabn=${await page.locator('#browserEntry .entry-tabn').textContent()} tabs=${await page.evaluate(() => ui.tabsOf('one').length)}`);
+    check('the header count carries the paused mark while a human holds a tab', await page.locator('#browserEntry .entry-paused').count() === 1);
+    check('the held row hides while a tab nobody holds is on screen', await page.locator('.b2-control').isHidden());
+    await page.locator('#browserEntry').click();
+    await page.waitForFunction(() => window.sent.some(c => c.command === 'chromePinWindow' && c.args?.tabId === 'web'), null, { timeout:3000 });
+    check('the header count opens the human-held tab first', true);
+    check('the held row shows II + 「あなたが操作中」 + 「AI に戻す」 under the address bar',
+      await page.locator('.b2-control').isVisible() && await page.locator('.b2-control .b2-pause').count() === 1 && (await page.locator('.b2-control').textContent()).includes('あなたが操作中'));
+    await page.evaluate(() => { window.sent.length = 0; });
+    await page.locator('.b2-control .b2-action').click();
+    check('the held row returns control to the AI', (await page.evaluate(() => window.sent)).some(c => c.command === 'chromeResume' && c.args.sessionId === 'one'));
+    await page.evaluate(() => { ui.onEvent({ type:'tab:holder', sessionId:'one', targetId:'web', holder:'ai' }); });
+    check('the row and the mark go away once no human tab remains', await page.locator('.b2-control').isHidden() && await page.locator('#browserEntry .entry-paused').count() === 0);
     await page.setViewportSize({ width:1280, height:720 });
-    await page.evaluate(() => { ui.onEvent({ type:'tab:holder', sessionId:'one', targetId:'web', holder:'ai' }); ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again' }); });
+    await page.evaluate(() => ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'web2', title:'Third again' }));
     check('badge goes away once no human tab remains', await page.locator('.b2-control').isHidden());
     await shot('handback-entries');
   } finally { await page.close(); await new Promise(resolve => server.close(resolve)); }

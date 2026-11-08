@@ -1,7 +1,7 @@
 import { t } from './i18n.mjs';
 import { createTabStrip, browserButton, browserIcon, tabIcon } from './tab-strip.mjs';
 import { createAddressBar, hasFileViews } from './address-bar.mjs';
-import { createControlBadge, createPhoneBrowserStrip, createTabHolderStore } from './chrome-control.mjs';
+import { createControlBadge, createTabHolderStore } from './chrome-control.mjs';
 import { pageRequestOf, framePoint } from './page-frame.mjs';
 import { samePath } from './file-actions.mjs';
 import { createPageTabs } from './page-tabs.mjs';
@@ -63,6 +63,8 @@ const css = `
 .bu-tight>.bu-forward:disabled{display:none}
 .bu-mobile>.bu-icon:not(.bu-conversation):not(.bu-more){display:none}.bu-mobile .bu-conversation{display:inline-flex}.bu-mobile .bu-count{display:block;width:20px;height:20px;padding:0;border:1.7px solid var(--ink-weak);margin:0 7px;border-radius:4px;font-size:12px;line-height:16px}.bu-phone-filename{font-weight:600}
 .bu-mobile .bu-omni{height:34px;margin:0 2px}.bu-mobile .bu-crumbs{font-size:13px;text-overflow:ellipsis;display:block;line-height:34px}
+/* 頭の行の [N]（.entry-tabn）と同じ規則: 2 桁は 11px・字間 -0.3px、100 以上は ∞（モック 02） */
+.bu-mobile .bu-count.two{font-size:11px;letter-spacing:-.3px}.bu-mobile .bu-count.sym{font-size:15px;line-height:15.6px}
 .bu-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;background:var(--surface-0);padding:16px;overflow:auto;max-height:70dvh}
 .bu-card{position:relative;min-width:0;overflow:hidden;border-radius:var(--r-m);background:var(--surface-paper)}.bu-card.on{outline:2px solid var(--line-blue)}
 .bu-card-pick{width:100%;text-align:left;padding:0 10px 10px!important}.bu-card-preview{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;margin-bottom:8px}.bu-card-label{display:flex;gap:6px;align-items:center;padding-right:16px}.bu-card-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.bu-card-close{position:absolute;right:4px;bottom:4px;width:24px;height:24px}.bu-overview-new{grid-column:1/-1;justify-self:center}
@@ -74,7 +76,6 @@ const css = `
 .browser-unify .bu-panel>.cp-screen{flex:1;min-height:0;border:0;border-radius:0;margin:0 0 0 var(--bu-tree-width)}
 .bu-tab.bu-flash{animation:bu-flash .9s ease-out}@keyframes bu-flash{0%,40%{background:color-mix(in srgb,var(--line-blue) 22%,transparent)}}
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
-.bu-phone-strip{padding:0 0 6px}.bu-phone-strip[hidden]{display:none}
 .cp-screen>.bu-page-host{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;z-index:5;background:var(--surface-paper)}
 @media(max-width:600px){.bu-tabs{display:none}.bu-toolbar{height:48px}.browser-unify #filePreview[data-panel=chrome-window]{border-radius:0}}
 `;
@@ -103,7 +104,7 @@ export function tabLabel(tab) {
  *   - controlStore: web/chrome-control.mjs の chromeControlStore（エージェントが動いているか・止めたか）
  *   - holderStore: web/chrome-control.mjs の createTabHolderStore（タブの持ち手。頭の行の印と同じ置き場を頭の行と分け合う。無ければ自分で持つ）
  *   - onPageRequest(request, { sessionId, targetId }): ファイルのページからの頼み（tab:page-request）。worktree の頼みは戻り値・例外をページへ返す
- *   - composer(): スマホの帯を置く入力欄（その上に置く）
+ *   - onTabsChange(): タブの列を描き直したとき（頭の行の [N] が数を追う）
  */
 export function createBrowserUnify(deps = {}) {
   const { cmd, state = {}, chrome = () => null, showMenu = () => {}, notify = () => {}, osActions = () => false } = deps;
@@ -328,9 +329,9 @@ export function createBrowserUnify(deps = {}) {
   }
   const root = document.createElement('div'); root.className = 'bu-chrome'; root.append(strip.root, address.root);
   const overview = document.createElement('div'); overview.className = 'bu-overview'; overview.hidden = true; root.append(overview);
-  let badge = null, phoneStrip = null, stripHolder = null;
+  let badge = null;
   async function showOverview() {
-    overview.hidden = !overview.hidden; if (overview.hidden) return;
+    overview.hidden = !overview.hidden; paintControl(); if (overview.hidden) return;
     overview.replaceChildren(...tabs().map(tab => {
       const card = document.createElement('div'); card.className = 'bu-card' + (tab.targetId === current()?.targetId ? ' on' : '');
       const pickButton = document.createElement('button'); pickButton.type = 'button'; pickButton.className = 'bu-card-pick';
@@ -344,27 +345,16 @@ export function createBrowserUnify(deps = {}) {
     }));
     const add = browserButton('plus', t('tabs:strip.new'), () => { overview.hidden = true; navigate('new').catch(failed); }); add.classList.add('bu-overview-new'); overview.append(add);
   }
-  /** 映像の再開操作とスマホの入口を今の状態にする */
+  /** 映像の再開操作（アドレスバーのすぐ下の 1 行）を今の状態にする */
   function paintControl() {
     if (!enabled) return;
-    // 人が触っているタブは会話ごとに数える（anyHuman）。別のタブを見ていても「AI に戻す」は消えない（ADR 0296）
     const c = control();
-    badge?.update({ visible:(!c.tab?.local || c.tab.mode === 'chrome') && c.anyHuman && c.store !== 'paused' });
-    // スマホ: 右の欄を閉じている間、入力欄の上に帯（押すと右の欄を開く）。入力欄は履歴に重ねてあるので、帯は入力欄の中の先頭に置く
-    const composer = deps.composer?.();
-    const want = phoneQuery.matches && (c.agentUsed || c.anyHuman) && tabs().length > 0 && !chrome()?.isOpen?.() && !!composer;
-    if (want && !phoneStrip) {
-      stripHolder = document.createElement('div'); stripHolder.className = 'bu-phone-strip'; composer.prepend(stripHolder);
-      phoneStrip = createPhoneBrowserStrip({ mount:stripHolder, onActivate:() => chrome()?.open?.(), onResume:() => cmd('chromeResume', { sessionId:session() }).catch(failed) });
-    }
-    if (stripHolder) stripHolder.hidden = !want;
-    // 帯は今の「一時停止中」の帯を置き換える（任せるは帯にもある）。帯を出している間は、会話の側の古い帯を出さない
-    const banner = document.getElementById('chromeBanner');
-    if (banner) banner.hidden = want;
-    if (!want) return;
-    phoneStrip.update({ waiting:c.anyHuman });
+    // 人が触っているタブは会話ごとに数える（anyHuman）。PC は別のタブを見ていても「AI に戻す」は消えない（ADR 0296）。
+    // スマホは「II あなたが操作中 [AI に戻す]」を人のタブを開いている間だけ出す（一覧を開いている間も出さない。承認済み 2026-11-08）
+    const shown = phoneQuery.matches ? (c.held.holder === 'human' && overview.hidden) : (c.anyHuman && c.store !== 'paused');
+    badge?.update({ visible:(!c.tab?.local || c.tab.mode === 'chrome') && shown });
   }
-  function paint() { const tab = current(); strip.update(tabs(), tab?.targetId); address.show(tab, tabs().length); paintControl(); paintLocal(); }
+  function paint() { const tab = current(); strip.update(tabs(), tab?.targetId); address.show(tab, tabs().length); paintControl(); paintLocal(); deps.onTabsChange?.(); }
   const pageHost = document.createElement('div'); pageHost.className = 'bu-page-host';
   const frames = new Map(); let local = null, explorer = null;
   const update = document.createElement('button'); update.type = 'button'; update.className = 'bu-page-update'; update.hidden = true;
@@ -518,7 +508,9 @@ export function createBrowserUnify(deps = {}) {
   }
   function attach() {
     chrome()?.mountBrowserChrome?.(root);
-    if (badge && badge.element.parentElement !== root) root.append(badge.element);
+    // 「II あなたが操作中 [AI に戻す]」はアドレスバーのすぐ下の 1 行（承認済み 2026-11-08）。
+    // 一覧（.bu-overview）の後に置くので、PC の出る場所は今のまま（一覧を開いている間は一覧の下）
+    if (badge && badge.element.parentElement !== root) overview.after(badge.element);
     paint();
   }
   /** ファイルのページの頼み。worktree（requestId がある）は結果をページへ返す。メニューの位置はページの点から映像の上の点へ直す */
@@ -556,6 +548,28 @@ export function createBrowserUnify(deps = {}) {
     async focusTab(tab, sessionId) {
       if (sessionId !== session()) return;
       await pick(tab); chrome()?.open?.();
+    },
+    /**
+     * スマホの頭の行の [N]（承認済み 2026-11-08。temporary/mockups/phone-browser-header.html）。
+     * 人が操作中のタブを先に、無ければ最後に見ていたタブを全画面で開く。タブが無ければ新しいタブを開く。
+     * 開いたブラウザーの中の [N] が一覧を開く（頭の行の [N] と最初の動作はわざと違う）
+     */
+    async openEntry(sessionId) {
+      const list = allTabs(sessionId);
+      const held = list.find(item => holderOf(sessionId, item.chromeId ?? item.targetId).holder === 'human');
+      const tab = held ?? (sessionId === session() ? current() : list.find(item => item.targetId === chrome()?.tabId) ?? list[0] ?? null);
+      if (tab) {
+        if (sessionId === session()) await pick(tab);
+        else {
+          const pin = { windowId:tab.windowId ?? null, tabId:tab.chromeId ?? tab.targetId };
+          try { await (chrome()?.pinTab ? chrome().pinTab(sessionId, pin) : cmd('chromePinWindow', { sessionId, ...pin })); }
+          catch (error) { notify(error?.message || t('browser.chromeWindow.pinFailed')); }
+        }
+        chrome()?.open?.(null, sessionId === session() ? {} : { target:sessionId }); return;
+      }
+      if (sessionId === session()) await openInput(null, sessionId);
+      else await cmd('chromeNavigate', { sessionId, action:'new' }).catch(failed);
+      chrome()?.open?.(null, sessionId === session() ? {} : { target:sessionId });
     },
     /** タブの列のタブを一瞬光らせる（もう開いていたファイル） */
     flashTab(tab, sessionId) {

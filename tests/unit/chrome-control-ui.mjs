@@ -1,10 +1,10 @@
 import { N } from '../lib/dom-stub.mjs';
-import { createChromeControlView, createChromeControlStore, createTabHolderStore, createControlBadge, createPhoneBrowserStrip, durationText, renderChromeHandoverLine, renderChromeClosedLine, setChromeHandoverAgentName, CONTROL_STATES } from '../../web/chrome-control.mjs';
+import { createChromeControlView, createChromeControlStore, createTabHolderStore, createControlBadge, durationText, renderChromeHandoverLine, renderChromeClosedLine, setChromeHandoverAgentName, CONTROL_STATES } from '../../web/chrome-control.mjs';
 import { renderPresent } from '../../web/render.mjs';
 import * as history from '../../core/history.mjs';
 
 export const name = 'chrome-control-ui';
-export const title = 'エージェントの Chrome の窓の状態（web/chrome-control.mjs）: 一時停止中の帯と「AI に戻す」・押した位置の輪・スマホの帯の読み上げ・状態の置き場・タブの持ち手の置き場（会話ごと）・会話の引き継ぎの行・記録（DOM の代役。ADR 0148・0154・0294・0296）';
+export const title = 'エージェントの Chrome の窓の状態（web/chrome-control.mjs）: 一時停止中の帯と「AI に戻す」・押した位置の輪・状態の置き場・タブの持ち手の置き場（会話ごと）・会話の引き継ぎの行・記録（DOM の代役。ADR 0148・0154・0294・0296）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -30,17 +30,10 @@ export default async function (t) {
       badge.update({ agentUsed: true, name: 'Claude' }); field.focus();
       for (const fn of win.on?.resize ?? []) fn({ type: 'resize' });
       t.ok('窓の大きさが変わっても札に焦点を移さない', doc.activeElement === field);
+      t.ok('札は II の印と「あなたが操作中」と戻すボタン（スマホでは印の付いた 1 行に並べ替える。承認済み 2026-11-08）',
+        badge.element.querySelector('.b2-pause') !== null && badge.element.querySelector('.b2-grow') !== null
+        && badge.element.querySelector('.b2-action')?.textContent === 'AI に戻す', badge.element.outerHTML);
       badge.destroy();
-      // ---- スマホの帯: 押すと右の欄の映像を開く。読み上げは「画面を開く」と、ドメイン・状態の説明
-      const mount = new N('div');
-      let activated = 0;
-      const strip = createPhoneBrowserStrip({ mount, onActivate: () => { activated++; } });
-      const opener = strip.element.querySelector('.b2-strip-open');
-      t.ok('スマホの帯はブラウザーの入口だけを読み上げる', opener.textContent === 'ブラウザーを開く' && !strip.element.querySelector('.b2-strip-info'));
-      t.ok('スマホの帯は開閉の状態を持たない（aria-expanded を付けない）', opener.getAttribute('aria-expanded') === undefined);
-      opener.onclick?.(); for (const fn of opener.on?.click ?? []) fn({ type: 'click' });
-      t.ok('帯を押すと onActivate を呼ぶ', activated === 1, String(activated));
-      strip.destroy();
     } finally { globalThis.document = oldDoc; globalThis.window = oldWindow; N.prototype.focus = oldFocus; }
   }
 

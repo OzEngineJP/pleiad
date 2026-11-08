@@ -162,29 +162,19 @@ async page => {
   if (await page.locator('#filePreview[data-panel="chrome-window"]').isVisible()) await page.locator('#browserEntry').click();
   // Unified components are mounted independently of the legacy panel assembly.
   const unified = await page.evaluate(async () => {
-    const { createControlBadge, createPhoneBrowserStrip } = await import('/chrome-control.mjs');
+    const { createControlBadge } = await import('/chrome-control.mjs');
     const mount = document.createElement('div'); document.body.append(mount);
     const calls = [], values = [];
     const badge = createControlBadge({ mount, onResume: () => calls.push('resume') });
     values.push(badge.element.hidden === true);
     badge.update({ visible: true });
-    const btn = badge.element.querySelector('button');
+    const btn = badge.element.querySelector('.b2-action');
     values.push(badge.element.hidden === false && badge.element.textContent.includes('あなたが操作中') && btn.textContent === 'AI に戻す');
+    values.push(badge.element.querySelector('.b2-pause') !== null && badge.element.querySelector('.b2-grow') !== null);
     btn.click(); await Promise.resolve();
     values.push(calls.join() === 'resume');
-    let activated = 0, resumed = 0;
-    const strip = createPhoneBrowserStrip({ mount, onActivate: () => { activated++; }, onResume: () => { resumed++; } });
-    const resumeBtn = strip.element.querySelector('.b2-strip-resume');
-    strip.update({ waiting: false });
-    values.push(resumeBtn.hidden === true && resumeBtn.textContent === 'AI に戻す');
-    strip.update({ waiting: true });
-    values.push(resumeBtn.hidden === false);
-    resumeBtn.click(); await Promise.resolve();
-    values.push(resumed === 1);
-    strip.element.querySelector('.b2-strip-open').click();
-    values.push(activated === 1);
-    strip.destroy(); badge.destroy(); mount.remove(); return values;
+    badge.destroy(); mount.remove(); return values;
   });
-  check(unified.every(Boolean), `unified badge: hidden before visible, 「あなたが操作中」+「AI に戻す」, phone strip resume on waiting, open entry (${JSON.stringify(unified)})`);
+  check(unified.every(Boolean), `unified badge: hidden before visible, 「あなたが操作中」+「AI に戻す」, II mark, resume (${JSON.stringify(unified)})`);
   return results.join('\n');
 }
