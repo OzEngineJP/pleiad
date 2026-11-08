@@ -11,7 +11,6 @@ package dev.pleiad.app.remote
 //   <dir>/static/<hostId>.bin  the host's web/ shell as last confirmed (StaticCache.kt, docs/remote.md §8.6)
 
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -260,7 +259,16 @@ class RemoteDevice(
     private val log: (String) -> Unit = {},
 ) {
     val loop = Loop()
-    private val proxies = ConcurrentHashMap<String, DeviceProxy>()
+    // Every read or write of the proxy table (open, release, close, remove, the Plus ledger's list()) is serialized on
+    // proxyLock: the callers come in on different threads (the host windows' worker, the plugin pool, the loop).
+    // Nothing inside the lock waits on a thread that needs it (binds and handshakes run on loop/worker threads), and
+    // none of it runs on the main thread.
+    private val proxyLock = Any()
+    private val proxies = HashMap<String, DeviceProxy>()
+    /** The windows holding each proxy open: open() registers the holder, release() drops it. A proxy is closed only
+     *  when its last holder leaves, so a finishing window never cuts a proxy a newer window already took (the
+     *  notification-tap race that left the new window on net::ERR_EMPTY_RESPONSE). Forced closes drop the whole set. */
+    private val leases = HashMap<DeviceProxy, MutableSet<Any>>()
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, LinkStatus) -> Unit>()
     @Volatile var plusIdToken: (() -> String?)? = null
     @Volatile var plusReadmit: ((String) -> HostCreds?)? = null
@@ -271,14 +279,19 @@ class RemoteDevice(
     fun offStatus(fn: (hostId: String, status: LinkStatus) -> Unit) { listeners.remove(fn) }
 
     /** Host list with the live state ("closed" when no proxy is open, "revoked" when the host removed us). A record's state is its own route's proxy only. */
-    fun list(): List<Pair<HostRecord, LinkStatus?>> = store.hosts().map { h -> h to proxies[h.hostId]?.takeIf { it.creds.via == h.via }?.link?.status }
+    fun list(): List<Pair<HostRecord, LinkStatus?>> = synchronized(proxyLock) {
+        store.hosts().map { h -> h to proxies[h.hostId]?.takeIf { it.creds.via == h.via }?.link?.status }
+    }
 
     /** The route of each host window that is connected now (HostRoute: opening the host again keeps it). */
-    fun connectedVia(): Map<String, String> = proxies.filterValues { it.link.status.state == "connected" }.mapValues { it.value.creds.via }
+    fun connectedVia(): Map<String, String> = synchronized(proxyLock) {
+        proxies.filterValues { it.link.status.state == "connected" }.mapValues { it.value.creds.via }
+    }
 
     /** The route to open [hostId] with when nothing chose one: the open proxy's, else [preferred], else own, else Plus. */
-    fun routeFor(hostId: String, preferred: String? = null): String? =
+    fun routeFor(hostId: String, preferred: String? = null): String? = synchronized(proxyLock) {
         proxies[hostId]?.creds?.via ?: HostRoute.reopen(hostId, store.hosts(), preferred)
+    }
 
     /**
      * Pair and save (blocking). Each pairing makes a new device key (a revoked key is refused even with a QR code,
@@ -320,16 +333,25 @@ class RemoteDevice(
     }
 
     /** A new pairing was saved: an open proxy on the same route reconnects with it. A proxy on the other route keeps its own credentials. */
-    internal fun repaired(rec: HostRecord, keyPair: KeyPair? = null) {
+    internal fun repaired(rec: HostRecord, keyPair: KeyPair? = null): Unit = synchronized(proxyLock) {
         val px = proxies[rec.hostId] ?: return
         if (px.creds.via != rec.via) return
         store.credentials(rec.hostId, rec.via)?.let { px.retryNow(it, keyPair) }
     }
 
-    /** Open (or reuse) the host's proxy. Blocking (binds the port). */
-    @Synchronized
-    fun open(hostId: String, via: String = "own"): DeviceProxy {
-        proxies[hostId]?.let { if (it.creds.via == via) return it else close(hostId) }
+    /**
+     * Open (or reuse) the host's proxy. [user] is what keeps the proxy open — a host window passes itself, and its
+     * release() drops the hold (the last holder leaving closes the proxy). Null: just make sure the proxy exists
+     * (the host list's "open" before it starts the window). Blocking (binds the port); never on the main thread.
+     */
+    fun open(hostId: String, via: String = "own", user: Any? = null): DeviceProxy = synchronized(proxyLock) {
+        val current = proxies[hostId]
+        if (current != null && current.creds.via == via) {
+            if (user != null) attach(current, user)
+            return current
+        }
+        // A different route was asked for: the open proxy goes (its holders' releases become no-ops)
+        if (current != null) dropProxy(hostId)
         val creds = store.credentials(hostId, via) ?: throw IllegalArgumentException("unknown-host")
         val rec = store.host(hostId, via)
         val px = DeviceProxy(
@@ -351,37 +373,68 @@ class RemoteDevice(
         px.start()
         if (px.port != (rec?.port ?: 0)) store.updateHost(hostId, via) { it.copy(port = px.port) }
         proxies[hostId] = px
-        return px
+        if (user != null) attach(px, user)
+        px
     }
 
-    fun proxy(hostId: String): DeviceProxy? = proxies[hostId]
+    fun proxy(hostId: String): DeviceProxy? = synchronized(proxyLock) { proxies[hostId] }
 
-    fun updatePlusRelay(relayUrl: String) {
+    fun updatePlusRelay(relayUrl: String) = synchronized(proxyLock) {
         store.updatePlusRelay(relayUrl)
         for ((hostId, px) in proxies) if (px.creds.via == "plus") {
             store.credentials(hostId, "plus")?.let(px::updateCredentials)
         }
     }
 
-    fun retryPausedPlus() {
+    fun retryPausedPlus() = synchronized(proxyLock) {
         for (px in proxies.values) if (px.creds.via == "plus" && px.link.state == "paused") px.link.retryNow()
     }
 
     private fun staticCacheFile(hostId: String) = File(store.dir, "static/$hostId.bin")
 
-    fun close(hostId: String) { proxies.remove(hostId)?.close() }
+    /** A window that opened a proxy lets it go; with no other window holding it, the proxy closes. */
+    fun release(user: Any) = synchronized(proxyLock) {
+        val px = leases.entries.firstOrNull { user in it.value }?.key ?: return
+        detach(px, user)
+    }
+
+    /** Close the host's proxy now, whoever holds it (unpairing, a route switch, sign-out). Windows use release(). */
+    fun close(hostId: String) = synchronized(proxyLock) { dropProxy(hostId) }
 
     fun rename(hostId: String, label: String, via: String = "own") = store.updateHost(hostId, via) { it.copy(label = PairingCodec.cleanLabel(label)) }
 
     /** Forget the pairing here (the host still lists the device until it is revoked there). */
-    fun remove(hostId: String, via: String = "own"): HostRecord? {
+    fun remove(hostId: String, via: String = "own"): HostRecord? = synchronized(proxyLock) {
         val removed = store.removeHost(hostId, via)
         if (store.hosts().none { it.hostId == hostId }) {
-            close(hostId)
+            dropProxy(hostId)
             staticCacheFile(hostId).delete()
-        } else if (proxies[hostId]?.creds?.via == via) close(hostId)   // its credentials are gone; the other route stays paired
-        return removed
+        } else if (proxies[hostId]?.creds?.via == via) dropProxy(hostId)   // its credentials are gone; the other route stays paired
+        removed
     }
 
-    fun closeAll() { for (k in proxies.keys.toList()) close(k) }
+    fun closeAll() = synchronized(proxyLock) { for (k in proxies.keys.toList()) dropProxy(k) }
+
+    /** Register [user] as holding [px] (moving its hold off another proxy if it had one). Caller holds proxyLock. */
+    private fun attach(px: DeviceProxy, user: Any) {
+        leases.entries.firstOrNull { it.key !== px && user in it.value }?.key?.let { detach(it, user) }
+        leases.getOrPut(px) { mutableSetOf() }.add(user)
+    }
+
+    /** Drop [user]'s hold on [px]; with nobody left holding it, the proxy is closed. Caller holds proxyLock. */
+    private fun detach(px: DeviceProxy, user: Any) {
+        val users = leases[px] ?: return
+        users.remove(user)
+        if (users.isNotEmpty()) return
+        leases.remove(px)
+        if (proxies[px.creds.hostId] === px) proxies.remove(px.creds.hostId)
+        px.close()
+    }
+
+    /** Remove and close the host's proxy whoever holds it (holders' later releases become no-ops). Caller holds proxyLock. */
+    private fun dropProxy(hostId: String) {
+        val px = proxies.remove(hostId) ?: return
+        leases.remove(px)
+        px.close()
+    }
 }
