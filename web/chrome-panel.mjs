@@ -15,8 +15,14 @@ import { notify } from './file-actions.mjs';
 import { createFrameSink, createScreencastInput } from './screencast-frame.mjs';
 import { containRect, pageMetadata } from './page-coords.mjs';
 import { browserIcon } from './tab-strip.mjs';
-import { runMark } from './arc.mjs';
-import { pinIcon } from './chrome-window-switch.mjs';
+
+/** 固定の印（映像の左上の小さなピン） */
+function pinIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'i'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS(svg.namespaceURI, 'path'); p.setAttribute('d', 'M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7'); svg.append(p);
+  return svg;
+}
 
 /** 右の欄の ⋮ の行のアイコン（web/browser-unify.mjs のメニューと同じ線の絵） */
 const menuIcon = kind => { const svg = browserIcon(kind); svg.classList.add('i'); return svg; };
@@ -74,66 +80,6 @@ export function createWindowTable() {
 }
 
 /**
- * 閉じる前の確かめ（小さなダイアログ）。パネルの本体（position: relative）の中に重ねる。
- * 「やめる」に焦点。Esc・外側を押すのも「やめる」。引き継ぎ中・依頼待ちのときは注意の一文を足す。
- */
-export function createCloseDialog({ t }) {
-  const root = el('div', 'cp-dlg'); root.hidden = true;
-  let returnTo = null, serial = 0;
-
-  function dismiss(restore = true) {
-    if (root.hidden) return;
-    root.hidden = true; root.replaceChildren();
-    const target = returnTo; returnTo = null;
-    if (restore && target && !target.disabled) target.focus?.();
-  }
-
-  /**
-   * @param number 閉じるウィンドウの番号（知らなければ null）
-   * @param many   ウィンドウが 2 つ以上ある（番号を題に入れる）
-   * @param agent  エージェントが操作しているウィンドウか（番号の横に印を添える）
-   * @param running エージェントが操作中か
-   * @param risk   'human'（引き継ぎ中）| 'waiting'（依頼待ち）| null
-   * @param run    「閉じる」で呼ぶ
-   * @param trigger 閉じたあとに焦点を返すボタン
-   */
-  function ask({ number = null, many = false, agent = false, running = false, risk = null, run, trigger = null }) {
-    returnTo = trigger;
-    const id = ++serial;
-    const card = el('div', 'cp-dlg-card'); card.setAttribute('role', 'alertdialog'); card.setAttribute('aria-modal', 'true');
-    const pic = el('div', 'cp-dlg-pic'); pic.setAttribute('aria-hidden', 'true');
-    const chip = el('span', 'cp-dlg-chip', number == null ? '' : String(number));
-    if (agent) chip.append(running ? runMark() : el('span', 'cp-dlg-dot'));
-    pic.append(chip);
-    const title = el('p', 'cp-dlg-t', many && number != null ? t('browser.chromeWindow.closeAskNumber', { n: number }) : t('browser.chromeWindow.closeAsk'));
-    title.id = `cp-dlg-t${id}`; card.setAttribute('aria-labelledby', title.id);
-    card.append(pic, title);
-    if (risk) {
-      const note = el('p', 'cp-dlg-n', risk === 'human' ? t('browser.chromeWindow.closeRiskHuman') : t('browser.chromeWindow.closeRiskWaiting'));
-      note.id = `cp-dlg-n${id}`; card.setAttribute('aria-describedby', note.id);
-      card.append(note);
-    }
-    const no = el('button', 'btn btn-quiet', t('pending.cancel')); no.type = 'button';
-    const yes = el('button', 'btn cp-dlg-yes', t('browser.chromeWindow.closeYes')); yes.type = 'button';
-    const buttons = el('div', 'cp-dlg-b'); buttons.append(no, yes);
-    card.append(buttons);
-    no.onclick = () => dismiss();
-    yes.onclick = () => { returnTo = null; root.hidden = true; root.replaceChildren(); run?.(); };
-    root.onclick = event => { if (event.target === root) dismiss(); };
-    root.onkeydown = event => {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation?.(); dismiss(); }
-      else if (event.key === 'Tab') { event.preventDefault(); const active = globalThis.document?.activeElement; (active === no ? yes : no).focus?.(); }
-    };
-    root.replaceChildren(card);
-    root.hidden = false;
-    no.focus?.();
-    return { no, yes, card };
-  }
-
-  return { root, ask, dismiss, get open() { return !root.hidden; } };
-}
-
-/**
  * @param cmd       WS のコマンド
  * @param preview   web/file-preview.mjs の返り値（openPanel・close・panelOpen）
  * @param session   今の会話の id
@@ -142,7 +88,7 @@ export function createCloseDialog({ t }) {
  * @param menuItems (会話の id) → ⋮ の先頭に足す行（リモートの端末の「PC で操作する」など）
  * @param openConversation (会話の id) → ⋮「会話を開く」（子の会話を映しているとき）
  */
-export function setupChromePanel({ cmd, preview, session = () => null, windows = createWindowTable(), closeRisk = () => null,
+export function setupChromePanel({ cmd, preview, session = () => null, windows = createWindowTable(),
   canOperateHere = () => false, operateHere = null, menuItems = () => [], openConversation = null } = {}) {
   let unifiedHeader = null; const tabListeners = new Set();
   let unifiedInput = null, inputOptions = null;   // 映像からの入力（useInput。web/screencast-frame.mjs の createScreencastInput）
@@ -152,7 +98,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
   let watchGeneration = 0, pinGeneration = 0, stateVersion = 0;
   let pendingTab = null, pinRequest = null, targetListeners = new Set();   // 開始待ちのタブと、送信後の完了待ちを分ける
   const inFlightPins = new Set();
-  let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, closing = false, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown;   // hold: 閉じたウィンドウを薄くして残している間
+  let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown;   // hold: 閉じたウィンドウを薄くして残している間
 
   function build() {
     const veil = el('div', 'cp-veil'); veil.hidden = true;
@@ -179,13 +125,12 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     const pin = el('div', 'cp-pin'); pin.setAttribute('aria-hidden', 'true'); pin.append(pinIcon());
     const screen = el('div', 'cp-screen'); screen.tabIndex = 0; screen.setAttribute('role', 'img');
     screen.append(img, ghost, veil, lag, stale, pin);
-    const dialog = createCloseDialog({ t });
     const empty = el('div', 'cp-empty'); empty.hidden = true;
     // 第 10 段のプロフィール pill をここへ差し込む。空の間は幅を取らない。
     const profileSlot = el('div', 'cp-profile-slot'); profileSlot.dataset.slot = 'chrome-profile';
     const node = el('div', 'cp');
     if (unifiedHeader) { node.classList.add('bu-panel'); node.append(unifiedHeader); }
-    node.append(screen, empty, dialog.root);
+    node.append(screen, empty);
     const sink = createFrameSink({ img,
       onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, source: 'chrome', seq }).catch(() => {}); },
       onMark: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, source: 'chrome', seq, mark: true }).catch(() => {}); } });
@@ -194,7 +139,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
       const w = Number(metadata?.deviceWidth), h = Number(metadata?.deviceHeight);
       if (w > 0 && h > 0) { const ratio = `${Math.round(w)} / ${Math.round(h)}`; if (screen.style.aspectRatio !== ratio) screen.style.aspectRatio = ratio; }
     };
-    return { node, profileSlot, screen, img, ghost, dialog, veil, veilText, here, empty, sink, fit, lag, stale };
+    return { node, profileSlot, screen, img, ghost, veil, veilText, here, empty, sink, fit, lag, stale };
   }
 
   const isOpen = () => preview.panelOpen(KEY);
@@ -237,7 +182,6 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     startFade();   // 前の絵を重ね、新しい会話の絵が来たら溶かす
     clearTimeout(holdTimer);
     hold = null; lastShown = undefined;
-    parts.dialog.dismiss(false);
     sessionId = id; state = null; frameMeta = null; ended = false;
     parts.sink.reset(); unifiedInput?.reset();
     connecting = !pagePaused && windows.has(id);
@@ -274,26 +218,6 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     clearTimeout(holdTimer);
     hold = { windowId, number, index };
     holdTimer = setTimeout(() => { hold = null; if (parts) paint(); }, HOLD_MS);
-  }
-
-  /** 閉じる前の確かめ（いつも出す）。映像に映っているウィンドウを閉じる */
-  function askClose(trigger) {
-    const id = sessionId;
-    if (!id || !windows.has(id) || closing || !parts) return;
-    const shown = shownNow();
-    const rows = windows.list(id);
-    const number = shown != null ? windows.numberOf(id, shown) : rows.length === 1 ? rows[0].number : null;
-    parts.dialog.ask({ number, many: windows.count(id) > 1, agent: shown != null && shown === windows.current(id), running: windows.operating(id),
-      risk: closeRisk(id), trigger, run: () => closeShown(id, shown) });
-  }
-  async function closeShown(id, windowId) {
-    if (closing) return;
-    closing = true;
-    try {
-      const result = await cmd('chromeCloseWindow', windowId != null && windows.count(id) > 1 ? { sessionId: id, windowId } : { sessionId: id });
-      if (result?.failed) notify(t('browser.chromeWindow.closeFailed'));
-    } catch (error) { notify(error?.message || t('browser.chromeWindow.closeFailed')); }
-    finally { closing = false; }
   }
 
   function paint() {
@@ -413,7 +337,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     observer?.disconnect(); observer = null;
     clearTimeout(resizeTimer); clearTimeout(holdTimer);
     hold = null; lastShown = undefined;
-    endFade(); parts?.dialog.dismiss(false);
+    endFade();
     if (sessionId && !pagePaused) cmd('browserScreencastStop', { sessionId, source: 'chrome' }).catch(() => {});
     sessionId = null; owner = null; state = null; frameMeta = null; ended = false; connecting = false; lastBox = null; pagePaused = false; pendingTab = null;
     parts?.sink.reset(); unifiedInput?.reset();
@@ -500,7 +424,6 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
       if (sessionId && owner && sessionId !== owner && openConversation) {
         const id = sessionId; items.push({ label:t('browser.chromeWindow.openConversation'), icon:menuIcon('chat'), onClick:() => openConversation(id) });
       }
-      items.push({ label:t('browser.chromeWindow.closeShown'), icon:menuIcon('window'), disabled:!windows.list(sessionId).length || closing, onClick:() => askClose(anchor) });
       return items;
     },
     get tabId() { return state?.tabId ?? null; },
@@ -587,7 +510,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
         // 閉じたウィンドウを薄く残している間は、新しい絵を映さない（届いたことだけ返して、次を止めない）
         cmd('browserScreencastAck', { sessionId, source: 'chrome', seq: message.seq }).catch(() => {});
       }
-      else if (message.type === 'frame' && typeof message.data === 'string') { fadeOutGhost(); frameMeta = message.metadata ?? null; parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); }
+      else if (message.type === 'frame' && typeof message.data === 'string') { fadeOutGhost(); frameMeta = message.metadata ?? null; parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); for (const listener of tabListeners) listener({ type:'frame', tabId: message.tabId }); }
       else if (message.type === 'mark') parts.sink.push(message);
       else if (message.type === 'video') { video = { lag: message.lag === true, stale: message.stale === true }; paint(); }
       else if (message.type === 'interaction') {

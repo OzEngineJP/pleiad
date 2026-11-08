@@ -89,10 +89,10 @@ body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) v
 .file-preview-pdf canvas{display:block;margin:auto}
 .file-preview-pdf-text{padding:16px;font-size:var(--fs-s);overflow-wrap:anywhere}
 .file-preview-pdf-text summary{cursor:pointer;color:var(--ink-blue)}
-.file-preview-resize{position:absolute;inset:0 auto 0 0;width:8px;cursor:col-resize;touch-action:none;z-index:2}
-/* 掴める幅は 8px のまま、見える印は細い丸い棒。上下は紙の角の丸み（--r-l）の分だけ空け、会話の角に掛からない。
+.file-preview-resize{position:absolute;inset:0 auto 0 0;width:8px;cursor:col-resize;touch-action:none;z-index:8}
+/* 掴める幅は 8px のまま、見える印は細い丸い棒。z-index は Chrome の画面・ツリーの層（5・6）より上に置く。
    フォーカスの輪も四角い 8px の箱ではなく棒に沿わせる（輪の色と太さはボタンと同じ） */
-.file-preview-resize::before{content:'';position:absolute;inset:var(--r-l) 2px;border-radius:var(--r-pill)}
+.file-preview-resize::before{content:'';position:absolute;inset:0 2px;border-radius:var(--r-pill)}
 .file-preview-resize:hover::before,.file-preview-resize:focus-visible::before{background:var(--surface-3)}
 .file-preview-resize:focus-visible{outline:none}
 .file-preview-resize:focus-visible::before{outline:2px solid var(--line-blue);outline-offset:1px}

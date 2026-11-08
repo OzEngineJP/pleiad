@@ -1,6 +1,7 @@
 import { t, has } from './i18n.mjs';
 import { createTabStrip, browserButton, browserIcon, tabIcon } from './tab-strip.mjs';
-import { createWindowSwitch } from './chrome-window-switch.mjs';
+import { createCombo } from './combo.mjs';
+import { runMark } from './arc.mjs';
 import { createAddressBar, hasFileViews } from './address-bar.mjs';
 import { createControlBadge, createTabHolderStore } from './chrome-control.mjs';
 import { pageRequestOf, framePoint } from './page-frame.mjs';
@@ -64,11 +65,19 @@ const css = `
 .tabn-badge{position:relative;display:grid;place-items:center;width:20px;height:20px;flex:none;padding:0;border:0;background:transparent;font-size:12px;line-height:16px;color:var(--ink-weak)}
 .tabn-badge>svg{position:absolute;inset:0;width:20px;height:20px;overflow:visible}.tabn-badge>svg rect{stroke:currentColor}.tabn-value{position:relative;z-index:1}
 .bu-tight>.bu-forward:disabled{display:none}
-.bu-mobile>.bu-icon:not(.bu-conversation):not(.bu-more){display:none}.bu-mobile .bu-conversation{display:inline-flex}.bu-mobile .bu-count{display:block;margin:0 7px}.bu-mobile .bu-count.tabn-badge{display:grid;color:var(--ink-weak)}.bu-phone-filename{font-weight:600}
+.bu-mobile>.bu-icon:not(.bu-conversation):not(.bu-more){display:none}.bu-mobile .bu-conversation{display:inline-flex}.bu-mobile .bu-count{display:grid;margin:0 12px}.bu-mobile .bu-count.tabn-badge{color:var(--ink-weak);position:relative}.bu-mobile .bu-count.tabn-badge::before{content:'';position:absolute;inset:-12px}.bu-phone-filename{font-weight:600}
 .bu-mobile .bu-omni{height:34px;margin:0 2px}.bu-mobile .bu-crumbs{font-size:13px;text-overflow:ellipsis;display:block;line-height:34px}
-.bu-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;background:var(--surface-0);padding:16px;overflow:auto;max-height:70dvh}
+.bu-overview{display:flex;flex-direction:column;background:var(--surface-0);max-height:70dvh;overflow:visible}
+.bu-ov-head{display:flex;align-items:center;gap:2px;flex:none;height:52px;padding:0 4px;background:var(--surface-3)}
+.bu-ov-head .bu-icon{width:44px;height:44px}
+.bu-ov-head .bu-conv{flex:1;min-width:0;max-width:none;margin:0 4px}
+.bu-ov-head .bu-conv input{height:44px;font-size:14px;padding:0 28px 0 12px}
+.bu-ov-head .bu-conv::after{top:18px;right:12px}
+.bu-ov-head .bu-conv>.run{top:15px}
+.bu-ov-head .bu-conv .clist{width:268px;max-width:calc(100vw - 70px)}
+.bu-ov-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:16px;overflow-y:auto;flex:1;min-height:0;align-content:start}
 .bu-card{position:relative;min-width:0;overflow:hidden;border-radius:var(--r-m);background:var(--surface-paper)}.bu-card.on{outline:2px solid var(--line-blue)}
-.bu-card-pick{width:100%;text-align:left;padding:0 10px 10px!important}.bu-card-preview{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;margin-bottom:8px}.bu-card-label{display:flex;gap:6px;align-items:center;padding-right:16px}.bu-card-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.bu-card-close{position:absolute;right:4px;bottom:4px;width:24px;height:24px}.bu-overview-new{grid-column:1/-1;justify-self:center}
+.bu-card-pick{width:100%;text-align:left;padding:0 10px 10px!important}.bu-card-preview{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;margin-bottom:8px}.bu-card-label{display:flex;gap:6px;align-items:center;padding-right:16px}.bu-card-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.bu-card-close{position:absolute;right:4px;bottom:4px;width:24px;height:24px}
 .browser-unify #filePreview[data-panel=chrome-window]{padding:0;gap:0;overflow:hidden}
 .browser-unify #filePreview[data-panel=chrome-window]>.file-preview-head,.browser-unify #filePreview[data-panel=chrome-window]>.file-preview-toolbar{display:none}
 .browser-unify #filePreview[data-panel=chrome-window] .file-preview-body-layout{padding:0;gap:0}
@@ -79,53 +88,27 @@ const css = `
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
 .bu-agent{display:grid;place-items:center;flex:none;width:14px;height:14px}
 .bu-agent .run svg{width:12.32px;height:12.32px;stroke-width:1.7}
-.cp-sw{display:grid;grid-template-rows:0fr;visibility:hidden;flex:none;min-width:0;transition:grid-template-rows var(--dur) var(--ease-out),visibility 0s linear var(--dur)}
-.cp-sw[data-open]{grid-template-rows:1fr;visibility:visible;transition-delay:0s;background:var(--bu-frame)}
-.cp-sw-in{overflow:hidden;min-height:0;min-width:0}
-.cp-sw-row{display:flex;align-items:center;gap:4px;min-width:0;height:40px;padding:0 6px 0 8px}
-.cp-sw-list{position:relative;display:flex;gap:2px;flex:1;min-width:0;padding:2px;overflow-x:auto;scrollbar-width:none;border-radius:999px;background:var(--surface-3)}
-.cp-sw-list::-webkit-scrollbar{display:none}
-.cp-sw-pad{position:absolute;left:0;top:2px;width:44px;height:24px;border-radius:999px;background:var(--surface-paper);box-shadow:0 1px 2px var(--shadow);pointer-events:none;transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
-.cp-sw-chip{position:relative;flex:none;display:flex;align-items:center;justify-content:center;gap:2px;min-width:44px;height:24px;padding:0;border:0;border-radius:999px;background:none;color:var(--ink-weak);font:inherit;font-size:12px;cursor:pointer;transition:opacity var(--dur) var(--ease-out),color var(--dur-fast) var(--ease-out)}
-.cp-sw-chip:hover:not(:disabled){color:var(--ink)}
-.cp-sw-chip[aria-selected="true"]{color:var(--ink)}
-.cp-sw-chip:disabled{cursor:default}
-.cp-sw-chip.ghost{opacity:.35;pointer-events:none}
-.cp-sw-chip:focus-visible,.cp-sw-follow:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
-.cp-sw-num{min-width:0;line-height:1}
-.cp-sw-ag{display:grid;place-items:center;width:0;height:14px;transform:scale(0);transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
-.cp-sw-chip[data-agent] .cp-sw-ag{width:14px;transform:scale(1)}
-.cp-sw-ag .run svg{width:12.32px;height:12.32px;stroke-width:1.7}
-.cp-sw-chip[data-agent][data-idle] .cp-sw-ag::after{content:"";display:block;width:6px;height:6px;border-radius:50%;color:var(--ink-weak);background:currentColor}
-.cp-sw-dot{display:block;width:6px;height:6px;border-radius:50%;color:var(--ink-weak);background:currentColor}
-.cp-sw-dot.wait{color:var(--ink-mark)}
-.cp-sw-chip.cp-sw-conv{min-width:0;width:auto;max-width:160px;padding:0 10px;gap:5px}
-.cp-sw-chip + .cp-sw-conv{margin-left:5px}
-.cp-sw-conv[data-on]{color:var(--ink)}
-.cp-sw-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
-.cp-sw-cm{display:grid;place-items:center;flex:none;width:14px;height:14px}
-.cp-sw-cm:empty{display:none}
-.cp-sw-cm .run svg{width:12.32px;height:12.32px;stroke-width:1.7}
-.cp-sw-chip.flash{animation:cp-sw-flash 700ms var(--ease-out)}
-@keyframes cp-sw-flash{0%{box-shadow:0 0 0 3px var(--line-blue)}100%{box-shadow:0 0 0 3px transparent}}
-.cp-sw[data-paused] .cp-sw-chip:not(.cp-sw-conv){opacity:.45}
-.cp-sw-follow{flex:none;position:relative;width:32px;height:32px;color:var(--ink-weak)}
-.cp-sw-follow svg{width:17px;height:17px}
-.cp-sw-follow.on{color:var(--ink-blue)}
-.cp-sw-follow[data-away]{color:var(--ink)}
-.cp-sw-follow.flash::after{content:"";position:absolute;inset:0;border-radius:50%;animation:cp-sw-flash 700ms var(--ease-out);pointer-events:none}
-@media (pointer:coarse),(max-width:520px){
-  .cp-sw-chip,.cp-sw-pad{height:30px}
-  .cp-sw-chip{min-width:50px}
-  .cp-sw-follow{width:40px;height:40px}
-}
-@media (prefers-reduced-motion:reduce){
-  .cp-sw,.cp-sw-pad,.cp-sw-chip,.cp-sw-ag{transition:none}
-  .cp-sw-chip.flash,.cp-sw-follow.flash::after{animation:none}
-  .cp-sw-chip.flash{box-shadow:0 0 0 2px var(--line-blue)}
-}
+/* 上の行: 会話の切替（共有 combo）＋ タブの列 ＋ 右端に固定の ＋（承認済み 2026-11-08） */
+.bu-tabrow{display:flex;align-items:stretch;height:42px;min-width:0;gap:4px;padding-left:8px;background:var(--bu-frame)}
+.bu-tabrow .bu-conv{flex:none;align-self:flex-start;min-width:0;max-width:220px;margin-top:4px}
+.bu-conv input{height:34px;font-size:13px;padding:0 24px 0 12px}
+.bu-conv::after{content:'';position:absolute;right:10px;top:12px;width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);color:var(--ink-weak);pointer-events:none}
+.bu-conv>.run{position:absolute;left:8px;top:10px;display:grid;place-items:center;pointer-events:none}
+.bu-conv>.run svg{width:14px;height:14px}
+.bu-conv:has(>.run:not([hidden])) input{padding-left:28px}
+.bu-conv .clist{z-index:30}
+.bu-tabrow .bu-tabs{flex:1;height:42px;padding:4px 4px 0 0;overflow-x:auto;scrollbar-width:none}
+.bu-tabrow .bu-tabs::-webkit-scrollbar{display:none}
+.bu-tabrow .bu-tab{height:38px;padding-bottom:4px}
+.bu-tabrow .bu-new{flex:none;align-self:center;width:36px;height:34px;margin:0 6px 0 0}
+/* アドレスバーの下の細い読み込み線（スマホのタブ切替。新しい映像・ページが届くまで） */
+.bu-load{position:absolute;left:0;right:20%;bottom:0;height:2px;background:var(--line-blue);animation:bu-load .8s ease-in-out infinite alternate}
+@keyframes bu-load{to{right:0}}
+@media(min-width:601px){.bu-load{display:none}}
+@media(prefers-reduced-motion:reduce){.bu-load{animation:none}}
 .cp-screen>.bu-page-host{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;z-index:5;background:var(--surface-paper)}
-@media(max-width:600px){.bu-tabs{display:none}.bu-toolbar{height:48px}.browser-unify #filePreview[data-panel=chrome-window]{border-radius:0}}
+@media(max-width:760px){.browser-unify #filePreview{padding:0;border-radius:0}.browser-unify #filePreview .file-preview-content{border-radius:0}}
+@media(max-width:600px){.bu-tabrow{display:none}.bu-toolbar{height:48px}.bu-overview{position:absolute;inset:0;max-height:none;z-index:40}}
 `;
 
 // i18n-dynamic: tabs:address.locations.
@@ -176,13 +159,8 @@ export function createBrowserUnify(deps = {}) {
   const allTabs = id => { const local = pages.list(id), linked = new Set(local.map(tab => tab.chromeId).filter(Boolean)); const merged = [...local, ...(rows.get(id) ?? []).filter(tab => !linked.has(tab.targetId))];
     for (const tab of merged) { const key = `${id}:${tab.targetId}`; if (!orders.has(key)) orders.set(key, ++order); }
     return merged.sort((a,b) => orders.get(`${id}:${a.targetId}`) - orders.get(`${id}:${b.targetId}`)); };
-  // 下の列は映している窓のタブだけ（8e2bd1ab^ 286 行）。ファイル・ページのタブは窓に属さないので残し、窓の分からないタブは隠さない
-  const tabs = () => {
-    const id = session(), list = allTabs(id);
-    const win = shownWindow(id);
-    if (win == null || !(windowsTbl?.ids?.(id) ?? []).includes(win)) return list;
-    return list.filter(tab => tab.page || !Number.isSafeInteger(tab.windowId) || tab.windowId === win);
-  };
+  // タブの列は選んだ会話の窓全部のタブ（承認済み 2026-11-08。窓番号は出さない）。子を選んだら子の分だけ
+  const tabs = () => allTabs(session());
   const current = () => tabs().find(tab => active?.sessionId === session() && tab.targetId === active.targetId) ?? tabs().find(tab => tab.targetId === chrome()?.tabId) ?? tabs()[0] ?? null;
   const holderOf = (sessionId, targetId) => holderStore.holderOf(sessionId, targetId);
   const phoneQuery = matchMedia('(max-width: 600px)');
@@ -238,12 +216,16 @@ export function createBrowserUnify(deps = {}) {
     const tab = tabs().find(item => item.targetId === args.targetId) ?? current();
     if (action === 'tree') { explorer?.toggle(); return {}; }
     if (action === 'new' || action === 'home') {
-      const opened = await openInput(args.input, sessionId); if (opened) { chrome()?.open?.(); return opened; }
+      const pending = beginLoad({ pending:true });
+      const opened = await openInput(args.input, sessionId).catch(error => { if (loadTicket === pending) clearLoading(); throw error; });
+      if (loadTicket === pending) clearLoading();   // pick が具体的な待ちへ替えていなければ下ろす
+      if (opened) { chrome()?.open?.(); return opened; }
     }
     if (tab?.local) {
       if (action === 'close') {
         if (!discard(tab)) return {};
         if (tab.chromeId) await cmd('chromeNavigate', { sessionId, targetId:tab.chromeId, action:'close' });
+        if (loadTicket?.targetId === tab.targetId) clearLoading();
         frames.get(tab.targetId)?.frame.remove(); frames.delete(tab.targetId); pages.close(tab);
         if (active?.targetId === tab.targetId) { active = null; if (tabs().length) await pick(tabs()[0]); else await openInput(null, sessionId); }
         return {};
@@ -280,7 +262,7 @@ export function createBrowserUnify(deps = {}) {
             if (target) {
 
               // Navigation uses the parent-owned URL so missing bridges and source documents work too.
-              here.url = target; here.pendingNav = null; here.frame.src = target;
+              here.url = target; here.pendingNav = null; here.loaded = false; here.frame.src = target;
               pages.histGo(tab, dir);
               return {};
             }
@@ -302,15 +284,41 @@ export function createBrowserUnify(deps = {}) {
     if (result?.targetId) await pick(tabs().find(item => item.targetId === result.targetId) ?? { targetId:result.targetId });
     return result;
   }
+  // ---- 読み込み線（スマホ。タブを押した直後から、新しい映像・ページが届くまで。古い応答では下ろさない） ----
+  const loadLine = document.createElement('div'); loadLine.className = 'bu-load'; loadLine.hidden = true;
+  let loadTicket = null, loadTimer = 0;
+  function beginLoad(ticket) {
+    clearTimeout(loadTimer);
+    if (!phoneQuery.matches) { loadTicket = null; loadLine.hidden = true; return null; }
+    loadTicket = { sessionId:session(), ...ticket };
+    loadLine.hidden = false;
+    const captured = loadTicket;
+    loadTimer = setTimeout(() => { if (loadTicket === captured) clearLoading(); }, 12000);
+    return loadTicket;
+  }
+  function clearLoading(ticket = null) {
+    if (ticket && loadTicket !== ticket) return;
+    clearTimeout(loadTimer); loadTicket = null; loadLine.hidden = true;
+  }
   async function pick(tab) {
     const selection = active = { sessionId:session(), targetId:tab.targetId };
+    clearLoading();   // 前の待ち（別のタブへ替えた・古い線）はここで下ろす
     overview.hidden = true;
-    if (tab.local && tab.mode !== 'chrome') { chrome()?.cancelTabPin?.(); paint(); return; }
+    if (tab.local && tab.mode !== 'chrome') {
+      chrome()?.cancelTabPin?.();
+      const entry = frames.get(tab.targetId);
+      if (entry?.loaded !== true) beginLoad({ targetId:tab.targetId, local:true });
+      paint(); return;
+    }
     try {
-      const pin = { windowId:tab.windowId ?? null, tabId:tab.chromeId ?? tab.targetId };
+      const target = tab.chromeId ?? tab.targetId;
+      // AI が操作中のタブを選ぶ = エージェントを追う（固定を解く。専用の追うボタンは無い）
+      const follow = target != null && target === chrome()?.screencastState?.agentTabId;
+      const pin = follow ? { windowId:null, tabId:null } : { windowId:tab.windowId ?? null, tabId:target };
+      beginLoad({ targetId:tab.targetId, chrome:target, follow });
       const pending = chrome()?.pinTab ? chrome().pinTab(selection.sessionId, pin) : cmd('chromePinWindow', { sessionId:selection.sessionId, ...pin });
       paint(); await pending;
-    } catch (error) { pinFailed(error); }
+    } catch (error) { if (active === selection) clearLoading(); pinFailed(error); }
   }
   async function display(mode) {
     let tab = current(); if (!tab) return;
@@ -352,7 +360,7 @@ export function createBrowserUnify(deps = {}) {
     const held = tab ? holderOf(sessionId, tab.chromeId ?? tab.targetId) : { holder:'ai' };
     return { sessionId, tab, held, agentTab, store, anyHuman, agentUsed:store !== 'idle' || agentTab != null };
   }
-  const strip = createTabStrip({ label:tabLabel, onPick:pick, onClose:tab => navigate('close', { targetId:tab.targetId }).catch(failed), onNew:() => navigate('new').catch(failed),
+  const strip = createTabStrip({ label:tabLabel, externalNew:true, onPick:pick, onClose:tab => navigate('close', { targetId:tab.targetId }).catch(failed), onNew:() => navigate('new').catch(failed),
     // タブの右クリック: 今のタブの操作、その下に再読み込み・タブを閉じる（モック v6 の「タブを右クリック」。題は付けない）
     onMenu(tab, event) {
       event.preventDefault();
@@ -386,109 +394,61 @@ export function createBrowserUnify(deps = {}) {
     if (!phoneQuery.matches) items.push({ sep:true }, { label:t('tabs:address.closePanel'), icon:icon('panel'), onClick:close });
     const box = anchor.getBoundingClientRect(); showMenu(box.left, box.bottom + 4, items);
   }
-  // ---- 上の列（会話の題・ウィンドウの番号・「エージェントを追う」。inapp-browser.md「見るウィンドウを選ぶ」） ----
-  /** 切り替えられない間: PC で引き継いでいる・ほかの端末が操作している。会話の題のチップはいつも押せる */
-  const switchDisabled = id => {
-    const row = deps.controlStore?.get?.(id) ?? {};
-    return row.state === 'paused' && !(row.by === 'device' && deps.deviceOperating?.(id) === true);
-  };
-  const pinnedWindowOf = id => { const pin = windowsTbl?.pinned?.(id); return pin != null && (windowsTbl?.ids?.(id) ?? []).includes(pin) ? pin : null; };
-  const pinnedAny = id => pinnedWindowOf(id) != null || (id === session() && (chrome()?.screencastState?.pinnedWindowId != null || chrome()?.screencastState?.pinnedTabId != null));
-  /** 映像に映っているウィンドウ。閉じたウィンドウを薄くして残している間は、それ */
-  const shownWindow = id => {
-    if (id === session()) {
-      const hold = chrome()?.hold;
-      if (hold?.windowId != null) return hold.windowId;
-      const live = chrome()?.screencastState;
-      const row = (live?.list ?? []).find(item => item.tabId === live?.tabId);
-      if (Number.isSafeInteger(row?.windowId)) return row.windowId;
-    }
-    return pinnedWindowOf(id) ?? windowsTbl?.current?.(id) ?? (windowsTbl?.ids?.(id) ?? [])[0] ?? null;
-  };
-  /** 上の列に出す会話: この会話と、窓のある直接の子の会話（映している子は窓が無くても）。2 つ以上のときだけ */
+  // ---- 上の行の会話の切替（共有 combo。窓番号と「エージェントを追う」は出さない。承認済み 2026-11-08） ----
+  /** 上の行に出す会話: この会話と、窓のある直接の子の会話（映している子は窓が無くても）。2 つ以上のときだけ */
   function convList() {
     const owner = state.current, shown = session();
     if (!owner) return [];
-    const list = [{ sessionId: owner, label: t('browser.chromeWindow.thisConversation'), waits: false }];
+    const list = [{ sessionId: owner, label: t('browser.chromeWindow.thisConversation') }];
     for (const row of deps.conversations?.() ?? []) {
       if (!row?.taskId || !row.sessionId || row.sessionId === owner) continue;
       if (!(row.windows > 0) && row.sessionId !== shown) continue;
-      list.push({ sessionId: row.sessionId, label: row.title || t('browser.chromeWindow.childUntitled'), waits: row.waiting === true });
+      list.push({ sessionId: row.sessionId, label: row.title || t('browser.chromeWindow.childUntitled') });
     }
-    if (shown && !list.some(conv => conv.sessionId === shown)) list.push({ sessionId: shown, label: t('browser.chromeWindow.childUntitled'), waits: false });
-    if (list.length < 2) return [];
-    return list.map(conv => ({ sessionId: conv.sessionId, label: conv.label, agent: deps.agentName?.(conv.sessionId), current: conv.sessionId === shown,
-      mark: conv.waits || deps.waiting?.(conv.sessionId) === true ? 'wait' : windowsTbl?.operating?.(conv.sessionId) || deps.controlStore?.get?.(conv.sessionId)?.state === 'running' ? 'run' : null }));
+    if (shown && !list.some(conv => conv.sessionId === shown)) list.push({ sessionId: shown, label: t('browser.chromeWindow.childUntitled') });
+    return list.length < 2 ? [] : list;
   }
-  /** 番号のチップ: その会話を映してからそのウィンドウを固定する（固定は会話に 1 つ。映し始めの固定はパネルの pinTab が受け持つ） */
-  function onPick(windowId, ownerId) {
-    const id = ownerId ?? session();
-    if (!id || !Number.isSafeInteger(windowId) || switchDisabled(id) || !(windowsTbl?.ids?.(id) ?? []).includes(windowId)) return;
-    active = null;
-    if (id !== session()) chrome()?.open?.(null, { target: id });
-    const pin = { windowId, tabId: null };
-    (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => pinFailed(error));
-  }
-  /** 会話の題のチップ: 会話は移らず、映像だけその会話の Chrome へ替える */
+  /** 会話の切替: 会話は移らず、映像だけその会話の Chrome へ替える */
   function onPickConv(id) { if (id && id !== session()) { active = null; chrome()?.open?.(null, { target: id }); } }
-  /** 「エージェントを追う」。追っている間に押すと、今映っているウィンドウを固定する */
-  function onFollow() {
-    const id = session();
-    if (!id || switchDisabled(id)) return;
-    if (pinnedAny(id)) {
-      const pin = { windowId: null, tabId: null };
-      (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => pinFailed(error));
-      switcher.flashFollow();
-    } else {
-      const shown = shownWindow(id);
-      if (shown == null) return;
-      const pin = { windowId: shown, tabId: null };
-      (chrome()?.pinTab ? chrome().pinTab(id, pin) : cmd('chromePinWindow', { sessionId: id, ...pin })).catch(error => pinFailed(error));
-    }
-  }
-  const switcher = createWindowSwitch({ t, getName: () => deps.agentName?.(session()) ?? 'Claude', onPick, onPickConv, onFollow });
-  let lastAgentWin;
-  /** 上の列を描く（チップの並び・印・追う・固定の印） */
+  const convOptions = () => convList().map(row => ({ value: row.sessionId, label: row.label }));
+  const conv = createCombo({ ariaLabel: t('browser.chromeWindow.pickConversation'), cls: 'bu-conv', strict: true, options: convOptions,
+    onCommit: id => onPickConv(id) });
+  const convRun = runMark(); convRun.hidden = true; conv.root.prepend(convRun);
+  /** 上の行の切替を今の状態にする（選ぶ会話・動いている印） */
   function paintSwitch() {
     if (!enabled) return;
-    const shown = session();
-    const convs = convList();
-    const rows = shown ? windowsTbl?.list?.(shown) ?? [] : [];
-    const known = rows.length > 0 && rows.every(row => row.windowId !== null);
-    const shownWin = shown ? shownWindow(shown) : null, agentWin = shown ? windowsTbl?.current?.(shown) ?? null : null;
-    const items = known && (rows.length >= 2 || !convs.length) ? rows.map(row => ({ windowId: row.windowId, number: row.number, selected: row.windowId === shownWin, agent: row.windowId === agentWin, ghost: false, sessionId: shown })) : [];
-    const hold = shown === chrome()?.sessionId ? chrome()?.hold : null;
-    if (items.length && hold) items.splice(Math.min(hold.index, items.length), 0, { windowId: hold.windowId, number: hold.number, selected: true, agent: false, ghost: true, sessionId: shown });
-    // ほかの会話のウィンドウ（2 つ以上ある分）も、その会話の題の後ろに番号で出す
-    for (const conv of convs) {
-      if (conv.sessionId === shown) continue;
-      const others = windowsTbl?.list?.(conv.sessionId) ?? [];
-      if (others.length < 2 || !others.every(row => row.windowId !== null)) continue;
-      const otherAgent = windowsTbl?.current?.(conv.sessionId), otherRunning = windowsTbl?.operating?.(conv.sessionId) === true;
-      for (const row of others) items.push({ windowId: row.windowId, number: row.number, selected: false, agent: row.windowId === otherAgent, running: otherRunning, ghost: false, sessionId: conv.sessionId });
-    }
-    // 会話の題が選ばれているのは、映している会話に番号のチップが無いとき（あれば番号のチップに敷きがある）
-    const targetHasNumbers = items.some(item => item.sessionId === shown);
-    for (const conv of convs) conv.selected = conv.current && !targetHasNumbers;
-    // エージェントが別のウィンドウへ移ったら、そのチップの印が移って 1 回光る
-    const flashId = lastAgentWin !== undefined && agentWin !== lastAgentWin && agentWin != null ? agentWin : null;
-    lastAgentWin = agentWin;
-    const pinned = shown ? pinnedAny(shown) === true : false;
-    const live = chrome()?.screencastState;
-    const away = pinned && (pinnedWindowOf(shown) !== agentWin || (live?.pinnedTabId != null && live?.tabId !== live?.agentTabId));
+    const shown = session(), convs = convList();
+    conv.root.hidden = convs.length < 2;
+    if (convs.length >= 2) conv.set(shown);
     const running = shown ? windowsTbl?.operating?.(shown) === true : false;
-    const disabled = shown ? switchDisabled(shown) : false;
-    const firstOpen = convs.length >= 2 || items.length >= 2;
-    switcher.paint({ items, convs, agentRunning: running, pinned, away, disabled, flashId, followHere: firstOpen || tabs().length < 2 });
-    // 「追う」は見えている最初の列の右端（上の列が閉じていてタブの列だけならタブの列）
-    if (!firstOpen && tabs().length >= 2 && switcher.follow.parentNode !== strip.root) strip.root.append(switcher.follow);
+    convRun.hidden = ovRun.hidden = !running;
   }
-  const root = document.createElement('div'); root.className = 'bu-chrome'; root.append(switcher.root, strip.root, address.root);
-  const overview = document.createElement('div'); overview.className = 'bu-overview'; overview.hidden = true; root.append(overview);
-  let badge = null;
-  async function showOverview() {
-    overview.hidden = !overview.hidden; paintControl(); if (overview.hidden) return;
-    overview.replaceChildren(...tabs().map(tab => {
+  const tabRow = document.createElement('div'); tabRow.className = 'bu-tabrow';
+  tabRow.append(conv.root, strip.root, strip.add);
+  const root = document.createElement('div'); root.className = 'bu-chrome'; root.append(tabRow, address.root);
+  address.root.append(loadLine);
+  // ---- スマホの一覧（[N]）: 上段は閉じる・会話の切替・＋。カードは選んだ会話のタブだけ ----
+  const overview = document.createElement('div'); overview.className = 'bu-overview'; overview.hidden = true;
+  const ovBack = browserButton('back', t('tabs:strip.closeList'), () => { overview.hidden = true; paintControl(); });
+  const ovNew = browserButton('plus', t('tabs:strip.new'), () => { overview.hidden = true; navigate('new').catch(failed); });
+  const ovConv = createCombo({ ariaLabel: t('browser.chromeWindow.pickConversation'), cls: 'bu-conv', strict: true, options: convOptions,
+    onCommit: id => onPickConv(id) });
+  const ovRun = runMark(); ovRun.hidden = true; ovConv.root.prepend(ovRun);
+  const ovCards = document.createElement('div'); ovCards.className = 'bu-ov-cards';
+  const ovHead = document.createElement('div'); ovHead.className = 'bu-ov-head'; ovHead.append(ovBack, ovConv.root, ovNew);
+  overview.append(ovHead, ovCards); root.append(overview);
+  let badge = null, ovSig = null;
+  function paintOverview() {
+    if (overview.hidden) return;
+    const convs = convList();
+    ovConv.root.hidden = convs.length < 2;
+    if (convs.length >= 2) ovConv.set(session());
+    // タブの並びだけでなく題・選択・持ち手の変化でもカードを張り直す（同じ枚数で中身が替わると見逃すため）
+    const list = tabs(), cur = current()?.targetId;
+    const sig = list.map(tab => `${tab.targetId}|${tabLabel(tab)}|${tab.targetId === cur ? 1 : 0}`).join(',');
+    if (sig === ovSig) return;
+    ovSig = sig;
+    ovCards.replaceChildren(...list.map(tab => {
       const card = document.createElement('div'); card.className = 'bu-card' + (tab.targetId === current()?.targetId ? ' on' : '');
       const pickButton = document.createElement('button'); pickButton.type = 'button'; pickButton.className = 'bu-card-pick';
       const img = document.createElement('img'); img.alt = ''; img.className = 'bu-card-preview';
@@ -499,7 +459,10 @@ export function createBrowserUnify(deps = {}) {
       !tab.local && cmd('chromeAddress', { sessionId:session(), input:'', targetId:tab.targetId, thumbnail:true }).then(result => { if (img.isConnected && result?.data) img.src = `data:image/jpeg;base64,${result.data}`; }).catch(() => {});
       return card;
     }));
-    const add = browserButton('plus', t('tabs:strip.new'), () => { overview.hidden = true; navigate('new').catch(failed); }); add.classList.add('bu-overview-new'); overview.append(add);
+  }
+  function showOverview() {
+    overview.hidden = !overview.hidden; paintControl(); if (overview.hidden) return;
+    ovSig = null; paintOverview();
   }
   /** 映像の再開操作（アドレスバーのすぐ下の 1 行）を今の状態にする */
   function paintControl() {
@@ -512,10 +475,11 @@ export function createBrowserUnify(deps = {}) {
   }
   function paint() {
     const tab = current(), shown = session(), live = chrome()?.screencastState;
+    if (loadTicket?.sessionId && loadTicket.sessionId !== shown) clearLoading();   // 別の会話へ映し替えたら、前の待ちは下ろす
     const running = shown ? windowsTbl?.operating?.(shown) === true : false;
-    // タブのチップのエージェントの印（弧/点。エージェントの今のタブは映像の状態が持つ）
+    // タブのチップのエージェントの印（弧。エージェントの今のタブは映像の状態が持つ）
     const items = tabs().map(row => row.local || live?.agentTabId == null ? row : { ...row, agent: row.targetId === live.agentTabId, agentRunning: running, agentName: deps.agentName?.(shown) });
-    strip.update(items, tab?.targetId); address.show(tab, items.length); paintControl(); paintLocal(); paintSwitch(); deps.onTabsChange?.();
+    strip.update(items, tab?.targetId); address.show(tab, items.length); paintControl(); paintLocal(); paintSwitch(); paintOverview(); deps.onTabsChange?.();
   }
   const pageHost = document.createElement('div'); pageHost.className = 'bu-page-host';
   const frames = new Map(); let local = null, explorer = null;
@@ -545,9 +509,12 @@ export function createBrowserUnify(deps = {}) {
     if (!entry) {
       const frame = document.createElement('iframe'); frame.className = 'bu-local-page'; frame.title = tabLabel(tab);
       frame.setAttribute('referrerpolicy', 'no-referrer'); frame.src = tab.url;
-      entry = { frame, sessionId, targetId:tab.targetId, url:tab.url, reload:tab.reload, tab };
+      entry = { frame, sessionId, targetId:tab.targetId, url:tab.url, reload:tab.reload, tab, loaded:false };
       frames.set(tab.targetId, entry); pageHost.append(frame);
-      frame.addEventListener('load', () => { followLocal(entry); });
+      frame.addEventListener('load', () => {
+        entry.loaded = true; followLocal(entry);
+        if (loadTicket?.local && loadTicket.targetId === entry.targetId) clearLoading();
+      });
     } else if ((!tab.pending && entry.url !== tab.url) || entry.reload !== tab.reload) {
       const same = entry.url === tab.url;
       entry.url = tab.url; entry.reload = tab.reload;
@@ -555,8 +522,9 @@ export function createBrowserUnify(deps = {}) {
       // 橋の無い出し方（?view=source の text/plain）は枠を直接読み直す
       const bridged = (() => { try { return new URL(entry.url).searchParams.get('view') !== 'source'; } catch { return false; } })();
       if (same && bridged && ['html', 'viz'].includes(tab.page?.kind)) pageCommand(entry, { type:'reload' });
-      else entry.frame.src = tab.url;
+      else { entry.loaded = false; entry.frame.src = tab.url; beginLoad({ targetId:tab.targetId, local:true }); }
     }
+    if (loadTicket?.local && loadTicket.targetId === tab.targetId && entry.loaded === true) clearLoading();
     entry.frame.title = tabLabel(tab);
     entry.frame.hidden = tab.mode === 'chrome';
     if (tab.mode === 'chrome') { local = null; chrome()?.mountPage?.(null); }
@@ -790,6 +758,17 @@ export function createBrowserUnify(deps = {}) {
               for (const tab of list) pages.reissue(tab).catch(failed);
             }
           })();
+          // 読み込み線: 選んだタブの最初のフレームが届いたら下ろす（映像の状態が先に替わっても、絵が古いまま線を下ろさない）
+          if (event?.type === 'state' && loadTicket?.follow && loadTicket.sessionId === session()) {
+            // 追っている途中で AI が別のタブへ移ったら、待つ絵をそのタブへ替える
+            const moved = chrome()?.screencastState?.agentTabId;
+            if (moved != null) loadTicket.chrome = moved;
+          }
+          if (event?.type === 'frame' && loadTicket && !loadTicket.local) {
+            if (loadTicket.sessionId === session() && event.tabId === loadTicket.chrome) clearLoading();
+          }
+          if (event?.type === 'pin-failed' && loadTicket && (!event.sessionId || event.sessionId === loadTicket.sessionId)
+            && (!event.tabId || event.tabId === loadTicket.chrome || loadTicket.follow)) clearLoading();
           if (!current()?.local && (event?.type === 'state' || event?.type === 'reconnected'
             || (event?.type === 'pin-failed' && active?.targetId === event.tabId
               && (!event.sessionId || event.sessionId === active.sessionId)))) active = null;

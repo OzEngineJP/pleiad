@@ -18,6 +18,7 @@
     "new": "新しいタブ",
     "close": "{{title}} を閉じる",
     "closeTab": "タブを閉じる",
+    "closeList": "タブ一覧を閉じる",
     "open_other": "ブラウザーを開く（{{count}} 個のタブ）"
   },
   "address": {
