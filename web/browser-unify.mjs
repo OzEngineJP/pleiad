@@ -88,7 +88,7 @@ const css = `
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
 .bu-agent{display:grid;place-items:center;flex:none;width:14px;height:14px}
 .bu-agent .run svg{width:12.32px;height:12.32px;stroke-width:1.7}
-/* 上の行: 会話の切替（共有 combo）＋ タブの列 ＋ 右端に固定の ＋（承認済み 2026-11-08） */
+/* Keep the conversation picker and add button outside the scrolling tabs. */
 .bu-tabrow{display:flex;align-items:stretch;height:42px;min-width:0;gap:4px;padding-left:8px;background:var(--bu-frame)}
 .bu-tabrow .bu-conv{flex:none;align-self:flex-start;min-width:0;max-width:220px;margin-top:4px}
 .bu-conv input{height:34px;font-size:13px;padding:0 24px 0 12px}
@@ -101,7 +101,7 @@ const css = `
 .bu-tabrow .bu-tabs::-webkit-scrollbar{display:none}
 .bu-tabrow .bu-tab{height:38px;padding-bottom:4px}
 .bu-tabrow .bu-new{flex:none;align-self:center;width:36px;height:34px;margin:0 6px 0 0}
-/* アドレスバーの下の細い読み込み線（スマホのタブ切替。新しい映像・ページが届くまで） */
+/* Show loading until the selected mobile tab supplies its first frame or page. */
 .bu-load{position:absolute;left:0;right:20%;bottom:0;height:2px;background:var(--line-blue);animation:bu-load .8s ease-in-out infinite alternate}
 @keyframes bu-load{to{right:0}}
 @media(min-width:601px){.bu-load{display:none}}
