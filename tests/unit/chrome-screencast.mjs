@@ -216,6 +216,10 @@ export default async function (t) {
       await r.chrome.turnOff();
       t.ok('Chrome との接続が切れると、ended(closed) を端末へ送る', await until(() => messages.slice(n).some(m => m.type === 'ended' && m.reason === 'closed')));
     }
+    // ページの大きさは、見る・止める・付け替える・断つ・切れる、のどれでも触らない（ADR 0296: 変えると AI の snapshot・クリックの座標が古い画面のものになるため）
+    t.ok('見る・止める・付け替える・断つ・切れる — ページの大きさを触る呼び出し（override・戻す口・中身の大きさ）は一度も無い',
+      !r.chrome.calls.some(c => /^(Emulation\.(set|clear)DeviceMetricsOverride|Browser\.setContentsSize)$/.test(c.method)),
+      JSON.stringify(r.chrome.calls.filter(c => /^(Emulation\.|Browser\.setContentsSize)/.test(c.method)).map(c => c.method)));
     bridge.close();
   } finally {
     a1?.close();
@@ -446,6 +450,9 @@ async function scenarios(t) {
       await sleep(100);
       t.ok('AI に戻したタブから開いたタブへは移らない', x.fake.screencasting(x.tab) && !x.fake.screencasting(later) && x.bridge.pinned('s1') === null);
       await x.hub.unwatch(x.client, 's1');
+      t.ok('人が触る・AI に戻す・見るのをやめる — ページの大きさを触る呼び出しは一度も無い',
+        !x.r.chrome.calls.some(c => /^(Emulation\.(set|clear)DeviceMetricsOverride|Browser\.setContentsSize)$/.test(c.method)),
+        JSON.stringify(x.r.chrome.calls.filter(c => /^(Emulation\.|Browser\.setContentsSize)/.test(c.method)).map(c => c.method)));
     } finally { await x.done(); }
   }
 }
