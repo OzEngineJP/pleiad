@@ -55,6 +55,9 @@ export const DATA_WRITES = [
   { file: 'core/backends/antigravity-store.mjs', sites: 1, targets: [
     { name: 'antigravity/<conversationId>.json', limit: '会話の長さ', reason: 'Antigravity の会話の控え。ターン中に何度も書き直す', unbounded: true },
   ] },
+  { file: 'core/backends/antigravity.mjs', sites: 1, targets: [
+    { name: 'antigravity/models.json', limit: 'MODELS_CACHE_MAX_ROWS=64 行・id 128 字・label 256 字・MODELS_CACHE_MAX_BYTES=64KiB', reason: '`agy models` の一覧の写し。明示の probe で取れたときだけ置き換え、再起動で保存済みの明示モデル・エフォートを `agy models` 無しで戻す（認証の証拠には使わない）' },
+  ] },
   { file: 'core/backends/devin-config.mjs', sites: 3, targets: [
     { name: 'devin/metadata-config/devin/config.json', limit: '固定 1 ファイル。METADATA_CONFIG の 7 個の import 無効化と hooks/auto_update/notify だけ（1 KiB 未満）', reason: 'モデル一覧の取得を専用 cwd と固定設定で行う。利用者の設定・認証情報をコピーせず、会話数によって増えない' },
     { name: 'devin/turn-configs/<uuid>.json', limit: '最大 1 MiB・会話ごとに 1 ファイル', reason: 'Hooks / nativeShellOff を会話単位で適用し、ACP 初期化が設定を読んだ直後に削除する' },

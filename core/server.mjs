@@ -2943,7 +2943,10 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
   // 互換の接続先では公式の既定（prefs）を持ち込まない（段の意味が接続先ごとに違う）
   const value = asked ?? current.effort ?? (endpoint ? '' : prefs.backends?.[backend.id]?.effort) ?? '';
   if (asked !== undefined) return validateEffort(backend, value, model, cwd, endpoint);
-  return Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value) ? value : '';
+  if (Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value)) return value;
+  // 一覧そのものが無い backend では、覚えている段を「一覧に無い」と黙って落とさない（別の強さで動くため。明示の一覧確認で直せる）
+  if (!endpoint && value !== '') await backend.requireModelCatalog?.(cwd);
+  return '';
 }
 
 /**

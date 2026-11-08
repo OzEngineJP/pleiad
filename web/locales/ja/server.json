@@ -866,7 +866,8 @@
       "defaultNote": "agy の設定をそのまま使う",
       "unknownDefault": "既定（agy の設定）",
       "unknownDefaultNote": "agy の設定をそのまま使う（Pleiad からは読めない）",
-      "effortReason": "agy の既定のモデルが分からないため、段はモデルを選ぶと選べます"
+      "effortReason": "agy の既定のモデルが分からないため、段はモデルを選ぶと選べます",
+      "checkNeeded": "Antigravity のモデル一覧がまだ確認できていないため、覚えている強さを適用できません。設定 › エージェント設定 で Antigravity の「状態を再確認」してから、もう一度送ってください。"
     },
     "usage": {
       "badResponse": "使用枠の応答形式が不正です",

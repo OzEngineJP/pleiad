@@ -868,7 +868,8 @@
       "defaultNote": "Uses your agy settings as is.",
       "unknownDefault": "Default (agy settings)",
       "unknownDefaultNote": "Uses your agy settings as is (Pleiad cannot read them).",
-      "effortReason": "The agy default model is unknown, so choose a model to pick an effort."
+      "effortReason": "The agy default model is unknown, so choose a model to pick an effort.",
+      "checkNeeded": "Antigravity's model list has not been verified yet, so the saved effort cannot be applied. In Settings > Agents, recheck Antigravity's status, then send again."
     },
     "usage": {
       "badResponse": "The usage response has an invalid format.",

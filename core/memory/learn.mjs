@@ -416,7 +416,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     } catch (e) {
       // 中止は失敗にしない。世代の替わった実行が遅れて返した失敗も、新しい世代を止めない（現在世代の別経路の停止は保持する）
       if (e?.stopped) return null;
-      if (genOf(await readPrefs()) === gen) await recordFailure(e);   // 夜の整理と同じ停止状態へ（許可リスト以外は即 halted）
+      if (genOf(await readPrefs()) === gen) await recordFailure(e, gen);   // 夜の整理と同じ停止状態へ（許可リスト以外は即 halted）
       throw e;
     }
     return {
@@ -445,12 +445,15 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     return !state.status.halted && episodeSummaryAllowed(p) && genOf(p) === gen;
   }
 
-  /** 失敗の記録（learner・エピソード共通の停止状態）。許可リストの一時エラーだけ有限再試行、それ以外は 1 回で halted */
-  async function recordFailure(e) {
+  /** 失敗の記録（learner・エピソード共通の停止状態）。許可リストの一時エラーだけ有限再試行、それ以外は 1 回で halted。
+   *  gen は止まった実行の世代（再有効化＝今の世代との違いで見る） */
+  async function recordFailure(e, gen = null) {
     const message = String(e?.message ?? e).slice(0, ERROR_MAX);
     const count = (state.status.failure?.count ?? 0) + 1;
     const at = now();
-    const halted = !TRANSIENT.test(message) || count >= MAX_FAILURES ? { at, message } : null;
+    // 停止は、止まった実行の世代（gen）ごと持つ。時刻でなく世代で見るので、同じ瞬間の ON→失敗（from > halted.at）を
+    // 「再有効化」と誤認して勝手に解除することも、時計の後戻りでラッチが外れることもない
+    const halted = !TRANSIENT.test(message) || count >= MAX_FAILURES ? { at, message, gen } : null;
     state.status = { ...state.status,
       failure: halted ? null : { at, message, count, retryAt: at + retryDelay(count) },
       // 停止はラッチ。別経路で既に止まっている間に来た遅い一時エラーで halted を null に戻さない
@@ -492,7 +495,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
         if (e?.stopped) stopped = true;   // OFF・世代替わりでの中止は失敗にしない
         else {
           // 世代の替わった実行が遅れて返した失敗は、新しい世代を止めない（古い世代の結果と失敗を両方無効にする。現在世代の別経路の停止は保持する）
-          if (gen !== null && genOf(await readPrefs()) === gen) await recordFailure(e);
+          if (gen !== null && genOf(await readPrefs()) === gen) await recordFailure(e, gen);
           throw e;
         }
       }
@@ -540,9 +543,10 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
   // ほかの会話のターンが走っていても待たない（上の冒頭の説明）。待つのは learner 自身・止めている間・失敗の後の間隔だけ
   async function runIfDue() {
     const prefs = await readPrefs();
-    // 再有効化（OFF→ON）で stopped を解除する（memoryLearnFrom が halted より新しい＝止まった後に ON にし直した）。
-    // 保存に失敗したら実行には進まない（投げて、呼び出し側の log に任せる）。メモリ上の状態も戻す
-    if (state.status.halted && autoLearnAllowed(prefs) && timeOf(prefs.memoryLearnFrom) > state.status.halted.at) {
+    // 再有効化（OFF→ON）で stopped を解除する（今の世代が止まった実行の世代と違う＝止まった後に ON にし直した）。
+    // 時刻ではなく世代で見るので、同じ瞬間の ON→失敗を再有効化と誤認しない。halted.gen の無い古い保存は、
+    // 何かの世代で有効なら解除と同じ扱い（従来どおり再有効化で戻す）。保存に失敗したら実行には進まない。メモリ上の状態も戻す
+    if (state.status.halted && autoLearnAllowed(prefs) && genOf(prefs) !== state.status.halted.gen) {
       const before = state.status;
       state.status = { ...state.status, halted: null, failure: null };
       try { await save(); } catch (e) { state.status = before; throw e; }
