@@ -141,6 +141,77 @@ export default async function(t) {
       errors.length === 1 && errors[0][0] === 'NOT_FOUND');
   }
 
+  // ---- 文書の中の履歴（histGo。親が URL を出し、枠の中の history には頼らない。指摘 1） ----
+  {
+    const { tabs } = setup({ pageOpen: async () => ({ kind:'html', url:`http://f0123456789abcde.localhost:9999/f/${'K'.repeat(43)}/a.html`, path:'D:/w/a.html' }) });
+    const tab = await tabs.open({ sessionId:'s1', kind:'html', path:'D:/w/a.html' });
+    const A = tab.url, B = `http://f0123456789abcde.localhost:9999/f/${'K'.repeat(43)}/b.html`, C = `http://f0123456789abcde.localhost:9999/f/${'K'.repeat(43)}/c.html`;
+    tabs.locate(tab, { url:B }); tabs.locate(tab, { url:C });
+    assert.equal(tabs.histGo(tab, -1), B, '戻るは文書の中の履歴の前の場所の URL を返す');
+    assert.equal(tab.url, B); assert.equal(tab.canGoBack, true); assert.equal(tab.canGoForward, true);
+    assert.equal(tabs.histGo(tab, -1), A);
+    assert.equal(tabs.histGo(tab, -1), null, '文書の中の履歴の先頭より前は返さない（外の履歴へ任せる）');
+    assert.equal(tabs.histGo(tab, 1), B); assert.equal(tabs.histGo(tab, 1), C);
+    assert.equal(tabs.histGo(tab, 1), null);
+    // # の違いだけの移動も履歴に足る（hash を書き換えるページ。指摘 2）
+    tabs.locate(tab, { url:`${C}#section` });
+    assert.equal(tabs.histGo(tab, -1), C);
+    // 原文は履歴に足す: 戻るとプレビューの URL へ戻れる（原文の文書には橋が無い。指摘 8）
+    tabs.view(tab, 'source');
+    assert.equal(tab.view, 'source'); assert.equal(tab.canGoBack, true);
+    assert.equal(tabs.histGo(tab, -1), C);
+    assert.equal(tab.view, 'preview', '戻った先が原文でなければ出し方も戻る');
+    // 別の文書へ移る（travel・replace）と文書の中の履歴は張り直す（前の文書の場所を残さない）
+    await tabs.open({ sessionId:'s1', kind:'git' }, tab);
+    tabs.travel(tab, -1);
+    assert.equal(tab.url, C, 'travel は前の文書の最後の場所へ戻る');
+    assert.equal(tabs.histGo(tab, -1), null, '別の文書の中の履歴を混ぜない');
+    t.ok('文書の中の履歴は親が持ち、# の違い・原文・文書の切り替えをそれぞれ正しく捌く', true);
+  }
+
+  // ---- 同じ文書の中の報告（sameDocument）は履歴に積まず置き換え、触った印を消さない（指摘 2） ----
+  {
+    const { tabs } = setup({ pageOpen: async () => ({ kind:'html', url:`http://f0123456789abcde.localhost:9999/f/${'K'.repeat(43)}/a.html`, path:'D:/w/a.html' }) });
+    const tab = await tabs.open({ sessionId:'s1', kind:'html', path:'D:/w/a.html' });
+    const B = `http://f0123456789abcde.localhost:9999/f/${'K'.repeat(43)}/b.html`;
+    tabs.locate(tab, { url:B });
+    tabs.activity(tab);                        // 入力を打った印
+    tab.pending = true;
+    const marked = `${B}#q=%E3%81%82`;
+    tabs.locate(tab, { url:marked, sameDocument:true });   // replaceState('#q=…') の報告
+    assert.equal(tab.url, marked, 'アドレスは今の場所を映す');
+    assert.equal(tab.histTrail.length, 2, '履歴には積まない（押せる「戻る」の偽物を生まない）');
+    assert.equal(tabs.histPeek(tab, -1), tab.histTrail[0], '戻る先は前の文書の場所');
+    assert.equal(tab.touched, true, '触った印は消さない');
+    assert.equal(tab.pending, true, '「更新を表示」の印も消さない');
+    assert.equal(tab.reload, undefined, '読み直しも起きない');
+    t.ok('sameDocument の報告は、その場の URL を書き換えるだけで履歴・印・読み直しを動かさない', true);
+  }
+
+  // ---- reissue は URL が変わらなければ読み直さない（指摘 9） ----
+  {
+    const { tabs } = setup({ pageOpen: async () => ({ kind:'html', url:`http://f0123456789abcde.localhost:9999/f/${'K'.repeat(43)}/a.html`, path:'D:/w/a.html' }) });
+    const tab = await tabs.open({ sessionId:'s1', kind:'html', path:'D:/w/a.html' });
+    await tabs.reissue(tab);
+    assert.equal(tab.reload, undefined, '同じ URL が返れば読み直さない（つなぎ直しで触っていないタブを毎回読み直さない）');
+    assert.equal(tab.page.path, 'D:/w/a.html');
+    t.ok('reissue: 鍵が生きて同じ URL なら枠はそのまま（見張りはサーバーが戻す）', true);
+  }
+
+  // ---- 外の URL のタブ（kind:'web'）は変化の知らせを捌かない（指摘 5） ----
+  {
+    const { tabs } = setup({ pageOpen: async () => ({ kind:'html', url:`http://f0123456789abcde.localhost:9999/f/${'K'.repeat(43)}/a.html`, path:'D:/w/a.html' }) });
+    const tab = await tabs.open({ sessionId:'s1', kind:'html', path:'D:/w/a.html' });
+    tab.page = { kind:'web' };   // Chrome のタブが外の URL へ移った印（syncLinkedPage が立てる）
+    tabs.event({ type:'page:changed', sessionId:'s1', path:'D:/w/a.html' });
+    tabs.event({ type:'page:changed', sessionId:'s1', path:'D:/w/a.html' });
+    assert.equal(tab.reload, undefined, 'page を持たないタブで page:changed が落ちない');
+    tab.page = null;
+    tabs.event({ type:'page:changed', sessionId:'s1', path:'D:/w/a.html' });
+    assert.equal(tab.reload, undefined, 'page が null でも落ちない');
+    t.ok('外の URL のタブ（page なし・kind:web）は変化の知らせを捌かない', true);
+  }
+
   // ---- 閉じたタブの見張りを外す（N6） ----
   {
     const { tabs, releases } = setup({ pageOpen: async request => ({ kind:'file', path:request.path, suffix:`/_pleiad/s/s1/file?path=${encodeURIComponent(request.path)}` }) });

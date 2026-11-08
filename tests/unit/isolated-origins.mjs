@@ -112,6 +112,22 @@ export default async function (t) {
     watch.removeSession('s1');
     listener('change', 'a.md'); listener('change', 'b.md'); await wait(60);
     t.ok('会話ぶんを消すと、その会話へはもう知らせない', events.every(e => e.sessionId !== 's1'));
+    events.length = 0;
+    // 持ち主（画面×タブ）ごとの数え方: 1 つの持ち主が外しても、同じ会話の別のタブ・別の会話の分は残る（指摘 3）
+    watch.add('s3', fileA, 'file', 'screen:a/page:1');
+    watch.add('s3', fileA, 'file', 'screen:a/page:2');
+    watch.add('s4', fileA, 'file', 'screen:b/page:1');
+    watch.remove('s3', fileA, 'file', 'screen:a/page:1');
+    listener('change', 'a.md'); await waitFor(() => events.length === 4, 2000);
+    t.ok('1 つの持ち主が外しても、同じ会話の別のタブと別の会話の分は残る（s2・フォルダーの s9 も）',
+      JSON.stringify(events.map(e => e.sessionId).sort()) === '["s2","s3","s4","s9"]');
+    events.length = 0;
+    watch.removeClient('screen:a');
+    listener('change', 'a.md'); await wait(60);
+    t.ok('画面の持ち主ぶんを消すとその画面ぶんだけ外れる（s3 の両タブが外れ、s2・s4・s9 は残る）',
+      JSON.stringify(events.map(e => e.sessionId).sort()) === '["s2","s4","s9"]');
+    events.length = 0;
+    watch.removeSession('s3'); watch.removeSession('s4');
     watch.close();
     t.ok('close は全部の watch を畳む', watchers.size === 0 && watch.stats().targets === 0);
   } finally {

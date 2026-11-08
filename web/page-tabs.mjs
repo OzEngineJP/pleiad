@@ -28,6 +28,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
   };
   async function open(input, replace = null) {
     const { sessionId, kind = 'new', path, vizHash, hash, entry } = input;
+    const targetId = replace?.targetId ?? `page:${serial + 1}`;
     let page;
     if (kind === 'viz' || kind === 'html' || (kind === 'file' && /\.html?$/i.test(path ?? ''))) {
       let opened;
@@ -37,10 +38,11 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
         if (at.hostname !== 'localhost' && !MARK.test(at.hostname.toLowerCase())) throw new Error('invalid-url');
         opened = { kind: 'html', url: at.href, path };
       } else {
-        // 開く先はサーバーが決める（core/browser-unify-ws.mjs の pageOpen。可視化は hash、HTML のファイルは kind:'html'）
+        // 開く先はサーバーが決める（core/browser-unify-ws.mjs の pageOpen。可視化は hash、HTML のファイルは kind:'html'）。
+        // tab は変化の見張りの持ち主（core/page-watch.mjs の owner。タブを閉じた・タブの中で移ったときにその分だけ外す）
         const request = kind === 'viz'
-          ? { sessionId, kind: 'viz', hash: String(vizHash ?? hash ?? ''), ...(entry ? { entry } : {}), ...(input.title ? { title: input.title } : {}), ...(input.path ? { path: input.path } : {}) }
-          : { sessionId, kind: 'html', path, ...(input.title ? { title: input.title } : {}) };
+          ? { sessionId, kind: 'viz', hash: String(vizHash ?? hash ?? ''), tab: targetId, ...(entry ? { entry } : {}), ...(input.title ? { title: input.title } : {}), ...(input.path ? { path: input.path } : {}) }
+          : { sessionId, kind: 'html', path, tab: targetId, ...(input.title ? { title: input.title } : {}) };
         opened = await pageOpen(request);
       }
       const url = new URL(opened?.url ?? '', origin);
@@ -61,6 +63,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
       request:{ sessionId, kind, path, vizHash:vizHash ?? hash, entry }, touched:false, dirty:false, pending:false });
     tab.history.splice(++tab.position); tab.history.push(page);
     tab.canGoBack = tab.position > 0; tab.canGoForward = false;
+    if (replace) { tab.histTrail = [page.url]; tab.histPos = 0; }   // 別の文書に替わる: 文書の中の履歴は張り直す（前の文書の場所を残さない）
     if (!replace) sessions.set(sessionId, [...list(sessionId), tab]);
     changed(tab); return tab;
   }
@@ -75,7 +78,8 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     tab.view = next;
     if (url.href === tab.url) { changed(tab); return; }
     tab.url = url.href;
-    if (tab.histTrail?.length) tab.histTrail[tab.histPos] = tab.url;
+    // 原文（?view=source）は別の文書として文書の中の履歴に足す。戻るとプレビューの URL へ戻れる（原文の文書には橋が無い。指摘 8）
+    if (tab.histTrail?.length) { const pos = tab.histPos ?? 0; if (tab.histTrail[pos] !== url.href) { tab.histTrail.splice(pos + 1); tab.histTrail.push(url.href); tab.histPos = pos + 1; tab.canGoBack = true; tab.canGoForward = false; } }
     if (tab.history?.length) tab.history[tab.position] = { ...tab.history[tab.position], url:tab.url };
     reload(tab);
   }
@@ -84,16 +88,31 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
    * 文書の中の履歴は tab.histTrail で持ち、戻った場所は同じ URL の並びで見分ける（新しい移動は先を捨てて足す）。
    * resolved はサーバーが URL から戻した対象（pageResolve。ファイルのパス・束の入口。見張りもサーバーが登り直す）
    */
-  function locate(tab, { url, title = null, resolved = null } = {}) {
+  function locate(tab, { url, title = null, resolved = null, sameDocument = false } = {}) {
     const trail = tab.histTrail ?? (tab.histTrail = [tab.url]);
     let pos = tab.histPos ?? trail.length - 1;
-    if (trail[pos] === url) { /* 同じ場所の報告（読み直し・ハッシュだけの替わりは下で捌く） */ }
+    if (sameDocument) {
+      // 同じ文書の中の報告（ハッシュの変化・replaceState。橋が sameDocument を付ける）は履歴に積まず
+      // その場の URL を書き換えるだけ。触った・未確定の印は消さない（押せる「戻る」の偽物を生まない。指摘 2）
+      trail[pos] = url; tab.histPos = pos;
+      tab.url = url;
+      try { tab.view = new URL(url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch {}
+      if (title) { tab.title = title; if (tab.page) tab.page.title = title; }
+      if (resolved?.kind === 'html') { tab.page = { ...tab.page, kind:'html', path:resolved.path }; if (tab.request) tab.request.path = resolved.path; }
+      else if (resolved?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', vizHash:resolved.hash, entry:resolved.entry };
+      if (tab.history?.length) tab.history[tab.position] = { ...tab.history[tab.position], url:tab.url, title:tab.title,
+        kind:tab.page?.kind, path:tab.page?.path, vizHash:tab.page?.vizHash, entry:tab.page?.entry };
+      changed(tab);
+      return;
+    }
+    if (trail[pos] === url) { /* 同じ場所の報告（読み直し・ハッシュだけの替わりは上で捌く） */ }
     else if (trail[pos - 1] === url) pos--;
     else if (trail[pos + 1] === url) pos++;
     else { trail.splice(pos + 1); trail.push(url); pos = trail.length - 1; }
     tab.histPos = pos;
-    tab.canGoBack = pos > 0; tab.canGoForward = pos < trail.length - 1;
+    tab.canGoBack = pos > 0 || (tab.position ?? 0) > 0; tab.canGoForward = pos < trail.length - 1 || (tab.position ?? 0) < (tab.history?.length ?? 0) - 1;
     tab.url = url;
+    try { tab.view = new URL(url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch {}
     if (title) { tab.title = title; if (tab.page) tab.page.title = title; }
     if (resolved?.kind === 'html') { tab.page = { ...tab.page, kind:'html', path:resolved.path }; if (tab.request) tab.request.path = resolved.path; }
     else if (resolved?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', vizHash:resolved.hash, entry:resolved.entry };
@@ -102,18 +121,45 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
       kind:tab.page?.kind, path:tab.page?.path, vizHash:tab.page?.vizHash, entry:tab.page?.entry };
     changed(tab);
   }
+  /**
+   * 文書の中の履歴（histTrail）を戻る/進む。親が URL を出し、枠は場所を差し替えるだけ
+   * （枠の中の history は鍵の替わり・再接続・読み直しで失われるので頼らない。指摘 1）。
+   * 戻り値は移る先の URL（履歴が無ければ null）。実際に枠を動かすのは呼び手（browser-unify.mjs）
+   */
+  /** 文書の中の履歴の移る先（histGo と同じ判定・まだ動かさない。枠の移し方を呼び手が決めてから histGo で確定する） */
+  function histPeek(tab, direction) {
+    const trail = tab.histTrail ?? [];
+    return trail[(tab.histPos ?? trail.length - 1) + direction] ?? null;
+  }
+  function histGo(tab, direction) {
+    const trail = tab.histTrail ?? [];
+    const pos = (tab.histPos ?? trail.length - 1) + direction;
+    if (pos < 0 || pos >= trail.length || !trail[pos]) return null;
+    tab.histPos = pos;
+    tab.url = trail[pos];
+    try { tab.view = new URL(tab.url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch {}
+    tab.canGoBack = pos > 0 || (tab.position ?? 0) > 0;
+    tab.canGoForward = pos < trail.length - 1 || (tab.position ?? 0) < (tab.history?.length ?? 0) - 1;
+    if (tab.history?.length) tab.history[tab.position] = { ...tab.history[tab.position], url:tab.url };
+    tab.touched = false; tab.dirty = false; tab.pending = false;
+    changed(tab);
+    return trail[pos];
+  }
   /** 鍵・開く先をサーバーへ取り直す（期限切れ・サーバーの入れ替えで外れた見張りの戻し。request は open が覚えている開き方） */
   async function reissue(tab) {
     const page = tab.page ?? {};
     const request = page.kind === 'viz'
-      ? { sessionId:tab.sessionId, kind:'viz', hash:page.vizHash, entry:page.entry, title:page.title, path:page.path }
+      ? { sessionId:tab.sessionId, kind:'viz', hash:page.vizHash, entry:page.entry, title:page.title, path:page.path, tab:tab.targetId }
       : { sessionId:tab.sessionId, kind:page.kind === 'html' ? 'html' : (tab.request?.kind ?? 'file'),
-          path:page.path ?? tab.request?.path, title:page.title ?? tab.title, line:tab.request?.line };
+          path:page.path ?? tab.request?.path, title:page.title ?? tab.title, line:tab.request?.line, tab:tab.targetId };
     const opened = await pageOpen(request);
     if (!opened?.url) throw Object.assign(new Error('invalid-url'), { code:'invalid-url' });
     const at = new URL(opened.url, origin);
+    const was = tab.url;
     applyOpened(tab, opened, at);
-    if (isTouched(tab)) { tab.pending = true; changed(tab); } else reload(tab);
+    // 戻ってきた URL が同じなら読み直さない（鍵・見張りはサーバー側で戻った。つなぎ直しで触っていないタブを毎回読み直さない。指摘 9）
+    if (isTouched(tab)) { tab.pending = true; changed(tab); }
+    else if (tab.url !== was) reload(tab); else changed(tab);
     return tab;
   }
   /** page:moved の前の port の URL を今の port へ付け替える（core/isolated-origins.mjs の movedPageUrl と同じ決まり。印は port に依らないので変わらない） */
@@ -130,7 +176,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
   function event(message) {
     if (message.type === 'page:changed') {
       for (const tab of list(message.sessionId)) {
-        if (!samePath(tab.page.path, message.path)) continue;
+        if (!tab.page?.path || !samePath(tab.page.path, message.path)) continue;   // 外の URL のタブ（kind:'web'・page なし）は対象外
         if (isTouched(tab)) { tab.pending = true; changed(tab); } else reload(tab);
       }
       return;
@@ -138,6 +184,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     if (message.type !== 'page:moved') return;
     for (const tabs of sessions.values()) for (const tab of tabs) {
       for (const item of tab.history) { const next = item.url && moved(item.url, message); if (next) { item.url = next; item.origin = new URL(next).origin; } }
+      for (const [at, item] of (tab.histTrail ?? []).entries()) { const next = item && moved(item, message); if (next) tab.histTrail[at] = next; }
       const next = tab.url && moved(tab.url, message);
       if (!next) {
         // 前の port から付け替えられない隔離の URL は、開き方から鍵と見張りを取り直す
@@ -152,8 +199,11 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
   function travel(tab, direction) {
     const position = tab.position + direction, page = tab.history[position]; if (!page) return;
     tab.position = position; Object.assign(tab, { url:page.url, title:page.title, origin:page.origin, page:tabPage(page), touched:false, dirty:false, pending:false });
+    // 別の文書に移る: 文書の中の履歴はその文書ので張り直す（前の文書の場所を残すと、戻る/進むが別の文書の場所を指す）
+    tab.histTrail = [page.url]; tab.histPos = 0;
+    try { tab.view = new URL(page.url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch {}
     tab.canGoBack = position > 0; tab.canGoForward = position < tab.history.length - 1; changed(tab);
   }
-  return { list, sessionIds: () => [...sessions.keys()], open, activity, reload, event, travel, locate, view, reissue, isTouched,
+  return { list, sessionIds: () => [...sessions.keys()], open, activity, reload, event, travel, locate, view, reissue, histGo, histPeek, isTouched,
     close(tab) { release?.(tab); sessions.set(tab.sessionId, list(tab.sessionId).filter(item => item !== tab)); changed(tab); } };
 }

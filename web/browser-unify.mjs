@@ -113,7 +113,7 @@ export function createBrowserUnify(deps = {}) {
   const pages = createPageTabs({ pageOpen:input => (deps.pageOpen ?? (args => cmd('pageOpen', args)))(input), origin:location.origin, changed:() => { if (enabled) paint(); },
     // 「触った」はページが送る活動だけでなく、映像側の持ち手も数える（Chrome の映像のタブを人が操作中なら、戻ったときの上書きも「触った」）
     touched:tab => holderOf(tab.sessionId, tab.chromeId ?? tab.targetId).holder === 'human',
-    release:tab => { if (['file', 'dir', 'html'].includes(tab.page?.kind) && tab.page.path) cmd('pageWatch', { sessionId:tab.sessionId, path:tab.page.path, kind:tab.page.kind === 'dir' ? 'dir' : 'file' }).catch(() => {}); },
+    release:tab => { if (['file', 'dir', 'html'].includes(tab.page?.kind) && tab.page.path) cmd('pageWatch', { sessionId:tab.sessionId, path:tab.page.path, kind:tab.page.kind === 'dir' ? 'dir' : 'file', tab:tab.targetId }).catch(() => {}); },
     onError:error => failed(error) });
   const allTabs = id => { const local = pages.list(id), linked = new Set(local.map(tab => tab.chromeId).filter(Boolean)); const merged = [...local, ...(rows.get(id) ?? []).filter(tab => !linked.has(tab.targetId))];
     for (const tab of merged) { const key = `${id}:${tab.targetId}`; if (!orders.has(key)) orders.set(key, ++order); }
@@ -154,13 +154,13 @@ export function createBrowserUnify(deps = {}) {
       else if (isolatedHost && /^\/f\//.test(parsed.pathname)) {
         kind = 'html'; url = parsed.href; title = parsed.searchParams.get('title');
         // 鍵を開いて中身のファイルを引く（アドレスバーのパンくず・ツリー・変化の見張り。pageResolve はサーバーが登り直す）
-        const resolved = await cmd('pageResolve', { sessionId, url:parsed.href }).catch(() => null);
+        const resolved = await cmd('pageResolve', { sessionId, url:parsed.href, tab:replace?.targetId }).catch(() => null);
         if (resolved?.kind === 'html') path = resolved.path;
       }
       else if (/^(?:[a-z]:[\\/]|[./~])/i.test(input)) { const resolved = await cmd('resolvePath', { sessionId, path:input }); kind = resolved.kind === 'directory' ? 'dir' : 'file'; path = resolved.path; }
       else return null;
     }
-    const existing = path && pages.list(sessionId).find(tab => tab !== replace && samePath(tab.page.path, path));
+    const existing = path && pages.list(sessionId).find(tab => tab !== replace && samePath(tab.page?.path, path));
     if (existing) { if (sessionId === session()) await pick(existing); return existing; }
     if (replace && !discard(replace)) return replace;
     const tab = await pages.open({ sessionId, kind:kind ?? 'new', path, vizHash, entry, title, line, url }, replace);
@@ -203,9 +203,27 @@ export function createBrowserUnify(deps = {}) {
         if (action === 'reload') { if (discard(tab)) pages.reload(tab); return {}; }
         if (action === 'view') { const here = frames.get(tab.targetId); if (here) pageCommand(here, { type:'view', view:args.view }); return {}; }
         if (action === 'back' || action === 'forward') {
-          // 隔離の origin のページは、中の文書の履歴を動かす（戻る/進むの印は LINK_BRIDGE の報告で決まる）
+          // 隔離の origin のページは、親が持つ文書の中の履歴（histTrail）を動かす。枠の中の history は
+          // 鍵の替わり・読み直し・つなぎ直しで失われるので頼らない（指摘 1）。
+          // 橋のある文書は中で場所を差し替える（location.replace。上の画面の履歴を伸ばさない）。
+          // 原文（text/plain。橋が無い）や # の違いは paintLocal の src の張り直しに任せる（指摘 8）
           const here = frames.get(tab.targetId);
-          if (here && ['html', 'viz'].includes(tab.page?.kind)) { pageCommand(here, { type:action }); return {}; }
+          if (here && ['html', 'viz'].includes(tab.page?.kind)) {
+            const dir = action === 'back' ? -1 : 1;
+            const target = pages.histPeek(tab, dir);
+            if (target) {
+              const isSource = u => { try { return new URL(u).searchParams.get('view') === 'source'; } catch { return false; } };
+              // 両端とも橋のある文書のときだけ中で差し替える。原文（橋が無い）へは paintLocal の src に任せる
+              if (!isSource(here.url) && !isSource(target)) {
+                pageCommand(here, { type:'navigate', url:target });
+                here.url = target; here.pendingNav = target;
+                // 橋が届かない文書（消えたファイル・壊れたページ）なら枠を直接張り直す
+                setTimeout(() => { const e = frames.get(tab.targetId); if (e === here && e.pendingNav === target) { e.pendingNav = null; e.frame.src = target; } }, 800);
+              }
+              pages.histGo(tab, dir);
+              return {};
+            }
+          }
           if (discard(tab)) pages.travel(tab, action === 'back' ? -1 : 1); return {};
         }
       }
@@ -237,7 +255,7 @@ export function createBrowserUnify(deps = {}) {
     let tab = current(); if (!tab) return;
     if (mode === 'page') {
       if (!tab.local) {
-        if (!tab.page) return;
+        if (!tab.page || tab.page.kind === 'web') return;   // 外の URL のタブは「ページ」へ戻せる対象を持たない
         const original = tab, request = { sessionId:session(), ...tab.page, title:tab.page.title ?? tab.title };
         // 隔離の origin のタブは URL の形から開き直す。可視化は束の入口（sub.html など）を、HTML のファイルは鍵の URL を引き継ぐ
         if (tab.page.kind === 'viz') {
@@ -252,8 +270,8 @@ export function createBrowserUnify(deps = {}) {
     if (!tab.local) return;
     // 隔離の origin のページ（可視化・HTML のファイル）は鍵・束の印の URL のまま映像へ開く（P9）
     const isolated = ['viz', 'html'].includes(tab.page?.kind) || /\.html?$/i.test(tab.page?.path ?? '');
-    let input = isolated ? tab.url : tab.page.path;
-    if (!input && tab.page.kind !== 'new') {
+    let input = isolated ? tab.url : tab.page?.path;
+    if (!input && tab.page?.kind !== 'new') {
       if (!pagePort) throw new Error('NO_WINDOW');
       const url = new URL(tab.url); url.hostname = 'localhost'; url.port = String(pagePort); input = url.href;
     }
@@ -284,7 +302,7 @@ export function createBrowserUnify(deps = {}) {
     });
   const address = createAddressBar({ navigate, cwd:() => state.cwd ?? '', suggest:input => cmd('chromeAddress', { sessionId:session(), input }), onClose:() => chrome()?.close(), onTabs:() => showOverview(),
     onDisplay:(anchor, tab) => { const rect = anchor.getBoundingClientRect(); showMenu(rect.left, rect.bottom, [
-      { label:t('tabs:display.page'), checked:tab?.local && tab.mode !== 'chrome', disabled:!tab?.page, onClick:() => display('page').catch(failed) },
+      { label:t('tabs:display.page'), checked:tab?.local && tab.mode !== 'chrome', disabled:!tab?.page || tab.page.kind === 'web', onClick:() => display('page').catch(failed) },
       { label:t('tabs:display.chrome'), checked:!tab?.local || tab.mode === 'chrome', onClick:() => display('chrome').catch(failed) },
     ]); },
     onMenu:(anchor, shown) => addressMenu(anchor, { ...shown, go:action => navigate(action).catch(failed), setView:view => address.setView(view),
@@ -376,7 +394,13 @@ export function createBrowserUnify(deps = {}) {
       frames.set(tab.targetId, entry); pageHost.append(frame);
       frame.addEventListener('load', () => { followLocal(entry); probeLocal(entry); });
     } else if ((!tab.pending && entry.url !== tab.url) || entry.reload !== tab.reload) {
-      entry.url = tab.url; entry.reload = tab.reload; entry.frame.src = tab.url;
+      const same = entry.url === tab.url;
+      entry.url = tab.url; entry.reload = tab.reload;
+      // 同じ文書のままの読み直しは中の文書に頼む（src の張り直しは # だけの違いを読み直さない・場所を保てない。指摘 2）。
+      // 橋の無い出し方（?view=source の text/plain）は枠を直接読み直す
+      const bridged = (() => { try { return new URL(entry.url).searchParams.get('view') !== 'source'; } catch { return false; } })();
+      if (same && bridged && ['html', 'viz'].includes(tab.page?.kind)) pageCommand(entry, { type:'reload' });
+      else entry.frame.src = tab.url;
     }
     entry.frame.title = tabLabel(tab);
     entry.frame.hidden = tab.mode === 'chrome';
@@ -405,7 +429,7 @@ export function createBrowserUnify(deps = {}) {
   async function probeLocal(entry) {
     const tab = entry.tab;
     if (!frames.has(entry.targetId) || !['html', 'viz'].includes(tab.page?.kind)) return;
-    try { await cmd('pageResolve', { sessionId:entry.sessionId, url:entry.url }); }
+    try { await cmd('pageResolve', { sessionId:entry.sessionId, url:entry.url, tab:entry.targetId }); }
     catch { try { await pages.reissue(tab); } catch (error) { failed(error); } }
   }
   /** ページの URL（/_pleiad/…）を画面と同じ出どころへ写す。映像の中の移動を、リンクした端末内タブへ戻すときに使う */
@@ -426,7 +450,7 @@ export function createBrowserUnify(deps = {}) {
     if (!('page' in event)) return;
     const page = event.page;
     if (page?.kind === 'html' && event.url) {
-      void cmd('pageResolve', { sessionId:tab.sessionId, url:event.url }).then(resolved => {
+      void cmd('pageResolve', { sessionId:tab.sessionId, url:event.url, tab:tab.targetId }).then(resolved => {
         if (resolved?.kind !== 'html' || tab.chromeId !== event.targetId) return;
         tab.page = { ...tab.page, kind:'html', path:resolved.path, ...(page.title ? { title:page.title } : {}) };
         tab.url = event.url;
@@ -437,7 +461,7 @@ export function createBrowserUnify(deps = {}) {
     }
     if (page?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', vizHash:page.hash };
     else if (page) tab.page = { ...tab.page, ...page };
-    else tab.page = null;
+    else tab.page = { kind:'web' };   // 外の URL のタブ（page は空でなく 'web'。あちこちで tab.page.path などを読むので null にしない。指摘 5）
     const local = event.url && mirrorUrl(event.url);
     if (local && tab.mode === 'chrome' && local !== tab.url) {
       tab.url = local;
@@ -454,9 +478,14 @@ export function createBrowserUnify(deps = {}) {
       let at;
       try { at = new URL(event.data.href); } catch { return; }
       if (at.origin !== event.origin) return;
-      entry.url = at.href;
-      const resolved = await cmd('pageResolve', { sessionId:entry.sessionId, url:at.href }).catch(() => null);
-      pages.locate(entry.tab, { url:at.href, title:typeof event.data.title === 'string' ? event.data.title : null, resolved });
+      entry.url = at.href; entry.pendingNav = null;   // 文書の中の履歴を移した届いた（戻る/進むの待ち合わせ）
+      const before = entry.tab.page?.path;
+      const resolved = await cmd('pageResolve', { sessionId:entry.sessionId, url:at.href, tab:entry.targetId }).catch(() => null);
+      // 別のファイルへ移った: 前のファイルのこのタブぶんの見張りを外す（ほかの画面・タブが見ている分は残る。指摘 3）
+      if (resolved?.kind === 'html' && before && resolved.path && !samePath(before, resolved.path)) {
+        cmd('pageWatch', { sessionId:entry.sessionId, path:before, kind:'file', tab:entry.targetId }).catch(() => {});
+      }
+      pages.locate(entry.tab, { url:at.href, title:typeof event.data.title === 'string' ? event.data.title : null, resolved, sameDocument:event.data.sameDocument === true });
       return;
     }
     if (event.data?.type === 'ply-preview-open-link' && typeof event.data.url === 'string') {

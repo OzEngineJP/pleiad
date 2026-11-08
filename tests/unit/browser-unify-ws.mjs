@@ -115,11 +115,13 @@ export default async function(t) {
     const htmlKeys = createHtmlKeys({ secret });
     const watches = [];
     const hash = 'b'.repeat(64);
-    const removed = [];
+    const removed = [], removedClients = [];
     const openWs = createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client),
       ports:() => ({ pages:12345, isolated:23456 }), cwd:() => work, access:() => ({ dataDir }),
-      htmlKeys, secret, pageWatch:{ add:(...args) => watches.push(args), remove:(...args) => removed.push(args) },
-      isolatedRoutes:{ manifest:async h => h === hash ? { 'index.html':{ sha:'0'.repeat(64) } } : null } });
+      htmlKeys, secret, pageWatch:{ add:(...args) => watches.push(args), remove:(...args) => removed.push(args), removeClient:(id) => removedClients.push(id) },
+      // 可視化の元のファイルは会話の記録（束の持ち主の行）から決める。クライアントの送った path は使わない（指摘 6）
+      vizSource:async (sessionId, h) => h === hash ? { path:path.join(work, 'visualized.html') } : null,
+      isolatedRoutes:{ manifest:async h => [hash, 'c'.repeat(64)].includes(h) ? { 'index.html':{ sha:'0'.repeat(64) } } : null } });
     const htmlFile = path.join(work, 'page.html'); await fs.writeFile(htmlFile, '<p>h</p>');
     const page = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'file', path:file }, client:clients[0] });
     t.ok('ページは pages の port の URL（画面が組み立てない）。開いたファイルは変化の見張りに登る',
@@ -140,9 +142,11 @@ export default async function(t) {
     const otherSession = await openWs.handle({ command:'pageOpen', args:{ sessionId:'two', kind:'file', path:file }, client:clients[0] }).then(() => null, e => e.code);
     t.ok('目録に無い束・知らない kind・見ていない接続・ほかの会話は断る',
       badViz === 'NOT_FOUND' && badKind === 'INVALID' && stranger === 'INVALID' && otherSession === 'INVALID');
-    const vizMeta = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'viz', hash, title:'月ごとの売上', path:htmlFile }, client:clients[0] });
-    t.ok('可視化の開く先は元のファイルと題を返す（アドレスバーのパンくず・ツリー・タブの題に使う）',
-      vizMeta.path === htmlFile && vizMeta.title === '月ごとの売上' && new URL(vizMeta.url).searchParams.get('title') === '月ごとの売上');
+    const vizMeta = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'viz', hash, title:'月ごとの売上', path:'C:/Windows/System32/evil<script>.html' }, client:clients[0] });
+    t.ok('可視化の元のファイルは会話の記録から返す（クライアントの送った path は信じない。アドレスバー・ツリー・タブの題に使う）',
+      vizMeta.path === path.join(work, 'visualized.html') && vizMeta.title === '月ごとの売上' && new URL(vizMeta.url).searchParams.get('title') === '月ごとの売上');
+    const orphanViz = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'viz', hash:'c'.repeat(64), path:htmlFile }, client:clients[0] });
+    t.ok('記録に無い束は path を返さない（クライアントの path を反映させない）', orphanViz.path === undefined);
 
     // pageResolve: 隔離の URL を開いている対象へ戻す（ページ内の移動の追跡。ファイルなら見張りも登り直す）
     const watchesBefore = watches.length;
@@ -161,6 +165,31 @@ export default async function(t) {
     t.ok('pageResolve: 直書き localhost の隔離 port も引ける。別 port・別の印・知らない鍵・他の会話の鍵・見ていない接続は断る',
       vizResolve.kind === 'viz' && vizResolve.hash === hash && vizResolve.entry === 'index.html' && vizMarkResolve.kind === 'viz'
       && wrongPort === 'INVALID' && wrongMark === 'INVALID' && badKey === 'NOT_FOUND' && foreignKey === 'INVALID' && resolveStranger === 'INVALID');
+
+    // pageResolve の対象はフォルダーの中の HTML だけ（指摘 7）: 鍵の URL の道を変えて確かめる
+    const keyUrl = new URL(html.url), key = decodeURIComponent(keyUrl.pathname.split('/')[2]), mark = keyUrl.hostname;
+    for (const name of ['.env', 'notes.md', '.secret/page.html', 'page.png']) await fs.mkdir(path.join(work, name.endsWith('page.html') ? '.secret' : '.'), { recursive:true }).then(() => fs.writeFile(path.join(work, name), 'x')).catch(() => {});
+    const [envFile, mdFile, dotDir, pngFile, htmMissing] = await Promise.all([
+      openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://${mark}:23456/f/${encodeURIComponent(key)}/.env` }, client:clients[0] }).then(() => null, e => e.code),
+      openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://${mark}:23456/f/${encodeURIComponent(key)}/notes.md` }, client:clients[0] }).then(() => null, e => e.code),
+      openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://${mark}:23456/f/${encodeURIComponent(key)}/.secret/page.html` }, client:clients[0] }).then(() => null, e => e.code),
+      openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://${mark}:23456/f/${encodeURIComponent(key)}/page.png` }, client:clients[0] }).then(() => null, e => e.code),
+      openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://${mark}:23456/f/${encodeURIComponent(key)}/missing.htm` }, client:clients[0] }).then(() => null, e => e.code),
+    ]);
+    await fs.writeFile(path.join(work, 'other.htm'), '<p>h</p>');
+    const htmOk = await openWs.handle({ command:'pageResolve', args:{ sessionId:'one', url:`http://${mark}:23456/f/${encodeURIComponent(key)}/other.htm` }, client:clients[0] });
+    t.ok('pageResolve は .env・.md・ドットで始まるフォルダー・画像・無いファイルを断り、.htm は引く',
+      envFile === 'NOT_FOUND' && mdFile === 'NOT_FOUND' && dotDir === 'NOT_FOUND' && pngFile === 'NOT_FOUND' && htmMissing === 'NOT_FOUND'
+      && htmOk.kind === 'html' && htmOk.path === path.join(work, 'other.htm'));
+
+    // pageOpen・pageResolve・pageWatch はタブの id を見張りの持ち主（owner）として渡す（指摘 3）
+    watches.length = 0; removed.length = 0;
+    await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'file', path:file, tab:'page:7' }, client:clients[0] });
+    await openWs.handle({ command:'pageWatch', args:{ sessionId:'one', path:file, kind:'file', tab:'page:7' }, client:clients[0] });
+    t.ok('開く・外すのどちらも「画面/タブ」の持ち主を渡す',
+      watches.some(w => w[3] === 'screen:1/page:7') && removed.some(w => w[0] === 'one' && w[1] === file && w[2] === 'file' && w[3] === 'screen:1/page:7'));
+    openWs.screenClosed(clients[0]);
+    t.ok('画面が切れるとその画面の持ち主ぶんを外す', removedClients.length === 1 && removedClients[0] === 'screen:1');
 
     // pageWatch: 閉じたタブの見張りを外す（見ている接続からの依頼だけ。上限の食い潰しを防ぐ）
     const watch = await openWs.handle({ command:'pageWatch', args:{ sessionId:'one', path:file, kind:'file' }, client:clients[0] });

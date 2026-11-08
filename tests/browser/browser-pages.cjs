@@ -6,13 +6,13 @@ module.exports = async function({browser,check,screenshots}) {
   const fixture = `<!doctype html><html lang="ja" data-theme="light"><meta charset="utf-8">
 <script type="importmap">{"imports":{"i18next":"/vendor/i18next.mjs"}}</script>
 <link rel="stylesheet" href="/web/tokens.css"><link rel="stylesheet" href="/web/tree.css"><link rel="stylesheet" href="/web/pages/pages.css">
-<style>body{margin:0;display:flex;height:100vh;background:var(--surface-paper);color:var(--ink);font:14px system-ui}#conversation{flex:1;padding:32px}#filePreview{width:820px;display:flex;flex-direction:column;min-width:0;height:100vh;overflow:hidden}.file-preview-head,.file-preview-toolbar,.file-preview-resize,.file-preview-foot{display:none!important}.file-preview-body-layout,.file-preview-content{display:flex;flex:1;min-height:0;min-width:0}.file-preview-content[hidden],#filePreview[hidden],.file-preview-tree-pane[hidden]{display:none!important}.cp-screen{position:relative;overflow:hidden}.cp-screen>img,.cp-ghost,.cp-veil,.cp-empty,.cp-lag,.cp-stale,.cp-profile-slot,.cp-crop{display:none!important}.cp-slot{display:none}.i{width:18px;height:18px}#menu{position:fixed;z-index:99;background:var(--surface-paper);box-shadow:0 4px 16px var(--shadow);padding:6px;border-radius:8px}#menu button{display:block;padding:10px;background:none;border:0;color:inherit}#menu[hidden]{display:none}@media(max-width:600px){#conversation{display:none}#filePreview{width:100%}}</style>
+<style>body{margin:0;display:flex;height:100vh;background:var(--surface-paper);color:var(--ink);font:14px system-ui}#conversation{flex:1;padding:32px}#filePreview{width:820px;display:flex;flex-direction:column;min-width:0;height:100vh;overflow:hidden}.file-preview-head,.file-preview-toolbar,.file-preview-resize,.file-preview-foot{display:none!important}.file-preview-body-layout,.file-preview-content{display:flex;flex:1;min-height:0;min-width:0}.file-preview-content[hidden],#filePreview[hidden],.file-preview-tree-pane[hidden]{display:none!important}.cp-screen{position:relative;overflow:hidden}.cp-screen>img,.cp-ghost,.cp-veil,.cp-empty,.cp-lag,.cp-stale,.cp-profile-slot,.cp-crop{display:none!important}.i{width:18px;height:18px}#menu{position:fixed;z-index:99;background:var(--surface-paper);box-shadow:0 4px 16px var(--shadow);padding:6px;border-radius:8px}#menu button{display:block;padding:10px;background:none;border:0;color:inherit}#menu[hidden]{display:none}@media(max-width:600px){#conversation{display:none}#filePreview{width:100%}}</style>
 <nav id="sidebar"></nav><main id="conversation"><h2>ファイルを確認</h2><p>計画と資料を開いています。</p><div id="composer"></div></main><div id="menu" hidden></div>
 <script type="module">
 import {createBrowserUnify} from '/web/browser-unify.mjs';
 import {setupFilePreview} from '/web/file-preview.mjs';
 import {setupChromePanel} from '/web/chrome-panel.mjs';
-import {pageOpenFixture} from '/tests/lib/page-open-w1.mjs';
+import {pageOpenFixture} from '/tests/lib/page-open.mjs';
 window.appState={current:'one',cwd:'D:/work'};window.sent=[]; window.errors=[]; window.current='one'; let panelOpen=false;
 const cmd=async(command,args)=>{sent.push({command,args});if(command==='resolvePath')return {path:args.path,kind:args.path.endsWith('/docs')?'directory':'file'};if(command==='chromeNavigate')return {targetId:args.targetId??'chrome:'+sent.length};return {}};
 window.preview=setupFilePreview({getContext:()=>({sessionId:current}),cmd,useFile(){},onLayout(){}});
@@ -23,7 +23,7 @@ ui.capsChanged({browserUnify:{pages:Number(location.port)}});
 window.openFile=path=>ui.openTab({sessionId:'one',kind:'file',path});
 await openFile('D:/work/docs/plan.md'); window.ready=true;
 </script>`;
-  const pageContent = `<!doctype html><html lang="ja"><meta charset="utf-8"><link rel="stylesheet" href="/web/tokens.css"><style>body{margin:0;padding:32px 40px;color:var(--ink);background:var(--surface-paper);font:14px/1.8 system-ui}h1{font-size:24px}input{font:inherit;color:inherit;background:var(--surface-paper);border:1px solid var(--line);padding:8px}main{max-width:680px}li{padding:5px}html{height:100%}body{min-height:1300px} @media(max-width:600px){body{padding:20px}}</style><main><h1>ブラウザーをひとつに</h1><p>ファイル・フォルダー・可視化を、会話の右側で確認できます。</p><h2>ファイルを開く</h2><ul><li>左のツリーから資料を選ぶ</li><li>タブを切り替えて見比べる</li><li>変更が届いたら内容を確認する</li></ul><label>メモ <input aria-label="メモ"></label><p id="count"></p></main><script>window.loads=Date.now();addEventListener('message',e=>{if(e.data?.type==='pleiad:env')document.documentElement.dataset.theme=e.data.env.theme});</script><script type="module">import {installPageActivity} from "/web/pages/activity.mjs";installPageActivity();</script>`;
+  const pageContent = `<!doctype html><html lang="ja"><meta charset="utf-8"><link rel="stylesheet" href="/web/tokens.css"><style>body{margin:0;padding:32px 40px;color:var(--ink);background:var(--surface-paper);font:14px/1.8 system-ui}h1{font-size:24px}input{font:inherit;color:inherit;background:var(--surface-paper);border:1px solid var(--line);padding:8px}main{max-width:680px}li{padding:5px}html{height:100%}body{min-height:1300px} @media(max-width:600px){body{padding:20px}}</style><main><h1>ブラウザーをひとつに</h1><p>ファイル・フォルダー・可視化を、会話の右側で確認できます。</p><h2>ファイルを開く</h2><ul><li>左のツリーから資料を選ぶ</li><li>タブを切り替えて見比べる</li><li>変更が届いたら内容を確認する</li></ul><label>メモ <input aria-label="メモ"></label><p id="count"></p></main><script>window.loads=Date.now();addEventListener('message',e=>{if(e.data?.type==='pleiad:env')document.documentElement.dataset.theme=e.data.env.theme;const c=e.data;if(c?.type==='pleiad:page-command'){if(c.command?.type==='reload')location.reload();else if(c.command?.type==='navigate')location.replace(c.command.url)}});</script><script type="module">import {installPageActivity} from "/web/pages/activity.mjs";installPageActivity();</script>`;
   const tree = [{id:'D:/work',name:'work',kind:'directory',children:[{id:'D:/work/docs',name:'docs',kind:'directory',open:true,children:[{id:'D:/work/docs/plan.md',name:'plan.md',kind:'file'},{id:'D:/work/docs/report.html',name:'report.html',kind:'file'},{id:'D:/work/docs/notes.md',name:'notes.md',kind:'file'}]},{id:'D:/work/src',name:'src',kind:'directory'}]}];
   const server=http.createServer(async(req,res)=>{try{
     const url=new URL(req.url,'http://localhost'); let p=url.pathname;
@@ -35,7 +35,7 @@ await openFile('D:/work/docs/plan.md'); window.ready=true;
     if(p==='/fixture-page'||p.startsWith('/_pleiad/')){res.setHeader('Content-Type','text/html; charset=utf-8');return res.end(pageContent)}
     if(p==='/file-preview'){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({tree,children:[]}))}
     const file=p==='/vendor/i18next.mjs'?path.join(repo,'node_modules/i18next/dist/esm/i18next.js'):path.resolve(repo,'.'+p);
-    if(!file.startsWith(path.join(repo,'web')+path.sep)&&p!=='/vendor/i18next.mjs'&&p!=='/tests/lib/page-open-w1.mjs'){res.writeHead(404);return res.end()}
+    if(!file.startsWith(path.join(repo,'web')+path.sep)&&p!=='/vendor/i18next.mjs'&&p!=='/tests/lib/page-open.mjs'){res.writeHead(404);return res.end()}
     res.setHeader('Content-Type',p.endsWith('.css')?'text/css':p.endsWith('.json')?'application/json':'text/javascript');res.end(await fs.readFile(file));
   }catch(e){res.writeHead(500);res.end(e.message)}});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -108,8 +108,9 @@ await openFile('D:/work/docs/plan.md'); window.ready=true;
     const moved=await page.evaluate(()=>{const port=Number(location.port);ui.onEvent({type:'page:moved',sessionId:'one',previous:{pages:[port],isolated:[]},ports:{pages:port}});return ui.tabsOf('one').at(-1).pending});
     check('dirty moved page keeps the old document until accepted',moved===true&&await page.frameLocator('.bu-local-page:not([hidden])').locator('input').inputValue()===beforeMove);
     await page.locator('.bu-page-update').click();
-    await page.frameLocator('.bu-local-page:not([hidden])').locator('input').waitFor();
-    await page.waitForFunction(()=>document.querySelector('.bu-local-page:not([hidden])').contentDocument?.querySelector('input')?.value==='');
+    let cleared=false;
+    for(let i=0;i<50&&!cleared;i++){await page.waitForTimeout(100);cleared=await page.frameLocator('.bu-local-page:not([hidden])').locator('input').inputValue({timeout:400}).then(v=>v==='',()=>false)}
+    check('accepted update reloads the isolated page',cleared);
     await page.evaluate(()=>ui.openTab({sessionId:'one',kind:'git'}));await page.evaluate(()=>ui.display('chrome'));
     check('git Chrome display uses the pages origin',await page.evaluate(()=>sent.filter(x=>x.command==='chromeNavigate').at(-1).args.input===location.origin.replace('127.0.0.1','localhost')+'/_pleiad/s/one/git'));
     await page.evaluate(()=>ui.display('page'));

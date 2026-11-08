@@ -2408,6 +2408,11 @@ const pagesRoutes = createPagesRoutes({ ops: (caller, id, input) => opsRegistry.
 const isolatedRoutes = createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, secret: pageSecrets.key, fileAccessFor, ports: () => pagePorts, log: pagesLog });
 const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, pageRequests, log: pagesLog,
   htmlKeys, secret: pageSecrets.key, pageWatch,
+  // 可視化の束を開いた元のファイルは、クライアントの送った値でなく会話の記録の行から決める（pageOpen の応答の path）
+  vizSource: async (sessionId, hash) => {
+    const row = (await pageTranscript(sessionId)).presents?.find?.(p => p?.kind === 'visualization' && !p.error && p?.bundle?.hash === hash);
+    return row ? { path: row.path ?? null, caption: row.caption ?? null } : null;
+  },
   // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る
   movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
   mask: message => secretMasker.json(message),
@@ -5942,6 +5947,7 @@ function attach(ws) {
 
 function detach(ws) {
   if (!runtime.sockets.delete(ws)) return;
+  browserUnifyWs.screenClosed?.(ws);   // 切れた画面ぶんのファイルの見張りを外す（page:changed の owner）
   if (runtime.sockets.size > 0) return;          // まだ別のタブが居る
   if (runtime.turns.size === 0 && blockingWaits().length === 0) return;
 

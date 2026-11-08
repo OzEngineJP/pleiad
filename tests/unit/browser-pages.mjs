@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createPageTabs } from '../../web/page-tabs.mjs';
-import { pageOpenFixture } from '../lib/page-open-w1.mjs';
-export const name = 'browser-pages-w1';
+import { pageOpenFixture } from '../lib/page-open.mjs';
+export const name = 'browser-pages';
 export const title = '画面内のページ・更新・表示切り替え・ファイルツリー';
 export default async function(t) {
   const calls = [], origin = 'http://localhost:8123';
   const model = createPageTabs({ origin, pageOpen:async input => { calls.push(input); return pageOpenFixture('http://localhost:8125')(input); } });
   const a = await model.open({sessionId:'one',kind:'file',path:'D:/work/a.html'});
   assert.equal(a.url, (await pageOpenFixture('http://localhost:8125')(calls[0])).url);
-  assert.deepEqual(calls, [{sessionId:'one',kind:'html',path:'D:/work/a.html'}]);
+  assert.deepEqual(calls, [{sessionId:'one',kind:'html',path:'D:/work/a.html',tab:a.targetId}]);
   assert.equal(a.page.kind, 'html');
   t.ok('HTML uses the complete URL from pageOpen (kind:html)', true);
   const v = await model.open({sessionId:'one',kind:'viz',vizHash:'ab'.repeat(32),entry:'chart.html'});
@@ -33,10 +33,10 @@ export default async function(t) {
   const bad = createPageTabs({origin,pageOpen:async()=>({kind:'html',url:'javascript:alert(1)'})});
   await assert.rejects(bad.open({sessionId:'one',kind:'file',path:'a.htm'}));
   t.ok('pageOpen rejects executable URLs',true);
-  if (process.env.W1_BROWSER_TEST !== '1') { t.note('W1_BROWSER_TEST=1 enables the isolated browser checks.'); return; }
+  if (process.env.BROWSER_PAGES_TEST !== '1') { t.note('BROWSER_PAGES_TEST=1 enables the isolated browser checks.'); return; }
   const require = createRequire(import.meta.url);
-  const pw = process.env.W1_PLAYWRIGHT_PACKAGE ? createRequire(process.env.W1_PLAYWRIGHT_PACKAGE)('playwright-core') : require('playwright-core');
-  const browser = await pw.chromium.launch({headless:true,...(process.env.W1_CHROME ? {executablePath:process.env.W1_CHROME}:{}),args:['--use-angle=d3d11','--num-raster-threads=4']});
-  try { await require('../browser/browser-pages-w1.cjs')({browser,check:(...args)=>t.ok(...args),screenshots:process.env.W1_SCREENSHOTS}); }
+  const pw = process.env.BROWSER_PAGES_PLAYWRIGHT_PACKAGE ? createRequire(process.env.BROWSER_PAGES_PLAYWRIGHT_PACKAGE)('playwright-core') : require('playwright-core');
+  const browser = await pw.chromium.launch({headless:true,...(process.env.BROWSER_PAGES_CHROME ? {executablePath:process.env.BROWSER_PAGES_CHROME}:{}),args:['--use-angle=d3d11','--num-raster-threads=4']});
+  try { await require('../browser/browser-pages.cjs')({browser,check:(...args)=>t.ok(...args),screenshots:process.env.BROWSER_PAGES_SCREENSHOTS}); }
   finally { await browser.close(); }
 }

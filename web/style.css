@@ -1158,8 +1158,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .visualize-seamless .present-body>.visualize-frame{display:block;width:100%;border-radius:var(--r-m);background:transparent}
 /* 操作列は枠の内側の端に置く。外に出すと、カードと操作列の間で hover が切れてマウスでは押せない（P2） */
 .visualize-seamless .present-tools{position:absolute;top:6px;right:8px;z-index:3;display:flex;align-items:center;gap:2px;padding:2px;background:var(--surface-paper);border-radius:var(--r-pill);box-shadow:0 0 0 1px var(--line),0 2px 8px var(--shadow);opacity:0;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out)}
-.visualize-seamless:is(:hover,:focus-within){box-shadow:0 0 0 1px var(--line)}
-.visualize-seamless:is(:hover,:focus-within) .present-tools,.visualize-seamless .present-tools:is(:hover,:focus-within){opacity:1;pointer-events:auto}
+/* .point: 隔離の origin の iframe の上では親の :hover が付かないので、枠の中の橋が教える「触れている」の印（P2。web/visualize-frame.mjs） */
+.visualize-seamless:is(:hover,:focus-within,.point){box-shadow:0 0 0 1px var(--line)}
+.visualize-seamless:is(:hover,:focus-within,.point) .present-tools,.visualize-seamless .present-tools:is(:hover,:focus-within){opacity:1;pointer-events:auto}
 .visualize-seamless .present-tools .h-icon:hover{background:var(--surface-1);color:var(--ink)}
 .visualize-seamless .visualize-title{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 /* 広げる（web/visualize-widen.mjs、ADR 0252）。左右の margin は .mw-body の padding の箱の 4px 内側までを JS が測る。

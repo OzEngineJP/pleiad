@@ -7,6 +7,18 @@ import { confirmedPreview, currentPreviewPolicy } from './preview-confirm.mjs';
 export { VISUALIZE_CSP, visualizationDocument } from './visualize-document.mjs';
 
 if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('message', event => {
+  // cross-origin の iframe の上では親の要素に :hover が付かない。枠の中の橋の「触れている」の報告で
+  // カードに .point を付け、操作列（style.css）を出す。外れるときは少し待って、操作列へ移った途中なら消さない
+  if (event.data?.type === 'ply-preview-point') {
+    for (const frame of document.querySelectorAll('iframe.visualize-frame')) {
+      if (frame.contentWindow !== event.source) continue;
+      const card = frame.closest('.visualize-seamless');
+      if (!card) continue;
+      if (event.data.over === true) card.classList.add('point');
+      else setTimeout(() => { if (!card.matches(':hover,:focus-within')) card.classList.remove('point'); }, 80);
+    }
+    return;
+  }
   if (event.data?.type !== 'ply-visualize-height' || !Number.isFinite(event.data.height)) return;
   // No commands or arbitrary styles cross this boundary: only bounded height,
   // and only from a currently mounted visualization's own WindowProxy.

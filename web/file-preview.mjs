@@ -3,7 +3,7 @@ import { t, fmt } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { markdownContent, parseTable } from './file-preview-content.mjs';
-import { visualizationFrame, isolatedVisualizationUrl, configureVisualizationTabs } from './visualize-frame.mjs';
+import { visualizationFrame, configureVisualizationTabs } from './visualize-frame.mjs';
 import { createFilePageRouter } from './page-frame.mjs';
 import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon, locateIcon, collapseAllIcon } from './icons.mjs';
 import { fileMenuItems, copyPathText, relativeTo, samePath, notify, download } from './file-actions.mjs';

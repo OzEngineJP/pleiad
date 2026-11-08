@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { classifyAddressInput, resolveAddressInput } from './address-input.mjs';
 import { inspectFile, listTreeFolder } from './file-preview.mjs';
@@ -16,6 +17,8 @@ export function createBrowserUnifyWs(deps = {}) {
   const relay = deps.relay;
   const screens = new WeakMap(); let nextScreen = 0;
   const clientId = client => { if (!screens.has(client)) screens.set(client, `screen:${++nextScreen}`); return screens.get(client); };
+  // 見張りの持ち主（core/page-watch.mjs の owner）は「画面の id/タブの id」。タブを閉じたとき・画面が切れたときにその分だけ外れる
+  const ownerOf = (client, tab) => `${clientId(client)}/${typeof tab === 'string' && tab ? tab : '·'}`;
   const fail = code => { throw Object.assign(new Error(code), { code }); };
   const send = (client, event) => {
     if (client.readyState !== undefined && client.readyState !== client.OPEN) return;
@@ -63,7 +66,7 @@ export function createBrowserUnifyWs(deps = {}) {
    *   - 可視化:  { kind:'viz', hash, entry, url }。url は束の印の出どころ（v<印>.localhost）
    * ページの対象は変化の見張り（core/page-watch.mjs）に登録する（開いたファイルが変わったら page:changed）
    */
-  async function openTarget(sessionId, input) {
+  async function openTarget(sessionId, input, owner = '·') {
     const ports = deps.ports?.() ?? {};
     if (!ports.pages || !ports.isolated) fail('UNSUPPORTED');
     const kind = typeof input?.kind === 'string' ? input.kind : '';
@@ -85,12 +88,12 @@ export function createBrowserUnifyWs(deps = {}) {
         if (checked === 'denied' || !/\.html?$/i.test(checked.file)) fail('INVALID');
         const key = deps.htmlKeys?.issue({ sessionId, path: checked.file, once: Array.isArray(input?.once) ? input.once.slice(0, 50) : [] });
         if (!key || !deps.secret) fail('UNAVAILABLE');
-        deps.pageWatch?.add(sessionId, checked.file, 'file');
+        deps.pageWatch?.add(sessionId, checked.file, 'file', owner);
         const suffix = title ? `?title=${encodeURIComponent(title)}` : '';
         return { kind: 'html', path: checked.file, key, cwd: cwd ?? undefined,
           url: `http://${fileMark(deps.secret, path.dirname(checked.file))}.localhost:${ports.isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(checked.file))}${suffix}` };
       }
-      if (file) deps.pageWatch?.add(sessionId, file, page === 'dir' ? 'dir' : 'file');
+      if (file) deps.pageWatch?.add(sessionId, file, page === 'dir' ? 'dir' : 'file', owner);
       const url = new URL(pageUrl(sessionId, page, file));
       if (/^\d{1,9}$/.test(String(input?.line ?? ''))) url.searchParams.set('line', String(input.line));
       return { kind: page, path: file ?? undefined, cwd: cwd ?? undefined, suffix: `${url.pathname}${url.search}`, url: url.href };
@@ -101,10 +104,10 @@ export function createBrowserUnifyWs(deps = {}) {
       const files = await deps.isolatedRoutes?.manifest?.(hash);
       const rel = files && manifestRel(files, typeof input?.entry === 'string' && input.entry ? input.entry.replaceAll('\\', '/') : 'index.html');
       if (!rel) fail('NOT_FOUND');
-      // 元のファイル・題は呼び手（カード）から届く表示用の情報。アドレスバーとタブの題に使う
-      const source = typeof input?.path === 'string' && input.path ? input.path.slice(0, 4096) : undefined;
+      // 元のファイルはクライアントの送った値でなく、会話の記録にある束の持ち主の行から決める（指摘 6）
+      const source = await deps.vizSource?.(sessionId, hash).catch(() => null);
       const params = new URLSearchParams({ embed: 'tab', ...(title ? { title } : {}) });
-      return { kind: 'viz', hash, entry: rel, title: title || rel, path: source,
+      return { kind: 'viz', hash, entry: rel, title: title || rel, path: source?.path ?? undefined,
         url: `http://${vizMark(hash)}.localhost:${ports.isolated}/viz/${hash}/${rel.split('/').map(encodeURIComponent).join('/')}?${params}` };
     }
     fail('INVALID');
@@ -114,7 +117,7 @@ export function createBrowserUnifyWs(deps = {}) {
    * 隔離の origin の URL を、開いている対象（ファイルのパス・束）へ戻す（pageResolve）。
    * ページ内の移動で親が受け取った URL を確かめ、ファイルなら変化の見張りにも登り直す
    */
-  async function resolvePageLocation(sessionId, raw) {
+  async function resolvePageLocation(sessionId, raw, owner = '·') {
     let parsed;
     try { parsed = new URL(String(raw ?? '')); } catch { fail('INVALID'); }
     const isolated = deps.ports?.().isolated;
@@ -136,13 +139,28 @@ export function createBrowserUnifyWs(deps = {}) {
       if (!held?.root) fail('NOT_FOUND');
       if (held.sessionId && held.sessionId !== sessionId) fail('INVALID');
       if (parsed.hostname !== 'localhost' && parsed.hostname !== `${fileMark(deps.secret, held.root)}.localhost`) fail('INVALID');
+      // ドットで始まる名前（.env・.git など）は開いている対象としても認めない（serveFile と同じ。指摘 7）
       const rel = parts.slice(2).filter(part => part && part !== '.' && part !== '..');
+      if (rel.some(part => part.startsWith('.'))) fail('NOT_FOUND');
       const file = path.join(held.root, ...rel);
       if (rel.length && file !== held.root && !file.startsWith(held.root + path.sep)) fail('INVALID');
       const access = await deps.access?.(sessionId) ?? null;
-      const checked = await inspectFile(rel.length ? file : path.join(held.root, held.entry), access ?? {}).catch(() => null);
-      if (!checked || checked === 'denied' || !checked.stat?.isFile?.()) fail('NOT_FOUND');
-      deps.pageWatch?.add(sessionId, checked.file, 'file');
+      // 実体のパスが鍵のフォルダーの中にあることを realpath で確かめる（シンボリックリンク・ジャンクションで外へ出させない）
+      let checked, root;
+      try {
+        root = await fs.realpath(held.root);
+        checked = await inspectFile(rel.length ? path.join(root, ...rel) : path.join(root, held.entry), access ?? {});
+      } catch { fail('NOT_FOUND'); }
+      if (!checked || checked === 'denied') fail('NOT_FOUND');
+      const real = await fs.realpath(checked.file).catch(() => null);
+      if (!real) fail('NOT_FOUND');
+      const inside = path.relative(
+        process.platform === 'win32' ? root.toLowerCase() : root,
+        process.platform === 'win32' ? real.toLowerCase() : real);
+      if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) fail('NOT_FOUND');
+      // 開いている対象として追うのは HTML の文書だけ（.md や画像を「そのファイルのページ」として登録しない）
+      if (!checked.stat?.isFile?.() || !/\.html?$/i.test(checked.file)) fail('NOT_FOUND');
+      deps.pageWatch?.add(sessionId, checked.file, 'file', owner);
       return { kind: 'html', path: checked.file };
     }
     fail('NOT_FOUND');
@@ -259,6 +277,11 @@ export function createBrowserUnifyWs(deps = {}) {
       // 開き直した画面にも、人の操作中のタブの札を出す（AI のタブは送らない。画面は tab:info の reset で持ち手を忘れる）
       for (const held of relay?.unify.tabHolder?.held?.(sessionId) ?? []) send(client, { ...held, type: 'tab:holder', sessionId });
     },
+    /** 画面の接続が切れた: その画面の持ち主ぶんの見張りを外す（ほかの画面の分は残る。server.mjs の detach から） */
+    screenClosed(client) {
+      const id = screens.get(client);
+      if (id) deps.pageWatch?.removeClient?.(id);
+    },
     close() { unsubscribe?.(); },
     async handle({ command, args, client }) {
       if (command === 'pageResult') {
@@ -279,15 +302,16 @@ export function createBrowserUnifyWs(deps = {}) {
       if (command === 'pageOpen') {
         // 開く先はサーバーが決める。その会話を見ている画面だけが頼める（allowed は見ている会話かを確かめる）
         if (!args || typeof args !== 'object' || !allowed(client, args.sessionId)) fail('INVALID');
-        return openTarget(args.sessionId, args);
+        return openTarget(args.sessionId, args, ownerOf(client, args.tab));
       }
       if (command === 'pageResolve') {
         if (!args || typeof args !== 'object' || !allowed(client, args.sessionId)) fail('INVALID');
-        return resolvePageLocation(args.sessionId, args.url);
+        return resolvePageLocation(args.sessionId, args.url, ownerOf(client, args.tab));
       }
       if (command === 'pageWatch') {
         if (!args || typeof args !== 'object' || !allowed(client, args.sessionId) || typeof args.path !== 'string' || !args.path) fail('INVALID');
-        deps.pageWatch?.remove?.(args.sessionId, args.path, args.kind === 'dir' ? 'dir' : 'file');
+        // 外すのはこの画面のこのタブぶんだけ（ほかの画面・タブが同じファイルを見ていても残る。core/page-watch.mjs）
+        deps.pageWatch?.remove?.(args.sessionId, args.path, args.kind === 'dir' ? 'dir' : 'file', ownerOf(client, args.tab));
         return { removed: true };
       }
       if (command !== 'chromeAddress') fail('UNKNOWN_COMMAND');

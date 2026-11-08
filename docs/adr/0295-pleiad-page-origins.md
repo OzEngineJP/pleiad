@@ -185,9 +185,9 @@ ADR 0294 で、ファイル・フォルダー・git・プラグイン・新し�
 HTML・可視化のタブは、画面を作る W1 と隔離配信を作る W2 の境界を次のように分ける。この節が旧来の HTML の外枠 URL・opaque origin・スマホだけの端末内描画に優先する。鍵・CSP・リモートの配信変更は W2 の実装で合わせる。
 
 - `pageOpen({sessionId, kind:'file'|'viz', path?, vizHash?, entry?})` は `{url,title,path?,kind,origin}` を返す。W1 は HTML・可視化の URL を組み立てず、ページでも Chrome でも返却 URL を使う。
-- `page:moved {sessionId,from,to}` は現在の URL と履歴を差し替える。入力済みの画面は「更新を表示」を押して確認するまで残す。
+- `page:moved {ports:{pages,isolated}, previous:{pages[],isolated[]}}` は、今の port と「かつて Pleiad のリスナーだった port」の一覧を知らせる（会話 id は持たない。全画面へ届く）。画面は現在の URL と履歴の中で前の port を持つものを今の port へ差し替える。入力済みの画面は「更新を表示」を押して確認するまで残す。
 - `page:changed {sessionId,path}` は、未操作なら読み直し、操作後なら「更新を表示」を出す。
-- W1 の実装は `web/page-tabs.mjs` と `web/browser-unify.mjs`。試験だけ `tests/lib/page-open-w1.mjs` を依存として渡す。本番は `pageOpen` コマンドを呼び、代わりの URL へ逃がさない。W2 がコマンドを追加すれば、試験用の注入を使わず接続できる。
+- W1 の実装は `web/page-tabs.mjs` と `web/browser-unify.mjs`。試験だけ `tests/lib/page-open.mjs` を依存として渡す。本番は `pageOpen` コマンドを呼び、代わりの URL へ逃がさない。W2 がコマンドを追加すれば、試験用の注入を使わず接続できる。
 - サーバーの入れ替えで線を張り直したあとは、画面はまず見ている会話を `watchSession` で登録し直してから、ファイル・フォルダー・HTML・可視化のタブの `pageOpen` を取り直す（逆の順では、その接続が会話を見ているとサーバーが分かる前の `pageOpen` が INVALID で落ちる）。隔離の URL を開くたびにも `pageResolve` で確かめ、引けなければ同じ道で取り直す。
 - 隔離された HTML の操作検出には `web/pages/activity.mjs` の `installPageActivity` を W2 のページへ載せる（モジュールを配るか、同関数を橋へ組み込む）。親の load 時の `pleiad:page-activity-init` に対し、クリック・選択・スクロール・入力の最初の変化を `pleiad:page-activity {input:boolean}` で親へ返す。親 window を照合し、応答先は受信した正確な origin に限定する。W1 も iframe の window と返却 URL の origin を照合する。この橋はアプリ操作の命令を受けない。
 

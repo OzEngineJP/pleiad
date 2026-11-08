@@ -1,5 +1,7 @@
 // 画面に開かれているファイル・フォルダーの変化を追う（page:changed。ADR 0295 の 6）。
-//   - 開くとき（pageOpen・ファイルのページの api/preview・api/html-key）に登録する。開いた数だけ簿に残る（上限あり）
+//   - 開くとき（pageOpen・pageResolve・ファイルのページの api/preview・api/html-key）に登録する。開いた数だけ簿に残る（上限あり）
+//   - 登録は「画面×タブ」の持ち主ごとに数える（owner。無いものは '·'）。同じファイルを別の画面・タブが開いていても、
+//     1 つの持ち主が外しても残りの分は残る。画面が切れたらその持ち主ぶんを全部外す（removeClient）
 //   - fs.watch はフォルダー単位に張る（Windows の watch は直下の子だけ分かる）。ファイルは中身の名前で照合し、
 //     フォルダー（dir の印）は直下の子のどれかが変われば知らせる。書き換え・名前の替え・消去のどれも拾う
 //   - 同じファイルへの連続の書き込みは 250ms でまとめてから知らせる（AI の一括の書き換えで何度も読み直さない）
@@ -24,14 +26,14 @@ const norm = value => {
  * @param [deps.debounceMs] まとめる幅（試験用）
  */
 export function createPageWatch({ watch = (dir, listener) => fs.watch(dir, listener), emit = () => {}, debounceMs = DEBOUNCE_MS } = {}) {
-  // dirKey（張ったフォルダー）-> { watcher, targets: Map<targetKey, { path, sessions:Set, dir }> }
+  // dirKey（張ったフォルダー）-> { watcher, targets: Map<targetKey, { path, sessions:Map<sessionId, Set<owner>>, dir }> }
   const watched = new Map();
   const pending = new Map();   // targetKey -> timer
   let tracked = 0;
 
   function fire(dirKey, targetKey) {
     const entry = watched.get(dirKey)?.targets.get(targetKey);
-    if (entry) for (const sessionId of entry.sessions) emit(sessionId, entry.path);
+    if (entry) for (const sessionId of entry.sessions.keys()) emit(sessionId, entry.path);
   }
 
   function onEvent(dirKey, _type, name) {
@@ -94,8 +96,12 @@ export function createPageWatch({ watch = (dir, listener) => fs.watch(dir, liste
   }
 
   return {
-    /** @param {'file'|'dir'} kind 'dir' なら対象のフォルダーの直下の子の変化を知らせる */
-    add(sessionId, filePath, kind = 'file') {
+    /**
+     * @param {'file'|'dir'} kind 'dir' なら対象のフォルダーの直下の子の変化を知らせる
+     * @param [owner] 見張っている持ち主（'画面の id/タブの id'。ページ自身の登録は '·'）。
+     *   remove は同じ持ち主の分だけ外すので、同じファイルを開いているほかの画面・タブの分は残る
+     */
+    add(sessionId, filePath, kind = 'file', owner = '·') {
       if (typeof sessionId !== 'string' || !sessionId || typeof filePath !== 'string' || !filePath) return;
       const isDir = kind === 'dir';
       const dirPath = isDir ? filePath : path.dirname(filePath);
@@ -105,22 +111,41 @@ export function createPageWatch({ watch = (dir, listener) => fs.watch(dir, liste
       let entry = dir.targets.get(targetKey);
       if (!entry) {
         if (tracked >= MAX_TRACKED) evictOldest();
-        entry = { path: filePath, sessions: new Set(), dir: isDir };
+        entry = { path: filePath, sessions: new Map(), dir: isDir };
         dir.targets.set(targetKey, entry);
         tracked++;
       } else { dir.targets.delete(targetKey); dir.targets.set(targetKey, entry); }   // 使った対象を新しい方へ（上限は古い方から外す）
-      entry.sessions.add(sessionId);
+      let owners = entry.sessions.get(sessionId);
+      if (!owners) { owners = new Set(); entry.sessions.set(sessionId, owners); }
+      owners.add(typeof owner === 'string' && owner ? owner : '·');
     },
-    remove(sessionId, filePath, kind = 'file') {
+    remove(sessionId, filePath, kind = 'file', owner = '·') {
       const dirKey = norm(kind === 'dir' ? filePath : path.dirname(filePath));
       const targetKey = kind === 'dir' ? `${norm(filePath)}\u0000dir` : norm(filePath);
-      watched.get(dirKey)?.targets.get(targetKey)?.sessions.delete(sessionId);
+      const entry = watched.get(dirKey)?.targets.get(targetKey);
+      const owners = entry?.sessions.get(sessionId);
+      if (owners) {
+        owners.delete(typeof owner === 'string' && owner ? owner : '·');
+        if (!owners.size) entry.sessions.delete(sessionId);
+      }
       prune(dirKey, targetKey);
     },
     /** その会話ぶんを全部消す（タブを閉じたとき・会話の終わり） */
     removeSession(sessionId) {
       for (const [dirKey, dir] of watched) for (const [targetKey, entry] of dir.targets) {
         entry.sessions.delete(sessionId);
+        prune(dirKey, targetKey);
+      }
+    },
+    /** 切れた画面の持ち主ぶんを全部消す（持ち主は '<clientId>/<タブ>' の形） */
+    removeClient(clientId) {
+      if (typeof clientId !== 'string' || !clientId) return;
+      const prefix = `${clientId}/`;
+      for (const [dirKey, dir] of watched) for (const [targetKey, entry] of dir.targets) {
+        for (const [sessionId, owners] of entry.sessions) {
+          for (const owner of [...owners]) if (owner === clientId || owner.startsWith(prefix)) owners.delete(owner);
+          if (!owners.size) entry.sessions.delete(sessionId);
+        }
         prune(dirKey, targetKey);
       }
     },
