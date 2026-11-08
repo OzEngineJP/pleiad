@@ -44,6 +44,8 @@ export function createBrowserTree({ host, open, menu, notify = () => {} }) {
     onMore:async item => { const result = await read(item.id, true, item.next); const known = new Set(item.children.map(child => child.id)); return { ...result, children:[...item.children, ...nodes(result.children).filter(child => !known.has(child.id))] }; },
   });
   function layout() {
+    const chrome = host.querySelector('.bu-chrome');
+    root.style.top = `${chrome ? chrome.offsetTop + chrome.offsetHeight : 0}px`;
     narrow = host.clientWidth < 640 || matchMedia('(max-width:600px)').matches;
     const visible = !!path && (narrow ? overlay : prefs.open);
     root.hidden = !visible; host.querySelector('.bu-tree')?.setAttribute('aria-expanded', String(visible)); root.classList.toggle('bu-tree-overlay', narrow);
@@ -62,7 +64,8 @@ export function createBrowserTree({ host, open, menu, notify = () => {} }) {
   resize.onpointerup = event => { if (resize.hasPointerCapture(event.pointerId)) resize.releasePointerCapture(event.pointerId); };
   root.addEventListener('keydown', event => { if (event.key === 'Escape' && narrow) { event.preventDefault(); event.stopPropagation(); toggle(false); host.querySelector('.bu-tree')?.focus(); } });
   host.addEventListener('pointerdown', event => { if (narrow && !root.contains(event.target) && !event.target.closest('.bu-tree')) { overlay = false; layout(); } });
-  new ResizeObserver(layout).observe(host);
+  const layoutWatch = new ResizeObserver(layout); layoutWatch.observe(host);
+  const chromeRow = host.querySelector('.bu-chrome'); if (chromeRow) layoutWatch.observe(chromeRow);
   async function show(tab, id) {
     if (sessionId !== id) {
       sessionId = id; loaded = null; overlay = false; prefs = { open:true, width:208 };

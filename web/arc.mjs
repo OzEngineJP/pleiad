@@ -17,7 +17,7 @@ const orbit = (deg) => {
   return [(ARC.cx + SAT.orbit * Math.cos(a)).toFixed(2), (ARC.cy + SAT.orbit * Math.sin(a)).toFixed(2)];
 };
 
-if (document.addEventListener) {
+if (typeof document !== 'undefined' && document.addEventListener) {
   const pauseWhenHidden = () => document.documentElement.classList.toggle("page-hidden", document.hidden);
   document.addEventListener("visibilitychange", pauseWhenHidden);
   pauseWhenHidden();

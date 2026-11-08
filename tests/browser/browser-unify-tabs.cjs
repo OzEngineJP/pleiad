@@ -28,7 +28,7 @@ window.holderStore=createTabHolderStore();
 window.windowTable=createWindowTable();
 window.convRows=[];
 window.waitingIds=new Set(); window.deviceOpIds=new Set();
-window.chromeFixture={sessionId:'one',tabId:'file',opened:false,pins:[],scState:null,isOpen(){return this.opened},open(el,opts={}){this.opened=true;(this.opens??=[]).push(opts.target??null);if(opts.target)this.sessionId=opts.target},async pinTab(id,pin){this.pins.push({sessionId:id,...pin});sent.push({command:'chromePinWindow',args:{sessionId:id,...pin}});if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});if(pin.tabId)chromeFixture.tabId=pin.tabId;chromeFixture.change?.({type:'state'})},cancelTabPin(){this.cancelTabPinCalls=(this.cancelTabPinCalls??0)+1},get screencastState(){return this.scState},get hold(){return null},mountBrowserChrome(root){document.querySelector('#panel').prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true;this.opened=false}};
+window.chromeFixture={sessionId:'one',tabId:'file',opened:false,pins:[],scState:null,isOpen(){return this.opened},open(el,opts={}){this.opened=true;(this.opens??=[]).push(opts.target??null);if(opts.target)this.sessionId=opts.target},async pinTab(id,pin){this.pins.push({sessionId:id,...pin});sent.push({command:'chromePinWindow',args:{sessionId:id,...pin}});if(window.delayPin)await new Promise((resolve,reject)=>{window.finishPin=resolve;window.failPin=reject});if(pin.tabId)chromeFixture.tabId=pin.tabId;chromeFixture.change?.({type:'state'})},cancelTabPin(){this.cancelTabPinCalls=(this.cancelTabPinCalls??0)+1},get screencastState(){return this.scState},get hold(){return null},workspaceEl:null,get workspace(){return this.workspaceEl},mountBrowserChrome(root){let p=document.querySelector('#buPanel');if(!p){p=document.createElement('div');p.className='cp bu-panel';const s=document.createElement('div');s.className='cp-screen';p.append(root,s);document.querySelector('#panel').prepend(p);this.workspaceEl=p}else if(root.parentElement!==p)p.prepend(root)},onOpenChange(fn){this.openChange=fn},onTargetChange(){},onTabChange(fn){this.change=fn},close(){window.closedPanel=true;this.opened=false}};
 window.st={current:'one',cwd:'D:/dev/pleiad'};
 window.ui=createBrowserUnify({state:window.st,chrome:()=>chromeFixture,controlStore:{get:id=>({state:(window.agentStates?.[id])??window.agentState??'idle',by:window.agentBy??null})},holderStore,onTabsChange:()=>window.entry?.paint(),osActions:()=>window.hostScreen===true,notify:text=>notices.push(text),onPageRequest:(request,where)=>{pageRequests.push({request,where});return true},
   windows:windowTable,conversations:()=>window.convRows,waiting:id=>window.waitingIds.has(id),deviceOperating:id=>window.deviceOpIds.has(id),agentName:()=>'Claude',
@@ -50,6 +50,7 @@ window.ready=true;
       if (pathname === '/web/browser-unify.mjs' && unifySource) { res.setHeader('Content-Type', 'text/javascript'); res.end(unifySource); return; }
       if (pathname === '/fixture') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(fixture); return; }
       if (pathname === '/favicon.ico') { res.setHeader('Content-Type', 'image/png'); res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1sAAAAASUVORK5CYII=', 'base64')); return; }
+      if (pathname === '/file-preview') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ tree:[{ name:'pleiad', kind:'directory', id:'D:/dev/pleiad', children:[{ name:'docs', kind:'directory', id:'D:/dev/pleiad/docs' }] }] })); return; }
       if (pathname.startsWith('/site') || pathname.startsWith('/_pleiad/s/one/file')) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end('<title>Live '+pathname+'</title><link rel="icon" href="/favicon.ico"><h1>Page</h1>'); return;
       }
@@ -293,6 +294,66 @@ window.ready=true;
     await page.evaluate(() => { document.documentElement.dataset.theme='dark'; ui.envChanged({theme:'dark'}); });
     await shot('360-dark-conv-chips');
     await page.evaluate(() => { document.documentElement.dataset.theme='light'; ui.envChanged({theme:'light'}); });
+    await page.setViewportSize({ width:1280, height:720 });
+
+    // ---- ツリーは常にアドレスバーの下から始まり開閉のボタンは押せる・[N] はスマホのバーだけ（beta.34 の報告）
+    const geom = () => page.evaluate(() => {
+      const e = document.querySelector('.bu-explorer'), bar = document.querySelector('.bu-omni');
+      const sw = document.querySelector('.cp-sw'), count = document.querySelector('.bu-count');
+      return { exists:!!e, hidden:e ? e.hidden : true, top:e ? e.getBoundingClientRect().top : -1,
+        barBottom:bar ? bar.getBoundingClientRect().bottom : -1, convOpen:sw ? sw.hasAttribute('data-open') : false,
+        count:count ? getComputedStyle(count).display : 'absent' };
+    });
+    await page.evaluate(() => {
+      window.st.current = 'one'; window.entrySid = 'one';
+      window.agentStates = { one:'running', 'one/child':'running' };
+      window.convRows = [{ sessionId:'one/child', taskId:'t1', title:'子の作業', windows:2, state:'running', waiting:false }];
+      windowTable.apply({ sessionId:'one', windows:2, windowIds:[1,2], currentWindowId:1, pinnedWindowId:null, operating:true });
+      windowTable.apply({ sessionId:'one/child', windows:2, windowIds:[9,10], currentWindowId:9, pinnedWindowId:null, operating:true });
+      ui.onEvent({ type:'tab:info', sessionId:'one', reset:true, tabs:rows });
+      chromeFixture.sessionId = 'one'; chromeFixture.tabId = 'file'; chromeFixture.scState = null; window.delayPin = false;
+      document.querySelector('#panel').style.width = '720px';
+      ui.conversationsChanged(); ui.openEntry('one');
+    });
+    await page.waitForSelector('.bu-explorer:not([hidden])', { timeout:8000 });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 120)));
+    let g = await geom();
+    check('with the conversation row the tree starts below the address bar', g.convOpen && g.exists && !g.hidden && g.top >= g.barBottom, JSON.stringify(g));
+    await page.locator('.bu-tree').click();
+    check('the tree toggle in the address bar closes the explorer', await page.evaluate(() => document.querySelector('.bu-explorer').hidden));
+    await page.locator('.bu-tree').click();
+    await page.evaluate(() => new Promise(r => setTimeout(r, 120)));
+    g = await geom();
+    check('the tree toggle reopens the explorer below the address bar', !g.hidden && g.top >= g.barBottom, JSON.stringify(g));
+    // 欄が狭いとき（ツリーが映像に重なる形）でも同じ境界
+    await page.evaluate(() => { document.querySelector('#panel').style.width = '560px'; });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 150)));
+    g = await geom();
+    check('the narrow column turns the tree into an overlay', g.hidden, JSON.stringify(g));
+    await page.locator('.bu-tree').click();
+    await page.evaluate(() => new Promise(r => setTimeout(r, 150)));
+    g = await geom();
+    check('the overlay tree starts below the address bar', !g.hidden && g.top >= g.barBottom, JSON.stringify(g));
+    // 会話の列が無いとき
+    await page.evaluate(() => {
+      window.convRows = [];
+      windowTable.apply({ sessionId:'one/child', windows:0, windowIds:[] });
+      windowTable.apply({ sessionId:'one', windows:1, windowIds:[1], currentWindowId:1, pinnedWindowId:null, operating:true });
+      document.querySelector('#panel').style.width = '720px';
+      ui.conversationsChanged();
+    });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 400)));
+    g = await geom();
+    check('without the conversation row the tree starts below the address bar', !g.convOpen && !g.hidden && g.top >= g.barBottom, JSON.stringify(g));
+    check('no tab count badge in the address bar on PC', g.count === 'none', JSON.stringify(g));
+    // スマホ: [N] は出る・重なるツリーもアドレスバーの下
+    await page.setViewportSize({ width:360, height:720 });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 150)));
+    g = await geom();
+    check('the tab count badge shows in the address bar on the phone', g.count === 'grid', JSON.stringify(g));
+    if (g.hidden) { await page.locator('.bu-tree').click(); await page.evaluate(() => new Promise(r => setTimeout(r, 150))); }
+    g = await geom();
+    check('on the phone the tree overlay starts below the address bar', !g.hidden && g.top >= g.barBottom, JSON.stringify(g));
     await page.setViewportSize({ width:1280, height:720 });
   } finally { await page.close(); await new Promise(resolve => server.close(resolve)); }
 };
