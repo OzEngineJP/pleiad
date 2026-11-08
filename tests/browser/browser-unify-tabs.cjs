@@ -241,12 +241,37 @@ window.ready=true;
     await page.evaluate(() => { windowTable.apply({ sessionId:'one/child', windows:2, windowIds:[9,10], currentWindowId:9, pinnedWindowId:10, operating:true }); ui.conversationsChanged(); });
     await page.locator('.cp-sw-follow').click();
     check('「エージェントを追う」 releases the pin', await page.evaluate(() => chromeFixture.pins.at(-1)?.windowId === null && chromeFixture.pins.at(-1)?.tabId === null));
-    await page.evaluate(() => { chromeFixture.scState = { agentTabId:'c1', tabId:'c1' }; ui.conversationsChanged(); });
+    // 本物は「エージェントを追う」の応答で固定の解除が表へ届く。fake の表は自分で更新する
+    await page.evaluate(() => { chromeFixture.scState = { agentTabId:'c1', tabId:'c1' }; windowTable.apply({ sessionId:'one/child', windows:2, windowIds:[9,10], currentWindowId:9, pinnedWindowId:null, operating:true }); ui.conversationsChanged(); });
     check('the tab the agent is on carries the running mark', await page.locator('.bu-tab .bu-agent').count() === 1);
+
+    // ---- 下の列は映している窓のタブだけ（旧仕様 B。8e2bd1ab^ 286 行）。番号のチップで窓を替えると、出るタブも替わる
+    const stripTitles = () => page.evaluate(() => [...document.querySelectorAll('.bu-tab .bu-tab-title')].map(el => el.textContent));
+    await page.evaluate(() => {
+      windowTable.apply({ sessionId:'one/child', windows:2, windowIds:[9,10], currentWindowId:9, pinnedWindowId:null, operating:true });
+      ui.onEvent({ type:'tab:info', sessionId:'one/child', reset:true, tabs:[
+        { sessionId:'one/child', targetId:'w9a', windowId:9,  title:'W9 A',  url:'https://w9a.example/' },
+        { sessionId:'one/child', targetId:'w9b', windowId:9,  title:'W9 B',  url:'https://w9b.example/' },
+        { sessionId:'one/child', targetId:'w10a', windowId:10, title:'W10 A', url:'https://w10a.example/' },
+      ]});
+      ui.conversationsChanged();
+    });
+    check('while following the agent, the strip shows only the tabs of the window the agent is on', (await stripTitles()).join(',') === 'W9 A,W9 B');
+    await page.locator('.cp-sw-chip:not(.cp-sw-conv)').nth(3).click();
+    await page.evaluate(() => { windowTable.apply({ sessionId:'one/child', windows:2, windowIds:[9,10], currentWindowId:9, pinnedWindowId:10, operating:true }); ui.conversationsChanged(); });
+    check('switching to the second window replaces the strip with that window\'s tabs', (await stripTitles()).join(',') === 'W10 A');
+    await page.locator('.cp-sw-chip:not(.cp-sw-conv)').nth(2).click();
+    await page.evaluate(() => { windowTable.apply({ sessionId:'one/child', windows:2, windowIds:[9,10], currentWindowId:9, pinnedWindowId:9, operating:true }); ui.conversationsChanged(); });
+    check('switching back to the first window shows only its tabs', (await stripTitles()).join(',') === 'W9 A,W9 B');
     // 入口を押したとき（32 行）: 操作中なら Chrome のタブを開いて追う（固定を足さない）
     await page.evaluate(() => { chromeFixture.opened = false; chromeFixture.pins = []; });
-    await page.evaluate(() => ui.openEntry('one'));
+    await page.evaluate(() => { ui.openEntry('one'); ui.conversationsChanged(); });
     check('opening the entry while the agent operates follows the agent (no pin)', await page.evaluate(() => chromeFixture.opened && chromeFixture.pins.length === 0));
+    // 「この会話」はファイルのタブを残し、Chrome のタブは映している窓のものだけ（8e2bd1ab^ 286 行）
+    await page.evaluate(() => ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'w2a', windowId:2, title:'W2 A', url:'https://w2a.example/' }));
+    const oneTitles = await page.evaluate(() => [...document.querySelectorAll('.bu-tab .bu-tab-title')].map(el => el.textContent).join(','));
+    check('this conversation keeps file tabs and shows only the shown window\'s Chrome tabs', oneTitles === 'file-preview.md,GitHub · Pleiad,file.md,Third again', oneTitles);
+    await page.evaluate(() => ui.onEvent({ type:'tab:info', sessionId:'one', targetId:'w2a', removed:true }));
     // 欄が閉じているまま会話が変わっても空のタブを足さない（前の仕様 32 行）。タブの数はスマホの [N] で出るので 360px で確かめる
     await page.setViewportSize({ width:360, height:720 });
     await page.evaluate(() => { chromeFixture.opened = false; window.st.current = 'two'; window.entrySid = 'two'; window.sent.length = 0; ui.sessionChanged('two'); });

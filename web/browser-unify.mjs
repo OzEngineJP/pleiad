@@ -176,7 +176,13 @@ export function createBrowserUnify(deps = {}) {
   const allTabs = id => { const local = pages.list(id), linked = new Set(local.map(tab => tab.chromeId).filter(Boolean)); const merged = [...local, ...(rows.get(id) ?? []).filter(tab => !linked.has(tab.targetId))];
     for (const tab of merged) { const key = `${id}:${tab.targetId}`; if (!orders.has(key)) orders.set(key, ++order); }
     return merged.sort((a,b) => orders.get(`${id}:${a.targetId}`) - orders.get(`${id}:${b.targetId}`)); };
-  const tabs = () => allTabs(session());
+  // 下の列は映している窓のタブだけ（8e2bd1ab^ 286 行）。ファイル・ページのタブは窓に属さないので残し、窓の分からないタブは隠さない
+  const tabs = () => {
+    const id = session(), list = allTabs(id);
+    const win = shownWindow(id);
+    if (win == null || !(windowsTbl?.ids?.(id) ?? []).includes(win)) return list;
+    return list.filter(tab => tab.page || !Number.isSafeInteger(tab.windowId) || tab.windowId === win);
+  };
   const current = () => tabs().find(tab => active?.sessionId === session() && tab.targetId === active.targetId) ?? tabs().find(tab => tab.targetId === chrome()?.tabId) ?? tabs()[0] ?? null;
   const holderOf = (sessionId, targetId) => holderStore.holderOf(sessionId, targetId);
   const phoneQuery = matchMedia('(max-width: 600px)');
