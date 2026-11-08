@@ -59,6 +59,8 @@ export default async function (t) {
     return { sessionId: id, isError: ev.isError, text: ev.text, data };
   };
   try {
+    await c.cmd('authStatus', { backend: 'antigravity', probe: true });
+    await c.cmd('delegationRouting', { refresh: true });
     // ---- 設定と使用量（段 B の画面が読む口）
     let state;
     for (let i = 0; i < 200; i++) {
@@ -75,7 +77,7 @@ export default async function (t) {
     t.ok('候補ごとに今の使用量と使えるかどうかを返す（agy の使用量を定期的に取っている）', gem?.usable === true && gem.windows.length === 2 && gem.checkedAt
       && state.candidates.find(x => x.candidate === 'claude:opus').reason === 'unavailable', JSON.stringify(gem));
     t.ok('今の一覧に無い候補・使えないバックエンドを知らせる', state.warnings.some(w => w.candidate === 'codex:gpt-6-sol' && w.reason === 'unavailable')
-      && state.warnings.some(w => w.candidate === 'antigravity:claude-opus-4-6-thinking' && w.reason === 'model_unknown'));
+      && state.warnings.some(w => w.candidate === 'antigravity:claude-opus-4-6-thinking' && w.reason === 'model_unknown'), JSON.stringify(state.warnings));
     t.ok('キーは未登録（判定に使うキーは 1 つ）', state.key.hasKey === false);
 
     // ---- kind の検査

@@ -133,7 +133,7 @@ export default async function (t) {
       let clock = 1000;
       const rows = Array.from({ length: count }, (_, i) => ({ id: `s${i}`, backend: 'fake', lastModified: 1 }));
       const learner = createMemoryLearner({ dataDir: dir, channels: { dir: path.join(dir, 'channels') }, bots: { get: async () => null }, memory: {}, host: {}, clock: {},
-        readPrefs: async () => ({}), listSessions: async () => rows, readMessages: async () => [], now: () => (clock += 1000) });
+        readPrefs: async () => ({ memoryAutoLearn: true }), listSessions: async () => rows, readMessages: async () => [], now: () => (clock += 1000) });
       closers.push(() => learner.close());
       await learner.runNow();
       const rerun = await counter.measure(() => learner.runNow());
