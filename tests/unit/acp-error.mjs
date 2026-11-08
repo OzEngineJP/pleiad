@@ -16,6 +16,9 @@ export default async function test(t) {
     [{ code: -32603, message: 'Internal error', data: `Grok Build usage balance exhausted ${secret}` }, 'usageExhausted'],
     [{ code: -32603, message: 'Internal error', data: { details: `Grok Build usage balance exhausted ${secret}` } }, 'usageExhausted'],
     [{ code: -32000, message: secret, data: { error: { message: `quota exceeded ${secret}` } } }, 'usageExhausted'],
+    // 日次の有料モデル枠（実機の種別）。次の行は同じ文言だけ（種別が無いときの保険）
+    [{ code: -32011, message: `Your daily usage quota has been exhausted. Visit https://app.devin.ai/settings/usage ${secret}`, data: { 'cognition.ai/errorKind': 'resource_exhausted', 'cognition.ai/retryable': true } }, 'usageExhausted'],
+    [{ code: -32011, message: `Your daily usage quota has been exhausted. Visit https://app.devin.ai/settings/usage ${secret}` }, 'usageExhausted'],
     [{ code: -32000, message: `API error (status 402 Payment Required): ${secret}` }, 'paymentRequired'],
     [{ code: -32000, message: secret, data: { statusCode: 402 } }, 'paymentRequired'],
     [{ code: -32000, message: secret, data: { httpStatus: 402 } }, 'paymentRequired'],
@@ -85,6 +88,14 @@ export default async function test(t) {
   t.ok('provider の retryable 印が無い同じ文言は対象外', true);
   assert.equal(acpTurnLimit({ code: -32010, message: 'Internal error', data: retryable }, now), null);
   t.ok('retryable でも rate limit でない文言は対象外', true);
+  const quota = { code: -32011, message: `Your daily usage quota has been exhausted. Visit https://app.devin.ai/settings/usage ${secret}`,
+    data: { 'cognition.ai/errorKind': 'resource_exhausted', 'cognition.ai/retryable': true } };
+  assert.deepEqual(acpTurnLimit(quota, now), { resetsAt: null });
+  t.ok('日次クォータ枯渇（resource_exhausted・retryable）は時刻が無くても limited（resetsAt: null）', true);
+  assert.equal(acpTurnLimit({ ...quota, data: { 'cognition.ai/errorKind': 'resource_exhausted' } }, now), null);
+  assert.equal(acpTurnLimit({ ...quota, data: { 'cognition.ai/errorKind': 'resource_exhausted', 'cognition.ai/retryable': 'true' } }, now), null);
+  assert.equal(acpTurnLimit({ ...quota, data: { 'cognition.ai/errorKind': 'unavailable', 'cognition.ai/retryable': true } }, now), null);
+  t.ok('resource_exhausted でも retryable が真でない・文字列の "true"・種別が違うものは対象外', true);
   assert.deepEqual(acpTurnLimit({ code: -32010, message: 'reset in 99999999999999999999 seconds rate limit', data: retryable }, now), { resetsAt: now + 24 * 3600_000 });
   assert.deepEqual(acpTurnLimit({ code: -32010, message: 'rate limit reset in 3 days', data: retryable }, now), { resetsAt: now + 24 * 3600_000 });
   t.ok('桁あふれ・1 日を超える見込みは 1 日で切る（枠を何日も外さない）', true);
