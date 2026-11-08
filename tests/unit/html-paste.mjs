@@ -7,6 +7,7 @@
 import { htmlToRich, PASTE_IMAGE_MAX } from '../../web/html-paste.mjs';
 import { markdownToDoc, docToMarkdown } from '../../web/md-doc.mjs';
 import { parseMini } from '../lib/mini-html.mjs';
+import { parseStructure } from '../../web/md-structure.mjs';
 
 export const name = 'html-paste';
 export const title = '貼り付けの HTML → 入力欄の形: 書式・リスト・引用・コード・リンク・表・画像の振り分け・構造の無い HTML は対象外・往復で崩れない';
@@ -53,7 +54,18 @@ export default async function (t) {
     '- 親\n  - 子1\n  - 子2\n    3. 孫\n    4. 孫2\n- 次');
   same('li の中の p・div は 1 つの項目（続きは字下げ）', '<ul><li><p>一段落</p><p>二段落</p></li><li><div>div</div></li></ul>', '- 一段落\n\n  二段落\n- div');
   same('li の外の入れ子のリスト（崩れた HTML）・閉じの省略', '<ul><li>a<li>b<ul><li>c</ul></ul>', '- a\n- b\n  - c');
-  same('入れ子の引用は > > ・引用の中の段落', '<blockquote>外<blockquote>内</blockquote></blockquote><blockquote><p>一</p><p>二</p></blockquote>', '> 外\n> > 内\n> 一\n>\n> 二');
+  // 並んだ 2 つの引用は空行で分ける（続けると 1 つの引用になり、「一」が入れ子の「内」の続きに読まれる）
+  same('入れ子の引用は > > ・引用の中の段落・並んだ引用は空行で分ける', '<blockquote>外<blockquote>内</blockquote></blockquote><blockquote><p>一</p><p>二</p></blockquote>', '> 外\n> > 内\n\n> 一\n>\n> 二');
+  // 引用・リストのすぐ後の字の行は、Markdown では前の段落の続き（遅延の続き）に読まれて中へ入る。空行で切る（ADR 0301）
+  same('引用の後の段落・div は空行で切る', '<blockquote><p>q</p></blockquote><p>y</p><blockquote>r</blockquote><div>z</div>', '> q\n\ny\n> r\n\nz');
+  same('リストの後の段落は空行で切る・リストの後の見出し・コードはそのまま', '<ul><li>a</li></ul><p>y</p><ol><li>b</li></ol><h3>h</h3><ul><li>c</li></ul><pre>x</pre>', '- a\n\ny\n1. b\n### h\n- c\n```\nx\n```');
+  same('引用・リストの中でも、入れ子の後の字は空行で切る', '<blockquote><blockquote>内</blockquote>外</blockquote><ul><li>a<ul><li>b</li></ul>c</li></ul>', '> > 内\n>\n> 外\n- a\n  - b\n\n  c');
+  // 送った後の描画と同じ読み方（md-structure）で、最後の行の引用の数・項目の数を見る
+  const depth = (n) => { let q = 0, it = 0; for (; n; n = n.parent) { q += n.t === 'bq'; it += n.t === 'item'; } return `${q},${it}`; };
+  for (const [html, want] of [['<blockquote><p>q</p></blockquote><p>y</p>', '0,0'], ['<ul><li>a</li></ul><p>y</p>', '0,0'], ['<blockquote><blockquote>内</blockquote>外</blockquote>', '1,0'], ['<ul><li>a<ul><li>b</li></ul>c</li></ul>', '0,1']]) {
+    const got = depth(parseStructure(md(html).split('\n')).lines.at(-1).node);
+    t.ok(`${html} の最後の字は、HTML と同じ入れ物（引用の数,項目の数 = ${want}）に読まれる`, got === want, got);
+  }
   same('リストの外に切り出された li（選択の途中から）', '<li>切れた項目</li><li>もう 1 つ</li>', '- 切れた項目\n- もう 1 つ');
 
   // ---- コード

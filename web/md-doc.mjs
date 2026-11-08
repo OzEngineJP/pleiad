@@ -13,13 +13,13 @@
 //   marker 行頭の記号と字下げ（`## `・`  - `・`3. `・`> > `・`> # `・cont は項目の中身の始まりまでの空白）。p は ''、code は外側の分だけ
 //   runs   インラインの並び [{ text, marks: [{ id, t: 'strong'|'em'|'code'|'link', d?, url? }] }]。code の行は印の無い 1 つの run
 //   att    添付の 1 行（原子）。raw は送る 1 行（`[添付] パス`）、path は解決済みのパス、pid は送っている途中の仮の ID
-//   breakBefore 直前にシリアライズする段落境界（外側の引用・字下げだけ）。編集行やカーソル位置を増やさない
 //   pad    添付の前後・閉じたコードブロックの後ろに、キャレットを置くために足した空行。空のうちは Markdown に出さない
 // 位置: { b: ブロックの添字, v: ブロックの見える文字の中の位置 }（記号・区切りは数えない）。選択は { s, e }（s ≤ e）
 //
 // 操作はどれも状態 { blocks, sel } を受けて新しい状態を返す（元は変えない）。DOM との結び付けは md-editor.mjs。
-import { editingState, normalizeEditingState } from './md-editing-state.mjs';
-import { parseStructure, codeRoles, prefixEnd } from './md-structure.mjs';
+import { editingState, textHash } from './md-editing-state.mjs';
+import { parseStructure, codeRoles, prefixEnd, containersOf } from './md-structure.mjs';
+import { createMatcher, sepBetween, escapeContent, unescapeContent, RE_HR } from './md-rows.mjs';
 import { ATTACHMENT_LINE, ATTACHMENT_MARKS, attachmentLine, normalizeAttachmentPath } from './timeline.mjs';
 
 export { attachmentLine, normalizeAttachmentPath };
@@ -238,44 +238,173 @@ const CODE_ROLES = new Set(['fence-open', 'code', 'fence-close', 'icode']);
 
 const codeBlock = (line, marker = '') => ({ kind: 'code', marker, runs: plainRun(line) });
 
-// ------------------------------------------------------------------ 構造（web/md-structure.mjs。履歴と同じ読み方。ADR 0292）
-// An unfinished upload has no Markdown row; carry its boundary to the next
-// serialized row until it resolves. Keep the boundary on the atom in the model.
-function* serializedRows(blocks) {
-  let before;
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i];
-    if (b.breakBefore !== undefined) before = b.breakBefore;
-    if (omitted(b)) continue;
-    yield { b, i, before };
-    before = undefined;
-  }
+// ------------------------------------------------------------------ 行の文字と送る Markdown（ADR 0301。編集行だけが構造の正本）
+// 行の文字（rowLine）は、行の記号と、頭の空白を除いてエスケープした中身（web/md-rows.mjs の escapeContent。記号の無い字は記号にしない）。
+// 送る Markdown は、行の文字を上から並べ、段落の続きとして読まれてしまうところにだけ区切りの空行（sepBetween）を足したもの。
+// 行の入れ物（描き方・番号・字下げの操作）も、同じ行の文字を読んだ木（rowTree）で決める。遅延の続きは使わない。
+// 読み込んだ Markdown は、どの行も変えないうちは元の文字のまま送る（ブロックの src。遅延の続き・余分な空白・区切りをそのまま残す）
+
+/** 行の文字と、見える位置から文字の位置への写し。位置は base + after[v]（after が無ければ base + v） */
+function rowLine(b, plain = false, lead = false) {
+  if (b.kind === 'att') { const raw = b.raw ?? ''; return { text: raw, base: 0, after: null, len: raw.length }; }
+  if (b.kind === 'code') return { text: b.marker + runsText(b.runs), base: b.marker.length, after: null, len: runsLength(b.runs) };
+  const s = serializeRunsMapped(b.runs), len = runsLength(b.runs);
+  if (plain) return { text: b.marker + s.text, base: b.marker.length, after: s.after, len };
+  // lead: 頭の空白も残す（段落の続きの行だけ。leadLine）
+  const k = /^[ \t]*/.exec(s.text)[0].length, keep = lead ? k : 0;
+  const e = escapeContent(s.text.slice(k), b.kind, b.marker);
+  const after = s.after.map((o) => (o <= k ? Math.min(o, keep) : o - k + keep + (e.esc && o - k > e.p ? 1 : 0)));
+  return { text: b.marker + s.text.slice(0, keep) + e.text, base: b.marker.length, after, len };
 }
 
 /**
- * ブロックの並びの構造。info[i] はブロック i の行の情報（md-structure.mjs の行。Markdown に出ないブロックは null）、idx[行] はブロックの添字。
- * 空の構造行も段落を終える行として読む。確定した記号は編集行が別に保持する。
+ * 段落の続きの行（手前の段落と同じ入れ物の中で、新しい入れ物を開かない本文・引用の行）は、中身の頭の空白も送る（貼った字の字下げを残す）。
+ * CommonMark は段落の続きの行の頭の空白で構造を変えない（字下げのコードは段落を打ち切れない。頭の記号は逃がしてある）。
+ * ほかの行の頭の空白は、字下げのコード・項目の中身に読まれるので送らない。A は手前の行まで読んだ結果、prev はその行の文字、L は頭の空白を除いた行の文字。
+ * 字のまま送る区切り線・表・setext の下線（行の読み方では段落、履歴では別の物）に関わる行は、頭の空白を送らない
  */
-export function docStructure(blocks, raw = blockRaw) {
-  const idx = [], src = [];
-  for (const { b, i, before } of serializedRows(blocks)) {
-    if (idx.length && before !== undefined) { idx.push(null); src.push(before); }
-    idx.push(i);
-    const r = raw(b);
-    if ((b.kind === 'ul' || b.kind === 'ol') && !runsLength(b.runs) && /[ \t]$/.test(r)) {
-      // 空の確定項目は段落を開始できるが、その空行で段落を終える。
-      // 仮の本文だけを置くと、後続行がその項目の lazy continuation になってしまう。
-      src.push(r + 'x');
-      idx.push(null); src.push(r.replace(/[^> \t]/g, ' '));
-    } else src.push(r);
+const RE_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
+function leadLine(m, A, b, L, prev) {
+  if (!A || A.role !== 'para' || prev == null || (b.kind !== 'p' && b.kind !== 'quote') || blankRow(b)) return L;
+  const before = prev.slice(A.end).trim(), own = L.text.slice(b.marker.length).trim();
+  if (RE_HR.test(before) || RE_UNDERLINE.test(before) || before.includes('|') || RE_UNDERLINE.test(own) || own.includes('|')) return L;
+  const K = rowLine(b, false, true);
+  if (K.text === L.text) return L;
+  for (const t of [L.text, K.text]) {
+    const B = m.peek(t, b.kind);
+    if (B.role !== 'para' || B.opens || B.kept !== A.path.length || B.path.length !== A.path.length) return L;
   }
-  const { root, lines } = parseStructure(src);
-  const info = blocks.map(() => null);
-  idx.forEach((bi, k) => { if (bi !== null) info[bi] = lines[k]; });
-  return { root, lines, info, idx };
+  return K;
 }
 
-/** 行の入れ物の記号のうち、ブロックの記号（marker）の中に収まるもの（外から内へ）。空行上の幅0の項目継続は、その行が持つ記号ではない。 */
+/** 行の文字（memo は WeakMap。ブロックは作った後に書き換えない） */
+function lineOf(b, memo, plain) {
+  let e = memo?.get(b);
+  if (!e || e.plain !== plain) { e = { ...rowLine(b, plain), plain, sig: undefined }; memo?.set(b, e); }
+  return e;
+}
+
+/** 読み込んだときの行と同じか（src の sig） */
+const rowSig = (b) => textHash(`${b.kind}|${b.marker}|${b.kind === 'att' ? b.raw ?? '' : serializeRuns(b.runs)}`);
+
+/** どの行も、読み込んだ Markdown のときのまま（並び・数・中身）なら、その読み込みの src の並び */
+function uneditedRows(blocks, memo) {
+  let id = null, n = 0, total = 0;
+  for (const b of blocks) {
+    if (omitted(b)) continue;
+    const s = b.src;
+    if (!s || (id !== null && s.id !== id) || s.i !== n) return null;
+    const e = memo?.get(b);
+    const sig = e ? (e.sig ??= rowSig(b)) : rowSig(b);
+    if (sig !== s.sig) return null;
+    id = s.id; total = s.n; n++;
+  }
+  return n && n === total ? id : null;
+}
+
+const canonical = (path) => path.map((e) => (e.t === 'bq' ? '> ' : ' '.repeat(e.need))).join('');
+const kindOfPath = (path) => (!path.length ? 'p' : path.at(-1).t === 'bq' ? 'quote' : 'cont');
+
+/** 行の読み方の結果から行の種類（最後の記号が引用なら引用、その行で始まった項目なら箇条書き・番号、続けた項目なら項目の中の続きの行） */
+function kindOfMatch(r) {
+  const m = r.marks.at(-1);
+  if (!m) return 'p';
+  const e = r.path[m.k];
+  return e.t === 'bq' ? 'quote' : m.opened ? (e.ordered ? 'ol' : 'ul') : 'cont';
+}
+
+/** 字の無い（空白だけの）引用・続きの行・本文の行（Markdown では空行。中身の頭の空白は送らないので、記号は入れ物を続けるだけ） */
+const blankRow = (b) => (b.kind === 'p' || b.kind === 'quote' || b.kind === 'cont') && (!runsLength(b.runs) || !/[^ \t]/.test(rowLine(b).text.slice(b.marker.length)));
+
+/**
+ * j 番目の行の前に要る区切りの空行（要らなければ null）。A は手前の行まで読んだ結果、n は行の数、text(k)・kind(k)・blank(k) は k 番目の行。
+ * 段落の後の空の行の並びは、その頭の 1 行が区切りとして読まれる（markdownToDoc）ので、並びの次の行が同じ区切りを要るなら、
+ * 並びの頭にも区切りを足す（足さないと空の行が 1 つ減る）。送るとき・読むとき・整えるときで同じ決まりを使う
+ */
+function sepBefore(m, A, j, n, text, kind, blank) {
+  if (!blank(j)) return sepBetween(A, m.peek(text(j), kind(j)));
+  if (!A || (A.role !== 'para' && A.role !== 'att')) return null;
+  let k = j + 1;
+  while (k < n && blank(k)) k++;
+  if (k >= n) return null;
+  const s = sepBetween(A, m.peek(text(k), kind(k)));
+  return s !== null && s === text(j).trimEnd() ? s : null;
+}
+
+/** 行の並びを上から読み、要るところに区切りの空行を足す。emit(item) は行 { bi, line, r } と区切り { sep, r } を 1 つずつ受ける（r は読んだ結果） */
+function eachLine(blocks, m, line, emit) {
+  const rows = [];
+  blocks.forEach((b, i) => { if (!omitted(b)) rows.push(i); });
+  const at = (k) => blocks[rows[k]];
+  let A = null, prev = null;
+  rows.forEach((bi, j) => {
+    const b = blocks[bi];
+    const sep = sepBefore(m, A, j, rows.length, (k) => line(at(k)).text, (k) => at(k).kind, (k) => blankRow(at(k)));
+    if (sep !== null) { A = m.step(sep, 'sep'); prev = sep; emit({ sep, r: A }); }
+    const L = leadLine(m, A, b, line(b), prev);
+    A = m.step(L.text, b.kind); prev = L.text;
+    emit({ bi, line: L, r: A });
+  });
+}
+
+/**
+ * 送る Markdown の行の並び { lines: [{ b, start, raw, base, after, len, sep? }], text, length }。lines は Markdown に出るブロックだけ
+ * （sep はその行の前の区切りの空行）。出ないブロック（送っている途中の添付・空の pad）は、次に出るブロックの頭と同じ位置に写る。
+ * memo（WeakMap）を渡すと、変わらないブロックの行の文字を使い回す。plain は整形しない平文の欄（エスケープも区切りも足さない）
+ */
+export function docLayout(blocks, memo = null, { plain = false } = {}) {
+  const lines = [];
+  let text = '';
+  const push = (b, sep, raw, base, after, len) => {
+    if (lines.length) text += '\n';
+    if (sep !== undefined && lines.length) text += sep + '\n';
+    lines.push({ b, start: text.length, raw, base, after, len, ...(sep !== undefined && lines.length ? { sep } : {}) });
+    text += raw;
+  };
+  if (plain) {
+    blocks.forEach((b, i) => { if (!omitted(b)) { const L = lineOf(b, memo, true); push(i, undefined, L.text, L.base, L.after, L.len); } });
+  } else if (uneditedRows(blocks, memo)) {
+    blocks.forEach((b, i) => {
+      if (omitted(b)) return;
+      const s = b.src, L = lineOf(b, memo, false);
+      const after = L.after && b.kind !== 'code' ? serializeRunsMapped(b.runs).after.map((o) => o + (s.esc && o > s.p ? 1 : 0)) : null;
+      push(i, s.pre, s.line, Math.min(s.c0, s.line.length), after, L.len);
+    });
+  } else {
+    let sep;
+    eachLine(blocks, createMatcher(), (b) => lineOf(b, memo, false), (x) => {
+      if (x.sep !== undefined) { sep = x.sep; return; }
+      push(x.bi, sep, x.line.text, x.line.base, x.line.after, x.line.len);
+      sep = undefined;
+    });
+  }
+  return { lines, text, length: text.length };
+}
+
+export function docToMarkdown(blocks, opts = {}) {
+  return docLayout(blocks, null, opts).text;
+}
+
+export const layoutMarkdown = (layout) => layout.text;
+
+/**
+ * 行の入れ物の木（描き方・番号・字下げの操作が使う）。行の文字を上から読んだもので、遅延の続きは無い。
+ * { root, lines, info, idx }: lines[行] は送る Markdown の行ごとの情報（区切りの空行も 1 行）、idx[行] はブロックの添字（区切りは null）、
+ * info[i] はブロック i の行の情報 { marks: [{ node, at, end, opened }], node, role, at }（Markdown に出ないブロックは null）。
+ * 節の形は web/md-structure.mjs と同じ（lineIndent・itemMarker がそのまま使える）
+ */
+export function rowTree(blocks, memo = null) {
+  const m = createMatcher({ tree: true });
+  const lines = [], idx = [], info = blocks.map(() => null);
+  eachLine(blocks, m, (b) => lineOf(b, memo, false), (x) => {
+    lines.push(x.r.info);
+    idx.push(x.bi ?? null);
+    if (x.bi !== undefined) info[x.bi] = x.r.info;
+  });
+  return { root: m.root, lines, info, idx };
+}
+
+/** 行の入れ物の記号のうち、ブロックの記号（marker）の中に収まるもの（外から内へ）。空行上の幅 0 の項目の続きは、その行が持つ記号ではない */
 export const ownMarks = (li, b) => (li ? li.marks.filter((m) => m.end <= b.marker.length && m.end > m.at) : []);
 
 /** 文字の位置 upto の桁（タブは 4 の倍数へ進む） */
@@ -313,51 +442,87 @@ function nextItemSeg(seg) {
 /** 記号の並びの先頭 n 個で始まる続きの行の種類（最後が引用なら引用、項目なら項目の中の続きの行。記号が無ければ段落） */
 const contKind = (marks, n) => (n <= 0 ? 'p' : marks[n - 1].node.t === 'bq' ? 'quote' : 'cont');
 
-/** 行 1 つを、構造の行の情報（info）からブロックにする。resolve(path) が truthy な添付の印は原子にする */
-function lineBlock(text, info, { resolve = () => null, plain = false } = {}) {
-  if (plain || !info) return { kind: 'p', marker: '', runs: plain ? plainRun(text) : parseInline(text) };
-  const end = prefixEnd(info);
-  if (CODE_ROLES.has(info.role)) return codeBlock(text.slice(end), text.slice(0, end));
+/**
+ * 読み込んだ Markdown の 1 行を、行の候補にする（li は CommonMark で読んだ行の情報。履歴と同じ構造）。
+ * 遅延の続きの行は、続けている入れ物の記号を足した行にする（送る文字は元のまま。src）。空行は null（記号は前の行で決める）
+ */
+function candidate(text, li, { resolve = () => null } = {}) {
+  // 空の行（中身の無い項目は、項目の行）
+  if (!li || (li.role === 'blank' && !li.marks.some((m) => m.opened && m.node.t === 'item'))) return null;
+  const end = prefixEnd(li);
+  if (CODE_ROLES.has(li.role)) return { ...codeBlock(text.slice(end), text.slice(0, end)), c0: end };
   const mark = ATTACHMENT_LINE.exec(text.trim());
-  if (mark && resolve(mark[1])) return { kind: 'att', marker: '', runs: [], raw: text, path: mark[1] };
-  if (info.role === 'heading' && /#[ \t]+$/.test(text.slice(0, info.at))) return { kind: 'h', marker: text.slice(0, info.at), runs: parseInline(text.slice(info.at)) };
-  const m = info.marks.at(-1);
-  if (!m || !end) return { kind: 'p', marker: '', runs: parseInline(text) };
-  const marker = text.slice(0, end), runs = parseInline(text.slice(end));
-  if (m.node.t === 'bq') return { kind: 'quote', marker, runs };
-  if (m.opened) return { kind: m.node.parent.ordered ? 'ol' : 'ul', marker, runs };
-  return { kind: 'cont', marker, runs };
+  if (mark && resolve(mark[1])) return { kind: 'att', marker: '', runs: [], raw: text, path: mark[1], c0: 0 };
+  if (li.role === 'heading' && /^[ \t]{0,3}#{1,6}(?:[ \t]+|$)/.test(text.slice(end, li.at))) {
+    const head = text.slice(0, li.at);
+    return { kind: 'h', marker: /#$/.test(head) ? `${head} ` : head, runs: parseInline(text.slice(li.at)), c0: li.at };
+  }
+  let marker = text.slice(0, end), kind;
+  if (li.role === 'lazy') {
+    const own = new Set(li.marks.map((m) => m.node));
+    const open = containersOf(li.node).filter((n) => n.t !== 'list');
+    for (const n of open) if (!own.has(n)) marker += n.t === 'bq' ? '> ' : ' '.repeat(n.markerOffset + n.padding);
+    kind = !open.length ? 'p' : open.at(-1).t === 'bq' ? 'quote' : 'cont';
+  } else {
+    const m = end ? li.marks.at(-1) : null;
+    kind = !m ? 'p' : m.node.t === 'bq' ? 'quote' : m.opened ? (m.node.parent.ordered ? 'ol' : 'ul') : 'cont';
+  }
+  const rest = text.slice(end), k = /^[ \t]*/.exec(rest)[0].length;
+  const u = unescapeContent(rest.slice(k), kind, marker);
+  // lead: 段落の続きの行なら中身に残す頭の空白（markdownToDoc が leadLine で決める）
+  return { kind, marker, runs: parseInline(u.text), c0: end + k, esc: u.esc, p: u.p, ...(k && (kind === 'p' || kind === 'quote') ? { lead: { runs: parseInline(rest.slice(0, k) + u.text), k } } : {}) };
 }
 
-/** 記号の並びの j 個目の記号が、ブロックの記号として最低限要る長さ（引用は `>`、項目は記号と空白 1 つ、続きの行は読んだ空白の全部） */
-function minEnd(text, m) {
-  if (m.node.t === 'bq') return m.at + 1;
-  if (!m.opened) return m.end;
-  const bullet = /^(?:\d{1,9}[.)]|[-+*])/.exec(text.slice(m.at))?.[0].length ?? 1;
-  return Math.min(m.end, m.at + bullet + 1);
-}
+let docSeq = 0;
 
 /**
- * ブロックの種類と記号が、構造の読み方と合っているか（合わない行は normalizeFences が読み直す）。
- * 記号より後ろに構造の記号が続くのはかまわない（記号のまま打った字。元に戻すで戻した行を勝手に書式にしない）
+ * Markdown の文字列 → ブロック。どの行も変えないうちは、docToMarkdown で元の文字に戻る（src）。行の種類と記号は、
+ * 履歴と同じ構造の読み方（web/md-structure.mjs）で決め、遅延の続きの行には入れ物の記号を足す。空行の記号は、前の行を読んだ入れ物のうち
+ * その空行が続けるもの。行の文字から作り直すと付く区切りの空行（sepBetween）と同じ空行は、行にしない（次の行の src.pre に持つ）
  */
-function agrees(b, li, text) {
-  if (!li || b.kind === 'p' || b.kind === 'att' || b.kind === 'code') return true;
-  if (CODE_ROLES.has(li.role)) return false;
-  const n = b.marker.length;
-  if (b.kind === 'h') return li.role === 'heading' && n <= li.at && /#[ \t]+$/.test(b.marker) && ownMarks(li, b).length === li.marks.length;
-  let k = -1;
-  li.marks.forEach((m, j) => { if (m.end > m.at && minEnd(text, m) <= n) k = j; });
-  const m = li.marks[k];
-  if (!m || n > m.end) return false;
-  if (m.node.t === 'bq') return b.kind === 'quote';
-  if (!m.opened) return b.kind === 'cont';
-  return b.kind === (m.node.parent.ordered ? 'ol' : 'ul');
+export function markdownToDoc(md, opts = {}) {
+  const lines = String(md ?? '').replace(/\r\n?/g, '\n').split('\n');
+  if (opts.plain) return ensureShape(lines.map((line) => ({ kind: 'p', marker: '', runs: plainRun(line) })));
+  const info = parseStructure(lines).lines;
+  const C = lines.map((line, i) => candidate(line, info[i], opts));
+  const m = createMatcher(), out = [];
+  const textOf = (j) => (C[j] ? rowLine(C[j]).text : lines[j]);
+  const kindOf = (j) => C[j]?.kind ?? 'p';
+  let P = null, prevText = null, absorbed = false, pre;
+  for (let j = 0; j < lines.length; j++) {
+    let b = C[j];
+    if (!b) {
+      if (!absorbed) {
+        const sep = sepBefore(m, P, j, lines.length, (k) => (k === j ? lines[j] : textOf(k)), kindOf, (k) => !C[k] || k === j);
+        if (sep !== null) { P = m.step(sep, 'sep'); prevText = sep; pre = lines[j]; absorbed = true; continue; }
+      }
+      const B = m.peek(lines[j], 'p'), marker = canonical(B.path);
+      b = { kind: kindOfPath(B.path), marker, runs: [], c0: lines[j].length };
+      C[j] = b;
+    }
+    absorbed = false;
+    if (b.lead) {
+      const { lead } = b;
+      delete b.lead;
+      const wide = { ...b, runs: lead.runs }, L = rowLine(wide);
+      if (leadLine(m, P, wide, L, prevText) !== L) { b = Object.assign(wide, { c0: b.c0 - lead.k, p: b.p + lead.k }); C[j] = b; }
+    }
+    b.src = { line: lines[j], c0: b.c0, ...(b.esc ? { esc: true, p: b.p } : {}), ...(pre !== undefined ? { pre } : {}) };
+    delete b.c0; delete b.esc; delete b.p;
+    pre = undefined;
+    prevText = leadLine(m, P, b, rowLine(b), prevText).text;
+    P = m.step(prevText, b.kind);
+    out.push(b);
+  }
+  const id = `${Date.now().toString(36)}.${++docSeq}`;
+  out.forEach((b, i) => { b.src = { id, i, n: out.length, ...b.src, sig: rowSig(b) }; });
+  return ensureShape(out);
 }
 
 /** 行 1 つ（前後の行とつながらないもの）をブロックにする */
 export function classifyLine(line, opts = {}) {
-  return lineBlock(line, opts.plain ? null : parseStructure([line]).lines[0], opts);
+  const { src, ...b } = markdownToDoc(line, opts).find((x) => !x.pad);
+  return b;
 }
 
 /** フェンスの行の役割: 'open' | 'close' | 'in' | null（md-structure.mjs の codeRoles。web/render.mjs の codeFenceMask と同じ範囲） */
@@ -369,149 +534,41 @@ export function ensureShape(blocks) {
   if (blocks[0].kind === 'att') blocks.unshift({ ...emptyBlock(), pad: true });
   const last = blocks.at(-1);
   if (last.kind === 'att') blocks.push({ ...emptyBlock(), pad: true });
-  else if (last.kind === 'code' && docStructure(blocks).info.at(-1)?.role === 'fence-close') blocks.push({ ...emptyBlock(), pad: true });
+  else if (last.kind === 'code' && rowTree(blocks).info.at(-1)?.role === 'fence-close') blocks.push({ ...emptyBlock(), pad: true });
   return blocks;
 }
 
-/** Markdown の文字列 → ブロック。docToMarkdown で必ず元に戻る。行の種類は履歴と同じ構造の読み方で決める（web/md-structure.mjs） */
-export function markdownToDoc(md, opts = {}) {
-  const lines = String(md ?? '').replace(/\r\n?/g, '\n').split('\n');
-  const info = opts.plain ? [] : parseStructure(lines).lines;
-  return ensureShape(lines.map((line, i) => lineBlock(line, info[i], opts)));
-}
-
-export function docToMarkdown(blocks) {
-  return [...serializedRows(blocks)].map(({ b, before }, i) => (i && before !== undefined ? before + '\n' : '') + blockRaw(b)).join('\n');
-}
-
-export const layoutMarkdown = (layout) => layout.lines.map(l => (l.before !== undefined ? l.before + '\n' : '') + l.raw).join('\n');
-
-/** Only committed containers participate in editing decoration; parsing stays CommonMark. */
-export function editingNode(blocks, S, b, li) {
-  let accepted = li.node;
-  for (let node = li.node; node && node.t !== 'root'; node = node.parent) {
-    if (node.t !== 'bq' && node.t !== 'item') continue;
-    const bi = S.idx[node.start], opener = S.info[bi]?.marks.find(m => m.node === node && m.opened);
-    const owned = li.marks.some(m => m.node === node && m.end > 0 && m.end <= b.marker.length);
-    const pending = !owned && opener && opener.end > (blocks[bi]?.marker.length ?? 0);
-    const unownedBlank = node.t === 'item' && li.role === 'blank' && !li.marks.some(m => m.node === node && m.end > 0 && m.end <= b.marker.length);
-    if (pending || unownedBlank) accepted = node.t === 'item' ? node.parent.parent : node.parent;
-  }
-  return accepted;
-}
-
-/** Draft sidecars contain no DOM, attachment credentials or inline mark identities. */
+/**
+ * 下書きの付属（行の種類と記号）。行は Markdown から読み直すので読まない（ADR 0301）が、前の版が読めるように、
+ * 記号が行の頭にそのまま書いてある行だけで作る（作れなければ null）
+ */
+// 行の記号は、送る行に書いた記号（読み込んだまま送る行は、元の字の記号。`>` だけの行の記号は `> ` でなく `>`）
+const writtenMarker = (b, l) => (b.kind === 'att' ? '' : l.raw.startsWith(b.marker) ? b.marker : l.raw.slice(0, l.base));
 export function snapshotEditing(blocks) {
-  const layout = docLayout(blocks), text = layoutMarkdown(layout);
-  return editingState(text, layout.lines.map(l => ({ at: l.start, kind: blocks[l.b].kind, marker: l.marker, ...(l.before !== undefined ? { before: l.before } : {}) })));
+  const layout = docLayout(blocks);
+  return editingState(layout.text, layout.lines.map((l) => ({ at: l.start, kind: blocks[l.b].kind, marker: writtenMarker(blocks[l.b], l), ...(l.sep !== undefined ? { before: l.sep } : {}) })));
 }
 
-function restoreRow(raw, row, opts) {
-  if (row.kind === 'att') return lineBlock(raw, parseStructure([raw]).lines[0], opts);
-  return { kind: row.kind, marker: row.marker, runs: row.kind === 'code' || opts.plain ? plainRun(raw.slice(row.marker.length)) : parseInline(raw.slice(row.marker.length)) };
-}
-
+/** 下書きを読む。行は Markdown だけから読み直す（付属の行の情報は使わない。ADR 0301） */
 export function restoreEditing(text, saved, opts = {}) {
-  const state = normalizeEditingState(text, saved);
-  if (!state) return markdownToDoc(text, opts);
-  const blocks = state.rows.map(row => {
-    const end = text.indexOf('\n', row.at), raw = text.slice(row.at, end < 0 ? text.length : end);
-    const b = restoreRow(raw, row, opts);
-    if (row.before !== undefined) b.breakBefore = row.before;
-    return b;
-  });
-  // A sidecar can affect editing, never change the accompanying Markdown.
-  return docToMarkdown(blocks) === text ? ensureShape(blocks) : markdownToDoc(text, opts);
+  return markdownToDoc(text, opts);
 }
 
-/** Raw-offset replacement retains unaffected editing rows and their boundaries. */
+/** Markdown の文字の範囲 [start, end) を value に置き換えて読み直す（キャレットは置き換えた文字の後ろ） */
 export function replaceMarkdownRange(st, value, start, end, opts = {}) {
-  const layout = docLayout(st.blocks), text = layoutMarkdown(layout);
+  const text = docLayout(st.blocks, null, opts).text;
   start = Math.max(0, Math.min(text.length, Math.trunc(start) || 0));
   end = Math.max(start, Math.min(text.length, Math.trunc(end) || 0));
-  value = value.replace(/\r\n?/g, '\n');
-  const result = text.slice(0, start) + value + text.slice(end), delta = value.length - (end - start);
-  const preserved = new Map();
-  for (const l of layout.lines) {
-    const rowEnd = l.start + l.raw.length;
-    const outside = rowEnd < start || l.start >= end;
-    const inside = start >= l.start + l.marker.length && start <= rowEnd && !(start === 0 && end === text.length);
-    if (!outside && !inside) continue;
-    const movedStart = l.start === start && start === end && value.endsWith('\n');
-    const at = l.start >= end && (l.start > start || movedStart) ? l.start + delta : l.start;
-    const oldBoundary = l.start - (l.before?.length ?? -1) - 1;
-    const boundaryUntouched = l.before !== undefined && (end <= oldBoundary || start >= l.start);
-    preserved.set(at, { kind: st.blocks[l.b].kind, marker: l.marker, ...(boundaryUntouched ? { before: l.before } : {}) });
-  }
-  const blocks = markdownToDoc(result, opts).filter(b => !b.pad);
-  const physical = result.split('\n');
-  let at = 0;
-  const out = [];
-  physical.forEach((raw, i) => {
-    const row = preserved.get(at);
-    let b = blocks[i];
-    if (row && raw.startsWith(row.marker)) {
-      b = restoreRow(raw, row, opts);
-      if (row.before !== undefined && out.length > 1 && blockRaw(out.at(-1)) === row.before) { out.pop(); b.breakBefore = row.before; }
-    }
-    out.push(b);
-    at += raw.length + 1;
-  });
-  ensureShape(out);
-  const p = offsetToPos(out, start + value.length);
-  return { blocks: out, sel: caret(p.b, p.v) };
+  value = String(value).replace(/\r\n?/g, '\n');
+  const blocks = markdownToDoc(text.slice(0, start) + value + text.slice(end), opts);
+  const p = offsetToPos(blocks, start + value.length);
+  return { blocks, sel: caret(p.b, p.v) };
 }
 
-/** Existing edit-cancellation merge trims its edges; retain interior editing state. */
+/** 編集の取り消しで、脇に取った書きかけを編集中の中身へ足す。前後の空白を除いて、段落の区切りでつなぐ */
 export function mergeEditingContent(parts) {
-  const blocks = [], strings = [];
-  for (const part of parts) {
-    const text = String(part?.text ?? ''), trimmed = text.trim();
-    if (!trimmed) continue;
-    const paths = new Set((part?.attached ?? []).map(a => a.path));
-    const opts = { resolve: path => paths.has(path) };
-    let st = { blocks: restoreEditing(text, part?.editing, opts), sel: caret(0, 0) };
-    const from = text.length - text.trimStart().length, to = text.trimEnd().length;
-    st = replaceMarkdownRange(st, '', to, text.length, opts);
-    st = replaceMarkdownRange(st, '', 0, from, opts);
-    if (strings.length) blocks.push(emptyBlock());
-    blocks.push(...st.blocks.filter(b => !b.pad));
-    strings.push(trimmed);
-  }
-  const text = strings.join('\n\n');
-  return { text, ...(blocks.length && docToMarkdown(blocks) === text ? { editing: snapshotEditing(blocks) } : {}) };
+  return { text: parts.map((part) => String(part?.text ?? '').trim()).filter(Boolean).join('\n\n') };
 }
-
-/**
- * 文字列での位置の対応。lines は Markdown に出るブロックだけ { b, start, marker, map }。
- * 出ないブロック（送っている途中の添付・空の pad）は、次に出るブロックの頭と同じ位置に写る
- */
-export function docLayout(blocks, memo = null) {
-  const lines = [];
-  let start = 0;
-  for (const { b, i, before: boundary } of serializedRows(blocks)) {
-    // memo（WeakMap）を渡すと、変わらないブロックの分を使い回す。渡す側は、ブロックを作った後に書き換えないこと
-    let e = memo?.get(b);
-    if (!e) {
-      const raw = blockRaw(b);
-      const map = b.kind === 'att' || b.kind === 'code' ? null : serializeRunsMapped(b.runs);
-      e = { raw, marker: b.kind === 'att' ? '' : b.marker, map, len: b.kind === 'att' ? raw.length : runsLength(b.runs) };
-      memo?.set(b, e);
-    }
-    const before = lines.length ? boundary : undefined;
-    if (before !== undefined) start += before.length + 1;
-    lines.push({ b: i, start, ...e, before });
-    start += e.raw.length + 1;
-  }
-  return { lines, length: Math.max(0, start - 1) };
-}
-
-/** ブロックの Markdown の文字（blockRaw）を、変わらないブロックの分だけ使い回す関数にする（cache は WeakMap。ブロックは作った後に書き換えない） */
-export const memoRaw = (cache) => (b) => {
-  let r = cache.get(b);
-  if (r === undefined) { r = blockRaw(b); cache.set(b, r); }
-  return r;
-};
 
 /** 位置 → Markdown の文字列の位置（v 番目の見える文字の直後）。layout は docLayout(blocks) の結果を使い回すとき */
 export function posToOffset(blocks, pos, layout = docLayout(blocks)) {
@@ -519,8 +576,8 @@ export function posToOffset(blocks, pos, layout = docLayout(blocks)) {
   const line = layout.lines.find(l => l.b >= pos.b) ?? layout.lines.at(-1);
   if (line.b > pos.b) return line.start;
   if (line.b < pos.b) return layout.length;
-  if (!line.map) return line.start + line.marker.length + Math.min(pos.v, line.len);
-  return line.start + line.marker.length + line.map.after[Math.min(pos.v, line.len)];
+  const v = Math.min(pos.v, line.len);
+  return line.start + Math.min(line.raw.length, line.base + (line.after ? line.after[v] : v));
 }
 
 /** Markdown の文字列の位置 → 位置（その手前までにある見える文字の数） */
@@ -532,20 +589,21 @@ export function offsetToPos(blocks, offset, layout = docLayout(blocks)) {
     else if (offset > line.start + line.raw.length) return { b: l.b, v: 0 };
   }
   const r = Math.max(0, Math.min(offset - line.start, line.raw.length));
-  const inner = r - line.marker.length;
-  if (!line.map) return { b: line.b, v: Math.max(0, Math.min(inner, line.len)) };
+  const inner = r - line.base;
+  if (inner < 0) return { b: line.b, v: 0 };
+  if (!line.after) return { b: line.b, v: Math.min(inner, line.len) };
   let v = 0;
-  while (v < line.len && line.map.after[v + 1] <= inner) v++;
-  return { b: line.b, v: inner < 0 ? 0 : v };
+  while (v < line.len && line.after[v + 1] <= inner) v++;
+  return { b: line.b, v };
 }
 
-/** ブロックの中の位置 v を、行の文字の位置にする（読み直した行へ位置を移すとき） */
+/** ブロックの中の位置 v を、行の文字（blockRaw）の位置にする（読み直した行へ位置を移すとき） */
 function rawOffsetOf(b, v) {
   if (b.kind === 'att') return 0;
   const len = runsLength(b.runs), at = Math.min(v, len);
   return b.marker.length + (b.kind === 'code' ? at : serializeRunsMapped(b.runs).after[at]);
 }
-/** 行の文字の位置を、ブロックの中の位置にする */
+/** 行の文字（blockRaw）の位置を、ブロックの中の位置にする */
 function vOfRaw(b, off) {
   if (b.kind === 'att') return 0;
   const len = runsLength(b.runs), inner = off - b.marker.length;
@@ -555,6 +613,99 @@ function vOfRaw(b, off) {
   let v = 0;
   while (v < len && after[v + 1] <= inner) v++;
   return v;
+}
+
+// ------------------------------------------------------------------ 行と入れ物の整合
+/** コードの中でなくなった行の文字を、その位置の入れ物で読み直す（`- x` は箇条書き、`# x` は見出し） */
+function rereadLine(m, text, resolve) {
+  const H = m.peek(text, 'h');
+  if (H.role === 'heading') {
+    const end = H.end + /^[ \t]*#{1,6}(?:[ \t]+|$)/.exec(text.slice(H.end))[0].length;
+    return { kind: 'h', marker: /#$/.test(text.slice(0, end)) ? `${text.slice(0, end)} ` : text.slice(0, end), runs: parseInline(text.slice(end)) };
+  }
+  const mark = ATTACHMENT_LINE.exec(text.trim());
+  if (mark && resolve(mark[1])) return { kind: 'att', marker: '', runs: [], raw: text, path: mark[1] };
+  const B = m.peek(text, 'p');
+  return { kind: kindOfMatch(B), marker: text.slice(0, B.end), runs: parseInline(text.slice(B.end)) };
+}
+
+/**
+ * 1 行を、その位置の入れ物に合わせる（m はその行の手前まで読んだもの）。合っていれば同じブロックを返す。
+ * shift は位置の移し方（'raw': 行の文字の同じ位置へ、数: 中身の頭に足した字の数）
+ */
+function fitRow(m, b, resolve) {
+  if (b.kind === 'att') {
+    const raw = b.raw ?? '', B = m.peek(raw, 'att');
+    return CODE_ROLES.has(B.role) ? { b: codeBlock(raw.slice(B.end), raw.slice(0, B.end)), shift: 'raw' } : { b };
+  }
+  if (b.kind === 'code') {
+    const raw = blockRaw(b), B = m.peek(raw, 'code');
+    if (!CODE_ROLES.has(B.role)) {
+      const r = rereadLine(m, raw, resolve);
+      return { b: blankRow(r) ? { ...r, kind: kindOfPath(B.path), marker: canonical(B.path) } : r, shift: 'raw' };
+    }
+    return B.end === b.marker.length ? { b } : { b: codeBlock(raw.slice(B.end), raw.slice(0, B.end)), shift: 'raw' };
+  }
+  let marker = b.marker;
+  if ((b.kind === 'ul' || b.kind === 'ol' || b.kind === 'h') && b.runs.length && !/[ \t]$/.test(marker)) marker += ' ';
+  const fixed = marker === b.marker ? b : { ...b, marker };
+  const B = m.peek(rowLine(fixed).text, b.kind);
+  if (CODE_ROLES.has(B.role)) {
+    const raw = blockRaw(b), e = Math.min(B.end, b.marker.length);
+    return { b: codeBlock(raw.slice(e), raw.slice(0, e)), shift: 'raw' };
+  }
+  // 字の無い行は空行。種類と記号は、空行が続けている入れ物から（読み込んだときと同じ）
+  if (blankRow(b)) {
+    const kind = kindOfPath(B.path);
+    // 項目を始める行（`- > ` の空の引用）は Markdown でも空行ではない。記号はそのまま（読み込んだときと同じ）
+    if (B.marks.some((x) => x.item && x.opened)) return kind === b.kind ? { b } : { b: { ...b, kind } };
+    const mk = canonical(B.path);
+    return kind === b.kind && mk === b.marker ? { b } : { b: { ...b, kind, marker: mk } };
+  }
+  if (b.kind === 'p') return { b: fixed };
+  if (b.kind === 'h' && B.role === 'heading') return { b: fixed };
+  let runs = b.runs, shift = 0;
+  if (B.end < marker.length) {
+    const left = marker.slice(B.end);
+    marker = marker.slice(0, B.end);
+    if (/[^ \t]/.test(left)) { runs = mergeRuns([...plainRun(left), ...runs]); shift = left.length; }
+  }
+  const kind = kindOfMatch(B);
+  if (kind === b.kind && marker === b.marker && runs === b.runs) return { b };
+  return { b: { ...b, kind, marker, runs }, shift };
+}
+
+/**
+ * 行の種類と記号を、行の文字を上から読んだ入れ物（rowTree と同じ読み方）に合わせる。書き換えたら true。
+ *   記号のうち入れ物として読めない部分は、空白なら捨て、字なら中身の頭に戻す（親の項目が消えた続きの行・字下げの足りない行）。
+ *   コードの中に入った行は code に、コードから出た行は読み直す。段落（p）は書式にしない（元に戻すで戻した「記号のままの行」）。
+ *   中身の無い引用・続きの行・段落の記号は、続けている入れ物の記号にそろえる（読み込んだときと同じ）。
+ * sel を渡すと、読み直した行の中の位置を同じ字の上に移す
+ */
+export function normalizeRows(blocks, { resolve = () => null, plain = false, sel = null } = {}) {
+  if (plain) return false;
+  const m = createMatcher();
+  let changed = false;
+  const rows = [];
+  blocks.forEach((b, i) => { if (!omitted(b)) rows.push(i); });
+  let A = null;
+  rows.forEach((i, j) => {
+    const b = blocks[i], fit = fitRow(m, b, resolve), nb = fit.b;
+    if (nb !== b) {
+      if (sel) for (const k of ['s', 'e']) {
+        if (sel[k].b !== i) continue;
+        const v = fit.shift === 'raw' ? vOfRaw(nb, rawOffsetOf(b, sel[k].v)) : sel[k].v + (fit.shift ?? 0);
+        sel[k] = { b: i, v: nb.kind === 'att' ? 0 : Math.min(v, runsLength(nb.runs)) };
+      }
+      blocks[i] = nb;
+      changed = true;
+    }
+    const text = rowLine(nb).text, at = (k) => (k === j ? nb : blocks[rows[k]]);
+    const sep = sepBefore(m, A, j, rows.length, (k) => rowLine(at(k)).text, (k) => at(k).kind, (k) => blankRow(at(k)));
+    if (sep !== null) m.step(sep, 'sep');
+    A = m.step(text, nb.kind);
+  });
+  return changed;
 }
 
 // ------------------------------------------------------------------ 状態と選択
@@ -570,7 +721,7 @@ export function deleteSelection(st) {
   const { s, e } = next.sel;
   const bs = next.blocks[s.b], be = next.blocks[e.b];
   if (s.b === e.b) {
-    if (bs.kind === 'att') { removeAtomAt(next.blocks, s.b); ensureShape(next.blocks); next.sel = caret(Math.min(s.b, next.blocks.length - 1), 0); return next; }
+    if (bs.kind === 'att') { next.blocks.splice(s.b, 1); ensureShape(next.blocks); next.sel = caret(Math.min(s.b, next.blocks.length - 1), 0); return next; }
     bs.runs = mergeRuns([...sliceRuns(bs.runs, 0, s.v), ...sliceRuns(bs.runs, e.v)]);
     next.sel = caret(s.b, s.v);
     return next;
@@ -583,7 +734,7 @@ export function deleteSelection(st) {
     // コードの行と本文の行をつなぐときは、つないだ側の種類に合わせて文字にそろえる
     if (bs.kind === 'code') merged.runs = plainRun(runsText(head) + (be.kind === 'code' ? runsText(tail) : (e.v === 0 ? be.marker : '') + serializeRuns(tail)));
     else if (be.kind === 'code') merged.runs = mergeRuns([...head, ...plainRun(runsText(tail))]);
-  } else if (tail) merged = { ...be, runs: tail, marker: e.v === 0 ? be.marker : '', ...(be.breakBefore === undefined && bs.breakBefore !== undefined ? { breakBefore: bs.breakBefore } : {}) };
+  } else if (tail) merged = { ...be, runs: tail, marker: e.v === 0 ? be.marker : '' };
   else if (head) merged = { ...bs, runs: head };
   else merged = null;
   const at = s.b;
@@ -653,7 +804,7 @@ function itemSegOf(S, blocks, item) {
  * Enter で行を割ったときの、下の行の種類と記号。項目は次の項目（番号は 1 つ進める）、引用・項目の中の続きの行・コードは同じ入れ物の中の行、
  * 見出し・段落はその入れ物の中の続きの行（入れ物の外なら段落）
  */
-function nextLineOf(blocks, b, S = docStructure(blocks)) {
+function nextLineOf(blocks, b, S = rowTree(blocks)) {
   const blk = blocks[b], li = S.info[b], raw = blockRaw(blk);
   const own = ownMarks(li, blk), n = own.length;
   if (blk.kind === 'cont') return { kind: 'cont', marker: blk.marker };
@@ -675,17 +826,15 @@ function shiftRun(marker, p, delta) {
   return marker.slice(0, p) + ' '.repeat(Math.max(0, width + delta)) + marker.slice(q);
 }
 
-/** 項目 item の記号を持つ編集行と出力境界。空の編集行・遅延の続きは除く。field は字下げを持つ marker / breakBefore。 */
+/** 項目 item の記号を持つ編集行（空行も、記号が項目の字下げを持てば含む）。区切りの空行は行から作るので含まない。field は字下げを持つ marker */
 function itemLines(S, blocks, item) {
   const out = [];
   for (let ln = item.start; ln <= item.end; ln++) {
-    const separator = S.idx[ln] === null;
-    const i = separator ? S.idx[ln + 1] : S.idx[ln], li = S.lines[ln];
-    if (!li || (!separator && li.role === 'blank') || li.role === 'lazy') continue;
-    const field = separator ? 'breakBefore' : 'marker';
-    const own = li.marks.filter(m => m.end <= (blocks[i]?.[field]?.length ?? 0));
+    const i = S.idx[ln], li = S.lines[ln];
+    if (i === null || !li) continue;
+    const own = li.marks.filter(m => m.end <= (blocks[i]?.marker.length ?? 0));
     const k = own.findIndex((m) => m.node === item);
-    if (k >= 0) out.push({ i, k, li, own, field });
+    if (k >= 0) out.push({ i, k, li, own, field: 'marker' });
   }
   return out;
 }
@@ -695,7 +844,7 @@ function itemLines(S, blocks, item) {
  * （元の番号が 3, 7 なら 3, 4）。番号の桁が変わったら、その項目の続きの行の字下げも同じだけずらす（項目の中に残す）
  */
 export function renumber(blocks) {
-  const S = docStructure(blocks);
+  const S = rowTree(blocks);
   const edits = [];   // { i, field = 'marker', p, del, ins }（記号または出力境界の中の位置）
   const walk = (node) => {
     for (const c of node.children) {
@@ -758,14 +907,14 @@ function selectedItems(S, blocks, s, e) {
 export function indentList(st, dir) {
   const { s, e } = orderSel(st.sel.s, st.sel.e);
   const next = clone(st);
-  const first = selectedItems(docStructure(next.blocks), next.blocks, s.b, e.b);
+  const first = selectedItems(rowTree(next.blocks), next.blocks, s.b, e.b);
   if (!first.length) return null;
   const moved = new Set();
   let any = false;
   for (const i of first) {
     if (moved.has(i)) continue;
     // 動かすたびに読み直す（前の項目を動かすと、後ろの項目の親・兄弟が変わる）
-    const S = docStructure(next.blocks);
+    const S = rowTree(next.blocks);
     const m = ownMarks(S.info[i], next.blocks[i]).at(-1);
     if (!m?.opened || m.node.t !== 'item') continue;
     const item = m.node, list = item.parent, lines = itemLines(S, next.blocks, item);
@@ -801,9 +950,18 @@ export function indentList(st, dir) {
   return next;
 }
 
-/** Enter と行頭 Backspace で現在行の構造を一段解除する。送信用の区切りは編集行を増やさない。 */
+/** 無くなる項目 gone の中身の行（from 行目から続く、その項目の字下げを持つ行）から、項目の字下げを外す。S は無くす前に読んだ rowTree */
+function takeOut(blocks, S, from, gone) {
+  for (let k = from; k < blocks.length; k++) {
+    const x = blocks[k], m = S.info[k]?.marks.find((y) => y.node === gone);
+    if (!m) break;
+    if (m.end > m.at && m.end <= x.marker.length) blocks[k] = { ...x, marker: x.marker.slice(0, m.at) + x.marker.slice(m.end) };
+  }
+}
+
+/** Enter と行頭 Backspace で現在行の構造を一段解除する（その場で。ADR 0300）。前後の行との区切りは、送るときに行から作る（ADR 0301） */
 function releaseStructure(next, b) {
-  const blk = next.blocks[b], S = docStructure(next.blocks);
+  const blk = next.blocks[b], S = rowTree(next.blocks);
   const own = ownMarks(S.info[b], blk);
   const n = blk.kind === 'h' ? own.length : Math.max(0, own.length - 1);
   let marker = blk.marker.slice(0, own[n - 1]?.end ?? 0);
@@ -816,23 +974,10 @@ function releaseStructure(next, b) {
       kind = parent.parent.ordered ? 'ol' : 'ul';
     }
   }
+  // 項目をやめた行の下にあるその項目の中身（子の項目・続きの行）は、項目の字下げを外して一緒に出す。
+  // Markdown は項目と子の間に段落を置けないので、残すと後でこの行に字を打ったときに外へ飛ぶ
+  if (own[n]?.node.t === 'item' && !(kind === 'ul' || kind === 'ol')) takeOut(next.blocks, S, b + 1, own[n].node);
   next.blocks[b] = { ...blk, kind, marker };
-  // 見出しの解除は入れ物の深さを変えず、以前の段落境界も引き継ぐ。
-  if (blk.kind !== 'h') delete next.blocks[b].breakBefore;
-  // 空行の直後に文字を入れても、解除した構造の続きへ戻らないようにする。
-  const probe = next.blocks.slice();
-  if (!runsLength(probe[b].runs)) probe[b] = { ...probe[b], runs: plainRun('x') };
-  let depth = 0;
-  for (let node = docStructure(probe).info[b]?.node; node; node = node.parent) {
-    if (node.t === 'bq' || node.t === 'item') depth++;
-  }
-  if (n < own.length && depth > n) next.blocks[b].breakBefore = contPrefix(blockRaw(blk), own, n);
-  // 解除で段落ができた場合も、次の確定済み番号項目を保つ。
-  const following = next.blocks[b + 1];
-  if (following && !agrees(following, docStructure(next.blocks).info[b + 1], blockRaw(following))) {
-    const marks = ownMarks(S.info[b + 1], following);
-    next.blocks[b + 1] = { ...following, breakBefore: contPrefix(blockRaw(following), marks, Math.max(0, marks.length - 1)) };
-  }
   next.sel = caret(b, 0);
   renumber(next.blocks);
   return next;
@@ -854,7 +999,7 @@ export function enter(st, { plain = false, soft = false } = {}) {
     return next;
   };
   if (blk.kind === 'att') return below();
-  const S = plain ? null : docStructure(next.blocks);
+  const S = plain ? null : rowTree(next.blocks);
   const li = S?.info[b], raw = blockRaw(blk), own = ownMarks(li, blk);
   const left = sliceRuns(blk.runs, 0, v), right = sliceRuns(blk.runs, v);
   delete blk.pad;
@@ -864,14 +1009,13 @@ export function enter(st, { plain = false, soft = false } = {}) {
     next.sel = caret(b + 1, at);
     return finish();
   };
-  /** 空の引用の Shift+Enter は、従来どおり区切りの次の行へ進む。 */
-  const leave = (upto) => {
-    const marker = contPrefix(raw, own, upto);
-    next.blocks[b] = { ...blk, kind: marker ? contKind(own, upto) : 'p', marker, runs: [] };
-    next.blocks.splice(b + 1, 0, { kind: next.blocks[b].kind, marker, runs: [] });
-    next.sel = caret(b + 1, 0);
-    return finish();
-  };
+  // 項目の頭の行は空行を 1 つまでしか持てない（CommonMark: 項目は空行 2 つで始められない）。空の頭の後の空の続きの行に、もう 1 つ足さない
+  const emptyHead = (x) => (x?.kind === 'ul' || x?.kind === 'ol') && !runsLength(x.runs);
+  const blankCont = (x) => x?.kind === 'cont' && !runsLength(x.runs);
+  if (!plain && soft && ((blankCont(blk) && emptyHead(next.blocks[b - 1])) || (emptyHead(blk) && blankCont(next.blocks[b + 1])))) return cur;
+  // 空の頭の下に中身（子の項目）があるときも足さない。空行が項目を閉じ、下の行が外へ出てしまう
+  const head = emptyHead(blk) ? li?.marks.findLast((m) => m.opened && m.node.t === 'item')?.node : null;
+  if (!plain && soft && head && S.info[b + 1]?.marks.some((m) => m.node === head)) return cur;
   if (!plain && blk.kind === 'cont') {
     if (soft) return insertBelow('cont', blk.marker, right, 0);
     if (!blk.runs.length) return releaseStructure(next, b);
@@ -899,17 +1043,15 @@ export function enter(st, { plain = false, soft = false } = {}) {
     // チェック欄（- [ ] ）は、次の項目も未チェックの [ ] から始める
     const check = blk.kind === 'ul' ? RE_CHECK.exec(runsText(blk.runs))?.[0] : null;
     const carry = check && v >= check.length ? '[ ] ' : '';
-    if (carry ? runsText(blk.runs).length === check.length : !blk.runs.length) {
-      if (!soft) {
-        blk.runs = [];
-        const released = releaseStructure(next, b);
-        if (carry && (released.blocks[b].kind === 'ul' || released.blocks[b].kind === 'ol')) {
-          released.blocks[b].runs = plainRun(carry);
-          released.sel = caret(b, carry.length);
-        }
-        return released;
+    // 空の行の Enter は一段外す。空の引用の行の Shift+Enter は、ほかの引用の行と同じく次の引用の行を足す（ADR 0301）
+    if (!soft && (carry ? runsText(blk.runs).length === check.length : !blk.runs.length)) {
+      blk.runs = [];
+      const released = releaseStructure(next, b);
+      if (carry && (released.blocks[b].kind === 'ul' || released.blocks[b].kind === 'ol')) {
+        released.blocks[b].runs = plainRun(carry);
+        released.sel = caret(b, carry.length);
       }
-      return leave(Math.max(0, own.length - 1));
+      return released;
     }
     const { kind, marker } = nextLineOf(next.blocks, b, S);
     return insertBelow(kind, marker, mergeRuns([...plainRun(carry), ...right]), carry.length);
@@ -947,7 +1089,7 @@ export function backspaceAtStart(st) {
   if (b === 0) return next;
   const prev = next.blocks[b - 1];
   if (prev.kind === 'att') {
-    removeAtomAt(next.blocks, b - 1);
+    next.blocks.splice(b - 1, 1);
     ensureShape(next.blocks);
     next.sel = caret(Math.min(b - 1, next.blocks.length - 1), 0);
     return next;
@@ -972,7 +1114,7 @@ export function deleteAtEnd(st) {
   const after = next.blocks[b + 1];
   const here = next.blocks[b];
   if (after.kind === 'att') {
-    removeAtomAt(next.blocks, b + 1);
+    next.blocks.splice(b + 1, 1);
     ensureShape(next.blocks);
     next.sel = caret(b, next.sel.s.v);
     return next;
@@ -981,6 +1123,12 @@ export function deleteAtEnd(st) {
   const runs = here.kind === 'code' || after.kind === 'code'
     ? plainRun(runsText(here.runs) + runsText(after.runs))
     : mergeRuns([...here.runs, ...after.runs]);
+  // 空の行（引用・続きの行・段落）に項目の頭の行をつなぐと、その項目は無くなる。中身の行は字下げを外して一緒に出す（内側の項目から）。
+  // 残すと、空の行は項目を閉じないので前の項目の中身になり、後でこの行に字を打ったときに外へ飛ぶ
+  if ((after.kind === 'ul' || after.kind === 'ol') && blankRow({ ...here, runs })) {
+    const S = rowTree(next.blocks);
+    for (const m of (S.info[b + 1]?.marks ?? []).filter((y) => y.opened && y.node.t === 'item').reverse()) takeOut(next.blocks, S, b + 2, m.node);
+  }
   next.blocks.splice(b, 2, { ...here, kind: here.kind === 'att' ? 'p' : here.kind, runs, pad: undefined });
   ensureShape(next.blocks);
   next.sel = caret(b, at);
@@ -1000,7 +1148,7 @@ export function insertAtom(st, atom) {
   const blk = next.blocks[b];
   let at;   // 添付を置く添字
   if (blk.kind === 'code') {
-    const S = docStructure(next.blocks), node = S.info[b]?.node;
+    const S = rowTree(next.blocks), node = S.info[b]?.node;
     at = (node?.t === 'code' ? S.idx[node.end] ?? b : b) + 1;
     next.blocks.splice(at, 0, atom);
   } else if (blk.kind === 'att') {
@@ -1008,11 +1156,9 @@ export function insertAtom(st, atom) {
     next.blocks.splice(at, 0, atom);
   } else if (!blk.runs.length) {
     at = b;
-    if (blk.breakBefore !== undefined) atom = { ...atom, breakBefore: blk.breakBefore };
     next.blocks.splice(b, 1, atom);
   } else if (v === 0) {
     at = b;
-    if (blk.breakBefore !== undefined) { atom = { ...atom, breakBefore: blk.breakBefore }; delete blk.breakBefore; }
     next.blocks.splice(b, 0, atom);
   } else if (v >= runsLength(blk.runs)) {
     at = b + 1;
@@ -1034,15 +1180,6 @@ export function insertAtom(st, atom) {
   return next;
 }
 
-// Removing an atom does not remove the paragraph boundary it temporarily owns.
-function removeAtomAt(blocks, i) {
-  const before = blocks[i].breakBefore, following = blocks[i + 1];
-  if (before !== undefined && following && following.breakBefore === undefined) {
-    blocks[i + 1] = { ...following, breakBefore: before, pad: undefined };
-  }
-  blocks.splice(i, 1);
-}
-
 /** 条件に合う添付を外す */
 export function removeAtoms(st, pred) {
   const next = clone(st);
@@ -1052,7 +1189,7 @@ export function removeAtoms(st, pred) {
     const b = next.blocks[i];
     if (b.kind !== 'att' || !pred(b)) continue;
     if (i < at) shift++;
-    removeAtomAt(next.blocks, i);
+    next.blocks.splice(i, 1);
   }
   ensureShape(next.blocks);
   const idx = Math.max(0, Math.min(at - shift, next.blocks.length - 1));
@@ -1065,7 +1202,7 @@ export function removeAtomsTidy(st, pred) {
   const next = removeAtoms(st, pred);
   const at = next.sel.s.b;
   let shift = 0;
-  const { info } = docStructure(next.blocks);
+  const { info } = rowTree(next.blocks);
   const keep = next.blocks.filter((b, i, all) => {
     const stray = b.pad && isEmptyBlock(b) && all.length > 1 && all[i - 1]?.kind !== 'att' && all[i + 1]?.kind !== 'att'
       && !(all[i - 1]?.kind === 'code' && info[i - 1]?.role === 'fence-close');
@@ -1095,7 +1232,7 @@ export function pasteText(st, text, { plain = false, resolve = () => null } = {}
   const blk = cur.blocks[b];
   if (!src.includes('\n')) return insertRuns(cur, plain || blk.kind === 'code' ? plainRun(src) : parseInline(src));
   // コードブロックの中へ貼った行は、同じ入れ物の中のコードの行（リスト・引用の中のコードなら、その字下げ・`>` を付ける）
-  const codeMarker = blk.kind === 'code' ? contPrefix(blockRaw(blk), docStructure(cur.blocks).info[b]?.marks ?? []) : '';
+  const codeMarker = blk.kind === 'code' ? contPrefix(blockRaw(blk), rowTree(cur.blocks).info[b]?.marks ?? []) : '';
   const parsed = blk.kind === 'code' ? src.split('\n').map((line) => codeBlock(line, codeMarker)) : markdownToDoc(src, { resolve, plain }).filter(x => !x.pad);
   return spliceParsed(cur, parsed, { resolve, plain });
 }
@@ -1116,6 +1253,15 @@ export function pasteRich(st, parts, { resolve = () => null } = {}) {
   return spliceParsed(cur, parsed, { resolve, rich: true });
 }
 
+/**
+ * 貼った行を、キャレットのあった行の入れ物（引用・項目）の中に入れる（ADR 0301）。pre はその入れ物の記号、kind は本文の行がなる種類。
+ * 本文の行は入れ物の行に、自分の記号を持つ行（引用・項目・見出し・コード）はその記号を入れ物の記号の後ろに足す。添付の行はそのまま
+ */
+function intoContainer(rows, pre, kind) {
+  if (!pre) return rows;
+  return rows.map((x) => (x.kind === 'att' ? x : x.kind === 'p' ? { ...x, kind, marker: pre } : { ...x, marker: pre + x.marker }));
+}
+
 /** 解いたブロックを、キャレットの行へ差し込む（pasteText・pasteRich の本体）。cur は選択を消した後の状態 */
 function spliceParsed(cur, parsed, { plain = false, resolve = () => null, rich = false } = {}) {
   const { b, v } = cur.sel.s;
@@ -1126,18 +1272,27 @@ function spliceParsed(cur, parsed, { plain = false, resolve = () => null, rich =
   const left = blk.kind === 'att' ? null : { ...blk, runs: sliceRuns(blk.runs, 0, cutAt), pad: undefined };
   const tailOf = blk.kind === 'att' ? null : plain ? { kind: 'p', marker: '' } : blk.kind === 'h' ? { kind: 'p', marker: '' } : nextLineOf(cur.blocks, b);
   const right = blk.kind === 'att' ? null : { ...tailOf, runs: sliceRuns(blk.runs, cutAt) };
+  // キャレットのあった行の入れ物（貼った行もその中に入れる）。コードの中は呼ぶ側が記号を付ける
+  const own = !plain && !inCode && blk.kind !== 'att' ? ownMarks(rowTree(cur.blocks).info[b], blk) : [];
+  const pre = own.length ? contPrefix(blockRaw(blk), own) : '';
+  const firstKind = parsed[0]?.kind;
   const seq = [];
-  if (left && (left.runs.length || left.marker)) seq.push(left);
+  // 字の無い引用・続きの行は、入れ物の記号を貼った行が持つので残さない（中身の無い項目の頭は残し、貼った先頭の本文の行をその中身にする）
+  if (left && (left.runs.length || (left.marker && !(pre && blankRow(left))))) seq.push(left);
   const firstIdx = seq.length;
-  seq.push(...clone(parsed));
-  if (blk.breakBefore !== undefined) seq[0].breakBefore = blk.breakBefore;
+  // 貼った行は編集した行（読み込んだ元の文字 src は持たない）
+  seq.push(...intoContainer(clone(parsed).map(({ src: _, ...x }) => x), pre, contKind(own, own.length)));
   // 空の頭の行は貼った先頭の行と一体（記号ごと置き換える）。中身のある行なら、貼った先頭の行の中身を後ろにつなぐ
-  if (firstIdx === 1 && seq[1].kind !== 'att' && seq[0].kind !== 'att' && !(inCode) && (!rich || seq[1].kind === 'p')) {
+  if (firstIdx === 1 && seq[1].kind !== 'att' && seq[0].kind !== 'att' && !(inCode) && (!rich || firstKind === 'p')) {
     seq[0] = { ...seq[0], runs: mergeRuns([...seq[0].runs, ...seq[1].runs]) };
     seq.splice(1, 1);
   } else if (firstIdx === 1 && inCode) {
     seq[0] = { ...seq[0], runs: plainRun(runsText(seq[0].runs) + runsText(seq[1].runs)) };
     seq.splice(1, 1);
+  }
+  // 中身の無い項目の頭のすぐ下の空の行は、項目を閉じて下の行（子の項目など）を外へ出すので作らない（Shift+Enter と同じ。ADR 0301）
+  if (!plain && firstIdx === 1 && (seq[0].kind === 'ul' || seq[0].kind === 'ol') && !runsLength(seq[0].runs)) {
+    while (seq.length > 1 && blankRow(seq[1])) seq.splice(1, 1);
   }
   let caretAt = seq.length - 1;
   let caretV = seq.at(-1).kind === 'att' ? 0 : runsLength(seq.at(-1).runs);
@@ -1152,43 +1307,25 @@ function spliceParsed(cur, parsed, { plain = false, resolve = () => null, rich =
   next.blocks.splice(b, 1, ...seq);
   const idx = b + caretAt;
   const sel = caret(Math.min(idx, next.blocks.length - 1), caretV);
-  normalizeFences(next.blocks, { resolve, plain, sel });
+  normalizeRows(next.blocks, { resolve, plain, sel });
   ensureShape(next.blocks);
   next.sel = caret(Math.min(sel.s.b, next.blocks.length - 1), sel.s.v);
   return next;
 }
 
-// ------------------------------------------------------------------ 構造との整合
-/**
- * 行の種類と記号を、構造の読み方（web/md-structure.mjs。履歴と同じ）に合わせる。コードの中に入った行は code に、コードから出た行・
- * 構造と合わなくなった書式の行（親の項目が消えた続きの行など）は読み直す。書き換えたら true。
- * undo で戻した「記号のままの行」を勝手に書式にしないよう、段落（p）は書式にしない。sel を渡すと、読み直した行の中の位置を同じ字の上に移す
- */
-export function normalizeFences(blocks, { resolve = () => null, plain = false, raw = blockRaw, sel = null } = {}) {
-  if (plain) return false;
-  const S = docStructure(blocks, raw);
-  let changed = false;
-  blocks.forEach((b, i) => {
-    const li = S.info[i];
-    if (!li) return;
-    const text = raw(b), code = CODE_ROLES.has(li.role);
-    const redo = b.kind === 'att' ? code
-      : b.kind === 'code' ? !code || b.marker !== text.slice(0, prefixEnd(li))
-      : code || !agrees(b, li, text);
-    if (!redo) return;
-    // 中身の無い箇条書きの行は、構造を読むときに中身を足してある（docStructure）。読み直すときは足した字を除く
-    const nb = lineBlock(text, li, { resolve });
-    if (nb.kind === b.kind && nb.marker === b.marker) return;
-    if (sel) for (const k of ['s', 'e']) if (sel[k].b === i) sel[k] = { b: i, v: vOfRaw(nb, rawOffsetOf(b, sel[k].v)) };
-    if (b.breakBefore !== undefined) nb.breakBefore = b.breakBefore;
-    blocks[i] = nb;
-    changed = true;
-  });
-  return changed;
-}
-
 // ------------------------------------------------------------------ 打った直後の整形
 const BLOCK_TRIGGER = /^(#{1,6}|[-*+]|\d{1,9}[.)]|>) $/;
+
+/** 行の種類と記号が、行の文字を読んだ入れ物（rowTree の行の情報）と合うか（行頭の記号を確定してよいか） */
+function fits(b, li) {
+  if (!li) return false;
+  if (b.kind === 'h') return li.role === 'heading';
+  if (CODE_ROLES.has(li.role)) return false;
+  const m = li.marks.at(-1);
+  if (!m || m.end < b.marker.length) return false;
+  const kind = m.node.t === 'bq' ? 'quote' : m.opened ? (m.node.parent.ordered ? 'ol' : 'ul') : 'cont';
+  return kind === b.kind;
+}
 
 function runAt(runs, v) {
   let at = 0;
@@ -1237,7 +1374,7 @@ function inlinePattern(prefix, ch) {
 
 /**
  * 字を 1 つ打った直後に整える。ch は打った字、キャレットは打った字の直後。整えたら { state, kind }、無ければ null。
- *   行頭 `# `・`- `・`1. `・`> ` で行の種類（項目の中の行・引用の行でも。入れ子の項目・引用・項目の中の見出しになる）、行頭の ``` でコードブロック（閉じも足す）。
+ *   行頭 `# `・`- `・`1. `・`> ` で行の種類（項目の中の行・引用の行でも。入れ子の項目・引用・項目の中の見出しになる。項目の頭の行の中身の頭では `# ` 以外）、行頭の ``` でコードブロック（閉じも足す）。
  *   行の種類は、履歴と同じ構造の読み方でその種類になるときだけ変える（段落の続きの `2. ` は項目にならないので変えない）
  *   `code`・**太字**・*斜体*・[文字](URL) は閉じた字を打った時点で
  */
@@ -1248,15 +1385,17 @@ export function applyTriggers(st, ch, { plain = false } = {}) {
   if (!blk || blk.kind === 'att' || blk.kind === 'code') return null;
   const text = runsText(blk.runs);
   const lineStart = blk.kind === 'p' || blk.kind === 'cont' || blk.kind === 'quote';
-  if (lineStart && ch === ' ') {
+  // 項目の頭の行の中身の頭でも、`> `・`- `・`1. ` は Space で確定する（`- > a` の引用・`- - a` の入れ子の項目。ADR 0301）
+  const itemHead = blk.kind === 'ul' || blk.kind === 'ol';
+  if ((lineStart || itemHead) && ch === ' ') {
     const head = text.slice(0, v);
     const m = BLOCK_TRIGGER.exec(head);
-    if (m && serializeRuns(sliceRuns(blk.runs, 0, v)) === head) {
+    if (m && (lineStart || head[0] !== '#') && serializeRuns(sliceRuns(blk.runs, 0, v)) === head) {
       const next = clone(st);
       const kind = head[0] === '#' ? 'h' : head[0] === '>' ? 'quote' : /\d/.test(head[0]) ? 'ol' : 'ul';
       const nb = { ...blk, kind, marker: blk.marker + head, runs: sliceRuns(blk.runs, v) };
       next.blocks[b] = nb;
-      if (agrees(nb, docStructure(next.blocks).info[b], blockRaw(nb))) {
+      if (fits(nb, rowTree(next.blocks).info[b])) {
         next.sel = caret(b, 0);
         return { state: next, kind: 'block' };
       }
@@ -1264,8 +1403,8 @@ export function applyTriggers(st, ch, { plain = false } = {}) {
   }
   if (lineStart && ch === '`' && text.slice(0, v) === '```') {
     const next = clone(st);
-    const own = ownMarks(docStructure(st.blocks).info[b], blk), inner = contPrefix(blockRaw(blk), own);
-    next.blocks[b] = { ...codeBlock('```' + text.slice(v), blk.marker), ...(blk.breakBefore !== undefined ? { breakBefore: blk.breakBefore } : {}) };
+    const own = ownMarks(rowTree(st.blocks).info[b], blk), inner = contPrefix(blockRaw(blk), own);
+    next.blocks[b] = codeBlock('```' + text.slice(v), blk.marker);
     next.blocks.splice(b + 1, 0, codeBlock('', inner), codeBlock('```', inner));
     ensureShape(next.blocks);
     next.sel = caret(b, 3);
@@ -1327,7 +1466,7 @@ export function selectionMarkdown(st) {
   const { s, e } = st.sel;
   if (isCollapsed(st.sel)) return '';
   const lines = [];
-  const boundaries = new Map(docLayout(st.blocks).lines.map(l => [l.b, l.before]));
+  const boundaries = new Map(docLayout(st.blocks).lines.map(l => [l.b, l.sep]));
   for (let i = s.b; i <= e.b; i++) {
     const b = st.blocks[i];
     if (i > s.b && boundaries.get(i) !== undefined) lines.push(boundaries.get(i));
@@ -1341,7 +1480,9 @@ export function selectionMarkdown(st) {
 }
 
 // ------------------------------------------------------------------ 元に戻す
-const sameBlock = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
+// 読み込んだ元の文字（src）は比べない（行が同じなら同じ状態。src は行を変えないうちの写しで、行の正ではない。ADR 0301）
+const rowJson = (b) => JSON.stringify(b, (k, v) => (k === 'src' ? undefined : v));
+const sameBlock = (a, b) => a === b || rowJson(a) === rowJson(b);
 const sameBlocks = (a, b) => a.length === b.length && a.every((x, i) => sameBlock(x, b[i]));
 /** 履歴の 1 件分。ブロックの並びだけ写し、ブロック自体は共有する（作った後に書き換えない約束）。選択は写す */
 const keep = (state) => ({ blocks: state.blocks.slice(), sel: clone(state.sel) });

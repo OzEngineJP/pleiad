@@ -89,7 +89,7 @@ function broadcast(directory, type, properties) {
   if(type==='session.idle')return output(s.error?'session.execution.failed':'session.execution.succeeded',{sessionID:s.id,...(s.error?{error:s.error}:{})});
   output(type,p);
 }
-function formOf(p){return {id:p.id,sessionID:p.sessionID,title:'Question',fields:p.questions.map((q,i)=>({key:String(i),type:q.multiple?'multiselect':'string',title:q.question,options:q.options.map(o=>({value:o.label,label:o.label,...(o.description?{description:o.description}:{})}))}))};}
+function formOf(p){return {id:p.id,sessionID:p.sessionID,title:'Question',fields:p.questions.map((q,i)=>({key:String(i),type:q.multiple?'multiselect':'string',title:q.question,custom:q.custom,options:q.options.map(o=>({value:o.value ?? o.label,label:o.label,...(o.description?{description:o.description}:{})}))}))};}
 function nativeRow(s){
   const totals={cost:0,tokens:{input:0,output:0,reasoning:0,cache:{read:0,write:0}}};
   for(const info of [...s.messages.map(m=>m.info),...Object.values(s.compactionUsage??{})]) {
@@ -330,7 +330,20 @@ async function run(s, user, text, { system = null } = {}) {
       if (answer.reply === 'reject') { t.fail(`The user rejected permission to use this specific tool call${answer.message ? ` with the following feedback: ${answer.message}` : ''}`); reply = `rejected${answer.message ? `: ${answer.message}` : ''}`; }
       else { t.done('asked\n', { exit: 0 }); reply = `allowed (${answer.reply})`; }
     } else if (text.startsWith('question')) {
-      const answer = await ask(s, 'question.asked', { questions: [{ question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'warm' }, { label: 'Blue' }] }] });
+      // question-custom: 本物のフォームと同じく、ラベル（カンマ入り）とは別の value を持つ custom:false の選択肢
+      // question-multi: 複数選択。カンマ入りの value の境界を確かめる
+      // question-space: 前後に空白を持つ value。trim されずに届くか確かめる
+      // question-collide: 送られた文字列が別の選択肢の label と同じ（'b' は 1 つ目の label・2 つ目の value）
+      const variant = ['custom', 'multi', 'space', 'collide'].find((v) => text.startsWith(`question-${v}`));
+      const answer = await ask(s, 'question.asked', { questions: [variant === 'custom'
+        ? { question: 'Search providers?', header: 'Web', custom: false, options: [{ label: 'Allow search via Exa, Firecrawl', value: 'allow' }, { label: 'Disable web search', value: 'disable' }] }
+        : variant === 'multi'
+        ? { question: 'Which tags?', header: 'Tags', multiple: true, custom: false, options: [{ label: 'one, two', value: 'one,two' }, { label: 'three', value: 'three' }] }
+        : variant === 'space'
+        ? { question: 'Pick one?', header: 'Pad', custom: false, options: [{ label: 'padded', value: ' a ' }, { label: 'plain', value: 'b' }] }
+        : variant === 'collide'
+        ? { question: 'Collide?', header: 'Col', custom: false, options: [{ label: 'b', value: 'a' }, { label: 'Other', value: 'b' }] }
+        : { question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'warm' }, { label: 'Blue' }] }] });
       reply = answer.rejected ? 'question rejected' : `answers: ${JSON.stringify(answer.answers)}`;
     } else if (text.startsWith('mcp:')) {
       const { server, tool, arguments: args = {} } = JSON.parse(text.slice(4));

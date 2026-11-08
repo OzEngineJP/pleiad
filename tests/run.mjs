@@ -363,6 +363,8 @@ const SUITES = [
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の自動選択のモデルと偽の agy）
   './unit/server-delegation-routing.mjs',
   './unit/server-delegation-routing-settings.mjs',
+  // 仕事を始める前に断られた子を次の候補へ任せ直す（ADR 0302）: 任せ直す・痕跡があれば替えない・回数の上限と記録
+  './unit/server-delegation-reroute.mjs',
   // 委譲の画面の 1 回の組み立てで、同じエージェントのモデル一覧は 1 回だけ引く（偽の Devin の起動回数で確かめる）
   './unit/server-delegation-models-share.mjs',
   './unit/server-delegation-effort.mjs',
@@ -542,6 +544,9 @@ const SUITES = [
   // Claude の巻き戻し（resumeSessionAt・resumeDropsTurn を resume に添える。拒否は呼び出し側へ）: SDK の query を身代わりに
   './unit/claude-rewind.mjs',
   './unit/md-doc.mjs',
+  './unit/md-rows-serialize.mjs',
+  // 打鍵の並びの総当たりとでたらめ（ADR 0301）。MD_ROWS_SEARCH=full で手元の長い探索
+  './unit/md-rows-search.mjs',
   './unit/md-exit-in-place.mjs',
   './unit/md-editing-state.mjs',
   // 貼り付けの HTML → 入力欄の形（ADR 0141）: 書式・リスト・引用・コード・リンク・表・画像の振り分け・構造の無い HTML は対象外・往復

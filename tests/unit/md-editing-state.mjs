@@ -1,8 +1,8 @@
 import {
   markdownToDoc, docToMarkdown, caret, enter, backspaceAtStart, insertText, insertPlain,
   applyTriggers, snapshotEditing, restoreEditing, replaceMarkdownRange, mergeEditingContent,
-  docStructure, editingNode, createHistory, posToOffset, offsetToPos, selectionMarkdown,
-  deleteSelection, deleteAtEnd, pasteText, toggleMark, newAtom, insertAtom, removeAtoms, normalizeFences, indentList, renumber,
+  rowTree, createHistory, posToOffset, offsetToPos, selectionMarkdown,
+  deleteSelection, deleteAtEnd, pasteText, toggleMark, newAtom, insertAtom, removeAtoms, normalizeRows, indentList, renumber,
 } from '../../web/md-doc.mjs';
 import { textHash, normalizeEditingState } from '../../web/md-editing-state.mjs';
 import { parseDrafts, serializeDrafts } from '../../web/channels/ch-attach-model.mjs';
@@ -13,15 +13,15 @@ export const title = '確定前の記号・同じ行の構造解除・送信境�
 const st = (text, b = 0, v = 0) => ({ blocks: markdownToDoc(text), sel: caret(b, v) });
 const md = s => docToMarkdown(s.blocks);
 const shape = s => s.blocks.map(b => b.kind).join(',');
-const bars = s => { const S = docStructure(s.blocks); return s.blocks.map((b, i) => S.info[i] ? lineIndent(editingNode(s.blocks, S, b, S.info[i])).bars.length : 0); };
+const bars = s => { const S = rowTree(s.blocks); return s.blocks.map((b, i) => S.info[i] ? lineIndent(S.info[i].node).bars.length : 0); };
 const select = (s, b, v = 0) => ({ blocks: s.blocks, sel: caret(b, v) });
 const exit = (text = '> a\n> b') => backspaceAtStart(st(text, 1));
 
 export default async function (t) {
   for (const marker of ['>', '-', '1.']) {
-    const pending = insertPlain(st(''), marker), S = docStructure(pending.blocks);
-    const at = lineIndent(editingNode(pending.blocks, S, pending.blocks[0], S.info[0]));
-    t.ok(`${marker} は確定前に字下げ・引用線を付けない`, !at.bars.length && at.l1 === 0 && at.ln === 0 && at.mk === 0 && md(pending) === marker, JSON.stringify(at));
+    const pending = insertPlain(st(''), marker), S = rowTree(pending.blocks);
+    const at = lineIndent(S.info[0].node);
+    t.ok(`${marker} は確定前に字下げ・引用線を付けない`, !at.bars.length && at.l1 === 0 && at.ln === 0 && at.mk === 0 && md(pending) === marker.replace(/[>.-]$/, '\\$&'), JSON.stringify(at));
     const spaced = insertText(pending, ' '), committed = applyTriggers(spaced, ' ')?.state;
     t.ok(`${marker} は Space で確定し、空行の Enter は同じ行で解除する`, committed && shape(committed) !== 'p' && shape(enter(committed)) === 'p' && enter(committed).sel.s.b === 0);
     const saved = snapshotEditing(pending.blocks);
@@ -30,21 +30,21 @@ export default async function (t) {
   for (const text of ['> a\n> ', '> a\n> b', '- a\n- ', '- a\n- b', '1. a\n2. ', '1. a\n2. b']) {
     const before = st(text, 1), s = backspaceAtStart(before), typed = insertText(s, 'x');
     t.ok(`解除 ${JSON.stringify(text)} は2行・同じ行頭、入力後も本文`, s.blocks.length === 2 && s.sel.s.b === 1 && s.sel.s.v === 0 && shape(s).endsWith(',p') && shape(typed).endsWith(',p'));
-    const S = docStructure(typed.blocks);
+    const S = rowTree(typed.blocks);
     let node = S.info[1].node, inside = false;
     while (node) { inside ||= node.t === 'bq' || node.t === 'item'; node = node.parent; }
     t.ok('送信本文を共通解析しても引用・項目の外', !inside && md(typed).includes('\n\n'));
     const h = createHistory(); h.reset(before); h.push(s, 'backspace');
     t.ok('Undo1回で構造・境界・選択を戻す、Redoで再解除', md(h.undo()) === text && md(h.redo()) === md(s));
     const restored = restoreEditing(md(s), JSON.parse(JSON.stringify(snapshotEditing(s.blocks))));
-    t.ok('保存復元後も2編集行、原文一致', restored.length === 2 && docToMarkdown(restored) === md(s) && restored[1].breakBefore === '');
+    t.ok('保存復元後も2編集行、原文一致', restored.length === 2 && docToMarkdown(restored) === md(s) && restored[1].kind === 'p');
   }
   const q = enter(st('> a', 0, 1));
   t.ok('Enter直後の空引用も2行とも引用線を保つ', q.blocks.length === 2 && bars(q).join() === '1,1' && md(q) === '> a\n> ');
   const deep = exit('> > a\n> > b');
-  t.ok('多段引用は一段だけ外し外側を保つ', deep.blocks.length === 2 && deep.blocks[1].marker === '> ' && deep.blocks[1].breakBefore === '> ' && bars(deep).join() === '2,1');
+  t.ok('多段引用は一段だけ外し外側を保つ', deep.blocks.length === 2 && deep.blocks[1].marker === '> ' && md(deep) === '> > a\n>\n> b' && bars(deep).join() === '2,1');
   const listInQuote = exit('> - a\n> - b');
-  t.ok('引用内リストの解除は引用を保つ', shape(listInQuote) === 'ul,quote' && bars(listInQuote).join() === '1,1' && md(listInQuote) === '> - a\n> \n> b');
+  t.ok('引用内リストの解除は引用を保つ', shape(listInQuote) === 'ul,quote' && bars(listInQuote).join() === '1,1' && md(listInQuote) === '> - a\n>\n> b');
   t.ok('入れ子項目の先頭は親の続きへ戻し不要な境界を増やさない', md(exit('- a\n  - b')) === '- a\n  b');
   const s = exit(), raw = md(s), offset = posToOffset(s.blocks, { b: 1, v: 0 });
   t.ok('原文offsetは境界を含み、編集位置は境界を飛び越す', offset === 5 && offsetToPos(s.blocks, 4).b === 1 && offsetToPos(s.blocks, 4).v === 0 && offsetToPos(s.blocks, offset + 1).v === 1);
@@ -56,23 +56,23 @@ export default async function (t) {
   const replace = replaceMarkdownRange(s, '本文', offset, offset + 1);
   t.ok('setRangeText相当の本文置換は境界と2行を保つ', md(replace) === '> a\n\n本文' && replace.blocks.length === 2 && replace.sel.s.b === 1 && replace.sel.s.v === 2);
   const multiline = replaceMarkdownRange(s, 'new\nline', offset, offset + 1);
-  t.ok('範囲APIの複数行置換でも境界を編集行へ戻さない', md(multiline) === '> a\n\nnew\nline' && multiline.blocks.length === 3 && multiline.blocks[1].breakBefore === '');
+  t.ok('範囲APIの複数行置換でも境界を編集行へ戻さない', md(multiline) === '> a\n\nnew\nline' && multiline.blocks.length === 3 && shape(multiline) === 'quote,p,p');
   const removeBoundary = replaceMarkdownRange(s, '', 4, 5);
-  t.ok('原文APIで区切りを明示削除すれば通常の原文として扱う', md(removeBoundary) === '> a\nb' && !removeBoundary.blocks.some(b => b.breakBefore !== undefined));
+  t.ok('原文APIで区切りを明示削除すれば通常の原文として扱う', md(removeBoundary) === '> a\nb' && shape(removeBoundary) === 'quote,quote');
   const replaceAll = replaceMarkdownRange(s, '> pasted\n> quote', 0, raw.length);
   t.ok('原文全置換は旧編集状態を持ち越さない', md(replaceAll) === '> pasted\n> quote' && shape(replaceAll) === 'quote,quote');
   const prepended = replaceMarkdownRange(s, 'queued\n\n', 0, 0);
-  t.ok('送信待ちの本文を先頭へ戻しても既存下書きの境界を保つ', md(prepended) === 'queued\n\n' + raw && prepended.blocks.length === 4 && prepended.blocks.at(-1).breakBefore === '');
+  t.ok('送信待ちの本文を先頭へ戻しても既存下書きの境界を保つ', md(prepended) === 'queued\n\n' + raw && prepended.blocks.length === 4 && shape(prepended) === 'p,p,quote,p');
   const pasted = pasteText(s, 'new\ntext');
-  t.ok('解除行へ複数行貼付しても境界と原文を保つ', md(pasted) === '> a\n\nnew\ntextb' && pasted.blocks.length === 3 && pasted.blocks[1].breakBefore === '');
+  t.ok('解除行へ複数行貼付しても境界と原文を保つ', md(pasted) === '> a\n\nnew\ntextb' && pasted.blocks.length === 3 && shape(pasted) === 'quote,p,p');
   const formatted = toggleMark({ ...s, sel: { s: { b: 1, v: 0 }, e: { b: 1, v: 1 } } }, 'strong');
   t.ok('解除行の書式変更でも境界を保つ', md(formatted) === '> a\n\n**b**');
   const code = applyTriggers(insertPlain(select(exit('> a\n> '), 1), '```'), '`')?.state;
-  t.ok('解除行のコード作成でも境界は開きフェンスだけ', code && code.blocks[1].breakBefore === '' && code.blocks.slice(2).every(b => b.breakBefore === undefined));
+  t.ok('解除行のコード作成は引用の外のコード（フェンスは引用を閉じるので区切りは要らない）', code && md(code) === '> a\n```\n\n```' && shape(code) === 'quote,code,code,code,p');
   const atom = insertAtom(select(s, 1), newAtom({ path: 'C:/test/a.png' }));
-  t.ok('解除行頭の添付挿入は境界を添付へ移す', atom.blocks[1].kind === 'att' && atom.blocks[1].breakBefore === '' && atom.blocks[2].breakBefore === undefined);
+  t.ok('解除行頭の添付挿入は引用の外の添付', atom.blocks[1].kind === 'att' && md(atom) === '> a\n\n[添付] C:/test/a.png\nb');
   for (const removed of [removeAtoms(atom, () => true), backspaceAtStart(select(atom, 2)), deleteAtEnd(select(atom, 0, 1)), deleteSelection({ ...atom, sel: { s: { b: 1, v: 0 }, e: { b: 1, v: 1 } } })]) {
-    t.ok('添付だけの削除は境界を次の本文へ戻す', md(removed) === raw && removed.blocks.length === 2 && removed.blocks[1].breakBefore === '');
+    t.ok('添付だけの削除は境界を次の本文へ戻す', md(removed) === raw && removed.blocks.length === 2 && removed.blocks[1].kind === 'p');
   }
   const uploading = insertAtom(select(s, 1), newAtom({ pid: 'pending-test' }));
   t.ok('未完了の添付を除いた送信原文にも本文境界を残す', md(uploading) === raw && docToMarkdown(restoreEditing(raw, snapshotEditing(uploading.blocks))) === raw && bars(uploading).at(-1) === 0);
@@ -80,7 +80,7 @@ export default async function (t) {
   t.ok('添付から次の本文行頭までの範囲削除は本文境界を保つ', md(deleteSelection({ ...atom, sel: { s: { b: 1, v: 0 }, e: { b: 2, v: 0 } } })) === raw);
   const saved = snapshotEditing(s.blocks);
   for (const bad of [{ ...saved, v: 2 }, { ...saved, hash: 'bad' }, { ...saved, rows: [...saved.rows].reverse() }, { ...saved, rows: saved.rows.map((r, i) => i ? { ...r, before: 'secret' } : r) }]) {
-    t.ok('不正な編集情報は捨て、本文だけを原文通り読む', normalizeEditingState(raw, bad) === null && docToMarkdown(restoreEditing(raw, bad)) === raw && restoreEditing(raw, bad).length === 3);
+    t.ok('不正な編集情報は捨て、本文だけを原文通り読む', normalizeEditingState(raw, bad) === null && docToMarkdown(restoreEditing(raw, bad)) === raw && restoreEditing(raw, bad).length === 2);
   }
   for (const text of ['>alone\nlazy', '-\n\ntext', '1. a\n3. b', '> a\n\nb']) {
     t.ok('既存の原文のみのデータを勝手に書き換えない', docToMarkdown(restoreEditing(text)) === text);
@@ -89,7 +89,7 @@ export default async function (t) {
   t.ok('編集取り消しの結合でも内部境界を保持する', merged.text === raw + '\n\ndraft' && restoreEditing(merged.text, merged.editing).length === 4);
   const withAttachment = mergeEditingContent([{ text: docToMarkdown(atom.blocks), editing: snapshotEditing(atom.blocks), attached: [{ path: 'C:/test/a.png' }] }, { text: 'other' }]);
   const restoredAttachment = restoreEditing(withAttachment.text, withAttachment.editing, { resolve: p => p === 'C:/test/a.png' });
-  t.ok('編集中の結合で添付の実体と境界を保つ', restoredAttachment.some(b => b.kind === 'att' && b.breakBefore === ''));
+  t.ok('編集中の結合で添付の実体と区切りを保つ', restoredAttachment.some(b => b.kind === 'att') && docToMarkdown(restoredAttachment) === withAttachment.text);
   const channel = parseDrafts(serializeDrafts(new Map([['feed:x', { text: raw, attached: [], at: 1, editing: saved }]])));
   t.ok('チャンネルの保存形式を往復しても境界と2行を保つ', restoreEditing(channel.get('feed:x').text, channel.get('feed:x').editing).length === 2);
   let exact = true;
@@ -128,7 +128,7 @@ export default async function (t) {
     for (const prefix of ['queued\n', 'queued\n\n']) {
       const next = replaceMarkdownRange(pending, prefix, 0, 0);
       t.ok('改行で終わる先頭挿入は元行の未確定状態を移す: ' + marker,
-        md(next) === prefix + marker && next.blocks.at(-1).kind === 'p' && next.blocks.at(-1).marker === '' && bars(next).every(n => n === 0));
+        md(next) === prefix + marker.replace(/[>.-]$/, '\\$&') && next.blocks.at(-1).kind === 'p' && next.blocks.at(-1).marker === '' && bars(next).every(n => n === 0));
       t.ok('先頭挿入後の未確定状態を保存復元', restoreEditing(md(next), snapshotEditing(next.blocks)).at(-1).kind === 'p');
     }
   }
@@ -139,7 +139,7 @@ export default async function (t) {
     '- A\n- B\n  - C\n    > > x\n    > > y',
   ]) {
     const exited = backspaceAtStart(st(text, text.split('\n').length - 1));
-    const indented = indentList(select(exited, 1), 1), S = docStructure(indented.blocks);
+    const indented = indentList(select(exited, 1), 1), S = rowTree(indented.blocks);
     const parentItem = S.info[1].marks.filter(m => m.node.t === 'item').at(-1).node;
     let n = S.info.at(-1).node, retained = false;
     while (n) { retained ||= n === parentItem; n = n.parent; }
@@ -152,15 +152,15 @@ export default async function (t) {
   const numbered = backspaceAtStart(st('8. A\n9. B\n   > > x\n   > > y', 3));
   numbered.blocks[0] = { ...numbered.blocks[0], marker: '9. ' };
   renumber(numbered.blocks);
-  t.ok('番号が9から10へ増えると境界も1桁広がる', md(numbered) === '9. A\n10. B\n    > > x\n    > \n    > y');
+  t.ok('番号が9から10へ増えると境界も1桁広がる', md(numbered) === '9. A\n10. B\n    > > x\n    >\n    > y');
   numbered.blocks[0] = { ...numbered.blocks[0], marker: '8. ' };
   renumber(numbered.blocks);
-  t.ok('番号が10から9へ減ると境界も1桁戻る', md(numbered) === '8. A\n9. B\n   > > x\n   > \n   > y');
+  t.ok('番号が10から9へ減ると境界も1桁戻る', md(numbered) === '8. A\n9. B\n   > > x\n   >\n   > y');
   for (const [text, changed, expected] of [
-    ['> 8. A\n> 9. B\n>    > > x\n>    > > y', [[0, '8.']], '> 9. A\n> 10. B\n>     > > x\n>     > \n>     > y'],
-    ['8. A\n9. B\n\n   8. C\n   9. D\n      > > x\n      > > y', [[0, '8.'], [3, '8.']], '9. A\n10. B\n\n    9. C\n    10. D\n        > > x\n        > \n        > y'],
+    ['> 8. A\n> 9. B\n>    > > x\n>    > > y', [[0, '8.']], '> 9. A\n> 10. B\n>     > > x\n>     >\n>     > y'],
+    ['8. A\n9. B\n\n   8. C\n   9. D\n      > > x\n      > > y', [[0, '8.'], [2, '8.']], '9. A\n10. B\n\n    9. C\n    10. D\n        > > x\n        >\n        > y'],
   ]) {
-    const s = backspaceAtStart(st(text, text.split('\n').length - 1)), original = md(s);
+    const s = backspaceAtStart(st(text, markdownToDoc(text).length - 1)), original = md(s);
     for (const [i, from] of changed) s.blocks[i] = { ...s.blocks[i], marker: s.blocks[i].marker.replace(from, '9.') };
     renumber(s.blocks);
     t.ok('引用内・複数段の番号の桁幅変更を境界へ反映', md(s) === expected);
@@ -171,6 +171,6 @@ export default async function (t) {
     t.ok('複数段の番号を狭めると元の境界へ戻る', md(s) === original);
   }
   const unchanged = structuredClone(s.blocks);
-  normalizeFences(unchanged);
+  normalizeRows(unchanged);
   t.ok('通常の構造再確認で解除を取り消さない', docToMarkdown(unchanged) === raw && unchanged[1].kind === 'p');
 }

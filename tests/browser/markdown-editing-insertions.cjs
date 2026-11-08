@@ -7,9 +7,11 @@ async page => {
     if (!passed) throw Error(`${name}: ${JSON.stringify(got)} != ${JSON.stringify(want)}`);
   };
   const reset = text => page.evaluate(text => { const p = document.querySelector('#prompt'); p.value = text; p.dispatchEvent(new Event('input', { bubbles: true })); p.focus(); p.setSelectionRange(text.length, text.length); }, text);
-  const snap = () => page.evaluate(() => {
+  const snap = () => page.evaluate(async () => {
     const p = document.querySelector('#prompt');
-    return { raw: p.value, kinds: [...p.children].map(d => d.dataset.k), before: [...p.children].map(d => d.dataset.breakBefore ?? null), markers: [...p.children].map(d => d.dataset.m ?? ''), focus: document.activeElement.id };
+    // 行の前の区切りは、送る Markdown の前の行との間の行（無ければ null）
+    const { posToOffset } = await import('/md-doc.mjs'), st0 = p.editor.getState(), lines0 = p.value.split('\n'); const lineAt = i => p.value.slice(0, posToOffset(st0.blocks, { b: i, v: 0 })).split('\n').length - 1; const sepOf = i => (i > 0 && lineAt(i) - lineAt(i - 1) > 1 ? lines0[lineAt(i) - 1] : null);
+    return { raw: p.value, kinds: [...p.children].map(d => d.dataset.k), before: [...p.children].map((d, i) => sepOf(i)), markers: [...p.children].map(d => d.dataset.m ?? ''), focus: document.activeElement.id };
   });
   const ready = async () => {
     await page.waitForTimeout(1800);
@@ -43,7 +45,7 @@ async page => {
   await page.evaluate(() => { if (!document.querySelector('#armedChip').hidden) document.querySelector('#armedRemove').click(); });
   await schedule(); await reset(''); await K.type('>'); await editSchedule();
   const pending = await snap();
-  check('予約編集で前置きしても末尾の記号は未確定', [pending.raw, pending.kinds, pending.markers.at(-1)], ['予約本文\n\n>', ['p', 'p', 'p'], '']);
+  check('予約編集で前置きしても末尾の記号は未確定', [pending.raw, pending.kinds, pending.markers.at(-1)], ['予約本文\n\n\\>', ['p', 'p', 'p'], '']);  // 確定していない行頭の記号はエスケープして送る（ADR 0301 の S3）
   await reload(); check('前置き後の未確定記号も復元', (await snap()).kinds, ['p', 'p', 'p']);
   await page.evaluate(() => { if (!document.querySelector('#armedChip').hidden) document.querySelector('#armedRemove').click(); });
   await exit();
@@ -64,9 +66,9 @@ async page => {
   await reset('- A\n- B\n  > > x\n  > > y'); await K.press('Home'); await K.press('Backspace');
   await page.evaluate(() => { const p = document.querySelector('#prompt'); p.setSelectionRange(6, 6); }); await K.press('Tab');
   const indented = await snap(); evidence.push({ name: 'nested-indent', ...indented });
-  check('実際のTabで解除境界も子項目内へ移動', [indented.raw, indented.before.at(-1)], ['- A\n  - B\n    > > x\n    > \n    > y', '    > ']);
+  check('実際のTabで解除境界も子項目内へ移動', [indented.raw, indented.before.at(-1)], ['- A\n  - B\n    > > x\n    >\n    > y', '    >']);  // 引用の中の空行は `>` だけで送る（ADR 0301 の S2）
   await K.press('Shift+Tab');
-  check('Shift+Tabで境界も戻る', (await snap()).raw, '- A\n- B\n  > > x\n  > \n  > y');
+  check('Shift+Tabで境界も戻る', (await snap()).raw, '- A\n- B\n  > > x\n  >\n  > y');
   await reload(); check('字下げ後の保存復元でも4編集行', (await snap()).kinds.length, 4);
   return { checks, evidence, passed: checks.every(c => c.passed) };
 }

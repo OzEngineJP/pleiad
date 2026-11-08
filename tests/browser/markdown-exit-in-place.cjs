@@ -9,17 +9,18 @@ async page => {
       const m = await import('/md-doc.mjs'), { parseStructure } = await import('/md-structure.mjs');
       const { renderMarkdown } = await import('/render.mjs');
       const structure = parseStructure(p.value.split('\n'));
+      const posToOffset = m.posToOffset, st0 = p.editor.getState(), lines0 = p.value.split('\n'); const lineAt = i => p.value.slice(0, posToOffset(st0.blocks, { b: i, v: 0 })).split('\n').length - 1; const sepOf = i => (i > 0 && lineAt(i) - lineAt(i - 1) > 1 ? lines0[lineAt(i) - 1] : null);
       const depth = n => { let q = 0, list = 0; for (; n; n = n.parent) { q += n.t === 'bq'; list += n.t === 'item'; } return [q, list]; };
       return { raw: p.value, state, editing: p.editor.snapshotEditing(), sentHtml: renderMarkdown(p.value), events: window.__exitEvents ?? [],
         rows: [...p.children].map((b, i) => ({ kind: b.dataset.k, marker: state.blocks[i].marker,
-          q: +(b.dataset.q ?? 0), boundary: b.dataset.breakBefore ?? null, text: b.textContent,
+          q: +(b.dataset.q ?? 0), boundary: sepOf(i), text: b.textContent,
           indent: b.style.getPropertyValue('--md-ind'), height: b.getBoundingClientRect().height,
           sentDepth: depth(structure.lines[p.value.slice(0, m.posToOffset(state.blocks, { b: i, v: 0 })).split('\n').length - 1]?.node),
         })) };
     });
     evidence.push({ name, ...x });
     check(name + ' 編集行と選択位置', x.rows.length === x.state.blocks.length && x.state.sel.s.b < x.rows.length && x.state.sel.e.b < x.rows.length);
-    check(name + ' 確定記号・段落境界とDOM', x.rows.every((r, i) => r.kind === x.state.blocks[i].kind && r.height > 0 && r.boundary === (x.state.blocks[i].breakBefore ?? null)));
+    check(name + ' 確定記号とDOM', x.rows.every((r, i) => r.kind === x.state.blocks[i].kind && r.height > 0));
     check(name + ' 引用の深さは送信と一致', x.rows.every((r, i) => (r.kind === 'p' && ['>', '-', '1.'].includes(r.text)) || !x.state.blocks[i].runs.some(r => r.text.trim()) || r.q === r.sentDepth[0]));
     return x;
   };
@@ -45,7 +46,7 @@ async page => {
   });
   for (const mark of ['>', '-', '1.']) {
     const out = await base(mark);
-    check(mark + ' 空行Enterは同じ2行目で解除', [out.raw, out.rows.length, out.rows[1].kind, out.rows[1].boundary, out.state.sel.s], [mark + ' a\n\n', 2, 'p', '', { b: 1, v: 0 }]);
+    check(mark + ' 空行Enterは同じ2行目で解除', [out.raw, out.rows.length, out.rows[1].kind, out.rows[1].boundary, out.state.sel.s], [mark + ' a\n', 2, 'p', null, { b: 1, v: 0 }]);
     await type('b'); const typed = await snap(mark + ' 外へ入力');
     check(mark + ' Enter×2の直後の文字は構造外', [typed.raw, typed.rows[1].sentDepth], [mark + ' a\n\nb', [0, 0]]);
     await base(mark); const joined = await op('Backspace', mark + ' ユーザーの結合');

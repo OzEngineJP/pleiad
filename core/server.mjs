@@ -3485,7 +3485,13 @@ function makeEmit(turn) {
     // バックエンドが付けた時刻は上書きしない（docs/multi-backend.md §2.2）
     if (event?.type === 'tool.start' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
     if (event?.type === 'tool.result' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
-    if (event?.type) { agentTasks?.observe(turn.info.sessionId, event); sessionCommands?.observe(turn.info.sessionId, event); }
+    if (event?.type) {
+      agentTasks?.observe(turn.info.sessionId, event); sessionCommands?.observe(turn.info.sessionId, event);
+      // 委譲の子が仕事を始めた印（ADR 0302）。再生でも立てる（起きた仕事の記録の再生は、起きたことの証拠）
+      const execution = taskExecutions.get(turn.info.sessionId);
+      if (execution && !execution.touched
+        && (REROUTE_TOUCHED_EVENTS.has(event.type) || (event.type === 'activity' && REROUTE_TOUCHED_ACTIVITY.has(event.state)))) execution.touched = true;
+    }
     // git でしたこと（PR の作成など）をターンの終わりの要約に使う
     const gitFound = turn.gitCalls?.track(event);
     if (gitFound?.length && !replay) recordPrs(turn.info.sessionId, gitFound);
@@ -6532,6 +6538,9 @@ async function recordTaskNotice(sessionId, prompt) {
   if (!hashes.includes(digest)) await store.setSessionData(sessionId, 'taskNotices', [...hashes, digest]);
 }
 
+/** 完了通知の委譲先の名前（backend:model。アカウントがあれば backend@account:model。候補の一覧と同じ形） */
+const candidateNoticeName = target => candidateId(target?.backend ?? '', target?.model ?? '', target?.account || null);
+
 /**
  * 完了通知の本文。1 件は今までの文。2 件以上は 1 つにまとめ、taskId ごとの節を完了の早い順に並べる。
  * 結果は 1 件 16000 字まで（まとめたときは全体で 16000 字ほどに分ける。切った分は ply_task_status の offset で読める）
@@ -6546,6 +6555,11 @@ function completionNotice(lng, tasks) {
     error: [task.limit ? limitNotice(lng, task.limit) : '', task.error ?? ''].filter(Boolean).join('\n'),
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
+    // 仕事を始める前に断られた委譲先を自動で替えた（ADR 0302）なら、元の委譲先と理由・実際に走った委譲先を 1 行ずつ添える
+    // i18n-dynamic: agent:delegation.noticeRerouted
+    rerouted: (task.routing?.attempts ?? []).map((attempt, i, all) => agentT(lng,
+      attempt.outcome === 'limited' ? 'delegation.noticeReroutedLimited' : 'delegation.noticeReroutedError',
+      { from: candidateNoticeName(attempt.target), to: candidateNoticeName(all[i + 1]?.target ?? task.routing.target) })).join(''),
     rejections: rejectionNotice(lng, task.rejections),
     git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
@@ -6663,8 +6677,15 @@ async function renewTaskWorktree(task) {
  * waitingSince は、main が返答を終えて裏の作業だけを待ち始めた時刻（watchChildBackground。ADR 0170）。付け直すターンでは札の delegation から戻す
  */
 function newExecution(card = null) {
-  return { outcome: null, error: null, limit: null, rejections: [], waitingSince: Number.isFinite(card?.waitingSince) ? card.waitingSince : null, streamed: '', streamEnded: false };
+  return { outcome: null, error: null, limit: null, rejections: [], waitingSince: Number.isFinite(card?.waitingSince) ? card.waitingSince : null, streamed: '', streamEnded: false,
+    // 仕事を始めた印（ADR 0302）。下の REROUTE_TOUCHED_* の出来事が 1 つでも来たら立つ。経過時間では測らない
+    touched: false };
 }
+
+// 委譲の子のターンで「仕事を始めた」と数える出来事（ADR 0302）。稼働表示（activity の thinking・preparing・idle・stopping）は
+// プロンプトの受理で出るもので仕事の痕跡ではないので数えない。task.activity / task.command は実行の中身（hook・コマンド）の通知
+const REROUTE_TOUCHED_EVENTS = new Set(['text.delta', 'text.end', 'thinking.delta', 'thinking.end', 'tool.start', 'tool.result', 'task.activity', 'task.command']);
+const REROUTE_TOUCHED_ACTIVITY = new Set(['writing', 'running', 'compacting', 'waiting', 'retrying']);
 
 /**
  * 委譲の子のターンの実行の前半（agentTasks の execute と、付け直し）: 実行の控えを置き、タスクの取り消しで子のターンを止める口をつなぐ。
@@ -6726,13 +6747,13 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
   worktreeSweepSoon();
   const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
-  if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, git, ...extra };
+  if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, git, touched: Boolean(execution.touched), ...extra };
   // 上限で止まった（limited）は、解除時刻・枠と、止まった委譲先（エージェント・モデル・アカウント）を結果に添える
   // （台帳の row.limit。失敗と分けて知らせ、自動の振り分けがいつまで選ばないかを添える。ADR 0229、Issue #111）
   const limit = !signal.aborted && execution.outcome === 'limited' && execution.limit
     ? { resetsAt: execution.limit.resetsAt ?? null, window: execution.limit.window ?? null,
       backend: execution.limit.backend ?? null, model: execution.limit.model ?? null, account: execution.limit.account ?? null } : null;
-  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git, ...(limit ? { limit } : {}), ...extra };
+  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git, touched: Boolean(execution.touched), ...(limit ? { limit } : {}), ...extra };
 }
 
 /**
@@ -6964,6 +6985,72 @@ agentTasks = await createAgentTasks({
     }
     return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(worktree ? { worktree } : {}), ...(routing ? { routing } : {}),
       ...(remoteReq ? { requester: { deviceId: remoteReq.deviceId, deviceName: remoteReq.deviceName, sessionId: remoteReq.sessionId, title: remoteReq.title } } : {}) };
+  },
+  // 自動の振り分けの子が仕事を始める前に断られた → 失敗した候補を外して route() を呼び直し、次の候補で新しい子の会話を作る（ADR 0302）。
+  // 候補の選び方・子の会話の作り方は prepare の自動の分と同じ規則（公式の接続先・使用量で選んだアカウント・段の強さ）。
+  // worktree は新しく作らずタスクのものを継ぐ（片付け済みなら execute の renewTaskWorktree が作り直す）。
+  // 失敗した子の会話は消さず、delegation に superseded を添えて残す。次の候補が無ければ null
+  reroute: async (task, failed) => {
+    const owner = task.parentSessionId;
+    const prev = task.routing ?? {};
+    const lng = await agentLocaleFor(owner);
+    const oldSessionId = task.sessionId;
+    // 失敗した候補（これまでの試行分全部）を外す。同じ委譲先を二度選ばない（route() の skipped には理由付きで出る）
+    const rejected = {};
+    for (const target of [...(prev.attempts ?? []).map(a => a?.target), prev.target])
+      if (target?.backend && target.model) rejected[candidateId(target.backend, target.model, target.account || null)] = 'rejected_before_work';
+    const judged = { judge: prev.judge ?? 'none', signals: prev.signals ?? null, probabilities: prev.probabilities ?? null, fallback: prev.fallback ?? null };
+    // タスクの worktree が生きていればその中で、無ければ（先の完了で片付けられた）元の場所で走らせる
+    const wt = task.worktree ? await worktreeHost.worktrees.get(task.worktree.id).catch(() => null) : null;
+    const cwd = wt?.path ?? task.worktree?.origin ?? task.cwd;
+    // 選んだ候補を子の場所で確かめ直す（routeDelegation の preflight と同じ。一覧から消えた・走らせない版は次の候補へ）
+    let ok, next, backend = null, account = '', model = null;
+    for (;;) {
+      ({ ok, routing: next } = route({ kind: prev.kind, judged, settings: routingSettingsCache, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked }));
+      if (!ok) return null;
+      const picked = getBackend(next.target.backend);
+      if (!picked) { rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'unavailable'; continue; }
+      const acct = accountKind(picked) ? next.target.account ?? '' : '';
+      const scoped = await backendForAccount(picked, await accountResolve(picked, acct)).catch(() => null);
+      const resolved = scoped ? await resolveModel(null, await canonicalModel(scoped, next.target.model, cwd, ''), scoped, cwd, '').catch(() => null) : null;
+      if (resolved === next.target.model && await validModel(scoped, next.target.model, cwd).catch(() => false) && scoped.runnableModel?.(next.target.model) !== false) {
+        backend = scoped; account = acct; model = resolved; break;
+      }
+      rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'model_unknown';
+    }
+    const decided = decideEffort({ settings: routingSettingsCache, tier: next.tier ?? null,
+      candidate: candidateId(backend.id, model, accountKind(backend) ? account || null : null), capability: await effortCapability(backend, model, cwd) });
+    const effort = await resolveEffort(null, decided.send, backend, model, cwd, null);
+    const modes = backend.modes();
+    const mode = modes[task.mode] ? task.mode : firstMode(modes);
+    const label = accountKind(backend) && next.target.accountLabel && (next.target.account ?? null) === account ? { accountLabel: next.target.accountLabel } : {};
+    // 失敗した回の記録（error は完了通知に載せるのと同じ、伏せ済みの文言）。新しい子の会話の routing にも同じ attempts を書く
+    const attempt = { target: { backend: prev.target?.backend ?? null, model: prev.target?.model ?? null, account: prev.target?.account ?? null },
+      sessionId: oldSessionId, outcome: failed?.outcome ?? null, error: failed?.error ?? null };
+    const routing = { ...next, target: { backend: backend.id, model, account: accountKind(backend) ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null },
+      ...(decided ? { effortSource: decided.source, ...(decided.tier ? { effortTier: decided.tier } : {}), ...(decided.asked ? { effortAsked: decided.asked } : {}) } : {}),
+      attempts: [...(prev.attempts ?? []), attempt] };
+    const info = { title: task.title ?? null, cwd, createdAt: Date.now(), lastModified: Date.now() };
+    const sessionId = await createConversation(backend, info);
+    try {
+      await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
+      await chromeProfiles?.inherit(owner, sessionId);
+      await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
+      await store.setSessionData(sessionId, 'effort', effort);
+      const previous = await store.get(oldSessionId).catch(() => null);
+      await store.setSessionData(sessionId, 'delegation', { taskId: task.taskId, parentSessionId: owner, manager: 'ply',
+        ...(previous?.delegation?.remote ? { remote: previous.delegation.remote } : {}) }, { durable: true });
+      await store.setSessionData(sessionId, 'agentLocale', lng);
+      if (account) await store.setSessionData(sessionId, 'claudeAccount', account);
+      await store.setSessionData(sessionId, 'routing', routing);
+      // 失敗した子の会話は残す。任せ直しで役目を終えたことが分かるよう、delegation に次の会話の id を添える
+      if (previous?.delegation) await store.setSessionData(oldSessionId, 'delegation', { ...previous.delegation, superseded: sessionId }, { durable: true });
+      if (wt) await worktreeHost.worktrees.update(wt.id, { sessionId }).catch(() => {});
+    } catch (e) {
+      await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId);
+      throw e;
+    }
+    return { sessionId, backend: backend.id, model, effort, cwd, mode, routing };
   },
   execute: async (task, prompt, signal, meta = {}) => {
     if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
