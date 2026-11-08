@@ -37,7 +37,10 @@ function episodePosts(posts, threadId, botId) {
   return recent;
 }
 
-export function createEpisodes({ channels, bots, summarize, localeOf = () => 'ja', now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+//   enabled(latestAt) … 要約のスイッチ（memoryAutoLearn && memoryEpisodeSummary）と、自動で走ってよい時刻の下限。
+//     タイマーを発火した時点・要約を書く前に確かめる。latestAt はスレッドの最新の対象発言・更新。
+//     OFF の間に静かになったスレッドを、ON にした直後の再予約でまとめて要約しないため（latestAt ≤ memoryLearnFrom なら偽）
+export function createEpisodes({ channels, bots, summarize, enabled = async () => true, localeOf = () => 'ja', now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   const timers = new Map();
   const deferrals = new Map();
   let closed = true;
@@ -78,7 +81,7 @@ export function createEpisodes({ channels, bots, summarize, localeOf = () => 'ja
   const inProgress = (posts) => posts.some((p) => !p.deletedAt && p.state === 'working' && now() - (p.editedAt ?? p.at ?? 0) < STALE_WORKING_MS);
 
   async function digestThread(channelId, threadId) {
-    if (closed) return;
+    if (closed || !(await enabled())) return;   // OFF なら要約・記憶の書き込みに進まない（再予約もしない）
     const thread = await channels.threads.get(channelId, threadId);
     if (!thread || !Object.keys(thread.sessions ?? {}).length) return;
     const channel = await channels.get({ channelId }).catch(() => null);
@@ -103,6 +106,9 @@ export function createEpisodes({ channels, bots, summarize, localeOf = () => 'ja
       if (!recent.some((p) => p.author?.kind === 'human')) continue;
       const currentFingerprint = fingerprint(recent);
       if (thread.digest?.[botId]?.fingerprint === currentFingerprint) continue;
+      // 最新の対象発言・更新が ON にした時刻より前なら走らない（起動時の再予約や残ったタイマーが古いスレッドをまとめて要約しない）
+      const latestAt = Math.max(0, ...recent.map((p) => p.editedAt ?? p.at ?? 0));
+      if (!(await enabled(latestAt))) continue;
       const episode = await summarize({ botId, channelId, threadId, posts: recent, previous: thread.digest?.[botId]?.text ?? '' });
       if (!episode?.text || closed) continue;
       // 要約を作っている間に新しい投稿が来たら、古い要約を保存せず静かになるのを待つ。
@@ -111,7 +117,9 @@ export function createEpisodes({ channels, bots, summarize, localeOf = () => 'ja
         defer(channelId, threadId);
         return;
       }
-      await episode.commit();
+      if (!(await enabled())) return;   // 要約を作っている間に OFF にされたら書き込まない
+      const written = await episode.commit();
+      if (written === null) return;   // 世代違い・OFF・停止で書き込みが中止された。古い要約も保存しない
       await channels.threads.update(channelId, threadId, (old) => ({ digest: {
         ...(old.digest ?? {}), [botId]: { text: clip(episode.text, 500), at: now(), lastAt: Math.max(...recent.map((p) => p.editedAt ?? p.at ?? 0)), fingerprint: currentFingerprint },
       } }));

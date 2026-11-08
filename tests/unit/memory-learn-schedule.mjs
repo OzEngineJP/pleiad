@@ -45,14 +45,14 @@ export default async function (t) {
       getBackend: (id) => (id === 'fake' ? fake : null),
       listBackends: () => [fake],
     };
-    let prefs = { backend: 'fake' };
-    let failNext = false;
+    let prefs = { backend: 'fake', memoryAutoLearn: true };
+    let failWith = null;   // 次の 1 回だけ投げる失敗（分類不能・許可リストの一時エラーを確かめる）
     let asks = 0;
     let asked = [];   // 学習の呼び出しに渡った人の発言の本文（呼び出しごと）
     // 学習の会話の代わり: 「覚えて」の発言を候補にし、「やめて」があれば種類 stop、なければ pref。重みは 3
     const ask = async (prompt) => {
       asks++;
-      if (failNext) { failNext = false; throw new Error('backend is down'); }
+      if (failWith) { const e = failWith; failWith = null; throw e; }
       const line = prompt.split('\n').find((part) => part.startsWith('Human statements: '));
       const statements = JSON.parse(line.slice('Human statements: '.length));
       asked.push(statements.map((item) => item.text));
@@ -98,22 +98,36 @@ export default async function (t) {
     status = await learner.status();
     t.ok('次の日の予定も飛ばすと 2 回', status.skip.count === 2 && status.nextAt === null && status.paused === true, JSON.stringify(status));
 
-    // ---- 失敗したら間隔を空けて試し直す（毎分モデルを呼ばない）。成功で印を消す
-    prefs = { backend: 'fake' };
+    // ---- 分類不能な失敗は 1 回で停止（halted。認証エラーなど見分けの付かない失敗を繰り返さない）。
+    //      解除は明示の「もう一度」（learnNow）か再有効化だけ
+    prefs = { backend: 'fake', memoryAutoLearn: true };
     await chat('覚えて: 失敗の後でもこの発言を忘れずに覚える');
-    failNext = true;
-    const before = asks;
+    failWith = new Error('backend is down');
     let error = null;
     try { await learner.runIfDue(); } catch (e) { error = e; }
     status = await learner.status();
-    t.ok('失敗は様子に残る（理由の文・回数・次に試す時刻 15 分後）', error && status.failure.message === 'backend is down' && status.failure.count === 1 && status.failure.retryAt === at + 15 * MIN, JSON.stringify(status));
+    t.ok('分類不能な失敗は停止に残る（理由の文・failure には残らない）', error && status.halted.message === 'backend is down' && status.failure === null, JSON.stringify(status));
+    at += MIN;
+    t.ok('停止中は間隔を待たずに試さない（理由 halted）', (await learner.runIfDue()).skipped === 'halted');
+    const retried = await learner.learnNow();
+    status = await learner.status();
+    t.ok('明示の「もう一度」で解除して走り、成功で失敗と飛ばした印を消す', retried.changed >= 2 && status.failure === null && status.skip === null && status.halted === null, JSON.stringify(retried));
+    t.ok('前の回に回した会話の発言も読む', (await memory.list({ layer: 'user' })).some((e) => e.text.includes('次の回に読む')));
+
+    // ---- 許可リストの一時エラー（learner turn: limited）は間隔を空けて試し直す（毎分モデルを呼ばない）
+    at += DAY;
+    await chat('覚えて: 一時エラーの後でもこの発言を忘れずに覚える');
+    failWith = new Error('learner turn: limited');
+    const before = asks;
+    try { await learner.runIfDue(); } catch (e) { error = e; }
+    status = await learner.status();
+    t.ok('一時エラーは様子に残る（理由の文・回数・次に試す時刻 15 分後）', status.failure.message === 'learner turn: limited' && status.failure.count === 1 && status.failure.retryAt === at + 15 * MIN && status.halted === null, JSON.stringify(status));
     at += MIN;
     t.ok('間隔の間は試さない（理由 failed）', (await learner.runIfDue()).skipped === 'failed' && asks === before + 1);
     at += 15 * MIN;
-    const retried = await learner.runIfDue();
+    await learner.runIfDue();
     status = await learner.status();
-    t.ok('間隔の後に試し直し、成功で失敗と飛ばした印を消す', retried.changed >= 2 && status.failure === null && status.skip === null, JSON.stringify(retried));
-    t.ok('前の回に回した会話の発言も読む', (await memory.list({ layer: 'user' })).some((e) => e.text.includes('次の回に読む')));
+    t.ok('間隔の後に試し直し、成功で失敗の印を消す', status.failure === null && (await memory.list({ layer: 'user' })).some((e) => e.text.includes('一時エラーの後')));
 
     // ---- 対象を絞った実行（スレッドが静かになった後の整理の土台）。予定の回には数えない
     const lastRunAt = learner.state().lastRunAt;
@@ -147,7 +161,7 @@ export default async function (t) {
     let reads = [];
     const host2 = { ...host, store: { getAll: async () => Object.fromEntries([...convs].map(([id, c]) => [id, c.meta])), get: async (id) => convs.get(id)?.meta ?? {} } };
     const learner2 = createMemoryLearner({ dataDir: dir2, channels: channels2, bots: { get: async () => null }, memory: memory2, host: host2, clock, now: () => at,
-      readPrefs: async () => ({ backend: 'fake' }), ask,
+      readPrefs: async () => ({ backend: 'fake', memoryAutoLearn: true }), ask,
       readMessages: async (id) => { reads.push(id); return structuredClone(convs.get(id)?.messages ?? []); },
       listSessions: async () => [...convs].map(([id, c]) => ({ id, ...c.meta })) });
     asked = [];

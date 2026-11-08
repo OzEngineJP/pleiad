@@ -32,7 +32,7 @@ export default async function (t) {
     let prompt = '';
     let askCount = 0;
     const learner = createMemoryLearner({ dataDir: dir, channels, bots, memory,
-      host: { store: { get: async () => ({}) } }, clock: { now: Date.now }, readPrefs: async () => ({}),
+      host: { store: { get: async () => ({}) } }, clock: { now: Date.now }, readPrefs: async () => ({ memoryAutoLearn: true, memoryEpisodeSummary: true }),
       ask: async (value) => {
         askCount++;
         prompt = value;

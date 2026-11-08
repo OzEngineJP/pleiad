@@ -34,7 +34,7 @@ import path from 'node:path';
 import { createChannelService } from './channels/service.mjs';
 import { createBotService } from './bots/service.mjs';
 import { createMemoryService } from './memory/service.mjs';
-import { createMemoryLearner } from './memory/learn.mjs';
+import { createMemoryLearner, episodeSummaryAllowedAt } from './memory/learn.mjs';
 import { createEpisodes } from './memory/episodes.mjs';
 import { createDispatcher } from './bots/dispatch.mjs';
 import { createRoutineService } from './routines/service.mjs';
@@ -101,7 +101,8 @@ export function createBotHost(deps) {
   // ---- memory（S3）
   const memory = createMemoryService({ dataDir, channels, emit, withLayer: (layer, fn) => layer === 'user' ? fn() : bots.withActivity(layer, fn), localeOf: () => deps.currentLocale?.() ?? 'ja' });
   let learner;
-  const episodes = createEpisodes({ channels, bots, summarize: (args) => learner.summarizeEpisode(args), localeOf: () => deps.currentLocale?.() ?? 'ja' });
+  const episodes = createEpisodes({ channels, bots, summarize: (args) => learner.summarizeEpisode(args), localeOf: () => deps.currentLocale?.() ?? 'ja',
+    enabled: async (latestAt = null) => !learner.isHalted() && episodeSummaryAllowedAt(await store.getPrefs(), latestAt) });
   // ---- dispatch（S4）
   const dispatch = createDispatcher({ channels, bots, memory, episodes, brain, host, emit });
   host.refuseBotRemoval = async botId => {

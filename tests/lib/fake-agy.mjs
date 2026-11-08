@@ -65,10 +65,22 @@ const flag = (name) => {
 const has = (name) => argv.includes(name);
 
 if (has('--version')) {
-  console.log('1.2.5');
+  // FAKE_AGY_VERSION で版を差し替える（古い CLI は /usage の print を持たない再現に使う）
+  console.log(process.env.FAKE_AGY_VERSION || '1.2.5');
   process.exit(0);
 }
+// 未ログインの再現（前半）: 本物の資格情報は OS の資格情報ストアに残り、**プロセスをまたいで効く**。
+// 身代わりは印のファイルで同じことをする（`agy models` や `--print` は別プロセスで走るので、
+// ここが無いと「ログインしたのに次の確認で未ログイン」になってしまう）。残りの宣言は下の「未ログインの再現」
+const authFile = process.env.FAKE_AGY_AUTH_FILE || null;
+const signedIn = () => Boolean(authFile && fs.existsSync(authFile));
+
 if (flag('--print') === '/usage') {
+  if (process.env.FAKE_AGY_NEEDS_AUTH === "1" && !signedIn()) {
+    // 公式の headless 保証の形: 端末の無い環境で未認証なら「authentication required」で落ちる（OAuth を始めない）
+    process.stderr.write("Error: authentication required. Run agy to sign in." + NL);
+    process.exit(1);
+  }
   if (process.env.FAKE_AGY_USAGE_DELAY_MS) await new Promise(r => setTimeout(r, Number(process.env.FAKE_AGY_USAGE_DELAY_MS)));
   console.log(JSON.stringify({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [
     { name: 'Gemini Models', buckets: [
@@ -80,11 +92,7 @@ if (flag('--print') === '/usage') {
   process.exit(0);
 }
 
-// 未ログインの再現。本物の資格情報は OS の資格情報ストアに残り、**プロセスをまたいで効く**。
-// 身代わりは印のファイルで同じことをする（`agy models` は別プロセスで走るので、
-// ここが無いと「ログインしたのに次の確認で未ログイン」になってしまう）。
-const authFile = process.env.FAKE_AGY_AUTH_FILE || null;
-const signedIn = () => Boolean(authFile && fs.existsSync(authFile));
+// 未ログインの再現（後半: authFile・signedIn は上の `/usage` 分岐より前に宣言してある）
 const needsAuth = process.env.FAKE_AGY_NEEDS_AUTH === "1" && !signedIn();
 let authorized = !needsAuth;
 

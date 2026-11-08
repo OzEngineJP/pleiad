@@ -66,10 +66,12 @@ export function antigravityQuota(result) {
 
 // Never expose stderr: authentication errors can contain credentials/URLs.
 // Bound both the lifetime and output, and only terminate our own child.
+// stderr は分類のためだけに見る（未認証「authentication required」を拾って、呼び出し側が 'out' に戻せるように）。
+// 本文は捨て、エラーにはコードだけを付ける（資格情報や URL を漏らさない）
 function capture(argv, args, timeoutMs) {
   return new Promise((resolve, reject) => {
     const proc = spawnCli(argv, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let output = '', bytes = 0, settled = false;
+    let output = '', stderr = '', bytes = 0, settled = false;
     const finish = (error) => {
       if (settled) return;
       settled = true; clearTimeout(timer);
@@ -82,15 +84,23 @@ function capture(argv, args, timeoutMs) {
       if (bytes > 1024 * 1024) return finish(new Error(t('antigravity.usage.tooLarge')));
       output += chunk;
     });
-    proc.stderr.on('data', () => {});
+    proc.stderr.on('data', chunk => { if (stderr.length < 4096) stderr += chunk; });
     proc.on('error', () => finish(new Error(t('antigravity.usage.cannotStart'))));
-    proc.on('close', code => finish(code === 0 ? null : new Error(t('antigravity.usage.cannotRead'))));
+    proc.on('close', code => {
+      if (code === 0) return finish(null);
+      const error = new Error(t('antigravity.usage.cannotRead'));
+      // 未認証は確定的（公式の headless 保証: 端末無しでは authentication required で終わる）。コードだけを伝える
+      if (/authentication required|sign in|unauthorized/i.test(stderr)) error.code = 'AUTH_REQUIRED';
+      finish(error);
+    });
   });
 }
 
+// attempted: 実際に `--print /usage` を起こして読めたか（古い CLI の needsUpdate は false。呼び出し側が
+// 認証の成否を確かめる目印にする。バージョン確認の `--version` は認証しないので含めない）
 export async function readAntigravityUsage({ argv = cliCommand('antigravity'), timeoutMs = 25_000 } = {}) {
   const version = await capture(argv, ['--version'], timeoutMs);
-  if (!supportsUsage(version)) return { windows: [], message: t('antigravity.usage.needsUpdate') };
+  if (!supportsUsage(version)) return { windows: [], attempted: false, message: t('antigravity.usage.needsUpdate') };
   const output = await capture(argv, ['--print', '/usage', '--output-format', 'json', '--print-timeout', '20s'], timeoutMs);
-  return antigravityQuota(JSON.parse(output));
+  return { ...antigravityQuota(JSON.parse(output)), attempted: true };
 }
