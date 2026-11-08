@@ -156,11 +156,9 @@ export default async function (t) {
       panel.open();
       // ⋯ はアドレスバーのメニュー（web/browser-unify.mjs）が browserMenuItems の行を出す
       const menuItems = panel.browserMenuItems(null);
-      menuItems.find(item => item.label === '表示中のウィンドウを閉じる').onClick();
-      t.ok('⋯ の「表示中のウィンドウを閉じる」は、確かめを出すまで chromeCloseWindow を送らない', !commands.some(([name]) => name === 'chromeCloseWindow'));
-      body.querySelector('.cp-dlg-yes').onclick();
-      await sleep(0);
-      t.ok('確かめに答えると、自分の会話 ID で chromeCloseWindow を送る', menuItems.length === 1 && commands.some(([name, args]) => name === 'chromeCloseWindow' && args.sessionId === 'panel'));
+      t.ok('パネルのメニューには窓をまとめて閉じる項目を置かない', !menuItems.some(item => item.label === '表示中のウィンドウを閉じる'));
+      t.ok('メニューを開いても窓を閉じるダイアログやコマンドを作らない', !body.querySelector('.cp-dlg') && !commands.some(([name]) => name === 'chromeCloseWindow'));
+      panel.close();
     } finally { globalThis.requestAnimationFrame = oldFrame; N.prototype.toggleAttribute = oldToggle; }
 
     const bridgeCalls = [];
@@ -234,7 +232,7 @@ export default async function (t) {
         && (await fs.readdir(path.join(r.dataDir, 'uploads', 'chrome-window', crypto.createHash('sha256').update('unable').digest('hex')))).length === 0);
     } finally { r.desktop.opts.closeFails = false; unableCdp.send = unableSend; }
 
-    // 窓が複数あるとき、ウィンドウを 1 つだけ閉じられる（右パネルの「表示中のウィンドウを閉じる」）。ほかの窓・引き継ぎ・閉じた行には触れない
+    // 窓が複数あるとき、指定した窓を 1 つだけ閉じられる。ほかの窓・引き継ぎ・閉じた行には触れない
     {
       const a = await r.relay.openForConversation('multi', 'https://multi-a.test/');
       const b = await r.relay.openForConversation('multi', 'https://multi-b.test/');
