@@ -9,8 +9,6 @@
 // i18n-dynamic: settings.memory.act.
 // i18n-dynamic: channels:memory.learn.
 // i18n-dynamic: channels:memory.learn.reason.
-// server:antigravity.auth.unconfirmed は core が受動の確認で返す文言（core 側の変更と一緒に使われる）
-// i18n-dynamic: server:antigravity.auth.unconfirmed
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { learnStatusView, shortTime } from './channels/bot-model.mjs';
