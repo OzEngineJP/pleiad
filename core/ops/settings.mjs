@@ -96,6 +96,33 @@ export const settings = [
   defineSetting({ key: 'memoryLearnPaused', summary: S('memoryLearnPaused'), risk: 'write', riskReason: WRITE_ABOUT,
     schema: z.boolean(), default: false, read: fromPrefs('memoryLearnPaused'),
     ...plainPref('memoryLearnPaused', (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'memoryLearnPaused: boolean'); return v; }) }),
+  defineSetting({ key: 'memoryAutoLearn', summary: S('memoryAutoLearn'), risk: 'write', riskReason: `The switch for automatic memory organization and conversation summaries. Default off; existing users migrate to off once. ${WRITE_ABOUT}`,
+    prefKeys: ['memoryAutoLearn', 'memoryLearnFrom', 'memoryLearnPaused'], schema: z.boolean(), default: false,
+    read: async (ctx) => { const p = await prefs(ctx); return p.memoryAutoLearn === true && p.memoryLearnPaused !== true; },
+    normalize: async (ctx, value, extra) => {
+      if (value === null) throw invalid(ctx, 'memoryAutoLearn: null');
+      if (typeof value !== 'boolean') throw invalid(ctx, 'memoryAutoLearn: boolean');
+      return { after: value, arg: value };
+    },
+    // ON（fail-closed の順。途中の保存が失敗しても有効なまま残らない）: 先にスイッチを落とし、
+    //   世代（memoryLearnFrom）と「止める」の解除を書き、有効化は最後に書く。
+    //   世代は OFF でも消さず、ON のたびに前の値+1（OFF で消すと、同じ ms の OFF→ON で次の世代が前の世代と同じ値になる。
+    //   OFF の間も残った値は genOf が使わない）。すでに true の状態で true を書き直すときも同じ順（途中は必ず OFF）
+    //   OFF: スイッチを落とすだけ（落ちなければ有効のまま＝安全側）
+    write: async (ctx, v) => {
+      if (v === true) {
+        await ctx.writes.pref('memoryAutoLearn', false);
+        const from = Math.max(Date.now(), (await prefs(ctx)).memoryLearnFrom ?? 0) + 1;
+        await ctx.writes.pref('memoryLearnFrom', from);
+        await ctx.writes.pref('memoryLearnPaused', null);
+        await ctx.writes.pref('memoryAutoLearn', true);
+      } else {
+        await ctx.writes.pref('memoryAutoLearn', false);
+      }
+    } }),
+  defineSetting({ key: 'memoryEpisodeSummary', summary: S('memoryEpisodeSummary'), risk: 'write', riskReason: `Whether quiet bot conversations are summarized and handed off. Only runs while memoryAutoLearn is on. ${WRITE_ABOUT}`,
+    prefKeys: ['memoryEpisodeSummary'], schema: z.boolean(), default: false, read: fromPrefs('memoryEpisodeSummary'),
+    ...plainPref('memoryEpisodeSummary', (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'memoryEpisodeSummary: boolean'); return v; }) }),
   defineSetting({ key: 'model', summary: S('model'), risk: 'write', riskReason: `The default model for new conversations. ${PICK_ABOUT}`,
     schema: z.string(), default: '', read: fromPrefs('model'), ...plainPref('model', knownValue('model')) }),
   defineSetting({ key: 'effort', summary: S('effort'), risk: 'write', riskReason: `The default thinking depth for new conversations. ${PICK_ABOUT}`,

@@ -94,6 +94,8 @@ export default async function (t) {
     ['memoryLearnBackend', true, '記憶の学習に使うエージェント。無いエージェントは normalize で落ちる'],
     ['memoryLearnAt', true, '記憶の学習の時刻の好み'],
     ['memoryLearnPaused', true, '記憶の学習の一時停止の好み'],
+    ['memoryAutoLearn', true, '記憶の自動整理と会話の要約の主スイッチの好み'],
+    ['memoryEpisodeSummary', true, '会話の要約のスイッチの好み（自動整理が ON のときだけ効く）'],
     ['model', true, '新しい会話の既定のモデル。知らないモデルは normalize で落ちる'],
     ['effort', true, '新しい会話の既定の考える深さ'],
     ['shellTool', true, 'エージェントごとのシェルのツールの好み（どちらも承認モードで聞く）'],
@@ -278,6 +280,46 @@ export default async function (t) {
     const r = await registry.invoke(bound('ask'), 'settings.set', { key: 'computerUse', value: { enabled: true } }, f.deps);
     const rows = f.log.approvals[0].change.rows;
     t.ok('computerUse を有効にする: 承認カードの行は変わった項目だけ（computerUse.enabled）', r.pending && rows.length === 1 && rows[0].path === 'computerUse.enabled' && rows[0].before === 'false' && rows[0].after === 'true' && f.log.approvals[0].change.loosens === true, JSON.stringify(rows));
+  }
+
+  {
+    // memoryAutoLearn: ON の保存は fail-closed の順（先に OFF・世代・「止める」の解除・最後に ON）。
+    // 世代（memoryLearnFrom）は OFF でも消さず単調に増やす（同じ ms の OFF→ON でぶつからない）
+    const f = fake({ prefs: {} });
+    const on = () => registry.invoke(human, 'settings.set', { key: 'memoryAutoLearn', value: true }, f.deps);
+    const off = () => registry.invoke(human, 'settings.set', { key: 'memoryAutoLearn', value: false }, f.deps);
+    const FIXED = 1_800_000_000_000;
+    const realNow = Date.now;
+    Date.now = () => FIXED;
+    try {
+      const r1 = await on();
+      const writes1 = f.log.writes.map((w) => w.slice(1).join('='));
+      t.ok('memoryAutoLearn ON: 先に OFF・世代・「止める」の解除・最後に ON（fail-closed の順）',
+        r1.ok && JSON.stringify(writes1) === JSON.stringify(['memoryAutoLearn=false', 'memoryLearnFrom=1800000000001', 'memoryLearnPaused=', 'memoryAutoLearn=true']), JSON.stringify(f.log.writes));
+      t.ok('memoryAutoLearn ON: 世代は時刻+1', f.prefs.memoryLearnFrom === FIXED + 1);
+      f.log.writes.length = 0;
+      await off();
+      t.ok('memoryAutoLearn OFF: スイッチだけ落とす（世代は消さない＝単調の元を残す）', f.prefs.memoryAutoLearn === false && f.prefs.memoryLearnFrom === FIXED + 1
+        && f.log.writes.length === 1 && f.log.writes[0].join() === 'pref,memoryAutoLearn,false', JSON.stringify(f.log.writes));
+      f.log.writes.length = 0;
+      await on();
+      t.ok('memoryAutoLearn: 同じ ms の OFF→ON でも世代は前の値+1（ぶつからない）', f.prefs.memoryLearnFrom === FIXED + 2);
+      // すでに true（＋旧 memoryLearnPaused）で true を書き直しても、途中は必ず OFF に倒れる順
+      f.prefs.memoryLearnPaused = true;
+      f.log.writes.length = 0;
+      const again = await on();
+      const writes2 = f.log.writes.map((w) => w.slice(1).join('='));
+      t.ok('memoryAutoLearn: true+paused に true を書き直しても途中は必ず OFF（世代・解除のあと最後に ON）',
+        again.ok && f.prefs.memoryAutoLearn === true && f.prefs.memoryLearnPaused === undefined
+        && writes2[0] === 'memoryAutoLearn=false' && writes2[1].startsWith('memoryLearnFrom=') && writes2.at(-1) === 'memoryAutoLearn=true', JSON.stringify(writes2));
+    } finally { Date.now = realNow; }
+
+    // 途中の保存が失敗しても有効なまま残らない（fail-closed）
+    const g = fake({ prefs: { memoryAutoLearn: true, memoryLearnFrom: 1 } });
+    const orig = g.deps.writes.pref;
+    g.deps.writes.pref = async (key, value) => { if (key === 'memoryLearnFrom') throw new Error('injected store failure'); return orig(key, value); };
+    const res = await registry.invoke(human, 'settings.set', { key: 'memoryAutoLearn', value: true }, g.deps).catch(() => null);
+    t.ok('memoryAutoLearn ON: 途中の保存が失敗しても有効なまま残らない', g.prefs.memoryAutoLearn === false && !(res && res.ok), JSON.stringify(res));
   }
 
   // ---- 行の作り方

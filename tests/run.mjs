@@ -384,6 +384,8 @@ const SUITES = [
   // Claude の使用量: 開始時点の累計（cost-state）からの差分・resume 前の読み取り・既存の記録の移行（写し・冪等）
   './unit/claude-usage-delta.mjs',
   './unit/antigravity-usage.mjs',
+  // Antigravity の受動の照会: auth.status/models は agy を起こさず、usage は --print の保証内のみ・未ログインで以後は起こさない
+  './unit/antigravity-passive.mjs',
   // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ
   './unit/header-usage.mjs',
   './unit/conversation-usage.mjs',
@@ -1039,6 +1041,7 @@ const SUITES = [
   './unit/webhook.mjs',
   './unit/memory-learn.mjs',
   './unit/memory-episodes.mjs',
+  './unit/memory-learn-gate.mjs',
   // 夜の整理の走り方: ほかのターンで止まらない・走っている会話は次へ・飛ばした回数と理由・失敗の間隔・対象を絞った実行（ADR 0118）
   './unit/memory-learn-schedule.mjs',
   // テストランナー自身（tests/lib/runner*.mjs）: 引数・登録の検査・--shard の分け方・--jobs の worker・異常系・環境の隔離。試験用の小さな suite を子プロセスで走らせる（実際の suite は走らせない）

@@ -87,11 +87,24 @@ export default async function(t) {
 
     const script = path.join(dir, 'old.mjs');
     await fs.writeFile(script, "if (process.argv.includes('--version')) console.log('1.1.10'); else { console.log('unexpected prompt'); process.exit(1); }");
-    assert.match((await readAntigravityUsage({ argv: [process.execPath, script] })).message, /agy update/);
+    const old = await readAntigravityUsage({ argv: [process.execPath, script] });
+    assert.match(old.message, /agy update/);
+    assert.equal(old.attempted, false, '古い CLI は print を試していない（認証の見通しを変えない目印）');
     await fs.writeFile(script, "console.error('Bearer secret'); process.exit(1);");
     await assert.rejects(readAntigravityUsage({ argv: [process.execPath, script] }), e => !e.message.includes('secret'));
     await fs.writeFile(script, "setInterval(() => {}, 1000);");
     await assert.rejects(readAntigravityUsage({ argv: [process.execPath, script], timeoutMs: 100 }), /時間切れ/);
     t.ok('旧版ではプロンプトを送らず、失敗情報を秘匿し、タイムアウトで子を終了する', true);
+
+    // 未認証（authentication required）は stderr を内部分類して code を付ける（本文は漏らさない）。
+    // この形で落ちる保証は公式の headless 仕様（偽 CLI が確かめるのは分類と呼び方）
+    await fs.writeFile(script, "if (process.argv.includes('--version')) console.log('1.2.5'); else { console.error('Error: authentication required'); process.exit(1); }");
+    await assert.rejects(readAntigravityUsage({ argv: [process.execPath, script] }),
+      (e) => e.code === 'AUTH_REQUIRED' && !e.message.includes('authentication'));
+    // 読めた場合は attempted:true（実際に --print /usage を起こして読んだ）
+    const ok = await readAntigravityUsage({ argv: [process.execPath, fake] });
+    assert.equal(ok.attempted, true);
+    assert.ok(ok.windows.length > 0);
+    t.ok('未認証は AUTH_REQUIRED コードで返し（本文を漏らさない）、読めた場合は attempted:true', true);
   } finally { client?.close(); await server?.stop(); await fs.rm(dir, { recursive: true, force: true }); }
 }

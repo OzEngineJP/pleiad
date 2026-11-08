@@ -32,7 +32,7 @@ try {
   let calls = 0;
   const host = {
     store: {
-      getAll: async () => Object.fromEntries(side), get: async (id) => side.get(id) ?? {}, getPrefs: async () => ({ backend: 'fake' }),
+      getAll: async () => Object.fromEntries(side), get: async (id) => side.get(id) ?? {}, getPrefs: async () => ({ backend: 'fake', memoryAutoLearn: true }),
       setMeta: async (id, value) => side.set(id, { ...side.get(id), ...value }),
       setMode: async () => {}, setModel: async () => {},
       setSessionData: async (id, key, value) => side.set(id, { ...side.get(id), [key]: value }),

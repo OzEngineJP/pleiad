@@ -40,10 +40,11 @@ const tagInputs = (id) => ({
 const changesTags = (entry, args) => ['kind', 'weight', 'status'].some((key) => args[key] !== undefined && args[key] !== entry[key]);
 
 const learnStatusOut = z.object({
-  at: z.string(), paused: z.boolean(), running: z.boolean(), lastRunAt: z.number().nullable(), nextAt: z.number().nullable(),
-  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional() }).nullable(),
+  at: z.string(), enabled: z.boolean(), summaryEnabled: z.boolean(), paused: z.boolean(), running: z.boolean(), lastRunAt: z.number().nullable(), nextAt: z.number().nullable(),
+  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional(), stopped: z.string().optional() }).nullable(),
   skip: z.object({ reason: z.string(), count: z.number(), at: z.number() }).nullable(),
   failure: z.object({ message: z.string(), count: z.number(), at: z.number(), retryAt: z.number() }).nullable(),
+  halted: z.object({ message: z.string(), at: z.number() }).nullable(),
 });
 
 /** MemoryError → OpError（会話の言語の文）。ほかの例外はそのまま */
@@ -215,6 +216,18 @@ export const memoryOps = [
     output: learnStatusOut,
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'learn-status'] } },
     handler: async (ctx) => ctx.memoryLearner.status(),
+  }),
+
+  // 「今すぐ整理」/「もう一度」。停止（halted）を明示操作で解除してから 1 回走る。自動整理が OFF のままでは動かない（skipped: 'off'）
+  defineOp({
+    id: 'memory.learnNow',
+    summary: 'agent:ops.memory.learnNow.summary',
+    risk: 'write',
+    riskReason: 'Starts one memory-organization turn on the chosen backend right now and clears a stopped state. It is explicit: the automatic switch off still skips it',
+    input: z.object({}),
+    output: z.object({ read: z.number().optional(), changed: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), skipped: z.string().optional() }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'learn-now'] } },
+    handler: async (ctx) => ctx.memoryLearner.learnNow(),
   }),
 
   // 忘れた直後の「元に戻す」。画面の「元に戻す」の帯と、AI・CLI の両方に出す（全機能は AI も使える）。誰が戻したかは log.jsonl の by に残る
