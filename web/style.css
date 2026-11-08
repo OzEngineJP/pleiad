@@ -676,7 +676,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .entry-run.run{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
 .entry-run.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 /* スマホの頭の行の [N]（承認済み 2026-11-08。temporary/mockups/phone-browser-header.html）: 窓のアイコンの代わりにタブの数の四角 */
-.entry-tabn{display:none}
+#browserEntry .entry-tabn{display:none}
 .tabn-badge{position:relative;display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;background:transparent;font-size:12px;line-height:16px;color:var(--ink-weak)}
 .tabn-badge>svg{position:absolute;inset:0;width:20px;height:20px;overflow:visible}
 .tabn-badge>svg rect{stroke:currentColor}

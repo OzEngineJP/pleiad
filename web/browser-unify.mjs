@@ -78,7 +78,7 @@ const css = `
 .bu-tab.bu-flash{animation:bu-flash .9s ease-out}@keyframes bu-flash{0%,40%{background:color-mix(in srgb,var(--line-blue) 22%,transparent)}}
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
 .bu-agent{display:grid;place-items:center;flex:none;width:14px;height:14px}
-.bu-agent .run{transform:scale(.75)}
+.bu-agent .run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 .cp-sw{display:grid;grid-template-rows:0fr;visibility:hidden;flex:none;min-width:0;transition:grid-template-rows var(--dur) var(--ease-out),visibility 0s linear var(--dur)}
 .cp-sw[data-open]{grid-template-rows:1fr;visibility:visible;transition-delay:0s;background:var(--bu-frame)}
 .cp-sw-in{overflow:hidden;min-height:0;min-width:0}
@@ -95,7 +95,7 @@ const css = `
 .cp-sw-num{min-width:0;line-height:1}
 .cp-sw-ag{display:grid;place-items:center;width:0;height:14px;transform:scale(0);transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
 .cp-sw-chip[data-agent] .cp-sw-ag{width:14px;transform:scale(1)}
-.cp-sw-ag .run{transform:scale(.75)}
+.cp-sw-ag .run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 .cp-sw-chip[data-agent][data-idle] .cp-sw-ag::after{content:"";display:block;width:6px;height:6px;border-radius:50%;color:var(--ink-weak);background:currentColor}
 .cp-sw-dot{display:block;width:6px;height:6px;border-radius:50%;color:var(--ink-weak);background:currentColor}
 .cp-sw-dot.wait{color:var(--ink-mark)}
@@ -103,9 +103,9 @@ const css = `
 .cp-sw-chip + .cp-sw-conv{margin-left:5px}
 .cp-sw-conv[data-on]{color:var(--ink)}
 .cp-sw-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
-.cp-sw-cm{display:grid;place-items:center;flex:none;width:10px;height:14px}
+.cp-sw-cm{display:grid;place-items:center;flex:none;width:14px;height:14px}
 .cp-sw-cm:empty{display:none}
-.cp-sw-cm .run{transform:scale(.75)}
+.cp-sw-cm .run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 .cp-sw-chip.flash{animation:cp-sw-flash 700ms var(--ease-out)}
 @keyframes cp-sw-flash{0%{box-shadow:0 0 0 3px var(--line-blue)}100%{box-shadow:0 0 0 3px transparent}}
 .cp-sw[data-paused] .cp-sw-chip:not(.cp-sw-conv){opacity:.45}
