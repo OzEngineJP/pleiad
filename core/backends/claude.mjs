@@ -1389,7 +1389,8 @@ export const backend = {
       for await (const m of query({
         prompt,
         options: {
-          pathToClaudeCodeExecutable: claudeExecutable(), model: model || "haiku",
+          // 実行ファイルも sdk.executable（試験の差し替え口）を通す。実 CLI の有無で内部呼出しの試験が落ちない
+          pathToClaudeCodeExecutable: sdk.executable(), model: model || "haiku",
           // 道具は渡さない。tools: [] が内蔵ツールを全て無効にする（--tools "" と同じ。allowedTools は許可側の抑止でしかない）、
           // 残った何かが承認を求めても dontAsk + canUseTool で必ず拒否する
           tools: [], allowedTools: [], permissionMode: "dontAsk",

@@ -148,22 +148,24 @@ export default async function (t) {
     assert.equal((await calls()).length, spawnedAfter, '失効が確定したら以後の受動の照会は agy を起こさない');
     t.ok('cache あるまま資格情報が失効しても、受動は cache/未ログインを返して起こさない', true);
 
-    // ---- 未ログインが確定している間は suggestNext も新規起動しない（`--print` の保証内でも、
-    //      起動ごとに使い捨ての会話履歴を書くため。確定していなければ従来どおり試す——保証内の機能を無用に止めない）
+    // ---- 内部呼出しを分離できないので、候補の口（suggestNext）は持たない。ログインの状態に関わらず agy を起こさない
     const sugOutBefore = (await envCalls()).length;
-    assert.equal(await backend.suggestNext({ prompt: 'test' }), null, '未ログイン確定の間は候補づくりを起こさない');
-    assert.equal((await envCalls()).length, sugOutBefore, 'suggestNext も agy を起こさない');
-    t.ok('未ログイン確定の間は suggestNext も起こさない', true);
+    assert.equal(typeof backend.suggestNext, 'undefined', 'Antigravity は候補の内部呼出しを持たない');
+    assert.equal(backend.capabilities.internalCall.state, 'impossible', '内部呼出しは分離できない');
+    assert.equal(backend.capabilities.promptSuggestions.state, 'impossible', '候補も出せない');
+    assert.equal((await envCalls()).length, sugOutBefore, '候補のために agy を起こさない');
+    t.ok('Antigravity は内部呼出し（候補）を持たず、ログインの状態に関わらず agy を起こさない', true);
 
     // ---- 古い CLI（/usage の print を持たない）: attempted:false で返し、認証の見通しを変えない
     process.env.FAKE_AGY_VERSION = '1.1.10';
     await fs.writeFile(authFile, 'ok');
     await backend.auth.status({ probe: true });   // 'in' に戻す（明示の文脈）
-    // ---- 未ログインが確定していなければ、suggestNext は従来どおり `--print` で起こす（保証内の機能を無用に止めない）
+    // ---- ログインしていても、候補の口は無い（内部呼出しの分離はログインと別の保証）
     const sugInBefore = (await envCalls()).length;
-    const sug = await backend.suggestNext({ prompt: '続きを書いて' });
-    assert.ok((await envCalls()).length > sugInBefore, '確定していなければ候補づくりを従来どおり起こす');
-    assert.equal(typeof sug, 'string', '候補の文字列を返す');
+    assert.equal(typeof backend.suggestNext, 'undefined');
+    assert.equal(backend.capabilities.internalCall.state, 'impossible');
+    assert.equal((await envCalls()).length, sugInBefore, 'ログイン中でも候補のために agy を起こさない');
+    t.ok('ログイン中でも Antigravity は候補の口を持たない', true);
     const old = await backend.usage();
     assert.equal(old.attempted, false, '古い CLI は print を起こさない（needsUpdate）');
     const before2 = (await calls()).length;

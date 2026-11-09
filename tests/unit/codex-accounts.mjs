@@ -97,14 +97,24 @@ export default async function test(t) {
     await run(b, { contextRuntime: context });
     assert.ok(await boundA.suggestTitle({ transcript: 'a title', locale: 'en' }));
     assert.ok(await boundB.suggestNext({ prompt: 'suggest a next step' }));
-    // 内部呼出しも、束縛したアカウントの app-server（HOME）で走る（Issue #180）
+    // 内部呼出しも、束縛したアカウントの app-server（HOME）で走る（Issue #180）。
+    // turn/start の記録には prompt が載らないので、呼出しの前後で件数を取り、増えた 1 件をこの呼出しとして対応させる
+    const readLog = async () => (await fs.readFile(vars.FAKE_CODEX_LOG, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
+    // ACCOUNT_MODE は method ごとの汎用行も書く。turn/start の詳細行（threadId を持つ）だけを数える
+    const turnStarts = (list) => list.filter(x => x.method === 'turn/start' && x.threadId);
+    const turnsBeforeInternal = turnStarts(await readLog()).length;
     assert.ok((await boundB.internalTurn({ prompt: 'internal account turn', cwd: root }))?.text !== undefined);
+    const afterInternal = await readLog();
+    const pidHomesAfterInternal = new Map(afterInternal.filter(x => x.method === 'initialize').map(x => [x.pid, x.home]));
+    const internalTurns = turnStarts(afterInternal).slice(turnsBeforeInternal);
+    assert.equal(internalTurns.length, 1, `internalTurn の turn/start は 1 件だけ増える: ${JSON.stringify(internalTurns.map(x => ({ pid: x.pid, home: pidHomesAfterInternal.get(x.pid), threadId: x.threadId, model: x.model, effort: x.effort, ephemeral: x.ephemeral, developerInstructions: x.developerInstructions })))}`);
+    assert.equal(pidHomesAfterInternal.get(internalTurns[0].pid), b.dir, 'internalTurn は選択したアカウントの app-server で走る');
+    assert.equal(internalTurns[0].ephemeral, true, 'internalTurn は ephemeral の thread で走る');
     await boundB.runTurn({ prompt: 'bound turn', cwd: root, mode: 'readonly', signal: new AbortController(), emit: () => {}, askPermission: async () => ({ allow: false }), account: a });
-    const logs = (await fs.readFile(vars.FAKE_CODEX_LOG, 'utf8')).trim().split('\n').map(JSON.parse);
-    const pidHomes = new Map(logs.filter(x => x.method === 'initialize').map(x => [x.pid, x.home]));
-    const turns = logs.filter(x => x.method === 'turn/start');
+    const logs = await readLog();
+    const pidHomes = pidHomesAfterInternal;
+    const turns = turnStarts(logs);
     assert.ok(turns.some(x => pidHomes.get(x.pid) === a.dir));
-    assert.ok(turns.some(x => pidHomes.get(x.pid) === b.dir && JSON.stringify(x).includes('internal account turn')), 'internalTurn は選択したアカウントの app-server で走る');
     assert.ok(turns.some(x => pidHomes.get(x.pid) === b.dir));
     assert.ok([...pidHomes].filter(([, h]) => h === b.dir).length >= 2);
     assert.equal(turns.some(x => pidHomes.get(x.pid) === home), false);

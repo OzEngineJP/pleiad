@@ -217,9 +217,14 @@ export default async function (t) {
   // ---- 画面に出ない修正（ソースの形で見る。SDK も LLM も呼ばない）
   {
     const claude = await fs.readFile(new URL("../../core/backends/claude.mjs", import.meta.url), "utf8");
-    const title = claude.slice(claude.indexOf("async suggestTitle("), claude.indexOf("async suggestTitle(") + 2000);
-    t.ok("タイトル生成の問い合わせは会話として残さない（persistSession: false）", /persistSession:\s*false/.test(title));
+    // 題は内部呼出し（internalTurn）を通る。会話を残さず、道具・設定・MCP も渡さないことを実際のブロックで見る
+    const internal = claude.slice(claude.indexOf("async internalTurn("), claude.indexOf("async internalTurn(") + 4000);
+    t.ok("題の内部呼出しは会話として残さず（persistSession: false）、道具・設定・MCP を渡さない",
+      /persistSession:\s*false/.test(internal) && /tools:\s*\[\]/.test(internal) && /allowedTools:\s*\[\]/.test(internal)
+      && /settingSources:\s*\[\]/.test(internal) && /strictMcpConfig:\s*true/.test(internal) && /mcpServers:\s*\{\}/.test(internal));
     const server = await fs.readFile(new URL("../../core/server.mjs", import.meta.url), "utf8");
+    t.ok("題はサーバーの共通内部呼出し（kind: title）を通り、指示は backend.titlePrompt を await する",
+      /kind:\s*'title'/.test(server) && /await backend\.titlePrompt\(/.test(server));
     t.ok("完了通知のライブのイベントは本文を載せる", /emit\(\{ type: 'taskNotice', text: /.test(server));
   }
 }

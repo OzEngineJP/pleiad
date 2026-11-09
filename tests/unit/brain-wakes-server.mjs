@@ -29,7 +29,7 @@ export default async function (t) {
     const setClock = (ms) => fs.writeFile(clockFile, String(ms));
     await setClock(T0);
     const env = {
-      AGENT_HOST_BACKENDS: 'fake', TEST_ROUTINES_CLOCK: clockFile,
+      AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_USAGE: '1', TEST_ROUTINES_CLOCK: clockFile,
       NODE_OPTIONS: `--loader="${pathToFileURL(path.join(ROOT, 'tests/lib/routines-clock-loader.mjs')).href}"`,
     };
     const boot = async () => {

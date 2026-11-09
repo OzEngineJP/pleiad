@@ -224,8 +224,11 @@ export default async function (t) {
     const liveResult = await liveRun;
     t.ok('実行中のターンへ承認モードとモデルを送り、設定応答で反映を確かめる', liveMode && liveModel && liveResult.sessionId === liveSessionId);
     const suggestionBackend = createDevinBackend({ catalogue, command, dataDir: path.join(root, 'suggestions') });
-    const suggestion = await suggestionBackend.suggestNext({ prompt: '[permission] propose a brief next step' });
-    t.ok('次の発言候補は使い捨ての読み取り専用ターンで生成する', typeof suggestion === 'string' && suggestion.includes('fixture:'));
+    // Devin は内部呼出しを分離できないので候補の口を持たない。通常会話の runTurn は上の試験のまま
+    t.ok('Devin は候補の内部呼出しを持たない（分離できない）',
+      typeof suggestionBackend.suggestNext === 'undefined'
+      && suggestionBackend.capabilities.internalCall.state === 'impossible'
+      && suggestionBackend.capabilities.promptSuggestions.state === 'impossible');
     const deliveryCalls = [];
     class DeliveryClient extends DevinAcp {
       async call(method, params, options) { deliveryCalls.push({ method, params }); return super.call(method, params, options); }

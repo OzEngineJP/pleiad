@@ -162,6 +162,8 @@ export default async function (t) {
     // 入力欄の `!`（core/shell-runs.mjs）。このテストの対象外
     shellRuns: { decorate: m => m, rows: () => [], placeKept: m => m },
     decorateScheduled: m => m,
+    // 旧内部会話の境界（core/internal-conversation.mjs）。この試験の会話は通常の会話
+    isInternalSessionId: async () => false,
     history: { loadTranscript: () => new Promise(r => { resolveTranscript = r; }) },
     // 読んだ履歴を検索の写しへ入れる口（core/session-search.mjs）。このテストの対象外
     sessionSearch: { ingest: () => true },

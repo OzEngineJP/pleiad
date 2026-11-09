@@ -106,20 +106,22 @@ export default async function (t) {
     t.ok('今すぐの心拍は、ふるいを通って安いモデルを 1 回呼ぶ（forced）', beat1.ran === true && beat1.gate.reason === 'forced' && beat1.did === 'think', JSON.stringify(beat1));
     const v1 = await view(owl.id);
     const think = v1.stream.find((r) => r.kind === 'think');
-    t.ok('思考の流れに 1 行（独り言・使ったトークン・隠れた会話の id）。気がかりが開く（起こす条件つき）', think.text.includes('資料が気になる') && think.tokens.input > 0 && typeof think.meta.session === 'string' && v1.loops.length === 1 && v1.loops[0].id === 'doc' && v1.loops[0].wakeOn.word === '資料');
+    t.ok('思考の流れに 1 行（独り言・使ったトークン・内部呼出しの id）。気がかりが開く（起こす条件つき）', think.text.includes('資料が気になる') && think.tokens.input > 0 && typeof think.meta.call === 'string' && v1.loops.length === 1 && v1.loops[0].id === 'doc' && v1.loops[0].wakeOn.word === '資料');
     t.ok('画面へ brainChanged が出る', c.since(m1).some((e) => e.type === 'brainChanged' && e.botId === owl.id));
+    // 新経路は host 会話を作らない。会話一覧に pulse の行は無く、journal（internal.calls）と usage（internalTask）に残る
     const hidden = (await c.cmd('listSessions')).filter((s) => s.bot?.kind === 'pulse');
-    t.ok('安いモデルの隠れた会話は bot の会話（kind: pulse。画面は bot の会話を Chats の一覧に出さない）で、読み取りのモード（plan）。1 回の心拍に 1 つ', hidden.length === 1 && hidden[0].bot.botId === owl.id && hidden[0].mode === 'plan' && hidden[0].title.includes('Owl'));
+    t.ok('安いモデルのために host の隠れた会話を作らない（一覧に pulse が無い）', hidden.length === 0, JSON.stringify(hidden.map((s) => s.id)));
+    const reader = openReadOnly(dataDir);
+    try {
+      const journal = reader.prepare("SELECT value FROM memory_state WHERE kind = 'internal.calls'").all().map((r) => JSON.parse(r.value));
+      const usage = reader.prepare('SELECT data FROM usage_records ORDER BY seq').all().map((r) => JSON.parse(r.data));
+      const call = journal.find((row) => row.kind === 'pulse' && row.botId === owl.id);
+      const spent = usage.find((row) => row.internalTask?.kind === 'pulse' && row.internalTask?.botId === owl.id);
+      t.ok('心拍は journal の internal.calls に種類・状態・usage 付きで残る', call?.status === 'ok' && call?.backend === 'fake' && Number.isFinite(spent?.inputTokens), JSON.stringify({ call, spent }));
+    } finally { reader.close(); }
     await sleep(200);
-    t.ok('ADR 0127: 隠れた会話のターンが終わっても、画面へ完了の知らせ（completionReady）を出さない（PC の通知・スマホの通知が出ない）',
-      c.since(m1).some((e) => e.type === 'turnEnd' && e.sessionId === hidden[0].id) && !c.since(m1).some((e) => e.type === 'completionReady' && e.sessionId === hidden[0].id),
-      JSON.stringify(c.since(m1).filter((e) => ['turnEnd', 'completionReady'].includes(e.type)).map((e) => [e.type, e.sessionId])));
-    t.ok('ADR 0127: 隠れた会話の場所（ホーム）は、最近の場所の候補（place）にしない', hidden[0].place === null && typeof hidden[0].cwd === 'string');
-    // 隠れた会話で道具の承認を求めても、人に見えるカード・通知は出さず、すぐ断る（誰も答えず心拍が止まったままにならない）
-    const askHidden = await c.runTurn({ sessionId: hidden[0].id, prompt: 'ask' }, { ms: 20_000 });
-    const askedText = (await c.cmd('loadSession', { sessionId: hidden[0].id })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
-    t.ok('隠れた会話（pulse）で承認を求めると、カードを出さずにすぐ断る（道具は使えないと返す）',
-      askHidden.permissions.length === 0 && askHidden.outcome === 'ok' && askedText.startsWith('拒否された') && askedText.includes('道具を使えない'), JSON.stringify({ p: askHidden.permissions.length, o: askHidden.outcome, askedText }));
+    t.ok('心拍のターンが終わっても、画面へ完了の知らせ（completionReady）を出さない（PC の通知・スマホの通知が出ない）',
+      !c.since(m1).some((e) => e.type === 'completionReady'), JSON.stringify(c.since(m1).filter((e) => e.type === 'completionReady').map((e) => e.sessionId)));
 
     // ---- ③ 引き継ぎ → DM の賢いモデルのターン
     const beat2 = await call('brain.beat', { botId: owl.id });

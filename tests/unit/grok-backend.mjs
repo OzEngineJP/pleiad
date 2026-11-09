@@ -3,6 +3,7 @@
 // session/new と session/load の両方に届き、渡さないターン・別の会話・履歴の読み込みには混ざらない。
 // プラグインの置き場はターンの終わりに消え、持ち主の居ない残りは次の書き込みで消える。
 // turn_completed の usage（ターンのモデル呼び出しの合計）は文脈の量にしない
+import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -389,17 +390,14 @@ export default async function (t) {
       if (previousHome === undefined) delete process.env.AGENT_HOST_GROK_HOME;
       else process.env.AGENT_HOST_GROK_HOME = previousHome;
     }
-    // 7. turn_completed の usage は呼び出しの合計で、文脈の占有ではない。usage_update の used/size だけを文脈の量にする
+    // 7. Grok は内部呼出しを分離できないので候補の口を持たない（通常会話の MCP/Hooks は上の試験のまま）
     {
       mark = calls.length;
-      const suggestion = await backend.suggestNext({ prompt: '{"suggestion":"Continue"}', signal: new AbortController().signal });
-      const suggestionSession = of('session/new', mark)[0];
-      t.ok('suggestNext は提案を返し、MCP と Hooks を持たない読み取り専用セッションを作る',
-        suggestion === 'fixture reply'
-        && suggestionSession?.params?.mcpServers?.length === 0
-        && !suggestionSession?.params?._meta?.pluginDirs
-        && of('session/set_mode', mark).some(c => c.params.modeId === 'plan')
-        && of('session/close', mark).length === 1);
+      assert.equal(typeof backend.suggestNext, 'undefined');
+      assert.equal(backend.capabilities.internalCall.state, 'impossible');
+      assert.equal(backend.capabilities.promptSuggestions.state, 'impossible');
+      assert.equal(of('session/new', mark).length, 0, '候補のために新しいセッションを作らない');
+      t.ok('Grok は候補の内部呼出しを持たず、候補のためにセッションを作らない', true);
     }
     {
       const original = process.env.GROK_CONFIG;

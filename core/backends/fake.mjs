@@ -1097,7 +1097,8 @@ export const backend = {
     if (process.env.FAKE_INTERNAL_LOG) {
       try { fs.appendFileSync(process.env.FAKE_INTERNAL_LOG, JSON.stringify({ kind, prompt: p }) + "\n"); } catch { /* 試験用の記録. 書けなくても本処理は続ける */ }
     }
-    const usage = { inputTokens: 120, outputTokens: 8, cachedTokens: 0 };
+    // 使用量の台本（AGENT_HOST_FAKE_USAGE=1）は通常会話と同じ固定値。無ければ小さい既定値（記録の形の確認用）
+    const usage = FAKE_USAGE ? { inputTokens: 1000, outputTokens: 200, cachedTokens: 900 } : { inputTokens: 120, outputTokens: 8, cachedTokens: 0 };
     // 題（kind: 'title'）: 指示の後ろの会話の見出し（依頼:/Request:）をそのまま返す
     if (kind === 'title') {
       const gist = p.split('\n\n').slice(1).join('\n\n');
