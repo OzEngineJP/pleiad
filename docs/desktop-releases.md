@@ -31,7 +31,7 @@ Pleiad の画面・サーバー・Electron を一つの `package.json.version` �
 3. 既定では push しない。表示された `git push --atomic origin main v0.12.0-beta.10` を打つ（main とタグが一緒に通るか一緒に落ちる）。`--push` を付けたときだけ、スクリプトが送る。送ると `Evaluation release` が起動し、同じ commit の CI の結果を待って公開する。
 `--dry-run` は前提の検査だけ（何も書かない）。`--offline` は origin を見ない（一時の clone での練習用）。
 
-CIのElectron本体の取得は `scripts/prepare-electron.mjs` が行う。通常の公式配布URLがサーバー障害や通信エラーで使えないときは、同じ公式リリースのGitHub APIへ切り替える。どちらもnpmパッケージに固定されたSHA-256で検証してから展開し、配布物の生成にも同じ検証済みアーカイブを渡す。
+CIのElectron本体の取得は `scripts/prepare-electron.mjs` が行う。通常の公式配布URLがサーバー障害や通信エラーで使えないときは、同じ公式リリースのGitHub APIへ切り替える。どちらもnpmパッケージに固定されたSHA-256で検証してから展開し、配布物の生成にも同じ検証済みアーカイブを渡す。古いタグのやり直しでも、同じ固定の SHA-256 での検証は維持する。
 
 **タグの前に手元で `npm test` 全部は流さない。** コードの確かめは main の CI が行い、赤い commit は `ci-gate` が公開を止める（[release-ci-reuse.md](release-ci-reuse.md)）。CI は落ちた suite だけを 1 回流し直し、通れば緑にする（流し直したことは警告の注釈とジョブのまとめに必ず残る）。手元の `npm test` は流し直さない。
 公開前に原稿の日付と検証結果を確定する。コミットの羅列はリリースノートの本文にしない。

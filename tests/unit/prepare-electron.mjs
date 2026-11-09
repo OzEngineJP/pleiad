@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parse } from 'yaml';
 import { electronDownloader } from '../../scripts/prepare-electron.mjs';
 
 export const name = 'prepare-electron';
@@ -41,4 +42,31 @@ export default async function (t) {
     await assert.rejects(foreign.download(`https://example.invalid/${filename}`, path.join(root, 'foreign')), /Unsupported/);
     t.ok('404や公式以外の取得先をAPIへ置き換えない', true);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
+
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const workflow = parse(await fs.readFile(path.join(repo, '.github/workflows/evaluation-release.yml'), 'utf8'));
+  const pin = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262';
+  for (const jobName of ['mac', 'windows']) {
+    const steps = workflow.jobs[jobName].steps;
+    const product = steps.filter((step) => String(step.uses ?? '').startsWith('actions/checkout@') && step.with?.path !== 'release-prep');
+    const npm = steps.findIndex((step) => step.run === 'npm ci');
+    const helper = steps.findIndex((step) => step.with?.path === 'release-prep');
+    const warm = steps.findIndex((step) => step.name === 'Prepare verified Electron');
+    assert.equal(product.length, 1);
+    assert.equal(product[0].uses, pin);
+    assert.equal(product[0].with.ref, '${{ inputs.tag || github.ref_name }}');
+    assert.equal(product[0].with['persist-credentials'], false);
+    assert.equal(steps[helper].uses, pin);
+    assert.equal(steps[helper].with.ref, '${{ github.workflow_sha }}');
+    assert.equal(steps[helper].with['sparse-checkout'], 'scripts');
+    assert.equal(steps[helper].with['persist-credentials'], false);
+    assert.equal(steps[warm].run, 'node release-prep/scripts/prepare-electron.mjs');
+    assert.ok(npm >= 0 && npm < helper && helper < warm);
+    t.ok(`${jobName}: 準備は workflow の commit から取り、製品 checkout はタグのまま、npm ci の後に温める`, true);
+  }
+  const helperFile = path.join(repo, 'release-prep', 'scripts', 'prepare-electron.mjs');
+  const resolved = createRequire(helperFile).resolve('electron/package.json');
+  assert.equal(await fs.realpath(resolved), await fs.realpath(path.join(repo, 'node_modules', 'electron', 'package.json')));
+  assert.equal(resolved.includes(`${path.sep}release-prep${path.sep}`), false);
+  t.ok('第二 checkout の位置から、製品の node_modules にある electron へ解決する', true);
 }
