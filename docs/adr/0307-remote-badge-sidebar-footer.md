@@ -27,3 +27,14 @@
 - `web/index.html`・`web/client.mjs`: コメントと引き出しの inert の一覧（バッジは脇の中なので対象外）を新しい置き場に合わせる。レールのボタンの `tabIndex` は `paintSideChrome` がほかと揃える。
 - `docs/remote.md` §7.2 を新しい形に書き直す。i18n の文言は足さない（今の `remote.*` を流用）。
 - OS の窓タイトル・タスクバーの重ねアイコン・`desktop/remote-windows.cjs`・`desktop/remote-preload.cjs` は変えない。
+
+## ずれの直し（2026-11-09 承認・同日追記）
+
+実画面の計測で確定した 2 件のずれを直した:
+
+1. **開いた脇で Plus の丸（`#sideAvatar`、`.side-avb`）が印の行に重なる。** 脇が開いている間だけ `.side-avb` を `bottom:40px`（印の行 32px＋元の 8px）にして `.side-me` の左に載せる（701px 以上・`:root.remote:not(.remote-mobile)`。丸の移りは `bottom` の `--dur-fast` の遷移）。畳んだレール（`:root.side-closed body:not(.settings)`）では最下部（`bottom:8px`）のまま。⇄→歯車→丸の並びは変えない
+2. **700px 以下の添え字（`#remoteSub`、`.host-sub`）から開く面が窓の下端に出る**（約 540px 離れる）。添え字から開いたときはその行の直下に出す（`getBoundingClientRect` で位置を取る）。脇の行（`#remoteBadge`）・レール（`#remoteRail`）から開く面は下端固定（`bottom:44px`/`left:12px`）のまま
+
+併せて、印の行の上の髪の線は `border-top` から `::before`（`linear-gradient(var(--line-faint) …)`）へ描き方を変えた。片側の `border-*` は `one-sided-line`（design-lint の --strict）で落ちるため。見た目（1px・`--line-faint`・行の上端いっぱい）は変わらない。
+
+面の中身（再試行・「このウィンドウを閉じる」・Esc など）と文言（`remote.*`）、レールの並び、700px 以下の添え字の置き方、OS タイトル・タスクバー、モバイルの殻（`setupHostBar`）は変えない。

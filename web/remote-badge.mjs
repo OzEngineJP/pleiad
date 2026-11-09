@@ -140,6 +140,18 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
   }
   function setOpen(open) {
     pop.hidden = !open;
+    // 700px 以下の添え字（#remoteSub）から開いたときは、その行の直下に出す（開いた元に合わせる。2026-11-09 のずれ直し）。
+    // 脇の行・レールの ⇄ から開くときは今までどおり窓の下端に固定（style.css の bottom:44px / left:12px）
+    if (open && sub && opener === sub && typeof sub.getBoundingClientRect === 'function') {
+      const r = sub.getBoundingClientRect();
+      const vw = doc.defaultView?.innerWidth ?? 1024;
+      const w = Math.min(300, vw - 24);   // style.css の width:min(300px,calc(100vw - 24px)) と同じ
+      pop.style.left = `${Math.max(12, Math.min(r.left, vw - w - 12))}px`;
+      pop.style.top = `${r.bottom + 6}px`;
+      pop.style.bottom = 'auto';
+    } else {
+      pop.style.left = pop.style.top = pop.style.bottom = '';
+    }
     for (const b of [badge, rail, sub]) b?.setAttribute('aria-expanded', String(open));
   }
   const toggle = e => { e.stopPropagation(); opener = e.currentTarget ?? badge; setOpen(pop.hidden); };
