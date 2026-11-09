@@ -37,6 +37,7 @@ import { insideDir, sameDir } from './worktrees.mjs';
 import { killUnder, killHeldUnder } from './proc-track.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { recentFilesOf, visualizationLinksOf } from './session-files.mjs';
+import { isHash, blobPath, BUNDLE_LIMITS } from './viz-bundle.mjs';
 import { createPrReader, basicPr, PR_READ_MAX } from './git-prs.mjs';
 import { mergePrs, unionPrs } from './session-prs.mjs';
 import { createUpdateGate } from './update-gate.mjs';
@@ -2410,7 +2411,7 @@ function pageTranscript(sessionId) {
     if (!index) { index = new Map(); vizSourceIndex.set(sessionId, index); }
     for (const present of got.presents ?? []) {
       const hash = present?.kind === 'visualization' && !present.error ? present.bundle?.hash : null;
-      if (typeof hash === 'string' && hash) index.set(hash, { path:present.path ?? null, caption:present.caption ?? null });
+      if (typeof hash === 'string' && hash && present.bundle?.entry) index.set(`${hash}/${present.bundle.entry}`, { path:present.path ?? null, caption:present.caption ?? null });
     }
     while (index.size > 500) index.delete(index.keys().next().value);
     while (vizSourceIndex.size > 20) vizSourceIndex.delete(vizSourceIndex.keys().next().value);
@@ -2420,23 +2421,38 @@ function pageTranscript(sessionId) {
   while (pageTranscripts.size > 20) pageTranscripts.delete(pageTranscripts.keys().next().value);
   return promise;
 }
+async function savedVizSource(sessionId, hash, entry) {
+  const key = `${hash}/${entry}`;
+  const indexed = vizSourceIndex.get(sessionId)?.get(key);
+  if (indexed) return indexed;
+  // A newly saved visualization may be newer than the short-lived transcript cache.
+  pageTranscripts.delete(sessionId);
+  await pageTranscript(sessionId);
+  return vizSourceIndex.get(sessionId)?.get(key) ?? null;
+}
 pageRequests = createPageRequests({ relay: chromeRelay ?? null, store, fileAccessFor, fileRoots, resolveSessionFile, log: pagesLog });
 void pageRequests.env({ lang: locale.lang });
 const pagesRoutes = createPagesRoutes({ ops: (caller, id, input) => opsRegistry.invoke(caller, id, input, opsDeps()),
   store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, secret: pageSecrets.key, watch: pageWatch, ports: () => pagePorts, log: pagesLog, env: () => pageRequests.envOf(),
   recentFiles: async sessionId => recentFilesOf(await pageTranscript(sessionId)),
   visualizations: async sessionId => visualizationLinksOf((await pageTranscript(sessionId)).presents, pagePorts?.isolated),
+  // 会話に保存した可視化の束の中身（「HTML を保存」が取る）。この会話の記録にある束・HTML の入口だけ。中身は目録が持つ実体
+  vizEntry: async (sessionId, hash, entry) => {
+    if (!isHash(hash) || typeof entry !== 'string' || !entry || !/\.html?$/i.test(entry)) return null;
+    const source = await savedVizSource(sessionId, hash, entry);
+    if (!source) return null;
+    const sha = (await isolatedRoutes.manifest(hash))?.[entry];
+    const file = isHash(sha) && blobPath(store.dataDir, sha);
+    if (!file) return null;
+    const body = await fs.readFile(file).catch(() => null);
+    return body && body.length <= BUNDLE_LIMITS.file ? body : null;
+  },
   gitTimeline: async sessionId => timelineOf((await pageTranscript(sessionId)).messages) });
 const isolatedRoutes = createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, secret: pageSecrets.key, fileAccessFor, ports: () => pagePorts, log: pagesLog });
 const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, pageRequests, log: pagesLog,
   htmlKeys, secret: pageSecrets.key, pageWatch,
   // 可視化の束を開いた元のファイルは、クライアントの送った値でなく会話の記録の行から決める（pageOpen の応答の path）
-  vizSource: async (sessionId, hash) => {
-    const indexed = vizSourceIndex.get(sessionId)?.get(hash);
-    if (indexed) return indexed;
-    await pageTranscript(sessionId);
-    return vizSourceIndex.get(sessionId)?.get(hash) ?? null;
-  },
+  vizSource: savedVizSource,
   // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る
   movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
   mask: message => secretMasker.json(message),

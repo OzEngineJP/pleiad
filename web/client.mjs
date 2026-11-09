@@ -8947,6 +8947,7 @@ function connectFilePages(unify) {
     openTab: (args) => unify.openTab(args),
     focusTab: (tab, id) => unify.focusTab(tab, id),
     flashTab: (tab, id) => unify.flashTab(tab, id),
+    markViz: (tab, viz) => unify.markViz?.(tab, viz),
   });
 }
 /**
@@ -8958,9 +8959,16 @@ async function handlePageRequest(request, { sessionId } = {}) {
   const path = typeof request?.path === 'string' && request.path ? request.path : null;
   switch (request?.type) {
     case 'file-menu':
-      if (!path || !Number.isFinite(request.x) || !Number.isFinite(request.y)) return false;
-      await filePreview.menu(request.x, request.y, { path, kind: request.kind === 'directory' ? 'directory' : 'file', sessionId, ...(typeof request.base === 'string' ? { base: request.base } : {}) });
+      if ((!path && !request?.viz?.hash) || !Number.isFinite(request.x) || !Number.isFinite(request.y)) return false;
+      await filePreview.menu(request.x, request.y, { path, kind: request.kind === 'directory' ? 'directory' : 'file', sessionId,
+        ...(request.viz ? { viz: request.viz } : {}), missing: request.missing === true,
+        ...(typeof request.base === 'string' ? { base: request.base } : {}) });
       return true;
+    case 'open-viz':
+      // 新しいタブの可視化の行。元の HTML・保存した版・消失の切り替えは filePreview 側（pageOpen がパスを確かめる）
+      if (!request?.viz?.hash) return false;
+      return filePreview.openVisualization({ sessionId, path:path ?? '', missing:request.missing === true,
+        hash:request.viz.hash, entry:request.viz.entry, title:request.viz.title }) !== false;
     case 'use-file': {
       if (!here || !path) return false;
       const where = await cmd('resolvePath', { path, sessionId });

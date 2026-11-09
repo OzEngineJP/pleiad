@@ -14,6 +14,7 @@ const paths = {
   plugins: 'M9 3v4M15 3v4M6 7h12v4a6 6 0 0 1-12 0zM12 17v4',
   profile: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0', chat: 'M4 5h16v11H9l-5 4z', window: 'M3 4h18v16H3zM3 9h18',
   new: 'M12 5v14M5 12h14', attachment: 'm9 12 6-6a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l9-9',
+  saved: 'M12 7v5l3.5 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', external: 'M14 4h6v6M20 4l-9 9M19 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4',
 };
 export function browserIcon(kind) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

@@ -49,11 +49,20 @@ export function configureIsolatedOrigin(options) {
 }
 let visualizationTabs = null;
 export function configureVisualizationTabs(options) { visualizationTabs = options; }
+/** OS の操作（外で開く）を出してよいか（サーバーのある PC の画面か。判定はホスト側） */
+export const visualizationOsAllowed = () => visualizationTabs?.osActions?.() === true;
 /** Returns false only when the no-Chrome layout must handle the expansion. */
 export function openVisualizationTab(bundle, element, title = '', path = '') {
   const tabs = visualizationTabs;
   const sessionId = tabs?.sessionId?.(element);
-  if (!sessionId || !tabs.connected?.(sessionId) || !tabs.openTab) return false;
+  if (!sessionId || !tabs.connected?.(sessionId)) return false;
+  // 開き分け（元の HTML・保存した版・消失の切り替え）はホストの open。無ければ従来どおり束を開く
+  if (tabs.open) {
+    try { if (tabs.open({ sessionId, path, hash:bundle?.hash, entry:bundle?.entry, title, element }) === false) return false; }
+    catch (error) { tabs.onError?.(error); }
+    return true;
+  }
+  if (!tabs.openTab) return false;
   // 開く先はサーバーが決める（pageOpen → 束の印の出どころ）。束・入口・題・元のファイルは一度だけ渡す
   try { Promise.resolve(tabs.openTab({ sessionId, kind:'viz', vizHash:bundle?.hash, entry:bundle?.entry, title, path })).catch(error => tabs.onError?.(error)); }
   catch (error) { tabs.onError?.(error); }

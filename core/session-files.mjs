@@ -44,6 +44,7 @@ export function recentFilesOf({ messages = [], presents = [], toolHints = {}, ac
 
 /**
  * 会話の可視化（束のあるもの）の、隔離の origin の URL。新しい順
+ * hash・entry・元のパス（記録にあれば）も載せる: 新しいタブの一覧が「元の HTML」と「保存した版」を開き分けるため
  * @param {object[]} presents withLegacyBundles を通した記録の行
  * @param {number} isolatedPort
  */
@@ -56,7 +57,10 @@ export function visualizationLinksOf(presents, isolatedPort, limit = 20) {
     const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
     const title = String(row.caption ?? row.path ?? bundle.entry).slice(0, 200);
     // アプリの専用の出どころ（v<束の印>.localhost。core/isolated-origins.mjs）
-    out.push({ title, url: `http://${vizMark(bundle.hash)}.localhost:${isolatedPort}/viz/${bundle.hash}/${entry}?${new URLSearchParams({ embed: 'tab', title })}` });
+    out.push({ title, hash: bundle.hash, entry: bundle.entry,
+      url: `http://${vizMark(bundle.hash)}.localhost:${isolatedPort}/viz/${bundle.hash}/${entry}?${new URLSearchParams({ embed: 'tab', title })}`,
+      ...(typeof row.path === 'string' && row.path ? { path: row.path } : {}),
+      ...(typeof row.at === 'string' && row.at ? { at: row.at } : {}) });
     if (out.length === limit) break;
   }
   return out;

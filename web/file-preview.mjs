@@ -3,9 +3,10 @@ import { t, fmt } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { markdownContent, parseTable } from './file-preview-content.mjs';
-import { visualizationFrame, configureVisualizationTabs } from './visualize-frame.mjs';
+import { visualizationFrame, configureVisualizationTabs, downloadVisualization } from './visualize-frame.mjs';
 import { createFilePageRouter } from './page-frame.mjs';
-import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon, locateIcon, collapseAllIcon } from './icons.mjs';
+import { savedVizOf } from './page-tabs.mjs';
+import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon, locateIcon, collapseAllIcon, historyIcon, openInBrowserIcon, downloadIcon } from './icons.mjs';
 import { fileMenuItems, copyPathText, relativeTo, samePath, notify, download } from './file-actions.mjs';
 import { applySlots, fileSlots, customSlots, gitSlots, chromeSlots, subtitleFor } from './side-panel.mjs';
 import { copyText } from './code-copy.mjs';
@@ -49,8 +50,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   function configureBrowserUnify(options) {
     sessionGeneration++;
     unified = options;
-    configureVisualizationTabs(options ? { connected: options.connected, openTab: options.openTab,
-      sessionId:element => getContext(element)?.sessionId, onError:failed } : null);
+    configureVisualizationTabs(options ? { connected: options.connected, openTab: options.openTab, open:openVisualization,
+      osActions, sessionId:element => getContext(element)?.sessionId, onError:failed } : null);
     if (!options) { openPage = null; return; }
     openPage = createFilePageRouter({ ...options, cmd, resolved: rememberFile,
       getGeneration:() => sessionGeneration });
@@ -509,12 +510,26 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     if (unifiedEnabled()) return openPage(ref, whereFrom({ path:ref.path, element, base }), element).catch(failed);
     return open(ref, element, base);
   }
-  /** 右の欄の ⋮ とタブの右クリックに足すファイルの操作（Pleiad のファイル・フォルダーのページ。web/browser-unify.mjs） */
+  /**
+   * 右の欄の ⋮ とタブの右クリックに足すファイルの操作（Pleiad のファイル・フォルダーのページ。web/browser-unify.mjs）。
+   * 保存した版（kind:'viz'）は可視化のメニュー。可視化から開いた元の HTML のタブには「会話に保存した版を開く」を足す
+   */
   function tabMenu(tab) {
+    if (tab?.page?.kind === 'viz') return vizMenuItems(vizTargetOf(tab), { variant:'saved' });
     if (!tab?.page?.path) return [];
     const where = resolvedFiles.get(tab.page.path) ?? tab.page;
-    return fileMenuItems(where, { osActions:osActions(), defaultAppAllowed:where.defaultAppAllowed === true,
+    const items = fileMenuItems(where, { osActions:osActions(), defaultAppAllowed:where.defaultAppAllowed === true,
       canUse:!!useFile, run:action => run(action, { ...where, element:tab.element }) });
+    const viz = savedVizOf(tab);
+    if (viz) {
+      const target = { path:viz.path, sessionId:tab.sessionId, element:tab.element,
+        viz:{ hash:viz.hash, entry:viz.entry, title:viz.title || tab.page.title || tab.title } };
+      const saved = vizItem(t('tabs:display.openSaved'), 'vizSaved', historyIcon, target);
+      const sepAt = items.findIndex(item => item.sep);
+      if (sepAt >= 0) items.splice(sepAt + 1, 0, saved, { sep:true });
+      else items.push({ sep:true }, saved);
+    }
+    return items;
   }
   async function osAction(command, target) {
     if (!cmd || (unifiedEnabled() && !osActions())) return;
@@ -552,18 +567,133 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
       }
     } catch (error) { failed(error); }
   }
+  // ---- 可視化（会話に保存した版と元の HTML） ----
+  const VIZ_NOT_FOUND = new Set(['not-found', 'ENOENT', 'ENOTDIR', 'NOT_FOUND']);
+  /** 束の印（64 hex）だけが保存した版を開ける。無ければ保存版の入口・開く操作は出さない */
+  const VIZ_HASH = /^[0-9a-f]{64}$/;
+  /** 可視化を開く。既定（auto）は元の HTML。消えた（missing）と分かっているものは保存した版へ進んで切り替えの知らせを出す。元の記録が無いもの・明示の保存版は知らせずそのまま開く（正常） */
+  function openVisualization(detail, mode = 'auto') {
+    const hash = detail.hash ?? detail.vizHash ?? detail.bundle?.hash;
+    // 束の印も元のパスも無いものは、呼び手が中身から srcdoc のパネルを開く（従来の出し方）
+    if (!VIZ_HASH.test(hash ?? '') && !detail.path) return false;
+    const sessionId = detail.sessionId ?? getContext(detail.element)?.sessionId;
+    if (!sessionId || !unified?.connected?.(sessionId) || !unified.openTab) return false;
+    void openVizTab(detail, mode, sessionId).catch(failed);
+    return true;
+  }
+  async function openVizTab(detail, mode, sessionId) {
+    const hash = detail.hash ?? detail.vizHash ?? detail.bundle?.hash, entry = detail.entry ?? detail.bundle?.entry, title = detail.title ?? '';
+    const tabs = unified.tabs?.(sessionId) ?? unified.tabsOf?.(sessionId) ?? [];
+    const openSaved = async () => {
+      if (!VIZ_HASH.test(hash ?? '')) return;
+      const existing = tabs.find(tab => tab.local && tab.page?.kind === 'viz' && tab.page?.vizHash === hash && tab.page?.entry === entry);
+      if (existing) { await unified.focusTab?.(existing, sessionId); unified.flashTab?.(existing, sessionId); return; }
+      await unified.openTab({ sessionId, kind:'viz', vizHash:hash, entry, title, path:detail.path ?? '' });
+    };
+    if (mode === 'saved' || !detail.path) { await openSaved(); return; }
+    // 消えていると分かっているものは保存版へ進んで、モックと同じ切り替えの知らせを出す（元パス不明・明示の保存版は静かに開く）
+    if (detail.missing === true) { notify(t('files.vizFallback')); await openSaved(); return; }
+    const existing = tabs.find(tab => tab.local && tab.page?.kind !== 'viz' && tab.page?.path && samePath(tab.page.path, detail.path));
+    // 使い回すタブにも今回の可視化の記録を付ける（普通に開いたタブ・同じパスの別の束から開いたタブ。別ファイルへ移ったタブは同じパスではないのでここに来ない）
+    if (existing) { unified.markViz?.(existing, { hash, entry, title, path:detail.path }); await unified.focusTab?.(existing, sessionId); unified.flashTab?.(existing, sessionId); return; }
+    // 元の HTML のタブの題はファイル名（可視化の題は固定の記録 request.viz.title へ別に持つ。文書の <title> の更新は従来どおり）
+    try { await unified.openTab({ sessionId, kind:'file', path:detail.path, viz:{ hash, entry, title, path:detail.path }, title:String(detail.path).split(/[\\/]/).at(-1) || title }); }
+    catch (error) {
+      const code = error?.code ?? error?.message;
+      if (mode === 'original') { VIZ_NOT_FOUND.has(code) ? notify(t('files.vizNotFound')) : failed(error); return; }
+      // 消失（not-found/ENOENT）以外の失敗は「元のファイルが無い」とは言わず、従来の開けない表現で出す
+      if (!VIZ_NOT_FOUND.has(code)) { failed(error); return; }
+      notify(t('files.vizFallback'));
+      await openSaved();
+    }
+  }
+  const menuIconOf = markup => { const icon = el('span'); icon.innerHTML = markup; return icon; };
+  const vizItem = (label, action, markup, target) => ({ label, icon:menuIconOf(markup), onClick:() => runViz(action, target) });
+  /** 可視化のメニュー。row: 新しいタブの行の ⋯ / card: 会話のカードの ⋯ / saved: 保存版のタブの ⋮。OS の操作は元のパスの記録があるものに出す（消えたものは押すと「元のファイルが見つかりません」。記録自体が無いもの・remote には出さない） */
+  function vizMenuItems(target, { osActions: allowed = osActions(), variant = 'row' } = {}) {
+    const hasPath = typeof target.path === 'string' && target.path.length > 0;
+    const hasHash = VIZ_HASH.test(target.viz?.hash ?? '');
+    // HTML の保存は中身（withContent）を優先し、中身の無い経路は束（api/viz）から
+    const canSave = hasHash || typeof target.withContent === 'function';
+    // 元パスの記録があれば OS の操作は残す（押すと「元のファイルが見つかりません」）。無いものだけ出さない。remote（allowed=false）は出さない
+    const osOk = allowed && hasPath;
+    const groups = [];
+    if (variant === 'saved') {
+      if (hasPath) groups.push([vizItem(t('tabs:display.openOriginal'), 'vizOriginal', fileIcon, target)]);
+      groups.push([canSave && vizItem(t('timeline.present.download'), 'vizSave', downloadIcon, target),
+        vizItem(t('tabs:display.copyTitle'), 'copyTitle', copyIcon, target)].filter(Boolean));
+    } else if (variant === 'card') {
+      const local = [osOk && vizItem(t('files.menu.revealFile'), 'reveal', folderIcon, target),
+        hasHash && vizItem(t('tabs:display.openSaved'), 'vizSaved', historyIcon, target)].filter(Boolean);
+      const tail = [hasPath && vizItem(t('files.menu.copyPath'), 'copy', copyIcon, target),
+        canSave && vizItem(t('timeline.present.download'), 'vizSave', downloadIcon, target)].filter(Boolean);
+      groups.push(...(local.length ? [local] : []), ...(tail.length ? [tail] : []));
+    } else {
+      const local = osOk ? [vizItem(t('files.menu.revealFile'), 'reveal', folderIcon, target),
+        vizItem(t('browser.openExternal'), 'external', openInBrowserIcon, target)] : [];
+      const tail = [hasPath && vizItem(t('files.menu.copyPath'), 'copy', copyIcon, target),
+        ((target.missing === true || !hasPath) && canSave) && vizItem(t('timeline.present.download'), 'vizSave', downloadIcon, target)].filter(Boolean);
+      groups.push(...(local.length ? [local] : []),
+        ...(hasHash ? [[vizItem(t('tabs:display.openSaved'), 'vizSaved', historyIcon, target)]] : []), ...(tail.length ? [tail] : []));
+    }
+    return groups.flatMap((group, i) => i ? [{ sep:true }, ...group] : group);
+  }
+  async function runViz(action, target) {
+    const viz = target.viz ?? {};
+    const sessionId = target.sessionId ?? getContext(target.element)?.sessionId;
+    if (action === 'vizSaved') return openVisualization({ sessionId, path:target.path, hash:viz.hash, entry:viz.entry, title:viz.title ?? target.title, element:target.element }, 'saved');
+    if (action === 'vizOriginal') return openVisualization({ sessionId, path:target.path, hash:viz.hash, entry:viz.entry, title:viz.title ?? target.title, element:target.element }, 'original');
+    if (action === 'vizSave') {
+      try {
+        // カードの保存は中身（content）からの従来の道を優先する（束の印があっても。記録の上限・束の欠損・無駄な通信を避ける）。
+        // api/viz は中身を手元に持たない経路（新しいタブの行・保存版のタブ）だけが使う
+        if (typeof target.withContent === 'function') {
+          target.withContent(content => downloadVisualization({ path:target.path, title:viz.title ?? target.title, content }));
+          return;
+        }
+        if (!VIZ_HASH.test(viz.hash ?? '')) return;
+        const query = new URLSearchParams({ hash:viz.hash ?? '', entry:viz.entry ?? '' });
+        const res = await fetch(`/_pleiad/s/${encodeURIComponent(sessionId)}/api/viz?${query}`, { credentials:'same-origin', cache:'no-store' });
+        if (!res.ok) throw Object.assign(new Error('read-failed'), { code:'read-failed' });
+        const content = await res.text();
+        downloadVisualization({ path:target.path, title:viz.title ?? target.title, content });
+      } catch (error) { failed(error); }
+      return;
+    }
+    if (action === 'copyTitle') {
+      try { await navigator.clipboard.writeText(viz.title ?? target.title ?? ''); notify(t('timeline.code.copied')); }
+      catch { notify(t('timeline.code.copyFailed')); }
+      return;
+    }
+    // 元のファイルが消えていると分かっているものの OS の操作・読み出しは「元のファイルが見つかりません」にする（パスのコピーは残す）
+    if (target.missing === true && ['reveal', 'external', 'default', 'save', 'use'].includes(action)) { notify(t('files.vizNotFound')); return; }
+    return run(action, target);
+  }
+  /** 開いているタブ（kind:'viz' は保存した版）からメニューの対象へ */
+  const vizTargetOf = tab => ({ path:tab.page?.path, sessionId:tab.sessionId, element:tab.element,
+    viz:{ hash:tab.page?.vizHash, entry:tab.page?.entry, title:tab.page?.title ?? tab.title } });
   /**
-   * ファイルの操作メニューを開く。target は { path, kind?, line?, element?, base?, cwd?, current? }。
-   * current（右パネルに出ているファイル）は「右パネルで開く」を出さない
+   * ファイルの操作メニューを開く。target は { path, kind?, line?, element?, base?, cwd?, current?, viz?, missing?, variant? }。
+   * current（右パネルに出ているファイル）は「右パネルで開く」を出さない。
+   * viz のある対象は可視化のメニュー（元のパスが無くても開ける。パスが消えていても保存版の操作は出す。消失以外の失敗は通常の知らせ）
    */
   async function menu(x, y, target) {
-    if (!showMenu || !target?.path || !cmd) return;
+    if (!showMenu || !cmd || (!target?.path && !target?.viz)) return;
     try {
       const generation = sessionGeneration;
-      const where = await cmd('resolvePath', whereFrom(target));
+      const where = target.path ? await cmd('resolvePath', whereFrom(target)).catch(error => {
+        if (!target.viz) throw error;
+        // 消えた元のファイルだけ missing を立てる。権限など消失以外の失敗は missing にせずメニューは残す
+        // （保存版・HTML の保存・パスのコピーは元ファイルの読み取り権限と無関係。OS の操作は押した先の検査で断られる）
+        if (VIZ_NOT_FOUND.has(error?.code ?? error?.message)) target = { ...target, missing:true };
+        return {};
+      }) : {};
       if (generation !== sessionGeneration) return;
-      rememberFile(where);
-      target = { ...target, ...where };
+      if (where.path) { rememberFile(where); target = { ...target, ...where }; }
+      if (target.viz) {
+        showMenu(x, y, vizMenuItems(target, { variant:target.variant ?? 'row' }), target.path ?? target.viz.title);
+        return;
+      }
       showMenu(x, y, fileMenuItems(target, { osActions:osActions(),
         defaultAppAllowed:where.defaultAppAllowed === true, canUse:!!useFile, run:action => run(action, target) }), target.path);
     } catch (error) { failed(error); }
@@ -623,15 +753,27 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     const base = anchor.closest('.file-preview-document') ? file?.path : undefined;
     activate(ref, anchor, base);
   });
-  // 可視化のカードの「ページで開く」: 隔離オリジンの写し（アプリ専用の出どころ v<印>.localhost）を会話の Chrome のタブで開く。
+  // 可視化のカードの「ページで開く」: 元の HTML をページタブで開く。無い・消えたものは保存した版（隔離オリジンの写し）。
   // Chrome が無ければ右の欄へ（その場で広げるのは別の「広げる」ボタン。web/render.mjs・ADR 0295 の 4）
   document.addEventListener('ply-visualize-browser', event => {
     const d = event.detail;
     if (!d || !event.target?.isConnected) return;
     const sessionId = getContext(event.target)?.sessionId;
-    if (unified?.connected?.(sessionId) && unified.openTab)
-      return Promise.resolve(unified.openTab({ sessionId, kind:'viz', vizHash:d.bundle?.hash, entry:d.bundle?.entry, title:d.title, path:d.path ?? '' })).catch(failed);
+    if (openVisualization({ sessionId, path:d.path ?? '', hash:d.bundle?.hash, entry:d.bundle?.entry, title:d.title, element:event.target }))
+      return;
     return openPanel({ key:'visualization', title:d.title, body:visualizationFrame(d.content, d.title, { fill:true, bundle:d.bundle }), element:event.target });
+  });
+  // カードの「外で開く」: 元の HTML を既定のブラウザーへ（元のパスがあって、サーバーのある PC の画面のときだけボタンが出る）
+  document.addEventListener('ply-visualize-external', event => {
+    const d = event.detail;
+    if (d?.path && event.target?.isConnected) run('external', { path:d.path, element:event.target });
+  });
+  // カードの「⋯」: 可視化のメニュー（元のファイルをエクスプローラー・保存した版・パスをコピー・HTML を保存）
+  document.addEventListener('ply-visualize-menu', event => {
+    const d = event.detail;
+    if (!d || !event.target?.isConnected) return;
+    menu(d.x ?? 0, d.y ?? 0, { path:d.path ?? '', element:event.target, variant:'card',
+      viz:{ hash:d.hash, entry:d.entry, title:d.title }, withContent:d.withContent });
   });
   document.addEventListener('keydown', event => {
     if (panel.hidden || isComposingKey(event) || event.defaultPrevented || document.querySelector('dialog[open]')) return;
@@ -654,8 +796,12 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     configureBrowserUnify, tabMenu,
     /** 右パネルでファイルを開く（拡大表示の「右パネルで開く」） */
     open: (ref, element) => activate(ref, element),
-    /** ファイルの操作メニュー（拡大表示・会話の画像） */
+    /** ファイルの操作メニュー（拡大表示・会話の画像・ページの行の ⋯） */
     menu, reveal: (target) => osAction('revealPath', target),
+    /** 元の HTML を既定のブラウザーで開く（可視化のページ・タブの外で開く印） */
+    openExternal: (target) => run('external', target),
+    /** 可視化を開く（新しいタブの行・カード。元の HTML・保存した版・消失の切り替えはここ） */
+    openVisualization,
     /** 拡大表示の「既定のアプリで開く」を出してよいか（ホストの画面で、サーバーが許した種類の実体だけ） */
     defaultAppAllowed: async (target) => {
       if (!cmd || !unifiedEnabled() || !osActions() || !target?.path) return false;

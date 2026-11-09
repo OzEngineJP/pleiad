@@ -2916,6 +2916,8 @@
     "copyPathFailed": "Couldn't copy the path",
     "copyRelativeFailed": "Couldn't copy the relative path",
     "noRelative": "This file is outside the working directory, so it has no relative path",
+    "vizFallback": "The original file is gone — opened the saved version.",
+    "vizNotFound": "The original file was not found.",
     "actionFailed": "The action failed"
   },
   "timeline": {
@@ -2948,7 +2950,6 @@
         "visualization": "Visualization"
       },
       "namedVisualization": "Visualization: {{title}}",
-      "copyPath": "Copy path",
       "download": "Save HTML",
       "widen": "Widen",
       "open": "Open as page",

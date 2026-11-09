@@ -2852,6 +2852,8 @@
     "copyPathFailed": "パスをコピーできませんでした",
     "copyRelativeFailed": "相対パスをコピーできませんでした",
     "noRelative": "作業ディレクトリの外にあるため、相対パスはありません",
+    "vizFallback": "元のファイルが無いため、保存した版を開きました",
+    "vizNotFound": "元のファイルが見つかりません",
     "actionFailed": "操作できませんでした"
   },
   "timeline": {
@@ -2884,7 +2886,6 @@
         "visualization": "可視化"
       },
       "namedVisualization": "可視化: {{title}}",
-      "copyPath": "パスをコピー",
       "download": "HTML を保存",
       "widen": "広げる",
       "narrow": "元の幅に戻す",

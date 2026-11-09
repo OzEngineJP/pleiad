@@ -57,8 +57,14 @@ const css = `
 .bu-measure .bu-crumb{flex:none}.bu-views{display:inline-flex;flex:none;padding:2px;border-radius:999px;background:var(--surface-3)}
 .bu-views .bu-icon{width:auto;height:24px;padding:0 10px;gap:4px;font-size:12px;border-radius:999px}.bu-views svg{display:none;width:15px;height:15px}
 .bu-views .on{background:var(--surface-paper);box-shadow:0 1px 2px var(--shadow)}.bu-views.bu-icons svg{display:block}.bu-views.bu-icons span{display:none}.bu-views.bu-icons .bu-icon{padding:0 7px}
+.bu-saved{display:inline-flex;align-items:center;gap:5px;flex:none;height:22px;padding:0 9px;border-radius:11px;background:var(--surface-3);color:var(--ink-weak);font-size:12px}
+.bu-saved svg{width:13px;height:13px}.bu-saved-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.bu-external{width:28px;height:26px;border-radius:13px;flex:none;margin-left:2px}.bu-external svg{width:16px;height:16px}
 .bu-address-input{width:100%;min-width:0;flex:1;border:0;outline:0;background:none;color:var(--ink);font:inherit;font-size:13px;padding:0 8px;height:100%}
-.bu-editing .bu-omni{box-shadow:inset 0 0 0 2px var(--line-blue)}
+.bu-editing .bu-omni,.bu-omni:has(:focus-visible){box-shadow:none;outline:2px solid var(--line-blue);outline-offset:1px}
+.bu-editing .bu-omni{background:var(--surface-paper)}
+/* One ring only: no outlines inside the pill. Kept after .bu-chrome button:focus-visible (same specificity (0,2,1)). */
+.bu-omni button:focus-visible,.bu-omni input:focus-visible,.bu-crumbs:focus-visible{outline:none}
 .bu-suggestions,.bu-address-error{position:absolute;z-index:20;top:43px;left:8px;right:8px;background:var(--surface-paper);border-radius:var(--r-m);box-shadow:0 4px 16px var(--shadow);padding:6px}
 .bu-suggestion{display:block;width:100%;text-align:left;padding:8px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:var(--r-s)}.bu-suggestion:hover,.bu-suggestion[aria-selected=true]{background:var(--surface-2)}
 .bu-address-error{color:var(--ink-danger);font-size:13px;padding:10px 14px}.bu-conversation{display:none}.bu-toolbar .bu-count{display:none}
@@ -173,9 +179,10 @@ export function createBrowserUnify(deps = {}) {
    * Web のページは「既定のブラウザーで開く」（URL）。リモートの画面では外で開く操作を出さない（ADR 0010。モック v6 の 9）
    */
   const tabMenu = tab => {
-    const page = tab?.page?.path && ['file', 'dir', 'viz', 'html'].includes(tab.page.kind) ? { path:tab.page.path, kind:tab.page.kind === 'dir' ? 'directory' : 'file' } : null;
+    // 保存した版（kind:'viz'）は束の印（vizHash・entry）が要るので、タブをそのまま渡す
+    if (tab?.page?.kind === 'viz') return deps.preview?.tabMenu?.(tab) ?? [];
+    const page = tab?.page?.path && ['file', 'dir', 'html'].includes(tab.page.kind) ? { path:tab.page.path, kind:tab.page.kind === 'dir' ? 'directory' : 'file' } : null;
     if (page) return deps.preview?.tabMenu?.({ ...tab, page }) ?? [];
-    if (tab?.page?.kind === 'viz') return [{ label:t('tabs:display.copyTitle'), onClick:async () => { try { await navigator.clipboard.writeText(tab.title ?? ''); notify(t('timeline.code.copied')); } catch { notify(t('timeline.code.copyFailed')); } } }];
     if (tab?.page || !/^https?:\/\//i.test(tab?.url ?? '') || !osActions()) return [];
     return [{ label:t('browser.openExternal'), icon:menuIcon('web'), onClick:() => openExternalLink(tab.url) }];
   };
@@ -205,7 +212,7 @@ export function createBrowserUnify(deps = {}) {
       else if (/^(?:[a-z]:[\\/]|[./~])/i.test(input)) { const resolved = await cmd('resolvePath', { sessionId, path:input }); kind = resolved.kind === 'directory' ? 'dir' : 'file'; path = resolved.path; }
       else return null;
     }
-    const existing = path && pages.list(sessionId).find(tab => tab !== replace && samePath(tab.page?.path, path));
+    const existing = path && pages.list(sessionId).find(tab => tab !== replace && tab.page?.kind !== 'viz' && samePath(tab.page?.path, path));
     if (existing) { if (sessionId === session()) await pick(existing); return existing; }
     if (replace && !discard(replace)) return replace;
     const tab = await pages.open({ sessionId, kind:kind ?? 'new', path, vizHash, entry, title, line, url }, replace);
@@ -371,6 +378,8 @@ export function createBrowserUnify(deps = {}) {
     },
     });
   const address = createAddressBar({ navigate, cwd:() => state.cwd ?? '', suggest:input => cmd('chromeAddress', { sessionId:session(), input }), onClose:() => chrome()?.close(), onTabs:() => showOverview(),
+    // 元の HTML のタブの、外で開く印（アドレスの右端。OS の操作はサーバーのある PC の画面だけ）
+    externalFor:tab => tab?.page?.kind === 'html' && tab.page.path && osActions() ? () => deps.preview?.openExternal?.({ path:tab.page.path, sessionId:tab.sessionId }) : null,
     onDisplay:(anchor, tab) => { const rect = anchor.getBoundingClientRect(); showMenu(rect.left, rect.bottom, [
       { label:t('tabs:display.page'), checked:tab?.local && tab.mode !== 'chrome', disabled:!tab?.page || tab.page.kind === 'web', onClick:() => display('page').catch(failed) },
       { label:t('tabs:display.chrome'), checked:!tab?.local || tab.mode === 'chrome', onClick:() => display('chrome').catch(failed) },
@@ -644,7 +653,10 @@ export function createBrowserUnify(deps = {}) {
   }
   /** ファイルのページの頼み。worktree（requestId がある）は結果をページへ返す。メニューの位置はページの点から映像の上の点へ直す */
   async function pageRequest({ sessionId, targetId, request }) {
-    if (!request || typeof request !== 'object' || request.sessionId !== sessionId || !deps.onPageRequest) return;
+    // 端末経由でもページの頼みは未信頼: iframe の message と同じ検査（種別・形・長さ・送信元の会話）を通す
+    const checked = pageRequestOf({ type:'pleiad:page-request', request }, sessionId);
+    if (!checked || !deps.onPageRequest) return;
+    request = checked;
     const reply = (ok, value) => cmd('pageResult', { sessionId, targetId, requestId:request.requestId, ok,
       ...(ok ? { result:value ?? null } : { error:String(value?.message ?? value ?? 'unavailable').slice(0, 200) }) }).catch(() => {});
     try {
@@ -657,6 +669,8 @@ export function createBrowserUnify(deps = {}) {
     root, tabs:strip, address, navigate,
     /** その会話のタブ（web/file-preview.mjs の configureBrowserUnify。同じファイルのタブを使い回す） */
     tabsOf:allTabs,
+    /** 使い回したタブへ今回の可視化の記録を付ける（web/page-tabs.mjs の markViz） */
+    markViz:(tab, viz) => pages.markViz?.(tab, viz),
     /** 利用者のページタブを開く（ファイルのリンク・可視化） */
     async openTab(input) {
       const { sessionId, url, ...request } = input;

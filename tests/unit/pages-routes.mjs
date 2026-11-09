@@ -42,7 +42,7 @@ export async function createFixture() {
   await fs.writeFile(path.join(uploadDir, 'alpha.txt'), 'attachment alpha');
   await fs.writeFile(path.join(uploadDir, 'beta.txt'), 'attachment beta');
   const sessions = { alpha:{ title:'ブラウザー統合', cwd }, beta:{ cwd:scratch }, review:{ cwd } };
-  const calls = [], issued = [], watched = [];
+  const calls = [], issued = [], watched = [], vizCalls = [];
   const pageWatch = createPageWatch({ watch:() => ({ close() {} }) });
   const env = { lang:'ja', theme:'light' };
   const deps = {
@@ -57,7 +57,13 @@ export async function createFixture() {
     htmlKeys:{ issue:async args => { issued.push(args); return 'fixture-key'; } },
     watch:{ add:(...args) => { watched.push(args); pageWatch.add(...args); } },
     secret:crypto.randomBytes(32),
-    visualizations:id => id === 'alpha' ? [{ title:'図', url:'http://localhost:49199/viz/abc/index.html?embed=tab' }, { title:'外', url:'http://localhost:5173/viz/abc/index.html' }] : [],
+    visualizations:id => id === 'alpha' ? [
+      { title:'図', url:'http://localhost:49199/viz/abc/index.html?embed=tab', hash:'a'.repeat(64), entry:'index.html', path:path.join(cwd, 'index.html'), at:'2026-11-06T00:10:00Z' },
+      { title:'消えた', url:'http://localhost:49199/viz/def/index.html?embed=tab', hash:'b'.repeat(64), entry:'index.html', path:path.join(cwd, 'gone.html'), at:'2026-11-06T00:11:00Z' },
+      { title:'元なし', url:'http://localhost:49199/viz/ghi/index.html?embed=tab', hash:'c'.repeat(64), entry:'index.html', at:'2026-11-06T00:12:00Z' },
+      { title:'外', url:'http://localhost:5173/viz/abc/index.html' },
+    ] : [],
+    vizEntry:async (id, hash, entry) => { vizCalls.push([id, hash, entry]); return id === 'alpha' && hash === 'a'.repeat(64) && entry === 'index.html' ? '<h1>saved viz</h1>' : null; },
     ops:async (actor, id, input) => {
       calls.push({ actor, id, input });
       let result;
@@ -80,7 +86,7 @@ export async function createFixture() {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const url = (route, params = {}, id = 'alpha') => `${origin}/_pleiad/s/${id}/${route}?${new URLSearchParams(params)}`;
   const close = async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); pageWatch.close(); await fs.rm(scratch, { recursive:true, force:true }); };
-  return { cwd, scratch, dataDir, uploadDir, origin, url, close, calls, issued, watched, env, sessions, pageWatch };
+  return { cwd, scratch, dataDir, uploadDir, origin, url, close, calls, issued, watched, vizCalls, env, sessions, pageWatch };
 }
 
 export default async function (t) {
@@ -206,7 +212,19 @@ export default async function (t) {
     t.ok('プラグインの一覧は保護されたパス・設定・注入した本文を返さない', plugins.body.report.entries.length === 3 && !JSON.stringify(plugins.body).includes('SECRET') && !JSON.stringify(plugins.body).includes('private injected'));
     const recent = await get('api/recent');
     t.ok('最近のファイルは会話の範囲を検査し重複を除く', recent.body.files.some(e => e.name === 'README.md' && e.source === 'edited') && recent.body.files.filter(e => e.name === 'README.md').length === 1 && !recent.body.files.some(e => ['beta.txt', 'secret.json'].includes(e.name)));
-    t.ok('可視化はこの会話の隔離の origin のものだけ出す', recent.body.visualizations.length === 1 && recent.body.visualizations[0].url === 'http://localhost:49199/viz/abc/index.html?embed=tab');
+    t.ok('可視化はこの会話の隔離の origin のものだけ出す', recent.body.visualizations.length === 3 && recent.body.visualizations[0].url === 'http://localhost:49199/viz/abc/index.html?embed=tab');
+    const [vizRow, goneRow, noPathRow] = recent.body.visualizations;
+    const realIndex = await fs.realpath(path.join(f.cwd, 'index.html'));
+    t.ok('可視化は束の印・入口・時刻と、検査した実体の元のパスを載せる',
+      vizRow.hash === 'a'.repeat(64) && vizRow.entry === 'index.html' && vizRow.path === realIndex && vizRow.at === '2026-11-06T00:10:00Z' && vizRow.missing !== true, JSON.stringify(vizRow));
+    t.ok('元のファイルが消えたものだけ missing を付けてパスを残す（元の記録が無いものは missing ではない）',
+      goneRow.missing === true && goneRow.path === path.join(f.cwd, 'gone.html') && !Object.hasOwn(noPathRow, 'path') && noPathRow.missing !== true, JSON.stringify(recent.body.visualizations));
+    const vizSave = await fetch(f.url('api/viz', { hash:'a'.repeat(64), entry:'index.html' }));
+    t.ok('api/viz は会話の記録にある束の HTML を返す', vizSave.status === 200 && (await vizSave.text()) === '<h1>saved viz</h1>' && f.vizCalls[0][0] === 'alpha');
+    const vizBad = await Promise.all([{ hash:'d'.repeat(64), entry:'index.html' }, { hash:'a'.repeat(64), entry:'other.html' }, { hash:'not-a-hash', entry:'index.html' }]
+      .map(async params => (await fetch(f.url('api/viz', params))).status));
+    const vizOther = await fetch(f.url('api/viz', { hash:'a'.repeat(64), entry:'index.html' }, 'beta'));
+    t.ok('api/viz は形の外・ほかの会話の束を 404 で断る', vizBad.every(status => status === 404) && vizOther.status === 404);
     const deviceRecent = await get('api/recent', {}, 'alpha', { 'x-test-via':'main', 'x-pleiad-page-ports':JSON.stringify({ main:43001, pages:43001, isolated:43002 }) });
     t.ok('スマホの道では可視化の URL を端末の隔離の port にする', deviceRecent.body.visualizations[0].url === 'http://localhost:43002/viz/abc/index.html?embed=tab');
     const other = await get('api/recent', {}, 'beta');

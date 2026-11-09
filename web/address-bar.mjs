@@ -1,6 +1,6 @@
 import { t } from './i18n.mjs';
 import { tabCountBadge } from './tab-count-badge.mjs';
-import { browserButton } from './tab-strip.mjs';
+import { browserButton, browserIcon } from './tab-strip.mjs';
 
 // i18n-dynamic: tabs:address.reasons.
 // i18n-dynamic: tabs:address.locations.
@@ -17,7 +17,7 @@ export function addressCrumbs(file) {
 
 export const hasFileViews = tab => (tab?.page?.kind === 'file' && /\.(?:md|markdown|html?|csv|tsv|svg)$/i.test(tab.page.path ?? '')) || tab?.page?.kind === 'html';
 
-export function createAddressBar({ navigate = async () => {}, suggest = async () => ({}), cwd = () => '', onMenu = () => {}, onTabs = () => {}, onClose = () => {}, onDisplay = null, mobile = () => matchMedia('(max-width: 600px)').matches } = {}) {
+export function createAddressBar({ navigate = async () => {}, suggest = async () => ({}), cwd = () => '', onMenu = () => {}, onTabs = () => {}, onClose = () => {}, onDisplay = null, externalFor = null, mobile = () => matchMedia('(max-width: 600px)').matches } = {}) {
   const root = document.createElement('div'); root.className = 'bu-toolbar';
   const back = browserButton('back', t('tabs:address.back'), () => run('back'));
   const forward = browserButton('forward', t('tabs:address.forward'), () => run('forward'));
@@ -43,7 +43,9 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   menu.classList.add('bu-more');
   const display = document.createElement('button'); display.type = 'button'; display.className = 'bu-display';
   display.setAttribute('aria-haspopup', 'menu'); display.onclick = () => onDisplay?.(display, tab);
-  omni.append(tree, crumbs, views, input); root.append(conversation, back, forward, reload, omni, display, count, menu, list, error);
+  // 元の HTML のタブの右端の「外で開く」（既定のブラウザー）。出せるときだけ externalFor が動作を返す
+  const external = browserButton('external', t('browser.openExternal'), () => externalFor?.(tab)?.()); external.classList.add('bu-external'); external.hidden = true;
+  omni.append(tree, crumbs, views, external, input); root.append(conversation, back, forward, reload, omni, display, count, menu, list, error);
   let tab = null, view = 'preview', ticket = 0, timer = 0, active = -1, suggestions = [], blockedInput = null, lastTotal = 0;
   const savedViews = new Map();
   const reason = code => t(`tabs:address.reasons.${code}`, { defaultValue: t('tabs:address.failed') });
@@ -60,7 +62,7 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     if (!input.hidden) return;
     ticket++; clearTimeout(timer); suggestions = []; blockedInput = null; active = -1; list.hidden = true; error.hidden = true; crumbs.hidden = true; tree.hidden = true; views.hidden = true;
     input.hidden = false; input.value = tab?.page?.path ?? (tab?.page?.kind === 'viz' ? tab.title : tab?.page?.kind === 'new' ? '' : tab?.url ?? ''); input.focus(); input.select();
-    root.classList.add('bu-editing');
+    external.hidden = true; root.classList.add('bu-editing');
   }
   function cancel() { ticket++; clearTimeout(timer); input.hidden = true; list.hidden = true; error.hidden = true; root.classList.remove('bu-editing'); show(tab); }
   async function submit(value = input.value) {
@@ -138,9 +140,16 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
     count.setAttribute('aria-label', t('tabs:address.openTabs', { count: total }));
     if (!input.hidden) return;
     back.disabled = !tab?.canGoBack; forward.disabled = !tab?.canGoForward; reload.disabled = !tab;
-    const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = !['file', 'dir', 'html'].includes(tab?.page?.kind) && !(tab?.page?.kind === 'viz' && file);
+    const file = Boolean(tab?.page?.path); omni.classList.toggle('bu-file', file); tree.hidden = !['file', 'dir', 'html'].includes(tab?.page?.kind);
+    external.hidden = !(externalFor?.(tab) && !mobile());
     crumbs.hidden = false; crumbs.replaceChildren();
-    if (file && tab.page.kind !== 'attachment' && !mobile()) {
+    if (tab?.page?.kind === 'viz') {
+      // 保存した版: 元のパスは現在の出どころではないので出さず、印と題だけを出す（元パスは ⋮ の操作が使う）
+      const chip = document.createElement('span'); chip.className = 'bu-saved';
+      chip.append(browserIcon('saved'), document.createTextNode(t('tabs:address.savedVersion')));
+      const name = document.createElement('span'); name.className = 'bu-saved-title';
+      name.textContent = tab.page.title || tab.title || ''; crumbs.append(chip, name); crumbs.title = name.textContent;
+    } else if (file && tab.page.kind !== 'attachment' && !mobile()) {
       const all = addressCrumbs(tab.page.path);
       all.forEach((part, index) => {
         const current = index === all.length - 1;

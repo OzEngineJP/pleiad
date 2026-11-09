@@ -92,6 +92,25 @@ export default async function (t) {
     const rid = '0f8fad5b-d9cb-469f-a165-70867728950e';
     t.ok('worktree の keep は id と真偽だけ', JSON.stringify(ok({ type: 'worktree', sessionId: 'one', action: 'keep', requestId: rid, id: 'w1', kept: true, row: { a: 1 } }).request) === JSON.stringify({ type: 'worktree', sessionId: 'one', action: 'keep', requestId: rid, id: 'w1', kept: true }));
     t.ok('worktree は知らない action・requestId の無いものを捨てる', !ok({ type: 'worktree', sessionId: 'one', action: 'delete', requestId: rid, row: {} }).ok && !ok({ type: 'worktree', sessionId: 'one', action: 'ask', row: {} }).ok && !ok({ type: 'worktree', sessionId: 'one', action: 'ask', requestId: 'x y', row: {} }).ok);
+    const hash64 = 'a'.repeat(64);
+    const openViz = ok({ type: 'open-viz', sessionId: 'one', viz: { hash: hash64, entry: 'index.html', title: '図' }, path: '/w/chart.html', missing: true, junk: 1 });
+    t.ok('open-viz は viz・path・missing だけを写す（知らない欄は落とす）',
+      openViz.ok && JSON.stringify(openViz.request) === JSON.stringify({ type: 'open-viz', sessionId: 'one', viz: { hash: hash64, entry: 'index.html', title: '図' }, path: '/w/chart.html', missing: true }), JSON.stringify(openViz));
+    t.ok('open-viz は形の合う束の印（64 hex）だけを受ける',
+      !ok({ type: 'open-viz', sessionId: 'one' }).ok && !ok({ type: 'open-viz', sessionId: 'one', viz: { hash: 'zz' } }).ok
+      && !ok({ type: 'open-viz', sessionId: 'one', viz: { hash: hash64.toUpperCase() } }).ok && !ok({ type: 'open-viz', sessionId: 'one', viz: 'x' }).ok);
+    t.ok('viz の入口・題は上限まで・NUL は捨てる',
+      !ok({ type: 'open-viz', sessionId: 'one', viz: { hash: hash64, entry: 'a'.repeat(2001) } }).ok
+      && ok({ type: 'open-viz', sessionId: 'one', viz: { hash: hash64, entry: 'a'.repeat(2000), title: 'a'.repeat(2000) } }).ok
+      && !ok({ type: 'open-viz', sessionId: 'one', viz: { hash: hash64, title: 'a'.repeat(2001) } }).ok
+      && !ok({ type: 'open-viz', sessionId: 'one', viz: { hash: hash64, entry: 'a\0b' } }).ok);
+    const vizMenu = ok({ type: 'file-menu', sessionId: 'one', viz: { hash: hash64 }, x: 1, y: 2, missing: true });
+    t.ok('file-menu は元パスの記録の無い可視化の行も viz だけで開ける',
+      vizMenu.ok && vizMenu.request.viz.hash === hash64 && !('path' in vizMenu.request) && vizMenu.request.missing === true && vizMenu.request.x === 1, JSON.stringify(vizMenu));
+    t.ok('file-menu はパスと viz の両方を写す・形の違う viz は落としてパスがあれば通す',
+      ok({ type: 'file-menu', sessionId: 'one', path: 'a.txt', viz: { hash: hash64 }, x: 1, y: 2 }).request.viz.hash === hash64
+      && !ok({ type: 'file-menu', sessionId: 'one', viz: { hash: 'bad' }, x: 1, y: 2 }).ok
+      && ok({ type: 'file-menu', sessionId: 'one', path: 'a.txt', viz: { hash: 'bad' }, x: 1, y: 2 }).request.viz === undefined);
     t.ok('worktree の行は JSON の写し（上限と深さの外は捨てる）', ok({ type: 'worktree', sessionId: 'one', action: 'archive', requestId: rid, row: { path: '/w', leftover: { id: 'l' } } }).ok
       && !ok({ type: 'worktree', sessionId: 'one', action: 'archive', requestId: rid, row: { big: 'a'.repeat(20000) } }).ok
       && !ok({ type: 'worktree', sessionId: 'one', action: 'archive', requestId: rid, row: { a: { b: { c: { d: { e: { f: { g: 1 } } } } } } } }).ok
@@ -116,6 +135,22 @@ export default async function (t) {
     t.ok('置き場に無い会話の頼みは捨てる', await requests.accept({ type: 'use-file', sessionId: 'gone', path: '/work/x' }, { ...ctx, sessionId: 'gone' }) === null);
     t.ok('届ける画面（by）が無ければ捨てる', await requests.accept({ type: 'use-text', sessionId: 'one', text: 'x' }, { sessionId: 'one', by: null }) === null);
     t.ok('パスを持たない頼みは形の検査だけ', (await requests.accept({ type: 'use-text', sessionId: 'one', text: 'hello' }, ctx))?.text === 'hello');
+    const hash64 = 'a'.repeat(64);
+    const openViz = await requests.accept({ type: 'open-viz', sessionId: 'one', viz: { hash: hash64 }, path: 'chart.html' }, ctx);
+    t.ok('open-viz のパスも作業フォルダーで解き、検査した実体のパスに置き換える', openViz?.path === '/real/work/chart.html' && openViz.viz.hash === hash64, JSON.stringify(openViz));
+    const vizOnly = await requests.accept({ type: 'file-menu', sessionId: 'one', viz: { hash: hash64 }, x: 1, y: 2 }, ctx);
+    t.ok('元パスの記録の無い可視化のメニューはパスの検査なしで通す', vizOnly?.viz?.hash === hash64 && !('path' in vizOnly));
+    const gone = createPageRequests({ ...deps, inspect: async () => { throw fail('ENOENT'); } });
+    const goneMenu = await gone.accept({ type: 'file-menu', sessionId: 'one', path: '/work/gone.html', viz: { hash: hash64 }, x: 1, y: 2 }, ctx);
+    t.ok('可視化の元のファイルが消えていても missing を付けてパスを残す（画面が保存版へ切り替えて知らせる）',
+      goneMenu?.missing === true && goneMenu.path === '/work/gone.html' && goneMenu.viz.hash === hash64, JSON.stringify(goneMenu));
+    const denied = await requests.accept({ type: 'file-menu', sessionId: 'one', path: '/secret/x', viz: { hash: hash64 }, x: 1, y: 2 }, ctx);
+    t.ok('権限など消失以外の断られはパスだけ落とす（元パス不明と同じ正常系・可視化は通す）', denied?.viz?.hash === hash64 && !('path' in denied) && denied.missing !== true, JSON.stringify(denied));
+    const deniedOpen = await requests.accept({ type: 'open-viz', sessionId: 'one', path: '/secret/x', viz: { hash: hash64 } }, ctx);
+    t.ok('open-viz も同じ扱い（消失なら missing・権限ならパスを落とす）',
+      deniedOpen?.viz?.hash === hash64 && !('path' in deniedOpen)
+      && (await gone.accept({ type: 'open-viz', sessionId: 'one', path: '/work/gone.html', viz: { hash: hash64 } }, ctx))?.missing === true);
+    t.ok('viz の無い file-menu は従来どおりパスの検査で捨てる', await requests.accept({ type: 'file-menu', sessionId: 'one', path: '/secret/x' }, ctx) === null);
   }
 
   // ===== 3. 中継の口（偽のタブ）: 付ける先・呼び元の world・人の操作・上限 =====

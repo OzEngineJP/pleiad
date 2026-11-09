@@ -6,7 +6,9 @@
     "update": "Show update",
     "discard": "Discard your input and reload?",
     "resume": "Return to AI",
-    "copyTitle": "Copy title"
+    "copyTitle": "Copy title",
+    "openOriginal": "Open original file",
+    "openSaved": "Open saved version"
   },
   "tree": {
     "close": "Close tree",
@@ -34,6 +36,7 @@
     "view": "File view",
     "preview": "Preview",
     "source": "Source",
+    "savedVersion": "Saved version",
     "showSource": "Show source",
     "locations": {
       "viz": "Visualization",

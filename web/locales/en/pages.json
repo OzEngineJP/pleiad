@@ -23,7 +23,8 @@
     "changes": "{{count}} changed files",
     "conversation": "This conversation", "git": "git", "plugins": "Plugins", "recent": "Recent files", "folders": "Working folders",
     "emptyRecent": "Files opened in this conversation appear here.", "emptyFolders": "No working folder yet.",
-    "sources": { "read": "Read", "edited": "Edited", "attached": "Attached", "opened": "Opened" }
+    "sources": { "read": "Read", "edited": "Edited", "attached": "Attached", "opened": "Opened" },
+    "visualizations": "Visualizations", "showAll": "Show all ({{count}})", "showLess": "Show less", "savedVersion": "Saved version"
   },
   "plugins": {
     "instruction": "Instructions", "skill": "Skills", "mcp": "Connections", "empty": "No items were loaded for this conversation.",
