@@ -37,7 +37,7 @@ export default function(t) {
   };
   const ctx = vm.createContext({ el: make, $: id => nodes[id], runMark, satMark, t: key => key, thread, log: {},
     runningTools: { size: 0, clear() {}, el: new N("div") }, matchMedia: () => ({ matches: true }),
-    paintingHistory: false, paintBefore: null, atBottom: () => false,
+    paintingHistory: false, replayPainting: false, paintBefore: null, atBottom: () => false,
     Date, setTimeout, clearTimeout, setInterval: fn => { timers.add(fn); return fn; }, clearInterval: fn => timers.delete(fn),
     turnStartHere: () => 1, behindHere: () => behind, stoppingHere: () => false,
     isRunningHere: () => running, backgroundCounts: () => ({ live }), relayoutBranches() {},

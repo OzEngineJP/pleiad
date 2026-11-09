@@ -115,7 +115,7 @@ export default async function (t) {
 
   /** 画面にモジュールを付ける。historyAnchor と atBottom は client.mjs の本物 */
   const attach = (s, options = {}) => {
-    const context = vm.createContext({ log: s.log, thread: s.thread });
+    const context = vm.createContext({ log: s.log, thread: s.thread, replayPainting: false });
     vm.runInContext(`${atBottomSource}\n${anchorSource}\nthis.atBottom = atBottom; this.historyAnchor = historyAnchor;`, context);
     return createHeightSettler({
       log: s.log, thread: s.thread, atBottom: context.atBottom, anchorRow: context.historyAnchor,
