@@ -175,14 +175,14 @@ setup-token が発行するトークンの scope は `user:inference` だけで�
 
 この PC の OS 通知と、離れたスマホへの通知を同じ出来事から出す（[ADR 0086](adr/0086-notifications-through-relay.md)）。
 
-- **種類**: 返事が要る（承認・質問）・失敗（ターンの outcome が error。中断と、ホストが離れたことによる終わりは送らない）・完了。委譲の子の会話の完了は送らない（依頼元の完了に含む）。空いている間の自動圧縮のターンも送らない。bot の会話（Channels のスレッド・DM・ルーティン）は、PC もスマホも完了を出さず、失敗・承認・質問は出す（完了はスレッドで見える。[ADR 0109](adr/0109-bot-and-dispatch.md)・[ADR 0127](adr/0127-hidden-conversations-quiet.md)）。夜の記憶の整理・心拍の隠れた会話は、完了も失敗も出さない（失敗は bot のページで見える。ADR 0127）。完了と失敗は、子の作業や裏の作業が残る間は待ち、会話が落ち着いてから 1 回だけ（`core/completion-notices.mjs`。画面が居なくても、スマホへはその時点で送る）。
+- **種類**: 返事が要る（承認・質問）・失敗（ターンの outcome が error。中断と、ホストが離れたことによる終わりは送らない）・完了。委譲の子の会話の完了は送らない（依頼元の完了に含む）。空いている間の自動圧縮のターンも送らない。bot の会話（Channels のスレッド・DM・ルーティン）は、PC もスマホも完了を出さず、失敗・承認・質問は出す（完了はスレッドで見える。[ADR 0109](adr/0109-bot-and-dispatch.md)・[ADR 0127](adr/0127-hidden-conversations-quiet.md)）。夜の記憶の整理・心拍の安い判断は内部呼び出しで行い、会話を作らない（下「内部呼び出し」）。完了も失敗も出さない（失敗・停止は記憶の設定・bot のページで見える。ADR 0127）。完了と失敗は、子の作業や裏の作業が残る間は待ち、会話が落ち着いてから 1 回だけ（`core/completion-notices.mjs`。画面が居なくても、スマホへはその時点で送る）。
 - **見ている会話**: 各画面は「いま見ている会話」を `presence { visible, sessionId }` でホストへ送る（会話を移した・窓が隠れた/現れた・つなぎ直したときと、見ている間は 1 分ごと。`web/presence.mjs`）。ホストは 150 秒更新の無い印を捨て、接続が閉じたら消す（`core/notify/presence.mjs`）。スマホのアプリが背面に回った間は、画面が可視でも見ていない。
 - **この PC**: 設定 › 通知 › この PC の 3 つ（完了・返事待ち・失敗。既定はすべてオン。`<data>/notify.json`）で切った種類は出さない。その会話を見ている間も出さない（出さなかった分は後から出し直さない）。
 - **スマホ**（`core/notify/`）: ホストが端末ごとに判定し、端末ごとの通知鍵で暗号化して中継の通知の線へ渡す（`docs/remote.md` §5.6・§11-5）。送らない: 端末で切った種類・ホストで止めた端末・その端末自身の画面がその会話を見ている・他の画面（PC・別の端末）が見ていて端末の設定「PC で見ている会話は送らない」（既定オン）・2 分より古い完了・30 秒未満のターンの完了。承認・質問がどこかで決着した（ターンの終わりを含む）ら、出ている通知へ取り消しを送る。完了・失敗の会話をどこかで開いた・既読にしたときも取り消す。会話名は一覧の行と同じ題（無ければ空で、端末が「Pleiad の会話」にする）。
 - **端末の出し方**（Android。`NotifyPlanner`・`NotifyPresenter`。束ね方と文面の形は承認済み（2026-10-25、[ADR 0269](adr/0269-mobile-notify-open-bundle.md)））: 同じ会話は 1 通を上書きする。題は会話名（無ければ「Pleiad の会話」）、本文は出来事（承認・質問が複数なら「◆ 承認を待っています（N 件）」と本文に件数が入る）で、畳まれた 1 行でもどの会話か読める。完了は会話ごとに 1 通を残したまま、2 件目からホストごとのまとめ「N 件の会話が終わりました」を親（グループの summary）として重ねる。新しい完了が届くと鳴るのは 1 回（届いた子は静かに出し、まとめが知らせる）。子が押される・どこかで見られて消える・承認に上書きされるたびに、まとめは件数を付けて静かに出し直し、1 件に戻れば消える。まとめを押すと完了の子も全部消え、最新の会話が開く。チャンネルは「要対応」（承認・質問・失敗）と「完了」。通知のグループはホストごとで、ホスト名をサブテキストに出す。ロック画面は既定で汎用の文。押すと `pleiad://open?h=&s=` でそのホストの窓がその会話を開く（開ける経路は自分の中継・Pleiad Plus のどちらでもよい—`HostRoute.openable`。開くときの経路は `routeFor` が決める）。端末の許可待ちの通知だけ今までの形（題=出来事、本文=「端末「x」が追加の許可を待っています」）。通知から直接の許可は付けない。
 - **設定**: スマホのアプリの「通知」（受け取る・返事が要るとき・失敗・完了・ロック画面に会話名を出す・PC で見ている会話は送らない）は端末ごとで、変えたらホストへ登録し直す。デスクトップの設定 › 通知 の「スマホ」は、ペアリングしたスマホの一覧（最後に送った時刻・オン/オフ）で、ホスト側で止める切り替えだけを持つ。
 - **通知の一覧**（ベルのボタン。[ADR 0149](adr/0149-notification-inbox.md)）: OS 通知・スマホの通知は出して消えるが、あなた向けの出来事はサーバーの DB（`pleiad.db` の `notifications` 表。1 件 1 行。`LATE_TABLES_SQL` で足す表で、形式番号は上げない。欠けても失う記録は無い）にも残し、画面のベルの面から辿って飛べる。書くのは `core/notification-sources.mjs`（出来事の起きる場所から。`core/notifications.mjs` が表を持つ）。
-  - **載せる種類**: `wait`（あなた待ち。承認・質問。成立で載り、決着で `resolvedAt`・`outcome`（allowed・answered・denied・cancelled）が付いて既読になる。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ。隠れた会話は載せない）・`failed`・`done`（ターンの終わり。`completionNotices` が会話を落ち着いてから 1 回出す点で書く。bot の会話は失敗だけ、隠れた会話（learner・pulse）・委譲の子・空き時間の自動圧縮は載せない。今の通知の規則と同じ）・`mention`（人以外の投稿の `@あなた`。投稿の追加・編集で書く）。チャンネルの新着・ルーティンの結果・委譲の完了は載せない。
+  - **載せる種類**: `wait`（あなた待ち。承認・質問。成立で載り、決着で `resolvedAt`・`outcome`（allowed・answered・denied・cancelled）が付いて既読になる。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ。隠れた会話は載せない）・`failed`・`done`（ターンの終わり。`completionNotices` が会話を落ち着いてから 1 回出す点で書く。bot の会話は失敗だけ、内部呼び出し（記憶の整理・心拍の安い判断。ターンの終わりを持たない）・委譲の子・空き時間の自動圧縮は載せない。今の通知の規則と同じ）・`mention`（人以外の投稿の `@あなた`。投稿の追加・編集で書く）。チャンネルの新着・ルーティンの結果・委譲の完了は載せない。
   - **飛び先**: 会話の通知は `sessionId` と、ターンの最後の発言の `uuid`（`text.end` の uuid。無いバックエンドは会話の末尾へ）。bot の会話のターン・承認はチャンネルとスレッド（`channelId`・`threadId`）、`@あなた` は加えて `postId`。名前（会話の題・bot・チャンネル・スレッドの題）は載せた時点の控え（画面は会話の題だけ今のものを先に使う）。
   - **重複しない**: `dedupeKey`（完了・失敗 `done:<会話>:<completedAt>`・`failed:…`、あなた待ち `wait:<承認の id>`、メンション `mention:<投稿の id>`）が同じなら載せない。同じ出来事を何度渡してもよい。
   - **既読**: 通知ごと（`read_at`）。会話の `markRead`（`readAt` まで）・その会話を見た（`presence`）・チャンネルの `channels.markRead`（`readAt` まで。bot の会話の通知はチャンネルの既読でも）で、対応する通知も既読になる。いま見ている会話で起きたものは最初から既読で載る。
@@ -192,7 +192,7 @@ setup-token が発行するトークンの scope は `user:inference` だけで�
 
 ## タイトル生成（2026-09-15）
 
-明示操作のタイトル候補生成は、会話のモデル・エフォートを引き継がず、生成側の軽量モデルを使う。Claude は `haiku`、Codex は `gpt-5.6-luna` / `low`。Codex は `model/list` から選び、`gpt-5.6-luna` が無ければ名前に luna / mini / nano / spark を含むもの（この順）、それも無ければ model を渡さず codex の既定（config.toml / isDefault。会話のモデルではない）に任せる。`low` は選んだモデルが対応する（または段が分からない）ときだけ渡す。一覧に無いモデルを名指しして生成ごと落ちるのを避けるため。Codex は一時スレッドで実行する。モデル選定: https://learn.chatgpt.com/docs/models 。
+明示操作のタイトル候補生成は、会話のモデル・エフォートを引き継がず、生成側の軽量モデルを使う。Claude は `haiku`、Codex は `gpt-5.6-luna` / `low`。Codex は `model/list` から選び、`gpt-5.6-luna` が無ければ名前に luna / mini / nano / spark を含むもの（この順）、それも無ければ model を渡さず codex の既定（config.toml / isDefault。会話のモデルではない）に任せる。`low` は選んだモデルが対応する（または段が分からない）ときだけ渡す。一覧に無いモデルを名指しして生成ごと落ちるのを避けるため。生成は内部呼び出し（下「内部呼び出し」、`kind: 'title'`）で行い、Pleiad の会話にも接続先の会話履歴にも残さない。分離して呼べないエージェント（能力の印 `internalCall` が `impossible`）では生成せず `UNSUPPORTED` で断る（通常会話への切り替えはしない）。モデル選定: https://learn.chatgpt.com/docs/models 。
 
 
 ## 使用量（2026-09-14）
@@ -280,9 +280,19 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 返答が終わった会話の、空の入力欄にグレーで出す次のメッセージの候補（見た目は design-system.md「入力欄の呼び出しと候補」、[ADR 0211](adr/0211-prompt-suggestions-and-history-recall.md)）。設定 › 入力の「次のメッセージの候補を表示する」（`composer.suggestions`。既定オン）で止められる。作るのは成功で終わったターンの後だけで、委譲の子・bot・圧縮のターンには作らない。候補は保存せず、`promptSuggestion` の出来事（`{ sessionId, text }`）で全部の画面へ流し、画面が会話ごとに最後の 1 つを持つ。送った・別の端末から発言が入ったら捨てる。次のターンが始まったら、作りかけは止める（`core/prompt-suggestions.mjs` の `createSuggestionJobs`）。
 - **Claude**: Claude Code の予測（Agent SDK の `promptSuggestions`）。ターンの中で `prompt_suggestion` が届く（`result` の後。最初のターン・プランモード・最後の返答でキャッシュに 1 万トークンを超えて書いた・使用量の上限に達したときは来ない）。CLI は使用枠の警告（`allowed_warning`。週次 95% など）の間も既定では作らないので、候補を頼むターンには `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=true` を付けて警告の間も作らせる（2026-10-17。付けないと上限の近くで候補が出ないままになっていた）。親の会話のキャッシュに相乗りするので、ほぼ使用量を使わない。Pleiad が `result` の直後に入力を閉じても届き、resume で起こし直したプロセスの 1 ターン目でも届く（2026-10-15 実測）
-- **Codex・Antigravity**: ネイティブの予測が無い（Codex の app-server に口が無い。TUI には 2026-09-24 に入り 09-27 に外された。ChatGPT のデスクトップの「composer predictions」は app-server から使えない）。ターンの後に、直近の発言（人と AI の本文。新しい方から 8 件・最後の返答は 4000 字・ほかは 1500 字）の要約を、指示（Codex の TUI の予測の指示に、要約で渡すことを足したもの）と一緒に軽いモデルへ 1 回渡し、`{"suggestion": …}` の JSON で受ける（`backend.suggestNext`）。1 行・240 字まで。会話の長さによらず 1 回の費用がほぼ一定。
+- **Codex**: ネイティブの予測が無い（Codex の app-server に口が無い。TUI には 2026-09-24 に入り 09-27 に外された。ChatGPT のデスクトップの「composer predictions」は app-server から使えない）。ターンの後に、直近の発言（人と AI の本文。新しい方から 8 件・最後の返答は 4000 字・ほかは 1500 字）の要約を、指示（Codex の TUI の予測の指示に、要約で渡すことを足したもの）と一緒に軽いモデルへ 1 回渡し、`{"suggestion": …}` の JSON で受ける（`backend.suggestNext` → 内部呼び出し `kind: 'suggest'`。下「内部呼び出し」。Pleiad の会話にも接続先の会話履歴にも残さない）。1 行・240 字まで。会話の長さによらず 1 回の費用がほぼ一定。
   Codex はタイトルと同じ軽いモデルの使い捨てのスレッド（`ephemeral`）。会話の fork（`thread/fork`）は使わない（fork は新しいスレッドの id でキャッシュが分かれ、会話の部分がキャッシュに乗らない。2026-10-15 実測）。会話で選んだ互換の接続先があればそれで回す。
-  Antigravity は `agy --print` を Flash の low で 1 回。`agy --print` は 1 回ごとに会話を利用者の履歴（`~/.gemini/antigravity-cli/`）に残すので、agy の状態の置き場（`USERPROFILE`・`HOME`）だけを一時フォルダーの下の使い捨ての場所（`pleiad-agy-suggest`）へ向けて起こす（ログインは OS の資格情報にあり、そのまま通る）。回ごとにその回の会話の置き場を消し、消せずに残った 10 分より古いものと 2 MB を超えた要約の DB も、次に起こす前に消す（`core/backends/antigravity-suggest.mjs`）
+- **Antigravity・Devin・Grok・OpenCode**: 候補は内部呼び出しで作るので、内部呼び出しを分離できないこれらのエージェントでは出さない（能力の印 `promptSuggestions` と `internalCall` が `impossible`）。設定 › 入力のスイッチの説明にエージェント名と理由を出す（2026-11-09。Antigravity は `agy --print` を使い捨ての置き場で回していたが、内蔵の道具・hook を外せることを確かめられないため止めた）
+
+## 内部呼び出し（2026-11-09）
+
+会話の中に置かない 1 回きりの AI 呼び出しの共通経路（`host.internalCall` → `core/internal-call.mjs`。[ADR 0306](adr/0306-internal-ai-isolation.md)）。使う場所は 5 つ: 夜の記憶の整理（`learner`）・bot の会話の要約（`episode`）・心拍の安い判断（`pulse`）・次の発言の候補（`suggest`）・タイトル生成（`title`）。どれも Pleiad の会話（セッション）を作らず、接続先の会話履歴にも残さない。
+
+- **能力の印**: `capabilities.internalCall`。Claude・Codex は `ephemeral`（接続先に会話を残さない実行。Claude は保存しない設定・道具・hook・MCP を外して呼び、確かめられるときだけ。Codex は使い捨てのスレッドと閉じた道具・MCP で呼び、設定が読めないときは呼ばない）。fake は `ephemeral`（試験用）。Antigravity・Devin・Grok・OpenCode は `impossible(理由)` — 接続先に会話を残さないことを確かめられないため
+- **分離できないエージェントでは実行しない**（通常会話への切り替えはしない）: learner・episode は停止（halted）として記憶の設定の状態の行に理由を出し、pulse は bot のページの静かな行（理由 `internalUnavailable`）を付けて paused、候補は設定 › 入力の説明にエージェント名と理由、タイトル生成は `UNSUPPORTED` で断る
+- **記録**: 呼び出しごとに journal（`memory_state` kind `internal.calls`。1 呼出し 1 行・終了分は直近 100 件・起動時にこのプロセスの開始前の running は interrupted）と、使用量（`usage_records` の `internalTask` 欄。kind・botId・model・account・endpoint）を残す。測れない値は 0 でなく null（不明）。pulse の不明な消費はその日の自発を止める。失敗・中断でも記録し、上限時間で打ち切った後に届いた使用量は同じ行に補正する。呼び出しには上限時間と abort の猶予を付ける
+- **会話に差し込む内部の発言**（`runTurn({ internal: true })`。接続先からの通知・待機応答など）は別物で変えない。**Claude のターンの中の候補**（`promptSuggestions: 'native'`）も内部呼び出しではないので従来どおり
+- **旧内部会話の除外**: 以前 learner・pulse が作った隠れた会話は、確かな印（`meta.bot.kind` が `learner`・`pulse` で `channelId`・`threadId` が null。題・文頭の prefix では判定しない）のあるものだけを、一覧・検索・最近の場所・通常の `sessions.get`/`sessions.read` から外す（`core/internal-conversation.mjs`）。データは残す（消さない）。診断用に `sessions.get`/`sessions.read` の `includeInternal` で読める
 
 ## セッション検索（2026-10-03）
 

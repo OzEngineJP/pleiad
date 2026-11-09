@@ -27,6 +27,7 @@
     "cap:handover": "agents",
     "cap:hooks": "agents",
     "cap:hostTools": "agents",
+    "cap:internalCall": "agents",
     "cap:liveMode": "agents",
     "cap:liveModel": "agents",
     "cap:login": "agents",

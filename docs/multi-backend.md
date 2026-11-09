@@ -315,7 +315,9 @@ export const backend = {
     status: "running" | "completed" | "failed" | "stopped",
     startedAt: string | null, endedAt: string | null,   // ISO 文字列
   } | null>,                                            // null は「分からない」。describeBackends の capabilities.subagentState
-  suggestTitle?({ transcript }): Promise<string>,  // 小さいモデルで 1 発
+  suggestTitle?({ transcript }): Promise<string>,  // 小さいモデルで 1 発。内部呼出しで回すので、分離できないバックエンドは付けず capabilities.internalCall も impossible にする
+  internalTurn?({ kind, prompt, model, effort, mode, signal, locale, cwd, endpoint, oauthToken, account })
+    : Promise<{ text, usage? }>,     // 内部呼出し（design.md「内部呼び出し」。会話も接続先の履歴も作らない 1 回きり。記憶の整理・心拍・候補・題名が使う。分離を確かめられなければ付けない）
 
   // ---- 認証
   auth?: {
