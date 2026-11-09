@@ -288,6 +288,15 @@ export default async function(t) {
     await rejects('Lease rejects racing new work', () => gate.enter());
     gate.release(); const finish = gate.enter(); finish();
     t.ok('Failed install unlocks work', gate.acquire()); gate.release();
+    const finishRead = gate.enter({ blocking: false });
+    t.ok('A pending read does not block the update lease', gate.acquire());
+    await rejects('The update lease also rejects new reads', () => gate.enter({ blocking: false }));
+    finishRead(); finishRead();
+    gate.release();
+    const finishSave = gate.enter();
+    t.ok('Finishing an untracked read cannot release a pending save', !gate.acquire());
+    finishSave();
+    t.ok('The save still releases its own lease', gate.acquire()); gate.release();
     let resolveQueue;
     const pendingQueue = new Promise(resolve => { resolveQueue = resolve; });
     const queue = createMessageQueue({ store: { get: () => pendingQueue } });

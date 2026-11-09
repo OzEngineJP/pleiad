@@ -9334,7 +9334,11 @@ wss.on("connection", (ws, req) => {
 
     let releaseUpdateGate;
     try {
-      releaseUpdateGate = updateGate.enter();
+      const operation = msg.command === 'invoke' ? opsRegistry.get(msg.args?.op) : opsRegistry.getLegacy(msg.command);
+      // Only definitions guaranteed to remain reads can be abandoned during
+      // shutdown. Dynamic risks and unknown commands keep protecting writes.
+      const readOnly = operation?.risk === 'read' && !operation.riskOf;
+      releaseUpdateGate = updateGate.enter({ blocking: !readOnly });
       // ブラウザーの一本化の WS のコマンド（core/browser-unify-ws.mjs）
       if (isBrowserUnifyCommand(msg.command)) {
         try {

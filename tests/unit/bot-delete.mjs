@@ -100,6 +100,9 @@ export default async function(t) {
     const unsent = await client.cmd('newSession', { backend: 'fake', cwd: ROOT });
     t.ok('別スレッドの送信予定は未送信会話の削除を妨げない', await client.cmd('deleteUnsentSession', { sessionId: unsent.sessionId }) === 'deleted');
     await op('sessions.cancelSchedule', { id: scheduled.id });
+    // running can still be empty while the preceding posts prepare their turns.
+    // Delete only after the public deletion check says all preparation is done.
+    await until(async () => !(await op('bots.get', { botId: live.id })).deletion.blockedReason);
     await op('bots.delete', { botId: live.id });
     t.ok('既存スレッドの投稿は保存前に拒否', await fails(() => op('channels.post', { channelId: channel.id, threadId: root.id, text: 'forbidden' })));
     t.ok('閲覧用スレッドの本文編集もサーバーが拒否', await fails(() => op('channels.edit', { channelId: channel.id, postId: root.id, text: 'forbidden edit' }), 'READ_ONLY'));

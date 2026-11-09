@@ -8,13 +8,14 @@ import net from 'node:net';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { encodeLine, decodeLine, createLineReader, DEFAULT_MAX_LINE_BYTES } from '../../core/link-codec.mjs';
 import { createMainLink, mainLinkPipeName, readLinkFile, removeLinkFile, linkFilePath, handoverEnabled, IPC_RANGE, LINK_FILE } from '../../core/main-link.mjs';
 import { createMainPort, getMainPort, setMainPortSource } from '../../core/main-port.mjs';
 import { writeControlFile, controlFilePath } from '../../core/control-file.mjs';
 import { parentPortCipher } from '../../core/secret-store.mjs';
 import { startServer } from '../lib/server.mjs';
+import { open } from '../lib/ws-client.mjs';
 import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 const require = createRequire(import.meta.url);
@@ -405,7 +406,22 @@ export default async function (t) {
   // ---- 別プロセスのサーバー（本物のパイプ）: core/server.mjs を AGENT_HOST_HANDOVER=on で起こす
   {
     const dataDir = tempDir();
-    const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_HANDOVER: 'on' }, dataDir, timeoutMs: 60_000 });
+    // Hold a real listSessions response without adding a test-only production
+    // command. Both WS entry points must remain safe for the updater to stop.
+    const entry = path.join(dataDir, 'server-fixture.mjs');
+    const released = path.join(dataDir, 'release-list');
+    fs.writeFileSync(entry, `
+      import fs from 'node:fs';
+      import { backend } from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'core/backends/fake.mjs')).href)};
+      const original = backend.listSessions;
+      backend.listSessions = async args => {
+        while (!fs.existsSync(${JSON.stringify(released)})) await new Promise(r => setTimeout(r, 10));
+        return original(args);
+      };
+      await import(${JSON.stringify(pathToFileURL(path.join(ROOT, 'core/server.mjs')).href)});
+    `);
+    const server = await startServer({ entry, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_HANDOVER: 'on' }, dataDir, timeoutMs: 60_000 });
+    let screen;
     try {
       const info = await waitFor(() => readLinkInfo(dataDir), 5000, 'main-link.json');
       const control = JSON.parse(fs.readFileSync(controlFilePath(dataDir), 'utf8'));
@@ -419,9 +435,20 @@ export default async function (t) {
       client.postMessage({ type: 'running' });
       const running = await waitFor(() => seen.messages.find(m => m.type === 'running'), 5000, 'running');
       t.ok('サーバー（on）: running の往復（work の件数 0）', running.work?.count === 0);
+      screen = await open(server);
+      const lists = [screen.cmd('listSessions'), screen.cmd('invoke', { op: 'sessions.list', args: {} })];
+      // A response to a later frame proves that both list commands have entered
+      // the handler on this same connection. Their list responses remain held.
+      await screen.cmd('prefs');
       client.postMessage({ type: 'update-lock', id: 'u1' });
       const lock = await waitFor(() => seen.messages.find(m => m.type === 'update-lock' && m.id === 'u1'), 5000, 'update-lock');
+      t.ok('Pending session lists through legacy and invoke do not prevent the update lock', lock.ok === true);
+      const blocked = await settled(screen.cmd('prefs'));
+      t.ok('After acquiring the update lock, new reads are rejected', Boolean(blocked.error));
       client.postMessage({ type: 'update-unlock' });
+      fs.writeFileSync(released, '');
+      await Promise.all(lists);
+      screen.close(); screen = null;
       t.ok('サーバー（on）: update-lock が取れて ok', lock.ok === true);
       client.postMessage({ type: 'abort', id: 'a1', reason: 'quit' });
       const aborted = await waitFor(() => seen.messages.find(m => m.type === 'abort' && m.id === 'a1'), 5000, 'abort');
@@ -446,6 +473,8 @@ export default async function (t) {
       await waitFor(() => { try { process.kill(info.pid, 0); return false; } catch { return true; } }, 10_000, 'server process gone');
       t.ok('サーバー（on）: kill（shutdown）でサーバーが終わり、control.json・main-link.json を消す', !fs.existsSync(controlFilePath(dataDir)) && !fs.existsSync(linkFilePath(dataDir)));
     } finally {
+      fs.writeFileSync(released, '');
+      screen?.close();
       await server.stop();
       await cleanupTestHolder(dataDir);
       fs.rmSync(dataDir, { recursive: true, force: true });

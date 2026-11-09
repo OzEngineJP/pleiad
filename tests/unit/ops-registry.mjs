@@ -51,6 +51,9 @@ export default async function (t) {
   t.ok('同じ id は断る', throws(() => createRegistry({ ops: [noop, noop] })) !== null);
   t.ok('同じ legacyCommand は断る', throws(() => createRegistry({ ops: [defineOp(base('t.a', { legacyCommand: 'x' })), defineOp(base('t.b', { legacyCommand: 'x' }))] })) !== null);
   t.ok('defineOp を通していないものは断る', throws(() => createRegistry({ ops: [{ id: 'x.y' }] })) !== null);
+  const legacyRead = defineOp(base('t.legacyRead', { legacyCommand: 'list', legacyAliases: ['listAlias'] }));
+  const legacyRegistry = createRegistry({ ops: [legacyRead] });
+  t.ok('Legacy command lookup returns the authoritative definition, including aliases', legacyRegistry.getLegacy('list') === legacyRead && legacyRegistry.getLegacy('listAlias') === legacyRead && legacyRegistry.getLegacy('unknown') === undefined);
 
   // ---- 関所
   const calls = [];

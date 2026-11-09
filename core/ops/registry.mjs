@@ -353,6 +353,7 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
     ops: [...byId.values()],
     settings: [...settingsByKey.values()],
     get: (id) => byId.get(id),
+    getLegacy: (command) => byLegacy.get(command),
     getSetting: (key) => settingsByKey.get(key),
     legacyCommands: () => new Set(byLegacy.keys()),
     list,
