@@ -41,7 +41,7 @@ bot（名前・人格・記憶・権限を持つ定義）と、人と bot が集
 | `core/memory/learn.mjs`（`createMemoryLearner`） | 新しい人の発言を夜に整理。利用者のルーティン一覧には出さない | L1 |
 | `core/brain/`（`store.mjs`・`pulse.mjs`・`gate.mjs`・`drives.mjs`・`inner.mjs`・`answer.mjs`） | bot の頭の中: 活動メモ・気がかりの保存、心拍（ふるい・安いモデル・引き継ぎ）、欲求、`<pleiad-inner>` の文、安いモデルの返事の読み取り | B1（ADR 0126） |
 | `core/bots/dispatch.mjs`（`createDispatcher`） | @ から起こす・途中送信・ターンの投稿・止める・トークンの集計 | S4 |
-| `core/internal-call.mjs`・`core/internal-conversation.mjs` | 内部呼出しの共通経路（会話も接続先の履歴も作らない。journal・使用量・分離できない印）と、確かな旧内部会話の判定・除外 | 共通（Issue #180） |
+| `core/internal-call.mjs`・`core/internal-conversation.mjs` | 内部呼出しの共通経路（会話も接続先の履歴も作らない。journal・使用量・分離できない印）と、確かな旧内部会話の判定・除外 | 共通（ADR 0306） |
 | `core/routines/service.mjs`（`createRoutineService`）・`cron.mjs`・`schedule.mjs`・`runner.mjs`・`events.mjs` | ルーティン | R1（P2） |
 | `core/routines/webhook.mjs`（`createWebhookReceiver`） | `/hooks/<id>` | H1（P3） |
 | `core/ops/{channels,bots,memory,brain,routines}.mjs` | 操作（`defineOp`）。空の配列から始まる | それぞれ S1 / S2 / S3 / R1 |

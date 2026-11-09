@@ -24,7 +24,7 @@ While organization is off, the time and the summary switch can't be changed (the
 
 ### The agent used for organizing
 
-Organizing and summarizing are done through one-off internal calls to a light model. They are not retained as a Pleiad conversation or as conversation history on the agent side.
+Organizing and summarizing are done through one-off internal calls (the agent and model follow the organizing settings). They are not retained as a Pleiad conversation or as conversation history on the agent side.
 
 - **Agents that can run them**: Claude, Codex
 - **Agents that cannot**: Antigravity, Devin, Grok, OpenCode — Pleiad cannot guarantee that no conversation is left on the agent side, so organizing does not run and the status line shows why (it does not silently switch to an ordinary conversation)
