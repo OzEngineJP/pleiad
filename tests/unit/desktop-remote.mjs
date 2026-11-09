@@ -214,10 +214,18 @@ export default async function (t) {
     const uiSub = setupRemoteBadge({ remote: { ...remote, onStatus: () => {} }, doc });
     t.ok('タイトルの下の行に添え字（crumbSep の次、⇄ とホスト名）',
       uiSub.sub && lineD.children.indexOf(uiSub.sub) === lineD.children.indexOf(sepD) + 1 && uiSub.sub.textContent.includes('desktop-home'), uiSub.sub?.textContent);
+    // 添え字から開く面はその行の直下に出す（下端固定ではない。2026-11-09 のずれ直し）
+    uiSub.sub.getBoundingClientRect = () => ({ left: 70, bottom: 104, right: 200, top: 80, width: 130, height: 24 });
     uiSub.sub.onclick({ stopPropagation() {}, currentTarget: uiSub.sub });
     t.ok('添え字を押しても同じ面が開く', uiSub.pop.hidden === false && uiSub.sub.getAttribute('aria-expanded') === 'true');
+    t.ok('添え字から開く面はその行の直下（要素の位置から fixed の left/top を取る）',
+      uiSub.pop.style.top === '110px' && uiSub.pop.style.left === '70px' && uiSub.pop.style.bottom === 'auto', JSON.stringify(uiSub.pop.style));
     doc.fire('keydown', { key: 'Escape' });
     t.ok('添え字からも Esc で閉じる', uiSub.pop.hidden === true);
+    uiSub.badge.onclick({ stopPropagation() {}, currentTarget: uiSub.badge });
+    t.ok('脇の行・レールから開く面は下端固定のまま（位置は付け直さない）',
+      uiSub.pop.hidden === false && !uiSub.pop.style.top && !uiSub.pop.style.left && !uiSub.pop.style.bottom, JSON.stringify(uiSub.pop.style));
+    doc.fire('keydown', { key: 'Escape' });
     statusListener({ state: 'host-offline' });
     t.ok('ホストがオフライン: バッジに状態を添え、面に再試行', ui.badge.textContent.includes('ホストがオフライン') && retryBtn.hidden === false && ui.badge.attrs['data-state'] === 'host-offline');
     t.ok('ホストがオフライン: レールの読み上げにも状態を添える', String(ui.rail.attrs['aria-label']).includes('ホストがオフライン'));

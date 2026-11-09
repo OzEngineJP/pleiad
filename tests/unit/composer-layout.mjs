@@ -104,9 +104,13 @@ export default async function (t) {
   t.ok('リモートの窓の帯・脇・タイトル行はホストと同じ構造（リモート専用の配置ルールは無い。2026-11-09 承認）',
     !/:root\.desktop\.remote[^\n{]*titlebar|:root\.desktop\.remote #sidebar|:root\.desktop\.remote[^\n{]*\.top\{position:fixed/.test(css));
   t.ok('リモートの印は脇のいちばん下の行（アカウント行の下）・畳んだレールの ⇄・面は行の上に開く',
-    /#sidebar > \.remote-badge\{display:flex[^}]*border-top:1px solid var\(--line-faint\)/.test(css)
+    /#sidebar > \.remote-badge\{display:flex[^}]*border-radius:0/.test(css)
+    && /#sidebar > \.remote-badge::before\{content:"";position:absolute;[^}]*height:1px;[^}]*background:linear-gradient\(var\(--line-faint\)/.test(css)
     && /\.side-rail > \.remote-rail\{margin-top:auto\}/.test(css)
     && /\.remote-pop:not\(\[hidden\]\)\{display:block;position:fixed;left:12px;bottom:44px/.test(css));
+  t.ok('リモートの窓で脇が開いている間、Plus の丸は印の行の分だけ上げる（畳んだレールでは最下部のまま。2026-11-09 のずれ直し）',
+    /:root\.remote:not\(\.remote-mobile\) #sidebar > \.side-avb\{bottom:40px\}/.test(css)
+    && /:root\.remote\.side-closed body:not\(\.settings\) > #sidebar > \.side-avb\{bottom:8px\}/.test(css));
   t.ok('簡易ブラウザーの行の輪は内側に描く（一覧のスクロールの箱の端で切れていた）', /\.cbrowse \.copt:focus-visible\{outline-offset:-2px\}/.test(css));
   // 発言の引用は入力欄の引用と同じ左の縦線（docs/design-system.md「4.5 会話」。見た目は tests/browser/message-quote-bar.cjs）
   const Q = String.raw`:is\(\.body,\.post-body,\.th-log-text\) blockquote`;

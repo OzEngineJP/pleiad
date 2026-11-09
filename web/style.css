@@ -251,7 +251,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
    閉じている間は押せるボタン */
 .side-avb{position:absolute;left:8px;bottom:8px;z-index:2;width:36px;height:36px;padding:0;border:0;border-radius:50%;
   background:transparent;display:none;place-items:center;color:var(--ink);cursor:default;pointer-events:none;
-  transition:background-color var(--dur-fast) var(--ease-out)}
+  transition:background-color var(--dur-fast) var(--ease-out),bottom var(--dur-fast) var(--ease-out)}
 /* 頭文字・人の形の丸（#sideAvatar と #sidePlus の中。設定 › Pleiad Plus の .rm-av と同じ形） */
 .side-av{width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;
   background:var(--surface-paper);box-shadow:inset 0 0 0 1px var(--line);color:var(--ink-strong);font-weight:600;font-size:var(--fs-s);overflow:hidden}
@@ -613,14 +613,22 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 .remote-badge .i{width:15px;height:15px;flex:none}
 .remote-badge .host{font-family:var(--font-mono);min-width:0;overflow:hidden;text-overflow:ellipsis}
 .remote-badge .state{font-weight:400;flex:none}
-/* 脇のいちばん下の 1 行。高さ・ホバーは脇の行に揃え、上に髪の線を引く */
+/* 脇のいちばん下の 1 行。高さ・ホバーは脇の行に揃え、上に髪の線を引く（::before で描く。border-top は片側の線なので使わない） */
 :root.remote:not(.remote-mobile) #sidebar > .remote-badge{display:flex;flex:none;width:100%;height:32px;
-  padding:0 10px 0 8px;border-top:1px solid var(--line-faint);border-radius:0;text-align:left}
+  padding:0 10px 0 8px;border-radius:0;text-align:left;position:relative}
+:root.remote:not(.remote-mobile) #sidebar > .remote-badge::before{content:"";position:absolute;left:0;right:0;top:0;height:1px;
+  background:linear-gradient(var(--line-faint),var(--line-faint));pointer-events:none}
 :root.remote:not(.remote-mobile) #sidebar > .remote-badge .host{flex:1}
 /* 畳んだレールの ⇄ は設定の上（左下の Pleiad Plus の丸は動かさない）。tabIndex は paintSideChrome が揃える */
 .side-rail .remote-rail{color:var(--ink-blue)}
 :root.remote:not(.remote-mobile) .side-rail > .remote-rail{margin-top:auto}
 :root.remote:not(.remote-mobile) .side-rail:has(> .remote-rail) > .side-rail-gear{margin-top:0}
+/* 脇が開いている間、左下の Plus の丸は印の行（高さ 32px）の分だけ上げて .side-me の左に載せる（2026-11-09 のずれ直し。
+   畳んだレールでは今までどおり最下部。丸の移りは .side-avb の bottom の遷移（--dur-fast）でなめらかに） */
+@media (min-width:701px){
+  :root.remote:not(.remote-mobile) #sidebar > .side-avb{bottom:40px}
+  :root.remote.side-closed body:not(.settings) > #sidebar > .side-avb{bottom:8px}
+}
 /* 面は脇の下端の行の上に開く */
 :root.remote .remote-pop:not([hidden]){display:block;position:fixed;left:12px;bottom:44px;z-index:60;
   width:min(300px,calc(100vw - 24px));padding:12px 14px;font-size:var(--fs-s)}
