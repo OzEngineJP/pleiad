@@ -1,6 +1,6 @@
 import { withoutVisualizeReferences } from './visualize-reference.mjs';
 import { fileReference, looksLikePath, findWindowsPaths, baseName, dirName, WINDOWS_PATH_SOURCE } from './file-reference.mjs';
-import { visualizationFrame, downloadVisualization, openVisualizationTab, visualizationBundleNotice } from './visualize-frame.mjs';
+import { visualizationFrame, openVisualizationTab, visualizationBundleNotice, visualizationOsAllowed } from './visualize-frame.mjs';
 import { wireWiden } from './visualize-widen.mjs';
 import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // md 描画と present カードの描画。外部ライブラリを足さない方針なので自前で持つ（設計メモ §11）。
@@ -13,8 +13,7 @@ import { el, chevron, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { terminalView, updateTerminal } from "./terminal.mjs";
 import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
-import { copyIcon, downloadIcon, moreIcon, panelIcon } from './icons.mjs';
-import { copyPathText } from './file-actions.mjs';
+import { copyIcon, moreIcon, panelIcon, openInBrowserIcon } from './icons.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
 import { isPlyDelegateToolName } from './delegate-result.mjs';
@@ -606,15 +605,21 @@ export function renderPresent(ev) {
         return withContent(content => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
           detail:{ content, title:e.caption ?? '', bundle:e.bundle, path:e.path ?? '' } })));
       }, { capture:true });
+      // 「外で開く」は元の HTML を既定のブラウザーへ。元のパスがあって、サーバーのある PC の画面（OS の操作）のときだけ
+      if (e.path && visualizationOsAllowed()) {
+        const external = tool(openInBrowserIcon, t('browser.openExternal'), 'visualize-external');
+        external.addEventListener('click', event => { event.stopImmediatePropagation();
+          external.dispatchEvent(new CustomEvent('ply-visualize-external', { bubbles:true, detail:{ path:String(e.path) } })); }, { capture:true });
+      }
+      // 「⋯」は可視化のメニュー（元のファイルをエクスプローラー・会話に保存した版・パスをコピー・HTML を保存。web/file-preview.mjs）
+      // withContent は束を持たない記録の「HTML を保存」が使う従来の道（中身から直接保存）
+      const more = tool(moreIcon, t('files.currentActions'), 'visualize-menu');
+      more.addEventListener('click', event => { event.stopImmediatePropagation();
+        const rect = more.getBoundingClientRect();
+        more.dispatchEvent(new CustomEvent('ply-visualize-menu', { bubbles:true,
+          detail:{ x:rect.left, y:rect.bottom + 4, path:e.path ?? '', hash:e.bundle?.hash, entry:e.bundle?.entry, title:e.caption ?? '', withContent } })); }, { capture:true });
       const notice = visualizationBundleNotice(e.bundle);
       if (notice) body.append(el('p', 'present-note', notice));
-      // コピーと保存は右パネル（⋯・下の行）と同じ処理を呼ぶ。知らせの文言も同じ（web/file-actions.mjs・web/visualize-frame.mjs）
-      if (e.path) tool(copyIcon, t('timeline.present.copyPath')).onclick = () => copyPathText(String(e.path));
-
-      // 保存されるのは会話に残っている HTML。元のファイルは変わっていることがある。
-      // 会話には可視化がいくつも並ぶので、URL は押したときだけ作ってすぐ捨てる
-      tool(downloadIcon, t('timeline.present.download')).onclick =
-        () => withContent((content) => downloadVisualization({ path: e.path, title: e.caption, content }));
 
       card.append(controls);
       if (e.mode === 'wide') card.classList.add('visualize-wide');

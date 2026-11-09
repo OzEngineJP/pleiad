@@ -55,7 +55,7 @@ export function errorView(root, error) {
 }
 // These are requests for the host's menu/confirmation, never write operations.
 export function request(type, detail = {}) {
-  if (!['file-menu', 'use-file', 'commit', 'use-text', 'worktree', 'jump'].includes(type)) return;
+  if (!['file-menu', 'use-file', 'commit', 'use-text', 'worktree', 'jump', 'open-viz'].includes(type)) return;
   const message = { type, sessionId, ...detail };
   if (typeof globalThis.plyPage === 'function') return globalThis.plyPage(JSON.stringify(message));
   else if (parent !== window) parent.postMessage({ type:'pleiad:page-request', request:message }, location.origin);
@@ -85,6 +85,17 @@ window.addEventListener('pleiad:page-result', event => receiveResult(event.detai
 export function fileActions(row, path, kind = 'file') {
   row.addEventListener('contextmenu', event => { event.preventDefault(); request('file-menu', { path, kind, x:event.clientX, y:event.clientY }); });
   const more = button(null, event => { event.stopPropagation(); request('file-menu', { path, kind, x:event.clientX, y:event.clientY }); }, 'more');
+  more.append(icon(moreIcon)); more.title = text('fileMenu'); more.setAttribute('aria-label', text('fileMenu')); row.append(more);
+}
+/** 可視化の行の「⋯」。path が無い（元の記録が無い）ときは viz の情報だけで開くメニューになる（ホスト側で OS の動作は出さない）。missing は記録に元パスがあるが実体が無い印（コピーに要るので path は残す） */
+export function vizActions(row, { hash, entry = '', title = '', path = '', missing = false }) {
+  const detail = { viz:{ hash, entry, title }, x:0, y:0, missing:missing === true };
+  if (path) { detail.path = path; detail.kind = 'file'; }
+  const menu = event => { event.stopPropagation(); event.preventDefault();
+    const rect = row.getBoundingClientRect();
+    request('file-menu', { ...detail, x: event.clientX || rect.right - 8, y: event.clientY || rect.top + rect.height / 2 }); };
+  row.addEventListener('contextmenu', menu);
+  const more = button(null, menu, 'more');
   more.append(icon(moreIcon)); more.title = text('fileMenu'); more.setAttribute('aria-label', text('fileMenu')); row.append(more);
 }
 export function size(value) { return value < 1024 ? `${value} B` : value < 1024 * 1024 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`; }

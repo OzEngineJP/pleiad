@@ -137,6 +137,12 @@ export function createPagesRoutes(deps = {}) {
           if (!Number.isSafeInteger(offset) || offset < 0) throw fault('invalid-path');
           json(req, res, via, await listTreeFolder(ref.file, { access, offset })); break;
         }
+        case 'api/viz': {
+          // 会話に保存した可視化の束の中身（「HTML を保存」が取る）。この会話の記録にある束だけ。認証済み GET
+          const body = await deps.vizEntry?.(sessionId, String(q.get('hash') ?? ''), String(q.get('entry') ?? ''));
+          if (!body) throw fault('not-found', 404);
+          send(req, res, via, 200, body, { 'content-type':'text/plain; charset=utf-8' }); break;
+        }
         case 'api/html-key': {
           const ref = await resolve();
           if (!ref.stat.isFile() || !/\.html?$/i.test(ref.file)) throw fault('unsupported');
@@ -265,7 +271,19 @@ export function createPagesRoutes(deps = {}) {
               if (target.protocol !== 'http:' || !marked || Number(target.port || 80) !== ports().isolated || target.username || target.password || !view.isolated) continue;
               target.port = String(view.isolated);   // the device proxy's isolated port when viewed from a phone
               if (view.isolated !== ports().isolated) target.hostname = 'localhost';
-              visualizations.push({ title:String(item.title ?? ''), url:target.href });
+              const row = { title:String(item.title ?? ''), url:target.href,
+                hash:String(item.hash ?? ''), entry:String(item.entry ?? ''), at:typeof item.at === 'string' ? item.at : undefined };
+              // 元のファイル: 記録にあって読めるなら実体のパス、消えた・無いものは missing（拒否など別の失敗はパスを返して開く側が断る）
+              if (typeof item.path === 'string' && item.path) {
+                try {
+                  const { file, stat } = await inspectFile(item.path, access);
+                  if (stat.isFile()) row.path = file; else { row.path = item.path; row.missing = true; }
+                } catch (error) {
+                  if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') { row.path = item.path; row.missing = true; }
+                  else row.path = item.path;
+                }
+              }
+              visualizations.push(row);
             } catch { /* Only this conversation's host supplies visualization links. */ }
           }
           json(req, res, via, { files, visualizations, folders:folders.slice(0, 8), session:{ id:sessionId, title:meta.title ?? '' } }); break;

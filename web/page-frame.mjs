@@ -1,14 +1,33 @@
 import { samePath } from './file-actions.mjs';
 
-const REQUESTS = new Set(['file-menu', 'use-file', 'use-text', 'jump', 'commit', 'worktree']);
+const REQUESTS = new Set(['file-menu', 'use-file', 'use-text', 'jump', 'commit', 'worktree', 'open-viz']);
+const VIZ_TEXT = value => typeof value === 'string' && value.length <= 2000 ? value : undefined;
+/** open-viz・file-menu に乗る可視化の情報は未信頼入力: 形と長さを検査し、束の印は 64 hex のものだけ通す */
+function vizOf(value) {
+  if (value == null || typeof value !== 'object') return undefined;
+  const hash = /^[0-9a-f]{64}$/.test(value.hash ?? '') ? value.hash : undefined;
+  if (!hash) return undefined;
+  const viz = { hash };
+  const entry = VIZ_TEXT(value.entry); if (entry) viz.entry = entry;
+  const title = VIZ_TEXT(value.title); if (title) viz.title = title;
+  return viz;
+}
 /** iframe のページからの頼み（pleiad:page-request）を検査して返す。通さないものは null。スマホの端末内のページ（web/browser-unify.mjs）も使う */
 export function pageRequestOf(message, sessionId) {
   const request = message?.request;
   if (message?.type !== 'pleiad:page-request' || !request || !REQUESTS.has(request.type) || request.sessionId !== sessionId) return null;
   try { if (JSON.stringify(message).length > 65536) return null; } catch { return null; }
-  if (['file-menu', 'use-file'].includes(request.type) && (typeof request.path !== 'string' || !request.path || request.path.length > 8192)) return null;
+  const viz = vizOf(request.viz);
+  const hasPath = typeof request.path === 'string' && request.path && request.path.length <= 8192;
+  // use-file は従来どおり有効なパスが必須。file-menu は可視化の行（元パスの記録が無いもの）だけ viz でよい
+  if (request.type === 'use-file' && !hasPath) return null;
+  if (request.type === 'file-menu' && !hasPath && !viz) return null;
   if (request.type === 'file-menu' && (!['file', 'directory'].includes(request.kind ?? 'file') ||
       !Number.isFinite(request.x) || !Number.isFinite(request.y))) return null;
+  if (request.type === 'open-viz' && !viz) return null;
+  if (!hasPath) delete request.path;
+  if (viz) request.viz = viz; else delete request.viz;
+  request.missing = request.missing === true;
   return request;
 }
 
@@ -33,7 +52,7 @@ export function createFilePageRouter({ cmd, caps, openTab, tabs = () => [], focu
     resolved(where);
     const page = where.kind === 'directory' ? 'dir' : 'file';
     if (openTab) {
-      const existing = tabs(sessionId).find(tab => tab.local && samePath(tab.path ?? tab.page?.path, where.path));
+      const existing = tabs(sessionId).find(tab => tab.local && tab.page?.kind !== 'viz' && samePath(tab.path ?? tab.page?.path, where.path));
       if (existing && focusTab) { await focusTab(existing, sessionId); flashTab?.(existing, sessionId); return true; }
       await openTab({ sessionId, path:where.path, kind:page, line:ref.line }); return true;
     }

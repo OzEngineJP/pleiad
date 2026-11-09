@@ -53,6 +53,15 @@ Then just write what you want in the message box and send it. For actions that n
 
 You can change the agent and working directory in the conversation at any time. You can also add agents and sign in later under Settings › "Agents".
 
+## Open visualizations and files in the side panel
+
+When an agent produces HTML or a visualization, it appears as a card in the conversation. In the side panel (the conversation browser) you can open them as pages, alongside files, folders, git, and plugins.
+
+- "Open in page" on a card opens the **current contents of the original HTML** in the side panel. If the original file is gone, it switches to the version saved in the conversation and tells you so.
+- Under "+" (new tab), "This conversation" lists shortcuts to Changes and Plugins, plus the conversation's visualizations (newest five with "Show all"). Pressing a row opens the original HTML; records without a recorded original open the "saved version" directly.
+- A "saved version" tab shows a "Saved version" badge and its title in the address bar. It is a snapshot of how it looked when saved — not the current original file.
+- Cards have an "Open in default browser" button, and the "⋯" on a row or card lets you reveal the original in Explorer, copy its path, open the saved version, or save the HTML (records without an original path do not show path-based actions. On screens opened from another device, actions that operate on the PC running Pleiad are not shown).
+
 ## Change a bot’s icon
 
 On the bot’s page, press the round icon with the pencil badge. Choose "Not set", "Choose emoji", or "Choose image". An unset icon shows the first character of the name. Images can be PNG, JPEG, or WebP, up to 10 MB.

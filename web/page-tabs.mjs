@@ -1,5 +1,11 @@
 import { samePath } from './file-actions.mjs';
 
+/** タブが今も元の可視化のファイルを表示しているときだけ、その可視化の記録（request.viz）を返す（別のファイルへ移ったタブには保存版の入口を出さない） */
+export function savedVizOf(tab) {
+  const viz = tab?.request?.viz;
+  return viz?.hash && viz.path && tab.page?.path && samePath(tab.page.path, viz.path) ? viz : null;
+}
+
 /** Screen-owned pages. Chrome targets are attached only by an explicit display change. */
 export function createPageTabs({ pageOpen, origin, changed = () => {}, touched = null, release = null, onError = null }) {
   const sessions = new Map(); let serial = 0;
@@ -61,8 +67,12 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     }
     const tab = replace ?? { targetId, sessionId, local:true, mode:'page', history:[], position:-1, histTrail:[page.url], histPos:0 };
     if (replace && tab.page?.path && (!page.path || !samePath(tab.page.path, page.path))) release?.(tab);
+    // 元の可視化の記録（hash・入口・題・元のパス）は固定: request.path はページの中の移動で変わるが、この tab をどの可視化から開いたかは変わらない。
+    // 固定の元パスはサーバーが解いた page.path を優先する（記録の綴りと解決後がずれても、表示中のファイルと見比べられる）
+    const rawViz = input.viz ?? ((vizHash ?? hash) ? { hash:vizHash ?? hash, entry, title:input.title, path } : null);
+    const viz = kind !== 'viz' && rawViz?.hash ? { hash:rawViz.hash ?? '', entry:rawViz.entry ?? '', title:rawViz.title ?? '', path:page.path ?? rawViz.path ?? '' } : null;
     Object.assign(tab, { url:page.url, title:page.title, page:tabPage(page), origin:page.origin,
-      request:{ sessionId, kind, path, vizHash:vizHash ?? hash, entry }, touched:false, dirty:false, pending:false });
+      request:{ sessionId, kind, path, ...(viz ? { viz } : {}) }, touched:false, dirty:false, pending:false });
     if (page.kind === 'html') tab.keyIssuedAt = Date.now();
     tab.history.splice(++tab.position); tab.history.push(page);
     tab.canGoBack = tab.position > 0; tab.canGoForward = false;
@@ -215,6 +225,12 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     try { tab.view = new URL(page.url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch {}
     tab.canGoBack = position > 0; tab.canGoForward = position < tab.history.length - 1; changed(tab);
   }
-  return { list, sessionIds: () => [...sessions.keys()], open, activity, reload, event, travel, locate, view, reissue, histGo, histPeek, isTouched,
+  /** このタブをどの可視化から開いたかを今の可視化へ書き直す（同じパスのタブの使い回し・別の束からの開き直し）。元パスは解決済みの表示中のパスを優先する */
+  function markViz(tab, viz) {
+    if (!tab?.request) return;
+    tab.request = { ...tab.request, viz:{ hash:viz.hash ?? '', entry:viz.entry ?? '', title:viz.title ?? '', path:tab.page?.path ?? viz.path ?? '' } };
+    changed(tab);
+  }
+  return { list, sessionIds: () => [...sessions.keys()], open, activity, reload, event, travel, locate, view, reissue, histGo, histPeek, isTouched, markViz, savedVizOf,
     close(tab) { release?.(tab); sessions.set(tab.sessionId, list(tab.sessionId).filter(item => item !== tab)); changed(tab); } };
 }

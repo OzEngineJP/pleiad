@@ -5,7 +5,7 @@
 //   - reissue は開き方から鍵と見張りを取り直す。閉じたタブの見張りは release で外す（N6）
 //   - pleiadPage: 印の出どころと直書き localhost の隔離 port の両方をアプリのページと分ける（P9）
 import assert from 'node:assert/strict';
-import { createPageTabs } from '../../web/page-tabs.mjs';
+import { createPageTabs, savedVizOf } from '../../web/page-tabs.mjs';
 import { pleiadPage } from '../../core/chrome/tab-info.mjs';
 import { hasFileViews } from '../../web/address-bar.mjs';
 import { createPageWatch } from '../../core/page-watch.mjs';
@@ -49,6 +49,29 @@ export default async function(t) {
     const file = await tabs.open({ sessionId:'s1', kind:'file', path:'D:/w/notes.md' });
     assert.equal(file.url, `${ORIGIN}/_pleiad/s/s1/file?path=${encodeURIComponent('D:/w/notes.md')}`, 'ページは suffix を本体の出どころで使う（返った port の URL は使わない）');
     t.ok('開く先はサーバーの応答だけ（ページは suffix・隔離は返った URL。可視化は hash・入口・題・元パスを一度だけ渡す）', true);
+
+    // ---- 可視化から開いた元の HTML のタブ: request.viz は固定の記録（request.path は移動で変わる） ----
+    {
+      const HASH2 = 'c'.repeat(64);
+      // 記録の綴り（./）と解決後が違っても、固定の元パスはサーバーの解いた page.path を取る（F5）
+      const file = await tabs.open({ sessionId:'s1', kind:'file', path:'D:/w/./a.html',
+        viz:{ hash:VIZ_HASH, entry:'index.html', title:'図', path:'D:/w/./a.html' }, title:'a.html' });
+      assert.deepEqual(file.request.viz, { hash:VIZ_HASH, entry:'index.html', title:'図', path:'D:/w/a.html' });
+      assert.equal(file.title, 'a.html', '元の HTML のタブの題はファイル名（可視化の題は request.viz.title へ別に持つ。F4）');
+      assert.equal(file.page.vizHash, undefined, '元の HTML のタブ自体は可視化ではない（印は request.viz）');
+      t.ok('可視化から開いた元の HTML は保存版の記録を持ち、元のファイルを出している間は入口が出る', savedVizOf(file)?.hash === VIZ_HASH);
+      tabs.markViz(file, { hash:HASH2, entry:'two.html', title:'図2', path:'D:/w/a.html' });
+      t.ok('同じパスのタブを使い回すときは今回の可視化へ記録を書き直す（普通に開いたタブ・別の束から開いたタブ）',
+        file.request.viz.hash === HASH2 && file.request.viz.entry === 'two.html' && savedVizOf(file)?.hash === HASH2);
+      const firstUrl = file.url;
+      tabs.locate(file, { url:`http://f0123456789abcde.localhost:9999/f/${'L'.repeat(43)}/other.html`, resolved:{ kind:'html', path:'D:/w/other.html' } });
+      t.ok('タブが別のファイルへ移ると記録は残るが入口は出さない（古い束の保存版は出さない）',
+        file.page.path === 'D:/w/other.html' && file.request.path === 'D:/w/other.html' && file.request.viz.hash === HASH2 && savedVizOf(file) === null);
+      tabs.locate(file, { url:firstUrl, resolved:{ kind:'html', path:'D:/w/a.html' } });
+      t.ok('元のファイルへ戻れば保存版の入口は再び出る', file.page.path === 'D:/w/a.html' && savedVizOf(file)?.hash === HASH2);
+      assert.equal(viz.page.kind, 'viz', '保存した版のタブは kind:viz のまま（request.viz は付かない）');
+      assert.equal(viz.request.viz, undefined);
+    }
 
     await assert.rejects(tabs.open({ sessionId:'s1', kind:'html', url:'https://evil.example/f/x/a.html' }), /invalid-url/);
     await assert.rejects(tabs.open({ sessionId:'s1', kind:'html', url:'http://user:pw@f0123456789abcde.localhost:9999/f/x/a.html' }), /invalid-url/);

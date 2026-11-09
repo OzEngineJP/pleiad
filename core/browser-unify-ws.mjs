@@ -112,7 +112,7 @@ export function createBrowserUnifyWs(deps = {}) {
       const rel = files && manifestRel(files, typeof input?.entry === 'string' && input.entry ? input.entry.replaceAll('\\', '/') : 'index.html');
       if (!rel) fail('NOT_FOUND');
       // 元のファイルはクライアントの送った値でなく、会話の記録にある束の持ち主の行から決める（指摘 6）
-      const source = await deps.vizSource?.(sessionId, hash).catch(() => null);
+      const source = await deps.vizSource?.(sessionId, hash, rel).catch(() => null);
       const params = new URLSearchParams({ embed: 'tab', ...(title ? { title } : {}) });
       return { kind: 'viz', hash, entry: rel, title: title || rel, path: source?.path ?? undefined,
         url: `http://${vizMark(hash)}.localhost:${ports.isolated}/viz/${hash}/${rel.split('/').map(encodeURIComponent).join('/')}?${params}` };

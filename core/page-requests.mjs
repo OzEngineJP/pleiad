@@ -8,7 +8,7 @@
 import { inspectFile as defaultInspect } from './file-preview.mjs';
 
 /** 受ける頼みの種類（web/pages/README.md の「ホストへの操作要求」。commit は今のページが送らないので受けない） */
-export const REQUEST_TYPES = Object.freeze(['file-menu', 'use-file', 'use-text', 'jump', 'worktree']);
+export const REQUEST_TYPES = Object.freeze(['file-menu', 'use-file', 'use-text', 'jump', 'worktree', 'open-viz']);
 /** 作業場所の書き込みの頼みの action */
 export const WORKTREE_ACTIONS = Object.freeze(['keep', 'ask', 'unask', 'archive', 'restore']);
 /** 作成欄へ渡す文の上限（文字数） */
@@ -26,6 +26,18 @@ const LANGS = ['ja', 'en'];
 const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
 
 const str = (value, max, { min = 1 } = {}) => typeof value === 'string' && value.length >= min && value.length <= max && !value.includes('\0');
+/** 可視化の情報（open-viz・可視化の行の file-menu に載る）。束の印は 64 hex、入口と題は上限まで。形の外は undefined */
+const VIZ_LIMIT = 2000;
+function vizShape(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  if (typeof raw.hash !== 'string' || !/^[0-9a-f]{64}$/.test(raw.hash)) return undefined;
+  const viz = { hash: raw.hash };
+  if (raw.entry != null) { if (!str(raw.entry, VIZ_LIMIT)) return undefined; viz.entry = raw.entry; }
+  if (raw.title != null) { if (!str(raw.title, VIZ_LIMIT)) return undefined; viz.title = raw.title; }
+  return viz;
+}
+/** 消えたファイルの印（inspectFile の投げる fs の失敗。権限・通信の失敗は含めない） */
+const GONE = new Set(['ENOENT', 'ENOTDIR']);
 const coord = value => Number.isFinite(value) ? Math.min(100_000, Math.max(0, Math.round(value))) : undefined;
 /** JSON で写せる、上限と深さの内の素のオブジェクトなら写し、それ以外は undefined */
 function plainCopy(value, limit = OBJECT_LIMIT) {
@@ -51,10 +63,21 @@ export function checkShape(raw, { sessionId } = {}) {
   const base = { type: raw.type, sessionId };
   switch (raw.type) {
     case 'file-menu': {
-      if (!str(raw.path, PATH_LIMIT)) return no('path');
+      const viz = vizShape(raw.viz);
+      const hasPath = str(raw.path, PATH_LIMIT);
+      // 可視化の行（元パスの記録が無いもの）は viz の情報だけでメニューを開く。パスはあれば検査する
+      if (!hasPath && !viz) return no('path');
       if (raw.base != null && !str(raw.base, PATH_LIMIT)) return no('base');
       const x = coord(raw.x), y = coord(raw.y);
-      return { ok: true, request: { ...base, path: raw.path, ...(raw.base != null ? { base: raw.base } : {}), ...(x != null && y != null ? { x, y } : {}) } };
+      return { ok: true, request: { ...base, ...(hasPath ? { path: raw.path } : {}), ...(viz ? { viz } : {}),
+        ...(raw.base != null ? { base: raw.base } : {}), ...(x != null && y != null ? { x, y } : {}),
+        ...(raw.missing === true ? { missing: true } : {}) } };
+    }
+    case 'open-viz': {
+      const viz = vizShape(raw.viz);
+      if (!viz) return no('viz');
+      return { ok: true, request: { ...base, viz,
+        ...(str(raw.path, PATH_LIMIT) ? { path: raw.path } : {}), ...(raw.missing === true ? { missing: true } : {}) } };
     }
     case 'use-file':
       if (!str(raw.path, PATH_LIMIT)) return no('path');
@@ -133,7 +156,9 @@ export function createPageRequests(deps = {}) {
     const shape = checkShape(raw, { sessionId });
     if (!shape.ok) { log(`page-requests: dropped (${shape.reason})`); return null; }
     const request = shape.request;
-    if (request.type === 'file-menu' || request.type === 'use-file') {
+    if (request.type === 'file-menu' || request.type === 'use-file' || request.type === 'open-viz') {
+      // 可視化の行で元パスの記録が無いものはパスの検査をしない（開くのは保存版。OS の操作は出さない）
+      if (request.path == null) return request.viz ? request : null;
       try {
         const checked = await recheck(sessionId, request.path, request.base);
         if (request.type === 'use-file' && checked.kind !== 'file') { log('page-requests: dropped (not a file)'); return null; }
@@ -141,6 +166,14 @@ export function createPageRequests(deps = {}) {
         const { base: _base, ...rest } = request;
         return { ...rest, path: checked.path, kind: checked.kind };
       } catch (error) {
+        if (request.viz) {
+          // 可視化の元のファイル: 消えたもの（ENOENT・ENOTDIR）は missing を付けてパスを残す（画面が保存版へ切り替えて知らせる）。
+          // 権限・読めないパスなどほかの断られはパスだけ落とす（元パス不明と同じ、保存版をそのまま開く正常系）
+          const { base: _base, kind: _kind, ...rest } = request;
+          if (GONE.has(error?.code)) return { ...rest, missing: true };
+          const { path: _path, ...withoutPath } = rest;
+          return withoutPath;
+        }
         log(`page-requests: dropped (${error?.code ?? error?.message ?? 'path'})`);
         return null;
       }

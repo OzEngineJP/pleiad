@@ -37,7 +37,7 @@ export default async function (t) {
     { kind: 'visualization', caption: '古い図', bundle: { hash: HASH, entry: 'index.html' } },
     { kind: 'visualization', caption: '失敗', error: 'x', bundle: { hash: HASH, entry: 'index.html' } },
     { kind: 'visualization', caption: '束なし' },
-    { kind: 'visualization', path: '/w/report.html', bundle: { hash: HASH2, entry: 'sub dir/レポート.html' } },
+    { kind: 'visualization', path: '/w/report.html', at: '2026-11-06T00:10:00Z', bundle: { hash: HASH2, entry: 'sub dir/レポート.html' } },
     { kind: 'visualization', caption: '形違い', bundle: { hash: 'zz', entry: 'index.html' } },
   ];
   const links = visualizationLinksOf(rows, 49199);
@@ -45,5 +45,8 @@ export default async function (t) {
     links.length === 2 && links[0].title === '/w/report.html'
     && links[0].url === `http://v${HASH2.slice(0, 24)}.localhost:49199/viz/${HASH2}/sub%20dir/%E3%83%AC%E3%83%9D%E3%83%BC%E3%83%88.html?embed=tab&title=%2Fw%2Freport.html`
     && links[1].url === `http://v${HASH.slice(0, 24)}.localhost:49199/viz/${HASH}/index.html?embed=tab&title=%E5%8F%A4%E3%81%84%E5%9B%B3`);
+  t.ok('束の印・入口・元のパス・時刻も載せる（新しいタブの「元の HTML」と「保存した版」の開き分け）',
+    links[0].hash === HASH2 && links[0].entry === 'sub dir/レポート.html' && links[0].path === '/w/report.html' && links[0].at === '2026-11-06T00:10:00Z'
+    && links[1].hash === HASH && links[1].entry === 'index.html' && !Object.hasOwn(links[1], 'path'));
   t.ok('隔離の port がまだ無ければ空', visualizationLinksOf(rows, undefined).length === 0 && visualizationLinksOf(rows, 0).length === 0);
 }

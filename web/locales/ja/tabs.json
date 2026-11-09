@@ -6,7 +6,9 @@
     "update": "更新を表示",
     "discard": "入力を破棄して再読み込みしますか？",
     "resume": "AI に戻す",
-    "copyTitle": "タイトルをコピー"
+    "copyTitle": "タイトルをコピー",
+    "openOriginal": "元のファイルを開く",
+    "openSaved": "会話に保存した版を開く"
   },
   "tree": {
     "close": "ツリーを閉じる",
@@ -32,6 +34,7 @@
     "view": "ファイルの表示",
     "preview": "プレビュー",
     "source": "原文",
+    "savedVersion": "保存した版",
     "showSource": "原文を表示",
     "locations": {
       "viz": "可視化",

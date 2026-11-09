@@ -80,7 +80,9 @@ async (page, { shots = '' } = {}) => {
   check(!(await page.locator('main').innerText()).includes('SECRET'), 'Plugin configuration stays out of the page');
   await shot('plugins-1280');
   await open('new');
-  check((await page.locator('main h2').allTextContents()).join('|') === 'この会話|最近のファイル|作業フォルダー', 'New tab has the three approved sections');
+  check((await page.locator('main h2').allTextContents()).join('|') === 'この会話|可視化|最近のファイル|作業フォルダー', 'New tab has the conversation, visualization, recent and folder sections');
+  check(await page.locator('.viz-row').count() === 3, 'Visualizations list as rows separate from shortcuts');
+  check(await page.locator('.viz-row .viz-saved').count() === 2, 'Missing and path-less rows carry the saved-version badge');
   await shot('new-1280');
   await page.setViewportSize({ width:360, height:800 });
   await shot('new-360');
