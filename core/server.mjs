@@ -4689,8 +4689,9 @@ async function suggestWritableTitleOf(args) {
       // 候補生成と同じ: 接続先を指定されているのに解決できないなら、既定の接続先へ黙って戻さない
       if (!endpoint) throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
     }
-    // 題の指示はバックエンドが持つ（サーバーにエージェントごとの分岐を置かない）。無ければ共通の文
-    const prompt = typeof backend.titlePrompt === 'function' ? backend.titlePrompt(lng) : agentT(lng, 'title.internal');
+    // 題の指示はバックエンドが持つ（サーバーにエージェントごとの分岐を置かない）。無ければ共通の文。
+    // Codex の exported backend は method を Promise で返すので、必ず解決してから連結する
+    const prompt = typeof backend.titlePrompt === 'function' ? await backend.titlePrompt(lng) : agentT(lng, 'title.internal');
     // 共通の内部呼出し（Issue #180。usage は internalTask 欄付きで記録。kind 'title'）。外側の返りは従来どおり文字列
     const out = await internalCalls.call({ kind: 'title', backend, prompt: prompt + NL + NL + gist, locale: lng,
       endpoint: endpoint ?? undefined, accountId: endpoint ? undefined : (saved.claudeAccount ?? '') });

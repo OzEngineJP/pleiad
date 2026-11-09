@@ -79,6 +79,12 @@ export default async function (t) {
     await assert.rejects(() => backend.internalTurn({ prompt: '失敗', cwd }), (e) => e?.code === 'INTERNAL_UNAVAILABLE');
     assert.equal(starts.length, before, 'config/read が失敗したら thread/start しない');
     t.ok('config/read が失敗したら内部呼出しを始めない（fail-closed）', true);
+
+    // exported backend の titlePrompt は Promise を返す。server 側は await して指示文にする
+    const pendingPrompt = backend.titlePrompt('ja');
+    assert.equal(typeof pendingPrompt?.then, 'function', 'titlePrompt は Promise を返す');
+    assert.match(await pendingPrompt, /次の作業ログ/);
+    t.ok('titlePrompt が Promise でも解決した指示文になる', true);
   } finally {
     rpc.request = originals.request;
     rpc.attach = originals.attach;

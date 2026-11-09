@@ -24,7 +24,7 @@ export default async function (t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-fake-")));
   const restartForWork = restartMode()?.trigger === 'work';
   const server = await startServer({
-    env: { AGENT_HOST_BACKENDS: "fake", ...(restartForWork ? { AGENT_HOST_RUNTIME_ROOT: path.join(scratch, 'runtime') } : {}) },
+    env: { AGENT_HOST_BACKENDS: "fake", FAKE_INTERNAL_LOG: path.join(scratch, 'internal-prompts.jsonl'), ...(restartForWork ? { AGENT_HOST_RUNTIME_ROOT: path.join(scratch, 'runtime') } : {}) },
     dataDir: path.join(scratch, "data"),
     timeoutMs: 30_000,
   });
@@ -219,6 +219,11 @@ export default async function (t) {
 
     const { title: guessed } = await c.cmd("suggestTitle", { sessionId: sid });
     t.ok("タイトル案が返る", typeof guessed === "string" && guessed.length > 0, guessed);
+    // titlePrompt が Promise でも、server が await して実際の指示文を internalTurn へ渡す（Issue #180）
+    const titlePrompt = (await fs.readFile(path.join(scratch, 'internal-prompts.jsonl'), 'utf8')).trim().split('\n')
+      .map((line) => JSON.parse(line)).find((row) => row.kind === 'title')?.prompt ?? '';
+    t.ok('非同期の題の指示を await して internalTurn へ渡す（[object Promise] を混ぜない）',
+      titlePrompt.startsWith('解決済みの題の指示') && !titlePrompt.includes('[object Promise]'), titlePrompt);
 
     // ---- 状態グループのアイコン（sidecar statuses.json）
     const noIcon = (await c.cmd("listStatuses")).find((s) => s.status === "進行中");

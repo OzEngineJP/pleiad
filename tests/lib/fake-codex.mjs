@@ -777,6 +777,10 @@ async function handle(method, params) {
         if (t.model !== "gpt-5.6-luna" || params?.effort !== "low") {
           throw new Error("Title generation must use Luna with low effort");
         }
+        // titlePrompt は async（exported backend の wrapper）。await し忘れると [object Promise] が指示文に混ざる
+        if (!text.includes("次の作業ログを表す") || text.includes("[object Promise]")) {
+          throw new Error("Title generation must receive the resolved codex title instruction");
+        }
       }
       // 応答を返してから走る。本物も turn/start の応答と通知は別々に来る
       const script = text.startsWith("slow") ? runSlowTurn(t, turnId, text)

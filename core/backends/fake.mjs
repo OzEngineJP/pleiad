@@ -1088,9 +1088,15 @@ export const backend = {
   // 内部呼出し（Issue #180。host.internalCall → backend.internalTurn）。LLM は呼ばず、台本の印だけ返す:
   //   [agent] の返答の中の「suggest:<文>」→ 次の発言の候補の JSON / 「title:<文>」→ 題名 / 無ければ最後の返答の先頭行
   // usage は固定の小さい値を返す（記録の形の確認用。量に意味はない）
+  // 題の指示（server が await して internalTurn へ渡す。Issue #180）。試験では解決済みかを見分けられる文にする
+  async titlePrompt(locale) { return locale === 'en' ? 'Resolved title instruction' : '解決済みの題の指示'; },
+
   async internalTurn({ kind, prompt, signal }) {
     if (signal?.aborted) return { text: "", usage: null, aborted: true };
     const p = String(prompt ?? "");
+    if (process.env.FAKE_INTERNAL_LOG) {
+      try { fs.appendFileSync(process.env.FAKE_INTERNAL_LOG, JSON.stringify({ kind, prompt: p }) + "\n"); } catch { /* 試験用の記録. 書けなくても本処理は続ける */ }
+    }
     const usage = { inputTokens: 120, outputTokens: 8, cachedTokens: 0 };
     // 題（kind: 'title'）: 指示の後ろの会話の見出し（依頼:/Request:）をそのまま返す
     if (kind === 'title') {
