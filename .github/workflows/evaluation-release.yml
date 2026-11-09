@@ -98,7 +98,7 @@ jobs:
           sparse-checkout: scripts
           persist-credentials: false
       - name: Prepare verified Electron
-        run: node release-prep/scripts/prepare-electron.mjs
+        run: node release-prep/scripts/prepare-electron.mjs --release
       # macOS 固有の実行環境と、認証用ディレクトリ・CLI の接続を公開前に検査する。実サービスや利用者の資格情報は使わない。
       - name: Release environment smoke
         run: |
@@ -237,7 +237,7 @@ jobs:
           sparse-checkout: scripts
           persist-credentials: false
       - name: Prepare verified Electron
-        run: node release-prep/scripts/prepare-electron.mjs
+        run: node release-prep/scripts/prepare-electron.mjs --release
       # koffi（computer use の Win32 呼び出し）のネイティブ本体は @koromix/koffi-<os>-<cpu> という別のパッケージで、
       # npm ci はこの runner（x64）の分しか入れない。arm64 のインストーラーにも入れるため、arm64 の本体を足す。
       # --force は os / cpu の検査を外す（他の OS の本体は増えず、package.json とロックも変わらない）。版は koffi 本体に合わせる
@@ -287,6 +287,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PLY_WINDOWS_SIGNING: none
         run: ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG -BuildOnly
+      - name: Verify Windows executable architectures
+        run: node release-prep/scripts/verify-windows-architectures.mjs dist-desktop
       - name: Packaged UI startup smoke
         timeout-minutes: 5
         run: |

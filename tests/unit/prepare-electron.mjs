@@ -6,7 +6,8 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'yaml';
-import { electronDownloader } from '../../scripts/prepare-electron.mjs';
+import { electronDownloader, officialReleaseDownloader, windowsInstallerTools } from '../../scripts/prepare-electron.mjs';
+import { verifyWindowsArchitectures } from '../../scripts/verify-windows-architectures.mjs';
 
 export const name = 'prepare-electron';
 export const title = 'Electronの代替取得でも固定したチェックサムを検証する';
@@ -60,7 +61,7 @@ export default async function (t) {
     assert.equal(steps[helper].with.ref, '${{ github.workflow_sha }}');
     assert.equal(steps[helper].with['sparse-checkout'], 'scripts');
     assert.equal(steps[helper].with['persist-credentials'], false);
-    assert.equal(steps[warm].run, 'node release-prep/scripts/prepare-electron.mjs');
+    assert.equal(steps[warm].run, 'node release-prep/scripts/prepare-electron.mjs --release');
     assert.ok(npm >= 0 && npm < helper && helper < warm);
     t.ok(`${jobName}: 準備は workflow の commit から取り、製品 checkout はタグのまま、npm ci の後に温める`, true);
   }
@@ -69,4 +70,55 @@ export default async function (t) {
   assert.equal(await fs.realpath(resolved), await fs.realpath(path.join(repo, 'node_modules', 'electron', 'package.json')));
   assert.equal(resolved.includes(`${path.sep}release-prep${path.sep}`), false);
   t.ok('第二 checkout の位置から、製品の node_modules にある electron へ解決する', true);
+
+  const toolSource = await fs.readFile(createRequire(import.meta.url).resolve('app-builder-lib/out/toolsets/windows.js'), 'utf8');
+  const tools = windowsInstallerTools(toolSource);
+  assert.deepEqual(tools.map(tool => tool.name), ['nsis', 'nsis-resources']);
+  for (const tool of tools) assert.match(tool.checksum, /^[a-f0-9]{64}$/);
+  assert.throws(() => windowsInstallerTools(''), /Missing pinned/);
+  const requests = [];
+  const binary = officialReleaseDownloader('electron-userland/electron-builder-binaries', 'nsis-resources-3.4.1', {
+    warn: () => {}, fetchImpl: async url => {
+      requests.push(url);
+      if (url.includes('/releases/download/')) return new Response('', { status: 504 });
+      if (url.includes('/releases/tags/')) return Response.json({ assets: [{ name: 'nsis-resources-3.4.1.7z', id: 321 }] });
+      return new Response('builder tool');
+    },
+  });
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'builder-download-test-'));
+  try {
+    await binary.download('https://github.com/electron-userland/electron-builder-binaries/releases/download/nsis-resources-3.4.1/nsis-resources-3.4.1.7z', path.join(temp, 'tool.7z'));
+    assert.equal(requests[2], 'https://api.github.com/repos/electron-userland/electron-builder-binaries/releases/assets/321');
+  } finally { await fs.rm(temp, { recursive: true, force: true }); }
+  assert.throws(() => officialReleaseDownloader('foreign/repo', 'v1'), /Unsupported/);
+  t.ok('インストーラー部品も依存パッケージのハッシュを使い、公式の同じ配布元へ切り替える', true);
+
+  const builds = await fs.mkdtemp(path.join(os.tmpdir(), 'windows-arch-test-'));
+  const executable = machine => {
+    const buffer = Buffer.alloc(134);
+    buffer.writeUInt16LE(0x5a4d, 0); buffer.writeUInt32LE(128, 0x3c);
+    buffer.writeUInt32LE(0x4550, 128); buffer.writeUInt16LE(machine, 132);
+    return buffer;
+  };
+  const x64 = path.join(builds, 'win-unpacked', 'Ply.exe');
+  const arm64 = path.join(builds, 'win-arm64-unpacked', 'Ply.exe');
+  try {
+    for (const file of [x64, arm64]) await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(x64, executable(0x8664)); await fs.writeFile(arm64, executable(0xaa64));
+    await verifyWindowsArchitectures(builds);
+    await fs.writeFile(arm64, executable(0x8664));
+    await assert.rejects(verifyWindowsArchitectures(builds), /Wrong executable architecture: win-arm64/);
+    await fs.writeFile(arm64, Buffer.alloc(12));
+    await assert.rejects(verifyWindowsArchitectures(builds), /Invalid executable/);
+    const invalid = executable(0xaa64); invalid.writeUInt32LE(0xffffff, 0x3c);
+    await fs.writeFile(arm64, invalid);
+    await assert.rejects(verifyWindowsArchitectures(builds), /Invalid PE header/);
+    t.ok('Arm64配布物へのx64実行ファイル混入と破損した実行ファイルを公開前に拒否する', true);
+  } finally { await fs.rm(builds, { recursive: true, force: true }); }
+  const winSteps = workflow.jobs.windows.steps;
+  const archCheck = winSteps.findIndex(step => step.name === 'Verify Windows executable architectures');
+  assert.equal(winSteps[archCheck].run, 'node release-prep/scripts/verify-windows-architectures.mjs dist-desktop');
+  assert.ok(archCheck > winSteps.findIndex(step => step.name === 'Verify and build unsigned'));
+  assert.ok(archCheck < winSteps.findIndex(step => step.name === 'Packaged UI startup smoke'));
+  t.ok('Windows実行ファイルのCPU検証をビルドの後、配布物の起動と公開の前に行う', true);
 }
