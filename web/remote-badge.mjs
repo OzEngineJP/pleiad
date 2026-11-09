@@ -1,7 +1,9 @@
-// リモートの窓の印（docs/remote.md §7.2 の 1。2026-09-23 から「H1・塗りなし」）。
+// リモートの窓の印（docs/remote.md §7.2 の 1。2026-11-09 承認: 帯のバッジから脇のいちばん下の行へ。案 A）。
 // 端末のアプリ（デスクトップ版の desktop/remote-preload.cjs）が window.plyRemote を渡したときだけ描く。
-// 帯の左に差しの青のホスト名のバッジを常に出す（閉じるボタンは無い）。押すと接続の情報と「この窓を閉じる」の小さな面。
-// 帯の色は脇と同じ面（style.css の :root.desktop.remote .titlebar。client.mjs の paintTitleBar が読んで OS へ送る）。
+// 脇のいちばん下（アカウント行 .side-foot の下）に差しの青の 1 行「⇄ リモート: ホスト名」を常に出す（閉じるボタンは無い）。
+// 押すと接続の情報と「この窓を閉じる」の小さな面が上向きに開く。畳んだレールでは ⇄ を設定の上、
+// 700px 以下ではタイトルの下の行に「· ⇄ ホスト名」（.host-sub。モバイル版の殻と同じ置き方）を出す。
+// 帯の色は脇と同じ面（style.css の .titlebar。client.mjs の paintTitleBar が読んで OS へ送る）。
 // つながらないとき（中継・ホストがオフライン）はバッジに状態を添え、面に「再試行」を出す。取り消されたら本体が読み直して
 // プロキシの案内のページを出す（desktop/remote-windows.cjs）。線が止まった（外された・止められた ほか）・Plus が止まっている間も
 // 状態を添える（再試行は出さない。何をすればよいかは会話の画面の案内 web/connection-status.mjs）。
@@ -47,7 +49,7 @@ export function badgeView(info, status) {
 }
 
 /**
- * バッジと面を作って帯に置く。plyRemote が無ければ何もしない（null）。
+ * バッジ・レールの ⇄・タイトルの下の添え字と面を作る。plyRemote が無ければ何もしない（null）。
  *   remote: window.plyRemote、doc: document
  */
 export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = globalThis.document, back } = {}) {
@@ -63,6 +65,32 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
   badge.setAttribute('aria-controls', 'remotePop');
   const label = el('span', 'lbl'), host = el('span', 'host'), suffix = el('span', 'state');
   badge.append(icon(ARROWS), label, host, suffix);
+
+  // 畳んだレールの ⇄（設定の上に置く）と、700px 以下のタイトルの下の添え字（.host-sub。crumbSep の次）
+  const rail = el('button', 'btn btn-icon remote-rail');
+  rail.type = 'button';
+  rail.id = 'remoteRail';
+  rail.setAttribute('aria-expanded', 'false');
+  rail.setAttribute('aria-controls', 'remotePop');
+  rail.append(icon(ARROWS));
+
+  const col = doc.querySelector?.('.title-col');
+  let sub = null, subHost = null, subState = null;
+  if (col) {
+    sub = el('button', 'host-sub');
+    sub.type = 'button';
+    sub.id = 'remoteSub';
+    sub.setAttribute('aria-expanded', 'false');
+    sub.setAttribute('aria-controls', 'remotePop');
+    subHost = el('span', 'host');
+    subState = el('span', 'state');
+    const arrows = icon(ARROWS);
+    arrows.setAttribute('aria-hidden', 'true');
+    sub.append(arrows, subHost, subState);
+    const line = col.querySelector('.title-sub');
+    const after = line?.querySelector('#crumbSep');
+    if (after) after.after(sub); else (line ?? col).append(sub);
+  }
 
   const pop = el('div', 'pop remote-pop');
   pop.id = 'remotePop';
@@ -80,6 +108,7 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
   pop.append(heading, facts, acts);
 
   let view = badgeView(info, null);
+  let opener = badge;
   function paint(status) {
     if (status !== undefined) view = badgeView(info, status);
     label.textContent = view.label;
@@ -88,6 +117,19 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
     suffix.hidden = !view.suffix;
     badge.title = view.title;
     badge.dataset.state = view.state;
+    // レールの ⇄・添え字にも同じ状態を写す（読み上げ名は「リモート: ホスト名 · 状態」）
+    const name = `${view.label} ${view.host}${view.suffix ? ` · ${view.suffix}` : ''}`;
+    rail.title = view.title;
+    rail.setAttribute('aria-label', name);
+    rail.dataset.state = view.state;
+    if (sub) {
+      subHost.textContent = view.host;
+      subState.textContent = view.suffix ? ` · ${view.suffix}` : '';
+      subState.hidden = !view.suffix;
+      sub.title = view.title;
+      sub.setAttribute('aria-label', name);
+      sub.dataset.state = view.state;
+    }
     heading.textContent = view.host;
     const rows = [[t('remote.pop.state'), view.stateText]];
     if (info.relay) rows.push([t('remote.pop.relay'), info.relay]);
@@ -98,22 +140,32 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
   }
   function setOpen(open) {
     pop.hidden = !open;
-    badge.setAttribute('aria-expanded', String(open));
+    for (const b of [badge, rail, sub]) b?.setAttribute('aria-expanded', String(open));
   }
-  badge.onclick = e => { e.stopPropagation(); setOpen(pop.hidden); };
+  const toggle = e => { e.stopPropagation(); opener = e.currentTarget ?? badge; setOpen(pop.hidden); };
+  badge.onclick = toggle;
+  rail.onclick = toggle;
+  if (sub) sub.onclick = toggle;
   pop.addEventListener('click', e => e.stopPropagation());
   doc.addEventListener('click', () => setOpen(false));
-  doc.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidden) { setOpen(false); badge.focus(); } });
+  doc.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidden) { setOpen(false); opener.focus(); } });
   retry.onclick = () => { Promise.resolve(remote.retry?.()).catch(() => {}); };
   close.onclick = () => { remote.closeWindow?.(); };
 
-  // 帯（.titlebar）の直後に置く。帯は掴んで窓を動かす場所で aria-hidden なので、押せるバッジは帯の外の要素にする
+  // 脇のいちばん下（アカウント行 .side-foot の下）に置く。帯は掴んで窓を動かす場所で、印は脇の中の行
+  const foot = doc.querySelector('.side-foot');
+  if (foot) foot.after(badge); else doc.body.append(badge);
+  // 畳んだレールでは設定（#railSettings）の上。tabIndex は client.mjs の paintSideChrome がほかのボタンと揃える
+  const railNav = doc.querySelector('#sideRail');
+  const gear = railNav?.querySelector('#railSettings');
+  if (railNav) { railNav.insertBefore(rail, gear ?? null); rail.tabIndex = gear?.tabIndex ?? -1; }
+  // 面は body の直下（fixed で脇の下端の行の上に開く）。帯は aria-hidden なので、面は帯の外の要素にする
   const bar = doc.querySelector('.titlebar');
-  if (bar) bar.after(badge, pop); else doc.body.prepend(badge, pop);
+  if (bar) bar.after(pop); else doc.body.prepend(pop);
   paint();
   Promise.resolve(remote.status?.()).then(s => { if (s) paint(s); }).catch(() => {});
   remote.onStatus?.(s => paint(s));
-  return { badge, pop, paint, view: () => view };
+  return { badge, pop, rail, sub, paint, view: () => view };
 }
 
 const BACK = 'M15 6l-6 6 6 6';
