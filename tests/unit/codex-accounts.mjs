@@ -97,11 +97,14 @@ export default async function test(t) {
     await run(b, { contextRuntime: context });
     assert.ok(await boundA.suggestTitle({ transcript: 'a title', locale: 'en' }));
     assert.ok(await boundB.suggestNext({ prompt: 'suggest a next step' }));
+    // 内部呼出しも、束縛したアカウントの app-server（HOME）で走る（Issue #180）
+    assert.ok((await boundB.internalTurn({ prompt: 'internal account turn', cwd: root }))?.text !== undefined);
     await boundB.runTurn({ prompt: 'bound turn', cwd: root, mode: 'readonly', signal: new AbortController(), emit: () => {}, askPermission: async () => ({ allow: false }), account: a });
     const logs = (await fs.readFile(vars.FAKE_CODEX_LOG, 'utf8')).trim().split('\n').map(JSON.parse);
     const pidHomes = new Map(logs.filter(x => x.method === 'initialize').map(x => [x.pid, x.home]));
     const turns = logs.filter(x => x.method === 'turn/start');
     assert.ok(turns.some(x => pidHomes.get(x.pid) === a.dir));
+    assert.ok(turns.some(x => pidHomes.get(x.pid) === b.dir && JSON.stringify(x).includes('internal account turn')), 'internalTurn は選択したアカウントの app-server で走る');
     assert.ok(turns.some(x => pidHomes.get(x.pid) === b.dir));
     assert.ok([...pidHomes].filter(([, h]) => h === b.dir).length >= 2);
     assert.equal(turns.some(x => pidHomes.get(x.pid) === home), false);

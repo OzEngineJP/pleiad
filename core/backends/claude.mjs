@@ -55,7 +55,7 @@ const NL = String.fromCharCode(10);
 // resumeGraceMs は裏の作業を見たターンで入力を閉じる前に置く猶予（claude-background.mjs の RESUME_GRACE_MS）
 // probe / cliSigThrottleMs はモデル一覧の引き直し（下の CATALOG_TTL のあたり）だけがテストで差し替える
 // query が null のときは読み込んだ SDK の query（loadClaudeSdk）
-const sdk = { query: null, executable: claudeExecutable, probe: null, cliSigThrottleMs: 5_000, stopAckMs: 2500, stopExitMs: 3000, resumeGraceMs: RESUME_GRACE_MS };
+const sdk = { query: null, resolveSettings: null, executable: claudeExecutable, probe: null, cliSigThrottleMs: 5_000, stopAckMs: 2500, stopExitMs: 3000, resumeGraceMs: RESUME_GRACE_MS };
 export function setClaudeSdkForTest(over = {}) {
   const prev = { ...sdk };
   Object.assign(sdk, over);
@@ -1378,12 +1378,14 @@ export const backend = {
     if (signal?.aborted) return null;
     signal?.addEventListener?.("abort", stop, { once: true });
     try {
-      const sdk = await loadClaudeSdk();
+      // 試験が query と resolveSettings の両方を差し替えていれば SDK を読み込まない
+      const api = sdk.query && sdk.resolveSettings ? sdk : await loadClaudeSdk();
       // 管理（admin）層の hooks は managedSettings の disableAllHooks では止まらないことがある（SDK 0.3.288 の管理層の説明）。
-      // 実効の設定を CLI 無しで読み、管理層に hooks があれば内部呼出しを始めない（管理ポリシーを迂回しない）
-      const blocked = await managedHooksBlockReason(sdk, cwd);
+      // 実効の設定を CLI 無しで読み、管理層に hooks があれば内部呼出しを始めない（管理ポリシーを迂回しない）。
+      // query / resolveSettings は既存の試験の差し替え口（setClaudeSdkForTest）を優先する
+      const blocked = await managedHooksBlockReason({ resolveSettings: sdk.resolveSettings ?? api.resolveSettings }, cwd);
       if (blocked) throw Object.assign(new Error(blocked), { code: 'INTERNAL_UNAVAILABLE' });
-      const { query } = sdk;
+      const query = sdk.query ?? api.query;
       for await (const m of query({
         prompt,
         options: {

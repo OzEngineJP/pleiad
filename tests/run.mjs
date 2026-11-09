@@ -70,6 +70,9 @@ const SUITES = [
   './unit/server-prompt-suggestions.mjs',
   // 内部 AI 呼出し（Issue #180）: 会話も接続先の履歴も作らない共通経路・journal・使用量・中断・再起動
   './unit/internal-call.mjs',
+  // バックエンドごとの内部呼出しの契約（偽の SDK / RPC で、ephemeral・道具/MCP/hooks の閉じ方・fail-closed）
+  './unit/claude-internal-call.mjs',
+  './unit/codex-internal-call.mjs',
   // 旧内部会話の分類（durable 印だけ・チャンネル/スレッド無し）と、ネイティブ id から host の印を引く境界
   './unit/internal-conversation.mjs',
   // 実際のサーバーの公開経路（一覧・get・read・changes・ネイティブ id）から返らないこと（再起動を含む）
