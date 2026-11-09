@@ -30,6 +30,38 @@ export function createSessionLoads() {
       return [...(data.stream?.events ?? []),
         ...load.events.filter(e => e.streamSeq > data.streamCursor)];
     },
+    /** Restore in bounded tasks while new display events stay behind the snapshot. */
+    async replay(load, data, { apply, paint = fn => fn(), current = () => true,
+      yieldTask = () => new Promise(resolve => setTimeout(resolve, 0)), now = () => performance.now(), budget = 8 } = {}) {
+      const snapshot = data.stream?.events ?? [];
+      let head = 0, received = 0;
+      const active = () => pending.has(load) && current();
+      try {
+        if (snapshot.length > 64) await yieldTask();
+        while (active()) {
+          paint(() => {
+            const started = now();
+            let count = 0;
+            while (active()) {
+              let event;
+              if (head < snapshot.length) event = snapshot[head++];
+              else if (received < load.events.length) {
+                event = load.events[received++];
+                if (!(event.streamSeq > data.streamCursor)) continue;
+              } else break;
+              apply(event);
+              // A count bound also protects against coarse or stubbed clocks.
+              if (++count >= 64 || now() - started >= budget) break;
+            }
+          });
+          if (!active()) return false;
+          if (head === snapshot.length && received === load.events.length) return true;
+          await yieldTask();
+        }
+        return false;
+      } finally { pending.delete(load); }
+    },
+    isPending(load) { return pending.has(load); },
     cancel(load) { pending.delete(load); },
   };
 }

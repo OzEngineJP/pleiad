@@ -216,6 +216,21 @@ function itemOf(card) {
   };
 }
 
+// Only the synchronous restoration task is batched; ordinary live events keep their motion.
+let restoring = 0;
+const restoredBundles = new Set();
+export function batchToolUpdates(fn) {
+  restoring++;
+  try { return fn(); }
+  finally {
+    if (!--restoring) {
+      const bundles = [...restoredBundles];
+      restoredBundles.clear();
+      for (const bundle of bundles) bundle.layout();
+    }
+  }
+}
+
 export class Bundle {
   /**
    * @param {{live?:boolean, kind?:"tools"|"computer", onStop?:(bundle:Bundle)=>void}} [o]
@@ -346,11 +361,12 @@ export class Bundle {
     if (prev) {
       const w = this.wrap(prev);
       this.hist.append(w);
-      animate(w, [{ opacity: 1 }, { opacity: .42 }], { duration: DUR });
+      if (restoring) { w.classList.add("hid"); w.setAttribute("inert", ""); }
+      else animate(w, [{ opacity: 1 }, { opacity: .42 }], { duration: DUR });
     }
     const nw = this.wrap(card);
     this.latest.replaceChildren(nw);
-    if (!reducedMotion()) {
+    if (!restoring && !reducedMotion()) {
       // 畳まれる行と同じフレームで伸び始める（同時に進むので、まとまりの高さはほぼ変わらない）
       nw.classList.add("hid");
       void nw.offsetHeight;
@@ -379,7 +395,7 @@ export class Bundle {
       this.layout();
     };
     const w = card?.hiWrap;
-    if (!w || reducedMotion()) { settle(); return; }
+    if (restoring || !w || reducedMotion()) { settle(); return; }
     // 最新の行を上へ畳んでから、中の行へ移す（移したときに一瞬出ないよう、移す先は高さ 0）
     w.style.transition = `grid-template-rows ${DUR}ms ${EASE}, opacity ${DUR}ms ${EASE}`;
     w.classList.add("hid");
@@ -437,6 +453,7 @@ export class Bundle {
 
   /** 中の行の出入りを決め直し、見出しを書き直す */
   layout({ stagger = false, countAnimation = false } = {}) {
+    if (restoring) { restoredBundles.add(this); return; }
     const inner = this.inner, n = inner.length;
     // 終わったコンピューターの操作の塊は、閉じていても失敗・止めた行・最後の画面・最後の行を見せる
     const pick = this.computer && !this.live ? pickRows(this.items) : null;
@@ -476,6 +493,7 @@ export class Bundle {
 
   /** 見出し。「ツール実行 N」・失敗の数（右端）・走っている間の経過。結果が届いたら呼び直す */
   paint(countAnimation = false) {
+    if (restoring) { restoredBundles.add(this); return; }
     // 終わった塊に遅れて結果が届いたとき（見せる行が替わりうる）は、行の出入りから決め直す
     if (this.computer && !this.live && !this.laying) return this.layout();
     this.el.classList.toggle("tools-away", this.cards.length > 0 && this.cards.every(c => c.toolHome));

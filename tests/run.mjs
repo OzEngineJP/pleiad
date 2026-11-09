@@ -686,6 +686,8 @@ const SUITES = [
   './unit/claude-model-match.mjs',
   './unit/codex-background.mjs',
   './unit/codex-terminals.mjs',
+  './unit/codex-live-messages.mjs',
+  './unit/session-replay.mjs',
   './unit/event-session-id.mjs',
   './unit/lineage.mjs',
   './unit/branches.mjs',

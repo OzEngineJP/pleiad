@@ -1312,6 +1312,25 @@ function ensureWhenCloser() {
   document.addEventListener("keydown", closeAll);
 }
 
+let measuringBatch = 0;
+const timeMeasurements = new Set();
+const timeWidth = card => {
+  const res = card.querySelector(".tc-res"), btn = card.querySelector(".tc-time");
+  return (res?.getBoundingClientRect?.().width ?? 0) + (btn?.getBoundingClientRect?.().width ?? 0);
+};
+/** During history restoration, read all tool widths before writing any of them. */
+export function batchToolMeasurements(fn) {
+  measuringBatch++;
+  try { return fn(); }
+  finally {
+    if (!--measuringBatch) {
+      const widths = [...timeMeasurements].filter(card => card.isConnected).map(card => [card, timeWidth(card)]);
+      timeMeasurements.clear();
+      for (const [card, width] of widths) card.style.setProperty("--res-w", `${width}px`);
+    }
+  }
+}
+
 /**
  * 行の右端の時刻ボタン（HH:MM）とポップオーバーを、card.toolStarted / toolEnded / toolExitCode の今の分に書き直す。
  * 始まりの時刻が無い（古い履歴）なら、ボタンもポップオーバーも出さない
@@ -1371,7 +1390,10 @@ function updateWhen(card) {
   card.querySelector(".tc-when-pop")?.setAttribute("role", "dialog");
   // 重ねた矢印（.tc-go）は「値の列」の幅から位置を引く。時刻ボタンが値の列の右に居るので、分だけ --res-w を広げる
   const res = card.querySelector(".tc-res");
-  if (res) card.style.setProperty("--res-w", `${(res.getBoundingClientRect?.().width ?? 0) + (btn.getBoundingClientRect?.().width ?? 0)}px`);
+  if (res) {
+    if (measuringBatch) timeMeasurements.add(card);
+    else card.style.setProperty("--res-w", `${timeWidth(card)}px`);
+  }
 }
 
 /**

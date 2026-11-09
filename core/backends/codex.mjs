@@ -1576,6 +1576,9 @@ const backend = {
     const items = new Map();       // itemId -> ThreadItem
     let thinkingOpen = false;
     let sawText = false;
+    let sawThinking = false;
+    const messageText = new Map();
+    const completedMessages = new Set();
     let turnId = null;
     let settleTurn = null;
     // 新規スレッドの最初のリクエストの入力トークン数（固定の部分の重さ。委譲の子の自動圧縮の閾値の見積もりに使う。ADR 0166）
@@ -1669,18 +1672,25 @@ const backend = {
           turnId ??= params?.turn?.id ?? null;
           return;
 
-        case "item/agentMessage/delta":
+        case "item/agentMessage/delta": {
+          if (turnId && params?.turnId && params.turnId !== turnId) return;
+          if (completedMessages.has(params?.itemId)) return;
+          const text = String(params?.delta ?? "");
+          if (params?.itemId) messageText.set(params.itemId, (messageText.get(params.itemId) ?? "") + text);
           if (!sawText) { sawText = true; emit({ type: "activity", state: "writing" }); }
-          return emit({ type: "text.delta", text: String(params?.delta ?? "") });
+          return emit({ type: "text.delta", text });
+        }
 
         case "item/reasoning/summaryTextDelta":
         case "item/reasoning/textDelta":
           openThinking();
+          if (params?.delta) sawThinking = true;
           return emit({ type: "thinking.delta", text: String(params?.delta ?? "") });
 
         case "item/started": {
           const item = params?.item;
           if (!item?.id) return;
+          if (item.type === "agentMessage" && turnId && params?.turnId && params.turnId !== turnId) return;
           // 入力欄の `!` の結果はエージェントのツールではない。backend.shell が拾って shell.* で出す
           if (isUserShell(item)) return;
           if (item.type === 'contextCompaction') emit(codexCompactionEvent(method, params));
@@ -1712,6 +1722,20 @@ const backend = {
           // item/started を取りこぼしたときの保険。届いていれば steered から消えていて何もしない
           noteDelivered(item);
           if (item.type === "reasoning" && thinkingOpen) thinkingOpen = false;
+          if (item.type === "agentMessage") {
+            if (turnId && params?.turnId && params.turnId !== turnId) return;
+            if (completedMessages.has(item.id)) return;
+            completedMessages.add(item.id);
+            // 完了だけ届く場合も本文を復元する。逐次配送済みの本文は重ねない。
+            const sent = messageText.get(item.id) ?? "";
+            const text = String(item.text ?? "");
+            if (text.startsWith(sent) && text.length > sent.length) emit({ type: "text.delta", text: text.slice(sent.length) });
+            messageText.delete(item.id);
+            if (!text && !sent && !sawText && !sawThinking) return;
+            sawText = false;
+            sawThinking = false;
+            return emit({ type: "text.end", uuid: item.id });
+          }
           if (!TOOL_ITEMS.has(item.type)) return;
           if (!started) emit({ type: "tool.start", id: item.id, name: toolName(item), input: toolInput(item),
             turnId: params.turnId, startedAt: params.startedAtMs, processId: item.processId });

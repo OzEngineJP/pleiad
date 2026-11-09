@@ -4,8 +4,8 @@ import { t } from "./i18n.mjs";
 import { runMark } from "./arc.mjs";
 
 const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
-const move = (node, mutate) => {
-  const before = node.isConnected ? node.getBoundingClientRect() : null;
+const move = (node, mutate, motion = true) => {
+  const before = motion && node.isConnected ? node.getBoundingClientRect() : null;
   const focus = node.contains(document.activeElement) ? document.activeElement : null;
   mutate();
   focus?.focus({ preventScroll: true });
@@ -37,6 +37,14 @@ export class RunningTools {
     this.el.append(this.rows, this.more, this.status);
   }
   get size() { return this.cards.size; }
+  /** Restore completed rows without animating each historical start and finish. */
+  batch(fn) {
+    this.restoring = (this.restoring ?? 0) + 1;
+    try { return fn(); }
+    finally {
+      if (!--this.restoring) { this.layout(); this.changed(); this.after?.(false); }
+    }
+  }
   add(card) {
     if (this.cards.has(card)) return;
     const stick = this.before?.();
@@ -53,11 +61,10 @@ export class RunningTools {
     mark.setAttribute("aria-hidden", "true");
     mark.append(runMark());
     card.querySelector(".tc-line")?.prepend(mark);
-    move(card, () => this.rows.append(card));
+    move(card, () => this.rows.append(card), !this.restoring);
     card.toolBundle?.paint();
     this.layout();
-    this.changed();
-    this.after?.(stick);
+    if (!this.restoring) { this.changed(); this.after?.(stick); }
   }
   remove(card) {
     if (!this.cards.delete(card)) return;
@@ -74,13 +81,13 @@ export class RunningTools {
       if (label) label.textContent = card.historyVerb;
       card.toolBundle?.paint();
       if (open || focused) card.toolBundle?.reveal(card);
-    });
+    }, !this.restoring);
     if (!this.size) this.expanded = false;
     this.layout();
-    this.changed();
-    this.after?.(stick);
+    if (!this.restoring) { this.changed(); this.after?.(stick); }
   }
   layout() {
+    if (this.restoring) return;
     [...this.cards].forEach((card, i) => { card.hidden = !this.expanded && i >= 3; });
     const n = Math.max(0, this.size - 3);
     this.more.hidden = !n;

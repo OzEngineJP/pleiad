@@ -25,12 +25,17 @@ export default async function (t) {
   const notices = [];
   const completionNotifications = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: notice => notices.push(notice) } }, openSession: noop });
   let bodies = [], releaseHistory, releaseBranches, syncs = 0;
+  const renderedPermissions = [];
+  const historyTimers = new Map();
+  let timerId = 0;
   const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
   const loads = createSessionLoads();
   const context = vm.createContext({
     // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。このテストは本文の raw だけを見る
+    runningTools: { batch: fn => fn() },
+    replayPainting: false, pendingHistorySync: false, batchToolUpdates: fn => fn(), batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(),
     requestAnimationFrame: () => 1, cancelAnimationFrame: noop, streamFrame: 0, streamTarget: null, stoppingHere: () => false,
-    setTimeout: () => 1, clearTimeout: noop, heightSettler: null, prepareHistoryHeights: noop,
+    setTimeout: (fn, ms) => { const id = ++timerId; if (ms === 150) historyTimers.set(id, fn); return id; }, clearTimeout: id => historyTimers.delete(id), heightSettler: null, prepareHistoryHeights: noop,
     completionNotifications, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
     headerUsage: { turnEnded: noop },
@@ -58,8 +63,10 @@ export default async function (t) {
     promptPlaceholder: () => "chat.composer.placeholder",
     state, sessionLoads: loads, outboxes: new Map(), paintOutbox: noop, syncOutboxRows: noop, refreshOutbox: async () => [],
     displayedCompletions: new Map(), document: { visibilityState: "visible" },
+    renderPermission: ev => renderedPermissions.push(ev),
+    browserEntry: null, browserSettings: { chromeRepaint: noop },
     // 承認カードはこのテストの対象外（tests/unit/server-fake.mjs の reopenCase が見ている）
-    paintPendingPerms: noop, paintComputerWait: noop,
+    paintPendingPerms: id => { for (const ev of state.pendingPerms.values()) if (ev.sessionId === id) context.renderPermission(ev); }, paintComputerWait: noop,
     readCompletions: { mark: noop }, renderSessions: noop, acknowledgeDisplayed: noop, el: () => ({ dataset: {} }), renderMarkdown: x => x, renderAssistantMarkdown: x => x,
     closeBundle: noop, settleStrays: noop, followBottom: noop, closeThink: noop, activity: { show: noop, hide: noop }, atBottom: () => false,
     ensureTurnEl: () => ({ append: x => bodies.push(x) }),
@@ -121,6 +128,36 @@ export default async function (t) {
   await new Promise(setImmediate);
   t.ok("読込中に終了しても全文を残して履歴同期する", bodies[0]?.dataset.raw === "全文" && syncs === 1);
   t.ok('履歴読込中の完了も一度だけ通知する', notices.length === 1 && notices[0].sessionId === 'target');
+
+  // Pause the actual paintSession at a replay yield, then deliver completion.
+  const originalReplay = loads.replay;
+  let releaseReplay;
+  let yielded = false;
+  loads.replay = (load, data, options) => originalReplay(load, data, {
+    ...options,
+    yieldTask: async () => {
+      if (!yielded) { yielded = true; await new Promise(resolve => { releaseReplay = resolve; }); }
+    },
+  });
+  state.current = "other";
+  const longSelection = vm.runInContext("select('target')", context);
+  const many = Array.from({ length: 150 }, (_, i) => event(String(i) + ",", 20 + i));
+  releaseHistory({ messages: [], presents: [], stream: { events: many }, streamCursor: 169 });
+  await new Promise(setImmediate);
+  const beforeSync = syncs;
+  t.ok('分割再生を始める前に骨組みのタイマーを止める', historyTimers.size === 0);
+  deliver({ type: 'permission', id: 'during-replay', sessionId: 'target', toolUseID: 'pending-tool', kind: 'tool' });
+  t.ok('再生中の承認は覚えて、ツール行を復元するまでは描かない', state.pendingPerms.has('during-replay') && !renderedPermissions.length);
+  deliver(event("tail", 170));
+  deliver({ type: "text.end", sessionId: "target", streamSeq: 171 });
+  deliver({ type: "turnEnd", sessionId: "target", streamSeq: 172, outcome: 'ok', completedAt: 200 });
+  t.ok("再生の待ち中に届いた終了は復元を追い越さない", yielded && syncs === beforeSync && state.loadingSession === 'target');
+  releaseReplay();
+  await longSelection;
+  t.ok("分割再生の本文と到着した末尾を一度ずつ残し、最後に履歴を同期する", bodies[0]?.dataset.raw === many.map(e => e.text).join('') + 'tail' && syncs === beforeSync + 1 && state.loadingSession === null);
+  t.ok('再生後に受信した承認を一度だけ描く', renderedPermissions.length === 1 && renderedPermissions[0].id === 'during-replay');
+  state.pendingPerms.clear();
+  loads.replay = originalReplay;
 
   const cancelled = loads.begin("target");
   loads.cancel(cancelled);

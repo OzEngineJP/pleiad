@@ -5,6 +5,7 @@
 // DOM シムは tests/run.mjs が入口で入れている。
 import { bundleStats, splitToolCalls, clock, secs } from "../../web/tool-bundle.mjs";
 import { renderToolCall, applyToolResult, applyToolHints, applySubagentTools, toolChange, exitCodeOf, failureLine, isDelegateToolName, isPlyDelegateToolName } from "../../web/render.mjs";
+import { terminalView, updateTerminal, batchTerminalUpdates } from '../../web/terminal.mjs';
 import { toolNodes } from "../../web/channels/thread-tools.mjs";
 import { parseTaskNotice } from "../../web/task-notice.mjs";
 
@@ -16,6 +17,26 @@ const item = (verb, extra = {}) => ({ verb, ...extra });
 
 export default async function (t) {
   t.ok("ツールの経過は1分未満も m:ss、1時間以上は h:mm:ss", secs(0) === "0:00" && secs(59000) === "0:59" && secs(61000) === "1:01" && secs(3661000) === "1:01:01");
+  {
+    const boxes = [terminalView(), terminalView()];
+    const reads = [], writes = [];
+    for (const [i, box] of boxes.entries()) {
+      box.textContent = 'old';
+      let position = i ? 900 : 100;
+      Object.defineProperties(box, {
+        scrollHeight: { get: () => { reads.push(i); return box.textContent.includes('new') ? 1200 : 1000; } },
+        clientHeight: { value: 100 },
+        scrollTop: { get: () => position, set: value => { position = value; writes.push(reads.length); } },
+      });
+    }
+    batchTerminalUpdates(() => {
+      updateTerminal(boxes[0], { output: 'superseded' });
+      updateTerminal(boxes[0], { output: 'new reading' });
+      updateTerminal(boxes[1], { output: 'new following' });
+    });
+    t.ok('端末の一括復元は最新の出力を使い、読み返す位置と末尾への追従を保つ', boxes[0].scrollTop === 100 && boxes[1].scrollTop === 1200 && boxes[0].textContent.includes('new reading') && !boxes[0].textContent.includes('superseded'));
+    t.ok('端末のスクロールは位置をまとめて読んだ後に反映する', writes.length === 2 && writes.every(count => count === reads.length));
+  }
   // ---- 数え方
   {
     const st = bundleStats([

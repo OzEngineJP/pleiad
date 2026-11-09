@@ -1,4 +1,4 @@
-import { terminalView, updateTerminal } from './terminal.mjs';
+import { terminalView, updateTerminal, batchTerminalUpdates } from './terminal.mjs';
 import { setupDrawerSwipe, drawerBlockingOverlay } from './drawer-swipe.mjs';
 import { delegateResult, delegateTaskId, isPlyDelegateToolName } from './delegate-result.mjs';
 import { isComposingKey, shortcutLabel } from "./keyboard.mjs";
@@ -51,9 +51,9 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
-import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, applySubagentTools, plainTextHtml } from "./render.mjs";
+import { batchToolMeasurements, renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, applySubagentTools, plainTextHtml } from "./render.mjs";
 import { RunningTools } from "./running-tools.mjs";
-import { Bundle, bundleOf, clock, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
+import { Bundle, batchToolUpdates, bundleOf, clock, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { localTime, syncServerClock, toolStartedAt } from "./server-clock.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
@@ -921,7 +921,8 @@ function wrap(node, key) {
   return w;
 }
 
-const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+let replayPainting = false;
+const atBottom = () => !replayPainting && log.scrollHeight - log.scrollTop - log.clientHeight < 40;
 
 /**
  * 末尾へ送り、高さが落ち着くまで末尾に合わせ直す。画面の外の発言は仮の高さで並び（style.css の content-visibility）、
@@ -992,7 +993,7 @@ let olderEl = null;
 let backfill = null;
 
 function append(node, key) {
-  if (paintingHistory) { const w = wrap(node, key); place(w); return w; }
+  if (paintingHistory || replayPainting) { const w = wrap(node, key); place(w); return w; }
   const stick = !state.busy && atBottom();
   const w = wrap(node, key);
   place(w);
@@ -1960,6 +1961,7 @@ const isBoundaryTool = (name, tools) => isDelegateTool(name) || tools.has(name);
 
 /** 会話の下端に付いていく（行が伸びて高さが変わる間も、読んでいた下端に居続ける） */
 function followBottom(ms = 320) {
+  if (replayPainting) return;
   const end = performance.now() + ms;
   const tick = () => { log.scrollTop = log.scrollHeight; if (performance.now() < end) requestAnimationFrame(tick); };
   tick();
@@ -3155,7 +3157,7 @@ const activity = {
       if (!delayMark) tip.append(this.mark());
       m.append(tip, el("span", "txt"), el("span", "el"));
       append(m, "activity");
-      if (!matchMedia("(prefers-reduced-motion: reduce)").matches && m.animate) m.animate([
+      if (!replayPainting && !matchMedia("(prefers-reduced-motion: reduce)").matches && m.animate) m.animate([
         { transform: "translateY(6px)", opacity: .3 }, { transform: "none", opacity: 1 },
       ], { duration: 240, easing: "cubic-bezier(.2,.7,.2,1)" });
       this.el = m;
@@ -3856,6 +3858,9 @@ function onEvent(ev, replay = false) {
     }
 
     case "permission":
+      // The pending map and notification were updated above. Bind the card only
+      // after replay has created its tool row (paintPendingPerms below).
+      if (state.displayLoad?.id === ev.sessionId && sessionLoads.isPending(state.displayLoad)) return;
       return renderPermission(ev);
 
     case "permissionRelayEnd":
@@ -3958,7 +3963,8 @@ function onEvent(ev, replay = false) {
       if (ev.sessionId) { state.runningIds.delete(ev.sessionId); state.stopping.delete(ev.sessionId); resumeSettled(ev.sessionId); }
       syncRunState();
       paintInterruptLine();
-      syncHistory();
+      if (replayPainting && state.displayLoad) state.displayLoad.syncHistory = true;
+      else syncHistory();
       // git の状態（ブランチ・変更の数）はターンの終わりに取り直す。開いている git パネルも（ADR 0085）
       if (ev.sessionId && ev.sessionId === state.current) { refreshGit({ force: true }).catch(() => {}); gitPanel?.changed(); }
       // 右パネルの Hooks の「発火の記録」はターンの終わりに会話へ残る。開いていれば取り直す
@@ -9292,7 +9298,7 @@ if (typeof ResizeObserver === "function") new ResizeObserver(() => {
 }).observe(thread);
 
 /** Layout runs on append as well as resize; the spine exists even before the first turn. */
-function relayoutBranches() { layoutBranchSpine(thread); }
+function relayoutBranches() { if (!replayPainting) layoutBranchSpine(thread); }
 
 let pendingBranchReload = false, pendingHistorySync = false;
 async function reloadBranches(ev) {
@@ -9846,6 +9852,8 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
       ? retainPlan({ messages: state.messages, presents: state.presents, compactions: state.compactions, base: state.base, presentBase: state.presentBase },
         { messages: data?.messages, presents: data?.presents, compactions: data?.compactions, base: data?.base, presentBase: data?.presentBase })
       : null;
+    // Restoration now yields; the loading skeleton must never replace a partial replay.
+    clearTimeout(historyTimer);
     await paintSession(id, data, { keepUpTo, load, quiet, fresh, plan });
   } catch (e) {
     // 描く途中（枝の読み込みなど）で落ちても、欄を待ちのまま残さない
@@ -9910,12 +9918,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     family = loadBranches(id).catch(() => null);
   }
   if (state.current !== id || load && state.displayLoad !== load) return;
-  state.loadingSession = null;
-  // 対応を終えたエージェントの会話で閉じた欄（下の retired）は、別の会話を開いたら戻す
-  $("prompt").disabled = false;
-  composerWait.idle();
-  syncRunState();
-  syncTopbar();
+  // 読み込み中の再生が終わるまで、送信や読み足しは始めない。
 
   if (navSession !== id) { navSession = id; nav.reset(); toc.reset(); }
   const scrollAt = log.scrollTop;
@@ -9957,9 +9960,24 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     if (lastUser) lastUser.dataset.messageId = state.initialMessageId;
   }
   syncOutboxRows(outboxes.get(id) ?? []);
-  // Replay synchronously after clearing/painting; only events after the server
-  // snapshot are appended, so an in-flight delta is neither lost nor doubled.
-  if (load) for (const event of sessionLoads.finish(load, data)) onEvent(event, true);
+  // Keep incoming display events queued until snapshot restoration catches up.
+  if (load) {
+    const restored = await sessionLoads.replay(load, data, {
+      current: () => state.current === id && state.displayLoad === load,
+      apply: event => onEvent(event, true),
+      paint: fn => {
+        replayPainting = true;
+        try { batchToolMeasurements(() => batchTerminalUpdates(() => batchToolUpdates(() => runningTools.batch(fn)))); }
+        finally { replayPainting = false; flushStream(); relayoutBranches(); }
+      },
+    });
+    if (!restored) return;
+  }
+  state.loadingSession = null;
+  $("prompt").disabled = false;
+  composerWait.idle();
+  syncRunState();
+  syncTopbar();
   // まだ答えていない承認は本文の後（＝稼働表示の手前）に出す。届いたときに取りこぼしていても、
   // loadSession が返す保留中の一覧から拾える
   for (const ev of data?.permissions ?? []) if (ev.id) state.pendingPerms.set(ev.id, ev);
@@ -9979,7 +9997,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   refreshContextInfo({ force: true }).catch(() => {});
   refreshGit({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
-  if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
+  if (isRunningHere()) activity.show(activity.text && activity.text !== t('pending.historyLoading') ? activity.text : ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
   else if (behindHere() || backgroundCounts().live) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星（待てないものだけなら印なし）
   relayoutBranches();     // 稼働表示が出た後の高さで、今いる枝の終端ノードを置き直す
   $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : promptPlaceholder();
@@ -10001,6 +10019,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
     if (stick) scrollToEnd();
   });
   if (moving) await moving.promote(transition.snapshot);
+  if (load?.syncHistory && state.current === id && state.displayLoad === load) void syncHistory();
 }
 
 /**
