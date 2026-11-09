@@ -223,8 +223,8 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 #sidebar{display:flex;flex-direction:column;min-height:0;min-width:0;width:var(--side-w);position:relative;--p-top:9px;--rail-top:49px}
 /* 脇の左上の P の印の位置（--p-top）と、閉じたレールの上端（--rail-top）。デスクトップ版は帯の中、
    macOS は信号（x 16–52・y 14–26）の下の検索の行の左（信号と重ならない） */
-:root.desktop:not(.remote) > body > #sidebar{--p-top:4px;--rail-top:48px}
-:root.desktop:not(.remote).mac > body > #sidebar{--p-top:44px;--rail-top:84px}
+:root.desktop > body > #sidebar{--p-top:4px;--rail-top:48px}
+:root.desktop.mac > body > #sidebar{--p-top:44px;--rail-top:84px}
 /* 控えめなグリッド。脇と、デスクトップ版で脇から続く窓の上端の帯にだけ。どちらも窓の左上が原点なので点が揃う */
 #sidebar,.titlebar{background:var(--surface-0);background-image:radial-gradient(var(--line-faint) 1px,transparent 1.2px);background-size:24px 24px}
 #sidebar header{display:flex;align-items:center;justify-content:flex-end;gap:4px;padding:10px 8px 4px;position:relative}
@@ -587,48 +587,43 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 /* 帯の中・帯に掛かる押せるものは no-drag にしないと押せない（P の印・レール・Plus の丸・見出しのボタン） */
 :root.desktop #sidebar :is(header button,.side-pm,.side-avb,.side-rail button){-webkit-app-region:no-drag}
 /* 閉じたレールの押せるボタンの合間は、帯と同じく掴んで窓を動かせるようにする */
-:root.desktop:not(.remote) #sidebar .side-rail{-webkit-app-region:drag}
-:root.desktop:not(.remote) #sidebar .side-rail button{-webkit-app-region:no-drag}
+:root.desktop #sidebar .side-rail{-webkit-app-region:drag}
+:root.desktop #sidebar .side-rail button{-webkit-app-region:no-drag}
 /* macOS は信号の下（検索の行の左）に P の印が来るので、検索の行の左を P の分だけ開ける */
-:root.mac:not(.remote) #sidebar > .search{padding-left:50px}
+:root.mac #sidebar > .search{padding-left:50px}
 /* 設定の間は検索の行が無いので、メニューを P の分だけ下げる */
-:root.mac:not(.remote) body.settings > #sidebar > .settings-menu{padding-top:36px}
+:root.mac body.settings > #sidebar > .settings-menu{padding-top:36px}
 /* 重ねたダイアログは帯の下の範囲で中央に置く。帯に掛かると右上の閉じるボタンが窓のボタンの下に潜って押せない */
 :root.desktop dialog:modal{top:var(--bar-h)}
 :root.desktop #lightbox img{max-height:calc(92vh - 124px - var(--bar-h))}
 
 /* ==================== リモートの窓（docs/remote.md §7.2。web/remote-badge.mjs、desktop/remote-preload.cjs の plyRemote） ====================
-   帯を窓の幅いっぱいの 1 行にし、左（脇の列の上）にホスト名のバッジ、右（会話の列の上）にタイトル行を上げる（「H1・塗りなし」。
-   2026-09-23 に塗りをやめた）。帯は脇と同じ面（--surface-0 と点）のまま、
-   脇を閉じても・プレビューを並べても変えない。リモートの印は差しの青（--ink-blue）の「⇄ リモート: ホスト名」と、
-   OS の窓タイトル（Pleiad — リモート: ホスト名）・タスクバーの重ねアイコン（desktop/remote-windows.cjs）。
-   帯の地と記号の色は、ローカルと同じく paintTitleBar が .titlebar の --bar-end と --ink を読んで OS へ送る。
-   脇の開閉・プレビューで帯を紙にする上の規則より強くするため、帯の地だけ !important にする */
-:root.desktop.remote body > .titlebar{background:var(--surface-0) radial-gradient(var(--line-faint) 1px,transparent 1.2px) 0 0/24px 24px !important;--bar-end:var(--surface-0) !important}
-:root.desktop.remote #sidebar{grid-area:2/1/-1/2}
-:root.desktop.remote #sidebar header{-webkit-app-region:no-drag}
-:root.mac.remote #sidebar header{padding-left:12px}   /* 信号は帯の中にある */
+   帯・脇の見出し・タイトル行はホストと同じ構造（リモート専用の配置ルールは無い。2026-11-09 承認）。リモートの印は
+   脇のいちばん下、アカウント行（.side-foot）の下の 1 行「⇄ リモート: ホスト名」（差しの青 --ink-blue、ホスト名は等幅）。
+   押すと接続の情報の面が上向きに開く。つながっていない間だけ、行の右に弱い字で状態を添える。
+   畳んだレールでは ⇄ を設定の上に、700px 以下ではタイトルの下の行に「· ⇄ ホスト名」（.host-sub。モバイル版の殻と同じ置き方）。
+   見分けはこの印と、OS の窓タイトル（Pleiad — リモート: ホスト名）・タスクバーの重ねアイコンで行う（desktop/remote-windows.cjs）。
+   帯の地と記号の色は、ローカルと同じく paintTitleBar が .titlebar の --bar-end と --ink を読んで OS へ送る */
 .remote-badge,.remote-pop{display:none}
-:root.remote .remote-badge{display:inline-flex;align-items:center;gap:6px;grid-area:1/1/2/-1;justify-self:start;align-self:center;z-index:5;
-  margin-left:8px;max-width:calc(var(--side-w) - 16px);min-width:0;padding:3px 10px 3px 8px;border-radius:var(--r-pill);background:transparent;
-  color:var(--ink-blue);font:inherit;font-size:var(--fs-s);font-weight:600;white-space:nowrap;cursor:pointer;-webkit-app-region:no-drag}
+/* 「⇄ リモート: ホスト名」の形（脇のいちばん下の行・モバイル版の殻の pill で共有。位置はそれぞれの規則が決める） */
+:root.remote .remote-badge{align-items:center;gap:6px;border:0;border-radius:var(--r-pill);background:transparent;
+  color:var(--ink-blue);font:inherit;font-size:var(--fs-s);font-weight:600;white-space:nowrap;cursor:pointer}
 :root.remote .remote-badge:hover,:root.remote .remote-badge[aria-expanded="true"]{background:var(--surface-2)}
 :root.remote .remote-badge:focus-visible{background:var(--surface-2);outline:2px solid var(--line-blue);outline-offset:-2px}
-:root.mac.remote .remote-badge{margin-left:80px;max-width:calc(var(--side-w) - 88px)}   /* 左の信号 3 つを避ける */
 .remote-badge .i{width:15px;height:15px;flex:none}
 .remote-badge .host{font-family:var(--font-mono);min-width:0;overflow:hidden;text-overflow:ellipsis}
 .remote-badge .state{font-weight:400;flex:none}
-:root.remote .remote-pop:not([hidden]){display:block;position:fixed;left:12px;top:calc(var(--bar-h,40px) + 4px);z-index:60;
+/* 脇のいちばん下の 1 行。高さ・ホバーは脇の行に揃え、上に髪の線を引く */
+:root.remote:not(.remote-mobile) #sidebar > .remote-badge{display:flex;flex:none;width:100%;height:32px;
+  padding:0 10px 0 8px;border-top:1px solid var(--line-faint);border-radius:0;text-align:left}
+:root.remote:not(.remote-mobile) #sidebar > .remote-badge .host{flex:1}
+/* 畳んだレールの ⇄ は設定の上（左下の Pleiad Plus の丸は動かさない）。tabIndex は paintSideChrome が揃える */
+.side-rail .remote-rail{color:var(--ink-blue)}
+:root.remote:not(.remote-mobile) .side-rail > .remote-rail{margin-top:auto}
+:root.remote:not(.remote-mobile) .side-rail:has(> .remote-rail) > .side-rail-gear{margin-top:0}
+/* 面は脇の下端の行の上に開く */
+:root.remote .remote-pop:not([hidden]){display:block;position:fixed;left:12px;bottom:44px;z-index:60;
   width:min(300px,calc(100vw - 24px));padding:12px 14px;font-size:var(--fs-s)}
-/* タイトル行を帯に上げる（701px 以上。狭い窓では脇が引き出しになるので会話の上に残す）。帯の空いている所は掴んで窓を動かせる。
-   左端は脇の幅（脇を閉じても同じ。バッジの右）、右端は窓のボタン（Windows は 3 つで 138px、macOS は信号が左なので 8px） */
-@media (min-width:701px){
-  :root.desktop.remote:not(.remote-mobile) body > main > .top{position:fixed;top:0;left:var(--side-col);right:var(--wc-w,138px);z-index:6;height:var(--bar-h);
-    padding:0 8px;-webkit-app-region:drag}
-  :root.mac.remote:not(.remote-mobile) body > main > .top{--wc-w:8px}
-  :root.desktop.remote:not(.remote-mobile) body > main > .top > *{-webkit-app-region:no-drag}
-  :root.desktop.remote:not(.remote-mobile) body > main > .top input{font-size:var(--fs);padding:3px 8px}
-}
 .remote-pop .remote-host{font-family:var(--font-mono);overflow-wrap:anywhere}
 .remote-pop dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:8px 0 10px}
 .remote-pop dt{color:var(--ink-weak)}
@@ -2270,7 +2265,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .side-me .side-av{display:inline-flex;width:30px;height:30px}
   #sessionMore:not([hidden]){display:inline-flex}
   /* 脇の見出しは 1 行（引き出しの幅なら入る） */
-  :root.desktop:not(.remote) #sidebar header{-webkit-app-region:no-drag}
+  :root.desktop #sidebar header{-webkit-app-region:no-drag}
   /* 履歴の外側。筋と節も24pxの溝の中心に合わせる。 */
   #log{padding-left:0;padding-right:8px;padding-bottom:12px}   /* 末尾の余白 24→12px（conversation-nav-view.mjs の END_GAP_NARROW） */
   #logFrame > #log{padding-bottom:calc(12px + var(--composer-h,0px))}
@@ -2335,7 +2330,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .host-sub .state{flex:none;font-family:var(--font)}
 .remote-badge .i.back{width:16px;height:16px}
 @media (max-width:700px){
-  :root.remote-mobile .host-sub{display:inline-flex}
+  :root.remote .host-sub{display:inline-flex}
   :root.remote-mobile main > .top{padding-top:6px}
   :root.remote-mobile main > .top input{padding-top:1px;padding-bottom:1px;line-height:1.35}
 }

@@ -167,10 +167,16 @@ export default async function (t) {
     const mkDoc = () => {
       const html = new N('html'), body = new N('body'), bar = new N('div');
       bar.className = 'titlebar';
-      bar.after = (...n) => { const i = body.children.indexOf(bar); for (const c of n) c.parent = body; body.children.splice(i + 1, 0, ...n); };
       body.append(bar);
+      const aside = new N('aside'), railNav = new N('nav'), gear = new N('button'), foot = new N('footer');
+      railNav.className = 'side-rail'; railNav.id = 'sideRail';
+      gear.id = 'railSettings'; gear.tabIndex = -1;
+      railNav.append(gear);
+      foot.className = 'side-foot';
+      aside.append(railNav, foot);
+      body.append(aside);
       const listeners = {};
-      return { documentElement: html, body, querySelector: s => body.querySelector(s), addEventListener: (ty, fn) => { (listeners[ty] ??= []).push(fn); }, fire: (ty, e) => (listeners[ty] ?? []).forEach(f => f(e)) };
+      return { documentElement: html, body, sidebar: aside, railNav, gear, foot, querySelector: s => body.querySelector(s), addEventListener: (ty, fn) => { (listeners[ty] ??= []).push(fn); }, fire: (ty, e) => (listeners[ty] ?? []).forEach(f => f(e)) };
     };
     t.ok('plyRemote が無ければ描かない（ローカルの窓・ブラウザー版）', setupRemoteBadge({ remote: undefined, doc: mkDoc() }) === null && remoteInfo({}) === null);
     let statusListener = null, closed = 0, retried = 0;
@@ -183,18 +189,38 @@ export default async function (t) {
       ui.badge.textContent.includes('接続しています…') && ui.badge.attrs['data-state'] === 'connecting', ui.badge.textContent);
     await new Promise(r => setTimeout(r, 0));
     t.ok('html に .remote を付ける', doc.documentElement.classList.contains('remote'));
-    t.ok('バッジは帯の直後（押せる要素。帯は aria-hidden のまま）', doc.body.children[1] === ui.badge && doc.body.children[2] === ui.pop);
+    t.ok('印は脇のいちばん下（アカウント行 .side-foot の次）。面は帯の直後（押せる要素。帯は aria-hidden のまま）',
+      doc.sidebar.children.indexOf(ui.badge) === doc.sidebar.children.indexOf(doc.foot) + 1 && doc.body.children[1] === ui.pop);
+    t.ok('畳んだレールの ⇄ は設定（#railSettings）の上', doc.railNav.children.indexOf(ui.rail) === doc.railNav.children.indexOf(doc.gear) - 1);
     t.ok('バッジ: 「リモート: desktop-home」、つながっている間は状態を添えない', ui.badge.textContent === 'リモート:desktop-home' && ui.badge.getAttribute('aria-expanded') === 'false', ui.badge.textContent);
     t.ok('バッジの title にホスト名', String(ui.badge.attrs.title).includes('desktop-home'));
+    t.ok('レールの ⇄ の読み上げは「リモート: desktop-home」', String(ui.rail.attrs['aria-label']).includes('desktop-home'), ui.rail.attrs['aria-label']);
     t.ok('面: ホスト名・状態・中継・つないだ時刻・この端末', ['desktop-home', '接続済み', 'relay.example.net', 'thinkpad'].every(s => ui.pop.textContent.includes(s)) && ui.pop.textContent.includes('つないだ時刻'));
     const [retryBtn, closeBtn] = ui.pop.querySelector('.acts').children;
     t.ok('つながっている間は再試行を出さない', retryBtn.hidden === true);
-    ui.badge.onclick({ stopPropagation() {} });
+    ui.badge.onclick({ stopPropagation() {}, currentTarget: ui.badge });
     t.ok('押すと面が開く', ui.pop.hidden === false && ui.badge.getAttribute('aria-expanded') === 'true');
     doc.fire('keydown', { key: 'Escape' });
     t.ok('Esc で閉じる', ui.pop.hidden === true);
+    ui.rail.onclick({ stopPropagation() {}, currentTarget: ui.rail });
+    t.ok('レールの ⇄ からも同じ面が開く', ui.pop.hidden === false && ui.rail.getAttribute('aria-expanded') === 'true');
+    doc.fire('keydown', { key: 'Escape' });
+    t.ok('Esc で閉じる（レールからも）', ui.pop.hidden === true);
+    // 700px 以下の添え字（.host-sub、crumbSep の次。モバイル版の殻と同じ置き方）
+    const colD = new N('div'); colD.className = 'title-col';
+    const lineD = new N('div'); lineD.className = 'title-sub';
+    const sepD = new N('span'); sepD.id = 'crumbSep';
+    lineD.append(sepD); colD.append(lineD); doc.body.append(colD);
+    const uiSub = setupRemoteBadge({ remote: { ...remote, onStatus: () => {} }, doc });
+    t.ok('タイトルの下の行に添え字（crumbSep の次、⇄ とホスト名）',
+      uiSub.sub && lineD.children.indexOf(uiSub.sub) === lineD.children.indexOf(sepD) + 1 && uiSub.sub.textContent.includes('desktop-home'), uiSub.sub?.textContent);
+    uiSub.sub.onclick({ stopPropagation() {}, currentTarget: uiSub.sub });
+    t.ok('添え字を押しても同じ面が開く', uiSub.pop.hidden === false && uiSub.sub.getAttribute('aria-expanded') === 'true');
+    doc.fire('keydown', { key: 'Escape' });
+    t.ok('添え字からも Esc で閉じる', uiSub.pop.hidden === true);
     statusListener({ state: 'host-offline' });
     t.ok('ホストがオフライン: バッジに状態を添え、面に再試行', ui.badge.textContent.includes('ホストがオフライン') && retryBtn.hidden === false && ui.badge.attrs['data-state'] === 'host-offline');
+    t.ok('ホストがオフライン: レールの読み上げにも状態を添える', String(ui.rail.attrs['aria-label']).includes('ホストがオフライン'));
     retryBtn.onclick(); closeBtn.onclick();
     t.ok('再試行・この窓を閉じるは plyRemote へ', retried === 1 && closed === 1);
     statusListener({ state: 'revoked' });
