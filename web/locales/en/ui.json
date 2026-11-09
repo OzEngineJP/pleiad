@@ -67,6 +67,7 @@
       "suggestions": {
         "title": "Suggest the next message",
         "description": "After a reply, a suggestion appears in the empty message box. Press Tab to use it ({{agents}}).{{covered}}{{stopped}}",
+        "descriptionNoAgents": "No agent can offer suggestions.{{stopped}}",
         "coveredNote": " Generating a suggestion spends a little usage on {{agents}}.",
         "stoppedNote": " {{agents}} cannot offer suggestions because internal calls cannot run isolated from conversations."
       },

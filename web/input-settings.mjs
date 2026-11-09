@@ -61,11 +61,16 @@ export function setupInputSettings({ cmd, getPrefs, getBackends = () => [] }) {
       const r = el('div', 'nf-row');
       const info = el('div', 'nf-info');
       const desc = base === 'settings.input.suggestions'
-        ? t('settings.input.suggestions.description', {
-            agents,
-            covered: covered ? t('settings.input.suggestions.coveredNote', { agents: covered }) : '',
-            stopped: stopped ? t('settings.input.suggestions.stoppedNote', { agents: stopped }) : '',
-          })
+        ? (agents
+          ? t('settings.input.suggestions.description', {
+              agents,
+              covered: covered ? t('settings.input.suggestions.coveredNote', { agents: covered }) : '',
+              stopped: stopped ? t('settings.input.suggestions.stoppedNote', { agents: stopped }) : '',
+            })
+          // 候補を出せるエージェントが 0 で、止めた理由だけを出すときは「（）」を出さない
+          : t('settings.input.suggestions.descriptionNoAgents', {
+              stopped: stopped ? t('settings.input.suggestions.stoppedNote', { agents: stopped }) : '',
+            }))
         : t(`${base}.description`);
       info.append(el('span', 'nf-label', label), el('small', null, desc));
       r.append(info, sw);

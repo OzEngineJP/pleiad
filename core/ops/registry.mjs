@@ -142,9 +142,24 @@ function localize(node, locale) {
   return out;
 }
 
+/**
+ * 診断用の引数は、操作の一覧（/api/ops・ply_control の tools/list・CLI の help）には出さない。
+ * 入力としては受け付ける（handler は args から読む）が、AI に渡す文の量（tools/list の上限）を増やさない。
+ * 既存の会話の get/read を調べるときだけ使う includeInternal が該当する（Issue #180）。
+ */
+const DIAGNOSTIC_INPUTS = new Set(['includeInternal']);
+
 /** zod → JSON Schema。変換できない入力（Date・関数など）は投げる（T8）。 */
 export function inputJsonSchema(op, locale) {
   const schema = z.toJSONSchema(op.input, { unrepresentable: 'throw', io: 'input' });
+  for (const key of DIAGNOSTIC_INPUTS) {
+    if (!schema?.properties?.[key]) continue;
+    delete schema.properties[key];
+    if (Array.isArray(schema.required)) {
+      schema.required = schema.required.filter((name) => name !== key);
+      if (!schema.required.length) delete schema.required;
+    }
+  }
   return locale === undefined ? schema : localize(schema, locale);
 }
 

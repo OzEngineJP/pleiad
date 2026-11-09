@@ -763,18 +763,18 @@
         "cursor": "前の返り値の next。続きから返す。"
       },
       "get": {
-        "summary": "会話 1 件のメタ情報（題・状態・場所・エージェント・親子・最近の変更）を返す。本文は read。",
+        "summary": "会話 1 件のメタ情報（題・状態・場所・エージェント・親子・最近の変更）を返す。本文は read_session。",
         "sessionId": "会話の id。",
-        "includeInternal": "診断。"
+        "includeInternal": "診断用。内部の会話も含める（既定 false）。"
       },
       "read": {
-        "summary": "会話の本文を messageId の前後だけ読む。省くと末尾。検索の hit の uuid も渡せる。",
+        "summary": "会話の本文を messageId の前後だけ読む。省くと末尾。search_sessions の hit の uuid も渡せる。",
         "sessionId": "会話の id。",
-        "includeInternal": "診断。",
+        "includeInternal": "診断用。内部の会話も含める（既定 false）。",
         "messageId": "中心にする発言の id（uuid）。省くと最後。",
         "before": "messageId より前の件数（既定 4、最大 20）。",
         "after": "messageId より後の件数（既定 4、最大 20）。",
-        "maxChars": "1 件の最大字数（既定 2000・最大 8000）。"
+        "maxChars": "1 件の最大字数（既定 2000・最大 8000）。全体は 40000 字まで。"
       },
       "setTitle": {
         "summary": "会話の題を変える。変更の記録に、変えた主体と理由が残る。",

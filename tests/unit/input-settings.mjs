@@ -48,9 +48,12 @@ export default function (t) {
   t.ok('混在なら対応している名前だけが載る（対応の無いものは外れる）',
     mixed.descs().some(d => d.includes('Claude') && d.includes('Fake (test)') && !d.includes('Devin')));
   const stoppedOnly = panel(() => [stopped]);
+  const stoppedDesc = stoppedOnly.descs().find(d => d.includes('OpenCode'));
   t.ok('分離して呼べないエージェントだけでも行を出し、止めた理由を説明に載せる（黙って消さない）',
     stoppedOnly.labels().includes(tr('settings.input.suggestions.title'))
-    && stoppedOnly.descs().some(d => d.includes('OpenCode') && d.includes(tr('settings.input.suggestions.stoppedNote', { agents: 'OpenCode' }).trim())));
+    && stoppedDesc?.includes(tr('settings.input.suggestions.stoppedNote', { agents: 'OpenCode' }).trim()));
+  t.ok('候補を出せるエージェントが 0 のときは、空の括弧「（）」を出さない（非対応のみのケース）',
+    Boolean(stoppedDesc) && !stoppedDesc.includes('（）') && !stoppedDesc.includes('()'), stoppedDesc);
   t.ok('対応と停止が混ざっても、両方の名前が説明に載る',
     panel(() => [fake, stopped]).descs().some(d => d.includes('Fake (test)') && d.includes('OpenCode') && d.includes('候補を出せません')));
 
