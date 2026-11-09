@@ -6,6 +6,7 @@ import { createChannelService } from '../../core/channels/service.mjs';
 import { createMemoryService } from '../../core/memory/service.mjs';
 import { createMemoryLearner } from '../../core/memory/learn.mjs';
 import { createEpisodes, EPISODE_QUIET_MS, MAX_DEFERRALS, STALE_WORKING_MS } from '../../core/memory/episodes.mjs';
+import { backend as fake } from '../../core/backends/fake.mjs';
 import { splitLeadingNotes } from '../../core/system-messages.mjs';
 
 export const name = 'memory-episodes';
@@ -18,7 +19,7 @@ export default async function (t) {
   const channels = createChannelService({ dir: path.join(dir, 'channels'), hooks: { removed: (post) => episodes?.onPosted(post) } });
   const bots = { get: async ({ botId: id }) => [botId, otherId].includes(id) ? { id } : null };
   const memory = createMemoryService({ dataDir: dir, channels });
-  let episodes;
+  let episodes, learner;
   try {
     await channels.start();
     await memory.start();
@@ -31,7 +32,7 @@ export default async function (t) {
     const human = await channels.post({ channelId: channel.id, threadId: root.id, text: '確認は私が担当します。' }, { kind: 'human' });
     let prompt = '';
     let askCount = 0;
-    const learner = createMemoryLearner({ dataDir: dir, channels, bots, memory,
+    learner = createMemoryLearner({ dataDir: dir, channels, bots, memory,
       host: { store: { get: async () => ({}) } }, clock: { now: Date.now }, readPrefs: async () => ({ memoryAutoLearn: true, memoryEpisodeSummary: true }),
       ask: async (value) => {
         askCount++;
@@ -59,6 +60,18 @@ export default async function (t) {
     assert.equal(entries[0].kind, 'decision');
     assert.equal(entries[0].weight, 3);
     assert.equal(entries[0].sources[0].postId, root.id);
+    // 要約は kind:'episode' で内部呼出しへ行く（夜の整理の kind:'learner' と処理種別を分ける。Issue #180）
+    let episodeKind = null;
+    const kindLearner = createMemoryLearner({ dataDir: dir, channels, bots, memory,
+      host: { store: { get: async () => ({}) }, getBackend: () => fake, listBackends: () => [fake],
+        resolveModel: async () => '', resolveEffort: async () => '',
+        internalCall: async ({ kind }) => { episodeKind = kind; return { text: JSON.stringify({ summary: '種別の確認', memories: [] }), callId: 'call-episode' }; } },
+      clock: { now: Date.now }, readPrefs: async () => ({ memoryAutoLearn: true, memoryEpisodeSummary: true }) });
+    const kindResult = await kindLearner.summarizeEpisode({ botId, channelId: channel.id, threadId: root.id,
+      posts: [{ id: 'p_kind', author: { kind: 'human' }, text: '種別の確認用の人の発言です', at: Date.now() }] });
+    assert.equal(episodeKind, 'episode');
+    assert.equal(kindResult?.text, '種別の確認');
+    kindLearner.close();
     episodes.onTurnEnd(channel.id, root.id);
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(askCount, 1, '投稿に変更がなければ要約を作り直さない');
@@ -95,9 +108,10 @@ export default async function (t) {
     t.ok('作業中のまま消した投稿は working を外す', true);
   } finally {
     episodes?.stop();
+    learner?.close();
     memory.stop();
     await channels.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 }).catch(() => {});
   }
   await digestWhileWorking(t);
 }

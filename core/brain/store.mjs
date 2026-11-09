@@ -127,12 +127,18 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
       return next;
     },
 
-    addSpend(channelId, botId, { day, percent = 0, tokens = 0 }) {
+    addSpend(channelId, botId, { day, percent = 0, tokens = 0, unknown = false }) {
       open();
       const id = `${channelId}/${botId}`;
       const cur = states.get('brain.spend', id);
-      const base = cur?.day === day ? cur : { day, percent: 0, tokens: 0 };
-      states.save([['brain.spend', id, { day, percent: base.percent + percent, tokens: base.tokens + tokens }]]);
+      const base = cur?.day === day ? cur : { day, percent: 0, tokens: 0, unknown: 0 };
+      // 使用量が測れなかった呼出し（Issue #180）: 0 とは扱わず「不明」の回数を残す（allowsBrain がその日の自発を止める）
+      states.save([['brain.spend', id, { day, percent: base.percent + percent, tokens: base.tokens + tokens, unknown: (base.unknown ?? 0) + (unknown ? 1 : 0) }]]);
+    },
+    /** その日の、使用量が測れなかった内部呼出しの回数 */
+    spentUnknown(botId, day) {
+      open();
+      return Object.entries(states.ofKind('brain.spend')).filter(([id, v]) => id.endsWith(`/${botId}`) && v.day === day).reduce((n, [, v]) => n + (v.unknown ?? 0), 0);
     },
     spentPercent(channelId, day) {
       open();

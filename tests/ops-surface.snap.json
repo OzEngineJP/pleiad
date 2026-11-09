@@ -4015,7 +4015,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "18e4482f0f74"
+      "input": "0660b0aa1cdb"
     },
     {
       "id": "sessions.lineage",
@@ -4172,7 +4172,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "62fa526050a3"
+      "input": "8ac0bbb7adb6"
     },
     {
       "id": "sessions.readSubagent",
@@ -5543,11 +5543,11 @@
     },
     {
       "name": "get_session",
-      "input": "641f73bc6645"
+      "input": "33dab9dd1cd3"
     },
     {
       "name": "read_session",
-      "input": "64f25035b503"
+      "input": "c617ff8280d3"
     },
     {
       "name": "get_setting",

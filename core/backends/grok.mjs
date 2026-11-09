@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import os from 'node:os';
+import os from 'node:os'; // eslint-disable-line no-unused-vars — internal 呼出しは分離（Issue #180）
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
@@ -683,33 +683,6 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     async adoptTurn(args) {
       if (!args.card?.held || !args.card.grok || typeof args.source?.write !== 'function') throw new Error('grok: the turn was not on the holder');
       return this.runTurn(args, { source: args.source, card: args.card });
-    },
-    /** Generate suggestions in an isolated, read-only ACP session. */
-    async suggestNext({ prompt, signal, account } = {}) {
-      if (signal?.aborted) return null;
-      const target = account?.account ? await this.forAccount(account.account) : this;
-      const controller = new AbortController();
-      const abort = () => controller.abort();
-      signal?.addEventListener('abort', abort, { once: true });
-      let text = '', failure = null, sessionId = null;
-      try {
-        const result = await target.runTurn({
-          prompt, cwd: os.tmpdir(), mode: 'plan', ephemeral: true, signal: controller,
-          askPermission: async () => ({ allow: false }),
-          emit: event => {
-            if (event.type === 'text.delta') text += event.text;
-            if (event.type === 'session') sessionId = event.sessionId;
-            if (event.type === 'turnResult' && event.outcome !== 'ok') failure = event.error || event.outcome;
-          },
-        });
-        sessionId ??= result?.sessionId ?? null;
-      } finally {
-        signal?.removeEventListener('abort', abort);
-        if (sessionId) await target.releaseConversation(sessionId);
-      }
-      if (controller.signal.aborted) return null;
-      if (failure) throw new Error(String(failure));
-      return text;
     },
     async compact(args) {
       return this.runTurn({ ...args, prompt: '/compact' });

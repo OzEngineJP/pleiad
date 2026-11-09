@@ -188,6 +188,25 @@ export async function conversationBackend(id) {
   return entries[id]?.backend;
 }
 
+/**
+ * ネイティブの会話 id → Pleiad の会話 id の対応（今の nativeId と、切り替え・巻き戻しの前の segments の両方）。
+ * ネイティブの id を直接指定されたときに、その会話の印（bot など）を host 側で引くために使う（Issue #180）
+ */
+export async function nativeOwnerIndex() {
+  const index = new Map();
+  for (const [id, r] of Object.entries(await all())) {
+    if (r.nativeId) index.set(r.nativeId, id);
+    for (const segment of r.segments ?? []) if (segment?.nativeId) index.set(segment.nativeId, id);
+  }
+  return index;
+}
+
+/** ネイティブの会話 id を持つ Pleiad の会話 id。無ければ null */
+export async function hostConversationOfNative(nativeId) {
+  if (!nativeId) return null;
+  return (await nativeOwnerIndex()).get(nativeId) ?? null;
+}
+
 export async function createConversation(backend, info) {
   const id = crypto.randomUUID();
   (await all())[id] = { backend: backend.id, nativeId: null, base: 0, messages: [], segments: [], info, _dirty: true };

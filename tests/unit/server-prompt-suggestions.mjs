@@ -90,12 +90,14 @@ export default async function (t) {
     const saved = JSON.parse(await fs.readFile(path.join(opencodeState, 'sessions.json'), 'utf8'));
     const log = String(await fs.readFile(opencodeLog, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     const suggestionSession = log.find(row => row.event === 'turn' && row.user.includes('This is an app-generated request'))?.session;
-    const deleted = log.find(row => row.event === 'delete' && row.session === suggestionSession);
-    t.ok('OpenCode はターンの後に候補を作り、別 session の一時履歴を消す',
-      turn.outcome === 'ok' && suggestion?.text === 'テストを流して'
-      && Object.keys(saved).length === 1 && Object.hasOwn(saved, turn.sessionId) && Boolean(deleted), JSON.stringify({ outcome: turn.outcome, suggestion, sessions: Object.keys(saved).length, suggestionSession: Boolean(suggestionSession), deleted: Boolean(deleted), log: log.map(row => ({ event: row.event, session: row.session, user: row.user?.slice(0, 70) })) }));
-    t.ok('提案用 session は全ツールを拒否する読み取り専用権限で作る',
-      deleted?.permissions?.some(p => p.permission === '*' && p.action === 'deny'));
+    // OpenCode は内部呼出しを分離して作れない（ephemeral の保証が無い）ので、候補のための一時 session を作らない（Issue #180）
+    t.ok('OpenCode は候補を作らない（一時 session を新しく作らない）',
+      turn.outcome === 'ok' && suggestion === null
+      && Object.keys(saved).length === 1 && Object.hasOwn(saved, turn.sessionId) && !suggestionSession,
+      JSON.stringify({ outcome: turn.outcome, suggestion, sessions: Object.keys(saved).length, suggestionSession: Boolean(suggestionSession), log: log.map(row => ({ event: row.event, session: row.session, user: row.user?.slice(0, 70) })) }));
+    const announced = (await oc.cmd('backends')).find((b) => b.id === 'opencode');
+    t.ok('候補を出せない理由を既存の設定の面で示す印（suggestionsStopped）を持つ',
+      announced?.suggestionsStopped === true && announced?.capabilities?.promptSuggestions === false, JSON.stringify(announced));
   } finally {
     oc.close(); await opencodeServer.stop();
     const { stopOpencodeServer } = await import('../../core/backends/opencode.mjs');

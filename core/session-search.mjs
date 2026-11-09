@@ -7,6 +7,7 @@
 //
 // 照合: 空白区切りは AND（語ごとに題・状態・場所・どの発言に当たってもよい）。"…" で囲んだ語は畳まずそのまま、
 // ほかは NFKC と小文字に畳んだ部分一致。場所は作業ディレクトリのフォルダー名だけに当てる。
+import { isInternalConversationMeta } from './channels/types.mjs';
 
 const DAY_MS = 86_400_000;
 // 新しさの減点の上限（30 日で 1、3 まで = 90 日以上は同じ）
@@ -386,6 +387,8 @@ function decodeCursor(cursor) {
 /** 会話の行（一覧の 1 行）が、本文を見ない絞り込みに合うか */
 export function passesFilters(row, f) {
   if (f.sessionIds && !f.sessionIds.has(row.id)) return false;
+  // 旧内部会話（心拍・学習の隠れた会話。Issue #180）は includeDelegated と独立に常に除く（接頭辞では判定しない）
+  if (isInternalConversationMeta(row)) return false;
   // 委譲の子と bot の会話（Channels のスレッド・DM。ADR 0109）は既定で除く。includeDelegated で含める
   if (!f.includeDelegated && (row.delegation || row.bot)) return false;
   if (f.backends && !f.backends.has(row.backend)) return false;

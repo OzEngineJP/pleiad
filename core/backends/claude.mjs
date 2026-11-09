@@ -597,6 +597,34 @@ function restoredSteers(steers) {
     .map((p) => ({ id: typeof p.id === "string" ? p.id : null, uuid: p.uuid, text: null, hash: typeof p.hash === "string" ? p.hash : null, sawResult: Boolean(p.sawResult) }));
 }
 
+/**
+ * 内部呼出しで管理層の hooks を止められないなら、その理由を返す（止められる・管理層が無いなら null）。
+ * SDK の resolveSettings は CLI を起こさずに実効の設定を読む。管理層に hooks が 1 つでもあれば、
+ * managedSettings の disableAllHooks では消えない（管理ポリシーは迂回しない）。読めないときも始めない（fail-closed）。
+ * 管理設定はあとから変わりうるので、結果は覚えず、呼出しのたびに実効値を確かめる。
+ */
+async function managedHooksBlockReason(sdk, cwd) {
+  try {
+    if (typeof sdk?.resolveSettings !== 'function') throw new Error('resolveSettings is unavailable');
+    const resolved = await sdk.resolveSettings({ ...(cwd ? { cwd } : {}), settingSources: [], managedSettings: { disableAllHooks: true } });
+    if (!Array.isArray(resolved?.sources)) throw new Error('resolveSettings returned no sources');
+    const managedSources = resolved.sources.filter((s) => s?.source === 'managed');
+    // policyHelper が管理設定を注入する構成では、その結果（hooks を含みうる）を resolveSettings が実行しない。
+    // 読めたつもりで通さず、検証できないものとして内部呼出しを止める
+    if (managedSources.some((s) => s.settings?.policyHelper || s.policyOrigin === 'helper'))
+      return 'internal call: managed policyHelper cannot be verified';
+    const managed = managedSources.map((s) => s.settings ?? {});
+    const hasHooks = managed.some((settings) => {
+      const hooks = settings.hooks;
+      if (!hooks || typeof hooks !== 'object') return false;
+      return Object.values(hooks).some((v) => Array.isArray(v) ? v.length > 0 : Boolean(v) && typeof v === 'object' && Object.keys(v).length > 0);
+    });
+    return hasHooks ? 'internal call: managed hooks cannot be disabled' : null;
+  } catch (e) {
+    return `internal call: could not verify managed hooks: ${String(e?.message ?? e)}`;
+  }
+}
+
 export const backend = {
   // 登録したアカウントがあれば、アカウントごとに見出しを付けて返す（server が accounts を解いて渡す）
   usage: ({ accounts, loginLabel, skip } = {}) => readClaudeAccountsUsage({ accounts, loginLabel, skip }),
@@ -1338,34 +1366,80 @@ export const backend = {
   },
 
   /**
+   * 履歴に残さない 1 回きりの内部呼出し（Issue #180。core/internal-call.mjs → host.internalCall）。
+   * 道具も設定も要らないので settingSources / allowedTools を切って軽く回し、persistSession: false で
+   * 接続先の会話一覧にも残さない。止められた（signal）ときは null、失敗は投げる（取れた分の使用量は error.usage に載せる）。
+   * 返りは { text, usage }。usage は測れなければ null（0 扱いにしない。core/usage.mjs の internalTask 行へ渡る）
+   */
+  async internalTurn({ prompt, model, signal, locale, cwd, endpoint, oauthToken }) {
+    let text = "", usage = null;
+    const ac = new AbortController();
+    const stop = () => ac.abort();
+    if (signal?.aborted) return null;
+    signal?.addEventListener?.("abort", stop, { once: true });
+    try {
+      const sdk = await loadClaudeSdk();
+      // 管理（admin）層の hooks は managedSettings の disableAllHooks では止まらないことがある（SDK 0.3.288 の管理層の説明）。
+      // 実効の設定を CLI 無しで読み、管理層に hooks があれば内部呼出しを始めない（管理ポリシーを迂回しない）
+      const blocked = await managedHooksBlockReason(sdk, cwd);
+      if (blocked) throw Object.assign(new Error(blocked), { code: 'INTERNAL_UNAVAILABLE' });
+      const { query } = sdk;
+      for await (const m of query({
+        prompt,
+        options: {
+          pathToClaudeCodeExecutable: claudeExecutable(), model: model || "haiku",
+          // 道具は渡さない。tools: [] が内蔵ツールを全て無効にする（--tools "" と同じ。allowedTools は許可側の抑止でしかない）、
+          // 残った何かが承認を求めても dontAsk + canUseTool で必ず拒否する
+          tools: [], allowedTools: [], permissionMode: "dontAsk",
+          canUseTool: async () => ({ behavior: 'deny', message: 'internal call: tools are disabled' }),
+          // 設定ファイルは読まない（SDK の分離モード）。ユーザーの MCP・フック・権限は載らない
+          settingSources: [],
+          // SDK 内の MCP も登録せず、設定由来の MCP（.mcp.json・plugin・frontmatter 含む）を全部無視する
+          mcpServers: {}, strictMcpConfig: true,
+          // 設定・プラグインの hooks を止める。flag 層（settings）と管理層（managedSettings）の両方を指定し、
+          // 管理層がある環境では上の managedHooksBlockReason が実効値を確かめてから呼ぶ
+          settings: { disableAllHooks: true }, managedSettings: { disableAllHooks: true },
+          // 1 回きりの問い合わせ。会話として残すと「次は作業ログの冒頭です…」で始まる会話が Claude の一覧に出る
+          maxTurns: 1, persistSession: false,
+          ...(cwd ? { cwd } : {}),
+          // その会話で選んだアカウントで回す。選んでいなければ env を渡さない（今までどおり SDK が process.env を使う）。
+          // 互換の接続先の呼出しは、その接続先のモデル（"haiku" が ANTHROPIC_DEFAULT_HAIKU_MODEL に置き換わる）。
+          // settingSources が空なのでユーザーの settings.json は読まれず、env だけで足りる
+          abortController: ac,
+          ...(endpoint ? { env: claudeCompatEnv(process.env, endpoint) } : oauthToken ? { env: claudeEnv(process.env, { token: oauthToken }) } : {}) },
+      })) {
+        if (m.type === "assistant") for (const b of m.message?.content ?? []) if (b.type === "text") text += b.text;
+        // 最後の result メッセージにこの呼出しの使用量が載る（入力はキャッシュの作成・読みを含む）
+        if (m.type === "result" && m.usage) {
+          const cached = (m.usage.cache_creation_input_tokens ?? 0) + (m.usage.cache_read_input_tokens ?? 0);
+          usage = { inputTokens: (m.usage.input_tokens ?? 0) + cached, outputTokens: m.usage.output_tokens ?? 0, cachedTokens: cached,
+            costUsd: Number.isFinite(m.total_cost_usd) ? m.total_cost_usd : null };
+        }
+      }
+    } catch (err) {
+      // 秘密を消すために Error を作り直しても、呼び出し側が使う code（INTERNAL_UNAVAILABLE 等）・usage・cause は落とさない
+      const e = oauthToken || endpoint ? new Error(redactSecret(redactToken(err?.message ?? err, oauthToken), endpoint?.key)) : err;
+      e.usage = usage;
+      if (e !== err) { e.code = err?.code; e.cause = err; }
+      if (ac.signal.aborted) return { text, usage, aborted: true };
+      throw e;
+    } finally { signal?.removeEventListener?.("abort", stop); }
+    // 止められても、取れた分の使用量は捨てない（internal-call が aborted の行に載せる）
+    if (ac.signal.aborted) return { text, usage, aborted: true };
+    return { text, usage };
+  },
+
+  /** 題を作る指示（server が internalCall へ渡す。エージェントごとの文をサーバーに分岐させない） */
+  titlePrompt(locale) { return agentT(locale, 'title.claude'); },
+
+  /**
    * 小さいモデルで1発。会話の中身を見て決めるので、走っているターンとは別に立てる。
-   * 道具も設定も要らないので settingSources / allowedTools を切って軽く回す。
    * 返すのは生成された生のテキスト。前後の記号を落とす整形は server 側（バックエンド非依存）。
    */
   // locale は会話の言語。タイトルもその言語で作らせる
   async suggestTitle({ transcript, oauthToken, endpoint = null, locale }) {
-    let title = "";
-    try {
-      const { query } = await loadClaudeSdk();
-      for await (const m of query({
-        prompt: agentT(locale, 'title.claude') + NL + NL + transcript,
-        options: {
-          pathToClaudeCodeExecutable: claudeExecutable(), model: "haiku", settingSources: [], allowedTools: [], permissionMode: "default",
-          // 1 回きりの問い合わせ。会話として残すと「次は作業ログの冒頭です…」で始まる会話が Claude の一覧に出る
-          persistSession: false,
-          // その会話で選んだアカウントで回す。選んでいなければ env を渡さない（今までどおり SDK が process.env を使う）。
-          // 互換の接続先の会話は、その接続先の Haiku 相当のモデル（"haiku" が ANTHROPIC_DEFAULT_HAIKU_MODEL に置き換わる）。
-          // settingSources が空なのでユーザーの settings.json は読まれず、env だけで足りる
-          ...(endpoint ? { env: claudeCompatEnv(process.env, endpoint) } : oauthToken ? { env: claudeEnv(process.env, { token: oauthToken }) } : {}) },
-      })) {
-        if (m.type !== "assistant") continue;
-        for (const b of m.message?.content ?? []) if (b.type === "text") title += b.text;
-      }
-    } catch (err) {
-      if (oauthToken || endpoint) throw new Error(redactSecret(redactToken(err?.message ?? err, oauthToken), endpoint?.key));
-      throw err;
-    }
-    return title;
+    const out = await backend.internalTurn({ prompt: agentT(locale, 'title.claude') + NL + NL + transcript, model: "haiku", endpoint, oauthToken, locale });
+    return out?.text ?? "";
   },
 };
 

@@ -180,13 +180,26 @@ export function createBudget({ channels, host, now = Date.now, log = () => {}, b
   }
 
   async function chargeBrain({ channelId, botId, backend, model, usage }) {
+    if (!brain || !botId) return { percent: null, tokens: 0, unknown: false };
+    // 使用量が測れなかった呼出し（内部呼出しの usage が無い・全部 null。Issue #180）は 0 にしない:
+    // 「不明」の印を 1 日の支出に残し、同じ日の自発・引き継ぎを止める（無制限の無料として扱わない）。
+    // 一部の欄だけ finite のときも「測定済み」にしない（欠けた output 等を 0 として予算を通さない）
+    const keys = ['inputTokens', 'outputTokens', 'cachedTokens'];
+    const measured = usage && keys.every((k) => Number.isFinite(usage[k]));
+    const partial = usage && keys.some((k) => Number.isFinite(usage[k]));
     const tokens = weighted(usage);
-    if (!brain || !botId || !(tokens > 0)) return { percent: null, tokens: 0 };
+    const day = dayOf(now());
+    if (!measured) {
+      // 既知の分はトークンに足しつつ、不明の印を残す（その日の自発・引き継ぎは止まる）
+      brain.addSpend(channelId ?? NO_HOME, botId, { day, percent: 0, tokens: partial ? tokens : 0, unknown: true });
+      return { percent: null, tokens: partial ? tokens : 0, unknown: true };
+    }
+    if (!(tokens > 0)) return { percent: null, tokens: 0, unknown: false };
     // 家のチャンネルが無い（DM だけの bot の予約）: % を足す先は無いが、bot の 1 日のトークンには数える
-    if (!channelId) { brain.addSpend(NO_HOME, botId, { day: dayOf(now()), percent: 0, tokens }); return { percent: null, tokens }; }
+    if (!channelId) { brain.addSpend(NO_HOME, botId, { day, percent: 0, tokens }); return { percent: null, tokens }; }
     const rate = backend ? await rateOf(backend, model) : null;
     const percent = rate ? tokensOf(usage) / rate : null;
-    brain.addSpend(channelId, botId, { day: dayOf(now()), percent: percent ?? 0, tokens });
+    brain.addSpend(channelId, botId, { day, percent: percent ?? 0, tokens });
     return { percent, tokens };
   }
 
@@ -194,22 +207,26 @@ export function createBudget({ channels, host, now = Date.now, log = () => {}, b
     if (!botId) return null;
     const day = dayOf(now());
     const tokensLeft = Math.max(0, BRAIN_DAILY_TOKENS - (brain?.spentTokens(botId, day) ?? 0));
-    if (!channelId) return { daily: null, channel: null, known: true, tokensLeft };
+    // 不明の支出が残っている日は「残りが分からない」（allowsBrain が止める。tokensLeft は測れた分だけなので）
+    const unknownSpend = (brain?.spentUnknown(botId, day) ?? 0) > 0;
+    if (!channelId) return { daily: null, channel: null, known: true, tokensLeft, unknownSpend };
     const channel = await channels.get({ channelId }).catch(() => null);
     if (!channel || channel.kind !== 'channel') return null;
     const budget = budgetOf(channel);
-    if (budget.daily === null) return { daily: null, channel: null, known: true, tokensLeft };
+    if (budget.daily === null) return { daily: null, channel: null, known: true, tokensLeft, unknownSpend };
     const threads = await channels.threads.list(channelId).catch(() => []);
     const channelLeft = Math.max(0, budget.daily - spentToday(threads, channelId, day) - (brain?.spentPercent(channelId, day) ?? 0));
     let known = true;
     if (backend) known = Boolean(rates.get(keyOf(backend, model)) ?? await Promise.race([rateOf(backend, model), new Promise((r) => { const t = setTimeout(r, LEFT_WAIT_MS, null); t.unref?.(); })]));
-    return { daily: budget.daily, channel: channelLeft, known, tokensLeft };
+    return { daily: budget.daily, channel: channelLeft, known, tokensLeft, unknownSpend };
   }
 
   async function allowsBrain({ channelId, botId }) {
     try {
       const l = await leftBrain({ channelId, botId });
       if (!l) return false;   // 指したチャンネルが引けない自発はしない（数える先が無い）。channelId が null ならトークンの上限だけ見る
+      // 不明の支出がある日は「残りが分からない」ので自発・引き継ぎを止める（使用量を測れなかった分を無料にはしない）
+      if (l.unknownSpend) return false;
       return l.tokensLeft > 0 && (l.channel === null || l.channel > 0);
     } catch (e) { log('could not check the brain budget:', errText(e)); return false; }
   }

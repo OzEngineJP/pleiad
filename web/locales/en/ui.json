@@ -66,8 +66,9 @@
       },
       "suggestions": {
         "title": "Suggest the next message",
-        "description": "After a reply, a suggestion appears in the empty message box. Press Tab to use it ({{agents}}).{{covered}}",
-        "coveredNote": " Generating a suggestion spends a little usage on {{agents}}"
+        "description": "After a reply, a suggestion appears in the empty message box. Press Tab to use it ({{agents}}).{{covered}}{{stopped}}",
+        "coveredNote": " Generating a suggestion spends a little usage on {{agents}}.",
+        "stoppedNote": " {{agents}} cannot offer suggestions because internal calls cannot run isolated from conversations."
       },
       "saveFailed": "Couldn't save: {{error}}"
     },

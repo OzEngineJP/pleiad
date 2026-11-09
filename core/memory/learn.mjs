@@ -5,7 +5,7 @@
 // 走っているターンの会話だけは読まずに次の回へ回す（deferred）。待つのは、learner 自身が走っている間・止めている間・失敗の後の間隔だけ。
 // 読む量の上限: 最後まで読んだ会話は、その時の更新時刻（cursor.seen）から変わるまで読み直さない。読むのは 14 日以内（最初の回は 3 日）の発言・投稿だけ。
 // 1 回の学習の呼び出しに人の発言を 40 件（本文 2.4 万字）までまとめ、1 回の実行は 5 回の呼び出し（200 件）まで。残りは次の回（lastResult.more）。
-// 呼び出しごとに隠れた会話（bot.kind = 'learner'）を 1 つ作り、新しい 20 個を残して古いものはネイティブの会話ごと消す（host.deleteHidden。ADR 0127）。
+// 呼び出しは共通の内部呼出し（host.internalCall。Issue #180。会話・接続先の履歴を作らない。過去に作った隠れた会話は消さず残す）。
 // 走った・飛ばした・失敗したことは DB の memory_state の meta 'status' の 1 行に残し、memory.learnStatus（bot のページの記憶の見出し）で見せる。
 //
 // runNow({ scope? }) … scope は { sessionIds?, channelIds? }。渡すとその会話・チャンネルだけを読む（スレッドが静かになった後の整理のため。
@@ -39,8 +39,6 @@ const STATEMENT_CHARS = 2_000;
  * 5 件ずつの頃は発言 1 件に 1 つまで書けた。40 件をまとめても、その半分までは残せる）
  */
 const CANDIDATES_PER_CALL = 20;
-/** 残しておく学習の隠れた会話の数（何をしたかを後から開いて確かめられるように）。古いものは消す */
-const KEEP_SESSIONS = 20;
 const MAX_TIMER = 2_147_483_647;
 const SETTINGS_POLL_MS = 60_000;
 /** 失敗した後に次を試すまでの間隔（15 分から倍に、6 時間まで）。失敗のたびにモデルを毎分呼ばないため */
@@ -288,7 +286,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     return { items: items.sort((a, b) => a.at - b.at), cursor: next, deferred, full: full() };
   }
 
-  async function askBackend(prompt, prefs, guard = null) {
+  async function askBackend(prompt, prefs, guard = null, kind = 'learner') {
     const backendId = prefs.memoryLearnBackend || prefs.backend || host.listBackends()[0]?.id;
     const backend = host.getBackend(backendId);
     if (!backend) throw new Error(`learner backend unavailable: ${backendId}`);
@@ -300,32 +298,18 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     // いちばん狭いモード（Claude は plan、Codex は readonly）。以前は readonly だけを探していて、Claude では整理が走らなかった
     const mode = narrowestMode(modes);
     if (!mode) throw new Error(`learner backend has no read-only mode: ${backendId}`);
-    const title = agentT(locale(), 'memory.learn.title');
-    const sessionId = await host.createConversation(backend, { title, cwd, createdAt: now(), lastModified: now() });
-    await host.store.setMeta(sessionId, { backend: backend.id, title, cwd, createdAt: now(), lastModified: now(), unsent: true });
-    await host.store.setMode(sessionId, mode);
-    await host.store.setModel(sessionId, model);
-    await host.store.setSessionData(sessionId, 'effort', effort);
-    await host.store.setSessionData(sessionId, 'bot', { botId: LEARNER_ID, kind: 'learner', channelId: null, threadId: null }, { durable: true });
-    // 会話を作ってから AI を呼ぶまでの間（resolveModel 等の await）に OFF・停止・世代替わりがあり得る。
-    // runTurn の直前に確かめ、止まっていたら新しい AI 呼び出しへは進まない（中止は失敗・halt にしない）
+    // 解決の await 中に OFF・停止・世代替わりがあり得る。呼ぶ直前に確かめ、止まっていたら新しい AI 呼び出しへは進まない（中止は失敗・halt にしない）
     if (guard && !(await guard())) throw stopped();
-    const outcome = await host.runTurn({ sessionId, prompt }, () => {}, { internal: true });
-    if (outcome !== 'ok' && outcome !== 'done') throw new Error(`learner turn: ${outcome}`);
-    const messages = await backend.getMessages(sessionId, { fullResults: true });
-    await pruneSessions(sessionId);
-    return { text: [...messages].reverse().find((m) => m.role === 'assistant' && m.text)?.text ?? '', sessionId };
-  }
-
-  /** 学習の隠れた会話を、新しい KEEP_SESSIONS 個（今の会話を含む）を残して消す。消せない（バックエンドが消せない・走っている）ものは残る */
-  async function pruneSessions(current) {
-    if (!host.deleteHidden) return;
-    try {
-      const all = await host.store.getAll();
-      const mine = Object.entries(all).filter(([id, v]) => v?.bot?.kind === 'learner' && id !== current)
-        .sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-      for (const [id] of mine.slice(KEEP_SESSIONS - 1)) await host.deleteHidden(id).catch((e) => log('could not delete a hidden conversation:', e.message));
-    } catch (e) { log('could not prune the hidden conversations:', e.message); }
+    // 内部呼出し（Issue #180。会話も接続先の履歴も作らない。分離できない backend では INTERNAL_UNAVAILABLE が飛ぶ → 理由付きで停止）
+    const out = await host.internalCall({ kind, backend, prompt, model, effort, mode, cwd, locale: locale() });
+    // 利用者の OFF・停止による中止は失敗にしない（旧経路の stopped と同じ扱い。設定に停止理由を出さない）。
+    // 処理の上限時間切れと空の回答は、止めたのではなく失敗なので、理由付きの失敗（既存の recordFailure → halted）へ回す
+    if (out?.aborted) {
+      if (out.reason === 'timeout') throw new Error('learner internal call timed out');
+      throw stopped();
+    }
+    if (!out?.text) throw new Error('learner returned an empty answer');
+    return { text: out.text, sessionId: `internal:${out.callId}` };
   }
 
   // mayWrite: 各書き込みの直前に確かめる（OFF→ON が短時間にあっても、OFF 前の世代の AI 結果を書かない）
@@ -410,7 +394,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     let result, response;
     try {
       if (!(await mayWriteSummary(gen))) return null;   // ask 直前にも確かめる（memory.list 等の await 中に OFF/停止され得る）
-      response = ask ? await ask(prompt, prefs) : await askBackend(prompt, prefs, () => mayWriteSummary(gen));
+      response = ask ? await ask(prompt, prefs) : await askBackend(prompt, prefs, () => mayWriteSummary(gen), 'episode');
       result = parseLearnerJson(String(typeof response === 'string' ? response : response.text).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, ''));
       if (typeof result.summary !== 'string' || !result.summary.trim()) throw new Error('learner returned no episode summary');
     } catch (e) {

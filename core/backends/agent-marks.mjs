@@ -18,6 +18,8 @@ export const CAPABILITY_STATES = {
     autoCompactWindow: true,
     // 次の発言の候補はターンの中で届く（runArgs.promptSuggestions。ターンの後に作らない。core/prompt-suggestions.mjs）
     promptSuggestions: 'native',
+    // 内部呼出し（Issue #180。core/internal-call.mjs）: persistSession:false・allowedTools:[]・settingSources:[] の 1 回きりの問い合わせ
+    internalCall: 'ephemeral',
     title: true,       // renameSession / customTitle。公式 CLI・VS Code と共有される
     tag: true,         // tagSession / tag。同上
     fork: true,
@@ -84,6 +86,8 @@ export const CAPABILITY_STATES = {
     accounts: 'agent',
     autoCompactWindow: true,           // thread/start・thread/resume の model_auto_compact_token_limit（Claude の窓から固定部分を引く）
     promptSuggestions: covered,   // ターンの後に suggestNext で作る
+    // 内部呼出し（Issue #180）: ephemeral の使い捨てスレッドの 1 ターン（suggestNext・suggestTitle と同じ経路）
+    internalCall: 'ephemeral',
     plyContext: 'turn',
     steer: true,   // turn/steer で走っているターンへ足す
     handover: true,          // 共有の app-server を保持役に載せ、新しいサーバーが付け直す（codex-held.mjs）
@@ -115,7 +119,10 @@ export const CAPABILITY_STATES = {
     compatEndpoints: impossible('agy 1.4.7 の customModelsConfig は Gemini API key 専用で、Google アカウントでは無視される'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: impossible('agy が自分で圧縮する。手動の圧縮の口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     autoCompactWindow: impossible('agy 1.4.7 は自動圧縮の閾値を設定する CLI 引数・設定を公開しない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    promptSuggestions: covered,   // ターンの後に suggestNext で作る
+    // 次の発言の候補も内部呼出しで作る。agy の --print は会話を履歴に残し、道具・フックを止める保証も無いので出せない（Issue #180）
+    promptSuggestions: impossible('次の発言の候補は内部呼出しで作る。agy は内部呼出しを分離できないので出せない（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 使い捨てのホームでも agy の --print は会話を履歴に残し、CLI 内蔵の道具・フックを止める保証が無いので内部呼出しは持たない（Issue #180）
+    internalCall: impossible('使い捨てのホームでも agy --print は会話を履歴に残し、内蔵の道具・フックを止める保証が無い（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じくカスタムエージェントの mcpServers に束ねた中継で渡す。
     // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため。
     // 継続した会話でもそのターンの設定が届き、記録と実際が一致する）。カスタムエージェントが読まない作業場所の
@@ -152,7 +159,10 @@ export const CAPABILITY_STATES = {
     compatEndpoints: impossible('OpenCode 自身の接続先としてつなぐので、Pleiad の互換の接続先は使わない（ADR 0221）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: true,          // POST /session/{id}/summarize
     autoCompactWindow: impossible('OpenCode 2.0.32 は compaction.buffer を全体設定でしか受けず、セッション別の自動圧縮閾値を設定する API が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    promptSuggestions: covered,  // ネイティブ通知が無いため、ターン後に別の読み取り専用 session で提案を作る
+    // 別 session を作って消す従来形は、接続先の履歴に残らない保証が無い（Issue #180）
+    promptSuggestions: impossible('次の発言の候補は内部呼出しで作る。OpenCode は内部呼出しを分離できないので出せない（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 一時 session を作り削除しても接続先の履歴に残らない保証が無い（削除の口の検証が済んでいない）
+    internalCall: impossible('一時 session を作り削除しても、接続先の履歴に残らない保証が無い（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     plyAgents: true,        // ply_agents を中継の口で渡し、指示を system に入れる
     plyInstructions: true,  // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
     plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）
@@ -186,7 +196,9 @@ export const CAPABILITY_STATES = {
     compatEndpoints: impossible('通常版の CLI は Devin の接続先（windsurf）固定で、ACP_BACKEND=openai などの互換接続先は Unknown backend type で拒否される（エアギャップ専用ビルドのみ。CLI 3000.11.92 で確認）'), // i18n-ignore: CLI の機能確認に基づく開発者向けの理由
     compact: true,                    // /compact を prompt として送る（下の compact）
     autoCompactWindow: impossible('Devin CLI 3000.11.92 の公式設定項目・ACP configOptions に自動圧縮閾値が無い'), // i18n-ignore: CLI と公式資料の確認に基づく開発者向け理由
-    promptSuggestions: covered,       // ターンの後に suggestNext で作る
+    // ephemeral の ACP 会話が接続先の履歴に残らない保証が無いので、内部呼出しは持たない（Issue #180）
+    promptSuggestions: impossible('次の発言の候補は内部呼出しで作る。Devin は内部呼出しを分離できないので出せない（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    internalCall: impossible('ephemeral な ACP 会話が接続先の履歴に残らない保証が無い（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     plyInstructions: true,
     plyAgents: true,
     // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
@@ -222,7 +234,9 @@ export const CAPABILITY_STATES = {
     compatEndpoints: true, // 会話専用の GROK_HOME/config.toml と XAI_API_KEY で OpenAI Chat Completions 互換へ接続
     compact: true,                    // compact() から /compact を送り、自動圧縮通知を履歴イベントへ写す
     autoCompactWindow: true,          // GROK_CONFIG.session.auto_compact_threshold_percent に換算
-    promptSuggestions: covered,       // ACP に提案 API がなく、ターン後の使い捨て読み取り専用会話で補う
+    // ephemeral の ACP 会話が接続先の履歴に残らない保証が無いので、内部呼出しは持たない（Issue #180）
+    promptSuggestions: impossible('次の発言の候補は内部呼出しで作る。Grok は内部呼出しを分離できないので出せない（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    internalCall: impossible('ephemeral な ACP 会話が接続先の履歴に残らない保証が無い（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     plyInstructions: true,
     plyAgents: true,
     plyContext: 'turn',         // ply_context の HTTP MCP をターンごとに渡す（native の AGENTS.md・Skills と重なる owners は拒否）

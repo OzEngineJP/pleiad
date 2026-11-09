@@ -1,7 +1,7 @@
 // i18n-dynamic: agent:brain.loop.
 // i18n-dynamic: agent:brain.reason.
 // 心拍（ADR 0126）。bot ごとのタイマーで小さく起き続け、ほとんどは「静か」の 1 行だけ残す。大事なときだけ安いモデルを呼び、賢いモデルへ引き継ぐ。
-// 3 段の頭: ① コードのふるい（core/brain/gate.mjs。0 円）→ ② 安いモデル（ぼんやり。隠れた会話・読み取りのモード・JSON だけ）→ ③ 賢いモデル（bot の本物の会話。投稿・作業はここだけ）。
+// 3 段の頭: ① コードのふるい（core/brain/gate.mjs。0 円）→ ② 安いモデル（ぼんやり。内部呼出し・道具なし・JSON だけ）→ ③ 賢いモデル（bot の本物の会話。投稿・作業はここだけ）。
 // ここは 1 回の流れとタイマー・安いモデルの呼び方。欲求は drives.mjs、ふるいは gate.mjs、文は inner.mjs、返事の読み取りは answer.mjs、保存は store.mjs。
 //
 // 守っていること（安全の制限。型は決めない: 何を考えるか・いつ話すかは bot が決める）:
@@ -13,9 +13,9 @@
 //   - 独り言を意味記憶には書かない（記憶の出どころ検査は緩めない。ここから memory.* は呼ばない）
 //
 //   createPulse({ dataDir, brain, channels, bots, host, budget, dispatch, memory, clock, ask, floorMs, tickMs }) → Pulse
-//     host … store.getPrefs・getBackend・listBackends・resolveModel・resolveEffort・createConversation・runTurn・usageStore・currentLocale（learn.mjs と同じ）
+//     host … store.getPrefs・getBackend・listBackends・resolveModel・resolveEffort・internalCall・currentLocale（learn.mjs と同じ）
 //     budget … createBudget の返り（allowsBrain・leftBrain・chargeBrain）。dispatch … { handoff }（賢いモデルへの引き継ぎ）
-//     ask(prompt, { bot, prefs }) → string | { text, sessionId?, usage? }   … 安いモデルの身代わり（テスト用）。無ければ隠れた会話で聞く
+//     ask(prompt, { bot, prefs }) → string | { text, callId?, usage? }   … 安いモデルの身代わり（テスト用）。無ければ内部呼出しで聞く
 //     floorMs・tickMs・everyMs … 間隔の下限・タイマーの確かめる間隔・既定の間隔の上書き（テストと開発中の確かめ用。bots-host が環境変数から渡す）
 //   Pulse:
 //     start()・stop()・close()   … タイマー（tickMs ごとに、時刻の来た bot の心拍を 1 本ずつ流す）
@@ -26,6 +26,8 @@
 import os from 'node:os';
 import { agentT } from '../i18n.mjs';
 import { narrowestMode } from '../modes.mjs';
+import { capabilityValue } from '../backends/capability-marks.mjs';
+import { INTERNAL_UNAVAILABLE } from '../internal-call.mjs';
 import { computeDrives } from './drives.mjs';
 import { gate as runGate, wakeMatches } from './gate.mjs';
 import { beatPrompt, handoffText, WORK_NOTES_VERSION, workNotesContext } from './inner.mjs';
@@ -41,9 +43,6 @@ const THREAD_LIMIT = 30;
 const EVENTS_MAX = 30;
 /** 失敗が続いたときの間隔の伸ばし方（間隔 × 2^失敗、上限は 60 分） */
 const FAIL_BACKOFF_MAX = 4;
-/** bot ごとの、残しておく隠れた会話（心拍 1 回 = 1 会話）の数 */
-const KEEP_SESSIONS = 60;
-const PRUNE_SESSIONS_EVERY = 20;
 const log = (...a) => console.error('  pulse:', ...a);
 const errText = (e) => String(e?.message ?? e);
 const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0, n).join('');
@@ -60,7 +59,6 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
   let closed = true;
   let chain = Promise.resolve();
   const running = new Set();
-  const beats = new Map();   // botId → 心拍の数（隠れた会話の掃除の間隔用）
   const locale = () => host?.currentLocale?.() ?? 'ja';
   /** 既定の間隔（ms）。Bot.pulse.everyMin（5〜60 分）。everyMs は開発中の確かめ用の上書き（AGENT_HOST_PULSE_EVERY_MS） */
   const everyOf = (bot) => everyMs ?? (bot.pulse?.everyMin ?? 10) * 60_000;
@@ -130,50 +128,37 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
   // ------------------------------------------------------------ 安いモデル（隠れた会話。夜の整理 core/memory/learn.mjs の askBackend と同じ手順）
 
+  /** 心拍の安いモデルを呼ぶ backend の id（internalStop の印と、能力の前検で使う） */
+  const pulseBackendId = (bot, prefs) =>
+    bot.pulse?.backend || prefs.memoryLearnBackend || bot.backend || prefs.backend || host.listBackends()[0]?.id;
+
   async function askBackend(bot, prompt, prefs) {
-    const backendId = bot.pulse?.backend || prefs.memoryLearnBackend || bot.backend || prefs.backend || host.listBackends()[0]?.id;
+    const backendId = pulseBackendId(bot, prefs);
     const backend = host.getBackend(backendId);
     if (!backend) throw new Error(`pulse backend unavailable: ${backendId}`);
     const cwd = os.homedir();
     const own = backendId === bot.backend;
     const model = await host.resolveModel(null, bot.pulse?.model || prefs.backends?.[backendId]?.model || (!bot.pulse?.backend && !prefs.memoryLearnBackend && own ? bot.model : undefined) || undefined, backend, cwd, '');
     const effort = await host.resolveEffort(null, prefs.backends?.[backendId]?.effort || undefined, backend, model, cwd, null);
-    // いちばん狭いモード（Claude は plan、Codex は readonly）。道具は使わせない（承認を求めても、隠れた会話では server が断る）
     const mode = narrowestMode(backend.modes());
     if (!mode) throw new Error(`pulse backend has no read-only mode: ${backendId}`);
-    const title = agentT(locale(), 'brain.pulse.title', { icon: bot.icon, name: bot.name });
-    const at = now();
-    const sessionId = await host.createConversation(backend, { title, cwd, createdAt: at, lastModified: at });
-    await host.store.setMeta(sessionId, { backend: backend.id, title, cwd, createdAt: at, lastModified: at, unsent: true });
-    await host.store.setMode(sessionId, mode);
-    await host.store.setModel(sessionId, model);
-    await host.store.setSessionData(sessionId, 'effort', effort);
-    await host.store.setSessionData(sessionId, 'agentLocale', locale());
-    // 心拍も bot のアカウントの枠で動く（ADR 0224）。bot 自身の backend（アカウントを選べるもの）で走るときだけ。
-    // 別の backend で心拍を回す bot（pulse.backend・夜の整理の既定）に、ほかのエージェントのアカウントを渡さない
-    if (own && backend.capabilities?.accounts && bot.account) await host.store.setSessionData(sessionId, 'claudeAccount', bot.account);
-    await host.store.setSessionData(sessionId, 'bot', { botId: bot.id, kind: 'pulse', channelId: null, threadId: null }, { durable: true });
-    const outcome = await host.runTurn({ sessionId, prompt }, () => {}, { internal: true });
-    if (outcome !== 'ok' && outcome !== 'done') throw new Error(`pulse turn: ${outcome}`);
-    const messages = await backend.getMessages(sessionId, { fullResults: true });
-    const text = [...messages].reverse().find((m) => m.role === 'assistant' && m.text)?.text ?? '';
-    const rows = await host.usageStore?.records?.({ sessionIds: [sessionId], since: at - 1000 }).catch(() => []) ?? [];
-    const usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-    for (const r of rows) { usage.inputTokens += r.inputTokens ?? 0; usage.outputTokens += r.outputTokens ?? 0; usage.cachedTokens += r.cachedTokens ?? 0; }
-    return { text, sessionId, usage, backend: backend.id, model };
-  }
-
-  /**
-   * 古い心拍の隠れた会話を、新しい KEEP_SESSIONS 件を残して消す（1 回 1 会話なので、放っておくと夜ごとに積もる）。
-   * ネイティブの会話ごと消せるときだけ消す（host.deleteHidden）。以前は sidecar だけを消していて、bot の印を失った会話が Chats の一覧に出た（ADR 0127）
-   */
-  async function pruneSessions(botId) {
+    // 分離して呼べない backend では第2段を起動しない（恒常的なので、再試行しても同じ。journal 行も作らないで止める）
+    if (typeof backend.internalTurn !== 'function' || !capabilityValue(backend.capabilities?.internalCall))
+      throw Object.assign(new Error(`pulse backend cannot run isolated internal calls: ${backendId}`), { code: INTERNAL_UNAVAILABLE });
+    // 内部呼出し（Issue #180。会話も接続先の履歴も作らない。usage は internalTurn の返りで直接 chargeBrain へ）。
+    // 心拍も bot のアカウントの枠で動く（ADR 0224）。bot 自身の backend（アカウントを選べるもの）で走るときだけ
+    let out;
     try {
-      if (!host.deleteHidden) return;
-      const all = await host.store.getAll();
-      const mine = Object.entries(all).filter(([, v]) => v?.bot?.kind === 'pulse' && v.bot.botId === botId).sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-      for (const [id] of mine.slice(KEEP_SESSIONS)) await host.deleteHidden(id).catch((e) => log('could not delete a hidden conversation:', errText(e)));
-    } catch (e) { log('could not prune the hidden conversations:', errText(e)); }
+      out = await host.internalCall({ kind: 'pulse', backend, prompt, model, effort, mode, cwd, locale: locale(), botId: bot.id,
+        accountId: own && backend.capabilities?.accounts ? bot.account ?? '' : '' });
+    } catch (e) {
+      // 呼出しを始めた後の失敗（部分の使用量を含む）。予算へは呼び出し側で反映する
+      e.internalCallAttempted = true;
+      throw e;
+    }
+    if (out?.aborted) return { text: '', usage: out.usage ?? null, backend: backend.id, model, callId: out.callId, aborted: true, reason: out.reason };
+    if (!out?.text) throw Object.assign(new Error('pulse: no answer'), { internalCallAttempted: true, usage: out?.usage ?? null });
+    return { text: out.text, usage: out.usage ?? null, backend: backend.id, model, callId: out.callId };
   }
 
   // ------------------------------------------------------------ 1 回の心拍
@@ -243,15 +228,35 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
       const response = ask ? await ask(prompt, { bot, prefs }) : await askBackend(bot, prompt, prefs);
       answered = typeof response === 'string' ? { text: response } : response;
     } catch (e) {
+      // 恒常的な理由（内部呼出しに対応できない backend 等）は、指数再試行しても同じなので理由を残して心拍を止める。
+      // 呼出しを始める前の失敗なので予算には数えない
+      if (e?.code === INTERNAL_UNAVAILABLE) return stopped(bot, { state, at, common, meta, cursor: state.cursorAt ?? since, message: errText(e) });
+      // 呼出しを始めた後の失敗・中断は、部分の使用量が取れなくても「不明」として予算に残す（無料で繰り返させない）
+      if (e?.internalCallAttempted || e?.usage) {
+        try { await budget.chargeBrain({ channelId: home.id, botId: bot.id, backend: cheapBackend, model: bot.pulse?.model, usage: e?.usage ?? null }); }
+        catch (budgetError) { log('could not charge the budget:', errText(budgetError)); return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(budgetError) }); }
+      }
       return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(e) });
+    }
+    if (answered.aborted) {
+      // 中止は失敗として間隔を伸ばし、取れた使用量（不明を含む）は予算に残す。結果は採用しない
+      try { await budget.chargeBrain({ channelId: home.id, botId: bot.id, backend: answered.backend ?? cheapBackend, model: answered.model, usage: answered.usage ?? null }); }
+      catch (budgetError) { return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(budgetError) }); }
+      return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: `pulse: ${answered.reason ?? 'aborted'}` });
     }
     const usage = answered.usage ?? null;
     const tokens = usage ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, cached: usage.cachedTokens ?? 0 } : null;
-    if (usage) await budget.chargeBrain({ channelId: home.id, botId: bot.id, backend: answered.backend ?? cheapBackend, model: answered.model, usage }).catch((e) => log('could not charge the budget:', errText(e)));
+    // 使用量が測れなくても chargeBrain は呼ぶ（null なら「不明」の印を残し、その日の自発を止める。0 扱いにはしない。Issue #180）。
+    // 予算の記録に失敗したら、その後の解析・引き継ぎ（AI/外部の行動）へ進まない（帳簿の無い消費を増やさない）
+    try {
+      await budget.chargeBrain({ channelId: home.id, botId: bot.id, backend: answered.backend ?? cheapBackend, model: answered.model, usage });
+    } catch (e) {
+      return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(e) });
+    }
     let parsed;
     try { parsed = parseBeat(answered.text, { now: at }); }
-    catch (e) { return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta: { ...meta, ...(answered.sessionId ? { session: answered.sessionId } : {}) }, message: errText(e), tokens }); }
-    const rowMeta = { ...meta, workNotesVersion: WORK_NOTES_VERSION, ...(answered.sessionId ? { session: answered.sessionId } : {}) };
+    catch (e) { return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta: { ...meta, ...(answered.callId ? { call: answered.callId } : {}) }, message: errText(e), tokens }); }
+    const rowMeta = { ...meta, workNotesVersion: WORK_NOTES_VERSION, ...(answered.callId ? { call: answered.callId } : {}) };
 
     // ⑦ 返事を当てはめる: 流れ・気がかり・次に起きる時刻
     let seq = null;
@@ -268,9 +273,6 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
     // ⑧ 賢いモデルへの引き継ぎ（確かめる・話す）
     if (parsed.do === 'act' && parsed.handoff) await handOff(bot, home, parsed, { taint, taintOnly: taintedInput && !cleanTrigger, at });
-    const n = (beats.get(bot.id) ?? 0) + 1;
-    beats.set(bot.id, n);
-    if (!ask && n % PRUNE_SESSIONS_EVERY === 0) pruneSessions(bot.id);
     return { botId, ran: true, gate: verdict, did: parsed.do, seq };
   }
 
@@ -280,6 +282,14 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     brain.append(bot.id, { kind: 'quiet', tokens, meta: { ...meta, reason: 'error', error: clip(message, 160) } });
     brain.setState(bot.id, { ...common, cursorAt: cursor, nextAt: at + Math.min(PULSE_CEIL_MS, every * 2 ** Math.min(failures, FAIL_BACKOFF_MAX)), failures });
     return { botId: bot.id, ran: true, did: 'error', error: message };
+  }
+
+  /** 恒常的な理由（内部呼出しに対応できない backend 等。Issue #180）。再試行しても同じなので、理由を brain の流れに残して心拍を止める（再試行しない） */
+  function stopped(bot, { state, common, meta, cursor, message }) {
+    brain.append(bot.id, { kind: 'quiet', meta: { ...meta, reason: 'internalUnavailable', error: clip(message, 160) } });
+    // paused で止める（［起こす］で人がやり直せる。眠らせると同じ停止の形なので、状態の表示・再開の口は既存のまま）
+    brain.setState(bot.id, { ...common, cursorAt: cursor, paused: true, failures: state.failures ?? 0 });
+    return { botId: bot.id, ran: true, did: 'stopped', error: message };
   }
 
   async function relatedOf(bot, events) {

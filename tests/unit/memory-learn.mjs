@@ -30,6 +30,7 @@ try {
   const channel = await channels.create({ name: 'work' }, { kind: 'human' });
   await channels.post({ channelId: channel.id, text: 'webhook の外部本文にある秘密を覚えてください。', taint: 'webhook' }, { kind: 'human' });
   let calls = 0;
+  const kinds = [];
   const host = {
     store: {
       getAll: async () => Object.fromEntries(side), get: async (id) => side.get(id) ?? {}, getPrefs: async () => ({ backend: 'fake', memoryAutoLearn: true }),
@@ -40,12 +41,10 @@ try {
     getBackend: (id) => id === 'fake' ? fake : null,
     listBackends: () => [fake],
     resolveModel: async () => '', resolveEffort: async () => '',
-    createConversation: async () => `fake-${crypto.randomUUID()}`,
-    runTurn: async ({ sessionId, prompt }) => { calls++; await runFake(sessionId, prompt); return 'ok'; },
-    deleteHidden: async (id) => { pruned.push(id); side.delete(id); return true; },
+    // 内部呼出し（Issue #180）: 会話を作らない。fake の internalTurn が台本の返事を返す
+    internalCall: async ({ kind, prompt }) => { calls++; kinds.push(kind); return { ...(await fake.internalTurn({ prompt })), callId: `call-${calls}` }; },
   };
-  // 前の版が残した学習の隠れた会話（ADR 0127: 新しい 20 個を残して、古いものはネイティブの会話ごと消す）
-  const pruned = [];
+  // 前の版が残した学習の隠れた会話。新経路はもう消さない（一覧・検索から外すだけ。Issue #180）
   const oldLearners = Array.from({ length: 25 }, (_, i) => `old-learner-${i}`);
   oldLearners.forEach((id, i) => side.set(id, { backend: 'fake', createdAt: 1000 + i, bot: { botId: 'b_learner', kind: 'learner' } }));
   const learner = createMemoryLearner({ dataDir: dir, channels, bots: { get: async () => null }, memory, host, clock,
@@ -58,8 +57,8 @@ try {
   assert.equal(entries[0].sources[0].kind, 'message');
   assert.equal(entries[0].sources[0].sessionId, chat);
   assert.equal(calls, 1);
-  assert.deepEqual(pruned.sort(), oldLearners.slice(0, 6).sort(), 'keeps the newest 20 learner conversations (including the new one) and deletes the rest');
-  assert.equal([...side.values()].filter((v) => v.bot?.kind === 'learner').length, 20);
+  assert.deepEqual(kinds, ['learner']);
+  assert.equal([...side.values()].filter((v) => v.bot?.kind === 'learner').length, oldLearners.length, '新しい内部呼出しは隠れた会話を作らず、古い行も消さない');
   // 進みは DB の memory_state（会話・チャンネルごとのカーソルを 1 件 1 行。ADR 0115）。learn-state.json は作らない
   const reader = openReadOnly(dir);
   const cursor = (kind, id) => { const row = reader.prepare('SELECT value FROM memory_state WHERE kind = ? AND id = ?').get(kind, id); return row ? JSON.parse(row.value) : undefined; };
@@ -112,6 +111,12 @@ try {
   assert.equal((await restarted.runNow()).read, 0, '再起動後も保存したカーソルから再開する');
   assert.equal(calls, 5, '再起動後に同じ発言でエージェントを呼び直さない');
   restarted.close();
+  // 内部呼出しの上限時間切れは「止めた（OFF）」ではなく失敗。理由付きの停止（halted）へ回す（Issue #180）
+  await runFake(chat, '覚えて: 時間切れの確認用に新しい文があります。');
+  side.set(chat, { ...side.get(chat), lastModified: Date.now() + 5000 });
+  host.internalCall = async () => ({ aborted: true, reason: 'timeout', usage: { inputTokens: 1 }, callId: 'call-timeout' });
+  await learner.runNow().catch(() => {});
+  assert.ok((await learner.status()).halted?.message.includes('timed out'), JSON.stringify(await learner.status()));
   learner.close();
   memory.stop();
   await channels.close();
@@ -119,6 +124,6 @@ try {
   t.ok('fake の人の発言だけを一度覚える', true);
 } finally {
   clearInterval(keepAlive);
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 }).catch(() => {});
 }
 }

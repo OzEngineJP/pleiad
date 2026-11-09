@@ -38,7 +38,7 @@ export default async function (t) {
   const ask = async (prompt) => {
     prompts.push(prompt);
     if (fail) throw new Error(fail);
-    return { text: typeof answer === 'string' ? answer : JSON.stringify(answer), usage, sessionId: 'fake-hidden' };
+    return { text: typeof answer === 'string' ? answer : JSON.stringify(answer), usage, callId: 'fake-call' };
   };
   const timers = [];
   const fakeClock = { now, setTimer: (fn, ms) => { const h = { fn, ms }; timers.push(h); return h; }, clearTimer: (h) => { const i = timers.indexOf(h); if (i >= 0) timers.splice(i, 1); } };
@@ -79,7 +79,7 @@ export default async function (t) {
     const prompt = prompts.at(-1);
     t.ok('新しい人の投稿は、ふるいを通って安いモデルに渡る（束に出来事の本文・道具を使わず JSON だけの指示が入る）', r.gate.reason === 'human' && prompts.length === 1 && prompt.includes('来週の発表の資料') && prompt.includes('<pleiad-pulse>') && prompt.includes('Do not use tools'));
     const think = rows().find((x) => x.kind === 'think');
-    t.ok('返事は思考の流れに 1 行（独り言・理由・欲求・使ったトークン・隠れた会話の id）', think.text.includes('発表の資料が気になる') && think.meta.reason === 'human' && think.meta.session === 'fake-hidden' && think.tokens.input === 1000 && think.meta.drives);
+    t.ok('返事は思考の流れに 1 行（独り言・理由・欲求・使ったトークン・内部呼出しの id）', think.text.includes('発表の資料が気になる') && think.meta.reason === 'human' && think.meta.call === 'fake-call' && think.tokens.input === 1000 && think.meta.drives);
     const loop = brain.loops(bot.id)[0];
     t.ok('気がかりが足され、1 変化 1 行が流れに残る', loop.id === 'doc' && loop.wakeOn.word === '資料' && rows().some((x) => x.kind === 'loop' && x.refs[0] === 'doc' && x.text.includes('気がかりを足した')));
     const st = brain.state(bot.id);

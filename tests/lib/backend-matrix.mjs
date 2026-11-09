@@ -29,6 +29,7 @@ export const ABOUT = {
   compact: '手動・自動の圧縮（true: compact() で圧縮する / prompt: /compact を発言として送る）',
   autoCompactWindow: '委譲の子の自動圧縮の閾値を受け取る',
   promptSuggestions: '次の発言の候補（native: ターンの中で届く / 補: ターンの後に suggestNext で作る）',
+  internalCall: '履歴に残さない内部処理の呼び出し（ephemeral: 接続先に残さない / isolated: 分離した一時実行）',
   plyInstructions: 'Pleiad の指示（ユーザーが足した分・既定の項目）を受け取る',
   plyAgents: '委譲の橋（ply_agents。agentRuntime の url・headers・instructions）を受け取る',
   plyContext: 'Pleiad のコンテキスト（ply_context）の受け取り方（turn / conversation）',

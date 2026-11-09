@@ -184,6 +184,15 @@ async function japaneseCases(t) {
     at += 6 * 3600000;
     assert.equal((await restored.summary('codex')).fiveHour.turns, 0);
     assert.equal((await restored.summary('codex')).sevenDay.turns, 1);
+    // 内部呼出しの遅着補正（Issue #180）: 対象の id の 1 行だけを直し、at とほかの行は変えない
+    const originalAt = (await restored.snapshot()).records.find((r) => r.id === 'a').at;
+    assert.equal(await restored.amend('a', { id: 'a', backend: 'codex', inputTokens: 42, outputTokens: 1, cachedTokens: 0, internalTask: { kind: 'pulse', botId: 'b_1' } }), true);
+    const amended = (await restored.snapshot()).records.find((r) => r.id === 'a');
+    assert.equal(amended.inputTokens, 42);
+    assert.equal(amended.at, originalAt, 'at は元の記録のまま');
+    assert.equal(amended.internalTask.kind, 'pulse');
+    assert.equal((await restored.snapshot()).records.find((r) => r.id === 'b').costUsd, .5, 'ほかの行は変えない');
+    assert.equal(await restored.amend('missing', { id: 'missing', backend: 'codex' }), false, '無い行は作らない');
     server = await startServer({ dataDir: path.join(dir, 'server'), env: { AGENT_HOST_BACKENDS: 'codex', AGENT_HOST_CODEX_BIN: `node "${path.resolve('tests/lib/fake-codex.mjs')}"` } });
     client = await open({ port: server.port, token: server.token, autoAllow: true });
     await assert.rejects(client.cmd('providerUsage', { backend: 'invalid' }));

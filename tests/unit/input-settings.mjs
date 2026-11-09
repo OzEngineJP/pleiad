@@ -11,6 +11,8 @@ export const title = '設定 › 入力: 次の発言の候補の行は、候補
 const fake = { id: 'fake', label: 'Fake (test)', capabilities: { promptSuggestions: true } };
 const claude = { id: 'claude', label: 'Claude', capabilities: { promptSuggestions: 'native' } };
 const devin = { id: 'devin', label: 'Devin', capabilities: { promptSuggestions: false } };
+// 内部呼出しを分離できないので候補を止めたエージェント（Issue #180）。行は出し、理由を説明に載せる
+const stopped = { id: 'opencode', label: 'OpenCode', capabilities: { promptSuggestions: false }, suggestionsStopped: true };
 
 function panel(backends, { prefs = {} } = {}) {
   const root = new N('div');
@@ -45,6 +47,12 @@ export default function (t) {
   const mixed = panel(() => [claude, fake, devin]);
   t.ok('混在なら対応している名前だけが載る（対応の無いものは外れる）',
     mixed.descs().some(d => d.includes('Claude') && d.includes('Fake (test)') && !d.includes('Devin')));
+  const stoppedOnly = panel(() => [stopped]);
+  t.ok('分離して呼べないエージェントだけでも行を出し、止めた理由を説明に載せる（黙って消さない）',
+    stoppedOnly.labels().includes(tr('settings.input.suggestions.title'))
+    && stoppedOnly.descs().some(d => d.includes('OpenCode') && d.includes(tr('settings.input.suggestions.stoppedNote', { agents: 'OpenCode' }).trim())));
+  t.ok('対応と停止が混ざっても、両方の名前が説明に載る',
+    panel(() => [fake, stopped]).descs().some(d => d.includes('Fake (test)') && d.includes('OpenCode') && d.includes('候補を出せません')));
 
   // ---- 一覧の到着で描き直す（backends は後から届く。paint で出し分けが変わる）----
   let list = [devin];

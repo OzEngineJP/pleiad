@@ -398,6 +398,15 @@ export function usageTable(db) {
       };
     },
     has(id) { return !!prepared(db, 'SELECT 1 AS found FROM usage_records WHERE id = ? LIMIT 1').get(id); },
+    /** 1 行を id で読む（無ければ null）。遅れて届いた使用量の補正に使う */
+    byId(id) {
+      const row = prepared(db, 'SELECT data FROM usage_records WHERE id = ? ORDER BY seq LIMIT 1').get(id);
+      return row ? JSON.parse(row.data) : null;
+    },
+    /** 1 行だけを id で置き換える（ほかの記録は読まない・書き直さない）。見つからなければ false */
+    amend(id, record) {
+      return prepared(db, 'UPDATE usage_records SET data = ? WHERE id = ?').run(jsonOf(record), id).changes > 0;
+    },
     /** 1 件足す。メタが無ければ since・migrations も書く */
     add(record, { since, migrations }) {
       transaction(db, () => {

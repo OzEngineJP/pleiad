@@ -30,7 +30,7 @@ import { antigravityLimit } from "./antigravity-limit.mjs";
 import { undelivered } from "./undelivered.mjs";
 import { agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
-import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
+// antigravity-suggest.mjs（使い捨てホームで候補を作る）は、内部呼出しを分離して呼べる保証が無いため使わない（Issue #180）
 import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { t, agentT } from "../i18n.mjs";
 import { mcpContacted, mcpContactsWatched } from "../mcp-contact.mjs";
@@ -457,17 +457,6 @@ export const backend = {
   async requireModelCatalog() {
     await loadModelsCache();
     if (modelCache === null) throw new Error(t('antigravity.models.checkNeeded'));
-  },
-
-  /**
-   * 次の発言の候補（core/prompt-suggestions.mjs、ADR 0211）。prompt は指示と要約。返すのは生の返り（読むのは server 側）。
-   * agy は 1 回ごとに会話を履歴に残すので、使い捨てのホームで起こす（antigravity-suggest.mjs）
-   */
-  async suggestNext({ prompt, signal }) {
-    // 未ログインが確定している間は新規起動しない（`--print` の headless 保証内でも、起動ごとに使い捨ての会話履歴を書くため。
-    // 確定していない間は従来どおり試す——保証内の機能を無用に止めない）
-    if (authGuess === 'out') return null;
-    return runAgySuggestion({ prompt, model: suggestModel(await backend.models()), signal });
   },
 
   // ---- 実行 ---------------------------------------------------------------

@@ -43,10 +43,13 @@ export function setupInputSettings({ cmd, getPrefs, getBackends = () => [] }) {
     const now = inputPrefs(getPrefs());
     // 候補を出せるエージェントが無いのに設定だけ見せると、入れても何も起きない（#147）。ある分だけ行を出し、
     // 説明にも対応しているエージェントの名前を載せる（Pleiad が後から作る分は料金が別途かかる）
-    const suggestible = getBackends().filter(b => b.capabilities?.promptSuggestions);
+    const all = getBackends();
+    const suggestible = all.filter(b => b.capabilities?.promptSuggestions);
+    // 候補を出せない印のエージェント（候補は内部呼出しで作るが、分離して呼べない・未対応。Issue #180。理由をここで見せる）
+    const stopped = all.filter(b => b.suggestionsStopped).map(b => b.label ?? b.id).join('・');
     const agents = suggestible.map(b => b.label ?? b.id).join('・');
     const covered = suggestible.filter(b => b.capabilities.promptSuggestions !== 'native').map(b => b.label ?? b.id).join('・');
-    const rows = ROWS.filter(([, , base]) => base !== 'settings.input.suggestions' || suggestible.length).map(([name, key, base]) => {
+    const rows = ROWS.filter(([, , base]) => base !== 'settings.input.suggestions' || suggestible.length || stopped).map(([name, key, base]) => {
       const label = t(`${base}.title`);
       const sw = el('button', 'cx-sw');
       sw.type = 'button';
@@ -58,7 +61,11 @@ export function setupInputSettings({ cmd, getPrefs, getBackends = () => [] }) {
       const r = el('div', 'nf-row');
       const info = el('div', 'nf-info');
       const desc = base === 'settings.input.suggestions'
-        ? t('settings.input.suggestions.description', { agents, covered: covered ? t('settings.input.suggestions.coveredNote', { agents: covered }) : '' })
+        ? t('settings.input.suggestions.description', {
+            agents,
+            covered: covered ? t('settings.input.suggestions.coveredNote', { agents: covered }) : '',
+            stopped: stopped ? t('settings.input.suggestions.stoppedNote', { agents: stopped }) : '',
+          })
         : t(`${base}.description`);
       info.append(el('span', 'nf-label', label), el('small', null, desc));
       r.append(info, sw);

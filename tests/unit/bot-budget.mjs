@@ -116,12 +116,21 @@ export default async function (t) {
       const left = await budget.leftBrain({ channelId: null, botId: 'b_dm' });
       t.ok('家が無いときの残りは、1 日のトークンの上限だけ（チャンネルの % は null）', left.tokensLeft === BRAIN_DAILY_TOKENS - 1300 && left.channel === null && left.daily === null, JSON.stringify(left));
       t.ok('上限の内なら、家が無くても自発してよい', await budget.allowsBrain({ channelId: null, botId: 'b_dm' }));
-      await budget.chargeBrain({ channelId: null, botId: 'b_dm', usage: { inputTokens: BRAIN_DAILY_TOKENS } });
+      await budget.chargeBrain({ channelId: null, botId: 'b_dm', usage: { inputTokens: BRAIN_DAILY_TOKENS, outputTokens: 0, cachedTokens: 0 } });
       t.ok('1 日のトークンの上限を使い切ったら、家が無くても自発しない', !(await budget.allowsBrain({ channelId: null, botId: 'b_dm' })) && (await budget.leftBrain({ channelId: null, botId: 'b_dm' })).tokensLeft === 0);
-      await budget.chargeBrain({ channelId: 'c_1', botId: 'b_mix', backend: 'codex', model: '', usage: { inputTokens: 100 } });
-      await budget.chargeBrain({ channelId: null, botId: 'b_mix', usage: { inputTokens: 200 } });
+      await budget.chargeBrain({ channelId: 'c_1', botId: 'b_mix', backend: 'codex', model: '', usage: { inputTokens: 100, outputTokens: 0, cachedTokens: 0 } });
+      await budget.chargeBrain({ channelId: null, botId: 'b_mix', usage: { inputTokens: 200, outputTokens: 0, cachedTokens: 0 } });
       t.ok('同じ bot の、家のチャンネルの分と家が無いときの分は、1 日のトークンでは合わせて数える。チャンネルの % には家の分だけ入る',
         brain.spentTokens('b_mix', today) === 300 && Math.abs(brain.spentPercent('c_1', today) - 0.1) < 1e-9 && (await budget.allowsBrain({ channelId: 'c_1', botId: 'b_mix' })));
+      // 一部の欄だけ分かる usage は「測定済み」にしない（欠けた output を 0 として予算を通さない。Issue #180）
+      await budget.chargeBrain({ channelId: 'c_1', botId: 'b_partial', usage: { inputTokens: 50, outputTokens: null, cachedTokens: null } });
+      const partialLeft = await budget.leftBrain({ channelId: 'c_1', botId: 'b_partial' });
+      t.ok('部分の usage は既知分を数えつつ不明の印を残し、その日の自発を止める',
+        brain.spentTokens('b_partial', today) === 50 && partialLeft.unknownSpend === true && !(await budget.allowsBrain({ channelId: 'c_1', botId: 'b_partial' })));
+      await budget.chargeBrain({ channelId: 'c_1', botId: 'b_unknown', usage: null });
+      t.ok('usage が無い呼出しも 0 として無料にせず、不明の印でその日の自発を止める',
+        brain.spentTokens('b_unknown', today) === 0 && (await budget.leftBrain({ channelId: 'c_1', botId: 'b_unknown' })).unknownSpend === true
+        && !(await budget.allowsBrain({ channelId: 'c_1', botId: 'b_unknown' })));
       t.ok('指したチャンネルが引けない自発はしない（数える先が無い）。botId が無ければ数えない',
         !(await budget.allowsBrain({ channelId: 'c_missing', botId: 'b_mix' })) && (await budget.chargeBrain({ channelId: null, botId: null, usage: { inputTokens: 10 } })).tokens === 0 && (await budget.leftBrain({ channelId: null, botId: null })) === null);
     } finally {

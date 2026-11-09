@@ -233,6 +233,9 @@
     "failed": "考えられなかった: {{error}}",
     "empty": "空のタイトルが返ってきた"
   },
+  "internal": {
+    "sweepFailed": "内部呼び出しの記録の掃除に失敗しました"
+  },
   "attach": {
     "noContent": "中身が無い",
     "tooLarge": "大きすぎる（{{size}}MB / 上限 {{limit}}MB）",
@@ -670,7 +673,6 @@
       "noResponse": "応答なし",
       "stillOldEndpoint": "接続先を切り替えられませんでした（codex が前の接続先のまま会話を読み込みました）。裏で動いている端末があれば止めてから、もう一度送ってください",
       "noThreadId": "{{method}} が threadId を返さなかった",
-      "titleAborted": "タイトル生成を中断しました",
       "historyUnreadable": "Codex の履歴を読み出せません",
       "historyTooLarge": "Codex の履歴が大きすぎて読み込めませんでした（{{method}} の応答が 1 回で受け取れる大きさを超えました）",
       "historyTimeout": "Codex の履歴を {{seconds}} 秒で読み込めませんでした（{{method}} の応答がありません）。もう一度開いてください",

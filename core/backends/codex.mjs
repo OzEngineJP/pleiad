@@ -86,6 +86,10 @@ const MODES = {
   readonly: { get label() { return t("modes.readonly"); }, get short() { return t("modesShort.readonly"); }, get note() { return t("codex.modes.readonly"); }, approvalPolicy: "on-request", sandbox: "read-only", scope: "readonly", autonomy: "judge", enforced: true },
 };
 
+// 内部呼出し（Issue #180）の承認×sandbox の組。モードの一覧には出さない（画面のモードではない）。
+// 本体は internalConfig が shell 系の道具自体を出さない形。承認が要る残りの道具は全部拒否（untrusted + deny）、read-only は二重の保険
+const INTERNAL_MODE = { approvalPolicy: "untrusted", sandbox: "read-only", autonomy: "never", enforced: true };
+
 // 外へ見せるのは語彙と軸だけ。approvalPolicy / sandbox は codex の内部事情なので出さない。
 const vocab = ({ label, short, note, scope, autonomy, enforced }) => ({ label, ...(short ? { short } : {}), note, scope, autonomy, enforced });
 
@@ -272,12 +276,15 @@ function titleModel(models) {
   return { ...(model ? { model } : {}), ...(low ? { effort: "low" } : {}) };
 }
 
-/** config/read（作業場所ごとの config.toml）。表示のたびに引かないよう少しだけ覚える。読めなければ null */
+/**
+ * config/read（作業場所ごとの config.toml）。表示のたびに引かないよう少しだけ覚える。読めなければ null。
+ * fresh はキャッシュを迂回する（内部呼出しは利用者が直前に足した MCP も閉じるため、古い一覧を使わない）
+ */
 const configCache = new Map();
-async function readConfig(cwd) {
+async function readConfig(cwd, { fresh = false } = {}) {
   const key = cwd || "";
   const hit = configCache.get(key);
-  if (hit && Date.now() - hit.at < 30_000) return hit.config;
+  if (!fresh && hit && Date.now() - hit.at < 30_000) return hit.config;
   let config = null;
   try { config = (await rpc.request("config/read", { ...(cwd ? { cwd } : {}), includeLayers: false }, 10_000))?.config ?? null; }
   catch { /* 既定の解決ができないだけ */ }
@@ -1518,7 +1525,7 @@ const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, autoCompactWindow = null, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, autoCompactWindow = null, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, endpoint = null, internal = false, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
     // 会話のシェルへ渡す秘密情報と変数（ADR 0217）。空なら渡さない
     const secretsEnv = secretsRuntime?.env && Object.keys(secretsRuntime.env).length ? secretsRuntime.env : null;
     // adopt は付け直し（{ source, card }。adoptTurn だけが渡す。無停止の更新 段階 3）。保持役の子の app-server が持つ走っているターンを、記録の再生で引き取る
@@ -1540,7 +1547,29 @@ const backend = {
     const compat = endpoint ? codexCompatThread(endpoint) : null;
     if (compat && !model) model = endpoint.roles?.main || undefined;
     const hide = text => redactSecret(text, endpoint?.key);
-    const m = MODES[mode] ?? MODES.ask;
+    // 内部呼出しは untrusted + read-only（Issue #180。INTERNAL_MODE。道具自体は下の internalConfig が閉じる）
+    const m = internal ? INTERNAL_MODE : (MODES[mode] ?? MODES.ask);
+    // 利用者の MCP を閉じるには config/read が要る。読めない（null）なら閉じられないので始めない（fail-closed）。
+    // 「既定の解決ができないだけ」で開いたままにしない（MCP の起動・接続は内部呼出しの外の副作用）
+    const config = internal ? await readConfig(cwd, { fresh: true }) : null;
+    if (internal && !config) throw Object.assign(new Error('codex: could not read the config to disable MCP servers'), { code: 'INTERNAL_UNAVAILABLE' });
+    // shell・子のエージェント・実行系以外の口を全部閉じる上書き（untrusted でも承認なしで動く安全な読み取りがあるので、
+    // 道具自体を出さない。codex features list で確かめた stable の feature 名）。通常会話には影響しない（この thread の config だけ）
+    const internalConfig = internal ? {
+      'features.shell_tool': false,     // shell の道具を出さない（新しい統合 exec）
+      'features.unified_exec': false,   // 旧 exec の道具も出さない（両方 false で shell 口は閉じる）
+      'features.code_mode': false,      // コード実行の口を出さない
+      'features.multi_agent': false,    // ネイティブの子エージェントを出さない（子は永続の会話を作り、ephemeral の保証を破る）
+      'features.multi_agent_v2': false,
+      'features.hooks': false,          // codex の lifecycle hooks（hooks.json・[hooks]）
+      'web_search': 'disabled',         // Web 検索のツールを出さない
+      'features.view_image': false,     // ローカルの画像を読む道具を出さない
+      'features.goals': false,          // 永続の目標（自動の続き）を出さない
+      'features.apps': false,           // コネクター（アプリ）を出さない
+      'features.memories': false,       // codex の記憶を読ませない
+      'notify': [],                     // ターン終了に外部プログラムを起こさない
+      ...Object.fromEntries(Object.keys(config?.mcp_servers ?? {}).map((name) => [`mcp_servers.${name}.enabled`, false])),
+    } : null;
 
     // 承認カードに中身を載せるために、見たアイテムを覚えておく。
     // fileChange の承認要求は itemId しか運ばない（スキーマで確認済み）。
@@ -1831,6 +1860,8 @@ const backend = {
         config: {
           // Clear the retired built-in connection on already-loaded threads too.
           'mcp_servers.ply': { command: process.execPath, enabled: false, required: false },
+          // 内部呼出しの閉じ方（hooks・検索・画像・目標・記憶・コネクター・利用者の MCP・notify。上の internalConfig）
+          ...(internalConfig ?? {}),
           ...(agentRuntime ? { 'mcp_servers.ply_agents': { url: agentRuntime.url, http_headers: agentRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
           // エージェントのブラウザー操作（core/browser-bridge.mjs。ADR 0148）
           ...(browserRuntime ? { [`mcp_servers.${BROWSER_SERVER}`]: { url: browserRuntime.url, http_headers: browserRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: COMPUTER_CALL_TIMEOUT_SEC } } : {}),
@@ -2128,53 +2159,64 @@ const backend = {
   },
 
   // locale は会話の言語。タイトルもその言語で作らせる
-  async suggestTitle({ transcript, endpoint = null, locale }) {
-    // 会話やネイティブの設定が大きいモデル・段でも、軽いものを選ぶ（一覧に無いモデルを名指しすると落ちる）。
-    // 互換の接続先の会話は、その接続先の既定のモデルで段を送らずに作る（公式の model/list は互換の先のモデルを知らない）
-    const pick = endpoint ? { model: endpoint.roles?.main || undefined, effort: '' } : titleModel(await backend.models(os.tmpdir()));
-    const signal = new AbortController();
-    const timer = setTimeout(() => signal.abort(), 90_000);
-    let text = "", error = null;
+  /**
+   * 履歴に残さない 1 回きりの内部呼出し（Issue #180。core/internal-call.mjs → host.internalCall）。
+   * 軽いモデルの使い捨てスレッド（ephemeral。会話の一覧に残らない）で 1 回だけ回す。
+   * 返りは { text, usage, nativeId }。usage は turn の usage 出来事（thread/tokenUsage/updated）の最後の値。
+   * 止められた（signal）ときは null、失敗は投げる（取れた分の使用量は error.usage に載せる）。
+   * 会話の fork（thread/fork）では作らない: fork は新しいスレッドの id で、会話の部分がキャッシュに乗らない（2026-10-15 実測）
+   */
+  async internalTurn({ prompt, model, effort, signal, locale, cwd, endpoint }) {
+    const ac = new AbortController();
+    const stop = () => ac.abort();
+    if (signal?.aborted) return null;
+    signal?.addEventListener('abort', stop, { once: true });
+    // 呼び出し側の作業場所を使う（learner はホーム、題・候補は呼び出し側の指定）。MCP を読む cwd と実行の cwd を一致させる。
+    // locale は codex の内部呼出しでは使わない（題の指示はサーバーが作る）
+    const workdir = cwd || os.tmpdir();
+    let text = "", error = null, usage = null, nativeId = null;
     try {
+      // モデル・段が来なければ軽いものを選ぶ（一覧に無いモデルを名指しすると落ちる）。
+      // 互換の接続先はその接続先の既定のモデルで段を送らずに作る（公式の model/list は互換の先のモデルを知らない）
+      const base = endpoint ? { model: endpoint.roles?.main || undefined, effort: '' } : titleModel(await backend.models(workdir));
+      const pick = { model: model || base.model, effort: effort ?? base.effort };
       await backend.runTurn({
-        prompt: agentT(locale, 'title.codex') + NL + NL + transcript,
-        cwd: os.tmpdir(), mode: "readonly", model: pick.model, effort: pick.effort, ephemeral: true, signal, endpoint,
+        prompt, cwd: workdir, internal: true, mode: "readonly", model: pick.model, effort: pick.effort, ephemeral: true, signal: ac, endpoint,
         askPermission: async () => ({ allow: false }),
         emit: (ev) => {
           if (ev.type === "text.delta") text += ev.text;
-          if (ev.type === "turnResult" && ev.outcome !== "ok") error = ev.error || t("codex.errors.titleAborted");
+          if (ev.type === "session") nativeId = ev.sessionId ?? nativeId;
+          if (ev.type === "usage") usage = { inputTokens: ev.inputTokens ?? null, outputTokens: ev.outputTokens ?? null, cachedTokens: ev.cachedTokens ?? null };
+          if (ev.type === "turnResult" && ev.outcome !== "ok") error = ev.error || ev.outcome;
         },
       });
-      if (error) throw new Error(error);
-      return text;
+    } finally { signal?.removeEventListener('abort', stop); }
+    // 止められても、取れた分の使用量は捨てない（internal-call が aborted の行に載せる）
+    if (ac.signal.aborted) return { text, usage, nativeId, aborted: true };
+    if (error) { const e = new Error(String(error)); e.usage = usage; e.nativeId = nativeId; throw e; }
+    return { text, usage, nativeId };
+  },
+
+  /** 題を作る指示（server が internalCall へ渡す。エージェントごとの文をサーバーに分岐させない） */
+  titlePrompt(locale) { return agentT(locale, 'title.codex'); },
+
+  async suggestTitle({ transcript, endpoint = null, locale }) {
+    // 互換の接続先の会話は、その接続先の既定のモデルで段を送らずに作る（公式の model/list は互換の先のモデルを知らない）
+    const signal = new AbortController();
+    const timer = setTimeout(() => signal.abort(), 90_000);
+    try {
+      const out = await backend.internalTurn({ prompt: agentT(locale, 'title.codex') + NL + NL + transcript, endpoint, signal: signal.signal, locale });
+      return out?.aborted ? "" : (out?.text ?? "");
     } finally { clearTimeout(timer); }
   },
 
   /**
    * 次の発言の候補（core/prompt-suggestions.mjs、ADR 0211）。prompt は指示と要約。返すのは生の返り（読むのは server 側）。
-   * タイトルと同じく、軽いモデルの使い捨てのスレッド（ephemeral。会話の一覧に残らない）で 1 回だけ回す。
-   * 会話の fork（thread/fork）では作らない: fork は新しいスレッドの id で、会話の部分がキャッシュに乗らない（2026-10-15 実測）
+   * 内部呼出しと同じ ephemeral の使い捨てのスレッドで 1 回だけ回す
    */
   async suggestNext({ prompt, endpoint = null, signal }) {
-    const pick = endpoint ? { model: endpoint.roles?.main || undefined, effort: '' } : titleModel(await backend.models(os.tmpdir()));
-    const ac = new AbortController();
-    const stop = () => ac.abort();
-    if (signal?.aborted) return null;
-    signal?.addEventListener('abort', stop, { once: true });
-    let text = "", error = null;
-    try {
-      await backend.runTurn({
-        prompt, cwd: os.tmpdir(), mode: "readonly", model: pick.model, effort: pick.effort, ephemeral: true, signal: ac, endpoint,
-        askPermission: async () => ({ allow: false }),
-        emit: (ev) => {
-          if (ev.type === "text.delta") text += ev.text;
-          if (ev.type === "turnResult" && ev.outcome !== "ok") error = ev.error || ev.outcome;
-        },
-      });
-    } finally { signal?.removeEventListener('abort', stop); }
-    if (ac.signal.aborted) return null;
-    if (error) throw new Error(error);
-    return text;
+    const out = await backend.internalTurn({ prompt, endpoint, signal });
+    return out?.aborted ? null : (out?.text ?? null);
   },
 
   // ---- セッション管理 -----------------------------------------------------

@@ -233,6 +233,9 @@
     "failed": "Could not generate a title: {{error}}",
     "empty": "An empty title was returned."
   },
+  "internal": {
+    "sweepFailed": "Could not clean up the internal call journal."
+  },
   "attach": {
     "noContent": "The file is empty.",
     "tooLarge": "Too large ({{size}} MB / limit {{limit}} MB).",
@@ -672,7 +675,6 @@
       "noResponse": "no response",
       "stillOldEndpoint": "Could not switch the endpoint (codex loaded the conversation with the previous endpoint). Stop any background terminals, then send again.",
       "noThreadId": "{{method}} did not return a threadId.",
-      "titleAborted": "Title generation was stopped.",
       "historyUnreadable": "Cannot read the Codex history.",
       "historyTooLarge": "The Codex history was too large to load (the {{method}} response exceeded the size that can be received at once).",
       "historyTimeout": "Couldn't load the Codex history within {{seconds}} seconds ({{method}} didn't respond). Open it again.",

@@ -350,6 +350,13 @@ export function usageRecord(record, at) {
   if (typeof record.nativeSessionId === 'string' && /^[\w-]{1,200}$/.test(record.nativeSessionId)) safe.nativeSessionId = record.nativeSessionId;
   // どの会話のターンか（bot ごと・スレッドごとの合計を引くため。ADR 0109）。この欄が付く前の記録には無い
   if (typeof record.sessionId === 'string' && /^[\w-]{1,200}$/.test(record.sessionId)) safe.sessionId = record.sessionId;
+  // 会話を持たない内部呼出しの内訳（Issue #180。記憶の整理・心拍・要約・候補・題名）。sessionId は付けないので会話の集計には混ざらず、
+  // backend ごとの合計（tokensSince）には入る。値は短い文字列だけを残す（秘密は渡さない。アカウントは id・接続先は id）
+  if (record.internalTask && typeof record.internalTask === 'object') {
+    const task = Object.fromEntries(Object.entries(record.internalTask)
+      .filter(([key, value]) => ['kind', 'botId', 'model', 'account', 'endpoint'].includes(key) && typeof value === 'string' && /^[\w .:/@-]{1,120}$/.test(value)));
+    if (typeof task.kind === 'string' && task.kind) safe.internalTask = task;
+  }
   if ('cumulativeStart' in record || 'cumulativeEnd' in record) {
     safe.cumulativeStart = totals(record.cumulativeStart); safe.cumulativeEnd = totals(record.cumulativeEnd);
   }
@@ -382,6 +389,20 @@ export function createUsageStore(dir, { now = Date.now } = {}) {
     },
     /** 記録の全体（{ version, since, migrations, records }）。まだ 1 件も書いていなければ null。移行（core/usage-migrations.mjs）が読む */
     async snapshot() { await writes; return open().snapshot(); },
+    /**
+     * 1 行だけを補正する（内部呼出しが上限時間で打ち切られた後、遅れて届いた使用量。Issue #180）。
+     * 移行の update（全体の読み書き）とは別で、対象の id の行だけを書き、at は元の記録のまま残す。
+     * 行が無ければ false（新しく作らない）。
+     */
+    amend(id, record) {
+      return serial(async () => {
+        const rows = open();
+        const existing = rows.byId(id);
+        if (!existing) return false;
+        rows.amend(id, usageRecord({ ...existing, ...record }, existing.at ?? now()));
+        return true;
+      });
+    },
     /** 移行（core/usage-migrations.mjs）。fn が新しい中身を返したときだけ書く。記録が無ければ何もしない */
     update(fn) {
       return serial(async () => {

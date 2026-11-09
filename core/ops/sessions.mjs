@@ -4,6 +4,7 @@
 // sessions.search は会話の題・状態・場所・本文を探す（core/session-search.mjs。docs/design.md「セッション検索」）。ctx.app.searchSessions を呼ぶ。入力と出力の形が SearchInput / SearchResult。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
+import { isInternalConversationMeta } from '../channels/types.mjs';
 import { defineOp, OpError } from './registry.mjs';
 
 const D = (id, key) => `agent:ops.sessions.${id}.${key}`;
@@ -64,6 +65,8 @@ export function pageSessions(rows, { backend, cwd, status, parent, query, includ
   const needle = query ? fold(query).trim() : '';
   const root = cwd ? normPath(cwd) : '';
   const picked = rows.filter((r) => r && !r.unsent)
+    // 旧内部会話（心拍・学習の隠れた会話。Issue #180）は includeDelegated と独立に常に外す
+    .filter((r) => !isInternalConversationMeta(r))
     .filter((r) => !backend || r.backend === backend)
     .filter((r) => status === undefined || (r.status ?? null) === (status === '' ? null : status))
     .filter((r) => !parent || parentIdOf(r) === parent)
@@ -262,12 +265,14 @@ export const sessionOps = [
     summary: 'agent:ops.sessions.get.summary',
     risk: 'read',
     scope: 'session',
-    input: z.object({ sessionId: sessionId('get') }),
+    input: z.object({ sessionId: sessionId('get'),
+      // 確実な旧内部会話（心拍・学習の隠れた会話。Issue #180）は既定で返さない。診断のときだけ true で読む
+      includeInternal: z.boolean().optional().describe(D('get', 'includeInternal')) }),
     output: listItem.extend({ mode: z.string().nullable(), model: z.string().nullable(), effort: z.string().nullable(), children: z.array(z.string()),
       changes: z.array(z.object({ at: z.string(), by: z.string(), via: z.string().optional(), bySession: z.string().optional(), field: z.string(), from: z.unknown(), to: z.unknown(), reason: z.string().nullable() })) }),
     surfaces: { ui: true, mcp: 'direct', cli: { path: ['sessions', 'get'], positional: ['sessionId'] } },
-    handler: async (ctx, { sessionId: id }) => {
-      const found = await ctx.sessions.get(id);
+    handler: async (ctx, { sessionId: id, includeInternal }) => {
+      const found = await ctx.sessions.get(id, { includeInternal: Boolean(includeInternal) });
       if (!found) throw missing(ctx, id);
       const { row, children, history } = found;
       return { ...listRowOf(row), mode: row.mode ?? null, model: row.model || null, effort: row.effort || null, children,
@@ -286,12 +291,14 @@ export const sessionOps = [
       before: z.number().int().min(0).max(READ_SIDE_MAX).optional().describe(D('read', 'before')),
       after: z.number().int().min(0).max(READ_SIDE_MAX).optional().describe(D('read', 'after')),
       maxChars: z.number().int().min(100).max(READ_CHARS_MAX).optional().describe(D('read', 'maxChars')),
+      // 確実な旧内部会話は既定で返さない（Issue #180）。診断のときだけ true で読む
+      includeInternal: z.boolean().optional().describe(D('read', 'includeInternal')),
     }),
     output: z.object({ total: z.number().int(), from: z.number().int(), to: z.number().int(), hasMoreBefore: z.boolean(), hasMoreAfter: z.boolean(),
       messages: z.array(z.object({ index: z.number().int(), uuid: z.string().nullable(), role: z.string(), at: z.string().nullable(), text: z.string(), truncated: z.boolean(), tools: z.array(z.string()).optional() })) }),
     surfaces: { ui: true, mcp: 'direct', cli: { path: ['sessions', 'read'], positional: ['sessionId'] } },
-    handler: async (ctx, { sessionId: id, ...window }) => {
-      const messages = await ctx.sessions.read(id);
+    handler: async (ctx, { sessionId: id, includeInternal, ...window }) => {
+      const messages = await ctx.sessions.read(id, { includeInternal: Boolean(includeInternal) });
       if (messages === null) throw missing(ctx, id);
       try { return { sessionId: id, ...readWindow(messages, window) }; }
       catch (e) { if (e instanceof OpError && e.code === 'MESSAGE_NOT_FOUND') throw new OpError('MESSAGE_NOT_FOUND', agentT(ctx.locale, 'ops.errors.MESSAGE_NOT_FOUND', { id: window.messageId })); throw e; }

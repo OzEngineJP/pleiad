@@ -55,6 +55,7 @@ export const CAPABILITY_CONTRACTS = {
   compact: { suites: ['server-compaction', 'server-codex-compaction'] },
   autoCompactWindow: { suites: ['server-compaction-delegated'], agents: { codex: 'backend-delivery' } },
   promptSuggestions: { suites: ['server-prompt-suggestions', 'server-devin'], agents: { opencode: 'backend-delivery', devin: 'server-devin' } },
+  internalCall: { suites: ['internal-call', 'server-prompt-suggestions'] },
   plyAgents: { suites: ['agent-tasks'], agents: DELIVERY_AGENTS },
   plyInstructions: { suites: ['server-added-context', 'agent-tasks'], agents: DELIVERY_AGENTS },
   plyContext: { suites: ['server-agy-context', 'server-opencode-context', 'context-owner-capability'], agents: DELIVERY_AGENTS },

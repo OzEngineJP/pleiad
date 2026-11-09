@@ -253,6 +253,14 @@ const usageStore = createUsageStore(store.dataDir);
 migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') })
   .then(result => { if (result) console.log(`  ${t('usage.migrated', result)}`); })
   .catch(err => console.error(`  ${t('usage.migrateFailed')}`, String(err?.message ?? err)));
+// 内部 AI 呼出し（Issue #180。host.internalCall → core/internal-call.mjs）。会話も接続先の履歴も作らない 1 回きりの呼び出し。
+// journal は memory_state（'internal.calls'）、使用量は usageStore（internalTask 欄）。起動時の sweep は起動前に残った running だけ中断にする
+const internalCalls = createInternalCalls({
+  dataDir: store.dataDir, usageStore,
+  accountResolve: (backend, id) => accountResolve(backend, id),
+  backendForAccount: (backend, account) => accountKind(backend) === 'agent' ? backendForAccount(backend, account) : backend,
+});
+void internalCalls.sweep().catch(e => console.error(`  ${t('internal.sweepFailed')}:`, String(e?.message ?? e)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_VERSION = JSON.parse(await fs.readFile(path.join(HERE, '..', 'package.json'), 'utf8')).version;
 // 版を見分けるビルドの短いハッシュ（実行場所の木・配布物なら有る。開発のリポジトリは null）。ready に載せ、版が変わった画面を読み直させる（docs/zero-downtime-update/design.md §8）
@@ -412,8 +420,12 @@ import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, waitStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
-import { channelEventRows, HIDDEN_BOT_KINDS } from './channels/types.mjs';
+import { channelEventRows, HIDDEN_BOT_KINDS, isInternalConversationMeta } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
+import { createInternalCalls, INTERNAL_UNAVAILABLE } from './internal-call.mjs';
+import { internalConversationOwner, isInternalSessionId } from './internal-conversation.mjs';
+import { nativeOwnerIndex } from './conversations.mjs';
+import { capabilityValue } from './backends/capability-marks.mjs';
 import { startBrowserUnifyListeners } from './browser-unify-listeners.mjs';
 import { createBrowserUnifyWs, isBrowserUnifyCommand } from './browser-unify-ws.mjs';
 import { createPagesRoutes } from './pages-routes.mjs';
@@ -2796,7 +2808,9 @@ async function conversationTitleOf(sessionId) {
  * 全エージェントのネイティブ一覧と sidecar を1つに合わせる（docs/multi-backend.md §2.1）。
  * ネイティブ一覧に出ないセッション（sidecar にしか無いもの）も落とさずに足す。
  */
-async function sessionList({ limit = 100, track = true } = {}) {
+// 確実な旧内部会話（bot.kind が learner/pulse で channel・thread に紐づかないもの。Issue #180）は
+// 通常の一覧・get・read・検索・場所からは返さない。診断用に見るときだけ includeInternal を立てる
+async function sessionList({ limit = 100, track = true, includeInternal = false } = {}) {
   const backends = listBackends();
   const [side, ...lists] = await Promise.all([
     store.getAll().catch(() => ({})),
@@ -2805,15 +2819,24 @@ async function sessionList({ limit = 100, track = true } = {}) {
 
   const rows = new Map();
 
+  // ネイティブの一覧にだけ出る旧内部会話（Pleiad の記録はネイティブ id を segments に持つ）も、
+  // host 側の印を見て外す（Issue #180。id の prefix では判定しない）
+  const owners = includeInternal ? null : await nativeOwnerIndex();
+  const hiddenNative = (nativeId) => {
+    const host = owners.get(nativeId);
+    return host ? isInternalConversationMeta(side[host]) : false;
+  };
   backends.forEach((b, i) => {
     // 欠けた行（sessionId の無いもの）は飛ばす。1 行のせいで一覧全体を失敗させない
-    for (const s of lists[i]) if (s?.sessionId) rows.set(s.sessionId, withWorktree(sessionRow(b, s, side[s.sessionId])));
+    for (const s of lists[i]) if (s?.sessionId && (includeInternal || (!isInternalConversationMeta(side[s.sessionId]) && !hiddenNative(s.sessionId))))
+      rows.set(s.sessionId, withWorktree(sessionRow(b, s, side[s.sessionId])));
   });
 
   // sidecar にしか無い行。どのエージェントのものか分からないもの（v1 から引き継いだ行で
   // まだ一度も触っていないもの）は出さない。出しても開けないので一覧を濁すだけ。
   // 対応を終えたエージェントの会話は出す（読めるが続けられない。sessionBackend の retired）
   for (const [id, extra] of Object.entries(side)) {
+    if (!includeInternal && (isInternalConversationMeta(extra) || hiddenNative(id))) continue;
     const b = rows.has(id) || !extra.backend ? null : sessionBackend(extra.backend);
     if (!b) continue;
     const managed = b.retired ? await b.getSession(id).catch(() => null) : null;
@@ -4236,10 +4259,20 @@ const opsSessions = {
   list: () => sessionList({ limit: 500, track: false }),
   // 画面のサイドバーが読む全部の行（作業場所を許可する場所に覚える。track）
   rows: () => sessionList(),
-  // 変更の記録（会話が無ければ null）
-  history: async (id) => ((await resolveBackendForSession(id)) ? (await store.get(id)).history ?? [] : null),
-  get: async (id) => {
-    const rows = await sessionList({ limit: 500, track: false });
+  // 変更の記録（会話が無ければ null）。確実な旧内部会話は既定では返さない（Issue #180。診断は includeInternal）
+  history: async (id, { includeInternal = false } = {}) => {
+    const owner = await internalConversationOwner(id);
+    if (owner && !includeInternal) return null;
+    id = owner ?? id;
+    return (await resolveBackendForSession(id)) ? (await store.get(id)).history ?? [] : null;
+  },
+  get: async (id, { includeInternal = false } = {}) => {
+    // 確実な旧内部会話は、ネイティブ id の直接指定でも返さない（Issue #180。通常の会話操作と同じ境界）。
+    // 診断の明示要求では、native id をその会話の host id に直して返す
+    const owner = await internalConversationOwner(id);
+    if (owner && !includeInternal) return null;
+    id = owner ?? id;
+    const rows = await sessionList({ limit: 500, track: false, includeInternal });
     let row = rows.find((r) => r.id === id);
     const side = await store.get(id).catch(() => ({}));
     if (!row) {
@@ -4250,7 +4283,10 @@ const opsSessions = {
     }
     return { row, children: rows.filter((r) => parentIdOf(r) === id).map((r) => r.id), history: side.history ?? [] };
   },
-  read: async (id) => {
+  read: async (id, { includeInternal = false } = {}) => {
+    const owner = await internalConversationOwner(id);
+    if (owner && !includeInternal) return null;
+    id = owner ?? id;
     const backend = await resolveBackendForSession(id);
     return backend ? (await history.loadTranscript(id, backend)).messages : null;
   },
@@ -4614,7 +4650,9 @@ async function suggestWritableTitleOf(args) {
   if (!sessionId) throw new Error(t('session.required'));
   const backend = await resolveBackendForSession(sessionId);
   if (!backend) throw new Error(t('agents.notFound'));
-  if (!backend.suggestTitle) throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
+  // 題を付けるには内部呼出しを分離して呼べる印が要る（Issue #180。呼べないなら通常の会話へは逃げない）
+  if (!capabilityValue(backend.capabilities?.internalCall) || typeof backend.internalTurn !== 'function')
+    throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
   const { messages } = await history.loadTranscript(sessionId, backend);
   // タイトルは会話の言語で作る（渡す見出しもその言語）
   const lng = await ensureAgentLocale(sessionId);
@@ -4626,20 +4664,26 @@ async function suggestWritableTitleOf(args) {
   if (!gist) throw new Error(t('title.noContent'));
 
   let title = "";
-  const context = {};
+  let endpoint = null;
   try {
-    // タイトル生成もその会話で選んだアカウントで回す。使えないアカウントなら生成しない（別のアカウントへ落とさない）
-    // 互換の接続先の会話は、その接続先の Haiku 相当（Codex は既定）のモデルで作る。使えない接続先なら作らない
+    // タイトル生成もその会話で選んだアカウント・接続先で回す。使えないなら別のところへ落とさない
     const saved = await store.get(sessionId);
-    if (endpointCapable(backend) && saved.compatEndpoint) context.endpoint = await compatEndpoints.resolve(saved.compatEndpoint, backend.id);
-    if (!context.endpoint && accountKind(backend)) {
-      const account = await accountResolve(backend, saved.claudeAccount ?? '');
-      if (account?.token) context.oauthToken = account.token;
-      else if (account) context.account = account;
+    if (saved.compatEndpoint) {
+      endpoint = endpointCapable(backend) ? await compatEndpoints.resolve(saved.compatEndpoint, backend.id) : null;
+      // 候補生成と同じ: 接続先を指定されているのに解決できないなら、既定の接続先へ黙って戻さない
+      if (!endpoint) throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
     }
-    title = String(await backend.suggestTitle({ transcript: gist, locale: lng, ...context }) ?? "");
+    // 題の指示はバックエンドが持つ（サーバーにエージェントごとの分岐を置かない）。無ければ共通の文
+    const prompt = typeof backend.titlePrompt === 'function' ? backend.titlePrompt(lng) : agentT(lng, 'title.internal');
+    // 共通の内部呼出し（Issue #180。usage は internalTask 欄付きで記録。kind 'title'）。外側の返りは従来どおり文字列
+    const out = await internalCalls.call({ kind: 'title', backend, prompt: prompt + NL + NL + gist, locale: lng,
+      endpoint: endpoint ?? undefined, accountId: endpoint ? undefined : (saved.claudeAccount ?? '') });
+    if (out?.aborted) throw new Error('aborted');
+    title = String(out?.text ?? "");
   } catch (err) {
-    throw new Error(t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, context.oauthToken), context.endpoint?.key) }));
+    if (err?.code === INTERNAL_UNAVAILABLE) throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
+    if (err?.code === 'UNSUPPORTED') throw err;
+    throw new Error(t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, null), endpoint?.key) }));
   }
 
   // 前後の記号を落とす。モデルが鉤括弧やクオートで包むことがある
@@ -7273,6 +7317,8 @@ worktreeSweepSoon();
 botHost = createBotHost({
   store, dataDir: store.dataDir, usageStore, sessionSearch, runtime, outbox,
   createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
+  // 内部 AI 呼出し（Issue #180。learn・pulse の安いモデルは、会話を作らずここを通る。分離できない印の backend は投げる）
+  internalCall: internalCalls.call,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
   sessionBusy: id => sessionBusy(id),
   refuseBotDelete: id => refuseDelete(id, { bot: true }),
@@ -8653,7 +8699,9 @@ async function suggestAfterTurn(turn, { delegated, bot }) {
   const id = turn.info.sessionId;
   const backend = turn.backend;
   if (!id || turn.outcome !== 'ok' || turn.compactTrigger || turn.compaction || delegated || bot) return;
+  // 'native'（Claude。ターンの中で届く）は内部呼出しを伴わないので従来どおり。covered は内部呼出しを分離して呼べる印が要る（Issue #180）
   if (backend.capabilities?.promptSuggestions === 'native' || typeof backend.suggestNext !== 'function') return;
+  if (!backend.internalTurn || !capabilityValue(backend.capabilities?.internalCall)) return;
   if ((await store.getPrefs()).composerSuggestions === false) return;
   if (runtime.turns.has(id) || (await outbox.list(id)).some(m => !['sent', 'cancelled'].includes(m.status))) return;
   promptSuggestions.start(id, async (signal) => {
@@ -8663,9 +8711,10 @@ async function suggestAfterTurn(turn, { delegated, bot }) {
     const saved = await store.get(id);
     const endpoint = endpointCapable(backend) && saved.compatEndpoint ? await compatEndpoints.resolve(saved.compatEndpoint, backend.id) : null;
     if (saved.compatEndpoint && !endpoint) return null;
-    const account = !endpoint ? await accountResolve(backend, saved.claudeAccount ?? '') : null;
-    return backend.suggestNext({ prompt: suggestionPrompt(gist), signal, ...(endpoint ? { endpoint } : {}),
-      ...(account?.token ? { oauthToken: account.token } : account ? { account } : {}) });
+    // 共通の内部呼出しで回す（usage は internalTask 欄付きで記録される。kind 'suggest'）
+    const out = await internalCalls.call({ kind: 'suggest', backend, prompt: suggestionPrompt(gist), signal,
+      endpoint: endpoint ?? undefined, accountId: endpoint ? undefined : (saved.claudeAccount ?? ''), locale: await ensureAgentLocale(id) });
+    return out?.aborted ? null : (out?.text ?? null);
   });
 }
 
@@ -9082,6 +9131,9 @@ async function withWritableSession(sessionId, fn) {
   if (!sessionId) return fn();
   const meta = await store.get(sessionId);
   if (meta.deletedBot) throw new OpError('READ_ONLY', t('session.deletedBotReadOnly'));
+  // 確実な旧内部会話はもう書けない（Issue #180。送る・題を替える・圧縮する等の会話操作は全部ここを通る）。
+  // ネイティブ id の直接指定も、その id を持つ Pleiad の会話の印まで辿って断る
+  if (await isInternalSessionId(sessionId)) throw new OpError('SESSION_NOT_FOUND', t('session.notFound'));
   // 夜の共通記憶整理だけは bot 定義を持たない内部会話。一般の不明な bot は許可しない。
   const internalLearner = meta.bot?.botId === 'b_learner' && meta.bot.kind === 'learner' && meta.bot.channelId === null && meta.bot.threadId === null;
   let release;
@@ -9828,6 +9880,8 @@ wss.on("connection", (ws, req) => {
             };
             // A later completion cannot be acknowledged by an older history snapshot.
             const sidecar = await timing.run('sidecar', () => store.get(sessionId));
+            // 確実な旧内部会話は通常の読み出しに返さない（Issue #180。ネイティブ id の直接指定でも同じ境界）
+            if (await isInternalSessionId(sessionId)) return loadReply(false, t('session.notFound'), 'SESSION_NOT_FOUND');
             const completedAt = sidecar.completedAt ?? null;
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
@@ -10441,6 +10495,8 @@ function shutdownServer({ stopHeld = false } = {}) {
     await mainLink?.close?.().catch(error => console.error('main link shutdown failed:', error?.code ?? error?.message ?? error));
     // bot の DB（別のファイル）とデータ置き場の DB の接続を閉じてから、ロックを放す（次のサーバーが取ってすぐ開く）
     await botHost?.close?.();
+    // 内部呼出しの journal（memory_state）の書き込みを待って離す。既存の hooks.internal の注入ターンとは別の経路
+    await internalCalls.close().catch(error => console.error('internal call journal shutdown failed:', error?.code ?? error?.message ?? error));
     store.closeStore();
     closeDataDb(store.dataDir);
     releaseDataLock();

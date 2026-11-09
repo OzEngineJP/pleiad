@@ -128,6 +128,15 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
 export const BOT_SESSION_KINDS = Object.freeze(['thread', 'dm', 'routine', 'learner', 'pulse']);
 /** 人に見せない隠れた会話（心拍・夜の整理）。チャンネルへ書かせず（ADR 0126）、完了の知らせ・最近の場所の候補に出さない（ADR 0127） */
 export const HIDDEN_BOT_KINDS = new Set(['learner', 'pulse']);
+/**
+ * 旧経路で作られた内部の隠れた会話か（Issue #180。通常の一覧・get・read・検索・場所からは返さない）。
+ * 確実な印だけを見る: bot.kind が隠れた種類で、チャンネル・スレッドへ紐づかない（channelId・threadId が null）。
+ * 通常の bot 会話（thread/dm/routine や channelId/threadId を持つ）と、印の無い・判別できない会話は隠さない
+ */
+export const isInternalConversationMeta = (meta) => {
+  const bot = meta?.bot;
+  return HIDDEN_BOT_KINDS.has(bot?.kind) && bot?.channelId == null && bot?.threadId == null;
+};
 /** Post.state の値 */
 export const POST_STATES = Object.freeze(['working', 'waiting', 'done', 'checking', 'failed', 'stopped', 'skipped']);
 /** ThreadState.state の値 */

@@ -68,6 +68,12 @@ const SUITES = [
   // 次の発言の候補（要約・読み取り・作りかけ・Claude の予測・Antigravity の使い捨てのホーム）と、入力欄の ↑ の呼び出しの並び（ADR 0211）
   './unit/prompt-suggestions.mjs',
   './unit/server-prompt-suggestions.mjs',
+  // 内部 AI 呼出し（Issue #180）: 会話も接続先の履歴も作らない共通経路・journal・使用量・中断・再起動
+  './unit/internal-call.mjs',
+  // 旧内部会話の分類（durable 印だけ・チャンネル/スレッド無し）と、ネイティブ id から host の印を引く境界
+  './unit/internal-conversation.mjs',
+  // 実際のサーバーの公開経路（一覧・get・read・changes・ネイティブ id）から返らないこと（再起動を含む）
+  './unit/server-internal-isolation.mjs',
   './unit/file-preview.mjs',
   // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名も全部出す・roots の外は読めない
   './unit/file-preview-tree.mjs',

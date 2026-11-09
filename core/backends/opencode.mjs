@@ -3,7 +3,7 @@
 // 共有プロセスは保持役が --stdio の stdin を維持する。コンテキストの担当が異なる
 // ターンは設定と HOME を隔離し、終了後に専用プロセスを止める（docs/multi-backend.md §2.10）。
 import fs from 'node:fs';
-import os from 'node:os';
+import os from 'node:os'; // eslint-disable-line no-unused-vars — internal 呼出しは分離（Issue #180）
 import path from 'node:path';
 import { t } from '../i18n.mjs';
 import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
@@ -473,40 +473,6 @@ export const backend = {
       appliedMode.set(key, permissionKey);
       return true;
     } catch { return false; }
-  },
-
-  /** 次の発言の候補は別 session で作り、完了後に必ず削除する（ADR 0211）。 */
-  async suggestNext({ prompt, signal, account = null } = {}) {
-    const srv = serverFor(account);
-    if (signal?.aborted) return null;
-    const ac = new AbortController();
-    const stop = () => ac.abort(signal?.reason);
-    signal?.addEventListener('abort', stop, { once: true });
-    let sessionId = null, text = '', failure = null;
-    try {
-      const result = await backend.runTurn({
-        prompt, cwd: os.tmpdir(), mode: 'plan', suggestionOnly: true, account,
-        signal: { signal: ac.signal },
-        askPermission: async () => ({ allow: false }),
-        emit: (event) => {
-          if (event.type === 'session') sessionId = event.sessionId;
-          if (event.type === 'text.delta') text += event.text;
-          if (event.type === 'turnResult' && event.outcome !== 'ok') failure = event.error || event.outcome;
-        },
-      }, null, srv);
-      sessionId ??= result?.sessionId ?? null;
-    } finally {
-      signal?.removeEventListener('abort', stop);
-      if (sessionId) {
-        await srv.request('DELETE', `/api/session/${encodeURIComponent(sessionId)}`, { directory: os.tmpdir() }).catch(() => {});
-        directories.delete(sessionKey(sessionId, srv));
-        appliedMode.delete(sessionKey(sessionId, srv));
-        sessionAccounts.delete(sessionId);
-      }
-    }
-    if (ac.signal.aborted) return null;
-    if (failure) throw new Error(failure);
-    return text;
   },
 
   async forAccount(account) {

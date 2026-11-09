@@ -450,6 +450,8 @@ export const backend = {
     mcpApproval: 'agent',
     compatEndpoints: impossible('試験用の身代わりは互換の接続先を持たない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     promptSuggestions: covered,
+    // 内部呼出し（Issue #180。host.internalCall）。FAKE_INTERNAL=off で「分離して呼べないエージェント」にする
+    get internalCall() { return process.env.FAKE_INTERNAL === 'off' ? impossible('試験用に内部呼出しを止めている') : 'ephemeral'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     plyContext: 'turn',
     steer: true,
     handover: true,          // 台本 held: のターンを保持役に載せる（試験用）
@@ -1081,6 +1083,50 @@ export const backend = {
     const last = String(prompt ?? "").split("[agent]\n").at(-1).split("</conversation>")[0];
     const text = /suggest:([^\n]*)/.exec(last)?.[1]?.trim();
     return JSON.stringify({ suggestion: text || null });
+  },
+
+  // 内部呼出し（Issue #180。host.internalCall → backend.internalTurn）。LLM は呼ばず、台本の印だけ返す:
+  //   [agent] の返答の中の「suggest:<文>」→ 次の発言の候補の JSON / 「title:<文>」→ 題名 / 無ければ最後の返答の先頭行
+  // usage は固定の小さい値を返す（記録の形の確認用。量に意味はない）
+  async internalTurn({ kind, prompt, signal }) {
+    if (signal?.aborted) return { text: "", usage: null, aborted: true };
+    const p = String(prompt ?? "");
+    const usage = { inputTokens: 120, outputTokens: 8, cachedTokens: 0 };
+    // 題（kind: 'title'）: 指示の後ろの会話の見出し（依頼:/Request:）をそのまま返す
+    if (kind === 'title') {
+      const gist = p.split('\n\n').slice(1).join('\n\n');
+      return { text: gist.split('\n').find((line) => line.trim())?.trim().slice(0, 120) ?? '', usage };
+    }
+    // 心拍の安いモデル（<pleiad-pulse>）は runTurn と同じ台本（AGENT_HOST_FAKE_PULSE）
+    if (p.startsWith('<pleiad-pulse>')) return { text: nextPulseAnswer(), usage };
+    // 夜の整理（<pleiad-memory-learn>）: runTurn と同じく、人の「覚えて:」だけを候補にする
+    if (p.startsWith('<pleiad-memory-learn>')) {
+      const line = p.split('\n').find((part) => part.startsWith('Human statements: '));
+      const statements = JSON.parse(line?.slice('Human statements: '.length) ?? '[]');
+      return { text: JSON.stringify({ memories: statements.flatMap((item) => {
+        const match = /^覚えて[:：]\s*(.{8,300})/u.exec(item.text.trim());
+        const learned = match?.[1] ?? item.aiContext?.text;
+        return learned ? [{ action: 'add', layer: 'user', text: learned, sourceIndexes: [item.index] }] : [];
+      }) }), usage };
+    }
+    // 静かなスレッドの要約（<pleiad-memory-episode>）: 最初の人の発言を要約にし、覚えて: を候補にする
+    if (p.startsWith('<pleiad-memory-episode>')) {
+      const line = p.split('\n').find((part) => part.startsWith('Posts: '));
+      const posts = JSON.parse(line?.slice('Posts: '.length) ?? '[]');
+      const human = posts.filter((post) => post.from === 'human');
+      const memories = human.flatMap((post) => {
+        const match = /^覚えて[:：]\s*(.{8,300})/u.exec(String(post.text ?? '').trim());
+        return match ? [{ action: 'add', layer: p.match(/layer":"([^"]+)/)?.[1] ?? 'user', text: match[1], sourceIndexes: [post.humanIndex] }] : [];
+      }).filter((m) => m.sourceIndexes[0] >= 0);
+      const summary = String(human[0]?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
+      return { text: JSON.stringify({ summary, memories }), usage };
+    }
+    const last = p.split("[agent]\n").at(-1).split("</conversation>")[0];
+    const suggest = /suggest:([^\n]*)/.exec(last)?.[1]?.trim();
+    if (/suggest:/.test(last)) return { text: JSON.stringify({ suggestion: suggest || null }), usage };
+    const title = /title:([^\n]*)/.exec(last)?.[1]?.trim();
+    if (title) return { text: title, usage };
+    return { text: last.split("\n").find((l) => l.trim())?.slice(0, 60) ?? "", usage };
   },
 
   // 使っている CLI の在り処と版（設定の行の名前の下。Claude の cliInfo と同じ形）。fake は CLI を持たないので、このファイル

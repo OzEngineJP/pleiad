@@ -7,7 +7,7 @@
 import * as store from "../store.mjs";
 import { wrapBackend as wrapNative, conversationBackend } from "../conversations.mjs";
 import { t } from "../i18n.mjs";
-import { NO_CAPABILITIES, NO_TRAITS, legacyCapabilities, impossible } from "./contract.mjs";
+import { NO_CAPABILITIES, NO_TRAITS, legacyCapabilities, impossible, isCapabilityState } from "./contract.mjs";
 import { AGENTS, DEFAULT_AGENT_IDS, agentPresentation } from "./agents.mjs";
 
 // id -> そのモジュールの場所（エージェントの記述 core/backends/agents.mjs の module）。ここに無い id は無視する（環境変数からの任意 import は許さない）
@@ -15,6 +15,8 @@ const KNOWN = Object.fromEntries(Object.entries(AGENTS).map(([id, a]) => [id, a.
 
 const enabled = new Map();   // id -> backend
 const nativeBackends = new WeakMap();
+// 包む前の生の能力の印（状態のまま。legacyCapabilities を通す前）。画面向けの「止めた理由」の判定に使う
+const rawCapabilityBackends = new WeakMap();
 
 // 対応を終えたバックエンド。その会話は一覧に残し、開いて読めるが続けられない（送信・設定の変更・分岐・切り替えは断る）。
 // 新しい会話の既定や委譲の行き先には出さない（getBackend / listBackends には載らない）。
@@ -34,6 +36,7 @@ function wrapBackend(native) {
   }
   const wrapped = wrapNative(projected);
   nativeBackends.set(wrapped, projected);
+  rawCapabilityBackends.set(wrapped, native);
   for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(native))) {
     if (desc.get) Object.defineProperty(wrapped, key, { get: desc.get.bind(native), enumerable: true, configurable: true });
   }
@@ -47,6 +50,7 @@ export async function backendForAccount(backend, account) {
   if (!account) return wrapBackend(native);
   const scoped = wrapBackend(await native.forAccount(account));
   nativeBackends.set(scoped, native);
+  rawCapabilityBackends.set(scoped, native);
   return scoped;
 }
 
@@ -152,6 +156,8 @@ export function describeBackends() {
     description: b.description ?? "",
     // 短い名前・ロゴ・自動の圧縮の設定の行（エージェントの記述）。画面は id の表を持たずにこれを使う
     ...agentPresentation(b.id),
+    // 候補を出せない印のエージェント（候補は内部呼出しで作る。分離して呼べない impossible・未対応の todo。入力設定で理由を出す。Issue #180）
+    suggestionsStopped: ['impossible', 'todo'].includes(rawCapabilityBackends.get(b)?.capabilities?.promptSuggestions?.state),
     capabilities: {
       ...b.capabilities,
       suggestTitle: typeof b.suggestTitle === "function",

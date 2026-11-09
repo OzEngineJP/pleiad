@@ -1,5 +1,5 @@
 import path from 'node:path';
-import os from 'node:os';
+import os from 'node:os'; // eslint-disable-line no-unused-vars — internal 呼出しは分離（Issue #180）
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
 import { t, agentT } from '../i18n.mjs';
 import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
@@ -598,32 +598,6 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     // 自動圧縮を含む区切りを、会話の DB（sessions.db の継続ノード）から読む（core/compaction-history.mjs の形）
     async getCompactions(sessionId) {
       return devinCompactionsFromDb({ dataDir, sessionId });
-    },
-    /** Generate suggestions in a temporary, read-only ACP conversation. */
-    async suggestNext({ prompt, signal } = {}) {
-      if (signal?.aborted) return null;
-      const controller = new AbortController();
-      const abort = () => controller.abort();
-      signal?.addEventListener('abort', abort, { once: true });
-      let text = '', failure = null, sessionId = null;
-      try {
-        const result = await this.runTurn({
-          prompt, cwd: os.tmpdir(), mode: 'plan', ephemeral: true, signal: controller,
-          askPermission: async () => ({ allow: false }),
-          emit: event => {
-            if (event.type === 'text.delta') text += event.text;
-            if (event.type === 'session') sessionId = event.sessionId;
-            if (event.type === 'turnResult' && event.outcome !== 'ok') failure = event.error || event.outcome;
-          },
-        });
-        sessionId ??= result?.sessionId ?? null;
-      } finally {
-        signal?.removeEventListener('abort', abort);
-        if (sessionId) await this.releaseConversation(sessionId);
-      }
-      if (controller.signal.aborted) return null;
-      if (failure) throw new Error(String(failure));
-      return text;
     },
     async setModelLive(handle, model) {
       return liveControls.get(handle?.sessionId)?.setModel(model) ?? false;
