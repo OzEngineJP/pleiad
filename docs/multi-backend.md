@@ -116,7 +116,8 @@ ACP の `session/prompt` を走っているターンへ重ねると、**Devin �
 （cancelled 以外の stopReason で `userMessage.delivered`、拒否・中断は既読不明として `unknown: true` 付きの `userMessage.dropped`）。受理前の早期の拒否では合図を出さない。
 Grok のように次の回として回る分は、runTurn が drain で決着まで待つ（待たずに畳むと接続の終了で全部 dropped になる）。Grok は途中送信を `user_message_chunk` でエコーしないので、mapper が自分で user 行に置く（`queueUser`）。
 書いた直後に積み（受理の判定を待つ間に今の回が終わり、次の回の出力が始まることがある）、`turn_completed` の後に次の回の出力が始まる直前に送った順で置く。早期のプロトコル拒否（次のターンで送り直す）だけは取り消し、回られずに残った分は記録の末尾に置く。
-Devin は折り込んだ途中送信を `user_message_chunk` で流すかを確かめておらず、mapper は自分で行を置かない（流れなければライブの記録に残らない。元の依頼の echo が終わる前に流れると、echo と見分けられない）。
+Devin は折り込んだ途中送信をライブの `user_message_chunk` で流さない（2026-11-09 実機。折り込みの位置は transcript に交互で残るが、ライブでは応答の行が分かれず、途中送信は回の末尾にまとめて立つ）。
+mapper は自分で行を置かず、再生（`session/load`）との併合で直す（`core/conversations.mjs` の `alignPositional` が、連結されたライブの行を再生の並びに分解して重ねる）。
 Antigravity は途中送信を持たない（送ると `reason: 'turn'` で送信待ちになる）。
 `phase` が `waiting` に変わった時点で `core/server.mjs` が `kick` し直し、待っていた送信をすぐ流す。
 終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残るターンで、予約があると裏を止めるまで送られなかった（2026-10-02 に実例）のはこれで直した。

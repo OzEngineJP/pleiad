@@ -248,4 +248,68 @@ export default function (t) {
     assert.deepEqual(view(r).filter(([role]) => role === 'user').map(([, text]) => text), ['Run the steps', 'Instruction X', 'Instruction Y', 'Instruction Y']);
     t.ok('Grok の途中送信の再生は、包みを外して 1 通ずつライブの行に重なり、読み直しても同じ指示が二重に出ない', true);
   }
+
+  // ---- Devin: 折り込まれた途中送信がライブでエコーされないとき（実機 2026-11-09）:
+  //      途中送信は回の末尾にまとめて立ち、応答は前後の分を 1 行に連結する。再生（折り込みの位置）との併合で、
+  //      連結の行は再生の並びを正として外れ、二重に出ない。当たらなかった記録の行は残す原則は、中身が全部
+  //      再生側に残る行（=連結の行）には及ばない
+  {
+    const r = record(), mapper = createDevinMapper('nid');
+    const t1 = tool('t1', 'r1'), t2 = tool('t2', 'r2');
+    const sent = sentOf('task');
+    mapper.beginTurn(sent, 'task');
+    mapper.accept(chunk('user', sent));
+    mapper.accept(chunk('agent', 'part1'));
+    for (const u of t1) mapper.accept(u);
+    mapper.queueUser('steer1');            // 受理。Devin は折り込みを user_message_chunk で流さないので、エコーは来ない
+    mapper.accept(chunk('agent', 'part2'));
+    mapper.queueUser('steer2');
+    for (const u of t2) mapper.accept(u);
+    mapper.accept(chunk('agent', 'part3'));
+    mapper.finish();                       // steer1・steer2 は末尾に立つ
+    mergeMessages(r, mapper.messages(), 'devin');
+    assert.deepEqual(view(r), [['user', 'task'], ['assistant', 'part1\n\npart2\n\npart3'], ['user', 'steer1'], ['user', 'steer2']]);
+    const interleaved = [['user', 'task'], ['assistant', 'part1'], ['user', 'steer1'], ['assistant', 'part2'], ['user', 'steer2'], ['assistant', 'part3']];
+    const replayed = createDevinMapper('nid');
+    for (const u of [chunk('user', sent), chunk('agent', 'part1'), ...t1, chunk('user', 'steer1'),
+      chunk('agent', 'part2'), chunk('user', 'steer2'), ...t2, chunk('agent', 'part3')]) replayed.accept(u);
+    mergeMessages(r, replayed.messages(), 'devin');
+    assert.deepEqual(view(r), interleaved);
+    assert.equal(r.messages[1].toolCalls?.length, 1);
+    assert.equal(r.messages[3].toolCalls?.length ?? 0, 0);
+    assert.equal(r.messages[5].toolCalls?.length, 1);
+    t.ok('末尾に立った途中送信と連結の応答は、再生の並びに直り二重に出ない', true);
+    const before = uuids(r), shape = view(r);
+    mergeMessages(r, replayed.messages(), 'devin');
+    assert.deepEqual(view(r), shape); assert.deepEqual(uuids(r), before);
+    t.ok('直ったあとの再生でも重ならない', true);
+    // 修正前の併合で既に二重になった記録（連結の行と再生の行が並ぶ形）も、次の併合で連結の行だけ外れて落ち着く
+    const broken = { ...r, messages: structuredClone(r.messages) };
+    broken.messages.splice(2, 0, { uuid: 'devin:nid:nid:OLD:assistant:1', role: 'assistant',
+      text: 'part1\n\npart2\n\npart3', toolCalls: [{ id: 't1' }, { id: 't2' }], backend: 'devin', at: null });
+    mergeMessages(broken, replayed.messages(), 'devin');
+    assert.deepEqual(view(broken), shape);
+    t.ok('既に二重に記録された会話も、次の併合で連結の行だけ外れて落ち着く', true);
+  }
+
+  // ---- 連結の判定が誤って消さないこと:
+  //      (a) 1 行との一致（正当な同じ本文の繰り返し。圧縮で片方だけ残った再生でも、もう片方の記録を消さない）
+  //      (b) 中身が再生の行と違う行（連結ではない行）は残る
+  {
+    const r = record(), mapper = createDevinMapper('nid');
+    const ok2 = turnOf('go', 'same answer');
+    mergeMessages(r, live(mapper, ok2).messages(), 'devin');
+    mergeMessages(r, live(mapper, ok2).messages(), 'devin');
+    mergeMessages(r, replay([ok2]).messages(), 'devin');   // 1 ターン分の再生（もう 1 ターンは圧縮で落ちた形）
+    t.ok('同じ本文の発言が 1 行の再生と一致しても、記録の行は消えない', r.messages.length === 4);
+    // 連結ではない行（再生の行に無い中身を持つ）は残る
+    const r2 = record(), m2 = createDevinMapper('nid');
+    mergeMessages(r2, live(m2, turnOf('q', 'alpha beta gamma')).messages(), 'devin');
+    const partial = createDevinMapper('nid');
+    for (const u of [chunk('user', sentOf('q')), chunk('agent', 'alpha'), chunk('user', 'mid'), chunk('agent', 'beta')]) partial.accept(u);
+    mergeMessages(r2, partial.messages(), 'devin');
+    const texts = r2.messages.map(m => m.text);
+    t.ok('再生の断片で埋め尽くせない行は残る（"alpha beta gamma" は alpha+beta では作れない）',
+      texts.includes('alpha beta gamma') && texts.includes('mid'));
+  }
 }

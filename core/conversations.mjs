@@ -362,6 +362,27 @@ const nativeView = (messages) => messages.map(({ sent, positional, liveUuid, ...
 const nativeEvent = ({ liveUuid, ...event }) => event;
 // 改行コードの違い（CRLF / LF）だけは同じ本文として扱う。空白は詰めない（コードの字下げなど、空白だけが違う別の本文を取り違えない）
 const lf = (text) => String(text ?? "").replace(/\r\n/g, "\n");
+/**
+ * 本文が、順に並んだ断片でちょうど埋め尽くせるか（断片の境は無しか空行 1 つだけ）。
+ * 再生が途中送信の前後で分けた発言を、ライブの行が 1 行に連結したとき（Devin は折り込んだ途中送信を
+ * user_message_chunk で流さない）、境はツールを挟んだ所が空行、挟まない所が連結になる
+ */
+function tiledBy(target, texts) {
+  const seen = new Set();
+  const go = (i, pos) => {
+    if (i === texts.length) return pos === target.length;
+    const key = `${i}:${pos}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (!target.startsWith(texts[i], pos)) return false;
+    const next = pos + texts[i].length;
+    if (i + 1 === texts.length) return next === target.length;
+    if (go(i + 1, next)) return true;
+    for (const sep of ["\n\n", "\n"]) if (target.startsWith(sep, next) && go(i + 1, next + sep.length)) return true;
+    return false;
+  };
+  return go(0, 0);
+}
 const promptHash = (text) => crypto.createHash("sha256").update(lf(text)).digest("hex");
 // 照合の鍵。同じ本文でもツールの呼び出し（id）が違えば別の行
 const rowKey = (m) => JSON.stringify([m.role, lf(m.text), (m.toolCalls ?? []).map((call) => String(call?.id ?? ""))]);
@@ -377,6 +398,10 @@ const ALIGN_LOOKBACK = 64;
  *   role と本文で全体を重複排除しない（正当な「OK」「続けて」の繰り返しを消さない）
  * - 当たるのは鍵（role・本文・ツールの id）が同じ行だけ。当たった行は記録の uuid を保って中身を更新する。
  *   当たらない再生の行は直前に当たった行の後に、当たらないライブの行は末尾に足す。当たらなかった記録の行は消さない（圧縮で落ちた発言を残す）
+ * - 例外: 記録の行が、連続する同じ役の再生の行（2 行以上）の連結と本文・思考・ツールがまったく同じときは外す。
+ *   Devin は折り込んだ途中送信をライブの user_message_chunk で流さないので、途中送信の前後でネイティブが分けた
+ *   発言がライブでは 1 行に連結され、再生の行と二重に並ぶ。その行は再生の並びを正とする（中身が全部再生側に残るので失わない）。
+ *   1 行との一致は「OK」「続けて」のような正当な繰り返しと区別が付かないので、2 行以上の連結に限る
  */
 function alignPositional(segment, rows) {
   // 再生の user 行は送った全文。記録の同じハッシュの行の本文（人が書いた分）に戻す。全文が一致したときだけ
@@ -423,9 +448,11 @@ function alignPositional(segment, rows) {
   const merged = segment.slice(), after = new Map(), uuids = new Set(segment.map((m) => m.uuid).filter(Boolean));
   const first = match.find((j) => j >= 0);
   let cursor = first === undefined ? segment.length - 1 : first - 1;
+  const replayed = new Set();
   rows.forEach((m, i) => {
     const positional = m.positional;
     delete m.positional;
+    if (positional) replayed.add(m);
     const at = match[i];
     if (at >= 0) {
       m.uuid = segment[at].uuid;
@@ -447,7 +474,33 @@ function alignPositional(segment, rows) {
   });
   const out = [...(after.get(-1) ?? [])];
   merged.forEach((m, j) => out.push(m, ...(after.get(j) ?? [])));
-  return out;
+  // 連結されたライブの行を外す（上の docstring の例外）。当たらなかった記録の行だけを調べる
+  const hit = new Set(match.filter(j => j >= 0)), drop = new Set();
+  merged.forEach((m, j) => {
+    if (hit.has(j)) return;
+    const parts = out.filter(p => replayed.has(p) && p.role === m.role);
+    if (parts.length < 2) return;
+    const text = lf(m.text), thinking = lf(m.thinking ?? ''), tools = new Set((m.toolCalls ?? []).map(c => String(c?.id ?? '')));
+    for (let a = 0; a + 1 < parts.length; a++) {
+      const run = [], covered = new Set();
+      let len = 0, found = false;
+      for (let b = a; b < parts.length; b++) {
+        run.push(parts[b]);
+        len += lf(parts[b].text).length;
+        for (const c of parts[b].toolCalls ?? []) covered.add(String(c?.id ?? ''));
+        if (len > text.length) break;
+        if (run.length >= 2 && tiledBy(text, run.map(p => lf(p.text)))
+          && tiledBy(thinking, run.map(p => lf(p.thinking ?? '')))
+          && [...tools].every(id => covered.has(id))) { found = true; break; }
+      }
+      if (found) {
+        if (run[0].at == null && m.at != null) run[0].at = m.at;
+        drop.add(m);
+        break;
+      }
+    }
+  });
+  return drop.size ? out.filter(m => !drop.has(m)) : out;
 }
 
 export async function switchBackend(id, source, target, { restart = false } = {}) {
