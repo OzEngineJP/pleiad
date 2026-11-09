@@ -90,6 +90,8 @@ jobs:
           node-version: "22.13"
           cache: npm
       - run: npm ci
+      - name: Prepare verified Electron
+        run: node scripts/prepare-electron.mjs
       # macOS 固有の実行環境と、認証用ディレクトリ・CLI の接続を公開前に検査する。実サービスや利用者の資格情報は使わない。
       - name: Release environment smoke
         run: |
@@ -220,6 +222,8 @@ jobs:
           "TEMP=$testTemp" >> $env:GITHUB_ENV
           "TMP=$testTemp" >> $env:GITHUB_ENV
       - run: npm ci
+      - name: Prepare verified Electron
+        run: node scripts/prepare-electron.mjs
       # koffi（computer use の Win32 呼び出し）のネイティブ本体は @koromix/koffi-<os>-<cpu> という別のパッケージで、
       # npm ci はこの runner（x64）の分しか入れない。arm64 のインストーラーにも入れるため、arm64 の本体を足す。
       # --force は os / cpu の検査を外す（他の OS の本体は増えず、package.json とロックも変わらない）。版は koffi 本体に合わせる

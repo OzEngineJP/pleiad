@@ -12,7 +12,7 @@ const { releaseSigning, macArchTargets } = require('./scripts/release-signing.cj
 const signing = releaseSigning();
 if (signing.win) config.win = { ...config.win, ...signing.win };
 if (signing.mac) config.mac = { ...config.mac, ...signing.mac, target: macArchTargets(config.mac.target, process.env.PLY_MAC_ARCH) };
-module.exports = { ...config, forceCodeSigning: true, extraMetadata: { plyRelease: true },
+module.exports = { ...config, ...(process.env.PLY_ELECTRON_DIST ? { electronDist: process.env.PLY_ELECTRON_DIST } : {}), forceCodeSigning: true, extraMetadata: { plyRelease: true },
   // mac の公証は自前の afterSign（scripts/notarize-mac.cjs。長い間隔の再試行つき）で行う。mac 以外では何もしない
   afterSign: require.resolve('./scripts/notarize-mac.cjs'),
   // PrivateGitHubProvider reads latest*.yml even for prereleases. The GitHub

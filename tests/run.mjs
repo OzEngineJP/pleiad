@@ -1061,6 +1061,7 @@ const SUITES = [
   './unit/runner-contract.mjs',
   // リリースで使う同一 commit の main CI の照合と公開前の検証条件
   './unit/release-ci-gate.mjs',
+  './unit/prepare-electron.mjs',
   // 版上げのスクリプト（scripts/release-bump.mjs）: 前提の検査・版の書き換え（CRLF のまま）・commit とタグ・--push のときだけ atomic に送る・失敗したら元に戻す（一時の git リポジトリ）
   './unit/release-bump.mjs',
   // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
