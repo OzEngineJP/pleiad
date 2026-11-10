@@ -37,7 +37,7 @@ export default async function test(t) {
   globalThis.window = { open: () => { const popup = { location: { href: '' }, closed: 0, close() { this.closed++; } }; popups.push(popup); return popup; } };
   const { setupAgentAccounts, createAccountRequestCache, composerAccount } = await import('../../web/agent-accounts.mjs');
   const { paintAuthFailure } = await import('../../web/auth-expired.mjs');
-  const { vocabKey, vocabReady, defaultModelOf, createEffortsLoader, createEffortsView } = await import('../../web/composer-vocab.mjs');
+  const { vocabKey, vocabReady, defaultModelOf, modelsRequest, createEffortsLoader, createEffortsView } = await import('../../web/composer-vocab.mjs');
   const { t: tr } = i18n;
   const $ = id => nodes.get(id);
   const account = (id, name = id) => ({ id, name, hasCredential: false });
@@ -243,7 +243,7 @@ export default async function test(t) {
         loadAccounts: backend => { const response = deferred(); accountReads.push({ backend, ...response }); return response.promise; },
         compatEndpoints: { load: async () => [] }, accountWarning: '', endpointWarning: '',
       });
-      vm.runInContext(['draftView', 'endpointOf', 'composerSelection', 'syncEndpoint', 'syncAccount', 'effortCwd', 'effortSelection', 'adoptEfforts', 'syncTopbar'].map(functionSource).join('\n'), sandbox);
+      vm.runInContext(['draftView', 'endpointOf', 'composerSelection', 'syncEndpoint', 'syncAccount', 'vocabCwd', 'effortSelection', 'adoptEfforts', 'syncTopbar'].map(functionSource).join('\n'), sandbox);
       const old = sandbox.syncTopbar(); await tick();
       assert.equal(accountReads.length, 1);
       state.prefs.backends.codex.account = 'default-B';
@@ -261,21 +261,21 @@ export default async function test(t) {
 
       const modelReads = [], modelState = { vocab: new Map() };
       let refreshed = 0;
-      const vocabSandbox = vm.createContext({ state: modelState, createAccountRequestCache, createEffortsLoader, createEffortsView,
+      const vocabSandbox = vm.createContext({ state: modelState, createAccountRequestCache, createEffortsLoader, createEffortsView, modelsRequest,
         cmd: async (operation, args) => {
           if (operation === 'modes') return { ask: {} };
           assert.equal(operation, 'models'); const response = deferred(); modelReads.push({ args, ...response }); return response.promise;
         }, syncTopbar: async () => { refreshed++; },
       });
-      const vocabStart = source.indexOf('const accountVocabs =');
+      const vocabStart = source.indexOf('async function readVocab');
       const vocabEnd = source.indexOf('// ----------------------------------------------------------------', vocabStart);
-      vm.runInContext(source.slice(vocabStart, vocabEnd) + '\nglobalThis.vocabCaches = { accountVocabs, accountVocabRequests };', vocabSandbox);
+      vm.runInContext(source.slice(vocabStart, vocabEnd) + '\nglobalThis.vocabCaches = { vocabRequests };', vocabSandbox);
       const older = vocabSandbox.loadVocab('codex', 'A'); await tick();
       vocabSandbox.revalidateVocab('codex', 'A'); await tick();
       modelReads[1].resolve({ latest: {} }); await tick();
       modelReads[0].resolve({ obsolete: {} }); await older;
-      assert.deepEqual([...vocabSandbox.vocabCaches.accountVocabs.values()].map(v => Object.keys(v.models)), [['latest']]);
-      assert.equal(modelState.vocab.size, 0); assert.equal(refreshed, 1);
+      assert.deepEqual([...vocabSandbox.vocabCaches.vocabRequests.cache.values()].map(v => Object.keys(v.models)), [['latest']]);
+      assert.equal(Object.keys(modelState.vocab.get('codex').models)[0], 'latest'); assert.equal(refreshed, 1);
       assert.ok(modelReads.every(r => r.args.account === 'A'));
       check('real client model revalidation refreshes only the selected account catalog and rejects older late model results');
     }

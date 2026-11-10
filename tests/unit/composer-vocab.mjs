@@ -1,6 +1,6 @@
 // 入力欄のモデル・エフォートの一覧が、いま選んでいるものの一覧かの判定と、エフォートの取得の相乗り（web/composer-vocab.mjs）。
 // エージェントを切り替えた直後に前のエージェントの一覧を出さない・同じ鍵の取得は 1 本・古い取得は新しい鍵へ混ざらない、を確かめる。
-import { vocabKey, vocabReady, defaultModelOf, effortRequest, effortsKeyOf, createEffortsLoader, createEffortsView } from '../../web/composer-vocab.mjs';
+import { vocabKey, vocabReady, defaultModelOf, modelsRequest, effortRequest, effortsKeyOf, createEffortsLoader, createEffortsView } from '../../web/composer-vocab.mjs';
 
 export const name = 'composer-vocab';
 export const title = '入力欄の一覧: 切り替えた直後は前の一覧を出さず、同じ取得は 1 本にまとめる';
@@ -9,12 +9,21 @@ const gate = () => { const g = {}; g.promise = new Promise((resolve, reject) => 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 export default async function (t) {
-  // ---- 一覧の鍵: エージェントとアカウントで決まる。接続先を選んでいる間はアカウントを見ない ----
+  // ---- 一覧の鍵: エージェントとアカウント・作業場所で決まる。接続先を選んでいる間はアカウントを見ない ----
   const claude = vocabKey({ backend: 'claude', account: '' });
   t.ok('エージェントが違えば鍵が違う', claude !== vocabKey({ backend: 'codex', account: '' }));
   t.ok('アカウントが違えば鍵が違う', claude !== vocabKey({ backend: 'claude', account: 'work' }));
+  t.ok('作業場所が違えば鍵が違う（その場所のプロジェクト設定が一覧を変える）', claude !== vocabKey({ backend: 'claude', account: '', cwd: '/a' }) && vocabKey({ backend: 'claude', account: '', cwd: '/a' }) !== vocabKey({ backend: 'claude', account: '', cwd: '/b' }));
   t.ok('接続先を選んでいるときはアカウントを鍵に入れない', vocabKey({ backend: 'claude', account: 'work', endpoint: 'ep1' }) === vocabKey({ backend: 'claude', account: '', endpoint: 'ep2' }));
   t.ok('取れていない・別の鍵の一覧は、いまの一覧として扱わない', !vocabReady(null, claude) && !vocabReady(undefined, claude) && !vocabReady(vocabKey({ backend: 'codex' }), claude) && vocabReady(claude, claude));
+
+  // ---- モデルの一覧の問い合わせ: 作業場所を送る（場所が違うと別の版しか出ないことがある）。接続先を選んでいる間はアカウントを送らない ----
+  {
+    const req = modelsRequest({ backend: 'claude', account: 'work', cwd: '/w' });
+    t.ok('モデルの一覧の頼み方に cwd が付く', req.cwd === '/w' && req.account === 'work' && req.backend === 'claude');
+    t.ok('作業場所が無ければ cwd は送らない・接続先を選んでいるときはアカウントを送らない',
+      !('cwd' in modelsRequest({ backend: 'claude' })) && !('account' in modelsRequest({ backend: 'claude', account: 'work', endpoint: 'ep' })));
+  }
 
   // ---- 切り替えて戻した場合: 取ってあった一覧がそのままいまの一覧になる ----
   {

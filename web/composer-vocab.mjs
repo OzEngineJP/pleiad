@@ -2,8 +2,14 @@
 // エージェント・アカウントを切り替えた直後は、前のエージェントの一覧を出さない。同じ取得の鍵なら、取得中も取得済みも 1 本に相乗りする。
 import { createAccountRequestCache } from './agent-accounts.mjs';
 
-/** モデルの一覧の鍵。一覧はエージェントと（公式の接続先のときの）アカウントで決まる */
-export const vocabKey = ({ backend = '', account = '', endpoint = '' } = {}) => JSON.stringify([backend, endpoint ? '' : account]);
+/** モデルの一覧の問い合わせ（接続先を選んでいるときはアカウントを送らない）。
+ *  作業場所を付ける —— Claude はその場所のプロジェクト設定が一覧を変える（場所が違うと別の版しか出ないことがある） */
+export const modelsRequest = ({ backend, account = '', endpoint = '', cwd = '' } = {}) => ({
+  backend, ...(endpoint ? {} : account ? { account } : {}), ...(cwd ? { cwd } : {}),
+});
+
+/** モデルの一覧の鍵。一覧はエージェントと（公式の接続先のときの）アカウント・作業場所で決まる */
+export const vocabKey = ({ backend = '', account = '', endpoint = '', cwd = '' } = {}) => JSON.stringify([backend, endpoint ? '' : account, cwd]);
 
 /** 一覧を取ってあるのが、いま選んでいるものか（取っていない・別のものなら false） */
 export const vocabReady = (loadedKey, wantedKey) => loadedKey != null && loadedKey === wantedKey;

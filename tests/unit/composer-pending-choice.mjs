@@ -28,7 +28,7 @@ export default async function (t) {
     return source.slice(start, source.indexOf('\n}', start) + 2);
   };
   const FUNCTIONS = ['reserveSettings', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'pendingChoice', 'settleNext', 'composerSelection',
-    'endpointOf', 'selectedMode', 'syncTopbar', 'runRefresh', 'activeBackendId', 'capsOf'];
+    'endpointOf', 'selectedMode', 'syncTopbar', 'runRefresh', 'activeBackendId', 'capsOf', 'vocabCwd'];
   const onBackend = /^\s+backend: (\(v\) => \{.*\}),$/m.exec(source);
   if (!onBackend) throw new Error('client.mjs の on.backend が見つからない');
   const code = `let settingsWrite = Promise.resolve(), settingsFailure = null, failedSettingsPatch = null, failedSettingsError = '';

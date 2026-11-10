@@ -249,10 +249,12 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   const rowObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(fitThreadRow) : null;
   rowObserver?.observe(destChip.parentElement);
   let vocabFor = null, vocab = { models: {}, modes: {} };
-  const loadVocab = async (backend) => {
-    if (!backend || vocabFor === backend) return;
-    vocabFor = backend;
-    vocab = (await host.vocab?.(backend).catch(() => null)) ?? { models: {}, modes: {} };
+  const loadVocab = async (backend, cwd = '') => {
+    // モデルの一覧は作業場所で変わりうる（Claude はその場所のプロジェクト設定が行を変える）ので、鍵に場所を入れる
+    const key = `${backend}${cwd}`;
+    if (!backend || vocabFor === key) return;
+    vocabFor = key;
+    vocab = (await host.vocab?.(backend, cwd).catch(() => null)) ?? { models: {}, modes: {} };
     paintSettings();
   };
   const leaf = (path) => String(path ?? '').split(/[\\/]/).filter(Boolean).at(-1) ?? '';
@@ -272,7 +274,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       fitThreadRow();
       return;
     }
-    loadVocab(s.backend);
+    loadVocab(s.backend, s.values?.cwd ?? '');
     const v = s.values, d = s.defaults;
     // 既定に従うモデルは、Chats のチップと同じく実際に当たるモデルの名前で出す
     const modelLabel = (vocab.models?.[v.model] ? resolvedModel(vocab.models, v.model).label : '') || v.model || t('chat.model.default');
@@ -367,7 +369,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const bot = destNow().bot;
     const s = bot && settings(bot.id);
     if (!s) return;
-    await loadVocab(s.backend);
+    await loadVocab(s.backend, s.values?.cwd ?? '');
     const items = Object.entries(vocab.modes ?? {}).map(([id, m]) => ({
       label: m.label ?? id, hint: id === s.defaults.mode ? t('channels:thread.settings.botDefault', { name: bot.name }) : (m.note ?? ''), checked: id === s.values.mode,
       onClick: () => apply({ mode: id }),

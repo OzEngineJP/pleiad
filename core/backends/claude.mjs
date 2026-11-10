@@ -30,7 +30,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
-import { buildClaudeModels, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
+import { buildClaudeModels, catalogIsComplete, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
 import { normalizeSdkMessage, isClaudeAuthError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript } from "./claude-normalize.mjs";
 import { createTranscriptReader } from "./claude-transcript.mjs";
@@ -211,7 +211,22 @@ function loadCatalog(cwd, pref, { refresh = false } = {}) {
   // 確かめが並ぶ経路（委譲の読み替え・候補ごとの確かめ）で CLI を続けて起こさないため
   if (refresh && e.value && now - e.at < CATALOG_RETRY) return Promise.resolve(e.value);
   e.probe ??= sdk.probe(cwd, !pref.custom)
-    .then((c) => { e.value = c; e.cliSig = cliSig; e.failed = 0; anyCatalog = c; anyCatalogSig = cliSig; coldSince = 0; e.at = Date.now(); return c; })
+    .then((c) => {
+      e.cliSig = cliSig;
+      // CLI がときどき「短い一覧」（系統の別名の行が欠けたもの。claude-models.mjs の catalogIsComplete）を返す。
+      // 手元に完全な一覧（この条件の一覧か、別の条件で取れた一覧）があれば短い一覧で上書きせず、
+      // 失敗と同じ間隔で取り直す。完全な一覧を一度も取れていなければ短い一覧も使う（無いよりは出す）
+      const any = freshAnyCatalog(cliSig) && { ...anyCatalog, applied: false };
+      const best = catalogIsComplete(e.value?.rows) ? e.value : (catalogIsComplete(any?.rows) ? any : e.value ?? any);
+      if (!catalogIsComplete(c.rows) && catalogIsComplete(best?.rows)) {
+        e.failed = Date.now();
+        return best;
+      }
+      e.value = c; e.failed = 0; coldSince = 0; e.at = Date.now();
+      // 別の条件の一覧を先に答える stand() には、最後に取れた完全な一覧を持たせる（短い一覧で上書きしない）
+      if (catalogIsComplete(c.rows) || !catalogIsComplete(anyCatalog?.rows)) { anyCatalog = c; anyCatalogSig = cliSig; }
+      return c;
+    })
     .catch((err) => {
       e.failed = Date.now(); e.cliSig = cliSig;
       // SDK を取っていないだけなら黙る（固定の一覧で答える。取った後の引き直しで埋まる）
@@ -670,6 +685,7 @@ export const backend = {
     return !freshAnyCatalog(cliSignature()) && /^[\w.\-\[\]]+$/.test(model);
   },
   // 明示して渡された名前（claude-sonnet-5-5 など）を一覧の id に当てる。当たらなければ null
+  // （呼び手はそのまま送る。一覧に無い名前を系統名へ縮めない —— 指す版は CLI が決めるので、別の版で走ることがあった）
   async matchModel(name, cwd) {
     const pref = await preferredSettings(cwd);
     const c = await loadCatalog(cwd, pref);

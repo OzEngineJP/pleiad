@@ -12,6 +12,22 @@ export const title = "Claude のモデル一覧: 手元に一覧があれば引�
 
 const ROW_V1 = { value: "claude-sonnet-5", resolvedModel: "claude-sonnet-5", description: "Sonnet 5 · test" };
 const ROW_V2 = { value: "claude-sonnet-5-5", resolvedModel: "claude-sonnet-5-5", description: "Sonnet 5.5 · test" };
+// CLI 2.1.322 の実測に沿った形。完全な一覧は系統ごとに別名の行を持つ。短い一覧は版つきの行だけで、別名の行が欠ける
+const COMPLETE_ROWS = [
+  { value: "default", resolvedModel: "claude-opus-5-5" },
+  { value: "fable", resolvedModel: "claude-fable-5-2", description: "Fable 5.2 · test" },
+  { value: "claude-fable-5-1", resolvedModel: "claude-fable-5-1", description: "Fable 5.1 · test" },
+  { value: "opus", resolvedModel: "claude-opus-5-5", description: "Opus 5.5 · test" },
+  { value: "sonnet", resolvedModel: "claude-sonnet-5-5", description: "Sonnet 5.5 · test" },
+  { value: "haiku", resolvedModel: "claude-haiku-4-5-20251001", description: "Haiku 4.5 · test" },
+];
+const SHORT_ROWS = [
+  { value: "default", resolvedModel: "claude-opus-5-5" },
+  { value: "opus", resolvedModel: "claude-opus-5-5", description: "Opus 5.5 · test" },
+  { value: "claude-fable-5-1[1m]", resolvedModel: "claude-fable-5-1", description: "Fable 5.1 with 1M context · test" },
+  { value: "sonnet", resolvedModel: "claude-sonnet-5-5", description: "Sonnet 5.5 · test" },
+  { value: "haiku", resolvedModel: "claude-haiku-4-5-20251001", description: "Haiku 4.5 · test" },
+];
 const has = (models, id) => Object.hasOwn(models, id);
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -107,6 +123,27 @@ export default async function (t) {
     await tick();
     const warm = await timed(() => claude.models(cwdD));
     t.ok("引けた後はその一覧で答える", has(warm.v, "claude-sonnet-5-5") && warm.ms < 500, `${warm.ms}ms`);
+
+    // 短い一覧（系統の別名の行が欠けたもの。CLI がときどき返す）は完全な一覧を上書きしない
+    fs.writeFileSync(exe, "v4-short-list");   // 別の実体として、取り置きを全部忘れて完全な一覧から引き直す
+    const cwdF = path.join(dir, "f");
+    fs.mkdirSync(cwdF);
+    instant = COMPLETE_ROWS;
+    const full = await timed(() => claude.models(cwdF));
+    t.ok("完全な一覧はそのまま出る（fable の行があり、Fable 5.2 と出る）",
+      has(full.v, "fable") && full.v.fable.label === "Fable 5.2" && has(full.v, "claude-fable-5-1"), Object.keys(full.v).join(","));
+    instant = null;
+    Date.now = () => realNow() + 240 * 60_000;   // TTL を超えて取り直しへ（取ってから 60 秒の内の手元の答えは避ける）
+    instant = SHORT_ROWS;
+    r = await timed(() => claude.models(cwdF));
+    await tick();
+    t.ok("引き直しが短い一覧を返しても、手元の完全な一覧で答える",
+      has(r.v, "fable") && r.v.fable.label === "Fable 5.2" && has(r.v, "claude-fable-5-1"), Object.keys(r.v).join(","));
+    instant = null;
+    r = await timed(() => claude.models(cwdF, { refresh: true }));
+    t.ok("明示の取り直しが短い一覧を返しても、完全な一覧を上書きしない",
+      has(r.v, "fable") && has(r.v, "claude-fable-5-1"), Object.keys(r.v).join(","));
+    Date.now = realNow;
   } finally {
     Date.now = realNow;
     console.error = realError;

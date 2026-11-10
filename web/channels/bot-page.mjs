@@ -283,18 +283,21 @@ export function createBotPage(host) {
   const closePanels = () => { modelPanel.hide(false); modePanel.hide(false); addPanel.hide(false); closeEmojiPicker(); if (iconDialog.open) iconDialog.close(); };
 
   // ---------------------------------------------------------------- 語彙（バックエンドごとの承認モード・モデル・エフォート）
-  async function vocabOf(backend, model = '') {
-    let v = S.vocab.get(backend);
+  /** bot が走る作業場所（最初のフォルダー。core/bots/sessions.mjs の pickCwd）。モデルの一覧・段はその場所のプロジェクト設定で変わる */
+  const botCwd = (b) => b?.folders?.[0]?.path ?? '';
+  async function vocabOf(backend, model = '', cwd = '', account = '') {
+    const key = JSON.stringify([backend, account, cwd]);
+    let v = S.vocab.get(key);
     if (!v) {
       const [modes, models] = await Promise.all([
         host.cmd('modes', { backend }).catch(() => ({})),
-        host.cmd('models', { backend }).catch(() => ({})),
+        host.cmd('models', { backend, ...(account ? { account } : {}), ...(cwd ? { cwd } : {}) }).catch(() => ({})),
       ]);
       v = { modes: modes ?? {}, models: models ?? {}, efforts: new Map() };
-      if (Object.keys(v.modes).length && Object.keys(v.models).length) S.vocab.set(backend, v);
+      if (Object.keys(v.modes).length && Object.keys(v.models).length) S.vocab.set(key, v);
     }
     if (!v.efforts.has(model)) {
-      const efforts = await host.cmd('efforts', { backend, model }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
+      const efforts = await host.cmd('efforts', { backend, model, cwd: cwd || undefined, ...(account ? { account } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
       v.efforts.set(model, efforts ?? {});
     }
     return { modes: v.modes, models: v.models, efforts: v.efforts.get(model) };
@@ -304,7 +307,7 @@ export function createBotPage(host) {
     const cur = vm();
     if (!cur) return;
     const seq = ++S.seq;
-    const v = await vocabOf(cur.backend, cur.model ?? '');
+    const v = await vocabOf(cur.backend, cur.model ?? '', botCwd(cur), cur.account ?? '');
     if (seq !== S.seq) return;
     S.v = v;
     paintRun();
@@ -650,13 +653,13 @@ export function createBotPage(host) {
     Object.assign(d, patch);
     if ('backend' in patch) {
       d.model = ''; d.effort = ''; d.account = '';
-      const v = await vocabOf(d.backend, '');
+      const v = await vocabOf(d.backend, '', botCwd(d), d.account ?? '');
       if (S.draft !== d) return;
       d.mode = M.modeAfterBackend(v.modes, d.mode);
       S.v = v;
     } else if ('model' in patch) {
       d.effort = '';
-      const v = await vocabOf(d.backend, d.model);
+      const v = await vocabOf(d.backend, d.model, botCwd(d), d.account ?? '');
       if (S.draft !== d) return;
       S.v = v;
     } else if ('effort' in patch) {
@@ -870,7 +873,7 @@ export function createBotPage(host) {
     if (id === 'new') {
       S.bot = null;
       const first = backends().find((b) => b.id === host.state?.backendId)?.id ?? backends()[0]?.id ?? '';
-      const v = await vocabOf(first, '');
+      const v = await vocabOf(first);
       if (S.id !== 'new') return;
       S.draft = M.newDraft(first, v.modes);
       S.v = v;

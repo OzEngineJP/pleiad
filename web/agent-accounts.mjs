@@ -30,6 +30,8 @@ export function createAccountRequestCache({ read, cache = new Map(), accept = ()
       if (key === undefined) { pending.clear(); cache.clear(); }
       else { pending.delete(key); cache.delete(key); }
     },
+    /** 覚えている・取りかけている鍵の一覧（条件に当たるものだけ捨てるために使う） */
+    keys: () => new Set([...pending.keys(), ...cache.keys()]),
   };
 }
 

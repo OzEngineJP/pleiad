@@ -84,7 +84,7 @@ import { paintTaskChrome, closeRiskOf, confirmCloseWindow } from './task-chrome.
 import { createBackgroundChip } from './background-chip.mjs';
 import { overlaySessions, revertFailed, currentRows } from './pending-sidebar.mjs';
 import { createMoveLanes, settleAll } from './sidebar-moves.mjs';
-import { vocabKey, vocabReady, defaultModelOf, createEffortsLoader, createEffortsView } from './composer-vocab.mjs';
+import { vocabKey, vocabReady, defaultModelOf, modelsRequest, createEffortsLoader, createEffortsView } from './composer-vocab.mjs';
 import { createAuxSlot, beginAux, settleAux, clearAux, auxState, auxData } from './composer-aux.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
@@ -414,7 +414,7 @@ const state = {
   modes: {},
   mode: "default",     // 次のターンに使う承認モード
   models: {},
-  vocabKey: null,   // models・modes がどの選択（エージェント・アカウント）の一覧か（web/composer-vocab.mjs）
+  vocabKey: null,   // models・modes がどの選択（エージェント・アカウント・作業場所）の一覧か（web/composer-vocab.mjs）
   model: "",           // 次のターンに使うモデル（空 = 既定に従う）
   // 入力欄のチップ（web/composer-controls.mjs）が出す値。予約があれば予約の値
   cwd: "",             // 次のターンの作業ディレクトリ
@@ -3675,7 +3675,7 @@ function onEvent(ev, replay = false) {
       syncTopbar().catch(() => {});
       break;
     case 'agentAccountsChanged':
-      agentAccounts.invalidate(); accountVocabRequests.invalidate(); effortsLoader.invalidate();
+      agentAccounts.invalidate(); vocabRequests.invalidate(); effortsLoader.invalidate();
       syncTopbar().catch(() => {});
       break;
     case 'compatEndpointsChanged':
@@ -4129,52 +4129,55 @@ async function loadBackends(early = null) {
   return state.backends;
 }
 
-/** そのエージェントの語彙（承認モード / モデル）。値の意味はこちらでは解釈しない。 */
-const accountVocabs = new Map();
-async function readVocab(id, account = '') {
+/** そのエージェントの語彙（承認モード / モデル）。値の意味はこちらでは解釈しない。
+ *  モデルの一覧は作業場所で変わりうる（Claude はその場所のプロジェクト設定が行を変える）ので、鍵に場所を入れる */
+async function readVocab(id, account = '', cwd = '') {
   const [modes, models] = await Promise.all([
     cmd('modes', { backend: id }).catch(() => ({})),
-    cmd('models', { backend: id, ...(account ? { account } : {}) }).catch(() => ({})),
+    cmd('models', modelsRequest({ backend: id, account, cwd })).catch(() => ({})),
   ]);
   return { modes: modes ?? {}, models: models ?? {} };
 }
 const usableVocab = v => Object.keys(v.modes).length > 0 && Object.keys(v.models).length > 0;
-const defaultVocabRequests = createAccountRequestCache({ cache: state.vocab, read: id => readVocab(id), accept: usableVocab });
-const accountVocabRequests = createAccountRequestCache({ cache: accountVocabs, read: key => readVocab(...JSON.parse(key)), accept: usableVocab });
+const vocabRequests = createAccountRequestCache({ read: key => readVocab(...JSON.parse(key)), accept: usableVocab });
 /** エフォートの段。エージェント・アカウント・接続先・作業場所・モデルが同じなら取得中も取得済みも使い回す */
 const effortsLoader = createEffortsLoader({ cmd });
 const effortsView = createEffortsView({ loader: effortsLoader });
 const noEfforts = () => ({ '': { label: t('chat.next.useDefault') } });
-const vocabCache = (id, account) => ({ requests: account ? accountVocabRequests : defaultVocabRequests, key: account ? JSON.stringify([id, account]) : id });
-async function loadVocab(id, account = '') {
+const vocabCache = (id, account, cwd) => JSON.stringify([id, account ?? '', cwd ?? '']);
+async function loadVocab(id, account = '', cwd = '') {
   if (!id) return { modes: {}, models: {} };
-  const { requests, key } = vocabCache(id, account);
-  return await requests.get(key) ?? { modes: {}, models: {} };
+  const v = await vocabRequests.get(vocabCache(id, account, cwd)) ?? { modes: {}, models: {} };
+  // 表示だけに使う写し（モードの見出し・モデルの読み方。state.vocab はエージェントごとに最後に読んだ一覧）
+  state.vocab.set(id, v);
+  return v;
 }
 
-async function fetchVocab(id, account = '') {
-  const { requests, key } = vocabCache(id, account);
-  return await requests.get(key, { force: true }) ?? { modes: {}, models: {} };
+async function fetchVocab(id, account = '', cwd = '') {
+  const v = await vocabRequests.get(vocabCache(id, account, cwd), { force: true }) ?? { modes: {}, models: {} };
+  state.vocab.set(id, v);
+  return v;
 }
 
 /**
  * 語彙を裏で取り直す（モデルの面を開いたとき）。codex のモデルは更新や入れ替えで変わる。
  * 届くまでは覚えている一覧を出したまま。空（失敗）なら fetchVocab が覚えている方を残す
  */
-function revalidateVocab(id, account = '') {
+function revalidateVocab(id, account = '', cwd = '') {
   if (!id) return;
-  const { requests, key } = vocabCache(id, account);
-  const before = requests.cache.get(key);
-  fetchVocab(id, account).then((v) => {
-    if (requests.cache.get(key) !== v || JSON.stringify(before) === JSON.stringify(v)) return;
+  const key = vocabCache(id, account, cwd);
+  const before = vocabRequests.cache.get(key);
+  fetchVocab(id, account, cwd).then((v) => {
+    if (vocabRequests.cache.get(key) !== v || JSON.stringify(before) === JSON.stringify(v)) return;
     effortsLoader.invalidate();
     syncTopbar().catch(() => {});
   }).catch(() => {});
 }
 
-/** ログイン・ログアウトの後。使えるモデルはアカウントで変わるので、覚えた語彙を捨てて描き直す */
+/** ログイン・ログアウトの後。使えるモデルはアカウントで変わるので、そのエージェントの覚えた語彙を捨てて描き直す */
 function forgetVocab(id) {
-  defaultVocabRequests.invalidate(id);
+  for (const key of vocabRequests.keys()) { if (JSON.parse(key)[0] === id) vocabRequests.invalidate(key); }
+  state.vocab.delete(id);
   effortsLoader.invalidate();
   syncTopbar().catch(() => {});
 }
@@ -4991,7 +4994,7 @@ const claudeAccounts = setupClaudeAccounts({ cmd,
 // Claude 以外のエージェントのアカウントの設定（web/agent-accounts.mjs。ADR 0222）
 const agentAccounts = setupAgentAccounts({ cmd, labelOf,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
-  onChange: () => { accountVocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); } });
+  onChange: () => { vocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); } });
 /** エージェントのアカウントの一覧（共通の形 { id, name, ready }）。取ってあるもの（同期） */
 function accountList(bid) {
   const kind = capsOf(bid).accounts;
@@ -5184,15 +5187,19 @@ function homeBotSetup(bot) {
   const mode = state.modes?.[state.mode]?.label ?? state.mode ?? '';
   return [labelOf(bot.backend), modelChipLabel(state.models, state.model, state.efforts, state.effort), mode].filter(Boolean).join(' · ');
 }
-/** エフォートの段が見る作業場所。会話があればその次のターンの場所、まだ無い草稿では選んでいる場所（その場所のプロジェクト設定が段を変える） */
-function effortCwd(s) {
-  return s ? s.nextSettings?.cwd || s.cwd || '' : state.draft.cwd || state.cwd || '';
+/** モデルの一覧・エフォートの段が見る作業場所。会話があればその次のターンの場所、まだ無い草稿では選んでいる場所、
+ *  Chats で bot を選んでいるときは bot の最初のフォルダー（bot はそこで走る。core/bots/sessions.mjs の pickCwd）。
+ *  その場所のプロジェクト設定が Claude のモデルの一覧・段を変える（作ったばかりの会話は予約が届くまで下書きの場所） */
+function vocabCwd(s, homeBot = null) {
+  if (homeBot) return homeBot.folders?.[0]?.path || state.homeDir || '';
+  if (s) return (justCreated() && state.draft.cwd) || s.nextSettings?.cwd || s.cwd || '';
+  return state.draft.cwd || state.cwd || '';
 }
 /** いま入力欄で選んでいるものの、エフォートの段の問い合わせ（モデル・作業場所・接続先まで。表示の鍵と取得の鍵は同じ） */
 function effortSelection() {
   const s = state.sessions.find(x => x.id === state.current);
   const choice = composerSelection();
-  return { backend: state.shownBackend ?? activeBackendId(), account: choice.account, endpoint: choice.endpoint, model: state.model, cwd: effortCwd(s) };
+  return { backend: state.shownBackend ?? activeBackendId(), account: choice.account, endpoint: choice.endpoint, model: state.model, cwd: vocabCwd(s, choice.homeBot) };
 }
 /**
  * これから選ぶ値（予約の保存はまだ）のエフォートの段を、裏で取っておく。予約が書けたあとの描き直しは、同じ鍵の取得に相乗りする。
@@ -5217,9 +5224,10 @@ async function adoptEfforts() {
  */
 function warmAgentChoices(backend) {
   const s = state.sessions.find(x => x.id === state.current);
-  loadVocab(backend, '').then(({ models }) => {
+  const { homeBot } = composerSelection();
+  loadVocab(backend, '', vocabCwd(s, homeBot)).then(({ models }) => {
     if (state.shownBackend !== backend) return;
-    effortsLoader.load({ backend, model: defaultModelOf(models), cwd: effortCwd(s) }).catch(() => {});
+    effortsLoader.load({ backend, model: defaultModelOf(models), cwd: vocabCwd(s, homeBot) }).catch(() => {});
   }).catch(() => {});
 }
 
@@ -5235,7 +5243,8 @@ const controls = chatComposer.useControls({
     const sent = !unsentHere();
     // 切り替えた直後は、前のエージェントのモデル・エフォートの一覧を出さない（取れたら syncTopbar が鍵を合わせる）
     const choice = composerSelection();
-    const wanted = vocabKey({ backend: bid, account: choice.account, endpoint: choice.endpoint });
+    const wanted = vocabKey({ backend: bid, account: choice.account, endpoint: choice.endpoint,
+      cwd: vocabCwd(state.sessions.find(x => x.id === state.current), choice.homeBot) });
     const modelsReady = vocabReady(state.vocabKey, wanted), effortsReady = modelsReady && effortsView.ready(effortSelection());
     return {
       // bot を選んだ未送信の会話は、bot が実際に使う値を表示だけ（一時チャットには作業場所が無いので、bot の最初のフォルダーかホーム。core/bots/sessions.mjs の pickCwd）
@@ -5306,8 +5315,8 @@ const controls = chatComposer.useControls({
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
     openModel: () => {
-      const { backend, account, endpoint } = composerSelection();
-      revalidateVocab(backend, endpoint ? '' : account);
+      const { backend, account, endpoint, homeBot } = composerSelection();
+      revalidateVocab(backend, endpoint ? '' : account, vocabCwd(state.sessions.find(x => x.id === state.current), homeBot));
       usageSource.load(backend).catch(() => {});
     },
   },
@@ -6332,7 +6341,7 @@ function modelText(item) {
   const vocab = state.vocab.get(item.backend);
   if (!vocab && item.backend && !vocabAsked.has(item.backend)) {
     vocabAsked.add(item.backend);
-    loadVocab(item.backend).then(() => { if ($('workDialog').open) renderBackground(); }).catch(() => {});
+    loadVocab(item.backend, '', (item.taskId && taskById(item.taskId)?.cwd) || '').then(() => { if ($('workDialog').open) renderBackground(); }).catch(() => {});
   }
   const models = vocab?.models ?? {};
   const name = item.model ? modelDisplayName(models, item.model) : item.source === 'task' ? resolvedModel(models, '').label : '';
@@ -7181,7 +7190,7 @@ function decorateDelegateCard(card) {
   const auto = isAutoRouting(routing);
   // モデル・承認モードの表示名は語彙から。まだ無ければ取りに行き、届いたら理由の行を書き直す
   const missing = [routing.target, ...(routing.skipped ?? []).map(s => splitCandidate(s.candidate))].map(x => x?.backend).filter(b => b && !state.vocab.has(b));
-  for (const b of new Set(missing)) loadVocab(b).then(() => { if (card.dataset.taskId === taskId) paintRouteLine(card, routing); }).catch(() => {});
+  for (const b of new Set(missing)) loadVocab(b, '', taskById(taskId)?.cwd ?? '').then(() => { if (card.dataset.taskId === taskId) paintRouteLine(card, routing); }).catch(() => {});
   const head = card.querySelector('.tc-head');
   const label = head.querySelector('.tc-label');
   label.textContent = t('timeline.tool.label.delegate');
@@ -7282,7 +7291,7 @@ function decorateFailedDelegate(card, result) {
   paint();
   // モデルの表示名は語彙から。まだ無ければ取りに行き、届いたら書き直す（折りたたみを開いていれば開いたまま）
   const missing = [...new Set(failure.skipped.map(s => splitCandidate(s.candidate).backend).filter(b => b && !state.vocab.has(b)))];
-  for (const b of missing) loadVocab(b).then(() => {
+  for (const b of missing) loadVocab(b, '', state.cwd || '').then(() => {
     const wasOpen = card.querySelector(':scope > .tc-cands-fold')?.open;
     paint();
     if (wasOpen) card.querySelector(':scope > .tc-cands-fold').open = true;
@@ -7435,7 +7444,7 @@ async function toggleRetry(card, root, button) {
     const taskId = card.dataset.taskId;
     const task = taskById(taskId);
     const routing = task?.routing ?? cardRouting.get(card);
-    for (const b of new Set((data.candidates ?? []).map(c => c.backend).filter(b => b && !state.vocab.has(b)))) await loadVocab(b).catch(() => {});
+    for (const b of new Set((data.candidates ?? []).map(c => c.backend).filter(b => b && !state.vocab.has(b)))) await loadVocab(b, '', task?.cwd ?? '').catch(() => {});
     const panel = retryPanel({ candidates: retryCandidates(data.candidates, routing, (data.settings?.levels ?? []).map(l => l.id)), running: TASK_LIVE.has(task?.status),
       names: routingNames, logo: routingLogo,
       run: (args) => cmd('retryAgentTask', { taskId, ...args }),
@@ -8004,7 +8013,7 @@ const channelsUi = setupChannels({
   homeStatusItems: (sessionId) => homeStatusItems(sessionId),
   agentName: (sessionId) => { const s = state.sessions.find((x) => x.id === sessionId); return s ? labelOf(s.backend) : null; },
   // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
-  vocab: (backend) => loadVocab(backend),
+  vocab: (backend, cwd) => loadVocab(backend, '', cwd),
   quota: (backend) => usageSource.load(backend),
   usageOf: (backend) => usageSource.get(backend),
   onUsage: (fn) => usageSource.onResult(fn),
@@ -8655,7 +8664,7 @@ function rowMenu(s, x, y, lead = []) {
   const repaint = () => update(paint(), title);
   setTimeout(() => { waitingVisible = true; repaint(); }, 150);
   const bid = s.nextSettings?.backend ?? s.backend;
-  (async () => { try { vocab = await loadVocab(bid, s.nextSettings?.account ?? s.claudeAccount ?? ''); } catch { vocab = { modes: {}, models: {} }; } repaint(); })();
+  (async () => { try { vocab = await loadVocab(bid, s.nextSettings?.account ?? s.claudeAccount ?? '', s.nextSettings?.cwd || s.cwd || ''); } catch { vocab = { modes: {}, models: {} }; } repaint(); })();
   cmd("efforts", { backend: bid, account: s.nextSettings?.account ?? s.claudeAccount ?? '', model: s.nextSettings?.model ?? s.model ?? "", cwd: s.nextSettings?.cwd || s.cwd || undefined })
     .then(value => { efforts = value; repaint(); }).catch(() => { efforts = {}; repaint(); });
   rowEndpointItems(s).then(value => { endpoints = value; repaint(); });
@@ -9136,8 +9145,8 @@ async function syncTopbar() {
   refreshGit().catch(() => {});
 
   // 語彙はエージェントごとに違う。切り替えたら取り直す。互いに待たない問い合わせ（語彙・接続先・アカウント）は一緒に出す
-  const wanted = vocabKey({ backend: bid, account: selectedAccount, endpoint: selectedEndpoint });
-  const vocabRequest = loadVocab(bid, selectedEndpoint ? '' : selectedAccount);
+  const wanted = vocabKey({ backend: bid, account: selectedAccount, endpoint: selectedEndpoint, cwd: vocabCwd(s, homeBot) });
+  const vocabRequest = loadVocab(bid, selectedEndpoint ? '' : selectedAccount, vocabCwd(s, homeBot));
   const endpointRequest = syncEndpoint(s, bid, { value: selectedEndpoint, visible: !homeBot && Boolean(s), current });
   const accountRequest = syncAccount(s, bid, { value: selectedAccount, visible: !homeBot, current });
   endpointRequest.catch(() => {}); accountRequest.catch(() => {});
@@ -11114,7 +11123,7 @@ addEventListener('plyremote:start', () => { shellStopped = false; presenceReport
 presenceReporter.start();
 // 設定 › 委譲（委譲先の自動選択）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
-  modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
+  modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id, '', state.cwd || '')).models : null),
   modelName: (backend, model) => routingNames.model(backend, model), openPage: name => $(`${name}Tab`)?.click(),
   // 使えないアカウントの候補の「ログインし直す」: エージェント設定のそのエージェントのアカウントを開き、その行へフォーカス（ADR 0264）
   openAccount: (backend, account) => capsOf(backend).accounts === 'token' ? claudeAccounts.open({ focus: account })
