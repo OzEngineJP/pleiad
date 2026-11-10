@@ -127,6 +127,9 @@ export default async function (t) {
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
     armedSends: new Map(), scheduleAttempt: null, limitOp: async () => ({}), paintArmed: noop,
+    // 使えるエージェントが無いときの案内（web/no-agent.mjs）。このテストは使える状態だけ
+    noAgent: { blocks: () => false, sync: noop, visible: () => false },
+    usableNow: () => ({ levels: new Map(), usable: [{}], count0: false }),
   });
   vm.runInContext(code, context);
   context.composerWait = createComposerWait({ box: $('cbox'), prompt: $('prompt'), send: $('send'), note: $('composerNote'),
