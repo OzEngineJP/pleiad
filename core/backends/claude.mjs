@@ -129,7 +129,7 @@ const PROVIDER_ENV = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_C
   "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_GATEWAY"];
 // 引く条件（作業場所・段に効く設定）ごとに 1 件。{ value, at, failed, probe, cliSig }
 const catalogs = new Map();
-let anyCatalog = null, anyCatalogSig = null;   // どれか 1 件でも取れたか（validModel が保存済みの id を通すかどうか）
+let anyCatalog = null, anyCatalogSig = null;   // どれか 1 件でも取れたか（別の作業場所の一覧で先に答える stand() の手元の答え）
 
 // CLI の実体（パス・更新時刻・サイズ）の目印。claude update でモデルが増えても（2026-09-29、
 // 2.1.284 で Sonnet 5.5）CATALOG_TTL の 30 分は古い一覧のままだったので、版が変わったら TTL 内でも引き直す。
@@ -190,7 +190,7 @@ function freshAnyCatalog(cliSig) {
 // 手元に一覧が何も無いまま待ち始めた時刻。待つのは CATALOG_WAIT までを全員で共有する（呼ぶたびに数え直さない。
 // 起動直後は newSession・models・efforts が続けて来るので、数え直すと 3 秒ずつ重なる）
 let coldSince = 0;
-function loadCatalog(cwd, pref) {
+function loadCatalog(cwd, pref, { refresh = false } = {}) {
   // 別の接続先のときは設定を読まないので、作業場所で結果は変わらない
   const key = pref.custom ? "custom" : `${cwd || ""}|${pref.sig}`, now = Date.now();
   const cliSig = cliSignature();
@@ -201,10 +201,15 @@ function loadCatalog(cwd, pref) {
   }
   // CLI の版が変わっていたら（claude update）、30 分の TTL 内・失敗の再試行待ちの中でも忘れて引き直す
   if (e.cliSig && cliSig && e.cliSig !== cliSig) { e.value = null; e.at = 0; e.failed = 0; }
-  if (e.value && now - e.at < CATALOG_TTL) return Promise.resolve(e.value);
+  if (!refresh && e.value && now - e.at < CATALOG_TTL) return Promise.resolve(e.value);
   // 手元の答え: この条件の古い一覧 → 別の条件で取れた一覧（段は利用者の設定で補う）。無ければ null（固定の一覧で答える）
   const stand = () => e.value ?? (freshAnyCatalog(cliSig) && { ...anyCatalog, applied: false }) ?? null;
+  // 失敗の再試行待ちは取り直し（refresh）でも守る（失敗し続ける間、確かめるたびに CLI を起こして待たせない）
   if (now - e.failed < CATALOG_RETRY) return Promise.resolve(stand());
+  // 明示の取り直し（models({ refresh })。選ぶときに「一覧に無い」を確かめ直す呼び出し）は TTL を無視して起こし、
+  // 結果を待つ。ただしその条件の一覧を取ってから再試行待ちと同じ間（60 秒）は手元の一覧を返す——「一覧に無い」の
+  // 確かめが並ぶ経路（委譲の読み替え・候補ごとの確かめ）で CLI を続けて起こさないため
+  if (refresh && e.value && now - e.at < CATALOG_RETRY) return Promise.resolve(e.value);
   e.probe ??= sdk.probe(cwd, !pref.custom)
     .then((c) => { e.value = c; e.cliSig = cliSig; e.failed = 0; anyCatalog = c; anyCatalogSig = cliSig; coldSince = 0; e.at = Date.now(); return c; })
     .catch((err) => {
@@ -214,6 +219,8 @@ function loadCatalog(cwd, pref) {
       return e.value;
     })
     .finally(() => { e.probe = null; });
+  // 取れなければ手元の答え（古い一覧・別の条件の一覧・無ければ固定の一覧）に戻る
+  if (refresh) return e.probe.then((v) => v ?? stand());
   // 引き直しは裏で走らせ、手元の答えがあれば待たずに返す（引き直しは CLI を起こして 10 秒ほど掛かる。会話を作る・一覧を開くたびに待たせない）
   const handy = stand();
   if (handy) return Promise.resolve(handy);
@@ -250,9 +257,9 @@ async function preferredSettings(cwd) {
   preferredCache.set(key, { value, at: Date.now() });
   return value;
 }
-async function claudeModels(cwd) {
+async function claudeModels(cwd, { refresh = false } = {}) {
   const pref = await preferredSettings(cwd);
-  const c = await loadCatalog(cwd, pref);
+  const c = await loadCatalog(cwd, pref, { refresh });
   if (!c) return MODELS;
   return buildClaudeModels({ rows: c.rows, efforts: c.efforts, preferred: pref.model, preferredEffort: c.applied ? null : pref.effort });
 }
@@ -651,13 +658,16 @@ export const backend = {
   toolHints: TOOL_HINTS,
 
   modes: () => MODES,
-  models: (cwd) => claudeModels(cwd),
+  models: (cwd, { refresh = false } = {}) => claudeModels(cwd, { refresh }),
   warmModels: (cwd) => warmCatalog(cwd),
-  // 一覧が引けないうち（未ログイン・一覧の取得中）は、保存済みの id を無効にしない（CLI が確かめる）
-  async validModel(model, cwd) {
+  // server の共通の確かめ（一覧の確認 → 取り直し）のあと、それでも無いときの最後の判断:
+  // 一覧を 1 度も取れていない間（未ログイン・取得が失敗し続けている）は、形の良い id を断らない
+  // （使えるかは CLI が確かめる。固定の一覧に無い新しいモデル・保存済みの id を「一覧に無い」で消さない。
+  // 一覧が取れたあとは共通側の結果どおり。antigravity の validModel と同じ形）
+  async validModel(model) {
     if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;
     if (!model) return true;
-    return Object.hasOwn(await claudeModels(cwd), model) || (!freshAnyCatalog(cliSignature()) && /^[\w.\-\[\]]+$/.test(model));
+    return !freshAnyCatalog(cliSignature()) && /^[\w.\-\[\]]+$/.test(model);
   },
   // 明示して渡された名前（claude-sonnet-5-5 など）を一覧の id に当てる。当たらなければ null
   async matchModel(name, cwd) {

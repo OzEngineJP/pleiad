@@ -87,9 +87,9 @@ export default async function (t) {
       `${calls(cwdC)} 回 ${Object.keys(again.v).join(",")}`);
     Date.now = realNow;
 
-    // 会話を作るときの確かめ（validModel）も待たない
-    const v = await timed(() => claude.validModel("claude-sonnet-5-5", cwdC));
-    t.ok("validModel も古い一覧で答える", v.v === true && v.ms < 1000, `${v.v} ${v.ms}ms`);
+    // 会話を作るときの確かめ（モデル一覧の読み取り）も待たない
+    const v = await timed(() => claude.models(cwdC));
+    t.ok("モデル一覧の読み取りも古い一覧で答える", has(v.v, "claude-sonnet-5-5") && v.ms < 1000, `${v.ms}ms`);
 
     // 手元に何も無い（CLI が更新されて一覧を忘れた）間は待つが、待つのは CATALOG_WAIT までを全員で共有する
     fs.writeFileSync(exe, "v2-longer-content-after-update");

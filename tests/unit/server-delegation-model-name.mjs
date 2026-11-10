@@ -4,6 +4,7 @@
 //   - 当たらない名前は、黙って既定に戻さず model_unknown で断る（選べる名前を添える）。子の会話もタスクも作らない
 //   - model を書かなければ今までどおり既定
 import fs from 'node:fs/promises';
+import fss from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
@@ -15,7 +16,12 @@ const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args }
 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-delegation-model-name-'));
-  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake' } });
+  // 一覧をファイルから読ませ、models() の呼び出しを <file>.calls に記録させる
+  // （正式な ID の読み替えで、取り直し（{ refresh }）が走らないことを確かめる）
+  const modelsFile = path.join(scratch, 'fake-models.json');
+  const same = { fast: {}, smart: {}, tiny: {} };
+  fss.writeFileSync(modelsFile, JSON.stringify({ normal: same, refreshed: same }));
+  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_MODELS: modelsFile } });
   const c = await open({ port: server.port, token: server.token });
   const call = async (sessionId, name, args) => {
     const from = c.mark();
@@ -45,10 +51,15 @@ export default async function (t) {
     t.ok('一覧の id はそのまま子のモデルになる', (await taskOf(plain.taskId))?.model === 'fast');
     await settle(plain.taskId);
 
+    const callsBefore = fss.existsSync(`${modelsFile}.calls`) ? fss.readFileSync(`${modelsFile}.calls`, 'utf8') : '';
     const official = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'fake', model: 'fake-smart-3-5', task: 'echo:B' });
     const officialTask = official.taskId ? await taskOf(official.taskId) : null;
     t.ok('正式な ID は一覧の id に当てて走る（既定には落ちない）', !official.error && officialTask?.model === 'smart', JSON.stringify(official).slice(0, 300));
     if (official.taskId) await settle(official.taskId);
+    // canonicalModel は手元の一覧と matchModel で先に当てるので、正式な ID の読み替えで取り直し（models({ refresh })）は走らない
+    const callsAfter = fss.existsSync(`${modelsFile}.calls`) ? fss.readFileSync(`${modelsFile}.calls`, 'utf8') : '';
+    t.ok('正式な ID の読み替えで取り直し（{ refresh }）は走らない',
+      !callsAfter.slice(callsBefore.length).includes('refresh'), callsAfter.slice(callsBefore.length).trim().split('\n').join(',') || '(無し)');
 
     const before = (await tasks()).length;
     const unknown = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'fake', model: 'no-such-model', task: 'echo:C' });

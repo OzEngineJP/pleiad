@@ -309,6 +309,8 @@ const SUITES = [
   './unit/server-setting-approval-delegated.mjs',
   // 途中切り替えに対応しないエージェントの承認モード: 走っている間の変更は次のターンへの予約（nextSettings）になる（#147）
   './unit/server-mode-next-turn.mjs',
+  // 予約したモデルは一覧が縮んでも backend へ届く。選ぶとき（setTurnSettings）の確かめは一度だけ取り直す
+  './unit/server-reserved-model.mjs',
   './unit/server-ops.mjs',
   './unit/sessions-search-op.mjs',
   './unit/agent-tasks.mjs',
@@ -683,6 +685,8 @@ const SUITES = [
   './unit/claude-catalog-cli-version.mjs',
   // Claude のモデル一覧: 手元に古い一覧・別の作業場所の一覧があれば、引き直しを待たずに返す
   './unit/claude-catalog-stale.mjs',
+  // Claude のモデル一覧: { refresh } は TTL・再試行待ちを無視して取り直して待つ
+  './unit/claude-model-refresh.mjs',
   './unit/claude-model-match.mjs',
   './unit/codex-background.mjs',
   './unit/codex-terminals.mjs',

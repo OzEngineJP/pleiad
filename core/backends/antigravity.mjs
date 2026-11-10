@@ -465,19 +465,23 @@ export const backend = {
    * 段の候補も各行の efforts に載せる（core/effort.mjs がそれを読む）。
    * 既定のモデルは `agy models` を起こしたときのログから読む（listModels）。一覧を引けていなければ「既定（agy の設定）」だけ
    */
-  async models() {
+  async models(cwd, { refresh = false } = {}) {
     // `agy models` は headless の保証が無いので、未確認（'unknown'）・未ログイン（'out'）では起こさない。
     // 'in' の間だけ、一覧が無い・TTL を過ぎた一覧を、この読み取りをきっかけに裏で引き直す
     //（この呼び出しは待たない。今の一覧（無ければ空）を返す。issue #161）。
     // 写し（認証の証拠ではない）があれば、再起動直後も保存済みの明示モデル・エフォート（models[id].efforts）を戻す
+    // { refresh }（選ぶときに「一覧に無い」を確かめ直す、server の validModel）は 'in' のときだけ
+    // 待って取り直す（TTL・受動の間隔を無視するが、`agy models` を起こしてよい条件は変えない）
     if (modelCache === null) await loadModelsCache();
-    refreshModelsSoon();
+    if (refresh && authGuess === 'in') await fetchModels().catch(() => null);
+    else refreshModelsSoon();
     return modelCache ?? buildAgyModels([], null);
   },
 
   // 一覧を引けていない間（受動では `agy models` を起こさない）は、保存済みの明示モデルを
-  // 「一覧に無い」で既定へ戻さない（claude.mjs の validModel と同じ考え。不実な id は CLI が断る）。
-  // 一覧（メモリか写し）があるあとは一覧どおりに見る
+  // 「一覧に無い」で断らない（不実な id は CLI が断る。docs/adr/0304・0308）。
+  // 一覧（メモリか写し）があるあとは一覧どおりに見る。
+  // server の validModel は一覧の確認・取り直しのあと、それでも無いときの最後の判断としてこれを呼ぶ
   async validModel(model) {
     if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;
     if (!model) return true;

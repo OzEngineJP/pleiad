@@ -56,6 +56,7 @@
 // ほかの台本（steps:・control:・computer:・browser:・context:・held:・bg-shell・term など）は台本として読まず、言葉をそのまま返す
 // 行頭の <pleiad-channel> などの包み（bot の会話。core/system-messages.mjs の splitLeadingNotes）は外してから台本を選ぶ（scriptOf）。
 // 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける／
+//   AGENT_HOST_FAKE_MODELS=<JSON のファイル> … モデルの一覧（models()）を毎回そのファイルから読む（縮小・{refresh}の出し分けは fakeModels のコメント）
 //   AGENT_HOST_FAKE_QUOTA=<JSON のファイル> … 使用枠（usage()。{ windows: [{ label, usedPercent, resetsAt, minutes }] }）を毎回そのファイルから読む。
 //   指定が無いと usage() を持たない（使用量の上限の再開が、解除時刻の分からない上限の空きを確かめる検査用）
 //   AGENT_HOST_FAKE_LOGIN_MS=<ms> … ログイン（auth.login）が終わるまでの時間（既定 0）。その間は pending で、auth.cancel でやめられる（［やめる］の確認用）
@@ -141,6 +142,28 @@ const MODELS = {
   smart:  { label: "Smart 3.5", note: "賢い", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
   tiny:   { label: "Tiny 1.0",  note: "軽い。段を選べない", efforts: [], defaultEffort: null },
 };
+
+/**
+ * AGENT_HOST_FAKE_MODELS=<JSON ファイル> … models() の一覧を毎回そのファイルから読む（一覧の縮小・取り直しの検査用。指定が無ければ MODELS）。
+ *   { "models": {id: 行} }                        … 常にこれ
+ *   { "normal": {id: 行}, "refreshed": {id: 行} } … { refresh: true } の呼び出しは refreshed、それ以外は normal
+ * 行は { label?, note?, efforts?, defaultEffort? }。""（既定）の行は MODELS のものを常に足す。
+ * 呼び出しは <ファイル>.calls に normal/refresh の行を足して記録する（取り直しが走ったかどうかの検査用）
+ */
+function fakeModels(refresh) {
+  const file = process.env.AGENT_HOST_FAKE_MODELS;
+  if (!file) return MODELS;
+  try { fs.appendFileSync(`${file}.calls`, refresh ? "refresh\n" : "normal\n"); } catch { /* 記録用。失敗しても一覧は返す */ }
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    const table = raw?.normal !== undefined || raw?.refreshed !== undefined
+      ? (refresh ? raw.refreshed : raw.normal)
+      : (raw?.models ?? raw);
+    const out = { "": MODELS[""] };
+    for (const [id, row] of Object.entries(table ?? {})) out[id] = { label: id, efforts: [], defaultEffort: null, ...row };
+    return out;
+  } catch { return MODELS; }
+}
 
 const TOOL_HINTS = {
   fake_shell: { label: "実行", shape: "shell" },
@@ -470,7 +493,7 @@ export const backend = {
   toolHints: TOOL_HINTS,
 
   modes: () => MODES,
-  models: async () => MODELS,
+  models: async (cwd, { refresh = false } = {}) => fakeModels(refresh),
   // 正式な ID（Claude の claude-sonnet-5-5 に当たるもの）を一覧の id に当てる手段。サーバーの配線の試験で通す
   matchModel: async (name) => /^fake-(fast|smart|tiny)-\d/.exec(String(name))?.[1] ?? null,
 
@@ -509,6 +532,13 @@ export const backend = {
     // 実行中の切り替えが効いたことを確かめられるよう、handle にも今の値を持たせる
     const handle = { sessionId: id, mode, model };
     if (control) control.handle = handle;
+
+    // "deny-" で始まるモデルは、backend が理由を付けて断る検査用（CLI が使えないモデルを断る形。
+    // Pleiad が送信直前に一覧で遮らないので、断る側の文が会話に出るかを確かめる）
+    if (typeof model === "string" && model.startsWith("deny-")) {
+      emit({ type: "turnResult", outcome: "error", error: `fake: model ${model} is not available` });
+      return { sessionId: id };
+    }
 
     // 台本 "pre-hold:<ゲート>": プロンプトを渡す前にゲートを待つ。中断されたら渡さないまま aborted で終わる
     const preHold = !plain && /^pre-hold:([\w.-]+)\s*$/.exec(scriptOf(prompt))?.[1];

@@ -28,7 +28,7 @@ export default async function (t) {
   });
   try {
     await claude.models(cwd);
-    t.ok("（前提）正式な ID は一覧の id ではないので、そのままでは無効", await claude.validModel("claude-sonnet-5-5", cwd) === false);
+    t.ok("（前提）正式な ID は一覧の id ではないので、そのままでは一覧に無い", !Object.hasOwn(await claude.models(cwd), "claude-sonnet-5-5"));
     t.ok("正式な ID は resolvedModel が一致する行に当たる", await claude.matchModel("claude-sonnet-5-5", cwd) === "sonnet");
     t.ok("1M の正式な ID は 1M の行に当たる", await claude.matchModel("claude-opus-5-5[1m]", cwd) === "opus[1m]");
     t.ok("大文字小文字は問わない", await claude.matchModel("Claude-Sonnet-5-5", cwd) === "sonnet");

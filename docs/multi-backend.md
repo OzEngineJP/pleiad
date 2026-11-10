@@ -290,7 +290,11 @@ export const backend = {
 
   // ---- 語彙（UI はこれを <select> に流し込むだけ。値の意味は知らない）
   modes(): { [id]: { label, note } },          // 承認モード。id はバックエンドごとに違ってよい
-  models(): Promise<{ [id]: { label, note } }>,// "" は「既定に従う」
+  models(cwd, { refresh = false } = {}): Promise<{ [id]: { label, note } }>,// "" は「既定に従う」。
+                                // refresh: 選ぶときに「一覧に無い」を確かめ直す呼び出し（server の validModel）。
+                                // TTL・受動の間隔を無視して取り直し、結果を待ってよい（直前の失敗・直近の取得から
+                                // 短い間は手元の一覧で答えてよい——確かめが並ぶ経路で CLI を連発しない）。
+                                // 読まない backend はそのまま再判定される
 
   // ---- 実行
   runTurn({ prompt, sessionId, cwd, mode, model, emit, askPermission, signal, control })

@@ -2998,10 +2998,12 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
  */
 async function validModel(backend, model, cwd, endpointId = '') {
   if (endpointId) return model === '' || isModelId(model);
-  if (backend.validModel) return backend.validModel(model, cwd);
   if (Object.hasOwn(await backend.models(cwd), model)) return true;
   // 一覧の置き場が古い間に「一覧に無い」と誤って断らないよう、取り直して確かめる（{ refresh } を読まない backend はそのまま再判定）
-  return Object.hasOwn(await backend.models(cwd, { refresh: true }), model);
+  if (Object.hasOwn(await backend.models(cwd, { refresh: true }), model)) return true;
+  // 一覧をまだ持てない backend が、形の良い id を CLI の判断へ委ねる余地（antigravity。一覧が無い間に保存済みの
+  // 明示モデルを「一覧に無い」で断らない。docs/adr/0304・0308）。一覧が取れている backend はここまでの結果どおり断る
+  return backend.validModel ? backend.validModel(model, cwd) : false;
 }
 /**
  * 明示して渡されたモデル名を、一覧の id に当てる（AI が書く claude-sonnet-5-5 → sonnet）。
@@ -3009,8 +3011,13 @@ async function validModel(backend, model, cwd, endpointId = '') {
  */
 async function canonicalModel(backend, name, cwd, endpointId = '') {
   if (endpointId || typeof name !== 'string' || !backend.matchModel) return name;
-  if (await validModel(backend, name, cwd).catch(() => false)) return name;
-  return (await backend.matchModel(name, cwd).catch(() => null)) ?? name;
+  // 正式な ID（claude-sonnet-5-5 など）は一覧の id ではないので、取り直しを伴う確かめ（validModel → models({ refresh })）
+  // の前に、手元の一覧と matchModel だけで当てる（当たる読み替えで CLI を起こして待たない）
+  if (Object.hasOwn(await backend.models(cwd).catch(() => ({})), name)) return name;
+  const matched = await backend.matchModel(name, cwd).catch(() => null);
+  if (matched !== null && matched !== undefined) return matched;
+  // 両方外れた名前はそのまま返す（呼び出し側が validModel・resolveModel で取り直しを伴って確かめ、断る）
+  return name;
 }
 /** エラーに添える、選べるモデル名（隠し以外を先頭 30 件） */
 async function knownModelNames(backend, cwd, endpointId = '') {
@@ -7466,7 +7473,9 @@ async function prepareTurn(args, hooks, compactionRevision) {
   backend = await backendForAccount(getBackend(accountBackend.id) ?? accountBackend, account);
   if (reserved) {
     const target = backend;
-    if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
+    // モデルの一覧の確かめはしない。予約してから送信までに一覧が縮んでいても、選んだモデルをそのまま CLI/API へ渡す
+    // （使えなければ CLI/API が断り、その理由が会話に出る。黙って既定へ戻さない）。形（文字列・長さ・制御文字）だけは断る
+    if (!target || !(reserved.model === '' || isModelId(reserved.model)) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
     await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
     if (target.id !== previousTurnBackend.id) {
       await switchBackend(sessionId, previousTurnBackend, target);
@@ -7493,7 +7502,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 会話の言語（エージェントに渡す文の言語）。記録にあればそれ、無ければ今の画面の言語で決めて保存する（新規は id が決まったとき）
   const agentLocale = sessionId ? await ensureAgentLocale(sessionId) : currentLocale();
   const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
-  const model = await resolveModel(sessionId, reserved ? reserved.model : args?.model, backend, cwd, endpointId);
+  // 予約のモデルは選んだときに確かめ、送る直前に形を確かめた値をそのまま渡す（一覧とずれていても既定へ戻さない）
+  const model = reserved ? reserved.model : await resolveModel(sessionId, args?.model, backend, cwd, endpointId);
   const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
   // worktree（ADR 0089）。使う場所が worktree の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
   const worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
