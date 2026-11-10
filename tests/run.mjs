@@ -106,6 +106,7 @@ const SUITES = [
   './unit/header-entries.mjs',
   './unit/shortcut-labels.mjs',
   './unit/arc.mjs',
+  './unit/motion.mjs',
   './unit/activity-strip.mjs',
   // mark 型ロゴの文書内シンボル化（web/brand-marks.mjs）: <use> の参照・1 回だけの取得・シンボルの登録・失敗後の取り直し
   './unit/brand-marks.mjs',
