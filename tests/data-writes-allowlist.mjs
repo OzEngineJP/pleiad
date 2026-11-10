@@ -58,8 +58,9 @@ export const DATA_WRITES = [
   { file: 'core/backends/antigravity.mjs', sites: 1, targets: [
     { name: 'antigravity/models.json', limit: 'MODELS_CACHE_MAX_ROWS=64 行・id 128 字・label 256 字・MODELS_CACHE_MAX_BYTES=64KiB', reason: '`agy models` の一覧の写し。明示の probe で取れたときだけ置き換え、再起動で保存済みの明示モデル・エフォートを `agy models` 無しで戻す（認証の証拠には使わない）' },
   ] },
-  { file: 'core/backends/fake.mjs', sites: 1, targets: [
+  { file: 'core/backends/fake.mjs', sites: 2, targets: [
     { name: '(環境変数 FAKE_INTERNAL_LOG が指す、試験の一時ファイル。未設定なら書かない)', limit: '設定した試験の内部呼出し 1 回につき 1 行。環境変数が無ければ書かない', reason: '試験専用の身代わりが、内部呼出しへ渡った指示文を確認するための追記ログ。製品のデータ置き場には書かない', appendOnly: true },
+    { name: '(環境変数 AGENT_HOST_FAKE_MODELS が指すファイル + .calls。試験の一時ファイル。未設定なら書かない)', limit: '設定した試験の models() 1 回につき 1 行。環境変数が無ければ書かない', reason: '試験専用の身代わりが、モデル一覧の取り直し（{ refresh }）が走ったかを確認するための追記ログ。製品のデータ置き場には書かない', appendOnly: true },
   ] },
   { file: 'core/backends/devin-config.mjs', sites: 3, targets: [
     { name: 'devin/metadata-config/devin/config.json', limit: '固定 1 ファイル。METADATA_CONFIG の 7 個の import 無効化と hooks/auto_update/notify だけ（1 KiB 未満）', reason: 'モデル一覧の取得を専用 cwd と固定設定で行う。利用者の設定・認証情報をコピーせず、会話数によって増えない' },
