@@ -28,6 +28,7 @@ export default async function (t) {
   const envFile = path.join(dir, 'env.json');
   const saved = {};
   for (const key of ['AGENT_HOST_AGY_BIN', 'AGENT_HOST_DATA', 'AGENT_HOST_AGY_SUGGEST_HOME', 'AGENT_HOST_AGY_MODELS_TTL_MS',
+    'AGENT_HOST_AGY_MODELS_GATE_RETRY_MS', 'AGENT_HOST_AGY_EMPTY_SUCCESS_MS',
     'FAKE_AGY_NEEDS_AUTH', 'FAKE_AGY_AUTH_FILE', 'FAKE_AGY_ARGS_FILE', 'FAKE_AGY_ENV_FILE', 'FAKE_AGY_VERSION', 'FAKE_AGY_MODELS_FAIL', 'FAKE_AGY_DEFAULT_LABEL']) {
     saved[key] = process.env[key];
   }
@@ -180,22 +181,26 @@ export default async function (t) {
     t.ok('古い CLI には /usage を送らず、認証の見通しを変えない', true);
 
     // ---- 送信の関所（requireModelCatalog）: 一覧が無ければ、/usage で見通しを確かめてから自分で取る。
-    //      ログイン中なら取れ、並ぶ呼び出しは `agy models` を 1 本に束ねる
+    //      ログイン中なら取れ、「確かめる→取る」の全体は 1 本に束ねる（並ぶ呼び出しは同じ結果を受け取る）
     delete process.env.FAKE_AGY_VERSION;
     await fs.rm(modelsFile, { force: true });
     let reSeq = 0;
     const freshBackend = async () => (await import(`../../core/backends/antigravity.mjs?re=${Date.now()}-${++reSeq}`)).backend;
     const catalogCalls = () => calls().then((a) => a.filter((x) => x.at(-1) === 'models'));
+    const usageCalls = () => calls().then((a) => a.filter((x) => x.includes('/usage')));
     const gate = await freshBackend();
     const beforeGate = (await catalogCalls()).length;
+    const beforeGateUsage = (await usageCalls()).length;
     const [resolved] = await Promise.all([
       validateEffort(gate, 'low', 'fake-flash-high'),
+      gate.requireModelCatalog(),
       gate.requireModelCatalog(),
     ]);
     assert.equal(resolved, 'low', '一覧を自分で取れれば保存済みのエフォートを適用する');
     assert.equal((await catalogCalls()).length, beforeGate + 1, '並ぶ取得は agy models を 1 本に束ねる');
+    assert.equal((await usageCalls()).length, beforeGateUsage + 1, '並ぶ関所の /usage の確認も 1 本に束ねる');
     assert.equal((await gate.auth.status()).loggedIn, true, '一覧を取れた＝ログイン済みと分かる');
-    t.ok('一覧が無くても送信の関所は /usage でログインを確かめて自分で一覧を取る（並ぶ取得は 1 本）', true);
+    t.ok('一覧が無くても送信の関所は /usage でログインを確かめて自分で一覧を取る（並ぶ関所は 1 本）', true);
 
     // ---- 未ログインと確かめられたら、関所は一覧を取りに行かずログインの案内を返す。確定後は usage すら起こさない
     await fs.rm(modelsFile, { force: true });   // 直前の取得が残した写しは消す（写しがあれば関所は素通しする）
@@ -267,6 +272,62 @@ export default async function (t) {
     assert.equal((await calls()).length, beforeOut2, 'out のままでは古い一覧でも引き直さない');
     await fs.writeFile(authFile, 'ok');
     t.ok('out のあとは古い一覧でも agy を起こさない', true);
+
+    // ---- 認証の証拠: 保持役の付け直しが再生した result・本文の無い SUCCESS は 'in' にしない。
+    //      再生はこのプロセスが確かめた訳ではなく、空の SUCCESS は打ち切り（print timeout）と見分けがつかない
+    const noEvidence = await freshBackend();
+    const replayCalls = (await calls()).length;
+    // 保持役の子 1 つ分の写し（core/adopt.mjs の holderSource の形）。印（turn）から ack までが再生になる
+    const replaySource = {
+      id: 'agy-replay',
+      client: { on() {}, off() {}, end() {}, kill() {}, mark() {}, label() {}, sendBatch() {} },
+      state: { id: 'agy-replay', alive: true, acked: 1, seq: 1, marks: { turn: 1 } },
+      attachable: true, acked: 0,
+      async replay() {
+        return [[1, JSON.stringify({ event: 'result', result: {
+          conversation_id: 'conv-replay', status: 'SUCCESS', response: '過去の返事', duration_seconds: 0.1, num_turns: 1 } })]];
+      },
+      async *attach() { yield { exit: { code: 0, signal: null } }; },
+      ack() {}, write() { return true; }, release() {}, dispose() {},
+    };
+    const adopted = await noEvidence.adoptTurn({
+      sessionId: 'conv-replay', cwd: dir, emit: () => {},
+      card: { held: true, agy: { sentAt: 1, resumed: true, sentHash: null, home: null, keys: null, hookRuns: null } },
+      source: replaySource,
+    });
+    assert.equal(adopted.sessionId, 'conv-replay');
+    assert.equal((await calls()).length, replayCalls, '付け直しの再生は agy を起こさない');
+    assert.equal((await noEvidence.auth.status()).unconfirmed, true, '再生した SUCCESS はログインの証拠にしない');
+    await noEvidence.models();
+    assert.equal((await calls()).length, replayCalls, '再生の後の models() も agy models を起こさない');
+    noEvidence.releaseConversation('conv-replay');
+    // 本文の無い SUCCESS（'timeout' は空の SUCCESS を出してから印を stderr に書く。猶予を縮めて猶予後の確定側を試す）
+    process.env.AGENT_HOST_AGY_EMPTY_SUCCESS_MS = '10';
+    const emptySid = await noEvidence.runTurn({ cwd: dir, prompt: 'timeout', emit: () => {} }).then((r) => r?.sessionId).catch(() => null);
+    if (emptySid) noEvidence.releaseConversation(emptySid);
+    delete process.env.AGENT_HOST_AGY_EMPTY_SUCCESS_MS;
+    assert.equal((await noEvidence.auth.status()).unconfirmed, true, '本文の無い SUCCESS もログインの証拠にしない');
+    const afterEmpty = (await catalogCalls()).length;
+    await noEvidence.models();
+    assert.equal((await catalogCalls()).length, afterEmpty, '空の SUCCESS の後の models() も agy models を起こさない');
+    t.ok('再生の result・本文の無い SUCCESS はログインの証拠にしない（一覧の自動の取得は開かない）', true);
+
+    // ---- 関所の再試行の間隔は、裏の引き直しの間隔（TTL）と別。
+    //      裏の取得が一時的な理由で落ちても、短い間隔（AGENT_HOST_AGY_MODELS_GATE_RETRY_MS。既定 30 秒）を過ぎれば自分で 1 回試す
+    await fs.rm(modelsFile, { force: true });
+    process.env.FAKE_AGY_MODELS_FAIL = '1';
+    const retry = await freshBackend();
+    await assert.rejects(retry.requireModelCatalog(), /モデル一覧/);   // /usage で 'in' にしてから取りに行くが、取得は落ちる
+    const failedCalls = (await catalogCalls()).length;
+    await assert.rejects(retry.requireModelCatalog(), /モデル一覧/);
+    assert.equal((await catalogCalls()).length, failedCalls, '直前の失敗から短い間隔では agy models を起こさない');
+    process.env.AGENT_HOST_AGY_MODELS_GATE_RETRY_MS = '1';
+    delete process.env.FAKE_AGY_MODELS_FAIL;
+    await new Promise((r) => setTimeout(r, 10));
+    await retry.requireModelCatalog();
+    assert.equal((await catalogCalls()).length, failedCalls + 1, '間隔を過ぎた関所は自分で 1 回取りに行く');
+    assert.ok((await retry.models())['fake-flash-low'], '関所が取れた一覧が見える');
+    t.ok('関所の再試行は直前の失敗からの短い間隔で控える（裏の失敗で送信が長く断られない）', true);
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;

@@ -219,14 +219,25 @@ let modelCacheAt = 0;
 let modelsCacheLoad = null;
 /** 進行中の `agy models`。並ぶ取得は同じ 1 本を待つ（single-flight） */
 let modelsFetch = null;
-/** 最後に一覧の取得を試みた時刻（成否を問わない）。失敗の繰り返しを止める間隔に使う */
+/** 最後に一覧の取得を試みた時刻（成否を問わない）。裏の引き直し（TTL）の間隔に使う */
 let modelsFetchTriedAt = 0;
+/** 最後に一覧の取得が失敗した時刻。送信の関所が失敗を連発しないための間隔に使う */
+let modelsFetchFailedAt = 0;
+/** 送信の関所（見通しの確認 → 取得）の進行中の 1 本。並ぶ呼び出しは同じ結果を受け取る */
+let modelsGate = null;
 /**
  * 覚えた一覧を古いとみなすまでの ms（`AGENT_HOST_AGY_MODELS_TTL_MS`。既定 5 分）。
  * agy の既定（/model の選択）は Pleiad の外で変わり得るので、過ぎた一覧は読み取りをきっかけに裏で引き直す（issue #161）。
  * 読み取りごとに評価する（試験が途中で変えられるように）
  */
 const modelsTtlMs = () => Number(process.env.AGENT_HOST_AGY_MODELS_TTL_MS ?? 5 * 60_000);
+/**
+ * 送信の関所が一覧の取得を試す間の、直前の失敗から試行を控える ms（`AGENT_HOST_AGY_MODELS_GATE_RETRY_MS`。既定 30 秒）。
+ * 裏の取得（usage の温め・TTL の引き直し）が一時的な理由で 1 回落ちただけで、人の送信や bot の送信が
+ * TTL いっぱい「一覧を確認して」で断られるのを防ぐため、裏の間隔（TTL）より短い間隔にする。
+ * 読み取りごとに評価する（試験が途中で縮められるように）
+ */
+const modelsGateRetryMs = () => Number(process.env.AGENT_HOST_AGY_MODELS_GATE_RETRY_MS ?? 30_000);
 
 /** ログインを 2 本同時に走らせないための印。 */
 let pendingAuth = null;
@@ -476,33 +487,41 @@ export const backend = {
   },
 
   // 一覧が無い（このプロセスで未取得・写しも無い）ときは、このプロセスでログイン済みと確かめてから自分で取りに行く。
-  // 段はモデル id に入るので、一覧が無いまま検査を省いて別の強さで黙って走らせない。終わり方は:
+  // 段はモデル id に入るので、一覧が無いまま検査を省いて別の強さで黙って走らせない。
+  // 「確かめる→取る」の全体を modelsGate で 1 本に束ねる（再起動直後に並ぶ送信・bot・委譲は同じ結果を受け取り、
+  // /usage も agy models も 1 本だけ起こす）。終わり方は:
   //   - 一覧を取れた（呼ぶ側は取れた一覧でもう一度候補を引く）
   //   - 未ログイン確定（'out'。一覧の取得が「sign in」で落ちた場合も）: ログインの案内を投げる。agy は起こさない
   //   - 未確認（'unknown'）: まず /usage で見通しを確かめる（公式の headless 保証。未認証なら OAuth を始めず即落ちる）。
   //     'in' なら一覧を取り、'out' ならログインの案内、確かめられなければ checkNeeded（`agy models` は起こさない）
-  //   - 取得のほかの失敗・直前の試みから間隔が浅い再試行: checkNeeded（失敗を連発しない）
+  //   - 取得のほかの失敗・直前の失敗から間隔（modelsGateRetryMs）が浅い再試行: checkNeeded（失敗を連発しない）
   async requireModelCatalog() {
     await loadModelsCache();
     if (modelCache !== null) return;
-    if (authGuess === 'out') throw new Error(t('antigravity.auth.notLoggedIn'));
-    if (authGuess === 'unknown') {
-      await backend.usage().catch(() => null);   // 受動でも起こせる /usage（起こしてよいのはこの読み取り専用だけ）
+    // 本体の掃除は外側の .finally に付ける: IIFE が await せずに終わる経路（失敗の連発止め・out の案内）では、
+    // finally が ??= の代入より先に走り、決まったはずの拒否 promise が modelsGate に残ってしまう
+    modelsGate ??= (async () => {
       if (authGuess === 'out') throw new Error(t('antigravity.auth.notLoggedIn'));
-      if (authGuess !== 'in') throw new Error(t('antigravity.models.checkNeeded'));   // 古い CLI・分からない失敗
-    }
-    // 取れたのか取れないのか分からないまま、短い間に何度も `agy models` を起こさない。
-    // 進行中の取得には相乗りする（並ぶ呼び出しは fetchModels が 1 本に束ねる）
-    if (!modelsFetch && Date.now() - modelsFetchTriedAt < modelsTtlMs()) throw new Error(t('antigravity.models.checkNeeded'));
-    try {
-      await fetchModels();
-    } catch (e) {
-      if (AUTH_REQUIRED.test(String(e?.message ?? e))) {
-        authGuess = 'out';
-        throw new Error(t('antigravity.auth.notLoggedIn'));
+      if (authGuess === 'unknown') {
+        await backend.usage().catch(() => null);   // 受動でも起こせる /usage（起こしてよいのはこの読み取り専用だけ）
+        if (authGuess === 'out') throw new Error(t('antigravity.auth.notLoggedIn'));
+        if (authGuess !== 'in') throw new Error(t('antigravity.models.checkNeeded'));   // 古い CLI・分からない失敗
       }
-      throw new Error(t('antigravity.models.checkNeeded'));
-    }
+      // 取れたのか取れないのか分からないまま、短い間に何度も `agy models` を起こさない。
+      // 裏の取得が最近落ちていても、この間隔を過ぎていれば自分で 1 回試す（裏の失敗で送信が長く断られない）。
+      // 進行中の取得には相乗りする（並ぶ呼び出しは fetchModels が 1 本に束ねる）
+      if (!modelsFetch && Date.now() - modelsFetchFailedAt < modelsGateRetryMs()) throw new Error(t('antigravity.models.checkNeeded'));
+      try {
+        await fetchModels();
+      } catch (e) {
+        if (AUTH_REQUIRED.test(String(e?.message ?? e))) {
+          authGuess = 'out';
+          throw new Error(t('antigravity.auth.notLoggedIn'));
+        }
+        throw new Error(t('antigravity.models.checkNeeded'));
+      }
+    })().finally(() => { modelsGate = null; });
+    return modelsGate;
   },
 
   // ---- 実行 ---------------------------------------------------------------
@@ -818,14 +837,18 @@ export const backend = {
           // 打ち切られた後の result は SUCCESS でも信じない（onPrintTimeout が畳んでいる）
           if (timedOut || closed) return;
           const r = ev.result ?? {};
-          // 認証の要るターンが通った＝このプロセスでログイン済みが確かめられた（一覧の自動の引き直しを開ける）
-          if (String(r.status ?? "").toUpperCase() === "SUCCESS") authGuess = 'in';
           // 本文の無い SUCCESS は、打ち切り（onPrintTimeout）と見分けがつかない。印が遅れて
           // 届く分だけ待ってから確定する。その間に印が来れば onPrintTimeout が失敗として畳む
           if (!ev[LATE] && !opts?.replay && !sawText && !r.response && String(r.status ?? "").toUpperCase() === "SUCCESS") {
             // 保持役の読みは、確定するまで ack しない（待つ間に手を離しても、新しいサーバーが同じ result を読み直す）
             return new Promise((resolve) => setTimeout(() => resolve(handle({ ...ev, [LATE]: true }, opts)), EMPTY_SUCCESS_GRACE_MS));
           }
+          // 認証の要るターンが通った＝このプロセスでログイン済みが確かめられた（一覧の自動の引き直しを開ける）。
+          // 証拠にするのは「このプロセスが受けた・本文のある SUCCESS」だけ:
+          //   - 再生の行（opts.replay）は、付け直しで読み直した過去の出来事で、このプロセスが確かめた訳ではない
+          //   - 本文の無い SUCCESS は、猶予（EMPTY_SUCCESS_GRACE_MS）の前は打ち切りと見分けがつかず、
+          //     猶予の後（LATE）も本文が来ていなければ安全側で証拠にしない
+          if (!opts?.replay && String(r.status ?? "").toUpperCase() === "SUCCESS" && (sawText || r.response)) authGuess = 'in';
           conversationId ||= r.conversation_id || null;
           // 返答の無いまま拒否された操作だけが残った SUCCESS は、普通の完了にしない（組織の管理ポリシー。docs/multi-backend.md §2.8）
           const deniedActions = Array.isArray(r.denied_actions) ? r.denied_actions : [];
@@ -1406,6 +1429,7 @@ function fetchModels() {
     modelsFetchTriedAt = Date.now();
     modelsFetch = listModels()
       .then((list) => rememberModels(list))
+      .catch((e) => { modelsFetchFailedAt = Date.now(); throw e; })
       .finally(() => { modelsFetch = null; });
   }
   return modelsFetch;
