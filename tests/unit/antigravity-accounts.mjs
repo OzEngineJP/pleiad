@@ -16,12 +16,14 @@ export default async function run(t) {
   const argsFile = path.join(dir, 'args.json');
   const env = {
     AGENT_HOST_AGY_BIN: `${JSON.stringify(process.execPath)} ${JSON.stringify(fake)}`,
+    AGENT_HOST_DATA: dir,   // 一覧の写し（antigravity/models.json）をこの試験の置き場に向ける
     FAKE_AGY_ARGS_FILE: argsFile,
   };
   const saved = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   try {
     Object.assign(process.env, env);
-    const { backend } = await import('../../core/backends/antigravity.mjs');
+    // モジュールのキャッシュを別にして、他の試験が残した見通し（authGuess）・一覧 cache の影響を受けない
+    const { backend } = await import(`../../core/backends/antigravity.mjs?re=accounts-${Date.now()}`);
     const { legacyCapabilities } = await import('../../core/backends/contract.mjs');
     const account = { id: 'acct-a', name: 'A', dir: path.join(dir, 'account-a'),
       get credential() { throw new Error('secret-sentinel must never be read'); } };
@@ -45,12 +47,18 @@ export default async function run(t) {
     assert.equal(usage.windows.length, 3);
     assert.equal(usage.windows[2].usedPercent, 100);
     assert.equal(typeof usage.message, 'string');
-    const args = JSON.parse(await fs.readFile(argsFile, 'utf8'));
-    assert.equal(args.length, 2);
+    // 使用量が読めた＝ログイン済みが確かめられたので、一覧（写しも無い）が無ければ裏で 1 回取りに行く（この呼び出しは待たない）
+    let args;
+    for (let i = 0; i < 100 && (args = JSON.parse(await fs.readFile(argsFile, 'utf8'))).length < 3; i++) await new Promise(r => setTimeout(r, 50));
+    assert.equal(args.length, 3);
     assert.deepEqual(args[0], ['--version']);
     assert.deepEqual(args[1], ['--print', '/usage', '--output-format', 'json', '--print-timeout', '20s']);
-    assert.deepEqual(await fs.readdir(dir), ['args.json']);
-    t.ok('Existing live usage retains its shape and only executes version and read-only usage commands', true);
+    assert.equal(args[2][0], '--log-file');
+    assert.equal(args[2].at(-1), 'models');
+    // 一覧の写し（取れた時刻付き）は使い捨ての置き場に入る（利用者の本物の置き場ではない）
+    for (let i = 0; i < 100 && !(await fs.readdir(dir)).includes('antigravity'); i++) await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual((await fs.readdir(dir)).sort(), ['antigravity', 'args.json']);
+    t.ok('Existing live usage retains its shape, executes only version and read-only usage commands, then warms the missing catalog once', true);
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;

@@ -41,6 +41,24 @@ export default async function (t) {
   await fs.mkdir(work, { recursive: true });
   const gates = await createFakeGates(scratch);
   const readJson = async file => JSON.parse(await fs.readFile(file, 'utf8').catch(() => '[]'));
+  // 起こされた pid・引数のうち会話の agy だけを拾う（送信の関所・裏の一覧取得も同じ控えに残る。会話の起こしは --input-format を持つ）
+  const convPids = async () => {
+    const [pids, args] = await Promise.all([readJson(pidFile), readJson(argsFile)]);
+    return pids.filter((_, i) => args[i]?.includes('--input-format'));
+  };
+  const convArgs = async () => (await readJson(argsFile)).filter(a => a.includes('--input-format'));
+  // 既定が先から分かっている状態を作る一覧の写し。無いと、ターンのあいだに一覧が届いて渡すモデルが変わり、会話を --conversation で起こし直して揺れる
+  const dir = path.join(dataDir, 'antigravity');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'models.json'), JSON.stringify({
+    rows: [
+      { id: 'fake-antigravity-1', label: 'Fake Antigravity 1' },
+      { id: 'fake-antigravity-2', label: 'Fake Antigravity 2 (Thinking)' },
+      { id: 'fake-flash-high', label: 'Fake Flash (High)' },
+      { id: 'fake-flash-low', label: 'Fake Flash (Low)' },
+    ],
+    defaultLabel: 'Fake Flash (High)', fetchedAt: Date.now(),
+  }));
   // 環境変数で入っている仕掛け（PLEIAD_TEST_RESTART）は外し、この suite は明示的に起こし直す
   uninstallRestartMode();
   const controller = installRestartMode({ trigger: 'manual' });
@@ -62,8 +80,8 @@ export default async function (t) {
     // I: ターンを終えて次の発言を待つ agy
     const idle = await c.runTurn({ backend: 'antigravity', cwd: work, prompt: 'plain' }, { ms: WAIT_MS });
     assert.equal(idle.outcome, 'ok', server.tail(10));
-    const [idlePid] = await readJson(pidFile);
-    const idleArgs = (await readJson(argsFile))[0] ?? [];
+    const [idlePid] = await convPids();
+    const idleArgs = (await convArgs())[0] ?? [];
     const idleHome = idleArgs[idleArgs.lastIndexOf('--add-dir') + 1];
     assert.ok(path.basename(String(idleHome)).startsWith('held-'), `保持役に載せた agy の置き場は held-* ${JSON.stringify(idleArgs)}`);
     await fs.stat(idleHome);
@@ -75,7 +93,7 @@ export default async function (t) {
     const rId = started.sessionId;
     await until(async () => (await c.cmd('running')).turns.some(turn => turn.sessionId === rId && turn.held), WAIT_MS, 'R のターンが保持役に載る');
     await sleep(800);   // 札の置き直し（touchCard）が保持役へ届くまで
-    const rPid = (await readJson(pidFile)).at(-1);
+    const rPid = (await convPids()).at(-1);
     assert.notEqual(rPid, idlePid, '会話ごとに別の agy');
     assert.ok(alive(idlePid) && alive(rPid));
 
@@ -97,18 +115,23 @@ export default async function (t) {
     const ends = c.since(from).filter(event => event.type === 'turnEnd' && event.sessionId === rId);
     t.ok('ターン中の agy（札と印がある）は起動で止めず、付け直したターンは 1 回だけ ok で締まる',
       turn.outcome === 'ok' && ends.length === 1 && server.tail(300).includes('ターンを付け直した'), JSON.stringify({ outcome: turn.outcome, ends: ends.length }));
-    const spawnedBefore = (await readJson(pidFile)).length;
+    const spawnedBefore = (await convPids()).length;
     const nextR = await c.runTurn({ backend: 'antigravity', sessionId: rId, cwd: work, prompt: 'next R' }, { ms: WAIT_MS });
     assert.equal(nextR.outcome, 'ok', server.tail(10));
-    t.ok('付け直した agy は会話の次のターンも使う（起こし直さない）', (await readJson(pidFile)).length === spawnedBefore && alive(rPid));
+    // 同じ agy を使い回すか、届いた一覧で既定が明示されて --conversation で起こし直す（新しい会話にはならない）
+    const convsAfterR = await convArgs();
+    const spawnedAfterR = convsAfterR.length;
+    t.ok('付け直した agy の会話の次のターンは同じ会話で続く（使い回しか --conversation で起こし直し）',
+      spawnedAfterR <= spawnedBefore + 1 && convsAfterR.slice(spawnedBefore).every(a => a[a.indexOf('--conversation') + 1] === rId),
+      JSON.stringify({ spawnedBefore, spawnedAfterR, added: convsAfterR.slice(spawnedBefore) }));
 
     // 3. 止めた I の次のターンは --conversation で起こし直す
     const nextI = await c.runTurn({ backend: 'antigravity', sessionId: idle.sessionId, cwd: work, prompt: 'after restart I' }, { ms: WAIT_MS });
     assert.equal(nextI.outcome, 'ok', server.tail(10));
-    const pids = await readJson(pidFile);
-    const last = (await readJson(argsFile)).at(-1) ?? [];
+    const pids = await convPids();
+    const last = (await convArgs()).at(-1) ?? [];
     t.ok('止めた agy の会話の次のターンは --conversation で起こし直して続く',
-      pids.length === spawnedBefore + 1 && last[last.indexOf('--conversation') + 1] === idle.sessionId, JSON.stringify({ pids, last }));
+      pids.length === spawnedAfterR + 1 && last[last.indexOf('--conversation') + 1] === idle.sessionId, JSON.stringify({ pids, last }));
     assert.ok(!server.tail(300).includes('[unhandledRejection]'), server.tail(20));
   } finally {
     c?.close();

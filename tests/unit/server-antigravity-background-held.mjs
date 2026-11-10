@@ -40,6 +40,18 @@ export default async function (t) {
     const found = await ensureHolder({ dataDir, root, mode: "detached", idleMs: 20_000, timeoutMs: 20_000 });
     holderPid = found.pid;
     found.client.close();
+    // 既定が先から分かっている状態を作る一覧の写し。無いと、ターンのあいだに一覧が届いて渡すモデルが変わり、会話を --conversation で起こし直して揺れる
+    const modelsDir = path.join(dataDir, "antigravity");
+    await fs.mkdir(modelsDir, { recursive: true });
+    await fs.writeFile(path.join(modelsDir, "models.json"), JSON.stringify({
+      rows: [
+        { id: "fake-antigravity-1", label: "Fake Antigravity 1" },
+        { id: "fake-antigravity-2", label: "Fake Antigravity 2 (Thinking)" },
+        { id: "fake-flash-high", label: "Fake Flash (High)" },
+        { id: "fake-flash-low", label: "Fake Flash (Low)" },
+      ],
+      defaultLabel: "Fake Flash (High)", fetchedAt: Date.now(),
+    }));
     server = await startServer({
       env: {
         AGENT_HOST_BACKENDS: "antigravity",

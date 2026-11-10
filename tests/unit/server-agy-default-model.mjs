@@ -2,8 +2,10 @@
 //
 //   - 「既定」（model ''）でも、覚えた既定のモデル（models[""].resolvesTo）を --model で明示する
 //     （省くと agy はその時点の自分の既定を使い、Pleiad の起動後に agy 側で既定が変わると、別のモデルの枠が減る）
-//   - 一覧の引き直しは明示の再確認（authStatus の probe）だけ。受動の models() は `agy models` を起こさない
-//     （未ログインだと OAuth を待つので headless 保証が無い）。probe で取れた一覧が agy 側の既定の変化に追う
+//   - 一覧の引き直しは、人の明示（authStatus の probe）のほか、このプロセスでログイン済みと確かめた所でだけ:
+//     覚えた段の要る送信で一覧が無ければ /usage で確かめて取る（待つ）・使用量が読めて一覧が無ければ裏で取る・
+//     'in' の間に TTL を超えた一覧は読み取りをきっかけに裏で引き直す。受動の models() 自体は `agy models` を待たない
+//     （`agy models` は headless 保証が無いので、未確認・未ログインでは起こさない）
 //   - 渡すモデルが変わったら、同じ会話の agy を起こし直す（--model は起動時にしか渡せない）
 // 本物の agy は起動しない（tests/lib/fake-agy.mjs。既定のモデルは FAKE_AGY_DEFAULT_LABEL_FILE で切り替える）。
 import fs from "node:fs/promises";
@@ -49,11 +51,11 @@ export default async function (t) {
       first.outcome === "ok" && firstArgs.length === 1 && modelOf(firstArgs[0]) === "fake-flash-high" && !firstArgs[0].includes("--effort"),
       JSON.stringify(firstArgs));
 
-    // agy 側で既定が変わる（/model で選び直した・agy の既定が更新された）。受動の models() は
-    // cache を返すだけで引き直さない（`agy models` は起こさない）。明示の再確認で一覧を引き直す
+    // agy 側で既定が変わる（/model で選び直した・agy の既定が更新された）。受動の models() は待たず
+    // 覚えた一覧を返す（取ったばかり＝TTL 内なので裏の引き直しも起きない）。明示の再確認で一覧を引き直す
     await fs.writeFile(labelFile, "Fake Antigravity 1");
     const stale = await c.cmd("models", { backend: "antigravity" });
-    t.ok("受動の models() は引き直さず cache を返す", stale[""]?.resolvesTo === "fake-flash-high", JSON.stringify(stale[""]));
+    t.ok("受動の models() は待たず覚えた一覧を返す", stale[""]?.resolvesTo === "fake-flash-high", JSON.stringify(stale[""]));
     await c.cmd("authStatus", { backend: "antigravity", probe: true });
     const after = await c.cmd("models", { backend: "antigravity" });
     t.ok("明示の再確認で一覧を引き直し、新しい既定に追う",
@@ -78,25 +80,24 @@ export default async function (t) {
     await server.stop();
   }
 
-  // ---- 冷たい cache（旧版・写しが無い・壊れた）。覚えている段を「一覧に無い」と黙って既定へ落とさない。
-  //      agy は段がモデル id に入るので、落とすと保存とは違う強さで動く。明示の一覧確認で直せる形で止める
+  // ---- 一覧の写しも無い再起動。覚えている段を「一覧に無い」と黙って既定へ落とさない:
+  //      送信の関所が、受動でも起こせる /usage でログインを確かめてから一覧を自分で取り、覚えた段で送る。
+  //      （未ログイン・見通し不明なら、別の強さで黙って走らないよう同じ関所で止める。antigravity-passive.mjs）
   await fs.writeFile(labelFile, "Fake Flash (High)");   // agy 側の既定は変わっていない想定
   await fs.rm(path.join(scratch, "data", "antigravity", "models.json"), { force: true });
   const server2 = await startServer({ env, dataDir: path.join(scratch, "data"), timeoutMs: 30_000 });
   const c2 = await open({ port: server2.port, token: server2.token });
   try {
     const mark3 = (await argvList()).length;
-    await assert.rejects(
-      c2.runTurn({ prompt: "段", sessionId: null, cwd: ROOT, backend: "antigravity", mode: "yolo" }, { ms: 30_000 }),
-      /モデル一覧がまだ確認できていない|状態を再確認/);
-    t.ok("一覧が無いのに覚えている段があれば、別の強さで黙って走らず、直し口の分かる失敗にする", true);
-    t.ok("失敗したターンは agy を起こさない", (await argvList()).length === mark3, JSON.stringify(await argvList()));
-    await c2.cmd("authStatus", { backend: "antigravity", probe: true });
     const fourth = await c2.runTurn({ prompt: "段", sessionId: null, cwd: ROOT, backend: "antigravity", mode: "yolo" }, { ms: 60_000 });
-    const fourthArgs = await turnArgs(mark3);
-    t.ok("一覧を確認すれば覚えていたモデル・段がそのまま効く（--model に段違いの id）",
-      fourth.outcome === "ok" && fourthArgs.length === 1 && modelOf(fourthArgs[0]) === "fake-flash-low",
-      JSON.stringify(fourthArgs));
+    const spawned = (await argvList()).slice(mark3);
+    const fourthTurn = spawned.filter((a) => a.some((x) => x.startsWith("--print")) && !a.includes("/usage"));
+    t.ok("一覧が無くても送信の関所が /usage でログインを確かめて一覧を取り、覚えたモデル・段がそのまま効く（--model に段違いの id）",
+      fourth.outcome === "ok" && fourthTurn.length === 1 && modelOf(fourthTurn[0]) === "fake-flash-low",
+      JSON.stringify(spawned));
+    t.ok("確かめるのは読み取り専用の /usage で、一覧の取得は 1 本だけ",
+      spawned.some((a) => a.includes("/usage")) && spawned.filter((a) => a.at(-1) === "models").length === 1,
+      JSON.stringify(spawned));
   } finally {
     c2.close();
     await server2.stop();

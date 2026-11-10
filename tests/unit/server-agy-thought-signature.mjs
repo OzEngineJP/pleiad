@@ -44,6 +44,18 @@ export default async function (t) {
   const prompts = async (needle) => (await fs.readFile(promptLog, "utf8").catch(() => "")).split("\n").filter((line) => line.includes(needle));
   const flag = (argv, name) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : null);
 
+  // 既定が先から分かっている状態を作る一覧の写し。無いと、ターンのあいだに一覧が届いて渡すモデルが変わり、会話を --conversation で起こし直して揺れる
+  await fs.mkdir(path.join(dataDir, "antigravity"), { recursive: true });
+  await fs.writeFile(path.join(dataDir, "antigravity", "models.json"), JSON.stringify({
+    rows: [
+      { id: "fake-antigravity-1", label: "Fake Antigravity 1" },
+      { id: "fake-antigravity-2", label: "Fake Antigravity 2 (Thinking)" },
+      { id: "fake-flash-high", label: "Fake Flash (High)" },
+      { id: "fake-flash-low", label: "Fake Flash (Low)" },
+    ],
+    defaultLabel: "Fake Flash (High)", fetchedAt: Date.now(),
+  }));
+
   const server = await startServer({
     env: {
       AGENT_HOST_BACKENDS: "antigravity",

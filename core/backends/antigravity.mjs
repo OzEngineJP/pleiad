@@ -213,15 +213,29 @@ function disarmIdle(session) {
 
 /** 直近に引けたモデル一覧。`agy models` は認証が要るので、引けたときだけ覚える。 */
 let modelCache = null;
+/** 一覧を引いた（写しから戻した）時刻。古い形の写しには時刻が無いので 0（＝古い） */
+let modelCacheAt = 0;
 /** 一覧の写し（AGENT_HOST_DATA/antigravity/models.json）の読み込み。全員が同じ 1 本を待つ */
 let modelsCacheLoad = null;
+/** 進行中の `agy models`。並ぶ取得は同じ 1 本を待つ（single-flight） */
+let modelsFetch = null;
+/** 最後に一覧の取得を試みた時刻（成否を問わない）。失敗の繰り返しを止める間隔に使う */
+let modelsFetchTriedAt = 0;
+/**
+ * 覚えた一覧を古いとみなすまでの ms（`AGENT_HOST_AGY_MODELS_TTL_MS`。既定 5 分）。
+ * agy の既定（/model の選択）は Pleiad の外で変わり得るので、過ぎた一覧は読み取りをきっかけに裏で引き直す（issue #161）。
+ * 読み取りごとに評価する（試験が途中で変えられるように）
+ */
+const modelsTtlMs = () => Number(process.env.AGENT_HOST_AGY_MODELS_TTL_MS ?? 5 * 60_000);
 
 /** ログインを 2 本同時に走らせないための印。 */
 let pendingAuth = null;
 /**
  * 最後に分かったログインの見通し（'unknown'|'in'|'out'。プロセス内だけ）。
- * 受動の照会が `agy` を起こさないための状態表示用。`agy models`（未ログインだと OAuth を待つサブコマンド）は
- * 対話的文脈（auth.status の probe・login）でしか起こさない。`--print` 系（公式の headless 保証）は受動でも起こせる
+ * 受動の照会が `agy` を起こさないための状態表示用。`agy models`（未ログインだと「Please sign in」で落ちるか、
+ * 環境によっては認証待ちになるサブコマンド）は、このプロセスでログイン済みと確かめられた所
+ * （人の明示の確認・ログイン・使用量の読み・認証を通ったターン）でだけ起こす。
+ * `--print` 系（公式の headless 保証）は受動でも起こせる
  */
 let authGuess = "unknown";
 /** 未認証の印（`agy models` の「Please sign in」と `--print` 系の authentication required） */
@@ -407,7 +421,15 @@ export const backend = {
     if (authGuess === 'out') return { windows: [], reason: 'no-login', message: t("antigravity.auth.notLoggedIn") };
     try {
       const result = await (await import('./antigravity-usage.mjs')).readAntigravityUsage();
-      if (result?.attempted === true) authGuess = 'in';
+      if (result?.attempted === true) {
+        authGuess = 'in';
+        // 使用量が読めた＝このプロセスでログイン済みが確かめられた。一覧（メモリにも写しにも）が無ければ裏で 1 回取る
+        //（この呼び出しは待たない。間隔の制限は refreshModelsSoon。一覧があるのに定期の読みで起こし続ける形にはしない）
+        if (modelCache === null) {
+          await loadModelsCache();
+          if (modelCache === null) refreshModelsSoon();
+        }
+      }
       return result;
     } catch (e) {
       if (e?.code === 'AUTH_REQUIRED' || AUTH_REQUIRED.test(String(e?.message ?? e))) {
@@ -433,11 +455,12 @@ export const backend = {
    * 既定のモデルは `agy models` を起こしたときのログから読む（listModels）。一覧を引けていなければ「既定（agy の設定）」だけ
    */
   async models() {
-    // `agy models` は未ログインだと OAuth を待つ（headless の保証が無い）ので、受動の一覧では起こさない。
-    // 引き直しは対話的文脈（auth.status の probe / login の signedIn）だけ。
-    // 受動では agy を起こさないが、前に取れた一覧の写し（認証の証拠ではない）で
-    // 再起動直後も保存済みの明示モデル・エフォート（models[id].efforts）を戻す
+    // `agy models` は headless の保証が無いので、未確認（'unknown'）・未ログイン（'out'）では起こさない。
+    // 'in' の間だけ、一覧が無い・TTL を過ぎた一覧を、この読み取りをきっかけに裏で引き直す
+    //（この呼び出しは待たない。今の一覧（無ければ空）を返す。issue #161）。
+    // 写し（認証の証拠ではない）があれば、再起動直後も保存済みの明示モデル・エフォート（models[id].efforts）を戻す
     if (modelCache === null) await loadModelsCache();
+    refreshModelsSoon();
     return modelCache ?? buildAgyModels([], null);
   },
 
@@ -452,11 +475,34 @@ export const backend = {
     return /^[\w.\-\[\]]+$/.test(model);
   },
 
-  // 一覧が無い（このプロセスで未取得・写しも無い）ときだけ止める。
-  // 段はモデル id に入るので、検査を省いて別の強さで黙って走らせない。一覧確認（状態を再確認）が直し口
+  // 一覧が無い（このプロセスで未取得・写しも無い）ときは、このプロセスでログイン済みと確かめてから自分で取りに行く。
+  // 段はモデル id に入るので、一覧が無いまま検査を省いて別の強さで黙って走らせない。終わり方は:
+  //   - 一覧を取れた（呼ぶ側は取れた一覧でもう一度候補を引く）
+  //   - 未ログイン確定（'out'。一覧の取得が「sign in」で落ちた場合も）: ログインの案内を投げる。agy は起こさない
+  //   - 未確認（'unknown'）: まず /usage で見通しを確かめる（公式の headless 保証。未認証なら OAuth を始めず即落ちる）。
+  //     'in' なら一覧を取り、'out' ならログインの案内、確かめられなければ checkNeeded（`agy models` は起こさない）
+  //   - 取得のほかの失敗・直前の試みから間隔が浅い再試行: checkNeeded（失敗を連発しない）
   async requireModelCatalog() {
     await loadModelsCache();
-    if (modelCache === null) throw new Error(t('antigravity.models.checkNeeded'));
+    if (modelCache !== null) return;
+    if (authGuess === 'out') throw new Error(t('antigravity.auth.notLoggedIn'));
+    if (authGuess === 'unknown') {
+      await backend.usage().catch(() => null);   // 受動でも起こせる /usage（起こしてよいのはこの読み取り専用だけ）
+      if (authGuess === 'out') throw new Error(t('antigravity.auth.notLoggedIn'));
+      if (authGuess !== 'in') throw new Error(t('antigravity.models.checkNeeded'));   // 古い CLI・分からない失敗
+    }
+    // 取れたのか取れないのか分からないまま、短い間に何度も `agy models` を起こさない。
+    // 進行中の取得には相乗りする（並ぶ呼び出しは fetchModels が 1 本に束ねる）
+    if (!modelsFetch && Date.now() - modelsFetchTriedAt < modelsTtlMs()) throw new Error(t('antigravity.models.checkNeeded'));
+    try {
+      await fetchModels();
+    } catch (e) {
+      if (AUTH_REQUIRED.test(String(e?.message ?? e))) {
+        authGuess = 'out';
+        throw new Error(t('antigravity.auth.notLoggedIn'));
+      }
+      throw new Error(t('antigravity.models.checkNeeded'));
+    }
   },
 
   // ---- 実行 ---------------------------------------------------------------
@@ -772,6 +818,8 @@ export const backend = {
           // 打ち切られた後の result は SUCCESS でも信じない（onPrintTimeout が畳んでいる）
           if (timedOut || closed) return;
           const r = ev.result ?? {};
+          // 認証の要るターンが通った＝このプロセスでログイン済みが確かめられた（一覧の自動の引き直しを開ける）
+          if (String(r.status ?? "").toUpperCase() === "SUCCESS") authGuess = 'in';
           // 本文の無い SUCCESS は、打ち切り（onPrintTimeout）と見分けがつかない。印が遅れて
           // 届く分だけ待ってから確定する。その間に印が来れば onPrintTimeout が失敗として畳む
           if (!ev[LATE] && !opts?.replay && !sawText && !r.response && String(r.status ?? "").toUpperCase() === "SUCCESS") {
@@ -1072,7 +1120,7 @@ export const backend = {
         return { loggedIn: false, account: null, unconfirmed: true, detail: t("antigravity.auth.unconfirmed") };
       }
       try {
-        await rememberModels(await listModels());
+        await fetchModels();
         authGuess = 'in';
         return { loggedIn: true, account: t("antigravity.auth.account"), detail: t("antigravity.auth.detail") };
       } catch (err) {
@@ -1165,7 +1213,7 @@ const AGY_MODELS_MAX_CHARS = 128 * 1024;
 /** ログイン済みか。`agy models` が通れば通っている（資格情報は OS の資格情報ストアにあり読めない）。 */
 async function signedIn() {
   try {
-    await rememberModels(await listModels());
+    await fetchModels();
     authGuess = 'in';
     return true;
   } catch {
@@ -1282,6 +1330,7 @@ export async function stopHeldAgy() {
 async function rememberModels(list) {
   if (!list?.rows?.length) return;
   modelCache = buildAgyModels(list.rows, list.defaultLabel);   // lazy load の中の古い写しは、代入前の null 判定で上書きされない
+  modelCacheAt = Date.now();
   await persistModelsCache(list);
 }
 
@@ -1305,7 +1354,9 @@ function cacheRowsOf(raw) {
       && typeof r.label === 'string' && r.label.length > 0 && r.label.length <= MODELS_CACHE_MAX_LABEL)
     .map((r) => ({ id: r.id, label: r.label }));
   if (!rows.length) return null;
-  return { rows, defaultLabel: typeof raw.defaultLabel === 'string' && raw.defaultLabel.length > 0 && raw.defaultLabel.length <= MODELS_CACHE_MAX_LABEL ? raw.defaultLabel : null };
+  // 写しが取れた時刻。古い形（時刻なし）は 0＝古い一覧にして、ログインが確かめられれば引き直す。未来の時刻は今に畳む
+  const fetchedAt = Number.isFinite(raw.fetchedAt) ? Math.max(0, Math.min(raw.fetchedAt, Date.now())) : 0;
+  return { rows, defaultLabel: typeof raw.defaultLabel === 'string' && raw.defaultLabel.length > 0 && raw.defaultLabel.length <= MODELS_CACHE_MAX_LABEL ? raw.defaultLabel : null, fetchedAt };
 }
 
 function loadModelsCache() {
@@ -1317,7 +1368,10 @@ function loadModelsCache() {
       if (!cached) return;
       const built = buildAgyModels(cached.rows, cached.defaultLabel);
       // 読み込みの途中で明示の probe が新しい一覧を入れても、古い写しで上書きしない（代入前に null を確かめる）
-      if (Object.keys(built).length > 1 && modelCache === null) modelCache = built;   // '' だけなら写し無しと同じ
+      if (Object.keys(built).length > 1 && modelCache === null) {
+        modelCache = built;   // '' だけなら写し無しと同じ
+        modelCacheAt = cached.fetchedAt;
+      }
     } catch { /* 無い・壊れている → 空のまま */ }
   })();
   return modelsCacheLoad;
@@ -1330,15 +1384,45 @@ async function persistModelsCache(list) {
       .filter((r) => r.id && r.label);
     if (!rows.length) return;
     const defaultLabel = typeof list.defaultLabel === 'string' ? list.defaultLabel.slice(0, MODELS_CACHE_MAX_LABEL) : null;
-    const data = JSON.stringify({ rows, defaultLabel });
+    const data = JSON.stringify({ rows, defaultLabel, fetchedAt: Date.now() });
     if (Buffer.byteLength(data, 'utf8') > MODELS_CACHE_MAX_BYTES) return;
     await fs.promises.mkdir(transcript.dir(), { recursive: true });
     await writeAtomic(modelsCacheFile(), data);
   } catch { /* 写しが書けなくても動きは変わらない */ }
 }
 
-// `agy models` は受動では引き直さない（未ログインだと OAuth を待つ。headless 保証が無い）。
-// 一覧の引き直しは対話的文脈（auth.status の probe・ログイン後の signedIn）だけ。古い cache はそのまま返す
+// `agy models` の自動の引き直しは、このプロセスでログイン済みと確かめられた所（'in'）だけ:
+//   - 送信の関所（requireModelCatalog）は、一覧が無ければ /usage で見通しを確かめてから取りに行く（待つ）
+//   - 使用量が読めて一覧が無ければ、裏で 1 回取る（usage()）
+//   - 'in' の間、一覧が読まれて TTL を過ぎた一覧なら、裏で引き直す（models()）
+// 未確認（'unknown'）・未ログイン（'out'）では、受動の照会も送信の関所も `agy models` を起こさない
+
+/**
+ * `agy models` を 1 本にまとめて起こし、取れた一覧（と写し）を覚える。
+ * 並ぶ取得（明示の probe・ログインの見張り・送信の関所・裏の引き直し）は同じ 1 本を待つ（single-flight）。
+ */
+function fetchModels() {
+  if (!modelsFetch) {
+    modelsFetchTriedAt = Date.now();
+    modelsFetch = listModels()
+      .then((list) => rememberModels(list))
+      .finally(() => { modelsFetch = null; });
+  }
+  return modelsFetch;
+}
+
+/**
+ * 一覧を裏で引き直す口。`agy models` はこのプロセスでログイン済み（'in'）と確かめられた所でだけ起こす
+ *（未確認・未ログインでは自動的に起こさない）。起こすのは一覧が無い・TTL を過ぎたときで、
+ * 前の試みから TTL 未満では起こさない（使用量の定期の読みをきっかけに起こし続けたり、失敗を繰り返したりしない）。
+ * 呼び出しは待たない。「sign in」で落ちたら見通しを out に、ほかの失敗は前の一覧を残して次の TTL まで試さない
+ */
+function refreshModelsSoon() {
+  if (authGuess !== 'in' || modelsFetch) return;
+  if (modelCache !== null && Date.now() - modelCacheAt < modelsTtlMs()) return;
+  if (Date.now() - modelsFetchTriedAt < modelsTtlMs()) return;
+  void fetchModels().catch((e) => { if (AUTH_REQUIRED.test(String(e?.message ?? e))) authGuess = 'out'; });
+}
 
 // サーバが終わったら、サーバーの子として起こした agy を道連れにする（保持役の子には触れない。新しいサーバーが起動で拾う。ADR 0270）。
 // **SIGINT / SIGTERM のハンドラは足さない**（server はワーカースレッドでも動く。

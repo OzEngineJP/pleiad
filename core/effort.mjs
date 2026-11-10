@@ -60,9 +60,11 @@ export async function validateEffort(backend, value, model, cwd, endpoint = null
   if (value === '') return value;
   if (typeof value !== 'string') throw new Error(t('effort.unavailable'));
   if (!Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value)) {
-    // 一覧そのものが無い backend は「分からない」で止める（モデル id に段が入ると別の強さで動くため。既知の一覧での未対応は従来どおり）
+    // 一覧そのものが無い backend は、一覧を取ってから候補を引き直す（一覧が無いと値の良否を判定できず、
+    // モデル id に段が入ると別の強さで動くため。取れなければ requireModelCatalog が理由を分けた失敗を投げる。
+    // 既知の一覧での未対応は従来どおり）
     if (!endpoint) await backend.requireModelCatalog?.(cwd);
-    throw new Error(t('effort.unavailable'));
+    if (!Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value)) throw new Error(t('effort.unavailable'));
   }
   return value;
 }

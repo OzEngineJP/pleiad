@@ -1,10 +1,14 @@
-// Antigravity の受動の照会は `agy` を起こさない:
+// Antigravity の受動の照会が `agy` を起こす条件:
 //   - auth.status（probe 無し。起動時・定期の確認）は最後に分かった見通しだけを返し、`agy` を起こさない
-//   - models() は cache か「既定（agy の設定）」だけ。`agy models`（headless 保証が無いサブコマンド）は起こさない
+//   - models() は cache（写し含む）か「既定（agy の設定）」だけを返す。
+//     `agy models`（headless 保証が無いサブコマンド）は、このプロセスでログイン済みと確かめた所（'in'）でだけ起こす:
+//       · 一覧が無いのに送信が覚えたエフォートを要る → requireModelCatalog が /usage で確かめてから取る（待つ）
+//       · 使用量（/usage）が読めて一覧が無い → 裏で 1 回取る
+//       · 'in' の間に一覧が読まれて TTL（AGENT_HOST_AGY_MODELS_TTL_MS。既定 5 分）を超えている → 裏で引き直す
 //   - usage() だけは公式の headless 保証（--print/-p。未認証なら OAuth を始めず authentication required で落ちる、
 //     対応版 1.1.11+）の内側で受動に起こせる。呼び出す引数・stdio・未認証の落ち方は偽 CLI で確かめる
 //     （偽 CLI が確かめるのは Pleiad 側の呼び方。CLI 本体の保証は公式仕様と対応版の根拠）
-//   - 未ログインが確定（authentication required / 認証 URL の要求）したら、以後の受動の照会は起こさない
+//   - 未ログインが確定（authentication required / 認証 URL の要求）したら、以後の受動の照会も送信の関所も起こさない
 //   - 認証成功のモデル cache がある状態で資格情報が失効しても、受動の models() は cache を返し、usage は
 //     未認証で落ちて 'out' に戻る（毎回起こし続けない）
 import assert from 'node:assert/strict';
@@ -13,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const name = 'antigravity-passive';
-export const title = 'Antigravity: 受動の照会は agy を起こさない（usage は --print の保証内のみ・未ログインで以後は起こさない）';
+export const title = 'Antigravity: 受動の照会が agy を起こすのはログイン確定後だけ（usage は --print の保証内のみ）';
 
 const FAKE = path.resolve('tests/lib/fake-agy.mjs').replace(/\\/g, '/');
 
@@ -23,8 +27,8 @@ export default async function (t) {
   const authFile = path.join(dir, 'auth.ok');
   const envFile = path.join(dir, 'env.json');
   const saved = {};
-  for (const key of ['AGENT_HOST_AGY_BIN', 'AGENT_HOST_DATA', 'AGENT_HOST_AGY_SUGGEST_HOME',
-    'FAKE_AGY_NEEDS_AUTH', 'FAKE_AGY_AUTH_FILE', 'FAKE_AGY_ARGS_FILE', 'FAKE_AGY_ENV_FILE', 'FAKE_AGY_VERSION', 'FAKE_AGY_MODELS_FAIL']) {
+  for (const key of ['AGENT_HOST_AGY_BIN', 'AGENT_HOST_DATA', 'AGENT_HOST_AGY_SUGGEST_HOME', 'AGENT_HOST_AGY_MODELS_TTL_MS',
+    'FAKE_AGY_NEEDS_AUTH', 'FAKE_AGY_AUTH_FILE', 'FAKE_AGY_ARGS_FILE', 'FAKE_AGY_ENV_FILE', 'FAKE_AGY_VERSION', 'FAKE_AGY_MODELS_FAIL', 'FAKE_AGY_DEFAULT_LABEL']) {
     saved[key] = process.env[key];
   }
   // node は PATH から解く（空白を含む実行ファイルのパスは parseCommand を崩す）
@@ -174,6 +178,95 @@ export default async function (t) {
     // 認証しない版確認だけが起こる（/usage は送らない。起こすたびに --version を確かめるのは既存の動き）
     assert.ok(spawns.length && spawns.every((a) => a.includes('--version')) && !spawns.some((a) => a.includes('/usage')), '古い CLI には /usage を送らない');
     t.ok('古い CLI には /usage を送らず、認証の見通しを変えない', true);
+
+    // ---- 送信の関所（requireModelCatalog）: 一覧が無ければ、/usage で見通しを確かめてから自分で取る。
+    //      ログイン中なら取れ、並ぶ呼び出しは `agy models` を 1 本に束ねる
+    delete process.env.FAKE_AGY_VERSION;
+    await fs.rm(modelsFile, { force: true });
+    let reSeq = 0;
+    const freshBackend = async () => (await import(`../../core/backends/antigravity.mjs?re=${Date.now()}-${++reSeq}`)).backend;
+    const catalogCalls = () => calls().then((a) => a.filter((x) => x.at(-1) === 'models'));
+    const gate = await freshBackend();
+    const beforeGate = (await catalogCalls()).length;
+    const [resolved] = await Promise.all([
+      validateEffort(gate, 'low', 'fake-flash-high'),
+      gate.requireModelCatalog(),
+    ]);
+    assert.equal(resolved, 'low', '一覧を自分で取れれば保存済みのエフォートを適用する');
+    assert.equal((await catalogCalls()).length, beforeGate + 1, '並ぶ取得は agy models を 1 本に束ねる');
+    assert.equal((await gate.auth.status()).loggedIn, true, '一覧を取れた＝ログイン済みと分かる');
+    t.ok('一覧が無くても送信の関所は /usage でログインを確かめて自分で一覧を取る（並ぶ取得は 1 本）', true);
+
+    // ---- 未ログインと確かめられたら、関所は一覧を取りに行かずログインの案内を返す。確定後は usage すら起こさない
+    await fs.rm(modelsFile, { force: true });   // 直前の取得が残した写しは消す（写しがあれば関所は素通しする）
+    await fs.rm(authFile);
+    const gateOut = await freshBackend();
+    const beforeOut = (await catalogCalls()).length;
+    await assert.rejects(gateOut.requireModelCatalog(), /ログイン/);
+    assert.equal((await catalogCalls()).length, beforeOut, '見通しを確かめるのに agy models は起こさない');
+    assert.equal((await gateOut.auth.status()).loggedIn, false);
+    const stillOut = (await calls()).length;
+    await assert.rejects(gateOut.requireModelCatalog(), /ログイン/);
+    assert.equal((await calls()).length, stillOut, 'out のあとの関所は usage すら起こさない');
+    t.ok('未ログインなら送信の関所は /usage で確かめてログインの案内を返す（agy models は起こさない）', true);
+
+    // ---- 古い CLI（/usage を持たない）: 見通しを確かめられないので `agy models` は起こさず「確認して」の案内
+    await fs.writeFile(authFile, 'ok');
+    process.env.FAKE_AGY_VERSION = '1.1.10';
+    const gateOld = await freshBackend();
+    const beforeOld = (await calls()).length;
+    await assert.rejects(gateOld.requireModelCatalog(), /モデル一覧/);
+    const oldSpawns = (await calls()).slice(beforeOld);
+    assert.ok(oldSpawns.length && oldSpawns.every((a) => a.includes('--version')) && !oldSpawns.some((a) => a.includes('models')), '古い CLI には一覧を取りに行かない');
+    delete process.env.FAKE_AGY_VERSION;
+    t.ok('見通しを確かめられなければ agy models は起こさず「一覧を確認して」の案内を返す', true);
+
+    // ---- 使用量が読めて一覧（写しも無い）が無ければ、裏で 1 回一覧を取る（読むたびには取らない）
+    await fs.rm(modelsFile, { force: true });
+    const warm = await freshBackend();
+    const beforeWarm = (await catalogCalls()).length;
+    await warm.usage();
+    for (let i = 0; i < 200 && (await catalogCalls()).length < beforeWarm + 1; i++) await new Promise((r) => setTimeout(r, 25));
+    assert.equal((await catalogCalls()).length, beforeWarm + 1, 'usage が読めたら裏で一覧を 1 回取る');
+    let warmed = {};
+    for (let i = 0; i < 200 && !(warmed = await warm.models())['fake-flash-low']; i++) await new Promise((r) => setTimeout(r, 25));
+    assert.ok(warmed['fake-flash-low'], '裏で取れた一覧が見える');
+    await warm.usage();
+    assert.equal((await catalogCalls()).length, beforeWarm + 1, '一覧があるあとは usage のたびに取らない');
+    t.ok('使用量が読めて一覧が無ければ裏で 1 回取り、取れた一覧を models() が見せる', true);
+
+    // ---- 'in' の間、TTL を過ぎた一覧は読み取りをきっかけに裏で引き直す（agy 側の既定の変化を拾う。issue #161）
+    process.env.AGENT_HOST_AGY_MODELS_TTL_MS = '1';
+    process.env.FAKE_AGY_DEFAULT_LABEL = 'Fake Antigravity 1';
+    const beforeTtl = (await catalogCalls()).length;
+    await warm.models();   // TTL 超過の一覧 → 裏で引き直し
+    delete process.env.AGENT_HOST_AGY_MODELS_TTL_MS;
+    for (let i = 0; i < 200 && (await warm.models())['']?.resolvesTo !== 'fake-antigravity-1'; i++) await new Promise((r) => setTimeout(r, 25));
+    assert.equal((await warm.models())[''].resolvesTo, 'fake-antigravity-1', '引き直した一覧で新しい既定が見える');
+    assert.equal((await catalogCalls()).length, beforeTtl + 1, '裏の引き直しは 1 本');
+    delete process.env.FAKE_AGY_DEFAULT_LABEL;
+    t.ok('in の間は TTL 超過の一覧を読み取りをきっかけに裏で引き直す', true);
+
+    // ---- 見通しが 'unknown'/'out' のままでは、古い一覧を返しても裏の引き直しは起こさない
+    //      （写しの復元はログインの証拠にしない。'out' 確定後も同じ）
+    const mirror = JSON.parse(await fs.readFile(modelsFile, 'utf8'));
+    mirror.fetchedAt = 1;   // 取れたのは昔（TTL 超過）
+    await fs.writeFile(modelsFile, JSON.stringify(mirror));
+    const asleep = await freshBackend();
+    const beforeSleep = (await calls()).length;
+    const restoredStale = await asleep.models();
+    assert.ok(restoredStale['fake-flash-low'], '古い写しでも一覧は戻す');
+    await asleep.requireModelCatalog();   // 写しがあるので関所も素通し（agy は起こさない）
+    assert.equal((await calls()).length, beforeSleep, 'unknown のままでは引き直しも関所も agy を起こさない');
+    t.ok('写しの復元だけのプロセス（unknown）は、古い一覧を返しても agy を起こさない', true);
+    await fs.rm(authFile);
+    const asleepOut = await freshBackend();
+    await asleepOut.usage();   // AUTH_REQUIRED → 'out'
+    const beforeOut2 = (await calls()).length;
+    await asleepOut.models();
+    assert.equal((await calls()).length, beforeOut2, 'out のままでは古い一覧でも引き直さない');
+    await fs.writeFile(authFile, 'ok');
+    t.ok('out のあとは古い一覧でも agy を起こさない', true);
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;

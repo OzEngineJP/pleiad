@@ -86,7 +86,10 @@ export default async function (t) {
     const body = first.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     t.ok('指示と Skills の一覧が agy のシステムプロンプト（エージェントの本文）に入る', first.outcome === 'ok' && body.includes('PROJECT-RULE-AGY') && /demo: Demo skill/.test(body), body.slice(0, 400));
     const agent = JSON.parse(await fs.readFile(agentFile, 'utf8'));
-    const args = JSON.parse(await fs.readFile(argsFile, 'utf8'))[0];
+    // 引数の控えには会話の起こし（--input-format）のほか、送信の関所・裏の一覧取得（--version・/usage・agy models）も残る
+    const allArgs = JSON.parse(await fs.readFile(argsFile, 'utf8'));
+    const convArgs = allArgs.filter((a) => a.includes('--input-format'));
+    const args = convArgs[0] ?? allArgs[0];
     const home = args[args.lastIndexOf('--add-dir') + 1];
     t.ok('Pleiad の置き場に作ったエージェントを --add-dir と --agent で渡す', agent.found && args.includes('--agent') && args[args.indexOf('--agent') + 1] === 'ply-context'
       && path.relative(path.join(dataDir, 'antigravity', 'context'), home).split(path.sep).length === 1 && args.includes(cwd), JSON.stringify(args));
@@ -107,7 +110,14 @@ export default async function (t) {
     const skill = await client.runTurn({ prompt: `mcp-call:load_skill ${JSON.stringify({ id: skillId })}`, sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
     t.ok('Skill の本文を ply_context から読める', skill.events.some(e => e.type === 'tool.result' && e.text.includes('DEMO-SKILL-BODY')), JSON.stringify(skill.events.filter(e => e.type === 'tool.result')).slice(0, 300));
     const pids = JSON.parse(await fs.readFile(pidFile, 'utf8'));
-    t.ok('agy は会話のあいだ 1 本（トークンは会話ごと）', pids.length === 1, JSON.stringify(pids));
+    const latestArgs = JSON.parse(await fs.readFile(argsFile, 'utf8'));
+    const convPids = pids.filter((_, i) => latestArgs[i]?.includes('--input-format'));
+    // 一覧が届くと既定が --model で明示され、走っている会話は一度だけ --conversation で起こし直す（新しい会話・別トークンにはならない）
+    const convs = latestArgs.filter((a) => a.includes('--input-format'));
+    t.ok('agy は会話のあいだ 1 本のまま（既定の明示で起こし直すときも --conversation。トークンは会話ごと）',
+      convs.length === convPids.length && convs.length >= 1 && convs.length <= 2
+      && convs.slice(1).every((a) => a[a.indexOf('--conversation') + 1] === sessionId),
+      JSON.stringify({ pids: pids.length, convPids }));
 
     const record = await client.cmd('sessionContext', { sessionId });
     const row = record?.report?.entries?.find(e => e.name === 'fixture');

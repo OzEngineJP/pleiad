@@ -32,6 +32,7 @@ export default async function (t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-agy-bg-")));
   const fake = path.join(ROOT, "tests", "lib", "fake-agy.mjs");
   const pidFile = path.join(scratch, "agy-pids.json");
+  const argsFile = path.join(scratch, "agy-args.json");
   const commandPidFile = path.join(scratch, "command-pid");
   const readPid = async () => Number(await fs.readFile(commandPidFile, "utf8").catch(() => "0")) || null;
   // 偽の agy は ACTIVE を出してからシェルを起こし、その pid を書く。並べて流すと起こすのに 0.7 秒ほどかかり、裏へ回る（0.4 秒）より遅れる
@@ -42,12 +43,26 @@ export default async function (t) {
   const outside = spawn(COMMAND, { shell: true, stdio: "ignore", windowsHide: true });
   leftovers.add(outside.pid);
 
+  // 既定が先から分かっている状態を作る一覧の写し。無いと、ターンのあいだに一覧が届いて渡すモデルが変わり、会話を --conversation で起こし直して揺れる
+  const modelsDir = path.join(scratch, "data", "antigravity");
+  await fs.mkdir(modelsDir, { recursive: true });
+  await fs.writeFile(path.join(modelsDir, "models.json"), JSON.stringify({
+    rows: [
+      { id: "fake-antigravity-1", label: "Fake Antigravity 1" },
+      { id: "fake-antigravity-2", label: "Fake Antigravity 2 (Thinking)" },
+      { id: "fake-flash-high", label: "Fake Flash (High)" },
+      { id: "fake-flash-low", label: "Fake Flash (Low)" },
+    ],
+    defaultLabel: "Fake Flash (High)", fetchedAt: Date.now(),
+  }));
+
   const server = await startServer({
     env: {
       AGENT_HOST_BACKENDS: "antigravity",
       AGENT_HOST_AGY_BIN: `node "${fake}"`,
       AGENT_HOST_AGY_BACKGROUND_MS: "400",
       FAKE_AGY_PID_FILE: pidFile,
+      FAKE_AGY_ARGS_FILE: argsFile,
       FAKE_AGY_COMMAND_PID_FILE: commandPidFile,
     },
     dataDir: path.join(scratch, "data"),
@@ -85,7 +100,10 @@ export default async function (t) {
     if (shell) await until(async () => (inner = (await listProcesses({ parent: shell }).catch(() => [])).map((p) => p.pid)).length > 0, 3_000);
     if (shell) leftovers.add(shell);
     for (const pid of inner) leftovers.add(pid);
-    const agyPid = JSON.parse(await fs.readFile(pidFile, "utf8")).at(-1);
+    // 会話の agy の pid（控えには送信の関所・裏の一覧取得も残る。会話の起こしは --input-format を持つ）
+    const agyPids = JSON.parse(await fs.readFile(pidFile, "utf8"));
+    const agyArgs = JSON.parse(await fs.readFile(argsFile, "utf8"));
+    const agyPid = agyPids.filter((_, i) => agyArgs[i]?.includes("--input-format")).at(-1);
 
     const unknown = await c.cmd("stopBackground", { sessionId, taskId: `${sessionId}:999` }).then(() => null, (e) => e.message);
     t.ok("知らない id は止めずに断る", Boolean(unknown) && alive(shell), String(unknown));

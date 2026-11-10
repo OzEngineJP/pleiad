@@ -2983,8 +2983,12 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
   const value = asked ?? current.effort ?? (endpoint ? '' : prefs.backends?.[backend.id]?.effort) ?? '';
   if (asked !== undefined) return validateEffort(backend, value, model, cwd, endpoint);
   if (Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value)) return value;
-  // 一覧そのものが無い backend では、覚えている段を「一覧に無い」と黙って落とさない（別の強さで動くため。明示の一覧確認で直せる）
-  if (!endpoint && value !== '') await backend.requireModelCatalog?.(cwd);
+  // 一覧そのものが無い backend では、覚えている段を「一覧に無い」と黙って落とさない（別の強さで動くため）。
+  // 一覧を取ってから候補を引き直し、取れた一覧でも未対応なら未指定に戻す（取れなければ requireModelCatalog が理由を分けた失敗を投げる）
+  if (!endpoint && value !== '') {
+    await backend.requireModelCatalog?.(cwd);
+    if (Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value)) return value;
+  }
   return '';
 }
 

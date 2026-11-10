@@ -697,13 +697,24 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 - `agy models` は未ログインだと `Please sign in to view available models` で落ちる。
   資格情報は **OS の資格情報ストア**（macOS のキーチェーン: service `gemini` / account `antigravity`）に
   あってファイルとして読めないので、**ログイン判定は `agy models` に聞く**
+- `agy models` は `agy --print …` 系と違って **headless の公式保証が無い**（実機では「Please sign in」で落ちたが、
+  環境によっては認証待ちになり得る）。**だから、このプロセスでログイン済みと確かめられた所でだけ起こす**:
+  - 人の明示（`authStatus` の probe・ログインの見張り）で引き、その一覧を控える
+  - 一覧が無いのに送信が覚えたエフォートを要るときは、公式の読み取り専用 `/usage`（1.1.11+。
+    未認証なら `authentication required` で落ちて OAuth を始めない）でログインを確かめてから自分で引く。
+    引けなければ、別の強さで黙って走らないようその送信を止める（`requireModelCatalog`）
+  - 使用量（`/usage`）が読めて一覧が無いときは、裏で 1 回引く（間隔の制限あり）
+  - ログイン済みの間は、`models()` が読まれたときに TTL を超えた一覧を裏で引き直す（下）
+  見通しが未確認（'unknown'）・未ログイン（'out'）の間は、受動の照会も送信の関所も `agy models` を起こさない。
+  取れた一覧は `AGENT_HOST_DATA/antigravity/models.json` に写す（取れた時刻 `fetchedAt` 付き。再起動後も
+  保存済みのモデル・エフォートを戻すため）。**写しはログインの証拠にしない**（`authGuess` は動かさない）
 - `agy models` の出力は `id<TAB>表示名`（例 `gemini-3.8-flash-high<TAB>Gemini 3.8 Flash (High)`）。段違いは別の id で並ぶ（1.2.8 で確認）。
   既定のモデルは設定ファイルに出ない。agy は起動のたびにログへ `Propagating selected model override to backend: label="…"` を書くので、
   Pleiad は `agy --log-file <一時ファイル> models` で呼び、その label を既定として読む（公開の口ではないので、取れなければ「既定（agy の設定）」）
 - 「既定」（モデル `''`）のターンでも、読んだ既定のモデル（`models[""].resolvesTo`）を `--model` で明示する（`agyTarget`）。
   省くと agy はその時点の自分の既定を使い、Pleiad が読んだ後に agy 側で既定が変わると、画面の「既定（モデル名）」・使用量の枠と別のモデルで走って別の枠が減る（issue #161）。
-  既定が読めていなければ何も渡さない。読んだ一覧は `AGENT_HOST_AGY_MODELS_TTL_MS`（既定 5 分）を過ぎると、一覧を読んだとき（`models()`）に裏で `agy models` を引き直す
-  （一度も引けていなければ起こさない）。`--model` は起動時にしか渡せないので、渡すモデルが変われば同じ会話の agy を起こし直す（`--conversation` で続く）
+  既定が読めていなければ何も渡さない。読んだ一覧は `AGENT_HOST_AGY_MODELS_TTL_MS`（既定 5 分）を過ぎると、**ログイン済み（'in'）の間だけ**、一覧を読んだとき（`models()`）に裏で `agy models` を引き直す。
+  失敗したら前の一覧を残し、TTL まで試さない。写しから戻しただけ（'unknown'）では起こさない。`--model` は起動時にしか渡せないので、渡すモデルが変われば同じ会話の agy を起こし直す（`--conversation` で続く）
 - 1.2.8 では `agy -p "/model"` などの slash コマンドは**通常のプロンプトとして LLM に送られる**（changelog 1.1.11 の「quota を使わずに答える」は当てはまらなかった。実測）。調べるのに使わない
 - サブコマンドは `agent(s)` / `models` / `mcp` / `plugin` / `remote-control` / `update` /
   `changelog` / `install` / `help`。**会話を列挙するものが無い**
