@@ -822,6 +822,7 @@ const SUITES = [
   './unit/server-codex-compaction.mjs',
   // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
   './unit/server-compat-endpoints.mjs',
+  './unit/server-setup-endpoint-only.mjs',
   // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）
   './unit/server-compat-real-cli.mjs',
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
