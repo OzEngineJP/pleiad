@@ -80,6 +80,14 @@ export function isClaudeAuthError(message) {
   return /authentication_failed|access token has expired|failed to authenticate|\bAPI Error:? 401\b/i.test(String(message ?? ''));
 }
 
+/**
+ * 失敗の文面が「選んだモデルを API が断った」（404。`There's an issue with the selected model (…). It may not exist or you may not have access to it.`）か。
+ * 例外だけが届いたときの控え。ADR 0309・0311
+ */
+export function isClaudeModelError(message) {
+  return /issue with the selected model|model.{0,60}(?:may not exist|not found|does not exist)|API Error:? 404.{0,200}model/i.test(String(message ?? ''));
+}
+
 export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = null } = {}) {
   const out = [];
   if (!m || typeof m !== "object") return out;
@@ -110,6 +118,11 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = nul
   if (m.type === 'assistant' && m.error === 'authentication_failed') out.push({ type: 'authFailed' });
   if (m.type === 'result' && m.is_error === true && m.api_error_status === 401)
     out.push({ type: 'authFailed', ...(typeof m.result === 'string' && m.result ? { message: m.result } : {}) });
+
+  // 選んだモデルを API が断った（404）。result の is_error・api_error_status: 404。印（modelRejected）は claude.mjs が受け取り、
+  // 失敗の turnResult に kind: 'model' を付ける（401 の authFailed と同じ形。ADR 0311）。subtype は success のままなので、印が無いと成功に見える
+  if (m.type === 'result' && m.is_error === true && m.api_error_status === 404)
+    out.push({ type: 'modelRejected', ...(typeof m.result === 'string' && m.result ? { message: m.result } : {}) });
 
   // 次の発言の候補（promptSuggestions。core/prompt-suggestions.mjs）。1 行に整えて使えるものだけ
   if (m.type === 'prompt_suggestion') {

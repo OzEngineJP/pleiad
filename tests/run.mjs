@@ -54,6 +54,8 @@ const SUITES = [
   './unit/plus-sync-admission.mjs',
   './unit/acp-error.mjs',
   './unit/slot-limits.mjs',
+  // CLI/API にモデルを断られた枠の記録と、エージェントごとの断りの検出（ADR 0311）
+  './unit/model-rejects.mjs',
   './unit/opencode-v2.mjs',
   './unit/compaction.mjs',
   './unit/context-rebuild.mjs',

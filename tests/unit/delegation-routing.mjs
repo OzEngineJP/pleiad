@@ -193,7 +193,11 @@ export default async function (t) {
     && rejectedClaude.routing.skipped.length === 1 && rejectedClaude.routing.skipped[0].account === '' && rejectedClaude.routing.skipped[0].reason === 'model_unknown',
     JSON.stringify(rejectedClaude.routing.skipped));
   const unknownModel = { ...S1, antigravity: { ...S1.antigravity, models: { 'gemini-3.8-flash-high': false } } };
-  t.ok('一覧に無いモデルは model_unknown で飛ばす（黙って既定に落とさない）', routeAt('trivial', 'low', unknownModel).routing.skipped[0].reason === 'model_unknown');
+  const unlisted = routeAt('trivial', 'low', unknownModel);
+  t.ok('一覧に無いモデルでも飛ばさず選ぶ（使えるかは CLI が決める。ADR 0311）', target(unlisted) === 'antigravity:gemini-3.8-flash-high' && unlisted.routing.skipped.length === 0, JSON.stringify(unlisted.routing));
+  t.ok('一覧に無い候補は、選べるまま「一覧に無い」知らせを付ける（modelNotListed）', (s => s?.usable === true && s.modelNotListed === true)(candidateStates({ settings, usage: unknownModel, now: NOW }).find(s => s.candidate === 'antigravity:gemini-3.8-flash-high')));
+  const refused = route({ kind: 'trivial', judged: { judge: DEFAULT_JUDGE, signals: zero }, settings, usage: S1, now: NOW, rejected: { 'antigravity:gemini-3.8-flash-high': 'model_rejected' } });
+  t.ok('CLI に断られた候補（model_rejected）は理由を付けて飛ばし、次の候補へ', target(refused) === 'claude:haiku@main' && refused.routing.skipped[0].reason === 'model_rejected');
   const gone = { ...S1, antigravity: { available: false, checkedAt: null, windows: [], models: {} } };
   t.ok('未接続のバックエンドは unavailable で飛ばす', routeAt('trivial', 'low', gone).routing.skipped[0].reason === 'unavailable');
   const climb = { ...S1, antigravity: { ...S1.antigravity, windows: [week(90, 80, { group: 'Gemini Models' }), week(90, 80, { group: 'Claude and GPT models' })] },

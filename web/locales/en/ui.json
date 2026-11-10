@@ -4120,7 +4120,8 @@
     },
     "skip": {
       "unavailable": "unavailable",
-      "model_unknown": "model not listed",
+      "model_unknown": "not in the model list (the CLI decides whether it works)",
+      "model_rejected": "model rejected by the CLI",
       "usage_unknown": "usage unknown",
       "usage_stale": "usage out of date",
       "quota_high": "usage high",

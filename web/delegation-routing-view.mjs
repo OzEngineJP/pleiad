@@ -78,7 +78,7 @@ const accountName = row => row.accountLabel || (row.account === '' ? t('routing.
 
 /** 上限で止まって飛ばした候補の戻る見込み（Date）。無い・読めなければ null */
 function untilOf(skipped) {
-  const until = ['retry_waiting', 'recently_limited'].includes(skipped.reason) && skipped.until ? new Date(skipped.until) : null;
+  const until = ['retry_waiting', 'recently_limited', 'model_rejected'].includes(skipped.reason) && skipped.until ? new Date(skipped.until) : null;
   return until && Number.isFinite(until.getTime()) ? until : null;
 }
 
@@ -244,7 +244,7 @@ export function parseRoutingFailure(text) {
 }
 
 // 直せば通るもの（設定）を先に、待てば戻るもの（使用量）を後に
-const FAILURE_ORDER = ['unavailable', 'model_unknown', 'quota_full', 'recently_limited', 'retry_waiting', 'quota_high', 'pace_high', 'pace_unknown', 'usage_stale', 'usage_unknown'];
+const FAILURE_ORDER = ['unavailable', 'model_unknown', 'model_rejected', 'quota_full', 'recently_limited', 'retry_waiting', 'quota_high', 'pace_high', 'pace_unknown', 'usage_stale', 'usage_unknown'];
 /** 飛ばした候補を理由ごとにまとめる。[{ reason, items }]（理由の順は FAILURE_ORDER、知らない理由は後ろ） */
 export function groupSkipped(skipped) {
   const groups = new Map();

@@ -14,7 +14,7 @@
 //      item/started で見た item を覚えておいて承認カードに載せる。
 import os from "node:os";
 import { codexQuota, createCodexMeter } from '../usage.mjs';
-import { codexLimitError, codexResetOf } from './codex-limit.mjs';
+import { codexLimitError, codexModelError, codexResetOf } from './codex-limit.mjs';
 import { rpc as defaultRpc, withCodexEnvironment } from './codex-rpc.mjs';
 import { commandActivity } from "./codex-background.mjs";
 import { createTerminalTracker } from "./codex-background.mjs";
@@ -1638,7 +1638,7 @@ const backend = {
     }
     const failureResult = async (error, turns = null) => {
       const message = hide(String(error?.message ?? error?.type ?? error ?? t('codex.errors.failed')));
-      if (!codexLimitError(error)) return { type: 'turnResult', outcome: 'error', error: message, turns };
+      if (!codexLimitError(error)) return { type: 'turnResult', outcome: 'error', error: message, turns, ...(codexModelError(error) ? { kind: 'model' } : {}) };
       const usage = await rpc.request('account/rateLimits/read', {}, 15_000).then(codexQuota, () => null);
       const next = codexResetOf(usage?.windows, Date.now(), model);
       return { type: 'turnResult', outcome: 'limited', error: message, turns,

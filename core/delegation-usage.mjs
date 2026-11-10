@@ -5,7 +5,7 @@
 // snapshot() の形（core/delegation-routing.mjs の checkCandidate が読む）:
 //   { [backend]: { available, checkedAt, windows, accounts?, models: { [model]: bool } } }
 //   accounts … アカウントを登録したエージェント（ADR 0222）。[{ account: ''（ログイン中）| アカウント id, label, windows, identity, runnable }]
-//   models   … 候補に挙がっているモデルが今の一覧にあるか（無ければ model_unknown で飛ばす）
+//   models   … 候補に挙がっているモデルが今の一覧にあるか（設定画面の「一覧に見当たらない」の注意だけに使う。振り分けは飛ばさない。ADR 0311）
 
 import { maskEmail } from './usage.mjs';
 
@@ -18,7 +18,7 @@ export const STALE_MS = REFRESH_MS * 3;
  * installed(id)… CLI が入っているか
  * read(b)      … 使用量（providerQuota）
  * candidates() … 今の設定の候補（'backend:model' の一覧）
- * modelKnown(b, model) … そのモデルが一覧にあるか（validModel）。一覧を引く前なら warm(b) を 1 回呼んでから見直す
+ * modelKnown(b, model) … そのモデルが一覧にあるか（一覧の id と行の resolvedModel の名前）。一覧を引く前なら warm(b) を 1 回呼んでから見直す
  * claudeIdentities() … { login: { org, email } | null, accounts: [{ id, hasToken, identity }] }
  */
 export function createUsageMonitor({ backends, installed = () => true, read, candidates, modelKnown, warm = async () => {}, claudeIdentities = async () => null,
