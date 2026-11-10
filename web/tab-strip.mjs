@@ -38,6 +38,14 @@ export function tabIcon(tab) {
   return icon;
 }
 
+// タブの列と ∨ の一覧では新しいタブに印を付けない（すぐ右の ＋ と同じ形が並ぶため）。
+// 字の頭をほかのタブ・行とそろえるため、印の場所は空けておく（docs/design-system.md「内蔵ブラウザーのタブの列」）
+function stripIcon(tab) {
+  if (tab.page?.kind !== 'new') return tabIcon(tab);
+  const slot = document.createElement('span'); slot.className = 'bu-favicon'; slot.setAttribute('aria-hidden', 'true');
+  return slot;
+}
+
 // ---- タブの列の寸法（docs/design-system.md「内蔵ブラウザーのタブの列」） ----
 const TAB_MIN = 96;          // これより細くしない。入らなければ横に流す
 const NARROW_AT = 120;       // 1 枚あたりこれを切ったら、選んでいないタブの ✕ はホバーだけ（選んだタブは 120px を保つ）
@@ -252,8 +260,8 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       if (running) {
         const mark = document.createElement('span'); mark.className = 'bu-agent'; mark.setAttribute('aria-hidden', 'true'); mark.append(runMark());
         pick.setAttribute('aria-label', `${name}, ${t('browser.chromeWindow.chipAgentRunning', { name: tab.agentName ?? 'Claude' })}`);
-        pick.replaceChildren(tabIcon(tab), mark, title);
-      } else { pick.removeAttribute('aria-label'); pick.replaceChildren(tabIcon(tab), title); }
+        pick.replaceChildren(stripIcon(tab), mark, title);
+      } else { pick.removeAttribute('aria-label'); pick.replaceChildren(stripIcon(tab), title); }
       const closeName = t('tabs:strip.close', { title: name });
       close.title = closeName; close.setAttribute('aria-label', closeName);
     }
@@ -391,7 +399,7 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       li.setAttribute('aria-selected', 'false');
       if (String(tab.targetId) === selected) li.setAttribute('aria-current', 'true');
       const text = document.createElement('span'); text.className = 't'; text.textContent = label(tab);
-      li.append(tabIcon(tab), text);
+      li.append(stripIcon(tab), text);
       return li;
     }));
     markActive();

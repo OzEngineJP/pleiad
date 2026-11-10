@@ -402,6 +402,25 @@ window.ready=true;
     g = await geom();
     check('without the conversation row the tree starts below the address bar', !g.convOpen && !g.hidden && g.top >= g.barBottom, JSON.stringify(g));
     check('no tab count badge in the address bar on PC', g.count === 'none', JSON.stringify(g));
+    // 新しいタブには印を付けず、字の頭はほかのタブ・一覧の行とそろえる（docs/design-system.md「内蔵ブラウザーのタブの列」）
+    await page.evaluate(() => { ui.onEvent({ type:'tab:info', sessionId:'one', reset:true, tabs:[...rows, { sessionId:'one', targetId:'nt', windowId:1, title:'新しいタブ', url:'http://localhost/_pleiad/s/one/new', page:{ kind:'new' } }] }); });
+    await page.locator('.bu-tab[data-target="nt"]').waitFor({ timeout:3000 });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 400)));
+    const slotOf = (root, textSel) => { const icon = root.querySelector('.bu-favicon'), text = root.querySelector(textSel); return { tag:icon?.tagName, empty:!!icon && icon.childElementCount === 0, width:icon ? Math.round(icon.getBoundingClientRect().width) : 0, textLeft:text ? Math.round(text.getBoundingClientRect().left - root.getBoundingClientRect().left) : -1 }; };
+    const stripMarks = await page.evaluate(src => { const slotOf = eval(src); const pick = id => document.querySelector(`.bu-tab[data-target="${id}"] .bu-tab-pick`); return { nt:slotOf(pick('nt'), '.bu-tab-title'), web:slotOf(pick('web'), '.bu-tab-title') }; }, String(slotOf));
+    check('the new tab carries no mark in the strip and its title lines up with the other tabs',
+      stripMarks.nt.tag === 'SPAN' && stripMarks.nt.empty && stripMarks.nt.width === 16 && stripMarks.nt.textLeft === stripMarks.web.textLeft && stripMarks.web.tag === 'IMG', JSON.stringify(stripMarks));
+    check('the + button keeps its plus icon', await page.locator('.bu-tabrow > .bu-new svg path').count() === 1);
+    await page.evaluate(() => { document.querySelector('#panel').style.width = '380px'; });
+    await page.locator('.bu-list').waitFor({ state:'visible', timeout:3000 });
+    await page.locator('.bu-list').click();
+    await page.locator('.bu-alltabs li[role="option"]').first().waitFor({ timeout:3000 });
+    const listMarks = await page.evaluate(src => { const slotOf = eval(src); const row = id => document.querySelector(`.bu-alltabs li[data-target="${id}"]`); return { nt:slotOf(row('nt'), '.t'), file:slotOf(row('file'), '.t') }; }, String(slotOf));
+    check('the new tab carries no mark in the tab list and its text lines up with rows that have one',
+      listMarks.nt.tag === 'SPAN' && listMarks.nt.empty && listMarks.nt.width === 16 && listMarks.nt.textLeft === listMarks.file.textLeft && listMarks.file.tag === 'svg', JSON.stringify(listMarks));
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => { ui.onEvent({ type:'tab:info', sessionId:'one', reset:true, tabs:rows }); document.querySelector('#panel').style.width = '720px'; });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 300)));
     // スマホ: [N] は出る・重なるツリーもアドレスバーの下
     await page.setViewportSize({ width:360, height:720 });
     await page.evaluate(() => new Promise(r => setTimeout(r, 150)));
