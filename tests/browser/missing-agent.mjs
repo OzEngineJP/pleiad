@@ -3,7 +3,7 @@
 //   確かめられない（未確認）だけのときは案内を出さない
 //   使っている途中で 0 個になる → 会話の中の一覧が出て送信ボタンだけ無効（下書きは書ける）／直ると一覧が消えて送れる
 //   エージェントの選択欄は使えないエージェントを選べない／送れなかった行から直して再送できる
-// 実行: node tests/browser/missing-agent.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる。MISSING_AGENT_ONLY=<場面名の一部> で絞る）
+// 実行: node tests/browser/missing-agent.mjs   （playwright-core は Windows の node の大域のもの。PW_CORE・PW_CHROMIUM で替えられる。MISSING_AGENT_ONLY=<場面名の一部> で絞る）
 // 本物のサーバー（偽の Claude Code CLI・一時のデータ置き場・別ポート）だけと話す。LLM も実データも使わない。
 import fs from 'node:fs';
 import os from 'node:os';
