@@ -4233,8 +4233,11 @@ function forgetVocab(id) {
 const loginActive = new Set();
 
 /** 認証の状態を取り直す。refresh() は毎イベント走るので、ここは起動時とログイン / ログアウトの後だけ */
-async function refreshAuth() {
-  await Promise.all(state.backends.map(async (b) => {
+async function refreshAuth({ unsettled = false } = {}) {
+  // unsettled: 使えると分かっているエージェントは読み直さない（裏の確かめ直しが、CLI を起こすのは「まだ変わりうるもの」だけ）
+  const levels = unsettled ? usableNow().levels : null;
+  const targets = levels ? state.backends.filter((b) => !state.auth.has(b.id) || levels.get(b.id)?.level !== 'usable') : state.backends;
+  await Promise.all(targets.map(async (b) => {
     const st = await cmd("authStatus", { backend: b.id }).catch((e) => ({ supported: false, error: e.message }));
     // ログインの途中は、取り直した結果で「待っている」を消さない（行が「ログイン」に戻り、URL の欄が消え、二重に始められてしまう）
     state.auth.set(b.id, loginActive.has(b.id) && !st.loggedIn && !st.pending ? { ...st, pending: true } : st);
@@ -11065,8 +11068,9 @@ noAgent = setupNoAgent({
   recheck: () => refreshAuth(), onChange: () => syncRunState(),
 });
 const agentRecheck = createRecheck({
-  visible: () => onboarding.isOpen() || $("onboardingDialog").open || noAgent.visible() || $("agentControls")?.getClientRects().length > 0,
-  check: () => refreshAuth(),
+  // 見ているのは 4 つ: 初回・出し直しの窓、会話の中の一覧、設定の「エージェント設定」のページ（ほかの設定のページでは走らない）
+  visible: () => $("onboardingDialog").open || noAgent.visible() || $("authSec")?.getClientRects().length > 0,
+  check: () => refreshAuth({ unsettled: true }),
 });
 // 設定 › 記憶 › bot（web/memory-settings.mjs。自動整理の入切・時刻・要約と、状態・明示操作。［ログイン］はエージェント設定へ移す）
 memorySettings = setupMemorySettings({

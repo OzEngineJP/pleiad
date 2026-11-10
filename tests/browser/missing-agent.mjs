@@ -391,6 +391,44 @@ try {
     check(true, '会話を作れなかった知らせの札が出る');
   }]);
 
+  scenes.push(['裏の確かめ直し: 使えると分かっているエージェントの CLI は起こさない・ほかの設定のページでは走らない・使えるようになったのは 5 秒以内に見つける', async () => {
+    const count = path.join(scratch, 'count.log');
+    const read = () => (fs.existsSync(count) ? fs.readFileSync(count, 'utf8').split('\n').filter(l => l.startsWith('auth')).length : 0);
+    // ログイン済みの Claude（使える）だけ。エージェントの設定のページを開いて 10 秒おく
+    let s = await scene({ login: true, sdk: 'local', backends: 'claude', env: { FAKE_CLAUDE_COUNT_FILE: count } });
+    await s.page.waitForSelector('#prompt', { timeout: 20_000 });
+    await s.page.evaluate(() => document.getElementById('railSettings').click());
+    await s.page.waitForSelector('#authSec', { state: 'visible', timeout: 10_000 });
+    await s.page.waitForTimeout(1500);
+    const base = read();
+    await s.page.waitForTimeout(10_000);
+    check(read() === base, '使えると分かっている Claude の CLI を、裏の確かめ直しは起こさない', { base, now: read() });
+    // 未ログインの Claude: 設定の別のページでは起こさず、エージェント設定のページでは 4 秒おきに起こす
+    fs.rmSync(count, { force: true });
+    s = await scene({ login: false, sdk: 'local', backends: 'claude,codex', env: { FAKE_CLAUDE_COUNT_FILE: count } });
+    await s.page.waitForSelector('#prompt', { timeout: 20_000 });
+    await s.page.waitForTimeout(1500);
+    await s.page.evaluate(() => { document.getElementById('onboardingGear')?.click(); });
+    await s.page.waitForTimeout(500);
+    await s.page.evaluate(() => document.getElementById('appearanceTab').click());
+    await s.page.waitForTimeout(500);
+    const b2 = read();
+    await s.page.waitForTimeout(9000);
+    check(read() === b2, '外観のページを見ている間は、確かめ直しが CLI を起こさない', { b2, now: read() });
+    await s.page.evaluate(() => document.getElementById('setupTab').click());
+    await s.page.waitForSelector('#authSec', { state: 'visible', timeout: 10_000 });
+    const b3 = read();
+    await s.page.waitForTimeout(9000);
+    const n = read() - b3;
+    check(n >= 2 && n <= 3, 'エージェント設定のページでは 4 秒おき（9 秒で 2〜3 回）', n);
+    // ログインしたら 5 秒以内に見つける
+    s.login();
+    const t0 = Date.now();
+    await s.page.waitForFunction(() => /ログイン中|ログイン済み/.test(document.querySelector('#authSec [data-agent="claude"]')?.innerText ?? ''), null, { timeout: 8000 }).catch(() => {});
+    const took = Date.now() - t0;
+    check(took <= 5000, 'ログインしたのを 5 秒以内に見つける', took);
+  }]);
+
   const only = process.env.MISSING_AGENT_ONLY;
   let failed = 0;
   for (const [name, fn] of scenes) {

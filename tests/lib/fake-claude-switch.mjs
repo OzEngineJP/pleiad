@@ -3,6 +3,8 @@
 import fs from 'node:fs';
 const argv = process.argv.slice(2);
 const loggedIn = Boolean(process.env.FAKE_CLAUDE_LOGIN_FLAG) && fs.existsSync(process.env.FAKE_CLAUDE_LOGIN_FLAG);
+// FAKE_CLAUDE_COUNT_FILE: 起こされるたびに 1 行足す（裏の確かめ直しが CLI を何回起こすかを数える試験用）
+if (process.env.FAKE_CLAUDE_COUNT_FILE) fs.appendFileSync(process.env.FAKE_CLAUDE_COUNT_FILE, `${argv.join(' ')}\n`);
 if (argv[0] === 'auth') {
   process.stdout.write(`${JSON.stringify(loggedIn ? { loggedIn: true, authMethod: 'fake', email: 'fake@example.invalid' } : { loggedIn: false })}\n`);
   process.exit(0);
