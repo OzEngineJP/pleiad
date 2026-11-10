@@ -84,6 +84,7 @@ async function leftEdges(page, scope) {
     }
     out.progress = [...extra[0].querySelectorAll('.bar, .st')].map(left);
     out.failure = [...extra[1].querySelectorAll('.st')].map(left);
+    out.retry = [...extra[1].querySelectorAll('button')].map(b => b.textContent.trim());
     extra.forEach(e => e.remove());
     return out;
   }, scope);
@@ -93,6 +94,7 @@ function checkEdges(e, where) {
   const lines = [e.name, ...e.desc, ...e.sdkName, ...e.terms];
   check(e.terms.length >= 1 && e.sdkName.length >= 3, `${where}: 名前・説明・SDK の名前・規約の行が全部ある`, e);
   check(lines.every(x => x === e.name), `${where}: 名前・説明・SDK の名前・規約の左端が同じ（${e.name}）`, e);
+  check(e.retry.includes('もう一度取得'), `${where}: 取得に失敗した行に［もう一度取得］がある`, e.retry);
   // 取得中の棒・失敗の理由は SDK の名前の行に続く（名前の右）。折り返したときの行頭も同じ左端になる
   check([...e.progress, ...e.failure].every(x => x >= e.name), `${where}: 取得中・失敗の表示は名前の左端より左へ出ない`, e);
 }
@@ -101,7 +103,7 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-missing-agent-'));
 let n = 0, browser;
 const servers = [];
 /** 場面ごとに別のサーバーとデータ置き場（done: 案内を一度終えた人。login: 最初からログイン済みか。sdk: 'local' | 'download'） */
-async function scene({ done = true, login = false, sdk = 'download', backends = 'claude,codex', seed = false, env = {}, cwd = os.homedir() } = {}) {
+async function scene({ done = true, login = false, sdk = 'download', backends = 'claude,codex', seed = false, env = {}, cwd = os.homedir(), init = null } = {}) {
   const dir = path.join(scratch, `s${++n}`);
   const dataDir = path.join(dir, 'data');
   fs.mkdirSync(dataDir, { recursive: true });
@@ -127,6 +129,7 @@ async function scene({ done = true, login = false, sdk = 'download', backends = 
     };
     if (!watch()) document.addEventListener('DOMContentLoaded', watch);
   });
+  if (init) await page.addInitScript(init);
   await page.bringToFront();
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(`http://127.0.0.1:${server.port}/?token=${server.token}`, { waitUntil: 'load' });
@@ -427,6 +430,36 @@ try {
     await s.page.waitForFunction(() => /ログイン中|ログイン済み/.test(document.querySelector('#authSec [data-agent="claude"]')?.innerText ?? ''), null, { timeout: 8000 }).catch(() => {});
     const took = Date.now() - t0;
     check(took <= 5000, 'ログインしたのを 5 秒以内に見つける', took);
+  }]);
+
+  scenes.push(['リモートの窓（ホストにつないだ側）: 閉じられない窓は出さず、会話の中の一覧が「ホストの PC でログイン」を出す・歯車で設定へ行ける', async () => {
+    const s = await scene({ login: false, sdk: 'local', backends: 'claude', init: () => { window.plyRemote = { shell: 'desktop' }; } });
+    const { page } = s;
+    await page.waitForSelector('#prompt', { timeout: 20_000 });
+    await page.waitForTimeout(3000);
+    check(!(await dialogOpen(page)), 'リモートの窓には閉じられない窓を出さない');
+    check(await listShown(page), '会話の中の一覧が出る');
+    const text = await page.innerText('#noAgent');
+    check(text.includes('ホストの PC でログイン'), '一覧の行が「ホストの PC でログイン」を案内する', text);
+    check(await page.locator('#noAgent button:has-text("ログイン")').count() === 0, 'この窓からログインを始めるボタンは出ない');
+    check(await sendDisabled(page), '送信ボタンは押せない');
+    await page.evaluate(() => document.getElementById('railSettings').click());
+    check(await settingsOpen(page), '設定へ行ける（過去の会話・設定は塞がれない）');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['閉じられない窓が出ている間も、窓（ページ）は閉じられる（アプリの終了を止めない）', async () => {
+    // デスクトップ版の終了（閉じる・メニュー・トレイ・Alt+F4）は main プロセスの close / before-quit が受け持ち、ページの中身に聞かない（desktop/main.cjs）。
+    // ページ側は、終了の確認（beforeunload）を持たず、モーダルが窓を閉じるのを止めないことだけを確かめる
+    const s = await scene({ done: false, login: false, backends: 'claude,codex' });
+    await s.page.waitForSelector('#prompt', { timeout: 20_000 });
+    await s.page.waitForTimeout(1500);
+    check(await dialogOpen(s.page), '閉じられない窓が出ている');
+    const before = await s.page.evaluate(() => ({ hasHandler: typeof window.onbeforeunload === 'function' }));
+    check(!before.hasHandler, 'ページは beforeunload の止め方を持たない');
+    const closed = new Promise(res => s.page.once('close', () => res(true)));
+    await s.page.close({ runBeforeUnload: true });
+    check(await Promise.race([closed, new Promise(res => setTimeout(() => res(false), 5000))]), '窓が出たままでもページは閉じる');
   }]);
 
   const only = process.env.MISSING_AGENT_ONLY;
