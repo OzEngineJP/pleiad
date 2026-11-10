@@ -34,7 +34,7 @@
 .arow .bar.mini>i{display:block;height:100%;color:var(--ink-blue);background:currentColor;border-radius:2px;transition:width var(--dur) var(--ease-out)}
 .arow .bar.ind>i{width:30%;animation:agent-row-ind 1.2s var(--ease-organic) infinite}
 @keyframes agent-row-ind{0%{transform:translateX(-100%)}100%{transform:translateX(340%)}}
-.lnk.q{color:var(--ink-weak);text-decoration:underline;text-underline-offset:2px;font-size:inherit;text-align:left}
+.lnk.q{padding:0;margin:0;color:var(--ink-weak);text-decoration:underline;text-underline-offset:2px;font-size:inherit;text-align:left}
 .lnk.q:hover{color:var(--ink)}
 .ar2.nologo{grid-template-columns:minmax(0,1fr) auto;padding:0}
 .ar2.nologo .ar2-m{grid-column:1}

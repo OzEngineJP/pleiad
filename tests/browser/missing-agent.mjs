@@ -39,6 +39,48 @@ function seedSdk(dataDir) {
 }
 const unseedSdk = dataDir => fs.rmSync(path.join(dataDir, 'claude-sdk'), { recursive: true, force: true });
 
+/**
+ * Claude Code の行の、文字の左端（getBoundingClientRect().left）を全部読む。名前・説明・SDK の名前・規約の行は、ロゴの右の
+ * 同じ位置から始まる（docs/design-system.md「エージェントの行」）。取得中・失敗の行は同じ親へ足して、実際の文脈の CSS で読む。
+ * ロゴの無い文脈（送れなかった行）は、行の左端が基準
+ */
+async function leftEdges(page, scope) {
+  return page.evaluate(async (scope) => {
+    const m = await import('/agent-row.mjs');
+    const rows = [...document.querySelectorAll(`${scope} [data-row="claude"]`)].filter(r => r.offsetParent);
+    const row = rows[0];
+    if (!row) return null;
+    const agent = { id: 'claude', label: 'Claude Code', description: 'エージェントの説明', capabilities: {} };
+    const logo = !row.classList.contains('nologo');
+    const base = { supported: true, installed: true, loggedIn: true };
+    const extra = [
+      m.agentRow({ agent, desc: true, logo, on: {}, st: { ...base, sdk: { ready: false, fetching: { received: 1000, total: 4000 }, version: '0.3.288' } } }),
+      m.agentRow({ agent, desc: true, logo, on: {}, st: { ...base, sdk: { ready: false, error: { kind: 'network', message: 'ネットワークに届かない' }, version: '0.3.288' } } }),
+      m.agentRow({ agent, desc: true, logo, on: {}, termsUrl: 'https://example.com/terms', st: { ...base, sdk: { ready: false, version: '0.3.288' } } }),
+    ];
+    row.parentElement.append(...extra);
+    const left = e => (e ? Math.round(e.getBoundingClientRect().left * 10) / 10 : null);
+    const out = { name: left(row.querySelector('.arow-n')) ?? left(row.querySelector('.ar2-m')), desc: [], sdkName: [], terms: [], progress: [], failure: [] };
+    for (const r of [row, ...extra]) {
+      for (const d of r.querySelectorAll('.ar2-d')) out.desc.push(left(d));
+      for (const n of r.querySelectorAll('.ar2-sn')) out.sdkName.push(left(n));
+      for (const a of r.querySelectorAll('.ar2-d a')) out.terms.push(left(a));
+    }
+    out.progress = [...extra[0].querySelectorAll('.bar, .st')].map(left);
+    out.failure = [...extra[1].querySelectorAll('.st')].map(left);
+    extra.forEach(e => e.remove());
+    return out;
+  }, scope);
+}
+function checkEdges(e, where) {
+  check(e !== null, `${where}: Claude Code の行がある`);
+  const lines = [e.name, ...e.desc, ...e.sdkName, ...e.terms];
+  check(e.terms.length >= 1 && e.sdkName.length >= 3, `${where}: 名前・説明・SDK の名前・規約の行が全部ある`, e);
+  check(lines.every(x => x === e.name), `${where}: 名前・説明・SDK の名前・規約の左端が同じ（${e.name}）`, e);
+  // 取得中の棒・失敗の理由は SDK の名前の行に続く（名前の右）。折り返したときの行頭も同じ左端になる
+  check([...e.progress, ...e.failure].every(x => x >= e.name), `${where}: 取得中・失敗の表示は名前の左端より左へ出ない`, e);
+}
+
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-missing-agent-'));
 let n = 0, browser;
 const servers = [];
@@ -58,6 +100,17 @@ async function scene({ done = true, login = false, sdk = 'download', backends = 
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'ja-JP' });
   const page = await ctx.newPage();
   const errors = [];
+  // 起動中にサイドバーの知らせの札（#sideUndo）へ出た字を全部控える（起動しただけで失敗の札が出ていないかを見る）
+  await page.addInitScript(() => {
+    window.__sideTexts = [];
+    const watch = () => {
+      const box = document.getElementById('sideUndo');
+      if (!box) return false;
+      new MutationObserver(() => { if (!box.hidden && box.textContent.trim()) window.__sideTexts.push(box.textContent.trim()); }).observe(box, { childList: true, attributes: true, subtree: true });
+      return true;
+    };
+    if (!watch()) document.addEventListener('DOMContentLoaded', watch);
+  });
   await page.bringToFront();
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(`http://127.0.0.1:${server.port}/?token=${server.token}`, { waitUntil: 'load' });
@@ -227,6 +280,57 @@ try {
     check(/ホストの PC でログイン/.test(rows.remote.text) && rows.remote.ops.length === 0, 'リモートの窓の行: 「ホストの PC でログイン」で操作が無い', rows.remote);
     check(/取得しています/.test(rows.refetch.text), 'SDK を取り直している間の行: 「取得しています」', rows.refetch);
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['起動しただけでは失敗の札を出さない（使えるものが 0 個でも 1 つ以上でも。覚えが無いときも）', async () => {
+    for (const [label, opts] of [['0 個', { login: false, backends: 'claude,codex' }], ['1 個', { login: true, sdk: 'local', backends: 'claude,codex' }], ['初回・0 個・3 つ有効', { done: false, login: false, backends: 'claude,codex,antigravity' }], ['初回・1 個・3 つ有効', { done: false, login: true, sdk: 'local', backends: 'claude,codex,antigravity' }]]) {
+      const s = await scene(opts);
+      await s.page.waitForTimeout(4500);
+      const texts = await s.page.evaluate(() => window.__sideTexts);
+      check(!texts.some(x => /操作できませんでした|エージェントの指定/.test(x)), `起動しただけでは失敗の札が出ない（使えるもの ${label}）`, texts);
+      check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+    }
+  }]);
+
+  scenes.push(['行の左端: 初回・出し直し・設定・会話の中の一覧・送れなかった行で、名前と下の行の左端が同じ', async () => {
+    // 初回
+    let s = await scene({ done: false, login: false, backends: 'claude,codex' });
+    await s.page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
+    await s.page.waitForTimeout(1500);
+    checkEdges(await leftEdges(s.page, '#onboardingDialog'), '初回の案内');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+    // 出し直し
+    s = await scene({ done: true, login: false, backends: 'claude,codex' });
+    await s.page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
+    await s.page.waitForTimeout(1500);
+    checkEdges(await leftEdges(s.page, '#onboardingDialog'), '出し直した案内');
+    // 設定
+    await s.page.click('#onboardingGear');
+    await s.page.waitForSelector('#refreshAgents', { timeout: 10_000 });
+    await s.page.waitForTimeout(800);
+    checkEdges(await leftEdges(s.page, 'body.settings'), '設定のエージェント設定');
+    // 会話の中の一覧
+    s = await scene({ login: true, sdk: 'local', backends: 'claude' });
+    await s.page.waitForSelector('#prompt', { timeout: 20_000 });
+    await s.page.waitForTimeout(1500);
+    s.logout();
+    await s.page.click('#settings');
+    await s.page.waitForSelector('#refreshAgents', { timeout: 10_000 });
+    await s.page.click('#refreshAgents');
+    await s.page.waitForTimeout(1500);
+    await backToChat(s.page);
+    await s.page.waitForFunction(() => { const e = document.getElementById('noAgent'); return e && !e.hidden && e.offsetParent; }, null, { timeout: 20_000 });
+    checkEdges(await leftEdges(s.page, '#noAgent'), '会話の中の一覧');
+    // 送れなかった行
+    s = await scene({ login: true, sdk: 'download', backends: 'claude', seed: true });
+    await s.page.waitForSelector('#prompt', { timeout: 20_000 });
+    await s.page.waitForTimeout(1800);
+    unseedSdk(s.dataDir);
+    await s.page.click('#prompt');
+    await s.page.keyboard.type('左端の確かめ');
+    await s.page.click('#send');
+    await s.page.waitForSelector('.outbox-fix [data-row="claude"]', { timeout: 20_000 });
+    checkEdges(await leftEdges(s.page, '.outbox-fix'), '送れなかった行');
   }]);
 
   const only = process.env.MISSING_AGENT_ONLY;
