@@ -13,6 +13,8 @@
 .onboarding-subtitle{margin:4px 0 0;font-size:var(--fs-s);color:var(--ink-weak)}
 /* 選んだ行は、脇の一覧と同じく「グレーの地から白へ持ち上がる」で表す（枠も輪も付けない） */
 .onboarding-agent-list{margin:16px 0 20px}
+.onboarding-dialog.none .onboarding-agent-list{margin-bottom:0}
+.onboarding-dialog.none #onboardingError:empty{margin:0}
 /* 使えるエージェントがありません: 使えるものができたら、900ms 待ってから 240ms で薄れて閉じる */
 .onboarding-dialog{transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
 .onboarding-dialog.leaving{opacity:0;transform:translateY(-6px)}

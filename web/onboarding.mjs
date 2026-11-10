@@ -120,6 +120,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, 
     // 作業ディレクトリと「会話を始める」は最初の案内だけ。再び出る案内は、使えるものができたら自分で閉じる
     $('onboardingCwd').hidden = none;
     document.querySelector('.onboarding-actions').hidden = none;
+    welcome.classList.toggle('none', none);   // 下に続く欄が無いので、一覧の下の余白を詰める
     welcome.classList.remove('leaving');
     if (!welcome.open) { welcome.showModal(); $('onboardingTitle').focus({ preventScroll: true }); }   // 歯車に枠が出ないよう、見出しへ（読み上げは見出しから始まる）
     paint();
