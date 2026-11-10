@@ -67,7 +67,8 @@
 .copt.agent-off .cbody{flex:1;min-width:0;opacity:.62}
 .copt.agent-off .sub{display:block}
 .copt.agent-off .lnk.q{display:block;font-size:var(--fs-xs)}
-.copt.agent-off .agent-off-op{flex:none;align-self:center;padding:3px 10px}
+.copt.agent-off .agent-off-op{flex:none;align-self:center;padding:2px 10px;font-size:var(--fs-xs)}
+.copt.agent-off .agent-off-st{flex:none;align-self:center;padding:0;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 
 /* 「使えるエージェントがありません」の一覧（会話の中・空の会話の中央）。一覧は消えるとき 900ms 待ってから 240ms で薄れる */
 .setup{display:flex;justify-content:center;padding:12px 20px 8px;transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}

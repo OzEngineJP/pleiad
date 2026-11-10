@@ -297,7 +297,8 @@ export function createRowKit({ getAuth, getEndpoints, isRemote, termsUrl, action
     const st = getAuth(agent.id);
     const lv = agentLevel({ st, endpointConfirmed: Boolean(c.endpoints?.has(agent.id)), endpointsKnown: c.endpoints !== null, canEndpoint: Boolean(agent.capabilities?.compatEndpoints) });
     const body = bodyOf(agent, c);
-    const words = [bodyState(body, c.remote).textContent];
+    const bodyEl = bodyState(body, c.remote);
+    const words = [bodyEl.textContent];
     if (st?.sdk) words.push(sdkState(st).map((n) => n.textContent).filter(Boolean)[0] ?? '');
     let op = bodyButton(agent, body, { remote: c.remote, on });
     let terms = null;
@@ -305,7 +306,8 @@ export function createRowKit({ getAuth, getEndpoints, isRemote, termsUrl, action
       op = sdkButton(agent, st, { remote: c.remote, on });
       if (op && (sdkKey(st) === 'none' || sdkKey(st) === 'failed')) terms = termsLine(termsUrl);
     }
-    return { usable: lv.level === 'usable', status: words.filter(Boolean).join(' · '), op, terms };
+    // 状態が 1 つだけ（SDK の無いエージェント）なら、名前の行の右に置けるよう、印つきの要素も返す
+    return { usable: lv.level === 'usable', status: words.filter(Boolean).join(' · '), state: st?.sdk ? null : bodyEl, op, terms };
   }
   return { on, waiting, plan, build, paint, bodyOf, condensed };
 }

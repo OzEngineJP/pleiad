@@ -295,9 +295,12 @@ function unusableAgentRow(b, v, mark) {
   const mid = el("span", "cbody");
   const m = el("span", "main hasmark");
   m.append(mark, el("span", "txt", b.label));
-  mid.append(m, el("span", "sub", v.status));
+  // 状態が 1 つだけの行は、名前と同じ行の右（操作の左）に置く。本体と SDK の 2 つがある行（Claude Code）は名前の下に並べる
+  if (!v.state) mid.append(m, el("span", "sub", v.status));
+  else mid.append(m);
   if (v.terms) mid.append(v.terms);
   r.append(el("span", "tick", ""), mid);
+  if (v.state) { const st = el("span", "arow agent-off-st"); st.append(v.state); r.append(st); }
   if (v.op) { v.op.classList.add("agent-off-op"); r.append(v.op); }
   return r;
 }
