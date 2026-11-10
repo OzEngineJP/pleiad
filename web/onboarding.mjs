@@ -121,7 +121,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, 
     $('onboardingCwd').hidden = none;
     document.querySelector('.onboarding-actions').hidden = none;
     welcome.classList.remove('leaving');
-    if (!welcome.open) welcome.showModal();
+    if (!welcome.open) { welcome.showModal(); $('onboardingTitle').focus({ preventScroll: true }); }   // 歯車に枠が出ないよう、見出しへ（読み上げは見出しから始まる）
     paint();
   }
   function resumeGate() {

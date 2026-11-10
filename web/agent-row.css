@@ -83,3 +83,4 @@
 .recheck .run svg{width:14px;height:14px}
 .fail-rows{display:flex;flex-direction:column;gap:2px;margin:0 0 4px;max-width:520px}
 @media (prefers-reduced-motion:reduce){.setup,.setup.leave{transition:none}}
+#onboardingTitle:focus{outline:none}

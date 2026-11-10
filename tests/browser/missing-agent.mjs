@@ -208,6 +208,27 @@ try {
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
 
+  scenes.push(['行の形: 期限切れ・リモートの窓・SDK を取り直している間', async () => {
+    const s = await scene({ login: true, sdk: 'local', backends: 'claude' });
+    const { page } = s;
+    await page.waitForSelector('#prompt', { timeout: 20_000 });
+    const rows = await page.evaluate(async () => {
+      const m = await import('/agent-row.mjs');
+      const agent = { id: 'claude', label: 'Claude Code', description: 'x', capabilities: {} };
+      const base = { supported: true, installed: true, loggedIn: true, sdk: { ready: true, version: '0.3.288' } };
+      const text = (st, remote = false) => { const r = m.agentRow({ agent, st, remote, on: {} }); return { text: r.innerText.split(/\s+/).join(' '), ops: [...r.querySelectorAll('button')].map(x => x.textContent.trim()) }; };
+      return {
+        expired: text({ ...base, expired: true }),
+        remote: text({ ...base, loggedIn: false }, true),
+        refetch: text({ ...base, sdk: { ready: false, fetching: { received: 1000, total: 4000 }, version: '0.3.288' } }),
+      };
+    });
+    check(/ログインの有効期限が切れています/.test(rows.expired.text) && rows.expired.ops.includes('ログインし直す'), '期限切れの行: 文言と［ログインし直す］', rows.expired);
+    check(/ホストの PC でログイン/.test(rows.remote.text) && rows.remote.ops.length === 0, 'リモートの窓の行: 「ホストの PC でログイン」で操作が無い', rows.remote);
+    check(/取得しています/.test(rows.refetch.text), 'SDK を取り直している間の行: 「取得しています」', rows.refetch);
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
   const only = process.env.MISSING_AGENT_ONLY;
   let failed = 0;
   for (const [name, fn] of scenes) {
