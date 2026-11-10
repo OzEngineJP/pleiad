@@ -32,7 +32,7 @@ import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, catalogIsComplete, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
-import { normalizeSdkMessage, isClaudeAuthError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript } from "./claude-normalize.mjs";
+import { normalizeSdkMessage, isClaudeAuthError, isClaudeModelError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript } from "./claude-normalize.mjs";
 import { createTranscriptReader } from "./claude-transcript.mjs";
 import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
@@ -1006,6 +1006,8 @@ export const backend = {
     // ログインの期限切れ（401）の印（normalize の authFailed）と、このターンにツールの実行か返答の本文がもう出たか。
     // 失敗の turnResult に kind: 'auth' と pristine（何も出ていない = 最初の API 呼び出しで断られた）を付ける（ADR 0212）
     let authFailed = null;
+    // 選んだモデルを API が断った（404）印（normalize の modelRejected）。失敗の turnResult に kind: 'model' と pristine を付ける（ADR 0311）
+    let modelRejected = null;
     let produced = false;
     // CLI から最初のメッセージが届いたか。巻き戻しを伴うターンが、これより前に失敗したら（catch の rewindRejected）
     let sawMessage = false;
@@ -1060,6 +1062,7 @@ export const backend = {
         // （SDKAssistantMessage に quotaLimits は載らない）。後の印で上書きすると解除時刻の分からない上限になり、振り分けが外さない（2026-10-21）
         if (ev.type === 'limit') { limit = mergeLimit(limit, ev); continue; }
         if (ev.type === 'authFailed') { authFailed = { message: ev.message ?? authFailed?.message ?? null }; continue; }
+        if (ev.type === 'modelRejected') { modelRejected = { message: ev.message ?? modelRejected?.message ?? null }; continue; }
         if (ev.type === 'text.delta' || ev.type === 'tool.start') produced = true;
         if (ev.type === "turnResult" && stop) continue;
         if (ev.type === 'turnResult' && limit) { heldResult = { ...ev, outcome: 'limited', ...limitFields(limit) }; continue; }
@@ -1220,6 +1223,7 @@ export const backend = {
       else if (limit) emit({ type: 'turnResult', outcome: 'limited', ...limitFields(limit) });
       // 401 の result は subtype が success のまま（is_error だけが立つ）。例外にならずに終わっても、成功として出さない
       else if (authFailed) emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced });
+      else if (modelRejected) emit({ type: 'turnResult', outcome: 'error', error: hide(modelRejected.message ?? 'model_not_found'), kind: 'model', pristine: !produced });
       else if (heldResult) emit(heldResult);
     } catch (err) {
       // 巻き戻しを伴うターンが、CLI から何も届かないうちに失敗した（resume の拒否。`Resume rejected by --resume-drops-turn:` の文面は SDK の例外に載るとは限らないので、
@@ -1239,7 +1243,8 @@ export const backend = {
       }
       const message = hide(err?.message ?? err);
       const auth = authFailed || isClaudeAuthError(err?.message ?? err);
-      emit({ type: "turnResult", outcome: "error", error: message, ...(auth ? { kind: 'auth', pristine: !produced } : {}) });
+      const modelFailed = !auth && (modelRejected || isClaudeModelError(err?.message ?? err));
+      emit({ type: "turnResult", outcome: "error", error: message, ...(auth ? { kind: 'auth', pristine: !produced } : modelFailed ? { kind: 'model', pristine: !produced } : {}) });
       const thrown = (oauthToken || endpoint) && err?.message && message !== err.message ? new Error(message) : err;
       throw promptSent ? thrown : undelivered(thrown);
     } finally {

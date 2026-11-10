@@ -31,6 +31,8 @@ const NOTICED_MAX = 50;
 const MAX_REJECTIONS = 50;
 // 自動の振り分けの子が仕事を始める前に断られたときの、任せ直しの上限（ADR 0302。2 回の任せ直し = 合計 3 候補まで）
 const REROUTE_MAX = 2;
+// CLI/API がモデルを断った回（ADR 0311）は、断られた枠が断った理由付きで残るので、全部の候補を順に試せる上限を高くする
+const MODEL_REROUTE_MAX = 6;
 // 子が返答を終えて裏の作業だけを待つ間の、最初の知らせまでの猶予（docs/agent-delegation.md「子に残った裏の作業」）。
 // すぐ終わる裏の作業（短いサブエージェントなど）のたびに、依頼元のターンを起こさない。知らせ直す周期がこれより短ければ周期に合わせる
 const BACKGROUND_FIRST_MS = 60_000;
@@ -525,8 +527,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         // 痕跡（返答・思考・ツール・作業の出来事）が 1 つでもあれば仕事が重複するので任せ直さない。経過時間は見ない
         for (let reroutes = 0; !finish && !instructionIds.length && !r.host && r.routing?.mode === 'auto'
             && (result?.outcome === 'error' || result?.outcome === 'limited') && result?.touched === false
-            && !controller.signal.aborted && !halted() && reroutes < REROUTE_MAX; reroutes += 1) {
-          const next = await reroute(structuredClone(r), { outcome: result.outcome, error: result.error ?? null }).catch(() => null);
+            && !controller.signal.aborted && !halted() && reroutes < (result.modelRejected ? MODEL_REROUTE_MAX : REROUTE_MAX); reroutes += 1) {
+          const next = await reroute(structuredClone(r), { outcome: result.outcome, error: result.error ?? null, ...(result.modelRejected ? { modelRejected: true } : {}) }).catch(() => null);
+          // モデルを断られた後に候補が尽きた: 振り分けの失敗と同じ文面で失敗にする（ADR 0311）
+          if (next?.exhausted) { result = { ...result, error: next.exhausted }; break; }
           if (!next?.sessionId) break;
           const previous = r.sessionId;
           // タスクの記録を新しい会話・委譲先・振り分けへ書き換える。保存できなければ任せ直しをやめ、作った子を巻き戻す

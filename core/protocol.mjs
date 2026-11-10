@@ -282,6 +282,8 @@ export const EVENTS = new Set([
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
   "turnResult",      // { outcome: ok|error|aborted|limited, turns?, costUsd?, error?, reason?, resetsAt?, window?, scope? }。limited は使用量の上限で止まった（resetsAt は解ける時刻の epoch ms。分からなければ無い。window は止まった枠の名前、scope: 'account' はアカウント全体の枠。ADR 0229）。costUsd はこのターンの推計費用（Claude はターン開始時の累計からの差分）。reason は aborted のときの中断の理由（user|update|quit|hostAway）
   //   kind: 'auth' はログインの期限切れ（401）の失敗。pristine はツールの実行も返答の本文もまだ出ていなかった（最初の API 呼び出しで断られた）。
+  //   kind: 'model' は選んだモデルを CLI/API が断った失敗（Claude は 404、Codex は model_not_found）。委譲の自動の振り分けの子なら、次の候補で作り直す（ADR 0311）。
+  //   見分けは backend の中で行う。見分けられない backend は kind を付けず、ふつうの失敗として理由を出す。pristine が true なら返答・ツールがまだ出ていない
   //   server が auth: { mode: cli, email? } | { mode: token, accountId, name? } と backend を添える（互換の接続先の会話には添えない。ADR 0212）
   // { text } 次の発言の候補（1 行）。Claude はターンの中（turnResult より前のこともある）、Codex・Antigravity はターンの後に届く。保存しない（core/prompt-suggestions.mjs）
   "promptSuggestion",

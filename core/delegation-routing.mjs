@@ -440,6 +440,7 @@ export function sameIdentity(a, b) {
  * 1 つの候補を見る。{ ok, reason?, detail?, account?, accountLabel?, window?, windows?, checkedAt }
  * detail は unavailable の中身（画面が「使えない（入っていない）」と添える）: disabled（エージェントが有効でない）・
  * not_installed（CLI が入っていない）・no_token（登録したアカウントにトークンが無い）・no_account（候補のアカウントが登録に無い）
+ * モデルが一覧にあるかは見ない（一覧は CLI が使えるモデルの正本ではない。使えるかは CLI/API が決め、断られたら次の候補へ。ADR 0311）。
  * usage は core/delegation-usage.mjs の snapshot()：
  *   { [backend]: { available, checkedAt, windows, accounts?: [{ account, label, windows, identity, runnable }], models: { [model]: bool } } }
  * 候補はアカウント 1 つの単位（ADR 0264）。アカウントを登録したエージェントでは、候補のアカウント（`@` が無ければログイン中）の行だけを見て、
@@ -460,12 +461,10 @@ export function checkCandidate(candidate, { usage, settings, now, blocked = () =
     const row = entry.accounts.find(a => a.account === (parsed.account ?? ''));
     if (!row) return { ok: false, reason: 'unavailable', detail: 'no_account', account: parsed.account ?? '', accountLabel: null, checkedAt };
     const labelled = { account: row.account, accountLabel: row.label ?? null };
-    if (entry.models?.[parsed.model] !== true) return { ok: false, reason: 'model_unknown', ...labelled, checkedAt };
     return { ...labelled, ...assessRow(parsed.backend, parsed.model, row, { checkedAt, policy, settings, now, blocked }) };
   }
   // 登録が無い（または持てない）エージェントに、アカウントを書いた候補
   if (parsed.account) return { ok: false, reason: 'unavailable', detail: 'no_account', account: parsed.account, accountLabel: null, checkedAt };
-  if (entry.models?.[parsed.model] !== true) return { ok: false, reason: 'model_unknown' };
   const staleReason = checkedAt == null ? 'usage_unknown' : now - checkedAt > STALE_MS ? 'usage_stale' : null;
   const held = blocked(parsed.backend, parsed.model, entry.accountable ? '' : null);
   if (held) return { ok: false, reason: held.reason, ...(held.until ? { until: held.until } : {}), account: entry.accountable ? '' : null, checkedAt };
@@ -568,8 +567,8 @@ export function manualRouting({ kind, candidate, check, of, from, effortTier = n
 
 /**
  * レベル・候補を選ぶ。judged は判定の結果 { judge, signals, probabilities, fallback }（signals が null なら難しさは mid）。
- * rejected は、選んだ後の確かめで落ちた候補と理由（{ 'codex:gpt-6-sol': 'model_unknown' }。server が委譲先の cwd で
- * モデルを確かめ直し、だめなら足して選び直す）。
+ * rejected は、選んだ後の確かめで落ちた候補と理由（{ 'devin:xxx': 'model_unknown' }。server が走らせられない版を確かめ、
+ * だめなら足して選び直す。子が最初のターンでモデルを断った候補は 'model_rejected'）。
  * レベルは設定の levels の順（弱い → 強い）。表のレベルから上へ順に試し、全部だめなら下のレベルも強い順に戻る。
  * 選べれば { ok: true, routing }、全部だめなら { ok: false, routing }（target は null）。
  * usageAt は選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）
@@ -663,6 +662,8 @@ export function candidateStates({ settings, usage, now = Date.now(), blocked }) 
       ...(scoped ? { scoped: true, account: parsed.account ?? '', accountLabel: row?.label ?? null } : { account: check.ok ? check.account ?? null : null }),
       tiers: order.filter(level => (settings.tiers[level] ?? []).includes(candidate)),
       usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}),
+      // 一覧に見当たらない（注意だけ。使えるかは CLI が決めるので usable は変えない。ADR 0311）
+      ...(parsed && entry?.available && entry.models?.[parsed.model] !== true ? { modelNotListed: true } : {}),
       ...(check.until ? { until: new Date(check.until).toISOString() } : {}),
       ...(check.window ? { window: check.window } : {}),
       checkedAt: at ? new Date(at).toISOString() : null,
@@ -680,7 +681,11 @@ export function formatSkippedCandidates(skipped) {
   }).join('\n');
 }
 
-/** 設定の検証で知らせること（今のモデル一覧に無い候補・使えないバックエンド・登録に無いアカウント）。黙って消さない */
+/**
+ * 設定の検証で知らせること（今のモデル一覧に見当たらない候補・使えないバックエンド・登録に無いアカウント）。黙って消さない。
+ * 一覧に無いことは注意で、振り分けは飛ばさない（使えるかは CLI が決める）。
+ * 取り置きの usage[backend].models は、一覧の id のほか行の resolvedModel に正確に一致する名前（claude-fable-5-2 など）も「ある」と数える
+ */
 export function settingsWarnings({ settings, usage }) {
   const out = [];
   for (const candidate of [...new Set(Object.values(settings.tiers ?? {}).flat())]) {

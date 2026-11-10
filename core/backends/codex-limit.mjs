@@ -3,6 +3,15 @@ export function codexLimitError(error) {
   return /(?:usage|rate|request) limit|quota|too many requests/i.test(message);
 }
 
+/**
+ * 知らない・使えないモデルを API が断った失敗か（`400 model_not_found` など。ADR 0309 の実測）。
+ * 見分けは backend の中で行い、外へは turnResult の kind: 'model' で渡す（ADR 0311）
+ */
+export function codexModelError(error) {
+  const message = String(error?.message ?? error?.type ?? error?.code ?? error ?? '');
+  return /model_not_found|(?:model|モデル).{0,80}(?:is not supported|does not exist|not found|unsupported)|unknown model/i.test(message);
+}
+
 const squash = text => String(text ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /**

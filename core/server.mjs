@@ -75,6 +75,7 @@ import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { limitHolds, limitResetsAt, clockText } from './limit-resume.mjs';
 import { createSlotLimits, slotKey, slotAccount } from './slot-limits.mjs';
+import { createModelRejects } from './model-rejects.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
@@ -1750,7 +1751,8 @@ const routingUsage = createUsageMonitor({
   installed: id => installation(id).installed,
   read: providerQuota,
   candidates: () => [...new Set(levelOrder(routingSettingsCache).flatMap(level => routingSettingsCache.tiers[level] ?? []))],
-  modelKnown: (b, model) => validModel(b, model, process.cwd()),
+  // 設定画面の「一覧に見当たらない」の注意だけに使う（振り分けは一覧で飛ばさない。ADR 0311）。一覧の id のほか、行の resolvedModel に一致する名前も「ある」
+  modelKnown: async (b, model) => await validModel(b, model, process.cwd()) || Boolean(await b.matchModel?.(model, process.cwd()).catch(() => null)),
   // 一覧をまだ引いていないバックエンド（agy はログインの確認で一覧を覚える）だけ、確かめ直す。
   // 確かめられたら 30 分は繰り返さない。未ログイン・失敗なら次の取り直し（5 分後）でまた確かめる
   warm: async b => {
@@ -1799,15 +1801,16 @@ async function routeDelegation(args, lng, cwd) {
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
-  // 選んだ候補のモデルを委譲先の場所で確かめ直す。取り置きの後に一覧から消えていたら、既定に落とさず次の候補へ。
-  // 一覧に載っていても、エージェントが走らせられないと分かっている版（runnableModel。Devin の ACP に無い版）も次の候補へ
+  // 選んだ候補を確かめ直す。一覧では裁かない。エージェントが走らせられないと分かっている版（runnableModel。Devin の ACP に無い版）は次の候補へ
   const rejected = {};
   let ok, routing;
   for (;;) {
     ({ ok, routing } = route({ kind: args.kind, judged, settings, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked }));
     if (!ok) break;
     const picked = getBackend(routing.target.backend);
-    if (picked && await validModel(picked, routing.target.model, cwd).catch(() => false) && picked.runnableModel?.(routing.target.model) !== false) break;
+    // モデルが一覧にあるかは見ない（使えるかは CLI/API が決め、断られたら次の候補で作り直す。ADR 0311）。
+    // 見るのは、エージェントが有効か・モデル名の形・エージェントが走らせられないと分かっている版（runnableModel）だけ
+    if (picked && isModelId(routing.target.model) && picked.runnableModel?.(routing.target.model) !== false) break;
     rejected[candidateId(routing.target.backend, routing.target.model, routing.target.account || null)] = picked ? 'model_unknown' : 'unavailable';
   }
   if (!ok) {
@@ -3712,14 +3715,19 @@ function makeEmit(turn) {
         turn.failureReason = { source: 'backend.afterReply', status: String(event.backendFailure.status ?? '').slice(0, 100),
           error: String(event.backendFailure.error ?? '').slice(0, 1000) };
       const execution = taskExecutions.get(turn.info.sessionId);
-      if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; execution.limit = event.outcome === 'limited' ? turn.limit : null; }
+      if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; execution.limit = event.outcome === 'limited' ? turn.limit : null;
+        // CLI/API がモデルを断った（backend が kind: 'model' で知らせる）。pristine（ツール・返答がまだ出ていない）なら任せ直せる（ADR 0311）
+        execution.modelRejected = event.outcome === 'error' && event.kind === 'model' ? { pristine: event.pristine === true } : null; }
       // 上限で止まった枠は、委譲の振り分けでしばらく飛ばす。同じ枠のターンが通ったら戻す（ADR 0229）
       // 解除の見込みを過ぎてすぐ同じ枠がまた止まったら、保留を延ばす（core/slot-limits.mjs。Issue #111）。
       // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない。アカウント全体の枠（scope: 'account'。Claude の 5 時間・週）は、モデルを問わず 1 つに記録する
       if (!replay && !turn.info.endpoint) {
         if (event.outcome === 'limited') limitedSlots.record({ backend: turn.backend.id, model: turn.info.model, account: limitAccount(turn.backend, turn.info.account),
           resetsAt: turn.limit?.resetsAt, window: turn.limit?.window, scope: event.scope ?? null });
-        else if (event.outcome === 'ok') limitedSlots.clear(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account));
+        else if (event.outcome === 'ok') {
+          limitedSlots.clear(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account));
+          modelRejects.clear(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account));
+        }
       }
       turn.retry = null;
       turn.retryEpisode = null;
@@ -4034,6 +4042,7 @@ async function applyRoutingSettings(patch) {
   });
   await savePref('delegationRouting', Object.keys(raw).length ? raw : null);
   routingSettingsCache = settings;
+  modelRejects.reset();
   if (!settings.enabled) routingUsage.stop();
   else if (ROUTING_USAGE_AUTO) {
     routingUsage.start();
@@ -6466,6 +6475,8 @@ const limitStates = new Map();
 // 解除の見込み（最低 1 分。見込みを過ぎてすぐの再発は延ばす）を過ぎるか、同じ枠のターンが通ったら外す。
 // 解除時刻が分からないものは 30 分（覚えるのはこのサーバーの間だけ。core/slot-limits.mjs）
 const limitedSlots = createSlotLimits();
+// CLI/API がモデルを断った枠（自動の振り分けのモデルの断り。30 分外す。振り分けの設定が変わったら忘れる。ADR 0311）
+const modelRejects = createModelRejects();
 /**
  * 枠のアカウント（limitedSlots の記録・slotBlocked・heldSlots・turn.limit・完了の通知で同じ規則にする。Issue #121）。
  * アカウントを持たないエージェントは、会話が継いだ Claude のアカウントがあっても null（振り分けは null で引く）
@@ -6482,8 +6493,9 @@ function slotBlocked(backend, model, account) {
       return { reason: 'retry_waiting', ...(Number.isFinite(turn.retry.next) ? { until: turn.retry.next } : {}) };
   }
   const limited = limitedSlots.get(backend, model, account);
-  if (!limited) return null;
-  return { reason: 'recently_limited', until: limited.until };
+  if (limited) return { reason: 'recently_limited', until: limited.until };
+  const rejected = modelRejects.get(backend, model, account);
+  return rejected ? { reason: 'model_rejected', until: rejected.until } : null;
 }
 /**
  * 今止まっている枠（使用量の画面・ply_usage に出す。Issue #111）。日次・週次の枠が 0% でも、短い間隔の上限で使えないことがある。
@@ -6848,7 +6860,11 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   const limit = !signal.aborted && execution.outcome === 'limited' && execution.limit
     ? { resetsAt: execution.limit.resetsAt ?? null, window: execution.limit.window ?? null,
       backend: execution.limit.backend ?? null, model: execution.limit.model ?? null, account: execution.limit.account ?? null } : null;
-  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git, touched: Boolean(execution.touched), ...(limit ? { limit } : {}), ...extra };
+  // モデルを断られた（pristine）ときは、断りの文面そのものが assistant の発言として流れていても仕事の痕跡に数えない
+  const modelRejected = !signal.aborted && execution.outcome === 'error' && Boolean(execution.modelRejected);
+  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git,
+    touched: modelRejected && execution.modelRejected.pristine ? false : Boolean(execution.touched),
+    ...(modelRejected ? { modelRejected: true } : {}), ...(limit ? { limit } : {}), ...extra };
 }
 
 /**
@@ -7021,8 +7037,10 @@ agentTasks = await createAgentTasks({
     const tierRule = !auto && !chosen && !endpoint && Boolean(accountKind(backend)) && (await accountRows(backend)).length > 0;
     const account = tierRule ? await tierAccountFor(backend, carried, typeof args.model === 'string' ? args.model : null, lng) : carried;
     if (!endpoint) backend = await backendForAccount(backend, await accountResolve(backend, account));
-    const asked = await canonicalModel(backend, args.model, cwd, endpoint);
-    const model = await resolveModel(null, asked, backend, cwd, endpoint);
+    // 自動の振り分けで選んだモデルは、一覧で読み替え・裁きをせず選んだ名前のまま送る（claude-fable-5-2 のように一覧の id でない名前も CLI が受け付ける。
+    // 使えなければ CLI/API が断り、次の候補で作り直す。ADR 0311）
+    const asked = auto ? args.model : await canonicalModel(backend, args.model, cwd, endpoint);
+    const model = auto ? (isModelId(asked) ? asked : '') : await resolveModel(null, asked, backend, cwd, endpoint);
     // 依頼元が書いたモデル名が一覧に無いなら、黙って既定に落とさず断る（選べる名前を添える）。互換の接続先は形だけを見る
     if (!auto && !endpoint && typeof args.model === 'string' && model !== asked) {
       throw new Error(agentT(lng, 'delegation.modelUnknown', { model: args.model, backend: backend.id, models: await knownModelNames(backend, cwd) }));
@@ -7092,24 +7110,31 @@ agentTasks = await createAgentTasks({
     const oldSessionId = task.sessionId;
     // 失敗した候補（これまでの試行分全部）を外す。同じ委譲先を二度選ばない（route() の skipped には理由付きで出る）
     const rejected = {};
-    for (const target of [...(prev.attempts ?? []).map(a => a?.target), prev.target])
-      if (target?.backend && target.model) rejected[candidateId(target.backend, target.model, target.account || null)] = 'rejected_before_work';
+    for (const a of [...(prev.attempts ?? []), { target: prev.target, reason: failed?.modelRejected ? 'model_rejected' : null }])
+      if (a?.target?.backend && a.target.model) rejected[candidateId(a.target.backend, a.target.model, a.target.account || null)] = a.reason ?? 'rejected_before_work';
+    // CLI/API がモデルを断った（最初のターン。ADR 0311）: その枠をしばらく振り分けから外し、続く委譲も選ばない
+    if (failed?.modelRejected && prev.target?.backend && prev.target.model)
+      modelRejects.record({ backend: prev.target.backend, model: prev.target.model, account: limitAccount(prev.target.backend, prev.target.account), message: failed.error });
     const judged = { judge: prev.judge ?? 'none', signals: prev.signals ?? null, probabilities: prev.probabilities ?? null, fallback: prev.fallback ?? null };
     // タスクの worktree が生きていればその中で、無ければ（先の完了で片付けられた）元の場所で走らせる
     const wt = task.worktree ? await worktreeHost.worktrees.get(task.worktree.id).catch(() => null) : null;
     const cwd = wt?.path ?? task.worktree?.origin ?? task.cwd;
-    // 選んだ候補を子の場所で確かめ直す（routeDelegation の preflight と同じ。一覧から消えた・走らせない版は次の候補へ）
+    // 選んだ候補を確かめ直す（routeDelegation の preflight と同じ。一覧では裁かず、走らせない版は次の候補へ）
     let ok, next, backend = null, account = '', model = null;
     for (;;) {
       ({ ok, routing: next } = route({ kind: prev.kind, judged, settings: routingSettingsCache, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked }));
-      if (!ok) return null;
+      if (!ok) {
+        // モデルを断られた後に候補が尽きた: 振り分けの失敗と同じ集計の文面で失敗にする（今の routing.exhausted と同じ見せ方）
+        if (!failed?.modelRejected) return null;
+        const skipped = formatSkippedCandidates(next.skipped);
+        return { exhausted: agentT(lng, 'routing.exhausted', { kind: prev.kind, difficulty: next.difficulty, avoidPercent: routingSettingsCache.avoidPercent, skipped }) };
+      }
       const picked = getBackend(next.target.backend);
       if (!picked) { rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'unavailable'; continue; }
       const acct = accountKind(picked) ? next.target.account ?? '' : '';
       const scoped = await backendForAccount(picked, await accountResolve(picked, acct)).catch(() => null);
-      const resolved = scoped ? await resolveModel(null, await canonicalModel(scoped, next.target.model, cwd, ''), scoped, cwd, '').catch(() => null) : null;
-      if (resolved === next.target.model && await validModel(scoped, next.target.model, cwd).catch(() => false) && scoped.runnableModel?.(next.target.model) !== false) {
-        backend = scoped; account = acct; model = resolved; break;
+      if (scoped && isModelId(next.target.model) && scoped.runnableModel?.(next.target.model) !== false) {
+        backend = scoped; account = acct; model = next.target.model; break;
       }
       rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'model_unknown';
     }
@@ -7121,7 +7146,7 @@ agentTasks = await createAgentTasks({
     const label = accountKind(backend) && next.target.accountLabel && (next.target.account ?? null) === account ? { accountLabel: next.target.accountLabel } : {};
     // 失敗した回の記録（error は完了通知に載せるのと同じ、伏せ済みの文言）。新しい子の会話の routing にも同じ attempts を書く
     const attempt = { target: { backend: prev.target?.backend ?? null, model: prev.target?.model ?? null, account: prev.target?.account ?? null },
-      sessionId: oldSessionId, outcome: failed?.outcome ?? null, error: failed?.error ?? null };
+      sessionId: oldSessionId, outcome: failed?.outcome ?? null, error: failed?.error ?? null, ...(failed?.modelRejected ? { reason: 'model_rejected' } : {}) };
     const routing = { ...next, target: { backend: backend.id, model, account: accountKind(backend) ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null },
       ...(decided ? { effortSource: decided.source, ...(decided.tier ? { effortTier: decided.tier } : {}), ...(decided.asked ? { effortAsked: decided.asked } : {}) } : {}),
       attempts: [...(prev.attempts ?? []), attempt] };

@@ -21,6 +21,7 @@
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
 //   "fail-auth"    … ログインの期限切れ（401）で失敗する（Claude と同じ kind: 'auth'・pristine: true。ADR 0212）。
 //                    "fail-auth tool" はツールを 1 回動かしてから失敗する（pristine: false）
+//   "fail-model"   … 選んだモデルを断られて失敗する（kind: 'model'・pristine: true。ADR 0311）。モデル名が rejected- で始まるときは、台本によらずどのターンも同じ断り方をする
 //   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
 //   "retry-wait <limit|error> <秒|none> gate:<名前> <本文>" … 再試行の待ち（OpenCode の session.status の retry を写した activity retrying と同じ形。ADR 0229）を出し、
 //                    ゲートが開いたら running に戻って本文を返す。<秒> は次の再試行までの秒（none は時刻が分からない待ち）。待ちの間に中断されたら aborted
@@ -586,9 +587,17 @@ export const backend = {
     const out = { uuid: crypto.randomUUID(), role: "assistant", text: "", toolCalls: null };
     // 台本 "fail-auth" の失敗（turnResult に kind: 'auth' と pristine を付ける）
     let authFailure = null;
+    // モデルの断り（kind: 'model'・pristine: true。Claude の 404 と同じ形。ADR 0311）
+    let modelFailure = false;
 
     try {
-      if (!plain && text.startsWith("slow")) {
+      // モデル名が rejected- で始まるとき、または台本 "fail-model"。Claude と同じく、断りの文面が assistant の発言として流れてから失敗する
+      if (!plain && (/^fail-model(\s|$)/.test(text) || /^rejected-/.test(String(model ?? '')))) {
+        out.text = `There's an issue with the selected model (${model || 'default'}). It may not exist or you may not have access to it.`;
+        await say(emit, out.text, out.uuid);
+        modelFailure = true;
+        throw new Error(out.text);
+      } else if (!plain && text.startsWith("slow")) {
         // 中断できることを測るための台本。signal が来るまで終わらない
         if (SLOW_STEER && control) {
           // AGENT_HOST_FAKE_SLOW_STEER=1 のとき: 途中送信を受理して履歴に積む（bot への書き足しの検査用。終わりは finally が外す）
@@ -971,7 +980,7 @@ export const backend = {
         await say(emit, out.text, out.uuid);
       }
     } catch (err) {
-      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err), ...(authFailure ? { kind: "auth", pristine: authFailure.pristine } : {}) });
+      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err), ...(authFailure ? { kind: "auth", pristine: authFailure.pristine } : modelFailure ? { kind: "model", pristine: true } : {}) });
       if (authFailure && out.toolCalls) push(s, out);
       throw err;
     } finally {

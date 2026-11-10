@@ -156,6 +156,43 @@ export default async function (t) {
       cappedNotice.includes('antigravity:gemini-3.8-nano-high は仕事を始める前に使用量の上限で断られたので、antigravity:gemini-3.8-turbo-high へ任せ直しました')
       && cappedNotice.includes('antigravity:gemini-3.8-turbo-high は仕事を始める前に使用量の上限で断られたので、antigravity:gemini-3.8-pro-high へ任せ直しました'), cappedNotice.slice(0, 600));
 
+    // ---- モデルを CLI に断られた子（ADR 0311）。一覧に無い名前（fake:rejected-a は fake の一覧に無い）も、飛ばさず選ぶ
+    await setTiers(['fake:rejected-a', 'fake:fast']);
+    const refusedFirst = await delegate(sid, { kind: 'trivial', task: 'echo:after-refusal' });
+    t.ok('（準備）一覧に無いモデルでも飛ばさず、先頭の候補として選ぶ', refusedFirst.data?.routing?.target?.backend === 'fake' && refusedFirst.data.routing.target.model === 'rejected-a'
+      && !(refusedFirst.data.routing.skipped ?? []).some(x => x.candidate === 'fake:rejected-a'), JSON.stringify(refusedFirst.data?.routing?.skipped));
+    const refusedRow = await settle(refusedFirst.data.taskId);
+    t.ok('最初のターンでモデルを断られた子は、次の候補（fake:fast）で作り直して完了する（発言は断りの文面だけでも仕事の痕跡にしない）',
+      refusedRow?.status === 'completed' && refusedRow.model === 'fast' && refusedRow.sessionId !== refusedFirst.data.sessionId
+      && refusedRow.routing?.attempts?.length === 1 && refusedRow.routing.attempts[0].target?.model === 'rejected-a' && refusedRow.routing.attempts[0].reason === 'model_rejected',
+      JSON.stringify({ s: refusedRow?.status, m: refusedRow?.model, at: refusedRow?.routing?.attempts }));
+    t.ok('断られた候補は skipped に model_rejected で残る', (refusedRow?.routing?.skipped ?? []).some(x => x.candidate === 'fake:rejected-a' && x.reason === 'model_rejected'),
+      JSON.stringify(refusedRow?.routing?.skipped));
+    // 設定を替えずにもう一度: 断られた候補はしばらく選ばない（サーバーの間だけ覚える）
+    const second = await delegate(sid, { kind: 'trivial', task: 'echo:again' });
+    t.ok('しばらくは断られた候補を選ばず、最初から次の候補へ（skipped に model_rejected と外す期限）', second.data?.routing?.target?.model === 'fast'
+      && (second.data.routing.skipped ?? []).some(x => x.candidate === 'fake:rejected-a' && x.reason === 'model_rejected' && x.until), second.text.slice(0, 400));
+    await settle(second.data.taskId);
+    // 振り分けの設定を保存すると、断りの記録は忘れる
+    await setTiers(['fake:rejected-a', 'fake:fast']);
+    const forgot = await delegate(sid, { kind: 'trivial', task: 'echo:forgot' });
+    t.ok('設定を保存すると断りの記録は消え、また先頭の候補から試す', forgot.data?.routing?.target?.model === 'rejected-a', forgot.text.slice(0, 300));
+    await settle(forgot.data.taskId);
+    // 候補が尽きたら、理由つきで失敗する
+    await setTiers(['fake:rejected-a', 'fake:rejected-b']);
+    const exhausted = await delegate(sid, { kind: 'trivial', task: 'echo:none' });
+    const exhaustedRow = await settle(exhausted.data.taskId);
+    t.ok('候補がすべて断られたら失敗し、理由（routing.exhausted）に断られた候補を載せる', exhaustedRow?.status === 'failed'
+      && /rejected-a/.test(exhaustedRow.error ?? '') && /rejected-b/.test(exhaustedRow.error ?? '') && exhaustedRow.routing?.attempts?.length >= 1,
+      JSON.stringify({ s: exhaustedRow?.status, e: exhaustedRow?.error }));
+    // 固定（backend と model を書く）は、これまでどおり
+    const pinnedBad = await delegate(sid, { kind: 'trivial', backend: 'fake', model: 'rejected-a', task: 'echo:x' });
+    t.ok('固定でモデルが一覧に無ければ、これまでどおり model_unknown で断る（子を作らない）', pinnedBad.isError && pinnedBad.text.includes('model_unknown'), pinnedBad.text.slice(0, 300));
+    const pinnedRefused = await delegate(sid, { kind: 'trivial', backend: 'fake', model: 'fast', task: 'fail-model' });
+    const pinnedRefusedRow = await settle(pinnedRefused.data.taskId);
+    t.ok('固定の委譲でモデルを断られても、作り直さず同じ子の会話で失敗になる', pinnedRefusedRow?.status === 'failed' && pinnedRefusedRow.sessionId === pinnedRefused.data.sessionId
+      && !(pinnedRefusedRow.routing?.attempts ?? []).length, JSON.stringify({ s: pinnedRefusedRow?.status, at: pinnedRefusedRow?.routing?.attempts }));
+
     // 後片付け: 走っている子を止める
     for (const task of await c.cmd('agentTasks')) if (['queued', 'running'].includes(task.status)) await c.cmd('cancelAgentTask', { taskId: task.taskId }).catch(() => {});
   } finally {

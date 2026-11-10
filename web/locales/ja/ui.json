@@ -4017,7 +4017,8 @@
     },
     "skip": {
       "unavailable": "使えない",
-      "model_unknown": "モデルが一覧に無い",
+      "model_unknown": "一覧に見当たらない（使えるかは CLI が決める）",
+      "model_rejected": "モデルを CLI に断られた",
       "usage_unknown": "使用量が分からない",
       "usage_stale": "使用量が古い",
       "quota_high": "使用量が多い",

@@ -457,9 +457,11 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       const u = usageSummary(st); if (u) sub.push(u);
     }
     else if (st) sub.push(skipText(st.reason, st.detail));
+    // 一覧に見当たらない（注意。振り分けは飛ばさず、使えるかは CLI が決める）
+    if (st?.modelNotListed) sub.push(skipText('model_unknown'));
     if (!sub.length) return { st, lines: [] };
     const relogin = scoped && parsed.account && st?.detail === 'no_token' ? parsed.account : '';
-    return { st, lines: [{ text: (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(join), strong: st?.reason === 'model_unknown', relogin }] };
+    return { st, lines: [{ text: (st?.modelNotListed ? '⚠ ' : '') + sub.join(join), strong: Boolean(st?.modelNotListed), relogin }] };
   }
   const usageLines = (candidate, lines) => lines.map(line => {
     const small = el('small', line.strong ? 'rt-strong' : null, line.text);
