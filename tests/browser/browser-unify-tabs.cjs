@@ -402,7 +402,7 @@ window.ready=true;
     g = await geom();
     check('without the conversation row the tree starts below the address bar', !g.convOpen && !g.hidden && g.top >= g.barBottom, JSON.stringify(g));
     check('no tab count badge in the address bar on PC', g.count === 'none', JSON.stringify(g));
-    // 新しいタブには印を付けず、字の頭はほかのタブ・一覧の行とそろえる（docs/design-system.md「内蔵ブラウザーのタブの列」）
+    // 新しいタブには印を付けず、字の頭はほかのタブ・一覧の行とそろえる（docs/design-system.md「PC のタブとアドレスバー」）
     await page.evaluate(() => { ui.onEvent({ type:'tab:info', sessionId:'one', reset:true, tabs:[...rows, { sessionId:'one', targetId:'nt', windowId:1, title:'新しいタブ', url:'http://localhost/_pleiad/s/one/new', page:{ kind:'new' } }] }); });
     await page.locator('.bu-tab[data-target="nt"]').waitFor({ timeout:3000 });
     await page.evaluate(() => new Promise(r => setTimeout(r, 400)));

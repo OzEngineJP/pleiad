@@ -39,15 +39,16 @@ export function tabIcon(tab) {
 }
 
 // タブの列と ∨ の一覧では新しいタブに印を付けない（すぐ右の ＋ と同じ形が並ぶため）。
-// 字の頭をほかのタブ・行とそろえるため、印の場所は空けておく（docs/design-system.md「内蔵ブラウザーのタブの列」）
+// 字の頭をほかのタブ・行とそろえるため、印の場所は空けておく（docs/design-system.md「PC のタブとアドレスバー」）
 function stripIcon(tab) {
   if (tab.page?.kind !== 'new') return tabIcon(tab);
   const slot = document.createElement('span'); slot.className = 'bu-favicon'; slot.setAttribute('aria-hidden', 'true');
   return slot;
 }
 
-// ---- タブの列の寸法（docs/design-system.md「内蔵ブラウザーのタブの列」） ----
+// ---- タブの列の寸法（docs/design-system.md「PC のタブとアドレスバー」） ----
 const TAB_MIN = 96;          // これより細くしない。入らなければ横に流す
+const TAB_MIN_ON = 120;      // 選んだタブは ✕ の分を足した幅より細くしない
 const NARROW_AT = 120;       // 1 枚あたりこれを切ったら、選んでいないタブの ✕ はホバーだけ（選んだタブは 120px を保つ）
 const FADE = 24;             // 端のぼかしの幅。流すときはこの内側まで出す
 const CLOSING_RIGHT = 60, CLOSING_BELOW = 40, TOUCH_HOLD = 2000;   // 続けて閉じる間、幅を止めておく範囲（Chrome の closing mode）
@@ -149,7 +150,8 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       const outer = node => { const s = styleOf(node); return (node.offsetWidth || 0) + px(s?.marginLeft) + px(s?.marginRight); };
       const used = others.reduce((sum, node) => sum + (node === gap ? 8 : outer(node)), 0) + between * others.length + px(rowStyle?.paddingLeft) + px(rowStyle?.paddingRight);
       const room = row.clientWidth - used, n = tabs.length;
-      const over = n * TAB_MIN + (n > 1 ? FADE : 0) > room;
+      // ∨ を除いた幅で量る（∨ は入りきらないときだけ出すので、∨ の幅を引くと出たり消えたりを繰り返す）
+      const over = (n ? TAB_MIN_ON + (n - 1) * TAB_MIN : 0) > room;
       if (list.hidden === over) list.hidden = !over;
       if (!over && listState) closeList(false);
       root.classList.toggle('bu-narrow', n > 0 && (over || room / n < NARROW_AT));
@@ -235,7 +237,7 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
   function makeEntry(id) {
     const el = document.createElement('div'); el.className = 'bu-tab'; el.dataset.target = id; el.setAttribute('role', 'presentation');
     const pick = document.createElement('button'); pick.type = 'button'; pick.className = 'bu-tab-pick'; pick.setAttribute('role', 'tab');
-    const close = document.createElement('button'); close.type = 'button'; close.className = 'bu-tab-close'; close.tabIndex = -1;
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'bu-tab-close';
     close.append(browserIcon('close', 1.9));
     const entry = { id, el, pick, close, tab: null, sig: null, spring: null, mode: null, nat: 0, w0: 0, onGrown: null };
     el.oncontextmenu = event => onMenu(entry.tab, event);
@@ -268,7 +270,8 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
     const on = entry.id === selected;
     entry.el.classList.toggle('on', on);
     entry.pick.setAttribute('aria-selected', String(on));
-    entry.pick.tabIndex = on || (selected == null && index === 0) ? 0 : -1;
+    // 今のタブの題と ✕ だけが Tab の順に入る（ほかのタブへは矢印で移る。docs/design-system.md「PC のタブとアドレスバー」）
+    entry.pick.tabIndex = entry.close.tabIndex = on || (selected == null && index === 0) ? 0 : -1;
   }
 
   function onPickKey(entry, event) {
@@ -377,8 +380,13 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
     listState = { pop, input, ul, id, act: 0, rows: [], spring };
     list.setAttribute('aria-expanded', 'true');
     input.addEventListener('input', () => fillList(true));
-    input.addEventListener('keydown', onListKey);
-    pop.addEventListener('focusout', event => { if (listState && !pop.contains(event.relatedTarget) && event.relatedTarget !== list) closeList(false); });
+    pop.addEventListener('keydown', onListKey);
+    // 一覧の閉じ方は docs/design-system.md「PC のタブとアドレスバー」。
+    // 行・余白・スクロールバーを押しても検索欄のフォーカスを保つ（押した瞬間にフォーカスが欄の外へ移ると閉じて click が届かない）。
+    // 検索欄の中は既定のまま（カーソルを置く・字を選ぶ）。スクロールバーは既定を止めてもなぞれる
+    pop.addEventListener('mousedown', event => { if (event.target !== input) event.preventDefault(); });
+    // フォーカスが一覧の外のものへ移ったら閉じる（行き先の無い blur ＝窓の切り替えなどでは閉じない。外を押したときは onOutsidePointer）
+    pop.addEventListener('focusout', event => { const next = event.relatedTarget; if (listState && next && !pop.contains(next) && next !== list) closeList(false); });
     pop.addEventListener('click', event => { const option = event.target?.closest?.('[role=option]'); if (option) pickFromList(option.dataset.target); });
     docOn('pointerdown', onOutsidePointer, true);
     fillList(false);
@@ -441,6 +449,10 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
   }
 
   root.addEventListener('wheel', onWheel, { passive: false });
+  // 手で流し始めたら、ばねの流れを止める（docs/design-system.md「PC のタブとアドレスバー」）
+  const handScroll = () => { scrollSpring.stop(); follow = false; };
+  root.addEventListener('pointerdown', handScroll, { passive: true });
+  root.addEventListener('touchstart', handScroll, { passive: true });
   root.addEventListener('scroll', edges, { passive: true });
   docOn('keydown', onDocumentKey);
   let observed = null;
@@ -460,6 +472,10 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
     /** 今のタブにフォーカスを置く（パネルを開いたとき） */
     focusCurrent: () => { const id = selected ?? (tabs[0] ? String(tabs[0].targetId) : null); if (id) focusPick(id); return Boolean(id && pickOf(id)); },
     closeList: () => closeList(false),
-    destroy() { observer?.disconnect(); closeList(false); docOff('keydown', onDocumentKey); resetClosing(); },
+    destroy() {
+      observer?.disconnect(); closeList(false); docOff('keydown', onDocumentKey); resetClosing();
+      scrollSpring.stop(); dropSpacer(); dropGhosts();
+      for (const entry of items.values()) { entry.spring?.stop(); entry.onGrown = null; }
+    },
   };
 }
