@@ -7933,12 +7933,16 @@ const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs
   // 上の列: 窓の表・窓のある子の一覧・依頼待ち・この端末が端末で操作しているか（inapp-browser.md「見るウィンドウを選ぶ」）
   windows:chromeWindows, conversations:() => chromeWindowRows, waiting:handoffWaiting, deviceOperating:id => deviceOperating.has(id),
   // タブの列を描き直したら、頭の行の [N] も数を追う（スマホの入口。承認済み 2026-11-08）
-  onTabsChange:() => browserEntry?.paint(), osActions:() => state.osActions === true }))));
+  onTabsChange:() => browserEntry?.paint(), osActions:() => state.osActions === true,
+  // ✖ で閉じたら頭のアイコンへフォーカスを戻す（docs/design-system.md「会話の頭の行のアイコン」）
+  focusEntry:() => $('browserEntry')?.focus({ preventScroll:true }) }))));
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
   getContext: anchor => channelsUi.contextForPanel(anchor) ?? ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); },
+  // 内蔵ブラウザーの開け閉めのばね。頭のアイコンと ✖ の受け渡しが追う（web/panel-handoff.mjs）
+  onMotion: (p, phase) => browserEntry?.motion?.(p, phase),
   // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
@@ -7974,6 +7978,7 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'),
   mobile: () => phoneEntryView.matches,
   tabs: id => browserUnifyUi?.tabsOf(id) ?? (chromeWindows.has(id) ? [{ targetId: 'window' }] : []),
   openEntry: id => { loadBrowserUnify().then(ui => ui.openEntry(id)).catch(error => notify(error?.message || t('tabs:address.failed'))); },
+  panelClose: () => document.querySelector('#filePreview .bu-panel-close:not([hidden])'),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
 phoneEntryView.addEventListener('change', () => browserEntry?.paint());
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。

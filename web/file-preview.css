@@ -1,7 +1,13 @@
 /* The preview shares the conversation's viewport, with independent scrolling. */
 /* プレビューの列の幅の初期値。開くと file-preview.mjs が実測して body に直接書く。窓の上端の帯（style.css）も同じ値で塗り分ける */
-body{--file-preview-width:40vw}
+body{--file-preview-width:40vw;--file-preview-shown:var(--file-preview-width)}
 body.file-preview-open{grid-template-columns:var(--side-col) minmax(360px,1fr) var(--file-preview-width,40vw)}
+/* 開け閉めの動きの間（内蔵ブラウザーの中身。file-preview.mjs が --file-preview-shown を毎フレーム書き、止まったら外して列の幅へ戻す。docs/design-system.md §8）。
+   列の幅だけを動かし、中身は全幅のまま左に寄せて右を切る。閉じる間は論理の上では閉じていて（hidden）、中身を残して見せるだけ */
+body:is(.file-preview-open,.file-preview-leaving){grid-template-columns:var(--side-col) minmax(360px,1fr) var(--file-preview-shown,var(--file-preview-width,40vw))}
+body.file-preview-moving{overflow:clip}
+.file-preview.fp-leaving[hidden]{display:flex!important}
+.file-preview.fp-leaving{pointer-events:none}
 .file-preview{grid-column:3;min-width:0;min-height:0;position:relative;display:flex;flex-direction:column;padding:0 16px 0 12px;background:var(--surface-0);color:var(--ink)}
 .file-preview-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:18px 0 14px}
 .file-preview-title{min-width:0;flex:1}
@@ -108,17 +114,17 @@ body.file-preview-wide .file-preview{grid-column:2}
 body.file-preview-wide .file-preview-resize{display:none}
 @media(max-width:1150px) and (min-width:761px){
   body{--file-preview-width:48vw}
-  body.file-preview-open{grid-template-columns:0 minmax(360px,1fr) var(--file-preview-width,48vw)}
-  body.file-preview-open > #sidebar{visibility:hidden}
+  body:is(.file-preview-open,.file-preview-leaving){grid-template-columns:0 minmax(360px,1fr) var(--file-preview-shown,var(--file-preview-width,48vw))}
+  body:is(.file-preview-open,.file-preview-leaving) > #sidebar{visibility:hidden}
   body.file-preview-wide{grid-template-columns:0 minmax(0,1fr)}
   /* デスクトップ版は脇を閉じたときと同じ（web/style.css の「窓の枠」）。紙の左上は窓の縁に接し、
      帯は会話の上だけ紙に、プレビューの上は脇の面のまま。紙が上へ延びるので右上の角も無くなる */
-  :root.desktop body.file-preview-open:not(.file-preview-wide) > .titlebar{background:linear-gradient(to left,var(--surface-0) var(--file-preview-width),var(--surface-paper) 0)}
+  :root.desktop body:is(.file-preview-open,.file-preview-leaving):not(.file-preview-wide) > .titlebar{background:linear-gradient(to left,var(--surface-0) var(--file-preview-shown,var(--file-preview-width)),var(--surface-paper) 0)}
   :root.desktop body.file-preview-open > main{--paper-tl:0px;--paper-tr:0px}
   :root.desktop body.file-preview-wide > .titlebar{background:var(--surface-0)}   /* 広げたプレビューだけが下にある。点は脇の印なので載せない */
 }
 @media(max-width:760px){
-  body.file-preview-open{grid-template-columns:var(--side-col) minmax(0,1fr)}
+  body:is(.file-preview-open,.file-preview-leaving){grid-template-columns:var(--side-col) minmax(0,1fr)}
   .file-preview{position:fixed;inset:0;z-index:45;padding:0 12px}
   :root.desktop .file-preview{top:var(--bar-h)}   /* 窓の上端の帯と窓のボタンを残す。帯より上は掴んで動かす場所 */
   /* 帯の下は全面のプレビュー。帯と、帯に残る脇の見出しから点を外し、点が帯の高さで途切れて見えないようにする */

@@ -365,12 +365,18 @@ window.ready=true;
       ui.conversationsChanged(); ui.openEntry('one');
     });
     await page.locator('.bu-tab[data-target="file"] .bu-tab-pick').click();
+    // ツリーは既定で閉じる（覚えていない会話。docs/design-system.md「ファイルのツリーと更新」）
+    await page.locator('.bu-tree').waitFor({ state:'visible', timeout:8000 });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 120)));
+    check('the tree starts closed in a conversation that has not opened it', await page.evaluate(() => { const e = document.querySelector('.bu-explorer'); return !e || e.hidden; }));
+    await page.locator('.bu-tree').click();
     await page.waitForSelector('.bu-explorer:not([hidden])', { timeout:8000 });
     await page.evaluate(() => new Promise(r => setTimeout(r, 120)));
     let g = await geom();
     check('with the conversation row the tree starts below the address bar', g.convOpen && g.exists && !g.hidden && g.top >= g.barBottom, JSON.stringify(g));
     await page.locator('.bu-tree').click();
-    check('the tree toggle in the address bar closes the explorer', await page.evaluate(() => document.querySelector('.bu-explorer').hidden));
+    // 閉じる動き（ばね）が終わると隠れる
+    check('the tree toggle in the address bar closes the explorer', await page.waitForFunction(() => document.querySelector('.bu-explorer').hidden, null, { timeout:3000 }).then(() => true, () => false));
     await page.locator('.bu-tree').click();
     await page.evaluate(() => new Promise(r => setTimeout(r, 120)));
     g = await geom();

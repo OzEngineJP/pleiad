@@ -21,6 +21,9 @@
     "close": "{{title}} を閉じる",
     "closeTab": "タブを閉じる",
     "closeList": "タブ一覧を閉じる",
+    "all": "すべてのタブ",
+    "search": "タブを検索",
+    "noMatch": "一致するタブはありません",
     "open_other": "ブラウザーを開く（{{count}} 個のタブ）"
   },
   "address": {

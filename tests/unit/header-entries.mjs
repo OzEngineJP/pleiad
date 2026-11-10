@@ -165,7 +165,11 @@ export default async function (t) {
     held = true; openState = false; entry.paint();
     t.ok('人のタブがある間は II の丸を出す', entryButton.querySelector('.entry-browser-mark')?.classList.contains('entry-paused') === true);
     openState = true; entry.paint();
-    t.ok('ブラウザーを開いている間は角の印を出さない（中の UI が状態を見せる）', entryButton.querySelector('.entry-browser-mark') === null);
+    const kept = entryButton.querySelector('.entry-browser-mark');
+    t.ok('ブラウザーを開いている間は角の印を隠す（中の UI が状態を見せる。要素は残し、閉じる動きで受け渡す）', kept?.hidden === true);
+    openState = false; entry.paint();
+    t.ok('閉じると同じ印の要素をそのまま見せる（付け直さない）', entryButton.querySelector('.entry-browser-mark') === kept && kept.hidden === false);
+    openState = true; entry.paint();
     entry.toggle();
     t.ok('開いているときに押すと閉じる（閉じる動作は PC と同じ）', closed.length === 1);
     mobile = false; openState = false; count = 4; entry.paint(); entry.toggle();
