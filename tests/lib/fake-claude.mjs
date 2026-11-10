@@ -9,18 +9,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const CLI = fileURLToPath(new URL('./fake-claude-cli.mjs', import.meta.url));
 
 /** dir の下に偽の CLI を置き、サーバーに渡す env を返す */
-export async function installFakeClaude(dir) {
+export async function installFakeClaude(dir, { cli = CLI } = {}) {
   await fs.mkdir(dir, { recursive: true });
   if (process.platform === 'win32') {
     const pkg = path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code');
     await fs.mkdir(pkg, { recursive: true });
     await fs.writeFile(path.join(pkg, 'package.json'), JSON.stringify({ name: '@anthropic-ai/claude-code', version: '2.1.288', bin: { claude: 'cli.mjs' } }));
-    await fs.writeFile(path.join(pkg, 'cli.mjs'), `import ${JSON.stringify(pathToFileURL(CLI).href)};\n`);
+    await fs.writeFile(path.join(pkg, 'cli.mjs'), `import ${JSON.stringify(pathToFileURL(cli).href)};\n`);
     const cmd = path.join(dir, 'claude.cmd');
     await fs.writeFile(cmd, `@"${process.execPath}" "${path.join(pkg, 'cli.mjs')}" %*\r\n`);
     return { bin: cmd, env: { AGENT_HOST_CLAUDE_BIN: cmd } };
   }
   const sh = path.join(dir, 'claude');
-  await fs.writeFile(sh, `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`, { mode: 0o755 });
+  await fs.writeFile(sh, `#!/bin/sh\nexec "${process.execPath}" "${cli}" "$@"\n`, { mode: 0o755 });
   return { bin: sh, env: { AGENT_HOST_CLAUDE_BIN: sh } };
 }

@@ -7,7 +7,7 @@ import { createClaudeAuth } from '../../core/auth/claude-cli.mjs';
 import { cliCommand, installation, findExecutable, unwrapCommandShim, directCommand } from '../../core/cli-installation.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
-import { shouldShowOnboarding } from '../../web/onboarding.mjs';
+import { usableReport, gateKind } from '../../web/agent-usable.mjs';
 
 export const name = 'onboarding';
 export const title = 'Installation, Claude authentication and persistent setup';
@@ -15,6 +15,7 @@ export default async function(t) {
   const agents = [{ id: 'fake', installed: true }];
   const ready = new Map([['fake', { supported: true, loggedIn: true }]]);
   const missing = new Map([['fake', { supported: true, loggedIn: false }]]);
+  const shouldShowOnboarding = (status, auth) => gateKind({ status, report: usableReport({ agents: status.agents, auth }) }) !== null;
   t.ok('First visit shows welcome even with an existing account', shouldShowOnboarding({ agents }, ready));
   t.ok('Dismissed welcome stays closed on reload when configured', !shouldShowOnboarding({ agents, seen: true }, ready));
   t.ok('No configured accounts shows welcome again', shouldShowOnboarding({ agents, seen: true }, missing));

@@ -510,6 +510,7 @@ const SUITES = [
   // 通知の画面側: この PC の設定・見ている間は出さない・失敗・presence の知らせ・設定 › 通知・スマホのアプリの帯と通知から開く会話
   './unit/notify-web.mjs',
   './unit/onboarding.mjs',
+  './unit/agent-usable.mjs',
   './unit/tree.mjs',
   './unit/family.mjs',
   './unit/pending-sidebar.mjs',
