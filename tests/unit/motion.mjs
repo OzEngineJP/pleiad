@@ -100,6 +100,41 @@ export default async function (t) {
     assert.ok(r.value > 0 && r.value < 0.9, `間が空いても跳ばない（${r.value}）`);
     r.finish();
 
+    // ---- 1 本の onUpdate が投げても、ほかのばねは止まらない（投げた 1 本は外して onEnd を呼び、例外は console.error へ） ----
+    motionClock.freeze();
+    const errors = [], savedError = console.error;
+    console.error = (...args) => errors.push(args);
+    try {
+      let badEnd = 0, goodEnd = 0, calls = 0;
+      const bad = createSpring(0, { onUpdate: () => { calls++; if (calls === 2) throw new Error('boom'); } });
+      const good = createSpring(0, { epsilon: 0.01 });
+      bad.to(100, { onEnd: () => badEnd++ });
+      good.to(100, { onEnd: () => goodEnd++ });
+      motionClock.advance(16);
+      assert.equal(bad.moving, false, '投げたばねは外す');
+      assert.equal(bad.value, 100, '投げたばねは目標に置く');
+      assert.equal(badEnd, 1, '投げたばねの onEnd も呼ぶ（後片付けを飛ばさない）');
+      assert.equal(errors.length, 1, '例外は飲み込まず console.error へ出す');
+      assert.equal(errors[0].at(-1)?.message, 'boom');
+      assert.equal(good.moving, true, 'ほかのばねは動き続ける');
+      motionClock.advance(2000);
+      assert.equal(good.value, 100); assert.equal(goodEnd, 1);
+      assert.equal(motionClock.moving, 0);
+      // onEnd が投げても、次のばねは進む
+      const loud = createSpring(0), next = createSpring(0, { epsilon: 0.01 }); let nextEnd = 0;
+      loud.to(1, { onEnd: () => { throw new Error('end'); } });
+      next.to(100, { onEnd: () => nextEnd++ });
+      motionClock.advance(2000);
+      assert.equal(next.value, 100); assert.equal(nextEnd, 1);
+      assert.equal(errors.length, 2); assert.equal(motionClock.moving, 0);
+      // finishAll でも同じ
+      const bad2 = createSpring(0, { onUpdate: () => { throw new Error('fin'); } }), ok2 = createSpring(0); let ok2End = 0;
+      bad2.to(5); ok2.to(5, { onEnd: () => ok2End++ });
+      motionClock.finishAll();
+      assert.equal(ok2.value, 5); assert.equal(ok2End, 1); assert.equal(motionClock.moving, 0); assert.equal(errors.length, 3);
+    } finally { console.error = savedError; motionClock.thaw(); }
+    t.ok('1 本の onUpdate・onEnd が投げても、ほかのばねは終わりまで進み、投げた 1 本は外して onEnd を呼び、例外は console.error へ出す', true);
+
     // ---- 動きを減らす設定: その場で終わり、動いているものも終える ----
     globalThis.matchMedia = q => ({ matches: /reduce/.test(q) });
     assert.equal(reducedMotion(), true);

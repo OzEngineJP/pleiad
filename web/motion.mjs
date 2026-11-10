@@ -62,9 +62,14 @@ const live = new Set();
 const clock = { manual: false, raf: 0, last: null };
 const hasRaf = () => typeof requestAnimationFrame === 'function';
 
+/** 1 本の onUpdate・onEnd が投げても、ほかのばねと時計は止めない（その 1 本は外して終わらせ、例外は出す） */
+function guard(spring, run) {
+  try { run(); }
+  catch (error) { console.error('ばねの更新で例外が出たので、そのばねを止めました', error); spring._fail(); }
+}
 function stepAll(ms) {
   const dt = ms / 1000;
-  for (const spring of [...live]) spring._step(dt);
+  for (const spring of [...live]) guard(spring, () => spring._step(dt));
 }
 function tick(now) {
   clock.raf = 0;
@@ -78,7 +83,7 @@ function kick() {
   clock.last = null;
   clock.raf = requestAnimationFrame(tick);
 }
-function finishAll() { for (const spring of [...live]) spring.finish(); }
+function finishAll() { for (const spring of [...live]) guard(spring, () => spring.finish()); }
 
 /** 撮影と試験用: 時計を止める・決まった時間だけ進める（8ms 刻み）・戻す・動いているものを全部終える */
 export const motionClock = Object.freeze({
@@ -120,6 +125,12 @@ export function createSpring(value = 0, { preset = 'smooth', onUpdate = null, ep
     set(next) { live.delete(spring); moving = false; end = null; x = target = next; v = 0; emit(); return spring; },
     stop() { live.delete(spring); moving = false; end = null; target = x; v = 0; return spring; },
     finish() { if (moving || end) settle(); return spring; },
+    /** 投げたばね: 目標に置いて外し、まだ呼んでいない onEnd を呼ぶ（後片付けの onEnd を飛ばさない） */
+    _fail() {
+      live.delete(spring); moving = false; x = target; v = 0;
+      const done = end; end = null;
+      try { done?.(); } catch (error) { console.error('ばねの終わりの処理で例外が出ました', error); }
+    },
     _step(dt) {
       if (!moving) { live.delete(spring); return; }
       t += dt;
