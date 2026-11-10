@@ -174,7 +174,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ## モデルを断られたとき（自動の振り分け。ADR 0311）
 
 - 自動で選ぶ（`backend` を省いた）委譲は、モデルが一覧に無いことを理由に候補を飛ばさない。一覧は正本ではなく、候補を選ぶのと送るのが同時で、間に人がいないので、飛ばし間違えると黙って弱いモデルで走る。使えるかは CLI/API が決める。固定の委譲（`backend` と `model` を書く）は従来どおり一覧で確かめ、無ければ `model_unknown` で断る。
-- 子の最初のターンで CLI/API がモデルを断ったら（まだ仕事が始まっていない子だけ）、ADR 0302 の任せ直しの経路で次の候補で子を作り直す。断られた候補は `routing.skipped` に `model_rejected` で残し、`routing.attempts` の `reason` にも付く。候補が尽きたら理由（`routing.exhausted`）付きで失敗する。回数は上限で打ち切らず候補の数まで（`MODEL_REROUTE_MAX`）。
+- 子の最初のターンで CLI/API がモデルを断ったら（まだ仕事が始まっていない子だけ）、ADR 0302 の任せ直しの経路で次の候補で子を作り直す。断られた候補は `routing.skipped` に `model_rejected` で残し、`routing.attempts` の `reason` にも付く。候補が尽きたら理由（`routing.exhausted`）付きで失敗する。モデルを断られたときの任せ直しは 6 回まで（`MODEL_REROUTE_MAX`。ほかの理由の任せ直しは 2 回）。上限に達したら、最後の子の失敗（CLI の断りの文面）がそのまま結果になる。
 - 断られた枠（エージェント・モデル・アカウント）は 30 分だけ選ばない（`core/model-rejects.mjs`。このサーバーの間だけ。何度断られても延ばさない・同じ枠のターンが通れば消す・振り分けの設定を保存すれば忘れる）。外している間は `skipped` に `model_rejected` と期限（`until`）が付く。
 - 断りを見分けて `turnResult` の `kind: 'model'` で渡すのは Claude（`api_error_status: 404` の結果と断りの文面）と Codex（`model_not_found` など）。Antigravity・OpenCode・Grok・Devin は見分けず、理由つきの普通の失敗になる。
 - 設定の警告（`warnings`）と候補の `modelNotListed` は「一覧に見当たらない（使えるかは CLI が決める）」という知らせで、止めない。行の `resolvedModel` に正確に当たる名前（`claude-fable-5-2`）は一覧にあるものとして数える。
