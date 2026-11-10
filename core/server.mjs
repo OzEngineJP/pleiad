@@ -3036,6 +3036,21 @@ async function resolveModel(sessionId, given, backend, cwd, endpointId = '') {
   return await validModel(backend, model, cwd, endpointId) ? model : "";
 }
 
+/**
+ * 送信の経路のモデル決め。渡された値 → 会話の保存値 → そのエージェントの設定の既定（resolveModel と同じ順）。
+ * 一覧では裁かない。形だけ確かめてそのまま CLI/API へ渡す（使えなければ CLI/API が断り、その理由が会話に出る。
+ * 予約の送信と同じ。ADR 0309）。エージェントを替えるとき（switchBackend）は保存値を消すので、別エージェントの名前は残らない
+ */
+async function sendModel(sessionId, given, backend, endpointId = '') {
+  const asked = typeof given === "string" ? given : null;
+  const saved = sessionId ? (await store.get(sessionId)).model : null;
+  const prefs = await store.getPrefs();
+  // 公式の既定のモデル（prefs）は互換の接続先へは持ち込まない
+  const fallback = endpointId ? '' : (prefs.backends ? prefs.backends[backend.id] : prefs)?.model;
+  const model = asked ?? saved ?? fallback ?? '';
+  return model === '' || isModelId(model) ? model : '';
+}
+
 /** 接続先を選べるエージェントか（Claude Code・Codex） */
 const endpointCapable = backend => Boolean(backend?.capabilities?.compatEndpoints);
 /** 一覧の行（キー無し）。effortOptions に渡す。'' なら null */
@@ -7502,8 +7517,9 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 会話の言語（エージェントに渡す文の言語）。記録にあればそれ、無ければ今の画面の言語で決めて保存する（新規は id が決まったとき）
   const agentLocale = sessionId ? await ensureAgentLocale(sessionId) : currentLocale();
   const permissionMode = await resolveMode(sessionId, reserved ? reserved.mode : args?.mode, backend);
-  // 予約のモデルは選んだときに確かめ、送る直前に形を確かめた値をそのまま渡す（一覧とずれていても既定へ戻さない）
-  const model = reserved ? reserved.model : await resolveModel(sessionId, args?.model, backend, cwd, endpointId);
+  // 予約のモデルは選んだときに確かめ、送る直前に形を確かめた値をそのまま渡す。予約の無い送信も同じく、保存値を一覧で裁かず
+  // そのまま渡す（一覧が縮んでいても黙って既定へ戻さない。別エージェントのモデルだけ既定に戻す。sendModel。ADR 0309）
+  const model = reserved ? reserved.model : await sendModel(sessionId, args?.model, backend, endpointId);
   const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
   // worktree（ADR 0089）。使う場所が worktree の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
   const worktreeEntry = await worktreeHost.worktrees.byPath(cwd);

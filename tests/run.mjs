@@ -311,6 +311,7 @@ const SUITES = [
   './unit/server-mode-next-turn.mjs',
   // 予約したモデルは一覧が縮んでも backend へ届く。選ぶとき（setTurnSettings）の確かめは一度だけ取り直す
   './unit/server-reserved-model.mjs',
+  './unit/server-send-model.mjs',
   './unit/server-ops.mjs',
   './unit/sessions-search-op.mjs',
   './unit/agent-tasks.mjs',
