@@ -581,6 +581,8 @@ const SUITES = [
   './unit/unread.mjs',
   // 中断と再開の画面（web/interrupt.mjs）: 三角の未読・理由の文言・再開ボタン・更新で止めた会話・更新の確認の作業一覧と進み
   './unit/web-interrupt.mjs',
+  // 更新の前の保存（web/client.mjs が setupUpdates へ渡す flush）: 前に失敗した設定・モードの保存で止まらない・下書きの失敗は止める
+  './unit/update-flush.mjs',
   // 確認済み（既読）の置き場と、2 本の接続で共有されること（fake バックエンド）
   './unit/read-store.mjs',
   './unit/store-flush.mjs',
