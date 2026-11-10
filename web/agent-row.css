@@ -85,3 +85,7 @@
 .fail-rows{display:flex;flex-direction:column;gap:2px;margin:0 0 4px;max-width:520px}
 @media (prefers-reduced-motion:reduce){.setup,.setup.leave{transition:none}}
 #onboardingTitle:focus{outline:none}
+.outbox-status-failed.outbox-fix{display:block}
+.outbox-fix .fail-head{color:var(--ink-strong);font-weight:600;margin-bottom:2px}
+.outbox-fix .fail-cause{color:var(--ink-weak);margin-bottom:6px}
+.outbox-fix .acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
