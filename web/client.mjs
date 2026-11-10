@@ -5837,8 +5837,8 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
       if (pendingNewSession) pendingRows.delete(pendingNewSession.id);
       pendingNewSession = null;
       renderSessions();
-      // 使えるエージェントが 0 件のときの失敗は札にしない（空の会話の中の一覧が、直す入口を出している。docs/desktop-onboarding.md「使えるエージェントが無いとき」）
-      if (!usableNow().usable.length) return null;
+      // 理由を案内の窓か空の会話の一覧が見せているときだけ、失敗の札を出さない（0 件でも、一覧が出ない場面 = 「たぶん」だけ・会話が開いている・リモートでは、札が唯一の知らせ）
+      if (noAgent?.visible() || onboarding.gated()) return null;
       // やり直しは、失敗の後に欄で選び直した作業場所・設定も引き継ぐ
       side.showUndo(t('pending.failed', { reason: e.message }), () => startNew({ status, cwd: draft.cwd || cwd, backend, changes: draft.changes }), { retry: true });
     }

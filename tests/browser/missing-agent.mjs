@@ -101,13 +101,13 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-missing-agent-'));
 let n = 0, browser;
 const servers = [];
 /** 場面ごとに別のサーバーとデータ置き場（done: 案内を一度終えた人。login: 最初からログイン済みか。sdk: 'local' | 'download'） */
-async function scene({ done = true, login = false, sdk = 'download', backends = 'claude,codex', seed = false, env = {} } = {}) {
+async function scene({ done = true, login = false, sdk = 'download', backends = 'claude,codex', seed = false, env = {}, cwd = os.homedir() } = {}) {
   const dir = path.join(scratch, `s${++n}`);
   const dataDir = path.join(dir, 'data');
   fs.mkdirSync(dataDir, { recursive: true });
   const flag = path.join(dir, 'login.flag');
   if (login) fs.writeFileSync(flag, '1');
-  if (done) fs.writeFileSync(path.join(dataDir, 'onboarding.json'), JSON.stringify({ seen: true, setupComplete: true, backend: 'claude', cwd: os.homedir() }));
+  if (done) fs.writeFileSync(path.join(dataDir, 'onboarding.json'), JSON.stringify({ seen: true, setupComplete: true, backend: 'claude', cwd }));
   if (seed) seedSdk(dataDir);
   const fake = await installFakeClaude(path.join(dir, 'cli'), { cli: SWITCH });
   const server = await startServer({ dataDir, timeoutMs: 30_000, env: { AGENT_HOST_BACKENDS: backends, AGENT_HOST_LOCALE: 'ja', ...fake.env, FAKE_CLAUDE_LOGIN_FLAG: flag,
@@ -371,6 +371,24 @@ try {
     await card.getByRole('button', { name: 'ログイン', exact: true }).waitFor({ timeout: 10_000 });
     check(!/ログインを待っている/.test(await card.innerText()), 'やめると未ログインに戻る');
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['0 個でも、窓も一覧も理由を見せていないとき（「たぶん」が混ざる）は、会話を作れなかった知らせを出す', async () => {
+    // Claude は未ログイン（使えない）、Antigravity は確かめられない（たぶん）。窓も一覧も出ないので、札が唯一の知らせになる。
+    // 会話を作る呼び出しは、サーバーが断る（知らないエージェントの指定に差し替える）
+    const s = await scene({ login: false, sdk: 'local', backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-maybe')) } });
+    const { page } = s;
+    await page.waitForSelector('#prompt', { timeout: 20_000 });
+    await page.waitForTimeout(2500);
+    check(!(await dialogOpen(page)) && !(await listShown(page)), '窓も一覧も出ていない');
+    await page.evaluate(() => {
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (m) { try { const o = JSON.parse(m); if (o.command === 'newSession') return send.call(this, JSON.stringify({ ...o, args: { ...o.args, backend: 'no-such-agent' } })); } catch { /* 文字でない */ } return send.call(this, m); };
+    });
+    await page.click('#prompt');
+    await page.keyboard.press('Control+Shift+O');   // 新しい会話（ページの中のショートカット）
+    await page.waitForFunction(() => { const b = document.getElementById('sideUndo'); return b && !b.hidden && /操作できませんでした/.test(b.textContent); }, null, { timeout: 15_000 });
+    check(true, '会話を作れなかった知らせの札が出る');
   }]);
 
   const only = process.env.MISSING_AGENT_ONLY;
