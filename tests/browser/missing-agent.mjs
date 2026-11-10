@@ -37,6 +37,22 @@ function seedSdk(dataDir) {
   fs.writeFileSync(path.join(dir, 'sdk.mjs'), 'export {};\n');
   fs.writeFileSync(path.join(dataDir, 'claude-sdk', 'consent.json'), JSON.stringify({ acceptedAt: new Date().toISOString() }));
 }
+/** 偽の Antigravity CLI（`agy`。未ログイン: models が「Please sign in」で落ちる）を置き、AGENT_HOST_AGY_BIN に渡す値を返す */
+function installFakeAgy(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  const script = fileURLToPath(new URL('../lib/fake-agy-signin.mjs', import.meta.url));
+  if (process.platform === 'win32') {
+    const cmd = path.join(dir, 'agy.cmd');
+    fs.writeFileSync(cmd, `@"${process.execPath}" "${script}" %*
+`);
+    return cmd;
+  }
+  const sh = path.join(dir, 'agy');
+  fs.writeFileSync(sh, `#!/bin/sh
+exec "${process.execPath}" "${script}" "$@"
+`, { mode: 0o755 });
+  return sh;
+}
 const unseedSdk = dataDir => fs.rmSync(path.join(dataDir, 'claude-sdk'), { recursive: true, force: true });
 
 /**
@@ -95,7 +111,7 @@ async function scene({ done = true, login = false, sdk = 'download', backends = 
   if (seed) seedSdk(dataDir);
   const fake = await installFakeClaude(path.join(dir, 'cli'), { cli: SWITCH });
   const server = await startServer({ dataDir, timeoutMs: 30_000, env: { AGENT_HOST_BACKENDS: backends, AGENT_HOST_LOCALE: 'ja', ...fake.env, FAKE_CLAUDE_LOGIN_FLAG: flag,
-    AGENT_HOST_CLAUDE_SDK: sdk, AGENT_HOST_CODEX_BIN: MISSING, AGENT_HOST_ANTIGRAVITY_BIN: MISSING, CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), ...env } });
+    AGENT_HOST_CLAUDE_SDK: sdk, AGENT_HOST_CODEX_BIN: MISSING, AGENT_HOST_AGY_BIN: MISSING, CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), ...env } });
   servers.push(server);
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'ja-JP' });
   const page = await ctx.newPage();
@@ -169,7 +185,7 @@ try {
   }]);
 
   scenes.push(['確かめられない（未確認）だけのときは案内を出さない', async () => {
-    const s = await scene({ login: false, backends: 'claude,antigravity', env: { AGENT_HOST_ANTIGRAVITY_BIN: SWITCH } });
+    const s = await scene({ login: false, backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-unconfirmed')) } });
     await s.page.waitForTimeout(3500);
     check(!(await dialogOpen(s.page)), '未確認が混ざる間は案内を出さない');
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
@@ -331,6 +347,30 @@ try {
     await s.page.click('#send');
     await s.page.waitForSelector('.outbox-fix [data-row="claude"]', { timeout: 20_000 });
     checkEdges(await leftEdges(s.page, '.outbox-fix'), '送れなかった行');
+  }]);
+
+  scenes.push(['ログインの途中: 2 秒ごとの確かめ直しで「待っている」が戻らない（URL の欄・［やめる］が残り、二重に始められない）', async () => {
+    // Antigravity は、サーバーが pending を返さない（ログインは端末で行い、Pleiad は見張るだけ）
+    const s = await scene({ login: true, sdk: 'local', backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-login')) } });
+    const { page } = s;
+    await page.waitForSelector('#prompt', { timeout: 20_000 });
+    await page.evaluate(() => document.getElementById('railSettings').click());
+    const card = page.locator('#authSec [data-agent="antigravity"]');
+    await card.locator('button:has-text("状態を確認")').click();
+    await card.locator('button:has-text("ログイン")').first().waitFor({ timeout: 10_000 });
+    await card.locator('button:has-text("ログイン")').first().click();
+    await card.locator('button:has-text("やめる")').waitFor({ timeout: 10_000 });
+    // 確かめ直しは 2 秒ごと。三回り（6 秒）たっても、待っている表示のまま
+    await page.waitForTimeout(6000);
+    const text = await card.innerText();
+    check(/ログインを待っている/.test(text), 'ログインの途中: 6 秒たっても「待っている」のまま', text);
+    check(await card.locator('button:has-text("やめる")').count() === 1, '［やめる］が残っている');
+    check(await card.getByRole('button', { name: 'ログイン', exact: true }).count() === 0, '［ログイン］に戻らない（二重に始められない）');
+    check(await card.locator('.copy, button:has-text("コピー")').count() >= 1, 'URL（端末で打つコマンド）の欄が残っている');
+    await card.locator('button:has-text("やめる")').click();
+    await card.getByRole('button', { name: 'ログイン', exact: true }).waitFor({ timeout: 10_000 });
+    check(!/ログインを待っている/.test(await card.innerText()), 'やめると未ログインに戻る');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
 
   const only = process.env.MISSING_AGENT_ONLY;

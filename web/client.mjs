@@ -4229,11 +4229,15 @@ function forgetVocab(id) {
 // 置き場は設定メニューの中。常設しない。ログインが要るときだけ脇の下に一行で知らせる。
 // 設定モーダル内にURLを出し、コールバックを取れないときは手貼りの欄を出す。
 
+/** ログインの途中のエージェント（自分の窓が始めたもの・ほかの窓の URL の便りで知ったもの）。サーバーが pending を返さないエージェントでも、終わるまで待つ状態を保つ */
+const loginActive = new Set();
+
 /** 認証の状態を取り直す。refresh() は毎イベント走るので、ここは起動時とログイン / ログアウトの後だけ */
 async function refreshAuth() {
   await Promise.all(state.backends.map(async (b) => {
     const st = await cmd("authStatus", { backend: b.id }).catch((e) => ({ supported: false, error: e.message }));
-    state.auth.set(b.id, st);
+    // ログインの途中は、取り直した結果で「待っている」を消さない（行が「ログイン」に戻り、URL の欄が消え、二重に始められてしまう）
+    state.auth.set(b.id, loginActive.has(b.id) && !st.loggedIn && !st.pending ? { ...st, pending: true } : st);
   }));
   renderAuth();
   await onboarding.refresh();
@@ -4557,6 +4561,7 @@ function installClaudeSdk() {
 function authLogin(b, { fromRow = false } = {}) {
   if (window.plyRemote) { sys(html.t("remote.loginOnHost")); return Promise.resolve(null); }   // リモートの窓からは始めない（renderAuth と同じ理由）
   state.auth.set(b.id, { ...(state.auth.get(b.id) ?? {}), supported: true, pending: true });
+  loginActive.add(b.id);
   state.authNote.delete(b.id);
   renderAuth();
   onboarding.paint();
@@ -4567,6 +4572,7 @@ function authLogin(b, { fromRow = false } = {}) {
     .catch((e) => { failure = e; })
     .finally(async () => {
       rowLogins.delete(b.id);
+      loginActive.delete(b.id);
       state.authUrl.delete(b.id);
       forgetVocab(b.id);
       // やめた（［やめる］）は失敗として出さない。失敗の行から始めたものは、行が理由を出す
@@ -4714,6 +4720,7 @@ function onAuthEvent(ev) {
   if (ev.phase === "url") {
     // ほかの窓が始めたログインでも、待っている間はカードに［やめる］を出す
     state.auth.set(ev.backend, { ...(state.auth.get(ev.backend) ?? {}), supported: true, pending: true });
+    loginActive.add(ev.backend);
     state.authNote.delete(ev.backend);
     // URL はホストの窓にだけ出す（リモートの窓で開いても、ログインの戻り先はホストの PC。docs/remote.md §7.3）
     if (window.plyRemote) { renderAuth(); onboarding.paint(); return; }
@@ -4736,6 +4743,7 @@ function onAuthEvent(ev) {
     return append(row);
   }
   state.authUrl.delete(ev.backend);
+  loginActive.delete(ev.backend);
   const fromRow = rowLogins.has(ev.backend);
   // やめた（どの窓の［やめる］でも）: 一文は出さず、未ログインに戻す
   if (ev.phase === "cancelled") { refreshAuth().catch(() => {}); return; }
