@@ -70,4 +70,20 @@ export default async function(t) {
   t.ok('list: unconfirmed → not shown', listKind(unsure) === false);
   t.ok('list: one usable → not shown', listKind(fine) === false);
   t.ok('list: nothing known yet → not shown', listKind(report([], {})) === false);
+
+  // --- 閉じられない窓は「使えるものが 0 個と確かに分かったとき」だけ。期限切れ・取得の失敗・判定前は窓にしない
+  const settled = { setupComplete: true, seen: true };
+  const expiredOnly = report([claude], { claude: { installed: true, supported: true, loggedIn: true, expired: true, sdk: SDK_READY } });
+  t.ok('expired login alone: not usable, but no closed window at launch', level({ installed: true, supported: true, loggedIn: true, expired: true }) === 'no' && gateKind({ status: status(settled), report: expiredOnly }) === null);
+  t.ok('expired login alone: the in-conversation list is shown (re-login there)', listKind(expiredOnly) === true && expiredOnly.none.join() === 'claude');
+  t.ok('expired login with another agent logged out: still no window', gateKind({ status: status(settled), report: report([claude, codex], { claude: { installed: true, supported: true, loggedIn: true, expired: true, sdk: SDK_READY }, codex: { installed: true, supported: true, loggedIn: false } }) }) === null);
+  const failedFetch = report([claude], { claude: { installed: true, supported: true, loggedIn: true, sdk: { ...SDK_NONE, consent: true, error: { kind: 'network' } } } });
+  t.ok('SDK fetch failed after consent (offline after an update): no closed window, the list is shown', gateKind({ status: status(settled), report: failedFetch }) === null && listKind(failedFetch) === true);
+  t.ok('SDK refetching after consent: no closed window, the list is shown', gateKind({ status: status(settled), report: refetch }) === null && listKind(refetch) === true);
+  const neverFetched = report([claude], { claude: { installed: true, supported: true, loggedIn: true, sdk: SDK_NONE } });
+  t.ok('SDK never fetched (no consent record): the window is the way to fetch it', gateKind({ status: status(settled), report: neverFetched }) === 'none');
+  const accountOnly = report([claude], { claude: { installed: true, supported: true, loggedIn: false, accountReady: true, sdk: SDK_READY } });
+  t.ok('only a registered account (no CLI login): maybe usable → no closed window, no "0" list', level({ installed: true, supported: true, loggedIn: false, accountReady: true, sdk: SDK_READY }) === 'maybe' && gateKind({ status: status(settled), report: accountOnly }) === null && listKind(accountOnly) === false);
+  const sdkOnlyFirst = report([claude], { claude: { sdk: { ...SDK_NONE, consent: false } } });
+  t.ok('only the SDK event arrived (auth status not yet) → undecided, not 0', level({ sdk: SDK_NONE }) === 'maybe' && !sdkOnlyFirst.count0 && listKind(sdkOnlyFirst) === false);
 }

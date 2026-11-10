@@ -5,6 +5,8 @@
 //   'usable'  使える。
 //   'maybe'   分からない（確かめていない・確認が失敗した・裏で取得している最中）。0 件とは数えない。
 //   'no'      使えないと分かっている。
+// 'no' には hard の印が付く。hard: false は「使えないが、閉じられない窓で締め出すほどは確かでない・自分では直せない」
+//   （ログインの期限切れ・SDK の取得の失敗。会話の中の一覧と送信の無効で知らせ、窓は出さない）。窓の判定（count0）は hard の 'no' だけを数える。
 // 取りうる理由（reason）は画面の行の文言に使う: 'notInstalled' | 'loggedOut' | 'pending' | 'expired' | 'sdkMissing' | 'sdkFetching'
 //   | 'unconfirmed' | 'checkFailed' | 'unknown' | 'ok'
 //
@@ -20,28 +22,32 @@
  */
 export function agentLevel({ st, endpointConfirmed = false, endpointsKnown = true, canEndpoint = false }) {
   if (!st) return { level: 'maybe', reason: 'unknown' };
+  // 認証の状態がまだ届いていない（SDK の知らせだけが先に載った）。判定前は使えるかもしれない
+  if (st.installed === undefined && st.loggedIn === undefined && st.supported === undefined) return { level: 'maybe', reason: 'unknown' };
   // 状態の問い合わせそのものが失敗した（{ supported:false, error }）。切れていると断定しない
   if (st.error && st.installed === undefined) return { level: 'maybe', reason: 'checkFailed' };
-  if (st.installed === false) return { level: 'no', reason: 'notInstalled' };
+  if (st.installed === false) return { level: 'no', reason: 'notInstalled', hard: true };
   const sdk = st.sdk;
   // 本体の見立て
   let body;
-  if (st.expired && st.loggedIn) body = { level: 'no', reason: 'expired' };
+  if (st.expired && st.loggedIn) body = { level: 'no', reason: 'expired', hard: false };
   else if (st.supported === false) body = st.error ? { level: 'maybe', reason: 'checkFailed' } : { level: 'usable', reason: 'ok' };   // ログインの口を持たない（入っていれば使える）
-  else if (st.pending) body = { level: 'no', reason: 'pending' };
+  else if (st.pending) body = { level: 'no', reason: 'pending', hard: true };
   else if (st.loggedIn) body = { level: 'usable', reason: 'ok' };
   else if (endpointConfirmed) body = { level: 'usable', reason: 'ok' };
+  else if (st.accountReady) body = { level: 'maybe', reason: 'unconfirmed' };   // 登録したアカウントで走るかもしれない（CLI のログインが無くても）。締め出さない
   else if (st.checkFailed) body = { level: 'maybe', reason: 'checkFailed' };
   else if (st.unconfirmed) body = { level: 'maybe', reason: 'unconfirmed' };
   else if (canEndpoint && !endpointsKnown) body = { level: 'maybe', reason: 'unknown' };
-  else body = { level: 'no', reason: 'loggedOut' };
+  else body = { level: 'no', reason: 'loggedOut', hard: true };
   // 確かめ済みの接続先は期限切れのログインとは関係なく使える
   if (body.reason === 'expired' && endpointConfirmed) body = { level: 'usable', reason: 'ok' };
   if (body.level === 'no') return body;
   // SDK（Claude だけ。状態に sdk が載る）。取れていなければ使えない。ただし同意済みで裏で取っている最中は「分からない」
   if (sdk && !sdk.ready) {
     if (!sdk.error && (sdk.fetching || sdk.consent)) return { level: 'maybe', reason: 'sdkFetching' };
-    return { level: 'no', reason: 'sdkMissing' };
+    // 一度でも同意して取ったことがある人は、取得に失敗しても窓では締め出さない（会話の中の一覧の［もう一度取得］で直す）。窓は SDK を一度も取っていない人だけ
+    return { level: 'no', reason: 'sdkMissing', hard: !sdk.consent };
   }
   return body;
 }
@@ -65,7 +71,7 @@ export function usableReport({ agents, auth, endpoints = new Set() }) {
   }
   const ids = (level) => agents.filter((a) => levels.get(a.id).level === level).map((a) => a.id);
   const usable = ids('usable'), maybe = ids('maybe'), none = ids('no');
-  return { levels, usable, maybe, none, count0: agents.length > 0 && usable.length === 0 && maybe.length === 0 };
+  return { levels, usable, maybe, none, count0: agents.length > 0 && usable.length === 0 && maybe.length === 0 && none.every((id) => levels.get(id).hard !== false) };
 }
 
 /**

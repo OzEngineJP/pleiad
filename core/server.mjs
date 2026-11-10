@@ -4918,7 +4918,9 @@ const opsAgents = {
     const auth = noteAuth(backend.id, await backend.auth.status({ probe }));
     // 期限切れ（会話で 401 を受けた）。CLI はログイン済みを返したままなので、Pleiad が覚えている印で出す
     const expired = auth.loggedIn && authExpired.has(backend.id) ? { expired: true } : {};
-    return { backend: backend.id, status: { supported: true, ...installed, ...auth, ...where, ...expired, ...sdk } };
+    // Pleiad に登録したアカウント（トークン・資格情報）で会話が走る人は、CLI のログインが無くても使えるかもしれない（画面は「使えるかもしれない」に数える）
+    const accountReady = !auth.loggedIn && (await accountRows(backend).catch(() => [])).some(a => a.ready) ? { accountReady: true } : {};
+    return { backend: backend.id, status: { supported: true, ...installed, ...auth, ...where, ...expired, ...accountReady, ...sdk } };
   },
 };
 

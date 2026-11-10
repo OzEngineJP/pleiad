@@ -726,7 +726,10 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     auth: {
       /** ~/.grok/auth.json に登録があればログイン済み。無ければ `grok models` が通るか見る（XAI_API_KEY など） */
       async status() {
-        if (await signedIn()) return { loggedIn: true, account: t('grok.auth.account'), detail: null };
+        const state = await signedInState();
+        if (state === 'in') return { loggedIn: true, account: t('grok.auth.account'), detail: null };
+        // 起動の失敗・時間切れは「ログインしていない」ではない（確かめられなかった）
+        if (state === 'unknown') return { loggedIn: false, account: null, unconfirmed: true, detail: null };
         return { loggedIn: false, account: null, detail: t('grok.auth.notLoggedIn') };
       },
       /** ログインは端末でしか受け付けない。コマンドを出し、ログインが済むまで見張る */
@@ -802,15 +805,18 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     });
   }
   /** auth.json の登録、XAI_API_KEY、`grok models` のどれかが通ればログイン済み */
-  async function signedIn() {
-    if (envForScope().XAI_API_KEY) return true;
+  /** 'in' | 'out' | 'unknown'（CLI を起こせなかった・時間切れ。ログインしていないとは言えない） */
+  async function signedInState() {
+    if (envForScope().XAI_API_KEY) return 'in';
     try {
-      if (Object.keys(JSON.parse(fs.readFileSync(path.join(homeForScope(), 'auth.json'), 'utf8'))).length) return true;
+      if (Object.keys(JSON.parse(fs.readFileSync(path.join(homeForScope(), 'auth.json'), 'utf8'))).length) return 'in';
     } catch {}
-    if (!command()) return false;
-    const { code } = await runAuth(['models'], { timeoutMs: 10000 }).catch(() => ({ code: -1 }));
-    return code === 0;
+    if (!command()) return 'out';
+    let ran = true;
+    const { code } = await runAuth(['models'], { timeoutMs: 10000 }).catch(() => { ran = false; return { code: -1 }; });
+    return !ran ? 'unknown' : code === 0 ? 'in' : 'out';
   }
+  async function signedIn() { return (await signedInState()) === 'in'; }
 }
 
 export const backend = createGrokBackend();
