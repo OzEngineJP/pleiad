@@ -11,6 +11,7 @@ import path from 'node:path';
  * brand       ロゴ（web/brand/ のファイル）。mark: true は SVG の #mark を currentColor で描く（色は web/style.css の .row-be-<id>。
  *             画面は文書内の <symbol> として読み込む。web/brand-marks.mjs）、false は画像のまま。null はロゴなし（◇）
  * cli         実行ファイル。exe は既定の名前、binEnv は差し替えの環境変数、npmPackage は npm の包み（.cmd を node で起こす形に解く）、
+ *             installCommand は公式が 1 行で案内している入れ方（確かめたものだけ。画面の行に「コピー」付きで出す。無ければ null か書かない）、
  *             installUrl は「インストール」の案内、searchDirs は PATH のほかに見る置き場（起動済みの Pleiad が PATH の変更を拾えないため）。
  *             null は CLI を使わない（fake）
  * idleCompaction  会話を離れた後の自動の圧縮（ADR 0068）の既定 { enabled, delayMinutes }。null は Pleiad が圧縮しない
@@ -35,7 +36,7 @@ export const AGENTS = {
     module: './claude.mjs',
     shortLabel: 'Claude',
     brand: { logo: 'claude.svg', mark: false },
-    cli: { exe: 'claude', binEnv: 'AGENT_HOST_CLAUDE_BIN', npmPackage: '@anthropic-ai/claude-code', installUrl: 'https://code.claude.com/docs/en/setup', searchDirs: null },
+    cli: { exe: 'claude', binEnv: 'AGENT_HOST_CLAUDE_BIN', npmPackage: '@anthropic-ai/claude-code', installCommand: 'npm install -g @anthropic-ai/claude-code', installUrl: 'https://code.claude.com/docs/en/setup', searchDirs: null },
     idleCompaction: { enabled: true, delayMinutes: 50 },
     rebuildIdleMinutes: 60,
     contextSources: ['claude'],
@@ -48,7 +49,7 @@ export const AGENTS = {
     module: './codex.mjs',
     shortLabel: 'Codex',
     brand: { logo: 'openai.svg', mark: true },
-    cli: { exe: 'codex', binEnv: 'AGENT_HOST_CODEX_BIN', npmPackage: '@openai/codex', installUrl: 'https://developers.openai.com/codex/cli/', searchDirs: null },
+    cli: { exe: 'codex', binEnv: 'AGENT_HOST_CODEX_BIN', npmPackage: '@openai/codex', installCommand: 'npm install -g @openai/codex', installUrl: 'https://developers.openai.com/codex/cli/', searchDirs: null },
     idleCompaction: { enabled: false, delayMinutes: 25 },
     rebuildIdleMinutes: 60,
     contextSources: ['codex'],

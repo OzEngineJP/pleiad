@@ -710,6 +710,7 @@ export function createBotPage(host) {
     return {
       backends: backends(), backend: cur.backend, backendSwitchable: backends().length > 1,
       backendUsage: (id) => weekUsage(host.usageOf?.(id)?.quota, ''),
+      agentView: (id) => host.agentView?.(id) ?? null,
       models: v.models, model: cur.model ?? '',
       efforts: v.efforts, effort: cur.effort ?? '', effortDisabled: Object.keys(v.efforts ?? {}).length <= 1,
       ...(accountShown() ? { accounts: accountOptions(), account: cur.account ?? '' } : {}),

@@ -34,6 +34,7 @@
 <link rel="stylesheet" href="/routines.css">
 <link rel="stylesheet" href="/voice.css">
 <link rel="stylesheet" href="/api-keys.css">
+<link rel="stylesheet" href="/agent-row.css">
 <!-- i18next はビルドしないので、裸の名前をサーバーの配信口へ向ける（core/server.mjs の /vendor/i18next.mjs）。モジュールより前に置く -->
 <script type="importmap">{ "imports": { "i18next": "/vendor/i18next.mjs" } }</script>
 <!-- 最初の描画より前に、配色・言語・窓の枠（デスクトップ版だけ）・脇の開閉を決める。client.mjs を待つと一瞬ずれて見える。
@@ -166,17 +167,18 @@
   <div class="npop" id="notifPanel" hidden></div>
 
   <dialog class="onboarding-dialog" id="onboardingDialog" aria-labelledby="onboardingTitle">
+    <!-- 閉じる口は無い（使えるエージェントが 1 つ要る。docs/desktop-onboarding.md「使えるエージェントが無いとき」）。右上の歯車だけが設定へ出る -->
     <div class="dialog-heading">
       <div>
         <h2 id="onboardingTitle" data-i18n="dialog.onboarding.title"></h2>
-        <p class="onboarding-subtitle" data-i18n="dialog.onboarding.subtitle"></p>
+        <p class="onboarding-subtitle" id="onboardingSubtitle" data-i18n="dialog.onboarding.subtitle"></p>
       </div>
-      <button type="button" class="btn btn-quiet" id="closeOnboarding" data-i18n="dialog.onboarding.later"></button>
+      <button type="button" class="ibtn" id="onboardingGear" data-i18n-title="app.settings" data-i18n-aria-label="app.settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
     </div>
-    <div id="onboardingAgentList" class="onboarding-agent-list" role="radiogroup" data-i18n-aria-label="dialog.onboarding.agents"></div>
+    <div id="onboardingAgentList" class="alist onboarding-agent-list" role="radiogroup" data-i18n-aria-label="dialog.onboarding.agents"></div>
     <div id="onboardingAuth" class="onboarding-auth"></div>
     <!-- 作業ディレクトリ（web/onboarding.mjs。既定はホーム）。デスクトップ版は OS のダイアログ、ブラウザー版は簡易ブラウザー -->
-    <div class="onboarding-cwd" role="group" aria-labelledby="onboardingCwdLabel">
+    <div class="onboarding-cwd" id="onboardingCwd" role="group" aria-labelledby="onboardingCwdLabel">
       <div class="onboarding-cwd-label" id="onboardingCwdLabel" data-i18n="dialog.onboarding.cwd"></div>
       <div class="onboarding-cwd-row">
         <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
@@ -190,7 +192,7 @@
     <p id="onboardingError" role="status" aria-live="polite"></p>
     <p id="onboardingLive" class="visually-hidden" role="status" aria-live="polite"></p>
     <div class="onboarding-actions">
-      <small class="muted" data-i18n="dialog.onboarding.note"></small>
+      <small class="muted" id="onboardingNote" data-i18n="dialog.onboarding.note"></small>
       <button type="button" class="btn btn-primary" id="completeSetup" data-i18n="dialog.onboarding.start"></button>
     </div>
   </dialog>
@@ -228,7 +230,7 @@
     <div class="notify-band" id="notifyBand" role="region" data-i18n-aria-label="settings.nav.notify" hidden></div>
     <!-- 稼働表示（考えている・経過時間）は会話の筋の末尾の節として client.mjs が描く。固定の帯は置かない -->
     <!-- 会話を包む入れ物。最新へ・地図（web/conversation-nav-view.mjs）を #log の外に重ねる -->
-    <div class="log-frame" id="logFrame"><div id="log"><div class="thread" id="thread"></div></div></div>
+    <div class="log-frame" id="logFrame"><div id="noAgent" hidden></div><div id="log"><div class="thread" id="thread"></div></div></div>
 
     <p id="deletedBotNotice" class="deleted-bot-notice" role="status" hidden></p>
     <form class="composer" id="composer">

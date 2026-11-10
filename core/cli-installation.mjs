@@ -9,6 +9,9 @@ import { AGENTS, agentOf } from './backends/agents.mjs';
 /** id -> インストールの案内（エージェントの記述の cli.installUrl）。CLI を使わないもの（fake）は載らない */
 export const INSTALL_URLS = Object.fromEntries(Object.entries(AGENTS).filter(([, a]) => a.cli?.installUrl).map(([id, a]) => [id, a.cli.installUrl]));
 
+/** id -> 公式の 1 行の入れ方（エージェントの記述の cli.installCommand）。確かめていないものは載らない */
+export const INSTALL_COMMANDS = Object.fromEntries(Object.entries(AGENTS).filter(([, a]) => a.cli?.installCommand).map(([id, a]) => [id, a.cli.installCommand]));
+
 export function findExecutable(command, env = process.env, platform = process.platform) {
   const dirs = [path.join(os.homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'];
   if (env.APPDATA) dirs.push(path.join(env.APPDATA, 'npm'));
@@ -96,7 +99,7 @@ export function claudeExecutable() {
 }
 
 export function installation(id) {
-  return { installed: !INSTALL_URLS[id] || Boolean(cliCommand(id)), installUrl: INSTALL_URLS[id] };
+  return { installed: !INSTALL_URLS[id] || Boolean(cliCommand(id)), installUrl: INSTALL_URLS[id], ...(INSTALL_COMMANDS[id] ? { installCommand: INSTALL_COMMANDS[id] } : {}) };
 }
 
 export function spawnCli(argv, args, options = {}) {
