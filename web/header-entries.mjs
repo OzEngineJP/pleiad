@@ -11,6 +11,7 @@ import { isComposingKey } from './keyboard.mjs';
 import { browserIcon } from './tab-strip.mjs';
 import { runMark } from './arc.mjs';
 import { tabCountBadge } from './tab-count-badge.mjs';
+import { createPanelHandoff } from './panel-handoff.mjs';
 
 // エージェント任せの会話（と、Pleiad 担当を受け取れなかった antigravity の会話）
 export const isManagedContext = (report) => Boolean(report) && report.status !== 'native';
@@ -36,8 +37,11 @@ export const browserEntryMark = ({ requested = false, paused = false, working = 
 export function setupBrowserEntry({ button, chrome = () => null, windows = null, getSessionId = () => null,
   getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false, pagesOnly = () => false,
   humanHeld = () => false, mac = isMac(), blocked = () => false, announce = () => {},
-  mobile = () => false, tabs = () => [], openEntry = null }) {
+  mobile = () => false, tabs = () => [], openEntry = null, panelClose = () => null }) {
   if (!button) return null;
+  // 開いている間は、このボタンをタブの列の右端の ✖ へ受け渡す（web/panel-handoff.mjs）
+  const handoff = createPanelHandoff({ entry: button, target: panelClose, onPress: () => toggle() });
+  let mark = null, markVisual = '';
   button.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+B' : 'Control+Shift+B');
   const activeId = () => getSessionId() ?? null;
   const open = () => chrome()?.isOpen() === true;
@@ -86,20 +90,22 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
     button.title = onPhone ? label : `${label}（${browserShortcutLabel(mac)}）`;
     button.setAttribute('aria-label', label);
     button.setAttribute('aria-expanded', String(open()));
-    button.classList.toggle('on', open());
-    button.querySelector('.entry-browser-mark')?.remove();
-    // 開いている間はアドレスバーの札とタブの点が状態を見せるので、角の印は出さない。閉じている間の「動いている」も点にする
-    // （右の欄の印の角に弧を重ねると「›」に見える）
-    const shown = open() ? '' : state;
-    if (shown) {
-      // 「依頼待ち」も人に返す状態なので、人の操作と同じ II の丸に寄せる（色の点は使わない。承認済み 2026-11-08）
-      const visual = shown === 'requested' ? 'paused' : shown;
-      // 動いている印は弧（web/arc.mjs の runMark）。CSS は .entry-run.run に当たる
-      const mark = visual === 'working' ? runMark() : document.createElement('span');
-      mark.classList.add('entry-browser-mark', visual === 'working' ? 'entry-run' : `entry-${visual}`);
-      mark.setAttribute('aria-hidden', 'true');
-      button.append(mark);
+    // 「依頼待ち」も人に返す状態なので、人の操作と同じ II の丸に寄せる（色の点は使わない。承認済み 2026-11-08）
+    const visual = state === 'requested' ? 'paused' : state;
+    // 印の要素は、印が変わったときだけ替える（描くたびに付け直すと、弧が始めから回り直す）
+    if (visual !== markVisual) {
+      mark?.remove(); mark = null; markVisual = visual;
+      if (visual) {
+        // 動いている印は弧（web/arc.mjs の runMark）。CSS は .entry-run.run に当たる
+        mark = visual === 'working' ? runMark() : document.createElement('span');
+        mark.classList.add('entry-browser-mark', visual === 'working' ? 'entry-run' : `entry-${visual}`);
+        mark.setAttribute('aria-hidden', 'true');
+        button.append(mark);
+      }
     }
+    // 開いている間はアドレスバーの札とタブの点が状態を見せるので、角の印は隠す（右の欄の印の角に弧を重ねると「›」に見える）
+    if (mark) mark.hidden = open();
+    if (!handoff.moving) handoff.settle(open());
   }
 
   function toggle(anchor = button) {
@@ -120,5 +126,7 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
     toggle();
   });
   paint();
-  return { paint, toggle, currentMark, available: () => !!activeId() };
+  return { paint, toggle, currentMark, available: () => !!activeId(),
+    /** パネルのばねの進み具合（web/file-preview.mjs の onMotion） */
+    motion: (p, phase) => handoff.update(p, phase) };
 }

@@ -120,6 +120,10 @@
   --dur-pill:360ms;           /* 終端ノードが横へ伸びて pill になる */
   --ease-out:cubic-bezier(.2,.7,.2,1);       /* 部品の出入り */
   --ease-organic:cubic-bezier(.65,0,.25,1);  /* 枝。ゆっくり始まり、ゆっくり止まる */
+  /* ばね（応答の長さ・弾み）。JS は web/motion.mjs が読む。smooth は大きな面の出入りと幅、snappy は浮かぶ一覧だけ。
+     承認済み（2026-11-11、docs/design-system.md §8「動きの語彙」）。動きを減らす設定は web/motion.mjs が判定して終わりの値へ飛ばす */
+  --spring-smooth-response:.45s;--spring-smooth-bounce:0;
+  --spring-snappy-response:.3s;--spring-snappy-bounce:.15;
 
   color-scheme:light}
 

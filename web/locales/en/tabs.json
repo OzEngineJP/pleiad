@@ -21,6 +21,9 @@
     "close": "Close {{title}}",
     "closeTab": "Close tab",
     "closeList": "Close tab list",
+    "all": "All tabs",
+    "search": "Search tabs",
+    "noMatch": "No matching tabs",
     "open_one": "Open browser ({{count}} tab)",
     "open_other": "Open browser ({{count}} tabs)"
   },

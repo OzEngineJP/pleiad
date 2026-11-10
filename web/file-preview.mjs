@@ -11,6 +11,7 @@ import { fileMenuItems, copyPathText, relativeTo, samePath, notify, download } f
 import { applySlots, fileSlots, customSlots, gitSlots, chromeSlots, subtitleFor } from './side-panel.mjs';
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
+import { createSpring, reducedMotion } from './motion.mjs';
 
 const KIND = { markdown:'Markdown', html:'HTML', image:t('filePreview.kind.image'), table:t('filePreview.kind.table'), text:t('filePreview.kind.text'), pdf:'PDF',
   unsupported:t('filePreview.kind.unsupported'), directory:t('filePreview.kind.directory') };
@@ -37,7 +38,7 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
  * ファイル・可視化のクリックは Pleiad のページ（画面内のタブ。configureBrowserUnify。ADR 0294）で開く。
  * ページの口がまだ無い間（サーバーの hostCapabilities が届く前）は右パネルで開く（HTML は原文）
  */
-export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false }) {
+export function setupFilePreview({ getContext, useFile, onLayout, onMotion = null, showMenu, cmd, osActions = () => false }) {
   let unified = null, openPage = null;
   let sessionGeneration = 0;
   const resolvedFiles = new Map();
@@ -230,6 +231,44 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     handle.setAttribute('aria-valuenow', String(Math.round(percentage)));
     onLayout?.();
   };
+  // ---- 開閉の動き（内蔵ブラウザーの中身だけ。docs/design-system.md §8「動きの語彙」の smooth）。
+  // 0 = 閉じた・1 = 開いた。横に並ぶときは列の幅（--file-preview-shown）を、全面のときは横の位置を動かす。
+  // 中身は動く間も全幅のまま描き（押しつぶさない）、閉じる間は中身を残して、止まってから片付ける
+  let leaving = null;   // 閉じる動きの間だけ、閉じた中身（custom）を持つ。論理の上ではもう閉じている（panel.hidden）
+  let quiet = false;
+  const shown = createSpring(0, { preset:'smooth', epsilon:0.002, onUpdate:() => paintMotion() });
+  const motionOn = () => !reducedMotion() && typeof requestAnimationFrame === 'function' && !document.body.classList.contains('file-preview-wide');
+  const place = value => { quiet = true; shown.set(value); quiet = false; };
+  function clearMotion() {
+    document.body.style.removeProperty('--file-preview-shown');
+    panel.style.removeProperty('width'); panel.style.removeProperty('transform');
+  }
+  /** 今のばねの値を画面へ当てる。onMotion(p, phase) は頭の行の受け渡し（web/panel-handoff.mjs）が使う */
+  function paintMotion() {
+    if (quiet) return;
+    const p = Math.min(1, Math.max(0, shown.value)), moving = shown.moving;
+    // 動く間は中身が列より広くはみ出す。中へフォーカスを移すと body（overflow:hidden）が横へ送られるので、間だけ clip にする
+    document.body.classList.toggle('file-preview-moving', moving);
+    if (document.body.scrollLeft) document.body.scrollLeft = 0;
+    if (!moving) clearMotion();
+    else if (mobile.matches) { document.body.style.removeProperty('--file-preview-shown'); panel.style.removeProperty('width'); panel.style.transform = `translateX(${((1 - p) * 100).toFixed(3)}%)`; }
+    else {
+      const full = parseFloat(document.body.style.getPropertyValue('--file-preview-width')) || panel.offsetWidth || 0;
+      document.body.style.setProperty('--file-preview-shown', `${(p * full).toFixed(2)}px`);
+      panel.style.width = `${full}px`; panel.style.removeProperty('transform');
+    }
+    const phase = moving ? (shown.target > 0.5 ? 'opening' : 'closing') : (!panel.hidden && custom?.key === 'chrome-window' ? 'open' : 'closed');
+    onMotion?.(moving ? p : (phase === 'open' ? 1 : 0), phase);
+  }
+  /** 閉じる動きが終わった（または別の中身で開き直す）ときの片付け。閉じたときの後始末の残り */
+  function finishLeave() {
+    if (!leaving) return;
+    leaving = null;
+    if (shown.moving) { shown.stop(); place(0); }
+    panel.classList.remove('fp-leaving'); panel.inert = false; document.body.classList.remove('file-preview-leaving');
+    if (panel.hidden) { leaveCustom(); content.replaceChildren(); file = null; setTreeOpen(false); }
+    layout(); paintMotion();
+  }
   function disposePdf() { renderTask?.cancel(); renderTask = null; pdfTask?.destroy().catch(() => {}); pdfTask = null; pdfDoc = null; }
   /** 今のモードの設定。状態（custom・file）から毎回作り直す */
   function slots() {
@@ -249,11 +288,23 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   }
   const clearCurrent = () => document.querySelectorAll('.file-link[aria-current]').forEach(node => node.removeAttribute('aria-current'));
   function close(restore = true) {
+    if (leaving) finishLeave();
+    const animate = !panel.hidden && custom?.key === 'chrome-window' && motionOn();
     abort?.abort(); generation++; paintId++; disposePdf(); panel.hidden = true;
     document.body.classList.remove('file-preview-open','file-preview-wide');
     clearCurrent();
-    const was = custom; leaveCustom();
-    content.replaceChildren(); file = null; setTreeOpen(false); layout();
+    const was = custom;
+    if (animate) {
+      // 中身を残したまま閉じる向きへ動かし、止まってから片付ける（finishLeave）。開く途中なら、今の位置と速さから戻る
+      leaving = was;
+      if (!shown.moving) place(1);
+      panel.classList.add('fp-leaving'); panel.inert = true; document.body.classList.add('file-preview-leaving');
+      layout();
+      shown.to(0, { onEnd:finishLeave }); paintMotion();
+    } else {
+      leaveCustom();
+      content.replaceChildren(); file = null; setTreeOpen(false); layout();
+    }
     was?.onClose?.();
     if (restore && opener?.isConnected) opener.focus({ preventScroll:true });
   }
@@ -450,9 +501,14 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * 幅・Esc・狭い画面の全面表示はファイルと共有する。出す部品は customSlots（見出しと本文と閉じるだけ）
    */
   function openPanel({ key, title, subtitle = '', body, label, element, onClose, width = 0, footer = null, head = null, toolbar = null, wide = false, status: statusText }) {
+    // 閉じる動きの途中に同じ中身を開き直したら、今の位置から開く向きへ戻す。別の中身なら先に片付ける
+    const resume = !!leaving && leaving.key === key;
+    if (leaving && !resume) finishLeave();
+    if (resume) { leaving = null; panel.classList.remove('fp-leaving'); panel.inert = false; document.body.classList.remove('file-preview-leaving'); }
+    const wasShown = !panel.hidden;
     const previous = custom;
     abort?.abort(); generation++; paintId++; disposePdf();
-    if (previous && previous.key !== key) { leaveCustom(); previous.onClose?.(); }
+    if (previous && previous.key !== key && !resume) { leaveCustom(); previous.onClose?.(); }
     opener = element ?? null; file = null; reference = null;
     // 下の行のボタン（git の「再読み込み」「会話で使う」など）。枠の部品の表（parts.buttons）へ名前を付けて足し、モードの設定が並べる
     const footerIds = (footer ?? []).map((f, i) => { parts.buttons[`custom${i}`] = button(f.label, f.onClick); return `custom${i}`; });
@@ -469,6 +525,10 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     if (element) element.setAttribute('aria-expanded', 'true');
     // パネルの中（ブラウザーのタブの列）から切り替えたときは、押したタブのフォーカスを奪わない
     layout(); if (!panel.contains(document.activeElement)) panel.focus({ preventScroll:true });
+    if (key === 'chrome-window' && !wasShown) {
+      if (motionOn()) { if (!resume) place(0); shown.to(1); paintMotion(); }
+      else { place(1); paintMotion(); }
+    }
   }
   /** 開いている自前の中身を差し替える（スクロール位置は保つ）。別の中身・閉じているときは何もしない */
   function updatePanel(key, { title, subtitle, body, status: statusText } = {}) {
@@ -483,6 +543,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     return true;
   }
   function open(ref, element, base) {
+    finishLeave();
     if (!base) opener = element;
     leaveCustom();
     reference = ref; file = null; context = { ...getContext(element), ...(base ? {base} : {}) };

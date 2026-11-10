@@ -106,6 +106,7 @@ const SUITES = [
   './unit/header-entries.mjs',
   './unit/shortcut-labels.mjs',
   './unit/arc.mjs',
+  './unit/motion.mjs',
   './unit/activity-strip.mjs',
   // mark 型ロゴの文書内シンボル化（web/brand-marks.mjs）: <use> の参照・1 回だけの取得・シンボルの登録・失敗後の取り直し
   './unit/brand-marks.mjs',
@@ -960,6 +961,8 @@ const SUITES = [
   './unit/browser-unify-b3.mjs',
   './unit/browser-unify-ws.mjs',
   './unit/browser-unify-tabs.mjs',
+  // 右の欄のタブの列と開け閉めを本物の画面で（B1_BROWSER_TEST=1。tests/browser/right-panel-tabs.mjs）
+  './unit/right-panel-tabs.mjs',
   // 画面内ページのタブ（web/page-tabs.mjs）: サーバーが決める開く先・ページ内移動・更新の扱い・鍵と見張りの取り直し。Pleiad 印の分類（P9）
   './unit/browser-unify-pages.mjs',
   './unit/visualize-card-mouse.mjs',

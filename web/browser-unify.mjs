@@ -9,6 +9,7 @@ import { samePath } from './file-actions.mjs';
 import { createPageTabs } from './page-tabs.mjs';
 import { createBrowserTree } from './browser-tree.mjs';
 import { openExternalLink } from './link-open.mjs';
+import { browserShortcutLabel } from './header-entries.mjs';
 
 /** メニューの行のアイコン（タブの列・アドレスバーと同じ線の絵） */
 const menuIcon = kind => { const svg = browserIcon(kind); svg.classList.add('i'); return svg; };
@@ -30,7 +31,7 @@ const css = `
 .bu-tree-overlay{box-shadow:6px 0 18px var(--shadow)}
 @media(max-width:600px){.bu-display{font-size:11px!important;min-height:44px;padding:4px!important}.bu-tree-more{opacity:1;min-width:44px;min-height:44px}.bu-explorer-list .tree-row{min-height:44px}}
 
-.bu-chrome{--bu-frame:var(--surface-3);--bu-bar:var(--surface-1);--bu-omni:var(--surface-2);color:var(--ink);flex:none;min-width:0}
+.bu-chrome{--bu-frame:var(--surface-3);--bu-bar:var(--surface-1);--bu-omni:var(--surface-2);color:var(--ink);flex:none;min-width:0;position:relative}
 [data-theme=dark] .bu-chrome{--bu-frame:var(--surface-0);--bu-bar:var(--surface-3);--bu-omni:var(--surface-paper)}
 .bu-chrome button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .bu-chrome [hidden]{display:none!important}
@@ -38,16 +39,42 @@ const css = `
 .bu-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:34px;height:34px;border-radius:50%;padding:0}
 .bu-icon:hover:not(:disabled),.bu-crumb:hover,.bu-count:hover{background:var(--surface-3)}
 .bu-icon svg{width:18px;height:18px;flex:none}.bu-icon:disabled{opacity:.35;cursor:default}
-.bu-tabs{display:flex;align-items:end;height:40px;padding:0 6px 0 8px;background:var(--bu-frame);min-width:0}
-.bu-tab{height:34px;display:flex;align-items:center;flex:1 1 240px;max-width:240px;min-width:0;border-radius:10px 10px 0 0;position:relative;padding:0 8px 0 12px;color:var(--ink-weak)}
-.bu-tab+.bu-tab:before{content:'';position:absolute;left:0;top:7px;height:20px;width:1px;background:var(--line)}
+@property --fade-s{syntax:'<number>';inherits:false;initial-value:1}
+@property --fade-e{syntax:'<number>';inherits:false;initial-value:1}
+/* Tabs shrink to 96px, then scroll sideways with faded edges (24px). */
+.bu-tabs{display:flex;align-items:end;height:42px;padding:4px 0 0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;flex:0 1 auto;min-width:0;--fade-s:1;--fade-e:1;-webkit-mask-image:linear-gradient(to right,rgba(0,0,0,var(--fade-s)) 0,#000 24px,#000 calc(100% - 24px),rgba(0,0,0,var(--fade-e)) 100%);mask-image:linear-gradient(to right,rgba(0,0,0,var(--fade-s)) 0,#000 24px,#000 calc(100% - 24px),rgba(0,0,0,var(--fade-e)) 100%);transition:--fade-s var(--dur-fast) linear,--fade-e var(--dur-fast) linear}
+.bu-tabs.fade-s{--fade-s:0}.bu-tabs.fade-e{--fade-e:0}.bu-tabs::-webkit-scrollbar{display:none}
+.bu-tab{height:38px;padding:0 6px 4px 12px;display:flex;align-items:center;flex:0 1 240px;width:240px;max-width:240px;min-width:96px;border-radius:10px 10px 0 0;position:relative;overflow:hidden;color:var(--ink-weak);transition:background-color var(--dur-fast) var(--ease-out)}
+.bu-tab+.bu-tab:before{content:'';position:absolute;left:0;top:9px;height:20px;width:1px;background:var(--line)}
 .bu-tab.on{background:var(--bu-bar);color:var(--ink)}.bu-tab.on:before,.bu-tab.on+.bu-tab:before{display:none}
+.bu-tab:not(.on):hover{background:color-mix(in srgb,var(--bu-bar) 55%,transparent)}
+.bu-tab-pick:focus-visible{outline:none!important}.bu-tab:has(>.bu-tab-pick:focus-visible){box-shadow:inset 0 0 0 2px var(--line-blue)}
 .bu-tab-pick{display:flex;align-items:center;gap:8px;min-width:0;flex:1;height:100%;padding:0;text-align:left}
 .bu-tab-title{overflow:hidden;white-space:nowrap;flex:1;font-size:12px;mask-image:linear-gradient(to right,#000 calc(100% - 18px),transparent)}
 .bu-favicon{width:16px;height:16px;flex:none}.bu-loading{animation:bu-pulse 1s ease-in-out infinite alternate}@keyframes bu-pulse{to{opacity:.3}}
 @media(prefers-reduced-motion:reduce){.bu-loading{animation:none}}
-.bu-tab-close{width:18px;height:18px;margin-left:4px}.bu-tab-close svg{width:12px;height:12px}.bu-new{width:32px;height:32px;margin:0 0 1px 2px}
-.bu-favicons .bu-tab-title,.bu-favicons .bu-tab:not(.on) .bu-tab-close{display:none}.bu-favicons .bu-tab{padding:0 5px;justify-content:center}.bu-favicons .bu-tab-pick{justify-content:center;flex:0}
+/* Tab close: a 16px glyph in a 22px circle, 6px from the right edge. Hover 14% / press 22% of the text colour. */
+.bu-tab-close{width:22px;height:22px;margin-left:2px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;padding:0}
+.bu-tab-close svg{width:16px;height:16px}
+.bu-tab-close:hover{color:var(--ink-strong);background-image:linear-gradient(color-mix(in srgb,currentColor 14%,transparent),color-mix(in srgb,currentColor 14%,transparent))}
+.bu-tab-close:active{color:var(--ink-strong);background-image:linear-gradient(color-mix(in srgb,currentColor 22%,transparent),color-mix(in srgb,currentColor 22%,transparent))}
+/* Under 120px per tab, inactive tabs show their close only on hover; the active tab keeps 120px. */
+.bu-narrow .bu-tab:not(.on) .bu-tab-close{position:absolute;right:6px;top:6px;margin:0;opacity:0;background-color:color-mix(in srgb,var(--bu-bar) 55%,var(--bu-frame));transition:opacity var(--dur-fast) linear}
+.bu-narrow .bu-tab:not(.on):hover .bu-tab-close,.bu-narrow .bu-tab:not(.on):focus-within .bu-tab-close{opacity:1}
+.bu-narrow .bu-tab.on{min-width:120px}
+.bu-spacer{flex:none;height:1px}
+.bu-new{width:36px;height:34px;align-self:center}.bu-tabrow-gap{flex:1 0 8px}.bu-panel-close{margin-right:4px}
+.bu-list svg{width:16px;height:16px}.bu-list[aria-expanded=true]{background:var(--surface-3)}
+/* All tabs (opened from the chevron). */
+.bu-alltabs{position:absolute;z-index:31;width:300px;max-width:calc(100% - 16px);display:flex;flex-direction:column;padding:6px;border-radius:12px;background:var(--surface-paper);box-shadow:0 0 0 1px var(--line),0 8px 24px var(--shadow);transform-origin:top right}
+.bu-alltabs-q{flex:none;height:32px;border:0;border-radius:8px;background:var(--surface-1);color:var(--ink);font:inherit;font-size:13px;padding:0 10px;margin-bottom:4px;outline:none}
+.bu-alltabs-q:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.bu-alltabs ul{list-style:none;margin:0;padding:0;overflow:auto;min-height:0}
+.bu-alltabs li{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:8px;font-size:12.5px;white-space:nowrap;cursor:pointer}
+.bu-alltabs li:hover{background:var(--surface-1)}.bu-alltabs li.act{background:var(--surface-2)}
+.bu-alltabs li .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.bu-alltabs li[aria-current=true] .t{font-weight:700;color:var(--ink-blue)}.bu-alltabs li .bu-favicon{color:var(--ink-weak)}
+.bu-alltabs li.none{color:var(--ink-weak);cursor:default}.bu-alltabs li.none:hover{background:none}
 .bu-toolbar{position:relative;display:flex;align-items:center;gap:2px;height:46px;padding:0 6px;background:var(--bu-bar);min-width:0}
 .bu-omni{display:flex;align-items:center;flex:1;min-width:0;gap:8px;height:34px;border-radius:17px;margin:0 4px;padding:0 4px 0 12px;background:var(--bu-omni);cursor:text}
 .bu-omni.bu-file{padding-left:4px;gap:4px}.bu-tree{width:28px;height:26px;border-radius:13px}.bu-tree svg{width:17px;height:17px}
@@ -94,8 +121,8 @@ const css = `
 @media(prefers-reduced-motion:reduce){.bu-tab.bu-flash{animation:none;outline:2px solid var(--line-blue);outline-offset:-2px}}
 .bu-agent{display:grid;place-items:center;flex:none;width:14px;height:14px}
 .bu-agent .run svg{width:12.32px;height:12.32px;stroke-width:1.7}
-/* Keep the conversation picker and add button outside the scrolling tabs. */
-.bu-tabrow{display:flex;align-items:stretch;height:42px;min-width:0;gap:4px;padding-left:8px;background:var(--bu-frame)}
+/* Keep the conversation picker, new tab, all tabs and panel close outside the scrolling tabs. */
+.bu-tabrow{display:flex;align-items:center;height:42px;min-width:0;gap:4px;padding-left:8px;background:var(--bu-frame)}
 .bu-tabrow .bu-conv{flex:none;align-self:flex-start;min-width:0;max-width:220px;margin-top:4px}
 .bu-conv input{height:34px;font-size:13px;padding:0 24px 0 12px}
 .bu-conv::after{content:'';position:absolute;right:10px;top:12px;width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);color:var(--ink-weak);pointer-events:none}
@@ -103,10 +130,7 @@ const css = `
 .bu-conv>.run svg{width:14px;height:14px}
 .bu-conv:has(>.run:not([hidden])) input{padding-left:28px}
 .bu-conv .clist{z-index:30}
-.bu-tabrow .bu-tabs{flex:1;height:42px;padding:4px 4px 0 0;overflow-x:auto;scrollbar-width:none}
-.bu-tabrow .bu-tabs::-webkit-scrollbar{display:none}
-.bu-tabrow .bu-tab{height:38px;padding-bottom:4px}
-.bu-tabrow .bu-new{flex:none;align-self:center;width:36px;height:34px;margin:0 6px 0 0}
+.bu-tabrow .bu-tabs{align-self:stretch}
 /* Show loading until the selected mobile tab supplies its first frame or page. */
 .bu-load{position:absolute;left:0;right:20%;bottom:0;height:2px;background:var(--line-blue);animation:bu-load .8s ease-in-out infinite alternate}
 @keyframes bu-load{to{right:0}}
@@ -367,7 +391,10 @@ export function createBrowserUnify(deps = {}) {
     const held = tab ? holderOf(sessionId, tab.chromeId ?? tab.targetId) : { holder:'ai' };
     return { sessionId, tab, held, agentTab, store, anyHuman, agentUsed:store !== 'idle' || agentTab != null };
   }
-  const strip = createTabStrip({ label:tabLabel, externalNew:true, onPick:pick, onClose:tab => navigate('close', { targetId:tab.targetId }).catch(failed), onNew:() => navigate('new').catch(failed),
+  const mac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+  // タブの列の右端の ✖ はパネルを閉じる（開いている間は頭のアイコンを隠し、ここへ受け渡す。docs/design-system.md「会話の頭の行のアイコン」）
+  const strip = createTabStrip({ label:tabLabel, onPick:pick, onClose:tab => navigate('close', { targetId:tab.targetId }).catch(failed), onNew:() => navigate('new').catch(failed),
+    onPanelClose:() => { chrome()?.close(); deps.focusEntry?.(); }, shortcut:{ label:browserShortcutLabel(mac), aria:mac ? 'Meta+Shift+B' : 'Control+Shift+B' },
     // タブの右クリック: 今のタブの操作、その下に再読み込み・タブを閉じる（モック v6 の「タブを右クリック」。題は付けない）
     onMenu(tab, event) {
       event.preventDefault();
@@ -433,7 +460,7 @@ export function createBrowserUnify(deps = {}) {
     convRun.hidden = ovRun.hidden = !running;
   }
   const tabRow = document.createElement('div'); tabRow.className = 'bu-tabrow';
-  tabRow.append(conv.root, strip.root, strip.add);
+  tabRow.append(conv.root, ...strip.items);
   const root = document.createElement('div'); root.className = 'bu-chrome'; root.append(tabRow, address.root);
   address.root.append(loadLine);
   // ---- スマホの一覧（[N]）: 上段は閉じる・会話の切替・＋。カードは選んだ会話のタブだけ ----
@@ -646,6 +673,7 @@ export function createBrowserUnify(deps = {}) {
   }
   function attach() {
     chrome()?.mountBrowserChrome?.(root);
+    strip.relayout();
     // 「II あなたが操作中 [AI に戻す]」はアドレスバーのすぐ下の 1 行（承認済み 2026-11-08）。
     // 一覧（.bu-overview）の後に置くので、PC の出る場所は今のまま（一覧を開いている間は一覧の下）
     if (badge && badge.element.parentElement !== root) overview.after(badge.element);
@@ -745,8 +773,9 @@ export function createBrowserUnify(deps = {}) {
     /** タブの列のタブを一瞬光らせる（もう開いていたファイル） */
     flashTab(tab, sessionId) {
       if (sessionId !== session()) return;
-      const item = [...strip.root.querySelectorAll('.bu-tab')].find(node => node.dataset.target === tab?.targetId);
+      const item = [...strip.root.querySelectorAll('.bu-tab')].find(node => node.dataset.target === tab?.targetId && !node.classList.contains('bu-ghost'));
       if (!item) return;
+      strip.reveal(tab.targetId);
       item.classList.remove('bu-flash'); void item.offsetWidth; item.classList.add('bu-flash');
       item.addEventListener('animationend', () => item.classList.remove('bu-flash'), { once:true });
       setTimeout(() => item.classList.remove('bu-flash'), 1200);
@@ -760,6 +789,20 @@ export function createBrowserUnify(deps = {}) {
         badge = createControlBadge({ onResume:() => cmd('chromeResume', { sessionId:session() }).catch(failed) });
         chrome()?.useInput?.({ phone:() => phoneQuery.matches, showMenu });
         chrome()?.onOpenChange(attach);
+        // 開いたら中へフォーカスを移す: 新しいタブならアドレスバー、ほかは今のタブ（docs/design-system.md「会話の頭の行のアイコン」）。
+        // 開いたまま映す会話を替えたとき（show の呼び直し）は動かさない。スマホはキーボードを出さないよう、パネルのまま
+        let wasOpen = false;
+        chrome()?.onOpenChange(open => {
+          const opened = open && !wasOpen; wasOpen = !!open;
+          if (!opened || phoneQuery.matches) return;
+          // 開いた直後の知らせ（onTargetChange → attach）が列を置き直すと、移したフォーカスが外れる。次のコマで移す
+          const inside = () => {
+            if (chrome()?.isOpen?.() === false) return;
+            const tab = current();
+            if (!tab || tab.page?.kind === 'new') address.edit(); else strip.focusCurrent();
+          };
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(inside); else inside();
+        });
         chrome()?.onTargetChange(attach);
         chrome()?.onTabChange?.(event => {
           // つなぎ直し（サーバーの入れ替え）で、ファイル・フォルダー・HTML・可視化のページの見張りと鍵を取り直す（P6）。

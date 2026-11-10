@@ -579,7 +579,7 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 /* 紙の角。左上は脇の面に、右上は並べたプレビューの面に接するので丸める。閉じても脇の面（レール）が残るので角は変わらない。
    窓の縁に接する角は立てる（丸めると縁に欠けが出る） */
 :root.desktop body > main{--paper-tl:var(--r-l);--paper-tr:0px;border-radius:var(--paper-tl) var(--paper-tr) 0 0}
-:root.desktop body.file-preview-open > main{--paper-tr:0px}
+:root.desktop body:is(.file-preview-open,.file-preview-leaving) > main{--paper-tr:0px}
 /* 帯は脇と同じ面のまま。閉じても左の 52px にレールが残るので、帯・紙の角は開いているときと同じにする。
    --bar-end は帯の右端の色。窓のボタンの地として client.mjs の paintTitleBar が読んで OS へ送る */
 .titlebar{--bar-end:var(--surface-0)}
@@ -670,6 +670,8 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 #titleWand{flex:none;opacity:0;transform:translateX(-4px);transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur) var(--ease-out),background-color var(--dur-fast) var(--ease-out)}
 .title-field:is(:hover,:focus-within) #titleWand,#titleWand.busy{opacity:1;transform:none}
 @media (hover:none){.title-field:hover:not(:focus-within) #titleWand:not(.busy){opacity:0;transform:translateX(-4px)}}
+/* 右パネルを閉じた直後は、ポインターが動くまで杖を出さない（押した場所が広がった題の上に残るため。web/panel-handoff.mjs） */
+:root.wand-quiet .title-field:hover:not(:focus-within) #titleWand:not(.busy){opacity:0;transform:translateX(-4px)}
 @media (prefers-reduced-motion:reduce){#titleWand{transition:none;transform:none}}
 /* タイトル行の右の、右の欄を開け閉めするアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」）。
    「…」の「変更あり」は右上の強い字の点（紙の色の 2px の切り欠き）。
@@ -689,6 +691,14 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .entry-paused::before,.entry-paused::after{content:"";position:absolute;top:3px;width:2px;height:8px;border-radius:1px;background:currentColor}
 .entry-paused::before{left:4px}.entry-paused::after{right:4px}
 .btn:hover > .entry-dot{box-shadow:0 0 0 2px var(--surface-2)}
+/* 開いている間、頭のアイコンはタブの列の右端の ✖ へ受け渡して列から外す。動いている間は移る絵（web/panel-handoff.mjs）が 2 つの間を移る
+   （docs/design-system.md「会話の頭の行のアイコン」） */
+#browserEntry.entry-handed{display:none}
+.panel-flier{position:fixed;z-index:50;display:block;margin:0;padding:0;border:0;border-radius:50%;cursor:pointer;-webkit-app-region:no-drag}
+.panel-flier-g{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.panel-flier-g svg{width:var(--g);height:var(--g);flex:none}
+.panel-flier-mark{position:absolute;inset:0;pointer-events:none}
+.panel-flier.focus{outline:2px solid var(--line-blue);outline-offset:1px}
 /* AI がタイトルを考えている間。欄の文字を隠し、文字の代わりに丸い棒を置いて光を左から右へ通す。
    棒は 15px の太字 1 行に合わせた高さ 10px、長さはタイトルの半分ほど。欄は disabled で書き込めない */
 .title-field.generating input,.title-field.generating input::placeholder{color:transparent}
@@ -2279,7 +2289,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   #logFrame > #log{padding-bottom:calc(12px + var(--composer-h,0px))}
   /* デスクトップ版の紙の角: 脇は重なるだけなので、紙の左上は窓の縁に接する */
   :root.desktop body:not(.settings) > main{--paper-tl:0px}
-  :root.desktop body:not(.settings,.file-preview-open) > .titlebar{background:var(--surface-paper);--bar-end:var(--surface-paper)}
+  :root.desktop body:not(.settings,.file-preview-open,.file-preview-leaving) > .titlebar{background:var(--surface-paper);--bar-end:var(--surface-paper)}
   /* 浮く面は画面の幅に収める */
   #filterPop{width:min(250px,calc(100% - 24px))}
   #iconPop{width:min(312px,calc(100vw - 16px))}

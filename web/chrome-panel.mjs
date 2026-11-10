@@ -340,7 +340,8 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     endFade();
     if (sessionId && !pagePaused) cmd('browserScreencastStop', { sessionId, source: 'chrome' }).catch(() => {});
     sessionId = null; owner = null; state = null; frameMeta = null; ended = false; connecting = false; lastBox = null; pagePaused = false; pendingTab = null;
-    parts?.sink.reset(); unifiedInput?.reset();
+    // 映像の最後のコマは消さない（閉じる動きの間もパネルに残す。開くときは show が消す）
+    unifiedInput?.reset();
   }
 
   /** パネルを開く。id は映す会話（今の会話か、その子の会話） */
