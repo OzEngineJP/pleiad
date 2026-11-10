@@ -11061,7 +11061,10 @@ updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: o
   if (creatingSession || state.loadingSession) throw new Error(t('app.update.loading'));
   if (!state.current && ($('prompt').value || state.attached.length)) throw new Error(t('app.update.draftNoSession'));
   await saveDraft();
-  await Promise.all([settingsWrite, modeWrite, ...[...state.drafts].filter(([id, draft]) => id && draft.dirty).map(([id, draft]) => persistDraft(id, draft))]);
+  // 設定・モードの保存は、走っている分が終わるのを待つだけにする。失敗した書き込みは次に書けるまで拒否のまま残るが、
+  // 失敗の知らせは入力欄の上や会話に出ていて選び直しでしか解けない。ここで止めると「再起動して更新」がその理由で進まなくなる。
+  // 下書きの保存（saveDraft・persistDraft・draftWrites）は、失敗すると書きかけを失うおそれがあるので、失敗したら更新を止める
+  await Promise.all([settingsWrite.catch(() => {}), modeWrite.catch(() => {}), ...[...state.drafts].filter(([id, draft]) => id && draft.dirty).map(([id, draft]) => persistDraft(id, draft))]);
   await Promise.all([...draftWrites.values()]);
 } });
 // 狭い画面の引き出しから開いたなら閉じておく（docs/design-system.md「幕・会話の行・設定・Esc で閉じる」）。
