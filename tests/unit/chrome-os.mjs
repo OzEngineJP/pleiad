@@ -1517,6 +1517,84 @@ export default async function (t) {
       os.conceal(os.findWindowByNonce(NONCE));
       t.ok('履歴が無ければ、見える窓の列挙（Z 順）の先頭を前面にする', os.raiseVisibleBrowser({}).ok === true && w.fg === 600);
     }
+    // 隠し損ねた窓: 隠す位置に開いたタブの窓を Chrome がモニターの端へ寄せ、上の 29 画素だけがモニターにかかる（実機: 801×800、2026-11-10）。
+    // 隠していない・スタイルも付いていないので、画面の外の窓を見分けないと「見える窓」として前に出し、URL はその窓に開く
+    const STRAY = { title: 'GitHub - Google Chrome', rect: { left: 2531, top: -771, right: 3332, bottom: 29 } };
+    {
+      const { w, os } = setup('ChromeHTML');
+      w.add(650, STRAY);
+      os.conceal(os.findWindowByNonce(NONCE));
+      // 前面の履歴: 700 → 650（隠し損ねた窓）→ 601。いちばん新しい Chrome の窓は 650
+      w.fg = 601; os.guardTick();
+      w.fg = 650; os.guardTick();
+      w.fg = 700; os.guardTick();
+      const r = os.raiseVisibleBrowser({});
+      t.ok('前面の履歴で新しくても、画面の外の窓（中心がどのモニターにも無い）は前に出さず、画面の上の窓を出す', r.ok === true && w.fg === 601 && !w.calls.some(c => c[0] === 'setForeground' && c[1] === 650), JSON.stringify(r));
+    }
+    {
+      const { w, os } = setup('ChromeHTML');
+      w.windows.delete(600); w.windows.delete(601);
+      w.add(650, STRAY);
+      w.add(600, { title: 'Chrome A' });
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('窓の列挙（Z 順）の先頭でも、画面の外の窓は飛ばす', os.raiseVisibleBrowser({}).ok === true && w.fg === 600);
+    }
+    {
+      const { w, os } = setup('ChromeHTML');
+      w.windows.get(601).iconic = true;
+      w.windows.get(601).rect = { left: -32000, top: -32000, right: -31840, bottom: -31972 };
+      w.windows.delete(600);
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('最小化の窓は、矩形が画面の外（-32000）でも対象', os.raiseVisibleBrowser({}).ok === true && w.fg === 601);
+    }
+    {
+      const { w, os } = setup('ChromeHTML');
+      w.displays = [];
+      w.windows.delete(600);
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('モニターの一覧が取れなければ、どこかにかかる窓は対象（今までどおり）', os.raiseVisibleBrowser({}).ok === true && w.fg === 601);
+    }
+    // 見える Chrome の窓が無いとき: URL を渡されたら、隠した窓のプロフィールの新しい見える窓に開く（そのままでは last-active の隠した窓に入る）
+    {
+      const EXE = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+      const open = ({ conceal = { profile: 'Default' }, url = 'https://example.com/x?y=1', stray = true } = {}) => {
+        const w = winWith();
+        if (stray) w.add(650, STRAY);
+        w.registry[PROGID] = 'ChromeHTML';
+        const spawned = [], logs = [];
+        const spawn = (exe, args, options) => { spawned.push({ exe, args, options }); return { on() {}, unref() {} }; };
+        const os = createWin32ChromeOs({ win32: w, timers: noTimers, env: ENV, exists: p => p === EXE, spawn, log: line => logs.push(line) });
+        os.conceal(os.findWindowByNonce(NONCE), conceal);
+        return { w, r: os.raiseVisibleBrowser({ url }), spawned, logs };
+      };
+      {
+        const { w, r, spawned, logs } = open();
+        t.ok('見える窓が無く URL があれば、chrome.exe --profile-directory --new-window <URL> で開き、opened を返す（前面は動かさない）',
+          r.ok === true && r.opened === true && spawned.length === 1 && spawned[0].exe === EXE && w.fg === 700
+          && JSON.stringify(spawned[0].args) === JSON.stringify(['--profile-directory=Default', '--new-window', 'https://example.com/x?y=1']), JSON.stringify({ r, spawned, logs }));
+        t.ok('開いたことをログに残す（URL は残さない）', logs.some(line => /opened the URL in a new visible Chrome window/.test(line)) && !logs.some(line => line.includes('example.com')));
+      }
+      {
+        const { r, spawned } = open({ url: null });
+        t.ok('URL が無ければ（HTML のファイル）開かず no-visible', r.reason === 'no-visible' && spawned.length === 0);
+      }
+      {
+        const { r, spawned } = open({ url: 'file:///C:/x.html' });
+        t.ok('http・https でない URL は渡さない', r.reason === 'no-visible' && spawned.length === 0);
+      }
+      {
+        const { r, spawned } = open({ url: 'https://example.com/a --evil' });
+        t.ok('空白を含む URL は渡さない（引数の注入）', r.reason === 'no-visible' && spawned.length === 0);
+      }
+      {
+        const { r, spawned } = open({ conceal: { profile: 'Default', userDataDir: 'C:\\t\\ud' } });
+        t.ok('確かめ専用の User Data に隠しているなら開かない（既定の Chrome の last-active は動いていない）', r.reason === 'no-visible' && spawned.length === 0);
+      }
+      {
+        const { r, spawned, logs } = open({ conceal: {} });
+        t.ok('隠した窓のプロフィールが分からなければ開かない（ログに残す）', r.reason === 'no-visible' && spawned.length === 0 && logs.some(line => /profile of the hidden window is unknown/.test(line)));
+      }
+    }
     {
       const { w, os } = setup('ChromeHTML');
       w.windows.get(601).iconic = true;

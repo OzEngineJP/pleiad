@@ -26,7 +26,11 @@ export default async function (t) {
   t.ok('main は window.open と外のオリジンへの遷移を externalUrl で開く', /require\('\.\/external-url\.cjs'\)/.test(main) && /const href = externalUrl\(url\);\s*if \(!href\) return false;/.test(main)
     && /setWindowOpenHandler\(\(\{ url \}\) => \{ external\(url\)/.test(main));
   t.ok('external は、開く前に OS の層で見える Chrome の窓を前面にし（隠した窓に URL が入らないよう）、openExternal の失敗をログに残す',
-    /await frontVisibleBrowser\(new URL\(href\)\.protocol\.slice\(0, -1\)\)/.test(main) && /chromeOs\?\.raiseVisibleBrowser/.test(main) && /log\(`external failed:/.test(main));
+    /await frontVisibleBrowser\(new URL\(href\)\.protocol\.slice\(0, -1\), href\)/.test(main) && /chromeOs\?\.raiseVisibleBrowser\?\.\(\{ scheme, url \}\)/.test(main) && /log\(`external failed:/.test(main));
+  t.ok('見える Chrome の窓が無く、OS の層が新しい見える窓に URL を開いたときは、openExternal で開き直さない（二重に開かない）',
+    /if \(await frontVisibleBrowser\([^\n]*\)\) return true;\s*return shell\.openExternal\(href\)/.test(main) && /if \(raised\?\.opened\) return true;/.test(main));
+  t.ok('前に出さなかったわけ（隠した窓があるとき）をログに残す。URL は残さない',
+    /log\(`external: did not raise a browser window \(\$\{raised\.reason\}\)`\)/.test(main));
   t.ok('画面のリンク・リモートの窓・OAuth の同意も同じ出口（external）を通る',
     /ipcMain\.handle\('ply:open-external', \(event, url\) => \{\s*trusted\(event\);\s*return external\(url\);/.test(main) && /attachSecretBridge\(messages, \{ safeStorage, openExternal: url => void external\(url\) \}\)/.test(main)
     && /void external\(url\)/.test(remote) && !/shell\(\)\.openExternal/.test(remote));

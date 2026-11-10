@@ -931,10 +931,14 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
    * 最後に使われていた、見える（conceal していない）Chrome の窓を前面にして last-active を戻す。
    * 何もしない条件（{ ok: false } で返る）: 隠している窓が無い・トグルを入れる窓（ghost）の操作中・
    * 既定のブラウザーが Chrome 系でない・隠した窓と同じ Chrome に見える窓が無い。前に出せなければ reason: 'raise'（呼び出し側はそのまま開く）。
+   * 「見える窓」は画面（どれかのモニター）に中心がある窓。隠し損ねた窓（隠す位置に開いて、Chrome がモニターの端へ寄せたもの）は
+   * 見えないので選ばない（選ぶと URL がその窓に開き、利用者には何も起きないように見える。実機で見つけた: 2026-11-10）。
+   * 見える窓が無く url を渡されたときは、隠した窓のプロフィールの新しい窓を chrome.exe --new-window <url> で開き、{ ok: true, opened: true } を返す
+   * （呼び出し側は開き直さない）。そのままだと URL は last-active の隠した窓に入る。
    * 前に出した窓は隠した窓ではないので、前面の見張り（guardBody）は取り戻さない。
    * scheme: 'http' | 'https'（URL）・'html'（HTML のファイルを openPath で開く）
    */
-  function raiseVisibleBrowser({ scheme = 'https' } = {}) {
+  function raiseVisibleBrowser({ scheme = 'https', url = null } = {}) {
     const hidden = new Set();
     let ghost = false;
     for (const entry of refs.values()) {
@@ -948,7 +952,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
     // 隠した窓を持つ Chrome（プロセス）の窓だけを見る。別の User Data で起こした Chrome に隠しているなら、既定のブラウザーの last-active は動いていないので触らない
     const pids = new Set();
     for (const hwnd of hidden) { try { pids.add(win32.windowInfo(hwnd).pid); } catch { /* 閉じた窓 */ } }
-    // 見える Chrome の窓: 隠した窓（記録と、窓に残るスタイルの両方）でも、Edge・見えない・cloaked の窓でもないもの。最小化は含める（出すときに戻す）
+    // 見える Chrome の窓: 隠した窓（記録と、窓に残るスタイルの両方）でも、Edge・見えない・cloaked・画面の外の窓でもないもの。最小化は含める（出すときに戻す）
     const eligible = new Set();
     const listed = [];
     for (const { hwnd, info, exe } of browserWindows()) {
@@ -956,9 +960,10 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
       if (pids.size && !pids.has(info.pid)) continue;
       const entry = refs.get(String(hwnd));
       if (entry?.kind === 'agent' && entry.concealed) continue;
+      if (!info.iconic && !onScreen(info.rect)) continue;
       eligible.add(hwnd); listed.push(hwnd);
     }
-    if (!eligible.size) return { ok: false, reason: 'no-visible' };
+    if (!eligible.size) return url ? openUrlInVisibleWindow(url, hidden) : { ok: false, reason: 'no-visible' };
     // 「最後に使われていた」窓は、見張りが持つ前面の履歴（その窓が前面になる直前の前面の鎖）を新しい順にたどる。尽きたら窓の列挙（Z 順）の先頭から
     const order = [];
     const push = hwnd => { if (eligible.has(hwnd) && !order.includes(hwnd)) order.push(hwnd); };
@@ -971,6 +976,43 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
       } catch { /* 次の窓を試す */ }
     }
     return { ok: false, reason: 'raise' };
+  }
+
+  /** 窓の中心がどれかのモニターの中にあるか（モニターの一覧が取れなければ、どのモニターにもかからない位置でないか） */
+  function onScreen(rect) {
+    if (!rect) return false;
+    let list = [];
+    try { list = win32.monitors?.() ?? []; } catch { list = []; }
+    if (!list.length) return !offscreen(rect);
+    const x = (rect.left + rect.right) / 2, y = (rect.top + rect.bottom) / 2;
+    return list.some(m => x >= m.x && x < m.x + m.width && y >= m.y && y < m.y + m.height);
+  }
+
+  /**
+   * 見える Chrome の窓が無いとき、隠した窓のプロフィールの新しい窓に URL を開く（raiseVisibleBrowser の続き）。
+   * 確かめ専用の User Data に隠しているなら、既定のブラウザーの last-active は動いていないので開かない（no-visible で返し、呼び出し側がそのまま開く）
+   */
+  function openUrlInVisibleWindow(url, hidden) {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url) || /[\s\0]/.test(url)) return { ok: false, reason: 'no-visible' };
+    const entry = [...refs.values()].find(value => value.kind === 'agent' && value.concealed && hidden.has(value.hwnd) && profileDirOf(value)) ?? null;
+    if (!entry) { log('external: the profile of the hidden window is unknown, so no visible window was opened'); return { ok: false, reason: 'no-visible' }; }
+    if (entry.userDataDir ?? lastUserDataDir) return { ok: false, reason: 'no-visible' };
+    let browser = [...browsers.values()].find(value => value.product === 'chrome') ?? null;
+    if (!browser) {
+      const found = locateBrowser({ product: 'chrome' });
+      browser = found ? browsers.get(found.id) ?? null : null;
+    }
+    if (!browser) { log('external: chrome.exe not found, so no visible window was opened'); return { ok: false, reason: 'no-visible' }; }
+    try {
+      const child = spawn(browser.path, [`--profile-directory=${profileDirOf(entry)}`, '--new-window', url], { detached: true, stdio: 'ignore', windowsHide: false });
+      child.on?.('error', error => log(`external: opening a visible window failed: ${error.message}`));
+      child.unref?.();
+      log('external: opened the URL in a new visible Chrome window (no visible window)');
+      return { ok: true, method: 'new-window', opened: true };
+    } catch (error) {
+      log(`external: opening a visible window failed: ${error.message}`);
+      return { ok: false, reason: 'no-visible' };
+    }
   }
 
   return {
