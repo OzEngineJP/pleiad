@@ -205,14 +205,19 @@ async function installUpdate() {
  * エージェント用に画面の外へ隠した Chrome の窓は作られた瞬間に一度アクティブになり、Chrome の「最後にアクティブな窓」が
  * そのまま隠した窓に残ると、開いた URL・ファイルは見えない窓に入って利用者には何も起きないように見える（実機で再現）。
  * 見える Chrome の窓を前面にして last-active を戻す（chromeOs.raiseVisibleBrowser。隠した窓が無い・既定が Chrome でない・
- * Windows 以外では何もしない）。前面にしたときは、Chrome が前面化を受け取って last-active を更新するまで一拍置く
+ * Windows 以外では何もしない）。前面にしたときは、Chrome が前面化を受け取って last-active を更新するまで一拍置く。
+ * url を渡すと、見える Chrome の窓が無いときは chromeOs が新しい見える窓に開く。そのときは true を返す（呼び出し側は開き直さない）
  */
-async function frontVisibleBrowser(scheme) {
+async function frontVisibleBrowser(scheme, url = null) {
   let raised = null;
-  try { raised = chromeOs?.raiseVisibleBrowser?.({ scheme }); } catch {}
+  try { raised = chromeOs?.raiseVisibleBrowser?.({ scheme, url }); } catch {}
+  if (raised?.opened) return true;
   if (raised?.ok) log(`external: raised the last used visible browser window (${raised.method})`);
   else if (raised?.reason === 'raise') log('external: could not raise a visible browser window');
+  // 隠した窓があるのに前に出さなかったわけ（URL は残さない）。隠した窓が無い・Chrome の無い OS は毎回なので残さない
+  else if (raised?.reason && raised.reason !== 'no-hidden' && raised.reason !== 'unsupported') log(`external: did not raise a browser window (${raised.reason})`);
   if (raised?.ok) await new Promise(resolve => setTimeout(resolve, 150));
+  return false;
 }
 
 /**
@@ -222,7 +227,7 @@ async function frontVisibleBrowser(scheme) {
 async function external(url) {
   const href = externalUrl(url);
   if (!href) return false;
-  await frontVisibleBrowser(new URL(href).protocol.slice(0, -1));
+  if (await frontVisibleBrowser(new URL(href).protocol.slice(0, -1), href)) return true;
   return shell.openExternal(href).then(() => true, error => { log(`external failed: ${error?.message ?? error}`); return false; });
 }
 
