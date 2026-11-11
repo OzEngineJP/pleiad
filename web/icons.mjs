@@ -17,8 +17,11 @@ export const fileIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><
 // プレビューのツリーの見出し: 開いているファイルを表示（照準）・すべて折りたたむ（上下から閉じる）
 export const locateIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/></svg>';
 export const collapseAllIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"/></svg>';
-// ファイルの操作メニュー（⋯）。点は太めの線で打つ
-export const moreIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.6"/></svg>';
+// 操作のメニューを開く「…」は、どこでも縦の 3 点（⋮。docs/design-system.md「「…」の形」）。点は太めの線で打つ
+export const MORE_PATH = 'M12 5v.01M12 12v.01M12 19v.01';
+export const moreIcon = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${MORE_PATH}" stroke-width="2.6"/></svg>`;
+// 差分の畳んだ行（隠れている行がある）の印。メニューではないので横の 3 点のまま
+export const gapIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.6"/></svg>';
 // バックグラウンドの入口: 裏のコマンド・端末の絵（ターミナルの >_）
 export const TERMINAL_PATHS = ['M4 5h16v14H4z', 'M7.5 10l2.5 2.5-2.5 2.5', 'M12.5 15h4'];
 // git の動き（docs/design-system.md「git の動き」）: ブランチ・コミット・PR・会話のこの場所へ・›

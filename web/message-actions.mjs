@@ -29,10 +29,10 @@ export function copyGlyphs() {
   return [copy, ok];
 }
 
-/** ⋯ の絵 */
+/** 「…」の絵（縦の 3 点。点は塗り。docs/design-system.md「「…」の形」） */
 function dots() {
   const s = svg([]);
-  for (const cx of [5, 12, 19]) s.append(svgEl('circle', { cx, cy: 12, r: 1.3 }));
+  for (const cy of [5, 12, 19]) s.append(svgEl('circle', { cx: 12, cy, r: 1.3 }));
   return s;
 }
 

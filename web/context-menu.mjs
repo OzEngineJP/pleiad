@@ -98,7 +98,7 @@ export function createContextMenu() {
       let subTrigger = row;
       if (item.action) {
         const group = el('div', 'menu-row'); group.setAttribute('role', 'none');
-        const action = el('button', 'menu-action', '⋯'); action.type = 'button';
+        const action = el('button', 'menu-action', '⋮'); action.type = 'button';   // 「…」は縦の 3 点
         if (item.key) action.dataset.menuKey = item.key;
         action.setAttribute('role', 'menuitem'); action.setAttribute('aria-label', item.action.label);
         group.append(row, action); panel.append(group); subTrigger = action;

@@ -133,7 +133,7 @@ export function createBotPage(host) {
   nameIn.placeholder = t('channels:bot.namePlaceholder');
   const sub = el('div', 'bp-sub');
   const dmBtn = el('button', 'btn bp-dm');
-  const moreBtn = el('button', 'btn bp-more', '⋯');
+  const moreBtn = el('button', 'btn bp-more', '⋮');   // 「…」は縦の 3 点（docs/design-system.md「「…」の形」）
   moreBtn.type = 'button';
   moreBtn.setAttribute('aria-label', t('channels:botDelete.more'));
   moreBtn.setAttribute('aria-haspopup', 'menu');
