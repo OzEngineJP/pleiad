@@ -556,6 +556,8 @@ const SUITES = [
   './unit/view-state.mjs',
   // 子の会話のモーダルの詳細: 出来事（承認・本文の流れ）で間引いて読み直す・古い子の出来事は捨てる・入力中は待つ（ADR 0315 の段 2）
   './unit/detail-follow.mjs',
+  // 入力欄の配送の核: 送る先の会話ごとの受け取り・文中の添付の印・予定の冪等（ADR 0315 の段 4）
+  './unit/composer-sender.mjs',
   './unit/timeline-images.mjs',
   './unit/attachment-order.mjs',
   // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない

@@ -146,6 +146,7 @@ import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } 
 import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
+import { createSender } from './composer/sender.mjs';
 const outboxes = new Map();
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
@@ -154,7 +155,6 @@ const submittingMessages = new Set();
 const receipts = new Map();
 // 編集で入力欄へ戻した送信予定の時刻（sessionId -> 時刻）。送ると同じ時刻で予定し直し、チップの × で外せばふつうの送信になる
 const armedSends = new Map();
-let scheduleAttempt = null;   // 予定を置く応答が届かず送り直しても、同じ予定を二重に作らない
 try {
   for (const [id, request] of JSON.parse(localStorage.getItem('ply-message-receipts') ?? '[]')) receipts.set(id, request);
 } catch {}
@@ -10600,6 +10600,24 @@ async function sendToHomeBot(bot) {
   }
 }
 
+// メインの入力欄の配送（web/composer/sender.mjs。子の会話のモーダルの入力欄も同じ核を使う）
+const chatSender = createSender({
+  t, cmd: (command, args) => cmd(command, args), limitOp, randomId, receipts, saveReceipts, refreshOutbox,
+  scheduled: (sessionId) => { armedSends.delete(sessionId); paintArmed(); },
+  clearSent: (sessionId, text, attachments) => clearSentDraft(sessionId, text, attachments),
+  // 吹き出しは、受理の応答が先でも userMessage が先でも、この仮の添付で描く
+  beforeSend: (sessionId, request, full, ordered) => {
+    if (ordered.length && !messageRow(request.messageId)) provisionalByMessage.set(request.messageId, ordered.map(provisionalPresent));
+  },
+  afterSend: (sessionId, request, full) => {
+    if (state.current === sessionId && !messageRow(request.messageId)) {
+      markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');
+      syncOutboxRows(outboxes.get(sessionId) ?? []);
+    }
+  },
+  say: (text) => { $('settingsError').textContent = text; },
+});
+
 async function submit({ at = armedSends.get(state.current) } = {}) {
   // 編集中の送信は［送り直す］（Enter・送信の近道もここへ来る）
   if (chatEdit.active) return chatEdit.send();
@@ -10660,48 +10678,10 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
       return;
     }
     if (!at) { state.compactionAt = null; paintContextStrip(); }
-    // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）
-    const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
+    // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）。
     // 本文は文中の印（[添付] パス）ごとそのまま送る。文中に無い添付（文末に付く）だけ、今までどおり末尾に印を足す
-    const inDoc = composerEditor.attachmentKeys();
-    const tail = attachments.filter(a => !inDoc.has(attachedKey(a.path)));
-    const full = [text.trim(), tail.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
-    const args = { sessionId, prompt: full, cwd: state.cwd.trim() || undefined, mode: state.mode,
-      ...(attachments.length ? { attachments } : {}) };
-    // 日時を指定した送信は、送信待ちではなく予定として置く（時刻が来たら同じ送信待ちへ入る。core/send-schedule.mjs）
-    if (at) {
-      const key = `${sessionId}\n${full}\n${at}`;
-      if (scheduleAttempt?.key !== key) scheduleAttempt = { key, messageId: randomId() };
-      await limitOp('sessions.scheduleSend', { sessionId, prompt: full, at, messageId: scheduleAttempt.messageId,
-        ...(args.cwd ? { cwd: args.cwd } : {}), ...(args.mode ? { mode: args.mode } : {}), ...(attachments.length ? { attachments } : {}) });
-      scheduleAttempt = null;
-      armedSends.delete(sessionId); paintArmed();
-      await clearSentDraft(sessionId, text, attachments);
-      $('settingsError').textContent = '';
-      return;
-    }
-    const previous = receipts.get(sessionId);
-    if (previous) {
-      const known = (await refreshOutbox(sessionId)).find(m => m.id === previous.messageId);
-      if (!known && previous.prompt !== full) throw new Error(t('chat.send.unknownPrevious'));
-      if (known && previous.prompt === full) {
-        await clearSentDraft(sessionId, text, attachments);
-        receipts.delete(sessionId); saveReceipts();
-        return;
-      }
-    }
-    const request = previous && previous.prompt === full ? previous : { ...args, messageId: randomId() };
-    receipts.set(sessionId, request); saveReceipts();
-    // 吹き出しは、受理の応答が先でも userMessage が先でも、この仮の添付で描く
-    if (ordered.length && !messageRow(request.messageId)) provisionalByMessage.set(request.messageId, ordered.map(provisionalPresent));
-    await cmd('sendMessage', request);
-    if (state.current === sessionId && !messageRow(request.messageId)) {
-      markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');
-      syncOutboxRows(outboxes.get(sessionId) ?? []);
-    }
-    await clearSentDraft(sessionId, text, attachments);
-    receipts.delete(sessionId); saveReceipts();
-    $('settingsError').textContent = '';
+    await chatSender.send({ sessionId, text, ordered, at, cwd: state.cwd.trim(), mode: state.mode, attachedKey, attachmentLine,
+      agentLang: state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang, inDoc: composerEditor.attachmentKeys() });
   } catch (e) {
     $('settingsError').textContent = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
   } finally {
