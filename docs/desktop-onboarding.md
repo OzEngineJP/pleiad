@@ -55,7 +55,7 @@ Claudeは [公式CLI](https://code.claude.com/docs/en/cli-reference) の `auth s
 
 独自CLI: `AGENT_HOST_CLAUDE_BIN`、`AGENT_HOST_CODEX_BIN`。
 
-## 使えるエージェントが無いとき（承認済み（2026-11-11）、[ADR 0313](adr/0313-missing-agent-notice.md)）
+## 使えるエージェントが無いとき（承認済み（2026-11-11）、[ADR 0314](adr/0314-missing-agent-notice.md)）
 
 「使える」は `web/agent-usable.mjs` の 1 つの関数だけで決める。Claude Code は CLI・ログイン（または確かめ済みの互換の接続先）・SDK の 3 つが揃うこと、Codex は認証情報か確かめ済みの接続先、Antigravity は状態の確認が済むまで「未確認」、OpenCode は入っていれば使える、Devin は `auth status` がログイン済み、Grok はログイン済みか確かめ済みの接続先。分からないものは 0 個とは数えない。
 
