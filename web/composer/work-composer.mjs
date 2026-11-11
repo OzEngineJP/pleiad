@@ -2,7 +2,10 @@
 // （web/composer/composer.mjs。骨組みは Chats の欄の写しで、id の頭は wk: wkPrompt・wkSend…）を、モーダルの会話の面の下に置く。
 //   - 送る先は「いま詳細に出している子」。下書き・添付・送信中・送信待ちは子ごとに持ち、メインの下書きとも混ざらない
 //   - 送る核はメインと同じ（web/composer/sender.mjs）。受け取り（receipts）は会話の id で引くので、メインと共用できる
-//   - まだ使わない部品（通話・バックグラウンドの入口・編集して再送信・`!`・再開）は出さない
+//   - 出す部品: 字の欄・＋（メインと同じ「この端末から / ホストから」のメニュー）・モデル / effort / 作業場所 / 承認モードのチップ・/ のスキル・
+//     送信と ▾（日時の指定）・送信待ちの行（取り消す・編集・今すぐ送る）・文脈の帯（メーター・圧縮）・使用量の札・中断・再開
+//   - 出さない部品: 通話・バックグラウンドの入口・編集して再送信・↑ の呼び出し（recall）・`!`（シェルの行）・予定の編集中の札・下書きの保存の札
+//     （差は docs/adr/0317-modal-child-composer-stop-name-tags.md「主との違い」）
 // 入力欄は #workBody の外に置く。詳細の読み直し（refreshDetail）は #workBody の中身だけを作り直すので、打っている途中の文字・
 // カーソル・IME の変換・添付は、子が流れている間も消えない。
 import { buildComposer, composerEls, createComposer } from './composer.mjs';
@@ -10,6 +13,7 @@ import { createSender } from './sender.mjs';
 import { renderOutbox } from '../outbox.mjs';
 import { runMark } from '../arc.mjs';
 import { t } from '../i18n.mjs';
+import { setupAttachMenu } from '../attach-menu.mjs';
 
 const PREFIX = 'wk';
 const SAVE_WAIT_MS = 400;
@@ -33,7 +37,8 @@ const UNUSED = ['armedChip', 'draftSaved', 'armedNote', 'draftFail', 'connNote',
  * @param {{ get: (childId: string) => object, on: Record<string, (childId: string, ...args: any[]) => void> }} h.controls チップ（モデル・effort・作業場所・承認モード）
  * @param {{ list: (id: string) => object[], schedules: (id: string) => object[], cancelSchedule: (id: string) => Promise<any>, sendScheduledNow: (id: string) => Promise<any> }} h.outbox
  * @param {() => Promise<object>} h.environment 送信の日時の面の前提（常駐しているか）
- * @param {(childId: string) => string} h.cwdOf スキル候補を引く作業場所
+ * @param {(childId: string) => string} h.cwdOf スキル候補を引く作業場所（添付のメニューでホストのファイルを最初に開く場所でもある）
+ * @param {() => string} h.hostName 添付のメニューの見出しに出すホストの名前
  * @param {(childId: string) => string} h.compactNote /compact を使えない理由
  * @param {(item: object) => void} h.onStop 中断ボタンを押した（送るものは呼び出し側が決める。web/work-stop.mjs）
  * @param {() => void} h.onStripLevel 帯を縮める段が変わった（呼び出し側が narrow を見て帯の字を描き直す）
@@ -218,10 +223,22 @@ export function createWorkComposer(h) {
     off: () => c.editor.inCode(),
   });
 
-  // クリップ: この端末のファイルを選ぶ（メインの添付のメニューのうち、ホストのファイルの面はここでは出さない）
+  // クリップ: メインと同じ「この端末から / ホストから」のメニュー（web/attach-menu.mjs）。面は欄の中（ダイアログの中）に置く。
+  // フォルダーを送る入口（デスクトップ版のリモートの窓だけ）は、送り先がメインの会話なのでここでは出さない
+  const attachMenu = setupAttachMenu({
+    button: els.attach, id: 'wkAttachPop', anchor: els.cwdPop,
+    sources: () => ({ folder: false }), upload: null,
+    pickFiles: () => { if (childId) els.fileIn.click(); },
+    recent: () => [], cmd: h.cmd,
+    hostName: h.hostName, startDir: () => (childId ? h.cwdOf(childId) : ''),
+    attachHost: (files) => { if (childId) att.attachHost(files); },
+  });
+  els.attach.title = t('chat.attach.source.buttonTitle');
+  els.attach.setAttribute('aria-label', els.attach.title);
+  els.attach.setAttribute('aria-haspopup', 'dialog');
+  els.attach.setAttribute('aria-expanded', 'false');
   els.attach.addEventListener('pointerdown', att.rememberAt, true);
   els.attach.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') att.rememberAt(); }, true);
-  els.attach.addEventListener('click', () => { if (childId) els.fileIn.click(); });
   els.fileIn.onchange = () => { att.attachFiles([...els.fileIn.files]); els.fileIn.value = ''; };
   // 箱のどこを押しても字の欄へ（チップ・ボタンは除く）
   els.cbox.addEventListener('pointerdown', (e) => {
@@ -356,6 +373,7 @@ export function createWorkComposer(h) {
       c.slash?.close();
       c.sendMenu?.close();
       c.controls?.close();
+      attachMenu.reset();   // 開いていた場所・選んだホストのファイルは子ごと
       childId = id;
       contextParts = null;   // 次の子の値は呼び出し側が setContext で入れる
       closeMeter();
@@ -443,7 +461,7 @@ export function createWorkComposer(h) {
     saveDraft,
     /** 欄に書きかけがあるか（Esc の動きがメインと同じになるよう、呼び出し側が見る） */
     hasDraft() { return Boolean(childId && (input.value.trim() || att.items.length)); },
-    hide() { saveDraft(); childId = null; shownItem = null; form.hidden = true; },
+    hide() { saveDraft(); attachMenu.reset(); childId = null; shownItem = null; form.hidden = true; },
     destroy() { c.destroy(); form.remove(); },
   };
 }

@@ -101,17 +101,34 @@ try {
   evaluate(id => document.querySelector(`#groups .row[data-session="${id}"]`).click(), parent);
   await wait(() => evaluate(() => document.querySelectorAll('.tc[data-tool$="ply_delegate"][data-task-id] .tc-go').length >= 2), 'delegate cards');
 
+  // 印を付けてから押すまでに一覧・カードが描き直されると、印ごと要素が消える。そのときは付け直して押す（押した後で消えたのではない）
   const clickOn = (sel, label) => {
-    const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
-    assert.ok(ok, `target exists: ${label}`);
-    try { ab('click', '[data-probe="pick"]'); } finally { evaluate(() => document.querySelector('[data-probe="pick"]')?.removeAttribute('data-probe')); }
+    for (let tries = 0; ; tries++) {
+      const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
+      assert.ok(ok, `target exists: ${label}`);
+      try { ab('click', '[data-probe="pick"]'); return; }
+      catch (e) { if (tries >= 3 || !/Element not found/.test(String(e?.message))) throw e; }
+      finally { evaluate(() => document.querySelector('[data-probe="pick"]')?.removeAttribute('data-probe')); }
+    }
+  };
+  // 押した結果が出なければ、もう一度押す（描き直しの最中に押すと、押しが新しい要素に届かないことがある）。結果を待つ間は押し直さない
+  const clickUntil = async (sel, label, done) => {
+    for (let tries = 0; ; tries++) {
+      clickOn(sel, label);
+      const until = Date.now() + 1500;
+      while (Date.now() < until && !done()) await sleep(100);
+      if (done()) return;
+      assert.ok(tries < 2, `${label}: no effect after ${tries + 1} clicks`);
+    }
   };
   const dialogOpen = () => evaluate(() => document.getElementById('workDialog').open);
   const openCard = async (taskId, label) => {
     const isOpen = () => evaluate(id => document.getElementById('workDialog').open && !!document.getElementById('workBody').dataset.sessionId && !!document.querySelector(`#workList [data-key="t:${id}"][aria-current="true"]`), taskId);
     for (let tries = 0; ; tries++) {
       await sleep(700);
-      clickOn(`.tc[data-tool$="ply_delegate"][data-task-id="${taskId}"] .tc-go`, `card ${label}`);
+      // 座標では押さない: 子の承認のカードがメインの会話にも出て、押す直前に高さが変わると、メインの［拒否］が当たる（子の承認が拒否されて台本がずれる）
+      const hit = evaluate(id => { const n = document.querySelector(`.tc[data-tool$="ply_delegate"][data-task-id="${id}"] .tc-go`); if (!n) return false; n.click(); return true; }, taskId);
+      assert.ok(hit, `target exists: card ${label}`);
       const until = Date.now() + 4000;
       while (Date.now() < until && !isOpen()) await sleep(150);
       if (isOpen()) return;
@@ -175,8 +192,7 @@ try {
   console.log('PASS: the waiting child shows the approval card and a "waiting" list row; elapsed =', head1);
 
   // 開く: まとまり（6 件）を全部開き、その中の行の詳細を開く。窓が低いので詳細の欄はスクロールする
-  clickOn('#workBody .bg-thread .bundle .rhead', 'bundle head');
-  await wait(() => evaluate(() => document.querySelector('#workBody .bundle .rhead').getAttribute('aria-expanded') === 'true'), 'bundle open');
+  await clickUntil('#workBody .bg-thread .bundle .rhead', 'bundle head', () => evaluate(() => document.querySelector('#workBody .bundle .rhead').getAttribute('aria-expanded') === 'true'));
   evaluate(() => document.querySelectorAll('#workBody .bundle .tc')[2].querySelector('.tc-head').click());
   await sleep(700);   // 開く動き（240ms）が終わってから位置を置く
   const scrollable = evaluate(() => { const w = document.getElementById('workBody'); w.scrollTop = 90; return w.scrollHeight > w.clientHeight + 90 && w.scrollTop === 90; });
@@ -189,7 +205,13 @@ try {
       top: document.getElementById('workBody').scrollTop,
     };
   });
-  const before = shape();
+  // 位置を置いた直後に描き直しや高さの変化で動くことがある。置き直して落ち着いた形を基準にする
+  let before = shape();
+  for (let tries = 0; before.top !== 90 && tries < 5; tries++) {
+    evaluate(() => { document.getElementById('workBody').scrollTop = 90; });
+    await sleep(250);
+    before = shape();
+  }
   assert.deepEqual(before, { expanded: 'true', detail: '001000', top: 90 }, 'setup');
   // 読み直し = 筋の要素が作り直されたこと
   const reread = async (label, ms = 8000) => {
@@ -199,7 +221,7 @@ try {
 
   // ---- 2. 承認を押す: カードがすぐ消え、子の続きが 1 秒ほどで増える ----
   const tcBefore = evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length);
-  clickOn('#workBody .mw[data-key^="perm:"] .btn-primary', 'allow gate1');
+  await clickUntil('#workBody .mw[data-key^="perm:"] .btn-primary', 'allow gate1', () => evaluate(() => !document.querySelector('#workBody .mw[data-key^="perm:"]')));
   const clickedAt = evaluate(() => window.__log.clicks.at(-1));
   await wait(() => evaluate(n => document.querySelectorAll('#workBody .bg-thread .tc').length >= n + 3, tcBefore), 'the thread grows after the approval', 8000);
   let L = log();
@@ -277,16 +299,17 @@ try {
   await wait(() => log().perm.some(p => p.tool === 'Write' && p.sessionId === child.childId), 'gate2 permission reached the page', 60_000);
   await wait(() => evaluate(() => !!document.querySelector('#workBody .mw[data-key^="perm:"]')), 'gate2 card in the dialog', 8000);
   L = log();
-  const permAt = L.perm.find(p => p.tool === 'Write').t;
+  const gate2Perm = L.perm.find(p => p.tool === 'Write' && p.sessionId === child.childId); // 親の側に写った同じ承認（別の id）を拾わない
+  const permAt = gate2Perm.t;
   const shownAt = L.card.find(c => c.shown && c.t >= permAt - 50)?.t;
   assert.ok(shownAt !== undefined && shownAt - permAt <= 1000, `the second approval card appears promptly: ${shownAt - permAt}ms after the event`);
   assert.ok(L.waitRow.some(x => x.shown && x.t >= permAt - 50 && x.t - permAt <= 1500), 'the list row says waiting promptly');
   const head2 = evaluate(() => document.querySelector('#workHead .bg-elapsed')?.textContent ?? null);
   console.log(`PASS: second approval card ${shownAt - permAt}ms after the event; heading elapsed ${head1} -> ${head2}`);
-  const tcAtGate2 = evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length);
   clickOn('#workBody .mw[data-key^="perm:"] .btn-primary', 'allow gate2');
   const clicked2 = evaluate(() => window.__log.clicks.at(-1));
-  await wait(() => evaluate(n => document.querySelectorAll('#workBody .bg-thread .tc').length >= n + 2, tcAtGate2), 'the thread grows after the second approval', 8000);
+  // 行の数では比べない（まとまりが畳まれると数が減り、前の数に追いつくまで増えないことがある）。承認 2 のあとにしか出ない stream-c の行が 2 つ出るのを待つ
+  await wait(() => evaluate(() => [...document.querySelectorAll('#workBody .bg-thread .tc')].filter(n => n.textContent.includes('stream-c')).length >= 2), 'the thread grows after the second approval', 8000);
   L = log();
   const gone2 = L.card.find(c => !c.shown && c.t >= clicked2)?.t;
   assert.ok(gone2 !== undefined && gone2 - clicked2 <= 1000, `the second card disappears promptly: ${gone2 - clicked2}ms`);
@@ -308,7 +331,7 @@ try {
   // ---- 6b. ダイアログを閉じたら読み直さない（次の承認が届いても） ----
   await closeDialog();
   const closedAt = nowMs();
-  await wait(() => log().perm.some(p => p.tool === 'Write' && p.sessionId === child.childId && p.id !== L.perm.find(q => q.tool === 'Write').id), 'gate3 permission reached the page', 60_000);
+  await wait(() => log().perm.some(p => p.tool === 'Write' && p.sessionId === child.childId && p.id !== gate2Perm.id), 'gate3 permission reached the page', 60_000);
   await sleep(1500);
   assert.equal(rereads(child.childId, closedAt), 0, 'no re-read while the dialog is closed, even for the child approval');
   const anyRead = evaluate(f => window.__log.cmds.filter(c => c.command === 'loadSession' && c.t >= f).length, closedAt);
