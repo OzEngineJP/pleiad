@@ -201,6 +201,7 @@ async function refreshSchedules() {
   state.schedules = await limitOp('sessions.schedules');
   if (state.current) paintOutbox();
   workComposer?.paintOutbox();
+  syncWorkResume();
   renderSessions();
   try { channelsUi.schedulesChanged(); } catch { /* 起動の途中 */ }
 }
@@ -5715,6 +5716,7 @@ function syncResume() {
   }
   if (button.hidden === show) { button.hidden = !show; controls.fit(); }
   syncSendMore();
+  syncWorkResume();   // モーダルの子の「再開」も同じ流れで描き直す
 }
 
 /**
@@ -5736,6 +5738,40 @@ async function resumeSession(sessionId) {
   if (resuming.has(sessionId)) resuming.set(sessionId, setTimeout(() => { if (resumeSettled(sessionId)) syncResume(); }, RESUME_HOLD_MS));
   renderSessions();
   return true;
+}
+
+let workLimitClockTimer = null;
+/**
+ * 子の会話のモーダルの「▶ 再開」と欄の下の一行。出す条件と字はメインの syncResume と同じ（web/interrupt.mjs）。
+ * 子が中断状態・走っていない・承認待ちでない・欄が空のときだけ。字を書いたら隠し、「送ると、この指示で続けます」を出す
+ */
+function syncWorkResume() {
+  if (!workComposer) return;
+  const id = workComposer.childId;
+  const s = id ? state.sessions.find(x => x.id === id) : null;
+  const interrupted = Boolean(s) && isInterrupted(s) && !s.deletedBot && !s.retired;
+  clearTimeout(workLimitClockTimer);
+  if (!interrupted) { workComposer.setResume({}); return; }
+  const running = state.runningIds.has(id) || submittingMessages.has(id);
+  const waiting = (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && p.sessionId === id);
+  const written = workComposer.hasDraft();
+  const paused = pausedCount(outboxes.get(id));
+  const limitState = limitResumeState(s.interrupted);
+  const waitingClock = limitState === 'release';
+  if (waitingClock) {
+    const switchAt = s.interrupted.resetsAt + 500;
+    workLimitClockTimer = setTimeout(() => { syncWorkResume(); renderSessions(); }, Math.min(2_147_000_000, Math.max(1000, switchAt - Date.now())));
+  }
+  workComposer.setResume({
+    show: resumeVisible({ interrupted, running, waiting, text: '', attached: written }),
+    label: resumeLabel(paused, s.interrupted),
+    short: resumeShortLabel(s.interrupted),
+    limit: waitingClock,
+    disabled: resuming.has(id) || waitingClock,
+    note: running ? '' : resumeNoteText(paused, s.interrupted),
+    quiet: !written,
+    placeholder: running ? '' : t('interrupt.placeholder'),
+  });
 }
 
 $('resume').onclick = () => {
@@ -6694,6 +6730,7 @@ function syncWorkStop() {
     stopping: Boolean(id) && state.stopping.has(id),
   }));
   syncWorkContext();
+  syncWorkResume();
 }
 
 /** 子ごとの文脈の使用量（モーダルの入力欄の上の帯）。読み込み（loadSession）と contextWindow の出来事で更新する */
@@ -11119,6 +11156,12 @@ workComposer = createWorkComposer({
   cwdOf: (id) => workControls.selection(id).cwd || '',
   compactNote: (id) => t('compaction.agentManaged', { agent: labelOf(workControls.selection(id).backend) }),
   onStop: (item) => stopFromDialog(item),
+  onResume: (id) => {
+    completionNotifications.requestPermission();
+    workComposer.say('');
+    resumeSession(id).catch((e) => workComposer.say(t('interrupt.resumeFailed', { error: e.message }), true));
+  },
+  onSync: () => syncWorkResume(),
   compact: (id) => compactFromDialog(id),
   // 自動圧縮の設定は全体のページ。モーダルを閉じてそのページを開く
   compactionSettings: () => { $('workDialog').close(); openAutoCompactionSettings(); },

@@ -14,7 +14,7 @@ import { t } from '../i18n.mjs';
 const PREFIX = 'wk';
 const SAVE_WAIT_MS = 400;
 /** モーダルでは使わない部品（メインでだけ出る）。中断は setStop、帯の文脈は setContext で出し入れする */
-const UNUSED = ['armedChip', 'draftSaved', 'resume', 'resumeNote', 'armedNote', 'draftFail', 'connNote', 'workEntry'];
+const UNUSED = ['armedChip', 'draftSaved', 'armedNote', 'draftFail', 'connNote', 'workEntry'];
 
 /**
  * @param {object} h 呼び出し側（web/client.mjs）が渡す持ち分
@@ -36,6 +36,7 @@ const UNUSED = ['armedChip', 'draftSaved', 'resume', 'resumeNote', 'armedNote', 
  * @param {(childId: string) => string} h.cwdOf スキル候補を引く作業場所
  * @param {(childId: string) => string} h.compactNote /compact を使えない理由
  * @param {(item: object) => void} h.onStop 中断ボタンを押した（送るものは呼び出し側が決める。web/work-stop.mjs）
+ * @param {(childId: string) => void} h.onResume 再開ボタンを押した（web/interrupt.mjs の再開。呼び出し側が送る）
  * @param {(childId: string) => void} h.compact 文脈のメーターのメニューの［今すぐ圧縮］（この子の会話を圧縮する）
  * @param {() => void} h.compactionSettings メニューの［設定］（自動圧縮の設定のページを開く）
  */
@@ -60,6 +61,9 @@ export function createWorkComposer(h) {
   h.slot.append(solo);
   els.abort.hidden = true;
   els.abort.onclick = soloButton.onclick = () => { if (shownItem) h.onStop?.(shownItem); };
+  els.resume.onclick = () => { if (childId) h.onResume?.(childId); };
+  // 中断中の入力欄のプレースホルダ（メインの syncResume と同じ。中断が終われば元へ戻す）
+  let normalPlaceholder = null;
 
   let childId = null, shownItem = null, saveTimer = null, noteTimer = null;
   const attachedBy = new Map();   // 子 -> 添付の札（子ごと。メインの state.attached とは別）
@@ -356,6 +360,30 @@ export function createWorkComposer(h) {
       els.abort.disabled = disabled;
       paintSolo(show && solo, disabled);
       c.controls?.fit();
+    },
+    /**
+     * 「▶ 再開」と、欄の下の一行を出し入れする（メインの syncResume と同じ部品・同じ字。出す条件と字は web/interrupt.mjs）。
+     * r: { show（ボタン）, label, short（狭い幅の時計の字）, limit（解除前の時計）, disabled, note（一行。無ければ隠す）, quiet（書いていない間は見えない）, placeholder（中断中の欄の字。無ければ元へ戻す）}
+     */
+    setResume(r = {}) {
+      const label = r.label ?? '';
+      if (els.resumeLabel.textContent !== label) {
+        els.resumeLabel.textContent = label;
+        els.resume.title = label;
+        els.resume.setAttribute('aria-label', label);
+      }
+      els.resumeShort.textContent = r.short ?? '';
+      els.resume.classList.toggle('is-limit', Boolean(r.limit));
+      els.resume.disabled = Boolean(r.disabled);
+      els.resumeNote.hidden = !r.note;
+      if (els.resumeNote.textContent !== (r.note ?? '')) els.resumeNote.textContent = r.note ?? '';
+      els.resumeNote.classList.toggle('quiet', Boolean(r.quiet));
+      if (r.placeholder) {
+        if (normalPlaceholder === null) normalPlaceholder = input.placeholder;
+        input.placeholder = r.placeholder;
+      } else if (normalPlaceholder !== null) { input.placeholder = normalPlaceholder; normalPlaceholder = null; }
+      const hidden = !r.show;
+      if (els.resume.hidden !== hidden) { els.resume.hidden = hidden; c.controls?.fit(); }
     },
     /**
      * 入力欄の上の帯に、この子の文脈の使用量と圧縮の状態を出す。無ければ文脈の札を隠す（使用量のチップだけなら帯は残る）
