@@ -1085,6 +1085,18 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       return r.taskId;
     },
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
+    /** 委譲の子（ホストに任せたものを除く）の会話か。人が直接送る入力欄の名札・数え方の分かれ目（ADR 0317） */
+    isChild(sessionId) { const r = bySession.get(sessionId); return Boolean(r && !r.host); },
+    /**
+     * 人が子の会話へ直接送った（モーダルの入力欄・メインでその子を開いた入力欄。ADR 0317）。数を行に足し、完了通知の「人からの指示 N 件」に使う。
+     * 委譲の子（ホストに任せたものを除く）でなければ何もせず null。足したらタスクの id を返す
+     */
+    async humanSent(sessionId) {
+      const r = bySession.get(sessionId);
+      if (!r || r.host) return null;
+      await record(r.taskId, row => { row.humanInstructions = (row.humanInstructions ?? 0) + 1; }, 'humanSent');
+      return r.taskId;
+    },
     /** 最初の依頼（task と context）。やり直しで同じ依頼を渡す。context を持つ前に作ったタスクは task だけ */
     request(taskId) { const r = records[taskId]; return r ? { task: r.task, title: r.title ?? null, context: r.context ?? null } : null; },
     /**

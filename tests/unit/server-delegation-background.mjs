@@ -82,7 +82,7 @@ ${server.tail(40)}`);
       const first = await until(async () => (await bgNotices())[0]);
       t.ok('裏待ちの最初の通知に、子の返答・走っている作業・止め方が載る', first?.text.includes(task.taskId) && first.text.includes('子の報告: 試験を裏で流している')
         && first.text.includes('cat >> /dev/null') && first.text.includes('完了通知で届けます') && first.text.includes('ply_task_cancel')
-        && first.text.includes('作業ダイアログの停止ボタン'), first?.text);
+        && first.text.includes('子の会話の入力欄の中断ボタン'), first?.text);
       t.ok('裏待ちの通知に、出力の大きさと最後に伸びてからの時間が載る', first?.text.includes('- cat >> /dev/null（出力 13 バイト。最後に伸びてから 3 分）'), first?.text);
       const again = await until(async () => (await bgNotices()).find(m => m.text.includes('たってもまだ走っています')));
       t.ok('走り続けている間は周期で知らせ直す', again?.text.includes('cat >> /dev/null') && !again.text.includes('子のここまでの返答'), again?.text);

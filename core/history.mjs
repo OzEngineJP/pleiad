@@ -86,13 +86,50 @@ export async function prepareMessages(sessionId, raw) {
   const side = await store.get(sessionId);
   const notices = new Set(side.taskNotices ?? []);
   const relayed = new Map((side.relayed ?? []).map(r => [r.hash, r.sentBy]));
+  // 委譲の子の会話へ実際に渡った発言の台帳（core/server.mjs の recordDelivery。ADR 0317）。人が直接送った発言か、依頼元の AI の追加の指示かを決める元
+  const human = humanMessages(messages, side.deliveries ?? []);
   for (const m of messages) {
     if (m.role !== 'user' || m.kind) continue;
     const hash = crypto.createHash('sha256').update(m.text ?? '').digest('hex');
     if (notices.has(hash)) m.internalTaskNotice = true;
     else if (relayed.has(hash)) m.sentBy = relayed.get(hash);
+    else if (human.has(m)) m.sentByHuman = true;
   }
   return messages;
+}
+
+/**
+ * 履歴の発言のうち、人が直接送ったもの（台帳の by: human）の集合。台帳の行に ID を持つ（nativeId = バックエンドが付けた発言の uuid）ものは、
+ * その uuid の発言と 1 対 1 で結ぶ。uuid を返さないバックエンド（codex など）と、まだ uuid が付いていない行は、同じ本文の発言どうしを
+ * 末尾から数えて結ぶ（履歴の最後の「続けて」は台帳の最後の「続けて」）。台帳の上限で古い行が落ちても、履歴の古い発言が結ばれないだけで
+ * 新しい発言の判定は変わらない。同じ本文が AI からも人からも来ていても、台帳の by で見分ける。
+ */
+function humanMessages(messages, ledger) {
+  const human = new Set();
+  if (!ledger.length) return human;
+  const byNative = new Map(messages.filter(m => m.role === 'user' && !m.kind && m.uuid).map(m => [m.uuid, m]));
+  const taken = new Set();
+  const loose = new Map();
+  for (const entry of ledger) {
+    const m = entry.nativeId ? byNative.get(entry.nativeId) : null;
+    if (m && !taken.has(m)) { taken.add(m); if (entry.by === 'human') human.add(m); continue; }
+    if (!loose.has(entry.hash)) loose.set(entry.hash, []);
+    loose.get(entry.hash).push(entry);
+  }
+  const rest = new Map();
+  for (const m of messages) {
+    if (m.role !== 'user' || m.kind || taken.has(m)) continue;
+    const hash = crypto.createHash('sha256').update(m.text ?? '').digest('hex');
+    if (!rest.has(hash)) rest.set(hash, []);
+    rest.get(hash).push(m);
+  }
+  for (const [hash, entries] of loose) {
+    const shown = rest.get(hash) ?? [];
+    for (let i = 1; i <= Math.min(entries.length, shown.length); i++) {
+      if (entries.at(-i).by === 'human') human.add(shown.at(-i));
+    }
+  }
+  return human;
 }
 
 // ------------------------------------------------------------------ present

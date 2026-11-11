@@ -3681,6 +3681,7 @@ function makeEmit(turn) {
       touchCard(turn);
       const done = event.type === "userMessage.delivered" ? "delivered" : event.unknown ? "unknown" : "dropped";
       agentTasks?.steered(sent.taskId, sent.instructionIds, done, { nativeId: event.nativeId ?? null }).catch(() => {});
+      if (done === 'delivered') recordDelivery(sent.sessionId, { id: `task-send-${sent.instructionIds[0]}`, by: 'ai', text: sent.text, nativeId: event.nativeId ?? null }).catch(() => {});
       // 1 つの合図にまとめて届いた全指示の、表示上の「配送中」を解く（受付の taskInstruction は指示ごとの messageId）
       for (const id of sent.instructionIds) {
         emitGlobal({ type: done === 'delivered' ? 'userMessage.delivered' : 'userMessage.dropped',
@@ -3691,6 +3692,9 @@ function makeEmit(turn) {
     // 受理済みの途中送信（送信待ちの項目）への合図。捨てられたら送信待ちへ戻す
     const awaited = signal && event.messageId && turn.pendingSteers?.delete(event.messageId);
     if (awaited) touchCard(turn);
+    if (awaited && event.type === 'userMessage.delivered' && turn.info.sessionId) {
+      recordHumanDelivery(turn.info.sessionId, event.messageId, event.nativeId ?? null).catch(() => {});
+    }
     if (event?.type === "userMessage.dropped" && turn.info.sessionId && event.messageId && (!replay || awaited)) {
       outbox.returned(turn.info.sessionId, event.messageId).catch(() => {});
     }
@@ -4815,6 +4819,47 @@ async function recordRelayed(sessionId, prompt, sentBy) {
   const hash = crypto.createHash('sha256').update(prompt).digest('hex');
   const kept = ((await store.get(sessionId)).relayed ?? []).filter(r => r.hash !== hash);
   await store.setSessionData(sessionId, 'relayed', [...kept, { hash, sentBy: publicSender(sentBy) }].slice(-RELAYED_KEEP));
+}
+// 委譲の子の会話へ「実際に渡った」発言の台帳（sidecar deliveries。ADR 0317）。人が直接送った発言（by: human）と、依頼元の AI の追加の指示
+// （by: ai。ply_task_send）を、渡った順に { id, by, hash, at, nativeId? } で残す。履歴（core/history.mjs の prepareMessages）が
+// 同じ本文の発言を台帳と突き合わせて「あなた」の名札を付ける（本文のハッシュだけで決めると、同じ文面の AI の指示まで「あなた」になる）。
+// 人からの指示の数（完了通知の「人からの指示 N 件」）も、ここで初めて載った id だけを 1 回ずつ数える
+// （受け付けた時ではなく渡った時。取り消した送信待ちは数えない。同じ messageId の送り直しは台帳に既にあるので数えない）。
+// 古いものから捨てる（DELIVERY_KEEP 件）。書けなかったときは送信そのものは止めず、ログに残す
+const DELIVERY_KEEP = 500;
+const deliveryChains = new Map();
+const sha256 = text => crypto.createHash('sha256').update(String(text ?? '')).digest('hex');
+function recordDelivery(sessionId, { id, by, text, nativeId = null }) {
+  const run = async () => {
+    try {
+      if (!sessionId || !id || !agentTasks.isChild(sessionId)) return false;
+      const ledger = [...((await store.get(sessionId)).deliveries ?? [])];
+      const known = ledger.find(e => e.id === id);
+      if (known) {
+        // 先に「渡った」と控えた後で合図が nativeId を運んできた分は、同じ行へ足す（数え直さない）
+        if (nativeId && !known.nativeId) { known.nativeId = nativeId; await store.setSessionData(sessionId, 'deliveries', ledger); }
+        return false;
+      }
+      ledger.push({ id, by, hash: sha256(text), at: Date.now(), ...(nativeId ? { nativeId } : {}) });
+      await store.setSessionData(sessionId, 'deliveries', ledger.slice(-DELIVERY_KEEP));
+      if (by === 'human') await agentTasks.humanSent(sessionId);
+      return true;
+    } catch (e) {
+      console.error('  子の会話へ渡した発言の記録に失敗（名札・人からの指示の数がずれうる）:', sessionId, id, String(e?.message ?? e));
+      return false;
+    }
+  };
+  const next = (deliveryChains.get(sessionId) ?? Promise.resolve()).then(run);
+  deliveryChains.set(sessionId, next);
+  next.finally(() => { if (deliveryChains.get(sessionId) === next) deliveryChains.delete(sessionId); }).catch(() => {});
+  return next;
+}
+/** 送信待ちの項目が人の送信なら台帳に載せる（渡った時に呼ぶ。項目は sidecar の outbox から引く＝付け直しの後でも分かる） */
+async function recordHumanDelivery(sessionId, messageId, nativeId = null, item = null) {
+  if (!sessionId || !messageId) return false;
+  const found = item ?? ((await store.get(sessionId).catch(() => null))?.outbox ?? []).find(m => m.id === messageId);
+  if (!found?.args?.byHuman) return false;
+  return recordDelivery(sessionId, { id: messageId, by: 'human', text: found.args.prompt, nativeId });
 }
 /** 画面と履歴に出す送り手（連鎖の数は内部の歯止めなので出さない）。bot の会話は name・icon を足す */
 const publicSender = (sentBy) => {
@@ -6580,8 +6625,10 @@ const outbox = createMessageQueue({
     // pending を立て、画面は渡るまで待っていることを出す。出せないバックエンドは今までどおり即時扱い
     emitGlobal({ type: 'userMessage', sessionId, messageId: item.id, text: item.args.prompt, at: item.at,
       ...(item.args.scheduledFor ? { scheduledFor: item.args.scheduledFor } : {}),
-      ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}) });
+      ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}), ...(item.args.byHuman ? { sentByHuman: true } : {}) });
     if (recovered) emitGlobal({ type: 'userMessage.delivered', sessionId, messageId: item.id });
+    // 渡った合図を出せないバックエンドは受理した時点で渡ったとみなす。合図を後から出すバックエンドは、その合図で台帳に載せる（nativeId も一緒に）
+    if (!turn.control.steerConfirms || recovered) await recordHumanDelivery(sessionId, item.id, null, item);
     noteRelayHops(sessionId, item.args, { steered: true });
     if (item.args.attachments?.length) {
       (turn.steeredAttachments ??= []).push({ key: item.id, prompt: item.args.prompt });
@@ -6682,6 +6729,8 @@ function completionNotice(lng, tasks) {
       attempt.outcome === 'limited' ? 'delegation.noticeReroutedLimited' : 'delegation.noticeReroutedError',
       { from: candidateNoticeName(attempt.target), to: candidateNoticeName(all[i + 1]?.target ?? task.routing.target) })).join(''),
     rejections: rejectionNotice(lng, task.rejections),
+    // 人が子の会話へ直接送った分（ADR 0317）。送るたびには知らせず、完了のときにまとめて一行
+    human: task.humanInstructions > 0 ? agentT(lng, 'delegation.noticeHuman', { count: task.humanInstructions }) : '',
     git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
   if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
@@ -6768,13 +6817,14 @@ async function steerInstruction(task, instruction) {
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
   if (confirms) {
-    liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionIds: instruction.ids ?? [instruction.id] });
+    liveInstructions.set(item.id, { sessionId: task.sessionId, taskId: task.taskId, instructionIds: instruction.ids ?? [instruction.id], text: instruction.text });
     touchCard(turn);
   }
   let accepted;
   try { accepted = await turn.control.steer?.(item); }
   catch { if (liveInstructions.delete(item.id)) touchCard(turn); return 'error'; }
   if (!accepted) { if (liveInstructions.delete(item.id)) touchCard(turn); return 'wait'; }
+  if (!confirms) await recordDelivery(task.sessionId, { id: item.id, by: 'ai', text: instruction.text });
   if (!confirms) for (const id of instruction.ids ?? [instruction.id]) {
     // 合図の無いバックエンドは受理した時点で渡ったものとする。pending の行をここで解く
     emitGlobal({ type: 'userMessage.delivered', sessionId: task.sessionId, messageId: `task-send-${id}` });
@@ -6903,7 +6953,8 @@ function adoptChild(ctx, turnPromise, { abandon = false } = {}) {
   if (adopted) {
     // ターン開始の入力にした指示は、付け直したターンへプロンプトが渡ったら delivered にする（execute の onAccepted と同じ）。
     // 旧サーバーですでに渡っていたなら付け直しの時点で確定する。渡る前に手を離した分は、札の合図（hooks.onAccepted）で
-    ctx.hooks.onAccepted = nativeId => agentTasks.promptAccepted(taskId, nativeId).then(ids => {
+    ctx.hooks.onAccepted = nativeId => agentTasks.promptAccepted(taskId, nativeId).then(async ids => {
+      if (ids?.length) await recordDelivery(sessionId, { id: `task-send-${ids[0]}`, by: 'ai', text: ctx.prompt, nativeId });
       for (const id of ids ?? []) emitGlobal({ type: 'userMessage.delivered', sessionId, messageId: `task-send-${id}`, ...(nativeId ? { nativeId } : {}) });
     });
     if (ctx.initialDelivered) void agentTasks.promptAccepted(taskId).then(ids => {
@@ -7198,7 +7249,8 @@ agentTasks = await createAgentTasks({
       const renewed = await renewTaskWorktree(task).catch(() => null);
       // ターン開始の入力にした指示は、子がプロンプトを受け取った時点で配送済みにする（onAccepted。ターンの終わりを待たない）
       const outcome = await runTurn({ sessionId: task.sessionId, prompt, ...(meta?.messageId ? { messageId: meta.messageId } : {}) }, () => {}, { signal, taskId: task.taskId,
-        onAccepted: nativeId => agentTasks.promptAccepted(task.taskId, nativeId).then(ids => {
+        onAccepted: nativeId => agentTasks.promptAccepted(task.taskId, nativeId).then(async ids => {
+          if (ids?.length) await recordDelivery(task.sessionId, { id: `task-send-${ids[0]}`, by: 'ai', text: prompt, nativeId });
           for (const id of ids ?? []) emitGlobal({ type: 'userMessage.delivered', sessionId: task.sessionId, messageId: `task-send-${id}`, ...(nativeId ? { nativeId } : {}) });
         }) });
       if (outcome === 'requeue') return { requeue: true };
@@ -7800,6 +7852,7 @@ function bindTurnContext(ctx) {
     }
     if (ctx.initialDelivered || !args.messageId) return;
     ctx.initialDelivered = true;
+    recordHumanDelivery(ctx.sessionId, args.messageId, nativeId).catch(() => {});
     emit({ type: 'userMessage.delivered', messageId: args.messageId, ...(nativeId ? { nativeId } : {}) });
   };
 
@@ -7852,7 +7905,7 @@ async function beginTurn(ctx) {
   }
   if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
     ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
-    ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}) });
+    ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...(args.byHuman ? { sentByHuman: true } : {}) });
   if (ctx.interruption) emit({ type: 'interruptionNote', text: ctx.interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
   broadcastRunning();
   syncRunningPoll();
@@ -9791,8 +9844,10 @@ wss.on("connection", (ws, req) => {
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
           // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0102）。{ beforeMessageId, stopRunning? }
           if (rewind !== undefined && (typeof rewind?.beforeMessageId !== 'string' || !rewind.beforeMessageId)) throw new Error(t('rewind.invalid'));
-          const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}) };
-          return reply(true, await acceptMessage(sessionId, messageId, args, { rewind }));
+          // 委譲の子へ人が直接送る分には byHuman を付ける。届いた出来事が「あなた」の名札を付ける元（履歴は渡った時に残す台帳 recordDelivery）
+          const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}), ...(agentTasks.isChild(sessionId) ? { byHuman: true } : {}) };
+          const accepted = await acceptMessage(sessionId, messageId, args, { rewind });
+          return reply(true, accepted);
         }
         // 入力欄の `!`（シェルの行。ADR 0054）。人の操作なので承認モードは掛けない。送信待ちにも送り直しの控えにも積まない
         case 'runShell':

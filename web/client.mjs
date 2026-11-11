@@ -124,6 +124,7 @@ const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
   resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, versionReload } from './interrupt.mjs';
+import { workStop } from './work-stop.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -147,7 +148,11 @@ import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } 
 import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
+import { createSender } from './composer/sender.mjs';
+import { createWorkComposer } from './composer/work-composer.mjs';
+import { createWorkControls } from './composer/work-controls.mjs';
 const outboxes = new Map();
+let workComposer = null;   // 子の会話のモーダルの入力欄（web/composer/work-composer.mjs。下の操作の節で作る）
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
 // Persist the request ID before transport so an acknowledgement lost on reload
@@ -155,7 +160,6 @@ const submittingMessages = new Set();
 const receipts = new Map();
 // 編集で入力欄へ戻した送信予定の時刻（sessionId -> 時刻）。送ると同じ時刻で予定し直し、チップの × で外せばふつうの送信になる
 const armedSends = new Map();
-let scheduleAttempt = null;   // 予定を置く応答が届かず送り直しても、同じ予定を二重に作らない
 try {
   for (const [id, request] of JSON.parse(localStorage.getItem('ply-message-receipts') ?? '[]')) receipts.set(id, request);
 } catch {}
@@ -196,6 +200,8 @@ const scheduleActions = {
 async function refreshSchedules() {
   state.schedules = await limitOp('sessions.schedules');
   if (state.current) paintOutbox();
+  workComposer?.paintOutbox();
+  syncWorkResume();
   renderSessions();
   try { channelsUi.schedulesChanged(); } catch { /* 起動の途中 */ }
 }
@@ -3548,6 +3554,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
     if (state.current === ev.sessionId) { syncOutboxRows(ev.messages); noAgent?.sync(); }
+    if (workComposer?.childId === ev.sessionId) workComposer.paintOutbox();
     return;
   }
   if (ev.type === "turnEnd" && ev.sessionId) {
@@ -3567,7 +3574,7 @@ function onEvent(ev, replay = false) {
     // Process completion for every session, before filtering events to the open conversation.
     state.runningIds.delete(ev.sessionId);
     // ターンを回した分だけ使用量が動く。ヘッダーのチップをそのエージェントの分だけ取り直す（読み直しの再生では取らない）
-    if (!replay && !ev.requeued) headerUsage.turnEnded(s?.backend);
+    if (!replay && !ev.requeued) { headerUsage.turnEnded(s?.backend); workUsage?.turnEnded(s?.backend); }
     renderSessions();
     if (ev.sessionId !== state.current) scheduleRefresh();
   }
@@ -3650,6 +3657,15 @@ function onEvent(ev, replay = false) {
     return;
   }
   if (ev.type === 'userMessage' && ev.sessionId && !replay) dropSuggestion(ev.sessionId);
+  // 子の会話のモーダルの入力欄の上の帯（文脈）は、子ごとの最後の値を持つ。メインの state.contextWindow とは別
+  if (ev.type === 'contextWindow' && ev.sessionId) {
+    childContext.set(ev.sessionId, ev);
+    if (ev.sessionId === workComposer?.childId) syncWorkContext();
+  }
+  if (ev.type === 'compaction' && ev.sessionId) {
+    if (ev.phase === 'start' || ev.phase === 'failed') childCompaction.set(ev.sessionId, ev); else childCompaction.delete(ev.sessionId);
+    if (ev.sessionId === workComposer?.childId) syncWorkContext();
+  }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -5084,7 +5100,10 @@ function composerSelection() {
  * 使えるアカウントの行には、その週の使用量を添える（quota はそのエージェントの使用量。web/header-usage.mjs の weekUsage）
  */
 function accountOptions(quota) {
-  const { backend, account: value } = composerSelection();
+  const { backend, account } = composerSelection();
+  return accountOptionsOf(backend, account, quota);
+}
+function accountOptionsOf(backend, value, quota) {
   const list = accountList(backend);
   return [
     { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount"), usage: weekUsage(quota, "") },
@@ -5152,18 +5171,22 @@ async function syncEndpoint(s, bid, { value: selected = endpointOf(s), visible =
 /** 入力欄のモデルの面に渡す接続先の値と口（web/composer-controls.mjs の endpointSection / compatModelSection） */
 function endpointView(bid) {
   if (!state.endpointShown) return null;
+  return endpointViewOf(bid, state.endpoint);
+}
+/** 接続先の値と口（選んでいる接続先 selected を渡す版。子の会話のモーダルの入力欄もこれで作る） */
+function endpointViewOf(bid, selected) {
   const list = compatEndpoints.list(bid);
   const defaults = compatEndpoints.defaults();
-  const row = list.find((e) => e.id === state.endpoint) ?? null;
+  const row = list.find((e) => e.id === selected) ?? null;
   const official = bid === "claude" ? t("chat.endpoint.officialClaude") : t("chat.endpoint.officialCodex");
   return {
-    selected: state.endpoint, row, lost: lostText(bid),
+    selected, row, lost: lostText(bid),
     roleNames: bid === "claude" ? CLAUDE_ROLES.map((r) => [r.key, r.short]) : [],
     options: [
       { value: "", label: t("chat.endpoint.official"), sub: official, isDefault: !defaults[bid] },
       ...list.map((e) => ({ value: e.id, label: e.name, isDefault: defaults[bid] === e.id, warn: e.ready === false,
         sub: `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}${e.ready === false ? t("chat.endpoint.failedSuffix") : ""}`, title: `${e.name}（${e.baseUrl}）` })),
-      ...(state.endpoint && !row ? [{ value: state.endpoint, label: t("chat.endpoint.deleted"), sub: t("chat.account.chooseAgain"), gone: true }] : []),
+      ...(selected && !row ? [{ value: selected, label: t("chat.endpoint.deleted"), sub: t("chat.account.chooseAgain"), gone: true }] : []),
     ],
     manage: () => compatEndpoints.open(bid),
   };
@@ -5484,6 +5507,7 @@ function threadMenu(s, x, y) {
 }
 
 function renderSessions() {
+  workComposer?.paintControls();   // 子の行（モデル・予約）が変わったら、モーダルの入力欄のチップも今に合わせる
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から。
   // 依頼元の会話を消した子（ADR 0147）は、開く口が無くなるので一覧に出す
   // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）は会話としては出さない。スレッドは下の threadRows が 1 スレッド 1 行で出す。
@@ -5692,6 +5716,7 @@ function syncResume() {
   }
   if (button.hidden === show) { button.hidden = !show; controls.fit(); }
   syncSendMore();
+  syncWorkResume();   // モーダルの子の「再開」も同じ流れで描き直す
 }
 
 /**
@@ -5713,6 +5738,40 @@ async function resumeSession(sessionId) {
   if (resuming.has(sessionId)) resuming.set(sessionId, setTimeout(() => { if (resumeSettled(sessionId)) syncResume(); }, RESUME_HOLD_MS));
   renderSessions();
   return true;
+}
+
+let workLimitClockTimer = null;
+/**
+ * 子の会話のモーダルの「▶ 再開」と欄の下の一行。出す条件と字はメインの syncResume と同じ（web/interrupt.mjs）。
+ * 子が中断状態・走っていない・承認待ちでない・欄が空のときだけ。字を書いたら隠し、「送ると、この指示で続けます」を出す
+ */
+function syncWorkResume() {
+  if (!workComposer) return;
+  const id = workComposer.childId;
+  const s = id ? state.sessions.find(x => x.id === id) : null;
+  const interrupted = Boolean(s) && isInterrupted(s) && !s.deletedBot && !s.retired;
+  clearTimeout(workLimitClockTimer);
+  if (!interrupted) { workComposer.setResume({}); return; }
+  const running = state.runningIds.has(id) || submittingMessages.has(id);
+  const waiting = (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && p.sessionId === id);
+  const written = workComposer.hasDraft();
+  const paused = pausedCount(outboxes.get(id));
+  const limitState = limitResumeState(s.interrupted);
+  const waitingClock = limitState === 'release';
+  if (waitingClock) {
+    const switchAt = s.interrupted.resetsAt + 500;
+    workLimitClockTimer = setTimeout(() => { syncWorkResume(); renderSessions(); }, Math.min(2_147_000_000, Math.max(1000, switchAt - Date.now())));
+  }
+  workComposer.setResume({
+    show: resumeVisible({ interrupted, running, waiting, text: '', attached: written }),
+    label: resumeLabel(paused, s.interrupted),
+    short: resumeShortLabel(s.interrupted),
+    limit: waitingClock,
+    disabled: resuming.has(id) || waitingClock,
+    note: running ? '' : resumeNoteText(paused, s.interrupted),
+    quiet: !written,
+    placeholder: running ? '' : t('interrupt.placeholder'),
+  });
 }
 
 $('resume').onclick = () => {
@@ -6284,14 +6343,18 @@ function backgroundItems(scope = null) {
   const nativeKeys = new Set(items.map(i => i.key));
   const trees = here ? [...here].flatMap(id => taskTree(allTasks(), id)) : plyTasksHere();
   for (const { task, depth, rootLive, childCount } of trees) {
-    const live = TASK_LIVE.has(task.status);
-    const waiting = live && taskWaiting(task);
+    // 終わった（中断した）子へ人が直接送ると、タスクの状態は変わらないまま会話のターンだけが走り直す（メインと同じ）。
+    // そのあいだは一覧の行と見出しも「実行中」にする（■ は runningIds で既に出る）
+    const rerun = !TASK_LIVE.has(task.status) && !task.host && Boolean(task.sessionId) && state.runningIds.has(task.sessionId);
+    const taskStatus = rerun ? 'running' : task.status;
+    const live = TASK_LIVE.has(taskStatus);
+    const waiting = live && !rerun && taskWaiting(task);
     const hostOffline = Boolean(task.host) && live && !hostOnlineNow(task.host.hostId);
     const item = {
       key: `t:${task.taskId}`, group: 'agent', source: 'task', title: backgroundTitle(task), request: task.task,
       depth, rootLive, childCount, parentSessionId: task.parentSessionId, backend: task.backend,
-      model: task.model || null, effort: task.effort || null, status: TASK_MARK[task.status] ?? null,
-      taskStatus: waiting ? 'waiting' : task.status, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
+      model: task.model || null, effort: task.effort || null, status: TASK_MARK[taskStatus] ?? null,
+      taskStatus: waiting ? 'waiting' : taskStatus, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
       childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
       pendingMessages: task.pendingMessages ?? 0, instructionRevision: task.instructionRevision ?? 0,
       worktree: task.worktree ?? null, updatedAt: task.updatedAt ?? null,
@@ -6542,6 +6605,8 @@ function renderBackground() {
   // 同じ項目。見出し（状態・経過時間）だけ更新し、動いている子は続きを読み直す
   bg.view.item = item;
   paintDetailHead(item);
+  workComposer?.show(item);
+  syncWorkStop();
   const changed = item?.source === 'task' && bg.view.instructionRevision !== item.instructionRevision;
   const becameIdle = bg.view.wasLive && !item?.live;
   // ホストの線がオフライン・オンラインに変わったら、すぐ読み直す（筋の末尾の「ホストがオフライン」の行を替える・追いつく）
@@ -6639,24 +6704,115 @@ function paintDetailHead(item) {
         showOpen = true;
       }
     } else showOpen = true;
-    // 止めるのは根のタスク（止めれば孫も止まる。ホストの「すべて止める」と同じ）。読み出しで知った孫には出さない
-    if (!item.hostDescendant && (['queued', 'running'].includes(item.taskStatus) || item.waiting)) {
-      const stop = el('button', 'btn btn-quiet', t('dialog.work.stop'));
-      stop.type = 'button';
-      stop.setAttribute('aria-label', t('dialog.work.stopLabel', { name: item.title }));
-      stop.onclick = async () => {
-        stop.disabled = true;
-        try { await cmd('cancelAgentTask', { taskId: item.taskId }); }
-        catch (e) { detailNote(e.message); stop.disabled = false; }
-      };
-      actions.append(stop);
-    }
+    // 止めるのは見出しではなく入力欄の中断ボタン（syncWorkStop。ADR 0317）
     if (showOpen) actions.append(open);
   }
   if (item.group === 'command' && item.live !== false && (item.entry.capabilities ?? capsOf(item.entry.backend)).stopBackground) {
     actions.append(backgroundStopButton(item.entry.sessionId, item.task));
   }
   head.append(actions);
+}
+
+/**
+ * 子の会話のモーダルの中断ボタンを今に合わせる（出す条件と押せるかは web/work-stop.mjs）。
+ * 子のターンの出入り・承認の出入り・タスクの状態が変わるたびに呼ぶ
+ */
+function syncWorkStop() {
+  if (!workComposer) return;
+  const item = workComposer.item;
+  const id = item?.childId ?? null;
+  const live = (task) => TASK_LIVE.has(task.status);
+  workComposer.setStop(workStop({
+    item,
+    running: Boolean(id) && state.runningIds.has(id),
+    approval: Boolean(id) && (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && p.sessionId === id),
+    grandchild: Boolean(id) && allTasks().some((task) => task.parentSessionId === id && live(task)),
+    stopping: Boolean(id) && state.stopping.has(id),
+  }));
+  syncWorkContext();
+  syncWorkResume();
+}
+
+/** 子ごとの文脈の使用量（モーダルの入力欄の上の帯）。読み込み（loadSession）と contextWindow の出来事で更新する */
+const childContext = new Map();
+/** 子ごとの圧縮の状態（compaction の出来事。start = 圧縮中、failed = 失敗。終われば消す）。メインの state.compactionPhase の子の版 */
+const childCompaction = new Map();
+/** モーダルの入力欄の使用量のチップ（メインの headerUsage の 2 つ目。ポップはモーダルの中に置く）。下の操作の節で作る */
+let workUsage = null;
+function syncWorkUsage() {
+  if (!workUsage) return;
+  const id = workComposer?.childId;
+  const s = id ? workControls.selection(id) : null;
+  // 互換の接続先で動く子はサブスクの枠を使わない（メインの syncTopbar と同じ）
+  workUsage.show(s?.backend ? { backend: s.backend, account: s.endpoint ? '' : s.account, endpoint: s.endpoint, model: s.model, models: workControls.get(id).models } : { backend: null });
+}
+function compactFromDialog(id) {
+  cmd('compactConversation', { sessionId: id }).catch((e) => { childCompaction.set(id, { phase: 'failed', reason: String(e?.message ?? e) }); syncWorkContext(); });
+}
+function syncWorkContext() {
+  if (!workComposer) return;
+  const id = workComposer.childId;
+  syncWorkUsage();
+  const usage = id ? childContext.get(id) : null;
+  const phase = id ? childCompaction.get(id) ?? null : null;
+  const hasUsage = Boolean(usage && usage.windowTokens > 0);
+  if (!id || (!hasUsage && !phase)) { workComposer.setContext(null); return; }
+  const backend = workControls.selection(id).backend;
+  const canCompact = Boolean(capsOf(backend).compact);
+  const parts = { canCompact, compacting: phase?.phase === 'start', why: canCompact ? '' : t('compaction.agentManaged', { agent: labelOf(backend) }), actions: [] };
+  parts.phase = phase?.phase === 'start' ? 'running' : phase?.phase === 'failed' ? 'failed' : '';
+  // 狭い形では、圧縮中・失敗はメーターの位置に状態のチップを出す（メインと同じ）
+  if (hasUsage && !(workComposer.narrow && parts.phase)) {
+    const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
+    const amounts = { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) };
+    const bar = el('span', 'context-meter-bar');
+    const fill = el('span');
+    fill.style.width = `${Math.min(100, Math.max(0, rate))}%`;
+    bar.append(fill);
+    const caret = svgEl('svg', { class: 'i caret', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+    caret.append(svgEl('path', { d: 'M7 10l5 5 5-5' }));
+    parts.nodes = [document.createTextNode(t('compaction.context')), bar, document.createTextNode(workComposer.narrow ? t('compaction.meterShort', { rate }) : t('compaction.meter', amounts)), caret];
+    parts.label = [t('compaction.meterLabel', amounts), t('compaction.openActions')].join(t('compaction.spokenJoin'));
+  }
+  if (phase?.phase === 'start') parts.text = [runMark(), document.createTextNode(t('compaction.running'))];
+  else if (phase?.phase === 'failed') {
+    parts.text = [document.createTextNode(t('compaction.failed'))];
+    parts.title = phase.reason ?? '';
+    if (canCompact) {
+      const retry = el('button', null, t('compaction.retry'));
+      retry.type = 'button';
+      retry.onclick = () => compactFromDialog(id);
+      parts.actions.push(retry);
+    }
+    if (phase.reason && !workComposer.narrow) parts.actions.push(el('small', null, phase.reason));
+  }
+  workComposer.setContext(parts);
+}
+
+/**
+ * モーダルの中断ボタンを押した。入力欄のある子には、メインの中断ボタンと同じ「中断」（abort）を送る。
+ * ホストに任せた子（入力欄なし）は abort が別の PC に届かないので、タスクの取り消し（cancelAgentTask）を送る
+ */
+function stopFromDialog(item) {
+  const plan = workStop({
+    item,
+    running: Boolean(item.childId) && state.runningIds.has(item.childId),
+    approval: Boolean(item.childId) && (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && p.sessionId === item.childId),
+    grandchild: Boolean(item.childId) && allTasks().some((task) => task.parentSessionId === item.childId && TASK_LIVE.has(task.status)),
+  });
+  if (!plan.show) return;
+  if (plan.via === 'cancelAgentTask') {
+    cmd('cancelAgentTask', { taskId: item.taskId }).catch((e) => detailNote(e.message));
+    return;
+  }
+  const id = item.childId;
+  // 走っているターンの中断は、押した瞬間に受け付けた見た目にする（メインの中断ボタンと同じ）。ターンの外（順番待ち・承認待ち・孫の待ち）は止まり終える待ちが無い
+  if (state.runningIds.has(id)) { state.stopping.add(id); syncRunState(); }
+  cmd('abort', { sessionId: id }).catch((e) => {
+    state.stopping.delete(id);
+    syncRunState();
+    detailNote(e.message);
+  });
 }
 
 /** 詳細の下に一行（失敗の理由など）。読み直しで消える */
@@ -6678,7 +6834,10 @@ function openDetail(item) {
   if (filePreview.mounted() === $('workDialog') && chromePanel?.isOpen()) chromePanel.close();
   syncModalWatch();
   paintDetailHead(item);
+  workComposer?.show(item);
+  syncWorkStop();
   if (!item) return;
+  if (item.source === 'task' && item.childId) refreshOutbox(item.childId).then(() => workComposer?.paintOutbox()).catch(() => {});
   body.append(el('div', 'work-head', t('dialog.work.loading')));
   refreshDetail({ first: true });
 }
@@ -6959,6 +7118,8 @@ async function taskThread(item) {
   $('workBody').dataset.sessionId = item.childId;
   $('workBody').dataset.paneKind = 'task';
   syncModalWatch();
+  workComposer?.offerDraft(item.childId, data.draft);
+  if (data.contextWindow) { childContext.set(item.childId, data.contextWindow); syncWorkContext(); }
   const live = streamMessages(data.stream?.events, { backend: item.backend, model: item.model, initialMessageId: data.initialMessageId });
   const messages = [...(data.messages ?? []), ...live.messages];
   const th = readonlyThread(messages, { presents: [...(data.presents ?? []), ...live.presents], backend: item.backend, prompt: item.request, live: item.live, item,
@@ -7007,6 +7168,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   };
   const requestNode = (text, at) => parentMsg(text, at, t('dialog.work.request'));
   const followUp = (text, at) => parentMsg(text, at, t('dialog.work.instruction'));
+  // 人が子の会話へ直接送った発言は「あなた」（ADR 0317）。親の AI の追加の指示と見分ける。印は送った時に記録する（履歴は sentByHuman）
+  const youNode = (text, at) => parentMsg(text, at, t('chat.message.you'));
   const pendingNode = (instruction) => {
     const m = followUp(instruction.text, instruction.at);
     m.dataset.instructionId = instruction.id;
@@ -7050,7 +7213,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     }
     const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, sessionId,
       // 古い分を省いた筋（base > 0）の最初の発言は会話の途中。依頼ではなく追加の指示として描く
-      user: (m) => (it.mi === 0 && !base ? requestNode : followUp)(m.text, m.at) });
+      user: (m) => (it.mi === 0 && !base ? requestNode : m.sentByHuman ? youNode : followUp)(m.text, m.at) });
     prevRole = role;
     if (node) last = put(node, `m:${it.mi}`);
   }
@@ -7605,7 +7768,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
+$('workDialog').addEventListener('close', () => { workComposer?.hide(); workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -8064,7 +8227,12 @@ const filePreview = setupFilePreview({
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
   osActions: () => state.osActions === true,
-  useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
+  // 作業のダイアログの中（子の会話・その右の欄）で押したら、いま選んでいる子の入力欄へ。そのほかはメインの入力欄へ
+  useFile: (file, element) => {
+    if (element?.closest?.('#workDialog')) { workComposer?.insert({ files: [file] }); return; }
+    if (attachHostFiles([file])) $('prompt').focus();
+  },
+  canUse: element => (element?.closest?.('#workDialog') ? Boolean(workComposer?.visible) : undefined),
 });
 // 頭の行の右の欄のボタンと近道（web/header-entries.mjs）。会話を開いていない間は出さない
 // 右の欄の開け閉め。Chrome の窓かタブがあればその窓を映す。つないであって窓がまだ無ければ、新しいタブ（Pleiad の新しいタブのページ）で窓を作る
@@ -10590,6 +10758,7 @@ function syncRunState() {
   $("abort").hidden = !(here || isWaitingHere());
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
+  syncWorkStop();   // モーダルの子の中断ボタンも同じ流れで出し入れする
   syncResume();     // 中断状態なら同じ位置に「再開」
   syncEditTail();   // 編集中の帯の「走っている返答は止まる」
   chatSuggestion.refresh();   // 次のメッセージの候補は、返答が終わってから出す
@@ -10662,6 +10831,24 @@ async function sendToHomeBot(bot) {
   }
 }
 
+// メインの入力欄の配送（web/composer/sender.mjs。子の会話のモーダルの入力欄も同じ核を使う）
+const chatSender = createSender({
+  t, cmd: (command, args) => cmd(command, args), limitOp, randomId, receipts, saveReceipts, refreshOutbox,
+  scheduled: (sessionId) => { armedSends.delete(sessionId); paintArmed(); },
+  clearSent: (sessionId, text, attachments) => clearSentDraft(sessionId, text, attachments),
+  // 吹き出しは、受理の応答が先でも userMessage が先でも、この仮の添付で描く
+  beforeSend: (sessionId, request, full, ordered) => {
+    if (ordered.length && !messageRow(request.messageId)) provisionalByMessage.set(request.messageId, ordered.map(provisionalPresent));
+  },
+  afterSend: (sessionId, request, full) => {
+    if (state.current === sessionId && !messageRow(request.messageId)) {
+      markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');
+      syncOutboxRows(outboxes.get(sessionId) ?? []);
+    }
+  },
+  say: (text) => { $('settingsError').textContent = text; },
+});
+
 async function submit({ at = armedSends.get(state.current) } = {}) {
   // 編集中の送信は［送り直す］（Enter・送信の近道もここへ来る）
   if (chatEdit.active) return chatEdit.send();
@@ -10722,48 +10909,10 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
       return;
     }
     if (!at) { state.compactionAt = null; paintContextStrip(); }
-    // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）
-    const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
+    // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）。
     // 本文は文中の印（[添付] パス）ごとそのまま送る。文中に無い添付（文末に付く）だけ、今までどおり末尾に印を足す
-    const inDoc = composerEditor.attachmentKeys();
-    const tail = attachments.filter(a => !inDoc.has(attachedKey(a.path)));
-    const full = [text.trim(), tail.map(a => attachmentLine(agentLang, a.path)).join(NL)].filter(Boolean).join(NL + NL);
-    const args = { sessionId, prompt: full, cwd: state.cwd.trim() || undefined, mode: state.mode,
-      ...(attachments.length ? { attachments } : {}) };
-    // 日時を指定した送信は、送信待ちではなく予定として置く（時刻が来たら同じ送信待ちへ入る。core/send-schedule.mjs）
-    if (at) {
-      const key = `${sessionId}\n${full}\n${at}`;
-      if (scheduleAttempt?.key !== key) scheduleAttempt = { key, messageId: randomId() };
-      await limitOp('sessions.scheduleSend', { sessionId, prompt: full, at, messageId: scheduleAttempt.messageId,
-        ...(args.cwd ? { cwd: args.cwd } : {}), ...(args.mode ? { mode: args.mode } : {}), ...(attachments.length ? { attachments } : {}) });
-      scheduleAttempt = null;
-      armedSends.delete(sessionId); paintArmed();
-      await clearSentDraft(sessionId, text, attachments);
-      $('settingsError').textContent = '';
-      return;
-    }
-    const previous = receipts.get(sessionId);
-    if (previous) {
-      const known = (await refreshOutbox(sessionId)).find(m => m.id === previous.messageId);
-      if (!known && previous.prompt !== full) throw new Error(t('chat.send.unknownPrevious'));
-      if (known && previous.prompt === full) {
-        await clearSentDraft(sessionId, text, attachments);
-        receipts.delete(sessionId); saveReceipts();
-        return;
-      }
-    }
-    const request = previous && previous.prompt === full ? previous : { ...args, messageId: randomId() };
-    receipts.set(sessionId, request); saveReceipts();
-    // 吹き出しは、受理の応答が先でも userMessage が先でも、この仮の添付で描く
-    if (ordered.length && !messageRow(request.messageId)) provisionalByMessage.set(request.messageId, ordered.map(provisionalPresent));
-    await cmd('sendMessage', request);
-    if (state.current === sessionId && !messageRow(request.messageId)) {
-      markDelivery(ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending');
-      syncOutboxRows(outboxes.get(sessionId) ?? []);
-    }
-    await clearSentDraft(sessionId, text, attachments);
-    receipts.delete(sessionId); saveReceipts();
-    $('settingsError').textContent = '';
+    await chatSender.send({ sessionId, text, ordered, at, cwd: state.cwd.trim(), mode: state.mode, attachedKey, attachmentLine,
+      agentLang: state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang, inDoc: composerEditor.attachmentKeys() });
   } catch (e) {
     $('settingsError').textContent = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
   } finally {
@@ -10944,6 +11093,82 @@ setInterval(() => { if (state.current && sendSchedules(state.current).some(r => 
 /** いま日時を指定して送れるか（送る中身があり、シェルの形でなく、送れる会話か） */
 function canScheduleHere() { return Boolean(($('prompt').value.trim() || state.attached.length) && !composerShellMode && !retiredHere()); }
 function syncSendMore() { $('sendMore').disabled = !canScheduleHere() || $('send').disabled; }
+
+// 子の会話のモーダルの入力欄（ADR 0315 段 4）。メインと同じ部品を #workBody の外に置き、送る先は「いま詳細に出している子」。
+// 下書き・添付・送信中・送信待ちは子ごと。送る核・送信待ちの行・チップ・日時の面はメインと同じ部品
+const workEfforts = createEffortsView({ loader: effortsLoader });
+const workControls = createWorkControls({
+  row: (id) => state.sessions.find(s => s.id === id),
+  item: (id) => (workComposer?.childId === id ? workComposer.item : null),
+  pending: pendingChoice,
+  backends: () => state.backends,
+  labelOf,
+  vocab: (backend, account, cwd) => vocabRequests.cache.get(vocabCache(backend, account, cwd)) ?? null,
+  loadVocab,
+  efforts: workEfforts,
+  reserve: (patch, id) => reserveSettings(patch, id),
+  setMode: (id, mode) => {
+    modeWrite = modeWrite.catch(() => {}).then(() => cmd('setMode', { sessionId: id, mode, reasonKey: 'manual' }));
+    return modeWrite;
+  },
+  recent: cwdOptions,
+  worktreeNote: (branch) => t('worktree.childLocked', { branch }),
+  // 子のアカウント・接続先の候補（メインの accountOptions / endpointView と同じ部品。選んでいる値だけ子のもの）。
+  // 登録が無く選んでもいないアカウントの節、選べないエージェントの接続先の節は出さない（syncAccount / syncEndpoint と同じ）
+  loadChoices: async (backend) => {
+    await Promise.all([loadAccounts(backend), capsOf(backend).compatEndpoints ? compatEndpoints.load().catch(() => []) : null]);
+  },
+  accounts: (backend, value, endpoint) => {
+    if (!capsOf(backend).accounts) return null;
+    if (!accountList(backend).length && !value) return null;
+    return accountOptionsOf(backend, value, usageSource.get(backend)?.quota);
+  },
+  endpointView: (backend, selected) => (capsOf(backend).compatEndpoints ? endpointViewOf(backend, selected) : null),
+  revalidate: revalidateVocab,
+  repaint: () => { workComposer?.paintControls(); syncWorkUsage(); },
+  fail: (error, kind) => workComposer?.say(kind === 'mode' ? t('chat.sys.modeSaveFailed', { error }) : t('chat.settingsHold.settings', { error }), true),
+  empty: noEfforts,
+});
+workComposer = createWorkComposer({
+  slot: $('workComposerSlot'),
+  cmd: (command, args) => cmd(command, args),
+  drafts: { get: (id) => state.drafts.get(id), set: persistDraft },
+  attachHost: { cmd: (command, args) => cmd(command, args), whenOnline: (err) => whenOnline(err), openImage: (src, name, path) => openLightbox(src, name, path),
+    filePreview: { open: (...a) => filePreview.open(...a) } },
+  adopt: (owner, item) => adoptAttachment(owner, item),
+  notify: (text) => notify(text),
+  agentLang: (id) => state.sessions.find(s => s.id === id)?.agentLocale ?? uiLang,
+  format: { attachedKey, attachmentLine },
+  send: { cmd: (command, args) => cmd(command, args), limitOp, randomId, receipts, saveReceipts, refreshOutbox },
+  submitting: submittingMessages,
+  settled: async () => { await settingsWrite.catch(() => {}); await modeWrite.catch(() => {}); },
+  sendOptions: (id) => { const s = workControls.selection(id); return { cwd: s.cwd || '', mode: s.mode || undefined }; },
+  controls: workControls,
+  outbox: {
+    list: (id) => outboxes.get(id) ?? [],
+    schedules: sendSchedules,
+    cancelSchedule: (id) => limitOp('sessions.cancelSchedule', { id }),
+    sendScheduledNow: (id) => limitOp('sessions.sendScheduledNow', { id }),
+  },
+  environment: async () => {
+    const status = await cmd('remoteStatus').catch(() => null);
+    const resident = status?.resident;
+    return { persistent: !resident?.available || Boolean(status?.enabled && resident.keepRunning), hostZone: state.hostTimeZone };
+  },
+  cwdOf: (id) => workControls.selection(id).cwd || '',
+  compactNote: (id) => t('compaction.agentManaged', { agent: labelOf(workControls.selection(id).backend) }),
+  onStop: (item) => stopFromDialog(item),
+  onStripLevel: () => syncWorkContext(),
+  onResume: (id) => {
+    completionNotifications.requestPermission();
+    workComposer.say('');
+    resumeSession(id).catch((e) => workComposer.say(t('interrupt.resumeFailed', { error: e.message }), true));
+  },
+  onSync: () => syncWorkResume(),
+  compact: (id) => compactFromDialog(id),
+  // 自動圧縮の設定は全体のページ。モーダルを閉じてそのページを開く
+  compactionSettings: () => { $('workDialog').close(); openAutoCompactionSettings(); },
+});
 
 const shellComposer = chatComposer.useShell({
   availability: shellAvailability,
@@ -11369,6 +11594,15 @@ usageSource.onResult(() => { if (controls.panels.model.open) controls.paint(); }
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
   openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
+// 子の会話のモーダルの入力欄の使用量のチップ。同じ部品の 2 つ目で、見せる値は子のもの。ポップはモーダルの中に置く（body に置くと下に隠れる）
+{
+  const pop = el('div', 'pop usage-pop');
+  pop.id = 'wkUsagePop'; pop.setAttribute('role', 'dialog'); pop.hidden = true;
+  workUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
+    openSettings: () => { $('workDialog').close(); onboarding.open('usage'); $('usageTab').click(); },
+    onVisibility: () => workComposer?.syncStrip(), chip: workComposer.els.usageChip, pop, host: $('workDialog'), column: $('workDialog') });
+  syncWorkUsage();
+}
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin, current: () => ({ backend: state.shownBackend, model: state.model || state.models['']?.resolvesTo || '' }) });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });

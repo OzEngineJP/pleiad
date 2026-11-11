@@ -337,6 +337,8 @@ const SUITES = [
   // 中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない・再起動で止まったもの
   './unit/agent-tasks-interrupt.mjs',
   './unit/server-delegation-notice.mjs',
+  // 人が子の会話へ直接送った発言（ADR 0317）: 履歴の「あなた」の印・出来事の印・完了通知の「人からの指示 N 件」
+  './unit/server-human-sent.mjs',
   // 追加指示を走っている子のターンへ途中送信で渡す（fake の bg 台本。合図あり・なし、受理されない、結果不明、捨てられた、合図なし）
   './unit/server-delegation-steer.mjs',
   // ACP の子（Devin）への追加指示: 受理後の決着（渡った合図で delivered・既読不明は dropped で送り直さない）を指示の状態に反映する
@@ -528,6 +530,8 @@ const SUITES = [
   './unit/composer-aux.mjs',
   // 設定を書いている間の選択（web/client.mjs の pendingChoice・settleNext）: エージェントを選んだ直後に取り直しが走っても前のエージェントへ戻らない・書けた後の古い写しは載せ直す・失敗は保存できた値へ戻る
   './unit/composer-pending-choice.mjs',
+  // 子の会話のモーダルの入力欄のチップ（web/composer/work-controls.mjs）: アカウント・互換の接続先を子の値で出し、次のターンの予約へ流す
+  './unit/work-controls.mjs',
   // 入力欄の待ち（web/composer-wait.mjs）: 会話を開く・初めての接続・読み込みの失敗・作成中の送信の予約
   './unit/composer-wait.mjs',
   // 承認カード: 受け取られるまで送信中・失敗はカードの中・決着後の一行に対象と開閉
@@ -538,6 +542,8 @@ const SUITES = [
   './unit/connection-status.mjs',
   // 作業のダイアログの一覧の開け閉め（web/work-side.mjs）: 自動で畳む範囲・会話の最小幅・開き直す条件・◆・フォーカス
   './unit/work-side.mjs',
+  // 子の会話のモーダルの中断ボタン（web/work-stop.mjs）: 出す条件・ホストの子は中断だけ・ネイティブ／ホストの孫には出さない
+  './unit/work-stop.mjs',
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）
   './unit/composer-new-session.mjs',
   // 圧縮の区切りは発言を送っても動かない・放置中の圧縮の区切りは次の発言の前に置く（client.mjs の userMessage・paintCompactions）
@@ -556,6 +562,8 @@ const SUITES = [
   './unit/view-state.mjs',
   // 子の会話のモーダルの詳細: 出来事（承認・本文の流れ）で間引いて読み直す・古い子の出来事は捨てる・入力中は待つ（ADR 0315 の段 2）
   './unit/detail-follow.mjs',
+  // 入力欄の配送の核: 送る先の会話ごとの受け取り・文中の添付の印・予定の冪等（ADR 0315 の段 4）
+  './unit/composer-sender.mjs',
   './unit/timeline-images.mjs',
   './unit/attachment-order.mjs',
   // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない

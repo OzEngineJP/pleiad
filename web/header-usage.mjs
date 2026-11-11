@@ -197,12 +197,15 @@ export function usagePopBounds(chip, column, viewport, titleBottom = 0) {
     bottom, maxHeight: Math.max(0, Math.min(560, bottom - top)) };
 }
 
-export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {} }) {
-  const chip = $('usageChip'), pop = $('usagePop');
+/**
+ * 既定は会話の頭の入力欄の上のチップ（#usageChip / #usagePop）。子の会話のモーダルの入力欄は、自分のチップとポップを
+ * chip / pop で渡し、ポップを置く先（モーダルの最前面の中。body に置くとダイアログの下に隠れる）を host、
+ * 吹き出しを収める枠を column で渡して、もう 1 つ作る
+ */
+export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {}, chip = $('usageChip'), pop = $('usagePop'), host = document.body, column = chip.closest?.('main') }) {
   const mobile = globalThis.matchMedia?.('(max-width:700px)') ?? { matches: false, addEventListener() {} };
   let sheet = null, anchor = chip;
-  const column = chip.closest?.('main');
-  document.body?.append(pop);
+  host?.append(pop);
   pop.tabIndex = -1;
   pop.setAttribute('aria-label', t('usage.header.title'));
   chip.setAttribute('aria-controls', pop.id || 'usagePop');
@@ -505,7 +508,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       sheet.dialog.querySelector('.conversation-sheet-head').insertBefore(head, sheet.dialog.querySelector('.conversation-sheet-close'));
       sheet.dialog.addEventListener('close', () => {
         stopFollowing();
-        pop.hidden = true; document.body.append(pop); sheet = null;
+        pop.hidden = true; host.append(pop); sheet = null;
         pop.prepend(head); heading.hidden = false; dismiss.hidden = false;
         pop.setAttribute('role', 'dialog');
         expanded(false);

@@ -29,7 +29,8 @@ export function setupLinkMenu({ showMenu, doc = document, statusLine = desktopHo
   const surfaces = new Map();
   const surfaceOf = link => {
     if (link.closest('#log')) return { key: 'log', host: () => doc.querySelector('main') ?? doc.body, above: () => doc.getElementById('composer') };
-    if (link.closest('#workBody')) return { key: 'work', host: () => doc.getElementById('workBodyFrame'), above: () => null };
+    // 子の会話の入力欄（#workDialog の .wk-composer）が出ていれば、メインと同じく入力欄の上。出ない子（サブエージェント）は面の下端
+    if (link.closest('#workBody')) return { key: 'work', host: () => doc.getElementById('workBodyFrame'), above: () => doc.querySelector('#workDialog .wk-composer:not([hidden])') };
     return null;
   };
   function ensureStatus(surface) {

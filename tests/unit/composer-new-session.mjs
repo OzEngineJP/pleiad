@@ -14,6 +14,7 @@ import { markdownToDoc, docToMarkdown, snapshotEditing, restoreEditing, backspac
 import { createSessionLoads } from '../../web/session-stream.mjs';
 import { createComposerWait } from '../../web/composer-wait.mjs';
 import { createComposerAttachments } from '../../web/composer/attachments.mjs';
+import { createSender } from '../../web/composer/sender.mjs';
 import { syncRequest, joinReply, retainPlan, WINDOW_MESSAGES, WINDOW_BYTES } from '../../web/history-sync.mjs';
 
 export const name = 'composer-new-session';
@@ -124,7 +125,7 @@ export default async function (t) {
     // 入力欄の ↑ の呼び出し・次のメッセージの候補・設定 › 入力（web/composer/recall.mjs・suggestion.mjs・web/input-settings.mjs）。このテストの対象外
     chatRecall: { release: noop, reset: noop, input: noop, active: false }, chatSuggestion: { set: noop, refresh: noop }, suggestions: new Map(), dropSuggestion: noop, inputSettings: { paint: noop },
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
-    syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
+    syncResume: noop, syncWorkStop: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
     armedSends: new Map(), scheduleAttempt: null, limitOp: async () => ({}), paintArmed: noop,
     // 使えるエージェントが無いときの案内（web/no-agent.mjs）。このテストは使える状態だけ
@@ -133,6 +134,12 @@ export default async function (t) {
     usableNow: () => ({ levels: new Map(), usable: [{}], count0: false }),
   });
   vm.runInContext(code, context);
+  // submit が引く配送の核（web/client.mjs の chatSender。submit だけ切り出して流すので、同じ作りのものをここで作る）
+  context.chatSender = createSender({ t: (k) => context.t(k), cmd: (command, args) => cmd(command, args), limitOp: (op, args) => context.limitOp(op, args), randomId: () => context.randomId(),
+    receipts: context.receipts, saveReceipts: () => context.saveReceipts(), refreshOutbox: (id) => context.refreshOutbox(id),
+    scheduled: (id) => { context.armedSends.delete(id); context.paintArmed(); }, clearSent: (id, text, atts) => context.clearSentDraft(id, text, atts),
+    beforeSend: () => {}, afterSend: (id, request, full) => { if (context.state.current === id && !context.messageRow(request.messageId)) context.markDelivery(context.ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending'); },
+    say: (text) => { context.$('settingsError').textContent = text; } });
   context.composerWait = createComposerWait({ box: $('cbox'), prompt: $('prompt'), send: $('send'), note: $('composerNote'),
     busyLine: $('composerBusy'), busyText: $('composerBusyText'), t: k => k, runMark: () => { const s = new N('span'); s.className = 'run'; return s; },
     onChange: () => context.syncRunState(),

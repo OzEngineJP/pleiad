@@ -291,7 +291,7 @@
           <span class="chip armed" id="armedChip" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span class="v" id="armedText"></span><button type="button" class="x" id="armedRemove" data-i18n-aria-label="schedule.armedRemove" data-i18n-title="schedule.armedRemove"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
           <!-- 接続先（互換の接続先）は宛先とモデルのチップの面の中で選ぶ -->
           <!-- 中断。狭い幅（480px 以下）では四角のアイコンだけにする -->
-          <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3"/></svg><span data-i18n="chat.composer.abort"></span></button>
+          <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 15 15" aria-hidden="true"><rect width="15" height="15" rx="2.5"/></svg></button>
           <!-- 再開。中断状態・走っていない・欄が空のときだけ、中断と同じ位置に（web/interrupt.mjs）。保留があれば「保留中の N 件を送って再開」。上限で止まった会話は再生の三角が時計・字は「◷ 2:30 に再開」に替わり、▾ から面が開く -->
           <button type="button" class="btn btn-quiet resume" id="resume" hidden data-i18n-title="interrupt.resume" data-i18n-aria-label="interrupt.resume"><svg class="i resume-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg><svg class="i resume-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span id="resumeLabel" data-i18n="interrupt.resume"></span><span id="resumeShort" class="resume-short" aria-hidden="true"></span></button>
           <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle" data-i18n-aria-label="chat.composer.sendTitle"><svg class="i i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg><svg class="i i-run" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg></button>
@@ -499,6 +499,8 @@
       <section class="work-detail">
         <div class="work-dh" id="workHead"></div>
         <div class="work-body-frame" id="workBodyFrame"><div id="workBody"></div></div>
+        <!-- 子の会話の入力欄（web/composer/work-composer.mjs。メインの入力欄と同じ部品）。#workBody の外に置くので、会話の読み直しで消えない -->
+        <div class="work-composer-slot" id="workComposerSlot"></div>
       </section>
     </div>
   </dialog>

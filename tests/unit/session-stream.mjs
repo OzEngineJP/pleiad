@@ -38,7 +38,7 @@ export default async function (t) {
     setTimeout: (fn, ms) => { const id = ++timerId; if (ms === 150) historyTimers.set(id, fn); return id; }, clearTimeout: id => historyTimers.delete(id), heightSettler: null, prepareHistoryHeights: noop,
     completionNotifications, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
-    headerUsage: { turnEnded: noop },
+    headerUsage: { turnEnded: noop }, workUsage: null,  // 作業のダイアログの使用量の札（未作成のとき null）
     // スマホのアプリの帯（web/mobile-notify.mjs）と設定 › 通知（web/notify-settings.mjs）。このテストの対象外
     mobileNotify: { completed: noop }, notifySettings: { event: noop },
     // 通話モード（web/voice/）の設定の画面と部品。設定・キーが変わったときに onEvent が渡す。このテストの対象外

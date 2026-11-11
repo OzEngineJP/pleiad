@@ -1278,7 +1278,7 @@ export const backend = {
   },
 
   /**
-   * 裏で走っているタスクを 1 本止める（作業ダイアログの停止ボタンから）。
+   * 裏で走っているタスクを 1 本止める（子の会話の入力欄の中断ボタンから）。
    *
    * ターンを保持したまま待つのが Claude なので、止める相手は**走っているターンの query**。
    * `Query.stopTask` を叩くと CLI は status: "stopped" の task_notification を出し、

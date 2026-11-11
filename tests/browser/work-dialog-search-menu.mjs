@@ -2,7 +2,7 @@
 //   1. Ctrl+F は最前面の面の会話を探す（ダイアログが開いている間は子の会話。閉じたら本体へ戻る）
 //   2. Esc は 1 枚ずつ閉じる（目次 → ダイアログ。右の欄 → ダイアログ）
 //   3. 発言の ⋮ / 右クリック: 子の会話にも出るが、分岐・編集して再送信・再送信は出さない。本体は従来どおり
-//   4. リンクの右クリックとファイルの ⋮: ダイアログの中に出る。項目は本体と同じで「会話で使う」だけ出さない
+//   4. リンクの右クリックとファイルの ⋮: ダイアログの中に出る。項目は本体と同じ（「会話で使う」は子の入力欄へ入れる。ADR 0315 段 4）
 //   5. 読むだけの子（ネイティブのサブエージェント）にも検索と同じメニューが出る
 //   6. 本体の検索・メニューは今までどおり
 //   7. 頭の右端（本体の頭と同じ部品・順）: 検索・パネルを開く・（狭いとき ⋯）・↗。パネルは子の会話の欄を開け閉めし、Ctrl+Shift+B は前面のモーダルに効く
@@ -222,9 +222,16 @@ try {
   menu = menuItems();
   assert.ok(menu.inDialog && menu.onTop, `file menu is above the dialog: ${JSON.stringify(menu)}`);
   assert.ok(menu.items.some(x => x.includes('パスをコピー')), `has copy path: ${menu.items}`);
-  assert.ok(menu.items.every(x => !x.includes('会話で使う')), `no "use in conversation": ${menu.items}`);
+  assert.ok(menu.items.some(x => x.includes('会話で使う')), `"use in conversation" is offered (the child has a composer): ${menu.items}`);
   const fileMenu = menu.items;
-  await closeMenu();
+  // 押すと、いま選んでいる子の入力欄に添付が入る（メインの入力欄には入らない）
+  const composerText = (id) => evaluate(i => document.getElementById(i)?.closest('form')?.textContent ?? '', id);
+  const mainBefore = composerText('prompt');
+  evaluate(() => { const m = [...document.querySelectorAll('[role=menu]')].find(x => x.offsetWidth > 0); [...m.querySelectorAll('[role=menuitem]')].find(i => i.textContent.includes('会話で使う')).click(); });
+  await wait(() => composerText('wkPrompt').includes('child-note.md'), 'the file lands in the child composer');
+  assert.equal(composerText('prompt'), mainBefore, 'the main composer did not get the file');
+  assert.ok(evaluate(() => document.activeElement?.id === 'wkPrompt'), 'focus goes to the child composer');
+  await wait(() => evaluate(() => ![...document.querySelectorAll('[role=menu]')].some(m => m.offsetWidth > 0)), 'menu closed by the item');
   console.log('PASS: file link menu in the dialog', JSON.stringify(fileMenu));
 
   // ---- 5. 右の欄（ファイル）と目次: 相対パスは子の作業場所で開く・中クリックも同じ・Esc は 1 枚ずつ（目次 → 欄 → ダイアログ） ----
