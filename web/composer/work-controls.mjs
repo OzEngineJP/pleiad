@@ -20,6 +20,7 @@ import { effortsKeyOf } from '../composer-vocab.mjs';
  * @param {(backend: string) => Promise<any>} h.loadChoices そのエージェントのアカウントと接続先の一覧を取る
  * @param {(backend: string, account: string, endpoint: string) => object[]|null} h.accounts アカウントの候補（出さないときは null）
  * @param {(backend: string, endpoint: string) => object|null} h.endpointView 接続先の値と口（出さないときは null）
+ * @param {(branch: string) => string} h.worktreeNote worktree の子の作業場所のチップの注記（変えられない理由）
  * @param {() => object[]} h.recent 最近使った作業場所
  * @param {(backend: string, account: string, cwd: string) => void} h.revalidate モデルの面を開いたとき、語彙を裏で取り直す
  * @param {(childId: string) => void} h.repaint 値が届いた・変わったので描き直す
@@ -78,19 +79,22 @@ export function createWorkControls(h) {
     const efforts = ready ? h.efforts.efforts : {};
     const models = vocab?.models ?? {};
     const modes = vocab?.modes ?? {};
+    // 委譲で worktree を割り当てられた子は、作業場所を「元の場所 ⑂ worktree」で読み取りだけ出す（戻す・替えるは出さない）
+    const wt = h.item(childId)?.worktree;
+    const split = wt?.origin ? { origin: wt.origin, branch: wt.branch ?? '', path: wt.path ?? '' } : null;
     return {
-      cwd: s.cwd, recent: h.recent(), cwdDisabled: false,
+      cwd: s.cwd, recent: h.recent(), cwdDisabled: Boolean(split),
+      lockedNote: split ? h.worktreeNote(split.branch) : '',
       backends: h.backends(), backend: s.backend, backendSwitchable: false,
       models, modelsPending: !vocab, model: s.model,
       efforts, effortsPending: !ready, effort: s.effort, effortDisabled: !ready || Object.keys(efforts).length <= 1,
       accounts: s.backend ? h.accounts(s.backend, s.account, s.endpoint) : null, account: s.account,
       endpoint: s.backend ? h.endpointView(s.backend, s.endpoint) : null,
       modes, modesPending: !vocab, mode: s.mode || (Object.keys(modes)[0] ?? ''),
-      lockedNote: '',
       // 子のエージェントは決まっている。面の頭にはロゴと名前だけを出す（Channels のスレッドの面と同じ）
       destination: { sent: true, bot: null, selected: null, readOnlyBot: null, fixedAfterSend: true, threadPlain: true,
         botSetup: '', backendLabel: h.labelOf, groups: [] },
-      git: null, worktree: null, worktreePending: false, worktreeBusy: null, worktreeCheck: 'confirmed',
+      git: null, worktree: split ? { current: split, canSplit: false } : null, worktreePending: false, worktreeBusy: null, worktreeCheck: 'confirmed',
     };
   }
 

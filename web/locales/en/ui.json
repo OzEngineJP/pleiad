@@ -1148,6 +1148,7 @@
     "unknownTitle": "Couldn't check whether another conversation is writing here",
     "chipSuffix": "worktree",
     "chipTitle": "Worktree · from {{origin}}",
+    "childLocked": "Running in the delegated worktree ({{branch}}). The working folder can't be changed",
     "start": "Start in a worktree",
     "from": "from {{path}}",
     "back": "Back to the original",

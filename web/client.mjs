@@ -11033,6 +11033,7 @@ const workControls = createWorkControls({
     return modeWrite;
   },
   recent: cwdOptions,
+  worktreeNote: (branch) => t('worktree.childLocked', { branch }),
   // 子のアカウント・接続先の候補（メインの accountOptions / endpointView と同じ部品。選んでいる値だけ子のもの）。
   // 登録が無く選んでもいないアカウントの節、選べないエージェントの接続先の節は出さない（syncAccount / syncEndpoint と同じ）
   loadChoices: async (backend) => {

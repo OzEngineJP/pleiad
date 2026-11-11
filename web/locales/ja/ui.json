@@ -1131,6 +1131,7 @@
     "unknownTitle": "ほかの会話が書き込み中か確認できませんでした",
     "chipSuffix": "worktree",
     "chipTitle": "worktree · 元 {{origin}}",
+    "childLocked": "委譲先の worktree（{{branch}}）で動いています。作業場所は変えられません",
     "start": "worktree で始める",
     "from": "元 {{path}}",
     "back": "元の場所に戻す",

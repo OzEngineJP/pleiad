@@ -13,12 +13,13 @@ const settle = async () => { for (let i = 0; i < 8; i++) await tick(); };
 
 export default async function (t) {
   const rows = new Map([['c1', { id: 'c1', backend: 'claude', model: 'opus', effort: 'high', mode: 'plan', cwd: '/w', compatEndpoint: 'ep1', claudeAccount: 'acc1' }],
+    ['c3', { id: 'c3', backend: 'claude', model: 'opus', effort: 'high', mode: 'plan', cwd: '/repo.wt/x' }],
     ['c2', { id: 'c2', backend: 'codex', model: 'gpt', effort: 'low', mode: 'default', cwd: '/w' }]]);
   const writes = [], vocabAsked = [], choicesAsked = [], repaints = [], fails = [];
   const hold = { write: null };
   const efforts = { efforts: {}, ready: () => true, fresh: () => true, adopt: async () => true };
   const controls = createWorkControls({
-    row: (id) => rows.get(id), item: () => null, pending: () => null,
+    row: (id) => rows.get(id), item: (id) => (id === 'c3' ? { worktree: { origin: '/repo', branch: 'ply/x', path: '/repo.wt/x' } } : null), pending: () => null,
     backends: () => [{ id: 'claude' }, { id: 'codex' }], labelOf: (id) => id,
     vocab: (backend, account) => ({ models: { '': {}, opus: {} }, modes: { default: {}, plan: {} }, tag: `${backend}/${account}` }),
     loadVocab: async (...a) => { vocabAsked.push(a); },
@@ -29,6 +30,7 @@ export default async function (t) {
     loadChoices: async (backend) => { choicesAsked.push(backend); },
     accounts: (backend, account, endpoint) => (backend === 'claude' ? [{ value: '', label: 'signed' }, { value: 'acc1', label: 'A1', endpoint }] : null),
     endpointView: (backend, selected) => (backend === 'claude' ? { selected, row: selected ? { id: selected } : null } : null),
+    worktreeNote: (branch) => `wt:${branch}`,
     revalidate: () => {},
     repaint: (id) => repaints.push(id),
     fail: (e) => fails.push(e),
@@ -45,6 +47,12 @@ export default async function (t) {
 
   const cx = controls.get('c2');
   t.ok('対応していないエージェントの子にはアカウント・接続先の節を出さない', cx.accounts === null && cx.endpoint === null);
+
+  // 委譲で worktree を割り当てられた子: 作業場所は元の場所 ⑂ worktree の読み取りだけ
+  const wt = controls.get('c3');
+  t.ok('worktree の子は作業場所のチップを押せず、元の場所と worktree の印を出す', wt.cwdDisabled === true && wt.worktree?.current?.origin === '/repo' && wt.worktree.canSplit === false);
+  t.ok('押せない理由に worktree のブランチを添える', wt.lockedNote === 'wt:ply/x');
+  t.ok('worktree でない子は従来どおり（作業場所を替えられ、印も注記も無い）', d.cwdDisabled === false && d.worktree === null && d.lockedNote === '');
 
   // 接続先を選ぶ: 予約へ流れ、モデルとエフォートは重ねて空に戻る
   controls.on.endpoint('c1', 'ep2');
