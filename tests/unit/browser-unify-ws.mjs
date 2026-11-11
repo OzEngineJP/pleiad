@@ -293,6 +293,21 @@ export default async function(t) {
         t.ok('実サーバー: 直接の子だけが届き、孫・無関係な会話は届かない',
           resets.includes(parent) && resets.includes(child.sessionId) && !resets.includes(grandchild.sessionId) && !resets.includes(other),
           `resets=${JSON.stringify(resets)} parent=${parent} child=${child.sessionId} grandchild=${grandchild.sessionId} other=${other}`);
+        // 作業のダイアログの窓口（slot:'modal'。ADR 0315）: 見ている親の子孫でない会話も、モーダルが映す間は開ける。
+        // 窓口を空にすれば元へ戻る。メインの窓口（親）は替わらない
+        const openGrand = () => screen.cmd('pageOpen', { sessionId:grandchild.sessionId, kind:'file', path:`${ROOT}/package.json` }).then(() => 'ok', e => e.code ?? String(e.message));
+        const before = await openGrand();
+        const fromModal = screen.events.length;
+        await screen.cmd('watchSession', { sessionId:grandchild.sessionId, slot:'modal' });
+        const modalResets = screen.events.slice(fromModal).filter(event => event.type === 'tab:info' && event.reset).map(event => event.sessionId);
+        const viaModal = await openGrand();
+        const parentStill = await screen.cmd('pageOpen', { sessionId:parent, kind:'file', path:`${ROOT}/package.json` }).then(() => 'ok', e => e.code ?? String(e.message));
+        const otherViaModal = await screen.cmd('pageOpen', { sessionId:other, kind:'file', path:`${ROOT}/package.json` }).then(() => 'ok', e => e.code ?? String(e.message));
+        await screen.cmd('watchSession', { sessionId:null, slot:'modal' });
+        const after = await openGrand();
+        t.ok('実サーバー: モーダルの窓口が映す会話は、親の子孫でなくても開ける（窓口を空にすれば戻る）',
+          before !== 'ok' && viaModal === 'ok' && parentStill === 'ok' && otherViaModal !== 'ok' && after !== 'ok' && modalResets.includes(grandchild.sessionId),
+          JSON.stringify({ before, viaModal, parentStill, otherViaModal, after, modalResets }));
       } finally { screen?.close(); await server.stop(); }
     }
   } finally { ws?.close(); await fs.rm(root, { recursive:true, force:true }); }

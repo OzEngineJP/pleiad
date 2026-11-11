@@ -26,11 +26,12 @@ export function createBrowserUnifyWs(deps = {}) {
     client.send(deps.mask ? deps.mask(message) : message);
   };
   // タブ情報の届け先は「見ている会話とその子孫」（inapp-browser.md。親が子の Chrome を会話を移らずに見る）
-  const scope = client => {
-    const id = deps.watching?.(client);
+  // 見ている会話は main と modal（作業のダイアログで開いた子）の 2 枠。届け先はその和（ADR 0024 の改訂）
+  const scopeOf = id => {
     if (typeof id !== 'string' || !id) return [];
     return [id, ...(deps.descendants?.(id) ?? []).filter(value => typeof value === 'string' && value && value !== id)];
   };
+  const scope = client => [...new Set([...scopeOf(deps.watching?.(client)), ...scopeOf(deps.watchingModal?.(client))])];
   const allowed = (client, id) => Boolean(id && deps.clients?.().has(client) && scope(client).includes(id));
   const unsubscribe = relay?.onTabEvent((type, payload) => {
     if (!['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(type)) return;
@@ -274,15 +275,15 @@ export function createBrowserUnifyWs(deps = {}) {
         catch (error) { deps.log?.(`page tabs: migrate failed: ${String(error?.message ?? error)}`); }
       }
       for (const client of deps.clients?.() ?? []) {
-        if (!deps.watching?.(client)) continue;
+        if (!deps.watching?.(client) && !deps.watchingModal?.(client)) continue;
         send(client, { type: 'page:moved', ports: { pages: ports.pages ?? null, isolated: ports.isolated ?? null },
           previous: { pages: previous.pages ?? [], isolated: previous.isolated ?? [] } });
       }
     },
     snapshot(client, sessionId) {
       if (!allowed(client, sessionId)) return;
-      // 見ている会話に続けて子孫それぞれの一覧を送る（親の画面の列が子のタブを出せるように）
-      for (const id of scope(client)) {
+      // 見ている会話に続けて子孫それぞれの一覧を送る（親の画面の列が子のタブを出せるように）。枠が 2 つあるので、渡された会話の分だけ
+      for (const id of scopeOf(sessionId)) {
         send(client, { type: 'tab:info', sessionId: id, reset: true, tabs: relay?.unify.tabInfo.list(id) ?? [] });
         // 開き直した画面にも、人の操作中のタブの札を出す（AI のタブは送らない。画面は tab:info の reset で持ち手を忘れる）
         for (const held of relay?.unify.tabHolder?.held?.(id) ?? []) send(client, { ...held, type: 'tab:holder', sessionId: id });

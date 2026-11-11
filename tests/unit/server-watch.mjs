@@ -48,6 +48,24 @@ export default async function (t) {
     t.ok("watchSession の後は移った先の流れが届く", deltas(phone, from, y) > 0, String(deltas(phone, from, y)));
     t.ok("移る前の会話の流れは届かない", deltas(phone, from, x) === 0, String(deltas(phone, from, x)));
 
+    // ---- 窓口は 2 つ（main と modal。ADR 0315）: 作業のダイアログが映す会話の流れも、メインの会話と並んで届く ----
+    await phone.cmd("watchSession", { sessionId: x, slot: "modal" });
+    from = phone.mark();
+    await runner.cmd("runTurn", { ...turn, prompt: "echo:メインの返答", sessionId: y });
+    await runner.cmd("runTurn", { ...turn, prompt: "echo:モーダルの返答", sessionId: x });
+    await Promise.all([endOf(phone, y, from), endOf(phone, x, from)]);
+    t.ok("modal の窓口の会話の流れも届く（main の窓口と並ぶ）", deltas(phone, from, x) > 0 && deltas(phone, from, y) > 0, JSON.stringify({ x: deltas(phone, from, x), y: deltas(phone, from, y) }));
+    await phone.cmd("watchSession", { sessionId: null, slot: "modal" });
+    from = phone.mark();
+    await runner.cmd("runTurn", { ...turn, prompt: "echo:窓口を空にした後の返答", sessionId: x });
+    await endOf(phone, x, from);
+    await sleep(50);
+    t.ok("modal の窓口を空にしたら、その会話の流れは届かない（main は変わらない）", deltas(phone, from, x) === 0, String(deltas(phone, from, x)));
+    from = phone.mark();
+    await runner.cmd("runTurn", { ...turn, prompt: "echo:メインはそのまま", sessionId: y });
+    await endOf(phone, y, from);
+    t.ok("modal を空にしても main の会話の流れは届き続ける", deltas(phone, from, y) > 0, String(deltas(phone, from, y)));
+
     // ---- 一覧の使い回し: 変えた直後の一覧に載る ----
     await runner.cmd("listSessions");
     await runner.cmd("setTitle", { sessionId: x, title: "付け直したタイトル" });

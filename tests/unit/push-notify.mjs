@@ -97,6 +97,19 @@ export default async function (t) {
   t.ok('presence: 接続を閉じたら消える', presence.entries().length === 0);
   presence.set(wsA, { visible: true, sessionId: '' });
   t.ok('presence: 会話が空なら見ていない', !presence.viewing(''));
+  // 窓口（main / modal）ごとに 1 つの印（ADR 0315）。作業のダイアログが映す子の会話も、見ている会話に数える
+  presence.set(wsA, { visible: true, sessionId: 's1' });
+  presence.set(wsA, { visible: true, sessionId: 's9', slot: 'modal' });
+  t.ok('presence: 窓口が 2 つなら、どちらの会話も見ている', presence.viewing('s1') && presence.viewing('s9') && presence.entries().length === 2);
+  presence.set(wsA, { visible: false, sessionId: 's9', slot: 'modal' });
+  t.ok('presence: modal の印を外しても main の印は残る', presence.viewing('s1') && !presence.viewing('s9'));
+  presence.set(wsA, { visible: true, sessionId: 's9', slot: 'modal' });
+  clock += PRESENCE_TTL_MS - 1;
+  presence.set(wsA, { visible: true, sessionId: 's1' });
+  clock += 2;
+  t.ok('presence: 期限は窓口ごと（更新が無い modal の印だけ消える）', presence.viewing('s1') && !presence.viewing('s9'));
+  presence.clear(wsA);
+  t.ok('presence: 接続を閉じたら両方の窓口が消える', presence.entries().length === 0);
 
   // ── notifier ──
   const keys = { dPhone: generateNotifyKey(), dTablet: generateNotifyKey() };
