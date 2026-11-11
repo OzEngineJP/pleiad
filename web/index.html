@@ -483,6 +483,8 @@
     <header>
       <strong id="workTitle" data-i18n="dialog.work.title"></strong>
       <span class="work-count" id="workCount"></span>
+      <!-- 会話内を検索（#tocEntry と同じボタン・同じ目次。見る先は選んでいる子の会話。web/thread-nav.mjs） -->
+      <button type="button" class="btn btn-icon" id="workTocEntry" hidden aria-controls="filePreview" aria-expanded="false" aria-keyshortcuts="Control+F" data-shortcut="F" data-i18n-title="nav.toc.entry" data-i18n-aria-label="nav.toc.entry"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/></svg></button>
       <button type="button" class="btn" data-close data-i18n="dialog.close"></button>
     </header>
     <div class="work-split" id="workSplit">
