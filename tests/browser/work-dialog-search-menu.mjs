@@ -344,7 +344,7 @@ try {
   buttons = headButtons();
   const ids = buttons.map(b => b.id);
   assert.deepEqual(ids.slice(0, 2), ['workTocEntry', 'workBrowserEntry'], `order: toc, pane first: ${JSON.stringify(buttons)}`);
-  assert.equal(ids[ids.length - 1], 'bg-open', 'the open-as-conversation arrow stays last');
+  assert.ok(!ids.includes('bg-open'), `no open-as-conversation arrow on a delegated child (ADR 0318): ${JSON.stringify(ids)}`);
   assert.equal(buttons[0].label, mainLabel('tocEntry'), 'search button wording is the main one');
   assert.equal(buttons[1].label, mainLabel('browserEntry'), 'pane button wording is the main one');
   ab('press', 'Control+Shift+b');
@@ -406,7 +406,7 @@ try {
     await wait(() => evaluate(() => !!document.querySelector('#workBody a.file-link[data-file-path="child-note.md"]') && !document.getElementById('workTocEntry').hidden), `child body at ${w}`);
     const narrowButtons = headButtons();
     if (w === 360) {
-      assert.deepEqual(narrowButtons.map(b => b.id), ['workTocEntry', 'workBrowserEntry', 'workMore', 'bg-open'], `360px head: toc, [N], ⋯, arrow: ${JSON.stringify(narrowButtons)}`);
+      assert.deepEqual(narrowButtons.map(b => b.id), ['workTocEntry', 'workBrowserEntry', 'workMore'], `360px head: toc, [N], ⋯: ${JSON.stringify(narrowButtons)}`);
       assert.match(narrowButtons[1].label, /\d/, 'at 360px the pane button is the [N] tab count form, like main');
     }
     ab('press', 'Control+f');

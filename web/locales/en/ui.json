@@ -2731,8 +2731,6 @@
     "parentChat": "Parent conversation",
     "titleSuggestFailed": "Couldn't suggest a title: {{error}}",
     "more": "Actions for this conversation",
-    "parentLine": "↖ Requested by: {{title}}",
-    "parentLineAria": "Back to the requesting conversation \"{{title}}\"",
     "remoteOrigin": {
     "badge": "⇄ From {{device}}'s AI",
     "request": "Requested from \"{{title}}\"",
@@ -2871,7 +2869,6 @@
       "showFull": "Show full request",
       "collapse": "Collapse",
       "groupCommands": "Commands",
-      "openChat": "Open as conversation",
       "hostOmitted_one": "{{count}} older message is not shown",
       "hostOmitted_other": "{{count}} older messages are not shown",
       "hostDescendantsOmitted_one": "{{count}} older task delegated on the host is not listed",

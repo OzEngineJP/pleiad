@@ -72,7 +72,7 @@ export default async function (t) {
     const child = rows.find((r) => r.id === ids[1]);
     t.ok('引数なしは配列で全部', Array.isArray(rows) && rows.length === N, String(rows?.length));
     t.ok('行に routing を載せない', child && rows.every((r) => !('routing' in r)), JSON.stringify(child?.routing));
-    t.ok('子の行の delegation は依頼元だけ', JSON.stringify(child?.delegation) === JSON.stringify({ parentSessionId: ids[0] }), JSON.stringify(child?.delegation));
+    t.ok('子の行の delegation は依頼元とタスクの id だけ（ADR 0318）', JSON.stringify(child?.delegation) === JSON.stringify({ parentSessionId: ids[0], taskId: 'ply-task-1' }), JSON.stringify(child?.delegation));
     // 操作（core/ops の sessions.list）は細くしない。画面の WS の listSessions の返し方だけを変える
     const byOp = await local.cmd('invoke', { op: 'sessions.list', args: {} }).catch((e) => ({ error: e.message }));
     const opChild = Array.isArray(byOp) ? byOp.find((r) => r.id === ids[1]) : null;

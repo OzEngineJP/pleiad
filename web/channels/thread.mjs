@@ -364,7 +364,6 @@ export function createThread(host) {
       const bot = botOfSession(sessionId);
       return { name: bot?.name ?? t('channels:feed.unknownBot'), icon: () => botIcon(bot, 'th-band-icon') };
     },
-    openSession: (id) => host.openSession(id),
   };
   host.background?.mount(log, scope);
   subsButton.onclick = () => host.background?.open(scope);

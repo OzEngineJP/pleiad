@@ -781,6 +781,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.ai .body.flash,.m.ai.flash{border-radius:var(--r-s);animation:note-flash 1.2s var(--ease-out)}
 @media (prefers-reduced-motion:reduce){.m.user .body.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}
   .m.ai .body.flash,.m.ai.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
+/* モーダルの子の筋（.bg-thread）には、メインの #thread .mw-body の左の余白（中央の列に寄せる padding）が無く、発言が .mw-body の左端に接する。
+   輪（2px の影）が .mw-body の overflow:hidden に左を切られて文字の縁に重なるので、輪が出ている間だけ切る位置を 4px 外へ広げる（並びは動かさない） */
+.bg-thread .mw-body:has(.flash){overflow:clip;overflow-clip-margin:4px}
 .m.user .body{display:inline-block;max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:9px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
 /* ---- 自分の発言の Markdown と添付（web/user-message.mjs、docs/design-system.md「自分の発言」、ADR 0059）。
    本文は AI の本文と同じ md の見た目。添付は本文の印の位置に縮小（画像）か札（ファイル）で出る ---- */
@@ -2385,7 +2388,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .title-col .title-field{flex:1;min-width:0}
 .title-sub{display:contents}
 .title-sub > *{order:-1;flex:none}
-.title-sub > :is(#parentChatEntry,#remoteOriginLine){order:0}
+.title-sub > #remoteOriginLine{order:0}
 .host-sub{align-items:center;gap:4px;align-self:flex-start;min-width:0;max-width:100%;padding:0 10px;border-radius:var(--r-pill);background:transparent;
   color:var(--ink-blue);font:500 var(--fs-s)/1.45 var(--font-mono);white-space:nowrap;cursor:pointer}
 .host-sub:hover{background:var(--surface-1)}
@@ -2429,7 +2432,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .title-sub > button{display:block;height:24px;line-height:24px;text-align:left}
   /* 縮めるのは長い題を持つ語（依頼元・端末の AI から）から。所属とホスト名は残す */
   .title-sub > :is(#crumbHome,.host-sub){flex-shrink:0;max-width:50%}
-  .title-sub > :is(#parentChatEntry,#remoteOriginLine){flex-shrink:10}
+  .title-sub > #remoteOriginLine{flex-shrink:10}
   .title-sub .host-sub{height:24px}
   /* 語の間は「 · 」 */
   .title-sub > :not([hidden]):not(#crumbSep) ~ :not([hidden]):not(#crumbSep)::before{content:"·";margin-right:4px;color:var(--ink-weak)}
@@ -2438,7 +2441,6 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .title-sub .crumb-hash{margin-right:3px}
   .title-sub .host-sub{padding:0;font-size:inherit;align-self:center}
   .title-sub .remote-origin{font-size:inherit;flex-basis:auto;order:0;white-space:nowrap}
-  .title-sub #parentChatEntry{padding:0;color:var(--ink-weak);font-size:inherit}
 }
 @media (max-width:480px){
   main > .top{gap:4px}

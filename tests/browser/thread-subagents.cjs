@@ -110,12 +110,9 @@ async page => {
   check(/実行中 2 · 完了 1/.test(modal.count), 'the header counts running and done children', modal.count);
   await page.locator('#workList .bg-row').first().click();
   await until(async () => page.locator('#workBody .m, #workBody .mw').count(), 'child conversation in the detail');
-  check(await page.locator('#workHead .bg-open').count() === 1, 'the detail can open the child conversation');
-
-  // ---- 子の会話を開ける（Chats へ移る）
-  await page.locator('#workHead .bg-open').click();
-  await until(async () => page.evaluate(() => !document.getElementById('workDialog').open && !document.body.classList.contains('channels')), 'left Channels for the child chat');
-  check(await page.locator('#parentChatEntry').isVisible(), 'the child conversation is opened in Chats (with the way back to the parent)');
+  check(await page.locator('#workHead .bg-open').count() === 0, 'the detail has no way to open the child as a main conversation (ADR 0318)');
+  await page.keyboard.press('Escape');
+  await until(async () => page.evaluate(() => !document.getElementById('workDialog').open), 'dialog closed');
 
   // ---- カードの矢印から: スレッドの一覧で、その子を選んだ状態で開く
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);

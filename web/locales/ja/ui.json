@@ -2670,8 +2670,6 @@
     "parentChat": "親の会話",
     "titleSuggestFailed": "タイトルを考えられなかった: {{error}}",
     "more": "この会話の操作",
-    "parentLine": "↖ 依頼元: {{title}}",
-    "parentLineAria": "依頼元の会話「{{title}}」へ戻る",
     "remoteOrigin": {
     "badge": "⇄ {{device}} の AI から",
     "request": "依頼元の会話「{{title}}」",
@@ -2809,7 +2807,6 @@
       "showFull": "全文を表示",
       "collapse": "たたむ",
       "groupCommands": "コマンド",
-      "openChat": "会話として開く",
       "hostOmitted_other": "古い {{count}} 件のやり取りは省いています",
       "hostDescendantsOmitted_other": "ホストで任せた作業のうち、古い {{count}} 件は一覧に出していません",
       "openOnHost": "ホストで開く",

@@ -12,6 +12,7 @@ import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
 import { markdownToDoc, docToMarkdown, snapshotEditing, restoreEditing, backspaceAtStart, caret } from '../../web/md-doc.mjs';
 import { createSessionLoads } from '../../web/session-stream.mjs';
+import { createOpenGate } from '../../web/child-route.mjs';
 import { createComposerWait } from '../../web/composer-wait.mjs';
 import { createComposerAttachments } from '../../web/composer/attachments.mjs';
 import { createSender } from '../../web/composer/sender.mjs';
@@ -97,7 +98,7 @@ export default async function (t) {
     syncWorkEntry: noop, refreshGit: async () => {}, restorePastSubagents: noop, loadTaskCards: async () => {}, paintContextStrip: noop, paintCompactions: noop,
     pendingRows: new Map(), renderSessions: noop, pendingAfterDelay: () => noop, side: { keep: noop, showUndo: noop },
     filePreview: { sessionChanged: noop }, setTimeout: () => 1, clearTimeout: noop, el: () => new N('div'), append: noop,
-    activity: { show: noop, hide: noop }, sessionLoads: createSessionLoads(),
+    activity: { show: noop, hide: noop }, sessionLoads: createSessionLoads(), openGate: createOpenGate(),
     replayPainting: false, batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(), batchToolUpdates: fn => fn(),
     runningTools: { batch: fn => fn() }, flushStream: noop,
     branchSnapshots: () => [], paintOutbox: noop, refreshOutbox: async () => [], branches: { load: async () => {}, reset: noop, has: () => false, nameOf: () => '' }, scrollToEnd: noop, atBottom: () => false,

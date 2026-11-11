@@ -13,8 +13,9 @@ export function slimRow(row) {
   delete out.routing;
   if (row.delegation) {
     const d = row.delegation;
-    // 画面が見るのは、依頼元（一覧で子を親の下に畳む）と、端末の AI から任された印（⇄・端末の名前）だけ
-    out.delegation = { parentSessionId: d.parentSessionId ?? null, ...(d.remote ? { remote: d.remote } : {}) };
+    // 画面が見るのは、依頼元（一覧で子を親の下に畳む）・タスクの id（子の会話を、依頼元の会話の上のモーダルで開くための引き。ADR 0318）・
+    // 端末の AI から任された印（⇄・端末の名前）だけ
+    out.delegation = { parentSessionId: d.parentSessionId ?? null, ...(d.taskId ? { taskId: d.taskId } : {}), ...(d.remote ? { remote: d.remote } : {}) };
   }
   return out;
 }
