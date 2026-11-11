@@ -181,14 +181,14 @@ try {
   await wait(() => { const m = marks(runT.taskId); return m.head && m.head === m.row && m.head === stoppedMark; }, 'marks back to stopped', 8000);
   console.log('PASS: re-run after a stop — heading, list row and ■ follow the running turn, and return to stopped', JSON.stringify({ stoppedStatus, marks: marks(runT.taskId) }));
 
-  // ---- 2b. 終わった子: 入力欄の上の帯に、この子の文脈の使用量が出る（表示だけ。メインの帯の値ではなく子の値） ----
+  // ---- 2b. 終わった子: 入力欄の上の帯に、この子の文脈の使用量が出る（メインの帯の値ではなく子の値。押すとメインと同じ圧縮・設定のメニュー） ----
   await openCard(doneT.taskId, 'finished');
   await wait(() => evaluate(() => { const s = document.getElementById('wkContextStrip'); return !!s && !s.hidden && /コンテキスト/.test(s.textContent) && /82%/.test(s.textContent); }), 'child context meter in the strip', 10_000);
   console.log('context strip', JSON.stringify(evaluate(() => { const m = document.getElementById('wkContextMeter'); return { text: document.getElementById('wkContextStrip').textContent.trim(), label: m.getAttribute('aria-label'), haspopup: m.getAttribute('aria-haspopup'), pop: !!document.getElementById('wkContextMeterPop') }; })));
-  assert.equal(evaluate(() => document.getElementById('wkContextMeter').getAttribute('aria-haspopup')), null, 'the modal meter is display-only');
+  assert.equal(evaluate(() => document.getElementById('wkContextMeter').getAttribute('aria-haspopup')), 'menu', 'the modal meter opens the same menu as main');
   assert.equal(stopBtn().shown, false, 'no stop button on a finished child');
   shot('2b-finished-context-1280');
-  console.log('PASS: finished child — the strip above the composer shows the child context meter (display only)');
+  console.log('PASS: finished child — the strip above the composer shows the child context meter (with the menu)');
 
   // ---- 3. 承認待ちの子 ----
   await openCard(askT.taskId, 'ask');
