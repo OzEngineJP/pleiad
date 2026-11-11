@@ -13,8 +13,8 @@ import { t } from '../i18n.mjs';
 
 const PREFIX = 'wk';
 const SAVE_WAIT_MS = 400;
-/** モーダルでは使わない部品（メインでだけ出る）。止めるボタン・再開・帯は段 4 の後半（setStop・setStrip）で開ける */
-const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextStrip', 'resumeNote', 'armedNote', 'draftFail', 'connNote', 'workEntry'];
+/** モーダルでは使わない部品（メインでだけ出る）。中断は setStop、帯の文脈は setContext で出し入れする */
+const UNUSED = ['armedChip', 'draftSaved', 'resume', 'resumeNote', 'armedNote', 'draftFail', 'connNote', 'workEntry'];
 
 /**
  * @param {object} h 呼び出し側（web/client.mjs）が渡す持ち分
@@ -35,6 +35,7 @@ const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextStrip', 'resumeNote
  * @param {() => Promise<object>} h.environment 送信の日時の面の前提（常駐しているか）
  * @param {(childId: string) => string} h.cwdOf スキル候補を引く作業場所
  * @param {(childId: string) => string} h.compactNote /compact を使えない理由
+ * @param {(item: object) => void} h.onStop 中断ボタンを押した（送るものは呼び出し側が決める。web/work-stop.mjs）
  */
 export function createWorkComposer(h) {
   const form = buildComposer(PREFIX);
@@ -43,8 +44,25 @@ export function createWorkComposer(h) {
   const els = composerEls(PREFIX, form);
   for (const part of UNUSED) if (els[part]) els[part].hidden = true;
   form.hidden = true;
+  // 帯の文脈は表示だけ（圧縮のメニューは今の会話＝メインのもの。子には開かない）。メニューと、押せる印は外す
+  els.contextStrip.hidden = true;
+  els.contextMeterPop?.remove();
+  for (const name of ['aria-haspopup', 'aria-expanded', 'aria-controls']) els.contextMeter.removeAttribute(name);
+  els.contextMeter.setAttribute('role', 'img');
+  els.contextMeter.tabIndex = -1;
   h.slot.append(form);
   const input = els.prompt;
+  // 入力欄の無い子（ホストに任せた根）には、入力欄の位置に中断だけを出す。入力欄の中断と同じ部品（同じ形）
+  const solo = document.createElement('div');
+  solo.className = 'work-stop-only';
+  solo.hidden = true;
+  const soloButton = els.abort.cloneNode(true);
+  soloButton.id = 'wkStopOnly';
+  soloButton.hidden = false;
+  solo.append(soloButton);
+  h.slot.append(solo);
+  els.abort.hidden = true;
+  els.abort.onclick = soloButton.onclick = () => { if (shownItem) h.onStop?.(shownItem); };
 
   let childId = null, shownItem = null, saveTimer = null, noteTimer = null;
   const attachedBy = new Map();   // 子 -> 添付の札（子ごと。メインの state.attached とは別）
@@ -55,6 +73,8 @@ export function createWorkComposer(h) {
     els.settingsError.textContent = text ?? '';
     if (text && !sticky) noteTimer = setTimeout(() => { els.settingsError.textContent = ''; }, 6000);
   };
+
+  const paintSolo = (visible, disabled) => { solo.hidden = !visible; soloButton.disabled = disabled; };
 
   // ---- 書きかけ（子ごと。メインの下書きと同じ入れ物に、子の id で置く）
   const snapshot = () => ({ text: input.value ?? '', attached: att.items.slice(), editing: c.editor.snapshotEditing(), version: 2, dirty: true });
@@ -235,6 +255,7 @@ export function createWorkComposer(h) {
       c.sendMenu?.close();
       c.controls?.close();
       childId = id;
+      els.contextStrip.hidden = true;   // 次の子の値は呼び出し側が setContext で入れる
       say('');
       form.hidden = !id;
       if (!id) { paintOutbox(); return; }
@@ -266,6 +287,24 @@ export function createWorkComposer(h) {
       }
       if (ok) input.focus();
       return ok;
+    },
+    /**
+     * 中断ボタンを出し入れする（web/work-stop.mjs の結果）。solo は入力欄の無い子で、入力欄の位置に中断だけを出す
+     */
+    setStop({ show = false, disabled = false, solo = false } = {}) {
+      els.abort.hidden = !(show && !solo);
+      els.abort.disabled = disabled;
+      paintSolo(show && solo, disabled);
+      c.controls?.fit();
+    },
+    /** 入力欄の上の帯に、この子の文脈の使用量を出す（parts: { nodes, label }。無ければ帯ごと隠す） */
+    setContext(parts) {
+      const on = Boolean(childId && parts);
+      els.contextStrip.hidden = !on;
+      els.contextMeterWrap.hidden = !on;
+      if (!on) return;
+      els.contextMeter.replaceChildren(...parts.nodes);
+      els.contextMeter.setAttribute('aria-label', parts.label);
     },
     /** 欄の上の一行（保存できなかった理由など） */
     say,

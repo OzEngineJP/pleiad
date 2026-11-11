@@ -61,7 +61,7 @@ export default async function (t) {
   t.ok('＋は開いている間 45° 回って × に（aria-expanded。動きを減らす設定では回さない）', /\.attach-plus\[aria-expanded=true\] svg\.i\{[^}]*rotate\(45deg\)/.test(css)
     && /@media \(prefers-reduced-motion:reduce\)\{\.attach-plus svg\.i\{transition:none\}\}/.test(css));
   t.ok('承認モードの印は既定でないときだけ --ink-blue、Bypass は強い字', /\.chip \.mk\{[^}]*color:var\(--ink-blue\)/.test(css) && /\.chip \.mk\.danger\{color:var\(--ink-strong\)\}/.test(css));
-  t.ok('字の欄は 1 行から（編集欄の最小の高さは 1 行。上限は fitPrompt が max-height で決める）', /<div id="prompt"/.test(html) && /:is\(#prompt,#thPrompt\)\{[^}]*min-height:calc\(1\.6em \+ 12px\)/.test(css) && /:is\(#prompt,#thPrompt\)\{[^}]*overflow-y:auto/.test(css));
+  t.ok('字の欄は 1 行から（編集欄の最小の高さは 1 行。上限は fitPrompt が max-height で決める）', /<div id="prompt"/.test(html) && /:is\(#prompt,#thPrompt,#wkPrompt\)\{[^}]*min-height:calc\(1\.6em \+ 12px\)/.test(css) && /:is\(#prompt,#thPrompt,#wkPrompt\)\{[^}]*overflow-y:auto/.test(css));
   t.ok('作業ディレクトリのチップは等幅にしない（逸脱 a）', /id="cwdChip"/.test(html) && !/class="chip mono/.test(html) && !/\.chip\.mono\{/.test(css));
   t.ok('チップの行は折り返さない（700px 以下の flex-wrap:wrap を外した）', /\.crow\{[^}]*flex-wrap:nowrap/.test(css) && !/\.crow\{flex-wrap:wrap\}/.test(css));
   const chip = /\n\.chip\{([^}]*)\}/.exec(css)?.[1] ?? '';
@@ -84,7 +84,15 @@ export default async function (t) {
     /const folder = panel\(chips\.cwd, pops\.cwd, \{[^\n]*onHide: \(\) => \{ checkSeq\+\+; \}/.test(controlsSrc)
       && /found = await cmd\("listDirs", \{ path: value \}\);[\s\S]*?if \(seq !== checkSeq\) return;\s*done\(\);\s*msg\.replaceChildren\(\);[\s\S]*?commitCwd\(/.test(controlsSrc));
   t.ok('タッチではチップも 36px', /@media \(pointer:coarse\)\{[^@]*\.chip\{height:36px\}/s.test(css));
-  t.ok('480px 以下は ▾ を省き、中断はアイコンだけ', /@media \(max-width:480px\)\{[^@]*\.chip svg\.caret\{display:none\}[^@]*\.abort span\{display:none\}/s.test(css));
+  t.ok('480px 以下は ▾ を省く', /@media \(max-width:480px\)\{[^@]*\.chip svg\.caret\{display:none\}/s.test(css));
+  // 中断は全幅で同じ形（塗りの四角・送信と同じ高さの面・字なし。ADR 0317）。480px 以下で別の形にしない
+  t.ok('中断は全幅で、塗りの四角（15×15）を送信と同じ高さの面（34px・タッチ 36px・スマホ 44px）に置く。字は出さない',
+    /\n\.abort\{[^}]*width:34px;height:34px[^}]*border-radius:var\(--r-s\)\}/.test(css)
+      && /\n\.abort svg\.i\{[^}]*width:15px;height:15px;fill:currentColor;stroke:none\}/.test(css)
+      && /\.send,\.abort\{width:36px;height:36px\}/.test(css)
+      && /\.crow > :is\(\.btn-icon,\.send,\.abort\)\{width:var\(--hit\)/.test(css)
+      && !/\.abort span/.test(css) && !/\.abort\{[^}]*background:transparent/.test(css)
+      && /id="abort"[^>]*data-i18n-aria-label="chat\.composer\.abort"/.test(html) && !/id="abort"[^>]*>[^<]*<svg[^>]*>.*<\/svg><span/.test(html));
   t.ok('700px 以下は行に「保存済み」を出さず、失敗はチップの行の上の一行に（行の隙間では文が途中で切れた）',
     /@media \(max-width:700px\)\{[^@]*\.crow \.draft-saved\{display:none\}[^@]*\.draft-fail:not\(\[hidden\]\)\{display:flex\}/s.test(css)
       && /\n\.draft-fail\{display:none;/.test(css)

@@ -124,6 +124,7 @@ const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
   resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, versionReload } from './interrupt.mjs';
+import { workStop } from './work-stop.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
@@ -3655,6 +3656,11 @@ function onEvent(ev, replay = false) {
     return;
   }
   if (ev.type === 'userMessage' && ev.sessionId && !replay) dropSuggestion(ev.sessionId);
+  // 子の会話のモーダルの入力欄の上の帯（文脈）は、子ごとの最後の値を持つ。メインの state.contextWindow とは別
+  if (ev.type === 'contextWindow' && ev.sessionId) {
+    childContext.set(ev.sessionId, ev);
+    if (ev.sessionId === workComposer?.childId) syncWorkContext();
+  }
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -6549,6 +6555,7 @@ function renderBackground() {
   bg.view.item = item;
   paintDetailHead(item);
   workComposer?.show(item);
+  syncWorkStop();
   const changed = item?.source === 'task' && bg.view.instructionRevision !== item.instructionRevision;
   const becameIdle = bg.view.wasLive && !item?.live;
   // ホストの線がオフライン・オンラインに変わったら、すぐ読み直す（筋の末尾の「ホストがオフライン」の行を替える・追いつく）
@@ -6646,24 +6653,76 @@ function paintDetailHead(item) {
         showOpen = true;
       }
     } else showOpen = true;
-    // 止めるのは根のタスク（止めれば孫も止まる。ホストの「すべて止める」と同じ）。読み出しで知った孫には出さない
-    if (!item.hostDescendant && (['queued', 'running'].includes(item.taskStatus) || item.waiting)) {
-      const stop = el('button', 'btn btn-quiet', t('dialog.work.stop'));
-      stop.type = 'button';
-      stop.setAttribute('aria-label', t('dialog.work.stopLabel', { name: item.title }));
-      stop.onclick = async () => {
-        stop.disabled = true;
-        try { await cmd('cancelAgentTask', { taskId: item.taskId }); }
-        catch (e) { detailNote(e.message); stop.disabled = false; }
-      };
-      actions.append(stop);
-    }
+    // 止めるのは見出しではなく入力欄の中断ボタン（syncWorkStop。ADR 0317）
     if (showOpen) actions.append(open);
   }
   if (item.group === 'command' && item.live !== false && (item.entry.capabilities ?? capsOf(item.entry.backend)).stopBackground) {
     actions.append(backgroundStopButton(item.entry.sessionId, item.task));
   }
   head.append(actions);
+}
+
+/**
+ * 子の会話のモーダルの中断ボタンを今に合わせる（出す条件と押せるかは web/work-stop.mjs）。
+ * 子のターンの出入り・承認の出入り・タスクの状態が変わるたびに呼ぶ
+ */
+function syncWorkStop() {
+  if (!workComposer) return;
+  const item = workComposer.item;
+  const id = item?.childId ?? null;
+  const live = (task) => TASK_LIVE.has(task.status);
+  workComposer.setStop(workStop({
+    item,
+    running: Boolean(id) && state.runningIds.has(id),
+    approval: Boolean(id) && (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && p.sessionId === id),
+    grandchild: Boolean(id) && allTasks().some((task) => task.parentSessionId === id && live(task)),
+    stopping: Boolean(id) && state.stopping.has(id),
+  }));
+  syncWorkContext();
+}
+
+/** 子ごとの文脈の使用量（モーダルの入力欄の上の帯）。読み込み（loadSession）と contextWindow の出来事で更新する */
+const childContext = new Map();
+function syncWorkContext() {
+  if (!workComposer) return;
+  const usage = workComposer.childId ? childContext.get(workComposer.childId) : null;
+  if (!usage || !(usage.windowTokens > 0)) { workComposer.setContext(null); return; }
+  const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
+  const amounts = { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) };
+  const bar = el('span', 'context-meter-bar');
+  const fill = el('span');
+  fill.style.width = `${Math.min(100, Math.max(0, rate))}%`;
+  bar.append(fill);
+  workComposer.setContext({
+    nodes: [document.createTextNode(t('compaction.context')), bar, document.createTextNode(phoneView.matches ? t('compaction.meterShort', { rate }) : t('compaction.meter', amounts))],
+    label: t('compaction.meterLabel', amounts),
+  });
+}
+
+/**
+ * モーダルの中断ボタンを押した。入力欄のある子には、メインの中断ボタンと同じ「中断」（abort）を送る。
+ * ホストに任せた子（入力欄なし）は abort が別の PC に届かないので、タスクの取り消し（cancelAgentTask）を送る
+ */
+function stopFromDialog(item) {
+  const plan = workStop({
+    item,
+    running: Boolean(item.childId) && state.runningIds.has(item.childId),
+    approval: Boolean(item.childId) && (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && p.sessionId === item.childId),
+    grandchild: Boolean(item.childId) && allTasks().some((task) => task.parentSessionId === item.childId && TASK_LIVE.has(task.status)),
+  });
+  if (!plan.show) return;
+  if (plan.via === 'cancelAgentTask') {
+    cmd('cancelAgentTask', { taskId: item.taskId }).catch((e) => detailNote(e.message));
+    return;
+  }
+  const id = item.childId;
+  // 走っているターンの中断は、押した瞬間に受け付けた見た目にする（メインの中断ボタンと同じ）。ターンの外（順番待ち・承認待ち・孫の待ち）は止まり終える待ちが無い
+  if (state.runningIds.has(id)) { state.stopping.add(id); syncRunState(); }
+  cmd('abort', { sessionId: id }).catch((e) => {
+    state.stopping.delete(id);
+    syncRunState();
+    detailNote(e.message);
+  });
 }
 
 /** 詳細の下に一行（失敗の理由など）。読み直しで消える */
@@ -6686,6 +6745,7 @@ function openDetail(item) {
   syncModalWatch();
   paintDetailHead(item);
   workComposer?.show(item);
+  syncWorkStop();
   if (!item) return;
   if (item.source === 'task' && item.childId) refreshOutbox(item.childId).then(() => workComposer?.paintOutbox()).catch(() => {});
   body.append(el('div', 'work-head', t('dialog.work.loading')));
@@ -6969,6 +7029,7 @@ async function taskThread(item) {
   $('workBody').dataset.paneKind = 'task';
   syncModalWatch();
   workComposer?.offerDraft(item.childId, data.draft);
+  if (data.contextWindow) { childContext.set(item.childId, data.contextWindow); syncWorkContext(); }
   const live = streamMessages(data.stream?.events, { backend: item.backend, model: item.model, initialMessageId: data.initialMessageId });
   const messages = [...(data.messages ?? []), ...live.messages];
   const th = readonlyThread(messages, { presents: [...(data.presents ?? []), ...live.presents], backend: item.backend, prompt: item.request, live: item.live, item,
@@ -10605,6 +10666,7 @@ function syncRunState() {
   $("abort").hidden = !(here || isWaitingHere());
   // 受け付けた中断は取り消せない。止まり終えるまで押せないようにする（稼働表示は「中断している」）
   $("abort").disabled = here && stoppingHere();
+  syncWorkStop();   // モーダルの子の中断ボタンも同じ流れで出し入れする
   syncResume();     // 中断状態なら同じ位置に「再開」
   syncEditTail();   // 編集中の帯の「走っている返答は止まる」
   chatSuggestion.refresh();   // 次のメッセージの候補は、返答が終わってから出す
@@ -10991,6 +11053,7 @@ workComposer = createWorkComposer({
   },
   cwdOf: (id) => workControls.selection(id).cwd || '',
   compactNote: (id) => t('compaction.agentManaged', { agent: labelOf(workControls.selection(id).backend) }),
+  onStop: (item) => stopFromDialog(item),
 });
 
 const shellComposer = chatComposer.useShell({

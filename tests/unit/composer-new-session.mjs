@@ -125,7 +125,7 @@ export default async function (t) {
     // 入力欄の ↑ の呼び出し・次のメッセージの候補・設定 › 入力（web/composer/recall.mjs・suggestion.mjs・web/input-settings.mjs）。このテストの対象外
     chatRecall: { release: noop, reset: noop, input: noop, active: false }, chatSuggestion: { set: noop, refresh: noop }, suggestions: new Map(), dropSuggestion: noop, inputSettings: { paint: noop },
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
-    syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
+    syncResume: noop, syncWorkStop: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
     armedSends: new Map(), scheduleAttempt: null, limitOp: async () => ({}), paintArmed: noop,
     // 使えるエージェントが無いときの案内（web/no-agent.mjs）。このテストは使える状態だけ

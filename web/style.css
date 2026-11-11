@@ -988,7 +988,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .limit-interrupt-head .stop-mark{display:inline-block;vertical-align:-2px;margin-right:6px;text-indent:0}
 .limit-interrupt-head .sep,.limit-interrupt-head .t{margin-left:6px}
 .limit-interrupt-sub{margin-top:6px;padding-left:20px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--ink-weak)}
-.m.sys .stop-mark{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
+.m.sys .stop-mark{width:14px;height:14px;flex:none;fill:currentColor;stroke:none}
 /* 開ける出来事の一行（別のセッションからのメッセージ・Pleiad の完了通知。web/system-messages.mjs の sysFold）。
    開閉は会話の中の折りたたみ（tools.css の .tc-fold）と同じ ▸ の回転。既定は閉じた状態 */
 .m.sys .sys-fold>summary{list-style:none;cursor:pointer;user-select:none;display:flex;align-items:baseline;gap:6px}
@@ -1563,9 +1563,12 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .send{width:34px;height:34px;border-radius:50%;padding:0;margin-left:4px;flex:none}   /* 唯一の塗り */
 .send svg.i{width:17px;height:17px}
 .crow .btn-icon{flex:none}
-/* 中断。広い幅は字だけ、480px 以下は四角のアイコンだけ（下の「狭い画面」） */
-.abort{flex:none}
-.abort svg.i{display:none;width:18px;height:18px}
+/* 中断。全幅で同じ形: 塗りの四角（15×15）を、送信と同じ高さの角丸の面に置く（34px。タッチは送信に合わせて 36px・スマホは 44px）。
+   面は .btn-quiet（--surface-2、ホバー・押下で --surface-3）。名前は aria-label と title（字は出さない） */
+.abort{flex:none;width:34px;height:34px;padding:0;border-radius:var(--r-s)}
+.abort svg.i{display:block;width:15px;height:15px;fill:currentColor;stroke:none}
+/* 子の会話のモーダルで、入力欄が無い子（ホストに任せた根）に、入力欄の位置へ出す中断だけの行。形は入力欄の中断と同じ */
+.work-stop-only{display:flex;justify-content:flex-end;padding:8px 18px calc(8px + env(safe-area-inset-bottom,0px))}
 /* 再開。中断と同じ位置・同じ薄い面。再生の三角と字（480px 以下は三角だけ） */
 .resume{flex:none;margin-left:4px}
 .resume svg.i{width:16px;height:16px}
@@ -2275,7 +2278,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .btn-icon{min-width:36px;min-height:36px}
   /* 入力欄のチップ・中断は添付と同じ 36px。字の欄は 16px の字で 1.5 行間（上限 6 行は fitPrompt） */
   .chip{height:36px}
-  .abort,.resume{min-height:36px}
+  .resume{min-height:36px}
   :is(#prompt,#thPrompt,#wkPrompt){line-height:1.5}
   .md-b{min-height:1.5em}
   .row-more,.grp-more,.fam-more{min-width:32px;min-height:32px}
@@ -2289,7 +2292,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .top > .btn-icon,.crow > .btn-icon,.crow > .chip,.crow > .abort,.crow > .send{position:relative}
   .top > .btn-icon::before{content:"";position:absolute;inset:-4px}
   .crow > .btn-icon::before,.crow > .chip::before,.crow > .abort::before,.crow > .send::before{content:"";position:absolute;inset:-4px -1px}
-  .send{width:36px;height:36px}
+  .send,.abort{width:36px;height:36px}
   .side-mark[data-kind=unread]{top:5px;right:4px}
   .side-mark[data-kind=wait]{top:1px;right:-3px}
   /* 36px のボタンでは、変更ありの点・操作中の弧をアイコンの右上に寄せたまま置く */
@@ -2348,11 +2351,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (max-width:480px){
   .composer{--cpad-b:max(8px,env(safe-area-inset-bottom,0px))}
   .chip svg.caret{display:none}
-  /* 中断・再開は面を出さず、押せる 44px の箱に印だけを置く（送信の丸と丸を並べない。2026-10-24 承認） */
-  .abort{width:var(--hit);height:var(--hit);padding:0;border-radius:var(--r-m);background:transparent}
-  .abort:hover,.abort:active{background:var(--surface-2)}
-  .abort svg.i{display:block;width:var(--icon);height:var(--icon)}
-  .abort span{display:none}
+  /* 再開は面を出さず、押せる 44px の箱に印だけを置く（中断は全幅で同じ形。ADR 0317） */
   .resume{width:var(--hit);height:var(--hit);padding:0;border-radius:var(--r-m);background:transparent}
   .resume:hover,.resume:active{background:var(--surface-2)}
   .resume svg.i{width:var(--icon);height:var(--icon)}
@@ -2500,9 +2499,11 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   main > .top .side-mark[data-kind=unread]{top:8px;right:7px}
   main > .top .side-mark[data-kind=wait]{top:4px;right:0}
   /* 入力欄の下の行: 添付・チップ・中断・送信を 44px に */
-  .crow > :is(.btn-icon,.send){width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
+  .crow > :is(.btn-icon,.send,.abort){width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
   .crow > :is(.btn-icon,.send) > svg.i{width:var(--icon);height:var(--icon)}
-  .crow > :is(.abort,.resume){min-height:var(--hit)}
+  .crow > .resume{min-height:var(--hit)}
+  .work-stop-only{padding:4px 4px calc(8px + env(safe-area-inset-bottom,0px))}
+  .work-stop-only > .abort{width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
   .chip{height:var(--hit);font-size:var(--fs-ui)}
   .chip svg.i{width:var(--icon);height:var(--icon)}
   .chip svg.caret{width:var(--icon-s);height:var(--icon-s)}
@@ -2557,6 +2558,11 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 #contextStrip > .usage-chip{order:4;margin-left:0;flex:none}
 /* 列が狭く、縮めた形でも入り切らないとき（compaction.css の .tight）だけ、札を縮めて中を切る */
 #contextStrip.tight > :is(.context-meter-wrap,.usage-chip){flex:0 1 auto;min-width:0}
+/* 子の会話のモーダルの入力欄の上の帯（ADR 0317）。メインの帯と同じ並び・寸法で、文脈の使用量だけを表示する（押せない） */
+#wkContextStrip{padding:0;margin-bottom:8px;min-height:28px;gap:8px}
+#wkContextStrip::before{content:"";flex:1}
+#wkContextStrip > .context-meter-wrap{order:2;flex:none}
+#wkContextStrip .context-meter{pointer-events:none;cursor:default}
 @media (max-width:700px){
   #contextStrip{min-height:var(--hit)}
   #contextStrip .bg-chip{height:var(--hit)}

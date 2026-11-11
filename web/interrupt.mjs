@@ -58,10 +58,10 @@ export function warnMark(label, { read = false } = {}) {
   return svg;
 }
 
-/** 会話の末尾の「■ 中断しました」の四角（中断ボタンの四角と同じ形を 14px に） */
+/** 会話の末尾の「■ 中断しました」の四角（中断ボタンの塗りの四角と同じ形を 14px に） */
 export function stopMark() {
   const svg = svgEl("svg", { viewBox: "0 0 14 14", class: "stop-mark", "aria-hidden": "true" });
-  svg.append(svgEl("rect", { x: 3.5, y: 3.5, width: 7, height: 7, rx: 1.6 }));
+  svg.append(svgEl("rect", { x: 2.5, y: 2.5, width: 9, height: 9, rx: 1.8 }));
   return svg;
 }
 
