@@ -3,6 +3,7 @@
 //   - 委譲の子でない会話（依頼元）への送信には付かない
 //   - 届いた出来事にも sentByHuman（開いているモーダルがその場で「あなた」の名札を描ける）
 //   - 子が終わったとき、親の AI へ渡す完了通知に「人からの指示 N 件」が 1 回だけ載る（送るたびには知らせない）。人が送っていない子には載らない
+//   - 同じ文面を親の AI（ply_task_send）と人が送っても、「あなた」は人の分だけ（順序が入れ替わっても）。同じ messageId の送り直しは数えない
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -67,6 +68,49 @@ export default async function (t) {
     const sentToParent = parentLoaded.messages.find(m => m.role === 'user' && m.text === 'echo:親への送信');
     t.ok('依頼元への送信には sentByHuman を付けない', sentToParent && !sentToParent.sentByHuman);
     t.ok('依頼元への送信は子の人からの指示の数を増やさない', (await tasksOf(parent))[0].humanInstructions === 1);
+
+    // 同じ文面を親の AI と人が送る（AI → 人 → AI）。名札は台帳で見分け、人の 1 件だけに「あなた」が付く。同じ messageId の送り直しは数えない
+    const same = 'echo:続けて';
+    const parent2 = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('echo:最初の依頼') })).sessionId;
+    const [first2] = await awaitTasks(parent2, rows => rows[0]?.status === 'completed' && rows[0]?.notification === 'sent');
+    const child2 = first2.sessionId;
+    // 依頼元が完了通知の続きを走らせている間は送れない。空くまで繰り返す
+    const parentRun = async (sessionId, prompt) => {
+      for (let tries = 0; ; tries++) {
+        try { return await c.cmd('runTurn', { sessionId, prompt }); }
+        catch (e) { if (tries >= 80) throw e; await sleep(250); }
+      }
+    };
+    const aiSend = async () => {
+      const m = c.mark();
+      await parentRun(parent2, ply('ply_task_send', { taskId: first2.taskId, message: same }));
+      await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === child2, { from: m, ms: 30_000 });
+    };
+    await aiSend();
+    const humanSend = async (messageId, { runs = true } = {}) => {
+      const m = c.mark();
+      await c.cmd('sendMessage', { sessionId: child2, messageId, prompt: same });
+      if (runs) await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === child2, { from: m, ms: 30_000 });
+    };
+    await humanSend('human-same-0001');
+    await humanSend('human-same-0001', { runs: false });   // 同じ messageId の送り直し（応答が届かず送り直した）
+    await aiSend();
+    const sameLoaded = await c.cmd('loadSession', { sessionId: child2 });
+    const sameUsers = sameLoaded.messages.filter(m => m.role === 'user' && !m.kind && m.text === same);
+    t.ok('同じ文面の発言が 3 件ある（AI・人・AI）', sameUsers.length === 3, String(sameUsers.length));
+    t.ok('人の 1 件だけに「あなた」が付く（AI → 人 → AI の順）', sameUsers.map(m => Boolean(m.sentByHuman)).join() === 'false,true,false', sameUsers.map(m => m.sentByHuman).join());
+    t.ok('同じ messageId の送り直しは数えない', (await tasksOf(parent2))[0].humanInstructions === 1, String((await tasksOf(parent2))[0].humanInstructions));
+    // 人が先、AI が後（人 → AI）
+    const parent3 = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('echo:最初の依頼3') })).sessionId;
+    const [first3] = await awaitTasks(parent3, rows => rows[0]?.status === 'completed' && rows[0]?.notification === 'sent');
+    const m3 = c.mark();
+    await c.cmd('sendMessage', { sessionId: first3.sessionId, messageId: 'human-same-0003', prompt: same });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === first3.sessionId, { from: m3, ms: 30_000 });
+    const m4 = c.mark();
+    await parentRun(parent3, ply('ply_task_send', { taskId: first3.taskId, message: same }));
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === first3.sessionId, { from: m4, ms: 30_000 });
+    const order = (await c.cmd('loadSession', { sessionId: first3.sessionId })).messages.filter(m => m.role === 'user' && !m.kind && m.text === same);
+    t.ok('人 → AI の順でも、人の 1 件だけに「あなた」が付く', order.length === 2 && order.map(m => Boolean(m.sentByHuman)).join() === 'true,false', order.map(m => m.sentByHuman).join());
   } finally {
     c.close();
     await server.stop();

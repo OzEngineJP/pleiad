@@ -2,6 +2,7 @@
 //   1. 走っている子へ「つぎの指示A」（添付つき）を送ると送信待ちになり、［編集］で本文と添付が入力欄へ戻る（サーバー側では取り下げ）
 //   2. 戻した本文をもう一度送ると、添付の印が二重にならない
 //   3. 添付つきで終わった子へ送ると、添付が子へ届く（送信の要求に attachments が載る）
+//   4. 人からの指示の数は渡った分だけ（編集・取り消しで下げた送信待ちは数えず、届いた 1 件は 1 と数える）
 // 実行: node tests/browser/work-dialog-outbox.mjs   （会話の agent-browser の窓を使う。WORK_DIALOG_OUTBOX_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -167,6 +168,14 @@ try {
   await wait(() => evaluate(() => /これを見て/.test(document.getElementById('workBody').textContent)), 'shows in the thread');
   shot('3-attached-sent');
   console.log('PASS: a send with an attachment reaches the child with the attachment');
+
+  // ---- 4. 人からの指示の数: 送信待ちのまま取り下げた分は数えず、渡った 1 件だけ数える ----
+  const countOf = async taskId => (await client.cmd('agentTasks')).find(r => r.taskId === taskId)?.humanInstructions ?? 0;
+  const counted = Date.now() + 20_000;
+  while (Date.now() < counted && (await countOf(done.taskId)) !== 1) await sleep(200);
+  assert.equal(await countOf(done.taskId), 1, 'the delivered send is counted once');
+  assert.equal(await countOf(running.taskId), 0, 'withdrawn queued sends are not counted');
+  console.log('PASS: human instruction count follows deliveries only');
   console.log('PASS');
 } finally {
   client?.close();
