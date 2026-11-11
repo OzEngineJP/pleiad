@@ -234,7 +234,7 @@ web の `isMine` は新規セッションの id を `first` の付いた session
 （新規でも init が最初に来れば id とモデルが同時に確定する）。
 
 v3 で `statusIcon { status, icon }`（状態グループのアイコン。sidecar `statuses.json`）、`lineage`、`setStatusIcon`、runTurn の `status`、`text.end` の `uuid` を足した。`PROTOCOL_VERSION` は **3**。
-その後、番号を据え置いたまま `loadSession` の `watch` と `watchSession` を足した。宣言した接続には、流れの出来事を開いている会話の分だけ送る（[ADR 0024](adr/0024-watch-open-session-stream.md)）。
+その後、番号を据え置いたまま `loadSession` の `watch` と `watchSession` を足した。宣言した接続には、流れの出来事を開いている会話の分だけ送る（[ADR 0024](adr/0024-watch-open-session-stream.md)）。`watchSession` は `{ sessionId, slot? }` で、見る会話は主（`main`。省略時）と子の会話のモーダル（`modal`）の 2 つの口を持つ（[ADR 0315](adr/0315-two-watch-slots-modal-right-pane.md)）。
 さらに `loadSession` に `from`・`check`・`presentFrom`・`presentCheck` を足した。持っている履歴の先頭が合うときだけ続きを返し、合わなければ全量（[ADR 0062](adr/0062-incremental-session-load.md)）。
 
 **`permission.kind === "question"` の `questions` の形**（web の questionCard が読む形。Claude の AskUserQuestion 入力をそのまま正規形にする）:
