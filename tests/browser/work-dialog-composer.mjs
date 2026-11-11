@@ -212,6 +212,41 @@ try {
   const rereadsAfter = cmds('loadSession').filter(c => c.sessionId === runChild).length;
   console.log(`PASS: typing while the child streams keeps text/caret/focus (re-reads during typing: ${rereadsAfter - rereadsBefore})`);
 
+  // ---- 5a. 変換中（IME）: 子が流れて会話が読み直されても、入力欄の value に書き戻さず、選択・フォーカスも動かさない ----
+  // 本物の IME は合成できないので、compositionstart から compositionend の間に value への代入が 1 度も起きないこと
+  // （起きると変換が確定前に切れる）と、キャレット・フォーカスが動かないことを、読み直しが走る間じゅう確かめる
+  evaluate(() => {
+    const n = document.getElementById('wkPrompt');
+    let proto = n, desc = null;
+    while (proto && !(desc = Object.getOwnPropertyDescriptor(proto, 'value'))) proto = Object.getPrototypeOf(proto);
+    window.__valSets = 0;
+    window.__imePrev = n.value;
+    Object.defineProperty(n, 'value', { configurable: true, get() { return desc.get.call(this); }, set(v) { window.__valSets++; desc.set.call(this, v); } });
+    n.focus();
+    n.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+    desc.set.call(n, 'に');
+    n.setSelectionRange(1, 1);
+    n.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, data: 'に', inputType: 'insertCompositionText' }));
+  });
+  const imeBefore = cmds('loadSession').filter(c => c.sessionId === runChild).length;
+  await sleep(2500);
+  const ime = evaluate(() => { const n = document.getElementById('wkPrompt'); return { v: n.value, caret: n.selectionStart, focus: document.activeElement === n, sets: window.__valSets }; });
+  const imeReads = cmds('loadSession').filter(c => c.sessionId === runChild).length - imeBefore;
+  console.log('ime', JSON.stringify(ime), 're-reads', imeReads);
+  evaluate(() => {
+    const n = document.getElementById('wkPrompt');
+    n.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'に' }));
+    delete n.value;
+    n.value = window.__imePrev;
+    n.setSelectionRange(n.value.length, n.value.length);
+    n.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal(ime.sets, 0, 'the composer never writes value during a composition');
+  assert.equal(ime.v, 'に', 'the composing text is kept');
+  assert.equal(ime.caret, 1, 'caret does not move during a composition');
+  assert.ok(ime.focus, 'focus kept during a composition');
+  console.log(`PASS: composing text is untouched while the child streams (re-reads during composition: ${imeReads})`);
+
   // ---- 5b. アカウントの節: メインと同じ面に出て、選ぶと子の予約に流れる ----
   clickOn('#wkModelChip', 'model chip (accounts)');
   await wait(() => evaluate(() => !!document.querySelector('#workDialog [data-key^="account:"]')), 'account rows in the child model pop');
@@ -333,7 +368,7 @@ try {
   console.log('360', JSON.stringify(narrow));
   const strip360 = stripFit();
   console.log('strip 360', JSON.stringify(strip360));
-  assert.ok(!strip360.overflow && strip360.clipped.length === 0 && /^コンテキスト\d+%$/.test(strip360.meter), `strip fits at 360 with the short meter: ${JSON.stringify(strip360)}`);
+  assert.ok(!strip360.overflow && strip360.clipped.length === 0 && (/^コンテキスト\d+%$/.test(strip360.meter) || strip360.kids.some(k => k.id === 'wkContextStripStatus')), `strip fits at 360 with the short meter (or the status chip while the phase is shown, like main): ${JSON.stringify(strip360)}`);
   assert.ok(narrow.composer.bottom <= narrow.vh, 'composer is inside the viewport');
   assert.ok(narrow.last.bottom <= narrow.composer.top + 1, 'last message is above the composer');
   assert.ok(narrow.buttons.length >= 3 && narrow.buttons.every(b => b.w >= 44 && b.h >= 44), `heading buttons are 44px: ${JSON.stringify(narrow.buttons)}`);
