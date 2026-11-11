@@ -32,8 +32,8 @@ export function agentLevel({ st, endpointConfirmed = false, endpointsKnown = tru
   let body;
   if (st.expired && st.loggedIn) body = { level: 'no', reason: 'expired', hard: false };
   else if (st.supported === false) body = st.error ? { level: 'maybe', reason: 'checkFailed', pick: true } : { level: 'usable', reason: 'ok' };   // ログインの口を持たない（入っていれば使える）
+  else if (st.loggedIn) body = { level: 'usable', reason: 'ok' };   // ログイン済み（期限切れでない）なら、別のログイン（アカウントの追加・入り直し）が進んでいても使える
   else if (st.pending) body = { level: 'no', reason: 'pending', hard: true };
-  else if (st.loggedIn) body = { level: 'usable', reason: 'ok' };
   else if (endpointConfirmed) body = { level: 'usable', reason: 'ok' };
   else if (st.accountReady) body = { level: 'maybe', reason: 'unconfirmed', pick: true };   // 登録したアカウントで走るかもしれない（CLI のログインが無くても）。締め出さない
   else if (st.checkFailed) body = { level: 'maybe', reason: 'checkFailed', pick: true };

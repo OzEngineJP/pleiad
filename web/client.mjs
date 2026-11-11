@@ -11086,7 +11086,8 @@ noAgent = setupNoAgent({
 const agentRecheck = createRecheck({
   // 見ているのは 4 つ: 初回・出し直しの窓、会話の中の一覧、設定の「エージェント設定」のページ（ほかの設定のページでは走らない）
   visible: () => $("onboardingDialog").open || noAgent.visible() || $("authSec")?.getClientRects().length > 0,
-  check: () => refreshAuth({ unsettled: true }),
+  // 読み直しが 1 巡した回数の印（見た目には使わない。実画面の試験が、始まっていた確かめの終わりを待つ）
+  check: () => refreshAuth({ unsettled: true }).finally(() => { const d = document.documentElement.dataset; d.agentRechecks = String((Number(d.agentRechecks) || 0) + 1); }),
 });
 // 設定 › 記憶 › bot（web/memory-settings.mjs。自動整理の入切・時刻・要約と、状態・明示操作。［ログイン］はエージェント設定へ移す）
 memorySettings = setupMemorySettings({

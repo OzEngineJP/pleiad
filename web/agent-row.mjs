@@ -20,7 +20,7 @@ export function bodyKey(agent, st, { waiting = false, endpointConfirmed = false,
     case 'unconfirmed': return 'unconfirmed';
     case 'checkFailed': return 'checkFailed';
     case 'unknown': return 'unknown';
-    default: return 'ok';
+    default: return st?.pending && st.loggedIn && !st.expired ? 'pending' : 'ok';   // 使えるが別のログインが進んでいる間は、待っている行と［やめる］を出す
   }
 }
 
@@ -88,7 +88,7 @@ function sdkState(st) {
       fill.style.width = f.total ? `${pct}%` : '30%';
       bar.append(fill);
       if (!f.total) bar.classList.add('ind');
-      return [stateEl('run', text, { wait: true }), bar];
+      return [stateEl('fetching', text, { wait: true }), bar];
     }
     case 'failed': return [stateEl('fail', `⚠ ${sdkFailedText(sdk.error)}`)];
     case 'ready': return [stateEl('', t('settings.agents.row.sdkReady'))];

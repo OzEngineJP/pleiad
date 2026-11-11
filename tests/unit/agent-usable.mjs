@@ -18,6 +18,10 @@ export default async function(t) {
   t.ok('logged in is usable', level({ installed: true, supported: true, loggedIn: true }) === 'usable');
   t.ok('a confirmed compatible endpoint is usable without login', level({ installed: true, supported: true, loggedIn: false }, { endpointConfirmed: true }) === 'usable');
   t.ok('login in progress is not usable yet', level({ installed: true, supported: true, pending: true }) === 'no');
+  t.ok('logged in + another login in progress (add account / re-login) is still usable', level({ installed: true, supported: true, loggedIn: true, pending: true }) === 'usable');
+  t.ok('logged in + pending is not a hard block', agentLevel({ st: { installed: true, supported: true, loggedIn: true, pending: true } }).hard !== true);
+  t.ok('expired + pending stays as before (not usable)', level({ installed: true, supported: true, loggedIn: true, expired: true, pending: true }) === 'no');
+  t.ok('logged out + pending stays as before (hard no)', agentLevel({ st: { installed: true, supported: true, loggedIn: false, pending: true } }).hard === true);
   t.ok('unconfirmed (passive check cannot tell) is "maybe"', level({ installed: true, supported: true, unconfirmed: true }) === 'maybe');
   t.ok('check failure is "maybe"', level({ installed: true, supported: true, checkFailed: true }) === 'maybe');
   t.ok('verdict not returned yet is "maybe"', level(undefined) === 'maybe');

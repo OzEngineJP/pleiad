@@ -160,6 +160,8 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, 
         try { await cmd('onboardingSeen'); status.seen = true; }
         catch (e) { $('setupError').textContent = t('onboarding.seenFailed', { error: e.message }); }
       }
+      // 起動時の判定が済んだ印（見た目には使わない。実画面の試験が、判定の前に状態を変えないよう待つ）
+      document.documentElement.dataset.agentGate = gate ?? 'off';
       if (gate) { close(); showGate(); return; }
     }
     paint();

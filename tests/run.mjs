@@ -511,6 +511,7 @@ const SUITES = [
   './unit/notify-web.mjs',
   './unit/onboarding.mjs',
   './unit/agent-usable.mjs',
+  './unit/install-command.mjs',
   './unit/tree.mjs',
   './unit/family.mjs',
   './unit/pending-sidebar.mjs',

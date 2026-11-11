@@ -31,7 +31,13 @@ Press "Recheck status" under Settings › "Agents". If it still is not found, qu
 The agent's CLI is not installed. Open the install guide from [Agents](./agents/), install it, then press "Recheck status".
 
 **The Claude Agent SDK shows "Couldn't download"**
-Check your connection and press "Try again" on the Claude row.
+Check your connection and press "Try again" on the Claude row. If a reason follows ("Couldn't download: reason"), fix that first (connection, free disk space, and so on), then press it.
+
+**A "No agent is available" screen appears and can't be closed**
+Make any one agent usable to continue. Press "Install" on one that isn't installed (if a command is shown you can also run it in a terminal), or "Sign in" on one you aren't signed in to. Pleiad notices the install by itself; if it doesn't, press "Recheck status".
+
+**Sending a message shows "(agent) was not found." with "Resend" and "Cancel"**
+The agent's CLI can't be found. Install it and press "Recheck status", then press "Resend" to send the same message again. If you don't want to send it, press "Cancel". For Claude you may instead see "To use Claude you need Anthropic's Claude Agent SDK (version)." — press "Download" or "Try again" on the Claude row.
 
 ## Sign-in
 
@@ -98,6 +104,9 @@ Running work did not stop. Update again once it finishes or you stop it.
 | Could not migrate the saved data to the new format | This version cannot start. Keep using the previous version or contact support |
 | Not installed | The CLI was not found. Press "Recheck status"; if it persists, relaunch Pleiad |
 | (agent) was not found. Install it, then check again | The CLI is not installed. Install it and press "Recheck status" |
+| (agent) was not found. (with "Resend" and "Cancel") | Shown on the send line. Install, press "Recheck status", then "Resend" |
+| No agent is available | Install or sign in to any one agent to make it usable |
+| Couldn't download: (reason) | The Claude Agent SDK download failed. Fix the reason, then "Try again" |
 | Couldn't sign in | Try signing in again |
 | Timed out (10 minutes) / The terminal sign-in did not finish | Sign-in wait timed out. Check the terminal finished, then retry |
 | ⚠ Your sign-in has expired | Press "Sign in again" |

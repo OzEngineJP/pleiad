@@ -3,7 +3,7 @@
 //   確かめられない（未確認）だけのときは案内を出さない
 //   使っている途中で 0 個になる → 会話の中の一覧が出て送信ボタンだけ無効（下書きは書ける）／直ると一覧が消えて送れる
 //   エージェントの選択欄は使えないエージェントを選べない／送れなかった行から直して再送できる
-// 実行: node tests/browser/missing-agent.mjs   （playwright-core は Windows の node の大域のもの。PW_CORE・PW_CHROMIUM で替えられる。MISSING_AGENT_ONLY=<場面名の一部> で絞る）
+// 実行: node tests/browser/missing-agent.mjs   （MISSING_AGENT_REPEAT=5 で絞った場面を続けて流す。playwright-core は Windows の node の大域のもの。PW_CORE・PW_CHROMIUM で替えられる。MISSING_AGENT_ONLY=<場面名の一部> で絞る）
 // 本物のサーバー（偽の Claude Code CLI・一時のデータ置き場・別ポート）だけと話す。LLM も実データも使わない。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -83,6 +83,12 @@ async function leftEdges(page, scope) {
       for (const a of r.querySelectorAll('.ar2-d a')) out.terms.push(left(a));
     }
     out.progress = [...extra[0].querySelectorAll('.bar, .st')].map(left);
+    // 進みの棒と状態の字（字の実際の幅。入れ物からはみ出した分も含める）が重ならない
+    const bar = extra[0].querySelector('.bar'), st = extra[0].querySelector('.st.fetching');
+    const rg = document.createRange(); rg.selectNodeContents(st);
+    const a = rg.getBoundingClientRect(), b = bar.getBoundingClientRect();
+    out.overlap = a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+    out.barBox = [a, b].map(r => [r.left, r.top, r.right, r.bottom].map(Math.round));
     out.failure = [...extra[1].querySelectorAll('.st')].map(left);
     out.retry = [...extra[1].querySelectorAll('button')].map(b => b.textContent.trim());
     extra.forEach(e => e.remove());
@@ -95,12 +101,45 @@ function checkEdges(e, where) {
   check(e.terms.length >= 1 && e.sdkName.length >= 3, `${where}: 名前・説明・SDK の名前・規約の行が全部ある`, e);
   check(lines.every(x => x === e.name), `${where}: 名前・説明・SDK の名前・規約の左端が同じ（${e.name}）`, e);
   check(e.retry.includes('もう一度取得'), `${where}: 取得に失敗した行に［もう一度取得］がある`, e.retry);
+  check(e.overlap === false, `${where}: 取得中の進みの棒と状態の字の矩形が重ならない`, e.barBox);
   // 取得中の棒・失敗の理由は SDK の名前の行に続く（名前の右）。折り返したときの行頭も同じ左端になる
   check([...e.progress, ...e.failure].every(x => x >= e.name), `${where}: 取得中・失敗の表示は名前の左端より左へ出ない`, e);
 }
 
+/**
+ * 条件が満たされるまで、動作（クリックなど）を繰り返す。起動の直後は案内の判定が済むまで設定が開かない・状態の読み直しが先に届かない、
+ * ことがあるので、固定の時間ではなく「画面がその形になった」を待つ
+ */
+async function retryUntil(page, action, cond, timeout = 25_000) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    await page.evaluate(action).catch(() => {});
+    if (await page.evaluate(cond).catch(() => false)) return;
+    if (Date.now() > end) throw new Error(`条件を満たさなかった: ${cond} / 画面: ${(await page.evaluate(() => document.body.innerText).catch(() => '')).replace(/\s+/g, ' ').slice(0, 300)}`);
+    await page.waitForTimeout(250);
+  }
+}
+
+/** 画面が受け取った WebSocket の知らせに「SDK 取得済み」が載ったら window.__sdkReady を立てる（init に渡す） */
+const sdkReadyProbe = () => {
+  const W = window.WebSocket;
+  window.WebSocket = class extends W {
+    constructor(...a) {
+      super(...a);
+      this.addEventListener('message', (e) => { if (typeof e.data === 'string' && /"ready":\s*true/.test(e.data)) window.__sdkReady = true; });
+    }
+  };
+};
+
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-missing-agent-'));
-let n = 0, browser;
+let n = 0, browser, lastScene = null;
+/** 落ちた場面の画面の状態（開いている窓・一覧・設定・窓と設定の開閉の時刻・直前の WS の知らせ） */
+async function diagnose() {
+  if (!lastScene) return '';
+  const d = await lastScene.page.evaluate(() => ({ dialog: Boolean(document.getElementById('onboardingDialog')?.open), title: document.getElementById('onboardingTitle')?.textContent, list: Boolean(document.getElementById('noAgent')?.offsetParent), settings: document.body.classList.contains('settings'), flips: window.__flips, ws: (window.__ws ?? []).slice(-6) })).catch(e => ({ error: e.message }));
+  return `
+  画面: ${JSON.stringify(d)}`;
+}
 const servers = [];
 /** 場面ごとに別のサーバーとデータ置き場（done: 案内を一度終えた人。login: 最初からログイン済みか。sdk: 'local' | 'download'） */
 async function scene({ done = true, login = false, sdk = 'download', backends = 'claude,codex', seed = false, env = {}, cwd = os.homedir(), init = null } = {}) {
@@ -129,11 +168,45 @@ async function scene({ done = true, login = false, sdk = 'download', backends = 
     };
     if (!watch()) document.addEventListener('DOMContentLoaded', watch);
   });
+  // 落ちたときの調べ用: 受けた WS の知らせの末尾と、案内の窓・設定の開閉の時刻（diagnose が読む）
+  await page.addInitScript(() => {
+    const t0 = Date.now();
+    window.__ws = []; window.__flips = [];
+    const W = window.WebSocket;
+    window.WebSocket = class extends W {
+      constructor(...a) { super(...a); this.addEventListener('message', (e) => { if (typeof e.data === 'string') { window.__ws.push([Date.now() - t0, e.data.slice(0, 260)]); if (window.__ws.length > 40) window.__ws.shift(); } }); }
+    };
+    const watch = () => {
+      const d = document.getElementById('onboardingDialog');
+      if (!d) return false;
+      new MutationObserver(() => window.__flips.push([Date.now() - t0, 'dialog', d.open, document.body.classList.contains('settings'), window.__ws.length])).observe(d, { attributes: true, attributeFilter: ['open'] });
+      new MutationObserver(() => window.__flips.push([Date.now() - t0, 'settings', document.body.classList.contains('settings'), d.open, window.__ws.length])).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      return true;
+    };
+    if (!watch()) document.addEventListener('DOMContentLoaded', watch);
+  });
   if (init) await page.addInitScript(init);
   await page.bringToFront();
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(`http://127.0.0.1:${server.port}/?token=${server.token}`, { waitUntil: 'load' });
+  lastScene = { page, dataDir };
   return { page, errors, dataDir, flag, login: () => fs.writeFileSync(flag, '1'), logout: () => fs.rmSync(flag, { force: true }) };
+}
+/** 起動時の判定（初回の窓を出すか）が済むまで待つ。画面が dataset.agentGate に印を書く（web/onboarding.mjs）。判定の前に状態を変えると、変えた後の状態で判定が走る */
+const settled = page => page.waitForFunction(() => document.documentElement.dataset.agentGate !== undefined, null, { timeout: 30_000 });
+/** 確かめ直しが 1 巡する（dataset.agentRechecks が増える）まで待つ。見えている面があるときだけ走る */
+const nextRecheck = async (page, timeout = 20_000) => {
+  const before = await page.evaluate(() => Number(document.documentElement.dataset.agentRechecks) || 0);
+  await page.waitForFunction((b) => (Number(document.documentElement.dataset.agentRechecks) || 0) > b, before, { timeout });
+};
+/** read() の値が ms の間変わらなくなるまで待つ（始まっていた確かめが遅れて数えられるのを、数え始める前に済ませる） */
+async function stable(page, read, ms = 5000, timeout = 30_000) {
+  for (let last = -1, since = Date.now(), end = Date.now() + timeout; Date.now() < end;) {
+    const now = read();
+    if (now !== last) { last = now; since = Date.now(); } else if (Date.now() - since >= ms) return now;
+    await page.waitForTimeout(250);
+  }
+  throw new Error('数が落ち着かなかった');
 }
 const dialogOpen = page => page.evaluate(() => Boolean(document.getElementById('onboardingDialog')?.open));
 const settingsOpen = page => page.evaluate(() => document.body.classList.contains('settings'));
@@ -172,7 +245,7 @@ try {
     // SDK だけ先に済ませる（ログインはまだ）→ まだ使えない
     seedSdk(s.dataDir);
     await recheckButton(page, '#onboardingDialog').click().catch(() => {});
-    await page.waitForTimeout(2800);
+    await nextRecheck(page);   // 裏の確かめ直しが 1 巡して、SDK だけの状態が読まれた後
     check(await dialogOpen(page), 'SDK だけでは案内が閉じない');
     // ログインを済ませる → 裏の確かめで見つかり、案内が自動で閉じる
     s.login();
@@ -193,7 +266,8 @@ try {
 
   scenes.push(['確かめられない（未確認）だけのときは案内を出さない', async () => {
     const s = await scene({ login: false, backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-unconfirmed')) } });
-    await s.page.waitForTimeout(3500);
+    await settled(s.page);
+    await nextRecheck(s.page).catch(() => {});
     check(!(await dialogOpen(s.page)), '未確認が混ざる間は案内を出さない');
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
@@ -202,13 +276,12 @@ try {
     const s = await scene({ login: true, sdk: 'local', backends: 'claude' });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
-    await page.waitForTimeout(1500);
+    await settled(page);
     check(!(await dialogOpen(page)) && !(await listShown(page)), '使えるうちは案内も一覧も出ない');
     s.logout();
     await page.click('#settings');
     await page.waitForSelector('#refreshAgents', { timeout: 10_000 });
-    await page.click('#refreshAgents');
-    await page.waitForTimeout(1500);
+    await retryUntil(page, () => document.getElementById('refreshAgents').click(), () => Boolean(document.querySelector('body.settings [data-act="login"]')));
     await backToChat(page);
     await page.waitForFunction(() => { const e = document.getElementById('noAgent'); return e && !e.hidden && e.offsetParent; }, null, { timeout: 20_000 });
     check(!(await dialogOpen(page)), '使っている途中では案内（ダイアログ）を出さない');
@@ -233,12 +306,11 @@ try {
       const { page } = s;
       if (reduced) await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.waitForSelector('#prompt', { timeout: 20_000 });
-      await page.waitForTimeout(1500);
+      await settled(page);
       s.logout();
       await page.click('#settings');
       await page.waitForSelector('#refreshAgents', { timeout: 10_000 });
-      await page.click('#refreshAgents');
-      await page.waitForTimeout(1500);
+      await retryUntil(page, () => document.getElementById('refreshAgents').click(), () => Boolean(document.querySelector('body.settings [data-act="login"]')));
       await backToChat(page);
       await page.waitForFunction(() => { const e = document.getElementById('noAgent'); return e && !e.hidden && e.offsetParent; }, null, { timeout: 20_000 });
       // 一覧: 送信ボタンが使えるようになった時（消える流れの始まり）→ leave の印 → 隠れた時
@@ -301,8 +373,7 @@ try {
     seedSdk(s.dataDir);
     await page.evaluate(() => document.getElementById('settings')?.click());
     await page.waitForSelector('#refreshAgents', { timeout: 10_000 });
-    await page.click('#refreshAgents');
-    await page.waitForTimeout(1500);
+    await retryUntil(page, () => document.getElementById('refreshAgents').click(), () => Boolean(document.querySelector('body.settings [data-act="login"]')));
     await backToChat(page);
     await page.waitForSelector('.outbox-fix [data-fix="resend"]', { timeout: 20_000 });
     check(true, '直ると［再送する］が出る');
@@ -332,7 +403,7 @@ try {
     const s = await scene({ login: true, sdk: 'local', backends: 'claude' });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
-    await page.waitForTimeout(1500);
+    await settled(page);
     s.logout();
     await page.click('#prompt');
     await page.keyboard.type('ログインし直して再送');
@@ -344,8 +415,7 @@ try {
     s.login();
     await page.evaluate(() => document.getElementById('settings')?.click());
     await page.waitForSelector('#refreshAgents', { timeout: 10_000 });
-    await page.click('#refreshAgents');
-    await page.waitForTimeout(1500);
+    await retryUntil(page, () => document.getElementById('refreshAgents').click(), () => Boolean(document.querySelector('body.settings [data-act="login"]')));
     await backToChat(page);
     await page.waitForSelector('.outbox-fix [data-fix="resend"]', { timeout: 20_000 });
     await page.click('.outbox-fix [data-fix="resend"]');
@@ -391,35 +461,34 @@ try {
     // 初回
     let s = await scene({ done: false, login: false, backends: 'claude,codex' });
     await s.page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
-    await s.page.waitForTimeout(1500);
+    await s.page.waitForFunction(() => { const r = document.querySelector('#onboardingDialog [data-row="claude"]'); return r && r.offsetParent && r.querySelector('.st'); }, null, { timeout: 20_000 });
     checkEdges(await leftEdges(s.page, '#onboardingDialog'), '初回の案内');
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
     // 出し直し
     s = await scene({ done: true, login: false, backends: 'claude,codex' });
     await s.page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
-    await s.page.waitForTimeout(1500);
+    await s.page.waitForFunction(() => { const r = document.querySelector('#onboardingDialog [data-row="claude"]'); return r && r.offsetParent && r.querySelector('.st'); }, null, { timeout: 20_000 });
     checkEdges(await leftEdges(s.page, '#onboardingDialog'), '出し直した案内');
     // 設定
     await s.page.click('#onboardingGear');
     await s.page.waitForSelector('#refreshAgents', { timeout: 10_000 });
-    await s.page.waitForTimeout(800);
+    await s.page.waitForFunction(() => document.querySelector('body.settings [data-row="claude"] .st'), null, { timeout: 10_000 });
     checkEdges(await leftEdges(s.page, 'body.settings'), '設定のエージェント設定');
     // 会話の中の一覧
     s = await scene({ login: true, sdk: 'local', backends: 'claude' });
     await s.page.waitForSelector('#prompt', { timeout: 20_000 });
-    await s.page.waitForTimeout(1500);
+    await s.page.waitForFunction(() => document.getElementById('prompt') && !document.getElementById('onboardingDialog')?.open && window.__ready !== false, null, { timeout: 20_000 });
     s.logout();
-    await s.page.click('#settings');
-    await s.page.waitForSelector('#refreshAgents', { timeout: 10_000 });
-    await s.page.click('#refreshAgents');
-    await s.page.waitForTimeout(1500);
+    await retryUntil(s.page, () => document.getElementById('railSettings').click(), () => Boolean(document.getElementById('refreshAgents')?.offsetParent));
+    await retryUntil(s.page, () => document.getElementById('refreshAgents').click(), () => Boolean(document.querySelector('body.settings [data-act="login"]')));
     await backToChat(s.page);
     await s.page.waitForFunction(() => { const e = document.getElementById('noAgent'); return e && !e.hidden && e.offsetParent; }, null, { timeout: 20_000 });
     checkEdges(await leftEdges(s.page, '#noAgent'), '会話の中の一覧');
     // 送れなかった行
-    s = await scene({ login: true, sdk: 'download', backends: 'claude', seed: true });
+    s = await scene({ login: true, sdk: 'download', backends: 'claude', seed: true, init: sdkReadyProbe });
     await s.page.waitForSelector('#prompt', { timeout: 20_000 });
-    await s.page.waitForTimeout(1800);
+    // 画面が「SDK は取得済み」という知らせを受け取るまで待ってから、SDK を消す
+    await s.page.waitForFunction(() => window.__sdkReady === true, null, { timeout: 20_000 });
     unseedSdk(s.dataDir);
     await s.page.click('#prompt');
     await s.page.keyboard.type('左端の確かめ');
@@ -433,7 +502,7 @@ try {
     const s = await scene({ login: true, sdk: 'local', backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-login')) } });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
-    await page.waitForTimeout(1500);   // 起動の直後は、案内の判定が済むまで設定を開かない
+    await settled(page);
     await page.evaluate(() => document.getElementById('railSettings').click());
     const card = page.locator('#authSec [data-agent="antigravity"]');
     await card.locator('button:has-text("状態を確認")').click();
@@ -457,7 +526,7 @@ try {
     const s = await scene({ login: true, sdk: 'local', backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-cancel')) } });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
-    await page.waitForTimeout(1500);
+    await settled(page);
     await page.evaluate(() => document.getElementById('railSettings').click());
     await page.waitForSelector('#authSec [data-agent="antigravity"]', { timeout: 10_000 });
     const card = page.locator('#authSec [data-agent="antigravity"]');
@@ -470,6 +539,66 @@ try {
     check(true, '［やめる］で待ちが外れて「ログイン」に戻る');
     await page.waitForTimeout(6000);   // 2 秒ごとの確かめ直しが何度か回る
     check(await card.getByRole('button', { name: 'ログイン', exact: true }).count() === 1 && await card.locator('button:has-text("やめる")').count() === 0, '確かめ直しの後も「ログイン」のまま（待ちに戻らない）');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['ログイン済みで別のログインが進んでいる間: 使える（窓・一覧・送信の無効が出ない）・行は「待っている」と［やめる］のまま', async () => {
+    // サーバーの返事に「別のログインが進んでいる」を重ねる（アカウントの追加・入り直しの途中の形）
+    const s = await scene({ login: true, sdk: 'local', backends: 'claude', init: () => {
+      const Orig = window.WebSocket;
+      const walk = (o) => { if (!o || typeof o !== 'object') return; if (o.loggedIn === true && 'installed' in o) o.pending = { url: 'https://example.com/login' }; for (const k of Object.keys(o)) walk(o[k]); };
+      window.WebSocket = class extends Orig {
+        constructor(...a) {
+          super(...a);
+          const wrap = (h) => (ev) => { let d = ev.data; try { const j = JSON.parse(d); walk(j); d = JSON.stringify(j); } catch { /* 文字列でない */ } return h.call(this, new Proxy(ev, { get: (t, k) => k === 'data' ? d : (typeof t[k] === 'function' ? t[k].bind(t) : t[k]) })); };
+          let on = null;
+          Object.defineProperty(this, 'onmessage', { get: () => on, set: (h) => { on = h; super.onmessage = h ? wrap(h) : h; } });
+          const add = this.addEventListener.bind(this);
+          this.addEventListener = (type, h, o) => add(type, type === 'message' && typeof h === 'function' ? wrap(h) : h, o);
+        }
+      };
+    } });
+    const { page } = s;
+    await page.waitForSelector('#prompt', { timeout: 20_000 });
+    await settled(page);
+    check(!(await dialogOpen(page)) && !(await listShown(page)), '使えるので、窓も会話の中の一覧も出ない');
+    await page.fill('#prompt', 'こんにちは');
+    check(await page.evaluate(() => !document.getElementById('send').disabled), '送信ボタンは無効にならない');
+    await retryUntil(page, () => document.getElementById('railSettings').click(), () => Boolean(document.querySelector('#authSec [data-agent="claude"]')), 15_000);
+    await page.evaluate(() => document.getElementById('setupTab')?.click());
+    const card = page.locator('#authSec [data-agent="claude"]');
+    await card.locator('button:has-text("やめる")').waitFor({ timeout: 10_000 });
+    check(/ログインを待っている/.test(await card.innerText()), '行は「ログインを待っている」のまま', await card.innerText());
+    check(await card.locator('button:has-text("やめる")').count() === 1, '［やめる］が出ている');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['ボット作成のエージェント欄: 使えないエージェントは選べず、状態が出る・使えるものは選べる（ルーティン作成にはエージェント欄が無い）', async () => {
+    // Claude は使える。Codex は未インストール、Antigravity は未ログイン
+    const s = await scene({ login: true, sdk: 'local', backends: 'claude,codex,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-bot')) } });
+    const { page } = s;
+    await page.waitForSelector('#prompt', { timeout: 20_000 });
+    await settled(page);
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id: 'new' } })));
+    await page.waitForSelector('#botView:not([hidden]) #botName', { timeout: 15_000 });
+    await page.waitForFunction(() => document.querySelector('#botModelChip .v')?.textContent, null, { timeout: 15_000 });
+    const before = await page.locator('#botModelChip').getAttribute('data-backend');
+    await page.locator('#botModelChip').click();
+    await page.waitForSelector('[data-key="backend:codex"]', { timeout: 10_000 });
+    // 状態の読み込みが済んで、使える Claude が選べる行になるのを待つ（済まないままなら、下の確認が行の中身つきで落ちる）
+    await page.waitForFunction(() => { const r = document.querySelector('[data-key="backend:claude"]'); return r && !r.classList.contains('agent-off'); }, null, { timeout: 20_000 }).catch(() => {});
+    const rows = await page.evaluate(() => [...document.querySelectorAll('[data-key^="backend:"]')].map(r => ({ id: r.dataset.key.slice(8), off: r.classList.contains('agent-off'), disabled: r.getAttribute('aria-disabled') === 'true', text: r.innerText.split(/\s+/).join(' ') })));
+    const by = Object.fromEntries(rows.map(r => [r.id, r]));
+    check(by.claude && !by.claude.off, '使える Claude Code は選べる行', rows);
+    check(by.codex?.off && by.codex.disabled, '未インストールの Codex は選べない行', rows);
+    check(by.antigravity?.off && by.antigravity.disabled, '未ログインの Antigravity は選べない行', rows);
+    check(/未インストール/.test(by.codex.text), 'Codex の行に状態「未インストール」が出る', by.codex.text);
+    check(/未ログイン|未確認/.test(by.antigravity.text), 'Antigravity の行に状態（まだ確かめていない: 未確認）が出る', by.antigravity.text);
+    await page.locator('[data-key="backend:codex"] .main').click({ force: true });
+    await page.waitForTimeout(500);
+    check(await page.locator('#botModelChip').getAttribute('data-backend') === before, '使えない行を押しても、選んでいるエージェントは変わらない', before);
+    await fs.promises.mkdir('D:/dev/pleiad/temporary/screenshots/mna-f6', { recursive: true });
+    await page.screenshot({ path: 'D:/dev/pleiad/temporary/screenshots/mna-f6/bot-agent-field.png' });
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
 
@@ -502,21 +631,26 @@ try {
   }]);
 
   scenes.push(['未インストールの行: ［コピー］で入れ方のコマンドがクリップボードに入る・公式の 1 行が無いエージェントはコマンドの欄を出さない', async () => {
-    const s = await scene({ login: false, backends: 'codex,antigravity' });
+    const s = await scene({ login: false, backends: 'claude,codex,antigravity', env: { AGENT_HOST_CLAUDE_BIN: MISSING } });
     const { page } = s;
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);   // 試験のブラウザーの中だけ
     await page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
     const rows = page.locator('#onboardingAgentList');
-    check(await rows.locator('[data-row="codex"] code').count() === 0, '入れる前（インストールを押す前）はコマンドを出さない');
-    await rows.locator('[data-row="codex"] button:has-text("インストール")').first().click();
-    await rows.locator('[data-row="codex"] code').waitFor({ timeout: 10_000 });
-    const want = (await rows.locator('[data-row="codex"] code').innerText()).trim();
-    check(/^npm install -g \S+/.test(want), 'Codex の行にコマンドが出る', want);
-    await rows.locator('[data-row="codex"] button:has-text("コピー")').click();
+    check(await rows.locator('[data-row="claude"] code').count() === 0, '入れる前（インストールを押す前）はコマンドを出さない');
+    await rows.locator('[data-row="claude"] button:has-text("インストール")').first().click();
+    await rows.locator('[data-row="claude"] code').waitFor({ timeout: 10_000 });
+    const want = (await rows.locator('[data-row="claude"] code').innerText()).trim();
+    // 公式がネイティブのインストーラーを勧めているので、サーバーの OS に合う 1 行（npm ではない）
+    check(want === (process.platform === 'win32' ? 'irm https://claude.ai/install.ps1 | iex' : 'curl -fsSL https://claude.ai/install.sh | bash'), 'Claude の行に、サーバーの OS に合う公式の 1 行が出る', want);
+    await rows.locator('[data-row="claude"] button:has-text("コピー")').click();
     await page.waitForTimeout(300);
     const got = await page.evaluate(() => navigator.clipboard.readText());
     check(got === want, '［コピー］でコマンドがクリップボードに入る', got);
-    check(await rows.locator('[data-row="codex"] button:has-text("コピーしました")').count() === 1, '押した後は「コピーしました」と言う');
+    check(await rows.locator('[data-row="claude"] button:has-text("コピーしました")').count() === 1, '押した後は「コピーしました」と言う');
+    await rows.locator('[data-row="codex"] button:has-text("インストール")').first().click();
+    await page.waitForTimeout(300);
+    const codexCmd = await rows.locator('[data-row="codex"] code').count();
+    check(process.platform === 'win32' ? codexCmd === 0 : (await rows.locator('[data-row="codex"] code').innerText()).trim() === 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', 'Codex: macOS・Linux は公式の curl の 1 行、Windows は確かめられていないので出さない', codexCmd);
     await rows.locator('[data-row="antigravity"] button:has-text("インストール")').first().click();
     await page.waitForTimeout(300);
     check(await rows.locator('[data-row="antigravity"] code').count() === 0 && await rows.locator('[data-row="antigravity"] button:has-text("コピー")').count() === 0, '公式の 1 行が無い Antigravity にはコマンドの欄・［コピー］が出ない');
@@ -552,7 +686,7 @@ try {
     const s = await scene({ login: false, sdk: 'local', backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-maybe')) } });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
-    await page.waitForTimeout(2500);
+    await settled(page);
     check(!(await dialogOpen(page)) && !(await listShown(page)), '窓も一覧も出ていない');
     await page.evaluate(() => {
       const send = WebSocket.prototype.send;
@@ -570,10 +704,10 @@ try {
     // ログイン済みの Claude（使える）だけ。エージェントの設定のページを開いて 10 秒おく
     let s = await scene({ login: true, sdk: 'local', backends: 'claude', env: { FAKE_CLAUDE_COUNT_FILE: count } });
     await s.page.waitForSelector('#prompt', { timeout: 20_000 });
-    await s.page.waitForTimeout(1500);   // 起動の直後は、案内の判定が済むまで設定を開かない
+    await settled(s.page);
     await s.page.evaluate(() => document.getElementById('railSettings').click());
     await s.page.waitForSelector('#authSec', { state: 'visible', timeout: 10_000 });
-    await s.page.waitForTimeout(1500);
+    await stable(s.page, read, 3000);   // 起動の確かめが落ち着いてから数え始める
     const base = read();
     await s.page.waitForTimeout(10_000);
     check(read() === base, '使えると分かっている Claude の CLI を、裏の確かめ直しは起こさない', { base, now: read() });
@@ -581,14 +715,14 @@ try {
     fs.rmSync(count, { force: true });
     s = await scene({ login: false, sdk: 'local', backends: 'claude,codex', env: { FAKE_CLAUDE_COUNT_FILE: count } });
     await s.page.waitForSelector('#prompt', { timeout: 20_000 });
-    await s.page.waitForTimeout(1500);
-    await s.page.evaluate(() => { document.getElementById('onboardingGear')?.click(); });
-    await s.page.waitForTimeout(500);
-    await s.page.evaluate(() => document.getElementById('appearanceTab').click());
-    await s.page.waitForTimeout(500);
+    // 判定が済んで窓が出るのを待ってから歯車を押す（先に設定を開くと、判定の後で窓が設定の上に出る）
+    await s.page.waitForFunction(() => Boolean(document.getElementById('onboardingDialog')?.open), null, { timeout: 20_000 });
+    await retryUntil(s.page, () => { document.getElementById('onboardingGear')?.click(); document.getElementById('appearanceTab')?.click(); }, () => { const p = document.getElementById('appearancePanel'); return Boolean(p && p.offsetParent); });
+    // 起動の確かめが落ち着く（数が 5 秒変わらない）のを待ってから数え始める
+    await stable(s.page, read, 5000);
     const b2 = read();
     await s.page.waitForTimeout(9000);
-    check(read() === b2, '外観のページを見ている間は、確かめ直しが CLI を起こさない', { b2, now: read() });
+    check(read() === b2, '外観のページを見ている間は、確かめ直しが CLI を起こさない', { b2, now: read(), dialog: await dialogOpen(s.page), appearance: await s.page.evaluate(() => Boolean(document.getElementById('appearancePanel')?.offsetParent)), auth: await s.page.evaluate(() => document.getElementById('authSec')?.getClientRects().length ?? -1) });
     await s.page.evaluate(() => document.getElementById('setupTab').click());
     await s.page.waitForSelector('#authSec', { state: 'visible', timeout: 10_000 });
     const b3 = read();
@@ -607,7 +741,7 @@ try {
     const s = await scene({ login: false, sdk: 'local', backends: 'claude', init: () => { window.plyRemote = { shell: 'desktop', hostId: 'abcdef012345', hostName: 'dev-host' }; } });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
-    await page.waitForTimeout(3000);
+    await page.waitForFunction(() => { const e = document.getElementById('noAgent'); return e && !e.hidden && e.offsetParent; }, null, { timeout: 20_000 }).catch(() => {});
     check(!(await dialogOpen(page)), 'リモートの窓には閉じられない窓を出さない');
     check(await listShown(page), '会話の中の一覧が出る');
     const text = await page.innerText('#noAgent');
@@ -624,7 +758,7 @@ try {
     // ページ側は、終了の確認（beforeunload）を持たず、モーダルが窓を閉じるのを止めないことだけを確かめる
     const s = await scene({ done: false, login: false, backends: 'claude,codex' });
     await s.page.waitForSelector('#prompt', { timeout: 20_000 });
-    await s.page.waitForTimeout(1500);
+    await s.page.waitForFunction(() => Boolean(document.getElementById('onboardingDialog')?.open), null, { timeout: 20_000 }).catch(() => {});
     check(await dialogOpen(s.page), '閉じられない窓が出ている');
     const before = await s.page.evaluate(() => ({ hasHandler: typeof window.onbeforeunload === 'function' }));
     check(!before.hasHandler, 'ページは beforeunload の止め方を持たない');
@@ -637,8 +771,10 @@ try {
   let failed = 0;
   for (const [name, fn] of scenes) {
     if (only && !name.includes(only)) continue;
-    try { await fn(); console.log(`ok: ${name}`); } catch (e) { failed++; console.log(`FAIL: ${name}\n  ${e.message}
-  （直前に通った確認: ${results.at(-1) ?? 'なし'}）`); }
+    for (let rep = 0; rep < (Number(process.env.MISSING_AGENT_REPEAT) || 1); rep++) {
+    try { await fn(); console.log(`ok: ${name}`); } catch (e) { failed++; console.log(`FAIL: ${name}\n  ${e.message} @ ${(e.stack||"").split(String.fromCharCode(10)).find(l=>l.includes("missing-agent.mjs"))}
+  （直前に通った確認: ${results.at(-1) ?? 'なし'}）${await diagnose()}`); }
+    }
   }
   console.log(`${results.length} checks, ${failed} failed`);
   if (failed) process.exitCode = 1;

@@ -8,9 +8,9 @@
 .arow .st{display:inline-flex;align-items:center;gap:6px}
 .arow .st::before{content:"";width:6px;height:6px;border-radius:50%;color:var(--ink-blue);background:currentColor;flex:none}
 .arow .st.out::before{background:transparent;box-shadow:inset 0 0 0 1.5px var(--line-strong)}
-.arow .st.fail::before,.arow .st.wait::before,.arow .st.run::before{display:none}
+.arow .st.fail::before,.arow .st.wait::before,.arow .st.fetching::before{display:none}
 .arow .st.wait{color:var(--ink-mark)}
-.arow .st.run{color:var(--ink-weak);white-space:nowrap}
+.arow .st.fetching{color:var(--ink-weak);white-space:nowrap;flex:none}   /* 全体の .run（回る弧の 14px 四方）と名前をぶつけない。縮めず、入らなければ棒が次の行へ回る */
 .arow .st .run{width:14px;height:14px;color:inherit}
 .arow .st .run svg{width:14px;height:14px}
 .ar2{display:grid;grid-template-columns:18px minmax(0,1fr) auto;column-gap:10px;align-items:start;padding:7px 10px 7px 14px}
