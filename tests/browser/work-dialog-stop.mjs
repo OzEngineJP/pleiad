@@ -166,6 +166,21 @@ try {
   await wait(() => !stopBtn().shown, 'stop button hidden after the stop', 8000);
   console.log('PASS: running child — one stop button (filled square 34px, no heading 停止); abort stops it; list/heading marks change together', JSON.stringify({ before, after: marks(runT.taskId) }));
 
+  // ---- 2a. 止めた子へ人が直接送ると、会話は走り直す。タスクの状態は変わらない（メインと同じ）が、
+  //          詳細の見出し・一覧の行・■ は「実行中」に合わせる。止まれば「中断」に戻る ----
+  const stoppedStatus = (await taskOf(runT.taskId)).status;
+  const stoppedMark = marks(runT.taskId).head;
+  await client.cmd('sendMessage', { sessionId: runChild, messageId: 'stop-rerun-0001', prompt: `steps:@${runFile}` });
+  await wait(() => stopBtn().shown, 'stop button on the re-run child', 10_000);
+  await wait(() => { const m = marks(runT.taskId); return m.head && m.head === m.row && m.head !== stoppedMark; }, 'marks show running again', 8000);
+  assert.equal((await taskOf(runT.taskId)).status, stoppedStatus, 'the task row itself keeps its terminal state (same as main)');
+  assert.deepEqual(marks(runT.taskId), { head: '実行中', row: '実行中' }, 'heading and list row both say running');
+  shot('2a-rerun-1280');
+  pressStop();
+  await wait(() => !stopBtn().shown, 'stop button hidden after stopping the re-run', 12_000);
+  await wait(() => { const m = marks(runT.taskId); return m.head && m.head === m.row && m.head === stoppedMark; }, 'marks back to stopped', 8000);
+  console.log('PASS: re-run after a stop — heading, list row and ■ follow the running turn, and return to stopped', JSON.stringify({ stoppedStatus, marks: marks(runT.taskId) }));
+
   // ---- 2b. 終わった子: 入力欄の上の帯に、この子の文脈の使用量が出る（表示だけ。メインの帯の値ではなく子の値） ----
   await openCard(doneT.taskId, 'finished');
   await wait(() => evaluate(() => { const s = document.getElementById('wkContextStrip'); return !!s && !s.hidden && /コンテキスト/.test(s.textContent) && /82%/.test(s.textContent); }), 'child context meter in the strip', 10_000);
@@ -229,8 +244,9 @@ try {
   await client.cmd('runTurn', { backend: 'fake', cwd: work, prompt: 'slow' });
   const slowSession = (await client.waitFor(e => e.type === 'session' && e.sessionId && !known.has(e.sessionId), { from: slowMark, ms: 15_000 })).sessionId;
   assert.ok(slowSession, 'a second session is running');
-  evaluate(id => document.querySelector(`#groups .row[data-session="${id}"]`)?.click(), slowSession);
-  await wait(() => evaluate(() => { const b = document.getElementById('abort'); return !!b && !b.hidden && b.offsetParent !== null; }), 'main stop button');
+  await wait(() => evaluate(id => { const row = document.querySelector(`#groups .row[data-session="${id}"]`); if (!row) return false; row.click(); return true; }, slowSession), 'the running session row in the list');
+  try { await wait(() => evaluate(() => { const b = document.getElementById('abort'); return !!b && !b.hidden && b.offsetParent !== null; }), 'main stop button'); }
+  catch (e) { console.log('DEBUG', JSON.stringify(evaluate(() => ({ cur: document.querySelector('#groups .row[aria-current]')?.dataset.session, abort: document.getElementById('abort')?.hidden, dlg: document.getElementById('workDialog').open }))), slowSession); throw e; }
   const m = evaluate(() => {
     const b = document.getElementById('abort'); const r = b.getBoundingClientRect(); const s = b.querySelector('svg').getBoundingClientRect();
     return { w: Math.round(r.width), h: Math.round(r.height), svgW: Math.round(s.width), svgH: Math.round(s.height), text: b.textContent.trim(), label: b.getAttribute('aria-label'), title: b.title };

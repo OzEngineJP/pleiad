@@ -6296,14 +6296,18 @@ function backgroundItems(scope = null) {
   const nativeKeys = new Set(items.map(i => i.key));
   const trees = here ? [...here].flatMap(id => taskTree(allTasks(), id)) : plyTasksHere();
   for (const { task, depth, rootLive, childCount } of trees) {
-    const live = TASK_LIVE.has(task.status);
-    const waiting = live && taskWaiting(task);
+    // 終わった（中断した）子へ人が直接送ると、タスクの状態は変わらないまま会話のターンだけが走り直す（メインと同じ）。
+    // そのあいだは一覧の行と見出しも「実行中」にする（■ は runningIds で既に出る）
+    const rerun = !TASK_LIVE.has(task.status) && !task.host && Boolean(task.sessionId) && state.runningIds.has(task.sessionId);
+    const taskStatus = rerun ? 'running' : task.status;
+    const live = TASK_LIVE.has(taskStatus);
+    const waiting = live && !rerun && taskWaiting(task);
     const hostOffline = Boolean(task.host) && live && !hostOnlineNow(task.host.hostId);
     const item = {
       key: `t:${task.taskId}`, group: 'agent', source: 'task', title: backgroundTitle(task), request: task.task,
       depth, rootLive, childCount, parentSessionId: task.parentSessionId, backend: task.backend,
-      model: task.model || null, effort: task.effort || null, status: TASK_MARK[task.status] ?? null,
-      taskStatus: waiting ? 'waiting' : task.status, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
+      model: task.model || null, effort: task.effort || null, status: TASK_MARK[taskStatus] ?? null,
+      taskStatus: waiting ? 'waiting' : taskStatus, live, waiting, startedAt: task.createdAt ?? null, endedAt: live ? null : task.updatedAt ?? null,
       childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
       pendingMessages: task.pendingMessages ?? 0, instructionRevision: task.instructionRevision ?? 0,
       worktree: task.worktree ?? null, updatedAt: task.updatedAt ?? null,
