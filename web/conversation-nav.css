@@ -25,6 +25,8 @@
   background:var(--surface-float);color:var(--ink);box-shadow:0 8px 28px var(--shadow);border-radius:var(--r-pill);cursor:pointer;
   transition:background var(--dur-fast) var(--ease-out),width var(--dur) var(--ease-out);animation:nav-rise var(--dur) var(--ease-out)}
 .nav-latest:hover{background:var(--surface-float-hover)}
+/* 作業のダイアログには地図（右端の目盛り）が無いので、右端の寄せは狭い画面と同じ */
+.work-body-frame > .nav-latest{right:16px;bottom:12px}
 .nav-latest .nav-arrow{width:17px;height:17px;flex:none}
 /* 走っている間は pill に伸びて、矢印の左に §6 の弧 */
 .nav-latest.running{width:56px}
