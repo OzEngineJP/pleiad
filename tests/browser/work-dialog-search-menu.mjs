@@ -134,6 +134,8 @@ try {
   await sleep(500);
   ab('press', 'Control+f');
   await wait(() => tocState().open, 'main toc opened by Ctrl+F');
+  // 検索欄へのフォーカスは次の描画（requestAnimationFrame）で付く。開いた直後に見ると、描画が遅い窓では間に合わない
+  await wait(() => tocState().focused, 'main toc search field focused');
   let toc = tocState();
   assert.equal(toc.inDialog, false, 'main toc is not inside the work dialog');
   assert.ok(toc.focused, 'the search field has focus');
@@ -156,6 +158,8 @@ try {
   assert.equal(entry.label, entry.mainLabel, 'same wording as the main button');
   ab('press', 'Control+f');
   await wait(() => tocState().open, 'modal toc opened by Ctrl+F');
+  // 検索欄へのフォーカスは次の描画（requestAnimationFrame）で付く。開いた直後に見ると、描画が遅い窓では間に合わない
+  await wait(() => tocState().focused, 'modal toc search field focused');
   toc = tocState();
   assert.ok(toc.inDialog && toc.focused, `the toc is inside the dialog with focus: ${JSON.stringify(toc)}`);
   const words = list => list.map(x => x.replace(/[0-9]/g, ''));
