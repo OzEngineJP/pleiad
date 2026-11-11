@@ -6760,7 +6760,9 @@ function syncWorkContext() {
   const backend = workControls.selection(id).backend;
   const canCompact = Boolean(capsOf(backend).compact);
   const parts = { canCompact, compacting: phase?.phase === 'start', why: canCompact ? '' : t('compaction.agentManaged', { agent: labelOf(backend) }), actions: [] };
-  if (hasUsage) {
+  parts.phase = phase?.phase === 'start' ? 'running' : phase?.phase === 'failed' ? 'failed' : '';
+  // 狭い形では、圧縮中・失敗はメーターの位置に状態のチップを出す（メインと同じ）
+  if (hasUsage && !(workComposer.narrow && parts.phase)) {
     const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
     const amounts = { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) };
     const bar = el('span', 'context-meter-bar');
@@ -6769,7 +6771,7 @@ function syncWorkContext() {
     bar.append(fill);
     const caret = svgEl('svg', { class: 'i caret', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
     caret.append(svgEl('path', { d: 'M7 10l5 5 5-5' }));
-    parts.nodes = [document.createTextNode(t('compaction.context')), bar, document.createTextNode(phoneView.matches ? t('compaction.meterShort', { rate }) : t('compaction.meter', amounts)), caret];
+    parts.nodes = [document.createTextNode(t('compaction.context')), bar, document.createTextNode(workComposer.narrow ? t('compaction.meterShort', { rate }) : t('compaction.meter', amounts)), caret];
     parts.label = [t('compaction.meterLabel', amounts), t('compaction.openActions')].join(t('compaction.spokenJoin'));
   }
   if (phase?.phase === 'start') parts.text = [runMark(), document.createTextNode(t('compaction.running'))];
@@ -6782,7 +6784,7 @@ function syncWorkContext() {
       retry.onclick = () => compactFromDialog(id);
       parts.actions.push(retry);
     }
-    if (phase.reason && !phoneView.matches) parts.actions.push(el('small', null, phase.reason));
+    if (phase.reason && !workComposer.narrow) parts.actions.push(el('small', null, phase.reason));
   }
   workComposer.setContext(parts);
 }
@@ -11156,6 +11158,7 @@ workComposer = createWorkComposer({
   cwdOf: (id) => workControls.selection(id).cwd || '',
   compactNote: (id) => t('compaction.agentManaged', { agent: labelOf(workControls.selection(id).backend) }),
   onStop: (item) => stopFromDialog(item),
+  onStripLevel: () => syncWorkContext(),
   onResume: (id) => {
     completionNotifications.requestPermission();
     workComposer.say('');

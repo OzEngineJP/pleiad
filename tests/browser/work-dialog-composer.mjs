@@ -266,6 +266,41 @@ try {
   assert.ok(evaluate(() => document.getElementById('wkContextMeterPop').hidden), 'the menu closes after choosing');
   console.log('PASS: the modal strip has the meter menu (compact goes to the child) and the usage chip with its pop inside the dialog');
 
+  // ---- 5d. 帯は列の幅で縮む（メインの fitContextStrip と同じ。右の欄を開くと詳細の列が狭まる）。はみ出さず、字が切れない ----
+  const stripFit = () => evaluate(() => {
+    const strip = document.getElementById('wkContextStrip');
+    const sr = strip.getBoundingClientRect();
+    const kids = [...strip.children].filter(n => n.offsetParent).map(n => { const r = n.getBoundingClientRect(); return { id: n.id || n.className, right: Math.round(r.right - sr.left), w: Math.round(r.width) }; });
+    const clipped = ['wkContextMeter', 'wkUsageChip'].filter(id => { const n = document.getElementById(id); return n && n.offsetWidth > 0 && getComputedStyle(n).overflowX !== 'visible' && n.scrollWidth > n.clientWidth + 3; }).map(id => { const n = document.getElementById(id); return `${id}:${n.scrollWidth}>${n.clientWidth}`; });
+    return { w: Math.round(sr.width), cls: strip.className, meter: document.getElementById('wkContextMeter').textContent, chip: document.getElementById('wkUsageChip').textContent, kids,
+      overflow: kids.some(k => k.right > Math.round(sr.width) + 1), clipped, pane: document.getElementById('workBody').dataset.paneKind ?? '', composerRight: Math.round(document.querySelector('.wk-composer').getBoundingClientRect().right), scrollW: document.documentElement.scrollWidth };
+  });
+  for (const width of [1280, 1100, 900]) {
+    await closeDialog();
+    ab('set', 'viewport', String(width), '800');
+    await sleep(500);
+    await openCard(done.taskId, `done at ${width}`);
+    await wait(() => evaluate(() => { const w = document.getElementById('wkContextMeterWrap'); return !!w && !w.hidden && w.offsetWidth > 0; }), `strip at ${width}`);
+    await sleep(500);
+    const plain = stripFit();
+    console.log(`strip ${width} (no pane)`, JSON.stringify(plain));
+    assert.ok(!plain.overflow && plain.clipped.length === 0, `strip fits at ${width} without a pane: ${JSON.stringify(plain)}`);
+    shot(`5d-strip-${width}`);
+    if (evaluate(() => !!document.getElementById('workTocEntry') && document.getElementById('workTocEntry').offsetWidth > 0)) {
+      clickOn('#workTocEntry', 'open the right pane');
+      await sleep(900);
+      const withPane = stripFit();
+      console.log(`strip ${width} (pane)`, JSON.stringify(withPane));
+      assert.ok(!withPane.overflow && withPane.clipped.length === 0, `strip fits at ${width} with the right pane: ${JSON.stringify(withPane)}`);
+      shot(`5d-strip-${width}-pane`);
+    }
+  }
+  await closeDialog();
+  ab('set', 'viewport', '1280', '800');
+  await sleep(400);
+  await openCard(done.taskId, 'done after the strip widths');
+  console.log('PASS: the strip shrinks with the column (compact / tight) and never overflows or clips');
+
   // ---- 6. Esc: 開いているメニュー → ダイアログ。書きかけは子ごとに残り、開き直すと戻る ----
   clickOn('#wkModelChip', 'model chip');
   await wait(() => evaluate(() => [...document.querySelectorAll('.pop, [role=listbox], [role=menu]')].some(n => n.offsetWidth > 0 && n.closest('#workDialog'))), 'model pop open');
@@ -296,6 +331,9 @@ try {
     return { vh: innerHeight, composer: box(f), last: msgs.length ? box(msgs.at(-1)) : null, buttons, scrollW: document.documentElement.scrollWidth };
   });
   console.log('360', JSON.stringify(narrow));
+  const strip360 = stripFit();
+  console.log('strip 360', JSON.stringify(strip360));
+  assert.ok(!strip360.overflow && strip360.clipped.length === 0 && /^コンテキスト\d+%$/.test(strip360.meter), `strip fits at 360 with the short meter: ${JSON.stringify(strip360)}`);
   assert.ok(narrow.composer.bottom <= narrow.vh, 'composer is inside the viewport');
   assert.ok(narrow.last.bottom <= narrow.composer.top + 1, 'last message is above the composer');
   assert.ok(narrow.buttons.length >= 3 && narrow.buttons.every(b => b.w >= 44 && b.h >= 44), `heading buttons are 44px: ${JSON.stringify(narrow.buttons)}`);

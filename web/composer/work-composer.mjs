@@ -36,6 +36,7 @@ const UNUSED = ['armedChip', 'draftSaved', 'armedNote', 'draftFail', 'connNote',
  * @param {(childId: string) => string} h.cwdOf スキル候補を引く作業場所
  * @param {(childId: string) => string} h.compactNote /compact を使えない理由
  * @param {(item: object) => void} h.onStop 中断ボタンを押した（送るものは呼び出し側が決める。web/work-stop.mjs）
+ * @param {() => void} h.onStripLevel 帯を縮める段が変わった（呼び出し側が narrow を見て帯の字を描き直す）
  * @param {(childId: string) => void} h.onResume 再開ボタンを押した（web/interrupt.mjs の再開。呼び出し側が送る）
  * @param {(childId: string) => void} h.compact 文脈のメーターのメニューの［今すぐ圧縮］（この子の会話を圧縮する）
  * @param {() => void} h.compactionSettings メニューの［設定］（自動圧縮の設定のページを開く）
@@ -152,10 +153,49 @@ export function createWorkComposer(h) {
       els.contextMeter.setAttribute('aria-label', parts.label);
     } else closeMeter();
     for (const node of [...els.contextStripStatus.children]) if (node !== els.contextStripText) node.remove();
+    els.contextStrip.dataset.phase = parts?.phase ?? '';
     els.contextStripText.replaceChildren(...(parts?.text ?? []));
     if (parts?.title) els.contextStripText.title = parts.title; else els.contextStripText.removeAttribute('title');
     els.contextStripStatus.append(...(parts?.actions ?? []));
     els.contextStrip.hidden = !(childId && (parts || !els.usageChip.hidden));
+  }
+
+  // 帯は列の幅で縮める（メインの fitContextStrip と同じ。段 0 は広い形、1 は 480px 以下と同じ形（.compact）、2 は棒も外す（.tight））。
+  // 入り切らなければ 1 段縮め、縮めたときに要った幅を覚えて、列がそこまで広がったら 1 段戻す
+  const phone = matchMedia('(max-width:480px)');
+  let level = 0;
+  const stripNeed = [];
+  const narrow = () => phone.matches || level > 0;
+  function fitStrip() {
+    const strip = els.contextStrip;
+    const width = strip.getBoundingClientRect().width;
+    strip.classList.toggle('compact', narrow());
+    if (strip.hidden || !width) return;
+    const set = (next) => {
+      level = next;
+      strip.classList.toggle('compact', narrow());
+      strip.classList.toggle('tight', level > 1);
+    };
+    // 札が要る幅。押せる範囲の ::before が帯の外へ 2px 出るので、scrollWidth ではなく札の右端で測る
+    const need = () => {
+      const left = strip.getBoundingClientRect().left;
+      let right = 0;
+      for (const node of strip.children) if (node.offsetParent) right = Math.max(right, node.getBoundingClientRect().right - left);
+      return right;
+    };
+    const before = level;
+    while (level > 0 && width >= stripNeed[level - 1]) set(level - 1);
+    if (level !== before) h.onStripLevel?.();
+    while (level < 2 && need() > width + 0.5) {
+      stripNeed[level] = need();
+      set(level + 1);
+      h.onStripLevel?.();
+    }
+  }
+  {
+    const watch = new ResizeObserver(() => fitStrip());
+    for (const node of [els.contextStrip, els.contextMeterWrap, els.usageChip, els.contextStripStatus]) watch.observe(node);
+    phone.addEventListener('change', () => { fitStrip(); h.onStripLevel?.(); });
   }
 
   // 設定のチップ（モデルと effort・作業場所・承認モード）。値は子の行、変えると次のターンから効く（メインと同じ予約）
@@ -392,6 +432,8 @@ export function createWorkComposer(h) {
     setContext(parts) { contextParts = parts ?? null; paintStrip(); },
     /** 使用量のチップの出入りが変わった（web/header-usage.mjs の onVisibility）。帯ごと出すか決め直す */
     syncStrip: paintStrip,
+    /** 帯が 480px 以下と同じ縮んだ形か（メーターの字を短くする） */
+    get narrow() { return narrow(); },
     /** 欄の上の一行（保存できなかった理由など） */
     say,
     get childId() { return childId; },
