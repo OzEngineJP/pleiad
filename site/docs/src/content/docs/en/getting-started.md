@@ -35,7 +35,7 @@ How sign-in proceeds differs per agent:
 | Grok | Run `grok login` in a terminal (`grok login --device-auth` when there is no browser) | "Sign out" in Pleiad |
 
 - Sign-in waits for about 10 minutes. Press "Cancel" to stop waiting.
-- Claude needs the Claude Agent SDK as well as the CLI. After you install, Pleiad downloads it alongside the CLI and shows the progress on the Claude row. If the download fails, press "Try again" on the row.
+- Claude needs the Claude Agent SDK as well as the CLI. Press "Download" on the Claude row — you don't have to wait for the CLI install or sign-in to finish. If the download fails, press "Try again" on the row.
 - OpenCode's free models work without signing in; sign in when you want to connect other providers.
 - When you are using Pleiad from a phone or another PC, sign in on the PC where Pleiad runs (the host).
 
