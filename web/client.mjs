@@ -8219,7 +8219,8 @@ const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
-  getContext: anchor => channelsUi.contextForPanel(anchor) ?? workContext(anchor) ?? ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
+  // 要素の無い問い合わせ（右の欄の ⋮ の「今のタブ」の操作など）でも、欄がいまダイアログに付いている間は、そのダイアログの子の会話の内容を答える
+  getContext: anchor => channelsUi.contextForPanel(anchor) ?? workContext(anchor ?? (inWorkModal(null) ? $('workBody') : null)) ?? ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); modalEntry?.paint(); },
   // 内蔵ブラウザーの開け閉めのばね。頭のアイコンと ✖ の受け渡しが追う（web/panel-handoff.mjs）
   onMotion: (p, phase) => browserEntry?.motion?.(p, phase),
@@ -8229,11 +8230,15 @@ const filePreview = setupFilePreview({
   osActions: () => state.osActions === true,
   // 作業のダイアログの中（子の会話・その右の欄）で押したら、いま選んでいる子の入力欄へ。そのほかはメインの入力欄へ
   useFile: (file, element) => {
-    if (element?.closest?.('#workDialog')) { workComposer?.insert({ files: [file] }); return; }
+    if (inWorkModal(element)) { workComposer?.insert({ files: [file] }); return; }
     if (attachHostFiles([file])) $('prompt').focus();
   },
-  canUse: element => (element?.closest?.('#workDialog') ? Boolean(workComposer?.visible) : undefined),
+  canUse: element => (inWorkModal(element) ? Boolean(workComposer?.visible) : undefined),
 });
+/** 作業のダイアログの中の操作か。押した要素があればその位置で、無ければ（右の欄の ⋮ の今のタブの操作）右の欄がいまダイアログに付いているかで決める */
+function inWorkModal(element) {
+  return element ? Boolean(element.closest?.('#workDialog')) : $('filePreview')?.parentElement?.id === 'workSplit';
+}
 // 頭の行の右の欄のボタンと近道（web/header-entries.mjs）。会話を開いていない間は出さない
 // 右の欄の開け閉め。Chrome の窓かタブがあればその窓を映す。つないであって窓がまだ無ければ、新しいタブ（Pleiad の新しいタブのページ）で窓を作る
 // （ADR 0294 の 4 の 5 と同じ。Chrome の窓はいつもタブを 1 つ持つ）。Chrome が無ければ、新しいタブのページを 1 枚の iframe で出す
