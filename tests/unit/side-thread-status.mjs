@@ -194,6 +194,61 @@ export default async function (t) {
     t.ok('fork の器の中の行は level 4', rowOf(root, 'child')?.getAttribute('aria-level') === '4');
   } finally { familyDom.restore(); }
 
+  // ---- 並びは新しい順だけ。状態が長く動いていない会話も浮かせず、印（◌ と日数）も出さない（docs/design-system.md §4.1「行」）
+  const orderDom = installDom();
+  try {
+    const side = createSide({});
+    const root = orderDom.els.get('groups');
+    const now = new Date().toISOString();
+    const old = new Date(Date.now() - 30 * 86400000).toISOString();
+    const list = [
+      { id: 'fresh', title: 'fresh', status: 'A', lastModified: 3000, statusChangedAt: now },
+      { id: 'idle', title: 'idle', status: 'A', lastModified: 2000, statusChangedAt: old },
+      { id: 'fam', title: 'fam', status: 'A', lastModified: 1000, statusChangedAt: old },
+      { id: 'kin-old', title: 'kin-old', status: 'A', lastModified: 1100, statusChangedAt: old, parent: { sessionId: 'fam' } },
+      { id: 'kin-new', title: 'kin-new', status: 'A', lastModified: 1200, statusChangedAt: now, parent: { sessionId: 'fam' } },
+    ];
+    side.render(list, { statuses: [{ status: 'A' }], currentId: 'kin-old' });
+    const ids = [];
+    walk(sectionOf(root, 'A'), (n) => { if (n.dataset.session) ids.push(n.dataset.session); });
+    t.ok('状態の中は新しい順。器は中で一番新しい行の時刻で並び、根が先頭・枝は新しい順', ids.join() === 'fresh,idle,fam,kin-new,kin-old', ids.join());
+    t.ok('状態が長く動いていない会話にも ◌ と日数を出さない', !find(root, (n) => n.classList.contains('stale')) && !root.textContent.includes('◌'));
+    t.ok('状態が長く動いていない会話も、ほかの行と同じ相対の時刻を出す', !!find(rowOf(root, 'idle'), (n) => n.classList.contains('row-when')));
+  } finally { orderDom.restore(); }
+
+  // ---- 圧縮の予定・圧縮済みは脇に出さない（会話の中の文脈メーターと「自動で圧縮しました」が受け持つ）
+  const compactDom = installDom();
+  try {
+    const side = createSide({});
+    const root = compactDom.els.get('groups');
+    side.render([
+      { id: 'planned', title: 'planned', status: 'A', lastModified: 2000, compactionAt: Date.now() + 3600000 },
+      { id: 'done', title: 'done', status: 'A', lastModified: 1000, compacted: true },
+    ], { statuses: [{ status: 'A' }] });
+    t.ok('圧縮の予定の時計も「圧縮済み」も行に出さない', !find(root, (n) => n.classList.contains('row-compaction') || n.classList.contains('row-sched'))
+      && !root.textContent.includes('compaction.'));
+  } finally { compactDom.restore(); }
+
+  // ---- 畳んだ器の要約は印だけ。状態ごとの件数は出さない（docs/design-system.md §4.1「グループの要約」）
+  const sumDom = installDom();
+  try {
+    const side = createSide({});
+    const root = sumDom.els.get('groups');
+    const fork = [
+      { id: 'r1', title: 'root 1', status: 'A', lastModified: 3000 },
+      { id: 'r1a', title: 'kin 1', status: 'A', lastModified: 2900, parent: { sessionId: 'r1' } },
+      { id: 'r2', title: 'root 2', status: 'A', lastModified: 2000 },
+      { id: 'r2a', title: 'kin 2', status: 'A', lastModified: 1900, parent: { sessionId: 'r2' } },
+    ];
+    side.render(fork, { statuses: [{ status: 'A' }], waitingIds: new Set(['r1a']) });
+    const box1 = find(root, (n) => n.dataset.sideKey === 'family:r1');
+    const box2 = find(root, (n) => n.dataset.sideKey === 'family:r2');
+    const sum1 = box1 && find(box1, (n) => n.classList.contains('fam-sum'));
+    t.ok('畳んだ器に状態ごとの件数を出さない', !!box1 && !!box2 && !find(root, (n) => n.classList.contains('fam-count')));
+    t.ok('承認待ちの印は今までどおり要約に出る', !!sum1 && !!find(sum1, (n) => n.classList.contains('wait')));
+    t.ok('印が 1 つも無い器は要約の行を置かない', !find(box2, (n) => n.classList.contains('fam-sum')));
+  } finally { sumDom.restore(); }
+
   // ---- onSetStatus → サーバーへの振り分け（web/client.mjs を vm で切り出して走らせる）
   {
     const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');

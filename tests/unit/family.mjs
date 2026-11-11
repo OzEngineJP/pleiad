@@ -22,7 +22,7 @@ export default function (t) {
   t.ok("根は kin に入らない", !fams[0].kin.some((k) => k.id === "root"));
   t.ok("枝なしの会話は kin が空（器にしない目印）", fams[1].kin.length === 0);
 
-  // 入力の順をそのまま保つ。並べ替えは呼び出し側（放置が先、あとは新しい順）の仕事
+  // 入力の順をそのまま保つ。並べ替えは呼び出し側（新しい順）の仕事
   const order = familiesOf([row("solo"), row("root"), row("b", "root"), row("a", "root")]);
   t.ok("根は見えた順", shape(order) === "solo[] root[b a]", shape(order));
 

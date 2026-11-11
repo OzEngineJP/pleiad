@@ -43,10 +43,10 @@ export const elapsed = (when) => fmt.elapsed(when);
 /** 相対時刻。「たった今」「3分前」。一覧の行と候補の補足に */
 export const relTime = (when) => fmt.relative(when);
 
-/** 「…」の絵（行・見出しの操作。右クリックのメニューと同じ中身を開くボタンに置く） */
+/** 「…」の絵（行・見出しの操作。右クリックのメニューと同じ中身を開くボタンに置く）。縦の 3 点（⋮。docs/design-system.md「「…」の形」） */
 export function dotsIcon() {
   const svg = svgEl("svg", { class: "i", viewBox: "0 0 24 24", "aria-hidden": "true" });
-  for (const cx of [5, 12, 19]) svg.append(svgEl("circle", { cx, cy: 12, r: 1.2 }));
+  for (const cy of [5, 12, 19]) svg.append(svgEl("circle", { cx: 12, cy, r: 1.2 }));
   return svg;
 }
 

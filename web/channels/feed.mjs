@@ -151,7 +151,7 @@ export function createFeed(host) {
     more.title = t('channels:feed.settings.open');
     more.setAttribute('aria-label', t('channels:feed.settings.open'));
     const dots = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-    for (const cx of [5, 12, 19]) dots.append(svgEl('circle', { cx, cy: 12, r: 1.4 }));
+    for (const cy of [5, 12, 19]) dots.append(svgEl('circle', { cx: 12, cy, r: 1.4 }));   // 縦の 3 点（「…」の形）
     more.append(dots);
     more.onclick = () => openChannelSettings({ host, channel: ch, bots: [...S.bots.values()], returnTo: more });
     x(more);
