@@ -287,8 +287,15 @@ try {
   const narrow = evaluate(() => { const d = document.getElementById('workDialog').getBoundingClientRect(), f = document.getElementById('filePreview').getBoundingClientRect(); return { dw: Math.round(d.width), fw: Math.round(f.width), fx: Math.round(f.left), vw: innerWidth }; });
   assert.ok(narrow.fw >= narrow.vw - 2 && narrow.dw <= narrow.vw + 1, `the pane covers the dialog at ${narrow.vw}px: ${JSON.stringify(narrow)}`);
   if (shots) ab('screenshot', path.join(shots, 'work-dialog-pane-360.png'));
-  press('Escape');
-  await wait(() => evaluate(() => document.getElementById('filePreview').hidden || !document.getElementById('workDialog').classList.contains('file-preview-open')), 'narrow pane closed by Esc');
+  // 欄が開く動きの途中・焦点が欄へ移る前に押すと、Esc が欄に届かないことがある。落ち着くまで待ち、閉じなければ上限つきで押し直す
+  await wait(() => evaluate(() => { const d = document.getElementById('workDialog'); return !d.classList.contains('file-preview-moving') && d.contains(document.activeElement); }), 'narrow pane settled');
+  const paneClosed = () => evaluate(() => document.getElementById('filePreview').hidden || !document.getElementById('workDialog').classList.contains('file-preview-open'));
+  for (let tries = 0; tries < 5 && !paneClosed(); tries++) {
+    press('Escape');
+    const until = Date.now() + 3000;
+    while (Date.now() < until && !paneClosed()) await new Promise(r => setTimeout(r, 100));
+  }
+  assert.ok(paneClosed(), 'narrow pane closed by Esc');
   assert.equal((await snap()).dialogOpen, true);
   await closeDialog();
   ab('set', 'viewport', '1280', '800');
