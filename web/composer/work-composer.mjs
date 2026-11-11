@@ -149,9 +149,19 @@ export function createWorkComposer(h) {
     if (input.value.trim()) input.setRangeText(`${text}\n\n`, 0, 0);
     else input.value = text;
     for (const a of attached) if (!att.byPath?.(a.path)) att.restore([...att.items, a]);
+    att.placeTail?.();   // 文中に無い添付は字の欄の末尾に札で置く（一覧の面が無いので、置かないと見えない）
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.focus();
     saveDraft();
+  };
+  /** 送るとき末尾に足した添付の印（composeSend）を外す。添付は札で戻すので、残すともう一度送ったとき印が二重になる */
+  const withoutTailMarks = (prompt, list, id) => {
+    let rest = prompt;
+    for (const a of [...list].reverse()) {
+      const line = h.format.attachmentLine(h.agentLang(id), a.path);
+      if (rest.endsWith(line)) rest = rest.slice(0, -line.length).replace(/\s+$/, '');
+    }
+    return rest;
   };
   const scheduleActions = {
     now: async (entry) => { await h.outbox.sendScheduledNow(entry.id); },
@@ -170,7 +180,11 @@ export function createWorkComposer(h) {
     renderOutbox(els.outbox, queued, async (messageId, action) => {
       const row = queued.find((m) => m.id === messageId);
       await h.cmd('messageAction', { sessionId: id, messageId, action: action === 'edit' ? 'cancel' : action });
-      if (action === 'edit' && row && childId === id) restoreText(row.text ?? row.prompt ?? '');
+      // 送信待ちの項目は { id, status, args: { prompt, attachments } }。取り下げた本文と添付を入力欄へ戻す（予定の［編集］と同じ形）
+      if (action === 'edit' && row && childId === id) {
+        const list = row.args?.attachments ?? [];
+        restoreText(withoutTailMarks(row.args?.prompt ?? '', list, id), list.map((a) => ({ path: a.path, name: a.name, kind: 'file', mime: a.mime ?? '', from: 'host' })));
+      }
     }, new Set(), { schedules: h.outbox.schedules(id), scheduleActions, editQueued: true });
   }
 
