@@ -337,6 +337,8 @@ const SUITES = [
   // 中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない・再起動で止まったもの
   './unit/agent-tasks-interrupt.mjs',
   './unit/server-delegation-notice.mjs',
+  // 人が子の会話へ直接送った発言（ADR 0317）: 履歴の「あなた」の印・出来事の印・完了通知の「人からの指示 N 件」
+  './unit/server-human-sent.mjs',
   // 追加指示を走っている子のターンへ途中送信で渡す（fake の bg 台本。合図あり・なし、受理されない、結果不明、捨てられた、合図なし）
   './unit/server-delegation-steer.mjs',
   // ACP の子（Devin）への追加指示: 受理後の決着（渡った合図で delivered・既読不明は dropped で送り直さない）を指示の状態に反映する

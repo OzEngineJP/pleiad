@@ -86,11 +86,14 @@ export async function prepareMessages(sessionId, raw) {
   const side = await store.get(sessionId);
   const notices = new Set(side.taskNotices ?? []);
   const relayed = new Map((side.relayed ?? []).map(r => [r.hash, r.sentBy]));
+  // 人が委譲の子の会話へ直接送った発言（core/server.mjs の recordHumanSent。ADR 0317）。親の AI の追加の指示と見分ける名札の元
+  const human = new Set(side.humanSent ?? []);
   for (const m of messages) {
     if (m.role !== 'user' || m.kind) continue;
     const hash = crypto.createHash('sha256').update(m.text ?? '').digest('hex');
     if (notices.has(hash)) m.internalTaskNotice = true;
     else if (relayed.has(hash)) m.sentBy = relayed.get(hash);
+    else if (human.has(hash)) m.sentByHuman = true;
   }
   return messages;
 }

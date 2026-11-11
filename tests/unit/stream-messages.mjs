@@ -35,6 +35,16 @@ export default async function (t) {
   t.ok('結果がまだのツールは result を持たない（走っているカード）', !('result' in m0.toolCalls[1]));
   t.ok('発言者は渡したエージェントとモデル', m0.backend === 'antigravity' && m0.model === 'gemini-3.8-flash-high');
 
+  // 人が委譲の子へ直接送った発言は、出来事の sentByHuman を発言に引き継ぐ（モーダルが「あなた」の名札を描く元。ADR 0317）
+  const human = streamMessages(seq([
+    { type: 'userMessage', messageId: 'h1', text: '人の指示', sentByHuman: true },
+    { type: 'userMessage', messageId: 'a1', text: '別の AI の指示', sentBy: { sessionId: 'other' } },
+    { type: 'userMessage', messageId: 'p1', text: '印の無い発言' },
+  ]));
+  t.ok('出来事の sentByHuman が発言に付く（sentBy とは別。ほかの発言には付かない）',
+    human.messages.length === 3 && human.messages[0].sentByHuman === true && !human.messages[0].sentBy
+    && !human.messages[1].sentByHuman && human.messages[1].sentBy?.sessionId === 'other' && !human.messages[2].sentByHuman, json(human.messages));
+
   const split = streamMessages(seq([
     { type: 'text.delta', text: 'A' }, { type: 'text.end', uuid: 'u1' },
     { type: 'text.end', uuid: 'u2' }, { type: 'tool.start', id: 't1', name: 'Grep', input: {} },

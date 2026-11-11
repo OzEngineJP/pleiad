@@ -4816,6 +4816,16 @@ async function recordRelayed(sessionId, prompt, sentBy) {
   const kept = ((await store.get(sessionId)).relayed ?? []).filter(r => r.hash !== hash);
   await store.setSessionData(sessionId, 'relayed', [...kept, { hash, sentBy: publicSender(sentBy) }].slice(-RELAYED_KEEP));
 }
+// 人が委譲の子の会話へ直接送った発言（ADR 0317）。履歴が「あなた」の名札を付けるための本文のハッシュを会話に残し、親の AI へ渡す完了通知の
+// 「人からの指示 N 件」を数える。委譲の子でない会話には何もしない。履歴が別の会話の AI の発言と見分けるので sentBy は使わない
+async function recordHumanSent(sessionId, prompt) {
+  try {
+    if (!(await agentTasks.humanSent(sessionId))) return;
+    const hash = crypto.createHash('sha256').update(prompt).digest('hex');
+    const kept = ((await store.get(sessionId)).humanSent ?? []).filter(h => h !== hash);
+    await store.setSessionData(sessionId, 'humanSent', [...kept, hash].slice(-RELAYED_KEEP));
+  } catch (e) { console.error('  人からの指示の記録に失敗:', String(e?.message ?? e)); }
+}
 /** 画面と履歴に出す送り手（連鎖の数は内部の歯止めなので出さない）。bot の会話は name・icon を足す */
 const publicSender = (sentBy) => {
   if (!sentBy) return null;
@@ -6580,7 +6590,7 @@ const outbox = createMessageQueue({
     // pending を立て、画面は渡るまで待っていることを出す。出せないバックエンドは今までどおり即時扱い
     emitGlobal({ type: 'userMessage', sessionId, messageId: item.id, text: item.args.prompt, at: item.at,
       ...(item.args.scheduledFor ? { scheduledFor: item.args.scheduledFor } : {}),
-      ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}) });
+      ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}), ...(item.args.byHuman ? { sentByHuman: true } : {}) });
     if (recovered) emitGlobal({ type: 'userMessage.delivered', sessionId, messageId: item.id });
     noteRelayHops(sessionId, item.args, { steered: true });
     if (item.args.attachments?.length) {
@@ -6682,6 +6692,8 @@ function completionNotice(lng, tasks) {
       attempt.outcome === 'limited' ? 'delegation.noticeReroutedLimited' : 'delegation.noticeReroutedError',
       { from: candidateNoticeName(attempt.target), to: candidateNoticeName(all[i + 1]?.target ?? task.routing.target) })).join(''),
     rejections: rejectionNotice(lng, task.rejections),
+    // 人が子の会話へ直接送った分（ADR 0317）。送るたびには知らせず、完了のときにまとめて一行
+    human: task.humanInstructions > 0 ? agentT(lng, 'delegation.noticeHuman', { count: task.humanInstructions }) : '',
     git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
   if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
@@ -7852,7 +7864,7 @@ async function beginTurn(ctx) {
   }
   if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
     ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
-    ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}) });
+    ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...(args.byHuman ? { sentByHuman: true } : {}) });
   if (ctx.interruption) emit({ type: 'interruptionNote', text: ctx.interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
   broadcastRunning();
   syncRunningPoll();
@@ -9791,8 +9803,11 @@ wss.on("connection", (ws, req) => {
           if (attachments !== undefined && !Array.isArray(attachments)) throw new Error(t('send.invalidAttachments'));
           // 同じ会話の中で、発言の手前まで巻き戻して送り直す（ADR 0102）。{ beforeMessageId, stopRunning? }
           if (rewind !== undefined && (typeof rewind?.beforeMessageId !== 'string' || !rewind.beforeMessageId)) throw new Error(t('rewind.invalid'));
-          const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}) };
-          return reply(true, await acceptMessage(sessionId, messageId, args, { rewind }));
+          // 委譲の子へ人が直接送る分には byHuman を付ける。届いた出来事が「あなた」の名札を付ける元（履歴は recordHumanSent の印）
+          const args = { prompt, ...(attachments ? { attachments } : {}), ...(cwd ? { cwd } : {}), ...(mode ? { mode } : {}), ...(agentTasks.isChild(sessionId) ? { byHuman: true } : {}) };
+          const accepted = await acceptMessage(sessionId, messageId, args, { rewind });
+          await recordHumanSent(sessionId, prompt);
+          return reply(true, accepted);
         }
         // 入力欄の `!`（シェルの行。ADR 0054）。人の操作なので承認モードは掛けない。送信待ちにも送り直しの控えにも積まない
         case 'runShell':

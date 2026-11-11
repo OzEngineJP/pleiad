@@ -7078,6 +7078,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   };
   const requestNode = (text, at) => parentMsg(text, at, t('dialog.work.request'));
   const followUp = (text, at) => parentMsg(text, at, t('dialog.work.instruction'));
+  // 人が子の会話へ直接送った発言は「あなた」（ADR 0317）。親の AI の追加の指示と見分ける。印は送った時に記録する（履歴は sentByHuman）
+  const youNode = (text, at) => parentMsg(text, at, t('chat.message.you'));
   const pendingNode = (instruction) => {
     const m = followUp(instruction.text, instruction.at);
     m.dataset.instructionId = instruction.id;
@@ -7121,7 +7123,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     }
     const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, sessionId,
       // 古い分を省いた筋（base > 0）の最初の発言は会話の途中。依頼ではなく追加の指示として描く
-      user: (m) => (it.mi === 0 && !base ? requestNode : followUp)(m.text, m.at) });
+      user: (m) => (it.mi === 0 && !base ? requestNode : m.sentByHuman ? youNode : followUp)(m.text, m.at) });
     prevRole = role;
     if (node) last = put(node, `m:${it.mi}`);
   }
