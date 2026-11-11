@@ -422,6 +422,51 @@ try {
   await closeDialog();
   ab('set', 'viewport', '1280', '800');
   console.log('PASS: the dialog menu at 360px holds the pane item', JSON.stringify(moreMenu.items));
+
+  // ---- 10. 子が動いて本文が読み直されても、検索の印・現在の一致・検索語・開いているメニューは消えない・跳ばない（段 2 の再読み込みとの組み合わせ） ----
+  await openCard(child.taskId, 'child (re-read)');
+  await wait(() => evaluate(() => !!document.querySelector('#workBody a.file-link[data-file-path="child-note.md"]')), 'child body (re-read)');
+  ab('press', 'Control+f');
+  await wait(() => tocState().open, 'toc for re-read');
+  ab('keyboard', 'type', 'needle-child');
+  evaluate(() => document.querySelectorAll('#filePreview .toc-scope')[1].click());
+  await wait(() => evaluate(() => document.querySelectorAll('#workBody mark.searchhit').length > 0 && !/^0/.test(document.querySelector('#filePreview .toc-count')?.textContent ?? '0')), 'marks and a current match before the re-read');
+  // 開いている発言のメニュー（⋮）も一緒に
+  evaluate(() => document.querySelector('#workBody .m.ai .who-more').click());
+  await wait(() => menuItems(), 'menu before the re-read');
+  const reBefore = evaluate(() => ({ marks: document.querySelectorAll('#workBody mark.searchhit').length, active: document.querySelectorAll('#workBody mark.searchhit.active').length,
+    count: document.querySelector('#filePreview .toc-count').textContent, query: document.querySelector('#filePreview .toc-query').value, rows: document.querySelectorAll('#filePreview .toc-row').length }));
+  assert.equal(reBefore.active, 1, `one current match before: ${JSON.stringify(reBefore)}`);
+  evaluate(() => {
+    window.__thread = document.querySelector('#workBody > .thread.bg-thread');
+    window.__rebuilt = 0; window.__samples = [];
+    window.__timer = setInterval(() => {
+      const t = document.querySelector('#workBody > .thread.bg-thread');
+      if (t !== window.__thread) { window.__rebuilt++; window.__thread = t; }
+      const menu = [...document.querySelectorAll('[role=menu]')].find(m => m.offsetWidth > 0);
+      window.__samples.push({ rebuilt: window.__rebuilt, marks: document.querySelectorAll('#workBody mark.searchhit').length, active: document.querySelectorAll('#workBody mark.searchhit.active').length,
+        count: document.querySelector('#filePreview .toc-count')?.textContent ?? '', query: document.querySelector('#filePreview .toc-query')?.value ?? '', rows: document.querySelectorAll('#filePreview .toc-row').length, menu: !!menu,
+        focus: document.activeElement?.className ?? '', scrollTop: Math.round(document.getElementById('workBody').scrollTop) });
+    }, 30);
+  });
+  await client.cmd('runTurn', { sessionId: child.childId, prompt: 'echo:more from the child' });
+  await wait(() => evaluate(() => window.__rebuilt >= 1), 'the child body was read again');
+  await sleep(1500);
+  const reSamples = evaluate(() => { clearInterval(window.__timer); return window.__samples; });
+  const reAfter = reSamples[reSamples.length - 1];
+  const summary = (key) => [...new Set(reSamples.map(x => x[key]))];
+  assert.ok(reAfter.rebuilt >= 1, 'rebuilt');
+  assert.deepEqual(summary('query'), ['needle-child'], `the search word never changes: ${summary('query')}`);
+  assert.deepEqual(summary('active'), [1], `the current match mark is always one: ${summary('active')} ${JSON.stringify(reSamples.filter(x => x.active !== 1).slice(0, 3))}`);
+  assert.ok(Math.min(...reSamples.map(x => x.marks)) >= reBefore.marks, `match marks never vanish: ${summary('marks')} (before ${reBefore.marks})`);
+  assert.deepEqual(summary('count'), [reBefore.count], `the count text stays: ${summary('count')} (before ${reBefore.count})`);
+  assert.ok(Math.min(...reSamples.map(x => x.rows)) >= reBefore.rows, `toc rows never vanish: ${summary('rows')} (before ${reBefore.rows})`);
+  assert.deepEqual(summary('menu'), [true], `the open message menu stays open: ${summary('menu')}`);
+  assert.equal(menuItems()?.inDialog, true, 'the menu is still in the dialog');
+  console.log('PASS: after a re-read the marks, current match, search word, toc rows and open menu stay', JSON.stringify({ before: reBefore, samples: reSamples.length, rebuilt: reAfter.rebuilt, marks: summary('marks'), scrollTop: summary('scrollTop') }));
+  await closeMenu();
+  await pressKey('Escape');
+  await closeDialog();
 } finally {
   client?.close();
   await server?.stop();

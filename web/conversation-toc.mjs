@@ -481,12 +481,21 @@ export function createConversationToc({ thread: threadSource, log, nav, preview,
 
   // 会話が変わった（発言の増減・ターンの終わり）とき、開いていれば一覧を取り直す。閉じていれば次に開くときに作る
   let refreshTimer = 0;
-  const changed = (records) => {
+  /** 検索を取り直す。一覧の読んでいる位置と、フォーカスのある行は今のまま（検索語を打ち直したときとは違い、跳ばさない） */
+  const reapply = () => {
+    const top = list.scrollTop, row = list.contains(document.activeElement) ? document.activeElement.dataset?.id : null;
+    entriesDirty = true;
+    search({ select: false });
+    list.scrollTop = top;
+    if (row != null) list.querySelector(`.toc-row[data-id="${row}"]`)?.focus({ preventScroll: true });
+  };
+  const changed = (records, { now = false } = {}) => {
     if (!records.some((r) => r.addedNodes.length || r.removedNodes.length)) return;
     entriesDirty = true;
     if (!opened) return;
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => { entriesDirty = true; search({ select: false }); }, 300);
+    // 筋ごと作り直された（子の会話の読み直し）ときは待たずに取り直す。待つと、その間だけ印が消える
+    if (now) reapply(); else refreshTimer = setTimeout(reapply, 300);
   };
   const threadWatch = new MutationObserver(changed);
   let watched = null;
@@ -500,7 +509,7 @@ export function createConversationToc({ thread: threadSource, log, nav, preview,
   watch();
   // 筋を関数で渡された面は、更新のたびに筋が作り直される。入れ物（log）の子の入れ替わりで、見る先を付け替える
   if (typeof threadSource === 'function') {
-    new MutationObserver((records) => { watch(); changed(records); }).observe(log, { childList: true });
+    new MutationObserver((records) => { const was = watched; watch(); changed(records, { now: watched !== was }); }).observe(log, { childList: true });
   }
   nav.onUpdate(() => {
     // 発言（自分の依頼）の無い筋（依頼文が分からない読むだけの子）でも、返答があれば探せる。nav が hasContent を持てばそれで決める
