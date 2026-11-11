@@ -3465,6 +3465,10 @@ function markFailedMessage(row, item) {
   }
 }
 
+/** 送れなかった発言が会話に残っている（発言のある会話には一覧を出さず、送れなかった行で知らせる） */
+function hasFailedOutbox() {
+  return (outboxes.get(state.current) ?? []).some(m => m.status === 'failed');
+}
 function syncOutboxRows(messages) {
   if (!state.current || state.loadingSession) { paintOutbox(); return; }
   let withdrawn = false;
@@ -3520,7 +3524,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'notifyStatus') { notifySettings.event(ev); return; }
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
-    if (state.current === ev.sessionId) syncOutboxRows(ev.messages);
+    if (state.current === ev.sessionId) { syncOutboxRows(ev.messages); noAgent?.sync(); }
     return;
   }
   if (ev.type === "turnEnd" && ev.sessionId) {
@@ -4229,8 +4233,16 @@ function forgetVocab(id) {
 // 置き場は設定メニューの中。常設しない。ログインが要るときだけ脇の下に一行で知らせる。
 // 設定モーダル内にURLを出し、コールバックを取れないときは手貼りの欄を出す。
 
-/** ログインの途中のエージェント（自分の窓が始めたもの・ほかの窓の URL の便りで知ったもの）。サーバーが pending を返さないエージェントでも、終わるまで待つ状態を保つ */
-const loginActive = new Set();
+/** 自分の窓が始めて、いま走っているログイン（backend id → 始めた時刻）。サーバーが pending を返さないエージェントでも、終わるまで待つ状態を保つ。
+ *  ほかの窓のログインの終わりを取りこぼしても外れるよう、ログインの有効な時間（サーバーは 10 分で時間切れ）を過ぎたら外す */
+const loginActive = new Map();
+const LOGIN_HOLD_MS = 10 * 60 * 1000;
+function loginRunning(id) {
+  const at = loginActive.get(id);
+  if (at === undefined) return false;
+  if (Date.now() - at > LOGIN_HOLD_MS) { loginActive.delete(id); return false; }
+  return true;
+}
 
 /** 認証の状態を取り直す。refresh() は毎イベント走るので、ここは起動時とログイン / ログアウトの後だけ */
 async function refreshAuth({ unsettled = false } = {}) {
@@ -4240,7 +4252,7 @@ async function refreshAuth({ unsettled = false } = {}) {
   await Promise.all(targets.map(async (b) => {
     const st = await cmd("authStatus", { backend: b.id }).catch((e) => ({ supported: false, error: e.message }));
     // ログインの途中は、取り直した結果で「待っている」を消さない（行が「ログイン」に戻り、URL の欄が消え、二重に始められてしまう）
-    state.auth.set(b.id, loginActive.has(b.id) && !st.loggedIn && !st.pending ? { ...st, pending: true } : st);
+    state.auth.set(b.id, loginRunning(b.id) && !st.loggedIn && !st.pending ? { ...st, pending: true } : st);
   }));
   renderAuth();
   await onboarding.refresh();
@@ -4487,7 +4499,11 @@ function renderAuth() {
   const none = usableNow().count0;
   line.hidden = !none && need.length === 0;
   if (none) line.textContent = t("app.noUsableAgent");
-  else if (need.length) line.textContent = t("app.authNeed", { agents: need.join(t("app.listSeparator")) });
+  else if (need.length) {
+    const names = need.join(t("app.listSeparator"));
+    // リモートの窓ではログインはホストの PC で行う（行の押し先は設定。一覧の行と同じ言い方にそろえる）
+    line.textContent = window.plyRemote ? `${names} · ${t("remote.loginOnHostShort")}` : t("app.authNeed", { agents: names });
+  }
   syncAuthDot();
   noAgent?.sync();
   repaintSendFailures();
@@ -4564,7 +4580,7 @@ function installClaudeSdk() {
 function authLogin(b, { fromRow = false } = {}) {
   if (window.plyRemote) { sys(html.t("remote.loginOnHost")); return Promise.resolve(null); }   // リモートの窓からは始めない（renderAuth と同じ理由）
   state.auth.set(b.id, { ...(state.auth.get(b.id) ?? {}), supported: true, pending: true });
-  loginActive.add(b.id);
+  loginActive.set(b.id, Date.now());
   state.authNote.delete(b.id);
   renderAuth();
   onboarding.paint();
@@ -4596,7 +4612,8 @@ function authLogin(b, { fromRow = false } = {}) {
 async function checkAuthNow(b) {
   try {
     const st = await cmd("authStatus", { backend: b.id, probe: true });
-    if (st) state.auth.set(b.id, st);
+    // 確かめたのに、まだ確かめられない（時間切れ・起動の失敗）: 「確かめられなかった」として、初回の窓では選べる行にする（web/agent-usable.mjs の canPick）
+    if (st) state.auth.set(b.id, st.unconfirmed ? { ...st, checkFailed: true } : st);
   } catch {
     // 確かめる呼び出し自体が失敗（CLI の起動失敗・切れた接続）。生の文は出さず固定の一文だけ添え、
     // 前の状態と supported は消さないので［状態を確認］［ログイン］の入口は残る
@@ -4619,9 +4636,9 @@ async function cancelLogin(b) {
   if (authCancelling.has(b.id)) return;
   authCancelling.add(b.id);
   onboarding.paint();
-  const r = await cmd("authCancel", { backend: b.id }).catch(() => null);
-  if (r?.supported && r.cancelled) return;
-  // 待っているログインがもう無い・やめられない。いまの状態を読み直して描き直す
+  await cmd("authCancel", { backend: b.id }).catch(() => null);
+  // 「やめる」を押したら、返事の中身によらず待ちを外し、いまの状態を読み直して描き直す（やめたの便りを取りこぼしても戻る）
+  loginActive.delete(b.id);
   authCancelling.delete(b.id);
   await refreshAuth().catch(() => {});
 }
@@ -4723,7 +4740,6 @@ function onAuthEvent(ev) {
   if (ev.phase === "url") {
     // ほかの窓が始めたログインでも、待っている間はカードに［やめる］を出す
     state.auth.set(ev.backend, { ...(state.auth.get(ev.backend) ?? {}), supported: true, pending: true });
-    loginActive.add(ev.backend);
     state.authNote.delete(ev.backend);
     // URL はホストの窓にだけ出す（リモートの窓で開いても、ログインの戻り先はホストの PC。docs/remote.md §7.3）
     if (window.plyRemote) { renderAuth(); onboarding.paint(); return; }
@@ -11064,7 +11080,7 @@ const onboarding = setupOnboarding({ cmd, refreshAuth,
 // 会話の途中で使えるエージェントが 0 件になったときの、空の会話の中央の一覧と、案内・設定の面が見えている間の裏の読み直し
 noAgent = setupNoAgent({
   host: $("noAgent"), kit: agentRows, agents: () => onboarding.agents(),
-  wanted: () => !onboarding.gated() && !state.messages.length && listKind(usableNow()),
+  wanted: () => !onboarding.gated() && !state.messages.length && !hasFailedOutbox() && listKind(usableNow()),
   recheck: () => refreshAuth(), onChange: () => syncRunState(),
 });
 const agentRecheck = createRecheck({

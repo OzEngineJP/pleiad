@@ -227,6 +227,59 @@ try {
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
 
+  for (const reduced of [false, true]) {
+    scenes.push([`消えるまでの時間（${reduced ? '動きを減らす設定: 待たずに消える' : '通常: 900ms 見せて 240ms で薄れる'}）: 会話の中の一覧・出し直しの窓`, async () => {
+      const s = await scene({ login: true, sdk: 'local', backends: 'claude' });
+      const { page } = s;
+      if (reduced) await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.waitForSelector('#prompt', { timeout: 20_000 });
+      await page.waitForTimeout(1500);
+      s.logout();
+      await page.click('#settings');
+      await page.waitForSelector('#refreshAgents', { timeout: 10_000 });
+      await page.click('#refreshAgents');
+      await page.waitForTimeout(1500);
+      await backToChat(page);
+      await page.waitForFunction(() => { const e = document.getElementById('noAgent'); return e && !e.hidden && e.offsetParent; }, null, { timeout: 20_000 });
+      // 一覧: 送信ボタンが使えるようになった時（消える流れの始まり）→ leave の印 → 隠れた時
+      await page.evaluate(() => {
+        const t = window.__leave = {};
+        const host = document.getElementById('noAgent');
+        new MutationObserver(() => { if (host.classList.contains('leave') && t.leave == null) t.leave = performance.now(); if (host.hidden && t.hidden == null) t.hidden = performance.now(); }).observe(host, { attributes: true });
+        const send = document.getElementById('send');
+        new MutationObserver(() => { if (!send.disabled && t.start == null) t.start = performance.now(); }).observe(send, { attributes: true });
+      });
+      s.login();
+      await recheckButton(page, '#noAgent').click();
+      await page.waitForFunction(() => window.__leave.hidden != null, null, { timeout: 20_000 });
+      const t = await page.evaluate(() => window.__leave);
+      const hold = Math.round(t.leave - t.start), fade = Math.round(t.hidden - t.leave), all = Math.round(t.hidden - t.start);
+      console.log(`  計測: 一覧 ${reduced ? '（動きを減らす）' : ''} 保つ ${hold}ms・薄れる ${fade}ms・合計 ${all}ms`);
+      if (reduced) check(all <= 150, '動きを減らす設定では待たずに消える（150ms 以内）', t);
+      else check(Math.abs(hold - 900) <= 150 && Math.abs(fade - 240) <= 150, '一覧: 900ms 保って 240ms で薄れる（±150ms）', { hold, fade });
+      // 出し直しの窓（案内を一度終えた人が、使えるものが 0 個で開いた直後に直る）
+      const w = await scene({ login: false, sdk: 'local', backends: 'claude' });
+      if (reduced) await w.page.emulateMedia({ reducedMotion: 'reduce' });
+      await w.page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
+      await w.page.evaluate(() => {
+        const t = window.__win = {};
+        const d = document.getElementById('onboardingDialog');
+        new MutationObserver(() => { if (d.classList.contains('leaving') && t.leave == null) t.leave = performance.now(); if (!d.open && t.closed == null) t.closed = performance.now(); }).observe(d, { attributes: true });
+        const live = document.getElementById('onboardingLive');
+        new MutationObserver(() => { if (t.start == null) t.start = performance.now(); }).observe(live, { childList: true, characterData: true, subtree: true });
+      });
+      w.login();
+      await recheckButton(w.page, '#onboardingDialog').click().catch(() => {});
+      await w.page.waitForFunction(() => window.__win.closed != null, null, { timeout: 20_000 });
+      const u = await w.page.evaluate(() => window.__win);
+      const whold = Math.round((u.leave ?? u.closed) - u.start), wfade = Math.round(u.closed - (u.leave ?? u.closed)), wall = Math.round(u.closed - u.start);
+      console.log(`  計測: 窓 ${reduced ? '（動きを減らす）' : ''} 保つ ${whold}ms・薄れる ${wfade}ms・合計 ${wall}ms`);
+      if (reduced) check(wall <= 150, '窓: 動きを減らす設定では待たずに閉じる（150ms 以内）', u);
+      else check(Math.abs(whold - 900) <= 150 && Math.abs(wfade - 240) <= 150, '窓: 900ms 保って 240ms で薄れる（±150ms）', { whold, wfade });
+      check(s.errors.length === 0 && w.errors.length === 0, 'ページの例外が無い', [...s.errors, ...w.errors]);
+    }]);
+  }
+
   scenes.push(['送れなかった行: 原因を出し、直して再送すると送れる', async () => {
     // 画面が「使える」と思っている間に SDK が消え、送ると失敗する。失敗の行で状態を読み直し、SDK の行から取り直して（偽の置き場に戻す）再送する
     const s = await scene({ login: true, sdk: 'download', backends: 'claude', seed: true });
@@ -253,6 +306,25 @@ try {
     await backToChat(page);
     await page.waitForSelector('.outbox-fix [data-fix="resend"]', { timeout: 20_000 });
     check(true, '直ると［再送する］が出る');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['発言のある会話には一覧を出さず、送れなかった行で知らせる（空の会話へ戻ると一覧が出る）', async () => {
+    const s = await scene({ login: true, sdk: 'download', backends: 'claude', seed: true });
+    const { page } = s;
+    await page.waitForSelector('#prompt', { timeout: 20_000 });
+    await page.waitForTimeout(1800);
+    unseedSdk(s.dataDir);
+    await page.click('#prompt');
+    await page.keyboard.type('二重に出ない確かめ');
+    await page.click('#send');
+    await page.waitForSelector('.outbox-fix', { timeout: 20_000 });
+    await page.waitForTimeout(2500);   // 状態の読み直しと、一覧の出入りが落ち着くまで
+    check(!(await listShown(page)), '発言のある会話には、会話の中の一覧を出さない');
+    check(await page.locator('.outbox-fix').count() === 1, '送れなかった行は出ている');
+    await page.click('.outbox-fix [data-fix="cancel"]');   // 送れなかった発言をやめると、会話は空に戻る
+    await page.waitForFunction(() => { const e = document.getElementById('noAgent'); return e && !e.hidden && e.offsetParent; }, null, { timeout: 20_000 });
+    check(true, '空の会話へ戻ると一覧が出る');
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
 
@@ -381,6 +453,99 @@ try {
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
 
+  scenes.push(['ログインの途中: ［やめる］で待ちが外れて「ログイン」に戻り、確かめ直しの後も戻ったまま', async () => {
+    const s = await scene({ login: true, sdk: 'local', backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-cancel')) } });
+    const { page } = s;
+    await page.waitForSelector('#prompt', { timeout: 20_000 });
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => document.getElementById('railSettings').click());
+    await page.waitForSelector('#authSec [data-agent="antigravity"]', { timeout: 10_000 });
+    const card = page.locator('#authSec [data-agent="antigravity"]');
+    await card.locator('button:has-text("状態を確認")').click();
+    await card.locator('button:has-text("ログイン")').first().waitFor({ timeout: 10_000 });
+    await card.locator('button:has-text("ログイン")').first().click();
+    await card.locator('button:has-text("やめる")').waitFor({ timeout: 10_000 });
+    await card.locator('button:has-text("やめる")').click();
+    await card.getByRole('button', { name: 'ログイン', exact: true }).waitFor({ timeout: 10_000 });
+    check(true, '［やめる］で待ちが外れて「ログイン」に戻る');
+    await page.waitForTimeout(6000);   // 2 秒ごとの確かめ直しが何度か回る
+    check(await card.getByRole('button', { name: 'ログイン', exact: true }).count() === 1 && await card.locator('button:has-text("やめる")').count() === 0, '確かめ直しの後も「ログイン」のまま（待ちに戻らない）');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['SDK の取得に本当に失敗したとき（つながらない）: 理由が出る・末尾が「:」で終わらない・操作が右端の列にそろう', async () => {
+    const s = await scene({ login: true, sdk: 'download', backends: 'claude', env: { AGENT_HOST_CLAUDE_SDK_REGISTRY: 'http://127.0.0.1:9/' } });
+    const { page } = s;
+    await page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
+    const card = page.locator('#onboardingDialog');
+    await card.locator('button:has-text("取得する")').first().click();
+    await card.locator('button:has-text("もう一度取得")').waitFor({ timeout: 30_000 });
+    const text = (await card.innerText()).split(/\s+/).join(' ');
+    check(!/取得できませんでした\s*[:：]\s*(もう一度取得|$)/.test(text), '末尾の「:」だけが残らない', text);
+    check(/取得できませんでした: \S/.test(text), '「取得できませんでした: 理由」の形', text);
+    const edgesOf = (scope) => page.evaluate((scope) => {
+      const c = document.querySelector(scope);
+      return [...c.querySelectorAll('button')].filter(b => b.offsetParent && /^(もう一度取得|取得する|ログイン|インストール|コピー)/.test(b.textContent.trim())).map(b => ({ t: b.textContent.trim(), r: Math.round(b.getBoundingClientRect().right) }));
+    }, scope);
+    const aligned = (edges) => { const sdk = edges.find(e => e.t === 'もう一度取得'); return Boolean(sdk) && edges.every(e => Math.abs(e.r - sdk.r) <= 2); };
+    const first = await edgesOf('#onboardingDialog [data-row="claude"]');
+    check(aligned(first), '初回の窓: SDK の行の操作の右端が、ほかの行の操作の右端と同じ', first);
+    await page.click('#onboardingGear');
+    await page.waitForTimeout(600);
+    await page.evaluate(() => document.getElementById('setupTab').click());
+    await page.waitForSelector('#authSec [data-agent="claude"] button:has-text("もう一度取得")', { timeout: 10_000 });
+    const set = await edgesOf('#authSec [data-agent="claude"]');
+    check(aligned(set), '設定: SDK の行の操作の右端が、ほかの行の操作の右端と同じ', set);
+    const settingsText = (await page.locator('#authSec [data-agent="claude"]').innerText()).split(/\s+/).join(' ');
+    check(/取得できませんでした: \S/.test(settingsText), '設定の行にも理由が出る', settingsText);
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['未インストールの行: ［コピー］で入れ方のコマンドがクリップボードに入る・公式の 1 行が無いエージェントはコマンドの欄を出さない', async () => {
+    const s = await scene({ login: false, backends: 'codex,antigravity' });
+    const { page } = s;
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);   // 試験のブラウザーの中だけ
+    await page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
+    const rows = page.locator('#onboardingAgentList');
+    check(await rows.locator('[data-row="codex"] code').count() === 0, '入れる前（インストールを押す前）はコマンドを出さない');
+    await rows.locator('[data-row="codex"] button:has-text("インストール")').first().click();
+    await rows.locator('[data-row="codex"] code').waitFor({ timeout: 10_000 });
+    const want = (await rows.locator('[data-row="codex"] code').innerText()).trim();
+    check(/^npm install -g \S+/.test(want), 'Codex の行にコマンドが出る', want);
+    await rows.locator('[data-row="codex"] button:has-text("コピー")').click();
+    await page.waitForTimeout(300);
+    const got = await page.evaluate(() => navigator.clipboard.readText());
+    check(got === want, '［コピー］でコマンドがクリップボードに入る', got);
+    check(await rows.locator('[data-row="codex"] button:has-text("コピーしました")').count() === 1, '押した後は「コピーしました」と言う');
+    await rows.locator('[data-row="antigravity"] button:has-text("インストール")').first().click();
+    await page.waitForTimeout(300);
+    check(await rows.locator('[data-row="antigravity"] code').count() === 0 && await rows.locator('[data-row="antigravity"] button:has-text("コピー")').count() === 0, '公式の 1 行が無い Antigravity にはコマンドの欄・［コピー］が出ない');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
+  scenes.push(['初回の窓: 確かめたが確かめられない 1 つだけの人は、その行を選べて［会話を始める］で進める', async () => {
+    // Antigravity だけ。CLI は起動するが理由の分からない失敗で落ちる（未ログインとは断定できない）
+    const dir = path.join(scratch, 'agy-flaky');
+    fs.mkdirSync(dir, { recursive: true });
+    const js = path.join(dir, 'agy.mjs');
+    fs.writeFileSync(js, "process.stderr.write('unexpected failure' + String.fromCharCode(10)); process.exit(1);");
+    const bin = path.join(dir, process.platform === 'win32' ? 'agy.cmd' : 'agy');
+    fs.writeFileSync(bin, process.platform === 'win32' ? `@"${process.execPath}" "${js}" %*` + String.fromCharCode(13, 10) : `#!/bin/sh` + String.fromCharCode(10) + `exec "${process.execPath}" "${js}" "$@"` + String.fromCharCode(10), { mode: 0o755 });
+    const s = await scene({ done: false, login: false, backends: 'antigravity', env: { AGENT_HOST_AGY_BIN: bin } });
+    const { page } = s;
+    await page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
+    check(await page.locator('#onboardingAgentList [data-pick]').count() === 0, '未確認の間は選べず、［状態を確認］が次の一歩');
+    check(await page.locator('#completeSetup').isDisabled(), '［会話を始める］は押せない');
+    await page.locator('#onboardingAgentList button:has-text("状態を確認")').first().click();
+    await page.waitForFunction(() => document.querySelectorAll('#onboardingAgentList [data-pick]').length === 1, null, { timeout: 20_000 });
+    check(true, '確かめても確かめられない行は選べる');
+    check(!(await page.locator('#completeSetup').isDisabled()), '［会話を始める］が押せる');
+    await page.click('#completeSetup');
+    await page.waitForFunction(() => !document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
+    check(true, '窓が閉じて会話へ進む');
+    check(s.errors.length === 0, 'ページの例外が無い', s.errors);
+  }]);
+
   scenes.push(['0 個でも、窓も一覧も理由を見せていないとき（「たぶん」が混ざる）は、会話を作れなかった知らせを出す', async () => {
     // Claude は未ログイン（使えない）、Antigravity は確かめられない（たぶん）。窓も一覧も出ないので、札が唯一の知らせになる。
     // 会話を作る呼び出しは、サーバーが断る（知らないエージェントの指定に差し替える）
@@ -439,7 +604,7 @@ try {
   }]);
 
   scenes.push(['リモートの窓（ホストにつないだ側）: 閉じられない窓は出さず、会話の中の一覧が「ホストの PC でログイン」を出す・歯車で設定へ行ける', async () => {
-    const s = await scene({ login: false, sdk: 'local', backends: 'claude', init: () => { window.plyRemote = { shell: 'desktop' }; } });
+    const s = await scene({ login: false, sdk: 'local', backends: 'claude', init: () => { window.plyRemote = { shell: 'desktop', hostId: 'abcdef012345', hostName: 'dev-host' }; } });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
     await page.waitForTimeout(3000);
