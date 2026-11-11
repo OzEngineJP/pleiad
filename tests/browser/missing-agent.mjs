@@ -357,6 +357,7 @@ try {
     const s = await scene({ login: true, sdk: 'local', backends: 'claude,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-login')) } });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
+    await page.waitForTimeout(1500);   // 起動の直後は、案内の判定が済むまで設定を開かない
     await page.evaluate(() => document.getElementById('railSettings').click());
     const card = page.locator('#authSec [data-agent="antigravity"]');
     await card.locator('button:has-text("状態を確認")').click();
@@ -400,6 +401,7 @@ try {
     // ログイン済みの Claude（使える）だけ。エージェントの設定のページを開いて 10 秒おく
     let s = await scene({ login: true, sdk: 'local', backends: 'claude', env: { FAKE_CLAUDE_COUNT_FILE: count } });
     await s.page.waitForSelector('#prompt', { timeout: 20_000 });
+    await s.page.waitForTimeout(1500);   // 起動の直後は、案内の判定が済むまで設定を開かない
     await s.page.evaluate(() => document.getElementById('railSettings').click());
     await s.page.waitForSelector('#authSec', { state: 'visible', timeout: 10_000 });
     await s.page.waitForTimeout(1500);

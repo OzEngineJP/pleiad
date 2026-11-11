@@ -129,6 +129,7 @@ export default async function (t) {
     armedSends: new Map(), scheduleAttempt: null, limitOp: async () => ({}), paintArmed: noop,
     // 使えるエージェントが無いときの案内（web/no-agent.mjs）。このテストは使える状態だけ
     noAgent: { blocks: () => false, sync: noop, visible: () => false },
+    onboarding: { gated: () => false },
     usableNow: () => ({ levels: new Map(), usable: [{}], count0: false }),
   });
   vm.runInContext(code, context);
