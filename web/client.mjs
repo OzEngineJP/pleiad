@@ -25,6 +25,7 @@ import { authLinks } from './auth-links.mjs';
 import { mountFold, revealFold } from './fold.mjs';
 import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
+import { followMode, followsEvent, createDetailGate, gapFor, shouldHold, typingIn, selectingIn, markFocus, restoreFocus, FOLLOW_MIN_MS, SUBAGENT_MIN_MS, FOLLOW_INSURANCE_MS } from './detail-follow.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupCliSetup } from './cli-setup.mjs';
@@ -3567,6 +3568,8 @@ function onEvent(ev, replay = false) {
     browserEntry?.paint(); browserSettings.chromeRepaint();
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
+  // 子の会話のモーダルが見ている会話の出来事なら、詳細を読み直す（間引いて。ADR 0315 の段 2）
+  if (!replay) followDetail(ev);
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); paintMemoryGeneral(); memorySettings?.refresh(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
@@ -6561,6 +6564,7 @@ function openWork(key, scope = null) {
   bg.narrowDetail = typeof key === 'string';
   if (typeof key === 'string') bg.selected = key;
   else if (!bg.selected || !dialogItems().some(x => x.key === bg.selected && x.live)) bg.selected = dialogItems()[0]?.key ?? null;
+  bg.view?.follow?.cancel();
   bg.view = null;
   // 先に開く。詳細の読み込みは開いているときだけ走る
   if (!$('workDialog').open) { workSide.begin(); $('workDialog').showModal(); }
@@ -6648,7 +6652,9 @@ function detailNote(text) {
 function openDetail(item) {
   const body = $('workBody');
   clearTimeout(bg.view?.commandTimer);
+  bg.view?.follow?.cancel();
   bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0, hostOffline: item.host ? item.hostOffline : undefined } : null;
+  if (bg.view) bg.view.follow = followGate(bg.view);
   body.replaceChildren();
   delete body.dataset.sessionId; delete body.dataset.paneKind;
   // 別の項目へ切り替えたら、前の子の欄は閉じる（映す会話が違う）
@@ -6660,33 +6666,83 @@ function openDetail(item) {
   refreshDetail({ first: true });
 }
 
-/** 読み直しの間隔。走っている子は running の配信（4 秒ごと）に合わせて読み直す */
+/** 読み直しの間隔。出来事が届かない詳細は、running の配信（4 秒ごと）に合わせて読み直す */
 const DETAIL_MIN_MS = 2500;
 
-async function refreshDetail({ first = false, force = false } = {}) {
+/**
+ * 出来事が届く詳細（委譲した子・開いている会話のサブエージェント）は、出来事ごとに間引いて読み直す（ADR 0315 の段 2）。
+ * 配信での読み直しは取りこぼしに備えた長い間隔に残す。ホストに任せた子・コマンド・親が別の会話のサブエージェントは出来事が届かないので従来どおり。
+ */
+const followGate = (view) => createDetailGate({
+  gap: () => gapFor(view.lastReadMs, followMode(view.item, state.current) === 'subagent' ? SUBAGENT_MIN_MS : FOLLOW_MIN_MS),
+  run: ({ urgent }) => { if (bg.view === view && $('workDialog').open) refreshDetail({ force: true, urgent }); },
+});
+
+/** 詳細の出来事（承認のカード・本文の流れ）を受けたら、読み直しを頼む。承認の出入りは一覧の行と見出しも今に合わせる */
+function followDetail(ev) {
+  const view = bg.view;
+  if (!view?.follow || !$('workDialog').open) return;
+  const hit = followsEvent(view.item, state.current, ev);
+  if (!hit) return;
+  view.follow.poke(hit);
+  if (hit.urgent) queueMicrotask(() => { if (bg.view === view && $('workDialog').open) renderBackground(); });
+}
+
+/** 打っている途中・文字を選んでいる間に待たせた読み直しは、欄を離れた・選びを解いたときに続ける */
+function releaseHeldDetail() {
+  const view = bg.view;
+  if (view?.held && $('workDialog').open) view.follow?.poke();
+}
+document.addEventListener('selectionchange', releaseHeldDetail);
+$('workBody').addEventListener('focusout', () => setTimeout(releaseHeldDetail, 0));
+
+/** 見出しの経過時間だけを今にする（見出しを描き直さないので、回っている印やフォーカスは動かない） */
+function tickDetailHead(item) {
+  if (!item?.live) return;
+  const node = $('workHead').querySelector('.bg-elapsed');
+  const text = elapsedText(item);
+  if (node && text && node.textContent !== text) node.textContent = text;
+}
+
+async function refreshDetail({ first = false, force = false, urgent = false } = {}) {
   const view = bg.view;
   if (!view || !$('workDialog').open) return;
   if (view.busy) { if (force) view.pendingRefresh = true; return; }
-  if (!first && !force && Date.now() - view.at < DETAIL_MIN_MS) return;
+  const driven = Boolean(followMode(view.item, state.current));
+  if (!first && !force && Date.now() - view.at < (driven ? FOLLOW_INSURANCE_MS : DETAIL_MIN_MS)) return;
+  const body = $('workBody');
+  // 打っている途中・文字を選んでいる間は読み直さない（作り直すと消える）。欄を離れたら続きを読む
+  if (!first && shouldHold({ typing: typingIn(body, document.activeElement), selecting: selectingIn(body, window.getSelection()), urgent })) { view.held = true; return; }
+  view.held = false;
   view.busy = true;
   view.at = Date.now();
-  const body = $('workBody');
-  const stick = first || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  view.follow?.note();
+  const nearBottom = () => body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  let stick = first || nearBottom();
   try {
     const item = view.item;
     if (item.group === 'command') await paintCommandDetail(view);
     else {
       const content = item.source === 'task' ? await taskThread(item) : await subagentThread(item);
       if (bg.view !== view) return;
-      // 作り直すと開いていたツールの詳細・まとまり・畳みが閉じるので、読み込みの間に開いたものまで控えて戻す。位置も今のまま
+      // 読み込みの間に読む位置を上げていたら、底へ引き戻さない
+      stick = first || (stick && nearBottom());
+      // 作り直すと開いていたツールの詳細・まとまり・畳みが閉じるので、読み込みの間に開いたものまで控えて戻す。位置も今のまま。フォーカスも同じ場所へ戻す
       const keep = body.scrollTop;
+      const focus = markFocus(body, document.activeElement);
       restoreViewState(content, captureViewState(body));
       body.replaceChildren(content);
       body.scrollTop = keep;
+      restoreFocus(body, focus);
     }
+    view.lastReadMs = Date.now() - view.at;
+    tickDetailHead(view.item);
     view.wasLive = view.item.live;
     view.instructionRevision = view.item.instructionRevision;
     if (stick) body.scrollTop = body.scrollHeight;
+    // 最初の読み込みの間は、この会話の出来事の口がまだ開いていない。開く間に流れた分を、間隔を空けて 1 回だけ追いかける
+    // 終わっている子は出来事が来ないので追いかけない（読み直すと、開いたばかりの画面の DOM が無駄に作り直される）
+    if (first && driven && view.item.live) view.follow?.poke();
   } catch (e) {
     if (bg.view === view) body.replaceChildren(el('div', 'work-head', t('dialog.work.readFailed', { error: e.message })));
   } finally {
@@ -7532,7 +7588,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view = null; bg.extra.clear(); bg.scope = null; closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
+$('workDialog').addEventListener('close', () => { workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); bg.view = null; bg.extra.clear(); bg.scope = null; closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -10746,6 +10802,8 @@ function connect() {
       presenceReporter.report(true);
       modalPresence.reset();
       syncModalWatch({ force: true });
+      // 切れていた間の出来事は届いていない。見ている子の詳細を 1 回読み直す
+      bg.view?.follow?.poke({ urgent: true });
       // 前に開いていた会話の履歴は、一覧の返事を待たずに一緒に頼む（開くのは一覧が届いてからだが、読むのは並べる）
       let saved;
       try { saved = localStorage.getItem("agent-host-current"); } catch {}
