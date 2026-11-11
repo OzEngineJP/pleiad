@@ -765,6 +765,21 @@ try {
     check(await Promise.race([closed, new Promise(res => setTimeout(() => res(false), 5000))]), '窓が出たままでもページは閉じる');
   }]);
 
+  scenes.push(['窓が開いている間は、会話の中の一覧（#noAgent）を重ねない: 初回の窓・出し直しの窓（開いた直後も、確かめ直しが 1 巡した後も）', async () => {
+    for (const [label, done] of [['初回の窓', false], ['出し直しの窓', true]]) {
+      const s = await scene({ done });
+      await settled(s.page);
+      await s.page.waitForFunction(() => document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 });
+      // 一覧が窓より先に出ていると、「見せてから薄れる」時間（900 + 240ms）のあいだ窓の後ろに残る。開いた直後と、その時間の中ほどで見る
+      check(!(await listShown(s.page)), `${label}: 開いた直後、一覧は見えない`);
+      await s.page.waitForTimeout(500);
+      check(!(await listShown(s.page)), `${label}: 開いて 0.5 秒後も、一覧は見えない`);
+      await nextRecheck(s.page);
+      check(await dialogOpen(s.page) && !(await listShown(s.page)), `${label}: 確かめ直しが 1 巡した後も、一覧は見えない`);
+      await s.page.screenshot({ path: path.join(scratch, `${label === '初回の窓' ? 'first' : 'reopen'}.png`) });
+    }
+  }]);
+
   const only = process.env.MISSING_AGENT_ONLY;
   let failed = 0;
   for (const [name, fn] of scenes) {

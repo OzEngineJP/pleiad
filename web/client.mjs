@@ -11055,6 +11055,7 @@ const onboarding = setupOnboarding({ cmd, refreshAuth,
   kit: agentRows, capabilities: (id) => state.backends.find((b) => b.id === id)?.capabilities,
   loadEndpoints: () => loadConfirmedEndpoints(true), getEndpoints: () => confirmedEndpoints,
   // 「使えるエージェントがありません」が自分で閉じたとき、使えるようになったものを会話の既定にする
+  onGate: () => noAgent?.sync(),
   onUsable: (id) => { if (id && state.backendId !== id) { state.backendId = id; state.prefs.backend = id; cmd("setPref", { key: "backend", value: id }).catch(() => {}); } },
   authUrlBox,
   authNote: (id) => state.authNote.get(id) ?? '', folderBrowser, onClose: () => side.redraw(),
@@ -11069,6 +11070,7 @@ const onboarding = setupOnboarding({ cmd, refreshAuth,
 // 会話の途中で使えるエージェントが 0 件になったときの、空の会話の中央の一覧と、案内・設定の面が見えている間の裏の読み直し
 noAgent = setupNoAgent({
   host: $("noAgent"), kit: agentRows, agents: () => onboarding.agents(),
+  suppressed: () => Boolean(onboarding.gated()),
   wanted: () => !onboarding.gated() && !state.messages.length && !hasFailedOutbox() && listKind(usableNow()),
   recheck: () => refreshAuth(), onChange: () => syncRunState(),
 });

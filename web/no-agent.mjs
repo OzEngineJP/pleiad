@@ -11,10 +11,11 @@ import { runMark } from './arc.mjs';
  * @param {object} o.kit              createRowKit の束
  * @param {() => object[]} o.agents   行にするエージェント（説明つき）
  * @param {() => boolean} o.wanted    いま出すべきか（0 件・空の会話・案内のダイアログが出ていない）
+ * @param {() => boolean} [o.suppressed] 案内の窓を出すと決まっている間（出ていれば、直った後の薄れを待たずにすぐ消す。窓の後ろに重ねない）
  * @param {() => Promise<unknown>} o.recheck  ［状態を再確認］
  * @param {() => void} [o.onChange]   出入りしたとき（送信ボタンの状態を合わせる）
  */
-export function setupNoAgent({ host, kit, agents, wanted, recheck, onChange }) {
+export function setupNoAgent({ host, kit, agents, wanted, suppressed, recheck, onChange }) {
   let shown = false, leaving = false, checking = false, timer = 0, lastBlocks = false;
   const blocks = () => shown && !leaving;
   const notify = () => { if (blocks() !== lastBlocks) { lastBlocks = blocks(); onChange?.(); } };
@@ -41,6 +42,7 @@ export function setupNoAgent({ host, kit, agents, wanted, recheck, onChange }) {
   }
   function hide() { clearTimeout(timer); shown = false; leaving = false; host.hidden = true; host.classList.remove('leave'); notify(); }
   function sync() {
+    if (suppressed?.() && shown) return hide();
     const want = wanted();
     if (want) {
       clearTimeout(timer); leaving = false; host.classList.remove('leave');

@@ -13,7 +13,7 @@ const pages = [['setup', 'setupTab', 'setupPanel'], ['apiKeys', 'apiKeysTab', 'a
  * 初回の案内と「使えるエージェントがありません」は同じ窓で、閉じる口が無い（docs/desktop-onboarding.md「使えるエージェントが無いとき」）。
  * 出す・出さないの判断は web/agent-usable.mjs の gateKind だけ
  */
-export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, loadEndpoints, getEndpoints, onUsable, authNote, authUrlBox, begin, folderBrowser, onClose }) {
+export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, loadEndpoints, getEndpoints, onUsable, onGate, authNote, authUrlBox, begin, folderBrowser, onClose }) {
   const $ = id => document.getElementById(id);
   const welcome = $('onboardingDialog');
   let status = null, selected = '', checked = false, locked = false;
@@ -124,6 +124,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, 
     welcome.classList.remove('leaving');
     if (!welcome.open) { welcome.showModal(); $('onboardingTitle').focus({ preventScroll: true }); }   // 歯車に枠が出ないよう、見出しへ（読み上げは見出しから始まる）
     paint();
+    onGate?.();   // 会話の中の一覧は、窓を出すと決まった間は出さない（先に出ていたら、すぐ消す）
   }
   function resumeGate() {
     if (!gate || welcome.open) return;
