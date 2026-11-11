@@ -333,6 +333,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     return {
       backend: s.backend, backends: host.state?.backends ?? [], backendSwitchable: Boolean(bot.plain && !s.sessionId && (host.state?.backends?.length ?? 0) > 1),
       backendUsage: (id) => weekUsage(host.usageOf?.(id)?.quota, ''),
+      agentView: (id) => host.agentView?.(id) ?? null,
       models: vocab.models, model: s.values.model, efforts: threadEfforts, effort: s.values.effort,
       effortDisabled: Object.keys(threadEfforts).length <= 1,
       destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain), defaults: s.defaults,

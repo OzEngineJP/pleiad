@@ -616,8 +616,11 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     auth: {
       /** `devin auth status` を読む。人向けの文（Logged in … / User: Name:）と、fixture の JSON の両方を受ける */
       async status() {
-        const { code, out, err } = await runAuth(['auth', 'status']).catch(e => ({ code: -1, out: '', err: String(e?.message ?? e) }));
+        // 起動の失敗・時間切れは「ログインしていない」ではない（確かめられなかった）。断定すると、これが唯一のエージェントの人に窓が出る
+        let ran = true;
+        const { code, out, err } = await runAuth(['auth', 'status']).catch(e => { ran = false; return { code: -1, out: '', err: String(e?.message ?? e) }; });
         const text = `${out}\n${err}`.trim();
+        if (!ran) return { loggedIn: false, account: null, unconfirmed: true, detail: null };
         try {
           const parsed = JSON.parse(out.trim());
           if (typeof parsed.authenticated === 'boolean') return { loggedIn: parsed.authenticated, account: parsed.authenticated ? (parsed.name ?? parsed.user ?? null) : null, detail: text.slice(0, 200) || null };

@@ -12,22 +12,14 @@
 .dialog-heading h2{margin:0;font-size:var(--fs-xl)}
 .onboarding-subtitle{margin:4px 0 0;font-size:var(--fs-s);color:var(--ink-weak)}
 /* 選んだ行は、脇の一覧と同じく「グレーの地から白へ持ち上がる」で表す（枠も輪も付けない） */
-.onboarding-agent-list{display:flex;flex-direction:column;gap:4px;margin:16px 0 20px;padding:4px;border-radius:var(--r-m);background:var(--surface-0)}
-.onboarding-agent-item{background:transparent;border-radius:var(--r-m);padding:12px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:16px;transition:background-color var(--dur-fast) var(--ease-out)}
-.onboarding-agent-item:hover{background:var(--surface-1)}
-.onboarding-agent-item[aria-checked=true]{background:var(--surface-paper);box-shadow:0 2px 8px var(--shadow)}
-.onboarding-agent-item .agent-info{display:flex;flex-direction:column;min-width:0}
-.onboarding-agent-item .agent-name{font-weight:600;font-size:var(--fs)}
-.onboarding-agent-item[aria-checked=true] .agent-name{color:var(--ink-blue)}
-.onboarding-agent-item .agent-desc{font-size:var(--fs-s);color:var(--ink-weak);margin-top:2px}
-.onboarding-agent-item .agent-state{font-size:var(--fs-s);color:var(--ink-weak);text-align:right;flex:none}
-/* ログインを待っている行: 回る印と「ログインを待っている」・［やめる］。開く・写す入口は名前の下（ADR 0243） */
-.onboarding-agent-item .agent-state:has(.wait){gap:6px}
-.onboarding-agent-item .agent-state:has(.wait)::before{display:none}
-.onboarding-agent-item .agent-state .wait{display:inline-flex;align-items:center;gap:5px;color:var(--ink-mark);white-space:nowrap}
-.onboarding-agent-item .agent-state .btn{font-size:var(--fs-s);padding:4px 10px}
-.onboarding-agent-item .wait .run,.agent-state.spin .run{width:12px;height:12px;color:inherit}
-.onboarding-agent-item .wait .run svg,.agent-state.spin .run svg{width:12px;height:12px;stroke-width:1.7}
+.onboarding-agent-list{margin:16px 0 20px}
+.onboarding-dialog.none .onboarding-agent-list{margin-bottom:0}
+.onboarding-dialog.none #onboardingError:empty{margin:0}
+/* 使えるエージェントがありません: 使えるものができたら、900ms 待ってから 240ms で薄れて閉じる */
+.onboarding-dialog{transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
+.onboarding-dialog.leaving{opacity:0;transform:translateY(-6px)}
+@media (prefers-reduced-motion:reduce){.onboarding-dialog,.onboarding-dialog.leaving{transition:none}}
+.dialog-heading>div{min-width:0}
 .ob-links{display:flex;flex-wrap:wrap;gap:2px;margin:4px 0 0 -8px}
 .ob-links .btn{font-size:var(--fs-s);padding:3px 8px;color:var(--ink-blue)}
 .onboarding-auth:not(:empty){background:var(--surface-1);border-radius:var(--r-m);padding:10px 8px;margin-bottom:16px}
@@ -448,13 +440,6 @@ button.conn-lost:hover{color:var(--ink)}
 .agent-head .row-be{width:20px;height:20px}
 .agent-head .row-be svg,.agent-head .row-be img{width:18px;height:18px}
 .agent-name{font-weight:600;white-space:nowrap}
-.agent-state{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-s);color:var(--ink-weak);white-space:nowrap}
-.agent-state::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;color:var(--ink-blue);background:currentColor}
-.agent-state.out{color:var(--ink-strong);font-weight:600}
-.agent-state.out::before{color:var(--ink-weak);background:transparent;box-shadow:inset 0 0 0 1.5px currentColor}
-.agent-state.wait::before{color:var(--ink-mark)}
-.agent-state.spin{color:var(--ink-mark)}
-.agent-state.spin::before{display:none}
 .agent-actions{display:flex;align-items:center;gap:4px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
 .agent-actions .btn{font-size:var(--fs-s);padding:4px 10px}
 .agent-actions .connect .t{white-space:nowrap}

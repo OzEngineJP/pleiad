@@ -214,7 +214,7 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
         pills[Math.max(0, Math.min(pills.length - 1, i + (e.key === "ArrowRight" ? 1 : -1)))]?.focus();
       } else if (e.key === "ArrowDown") {
         const last = pills[pills.length - 1];
-        const next = [...pop.querySelectorAll("[role=option]:not(:disabled), .seg button, input, button.clink")].find((n) => after(last, n));
+        const next = [...pop.querySelectorAll("[role=option]:not(:disabled):not([aria-disabled=true]), .seg button, input, button.clink")].find((n) => after(last, n));
         if (next) { e.preventDefault(); next.focus(); }
       }
       return;
@@ -225,13 +225,13 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
     const from = e.target.closest?.("[role=option]");
     const list = from?.closest("[role=listbox]");
     if (!from && e.target.matches?.("input:not([type=range])") && e.key === "ArrowDown") {
-      const first = [...pop.querySelectorAll("[role=listbox]:not([hidden]) [role=option]:not(:disabled)")].find((o) => after(e.target, o));
+      const first = [...pop.querySelectorAll("[role=listbox]:not([hidden]) [role=option]:not(:disabled):not([aria-disabled=true])")].find((o) => after(e.target, o));
       if (first) { e.preventDefault(); first.focus(); }
       return;
     }
     if (!list) return;
     e.preventDefault();
-    const rows = [...list.querySelectorAll("[role=option]:not(:disabled)")];
+    const rows = [...list.querySelectorAll("[role=option]:not(:disabled):not([aria-disabled=true])")];
     const i = rows.indexOf(from) + (e.key === "ArrowDown" ? 1 : -1);
     if (i < 0) {
       const input = [...pop.querySelectorAll("input:not([type=range])")].filter((n) => after(n, list)).pop();
@@ -283,6 +283,26 @@ function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disa
   if (right) b.append(typeof right === "object" ? right : el("span", "r", right));
   b.onclick = onPick;
   return b;
+}
+
+/** 使えないエージェントの行（選べない。右に状態の言葉とその場の操作）。状態は「本体 · SDK」の 1 行 */
+function unusableAgentRow(b, v, mark) {
+  const r = el("div", "copt agent-off");
+  r.setAttribute("role", "option");
+  r.setAttribute("aria-selected", "false");
+  r.setAttribute("aria-disabled", "true");
+  r.dataset.key = `backend:${b.id}`;
+  const mid = el("span", "cbody");
+  const m = el("span", "main hasmark");
+  m.append(mark, el("span", "txt", b.label));
+  // 状態が 1 つだけの行は、名前と同じ行の右（操作の左）に置く。本体と SDK の 2 つがある行（Claude Code）は名前の下に並べる
+  if (!v.state) mid.append(m, el("span", "sub", v.status));
+  else mid.append(m);
+  if (v.terms) mid.append(v.terms);
+  r.append(el("span", "tick", ""), mid);
+  if (v.state) { const st = el("span", "arow agent-off-st"); st.append(v.state); r.append(st); }
+  if (v.op) { v.op.classList.add("agent-off-op"); r.append(v.op); }
+  return r;
 }
 
 function listbox(label, rows) {
@@ -572,11 +592,24 @@ export function renderModel({ pop, target: d, on, hide }) {
   if (d.backendSwitchable) {
     parts.push(head(t("composer.agent")));
     // モデル・接続先・アカウントと同じ一覧の行（承認済み（2026-10-18）、ADR 0228）。ロゴ + 正式名、右端に週の使用量（取れるものだけ）
-    parts.push(listbox(t("composer.agent"), d.backends.map((b) => {
-      const usage = d.backendUsage?.(b.id);
-      return row({ on: b.id === d.backend, main: b.label, mark: logo(b.id), right: usage ? weekRight(usage) : "",
-        key: `backend:${b.id}`, onPick: () => { if (b.id !== d.backend) on.backend(b.id); } });
-    })));
+    // 使えないエージェントは下に離し、選べない（docs/design-system.md「エージェントの行」。右に今の状態とその場の操作）
+    const views = new Map(d.backends.map((b) => [b.id, d.agentView?.(b.id) ?? null]));
+    const usableRows = [], otherRows = [];
+    for (const b of d.backends) {
+      const v = views.get(b.id);
+      if (!v || v.usable) {
+        const usage = d.backendUsage?.(b.id);
+        usableRows.push(row({ on: b.id === d.backend, main: b.label, mark: logo(b.id), right: usage ? weekRight(usage) : "",
+          key: `backend:${b.id}`, onPick: () => { if (b.id !== d.backend) on.backend(b.id); } }));
+      } else otherRows.push(unusableAgentRow(b, v, logo(b.id)));
+    }
+    const box = listbox(t("composer.agent"), usableRows);
+    parts.push(box);
+    if (otherRows.length) {
+      const rest = listbox(t("composer.agent"), otherRows);
+      rest.classList.add("unusable");
+      parts.push(rest);
+    }
   }
   if (!agentHead && d.destination?.usage) parts.push(d.destination.usage);
   // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを短い一行で出す

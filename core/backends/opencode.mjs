@@ -1158,7 +1158,8 @@ export const backend = {
         const connected = (data?.connected ?? []).map((id) => (data?.all ?? []).find((p) => p.id === id)?.name ?? id);
         return { loggedIn: true, account: connected.join(', ') || t('opencode.auth.freeOnly'), detail: t('opencode.auth.detail') };
       } catch (err) {
-        return { loggedIn: false, account: null, detail: String(err?.message ?? err).slice(0, 200) };
+        // サーバーに問い合わせられなかったのは「ログインしていない」ではない（確かめられなかった）
+        return { loggedIn: false, account: null, unconfirmed: true, detail: String(err?.message ?? err).slice(0, 200) };
       }
     },
     /** 接続先のログイン。OpenCode の接続先ごとの認可は端末の `opencode auth login` で選ぶので、そのコマンドを案内し、つないだ接続先が増えるまで待つ */

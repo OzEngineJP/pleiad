@@ -146,15 +146,20 @@
       "cliVersion": "{{agent}} {{version}}",
       "expired": "⚠ ログインの有効期限が切れています。",
       "signInAgain": "ログインし直す",
+      "row": {
+        "sdkNone": "未取得",
+        "sdkReady": "取得済み",
+        "openInstall": "公式の入れ方を開く"
+      },
       "claudeSdk": {
-        "notice": "Claude を使うには Anthropic の Claude Agent SDK（{{version}}）が必要です。Pleiad には含まれていないため、npm のレジストリから取得して、この PC に保存します。",
         "terms": "SDK には Anthropic の規約が適用されます",
         "fetch": "取得する",
         "retry": "もう一度取得",
         "fetching": "取得しています… {{received}} / {{total}}",
         "fetchingUnknown": "取得しています… {{received}}",
         "progressLabel": "Claude Agent SDK の取得の進み",
-        "failed": "取得できませんでした: {{error}}"
+        "failed": "取得できませんでした",
+        "failedWith": "取得できませんでした: {{error}}"
       }
     },
     "updates": {
@@ -2263,6 +2268,12 @@
       "reissue": "トークンを再発行",
       "loginFailed": "ログインできませんでした: {{error}}"
     },
+    "sendFail": {
+      "notFound": "{{agent}} が見つかりません。",
+      "sdkNeed": "Claude を使うには Anthropic の Claude Agent SDK（{{version}}）が要ります。",
+      "resend": "再送する",
+      "cancel": "取り消す"
+    },
     "sys": {
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
       "taskResultState": "委譲の結果（{{state}}）",
@@ -2720,6 +2731,7 @@
     "openSidebarWith": "サイドバーを開く（{{detail}}）",
     "previewShowing": "表示中",
     "authNeed": "{{agents}} にログインが要る",
+    "noUsableAgent": "使えるエージェントがありません",
     "protocolUnsupported": "未対応の protocolVersion: {{version}}",
     "initFailed": "初期化に失敗: {{error}}",
     "disconnected": "切断",
@@ -2729,7 +2741,8 @@
     "onboarding": {
       "title": "Pleiad へようこそ",
       "subtitle": "使用するエージェントと作業ディレクトリを選んで、最初の会話を始めましょう。",
-      "later": "あとで",
+      "noneTitle": "使えるエージェントがありません",
+      "noneSubtitle": "会話を続けるには、どれか 1 つを使えるようにしてください。",
       "agents": "使用するエージェント",
       "note": "エージェントと作業ディレクトリは、会話画面でいつでも変更できます",
       "start": "会話を始める",
@@ -3436,9 +3449,6 @@
     "cancel": "取り消す"
   },
   "onboarding": {
-    "installHint": "このエージェントをインストールし、設定から状態を再確認してください。",
-    "waitingLogin": "ログインの完了を待っています。",
-    "signInHint": "このエージェントにログインしてください。",
     "seenFailed": "初回表示の記録を保存できませんでした: {{error}}"
   },
   "common": {

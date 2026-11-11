@@ -1,34 +1,29 @@
 import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
-import { runMark } from './arc.mjs';
+import { usableReport, gateKind } from './agent-usable.mjs';
 // ページを足したら、下の `$('<名前>Tab').onclick = () => page('<名>')` も足す（無いと札は出るが切り替わらない）
 const pages = [['setup', 'setupTab', 'setupPanel'], ['apiKeys', 'apiKeysTab', 'apiKeysPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['input', 'inputTab', 'inputPanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['notify', 'notifyTab', 'notifyPanel'], ['voice', 'voiceTab', 'voicePanel'], ['remote', 'remoteTab', 'remotePanel'], ['plus', 'plusTab', 'plusPanel'], ['memory', 'memoryTab', 'memoryPanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
-// A failed status check is not evidence that the account is unconfigured.
-export function shouldShowOnboarding(status, auth) {
-  if (!status.seen && !status.setupComplete) return true;
-  return status.agents.length === 0 || status.agents.every(agent => {
-    const account = auth.get(agent.id);
-    return !agent.installed || account?.supported === true && account.loggedIn === false && !account.pending && !account.unconfirmed;
-  });
-}
-
 /**
  * folderBrowser はブラウザー版の「フォルダーを選ぶ…」の簡易ブラウザー（web/composer-controls.mjs。入力欄の面と同じ部品）
- * authLinks(id) はログインを待っている間の開く・写す入口（web/auth-links.mjs。URL が届くまでは null）、cancelLogin(agent) は［やめる］、
+ * kit は行の部品の束（web/agent-row.mjs の createRowKit。設定・会話の中の一覧と共有）、capabilities(id) は能力の印、
+ * loadEndpoints() は確かめ済みの互換の接続先を読み直す、onUsable(id) は「使えるエージェントがありません」が自分で閉じたときの行き先、
  * authNote(id) は直前のログインの時間切れ・失敗の一文（ADR 0243）
+ *
+ * 初回の案内と「使えるエージェントがありません」は同じ窓で、閉じる口が無い（docs/desktop-onboarding.md「使えるエージェントが無いとき」）。
+ * 出す・出さないの判断は web/agent-usable.mjs の gateKind だけ
  */
-export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, checkAuth, cancelLogin, authLinks, authNote, authUrlBox, begin, folderBrowser, onClose }) {
+export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, loadEndpoints, getEndpoints, onUsable, onGate, authNote, authUrlBox, begin, folderBrowser, onClose }) {
   const $ = id => document.getElementById(id);
   const welcome = $('onboardingDialog');
   let status = null, selected = '', checked = false, locked = false;
+  // 今出している案内の種類（'first' | 'none' | null）。null は窓を出していない（出す必要が無い）
+  let gate = null, leaving = null;
   // 初回の案内で選んだ作業ディレクトリ。選ぶまでは前に決めたもの、無ければホーム（docs/desktop-onboarding.md）
   let chosenCwd = '';
   const currentCwd = () => chosenCwd || status?.cwd || status?.homeDir || '';
   const error = message => { $('onboardingError').textContent = message; };
   const isOpen = () => document.body.classList.contains('settings');
-  // ［ログイン］→［やめる］、［やめる］→［ログイン］と、押したボタンが消える行の焦点の行き先（{ agent, pending: 待つ状態 }）
-  let loginFocus = null;
   // 読み上げに伝えたエージェントごとの状態（変わったときだけ #onboardingLive に書く）
   const spoken = new Map();
   // 別のページへ移ったら本文を先頭に戻す（前のページの位置のまま途中から始まらないように）。同じページを押し直したときは動かさない
@@ -60,6 +55,8 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, checkAut
     onClose?.();
     for (const node of covered()) node.inert = false;
     $('settings').focus();
+    // 設定から戻ったとき、まだ使えるエージェントが無ければ案内が戻る
+    if (gate) resumeGate();
   }
   // 更新の適用中は途中で再起動するので、会話へ戻る道を塞ぐ
   function lock(value) {
@@ -67,173 +64,125 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, checkAut
     $('backToChat').disabled = value;
     $('settingsNav').inert = value;
   }
-  // 一覧は radiogroup。行にログインボタンが入るので行自体は button にできない。
-  // 代わりに矢印で選び、Tab では群ごと飛ばす（選択中の行だけ tabindex=0）
-  function move(agents, step) {
-    const index = agents.findIndex(a => a.id === selected);
-    selected = agents[(Math.max(index, 0) + step + agents.length) % agents.length].id;
+  const agentsOf = () => (status?.agents || []).map(a => ({ ...a, capabilities: capabilities?.(a.id) ?? {} }));
+  // 一覧は radiogroup。使える行だけが選べる（選べない行は役割を持たず、操作のボタンだけを持つ）。
+  // 矢印で選び、Tab では群ごと飛ばす（選択中の行だけ tabindex=0）
+  function move(ids, step) {
+    const index = ids.indexOf(selected);
+    selected = ids[(Math.max(index, 0) + step + ids.length) % ids.length];
     paint({ focus: true });
   }
+  $('onboardingAgentList').addEventListener('keydown', event => {
+    const row = event.target.closest?.('[data-pick]');
+    if (!row || event.target !== row || isComposingKey(event)) return;
+    if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); selected = row.dataset.pick; return paint({ focus: true }); }
+    const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
+    const ids = [...$('onboardingAgentList').querySelectorAll('[data-pick]')].map(r => r.dataset.pick);
+    if (!step || ids.length < 2) return;
+    event.preventDefault();
+    move(ids, step);
+  });
 
   function paint({ focus = false } = {}) {
-    const agents = status?.agents || [], auth = getAuth();
-    if (!selected) selected = agents.find(a => a.installed && auth.get(a.id)?.loggedIn)?.id || status?.backend || agents[0]?.id || '';
-
+    const agents = agentsOf(), auth = getAuth();
+    const { usable, pickable } = kit.plan(agents);
+    if (!pickable.includes(selected)) selected = (pickable.includes(status?.backend) ? status.backend : usable[0] || pickable[0]) || '';
     const list = $('onboardingAgentList');
-    if (list) {
-      // 行は毎回作り直す。押した行ごと消えるので、居場所が一覧の中にあったら選択中の行へ戻す。
-      // 戻さないと body に落ち、そのあと矢印キーが効かない
-      const keepFocus = focus || list.contains(document.activeElement);
-      // 行の［ログイン］［やめる］に居たら、描き直した同じ行の同じ役のボタンへ戻す
-      const keepAct = !focus && list.contains(document.activeElement) && document.activeElement.closest('[data-act]')
-        ? document.activeElement.closest('.onboarding-agent-item')?.dataset.agent : null;
-      list.replaceChildren(...agents.map(agent => {
-        const row = document.createElement('div');
-        row.className = 'onboarding-agent-item';
-        row.dataset.agent = agent.id;
-        row.setAttribute('role', 'radio');
-        const isSelected = selected === agent.id;
-        row.setAttribute('aria-checked', String(isSelected));
-        row.tabIndex = isSelected ? 0 : -1;
-        row.onclick = () => { selected = agent.id; paint(); };
-        row.onkeydown = event => {
-          if (isComposingKey(event)) return;
-          if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); selected = agent.id; return paint({ focus: true }); }
-          const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
-          if (!step || agents.length < 2) return;
-          event.preventDefault();
-          move(agents, step);
-        };
+    kit.paint(list, agents, { desc: true, pick: { pickable: a => pickable.includes(a.id), selected, onPick: a => { selected = a.id; paint(); } } });
+    if (focus) list.querySelector('[aria-checked=true]')?.focus();
 
-        const info = document.createElement('div');
-        info.className = 'agent-info';
-        const name = document.createElement('span');
-        name.className = 'agent-name';
-        name.textContent = agent.label;
-        const desc = document.createElement('span');
-        desc.className = 'agent-desc';
-        desc.textContent = agent.description || '';
-        info.append(name, desc);
-
-        const stateEl = document.createElement('div');
-        stateEl.className = 'agent-state';
-
-        const st = auth.get(agent.id);
-        if (agent.installed === false) {
-          if (agent.installUrl) {
-            const link = document.createElement('a');
-            link.className = 'btn';
-            link.textContent = t('settings.agents.install');
-            link.href = agent.installUrl;
-            link.target = '_blank';
-            link.rel = 'noreferrer';
-            link.onclick = e => e.stopPropagation();
-            stateEl.append(link);
-          } else {
-            stateEl.textContent = t('settings.agents.notInstalled');
-          }
-        } else if (st?.loggedIn) {
-          stateEl.textContent = st.account || t('settings.agents.loggedIn');
-        } else if (st?.pending) {
-          // 回る印と「ログインを待っている」・［やめる］（リモートの窓からも押せる）。開く・写す入口は名前の下
-          const wait = document.createElement('span');
-          wait.className = 'wait';
-          wait.append(runMark(), t('settings.agents.loginPending'));
-          const stop = document.createElement('button');
-          stop.type = 'button';
-          stop.className = 'btn';
-          stop.dataset.act = 'login';
-          stop.textContent = t('settings.agents.cancelLogin');
-          stop.setAttribute('aria-label', t('settings.agents.cancelLoginLabel', { agent: agent.label }));
-          stop.disabled = Boolean(st.cancelling);
-          stop.onclick = e => {
-            e.stopPropagation();
-            stop.disabled = true;
-            loginFocus = { agent: agent.id, pending: false };
-            cancelLogin?.(agent);
-          };
-          stateEl.append(wait, stop);
-          const links = authLinks?.(agent.id);
-          if (links) { links.className = 'ob-links'; info.append(links); }
-        } else if (st?.unconfirmed) {
-          // 受動では分からない（agy のような CLI を確かめに起こさないため）。未ログインとは言わない。明示の［状態を確認］だけ確かめる
-          const name = document.createElement('span');
-          name.textContent = t('settings.agents.unconfirmed');
-          stateEl.append(name);
-          if (!globalThis.window?.plyRemote && checkAuth) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'btn';
-            btn.textContent = t('settings.agents.checkStatus');
-            btn.onclick = e => { e.stopPropagation(); btn.disabled = true; checkAuth(agent); };
-            stateEl.append(btn);
-          }
-        } else if (globalThis.window?.plyRemote) {
-          // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）
-          stateEl.textContent = t('remote.loginOnHostShort');
-          stateEl.title = t('remote.loginOnHost');
-        } else {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'btn';
-          btn.textContent = t('settings.agents.signIn');
-          btn.dataset.act = 'login';
-          btn.onclick = e => {
-            e.stopPropagation();
-            loginFocus = { agent: agent.id, pending: true };
-            if (authLogin) authLogin(agent);
-          };
-          stateEl.append(btn);
-        }
-
-        row.append(info, stateEl);
-        return row;
-      }));
-      const act = keepAct && [...list.children].find(r => r.dataset.agent === keepAct)?.querySelector('[data-act=login]');
-      if (act) act.focus();
-      else if (keepFocus) list.querySelector('[aria-checked=true]')?.focus();
-      // 押したボタンが消えた行では、入れ替わったボタン（［やめる］か［ログイン］）へ焦点を移す
-      if (loginFocus && Boolean(auth.get(loginFocus.agent)?.pending) === loginFocus.pending) {
-        const index = agents.findIndex(a => a.id === loginFocus.agent);
-        loginFocus = null;
-        list.children[index]?.querySelector('[data-act=login]')?.focus();
-      }
-      const live = $('onboardingLive');
-      for (const agent of agents) {
-        const st = auth.get(agent.id);
-        const said = st?.pending ? t('settings.agents.loginPending') : st?.unconfirmed ? t('settings.agents.unconfirmed') : st?.loggedIn ? t('settings.agents.loggedIn') : t('settings.agents.loggedOut');
-        if (spoken.has(agent.id) && spoken.get(agent.id) !== said && live) live.textContent = `${agent.label}: ${said}`;
-        spoken.set(agent.id, said);
-      }
+    // 読み上げ: 状態が変わった行だけ伝える
+    const live = $('onboardingLive');
+    for (const agent of agents) {
+      const st = auth.get(agent.id);
+      const said = st?.pending ? t('settings.agents.loginPending') : st?.unconfirmed ? t('settings.agents.unconfirmed') : usable.includes(agent.id) ? t('settings.agents.stateOn') : st?.installed === false ? t('settings.agents.notInstalled') : t('settings.agents.loggedOut');
+      if (spoken.has(agent.id) && spoken.get(agent.id) !== said && live) live.textContent = `${agent.label}: ${said}`;
+      spoken.set(agent.id, said);
     }
 
     // ログインの URL と手貼りの欄。ダイアログは modal なので、設定画面に出しても届かない
-    const box = authUrlBox?.(selected);
+    const waiting = agents.find(a => auth.get(a.id)?.pending);
+    const box = authUrlBox?.(waiting?.id ?? selected);
     $('onboardingAuth')?.replaceChildren(...(box ? [box] : []));
 
-    const agent = agents.find(a => a.id === selected), st = auth.get(selected) ?? {};
-    const ready = agent?.installed && st.loggedIn;
-    $('completeSetup').disabled = !ready;
-    error(ready ? ''
-      : agent?.installed === false ? t('onboarding.installHint')
-      : st.pending ? t('onboarding.waitingLogin')
-      : authNote?.(selected) || t('onboarding.signInHint'));
+    $('completeSetup').disabled = !selected;
+    const noted = agents.map(a => authNote?.(a.id)).find(Boolean);
+    error(selected ? '' : noted || '');
+    // 「使えるエージェントがありません」は、1 つ使えるようになったら自分で閉じる
+    if (gate === 'none' && usable.length && welcome.open && !leaving) leave(usable[0]);
+  }
+
+  // ---- 案内を出す・畳む
+  function showGate() {
+    const none = gate === 'none';
+    $('onboardingTitle').textContent = none ? t('dialog.onboarding.noneTitle') : t('dialog.onboarding.title');
+    $('onboardingSubtitle').textContent = none ? t('dialog.onboarding.noneSubtitle') : t('dialog.onboarding.subtitle');
+    // 作業ディレクトリと「会話を始める」は最初の案内だけ。再び出る案内は、使えるものができたら自分で閉じる
+    $('onboardingCwd').hidden = none;
+    document.querySelector('.onboarding-actions').hidden = none;
+    welcome.classList.toggle('none', none);   // 下に続く欄が無いので、一覧の下の余白を詰める
+    welcome.classList.remove('leaving');
+    if (!welcome.open) { welcome.showModal(); $('onboardingTitle').focus({ preventScroll: true }); }   // 歯車に枠が出ないよう、見出しへ（読み上げは見出しから始まる）
+    paint();
+    onGate?.();   // 会話の中の一覧は、窓を出すと決まった間は出さない（先に出ていたら、すぐ消す）
+  }
+  function resumeGate() {
+    if (!gate || welcome.open) return;
+    if (gate === 'none') {
+      const { usable } = kit.plan(agentsOf());
+      if (usable.length) { const id = usable[0]; gate = null; onUsable?.(id); return; }
+    }
+    showGate();
+  }
+  // 使えるものができた: 900ms 見せてから 240ms で薄れて閉じる。行き先は使えるようになったエージェント
+  function leave(id) {
+    leaving = setTimeout(() => {
+      const { usable } = kit.plan(agentsOf());
+      if (!usable.length) { leaving = null; return; }   // 見せている間に戻った
+      welcome.classList.add('leaving');
+      setTimeout(() => {
+        leaving = null;
+        gate = null;
+        welcome.classList.remove('leaving');
+        welcome.close();
+        onUsable?.(usable.includes(id) ? id : usable[0]);
+      }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 240);
+    }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 900);
   }
   async function refresh() {
     status = await cmd('onboardingStatus');
+    await loadEndpoints?.();
     paintCwd();
     if (!checked) {
       checked = true;
-      if (shouldShowOnboarding(status, getAuth())) {
+      const report = usableReport({ agents: agentsOf(), auth: getAuth(), endpoints: getEndpoints?.() ?? null });
+      gate = gateKind({ status, report, remote: Boolean(globalThis.window?.plyRemote) });
+      if (gate === 'first') {
         try { await cmd('onboardingSeen'); status.seen = true; }
         catch (e) { $('setupError').textContent = t('onboarding.seenFailed', { error: e.message }); }
-        close();
-        welcome.showModal();
       }
+      // 起動時の判定が済んだ印（見た目には使わない。実画面の試験が、判定の前に状態を変えないよう待つ）
+      document.documentElement.dataset.agentGate = gate ?? 'off';
+      if (gate) { close(); showGate(); return; }
     }
     paint();
   }
-  $('closeOnboarding').onclick = () => welcome.close();
+  // 閉じる口は無い: Esc・窓の外のクリックでは閉じない。設定へは歯車（戻ると案内が戻る）。OS の閉じる（アプリの終了）は止めない
+  welcome.addEventListener('cancel', event => { if (gate) event.preventDefault(); });
+  welcome.addEventListener('keydown', event => { if (event.key === 'Escape' && gate) event.preventDefault(); });
+  // 閉じられない窓の中で Tab が窓の外（ブラウザーの枠・本文）へ抜けないよう、端で反対の端へ戻す
+  welcome.addEventListener('keydown', event => {
+    if (event.key !== 'Tab' || !gate) return;
+    const items = [...welcome.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')].filter(x => !x.disabled && x.tabIndex >= 0 && x.offsetParent);
+    if (!items.length) return;
+    const edge = event.shiftKey ? items[0] : items.at(-1);
+    if (document.activeElement === edge) { event.preventDefault(); (event.shiftKey ? items.at(-1) : items[0]).focus(); }
+  });
+  welcome.addEventListener('close', () => {
+    // ほかの口が .close() してそのまま設定を開く（openSettings）のは通す。何も開かず閉じたなら出し直す
+    if (gate && !leaving) setTimeout(() => { if (gate && !welcome.open && !isOpen() && !leaving) showGate(); }, 0);
+  });
+  $('onboardingGear').onclick = () => { welcome.close(); open('setup'); };
   $('setupTab').onclick = () => page();
   $('appearanceTab').onclick = () => page('appearance');
   $('inputTab').onclick = () => page('input');
@@ -248,11 +197,6 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, checkAut
     if (document.querySelector('dialog[open]')) return;
     close();
   });
-  welcome.addEventListener('click', event => {
-    if (event.target !== welcome) return;
-    const r = welcome.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) welcome.close();
-  });
   $('refreshAgents').onclick = async () => {
     $('refreshAgents').disabled = true; $('setupError').textContent = '';
     try { await refreshAuth(); }
@@ -264,6 +208,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, checkAut
     try {
       status = { ...status, ...await cmd('completeSetup', { backend: selected, ...(currentCwd() ? { cwd: currentCwd() } : {}) }) };
       await begin({ backend: status.backend, cwd: status.cwd }, '');
+      gate = null;
       welcome.close();
       $('prompt').focus();
     } catch (e) { error(e.message); }
@@ -309,5 +254,5 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, checkAut
   welcome.addEventListener('close', () => { browseBox.hidden = true; browseBox.replaceChildren(); cwdError.textContent = ''; });
 
   page();
-  return { open, close, isOpen, lock, refresh, paint, page };
+  return { open, close, isOpen, lock, refresh, paint, page, gated: () => gate, agents: agentsOf };
 }

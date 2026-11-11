@@ -153,6 +153,7 @@ import { createVisualizationCollector, visualizeInstructions } from './visualize
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
+import { agentLevel, canPick } from '../web/agent-usable.mjs';
 import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, discardBrowserEnvironment, settleBrowserEnvironment, sweepBrowserEnvironments, chromeRelayBrowser, locateAgentBrowser } from './agent-browser.mjs';
 import { createChromeWindowCloser } from './chrome/close-window.mjs';
 import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeWindows } from './chrome/delegation.mjs';
@@ -2953,7 +2954,9 @@ async function pickBackend(sessionId, given) {
   if (preferred) return preferred;
   // 既定に覚えていたエージェントが無くなった（対応を終えた・無効にした）なら、有効なものの先頭へ落とす
   const only = listBackends();
-  if (only.length === 1 || (remembered && only.length)) return only[0];
+  // 何も覚えていない（初回・設定を消した）ときも、新しい会話は先頭のエージェントで作る。起動しただけで
+  // 「エージェントの指定が要る」の失敗を出さない（使えるかは入力欄・案内が見せる。docs/desktop-onboarding.md）
+  if (only.length) return only[0];
   throw new Error(t('agents.required'));
 }
 
@@ -4915,7 +4918,9 @@ const opsAgents = {
     const auth = noteAuth(backend.id, await backend.auth.status({ probe }));
     // 期限切れ（会話で 401 を受けた）。CLI はログイン済みを返したままなので、Pleiad が覚えている印で出す
     const expired = auth.loggedIn && authExpired.has(backend.id) ? { expired: true } : {};
-    return { backend: backend.id, status: { supported: true, ...installed, ...auth, ...where, ...expired, ...sdk } };
+    // Pleiad に登録したアカウント（トークン・資格情報）で会話が走る人は、CLI のログインが無くても使えるかもしれない（画面は「使えるかもしれない」に数える）
+    const accountReady = !auth.loggedIn && (await accountRows(backend).catch(() => [])).some(a => a.ready) ? { accountReady: true } : {};
+    return { backend: backend.id, status: { supported: true, ...installed, ...auth, ...where, ...expired, ...accountReady, ...sdk } };
   },
 };
 
@@ -10198,7 +10203,12 @@ wss.on("connection", (ws, req) => {
         case "completeSetup": {
           const backend = await pickBackend(null, msg.args?.backend);
           if (!installation(backend.id).installed) throw new Error(t('agents.installRequired'));
-          if (backend.auth?.status && !(await backend.auth.status({ probe: true })).loggedIn) throw new Error(t('agents.checkLogin'));
+          // 「使える」の判定は画面と同じ 1 つの関数（web/agent-usable.mjs）。画面が選ばせた行はここでも通る（接続先だけで使えるもの・ログインの口を持たないもの）
+          // 確かめたのに確かめられなかったもの（確認の失敗・時間切れ）は、画面と同じに「確かめられなかった」として通す（web/agent-usable.mjs の canPick）
+          const probed = await opsAgents.authStatus(backend.id, true).then(r => r.status, e => ({ supported: false, error: String(e?.message ?? e) }));
+          const status = probed.unconfirmed ? { ...probed, checkFailed: true } : probed;
+          const confirmed = await compatEndpoints.list(backend.id).then(r => r.endpoints.some(e => e.verifiedAt), () => false);
+          if (!canPick(agentLevel({ st: status, endpointConfirmed: confirmed, endpointsKnown: true, canEndpoint: endpointCapable(backend) }))) throw new Error(t('agents.checkLogin'));
           const { cwd } = await resolveCwd(null, msg.args?.cwd, backend);
           const saved = { seen: true, setupComplete: true, backend: backend.id, cwd: path.resolve(cwd) };
           await fs.mkdir(store.dataDir, { recursive: true });

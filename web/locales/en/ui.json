@@ -146,15 +146,20 @@
       "cliVersion": "{{agent}} {{version}}",
       "expired": "⚠ Your sign-in has expired.",
       "signInAgain": "Sign in again",
+      "row": {
+        "sdkNone": "Not fetched",
+        "sdkReady": "Fetched",
+        "openInstall": "Open the official install guide"
+      },
       "claudeSdk": {
-        "notice": "Claude needs Anthropic's Claude Agent SDK ({{version}}). It isn't included with Pleiad, so it is downloaded from the npm registry and saved on this PC.",
         "terms": "Anthropic's terms apply to the SDK",
         "fetch": "Download",
         "retry": "Try again",
         "fetching": "Downloading… {{received}} / {{total}}",
         "fetchingUnknown": "Downloading… {{received}}",
         "progressLabel": "Claude Agent SDK download progress",
-        "failed": "Couldn't download: {{error}}"
+        "failed": "Couldn't download",
+        "failedWith": "Couldn't download: {{error}}"
       }
     },
     "updates": {
@@ -2308,6 +2313,12 @@
       "reissue": "Reissue token",
       "loginFailed": "Couldn’t sign in: {{error}}"
     },
+    "sendFail": {
+      "notFound": "{{agent}} was not found.",
+      "sdkNeed": "To use Claude you need Anthropic's Claude Agent SDK ({{version}}).",
+      "resend": "Resend",
+      "cancel": "Cancel"
+    },
     "sys": {
       "taskResumed": "Received the Pleiad task result and resumed",
       "taskResultState": "Delegation result ({{state}})",
@@ -2781,6 +2792,7 @@
     "openSidebarWith": "Open sidebar ({{detail}})",
     "previewShowing": "Viewing",
     "authNeed": "Sign in to {{agents}}",
+    "noUsableAgent": "No agent is available",
     "protocolUnsupported": "Unsupported protocolVersion: {{version}}",
     "initFailed": "Couldn't start: {{error}}",
     "disconnected": "Disconnected",
@@ -2790,7 +2802,8 @@
     "onboarding": {
       "title": "Welcome to Pleiad",
       "subtitle": "Choose an agent and a working directory, then start your first conversation.",
-      "later": "Later",
+      "noneTitle": "No agent is available",
+      "noneSubtitle": "To keep chatting, get at least one agent ready to use.",
       "agents": "Agent to use",
       "note": "You can change the agent and working directory in the conversation at any time",
       "start": "Start conversation",
@@ -3528,9 +3541,6 @@
     "cancel": "Cancel"
   },
   "onboarding": {
-    "installHint": "Install this agent, then recheck its status in Settings.",
-    "waitingLogin": "Waiting for sign-in to finish.",
-    "signInHint": "Sign in to this agent.",
     "seenFailed": "Couldn't save that the welcome screen was shown: {{error}}"
   },
   "common": {

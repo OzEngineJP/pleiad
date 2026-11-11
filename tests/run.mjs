@@ -510,6 +510,8 @@ const SUITES = [
   // 通知の画面側: この PC の設定・見ている間は出さない・失敗・presence の知らせ・設定 › 通知・スマホのアプリの帯と通知から開く会話
   './unit/notify-web.mjs',
   './unit/onboarding.mjs',
+  './unit/agent-usable.mjs',
+  './unit/install-command.mjs',
   './unit/tree.mjs',
   './unit/family.mjs',
   './unit/pending-sidebar.mjs',
@@ -823,6 +825,8 @@ const SUITES = [
   './unit/server-codex-compaction.mjs',
   // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
   './unit/server-compat-endpoints.mjs',
+  './unit/server-setup-endpoint-only.mjs',
+  './unit/server-setup-check-failed.mjs',
   // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）
   './unit/server-compat-real-cli.mjs',
   // antigravity バックエンド。agy の身代わり（tests/lib/fake-agy.mjs）と話すだけで、
