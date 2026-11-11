@@ -6585,6 +6585,8 @@ function openWork(key, scope = null) {
 
 function paintDetailHead(item) {
   const head = $('workHead');
+  // 見出しの右のボタン（検索・パネル・「…」）は描き直しで外れないよう、先に置き場へ戻す
+  $('workEntries').append($('workTocEntry'), $('workBrowserEntry'), $('workMore'));
   head.replaceChildren();
   if (!item) return;
   const back = el('button', 'btn btn-icon bg-back');
@@ -6613,6 +6615,9 @@ function paintDetailHead(item) {
   title.append(h, meta);
   head.append(back, title);
   const actions = el('div', 'bg-dt-actions');
+  // 主の頭の行と同じ並び: 検索・パネル・「…」（狭い幅）。会話を開く ↗ は最後
+  actions.append($('workTocEntry'), $('workBrowserEntry'), $('workMore'));
+  let showOpen = false;
   if (item.source === 'task') {
     // 子の会話へ移るのは矢印のアイコン（名前は title・読み上げ）。「停止」は結果が重いので字のまま
     const open = el('button', 'btn btn-icon bg-open');
@@ -6627,9 +6632,9 @@ function paintDetailHead(item) {
         open.title = t('dialog.work.openOnHost');
         open.setAttribute('aria-label', t('dialog.work.openOnHost'));
         open.onclick = () => openOnHost(item);
-        actions.append(open);
+        showOpen = true;
       }
-    } else actions.append(open);
+    } else showOpen = true;
     // 止めるのは根のタスク（止めれば孫も止まる。ホストの「すべて止める」と同じ）。読み出しで知った孫には出さない
     if (!item.hostDescendant && (['queued', 'running'].includes(item.taskStatus) || item.waiting)) {
       const stop = el('button', 'btn btn-quiet', t('dialog.work.stop'));
@@ -6642,6 +6647,7 @@ function paintDetailHead(item) {
       };
       actions.append(stop);
     }
+    if (showOpen) actions.append(open);
   }
   if (item.group === 'command' && item.live !== false && (item.entry.capabilities ?? capsOf(item.entry.backend)).stopBackground) {
     actions.append(backgroundStopButton(item.entry.sessionId, item.task));
@@ -7972,6 +7978,7 @@ $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() 
 // 引き継いで戻した行（present kind: 'chromeHandover'）の「Claude に戻しました」の名前
 setChromeHandoverAgentName(() => labelOf(activeBackendId()));
 setChromeClosedSession(() => state.current);
+let modalEntry = null;   // 作業のダイアログの見出しのパネルのボタン（下の setupBrowserEntry。2 つ目）
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
 const chromeWindows = createWindowTable();
@@ -7987,14 +7994,14 @@ const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs
   // 上の列: 窓の表・窓のある子の一覧・依頼待ち・この端末が端末で操作しているか（inapp-browser.md「見るウィンドウを選ぶ」）
   windows:chromeWindows, conversations:() => chromeWindowRows, waiting:handoffWaiting, deviceOperating:id => deviceOperating.has(id),
   // タブの列を描き直したら、頭の行の [N] も数を追う（スマホの入口。承認済み 2026-11-08）
-  onTabsChange:() => browserEntry?.paint(), osActions:() => state.osActions === true,
+  onTabsChange:() => { browserEntry?.paint(); modalEntry?.paint(); }, osActions:() => state.osActions === true,
   // ✖ で閉じたら頭のアイコンへフォーカスを戻す（docs/design-system.md「会話の頭の行のアイコン」）
   focusEntry:() => $('browserEntry')?.focus({ preventScroll:true }) }))));
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
   getContext: anchor => channelsUi.contextForPanel(anchor) ?? workContext(anchor) ?? ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
-  onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); },
+  onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); modalEntry?.paint(); },
   // 内蔵ブラウザーの開け閉めのばね。頭のアイコンと ✖ の受け渡しが追う（web/panel-handoff.mjs）
   onMotion: (p, phase) => browserEntry?.motion?.(p, phase),
   // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
@@ -8107,7 +8114,50 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'),
   openEntry: id => { loadBrowserUnify().then(ui => ui.openEntry(id)).catch(error => notify(error?.message || t('tabs:address.failed'))); },
   panelClose: () => document.querySelector('#filePreview .bu-panel-close:not([hidden])'),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
-phoneEntryView.addEventListener('change', () => browserEntry?.paint());
+phoneEntryView.addEventListener('change', () => { browserEntry?.paint(); modalEntry?.paint(); });
+// 作業のダイアログの見出しの「パネルを開く」（主の #browserEntry と同じ部品の 2 つ目。見る先は選んでいる子の会話）。
+// 子の会話（task）は子のタブ、サブエージェント（subagent）は親のタブ。委譲先ホストの子は欄を持たないので隠れる（sessionId が無い）
+const modalPaneTarget = () => ($('workDialog').open && !bg.scope && $('workBody').dataset.paneKind ? $('workBody').dataset.sessionId || null : null);
+const modalRightPane = {
+  isOpen: () => { const id = modalPaneTarget(); return Boolean(id) && chromePanel?.isOpen() === true && filePreview.mounted() === $('workDialog') && chromePanel.sessionId === id; },
+  close() { if (modalRightPane.isOpen()) chromePanel.close(); },
+  open(anchor) {
+    const id = modalPaneTarget(); if (!id) return;
+    // 主と同じ入口の規則（操作中なら Chrome のタブ、それ以外は最後に見た方、無ければ新しいタブ）。欄はダイアログの中へ載せ替えてから開く
+    loadBrowserUnify().then(unify => {
+      if (modalPaneTarget() !== id) return;
+      mountModalPane();
+      return unify.openEntry(id, anchor);
+    }).catch(error => notify(error?.message || t('tabs:address.failed'))).finally(() => modalEntry?.paint());
+  },
+};
+const workMore = $('workMore');
+{
+  const entry = setupBrowserEntry({ button: $('workBrowserEntry'),
+    chrome: () => modalRightPane, windows: chromeWindows, pagesOnly: () => chromeLink !== 'connected' && !chromeWindows.has(modalPaneTarget()), getSessionId: modalPaneTarget,
+    getChromeState: id => chromeControlStore.get(id).state,
+    humanHeld: id => tabHolderStore.anyHuman(id),
+    waiting: handoffWaiting,
+    chromeAvailable: () => state.hostCaps?.chromeWindow === true,
+    mobile: () => phoneEntryView.matches,
+    tabs: id => browserUnifyUi?.tabsOf(id) ?? (chromeWindows.has(id) ? [{ targetId: 'window' }] : []),
+    openEntry: () => modalRightPane.open(),
+    panelClose: () => (filePreview.mounted() === $('workDialog') ? document.querySelector('#filePreview .bu-panel-close:not([hidden])') : null),
+    // 近道（Ctrl+Shift+B）は最前面の面に効かせる: 作業のダイアログだけが開いている間はこちら、主の側は dialog[open] で止まる
+    blocked: () => document.body.classList.contains('settings') || [...document.querySelectorAll('dialog[open]')].some(d => d !== $('workDialog')) });
+  // 「…」は主と同じく 700px 以下で、隠れたパネルの入口を持つ
+  modalEntry = entry && { ...entry, paint() { entry.paint(); workMore.hidden = !entry.available(); } };
+  workMore.onclick = () => {
+    const id = modalPaneTarget(); if (!id) return;
+    const r = workMore.getBoundingClientRect();
+    showMenu(r.right, r.bottom + 4, [{
+      label: chromeLink === 'connected' || chromeWindows.has(id) ? t('browser.unifiedEntryLabel') : (modalRightPane.isOpen() ? t('tabs:address.closePanel') : t('tabs:address.openPagePanel')),
+      onClick: () => entry.toggle(workMore) }], null, { alignRight: true });
+  };
+  const watch = new MutationObserver(() => modalEntry?.paint());
+  watch.observe($('workBody'), { attributes: true, attributeFilter: ['data-session-id', 'data-pane-kind'] });
+  watch.observe($('workDialog'), { attributes: true, attributeFilter: ['open'] });
+}
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
 // 前の回に見ていた場所は、会話を開く（select が残す）前に読んでおく（起動時に Channels の面の位置を戻す）
 const savedView = readAddress(localStorage);
@@ -10859,7 +10909,9 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
 // 作業のダイアログの会話内検索（2 つ目。同じ部品・同じ右の欄。見る先は選んでいる子の会話で、シートも最前面のダイアログの中に出す）
 const workThread = () => $('workBody').querySelector(':scope > .thread.bg-thread');
-const modalToc = createConversationToc({ thread: workThread, log: $('workBody'), nav: createThreadNav({ log: $('workBody'), thread: workThread }),
+const modalToc = createConversationToc({ thread: workThread, log: $('workBody'),
+  // 最新へのボタンと Alt+↑↓・End も主と同じ（作業のダイアログが最前面で開いている間、前面の筋に効く。一覧・右の欄・シートの中では奪わない）
+  nav: createThreadNav({ log: $('workBody'), thread: workThread, frame: $('workBodyFrame'), keys: $('workDialog'), skip: '.work-side, #filePreview, .toc, .toc-sheet', isRunning: () => bg.view?.item?.live === true }),
   preview: {
     openPanel: (spec) => { mountModalPane(); return filePreview.openPanel(spec); },
     close: (...args) => filePreview.close(...args),
@@ -10896,7 +10948,7 @@ document.addEventListener('ply-browser-toggle', event => {
   else chromePanel?.open(event.target, { target:event.detail?.sessionId });
 });
 chromePanel.onOpenChange(open => {
-  browserEntry?.paint();
+  browserEntry?.paint(); modalEntry?.paint();
   // ダイアログの中で欄を閉じたら、開いたリンクへフォーカスを戻す（別の所へ移していたら動かさない）
   if (!open && (document.activeElement === document.body || document.activeElement?.closest?.('#filePreview'))) restoreModalOpener();
 });

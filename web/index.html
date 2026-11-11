@@ -483,17 +483,22 @@
     <header>
       <strong id="workTitle" data-i18n="dialog.work.title"></strong>
       <span class="work-count" id="workCount"></span>
-      <!-- 会話内を検索（#tocEntry と同じボタン・同じ目次。見る先は選んでいる子の会話。web/thread-nav.mjs） -->
-      <button type="button" class="btn btn-icon" id="workTocEntry" hidden aria-controls="filePreview" aria-expanded="false" aria-keyshortcuts="Control+F" data-shortcut="F" data-i18n-title="nav.toc.entry" data-i18n-aria-label="nav.toc.entry"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/></svg></button>
       <button type="button" class="btn" data-close data-i18n="dialog.close"></button>
     </header>
+    <!-- 会話の見出し（#workHead）の右に並べる、主の頭の行と同じボタン。見出しは描き直すので、ここを置き場にして都度つけ直す（web/client.mjs paintDetailHead）。
+         会話内を検索（#tocEntry）・パネルを開く（#browserEntry）・「…」（#sessionMore）と同じ部品・同じ並び。見る先は選んでいる子の会話 -->
+    <div hidden id="workEntries">
+      <button type="button" class="btn btn-icon" id="workTocEntry" hidden aria-controls="filePreview" aria-expanded="false" aria-keyshortcuts="Control+F" data-shortcut="F" data-i18n-title="nav.toc.entry" data-i18n-aria-label="nav.toc.entry"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/></svg></button>
+      <button type="button" class="btn btn-icon" id="workBrowserEntry" hidden aria-controls="filePreview" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4ZM3 9.5h18M10.5 4v5.5"/></svg></button>
+      <button type="button" class="btn btn-icon more-btn" id="workMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/></svg></button>
+    </div>
     <div class="work-split" id="workSplit">
       <div class="work-side" id="workSide">
         <nav class="work-list" id="workList" data-i18n-aria-label="dialog.work.listLabel"></nav>
       </div>
       <section class="work-detail">
         <div class="work-dh" id="workHead"></div>
-        <div id="workBody"></div>
+        <div class="work-body-frame" id="workBodyFrame"><div id="workBody"></div></div>
       </section>
     </div>
   </dialog>
