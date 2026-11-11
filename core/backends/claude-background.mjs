@@ -33,7 +33,7 @@
 // **入力を閉じると CLI は数秒でそのコマンドを kill する**（`.output` に `[killed]` だけが残る）。
 // Claude の local_bash は終わると必ず system/task_notification（と background_tasks_changed）を出し、
 // CLI はそれで main を自動で再開させるので、待てば「完了の通知が来たら報告します」が本当に果たされる。
-// 終わらないコマンド（`npm run dev` など）への逃げ道は、タイムアウトではなく作業ダイアログの停止ボタン
+// 終わらないコマンド（`npm run dev` など）への逃げ道は、タイムアウトではなく子の会話の入力欄の中断ボタン
 // （claude.mjs の stopBackground -> SDK の Query.stopTask。止めると status: "stopped" の通知が来て閉じられる）。
 //
 // (b) は ambient を数えない（終わらないものが混じると、ターンが永久に終わらなくなる）。
