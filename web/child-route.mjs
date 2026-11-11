@@ -37,3 +37,18 @@ export function childRoute(id, sessions) {
 export function restoredSession(id, sessions) {
   return childRoute(id, sessions)?.root ?? id;
 }
+
+/**
+ * 会話を開く呼び出しの順番札（openConversation）。開く途中には待ちがあり（会話の読み込み・タスクの行・最初の描画）、
+ * その間に後の呼び出しや、利用者が別の会話を選んだとき、前の呼び出しは何もせずに終わる（後から子のモーダルを上に重ねない）。
+ * - begin() は新しい札を取る。それまでの札は古くなる
+ * - interrupt() は利用者の選び直し（別の会話を開く操作）。持っている札をすべて古くする
+ * - 札の stale() は、待った後に呼ぶ。true なら何もしない
+ */
+export function createOpenGate() {
+  let gen = 0;
+  return {
+    begin() { const mine = ++gen; return { stale: () => mine !== gen }; },
+    interrupt() { gen++; },
+  };
+}

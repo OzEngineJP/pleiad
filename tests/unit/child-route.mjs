@@ -1,5 +1,5 @@
 // 会話を開くときの行き先（web/child-route.mjs。ADR 0318）。委譲の子（孫を含む）は依頼元の根をメインに、子はモーダルで開く。
-import { isRootRow, childRoute, restoredSession } from '../../web/child-route.mjs';
+import { isRootRow, childRoute, restoredSession, createOpenGate } from '../../web/child-route.mjs';
 import { slimRow } from '../../core/session-list-delta.mjs';
 
 export const name = 'child-route';
@@ -42,4 +42,17 @@ export default async function (t) {
   // ---- 画面に届く行（slimRow）でも同じに引ける: taskId が届く
   const slimmed = sessions.map((s) => slimRow({ ...s, delegation: s.delegation && { ...s.delegation, manager: 'ply' } }));
   t.ok('slimRow を通した行でも子の taskId と根が引ける', j(childRoute('grand', slimmed)) === j({ root: 'root', taskId: 'ply-task-2', depth: 2 }), j(childRoute('grand', slimmed)));
+
+  // ---- 開く呼び出しの順番札（待っている間に後の呼び出し・利用者の選び直しがあれば、前の呼び出しは何もしない）
+  const gate = createOpenGate();
+  const first = gate.begin();
+  t.ok('札は取った直後は古くない', first.stale() === false);
+  const second = gate.begin();
+  t.ok('後の呼び出しが始まると、前の札は古い（最後の呼び出しが勝つ）', first.stale() === true && second.stale() === false);
+  gate.interrupt();
+  t.ok('利用者の選び直しで、持っている札はすべて古い', second.stale() === true);
+  const third = gate.begin();
+  t.ok('選び直しの後に取った札は古くない', third.stale() === false && first.stale() === true);
+  const other = createOpenGate();
+  t.ok('別の番札とは干渉しない', other.begin().stale() === false && third.stale() === false);
 }

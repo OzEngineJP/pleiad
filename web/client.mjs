@@ -78,7 +78,7 @@ import { attachedImageSrc } from "./composer/attachments.mjs";
 import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
 import { createHomeDest } from "./composer/home-dest.mjs";
 import { createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
-import { childRoute, restoredSession } from "./child-route.mjs";
+import { childRoute, restoredSession, createOpenGate } from "./child-route.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
@@ -6635,6 +6635,7 @@ function openWork(key, scope = null) {
   if (typeof key === 'string') bg.selected = key;
   else if (!bg.selected || !dialogItems().some(x => x.key === bg.selected && x.live)) bg.selected = dialogItems()[0]?.key ?? null;
   bg.view?.follow?.cancel();
+  flushDetailSettled(bg.view);
   bg.view = null;
   // 先に開く。詳細の読み込みは開いているときだけ走る
   if (!$('workDialog').open) { workSide.begin(); $('workDialog').showModal(); }
@@ -6811,7 +6812,8 @@ function openDetail(item) {
   const body = $('workBody');
   clearTimeout(bg.view?.commandTimer);
   bg.view?.follow?.cancel();
-  bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0, hostOffline: item.host ? item.hostOffline : undefined } : null;
+  flushDetailSettled(bg.view);
+  bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0, hostOffline: item.host ? item.hostOffline : undefined, settleWaiters: [] } : null;
   if (bg.view) bg.view.follow = followGate(bg.view);
   body.replaceChildren();
   modalToc.reset();
@@ -6827,6 +6829,25 @@ function openDetail(item) {
   body.append(el('div', 'work-head', t('dialog.work.loading')));
   // 最初の描画が終わる約束。外から開いた（openConversation）とき、描けた後に検索の発言へ送るために待つ
   bg.view.firstPaint = refreshDetail({ first: true });
+}
+
+/**
+ * 詳細の「読み直しが済んだ」印（外から開いた openConversation が、検索の発言へ送る前に待つ）。
+ * refreshDetail が、続けて読み直す予定が無い形で終わる・読み直しを見送る・別の項目へ替わる・ダイアログが閉じる、のどれかで待っている人を起こす。
+ * 待つ側は上限（max ms）も持つ（読み直しが続く間・見送られ続けても、そこで待つのをやめる）
+ */
+function flushDetailSettled(view) {
+  const waiters = view?.settleWaiters;
+  if (!waiters?.length) return;
+  view.settleWaiters = [];
+  for (const wake of waiters) wake();
+}
+function waitDetailSettled(view, max) {
+  return new Promise((resolve) => {
+    if (!view || bg.view !== view || !view.settleWaiters || (!view.busy && !view.pendingRefresh)) return resolve();
+    const timer = setTimeout(resolve, max);
+    view.settleWaiters.push(() => { clearTimeout(timer); resolve(); });
+  });
 }
 
 /** 読み直しの間隔。出来事が届かない詳細は、running の配信（4 秒ごと）に合わせて読み直す */
@@ -6875,7 +6896,7 @@ async function refreshDetail({ first = false, force = false, urgent = false } = 
   if (!first && !force && Date.now() - view.at < (driven ? FOLLOW_INSURANCE_MS : DETAIL_MIN_MS)) return;
   const body = $('workBody');
   // 打っている途中・文字を選んでいる間は読み直さない（作り直すと消える）。欄を離れたら続きを読む
-  if (!first && shouldHold({ typing: typingIn(body, document.activeElement), selecting: selectingIn(body, window.getSelection()), urgent })) { view.held = true; return; }
+  if (!first && shouldHold({ typing: typingIn(body, document.activeElement), selecting: selectingIn(body, window.getSelection()), urgent })) { view.held = true; flushDetailSettled(view); return; }
   view.held = false;
   view.busy = true;
   view.at = Date.now();
@@ -6917,8 +6938,8 @@ async function refreshDetail({ first = false, force = false, urgent = false } = 
     }
     if (view.pendingRefresh && bg.view === view) {
       view.pendingRefresh = false;
-      queueMicrotask(() => refreshDetail({ force: true }));
-    }
+      queueMicrotask(() => refreshDetail({ force: true }));   // 続けて読み直す。待っている人は、その読み直しの終わりで起こす
+    } else flushDetailSettled(view);
   }
 }
 
@@ -7755,7 +7776,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { workComposer?.hide(); workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
+$('workDialog').addEventListener('close', () => { workComposer?.hide(); workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); flushDetailSettled(bg.view); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -8991,7 +9012,7 @@ function rowMenu(s, x, y, lead = []) {
   const items = [
     ...lead, ...(lead.length ? [{ sep: true }] : []),
     // 頭の「…」（開いている会話。先頭に「開く」の見出しを足したとき）では、同じ語の「開く」（この会話を開く）を出さない
-    ...(lead.length && s.id === state.current ? [] : [{ label: t("session.menu.open"), onClick: () => select(s.id) }]),
+    ...(lead.length && s.id === state.current ? [] : [{ label: t("session.menu.open"), onClick: () => openConversation(s.id) }]),
     ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => openConversation(s.parent.sessionId) }] : []),
     ...(hasKin ? [{ label: t("session.menu.branches"), sub: kinItems }] : []),
     { label: t("session.menu.rename"), sub: () => [
@@ -10052,9 +10073,12 @@ async function loadHistory(args, prev = null, { window = false, bulk = false } =
  * jump は脇の検索の抜粋から開いたとき。読み込んだ後にその発言へ送って輪を付ける（openFromSearch・revealMessage）
  * after は fresh のとき、描く前に待つ約束（startNew の一覧の読み直し。会話の行が載ってから描く）
  * keepDrawer は起動・つなぎ直しで自動で開くとき。利用者が開いている脇のパネルを閉じない（行を押して選ぶ道は閉じる）
+ * viaOpen は openConversation が根の会話を開くとき。利用者の選び直しとは違うので、開く途中の呼び出しの順番札（openGate）を古くしない
  */
-async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null, after = null, keepDrawer = false } = {}) {
+async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null, after = null, keepDrawer = false, viaOpen = false } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload && !retry)) return;
+  // 利用者・他の入口が別の会話を選んだ。開く途中の openConversation（子のモーダルを開くはずの呼び出し）は、後から重ねずに終わる
+  if (!viaOpen && keepUpTo === undefined && !reload && !retry) openGate.interrupt();
   const quiet = reload && !retry && id === state.current && keepUpTo === undefined && !state.loadingSession;
   if (keepUpTo === undefined && !quiet && !fresh && !keepDrawer) setDrawer(false);
   filePreview.sessionChanged(id);
@@ -10104,39 +10128,50 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
  */
 const openFromSearch = (id, jump) => openConversation(id, { jump });
 
+/** 開く呼び出しの順番札（web/child-route.mjs）。openConversation が取り、select（利用者の選び直し）が古くする */
+const openGate = createOpenGate();
+/** モーダルの中身が読み直しを終えるのを待つ上限。これを越えたら待たずに終える（子のモーダルは開いたまま・検索の発言へは送らない） */
+const OPEN_SETTLE_MAX_MS = 3000;
+
 /**
  * 会話を開く入口（ADR 0318）。メインの画面に出るのは根の会話だけで、委譲の子（孫を含む）は依頼元の根の会話をメインに開き、その上のモーダルで出す
  * （子の行き先は web/child-route.mjs）。脇の検索・通知・スマホの通知・起動の復元・ロック待ち・代理送信・Channels・Chrome の窓から、ここを通る。
  * - 子でない会話（根として扱う子 = 端末の AI から任された子・依頼元を消した子 を含む）は、今までどおりメインで開く
  * - jump（検索の抜粋）があれば、開いた会話の中のその発言へ送って輪を付ける（子ならモーダルの中の筋）
  * - タスクの行が引けない（古い記録・上書きされた古い会話）子は、根の会話だけを開く
+ * - モーダルが開いているとき: 子でない会話・別の根の子を開くなら、先に今のモーダルを閉じる（前の根の子を上に残さない）。同じ根の別の子は、モーダルの中身を替える
+ * - 待ちの間（会話の読み込み・タスクの行・最初の描画）に、後の openConversation や利用者の選び直し（select）があれば、前の呼び出しは何もせずに終わる
+ *   （順番札 openGate）。最後に呼んだ会話だけが開く。待ちの間に利用者がモーダルを閉じた・別の子へ替えたときも、その子の筋へは送らない
  */
 async function openConversation(id, { jump = null, keepDrawer = false } = {}) {
   if (!id) return;
+  const ticket = openGate.begin();
   const route = childRoute(id, state.sessions);
+  const dialog = $('workDialog');
   if (!route) {
+    if (dialog.open) dialog.close();
     if (!jump) return select(id, { keepDrawer });
     if (id === state.current && !state.loadingSession) { if (narrowView.matches) setDrawer(false); revealMessage(jump); return; }
     return select(id, { jump, keepDrawer });
   }
   if (narrowView.matches && !keepDrawer) setDrawer(false);
-  const dialog = $('workDialog');
   if (state.current !== route.root) {
     if (dialog.open) dialog.close();   // 別の根の会話のモーダルを残さない
-    await select(route.root, { keepDrawer });
-    if (state.current !== route.root) return;
+    await select(route.root, { keepDrawer, viaOpen: true });
+    if (ticket.stale() || state.current !== route.root) return;
   }
   if (!route.taskId) return;
   await loadTaskCards(route.root).catch(() => {});
   const key = `t:${route.taskId}`;
   // 上書きされた古い会話（タスクが今の子として指す会話が別）・まだ行が無い子は開けない。根の会話だけを開いたままにする
-  if (state.current !== route.root || taskById(route.taskId)?.sessionId !== id || !backgroundItems().some(x => x.key === key)) return;
+  if (ticket.stale() || state.current !== route.root || taskById(route.taskId)?.sessionId !== id || !backgroundItems().some(x => x.key === key)) return;
   openWork(key);
   const view = bg.view;
   await view?.firstPaint;
   // 最初の描画の直後に、溜まっていた読み直しが続けて筋を作り直す。作り直す前に送ると、送った先の行が消えて輪も付かないので、読み直しが済むのを待つ
-  for (let i = 0; i < 40 && bg.view === view && (view.busy || view.pendingRefresh); i++) await new Promise((r) => setTimeout(r, 75));
-  if (jump && bg.view === view && view?.key === key) revealMessage(jump, true);
+  // （refreshDetail が済んだ印 settleWaiters で待つ。上限 OPEN_SETTLE_MAX_MS を越えたら待たずに終える）
+  await waitDetailSettled(view, OPEN_SETTLE_MAX_MS);
+  if (jump && !ticket.stale() && bg.view === view && view?.key === key) revealMessage(jump, true);
 }
 
 /**

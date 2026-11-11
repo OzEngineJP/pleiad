@@ -781,6 +781,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.ai .body.flash,.m.ai.flash{border-radius:var(--r-s);animation:note-flash 1.2s var(--ease-out)}
 @media (prefers-reduced-motion:reduce){.m.user .body.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}
   .m.ai .body.flash,.m.ai.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
+/* モーダルの子の筋（.bg-thread）には、メインの #thread .mw-body の左の余白（中央の列に寄せる padding）が無く、発言が .mw-body の左端に接する。
+   輪（2px の影）が .mw-body の overflow:hidden に左を切られて文字の縁に重なるので、輪が出ている間だけ切る位置を 4px 外へ広げる（並びは動かさない） */
+.bg-thread .mw-body:has(.flash){overflow:clip;overflow-clip-margin:4px}
 .m.user .body{display:inline-block;max-width:680px;background:var(--surface-2);border-radius:var(--r-l);padding:9px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
 /* ---- 自分の発言の Markdown と添付（web/user-message.mjs、docs/design-system.md「自分の発言」、ADR 0059）。
    本文は AI の本文と同じ md の見た目。添付は本文の印の位置に縮小（画像）か札（ファイル）で出る ---- */

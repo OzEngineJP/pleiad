@@ -5,6 +5,9 @@
 //   4. 保存していた「開いていた会話」が子の id なら、起動で根になる（モーダルは復元しない）
 //   5. 脇の検索（委譲した会話を含める）の結果を押す: 根がメイン・子がモーダルで、一致した発言のところへ着く
 //   6. モーダルの見出しに「会話として開く ↗」が無く、メインの見出しに「↖ 依頼元」の入口が無い
+//   7. 開く途中の入れ替わり: 子の結果を押した直後（0〜1.5 秒）に別の会話の結果を押すと、後の会話だけが開く（子のモーダルを後から重ねない）
+//   8. 子 → 孫を続けて開くと、最後に呼んだ孫で終わる
+//   9. ベル（通知の一覧）の「あなた待ち」の行（宛先が根・子・孫）: 根がメイン・子（孫）がモーダル。根の行はモーダルを開かない
 // 実行: node tests/browser/child-open-routes.mjs   （CHILD_OPEN_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -81,6 +84,23 @@ try {
     try { await client.cmd('deleteSession', { sessionId: second.sessionId }); break; }
     catch (error) { if (error.code !== 'CANNOT_DELETE' || tries >= 80) throw error; await sleep(250); }
   }
+  // 別の根（検索で子と並ぶ結果。開く途中の入れ替わりの相手）と、根の会話の埋め草（根を読み込む間を長くする）
+  const third = await client.runTurn({ backend: 'fake', cwd: work, prompt: 'echo:別の根 KIDMARK GRANDMARK OTHERROOT' });
+  for (let i = 0; i < 30; i++) await client.runTurn({ sessionId: root, prompt: `echo:埋め草 ${i} ${'あ'.repeat(120)}` });
+  // あなた待ち（承認待ち）の子・孫・ひ孫。通知は「依頼を出した会話」が宛先なので、根・子・孫の 3 つの行ができる
+  const taskSession = async (taskId) => (await client.cmd('agentTasks')).find(r => r.taskId === taskId)?.sessionId;
+  const askKid = await delegate(root, { title: '承認待ちの子', task: 'ask' });
+  await wait(() => taskSession(askKid.taskId), 'ask child session');
+  const askKidId = await taskSession(askKid.taskId);
+  const askGrand = await delegate(kidRow.sessionId, { title: '承認待ちの孫', task: 'ask' });
+  await wait(() => taskSession(askGrand.taskId), 'ask grandchild session');
+  const askGrandId = await taskSession(askGrand.taskId);
+  await client.waitFor(e => e.type === 'permission' && e.sessionId === askKidId, { from: 0, ms: 30_000 });
+  await client.waitFor(e => e.type === 'permission' && e.sessionId === askGrandId, { from: 0, ms: 30_000 });
+  const askGreat = await delegate(grandRow.sessionId, { title: '承認待ちのひ孫', task: 'ask' });
+  await wait(() => taskSession(askGreat.taskId), 'ask great-grandchild session');
+  const askGreatId = await taskSession(askGreat.taskId);
+  await client.waitFor(e => e.type === 'permission' && e.sessionId === askGreatId, { from: 0, ms: 30_000 });
   console.log('root', root, 'child', kidRow.sessionId, 'grandchild', grandRow.sessionId, 'orphan', orphanRow.sessionId);
 
   const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
@@ -163,6 +183,76 @@ try {
   assert.ok(hit.uuid, 'the flashed message is a real message row (data-hit-uuid)');
   shot('search-1280');
   console.log('PASS: a search result for a grandchild → root in main, grandchild in the modal');
+
+  // ---- 7・8. 開く途中の入れ替わり（脇の検索の結果を、間を空けて続けて押す）
+  const results = () => evaluate(() => [...document.querySelectorAll('#groups .row.res[data-session]')].map((n) => n.dataset.session));
+  const pressResults = (steps) => evaluate((list) => { for (const [id, ms] of list) setTimeout(() => document.querySelector(`#groups .row.res[data-session="${id}"]`)?.click(), ms); }, steps);
+  const searchTerm = async (term, expectIds) => {
+    evaluate((v) => { const q = document.getElementById('q'); q.focus(); q.value = v; q.dispatchEvent(new Event('input', { bubbles: true })); }, term);
+    await wait(async () => { const r = await results(); return expectIds.every((id) => r.includes(id)); }, `search results for ${term}`);
+  };
+  const settleModal = () => sleep(2600);
+  await searchTerm('GRANDMARK', [kidRow.sessionId, grandRow.sessionId, third.sessionId]);
+  // 出発点: 別の根をメインに（モーダルは閉じる）
+  const goThird = async () => {
+    if ((await modal()).open) { ab('press', 'Escape'); await wait(async () => !(await modal()).open, 'close modal before starting'); }
+    await wait(async () => (await results()).includes(third.sessionId), 'results are back');
+    pressResults([[third.sessionId, 0]]);
+    await wait(async () => (await current()) === third.sessionId, 'the other root is in main');
+    await sleep(400);
+  };
+  ab('errors', '--clear');
+  for (const gap of [0, 100, 300, 700, 1500]) {
+    await goThird();
+    pressResults([[kidRow.sessionId, 0], [third.sessionId, gap]]);
+    await sleep(gap + 300);
+    await settleModal();
+    const m = await modal();
+    assert.equal(await current(), third.sessionId, `gap ${gap}: the later-selected conversation stays in main`);
+    assert.equal(m.open, false, `gap ${gap}: no child modal is stacked on the later conversation (modal=${JSON.stringify(m)})`);
+  }
+  console.log('PASS: choosing another conversation soon after a child result opens only the later one (no stale modal)');
+
+  // 子 → 孫を続けて。最後に呼んだ孫で終わる（同じ瞬間・少し間を空けて）
+  for (const gap of [0, 250]) {
+    await goThird();
+    pressResults([[kidRow.sessionId, 0], [grandRow.sessionId, gap]]);
+    await wait(async () => (await modal()).open && (await modal()).sessionId === grandRow.sessionId, `gap ${gap}: the grandchild shows`);
+    await settleModal();
+    assert.equal((await modal()).sessionId, grandRow.sessionId, `gap ${gap}: the grandchild is still the one shown after settling`);
+    assert.equal(await current(), root, `gap ${gap}: the root is in main`);
+  }
+  const pageErrors = ab('errors');
+  assert.ok(!/Cannot set properties of null|TypeError/.test(pageErrors), 'no page error (bg.view null) while opening in a row: ' + pageErrors.slice(0, 300));
+  console.log('PASS: child then grandchild in a row ends on the grandchild (last call wins)');
+
+  // ---- 9. ベル: あなた待ちの子・孫
+  const bellRows = () => evaluate(() => [...document.querySelectorAll('#notifPanel .nrow')].map((n) => n.textContent.replace(/\s+/g, ' ').trim()));
+  const openBell = async () => {
+    if ((await modal()).open) { ab('press', 'Escape'); await wait(async () => !(await modal()).open, 'close modal before the bell'); }
+    evaluate(() => { const b = document.getElementById('notifBell'); if (document.getElementById('notifPanel').hidden) b.click(); });
+    await wait(async () => (await bellRows()).length > 0, 'the bell lists notifications');
+  };
+  const pressApprovalRow = (index) => evaluate((i) => { const rows = [...document.querySelectorAll('#notifPanel .nrow')].filter((n) => n.textContent.includes('承認を待っています')); rows[i]?.click(); return rows.length; }, index);
+  await goThird();
+  // 承認待ちの行（根・子・孫それぞれが「あなた待ち」の宛先）をすべて押す。根は根がメインのまま、子・孫は根がメイン・子（孫）がモーダルで開く
+  // 通知は「依頼を出した会話」が宛先: 承認待ちの子 → 根、承認待ちの孫 → 子、承認待ちのひ孫 → 孫
+  const outcomes = [];
+  let approvalRows = 3;
+  for (let i = 0; i < approvalRows; i++) {
+    await openBell();
+    if (i === 0) console.log('bell rows:', JSON.stringify((await bellRows()).slice(0, 4)));
+    approvalRows = await pressApprovalRow(i);
+    assert.ok(approvalRows >= 3, `the three approval-waiting rows are in the bell (${approvalRows})`);
+    await wait(async () => (await current()) === root, `bell row ${i}: the root is in main`);
+    await sleep(1200);
+    const m = await modal();
+    outcomes.push(m.open ? m.sessionId : 'root');
+    assert.equal(await current(), root, `bell row ${i}: the root is in main after settling`);
+  }
+  assert.deepEqual([...outcomes].sort(), ['root', kidRow.sessionId, grandRow.sessionId].sort(), `the bell reached the root (no modal), the child and the grandchild (${JSON.stringify(outcomes)})`);
+  console.log('PASS: bell ("waiting for you") rows for root / child / grandchild → root in main, the child (grandchild) in the modal');
+  shot('bell-grandchild-1280');
 
   // ---- 画面の撮影（CHILD_OPEN_SHOTS のときだけ）: 1280・760・360・暗い画面で、モーダルの見出し（↗ なし）と検索から開いた直後
   if (shots) {

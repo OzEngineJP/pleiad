@@ -5,6 +5,7 @@ import path from "node:path";
 import { createLoadTiming } from '../../core/load-timing.mjs';
 import { liveSnapshot } from '../../core/live-snapshot.mjs';
 import { createSessionLoads } from "../../web/session-stream.mjs";
+import { createOpenGate } from '../../web/child-route.mjs';
 import { createCompletionNotifications } from '../../web/notifications.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from '../../core/compaction-history.mjs';
 import { serveFrom, serveHistory, syncRequest, joinReply, retainPlan, WINDOW_MESSAGES, WINDOW_BYTES } from '../../web/history-sync.mjs';
@@ -98,6 +99,8 @@ export default async function (t) {
     // 会話を開くときの窓と手前を足す仕事（ADR 0182）。このテストの対象外
     WINDOW_MESSAGES, WINDOW_BYTES, backfill: null, paintBefore: null, olderBusy: null, olderFail: null, olderEl: null,
     cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0,
+    // 子の会話を開く呼び出しの世代（select が他の会話へ移ると古い呼び出しを止める）
+    openGate: createOpenGate(),
   });
   context.loadBranches = (id) => context.branches.load(id);   // client.mjs の const loadBranches（窓の先頭を添えて系譜を読む）
   vm.runInContext(functions, context);
