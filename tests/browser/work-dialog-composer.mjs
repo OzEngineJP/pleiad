@@ -4,6 +4,7 @@
 //   3. 下書きは子ごと（別の子へ切り替えても、閉じて開き直しても残る）
 //   4. 走っている子へ送ると「送信待ち」になり、取り消せる
 //   5. 子が流れている間（読み直しが速い）に打っても、文字・キャレットが消えない
+//   5b. モデルの面にアカウントの節が出て、選ぶと子の次のターンの予約（setTurnSettings）に流れる
 // 実行: node tests/browser/work-dialog-composer.mjs   （会話の agent-browser の窓を使う。WORK_DIALOG_COMPOSER_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -71,6 +72,8 @@ try {
   await client.waitFor(e => e.type === 'turnEnd' && e.sessionId !== parent, { from: 0, ms: 30_000 });
   const running = await delegate('走っている子', `steps:@${runFile}`);
   await sleep(1200);
+  // アカウントの節を出すための登録（委譲の依頼のあとに。登録すると委譲の設定の対象になる。トークンの持ち主の確認は失敗してもそのまま保存される）
+  await client.cmd('saveClaudeAccount', { name: '仕事用', token: 'sk-ant-oat01-work-dialog-composer-test' });
 
   const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
   ab('set', 'viewport', '1280', '800');
@@ -134,7 +137,7 @@ try {
     const log = window.__cmds = [];
     const send = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
-      try { const m = JSON.parse(data); if (m.command) log.push({ command: m.command, sessionId: m.args?.sessionId ?? null, prompt: m.args?.prompt ?? null }); } catch { /* 文字でないフレーム */ }
+      try { const m = JSON.parse(data); if (m.command) log.push({ command: m.command, sessionId: m.args?.sessionId ?? null, prompt: m.args?.prompt ?? null, patch: m.args?.settings ?? m.args?.patch ?? m.args ?? null }); } catch { /* 文字でないフレーム */ }
       return send.call(this, data);
     };
   });
@@ -208,6 +211,26 @@ try {
   assert.ok(typed.focus, 'focus kept in the composer');
   const rereadsAfter = cmds('loadSession').filter(c => c.sessionId === runChild).length;
   console.log(`PASS: typing while the child streams keeps text/caret/focus (re-reads during typing: ${rereadsAfter - rereadsBefore})`);
+
+  // ---- 5b. アカウントの節: メインと同じ面に出て、選ぶと子の予約に流れる ----
+  clickOn('#wkModelChip', 'model chip (accounts)');
+  await wait(() => evaluate(() => !!document.querySelector('#workDialog [data-key^="account:"]')), 'account rows in the child model pop');
+  const accountRows = evaluate(() => [...document.querySelectorAll('#workDialog [data-key^="account:"]')].map(n => ({ key: n.dataset.key, on: n.getAttribute('aria-selected') === 'true' || n.getAttribute('aria-checked') === 'true' || n.classList.contains('on') })));
+  console.log('account rows', JSON.stringify(accountRows));
+  assert.ok(accountRows.length >= 2, 'signed-in account + the registered account');
+  assert.ok(accountRows[0].key === 'account:' && accountRows[0].on, 'the signed-in account is the default selection');
+  const before = cmds('setTurnSettings').length;
+  const registered = accountRows.find(r => r.key !== 'account:').key;
+  evaluate(key => document.querySelector(`#workDialog [data-key="${key}"]`).click(), registered);
+  await wait(() => cmds('setTurnSettings').length > before, 'setTurnSettings sent');
+  const sentSettings = cmds('setTurnSettings').at(-1);
+  console.log('setTurnSettings', JSON.stringify(sentSettings));
+  assert.equal(sentSettings.sessionId, runChild, 'the reservation goes to the child');
+  assert.ok(JSON.stringify(sentSettings.patch).includes(registered.slice('account:'.length)), 'the reservation carries the chosen account');
+  assert.equal(composerState().value, 'aあaあaあaあaあaあaあaあ', 'the draft is kept');
+  ab('press', 'Escape');
+  await sleep(300);
+  console.log('PASS: the child model pop shows the account section and the choice is reserved for the child');
 
   // ---- 6. Esc: 開いているメニュー → ダイアログ。書きかけは子ごとに残り、開き直すと戻る ----
   clickOn('#wkModelChip', 'model chip');

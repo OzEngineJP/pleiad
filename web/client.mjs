@@ -5095,7 +5095,10 @@ function composerSelection() {
  * 使えるアカウントの行には、その週の使用量を添える（quota はそのエージェントの使用量。web/header-usage.mjs の weekUsage）
  */
 function accountOptions(quota) {
-  const { backend, account: value } = composerSelection();
+  const { backend, account } = composerSelection();
+  return accountOptionsOf(backend, account, quota);
+}
+function accountOptionsOf(backend, value, quota) {
   const list = accountList(backend);
   return [
     { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount"), usage: weekUsage(quota, "") },
@@ -5163,18 +5166,22 @@ async function syncEndpoint(s, bid, { value: selected = endpointOf(s), visible =
 /** 入力欄のモデルの面に渡す接続先の値と口（web/composer-controls.mjs の endpointSection / compatModelSection） */
 function endpointView(bid) {
   if (!state.endpointShown) return null;
+  return endpointViewOf(bid, state.endpoint);
+}
+/** 接続先の値と口（選んでいる接続先 selected を渡す版。子の会話のモーダルの入力欄もこれで作る） */
+function endpointViewOf(bid, selected) {
   const list = compatEndpoints.list(bid);
   const defaults = compatEndpoints.defaults();
-  const row = list.find((e) => e.id === state.endpoint) ?? null;
+  const row = list.find((e) => e.id === selected) ?? null;
   const official = bid === "claude" ? t("chat.endpoint.officialClaude") : t("chat.endpoint.officialCodex");
   return {
-    selected: state.endpoint, row, lost: lostText(bid),
+    selected, row, lost: lostText(bid),
     roleNames: bid === "claude" ? CLAUDE_ROLES.map((r) => [r.key, r.short]) : [],
     options: [
       { value: "", label: t("chat.endpoint.official"), sub: official, isDefault: !defaults[bid] },
       ...list.map((e) => ({ value: e.id, label: e.name, isDefault: defaults[bid] === e.id, warn: e.ready === false,
         sub: `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}${e.ready === false ? t("chat.endpoint.failedSuffix") : ""}`, title: `${e.name}（${e.baseUrl}）` })),
-      ...(state.endpoint && !row ? [{ value: state.endpoint, label: t("chat.endpoint.deleted"), sub: t("chat.account.chooseAgain"), gone: true }] : []),
+      ...(selected && !row ? [{ value: selected, label: t("chat.endpoint.deleted"), sub: t("chat.account.chooseAgain"), gone: true }] : []),
     ],
     manage: () => compatEndpoints.open(bid),
   };
@@ -11026,6 +11033,17 @@ const workControls = createWorkControls({
     return modeWrite;
   },
   recent: cwdOptions,
+  // 子のアカウント・接続先の候補（メインの accountOptions / endpointView と同じ部品。選んでいる値だけ子のもの）。
+  // 登録が無く選んでもいないアカウントの節、選べないエージェントの接続先の節は出さない（syncAccount / syncEndpoint と同じ）
+  loadChoices: async (backend) => {
+    await Promise.all([loadAccounts(backend), capsOf(backend).compatEndpoints ? compatEndpoints.load().catch(() => []) : null]);
+  },
+  accounts: (backend, value, endpoint) => {
+    if (!capsOf(backend).accounts) return null;
+    if (!accountList(backend).length && !value) return null;
+    return accountOptionsOf(backend, value, usageSource.get(backend)?.quota);
+  },
+  endpointView: (backend, selected) => (capsOf(backend).compatEndpoints ? endpointViewOf(backend, selected) : null),
   revalidate: revalidateVocab,
   repaint: () => workComposer?.paintControls(),
   fail: (error, kind) => workComposer?.say(kind === 'mode' ? t('chat.sys.modeSaveFailed', { error }) : t('chat.settingsHold.settings', { error }), true),

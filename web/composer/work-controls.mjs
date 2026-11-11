@@ -2,6 +2,7 @@
 // メインの controls（web/client.mjs）と同じ部品（web/composer-controls.mjs の setupComposerControls）に渡す get / on を、
 // 「いま詳細に出している子」の行から作る。子のエージェントは送る前から決まっているので切り替えず（backendSwitchable: false）、
 // 値の読みは「予約中の選択 → 次のターンの予約 → 子の行」の順（メインの composerSelection と同じ）。変えると次のターンから効く。
+// アカウントと互換の接続先もメインと同じ面に出す（server の reserveTurnSettings が会話ごとに受ける。次のターンから効く）。
 import { effortsKeyOf } from '../composer-vocab.mjs';
 
 /**
@@ -16,6 +17,9 @@ import { effortsKeyOf } from '../composer-vocab.mjs';
  * @param {{ ready: Function, fresh: Function, adopt: Function, efforts: object }} h.efforts 子用のエフォートの段の見張り
  * @param {(patch: object, childId: string) => Promise<any>|undefined} h.reserve 次のターンの設定を予約する（reserveSettings）
  * @param {(childId: string, mode: string) => Promise<any>} h.setMode
+ * @param {(backend: string) => Promise<any>} h.loadChoices そのエージェントのアカウントと接続先の一覧を取る
+ * @param {(backend: string, account: string, endpoint: string) => object[]|null} h.accounts アカウントの候補（出さないときは null）
+ * @param {(backend: string, endpoint: string) => object|null} h.endpointView 接続先の値と口（出さないときは null）
  * @param {() => object[]} h.recent 最近使った作業場所
  * @param {(backend: string, account: string, cwd: string) => void} h.revalidate モデルの面を開いたとき、語彙を裏で取り直す
  * @param {(childId: string) => void} h.repaint 値が届いた・変わったので描き直す
@@ -36,6 +40,7 @@ export function createWorkControls(h) {
     const base = {
       backend: next?.backend ?? row?.backend ?? item?.backend ?? '',
       account: pick('account', row?.claudeAccount, ''),
+      endpoint: pick('endpoint', row?.compatEndpoint, ''),
       cwd: pick('cwd', row?.cwd, item?.cwd),
       model: pick('model', row?.model, item?.model),
       effort: pick('effort', row?.effort, item?.effort),
@@ -46,14 +51,20 @@ export function createWorkControls(h) {
     if (mine) drop(childId, Object.keys(mine).filter((k) => mine[k] === base[k]));
     return { ...base, ...local.get(childId) };
   }
-  const effortSel = (s) => ({ backend: s.backend, account: s.account, endpoint: '', model: s.model, cwd: s.cwd });
+  // 互換の接続先ではアカウントを使わない（接続先のキーで送る。メインの syncTopbar と同じ）
+  const accountOf = (s) => (s.endpoint ? '' : s.account);
+  const effortSel = (s) => ({ backend: s.backend, account: accountOf(s), endpoint: s.endpoint, model: s.model, cwd: s.cwd });
 
   function get(childId) {
     const s = selection(childId);
-    const vocab = s.backend ? h.vocab(s.backend, s.account, s.cwd) : null;
+    const vocab = s.backend ? h.vocab(s.backend, accountOf(s), s.cwd) : null;
     if (s.backend && !vocab) {
-      const key = JSON.stringify(['vocab', s.backend, s.account, s.cwd]);
-      if (!asked.has(key)) { asked.add(key); h.loadVocab(s.backend, s.account, s.cwd).then(() => h.repaint(childId)).catch(() => {}); }
+      const key = JSON.stringify(['vocab', s.backend, accountOf(s), s.cwd]);
+      if (!asked.has(key)) { asked.add(key); h.loadVocab(s.backend, accountOf(s), s.cwd).then(() => h.repaint(childId)).catch(() => {}); }
+    }
+    if (s.backend) {
+      const key = JSON.stringify(['choices', s.backend]);
+      if (!asked.has(key)) { asked.add(key); h.loadChoices(s.backend).then(() => h.repaint(childId)).catch(() => {}); }
     }
     const sel = effortSel(s);
     const ready = Boolean(vocab) && h.efforts.ready(sel);
@@ -72,7 +83,8 @@ export function createWorkControls(h) {
       backends: h.backends(), backend: s.backend, backendSwitchable: false,
       models, modelsPending: !vocab, model: s.model,
       efforts, effortsPending: !ready, effort: s.effort, effortDisabled: !ready || Object.keys(efforts).length <= 1,
-      accounts: null, account: s.account, endpoint: null,
+      accounts: s.backend ? h.accounts(s.backend, s.account, s.endpoint) : null, account: s.account,
+      endpoint: s.backend ? h.endpointView(s.backend, s.endpoint) : null,
       modes, modesPending: !vocab, mode: s.mode || (Object.keys(modes)[0] ?? ''),
       lockedNote: '',
       // 子のエージェントは決まっている。面の頭にはロゴと名前だけを出す（Channels のスレッドの面と同じ）
@@ -110,8 +122,12 @@ export function createWorkControls(h) {
       h.setMode(childId, v).then(() => { if (h.row(childId)?.mode === v) drop(childId, ['mode']); h.repaint(childId); },
         (e) => { drop(childId, ['mode']); h.fail(e?.message ?? String(e), 'mode'); h.repaint(childId); });
     },
-    openModel: (childId) => { const s = selection(childId); if (s.backend) h.revalidate(s.backend, s.account, s.cwd); },
-    // 子では使わない口（worktree・エージェント・アカウント・接続先）は渡さない
+    // 互換の接続先。'' は公式。モデルとエフォートは接続先の既定へ戻る（メイン・server と同じ）
+    endpoint: (childId, v) => choose(childId, { endpoint: v }, { endpoint: v, model: '', effort: '' }),
+    // アカウント。'' はログイン中のアカウント（既定）
+    account: (childId, v) => choose(childId, { account: v }, { account: v }),
+    openModel: (childId) => { const s = selection(childId); if (s.backend) h.revalidate(s.backend, accountOf(s), s.cwd); },
+    // 子では使わない口（worktree・エージェント）は渡さない
   };
   return { get, on, selection };
 }

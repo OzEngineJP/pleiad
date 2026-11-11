@@ -530,6 +530,8 @@ const SUITES = [
   './unit/composer-aux.mjs',
   // 設定を書いている間の選択（web/client.mjs の pendingChoice・settleNext）: エージェントを選んだ直後に取り直しが走っても前のエージェントへ戻らない・書けた後の古い写しは載せ直す・失敗は保存できた値へ戻る
   './unit/composer-pending-choice.mjs',
+  // 子の会話のモーダルの入力欄のチップ（web/composer/work-controls.mjs）: アカウント・互換の接続先を子の値で出し、次のターンの予約へ流す
+  './unit/work-controls.mjs',
   // 入力欄の待ち（web/composer-wait.mjs）: 会話を開く・初めての接続・読み込みの失敗・作成中の送信の予約
   './unit/composer-wait.mjs',
   // 承認カード: 受け取られるまで送信中・失敗はカードの中・決着後の一行に対象と開閉
