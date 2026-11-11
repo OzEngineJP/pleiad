@@ -4,7 +4,7 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
-import { agentLevel } from './agent-usable.mjs';
+import { agentLevel, canPick } from './agent-usable.mjs';
 import { backendLogo } from './side.mjs';
 import { formatBytes } from './folder-upload.mjs';
 import { openExternalLink } from './link-open.mjs';
@@ -90,10 +90,16 @@ function sdkState(st) {
       if (!f.total) bar.classList.add('ind');
       return [stateEl('run', text, { wait: true }), bar];
     }
-    case 'failed': return [stateEl('fail', `⚠ ${t('settings.agents.claudeSdk.failed', { error: sdk.error.message ?? sdk.error.kind ?? '' })}`)];
+    case 'failed': return [stateEl('fail', `⚠ ${sdkFailedText(sdk.error)}`)];
     case 'ready': return [stateEl('', t('settings.agents.row.sdkReady'))];
     default: return [];
   }
+}
+
+/** 取得の失敗の 1 行。理由があるときだけ「: 理由」を付ける（末尾が「:」で終わる行を出さない） */
+export function sdkFailedText(error) {
+  const reason = String(error?.detail ?? '').trim();
+  return reason ? t('settings.agents.claudeSdk.failedWith', { error: reason }) : t('settings.agents.claudeSdk.failed');
 }
 
 function button(label, cls, onClick, extra = {}) {
@@ -265,11 +271,10 @@ export function createRowKit({ getAuth, getEndpoints, isRemote, termsUrl, action
   function plan(agents) {
     const c = ctx();
     const items = agents.map((a) => ({ id: a.id, body: bodyOf(a, c), sdk: sdkKey(getAuth(a.id)) }));
-    const usable = agents.filter((a) => {
-      const st = getAuth(a.id);
-      return agentLevel({ st, endpointConfirmed: Boolean(c.endpoints?.has(a.id)), endpointsKnown: c.endpoints !== null, canEndpoint: Boolean(a.capabilities?.compatEndpoints) }).level === 'usable';
-    }).map((a) => a.id);
-    return { items, usable, near: nearestStep(items, usable.length) };
+    const levelOf = (a) => agentLevel({ st: getAuth(a.id), endpointConfirmed: Boolean(c.endpoints?.has(a.id)), endpointsKnown: c.endpoints !== null, canEndpoint: Boolean(a.capabilities?.compatEndpoints) });
+    const usable = agents.filter((a) => levelOf(a).level === 'usable').map((a) => a.id);
+    const pickable = agents.filter((a) => canPick(levelOf(a))).map((a) => a.id);
+    return { items, usable, pickable, near: nearestStep(items, usable.length) };
   }
   function build(agent, { flash = false, desc = false, logo = true, pick = null, near = null, sdkOnly = false } = {}) {
     const c = ctx();

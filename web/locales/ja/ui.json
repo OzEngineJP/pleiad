@@ -158,7 +158,8 @@
         "fetching": "取得しています… {{received}} / {{total}}",
         "fetchingUnknown": "取得しています… {{received}}",
         "progressLabel": "Claude Agent SDK の取得の進み",
-        "failed": "取得できませんでした: {{error}}"
+        "failed": "取得できませんでした",
+        "failedWith": "取得できませんでした: {{error}}"
       }
     },
     "updates": {

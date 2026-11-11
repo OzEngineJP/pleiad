@@ -158,7 +158,8 @@
         "fetching": "Downloading… {{received}} / {{total}}",
         "fetchingUnknown": "Downloading… {{received}}",
         "progressLabel": "Claude Agent SDK download progress",
-        "failed": "Couldn't download: {{error}}"
+        "failed": "Couldn't download",
+        "failedWith": "Couldn't download: {{error}}"
       }
     },
     "updates": {

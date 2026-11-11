@@ -1,4 +1,4 @@
-import { agentLevel, usableReport, gateKind, listKind } from '../../web/agent-usable.mjs';
+import { agentLevel, usableReport, gateKind, listKind, canPick } from '../../web/agent-usable.mjs';
 
 export const name = 'agent-usable';
 export const title = 'Usable-agent decision: when the empty-agent notice is shown (and when it must not be)';
@@ -86,4 +86,23 @@ export default async function(t) {
   t.ok('only a registered account (no CLI login): maybe usable → no closed window, no "0" list', level({ installed: true, supported: true, loggedIn: false, accountReady: true, sdk: SDK_READY }) === 'maybe' && gateKind({ status: status(settled), report: accountOnly }) === null && listKind(accountOnly) === false);
   const sdkOnlyFirst = report([claude], { claude: { sdk: { ...SDK_NONE, consent: false } } });
   t.ok('only the SDK event arrived (auth status not yet) → undecided, not 0', level({ sdk: SDK_NONE }) === 'maybe' && !sdkOnlyFirst.count0 && listKind(sdkOnlyFirst) === false);
+
+  // --- 初回の窓で選べる行（canPick）。確かめたが確かめられなかった行・登録したアカウントだけの行は選べる。未確認・はっきり使えない行は選べない
+  const pick = (st, o = {}) => canPick(agentLevel({ st, ...o }));
+  t.ok('pick: usable is pickable', pick({ installed: true, supported: true, loggedIn: true }) === true);
+  t.ok('pick: a check that failed (checkFailed) is pickable', pick({ installed: true, supported: true, loggedIn: false, unconfirmed: true, checkFailed: true }) === true);
+  t.ok('pick: the status call itself failed is pickable', pick({ supported: false, error: 'boom' }) === true);
+  t.ok('pick: only a registered account is pickable', pick({ installed: true, supported: true, loggedIn: false, accountReady: true }) === true);
+  t.ok('pick: never checked (unconfirmed) is not pickable', pick({ installed: true, supported: true, loggedIn: false, unconfirmed: true }) === false);
+  t.ok('pick: not installed is not pickable', pick({ installed: false, supported: true }) === false);
+  t.ok('pick: confirmed logged out is not pickable', pick({ installed: true, supported: true, loggedIn: false }) === false);
+  t.ok('pick: SDK missing is not pickable even if the check failed', pick({ installed: true, supported: true, loggedIn: false, checkFailed: true, sdk: SDK_NONE }) === false);
+  t.ok('pick: still undecided (no status yet) is not pickable', pick(undefined) === false);
+  const stuck = report([agy], { antigravity: { installed: true, supported: true, loggedIn: false, unconfirmed: true, checkFailed: true } });
+  t.ok('first run: the one agent whose check keeps failing is pickable, and the usable list stays empty', canPick(stuck.levels.get('antigravity')) && stuck.usable.length === 0);
+
+  // --- SDK の取得を試みて失敗した（理由がある）状態は、同意の記録が無くても閉じられない窓の条件に数えない
+  const failedNoConsent = report([claude], { claude: { installed: true, supported: true, loggedIn: true, sdk: { ...SDK_NONE, consent: false, error: { kind: 'offline', detail: 'x' } } } });
+  t.ok('SDK fetch failed without a consent record: no closed window, the list is shown', gateKind({ status: status(settled), report: failedNoConsent }) === null && listKind(failedNoConsent) === true && failedNoConsent.count0 === false);
+  t.ok('SDK fetch failed without a consent record: not pickable on the first run', pick({ installed: true, supported: true, loggedIn: true, sdk: { ...SDK_NONE, consent: false, error: { kind: 'offline' } } }) === false);
 }

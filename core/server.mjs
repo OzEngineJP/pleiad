@@ -153,7 +153,7 @@ import { createVisualizationCollector, visualizeInstructions } from './visualize
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { agentLevel } from '../web/agent-usable.mjs';
+import { agentLevel, canPick } from '../web/agent-usable.mjs';
 import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, discardBrowserEnvironment, settleBrowserEnvironment, sweepBrowserEnvironments, chromeRelayBrowser, locateAgentBrowser } from './agent-browser.mjs';
 import { createChromeWindowCloser } from './chrome/close-window.mjs';
 import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeWindows } from './chrome/delegation.mjs';
@@ -10204,9 +10204,11 @@ wss.on("connection", (ws, req) => {
           const backend = await pickBackend(null, msg.args?.backend);
           if (!installation(backend.id).installed) throw new Error(t('agents.installRequired'));
           // 「使える」の判定は画面と同じ 1 つの関数（web/agent-usable.mjs）。画面が選ばせた行はここでも通る（接続先だけで使えるもの・ログインの口を持たないもの）
-          const status = (await opsAgents.authStatus(backend.id, true)).status;
+          // 確かめたのに確かめられなかったもの（確認の失敗・時間切れ）は、画面と同じに「確かめられなかった」として通す（web/agent-usable.mjs の canPick）
+          const probed = await opsAgents.authStatus(backend.id, true).then(r => r.status, e => ({ supported: false, error: String(e?.message ?? e) }));
+          const status = probed.unconfirmed ? { ...probed, checkFailed: true } : probed;
           const confirmed = await compatEndpoints.list(backend.id).then(r => r.endpoints.some(e => e.verifiedAt), () => false);
-          if (agentLevel({ st: status, endpointConfirmed: confirmed, endpointsKnown: true, canEndpoint: endpointCapable(backend) }).level !== 'usable') throw new Error(t('agents.checkLogin'));
+          if (!canPick(agentLevel({ st: status, endpointConfirmed: confirmed, endpointsKnown: true, canEndpoint: endpointCapable(backend) }))) throw new Error(t('agents.checkLogin'));
           const { cwd } = await resolveCwd(null, msg.args?.cwd, backend);
           const saved = { seen: true, setupComplete: true, backend: backend.id, cwd: path.resolve(cwd) };
           await fs.mkdir(store.dataDir, { recursive: true });

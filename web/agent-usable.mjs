@@ -25,18 +25,18 @@ export function agentLevel({ st, endpointConfirmed = false, endpointsKnown = tru
   // 認証の状態がまだ届いていない（SDK の知らせだけが先に載った）。判定前は使えるかもしれない
   if (st.installed === undefined && st.loggedIn === undefined && st.supported === undefined) return { level: 'maybe', reason: 'unknown' };
   // 状態の問い合わせそのものが失敗した（{ supported:false, error }）。切れていると断定しない
-  if (st.error && st.installed === undefined) return { level: 'maybe', reason: 'checkFailed' };
+  if (st.error && st.installed === undefined) return { level: 'maybe', reason: 'checkFailed', pick: true };
   if (st.installed === false) return { level: 'no', reason: 'notInstalled', hard: true };
   const sdk = st.sdk;
   // 本体の見立て
   let body;
   if (st.expired && st.loggedIn) body = { level: 'no', reason: 'expired', hard: false };
-  else if (st.supported === false) body = st.error ? { level: 'maybe', reason: 'checkFailed' } : { level: 'usable', reason: 'ok' };   // ログインの口を持たない（入っていれば使える）
+  else if (st.supported === false) body = st.error ? { level: 'maybe', reason: 'checkFailed', pick: true } : { level: 'usable', reason: 'ok' };   // ログインの口を持たない（入っていれば使える）
   else if (st.pending) body = { level: 'no', reason: 'pending', hard: true };
   else if (st.loggedIn) body = { level: 'usable', reason: 'ok' };
   else if (endpointConfirmed) body = { level: 'usable', reason: 'ok' };
-  else if (st.accountReady) body = { level: 'maybe', reason: 'unconfirmed' };   // 登録したアカウントで走るかもしれない（CLI のログインが無くても）。締め出さない
-  else if (st.checkFailed) body = { level: 'maybe', reason: 'checkFailed' };
+  else if (st.accountReady) body = { level: 'maybe', reason: 'unconfirmed', pick: true };   // 登録したアカウントで走るかもしれない（CLI のログインが無くても）。締め出さない
+  else if (st.checkFailed) body = { level: 'maybe', reason: 'checkFailed', pick: true };
   else if (st.unconfirmed) body = { level: 'maybe', reason: 'unconfirmed' };
   else if (canEndpoint && !endpointsKnown) body = { level: 'maybe', reason: 'unknown' };
   else body = { level: 'no', reason: 'loggedOut', hard: true };
@@ -47,10 +47,18 @@ export function agentLevel({ st, endpointConfirmed = false, endpointsKnown = tru
   if (sdk && !sdk.ready) {
     if (!sdk.error && (sdk.fetching || sdk.consent)) return { level: 'maybe', reason: 'sdkFetching' };
     // 一度でも同意して取ったことがある人は、取得に失敗しても窓では締め出さない（会話の中の一覧の［もう一度取得］で直す）。窓は SDK を一度も取っていない人だけ
-    return { level: 'no', reason: 'sdkMissing', hard: !sdk.consent };
+    // 取得を試みて失敗した（理由がある）状態も、同意の記録の有無によらず窓では締め出さない
+    return { level: 'no', reason: 'sdkMissing', hard: !sdk.consent && !sdk.error };
   }
   return body;
 }
+
+/**
+ * 初回の窓で選べる行か。使える行と、「確かめたが確かめられなかった」行（確認の失敗・時間切れ・起動の失敗）・
+ * 登録したアカウントだけがある行（pick の印）。まだ 1 度も確かめていない行・はっきり使えない行は選べない。
+ * 画面（選べる行）とサーバー（completeSetup の通過）は、この 1 つの関数を通る
+ */
+export const canPick = (lv) => lv?.level === 'usable' || lv?.pick === true;
 
 /**
  * 全エージェントの見立てと、0 件かどうか。

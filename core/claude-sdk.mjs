@@ -119,7 +119,7 @@ export function requestClaudeSdkConsent() {
 export function claudeSdkErrorMessage(error) {
   const kind = error?.kind ?? 'offline';
   // i18n-dynamic: claudeSdk.errors.
-  return t(`claudeSdk.errors.${kind}`, { detail: error?.detail ?? String(error?.message ?? error ?? '') });
+  return t(`claudeSdk.errors.${kind}`, { detail: error?.detail ?? String(error?.message ?? error ?? '') }).replace(/[:：]\s*$/, '');
 }
 
 /**

@@ -85,10 +85,10 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, 
 
   function paint({ focus = false } = {}) {
     const agents = agentsOf(), auth = getAuth();
-    const { usable } = kit.plan(agents);
-    if (!usable.includes(selected)) selected = (usable.includes(status?.backend) ? status.backend : usable[0]) || '';
+    const { usable, pickable } = kit.plan(agents);
+    if (!pickable.includes(selected)) selected = (pickable.includes(status?.backend) ? status.backend : usable[0] || pickable[0]) || '';
     const list = $('onboardingAgentList');
-    kit.paint(list, agents, { desc: true, pick: { pickable: a => usable.includes(a.id), selected, onPick: a => { selected = a.id; paint(); } } });
+    kit.paint(list, agents, { desc: true, pick: { pickable: a => pickable.includes(a.id), selected, onPick: a => { selected = a.id; paint(); } } });
     if (focus) list.querySelector('[aria-checked=true]')?.focus();
 
     // 読み上げ: 状態が変わった行だけ伝える
