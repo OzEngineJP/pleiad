@@ -66,6 +66,24 @@ export default async function (t) {
     await endOf(phone, y, from);
     t.ok("modal を空にしても main の会話の流れは届き続ける", deltas(phone, from, y) > 0, String(deltas(phone, from, y)));
 
+    // ---- modal の窓口だけを宣言した接続（main を宣言していない）は絞られない。後から main を宣言すると modal も効き始める ----
+    const lone = await open({ port: server.port, token: server.token });
+    try {
+      await lone.cmd("watchSession", { sessionId: x, slot: "modal" });
+      from = lone.mark();
+      await runner.cmd("runTurn", { ...turn, prompt: "echo:modal だけの接続への返答", sessionId: y });
+      await endOf(lone, y, from);
+      t.ok("main を宣言していない接続は、modal だけ宣言しても今までどおり全部届く", deltas(lone, from, y) > 0, String(deltas(lone, from, y)));
+      const w = (await runner.runTurn({ ...turn, prompt: "echo:main に宣言する会話", sessionId: null }, { ms: 20_000 })).sessionId;
+      await lone.cmd("watchSession", { sessionId: w, slot: "main" });
+      from = lone.mark();
+      await runner.cmd("runTurn", { ...turn, prompt: "echo:main を宣言した後の返答", sessionId: y });
+      await runner.cmd("runTurn", { ...turn, prompt: "echo:modal の枠の会話の返答", sessionId: x });
+      await Promise.all([endOf(lone, y, from), endOf(lone, x, from)]);
+      await sleep(50);
+      t.ok("main を宣言すると絞られ、modal の枠の会話だけが並んで届く", deltas(lone, from, y) === 0 && deltas(lone, from, x) > 0, JSON.stringify({ x: deltas(lone, from, x), y: deltas(lone, from, y) }));
+    } finally { lone.close(); }
+
     // ---- 一覧の使い回し: 変えた直後の一覧に載る ----
     await runner.cmd("listSessions");
     await runner.cmd("setTitle", { sessionId: x, title: "付け直したタイトル" });

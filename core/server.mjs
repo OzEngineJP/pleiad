@@ -3203,7 +3203,8 @@ const LIST_NEUTRAL_EVENTS = new Set([
 // 中継を通るスマホでは通信と処理の重さになっていた（ADR 0024）。
 // 完了（turnEnd）は一覧・通知に使うので全部送る。宣言していない接続（古い画面・テスト）には今までどおり全部送る
 // 見る会話は接続ごとに 2 枠: main（メインの画面の会話）と modal（作業のダイアログで開いている子の会話）。
-// どちらかの枠に当たる分を送る（ADR 0024 の改訂）。modal の枠は main を宣言した接続にだけ意味がある
+// どちらかの枠に当たる分を送る（ADR 0024 の改訂）。絞るのは main を宣言した接続だけ（wanted の先頭）。main を宣言していない接続は
+// 今までどおり全部届くので、modal の枠だけを宣言しても絞りは変わらない（後から main を宣言した時点で modal の枠も効き始める）
 const watching = new WeakMap();        // ws -> sessionId（main の枠）
 const watchingModal = new WeakMap();   // ws -> sessionId（modal の枠）
 const WATCH_EXEMPT = new Set(["turnEnd"]);
