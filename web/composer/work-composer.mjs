@@ -36,6 +36,8 @@ const UNUSED = ['armedChip', 'draftSaved', 'resume', 'resumeNote', 'armedNote', 
  * @param {(childId: string) => string} h.cwdOf スキル候補を引く作業場所
  * @param {(childId: string) => string} h.compactNote /compact を使えない理由
  * @param {(item: object) => void} h.onStop 中断ボタンを押した（送るものは呼び出し側が決める。web/work-stop.mjs）
+ * @param {(childId: string) => void} h.compact 文脈のメーターのメニューの［今すぐ圧縮］（この子の会話を圧縮する）
+ * @param {() => void} h.compactionSettings メニューの［設定］（自動圧縮の設定のページを開く）
  */
 export function createWorkComposer(h) {
   const form = buildComposer(PREFIX);
@@ -44,12 +46,7 @@ export function createWorkComposer(h) {
   const els = composerEls(PREFIX, form);
   for (const part of UNUSED) if (els[part]) els[part].hidden = true;
   form.hidden = true;
-  // 帯の文脈は表示だけ（圧縮のメニューは今の会話＝メインのもの。子には開かない）。メニューと、押せる印は外す
   els.contextStrip.hidden = true;
-  els.contextMeterPop?.remove();
-  for (const name of ['aria-haspopup', 'aria-expanded', 'aria-controls']) els.contextMeter.removeAttribute(name);
-  els.contextMeter.setAttribute('role', 'img');
-  els.contextMeter.tabIndex = -1;
   h.slot.append(form);
   const input = els.prompt;
   // 入力欄の無い子（ホストに任せた根）には、入力欄の位置に中断だけを出す。入力欄の中断と同じ部品（同じ形）
@@ -109,6 +106,53 @@ export function createWorkComposer(h) {
     onSchedule: () => c.sendMenu?.open(),
   });
   const att = c.attach;
+
+  // ---- 入力欄の上の帯: 文脈のメーター（メインと同じメニュー）・圧縮の状態・使用量のチップ
+  let contextParts = null;   // { nodes, label, canCompact, compacting, why, text, actions }
+  const closeMeter = (focus = false) => {
+    els.contextMeterPop.hidden = true;
+    els.contextMeter.setAttribute('aria-expanded', 'false');
+    if (focus) els.contextMeter.focus();
+  };
+  els.contextMeter.onclick = () => {
+    if (!els.contextMeterPop.hidden) return closeMeter(true);
+    els.contextMeterPop.hidden = false;
+    els.contextMeter.setAttribute('aria-expanded', 'true');
+    const cannot = !contextParts?.canCompact || contextParts.compacting;
+    els.meterCompact.disabled = cannot;
+    els.meterCompact.title = cannot && contextParts?.why ? contextParts.why : '';
+    els.contextMeterPop.querySelector('button:not(:disabled)')?.focus();
+  };
+  els.meterCompact.onclick = () => { closeMeter(); if (childId) h.compact(childId); };
+  els.meterSettings.onclick = () => { closeMeter(); h.compactionSettings(); };
+  const outsideMeter = (e) => { if (!els.contextMeterPop.hidden && !e.target.closest?.('.context-meter-wrap')) closeMeter(); };
+  document.addEventListener('pointerdown', outsideMeter);
+  document.addEventListener('focusin', outsideMeter);
+  els.contextMeterWrap.addEventListener('keydown', (e) => {
+    if (els.contextMeterPop.hidden) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMeter(true); }
+    else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+      const items = [...els.contextMeterPop.querySelectorAll('button:not(:disabled)')];
+      const index = items.indexOf(document.activeElement);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      e.preventDefault(); items[next]?.focus();
+    }
+  });
+  function paintStrip() {
+    const parts = childId ? contextParts : null;
+    if (!childId) els.usageChip.hidden = true;
+    const meter = Boolean(parts?.nodes);
+    els.contextMeterWrap.hidden = !meter;
+    if (meter) {
+      els.contextMeter.replaceChildren(...parts.nodes);
+      els.contextMeter.setAttribute('aria-label', parts.label);
+    } else closeMeter();
+    for (const node of [...els.contextStripStatus.children]) if (node !== els.contextStripText) node.remove();
+    els.contextStripText.replaceChildren(...(parts?.text ?? []));
+    if (parts?.title) els.contextStripText.title = parts.title; else els.contextStripText.removeAttribute('title');
+    els.contextStripStatus.append(...(parts?.actions ?? []));
+    els.contextStrip.hidden = !(childId && (parts || !els.usageChip.hidden));
+  }
 
   // 設定のチップ（モデルと effort・作業場所・承認モード）。値は子の行、変えると次のターンから効く（メインと同じ予約）
   c.useControls({
@@ -269,7 +313,9 @@ export function createWorkComposer(h) {
       c.sendMenu?.close();
       c.controls?.close();
       childId = id;
-      els.contextStrip.hidden = true;   // 次の子の値は呼び出し側が setContext で入れる
+      contextParts = null;   // 次の子の値は呼び出し側が setContext で入れる
+      closeMeter();
+      paintStrip();
       say('');
       form.hidden = !id;
       if (!id) { paintOutbox(); return; }
@@ -311,15 +357,13 @@ export function createWorkComposer(h) {
       paintSolo(show && solo, disabled);
       c.controls?.fit();
     },
-    /** 入力欄の上の帯に、この子の文脈の使用量を出す（parts: { nodes, label }。無ければ帯ごと隠す） */
-    setContext(parts) {
-      const on = Boolean(childId && parts);
-      els.contextStrip.hidden = !on;
-      els.contextMeterWrap.hidden = !on;
-      if (!on) return;
-      els.contextMeter.replaceChildren(...parts.nodes);
-      els.contextMeter.setAttribute('aria-label', parts.label);
-    },
+    /**
+     * 入力欄の上の帯に、この子の文脈の使用量と圧縮の状態を出す。無ければ文脈の札を隠す（使用量のチップだけなら帯は残る）
+     * parts: { nodes, label（メーター。無ければ出さない）, canCompact, compacting, why（圧縮できない理由）, text, actions, title（状態の文・ボタン）}
+     */
+    setContext(parts) { contextParts = parts ?? null; paintStrip(); },
+    /** 使用量のチップの出入りが変わった（web/header-usage.mjs の onVisibility）。帯ごと出すか決め直す */
+    syncStrip: paintStrip,
     /** 欄の上の一行（保存できなかった理由など） */
     say,
     get childId() { return childId; },

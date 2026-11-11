@@ -232,6 +232,40 @@ try {
   await sleep(300);
   console.log('PASS: the child model pop shows the account section and the choice is reserved for the child');
 
+  // ---- 5c. 入力欄の上の帯: 文脈のメーターのメニュー（今すぐ圧縮・設定）と、使用量のチップ（メインと同じ） ----
+  // 文脈の使用量は子のターンの終わりに届く。走っている子はまだ流れているので、終わった子で見る
+  await openCard(done.taskId, 'done for the strip');
+  await wait(() => evaluate(id => document.getElementById('workBody').dataset.sessionId === id, doneChild), 'on the done child');
+  await wait(() => evaluate(() => { const w = document.getElementById('wkContextMeterWrap'); return !!w && !w.hidden && w.offsetWidth > 0; }), 'context meter shows in the modal strip');
+  const strip = evaluate(() => {
+    const vis = n => !!n && !n.hidden && n.offsetWidth > 0;
+    return { strip: vis(document.getElementById('wkContextStrip')), meter: vis(document.getElementById('wkContextMeter')), chip: vis(document.getElementById('wkUsageChip')),
+      meterText: document.getElementById('wkContextMeter').textContent, chipText: document.getElementById('wkUsageChip').textContent };
+  });
+  console.log('strip', JSON.stringify(strip));
+  assert.ok(strip.strip && strip.meter && strip.chip, 'the strip shows the context meter and the usage chip');
+  clickOn('#wkUsageChip', 'usage chip');
+  await wait(() => evaluate(() => { const p = document.getElementById('wkUsagePop'); return !!p && !p.hidden && p.offsetWidth > 0; }), 'usage pop opens');
+  const popBox = evaluate(() => { const p = document.getElementById('wkUsagePop'), r = p.getBoundingClientRect(), d = document.getElementById('workDialog').getBoundingClientRect(); return { inside: document.getElementById('workDialog').contains(p), top: r.top, bottom: r.bottom, left: r.left, right: r.right, d: { top: d.top, bottom: d.bottom, left: d.left, right: d.right } }; });
+  console.log('usage pop', JSON.stringify(popBox));
+  assert.ok(popBox.inside, 'the usage pop lives inside the dialog (above the backdrop)');
+  assert.ok(popBox.top >= 0 && popBox.bottom <= 800 && popBox.left >= popBox.d.left - 1 && popBox.right <= popBox.d.right + 1, 'the usage pop is inside the dialog');
+  assert.ok(evaluate(() => document.getElementById('usagePop').hidden), 'the main usage pop stays closed');
+  shot('5c-usage-pop');
+  ab('press', 'Escape');
+  await wait(() => evaluate(() => document.getElementById('wkUsagePop').hidden), 'usage pop closes with Esc');
+  assert.ok(dialogOpen(), 'Esc closes only the usage pop');
+  clickOn('#wkContextMeter', 'context meter');
+  await wait(() => evaluate(() => { const p = document.getElementById('wkContextMeterPop'); return !!p && !p.hidden && p.offsetWidth > 0; }), 'meter menu opens');
+  assert.ok(evaluate(() => !document.getElementById('wkMeterCompact').disabled), 'compact is enabled for the fake agent (it can compact)');
+  shot('5c-meter-menu');
+  const compactMark = cmds('compactConversation').length;
+  clickOn('#wkMeterCompact', 'compact now');
+  await wait(() => cmds('compactConversation').length > compactMark, 'compactConversation sent');
+  assert.equal(cmds('compactConversation').at(-1).sessionId, doneChild, 'the compaction goes to the child, not the open main conversation');
+  assert.ok(evaluate(() => document.getElementById('wkContextMeterPop').hidden), 'the menu closes after choosing');
+  console.log('PASS: the modal strip has the meter menu (compact goes to the child) and the usage chip with its pop inside the dialog');
+
   // ---- 6. Esc: 開いているメニュー → ダイアログ。書きかけは子ごとに残り、開き直すと戻る ----
   clickOn('#wkModelChip', 'model chip');
   await wait(() => evaluate(() => [...document.querySelectorAll('.pop, [role=listbox], [role=menu]')].some(n => n.offsetWidth > 0 && n.closest('#workDialog'))), 'model pop open');

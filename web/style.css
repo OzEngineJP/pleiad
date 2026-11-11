@@ -2558,11 +2558,12 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 #contextStrip > .usage-chip{order:4;margin-left:0;flex:none}
 /* 列が狭く、縮めた形でも入り切らないとき（compaction.css の .tight）だけ、札を縮めて中を切る */
 #contextStrip.tight > :is(.context-meter-wrap,.usage-chip){flex:0 1 auto;min-width:0}
-/* 子の会話のモーダルの入力欄の上の帯（ADR 0317）。メインの帯と同じ並び・寸法で、文脈の使用量だけを表示する（押せない） */
+/* 子の会話のモーダルの入力欄の上の帯（ADR 0317）。メインの帯と同じ並び・寸法で、文脈の使用量（メニュー付き）・圧縮の状態・使用量のチップを出す */
 #wkContextStrip{padding:0;margin-bottom:8px;min-height:28px;gap:8px}
 #wkContextStrip::before{content:"";flex:1}
 #wkContextStrip > .context-meter-wrap{order:2;flex:none}
-#wkContextStrip .context-meter{pointer-events:none;cursor:default}
+#wkContextStrip > .context-strip-status{order:3}
+#wkContextStrip > .usage-chip{order:4;margin-left:0;flex:none}
 @media (max-width:700px){
   #contextStrip{min-height:var(--hit)}
   #contextStrip .bg-chip{height:var(--hit)}

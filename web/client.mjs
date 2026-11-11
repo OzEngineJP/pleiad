@@ -3573,7 +3573,7 @@ function onEvent(ev, replay = false) {
     // Process completion for every session, before filtering events to the open conversation.
     state.runningIds.delete(ev.sessionId);
     // ターンを回した分だけ使用量が動く。ヘッダーのチップをそのエージェントの分だけ取り直す（読み直しの再生では取らない）
-    if (!replay && !ev.requeued) headerUsage.turnEnded(s?.backend);
+    if (!replay && !ev.requeued) { headerUsage.turnEnded(s?.backend); workUsage?.turnEnded(s?.backend); }
     renderSessions();
     if (ev.sessionId !== state.current) scheduleRefresh();
   }
@@ -3659,6 +3659,10 @@ function onEvent(ev, replay = false) {
   // 子の会話のモーダルの入力欄の上の帯（文脈）は、子ごとの最後の値を持つ。メインの state.contextWindow とは別
   if (ev.type === 'contextWindow' && ev.sessionId) {
     childContext.set(ev.sessionId, ev);
+    if (ev.sessionId === workComposer?.childId) syncWorkContext();
+  }
+  if (ev.type === 'compaction' && ev.sessionId) {
+    if (ev.phase === 'start' || ev.phase === 'failed') childCompaction.set(ev.sessionId, ev); else childCompaction.delete(ev.sessionId);
     if (ev.sessionId === workComposer?.childId) syncWorkContext();
   }
   if (!isMine(ev)) {
@@ -6694,20 +6698,56 @@ function syncWorkStop() {
 
 /** 子ごとの文脈の使用量（モーダルの入力欄の上の帯）。読み込み（loadSession）と contextWindow の出来事で更新する */
 const childContext = new Map();
+/** 子ごとの圧縮の状態（compaction の出来事。start = 圧縮中、failed = 失敗。終われば消す）。メインの state.compactionPhase の子の版 */
+const childCompaction = new Map();
+/** モーダルの入力欄の使用量のチップ（メインの headerUsage の 2 つ目。ポップはモーダルの中に置く）。下の操作の節で作る */
+let workUsage = null;
+function syncWorkUsage() {
+  if (!workUsage) return;
+  const id = workComposer?.childId;
+  const s = id ? workControls.selection(id) : null;
+  // 互換の接続先で動く子はサブスクの枠を使わない（メインの syncTopbar と同じ）
+  workUsage.show(s?.backend ? { backend: s.backend, account: s.endpoint ? '' : s.account, endpoint: s.endpoint, model: s.model, models: workControls.get(id).models } : { backend: null });
+}
+function compactFromDialog(id) {
+  cmd('compactConversation', { sessionId: id }).catch((e) => { childCompaction.set(id, { phase: 'failed', reason: String(e?.message ?? e) }); syncWorkContext(); });
+}
 function syncWorkContext() {
   if (!workComposer) return;
-  const usage = workComposer.childId ? childContext.get(workComposer.childId) : null;
-  if (!usage || !(usage.windowTokens > 0)) { workComposer.setContext(null); return; }
-  const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
-  const amounts = { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) };
-  const bar = el('span', 'context-meter-bar');
-  const fill = el('span');
-  fill.style.width = `${Math.min(100, Math.max(0, rate))}%`;
-  bar.append(fill);
-  workComposer.setContext({
-    nodes: [document.createTextNode(t('compaction.context')), bar, document.createTextNode(phoneView.matches ? t('compaction.meterShort', { rate }) : t('compaction.meter', amounts))],
-    label: t('compaction.meterLabel', amounts),
-  });
+  const id = workComposer.childId;
+  syncWorkUsage();
+  const usage = id ? childContext.get(id) : null;
+  const phase = id ? childCompaction.get(id) ?? null : null;
+  const hasUsage = Boolean(usage && usage.windowTokens > 0);
+  if (!id || (!hasUsage && !phase)) { workComposer.setContext(null); return; }
+  const backend = workControls.selection(id).backend;
+  const canCompact = Boolean(capsOf(backend).compact);
+  const parts = { canCompact, compacting: phase?.phase === 'start', why: canCompact ? '' : t('compaction.agentManaged', { agent: labelOf(backend) }), actions: [] };
+  if (hasUsage) {
+    const rate = Math.round(100 * usage.usedTokens / usage.windowTokens);
+    const amounts = { rate, used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) };
+    const bar = el('span', 'context-meter-bar');
+    const fill = el('span');
+    fill.style.width = `${Math.min(100, Math.max(0, rate))}%`;
+    bar.append(fill);
+    const caret = svgEl('svg', { class: 'i caret', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+    caret.append(svgEl('path', { d: 'M7 10l5 5 5-5' }));
+    parts.nodes = [document.createTextNode(t('compaction.context')), bar, document.createTextNode(phoneView.matches ? t('compaction.meterShort', { rate }) : t('compaction.meter', amounts)), caret];
+    parts.label = [t('compaction.meterLabel', amounts), t('compaction.openActions')].join(t('compaction.spokenJoin'));
+  }
+  if (phase?.phase === 'start') parts.text = [runMark(), document.createTextNode(t('compaction.running'))];
+  else if (phase?.phase === 'failed') {
+    parts.text = [document.createTextNode(t('compaction.failed'))];
+    parts.title = phase.reason ?? '';
+    if (canCompact) {
+      const retry = el('button', null, t('compaction.retry'));
+      retry.type = 'button';
+      retry.onclick = () => compactFromDialog(id);
+      parts.actions.push(retry);
+    }
+    if (phase.reason && !phoneView.matches) parts.actions.push(el('small', null, phase.reason));
+  }
+  workComposer.setContext(parts);
 }
 
 /**
@@ -11046,7 +11086,7 @@ const workControls = createWorkControls({
   },
   endpointView: (backend, selected) => (capsOf(backend).compatEndpoints ? endpointViewOf(backend, selected) : null),
   revalidate: revalidateVocab,
-  repaint: () => workComposer?.paintControls(),
+  repaint: () => { workComposer?.paintControls(); syncWorkUsage(); },
   fail: (error, kind) => workComposer?.say(kind === 'mode' ? t('chat.sys.modeSaveFailed', { error }) : t('chat.settingsHold.settings', { error }), true),
   empty: noEfforts,
 });
@@ -11079,6 +11119,9 @@ workComposer = createWorkComposer({
   cwdOf: (id) => workControls.selection(id).cwd || '',
   compactNote: (id) => t('compaction.agentManaged', { agent: labelOf(workControls.selection(id).backend) }),
   onStop: (item) => stopFromDialog(item),
+  compact: (id) => compactFromDialog(id),
+  // 自動圧縮の設定は全体のページ。モーダルを閉じてそのページを開く
+  compactionSettings: () => { $('workDialog').close(); openAutoCompactionSettings(); },
 });
 
 const shellComposer = chatComposer.useShell({
@@ -11505,6 +11548,15 @@ usageSource.onResult(() => { if (controls.panels.model.open) controls.paint(); }
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
   openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
+// 子の会話のモーダルの入力欄の使用量のチップ。同じ部品の 2 つ目で、見せる値は子のもの。ポップはモーダルの中に置く（body に置くと下に隠れる）
+{
+  const pop = el('div', 'pop usage-pop');
+  pop.id = 'wkUsagePop'; pop.setAttribute('role', 'dialog'); pop.hidden = true;
+  workUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
+    openSettings: () => { $('workDialog').close(); onboarding.open('usage'); $('usageTab').click(); },
+    onVisibility: () => workComposer?.syncStrip(), chip: workComposer.els.usageChip, pop, host: $('workDialog'), column: $('workDialog') });
+  syncWorkUsage();
+}
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin, current: () => ({ backend: state.shownBackend, model: state.model || state.models['']?.resolvesTo || '' }) });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });
