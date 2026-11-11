@@ -11161,6 +11161,7 @@ workComposer = createWorkComposer({
     return { persistent: !resident?.available || Boolean(status?.enabled && resident.keepRunning), hostZone: state.hostTimeZone };
   },
   cwdOf: (id) => workControls.selection(id).cwd || '',
+  hostName: () => remoteInfo(window.plyRemote)?.host ?? state.hostCaps?.hostName ?? '',
   compactNote: (id) => t('compaction.agentManaged', { agent: labelOf(workControls.selection(id).backend) }),
   onStop: (item) => stopFromDialog(item),
   onStripLevel: () => syncWorkContext(),
