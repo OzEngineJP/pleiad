@@ -1901,7 +1901,41 @@ main.dropping #log{background:var(--surface-1)}
 .work-split>.file-preview{flex:0 0 var(--file-preview-shown,var(--file-preview-width));min-width:0;overflow:hidden;position:relative;grid-column:auto;z-index:1}
 .work-split>.file-preview>*{min-width:calc(var(--file-preview-width) - 28px)}
 .work-split>.file-preview .btn-wide{display:none}
+.work-side{display:flex;width:320px;flex:none;min-width:0;overflow:hidden;position:relative}
 .work-list{width:320px;flex:none;overflow-y:auto;overscroll-behavior:contain;padding:0 8px 12px}
+/* 一覧の開け閉め（web/work-side.mjs）。メインの脇（「脇の開閉」）と同じ部品・同じ動き・同じ値で、違いは 0 ではなく --rail-w（52px）の細い列が残ること。
+   畳むと一覧の列が 320px → 52px になり、会話と右の欄が押されて動く（重ねない・幕もかけない）。中身は幅を保ったまま --dur-fast で消え、
+   列の幅は --dur・--ease-out で縮む。動きを減らす設定では --dur が 0。開くボタン（.side-pm）は畳んだ列の左上に常に出す（モーダルにはロゴが無い） */
+#workDialog{--rail-w:52px}
+.work-open,.work-close-list{display:none}
+@media (min-width:701px){
+  #workDialog.list-folded .work-side{width:var(--rail-w)}
+  #workDialog.list-moving .work-side{transition:width var(--dur) var(--ease-out)}
+  .work-list{transition:opacity var(--dur-fast) linear}
+  #workDialog.list-folded .work-list{opacity:0;visibility:hidden}
+  #workDialog.list-moving .work-list{transition:opacity var(--dur-fast) linear,visibility 0s linear var(--dur)}
+  #workDialog:not(.list-moving).list-folded .work-list{transition:none}
+  #workDialog.list-folded>header{padding-left:var(--rail-w)}
+  #workDialog.list-moving>header{transition:padding-left var(--dur) var(--ease-out)}
+  /* 閉じるボタン: 一覧の右上（メインの #closeSidebar と同じ部品）。位置は動かさず、畳むときはすぐ消え、開くときは列が開き終わってから出る
+     （動く間に題や会話の上へ顔を出さない） */
+  .work-close-list{display:inline-grid;position:absolute;left:282px;top:12px;z-index:3;
+    transition:opacity var(--dur-fast) linear var(--dur)}
+  #workDialog.list-folded>.work-close-list{opacity:0;visibility:hidden;transition:opacity var(--dur-fast) linear,visibility 0s linear var(--dur-fast)}
+  /* 開くボタン: 畳んだ列の左上（.side-pm の形。メインの閉じた脇の P の印と同じ位置・大きさ・載せたときの印）。開いている間は隠す */
+  .work-open{display:grid;position:absolute;left:10px;top:11px;z-index:3;pointer-events:auto;cursor:pointer;opacity:0;visibility:hidden;
+    transition:opacity var(--dur-fast) linear,visibility 0s linear var(--dur-fast)}
+  .work-open .pm-op{display:block}
+  #workDialog.list-folded>.work-open{opacity:1;visibility:visible;
+    transition:opacity var(--dur-fast) linear var(--dur-fast),background-color var(--dur-fast) var(--ease-out)}
+  #workDialog.list-folded:not(.list-moving)>.work-open:is(:hover,:focus-visible,:active){background:var(--surface-2)}
+  /* 動いている間は右の欄の幅とダイアログの幅も同じ動きで追う（右の欄の開閉のばねが動いている間は、ばねが決める） */
+  #workDialog.list-moving:not(.file-preview-moving){transition:width var(--dur) var(--ease-out)}
+  #workDialog.list-moving:not(.file-preview-moving) .work-split>.file-preview{transition:flex-basis var(--dur) var(--ease-out)}
+}
+@media (prefers-reduced-motion:reduce){
+  .work-side,.work-list,#workDialog,#workDialog>header,.work-open,.work-close-list,.work-split>.file-preview{transition:none!important}
+}
 .bg-group{font-size:var(--fs-xs);color:var(--ink-weak);font-weight:600;letter-spacing:.05em;padding:10px 8px 4px}
 .bg-empty{font-size:var(--fs-s);color:var(--ink-weak);padding:10px 8px}
 .bg-row{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:2px 10px;align-items:center;width:100%;padding:8px 10px;border:0;
@@ -2018,18 +2052,25 @@ main.dropping #log{background:var(--surface-1)}
 .state-mark svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .work-stop{flex:none}
 .work-location{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+/* 右の欄はメインの狭い画面（760px 以下）と同じく、ダイアログいっぱいに重ねて右から入れる（動きは web/file-preview.mjs が transform を書く）。
+   一覧と会話の 2 列は 701px 以上で保ち、会話が 360px を割らないよう、701〜760px ではダイアログを窓いっぱいに近づける */
+@media (max-width:760px){
+  .work-split>.file-preview{position:absolute;inset:0;flex:none;width:auto;overflow:visible;z-index:5;padding:0 12px}
+  .work-split>.file-preview>*{min-width:0}
+}
+@media (max-width:760px) and (min-width:701px){
+  #workDialog,#workDialog:is(.file-preview-open,.file-preview-leaving){width:calc(100vw - 16px)}
+}
 @media (max-width:700px){
   #workDialog{width:100vw;height:100dvh;border-radius:0}
-  .work-list{width:100%}
+  .work-side,.work-list{width:100%}
   .work-split:not(.showing) .work-detail{display:none}
-  .work-split.showing .work-list{display:none}
+  .work-split.showing .work-side{display:none}
   .work-detail{border-radius:var(--r-l) var(--r-l) 0 0}
   .work-dh{padding-left:8px}
   .bg-back{display:inline-flex}
-  /* 3 段目（ページ）。ダイアログいっぱいに重ね、メインの狭い画面と同じく右から入れる（動きは web/file-preview.mjs が transform を書く） */
+  /* 3 段目（ページ）はダイアログと同じ幅 */
   #workDialog:is(.file-preview-open,.file-preview-leaving){width:100vw}
-  .work-split>.file-preview{position:absolute;inset:0;flex:none;width:auto;overflow:visible;z-index:5;padding:0 12px}
-  .work-split>.file-preview>*{min-width:0}
 }
 
 /* Approved UX proposal: choices, durable next-turn notice, and draft feedback. */

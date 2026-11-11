@@ -536,6 +536,8 @@ const SUITES = [
   './unit/computer-use-ui.mjs',
   // 接続の状態（web/connection-status.mjs）: 切れた一行・読み上げ・古いトークンの案内と再確認、開くボタンの印、/auth-check
   './unit/connection-status.mjs',
+  // 作業のダイアログの一覧の開け閉め（web/work-side.mjs）: 自動で畳む範囲・会話の最小幅・開き直す条件・◆・フォーカス
+  './unit/work-side.mjs',
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）
   './unit/composer-new-session.mjs',
   // 圧縮の区切りは発言を送っても動かない・放置中の圧縮の区切りは次の発言の前に置く（client.mjs の userMessage・paintCompactions）

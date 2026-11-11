@@ -12,6 +12,7 @@ import { applySlots, fileSlots, customSlots, gitSlots, chromeSlots, subtitleFor 
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
 import { createSpring, reducedMotion } from './motion.mjs';
+import { modalPaneWidth } from './work-side.mjs';
 
 const KIND = { markdown:'Markdown', html:'HTML', image:t('filePreview.kind.image'), table:t('filePreview.kind.table'), text:t('filePreview.kind.text'), pdf:'PDF',
   unsupported:t('filePreview.kind.unsupported'), directory:t('filePreview.kind.directory') };
@@ -213,9 +214,9 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   // 右の欄を置いている場所。会話の本体（body）が既定で、作業のダイアログを開いている間はそのダイアログ（mountIn）。
   // 開閉の印（file-preview-open など）と幅の変数は、置いている場所に付ける
   let host = null;
-  const modalNarrow = matchMedia('(max-width:700px)');
   const hostNode = () => host ?? document.body;
-  const narrow = () => (host ? modalNarrow.matches : mobile.matches);
+  // 760px 以下は、メインもダイアログの中も全面に重ねる（ダイアログの一覧・会話の 3 段は 700px 以下で、CSS が持つ）
+  const narrow = () => mobile.matches;
   // 幅の割合の分母は、脇を除いた窓の幅。1150px 以下では脇が畳まれ、閉じた脇（web/client.mjs）も列を取らない
   const besideSidebar = () => innerWidth - (innerWidth > 1150 && !document.documentElement.classList.contains('side-closed') ? sidebar.offsetWidth : 0);
   let opener, context = {}, reference, file, source = false, abort, generation = 0, paintId = 0, percentage = 48;
@@ -224,17 +225,21 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   let pdfTask, pdfDoc, pdfPage = 1, pdfZoom = 1, imageZoom = 1, renderTask;
   const layout = () => {
     const open = !panel.hidden, expanded = hostNode().classList.contains('file-preview-wide');
+    // ダイアログの中では、幅を決める前に開閉を知らせる。一覧の畳み方（web/work-side.mjs）がここで決まり、その列の幅で欄の幅を測る
+    host?.dispatchEvent(new CustomEvent('file-preview:layout', { detail:{ open } }));
     if (!host) { main.inert = open && (narrow() || expanded); sidebar.inert = open && narrow(); }
     panel.setAttribute('role', narrow() ? 'dialog' : 'complementary');
     if (narrow()) panel.setAttribute('aria-modal', 'true'); else panel.removeAttribute('aria-modal');
     setIcon(wide, expanded ? collapseIcon : expandIcon, expanded ? t('filePreview.besideChat') : t('filePreview.expand'));
     setIcon(closeButton, narrow() ? backIcon : closeIcon, narrow() ? t('filePreview.backToChat') : t('filePreview.closePreview'));
-    // 作業のダイアログの中では、窓の 96%（ダイアログの最大幅）から左の一覧の 320px を除いた分を割合の分母にする。会話の幅は 360px を残し、欄は 520px まで
-    const available = host ? Math.round(innerWidth * 0.96) - 320 : besideSidebar();
+    // 作業のダイアログの中では、窓の 96%（ダイアログの最大幅）から左の一覧の列（開いて 320px・畳んで 52px）を除いた分を割合の分母にする。
+    // 会話の幅は 360px を残し、欄は 520px まで。一覧を開き直したときは欄が縮む（web/work-side.mjs の modalPaneWidth）
+    const available = host ? 0 : besideSidebar();
     // 幅を決めた自前の中身（目次と検索。web/conversation-toc.mjs）は、その幅に固定して境界のつまみを出さない
-    const pixels = custom?.width ? Math.min(available - 360, custom.width) : Math.min(available - 360, Math.max(300, available * percentage / 100), host ? 520 : Infinity);
+    const pixels = host ? modalPaneWidth(innerWidth, host.classList.contains('list-folded'), { percentage, fixed:custom?.width ?? 0 })
+      : custom?.width ? Math.min(available - 360, custom.width) : Math.min(available - 360, Math.max(300, available * percentage / 100));
     handle.hidden = Boolean(custom?.width) || Boolean(host);   // ダイアログの中は幅が変わるとダイアログの縁も動くので、つまみは出さない
-    hostNode().style.setProperty('--file-preview-width', `${Math.max(300, pixels)}px`);
+    hostNode().style.setProperty('--file-preview-width', `${host ? Math.round(pixels) : Math.max(300, pixels)}px`);
     handle.setAttribute('aria-valuenow', String(Math.round(percentage)));
     onLayout?.();
   };

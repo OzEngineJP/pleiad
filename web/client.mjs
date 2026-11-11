@@ -133,7 +133,8 @@ import { mergeToolTurns } from './tool-turns.mjs';
 import { streamMessages } from './stream-messages.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
-import { attentionCounts, paintOpenSidebar } from './open-sidebar-mark.mjs';
+import { attentionCounts, paintOpenSidebar, paintOpenList } from './open-sidebar-mark.mjs';
+import { createWorkSide, SIDE_STORE as WORK_SIDE_STORE } from './work-side.mjs';
 import { setupNotificationInbox } from './notification-inbox.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
@@ -250,6 +251,17 @@ applyDom(document);
 rememberComposerTemplate($("composer"));
 // 「サイドバーを開く」の名前は件数を入れて書く（web/open-sidebar-mark.mjs）ので、HTML の data-i18n には置かない。一覧が届くまでは件数なし
 paintOpenSidebar($("openSidebar"), {}, t);
+// 作業のダイアログの一覧の開け閉め（web/work-side.mjs）。ボタンの名前は ◆ の有無で替わるので、HTML の data-i18n には置かない。
+// 右の欄の幅の測り直しは filePreview（後で作る）へ。Ctrl+B はダイアログが開いている間、この一覧を開け閉めする（脇には効かない）
+const workSide = createWorkSide({
+  dialog: $("workDialog"), openButton: $("workOpenList"), closeButton: $("workCloseList"),
+  width: () => innerWidth, duration: () => motionDuration(240), steps: () => matchMedia("(max-width:700px)").matches,
+  store: { get: () => { try { return localStorage.getItem(WORK_SIDE_STORE); } catch { return null; } }, set: v => localStorage.setItem(WORK_SIDE_STORE, v) },
+  relayout: () => { if (filePreview.mounted() === $("workDialog")) filePreview.layout(); },
+  paint: waiting => paintOpenList($("workOpenList"), waiting, t),
+});
+$("workDialog").addEventListener("file-preview:layout", e => workSide.layout(e.detail.open));
+workSide.setWaiting(false);
 // CSS の content: に出す文言。style.css・file-preview.css が var(--i18n-…) で読む（CSS に言語ごとの文言を持たない）
 for (const [name, text] of [["untitled", t("session.untitled")], ["default", t("chat.model.default")], ["showing", ` ${t("app.previewShowing")}`]]) {
   document.documentElement.style.setProperty(`--i18n-${name}`, JSON.stringify(text));
@@ -6481,6 +6493,7 @@ function renderBackground() {
   const items = dialogItems();
   if (!items.some(x => x.key === bg.selected) && !(bg.view?.item.group === 'command' && bg.view.key === bg.selected)) bg.selected = items[0]?.key ?? null;
   const { live, ended } = backgroundTotals(items);
+  workSide.setWaiting(items.some(x => x.waiting));
   $('workCount').textContent = t('dialog.work.count', { live, ended });
   const list = $('workList');
   list.replaceChildren();
@@ -6550,7 +6563,7 @@ function openWork(key, scope = null) {
   else if (!bg.selected || !dialogItems().some(x => x.key === bg.selected && x.live)) bg.selected = dialogItems()[0]?.key ?? null;
   bg.view = null;
   // 先に開く。詳細の読み込みは開いているときだけ走る
-  if (!$('workDialog').open) $('workDialog').showModal();
+  if (!$('workDialog').open) { workSide.begin(); $('workDialog').showModal(); }
   renderBackground();
   restoreChildSubagents();
   // 配信の間に始まって終わった子孫の委譲も一覧に出すため、会話の分を読み直す
@@ -7519,7 +7532,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { clearTimeout(bg.view?.commandTimer); bg.view = null; bg.extra.clear(); bg.scope = null; closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
+$('workDialog').addEventListener('close', () => { workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view = null; bg.extra.clear(); bg.scope = null; closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -7831,7 +7844,12 @@ function initSidebar() {
   const mac = /Mac/.test(navigator.platform);
   document.addEventListener("keydown", (e) => {
     if (isComposingKey(e) || e.altKey || e.shiftKey || (mac ? !e.metaKey || e.ctrlKey : !e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "b") return;
-    if (document.querySelector("dialog[open]")) return;
+    // 作業のダイアログが一番上に開いている間は、その一覧を開け閉めする（脇は動かさない）。ほかのダイアログが上なら何もしない
+    const dialogs = [...document.querySelectorAll("dialog[open]")];
+    if (dialogs.length) {
+      if (dialogs.at(-1) === $("workDialog") && workSide.set(!workSide.folded())) e.preventDefault();
+      return;
+    }
     e.preventDefault();
     setSidebar(document.documentElement.classList.contains("side-closed"));
   });
