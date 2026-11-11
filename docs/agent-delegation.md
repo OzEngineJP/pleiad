@@ -343,6 +343,10 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 子で実行前に拒否されたコマンドがあれば、通知の本文の最後（「元の依頼に必要な作業を続けてください。」の前）に 1 段落足す（`agent:delegation.noticeRejections`）。
 件数と、先頭 3 件の `command`（伏せて切ったもの）と `reason` だけを並べ、全件は `ply_task_status` の `rejections` で読むよう案内する。拒否が無ければ何も足さない。
 
+人が子の会話へ直接送った指示があれば、同じ位置（拒否の段落の後）に 1 行足す（`agent:delegation.noticeHuman`。「人からの指示 N 件」。[ADR 0317](adr/0317-modal-child-composer-stop-name-tags.md)）。
+子のダイアログの入力欄から送った発言を `sendMessage` が受けた時に、タスクの行の `humanInstructions` を 1 つ増やし、本文のハッシュを子の会話の sidecar（`humanSent`）に残す。親の AI の `ply_task_send` は数えない。
+送るたびには知らせず、完了通知にだけ累計を載せる（既に終わった子へ送ると子は動き直すが、新しい完了通知は出ず、その数は次の完了通知に載る）。送信待ちを取り消した指示も、受け付けた時点で数える。
+
 ## 追加指示の配送
 
 決定は [ADR 0065](adr/0065-steer-task-instructions.md)（[ADR 0044](adr/0044-task-instruction-delivery.md) の配送の規則を、走っている子のターンにも広げる）。
@@ -409,10 +413,10 @@ Codex の履歴が大きすぎて読めない・30 秒で応答が無い（`core
 
 ## 子に残った裏の作業
 
-子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。**Pleiad は子の裏の作業を時間で止めない。** main がまだ結果を待っているコマンドは 5 分で知らせ（[ADR 0048](adr/0048-delegation-silence-notice.md)）、main が返答を終えた後の裏の作業は、依頼元へ知らせながら終わるのを待つ（[ADR 0170](adr/0170-delegation-background-notify-not-stop.md)）。止めるのは依頼元（`ply_task_cancel`）か人（作業ダイアログの停止ボタン）。
+子の結果は、子のターンが終わり、子が待つ裏の作業と子が作った Pleiad タスクが片付いてから確定する（`execute`）。**Pleiad は子の裏の作業を時間で止めない。** main がまだ結果を待っているコマンドは 5 分で知らせ（[ADR 0048](adr/0048-delegation-silence-notice.md)）、main が返答を終えた後の裏の作業は、依頼元へ知らせながら終わるのを待つ（[ADR 0170](adr/0170-delegation-background-notify-not-stop.md)）。止めるのは依頼元（`ply_task_cancel`）か人（子の会話のダイアログの入力欄の中断ボタン）。
 
 - **Claude**: main が返答を終えても、裏のタスクが生きている間はターンを保持する（`phase: waiting`）。委譲の子では、待ち始めた時刻（`taskExecutions` の `waitingSince`。main が再開したら消し、再び `waiting` に入った時刻から数え直す）を元に、依頼元へ裏作業通知を送る（`core/agent-tasks.mjs` の `notifyBackground`）。
-  - 最初は待ち始めて 1 分後（`agent:delegation.backgroundNotice`）。待っている裏の作業の見出し（サブエージェントも含む）、子のここまでの返答（4000 字で切る）、タスクは実行中のままで終われば完了通知で届けること、止め方（`ply_task_cancel`・作業ダイアログの停止ボタン）を書く。
+  - 最初は待ち始めて 1 分後（`agent:delegation.backgroundNotice`）。待っている裏の作業の見出し（サブエージェントも含む）、子のここまでの返答（4000 字で切る）、タスクは実行中のままで終われば完了通知で届けること、止め方（`ply_task_cancel`・子の会話の入力欄の中断ボタン）を書く。
   - まだ走っていれば `AGENT_HOST_TASK_BACKGROUND_MINUTES`（既定 30 分。`0` で送らない）ごとに送り直す（`backgroundStillNotice`。返答は添えない）。
   - 待っている間は、無音の通知とコマンドの 5 分の通知を送らない（同じ待ちを重ねて知らせない）。
   - 送る前に、送った回数と時刻をタスクの行（`backgroundNotice`）に保存する。待ち始めた時刻は札（turn card の `delegation`）に載るので、無停止の更新の後も最初からやり直さない。ホストに任せたタスクの依頼元（リモート）には送らない。
