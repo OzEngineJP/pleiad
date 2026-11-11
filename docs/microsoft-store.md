@@ -129,9 +129,9 @@ Store 版の MCP 設定は `command` をこのエイリアスにし、`args` の
 
 ### 生成内容の報告と審査メモ
 
-Pleiad は利用者が用意した Claude Code・Codex・Antigravity の CLI の返答を表示する。モデルの提供元ではないが、Pleiad 内で見た不適切な生成内容は開発者へ報告できるようにする。返答の `⋯` →「不適切な AI の内容を報告」は Pleiad の公開 GitHub Issue 作成画面を開く。GitHub アカウントが必要で、本文の共有範囲と送信は利用者が決める。会話・添付・作業パスは自動で付けない。開発者は報告を確認し、Pleiad の表示・制御に原因があれば修正し、モデルや CLI に起因するものは該当する提供元への報告を案内する。公開 Issue に秘密を書かないよう、作成画面の本文で注意を出す。
+Pleiad は利用者が用意した Claude Code・Codex・Antigravity の CLI の返答を表示する。モデルの提供元ではないが、Pleiad 内で見た不適切な生成内容は開発者へ報告できるようにする。返答の `⋮` →「不適切な AI の内容を報告」は Pleiad の公開 GitHub Issue 作成画面を開く。GitHub アカウントが必要で、本文の共有範囲と送信は利用者が決める。会話・添付・作業パスは自動で付けない。開発者は報告を確認し、Pleiad の表示・制御に原因があれば修正し、モデルや CLI に起因するものは該当する提供元への報告を案内する。公開 Issue に秘密を書かないよう、作成画面の本文で注意を出す。
 
-Notes for certification に記す内容: "In Chats and Channels, open the menu (⋯) on an AI response and select 'Report inappropriate AI content'. This opens a new issue in the Pleiad developer's GitHub repository. No conversation text is uploaded automatically; the user chooses what to submit. The developer reviews reports and fixes Pleiad issues or directs model/CLI concerns to the relevant provider."
+Notes for certification に記す内容: "In Chats and Channels, open the menu (⋮) on an AI response and select 'Report inappropriate AI content'. This opens a new issue in the Pleiad developer's GitHub repository. No conversation text is uploaded automatically; the user chooses what to submit. The developer reviews reports and fixes Pleiad issues or directs model/CLI concerns to the relevant provider."
 
 ## Partner Center でやること
 
