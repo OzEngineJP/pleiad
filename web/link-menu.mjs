@@ -73,8 +73,9 @@ export function setupLinkMenu({ showMenu, doc = document, statusLine = desktopHo
   doc.addEventListener('contextmenu', e => {
     if (e.defaultPrevented) return;
     const link = appLinkOf(e.target);
-    // モーダルのダイアログの中は、メニュー（本体の上に出る面）が下に隠れる。標準のままにする
-    if (!link || link.closest('dialog[open]')) return;
+    // 作業のダイアログの中は本体と同じメニュー（メニューは最前面のダイアログの中に出る。web/context-menu.mjs）。
+    // ほかのダイアログは、メニューが下に隠れるので標準のままにする
+    if (!link || (link.closest('dialog[open]') && !link.closest('#workDialog'))) return;
     const href = link.href;
     const items = linkMenuItems({ act: {
       openExternal: () => openExternalLink(href),

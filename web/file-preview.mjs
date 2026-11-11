@@ -595,6 +595,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   }
   // ---- ファイルの操作（docs/design-system.md「ファイルの操作」）。メニューの中身は web/file-actions.mjs
   /** サーバーへ渡す場所の手がかり。相対パスは発言の時刻（at）かプレビュー中の文書（base）で解く */
+  /** 「会話で使う」を出すか。作業のダイアログの中（子の会話・その右の欄）には入力欄が無いので出さない（受ける所ができるまで） */
+  const canUseHere = element => !!useFile && !element?.closest?.('#workBody') && !(host && host === element?.closest?.('dialog'));
   const whereFrom = target => {
     const ctx = (target.element ? getContext(target.element) : unifiedEnabled() ? getContext(null) : context) ?? {};
     const sessionId = target.sessionId ?? ctx.sessionId;
@@ -615,7 +617,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     if (!tab?.page?.path) return [];
     const where = resolvedFiles.get(tab.page.path) ?? tab.page;
     const items = fileMenuItems(where, { osActions:osActions(), defaultAppAllowed:where.defaultAppAllowed === true,
-      canUse:!!useFile, run:action => run(action, { ...where, element:tab.element }) });
+      canUse:canUseHere(tab.element), run:action => run(action, { ...where, element:tab.element }) });
     const viz = savedVizOf(tab);
     if (viz) {
       const target = { path:viz.path, sessionId:tab.sessionId, element:tab.element,
@@ -791,7 +793,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
         return;
       }
       showMenu(x, y, fileMenuItems(target, { osActions:osActions(),
-        defaultAppAllowed:where.defaultAppAllowed === true, canUse:!!useFile, run:action => run(action, target) }), target.path);
+        defaultAppAllowed:where.defaultAppAllowed === true, canUse:canUseHere(target.element), run:action => run(action, target) }), target.path);
     } catch (error) { failed(error); }
   }
   /** マウスなら押した位置、キーボード（ContextMenu キー・Shift+F10）なら要素の左下 */
@@ -803,7 +805,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   /** 会話・Markdown プレビューの中のファイル（リンク・画像・⋯）から操作の対象を作る */
   function targetOf(node) {
     const holder = node.closest('[data-file-path],[data-file-menu]');
-    if (!holder || (!holder.closest('#log') && !holder.closest('#channelsView') && !holder.closest('.file-preview-document') && !holder.closest('#lightbox'))) return null;
+    if (!holder || (!holder.closest('#log') && !holder.closest('#channelsView') && !holder.closest('.file-preview-document') && !holder.closest('#lightbox') && !(holder.closest('#workBody') && getContext(holder)?.sessionId))) return null;
     const path = holder.dataset.filePath ?? holder.dataset.fileMenu;
     if (!path) return null;
     return { path, line:Number(holder.dataset.fileLine) || null, element:holder, base:holder.closest('.file-preview-document') ? file?.path : undefined };

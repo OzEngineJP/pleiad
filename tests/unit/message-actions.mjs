@@ -1,5 +1,5 @@
 // 発言の操作（web/message-actions.mjs）・長い発言の畳み（web/fold.mjs）・送った直後の画像の枠（web/attachment-frame.mjs）。ADR 0067
-import { messageMenuPlan, setupMessageMenu, COPIED_MS, aiReportUrl } from "../../web/message-actions.mjs";
+import { messageMenuPlan, setupMessageMenu, COPIED_MS, aiReportUrl, CHILD_MENU } from "../../web/message-actions.mjs";
 import { frameSize, pendingImageHtml, SLOW_MS } from "../../web/attachment-frame.mjs";
 import { revealFold } from "../../web/fold.mjs";
 import { postMenu } from "../../web/channels/post-menu.mjs";
@@ -40,6 +40,17 @@ export default async function (t) {
     && messageMenuPlan({ kind: "ai" }).find((p) => p.key === "fork").label === "ここから分岐");
   t.ok("分岐できない返答にも報告は出す", keys(messageMenuPlan({ kind: "ai", canFork: false })) === "copy,sep,report");
   t.ok("`!` の行は「入力欄に写す」を足し、編集・再送信は出さない", keys(messageMenuPlan({ kind: "cmd", shell: true })) === "copy,toComposer,fork");
+  // ---- 作業のダイアログの子の会話（ADR 0315 段 3）: 分岐・編集して再送信・再送信を出さず、残りは本体と同じ項目
+  const child = (kind) => messageMenuPlan({ kind, source: kind === "user", ...CHILD_MENU });
+  t.ok("子の会話の自分の発言: コピー・原文だけ（分岐・編集して再送信・再送信なし）", keys(child("user")) === "copy,sep,source"
+    && child("user").map((p) => p.label).join("|").includes("エージェントに渡した原文を見る"));
+  t.ok("子の会話のエージェントの返答: 返答をコピー・報告だけ（分岐なし）", keys(child("ai")) === "copy,sep,report"
+    && child("ai")[0].label === "返答をコピー");
+  t.ok("子の会話の絞り込みは本体の項目の部分集合（本体の並びは変えない）", (() => {
+    const mainUser = keys(messageMenuPlan({ kind: "user", source: true }));
+    return mainUser === "copy,fork,sep,edit,resend,source" && Object.isFrozen(CHILD_MENU)
+      && !("fork" in Object.fromEntries(child("user").map((p) => [p.key, 1]))) && !child("ai").some((p) => p.key === "fork");
+  })());
   const menu = (kind) => postMenu({ post: { author: { kind }, text: 'private content' }, t: () => 'react', name: 'bot', time: '', react: () => {} }).items;
   t.ok("Channels の bot 投稿にも報告を出し、人やシステムの投稿には出さない", menu('bot').some(item => item.label === '不適切な AI の内容を報告')
     && !menu('human').some(item => item.label === '不適切な AI の内容を報告')
