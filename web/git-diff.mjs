@@ -1,7 +1,7 @@
 // git パネルの差分の組み立て（docs/design-system.md「git の動き」、ADR 0135）。行番号（旧・新）・語の強調・変わっていない行の畳みと展開・
 // インライン / 左右。色は --diff-*（差分と状態の文字だけに使う族）。DOM に触れない buildItems / wordRange と、文字列を返す diffHTML。
 import { t } from './i18n.mjs';
-import { moreIcon } from './icons.mjs';
+import { gapIcon } from './icons.mjs';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -86,7 +86,7 @@ function sideRows(rows) {
 function gapLabel(g, after) {
   // 直前の関数は、続くハンクの見出し（git の funcname。言語によらない）を使う。無ければ JS の関数・クラスの行を探す
   const section = g.section || (after ? [...after.slice(0, g.from - 1)].reverse().find((s) => /^(export )?(default )?(async )?(function|class) /.test(s)) : null);
-  return `<span>${moreIcon}${esc(t('git.gapLines', { count: g.to - g.from + 1 }))}${section ? ` · <code>${esc(section.trim().slice(0, 60))}</code>` : ''}</span>`;
+  return `<span>${gapIcon}${esc(t('git.gapLines', { count: g.to - g.from + 1 }))}${section ? ` · <code>${esc(section.trim().slice(0, 60))}</code>` : ''}</span>`;
 }
 
 /**

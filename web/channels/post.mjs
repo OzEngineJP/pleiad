@@ -128,7 +128,8 @@ const replyIcon = () => {
 };
 const moreIcon = () => {
   const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-  for (const cx of [5.5, 12, 18.5]) svg.append(svgEl('circle', { cx, cy: 12, r: 1.5, fill: 'currentColor', stroke: 'none' }));
+  // 縦の 3 点（docs/design-system.md「「…」の形」）
+  for (const cy of [5.5, 12, 18.5]) svg.append(svgEl('circle', { cx: 12, cy, r: 1.5, fill: 'currentColor', stroke: 'none' }));
   return svg;
 };
 

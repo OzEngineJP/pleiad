@@ -72,29 +72,13 @@ function unreadMark() {
   return mark;
 }
 
-/** 脇の行の時計の印と時刻の字（「◷ 14:20」「◷ 2:30 に再開」）。圧縮の予定・上限の後の再開・送信予定が同じ形 */
+/** 脇の行の時計の印と時刻の字（「◷ 14:20」「◷ 2:30 に再開」）。上限の後の再開・送信予定が同じ形 */
 function scheduleMark(text, label = text) {
   const mark = el('span', 'row-sched');
   const svg = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
   svg.append(svgEl('circle', { cx: 12, cy: 12, r: 8 }), svgEl('path', { d: 'M12 7v5l3 2' }));
   mark.append(svg, document.createTextNode(text));
   mark.setAttribute('aria-label', label);
-  return mark;
-}
-
-function compactionMark(s) {
-  const mark = el('span', 'row-compaction');
-  const svg = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-  if (s.compactionAt) {
-    const time = new Date(s.compactionAt).toLocaleTimeString(document.documentElement.lang, { hour: '2-digit', minute: '2-digit' });
-    svg.append(svgEl('circle', { cx: 12, cy: 12, r: 8 }), svgEl('path', { d: 'M12 7v5l3 2' }));
-    mark.append(svg, document.createTextNode(time));
-    mark.setAttribute('aria-label', t('compaction.scheduled', { time }));
-  } else {
-    svg.append(svgEl('rect', { x: 4, y: 4, width: 16, height: 16, rx: 3 }),
-      svgEl('path', { d: 'M8 12h8M10 8l2 2 2-2M10 16l2-2 2 2' }));
-    mark.append(svg, document.createTextNode(t('compaction.sidebarDone')));
-  }
   return mark;
 }
 
@@ -106,7 +90,6 @@ function pendingLabel(text, queued = false) {
 }
 
 const STORE_KEY = "agent-host-side";
-const STALE_DAYS = 7;        // 状態がこれ以上動いていないものは ◌ と日数を出す（設計メモ §6）
 const UNDO_MS = 12000;       // 「元に戻す」の一行が出ている時間。押さなければ静かに消える
 const RECENT_SEARCH_KEY = "agent-host-side-recent";   // 最近の検索（結果を開いた語だけ。端末ごと）
 const RECENT_SEARCH_MAX = 5;
@@ -121,8 +104,6 @@ const PLUS = "M12 5v14M5 12h14";
 const HOME = "M21 12a8 8 0 0 1-11.8 7L4 20l1-4.5A8 8 0 1 1 21 12z";
 // 既定のアイコン。アイコン未設定のグループはフォルダ（他のアイコンと同じ線幅 1.6・丸端）
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
-
-const staleDays = (iso) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : 0);
 
 /** 作業ディレクトリの末尾。一覧で場所を見分けるのに足りる最小 */
 const shortDir = (d) => String(d ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() ?? "";
@@ -351,8 +332,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       if (fam.kin.length) for (const s of members(fam)) inFamily.add(s.id);
     }
     for (const st of visibleGroups) {
-      // 放置は上に浮く。それ以外は新しい順。家族は中で一番新しい行で並ぶ（枝が動けば器ごと上に来る）
-      const fams = (byGroup.get(st) ?? []).sort((a, b) => (famStale(b) - famStale(a)) || (famWhen(b) - famWhen(a)));
+      // 新しい順。家族は中で一番新しい行で並ぶ（枝が動けば器ごと上に来る）
+      const fams = (byGroup.get(st) ?? []).sort((a, b) => famWhen(b) - famWhen(a));
       const rows = fams.flatMap(members);        // このグループに出る行（器の中の枝を含む）
       const draftHere = last.draft && (last.draft.status ?? null) === st;
       if (!rows.length && !draftHere && filtering()) continue;   // 絞っているときは空のグループを出さない
@@ -741,17 +722,15 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     keyboard = true;
     syncKeyboard();
   });
-  const isStale = (s) => Boolean(s.status) && staleDays(s.statusChangedAt) >= STALE_DAYS;
 
   // ---- 家族（fork した会話の器） ------------------------------------------
   // 根とその子孫をひとつの器に入れる。見出しはフォルダの役目だけで、押すと開閉する（選べない）。
   // 根の会話は器の中の先頭の行から開く。行はどれも自分の題を出す（根も題のまま）。
 
-  const rowOrder = (a, b) => (isStale(b) - isStale(a)) || ((b.lastModified ?? 0) - (a.lastModified ?? 0));
-  /** 器に並ぶ行。根が先頭、続けて枝を放置・新しい順に */
+  const rowOrder = (a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0);
+  /** 器に並ぶ行。根が先頭、続けて枝を新しい順に */
   const members = (fam) => [fam.root, ...[...fam.kin].sort(rowOrder)];
   const famWhen = (fam) => Math.max(...members(fam).map((s) => s.lastModified ?? 0));
-  const famStale = (fam) => (members(fam).some(isStale) ? 1 : 0);
   const titleOf = (s) => (s.thread ? (s.title ?? "") : s.bot ? botTitle(s) : s.title === "(no title)" ? "" : (s.title ?? ""));
   /**
    * bot の会話の題。会話の題は「🦉 Owl · #checkout-perf › 根の投稿の頭」（core/bots/sessions.mjs の sessionTitle）で、
@@ -829,7 +808,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   /**
    * 畳んだ器の見出しに出す要約。中の様子を開かずに読めるようにする。
-   * 印（走っている・裏で待っている・未確認・承認待ち）と、状態ごとの件数。枝の本数そのものは出さない
+   * 印（走っている・裏で待っている・中断・未確認・承認待ち）だけ。状態ごとの件数と枝の本数は出さない
+   * （器は根の状態の見出しの下に並び、状態は見出しが言う。docs/design-system.md §4.1「グループの要約」）
    */
   function famSummary(list) {
     const sum = el("div", "fam-sum");
@@ -842,9 +822,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     else if ((stoppedMark = stoppedIn(list))) sum.append(stoppedMark);
     else if (list.some((s) => last.unreadIds.has(s.id))) sum.append(unreadMark());
     if (waiting) sum.append(approvalMark(waiting));
-    const counts = new Map();
-    for (const s of list) { const k = statusKey(s); counts.set(k, (counts.get(k) ?? 0) + 1); }
-    for (const [k, n] of counts) sum.append(el("span", "fam-count", `${k ?? t("session.status.none")} ${n}`));
     return sum;
   }
 
@@ -879,7 +856,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (fam.root.parent?.sessionId) name.append(forkMark());
     name.append(el("span", "fam-t", titleOf(fam.root)));
     body.append(name);
-    if (!open) body.append(famSummary(list));   // 開けば中の行が同じことを言うので、畳んでいる間だけ
+    // 開けば中の行が同じことを言うので、畳んでいる間だけ。印が 1 つも無ければ題の 1 行だけにする
+    const sum = open ? null : famSummary(list);
+    if (sum?.childElementCount) body.append(sum);
     head.append(chevron(), body);
     head.setAttribute("aria-label", spoken([...name.children, ...(body.querySelector(".fam-sum")?.children ?? [])]) || t("session.untitled"));
     head.onclick = () => setOpen(!open);
@@ -1003,7 +982,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.delegation?.remote) meta.append(el("span", "row-remote", t("session.remoteOrigin.badge", { device: s.delegation.remote.deviceName || "" })));
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", waitingLabel(s.id)));
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text, pendingRow.queued));
-    else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
     else if (!sendAt && !missed) meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
     const cwd = el("span", "row-cwd");
@@ -1013,7 +991,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.cwd) cwd.title = s.worktree ? `${s.worktree.origin} · ${s.cwd}` : s.cwd;
     meta.append(cwd);
     if (s.unsent) meta.append(el("span", "row-unsent", s.hasDraft ? t("sidebar.unsentDraft") : t("sidebar.unsent")));
-    if (s.compactionAt || s.compacted) meta.append(compactionMark(s));
     r.append(meta);
     r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([...meta.children])].filter(Boolean).join(", "));
 

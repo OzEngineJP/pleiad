@@ -705,6 +705,8 @@ const SUITES = [
   './unit/branches.mjs',
   // 見た目の規則。web/ の CSS と index.html を lint する（docs/design-system.md §5）
   './unit/design-lint.mjs',
+  // 操作のメニューを開く「…」はどこでも縦の 3 点（docs/design-system.md「「…」の形」・ADR 0313）
+  './unit/more-icon.mjs',
   // 多言語対応。翻訳漏れの lint（直書きの日本語のラチェット・辞書の揃い）と、言語の解決・書式・setPref locale
   './unit/i18n-lint.mjs',
   './unit/i18n.mjs',

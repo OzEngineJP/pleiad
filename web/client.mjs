@@ -3576,21 +3576,14 @@ function onEvent(ev, replay = false) {
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
   if (ev.type === 'permissionSettled') { onPermissionSettled(ev); return; }
   if (ev.type === 'compactionSchedule') {
-    const row = state.sessions.find(s => s.id === ev.sessionId);
-    if (row) row.compactionAt = ev.at;
     if (ev.sessionId === state.current) { state.compactionAt = ev.at; paintContextStrip(); }
-    renderSessions(); return;
+    return;
   }
   if (ev.type === 'conversationAutoCompaction') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
     if (row) row.autoCompactionOff = ev.off;
     if (ev.sessionId === state.current) document.dispatchEvent(new Event('ply-context-usage'));
     return;
-  }
-  if (ev.type === 'compaction' && ev.sessionId) {
-    const row = state.sessions.find(s => s.id === ev.sessionId);
-    if (row && ev.phase === 'complete' && ev.trigger !== 'manual') row.compacted = true;
-    renderSessions();
   }
   // 別の窓・別の端末（この窓も含む）で完了を確認した。一覧の青い丸だけが変わる
   if (ev.type === "read") { if (readCompletions.apply(ev.reads)) renderSessions(); return; }
@@ -10514,11 +10507,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
       } else sys(t('compaction.agentManaged', { agent: labelOf(activeBackendId()) }));
       return;
     }
-    if (!at) {
-      const row = state.sessions.find(s => s.id === sessionId);
-      if (row) { row.compacted = false; row.compactionAt = null; renderSessions(); }
-      state.compactionAt = null; paintContextStrip();
-    }
+    if (!at) { state.compactionAt = null; paintContextStrip(); }
     // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）
     const agentLang = state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang;
     // 本文は文中の印（[添付] パス）ごとそのまま送る。文中に無い添付（文末に付く）だけ、今までどおり末尾に印を足す
