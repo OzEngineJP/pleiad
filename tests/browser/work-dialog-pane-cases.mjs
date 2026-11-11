@@ -93,6 +93,8 @@ try {
       selected: fp.querySelector('[role=tab][aria-selected=true]')?.textContent.trim() ?? '',
       text: fp.textContent, kind: document.getElementById('workBody').dataset.paneKind ?? '', sid: document.getElementById('workBody').dataset.sessionId ?? '' };
   });
+  // 欄の上の行の会話の切替（メインの欄では映す会話を選ぶ。モーダルの欄は左の一覧で選んだ子のタブだけを映すので出さない）
+  const convSwitcherShown = () => evaluate(() => [...document.querySelectorAll('#filePreview .bu-conv')].some(n => n.offsetWidth > 0 && n.offsetHeight > 0));
   const clickOn = (sel, label) => {
     const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
     assert.ok(ok, `target exists: ${label}`);
@@ -157,11 +159,19 @@ try {
   await openLink('#workBody a.file-link[data-file-path="grand-note.md"]', 'grandchild link', () => evaluate(() => document.getElementById('filePreview').parentElement.id === 'workSplit' && document.getElementById('filePreview').textContent.includes('grand-dir')));
   s = await snap();
   assert.equal(s.dialogOpen, true, 'the dialog stays open');
+  assert.equal(convSwitcherShown(), false, 'the modal pane has no "child conversation" switcher in the tab row (the left list switches conversations)');
   assert.ok(s.tabs.some(x => x.includes('grand-note.md')), `grandchild tab: ${s.tabs}`);
   assert.ok(!s.text.includes('child-dir') && !s.text.includes('sibling-dir'), 'resolved in the grandchild cwd only');
   const watchAfterGrand = evaluate(() => window.__watch.filter(w => w.slot === 'modal').at(-1));
   assert.equal(watchAfterGrand?.sessionId, grandId, `the modal slot watches the grandchild: ${JSON.stringify(watchAfterGrand)}`);
-  if (shots) { fs.mkdirSync(shots, { recursive: true }); ab('screenshot', path.join(shots, 'pane-grandchild.png')); }
+  if (shots) { fs.mkdirSync(shots, { recursive: true }); await sleep(800); ab('screenshot', path.join(shots, 'pane-grandchild.png')); }
+  // 窓が狭くても（760px）切替は出ない。撮るときだけ幅を替えて戻す
+  ab('set', 'viewport', '760', '800');
+  await sleep(600);
+  assert.equal(convSwitcherShown(), false, 'no conversation switcher at 760px either');
+  if (shots) ab('screenshot', path.join(shots, 'pane-grandchild-760.png'));
+  ab('set', 'viewport', '1280', '800');
+  await sleep(600);
   console.log('PASS: grandchild link opens in the grandchild tab and cwd; the modal slot watches the grandchild');
 
   // ---- 2. 欄を開いたまま別の子へ切り替える ----
@@ -174,6 +184,7 @@ try {
   assert.ok(s.tabs.some(x => x.includes('sibling-note.md')), `sibling tab: ${s.tabs}`);
   assert.ok(s.tabs.every(x => !x.includes('grand-note.md')), `no tab of the previous child: ${s.tabs}`);
   assert.ok(!s.text.includes('grand-dir'), 'not the previous child cwd');
+  assert.equal(convSwitcherShown(), false, 'still no conversation switcher after switching to another child');
   const watchAfterSwitch = evaluate(() => window.__watch.filter(w => w.slot === 'modal').at(-1));
   assert.equal(watchAfterSwitch?.sessionId, s.sid, `the modal slot follows the switch: ${JSON.stringify(watchAfterSwitch)}`);
   console.log('PASS: switching to another child gives that child its own tab and watch');
