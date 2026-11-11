@@ -41,15 +41,22 @@ const collapse = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 const usable = (node) => !node.parentElement?.closest('button,summary,.code-copy');
 
 /**
- * @param {{ thread:HTMLElement, log:HTMLElement, nav:object, preview:object, narrow:MediaQueryList, button?:HTMLElement, entriesOf?:Function }} o
+ * @param {{ thread:HTMLElement|(() => HTMLElement|null), log:HTMLElement, nav:object, preview:object, narrow:MediaQueryList, button?:HTMLElement, entriesOf?:Function, host?:HTMLElement, inertNodes?:() => (HTMLElement|null)[], keyScope?:EventTarget }} o
  *   preview は web/file-preview.mjs の返り値（openPanel・close・panelOpen）。button は見出しの目次のボタン（Chats の会話は #tocEntry、チャンネルのスレッドは .th-toc）
  *   entriesOf は項目の作り方（既定は Chats の会話の筋）。チャンネルのスレッドは投稿の列から作る（web/channels/thread.mjs）:
  *   ({ turns, kinds, turnInfo }) → { kind: 'user'|'answer'|'tool', turn, row, el, bodies?, at, pending? }[]（bodies は探す対象の要素）
+ *
+ *   面ごとの部品（既定は本体の画面。作業のダイアログ #workDialog は自分の面を渡す。showModal の面は最前面で、body の下に出したものは隠れる）:
+ *   thread は要素か、いまの要素を返す関数（作業のダイアログは更新のたびに筋を作り直すので関数）。
+ *   host はシートを付ける先、inertNodes はシートが開いている間に操作を止める面、keyScope はシートの Esc・Tab を受ける先
  */
-export function createConversationToc({ thread, log, nav, preview, narrow, button, entriesOf = null, onOpen = null }) {
+export function createConversationToc({ thread: threadSource, log, nav, preview, narrow, button, entriesOf = null, onOpen = null, host = null, inertNodes = null, keyScope = null }) {
+  const threadOf = typeof threadSource === 'function' ? threadSource : () => threadSource;
+  const sheetHost = () => host ?? document.body;
+  const surfaces = () => (inertNodes ? inertNodes() : [document.querySelector('body > main'), document.getElementById('sidebar')]);
   // ---- 状態（会話を開いている間は保つ。会話を替えたら reset）
   let query = '', scope = 'user', newestFirst = false, hitIndex = -1, total = 0;
-  let entries = [], entriesDirty = true, opened = false, sheet = null, opener = null, typing = 0, active = -1;
+  let entries = [], entriesDirty = true, opened = false, sheet = null, inerted = [], opener = null, typing = 0, active = -1;
   /** 脇の検索から語を引き継いだ（carry）。パネルを開いていなくても、本文の一致に印を付けておく。開く・語を替える・会話を替えると終わる */
   let carried = false;
   /** @type {Map<number, HTMLButtonElement>} 発言（ターン）→ 目次の行 */
@@ -115,6 +122,8 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
   // ---- 発言の一覧（DOM から作る）
   /** 会話の筋を 1 度走査して、発言・返答・ツールの項目を文書の順に並べる */
   function build() {
+    const thread = threadOf();
+    if (!thread) { entries = []; entriesDirty = false; return; }
     const turns = nav.turns();
     const kinds = turnKinds(thread, turns);
     if (entriesOf) {
@@ -400,18 +409,20 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
     box.append(el('div', 'toc-grip'), head, root);
     sheet.append(veil, box);
     veil.onclick = close;
-    document.body.append(sheet);
-    for (const node of [document.querySelector('body > main'), document.getElementById('sidebar')]) if (node) node.inert = true;
+    sheetHost().append(sheet);
+    inerted = surfaces().filter(Boolean);
+    for (const node of inerted) node.inert = true;
   }
   function closeSheet() {
-    for (const node of [document.querySelector('body > main'), document.getElementById('sidebar')]) if (node) node.inert = false;
+    for (const node of inerted) node.inert = false;
+    inerted = [];
     sheet.remove();
     sheet = null;
     cleanup();
     if (opener?.isConnected) opener.focus({ preventScroll: true });
   }
   narrow.addEventListener('change', () => { if (opened) close(); });
-  document.addEventListener('keydown', (event) => {
+  (keyScope ?? document).addEventListener('keydown', (event) => {
     if (!sheet || event.isComposing) return;
     if (event.key === 'Escape') { event.preventDefault(); close(); }
     else if (event.key === 'Tab') {
@@ -470,15 +481,39 @@ export function createConversationToc({ thread, log, nav, preview, narrow, butto
 
   // 会話が変わった（発言の増減・ターンの終わり）とき、開いていれば一覧を取り直す。閉じていれば次に開くときに作る
   let refreshTimer = 0;
-  new MutationObserver((records) => {
+  /** 検索を取り直す。一覧の読んでいる位置と、フォーカスのある行は今のまま（検索語を打ち直したときとは違い、跳ばさない） */
+  const reapply = () => {
+    const top = list.scrollTop, row = list.contains(document.activeElement) ? document.activeElement.dataset?.id : null;
+    entriesDirty = true;
+    search({ select: false });
+    list.scrollTop = top;
+    if (row != null) list.querySelector(`.toc-row[data-id="${row}"]`)?.focus({ preventScroll: true });
+  };
+  const changed = (records, { now = false } = {}) => {
     if (!records.some((r) => r.addedNodes.length || r.removedNodes.length)) return;
     entriesDirty = true;
     if (!opened) return;
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => { entriesDirty = true; search({ select: false }); }, 300);
-  }).observe(thread, { childList: true });
+    // 筋ごと作り直された（子の会話の読み直し）ときは待たずに取り直す。待つと、その間だけ印が消える
+    if (now) reapply(); else refreshTimer = setTimeout(reapply, 300);
+  };
+  const threadWatch = new MutationObserver(changed);
+  let watched = null;
+  const watch = () => {
+    const now = threadOf();
+    if (now === watched) return;
+    threadWatch.disconnect();
+    watched = now;
+    if (now) threadWatch.observe(now, { childList: true });
+  };
+  watch();
+  // 筋を関数で渡された面は、更新のたびに筋が作り直される。入れ物（log）の子の入れ替わりで、見る先を付け替える
+  if (typeof threadSource === 'function') {
+    new MutationObserver((records) => { const was = watched; watch(); changed(records, { now: watched !== was }); }).observe(log, { childList: true });
+  }
   nav.onUpdate(() => {
-    const has = nav.turns().length > 0;
+    // 発言（自分の依頼）の無い筋（依頼文が分からない読むだけの子）でも、返答があれば探せる。nav が hasContent を持てばそれで決める
+    const has = nav.hasContent ? nav.hasContent() : nav.turns().length > 0;
     if (button && button.hidden === has) button.hidden = !has;
     if (opened) paintCurrent();
   });

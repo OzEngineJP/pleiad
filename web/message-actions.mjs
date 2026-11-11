@@ -115,6 +115,12 @@ export function messageMenuPlan({ kind = 'user', part = false, canFork = true, s
   return items;
 }
 
+/**
+ * 作業のダイアログの子の会話の発言のメニューに足す絞り込み（messageMenuPlan の引数）。この会話の発言ではないので、
+ * 分岐・編集して再送信・再送信は出さない（子から分岐は作らせない）。コピー・原文を見る（自分の発言）・報告（返答）は本体と同じ項目
+ */
+export const CHILD_MENU = Object.freeze({ canFork: false, editable: false });
+
 /** 触れる手段が押すことしか無い端末（ホバーが無い）か */
 export const hoverless = () => typeof matchMedia === 'function' && matchMedia('(hover:none)').matches;
 

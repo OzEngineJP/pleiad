@@ -658,12 +658,12 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* タイトル行の右の、右の欄を開け閉めするアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」）。
    「…」の「変更あり」は右上の強い字の点（紙の色の 2px の切り欠き）。
    エージェントの Chrome の操作中は右上の走っている弧（§6。14px の紙の色の丸の中に半径 4.4・線 1.5） */
-#browserEntry{position:relative}
+#browserEntry,#workBrowserEntry{position:relative}
 .entry-dot{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;color:var(--ink-strong);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
 .entry-run.run{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
 .entry-run.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 /* スマホの頭の行の [N]（承認済み 2026-11-08。temporary/mockups/phone-browser-header.html）: 窓のアイコンの代わりにタブの数の四角 */
-#browserEntry .entry-tabn{display:none}
+#browserEntry .entry-tabn,#workBrowserEntry .entry-tabn{display:none}
 .tabn-badge{position:relative;display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;background:transparent;font-size:12px;line-height:16px;color:var(--ink-weak)}
 .tabn-badge>svg{position:absolute;inset:0;width:20px;height:20px;overflow:visible}
 .tabn-badge>svg rect{stroke:currentColor}
@@ -675,7 +675,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .btn:hover > .entry-dot{box-shadow:0 0 0 2px var(--surface-2)}
 /* 開いている間、頭のアイコンはタブの列の右端の ✖ へ受け渡して列から外す。動いている間は移る絵（web/panel-handoff.mjs）が 2 つの間を移る
    （docs/design-system.md「会話の頭の行のアイコン」） */
-#browserEntry.entry-handed{display:none}
+#browserEntry.entry-handed,#workBrowserEntry.entry-handed{display:none}
 .panel-flier{position:fixed;z-index:50;display:block;margin:0;padding:0;border:0;border-radius:50%;cursor:pointer;-webkit-app-region:no-drag}
 .panel-flier-g{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
 .panel-flier-g svg{width:var(--g);height:var(--g);flex:none}
@@ -1965,6 +1965,8 @@ main.dropping #log{background:var(--surface-1)}
 .bg-dt-actions{display:flex;align-items:center;gap:6px;flex:none}
 .bg-open{color:var(--ink-weak)}
 .bg-open:hover{color:var(--ink)}
+/* 会話の本文を包む入れ物。最新へのボタンの置き場（主の #logFrame と同じ役） */
+.work-body-frame{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
 #workBody{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 18px 18px 8px;display:flex;flex-direction:column;gap:8px}
 #workBody>*{flex:0 0 auto}
 #workBody>.work-head,#workBody>pre,#workBody>.work-location{margin-left:14px}
@@ -2245,7 +2247,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .fam-more{position:absolute;right:4px;top:3px;width:26px;height:26px;visibility:hidden}
 .fam>.fam-head{padding-right:32px}
 .fam:hover>.fam-more,.fam>.fam-head:focus-visible+.fam-more,.fam-more:focus-visible{visibility:inherit}
-#sessionMore{display:none}
+#sessionMore,#workMore{display:none}
 
 /* ---- 入力の種類がタッチ（ホバーが無い・指で押す） ---- */
 @media (hover:none){
@@ -2454,6 +2456,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 
 @media (max-width:700px){
   main > .top #browserEntry{display:none!important}
+  /* 作業のダイアログの見出しも同じ（ADR 0316）: 700px 以下はパネルの入口を「…」へ畳み、600px 以下は [N] を出す */
+  #workHead #workBrowserEntry{display:none!important}
+  #workHead #workMore:not([hidden]){display:inline-flex}
 }
 
 /* 承認済み（2026-11-08。temporary/mockups/phone-browser-header.html）: スマホの頭の行の [N]。
@@ -2464,6 +2469,10 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   main > .top #browserEntry > svg.i{display:none}
   #browserEntry .entry-tabn{display:grid}
   main > .top .entry-run.run,main > .top .entry-paused{top:3px;right:3px}
+  #workHead #workBrowserEntry:not([hidden]):not(.entry-handed){display:inline-flex!important}
+  #workHead #workBrowserEntry > svg.i{display:none}
+  #workBrowserEntry .entry-tabn{display:grid}
+  #workHead .entry-run.run,#workHead .entry-paused{top:3px;right:3px}
 }
 
 /* 承認済み（2026-10-23）: スマホの大きさの段階（ADR 0256、docs/design-system.md「スマホの大きさの段階」）。
