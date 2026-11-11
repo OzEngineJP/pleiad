@@ -1,6 +1,6 @@
 // 作業の詳細（読むだけの筋）を running の配信のたびに作り直しても、開いたツールの詳細・ツールのまとまり・長文の畳みが閉じない
 // （web/view-state.mjs。client.mjs の refreshDetail が作り直す前に控え、画面に置く前に戻す）。
-// 実ブラウザーでの動きは tests/browser/work-dialog-keep-open.cjs。
+// 実ブラウザーでの動きは tests/browser/work-dialog-keep-open.mjs。
 //
 // DOM シムは tests/run.mjs が入口で入れている。
 import { el } from "../../web/dom.mjs";

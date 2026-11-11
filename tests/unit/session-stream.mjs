@@ -46,6 +46,8 @@ export default async function (t) {
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの新着と弧。このテストの対象外
     nav: { reset: noop, replyArrived: noop, syncRunning: noop }, navSession: null, toc: { reset: () => {}, refresh: () => {} },
     filePreview: { sessionChanged: noop },
+    // 子の会話のモーダルの読み直し（web/detail-follow.mjs の出来事の口）。このテストの対象外
+    followDetail: noop,
     // bot・Channels・ルーティンの画面（web/channels/）。onEvent の先頭で出来事を渡す。このテストの対象外
     channelsUi: { onEvent: () => false },
     // 見ている場所のアドレス（web/view-address.mjs）。会話を開くと残す。このテストの対象外

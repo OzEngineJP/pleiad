@@ -554,6 +554,8 @@ const SUITES = [
   './unit/tool-elapsed.mjs',
   // 作業の詳細の読み直し: 開いたツールの詳細・まとまり・長文の畳みを、作り直しの後も同じ所で開いたままにする
   './unit/view-state.mjs',
+  // 子の会話のモーダルの詳細: 出来事（承認・本文の流れ）で間引いて読み直す・古い子の出来事は捨てる・入力中は待つ（ADR 0315 の段 2）
+  './unit/detail-follow.mjs',
   './unit/timeline-images.mjs',
   './unit/attachment-order.mjs',
   // 自分の発言: 添付の印を本文の位置に置く（コードブロック内・一致しないパスは残す・古い形式は末尾）・畳み込み・別カードを二重に出さない
