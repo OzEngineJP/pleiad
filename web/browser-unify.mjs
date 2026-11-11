@@ -435,6 +435,9 @@ export function createBrowserUnify(deps = {}) {
   function convList() {
     const owner = state.current, shown = session();
     if (!owner) return [];
+    // 作業のダイアログの中の欄は、左の一覧で選んだ子の会話のタブだけを映す（ほかの会話へは左の一覧で替える）。
+    // メインの会話（owner）と映す子（shown）が別になるので、下の規則に任せると「子の会話」の切替が出てしまう
+    if (deps.preview?.mounted?.()) return [];
     const list = [{ sessionId: owner, label: t('browser.chromeWindow.thisConversation') }];
     for (const row of deps.conversations?.() ?? []) {
       if (!row?.taskId || !row.sessionId || row.sessionId === owner) continue;

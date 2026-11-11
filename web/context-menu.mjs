@@ -128,16 +128,20 @@ export function createContextMenu() {
       }
       if (!item.action) panel.append(row);
     }
-    document.body.append(panel); panels.push(panel);
+    // 作業のダイアログ（モーダル）が前面なら、その中へ出す（body に出すと、ダイアログの層の下に隠れる）。位置はダイアログの左上から測る
+    const front = [...(document.querySelectorAll?.('dialog[open]') ?? [])].at(-1);
+    const dialog = front?.id === 'workDialog' ? front : null;
+    (dialog ?? document.body).append(panel); panels.push(panel);
+    const box = dialog ? dialog.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
     const r = panel.getBoundingClientRect();
-    if (trigger && x + r.width > innerWidth - 8) {
+    if (trigger && x + r.width > box.left + box.width - 8) {
       // 右に入らなければ左へ返す。左にも入らない狭い画面（スマホ）では、押した行の下へ少しずらして重ねる
       const tr = trigger.getBoundingClientRect();
-      if (tr.left - r.width - 6 >= 8) x = tr.left - r.width - 6;
+      if (tr.left - r.width - 6 >= box.left + 8) x = tr.left - r.width - 6;
       else { x = tr.left + 12; y = tr.bottom + 2; }
     }
-    panel.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
-    panel.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+    panel.style.left = `${Math.max(8, Math.min(x - box.left, box.width - r.width - 8))}px`;
+    panel.style.top = `${Math.max(8, Math.min(y - box.top, box.height - r.height - 8))}px`;
     return panel;
   }
   // opts.opener は描き直される開き元の取得関数。opts.onClose は閉じたときに 1 度呼ぶ。opts.alignRight は x を面の右端に合わせる
@@ -146,7 +150,10 @@ export function createContextMenu() {
     closeHook = opts.onClose ?? null;
     const own = generation;
     const panel = panelAt(items, title, 0, x, y);
-    if (opts.alignRight) panel.style.left = `${Math.max(8, Math.min(x - panel.getBoundingClientRect().width, innerWidth - panel.getBoundingClientRect().width - 8))}px`;
+    if (opts.alignRight) {
+      const host = panel.parentElement?.id === 'workDialog' ? panel.parentElement.getBoundingClientRect() : { left: 0, width: innerWidth };
+      panel.style.left = `${Math.max(8, Math.min(x - host.left - panel.getBoundingClientRect().width, host.width - panel.getBoundingClientRect().width - 8))}px`;
+    }
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('keydown', key, true);
     buttons(panel)[0]?.focus({ preventScroll: true });

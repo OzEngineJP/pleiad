@@ -18,20 +18,41 @@ export function attentionCounts(sessions, { currentId = null, waitingIds = new S
   return { waiting, unread };
 }
 
-/** 開くボタンに印とアクセシブルな名前を付ける */
-export function paintOpenSidebar(button, { waiting = 0, unread = 0 } = {}, t) {
+function ensureMark(button) {
   let mark = button.querySelector('.side-mark');
-  if (!waiting && !unread) {
-    mark?.remove();
-    button.setAttribute('aria-label', t('app.openSidebar'));
-    return;
-  }
   if (!mark) {
     mark = document.createElement('span');
     mark.className = 'side-mark';
     mark.setAttribute('aria-hidden', 'true');
     button.append(mark);
   }
+  return mark;
+}
+
+/**
+ * 作業のダイアログの「一覧を開く」ボタン（畳んだ列の左上）の印と名前。承認待ちの子がいる間だけ ◆ を 1 つ（件数は付けない。
+ * 脇の印と同じ形）。名前は「一覧を開く（承認待ちあり）」。未確認の丸は持たない（段 1 の一覧は未確認の印を持たない）
+ */
+export function paintOpenList(button, waiting, t) {
+  if (!waiting) {
+    button.querySelector('.side-mark')?.remove();
+    button.setAttribute('aria-label', t('dialog.work.openList'));
+    return;
+  }
+  const mark = ensureMark(button);
+  mark.dataset.kind = 'wait';
+  mark.textContent = '';
+  button.setAttribute('aria-label', t('dialog.work.openListWaiting'));
+}
+
+/** 開くボタンに印とアクセシブルな名前を付ける */
+export function paintOpenSidebar(button, { waiting = 0, unread = 0 } = {}, t) {
+  if (!waiting && !unread) {
+    button.querySelector('.side-mark')?.remove();
+    button.setAttribute('aria-label', t('app.openSidebar'));
+    return;
+  }
+  const mark = ensureMark(button);
   mark.dataset.kind = waiting ? 'wait' : 'unread';
   mark.textContent = waiting > 1 ? String(waiting) : '';
   const parts = [];

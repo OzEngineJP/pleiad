@@ -476,13 +476,19 @@
   <!-- バックグラウンド（サブエージェント・委譲したタスク・裏のコマンド）。左に一覧、右に詳細（docs/design-system.md「バックグラウンド」）。
        承認ではないので dialog でよい。詳細の中身（#workBody）は会話と同じ部品で描く -->
   <dialog id="workDialog" aria-labelledby="workTitle">
+    <!-- 一覧の開け閉め。メインの脇と同じ部品（.side-pm＝畳んだ列の左上の開くボタン、#closeSidebar と同じ形の閉じるボタン）。
+         承認待ちの子がいる間は開くボタンに ◆（web/open-sidebar-mark.mjs）。docs/design-system.md「バックグラウンド」 -->
+    <button type="button" class="side-pm work-open" id="workOpenList" data-shortcut="B" data-i18n-title="dialog.work.openListTitle" aria-controls="workList" aria-keyshortcuts="Control+B"><svg class="i pm-op" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+    <button type="button" class="btn btn-icon side-toggle work-close-list" id="workCloseList" data-shortcut="B" data-i18n-title="dialog.work.closeListTitle" data-i18n-aria-label="dialog.work.closeList" aria-controls="workList" aria-keyshortcuts="Control+B"><svg class="i ic-side" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
     <header>
       <strong id="workTitle" data-i18n="dialog.work.title"></strong>
       <span class="work-count" id="workCount"></span>
       <button type="button" class="btn" data-close data-i18n="dialog.close"></button>
     </header>
     <div class="work-split" id="workSplit">
-      <nav class="work-list" id="workList" data-i18n-aria-label="dialog.work.listLabel"></nav>
+      <div class="work-side" id="workSide">
+        <nav class="work-list" id="workList" data-i18n-aria-label="dialog.work.listLabel"></nav>
+      </div>
       <section class="work-detail">
         <div class="work-dh" id="workHead"></div>
         <div id="workBody"></div>

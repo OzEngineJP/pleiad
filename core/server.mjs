@@ -2460,7 +2460,7 @@ const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports:
   // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る
   movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
   mask: message => secretMasker.json(message),
-  clients: () => runtime.sockets, watching: client => watching.get(client), access: fileAccessFor,
+  clients: () => runtime.sockets, watching: client => watching.get(client), watchingModal: client => watchingModal.get(client), access: fileAccessFor,
   // タブ情報の届け先を「見ている会話とその直接の子」へ広げる（inapp-browser.md。子の確かめ方は delegatedChromeTarget と同じ）
   descendants: id => (agentTasks?.rowsWhere(row => row.parentSessionId === id && row.sessionId && !row.host
     && store.peek(row.sessionId)?.delegation?.taskId === row.taskId
@@ -3202,11 +3202,20 @@ const LIST_NEUTRAL_EVENTS = new Set([
 // その会話の分だけ送る。画面は開いていない会話の流れを捨てていたが、全部の会話の文字の流れが全端末へ届き、
 // 中継を通るスマホでは通信と処理の重さになっていた（ADR 0024）。
 // 完了（turnEnd）は一覧・通知に使うので全部送る。宣言していない接続（古い画面・テスト）には今までどおり全部送る
-const watching = new WeakMap();   // ws -> sessionId
+// 見る会話は接続ごとに 2 枠: main（メインの画面の会話）と modal（作業のダイアログで開いている子の会話）。
+// どちらかの枠に当たる分を送る（ADR 0024 の改訂）。絞るのは main を宣言した接続だけ（wanted の先頭）。main を宣言していない接続は
+// 今までどおり全部届くので、modal の枠だけを宣言しても絞りは変わらない（後から main を宣言した時点で modal の枠も効き始める）
+const watching = new WeakMap();        // ws -> sessionId（main の枠）
+const watchingModal = new WeakMap();   // ws -> sessionId（modal の枠）
 const WATCH_EXEMPT = new Set(["turnEnd"]);
+/** slot: 'modal' なら modal の枠、それ以外は main の枠。sessionId が空ならその枠を外す */
+function setWatch(ws, slot, sessionId) {
+  const map = slot === "modal" ? watchingModal : watching;
+  if (typeof sessionId === "string" && sessionId) map.set(ws, sessionId); else map.delete(ws);
+}
 function wanted(ws, event) {
   if (!watching.has(ws) || !event?.sessionId || !streamEvents.has(event.type) || WATCH_EXEMPT.has(event.type)) return true;
-  return watching.get(ws) === event.sessionId;
+  return watching.get(ws) === event.sessionId || watchingModal.get(ws) === event.sessionId;
 }
 
 /** つながっている host 全部に送る（開いている会話を宣言した接続には、その会話の流れだけ）。1つでも届けば true。 */
@@ -9902,8 +9911,9 @@ wss.on("connection", (ws, req) => {
 
         // 開いている会話を登録し直す（読み直しは要らないとき。loadSession の watch と同じ）
         case "watchSession": {
-          const { sessionId } = msg.args ?? {};
-          if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
+          // slot: 'modal' は作業のダイアログで開いた子の会話の枠（main は外れない。閉じるときは sessionId を空にして外す）
+          const { sessionId, slot } = msg.args ?? {};
+          setWatch(ws, slot, sessionId);
           browserUnifyWs.snapshot(ws, sessionId);
           return reply(true, "ok");
         }
@@ -9913,7 +9923,7 @@ wss.on("connection", (ws, req) => {
         case 'presence': {
           const a = msg.args ?? {};
           const via = connectionDevices.get(ws);
-          notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId });
+          notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId, slot: a.slot });
           if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) {
             pushNotifier.viewed(a.sessionId);
             // 開いて見た会話の通知（あなた待ち・完了・失敗）は既読にする（ADR 0149）

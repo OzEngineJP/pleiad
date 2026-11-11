@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
+import { streamEvents } from "../../web/session-stream.mjs";
 
 export const name = "server-watch";
 export const title = "流れの出来事は開いている会話の分だけ届き、一覧は使い回しても古くならない";
@@ -47,6 +48,56 @@ export default async function (t) {
     await sleep(50);
     t.ok("watchSession の後は移った先の流れが届く", deltas(phone, from, y) > 0, String(deltas(phone, from, y)));
     t.ok("移る前の会話の流れは届かない", deltas(phone, from, x) === 0, String(deltas(phone, from, x)));
+
+    // ---- main の窓口だけを宣言した接続（modal を開いていない）でも、流れ以外の出来事は、宣言していない接続と同じだけ届く ----
+    // （スレッドの帯の「コンテキスト N%」・Channels の投稿・一覧の状態・通知は、開いていない会話の分も要る。ADR 0315 は絞りを広げるだけで、狭めない）
+    {
+      const nonStream = (c, f) => c.since(f).filter((e) => !streamEvents.has(e.type) && e.type !== "reply");
+      const countsOf = (list) => list.reduce((m, e) => { const k = e.sessionId ? `${e.type}@${e.sessionId === x ? "x" : e.sessionId === y ? "y" : "?"}` : e.type; m[k] = (m[k] || 0) + 1; return m; }, {});
+      from = phone.mark(); runFrom = runner.mark();
+      await runner.cmd("runTurn", { ...turn, prompt: "echo:開いていない会話の分の出来事", sessionId: x });
+      await Promise.all([endOf(phone, x, from), endOf(runner, x, runFrom)]);
+      await sleep(100);
+      const forPhone = countsOf(nonStream(phone, from)), forRunner = countsOf(nonStream(runner, runFrom));
+      t.ok("開いていない会話の、流れ以外の出来事（一覧・使用量・通知など）が届く", Object.keys(forRunner).some((k) => k.endsWith("@x")), JSON.stringify(forRunner));
+      t.ok("main の窓口だけの接続にも、流れ以外の出来事が宣言していない接続と同じだけ届く", JSON.stringify(forPhone) === JSON.stringify(forRunner), JSON.stringify({ forPhone, forRunner }));
+    }
+
+    // ---- 窓口は 2 つ（main と modal。ADR 0315）: 作業のダイアログが映す会話の流れも、メインの会話と並んで届く ----
+    await phone.cmd("watchSession", { sessionId: x, slot: "modal" });
+    from = phone.mark();
+    await runner.cmd("runTurn", { ...turn, prompt: "echo:メインの返答", sessionId: y });
+    await runner.cmd("runTurn", { ...turn, prompt: "echo:モーダルの返答", sessionId: x });
+    await Promise.all([endOf(phone, y, from), endOf(phone, x, from)]);
+    t.ok("modal の窓口の会話の流れも届く（main の窓口と並ぶ）", deltas(phone, from, x) > 0 && deltas(phone, from, y) > 0, JSON.stringify({ x: deltas(phone, from, x), y: deltas(phone, from, y) }));
+    await phone.cmd("watchSession", { sessionId: null, slot: "modal" });
+    from = phone.mark();
+    await runner.cmd("runTurn", { ...turn, prompt: "echo:窓口を空にした後の返答", sessionId: x });
+    await endOf(phone, x, from);
+    await sleep(50);
+    t.ok("modal の窓口を空にしたら、その会話の流れは届かない（main は変わらない）", deltas(phone, from, x) === 0, String(deltas(phone, from, x)));
+    from = phone.mark();
+    await runner.cmd("runTurn", { ...turn, prompt: "echo:メインはそのまま", sessionId: y });
+    await endOf(phone, y, from);
+    t.ok("modal を空にしても main の会話の流れは届き続ける", deltas(phone, from, y) > 0, String(deltas(phone, from, y)));
+
+    // ---- modal の窓口だけを宣言した接続（main を宣言していない）は絞られない。後から main を宣言すると modal も効き始める ----
+    const lone = await open({ port: server.port, token: server.token });
+    try {
+      await lone.cmd("watchSession", { sessionId: x, slot: "modal" });
+      from = lone.mark();
+      await runner.cmd("runTurn", { ...turn, prompt: "echo:modal だけの接続への返答", sessionId: y });
+      await endOf(lone, y, from);
+      t.ok("main を宣言していない接続は、modal だけ宣言しても今までどおり全部届く", deltas(lone, from, y) > 0, String(deltas(lone, from, y)));
+      const w = (await runner.runTurn({ ...turn, prompt: "echo:main に宣言する会話", sessionId: null }, { ms: 20_000 })).sessionId;
+      await lone.cmd("watchSession", { sessionId: w, slot: "main" });
+      from = lone.mark();
+      await runner.cmd("runTurn", { ...turn, prompt: "echo:main を宣言した後の返答", sessionId: y });
+      await runner.cmd("runTurn", { ...turn, prompt: "echo:modal の枠の会話の返答", sessionId: x });
+      await Promise.all([endOf(lone, y, from), endOf(lone, x, from)]);
+      await sleep(50);
+      t.ok("main を宣言すると絞られ、modal の枠の会話だけが並んで届く", deltas(lone, from, y) === 0 && deltas(lone, from, x) > 0, JSON.stringify({ x: deltas(lone, from, x), y: deltas(lone, from, y) }));
+    } finally { lone.close(); }
 
     // ---- 一覧の使い回し: 変えた直後の一覧に載る ----
     await runner.cmd("listSessions");
