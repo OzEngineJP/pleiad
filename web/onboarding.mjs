@@ -167,6 +167,14 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, 
   // 閉じる口は無い: Esc・窓の外のクリックでは閉じない。設定へは歯車（戻ると案内が戻る）。OS の閉じる（アプリの終了）は止めない
   welcome.addEventListener('cancel', event => { if (gate) event.preventDefault(); });
   welcome.addEventListener('keydown', event => { if (event.key === 'Escape' && gate) event.preventDefault(); });
+  // 閉じられない窓の中で Tab が窓の外（ブラウザーの枠・本文）へ抜けないよう、端で反対の端へ戻す
+  welcome.addEventListener('keydown', event => {
+    if (event.key !== 'Tab' || !gate) return;
+    const items = [...welcome.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')].filter(x => !x.disabled && x.tabIndex >= 0 && x.offsetParent);
+    if (!items.length) return;
+    const edge = event.shiftKey ? items[0] : items.at(-1);
+    if (document.activeElement === edge) { event.preventDefault(); (event.shiftKey ? items.at(-1) : items[0]).focus(); }
+  });
   welcome.addEventListener('close', () => {
     // ほかの口が .close() してそのまま設定を開く（openSettings）のは通す。何も開かず閉じたなら出し直す
     if (gate && !leaving) setTimeout(() => { if (gate && !welcome.open && !isOpen() && !leaving) showGate(); }, 0);

@@ -158,6 +158,10 @@ try {
     await page.mouse.click(4, 4);
     await page.waitForTimeout(300);
     check(await dialogOpen(page), '外のクリックで閉じない');
+    // キーボードだけ: Tab を重ねても焦点は窓の中にとどまり、輪が見える
+    const focusLog = [];
+    for (let i = 0; i < 6; i++) { await page.keyboard.press('Tab'); focusLog.push(await page.evaluate(() => ({ inside: Boolean(document.activeElement?.closest('#onboardingDialog')), ring: document.activeElement?.matches(':focus-visible') }))); }
+    check(focusLog.every(f => f.inside && f.ring), 'Tab を重ねても焦点は窓の中にとどまる（輪が見える）', focusLog);
     await page.click('#onboardingGear');
     await page.waitForTimeout(600);
     check(!(await dialogOpen(page)), '歯車で案内が閉じる');
