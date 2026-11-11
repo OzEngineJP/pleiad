@@ -808,7 +808,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   /**
    * 畳んだ器の見出しに出す要約。中の様子を開かずに読めるようにする。
-   * 印（走っている・裏で待っている・未確認・承認待ち）と、状態ごとの件数。枝の本数そのものは出さない
+   * 印（走っている・裏で待っている・中断・未確認・承認待ち）だけ。状態ごとの件数と枝の本数は出さない
+   * （器は根の状態の見出しの下に並び、状態は見出しが言う。docs/design-system.md §4.1「グループの要約」）
    */
   function famSummary(list) {
     const sum = el("div", "fam-sum");
@@ -821,9 +822,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     else if ((stoppedMark = stoppedIn(list))) sum.append(stoppedMark);
     else if (list.some((s) => last.unreadIds.has(s.id))) sum.append(unreadMark());
     if (waiting) sum.append(approvalMark(waiting));
-    const counts = new Map();
-    for (const s of list) { const k = statusKey(s); counts.set(k, (counts.get(k) ?? 0) + 1); }
-    for (const [k, n] of counts) sum.append(el("span", "fam-count", `${k ?? t("session.status.none")} ${n}`));
     return sum;
   }
 
@@ -858,7 +856,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (fam.root.parent?.sessionId) name.append(forkMark());
     name.append(el("span", "fam-t", titleOf(fam.root)));
     body.append(name);
-    if (!open) body.append(famSummary(list));   // 開けば中の行が同じことを言うので、畳んでいる間だけ
+    // 開けば中の行が同じことを言うので、畳んでいる間だけ。印が 1 つも無ければ題の 1 行だけにする
+    const sum = open ? null : famSummary(list);
+    if (sum?.childElementCount) body.append(sum);
     head.append(chevron(), body);
     head.setAttribute("aria-label", spoken([...name.children, ...(body.querySelector(".fam-sum")?.children ?? [])]) || t("session.untitled"));
     head.onclick = () => setOpen(!open);

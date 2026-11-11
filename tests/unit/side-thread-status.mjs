@@ -229,6 +229,26 @@ export default async function (t) {
       && !root.textContent.includes('compaction.'));
   } finally { compactDom.restore(); }
 
+  // ---- 畳んだ器の要約は印だけ。状態ごとの件数は出さない（docs/design-system.md §4.1「グループの要約」）
+  const sumDom = installDom();
+  try {
+    const side = createSide({});
+    const root = sumDom.els.get('groups');
+    const fork = [
+      { id: 'r1', title: 'root 1', status: 'A', lastModified: 3000 },
+      { id: 'r1a', title: 'kin 1', status: 'A', lastModified: 2900, parent: { sessionId: 'r1' } },
+      { id: 'r2', title: 'root 2', status: 'A', lastModified: 2000 },
+      { id: 'r2a', title: 'kin 2', status: 'A', lastModified: 1900, parent: { sessionId: 'r2' } },
+    ];
+    side.render(fork, { statuses: [{ status: 'A' }], waitingIds: new Set(['r1a']) });
+    const box1 = find(root, (n) => n.dataset.sideKey === 'family:r1');
+    const box2 = find(root, (n) => n.dataset.sideKey === 'family:r2');
+    const sum1 = box1 && find(box1, (n) => n.classList.contains('fam-sum'));
+    t.ok('畳んだ器に状態ごとの件数を出さない', !!box1 && !!box2 && !find(root, (n) => n.classList.contains('fam-count')));
+    t.ok('承認待ちの印は今までどおり要約に出る', !!sum1 && !!find(sum1, (n) => n.classList.contains('wait')));
+    t.ok('印が 1 つも無い器は要約の行を置かない', !find(box2, (n) => n.classList.contains('fam-sum')));
+  } finally { sumDom.restore(); }
+
   // ---- onSetStatus → サーバーへの振り分け（web/client.mjs を vm で切り出して走らせる）
   {
     const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
