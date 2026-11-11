@@ -4470,7 +4470,6 @@
     "ruleOnce": "Once after each successful turn (your messages and turns that receive a delegated result). The next message, manual compaction, deleting an unsent conversation, changing its backend, making it ineligible in settings, or Cancel clears the reservation",
     "settingFailed": "Could not save auto compaction settings: {{error}}",
     "otherConversationFailed": "Could not complete compaction for “{{title}}”: {{error}}",
-    "sidebarDone": "Compacted",
     "autoEnabled": "Automatically compact idle conversations",
     "minSize": "Minimum size",
     "delegatedSize": "Room before compacting delegated children",

@@ -216,6 +216,19 @@ export default async function (t) {
     t.ok('状態が長く動いていない会話も、ほかの行と同じ相対の時刻を出す', !!find(rowOf(root, 'idle'), (n) => n.classList.contains('row-when')));
   } finally { orderDom.restore(); }
 
+  // ---- 圧縮の予定・圧縮済みは脇に出さない（会話の中の文脈メーターと「自動で圧縮しました」が受け持つ）
+  const compactDom = installDom();
+  try {
+    const side = createSide({});
+    const root = compactDom.els.get('groups');
+    side.render([
+      { id: 'planned', title: 'planned', status: 'A', lastModified: 2000, compactionAt: Date.now() + 3600000 },
+      { id: 'done', title: 'done', status: 'A', lastModified: 1000, compacted: true },
+    ], { statuses: [{ status: 'A' }] });
+    t.ok('圧縮の予定の時計も「圧縮済み」も行に出さない', !find(root, (n) => n.classList.contains('row-compaction') || n.classList.contains('row-sched'))
+      && !root.textContent.includes('compaction.'));
+  } finally { compactDom.restore(); }
+
   // ---- onSetStatus → サーバーへの振り分け（web/client.mjs を vm で切り出して走らせる）
   {
     const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');

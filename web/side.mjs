@@ -72,29 +72,13 @@ function unreadMark() {
   return mark;
 }
 
-/** 脇の行の時計の印と時刻の字（「◷ 14:20」「◷ 2:30 に再開」）。圧縮の予定・上限の後の再開・送信予定が同じ形 */
+/** 脇の行の時計の印と時刻の字（「◷ 14:20」「◷ 2:30 に再開」）。上限の後の再開・送信予定が同じ形 */
 function scheduleMark(text, label = text) {
   const mark = el('span', 'row-sched');
   const svg = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
   svg.append(svgEl('circle', { cx: 12, cy: 12, r: 8 }), svgEl('path', { d: 'M12 7v5l3 2' }));
   mark.append(svg, document.createTextNode(text));
   mark.setAttribute('aria-label', label);
-  return mark;
-}
-
-function compactionMark(s) {
-  const mark = el('span', 'row-compaction');
-  const svg = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-  if (s.compactionAt) {
-    const time = new Date(s.compactionAt).toLocaleTimeString(document.documentElement.lang, { hour: '2-digit', minute: '2-digit' });
-    svg.append(svgEl('circle', { cx: 12, cy: 12, r: 8 }), svgEl('path', { d: 'M12 7v5l3 2' }));
-    mark.append(svg, document.createTextNode(time));
-    mark.setAttribute('aria-label', t('compaction.scheduled', { time }));
-  } else {
-    svg.append(svgEl('rect', { x: 4, y: 4, width: 16, height: 16, rx: 3 }),
-      svgEl('path', { d: 'M8 12h8M10 8l2 2 2-2M10 16l2-2 2 2' }));
-    mark.append(svg, document.createTextNode(t('compaction.sidebarDone')));
-  }
   return mark;
 }
 
@@ -1007,7 +991,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.cwd) cwd.title = s.worktree ? `${s.worktree.origin} · ${s.cwd}` : s.cwd;
     meta.append(cwd);
     if (s.unsent) meta.append(el("span", "row-unsent", s.hasDraft ? t("sidebar.unsentDraft") : t("sidebar.unsent")));
-    if (s.compactionAt || s.compacted) meta.append(compactionMark(s));
     r.append(meta);
     r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([...meta.children])].filter(Boolean).join(", "));
 
