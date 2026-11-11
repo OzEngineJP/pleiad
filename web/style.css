@@ -1889,10 +1889,18 @@ main.dropping #log{background:var(--surface-1)}
   border-radius:var(--r-l);background:var(--surface-0);color:var(--ink);box-shadow:0 16px 48px var(--shadow);overflow:hidden}
 #workDialog[open]{display:flex;flex-direction:column}
 #workDialog::backdrop{background:var(--surface-veil)}
-#workDialog header{display:flex;align-items:center;gap:8px;padding:12px 14px 8px 18px;flex:none}
-#workDialog header strong{font-size:var(--fs-s);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#workDialog>header{display:flex;align-items:center;gap:8px;padding:12px 14px 8px 18px;flex:none}
+#workDialog>header strong{font-size:var(--fs-s);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .work-count{flex:1;min-width:0;font-size:var(--fs-xs);color:var(--ink-weak)}
 .work-split{flex:1;display:flex;min-height:0}
+/* 右の欄をダイアログの中に載せている間（web/file-preview.mjs の mount。ADR 0315）。欄の部品はメインと同じで、置き場の幅だけがここで決まる。
+   ダイアログは欄の分だけ広げ（画面の 96% まで）、一覧・会話・欄を横に並べる。開け閉めの動きは --file-preview-shown がメインと同じに追う */
+#workDialog{--file-preview-shown:var(--file-preview-width)}
+#workDialog:is(.file-preview-open,.file-preview-leaving){width:min(96vw,calc(1040px + var(--file-preview-shown,var(--file-preview-width))))}
+#workDialog.file-preview-moving .work-split{overflow:clip}
+.work-split>.file-preview{flex:0 0 var(--file-preview-shown,var(--file-preview-width));min-width:0;overflow:hidden;position:relative;grid-column:auto;z-index:1}
+.work-split>.file-preview>*{min-width:calc(var(--file-preview-width) - 28px)}
+.work-split>.file-preview .btn-wide{display:none}
 .work-list{width:320px;flex:none;overflow-y:auto;overscroll-behavior:contain;padding:0 8px 12px}
 .bg-group{font-size:var(--fs-xs);color:var(--ink-weak);font-weight:600;letter-spacing:.05em;padding:10px 8px 4px}
 .bg-empty{font-size:var(--fs-s);color:var(--ink-weak);padding:10px 8px}
@@ -2018,6 +2026,10 @@ main.dropping #log{background:var(--surface-1)}
   .work-detail{border-radius:var(--r-l) var(--r-l) 0 0}
   .work-dh{padding-left:8px}
   .bg-back{display:inline-flex}
+  /* 3 段目（ページ）。ダイアログいっぱいに重ね、メインの狭い画面と同じく右から入れる（動きは web/file-preview.mjs が transform を書く） */
+  #workDialog:is(.file-preview-open,.file-preview-leaving){width:100vw}
+  .work-split>.file-preview{position:absolute;inset:0;flex:none;width:auto;overflow:visible;z-index:5;padding:0 12px}
+  .work-split>.file-preview>*{min-width:0}
 }
 
 /* Approved UX proposal: choices, durable next-turn notice, and draft feedback. */

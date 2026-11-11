@@ -64,7 +64,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   const heading = el('h2'), name = el('span', 'file-preview-name'), kind = el('span', 'file-preview-kind');
   heading.append(name, kind);
   const path = el('div', 'file-preview-path'); title.append(heading, path);
-  const wide = iconButton(expandIcon, t('filePreview.expand'), () => { document.body.classList.toggle('file-preview-wide'); layout(); });
+  const wide = iconButton(expandIcon, t('filePreview.expand'), () => { hostNode().classList.toggle('file-preview-wide'); layout(); });
   wide.classList.add('btn-wide');
   const closeButton = iconButton(closeIcon, t('filePreview.close'), () => close());
   // ツリーは畳んで始める（本文を広く読む）。開いたら今のファイルまで祖先を開いて、その行を見える位置へ送る。
@@ -196,8 +196,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   const use = button(t('filePreview.use'), () => {
     if (!file || context.sessionId !== getContext().sessionId) return;
     const selectedFile = file;
-    document.body.classList.remove('file-preview-wide');
-    if (mobile.matches) close(false); else layout();
+    hostNode().classList.remove('file-preview-wide');
+    if (narrow()) close(false); else layout();
     useFile(selectedFile);
   });
   const footActions = el('div', 'file-preview-foot-actions');
@@ -210,6 +210,12 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   panel.append(handle, head, toolbar, location, note, bodyLayout, footer); document.body.append(panel);
   const main = document.querySelector('body > main'), sidebar = document.getElementById('sidebar');
   const mobile = matchMedia('(max-width:760px)');
+  // 右の欄を置いている場所。会話の本体（body）が既定で、作業のダイアログを開いている間はそのダイアログ（mountIn）。
+  // 開閉の印（file-preview-open など）と幅の変数は、置いている場所に付ける
+  let host = null;
+  const modalNarrow = matchMedia('(max-width:700px)');
+  const hostNode = () => host ?? document.body;
+  const narrow = () => (host ? modalNarrow.matches : mobile.matches);
   // 幅の割合の分母は、脇を除いた窓の幅。1150px 以下では脇が畳まれ、閉じた脇（web/client.mjs）も列を取らない
   const besideSidebar = () => innerWidth - (innerWidth > 1150 && !document.documentElement.classList.contains('side-closed') ? sidebar.offsetWidth : 0);
   let opener, context = {}, reference, file, source = false, abort, generation = 0, paintId = 0, percentage = 48;
@@ -217,17 +223,18 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   let custom = null;   // ファイル以外の中身（この会話のコンテキストなど）を出しているときの { key, label }
   let pdfTask, pdfDoc, pdfPage = 1, pdfZoom = 1, imageZoom = 1, renderTask;
   const layout = () => {
-    const open = !panel.hidden, expanded = document.body.classList.contains('file-preview-wide');
-    main.inert = open && (mobile.matches || expanded); sidebar.inert = open && mobile.matches;
-    panel.setAttribute('role', mobile.matches ? 'dialog' : 'complementary');
-    if (mobile.matches) panel.setAttribute('aria-modal', 'true'); else panel.removeAttribute('aria-modal');
+    const open = !panel.hidden, expanded = hostNode().classList.contains('file-preview-wide');
+    if (!host) { main.inert = open && (narrow() || expanded); sidebar.inert = open && narrow(); }
+    panel.setAttribute('role', narrow() ? 'dialog' : 'complementary');
+    if (narrow()) panel.setAttribute('aria-modal', 'true'); else panel.removeAttribute('aria-modal');
     setIcon(wide, expanded ? collapseIcon : expandIcon, expanded ? t('filePreview.besideChat') : t('filePreview.expand'));
-    setIcon(closeButton, mobile.matches ? backIcon : closeIcon, mobile.matches ? t('filePreview.backToChat') : t('filePreview.closePreview'));
-    const available = besideSidebar();
+    setIcon(closeButton, narrow() ? backIcon : closeIcon, narrow() ? t('filePreview.backToChat') : t('filePreview.closePreview'));
+    // 作業のダイアログの中では、窓の 96%（ダイアログの最大幅）から左の一覧の 320px を除いた分を割合の分母にする。会話の幅は 360px を残し、欄は 520px まで
+    const available = host ? Math.round(innerWidth * 0.96) - 320 : besideSidebar();
     // 幅を決めた自前の中身（目次と検索。web/conversation-toc.mjs）は、その幅に固定して境界のつまみを出さない
-    const pixels = custom?.width ? Math.min(available - 360, custom.width) : Math.min(available - 360, Math.max(300, available * percentage / 100));
-    handle.hidden = Boolean(custom?.width);
-    document.body.style.setProperty('--file-preview-width', `${Math.max(300, pixels)}px`);
+    const pixels = custom?.width ? Math.min(available - 360, custom.width) : Math.min(available - 360, Math.max(300, available * percentage / 100), host ? 520 : Infinity);
+    handle.hidden = Boolean(custom?.width) || Boolean(host);   // ダイアログの中は幅が変わるとダイアログの縁も動くので、つまみは出さない
+    hostNode().style.setProperty('--file-preview-width', `${Math.max(300, pixels)}px`);
     handle.setAttribute('aria-valuenow', String(Math.round(percentage)));
     onLayout?.();
   };
@@ -237,10 +244,10 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   let leaving = null;   // 閉じる動きの間だけ、閉じた中身（custom）を持つ。論理の上ではもう閉じている（panel.hidden）
   let quiet = false;
   const shown = createSpring(0, { preset:'smooth', epsilon:0.002, onUpdate:() => paintMotion() });
-  const motionOn = () => !reducedMotion() && typeof requestAnimationFrame === 'function' && !document.body.classList.contains('file-preview-wide');
+  const motionOn = () => !reducedMotion() && typeof requestAnimationFrame === 'function' && !hostNode().classList.contains('file-preview-wide');
   const place = value => { quiet = true; shown.set(value); quiet = false; };
   function clearMotion() {
-    document.body.style.removeProperty('--file-preview-shown');
+    hostNode().style.removeProperty('--file-preview-shown');
     panel.style.removeProperty('width'); panel.style.removeProperty('transform');
   }
   /** 今のばねの値を画面へ当てる。onMotion(p, phase) は頭の行の受け渡し（web/panel-handoff.mjs）が使う */
@@ -248,24 +255,47 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     if (quiet) return;
     const p = Math.min(1, Math.max(0, shown.value)), moving = shown.moving;
     // 動く間は中身が列より広くはみ出す。中へフォーカスを移すと body（overflow:hidden）が横へ送られるので、間だけ clip にする
-    document.body.classList.toggle('file-preview-moving', moving);
+    hostNode().classList.toggle('file-preview-moving', moving);
     if (document.body.scrollLeft) document.body.scrollLeft = 0;
     if (!moving) clearMotion();
-    else if (mobile.matches) { document.body.style.removeProperty('--file-preview-shown'); panel.style.removeProperty('width'); panel.style.transform = `translateX(${((1 - p) * 100).toFixed(3)}%)`; }
+    else if (narrow()) { hostNode().style.removeProperty('--file-preview-shown'); panel.style.removeProperty('width'); panel.style.transform = `translateX(${((1 - p) * 100).toFixed(3)}%)`; }
     else {
-      const full = parseFloat(document.body.style.getPropertyValue('--file-preview-width')) || panel.offsetWidth || 0;
-      document.body.style.setProperty('--file-preview-shown', `${(p * full).toFixed(2)}px`);
+      const full = parseFloat(hostNode().style.getPropertyValue('--file-preview-width')) || panel.offsetWidth || 0;
+      hostNode().style.setProperty('--file-preview-shown', `${(p * full).toFixed(2)}px`);
       panel.style.width = `${full}px`; panel.style.removeProperty('transform');
     }
     const phase = moving ? (shown.target > 0.5 ? 'opening' : 'closing') : (!panel.hidden && custom?.key === 'chrome-window' ? 'open' : 'closed');
     onMotion?.(moving ? p : (phase === 'open' ? 1 : 0), phase);
+  }
+  /**
+   * 右の欄を作業のダイアログ（作業の一覧と詳細の右）へ載せる。載せる間は、開閉の印・幅の変数・動きをそのダイアログへ付け、
+   * 会話の本体の列は動かさない。載せ替える前に欄を閉じる（開いたまま DOM を移すとページの iframe が読み直されるため。閉じる動きは待たない）。
+   * 戻すときも同じ（unmount）。欄の部品は 1 つで、モーダルの専用の見た目は持たない
+   */
+  function mount(dialog, slot) {
+    if (host === dialog) return;
+    if (host) unmount();
+    if (!panel.hidden || leaving) { close(false); finishLeave(); }
+    host = dialog;
+    slot.append(panel);
+    layout(); paintMotion();
+  }
+  function unmount() {
+    if (!host) return;
+    if (!panel.hidden || leaving) { close(false); finishLeave(); }
+    const was = host; host = null;
+    for (const name of ['file-preview-open', 'file-preview-wide', 'file-preview-moving', 'file-preview-leaving']) was.classList.remove(name);
+    was.style.removeProperty('--file-preview-width'); was.style.removeProperty('--file-preview-shown');
+    panel.style.removeProperty('width'); panel.style.removeProperty('transform');
+    document.body.append(panel);
+    layout(); paintMotion();
   }
   /** 閉じる動きが終わった（または別の中身で開き直す）ときの片付け。閉じたときの後始末の残り */
   function finishLeave() {
     if (!leaving) return;
     leaving = null;
     if (shown.moving) { shown.stop(); place(0); }
-    panel.classList.remove('fp-leaving'); panel.inert = false; document.body.classList.remove('file-preview-leaving');
+    panel.classList.remove('fp-leaving'); panel.inert = false; hostNode().classList.remove('file-preview-leaving');
     if (panel.hidden) { leaveCustom(); content.replaceChildren(); file = null; setTreeOpen(false); }
     layout(); paintMotion();
   }
@@ -291,14 +321,14 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     if (leaving) finishLeave();
     const animate = !panel.hidden && custom?.key === 'chrome-window' && motionOn();
     abort?.abort(); generation++; paintId++; disposePdf(); panel.hidden = true;
-    document.body.classList.remove('file-preview-open','file-preview-wide');
+    hostNode().classList.remove('file-preview-open','file-preview-wide');
     clearCurrent();
     const was = custom;
     if (animate) {
       // 中身を残したまま閉じる向きへ動かし、止まってから片付ける（finishLeave）。開く途中なら、今の位置と速さから戻る
       leaving = was;
       if (!shown.moving) place(1);
-      panel.classList.add('fp-leaving'); panel.inert = true; document.body.classList.add('file-preview-leaving');
+      panel.classList.add('fp-leaving'); panel.inert = true; hostNode().classList.add('file-preview-leaving');
       layout();
       shown.to(0, { onEnd:finishLeave }); paintMotion();
     } else {
@@ -504,7 +534,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     // 閉じる動きの途中に同じ中身を開き直したら、今の位置から開く向きへ戻す。別の中身なら先に片付ける
     const resume = !!leaving && leaving.key === key;
     if (leaving && !resume) finishLeave();
-    if (resume) { leaving = null; panel.classList.remove('fp-leaving'); panel.inert = false; document.body.classList.remove('file-preview-leaving'); }
+    if (resume) { leaving = null; panel.classList.remove('fp-leaving'); panel.inert = false; hostNode().classList.remove('file-preview-leaving'); }
     const wasShown = !panel.hidden;
     const previous = custom;
     abort?.abort(); generation++; paintId++; disposePdf();
@@ -517,8 +547,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     const toolIds = (toolbar ?? []).map((node, i) => { parts.buttons[`customTool${i}`] = node; return `customTool${i}`; });
     custom = { key, label, onClose, opener: element ?? null, width, footer: footerIds.length ? footerIds : null, head: headIds.length ? headIds : null, toolbar: toolIds.length ? toolIds : null, wide };
     context = getContext(element);
-    panel.hidden = false; panel.dataset.panel = key; document.body.classList.add('file-preview-open');
-    document.body.classList.remove('file-preview-wide');
+    panel.hidden = false; panel.dataset.panel = key; hostNode().classList.add('file-preview-open');
+    hostNode().classList.remove('file-preview-wide');
     content.setAttribute('aria-label', label); content.tabIndex = -1; content.scrollTop = 0;
     show({ title, subtitle, note:'', body, ...(statusText !== undefined ? { status:statusText, statusTitle:'' } : {}) });
     clearCurrent();
@@ -547,7 +577,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     if (!base) opener = element;
     leaveCustom();
     reference = ref; file = null; context = { ...getContext(element), ...(base ? {base} : {}) };
-    panel.hidden = false; document.body.classList.add('file-preview-open');
+    panel.hidden = false; hostNode().classList.add('file-preview-open');
     save.download = '';
     content.setAttribute('aria-label', t('filePreview.contents'));
     fullPath.value = ref.path;
@@ -790,15 +820,17 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     const r = more.getBoundingClientRect();
     menu(r.left, r.bottom + 4, target);
   });
+  /** 作業のダイアログの中のリンクで、そのダイアログの右の欄に開けるか（web/client.mjs の getContext が決める） */
+  const inModalPane = anchor => Boolean(anchor.closest('#workBody') && unifiedEnabled() && getContext(anchor)?.modal === true);
   document.addEventListener('click', event => {
     const anchor = event.target.closest('a');
     if (!anchor || (!anchor.closest('#log') && !anchor.closest('#channelsView') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
     const ref = anchor.dataset.filePath ? { path:anchor.dataset.filePath, line:Number(anchor.dataset.fileLine) || null } : fileReference(anchor.getAttribute('href'));
     if (!ref) return;
     event.preventDefault();
-    // サブエージェントの会話（作業のダイアログ）のリンクは、ダイアログを閉じて右パネルで開く。
-    // 横取りしないとページごとファイルへ移り、アプリの殻では戻る手段が無くなる
-    anchor.closest('dialog[open]')?.close();
+    // 作業のダイアログの会話のリンクは、ダイアログの右の欄で開く（その子のタブ）。欄を出せない中身（ホストの子・Channels の一覧）は、
+    // ダイアログを閉じて会話の右パネルで開く。横取りしないとページごとファイルへ移り、アプリの殻では戻る手段が無くなる
+    if (!inModalPane(anchor)) anchor.closest('dialog[open]')?.close();
     const base = anchor.closest('.file-preview-document') ? file?.path : null;
     activate(ref, anchor, base);
   });
@@ -810,7 +842,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     const ref = anchor.dataset.filePath ? { path:anchor.dataset.filePath } : fileReference(anchor.getAttribute('href'));
     if (!ref || !cmd) return;
     event.preventDefault();
-    anchor.closest('dialog[open]')?.close();
+    if (!inModalPane(anchor)) anchor.closest('dialog[open]')?.close();
     const base = anchor.closest('.file-preview-document') ? file?.path : undefined;
     activate(ref, anchor, base);
   });
@@ -836,10 +868,19 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     menu(d.x ?? 0, d.y ?? 0, { path:d.path ?? '', element:event.target, variant:'card',
       viz:{ hash:d.hash, entry:d.entry, title:d.title }, withContent:d.withContent });
   });
+  // ダイアログの Esc（cancel）は、欄を閉じた同じ押下では受けない。欄が開いているなら cancel でも欄を先に閉じる（スマホの戻る・requestClose）
+  let closedByEscape = false;
+  document.addEventListener('cancel', event => {
+    if (!host || event.target !== host) return;
+    if (closedByEscape) { event.preventDefault(); return; }
+    if (!panel.hidden) { event.preventDefault(); close(); }
+  }, true);
   document.addEventListener('keydown', event => {
-    if (panel.hidden || isComposingKey(event) || event.defaultPrevented || document.querySelector('dialog[open]')) return;
-    if (event.key === 'Escape') { event.preventDefault(); close(); }
-    if (event.key === 'Tab' && mobile.matches) {
+    if (panel.hidden || isComposingKey(event) || event.defaultPrevented) return;
+    // 開いているダイアログが、この欄を載せているダイアログだけなら受ける（Esc は 1 段ずつ。欄 → ダイアログ）
+    if ([...document.querySelectorAll('dialog[open]')].some(dialog => dialog !== host)) return;
+    if (event.key === 'Escape') { event.preventDefault(); closedByEscape = true; setTimeout(() => { closedByEscape = false; }, 0); close(); }
+    if (event.key === 'Tab' && narrow()) {
       const nodes = [...panel.querySelectorAll('button,a,input,[tabindex="0"]')].filter(e => e.getClientRects().length && !e.disabled), first = nodes[0], last = nodes.at(-1);
       if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel)) { event.preventDefault(); first?.focus(); }
@@ -853,7 +894,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   handle.onkeydown = event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); percentage = Math.max(30,Math.min(65,percentage + (event.key === 'ArrowLeft' ? 2 : -2))); layout(); } };
   addEventListener('resize', layout);
   new MutationObserver(() => { if (!panel.hidden && document.body.classList.contains('settings')) close(false); }).observe(document.body,{attributes:true,attributeFilter:['class']});
-  return { close, layout, openPanel, updatePanel, panelOpen: key => !panel.hidden && custom?.key === key,
+  return { close, layout, mount, unmount, mounted: () => host, openPanel, updatePanel, panelOpen: key => !panel.hidden && custom?.key === key,
     configureBrowserUnify, tabMenu,
     /** 右パネルでファイルを開く（拡大表示の「右パネルで開く」） */
     open: (ref, element) => activate(ref, element),

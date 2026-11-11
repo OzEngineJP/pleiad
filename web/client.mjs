@@ -6637,7 +6637,10 @@ function openDetail(item) {
   clearTimeout(bg.view?.commandTimer);
   bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0, hostOffline: item.host ? item.hostOffline : undefined } : null;
   body.replaceChildren();
-  delete body.dataset.sessionId;
+  delete body.dataset.sessionId; delete body.dataset.paneKind;
+  // 別の項目へ切り替えたら、前の子の欄は閉じる（映す会話が違う）
+  if (filePreview.mounted() === $('workDialog') && chromePanel?.isOpen()) chromePanel.close();
+  syncModalWatch();
   paintDetailHead(item);
   if (!item) return;
   body.append(el('div', 'work-head', t('dialog.work.loading')));
@@ -6691,6 +6694,8 @@ async function refreshDetail({ first = false, force = false } = {}) {
 async function subagentThread(item) {
   const data = await cmd('loadSubagent', { sessionId: item.parentId, agentId: item.agentId });
   $('workBody').dataset.sessionId = item.parentId;
+  $('workBody').dataset.paneKind = 'subagent';
+  syncModalWatch();
   const origin = data.origin ?? item.origin;
   const prompt = data.prompt ?? requestOf(origin);
   // モデルは記録から分かることがある（一覧の配信より先に読めたとき）
@@ -6866,6 +6871,8 @@ async function taskThread(item) {
     cmd('loadSession', { sessionId: item.childId, live: true }), cmd('agentTaskInstructions', { taskId: item.taskId }),
   ]);
   $('workBody').dataset.sessionId = item.childId;
+  $('workBody').dataset.paneKind = 'task';
+  syncModalWatch();
   const live = streamMessages(data.stream?.events, { backend: item.backend, model: item.model, initialMessageId: data.initialMessageId });
   const messages = [...(data.messages ?? []), ...live.messages];
   const th = readonlyThread(messages, { presents: [...(data.presents ?? []), ...live.presents], backend: item.backend, prompt: item.request, live: item.live, item,
@@ -7512,7 +7519,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { clearTimeout(bg.view?.commandTimer); bg.view = null; bg.extra.clear(); bg.scope = null; });
+$('workDialog').addEventListener('close', () => { clearTimeout(bg.view?.commandTimer); bg.view = null; bg.extra.clear(); bg.scope = null; closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -7957,7 +7964,7 @@ const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
-  getContext: anchor => channelsUi.contextForPanel(anchor) ?? ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
+  getContext: anchor => channelsUi.contextForPanel(anchor) ?? workContext(anchor) ?? ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
   onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); },
   // 内蔵ブラウザーの開け閉めのばね。頭のアイコンと ✖ の受け渡しが追う（web/panel-handoff.mjs）
   onMotion: (p, phase) => browserEntry?.motion?.(p, phase),
@@ -7986,6 +7993,77 @@ const rightPane = {
     });
   },
 };
+
+// ---------------------------------------------------------------- 作業のダイアログの中の右の欄（ADR 0315）
+// 子の会話のダイアログの中のリンクは、ダイアログを閉じずに、同じ右の欄をダイアログの中に出して開く。
+// 欄は画面に 1 つだけ。ダイアログを開いている間は #workSplit の右へ載せ替え、閉じたらメインへ戻す。
+/** その要素がいるダイアログの会話の内容。子の会話（task）・サブエージェント（subagent）だけが右の欄を持てる。委譲先ホストの会話（hostTaskThread）は持たない */
+function workContext(anchor) {
+  const body = anchor?.closest?.('#workBody');
+  const sessionId = body?.dataset.sessionId;
+  if (!sessionId) return null;
+  return { sessionId, at: anchor.closest('.m')?.dataset.at, modal: modalPaneFor(sessionId) };
+}
+/** この会話の右の欄をダイアログの中に出せるか（Channels のスレッドのダイアログは従来どおりメインで開く） */
+function modalPaneFor(sessionId) {
+  const body = $('workBody');
+  return $('workDialog').open && !bg.scope && Boolean(body.dataset.paneKind) && body.dataset.sessionId === sessionId;
+}
+const modalPane = { wasMain: false, owner: null, opener: null, openerPath: '' };
+/** ダイアログの中で右の欄を開く前の支度: 欄を載せ替え、映す会話をこの子の会話にする */
+async function prepareModalPane(sessionId) {
+  if (!modalPaneFor(sessionId)) return;
+  const dialog = $('workDialog');
+  await loadBrowserUnify();
+  if (!modalPaneFor(sessionId)) return;
+  if (filePreview.mounted() !== dialog) {
+    // メインで開いていた欄は閉じて、ダイアログを閉じたら開き直す
+    modalPane.wasMain = rightPane.isOpen();
+    modalPane.owner = state.current;
+    if (modalPane.wasMain) rightPane.close();
+    filePreview.mount(dialog, $('workSplit'));
+  }
+  if (!chromePanel.isOpen() || chromePanel.sessionId !== sessionId) chromePanel.open(null, { target: sessionId });
+}
+/** ダイアログを閉じた（別の子へ切り替えた）とき: 欄をメインへ戻し、メインで開いていたなら親のタブで開き直す */
+function closeModalPane() {
+  if (filePreview.mounted() !== $('workDialog')) return;
+  const reopen = modalPane.wasMain && modalPane.owner === state.current;
+  filePreview.unmount();
+  modalPane.wasMain = false; modalPane.owner = null; modalPane.opener = null; modalPane.openerPath = '';
+  if (reopen) rightPane.open();
+}
+/** 欄を閉じたら、開いたときに押したリンクへフォーカスを戻す（一覧が描き直されて消えていたら、同じパスのリンク。それも無ければ会話の本文） */
+function restoreModalOpener() {
+  const dialog = $('workDialog');
+  if (!dialog.open || filePreview.mounted() !== dialog) return;
+  const { opener, openerPath } = modalPane;
+  let target = opener?.isConnected ? opener : null;
+  if (!target && openerPath) target = [...$('workBody').querySelectorAll('[data-file-path]')].find(node => node.dataset.filePath === openerPath) ?? null;
+  const body = $('workBody');
+  if (!target) { body.tabIndex = -1; target = body; }
+  target.focus({ preventScroll: true });
+}
+$('workBody').addEventListener('click', event => {
+  const hit = event.target.closest?.('a,button');
+  if (!hit) return;
+  modalPane.opener = hit;
+  modalPane.openerPath = hit.closest('[data-file-path]')?.dataset.filePath ?? '';
+}, true);
+// ダイアログが見ている会話。子の会話を見ている間は、メインの会話とは別にホストへ伝える（ホストは窓口ごとに許可する会話を決める）
+let modalWatched = null;
+const modalWatchId = () => ($('workDialog').open && !bg.scope && $('workBody').dataset.paneKind === 'task' ? $('workBody').dataset.sessionId || null : null);
+const modalPresence = createPresenceReporter({
+  send: (visible, sessionId) => cmd('presence', { visible, sessionId, slot: 'modal' }),
+  current: modalWatchId, visible: watchingNow });
+function syncModalWatch({ force = false } = {}) {
+  const want = modalWatchId();
+  if (force || want !== modalWatched) {
+    modalWatched = want;
+    cmd('watchSession', { sessionId: want, slot: 'modal' }).catch(() => {});
+  }
+  modalPresence.report(force);
+}
 browserEntry = setupBrowserEntry({ button: $('browserEntry'),
   chrome: () => rightPane, windows: chromeWindows, pagesOnly: () => chromeLink !== 'connected' && !chromeWindows.has(state.current), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   getChromeState: id => chromeControlStore.get(id).state,
@@ -8983,8 +9061,8 @@ function connectFilePages(unify) {
     caps: () => state.hostCaps?.browserUnify ?? null,
     connected: () => true,
     tabs: (id) => unify.tabsOf(id),
-    openTab: (args) => unify.openTab(args),
-    focusTab: (tab, id) => unify.focusTab(tab, id),
+    openTab: async (args) => { await prepareModalPane(args.sessionId); return unify.openTab(args); },
+    focusTab: async (tab, id) => { await prepareModalPane(id); return unify.focusTab(tab, id); },
     flashTab: (tab, id) => unify.flashTab(tab, id),
     markViz: (tab, viz) => unify.markViz?.(tab, viz),
   });
@@ -10648,6 +10726,8 @@ function connect() {
       notificationInbox.reconnected();
       presenceReporter.reset();
       presenceReporter.report(true);
+      modalPresence.reset();
+      syncModalWatch({ force: true });
       // 前に開いていた会話の履歴は、一覧の返事を待たずに一緒に頼む（開くのは一覧が届いてからだが、読むのは並べる）
       let saved;
       try { saved = localStorage.getItem("agent-host-current"); } catch {}
@@ -10775,7 +10855,11 @@ document.addEventListener('ply-browser-toggle', event => {
   if (chromePanel?.isOpen() && chromePanel.sessionId === event.detail?.sessionId) chromePanel.close();
   else chromePanel?.open(event.target, { target:event.detail?.sessionId });
 });
-chromePanel.onOpenChange(() => { browserEntry?.paint(); });
+chromePanel.onOpenChange(open => {
+  browserEntry?.paint();
+  // ダイアログの中で欄を閉じたら、開いたリンクへフォーカスを戻す（別の所へ移していたら動かさない）
+  if (!open && (document.activeElement === document.body || document.activeElement?.closest?.('#filePreview'))) restoreModalOpener();
+});
 // エージェントの Chrome の一時停止中の帯と押した位置の輪（web/chrome-control.mjs。ADR 0154）。誰が操作中かと止める・任せるはアドレスバーの札（ADR 0296）。
 // 押した位置の輪は映像の上、一時停止中の帯は会話の側（入力欄の上）。撮影を断っている間の幕は映像の側が出す。窓があるか一時停止中の会話だけに出す
 chromeControlView = createChromeControlView({
@@ -11154,10 +11238,11 @@ window.plyRemote?.onOpenSession?.(id => { if (id) select(id); });
 // 見ている会話をホストへ知らせる。スマホへの通知を送らない・消すのに使う
 const presenceReporter = createPresenceReporter({ send: (visible, sessionId) => cmd('presence', { visible, sessionId }),
   current: () => state.current, visible: watchingNow });
-document.addEventListener('visibilitychange', () => presenceReporter.report());
-addEventListener('plyremote:stop', () => { shellStopped = true; presenceReporter.report(); });
-addEventListener('plyremote:start', () => { shellStopped = false; presenceReporter.report(true); });
+document.addEventListener('visibilitychange', () => { presenceReporter.report(); modalPresence.report(); });
+addEventListener('plyremote:stop', () => { shellStopped = true; presenceReporter.report(); modalPresence.report(); });
+addEventListener('plyremote:start', () => { shellStopped = false; presenceReporter.report(true); modalPresence.report(true); });
 presenceReporter.start();
+modalPresence.start();
 // 設定 › 委譲（委譲先の自動選択）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id, '', state.cwd || '')).models : null),
