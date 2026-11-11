@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
+import { streamEvents } from "../../web/session-stream.mjs";
 
 export const name = "server-watch";
 export const title = "流れの出来事は開いている会話の分だけ届き、一覧は使い回しても古くならない";
@@ -47,6 +48,20 @@ export default async function (t) {
     await sleep(50);
     t.ok("watchSession の後は移った先の流れが届く", deltas(phone, from, y) > 0, String(deltas(phone, from, y)));
     t.ok("移る前の会話の流れは届かない", deltas(phone, from, x) === 0, String(deltas(phone, from, x)));
+
+    // ---- main の窓口だけを宣言した接続（modal を開いていない）でも、流れ以外の出来事は、宣言していない接続と同じだけ届く ----
+    // （スレッドの帯の「コンテキスト N%」・Channels の投稿・一覧の状態・通知は、開いていない会話の分も要る。ADR 0315 は絞りを広げるだけで、狭めない）
+    {
+      const nonStream = (c, f) => c.since(f).filter((e) => !streamEvents.has(e.type) && e.type !== "reply");
+      const countsOf = (list) => list.reduce((m, e) => { const k = e.sessionId ? `${e.type}@${e.sessionId === x ? "x" : e.sessionId === y ? "y" : "?"}` : e.type; m[k] = (m[k] || 0) + 1; return m; }, {});
+      from = phone.mark(); runFrom = runner.mark();
+      await runner.cmd("runTurn", { ...turn, prompt: "echo:開いていない会話の分の出来事", sessionId: x });
+      await Promise.all([endOf(phone, x, from), endOf(runner, x, runFrom)]);
+      await sleep(100);
+      const forPhone = countsOf(nonStream(phone, from)), forRunner = countsOf(nonStream(runner, runFrom));
+      t.ok("開いていない会話の、流れ以外の出来事（一覧・使用量・通知など）が届く", Object.keys(forRunner).some((k) => k.endsWith("@x")), JSON.stringify(forRunner));
+      t.ok("main の窓口だけの接続にも、流れ以外の出来事が宣言していない接続と同じだけ届く", JSON.stringify(forPhone) === JSON.stringify(forRunner), JSON.stringify({ forPhone, forRunner }));
+    }
 
     // ---- 窓口は 2 つ（main と modal。ADR 0315）: 作業のダイアログが映す会話の流れも、メインの会話と並んで届く ----
     await phone.cmd("watchSession", { sessionId: x, slot: "modal" });
