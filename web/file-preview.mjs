@@ -39,7 +39,7 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
  * ファイル・可視化のクリックは Pleiad のページ（画面内のタブ。configureBrowserUnify。ADR 0294）で開く。
  * ページの口がまだ無い間（サーバーの hostCapabilities が届く前）は右パネルで開く（HTML は原文）
  */
-export function setupFilePreview({ getContext, useFile, onLayout, onMotion = null, showMenu, cmd, osActions = () => false }) {
+export function setupFilePreview({ getContext, useFile, canUse = null, onLayout, onMotion = null, showMenu, cmd, osActions = () => false }) {
   let unified = null, openPage = null;
   let sessionGeneration = 0;
   const resolvedFiles = new Map();
@@ -199,7 +199,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
     const selectedFile = file;
     hostNode().classList.remove('file-preview-wide');
     if (narrow()) close(false); else layout();
-    useFile(selectedFile);
+    useFile(selectedFile, panel);
   });
   const footActions = el('div', 'file-preview-foot-actions');
   footer.append(status, footActions);
@@ -595,8 +595,9 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
   }
   // ---- ファイルの操作（docs/design-system.md「ファイルの操作」）。メニューの中身は web/file-actions.mjs
   /** サーバーへ渡す場所の手がかり。相対パスは発言の時刻（at）かプレビュー中の文書（base）で解く */
-  /** 「会話で使う」を出すか。作業のダイアログの中（子の会話・その右の欄）には入力欄が無いので出さない（受ける所ができるまで） */
-  const canUseHere = element => !!useFile && !element?.closest?.('#workBody') && !(host && host === element?.closest?.('dialog'));
+  /** 「会話で使う」を出すか。作業のダイアログの中（子の会話・その右の欄）は、受ける入力欄（子の会話の入力欄）が出ているときだけ（canUse が答える）。
+   *  ほかのダイアログの中には入力欄が無いので出さない */
+  const canUseHere = element => !!useFile && (canUse?.(element) ?? (!element?.closest?.('#workBody') && !(host && host === element?.closest?.('dialog'))));
   const whereFrom = target => {
     const ctx = (target.element ? getContext(target.element) : unifiedEnabled() ? getContext(null) : context) ?? {};
     const sessionId = target.sessionId ?? ctx.sessionId;
@@ -660,8 +661,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, onMotion = nul
       const name = where.path.split(/[\\/]/).at(-1);
       if (action === 'save') return download(fileDownloadUrl(where.path, whereFrom(target).sessionId), name);
       if (action === 'use') {
-        if (getContext().sessionId !== whereFrom(target).sessionId) return;
-        useFile({ path:where.path, name, mime:'' });
+        if ((target.element ? getContext(target.element) : getContext())?.sessionId !== whereFrom(target).sessionId) return;
+        useFile({ path:where.path, name, mime:'' }, target.element);
       }
     } catch (error) { failed(error); }
   }

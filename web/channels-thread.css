@@ -21,8 +21,8 @@
 /* 板の境目。線ではなく、面の階調の細い棒（上下は余白を空ける） */
 /* スレッドの入力欄（Chats の入力欄と同じ部品。web/channels/thread-composer.mjs）。先頭は宛先とモデルのチップ（Chats の #modelChip と同じ形。style.css）。
    作業フォルダー・承認モードのチップは、宛先の bot の既定と違えば「変更あり」の点（チップの右上） */
-.th-composer .crow > .chip{position:relative}
-.th-composer .chip > .entry-dot{position:absolute;top:3px;right:3px}
+.th-composer .crow > .chip,.wk-composer .crow > .chip{position:relative}
+.th-composer .chip > .entry-dot,.wk-composer .chip > .entry-dot{position:absolute;top:3px;right:3px}
 .th-title-edit{cursor:text;border-radius:var(--r-s)}
 .th-title-edit:hover{background:var(--surface-1)}
 .th-title-input{flex:1;min-width:0;font:inherit;font-weight:600;padding:2px 6px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink)}
@@ -62,7 +62,7 @@
 .th-wand{flex:none;width:28px;height:28px;font-size:13px;color:var(--ink-weak)}
 .th-wand.busy{opacity:.5}
 /* 設定のチップのアイコン（Chats の入力欄と同じ線画） */
-.th-composer .crow > .chip > svg.i{width:14px;height:14px;flex:none}
+.th-composer .crow > .chip > svg.i,.wk-composer .crow > .chip > svg.i{width:14px;height:14px;flex:none}
 /* 送信待ち・`!` の行（ADR 0157）。`!` の行は Chats の .m.cmd をそのまま入れ、上に「〜の作業場所で実行」 */
 .th-shells{max-width:820px}
 .th-shell-where{margin:8px 0 2px 46px;font-size:var(--fs-xs);color:var(--ink-weak)}

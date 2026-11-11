@@ -148,7 +148,10 @@ import { chromeControlStore, createChromeControlView, createTabHolderStore, setC
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
 import { createSender } from './composer/sender.mjs';
+import { createWorkComposer } from './composer/work-composer.mjs';
+import { createWorkControls } from './composer/work-controls.mjs';
 const outboxes = new Map();
+let workComposer = null;   // 子の会話のモーダルの入力欄（web/composer/work-composer.mjs。下の操作の節で作る）
 const turnErrorRows = new Map();
 const submittingMessages = new Set();
 // Persist the request ID before transport so an acknowledgement lost on reload
@@ -196,6 +199,7 @@ const scheduleActions = {
 async function refreshSchedules() {
   state.schedules = await limitOp('sessions.schedules');
   if (state.current) paintOutbox();
+  workComposer?.paintOutbox();
   renderSessions();
   try { channelsUi.schedulesChanged(); } catch { /* 起動の途中 */ }
 }
@@ -3548,6 +3552,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
     if (state.current === ev.sessionId) { syncOutboxRows(ev.messages); noAgent?.sync(); }
+    if (workComposer?.childId === ev.sessionId) workComposer.paintOutbox();
     return;
   }
   if (ev.type === "turnEnd" && ev.sessionId) {
@@ -5484,6 +5489,7 @@ function threadMenu(s, x, y) {
 }
 
 function renderSessions() {
+  workComposer?.paintControls();   // 子の行（モデル・予約）が変わったら、モーダルの入力欄のチップも今に合わせる
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から。
   // 依頼元の会話を消した子（ADR 0147）は、開く口が無くなるので一覧に出す
   // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）は会話としては出さない。スレッドは下の threadRows が 1 スレッド 1 行で出す。
@@ -6542,6 +6548,7 @@ function renderBackground() {
   // 同じ項目。見出し（状態・経過時間）だけ更新し、動いている子は続きを読み直す
   bg.view.item = item;
   paintDetailHead(item);
+  workComposer?.show(item);
   const changed = item?.source === 'task' && bg.view.instructionRevision !== item.instructionRevision;
   const becameIdle = bg.view.wasLive && !item?.live;
   // ホストの線がオフライン・オンラインに変わったら、すぐ読み直す（筋の末尾の「ホストがオフライン」の行を替える・追いつく）
@@ -6678,7 +6685,9 @@ function openDetail(item) {
   if (filePreview.mounted() === $('workDialog') && chromePanel?.isOpen()) chromePanel.close();
   syncModalWatch();
   paintDetailHead(item);
+  workComposer?.show(item);
   if (!item) return;
+  if (item.source === 'task' && item.childId) refreshOutbox(item.childId).then(() => workComposer?.paintOutbox()).catch(() => {});
   body.append(el('div', 'work-head', t('dialog.work.loading')));
   refreshDetail({ first: true });
 }
@@ -6959,6 +6968,7 @@ async function taskThread(item) {
   $('workBody').dataset.sessionId = item.childId;
   $('workBody').dataset.paneKind = 'task';
   syncModalWatch();
+  workComposer?.offerDraft(item.childId, data.draft);
   const live = streamMessages(data.stream?.events, { backend: item.backend, model: item.model, initialMessageId: data.initialMessageId });
   const messages = [...(data.messages ?? []), ...live.messages];
   const th = readonlyThread(messages, { presents: [...(data.presents ?? []), ...live.presents], backend: item.backend, prompt: item.request, live: item.live, item,
@@ -7605,7 +7615,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
+$('workDialog').addEventListener('close', () => { workComposer?.hide(); workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -8064,7 +8074,12 @@ const filePreview = setupFilePreview({
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
   osActions: () => state.osActions === true,
-  useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
+  // 作業のダイアログの中（子の会話・その右の欄）で押したら、いま選んでいる子の入力欄へ。そのほかはメインの入力欄へ
+  useFile: (file, element) => {
+    if (element?.closest?.('#workDialog')) { workComposer?.insert({ files: [file] }); return; }
+    if (attachHostFiles([file])) $('prompt').focus();
+  },
+  canUse: element => (element?.closest?.('#workDialog') ? Boolean(workComposer?.visible) : undefined),
 });
 // 頭の行の右の欄のボタンと近道（web/header-entries.mjs）。会話を開いていない間は出さない
 // 右の欄の開け閉め。Chrome の窓かタブがあればその窓を映す。つないであって窓がまだ無ければ、新しいタブ（Pleiad の新しいタブのページ）で窓を作る
@@ -10924,6 +10939,59 @@ setInterval(() => { if (state.current && sendSchedules(state.current).some(r => 
 /** いま日時を指定して送れるか（送る中身があり、シェルの形でなく、送れる会話か） */
 function canScheduleHere() { return Boolean(($('prompt').value.trim() || state.attached.length) && !composerShellMode && !retiredHere()); }
 function syncSendMore() { $('sendMore').disabled = !canScheduleHere() || $('send').disabled; }
+
+// 子の会話のモーダルの入力欄（ADR 0315 段 4）。メインと同じ部品を #workBody の外に置き、送る先は「いま詳細に出している子」。
+// 下書き・添付・送信中・送信待ちは子ごと。送る核・送信待ちの行・チップ・日時の面はメインと同じ部品
+const workEfforts = createEffortsView({ loader: effortsLoader });
+const workControls = createWorkControls({
+  row: (id) => state.sessions.find(s => s.id === id),
+  item: (id) => (workComposer?.childId === id ? workComposer.item : null),
+  pending: pendingChoice,
+  backends: () => state.backends,
+  labelOf,
+  vocab: (backend, account, cwd) => vocabRequests.cache.get(vocabCache(backend, account, cwd)) ?? null,
+  loadVocab,
+  efforts: workEfforts,
+  reserve: (patch, id) => reserveSettings(patch, id),
+  setMode: (id, mode) => {
+    modeWrite = modeWrite.catch(() => {}).then(() => cmd('setMode', { sessionId: id, mode, reasonKey: 'manual' }));
+    return modeWrite;
+  },
+  recent: cwdOptions,
+  revalidate: revalidateVocab,
+  repaint: () => workComposer?.paintControls(),
+  fail: (error, kind) => workComposer?.say(kind === 'mode' ? t('chat.sys.modeSaveFailed', { error }) : t('chat.settingsHold.settings', { error }), true),
+  empty: noEfforts,
+});
+workComposer = createWorkComposer({
+  slot: $('workComposerSlot'),
+  cmd: (command, args) => cmd(command, args),
+  drafts: { get: (id) => state.drafts.get(id), set: persistDraft },
+  attachHost: { cmd: (command, args) => cmd(command, args), whenOnline: (err) => whenOnline(err), openImage: (src, name, path) => openLightbox(src, name, path),
+    filePreview: { open: (...a) => filePreview.open(...a) } },
+  adopt: (owner, item) => adoptAttachment(owner, item),
+  notify: (text) => notify(text),
+  agentLang: (id) => state.sessions.find(s => s.id === id)?.agentLocale ?? uiLang,
+  format: { attachedKey, attachmentLine },
+  send: { cmd: (command, args) => cmd(command, args), limitOp, randomId, receipts, saveReceipts, refreshOutbox },
+  submitting: submittingMessages,
+  settled: async () => { await settingsWrite.catch(() => {}); await modeWrite.catch(() => {}); },
+  sendOptions: (id) => { const s = workControls.selection(id); return { cwd: s.cwd || '', mode: s.mode || undefined }; },
+  controls: workControls,
+  outbox: {
+    list: (id) => outboxes.get(id) ?? [],
+    schedules: sendSchedules,
+    cancelSchedule: (id) => limitOp('sessions.cancelSchedule', { id }),
+    sendScheduledNow: (id) => limitOp('sessions.sendScheduledNow', { id }),
+  },
+  environment: async () => {
+    const status = await cmd('remoteStatus').catch(() => null);
+    const resident = status?.resident;
+    return { persistent: !resident?.available || Boolean(status?.enabled && resident.keepRunning), hostZone: state.hostTimeZone };
+  },
+  cwdOf: (id) => workControls.selection(id).cwd || '',
+  compactNote: (id) => t('compaction.agentManaged', { agent: labelOf(workControls.selection(id).backend) }),
+});
 
 const shellComposer = chatComposer.useShell({
   availability: shellAvailability,
