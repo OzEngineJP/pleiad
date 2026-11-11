@@ -7,6 +7,7 @@
 //   6. モーダルの見出しに「会話として開く ↗」が無く、メインの見出しに「↖ 依頼元」の入口が無い
 //   7. 開く途中の入れ替わり: 子の結果を押した直後（0〜1.5 秒）に別の会話の結果を押すと、後の会話だけが開く（子のモーダルを後から重ねない）
 //   8. 子 → 孫を続けて開くと、最後に呼んだ孫で終わる
+//   8b. 子 A のモーダルを開いている最中・開いたあとに、別の根の子 B を開く（モーダルを閉じてすぐ開き直す）: ページのエラー無し・B のモーダルが正しく出る
 //   9. ベル（通知の一覧）の「あなた待ち」の行（宛先が根・子・孫）: 根がメイン・子（孫）がモーダル。根の行はモーダルを開かない
 // 実行: node tests/browser/child-open-routes.mjs   （CHILD_OPEN_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
@@ -31,6 +32,9 @@ const ab = (...args) => {
   finally { fs.closeSync(fd); }
   return fs.readFileSync(abOut, 'utf8');
 };
+// errors は --json でないと本文が出ない（素の出力は行頭の印だけで、中身の無い「✗」になり、文字列の検査が素通りする）
+const pageErrorLog = () => JSON.stringify(JSON.parse(ab('errors', '--json')).data.errors);
+const clearPageErrors = () => { ab('errors', '--clear', '--json'); };
 const evaluate = (fn, arg) => {
   const code = `(${fn.toString()})(${JSON.stringify(arg) ?? ''})`;
   return JSON.parse(ab('eval', '--json', '--base64', Buffer.from(code).toString('base64'))).data.result;
@@ -87,6 +91,9 @@ try {
   // 別の根（検索で子と並ぶ結果。開く途中の入れ替わりの相手）と、根の会話の埋め草（根を読み込む間を長くする）
   const third = await client.runTurn({ backend: 'fake', cwd: work, prompt: 'echo:別の根 KIDMARK GRANDMARK OTHERROOT' });
   for (let i = 0; i < 30; i++) await client.runTurn({ sessionId: root, prompt: `echo:埋め草 ${i} ${'あ'.repeat(120)}` });
+  // 別の根の子（子 A のモーダルを開いたまま、別の根の子 B を開く場面の B）
+  const thirdKidTask = await delegate(third.sessionId, { title: '別の根の子', task: 'echo:別の根の子 GRANDMARK THIRDKIDMARK' });
+  const thirdKidRow = await completed(thirdKidTask.taskId);
   // あなた待ち（承認待ち）の子・孫・ひ孫。通知は「依頼を出した会話」が宛先なので、根・子・孫の 3 つの行ができる
   const taskSession = async (taskId) => (await client.cmd('agentTasks')).find(r => r.taskId === taskId)?.sessionId;
   const askKid = await delegate(root, { title: '承認待ちの子', task: 'ask' });
@@ -192,7 +199,7 @@ try {
     await wait(async () => { const r = await results(); return expectIds.every((id) => r.includes(id)); }, `search results for ${term}`);
   };
   const settleModal = () => sleep(2600);
-  await searchTerm('GRANDMARK', [kidRow.sessionId, grandRow.sessionId, third.sessionId]);
+  await searchTerm('GRANDMARK', [kidRow.sessionId, grandRow.sessionId, third.sessionId, thirdKidRow.sessionId]);
   // 出発点: 別の根をメインに（モーダルは閉じる）
   const goThird = async () => {
     if ((await modal()).open) { ab('press', 'Escape'); await wait(async () => !(await modal()).open, 'close modal before starting'); }
@@ -201,7 +208,7 @@ try {
     await wait(async () => (await current()) === third.sessionId, 'the other root is in main');
     await sleep(400);
   };
-  ab('errors', '--clear');
+  clearPageErrors();
   for (const gap of [0, 100, 300, 700, 1500]) {
     await goThird();
     pressResults([[kidRow.sessionId, 0], [third.sessionId, gap]]);
@@ -222,9 +229,32 @@ try {
     assert.equal((await modal()).sessionId, grandRow.sessionId, `gap ${gap}: the grandchild is still the one shown after settling`);
     assert.equal(await current(), root, `gap ${gap}: the root is in main`);
   }
-  const pageErrors = ab('errors');
+  const pageErrors = pageErrorLog();
   assert.ok(!/Cannot set properties of null|TypeError/.test(pageErrors), 'no page error (bg.view null) while opening in a row: ' + pageErrors.slice(0, 300));
   console.log('PASS: child then grandchild in a row ends on the grandchild (last call wins)');
+
+  // 子 A のモーダルを開いている（最中・開き終わり）まま、別の根の子 B を開く。A のモーダルを閉じてすぐ B を開き直す道で、
+  // 閉じる側の close イベントが非同期のため、開き直した B の view を null にして "Cannot set properties of null" になっていなかった
+  clearPageErrors();
+  for (const [label, settled, gap] of [['A open', true, 0], ['A in flight, gap 0', false, 0], ['A in flight, gap 100', false, 100]]) {
+    await goThird();
+    pressResults(settled ? [[kidRow.sessionId, 0]] : [[kidRow.sessionId, 0], [thirdKidRow.sessionId, gap]]);
+    if (settled) {
+      await wait(async () => (await modal()).open && (await modal()).sessionId === kidRow.sessionId, `${label}: A shows`);
+      await sleep(600);
+      pressResults([[thirdKidRow.sessionId, 0]]);
+    }
+    await wait(async () => (await modal()).open && (await modal()).sessionId === thirdKidRow.sessionId, `${label}: B shows in the modal`);
+    await settleModal();
+    const m = await modal();
+    assert.equal(m.sessionId, thirdKidRow.sessionId, `${label}: B is still the modal after settling (modal=${JSON.stringify(m)})`);
+    assert.ok(m.open, `${label}: the modal is open`);
+    assert.equal(await current(), third.sessionId, `${label}: B's root is in main`);
+    assert.ok(evaluate(() => document.getElementById('workBody').textContent.includes('THIRDKIDMARK')), `${label}: B's thread is painted in the modal`);
+  }
+  const openErrors = pageErrorLog();
+  assert.ok(!/Cannot set properties of null|TypeError/.test(openErrors), 'no page error (bg.view null) when opening another root\'s child over an open child: ' + openErrors.slice(0, 300));
+  console.log('PASS: opening another root\'s child over (or right after) a child modal shows it, with no page error');
 
   // ---- 9. ベル: あなた待ちの子・孫
   const bellRows = () => evaluate(() => [...document.querySelectorAll('#notifPanel .nrow')].map((n) => n.textContent.replace(/\s+/g, ' ').trim()));
