@@ -5,6 +5,9 @@
 //   4. リンクの右クリックとファイルの ⋮: ダイアログの中に出る。項目は本体と同じで「会話で使う」だけ出さない
 //   5. 読むだけの子（ネイティブのサブエージェント）にも検索と同じメニューが出る
 //   6. 本体の検索・メニューは今までどおり
+//   7. 頭の右端（本体の頭と同じ部品・順）: 検索・パネルを開く・（狭いとき ⋯）・↗。パネルは子の会話の欄を開け閉めし、Ctrl+Shift+B は前面のモーダルに効く
+//   8. 「最新へ」と Alt+↑↓・End、リンクの行き先の一行（.url-status）は本体と同じに出る
+//   9. 狭い幅（760・360px）の目次: Esc 1 回は目次だけを閉じ、モーダルは残る
 // 実行: node tests/browser/work-dialog-search-menu.mjs   （会話の agent-browser の窓を使う）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -45,7 +48,9 @@ try {
   fs.mkdirSync(childDir, { recursive: true });
   fs.writeFileSync(path.join(childDir, 'child-note.md'), '# child-note\n');
   const childSteps = path.join(base, 'child-steps.json');
-  fs.writeFileSync(childSteps, JSON.stringify({ steps: [{ text: 'Child reply: needle-child, see [child note](child-note.md).' }] }));
+  // 長い返答（本文がスクロールする）と、外のリンク（行き先の一行を確かめる）を含める
+  const tail = Array.from({ length: 30 }, (_, i) => `Line ${i + 1}: filler for scrolling.`).join('\n\n');
+  fs.writeFileSync(childSteps, JSON.stringify({ steps: [{ text: `Child reply: needle-child, see [child note](child-note.md) and [site](https://example.com/docs/page).\n\n${tail}` }] }));
 
   const first = await client.runTurn({ backend: 'fake', cwd: work, prompt: 'echo:zebra-main-only' });
   const parent = first.sessionId;
@@ -297,6 +302,126 @@ try {
   }
   assert.ok(Object.keys(subMenus).length > 0, 'the subagent thread has at least one message with a menu');
   console.log('PASS: native subagent (read-only) has search and the copy/source/report menu', JSON.stringify(subMenus));
+
+  // ---- 7. 頭の右端: 本体の頭と同じボタン・同じ名前・同じ順。パネルは開け閉めでき、Ctrl+Shift+B は前面のモーダルに効く ----
+  const headButtons = () => evaluate(() => {
+    const vis = n => n.offsetWidth > 0 && n.offsetHeight > 0;
+    return [...document.querySelectorAll('#workHead .bg-dt-actions button')].filter(vis).map(b => ({ id: b.id || (b.classList.contains('bg-open') ? 'bg-open' : b.className), label: b.getAttribute('aria-label'), expanded: b.getAttribute('aria-expanded'), inHeading: !!b.closest('#workHead') && !b.closest('#workDialog > header') }));
+  });
+  const mainLabel = id => evaluate(i => document.getElementById(i).getAttribute('aria-label'), id);
+  const paneOpen = () => { const s = paneState(); return s.inSplit && !s.hidden && /file-preview-open/.test(s.cls); };
+  // 読むだけの子（サブエージェント）: 親の会話のタブを開け閉めする。ボタンは出る
+  let buttons = headButtons();
+  assert.deepEqual(buttons.map(b => b.id).slice(0, 2), ['workTocEntry', 'workBrowserEntry'], `subagent head buttons: ${JSON.stringify(buttons)}`);
+  assert.ok(buttons.every(b => b.inHeading), 'the buttons are in the conversation heading, not in the top band');
+  const subPane = buttons.find(b => b.id === 'workBrowserEntry');
+  assert.equal(subPane.expanded, 'false', 'pane button starts closed');
+  clickOn('#workBrowserEntry', 'subagent pane button');
+  await wait(() => paneOpen(), 'subagent pane opened');
+  // 開いている間、本体と同じに頭のボタンはタブの列の ✖ へ受け渡される（見えないが、押した状態は持つ）
+  const entryNow = () => evaluate(() => { const b = document.getElementById('workBrowserEntry'); return { expanded: b.getAttribute('aria-expanded'), label: b.getAttribute('aria-label'), handed: b.classList.contains('entry-handed') }; });
+  assert.equal(entryNow().expanded, 'true', 'pressed state follows the pane');
+  await wait(() => !/file-preview-moving/.test(paneState().cls), 'the pane settles');
+  await sleep(500);
+  clickOn('#filePreview .bu-panel-close:not([hidden])', 'the pane close (✖) the button was handed to');
+  await wait(() => !paneOpen(), 'subagent pane closed').catch(e => { throw new Error(`${e.message} ${JSON.stringify([paneState(), evaluate(() => { const c = document.querySelector('#filePreview .bu-panel-close'); const r = c?.getBoundingClientRect(); return c && { hidden: c.hidden, rect: [r.left, r.top, r.width, r.height], label: c.getAttribute('aria-label'), top: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.outerHTML.slice(0, 120) }; })])}`); });
+  assert.equal(entryNow().expanded, 'false', 'pressed state is released when the pane closes');
+  console.log('PASS: subagent head has search + pane buttons; the pane toggles', JSON.stringify(buttons));
+  // 委譲した子: 同じ並び。名前は本体のボタンと同じ。Ctrl+Shift+B はモーダルのパネルを開け閉めし、本体のは開かない
+  clickOn(`#workList [data-key="t:${child.taskId}"]`, 'delegated child row');
+  await wait(() => evaluate(() => document.getElementById('workBody').dataset.paneKind === 'task'), 'child body');
+  buttons = headButtons();
+  const ids = buttons.map(b => b.id);
+  assert.deepEqual(ids.slice(0, 2), ['workTocEntry', 'workBrowserEntry'], `order: toc, pane first: ${JSON.stringify(buttons)}`);
+  assert.equal(ids[ids.length - 1], 'bg-open', 'the open-as-conversation arrow stays last');
+  assert.equal(buttons[0].label, mainLabel('tocEntry'), 'search button wording is the main one');
+  assert.equal(buttons[1].label, mainLabel('browserEntry'), 'pane button wording is the main one');
+  ab('press', 'Control+Shift+b');
+  await wait(() => paneOpen(), 'Ctrl+Shift+B opens the modal pane');
+  // 1 回で開いた（二重に切り替わっていない）。欄は本体の右ではなくモーダルの中にある
+  assert.equal(evaluate(() => document.getElementById('filePreview').parentElement.id), 'workSplit', 'the pane opened inside the dialog');
+  assert.notEqual(entryNow().label, buttons[1].label, 'the label turns into the close wording');
+  ab('press', 'Control+Shift+b');
+  await wait(() => !paneOpen(), 'Ctrl+Shift+B closes the modal pane');
+  console.log('PASS: delegated child head: same order and wording as main, Ctrl+Shift+B acts on the modal', JSON.stringify(buttons));
+
+  // ---- 8. 「最新へ」と Alt+↑↓・End。リンクの行き先の一行 ----
+  const scrollState = () => evaluate(() => { const b = document.getElementById('workBody'); const n = document.querySelector('#workBodyFrame > .nav-latest'); return { top: Math.round(b.scrollTop), away: Math.round(b.scrollHeight - b.clientHeight - b.scrollTop), latest: !!n && !n.hidden && n.offsetWidth > 0, label: n?.getAttribute('aria-label') ?? '' }; });
+  evaluate(() => { const b = document.getElementById('workBody'); b.scrollTop = b.scrollHeight; });
+  await wait(() => scrollState().away < 4 && !scrollState().latest, 'at the end: no latest button');
+  evaluate(() => { document.getElementById('workBody').scrollTop = 0; });
+  await wait(() => scrollState().latest, 'away from the end: the latest button shows');
+  const mainLatest = evaluate(() => document.querySelector('#logFrame > .nav-latest')?.getAttribute('aria-label') ?? '');
+  assert.equal(scrollState().label, mainLatest, 'latest button wording is the main one');
+  clickOn('#workBodyFrame > .nav-latest', 'latest button');
+  await wait(() => scrollState().away < 4 && !scrollState().latest, 'the latest button goes to the end and disappears');
+  // Alt+↑ はひとつ前の発言へ、End は末尾へ（本文にフォーカスがあるとき）
+  evaluate(() => document.getElementById('workBody').focus());
+  const before = scrollState().top;
+  ab('press', 'Alt+ArrowUp');
+  await wait(() => scrollState().top < before, 'Alt+ArrowUp moves to the previous message');
+  ab('press', 'End');
+  await wait(() => scrollState().away < 4, 'End goes to the latest');
+  // 一覧にフォーカスがあるときは奪わない（一覧の ↑↓・End は一覧のもの）
+  evaluate(() => document.querySelector('#workList [data-key]').focus());
+  const keep = scrollState().top;
+  ab('press', 'Alt+ArrowUp'); await sleep(500);
+  assert.equal(scrollState().top, keep, 'Alt+ArrowUp does not act from the list');
+  console.log('PASS: the latest button, Alt+Up/Down and End work in the dialog like main');
+  // リンクの行き先の一行（デスクトップ版のホストのときだけ出る本体の規則と同じ。窓に plyDesktop が有るとき）
+  evaluate(() => { window.plyDesktop = { openExternal() {} }; });
+  const statusOf = () => evaluate(() => { const b = document.querySelector('#workBodyFrame > .url-status'); if (!b) return null; const r = b.getBoundingClientRect(), f = document.getElementById('workBodyFrame').getBoundingClientRect(); return { on: b.classList.contains('on'), text: b.textContent.trim(), inFrame: r.left >= f.left && r.bottom <= f.bottom + 1 && r.top >= f.top, left: Math.round(r.left - f.left), bottomGap: Math.round(f.bottom - r.bottom) }; });
+  // 先にスクロールを終えてから乗せる（スクロールは一行を隠す。本体と同じ）
+  evaluate(() => { [...document.querySelectorAll('#workBody a')].find(n => /example\.com/.test(n.href)).scrollIntoView({ block: 'center', behavior: 'instant' }); });
+  await sleep(400);
+  evaluate(() => { [...document.querySelectorAll('#workBody a')].find(n => /example\.com/.test(n.href)).dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' })); });
+  await wait(() => statusOf()?.on, 'the url status line shows over a link in the dialog').catch(e => { throw new Error(`${e.message} ${JSON.stringify(evaluate(() => ({ link: [...document.querySelectorAll('#workBody a')].filter(n => /example/.test(n.href)).map(n => n.outerHTML.slice(0, 200)), status: [...document.querySelectorAll('.url-status')].map(n => n.parentElement.id || n.parentElement.tagName + ':' + n.className), desktop: typeof window.plyDesktop?.openExternal, remote: !!window.plyRemote })))}`); });
+  const status = statusOf();
+  assert.ok(status.inFrame && /example\.com\/docs\/page/.test(status.text), `url status is in the dialog frame: ${JSON.stringify(status)}`);
+  assert.equal(evaluate(() => !!document.querySelector('main > .url-status.on')), false, 'the main status line stays off');
+  if (shots) ab('screenshot', path.join(shots, 'modal-url-status-1280.png'));
+  evaluate(() => { const a = [...document.querySelectorAll('#workBody a')].find(n => /example\.com/.test(n.href)); a.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse', relatedTarget: document.body })); });
+  await wait(() => !statusOf()?.on, 'the url status line hides');
+  evaluate(() => { delete window.plyDesktop; });
+  console.log('PASS: link destination line appears at the lower left of the conversation in the dialog', JSON.stringify(status));
+
+  // ---- 9. 狭い幅: 760px は目次が全面、360px は下からのシート。Esc 1 回は目次だけを閉じる。⋯ の中にパネルがある ----
+  const narrowStates = {};
+  for (const [w, h] of [[760, 800], [360, 740]]) {
+    await closeDialog();
+    ab('set', 'viewport', String(w), String(h));
+    await sleep(900);
+    await openCard(child.taskId, `child at ${w}`);
+    await wait(() => evaluate(() => !!document.querySelector('#workBody a.file-link[data-file-path="child-note.md"]') && !document.getElementById('workTocEntry').hidden), `child body at ${w}`);
+    const narrowButtons = headButtons();
+    if (w === 360) {
+      assert.deepEqual(narrowButtons.map(b => b.id), ['workTocEntry', 'workBrowserEntry', 'workMore', 'bg-open'], `360px head: toc, [N], ⋯, arrow: ${JSON.stringify(narrowButtons)}`);
+      assert.match(narrowButtons[1].label, /\d/, 'at 360px the pane button is the [N] tab count form, like main');
+    }
+    ab('press', 'Control+f');
+    await wait(() => evaluate(() => !!document.querySelector('#filePreview .toc-query, .toc-sheet .toc-query')), `toc at ${w}`);
+    const form = evaluate(() => ({ sheet: !!document.querySelector('.toc-sheet .toc-query'), pane: !!document.querySelector('#filePreview .toc-query') }));
+    await pressKey('Escape');
+    await sleep(500);
+    const afterOne = evaluate(() => ({ dialog: document.getElementById('workDialog').open, toc: !!document.querySelector('.toc-query') }));
+    assert.deepEqual(afterOne, { dialog: true, toc: false }, `one Esc closes only the toc at ${w}px (${JSON.stringify(form)})`);
+    await pressKey('Escape');
+    await wait(() => !dialogOpen(), `the second Esc closes the dialog at ${w}px`);
+    narrowStates[w] = { form, afterOne, head: narrowButtons.map(b => b.id) };
+  }
+  console.log('PASS: at 760px and 360px one Esc closes only the toc', JSON.stringify(narrowStates));
+  // 360px の ⋯: パネルの開け閉めだけが入っている
+  await openCard(child.taskId, 'child at 360 (more)');
+  await wait(() => evaluate(() => !document.getElementById('workMore').hidden), 'more button');
+  clickOn('#workMore', 'more button');
+  await wait(() => menuItems(), 'the more menu');
+  const moreMenu = menuItems();
+  assert.ok(moreMenu.inDialog && moreMenu.onTop, `the more menu is above the dialog: ${JSON.stringify(moreMenu)}`);
+  assert.equal(moreMenu.items.length, 1, `the more menu has only the pane item: ${moreMenu.items}`);
+  await closeMenu();
+  await closeDialog();
+  ab('set', 'viewport', '1280', '800');
+  console.log('PASS: the dialog menu at 360px holds the pane item', JSON.stringify(moreMenu.items));
 } finally {
   client?.close();
   await server?.stop();
