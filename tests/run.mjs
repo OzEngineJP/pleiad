@@ -1053,6 +1053,8 @@ const SUITES = [
   // 脇 (W1): Channels の並べ方・bot の状態・タブの点・検索の横断の行と開く先・Chats の木の bot の会話の行の配線（描画は目視と session-list-keys.cjs）
   './unit/channels-side-ui.mjs',
   './unit/view-address.mjs',
+  // 会話を開く行き先（web/child-route.mjs。ADR 0318）: 委譲の子・孫は根をメインに・子をモーダルに。保存した id の読み替え
+  './unit/child-route.mjs',
   './unit/channels-threads-index.mjs',
   './unit/home-channel.mjs',
   './unit/bot-plain.mjs',

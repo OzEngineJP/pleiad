@@ -90,5 +90,5 @@ export default function (t) {
     && thread.includes('createBackgroundChip(subsButton)') && thread.includes('host.background?.open(scope)') && /subs\.hidden = !items\.length/.test(thread));
   t.ok('作業ログの委譲カードは、Chats の委譲カードと同じ仕上げ（link）を通す', thread.includes('link: (card, c) => host.background?.link(card, c.input, c.result') && /link && isBoundary\(card\.dataset\.tool\)/.test(read('web/channels/thread-tools.mjs')));
   t.ok('Chats の一覧・カードは、範囲（scope）を渡したときだけスレッドの分を引く（既定は今開いている会話）', /function backgroundItems\(scope = null\)/.test(client) && /function openWork\(key, scope = null\)/.test(client)
-    && /scope\.openSession\(item\.childId\)/.test(client));
+    && !/scope\.openSession/.test(client));   // 子を「会話として開く」口は無い（ADR 0318）
 }

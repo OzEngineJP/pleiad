@@ -235,7 +235,7 @@ export default async function test(t) {
         justCreated: () => false, unsentHere: () => true, activeBackendId: () => 'codex',
         capsOf: () => ({ accounts: 'agent', compatEndpoints: false }),
         $: id => { if (!nodes.has(id)) { const node = new Node('div'); node.id = id; } return $(id); },
-        t: tr, syncParentEntry() {}, rememberTitle() {}, syncTitleControls() {}, controls: { paint() {} },
+        t: tr, syncRemoteOriginLine() {}, rememberTitle() {}, syncTitleControls() {}, controls: { paint() {} },
         headerUsage: { show: info => headers.push(info) }, refreshGit: async () => {}, refreshWorktree: async () => {},
         paintSettingsNotice() {}, renderSessions() {}, selectedMode: () => 'default',
         loadVocab: async (backend, account) => { vocabReads.push({ backend, account }); return { modes: { default: {} }, models: { '': {} } }; },

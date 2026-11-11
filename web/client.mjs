@@ -78,6 +78,7 @@ import { attachedImageSrc } from "./composer/attachments.mjs";
 import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
 import { createHomeDest } from "./composer/home-dest.mjs";
 import { createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
+import { childRoute, restoredSession } from "./child-route.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
@@ -416,8 +417,9 @@ let notifyPc = { done: true, reply: true, failed: true };
 // スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
 let shellStopped = false;
 const watchingNow = () => !shellStopped && document.visibilityState === 'visible';
-const completionNotifications = createCompletionNotifications({ openSession: id => select(id), openSettings: page => openSettingsPage(page),
-  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id, isFocused: () => watchingNow() && document.hasFocus() });
+const completionNotifications = createCompletionNotifications({ openSession: id => openConversation(id), openSettings: page => openSettingsPage(page),
+  // 子の会話は、モーダルで開いている間も「見ている」（ホストへ伝える在席の 2 つ目の置き場 modalPresence と同じ会話。ADR 0315・0318）
+  settings: () => notifyPc, isViewing: id => watchingNow() && (state.current === id || modalWatchId() === id), isFocused: () => watchingNow() && document.hasFocus() });
 
 let ws = null;
 let seq = 0;
@@ -1600,7 +1602,7 @@ function markSentBy(m, sentBy) {
   const open = el('button', 'who-act', t('chat.message.openSender'));
   open.type = 'button';
   open.title = t('chat.message.openSenderTitle');
-  open.onclick = (e) => { e.stopPropagation(); select(sentBy.sessionId); };
+  open.onclick = (e) => { e.stopPropagation(); openConversation(sentBy.sessionId); };
   who.firstChild.append(open);
 }
 
@@ -2066,7 +2068,7 @@ function paintComputerWait() {
   for (const box of thread.querySelectorAll(".tc-lockwait")) if (box.closest?.(".tc") !== row) clearLockWait(box);
   if (!row || row.querySelector(".tc-lockwait, .tc-appr")) return;
   const details = row.querySelector(".tc-details"), host = row.closest(".in") ?? row;
-  const box = lockWaitBox(ev.holder, ev.since, (id) => select(id));
+  const box = lockWaitBox(ev.holder, ev.since, (id) => openConversation(id));
   swapHeight(host, () => { if (details) details.hidden = true; row.append(box); });
   fadeIn(box);
   bundleOf(row)?.reveal(row);
@@ -6043,8 +6045,9 @@ const handoffWaiting = id => [...state.pendingPerms.values()].some(ev => ev.sess
  */
 async function openChildChromeWindow(sessionId) {
   if (state.current && chromeWindowRows.some(row => row.sessionId === sessionId && row.taskId)) { chromePanel?.open($('browserEntry'), { target: sessionId }); return; }
-  await select(sessionId);
-  if (state.current === sessionId) chromePanel?.open($('browserEntry'));
+  // 窓が右パネルの行に無い（Channels のスレッドのカードなど）: 子の会話をモーダルで開いてから、モーダルの入口で映す（ADR 0318）
+  await openConversation(sessionId);
+  if (modalPaneTarget() === sessionId) modalRightPane.open();
 }
 /** カードの ×。引き継ぎ中・依頼待ちの窓は確かめてから閉じる。閉じている間は押せない */
 function closeChildChromeWindow(row, anchor) {
@@ -6420,20 +6423,12 @@ function syncWorkEntry() {
 }
 $('workEntryButton').onclick = () => openWork();
 
-/** 委譲された子の会話では、ヘッダーに依頼元の会話へ戻る口を出す（子の会話は脇の一覧に出ないため） */
-function syncParentEntry() {
-  const delegation = state.sessions.find(s => s.id === state.current)?.delegation;
-  const remote = delegation?.remote ?? null;
-  // 依頼元の会話を消した（ADR 0147）なら出さない。端末の AI から任された会話の依頼元は端末にあるので、戻る口は出さない
-  const parentId = remote ? null : delegation?.parentSessionId;
-  const parent = parentId && state.sessions.some(s => s.id === parentId) ? parentId : null;
-  const back = $('parentChatEntry');
-  back.hidden = !parent;
-  back.onclick = parent ? () => select(parent) : null;
-  // 題の下の行（700px 以下）・題の右（広い幅）に「↖ 依頼元: 題」
-  const parentTitle = parent ? state.sessions.find(s => s.id === parent)?.title || t('session.untitled') : '';
-  back.textContent = parent ? t('session.parentLine', { title: parentTitle }) : '';
-  if (parent) { back.setAttribute('aria-label', t('session.parentLineAria', { title: parentTitle })); back.title = parentTitle; }
+/**
+ * 端末の AI から任された会話（delegation.remote。メインで開く例外の子）では、題の下に出所の行を出す。
+ * 委譲の子はメインに開かないので、依頼元へ戻る「↖ 依頼元」の口は無い（ADR 0318。子はモーダルで、Esc で根へ戻る）
+ */
+function syncRemoteOriginLine() {
+  const remote = state.sessions.find(s => s.id === state.current)?.delegation?.remote ?? null;
   const origin = $('remoteOriginLine');
   origin.hidden = !remote;
   origin.textContent = remote ? [t('session.remoteOrigin.badge', { device: remote.deviceName || '' }),
@@ -6684,28 +6679,19 @@ function paintDetailHead(item) {
   title.append(h, meta);
   head.append(back, title);
   const actions = el('div', 'bg-dt-actions');
-  // 主の頭の行と同じ並び: 検索・パネル・「…」（狭い幅）。会話を開く ↗ は最後
+  // 主の頭の行と同じ並び: 検索・パネル・「…」（狭い幅）。ホストで開く ↗ は最後
   actions.append($('workTocEntry'), $('workBrowserEntry'), $('workMore'));
-  let showOpen = false;
-  if (item.source === 'task') {
-    // 子の会話へ移るのは矢印のアイコン（名前は title・読み上げ）。「停止」は結果が重いので字のまま
+  // 子の会話をメインの画面で開く ↗ は無い（子の会話はこのモーダルが唯一の場所。ADR 0318）。
+  // ホストに任せたタスクの子の会話はホストにある。経過はこの詳細で読めるので、手元の窓なら、そのホストのリモートの窓で開く入口だけを残す（ホストで続きを見る・指示を送る）。
+  // 止めるのは見出しではなく入力欄の中断ボタン（syncWorkStop。ADR 0317）
+  if (item.source === 'task' && item.host && window.plyDesktop?.openRemoteSession && !window.plyRemote && item.remoteSessionId) {
     const open = el('button', 'btn btn-icon bg-open');
     open.type = 'button';
-    open.title = t('dialog.work.openChat');
-    open.setAttribute('aria-label', t('dialog.work.openChat'));
+    open.title = t('dialog.work.openOnHost');
+    open.setAttribute('aria-label', t('dialog.work.openOnHost'));
     open.append(icon(GO_PATH));
-    open.onclick = () => { const scope = bg.scope; $('workDialog').close(); if (scope) scope.openSession(item.childId); else select(item.childId); };
-    // ホストに任せたタスクの子の会話はホストにある。経過はこの詳細で読めるので、手元の窓なら、そのホストのリモートの窓で開く入口を残す（ホストで続きを見る・指示を送る）
-    if (item.host) {
-      if (window.plyDesktop?.openRemoteSession && !window.plyRemote && item.remoteSessionId) {
-        open.title = t('dialog.work.openOnHost');
-        open.setAttribute('aria-label', t('dialog.work.openOnHost'));
-        open.onclick = () => openOnHost(item);
-        showOpen = true;
-      }
-    } else showOpen = true;
-    // 止めるのは見出しではなく入力欄の中断ボタン（syncWorkStop。ADR 0317）
-    if (showOpen) actions.append(open);
+    open.onclick = () => openOnHost(item);
+    actions.append(open);
   }
   if (item.group === 'command' && item.live !== false && (item.entry.capabilities ?? capsOf(item.entry.backend)).stopBackground) {
     actions.append(backgroundStopButton(item.entry.sessionId, item.task));
@@ -6839,7 +6825,8 @@ function openDetail(item) {
   if (!item) return;
   if (item.source === 'task' && item.childId) refreshOutbox(item.childId).then(() => workComposer?.paintOutbox()).catch(() => {});
   body.append(el('div', 'work-head', t('dialog.work.loading')));
-  refreshDetail({ first: true });
+  // 最初の描画が終わる約束。外から開いた（openConversation）とき、描けた後に検索の発言へ送るために待つ
+  bg.view.firstPaint = refreshDetail({ first: true });
 }
 
 /** 読み直しの間隔。出来事が届かない詳細は、running の配信（4 秒ごと）に合わせて読み直す */
@@ -8952,7 +8939,7 @@ function familyMenu(root, members, x, y) {
       { label: t("session.menu.clearStatus"), onClick: () => moveGroup(root, "") },
     ] },
     { sep: true },
-    { label: t("session.menu.openRoot"), hint: rowLabel(root), onClick: () => select(root.id) },
+    { label: t("session.menu.openRoot"), hint: rowLabel(root), onClick: () => openConversation(root.id) },
   ], t("session.menu.groupTitle", { title: rowLabel(root) }));
 }
 
@@ -8998,14 +8985,14 @@ function rowMenu(s, x, y, lead = []) {
   if (hasKin) cmd("lineage", { sessionId: s.id }).then((r) => { kin = r; }).catch(() => {});
   const kinItems = () => !kin ? [{ label: t("session.menu.loading") }]
     : kin.sessions.map((r) => ({ label: r.title && r.title !== "(no title)" ? r.title : t("session.untitled"),
-        hint: r.id === s.id ? t("session.menu.thisRow") : r.parent?.sessionId ? t("session.menu.branch") : t("session.menu.root"), checked: r.id === state.current, onClick: () => select(r.id) }));
+        hint: r.id === s.id ? t("session.menu.thisRow") : r.parent?.sessionId ? t("session.menu.branch") : t("session.menu.root"), checked: r.id === state.current, onClick: () => openConversation(r.id) }));
   const paint = () => {
   const mode = vocab ? selectedMode(s, s.nextSettings?.backend ?? s.backend, vocab.modes) : '';
   const items = [
     ...lead, ...(lead.length ? [{ sep: true }] : []),
     // 頭の「…」（開いている会話。先頭に「開く」の見出しを足したとき）では、同じ語の「開く」（この会話を開く）を出さない
     ...(lead.length && s.id === state.current ? [] : [{ label: t("session.menu.open"), onClick: () => select(s.id) }]),
-    ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => select(s.parent.sessionId) }] : []),
+    ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => openConversation(s.parent.sessionId) }] : []),
     ...(hasKin ? [{ label: t("session.menu.branches"), sub: kinItems }] : []),
     { label: t("session.menu.rename"), sub: () => [
       { input: { placeholder: t("session.menu.newTitle"), value: s.title === "(no title)" ? "" : s.title, onCommit: (v) =>
@@ -9521,7 +9508,7 @@ function readBootTitle() {
   } catch { return null; }
 }
 async function syncTopbar() {
-  syncParentEntry();
+  syncRemoteOriginLine();
   homeDest.paint();
   const version = ++topbarVersion;
   const s = state.sessions.find((x) => x.id === state.current);
@@ -9958,6 +9945,8 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     node.append(...toolNodes(cards, subagentToolsOf(m.backend ?? backend ?? activeBackendId())));
     if (m.text) { const b = el("div", "body"); b.dataset.raw = m.text; b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
   }
+  // 読むだけの筋は data-uuid を持たない（持つと ⋯ のメニューが分岐・編集を出す）。検索から開いたとき発言へ送る目印だけ別に付ける（revealMessage の inModal）
+  if (readonly && m.uuid && node) node.dataset.hitUuid = m.uuid;
   return { node, role: m.role };
 }
 
@@ -10113,10 +10102,41 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
  * 脇の検索の結果を押した。抜粋（jump）があればその発言へ飛び、無ければ（題・状態・場所だけの一致）ただ開く。
  * 今開いている会話の抜粋なら、読み直さずにその発言へ送る
  */
-async function openFromSearch(id, jump) {
-  if (!jump) return select(id);
-  if (id === state.current && !state.loadingSession) { if (narrowView.matches) setDrawer(false); revealMessage(jump); return; }
-  return select(id, { jump });
+const openFromSearch = (id, jump) => openConversation(id, { jump });
+
+/**
+ * 会話を開く入口（ADR 0318）。メインの画面に出るのは根の会話だけで、委譲の子（孫を含む）は依頼元の根の会話をメインに開き、その上のモーダルで出す
+ * （子の行き先は web/child-route.mjs）。脇の検索・通知・スマホの通知・起動の復元・ロック待ち・代理送信・Channels・Chrome の窓から、ここを通る。
+ * - 子でない会話（根として扱う子 = 端末の AI から任された子・依頼元を消した子 を含む）は、今までどおりメインで開く
+ * - jump（検索の抜粋）があれば、開いた会話の中のその発言へ送って輪を付ける（子ならモーダルの中の筋）
+ * - タスクの行が引けない（古い記録・上書きされた古い会話）子は、根の会話だけを開く
+ */
+async function openConversation(id, { jump = null, keepDrawer = false } = {}) {
+  if (!id) return;
+  const route = childRoute(id, state.sessions);
+  if (!route) {
+    if (!jump) return select(id, { keepDrawer });
+    if (id === state.current && !state.loadingSession) { if (narrowView.matches) setDrawer(false); revealMessage(jump); return; }
+    return select(id, { jump, keepDrawer });
+  }
+  if (narrowView.matches && !keepDrawer) setDrawer(false);
+  const dialog = $('workDialog');
+  if (state.current !== route.root) {
+    if (dialog.open) dialog.close();   // 別の根の会話のモーダルを残さない
+    await select(route.root, { keepDrawer });
+    if (state.current !== route.root) return;
+  }
+  if (!route.taskId) return;
+  await loadTaskCards(route.root).catch(() => {});
+  const key = `t:${route.taskId}`;
+  // 上書きされた古い会話（タスクが今の子として指す会話が別）・まだ行が無い子は開けない。根の会話だけを開いたままにする
+  if (state.current !== route.root || taskById(route.taskId)?.sessionId !== id || !backgroundItems().some(x => x.key === key)) return;
+  openWork(key);
+  const view = bg.view;
+  await view?.firstPaint;
+  // 最初の描画の直後に、溜まっていた読み直しが続けて筋を作り直す。作り直す前に送ると、送った先の行が消えて輪も付かないので、読み直しが済むのを待つ
+  for (let i = 0; i < 40 && bg.view === view && (view.busy || view.pendingRefresh); i++) await new Promise((r) => setTimeout(r, 75));
+  if (jump && bg.view === view && view?.key === key) revealMessage(jump, true);
 }
 
 /**
@@ -10149,21 +10169,27 @@ function openSettingsPage(page) {
  * 検索で探した語を会話の中の検索へ引き継ぎ（開かない。Ctrl+F の 1 手で残りの一致へ進める）、その発言へ送って輪（note-flash）を付ける。
  * 発言は uuid で引く（会話の行の data-uuid と、検索の結果の uuid は同じ値）。見つからなければ語だけ引き継ぐ
  */
-async function revealMessage({ uuid, role, query, speaker }) {
-  const find = () => [...thread.querySelectorAll('.m[data-uuid]')].find((x) => x.dataset.uuid === uuid) ?? null;
+async function revealMessage({ uuid, role, query, speaker }, inModal = false) {
+  // inModal: 子の会話のモーダルの筋（作業のダイアログ）。主の筋と同じ見え方で、窓の手前を読み足す仕組みは無い（子の会話は丸ごと描く）
+  const box = () => (inModal ? workThread() : thread);
+  const find = () => (inModal
+    ? [...(box()?.querySelectorAll('.m[data-hit-uuid]') ?? [])].find((x) => x.dataset.hitUuid === uuid)
+    : [...(box()?.querySelectorAll('.m[data-uuid]') ?? [])].find((x) => x.dataset.uuid === uuid)) ?? null;
   let m = find();
-  if (!m && backfill) { flushBackfill(); m = find(); }   // 窓の中の、まだ描いていない手前
-  // 窓の手前にある発言は、見つかるまで前の発言を読み足す
-  while (!m && state.base > 0 && await loadOlder({ reach: uuid })) m = find();
-  toc.carry(query, { scope: role === 'tool' ? 'tool' : speaker === 'user' ? 'user' : 'answer', uuid });
+  if (!inModal) {
+    if (!m && backfill) { flushBackfill(); m = find(); }   // 窓の中の、まだ描いていない手前
+    // 窓の手前にある発言は、見つかるまで前の発言を読み足す
+    while (!m && state.base > 0 && await loadOlder({ reach: uuid })) m = find();
+  }
+  (inModal ? modalToc : toc).carry(query, { scope: role === 'tool' ? 'tool' : speaker === 'user' ? 'user' : 'answer', uuid });
   if (!m) return;
   const mark = m.querySelector('mark.searchhit.active');
   revealFold(mark ?? m);   // 長い発言の畳まれた部分に一致があれば、動かさずに開く（web/fold.mjs）
   // 発言の頭を上から 90px の位置へ。長い発言で一致が画面の下に外れるときだけ、一致そのものへ送る
   const row = m.closest('.mw') ?? m;
-  const deep = mark && mark.getBoundingClientRect().top - row.getBoundingClientRect().top > log.clientHeight - 160;
+  const deep = mark && mark.getBoundingClientRect().top - row.getBoundingClientRect().top > (inModal ? $('workBody') : log).clientHeight - 160;
   const target = deep ? mark : row;
-  nav.scrollToRow(target, 90, () => flashMessage(m, mark));
+  (inModal ? modalNav : nav).scrollToRow(target, 90, () => flashMessage(m, mark));
 }
 let flashedMessage = null, flashMessageTimer = 0;
 /** 着いた発言の吹き出しに輪を 1 度だけ（入力欄の上の一行・添付の入口と同じ note-flash）。一致のある塊があればその塊に */
@@ -11024,11 +11050,13 @@ function connect() {
       return refresh({ sharePending: true }).then(async () => {
         // スマホの通知を押して開いた会話（殻が ?open= で渡す）。起動・つなぎ直しで自動に開くので、利用者が開いた脇のパネルは閉じない
         const wanted = mobileNotify.takeOpenRequest();
-        if (wanted) return select(wanted, { keepDrawer: true });
-        if (state.current) return select(state.current, { reload: true, keepDrawer: true });
+        if (wanted) return openConversation(wanted, { keepDrawer: true });
+        // 子の会話はメインに出さない（ADR 0318）。覚えていた id が子なら、その根の会話を開く（開いていたモーダルは戻さない。ダイアログは開き直しで閉じる他のダイアログと同じ）
+        if (state.current) return select(restoredSession(state.current, state.sessions), { reload: true, keepDrawer: true });
         // 一覧は件数で切れるので、前の会話がそこに無くても、読めた（先読みが返った）なら開く。読めないなら無い会話
-        const known = saved && (state.sessions.some(s => s.id === saved) || await bootPrefetch?.reply.then(() => bootPrefetch?.id === saved, () => false));
-        if (known) await select(saved, { keepDrawer: true });
+        const savedOpen = saved && restoredSession(saved, state.sessions);
+        const known = savedOpen && (state.sessions.some(s => s.id === savedOpen) || await bootPrefetch?.reply.then(() => bootPrefetch?.id === savedOpen, () => false));
+        if (known) await select(savedOpen, { keepDrawer: true });
         else {
           if (bootPrefetch) { sessionLoads.cancel(bootPrefetch.load); bootPrefetch = null; }   // 外れた先読み（無い会話）を捨てる
           // 殻（スマホのアプリ）で前の会話が無いときは、新しい会話ではなく、いちばん最近動いた会話を開く（端末の代理のポートが変わると覚えが消える）
@@ -11192,9 +11220,9 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
 // 作業のダイアログの会話内検索（2 つ目。同じ部品・同じ右の欄。見る先は選んでいる子の会話で、シートも最前面のダイアログの中に出す）
 const workThread = () => $('workBody').querySelector(':scope > .thread.bg-thread');
-const modalToc = createConversationToc({ thread: workThread, log: $('workBody'),
-  // 最新へのボタンと Alt+↑↓・End も主と同じ（作業のダイアログが最前面で開いている間、前面の筋に効く。一覧・右の欄・シートの中では奪わない）
-  nav: createThreadNav({ log: $('workBody'), thread: workThread, frame: $('workBodyFrame'), keys: $('workDialog'), skip: '.work-side, #filePreview, .toc, .toc-sheet', isRunning: () => bg.view?.item?.live === true }),
+// 最新へのボタンと Alt+↑↓・End も主と同じ（作業のダイアログが最前面で開いている間、前面の筋に効く。一覧・右の欄・シートの中では奪わない）
+const modalNav = createThreadNav({ log: $('workBody'), thread: workThread, frame: $('workBodyFrame'), keys: $('workDialog'), skip: '.work-side, #filePreview, .toc, .toc-sheet', isRunning: () => bg.view?.item?.live === true });
+const modalToc = createConversationToc({ thread: workThread, log: $('workBody'), nav: modalNav,
   preview: {
     openPanel: (spec) => { mountModalPane(); return filePreview.openPanel(spec); },
     close: (...args) => filePreview.close(...args),
@@ -11225,7 +11253,8 @@ chromePanel = setupChromePanel({ cmd, preview: filePreview,
   // リモートの端末の「引き継ぐ」は端末で操作するので、PC で操作するのは ⋯ から
   menuItems: id => (window.plyRemote && chromeControlStore.get(id).state !== 'paused'
     ? [{ label: t('chromeControl.takeOverPc'), onClick: () => cmd('chromeTakeOver', { sessionId: id }).catch(error => notify(error?.message || t('chromeControl.failed'))) }] : []),
-  openConversation: async id => { await select(id); if (state.current === id) chromePanel?.open($('browserEntry')); } });
+  // 子の会話はモーダルで開く（ADR 0318）。Chrome の窓を見ていたなら、モーダルの入口から続けて開く
+  openConversation: async id => { await openConversation(id); if (modalPaneTarget() === id) modalRightPane.open(); } });
 document.addEventListener('ply-browser-toggle', event => {
   if (chromePanel?.isOpen() && chromePanel.sessionId === event.detail?.sessionId) chromePanel.close();
   else chromePanel?.open(event.target, { target:event.detail?.sessionId });
@@ -11619,9 +11648,9 @@ const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage:
 const apiKeysSettings = setupApiKeysSettings({ cmd, page: onboarding.page, openEndpoints: agent => { if (compatEndpoints.openAgent !== agent) compatEndpoints.open(agent); else $('setupTab').click(); },
   recentFolders: () => cwdOptions().map((o) => o.value) });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
-const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
+const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => openConversation(id) });
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）
-window.plyRemote?.onOpenSession?.(id => { if (id) select(id); });
+window.plyRemote?.onOpenSession?.(id => { if (id) openConversation(id); });
 // 見ている会話をホストへ知らせる。スマホへの通知を送らない・消すのに使う
 const presenceReporter = createPresenceReporter({ send: (visible, sessionId) => cmd('presence', { visible, sessionId }),
   current: () => state.current, visible: watchingNow });

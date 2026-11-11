@@ -10,7 +10,7 @@
 //     state                         … client の state（読むだけ。current・sessions・runningIds・waitingIds など）
 //     filePreview                   … web/file-preview.mjs の返り。open(ref, element)・openPanel・close・panelOpen
 //     permissionCard(ev, into)      … 承認のカードを入れ物へ描く（client.mjs の permissionCard。質問は質問のカード。決着は resolvePermission と同じ）
-//     openSession(id)               … Chats の会話を開く（Chats のタブへ戻して select）
+//     openSession(id)               … Chats の会話を開く（Chats のタブへ戻す。委譲の子なら依頼元をメインに、子はモーダルで開く。ADR 0318）
 //     openThread(channelId, threadId, { postId }?) … スレッドを開く（postId があれば着いたその投稿へ送って輪を付ける。通知の一覧の飛び先）。setupChannels が足す（部品の openThread へ配る）。呼ぶのは W2（要約の行・「スレッドで返信」）、受けるのは W3
 //     openSidebar()                 … 脇を開く（狭い画面は引き出し）
 //     showMenu(x, y, items, title)  … 右クリックのメニュー（web/context-menu.mjs と同じ見え方）

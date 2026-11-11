@@ -144,7 +144,7 @@ export default async function (t) {
     /const open = drawerOpen\(\)/.test(settleBody) && /if \(open\) side\.redraw\(\)/.test(settleBody) && /n\.inert = open/.test(settleBody));
   t.ok("起動・つなぎ直しの select / startNew は脇のパネルを閉じない（keepDrawer）。行を押す道は今まで通り閉じる",
     /if \(keepUpTo === undefined && !quiet && !fresh && !keepDrawer\) setDrawer\(false\)/.test(client) && /if \(!keepDrawer\) setDrawer\(false\)/.test(client)
-      && /select\(saved, \{ keepDrawer: true \}\)/.test(client) && /startNew\(\{ keepDrawer: true \}\)/.test(client));
+      && /select\(savedOpen, \{ keepDrawer: true \}\)/.test(client) && /startNew\(\{ keepDrawer: true \}\)/.test(client));
   t.ok("脇の一覧は会話とスレッドの両方が届くまで骨組み（side.skeleton）",
     /if \(!\(listLoaded\.sessions && listLoaded\.threads\)\) side\.skeleton\(\)/.test(client));
   t.ok("pointer:coarse で入力欄を 16px 以上", /@media \(pointer:coarse\)\{[^@]*font-size:max\(16px/s.test(css));

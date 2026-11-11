@@ -56,7 +56,7 @@ const onBackend = ${onBackend[1]};`;
   const context = vm.createContext({
     state, composerAccount, homeDest: { bot: null, paint: noop }, bootHold: null, unsentHere: () => false,
     $: (id) => { if (!elements.has(id)) elements.set(id, { value: '', textContent: '' }); return elements.get(id); },
-    syncParentEntry: noop, rememberTitle: noop, syncTitleControls: noop, syncSettingsHold: noop, refreshGit: async () => {}, refreshWorktree: async () => {},
+    syncRemoteOriginLine: noop, rememberTitle: noop, syncTitleControls: noop, syncSettingsHold: noop, refreshGit: async () => {}, refreshWorktree: async () => {},
     headerUsage: { show: noop }, controls: { paint: () => painted.push({ shown: state.shownBackend, model: state.model }) },
     vocabKey: ({ backend, account, endpoint }) => `${backend}|${account}|${endpoint}`,
     loadVocab: async (bid) => { vocabAsked.push(bid); return { modes: { default: {}, plan: {} }, models: { '': {}, [`${bid}-m`]: {}, opus: {} } }; },

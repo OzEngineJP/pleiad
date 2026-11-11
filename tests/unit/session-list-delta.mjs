@@ -16,12 +16,13 @@ export default async function (t) {
   const row = { id: 'a', title: 'x', routing, delegation: { taskId: 'ply-task-1', parentSessionId: 'p', manager: 'ply', remote } };
   const slim = slimRow(row);
   t.ok('routing は載せない', !('routing' in slim), JSON.stringify(slim.routing));
-  t.ok('delegation は依頼元と端末の印だけ', JSON.stringify(slim.delegation) === JSON.stringify({ parentSessionId: 'p', remote }), JSON.stringify(slim.delegation));
+  t.ok('delegation は依頼元・タスクの id・端末の印だけ', JSON.stringify(slim.delegation) === JSON.stringify({ parentSessionId: 'p', taskId: 'ply-task-1', remote }), JSON.stringify(slim.delegation));
+  t.ok('タスクの id が無い古い記録は taskId を付けない', !('taskId' in slimRow({ id: 'o', delegation: { parentSessionId: 'p', manager: 'ply' } }).delegation));
   t.ok('元の行は変えない', row.routing === routing && row.delegation.taskId === 'ply-task-1');
   const plain = { id: 'b', title: 'y', delegation: null };
   t.ok('委譲でない行はそのまま', slimRow(plain) === plain);
   t.ok('routing: null の欄も外す', JSON.stringify(slimRow({ id: 'b', routing: null, delegation: null })) === '{"id":"b","delegation":null}');
-  t.ok('端末の印が無ければ remote を付けない', !('remote' in slimRow({ id: 'c', delegation: { parentSessionId: 'p', taskId: 't' } }).delegation));
+  t.ok('端末の印が無ければ remote を付けない（taskId は付く）', !('remote' in slimRow({ id: 'c', delegation: { parentSessionId: 'p', taskId: 't' } }).delegation));
 
   // ---- 差分: 乱数で一覧を動かし、受け手が毎回サーバーと同じ並び・同じ中身に組み立てる
   let seed = 7;
