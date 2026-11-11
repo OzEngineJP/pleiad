@@ -36,7 +36,7 @@ const arrowIcon = () => {
 };
 
 /** Chats の会話の発言の読み方（.mw の行・.body の吹き出し・.who の時刻） */
-const CHAT_ROWS = {
+export const CHAT_ROWS = {
   users: (thread) => [...thread.querySelectorAll(TURN_USER)],
   rowOf: (user) => user.closest('.mw'),
   bodyOf: (user) => user.querySelector(':scope > .body'),

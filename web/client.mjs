@@ -18,7 +18,7 @@ import { watchHostOnlyLinks } from './host-only-links.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
-import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard, reportAiContent } from './message-actions.mjs';
+import { actionButtons, copyToClipboard, messageMenuPlan, CHILD_MENU, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard, reportAiContent } from './message-actions.mjs';
 import { tailInfo, penGlyph } from './resend-band.mjs';
 import { paintAuthFailure, resentNote } from './auth-expired.mjs';
 import { authLinks } from './auth-links.mjs';
@@ -140,6 +140,7 @@ import { setupNotificationInbox } from './notification-inbox.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
+import { createThreadNav } from './thread-nav.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
@@ -1194,7 +1195,7 @@ function spine() {
 // コピーは自分の発言なら原文、エージェントの返答なら次の自分の発言までの本文の Markdown（ツールは含めない）。
 // 「ここから分岐」は、返答では ⋯ からその返答の終わりから、続きの発言を右クリックしたときはその発言から。
 
-/** 発言者の行の操作を付ける（コピー・⋯）。ボタンは whoLine が置いてある。読むだけの筋（委譲の詳細）では stripActions で外す */
+/** 発言者の行の操作を付ける（コピー・⋯）。ボタンは whoLine が置いてある。読むだけの筋（委譲の詳細）では、システム側の行だけ stripActions で外す（人の発言と返答は本体と同じ操作を持つ） */
 function wireActions(m) {
   const who = m.querySelector(':scope > .who');
   const copy = who?.querySelector('.who-copy'), more = who?.querySelector('.who-more');
@@ -1296,7 +1297,7 @@ function openMessageMenu({ m, part = false }, at = {}) {
   const target = kind === 'ai' && !part ? forkAtReplyEnd(m) : (m.dataset.uuid ? m : null);
   const canFork = Boolean(target) && capsOf(activeBackendId()).fork !== false;
   const command = kind === 'cmd' ? m.shellCommand?.() : null;
-  const plan = messageMenuPlan({ kind, part, canFork, shell: Boolean(command), source: kind === 'user', editable: Boolean(m.dataset.uuid) });
+  const plan = messageMenuPlan({ kind, part, canFork, shell: Boolean(command), source: kind === 'user', editable: Boolean(m.dataset.uuid), ...(m.closest('#workBody') ? CHILD_MENU : {}) });
   const busy = state.busy || Boolean(retiredHere());
   const run = {
     copy: () => copyToClipboard(messageCopyText(m), owner.querySelector(':scope > .who .who-copy')),
@@ -1327,6 +1328,15 @@ function openMessageMenu({ m, part = false }, at = {}) {
 }
 
 setupMessageMenu(thread, {
+  resolve: (target) => {
+    const m = target.closest('.m[data-role]');
+    if (!m) return null;
+    return { m, part: m.classList.contains('ai') && m.classList.contains('cont') };
+  },
+  open: (hit, at) => openMessageMenu(hit, at),
+});
+// 作業のダイアログの子の会話の発言も、同じメニュー（項目は CHILD_MENU で絞る）
+setupMessageMenu($('workBody'), {
   resolve: (target) => {
     const m = target.closest('.m[data-role]');
     if (!m) return null;
@@ -6579,6 +6589,8 @@ function openWork(key, scope = null) {
 
 function paintDetailHead(item) {
   const head = $('workHead');
+  // 見出しの右のボタン（検索・パネル・「…」）は描き直しで外れないよう、先に置き場へ戻す
+  $('workEntries').append($('workTocEntry'), $('workBrowserEntry'), $('workMore'));
   head.replaceChildren();
   if (!item) return;
   const back = el('button', 'btn btn-icon bg-back');
@@ -6607,6 +6619,9 @@ function paintDetailHead(item) {
   title.append(h, meta);
   head.append(back, title);
   const actions = el('div', 'bg-dt-actions');
+  // 主の頭の行と同じ並び: 検索・パネル・「…」（狭い幅）。会話を開く ↗ は最後
+  actions.append($('workTocEntry'), $('workBrowserEntry'), $('workMore'));
+  let showOpen = false;
   if (item.source === 'task') {
     // 子の会話へ移るのは矢印のアイコン（名前は title・読み上げ）。「停止」は結果が重いので字のまま
     const open = el('button', 'btn btn-icon bg-open');
@@ -6621,9 +6636,9 @@ function paintDetailHead(item) {
         open.title = t('dialog.work.openOnHost');
         open.setAttribute('aria-label', t('dialog.work.openOnHost'));
         open.onclick = () => openOnHost(item);
-        actions.append(open);
+        showOpen = true;
       }
-    } else actions.append(open);
+    } else showOpen = true;
     // 止めるのは根のタスク（止めれば孫も止まる。ホストの「すべて止める」と同じ）。読み出しで知った孫には出さない
     if (!item.hostDescendant && (['queued', 'running'].includes(item.taskStatus) || item.waiting)) {
       const stop = el('button', 'btn btn-quiet', t('dialog.work.stop'));
@@ -6636,6 +6651,7 @@ function paintDetailHead(item) {
       };
       actions.append(stop);
     }
+    if (showOpen) actions.append(open);
   }
   if (item.group === 'command' && item.live !== false && (item.entry.capabilities ?? capsOf(item.entry.backend)).stopBackground) {
     actions.append(backgroundStopButton(item.entry.sessionId, item.task));
@@ -6656,6 +6672,7 @@ function openDetail(item) {
   bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0, hostOffline: item.host ? item.hostOffline : undefined } : null;
   if (bg.view) bg.view.follow = followGate(bg.view);
   body.replaceChildren();
+  modalToc.reset();
   delete body.dataset.sessionId; delete body.dataset.paneKind;
   // 別の項目へ切り替えたら、前の子の欄は閉じる（映す会話が違う）
   if (filePreview.mounted() === $('workDialog') && chromePanel?.isOpen()) chromePanel.close();
@@ -6959,7 +6976,7 @@ async function taskThread(item) {
 
 /**
  * 読むだけの筋。メインパネルの paintHistory と同じ部品（wrap・userMsg・aiMsg・考えた内容・ツールカード・画像）で、描く先だけを変える。
- * 分岐・編集・再送は出さない（この会話の発言ではない）。走っている子は末尾に稼働表示（弧だけ）を置く。
+ * 発言のメニューは本体と同じ部品（⋯・右クリック・コピー）で、分岐・編集・再送は出さない（この会話の発言ではない。項目は CHILD_MENU が絞る）。走っている子は末尾に稼働表示（弧だけ）を置く。
  * 依頼元（親）は「あなた」と同じ扱いで、最初の「依頼」も追加の指示も自分の発言と同じ部品（Markdown・吹き出し・畳み方・時刻）で描き、
  * 発言者の語だけ「依頼」「追加の指示」にする。まだ子に渡っていない追加の指示は、差し込み待ち（sending）ならメインパネルの作業中の送信と同じ状態の行、
  * 待機（queued。途中送信できない子）なら末尾に時計の印、届かず終わったもの（dropped）は弱い字（ADR 0067。docs/design-system.md「バックグラウンド」）
@@ -6984,7 +7001,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   }
   const put = (node, key) => { const w = wrap(node, key); th.append(w); return w; };
   const parentMsg = (text, at, word) => {
-    const m = stripActions(userMsg(text, { at }));
+    const m = userMsg(text, { at });
     m.querySelector('.who > span').textContent = word;
     return m;
   };
@@ -7588,7 +7605,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); bg.view = null; bg.extra.clear(); bg.scope = null; closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
+$('workDialog').addEventListener('close', () => { workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -8017,6 +8034,7 @@ $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() 
 // 引き継いで戻した行（present kind: 'chromeHandover'）の「Claude に戻しました」の名前
 setChromeHandoverAgentName(() => labelOf(activeBackendId()));
 setChromeClosedSession(() => state.current);
+let modalEntry = null;   // 作業のダイアログの見出しのパネルのボタン（下の setupBrowserEntry。2 つ目）
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
 const chromeWindows = createWindowTable();
@@ -8032,14 +8050,14 @@ const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs
   // 上の列: 窓の表・窓のある子の一覧・依頼待ち・この端末が端末で操作しているか（inapp-browser.md「見るウィンドウを選ぶ」）
   windows:chromeWindows, conversations:() => chromeWindowRows, waiting:handoffWaiting, deviceOperating:id => deviceOperating.has(id),
   // タブの列を描き直したら、頭の行の [N] も数を追う（スマホの入口。承認済み 2026-11-08）
-  onTabsChange:() => browserEntry?.paint(), osActions:() => state.osActions === true,
+  onTabsChange:() => { browserEntry?.paint(); modalEntry?.paint(); }, osActions:() => state.osActions === true,
   // ✖ で閉じたら頭のアイコンへフォーカスを戻す（docs/design-system.md「会話の頭の行のアイコン」）
   focusEntry:() => $('browserEntry')?.focus({ preventScroll:true }) }))));
 const filePreview = setupFilePreview({
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
   getContext: anchor => channelsUi.contextForPanel(anchor) ?? workContext(anchor) ?? ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
-  onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); },
+  onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); modalEntry?.paint(); },
   // 内蔵ブラウザーの開け閉めのばね。頭のアイコンと ✖ の受け渡しが追う（web/panel-handoff.mjs）
   onMotion: (p, phase) => browserEntry?.motion?.(p, phase),
   // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
@@ -8084,19 +8102,21 @@ function modalPaneFor(sessionId) {
   return $('workDialog').open && !bg.scope && Boolean(body.dataset.paneKind) && body.dataset.sessionId === sessionId;
 }
 const modalPane = { wasMain: false, owner: null, opener: null, openerPath: '' };
+/** 欄をダイアログの中へ載せ替える（載せ替え済みなら何もしない）。メインで開いていた欄は閉じて、ダイアログを閉じたら開き直す */
+function mountModalPane() {
+  const dialog = $('workDialog');
+  if (filePreview.mounted() === dialog) return;
+  modalPane.wasMain = rightPane.isOpen();
+  modalPane.owner = state.current;
+  if (modalPane.wasMain) rightPane.close();
+  filePreview.mount(dialog, $('workSplit'));
+}
 /** ダイアログの中で右の欄を開く前の支度: 欄を載せ替え、映す会話をこの子の会話にする */
 async function prepareModalPane(sessionId) {
   if (!modalPaneFor(sessionId)) return;
-  const dialog = $('workDialog');
   await loadBrowserUnify();
   if (!modalPaneFor(sessionId)) return;
-  if (filePreview.mounted() !== dialog) {
-    // メインで開いていた欄は閉じて、ダイアログを閉じたら開き直す
-    modalPane.wasMain = rightPane.isOpen();
-    modalPane.owner = state.current;
-    if (modalPane.wasMain) rightPane.close();
-    filePreview.mount(dialog, $('workSplit'));
-  }
+  mountModalPane();
   if (!chromePanel.isOpen() || chromePanel.sessionId !== sessionId) chromePanel.open(null, { target: sessionId });
 }
 /** ダイアログを閉じた（別の子へ切り替えた）とき: 欄をメインへ戻し、メインで開いていたなら親のタブで開き直す */
@@ -8150,7 +8170,50 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'),
   openEntry: id => { loadBrowserUnify().then(ui => ui.openEntry(id)).catch(error => notify(error?.message || t('tabs:address.failed'))); },
   panelClose: () => document.querySelector('#filePreview .bu-panel-close:not([hidden])'),
   blocked: () => document.body.classList.contains('settings') || !!document.querySelector('dialog[open]') });
-phoneEntryView.addEventListener('change', () => browserEntry?.paint());
+phoneEntryView.addEventListener('change', () => { browserEntry?.paint(); modalEntry?.paint(); });
+// 作業のダイアログの見出しの「パネルを開く」（主の #browserEntry と同じ部品の 2 つ目。見る先は選んでいる子の会話）。
+// 子の会話（task）は子のタブ、サブエージェント（subagent）は親のタブ。委譲先ホストの子は欄を持たないので隠れる（sessionId が無い）
+const modalPaneTarget = () => ($('workDialog').open && !bg.scope && $('workBody').dataset.paneKind ? $('workBody').dataset.sessionId || null : null);
+const modalRightPane = {
+  isOpen: () => { const id = modalPaneTarget(); return Boolean(id) && chromePanel?.isOpen() === true && filePreview.mounted() === $('workDialog') && chromePanel.sessionId === id; },
+  close() { if (modalRightPane.isOpen()) chromePanel.close(); },
+  open(anchor) {
+    const id = modalPaneTarget(); if (!id) return;
+    // 主と同じ入口の規則（操作中なら Chrome のタブ、それ以外は最後に見た方、無ければ新しいタブ）。欄はダイアログの中へ載せ替えてから開く
+    loadBrowserUnify().then(unify => {
+      if (modalPaneTarget() !== id) return;
+      mountModalPane();
+      return unify.openEntry(id, anchor);
+    }).catch(error => notify(error?.message || t('tabs:address.failed'))).finally(() => modalEntry?.paint());
+  },
+};
+const workMore = $('workMore');
+{
+  const entry = setupBrowserEntry({ button: $('workBrowserEntry'),
+    chrome: () => modalRightPane, windows: chromeWindows, pagesOnly: () => chromeLink !== 'connected' && !chromeWindows.has(modalPaneTarget()), getSessionId: modalPaneTarget,
+    getChromeState: id => chromeControlStore.get(id).state,
+    humanHeld: id => tabHolderStore.anyHuman(id),
+    waiting: handoffWaiting,
+    chromeAvailable: () => state.hostCaps?.chromeWindow === true,
+    mobile: () => phoneEntryView.matches,
+    tabs: id => browserUnifyUi?.tabsOf(id) ?? (chromeWindows.has(id) ? [{ targetId: 'window' }] : []),
+    openEntry: () => modalRightPane.open(),
+    panelClose: () => (filePreview.mounted() === $('workDialog') ? document.querySelector('#filePreview .bu-panel-close:not([hidden])') : null),
+    // 近道（Ctrl+Shift+B）は最前面の面に効かせる: 作業のダイアログだけが開いている間はこちら、主の側は dialog[open] で止まる
+    blocked: () => document.body.classList.contains('settings') || [...document.querySelectorAll('dialog[open]')].some(d => d !== $('workDialog')) });
+  // 「…」は主と同じく 700px 以下で、隠れたパネルの入口を持つ
+  modalEntry = entry && { ...entry, paint() { entry.paint(); workMore.hidden = !entry.available(); } };
+  workMore.onclick = () => {
+    const id = modalPaneTarget(); if (!id) return;
+    const r = workMore.getBoundingClientRect();
+    showMenu(r.right, r.bottom + 4, [{
+      label: chromeLink === 'connected' || chromeWindows.has(id) ? t('browser.unifiedEntryLabel') : (modalRightPane.isOpen() ? t('tabs:address.closePanel') : t('tabs:address.openPagePanel')),
+      onClick: () => entry.toggle(workMore) }], null, { alignRight: true });
+  };
+  const watch = new MutationObserver(() => modalEntry?.paint());
+  watch.observe($('workBody'), { attributes: true, attributeFilter: ['data-session-id', 'data-pane-kind'] });
+  watch.observe($('workDialog'), { attributes: true, attributeFilter: ['open'] });
+}
 // いま見ている場所のアドレス（web/view-address.mjs）。通知の一覧・検索・脇の行・スレッドの開閉はここを通り、見ている場所を 1 つで残す。
 // 前の回に見ていた場所は、会話を開く（select が残す）前に読んでおく（起動時に Channels の面の位置を戻す）
 const savedView = readAddress(localStorage);
@@ -9691,7 +9754,7 @@ function flushBackfill() {
  * 履歴の発言 1 件の行。メインパネル（paintHistoryRows）と読むだけの筋（作業の詳細、readonlyThread）で共通。
  * node が null なら描かない。role は次の発言の cont（AI が続けて話したか）を決める。system はシステム側の行（systemHistoryNode）だったか。
  * prev は直前に置いた行。続けて残った中断（ツールの中断と、その直後の中断）は 1 行にする。
- * readonly は読むだけの筋: 操作（コピー・⋯）を外し、発言者をモデル名で出し（どのモデルが答えたかを見分けるため。
+ * readonly は読むだけの筋: システム側の行の操作（コピー・⋯）を外し（人の発言と返答は本体と同じ操作を持つ）、発言者をモデル名で出し（どのモデルが答えたかを見分けるため。
  * 分からなければエージェント名のまま）、ツールカードを state.toolCards に登録せず、委譲のカードに「開く」を付けない
  * （openFromCard はメインパネルの会話を親として子を探すので、別の会話の筋では違う子を開く）。
  * backend は発言に backend が無いときの発言者。sessionId は Web 検索の失敗に接続先の一文を足すときに引く会話。
@@ -9727,7 +9790,6 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     node.append(...toolNodes(cards, subagentToolsOf(m.backend ?? backend ?? activeBackendId())));
     if (m.text) { const b = el("div", "body"); b.dataset.raw = m.text; b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
   }
-  if (readonly) stripActions(node);
   return { node, role: m.role };
 }
 
@@ -10883,6 +10945,18 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
 // 会話の目次と検索（右パネル。狭い画面は下からのシート）。見出しの虫眼鏡と、会話の画面にいるときの Ctrl+F（macOS は ⌘F）で開く
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
+// 作業のダイアログの会話内検索（2 つ目。同じ部品・同じ右の欄。見る先は選んでいる子の会話で、シートも最前面のダイアログの中に出す）
+const workThread = () => $('workBody').querySelector(':scope > .thread.bg-thread');
+const modalToc = createConversationToc({ thread: workThread, log: $('workBody'),
+  // 最新へのボタンと Alt+↑↓・End も主と同じ（作業のダイアログが最前面で開いている間、前面の筋に効く。一覧・右の欄・シートの中では奪わない）
+  nav: createThreadNav({ log: $('workBody'), thread: workThread, frame: $('workBodyFrame'), keys: $('workDialog'), skip: '.work-side, #filePreview, .toc, .toc-sheet', isRunning: () => bg.view?.item?.live === true }),
+  preview: {
+    openPanel: (spec) => { mountModalPane(); return filePreview.openPanel(spec); },
+    close: (...args) => filePreview.close(...args),
+    panelOpen: (key) => filePreview.mounted() === $('workDialog') && filePreview.panelOpen(key),
+  },
+  narrow: navNarrow, button: $('workTocEntry'), host: $('workDialog'), keyScope: $('workDialog'),
+  inertNodes: () => [$('workOpenList'), $('workCloseList'), $('workDialog').querySelector(':scope > header'), $('workSplit')] });
 // 会話の右パネル「git」（ADR 0085）。返答の下の要約行・委譲カードの「変更」・狭い画面の「…」・近道（Ctrl+Shift+G）から開く
 gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),
   jump: jumpToConversation, use: useGitText, worktrees: worktreeOps, canOpen: () => Boolean(state.current && state.git.data),
@@ -10912,7 +10986,7 @@ document.addEventListener('ply-browser-toggle', event => {
   else chromePanel?.open(event.target, { target:event.detail?.sessionId });
 });
 chromePanel.onOpenChange(open => {
-  browserEntry?.paint();
+  browserEntry?.paint(); modalEntry?.paint();
   // ダイアログの中で欄を閉じたら、開いたリンクへフォーカスを戻す（別の所へ移していたら動かさない）
   if (!open && (document.activeElement === document.body || document.activeElement?.closest?.('#filePreview'))) restoreModalOpener();
 });
@@ -10969,12 +11043,15 @@ document.addEventListener('ply-git-open', (event) => {
 document.addEventListener('keydown', event => {
   const mac = /Mac/.test(navigator.platform);
   if (event.defaultPrevented || isComposingKey(event) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f' || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)) return;
-  if (document.body.classList.contains('settings') || document.querySelector('dialog[open]') || !state.current) return;
+  // 最前面の面を探す: 作業のダイアログだけが開いているときは子の会話、ほかのダイアログがあれば探さない、無ければ本体の会話
+  const dialogs = [...document.querySelectorAll('dialog[open]')];
+  const inWork = dialogs.length === 1 && dialogs[0] === $('workDialog') && Boolean(workThread());
+  if (document.body.classList.contains('settings') || (dialogs.length && !inWork) || (!inWork && !state.current)) return;
   const field = event.target;
   // 入力欄（#prompt。Markdown の編集欄は contenteditable。web/md-editor.mjs）と目次の検索欄では奪う。ほかの入力要素の中では奪わない
   if ((field.matches?.('input,textarea') || field.isContentEditable) && !field.closest?.('#prompt, .toc')) return;
   event.preventDefault();
-  toc.focusSearch();
+  (inWork ? modalToc : toc).focusSearch();
 });
 // 脇の会話検索へ移る（Ctrl+Shift+F。macOS は ⌘⇧F）。Ctrl+F は会話の中の検索のまま。脇が閉じていれば開く（狭い画面は引き出し）
 document.addEventListener('keydown', event => {
