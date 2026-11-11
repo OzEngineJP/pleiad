@@ -3268,8 +3268,6 @@
     "waitingChrome": "Waiting for Chrome",
     "waitingCount_one": "{{count}} waiting for approval",
     "waitingCount_other": "{{count}} waiting for approval",
-    "staleDays_one": "{{count}}d",
-    "staleDays_other": "{{count}}d",
     "unsent": "Unsent",
     "unsentDraft": "Unsent · draft",
     "undo": "Undo",

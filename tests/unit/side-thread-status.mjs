@@ -194,6 +194,28 @@ export default async function (t) {
     t.ok('fork の器の中の行は level 4', rowOf(root, 'child')?.getAttribute('aria-level') === '4');
   } finally { familyDom.restore(); }
 
+  // ---- 並びは新しい順だけ。状態が長く動いていない会話も浮かせず、印（◌ と日数）も出さない（docs/design-system.md §4.1「行」）
+  const orderDom = installDom();
+  try {
+    const side = createSide({});
+    const root = orderDom.els.get('groups');
+    const now = new Date().toISOString();
+    const old = new Date(Date.now() - 30 * 86400000).toISOString();
+    const list = [
+      { id: 'fresh', title: 'fresh', status: 'A', lastModified: 3000, statusChangedAt: now },
+      { id: 'idle', title: 'idle', status: 'A', lastModified: 2000, statusChangedAt: old },
+      { id: 'fam', title: 'fam', status: 'A', lastModified: 1000, statusChangedAt: old },
+      { id: 'kin-old', title: 'kin-old', status: 'A', lastModified: 1100, statusChangedAt: old, parent: { sessionId: 'fam' } },
+      { id: 'kin-new', title: 'kin-new', status: 'A', lastModified: 1200, statusChangedAt: now, parent: { sessionId: 'fam' } },
+    ];
+    side.render(list, { statuses: [{ status: 'A' }], currentId: 'kin-old' });
+    const ids = [];
+    walk(sectionOf(root, 'A'), (n) => { if (n.dataset.session) ids.push(n.dataset.session); });
+    t.ok('状態の中は新しい順。器は中で一番新しい行の時刻で並び、根が先頭・枝は新しい順', ids.join() === 'fresh,idle,fam,kin-new,kin-old', ids.join());
+    t.ok('状態が長く動いていない会話にも ◌ と日数を出さない', !find(root, (n) => n.classList.contains('stale')) && !root.textContent.includes('◌'));
+    t.ok('状態が長く動いていない会話も、ほかの行と同じ相対の時刻を出す', !!find(rowOf(root, 'idle'), (n) => n.classList.contains('row-when')));
+  } finally { orderDom.restore(); }
+
   // ---- onSetStatus → サーバーへの振り分け（web/client.mjs を vm で切り出して走らせる）
   {
     const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');

@@ -3184,7 +3184,6 @@
     "waiting": "承認待ち",
     "waitingChrome": "Chrome の操作待ち",
     "waitingCount_other": "承認待ち {{count}} 件",
-    "staleDays_other": "{{count}}日",
     "unsent": "未送信",
     "unsentDraft": "未送信 · 下書きあり",
     "undo": "元に戻す",
