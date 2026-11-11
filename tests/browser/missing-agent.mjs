@@ -597,8 +597,6 @@ try {
     await page.locator('[data-key="backend:codex"] .main').click({ force: true });
     await page.waitForTimeout(500);
     check(await page.locator('#botModelChip').getAttribute('data-backend') === before, '使えない行を押しても、選んでいるエージェントは変わらない', before);
-    await fs.promises.mkdir('D:/dev/pleiad/temporary/screenshots/mna-f6', { recursive: true });
-    await page.screenshot({ path: 'D:/dev/pleiad/temporary/screenshots/mna-f6/bot-agent-field.png' });
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
 
