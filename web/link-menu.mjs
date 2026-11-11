@@ -23,30 +23,41 @@ export const menuTitle = href => (href.length > 44 ? `…${href.slice(-43)}` : h
 
 /** 配線する。showMenu は web/client.mjs の右クリックメニュー。statusLine は左下の一行を出すか（既定はデスクトップ版のホストの画面） */
 export function setupLinkMenu({ showMenu, doc = document, statusLine = desktopHost }) {
-  let status = null, hovered = null;
-
-  function ensureStatus() {
-    if (status) return status;
-    const box = el('div', 'url-status'); box.setAttribute('aria-hidden', 'true');
+  let hovered = null;
+  // 一行を出す面は 2 つ: 会話の列（本体。会話の左下、入力欄の上）と、作業のダイアログの子の会話（本文の枠の左下）。
+  // ダイアログは最前面に出て本体の左下が隠れるので、面ごとに一行を持つ
+  const surfaces = new Map();
+  const surfaceOf = link => {
+    if (link.closest('#log')) return { key: 'log', host: () => doc.querySelector('main') ?? doc.body, above: () => doc.getElementById('composer') };
+    if (link.closest('#workBody')) return { key: 'work', host: () => doc.getElementById('workBodyFrame'), above: () => null };
+    return null;
+  };
+  function ensureStatus(surface) {
+    const host = surface.host();
+    let box = surfaces.get(surface.key);
+    if (box && box.parentElement === host) return box;
+    box?.remove();
+    box = el('div', 'url-status'); box.setAttribute('aria-hidden', 'true');
     box.append(icon('M14 4h6v6M20 4l-9 9M18 14v5H5V6h5'), el('span', 'dest'), el('span', 'u'));
-    (doc.querySelector('main') ?? doc.body).append(box);
-    status = box;
+    host.append(box);
+    surfaces.set(surface.key, box);
     return box;
   }
   function paint(link) {
-    // 会話の列の中だけ。ほかの面（右パネル・ダイアログ）には左下の場所が無い
-    if (!link.closest('#log')) return;
+    // 会話の列と、作業のダイアログの子の会話だけ。ほかの面（右パネル・そのほかのダイアログ）には左下の場所が無い
+    const surface = surfaceOf(link);
+    if (!surface) return;
     if (!statusLine()) return hide();
     const [label, url] = statusParts({ href: link.href });
-    const box = ensureStatus();
+    const box = ensureStatus(surface);
     box.querySelector('.dest').textContent = label;
     box.querySelector('.u').textContent = url;
     // 入力欄の上に置く（入力欄の高さは複数行で変わる）
-    const composer = doc.getElementById('composer'), main = box.parentElement;
-    if (composer && main?.getBoundingClientRect) box.style.bottom = `${Math.max(0, main.getBoundingClientRect().bottom - composer.getBoundingClientRect().top) + 8}px`;
+    const above = surface.above(), host = box.parentElement;
+    if (above && host?.getBoundingClientRect) box.style.bottom = `${Math.max(0, host.getBoundingClientRect().bottom - above.getBoundingClientRect().top) + 8}px`;
     box.classList.add('on');
   }
-  const hide = () => { hovered = null; status?.classList.remove('on'); };
+  const hide = () => { hovered = null; for (const box of surfaces.values()) box.classList.remove('on'); };
   const enter = link => { hovered = link; paint(link); };
   const leave = link => { if (hovered === link) hide(); };
 
