@@ -562,6 +562,8 @@ const SUITES = [
   './unit/message-peek.mjs',
   // 発言のメニュー（⋯・右クリック・キーボード）・長い発言の畳みを開く・送った直後の画像の枠（ADR 0067）
   './unit/message-actions.mjs',
+  // 会話内検索（目次）を面ごとに持てる: 本体とダイアログの目次で keydown・シート・inert が混ざらない（ADR 0315 段 3）
+  './unit/conversation-toc-instances.mjs',
   // 送り直し（ADR 0102・0178）: 消えるものの見立て・帯の文・編集中の引用と変更の判定・巻き戻しの印と提示の切り取り
   './unit/resend-band.mjs',
   // Claude の巻き戻し（resumeSessionAt・resumeDropsTurn を resume に添える。拒否は呼び出し側へ）: SDK の query を身代わりに
