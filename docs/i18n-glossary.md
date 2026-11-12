@@ -32,6 +32,7 @@
 | 会話のブラウザー（その会話の Chrome のウィンドウ） | conversation browser（Chrome window） |
 | ブラウザー（会話の Chrome を開く入口。ホストの画面もリモートも同じ） | Browser |
 | 既定のブラウザー | default browser |
+| 引き継ぐ（AI が操作している Chrome のタブの映像を、人の操作にするボタン。ADR 0320） | Take over |
 | 外部の読み込み / 許可したサイト / 止めた出どころ | External resources / Allowed sites / Blocked origins |
 | 一度だけ / このサイトは常に / 断る | Just once / Always for this site / Deny |
 | 常に / 毎回聞く | Always / Ask each time |

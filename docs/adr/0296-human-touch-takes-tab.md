@@ -1,6 +1,6 @@
 # 0296 人が触ったタブは人の操作になり、60 秒触らなければ AI に戻す。右のパネルとスマホの映像から操作できるようにする
 
-- 状態: 承認済み（2026-11-08。main に入れる直前に番号を確定）
+- 状態: 承認済み（2026-11-08。main に入れる直前に番号を確定）。「映像に触れたら人の操作になる」と「引き継ぐのボタンを置かない」は [ADR 0320](0320-hand-over-ai-tab.md) が置き換えた
 - 関連: [ADR 0294](0294-one-chrome-window-per-conversation.md)、[ADR 0148](0148-agent-browser-in-chrome.md)（一部置換）、[ADR 0154](0154-agent-window-hidden-off-screen.md)、[ADR 0297](0297-screencast-ack-paced-quality.md)
 
 ## 状況
