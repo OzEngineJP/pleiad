@@ -42,16 +42,15 @@ import { waitsForNextTurn, injectTaskInstructions } from "./task-instructions.mj
  *   nameTags   発言者の語を 依頼 / あなた / 追加の指示 にする（userWord）
  *   instructions  追加の指示の行（instructionRow）を出す
  *   liveActivity  走っている子は末尾に稼働表示（弧だけ）を置く（activityRow）
- *   yieldToReader  末尾へ付いていく間に、読んでいる人が上へ動かしたら追従をやめる（作業のダイアログ。主は従来どおり）
  */
 const ROLES = {
   main: {
     branches: true, ownSpine: false, readonly: false, menu: null, edit: true, resend: true, gitBadge: true,
-    skipPresent: [], nameTags: false, instructions: false, liveActivity: false, yieldToReader: false,
+    skipPresent: [], nameTags: false, instructions: false, liveActivity: false,
   },
   child: {
     branches: false, ownSpine: true, readonly: true, menu: CHILD_MENU, edit: false, resend: false, gitBadge: false,
-    skipPresent: ["git", "worktree"], nameTags: true, instructions: true, liveActivity: true, yieldToReader: true,
+    skipPresent: ["git", "worktree"], nameTags: true, instructions: true, liveActivity: true,
   },
 };
 
@@ -78,12 +77,8 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
   function followBottom(ms = 320) {
     if (replaying) return;
     const end = performance.now() + ms;
-    let put = -1;
     const tick = () => {
-      // 子の面（作業のダイアログ）は、読んでいる人が上へ動かしたら、そこで追従をやめる（流れが 250ms おきでも、読んでいる位置を保つ）
-      if (config.yieldToReader && put >= 0 && log.scrollTop < put - 4) return;
       log.scrollTop = log.scrollHeight;
-      put = log.scrollTop;
       if (performance.now() < end) requestAnimationFrame(tick);
     };
     tick();
