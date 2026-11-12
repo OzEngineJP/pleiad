@@ -991,6 +991,8 @@ const SUITES = [
   './unit/browser-unify-pages.mjs',
   './unit/visualize-card-mouse.mjs',
   './unit/browser-pages.mjs',
+  // ファイルのツリーが読めなかったとき: 描き直しのたびに読み直さない・欄の中の「再試行」・パスと会話が替わったら読み直す
+  './unit/browser-tree.mjs',
 
   // --- B2 映像からの操作・スマホの入力 ---
   './unit/phone-input.mjs',
