@@ -226,7 +226,7 @@ export default async function (t) {
     let clock = 0;
     const state = { current: "s", base: 0, presentBase: 0, messages, presents, loadingSession: false, busy: false, ...extra };
     const context = vm.createContext({
-      state, buildItems, inlineAttachments,
+      state, buildItems, inlineAttachments, child: null,
       thread: { querySelector: () => null }, log: { scrollTop: 0, scrollHeight: 100, style: {} },
       atBottom: () => true, holdReading: () => () => {},
       paintHistory: (_k, _r, older) => { painted.push({ ...older.range, prevRole: older.prevRole, before: context.paintBefore }); clock += msPerItem * (older.range.to - older.range.from); return []; },
@@ -243,7 +243,7 @@ export default async function (t) {
     bindHistoryState(state, context);
     vm.runInContext([
       constant("FIRST_PAINT_ROWS"), constant("BACKFILL_MIN"), constant("BACKFILL_MS"),
-      ...["historyRole", "roleBefore", "paintedAt", "paintedFloor", "splitFirstPaint", "backfillChunk", "scheduleBackfill", "stopBackfillTimer", "stepBackfill", "finishBackfill", "cancelBackfill", "flushBackfill"].map(cut),
+      ...["itemsOf", "historyRole", "roleBefore", "paintedAt", "paintedFloor", "splitFirstPaint", "backfillChunk", "scheduleBackfill", "stopBackfillTimer", "stepBackfill", "finishBackfill", "cancelBackfill", "flushBackfill"].map(cut),
       "this.api = { historyRole, roleBefore, paintedAt, paintedFloor, splitFirstPaint, backfillChunk, stepBackfill, cancelBackfill, flushBackfill, scheduleBackfill, get backfill() { return backfill; }, set backfill(v) { backfill = v; } };",
     ].join("\n"), context);
     /** idle の仕事を 1 つずつ空にする（上限つき）。走らせた回数を返す */

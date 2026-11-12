@@ -23,6 +23,22 @@ const work = path.join(base, 'work');
 fs.mkdirSync(work);
 const shots = process.env.WORK_DIALOG_KEEP_SHOTS;
 const ab = (...args) => execFileSync(process.env.AGENT_BROWSER_BIN || 'agent-browser', args, { encoding: 'utf8', timeout: 60_000 });
+
+// 利用者の実際のホイール（信頼された wheel。CDP の Input.dispatchMouseEvent）を、要素の中央に送る。
+// agent-browser の mouse wheel は座標を持てず (0,0) に届くので、会話の窓の CDP へ直に送る
+const cdpWheel = async (x, y, dy) => {
+  const ws = new WebSocket(ab('get', 'cdp-url').trim());
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  let id = 0; const pending = new Map();
+  ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && pending.has(d.id)) pending.get(d.id)(d); };
+  const send = (method, params, sessionId) => new Promise((res) => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params, sessionId })); });
+  try {
+    const t = (await send('Target.getTargets', {})).result.targetInfos.find(x => x.type === 'page' && x.url.includes(`127.0.0.1:${server.port}`));
+    const { sessionId } = (await send('Target.attachToTarget', { targetId: t.targetId, flatten: true })).result;
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId);
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy }, sessionId);
+  } finally { ws.close(); }
+};
 const evaluate = (fn, arg) => {
   const code = `(${fn.toString()})(${JSON.stringify(arg) ?? ''})`;
   return JSON.parse(ab('eval', '--json', '--base64', Buffer.from(code).toString('base64'))).data.result;
@@ -93,7 +109,11 @@ try {
   console.log(`parent=${parent} child=${child.childId} other=${other.childId}`);
   await sleep(800);
 
-  const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
+  // CHILD_THREAD=reread: 子の本文を従来の読み直しで描く（ADR 0319 段 6-6 の切り替え）。既定は子の役の実例（live）
+  const live = process.env.CHILD_THREAD !== 'reread';
+  const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}${live ? '' : '&childThread=reread'}`;
+  // まとまりの件数: live は発言ごとに切れる（メインと同じ。台本の最初のまとまりは 3 件）、reread は発言をまたいで 6 件
+  const BUNDLE = live ? 3 : 6;
   ab('set', 'viewport', '1280', '520');
   ab('open', pageUrl);
   await wait(() => evaluate(() => !!document.querySelector('#groups .row[data-session]')), 'session list');
@@ -101,13 +121,14 @@ try {
   evaluate(id => document.querySelector(`#groups .row[data-session="${id}"]`).click(), parent);
   await wait(() => evaluate(() => document.querySelectorAll('.tc[data-tool$="ply_delegate"][data-task-id] .tc-go').length >= 2), 'delegate cards');
 
-  // 印を付けてから押すまでに一覧・カードが描き直されると、印ごと要素が消える。そのときは付け直して押す（押した後で消えたのではない）
+  // 印を付けてから押すまでに一覧・カードが描き直されると、印ごと要素が消える。末尾へ付いていく追従（メインと同じ 320ms の合わせ直し）が押す点を動かすと、見出しが覆う。
+  // どちらも付け直して押す（押した後で起きたのではない）
   const clickOn = (sel, label) => {
     for (let tries = 0; ; tries++) {
       const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
       assert.ok(ok, `target exists: ${label}`);
       try { ab('click', '[data-probe="pick"]'); return; }
-      catch (e) { if (tries >= 3 || !/Element not found/.test(String(e?.message))) throw e; }
+      catch (e) { if (tries >= 12 || !/Element not found|is covered by/.test(String(e?.message))) throw e; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120); }
       finally { evaluate(() => document.querySelector('[data-probe="pick"]')?.removeAttribute('data-probe')); }
     }
   };
@@ -171,7 +192,7 @@ try {
     document.addEventListener('click', () => log.clicks.push(now()), true);
     let card = false, waitRow = false, tcs = -1;
     const note = () => {
-      const c = !!document.querySelector('#workBody .mw[data-key^="perm:"]');
+      const c = !!document.querySelector('#workBody :is(.mw[data-key^="perm:"], .tc-appr)');
       if (c !== card) { card = c; log.card.push({ t: now(), shown: c }); }
       const w = !!document.querySelector('#workList .bg-waiting');
       if (w !== waitRow) { waitRow = w; log.waitRow.push({ t: now(), shown: w }); }
@@ -186,7 +207,7 @@ try {
 
   // ---- 1. 承認を待っている子を開く ----
   await openCard(child.taskId, 'child');
-  await wait(() => evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length >= 6 && !!document.querySelector('#workBody .mw[data-key^="perm:"]')), 'thread with approval card');
+  await wait(() => evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length >= 6 && !!document.querySelector('#workBody :is(.mw[data-key^="perm:"], .tc-appr)')), 'thread with approval card');
   await wait(() => evaluate(() => !!document.querySelector('#workList .bg-waiting')), 'list row says waiting');
   const head1 = evaluate(() => document.querySelector('#workHead .bg-elapsed')?.textContent ?? null);
   console.log('PASS: the waiting child shows the approval card and a "waiting" list row; elapsed =', head1);
@@ -197,14 +218,14 @@ try {
   await sleep(700);   // 開く動き（240ms）が終わってから位置を置く
   const scrollable = evaluate(() => { const w = document.getElementById('workBody'); w.scrollTop = 90; return w.scrollHeight > w.clientHeight + 90 && w.scrollTop === 90; });
   assert.ok(scrollable, 'the detail body can be scrolled');
-  const shape = () => evaluate(() => {
+  const shape = () => evaluate((n) => {
     const b = document.querySelector('#workBody .bundle');
     return {
       expanded: b?.querySelector('.rhead')?.getAttribute('aria-expanded'),
-      detail: [...(b?.querySelectorAll('.tc') ?? [])].slice(0, 6).map(c => c.querySelector('.tc-details')?.open ? 1 : 0).join(''),
+      detail: [...(b?.querySelectorAll('.tc') ?? [])].slice(0, n).map(c => c.querySelector('.tc-details')?.open ? 1 : 0).join(''),
       top: document.getElementById('workBody').scrollTop,
     };
-  });
+  }, BUNDLE);
   // 位置を置いた直後に描き直しや高さの変化で動くことがある。置き直して落ち着いた形を基準にする
   let before = shape();
   for (let tries = 0; before.top !== 90 && tries < 5; tries++) {
@@ -212,16 +233,23 @@ try {
     await sleep(250);
     before = shape();
   }
-  assert.deepEqual(before, { expanded: 'true', detail: '001000', top: 90 }, 'setup');
+  assert.deepEqual(before, { expanded: 'true', detail: live ? '001' : '001000', top: 90 }, 'setup');
   // 読み直し = 筋の要素が作り直されたこと
   const reread = async (label, ms = 8000) => {
+    if (live) {
+      // live: 筋は作り直されない。目印が残ったまま、続きの行が増える
+      evaluate(() => { document.querySelector('#workBody .bg-thread').dataset.stale = '1'; window.__tc0 = document.querySelectorAll('#workBody .bg-thread .tc').length; });
+      await wait(() => evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length > window.__tc0), `grows: ${label}`, ms);
+      assert.equal(evaluate(() => document.querySelector('#workBody .bg-thread')?.dataset.stale), '1', 'the thread element is not rebuilt');
+      return;
+    }
     evaluate(() => { document.querySelector('#workBody .bg-thread').dataset.stale = '1'; });
     await wait(() => evaluate(() => !document.querySelector('#workBody .bg-thread')?.dataset.stale), `reread: ${label}`, ms);
   };
 
   // ---- 2. 承認を押す: カードがすぐ消え、子の続きが 1 秒ほどで増える ----
   const tcBefore = evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length);
-  await clickUntil('#workBody .mw[data-key^="perm:"] .btn-primary', 'allow gate1', () => evaluate(() => !document.querySelector('#workBody .mw[data-key^="perm:"]')));
+  await clickUntil('#workBody :is(.mw[data-key^="perm:"], .tc-appr) .btn-primary', 'allow gate1', () => evaluate(() => !document.querySelector('#workBody :is(.mw[data-key^="perm:"], .tc-appr)')));
   const clickedAt = evaluate(() => window.__log.clicks.at(-1));
   await wait(() => evaluate(n => document.querySelectorAll('#workBody .bg-thread .tc').length >= n + 3, tcBefore), 'the thread grows after the approval', 8000);
   let L = log();
@@ -235,24 +263,34 @@ try {
   // ---- 3. 流れている間: 読み直しを数え、位置・開いたまとまり・フォーカスが変わらない ----
   const streamFrom = nowMs();
   const sample = [];
-  // 開いたまとまりに戻る位置を置き直す（承認のカードが消えて高さが変わった）
-  evaluate(() => { document.getElementById('workBody').scrollTop = 90; });
-  await sleep(300);
+  // 利用者が上へ読み戻る（本物のホイールを 3 回）。置くのは 1 回だけで、そのあとの位置が保たれるかを見る
+  const gap = () => evaluate(() => { const b = document.getElementById('workBody'); return Math.round(b.scrollHeight - b.clientHeight - b.scrollTop); });
+  const rect = evaluate(() => { const r = document.getElementById('workBody').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; });
+  for (let k = 0; k < 3; k++) await cdpWheel(rect.x, rect.y, -180);
+  await sleep(150);
   const pinned = shape();
-  assert.equal(pinned.top, 90, 'reading position re-set');
+  const gap1 = gap();
+  await sleep(450);
+  const pinned2 = shape();
+  const held = pinned.top === pinned2.top && gap1 > 40 && gap() > 40;
+  console.log(`wheel-up result (${live ? 'live' : 'reread'}): top ${pinned.top} -> ${pinned2.top}, gap to the end ${gap1} -> ${gap()}, held=${held}`);
+  assert.ok(held, `reading position kept after the wheel-up: ${JSON.stringify({ pinned, pinned2 })}`);
   evaluate(() => document.querySelector('#workBody .bundle .rhead').focus({ preventScroll: true }));
   for (let i = 0; i < 3; i++) {
     await reread(`stream ${i}`);
     sample.push(shape());
     const focusKept = evaluate(() => document.activeElement === document.querySelector('#workBody .bundle .rhead'));
-    assert.deepEqual(sample.at(-1), pinned, `round ${i}: still open and at the same position`);
+    assert.deepEqual(sample.at(-1), pinned2, `round ${i}: still open and at the same position`);
     assert.ok(focusKept, `round ${i}: the focus stays on the bundle head`);
   }
   const reads = rereads(child.childId, streamFrom);
   const spanMs = nowMs() - streamFrom;
   console.log(`PASS: ${reads} re-reads in ${spanMs}ms while streaming; open bundle/detail, position and focus kept`);
-  assert.ok(reads >= 3, 'the thread is re-read by events');
-  assert.ok(reads <= Math.ceil(spanMs / 350) + 2, `re-reads are throttled (${reads} in ${spanMs}ms)`);
+  if (live) assert.equal(reads, 0, 'live: no loadSession while streaming (the window was read once at open)');
+  else {
+    assert.ok(reads >= 3, 'the thread is re-read by events');
+    assert.ok(reads <= Math.ceil(spanMs / 350) + 2, `re-reads are throttled (${reads} in ${spanMs}ms)`);
+  }
   evaluate(() => document.activeElement?.blur?.());
 
   // 画面の撮影: 流れている間の 1280 と 360
@@ -292,12 +330,13 @@ try {
   assert.equal(heldState.stale, '1', 'no re-read while text is selected');
   assert.ok(heldState.sel.includes('ここまで調べました'), 'the selection is kept');
   evaluate(() => getSelection().removeAllRanges());
-  await wait(() => evaluate(() => !document.querySelector('#workBody .bg-thread')?.dataset.stale), 'the held re-read runs once the selection is gone', 5000);
+  if (live) assert.equal(evaluate(() => document.querySelector('#workBody .bg-thread')?.dataset.stale), '1', 'live: the thread is never rebuilt, so the mark stays');
+  else await wait(() => evaluate(() => !document.querySelector('#workBody .bg-thread')?.dataset.stale), 'the held re-read runs once the selection is gone', 5000);
   console.log('PASS: selected text is not re-read away; the held read runs after the selection is released');
 
   // ---- 5. 次の承認のカードも出来事からすぐ出て、押せばすぐ消える ----
   await wait(() => log().perm.some(p => p.tool === 'Write' && p.sessionId === child.childId), 'gate2 permission reached the page', 60_000);
-  await wait(() => evaluate(() => !!document.querySelector('#workBody .mw[data-key^="perm:"]')), 'gate2 card in the dialog', 8000);
+  await wait(() => evaluate(() => !!document.querySelector('#workBody :is(.mw[data-key^="perm:"], .tc-appr)')), 'gate2 card in the dialog', 8000);
   L = log();
   const gate2Perm = L.perm.find(p => p.tool === 'Write' && p.sessionId === child.childId); // 親の側に写った同じ承認（別の id）を拾わない
   const permAt = gate2Perm.t;
@@ -306,7 +345,7 @@ try {
   assert.ok(L.waitRow.some(x => x.shown && x.t >= permAt - 50 && x.t - permAt <= 1500), 'the list row says waiting promptly');
   const head2 = evaluate(() => document.querySelector('#workHead .bg-elapsed')?.textContent ?? null);
   console.log(`PASS: second approval card ${shownAt - permAt}ms after the event; heading elapsed ${head1} -> ${head2}`);
-  clickOn('#workBody .mw[data-key^="perm:"] .btn-primary', 'allow gate2');
+  clickOn('#workBody :is(.mw[data-key^="perm:"], .tc-appr) .btn-primary', 'allow gate2');
   const clicked2 = evaluate(() => window.__log.clicks.at(-1));
   // 行の数では比べない（まとまりが畳まれると数が減り、前の数に追いつくまで増えないことがある）。承認 2 のあとにしか出ない stream-c の行が 2 つ出るのを待つ
   await wait(() => evaluate(() => [...document.querySelectorAll('#workBody .bg-thread .tc')].filter(n => n.textContent.includes('stream-c')).length >= 2), 'the thread grows after the second approval', 8000);
@@ -350,8 +389,8 @@ try {
   await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === child.childId, { ms: 30_000 }).catch(() => {});
   await openCard(child.taskId, 'child again');
   await wait(() => evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length >= 6), 'child thread again');
-  const reopened = evaluate(() => ({ expanded: document.querySelector('#workBody .bundle .rhead')?.getAttribute('aria-expanded') ?? null, detail: [...document.querySelectorAll('#workBody .bundle .tc')].slice(0, 6).map(c => c.querySelector('.tc-details')?.open ? 1 : 0).join('') }));
-  assert.deepEqual(reopened, { expanded: 'false', detail: '000000' }, 'reopening starts closed (nothing carried over)');
+  const reopened = evaluate((n) => ({ expanded: document.querySelector('#workBody .bundle .rhead')?.getAttribute('aria-expanded') ?? null, detail: [...document.querySelectorAll('#workBody .bundle .tc')].slice(0, n).map(c => c.querySelector('.tc-details')?.open ? 1 : 0).join('') }), BUNDLE);
+  assert.deepEqual(reopened, { expanded: 'false', detail: '0'.repeat(BUNDLE) }, 'reopening starts closed (nothing carried over)');
   await sleep(1200);
   const dropAt = nowMs();
   evaluate(() => window.__ws.close());

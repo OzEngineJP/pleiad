@@ -667,6 +667,8 @@ const SUITES = [
   './unit/history-retain.mjs',
   // 会話の本文の面の子の会話の役（ADR 0319 段 6-5）: 発言者の語・出さないもの・追加の指示の行・稼働表示（作業のダイアログと同じ事実）
   './unit/conversation-view-child.mjs',
+  // 作業のダイアログの子の実例への出来事の振り分け（ADR 0319 段 6-6）: 主が同じ会話なら主・別の会話と閉じたあとは描かない・読み込み中は取り置く
+  './unit/modal-child-routing.mjs',
   // loadSession の差分（ADR 0062）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
   './unit/history-sync.mjs',
   './unit/server-history-diff.mjs',

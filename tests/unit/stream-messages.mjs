@@ -131,7 +131,7 @@ export default async function (t) {
   t.ok('メインパネルと詳細は発言 1 件を historyRow で描く', main.includes('historyRow(it.m') && readonly.includes('historyRow(it.m')
     && !main.includes('renderToolCall') && !readonly.includes('renderToolCall'));
   t.ok('詳細は readonly: toolCards に登録せず、委譲のカードに「開く」を付けない',
-    readonly.includes('readonly: true') && row.includes('if (c.id && !readonly) toolCardMap().set') && row.includes('if (!readonly) linkDelegateCard'));
+    readonly.includes('readonly: true') && row.includes('if (c.id && (!readonly || linkCards)) toolCardMap().set') && row.includes('if (!readonly || linkCards) linkDelegateCard'));
   t.ok('接続先の一文は描いている会話で引く', row.includes('noteEndpointFailure(card, c.result, sessionId)') && task.includes('sessionId: item.childId'));
 
   // ---- サーバー越し: 走っている子を live で読むと、途中のツールと本文が出来事で返る

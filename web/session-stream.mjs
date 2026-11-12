@@ -10,6 +10,8 @@ export const streamEvents = new Set([
 export function createSessionLoads() {
   const pending = new Set();
   return {
+    /** 持っている読み込みを全部捨てる（実例を閉じるとき。流し直しは active() が偽になって止まる） */
+    cancel() { pending.clear(); },
     begin(id) {
       const load = { id, events: [] };
       pending.add(load);

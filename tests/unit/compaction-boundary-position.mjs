@@ -88,7 +88,7 @@ export default async function (t) {
   const thread = el('div', 'thread');
   const state = { compactions: [], busy: false, current: 's' };
   const context = vm.createContext({
-    state, thread, el, userMsg, t: k => k, noop, log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
+    state, thread, el, userMsg, t: k => k, noop, liveUserWord: () => null, log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
     atBottom: () => false, relayoutBranches: noop, canCompactHere: () => false, compactNumber: String, paintContextStrip: noop,
     historyPane: { painting: false, paintBefore: null }, replaying: false, isBusy: () => state.busy, paintedFloor: () => 0, provisionalByMessage: new Map(),
     // 本文の面（view）の中の名前と、その面が呼ぶ hooks

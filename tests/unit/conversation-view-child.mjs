@@ -4,7 +4,7 @@
 //   - 分岐・編集・再送・git の印は出さない。発言のメニューは CHILD_MENU。git・作業ブランチの提示は出さない
 //   - 追加の指示の行は 4 つの状態（差し込み待ち・待機・届かず終わった・届いた）で変わる。待機は時計の印、次のターンまで届かないなら字を添える
 //   - 走っている子は末尾に稼働表示（弧だけ）。ホストに届かない間・承認を待つ間は言い方が替わる
-// 画面ではまだ使わない（作業のダイアログは段 6-6 まで読み直しの経路）。ここでは設定と、設定が決める行の形を確かめる。
+// 段 6-6 から、作業のダイアログの「委譲の子」の本文はこの実例が描く（読み直しの経路は childThreadRenderer: 'reread' で残る）。ここでは設定と、設定が決める行の形・項目の足し引きを確かめる。
 import { createConversationView } from "../../web/conversation-view.mjs";
 import { readConversationView, readLiveTurn, readHistoryPane } from "../lib/cut-source.mjs";
 import { CHILD_MENU } from "../../web/message-actions.mjs";
@@ -138,4 +138,30 @@ export default async function (t) {
     offline.querySelector(".txt")?.textContent === tr("dialog.work.hostOfflineThread") && offline.querySelector(".el")?.textContent === tr("dialog.work.hostOfflineCatchUp", { time: "12:34" })
     && offline.querySelector(".activity-tip")?.children[0]?.getAttribute("aria-label") === tr("dialog.work.hostOfflineMark"));
   t.ok("ホストに届かず時刻も無いときは、時刻なしの言い方", child.activityRow({ hostOffline: {} }).querySelector(".el")?.textContent === tr("dialog.work.hostOfflineCatchUpNoTime"));
+
+  // ---------------------------------------------------------------- 項目の足し引き（子の会話の履歴を描く前）
+  const msgs = [
+    { role: "user", text: "調べて", at: "2026-01-01T00:00:00Z", uuid: "u1" },
+    { role: "assistant", text: "はい", at: "2026-01-01T00:00:10Z", uuid: "a1" },
+    { role: "user", text: "もう一つ", at: "2026-01-01T00:01:00Z", uuid: "n1" },
+    { role: "assistant", text: "了解", at: "2026-01-01T00:01:10Z", uuid: "a2" },
+  ];
+  const itemsOf = (messages, base = 0) => messages.map((m, i) => ({ kind: "msg", m, mi: base + i }));
+  const kinds = (items) => items.map(it => (it.kind === "msg" ? `m${it.mi}` : it.kind === "instruction" ? `i:${it.instruction.id}` : it.kind));
+  const c1 = makeView("child").view;
+  t.ok("指示も依頼の欠けも無ければ、発言の項目のまま", kinds(c1.childItems(itemsOf(msgs), msgs, 0)).join() === "m0,m1,m2,m3");
+  const c2 = makeView("child").view;
+  c2.setChild({ prompt: "調べて" });
+  t.ok("最初の発言が人の発言でないとき（記録に依頼が無い）、依頼の行を先頭に足す。base > 0 では足さない",
+    kinds(c2.childItems(itemsOf(msgs.slice(1)), msgs.slice(1), 0)).join() === "request,m0,m1,m2"
+    && kinds(c2.childItems(itemsOf(msgs.slice(1), 5), msgs.slice(1), 5)).join() === "m5,m6,m7");
+  const c3 = makeView("child").view;
+  c3.setInstructions([{ id: "i1", text: "もう一つ", at: Date.parse("2026-01-01T00:01:00Z"), state: "delivered", nativeId: "n1" }]);
+  t.ok("届いた指示の履歴の行（nativeId が一致して本文も同じ）は省き、指示の行が受付の位置に出る",
+    kinds(c3.childItems(itemsOf(msgs), msgs, 0)).join() === "m0,m1,i:i1,m3");
+  const c4 = makeView("child").view;
+  c4.setInstructions([{ id: "i2", text: "続けて", at: Date.parse("2026-01-01T00:05:00Z"), state: "sending" }]);
+  t.ok("まだ渡っていない指示は、受付時刻の位置（末尾）に出る", kinds(c4.childItems(itemsOf(msgs), msgs, 0)).join() === "m0,m1,m2,m3,i:i2");
+  t.ok("git の要約の提示は出さず、ほかの提示は残す", kinds(c1.childItems([...itemsOf(msgs), { kind: "present", p: { kind: "git" }, pi: 0, anchorMi: -1 }, { kind: "present", p: { kind: "html" }, pi: 1, anchorMi: -1 }], msgs, 0)).join() === "m0,m1,m2,m3,present");
+  t.ok("実例を閉じても落ちない（取り置き・仕事を止める）", (() => { c1.dispose(); return true; })());
 }

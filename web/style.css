@@ -2454,14 +2454,14 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 
 /* 承認済み（2026-10-22）: スマホの会話の文字と左右の余白。 */
 @media (max-width:700px){
-  #log .m > .body{font-size:var(--fs-body);line-height:1.7}
-  #log .m.user > .body{padding-left:8px;padding-right:8px}
+  :is(#log,.bg-thread) .m > .body{font-size:var(--fs-body);line-height:1.7}
+  :is(#log,.bg-thread) .m.user > .body{padding-left:8px;padding-right:8px}
   :is(.mw.node,.mw.activity) .mw-gutter::before{left:8.5px}
   .mw.card .mw-gutter::before{left:6.5px}
   /* 経過は文言のすぐ後ろ。短い文言（「考えている」）に 8 字ぶんの幅を取らない（行は 300px ほどあり、8 字より狭くはならない） */
   .m.activity .txt{min-width:0}
   .m.activity .el{margin-left:0}
-  .bg-thread > .spine{left:-8px}
+  .bg-thread > .spine.spine-static{left:-8px}   /* 静的な線（読み直しの描き方）だけ。実例の筋は主と同じく layoutBranchSpine が x=12 に引く */
   .branch-tip{transform:translateX(-12px)}
   .branch-ring{margin-left:4px}
   .cbox{padding-left:2px;padding-right:2px}

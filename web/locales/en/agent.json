@@ -1975,6 +1975,7 @@
       "historyRecall": "Whether pressing Up at the start of the message box recalls sent messages (true / false).",
       "suggestions": "Whether a predicted next message is shown in the empty message box after a reply (true / false). Only honored by agents that can produce it (capability promptSuggestions); where Pleiad generates it after the turn, making it spends a little usage."
     },
+    "childThreadRenderer": "How the delegated-child dialog draws its body (live / reread; default live). live draws events directly; reread re-reads the whole history on every event as before. Not shown in the settings screen.",
     "model": "The default model for new conversations.",
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",
