@@ -114,8 +114,9 @@ export default async function (t) {
         a = await agent(cdpUrl);
 
         // 人の操作になるタブと、見ているだけの別のタブ（スマホは別のタブを見ている間は行を出さない）
-        const held = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+        // 後に開いたほうがエージェントのタブ（AI のタブ）。人が引き継ぐ（[引き継ぐ]）タブは後のほう
         const other = phone ? (await a.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId : null;
+        const held = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
 
         // 実の browser-unify を、サーバーへの本物の cmd と本物の便りで組み立てる。
         // chrome() は画面の枠（右の欄・全画面のブラウザー）の代わり。mountBrowserChrome には根を渡す
@@ -137,6 +138,10 @@ export default async function (t) {
         await c.cmd('browserScreencast', { sessionId: id, source: 'chrome', width: 400, height: 300, ...(phone ? { device: 'phone' } : {}) });
         await c.cmd('chromePinWindow', { sessionId: id, windowId: null, tabId: held });
         await until(() => chrome.browser.screencasting(held), 10000, 'screencasting');
+        // AI のタブの映像は見るだけ（ADR 0321）。[引き継ぐ]（chromeTakeOver by: screen）を押してから触れる
+        const refused = await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: held, input: { type: 'tap', x: 3, y: 3 } }).then(() => null, error => error?.code);
+        t.ok(`${variant}: 引き継ぐ前の AI のタブの映像への入力はサーバーが断る`, refused === 'view-only', String(refused));
+        await c.cmd('chromeTakeOver', { sessionId: id, by: 'screen', tabId: held });
         await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: held, input: { type: 'tap', x: 3, y: 3 } });
         await c.waitFor(e => e.type === 'permissionUpdate' && e.browserHandoff?.state === 'operating', { from, ms: 10000 });
         await until(() => fixture.mounted?.querySelector('.b2-control'), 10000, 'badge row');

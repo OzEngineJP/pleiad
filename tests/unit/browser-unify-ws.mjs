@@ -31,13 +31,14 @@ export default async function(t) {
     await Promise.all([work, dataDir, profile].map(dir => fs.mkdir(dir)));
     const file = path.join(work, 'notes.md'); await fs.writeFile(file, '# Notes');
     await fs.writeFile(path.join(profile, 'Preferences'), JSON.stringify({ default_search_provider_data:{ url:'https://search.example/?q={searchTerms}' } }));
-    let emit, detached = 0, touched = [], calls = [], opened = [];
+    let emit, detached = 0, touched = [], calls = [], opened = [], aiTab = null;
+    const holders = new Map();   // 持ち手（無ければ AI）。aiTab は中継の AI のタブ（relay.view.current）
     const tabs = [{ sessionId:'one', targetId:'a', windowId:1, url:'https://example.com/', title:'One' }];
     const relay = {
       onTabEvent(fn) { emit = fn; return () => { emit = null; }; },
-      unify:{ tabInfo:{ list:id => id === 'one' ? tabs : [] }, tabHolder:{ touch:detail => touched.push(detail) } },
+      unify:{ tabInfo:{ list:id => id === 'one' ? tabs : [] }, tabHolder:{ touch:detail => touched.push(detail), holder:(id, targetId) => holders.get(targetId) ?? { holder:'ai' } } },
       async openForConversation(id, url) { opened.push({ id, url }); return { targetId:'new-tab' }; },
-      view:{ async closeTab(id, targetId) { calls.push(['close', id, targetId]); }, async attach() { return {
+      view:{ current:id => id === 'one' ? aiTab : null, async closeTab(id, targetId) { calls.push(['close', id, targetId]); }, async attach() { return {
         async send(method, params) { calls.push([method, params]); return method === 'Page.getNavigationHistory' ? { currentIndex:1, entries:[{ id:10 }, { id:20 }, { id:30 }] } : {}; },
         async detach() { detached++; },
       }; } },
@@ -81,34 +82,83 @@ export default async function(t) {
     t.ok('the reconnect snapshot also tells the human-held tabs after the tab list', holding.length === 2 && holding[0].reset && holding[1].type === 'tab:holder' && holding[1].targetId === 'a' && holding[1].holder === 'human' && holding[1].sessionId === 'one');
     const unwired = await createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client) }).handle({ command:'pageResult', args:reply, client:clients[0] });
     t.ok('without page requests the result is simply not delivered', unwired.delivered === false);
-    const suggestion = await ws.handle({ command:'chromeAddress', args:{ sessionId:'one', input:path.join(work, 'no') } });
+    const suggestion = await ws.handle({ command:'chromeAddress', args:{ sessionId:'one', input:path.join(work, 'no') }, client:clients[0] });
     t.ok('partial paths suggest inspected files', suggestion.suggestions.some(row => row.path === file));
-    const missing = await ws.handle({command:'chromeAddress', args:{sessionId:'one',input:path.join(work,'missing.md')}});
+    const missing = await ws.handle({command:'chromeAddress', args:{sessionId:'one',input:path.join(work,'missing.md')}, client:clients[0]});
     t.ok('a missing filename has an explanation before navigation', missing.reason === 'not-found' && !missing.suggestions.length);
-    await ws.navigate({ sessionId:'one', targetId:'a', input:file }, { by:'screen:1' });
+    // chromeAddress: アドレスの候補とタブの画像は、その会話を見ている認証済みの画面にだけ返す（page:changed と同じ届け先）
+    const deniedAddress = (client, args) => ws.handle({ command:'chromeAddress', args, client }).then(() => null, error => error.code);
+    const screenshots = () => calls.filter(call => call[0] === 'Page.captureScreenshot').length;
+    const shots = screenshots(), detachBase = detached;
+    watching.set(clients[1], 'two');
+    const addressCodes = await Promise.all([
+      deniedAddress(clients[1], { sessionId:'one', input:'' }),
+      deniedAddress(clients[2], { sessionId:'one', input:'' }),
+      deniedAddress(clients[3], { sessionId:'one', input:'' }),
+      deniedAddress(undefined, { sessionId:'one', input:'' }),
+      deniedAddress(clients[2], { sessionId:'one', input:'', targetId:'a', thumbnail:true }),
+      deniedAddress(clients[3], { sessionId:'one', input:'', targetId:'a', thumbnail:true }),
+      deniedAddress(clients[0], { sessionId:'two', input:'', targetId:'a', thumbnail:true }),
+    ]);
+    watching.set(clients[1], 'one');
+    t.ok('chromeAddress refuses suggestions and tab thumbnails unless the connection is authenticated and watching',
+      addressCodes.every(code => code === 'INVALID') && screenshots() === shots);
+    const thumbnail = await ws.handle({ command:'chromeAddress', args:{ sessionId:'one', input:'', targetId:'a', thumbnail:true }, client:clients[0] });
+    t.ok('the watching screen still receives the tab thumbnail', thumbnail !== null && screenshots() === shots + 1 && detached === detachBase + 1);
+    await ws.navigate({ sessionId:'one', targetId:'a', input:file }, { by:'screen:1', client:clients[0] });
     const destination = new URL(calls.at(-1)[1].url);
     t.ok('file navigation uses the conversation page and encoded absolute path', destination.port === '12345' && destination.pathname === '/_pleiad/s/one/file' && destination.searchParams.get('path') === file);
     t.ok('navigation marks this tab as human before sending CDP', touched.at(-1).targetId === 'a' && touched.at(-1).by === 'screen:1');
-    await ws.navigate({ sessionId:'one', targetId:'a', input:'two words' });
+    await ws.navigate({ sessionId:'one', targetId:'a', input:'two words' }, { client:clients[0] });
     t.ok('search uses the selected Chrome profile provider', calls.at(-1)[1].url === 'https://search.example/?q=two%20words');
     const count = calls.length;
     let blocked = false;
-    try { await ws.navigate({ sessionId:'one', targetId:'a', input:path.join(work, 'missing.md') }); } catch (error) { blocked = error.code === 'not-found'; }
+    try { await ws.navigate({ sessionId:'one', targetId:'a', input:path.join(work, 'missing.md') }, { client:clients[0] }); } catch (error) { blocked = error.code === 'not-found'; }
     t.ok('missing paths give a reason and never become searches', blocked && calls.length === count);
-    try { await ws.navigate({ sessionId:'two', targetId:'a', action:'reload' }); } catch {}
+    try { await ws.navigate({ sessionId:'two', targetId:'a', action:'reload' }, { client:clients[0] }); } catch {}
     t.ok('another conversation cannot operate the target', calls.length === count);
-    await ws.navigate({ sessionId:'one', targetId:'a', action:'back' });
+    // navigate（chromeNavigate の口）も、見ている画面からの操作だけ受ける
+    const openedCount = opened.length;
+    const navCodes = await Promise.all([
+      ws.navigate({ sessionId:'two', action:'new' }, { client:clients[0] }).then(() => null, error => error.code),
+      ws.navigate({ sessionId:'one', action:'new' }, { client:clients[2] }).then(() => null, error => error.code),
+      ws.navigate({ sessionId:'one', action:'new' }, { client:clients[3] }).then(() => null, error => error.code),
+      ws.navigate({ sessionId:'one', action:'new' }).then(() => null, error => error.code),
+    ]);
+    t.ok('navigate refuses to open or touch tabs unless the connection is authenticated and watching',
+      navCodes.every(code => code === 'INVALID') && opened.length === openedCount);
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'back' }, { client:clients[0] });
     t.ok('back follows this tab navigation history', calls.at(-1)[0] === 'Page.navigateToHistoryEntry' && calls.at(-1)[1].entryId === 10);
-    await ws.navigate({ sessionId:'one', action:'new' });
+    await ws.navigate({ sessionId:'one', action:'new' }, { client:clients[0] });
     t.ok('new tabs belong to the conversation and are human-held', opened.at(-1).url.endsWith('/_pleiad/s/one/new') && touched.at(-1).targetId === 'new-tab');
-    t.ok('temporary CDP sessions are detached', detached === 3);
-    await ws.navigate({sessionId:'one',action:'new',input:file}, {by:'screen:1'});
+    t.ok('temporary CDP sessions are detached', detached === detachBase + 4);
+    await ws.navigate({sessionId:'one',action:'new',input:file}, {by:'screen:1', client:clients[0]});
     t.ok('modified folder clicks may open the chosen location in a new tab', new URL(opened.at(-1).url).searchParams.get('path') === file);
-    await ws.navigate({sessionId:'one',input:'about:blank'});
+    await ws.navigate({sessionId:'one',input:'about:blank'}, { client:clients[0] });
     t.ok('blank addresses work with no previous target', opened.at(-1).url.endsWith('/new') && calls.at(-1)[1].url === 'about:blank');
     tabs[0].page={kind:'file',path:file};
-    await ws.navigate({sessionId:'one',targetId:'a',action:'view',view:'source'});
+    await ws.navigate({sessionId:'one',targetId:'a',action:'view',view:'source'}, { client:clients[0] });
     t.ok('view changes persist in the page URL before painting', calls.at(-1)[1].expression.includes('history.replaceState') && calls.at(-1)[1].expression.includes('source'));
+
+    // 引き継ぐ前の AI のタブは見るだけ（ADR 0321）: アドレスバーの移動・戻る・進む・再読み込み・閉じる・表示の切り替えは、どれも view-only で断り、CDP も持ち手も触らない
+    aiTab = 'a';
+    for (const args of [{ input:'https://moved.example/' }, { action:'back' }, { action:'forward' }, { action:'reload' }, { action:'close' }, { action:'view', view:'preview' }]) {
+      const sent = calls.length, held = touched.length;
+      const code = await ws.navigate({ sessionId:'one', targetId:'a', ...args }, { by:'screen:1', client:clients[0] }).then(() => null, error => error.code);
+      t.ok(`the agent tab before take-over refuses ${args.action ?? 'navigate'} with view-only, without CDP and without becoming human`, code === 'view-only' && calls.length === sent && touched.length === held,
+        JSON.stringify({ code, sent:calls.slice(sent), touched:touched.slice(held) }));
+    }
+    await ws.navigate({ sessionId:'one', action:'new', input:'https://fresh.example/' }, { by:'screen:1', client:clients[0] });
+    t.ok('while the agent tab is view-only, a typed address still opens in a new human tab', opened.at(-1).url === 'https://fresh.example/' && touched.at(-1).targetId === 'new-tab', JSON.stringify([opened.at(-1), touched.at(-1)]));
+    holders.set('a', { holder:'human' });   // [引き継ぐ] の後
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'reload' }, { by:'screen:1', client:clients[0] });
+    t.ok('after take-over the agent tab reloads', calls.at(-1)[0] === 'Page.reload');
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'close' }, { by:'screen:1', client:clients[0] });
+    t.ok('after take-over the agent tab closes', calls.at(-1)[0] === 'close' && calls.at(-1)[2] === 'a');
+    holders.clear(); aiTab = 'other';
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'reload' }, { client:clients[0] });
+    t.ok('a tab that is not the agent tab works as before even while its holder is ai', calls.at(-1)[0] === 'Page.reload');
+    aiTab = null;
 
     // pageOpen: 開く先はサーバーが決める（ADR 0295 の 7）。ページは pages の port、HTML と可視化は印の出どころ
     const secret = crypto.randomBytes(32);
@@ -277,9 +327,11 @@ export default async function(t) {
         screen = await open(server);
         const caps = await screen.cmd('hostCapabilities');
         t.ok('server always exposes browser capabilities', Number.isInteger(caps.browserUnify?.pages) && Number.isInteger(caps.browserUnify?.isolated));
+        const denied = await screen.cmd('chromeAddress', {sessionId:'one',input:''}, {ms:5000}).then(() => null, error => error.code);
+        t.ok('real server refuses address requests from a socket not watching the conversation', denied === 'INVALID', String(denied));
+        await screen.cmd('watchSession', {sessionId:'one'});
         const address = await screen.cmd('chromeAddress', {sessionId:'one',input:''}, {ms:5000}).then(value => ({value}), error => ({code:error.code}));
         t.ok('address requests always receive an explicit response', Array.isArray(address.value?.suggestions));
-        await screen.cmd('watchSession', {sessionId:'one'});
         t.ok('real server sends a reconnect snapshot to the watching socket', screen.events.some(event => event.type === 'tab:info' && event.sessionId === 'one' && event.reset));
         // 実サーバーの辿り方（core/server.mjs の descendants = 直接の子だけ・delegation.mjs と同じ確かめ）:
         // 親を見ている画面へは直接の子のタブが届き、孫・関係の無い会話は届かない

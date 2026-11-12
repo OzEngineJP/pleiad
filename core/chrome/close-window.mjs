@@ -32,7 +32,7 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
 
   async function capture(sessionId, fallbackOnly) {
     if (!fallbackOnly) {
-      const targetId = relay.view.current(sessionId);
+      const targetId = relay.view.shown(sessionId);
       if (targetId) {
         let view;
         try {

@@ -200,10 +200,12 @@ export function createBrowserUnifyWs(deps = {}) {
     const rel = parts.slice(2).filter(part => part && part !== '.' && part !== '..');
     return path.join(held.root, ...(rel.length ? rel : [held.entry]));
   }
-  async function navigate(args, { by = null } = {}) {
+  async function navigate(args, { by = null, client = null } = {}) {
     const { sessionId, targetId, action = 'navigate', input } = args;
     if (!relay) fail('UNSUPPORTED');
     if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) fail('INVALID');
+    // タブを開く・動かす・閉じる・出し方を替えるも、その会話を見ている画面からだけ（handle のコマンドと同じ関所）
+    if (!allowed(client, sessionId)) fail('INVALID');
     const url = action === 'new' && input == null ? pageUrl(sessionId, 'new') : ['new', 'navigate'].includes(action) ? await destination(sessionId, input) : null;
     if (action === 'new' || (!targetId && action === 'navigate')) {
       const opened = await relay.openForConversation(sessionId, url === 'about:blank' ? pageUrl(sessionId, 'new') : url);
@@ -216,6 +218,9 @@ export function createBrowserUnifyWs(deps = {}) {
       return { targetId: id ?? null };
     }
     if (!relay.unify.tabInfo.list(sessionId).some(tab => tab.targetId === targetId)) fail('NO_WINDOW');
+    // 引き継ぐ前の AI のタブは見るだけ（ADR 0321）: 移動・戻る・進む・再読み込み・閉じる・表示の切り替えは 'view-only' で断り、持ち手も替えない（人の操作に数えない）。
+    // 引き継ぐのは [引き継ぐ]（chromeTakeOver）だけ。新しいタブ（上の new）は人のタブなので、ここを通らない
+    if (relay.view.current(sessionId) === targetId && relay.unify.tabHolder.holder(sessionId, targetId)?.holder !== 'human') fail('view-only');
     relay.unify.tabHolder.touch({ sessionId, targetId, by });
     if (action === 'close') { await relay.view.closeTab(sessionId, targetId); return {}; }
     const attached = await relay.view.attach(sessionId, targetId, () => {});
@@ -345,7 +350,9 @@ export function createBrowserUnifyWs(deps = {}) {
         return { removed: true };
       }
       if (command !== 'chromeAddress') fail('UNKNOWN_COMMAND');
-      if (typeof args?.input !== 'string' || args.input.length > 8192 || typeof args.sessionId !== 'string' || !args.sessionId) fail('INVALID');
+      // アドレスの候補（その会話のファイルの辿り方）とタブの画像は、その会話を見ている画面にだけ返す（pageOpen と同じ関所）
+      if (!args || typeof args !== 'object' || !allowed(client, args.sessionId)) fail('INVALID');
+      if (typeof args.input !== 'string' || args.input.length > 8192 || typeof args.sessionId !== 'string' || !args.sessionId) fail('INVALID');
       if (args.thumbnail === true) {
         if (!relay?.unify.tabInfo.list(args.sessionId).some(tab => tab.targetId === args.targetId)) fail('NO_WINDOW');
         const attached = await relay.view.attach(args.sessionId, args.targetId, () => {});

@@ -1004,8 +1004,10 @@ const SUITES = [
   './unit/phone-input.mjs',
   './unit/chrome-input.mjs',
   './unit/browser-unify-input.mjs',
+  './unit/browser-unify-view-only.mjs',
   // --- W3 映像の触り心地: 選択・コピー・右クリックのメニュー・カーソル ---
   './unit/browser-video-input.mjs',
+  './unit/browser-handoff-ai-tab.mjs',
 
   // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
   // つなぎ目（core/bots-host.mjs）と土台: 空のままでは何も変えない・例外を出さない・使用量の sessionId・fake の台本の包み外し

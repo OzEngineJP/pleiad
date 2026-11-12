@@ -1390,6 +1390,7 @@
     "invalid-session": "Open a conversation first.",
     "not-watching": "You aren't viewing the browser. Open it again.",
     "no-tab": "That tab has already been closed.",
+    "view-only": "The agent is operating this tab. Take over to operate it.",
     "invalid-input": "Can't send this input.",
     "failed": "The browser action failed.",
     "no-window": "This conversation has no Chrome window yet.",

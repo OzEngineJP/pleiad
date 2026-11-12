@@ -2561,7 +2561,7 @@ function browserHandoffCard(ev, into = null) {
   const actions = el("div", "card-actions");
   // リモートの端末では「この端末で操作する」（右の欄の Chrome の映像で操作する）を足す。人が操作している間の「画面を開く」は右の欄にその会話の映像を開く
   const operateHere = window.plyRemote ? async (target) => (await chromePanel?.measure(null, { target })) ?? null : null;
-  const openScreen = (target) => chromePanel?.open(null, { target });
+  const openScreen = (target) => chromePanel?.openAiTab(target);
   const view = browserHandoffView(ev, { el, t, cmd, operateHere, openScreen, spinner: runMark, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
   head.append(el("span", "desc", view.summary()));
   card.append(head, view.body, actions);
