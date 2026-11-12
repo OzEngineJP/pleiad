@@ -347,9 +347,10 @@ export function createBrowserUnify(deps = {}) {
       const follow = target != null && target === chrome()?.screencastState?.agentTabId;
       const pin = follow ? { windowId:null, tabId:null } : { windowId:tab.windowId ?? null, tabId:target };
       beginLoad({ targetId:tab.targetId, chrome:target, follow });
+      chrome()?.expectFrame?.({ tabId:target, follow });   // 最初の絵が届くまでの骨組み（150ms を超えたら。ADR 0320）
       const pending = chrome()?.pinTab ? chrome().pinTab(selection.sessionId, pin) : cmd('chromePinWindow', { sessionId:selection.sessionId, ...pin });
       paint(); await pending;
-    } catch (error) { if (active === selection) clearLoading(); pinFailed(error); }
+    } catch (error) { if (active === selection) { clearLoading(); chrome()?.cancelFrameWait?.(); } pinFailed(error); }
   }
   async function display(mode) {
     let tab = current(); if (!tab) return;
@@ -383,13 +384,25 @@ export function createBrowserUnify(deps = {}) {
     if (tab.chromeUrl && tab.chromeUrl !== tab.url) await cmd('chromeNavigate', { sessionId:session(), targetId:tab.chromeId, action:'navigate', input });
     tab.chromeUrl = tab.url; tab.mode = 'chrome'; await pick(tab);
   }
+  /** [引き継ぐ]: 映像の AI のタブを、窓を出さずにこの画面の人の操作にする。スマホは映像の箱の大きさを添える。押したら入力を映像へ移す（ADR 0320） */
+  async function takeOver() {
+    const sessionId = session(); if (!sessionId) return;
+    const size = phoneQuery.matches ? await chrome()?.measure?.().catch(() => null) : null;
+    await cmd('chromeTakeOver', { sessionId, by:'screen', ...(size ?? {}) }).catch(failed);
+    paint();
+    chrome()?.focusScreen?.();
+  }
   /** 映像の操作状態。agentUsed: この会話のエージェントがブラウザーを使っている（使っていなければ入口を出さない）。anyHuman: 会話に人が触っているタブがある（見ているタブとは無関係） */
   function control() {
-    const sessionId = session(), tab = current(), agentTab = chrome()?.screencastState?.agentTabId ?? null;
+    const live = chrome()?.screencastState, sessionId = session(), tab = current(), agentTab = live?.agentTabId ?? null;
     const store = deps.controlStore?.get?.(sessionId)?.state ?? 'idle';
     const anyHuman = holderStore.anyHuman(sessionId);
     const held = tab ? holderOf(sessionId, tab.chromeId ?? tab.targetId) : { holder:'ai' };
-    return { sessionId, tab, held, agentTab, store, anyHuman, agentUsed:store !== 'idle' || agentTab != null };
+    // 映像に映っているのが AI のタブか。AI のタブは、人が引き継ぐ（持ち手が人になる）までは見るだけ（ADR 0320）。端末内のページを出している間は映像ではない
+    const page = Boolean(tab?.local && tab.mode !== 'chrome');
+    const videoTab = page ? null : (live?.tabId ?? tab?.chromeId ?? tab?.targetId ?? null);
+    const aiView = agentTab != null && videoTab === agentTab;
+    return { sessionId, tab, held, agentTab, store, anyHuman, aiView, viewOnly:aiView && holderOf(sessionId, agentTab).holder !== 'human', agentUsed:store !== 'idle' || agentTab != null };
   }
   const mac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
   // タブの列の右端の ✖ はパネルを閉じる（開いている間は頭のアイコンを隠し、ここへ受け渡す。docs/design-system.md「会話の頭の行のアイコン」）
@@ -510,7 +523,9 @@ export function createBrowserUnify(deps = {}) {
     // 人が触っているタブは会話ごとに数える（anyHuman）。PC は別のタブを見ていても「AI に戻す」は消えない（ADR 0296）。
     // スマホは「II あなたが操作中 [AI に戻す]」を人のタブを開いている間だけ出す（一覧を開いている間も出さない。承認済み 2026-11-08）
     const shown = phoneQuery.matches ? (c.held.holder === 'human' && overview.hidden) : (c.anyHuman && c.store !== 'paused');
-    badge?.update({ visible:shown });
+    // AI のタブを見ている間は、「<名前> が Chrome を操作中 [引き継ぐ]」を出し続ける（ADR 0320。人が引き継ぐと、上の「あなたが操作中 [AI に戻す]」になる。同じ高さで入れ替わる）
+    if (c.viewOnly) badge?.update({ visible:overview.hidden, mode:'ai', name:deps.agentName?.(c.sessionId) || '' });
+    else badge?.update({ visible:shown, mode:'human' });
   }
   function paint() {
     const tab = current(), shown = session(), live = chrome()?.screencastState;
@@ -789,8 +804,9 @@ export function createBrowserUnify(deps = {}) {
       if (!enabled) {
         enabled = true; const style = document.createElement('style'); style.dataset.browserUnify = ''; style.textContent = css; document.head.append(style); document.body.classList.add('browser-unify');
         // 札は止める・任せるだけ（映像に触れるだけでは引き継がない。ADR 0296）
-        badge = createControlBadge({ onResume:() => cmd('chromeResume', { sessionId:session() }).catch(failed) });
-        chrome()?.useInput?.({ phone:() => phoneQuery.matches, showMenu });
+        badge = createControlBadge({ onResume:() => cmd('chromeResume', { sessionId:session() }).catch(failed), onTakeOver:takeOver });
+        // AI のタブの映像は引き継ぐまで見るだけ。触れたら [引き継ぐ] を強調する（ADR 0320）
+        chrome()?.useInput?.({ phone:() => phoneQuery.matches, showMenu, viewOnly:() => control().viewOnly, onBlocked:() => badge?.nudge() });
         chrome()?.onOpenChange(attach);
         // 開いたら中へフォーカスを移す: 新しいタブならアドレスバー、ほかは今のタブ（docs/design-system.md「会話の頭の行のアイコン」）。
         // 開いたまま映す会話を替えたとき（show の呼び直し）は動かさない。スマホはキーボードを出さないよう、パネルのまま

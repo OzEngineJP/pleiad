@@ -7,22 +7,30 @@
 // 状態は core/chrome/control.mjs の 4 つ（running・idle・stopped・paused）。色は既存のトークンだけ。動きは --dur・--ease-out（動きを減らす設定では入れ替えだけ）。
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
+import { runMark } from './arc.mjs';
 
 /** Called only by the unified browser; legacy control remains unchanged. */
 export function ensureBrowserControlStyles() {
   if (document.getElementById('browser-control-styles')) return;
   const style = el('style'); style.id = 'browser-control-styles';
   style.textContent = `
- .b2-control{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:4px 12px;font-size:12px;color:var(--ink-weak)}
+ .b2-control{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:4px 12px;font-size:12px;color:var(--ink-weak);min-height:38px;box-sizing:border-box}
 .b2-control[hidden],.b2-sheet[hidden],.b2-fallback[hidden],.b2-phone-note[hidden]{display:none!important}
 .b2-action{border:0;border-radius:var(--r-pill);background:none;color:var(--ink-blue);padding:6px 10px;font:inherit;cursor:pointer}
 .b2-actions{display:flex;justify-content:flex-end;gap:8px}.b2-action.primary{color:var(--ink-blue);background:var(--fill-blue,var(--surface-2))}
 .b2-action:hover{background:var(--surface-2)}
-.b2-pause,.b2-grow{display:none}
+.b2-pause,.b2-grow,.b2-control .run{display:none}
+.b2-control[data-mode="ai"] .run{display:inline-grid;flex:none}
+/* Row while the AI tab is shown (ADR 0320): same height as the human row; the video stays view-only until the button is pressed */
+.b2-action.primary{font-weight:600}
+.b2-action:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
+.b2-action.nudge{animation:b2-nudge .9s ease-out}
+@keyframes b2-nudge{0%,40%{background:color-mix(in srgb,var(--line-blue) 26%,transparent);box-shadow:0 0 0 2px var(--line-blue)}}
 /* On phones, use one row: pause mark, “You are in control”, and “Return to AI” (approved 2026-11-08; temporary/mockups/phone-browser-header.html .bu-held). */
 @media(max-width:600px){
  .b2-control{justify-content:flex-start;gap:8px;padding:0 6px 0 14px;min-height:44px;box-sizing:border-box;font-size:13px;color:var(--ink);border-bottom:1px solid var(--line)}
- .b2-control .b2-pause{display:block;position:relative;width:14px;height:14px;flex:none}
+ .b2-control[data-mode="human"] .b2-pause{display:block;position:relative;width:14px;height:14px;flex:none}
+ .b2-control[data-mode="ai"] .run{display:inline-grid;flex:none}
  .b2-control .b2-pause::before,.b2-control .b2-pause::after{content:"";position:absolute;top:3px;width:2px;height:8px;border-radius:1px;background:currentColor}
  .b2-control .b2-pause::before{left:4px}.b2-control .b2-pause::after{right:4px}
  .b2-control .b2-grow{display:block;flex:1}
@@ -34,22 +42,48 @@ export function ensureBrowserControlStyles() {
 .b2-phone-note{position:fixed;z-index:96;left:8px;right:8px;bottom:8px;padding:6px 10px;border-radius:8px;background:var(--surface-1);box-shadow:0 4px 16px var(--shadow);color:var(--ink-weak);font-size:12px;line-height:1.5;text-align:center;pointer-events:none}
 .b2-fallback{position:fixed;z-index:96;left:8px;right:8px;bottom:8px;display:flex;gap:8px;padding:8px;border-radius:12px;background:var(--surface-1);box-shadow:0 8px 28px var(--shadow)}.b2-fallback input{min-width:0;flex:1;font:inherit;font-size:16px;color:var(--ink);background:var(--surface-2);border:0;padding:10px;border-radius:8px}
 .b2-sheet{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-end;justify-content:center;background:var(--surface-veil)}.b2-sheet-body{width:min(100%,480px);max-height:70dvh;overflow:auto;padding:20px;box-sizing:border-box;border-radius:16px 16px 0 0;background:var(--surface-1);color:var(--ink);box-shadow:0 -8px 28px var(--shadow)}.b2-sheet-title{font-size:16px;font-weight:600;margin:0 0 12px}.b2-sheet-message{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}.b2-sheet-option{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px}.b2-sheet input[type=text]{box-sizing:border-box;width:100%;font:inherit;font-size:16px;padding:10px;margin:10px 0}.b2-sheet-error{color:var(--ink-strong);font-size:13px;margin:8px 0}
-@media(prefers-reduced-motion:reduce){.b2-ripple{animation:none;opacity:.7}}
+@media(prefers-reduced-motion:reduce){.b2-ripple{animation:none;opacity:.7}.b2-action.nudge{animation:none;outline:2px solid var(--line-blue);outline-offset:2px}}
 `;
   document.head.append(style);
 }
 
-/** A return action appears only while a person is operating the video.
- *  構成は「II（.b2-pause）・あなたが操作中・押し広げ（.b2-grow）・AI に戻す」。
- *  PC は従来どおり右寄せの小さな札。スマホはアドレスバーのすぐ下の 1 行（.b2-pause の II と押し広げが出る。承認済み 2026-11-08） */
-export function createControlBadge({ mount, onResume = () => {} } = {}) {
+/**
+ * 映像の上の 1 行（アドレスバーのすぐ下）。2 つの形を、同じ高さで入れ替える（ADR 0320）:
+ *  - mode 'ai': AI のタブを見ている間。「<名前> が Chrome を操作中 [引き継ぐ]」。映像は見るだけで、[引き継ぐ] を押すと触れる
+ *  - mode 'human'（既定）: 人が操作している間。「あなたが操作中 [AI に戻す]」
+ * 構成は「II か AI の印・文・押し広げ（.b2-grow）・ボタン」。PC は右寄せの小さな札、スマホはアドレスバーのすぐ下の 1 行（承認済み 2026-11-08・2026-11-12）。
+ * role=status で、形が替わるたびに読み上げる。nudge() は見るだけの映像に触れたときに [引き継ぐ] を短く強調する（動きを減らす設定では輪郭だけ）。
+ */
+export function createControlBadge({ mount, onResume = () => {}, onTakeOver = () => {} } = {}) {
   ensureBrowserControlStyles();
-  const element = el('div', 'b2-control'), pause = el('span', 'b2-pause'), label = el('span', '', t('control:humanOperating')), grow = el('span', 'b2-grow');
-  pause.setAttribute('aria-hidden', 'true');
-  const resume = el('button', 'b2-action', t('tabs:display.resume')); resume.type = 'button'; element.hidden = true;
-  resume.onclick = async () => { resume.disabled = true; try { await onResume(); } finally { resume.disabled = false; } };
-  element.append(pause, label, grow, resume); mount?.append(element);
-  return { element, update({ visible = false } = {}) { element.hidden = !visible; }, destroy() { element.remove(); } };
+  const element = el('div', 'b2-control'), pause = el('span', 'b2-pause'), run = runMark(), label = el('span', ''), grow = el('span', 'b2-grow');
+  pause.setAttribute('aria-hidden', 'true'); run.setAttribute('aria-hidden', 'true');
+  element.setAttribute('role', 'status');
+  const button = el('button', 'b2-action'); button.type = 'button'; element.hidden = true;
+  let mode = null, nudgeTimer = 0;
+  const press = fn => async () => { button.disabled = true; try { await fn(); } finally { button.disabled = false; } };
+  button.onclick = () => (mode === 'ai' ? press(onTakeOver) : press(onResume))();
+  function paint(next, name) {
+    if (next === mode && label.dataset.name === (name ?? '')) return;
+    mode = next; label.dataset.name = name ?? '';
+    element.dataset.mode = mode;
+    if (mode === 'ai') { label.textContent = t('browser.entryState.working', { name: name || 'AI' }); button.textContent = t('control:takeOver'); button.classList.add('primary'); }
+    else { label.textContent = t('control:humanOperating'); button.textContent = t('tabs:display.resume'); button.classList.remove('primary'); }
+    button.classList.remove('nudge');
+  }
+  element.append(pause, run, label, grow, button); mount?.append(element);
+  paint('human');
+  return {
+    element, button,
+    update({ visible = false, mode: next = 'human', name = '' } = {}) { paint(next === 'ai' ? 'ai' : 'human', name); element.hidden = !visible; },
+    /** 見るだけの映像に触れた。[引き継ぐ] を短く強調する（続けて触れても 0.9 秒の間は重ねない） */
+    nudge() {
+      if (mode !== 'ai' || element.hidden || button.classList.contains('nudge')) return;
+      button.classList.add('nudge');
+      clearTimeout(nudgeTimer); nudgeTimer = setTimeout(() => button.classList.remove('nudge'), 900);
+    },
+    destroy() { clearTimeout(nudgeTimer); element.remove(); },
+  };
 }
 
 export const CONTROL_STATES = ['running', 'idle', 'stopped', 'paused'];

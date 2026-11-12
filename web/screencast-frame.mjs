@@ -20,8 +20,10 @@ export function framesPerSecond(times, now) {
  * PC のマウスは、ドラッグをページの選択（リンク・画像はドラッグ）として送る。右クリックは手元のメニューを出し、
  * 選択のコピー・リンク・すべて選択をページの中身（Core の問い合わせ。読むだけ）で決める。
  * showMenu は web/client.mjs の右クリックメニュー、openLink はリンク先を開く頼み（Chrome のタブへ移す）。
+ * viewOnly() が真の間（AI のタブ。引き継ぐまで）は、クリック・タップ・キー・ホイール・メニューをページへ送らず、人の操作にも数えない。
+ * 触れたときは onBlocked() を呼ぶ（行の [引き継ぐ] を強調する）。拡大・移動（手元だけ）とカーソルの問い合わせは今までどおり（ADR 0320）。
  */
-export function createScreencastInput({ surface, img, getFrame, send = () => {}, phone = false, onError = () => {}, showMenu = null, openLink = null }) {
+export function createScreencastInput({ surface, img, getFrame, send = () => {}, phone = false, onError = () => {}, showMenu = null, openLink = null, viewOnly = () => false, onBlocked = () => {} }) {
   ensureBrowserControlStyles();
   surface.classList.add('b2-input-surface'); surface.tabIndex = 0;
   img.draggable = false;
@@ -33,7 +35,9 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
   const rect = () => containRect(img.getBoundingClientRect(), { width: img.naturalWidth || metadata().deviceWidth, height: img.naturalHeight || metadata().deviceHeight });
   const coords = event => toPageCoords({ x: event.clientX, y: event.clientY }, rect(), metadata());
   const listen = (node, type, handler, options) => { node.addEventListener(type, handler, options); disposers.push(() => node.removeEventListener(type, handler, options)); };
-  const transmit = value => alive ? Promise.resolve().then(() => send(value)) : Promise.reject(new Error('closed'));
+  // 見るだけの間は、読むだけのカーソルの問い合わせのほかは送らない（送らずに、触れたことだけ知らせる）
+  const blocked = value => { if (value?.type === 'cursor' || !viewOnly()) return false; onBlocked(); return true; };
+  const transmit = value => alive ? (blocked(value) ? Promise.resolve(null) : Promise.resolve().then(() => send(value))) : Promise.reject(new Error('closed'));
   const dispatch = value => { transmit(value).catch(onError); };
   const flushTap = () => { clearTimeout(tapTimer); tapTimer = null; if (pendingTap) { const value = pendingTap; pendingTap = null; dispatch(value); } };
   const cancelTap = () => { clearTimeout(tapTimer); tapTimer = null; pendingTap = null; };
@@ -54,7 +58,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
       const [a, b] = [...pointers.values()]; pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y), zoom, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, panX, panY }; gesture = null; return;
     }
     gesture = { id: event.pointerId, touch: event.pointerType === 'touch', x: event.clientX, y: event.clientY, lastX: event.clientX, lastY: event.clientY, point, moved: false, long: false, dragging: false };
-    if (phone) longTimer = setTimeout(() => { if (gesture && !gesture.moved) { gesture.long = true; ripple(event); } }, 480);
+    if (phone) longTimer = setTimeout(() => { if (gesture && !gesture.moved) { gesture.long = true; if (!viewOnly()) ripple(event); } }, 480);
     if (!phone) surface.focus({ preventScroll: true });
   });
   listen(surface, 'pointermove', event => {
@@ -85,6 +89,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
     if (current.dragging) { dispatch({ type: 'drag', phase: 'end', ...(coords(event) ?? current.point) }); return; }
     if (cancelled || current.moved) return;
     const point = coords(event); if (!point) return;
+    if (viewOnly()) { onBlocked(); return; }   // 見るだけの映像のタップ・長押し・ダブルタップ。押した輪も出さない
     if (current.long) { dispatch({ type: 'context', ...point }); return; }
     if (phone && lastTap && event.timeStamp - lastTap < 280 && pendingTap && lastTapPoint && Math.hypot(event.clientX - lastTapPoint.x, event.clientY - lastTapPoint.y) < 24) {
       cancelTap(); lastTap = 0; zoom = zoom > 1 ? 1 : 2; panX = panY = 0; phoneInput?.blur(); transform(); return;
@@ -105,6 +110,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
   listen(surface, 'pointerup', event => finish(event)); listen(surface, 'pointercancel', event => finish(event, true));
   listen(surface, 'wheel', event => { const point = coords(event); if (!point) return; event.preventDefault(); if (zoom > 1) { panX -= event.deltaX; panY -= event.deltaY; transform(); } else dispatch({ type: 'scroll', ...point, dx: toPageDelta(event.deltaX, rect(), metadata()), dy: toPageDelta(event.deltaY, rect(), metadata()) }); }, { passive: false });
   listen(surface, 'contextmenu', event => { const point = coords(event); if (!point) return; event.preventDefault();
+    if (viewOnly()) { onBlocked(); return; }
     if (phone) { dispatch({ type: 'context', ...point }); return; }
     transmit({ type: 'menu', ...point }).then(result => pageMenu(event, result?.info)).catch(onError);
   });
@@ -143,6 +149,11 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
   listen(surface, 'keydown', event => {
     if (phone || event.target !== surface || event.altKey || event.isComposing) return;
     const accel = event.ctrlKey || event.metaKey;
+    if (viewOnly()) {
+      // 見るだけの間は、Tab で [引き継ぐ] へ移れるよう何も奪わない。文字・矢印などを打ったときだけ強調する
+      if (!accel && event.key !== 'Tab' && event.key !== 'Escape' && (event.key.length === 1 || ['Enter', 'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))) { event.preventDefault(); onBlocked(); }
+      return;
+    }
     if (accel) {
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
       if (key === 'a' || key === 'c' || key === 'x') {
@@ -157,7 +168,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
     if (event.key.length === 1) { event.preventDefault(); dispatch({ type: 'text', text: event.key }); }
     else if (['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); dispatch({ type: 'key', key: event.key, ...(modifiers ? { modifiers } : {}) }); }
   });
-  listen(surface, 'paste', event => { if (event.target !== surface) return; const text = event.clipboardData?.getData('text/plain'); if (text) { event.preventDefault(); dispatch({ type: 'text', text: text.slice(0, 2000) }); } });
+  listen(surface, 'paste', event => { if (event.target !== surface) return; if (viewOnly()) { event.preventDefault(); onBlocked(); return; } const text = event.clipboardData?.getData('text/plain'); if (text) { event.preventDefault(); dispatch({ type: 'text', text: text.slice(0, 2000) }); } });
   // 点の下のもののカーソルを遠隔のページへ聞いて合わせる。読むだけ（人の操作にしない）。押している間・スマホでは聞かない
   const applyCursor = name => { surface.style.cursor = img.style.cursor = typeof name === 'string' && /^[a-z-]+$/i.test(name) ? name : 'auto'; };
   const askCursor = () => {
