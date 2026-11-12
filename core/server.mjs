@@ -9522,7 +9522,7 @@ wss.on("connection", (ws, req) => {
         : Object.fromEntries(Object.entries(second ?? {}).filter(([, v]) => v !== null && v !== undefined));
       // 操作が投げても必ず返事をする。返事が無いと画面の cmd は待ち続け、一覧の取り直し（refresh）が後の分まで止まる
       try {
-        const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, { ...opsDeps(locale.lang), scanLock: wsScanLock, chromeNavigate: args => browserUnifyWs.navigate(args, { by:browserUnifyWs.clientId(ws) }) });
+        const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, { ...opsDeps(locale.lang), scanLock: wsScanLock, chromeNavigate: args => browserUnifyWs.navigate(args, { by:browserUnifyWs.clientId(ws), client:ws }) });
         return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code === FAILED ? undefined : r.code, r.issues ? { issues: r.issues } : undefined);
       } catch (err) {
         console.error(`  [command ${msg.command}]`, String(err?.stack ?? err));
@@ -10259,7 +10259,7 @@ wss.on("connection", (ws, req) => {
 
         // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
         case 'invoke': {
-          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, { ...opsDeps(locale.lang), chromeNavigate: args => browserUnifyWs.navigate(args, { by:browserUnifyWs.clientId(ws) }) });
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, { ...opsDeps(locale.lang), chromeNavigate: args => browserUnifyWs.navigate(args, { by:browserUnifyWs.clientId(ws), client:ws }) });
           return r.ok ? reply(true, r.result) : reply(false, r.error, r.code, r.issues ? { issues: r.issues } : undefined);
         }
 
