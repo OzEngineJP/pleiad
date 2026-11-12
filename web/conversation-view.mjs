@@ -27,7 +27,7 @@ import { attachmentMessageIndex, normalizeAttachmentPath } from "./timeline.mjs"
 import { sysFold } from "./system-messages.mjs";
 import { runMark, satMark } from "./arc.mjs";
 import { CHILD_MENU } from "./message-actions.mjs";
-import { waitsForNextTurn } from "./task-instructions.mjs";
+import { waitsForNextTurn, injectTaskInstructions } from "./task-instructions.mjs";
 
 /**
  * 役ごとの設定。主は今の動きのまま（読むのは child の仕事だけ。主の行は client.mjs の既存の経路が描く）。
@@ -165,6 +165,17 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     nextSeq: () => ++seq,
   });
 
+  // 子の会話の履歴を描く下請け（history-pane.mjs の hooks.child）。追加の指示・依頼の行を足し、出さない提示を除く
+  const childState = { backend: undefined, live: false, steer: true, prompt: null, instructions: [], waiting: false, hostOffline: null, seen: new Set() };
+  const childPaint = {
+    items: (items, { messages, base }) => childItems(items, messages, base),
+    extraRow: (it) => (it.kind === "request"
+      ? wrap(parentMsg(it.text, it.at, t("dialog.work.request")), "request")
+      : instructionRow(it.instruction, { live: childState.live, steer: childState.steer })),
+    rowOptions: (it) => ({ ...historyRowOptions({ backend: childState.backend, base: historyPane.base }, it), linkCards: true }),
+    place: (w) => place(w),
+  };
+
   const historyPane = createHistoryPane({
     thread, log,
     atBottom: () => atBottom(),
@@ -196,6 +207,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     isLoadingSession,
     backendVocab: hooks.backendVocab,
     toolCardMap: () => liveTurn.toolCards,
+    child: role === "child" ? childPaint : null,
   });
 
   // ---------------------------------------------------------------- 会話を開く（paintSession の実例の仕事）
@@ -337,12 +349,14 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     }, 150));
   }
 
-  function ensureMessageRow(messageId, text, at, sentBy = null) {
+  function ensureMessageRow(messageId, text, at, sentBy = null, word = null) {
     let row = messageRow(messageId);
     if (!row) {
       const presents = provisionalByMessage.get(messageId) ?? [];
       provisionalByMessage.delete(messageId);
-      row = append(hooks.userMsg(text, { at, presents, sentBy }), `live:${++seq}`);
+      const node = hooks.userMsg(text, { at, presents, sentBy });
+      if (word) node.querySelector(".who > span").textContent = word;
+      row = append(node, `live:${++seq}`);
       row.dataset.messageId = messageId;
       if (voiceDelivery.owns(messageId)) voiceDelivery.adopt(row);
     } else if (sentBy) hooks.markSentBy(row.querySelector('.m.user') ?? row, sentBy);
@@ -417,7 +431,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
         // userMessage.delivered/dropped（messageId 照合）で解決する。会話の中の位置は出来事の並び（受付時点）
         const pending = ev.type === 'taskInstruction' ? true : ev.pending;
         if (replay && ev.messageId === initialMessageId && ev.type === 'userMessage') {
-          const row = ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy);
+          const row = ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy, liveUserWord(ev));
           const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
           if (confirmed) row.dataset.delivered = '1';
           markDelivery(row, ev.pending && !confirmed ? 'sending' : 'sent');
@@ -425,7 +439,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
           return;
         }
         closeTurnEl();
-        const row = ev.messageId ? ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy)
+        const row = ev.messageId ? ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy, liveUserWord(ev))
           : append(hooks.userMsg(ev.text, { at: ev.at, sentBy: ev.sentBy }), `live:${++seq}`);
         if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
         row.dataset.messageStarted = '1';
@@ -707,7 +721,92 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     return w;
   }
 
-  /** 走っている子の末尾の稼働表示（弧だけ）。ホストに届かない間・承認を待つ間は、その言い方に替える */
+  /** 流れてきた人の発言（子の会話）の発言者の語。最初の発言は依頼、人が直接送った発言はあなた、それ以外は追加の指示 */
+  function liveUserWord(ev) {
+    if (!config.nameTags) return null;
+    if (ev.sentByHuman) return t("chat.message.you");
+    return !historyPane.base && !thread.querySelector(".m.user") ? t("dialog.work.request") : t("dialog.work.instruction");
+  }
+
+  /**
+   * 履歴の項目に、子の会話の行を足し引きする（history-pane の hooks.child.items）。
+   * 追加の指示は injectTaskInstructions が決めた位置（受付の出来事・配送の id・錨・時刻）に置き、届いた発言の履歴の行（重複）は省く。
+   * 最初の発言が依頼でないとき（記録に依頼が無い）は、依頼の行を先頭に足す。git の要約・作業ブランチの提示は出さない
+   */
+  function childItems(items, messages, base) {
+    let rest = items.filter(it => !(it.kind === "present" && skipsPresent(it.p)));
+    const list = childState.instructions;
+    if (list.length) {
+      // 指示を差し込むときは、発言の複製に通し番号を付けて渡す（ツールの錨で 1 つの発言が前後に分かれても、元の添字が分かる）
+      const tagged = messages.map((m, i) => ({ ...m, __mi: base + i }));
+      const injected = injectTaskInstructions(list, tagged);
+      const last = new Map();
+      injected.forEach((m, i) => { if (m.role !== "instruction") last.set(m.__mi, i); });
+      const out = [];
+      let p = 0;
+      const push = (m, it) => out.push(m.role === "instruction"
+        ? { kind: "instruction", instruction: m.instruction, at: m.at, sortAt: 0 }
+        : { ...it, m, mi: m.__mi });
+      for (const it of rest) {
+        if (it.kind !== "msg") { out.push(it); continue; }
+        const end = last.get(it.mi);
+        if (end === undefined) continue;   // 届いた指示の履歴の行: 指示の行が代わりに出る
+        for (; p <= end; p++) push(injected[p], it);
+      }
+      for (; p < injected.length; p++) if (injected[p].role === "instruction") push(injected[p]);
+      rest = out;
+    }
+    if (!base && childState.prompt && messages[0]?.role !== "user") rest = [{ kind: "request", text: childState.prompt, at: messages[0]?.at, sortAt: 0 }, ...rest];
+    return rest;
+  }
+
+  /** 子の会話の状態（バックエンド・走っているか・依頼の本文・途中送信を受けるか）を渡す。履歴を描く前と、状態が変わったときに呼ぶ */
+  function setChild(next = {}) {
+    Object.assign(childState, next);
+  }
+
+  /** 追加の指示の一覧を、描く前に渡す（最初に描く履歴が使う。ここにある指示は、最初の描画が置く） */
+  function setInstructions(list) {
+    childState.instructions = list ?? [];
+    childState.seen = new Set(childState.instructions.map(x => x.id));
+  }
+
+  /**
+   * 描いた後に追加の指示の一覧が変わった（受け付けた・渡った・届かず終わった・待機になった）: 描いてある行の状態を替え、
+   * 描いたときに無かった指示は、稼働表示の手前（末尾）に足す。描いたときにあった指示を足し直さない（履歴の発言に任せたものがある）
+   */
+  function syncInstructions(list) {
+    childState.instructions = list ?? [];
+    const opts = { live: childState.live, steer: childState.steer };
+    for (const x of childState.instructions) {
+      const old = thread.querySelector(`:scope > .mw[data-key="instruction:${CSS.escape(String(x.id))}"]`);
+      if (old) {
+        const fresh = instructionRow(x, opts);
+        if (fresh.innerHTML !== old.innerHTML || fresh.className !== old.className) { fresh.dataset.h = old.dataset.h ?? ""; if (!fresh.dataset.h) delete fresh.dataset.h; old.replaceWith(fresh); }
+      } else if (!childState.seen.has(x.id)) {
+        childState.seen.add(x.id);
+        closeTurnEl();
+        const stick = !isBusy() && atBottom();
+        place(instructionRow(x, opts));
+        if (stick) log.scrollTop = log.scrollHeight;
+      }
+    }
+  }
+
+  /** 追加の指示のまわりの出来事か（描くのは apply でなく、指示の一覧の読み直し） */
+  const isInstructionEvent = (ev) => ev?.type === "taskInstruction"
+    || (/^userMessage/.test(ev?.type ?? "") && typeof ev.messageId === "string" && ev.messageId.startsWith("task-send-"));
+
+  /** 実例を閉じる: 取り置き・描く仕事・タイマーを止める。行は残す（呼ぶ側が本文ごと捨てる）。閉じた実例は使わない */
+  function dispose() {
+    loads.cancel();
+    settling?.abort();
+    historyPane.dispose();
+    liveTurn.resetLiveTurn();
+    liveTurn.runningTools.clear();
+  }
+
+  /** 走っている子は末尾に稼働表示（弧だけ）を置く。ホストに届かない間・承認を待つ間は、その言い方に替える */
   function activityRow({ hostOffline = null, waiting = false } = {}) {
     const act = el("div", "m activity");
     if (hostOffline) {
@@ -739,6 +838,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     prepare, adopt, paint, finish, branchAnchor,
     apply, messageRow, markDelivery, ensureMessageRow, syncOutboxRows, settleSending, clearDeliveryTimer,
     userWord, historyRowOptions, skipsPresent, instructionRow, activityRow,
+    childState, childItems, setChild, setInstructions, syncInstructions, isInstructionEvent, dispose,
     atBottom, followBottom, scrollToEnd, relayoutBranches, wrap, place, append,
   };
 }
