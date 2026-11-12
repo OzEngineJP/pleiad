@@ -359,7 +359,7 @@ export default async function (t) {
   t.ok("配線: 遡りの照合は anchorSig で、検索からの移動（revealMessage）は届かせたい発言を reach で添える（1 回で届く）",
     /check: anchorSig\(/.test(cut("loadOlder")) && /reach/.test(cut("loadOlder")) && /loadOlder\(\{ reach: uuid \}\)/.test(cut("revealMessage")));
   t.ok("配線: 窓の手前の呼び出し（earlierCalls）を受けて覚え、作業ダイアログの過去の一覧が引く",
-    /state\.earlierCalls = data\?\.earlierCalls \?\? \[\]/.test(cut("paintSession")) && /state\.earlierCalls/.test(cut("restorePastSubagents")) && /subagentCalls\(/.test(cut("restorePastSubagents")));
+    /historyPane\.earlierCalls = data\?\.earlierCalls \?\? \[\]/.test(cut("adopt")) && /mainView\.adopt\(data\)/.test(cut("paintSession")) && /state\.earlierCalls/.test(cut("restorePastSubagents")) && /subagentCalls\(/.test(cut("restorePastSubagents")));
   t.ok("配線: 手前を足したとき、時刻だけで並ぶ提示（窓の中では先頭に載せていたもの）も時刻の位置へ描き直す", /firstAt/.test(cut("paintOlder")) && /it\.sortAt < firstAt/.test(cut("paintOlder")));
 
   // ---------------------------------------------------------------- 起動の先読み（ready の直後に前回の会話を頼む。開くときと同じ窓の形でなければ引き取れない）

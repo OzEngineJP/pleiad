@@ -102,7 +102,7 @@ export default function (t) {
   const html = read('web/index.html'), css = read('web/style.css');
   t.ok('再開は WS resume。更新は下書きを保存してからデスクトップへ渡す', client.includes("cmd('resume', { sessionId })") && updates.includes('await flush()') && updates.includes("bridge.update(name, value)"));
   t.ok('turnEnd の interrupted を会話に写し、ターンが始まれば消す', client.includes("s.interrupted = ev.interrupted ?? null") && /running\.has\(s\.id\)\) \{ s\.interrupted = null/.test(client));
-  t.ok('ライブの中断も保存された中断と同じ一行で描く（二重に出さない）', client.includes('paintInterruptLine({ at: ev.at ?? Date.now(),') && !client.includes('chat.sys.aborted'));
+  t.ok('ライブの中断も保存された中断と同じ一行で描く（二重に出さない）', read('web/conversation-view.mjs').includes('paintInterruptLine({ at: ev.at ?? Date.now(),') && !client.includes('chat.sys.aborted'));
   t.ok('脇の行・畳んだ見出し・器の要約に三角', (side.match(/warnMark\(/g) ?? []).length >= 2 && side.includes('stoppedIn(rows)') && side.includes('stoppedIn(list)'));
   t.ok('index.html: 中断の隣に再開、欄の下の一行、脇の下の一行。切り替え確認の一覧はない',
     ['id="resume"', 'id="resumeNote"', 'id="resumeStrip"'].every(x => html.includes(x)) && !html.includes('updateWork'));

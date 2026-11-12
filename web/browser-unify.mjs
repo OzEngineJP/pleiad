@@ -21,7 +21,7 @@ const css = `
 .bu-display{flex:none;font-size:12px!important;padding:6px 8px!important;border-radius:var(--r-pill);min-height:34px}
 .bu-display:hover{background:var(--surface-3)}
 .bu-page-update-bar{margin-left:var(--bu-tree-width);display:flex;align-items:center;gap:12px;padding:4px 12px;font-size:12px}.bu-page-update-bar[hidden]{display:none}.bu-page-update{display:block;margin:0 0 0 auto;padding:6px 12px!important;color:var(--ink-blue)!important}
-.bu-page-host[hidden],.bu-local-page[hidden],.bu-explorer[hidden]{display:none!important}
+.bu-page-host[hidden],.bu-local-page[hidden],.bu-explorer[hidden],.bu-explorer-list[hidden],.bu-explorer-failed[hidden]{display:none!important}
 .bu-local-page{width:100%;height:100%;border:0;display:block;background:var(--surface-paper)}
 .bu-panel{position:relative;--bu-tree-width:0px}
 .browser-unify .bu-panel>.cp-screen{margin-left:var(--bu-tree-width);width:calc(100% - var(--bu-tree-width))}
@@ -29,9 +29,10 @@ const css = `
 .bu-explorer-head{display:flex;align-items:center;justify-content:space-between;min-height:38px;padding:0 12px}.bu-explorer-head>span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bu-explorer-list{flex:1;min-height:0;overflow:auto;padding:0 6px}.file-preview-content[hidden]{display:none!important}.bu-explorer-list .tree-row{min-height:30px;padding-top:0;padding-bottom:0}.bu-explorer-list .tree-row.sel{background:var(--surface-2);box-shadow:none}.bu-explorer{border-right:1px solid var(--line)}.bu-explorer-head button{border:0;background:none;color:inherit;cursor:pointer;width:28px;height:28px;padding:5px}.bu-explorer-head svg{width:16px;height:16px}.bu-tree-more{border:0;background:none;color:inherit;padding:5px;cursor:pointer}
 .bu-explorer-list .tree-row>svg{width:16px;height:16px;flex:none}.bu-tree-more{width:28px;height:28px;margin-left:auto;opacity:0}.tree-row:hover .bu-tree-more,.tree-row.sel .bu-tree-more{opacity:1}
+.bu-explorer-failed{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:6px 12px}.bu-explorer-failed>p{margin:0;color:var(--ink-strong);font-weight:600;overflow-wrap:anywhere}.bu-explorer-head button:disabled{opacity:.35;cursor:default}
 .bu-tree-resize{position:absolute;right:-3px;top:0;bottom:0;width:6px;cursor:col-resize;touch-action:none}.bu-tree-resize:focus-visible{outline:2px solid var(--line-blue)}
 .bu-tree-overlay{box-shadow:6px 0 18px var(--shadow)}
-@media(max-width:600px){.bu-display{font-size:11px!important;min-height:44px;padding:4px!important}.bu-tree-more{opacity:1;min-width:44px;min-height:44px}.bu-explorer-list .tree-row{min-height:44px}}
+@media(max-width:600px){.bu-display{font-size:11px!important;min-height:44px;padding:4px!important}.bu-tree-more{opacity:1;min-width:44px;min-height:44px}.bu-explorer-list .tree-row{min-height:44px}.bu-explorer-failed .btn{min-height:44px;padding:0 16px}}
 
 .bu-chrome{--bu-frame:var(--surface-3);--bu-bar:var(--surface-1);--bu-omni:var(--surface-2);color:var(--ink);flex:none;min-width:0;position:relative}
 [data-theme=dark] .bu-chrome{--bu-frame:var(--surface-0);--bu-bar:var(--surface-3);--bu-omni:var(--surface-paper)}
@@ -567,7 +568,7 @@ export function createBrowserUnify(deps = {}) {
     if (!explorer && chrome()?.workspace) explorer = createBrowserTree({ host:chrome().workspace,
       open:(path, fresh) => navigate(fresh ? 'new' : 'navigate', { input:path }).catch(failed),
       menu:(item, x, y) => { const target = { page:{ path:item.id, kind:item.kind === 'directory' ? 'dir' : 'file' } };
-        showMenu(x, y, [{ label:t('tabs:tree.new'), onClick:() => navigate('new', { input:item.id }).catch(failed) }, ...tabMenu(target)]); }, notify });
+        showMenu(x, y, [{ label:t('tabs:tree.new'), onClick:() => navigate('new', { input:item.id }).catch(failed) }, ...tabMenu(target)]); } });
     explorer?.show(tab, sessionId);
     // 映像の中のファイル・フォルダーのページは、映像の中のバーが受け持つ（HTML は中にバーを出せないので、ここに出す。P10）
     update.hidden = updateBar.hidden = !tab?.local || !tab.pending || (tab.mode === 'chrome' && tab.page?.kind !== 'html');

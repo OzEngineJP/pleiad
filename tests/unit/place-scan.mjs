@@ -3,17 +3,15 @@
 // 時間ではなく、筋への querySelector の回数が件数に比例しないことで見る。
 import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readConversationView } from "../lib/cut-source.mjs";
 
 export const name = "place-scan";
 export const title = "履歴を描く間、1 行ごとに筋を探し回らない（稼働表示の行は activity.el で持つ）";
 
 export default async function (t) {
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const cut = name => {
-    const start = source.indexOf(`function ${name}(`);
-    return start < 0 ? "" : source.slice(start, source.indexOf("\n}", start) + 2);
-  };
-  t.ok("client.mjs から wrap・place・append を切り出せる", !!cut("wrap") && !!cut("place") && !!cut("append"));
+  const source = readConversationView();   // wrap・place・append の本体は web/conversation-view.mjs（ADR 0319 段 6-5）
+  const cut = name => cutFunction(source, name);
+  t.ok("conversation-view.mjs から wrap・place・append を切り出せる", !!cut("wrap") && !!cut("place") && !!cut("append"));
 
   /** 筋の身代わり。子は配列で持ち、筋への querySelector の呼び出しを数える */
   const screen = () => {
@@ -42,7 +40,7 @@ export default async function (t) {
       return e;
     };
     const activity = { el: null };
-    const context = vm.createContext({ thread, el, log: {}, atBottom: () => false, relayoutBranches() {}, state: { busy: true }, activity, historyPane: { painting: true, paintBefore: null }, replayPainting: false });
+    const context = vm.createContext({ thread, el, log: {}, atBottom: () => false, relayoutBranches() {}, isBusy: () => true, liveTurn: { activity }, historyPane: { painting: true, paintBefore: null }, replaying: false });
     vm.runInContext(`${cut("wrap")}\n${cut("place")}\n${cut("append")}\nthis.append = append;`, context);
     return { rows, el, activity, append: context.append, queries: () => queries };
   };
