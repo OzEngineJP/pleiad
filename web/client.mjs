@@ -1640,7 +1640,7 @@ function commandMsg(m) {
   const who = whoLine(t('chat.message.you'), m.at);
   // 入力欄の `!`（ADR 0054）: 渡す前は「次の発言で {agent} に渡す」、渡した後は「{agent} に渡した」。
   // ホストで走らせる会話は、渡す前なら行ごとに「渡さない」を選べる。渡さなかった行は「{agent} に渡していない」で残る（ADR 0055）
-  const agent = labelOf(m.backend ?? activeBackendId()) || 'AI';
+  const agent = labelOf(m.backend ?? activeBackendId()) || t('browser.agentFallback');
   if (m.kind === 'shell') {
     const label = retiredHere() && m.pending ? t('ui:deletedBotReadOnly') : m.kept ? t('chat.shell.kept', { agent }) : m.pending ? (m.skip ? t('chat.shell.skipped', { agent }) : t('chat.shell.pending', { agent })) : t('chat.system.handedTo', { agent });
     who.firstChild.append(' · ', el('span', 'handed', label));
@@ -1788,7 +1788,7 @@ function shellAvailability() {
   const current = activeBackendId();
   const backend = row?.nextSettings?.backend ?? current;
   const caps = capsOf(backend);
-  if (!caps.shell || (backend !== current && !(caps.shell === 'host' && capsOf(current).shell === 'host'))) return { ok: false, text: t('chat.shell.unavailable', { agent: labelOf(backend) || 'AI' }) };
+  if (!caps.shell || (backend !== current && !(caps.shell === 'host' && capsOf(current).shell === 'host'))) return { ok: false, text: t('chat.shell.unavailable', { agent: labelOf(backend) || t('browser.agentFallback') }) };
   // Codex はスレッドができてから（最初の発言の後）
   if (caps.shell === 'native' && (!row || row.unsent || state.current === freshSessionId)) return { ok: false, text: t('chat.shell.notStarted') };
   return { ok: true };
@@ -2551,6 +2551,11 @@ function foldApprovalRow(id, { box, row, details, host, act = activity }) {
  * Chrome の操作待ちのカード（permission の browserHandoff。web/browser-handoff-card.mjs）。ターンが終わっても残り、
  * 中身は permissionUpdate で替わり、決着は permissionSettled で畳む（ボタンは決着の便りを待つ）
  */
+const handoffCards = new Set();
+/** Chrome の操作待ちのカードの見出しの名前を引き直す（エージェントの一覧・会話の一覧が届いた後）。外れたカードは台帳から落とす */
+function renameHandoffCards() {
+  for (const rename of [...handoffCards]) if (!rename()) handoffCards.delete(rename);
+}
 function browserHandoffCard(ev, into = null) {
   const m = el("div", "m card");
   const card = el("div", "card");
@@ -2563,11 +2568,20 @@ function browserHandoffCard(ev, into = null) {
   const operateHere = window.plyRemote ? async (target) => (await chromePanel?.measure(null, { target })) ?? null : null;
   const openScreen = (target) => chromePanel?.openAiTab(target);
   const view = browserHandoffView(ev, { el, t, cmd, operateHere, openScreen, spinner: runMark, agentName: chromeAgentName, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
-  head.append(el("span", "desc", view.summary()));
+  const desc = el("span", "desc", view.summary());
+  head.append(desc);
   card.append(head, view.body, actions);
   placeCard(m, ev, into);
+  // 名前が後から分かる（エージェントの一覧・会話の一覧が届く）と、見出しと本文の名前を引き直す
+  const rename = () => {
+    if (!desc.isConnected || card.classList.contains("done")) return false;   // 畳んだ・外れたカードは描き直さない（ボタンを戻さない）
+    view.refresh();
+    desc.textContent = view.summary();
+    return true;
+  };
+  handoffCards.add(rename);
   registerRelayCard(ev, { m, card, head, code: null, actions, res: view.res, buttons: [], removeOnFold: [view.body],
-    settled: (settledEv) => handoffSettledLine(t, settledEv), onUpdate: (patch) => view.update(patch.browserHandoff) });
+    settled: (settledEv) => handoffSettledLine(t, settledEv), onUpdate: (patch) => { view.update(patch.browserHandoff); rename(); } });
   return m;
 }
 
@@ -3508,6 +3522,7 @@ async function loadBackends(early = null) {
   if (state.backends.length) return state.backends;
   const list = early ?? await cmd("backends").catch(() => []);
   state.backends = Array.isArray(list) ? list : [];
+  renameHandoffCards();
   // ロゴと短い名前（エージェントの記述）。脇の行・入口のチップ・入力欄の区切りがここから引く
   setAgentBrands(state.backends);
   // mark 型のロゴを文書内シンボルとして先に読み始める（開く前に届いていればちかちかしない）
@@ -9297,6 +9312,7 @@ async function runRefresh(listed) {
   serverMoveFields.clear();
   for (const s of sessions) serverMoveFields.set(s.id, { status: s.status ?? '', ungrouped: Boolean(s.ungrouped) });
   state.sessions = applyPendingPatches(sessions);
+  renameHandoffCards();
   settleNext(version);
   readCompletions.fromSessions(sessions);
   state.statuses = applyPendingStatuses(statuses);
@@ -10476,7 +10492,13 @@ gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: stat
 /** 右パネルの Chrome が映している会話（開いていなければ今の会話）。状態の一行・引き継ぎ・押した位置の輪はこの会話に向く */
 function chromeTarget() { return (chromePanel?.isOpen() && chromePanel.sessionId) || state.current || null; }
 /** その会話のエージェントの名前（子の会話を映しているときは子のエージェント） */
-function chromeAgentName(id) { return labelOf((id && id !== state.current ? state.sessions.find(s => s.id === id)?.backend : null) ?? activeBackendId()); }
+function chromeAgentName(id) {
+  // 一覧に無い会話（子・別の PC の子・件数の上限の外）の名前を、今の会話のエージェントで代用しない。分からなければ空（呼ぶ側が辞書の既定名にする）。
+  // エージェントの一覧がまだ届いていなければ、id（claude など）を字にしない
+  const own = !id || id === state.current;
+  const backend = own ? activeBackendId() : state.sessions.find(s => s.id === id)?.backend;
+  return state.backends.find(b => b.id === backend)?.label ?? '';
+}
 /** リモートの端末で、映像の箱の大きさを測ってその会話を端末から引き継ぐ（fromPc は PC で引き継いでいる窓を端末へ移す） */
 async function takeOverOnDevice(id, { fromPc = false } = {}) {
   const size = await chromePanel?.measure(null, { target: id });

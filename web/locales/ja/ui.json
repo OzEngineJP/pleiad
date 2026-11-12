@@ -4906,6 +4906,7 @@
   "browser": {
     "unifiedEntryLabel": "ブラウザー",
     "entryState": { "requested": "あなたへの依頼待ち", "paused": "あなたが Chrome を操作中", "working": "{{name}} が Chrome を操作中" },
+    "agentFallback": "AI",
     "openExternal": "既定のブラウザーで開く",
     "chromeWindow": {
       "panel": "Chrome のウィンドウ",

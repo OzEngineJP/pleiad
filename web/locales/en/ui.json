@@ -5016,6 +5016,7 @@
   "browser": {
     "unifiedEntryLabel": "Browser",
     "entryState": { "requested": "Waiting for your help", "paused": "You are operating Chrome", "working": "{{name}} is operating Chrome" },
+    "agentFallback": "AI",
     "openExternal": "Open in default browser",
     "chromeWindow": {
       "panel": "Chrome window",

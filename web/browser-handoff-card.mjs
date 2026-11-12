@@ -18,9 +18,9 @@ const REASONS = ['login', 'captcha', 'two_factor', 'payment', 'other'];
 /** 依頼の種類の字（login ほか）。知らない値は other */
 export const reasonLabel = (t, reason) => t(`${K}reason.${REASONS.includes(reason) ? reason : 'other'}`);
 
-/** カードの見出しの 1 行（一覧・通知・畳んだ後の要約に使う）。agent は頼んだエージェントの名前（分からなければ映像の行と同じ「AI」） */
+/** カードの見出しの 1 行（一覧・通知・畳んだ後の要約に使う）。agent は頼んだエージェントの名前（分からなければ映像の行と同じ辞書の既定名 browser.agentFallback） */
 export function handoffSummary(t, h, agent = '') {
-  return h.reason === 'connect' ? t(`${K}connect.lead`) : t(`${K}askedLead`, { agent: agent || 'AI', reason: reasonLabel(t, h.reason) });
+  return h.reason === 'connect' ? t(`${K}connect.lead`) : t(`${K}askedLead`, { agent: agent || t('browser.agentFallback'), reason: reasonLabel(t, h.reason) });
 }
 
 /** 見出しの印。接続の案内は承認（承認を待っている）、人への依頼は Chrome の操作待ち */
@@ -46,12 +46,13 @@ export function settledLine(t, ev) {
  * spinner() は「つないでいます…」の回る印（web/arc.mjs の runMark）。
  * operateHere(会話の id) はリモートの端末だけ: 右の欄にその会話の Chrome の映像を開き、映像の箱の大きさ（{ width, height, scale }。開けなければ null）を返す
  * openScreen(会話の id) は人が操作している間の「画面を開く」: 右の欄にその会話の Chrome の映像を開く
- * agentName(会話の id) は頼んだエージェントの名前（右の欄の映像の行と同じ引き方。子が頼んだときは子の会話の id を渡す）。無ければ「AI」
+ * 頼んだエージェントの名前は、サーバーが依頼に載せた h.agent（その会話のエージェントの表示名）を先に使う。無ければ agentName(会話の id)（右の欄の映像の行と同じ引き方。子が頼んだときは子の会話の id を渡す）。
+ * どちらも分からなければ辞書の既定名（browser.agentFallback）
  */
 export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operateHere = null, openScreen = null, spinner = null, agentName = null }) {
   let h = ev.browserHandoff;
   const targetSessionId = () => h.targetSessionId ?? ev.targetSessionId ?? ev.sessionId;
-  const askedBy = () => agentName?.(targetSessionId()) || '';
+  const askedBy = () => h.agent || agentName?.(targetSessionId()) || '';
   const body = el('div', 'bh-body');
   const res = el('span', 'res');
   let buttons = [];
@@ -207,6 +208,8 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
     get buttons() { return buttons; },
     summary: () => handoffSummary(t, h, askedBy()),
     mark: () => handoffMark(t, h),
+    /** 名前が後から分かったとき、本文の名前を描き直す */
+    refresh() { if (!busy) paint(); },
     update(next) {
       if (!next) return;
       h = { ...h, ...next };

@@ -32,6 +32,17 @@ const messages = [
   { role: "user", text: "計画を開いてください", uuid: `claude:${id}:u1`, at: iso(at), backend: "claude" },
   { role: "assistant", text: "開きました。", uuid: `claude:${id}:a1`, at: iso(at + 60_000), backend: "claude" },
 ];
+// 会話の中の可視化（縦にも横にも長い）。右の欄のタブで開いて、読み直してもスクロール位置が保たれるかを確かめる
+const reference = `visualize{"path":"${repo}/chart.html","title":"長いグラフ"}`;
+// 同じ中身を題だけ替えてもう一度出した 2 つ目（URL の題だけが違うときも位置が保たれるかを見る）
+const reference2 = `visualize{"path":"${repo}/chart.html","title":"別の題のグラフ"}`;
+messages[1].text = `開きました。\n${reference}\n${reference2}`;
+fs.mkdirSync(path.join(dir, "presents"), { recursive: true });
+const chartHtml = '<!doctype html><html><head><meta charset="utf-8"><title>chart</title></head><body style="margin:0"><h1 id="title">長いグラフ</h1><div style="height:3000px;width:3000px;background:linear-gradient(135deg,#dde,#99c)">縦にも横にも長い</div></body></html>';
+fs.writeFileSync(path.join(dir, "presents", `${id}.jsonl`), [
+  { at: iso(at + 60_000), kind: "visualization", caption: "長いグラフ", path: `${repo}/chart.html`, id: "chart", reference, by: "agent", content: chartHtml },
+  { at: iso(at + 61_000), kind: "visualization", caption: "別の題のグラフ", path: `${repo}/chart.html`, id: "chart", reference: reference2, by: "agent", content: chartHtml },
+].map((line) => JSON.stringify(line) + "\n").join(""));
 fs.writeFileSync(path.join(dir, "conversations", `${id}.json`), JSON.stringify({ messages }));
 fs.writeFileSync(path.join(dir, "conversations.json"), JSON.stringify({ [id]: { segments: [{ backend: "claude", nativeId: `n-${id}` }],
   info: { sessionId: id, title: "ファイルの読み直し", cwd: repo, createdAt: at, lastModified: at + 60_000 }, backend: "fake", nativeId: null, base: messages.length } }));

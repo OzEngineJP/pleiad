@@ -277,6 +277,11 @@ export default async function (t) {
     handoffs.connect('normal');
     const third = cards[2];
     t.ok('ほかのモードの会話: auto は false、demand の consent も false', third.opts.browserHandoff.auto === false && demands.at(-1).consent === false && third.opts.browserHandoff.agent === 'Claude');
+    // 人への依頼（hand_to_user）にも頼んだエージェントの表示名を載せる（子の会話は画面の一覧に無いことがある。カードの見出しはこれを先に使う）
+    status = { state: 'connected', dialog: false, assist: null, enable: true };
+    handoffs.ask('asker', { reason: 'login', message: 'x' });
+    const asked = cards.at(-1);
+    t.ok('依頼のカードにも、頼んだ会話のエージェントの名前が載る', asked.opts.browserHandoff.state === 'asked' && asked.opts.browserHandoff.agent === 'Claude', JSON.stringify(asked.opts.browserHandoff));
     handoffs.close();
   }
 }

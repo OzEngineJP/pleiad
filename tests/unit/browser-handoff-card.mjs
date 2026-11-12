@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { readWeb, cutFunction } from '../lib/cut-source.mjs';
 import { browserHandoffView, handoffSummary } from '../../web/browser-handoff-card.mjs';
 
 export const name = 'browser-handoff-card';
@@ -60,7 +62,8 @@ export default async function (t_) {
     t_.ok(`${lang}: askedLead は {{agent}} を取り、Claude を直書きしない`, lead.includes('{{agent}}') && !lead.includes('Claude'), lead);
   }
   const ja = dict('ja');
-  const tr = (key, params = {}) => (key === 'chat.browserHandoff.askedLead' ? ja.askedLead : key === 'chat.browserHandoff.reason.login' ? 'ログイン' : key)
+  const FALLBACK = JSON.parse(readFileSync(new URL('../../web/locales/ja/ui.json', import.meta.url), 'utf8')).browser.agentFallback;
+  const tr = (key, params = {}) => (key === 'chat.browserHandoff.askedLead' ? ja.askedLead : key === 'chat.browserHandoff.reason.login' ? 'ログイン' : key === 'browser.agentFallback' ? FALLBACK : key)
     .replace(/\{\{(\w+)\}\}/g, (_, k) => params[k]);
   const asked = (names, id = 'fake-session', extra = {}) => browserHandoffView({ id: 'c', sessionId: 'parent', ...extra, browserHandoff: { reason: 'login', state: 'asked', message: null } },
     { el, t: tr, cmd: async () => {}, agentName: names });
@@ -73,4 +76,33 @@ export default async function (t_) {
   t_.ok('子の会話が頼んだときは、子の会話の id で名前を引く', byChild.summary() === 'name-of-child からの依頼 · ログイン', byChild.summary());
   t_.ok('名前が分からないときは映像の行と同じ「AI」', asked(() => '').summary() === 'AI からの依頼 · ログイン' && asked(null).summary() === 'AI からの依頼 · ログイン');
   t_.ok('handoffSummary は connect のときは名前を使わない', handoffSummary(tr, { reason: 'connect' }, 'Fake') === 'chat.browserHandoff.connect.lead');
+  t_.ok('既定名は辞書の 1 つのキー（browser.agentFallback）から引く（ja・en とも）', ['ja', 'en'].every(lang => typeof JSON.parse(readFileSync(new URL(`../../web/locales/${lang}/ui.json`, import.meta.url), 'utf8')).browser.agentFallback === 'string'));
+
+  // サーバーが依頼に載せた表示名（h.agent）が先。子の会話が一覧に無くても、親のエージェントの名前に化けない
+  const carried = browserHandoffView({ id: 'c', sessionId: 'parent', targetSessionId: 'child', browserHandoff: { reason: 'login', state: 'asked', message: null, agent: 'Codex' } },
+    { el, t: tr, cmd: async () => {}, agentName: () => 'Claude' });
+  t_.ok('依頼に載った表示名（h.agent）を先に使う', carried.summary() === 'Codex からの依頼 · ログイン' && texts(carried)[0] === 'Codex からの依頼 · ログイン', carried.summary());
+
+  // 実物の chromeAgentName（web/client.mjs）を、一覧が子を含まない・エージェントの一覧が後から届く状態で通す
+  const clientSrc = readWeb('client.mjs');
+  const sandbox = { state: { current: 'parent', backendId: 'claude', backends: [], sessions: [{ id: 'parent', backend: 'claude' }, { id: 'listed', backend: 'codex' }] } };
+  vm.createContext(sandbox);
+  vm.runInContext(`${cutFunction(clientSrc, 'activeBackendId')}
+${cutFunction(clientSrc, 'chromeAgentName')}`, sandbox);
+  const real = id => sandbox.chromeAgentName(id);
+  t_.ok('エージェントの一覧が未着のうちは、id（claude）を字にしない', real('parent') === '' && real('listed') === '', JSON.stringify([real('parent'), real('listed')]));
+  const early = asked(real, null, { targetSessionId: 'child' });
+  t_.ok('未着のうちの見出しは辞書の既定名', early.summary() === 'AI からの依頼 · ログイン', early.summary());
+  const waiting = asked(real, null, { targetSessionId: 'listed' });
+  t_.ok('未着のうちに作ったカードは既定名', waiting.summary() === 'AI からの依頼 · ログイン' && texts(waiting)[0] === 'AI からの依頼 · ログイン');
+  sandbox.state.backends = [{ id: 'claude', label: 'Claude' }, { id: 'codex', label: 'Codex' }];
+  t_.ok('一覧が届けば、親の会話と一覧にある別の会話はそれぞれのエージェントの名前', real('parent') === 'Claude' && real('listed') === 'Codex', JSON.stringify([real('parent'), real('listed')]));
+  t_.ok('一覧に無い子の会話は、親のエージェントの名前で代用しない', real('child') === '', real('child'));
+  waiting.refresh();
+  t_.ok('名前が分かった後は、未着の間に作ったカードの見出しと本文が引き直して正しくなる', waiting.summary() === 'Codex からの依頼 · ログイン' && texts(waiting)[0] === 'Codex からの依頼 · ログイン', JSON.stringify([waiting.summary(), texts(waiting)]));
+  t_.ok('一覧に無い子のカードは既定名のまま（親の名前にならない）', early.summary() === 'AI からの依頼 · ログイン');
+  const late = asked(real, null, { targetSessionId: 'listed' });
+  t_.ok('子が一覧に載れば、見出しがその子のエージェントになる', late.summary() === 'Codex からの依頼 · ログイン', late.summary());
+  // 引き直しの結線: エージェントの一覧と会話の一覧が届いた所で、カードの名前を引き直す
+  t_.ok('エージェントの一覧・会話の一覧が届いた所でカードの名前を引き直す', (clientSrc.match(/renameHandoffCards\(\);/g) ?? []).length >= 2 && /view\.refresh\(\);\s*desc\.textContent = view\.summary\(\)/.test(clientSrc));
 }

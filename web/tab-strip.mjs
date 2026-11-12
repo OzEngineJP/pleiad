@@ -261,7 +261,7 @@ export function createTabStrip({ onPick = () => {}, onClose = () => {}, onNew = 
       // エージェントの印（inapp-browser.md。操作中だけ弧。最後に操作した idle の点は出さない）
       if (running) {
         const mark = document.createElement('span'); mark.className = 'bu-agent'; mark.setAttribute('aria-hidden', 'true'); mark.append(runMark());
-        pick.setAttribute('aria-label', `${name}, ${t('browser.chromeWindow.chipAgentRunning', { name: tab.agentName || 'AI' })}`);
+        pick.setAttribute('aria-label', `${name}, ${t('browser.chromeWindow.chipAgentRunning', { name: tab.agentName || t('browser.agentFallback') })}`);
         pick.replaceChildren(stripIcon(tab), mark, title);
       } else { pick.removeAttribute('aria-label'); pick.replaceChildren(stripIcon(tab), title); }
       const closeName = t('tabs:strip.close', { title: name });

@@ -61,7 +61,7 @@ const onBackend = ${onBackend[1]};`;
     vocabKey: ({ backend, account, endpoint }) => `${backend}|${account}|${endpoint}`,
     loadVocab: async (bid) => { vocabAsked.push(bid); return { modes: { default: {}, plan: {} }, models: { '': {}, [`${bid}-m`]: {}, opus: {} } }; },
     syncEndpoint: async () => {}, syncAccount: async () => {}, defaultModelOf: () => '', adoptEfforts: async () => true, paintSettingsNotice: noop, renderSessions: noop,
-    warmAgentChoices: noop,
+    warmAgentChoices: noop, renameHandoffCards: noop,
     cmd: (command, args) => {
       if (command !== 'setTurnSettings') return Promise.resolve({});
       const g = gate();

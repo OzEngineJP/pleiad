@@ -219,7 +219,10 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
       if (status.state !== 'connected') return startConnect(sessionId);
       const kind = HANDOFF_REASONS.includes(reason) ? reason : 'other';
       const text = cleanMessage(message);
-      const h = create(sessionId, kind, text, { reason: kind, message: text, state: 'asked', dialog: false });
+      // 頼んだエージェントの表示名は、サーバーがここで載せる（子の会話は画面の会話の一覧に無いことがある。端末・別の PC の子も同じ）
+      let agent = null;
+      try { agent = agentLabel(sessionId) ?? null; } catch { agent = null; }
+      const h = create(sessionId, kind, text, { reason: kind, message: text, state: 'asked', dialog: false, ...(agent ? { agent } : {}) });
       // 人が先に操作していた（PC で操作する・この端末で操作する）なら、「あなたが操作中」から始める
       evaluate(sessionId);
       return h;
