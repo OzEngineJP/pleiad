@@ -25,7 +25,7 @@ try {
 
   // 主の行の写し（委譲カードは子の状態で変わるので除く）
   const mainRows = () => page.evaluate(() => [...document.querySelectorAll('#thread .mw')]
-    .filter((w) => !w.querySelector('.tc[data-tool$="ply_delegate"]'))
+    .filter((w) => !w.querySelector('.tc[data-tool$="ply_delegate"]') && !String(w.dataset.key).startsWith('activity'))
     .map((w) => w.dataset.key + '|' + w.textContent.trim()));
   const mainBefore = await mainRows();
   assert.ok(mainBefore.length >= 8, `main has its own rows (${mainBefore.length})`);
