@@ -144,19 +144,19 @@ export default async function(t) {
     aiTab = 'a';
     for (const args of [{ input:'https://moved.example/' }, { action:'back' }, { action:'forward' }, { action:'reload' }, { action:'close' }, { action:'view', view:'preview' }]) {
       const sent = calls.length, held = touched.length;
-      const code = await ws.navigate({ sessionId:'one', targetId:'a', ...args }, { by:'screen:1' }).then(() => null, error => error.code);
+      const code = await ws.navigate({ sessionId:'one', targetId:'a', ...args }, { by:'screen:1', client:clients[0] }).then(() => null, error => error.code);
       t.ok(`the agent tab before take-over refuses ${args.action ?? 'navigate'} with view-only, without CDP and without becoming human`, code === 'view-only' && calls.length === sent && touched.length === held,
         JSON.stringify({ code, sent:calls.slice(sent), touched:touched.slice(held) }));
     }
-    await ws.navigate({ sessionId:'one', action:'new', input:'https://fresh.example/' }, { by:'screen:1' });
+    await ws.navigate({ sessionId:'one', action:'new', input:'https://fresh.example/' }, { by:'screen:1', client:clients[0] });
     t.ok('while the agent tab is view-only, a typed address still opens in a new human tab', opened.at(-1).url === 'https://fresh.example/' && touched.at(-1).targetId === 'new-tab', JSON.stringify([opened.at(-1), touched.at(-1)]));
     holders.set('a', { holder:'human' });   // [引き継ぐ] の後
-    await ws.navigate({ sessionId:'one', targetId:'a', action:'reload' }, { by:'screen:1' });
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'reload' }, { by:'screen:1', client:clients[0] });
     t.ok('after take-over the agent tab reloads', calls.at(-1)[0] === 'Page.reload');
-    await ws.navigate({ sessionId:'one', targetId:'a', action:'close' }, { by:'screen:1' });
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'close' }, { by:'screen:1', client:clients[0] });
     t.ok('after take-over the agent tab closes', calls.at(-1)[0] === 'close' && calls.at(-1)[2] === 'a');
     holders.clear(); aiTab = 'other';
-    await ws.navigate({ sessionId:'one', targetId:'a', action:'reload' });
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'reload' }, { client:clients[0] });
     t.ok('a tab that is not the agent tab works as before even while its holder is ai', calls.at(-1)[0] === 'Page.reload');
     aiTab = null;
 
