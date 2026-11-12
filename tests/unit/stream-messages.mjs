@@ -7,6 +7,7 @@ import path from 'node:path';
 import { streamMessages } from '../../web/stream-messages.mjs';
 import { renderToolCall, applyToolResult } from '../../web/render.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
+import { cutFunction, readClientAndLiveTurn } from '../lib/cut-source.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'stream-messages';
@@ -107,9 +108,9 @@ export default async function (t) {
   applyToolResult(card, m0.toolCalls[0].result);
   t.ok('畳んだツールからカードが描ける（入力と結果が出る）', card.dataset.tool === 'Bash' && card.outerHTML.includes('&quot;ls&quot;') && card.outerHTML.includes('<code>a.txt</code>'), card.outerHTML.slice(0, 200));
 
-  // ---- 配線（client.mjs）
-  const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
-  const body = (name) => { const start = source.indexOf(`function ${name}(`); return source.slice(start, source.indexOf('\n}', start) + 2); };
+  // ---- 配線（client.mjs と、履歴の面の web/history-pane.mjs。ADR 0319 段 6-4）
+  const source = readClientAndLiveTurn();
+  const body = (name) => cutFunction(source, name);
   const task = body('taskThread');
   t.ok('詳細は live で読み、watch は付けない（メインパネルで見ている会話を書き換えない）',
     task.includes("cmd('loadSession', { sessionId: item.childId, live: true })") && !task.includes('watch'));
@@ -130,7 +131,7 @@ export default async function (t) {
   t.ok('メインパネルと詳細は発言 1 件を historyRow で描く', main.includes('historyRow(it.m') && readonly.includes('historyRow(it.m')
     && !main.includes('renderToolCall') && !readonly.includes('renderToolCall'));
   t.ok('詳細は readonly: toolCards に登録せず、委譲のカードに「開く」を付けない',
-    readonly.includes('readonly: true') && row.includes('if (c.id && !readonly) state.toolCards.set') && row.includes('if (!readonly) linkDelegateCard'));
+    readonly.includes('readonly: true') && row.includes('if (c.id && !readonly) toolCardMap().set') && row.includes('if (!readonly) linkDelegateCard'));
   t.ok('接続先の一文は描いている会話で引く', row.includes('noteEndpointFailure(card, c.result, sessionId)') && task.includes('sessionId: item.childId'));
 
   // ---- サーバー越し: 走っている子を live で読むと、途中のツールと本文が出来事で返る

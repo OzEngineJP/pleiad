@@ -6,7 +6,7 @@
 // 時間ではなく、要素の同一性（===）と行の並びで判定する。
 import fs from "node:fs/promises";
 import vm from "node:vm";
-import { cutFunction, readClientAndLiveTurn, liveTurnStateDecl, bindLiveState } from "../lib/cut-source.mjs";
+import { cutFunction, readClientAndLiveTurn, liveTurnStateDecl, bindLiveState, historyPaneStateDecl, bindHistoryState } from "../lib/cut-source.mjs";
 import { N } from "../lib/dom-stub.mjs";
 import { buildItems, inlineAttachments, showsAsCard } from "../../web/timeline.mjs";
 import { retainPlan } from "../../web/history-sync.mjs";
@@ -105,9 +105,14 @@ export default async function (t) {
   const source = readClientAndLiveTurn();   // resetLiveTurn は web/live-turn.mjs（ADR 0319 段 6-3）
   const cut = name => {
     const body = cutFunction(source, name);
-    if (!body) throw new Error(`client.mjs と live-turn.mjs に ${name} が無い`);
+    if (!body) throw new Error(`client.mjs・live-turn.mjs・history-pane.mjs に ${name} が無い`);
     return body;
   };
+  // 履歴の面の中の状態（paintingHistory・paintBefore）は、client の place・append からは historyPane 越しに見える（ADR 0319 段 6-4）
+  const PANE_BRIDGE = [
+    "const placeRow = (node, key) => append(node, key);",
+    "const historyPane = { get painting() { return paintingHistory; }, get paintBefore() { return paintBefore; } };",
+  ].join("\n");
   const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows", "paintable"].map(cut).join("\n");
   const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // 履歴の 1 行。本物の historyRow（web/client.mjs）は発言 1 件から行を作る。ここでは中身が決まる作りものにして、行の並びと続きの見出しだけを見る
@@ -129,10 +134,15 @@ export default async function (t) {
     const context = vm.createContext({
       thread, state, activity, el, buildItems, inlineAttachments, showsAsCard, historyRow, log: { scrollTop: 0 }, atBottom: () => false, relayoutBranches() {}, paintDelegateStates() {},
       renderPresent: p => el("div", "m card", `提示 ${p.id ?? p.path}`), savedEvent: p => p,
-      cancelStream: () => { cancelled++; },
+      cancelStream: () => { cancelled++; }, replayPainting: false,
+      // createHistoryPane が主の会話から受ける値（hooks）
+      currentSession: () => state.current, isBusy: () => state.busy, isLoadingSession: () => state.loadingSession, toolCardMap: () => state.toolCards,
     });
     bindLiveState(state, context);
-    vm.runInContext(`let paintingHistory = false;\nlet paintBefore = null;\n${liveTurnStateDecl()}\n${functions}`, context);
+    // 履歴の面の持ち物（messages・base ほかと paintingHistory・paintBefore）は宣言ごと vm へ入れ、state の同名の項目をつなぐ
+    vm.runInContext(`${historyPaneStateDecl()}\n${liveTurnStateDecl()}`, context);
+    bindHistoryState(state, context);
+    vm.runInContext(`${functions}\n${PANE_BRIDGE}`, context);
     Object.assign(state, { streamEl: "s", thinkEl: "t", turnEl: "u", turnClosed: true, bundle: { live: true } });
     return {
       thread, state, activity, context,

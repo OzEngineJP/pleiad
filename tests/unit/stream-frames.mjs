@@ -25,6 +25,7 @@ export default async function (t) {
     const activity = { el: null, text: "", show(text) { this.text = text; this.el = { isConnected: true }; c.shows++; }, hide: noop };
     const context = vm.createContext({
       state, log, activity, cancelBackfill: noop,
+      toolCardMap: () => state.toolCards,   // createHistoryPane が主の会話から受ける値（clearThread が使う）
       requestAnimationFrame: cb => { frames.push(cb); return frames.length; },
       cancelAnimationFrame: id => { frames[id - 1] = null; },
       streamFrame: 0, streamTarget: null,

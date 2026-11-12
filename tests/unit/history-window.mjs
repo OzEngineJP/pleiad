@@ -2,8 +2,8 @@
 //   - 窓（末尾の発言だけ）の切り方・提示の本文の印・遡り（older）・窓の差分。つないだ結果は全量と同じ。古い相手とは今までの形でやりとりする
 //   - 画面の描き方: 末尾を先に描き、手前を idle に足す（splitFirstPaint・backfillChunk ほか。vm で client.mjs から切り出して動かす）
 // サーバーを起動して量と本文の取り方を確かめる試験は tests/unit/server-history-window.mjs。ブラウザーでの位置のずれは tests/browser/history-window.cjs
-import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn, historyPaneStateDecl, bindHistoryState } from "../lib/cut-source.mjs";
 import { buildItems, inlineAttachments } from "../../web/timeline.mjs";
 import {
   serveHistory, serveFrom, serveOlder, joinReply, joinOlder, syncRequest, windowStart, presentBaseFor, stubPresent, messageSig, anchorSig, presentSig, subagentCalls, subagentToolSet,
@@ -205,14 +205,14 @@ export default async function (t) {
   const anchoredItems = buildItems(anchored.messages.slice(300), anchored.presents.slice(anchoredStart), 300, anchoredStart);
   t.ok("窓の提示: 結び付き先が窓の手前の提示は、窓の中では結び付かない提示（anchorMi = -1）として出る", anchoredItems.filter(it => it.kind === "present" && it.p.by === "human").every(it => it.anchorMi === -1 || it.anchorMi >= 300));
 
-  // ---------------------------------------------------------------- 画面の描き方（vm で client.mjs から切り出す）
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  // ---------------------------------------------------------------- 画面の描き方（vm で client.mjs と history-pane.mjs から切り出す）
+  const source = readClientAndLiveTurn();   // 履歴の面は web/history-pane.mjs の createHistoryPane の中（ADR 0319 段 6-4）
   const cut = name => {
-    let from = source.indexOf(`function ${name}(`);
-    if (from < 0) throw new Error(`client.mjs に ${name} が無い`);
-    return source.slice(from, source.indexOf("\n}", from) + 2);
+    const body = cutFunction(source, name);
+    if (!body) throw new Error(`client.mjs・history-pane.mjs に ${name} が無い`);
+    return body;
   };
-  const constant = name => { const m = new RegExp(`const ${name} = \\d+;`).exec(source); if (!m) throw new Error(`client.mjs に ${name} が無い`); return m[0]; };
+  const constant = name => { const m = new RegExp(`const ${name} = \\d+;`).exec(source); if (!m) throw new Error(`client.mjs・history-pane.mjs に ${name} が無い`); return m[0]; };
 
   // 役割: systemHistoryNode の種類と historyRole が揃っている（行を作らずに続きの見出しの判定をするため）
   const systemKinds = new Set([...cut("systemHistoryNode").matchAll(/m\.kind === '(\w+)'/g)].map(m => m[1]));
@@ -232,13 +232,17 @@ export default async function (t) {
       paintHistory: (_k, _r, older) => { painted.push({ ...older.range, prevRole: older.prevRole, before: context.paintBefore }); clock += msPerItem * (older.range.to - older.range.from); return []; },
       syncEdit: () => { calls.sync++; }, paintCompactions: () => { calls.compactions++; }, placeJunctions: () => { calls.junctions++; },
       prepareHistoryHeights: () => { calls.heights++; }, maybeLoadOlder: () => { calls.older++; },
+      // createHistoryPane が主の会話から受ける値（hooks）
+      currentSession: () => state.current, isBusy: () => state.busy, isLoadingSession: () => state.loadingSession,
       requestAnimationFrame: fn => fn(),
       requestIdleCallback: fn => { idle.push(fn); return idle.length; }, cancelIdleCallback: id => { idle[id - 1] = null; },
       performance: { now: () => clock }, Date, Infinity,
     });
+    // 履歴の面の持ち物（messages・base ほかと backfill・paintBefore）は宣言ごと vm へ入れ、state の同名の項目をつなぐ
+    vm.runInContext(historyPaneStateDecl(), context);
+    bindHistoryState(state, context);
     vm.runInContext([
       constant("FIRST_PAINT_ROWS"), constant("BACKFILL_MIN"), constant("BACKFILL_MS"),
-      "let backfill = null; let paintBefore = null;",
       ...["historyRole", "roleBefore", "paintedAt", "paintedFloor", "splitFirstPaint", "backfillChunk", "scheduleBackfill", "stopBackfillTimer", "stepBackfill", "finishBackfill", "cancelBackfill", "flushBackfill"].map(cut),
       "this.api = { historyRole, roleBefore, paintedAt, paintedFloor, splitFirstPaint, backfillChunk, stepBackfill, cancelBackfill, flushBackfill, scheduleBackfill, get backfill() { return backfill; }, set backfill(v) { backfill = v; } };",
     ].join("\n"), context);
