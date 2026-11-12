@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy policy — Pleiad</title>
-<meta name="description" content="Privacy policy of the Pleiad Android and iOS apps and Pleiad Plus">
+<meta name="description" content="Privacy policy of the Pleiad Android and iOS apps">
 <link rel="canonical" href="https://pleiad.dev/en/privacy/">
 <link rel="alternate" hreflang="ja" href="https://pleiad.dev/privacy/">
 <link rel="alternate" hreflang="en" href="https://pleiad.dev/en/privacy/">
@@ -20,82 +20,62 @@
 </header>
 <main class="legal">
 <h1>Privacy policy</h1>
-<p class="legal-meta">Applies to: the Android app “Pleiad” (package name <code>dev.pleiad.android</code>), the iOS app “Pleiad” (bundle ID <code>dev.pleiad.app</code>), and Pleiad Plus as used from them (including the parts you use by signing in to Pleiad Plus from Pleiad on your PC)<br>Effective: October 6, 2026<br>Updated: November 12, 2026</p>
+<p class="legal-meta">Applies to: the Android app “Pleiad” (package name <code>dev.pleiad.android</code>) and the iOS app “Pleiad” (bundle ID <code>dev.pleiad.app</code>)<br>Effective: October 6, 2026<br>Updated: November 12, 2026</p>
 
-<p>The Pleiad apps (Android and iOS; “the app”) let you use Pleiad running on your own PC (“the host”) from your phone, through a relay server (“the relay”). You can choose between a relay you set up yourself and the official relay of Pleiad Plus (“Plus”), which is run by Oz Engine Inc. (“the developer”). This policy explains what information the app handles and where it goes.</p>
+<p>The Pleiad Android and iOS apps (“the app”) let you use Pleiad running on your own PC (“the host”) from your phone, through a relay server (“the relay”). You can choose either a relay you set up yourself or the official relay of Pleiad Plus (“Plus”), which is run by the developer. This policy explains what information the app handles and where it goes.</p>
 
 <h2>1. Information the developer receives</h2>
-<p>The app has no advertising, usage analytics or crash reporting. The developer does not use your information for tracking (following you across other companies’ apps and websites). What the developer receives depends on which relay you use.</p>
-<h3>When you use a relay you set up yourself (not using Plus)</h3>
-<p>The developer does not receive any information about you. The developer runs no server in this case, and no account sign-up is needed.</p>
-<h3>When you optionally sign in to Plus</h3>
-<p>Signing in to Plus is optional. The rest of the app works without it. You sign in with a Google or Apple account, and that company checks your password, so the developer does not receive it. When you sign in and use Plus, the developer receives the following.</p>
+<p>When you use your own relay, the developer does not receive any information about the app’s users. The developer runs no server for this and no account sign-up is needed. The app has no advertising, usage analytics or crash reporting.</p>
+<p>If you optionally sign in to Plus, the servers run by the developer receive the following.</p>
 <ul>
-  <li>Account information: your email address, an identifier that tells accounts apart (user ID), how you signed in (Google or Apple), and the account’s status (for example, whether it can use Plus).</li>
-  <li>Information for connecting: the host and device identifiers, the device’s public key, connection tokens and tickets, the IP address you connect from, when you connect, and how much data is sent. The app type and version.</li>
-  <li>Information about a host you register with Plus: its name, operating system type and Pleiad version (see “8. Using Plus from Pleiad on your PC”).</li>
+  <li>Your email address, user ID and how you signed in (Google or Apple)</li>
+  <li>Information for connecting: the host and device identifiers, your IP address, when you connected and how much data was sent</li>
 </ul>
-<p>The developer uses this only for the app’s functions: to identify you, to check that you can use the official Plus relay, and to connect your host and device. It is not used for advertising or usage analytics.</p>
-<p>The developer does not receive the conversations, approvals, settings, files or notification content exchanged between your host and your device. These are end-to-end encrypted between your device and your host, so the developer cannot read them even when they pass through the relay. The developer does not receive the private keys of your device or host either.</p>
+<p>The developer uses this only for the app’s functions (signing in and connecting through the relay), and not for advertising, analytics or tracking. Conversations are end-to-end encrypted between your device and your host, so the developer cannot read them.</p>
 
 <h2>2. Where the app sends information</h2>
-<p>The app sends information off your device to the following places.</p>
+<p>The app sends information off your device only to the following five places.</p>
 <h3>Your host (your own PC)</h3>
-<p>The app sends what you do on the host’s screen (conversations, approvals, settings and so on), files you choose to send, your device’s name (on Android, the name in your device settings, or the manufacturer and model; on iOS, the device name) and the app version. These are end-to-end encrypted between your device and your host, and only the host can read them. The keys for pairing through your own relay come only from the QR code (or code) shown on the host’s screen.</p>
-<h3>The relay</h3>
-<p>A relay you set up yourself is a server run by you (or the owner of the host), not by the developer. The official Plus relay is run by the developer. Neither relay can read the content, but to connect the two sides they can see the host and device identifiers, connection tokens, IP addresses, when and how long you connect, and how much data is sent. The connection is encrypted with TLS (<code>https</code>/<code>wss</code>).</p>
+<p>The app sends what you do on the host’s screen (conversations, approvals, settings and so on), files you choose to send, your device’s name (on Android, the name in your device settings, or the manufacturer and model; on iOS, the device name) and the app version. These are end-to-end encrypted between your device and your host, and only the host can read them. The keys for pairing come only from the QR code (or code) shown on the host’s screen.</p>
+<h3>The relay you set up</h3>
+<p>A relay you set up yourself is a server run by you (or the owner of the host), not by the developer. The official Plus relay is run by the developer. The relay cannot read the content, but to connect the two sides it can see the host and device identifiers, connection tokens, IP addresses, when and how long you connect, and how much data is sent. The connection is encrypted with TLS (<code>https</code>/<code>wss</code>).</p>
 <h3>Plus servers (only when you sign in)</h3>
-<p>When you sign in to Plus, the app sends the information listed in “1. Information the developer receives” to the developer’s servers (<code>api.pleiad.dev</code>, <code>account.pleiad.dev</code> and <code>relay.pleiad.dev</code>). The app uses these servers to confirm your sign-in, to get your account status and the list of your registered hosts, and to get tickets for connecting to the official relay.</p>
-<h3>Sign-in providers (only when you sign in)</h3>
-<p>Sign-in happens on a screen outside the app (Custom Tabs on Android, ASWebAuthenticationSession on iOS), using Google or Apple sign-in. What you enter there is handled by that company under its own policy (<a href="https://policies.google.com/privacy">Google Privacy Policy</a>, <a href="https://www.apple.com/legal/privacy/">Apple Privacy Policy</a>). Google’s Firebase Authentication is used to verify and renew your sign-in.</p>
-<h3>Reading QR codes</h3>
-<p>On Android, to read a pairing QR code, the app uses the QR code scanner of Google Play services (ML Kit). Images are processed on your device. Google collects device and app information, performance metrics and similar data to diagnose and measure this feature (<a href="https://developers.google.com/ml-kit/android-data-disclosure">ML Kit data disclosure</a>, <a href="https://policies.google.com/privacy">Google Privacy Policy</a>). On iOS, the camera image is read on your device and is not sent anywhere. On both, you can pair by pasting the code instead of scanning it (hosts on Plus can be opened from the list without a QR code).</p>
+<p>When you sign in to Plus, the app sends the information listed in “1.” to the developer’s servers. You sign in with a Google or Apple account, using Firebase Authentication.</p>
+<h3>Google’s QR code scanner (Android)</h3>
+<p>On Android, to read a pairing QR code, the app uses the QR code scanner of Google Play services (ML Kit). Images are processed on your device. Google collects device and app information, performance metrics and similar data to diagnose and measure this feature (<a href="https://developers.google.com/ml-kit/android-data-disclosure">ML Kit data disclosure</a>, <a href="https://policies.google.com/privacy">Google Privacy Policy</a>). You can also pair by pasting the code instead of scanning it. On iOS, the QR code is read on your device and is not sent anywhere.</p>
 <h3>Other websites</h3>
 <p>Links on the host’s screen open in another app, such as your browser. When something shown on the host’s screen (an image in a conversation, a view an agent made, and so on) loads images or scripts from another website, your device connects to that site directly, and the site sees connection information such as your IP address. Those sites handle data under their own policies.</p>
 
 <h2>3. Information stored on your device</h2>
-<p>The app stores, in its own storage, the list of paired hosts (host name, relay URL and identifiers), the keys and tokens used to talk to them, and the host you opened last. On Android it also stores your notification settings. While you are signed in to Plus, it also stores the token used to keep you signed in (the short-lived token used to verify your sign-in is kept only in memory and is not stored).</p>
-<p>On Android, keys and tokens are encrypted with a key in the Android Keystore and are not backed up. On iOS, keys and tokens are stored in the Keychain as “this device only”, so they are not carried over by backups or to another device (on a new device you pair and sign in again). On both, this is deleted when you uninstall the app. Removing a host from the list deletes that host’s information. Signing out of Plus deletes the sign-in information on your device.</p>
+<p>The app stores, in its own storage, the list of paired hosts (host name, relay URL and identifiers), the keys and tokens used to talk to them, your notification settings, and the host you opened last. Keys and tokens are encrypted with a key in the Android Keystore on Android, and kept in the Keychain on iOS. None of this is backed up, and it is deleted when you uninstall the app. Removing a host from the list deletes that host’s information. While you are signed in to Plus, your sign-in information is also stored, and it is deleted when you sign out.</p>
 
 <h2>4. Notifications</h2>
-<p>Notifications are used on Android only. The iOS app does not use notifications.</p>
-<p>While notifications are on, the Android app keeps running with one ongoing notification so that it stays connected to the relay. The host encrypts each notification (its kind, the host name, the conversation name and the time) with a key for your device before handing it to the relay, so the relay cannot read it. Notifications never contain message text. You can turn notifications off at any time on the app’s Notifications screen.</p>
+<p>Notifications are used on Android only; the iOS app does not use notifications. While notifications are on, the app keeps running with one ongoing notification so that it stays connected to the relay. The host encrypts each notification (its kind, the host name, the conversation name and the time) with a key for your device before handing it to the relay, so the relay cannot read it. Notifications never contain message text. You can turn notifications off at any time on the app’s Notifications screen.</p>
 
 <h2>5. Permissions</h2>
 <ul>
   <li>Camera (Android and iOS): used only to scan the pairing QR code.</li>
   <li>Notifications (Android): used to tell you about approvals, failures and finished work. The app asks when you turn notifications on.</li>
   <li>Foreground service and start at boot (Android): used, while notifications are on, to stay connected to the relay and to reconnect after a restart or an app update.</li>
-  <li>Microphone (Android): declared for the host’s voice call mode, but not used, because the app does not currently offer voice calls on the screen it shows through the relay.</li>
-  <li>Internet (Android): used to connect to the relay and the Plus servers.</li>
+  <li>Internet (Android): used to connect to the relay.</li>
 </ul>
 
 <h2>6. How data is protected</h2>
-<p>Traffic between your device and your host is end-to-end encrypted with keys exchanged at pairing (the Noise protocol), and traffic to the relay and the Plus servers is encrypted with TLS. Signing in to Plus uses a method that keeps no secret in the app (PKCE) and happens on a screen outside the app. The device’s keys and tokens are stored protected by a key in the Android Keystore (Android) or in the Keychain (iOS).</p>
-<p>When you pair through your own relay, the device and the host show the same confirmation code, and the owner of the host compares them before approving. With Plus, a device and a host signed in to the same account trust each other through Plus’s account ledger, which the developer manages, so no confirmation code is used. This means the ledger could technically be used to swap in a different key for a host. If you want to avoid this possibility, use your own relay, which pairs with a QR code and a confirmation code.</p>
+<p>Traffic between your device and your host is end-to-end encrypted with keys exchanged at pairing (the Noise protocol), and traffic to the relay is encrypted with TLS. When you pair through your own relay, the device and the host show the same confirmation code, and the owner of the host compares them before approving. The device’s keys and tokens are stored encrypted with a key in the Android Keystore (Android) or in the Keychain (iOS) and are not included in backups.</p>
 
 <h2>7. Retention and deletion</h2>
-<p>When you use only your own relay, the developer keeps no information about you. Information on your device is deleted when you remove a host from the list or uninstall the app. The relay does not store conversation content; while your device is offline it only holds encrypted notifications in memory for a short time (up to 15 minutes). The connection logs of your own relay (identifiers, times, amounts and so on) and the host’s conversation history are kept by the users who run them, and they can delete them.</p>
-<p>When you sign in to Plus, the developer keeps the information listed in “1. Information the developer receives” while the account exists. You can delete your account on the <a href="https://account.pleiad.dev/profile">account page</a> that opens from “Manage account” in the app. Once the account is deleted, it can no longer use the official Plus relay. The sign-in information on your device is deleted when you sign out of Plus.</p>
+<p>When you use your own relay, the developer keeps no information about users. When you sign in to Plus, the developer keeps the information listed in “1.” while the account exists. You can delete the account on the page that opens from “Manage account” in the app. Information on your device is deleted when you remove a host from the list or uninstall the app. The relay does not store conversation content; while your device is offline it only holds encrypted notifications in memory for a short time (up to 15 minutes). Your own relay’s connection logs (identifiers, times, amounts and so on) and the host’s conversation history are kept by the users who run them, and they can delete them.</p>
 
-<h2>8. Using Plus from Pleiad on your PC</h2>
-<p>You can also sign in to Plus from Pleiad on your PC. The information the developer receives when you sign in is the same as in “1. Information the developer receives”. In addition, depending on which Plus features Pleiad on your PC uses, the following is sent to the developer’s servers.</p>
-<ul>
-  <li>Host registration: to connect to the official Plus relay, the PC’s identifier and public key, the PC’s name, its operating system type (Windows, macOS or Linux), the Pleiad version and the number of devices connected through Plus are registered against your account.</li>
-  <li>Sync of settings, skills and instruction files: sync keeps settings, skills and global instruction files the same across the PCs of one account. The contents are encrypted on your PC before they are uploaded and are opened on the PC that receives them. The keys are not given to the developer, so the developer cannot read the contents. The developer receives only the ciphertext, wrapped keys, item identifiers, sizes, times and the identifier of the PC that wrote them. “Secrets and variables” are not synced.</li>
-  <li>Automatic delegation choice and voice calls: if you use these through Plus instead of your own key, your request text and audio pass through the developer’s servers and are sent on to the company that provides the model. These are not covered by end-to-end encryption. By choosing this feature, you agree to this being sent. If you choose your own key, they do not pass through the developer’s servers.</li>
-</ul>
-
-<h2>9. AI services used by the host</h2>
+<h2>8. AI services used by the host</h2>
 <p>The host uses AI services that you signed in to with your own accounts (such as Claude Code, Codex and Antigravity) from your PC. Instructions and conversations you send from the app may be passed to those services through the host. Those services handle data under their own policies.</p>
 
-<h2>10. Children</h2>
+<h2>9. Children</h2>
 <p>The app is not directed to children and does not knowingly collect information from children.</p>
 
-<h2>11. Changes to this policy</h2>
+<h2>10. Changes to this policy</h2>
 <p>When this policy changes, this page is updated and the date of the change is added below the effective date.</p>
 
-<h2>12. Contact</h2>
+<h2>11. Contact</h2>
 <p>Contact us through <a href="https://github.com/OzEngineJP/pleiad/issues">GitHub Issues</a> or the developer contact on the app’s Google Play or App Store listing.</p>
 </main>
 <footer class="legal-foot"><a href="../">Pleiad</a></footer>
