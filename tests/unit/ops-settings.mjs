@@ -114,6 +114,7 @@ export default async function (t) {
     ['externalSitePermissions', false, 'riskOf（関所を緩める向きがある）'],
     ['chromeProfileNotes', false, 'この PC の Chrome のプロファイルに付けるメモ（機械に固有）'],
     ['chromeNewProfile', false, 'この PC の Chrome のプロファイルを指す（機械に固有）'],
+    ['childThreadRenderer', false, '子の会話のダイアログの描き方の切り替え（不具合時の逃げ道。端末ごとに決める）'],
     ['computerUse', false, 'riskOf（関所を緩める向きがある）。アプリの実行ファイルの path を含む'],
     ['voice', false, 'riskOf（費用の安全弁を緩める向きがある）'],
     ['launchAtLogin', false, 'guarded。OS のログイン項目（機械に固有）'],

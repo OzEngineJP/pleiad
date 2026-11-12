@@ -149,6 +149,12 @@ export const settings = [
     prefKeys: ['composerSuggestions'], schema: z.boolean(), default: true, read: fromPrefs('composerSuggestions'),
     normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'composer.suggestions: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('composerSuggestions', v) }),
+  // 子の会話のモーダルの本文の描き方（ADR 0319 段 6-6）。設定の画面には出さない。live は会話の本文の部品で出来事を直に描く（既定）、
+  // reread は従来どおり出来事のたびに読み直す。新しい描き方に不具合が出たときの逃げ道
+  defineSetting({ key: 'childThreadRenderer', sync: false, summary: S('childThreadRenderer'), risk: 'write', riskReason: `Only switches how the delegated-child dialog draws its body; it does not touch the conversation gates. ${WRITE_ABOUT}`,
+    prefKeys: ['childThreadRenderer'], schema: z.enum(['live', 'reread']), default: 'live', read: fromPrefs('childThreadRenderer'),
+    normalize: (ctx, v) => { if (v !== 'live' && v !== 'reread') throw invalid(ctx, 'childThreadRenderer: live | reread'); return { after: v }; },
+    write: (ctx, v) => ctx.writes.pref('childThreadRenderer', v) }),
   // Pleiad Plus の画面の記憶（docs/plus.md）。ログイン時に両方へ仮想のキー plus を選んだ案内を閉じた印（plus.autoNoticeSeen）と、
   // 入口を出す印（plus.entrance。リンク pleiad://plus/enable が立てる。visibility: optin の間だけ効く）
   defineSetting({ key: 'plus', sync: false, summary: S('plus'), risk: 'write', riskReason: `Dismissed notices and the opt-in mark for Pleiad Plus. ${WRITE_ABOUT}`,

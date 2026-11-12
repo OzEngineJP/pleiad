@@ -5042,6 +5042,15 @@
       ]
     },
     {
+      "key": "childThreadRenderer",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "childThreadRenderer"
+      ]
+    },
+    {
       "key": "chromeAutoAllow",
       "risk": "write",
       "riskOf": true,
@@ -5326,6 +5335,13 @@
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
     },
     "backend": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "childThreadRenderer": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
       "agent-bound-ask": "write=allow",
