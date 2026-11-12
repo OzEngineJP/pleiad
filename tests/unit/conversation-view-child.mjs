@@ -6,12 +6,13 @@
 //   - 走っている子は末尾に稼働表示（弧だけ）。ホストに届かない間・承認を待つ間は言い方が替わる
 // 画面ではまだ使わない（作業のダイアログは段 6-6 まで読み直しの経路）。ここでは設定と、設定が決める行の形を確かめる。
 import { createConversationView } from "../../web/conversation-view.mjs";
+import { readConversationView, readLiveTurn, readHistoryPane } from "../lib/cut-source.mjs";
 import { CHILD_MENU } from "../../web/message-actions.mjs";
 import { t as tr } from "../../web/i18n.mjs";
 import { N } from "../lib/dom-stub.mjs";
 
 export const name = "conversation-view-child";
-export const title = "会話の本文の面の子の会話の役: 発言者の語・出さないもの・追加の指示の行・稼働表示（作業のダイアログと同じ事実）";
+export const title = "会話の本文の面の子の会話の役: 発言者の語・出さないもの・追加の指示の行・稼働表示（作業のダイアログと同じ事実）。本文の 3 つの部品が主の値を直に読まない（走査）";
 
 /** `.who > span` を引ける人の発言の作りもの（本物は web/client.mjs の userMsg） */
 class Row extends N {
@@ -55,7 +56,19 @@ function makeView(role, extra = {}) {
 
 const words = row => row.querySelector(".who > span").textContent;
 
+/** コメントと文字列を除いた原稿（走査の誤検出を避ける） */
+const codeOnly = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\s\/\/.*$/gm, "");
+
 export default async function (t) {
+  // ---------------------------------------------------------------- 主の値を直に読まない（別の会話の実例が主を壊さないための条件）
+  const parts = { "conversation-view.mjs": readConversationView(), "live-turn.mjs": readLiveTurn(), "history-pane.mjs": readHistoryPane() };
+  for (const [file, source] of Object.entries(parts)) {
+    const code = codeOnly(source);
+    // state（client.mjs の画面全体の状態）の項目・主の会話の値・画面全体の DOM・保存先。出来事の ev.state・指示の instruction.state は別物（. の後）
+    const direct = [...code.matchAll(/(^|[^.\w$])(state[.[]|localStorage|sessionStorage|document\.(getElementById|querySelector|title|body|documentElement)|getElementById)/g)].map(m => m[2]);
+    t.ok(`${file}: 主の state・画面全体の DOM・保存先を直に読まない`, direct.length === 0, direct.join(","));
+  }
+
   const main = makeView("main").view;
   const child = makeView("child").view;
 
