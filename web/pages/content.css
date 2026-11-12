@@ -24,3 +24,39 @@
 .git-page .seg [aria-pressed=true]{background:var(--surface-paper)}
 @media(hover:none){.code-copy{opacity:1}}
 @media(max-width:600px){.folder-grid{gap:2px}.shortcuts{flex-wrap:wrap}.shortcut{min-width:130px}.recent-row{flex-wrap:wrap}.recent-source{white-space:normal}}
+/* 待っている間の骨組み（ADR 0321）。.history-line と同じ形・光（1.6 秒）。ページの中では style.css が無いので、ここで持つ。
+   ダークは既定の --surface-2 だと地（--surface-paper）に沈むので、--surface-3 → --surface-thumb にする */
+:root{--sk-a:var(--surface-2);--sk-b:var(--surface-1);--sk-head:var(--surface-2);--sk-head-line:var(--surface-3)}
+:root[data-theme=dark]{--sk-a:var(--surface-3);--sk-b:var(--surface-thumb);--sk-head:var(--surface-1);--sk-head-line:var(--surface-thumb)}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--sk-a:var(--surface-3);--sk-b:var(--surface-thumb);--sk-head:var(--surface-1);--sk-head-line:var(--surface-thumb)}}
+.sk{animation:sk-in var(--dur) var(--ease-out) both}
+@keyframes sk-in{from{opacity:0}}
+@keyframes title-think{from{background-position:100% 0}to{background-position:0 0}}
+.sk .history-line,.shortcut .cnt{display:block;height:11px;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--sk-a) 40%,var(--sk-b) 50%,var(--sk-a) 60%) 0 0/300% 100% no-repeat;animation:title-think 1.6s var(--ease-organic) infinite}
+.sk-doc{display:flex;flex-direction:column;gap:13px;padding-top:6px;max-width:960px}
+.sk-code{padding-bottom:8px}
+.sk-code .r{display:flex;align-items:center;gap:12px;height:21.6px}
+.sk-code .r>:first-child{margin-left:14px}
+.sk-img .history-line{width:min(100%,360px);height:auto;aspect-ratio:4/3;margin:24px auto;border-radius:6px}
+.sk-dir{width:100%;max-width:1100px}
+.sk-dir .r{display:flex;align-items:center;gap:10px;min-height:46px;padding:0 4px}
+.sk-dir .r.h{min-height:34px}
+.sk-dir .r .history-line:nth-child(2){flex:none}
+.sk-table .r{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));height:35.8px;align-items:center}
+.sk-table .r>.c{padding:0 14px}
+.sk-table .r.h{background:var(--sk-head)}
+.sk-table .r.h .history-line{background:var(--sk-head-line);animation:none}
+.sk-pdf .c{display:flex;align-items:center;justify-content:center;gap:10px;height:36px;margin-bottom:16px}
+.sk-pdf>.history-line{height:auto;aspect-ratio:1/1.414;max-width:640px;margin:auto}
+.sk-plug .history-line.t{margin:6px 0 14px}
+.sk-plug .history-line.b{height:44px;border-radius:6px;margin:6px 0}
+.sk-plug .history-line.t:not(:first-child){margin-top:28px}
+.sk-row{display:flex;align-items:center;gap:12px;min-height:44px;padding:4px 8px}
+.sk-row .src{margin-left:auto;flex:none}
+.sk-row .nm{width:64px}
+.sk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 16px;margin-top:8px}
+.sk-grid .sk-row{min-height:36px;padding:4px 8px}
+.shortcut .cnt{display:inline-block;width:5.2em;height:11px;margin-left:8px;vertical-align:middle}
+@media(max-width:600px){.sk-grid{gap:2px}.sk-row{gap:6px;padding:4px 0}}
+@media(prefers-reduced-motion:reduce){.sk,.sk .history-line,.shortcut .cnt{animation:none}.sk .history-line,.shortcut .cnt{background:var(--sk-a)}}
+.shortcut{white-space:nowrap}.shortcut>span:not(.cnt){overflow:hidden;text-overflow:ellipsis}
