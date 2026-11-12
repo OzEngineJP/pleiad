@@ -206,6 +206,7 @@ function itemOf(card) {
     card,
     failed: card.classList.contains("tc-error"),
     stopped: card.classList.contains("tc-stopped"),
+    unverified: card.classList.contains("tc-unverified"),
     reason: card.dataset?.stopReason || null,
     shot: Boolean(card.querySelector(".tc-shot, .tc-shot-gone")),
     verb: card.dataset.verb ?? card.querySelector(".tc-label")?.textContent ?? "",
@@ -513,7 +514,7 @@ export class Bundle {
       const halted = items.some((x) => x.stopped && (x.reason === "escape" || x.reason === "stop" || x.reason === "update"));
       if (this.stopEl) this.stopEl.hidden = halted;
       this.mixEl.textContent = this.live || (this.stopEl && !halted) ? t("timeline.computer.bundle.running") : t("timeline.computer.bundle.done");
-      this.xmEl.textContent = [st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "", sum.stopped ? reasonShort(sum.stopped) : ""].filter(Boolean).join(" · ");
+      this.xmEl.textContent = [st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "", sum.stopped ? reasonShort(sum.stopped) : "", sum.unverified ? t("timeline.computer.unverified.count", { n: sum.unverified }) : ""].filter(Boolean).join(" · ");
       this.head.classList.toggle("xm-err", st.errors > 0);
 
     } else this.xmEl.textContent = st.errors ? t("timeline.bundle.failed", { count: st.errors, n: st.errors }) : "";

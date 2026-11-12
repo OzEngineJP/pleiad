@@ -21,7 +21,8 @@ import { renderWorktreeLine } from './worktree-ui.mjs';
 import { renderChromeHandoverLine, renderChromeClosedLine } from './chrome-control.mjs';
 import { renderChromeProfileLine } from './chrome-profile-menu.mjs';
 import { parseStructure, codeRoles, listClass, markerExtra, lineIndent, nestDepth } from './md-structure.mjs';
-import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark } from './computer-use.mjs';
+import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark, unverifiedText, unverifiedMark, unverifiedOpenLink } from './computer-use.mjs';
+import { resetDateText } from './plus-key-row.mjs';
 
 // ---------------------------------------------------------------- エスケープ
 
@@ -1607,7 +1608,7 @@ export function applyToolResult(node, result) {
     const shell = node.querySelector(".tc-details");
     if (shell) shell.hidden = false;
   }
-  node.classList.remove("tc-error", "tc-done", "tc-running", "tc-waiting", "tc-stopped");
+  node.classList.remove("tc-error", "tc-done", "tc-running", "tc-waiting", "tc-stopped", "tc-unverified");
   if (node.dataset) node.dataset.stopReason = "";
   const resEl = node.querySelector(".tc-res");
   if (resEl) { resEl.textContent = ""; resEl.className = "tc-res"; resEl.paint = null; delete resEl.dataset.sig; }
@@ -1644,6 +1645,16 @@ export function applyToolResult(node, result) {
         const why = reasonLong(computer.reason, computer.app) ?? failureLine(body);
         if (why) { const line = el("span", "tc-errline tc-reason", why); line.title = why; head.append(line); }
       } else if (computer.state === "waiting") resEl.textContent = t("timeline.computer.waiting");
+      else if (computer.unverified) {
+        // wait_until の問いを確かめられなかった（docs/computer-use.md）。弱い印「未確認」と理由の 1 文・設定へのリンク。失敗にも止めたにも数えない
+        const why = unverifiedText(computer.unverified, resetDateText(computer.unverified.resetAt));
+        resEl.replaceChildren(unverifiedMark());
+        const line = el("span", "tc-errline tc-reason tc-unv-line", why);
+        line.title = why;
+        line.append(" ", unverifiedOpenLink());
+        head.append(line);
+        node.classList.add("tc-unverified");
+      }
     }
     // 成功した行の右端は空のまま。結果の要約（「N 行」「N 件」）は行に出さない——開いた中身が語る（v4）
   }

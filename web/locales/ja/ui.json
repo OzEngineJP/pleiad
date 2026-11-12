@@ -3064,6 +3064,24 @@
       },
       "stoppedMark": "停止",
       "waiting": "待っている",
+      "unverified": {
+        "mark": "未確認",
+        "count": "未確認 {{n}}",
+        "open": "設定 › コンピューターの操作 を開く",
+        "reason": {
+          "credit": "今月の Pleiad Plus の上限に達しているため、画面の差分だけで待ちました（{{date}} に戻ります）。",
+          "creditError": "今月の Pleiad Plus の上限に達したため、問いを確かめられませんでした（{{date}} に戻ります）。",
+          "creditNoDate": "今月の Pleiad Plus の上限に達しているため、画面の差分だけで待ちました。",
+          "creditErrorNoDate": "今月の Pleiad Plus の上限に達したため、問いを確かめられませんでした。",
+          "loggedOut": "Pleiad Plus にログインしていないため、画面の差分だけで待ちました。",
+          "notPlus": "Pleiad Plus を使っていないため、画面の差分だけで待ちました。",
+          "maintenance": "Pleiad Plus がメンテナンス中のため、画面の差分だけで待ちました。",
+          "notPlusError": "Pleiad Plus を使っていないため、問いを確かめられませんでした。",
+          "plusError": "Pleiad Plus に聞けなかったため、問いを確かめられませんでした。",
+          "keyRejected": "OpenRouter のキーが受け付けられなかったため、問いを確かめられませんでした。",
+          "other": "決定モデルに聞けなかったため、問いを確かめられませんでした。"
+        }
+      },
       "shot": {
         "open": "撮った画面を拡大: {{title}}",
         "gone": "画面は消去済み",

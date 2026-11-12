@@ -3142,6 +3142,24 @@
       },
       "stoppedMark": "Stopped",
       "waiting": "Waiting",
+      "unverified": {
+        "mark": "Unverified",
+        "count": "Unverified {{n}}",
+        "open": "Open Settings › Computer use",
+        "reason": {
+          "credit": "Pleiad Plus reached this month's limit, so it waited on screen changes only (back on {{date}}).",
+          "creditError": "Pleiad Plus reached this month's limit, so the question couldn't be checked (back on {{date}}).",
+          "creditNoDate": "Pleiad Plus reached this month's limit, so it waited on screen changes only.",
+          "creditErrorNoDate": "Pleiad Plus reached this month's limit, so the question couldn't be checked.",
+          "loggedOut": "You're not signed in to Pleiad Plus, so it waited on screen changes only.",
+          "notPlus": "You're not using Pleiad Plus, so it waited on screen changes only.",
+          "maintenance": "Pleiad Plus is under maintenance, so it waited on screen changes only.",
+          "notPlusError": "You're not using Pleiad Plus, so the question couldn't be checked.",
+          "plusError": "Couldn't ask Pleiad Plus, so the question couldn't be checked.",
+          "keyRejected": "The OpenRouter key was rejected, so the question couldn't be checked.",
+          "other": "Couldn't ask the decision model, so the question couldn't be checked."
+        }
+      },
       "shot": {
         "open": "Enlarge screenshot: {{title}}",
         "gone": "Screenshot deleted",

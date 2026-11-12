@@ -60,6 +60,31 @@ export default async function (t) {
     t.ok("止めたものが無ければ理由は null", computerSummary([it(), it({ failed: true })]).stopped === null);
   }
 
+  // ---- wait_until の「未確認」（2026-11-13、docs/computer-use.md「wait_until の待ち方」）
+  {
+    const wait = (w) => ({ text: "待ちました", isError: false, computer: { tool: "wait_until", state: "ok", title: "終わるまで待つ", wait: w } });
+    const u = (w) => computerInfo(wait(w)).unverified;
+    t.ok("未確認の対象: error と、no_key・protected_app 以外の unverified", !!u({ status: "error", reason: "http_401" }) && !!u({ status: "unverified", reason: "plus_credit", via: "plus" })
+      && u({ status: "unverified", reason: "no_key" }) === null && u({ status: "unverified", reason: "protected_app" }) === null && u({ status: "success", answer: "yes" }) === null && u(undefined) === null);
+    const mk = (w) => row("wait_until", { title: "終わるまで待つ", until: "Is it done?" }, wait(w));
+    const credit = mk({ status: "unverified", reason: "plus_credit", via: "plus", reset_at: "2099-12-01T12:00:00.000Z" });
+    t.ok("行: 右端に弱い印「未確認」・理由の 1 文（戻る日付つき）・設定へのリンク・失敗にも止めたにもならない",
+      text(credit.querySelector(".tc-res")) === "未確認" && /画面の差分だけで待ちました（.+に戻ります）/.test(text(credit.querySelector(".tc-reason")))
+      && text(credit.querySelector(".tc-unv-open")) === "設定 › コンピューターの操作 を開く" && credit.classList.contains("tc-unverified") && !credit.classList.contains("tc-error") && !credit.classList.contains("tc-stopped"));
+    t.ok("理由の文: ログインなし・Plus でない・メンテ・OpenRouter のキー拒否・途中の上限",
+      text(mk({ status: "unverified", reason: "plus_logged_out", via: "plus" }).querySelector(".tc-reason")).startsWith("Pleiad Plus にログインしていないため")
+      && text(mk({ status: "unverified", reason: "plus_not_plus", via: "plus" }).querySelector(".tc-reason")).startsWith("Pleiad Plus を使っていないため")
+      && text(mk({ status: "unverified", reason: "plus_maintenance", via: "plus" }).querySelector(".tc-reason")).startsWith("Pleiad Plus がメンテナンス中のため")
+      && text(mk({ status: "error", reason: "http_401" }).querySelector(".tc-reason")).startsWith("OpenRouter のキーが受け付けられなかったため")
+      && /今月の Pleiad Plus の上限に達したため、問いを確かめられませんでした/.test(text(mk({ status: "error", reason: "credit_exhausted", via: "plus", reset_at: "2099-12-01T12:00:00.000Z" }).querySelector(".tc-reason"))));
+    t.ok("使わない（no_key）・保護されたアプリ・成功には印を付けない", !mk({ status: "unverified", reason: "no_key" }).classList.contains("tc-unverified")
+      && !mk({ status: "unverified", reason: "protected_app" }).classList.contains("tc-unverified") && !mk({ status: "success", answer: "yes" }).classList.contains("tc-unverified"));
+    const it = (extra = {}) => ({ failed: false, stopped: false, shot: false, running: false, unverified: false, ...extra });
+    const s = computerSummary([it({ unverified: true }), it({ unverified: true }), it({ failed: true }), it({ unverified: true, running: true })]);
+    t.ok("見出しの内訳: 未確認の数（走っているものは数えない）。失敗の数には入らない", s.unverified === 2 && s.failed === 1);
+    t.ok("pickRows の優先に未確認は入らない", [...pickRows([it({ unverified: true }), it(), it(), it(), it({ shot: true })])].sort().join() === "2,3,4");
+  }
+
   // ---- 行
   {
     const c = row("left_click", { title: "保存を押す", coordinate: [412, 238] });

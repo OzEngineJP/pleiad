@@ -41,6 +41,7 @@ export function computerInfo(result) {
   const known = c && STATES.has(c.state);
   const text = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
   return {
+    unverified: known ? unverifiedOf(c.wait) : null,
     state: known ? c.state : (result?.isError ?? result?.is_error) ? "failed" : "ok",
     reason: known ? text(c.reason) : null,
     title: known ? text(c.title) : null,
@@ -48,6 +49,53 @@ export function computerInfo(result) {
     grant: known && (c.grant === "bypass" || c.grant === "all") ? c.grant : null,
     actions: known && Array.isArray(c.actions) ? c.actions.filter((a) => a && typeof a === "object").slice(0, 20) : [],
   };
+}
+
+/**
+ * wait_until の問いを確かめられなかったか（印の wait。docs/computer-use.md「wait_until の待ち方」）。
+ * error と、unverified のうち理由が no_key（使わない）・protected_app（保護されたアプリ）でないものが対象。
+ * 失敗・止めたには数えない。戻り: { reason, via, resetAt, error } か null
+ */
+export function unverifiedOf(wait) {
+  if (!wait || typeof wait !== "object") return null;
+  const reason = typeof wait.reason === "string" ? wait.reason : "";
+  const error = wait.status === "error";
+  if (!error && !(wait.status === "unverified" && reason && reason !== "no_key" && reason !== "protected_app")) return null;
+  return { reason, via: wait.via === "plus" ? "plus" : null, resetAt: typeof wait.reset_at === "string" ? wait.reset_at : "", error };
+}
+
+/** 確かめられなかった理由の 1 文。date は「{date} に戻ります」の日付（無ければ日付なしの文） */
+export function unverifiedText(u, date = "") {
+  // i18n-dynamic: timeline.computer.unverified.reason.
+  const k = (key, p) => t(`timeline.computer.unverified.reason.${key}`, p);
+  if (u.via === "plus") {
+    if (u.error) {
+      if (u.reason === "credit_exhausted" || u.reason === "rate_limited") return u.reason === "credit_exhausted" ? (date ? k("creditError", { date }) : k("creditErrorNoDate")) : k("plusError");
+      if (u.reason === "not_plus" || u.reason === "account_disabled") return k("notPlusError");
+      return k("plusError");
+    }
+    if (u.reason === "plus_credit") return date ? k("credit", { date }) : k("creditNoDate");
+    if (u.reason === "plus_logged_out") return k("loggedOut");
+    if (u.reason === "plus_not_plus") return k("notPlus");
+    if (u.reason === "plus_maintenance") return k("maintenance");
+    return k("plusError");
+  }
+  if (u.error && (u.reason === "http_401" || u.reason === "http_403")) return k("keyRejected");
+  return k("other");
+}
+
+/** 行の右端の弱い印「未確認」（失敗の ✕ でも止めた — でもない） */
+export function unverifiedMark() {
+  const s = el("span", "tc-unv", t("timeline.computer.unverified.mark"));
+  return s;
+}
+
+/** 設定 › コンピューターの操作 を開く小さなリンク（クリックで 設定のそのページへ） */
+export function unverifiedOpenLink() {
+  const b = el("button", "tc-unv-open", t("timeline.computer.unverified.open"));
+  b.type = "button";
+  b.onclick = (e) => { e.stopPropagation(); document.dispatchEvent(new CustomEvent("ply-open-settings", { detail: { page: "computer" } })); };
+  return b;
 }
 
 /** 止めた理由の短い字（右端・見出し） */
@@ -88,7 +136,7 @@ export function pickRows(items) {
 export function computerSummary(items) {
   const done = items.filter((x) => !x.running);
   const stopped = done.filter((x) => x.stopped).at(-1);
-  return { failed: done.filter((x) => x.failed).length, stopped: stopped ? (stopped.reason ?? "other") : null };
+  return { failed: done.filter((x) => x.failed).length, stopped: stopped ? (stopped.reason ?? "other") : null, unverified: done.filter((x) => x.unverified).length };
 }
 
 // ---------------------------------------------------------------- 承認の内容
