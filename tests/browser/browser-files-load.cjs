@@ -1,5 +1,5 @@
 // playwright-cli run-code --filename=tests/browser/browser-files-load.cjs
-// 右の欄のファイルの読み直しと待っている間の見せ方（ADR 0321、docs/design-system.md §4.6）:
+// 右の欄のファイルの読み直しと待っている間の見せ方（ADR 0320、docs/design-system.md §4.6）:
 //   新しいタブは見出しとボタンを先に出す（件数は後・ボタンは動かない・最近は件数を待たない）・
 //   開き直すと読み直す（同じタブ 1 枚のまま問い合わせが増える）・最近のファイルが増える・
 //   150ms 未満は何も出さない・超えたら読み込み線とタブの印と骨組み（PC の幅）・届いたら消える・失敗は止まって文言・動きを減らす設定。
@@ -85,6 +85,19 @@ async (page) => {
   await nf2.waitForFunction((n) => document.querySelectorAll('.recent-row').length > n, recentBefore, { timeout: 8000 });
   check(await nf2.locator('.recent-row').count() > recentBefore, `あとから開いたファイルが、新しいタブの最近のファイルに増える（${recentBefore} → ${await nf2.locator('.recent-row').count()}）`);
   await shot('recent-grown');
+
+  // ---- 2b. [変更] の名札は、git の答えを待つ間も「変更」のまま（骨組み → 「git」→「変更」と入れ替わらない）。前の結果は会話ごとに覚えている
+  delay.git = 1500;
+  const knownFrames = new Set(page.frames());
+  await page.locator('.bu-new').click();
+  let nf3 = null;
+  for (let i = 0; i < 300 && !nf3; i++) { nf3 = page.frames().find((f) => !knownFrames.has(f) && /\/new(\?|$)/.test(f.url())) ?? null; if (!nf3) await page.waitForTimeout(20); }
+  if (!nf3) throw Error('2 枚目の新しいタブが出ない');
+  await nf3.waitForSelector('a.shortcut[data-kind="git"]');
+  const waiting = await nf3.evaluate(() => { const link = document.querySelector('a.shortcut[data-kind="git"]'); return { text: link.querySelector('span')?.textContent ?? '', pending: !!link.querySelector('.shortcut-pending'), cnt: !!link.querySelector('.cnt') }; });
+  check(/^変更/.test(waiting.text) && !waiting.pending && waiting.cnt, `覚えている会話では、git の答えを待つ間も名札は「変更」で、件数の所だけ骨組み（「${waiting.text}」）`);
+  await nf3.waitForFunction(() => /\d+ ファイル/.test(document.querySelector('a.shortcut[data-kind="git"] span')?.textContent ?? ''), null, { timeout: 8000 });
+  delay.git = 0;
 
   // ---- 3. 待ちの見せ方（PC の幅）: 150ms 未満は何も出さない
   const SRC = `${REPO}/src/app.js`;
