@@ -134,7 +134,7 @@ export default async function (t) {
     const context = vm.createContext({
       thread, state, activity, el, buildItems, inlineAttachments, showsAsCard, historyRow, log: { scrollTop: 0 }, atBottom: () => false, relayoutBranches() {}, paintDelegateStates() {},
       renderPresent: p => el("div", "m card", `提示 ${p.id ?? p.path}`), savedEvent: p => p,
-      cancelStream: () => { cancelled++; }, replayPainting: false,
+      cancelStream: () => { cancelled++; }, replaying: false, liveTurn: { activity },
       // createHistoryPane が主の会話から受ける値（hooks）
       currentSession: () => state.current, isBusy: () => state.busy, isLoadingSession: () => state.loadingSession, toolCardMap: () => state.toolCards,
     });

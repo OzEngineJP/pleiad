@@ -10,6 +10,7 @@
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
+import { openBridge } from '../lib/cut-source.mjs';
 import { markdownToDoc, docToMarkdown, snapshotEditing, restoreEditing, backspaceAtStart, caret } from '../../web/md-doc.mjs';
 import { createSessionLoads } from '../../web/session-stream.mjs';
 import { createOpenGate } from '../../web/child-route.mjs';
@@ -99,7 +100,7 @@ export default async function (t) {
     pendingRows: new Map(), renderSessions: noop, pendingAfterDelay: () => noop, side: { keep: noop, showUndo: noop },
     filePreview: { sessionChanged: noop }, setTimeout: () => 1, clearTimeout: noop, el: () => new N('div'), append: noop,
     activity: { show: noop, hide: noop }, sessionLoads: createSessionLoads(), openGate: createOpenGate(),
-    replayPainting: false, batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(), batchToolUpdates: fn => fn(),
+    batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(), batchToolUpdates: fn => fn(),
     runningTools: { batch: fn => fn() }, flushStream: noop,
     branchSnapshots: () => [], paintOutbox: noop, refreshOutbox: async () => [], branches: { load: async () => {}, reset: noop, has: () => false, nameOf: () => '' }, scrollToEnd: noop, atBottom: () => false,
     log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, thread: { children: [], querySelectorAll: () => [], classList: { toggle: noop } },
@@ -134,7 +135,7 @@ export default async function (t) {
     onboarding: { gated: () => false },
     usableNow: () => ({ levels: new Map(), usable: [{}], count0: false }),
   });
-  vm.runInContext(code, context);
+  vm.runInContext(`${code}\n${openBridge()}`, context);   // mainView は web/conversation-view.mjs の会話を開く仕事（ADR 0319 段 6-5）
   // submit が引く配送の核（web/client.mjs の chatSender。submit だけ切り出して流すので、同じ作りのものをここで作る）
   context.chatSender = createSender({ t: (k) => context.t(k), cmd: (command, args) => cmd(command, args), limitOp: (op, args) => context.limitOp(op, args), randomId: () => context.randomId(),
     receipts: context.receipts, saveReceipts: () => context.saveReceipts(), refreshOutbox: (id) => context.refreshOutbox(id),
