@@ -3395,7 +3395,7 @@ async function sendChromePillState(state) {
   const refs = current.state === 'paused' && current.by === 'pc'
     ? chromeRelay.scope.windows(state.sessionId).map(window => window.ref).filter(Boolean) : [];
   const agent = refs.length ? (runtime.turns.get(state.sessionId)?.backend
-    ?? await resolveBackendForSession(state.sessionId).catch(() => null))?.label ?? 'Claude' : '';
+    ?? await resolveBackendForSession(state.sessionId).catch(() => null))?.label ?? '' : '';
   if (chromeControl.state(state.sessionId).since !== state.since) return;
   try { hostedPort.postMessage({ type: 'chrome-pill-state', ...current, refs, agent }); } catch { /* main が離れたら次の snapshot で送り直す */ }
 }

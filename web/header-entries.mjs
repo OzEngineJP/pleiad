@@ -35,7 +35,7 @@ export const browserEntryMark = ({ requested = false, paused = false, working = 
  * blocked() が true の間は近道を効かせない（設定・ダイアログ）。会話を開いていない間は隠す
  */
 export function setupBrowserEntry({ button, chrome = () => null, windows = null, getSessionId = () => null,
-  getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false, pagesOnly = () => false,
+  getAgentName = () => '', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false, pagesOnly = () => false,
   humanHeld = () => false, mac = isMac(), blocked = () => false, announce = () => {},
   mobile = () => false, tabs = () => [], openEntry = null, panelClose = () => null }) {
   if (!button) return null;
@@ -66,7 +66,7 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
     const before = seenMark.get(id);
     seenMark.set(id, state);
     if (before === undefined || before === state) return;
-    if (state === 'requested' || state === 'paused') announce(t(`browser.entryState.${state}`, { name: getAgentName() || 'Claude' }));
+    if (state === 'requested' || state === 'paused') announce(t(`browser.entryState.${state}`, { name: getAgentName() || t('browser.agentFallback') }));
   }
 
   function paint() {

@@ -2149,7 +2149,7 @@
     },
     "browserHandoff": {
       "headingMark": "Chrome の操作待ち",
-      "askedLead": "Claude からの依頼 · {{reason}}",
+      "askedLead": "{{agent}} からの依頼 · {{reason}}",
       "reason": {
         "login": "ログイン",
         "captcha": "CAPTCHA",
@@ -4906,6 +4906,7 @@
   "browser": {
     "unifiedEntryLabel": "ブラウザー",
     "entryState": { "requested": "あなたへの依頼待ち", "paused": "あなたが Chrome を操作中", "working": "{{name}} が Chrome を操作中" },
+    "agentFallback": "AI",
     "openExternal": "既定のブラウザーで開く",
     "chromeWindow": {
       "panel": "Chrome のウィンドウ",

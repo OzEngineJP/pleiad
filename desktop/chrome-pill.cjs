@@ -106,7 +106,7 @@ function createChromePill({ electron, os, post, t, tickMs = 120, snapshotMs = 10
     if (waiting && (message.state !== 'paused' || message.error || message.since !== waiting.since)) release(message.sessionId);
     if (message.state === 'paused' && message.by === 'pc' && Array.isArray(message.refs) && message.refs.length) {
       const refs = message.refs.filter(ref => typeof ref?.id === 'string');
-      states.set(message.sessionId, { sessionId: message.sessionId, agent: String(message.agent || 'Claude'), since: message.since ?? null, refs });
+      states.set(message.sessionId, { sessionId: message.sessionId, agent: String(message.agent || ''), since: message.since ?? null, refs });
       if (refs.some(ref => os.bounds(ref))) pendingRefs.delete(message.sessionId);
       else if (!pendingRefs.has(message.sessionId)) pendingRefs.set(message.sessionId, 0);
     } else {

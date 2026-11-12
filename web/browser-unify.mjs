@@ -388,6 +388,7 @@ export function createBrowserUnify(deps = {}) {
   function giveUp(ticket) {
     const entry = ticket.local ? frames.get(ticket.targetId) : null;
     if (entry && (isolated(entry) ? entry.loaded !== true : entry.shown !== true)) entry.failed = true;
+    if (entry) { entry.rereading = false; entry.rereadQueued = false; entry.scrollSaved = null; }   // 返事の無い橋・来ない load で、読み直し中のまま残さない
     clearLoading(ticket);
     if (entry) paintLocal();
   }
@@ -617,6 +618,8 @@ export function createBrowserUnify(deps = {}) {
   const updateBar = document.createElement('div'); updateBar.className = 'bu-page-update-bar'; updateBar.hidden = true;
   const updateNotice = document.createElement('span'); updateNotice.setAttribute('role', 'status');
   updateBar.append(updateNotice, update); root.append(updateBar);
+  /** 題（?title）は表示だけで文書の違いではない */
+  const sameDoc = (a, b) => { if (a === b) return true; try { const x = new URL(a), y = new URL(b); x.searchParams.delete('title'); y.searchParams.delete('title'); return x.href === y.href; } catch { return false; } };
   function paintLocal() {
     const tab = current(), sessionId = session();
     if (!enabled) return;
@@ -638,24 +641,32 @@ export function createBrowserUnify(deps = {}) {
       frames.set(tab.targetId, entry); pageHost.append(frame);
       if (!(loadTicket?.local && loadTicket.targetId === tab.targetId)) beginLoad({ targetId:tab.targetId, local:true });
       frame.addEventListener('load', () => {
+        const back = entry.rereading ? entry.scrollSaved : null; entry.scrollSaved = null;   // 読み直す前に中の文書が知らせた位置（読み直し以外では戻さない）
         entry.loaded = true; entry.rereading = false; followLocal(entry);
+        if (back) pageCommand(entry, { type:'scroll-restore', x:back.x, y:back.y });   // 読み込み直した文書の中で、位置を戻す（橋が少しの間追う）
+        // 読み直しの途中に重なった頼みはここで 1 本だけ送る（橋は追っている間、目的地を返す。同時に 2 本走らせて位置を取り違えない）
+        if (entry.rereadQueued) { entry.rereadQueued = false; entry.rereading = true; entry.rereadAt = Date.now(); pageCommand(entry, { type:'reload' }); }
         if (entry.failed && isolated(entry)) { entry.failed = false; if (entry === local) paintPlane(entry); }   // 打ち切りの後に遅れて届いた
         // 端末内のページ（ファイル・フォルダー・変更・プラグイン・新しいタブ）は、中身を描き終えたと知らせるまで待つ。隔離の HTML・可視化は文書が届いたとき
-        if (isolated(entry) && loadTicket?.local && loadTicket.targetId === entry.targetId) clearLoading();
+        if (isolated(entry) && !entry.rereading && loadTicket?.local && loadTicket.targetId === entry.targetId) clearLoading();
       });
-    } else if ((!tab.pending && entry.url !== tab.url) || entry.reload !== tab.reload) {
-      const same = entry.url === tab.url;
+    } else if ((!tab.pending && !sameDoc(entry.url, tab.url)) || entry.reload !== tab.reload) {
+      const same = sameDoc(entry.url, tab.url);   // 題（?title）だけの違いは同じ文書（読み直しで位置を保つ）
       entry.url = tab.url; entry.reload = tab.reload; entry.failed = false; began = true;
       // 同じ文書のままの読み直しは中の文書に頼む（src の張り直しは # だけの違いを読み直さない・場所を保てない。指摘 2）。
       // 橋の無い出し方（?view=source の text/plain）は枠を直接読み直す
       const bridged = (() => { try { return new URL(entry.url).searchParams.get('view') !== 'source'; } catch { return false; } })();
-      if (same && bridged && isolated(entry)) { entry.rereading = true; pageCommand(entry, { type:'reload' }); beginLoad({ targetId:tab.targetId, local:true }); }
+      if (same && bridged && isolated(entry)) {
+        if (entry.rereading && Date.now() - entry.rereadAt < 10_000) entry.rereadQueued = true;   // 読み直しの途中: 届いてから続けて 1 本送る（load の側）。10 秒たっても届かなければ失われたとみて送り直す
+        else { entry.rereading = true; entry.rereadAt = Date.now(); entry.rereadQueued = false; entry.scrollSaved = null; pageCommand(entry, { type:'reload' }); }
+        beginLoad({ targetId:tab.targetId, local:true });
+      }
       // 端末内のページは枠を空にせず、中の文書が前の中身のまま読み直す（ページを描き終えるまでは次の描き直しで届く。ADR 0320）
       else if (same && bridged) {
         beginLoad({ targetId:tab.targetId, local:true });
         if (entry.ready) { entry.done = false; pageCommand(entry, { type:'reread' }); } else entry.rereadWanted = true;   // 描き終えの知らせが来るまで待ち続ける（途中の描き直しで線を下ろさない）
       }
-      else { entry.loaded = false; entry.ready = false; entry.done = false; entry.shown = false; entry.frame.src = tab.url; beginLoad({ targetId:tab.targetId, local:true }); }
+      else { entry.scrollSaved = null; entry.rereading = false; entry.rereadQueued = false; entry.loaded = false; entry.ready = false; entry.done = false; entry.shown = false; entry.frame.src = tab.url; beginLoad({ targetId:tab.targetId, local:true }); }
     }
     if (!began && loadTicket?.local && loadTicket.targetId === tab.targetId && settled(entry)) clearLoading();
     entry.frame.title = tabLabel(tab);
@@ -748,6 +759,12 @@ export function createBrowserUnify(deps = {}) {
         if (entry.ready && entry.rereadWanted) { entry.rereadWanted = false; entry.done = false; pageCommand(entry, { type:'reread' }); beginLoad({ targetId:entry.targetId, local:true }); }
         if (entry === local) paintPlane(entry);
       }
+      return;
+    }
+    if (event.data?.type === 'pleiad:page-scroll') {
+      // 隔離のページが読み直す直前の位置（LINK_BRIDGE）。この枠の持ち物として覚え、読み込み直したあと橋へ戻す。読み直しの間だけ受ける
+      const { x, y } = event.data;
+      if (entry.rereading === true && Number.isFinite(x) && Number.isFinite(y)) entry.scrollSaved = { x:Math.max(0, x), y:Math.max(0, y) };
       return;
     }
     if (event.data?.type === 'pleiad:page-activity') { pages.activity(entry.tab, event.data.input === true); explorer?.dismiss(); return; }

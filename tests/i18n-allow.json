@@ -6,6 +6,7 @@
     "pages:plugins.skill",
     "server:opencode.usage.copilotPremiumRequests",
     "ui:secrets.uses.pleiad",
+    "ui:browser.agentFallback",
     "server:codex.subagent.collab",
     "ui:settings.browser.agentBrowser.name",
     "channels:side.tabs.chats",

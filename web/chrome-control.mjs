@@ -67,7 +67,7 @@ export function createControlBadge({ mount, onResume = () => {}, onTakeOver = ()
     if (next === mode && label.dataset.name === (name ?? '')) return;
     mode = next; label.dataset.name = name ?? '';
     element.dataset.mode = mode;
-    if (mode === 'ai') { label.textContent = t('browser.entryState.working', { name: name || 'AI' }); button.textContent = t('control:takeOver'); button.classList.add('primary'); }
+    if (mode === 'ai') { label.textContent = t('browser.entryState.working', { name: name || t('browser.agentFallback') }); button.textContent = t('control:takeOver'); button.classList.add('primary'); }
     else { label.textContent = t('control:humanOperating'); button.textContent = t('tabs:display.resume'); button.classList.remove('primary'); }
     button.classList.remove('nudge');
   }
@@ -106,7 +106,7 @@ const RING_MS = 700;
  * @returns {{ banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null, error?: string|null}|null) => void,
  *            ring: (x: number, y: number, size?: {width: number, height: number}) => void, state: () => string|null, refresh: () => void }}
  */
-export function createChromeControlView({ resume, getName = () => 'Claude', onError = () => {} } = {}) {
+export function createChromeControlView({ resume, getName = () => '', onError = () => {} } = {}) {
   let current = null, showBanner = true;
   let busy = false;
   const label = () => t('chromeControl.resume', { name: getName() });
@@ -186,7 +186,7 @@ export function createChromeControlStore() {
 }
 
 /** 今の会話のエージェント名（閉じた行に使う。web/client.mjs が入れる） */
-let agentName = () => 'Claude';
+let agentName = () => '';
 export const setChromeHandoverAgentName = fn => { if (typeof fn === 'function') agentName = fn; };
 // 閉じた窓の静止画は、持ち主の会話を見ている要求にだけサーバーが見せる（core/chrome/window-shots.mjs）。今見ている会話の id を渡す
 let currentSession = () => null;
@@ -212,7 +212,7 @@ export function renderChromeClosedLine(ev) {
   const box = el('div', 'cc-closed');
   const by = ['agent', 'idle'].includes(ev?.chromeClosed?.by) ? ev.chromeClosed.by : 'human';
   const row = el('div', 'cc-line');
-  row.append(el('span', 'cc-line-t', t(`chromeControl.closed.${by}`, { name: agentName() })));
+  row.append(el('span', 'cc-line-t', t(`chromeControl.closed.${by}`, { name: agentName() || t('browser.agentFallback') })));
   box.append(row);
   if (typeof ev?.path === 'string' && ev.path) {
     const shot = el('img', 'cc-closed-shot');
