@@ -4,6 +4,7 @@
 //
 // DOM シムは tests/run.mjs が入口で入れている。
 import { readFileSync } from "node:fs";
+import { readHistoryPane } from "../lib/cut-source.mjs";
 import { Bundle, splitToolCalls } from "../../web/tool-bundle.mjs";
 import { renderToolCall, applyToolResult } from "../../web/render.mjs";
 import { createCompletionNotifications } from "../../web/notifications.mjs";
@@ -200,6 +201,8 @@ export default async function (t) {
     t.ok("承認の答えは scope（session / always）と、拒否の印（messageKey）を送る", /scope === "always"/.test(client) && /scope,?\s*\}/.test(client) && /messageKey: "userDenied"/.test(client));
     t.ok("computer.state は会話ごとに覚え、開いている会話の分だけ行に出す", /ev\.type === 'computer\.state'/.test(client) && /state\.computerStates\.set\(ev\.sessionId, ev\)/.test(client));
     t.ok("permission の computerApp は塊の最新の行か単独のカードに出す", /ev\.computerApp \? approvalApps\(ev\.computerApp\)/.test(client) && /computerApproval\(ev, computerApp, row\)/.test(client));
-    t.ok("履歴を開いたときの塊も kind で分ける（1 件でも塊）", /isComputerTool\(card\.dataset\.tool\) \? "computer" : "tools"/.test(client) && /seg\.kind !== "computer"/.test(client));
+    // 履歴の描画は web/history-pane.mjs へ移した（ADR 0319 段 6-4）。client.mjs と並べて同じ検査をする
+    const clientAndPane = `${client}\n${readHistoryPane()}`;
+    t.ok("履歴を開いたときの塊も kind で分ける（1 件でも塊）", /isComputerTool\(card\.dataset\.tool\) \? "computer" : "tools"/.test(clientAndPane) && /seg\.kind !== "computer"/.test(clientAndPane));
   }
 }
