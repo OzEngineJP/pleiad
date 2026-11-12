@@ -3,11 +3,12 @@
 //      子の語は主の #thread に出ない
 //   2. 子が終わったあと、モーダルを開いたまま、親の会話を本物のサーバーで走らせる。主の #thread は伸びるが、モーダルの本文は 1 つも変わらず、
 //      親の語はモーダルに出ない
+//   3. モーダルを閉じたあとに届く子の出来事は、閉じた実例（外れた本文の要素）に描かれず、ページのエラーも出ない
 // 実行: node tests/browser/child-modal-main-independence.mjs   （CHILD_THREAD=reread で従来の読み直しの経路でも確かめる）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・空いている別ポート）だけと話す。待ちは状態を待つ（上限つき）。
 import assert from 'node:assert/strict';
 import {
-  startRig, openPage, makeRoot, runScript, writeScript, historyScript, tailScript, delegateChild, waitChildDone, openChildModal, waitUntil,
+  startRig, openPage, makeRoot, runScript, writeScript, historyScript, tailScript, delegateChild, waitChildDone, openChildModal, closeChildModal, waitUntil,
 } from '../lib/child-modal-rig.mjs';
 
 const rig = await startRig({ tag: 'child-main-indep' });
@@ -60,6 +61,21 @@ try {
   const mainRowsAfter2 = await page.evaluate(() => document.querySelectorAll('#thread .mw').length);
   assert.ok(mainRowsAfter2 > mainRowsBefore2, 'main grew');
   console.log(`PASS: main grew ${mainRowsBefore2} -> ${mainRowsAfter2} rows; the modal's ${modalBefore.length} rows unchanged`);
+
+  // ---- 3. モーダルを閉じたあとに届く子の出来事は、閉じた実例に描かれない ----
+  await closeChildModal(rig);
+  const child2 = await delegateChild(rig, P, { title: '閉じたあとの子', task: `steps:@${writeScript(rig.base, 'c2-tail', tailScript({ rounds: 8, tag: '閉後' }))}` });
+  await openChildModal(rig, P, child2.taskId);
+  await waitUntil(() => page.evaluate(() => document.getElementById('workBody').textContent.includes('閉後')), 'the second child streams in the modal', 30_000);
+  await page.evaluate(() => { window.__closedThread = document.querySelector('#workBody .bg-thread'); });
+  await closeChildModal(rig);
+  const closedSig = () => page.evaluate(() => { const th = window.__closedThread; return th ? th.querySelectorAll('.mw').length + '|' + th.textContent.length : null; });
+  const sigAtClose = await closedSig();
+  assert.ok(sigAtClose, 'the closed thread node is still referenced');
+  await waitChildDone(rig, child2.taskId);
+  await new Promise((r) => setTimeout(r, 800));
+  assert.equal(await closedSig(), sigAtClose, 'events after the modal closed do not touch the disposed view');
+  console.log(`PASS: after closing, the child's events did not reach the disposed view (${sigAtClose})`);
   assert.deepEqual(rig.pageErrors, [], 'no page errors');
   console.log('ALL PASS');
 } finally {
