@@ -177,6 +177,11 @@ export default async function (t) {
       }
 
       // ---- 会話のアドレス欄の新しいタブ（chromeNavigate の action: new）: つながっていなければ Chrome の許可を待つ（接続の案内のカードは出さない）
+      // タブを開く・動かす口は、その会話を見ている画面からだけ（browser-unify-ws.mjs の allowed）。見ていない会話は断る
+      const targetsBefore = chrome.browser.targets().length;
+      const strangerNav = await fail(u.cmd('chromeNavigate', { sessionId: 'nobody', action: 'new', input: 'https://a.example/' }));
+      t.ok('見ていない会話の chromeNavigate は INVALID で断る（タブは開かない）', strangerNav?.code === 'INVALID' && chrome.browser.targets().length === targetsBefore, JSON.stringify(strangerNav));
+      await u.cmd('watchSession', { sessionId: turn.sessionId });
       const opening = u.cmd('chromeNavigate', { sessionId: turn.sessionId, action: 'new', input: 'https://a.example/' });
       await until(() => chrome.pending() >= 1, 8000, 'chromeNavigate upgrade pending');
       chrome.approve();
