@@ -161,6 +161,26 @@ export default async function (t) {
     } finally { await r.stop(); }
   }
 
+  // ===== 2b. 人が開いたタブがあっても、引き継ぎ（PC・この端末・画面）は AI のタブを対象にする（ADR 0320） =====
+  {
+    const r = await rig();
+    try {
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const aiTab = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      const humanTab = (await r.relay.openForConversation('one', 'https://human.test/')).targetId;
+      t.ok('人が開いたタブがあっても、AI のタブは AI が操作したタブのまま', !!humanTab && r.relay.view.current('one') === aiTab, String(r.relay.view.current('one')));
+      const screen = await r.control.takeOver('one', { by: 'screen' });
+      t.ok('[引き継ぐ]（screen）は AI のタブを人の操作にし、人が開いたタブには触れない', r.holder('one', aiTab) === 'human' && r.holder('one', humanTab) === 'ai' && screen.state !== 'paused', JSON.stringify({ ai: r.holder('one', aiTab), human: r.holder('one', humanTab), state: screen.state }));
+      await r.control.resume('one');
+      const device = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2 });
+      t.ok('「この端末で操作する」（device）も AI のタブが対象', r.holder('one', aiTab) === 'human' && r.holder('one', humanTab) === 'ai', JSON.stringify({ ai: r.holder('one', aiTab), human: r.holder('one', humanTab), device }));
+      await r.control.resume('one');
+      await r.control.takeOver('one');
+      t.ok('「PC で操作する」も AI のタブが対象', r.holder('one', aiTab) === 'human' && r.holder('one', humanTab) === 'ai', JSON.stringify({ ai: r.holder('one', aiTab), human: r.holder('one', humanTab) }));
+    } finally { await r.stop(); }
+  }
+
   // ===== 3. 窓が無いとき・窓が複数のとき =====
   {
     const r = await rig();

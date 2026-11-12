@@ -87,8 +87,12 @@ export default async function (t) {
     const watch = await c.cmd('browserScreencast', { sessionId: id, source: 'chrome', width: 400, height: 300, device: 'phone' });
     t.ok('ホストの画面から映像を見始められる', typeof watch.tabId === 'string', JSON.stringify(watch));
     await until(() => chrome.browser.screencasting(first), 10000, 'screencasting');
+    // AI のタブの映像は見るだけ（ADR 0320）。[引き継ぐ]（chromeTakeOver by: screen。スマホは映像の箱の大きさを添える）を押してから触れる
+    const refused = await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.tabId, input: { type: 'tap', x: 3, y: 3 } }).then(() => null, error => error?.code);
+    t.ok('引き継ぐ前の AI のタブへの入力は断る（人の操作に数えない）', refused === 'view-only', String(refused));
+    await c.cmd('chromeTakeOver', { sessionId: id, by: 'screen', width: 400, height: 300, scale: 1 });
     const tap = await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.tabId, input: { type: 'tap', x: 3, y: 3 } });
-    t.ok('映像への入力を受ける', tap?.ok !== false, JSON.stringify(tap));
+    t.ok('引き継いだあとは映像への入力を受ける', tap?.ok !== false, JSON.stringify(tap));
     const operating = await c.waitFor(e => e.type === 'permissionUpdate' && e.browserHandoff?.state === 'operating', { from, ms: 10000 });
     t.ok('人が触ったらカードは「あなたが操作中」（端末・映像からなので by: device）', operating.browserHandoff.by === 'device', JSON.stringify(operating.browserHandoff));
     const attachedFirst = await a.cmd('Target.attachToTarget', { targetId: first, flatten: true });
@@ -100,6 +104,7 @@ export default async function (t) {
     t.ok('エージェントが 2 枚目のタブを開いた', !!second);
     await c.cmd('chromePinWindow', { sessionId: id, windowId: null, tabId: second });
     await until(() => chrome.browser.screencasting(second), 10000, 'screencast second');
+    await c.cmd('chromeTakeOver', { sessionId: id, by: 'screen', width: 400, height: 300, scale: 1 });   // 2 枚目が AI のタブ。引き継いでから触れる
     await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: second, input: { type: 'tap', x: 4, y: 4 } });
     const attachedSecond = await a.cmd('Target.attachToTarget', { targetId: second, flatten: true });
     const blockedSecond = await a.cmd('Page.navigate', { url: 'https://example.invalid/second' }, attachedSecond.result?.sessionId);

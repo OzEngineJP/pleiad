@@ -53,7 +53,7 @@ export default async function (t) {
     const calls = [], messages = [];
     const holder = createTabHolder();
     const relay = { unify: { tabHolder: holder }, onTabEvent(fn) { return () => {}; } };
-    const host = { onChange() { return () => {}; }, summary: () => ({ tabs: 1, operating: true }), tabs: () => [{ targetId: 'T', windowId: 1 }], current: () => 'T', focus: async () => {},
+    const host = { onChange() { return () => {}; }, summary: () => ({ tabs: 1, operating: true }), tabs: () => [{ targetId: 'T', windowId: 1 }], current: () => null, focus: async () => {},
       async attach(sid, tid, event) {
         return { async send(method, params) { calls.push({ method, params });
           if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'F' } } };

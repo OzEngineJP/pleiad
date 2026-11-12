@@ -7,7 +7,7 @@ export default async function (t) {
   let clock = 1, tabListener, blockTap = false, unblock, inputEvent, frameEvent; const calls = [];
   const holder = createTabHolder({ now: () => clock, emit: (type, payload) => tabListener?.(type, payload) });
   const relay = { unify: { tabHolder: holder }, onTabEvent(fn) { tabListener = fn; return () => { tabListener = null; }; } };
-  const host = { onChange() { return () => {}; }, summary: () => ({ tabs: 1, operating: true }), tabs: () => [{ targetId: 'T', windowId: 1 }], current: () => 'T', focus: async () => {},
+  const host = { onChange() { return () => {}; }, summary: () => ({ tabs: 1, operating: true }), tabs: () => [{ targetId: 'T', windowId: 1 }], current: () => null, focus: async () => {},
     async attach(sid, tid, event) {
       return { async send(method, params) { calls.push({ method, params });
         if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased' && blockTap) { event('Page.javascriptDialogOpening', { type: 'confirm', message: 'confirm' }); return new Promise(resolve => { unblock = resolve; }); }

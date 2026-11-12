@@ -108,8 +108,13 @@ export default async function (t) {
     const frame = await until(() => remote.frames.find(f => f.kind === 'screencast' && f.type === 'frame'), 10000, 'frame');
     t.ok('フレームは source: chrome 付きで、見ている端末にだけ届く', frame.source === 'chrome' && frame.sessionId === id && !late.frames.some(f => f.kind === 'screencast') && !c.events.some(e => e.type === 'frame'));
     // 映像への入力は見ている端末から受ける（触れたタブは人の操作になる。ADR 0296 の 1）
+    // ただし AI のタブは引き継ぐ（chromeTakeOver by: screen）までは見るだけ。サーバーが 'view-only' で断る（ADR 0320）
+    const refused = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
+    t.ok('引き継ぐ前の AI のタブへの入力は view-only で断る', refused.ok === false && refused.code === 'view-only', JSON.stringify(refused));
+    const taken = await remote.ask('chromeTakeOver', { sessionId: id, by: 'screen' });
+    t.ok('「引き継ぐ」（by: screen）は窓を出さずに通る', taken.ok === true, JSON.stringify(taken));
     const input = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
-    t.ok('見ている端末の入力を受ける', input.ok === true, JSON.stringify(input));
+    t.ok('引き継いだあとは見ている端末の入力を受ける', input.ok === true, JSON.stringify(input));
     const hostWatch = await c.cmd('browserScreencast', { sessionId: id, source: 'chrome', width: 400, height: 300 });
     const sourceless = await c.cmd('browserScreencast', { sessionId: id, width: 400, height: 300 }).then(() => null, e => e.code);
     t.ok('ホストの画面（local）からも source: chrome で見られる（source の無い映像は無い: unavailable）', typeof hostWatch.tabId === 'string' && sourceless === 'unavailable', String(sourceless));
