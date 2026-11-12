@@ -1,6 +1,8 @@
 // AI のタブを別に持ち、引き継ぐまで映像は見るだけ（ADR 0321。ADR 0296 の「映像に触れたら人の操作になる」「引き継ぐのボタンを置かない」の置き換え）:
 //   - 中継: 人が開いたタブは AI のタブを替えない（attach・準備のコマンドでも）・AI が明示に操作したタブが AI のタブになる・閉じたら履歴の前の AI のタブへ戻る（popup は開いた元へ）
-//   - サーバー: 引き継ぐ前の AI のタブの映像への入力は 'view-only' で断り、人の操作に数えない・引き継いだあとは通る・人が開いたタブは今までどおり触れる
+//   - 中継: 許可の一覧（CLAIMS）のコマンドは 1 つずつ、人が開いたタブを AI のタブにする（一覧から 1 つ消すと落ちる）・一覧に無いコマンドでは移らない・履歴は 20 件まで
+//   - サーバー: 引き継ぐ前の AI のタブの映像への入力は 'view-only' で断り、人の操作に数えない（シート・ファイル・貼り付けも）・引き継いだあとは通る・人が開いたタブは今までどおり触れる
+//   - サーバー: 見るだけの AI のタブの確認の窓は、人がタブを替えた・パネルを閉じたくらいでは閉じない（人が引き継いだタブ・人のタブは今までどおり閉じる）
 //   - 画面の部品: 映像（見るだけの間は送らない）・行（<名前> が Chrome を操作中 [引き継ぐ]）・押したら強調
 import { agent, rig } from '../lib/chrome-relay-rig.mjs';
 import { createChromeScreencast } from '../../core/chrome/screencast.mjs';
@@ -102,6 +104,118 @@ export default async function (t) {
     } finally { a?.close(); await r.stop(); }
   }
 
+  // ===== 1b. 中継: 許可の一覧（CLAIMS）の 1 つずつ・一覧に無いコマンド・履歴の上限 =====
+  {
+    const r = await rig();
+    const holder = r.relay.unify.tabHolder;
+    let a;
+    try {
+      a = await agent(await r.relay.endpoint('one'));
+      const made = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      // 人が開いて触り、持ち手が AI に戻ったタブ（人のタブの印は残る）
+      const humanTab = async () => {
+        const id = (await r.relay.openForConversation('one', 'https://human.test/')).targetId;
+        holder.touch({ sessionId: 'one', targetId: id, by: 'pc' });
+        holder.release('one', id);
+        const sid = (await a.cmd('Target.attachToTarget', { targetId: id, flatten: true })).result.sessionId;
+        return { id, sid };
+      };
+      const settle = (promise, ms = 1500) => Promise.race([promise, sleep(ms)]);
+      // 一覧の全部を 1 つずつ（正規表現の一覧と同じ並び。1 つ消すと、その行が落ちる）
+      const claims = [
+        ['Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 }], ['Input.dispatchKeyEvent', { type: 'keyDown', key: 'a' }], ['Input.insertText', { text: 'x' }],
+        ['Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 1, y: 1 }] }], ['Input.imeSetComposition', { text: 'x', selectionStart: 1, selectionEnd: 1 }],
+        ['Runtime.evaluate', { expression: '1' }], ['Runtime.callFunctionOn', { functionDeclaration: '() => 1', objectId: 'x' }],
+        ['Runtime.compileScript', { expression: '1', sourceURL: '', persistScript: false }], ['Runtime.runScript', { scriptId: '1' }],
+        ['Page.navigate', { url: 'https://human.test/next' }], ['Page.reload', {}], ['Page.navigateToHistoryEntry', { entryId: 0 }], ['Page.bringToFront', {}],
+        ['Page.captureScreenshot', {}], ['Page.printToPDF', {}], ['Page.handleJavaScriptDialog', { accept: false }], ['Page.stopLoading', {}],
+        ['Page.setDocumentContent', { frameId: 'F', html: '' }],
+        ['Accessibility.getFullAXTree', {}], ['Accessibility.getPartialAXTree', { backendNodeId: 1 }], ['Accessibility.queryAXTree', { backendNodeId: 1 }],
+        ['Accessibility.getRootAXNode', {}], ['Accessibility.getChildAXNodes', { id: '1' }],
+        ['DOM.getDocument', {}], ['DOM.querySelector', { nodeId: 1, selector: 'a' }], ['DOM.querySelectorAll', { nodeId: 1, selector: 'a' }], ['DOM.getOuterHTML', { nodeId: 1 }],
+        ['DOM.describeNode', { nodeId: 1 }], ['DOM.resolveNode', { backendNodeId: 11 }], ['DOM.getBoxModel', { backendNodeId: 11 }], ['DOM.getContentQuads', { backendNodeId: 11 }],
+        ['DOM.performSearch', { query: 'a' }], ['DOM.focus', { backendNodeId: 11 }], ['DOM.scrollIntoViewIfNeeded', { backendNodeId: 11 }],
+        ['DOM.setFileInputFiles', { files: [], backendNodeId: 11 }], ['DOM.setAttributeValue', { nodeId: 1, name: 'a', value: 'b' }],
+        ['DOM.setAttributesAsText', { nodeId: 1, text: 'a=b' }], ['DOM.setOuterHTML', { nodeId: 1, outerHTML: '<a></a>' }], ['DOM.setNodeValue', { nodeId: 1, value: 'x' }],
+        ['DOM.removeNode', { nodeId: 1 }],
+      ];
+      // 人が触った後の最初の操作のコマンドは、門が 1 回だけ撮り直しを求めて断る（tab-holder）。断られたコマンドでは移らず、送り直したもので移る
+      for (const [method, params] of claims) {
+        const { id, sid } = await humanTab();
+        const before = r.relay.view.current('one');
+        let res = await settle(a.cmd(method, params, sid));
+        const refused = /snapshot/.test(res?.error?.message ?? '');
+        const stayed = r.relay.view.current('one') === made;
+        if (refused) res = await settle(a.cmd(method, params, sid));
+        t.ok(`CLAIMS: ${method} を受けた人のタブ（持ち手は AI に戻っている）が AI のタブになる${refused ? '（撮り直しを求めて断った 1 回目では移らない）' : ''}`,
+          before === made && stayed === refused && r.relay.view.current('one') === id, JSON.stringify([before, refused, stayed, r.relay.view.current('one')]));
+        r.fake.closeTab(id);
+        await until(() => r.relay.view.current('one') === made);
+      }
+      // ブラウザーの単位の明示の切り替え
+      {
+        const { id } = await humanTab();
+        await a.cmd('Target.activateTarget', { targetId: id });
+        t.ok('Target.activateTarget（ブラウザーの単位の切り替え）も、人のタブを AI のタブにする', r.relay.view.current('one') === id, String(r.relay.view.current('one')));
+        r.fake.closeTab(id);
+        await until(() => r.relay.view.current('one') === made);
+      }
+      // 一覧に無いコマンド（attach・各 enable・準備・読むだけの問い合わせ・Emulation・Network など）では、どれを送っても移らない
+      const { id: idle, sid: idleSid } = await humanTab();
+      const passive = [
+        ['Runtime.runIfWaitingForDebugger', {}], ['Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }],
+        ['Page.enable', {}], ['Runtime.enable', {}], ['Network.enable', {}], ['DOM.enable', {}], ['Accessibility.enable', {}], ['CSS.enable', {}], ['Log.enable', {}],
+        ['Page.setLifecycleEventsEnabled', { enabled: true }], ['Page.addScriptToEvaluateOnNewDocument', { source: '0' }], ['Page.getFrameTree', {}],
+        ['Page.createIsolatedWorld', { frameId: idle, worldName: 'agent' }], ['Page.getNavigationHistory', {}], ['Page.getLayoutMetrics', {}],
+        ['Runtime.addBinding', { name: 'agentBinding' }], ['Runtime.getProperties', { objectId: 'x' }], ['Runtime.releaseObject', { objectId: 'x' }],
+        ['Emulation.setDeviceMetricsOverride', { width: 800, height: 600, deviceScaleFactor: 1, mobile: false }], ['Emulation.setUserAgentOverride', { userAgent: 'x' }],
+        ['Network.setExtraHTTPHeaders', { headers: {} }], ['Network.setCacheDisabled', { cacheDisabled: true }], ['DOM.disable', {}],
+      ];
+      for (const [method, params] of passive) {
+        await settle(a.cmd(method, params, idleSid));
+        t.ok(`一覧に無い ${method} では、人のタブは AI のタブにならない`, r.relay.view.current('one') === made, String(r.relay.view.current('one')));
+      }
+      for (const [method, params] of [['Target.attachToTarget', { targetId: idle, flatten: true }], ['Browser.getVersion', {}], ['Target.getTargets', {}], ['Target.getTargetInfo', { targetId: idle }], ['Target.setDiscoverTargets', { discover: true }]]) {
+        await settle(a.cmd(method, params));
+        t.ok(`ブラウザーの単位の ${method} では、人のタブは AI のタブにならない`, r.relay.view.current('one') === made, String(r.relay.view.current('one')));
+      }
+      r.fake.closeTab(idle);
+
+      // 履歴の上限: AI が 22 個のタブを順に作ると、持ち越しに載るのは新しい 20 個（新しい順）
+      const opened = [];
+      for (let i = 0; i < 22; i += 1) opened.push((await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId);
+      const carried = () => r.relay.snapshot().entries.find(item => item.id === 'one');
+      const ai = carried()?.ai ?? [];
+      t.ok('AI のタブの履歴は 20 件まで（新しい順。古いものから落ちる）', ai.length === 20 && JSON.stringify(ai) === JSON.stringify(opened.slice(2).reverse()) && !ai.includes(made),
+        JSON.stringify(ai));
+      // 閉じたタブは履歴から外れ、AI のタブは 1 つ前へ戻る
+      await a.cmd('Target.closeTarget', { targetId: opened[21] });
+      t.ok('閉じたタブは持ち越しの履歴から外れ、AI のタブは 1 つ前のタブへ戻る', await until(() => !(carried()?.ai ?? []).includes(opened[21]) && r.relay.view.current('one') === opened[20]),
+        JSON.stringify([carried()?.ai, r.relay.view.current('one')]));
+      // 人のタブの印も 20 件まで
+      const humans = [];
+      for (let i = 0; i < 22; i += 1) humans.push((await r.relay.openForConversation('one', `https://h${i}.test/`)).targetId);
+      const marks = carried()?.human ?? [];
+      t.ok('人のタブの印も 20 件まで（古いものから落ちる）', marks.length === 20 && humans.slice(2).every(id => marks.includes(id)) && !marks.includes(humans[0]), JSON.stringify(marks));
+    } finally { a?.close(); await r.stop(); }
+  }
+
+  // ===== 1c. 中継: 持ち越しの読み込み（Chrome につなぐ前。つないだ後の「もう無いタブ」の掃除とは別に、読む時点で字の id だけ受ける）=====
+  {
+    const r = await rig();
+    try {
+      const many = Array.from({ length: 25 }, (_, i) => `H${i}`);
+      await r.relay.restore({ v: 1, port: null, chrome: null, windows: [], entries: [
+        { id: 'old', key: 'a'.repeat(48), stopped: false, paused: null, ai: ['T1', 42, '', 'z'.repeat(101), null, { id: 'T2' }, 'T1', ...many], human: ['T3', 7, 'T3', ''] },
+        { id: 'older', key: 'b'.repeat(48), stopped: false, paused: null },   // 旧版の形（ai・human が無い）
+      ] });
+      const item = id => r.relay.snapshot().entries.find(entry => entry.id === id);
+      t.ok('持ち越しの読み込み: 字の id だけ受け（数・空・101 字以上・null・object は捨て、重なりは 1 つ）、20 件まで',
+        JSON.stringify(item('old')?.ai) === JSON.stringify(['T1', ...many.slice(0, 19)]) && JSON.stringify(item('old')?.human) === JSON.stringify(['T3']), JSON.stringify(item('old')));
+      t.ok('旧版の形（ai・human が無い）も読め、AI のタブは無し', !!item('older') && item('older').ai === undefined && item('older').human === undefined && r.relay.view.current('older') === null, JSON.stringify(item('older')));
+    } finally { await r.stop(); }
+  }
+
   // ===== 2. サーバー: AI のタブの映像への入力は引き継ぐまで断る =====
   {
     let clock = 1, tabListener, aiTab = 'T'; const calls = [];
@@ -124,6 +238,18 @@ export default async function (t) {
       t.ok('文字・キーも同じく断る', key.ok === false && key.code === 'view-only' && !calls.some(call => /^Input\./.test(call.method)));
       const cursor = await cmd({ type: 'cursor', x: 3, y: 4 });
       t.ok('カーソルの問い合わせ（読むだけ）は断らない', cursor.code !== 'view-only', JSON.stringify(cursor));
+      // シート（ファイル・選択肢・確認の窓・入力欄）と貼り付け（画面は貼った字を type: 'text' で送る）・ほかの入力も、引き継ぐまでは断る
+      const sent = calls.length;
+      for (const input of [
+        { type: 'files', files: [{ name: 'a.txt', data: 'aGk=' }] }, { type: 'select', id: 1, selected: [0] }, { type: 'dialog', accept: true, text: 'x' },
+        { type: 'field', id: 1, value: 'x' }, { type: 'text', text: '貼り付けた\n複数行の字' }, { type: 'key', key: 'Enter' }, { type: 'scroll', x: 1, y: 1, dy: 100 },
+        { type: 'composition', text: 'あ' }, { type: 'context', x: 1, y: 1 }, { type: 'drag', phase: 'start', x: 1, y: 1 }, { type: 'copy' }, { type: 'menu', x: 1, y: 1 },
+      ]) {
+        const res = await cmd(input);
+        t.ok(`見るだけの間は ${input.type} も view-only で断る（ページへ何も送らない）`, res.ok === false && res.code === 'view-only' && calls.length === sent, JSON.stringify([res, calls.slice(sent).map(call => call.method)]));
+      }
+      t.ok('断った入力では、ファイルを入れず（DOM.setFileInputFiles）選択肢も選ばず、人の操作にもならない',
+        !calls.some(call => call.method === 'DOM.setFileInputFiles' || /__plyInput\.select/.test(call.params?.expression ?? '')) && holder.holder('s', 'T').holder === 'ai');
       holder.touch({ sessionId: 's', targetId: 'T', by: 'pc' });   // [引き継ぐ]（chromeTakeOver by: screen）が行うのと同じ持ち手の触り
       const after = await cmd({ type: 'tap', x: 30, y: 40 });
       t.ok('引き継いだあとは入力が通り、ページへ届く', after.ok === true && mouse().some(call => call.params.type === 'mouseReleased'), JSON.stringify(after));
@@ -136,6 +262,49 @@ export default async function (t) {
       holder.release('s', 'T');
       const human = await cmd({ type: 'tap', x: 30, y: 40 });
       t.ok('人が開いたタブ（AI のタブでない）は、今までどおり引き継がずに触れて人の操作になる', human.ok === true && holder.holder('s', 'T').holder === 'human', JSON.stringify(human));
+    } finally { hub.closeAll?.(); bridge.close?.(); }
+  }
+
+  // ===== 2b. サーバー: 見るだけの AI のタブの確認の窓は、人の画面の出入りでは閉じない =====
+  {
+    let tabListener; const aiTab = 'T'; const calls = [], listeners = [];
+    const holder = createTabHolder({ now: () => 1, emit: (type, payload) => tabListener?.(type, payload) });
+    const relay = { unify: { tabHolder: holder }, onTabEvent(fn) { tabListener = fn; return () => { tabListener = null; }; } };
+    const host = { onChange() { return () => {}; }, summary: () => ({ tabs: 2, operating: true }), tabs: () => [{ targetId: 'T', windowId: 1 }, { targetId: 'U', windowId: 1 }], current: () => aiTab, focus: async () => {},
+      async attach(_sessionId, targetId, onEvent) {
+        listeners.push({ targetId, onEvent });
+        return { async send(method, params) { calls.push({ targetId, method, params }); if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 }; if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'F' } } }; return { result: { value: true } }; }, detach: async () => {} };
+      } };
+    const bridge = createChromeScreencast({ host, relay }), hub = createScreencastHub({ bridge, source: 'chrome' });
+    const pc = { send() {} };
+    const dialogOn = targetId => { for (const item of listeners) if (item.targetId === targetId) item.onEvent('Page.javascriptDialogOpening', { type: 'confirm', message: 'ok?' }); };
+    const answered = targetId => calls.filter(call => call.targetId === targetId && call.method === 'Page.handleJavaScriptDialog').length;
+    try {
+      await hub.watch(pc, 's', { width: 560, height: 700 });
+      dialogOn('T');
+      await bridge.request('pin', 's', { tabId: 'U' });   // 人が右パネルでほかのタブを選んだ
+      await sleep(20);
+      t.ok('見るだけの AI のタブの確認の窓は、人がほかのタブへ替えても閉じない（キャンセルを送らない）', answered('T') === 0, JSON.stringify(calls.filter(call => call.method === 'Page.handleJavaScriptDialog')));
+      await bridge.request('pin', 's', {});   // 固定を解いて AI のタブへ戻る
+      dialogOn('T');
+      await hub.unwatch(pc, 's');   // パネルを閉じた
+      await sleep(20);
+      t.ok('見るだけの AI のタブの確認の窓は、パネルを閉じても閉じない', answered('T') === 0, JSON.stringify(calls.filter(call => call.method === 'Page.handleJavaScriptDialog')));
+
+      await hub.watch(pc, 's', { width: 560, height: 700 });
+      dialogOn('T');
+      holder.touch({ sessionId: 's', targetId: 'T', by: 'pc' });   // 人が引き継いだ
+      await hub.unwatch(pc, 's');
+      await sleep(20);
+      t.ok('人が引き継いだ AI のタブの窓は、今までどおりパネルを閉じるとキャンセルする', answered('T') >= 1 && calls.find(call => call.targetId === 'T' && call.method === 'Page.handleJavaScriptDialog')?.params?.accept === false);
+      holder.release('s', 'T');
+
+      await hub.watch(pc, 's', { width: 560, height: 700 });
+      await bridge.request('pin', 's', { tabId: 'U' });
+      dialogOn('U');
+      await bridge.request('pin', 's', {});   // 人のタブから AI のタブへ戻る
+      await sleep(20);
+      t.ok('人のタブ（AI のタブでない）の窓は、今までどおりタブを替えるとキャンセルする', answered('U') >= 1);
     } finally { hub.closeAll?.(); bridge.close?.(); }
   }
 

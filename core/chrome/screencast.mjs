@@ -1,6 +1,7 @@
 // エージェントの Chrome の窓の映像（docs/inapp-browser.md、ADR 0154・ADR 0294・ADR 0296・ADR 0297）。
 //
-// 会話の範囲の「今のタブ」（エージェントが最後にコマンドを送ったタブ。無ければ窓の最初のタブ。core/chrome/relay.mjs の view.current）に、
+// 会話の範囲の映すタブ（AI のタブ = エージェントが CLAIMS のコマンドで操作したタブの履歴の、残っている一番新しいもの。core/chrome/relay.mjs の view.current。
+// 無ければ映すだけ窓の最初のタブ = view.shown。人が右パネルで選んだタブはそちら。ADR 0321）に、
 // 中継自身のセッション（エージェントのものとは別）を付け、タブの focus emulation を保たせて（host.focus）Page.startScreencast を回す。
 //   - 映像の段ごとに 1 つのセッション（ADR 0297 §3）。見る人の段が違うと、段ごとの画質・大きさの screencast を同じタブへ並べて回す。
 //     段の一覧は hub が setFormats で渡す（formats: [{ tier, quality, maxWidth, maxHeight }]）。段ごとのセッションを開けない
@@ -237,7 +238,8 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
       });
       if (watch.generation !== generation || watches.get(sessionId) !== watch) { await view.detach(); return; }
       watch.inputView = view;
-      watch.pageInput = createPageInput({ send: (method, params) => view.send(method, params), emit: message => {
+      // 見るだけの AI のタブの確認の窓は、人がタブを替えた・パネルを閉じたくらいでは閉じない（AI が答える窓。ADR 0321）
+      watch.pageInput = createPageInput({ send: (method, params) => view.send(method, params), keepDialogs: () => viewOnly(sessionId, targetId), emit: message => {
         if (watch.generation === generation) emit('interaction', sessionId, { ...message, tabId: targetId }, message.type === 'fields' ? null : watch.inputClient);
       } });
       await watch.pageInput.start().catch(() => {}); // Unsupported pages retain keyboard fallback.

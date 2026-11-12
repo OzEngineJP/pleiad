@@ -67,7 +67,7 @@ export default async function (t) {
     throw new Error('connection child did not go away');
   };
   /** server.mjs の起動と同じ順: 接続の子 → 中継の restore → 接続の adopt → 以後の変化を預ける → 層が使えれば readopt */
-  const newServer = async (chrome, os, { timing, carryExtra, relayOptions, readoptOnReady = false, manual = false } = {}) => {
+  const newServer = async (chrome, os, { timing, carryExtra, relayOptions, readoptOnReady = false, manual = false, editCarry = null } = {}) => {
     const { client } = await holder.connect();
     const link = await openChromeLink({ holder: client, runtimeRoot: holder.root, runtimeKey: 'persist' });
     const locate = { browser: 'chrome', userDataDir: chrome.userDataDir };
@@ -75,7 +75,8 @@ export default async function (t) {
     const logs = [];
     const relay = createChromeRelay({ connection: conn, os, locate, scope: createChromeWindows({ os, locate, log: line => logs.push(line), ...(timing ? { timing } : {}) }),
       authorize: async () => ({ allow: true }), deniedMessage: () => 'DENIED', log: line => logs.push(line), ...(carryExtra ? { carryExtra } : {}), ...(relayOptions ?? {}) });
-    await relay.restore(link.welcome.carry, { staleSessions: link.welcome.sessions });
+    // editCarry: 前のサーバーが書いた預かり物を試験が書き換える（旧版の形・壊れた中身）
+    await relay.restore(editCarry ? editCarry(structuredClone(link.welcome.carry)) : link.welcome.carry, { staleSessions: link.welcome.sessions });
     const adopted = await conn.adopt();
     // control（server.mjs と同じく、restore の後に作る。一時停止・PC で操作するのまま持ち越した会話の撮影を断つ）
     const captureLog = [];
@@ -186,6 +187,70 @@ export default async function (t) {
       t.ok('更新の後につなぎ直したエージェントが全部のタブにつないで準備しても、人のタブは AI のタブにならない（人の印も持ち越す）', b.relay.view.current('conv-1c') === aiTab, String(b.relay.view.current('conv-1c')));
       ag.close(); ag2.close();
       await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
+    // ===== 1d. AI のタブの持ち越しの中身（ADR 0321）: ほかの会話のタブ・居ない間に閉じたタブ・壊れた id は除く／旧版の形（ai が無い）も読む／
+    //            つなぎ直しで id が替わったら、別のタブを AI のタブに戻さない =====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const A = 'conv-1d-a', B = 'conv-1d-b';
+      const a = await newServer(chrome, os);
+      const urlA = await a.relay.endpoint(A), urlB = await a.relay.endpoint(B);
+      const human = (await a.relay.openForConversation(A, 'https://human.example/')).targetId;
+      const agA = await agent(urlA), agB = await agent(urlB);
+      await agA.cmd('Target.setDiscoverTargets', { discover: true });
+      const ai1 = (await agA.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const ai2 = (await agA.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const other = (await agB.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      const carriedOf = (relay, id) => relay.snapshot().entries.find(item => item.id === id) ?? {};
+      t.ok('前提: A の AI のタブの履歴は [ai2, ai1]、人のタブの印は人が開いたタブ。B の AI のタブはほかのタブ',
+        JSON.stringify(carriedOf(a.relay, A).ai) === JSON.stringify([ai2, ai1]) && JSON.stringify(carriedOf(a.relay, A).human) === JSON.stringify([human]) && a.relay.view.current(B) === other,
+        JSON.stringify([carriedOf(a.relay, A), carriedOf(a.relay, B)]));
+      agA.close(); agB.close();
+      await until(() => a.link.alive && a.link.welcome, 2000);
+      await leave(a);
+      chrome.browser.closeTab(ai2);   // サーバーが居ない間に、AI のタブを閉じた
+      // 壊れた持ち越し: A の履歴の先頭に B のタブ・字でない id・空・長すぎる id・null、人の印にも B のタブを混ぜる
+      const b = await newServer(chrome, os, { editCarry: carry => {
+        const item = carry.entries.find(entry => entry.id === A);
+        item.ai = [other, 42, '', 'z'.repeat(101), null, ...item.ai];
+        item.human = [other, { id: human }, ...item.human];
+        return carry;
+      } });
+      await until(() => b.relay.view.tabs(A).length === 2 && b.relay.view.tabs(B).length === 1, 3000, 'carried tabs back in scope');
+      t.ok('壊れた持ち越しでも、AI のタブは A の範囲に戻った履歴のタブ（ほかの会話のタブ・閉じたタブではない）', b.relay.view.current(A) === ai1 && b.relay.view.current(B) === other,
+        JSON.stringify([b.relay.view.current(A), b.relay.view.current(B)]));
+      t.ok('持ち越しから、ほかの会話のタブ・居ない間に閉じたタブ・壊れた id が除かれる（A の履歴は [ai1]、人の印は人のタブだけ）',
+        await until(() => JSON.stringify(carriedOf(b.relay, A).ai) === JSON.stringify([ai1]) && JSON.stringify(carriedOf(b.relay, A).human) === JSON.stringify([human]), 3000).catch(() => false),
+        JSON.stringify(carriedOf(b.relay, A)));
+      t.ok('ほかの会話（B）の持ち越しはそのまま', JSON.stringify(carriedOf(b.relay, B).ai) === JSON.stringify([other]), JSON.stringify(carriedOf(b.relay, B)));
+      await leave(b);
+
+      // 旧版の形（ai・human が無い）: 読めて、AI のタブは「無い」（映すのは窓の最初のタブ）。AI が次に操作したタブが AI のタブになる
+      const c = await newServer(chrome, os, { editCarry: carry => { for (const entry of carry.entries) { delete entry.ai; delete entry.human; } return carry; } });
+      await until(() => c.relay.view.tabs(A).length === 2, 3000, 'carried tabs back in scope (old format)');
+      t.ok('旧版の形の持ち越しも読める: 窓は戻り、AI のタブは無し（映すのは窓の最初のタブ）', c.relay.view.current(A) === null && c.relay.view.shown(A) === c.relay.view.tabs(A)[0]?.targetId && c.relay.view.tabs(A).some(tab => tab.targetId === ai1),
+        JSON.stringify([c.relay.view.current(A), c.relay.view.shown(A), c.relay.view.tabs(A)]));
+      const agC = await agent(urlA);
+      const sid = (await agC.cmd('Target.attachToTarget', { targetId: ai1, flatten: true })).result?.sessionId;
+      await agC.cmd('Runtime.evaluate', { expression: '1' }, sid);
+      t.ok('旧版の形を読んだ後は、AI が次に操作したタブが AI のタブになる', c.relay.view.current(A) === ai1, String(c.relay.view.current(A)));
+      agC.close();
+      await leave(c);
+
+      // つなぎ直しで id が替わった（居ない間に AI のタブが閉じ、同じ窓に別のタブが開いた）: 新しいタブも人のタブも AI のタブにしない
+      const windowId = chrome.browser.targets().find(x => x.targetId === ai1)?.windowId;
+      chrome.browser.closeTab(ai1);
+      const fresh = chrome.browser.openUserTab('https://fresh.example/', 'fresh', windowId);
+      const d = await newServer(chrome, os);
+      await until(() => d.relay.view.tabs(A).some(tab => tab.targetId === fresh), 3000, 'the new tab is in scope');
+      t.ok('id が替わったら、AI のタブは無し（同じ窓の新しいタブ・人のタブを AI のタブに戻さない）', d.relay.view.current(A) === null && d.relay.view.current(A) !== fresh,
+        JSON.stringify([d.relay.view.current(A), fresh, human, d.relay.view.tabs(A)]));
+      t.ok('閉じた AI のタブの id は持ち越しから除かれる', await until(() => !(carriedOf(d.relay, A).ai ?? []).includes(ai1), 3000).catch(() => false), JSON.stringify(carriedOf(d.relay, A)));
+      await d.relay.close(); await d.conn.close(); await d.link.quit();
     }
 
     // ===== 1b. 最大化のまま開いた最初の窓（chrome.exe の窓）: 大きさを決めて通常に戻っても隠した位置のまま。更新を越えて引き継げる =====

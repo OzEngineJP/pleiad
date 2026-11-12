@@ -27,7 +27,7 @@
 //     agent-browser は --pin-tab で消えたタブに縛られたまま、次の open からも tab_gone で断り続ける。聞き手（core/agent-browser.mjs）が縛りの記録を消して true を返したら、
 //     中継はエージェントの接続を切る。デーモンはつなぎ直すときに記録を読み直し、縛りが無ければ新しいタブ（新しい専用窓）を作る。
 //     縛りの無いエージェントの接続は切らない（次の createTarget で黙って窓を開き直す。ADR 0154）
-// 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・エージェントが最後に触れたタブ（「今のタブ」）・
+// 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・AI のタブ（view.current。エージェントが CLAIMS のコマンドで操作したタブの履歴の、残っている一番新しいもの。ADR 0321）・
 // タブの題（右パネルのタブの列。見ている端末にだけ送る）・操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
 // ブラウザーの一本化（ADR 0294〜0297）の口: 移動の検査とコマンドの前後のふるい（page-policy.mjs）・操作の前の門（tab-holder.mjs）・
 // タブの情報（tab-info.mjs）・ページからの頼み（page-bridge.mjs）。出来事は onTabEvent(fn) に 1 本で出す（TAB_EVENTS）。setPagePorts でサーバーの port を受ける
@@ -303,8 +303,14 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       // Chrome は、すでに発見中の接続（更新を越えて接続の子が持ち続ける接続）への setDiscoverTargets では既存のタブの targetCreated を送り直さない（実機）。
       // 持ち越した窓のタブは、今あるタブを自分で引いて会話の範囲に戻す（イベントが来ても state.tabs で重ならない）
       if (state.windows.size) {
-        const { targetInfos = [] } = await cdp.send('Target.getTargets').catch(() => ({}));
+        const listed = await cdp.send('Target.getTargets').catch(() => null);
+        const targetInfos = Array.isArray(listed?.targetInfos) ? listed.targetInfos : [];
         await Promise.all(targetInfos.filter(info => info?.type === 'page').map(info => onTargetCreated(state, info).catch(() => {})));
+        // 持ち越した AI のタブの履歴・人の印から、この Chrome にもう無いタブ（居ない間に閉じた）を除く。一覧を引けなかったときは除かない（ADR 0321）
+        if (listed) {
+          const alive = new Set(targetInfos.map(info => info?.targetId));
+          for (const entry of entries.values()) for (const id of [...entry.ai, ...entry.human]) if (!alive.has(id)) forgetTab(entry, id);
+        }
       }
       if (orphans.size) { const ids = new Set(orphans); orphans.clear(); closeWindowTabs(state, ids).catch(() => {}); }
       return state;
@@ -440,6 +446,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     addWindow(state, entry, windowId);
     // 人が開いたタブの印（エージェントに知らせる前に付ける。知らせると agent-browser がすぐ attach と準備を送る）。人のタブが開いた popup も人のタブ
     if (human || (opener && entry.human.has(opener.targetId))) markHuman(entry, tab.targetId);
+    // ほかの会話の持ち越しに同じ id があれば外す（持ち越しが壊れていても、ほかの会話のタブを AI のタブ・人のタブとして覚え続けない。ADR 0321）
+    for (const other of entries.values()) if (other !== entry && (other.ai.includes(tab.targetId) || other.human.has(tab.targetId))) forgetTab(other, tab.targetId);
     // 持ち越した AI のタブがつなぎ直しで戻った・閉じた後の繰り上げ先が戻った
     if (up === state) refreshCurrent(entry);
     // 一時停止中（人が開いたタブなど）は、エージェントの接続に知らせず、エージェントのセッションも付けない
@@ -480,7 +488,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   /** タブの窓のプロフィールのフォルダー名（'chrome:<dir>' を外す。分からなければ null）。popup の窓を隠すときに渡す */
   const profileDirOfTab = tab => scope.profileOf?.(tab.entry.id, { windowId: tab.windowId, context: tab.info?.browserContextId ?? null })?.replace(/^chrome:/, '') ?? null;
 
-  /** エージェントが触れたタブを「今のタブ」として覚える（映像が追う。agent-browser の「今のタブ」は自分の側で持つので、コマンドの宛先から知る）。操作中の印も見直す */
+  /** エージェントが選んだ・操作したタブ（Target.activateTarget と CLAIMS のコマンドの宛先）を AI のタブにする（claim。映像が追う。
+   *  agent-browser の「今のタブ」は自分の側で持つので、コマンドの宛先から知る）。使った時刻と操作中の印も見直す。下ごしらえのコマンドでは呼ばない（ADR 0321） */
   function touch(tab) {
     const entry = tab.entry;
     noteUsed(entry);

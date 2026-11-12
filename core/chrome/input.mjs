@@ -169,12 +169,14 @@ function fieldProbe() {
   publish();
 }
 
-/** Own CDP session for field geometry and native sheets; dispose with the watched target. */
-export function createPageInput({ send, emit = () => {} }) {
+/** Own CDP session for field geometry and native sheets; dispose with the watched target.
+ *  keepDialogs() が true の間は、画面の出入り（cancelDialogs・dispose）で確認の窓を閉じない（見るだけの AI のタブの窓は AI のもの。ADR 0321） */
+export function createPageInput({ send, emit = () => {}, keepDialogs = () => false }) {
   let contextId = null, scriptId = null, disposed = false, chooser = null, dialog = false, closing = false;
   const uploads = new Set();
   const source = `(${fieldProbe.toString()})()`;
   async function cancelDialogs() {
+    if (keepDialogs()) return;
     closing = true;
     if (dialog) await send('Page.handleJavaScriptDialog', { accept: false }).catch(() => {});
   }
