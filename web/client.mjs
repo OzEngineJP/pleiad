@@ -2449,7 +2449,7 @@ function foldSettledCard(card, head, code, target) {
  * ツールの承認を、走っているまとまりの最新の行の場所に出す（許可・拒否をその場で押せる）。決着したらカードが縮んで普通の行に戻り、
  * まとまりに残る（外に ◇ の 1 行を残さない）。行は「動詞・主役・補足」の並びのまま、押したら 3 つのボタンを止めて受け取りを待つ
  */
-function rowApprovalCard(ev, row) {
+function rowApprovalCard(ev, row, { activity: act = activity } = {}) {   // act: 稼働表示の持ち主（既定は主。子の会話の窓は自分の実例のもの）
   const details = row.querySelector(".tc-details");
   const line = row.querySelector(".tc-line");
   const host = row.closest(".in") ?? row;
@@ -2519,7 +2519,7 @@ function rowApprovalCard(ev, row) {
     });
     bundleOf(row)?.paint();
     state.pendingPerms.delete(ev.id);
-    activity.afterPermission(undefined, { suspend: ok });
+    act.afterPermission(undefined, { suspend: ok });
   };
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);
@@ -2530,12 +2530,12 @@ function rowApprovalCard(ev, row) {
   fadeIn(box);
   bundleOf(row)?.reveal(row);
   // よそで片付いた。行へ戻すだけ（どう答えたかは分からない。結果はツールの流れで届く）
-  openCards.add(ev.id, { el: box, sending: () => Boolean(box.dataset.sending), fold: () => foldApprovalRow(ev.id, { box, row, details, host }) });
+  openCards.add(ev.id, { el: box, sending: () => Boolean(box.dataset.sending), fold: () => foldApprovalRow(ev.id, { box, row, details, host, act }) });
   return box;
 }
 
 /** ツールの行の中の承認を、答えを待たずに畳んで普通の行へ戻す（rowApprovalCard・computerApproval の行） */
-function foldApprovalRow(id, { box, row, details, host }) {
+function foldApprovalRow(id, { box, row, details, host, act = activity }) {
   state.pendingPerms.delete(id);
   if (!box.isConnected) return;   // 答えて、もう行へ戻っている
   swapHeight(host, () => {
@@ -2544,7 +2544,7 @@ function foldApprovalRow(id, { box, row, details, host }) {
     row.classList.remove("tc-waiting");
   });
   bundleOf(row)?.paint();
-  activity.afterPermission();
+  act.afterPermission();
 }
 
 /**
@@ -6462,7 +6462,17 @@ function modalChildPermission(ev) {
   const mc = modalChild;
   if (!mc || !mc.ready) return;
   const th = mc.view.thread;
-  if (th.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"]`)) return;
+  if (th.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"], [data-perm-id="${CSS.escape(ev.id)}"]`)) return;
+  // ツールの承認は、主と同じに、走っているツールの行の中に出す（renderPermission のツール行の分岐と同じ条件・同じ手順。持ち主は子の実例）
+  const lt = mc.view.liveTurn;
+  const row = ev.kind !== 'question' && !ev.browserSite && !ev.browserHandoff && !(ev.chromeWait && ev.remote) && !ev.computerApp && !ev.settingChange && !ev.secretRequest && ev.toolUseID
+    ? lt.toolCards.get(ev.toolUseID) : null;
+  if (row?.isConnected && (row.classList.contains('tc-at-end') || bundleOf(row)?.live)) {
+    markWaiting(row);
+    lt.activity.suspend();
+    rowApprovalCard(ev, row, { activity: lt.activity });
+    return;
+  }
   const card = ev.kind === 'question' ? questionCard(ev, th) : permissionCard(ev, th);
   if (!card) return;
   const act = th.querySelector('.mw.activity');
@@ -6530,8 +6540,8 @@ function syncModalChildItem(item) {
   if (!item.live && was) {
     view.liveTurn.settleStrays?.();
     view.liveTurn.activity.hide();
-  } else if (item.live && (!view.liveTurn.activity.el?.isConnected || (item.waiting && view.liveTurn.activity.text !== t('activity.waitingApproval')))) {
-    view.liveTurn.activity.show(item.waiting ? t('activity.waitingApproval') : ACTIVITY_LABEL.running);
+  } else if (item.live && (!view.liveTurn.activity.el?.isConnected || (item.waiting && !view.thread.querySelector('.tc-appr') && view.liveTurn.activity.text !== t('activity.waitingApproval')))) {
+    view.liveTurn.activity.show(modalChildActivityText(view, item));
   }
   if (owner.instructionRevision !== item.instructionRevision || was !== item.live) { owner.instructionRevision = item.instructionRevision; refreshModalInstructions(); }
   owner.wasLive = item.live;
@@ -6615,6 +6625,12 @@ function createModalChildView(item, th) {
   return view;
 }
 
+/** 子の実例の稼働表示の文言。ツールの行の中に承認が出ていれば、主と同じにその行が待ちを語り、稼働表示は走っているままの文言（承認の札が別の行のときだけ「承認を待っている」） */
+function modalChildActivityText(view, item) {
+  if (item.waiting && !view.thread.querySelector('.tc-appr')) return t('activity.waitingApproval');
+  return view.liveTurn.activity.text || ACTIVITY_LABEL.running;
+}
+
 /** 描き終えた子の実例の仕上げ: 承認待ち・通知・稼働表示・委譲カードの状態。開いた直後と、ターンの終わりの読み直しで同じ手順 */
 function settleModalChild(mc, data) {
   const { view, id } = mc, item = mc.owner.item, th = view.thread;
@@ -6623,7 +6639,7 @@ function settleModalChild(mc, data) {
   modalChildNotes(item);
   const cur = bg.view.item;
   view.setChild({ live: cur.live, waiting: cur.waiting === true });
-  if (cur.live && !view.liveTurn.activity.el?.isConnected) view.liveTurn.activity.show(cur.waiting ? t('activity.waitingApproval') : ACTIVITY_LABEL.running);
+  if (cur.live && !view.liveTurn.activity.el?.isConnected) view.liveTurn.activity.show(modalChildActivityText(view, cur));
   if (!th.querySelector(':scope > .mw') && !cur.live) th.append(el('div', 'work-head', t('dialog.work.noMessages')));
   paintDelegateStates(th);
   tickDetailHead(cur);
