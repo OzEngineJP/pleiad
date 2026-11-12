@@ -5,15 +5,27 @@
 //   isRunning() / stopping() / behind() / backgroundCounts() / turnStart()   進行中のターンの問い（live-turn.mjs の hooks と同じ）
 //   aiMsg(opts) / stopComputer(bundle) / onActivity()                          進行中のターンの下請け
 //   isBusy()                                                                   今、送信などで手が塞がっているか（行を足したとき末尾へ付いていくかの判定）
-//   会話を開く（paint）: setUuid(m, uuid) / isEditing() / syncOutboxRows(sessionId) / onEvent(ev, replay) / batchPaint(fn)
+//   会話を開く（paint）: setUuid(m, uuid) / isEditing() / outbox(sessionId) / onEvent(ev, replay) / batchPaint(fn)
+//   出来事を描く（apply）: userMsg(text, opts) / userRaw(row) / paintUser(row, text, presents) / paintUserTools(row) / markSentBy(row, by) / markSentLate(row, at, planned) /
+//     hhmm(at) / taskNoticeNode(text, at) / paintInterruptLine(live) / turnFailedRow(ev) / syncHistory()
+//   主だけの仕事（子の会話は渡さない）: paintOutbox() / markFailedMessage(row, item) / voiceDelivery / provisionalByMessage /
+//     onStopping(ev) / onTurnOk() / onReplyArrived(ev, replay) / onTurnSettled(ev)
 //   歴史の面の下請け（history-pane.mjs の hooks と同じ）: spine, placeJunctions, paintDelegateStates, paintCompactions, syncEdit, paintable,
 //     updateBranches, cmd, select, finalizing, systemHistoryNode, stripActions, userMsg, noteEndpointFailure, linkDelegateCard,
 //     activeBackendId, subagentToolsOf, isBoundaryTool, currentSession, isLoadingSession, backendVocab
 import { el } from "./dom.mjs";
 import { layoutBranchSpine } from "./branch-view.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
-import { createLiveTurn } from "./live-turn.mjs";
+import { createLiveTurn, ACTIVITY_LABEL } from "./live-turn.mjs";
 import { createHistoryPane } from "./history-pane.mjs";
+import { t } from "./i18n.mjs";
+import { renderPresent, renderToolCall, applyToolResult } from "./render.mjs";
+import { bundleOf, markRunning } from "./tool-bundle.mjs";
+import { toolStartedAt } from "./server-clock.mjs";
+import { isComputerTool } from "./computer-use.mjs";
+import { attachmentMessageIndex, normalizeAttachmentPath } from "./timeline.mjs";
+import { sysFold } from "./system-messages.mjs";
+import { runMark } from "./arc.mjs";
 
 // 役ごとの設定。主は今の動きのまま
 const ROLES = {
@@ -241,7 +253,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
       const lastUser = [...thread.querySelectorAll('.mw:has(.m.user:not(.cmd))')].at(-1);
       if (lastUser) lastUser.dataset.messageId = initialMessageId;
     }
-    hooks.syncOutboxRows(id);
+    syncOutboxRows(hooks.outbox(id));
     // Keep incoming display events queued until snapshot restoration catches up.
     if (load) {
       const restored = await loads.replay(load, data, {
@@ -266,6 +278,348 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     if (historyPane.backfill) historyPane.scheduleBackfill(historyPane.backfill);
   }
 
+  // ---------------------------------------------------------------- 送った発言の行（途中送信の配達。server の userMessage.pending / delivered）
+  //
+  // 受理（吹き出しを出す）と「エージェントに渡った」は別の瞬間。渡るまでの間だけ、吹き出しの下に
+  // 回る弧と一言を出す（docs/design-system.md §6。印は待っている間しか DOM に置かない）。
+  // 渡ったら「AIへ送信済み」に戻し、渡らないままターンが終わったら、次のターンで答えることを言う。
+  const NO_VOICE = { isVoice: () => false, owns: () => false, adopt() {}, mark: () => false, queued() {} };
+  const voiceDelivery = hooks.voiceDelivery ?? NO_VOICE;   // 声で送った発言の配送の一行（web/voice/delivery.mjs）。入力欄から送った発言の言い方は変えない
+  const provisionalByMessage = hooks.provisionalByMessage ?? new Map();   // 送った直後の仮の添付（messageId -> 添付）
+  const deliveredEarly = new Set();   // 吹き出しより先に届いた配達の合図
+  const deliveryTimers = new WeakMap();
+  const turnErrorRows = new Map();    // 会話 id -> 直近のターンの失敗の行（送れなかった発言の行を出すとき片付ける）
+  const DELIVERY = {
+    sending: t('chat.delivery.sending'),
+    pending: t('chat.delivery.pending'),
+    late: t('chat.delivery.late'),
+    sent: t('chat.delivery.sent'),
+  };
+  const messageRow = (messageId) => (messageId
+    ? [...thread.querySelectorAll('.mw[data-message-id]')].find(w => w.dataset.messageId === messageId)
+    : null) ?? null;
+  function markDelivery(row, kind) {
+    const status = row.querySelector('.outbox-status');
+    if (!status) return;
+    clearTimeout(deliveryTimers.get(row));
+    if (kind === 'pending') row.dataset.deliveryPending = '1';
+    else delete row.dataset.deliveryPending;
+    if (kind === 'sending') row.dataset.deliverySending = '1';
+    else delete row.dataset.deliverySending;
+    const waiting = kind === 'pending' || kind === 'sending';
+    if (voiceDelivery.isVoice(row) && voiceDelivery.mark(row, kind)) return;
+    status.replaceChildren(DELIVERY[kind]);
+    status.classList.remove('outbox-status-failed');
+    status.classList.toggle('outbox-status-mark', waiting);
+    if (waiting) deliveryTimers.set(row, setTimeout(() => {
+      if (row.isConnected && status.textContent === DELIVERY[kind])
+        status.prepend(runMark(kind === 'sending' ? DELIVERY.sending : t('chat.delivery.notYet')));
+    }, 150));
+  }
+
+  function ensureMessageRow(messageId, text, at, sentBy = null) {
+    let row = messageRow(messageId);
+    if (!row) {
+      const presents = provisionalByMessage.get(messageId) ?? [];
+      provisionalByMessage.delete(messageId);
+      row = append(hooks.userMsg(text, { at, presents, sentBy }), `live:${++seq}`);
+      row.dataset.messageId = messageId;
+      if (voiceDelivery.owns(messageId)) voiceDelivery.adopt(row);
+    } else if (sentBy) hooks.markSentBy(row.querySelector('.m.user') ?? row, sentBy);
+    if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
+    return row;
+  }
+
+  /** 発言の行の配達の時計を止める（送れなかった行へ替えるとき） */
+  const clearDeliveryTimer = (row) => clearTimeout(deliveryTimers.get(row));
+
+  /** 送れなかった行・送信待ちの行を、送信待ちの一覧（outbox）の今の中身に合わせる */
+  function syncOutboxRows(messages) {
+    if (!here() || isLoadingSession()) { hooks.paintOutbox?.(); return; }
+    let withdrawn = false;
+    for (const item of messages ?? []) {
+      const row = messageRow(item.id);
+      // 声で送った発言は、送信待ちでも会話の行に残す（時計の一行と［取り消す］。入力欄の脇の一覧にも出さない）
+      if (item.status === 'queued' && (item.waiting || row?.dataset.messageStarted) && voiceDelivery.isVoice(row)) { voiceDelivery.queued(row, item); continue; }
+      if ((item.status === 'queued' && (item.waiting || row?.dataset.messageStarted))
+        || ['paused', 'unknown', 'cancelled'].includes(item.status)) {
+        if (row) { row.remove(); withdrawn = true; }
+      } else if (item.status === 'failed') {
+        hooks.markFailedMessage?.(ensureMessageRow(item.id, item.args.prompt, item.at, item.args.sentBy), item);
+        const failure = turnErrorRows.get(here());
+        if (failure?.messageId === item.id) {
+          failure.node.closest('.mw')?.remove();
+          turnErrorRows.delete(here());
+          withdrawn = true;
+        }
+      } else if (item.status === 'sending' && row) {
+        row.dataset.messageStarted = '1';
+        if (!row.dataset.deliveryPending) markDelivery(row, 'sending');
+      }
+    }
+    if (withdrawn) relayoutBranches();
+    hooks.paintOutbox?.();
+  }
+
+  /** ターンが終わったのに「送信中」のままの吹き出し（渡った合図が来なかった）を片付ける。失敗なら outbox が先に失敗へ替えている */
+  function settleSending() {
+    for (const row of thread.querySelectorAll('.mw[data-delivery-sending]')) markDelivery(row, 'sent');
+  }
+
+  // ---------------------------------------------------------------- 出来事を本文に描く（onEvent の本文の部分）
+
+  /** 上限・一時的な失敗のあと、バックエンドが再試行を待っている（ADR 0229）。人の応答待ちとは別の言い方で、次の時刻と回数を出す */
+  const retryLabel = (retry) => {
+    const time = Number.isFinite(retry?.next) ? hooks.hhmm(retry.next) : "";
+    const attempt = retry?.attempt ?? 1;
+    if (retry?.limit) return time ? t("activity.retryLimit", { time, attempt }) : t("activity.retryLimitNoTime", { attempt });
+    return time ? t("activity.retryError", { time, attempt }) : t("activity.retryErrorNoTime", { attempt });
+  };
+
+  const {
+    activity, runningTools, toolCards, ensureTurnEl, openTurnEl, closeBundle, liveBundle, closeTurnEl, settleStrays,
+    thinkBox, closeThink, endStream, appendText,
+  } = liveTurn;
+
+  /**
+   * 1 つの出来事を、この実例の本文に描く。描く出来事の種類:
+   *   userMessage / taskInstruction / userMessage.delivered / userMessage.dropped（送った発言の行と配達）
+   *   text.delta / text.end / thinking.start / thinking.delta / tool.start / tool.result（進行中のターン）
+   *   activity / turnResult / turnEnd / taskNotice / channelEvent / interruptionNote / present
+   * この実例の会話の出来事かどうかの振り分けと、画面全体・主だけの仕事（上部のバー・既読・git・入力欄）は呼ぶ側と hooks の仕事。
+   * 戻り値は、描いた行（あれば）
+   */
+  function apply(ev, replay = false) {
+    switch (ev.type) {
+      case 'taskInstruction':
+      case 'userMessage': {
+        // 委譲の子への追加指示の受付（taskInstruction）は、配送中の発言と同じ pending の行として出す。
+        // userMessage.delivered/dropped（messageId 照合）で解決する。会話の中の位置は出来事の並び（受付時点）
+        const pending = ev.type === 'taskInstruction' ? true : ev.pending;
+        if (replay && ev.messageId === initialMessageId && ev.type === 'userMessage') {
+          const row = ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy);
+          const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
+          if (confirmed) row.dataset.delivered = '1';
+          markDelivery(row, ev.pending && !confirmed ? 'sending' : 'sent');
+          syncOutboxRows(hooks.outbox(here()));
+          return;
+        }
+        closeTurnEl();
+        const row = ev.messageId ? ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy)
+          : append(hooks.userMsg(ev.text, { at: ev.at, sentBy: ev.sentBy }), `live:${++seq}`);
+        if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
+        row.dataset.messageStarted = '1';
+        const userRow = row.querySelector('.m.user');
+        // 本文が同じなら描き直さない（送った直後の画像の枠を、読み込みの途中でやり直さない）
+        if (userRow?.querySelector(':scope > .body') && hooks.userRaw(userRow) !== String(ev.text ?? '')) hooks.paintUser(userRow, ev.text, userRow.attached ?? []);
+        if (ev.at) { row.querySelector('.m').dataset.at = ev.at; row.querySelector('.who .when').textContent = hooks.hhmm(ev.at); }
+        if (ev.scheduledFor) hooks.markSentLate(row.querySelector('.m'), ev.at, ev.scheduledFor);
+        // 放置中の圧縮で末尾に付いた区切りは、この発言の前へ置き直す（at で並べ直す）。
+        // 区切りがすべてこの発言より前にあるときは作り直さない。古い区切りを最新の発言の前へ動かしていた不具合の再発を防ぐ
+        const rows = [...thread.children];
+        if ([...thread.querySelectorAll('.mw[data-compaction-id]')].some(boundary => rows.indexOf(boundary) > rows.indexOf(row))) hooks.paintCompactions();
+        // pending = 受理はしたが、まだエージェントに渡っていない（userMessage.delivered を待つ）。
+        // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する
+        const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
+        if (confirmed) row.dataset.delivered = '1';
+        if (pending && ev.messageId && !confirmed) markDelivery(row, ev.initial ? 'sending' : 'pending');
+        else markDelivery(row, 'sent');
+        syncOutboxRows(hooks.outbox(here()));
+        return;
+      }
+      case 'userMessage.delivered': {
+        const row = messageRow(ev.messageId);
+        // 吹き出しより先に届くことがある（受理の応答と配達の合図が競る）。覚えておいて吹き出しで消す
+        if (!row) { if (ev.messageId) deliveredEarly.add(ev.messageId); return; }
+        row.dataset.delivered = '1';
+        markDelivery(row, 'sent');
+        return;
+      }
+      case 'userMessage.dropped':
+        // 読まれないままターンが死んだ。発言は送信待ち（保留）へ戻るので、会話からは下げる
+        messageRow(ev.messageId)?.remove();
+        hooks.paintOutbox?.();
+        return;
+
+      case "text.delta":
+        return appendText(String(ev.text ?? ""));
+
+      case "text.end": {
+        // 確定した発言。id が分かったので「ここから分岐」が押せるようになる。
+        // 続くツール呼び出しは同じ発言に入る（履歴の 1 メッセージ = 本文 + ツール呼び出し）。
+        // 本文の無い発言（ツールだけ）が、本文の無い発言に続くときは、発言もまとまりも閉じない。
+        // 履歴は「本文も thinking も無く連続するツール呼び出し」を 1 つの発言に合成する（claude-normalize の transcriptToMessages）ので、ライブも同じにする。
+        // Claude は本文の無い発言ごとに text.end を出す
+        const bodyless = !liveTurn.streamEl && !liveTurn.thinkEl;
+        if (bodyless && liveTurn.turnClosed && !liveTurn.endedWithText) return;
+        // 見せるものが無い発言（thinking が署名だけ）のために、空の発言の入れ物は作らない。id は次の入れ物に持たせる
+        if (bodyless && !liveTurn.turnEl) { liveTurn.pendingUuid = ev.uuid ?? null; liveTurn.turnClosed = true; liveTurn.endedWithText = false; return; }
+        // 本文のある発言に続けて来たなら（本文の無いツールだけの発言）、新しい発言を作る
+        const m = openTurnEl();
+        if (ev.uuid) hooks.setUuid(m, ev.uuid);
+        liveTurn.endedWithText = !bodyless;
+        closeThink();
+        endStream();
+        liveTurn.turnClosed = true;
+        return;
+      }
+
+      case "thinking.start":
+        endStream();
+        activity.show(ACTIVITY_LABEL.thinking);
+        return;
+
+      case "thinking.delta": {
+        // 平文が来ないエージェント（Claude の thinking は署名だけ）もある。
+        // 中身が来たときだけ箱を作る。稼働表示は文言だけにする。
+        activity.show(ACTIVITY_LABEL.thinking);
+        if (ev.text) {
+          const box = thinkBox().querySelector(".think-body");
+          box.textContent += ev.text;
+          if (liveTurn.thinkEl.open) box.scrollTop = box.scrollHeight;
+        }
+        return;
+      }
+
+      case "tool.start": {
+        if (ev.id && toolCards.has(ev.id)) {
+          const card = toolCards.get(ev.id);
+          if (!card.classList.contains("tc-done") && !card.classList.contains("tc-error") && !card.classList.contains("tc-stopped") && !card.classList.contains("tc-running") && !card.classList.contains("tc-waiting") && !hooks.isBoundaryTool(ev.name, hooks.subagentToolsOf(ev.backend ?? hooks.activeBackendId()))) {
+            markRunning(card, toolStartedAt(ev)); runningTools.add(card);
+          }
+          return card;
+        }
+        endStream();
+        const stick = atBottom();
+        const card = renderToolCall(ev.name, ev.input, { id: ev.id, at: ev.at, startedAt: ev.startedAt });
+        hooks.linkDelegateCard(card, ev.input);
+        const boundary = hooks.isBoundaryTool(ev.name, hooks.subagentToolsOf(ev.backend ?? hooks.activeBackendId()));
+        if (boundary) { closeBundle(); ensureTurnEl().append(card); }
+        else {
+          // 経過はサーバーが受けた時刻（at）から数える。開き直し・再接続の再生でも 0 に戻らない
+          const since = toolStartedAt(ev);
+          markRunning(card, since);
+          liveBundle(isComputerTool(ev.name) ? "computer" : "tools", since).add(card);
+          runningTools.add(card);
+        }
+        // 2 件目で見出しが現れ、行が伸びる間も、読んでいた下端に付いていく
+        if (stick) followBottom();
+        if (ev.id) toolCards.set(ev.id, card);
+        // 通常ツールは同じ行を末尾へ移し、汎用の稼働表示を重ねない。
+        // 委譲・サブエージェントの行には弧が無い（状態は 4 秒ごとの更新で追いつく）ので、それまでは従来の稼働表示を残す
+        if (boundary) activity.show(t("activity.runningTool", { tool: ev.name }));
+        else activity.suspend();
+        return card;
+      }
+
+      // ツールの戻り。対応するカードに結果を差し込む（別の吹き出しにはしない）
+      case "tool.result": {
+        const card = toolCards.get(ev.id);
+        if (card) { applyToolResult(card, ev); hooks.noteEndpointFailure(card, ev); hooks.linkDelegateCard(card, null, ev); bundleOf(card)?.paint(); }
+        activity.afterTool();
+        return;
+      }
+
+      case "activity":
+        if (ev.state === "idle") { settleStrays(); closeBundle(); return activity.hide(); }
+        // 別のタブで押した中断・開き直した会話でも、止まり終えるまで中断ボタンを押せなくする（主だけの仕事）
+        if (ev.state === "stopping") hooks.onStopping?.(ev);
+        // running / waiting は「動いている」「待っている」だけを言う汎用の事象。ツールの行が語っている間（suspend 中）は出さない
+        return activity.show(ev.label || (ev.state === 'preparing'
+          ? ev.current && ev.total ? t('activity.connectingMcp', { current: ev.current, total: ev.total }) : t('activity.preparing')
+          : ev.state === 'mcpStart' ? t('activity.mcpStarting', { name: ev.name ?? '' })
+          : ev.state === 'retrying' ? retryLabel(ev.retry)
+          : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing', passive: ev.state === 'running' || ev.state === 'waiting' });
+
+      case 'taskNotice':
+        closeTurnEl();
+        // 本文があれば開ける 1 行（既定は閉じた状態。履歴の systemHistoryNode と同じ形）
+        append(hooks.taskNoticeNode(ev.text, hooks.hhmm(ev.at ?? new Date())));
+        return;
+      case 'channelEvent':
+        // bot の会話へチャンネルの出来事・記憶の包みを渡した。履歴と同じ行（systemHistoryNode）で出す（サーバーが履歴と同じ形の rows を付ける）
+        closeTurnEl();
+        for (const row of ev.rows ?? []) { const node = hooks.systemHistoryNode({ at: new Date().toISOString(), ...row }); if (node) append(node); }
+        return;
+      case 'interruptionNote': {
+        // 中断で止めたものをエージェントへ伝えた。開くと伝えた中身が読める（履歴の systemHistoryNode と同じ形）。
+        // 添えた発言の吹き出しの前に置く（履歴と同じ並び）
+        const node = append(sysFold(t('chat.sys.interruptionNote'), ev.text ?? ''));
+        const row = ev.messageId ? messageRow(ev.messageId) : null;
+        if (row && row !== node) row.before(node);
+        return;
+      }
+      case "turnResult": {
+        if (ev.compact) return;
+        settleStrays();
+        closeBundle();                                // ターンが終わったら、最新の行を残さず見出しだけにする
+        // 終わったことは稼働表示が消えれば分かる。通ったターンでは、主だけの仕事（設定の行の期限切れの読み直し）をして終わる
+        if (ev.outcome === "ok") { hooks.onTurnOk?.(); return; }
+        closeTurnEl();
+        // 中断の一行は保存された状態と同じ形で描く（paintInterruptLine が二重に出さない）
+        if (ev.outcome === "aborted" || ev.outcome === 'limited') hooks.paintInterruptLine({ at: ev.at ?? Date.now(),
+          reason: ev.outcome === 'limited' ? 'limit' : ev.reason, resetsAt: ev.resetsAt, window: ev.window,
+          account: ev.account, backend: ev.backend });
+        else {
+          // ターンの失敗は会話の出来事として残す。「✕ 失敗」は強い字（ツールの失敗と同じ語）
+          const node = hooks.turnFailedRow(ev);
+          if (ev.sessionId) turnErrorRows.set(ev.sessionId, { messageId: ev.messageId, node });
+          const failed = hooks.outbox(ev.sessionId)?.find(m => m.status === 'failed' && m.id === ev.messageId);
+          if (failed) syncOutboxRows(hooks.outbox(ev.sessionId));
+        }
+        return;
+      }
+
+      case "present": {
+        if (ev.by === "human") {
+          const rows = [...thread.querySelectorAll('.m[data-role="user"]')];
+          const index = attachmentMessageIndex(rows.map(row => ({role:"user", at:row.dataset.at, text:hooks.userRaw(row)})), ev);
+          // 結び付いた発言が Markdown で描かれているなら、添付は本文の位置に取り込む（別のカードは出さない）
+          const owner = index >= 0 && rows[index].querySelector(':scope > .body')?.classList.contains('md-user') ? rows[index] : null;
+          if (owner) {
+            const same = (a, b) => normalizeAttachmentPath(a) === normalizeAttachmentPath(b);
+            const known = (owner.attached ?? []).findIndex(p => same(p.path, ev.path));
+            if (known < 0) hooks.paintUser(owner, hooks.userRaw(owner), [...(owner.attached ?? []), ev]);
+            else if (owner.attached[known].provisional) {
+              // 送った直後に仮の添付で描いてある。描き直さず（画像を読み直さない）、持っている情報だけを本物に替える
+              owner.attached[known] = ev;
+              hooks.paintUserTools(owner);
+            }
+            relayoutBranches();
+            return owner.closest('.mw');
+          }
+          const wrapper = append(renderPresent(ev), `live:${++seq}`);
+          wrapper.dataset.humanAttachment = "true";
+          if (index >= 0) {
+            let anchor = rows[index].closest('.mw');
+            while (anchor.nextElementSibling?.dataset.humanAttachment === "true") anchor = anchor.nextElementSibling;
+            anchor.after(wrapper);
+            relayoutBranches();
+          }
+          return wrapper;
+        }
+        closeTurnEl();
+        return append(renderPresent(ev), `live:${++seq}`);
+      }
+
+      case "turnEnd":
+        // 読み返している間に返答が終わったら、最新へのボタンに新着の印（主だけの仕事）
+        hooks.onReplyArrived?.(ev, replay);
+        closeTurnEl();
+        // 渡った合図が来ないままターンが終わった分。Codex などは次のターンとして答える。
+        // Claude は区切りで取り出された分にも同じターンの中で答え、渡った合図も出す（取りこぼしても、
+        // 次の内部ターンが始まった時点で出す。core/backends/claude.mjs の takeLeftovers）ので、普通はここに残らない。
+        // 待っているものは何も走っていないので、回る弧はここで外す
+        for (const row of thread.querySelectorAll('.mw[data-delivery-pending]')) markDelivery(row, 'late');
+        // 走っている印・送信中の印を下ろす（主だけの仕事）
+        hooks.onTurnSettled?.(ev);
+        hooks.paintInterruptLine();
+        if (replaying && displayLoad) displayLoad.syncHistory = true;
+        else hooks.syncHistory?.();
+        return;
+    }
+  }
+
   return {
     role,
     config,
@@ -280,6 +634,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     set initialMessageId(id) { initialMessageId = id; },
     nextSeq: () => ++seq,
     prepare, adopt, paint, finish, branchAnchor,
+    apply, messageRow, markDelivery, ensureMessageRow, syncOutboxRows, settleSending, clearDeliveryTimer,
     atBottom, followBottom, scrollToEnd, relayoutBranches, wrap, place, append,
   };
 }

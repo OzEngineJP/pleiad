@@ -60,15 +60,15 @@ const at = (n) => new Date(Date.UTC(2026, 8, 29, 0, n)).toISOString();
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
   const view = readConversationView();   // wrap・place・append の本体は web/conversation-view.mjs（ADR 0319 段 6-5）
-  const functions = ['wrap', 'place', 'append'].map(name => cutFunction(view, name)).join('\n') + '\n' + ['compactionBoundary', 'paintCompactions', 'acceptCompaction', 'ensureMessageRow'].map(name => {
+  const functions = ['wrap', 'place', 'append', 'ensureMessageRow'].map(name => cutFunction(view, name)).join('\n') + '\n' + ['compactionBoundary', 'paintCompactions', 'acceptCompaction'].map(name => {
     const start = source.indexOf(`function ${name}(`);
     if (start < 0) throw new Error(`client.mjs に ${name} が無い`);
     return source.slice(start, source.indexOf('\n}', start) + 2);
   }).join('\n');
-  const head = source.indexOf("case 'userMessage': {");
-  const tail = source.indexOf("case 'userMessage.delivered'", head);
-  if (head < 0 || tail < 0) throw new Error("client.mjs に case 'userMessage' が無い");
-  const userMessage = source.slice(head + "case 'userMessage': {".length, tail).trim().replace(/\}$/, '');
+  const head = view.indexOf("case 'userMessage': {");   // 出来事を描く仕事は view.apply（ADR 0319 段 6-5）
+  const tail = view.indexOf("case 'userMessage.delivered'", head);
+  if (head < 0 || tail < 0) throw new Error("conversation-view.mjs に case 'userMessage' が無い");
+  const userMessage = view.slice(head + "case 'userMessage': {".length, tail).trim().replace(/\}$/, '');
 
   const noop = () => {};
   const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -91,13 +91,14 @@ export default async function (t) {
     state, thread, el, userMsg, t: k => k, noop, log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
     atBottom: () => false, relayoutBranches: noop, canCompactHere: () => false, compactNumber: String, paintContextStrip: noop,
     historyPane: { painting: false, paintBefore: null }, replaying: false, isBusy: () => state.busy, paintedFloor: () => 0, provisionalByMessage: new Map(),
-    mainView: { replaying: false, nextSeq: (() => { let n = 0; return () => ++n; })() },
+    // 本文の面（view）の中の名前と、その面が呼ぶ hooks
+    here: () => state.current, hooks: { userMsg, userRaw: (m) => m.querySelector('.body')?.textContent ?? '', paintUser: noop, hhmm: x => x, markSentLate: noop, markSentBy: noop, paintCompactions: () => context.paintCompactions(), outbox: () => [] },
     activity: { el: null }, liveTurn: { activity: { el: null } },   // 稼働表示の行（place が使う）。このテストは稼働表示を出さない
     messageRow: (id) => thread.querySelectorAll('.mw').find(w => w.dataset.messageId === id) ?? null,
     closeTurnEl: noop, plainTextHtml: x => x, hhmm: x => x, markDelivery: noop, syncOutboxRows: noop, outboxes: new Map(),
     deliveredEarly: new Set(), voiceDelivery: { owns: () => false, adopt: noop }, document: { createTextNode: x => x },
   });
-  vm.runInContext(functions, context);
+  vm.runInContext(`let seq = 0, initialMessageId;\nconst replaying_ = false;\n${functions}`, context);
   vm.runInContext(`function onUserMessage(ev, replay = false) {\n${userMessage}\n}`, context);
   const send = (id, text, when) => { context.ev = { type: 'userMessage', messageId: id, text, at: when }; vm.runInContext('onUserMessage(ev)', context); };
   const history = (id, text, when) => {

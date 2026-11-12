@@ -18,7 +18,7 @@ export const title = "途中で開いたセッションを履歴と受信イベ�
 
 export default async function (t) {
   const source = readClientAndLiveTurn();   // appendText 〜 resetLiveTurn は web/live-turn.mjs（ADR 0319 段 6-3）
-  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => cutFunction(source, name, { withAsync: true })).join("\n");
+  const functions = ["onEvent", "turnFailedRow", "onStopping", "onTurnOk", "onReplyArrived", "onTurnSettled", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => cutFunction(source, name, { withAsync: true })).join("\n");
   const noop = () => {};
   const notices = [];
   const completionNotifications = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: notice => notices.push(notice) } }, openSession: noop });
