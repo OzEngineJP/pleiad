@@ -1,6 +1,6 @@
 # 0319 会話の本文の描画を 3 層の部品（createLiveTurn → createHistoryPane → createConversationView）に分け、主を先に動かして、モーダルの子を同じ部品に載せる
 
-- 状態: 承認（2026-11-12）。[0315](0315-two-watch-slots-modal-right-pane.md)〜[0318](0318-child-conversations-only-in-modal.md) に続く段 6。段 6-3（進行中のターン）は主の会話を動かさない移し替えとして実装済み
+- 状態: 承認（2026-11-12）。[0315](0315-two-watch-slots-modal-right-pane.md)〜[0318](0318-child-conversations-only-in-modal.md) に続く段 6。段 6-3（進行中のターン）と段 6-4（履歴の面）は主の会話を動かさない移し替えとして実装済み
 - 承認の内容: プロダクトオーナーが「子の会話のモーダルを主と同じ部品で作り直す」の残り（本文の描画の共通化）を「すぐやる。共通化すべき」として承認した
 - 前提: [0318](0318-child-conversations-only-in-modal.md)（子の会話はモーダルだけで開く）・[0317](0317-modal-child-composer-stop-name-tags.md)（モーダルの名札・入力欄・中断）
 
@@ -35,7 +35,7 @@
    | 層 | 部品 | 持つもの |
    | --- | --- | --- |
    | 1 | `createLiveTurn({ thread, ...hooks })`（`web/live-turn.mjs`） | 進行中のターン（追記中の発言・ツールのまとまり・本文の流れ・thinking・稼働表示）の描画と状態 |
-   | 2 | `createHistoryPane`（段 6-4） | 履歴の描画（ツールのまとまり・分け目・再読み込みの保ち方）。層 1 を中に持つ |
+   | 2 | `createHistoryPane({ thread, log, ...hooks })`（`web/history-pane.mjs`。段 6-4） | 履歴の面（窓・最初の塗り・後からの足し・古いページの読み足し・静かな読み直しで残す行・実寸の確定）の描画と状態。段 6-4 では層 1 の実例を主が持ち、部品は `resetLiveTurn()` を hook で受ける |
    | 3 | `createConversationView`（段 6-5） | 目次・検索・スクロール・入力欄との結び付きなど、筋 1 本の見せ方。層 2 を中に持つ |
 
    部品は主の会話の値（`state.current` など）を直に読まない。必要なものは hooks で受ける。
@@ -48,6 +48,10 @@
    - 状態（`turnEl`・`bundle`・`pendingUuid`・`endedWithText`・`turnClosed`・`streamEl`・`thinkEl`・`toolCards`）は部品の中が持つ。`client.mjs` の `state` の同名の項目は、部品の実例の getter / setter へつなぐ。
    - 今の関数名（`ensureTurnEl`・`appendText`・`resetLiveTurn` など）は、`client.mjs` に実例への薄い委任として残す。
    - モーダルの `#workDialog` は、この段ではまだ使わない。
+8. **段 6-4 の hooks**（`createHistoryPane` が受けるもの）: `thread`・`log`／`atBottom()`・`placeRow(node, key)`・`spine()`・`relayoutBranches()`・`placeJunctions(opts)`・`paintDelegateStates()`・`paintCompactions()`・`syncEdit()`・`paintable(p)`・`updateBranches(id, messages, opts)`・`finalizing(on)`／`resetLiveTurn()`／`cmd(command, args, opts)`・`select(id, opts)`／`systemHistoryNode(m)`・`stripActions(node)`・`userMsg(text, opts)`・`aiMsg(opts)`・`thinkFromText(text)`・`noteEndpointFailure(card, result, sessionId)`・`linkDelegateCard(card, input, result, ctx)`・`activeBackendId()`・`subagentToolsOf(id)`・`isBoundaryTool(name, tools)`／`currentSession()`・`isBusy()`・`isLoadingSession()`・`backendVocab(backend)`・`toolCardMap()`。
+   - 状態（`messages`・`base`・`presents`・`presentBase`・`earlierCalls`、窓の手前を描く仕事の `backfill`・`paintBefore`・`olderBusy`・`olderFail`・`olderEl`、描画中の印の `paintingHistory`）は部品の中が持つ。`client.mjs` の `state` の同名の 5 項目は、部品の実例の getter / setter へつなぐ（列挙できる項目のまま。`state` を丸ごと写す・並べる所は無い）。
+   - 部品は `state` を直に読まない（`web/history-pane.mjs` の中の `state.` は 0）。historyRow の `sessionId` の既定値も `currentSession()` から引く。
+   - 今の関数名（`paintHistory`・`retainThread`・`clearThread`・`historyRow`・`loadOlder` など）は、`client.mjs` に実例への薄い委任として残す。`loadHistory`・`syncHistory` は段 6-5 まで `client.mjs` に残す。
 
 ## 理由
 
@@ -59,7 +63,7 @@
 ## 残る場合
 
 - ネイティブの subagent とホストへ任せた子は、読み直しで描くので、層 2 の履歴の部品にはまだ載らない（行を描く関数だけが共通）。
-- 段 6-3 の hooks の形は、段 6-4 で履歴の部品を足すときに増減しうる。この ADR は hooks の名前を固定しない（部品が `state.current` などを直に読まないことを固定する）。
+- hooks の形は、段 6-5 以降で部品を足すときに増減しうる。この ADR は hooks の名前を固定しない（部品が `state.current` などを直に読まないことを固定する）。
 
 ## 影響
 
