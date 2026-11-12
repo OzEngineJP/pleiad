@@ -12,13 +12,24 @@ import { createHeightSettler } from "./history-heights.mjs";
 
 export function createHistoryPane(hooks) {
   const {
-    state, thread, log,
+    thread, log,
     atBottom, placeRow, resetLiveTurn, spine, relayoutBranches, placeJunctions, paintDelegateStates, paintCompactions, syncEdit,
     paintable, updateBranches, cmd, select, finalizing,
     systemHistoryNode, stripActions, userMsg, aiMsg, thinkFromText, noteEndpointFailure, linkDelegateCard,
     activeBackendId, subagentToolsOf, isBoundaryTool,
+    currentSession, isBusy, isLoadingSession, backendVocab, toolCardMap,
   } = hooks;
 
+  // 状態
+  // 今のセッションの履歴（loadSession の messages）。長い会話は末尾の窓だけ（ADR 0182）。client の messages はここへつながる
+  let messages = [];
+  // messages[0] の通し番号。画面の行の印 m:<通し番号> とサーバーの添字はこの値で揃える
+  let base = 0;
+  let presents = [];
+  // presents[0] の通し番号（p:<通し番号>）
+  let presentBase = 0;
+  // 窓の手前にあるサブエージェントの呼び出しの要約（サーバーが運ぶ。subagentCalls）。作業ダイアログの過去の一覧が使う
+  let earlierCalls = [];
   // 履歴をまとめて描く間は、1 件ごとに筋を貼り直さない。筋の位置と末尾の判定はレイアウトを読むので、
   // 1 件ごとにやると件数の 2 乗でレイアウトが走り、大きな会話を開くのに数秒かかっていた。paintHistory が最後に 1 回貼る
   let paintingHistory = false;
@@ -64,7 +75,7 @@ export function createHistoryPane(hooks) {
     resetLiveTurn();
     thread.replaceChildren(spine());
     thread.classList.remove("branched");
-    state.toolCards.clear();
+    toolCardMap().clear();
   }
 
   /** 行の中の発言の役割（続きの見出しを省くかの判定に使う）。履歴の行は AI なら .m.ai、人なら .m.user */
@@ -102,7 +113,7 @@ export function createHistoryPane(hooks) {
       if (after || row.classList.contains("branch-row") || row.dataset.compactionId !== undefined) row.remove();
       if (row === boundary) after = true;
     }
-    for (const [id, card] of state.toolCards) if (!card.isConnected) state.toolCards.delete(id);
+    for (const [id, card] of toolCardMap()) if (!card.isConnected) toolCardMap().delete(id);
     return { row: boundary, from, prevRole, rows };
   }
 
@@ -146,12 +157,12 @@ export function createHistoryPane(hooks) {
 
   function paintHistoryRows(fromMi, retained = null, older = null) {
     // older は一部だけ描くときの指定: wants（描く項目の判定）・range（描く項目の範囲 { from, to }）・items/refs/attachedTo（組み立て済み）・prevRole（範囲の直前の発言の役割）
-    const items = older?.items ?? buildItems(state.messages, state.presents, state.base, state.presentBase);
-    const refs = older?.refs ?? state.presents.map(p => p.reference);
+    const items = older?.items ?? buildItems(messages, presents, base, presentBase);
+    const refs = older?.refs ?? presents.map(p => p.reference);
     const added = [];
-    // fromMi は通し番号。窓の中の添字は fromMi - state.base
-    let prevRole = older && 'prevRole' in older ? older.prevRole : retained ? retained.prevRole : fromMi > state.base ? state.messages[fromMi - 1 - state.base]?.role : null;
-    const startAt = !retained && fromMi > state.base ? new Date(state.messages[fromMi - 1 - state.base]?.at ?? 0) : null;
+    // fromMi は通し番号。窓の中の添字は fromMi - base
+    let prevRole = older && 'prevRole' in older ? older.prevRole : retained ? retained.prevRole : fromMi > base ? messages[fromMi - 1 - base]?.role : null;
+    const startAt = !retained && fromMi > base ? new Date(messages[fromMi - 1 - base]?.at ?? 0) : null;
     // 発言に結び付いた human の present は、発言の本文の位置に取り込む（別のカードは出さない）。発言が描かれた添字だけ取り込み済みにする
     const attachedTo = older?.attachedTo ?? inlineAttachments(items);
     const inlined = new Set();
@@ -213,15 +224,15 @@ export function createHistoryPane(hooks) {
    */
   function paintedFloor() {
     if (backfill) return { mi: backfill.floorMi, at: paintedAt(backfill.floorMi) };
-    return state.base > 0 ? { mi: state.base, at: paintedAt(state.base) } : null;
+    return base > 0 ? { mi: base, at: paintedAt(base) } : null;
   }
   /**
    * 通し番号 mi 以降で最初に時刻を持つ発言の時刻。記録に時刻を持たない発言が窓や仕事の頭になっても、区切りの置き場所の基準が決まる。
    * 以降に時刻を持つ発言が 1 つも無ければ NaN（区切りを手前に置く基準が無いので、全部描く。窓の無い会話と同じ）
    */
   function paintedAt(mi) {
-    for (let i = Math.max(0, mi - state.base); i < state.messages.length; i++) {
-      const at = Date.parse(state.messages[i]?.at ?? '');
+    for (let i = Math.max(0, mi - base); i < messages.length; i++) {
+      const at = Date.parse(messages[i]?.at ?? '');
       if (Number.isFinite(at)) return at;
     }
     return NaN;
@@ -229,14 +240,14 @@ export function createHistoryPane(hooks) {
 
   /** 末尾を先に描く分け方。分けないときは null。tail は paintHistory(0, null, tail) に、job は手前を足す仕事（backfill）になる */
   function splitFirstPaint() {
-    if (state.messages.length < FIRST_PAINT_ROWS + BACKFILL_MIN) return null;
-    const items = buildItems(state.messages, state.presents, state.base, state.presentBase);
+    if (messages.length < FIRST_PAINT_ROWS + BACKFILL_MIN) return null;
+    const items = buildItems(messages, presents, base, presentBase);
     let rows = 0, cut = -1;
     for (let i = items.length - 1; i >= 0 && cut < 0; i--) if (items[i].kind === 'msg' && ++rows >= FIRST_PAINT_ROWS) cut = i;
     if (cut < BACKFILL_MIN) return null;
-    const refs = state.presents.map(p => p.reference);
+    const refs = presents.map(p => p.reference);
     const attachedTo = inlineAttachments(items);
-    const job = { id: state.current, items, refs, attachedTo, end: cut, size: 8, handle: null, floorMi: items[cut].mi };
+    const job = { id: currentSession(), items, refs, attachedTo, end: cut, size: 8, handle: null, floorMi: items[cut].mi };
     return { job, tail: { items, refs, attachedTo, range: { from: cut, to: items.length }, prevRole: roleBefore(items, cut) } };
   }
 
@@ -255,7 +266,7 @@ export function createHistoryPane(hooks) {
     finally { paintBefore = null; }
     job.end = from;
     const top = items.slice(from).find(it => it.kind === 'msg');
-    job.floorMi = top ? top.mi : state.base;
+    job.floorMi = top ? top.mi : base;
     restore();
     return from <= 0;
   }
@@ -272,7 +283,7 @@ export function createHistoryPane(hooks) {
   /** idle の 1 回分。かかった時間に合わせて次の件数を決める */
   function stepBackfill(job) {
     if (backfill !== job) return;
-    if (state.current !== job.id) { cancelBackfill(); return; }
+    if (currentSession() !== job.id) { cancelBackfill(); return; }
     const started = performance.now();
     const done = backfillChunk(job, job.size);
     const spent = Math.max(1, performance.now() - started);
@@ -312,12 +323,12 @@ export function createHistoryPane(hooks) {
    * node が null なら描かない。role は次の発言の cont（AI が続けて話したか）を決める。system はシステム側の行（systemHistoryNode）だったか。
    * prev は直前に置いた行。続けて残った中断（ツールの中断と、その直後の中断）は 1 行にする。
    * readonly は読むだけの筋: システム側の行の操作（コピー・⋯）を外し（人の発言と返答は本体と同じ操作を持つ）、発言者をモデル名で出し（どのモデルが答えたかを見分けるため。
-   * 分からなければエージェント名のまま）、ツールカードを state.toolCards に登録せず、委譲のカードに「開く」を付けない
+   * 分からなければエージェント名のまま）、ツールカードを主の会話の toolCards に登録せず、委譲のカードに「開く」を付けない
    * （openFromCard はメインパネルの会話を親として子を探すので、別の会話の筋では違う子を開く）。
    * backend は発言に backend が無いときの発言者。sessionId は Web 検索の失敗に接続先の一文を足すときに引く会話。
    * user を渡すと人の発言をそれで描く（詳細の最初の発言の「依頼」）
    */
-  function historyRow(m, { cont = false, refs = [], prev = null, readonly = false, backend, sessionId = state.current, user = null, presents = [] } = {}) {
+  function historyRow(m, { cont = false, refs = [], prev = null, readonly = false, backend, sessionId = currentSession(), user = null, presents = [] } = {}) {
     const system = systemHistoryNode(m);
     if (system !== undefined) {
       const repeated = system?.matches('.m.sys.interrupted') && prev?.querySelector(':scope .m.sys.interrupted');
@@ -330,7 +341,7 @@ export function createHistoryPane(hooks) {
     if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly, scheduledFor: m.scheduledFor, sentBy: m.sentBy });
     else {
       node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont });
-      if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
+      if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(backendVocab(backend)?.models ?? {}, m.model);
       if (m.thinking) node.append(thinkFromText(m.thinking));
       const cards = (m.toolCalls ?? []).map((c) => {
         const card = renderToolCall(c.name, c.input, { id: c.id, at: c.at, startedAt: c.startedAt, endAt: c.endAt });
@@ -340,7 +351,7 @@ export function createHistoryPane(hooks) {
           applyToolResult(card, res); noteEndpointFailure(card, c.result, sessionId);
         }
         if (!readonly) linkDelegateCard(card, c.input, c.result, { backend: m.backend ?? backend ?? activeBackendId() });
-        if (c.id && !readonly) state.toolCards.set(c.id, card);
+        if (c.id && !readonly) toolCardMap().set(c.id, card);
         return card;
       });
       if (!m.toolCalls) for (const name of m.tools ?? []) cards.push(renderToolCall(name, null));
@@ -400,8 +411,8 @@ export function createHistoryPane(hooks) {
   }
 
   function maybeLoadOlder() {
-    if (olderBusy || backfill || state.base <= 0 || !state.current || state.loadingSession || state.busy) return;
-    if (olderFail?.id === state.current && olderFail.base === state.base) return;
+    if (olderBusy || backfill || base <= 0 || !currentSession() || isLoadingSession() || isBusy()) return;
+    if (olderFail?.id === currentSession() && olderFail.base === base) return;
     if (log.scrollTop > OLDER_REACH) return;
     loadOlder();
   }
@@ -414,18 +425,18 @@ export function createHistoryPane(hooks) {
   function loadOlder({ reach = null } = {}) {
     if (olderBusy) return olderBusy;
     flushBackfill();   // 手前の行は、いま描いてある一番上の行の手前に足す。窓の中の手前を先に描き終える
-    const id = state.current, before = state.base;
-    if (!id || before <= 0 || !state.messages.length || state.loadingSession) return Promise.resolve(false);
-    const prev = { messages: state.messages, presents: state.presents, base: before, presentBase: state.presentBase };
-    const request = { before, presentBefore: state.presentBase };
-    const same = () => state.current === id && state.base === before && state.messages === prev.messages;
+    const id = currentSession(), before = base;
+    if (!id || before <= 0 || !messages.length || isLoadingSession()) return Promise.resolve(false);
+    const prev = { messages, presents, base: before, presentBase };
+    const request = { before, presentBefore: presentBase };
+    const same = () => currentSession() === id && base === before && messages === prev.messages;
     const run = (async () => {
       showOlder('loading');
       let joined = null;
       try {
         const data = await cmd('loadSession', { sessionId: id, lazy: true,
           older: { ...request, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: anchorSig(prev.messages[0]), ...(reach ? { reach } : {}) } }, { bulk: true });
-        if (!same()) { if (state.current === id) hideOlder(); return false; }   // 会話が替わった・窓が替わった: 捨てる
+        if (!same()) { if (currentSession() === id) hideOlder(); return false; }   // 会話が替わった・窓が替わった: 捨てる
         joined = joinOlder(prev, data, request);
       } catch {
         if (same()) { olderFail = { id, base: before }; showOlder('failed'); }
@@ -447,7 +458,7 @@ export function createHistoryPane(hooks) {
   /** 窓の手前を全部読む（会話の中の検索・目次を開くとき）。会話の最初まで読めたら true */
   async function loadAllOlder() {
     flushBackfill();
-    while (state.base > 0) if (!await loadOlder()) return state.base === 0;
+    while (base > 0) if (!await loadOlder()) return base === 0;
     return true;
   }
 
@@ -462,13 +473,13 @@ export function createHistoryPane(hooks) {
     const firstRow = thread.querySelector(`:scope > .mw[data-key="m:${oldBase}"]`);
     const repaint = Boolean(firstRow?.querySelector('.m.ai'));
     if (repaint) firstRow.remove();
-    state.messages = joined.messages;
-    state.presents = joined.presents;
-    state.base = joined.base;
-    state.presentBase = joined.presentBase;
+    messages = joined.messages;
+    presents = joined.presents;
+    base = joined.base;
+    presentBase = joined.presentBase;
     // 読み足した分の行だけ描く。窓の外の発言に結び付いて、窓の中では単独の行になっていた提示は、描き直す。
     // 結び付かない提示は、時刻が窓の最初の発言より前なら、窓の中では先頭に載せていたので、時刻の位置へ描き直す
-    const firstAt = Date.parse(state.messages[oldBase - state.base]?.at ?? '');
+    const firstAt = Date.parse(messages[oldBase - base]?.at ?? '');
     const wants = (it) => {
       if (it.kind === 'present') {
         const own = it.anchorMi >= 0 ? it.anchorMi < oldBase : it.pi < oldPresentBase || Boolean(it.p?.at) && it.sortAt < firstAt;
@@ -483,11 +494,11 @@ export function createHistoryPane(hooks) {
     };
     paintBefore = thread.querySelector(':scope > .spine')?.nextElementSibling ?? null;
     try { paintHistory(0, null, { wants }); } finally { paintBefore = null; }
-    updateBranches(state.current, state.messages, { base: state.base });
+    updateBranches(currentSession(), messages, { base });
     syncEdit();
     paintCompactions();
     placeJunctions();
-    if (state.base === 0) showOlder('start');
+    if (base === 0) showOlder('start');
     restore();
     prepareHistoryHeights();
     requestAnimationFrame(() => { log.style.overflowAnchor = ''; maybeLoadOlder(); });
@@ -497,8 +508,13 @@ export function createHistoryPane(hooks) {
     paintHistory, retainThread, clearThread, holdReading, historyRow, splitFirstPaint,
     paintedFloor, scheduleBackfill, cancelBackfill, flushBackfill,
     prepareHistoryHeights, maybeLoadOlder, loadOlder, loadAllOlder,
-    // 状態の読み書き（client の place・append・paintSession・revealMessage が読む）
+    // 状態の読み書き（client の place・append・paintSession・revealMessage が読む。client の state の同名の項目もここへつながる）
     get painting() { return paintingHistory; },
+    get messages() { return messages; }, set messages(v) { messages = v; },
+    get base() { return base; }, set base(v) { base = v; },
+    get presents() { return presents; }, set presents(v) { presents = v; },
+    get presentBase() { return presentBase; }, set presentBase(v) { presentBase = v; },
+    get earlierCalls() { return earlierCalls; }, set earlierCalls(v) { earlierCalls = v; },
     get paintBefore() { return paintBefore; },
     get backfill() { return backfill; }, set backfill(v) { backfill = v; },
     get olderFail() { return olderFail; }, set olderFail(v) { olderFail = v; },

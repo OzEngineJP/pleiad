@@ -39,6 +39,37 @@ export function liveTurnStateDecl(liveSource = readLiveTurn()) {
   return liveSource.slice(from, liveSource.indexOf("\n", at));
 }
 
+/**
+ * createHistoryPane の「状態」の宣言（let messages … let backfill）。切り出した関数と同じ vm に先に入れる。
+ * messages・base・presents・presentBase・earlierCalls は、本物では client の state の同名の項目からここへつながる
+ */
+export function historyPaneStateDecl(paneSource = readHistoryPane()) {
+  const from = paneSource.indexOf("  // 状態\n");
+  const mark = "let backfill = null;";
+  const at = paneSource.indexOf(mark, from);
+  if (from < 0 || at < 0) throw new Error("history-pane.mjs に状態の宣言が無い");
+  return paneSource.slice(from, paneSource.indexOf("\n", at));
+}
+
+export const HISTORY_STATE_KEYS = ["messages", "base", "presents", "presentBase", "earlierCalls"];
+
+/**
+ * client の state の同名の項目（本物は createHistoryPane の実例へつながる）を、vm の中の宣言へつなぐ。
+ * historyPaneStateDecl を vm へ入れた後に呼ぶ。state に初めから入れていた値は、つなぎ直した先へ写す
+ */
+export function bindHistoryState(state, context) {
+  const initial = {};
+  for (const key of HISTORY_STATE_KEYS) {
+    if (key in state) initial[key] = state[key];
+    Object.defineProperty(state, key, {
+      get: () => vm.runInContext(key, context),
+      set: (v) => { context.__historyValue = v; vm.runInContext(`${key} = __historyValue`, context); },
+      enumerable: true, configurable: true,
+    });
+  }
+  Object.assign(state, initial);
+}
+
 export const LIVE_STATE_KEYS = ["turnEl", "bundle", "pendingUuid", "endedWithText", "turnClosed", "streamEl", "thinkEl", "toolCards"];
 
 /**

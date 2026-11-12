@@ -99,6 +99,8 @@ export default async function (t) {
     cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0,
     // 子の会話を開く呼び出しの世代（select が他の会話へ移ると古い呼び出しを止める）
     openGate: createOpenGate(),
+    // createHistoryPane が主の会話から受ける値（clearThread が使う）
+    toolCardMap: () => state.toolCards,
   });
   context.loadBranches = (id) => context.branches.load(id);   // client.mjs の const loadBranches（窓の先頭を添えて系譜を読む）
   bindLiveState(state, context);

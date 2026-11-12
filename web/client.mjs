@@ -470,17 +470,12 @@ const state = {
   // 会話ごとのコンピューター操作の状態（computer.state。running / waiting のものだけ。idle は消す）。waiting の行の表示に使う
   computerStates: new Map(),
   submitting: false,       // 新規セッションを送った直後（id が決まるまで）
-  messages: [],        // 今のセッションの履歴（loadSession の messages）。長い会話は末尾の窓だけ（ADR 0182）
-  base: 0,             // messages[0] の通し番号。画面の行の印 m:<通し番号> とサーバーの添字はこの値で揃える
   contextInfo: null,   // 今のセッションの読み込み記録（sessionContext の戻り）。右パネル「この会話のコンテキスト」と「…」の変更ありの点に使う
   contextInfoId: null, // 上の記録がどのセッションのものか
   // worktree（ADR 0136）。worktreeCheck の結果（今の場所・作成できるか・同じリポジトリに書き込み中の別の会話）。
   // 「このまま元の場所で始める」を選んだ会話×場所は stay（今回だけ。メモリだけで、送ったら外す）
   worktree: createAuxSlot(),   // worktreeCheck の答え（web/composer-aux.mjs。確認中・失敗・確定を区別する）
   git: { ...createAuxSlot(), fetchKey: null, sessionId: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。入力欄のブランチ・「…」のメニューに使う
-  presents: [],
-  presentBase: 0,      // presents[0] の通し番号（p:<通し番号>）
-  earlierCalls: [],    // 窓の手前にあるサブエージェントの呼び出しの要約（サーバーが運ぶ。subagentCalls）。作業ダイアログの過去の一覧が使う
   auth: new Map(),         // backendId -> authStatus の戻り（{ supported, loggedIn, account?, detail?, pending?, unconfirmed? }。unconfirmed は受動では分からない = 未ログインと断定しない）
   authUrl: new Map(),      // backendId -> { url, message } ログインの途中で出た URL
   authNote: new Map(),     // backendId -> 直前のログインの時間切れ・失敗の一文（カードの中に出す。次のログインで消える。ADR 0243）
@@ -526,8 +521,9 @@ const {
 } = liveTurn;
 
 // 履歴の面（web/history-pane.mjs。ADR 0319 段 6-4）。今の関数名は、この実例への薄い委任として残す。
+// 部品は state.current などを直に読まない。主の会話の値は下の hooks で渡す。
 const historyPane = createHistoryPane({
-  state, thread, log,
+  thread, log,
   atBottom: () => atBottom(),
   placeRow: (node, key) => append(node, key),
   resetLiveTurn: () => resetLiveTurn(),
@@ -552,7 +548,16 @@ const historyPane = createHistoryPane({
   activeBackendId: () => activeBackendId(),
   subagentToolsOf: (id) => subagentToolsOf(id),
   isBoundaryTool: (name, tools) => isBoundaryTool(name, tools),
+  currentSession: () => state.current,
+  isBusy: () => state.busy,
+  isLoadingSession: () => state.loadingSession,
+  backendVocab: (backend) => state.vocab.get(backend),
+  toolCardMap: () => liveTurn.toolCards,
 });
+// state の同名の項目は、部品の持つ状態へつなぐ（messages・base・presents・presentBase・earlierCalls）
+for (const key of ["messages", "base", "presents", "presentBase", "earlierCalls"]) {
+  Object.defineProperty(state, key, { get: () => historyPane[key], set: (v) => { historyPane[key] = v; }, enumerable: true });
+}
 const {
   clearThread, retainThread, holdReading, paintHistory, historyRow, splitFirstPaint,
   paintedFloor, scheduleBackfill, cancelBackfill, flushBackfill,
