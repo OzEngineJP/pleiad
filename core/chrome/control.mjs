@@ -95,11 +95,14 @@ export function createChromeControl({ relay, os, now = Date.now, capture = null,
     for (const fn of [...listeners]) { try { fn(state); } catch (error) { log(`chrome-control: listener failed: ${error?.message ?? error}`); } }
   }
   const offChange = relay.onChange(publish);
+  /** カードのボタン（PC で操作する・この端末で操作する）の対象: AI のタブ。AI がまだどのタブも操作していないときだけ、窓の最初のタブ（ボタンが何も起こさず終わらないように。ADR 0320） */
+  function handoverTab(sessionId) { return relay.view?.current?.(sessionId) ?? relay.view?.shown?.(sessionId) ?? null; }
+
   /** 更新で持ち越した「PC で操作する」の窓（見せている窓の印だけが carry に載る）のタブが分かったら、そのタブを人の操作に戻す */
   function holdCarried(sessionId) {
     const pc = pcTabs.get(sessionId);
     if (!pc || pc.targetId) return;
-    const targetId = relay.view?.current?.(sessionId) ?? null;
+    const targetId = handoverTab(sessionId);
     if (!targetId) return;
     pc.targetId = targetId;
     holder()?.holdByPc?.({ sessionId, targetId });
@@ -147,7 +150,7 @@ export function createChromeControl({ relay, os, now = Date.now, capture = null,
    */
   async function operateOnPc(sessionId) {
     if (pcTabs.has(sessionId)) return stateOf(sessionId);   // もう窓を出している（二重に押しても窓は 1 回だけ出す）
-    const targetId = relay.view?.current?.(sessionId) ?? null;
+    const targetId = handoverTab(sessionId);
     const tab = targetId ? relay.view?.tabs?.(sessionId)?.find(item => item.targetId === targetId) ?? null : null;
     if (!tab || !relay.scope.windows?.(sessionId).some(window => window.ref)) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
     holder()?.holdByPc?.({ sessionId, targetId });   // 先に人の操作にする（窓が見える間にエージェントが触れない）
@@ -174,7 +177,7 @@ export function createChromeControl({ relay, os, now = Date.now, capture = null,
   async function takeOverByDevice(sessionId, { width, height, scale, fromPc = false } = {}) {
     const viewport = deviceViewport({ width, height, scale });
     if (!viewport) throw new ChromeControlError('INVALID', 'the size of the device view is needed');
-    const targetId = relay.view?.current?.(sessionId) ?? null;
+    const targetId = handoverTab(sessionId);
     if (!targetId) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
     if (pcTabs.has(sessionId)) {
       if (fromPc !== true) return stateOf(sessionId);   // 早い者勝ち（PC の窓を出している）
@@ -189,10 +192,26 @@ export function createChromeControl({ relay, os, now = Date.now, capture = null,
     return stateOf(sessionId);
   }
 
+  /**
+   * 「引き継ぐ」（右の欄の行のボタン。ADR 0320）: AI のタブを、窓を出さずにその画面の人の操作にする（持ち手の touch）。
+   * 映像は AI のタブの間は見るだけで、これを押すと触れる。スマホは映像の箱の大きさ（width・height・scale）を添える（無ければ大きさは変えない）
+   */
+  async function takeOverTab(sessionId, { width, height, scale } = {}) {
+    const targetId = relay.view?.current?.(sessionId) ?? null;
+    if (!targetId) throw new ChromeControlError('NO_WINDOW', 'no agent tab to hand over');
+    if (pcTabs.has(sessionId)) return stateOf(sessionId);   // PC の窓を出している間は、そちらが先（早い者勝ち）
+    const viewport = width != null || height != null || scale != null ? deviceViewport({ width, height, scale }) : null;
+    if ((width != null || height != null || scale != null) && !viewport) throw new ChromeControlError('INVALID', 'the size of the device view is needed');
+    holder()?.touch?.({ sessionId, targetId, by: viewport ? 'device' : 'pc', viewport });
+    publish(sessionId);
+    return stateOf(sessionId);
+  }
+
   async function doTakeOver(sessionId, { by = 'pc', width, height, scale, fromPc = false } = {}) {
     const before = relay.state(sessionId);
     if (!before) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
     if (before.paused) return stateOf(sessionId);   // 持ち越した一時停止の間は、今の状態を返すだけ（「任せる」で解く）
+    if (by === 'screen') return takeOverTab(sessionId, { width, height, scale });
     if (by === 'device') return takeOverByDevice(sessionId, { width, height, scale, fromPc });
     return operateOnPc(sessionId);
   }

@@ -41,7 +41,7 @@ const controlInput = z.object({ sessionId: sessionIdShape });
 const windowIdShape = z.number().int().describe('agent:ops.browser.chromePinWindow.windowId');
 const takeOverInput = z.object({
   sessionId: sessionIdShape,
-  by: z.enum(['pc', 'device']).optional().describe('agent:ops.browser.chromeTakeOver.by'),
+  by: z.enum(['pc', 'device', 'screen']).optional().describe('agent:ops.browser.chromeTakeOver.by'),
   width: z.number().positive().max(10000).optional().describe('agent:ops.browser.chromeTakeOver.width'),
   height: z.number().positive().max(10000).optional().describe('agent:ops.browser.chromeTakeOver.height'),
   scale: z.number().positive().max(10).optional().describe('agent:ops.browser.chromeTakeOver.scale'),
@@ -189,7 +189,7 @@ export const browserOps = [
     output: controlShape,
     surfaces: { ui: true, mcp: false, cli: false },
     legacyCommand: 'chromeTakeOver',
-    handler: (ctx, { sessionId, by, width, height, scale, fromPc }) => controlRun(ctx, 'takeOver', sessionId, by === 'device' ? { by, width, height, scale, ...(fromPc === true ? { fromPc: true } : {}) } : { by: 'pc' }),
+    handler: (ctx, { sessionId, by, width, height, scale, fromPc }) => controlRun(ctx, 'takeOver', sessionId, by === 'device' ? { by, width, height, scale, ...(fromPc === true ? { fromPc: true } : {}) } : by === 'screen' ? { by, width, height, scale } : { by: 'pc' }),
   }),
   defineOp({
     id: 'browser.chromeResume',

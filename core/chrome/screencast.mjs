@@ -23,6 +23,7 @@
 // core/browser-screencast.mjs の createScreencastHub の bridge の形（ready・request・ack・onFrame・onState・onEnded・onAway）に、
 // 段の口（setFormats）を足した形で使う。
 // 見る側の入力（タップ・文字）は、入力の口のセッションで今のタブへ送り、中継のタブごとの持ち手（relay.unify.tabHolder。ADR 0296）でそのタブを人の操作にする。
+// ただし AI のタブ（host.current）は、人が引き継ぐ（持ち手が人になる）までは見るだけで、入力は 'view-only' で断る（カーソルの問い合わせを除く。ADR 0320）。人が開いたタブは今までどおり触れる。
 // ページの大きさは変えない（見る人・操作する人・見る人の増減のどれでも。変えると AI の snapshot・クリックの座標が古い画面のものになるため）。
 // 人が操作するのは今の実ページをそのまま映したもので、座標は届いたフレームの metadata（端末の大きさ ÷ ページの倍率）で止める。
 // ページの大きさを変えるのは AI 自身（中継のセッション経由）と「PC で操作する」の窓だけ。
@@ -87,7 +88,7 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
   }
   const alive = (pin, tabs) => pin.tabId ? tabs.some(tab => tab.targetId === pin.tabId) : tabs.some(tab => tab.windowId === pin.windowId);
   /**
-   * 映すタブを決める: 固定したタブがあればそれ、固定したウィンドウがあればその中（今のタブがそこにあればそれ、無ければ最初のタブ）、無ければ今のタブ。
+   * 映すタブを決める: 固定したタブがあればそれ、固定したウィンドウがあればその中（今のタブがそこにあればそれ、無ければ最初のタブ）、無ければ AI のタブ（無ければ最初のタブ）。
    * 固定したタブ・ウィンドウが消えていれば、自動で移った分は前の固定（開いた元のタブ）へ戻し、人が選んだ分は固定を解く
    */
   function targetOf(sessionId, watch) {
@@ -95,7 +96,8 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
     const tabs = host.tabs(sessionId);
     while (watch.pin && !alive(watch.pin, tabs)) setPin(sessionId, watch, watch.pin.auto ? watch.pin.back : null);
     const pin = watch.pin;
-    if (!pin) return current;
+    // AI のタブが無いとき（まだ操作していない・閉じた）は、映すだけ最初のタブにする。AI のタブ扱い（印・見るだけ）にはならない（host.current は null のまま。ADR 0320）
+    if (!pin) return current ?? tabs[0]?.targetId ?? null;
     if (pin.tabId) return pin.tabId;
     const inWindow = tabs.filter(tab => tab.windowId === pin.windowId);
     return (inWindow.find(tab => tab.targetId === current) ?? inWindow[0]).targetId;
@@ -428,12 +430,17 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
     close() { off(); lastFrames.clear(); for (const sessionId of [...watches.keys()]) end(sessionId, 'closed'); },
   };
 
-  /** 見る側からの入力を、入力の口のセッションで今のタブへ送り、そのタブを人の操作にする */
+  /** AI のタブ（host.current）で、持ち手が人でない = 見るだけ（人が開いたタブ・人が引き継いだタブは触れる。ADR 0320） */
+  function viewOnly(sessionId, tabId) { return tabId != null && host.current(sessionId) === tabId && relay.unify.tabHolder.holder(sessionId, tabId)?.holder !== 'human'; }
+
+  /** 見る側からの入力を、入力の口のセッションで今のタブへ送り、そのタブを人の操作にする（AI のタブは引き継ぐまで断る） */
   async function input(sessionId, value, context = {}) {
     const watch = watches.get(sessionId);
     if (!watch?.inputView) throw new Error('not-watching');
     // A delayed packet from the previous tab must never reach the newly selected tab.
     if (context.tabId !== watch.tabId) throw new Error('no-tab');
+    // AI のタブは、人が引き継ぐ（持ち手が人になる）までは見るだけ。画面の封じだけに頼らず、ここでも断る（ADR 0320）。読むだけのカーソルの問い合わせは通す
+    if (value?.type !== 'cursor' && viewOnly(sessionId, context.tabId)) throw new Error('view-only');
     const scale = watch.pageScaleFactor || 1;
     // はみ出しの止めどころは、届いたフレームの大きさ（metadata の端末の大きさ ÷ ページの倍率）。override の有無に依らない
     const dims = Number.isFinite(watch.deviceWidth) && Number.isFinite(watch.deviceHeight) ? { width: watch.deviceWidth / scale, height: watch.deviceHeight / scale } : {};
@@ -460,6 +467,7 @@ export function createChromeScreencast({ host, relay, log = () => {} } = {}) {
     }
     const run = watch.queue.then(async () => {
       if (watches.get(sessionId) !== watch || watch.tabId !== context.tabId || !watch.inputView) throw new Error('no-tab');
+      if (viewOnly(sessionId, watch.tabId)) throw new Error('view-only');   // 順番待ちの間に AI へ戻った
       watch.inputClient = context.client;
       if (sheet && !await watch.pageInput.input(value)) throw new Error('invalid-input');
       relay.unify.tabHolder.touch({ sessionId, targetId: watch.tabId, by: context.device === 'phone' ? 'device' : 'pc',

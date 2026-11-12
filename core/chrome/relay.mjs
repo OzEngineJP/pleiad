@@ -1219,7 +1219,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url: cookieFirst ? 'about:blank' : url, entryId: entry.id });
       const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
       const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: cookieFirst ? 'about:blank' : url, attached: false, canAccessOpener: false }, { windowId });
-      touch(tab);
+      // 人が開いたタブは「AI のタブ」にしない（entry.current を替えない。AI が実際に操作したときに touch が替える。ADR 0320）
+      noteUsed(entry); refreshOperating(entry);
       if (cookieFirst) {
         const sessionId = await ensureInternal(state, tab);
         await tabCookie(state, sessionId);
@@ -1519,8 +1520,15 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         if (!state || state.cdp.closed || !tab || tab.entry.id !== sessionId) throw new Error('tab not available');
         await state.cdp.send('Target.closeTarget', { targetId });
       },
-      /** 今のタブ: エージェントが最後にコマンドを送った（開いた）タブ。無い・閉じていれば窓の最初のタブ。タブが無ければ null */
+      /** AI のタブ: エージェントが実際に操作した（コマンドを送った・つないだ・開いた）最後のタブ。人が開いたタブは入らない。無い・閉じていれば null（最初のタブへは戻さない。ADR 0320） */
       current(sessionId) {
+        const entry = entries.get(sessionId);
+        if (!entry || !up) return null;
+        if (entry.current && up.tabs.get(entry.current)?.entry === entry) return entry.current;
+        return null;
+      },
+      /** 窓に映っている・使う側のタブ: AI のタブ（current）。無ければ窓の最初のタブ。撮影・ログインの入力先・窓の特定など、引き継ぎの対象でなくてよい所が使う（引き継ぎは current だけ） */
+      shown(sessionId) {
         const entry = entries.get(sessionId);
         if (!entry || !up) return null;
         if (entry.current && up.tabs.get(entry.current)?.entry === entry) return entry.current;
