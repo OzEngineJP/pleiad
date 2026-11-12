@@ -203,7 +203,8 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     else measureTimer = setTimeout(() => { measureTimer = 0; measureStill(); }, wait);
   };
   // 止まった瞬間にやり直す口はこの 1 つだけ（見張りも間引き後の待ちもここへ通す）
-  const measureStill = whileStill(() => invalidate());
+  // 持ち主（スレッドの画面）が閉じ方を持たないので、DOM から外れた後に止まったときは測らない
+  const measureStill = whileStill(() => { if (thread.isConnected) invalidate(); });
 
   // ---- 移動
   let settle = null;

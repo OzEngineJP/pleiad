@@ -8,6 +8,8 @@
 // - やり直しは、合図が出たコマの次のコマの頭で 1 度（止まったコマのレイアウトの前ではなく、ばねの最後の rAF の外で）。
 //   その間に届いた呼び出しは捨てずに、そのやり直しに束ねる（やり直しは届いた後に走るので、最後の姿を読む）
 // - 同じ仕事を呼ぶ口は 1 つの whileStill にまとめる（口ごとに止まった瞬間のやり直しが走るため）
+// - 見張りの一覧（registry）に載るのは「止めた呼び出しを抱えている間」だけ。作っただけでは載らず、止まってやり直した（捨てた）ら外れる。
+//   持ち主が閉じ方を持たなくても、抱えた分は次に止まったときに 1 度で外れるので、残り続けるものが無い
 
 export const RIGHT_MOVING_CLASS = 'file-preview-moving';
 export const RIGHT_SETTLED_EVENT = 'right-panel-settled';
@@ -25,6 +27,7 @@ export function announceSettled() {
 }
 
 // 止まった合図を受けるのは document に 1 本だけ。whileStill ごとに足さない（呼ぶたびに閉じる口の無いリスナーが残るため）
+// 一覧に載るのは、動いている間に呼ばれて止めた分を抱えている口だけ
 const registry = new Set();
 let listeningOn = null;
 function listen() {
@@ -32,7 +35,7 @@ function listen() {
   listeningOn = document;
   document.addEventListener(RIGHT_SETTLED_EVENT, () => { for (const entry of [...registry]) entry.settled(); });
 }
-/** 見張っている口の数（試験用。開け閉めを繰り返しても増えないこと） */
+/** 止めた呼び出しを抱えている口の数（試験用。止まってやり直したあとは 0 に戻ること） */
 export const stillWatchers = () => registry.size;
 
 // 合図の次のコマで走らせる。ページが裏に回って rAF が止まっても残らないよう、時間でも拾う
@@ -54,28 +57,30 @@ export function whileStill(run, { replay = run, signal = null } = {}) {
     cancel();
     if (!settling) return;
     settling = false;
-    if (disposed || !pending) return;
-    if (rightPanelMoving()) return;   // 合図の直後に折り返した。次に止まったときに出る合図で走らせる
+    if (disposed) return;
+    if (!pending) { registry.delete(entry); return; }
+    if (rightPanelMoving()) return;   // 合図の直後に折り返した。抱えたまま、次に止まったときに出る合図で走らせる
     pending = false;
+    registry.delete(entry);
     replay();
   };
   const entry = {
     settled() {
-      if (disposed || !pending) return;
+      if (disposed) return;
+      if (!pending) { registry.delete(entry); return; }   // 動いている間に抱えたあと、止まる前にすぐ走って空になった分
       settling = true;
       cancel();
       if (typeof requestAnimationFrame === 'function') frame = requestAnimationFrame(flush);
       timer = setTimeout(flush, FALLBACK_MS);
     },
   };
-  registry.add(entry);
-  listen();
   const stop = () => { disposed = true; pending = false; settling = false; cancel(); registry.delete(entry); };
   if (signal) { if (signal.aborted) stop(); else signal.addEventListener('abort', stop, { once: true }); }
   return (...args) => {
     if (disposed) return;
-    if (rightPanelMoving() || settling) { pending = true; return; }
+    if (rightPanelMoving() || settling) { pending = true; registry.add(entry); listen(); return; }
     pending = false;
+    registry.delete(entry);   // 動いている間に抱えたあと、止まる合図の前に呼ばれてすぐ走った分は、もう抱えていない
     run(...args);
   };
 }
