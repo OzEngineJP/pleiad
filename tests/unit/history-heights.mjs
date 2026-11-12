@@ -5,7 +5,7 @@
 // client.mjs の historyAnchor を走らせる。本物の Chromium での確認は tests/browser/history-heights.cjs
 import fs from "node:fs/promises";
 import vm from "node:vm";
-import { cutFunction, readHistoryPane } from "../lib/cut-source.mjs";
+import { cutFunction, readHistoryPane, readConversationView } from "../lib/cut-source.mjs";
 import { createHeightSettler, TAIL_MAX_ROWS } from "../../web/history-heights.mjs";
 
 export const name = "history-heights";
@@ -111,12 +111,12 @@ export default async function (t) {
   const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   // historyAnchor は web/history-pane.mjs の createHistoryPane の中（ADR 0319 段 6-4）。字下げされているので cutFunction で切る
   const anchorSource = cutFunction(readHistoryPane(), "historyAnchor");
-  const atBottomSource = source.match(/^const atBottom = .*$/m)?.[0];
-  t.ok("history-pane.mjs から historyAnchor、client.mjs から atBottom を切り出せる", !!anchorSource && !!atBottomSource);
+  const atBottomSource = readConversationView().match(/^ *const atBottom = .*$/m)?.[0];   // 本体は web/conversation-view.mjs（段 6-5）
+  t.ok("history-pane.mjs から historyAnchor、conversation-view.mjs から atBottom を切り出せる", !!anchorSource && !!atBottomSource);
 
-  /** 画面にモジュールを付ける。historyAnchor は history-pane.mjs、atBottom は client.mjs の本物 */
+  /** 画面にモジュールを付ける。historyAnchor は history-pane.mjs、atBottom は conversation-view.mjs の本物 */
   const attach = (s, options = {}) => {
-    const context = vm.createContext({ log: s.log, thread: s.thread, replayPainting: false });
+    const context = vm.createContext({ log: s.log, thread: s.thread, replaying: false });
     vm.runInContext(`${atBottomSource}\n${anchorSource}\nthis.atBottom = atBottom; this.historyAnchor = historyAnchor;`, context);
     return createHeightSettler({
       log: s.log, thread: s.thread, atBottom: context.atBottom, anchorRow: context.historyAnchor,
