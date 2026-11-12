@@ -277,8 +277,21 @@ window.ready=true;
     check('the phone tab list opens with a head row (close · conversation combo · +)', await page.locator('.bu-overview:not([hidden]) .bu-ov-head').count() === 1
       && await page.locator('.bu-ov-head .bu-conv').count() === 1 && await page.locator('.bu-ov-head .bu-icon').count() === 2);
     check('the list shows only this conversation\'s tabs', await page.evaluate(() => document.querySelectorAll('.bu-card').length === ui.tabsOf('one').length));
-    await page.evaluate(() => { [...document.querySelectorAll('.bu-card')].find(el => el.textContent.includes('GitHub'))?.querySelector('.bu-card-pick')?.click(); });
-    check('tapping a card selects it at once and shows the loading line under the bar', await page.evaluate(() => document.querySelector('.bu-overview').hidden === true && document.querySelector('.bu-load')?.hidden === false && chromeFixture.pins.at(-1)?.tabId === 'web'));
+    // 選択と固定は押した同じ一続きの中ですぐ。読み込み線は待ちが 150ms を超えてから出る（ADR 0320 §3 の 3。速い切り替えでちらつかせない）。
+    // 線が出た時刻を控えて、押してから 150ms より前に出ていないことを見る（タイマーは早くは鳴らないので、重い PC でも揺れない）
+    const tapped = await page.evaluate(() => {
+      const line = document.querySelector('.bu-load');
+      window.lineShownAfter = null;
+      const t0 = performance.now();
+      const watch = new MutationObserver(() => { if (line.hidden === false) { window.lineShownAfter = performance.now() - t0; watch.disconnect(); } });
+      watch.observe(line, { attributes:true, attributeFilter:['hidden'] });
+      [...document.querySelectorAll('.bu-card')].find(el => el.textContent.includes('GitHub'))?.querySelector('.bu-card-pick')?.click();
+      return { closed:document.querySelector('.bu-overview').hidden === true, pin:chromeFixture.pins.at(-1)?.tabId, line:line.hidden };
+    });
+    check('tapping a card selects it at once (no loading line yet)', tapped.closed && tapped.pin === 'web' && tapped.line === true, JSON.stringify(tapped));
+    await page.waitForFunction(() => document.querySelector('.bu-load')?.hidden === false, null, { timeout:3000 }).catch(() => {});
+    const shownAfter = await page.evaluate(() => window.lineShownAfter);
+    check('the loading line shows under the bar once the wait passes 150 ms', await page.evaluate(() => document.querySelector('.bu-load')?.hidden === false) && shownAfter >= 145, `shown after ${shownAfter} ms`);
     await page.evaluate(() => { chromeFixture.scState = { tabId:'web', agentTabId:'file' }; chromeFixture.change?.({ type:'state' }); });
     check('a state update alone does not clear the loading line (the picture could still be stale)', await page.evaluate(() => document.querySelector('.bu-load')?.hidden === false));
     await page.evaluate(() => { chromeFixture.change?.({ type:'frame', tabId:'other' }); });
@@ -291,6 +304,8 @@ window.ready=true;
     await page.locator('.bu-count').click();
     await page.locator('.bu-overview:not([hidden])').waitFor({ timeout:3000 });
     await page.evaluate(() => { [...document.querySelectorAll('.bu-card')].find(el => el.textContent.includes('GitHub'))?.querySelector('.bu-card-pick')?.click(); });
+    // 線は 150ms を超えてから出る（ADR 0320）。出るまで待ってから、残るべき場面で残るかを見る
+    await page.waitForFunction(() => document.querySelector('.bu-load')?.hidden === false, null, { timeout:3000 }).catch(() => {});
     check('following the agent tab still shows the loading line (pin released)', await page.evaluate(() => document.querySelector('.bu-load')?.hidden === false && chromeFixture.pins.at(-1)?.tabId === null));
     await page.evaluate(() => { chromeFixture.change?.({ type:'frame', tabId:'old' }); });
     check('a leftover frame of the previous tab does not clear the line while following', await page.evaluate(() => document.querySelector('.bu-load')?.hidden === false));
