@@ -20,7 +20,7 @@
 </header>
 <main class="legal">
 <h1>Privacy policy</h1>
-<p class="legal-meta">Applies to: the Android app “Pleiad” (package name <code>dev.pleiad.android</code>) and the iOS app “Pleiad” (bundle ID <code>dev.pleiad.app</code>)<br>Effective: October 6, 2026<br>Updated: November 12, 2026</p>
+<p class="legal-meta">Applies to: the Android app “Pleiad” (package name <code>dev.pleiad.android</code>) and the iOS app “Pleiad” (bundle ID <code>dev.pleiad.app</code>), and Pleiad Plus as used from Pleiad on your PC<br>Effective: October 6, 2026<br>Updated: November 12, 2026</p>
 
 <p>The Pleiad Android and iOS apps (“the app”) let you use Pleiad running on your own PC (“the host”) from your phone, through a relay server (“the relay”). You can choose either a relay you set up yourself or the official relay of Pleiad Plus (“Plus”), which is run by the developer. This policy explains what information the app handles and where it goes.</p>
 
@@ -66,16 +66,24 @@
 <h2>7. Retention and deletion</h2>
 <p>When you use your own relay, the developer keeps no information about users. When you sign in to Plus, the developer keeps the information listed in “1.” while the account exists. You can delete the account on the page that opens from “Manage account” in the app. Information on your device is deleted when you remove a host from the list or uninstall the app. The relay does not store conversation content; while your device is offline it only holds encrypted notifications in memory for a short time (up to 15 minutes). Your own relay’s connection logs (identifiers, times, amounts and so on) and the host’s conversation history are kept by the users who run them, and they can delete them.</p>
 
-<h2>8. AI services used by the host</h2>
+<h2>8. Using Plus from Pleiad on your PC</h2>
+<p>Pleiad on your PC can also sign in to Plus. The information the developer receives when you sign in is the same as in “1.”, and depending on which feature you use, the following is sent to the developer’s servers.</p>
+<ul>
+  <li>Host registration: to connect to the official relay, the PC’s identifier, name, operating system type and Pleiad version are registered against your account.</li>
+  <li>Sync of settings, skills and instruction files: the contents are encrypted on your PC before they are uploaded, so the developer cannot read them. “Secrets and variables” are not synced.</li>
+  <li>Automatic delegation choice and voice calls: if you use these through Plus instead of your own key, your request text and audio pass through the developer’s servers and are sent on to the company that provides the model. These are not covered by end-to-end encryption. By choosing this feature, you agree to this being sent. If you choose your own key, they do not pass through the developer’s servers.</li>
+</ul>
+
+<h2>9. AI services used by the host</h2>
 <p>The host uses AI services that you signed in to with your own accounts (such as Claude Code, Codex and Antigravity) from your PC. Instructions and conversations you send from the app may be passed to those services through the host. Those services handle data under their own policies.</p>
 
-<h2>9. Children</h2>
+<h2>10. Children</h2>
 <p>The app is not directed to children and does not knowingly collect information from children.</p>
 
-<h2>10. Changes to this policy</h2>
+<h2>11. Changes to this policy</h2>
 <p>When this policy changes, this page is updated and the date of the change is added below the effective date.</p>
 
-<h2>11. Contact</h2>
+<h2>12. Contact</h2>
 <p>Contact us through <a href="https://github.com/OzEngineJP/pleiad/issues">GitHub Issues</a> or the developer contact on the app’s Google Play or App Store listing.</p>
 </main>
 <footer class="legal-foot"><a href="../">Pleiad</a></footer>
