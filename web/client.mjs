@@ -7120,12 +7120,13 @@ async function ledgerThread(item, note, { hostOffline = null } = {}) {
 
 async function taskThread(item) {
   if (item.host) return hostTaskThread(item);
-  const [data, instructionData] = await Promise.all([
-    cmd('loadSession', { sessionId: item.childId, live: true }), cmd('agentTaskInstructions', { taskId: item.taskId }),
-  ]);
+  // 出来事の見張りは読み込みより先に送る（同じ WebSocket なので順に届く）。読み込みの間に子が出した出来事を落とさず、読み込みの後に追いかけられる
   $('workBody').dataset.sessionId = item.childId;
   $('workBody').dataset.paneKind = 'task';
   syncModalWatch();
+  const [data, instructionData] = await Promise.all([
+    cmd('loadSession', { sessionId: item.childId, live: true }), cmd('agentTaskInstructions', { taskId: item.taskId }),
+  ]);
   workComposer?.offerDraft(item.childId, data.draft);
   if (data.contextWindow) { childContext.set(item.childId, data.contextWindow); syncWorkContext(); }
   const live = streamMessages(data.stream?.events, { backend: item.backend, model: item.model, initialMessageId: data.initialMessageId });
