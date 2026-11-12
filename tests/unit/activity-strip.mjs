@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
 import { el } from '../../web/dom.mjs';
 import { runMark, satMark } from '../../web/arc.mjs';
+import { readLiveTurn } from '../lib/cut-source.mjs';
 
 export const name = 'activity-strip';
 export const title = '稼働表示は筋の末尾の節（弧・衛星）。入力欄の上の帯は作業とメーターだけで出し入れする';
@@ -20,7 +21,8 @@ const matches = (node, sel) => sel.split(',').some(one => {
 export default function(t) {
   const src = fs.readFileSync(new URL('../../web/client.mjs', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
   const cut = name => { const at = src.indexOf(`function ${name}(`); return src.slice(at, src.indexOf('\n}', at) + 2); };
-  const actor = src.slice(src.indexOf('const activity = {'), src.indexOf('// ---------------------------------------------------------------- thinking'));
+  const liveSrc = readLiveTurn();   // 稼働表示の本体は web/live-turn.mjs（ADR 0319 段 6-3）
+  const actor = liveSrc.slice(liveSrc.indexOf('const activity = {'), liveSrc.indexOf('// ---------------------------------------------------------------- thinking'));
   const thread = new N('div'), strip = new N('div');
   const nodes = { contextStrip: strip, usageChip: new N('button'), workEntry: new N('div') };
   for (const n of Object.values(nodes)) strip.append(n);
@@ -38,9 +40,13 @@ export default function(t) {
   const ctx = vm.createContext({ el: make, $: id => nodes[id], runMark, satMark, t: key => key, thread, log: {},
     runningTools: { size: 0, clear() {}, el: new N("div") }, matchMedia: () => ({ matches: true }),
     paintingHistory: false, replayPainting: false, paintBefore: null, atBottom: () => false,
+    painting: () => false, replaying: () => false,   // live-turn.mjs は client の変数を直に読まず、この 2 つで聞く
     Date, setTimeout, clearTimeout, setInterval: fn => { timers.add(fn); return fn; }, clearInterval: fn => timers.delete(fn),
     turnStartHere: () => 1, behindHere: () => behind, stoppingHere: () => false,
     isRunningHere: () => running, backgroundCounts: () => ({ live }), relayoutBranches() {},
+    // live-turn.mjs が受ける hooks の名前（client の関数へ通す）
+    turnStart: () => 1, behind: () => behind, stopping: () => false, isRunning: () => running, relayout() {},
+    toolCards: new Map(), placeRow: (node, key) => ctx.append(node, key), onActivity() { ctx.syncStripVisible(); },
     ACTIVITY_LABEL: { running: 'working' }, clock: String, state: { bundle: null, busy: true }, closeMeterPop() {},
     narrowView: { get matches() { return narrow; } }, get contextShown() { return context; },
     stripIsNarrow: () => narrow,

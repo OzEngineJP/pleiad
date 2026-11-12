@@ -4,17 +4,16 @@
 // rAF は手で進める。流れが終わる所（text.end・ツール・発言を閉じる）と会話の切り替えでは、貯めた分を取りこぼさず、別の会話へ描かない。
 import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn, liveTurnStateDecl, bindLiveState } from "../lib/cut-source.mjs";
 
 export const name = "stream-frames";
 export const title = "text.delta は 1 コマに 1 回だけ描く。流れの終わりでは描き切り、会話を切り替えたら別の会話へ描かない";
 
 export default async function (t) {
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["appendText", "flushStream", "cancelStream", "endStream", "closeTurnEl", "resetLiveTurn", "clearThread"].map(name => {
-    const start = source.indexOf(`function ${name}(`);
-    return start < 0 ? "" : source.slice(start, source.indexOf("\n}", start) + 2);
-  });
-  t.ok("client.mjs から本文まわりの関数を切り出せる", functions.every(Boolean));
+  // 本文まわりは web/live-turn.mjs（ADR 0319 段 6-3）、clearThread は client.mjs
+  const source = readClientAndLiveTurn();
+  const functions = ["appendText", "flushStream", "cancelStream", "endStream", "closeTurnEl", "resetLiveTurn", "clearThread"].map(name => cutFunction(source, name));
+  t.ok("client.mjs と live-turn.mjs から本文まわりの関数を切り出せる", functions.every(Boolean));
 
   const noop = () => {};
   /** 1 つの画面。frames は rAF に積まれたもの、渡す atBottom で末尾にいるかを決める */
@@ -22,7 +21,7 @@ export default async function (t) {
     const frames = [];
     const c = { conversions: 0, layouts: 0, shows: 0, ids: 0 };
     const log = { scrollTop: 0, scrollHeight: 1000 };
-    const state = { streamEl: null, turnEl: null, turnClosed: false, thinkEl: null, toolCards: new Map() };
+    const state = {};   // 状態の項目は vm の宣言へつなぐ（bindLiveState）
     const activity = { el: null, text: "", show(text) { this.text = text; this.el = { isConnected: true }; c.shows++; }, hide: noop };
     const context = vm.createContext({
       state, log, activity, cancelBackfill: noop,
@@ -30,9 +29,9 @@ export default async function (t) {
       cancelAnimationFrame: id => { frames[id - 1] = null; },
       streamFrame: 0, streamTarget: null,
       atBottom: () => bottom,
-      relayoutBranches: () => { c.layouts++; },
+      relayout: () => { c.layouts++; },
       renderAssistantMarkdown: raw => { c.conversions++; return `<p>${raw}</p>`; },
-      ACTIVITY_LABEL: { writing: "writing", stopping: "stopping" }, stoppingHere: () => false,
+      ACTIVITY_LABEL: { writing: "writing", stopping: "stopping" }, stopping: () => false,
       closeThink: noop, closeBundle: noop,
       el: () => ({ dataset: {}, isConnected: true, innerHTML: "" }),
       openTurnEl: () => (state.turnEl ??= { append: noop }),
@@ -40,7 +39,8 @@ export default async function (t) {
       thread: { replaceChildren: noop, classList: { remove: noop } },
       spine: noop,
     });
-    vm.runInContext(functions.join("\n"), context);
+    bindLiveState(state, context);
+    vm.runInContext(`${liveTurnStateDecl()}\n${functions.join("\n")}`, context);
     const deltas = (texts) => { for (const x of texts) { context.text = x; vm.runInContext("appendText(text)", context); } };
     const run = code => vm.runInContext(code, context);
     /** 次のコマ: 積まれた rAF を 1 回ずつ進める */
@@ -140,7 +140,7 @@ export default async function (t) {
   // 6. 中断を頼んだ後は、稼働表示が「中断している」のままなので、デルタごとには更新し直さない
   {
     const s = screen();
-    s.run("stoppingHere = () => true");
+    s.run("stopping = () => true");
     s.activity.show = function (text) { this.text = "stopping"; this.el = { isConnected: true }; s.c.shows++; };
     s.deltas(["a", "b", "c", "d"]);
     t.ok("中断している間、稼働表示はデルタごとに更新し直さない", s.c.shows === 1, `${s.c.shows} 回`);

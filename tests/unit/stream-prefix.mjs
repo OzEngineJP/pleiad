@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn, liveTurnStateDecl, bindLiveState } from "../lib/cut-source.mjs";
 import { el } from "../../web/dom.mjs";
 import { renderAssistantMarkdown } from "../../web/render.mjs";
 
@@ -8,26 +9,28 @@ export const title = "閉じた発言の後もストリーミング本文の先�
 
 export default async function (t) {
   // 実際のクライアント関数を実行し、状態遷移による先頭断片の消失を検出する。
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  const source = readClientAndLiveTurn();   // 進行中のターンは web/live-turn.mjs（ADR 0319 段 6-3）
   const functions = ["appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl"].map(name => {
-    const start = source.indexOf(`function ${name}(`);
-    if (start < 0) throw new Error(`Missing client function: ${name}`);
-    return source.slice(start, source.indexOf("\n}", start) + 2);
+    const body = cutFunction(source, name);
+    if (!body) throw new Error(`Missing client function: ${name}`);
+    return body;
   }).join("\n");
 
   for (const closed of [false, true]) {
     const bodies = [];
-    const state = { streamEl: null, turnEl: null, turnClosed: closed };
+    const state = {};   // 状態の項目は vm の宣言へつなぐ（bindLiveState）
     const context = vm.createContext({
       state, el, renderAssistantMarkdown,
       closeBundle() {}, closeThink() {}, activity: { show() {} }, atBottom: () => false,
       ACTIVITY_LABEL: {},   // 稼働表示の文言（client.mjs）。このテストは見ない
-      stoppingHere: () => false,
+      stopping: () => false,
       // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。コマは待たず、下で同期に描かせる
-      requestAnimationFrame: () => 1, cancelAnimationFrame() {}, streamFrame: 0, streamTarget: null, relayoutBranches() {}, log: {},
+      requestAnimationFrame: () => 1, cancelAnimationFrame() {}, streamFrame: 0, streamTarget: null, relayout() {}, log: {},
       ensureTurnEl: () => ({ append: node => bodies.push(node) }),
     });
-    vm.runInContext(functions, context);
+    bindLiveState(state, context);
+    vm.runInContext(`${liveTurnStateDecl()}\n${functions}`, context);
+    state.turnClosed = closed;
     context.chunk = "こんに";
     vm.runInContext("appendText(chunk)", context);
     context.chunk = "ちは！👋";

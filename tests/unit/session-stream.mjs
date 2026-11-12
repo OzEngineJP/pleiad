@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn, liveTurnStateDecl, bindLiveState } from "../lib/cut-source.mjs";
 import os from "node:os";
 import path from "node:path";
 import { createLoadTiming } from '../../core/load-timing.mjs';
@@ -16,12 +17,8 @@ export const name = "session-stream";
 export const title = "途中で開いたセッションを履歴と受信イベントから欠落なく復元する";
 
 export default async function (t) {
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => {
-    let start = source.indexOf(`function ${name}(`);
-    if (source.slice(start - 6, start) === "async ") start -= 6;
-    return source.slice(start, source.indexOf("\n}", start) + 2);
-  }).join("\n");
+  const source = readClientAndLiveTurn();   // appendText 〜 resetLiveTurn は web/live-turn.mjs（ADR 0319 段 6-3）
+  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => cutFunction(source, name, { withAsync: true })).join("\n");
   const noop = () => {};
   const notices = [];
   const completionNotifications = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: notice => notices.push(notice) } }, openSession: noop });
@@ -29,13 +26,13 @@ export default async function (t) {
   const renderedPermissions = [];
   const historyTimers = new Map();
   let timerId = 0;
-  const state = { current: "other", sessions: [], drafts: new Map(), toolCards: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
+  const state = { current: "other", sessions: [], drafts: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
   const loads = createSessionLoads();
   const context = vm.createContext({
     // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。このテストは本文の raw だけを見る
     runningTools: { batch: fn => fn() },
     replayPainting: false, pendingHistorySync: false, batchToolUpdates: fn => fn(), batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(),
-    requestAnimationFrame: () => 1, cancelAnimationFrame: noop, streamFrame: 0, streamTarget: null, stoppingHere: () => false,
+    requestAnimationFrame: () => 1, cancelAnimationFrame: noop, streamFrame: 0, streamTarget: null, stoppingHere: () => false, stopping: () => false,
     setTimeout: (fn, ms) => { const id = ++timerId; if (ms === 150) historyTimers.set(id, fn); return id; }, clearTimeout: id => historyTimers.delete(id), heightSettler: null, prepareHistoryHeights: noop,
     completionNotifications, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop,
     // ヘッダーの使用量のチップ（web/header-usage.mjs）。ターンの終わりで取り直す。このテストの対象外
@@ -80,7 +77,7 @@ export default async function (t) {
     $: () => ({}), syncRunState: noop, syncTopbar: noop, syncWorkEntry: noop, refreshGit: async () => {}, gitPanel: null, restorePastSubagents: noop, log: { scrollTop: 0, scrollHeight: 0 },
     loadDraft: noop, saveDraft: async () => {}, settingsFailure: null, syncSettingsHold: noop, sys: noop,
     paintHistory: () => [], placeJunctions: () => [], isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }),
-    relayoutBranches: noop, branchIsFresh: () => false, setUuid: noop,
+    relayoutBranches: noop, relayout: noop, branchIsFresh: () => false, setUuid: noop,
     paintHeaderEntries: noop, refreshContextInfo: async () => null, isManagedContext: () => false,
     // 会話の右パネル（ターンの終わりに開いていれば描き直す）。このテストの対象外
     sessionContext: { isOpen: () => false, refresh: noop },
@@ -103,7 +100,8 @@ export default async function (t) {
     openGate: createOpenGate(),
   });
   context.loadBranches = (id) => context.branches.load(id);   // client.mjs の const loadBranches（窓の先頭を添えて系譜を読む）
-  vm.runInContext(functions, context);
+  bindLiveState(state, context);
+  vm.runInContext(`${liveTurnStateDecl()}\n${functions}`, context);
   const event = (text, streamSeq) => ({ type: "text.delta", sessionId: "target", text, streamSeq });
   const deliver = ev => { context.event = ev; vm.runInContext("onEvent(event)", context); };
   deliver(event("先頭", 1)); // Not viewing this session yet.
