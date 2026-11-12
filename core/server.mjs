@@ -5850,7 +5850,7 @@ function opsDeps(lng = currentLocale()) {
     prefs: () => store.getPrefs(),
     voice: { status: async () => ({ ...(await voiceHost.status()), ...(await keyChoiceInfo('voice')) }) },
     // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0155）
-    apiKeys: { list: () => apiKeys.list(), check: id => apiKeys.check(id) },
+    apiKeys: { list: async () => ({ ...(await apiKeys.list()), plus: await plusKeyInfo() }), check: id => apiKeys.check(id) },
     // 設定 › 秘密情報と変数（core/ops/secrets.mjs。ADR 0217）。値は返さない（変数の値だけ）
     secrets: secretsOps,
     compactionSettings: () => compactionSettings,
@@ -6508,8 +6508,8 @@ const computerBridge = computerDriver ? createComputerBridge({
       if (!current.introduced) await savePref('computerUse', { ...current, introduced: true });
     },
   },
-  // wait_until の問い（ADR 0165）。キーは設定 › API キーで人が選んだもの（computer:decider）。選ぶまでは null で、画面を送らない
-  decider: { key: () => apiKeys.useKey('computer:decider') },
+  // wait_until の問い（ADR 0165）。キーは設定 › コンピューターの操作で人が選んだもの（computer:decider。Pleiad Plus か OpenRouter のキー）。選ぶまでは via が null で、画面を送らない
+  decider: { route: () => apiKeys.useRoute('computer:decider') },
 }) : null;
 // 物理の Esc（main が離す・隠すまで済ませて知らせる）。ロックの持ち主と、貸し借りでつながるターン全部に止めた印を付ける
 computerDriver?.onEscape(owner => computerLock.escape(owner));

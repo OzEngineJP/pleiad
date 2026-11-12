@@ -107,7 +107,7 @@
       "key": "Press a key. text is in xdotool form (ctrl+s, Return, F5). repeat repeats it. The Windows key cannot be used.",
       "hold_key": "Hold the key (text) for duration seconds (at most 10).",
       "wait": "Wait for duration seconds (at most 10).",
-      "wait_until": "Wait until the screen changes and then stays still (if nothing changes in the first second, it returns as already still). Give until a question whose yes answer means done (e.g. \"Has the download finished?\"; English preferred): each time the screen goes still, a decision model looks at it and answers; it returns on yes. While the screen keeps changing, it also asks every 2 seconds. On no, it waits for the next change and stillness and asks again. timeout is in seconds (default 15, at most 30). No image is returned; take a screenshot afterwards if you need to see. The question is used only when the user has chosen a key in Settings. The result is in wait on the [ply_computer] line as fixed English words: status is success (with until, the decision model answered yes; without, the screen went still), timeout (no yes before the deadline, or the screen never went still), unverified (the screen went still but the question was not checked; reason: protected_app or no_key), or error (the decision model could not be asked). Anything other than success has not confirmed that it is done.",
+      "wait_until": "Wait until the screen changes and then stays still (if nothing changes in the first second, it returns as already still). Give until a question whose yes answer means done (e.g. \"Has the download finished?\"; English preferred): each time the screen goes still, a decision model looks at it and answers; it returns on yes. While the screen keeps changing, it also asks every 2 seconds. On no, it waits for the next change and stillness and asks again. timeout is in seconds (default 15, at most 30). No image is returned; take a screenshot afterwards if you need to see. The question is used only when the user has chosen Pleiad Plus or an OpenRouter key in Settings. The result is in wait on the [ply_computer] line as fixed English words: status is success (with until, the decision model answered yes; without, the screen went still), timeout (no yes before the deadline, or the screen never went still), unverified (the screen went still but the question was not checked; reason: protected_app, no_key, plus_credit, plus_logged_out, plus_not_plus or plus_maintenance; the plus_ ones mean Pleiad Plus is chosen but unusable), or error (the decision model could not be asked; via is plus when it went through Pleiad Plus). Anything other than success has not confirmed that it is done.",
       "open_application": "Launch an app (display name or exe name). If it is already running, this says so. The app's permission is checked before launching.",
       "computer_batch": "Run up to 20 actions in order. Each element of actions is { action, ...that tool's arguments }. All arguments are checked first, and nothing runs if any is wrong. It stops at the first failure or stop. If it includes screenshots, only the last image is returned. request_access, list_granted_applications, wait_until and computer_batch cannot be included."
     },
@@ -238,8 +238,28 @@
       "notYet_other": "Waited {{seconds}} s and asked the decision model {{count}} times, but it never answered yes.",
       "neverStillAsk": "Waited {{seconds}} s, but the screen never went still, so the decision model was not asked.",
       "neverStillProtected": "Waited {{seconds}} s, but the screen never went still and an app that cannot be operated ({{app}}) is in front, so the decision model was not asked.",
+      "plusUnavailable": "Waited {{seconds}} s. The screen went still, but the decision model was not asked because {{why}}.",
+      "neverStillUnavailable": "Waited {{seconds}} s, but the screen never went still, and the decision model was not asked because {{why}}.",
       "neverStillNoKey": "Waited {{seconds}} s, but the screen never went still, and the decision model was not asked because no key is chosen for wait_until questions.",
       "neverStill": "Waited {{seconds}} s, but the screen never went still.",
+      "unavailable": {
+        "plus_credit": "this month's Pleiad Plus limit has been reached",
+        "plus_logged_out": "Pleiad Plus is not signed in",
+        "plus_not_plus": "there is no Pleiad Plus subscription",
+        "plus_maintenance": "Pleiad Plus is under maintenance"
+      },
+      "plusReason": {
+        "timeout": "the decision model did not answer in time",
+        "network": "could not reach Pleiad Plus",
+        "bad_response": "could not read the answer",
+        "credit_exhausted": "this month's Pleiad Plus limit has been reached",
+        "rate_limited": "Pleiad Plus rate limited the request",
+        "not_plus": "there is no Pleiad Plus subscription",
+        "account_disabled": "the Pleiad Plus account is disabled",
+        "unauthenticated": "Pleiad Plus needs to be signed in again",
+        "upstream_error": "an error upstream of Pleiad Plus",
+        "unavailable": "Pleiad Plus did not return an answer"
+      },
       "reason": {
         "timeout": "the decision model did not answer in time",
         "network": "could not reach OpenRouter",

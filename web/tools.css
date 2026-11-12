@@ -341,6 +341,11 @@
 .stopmk{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
 .tc-res .stopmk{align-self:center}
 .tc-errline.tc-reason{font-family:var(--font);white-space:normal;overflow:visible}
+/* wait_until の問いを確かめられなかった行: 右端の弱い印「未確認」・理由の下の設定へのリンク（失敗でも止めたでもない。色は付けない） */
+.tc-unv{flex:none;align-self:center;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.tc-unv-open{display:inline;padding:0;border:0;background:none;font:inherit;color:var(--ink-weak);text-decoration:underline;cursor:pointer}
+.tc-unv-open:hover{color:var(--ink)}
+.tc-unv-open:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px;border-radius:var(--r-s)}
 .tc-said{flex:none;max-width:none}
 .tc-batch{margin:0 0 6px}
 

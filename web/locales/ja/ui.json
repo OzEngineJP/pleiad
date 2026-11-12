@@ -3064,6 +3064,24 @@
       },
       "stoppedMark": "停止",
       "waiting": "待っている",
+      "unverified": {
+        "mark": "未確認",
+        "count": "未確認 {{n}}",
+        "open": "設定 › コンピューターの操作 を開く",
+        "reason": {
+          "credit": "今月の Pleiad Plus の上限に達しているため、画面の差分だけで待ちました（{{date}} に戻ります）。",
+          "creditError": "今月の Pleiad Plus の上限に達したため、問いを確かめられませんでした（{{date}} に戻ります）。",
+          "creditNoDate": "今月の Pleiad Plus の上限に達しているため、画面の差分だけで待ちました。",
+          "creditErrorNoDate": "今月の Pleiad Plus の上限に達したため、問いを確かめられませんでした。",
+          "loggedOut": "Pleiad Plus にログインしていないため、画面の差分だけで待ちました。",
+          "notPlus": "Pleiad Plus を使っていないため、画面の差分だけで待ちました。",
+          "maintenance": "Pleiad Plus がメンテナンス中のため、画面の差分だけで待ちました。",
+          "notPlusError": "Pleiad Plus を使っていないため、問いを確かめられませんでした。",
+          "plusError": "Pleiad Plus に聞けなかったため、問いを確かめられませんでした。",
+          "keyRejected": "OpenRouter のキーが受け付けられなかったため、問いを確かめられませんでした。",
+          "other": "決定モデルに聞けなかったため、問いを確かめられませんでした。"
+        }
+      },
       "shot": {
         "open": "撮った画面を拡大: {{title}}",
         "gone": "画面は消去済み",
@@ -3813,7 +3831,6 @@
     "show": "表示",
     "hide": "隠す",
     "manage": "秘密情報と変数で管理",
-    "useKey": "使うキー",
     "checking": "確かめています…",
     "listSeparator": "・",
     "notEncrypted": "この起動ではキーを暗号化できません（本人だけが読めるファイルに保存します）。",
@@ -3944,9 +3961,13 @@
     },
     "computer": {
       "title": "wait_until の問いに使うキー",
-      "note": "wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます",
-      "unset": "キーを選ぶまで、問いは使わず画面の差分だけで待ちます",
+      "note": "wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます。Pleiad Plus を選んだときは、Pleiad Plus のサーバーを通ります",
       "selectLabel": "wait_until の問いに使うキー",
+      "none": "使わない",
+      "noneSub": "問いは使わず、画面の差分だけで待ちます",
+      "plusChosen": "Pleiad Plus を wait_until の問いに使います。",
+      "plusLimit": "今月の Pleiad Plus の上限に達したため、問いは使わず画面の差分だけで待ちます。",
+      "plusUnusable": "Pleiad Plus を使えないため、問いは使わず画面の差分だけで待ちます。",
       "chosen": "OpenRouter のキーを wait_until の問いに使います。",
       "unchosen": "wait_until の問いにキーを使わないようにしました。",
       "registered": "OpenRouter のキーを登録し、wait_until の問いに使います。"

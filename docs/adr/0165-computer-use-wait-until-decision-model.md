@@ -51,7 +51,9 @@ Studio Pro・Chrome・エクスプローラーの 42 場面を録画し（10 fps
   - `until` があれば、静止するたびに決定モデルに 1 回聞き、はいの確率が 0.5 以上なら返す。いいえなら次の変化と静止を待って聞き直す。上限に達したら「まだ終わっていない」と最後の確率を返す。
   - 返り値は、待った時間・聞いた回数・最後の確率・終わったか（下の「実装で決めた値」の `wait.status`）。画像は返さない（要ればエージェントが `screenshot` を撮る）。
   - エージェント向けの説明に「`until` は肯定の向き（はい = 完了）で書く。英語が望ましい」と書く（否定の向きは、pplx-decider でも肯定より数ポイント落ちる）。
-- **決定モデルは `perplexity/pplx-decider-v1.1-27b` を OpenRouter 経由で使う。** 画像は長辺 1440 前後に縮めて送る。
+- **決定モデルは `perplexity/pplx-decider-v1.2` を OpenRouter 経由で使う（2026-11-13 に `pplx-decider-v1.1-27b` から差し替え）。** 画像は長辺 1440 前後に縮めて送る。
+  - 差し替えの理由: 2026-11-13 に OpenRouter の `/api/v1/models/perplexity/pplx-decider-v1.1-27b/endpoints` が `endpoints: []`（提供者なし）で、自分のキーでも Pleiad Plus でも v1.1-27b の問いが通らなくなった。v1.2 は提供者 Perplexity があり、`input_modalities` に `image` があり、料金は prompt $0.00000002/token。モデルの説明は v1.2 を「v1.1 27B の後継で API の約束は同じ」としており、応答の読み方（`answers.<名前>.noul`）は変えていない。Pleiad Plus の中継は v1.1-27b と v1.2 の両方を通す。
+  - 下の比較表の数字は v1.1-27b を測った 2026-10 の値（v1.2 は測り直していない）。
 - **キーは設定 › API キーの OpenRouter のキーを使い、割り当て `computer:decider` を足す**（ADR 0155 の `uses`）。人がキーを選ぶまで画面を送らない。選ぶ欄の下に「`wait_until` に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます」と書く。選んでいなければ `until` は使えず、差分だけで待ったことを返り値に書く。
 - **送らない画面**: 前面の窓が、`ply_computer` が操作できないアプリ（ターミナル・パスワード管理・セキュリティソフト・Pleiad 自身など）のときは聞かず、差分だけで返す。
 - **失敗したとき**（OpenRouter の 429・5xx・時間切れ・キーの失効）: 黙って差分だけに落とさず、返り値に「決定モデルに聞けなかった」と理由を書いて返す（エージェントが `screenshot` で確かめ直せるように）。
@@ -100,3 +102,9 @@ Studio Pro・Chrome・エクスプローラーの 42 場面を録画し（10 fps
 - `ply_computer` のツールが 1 つ増え、docs/computer-use.md のツールの表・エージェント向けの指示を直す。
 - 設定 › API キーの割り当てに `computer:decider` が増え、ADR 0155 の「使っている所」・削除の確認・差し替えの確かめ直しの対象になる。
 - 画面が外部へ送られる経路が 1 つ増える（キーを選んだ人だけ）。
+
+## 追記（2026-11-13）: Pleiad Plus の経路と「未確認」
+
+- `computer:decider` に Pleiad Plus を選べる（[ADR 0155](0155-api-keys-in-one-place.md) の追記）。Plus のときは中継 `POST <PLUS_API>/v1/proxy/openrouter/alpha/decisions` へ ID トークン付きで送る。応答の形（`answers.done.noul`）は OpenRouter と同じ。401 は ID トークンを取り直して 1 回だけ送り直し、`not_plus`・`account_disabled` はアカウントを読み直し、`credit_exhausted` は上限を覚えて次から送らない。
+- 送る前に使えないと分かるとき（上限・ログインなし・Plus ではない・メンテナンス）は画面を送らず、差分だけで待って `unverified`（`plus_credit` / `plus_logged_out` / `plus_not_plus` / `plus_maintenance`）で返す。途中で断られたら `error`。印の `wait` に `via: 'plus'`・`reset_at?` を足した。
+- 会話の行は、`error` と、`no_key`・`protected_app` 以外の `unverified` に弱い印「未確認」と理由の 1 文を出す。通知は出さない。

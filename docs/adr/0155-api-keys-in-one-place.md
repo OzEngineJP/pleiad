@@ -65,3 +65,9 @@
 ## 追記（2026-10-10）: プロバイダー `cerebras` の廃止
 
 [ADR 0183](0183-cerebras-is-a-plain-compatible-endpoint.md) で、名前付きのプロバイダー `cerebras` を外した（`cerebras.ai` の互換の接続先のキーは `custom`。台帳を読むとき、`provider` が `cerebras` のキーを `custom`・host なしに直す）。
+
+## 追記（2026-11-13）: 仮想のキー `plus` を `computer:decider` にも選べる
+
+wait_until の問い（`computer:decider`）に、仮想のキー `plus`（Pleiad Plus）を選べるようにした（`PLUS_USES` に追加）。設定 › コンピューターの操作の欄は「Pleiad Plus / OpenRouter / 使わない」の 3 行のラジオ。
+- ログインしたときの自動選択（`judge:routing`・`voice`）は広げない。撮った画面を外へ送る機能なので、人が選んだときだけ使う。
+- 使えない状態（上限・ログインなし・Plus ではない・メンテナンス）は、OpenRouter のキーへ自動で切り替えず、差分だけで待って `unverified`（`plus_*`）で返す。会話の行に「未確認」を出す（[docs/computer-use.md](../computer-use.md)）。

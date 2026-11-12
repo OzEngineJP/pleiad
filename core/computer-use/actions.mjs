@@ -45,13 +45,14 @@ function modifiers(text, allowed = MODIFIERS) {
  * @param access { getPrefs(), sessionApps(sessionId), rememberSession(sessionId, apps), rememberAlways(app), markIntroduced() }
  * @param askPermission server の askPermission
  * @param translate server の t（承認カードの見出し）
- * @param decider wait_until の問いの口 { key(): 選んだキーか null, ask: askDecider と同じ形 }（core/computer-use/decider.mjs）
+ * @param decider wait_until の問いの口 { route?(): { via: 'plus'|'key'|null, endpoint, reason }（core/api-keys.mjs の useRoute）, key(): 選んだキーか null（route が無いとき）, ask: askDecider と同じ形 }（core/computer-use/decider.mjs）
  * @param platform 操作する PC の OS（process.platform）。darwin では ⌘ を通す
  */
 export function createActions({ driver, shots, access, askPermission, translate, decider = {}, platform = process.platform }) {
   const mac = platform === 'darwin';
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const deciderKey = decider.key ?? (async () => null);
+  const deciderRoute = decider.route ?? (async () => { const key = await deciderKey(); return key ? { via: 'key', key, endpoint: null, reason: null } : { via: null, endpoint: null, reason: null }; });
   const askDecision = decider.ask ?? askDecider;
 
   // ---- 共通の部品 ----------------------------------------------------------------------
@@ -397,7 +398,12 @@ export function createActions({ driver, shots, access, askPermission, translate,
       const until = typeof args.until === 'string' ? args.until.trim().replace(/\s+/g, ' ').slice(0, UNTIL_MAX) : '';
       const d = targetDisplay(ctx);
       // 人がキーを選ぶまでは画面を送らない（ADR 0155）。選んでいなければ問いを使わず、差分だけで待つ
-      const key = until ? await deciderKey().catch(() => null) : null;
+      const route = until ? await deciderRoute().catch(() => ({ via: null })) : { via: null };
+      const plus = route.via === 'plus';
+      // Pleiad Plus を選んでいて、送る前に使えないと分かっているとき（ログアウト・Plus でない・メンテナンス・今月の上限）は、画面を送らず差分だけで待つ
+      const resetAt = plus ? route.endpoint?.credit?.()?.resetAt ?? null : null;
+      const unavailable = plus ? (route.reason ? `plus_${route.reason}` : route.endpoint?.creditBlocked?.() ? 'plus_credit' : null) : null;
+      const key = until && route.via && !unavailable ? (route.endpoint ?? route.key ?? null) : null;  // 送れる口（無ければ null）
       activity(ctx, { display: d });
       const grab = async () => {
         const r = await capture(ctx, { display: d.id, gray: true, maxEdge: SETTLE.frameEdge, maxPixels: SETTLE.frameEdge * SETTLE.frameEdge });
@@ -405,6 +411,7 @@ export function createActions({ driver, shots, access, askPermission, translate,
         return r;
       };
       let skippedApp = '';
+      let creditResetAt = unavailable === 'plus_credit' ? resetAt : null;
       const askOnce = key ? async () => {
         // 前面が操作できないアプリ（ターミナル・パスワード管理など）の画面は送らない
         const { app } = await call(ctx, 'foreground', {});
@@ -412,14 +419,16 @@ export function createActions({ driver, shots, access, askPermission, translate,
         skippedApp = '';
         const shot = await capture(ctx, { display: d.id, ...DECIDER_SHOT });
         checkStopped(ctx);
-        return askDecision({ key, jpeg: shot.jpeg, until, signal: ctx.signal });
+        const ans = await askDecision({ ...(route.endpoint ? { endpoint: route.endpoint } : { key: route.key }), jpeg: shot.jpeg, until, signal: ctx.signal });
+        if (ans?.ok === false && ans.code === 'credit_exhausted') creditResetAt = ans.resetAt ?? route.endpoint?.credit?.()?.resetAt ?? null;
+        return ans;
       } : null;
-      const noKey = Boolean(until) && !key;
+      const noKey = Boolean(until) && !key && !unavailable;
       let r = await settle({ grab, ask: askOnce, timeoutMs: seconds * 1000, sleep, check: () => checkStopped(ctx) });
-      // 問いがあるのにキーが無ければ、画面が止まっても問いは確かめていない
-      if (noKey && r.status === 'success') r = { ...r, status: 'unverified', reason: 'no_key' };
+      // 問いがあるのにキーが無ければ、画面が止まっても問いは確かめていない。Plus が使えないときは、その理由を返す
+      if ((noKey || unavailable) && r.status === 'success') r = { ...r, status: 'unverified', reason: unavailable ?? 'no_key' };
       activity(ctx, { display: d });
-      return { text: untilText(ctx, r, { until, noKey, app: skippedApp }), wait: untilResult(r) };
+      return { text: untilText(ctx, r, { until, noKey, app: skippedApp, unavailable, plus, resetAt: creditResetAt }), wait: untilResult(r, { plus, unavailable, resetAt: creditResetAt }) };
     },
 
     async open_application(ctx, args) {
@@ -513,21 +522,30 @@ export function createActions({ driver, shots, access, askPermission, translate,
    * wait_until の結果の決まった語（言語に依らない。印の行の wait）。キーの値は入らない。
    * status: success（条件を満たした）・timeout・unverified（止まったが問いを確かめていない）・error（決定モデルに聞けなかった）
    */
-  function untilResult(r) {
+  function untilResult(r, { plus = false, unavailable = null, resetAt = null } = {}) {
+    // via: 'plus' は、問いの送り先が Pleiad Plus だったこと（error の理由の言い方を画面が選ぶ）。reset_at は上限が戻る日（ISO。行を読み直しても同じ文になるように）
+    const credit = r.reason === 'plus_credit' || r.reason === 'credit_exhausted';
     return { status: r.status, screen: r.screen, answer: r.answer, ...(r.reason ? { reason: r.reason } : {}),
+      ...(plus && (r.status === 'error' || unavailable) ? { via: 'plus' } : {}), ...(credit && resetAt ? { reset_at: resetAt } : {}),
       ...(r.p !== null ? { p_yes: r.p } : {}), checks: r.asks, waited_ms: r.waitedMs };
   }
   /** wait_until の結果の文（会話の言語の 1 文）。何が起きたかと待った時間 */
-  function untilText(ctx, r, { until, noKey, app }) {
+  function untilText(ctx, r, { until, noKey, app, unavailable = null, plus = false }) {
     const seconds = (r.waitedMs / 1000).toFixed(1);
+    const why = unavailable ? L(ctx, `until.unavailable.${unavailable}`) : '';
     const key = r.status === 'success' ? (r.answer === 'yes' ? (r.screen === 'stable' ? 'yes' : 'yesChanging') : r.sawChange ? 'still' : 'alreadyStill')
-      : r.status === 'unverified' ? (r.reason === 'no_key' ? 'noKey' : 'protectedApp')
+      : r.status === 'unverified' ? (unavailable ? 'plusUnavailable' : r.reason === 'no_key' ? 'noKey' : 'protectedApp')
       : r.status === 'error' ? 'error'
-      : r.asks ? 'notYet' : noKey ? 'neverStillNoKey' : app ? 'neverStillProtected' : until ? 'neverStillAsk' : 'neverStill';
-    return L(ctx, `until.${key}`, { seconds, app, count: r.asks, ...(r.status === 'error' ? { reason: deciderReason(ctx, r.reason) } : {}) });
+      : r.asks ? 'notYet' : unavailable ? 'neverStillUnavailable' : noKey ? 'neverStillNoKey' : app ? 'neverStillProtected' : until ? 'neverStillAsk' : 'neverStill';
+    return L(ctx, `until.${key}`, { seconds, app, count: r.asks, why, ...(r.status === 'error' ? { reason: deciderReason(ctx, r.reason, plus) } : {}) });
   }
   /** 決定モデルに聞けなかった理由（決まった code から。キーも応答の本文も含めない） */
-  function deciderReason(ctx, code) {
+  function deciderReason(ctx, code, plus = false) {
+    if (plus) {
+      const known = ['timeout', 'network', 'bad_response', 'credit_exhausted', 'rate_limited', 'not_plus', 'account_disabled', 'unauthenticated', 'upstream_error', 'unavailable'];
+      if (known.includes(code)) return L(ctx, `until.plusReason.${code}`);
+      if (!/^http_\d{3}$/.test(String(code ?? ''))) return L(ctx, 'until.plusReason.unavailable');
+    }
     const status = /^http_(\d{3})$/.exec(String(code ?? ''))?.[1];
     if (!status) return L(ctx, `until.reason.${['timeout', 'network', 'bad_response'].includes(code) ? code : 'bad_response'}`);
     const n = Number(status);

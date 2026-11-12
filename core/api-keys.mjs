@@ -28,9 +28,9 @@ import { t } from './i18n.mjs';
 export { providerOfEndpoint };
 
 export const SECRET_PREFIX = 'key:';
-/** 仮想のキー「Pleiad Plus」の id。値を持たない（秘密の置き場に何も書かない）。選べるのは judge:routing と voice だけ（docs/plus.md「キー無しの機能」） */
+/** 仮想のキー「Pleiad Plus」の id。値を持たない（秘密の置き場に何も書かない）。選べるのは judge:routing・voice・computer:decider（wait_until の問い。2026-11-13）だけ（docs/plus.md「キー無しの機能」） */
 export const PLUS_KEY_ID = 'plus';
-const PLUS_USES = new Set([JUDGE_USE, 'voice']);
+const PLUS_USES = new Set([JUDGE_USE, 'voice', 'computer:decider']);
 /** 古い置き場（互換の接続先のキー）の項目名 */
 export const LEGACY_ENDPOINT_PREFIX = 'compat-endpoint:';
 const LEGACY_VOICE_KEY = 'openrouter';
@@ -209,14 +209,21 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     if (id === PLUS_KEY_ID) {
       const session = plusSession();
       if (!session) return null;
-      const snap = session.snapshot?.() ?? {};
       // ログアウト・free・disabled・state off・maintenance は「キーが無い」と同じ扱い
-      if (!snap.signedIn || snap.available === false || snap.state === 'off' || snap.state === 'maintenance') return null;
-      if (snap.account?.status === 'free' || snap.account?.status === 'disabled') return null;
+      if (plusUnavailable(session)) return null;
       return plusEndpoint(use, session);
     }
     const key = await keyValue(id).catch(() => null);
     return key ? openEndpoint(use, key, id) : null;
+  }
+  /** plus を選んでいるのに使えない理由（logged_out・maintenance・not_plus）。使えるなら null。上限（credit）は endpoint.creditBlocked() で見る */
+  function plusUnavailable(session) {
+    if (!session) return 'logged_out';
+    const snap = session.snapshot?.() ?? {};
+    if (!snap.signedIn) return 'logged_out';
+    if (snap.available === false || snap.state === 'off' || snap.state === 'maintenance') return 'maintenance';
+    if (snap.account?.status === 'free' || snap.account?.status === 'disabled') return 'not_plus';
+    return null;
   }
 
   // ---- 値
@@ -406,6 +413,21 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     },
     /** 使う側が送る口（baseUrl・authorization）を返す。使わない・条件を満たさなければ null。詳しくは endpointFor */
     async useEndpoint(use) { return endpointFor(use); },
+    /**
+     * 使う側の「どう送るか」。{ via: 'plus'|'key'|null, endpoint, reason }。
+     * plus を選んでいて使えないとき via は 'plus'・endpoint は null・reason は logged_out / maintenance / not_plus。
+     * 上限（credit）は endpoint が返り、endpoint.creditBlocked() が true になる（送る前に断る側が見る）。使わない・キー未登録は via null
+     */
+    async useRoute(use) {
+      await ensure();
+      if (!USES.includes(use)) return { via: null, endpoint: null, reason: null };
+      if (migrated() && state.uses[use] === PLUS_KEY_ID) {
+        const reason = plusUnavailable(plusSession());
+        return { via: 'plus', endpoint: reason ? null : plusEndpoint(use, plusSession()), reason };
+      }
+      const endpoint = await endpointFor(use);
+      return { via: endpoint ? 'key' : null, endpoint, reason: null };
+    },
     /** 使うキーが選ばれているか（値は読まない）。保留中は古い置き場に値があるか */
     async hasUse(use) {
       await ensure();

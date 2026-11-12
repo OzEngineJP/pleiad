@@ -9600,6 +9600,8 @@ async function openFromNotification(target) {
   if (target?.settings) { openSettingsPage(target.settings); return; }
   await viewAddress.go(target);
 }
+// 会話の行の「設定 › コンピューターの操作 を開く」（web/computer-use.mjs）
+document.addEventListener('ply-open-settings', e => { if (e.detail?.page) openSettingsPage(e.detail.page); });
 /** 設定のそのページを開く（通知から。リモートなら状態も読み直す） */
 function openSettingsPage(page) {
   onboarding.open(page);
