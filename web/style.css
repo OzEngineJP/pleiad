@@ -1097,11 +1097,16 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* インラインコードのパスもファイルリンク。下線はリンクと同じ */
 .code-link{text-decoration:underline;text-decoration-color:var(--line-strong)}
 .code-link code,.body .code-link>code{color:var(--ink-blue)}   /* .body :not(pre)>code（本文色）より強くする */
-/* 短い知らせ（コピーした・開けなかった）。数秒で消える */
-.file-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:8px 16px;
-  background:var(--surface-paper);color:var(--ink);border-radius:var(--r-pill);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 短い知らせ（コピーした・開けなかった）。4 秒で消える。右端の ✕ でも消せる（docs/design-system.md「短い知らせ」）。
+   長い文は … で切り、✕ は縮めない。高さは ✕（30px）＋上下 2px で、✕ が無かったときと同じ 34px */
+.file-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:2px 2px 2px 16px;
+  display:flex;align-items:center;gap:4px;
+  background:var(--surface-paper);color:var(--ink);border-radius:var(--r-pill);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s)}
 .file-toast[hidden]{display:none}
+.file-toast-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* フォーカスの輪は ✕ の内側に引く（外に引くと、ピルの右端からはみ出す） */
+.file-toast-close{flex:none}
+.file-toast-close:focus-visible{outline-offset:-2px}
 .table-wrap{overflow-x:auto;margin:0 0 .9em;background:var(--surface-1);border-radius:var(--r-m);max-width:100%}
 .table-wrap table{border-collapse:collapse;width:100%;font-size:.94em}
 .table-wrap :is(th,td){padding:7px 14px;text-align:left;vertical-align:top}
@@ -2512,6 +2517,8 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   /* 添付の札の操作（取り消し・再試行・外す） */
   .md-att-act.btn-icon{width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
   .md-att-act svg.i{width:var(--icon-s);height:var(--icon-s)}
+  /* 短い知らせの ✕ */
+  .file-toast-close.btn-icon{width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
   /* メニュー・候補の行 */
   .pop .li{min-height:var(--hit)}
   .pop .li :is(svg.i,.conversation-menu-icon){width:var(--icon);height:var(--icon)}
