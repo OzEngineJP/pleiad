@@ -5326,9 +5326,14 @@ const opsGit = {
   panel: async (args, { sweep = false } = {}) => {
     const sessionId = args?.sessionId;
     const cwd = await gitCwd(args);
-    const only = args?.only === 'changes' || args?.only === 'light' ? args.only : null;
-    const state = cwd ? await gitActivity.status(cwd, { fresh: only !== 'changes' }) : null;
+    const only = ['changes', 'light', 'count'].includes(args?.only) ? args.only : null;
+    const state = cwd ? await gitActivity.status(cwd, { fresh: only !== 'changes' && only !== 'count' }) : null;
     if (!state) return { git: null };
+    // 新しいタブの「変更 N ファイル」だけ。一覧・worktree・会話の記録は読まない（変更のページと同じ定義の件数）
+    if (only === 'count') {
+      const files = await gitActivity.changeCount(cwd);
+      return { git: state, changes: files == null ? null : { range: 'uncommitted', hasSession: false, total: { files, add: 0, del: 0 }, files: [] }, at: Date.now() };
+    }
     const range = args?.range === 'session' ? 'session' : 'uncommitted';
     // 範囲の切り替えは変更の一覧だけで足りる（会話の記録も、worktree の一覧も読まない）
     if (only === 'changes') return { git: state, changes: await gitActivity.changes(cwd, sessionId, range), at: Date.now() };

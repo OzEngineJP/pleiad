@@ -21,6 +21,7 @@
   },
   "new": {
     "changes": "変更 {{count}} ファイル",
+    "changesLead": "変更",
     "conversation": "この会話", "git": "git", "plugins": "プラグイン", "recent": "最近のファイル", "folders": "作業フォルダー",
     "emptyRecent": "この会話で開いたファイルがここに並びます。", "emptyFolders": "作業フォルダーがまだありません。",
     "sources": { "read": "読み取り", "edited": "編集", "attached": "添付", "opened": "開いたファイル" },

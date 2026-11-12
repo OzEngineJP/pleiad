@@ -201,6 +201,13 @@ export async function diffFiles(root, from, to, { renames = false } = {}) {
   return { files, total: totals(files) };
 }
 
+/** diffFiles と同じ条件の差のファイル数（名前だけを読む。行数は数えない）。失敗は null */
+export async function countDiffFiles(root, from, to) {
+  const r = await readGit(root, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--ignore-submodules=dirty', '--name-only', '-z', from, to, '--']);
+  if (!r.ok) return null;
+  return r.stdout.split('\0').filter(Boolean).length;
+}
+
 export function totals(files) {
   return { files: files.length, add: files.reduce((a, f) => a + f.add, 0), del: files.reduce((a, f) => a + f.del, 0) };
 }

@@ -21,6 +21,7 @@
   },
   "new": {
     "changes": "{{count}} changed files",
+    "changesLead": "Changes",
     "conversation": "This conversation", "git": "git", "plugins": "Plugins", "recent": "Recent files", "folders": "Working folders",
     "emptyRecent": "Files opened in this conversation appear here.", "emptyFolders": "No working folder yet.",
     "sources": { "read": "Read", "edited": "Edited", "attached": "Attached", "opened": "Opened" },
