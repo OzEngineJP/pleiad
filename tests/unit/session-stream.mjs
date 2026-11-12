@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn } from "../lib/cut-source.mjs";
 import os from "node:os";
 import path from "node:path";
 import { createLoadTiming } from '../../core/load-timing.mjs';
@@ -16,12 +17,8 @@ export const name = "session-stream";
 export const title = "途中で開いたセッションを履歴と受信イベントから欠落なく復元する";
 
 export default async function (t) {
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => {
-    let start = source.indexOf(`function ${name}(`);
-    if (source.slice(start - 6, start) === "async ") start -= 6;
-    return source.slice(start, source.indexOf("\n}", start) + 2);
-  }).join("\n");
+  const source = readClientAndLiveTurn();   // appendText 〜 resetLiveTurn は web/live-turn.mjs（ADR 0319 段 6-3）
+  const functions = ["onEvent", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => cutFunction(source, name, { withAsync: true })).join("\n");
   const noop = () => {};
   const notices = [];
   const completionNotifications = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: notice => notices.push(notice) } }, openSession: noop });

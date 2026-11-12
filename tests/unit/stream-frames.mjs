@@ -4,17 +4,16 @@
 // rAF は手で進める。流れが終わる所（text.end・ツール・発言を閉じる）と会話の切り替えでは、貯めた分を取りこぼさず、別の会話へ描かない。
 import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn } from "../lib/cut-source.mjs";
 
 export const name = "stream-frames";
 export const title = "text.delta は 1 コマに 1 回だけ描く。流れの終わりでは描き切り、会話を切り替えたら別の会話へ描かない";
 
 export default async function (t) {
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-  const functions = ["appendText", "flushStream", "cancelStream", "endStream", "closeTurnEl", "resetLiveTurn", "clearThread"].map(name => {
-    const start = source.indexOf(`function ${name}(`);
-    return start < 0 ? "" : source.slice(start, source.indexOf("\n}", start) + 2);
-  });
-  t.ok("client.mjs から本文まわりの関数を切り出せる", functions.every(Boolean));
+  // 本文まわりは web/live-turn.mjs（ADR 0319 段 6-3）、clearThread は client.mjs
+  const source = readClientAndLiveTurn();
+  const functions = ["appendText", "flushStream", "cancelStream", "endStream", "closeTurnEl", "resetLiveTurn", "clearThread"].map(name => cutFunction(source, name));
+  t.ok("client.mjs と live-turn.mjs から本文まわりの関数を切り出せる", functions.every(Boolean));
 
   const noop = () => {};
   /** 1 つの画面。frames は rAF に積まれたもの、渡す atBottom で末尾にいるかを決める */

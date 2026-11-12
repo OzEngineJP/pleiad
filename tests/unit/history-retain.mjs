@@ -6,6 +6,7 @@
 // 時間ではなく、要素の同一性（===）と行の並びで判定する。
 import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn } from "../lib/cut-source.mjs";
 import { N } from "../lib/dom-stub.mjs";
 import { buildItems, inlineAttachments, showsAsCard } from "../../web/timeline.mjs";
 import { retainPlan } from "../../web/history-sync.mjs";
@@ -101,11 +102,11 @@ export default async function (t) {
   t.ok("添付が発言へ結ばれた（messageId が付いた）ら、その位置から描き直す", anchoredLater && anchoredLater.keepItems < 30, `${anchoredLater?.keepItems}`);
 
   // ---------------------------------------------------------------- 画面の行（retainThread・paintHistory）
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  const source = readClientAndLiveTurn();   // resetLiveTurn は web/live-turn.mjs（ADR 0319 段 6-3）
   const cut = name => {
-    const start = source.indexOf(`function ${name}(`);
-    if (start < 0) throw new Error(`client.mjs に ${name} が無い`);
-    return source.slice(start, source.indexOf("\n}", start) + 2);
+    const body = cutFunction(source, name);
+    if (!body) throw new Error(`client.mjs と live-turn.mjs に ${name} が無い`);
+    return body;
   };
   const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows", "paintable"].map(cut).join("\n");
   const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };

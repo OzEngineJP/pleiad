@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn } from "../lib/cut-source.mjs";
 import { el } from "../../web/dom.mjs";
 import { renderAssistantMarkdown } from "../../web/render.mjs";
 
@@ -8,11 +9,11 @@ export const title = "閉じた発言の後もストリーミング本文の先�
 
 export default async function (t) {
   // 実際のクライアント関数を実行し、状態遷移による先頭断片の消失を検出する。
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  const source = readClientAndLiveTurn();   // 進行中のターンは web/live-turn.mjs（ADR 0319 段 6-3）
   const functions = ["appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl"].map(name => {
-    const start = source.indexOf(`function ${name}(`);
-    if (start < 0) throw new Error(`Missing client function: ${name}`);
-    return source.slice(start, source.indexOf("\n}", start) + 2);
+    const body = cutFunction(source, name);
+    if (!body) throw new Error(`Missing client function: ${name}`);
+    return body;
   }).join("\n");
 
   for (const closed of [false, true]) {
