@@ -12,6 +12,7 @@ import { applySlots, fileSlots, customSlots, gitSlots, chromeSlots, subtitleFor 
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
 import { createSpring, reducedMotion } from './motion.mjs';
+import { announceSettled } from './panel-moving.mjs';
 import { modalPaneWidth } from './work-side.mjs';
 
 const KIND = { markdown:'Markdown', html:'HTML', image:t('filePreview.kind.image'), table:t('filePreview.kind.table'), text:t('filePreview.kind.text'), pdf:'PDF',
@@ -248,17 +249,19 @@ export function setupFilePreview({ getContext, useFile, canUse = null, onLayout,
   // 中身は動く間も全幅のまま描き（押しつぶさない）、閉じる間は中身を残して、止まってから片付ける
   let leaving = null;   // 閉じる動きの間だけ、閉じた中身（custom）を持つ。論理の上ではもう閉じている（panel.hidden）
   let quiet = false;
-  const shown = createSpring(0, { preset:'smooth', epsilon:0.002, onUpdate:() => paintMotion() });
+  let wasMoving = false;   // 動いていたか。止まった瞬間を見つけて、列の幅に反応して止めていた処理へ知らせる（web/panel-moving.mjs）
+  const shown = createSpring(0, { preset:'smooth', epsilon:0.002, onUpdate:() => paintMotion(), onFail:() => failMotion() });
   const motionOn = () => !reducedMotion() && typeof requestAnimationFrame === 'function' && !hostNode().classList.contains('file-preview-wide');
   const place = value => { quiet = true; shown.set(value); quiet = false; };
   function clearMotion() {
     hostNode().style.removeProperty('--file-preview-shown');
     panel.style.removeProperty('width'); panel.style.removeProperty('transform');
   }
-  /** 今のばねの値を画面へ当てる。onMotion(p, phase) は頭の行の受け渡し（web/panel-handoff.mjs）が使う */
+  /** 今のばねの値を画面へ当てる。onMotion(p, phase, px) は頭の行の受け渡し（web/panel-handoff.mjs）が使う（px は今の列の幅。全面のときは無い） */
   function paintMotion() {
     if (quiet) return;
     const p = Math.min(1, Math.max(0, shown.value)), moving = shown.moving;
+    let px;
     // 動く間は中身が列より広くはみ出す。中へフォーカスを移すと body（overflow:hidden）が横へ送られるので、間だけ clip にする
     hostNode().classList.toggle('file-preview-moving', moving);
     if (document.body.scrollLeft) document.body.scrollLeft = 0;
@@ -266,11 +269,26 @@ export function setupFilePreview({ getContext, useFile, canUse = null, onLayout,
     else if (narrow()) { hostNode().style.removeProperty('--file-preview-shown'); panel.style.removeProperty('width'); panel.style.transform = `translateX(${((1 - p) * 100).toFixed(3)}%)`; }
     else {
       const full = parseFloat(hostNode().style.getPropertyValue('--file-preview-width')) || panel.offsetWidth || 0;
-      hostNode().style.setProperty('--file-preview-shown', `${(p * full).toFixed(2)}px`);
+      px = p * full;
+      hostNode().style.setProperty('--file-preview-shown', `${px.toFixed(2)}px`);
       panel.style.width = `${full}px`; panel.style.removeProperty('transform');
     }
     const phase = moving ? (shown.target > 0.5 ? 'opening' : 'closing') : (!panel.hidden && custom?.key === 'chrome-window' ? 'open' : 'closed');
-    onMotion?.(moving ? p : (phase === 'open' ? 1 : 0), phase);
+    if (wasMoving && !moving) announceSettled();
+    wasMoving = moving;
+    onMotion?.(moving ? p : (phase === 'open' ? 1 : 0), phase, px);
+  }
+  /**
+   * ばねが例外で外れたとき（web/motion.mjs の _fail）。動いている印を残すと、止めた処理（枝の線・目次）が次の開け閉めまで止まったままになる。
+   * 止まった姿へ当て直し、それも投げるなら印を直に外して、止まった合図を出す
+   */
+  function failMotion() {
+    try { paintMotion(); } catch (error) { console.error('右の欄の動きの片付けで例外が出ました', error); }
+    if (!wasMoving) return;
+    wasMoving = false;
+    hostNode().classList.remove('file-preview-moving');
+    clearMotion();
+    announceSettled();
   }
   /**
    * 右の欄を作業のダイアログ（作業の一覧と詳細の右）へ載せる。載せる間は、開閉の印・幅の変数・動きをそのダイアログへ付け、

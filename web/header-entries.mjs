@@ -128,5 +128,5 @@ export function setupBrowserEntry({ button, chrome = () => null, windows = null,
   paint();
   return { paint, toggle, currentMark, available: () => !!activeId(),
     /** パネルのばねの進み具合（web/file-preview.mjs の onMotion） */
-    motion: (p, phase) => handoff.update(p, phase) };
+    motion: (p, phase, px) => handoff.update(p, phase, px) };
 }

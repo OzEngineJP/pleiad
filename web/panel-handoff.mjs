@@ -5,8 +5,14 @@
 //   位置・大きさ・色・字形を p で混ぜ、止まった時は本物と同じになるので、入れ替わる瞬間に何も変わらない
 // - 頭のアイコンの置き場は (幅 + 間) × (1 − p) で縮み、左の通話・目次のアイコンも同じばねで寄る
 // - 閉じた直後は、ポインターが動くまで題の杖（✨）を出さない（押した場所が広がった題の上に残るため）
-// p と向き（phase: opening / closing / open / closed）は web/file-preview.mjs の onMotion から届く
+// p と向き（phase: opening / closing / open / closed）と、そのときの列の幅 px は web/file-preview.mjs の onMotion から届く
+// - 動いている間のコマは「書くだけ」: 両端の姿（頭のアイコンの右端・✖ の左端と大きさ・字形・色・タブの列の色）は、
+//   動き始め（向きが替わったとき・窓の大きさが替わったとき・✖ が替わったとき）に 1 度だけ量って持つ。
+//   どちらの位置も右の欄の左の縁（W − px）と一緒に動くので、量った時の px との差だけ寄せる（毎コマ量り直して強制レイアウトしない）
+// - 動いている間に頭の行の右側の並び・タブの帯が替わっても（ボタンの出し入れ・✖ のタブが足される）、止まるときに 1 コマで跳ばないよう、
+//   終わりに近づいたとき（開くなら q ≥ 0.9・閉じるなら q ≤ 0.1）に 1 度だけ量り直す。強制レイアウトは動き始めと合わせて 2 度
 
+const LATE = 0.9;   // 終わりに近づいた（開くなら q がこれ以上・閉じるなら 1 − これ以下）。量り直す（上の説明）
 const clamp = (value) => Math.min(1, Math.max(0, value));
 const lerp = (a, b, q) => a + (b - a) * q;
 const mix = (a, b, q) => (q <= 0 ? a : q >= 1 ? b : `color-mix(in srgb,${b} ${(q * 100).toFixed(1)}%,${a})`);
@@ -18,7 +24,10 @@ const mix = (a, b, q) => (q <= 0 ? a : q >= 1 ? b : `color-mix(in srgb,${b} ${(q
 export function createPanelHandoff({ entry, target = () => null, onPress = null }) {
   if (!entry || typeof document === 'undefined') return { update() {}, settle() {}, get moving() { return false; } };
   let flier = null, glyphA = null, glyphB = null, markSlot = null, rest = null, phase = 'closed';
+  let geo = null;   // 動き始めに量った両端の姿（update の中で作る）。null なら次のコマで量り直す
   const root = document.documentElement;
+  const remeasure = () => { geo = null; };
+  if (typeof window !== 'undefined') window.addEventListener('resize', remeasure);
 
   const usable = (node) => !!node && typeof node.getBoundingClientRect === 'function' && node.getBoundingClientRect().width > 0;
   function build() {
@@ -57,15 +66,18 @@ export function createPanelHandoff({ entry, target = () => null, onPress = null 
     const x = target();
     if (x) unset(x, 'visibility');
     clearEntry();
+    geo = null;
     phase = open ? 'open' : 'closed';
     if (open && usable(x)) entry.classList.add('entry-handed');
     if (!open) measureRest();
   }
-  function update(p, next) {
+  function update(p, next, px) {
     const was = phase; phase = next;
     if (next === 'open' || next === 'closed') { settle(next === 'open'); return; }
+    if (was !== next) geo = null;   // 折り返したら終点が替わる
     const x = target();
-    if (!usable(x)) { if (flier) flier.hidden = true; clearEntry(); return; }
+    if (geo && geo.x !== x) geo = null;   // ✖ が作り直された
+    if (!geo && !usable(x)) { if (flier) flier.hidden = true; clearEntry(); return; }
     // 止まった所から開き始めたら、その瞬間の姿（指が乗った色など）を量り直す。最初のコマで色が跳ばない
     if (!rest || (was === 'closed' && next === 'opening')) { clearEntry(); measureRest(); }
     if (!flier) build();
@@ -85,19 +97,31 @@ export function createPanelHandoff({ entry, target = () => null, onPress = null 
     entry.style.width = `${(rest.width * (1 - q)).toFixed(2)}px`;
     entry.style.marginLeft = `${(-rest.gap * q).toFixed(2)}px`;
     x.style.visibility = 'hidden';
-    const home = entry.getBoundingClientRect(), to = x.getBoundingClientRect();
-    const fromLeft = home.right - rest.width, fromTop = home.top + (home.height - rest.height) / 2;
-    const size = lerp(rest.height, to.height, q);
-    const toGlyph = x.querySelector('svg')?.getBoundingClientRect().width || 18;
-    const xs = getComputedStyle(x), row = x.parentElement ? getComputedStyle(x.parentElement).backgroundColor : 'transparent';
+    // 量るのは動き始めの 1 コマだけ（上で書いた幅・間を当てた姿）。px が届かない呼び方では毎コマ量る
+    const late = next === 'opening' ? q >= LATE : q <= 1 - LATE;
+    const fresh = !geo || (late && !geo.late);
+    if (fresh) {
+      const home = entry.getBoundingClientRect(), to = x.getBoundingClientRect();
+      const computed = getComputedStyle(x);
+      geo = { x, px, late, homeRight: home.right, homeTop: home.top, homeHeight: home.height,
+        toLeft: to.left, toTop: to.top, toHeight: to.height,
+        glyph: x.querySelector('svg')?.getBoundingClientRect().width || 18,
+        color: computed.color, row: x.parentElement ? getComputedStyle(x.parentElement).backgroundColor : 'transparent' };
+    }
+    const g = geo;
+    if (!Number.isFinite(px)) geo = null;
+    // 頭の行の右端も ✖ も、右の欄の左の縁（W − px）と一緒に動く。量った時の px との差だけ寄せる
+    const shift = Number.isFinite(px) && Number.isFinite(g.px) ? g.px - px : 0;
+    const fromLeft = g.homeRight + shift - rest.width, fromTop = g.homeTop + (g.homeHeight - rest.height) / 2;
+    const size = lerp(rest.height, g.toHeight, q);
     flier.hidden = false;
-    flier.style.left = `${lerp(fromLeft, to.left, q).toFixed(2)}px`;
-    flier.style.top = `${lerp(fromTop, to.top, q).toFixed(2)}px`;
+    flier.style.left = `${lerp(fromLeft, g.toLeft + shift, q).toFixed(2)}px`;
+    flier.style.top = `${lerp(fromTop, g.toTop, q).toFixed(2)}px`;
     flier.style.width = flier.style.height = `${size.toFixed(2)}px`;
-    flier.style.setProperty('--g', `${lerp(rest.glyph, toGlyph, q).toFixed(2)}px`);
-    flier.style.color = mix(rest.color, xs.color, q);
+    flier.style.setProperty('--g', `${lerp(rest.glyph, g.glyph, q).toFixed(2)}px`);
+    flier.style.color = mix(rest.color, g.color, q);
     // 下を流れるタブの字と重ならないよう、動いている間だけ丸に下地（タブの列の色）を敷く
-    flier.style.backgroundColor = mix('transparent', row, clamp(q / 0.6));
+    flier.style.backgroundColor = mix('transparent', g.row, clamp(q / 0.6));
     // 窓の絵は 0〜0.5 で縮んで消え、✖ は 0.25〜0.75 で育つ（重ねて入れ替える。途中で絵が消えきるコマは無い）
     const a = clamp(q / 0.5), b = clamp((q - 0.25) / 0.5);
     glyphA.style.opacity = String(1 - a); glyphA.style.transform = `scale(${(1 - 0.4 * a).toFixed(3)})`;
@@ -105,6 +129,6 @@ export function createPanelHandoff({ entry, target = () => null, onPress = null 
     markSlot.style.opacity = String(1 - a);
     flier.classList.toggle('focus', typeof entry.matches === 'function' && entry.matches(':focus-visible'));
   }
-  return { update, settle, get moving() { return phase === 'opening' || phase === 'closing'; } };
+  return { update, settle, remeasure, get moving() { return phase === 'opening' || phase === 'closing'; } };
 }
 

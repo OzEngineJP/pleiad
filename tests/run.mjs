@@ -991,6 +991,9 @@ const SUITES = [
   './unit/browser-unify-tabs.mjs',
   // 右の欄のタブの列と開け閉めを本物の画面で（B1_BROWSER_TEST=1。tests/browser/right-panel-tabs.mjs）
   './unit/right-panel-tabs.mjs',
+  // 右の欄の動きの間は幅に反応する処理を止めて止まったら 1 度だけやり直す・受け渡しは動き始めに量って書くだけ（web/panel-moving.mjs・panel-handoff.mjs）
+  './unit/panel-moving.mjs',
+  './unit/right-panel-motion-cost.mjs',
   // 画面内ページのタブ（web/page-tabs.mjs）: サーバーが決める開く先・ページ内移動・更新の扱い・鍵と見張りの取り直し。Pleiad 印の分類（P9）
   './unit/browser-unify-pages.mjs',
   './unit/browser-files-reread.mjs',

@@ -10,6 +10,7 @@
 //   - 測るときは読みだけを続け、間に書き込みを挟まない。書くのは変わったときだけ
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
+import { whileStill } from './panel-moving.mjs';
 import { runMark } from './arc.mjs';
 import { userPieces, piecesText } from './conversation-nav.mjs';
 
@@ -193,14 +194,17 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     if (measureTimer) return;
     const wait = MEASURE_EVERY - (performance.now() - lastMeasure);
     const run = () => {
-      measureTimer = 0;
       ensureTurns();
       measureAll();
       schedule();
     };
     if (wait <= 0) run();
-    else measureTimer = setTimeout(run, wait);
+    // 間引いた後で走る頃に右の欄が動き始めていたら、走らせずに止まったときに 1 度（web/panel-moving.mjs）
+    else measureTimer = setTimeout(() => { measureTimer = 0; measureStill(); }, wait);
   };
+  // 止まった瞬間にやり直す口はこの 1 つだけ（見張りも間引き後の待ちもここへ通す）
+  // 持ち主（スレッドの画面）が閉じ方を持たないので、DOM から外れた後に止まったときは測らない
+  const measureStill = whileStill(() => { if (thread.isConnected) invalidate(); });
 
   // ---- 移動
   let settle = null;
@@ -271,7 +275,8 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
 
   // ---- 見張り
   // 筋の高さが変わったとき（発言の追記・畳みの開閉・実寸の確定）と、窓の大きさが変わったときは、全数測定を間引いて 1 度だけ
-  const resize = new ResizeObserver(invalidate);
+  // 右の欄の開閉で列の幅が動いている間は毎コマ変わるので測らず、止まった合図で 1 度だけ測る（web/panel-moving.mjs）
+  const resize = new ResizeObserver(() => measureStill());
   resize.observe(thread);
   resize.observe(log);
   // 発言の増減だけは並びから取り直す（中身の変化では取り直さない）

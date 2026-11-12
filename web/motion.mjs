@@ -97,9 +97,10 @@ export const motionClock = Object.freeze({
 /**
  * ばね 1 本。onUpdate(value) は値が変わるたびに呼ぶ。epsilon は「止まった」とみなすずれ（値の単位）。
  * to(target, { preset, onEnd }) で目標へ向かう（動いている途中なら今の位置と速さから続ける）。
- * set(value) は動かさずに置く。stop() はその場で止める。finish() は目標へ飛ばして終える
+ * set(value) は動かさずに置く。stop() はその場で止める。finish() は目標へ飛ばして終える。
+ * onFail は、onUpdate・onEnd が投げてばねを外したとき（_fail）の後始末。動いている間だけ付けた印などを外す（既定は何もしない）
  */
-export function createSpring(value = 0, { preset = 'smooth', onUpdate = null, epsilon = 0.5 } = {}) {
+export function createSpring(value = 0, { preset = 'smooth', onUpdate = null, epsilon = 0.5, onFail = null } = {}) {
   let x = value, v = 0, target = value, x0 = 0, v0 = 0, t = 0, params = springPreset(preset), end = null, moving = false;
   const emit = () => { onUpdate?.(x); };
   const settle = () => {
@@ -130,6 +131,7 @@ export function createSpring(value = 0, { preset = 'smooth', onUpdate = null, ep
       live.delete(spring); moving = false; x = target; v = 0;
       const done = end; end = null;
       try { done?.(); } catch (error) { console.error('ばねの終わりの処理で例外が出ました', error); }
+      try { onFail?.(); } catch (error) { console.error('ばねの失敗の後始末で例外が出ました', error); }
     },
     _step(dt) {
       if (!moving) { live.delete(spring); return; }
