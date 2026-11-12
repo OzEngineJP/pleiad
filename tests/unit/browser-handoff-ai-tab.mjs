@@ -1,4 +1,4 @@
-// AI のタブを別に持ち、引き継ぐまで映像は見るだけ（ADR 0320。ADR 0296 の「映像に触れたら人の操作になる」「引き継ぐのボタンを置かない」の置き換え）:
+// AI のタブを別に持ち、引き継ぐまで映像は見るだけ（ADR 0321。ADR 0296 の「映像に触れたら人の操作になる」「引き継ぐのボタンを置かない」の置き換え）:
 //   - 中継: 人が開いたタブは AI のタブを替えない（attach・準備のコマンドでも）・AI が明示に操作したタブが AI のタブになる・閉じたら履歴の前の AI のタブへ戻る（popup は開いた元へ）
 //   - サーバー: 引き継ぐ前の AI のタブの映像への入力は 'view-only' で断り、人の操作に数えない・引き継いだあとは通る・人が開いたタブは今までどおり触れる
 //   - 画面の部品: 映像（見るだけの間は送らない）・行（<名前> が Chrome を操作中 [引き継ぐ]）・押したら強調
@@ -11,7 +11,7 @@ import { createScreencastInput } from '../../web/screencast-frame.mjs';
 import { N } from '../lib/dom-stub.mjs';
 
 export const name = 'browser-handoff-ai-tab';
-export const title = 'AI のタブを別に持つ・引き継ぐまで映像は見るだけ（ADR 0320）: 中継の今のタブ・サーバーの view-only・[引き継ぐ] の行・映像の封じ（偽の Chrome・DOM の代役）';
+export const title = 'AI のタブを別に持つ・引き継ぐまで映像は見るだけ（ADR 0321）: 中継の今のタブ・サーバーの view-only・[引き継ぐ] の行・映像の封じ（偽の Chrome・DOM の代役）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) { const end = Date.now() + ms; while (!(await check())) { if (Date.now() > end) return false; await sleep(10); } return true; }

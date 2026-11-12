@@ -276,7 +276,7 @@ export default async function (t) {
       const { targetId } = await opening;
       const target = r.fake.targets().find(x => x.targetId === targetId);
       t.ok('許可されると会話の窓に URL を開く', target?.url === 'https://a.example/', JSON.stringify(target));
-      t.ok('開いたタブを会話の範囲に入れる（映像が追う）。人が開いたタブは AI のタブにはしない（ADR 0320）', r.relay.view.tabs('fresh').some(x => x.targetId === targetId) && r.relay.view.shown('fresh') === targetId && r.relay.view.current('fresh') === null);
+      t.ok('開いたタブを会話の範囲に入れる（映像が追う）。人が開いたタブは AI のタブにはしない（ADR 0321）', r.relay.view.tabs('fresh').some(x => x.targetId === targetId) && r.relay.view.shown('fresh') === targetId && r.relay.view.current('fresh') === null);
       t.ok('窓は画面の外に隠す（エージェントの窓と同じ）', await until(() => concealed(r, targetId)));
       t.ok('ターンは始めない（エージェントには知らせない。状態は idle）', r.control.state('fresh').state === 'idle');
       const second = await r.relay.openForConversation('fresh', 'https://b.example/');

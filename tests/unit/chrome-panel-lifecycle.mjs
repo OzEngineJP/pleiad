@@ -78,7 +78,7 @@ export default async function (t) {
       t.ok('映像が止まったあとの open は、見直す', r.starts() === 2);
     }
 
-    // カードの「画面を開く」（openAiTab）: 人が選んでいたタブの固定を外し、AI のタブを映す（ADR 0320）
+    // カードの「画面を開く」（openAiTab）: 人が選んでいたタブの固定を外し、AI のタブを映す（ADR 0321）
     {
       const r = rig();
       r.windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });

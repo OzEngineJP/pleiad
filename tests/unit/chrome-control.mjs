@@ -161,7 +161,7 @@ export default async function (t) {
     } finally { await r.stop(); }
   }
 
-  // ===== 2b. 人が開いたタブがあっても、引き継ぎ（PC・この端末・画面）は AI のタブを対象にする（ADR 0320） =====
+  // ===== 2b. 人が開いたタブがあっても、引き継ぎ（PC・この端末・画面）は AI のタブを対象にする（ADR 0321） =====
   {
     const r = await rig();
     try {

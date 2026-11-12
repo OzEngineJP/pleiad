@@ -129,7 +129,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     stale.append(staleText);
     const pin = el('div', 'cp-pin'); pin.setAttribute('aria-hidden', 'true'); pin.append(pinIcon());
     const screen = el('div', 'cp-screen'); screen.tabIndex = 0; screen.setAttribute('role', 'img');
-    // 最初の絵が届くまでの骨組み（面 1 枚。既存の .history-line。ADR 0320）。待ちが 150ms を超えたら出す
+    // 最初の絵が届くまでの骨組み（面 1 枚。既存の .history-line。ADR 0321）。待ちが 150ms を超えたら出す
     const skeleton = el('div', 'cp-skeleton'); skeleton.hidden = true; skeleton.setAttribute('aria-hidden', 'true'); skeleton.append(el('span', 'history-line'));
     screen.append(img, ghost, skeleton, veil, lag, stale, pin);
     const empty = el('div', 'cp-empty'); empty.hidden = true;
@@ -155,7 +155,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     if (!inputOptions || unifiedInput || !parts) return;
     unifiedInput = createScreencastInput({ surface: parts.screen, img: parts.img, getFrame: () => parts.sink.frame, phone: inputOptions.phone(),
       showMenu: inputOptions.showMenu,
-      // AI のタブは引き継ぐまで見るだけ（web/browser-unify.mjs が決める。ADR 0320）
+      // AI のタブは引き継ぐまで見るだけ（web/browser-unify.mjs が決める。ADR 0321）
       viewOnly: () => inputOptions.viewOnly?.() === true, onBlocked: () => inputOptions.onBlocked?.(),
       send: input => {
         const id = sessionId;
@@ -448,7 +448,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     /** 待ちをやめる（固定に失敗した） */
     cancelFrameWait() { endFrameWait(); paint(); },
     /**
-     * その会話の AI のタブを映す（カードの「画面を開く」・「この端末で操作する」。ADR 0320）。開いて、前に選んだタブの固定を外し、
+     * その会話の AI のタブを映す（カードの「画面を開く」・「この端末で操作する」。ADR 0321）。開いて、前に選んだタブの固定を外し、
      * 映像が替わって最初の絵が届くまで骨組みを出す（待ちが 150ms を超えたら）。もう AI のタブを映しているなら待たない
      */
     openAiTab(id) {
@@ -583,7 +583,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
      * ページの大きさはこの箱にする（高さは窓の形で箱が決まるので、画面の高さから取る）
      */
     async measure(element = null, { target = null } = {}) {
-      if (target) this.openAiTab(target);   // カードの「この端末で操作する」は AI のタブを映す（ADR 0320）
+      if (target) this.openAiTab(target);   // カードの「この端末で操作する」は AI のタブを映す（ADR 0321）
       else if (!isOpen()) open(element, { target });
       if (!isOpen() || !parts) return null;
       await new Promise(resolve => requestAnimationFrame(() => resolve()));

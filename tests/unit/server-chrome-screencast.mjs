@@ -108,7 +108,7 @@ export default async function (t) {
     const frame = await until(() => remote.frames.find(f => f.kind === 'screencast' && f.type === 'frame'), 10000, 'frame');
     t.ok('フレームは source: chrome 付きで、見ている端末にだけ届く', frame.source === 'chrome' && frame.sessionId === id && !late.frames.some(f => f.kind === 'screencast') && !c.events.some(e => e.type === 'frame'));
     // 映像への入力は見ている端末から受ける（触れたタブは人の操作になる。ADR 0296 の 1）
-    // ただし AI のタブは引き継ぐ（chromeTakeOver by: screen）までは見るだけ。サーバーが 'view-only' で断る（ADR 0320）
+    // ただし AI のタブは引き継ぐ（chromeTakeOver by: screen）までは見るだけ。サーバーが 'view-only' で断る（ADR 0321）
     const refused = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
     t.ok('引き継ぐ前の AI のタブへの入力は view-only で断る', refused.ok === false && refused.code === 'view-only', JSON.stringify(refused));
     // 画面が映していたタブが今の AI のタブと違えば（入れ違い）、op は通るが引き継がない（ADR 0321）

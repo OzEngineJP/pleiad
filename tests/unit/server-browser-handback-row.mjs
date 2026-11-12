@@ -138,7 +138,7 @@ export default async function (t) {
         await c.cmd('browserScreencast', { sessionId: id, source: 'chrome', width: 400, height: 300, ...(phone ? { device: 'phone' } : {}) });
         await c.cmd('chromePinWindow', { sessionId: id, windowId: null, tabId: held });
         await until(() => chrome.browser.screencasting(held), 10000, 'screencasting');
-        // AI のタブの映像は見るだけ（ADR 0320）。[引き継ぐ]（chromeTakeOver by: screen）を押してから触れる
+        // AI のタブの映像は見るだけ（ADR 0321）。[引き継ぐ]（chromeTakeOver by: screen）を押してから触れる
         const refused = await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: held, input: { type: 'tap', x: 3, y: 3 } }).then(() => null, error => error?.code);
         t.ok(`${variant}: 引き継ぐ前の AI のタブの映像への入力はサーバーが断る`, refused === 'view-only', String(refused));
         await c.cmd('chromeTakeOver', { sessionId: id, by: 'screen', tabId: held });

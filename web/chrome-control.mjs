@@ -21,7 +21,7 @@ export function ensureBrowserControlStyles() {
 .b2-action:hover{background:var(--surface-2)}
 .b2-pause,.b2-grow,.b2-control .run{display:none}
 .b2-control[data-mode="ai"] .run{display:inline-grid;flex:none}
-/* Row while the AI tab is shown (ADR 0320): same height as the human row; the video stays view-only until the button is pressed */
+/* Row while the AI tab is shown (ADR 0321): same height as the human row; the video stays view-only until the button is pressed */
 .b2-action.primary{font-weight:600}
 .b2-action:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
 .b2-action.nudge{animation:b2-nudge .9s ease-out}
@@ -48,7 +48,7 @@ export function ensureBrowserControlStyles() {
 }
 
 /**
- * 映像の上の 1 行（アドレスバーのすぐ下）。2 つの形を、同じ高さで入れ替える（ADR 0320）:
+ * 映像の上の 1 行（アドレスバーのすぐ下）。2 つの形を、同じ高さで入れ替える（ADR 0321）:
  *  - mode 'ai': AI のタブを見ている間。「<名前> が Chrome を操作中 [引き継ぐ]」。映像は見るだけで、[引き継ぐ] を押すと触れる
  *  - mode 'human'（既定）: 人が操作している間。「あなたが操作中 [AI に戻す]」
  * 構成は「II か AI の印・文・押し広げ（.b2-grow）・ボタン」。PC は右寄せの小さな札、スマホはアドレスバーのすぐ下の 1 行（承認済み 2026-11-08・2026-11-12）。

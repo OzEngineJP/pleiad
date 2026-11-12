@@ -95,7 +95,7 @@ export function createChromeControl({ relay, os, now = Date.now, capture = null,
     for (const fn of [...listeners]) { try { fn(state); } catch (error) { log(`chrome-control: listener failed: ${error?.message ?? error}`); } }
   }
   const offChange = relay.onChange(publish);
-  /** カードのボタン（PC で操作する・この端末で操作する）の対象: AI のタブ。AI がまだどのタブも操作していないときだけ、窓の最初のタブ（ボタンが何も起こさず終わらないように。ADR 0320） */
+  /** カードのボタン（PC で操作する・この端末で操作する）の対象: AI のタブ。AI がまだどのタブも操作していないときだけ、窓の最初のタブ（ボタンが何も起こさず終わらないように。ADR 0321） */
   function handoverTab(sessionId) { return relay.view?.current?.(sessionId) ?? relay.view?.shown?.(sessionId) ?? null; }
 
   /** 更新で持ち越した「PC で操作する」の窓（見せている窓の印だけが carry に載る）のタブが分かったら、そのタブを人の操作に戻す */
@@ -193,7 +193,7 @@ export function createChromeControl({ relay, os, now = Date.now, capture = null,
   }
 
   /**
-   * 「引き継ぐ」（右の欄の行のボタン。ADR 0320）: AI のタブを、窓を出さずにその画面の人の操作にする（持ち手の touch）。
+   * 「引き継ぐ」（右の欄の行のボタン。ADR 0321）: AI のタブを、窓を出さずにその画面の人の操作にする（持ち手の touch）。
    * 映像は AI のタブの間は見るだけで、これを押すと触れる。スマホは映像の箱の大きさ（width・height・scale）を添える（無ければ大きさは変えない）
    * tabId は画面が映している AI のタブ。今の AI のタブと違えば（押す間に AI が別のタブへ移った・古い画面）、何も替えずに今の状態を返す（画面は描き直す。ADR 0321）
    */

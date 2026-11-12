@@ -381,7 +381,7 @@ export function createBrowserUnify(deps = {}) {
       const follow = target != null && target === chrome()?.screencastState?.agentTabId;
       const pin = follow ? { windowId:null, tabId:null } : { windowId:tab.windowId ?? null, tabId:target };
       beginLoad({ targetId:tab.targetId, chrome:target, follow });
-      chrome()?.expectFrame?.({ tabId:target, follow });   // 最初の絵が届くまでの骨組み（150ms を超えたら。ADR 0320）
+      chrome()?.expectFrame?.({ tabId:target, follow });   // 最初の絵が届くまでの骨組み（150ms を超えたら。ADR 0321）
       const pending = chrome()?.pinTab ? chrome().pinTab(selection.sessionId, pin) : cmd('chromePinWindow', { sessionId:selection.sessionId, ...pin });
       paint(); await pending;
     } catch (error) { if (active === selection) { clearLoading(); chrome()?.cancelFrameWait?.(); } pinFailed(error); }
@@ -420,7 +420,7 @@ export function createBrowserUnify(deps = {}) {
     if (tab.chromeUrl && tab.chromeUrl !== tab.url) { const moved = await chromeNavigate({ sessionId:session(), targetId:tab.chromeId, action:'navigate', input }); if (moved?.blocked) return; }
     tab.chromeUrl = tab.url; tab.mode = 'chrome'; await pick(tab);
   }
-  /** [引き継ぐ]: 映像の AI のタブを、窓を出さずにこの画面の人の操作にする。スマホは映像の箱の大きさを添える。押したら入力を映像へ移す（ADR 0320） */
+  /** [引き継ぐ]: 映像の AI のタブを、窓を出さずにこの画面の人の操作にする。スマホは映像の箱の大きさを添える。押したら入力を映像へ移す（ADR 0321） */
   async function takeOver() {
     const sessionId = session(); if (!sessionId) return;
     const size = phoneQuery.matches ? await chrome()?.measure?.().catch(() => null) : null;
@@ -436,7 +436,7 @@ export function createBrowserUnify(deps = {}) {
     const store = deps.controlStore?.get?.(sessionId)?.state ?? 'idle';
     const anyHuman = holderStore.anyHuman(sessionId);
     const held = tab ? holderOf(sessionId, tab.chromeId ?? tab.targetId) : { holder:'ai' };
-    // 映像に映っているのが AI のタブか。AI のタブは、人が引き継ぐ（持ち手が人になる）までは見るだけ（ADR 0320）。端末内のページを出している間は映像ではない
+    // 映像に映っているのが AI のタブか。AI のタブは、人が引き継ぐ（持ち手が人になる）までは見るだけ（ADR 0321）。端末内のページを出している間は映像ではない
     const page = Boolean(tab?.local && tab.mode !== 'chrome');
     const videoTab = page ? null : (live?.tabId ?? tab?.chromeId ?? tab?.targetId ?? null);
     const aiView = agentTab != null && videoTab === agentTab;
@@ -561,7 +561,7 @@ export function createBrowserUnify(deps = {}) {
     // 人が触っているタブは会話ごとに数える（anyHuman）。PC は別のタブを見ていても「AI に戻す」は消えない（ADR 0296）。
     // スマホは「II あなたが操作中 [AI に戻す]」を人のタブを開いている間だけ出す（一覧を開いている間も出さない。承認済み 2026-11-08）
     const shown = phoneQuery.matches ? (c.held.holder === 'human' && overview.hidden) : (c.anyHuman && c.store !== 'paused');
-    // AI のタブを見ている間は、「<名前> が Chrome を操作中 [引き継ぐ]」を出し続ける（ADR 0320。人が引き継ぐと、上の「あなたが操作中 [AI に戻す]」になる。同じ高さで入れ替わる）
+    // AI のタブを見ている間は、「<名前> が Chrome を操作中 [引き継ぐ]」を出し続ける（ADR 0321。人が引き継ぐと、上の「あなたが操作中 [AI に戻す]」になる。同じ高さで入れ替わる）
     if (c.viewOnly) badge?.update({ visible:overview.hidden, mode:'ai', name:deps.agentName?.(c.sessionId) || '' });
     else badge?.update({ visible:shown, mode:'human' });
     chrome()?.refreshInput?.();   // 見るだけの間は確認・ファイル選び・選択の窓を出さず、引き継いだら開いたままのものを出す（ADR 0321）
@@ -844,7 +844,7 @@ export function createBrowserUnify(deps = {}) {
         enabled = true; const style = document.createElement('style'); style.dataset.browserUnify = ''; style.textContent = css; document.head.append(style); document.body.classList.add('browser-unify');
         // 札は止める・任せるだけ（映像に触れるだけでは引き継がない。ADR 0296）
         badge = createControlBadge({ onResume:() => cmd('chromeResume', { sessionId:session() }).catch(failed), onTakeOver:takeOver });
-        // AI のタブの映像は引き継ぐまで見るだけ。触れたら [引き継ぐ] を強調する（ADR 0320）
+        // AI のタブの映像は引き継ぐまで見るだけ。触れたら [引き継ぐ] を強調する（ADR 0321）
         chrome()?.useInput?.({ phone:() => phoneQuery.matches, showMenu, viewOnly:() => control().viewOnly, onBlocked:() => badge?.nudge(), onRefused:tabId => refusedViewOnly(tabId ?? undefined) });
         chrome()?.onOpenChange(attach);
         // 開いたら中へフォーカスを移す: 新しいタブならアドレスバー、ほかは今のタブ（docs/design-system.md「会話の頭の行のアイコン」）。

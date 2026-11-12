@@ -87,7 +87,7 @@ export default async function (t) {
     const watch = await c.cmd('browserScreencast', { sessionId: id, source: 'chrome', width: 400, height: 300, device: 'phone' });
     t.ok('ホストの画面から映像を見始められる', typeof watch.tabId === 'string', JSON.stringify(watch));
     await until(() => chrome.browser.screencasting(first), 10000, 'screencasting');
-    // AI のタブの映像は見るだけ（ADR 0320）。[引き継ぐ]（chromeTakeOver by: screen。スマホは映像の箱の大きさを添える）を押してから触れる
+    // AI のタブの映像は見るだけ（ADR 0321）。[引き継ぐ]（chromeTakeOver by: screen。スマホは映像の箱の大きさを添える）を押してから触れる
     const refused = await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.tabId, input: { type: 'tap', x: 3, y: 3 } }).then(() => null, error => error?.code);
     t.ok('引き継ぐ前の AI のタブへの入力は断る（人の操作に数えない）', refused === 'view-only', String(refused));
     await c.cmd('chromeTakeOver', { sessionId: id, by: 'screen', tabId: watch.tabId, width: 400, height: 300, scale: 1 });

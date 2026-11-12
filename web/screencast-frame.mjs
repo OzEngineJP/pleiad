@@ -21,7 +21,7 @@ export function framesPerSecond(times, now) {
  * 選択のコピー・リンク・すべて選択をページの中身（Core の問い合わせ。読むだけ）で決める。
  * showMenu は web/client.mjs の右クリックメニュー、openLink はリンク先を開く頼み（Chrome のタブへ移す）。
  * viewOnly() が真の間（AI のタブ。引き継ぐまで）は、クリック・タップ・キー・ホイール・メニューをページへ送らず、人の操作にも数えない。
- * 触れたときは onBlocked() を呼ぶ（行の [引き継ぐ] を強調する）。拡大・移動（手元だけ）とカーソルの問い合わせは今までどおり（ADR 0320）。
+ * 触れたときは onBlocked() を呼ぶ（行の [引き継ぐ] を強調する）。拡大・移動（手元だけ）とカーソルの問い合わせは今までどおり（ADR 0321）。
  */
 export function createScreencastInput({ surface, img, getFrame, send = () => {}, phone = false, onError = () => {}, showMenu = null, openLink = null, viewOnly = () => false, onBlocked = () => {} }) {
   ensureBrowserControlStyles();

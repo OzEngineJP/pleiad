@@ -1,5 +1,5 @@
 // playwright-cli run-code --filename=tests/browser/browser-handoff-ai-tab.cjs
-// AI のタブの映像は、[引き継ぐ] を押すまで見るだけ（ADR 0320。実際の画面・web/browser-unify.mjs・web/chrome-panel.mjs・web/screencast-frame.mjs・web/chrome-control.mjs）:
+// AI のタブの映像は、[引き継ぐ] を押すまで見るだけ（ADR 0321。実際の画面・web/browser-unify.mjs・web/chrome-panel.mjs・web/screencast-frame.mjs・web/chrome-control.mjs）:
 //   映像の上の 1 行（<名前> が Chrome を操作中 [引き継ぐ]・role=status）・触っても何も送らず [引き継ぐ] を強調・Tab で [引き継ぐ] に届き Enter・Space で引き継げる（スマホの幅も外付けのキーボードで輪が出る）・
 //   引き継ぐと「あなたが操作中 [AI に戻す]」（同じ高さ）で映像が操作できる・人が開いたタブは引き継ぎなしで触れる・最初の絵が届くまでの骨組み（タブの列・スマホのタブ一覧・カードの「画面を開く」から）・スマホの 1 行。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (AGENT_HOST_LOCALE=ja). Never run against live data.
