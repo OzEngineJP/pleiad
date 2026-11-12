@@ -970,6 +970,17 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys{margin-bottom:8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .m.sys b{color:var(--ink);font-weight:500}
 .m.sys.turn-failed b{color:var(--ink-strong);font-weight:700}
+/* 安全装置によるモデルの切り替えの行（web/model-switch.mjs。承認済み 2026-11-13）。行の入口は .auth-fail .acts、開いた中身の字下げは .m.sys .sys-body に合わせる */
+.m.sys.model-switch{display:flex;flex-direction:column;gap:4px}
+.model-switch .sw-acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:calc(1em + 6px)}
+.model-switch .sw-acts.in-fold{margin-bottom:4px}
+.model-switch .sw-acts .btn{padding:2px 10px;font-size:var(--fs-xs)}
+.model-switch .sw-acts .btn.lnk{color:var(--ink-blue);margin-left:-10px}
+.model-switch .sw-acts .done{color:var(--ink)}
+.model-switch .sw-acts .done + .btn.lnk{margin-left:0}
+.model-switch .sw-acts [hidden]{display:none}
+.m.sys.turn-failed.model-switch .sw-acts{margin-left:0;margin-top:2px}
+.who .who-model{white-space:nowrap}
 /* ログインの期限切れの失敗（web/auth-expired.mjs。docs/design-system.md「ログインの期限切れ」）。1 行目は失敗の一文、2 行目に直す入口・待っている様子・済んだ */
 .m.sys.auth-fail{display:flex;flex-direction:column;gap:4px}
 .auth-fail .acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}

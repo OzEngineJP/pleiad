@@ -18,6 +18,8 @@
 //   "slow"         … 中断されるまで待つ
 //   "pre-hold:<ゲート>" … プロンプトを渡す前の接続・準備に当たる区間で、ゲートが開くまで待つ（Devin が session/prompt の前に待つ形）。
 //                    待っている間に中断されたら、渡さないまま（履歴にも残さず）aborted で終わる。ゲートが開けば普通に渡して返す
+//   "switch …" … 安全装置でモデルが切り替わった（modelSwitch: switched。Fable 5.2 → Opus 4.8）後、いつもの echo で返答する。
+//                    "switch-stop …" は切り替え先が無く応答が止まった形（modelSwitch: stopped）で、本文は返さずターンが終わる
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
 //   "fail-auth"    … ログインの期限切れ（401）で失敗する（Claude と同じ kind: 'auth'・pristine: true。ADR 0212）。
 //                    "fail-auth tool" はツールを 1 回動かしてから失敗する（pristine: false）
@@ -597,6 +599,13 @@ export const backend = {
         await say(emit, out.text, out.uuid);
         modelFailure = true;
         throw new Error(out.text);
+      } else if (!plain && /^switch(-stop)?(\s|$)/.test(text)) {
+        // 安全装置のモデルの切り替え（Claude の model_refusal_fallback / model_refusal_no_fallback と同じ中立の出来事）。画面の確認用
+        const stopped = text.startsWith("switch-stop");
+        const notice = "Fable 5.2 の応答が、安全のための仕組みで止まりました。";
+        emit(stopped ? { type: "modelSwitch", phase: "stopped", from: "claude-fable-5-2", notice }
+          : { type: "modelSwitch", phase: "switched", from: "claude-fable-5-2", to: "claude-opus-4-8", notice: notice + "Opus 4.8 で続けます。" });
+        if (stopped) { emit({ type: "turnResult", outcome: "ok" }); return { sessionId: id }; }
       } else if (!plain && text.startsWith("slow")) {
         // 中断できることを測るための台本。signal が来るまで終わらない
         if (SLOW_STEER && control) {

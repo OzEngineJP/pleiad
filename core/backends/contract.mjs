@@ -155,6 +155,8 @@ export const BACKEND_EVENTS = {
   'userMessage.dropped': { messageId: str },
   promptSuggestion: { text: str },
   hookRun: { phase: oneOf('started', 'response') },
+  // 安全装置でモデルが替わった（switched。to は替え先）/ 替え先が無く止まった（stopped）。from は止められたモデル
+  modelSwitch: { phase: oneOf('switched', 'stopped'), from: str, to: optional(str) },
   // 裏のコマンドの様子（server が委譲のタスクの見張りに使い、画面へは流さない）。id はツールの呼び出しの id で、無いこともある。
   // state はバックエンドの語彙（stopped / completed / unknown / background / running など）のまま
   'task.activity': {},

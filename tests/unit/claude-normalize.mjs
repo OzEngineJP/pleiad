@@ -7,7 +7,7 @@
 // フィクスチャは実際に流れてくる形をそのまま写している
 // （temporary/inv-agent-host.md §1.3 が実データから起こした表が元）。
 // ※ core/backends/claude-normalize.mjs を変えたら、ここも合わせて変えること。
-import { normalizeSdkMessage, transcriptToMessages, mergeQueuedCommands, subagentEntries } from "../../core/backends/claude-normalize.mjs";
+import { normalizeSdkMessage, transcriptSystemMarks, transcriptToMessages, mergeQueuedCommands, subagentEntries } from "../../core/backends/claude-normalize.mjs";
 
 export const name = "claude-normalize";
 export const title = "SDK メッセージが正規化イベントになる";
@@ -243,4 +243,18 @@ export default function (t) {
   t.ok("上限を超えたら依頼文と末尾を残す",
     subagentEntries(transcript, { limit: 2 }).map((e) => e.uuid).join(",") === "r1,r7");
   t.ok("空の transcript は空", subagentEntries("").length === 0 && subagentEntries(null).length === 0);
+
+  // ---- 安全装置のモデルの切り替え（model_refusal_fallback / model_refusal_no_fallback。承認済み 2026-11-13）
+  {
+    const sw = one({ type: "system", subtype: "model_refusal_fallback", original_model: "claude-fable-5-2", fallback_model: "claude-opus-4-8", api_refusal_category: "cyber", content: "通知の原文", uuid: "n1", session_id: "s1" });
+    t.ok("model_refusal_fallback が modelSwitch(switched) になる（元と先のモデル・通知の原文）",
+      sw.length === 1 && sw[0].type === "modelSwitch" && sw[0].phase === "switched" && sw[0].from === "claude-fable-5-2" && sw[0].to === "claude-opus-4-8" && sw[0].notice === "通知の原文", JSON.stringify(sw));
+    const st = one({ type: "system", subtype: "model_refusal_no_fallback", original_model: "claude-fable-5-2", uuid: "n2", session_id: "s1" });
+    t.ok("切り替え先が無い止まり（no_fallback）は modelSwitch(stopped)・to を持たない", st.length === 1 && st[0].phase === "stopped" && !("to" in st[0]), JSON.stringify(st));
+    t.ok("サブエージェント（scope: local）の切り替えは出さない", one({ type: "system", subtype: "model_refusal_fallback", scope: "local", original_model: "a", fallback_model: "b" }).length === 0);
+    const row = (o) => JSON.stringify({ type: "system", subtype: "model_refusal_fallback", uuid: "w1", timestamp: "2026-11-13T01:00:05.000Z", originalModel: "claude-fable-5-2", fallbackModel: "claude-opus-4-8", content: "原文", ...o });
+    const marks = transcriptSystemMarks(row({}) + "\n" + row({ uuid: "w2", isSidechain: true }));
+    t.ok("履歴の読み戻し: transcript の切り替えの行を印に集める（サイドチェーンは除く）",
+      marks.modelSwitches.length === 1 && marks.modelSwitches[0].from === "claude-fable-5-2" && marks.modelSwitches[0].to === "claude-opus-4-8" && marks.modelSwitches[0].notice === "原文", JSON.stringify(marks.modelSwitches));
+  }
 }

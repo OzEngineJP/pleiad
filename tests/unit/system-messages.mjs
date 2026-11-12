@@ -227,4 +227,17 @@ export default async function (t) {
       /kind:\s*'title'/.test(server) && /await backend\.titlePrompt\(/.test(server));
     t.ok("完了通知のライブのイベントは本文を載せる", /emit\(\{ type: 'taskNotice', text: /.test(server));
   }
+
+  // ---- 安全装置のモデルの切り替え（承認済み 2026-11-13）: 切り替えた所に行を入れ、続く返答に替わった先を付ける
+  {
+    const marks = { modelSwitches: [{ uuid: "w1", at: Date.parse("2026-11-13T01:00:30.000Z"), from: "claude-fable-5-2", to: "claude-opus-4-8", notice: "原文" }] };
+    const at = (m) => `2026-11-13T01:0${m}:00.000Z`;
+    const rows = [{ ...u("u1", "調べて", at(0)) }, { ...a("a1", "切り替わる前"), at: at(0) }, { ...a("a2", "切り替わった後"), at: at(1) }, { ...u("u2", "次", at(2)) }, { ...a("a3", "次の返答"), at: at(3) }];
+    const out = classifySystemMessages(rows, marks);
+    const i = out.findIndex((m) => m.kind === "modelSwitch");
+    t.ok("切り替えの行は、切り替えより後の時刻の最初の行の手前に入る（役割は system・通知の原文を持つ）",
+      i === 2 && out[i].role === "system" && out[i].phase === "switched" && out[i].to === "claude-opus-4-8" && out[i].notice === "原文" && !("uuid" in out[i]), JSON.stringify(out.map((m) => m.kind ?? m.role)));
+    t.ok("続く返答には switchedModel が付き、次の人の発言で切れる", out[3].switchedModel === "claude-opus-4-8" && !out[1].switchedModel && !out[5].switchedModel && !out[4].switchedModel, JSON.stringify(out.map((m) => m.switchedModel ?? null)));
+    t.ok("印が無ければ行を増やさない", classifySystemMessages(rows, { modelSwitches: [] }).length === rows.length);
+  }
 }

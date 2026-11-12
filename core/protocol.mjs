@@ -265,6 +265,8 @@ export const EVENTS = new Set([
   'taskInstruction',
   // { text, messageId? } 中断で止めたものを、このターンの発言の前に添えてエージェントへ伝えた（text は伝えた中身。docs/design.md「中断と再開」）
   'interruptionNote',
+  // { phase: 'switched'|'stopped', from, to?, category?, notice?, nativeId? } 安全装置でモデルが替わった（switched）/ 替え先が無く応答が止まった（stopped）。会話の中の位置はこの出来事の位置（承認済み 2026-11-13）
+  'modelSwitch',
   'usage', // { inputTokens?, outputTokens?, cachedTokens?, costUsd? } このターンの分（ターンの中では増えていき、最後の値が記録になる）。Claude は nativeSessionId と開始・終了時点の会話の累計 cumulativeStart / cumulativeEnd も付ける。分からない値は null か省略
   "outbox", "userMessage",
   // { messageId } 途中送信がエージェントに渡った（会話に入った）。渡るまでの表示を消す合図

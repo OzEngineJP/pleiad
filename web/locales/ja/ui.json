@@ -2281,6 +2281,16 @@
       "taskResultState": "委譲の結果（{{state}}）",
       "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
+      "modelSwitch": {
+        "first": "{{from}} の応答が安全装置で止まり、{{to}} に切り替わりました",
+        "later": "安全装置で {{to}} に切り替わりました · この会話で {{n}} 回目",
+        "use": "次のターンから {{to}} を使う",
+        "using": "次のターンから {{to}} を使います",
+        "undo": "取り消す",
+        "stoppedHead": "✕ 応答が止まりました",
+        "stopped": "{{from}} の安全装置が止め、ほかのモデルでのやり直しはありませんでした",
+        "retry": "モデルを選んで送り直す"
+      },
       "opResult": "操作の結果（{{state}}）",
       "opResults_other": "操作の結果（{{count}} 件）",
       "opState": {
@@ -3158,6 +3168,7 @@
       "notListed": "一覧にありません。Enter でこの ID をそのまま使います。",
       "noList": "一覧がありません。ID を入力してください。",
       "chipTitle": "{{label}}（エージェント・モデル・エフォート。次のターンから適用）",
+      "switchedTitle": "安全装置で {{model}} が答えています",
       "chipAria": "モデルとエフォート: {{label}}",
       "loading": "モデルの一覧を読み込んでいます",
       "loadingAria": "{{backend}} · モデルを読み込んでいます"

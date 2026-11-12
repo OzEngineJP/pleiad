@@ -2326,6 +2326,16 @@
       "taskResultState": "Delegation result ({{state}})",
       "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
+      "modelSwitch": {
+        "first": "{{from}}'s response was stopped by a safeguard and switched to {{to}}",
+        "later": "Switched to {{to}} by a safeguard · switch no. {{n}} in this conversation",
+        "use": "Use {{to}} from the next turn",
+        "using": "Using {{to}} from the next turn",
+        "undo": "Undo",
+        "stoppedHead": "✕ The response stopped",
+        "stopped": "{{from}}'s safeguard stopped it and no other model retried",
+        "retry": "Choose a model and resend"
+      },
       "opResult": "Operation result ({{state}})",
       "opResults_one": "Operation results ({{count}})",
       "opResults_other": "Operation results ({{count}})",
@@ -3240,6 +3250,7 @@
       "notListed": "Not in the list. Press Enter to use this ID as is.",
       "noList": "No list available. Enter an ID.",
       "chipTitle": "{{label}} (agent, model, effort; applies from the next turn)",
+      "switchedTitle": "{{model}} is answering because of a safeguard",
       "chipAria": "Model and effort: {{label}}",
       "loading": "Loading the model list",
       "loadingAria": "{{backend}} · loading models"

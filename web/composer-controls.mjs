@@ -26,6 +26,8 @@ const DEFAULT_TAG = () => t("chat.model.default");
 
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 const FOLDER_ADD = "M12 11v5M9.5 13.5h5";
+// 入れ替わりの印（⇄。安全装置でモデルが替わったとき）
+const SWITCH = ["M5 8.5h14M15.5 5l3.5 3.5-3.5 3.5", "M19 15.5H5M8.5 12L5 15.5 8.5 19"];
 const SHIELD = "M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z";
 // Bypass のときに盾と入れ替える ⚠ の線画（字には ⚠ を書かない。記号は 1 つ）
 const WARN = ["M12 3.5l9.5 16.5h-19z", "M12 10v4.5M12 17.2v.3"];
@@ -1113,6 +1115,18 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
         chips.model.querySelector(".caret")?.before(sep, mark);
       }
       markedMode = d.mode;
+    }
+    // 安全装置で別のモデルが答えているあいだ（承認済み 2026-11-13）。選んだモデルは残し、承認モードの印と同じ形で「⇄ 答えているモデル」を足す
+    if (d.switched?.label) {
+      const why = t("composer.model.switchedTitle", { model: d.switched.label });
+      chips.model.setAttribute("aria-label", `${chips.model.getAttribute("aria-label")} · ${why}`);
+      chips.model.title = `${chips.model.title} · ${why}`;
+      const mark = el("span", "mk sw");
+      mark.setAttribute("aria-hidden", "true");
+      mark.append(glyph(...SWITCH), el("span", "full", d.switched.label));
+      const sep = el("span", "dotsep", "·");
+      sep.setAttribute("aria-hidden", "true");
+      chips.model.querySelector(".caret")?.before(sep, mark);
     }
     // 開いている面も描き直す。触っていた部品へフォーカスを戻す（data-key で引き直す）。
     // 戻すときは面をスクロールさせない（開いたときに焦点を置いた上の行へ、なぞって下げた一覧が引き戻される）。

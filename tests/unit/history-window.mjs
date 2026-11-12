@@ -251,7 +251,7 @@ export default async function (t) {
     return { state, api: context.api, painted, idle, calls, drain };
   };
 
-  const roles = [["command", "user"], ["shell", "user"], ["compactSummary", null], ["interrupt", null], ["teammate", null], ["interruptionNote", null], ["channelEvent", null], ["contextNote", null]];
+  const roles = [["command", "user"], ["shell", "user"], ["compactSummary", null], ["interrupt", null], ["teammate", null], ["interruptionNote", null], ["modelSwitch", null], ["channelEvent", null], ["contextNote", null]];
   const probe = screen(conversation(4));
   t.ok("historyRole: コマンドと ! は人の行・ほかのシステム側の行は役割なし・ふつうの発言は role",
     roles.every(([kind, role]) => probe.api.historyRole({ kind, role: "assistant" }) === role)
