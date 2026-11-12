@@ -2864,6 +2864,7 @@
     "actionsFor": "{{name}} の操作",
     "currentActions": "このファイルの操作",
     "revealTitle": "この PC のエクスプローラーで、ファイルを選んだ状態で開きます",
+    "toastClose": "閉じる",
     "copiedPath": "パスをコピーしました",
     "copiedRelative": "相対パスをコピーしました",
     "copyPathFailed": "パスをコピーできませんでした",
