@@ -73,13 +73,29 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
 
   const atBottom = () => !replaying && log.scrollHeight - log.scrollTop - log.clientHeight < 40;
 
-  /** 会話の下端に付いていく（行が伸びて高さが変わる間も、読んでいた下端に居続ける） */
+  /**
+   * 会話の下端に付いていく（行が伸びて高さが変わる間も、読んでいた下端に居続ける）。
+   * 追従している間に利用者がスクロールし始めたら（ホイール・タッチ・キー）、重なって呼ばれた分も含めてやめる。
+   * 末尾へ戻れば（atBottom）次の出来事からまた付いていく。呼び出しが重なっても追従の繰り返しは 1 本、操作の見張りも 1 組で、終わったら外す
+   */
+  let following = null;
   function followBottom(ms = 320) {
     if (replaying) return;
     const end = performance.now() + ms;
-    const tick = () => {
+    if (following) {
+      following.end = Math.max(following.end, end);
       log.scrollTop = log.scrollHeight;
-      if (performance.now() < end) requestAnimationFrame(tick);
+      return;
+    }
+    const run = new AbortController();
+    const state = following = { end, run };
+    run.signal.addEventListener("abort", () => { if (following === state) following = null; });
+    for (const type of ["wheel", "touchstart", "keydown", "pointerdown"]) log.addEventListener(type, () => run.abort(), { signal: run.signal, passive: true });
+    const tick = () => {
+      if (run.signal.aborted) return;
+      log.scrollTop = log.scrollHeight;
+      if (performance.now() < state.end) requestAnimationFrame(tick);
+      else run.abort();
     };
     tick();
   }
@@ -815,6 +831,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     spineFrame = null;
     loads.cancel();
     settling?.abort();
+    following?.run.abort();
     historyPane.dispose();
     liveTurn.resetLiveTurn();
     liveTurn.runningTools.clear();
