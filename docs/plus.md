@@ -117,8 +117,9 @@
 
 ## キー無しの機能（仮想のキー `plus`）
 
-Pleiad Plus にログインしていれば、自分の OpenRouter のキーが無くても「委譲先の自動選択」と「音声通話」が動く。台帳（`core/api-keys.mjs`）に値を持たない仮想のキー `plus`（`{ id: 'plus', provider: 'plus', label: 'Pleiad Plus', virtual: true }`）がいて、`judge:routing` と `voice` にだけ選べる（ほかの使い道は `UNSUPPORTED_USE`）。削除・名前の変更・値の確認・probe の対象にはならない。
+Pleiad Plus にログインしていれば、自分の OpenRouter のキーが無くても「委譲先の自動選択」と「音声通話」が動く。台帳（`core/api-keys.mjs`）に値を持たない仮想のキー `plus`（`{ id: 'plus', provider: 'plus', label: 'Pleiad Plus', virtual: true }`）がいて、`judge:routing`・`voice`・`computer:decider`（wait_until の問い。2026-11-13）にだけ選べる（ほかの使い道は `UNSUPPORTED_USE`）。削除・名前の変更・値の確認・probe の対象にはならない。
 
+- `computer:decider` は自動では選ばない（`autoPlus` の対象は `judge:routing`・`voice` だけ。撮った画面を送る機能なので、人が選んだときだけ）。使えない理由（上限・ログインなし・Plus ではない・メンテナンス）は送る前に分かり、画面の差分だけで待って `unverified`・`plus_*` で返す。OpenRouter のキーへ自動では切り替えない（[docs/computer-use.md](computer-use.md)「`wait_until` の待ち方」）。
 - ログインしたとき、委譲先の自動選択と音声通話の**両方**が「使わない」なら、両方に `plus` を自動で選ぶ（`onChange` に `{ uses: ['judge:routing', 'voice'], autoPlus: true }`）。どちらかでもキーを選んでいれば何もしない。ログアウトしても選択は消さない。
 - 使う側は `apiKeys.useEndpoint(use)` が返す `{ kind, baseUrl, authorization }` で送る。`useKey` は `plus` に対して `null` を返し続ける（値が無いので）。`hasUse` は送り先があるときだけ true。
 - `kind: 'openrouter'`（自分のキー）: `baseUrl` は OpenRouter（`AGENT_HOST_OPENROUTER_API`・`AGENT_HOST_VOICE_API`）、`authorization` は `Bearer <キー>`。
@@ -145,7 +146,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - `signedIn: false`: 「ログインしていません · ログイン」（［ログイン］で `plusLogin`）。選べない
 - `account.status` が `free`・`disabled`: 「Pleiad Plus を使っていません」。選べない
 - ログイン中で `status` がまだ無い（アカウントを読んでいる）: 場所取り（`.rm-skel`、読み上げは「読み込んでいます」）。`reachable === false` なら「読み込めませんでした」。どちらも「使っていません」とは言わない。選べない（2026-10-21 承認）
-- `state` が `off`・`maintenance`、`available === false`、`AGENT_HOST_PLUS=0`: 行ごと出さない
+- `state` が `maintenance`: 行は出すが選べない（「メンテナンス中です」）。`state` が `off`・`available === false`・`AGENT_HOST_PLUS=0`: 行ごと出さない（`plusRowVisible`）
 - 選んだ印（`uses` の `plus`）は残し続ける。ログアウト・`free`・`disabled` になっても OpenRouter へすげ替えない（効き目は「キーが無い」と同じ — `endpointFor` が `null` を返す）
 - 通話の設定では、選んでいて `limitReached` のとき、行の下に「今月の Pleiad Plus の上限に達したため、通話を始められません。」と「アカウントを管理」（`profileUrl` を外へ開く）を出す。通話の画面でも、始める前・途中の `credit_exhausted` は同じ文言の通知で終わる（やり直さない・ほかへ送らない）。`not_plus`・`account_disabled` は「このアカウントでは公式の中継を使えません」
 

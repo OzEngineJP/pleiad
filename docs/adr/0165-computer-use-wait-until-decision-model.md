@@ -102,3 +102,9 @@ Studio Pro・Chrome・エクスプローラーの 42 場面を録画し（10 fps
 - `ply_computer` のツールが 1 つ増え、docs/computer-use.md のツールの表・エージェント向けの指示を直す。
 - 設定 › API キーの割り当てに `computer:decider` が増え、ADR 0155 の「使っている所」・削除の確認・差し替えの確かめ直しの対象になる。
 - 画面が外部へ送られる経路が 1 つ増える（キーを選んだ人だけ）。
+
+## 追記（2026-11-13）: Pleiad Plus の経路と「未確認」
+
+- `computer:decider` に Pleiad Plus を選べる（[ADR 0155](0155-api-keys-in-one-place.md) の追記）。Plus のときは中継 `POST <PLUS_API>/v1/proxy/openrouter/alpha/decisions` へ ID トークン付きで送る。応答の形（`answers.done.noul`）は OpenRouter と同じ。401 は ID トークンを取り直して 1 回だけ送り直し、`not_plus`・`account_disabled` はアカウントを読み直し、`credit_exhausted` は上限を覚えて次から送らない。
+- 送る前に使えないと分かるとき（上限・ログインなし・Plus ではない・メンテナンス）は画面を送らず、差分だけで待って `unverified`（`plus_credit` / `plus_logged_out` / `plus_not_plus` / `plus_maintenance`）で返す。途中で断られたら `error`。印の `wait` に `via: 'plus'`・`reset_at?` を足した。
+- 会話の行は、`error` と、`no_key`・`protected_app` 以外の `unverified` に弱い印「未確認」と理由の 1 文を出す。通知は出さない。
