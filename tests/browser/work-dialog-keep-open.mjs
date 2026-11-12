@@ -23,6 +23,22 @@ const work = path.join(base, 'work');
 fs.mkdirSync(work);
 const shots = process.env.WORK_DIALOG_KEEP_SHOTS;
 const ab = (...args) => execFileSync(process.env.AGENT_BROWSER_BIN || 'agent-browser', args, { encoding: 'utf8', timeout: 60_000 });
+
+// 利用者の実際のホイール（信頼された wheel。CDP の Input.dispatchMouseEvent）を、要素の中央に送る。
+// agent-browser の mouse wheel は座標を持てず (0,0) に届くので、会話の窓の CDP へ直に送る
+const cdpWheel = async (x, y, dy) => {
+  const ws = new WebSocket(ab('get', 'cdp-url').trim());
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  let id = 0; const pending = new Map();
+  ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && pending.has(d.id)) pending.get(d.id)(d); };
+  const send = (method, params, sessionId) => new Promise((res) => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params, sessionId })); });
+  try {
+    const t = (await send('Target.getTargets', {})).result.targetInfos.find(x => x.type === 'page' && x.url.includes(`127.0.0.1:${server.port}`));
+    const { sessionId } = (await send('Target.attachToTarget', { targetId: t.targetId, flatten: true })).result;
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId);
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy }, sessionId);
+  } finally { ws.close(); }
+};
 const evaluate = (fn, arg) => {
   const code = `(${fn.toString()})(${JSON.stringify(arg) ?? ''})`;
   return JSON.parse(ab('eval', '--json', '--base64', Buffer.from(code).toString('base64'))).data.result;
@@ -247,25 +263,31 @@ try {
   // ---- 3. 流れている間: 読み直しを数え、位置・開いたまとまり・フォーカスが変わらない ----
   const streamFrom = nowMs();
   const sample = [];
-  // 開いたまとまりに戻る位置を置き直す（承認のカードが消えて高さが変わった）
-  // 末尾に付いて流れていた間の追従（メインと同じ。事象のたびに 320ms、フレームごとに末尾へ合わせ直す）の最中に置くと、すぐ末尾へ戻される
-  // （メインも同じ。実測）。追従が動いていない間に置けば、置いたあとは末尾でないので追従は始まらず、位置は保たれる。置けるまで置き直す
-  let pinned;
-  for (let tries = 0; tries < 40; tries++) {
-    evaluate(() => { document.getElementById('workBody').scrollTop = 90; });
-    await sleep(150);
-    pinned = shape();
-    if (pinned.top === 90) { await sleep(450); pinned = shape(); if (pinned.top === 90) break; }
+  // 利用者が上へ読み戻る（本物のホイールを 3 回）。置くのは 1 回だけで、そのあとの位置が保たれるかを見る
+  const gap = () => evaluate(() => { const b = document.getElementById('workBody'); return Math.round(b.scrollHeight - b.clientHeight - b.scrollTop); });
+  const rect = evaluate(() => { const r = document.getElementById('workBody').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; });
+  for (let k = 0; k < 3; k++) await cdpWheel(rect.x, rect.y, -180);
+  await sleep(150);
+  const pinned = shape();
+  const gap1 = gap();
+  await sleep(450);
+  const pinned2 = shape();
+  const held = pinned.top === pinned2.top && gap1 > 40 && gap() > 40;
+  console.log(`wheel-up result (${live ? 'live' : 'reread'}): top ${pinned.top} -> ${pinned2.top}, gap to the end ${gap1} -> ${gap()}, held=${held}`);
+  if (live) {
+    // live: 主と同じ追従（followBottom の rAF の繰り返し）が、流れている間は位置を末尾へ戻す。位置は主と同じ挙動で、ここでは確かめず記録だけする
+    // （ADR 0319 段 6-6 の「追従」。旧モーダルは保った）
+    if (!held) console.log('KNOWN DIFFERENCE (live): the reading position is returned to the end by followBottom while the stream continues');
+  } else {
+    assert.ok(held, `reading position kept after the wheel-up: ${JSON.stringify({ pinned, pinned2 })}`);
   }
-  // live: 末尾に付いた追従は主と同じで、流れている間は位置を置いても末尾へ戻される。位置を保つ確かめは reread（追従が動かない）でだけ行う
-  if (!live) assert.equal(pinned.top, 90, 'reading position re-set');
   const keep = (x) => (live ? { expanded: x.expanded, detail: x.detail } : x);
   evaluate(() => document.querySelector('#workBody .bundle .rhead').focus({ preventScroll: true }));
   for (let i = 0; i < 3; i++) {
     await reread(`stream ${i}`);
     sample.push(shape());
     const focusKept = evaluate(() => document.activeElement === document.querySelector('#workBody .bundle .rhead'));
-    assert.deepEqual(keep(sample.at(-1)), keep(pinned), `round ${i}: still open${live ? '' : ' and at the same position'}`);
+    assert.deepEqual(keep(sample.at(-1)), keep(pinned2), `round ${i}: still open${live ? '' : ' and at the same position'}`);
     assert.ok(focusKept, `round ${i}: the focus stays on the bundle head`);
   }
   const reads = rereads(child.childId, streamFrom);
