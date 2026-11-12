@@ -1,6 +1,7 @@
 // playwright-cli run-code --filename=tests/browser/history-heights.cjs
 // 長い会話を広い窓（#log が会話の列 860px よりずっと広い）で開いたとき、仮の高さの発言を見ている所の近くだけ実寸に確定して
 // 落ち着いた後も末尾にいること、読み返している位置が動かないこと、遠い行は確定しないままなこと（web/history-heights.mjs）。
+// 開くのは末尾の窓だけなので、手前は目次を開いて全部読み足してから見る（ADR 0182）。
 // 作りものの画面での同じ確認は tests/unit/history-heights.mjs。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (token history-heights-test, port 7432). Never run against live data:
 //   node tests/browser/history-heights-seed.mjs <empty data dir> <cwd>
@@ -11,12 +12,27 @@ async (page) => {
   const results = [];
   const check = (ok, label) => { if (!ok) throw Error(label); results.push(label); };
   await page.setViewportSize({ width: 2560, height: 1300 });
+  // 会話は末尾の窓（既定 50 発言。ADR 0182）だけで開き、手前は上へ送るか、会話の中の検索（目次）を開いたときに読み足す。
+  // 読み足した手前の行も仮の高さで並ぶ。遠い行と読み返しを見るため、目次を開いて手前を全部（240 発言）読み足す。
+  // 読み足しは読んでいる位置を動かさない（末尾にいれば末尾のまま）
+  const loadAllOlder = async () => {
+    await page.locator('#tocEntry').click();
+    await page.waitForFunction(() => document.querySelectorAll('#thread > .mw').length > 200 && !document.querySelector('#thread > .older-load[aria-busy]'));
+  };
+  // 目次（右パネル）を閉じ、開閉のばねが止まるまで待つ
+  const closeToc = async () => {
+    await page.locator('#tocEntry').click();
+    await page.waitForFunction(() => document.querySelector('#tocEntry').getAttribute('aria-expanded') === 'false'
+      && !['file-preview-open', 'file-preview-moving', 'file-preview-leaving'].some(c => document.body.classList.contains(c)));
+  };
   const open = async () => {
     await page.goto(URL);
     await page.locator(`.row[data-session="${ID}"]`).waitFor();
     await page.evaluate(() => { for (const d of document.querySelectorAll('dialog[open]')) d.close(); });
     await page.locator(`.row[data-session="${ID}"]`).click();
-    await page.waitForFunction(() => document.querySelectorAll('#thread > .mw').length > 200);
+    await page.waitForFunction(() => document.querySelectorAll('#thread > .mw').length > 0);
+    await loadAllOlder();
+    await closeToc();
   };
   // 確定は近くだけで、遠い行は仮の高さのまま残る。確定した行数が 1.5 秒変わらなくなったら落ち着いたとみなす
   const settled = () => page.evaluate(() => { delete window.__settle; }).then(() => page.waitForFunction(() => {
@@ -39,7 +55,7 @@ async (page) => {
   const farRows = await unsettled();
   check(farRows > 100, `rows far from the view keep their placeholder height (${farRows} rows)`);
 
-  // 2. 開いた直後に読み返し始める（ホイールで見張りを止め、途中へ移る）。確定が済まないうちに見ている発言を控え、落ち着いた後も同じ位置にある。
+  // 2. 開いて手前を読み足した直後に読み返し始める（ホイールで見張りを止め、途中へ移る）。確定が済まないうちに見ている発言を控え、落ち着いた後も同じ位置にある。
   //    確定はすぐ進むので、描いた次のフレームの頭（確定を始める rAF より先に登録した rAF）で動く
   await page.goto(URL);
   await page.locator(`.row[data-session="${ID}"]`).waitFor();
@@ -64,6 +80,9 @@ async (page) => {
     requestAnimationFrame(watch);
   });
   await page.locator(`.row[data-session="${ID}"]`).click();
+  await page.waitForFunction(() => document.querySelectorAll('#thread > .mw').length > 0);
+  // 手前を全部読み足した次のフレームで読み返し始める（読み足した手前の行はまだ仮の高さ）。目次は開いたまま見る
+  await loadAllOlder();
   await page.waitForFunction(() => window.__readBack);
   const before = await page.evaluate(() => window.__readBack);
   await settled();
