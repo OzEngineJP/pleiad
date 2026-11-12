@@ -139,7 +139,8 @@ const css = `
 @media(prefers-reduced-motion:reduce){.bu-load{animation:none}}
 .cp-screen>.bu-page-host{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;z-index:5;background:var(--surface-paper)}
 @media(max-width:760px){.browser-unify #filePreview{padding:0;border-radius:0}.browser-unify #filePreview .file-preview-content{border-radius:0}}
-@media(max-width:600px){.bu-tabrow{display:none}.bu-toolbar{height:48px}.bu-overview{position:absolute;inset:0;max-height:none;z-index:40}}
+/* Phone: the tab list covers the whole panel, so the chrome row must not be its containing block (it is only 48px tall). */
+@media(max-width:600px){.bu-tabrow{display:none}.bu-toolbar{height:48px}.bu-chrome{position:static}.bu-overview{position:absolute;inset:0;max-height:none;z-index:40}}
 `;
 
 // i18n-dynamic: tabs:address.locations.
