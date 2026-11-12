@@ -21,7 +21,7 @@ export default async function (t) {
   // ---- 札: 窓の大きさが変わったら閉じるだけで、札に焦点を移さない（スマホではキーボードが開くと窓が縮み、ページの欄から焦点が外れてキーボードが閉じた）
   {
     const oldDoc = globalThis.document, oldWindow = globalThis.window, oldFocus = N.prototype.focus;
-    const doc = new N('document'); Object.assign(doc, { createElement: tag => new N(tag), getElementById: () => null, head: new N('head'), body: new N('body') });
+    const doc = new N('document'); Object.assign(doc, { createElement: tag => new N(tag), createElementNS: (_ns, tag) => new N(tag), getElementById: () => null, head: new N('head'), body: new N('body') });
     const win = new N('window');
     globalThis.document = doc; globalThis.window = win;
     N.prototype.focus = function () { doc.activeElement = this; };

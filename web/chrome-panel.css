@@ -36,6 +36,11 @@
 .cp-frame{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none;
   transition:opacity var(--dur) var(--ease-out)}
 .cp-frame:not([src]){visibility:hidden}
+/* 最初の絵が届くまでの骨組み（面 1 枚。入れるのは 240ms で溶かす。動きを減らす設定では --dur が 0） */
+.cp-skeleton{position:absolute;inset:0;z-index:1;animation:cp-sk-in var(--dur) var(--ease-out) both}
+.cp-skeleton[hidden]{display:none}
+.cp-skeleton .history-line{height:100%;border-radius:0}
+@keyframes cp-sk-in{from{opacity:0}}
 .cp-screen.ended .cp-frame{opacity:.45}
 /* 撮影を止めている間（あなたが操作中）の薄い幕 */
 .cp-veil{position:absolute;inset:0;display:grid;place-items:center;background:var(--surface-veil);color:var(--ink);

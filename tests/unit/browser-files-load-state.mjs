@@ -1,6 +1,7 @@
 // 右の欄の待っている間の見せ方（ADR 0320）を、実の web/browser-unify.mjs と DOM の代役で確かめる:
 //   60 秒の打ち切り（時間は差し替え）・打ち切りの後に遅れて届いた中身が失敗の文を外す・dispose・pleiad:page-state の扱い・
 //   描きかけのタブへ戻ったときの線と打ち切り・HTML の読み直しの線。
+//   Chrome の映像のタブ（ADR 0321 の最初の絵の骨組みと同じ待ち）: 絵で下ろす・映しているタブでは出さない・打ち切りの後に絵が届いても何も残らない。
 // 実ブラウザーでの見た目は tests/browser/browser-files-load.cjs（手元の確認）。
 import assert from 'node:assert/strict';
 import { N } from '../lib/dom-stub.mjs';
@@ -74,9 +75,10 @@ export default async function (t) {
   const env = browserEnv();
   const uis = [];
   try {
-    const rig = async (limit = LIMIT) => {
+    const rig = async (limit = LIMIT, extend = null) => {
       const opens = [];
       const box = pane('s1');
+      if (extend) Object.assign(box, extend(box));
       const commands = [];
       const ui = createBrowserUnify({
         state: { current: 's1', cwd: '/w' }, chrome: () => box, notify: () => {}, showMenu: () => {}, loadDelay: DELAY, loadLimit: limit,
@@ -256,6 +258,53 @@ export default async function (t) {
       await r.ui.navigate('navigate', { targetId: tab.targetId, input: '/w/second.md' });
       await until(() => r.failedShown(), 2000, '別のファイルへ替えた後の待ちも打ち切る');
       t.ok('同じタブで別のファイルへ替えて応答が無いときも、前の文書の「描き終えた」を引きずらず、打ち切りで失敗の文を出す', true);
+    }
+
+    // ---- 10. Chrome の映像のタブ（ADR 0321 の 6）: 骨組みと同じ判断で線を出し、二重の面や失敗の文を出さない ----
+    {
+      // 右の欄の代役に映像の面を足す: expectFrame は映しているタブなら false（絵は来ない）、ほかは骨組みの待ちを記録して true
+      const chromeBox = box => ({
+        scState: { tabId: 'shown', agentTabId: 'shown' }, waits: [], pins: [], listeners: [],
+        get screencastState() { return this.scState; },
+        expectFrame({ tabId, follow }) { this.waits.push({ tabId, follow }); return tabId !== this.scState.tabId; },
+        cancelFrameWait() { this.waits.push('cancel'); }, cancelTabPin() {},
+        async pinTab(sessionId, pin) { this.pins.push(pin); },
+        onTabChange(fn) { box.listeners.push(fn); },
+        frame(tabId) { for (const fn of box.listeners) fn({ type: 'frame', tabId }); },
+      });
+      const r = await rig(LIMIT, chromeBox);
+      for (const [targetId, title] of [['shown', '映している'], ['other', 'ほかのタブ']]) r.ui.onEvent({ type: 'tab:info', sessionId: 's1', targetId, windowId: 1, title, url: `https://${targetId}.example/` });
+      const pickChrome = title => { const button = r.ui.root.querySelectorAll('.bu-tab-pick').find(node => node.textContent.includes(title)); assert.ok(button, `タブの列に ${title}`); return button.onclick(); };
+
+      // a. 映していないタブ: 150ms を超えたら線（骨組みは映像の面が出す。端末内のページの面は出さない）、そのタブの絵で下ろす
+      await pickChrome('ほかのタブ');
+      assert.deepEqual(r.box.waits.at(-1), { tabId: 'other', follow: false }, '骨組みの待ちを映像の面へ頼む');
+      await until(() => r.lineShown(), 1000, 'Chrome のタブの線');
+      assert.equal(r.skShown(), false, '端末内のページの面（.bu-page-sk）は重ねない');
+      r.box.frame('shown');
+      assert.equal(r.lineShown(), true, '前のタブの絵では下ろさない');
+      r.box.frame('other');
+      assert.equal(r.lineShown(), false, '選んだタブの最初の絵で線を下ろす');
+      t.ok('Chrome のタブ: 待ちが 150ms を超えたら線、選んだタブの絵で下ろす（端末内の面は重ねない）', true);
+
+      // b. もう映しているタブを選び直した: 新しい絵は来ない（サーバーは同じタブへ付け直さない）ので、線を出さない
+      r.box.scState = { tabId: 'other', agentTabId: 'shown' };
+      await pickChrome('ほかのタブ');
+      assert.equal(r.box.waits.at(-1)?.tabId, 'other', '映像の面に聞く');
+      await sleep(DELAY * 4);
+      assert.equal(r.lineShown(), false, '映しているタブでは線を出さない（打ち切りまで残さない）');
+      t.ok('Chrome のタブ: もう映しているタブを選び直したら、骨組みと同じく線も出さない', true);
+
+      // c. 打ち切り: 絵が来ないまま上限を過ぎたら線を止め、失敗の文は出さない。その後に絵が届いても何も残らない
+      r.box.scState = { tabId: 'shown', agentTabId: 'shown' };
+      await pickChrome('ほかのタブ');
+      await until(() => r.lineShown(), 1000, '線');
+      await until(() => !r.lineShown(), 2000, '打ち切りで線を止める');
+      assert.equal(r.failedShown(), false, 'Chrome のタブには失敗の文を出さない（打ち切りは最初の読み込みの端末内のページだけ）');
+      r.box.frame('other');
+      assert.equal(r.lineShown(), false, '打ち切りの後に絵が届いても、線は出し直さない');
+      assert.equal(r.failedShown(), false, '打ち切りの後に絵が届いても、失敗の文は残らない');
+      t.ok('Chrome のタブ: 打ち切りで線を止め、失敗の文は出さず、遅れて届いた絵の後も何も残らない', true);
     }
   } finally {
     for (const ui of uis) ui.dispose();

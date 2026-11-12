@@ -33,6 +33,10 @@ const RESIZE_STEP = 24;
 /** 映すウィンドウ・会話が替わるときの溶かす長さ（--dur と同じ）と、見ているウィンドウが閉じたあと戻るまで */
 const FADE_MS = 240;
 const HOLD_MS = 1000;
+/** タブを替えてから、最初の絵が届かないまま骨組みを出すまで */
+const SKELETON_DELAY_MS = 150;
+/** 骨組みを出し続ける上限（絵が届かなかったときに残さない）。右の欄の読み込み線の打ち切りと同じ 60 秒（ADR 0320 の 3） */
+const SKELETON_MAX_MS = 60000;
 
 /** 会話の Chrome の窓の知らせ（サーバーの chromeWindow イベント）を会話ごとに覚える。入口の表示と弧が読む */
 export function createWindowTable() {
@@ -98,6 +102,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
   let watchGeneration = 0, pinGeneration = 0, stateVersion = 0;
   let pendingTab = null, pinRequest = null, targetListeners = new Set();   // 開始待ちのタブと、送信後の完了待ちを分ける
   const inFlightPins = new Set();
+  let frameWait = null, skeletonTimer = 0;   // frameWait: タブを替えた後、そのタブの最初の絵を待っている（{ sessionId, tabId, follow, timer }）
   let opener = null, openListeners = new Set(), notifyOpenChange = open => { for (const fn of openListeners) { try { fn(open); } catch {} } }, hold = null, holdTimer = 0, fadeTimer = 0, fadePending = false, lastShown;   // hold: 閉じたウィンドウを薄くして残している間
 
   function build() {
@@ -124,7 +129,9 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     stale.append(staleText);
     const pin = el('div', 'cp-pin'); pin.setAttribute('aria-hidden', 'true'); pin.append(pinIcon());
     const screen = el('div', 'cp-screen'); screen.tabIndex = 0; screen.setAttribute('role', 'img');
-    screen.append(img, ghost, veil, lag, stale, pin);
+    // 最初の絵が届くまでの骨組み（面 1 枚。既存の .history-line。ADR 0321）。待ちが 150ms を超えたら出す
+    const skeleton = el('div', 'cp-skeleton'); skeleton.hidden = true; skeleton.setAttribute('aria-hidden', 'true'); skeleton.append(el('span', 'history-line'));
+    screen.append(img, ghost, skeleton, veil, lag, stale, pin);
     const empty = el('div', 'cp-empty'); empty.hidden = true;
     // 第 10 段のプロフィール pill をここへ差し込む。空の間は幅を取らない。
     const profileSlot = el('div', 'cp-profile-slot'); profileSlot.dataset.slot = 'chrome-profile';
@@ -139,7 +146,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
       const w = Number(metadata?.deviceWidth), h = Number(metadata?.deviceHeight);
       if (w > 0 && h > 0) { const ratio = `${Math.round(w)} / ${Math.round(h)}`; if (screen.style.aspectRatio !== ratio) screen.style.aspectRatio = ratio; }
     };
-    return { node, profileSlot, screen, img, ghost, veil, veilText, here, empty, sink, fit, lag, stale };
+    return { node, profileSlot, screen, img, ghost, skeleton, veil, veilText, here, empty, sink, fit, lag, stale };
   }
 
   const isOpen = () => preview.panelOpen(KEY);
@@ -148,10 +155,14 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     if (!inputOptions || unifiedInput || !parts) return;
     unifiedInput = createScreencastInput({ surface: parts.screen, img: parts.img, getFrame: () => parts.sink.frame, phone: inputOptions.phone(),
       showMenu: inputOptions.showMenu,
+      // AI のタブは引き継ぐまで見るだけ（web/browser-unify.mjs が決める。ADR 0321）
+      viewOnly: () => inputOptions.viewOnly?.() === true, onBlocked: () => inputOptions.onBlocked?.(),
       send: input => {
         const id = sessionId;
         if (!id || ended) return Promise.reject(new Error(t('browser.chromeWindow.inputFailed')));
-        return cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: state?.tabId ?? undefined, input });
+        // サーバーが「見るだけ」と断った（引き継ぎ・AI への返しが入れ違った）ときは、エラーにせず [引き継ぐ] を強調するだけ
+        return cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: state?.tabId ?? undefined, input })
+          .catch(error => { if (error?.code === 'view-only') { if (inputOptions.onRefused) inputOptions.onRefused(state?.tabId ?? null); else inputOptions.onBlocked?.(); return null; } throw error; });
       },
       openLink: url => {
         const id = sessionId;
@@ -181,7 +192,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     pagePaused = false;   // 新しい会話の映像は受ける（端末内のページを置くなら browser-unify がまた mountPage する）
     startFade();   // 前の絵を重ね、新しい会話の絵が来たら溶かす
     clearTimeout(holdTimer);
-    hold = null; lastShown = undefined;
+    hold = null; lastShown = undefined; endFrameWait();
     sessionId = id; state = null; frameMeta = null; ended = false;
     parts.sink.reset(); unifiedInput?.reset();
     connecting = !pagePaused && windows.has(id);
@@ -220,8 +231,19 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     holdTimer = setTimeout(() => { hold = null; if (parts) paint(); }, HOLD_MS);
   }
 
+  /** 骨組みを出し入れする。待ちが 150ms を超えたときだけ出す（すぐ絵が届けば出さない。溶かして入れるのは CSS の 240ms） */
+  function setSkeleton(on) {
+    if (!parts) return;
+    if (!on) { clearTimeout(skeletonTimer); skeletonTimer = 0; parts.skeleton.hidden = true; return; }
+    if (skeletonTimer || !parts.skeleton.hidden) return;
+    skeletonTimer = setTimeout(() => { skeletonTimer = 0; if (parts) parts.skeleton.hidden = false; }, SKELETON_DELAY_MS);
+  }
+  function endFrameWait() { if (frameWait) { clearTimeout(frameWait.timer); frameWait = null; } }
+  const waitingFirstFrame = () => Boolean(sessionId) && !ended && !hold && !('localPage' in (parts?.screen.dataset ?? {})) && windows.has(sessionId) && !parts?.sink.frame;
+
   function paint() {
     if (!parts) return;
+    setSkeleton(isOpen() && !pagePaused && (frameWait !== null || waitingFirstFrame()));
     // 右の欄の映像は、そのまま触れる（誰が操作中かはアドレスバーの札が示す）
     parts.screen.setAttribute('aria-label', t('browser.chromeWindow.screenUnified'));
     parts.veil.hidden = !state?.suspended || ended;
@@ -292,6 +314,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     }).catch(error => {
       if (!currentPin(pin)) return;
       pinRequest = null;
+      endFrameWait();
       for (const listener of tabListeners) listener({ type:'pin-failed', sessionId:id, tabId });
       announceState();
       paint();
@@ -337,7 +360,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     observer?.disconnect(); observer = null;
     clearTimeout(resizeTimer); clearTimeout(holdTimer);
     hold = null; lastShown = undefined;
-    endFade();
+    endFade(); endFrameWait(); setSkeleton(false);
     if (sessionId && !pagePaused) cmd('browserScreencastStop', { sessionId, source: 'chrome' }).catch(() => {});
     sessionId = null; owner = null; state = null; frameMeta = null; ended = false; connecting = false; lastBox = null; pagePaused = false; pendingTab = null;
     // 映像の最後のコマは消さない（閉じる動きの間もパネルに残す。開くときは show が消す）
@@ -411,7 +434,33 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
       return Promise.resolve();
     },
     /** 端末内のタブを選び直したら、映像の開始待ちの選択を取り消す。 */
-    cancelTabPin() { pendingTab = null; pinRequest = null; pinGeneration++; },
+    cancelTabPin() { pendingTab = null; pinRequest = null; pinGeneration++; endFrameWait(); },
+    /**
+     * 映すタブを替えた（タブの列・「画面を開く」）。そのタブの最初の絵が届くまで、待ちが 150ms を超えたら骨組みを出す。
+     * 映しているタブをもう一度選んだ（絵は来ない）ときは待たない。follow: AI のタブを追っている（AI が移れば待つタブも移る）。
+     * 返り値: そのタブの絵をもう映していて、新しい絵が来ないときだけ false（右の欄の読み込み線も出さない。サーバーは同じタブへ付け直さない）
+     */
+    expectFrame({ tabId = null, follow = false } = {}) {
+      endFrameWait();
+      const showing = isOpen() && !!sessionId && !pagePaused && tabId != null && tabId === state?.tabId && !!parts?.sink.frame;
+      if (!isOpen() || !sessionId || pagePaused || (tabId != null && tabId === state?.tabId)) { paint(); return !showing; }
+      frameWait = { sessionId, tabId, follow, timer: setTimeout(() => { frameWait = null; paint(); }, SKELETON_MAX_MS) };
+      paint(); return true;
+    },
+    /** 待ちをやめる（固定に失敗した） */
+    cancelFrameWait() { endFrameWait(); paint(); },
+    /**
+     * その会話の AI のタブを映す（カードの「画面を開く」・「この端末で操作する」。ADR 0321）。開いて、前に選んだタブの固定を外し、
+     * 映像が替わって最初の絵が届くまで骨組みを出す（待ちが 150ms を超えたら）。もう AI のタブを映しているなら待たない
+     */
+    openAiTab(id) {
+      if (!isOpen() || (id && id !== sessionId)) open(null, { target: id });
+      if (!isOpen() || !sessionId) return Promise.resolve();
+      const unpin = this.pinTab(sessionId, { windowId: null, tabId: null });
+      const agentTab = state?.agentTabId ?? null;
+      if (pendingTab || state?.pinnedTabId != null || state?.pinnedWindowId != null || state?.tabId !== agentTab) this.expectFrame({ tabId: agentTab, follow: true });
+      return unpin;
+    },
     /** タブ列とアドレスバーを映像の上へ置き、状態表示の挿入口をバーへ移す。 */
     mountBrowserChrome(node) {
       if (!parts) { parts = build(); root = parts.node; }
@@ -432,8 +481,12 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     get screencastState() { return state; },
     /** 見ているウィンドウが閉じて薄く残している間の情報（{ windowId, number, index }。上の列の幽霊チップ） */
     get hold() { return hold; },
-    /** 映像からの入力を使う（{ phone: () => スマホか }） */
+    /** 引き継いだら映像へ入力を移す（Tab・キーがそのまま映像へ届く） */
+    focusScreen() { parts?.screen.focus?.({ preventScroll: true }); },
+    /** 映像からの入力を使う（{ phone: () => スマホか, showMenu, viewOnly: () => 見るだけか, onBlocked: () => 見るだけの映像に触れた, onRefused: tabId => サーバーが見るだけで断った }） */
     useInput(options) { if (inputOptions) return; inputOptions = options; ensureInput(); },
+    /** 見るだけかが替わった: 確認・ファイル選び・選択の窓を出す／隠す（web/phone-input.mjs の refresh） */
+    refreshInput() { unifiedInput?.refresh?.(); },
     onTabChange(fn) { tabListeners.add(fn); },
     /** 映像の上に重ねる層（web/chrome-control.mjs の overlay）。映像の箱（position: relative）の中へ置く。null で外す */
     mountOverlay(node) {
@@ -511,7 +564,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
         // 閉じたウィンドウを薄く残している間は、新しい絵を映さない（届いたことだけ返して、次を止めない）
         cmd('browserScreencastAck', { sessionId, source: 'chrome', seq: message.seq }).catch(() => {});
       }
-      else if (message.type === 'frame' && typeof message.data === 'string') { fadeOutGhost(); frameMeta = message.metadata ?? null; parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); for (const listener of tabListeners) listener({ type:'frame', tabId: message.tabId }); }
+      else if (message.type === 'frame' && typeof message.data === 'string') { if (frameWait && frameWait.sessionId === sessionId && (message.tabId == null || message.tabId === frameWait.tabId)) endFrameWait(); fadeOutGhost(); frameMeta = message.metadata ?? null; parts.fit(message.metadata); parts.sink.push(message); ended = false; connecting = false; paint(); for (const listener of tabListeners) listener({ type:'frame', tabId: message.tabId }); }
       else if (message.type === 'mark') parts.sink.push(message);
       else if (message.type === 'video') { video = { lag: message.lag === true, stale: message.stale === true }; paint(); }
       else if (message.type === 'interaction') {
@@ -521,6 +574,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
       }
       else if (message.type === 'state') {
         if (!acceptState(message.state)) return;
+        if (frameWait?.follow && message.state?.agentTabId != null) frameWait.tabId = message.state.agentTabId;   // 追っている途中で AI が別のタブへ移った
         announceState();
         paint();
       }
@@ -531,7 +585,8 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
      * ページの大きさはこの箱にする（高さは窓の形で箱が決まるので、画面の高さから取る）
      */
     async measure(element = null, { target = null } = {}) {
-      if (!isOpen() || (target && target !== sessionId)) open(element, { target });
+      if (target) this.openAiTab(target);   // カードの「この端末で操作する」は AI のタブを映す（ADR 0321）
+      else if (!isOpen()) open(element, { target });
       if (!isOpen() || !parts) return null;
       await new Promise(resolve => requestAnimationFrame(() => resolve()));
       const box = parts.screen.getBoundingClientRect();

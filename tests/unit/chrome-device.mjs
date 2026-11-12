@@ -117,7 +117,7 @@ export default async function (t) {
       const other = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
       const sid = (await a.cmd('Target.attachToTarget', { targetId: tab, flatten: true })).result.sessionId;
       const sidOther = (await a.cmd('Target.attachToTarget', { targetId: other, flatten: true })).result.sessionId;
-      await a.cmd('Page.getFrameTree', {}, sid);   // 今のタブを 1 つ目に戻す
+      await a.cmd('Runtime.evaluate', { expression: '1' }, sid);   // 今のタブ（AI のタブ）を 1 つ目に戻す（準備の getFrameTree では移らない。ADR 0321）
       await until(() => r.relay.view.current('one') === tab);
       // AI が自分でページの大きさを決めた（agent-browser の set viewport。中継のセッション経由）
       const windowId = r.fake.targets().find(x => x.targetId === tab)?.windowId;
@@ -276,11 +276,11 @@ export default async function (t) {
       const { targetId } = await opening;
       const target = r.fake.targets().find(x => x.targetId === targetId);
       t.ok('許可されると会話の窓に URL を開く', target?.url === 'https://a.example/', JSON.stringify(target));
-      t.ok('開いたタブを会話の範囲に入れ、今のタブにする（映像が追う）', r.relay.view.tabs('fresh').some(x => x.targetId === targetId) && r.relay.view.current('fresh') === targetId);
+      t.ok('開いたタブを会話の範囲に入れる（映像が追う）。人が開いたタブは AI のタブにはしない（ADR 0321）', r.relay.view.tabs('fresh').some(x => x.targetId === targetId) && r.relay.view.shown('fresh') === targetId && r.relay.view.current('fresh') === null);
       t.ok('窓は画面の外に隠す（エージェントの窓と同じ）', await until(() => concealed(r, targetId)));
       t.ok('ターンは始めない（エージェントには知らせない。状態は idle）', r.control.state('fresh').state === 'idle');
       const second = await r.relay.openForConversation('fresh', 'https://b.example/');
-      t.ok('つながっていれば待たずに同じ会話の範囲へ開く', second.targetId !== targetId && r.relay.view.tabs('fresh').length === 2 && r.relay.view.current('fresh') === second.targetId);
+      t.ok('つながっていれば待たずに同じ会話の範囲へ開く', second.targetId !== targetId && r.relay.view.tabs('fresh').length === 2 && r.relay.view.current('fresh') === null);
     } finally { await r.stop(); }
   }
   {

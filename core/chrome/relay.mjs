@@ -27,7 +27,7 @@
 //     agent-browser は --pin-tab で消えたタブに縛られたまま、次の open からも tab_gone で断り続ける。聞き手（core/agent-browser.mjs）が縛りの記録を消して true を返したら、
 //     中継はエージェントの接続を切る。デーモンはつなぎ直すときに記録を読み直し、縛りが無ければ新しいタブ（新しい専用窓）を作る。
 //     縛りの無いエージェントの接続は切らない（次の createTarget で黙って窓を開き直す。ADR 0154）
-// 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・エージェントが最後に触れたタブ（「今のタブ」）・
+// 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・AI のタブ（view.current。エージェントが CLAIMS のコマンドで操作したタブの履歴の、残っている一番新しいもの。ADR 0321）・
 // タブの題（右パネルのタブの列。見ている端末にだけ送る）・操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
 // ブラウザーの一本化（ADR 0294〜0297）の口: 移動の検査とコマンドの前後のふるい（page-policy.mjs）・操作の前の門（tab-holder.mjs）・
 // タブの情報（tab-info.mjs）・ページからの頼み（page-bridge.mjs）。出来事は onTabEvent(fn) に 1 本で出す（TAB_EVENTS）。setPagePorts でサーバーの port を受ける
@@ -59,6 +59,24 @@ const OPERATES = /^(Input\.|Runtime\.(evaluate|callFunctionOn)$|Page\.(navigate|
  * ほかのコマンドは全部、印を付ける（DOM の書き換え・runScript・Debugger などでも移動はできるため。ターンの終わりで外れる）
  */
 const PASSIVE = /(\.enable|\.disable)$|^(Runtime\.runIfWaitingForDebugger|Target\.setAutoAttach)$/;
+/**
+ * AI のタブ（映像が追い、人が引き継ぐ対象。ADR 0321）を、そのタブへ移すコマンドの許可の一覧。ここに無いコマンドでは AI のタブは移らない。
+ * 理由: agent-browser は、範囲に入ったタブ（人が開いたタブ・持ち越して戻したタブも）に自分から Target.attachToTarget し、
+ * 続けて準備のコマンド（runIfWaitingForDebugger・各 enable・setAutoAttach・Page.getFrameTree）を送る（実測 2026-11-12、agent-browser 0.38.1）。
+ * それを数えると、人がタブを開いた瞬間や、つなぎ直したときに AI のタブが勝手に移る。数えるのは、エージェントがそのタブを相手に選んだと分かるものだけ:
+ * - 操作（入力・スクリプト・移動）: Input.*、Runtime.evaluate / callFunctionOn、Page.navigate / reload / navigateToHistoryEntry など
+ * - 明示の切り替え: Page.bringToFront（agent-browser の tab の切り替え）。ブラウザーの単位の Target.activateTarget は browserCommand で数える
+ * - ページを読む・撮る: 読み上げの木（snapshot）・画面の撮影・PDF・ダイアログへの答え・DOM を探す・書き換える
+ */
+const CLAIMS = new RegExp('^(' + [
+  'Input\\.[A-Za-z]+',
+  'Runtime\\.(evaluate|callFunctionOn|compileScript|runScript)',
+  'Page\\.(navigate|reload|navigateToHistoryEntry|bringToFront|captureScreenshot|printToPDF|handleJavaScriptDialog|stopLoading|setDocumentContent)',
+  'Accessibility\\.(getFullAXTree|getPartialAXTree|queryAXTree|getRootAXNode|getChildAXNodes)',
+  'DOM\\.(getDocument|querySelector|querySelectorAll|getOuterHTML|describeNode|resolveNode|getBoxModel|getContentQuads|performSearch|focus|scrollIntoViewIfNeeded|setFileInputFiles|setAttributeValue|setAttributesAsText|setOuterHTML|setNodeValue|removeNode)',
+].join('|') + ')$');
+/** AI のタブの履歴（新しい順）と、人が開いたタブの印を持ち越す数の上限（閉じたタブは外すので、ふつうは窓のタブの数より少ない） */
+const AI_HISTORY_MAX = 20;
 /** 中継の口が使う binding の名前（page-bridge.mjs の plyPage・input.mjs の plyInput）。エージェントには足させない・外させない */
 const RESERVED_BINDINGS = new Set(['plyPage', 'plyInput']);
 /** 確認のセッションとその子の iframe に付ける自動 attach（子は止めたまま付き、Fetch を付けてから走らせる） */
@@ -201,7 +219,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       v: 1,
       port: address?.port ?? null,
       chrome: chromeId,
-      entries: [...entries.values()].map(entry => ({ id: entry.id, key: entry.key, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastUsedAt: entry.lastUsedAt ?? null })),
+      entries: [...entries.values()].map(entry => ({ id: entry.id, key: entry.key, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastUsedAt: entry.lastUsedAt ?? null,
+        ...(entry.ai.length ? { ai: [...entry.ai] } : {}), ...(entry.human.size ? { human: [...entry.human] } : {}) })),
       windows,
     };
     const extra = carryExtra?.snapshot?.();
@@ -222,6 +241,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     if (v && [v.width, v.height, v.scale].every(n => Number.isFinite(n) && n > 0 && n <= 10_000)) mark.viewport = { width: v.width, height: v.height, scale: v.scale };
     return mark;
   };
+  /** carry のタブの id の列を戻す（字の id だけ・重ねない・上限まで） */
+  const carriedIds = list => (Array.isArray(list) ? [...new Set(list.filter(id => typeof id === 'string' && id && id.length <= 100))].slice(0, AI_HISTORY_MAX) : []);
   /** 持ち越す状態が変わった。聞き手（server.mjs → link.setCarry。200 ms でまとめる）へ今の状態を渡す */
   let lastCarry = '', lastMarks = '';
   function carryChanged() {
@@ -282,8 +303,14 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       // Chrome は、すでに発見中の接続（更新を越えて接続の子が持ち続ける接続）への setDiscoverTargets では既存のタブの targetCreated を送り直さない（実機）。
       // 持ち越した窓のタブは、今あるタブを自分で引いて会話の範囲に戻す（イベントが来ても state.tabs で重ならない）
       if (state.windows.size) {
-        const { targetInfos = [] } = await cdp.send('Target.getTargets').catch(() => ({}));
+        const listed = await cdp.send('Target.getTargets').catch(() => null);
+        const targetInfos = Array.isArray(listed?.targetInfos) ? listed.targetInfos : [];
         await Promise.all(targetInfos.filter(info => info?.type === 'page').map(info => onTargetCreated(state, info).catch(() => {})));
+        // 持ち越した AI のタブの履歴・人の印から、この Chrome にもう無いタブ（居ない間に閉じた）を除く。一覧を引けなかったときは除かない（ADR 0321）
+        if (listed) {
+          const alive = new Set(targetInfos.map(info => info?.targetId));
+          for (const entry of entries.values()) for (const id of [...entry.ai, ...entry.human]) if (!alive.has(id)) forgetTab(entry, id);
+        }
       }
       if (orphans.size) { const ids = new Set(orphans); orphans.clear(); closeWindowTabs(state, ids).catch(() => {}); }
       return state;
@@ -330,6 +357,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     scope.reset?.();
     for (const entry of entries.values()) {
       entry.windows.clear();
+      entry.ai = []; entry.human.clear();   // 別の Chrome: 覚えたタブの id は、もう何も指さない
       if (entry.paused) { entry.paused = null; changed(entry); }   // 引き継ぎ中の窓ももう無い
     }
   }
@@ -345,6 +373,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (!closed) fire(lostListeners, entry.id);   // 窓はもう無い。agent-browser の縛りを捨てさせる（接続はすぐ下で閉じる）
       entry.windows.clear();
       if (entry.paused) { entry.paused = null; changed(entry); }   // Chrome が閉じた。窓はもう無いので、引き継ぎも解く
+      // AI のタブの履歴と人の印は残す（Chrome が生きたまま接続だけ切れたなら、つなぎ直しで同じタブが戻る。戻ったタブを adopt が current に戻す）
       entry.current = null; entry.operating = false;
       for (const client of [...entry.clients]) { try { client.ws.close(1011, 'chrome disconnected'); } catch { /* 閉じていてもよい */ } }
       notifyView(entry.id, 'reset');
@@ -409,12 +438,18 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   function noteUsed(entry) { if (entry) entry.lastUsedAt = now(); }
 
   /** タブを会話の範囲に入れる。発見中の接続に targetCreated を送り、真似た自動 attach と確認の Fetch を付ける */
-  function adopt(state, entry, info, { windowId = null, opener = null } = {}) {
+  function adopt(state, entry, info, { windowId = null, opener = null, human = false } = {}) {
     if (state.tabs.has(info.targetId)) return state.tabs.get(info.targetId);
     noteUsed(entry);
     const tab = newTab(entry, info, windowId, opener);
     state.tabs.set(tab.targetId, tab);
     addWindow(state, entry, windowId);
+    // 人が開いたタブの印（エージェントに知らせる前に付ける。知らせると agent-browser がすぐ attach と準備を送る）。人のタブが開いた popup も人のタブ
+    if (human || (opener && entry.human.has(opener.targetId))) markHuman(entry, tab.targetId);
+    // ほかの会話の持ち越しに同じ id があれば外す（持ち越しが壊れていても、ほかの会話のタブを AI のタブ・人のタブとして覚え続けない。ADR 0321）
+    for (const other of entries.values()) if (other !== entry && (other.ai.includes(tab.targetId) || other.human.has(tab.targetId))) forgetTab(other, tab.targetId);
+    // 持ち越した AI のタブがつなぎ直しで戻った・閉じた後の繰り上げ先が戻った
+    if (up === state) refreshCurrent(entry);
     // 一時停止中（人が開いたタブなど）は、エージェントの接続に知らせず、エージェントのセッションも付けない
     if (!entry.paused) for (const client of clientsOf(entry)) {
       if (client.discovering) send(client, { method: 'Target.targetCreated', params: { targetInfo: { ...tab.info } } });
@@ -440,7 +475,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       tab.entry.windows.delete(tab.windowId);
       scope.windowClosed?.(tab.entry.id, tab.windowId);   // 窓だけ閉じられた。次に使うときに黙って開き直す
     }
-    if (tab.entry.current === tab.targetId) tab.entry.current = null;
+    forgetTab(tab.entry, tab.targetId);   // AI のタブだったら、履歴の 1 つ前の開いている AI のタブへ戻る（popup を閉じたら開いた元へ）
     notifyView(tab.entry.id, 'tabs');
     tabGone(tab);
     refreshOperating(tab.entry);
@@ -453,12 +488,46 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   /** タブの窓のプロフィールのフォルダー名（'chrome:<dir>' を外す。分からなければ null）。popup の窓を隠すときに渡す */
   const profileDirOfTab = tab => scope.profileOf?.(tab.entry.id, { windowId: tab.windowId, context: tab.info?.browserContextId ?? null })?.replace(/^chrome:/, '') ?? null;
 
-  /** エージェントが触れたタブを「今のタブ」として覚える（映像が追う。agent-browser の「今のタブ」は自分の側で持つので、コマンドの宛先から知る）。操作中の印も見直す */
+  /** エージェントが選んだ・操作したタブ（Target.activateTarget と CLAIMS のコマンドの宛先）を AI のタブにする（claim。映像が追う。
+   *  agent-browser の「今のタブ」は自分の側で持つので、コマンドの宛先から知る）。使った時刻と操作中の印も見直す。下ごしらえのコマンドでは呼ばない（ADR 0321） */
   function touch(tab) {
     const entry = tab.entry;
     noteUsed(entry);
-    if (entry.current !== tab.targetId) { entry.current = tab.targetId; notifyView(entry.id, 'current'); }
+    claim(tab);
     refreshOperating(entry);
+  }
+  /** AI のタブにする: 人の印を外し、履歴の先頭へ置く（ADR 0321。呼ぶのは CLAIMS のコマンド・Target.activateTarget・エージェントが作ったタブだけ） */
+  function claim(tab) {
+    const entry = tab.entry, id = tab.targetId;
+    const wasHuman = entry.human.delete(id);
+    if (entry.ai[0] !== id || wasHuman) {
+      entry.ai = [id, ...entry.ai.filter(other => other !== id)].slice(0, AI_HISTORY_MAX);
+      carryChanged();
+    }
+    refreshCurrent(entry);
+  }
+  function markHuman(entry, id) {
+    if (entry.human.has(id)) return;
+    entry.human.add(id);
+    while (entry.human.size > AI_HISTORY_MAX) entry.human.delete(entry.human.values().next().value);
+    carryChanged();
+  }
+  function forgetTab(entry, id) {
+    const had = entry.ai.includes(id) || entry.human.has(id);
+    entry.ai = entry.ai.filter(other => other !== id); entry.human.delete(id);
+    refreshCurrent(entry);
+    if (had) carryChanged();
+  }
+  /** AI のタブ: 履歴（新しい順）のうち、いま範囲にある最初のタブ。無ければ null */
+  const aiTabOf = entry => (up ? entry.ai.find(id => up.tabs.get(id)?.entry === entry) ?? null : null);
+  /** 窓に映っているタブ: AI のタブ。AI のタブが無いときだけ窓の最初のタブ */
+  const shownTab = entry => (up ? aiTabOf(entry) ?? tabsOf(up, entry)[0]?.targetId ?? null : null);
+  /** entry.current（AI のタブ）を履歴から引き直し、替わったら映像に知らせる */
+  function refreshCurrent(entry) {
+    const next = aiTabOf(entry);
+    if (entry.current === next) return;
+    entry.current = next;
+    notifyView(entry.id, 'current');
   }
   /** 操作中: ターンの間にエージェントがタブを動かしている */
   function refreshOperating(entry) {
@@ -973,8 +1042,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (params.url !== undefined && (!originOf(params.url) || originOf(params.url) !== originOf(original ?? ''))) throw denied('request url');
       client.paused.delete(params.requestId);
     } else if (method === 'Fetch.failRequest' || method === 'Fetch.fulfillRequest') client.paused.delete(params.requestId);
-    // エージェントが動かしているタブの印（人の操作と区別する。ターンの終わりで外れる）
-    if (!PASSIVE.test(method)) { tab.active = true; touch(tab); }
+    // エージェントが動かしているタブの印（人の操作と区別する。ターンの終わりで外れる）。人が開いたタブは、許可の一覧（CLAIMS）のコマンドだけ数える
+    const claims = CLAIMS.test(method);
+    if (!PASSIVE.test(method) && (claims || !client.entry.human.has(tab.targetId))) {
+      tab.active = true; noteUsed(client.entry);
+      if (claims) claim(tab);   // AI のタブを移すのは、エージェントがこのタブを相手に選んだと分かるコマンドだけ（準備のコマンドでは移さない）
+      refreshOperating(client.entry);
+    }
     // 移った後の確認の答えを待つ間は、このタブへのコマンドを待たせる（断られたページを読ませない）
     while (tab.gate) await tab.gate.promise;
     live();
@@ -1058,7 +1132,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         mine(state, client, params.targetId);
         return state.cdp.send(method, { targetId: params.targetId });
       }
-      case 'Target.attachToTarget': { const tab = mine(state, client, params.targetId); touch(tab); return { sessionId: await attachFor(state, client, tab) }; }
+      // つなぐだけでは AI のタブにしない（agent-browser は範囲のタブ全部につなぐ。CLAIMS の説明）
+      case 'Target.attachToTarget': { const tab = mine(state, client, params.targetId); noteUsed(entry); return { sessionId: await attachFor(state, client, tab) }; }
       case 'Target.detachFromTarget': {
         const rec = state.sessions.get(params.sessionId);
         if (!rec || rec.client !== client) throw denied('session');
@@ -1071,7 +1146,12 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         tab.agentClosed = true;
         return state.cdp.send(method, { targetId: params.targetId });
       }
-      case 'Target.activateTarget': mine(state, client, params.targetId); return {};   // bringToFront と同じ。範囲の外の targetId は断る（上の mine）
+      // bringToFront と同じ（明示の切り替え。AI のタブにする）。範囲の外の targetId は断る（mine）。
+      case 'Target.activateTarget': {
+        const tab = mine(state, client, params.targetId);
+        if (!entry.paused) touch(tab);   // 一時停止の間はエージェントのコマンドで何も移さない
+        return {};
+      }
       case 'Browser.getWindowForTarget': {
         if (!params.targetId) throw denied('target');
         mine(state, client, params.targetId);
@@ -1192,7 +1272,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: invalidCarry && !unlock, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false, lastUsedAt: now() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); carryChanged(); }
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: invalidCarry && !unlock, clients: new Set(), windows: new Set(), turn: false, current: null, ai: [], human: new Set(), operating: false, lastUsedAt: now() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); carryChanged(); }
       noteUsed(entry);
       if (unlock) { this.resume(sessionId); invalidCarry = false; }   // 人が送った: 無効だった預かり物の代わりに、ここから始める
       // 端点を渡すのはターンの始まり（core/agent-browser.mjs の browserEnvironment）。ターンの間、窓のタブに focus emulation を保つ
@@ -1210,7 +1290,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (typeof url !== 'string' || !/^https?:/i.test(url) || !allowUrl(url, { sessionId, via: 'open' })) throw denied('navigation');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false, lastUsedAt: now() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, ai: [], human: new Set(), operating: false, lastUsedAt: now() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
       noteUsed(entry);
       const state = up && !up.cdp.closed ? up : await bind(await connection.demand({ signal }));
       await prepareOpen(state, entry.id, url);
@@ -1218,8 +1298,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const cookieFirst = wantsCookie(url);
       const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url: cookieFirst ? 'about:blank' : url, entryId: entry.id });
       const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
-      const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: cookieFirst ? 'about:blank' : url, attached: false, canAccessOpener: false }, { windowId });
-      touch(tab);
+      const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: cookieFirst ? 'about:blank' : url, attached: false, canAccessOpener: false }, { windowId, human: true });
+      // 人が開いたタブは「AI のタブ」にしない（人の印を付ける。エージェントが CLAIMS のコマンドで明示に操作したときだけ AI のタブになる。ADR 0321）
+      noteUsed(entry); refreshOperating(entry);
       if (cookieFirst) {
         const sessionId = await ensureInternal(state, tab);
         await tabCookie(state, sessionId);
@@ -1285,10 +1366,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       changed(entry);
       return at;
     },
-    /** 会話の今の状態。会話が中継に無ければ null。lastWindowId は、エージェントが最後に操作したタブの窓（引き継ぎで前に出す窓） */
+    /** 会話の今の状態。会話が中継に無ければ null。lastWindowId は、窓に映っているタブ（AI のタブ。無ければ窓の最初のタブ）の窓（引き継ぎで前に出す窓） */
     state(sessionId) {
       const entry = entries.get(sessionId);
-      return entry ? { turn: entry.turn, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastWindowId: up?.tabs.get(entry.current)?.windowId ?? null } : null;
+      return entry ? { turn: entry.turn, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastWindowId: up?.tabs.get(shownTab(entry))?.windowId ?? null } : null;
     },
     /** その会話で Chrome の窓を最後に使った時刻（ms）。中継に無ければ null（ADR 0246 の 24 時間の掃除） */
     lastUsed(sessionId) { const entry = entries.get(sessionId); return Number.isFinite(entry?.lastUsedAt) ? entry.lastUsedAt : null; },
@@ -1405,7 +1486,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         for (const item of carry.entries) {
           if (typeof item?.id !== 'string' || !item.id || item.id.length > 200 || !/^[a-f0-9]{48}$/.test(item.key ?? '') || entries.has(item.id) || byKey.has(item.key)) continue;
           const entry = { id: item.id, key: item.key, stopped: item.stopped === true, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false,
-            lastUsedAt: Number.isFinite(item.lastUsedAt) ? item.lastUsedAt : now() };   // 更新で窓を持ち越しても、最後に使った時刻は戻さない（ADR 0246）
+            lastUsedAt: Number.isFinite(item.lastUsedAt) ? item.lastUsedAt : now(),   // 更新で窓を持ち越しても、最後に使った時刻は戻さない（ADR 0246）
+            // AI のタブの履歴と人が開いたタブの印（更新・再起動を越えて AI のタブを保つ。ADR 0321）。タブの id の字だけ受ける
+            ai: carriedIds(item.ai), human: new Set(carriedIds(item.human)) };
           // 一時停止は更新を越えて解けない（人が窓を操作している間に、エージェントのコマンドが通らない）。at・by は始まりの時刻と押した人
           if (item.paused && typeof item.paused === 'object') entry.paused = restoredPause(item.paused);
           entries.set(entry.id, entry); byKey.set(entry.key, entry);
@@ -1519,12 +1602,18 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         if (!state || state.cdp.closed || !tab || tab.entry.id !== sessionId) throw new Error('tab not available');
         await state.cdp.send('Target.closeTarget', { targetId });
       },
-      /** 今のタブ: エージェントが最後にコマンドを送った（開いた）タブ。無い・閉じていれば窓の最初のタブ。タブが無ければ null */
+      /**
+       * AI のタブ: AI のタブの履歴（新しい順）のうち、いま開いている最初のタブ。履歴に入るのは、エージェントが作ったタブと、
+       * エージェントが許可の一覧（CLAIMS）のコマンドで明示に操作したタブだけ（つなぐ・準備では入らない）。閉じたら 1 つ前へ戻る。無ければ null（ADR 0321）
+       */
       current(sessionId) {
         const entry = entries.get(sessionId);
-        if (!entry || !up) return null;
-        if (entry.current && up.tabs.get(entry.current)?.entry === entry) return entry.current;
-        return tabsOf(up, entry)[0]?.targetId ?? null;
+        return entry ? aiTabOf(entry) : null;
+      },
+      /** 窓に映っている・使う側のタブ: AI のタブ。AI のタブが 1 つも無いときだけ窓の最初のタブ。撮影・ログインの入力先・窓の特定など、引き継ぎの対象でなくてよい所が使う（引き継ぎは current だけ） */
+      shown(sessionId) {
+        const entry = entries.get(sessionId);
+        return entry ? shownTab(entry) : null;
       },
       /**
        * 映像を見ている間、そのタブに focus emulation を保つ（on）・その理由を手放す（!on。ターンの間・ほかの持ち主がいれば残す）。有効になるまで待つ。

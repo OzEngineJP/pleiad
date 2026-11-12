@@ -25,9 +25,9 @@ export function fieldAt(fields, point) {
 }
 
 /** Receive field/sheet events; reset on target changes, destroy on close. */
-export function createPhoneInput({ surface, send = () => {}, getRect = () => surface?.getBoundingClientRect(), getKeyboardRect = getRect, getMetadata = () => ({}), onPan = () => {}, phone = true, onError = () => {}, onCopy = null } = {}) {
+export function createPhoneInput({ surface, send = () => {}, getRect = () => surface?.getBoundingClientRect(), getKeyboardRect = getRect, getMetadata = () => ({}), onPan = () => {}, phone = true, onError = () => {}, onCopy = null, viewOnly = () => false } = {}) {
   // The caller can construct the part before mounting its surface.
-  if (!surface) return { focus() {}, blur() {}, beforeTap() { return true; }, receive() {}, reset() {}, destroy() {} };
+  if (!surface) return { focus() {}, blur() {}, beforeTap() { return true; }, receive() {}, refresh() {}, reset() {}, destroy() {} };
   ensureBrowserControlStyles();
   const overlay = el('textarea', 'b2-phone-input'); overlay.setAttribute('aria-label', t('control:keyboardInput'));
   overlay.autocomplete = 'off'; overlay.autocapitalize = 'off'; overlay.spellcheck = false; overlay.tabIndex = -1;
@@ -39,7 +39,9 @@ export function createPhoneInput({ surface, send = () => {}, getRect = () => sur
   fallbackInput.type = 'text'; fallbackInput.setAttribute('aria-label', t('control:keyboardInput')); fallbackDone.type = 'button'; fallback.append(fallbackInput, fallbackDone); fallback.hidden = true;
   const sheet = el('div', 'b2-sheet'), sheetBody = el('div', 'b2-sheet-body'); sheet.hidden = true; sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-modal', 'true'); sheet.append(sheetBody);
   surface.append(overlay, secret); document.body.append(fallback, note, sheet);
-  let fields = [], focused = null, active = overlay, previousFocus = null, sheetCleanup = () => {}, alive = true;
+  // pending: the dialog / file chooser / select still open on the page. Not shown while the video is view-only (the agent's tab before
+  // take-over, ADR 0321); refresh() shows it after take-over and hides it again if the tab goes back to the agent.
+  let fields = [], focused = null, active = overlay, previousFocus = null, sheetCleanup = () => {}, alive = true, pending = null;
   const post = value => { try { Promise.resolve(send(value)).catch(onError); } catch (error) { onError(error); } };
   const composition = createCompositionInput(post);
   const sentinel = '\u200b';
@@ -83,7 +85,7 @@ export function createPhoneInput({ surface, send = () => {}, getRect = () => sur
   const closeSheet = (restore = true) => { const visible = !sheet.hidden; sheet.hidden = true; sheetCleanup(); sheetCleanup = () => {}; if (visible && restore) previousFocus?.focus?.({ preventScroll: true }); previousFocus = null; };
   async function act(value, button, error) {
     button.disabled = true; error.textContent = '';
-    try { await send(value); closeSheet(); } catch { error.textContent = t('control:failed'); } finally { button.disabled = false; }
+    try { await send(value); pending = null; closeSheet(); } catch { error.textContent = t('control:failed'); } finally { button.disabled = false; }
   }
   function showSheet(message) {
     sheetCleanup(); sheetBody.replaceChildren(); previousFocus = document.activeElement;
@@ -91,7 +93,7 @@ export function createPhoneInput({ surface, send = () => {}, getRect = () => sur
     const cancel = el('button', 'b2-action', t('control:cancel')), done = el('button', 'b2-action primary', t('control:done'));
     cancel.type = done.type = 'button'; actions.append(cancel, done); sheetBody.append(title); sheet.hidden = false;
     sheet.setAttribute('aria-label', message.type === 'select' ? t('control:select') : message.type === 'file' ? t('control:file') : t('control:dialog'));
-    cancel.addEventListener('click', () => message.type === 'dialog' ? act({ type: 'dialog', accept: false }, cancel, error) : message.type === 'file' ? act({ type: 'files', files: [] }, cancel, error) : closeSheet());
+    cancel.addEventListener('click', () => message.type === 'dialog' ? act({ type: 'dialog', accept: false }, cancel, error) : message.type === 'file' ? act({ type: 'files', files: [] }, cancel, error) : (pending = null, closeSheet()));
     if (message.type === 'dialog') {
       title.textContent = t('control:dialog'); sheetBody.append(el('p', 'b2-sheet-message', message.message));
       const prompt = el('input'); prompt.type = 'text'; prompt.value = message.defaultPrompt ?? ''; prompt.setAttribute('aria-label', t('control:keyboardInput'));
@@ -168,11 +170,12 @@ export function createPhoneInput({ surface, send = () => {}, getRect = () => sur
     beforeTap(point) { const field = fieldAt(fields, point); if (field) return focus(field); focused = null; active.blur(); fallbackInput.blur(); fallback.hidden = note.hidden = true; onPan(0); return true; },
     receive(message) {
       if (message?.type === 'fields') { fields = message.fields ?? []; if (focused) { focused = fields.find(field => field.id === focused.id) ?? null; if (focused) position(focused); } }
-      else if (['dialog', 'select', 'file'].includes(message?.type)) showSheet(message);
-      else if (message?.type === 'dismiss') closeSheet();
+      else if (['dialog', 'select', 'file'].includes(message?.type)) { pending = message; if (!viewOnly()) showSheet(message); }
+      else if (message?.type === 'dismiss') { pending = null; closeSheet(); }
       else if (message?.type === 'keyboard' && !focused) { fallback.hidden = false; }
     },
-    reset() { fields = []; focused = null; composition.reset(); closeSheet(false); active.blur(); fallbackInput.blur(); fallback.hidden = note.hidden = true; onPan(0); },
+    refresh() { if (viewOnly()) { if (!sheet.hidden) closeSheet(false); } else if (pending && sheet.hidden) showSheet(pending); },
+    reset() { fields = []; focused = null; pending = null; composition.reset(); closeSheet(false); active.blur(); fallbackInput.blur(); fallback.hidden = note.hidden = true; onPan(0); },
     destroy() { alive = false; composition.reset(); sheetCleanup(); for (const dispose of disposers) dispose(); overlay.remove(); secret.remove(); fallback.remove(); note.remove(); sheet.remove(); onPan(0); },
   };
 }

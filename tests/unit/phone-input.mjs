@@ -73,5 +73,38 @@ export default async function (t) {
     let held = false;
     surface.dispatchEvent({ type: 'mousedown', target: image, button: 0, preventDefault() { held = true; } });
     t.ok('指を離した後の互換の mousedown で、重ねた入力欄から焦点を外さない', held);
+
+    // 見るだけの映像（引き継ぐ前の AI のタブ。ADR 0321）では、確認・ファイル選び・選択の窓を出さない。引き継いだら開いたままのものを出す。PC の欄（phone: false）も同じ部品で同じ
+    for (const onPhone of [true, false]) {
+      const where = onPhone ? 'スマホ' : 'PC';
+      let viewOnly = true; const answers = [];
+      const box = new N('div'); box.getBoundingClientRect = surface.getBoundingClientRect; box.setPointerCapture = () => {};
+      const shot = new N('img'); shot.naturalWidth = 360; shot.naturalHeight = 640; shot.getBoundingClientRect = surface.getBoundingClientRect;
+      const frame = createScreencastInput({ surface: box, img: shot, phone: onPhone, viewOnly: () => viewOnly, getFrame: () => ({ metadata: { deviceWidth: 360, deviceHeight: 640 } }), send: value => { answers.push(value); return Promise.resolve({}); } });
+      try {
+        const sheet = frame.phoneInput.sheet;
+        for (const message of [{ type: 'dialog', dialogType: 'confirm', message: '続ける？' }, { type: 'file', multiple: false }, { type: 'select', options: [{ label: 'あ', value: 'a' }], index: 0 }]) {
+          frame.receive(message);
+          t.ok(`${where}: 見るだけの間は ${message.type} の窓を出さない`, sheet.hidden && answers.length === 0);
+          frame.receive({ type: 'dismiss' });
+        }
+        frame.receive({ type: 'dialog', dialogType: 'confirm', message: '続ける？' });
+        frame.refresh();
+        t.ok(`${where}: 見るだけのまま描き直しても窓は出さない`, sheet.hidden);
+        viewOnly = false; frame.refresh();
+        t.ok(`${where}: 引き継いだら、開いたままの確認の窓を出す`, !sheet.hidden && sheet.textContent.includes('続ける？'), sheet.textContent);
+        viewOnly = true; frame.refresh();
+        t.ok(`${where}: AI へ戻ったら窓を隠す（返答はしない）`, sheet.hidden && answers.length === 0, JSON.stringify(answers));
+        viewOnly = false; frame.refresh();
+        t.ok(`${where}: また引き継いだら、まだ開いている窓をもう一度出す`, !sheet.hidden);
+        frame.receive({ type: 'dismiss' });
+        viewOnly = true; frame.refresh(); viewOnly = false; frame.refresh();
+        t.ok(`${where}: ページで閉じた窓（dismiss）は、引き継ぎ直しても出さない`, sheet.hidden);
+        viewOnly = true;
+        frame.receive({ type: 'select', options: [{ label: 'あ', value: 'a' }], index: 0 });
+        viewOnly = false; frame.refresh();
+        t.ok(`${where}: 見るだけの間に開いた選択の窓も、引き継いだら出す`, !sheet.hidden);
+      } finally { frame.destroy(); }
+    }
   } finally { video?.destroy(); phone?.destroy(); globalThis.document = oldDoc; globalThis.window = oldWindow; globalThis.visualViewport = oldViewport; globalThis.innerHeight = oldHeight; N.prototype.focus = oldFocus; if (oldBlur) N.prototype.blur = oldBlur; else delete N.prototype.blur; }
 }

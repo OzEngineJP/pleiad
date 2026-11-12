@@ -44,7 +44,7 @@ export async function screencastCommand({ command, args = {}, client, chrome = n
     }
   } catch (error) {
     const code = String(error?.message ?? '');
-    return { ok: false, code: ['invalid-input', 'not-watching', 'no-window', 'no-tab'].includes(code) ? code : 'failed' };
+    return { ok: false, code: ['invalid-input', 'not-watching', 'no-window', 'no-tab', 'view-only'].includes(code) ? code : 'failed' };
   }
 }
 
