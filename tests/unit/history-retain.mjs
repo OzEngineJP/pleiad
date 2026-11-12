@@ -113,7 +113,7 @@ export default async function (t) {
     "const placeRow = (node, key) => append(node, key);",
     "const historyPane = { get painting() { return paintingHistory; }, get paintBefore() { return paintBefore; } };",
   ].join("\n");
-  const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows", "paintable"].map(cut).join("\n");
+  const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows", "paintable", "itemsOf"].map(cut).join("\n");
   const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // 履歴の 1 行。本物の historyRow（web/client.mjs）は発言 1 件から行を作る。ここでは中身が決まる作りものにして、行の並びと続きの見出しだけを見る
   // 人の発言には、結び付いた添付（presents）を本文の位置に取り込み、AI の発言はツールをまとまり（.bundle）にして持つ（main の historyRow と同じ形）
@@ -132,7 +132,7 @@ export default async function (t) {
     let cancelled = 0, hidden = 0;
     const activity = { el: null, hide: () => { hidden++; activity.el?.closest?.(".mw")?.remove(); activity.el = null; } };
     const context = vm.createContext({
-      thread, state, activity, el, buildItems, inlineAttachments, showsAsCard, historyRow, log: { scrollTop: 0 }, atBottom: () => false, relayoutBranches() {}, paintDelegateStates() {},
+      thread, state, activity, el, buildItems, child: null, inlineAttachments, showsAsCard, historyRow, log: { scrollTop: 0 }, atBottom: () => false, relayoutBranches() {}, paintDelegateStates() {},
       renderPresent: p => el("div", "m card", `提示 ${p.id ?? p.path}`), savedEvent: p => p,
       cancelStream: () => { cancelled++; }, replaying: false, liveTurn: { activity },
       // createHistoryPane が主の会話から受ける値（hooks）
