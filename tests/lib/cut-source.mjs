@@ -1,6 +1,6 @@
 // web/ のソースの文字列から、関数や塊を切り出して vm へ入れるテストの共通の道具。
-// 進行中のターンの部分は web/live-turn.mjs の createLiveTurn の中、履歴の面は web/history-pane.mjs の createHistoryPane の中にある
-// （ADR 0319 段 6-3・6-4）。字下げされているので、閉じの `}` は関数の行と同じ字下げで探す。
+// 進行中のターンの部分は web/live-turn.mjs の createLiveTurn の中、履歴の面は web/history-pane.mjs の createHistoryPane の中、
+// 筋への置き方などは web/conversation-view.mjs の createConversationView の中にある（ADR 0319 段 6-3・6-4・6-5）。字下げされているので、閉じの `}` は関数の行と同じ字下げで探す。
 // 字下げが無い関数（client.mjs の最上位）では今までと同じ切り方になる。
 import fs from "node:fs";
 import vm from "node:vm";
@@ -27,8 +27,14 @@ export const readLiveTurn = () => readWeb("live-turn.mjs");
 /** web/history-pane.mjs（履歴の面の描画）のソース */
 export const readHistoryPane = () => readWeb("history-pane.mjs");
 
-/** client.mjs・live-turn.mjs・history-pane.mjs をつないだソース。どれにある関数でも cutFunction で切り出せる */
-export const readClientAndLiveTurn = () => `${readWeb("client.mjs")}\n${readLiveTurn()}\n${readHistoryPane()}`;
+/** web/conversation-view.mjs（会話の本文の面。筋への置き方・本文の面の束ね）のソース */
+export const readConversationView = () => readWeb("conversation-view.mjs");
+
+/**
+ * conversation-view.mjs・client.mjs・live-turn.mjs・history-pane.mjs をつないだソース。どれにある関数でも cutFunction で切り出せる。
+ * client.mjs の同名の関数は 1 行の委任（本体は view の中）なので、view を先に置いて本体の方を先に見つける
+ */
+export const readClientAndLiveTurn = () => `${readConversationView()}\n${readWeb("client.mjs")}\n${readLiveTurn()}\n${readHistoryPane()}`;
 
 /** createLiveTurn の「状態」の宣言（let turnEl … const toolCards）。切り出した関数と同じ vm に先に入れる */
 export function liveTurnStateDecl(liveSource = readLiveTurn()) {

@@ -58,8 +58,8 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
 import { batchToolMeasurements, renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, applySubagentTools, plainTextHtml } from "./render.mjs";
-import { createLiveTurn, ACTIVITY_LABEL } from "./live-turn.mjs";
-import { createHistoryPane } from "./history-pane.mjs";
+import { ACTIVITY_LABEL } from "./live-turn.mjs";
+import { createConversationView } from "./conversation-view.mjs";
 import { batchToolUpdates, bundleOf, clock, fadeIn, markRunning, markWaiting, swapHeight } from "./tool-bundle.mjs";
 import { localTime, syncServerClock, toolStartedAt } from "./server-clock.mjs";
 import { createContextMenu } from "./context-menu.mjs";
@@ -120,8 +120,6 @@ import { buildItems, attachmentMessageIndex, attachmentLine, ATTACHMENT_LINE, no
 import { commandParts, sysFold, teammateNode, shellFailed, elapsedText as shellElapsed } from "./system-messages.mjs";
 import { parseTaskNotice, parseSettingNotices } from "./task-notice.mjs";
 import { createShellComposer } from "./shell-composer.mjs";
-import { createSessionLoads } from "./session-stream.mjs";
-const sessionLoads = createSessionLoads();
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
   resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, versionReload } from './interrupt.mjs';
@@ -490,26 +488,50 @@ const state = {
   rebuildPhase: null,      // 組み立て中（contextRebuild phase start）の帯の印
 };
 
-// 進行中のターン（web/live-turn.mjs。ADR 0319 段 6-3）。今の関数名は、この実例への薄い委任として残す。
+// 会話の本文の面（web/conversation-view.mjs。ADR 0319 段 6-5）。進行中のターン（live-turn.mjs）と履歴の面（history-pane.mjs）の実例、
+// 履歴を読む間の出来事の取り置き、筋への行の置き方をこの実例が持つ。今の関数名は、この実例への薄い委任として残す。
 // 部品は state.current などを直に読まない。主の会話の値は下の hooks で渡す。
-const liveTurn = createLiveTurn({
-  thread, log,
-  isRunning: () => isRunningHere(),
-  stopping: () => stoppingHere(),
-  behind: () => behindHere(),
-  backgroundCounts: () => backgroundCounts(),
-  turnStart: () => turnStartHere(),
-  aiMsg: (opts) => aiMsg(opts),
-  placeRow: (node, key) => append(node, key),
-  atBottom: () => atBottom(),
-  followBottom: (ms) => followBottom(ms),
-  relayout: () => relayoutBranches(),
-  onActivity: () => syncWorkEntry(),
-  stopComputer: (bundle) => stopComputer(bundle),
-  replaying: () => replayPainting,
-  painting: () => historyPane.painting,
-  nextSeq: () => ++liveSeq,
+const mainView = createConversationView({
+  role: 'main',
+  log, thread, frame: $("logFrame"),
+  hooks: {
+    // 進行中のターン
+    isRunning: () => isRunningHere(),
+    stopping: () => stoppingHere(),
+    behind: () => behindHere(),
+    backgroundCounts: () => backgroundCounts(),
+    turnStart: () => turnStartHere(),
+    aiMsg: (opts) => aiMsg(opts),
+    onActivity: () => syncWorkEntry(),
+    stopComputer: (bundle) => stopComputer(bundle),
+    // 履歴の面
+    spine: () => spine(),
+    placeJunctions: (opts) => placeJunctions(opts),
+    paintDelegateStates: () => paintDelegateStates(),
+    paintCompactions: () => paintCompactions(),
+    syncEdit: () => syncEdit(),
+    paintable: (p) => paintable(p),
+    updateBranches: (id, messages, opts) => branches.update(id, messages, opts),
+    cmd: (command, args, opts) => cmd(command, args, opts),
+    select: (id, opts) => select(id, opts),
+    finalizing: (on) => nav.finalizing(on),
+    systemHistoryNode: (m) => systemHistoryNode(m),
+    stripActions: (node) => stripActions(node),
+    userMsg: (text, opts) => userMsg(text, opts),
+    noteEndpointFailure: (card, result, sessionId) => noteEndpointFailure(card, result, sessionId),
+    linkDelegateCard: (card, input, result, ctx) => linkDelegateCard(card, input, result, ctx),
+    activeBackendId: () => activeBackendId(),
+    subagentToolsOf: (id) => subagentToolsOf(id),
+    isBoundaryTool: (name, tools) => isBoundaryTool(name, tools),
+    // 主の会話の値
+    currentSession: () => state.current,
+    isBusy: () => state.busy,
+    isLoadingSession: () => state.loadingSession,
+    backendVocab: (backend) => state.vocab.get(backend),
+  },
 });
+const { liveTurn, historyPane } = mainView;
+const sessionLoads = mainView.loads;
 // state の同名の項目は、部品の持つ状態へつなぐ（読む側は書き換えない）
 Object.defineProperty(state, "toolCards", { get: () => liveTurn.toolCards, enumerable: true });
 for (const key of ["turnEl", "bundle", "pendingUuid", "endedWithText", "turnClosed", "streamEl", "thinkEl"]) {
@@ -519,41 +541,6 @@ const {
   activity, runningTools, ensureTurnEl, openTurnEl, closeBundle, liveBundle, closeTurnEl, settleStrays, resetLiveTurn,
   thinkBox, closeThink, thinkFromText, flushStream, cancelStream, endStream, appendText,
 } = liveTurn;
-
-// 履歴の面（web/history-pane.mjs。ADR 0319 段 6-4）。今の関数名は、この実例への薄い委任として残す。
-// 部品は state.current などを直に読まない。主の会話の値は下の hooks で渡す。
-const historyPane = createHistoryPane({
-  thread, log,
-  atBottom: () => atBottom(),
-  placeRow: (node, key) => append(node, key),
-  resetLiveTurn: () => resetLiveTurn(),
-  spine: () => spine(),
-  relayoutBranches: () => relayoutBranches(),
-  placeJunctions: (opts) => placeJunctions(opts),
-  paintDelegateStates: () => paintDelegateStates(),
-  paintCompactions: () => paintCompactions(),
-  syncEdit: () => syncEdit(),
-  paintable: (p) => paintable(p),
-  updateBranches: (id, messages, opts) => branches.update(id, messages, opts),
-  cmd: (command, args, opts) => cmd(command, args, opts),
-  select: (id, opts) => select(id, opts),
-  finalizing: (on) => nav.finalizing(on),
-  systemHistoryNode: (m) => systemHistoryNode(m),
-  stripActions: (node) => stripActions(node),
-  userMsg: (text, opts) => userMsg(text, opts),
-  aiMsg: (opts) => aiMsg(opts),
-  thinkFromText: (text) => thinkFromText(text),
-  noteEndpointFailure: (card, result, sessionId) => noteEndpointFailure(card, result, sessionId),
-  linkDelegateCard: (card, input, result, ctx) => linkDelegateCard(card, input, result, ctx),
-  activeBackendId: () => activeBackendId(),
-  subagentToolsOf: (id) => subagentToolsOf(id),
-  isBoundaryTool: (name, tools) => isBoundaryTool(name, tools),
-  currentSession: () => state.current,
-  isBusy: () => state.busy,
-  isLoadingSession: () => state.loadingSession,
-  backendVocab: (backend) => state.vocab.get(backend),
-  toolCardMap: () => liveTurn.toolCards,
-});
 // state の同名の項目は、部品の持つ状態へつなぐ（messages・base・presents・presentBase・earlierCalls）
 for (const key of ["messages", "base", "presents", "presentBase", "earlierCalls"]) {
   Object.defineProperty(state, key, { get: () => historyPane[key], set: (v) => { historyPane[key] = v; }, enumerable: true });
@@ -992,48 +979,13 @@ const hhmm = (at) => {
   return Number.isNaN(d.getTime()) ? "" : d.toTimeString().slice(0, 5);
 };
 
-/**
- * 発言の入れ物。左の溝（gutter）に筋の節、右に中身。枝の最小化・最大化はこの高さと位置を動かす。
- * 節は中身の箱の外にあるので、中身の overflow:hidden に切られない。
- */
-function wrap(node, key) {
-  const w = el("div", "mw");
-  if (key) w.dataset.key = key;
-  if (node.matches?.(".m:not(.sys):not(.cont):not(.activity)")) w.classList.add("node");
-  if (node.matches?.(".m.cont")) w.classList.add("cont");
-  if (node.matches?.(".m.card")) w.classList.add("card");
-  if (node.matches?.(".m.activity")) w.classList.add("activity");
-  const body = el("div", "mw-body");
-  body.append(node);
-  w.append(el("div", "mw-gutter"), body);
-  return w;
-}
+/** 発言の入れ物（本体は web/conversation-view.mjs） */
+function wrap(node, key) { return mainView.wrap(node, key); }
 
-let replayPainting = false;
-const atBottom = () => !replayPainting && log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+const atBottom = () => mainView.atBottom();
 
-/**
- * 末尾へ送り、高さが落ち着くまで末尾に合わせ直す。画面の外の発言は仮の高さで並び（style.css の content-visibility）、
- * 末尾へ送ったあとに見えた分が本当の高さに伸びるので、1 回送るだけでは末尾から外れる。
- * 利用者がスクロールし始めたら（ホイール・タッチ・キー）そこでやめる
- */
-let settling = null;
-function scrollToEnd() {
-  settling?.abort();
-  const run = settling = new AbortController();
-  log.scrollTop = log.scrollHeight;
-  for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) log.addEventListener(type, () => run.abort(), { signal: run.signal, passive: true });
-  let last = log.scrollHeight, calm = 0, frames = 0;
-  const tick = () => {
-    if (run.signal.aborted) return;
-    if (++frames > 60) return run.abort();
-    const height = log.scrollHeight;
-    if (height !== last || !atBottom()) { log.scrollTop = height; last = height; calm = 0; }
-    else if (++calm >= 3) return run.abort();
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}
+/** 末尾へ送り、高さが落ち着くまで末尾に合わせ直す（本体は web/conversation-view.mjs） */
+function scrollToEnd() { mainView.scrollToEnd(); }
 
 // 会話の移動（最新へ。docs/design-system.md「会話の移動」）。末尾へ送るのは上の scrollToEnd（実寸の確定を待つ）
 let navSession = null;   // 最新へのボタンの新着を数えている会話。替わったら数え直す（paintSession）
@@ -1057,26 +1009,10 @@ createConversationRail({ frame: $("logFrame"), log, thread, nav, narrow: navNarr
   }).observe(composer);
 }
 
-/**
- * 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す。
- * 稼働表示の行は activity.el が持っている。1 行ごとに筋の子孫を探すと、履歴を描く間が件数の 2 乗になる
- */
-function place(w) {
-  if (historyPane.paintBefore) { historyPane.paintBefore.before(w); return; }
-  const act = activity.el?.isConnected ? activity.el.closest(".mw") : null;
-  if (act && !w.classList.contains("activity")) act.before(w);
-  else thread.append(w);
-}
+/** 筋の末尾に置く（本体は web/conversation-view.mjs） */
+function place(w) { mainView.place(w); }
 
-function append(node, key) {
-  if (historyPane.painting || replayPainting) { const w = wrap(node, key); place(w); return w; }
-  const stick = !state.busy && atBottom();
-  const w = wrap(node, key);
-  place(w);
-  relayoutBranches();
-  if (stick) log.scrollTop = log.scrollHeight;
-  return w;
-}
+function append(node, key) { return mainView.append(node, key); }
 
 /** 出来事の一行。筋の節は持たない。html はこちらで組み立てた文字列だけ（中身は escText 済み） */
 function sys(html) {
@@ -1885,18 +1821,11 @@ function aiMsg({ uuid, at, cont, backend } = {}) {
   return m;
 }
 
-let liveSeq = 0;
-
 /** まとまりの外に置くツール（委譲・サブエージェント）。子は親のターンの後も動くので、閉じても見える。tools はその発言のエージェントの申告（subagentToolsOf） */
 const isBoundaryTool = (name, tools) => isDelegateTool(name) || tools.has(name);
 
-/** 会話の下端に付いていく（行が伸びて高さが変わる間も、読んでいた下端に居続ける） */
-function followBottom(ms = 320) {
-  if (replayPainting) return;
-  const end = performance.now() + ms;
-  const tick = () => { log.scrollTop = log.scrollHeight; if (performance.now() < end) requestAnimationFrame(tick); };
-  tick();
-}
+/** 会話の下端に付いていく（本体は web/conversation-view.mjs） */
+function followBottom(ms = 320) { mainView.followBottom(ms); }
 
 // ---------------------------------------------------------------- コンピューターの操作
 // 止める・別の会話を待つ・承認カード（docs/computer-use.md、ADR 0071・0073）。行と塊は web/render.mjs・web/tool-bundle.mjs、中身は web/computer-use.mjs
@@ -3045,7 +2974,7 @@ function ensureMessageRow(messageId, text, at, sentBy = null) {
   if (!row) {
     const presents = provisionalByMessage.get(messageId) ?? [];
     provisionalByMessage.delete(messageId);
-    row = append(userMsg(text, { at, presents, sentBy }), `live:${++liveSeq}`);
+    row = append(userMsg(text, { at, presents, sentBy }), `live:${mainView.nextSeq()}`);
     row.dataset.messageId = messageId;
     if (voiceDelivery.owns(messageId)) voiceDelivery.adopt(row);
   } else if (sentBy) markSentBy(row.querySelector('.m.user') ?? row, sentBy);
@@ -3312,7 +3241,7 @@ function onEvent(ev, replay = false) {
       }
       closeTurnEl();
       const row = ev.messageId ? ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy)
-        : append(userMsg(ev.text, { at: ev.at, sentBy: ev.sentBy }), `live:${++liveSeq}`);
+        : append(userMsg(ev.text, { at: ev.at, sentBy: ev.sentBy }), `live:${mainView.nextSeq()}`);
       if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
       row.dataset.messageStarted = '1';
       const userRow = row.querySelector('.m.user');
@@ -3537,7 +3466,7 @@ function onEvent(ev, replay = false) {
           relayoutBranches();
           return owner.closest('.mw');
         }
-        const wrapper = append(renderPresent(ev), `live:${++liveSeq}`);
+        const wrapper = append(renderPresent(ev), `live:${mainView.nextSeq()}`);
         wrapper.dataset.humanAttachment = "true";
         if (index >= 0) {
           let anchor = rows[index].closest('.mw');
@@ -3548,7 +3477,7 @@ function onEvent(ev, replay = false) {
         return wrapper;
       }
       closeTurnEl();
-      return append(renderPresent(ev), `live:${++liveSeq}`);
+      return append(renderPresent(ev), `live:${mainView.nextSeq()}`);
     }
 
     case "permission":
@@ -3657,7 +3586,7 @@ function onEvent(ev, replay = false) {
       if (ev.sessionId) { state.runningIds.delete(ev.sessionId); state.stopping.delete(ev.sessionId); resumeSettled(ev.sessionId); }
       syncRunState();
       paintInterruptLine();
-      if (replayPainting && state.displayLoad) state.displayLoad.syncHistory = true;
+      if (mainView.replaying && state.displayLoad) state.displayLoad.syncHistory = true;
       else syncHistory();
       // git の状態（ブランチ・変更の数）はターンの終わりに取り直す。開いている git パネルも（ADR 0085）
       if (ev.sessionId && ev.sessionId === state.current) { refreshGit({ force: true }).catch(() => {}); gitPanel?.changed(); }
@@ -9342,7 +9271,7 @@ if (typeof ResizeObserver === "function") new ResizeObserver(() => {
 }).observe(thread);
 
 /** Layout runs on append as well as resize; the spine exists even before the first turn. */
-function relayoutBranches() { if (!replayPainting) layoutBranchSpine(thread); }
+function relayoutBranches() { mainView.relayoutBranches(); }
 
 let pendingBranchReload = false, pendingHistorySync = false;
 async function reloadBranches(ev) {
@@ -9827,9 +9756,9 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
       current: () => state.current === id && state.displayLoad === load,
       apply: event => onEvent(event, true),
       paint: fn => {
-        replayPainting = true;
+        mainView.replaying = true;
         try { batchToolMeasurements(() => batchTerminalUpdates(() => batchToolUpdates(() => runningTools.batch(fn)))); }
-        finally { replayPainting = false; flushStream(); relayoutBranches(); }
+        finally { mainView.replaying = false; flushStream(); relayoutBranches(); }
       },
     });
     if (!restored) return;

@@ -5,6 +5,7 @@
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
+import { cutFunction, readConversationView } from '../lib/cut-source.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from '../../core/compaction-history.mjs';
 
 export const name = 'compaction-boundary-position';
@@ -58,7 +59,8 @@ const at = (n) => new Date(Date.UTC(2026, 8, 29, 0, n)).toISOString();
 
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
-  const functions = ['wrap', 'place', 'append', 'compactionBoundary', 'paintCompactions', 'acceptCompaction', 'ensureMessageRow'].map(name => {
+  const view = readConversationView();   // wrap・place・append の本体は web/conversation-view.mjs（ADR 0319 段 6-5）
+  const functions = ['wrap', 'place', 'append'].map(name => cutFunction(view, name)).join('\n') + '\n' + ['compactionBoundary', 'paintCompactions', 'acceptCompaction', 'ensureMessageRow'].map(name => {
     const start = source.indexOf(`function ${name}(`);
     if (start < 0) throw new Error(`client.mjs に ${name} が無い`);
     return source.slice(start, source.indexOf('\n}', start) + 2);
@@ -88,8 +90,9 @@ export default async function (t) {
   const context = vm.createContext({
     state, thread, el, userMsg, t: k => k, noop, log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
     atBottom: () => false, relayoutBranches: noop, canCompactHere: () => false, compactNumber: String, paintContextStrip: noop,
-    historyPane: { painting: false, paintBefore: null }, replayPainting: false, paintedFloor: () => 0, liveSeq: 0, provisionalByMessage: new Map(),
-    activity: { el: null },   // 稼働表示の行（place が使う）。このテストは稼働表示を出さない
+    historyPane: { painting: false, paintBefore: null }, replaying: false, isBusy: () => state.busy, paintedFloor: () => 0, provisionalByMessage: new Map(),
+    mainView: { replaying: false, nextSeq: (() => { let n = 0; return () => ++n; })() },
+    activity: { el: null }, liveTurn: { activity: { el: null } },   // 稼働表示の行（place が使う）。このテストは稼働表示を出さない
     messageRow: (id) => thread.querySelectorAll('.mw').find(w => w.dataset.messageId === id) ?? null,
     closeTurnEl: noop, plainTextHtml: x => x, hhmm: x => x, markDelivery: noop, syncOutboxRows: noop, outboxes: new Map(),
     deliveredEarly: new Set(), voiceDelivery: { owns: () => false, adopt: noop }, document: { createTextNode: x => x },

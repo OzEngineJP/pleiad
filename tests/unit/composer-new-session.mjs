@@ -99,7 +99,7 @@ export default async function (t) {
     pendingRows: new Map(), renderSessions: noop, pendingAfterDelay: () => noop, side: { keep: noop, showUndo: noop },
     filePreview: { sessionChanged: noop }, setTimeout: () => 1, clearTimeout: noop, el: () => new N('div'), append: noop,
     activity: { show: noop, hide: noop }, sessionLoads: createSessionLoads(), openGate: createOpenGate(),
-    replayPainting: false, batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(), batchToolUpdates: fn => fn(),
+    mainView: { replaying: false, nextSeq: (() => { let n = 0; return () => ++n; })() }, batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(), batchToolUpdates: fn => fn(),
     runningTools: { batch: fn => fn() }, flushStream: noop,
     branchSnapshots: () => [], paintOutbox: noop, refreshOutbox: async () => [], branches: { load: async () => {}, reset: noop, has: () => false, nameOf: () => '' }, scrollToEnd: noop, atBottom: () => false,
     log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, thread: { children: [], querySelectorAll: () => [], classList: { toggle: noop } },

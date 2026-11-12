@@ -31,7 +31,7 @@ export default async function (t) {
   const context = vm.createContext({
     // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。このテストは本文の raw だけを見る
     runningTools: { batch: fn => fn() },
-    replayPainting: false, pendingHistorySync: false, batchToolUpdates: fn => fn(), batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(),
+    mainView: { replaying: false, nextSeq: (() => { let n = 0; return () => ++n; })() }, pendingHistorySync: false, batchToolUpdates: fn => fn(), batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(),
     requestAnimationFrame: () => 1, cancelAnimationFrame: noop, streamFrame: 0, streamTarget: null, stoppingHere: () => false, stopping: () => false,
     setTimeout: (fn, ms) => { const id = ++timerId; if (ms === 150) historyTimers.set(id, fn); return id; }, clearTimeout: id => historyTimers.delete(id), heightSettler: null, prepareHistoryHeights: noop,
     completionNotifications, syncRequest, joinReply, retainPlan, retainThread: noop, holdReading: noop,
