@@ -15,6 +15,7 @@
 //     activeBackendId, subagentToolsOf, isBoundaryTool, currentSession, isLoadingSession, backendVocab
 import { el, svgEl } from "./dom.mjs";
 import { layoutBranchSpine } from "./branch-view.mjs";
+import { whileStill } from "./panel-moving.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 import { createLiveTurn, ACTIVITY_LABEL } from "./live-turn.mjs";
 import { createHistoryPane } from "./history-pane.mjs";
@@ -126,11 +127,13 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
   /** 筋（左の縦の線）の置き直し。分岐を持たない役（子）も、枝の行が無い 1 本の線を引く（主と同じ線） */
   function relayoutBranches() { if (!replaying) layoutBranchSpine(thread); }
   // 子の thread は client.mjs の見張りの外。高さが変わったら（画像・折り畳み・返答が伸びる）同じフレームの変化をまとめて置き直す
+  // 右の欄の開閉で列の幅が動いている間は毎コマ変わるので置き直さず、止まった合図で 1 回置き直す（web/panel-moving.mjs）
   let spineFrame = null;
-  const spineWatch = config.ownSpine && typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+  const relayoutStill = whileStill(() => relayoutBranches());
+  const spineWatch = config.ownSpine && typeof ResizeObserver === "function" ? new ResizeObserver(whileStill(() => {
     if (spineFrame !== null) return;
-    spineFrame = requestAnimationFrame(() => { spineFrame = null; relayoutBranches(); });
-  }) : null;
+    spineFrame = requestAnimationFrame(() => { spineFrame = null; relayoutStill(); });
+  }, () => relayoutBranches())) : null;
   spineWatch?.observe(thread);
 
   /**

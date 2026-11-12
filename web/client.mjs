@@ -147,6 +147,7 @@ import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } 
 import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
+import { whileStill } from './panel-moving.mjs';
 import { createSender } from './composer/sender.mjs';
 import { createWorkComposer } from './composer/work-composer.mjs';
 import { createWorkControls } from './composer/work-controls.mjs';
@@ -7840,9 +7841,9 @@ const filePreview = setupFilePreview({
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
   // 要素の無い問い合わせ（右の欄の ⋮ の「今のタブ」の操作など）でも、欄がいまダイアログに付いている間は、そのダイアログの子の会話の内容を答える
   getContext: anchor => channelsUi.contextForPanel(anchor) ?? workContext(anchor ?? (inWorkModal(null) ? $('workBody') : null)) ?? ({ sessionId:state.current, at:anchor?.closest('.m')?.dataset.at }),
-  onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); modalEntry?.paint(); },
+  onLayout: () => { requestAnimationFrame(() => relayoutBranchesStill()); browserEntry?.paint(); modalEntry?.paint(); },
   // 内蔵ブラウザーの開け閉めのばね。頭のアイコンと ✖ の受け渡しが追う（web/panel-handoff.mjs）
-  onMotion: (p, phase) => browserEntry?.motion?.(p, phase),
+  onMotion: (p, phase, px) => browserEntry?.motion?.(p, phase, px),
   // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
@@ -9327,18 +9328,26 @@ const branches = createBranches({
 });
 // 発言の高さが変わったら（画像の読み込み・折り畳み・返答が伸びる）筋の位置を確かめる。
 // 脇の開閉で会話の幅が動いている間は毎コマ変わるので貼らず、動き終わりに 1 回貼る（setSidebar）。
+// 右の欄の開閉で動いている間も同じ（止まった合図でやり直す。web/panel-moving.mjs）。
 // 同じフレームの高さ変化はまとめ、位置が変わらなければ branch-view 側で SVG 更新を省く。
 let branchResizeFrame = null;
-if (typeof ResizeObserver === "function") new ResizeObserver(() => {
-  if (document.body.classList.contains("side-moving") || branchResizeFrame !== null) return;
+const scheduleBranchRelayout = whileStill(() => {
+  if (branchResizeFrame !== null) return;
   branchResizeFrame = requestAnimationFrame(() => {
     branchResizeFrame = null;
-    if (!document.body.classList.contains("side-moving")) relayoutBranches();
+    // 次のコマまでの間に右の欄が動き始めていたら、止まったときに回す
+    if (!document.body.classList.contains("side-moving")) relayoutBranchesStill();
   });
+}, () => relayoutBranches());
+if (typeof ResizeObserver === "function") new ResizeObserver(() => {
+  if (document.body.classList.contains("side-moving")) return;
+  scheduleBranchRelayout();
 }).observe(thread);
 
 /** Layout runs on append as well as resize; the spine exists even before the first turn. */
 function relayoutBranches() { mainView.relayoutBranches(); }
+// 右の欄の開閉の動きの間は走らせず、止まったときに 1 度（開け閉めの最初に onLayout が呼ばれる。列の幅は動いている途中なので置き直しても無駄になる）
+const relayoutBranchesStill = whileStill(() => relayoutBranches());
 
 let pendingBranchReload = false, pendingHistorySync = false;
 async function reloadBranches(ev) {
