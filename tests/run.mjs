@@ -663,6 +663,8 @@ const SUITES = [
   './unit/place-scan.mjs',
   // つなぎ直したときの静かな読み直しは、同じ発言の行を残して変わった所から後ろだけ描く（読み返している位置も保つ。issue #37）
   './unit/history-retain.mjs',
+  // 会話の本文の面の子の会話の役（ADR 0319 段 6-5）: 発言者の語・出さないもの・追加の指示の行・稼働表示（作業のダイアログと同じ事実）
+  './unit/conversation-view-child.mjs',
   // loadSession の差分（ADR 0062）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
   './unit/history-sync.mjs',
   './unit/server-history-diff.mjs',

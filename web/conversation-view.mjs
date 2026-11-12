@@ -13,7 +13,7 @@
 //   歴史の面の下請け（history-pane.mjs の hooks と同じ）: spine, placeJunctions, paintDelegateStates, paintCompactions, syncEdit, paintable,
 //     updateBranches, cmd, select, finalizing, systemHistoryNode, stripActions, userMsg, noteEndpointFailure, linkDelegateCard,
 //     activeBackendId, subagentToolsOf, isBoundaryTool, currentSession, isLoadingSession, backendVocab
-import { el } from "./dom.mjs";
+import { el, svgEl } from "./dom.mjs";
 import { layoutBranchSpine } from "./branch-view.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 import { createLiveTurn, ACTIVITY_LABEL } from "./live-turn.mjs";
@@ -25,12 +25,32 @@ import { toolStartedAt } from "./server-clock.mjs";
 import { isComputerTool } from "./computer-use.mjs";
 import { attachmentMessageIndex, normalizeAttachmentPath } from "./timeline.mjs";
 import { sysFold } from "./system-messages.mjs";
-import { runMark } from "./arc.mjs";
+import { runMark, satMark } from "./arc.mjs";
+import { CHILD_MENU } from "./message-actions.mjs";
+import { waitsForNextTurn } from "./task-instructions.mjs";
 
-// 役ごとの設定。主は今の動きのまま
+/**
+ * 役ごとの設定。主は今の動きのまま（読むのは child の仕事だけ。主の行は client.mjs の既存の経路が描く）。
+ * child は、作業のダイアログの子の会話（client.mjs の readonlyThread・refreshDetail が今描いているもの）と同じ見え方の設定:
+ *   branches   分岐の筋（枝の最小化・分岐の先）を出すか。子の会話は 1 本道
+ *   readonly   履歴の行を historyRow の readonly で描く（Markdown にしない・uuid を持たない・システム側の行の操作を外す・
+ *              返答の発言者をモデル名で出す・委譲カードと道具のカードの登録をしない）
+ *   menu       発言のメニューの絞り（message-actions.mjs の CHILD_MENU。分岐・編集は出さない）
+ *   edit / resend / gitBadge   編集・再送・git の印は出さない
+ *   skipPresent  読むだけの筋に出さない提示の種類（git の要約の押した先は今の会話の右パネルで、読んでいる子の会話ではない）
+ *   nameTags   発言者の語を 依頼 / あなた / 追加の指示 にする（userWord）
+ *   instructions  追加の指示の行（instructionRow）を出す
+ *   liveActivity  走っている子は末尾に稼働表示（弧だけ）を置く（activityRow）
+ */
 const ROLES = {
-  main: { branches: true },
-  child: { branches: false },
+  main: {
+    branches: true, readonly: false, menu: null, edit: true, resend: true, gitBadge: true,
+    skipPresent: [], nameTags: false, instructions: false, liveActivity: false,
+  },
+  child: {
+    branches: false, readonly: true, menu: CHILD_MENU, edit: false, resend: false, gitBadge: false,
+    skipPresent: ["git", "worktree"], nameTags: true, instructions: true, liveActivity: true,
+  },
 };
 
 /**
@@ -620,6 +640,89 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     }
   }
 
+  // ---------------------------------------------------------------- 子の会話の見え方（role: 'child'）。段 6-6 から画面で使う
+
+  const clockIcon = () => {
+    const svg = svgEl("svg", { class: "i", viewBox: "0 0 24 24", "aria-hidden": "true" });
+    svg.append(svgEl("circle", { cx: 12, cy: 12, r: 8 }), svgEl("path", { d: "M12 8v4.5l3 2" }));
+    return svg;
+  };
+
+  /** 親の発言の吹き出し。人の発言と同じ部品で、発言者の語だけ替える */
+  function parentMsg(text, at, word) {
+    const m = hooks.userMsg(text, { at });
+    m.querySelector(".who > span").textContent = word;
+    return m;
+  }
+
+  /**
+   * 子の会話の履歴の発言者の語。最初の発言は依頼、人が子へ直接送った発言（sentByHuman。ADR 0317）は「あなた」、それ以外は追加の指示。
+   * 古い分を省いた筋（base > 0）の最初の発言は会話の途中なので、依頼ではなく追加の指示。主は null（人の発言の既定のまま）
+   */
+  function userWord(m, { index = 1, base = 0 } = {}) {
+    if (!config.nameTags) return null;
+    if (index === 0 && !base) return t("dialog.work.request");
+    return m?.sentByHuman ? t("chat.message.you") : t("dialog.work.instruction");
+  }
+
+  /** 履歴の発言 1 件を描くときの historyPane.historyRow への渡し物（読むだけの筋）。user は発言者の語を替えた吹き出しを返す */
+  function historyRowOptions({ backend, base = 0 } = {}, item = {}) {
+    const opts = { readonly: config.readonly, backend, sessionId: here() };
+    if (config.nameTags) opts.user = (m) => parentMsg(m.text, m.at, userWord(m, { index: item.mi, base }));
+    return opts;
+  }
+
+  /** 読むだけの筋に出さない提示か（git の要約・作業ブランチ。押した先が、読んでいる子の会話ではないため） */
+  const skipsPresent = (p) => config.skipPresent.includes(p?.kind);
+
+  /**
+   * 追加の指示の行（依頼元が子へ送った指示）。state は sending（差し込み待ち）/ queued（待機）/ dropped（届かず終わった）/ delivered（届いた）。
+   * steer は子のバックエンドが走っている間の差し込みを受けるか（能力の印。呼ぶ側が渡す）、live は子が走っているか
+   */
+  function instructionRow(instruction, { live = false, steer = true } = {}) {
+    const m = parentMsg(instruction.text, instruction.at, t("dialog.work.instruction"));
+    m.dataset.instructionId = instruction.id;
+    if (instruction.state === "sending") {
+      const status = el("div", "outbox-status outbox-status-mark");
+      status.append(runMark(t("chat.delivery.notYet")), t("chat.delivery.pending"));
+      m.append(status);
+    } else if (instruction.state === "dropped") {
+      m.append(el("div", "outbox-status", t("dialog.work.instructionDropped")));
+    } else if (instruction.state === "delivered") {
+      // 届いた分は何も付けない（発言そのものが配送の記録。待機の印は付けない）
+    } else {
+      // 待機中。字の代わりに、発言者の行の静止した時計の印（title・読み上げ名）
+      m.classList.add("queued");
+      const clock = el("span", "who-queued");
+      clock.setAttribute("role", "img");
+      clock.title = t("dialog.work.instructionQueued");
+      clock.setAttribute("aria-label", t("dialog.work.instructionQueued"));
+      clock.append(clockIcon());
+      m.querySelector(".who > span").after(clock);
+      // 途中で渡せない子・設定の変更と一緒に積んだ指示は、今の作業が終わるまで届かない。印だけでなく字で書き添える
+      if (waitsForNextTurn(instruction, { live, steer })) m.append(el("div", "outbox-status", t("dialog.work.instructionNextTurn")));
+    }
+    const w = wrap(m, `instruction:${instruction.id}`);
+    if (instruction.state !== "sending") w.classList.remove("node");
+    return w;
+  }
+
+  /** 走っている子の末尾の稼働表示（弧だけ）。ホストに届かない間・承認を待つ間は、その言い方に替える */
+  function activityRow({ hostOffline = null, waiting = false } = {}) {
+    const act = el("div", "m activity");
+    if (hostOffline) {
+      act.append(el("span", "txt", t("dialog.work.hostOfflineThread")),
+        el("span", "el", hostOffline.time ? t("dialog.work.hostOfflineCatchUp", { time: hostOffline.time }) : t("dialog.work.hostOfflineCatchUpNoTime")));
+    } else if (waiting) act.append(el("span", "txt", t("activity.waitingApproval")));
+    const tip = el("span", "activity-tip");
+    const mark = hostOffline ? satMark(1, t("dialog.work.hostOfflineMark")) : runMark(t("activity.turnRunning"));
+    mark.setAttribute("role", "img");
+    mark.setAttribute("aria-label", hostOffline ? t("dialog.work.hostOfflineMark") : t("activity.turnRunning"));
+    tip.append(mark);
+    act.prepend(tip);
+    return wrap(act, "activity");
+  }
+
   return {
     role,
     config,
@@ -635,6 +738,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     nextSeq: () => ++seq,
     prepare, adopt, paint, finish, branchAnchor,
     apply, messageRow, markDelivery, ensureMessageRow, syncOutboxRows, settleSending, clearDeliveryTimer,
+    userWord, historyRowOptions, skipsPresent, instructionRow, activityRow,
     atBottom, followBottom, scrollToEnd, relayoutBranches, wrap, place, append,
   };
 }
