@@ -17,10 +17,18 @@ async page => {
     await page.locator('#thread .mw.activity').waitFor({ state: 'detached' });
     await page.locator('#abort').waitFor({ state: 'hidden' });
   };
+  // 右の欄を開け閉めする。開くのは頭の行のアイコン（#browserEntry）、開いている間はそのアイコンがタブの列の右端の ✖ へ受け渡され
+  // （.entry-handed で並びから外れる）、閉じる役は ✖ が持つ（ADR 0312・docs/design-system.md「会話の頭の行のアイコン」）。
+  // 開閉のばねが止まり、受け渡しが済む（移る絵が消え、止まった側の本物だけが見える）まで待つ
   const panel = async open => {
-    const shown = await page.evaluate(() => !!document.body.classList.contains('file-preview-open'));
-    if (shown !== open) await page.locator('#browserEntry').click();
-    await page.waitForTimeout(400);
+    const shown = await page.evaluate(() => document.body.classList.contains('file-preview-open'));
+    if (shown !== open) await page.locator(open ? '#browserEntry' : '#filePreview .bu-panel-close:not([hidden])').click();
+    await page.waitForFunction(open => {
+      const body = document.body, fp = document.querySelector('#filePreview'), flier = document.querySelector('.panel-flier');
+      const seen = n => !!n && !n.hidden && getComputedStyle(n).display !== 'none' && n.getBoundingClientRect().width > 0;
+      const still = !body.classList.contains('file-preview-moving') && !body.classList.contains('file-preview-leaving') && !fp.classList.contains('fp-leaving') && !seen(flier);
+      return still && body.classList.contains('file-preview-open') === open && seen(document.querySelector('#browserEntry')) === !open;
+    }, open, { timeout: 10_000 });
   };
   const measure = () => page.evaluate(() => {
     const q = s => document.querySelector(s);
