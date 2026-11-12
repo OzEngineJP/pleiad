@@ -18,17 +18,38 @@ export const ACTIVITY_LABEL = {
 };
 
 /**
- * 進行中のターンの描画と、その状態（state の turnEl・bundle・streamEl・thinkEl・pendingUuid・endedWithText・turnClosed・toolCards）。
- * ctx: state, thread, log と、画面側の関数（append・atBottom・aiMsg・relayoutBranches・followBottom・stopComputer・
- * isRunningHere・stoppingHere・behindHere・turnStartHere・backgroundCounts・syncWorkEntry）、
- * 読むだけの印（replaying()・painting()）、履歴でない行の通し番号（nextSeq()）
+ * 進行中のターンの描画と、その状態（turnEl・bundle・streamEl・thinkEl・pendingUuid・endedWithText・turnClosed・toolCards）。
+ * 状態はこの中が持ち、外へは返す実例の getter / setter で出す（client は state の同名の項目をそこへつなぐ）。
+ * この部品は主の会話の値（state.current など）を直に読まない。必要なものは次の hooks で受ける。
+ *   thread, log                    会話の筋とその外枠（DOM）
+ *   isRunning() / stopping()       この会話の AI が走っているか / 中断を頼んだ後か
+ *   behind() / backgroundCounts()  裏（subagent・端末など）を待っているか / 待てない裏の数
+ *   turnStart()                    走っているターンの始まりの時刻（分からなければ null）
+ *   aiMsg(opts)                    AI の発言の行を作る（名札・バックエンドの印は呼ぶ側が決める）
+ *   placeRow(node, key)            筋の中へ行を置く（履歴との並びは呼ぶ側が決める）
+ *   atBottom() / followBottom(ms)  末尾を見ているか / 末尾へ追う
+ *   relayout()                     分岐の印などの再配置
+ *   onActivity()                   稼働表示が出入りした（作業の入口の更新）
+ *   stopComputer(bundle)           コンピューター操作の束の「止める」
+ *   replaying() / painting()       履歴の再生中か / 履歴を描いている最中か（読むだけの印）
+ *   nextSeq()                      履歴でない行（live:N）の通し番号
  */
-export function createLiveTurn(ctx) {
+export function createLiveTurn(hooks) {
   const {
-    state, thread, log, append, atBottom, aiMsg, relayoutBranches, followBottom, stopComputer,
-    isRunningHere, stoppingHere, behindHere, turnStartHere, backgroundCounts, syncWorkEntry,
+    thread, log, isRunning, stopping, behind, backgroundCounts, turnStart,
+    aiMsg, placeRow, atBottom, followBottom, relayout, onActivity, stopComputer,
     replaying, painting, nextSeq,
-  } = ctx;
+  } = hooks;
+
+  // 状態
+  let turnEl = null;          // 追記中の AI の発言（.m.ai）
+  let bundle = null;          // 走っているツールのまとまり（本文・委譲・ターンの終わりで閉じる。web/tool-bundle.mjs）
+  let pendingUuid = null;     // 見せるものが無いまま確定した発言（thinking だけ）の id。次に発言の入れ物を作るときに使う
+  let endedWithText = false;  // 直前に確定した発言（text.end）が本文を持っていたか
+  let turnClosed = false;     // text.end が来た。続くツール呼び出しは同じ発言に入り、次の本文は新しい発言になる
+  let streamEl = null;        // 追記中の本文
+  let thinkEl = null;         // 追記中の thinking 要素（平文が来たときだけ作る）
+  const toolCards = new Map();   // tool_use_id -> 描いたカード（結果を後から差し込む）
 
   // ---------------------------------------------------------------- 稼働表示
   // 「動いているのか分からない」を無くす。何をしているかと、経過時間を出し続ける。
@@ -36,7 +57,7 @@ export function createLiveTurn(ctx) {
   // 印は本文列に置き、実行中のツール行を優先する（ADR 0267）。
 
 
-  const runningTools = new RunningTools(() => activity.toolsChanged(), { before: () => atBottom(), after: stick => { relayoutBranches(); if (stick && !painting()) followBottom(); } });
+  const runningTools = new RunningTools(() => activity.toolsChanged(), { before: () => atBottom(), after: stick => { relayout(); if (stick && !painting()) followBottom(); } });
   const activity = {
     t0: 0,         // 経過の起点。走っているターンの始まり（turnStartHere）。分からなければ出し始めた時刻
     timer: null,
@@ -49,11 +70,11 @@ export function createLiveTurn(ctx) {
     shape: "",         // 今の印（run / sat:N / none）。変わったときだけ差し替える
     /** ターンは終わり、待てない裏の作業（端末・裏のコマンド）だけが残っている。印も経過時間も出さない（§6.1） */
     idleOnly() {
-      return !this.behind && !isRunningHere() && backgroundCounts().live > 0;
+      return !this.behind && !isRunning() && backgroundCounts().live > 0;
     },
     shapeNow() {
       if (this.behind) return `sat:${this.behind.n}`;
-      if (!stoppingHere() && [t("activity.waitingApproval"), t("activity.waitingAnswer"), t("activity.waitingChrome")].includes(this.text)) return "none";
+      if (!stopping() && [t("activity.waitingApproval"), t("activity.waitingAnswer"), t("activity.waitingChrome")].includes(this.text)) return "none";
       return this.idleOnly() ? "none" : "run";
     },
     mark() {
@@ -67,7 +88,7 @@ export function createLiveTurn(ctx) {
       else { runningTools.el.remove(); this.suspend(); this.afterTool(); }
     },
     paint() {
-      const tools = runningTools.size > 0 && !stoppingHere();
+      const tools = runningTools.size > 0 && !stopping();
       this.el.classList.toggle("tools-active", tools);
       if (tools) { if (runningTools.el.parentNode !== this.el) this.el.append(runningTools.el); } else runningTools.el.remove();
       this.el.querySelector(".txt").textContent = this.behind ? this.behind.label : this.idleOnly() ? t("activity.backgroundOnly") : this.text;
@@ -79,8 +100,8 @@ export function createLiveTurn(ctx) {
     },
     /** 承認・回答の決着後。親のターンが終わっていても、残った子の結果待ちに戻す。 */
     afterPermission(text = t("activity.continuing"), { suspend = false } = {}) {
-      if (isRunningHere()) { if (suspend) this.suspend(); else this.show(text); }
-      else if (behindHere()) this.show(t("activity.waitingBackground"));
+      if (isRunning()) { if (suspend) this.suspend(); else this.show(text); }
+      else if (behind()) this.show(t("activity.waitingBackground"));
     },
     /**
      * 汎用表示を抑える。実行中のツールがあれば同じ末尾の節に残し、承認カードだけなら節を外す。
@@ -90,15 +111,15 @@ export function createLiveTurn(ctx) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
       this.suspended = true;
-      if (!this.t0) this.t0 = turnStartHere() ?? Date.now();
-      if (runningTools.size || behindHere()) return this.show(this.text || ACTIVITY_LABEL.running, { keepSuspended: true });
+      if (!this.t0) this.t0 = turnStart() ?? Date.now();
+      if (runningTools.size || behind()) return this.show(this.text || ACTIVITY_LABEL.running, { keepSuspended: true });
       clearTimeout(this.markTimer);
       this.markTimer = null;
       this.behind = null;
       this.shape = "";
       this.el?.closest(".mw")?.remove();
       this.el = null;
-      relayoutBranches();
+      relayout();
     },
     /** ツールの結果が届いた。すぐ次のツールが始まらず、走っている行も無いなら、行に出ていない待ちとして稼働表示を戻す */
     afterTool() {
@@ -106,21 +127,21 @@ export function createLiveTurn(ctx) {
       this.idleTimer = setTimeout(() => {
         this.idleTimer = null;
         // 走っている・承認を待っている行が今のまとまりに無いときだけ（前のターンの残骸や他の会話の行は見ない）
-        const busy = [...state.toolCards.values()].some((c) => c.classList.contains("tc-running") || c.classList.contains("tc-waiting"));
-        if (isRunningHere() && !busy) this.show(ACTIVITY_LABEL.running);
+        const busy = [...toolCards.values()].some((c) => c.classList.contains("tc-running") || c.classList.contains("tc-waiting"));
+        if (isRunning() && !busy) this.show(ACTIVITY_LABEL.running);
       }, 600);
     },
     show(text, { delayMark = false, passive = false, keepSuspended = false } = {}) {
       // 汎用の事象（動いている・待っている）は、ツールの行が語っている間は出さない
-      if (passive && this.suspended && !runningTools.size && !behindHere()) return;
+      if (passive && this.suspended && !runningTools.size && !behind()) return;
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
       if (!keepSuspended) this.suspended = false;
       // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
-      if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
+      if (stopping()) text = ACTIVITY_LABEL.stopping;
       this.text = text;
-      if (!this.t0) this.t0 = turnStartHere() ?? Date.now();
-      this.behind = runningTools.size || stoppingHere() ? null : behindHere();
+      if (!this.t0) this.t0 = turnStart() ?? Date.now();
+      this.behind = runningTools.size || stopping() ? null : behind();
       // ターンが終わって裏だけが残った、またはその逆。出ている節の印を差し替える
       if (this.el?.isConnected && this.shape !== this.shapeNow()) this.remark();
       if (!this.el?.isConnected) {
@@ -129,7 +150,7 @@ export function createLiveTurn(ctx) {
         const tip = el("span", "activity-tip");
         if (!delayMark) tip.append(this.mark());
         m.append(tip, el("span", "txt"), el("span", "el"));
-        append(m, "activity");
+        placeRow(m, "activity");
         if (!replaying() && !matchMedia("(prefers-reduced-motion: reduce)").matches && m.animate) m.animate([
           { transform: "translateY(6px)", opacity: .3 }, { transform: "none", opacity: 1 },
         ], { duration: 240, easing: "cubic-bezier(.2,.7,.2,1)" });
@@ -147,8 +168,8 @@ export function createLiveTurn(ctx) {
         if (!tip.children.length) tip.append(this.mark());
       }
       this.paint();
-      relayoutBranches();
-      syncWorkEntry();
+      relayout();
+      onActivity();
       this.timer ??= setInterval(() => {
         const e = this.el?.querySelector(".el");
         if (e && !thread.classList.contains("activity-offline")) e.textContent = clock(Math.round((Date.now() - this.t0) / 1000));
@@ -157,16 +178,16 @@ export function createLiveTurn(ctx) {
     /** running が変わった。裏を待っているかどうかで印と見出しを差し替える（表示中のときだけ） */
     sync() {
       // 開き直した直後は running の放送より先に出ることがある。ターンの始まりが分かったら、そこからの経過に直す
-      const start = turnStartHere();
+      const start = turnStart();
       if (this.t0 && start != null && start < this.t0) this.t0 = start;
       if (!this.el?.isConnected) return;
       const was = this.behind;
-      this.behind = runningTools.size || stoppingHere() ? null : behindHere();
+      this.behind = runningTools.size || stopping() ? null : behind();
       if (this.shape !== this.shapeNow()) this.remark();
       // 待っている間に覚えた text は subagent 側のもの。main が戻ったら一旦中立の語にする
       if (was && !this.behind) this.text = ACTIVITY_LABEL.running;
       this.paint();
-      syncWorkEntry();
+      onActivity();
     },
     hide() {
       runningTools.clear();
@@ -190,7 +211,7 @@ export function createLiveTurn(ctx) {
   // 既定は閉じておく。読みたいときだけ開ける（畳んだままでも「考えた」ことは見える）。
 
   function thinkBox() {
-    if (state.thinkEl) return state.thinkEl;
+    if (thinkEl) return thinkEl;
     const d = document.createElement("details");
     d.className = "think live";
     const s = document.createElement("summary");
@@ -198,17 +219,17 @@ export function createLiveTurn(ctx) {
     const body = el("div", "think-body");
     d.append(s, body);
     openTurnEl().append(d);
-    state.thinkEl = d;
+    thinkEl = d;
     return d;
   }
 
   function closeThink() {
-    if (!state.thinkEl) return;
-    const d = state.thinkEl;
+    if (!thinkEl) return;
+    const d = thinkEl;
     d.classList.remove("live");
     const n = d.querySelector(".think-body").textContent.length;
     d.querySelector("summary").textContent = t("chat.thought", { count: n, chars: fmt.number(n) });
-    state.thinkEl = null;
+    thinkEl = null;
   }
 
   /** 履歴から復元するときの thinking。最初から閉じた状態で作る。 */
@@ -241,7 +262,7 @@ export function createLiveTurn(ctx) {
     const stick = target.isConnected && atBottom();
     target.innerHTML = renderAssistantMarkdown(target.dataset.raw);
     if (!target.isConnected) return;
-    relayoutBranches();
+    relayout();
     if (stick) log.scrollTop = log.scrollHeight;
   }
 
@@ -255,24 +276,24 @@ export function createLiveTurn(ctx) {
   /** 追記中の本文を終える。貯めた分を描き切ってから、次の本文・ツール・発言に移る */
   function endStream() {
     flushStream();
-    state.streamEl = null;
+    streamEl = null;
   }
 
   function appendText(text) {
     closeThink();
     // 稼働表示は文言が変わったときだけ更新する（show は行の置き直し・筋の貼り直し・作業の入口の更新まで行う）
-    const label = stoppingHere() ? ACTIVITY_LABEL.stopping : ACTIVITY_LABEL.writing;
+    const label = stopping() ? ACTIVITY_LABEL.stopping : ACTIVITY_LABEL.writing;
     if (!activity.el?.isConnected || activity.text !== label) activity.show(ACTIVITY_LABEL.writing);
-    if (!state.streamEl) {
+    if (!streamEl) {
       // 閉じた発言の後は streamEl がリセットされるため、本文を作る前に開く。
       const turn = openTurnEl();
       closeBundle();
-      state.streamEl = el("div", "body");
-      state.streamEl.dataset.raw = "";
-      turn.append(state.streamEl);
+      streamEl = el("div", "body");
+      streamEl.dataset.raw = "";
+      turn.append(streamEl);
     }
-    state.streamEl.dataset.raw += text;
-    streamTarget = state.streamEl;
+    streamEl.dataset.raw += text;
+    streamTarget = streamEl;
     streamFrame ||= requestAnimationFrame(flushStream);
   }
 
@@ -284,24 +305,24 @@ export function createLiveTurn(ctx) {
    * 同じ発言のもの（履歴では 1 メッセージ = 本文 + ツール呼び出し）なのでここへ入る。
    */
   function ensureTurnEl() {
-    if (state.turnEl) return state.turnEl;
-    const m = aiMsg({ at: new Date().toISOString(), cont: lastIsAi(), uuid: state.pendingUuid });
-    state.pendingUuid = null;
-    append(m, `live:${nextSeq()}`);
-    state.turnEl = m;
+    if (turnEl) return turnEl;
+    const m = aiMsg({ at: new Date().toISOString(), cont: lastIsAi(), uuid: pendingUuid });
+    pendingUuid = null;
+    placeRow(m, `live:${nextSeq()}`);
+    turnEl = m;
     return m;
   }
 
   /** 本文や thinking が始まる。閉じた発言の後なら新しい発言になる */
   function openTurnEl() {
-    if (state.turnClosed) closeTurnEl();
+    if (turnClosed) closeTurnEl();
     return ensureTurnEl();
   }
 
   /** 走っているまとまりを閉じて見出し 1 行にする（本文が来た・委譲が始まった・ターンが終わった） */
   function closeBundle() {
-    const b = state.bundle;
-    state.bundle = null;
+    const b = bundle;
+    bundle = null;
     if (!b) return;
     b.close();
   }
@@ -312,21 +333,21 @@ export function createLiveTurn(ctx) {
    */
   function liveBundle(kind = "tools", since = null) {
     const turn = ensureTurnEl();
-    if (state.bundle && state.bundle.el.parentNode === turn && state.bundle.kind === kind) return state.bundle;
+    if (bundle && bundle.el.parentNode === turn && bundle.kind === kind) return bundle;
     closeBundle();
-    state.bundle = new Bundle({ live: true, kind, since, ...(kind === "computer" ? { onStop: stopComputer } : {}) });
-    turn.append(state.bundle.el);
-    return state.bundle;
+    bundle = new Bundle({ live: true, kind, since, ...(kind === "computer" ? { onStop: stopComputer } : {}) });
+    turn.append(bundle.el);
+    return bundle;
   }
 
   function closeTurnEl() {
     closeThink();
     closeBundle();
     endStream();
-    state.turnEl = null;
-    state.turnClosed = false;
-    state.endedWithText = false;
-    state.pendingUuid = null;
+    turnEl = null;
+    turnClosed = false;
+    endedWithText = false;
+    pendingUuid = null;
   }
 
   /**
@@ -351,17 +372,25 @@ export function createLiveTurn(ctx) {
   function resetLiveTurn() {
     activity.hide();
     cancelStream();
-    state.streamEl = null;
-    state.thinkEl = null;
-    state.turnEl = null;
-    state.bundle = null;
-    state.turnClosed = false;
+    streamEl = null;
+    thinkEl = null;
+    turnEl = null;
+    bundle = null;
+    turnClosed = false;
   }
 
   return {
-    activity, runningTools,
+    activity, runningTools, toolCards,
     ensureTurnEl, openTurnEl, closeBundle, liveBundle, closeTurnEl, settleStrays, resetLiveTurn,
     thinkBox, closeThink, thinkFromText,
     flushStream, cancelStream, endStream, appendText,
+    // 状態の読み書き（client の state の同名の項目がここへつながる）
+    get turnEl() { return turnEl; }, set turnEl(v) { turnEl = v; },
+    get bundle() { return bundle; }, set bundle(v) { bundle = v; },
+    get pendingUuid() { return pendingUuid; }, set pendingUuid(v) { pendingUuid = v; },
+    get endedWithText() { return endedWithText; }, set endedWithText(v) { endedWithText = v; },
+    get turnClosed() { return turnClosed; }, set turnClosed(v) { turnClosed = v; },
+    get streamEl() { return streamEl; }, set streamEl(v) { streamEl = v; },
+    get thinkEl() { return thinkEl; }, set thinkEl(v) { thinkEl = v; },
   };
 }

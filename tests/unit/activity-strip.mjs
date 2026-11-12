@@ -44,6 +44,9 @@ export default function(t) {
     Date, setTimeout, clearTimeout, setInterval: fn => { timers.add(fn); return fn; }, clearInterval: fn => timers.delete(fn),
     turnStartHere: () => 1, behindHere: () => behind, stoppingHere: () => false,
     isRunningHere: () => running, backgroundCounts: () => ({ live }), relayoutBranches() {},
+    // live-turn.mjs が受ける hooks の名前（client の関数へ通す）
+    turnStart: () => 1, behind: () => behind, stopping: () => false, isRunning: () => running, relayout() {},
+    toolCards: new Map(), placeRow: (node, key) => ctx.append(node, key), onActivity() { ctx.syncStripVisible(); },
     ACTIVITY_LABEL: { running: 'working' }, clock: String, state: { bundle: null, busy: true }, closeMeterPop() {},
     narrowView: { get matches() { return narrow; } }, get contextShown() { return context; },
     stripIsNarrow: () => narrow,

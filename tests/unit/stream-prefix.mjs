@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import vm from "node:vm";
-import { cutFunction, readClientAndLiveTurn } from "../lib/cut-source.mjs";
+import { cutFunction, readClientAndLiveTurn, liveTurnStateDecl, bindLiveState } from "../lib/cut-source.mjs";
 import { el } from "../../web/dom.mjs";
 import { renderAssistantMarkdown } from "../../web/render.mjs";
 
@@ -18,17 +18,19 @@ export default async function (t) {
 
   for (const closed of [false, true]) {
     const bodies = [];
-    const state = { streamEl: null, turnEl: null, turnClosed: closed };
+    const state = {};   // 状態の項目は vm の宣言へつなぐ（bindLiveState）
     const context = vm.createContext({
       state, el, renderAssistantMarkdown,
       closeBundle() {}, closeThink() {}, activity: { show() {} }, atBottom: () => false,
       ACTIVITY_LABEL: {},   // 稼働表示の文言（client.mjs）。このテストは見ない
-      stoppingHere: () => false,
+      stopping: () => false,
       // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。コマは待たず、下で同期に描かせる
-      requestAnimationFrame: () => 1, cancelAnimationFrame() {}, streamFrame: 0, streamTarget: null, relayoutBranches() {}, log: {},
+      requestAnimationFrame: () => 1, cancelAnimationFrame() {}, streamFrame: 0, streamTarget: null, relayout() {}, log: {},
       ensureTurnEl: () => ({ append: node => bodies.push(node) }),
     });
-    vm.runInContext(functions, context);
+    bindLiveState(state, context);
+    vm.runInContext(`${liveTurnStateDecl()}\n${functions}`, context);
+    state.turnClosed = closed;
     context.chunk = "こんに";
     vm.runInContext("appendText(chunk)", context);
     context.chunk = "ちは！👋";

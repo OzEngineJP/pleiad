@@ -113,7 +113,7 @@ export default async function (t) {
     t.ok('ready の now で時計のずれを覚える', client.includes('syncServerClock(m.now);') && /startedAt: SERVER_STARTED_AT,\s*\n(\s*\/\/[^\n]*\n)*\s*now: Date\.now\(\),/.test(server));
     t.ok('最下部の進行中の行は、走っているターンの始まりから数える',
       client.includes('const turnStartHere = () => localTime((state.work.turns ?? []).find(belongsHere)?.startedAt);')
-      && (liveTurn.match(/if \(!this\.t0\) this\.t0 = turnStartHere\(\) \?\? Date\.now\(\);/g) ?? []).length === 2);
+      && (liveTurn.match(/if \(!this\.t0\) this\.t0 = turnStart\(\) \?\? Date\.now\(\);/g) ?? []).length === 2);
     t.ok('スレッドの走っている行も呼び出しの始まりから数える', thread.includes('markRunning(card, toolStartedAt(c))'));
   }
 

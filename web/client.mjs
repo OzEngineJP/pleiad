@@ -455,7 +455,6 @@ const state = {
   endpointShown: false, // 接続先の節を出すか（接続先を選べるエージェントのとき）
   prefs: {},           // 新しいセッションを始めるときの既定
   awaitingSession: false,  // 新規セッションの id 待ち（自分が送った直後だけ真）
-  toolCards: new Map(),// tool_use_id -> 描いたカード（結果を後から差し込む）
   attached: [],        // 次の送信で渡す添付（{name, path, kind}）
   drafts: new Map(),   // 書きかけ: sessionId（新規は ""）-> { text, attached }
   askedFor: new Set(), // 一覧に無いセッションのために取り直した記録（取り直しの繰り返しを防ぐ）
@@ -482,13 +481,6 @@ const state = {
   presents: [],
   presentBase: 0,      // presents[0] の通し番号（p:<通し番号>）
   earlierCalls: [],    // 窓の手前にあるサブエージェントの呼び出しの要約（サーバーが運ぶ。subagentCalls）。作業ダイアログの過去の一覧が使う
-  turnEl: null,        // 追記中の AI の発言（.m.ai）
-  bundle: null,        // 走っているツールのまとまり（本文・委譲・ターンの終わりで閉じる。web/tool-bundle.mjs）
-  pendingUuid: null,   // 見せるものが無いまま確定した発言（thinking だけ）の id。次に発言の入れ物を作るときに使う
-  endedWithText: false, // 直前に確定した発言（text.end）が本文を持っていたか。本文の無いツールだけの発言が続くときは、発言もまとまりも閉じない
-  turnClosed: false,   // text.end が来た。続くツール呼び出しは同じ発言に入り、次の本文は新しい発言になる
-  streamEl: null,      // 追記中の本文
-  thinkEl: null,       // 追記中の thinking 要素（平文が来たときだけ作る）
   auth: new Map(),         // backendId -> authStatus の戻り（{ supported, loggedIn, account?, detail?, pending?, unconfirmed? }。unconfirmed は受動では分からない = 未ログインと断定しない）
   authUrl: new Map(),      // backendId -> { url, message } ログインの途中で出た URL
   authNote: new Map(),     // backendId -> 直前のログインの時間切れ・失敗の一文（カードの中に出す。次のログインで消える。ADR 0243）
@@ -503,25 +495,31 @@ const state = {
   rebuildPhase: null,      // 組み立て中（contextRebuild phase start）の帯の印
 };
 
-// 進行中のターン（web/live-turn.mjs。ADR 0319 段 6-3）。今の関数名は、この実例への薄い委任として残す
+// 進行中のターン（web/live-turn.mjs。ADR 0319 段 6-3）。今の関数名は、この実例への薄い委任として残す。
+// 部品は state.current などを直に読まない。主の会話の値は下の hooks で渡す。
 const liveTurn = createLiveTurn({
-  state, thread, log,
-  append: (node, key) => append(node, key),
-  atBottom: () => atBottom(),
-  aiMsg: (opts) => aiMsg(opts),
-  relayoutBranches: () => relayoutBranches(),
-  followBottom: (ms) => followBottom(ms),
-  stopComputer: (bundle) => stopComputer(bundle),
-  isRunningHere: () => isRunningHere(),
-  stoppingHere: () => stoppingHere(),
-  behindHere: () => behindHere(),
-  turnStartHere: () => turnStartHere(),
+  thread, log,
+  isRunning: () => isRunningHere(),
+  stopping: () => stoppingHere(),
+  behind: () => behindHere(),
   backgroundCounts: () => backgroundCounts(),
-  syncWorkEntry: () => syncWorkEntry(),
+  turnStart: () => turnStartHere(),
+  aiMsg: (opts) => aiMsg(opts),
+  placeRow: (node, key) => append(node, key),
+  atBottom: () => atBottom(),
+  followBottom: (ms) => followBottom(ms),
+  relayout: () => relayoutBranches(),
+  onActivity: () => syncWorkEntry(),
+  stopComputer: (bundle) => stopComputer(bundle),
   replaying: () => replayPainting,
   painting: () => paintingHistory,
   nextSeq: () => ++liveSeq,
 });
+// state の同名の項目は、部品の持つ状態へつなぐ（読む側は書き換えない）
+Object.defineProperty(state, "toolCards", { get: () => liveTurn.toolCards, enumerable: true });
+for (const key of ["turnEl", "bundle", "pendingUuid", "endedWithText", "turnClosed", "streamEl", "thinkEl"]) {
+  Object.defineProperty(state, key, { get: () => liveTurn[key], set: (v) => { liveTurn[key] = v; }, enumerable: true });
+}
 const {
   activity, runningTools, ensureTurnEl, openTurnEl, closeBundle, liveBundle, closeTurnEl, settleStrays, resetLiveTurn,
   thinkBox, closeThink, thinkFromText, flushStream, cancelStream, endStream, appendText,
