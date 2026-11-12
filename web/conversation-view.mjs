@@ -608,6 +608,11 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
         closeTurnEl();
         for (const row of ev.rows ?? []) { const node = hooks.systemHistoryNode({ at: new Date().toISOString(), ...row }); if (node) append(node); }
         return;
+      case 'modelSwitch':
+        // 安全装置でモデルが切り替わった（履歴の systemHistoryNode と同じ形）。切り替わった所に弱い字の 1 行
+        closeTurnEl();
+        append(hooks.systemHistoryNode({ ...ev, kind: 'modelSwitch', at: ev.at ?? new Date().toISOString() }));
+        return;
       case 'interruptionNote': {
         // 中断で止めたものをエージェントへ伝えた。開くと伝えた中身が読める（履歴の systemHistoryNode と同じ形）。
         // 添えた発言の吹き出しの前に置く（履歴と同じ並び）

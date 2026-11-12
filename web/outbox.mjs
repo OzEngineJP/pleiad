@@ -13,7 +13,8 @@ function queuedLabel(wait) {
   if (wait?.reason === 'turn') return wait.detail === 'reserved' ? t('outbox.waitReply') : t('outbox.waitTurn');
   if (wait?.reason === 'order') return t('outbox.waitOrder');
   if (wait?.reason === 'limit') return t('outbox.waitLimit', { time: limitTime(wait.resetsAt) ?? t('interrupt.unknownTime') });
-  return statusLabel('queued');
+  // 理由が付かない送信待ちも、何を待つかは「作業が終わると自動で送信」（承認済み 2026-11-13。途中送信が断られたときに出る）
+  return t('outbox.waitTurn');
 }
 
 // 画面に出した送信予定の id。新しく増えた行だけ、下から滑り込ませる

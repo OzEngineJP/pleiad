@@ -226,7 +226,7 @@ export function createHistoryPane(hooks) {
    */
   function historyRole(m) {
     if (m.kind === 'command' || m.kind === 'shell') return 'user';
-    if (m.kind === 'compactSummary' || m.kind === 'interrupt' || m.kind === 'teammate' || m.kind === 'interruptionNote' || m.kind === 'channelEvent' || m.kind === 'contextNote' || m.internalTaskNotice) return null;
+    if (m.kind === 'compactSummary' || m.kind === 'interrupt' || m.kind === 'teammate' || m.kind === 'interruptionNote' || m.kind === 'modelSwitch' || m.kind === 'channelEvent' || m.kind === 'contextNote' || m.internalTaskNotice) return null;
     return m.role;
   }
   /** items の index の直前にある発言の役割（無ければ null） */
@@ -366,7 +366,7 @@ export function createHistoryPane(hooks) {
     let node;
     if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly, scheduledFor: m.scheduledFor, sentBy: m.sentBy });
     else {
-      node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont });
+      node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont, model: m.switchedModel });
       if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(backendVocab(backend)?.models ?? {}, m.model);
       if (m.thinking) node.append(thinkFromText(m.thinking));
       const cards = (m.toolCalls ?? []).map((c) => {

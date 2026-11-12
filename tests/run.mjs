@@ -687,6 +687,7 @@ const SUITES = [
   './unit/claude-transcript.mjs',
   // 履歴のシステム側のメッセージ: 形（transcript の印）と文面での見分け・区切りへの要約・中断・teammate・文脈のタグ・保存分（ADR 0053）
   './unit/system-messages.mjs',
+  './unit/model-switch.mjs',
   // bot の会話の先頭の包み（記憶・チャンネルの出来事）の組み立てと剥がし・本文の閉じタグが外へ出ない・id と発言者
   './unit/system-messages-leading.mjs',
   // 入力欄の `!`（ADR 0054）: ホストで走らせる・止める・上限・同じ runId・Claude に渡す形・Codex の userShell の履歴

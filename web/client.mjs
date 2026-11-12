@@ -73,6 +73,7 @@ import { promptMaxHeight, attachSources, attachFolderHints } from "./composer-la
 import { sendAttachment, ATTACH_MAX_BYTES, IMAGE_READ_HINT_BYTES } from "./attach-upload.mjs";
 import { formatBytes } from "./folder-upload.mjs";
 import { modelRowIds, modelDisplayName } from "./composer-labels.mjs";
+import { modelSwitchNode } from "./model-switch.mjs";
 import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
 import { attachedImageSrc } from "./composer/attachments.mjs";
@@ -424,6 +425,9 @@ let seq = 0;
 const pending = new Map();
 
 const state = {
+  // 安全装置で別のモデルに切り替わった印（承認済み 2026-11-13。docs/design-system.md「モデルの切り替え」）。{ sessionId, model, from, turnLive }。
+  // 入力欄のモデルの札の「⇄ X」と使用量の行き先に使い、切り替わらずに終わったターンの後か、人がモデルを替えたときに消える
+  switched: null,
   threadIndex: { threads: [], totals: {} },   // bot のスレッドの索引（channels.threads。脇の置き場所の木）
   current: null,      // 選択中の sessionId（null = 新規）
   loadingSession: null,
@@ -505,7 +509,7 @@ const mainView = createConversationView({
     behind: () => behindHere(),
     backgroundCounts: () => backgroundCounts(),
     turnStart: () => turnStartHere(),
-    aiMsg: (opts) => aiMsg(opts),
+    aiMsg: (opts) => aiMsg({ model: state.switched?.turnLive && state.switched.sessionId === state.current ? state.switched.model : undefined, ...opts }),
     onActivity: () => syncWorkEntry(),
     stopComputer: (bundle) => stopComputer(bundle),
     // 履歴の面
@@ -1459,7 +1463,7 @@ function setUuid(m, uuid) {
  * 時刻は触れている・焦点がある間だけ見える（style.css。場所は取ったままなので並びは動かない）。右端の操作の列（24px）は ⋯、
  * 時刻の左にコピー（actions: false は操作を持たない行。wireActions が押したときの動きを付ける）
  */
-function whoLine(who, at, { backend, actions = true } = {}) {
+function whoLine(who, at, { backend, actions = true, model = '' } = {}) {
   const w = el("div", "who");
   if (backend) {
     const logo = backendLogo(backend, who);
@@ -1468,6 +1472,8 @@ function whoLine(who, at, { backend, actions = true } = {}) {
     w.append(logo);
   }
   w.append(el("span", null, who));
+  // 選んだモデルと違うモデルが書いた返答は、名前の後ろにそのモデルを弱い字で添える（「Claude Code · Opus 4.8」）
+  if (model) w.append(el("span", "who-model", `· ${modelDisplayName(state.vocab.get(backend ?? activeBackendId())?.models ?? state.models ?? {}, model)}`));
   if (actions) {
     const { copy, more } = actionButtons();
     w.classList.add("acts");
@@ -1622,6 +1628,7 @@ function systemHistoryNode(m) {
   if (m.kind === 'command' || m.kind === 'shell') return commandMsg(m);
   // 中断で止めたものを Pleiad がエージェントへ伝えた文。開くと中身が読める
   if (m.kind === 'interruptionNote') return sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
+  if (m.kind === 'modelSwitch') return switchRow(m);
   // bot の会話の先頭の包み（core/system-messages.mjs の splitLeadingNotes）。チャンネルの出来事は「#チャンネル · 発言者」、記憶は渡した印。開くと中身が読める
   if (m.kind === 'channelEvent') return sysFold(m.history ? t('channels:event.thread', { channel: m.channel }) : t('channels:event.post', { channel: m.channel, from: m.from }), m.body ?? '', hhmm(m.at));
   if (m.kind === 'contextNote') return sysFold(m.tag === 'memory-core' ? t('channels:event.memoryCore') : m.tag === 'bot-recent' ? t('channels:event.botRecent') : m.tag === 'inner' ? (m.innerKind === 'wake' ? t('channels:event.wake') : t('channels:event.inner')) : t('channels:event.turnContext'), m.body ?? '', hhmm(m.at));
@@ -1843,12 +1850,96 @@ function interruptHistoryLine(m) {
   return line;
 }
 
-function aiMsg({ uuid, at, cont, backend } = {}) {
+/** 入力欄のモデルの一覧から、切り替え先のモデル（id）に当たる鍵を探す（無ければ ''。「次のターンから使う」を出さない） */
+function modelKeyFor(id) {
+  const models = state.models ?? {};
+  if (!id) return '';
+  if (id in models) return id;
+  return Object.keys(models).find((k) => models[k]?.resolvedModel === id) ?? '';
+}
+
+/** この会話で何回目の切り替えか（履歴に並んだ切り替えの行と、ライブで受けた分を数える） */
+function switchCount(m) {
+  if (m.nth) return m.nth;
+  let n = 0;
+  for (const x of state.messages) { if (x?.kind === 'modelSwitch' && x.phase === 'switched') n++; if (x === m) return n; }
+  return state.switchTotal ?? n;
+}
+
+/** 切り替えの行。履歴（systemHistoryNode）とライブ（conversation-view の modelSwitch）で同じ形 */
+function switchRow(m) {
+  const names = state.models ?? {};
+  const key = m.phase === 'switched' ? modelKeyFor(m.to) : '';
+  let before = null;
+  return modelSwitchNode({ ...m, count: m.phase === 'switched' ? switchCount(m) : 0 }, {
+    name: (id) => (id ? modelDisplayName(names, id) : ''),
+    at: m.at ? hhmm(m.at) : '',
+    onUse: key ? (on) => {
+      if (on) { before = state.model; chooseModel(key); } else chooseModel(before ?? '');
+    } : null,
+    onRetry: () => retryWithModel(),
+  });
+}
+
+/** モデルを人が選んだ（入力欄・「次のターンから使う」）。切り替わった印は人の選択で消える */
+function chooseModel(v) {
+  state.switched = null;
+  state.model = v;
+  controls.paint();
+  adoptEfforts().catch(() => {});
+  chooseSettings({ model: v, rememberModel: true });
+  if (retryRow) {
+    const row = retryRow; retryRow = null;
+    settingsWrite.catch(() => {}).then(() => resendFrom(row, false));
+  }
+}
+
+let retryRow = null;
+/** 応答が止まって切り替え先も無いとき: モデルの選び直しを開き、選んだら同じ発言をそのモデルで送り直す */
+function retryWithModel() {
+  const rows = thread.querySelectorAll('.m[data-role="user"]:not(.cmd)');
+  retryRow = rows[rows.length - 1] ?? null;
+  controls.panels.model.show();
+}
+
+/** 切り替えの出来事で、札と使用量の行き先を合わせる（ターンが終わるまで持ち、切り替えなしで通って終わると消す） */
+function trackSwitch(ev) {
+  if (ev.type === 'modelSwitch') {
+    if (ev.phase !== 'switched' || !ev.to) return;
+    // ライブの行の「何回目」: 履歴を開いた時点の数（restoreSwitched）に、このターンで受けた分を足す。同じ出来事の描き直しでは数え直さない
+    if (ev.nth === undefined) ev.nth = state.switchTotal = (state.switchTotal ?? 0) + 1;
+    // 選んだモデルが答えているなら、替わった印も使用量の行き先の切り替えも出さない（行は出す）
+    state.switched = answeredByChosen(ev.to) ? null : { sessionId: ev.sessionId ?? state.current, model: ev.to, from: ev.from, turnLive: true };
+    controls.paint(); paintHeaderUsage();
+  } else if (ev.type === 'turnResult' && !ev.compact && state.switched) {
+    if (state.switched.turnLive) state.switched.turnLive = false;
+    else if (ev.outcome === 'ok') { state.switched = null; controls.paint(); paintHeaderUsage(); }
+  }
+}
+
+/** 履歴を開いたとき: 最後の人の発言より後ろに切り替えの行があれば、札と使用量をそのモデルにする */
+function restoreSwitched(id, messages) {
+  const rows = messages ?? [];
+  state.switchTotal = rows.filter((m) => m?.kind === 'modelSwitch' && m.phase === 'switched').length;
+  state.switched = null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const m = rows[i];
+    if (m.role === 'user' && !m.kind) break;
+    if (m.kind === 'modelSwitch' && m.phase === 'switched' && m.to) { if (!answeredByChosen(m.to)) state.switched = { sessionId: id, model: m.to, from: m.from, turnLive: false }; break; }
+  }
+}
+
+/** 答えたモデル（id）が、入力欄で選んでいるモデルと同じか（同じなら「替わった」印は要らない） */
+const answeredByChosen = (id) => Boolean(id) && Boolean(state.model) && (id === state.model || modelKeyFor(id) === state.model);
+const switchedHere = () => (state.switched && state.switched.sessionId === state.current ? state.switched.model : null);
+function paintHeaderUsage() { try { controls.paint(); syncTopbar().catch(() => {}); } catch {} }
+
+function aiMsg({ uuid, at, cont, backend, model } = {}) {
   const m = el("div", "m ai" + (cont ? " cont" : ""));
   m.dataset.role = "assistant";
   if (at) m.dataset.at = at;
   const be = backend ?? activeBackendId();
-  m.append(whoLine(labelOf(be) || "AI", at, { backend: be }));
+  m.append(whoLine(labelOf(be) || "AI", at, { backend: be, model: cont ? "" : model }));
   wireActions(m);
   setUuid(m, uuid);
   return m;
@@ -3239,8 +3330,11 @@ function onEvent(ev, replay = false) {
     case 'taskNotice':
     case 'channelEvent':
     case 'interruptionNote':
-    case "turnResult":
     case "present":
+      return mainView.apply(ev, replay);
+    case 'modelSwitch':
+    case "turnResult":
+      trackSwitch(ev);
       return mainView.apply(ev, replay);
     case "sessionsChanged":
       if (ev.deleted === state.current) {
@@ -4654,6 +4748,8 @@ const controls = chatComposer.useControls({
       backendSwitchable: state.backends.length > 1,
       agentView: (id) => { const b = state.backends.find((x) => x.id === id); return b ? agentRows.condensed(rowAgent(b)) : null; },
       models: modelsReady ? state.models : {}, modelsPending: !modelsReady, model: state.model,
+      // 安全装置で切り替わったモデル（選んだモデルの札に「⇄ X」を添える）
+      switched: state.switched && state.switched.sessionId === state.current && !answeredByChosen(state.switched.model) ? { label: modelDisplayName(state.models ?? {}, state.switched.model) } : null,
       efforts: effortsReady ? state.efforts : {}, effortsPending: !effortsReady, effort: state.effort, effortDisabled: !effortsReady || state.effortDisabled,
       accounts: !bot && state.accountShown ? accountOptions(usageSource.get(bid)?.quota) : null, account: state.account,
       endpoint: bot ? null : endpointView(bid),
@@ -4666,7 +4762,7 @@ const controls = chatComposer.useControls({
         botSetup: bot ? homeBotSetup(bot) : '',
         openBot: id => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })),
         backendLabel: labelOf, onPick: id => homeDest.choose(id),
-        usage: destinationUsage(usageSource.get(bid), { model: state.model, models: modelsReady ? state.models : {}, account: bot ? bot.account ?? '' : state.account,
+        usage: destinationUsage(usageSource.get(bid), { model: switchedHere() ?? state.model, models: modelsReady ? state.models : {}, account: bot ? bot.account ?? '' : state.account,
           open: () => { onboarding.open('usage'); $('usageTab').click(); } }),
         groups: sent ? [] : [{ options: [
           { id: null, name: t('channels:homeDest.none'), backend: homeBackend() },
@@ -4689,7 +4785,7 @@ const controls = chatComposer.useControls({
     worktreeSplit: () => startWorktree(),
     worktreeBack: () => backFromWorktree(),
     backend: (v) => { state.shownBackend = v; controls.paint(); warmAgentChoices(v); chooseSettings({ backend: v, model: "" }); },
-    model: (v) => { state.model = v; controls.paint(); adoptEfforts().catch(() => {}); chooseSettings({ model: v, rememberModel: true }); },
+    model: (v) => chooseModel(v),
     // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
     endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); chooseSettings({ endpoint: v }); warmEfforts({ endpoint: v, model: "" }); },
     // Claude のアカウント。'' はログイン中のアカウント（既定）
@@ -6472,7 +6568,7 @@ const liveChildEligible = (item) => Boolean(item) && item.source === 'task' && i
 
 /** 実例の本文の面が描く出来事（追加の指示のまわりは除く。指示の一覧を読み直して描く） */
 const MODAL_CHILD_EVENTS = new Set(['userMessage', 'userMessage.delivered', 'userMessage.dropped', 'text.delta', 'text.end', 'thinking.start', 'thinking.delta', 'tool.start', 'tool.result', 'activity',
-  'taskNotice', 'channelEvent', 'interruptionNote', 'turnResult', 'present', 'turnEnd']);
+  'taskNotice', 'channelEvent', 'interruptionNote', 'modelSwitch', 'turnResult', 'present', 'turnEnd']);
 
 function modalChildPermission(ev) {
   const mc = modalChild;
@@ -9223,7 +9319,7 @@ async function syncTopbar() {
   if (state.current !== id || version !== topbarVersion) return;
   controls.paint();
   // 確定したモデルで使用量の札をもう一度絞り直す（先の呼び出し時点ではモデルが未確定のことがある）
-  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: state.model, models: state.models });
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: (state.switched?.sessionId === state.current ? state.switched.model : '') || state.model, models: state.models });
   paintSettingsNotice();
   renderSessions();
 }
@@ -9790,6 +9886,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.compactions = data?.compactions ?? [];
   state.rebuildPhase = null;
   state.rebuilds = data?.rebuilds ?? [];
+  restoreSwitched(id, data?.messages);
   paintContextStrip();
   restorePastSubagents(id);
   // 系譜（lineage）は待たずに本文を先に描き、分岐点の印は届いてから付ける（下の family）。

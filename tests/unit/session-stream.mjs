@@ -55,6 +55,8 @@ export default async function (t) {
     // 脇のスレッドの行の読み直し（channels.threads）。このテストの対象外
     THREAD_INDEX_EVENTS: new Set(), loadThreadIndexSoon: noop,
     paintContextStrip: noop, paintCompactions: noop,
+    // 安全装置のモデルの切り替えの印（client.mjs の trackSwitch・restoreSwitched）。tests/unit/model-switch.mjs が見る。このテストの対象外
+    trackSwitch: noop, restoreSwitched: noop,
     // 狭い画面の引き出し（client.mjs の setDrawer）。会話を開くと閉じる。このテストの対象外
     setDrawer: noop,
     // 起動で前回の会話を先に取っておく仕組み（client.mjs の startBootPrefetch）と、つなぎ中の骨組み。このテストの対象外（先取りは無い）

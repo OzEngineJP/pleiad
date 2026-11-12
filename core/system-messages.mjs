@@ -180,6 +180,7 @@ export function parseTeammate(text) {
  * - `{ role:'system', kind:'interrupt', text:'' }` … 中断
  * - `{ role:'system', kind:'teammate', text:'', from, body }` … agent teams の teammate の知らせ
  * - `{ role:'system', kind:'interruptionNote', text:'', body }` … 中断で止めたものを Pleiad が伝えた文（splitInterruptionNotes）
+ * - `{ role:'system', kind:'modelSwitch', text:'', phase:'switched', from, to, category?, notice? }` … 安全装置でモデルが替わった所（`marks.modelSwitches` から時刻の順に入れる。続く返答に `switchedModel`）
  * - `{ role:'system', kind:'contextNote' | 'channelEvent', text:'', … }` … bot の会話の先頭の包み（記憶・チャンネルの出来事。splitLeadingNotes）
  * 落とすもの: Pleiad の `/compact` の行とその出力、待機だけの teammate の知らせ、裏の作業の完了通知、文脈だけの発言。
  * コマンド・シェルの出力は入力の行へまとめ、uuid は出力の行のものにする（分岐点。SDK は追記した行より前で分岐できない）。
@@ -282,5 +283,30 @@ export function classifySystemMessages(messages, marks = null) {
     }
     out.push(m);
   }
+  return withModelSwitches(out, marks?.modelSwitches);
+}
+
+/**
+ * 安全装置でモデルが替わった所に `{ role:'system', kind:'modelSwitch', phase:'switched', from, to, notice? }` の行を入れる
+ * （承認済み 2026-11-13）。位置は時刻で決め、最初に switch より後の時刻を持つ行の手前に置く。
+ * 続く返答（次の人の発言まで）には `switchedModel`（替わった先）を付ける。見出しに「Claude Code · Opus 4.8」と出すため。
+ */
+function withModelSwitches(messages, switches) {
+  if (!switches?.length) return messages;
+  const out = [];
+  let list = [...switches], current = null;
+  for (const m of messages) {
+    const at = Date.parse(m?.at ?? "") || 0;
+    while (list.length && at && at > list[0].at) {
+      const s = list.shift();
+      out.push({ role: "system", kind: "modelSwitch", text: "", phase: "switched", from: s.from, to: s.to, ...(s.category ? { category: s.category } : {}),
+        ...(s.notice ? { notice: s.notice } : {}), nativeId: s.uuid, at: new Date(s.at).toISOString() });
+      current = s.to || null;
+    }
+    if (m?.role === "user" && !m.kind) current = null;
+    out.push(current && m?.role === "assistant" ? { ...m, switchedModel: current } : m);
+  }
+  for (const s of list) out.push({ role: "system", kind: "modelSwitch", text: "", phase: "switched", from: s.from, to: s.to,
+    ...(s.category ? { category: s.category } : {}), ...(s.notice ? { notice: s.notice } : {}), nativeId: s.uuid, at: new Date(s.at).toISOString() });
   return out;
 }

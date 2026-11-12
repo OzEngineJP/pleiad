@@ -238,6 +238,19 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = nul
     return out;
   }
 
+  // 安全装置でモデルが替わった / 替え先が無く止まった。サブエージェントだけの切り替え（scope: local）は主の会話に関係しない
+  if (m.type === "system" && (m.subtype === "model_refusal_fallback" || m.subtype === "model_refusal_no_fallback")) {
+    if (m.scope === "local") return out;
+    const switched = m.subtype === "model_refusal_fallback";
+    const category = m.api_refusal_category ?? m.category;
+    out.push({ type: "modelSwitch", phase: switched ? "switched" : "stopped",
+      from: String(m.original_model ?? ""), ...(switched && m.fallback_model ? { to: String(m.fallback_model) } : {}),
+      ...(typeof category === "string" && category ? { category } : {}),
+      ...(typeof m.content === "string" && m.content ? { notice: m.content } : {}),
+      ...(m.uuid ? { nativeId: String(m.uuid) } : {}) });
+    return out;
+  }
+
   if (m.type === "system" && m.subtype === "session_state_changed") {
     if (m.state === "requires_action") out.push({ type: "activity", state: "waiting" });
     else if (m.state === "running") out.push({ type: "activity", state: "running" });
@@ -294,7 +307,7 @@ export function claudeCompactionsFromHistory(rows) {
 export function transcriptSystemMarks(text) {
   const collector = systemMarkCollector();
   if (typeof text === 'string') for (const line of text.split('\n')) {
-    if (!['"compact_boundary"', '"isCompactSummary":true', '<command-name>', '<command-message>', '<bash-input>', '<local-command-std', '<bash-std', '"type":"attachment"'].some(s => line.includes(s))) continue;
+    if (!['"compact_boundary"', '"model_refusal_fallback"', '"isCompactSummary":true', '<command-name>', '<command-message>', '<bash-input>', '<local-command-std', '<bash-std', '"type":"attachment"'].some(s => line.includes(s))) continue;
     let row;
     try { row = JSON.parse(line); } catch {}
     collector.add(line, row);
@@ -306,7 +319,9 @@ function systemMarkCollector() {
   const summaries = new Map();
   const outputs = new Map();
   const compactions = [];
-  const needs = ['"compact_boundary"', '"isCompactSummary":true', "<local-command-std", "<bash-std"];
+  // 安全装置でモデルが替わった行（system:model_refusal_fallback）。transcript の行は camelCase
+  const modelSwitches = [];
+  const needs =['"compact_boundary"', '"isCompactSummary":true', "<local-command-std", "<bash-std"];
   let enabled = false;
   const parentOf = new Map();
   const boundaries = new Map();
@@ -325,6 +340,14 @@ function systemMarkCollector() {
     const mark = line.includes("<command-name>") || line.includes("<command-message>") || line.includes("<bash-input>")
       || line.includes("<local-command-std") || line.includes("<bash-std");
     const attachment = line.includes('"type":"attachment"');
+    if (line.includes('"model_refusal_fallback"') && row && typeof row === "object" && row.type === "system"
+      && row.subtype === "model_refusal_fallback" && !row.isSidechain && row.scope !== "local") {
+      const category = row.apiRefusalCategory ?? row.api_refusal_category;
+      modelSwitches.push({ uuid: typeof row.uuid === "string" ? row.uuid : null, at: Date.parse(row.timestamp ?? "") || 0,
+        from: String(row.originalModel ?? row.original_model ?? ""), to: String(row.fallbackModel ?? row.fallback_model ?? ""),
+        ...(typeof category === "string" && category ? { category } : {}),
+        ...(typeof row.content === "string" && row.content ? { notice: row.content } : {}) });
+    }
     if (!boundary && !summary && !mark && !attachment) return;
     if (!row || typeof row !== "object" || typeof row.uuid !== "string" || row.isSidechain) return;
     parentOf.set(row.uuid, row.parentUuid ?? null);
@@ -336,7 +359,8 @@ function systemMarkCollector() {
     else if (body.startsWith("<local-command-std") || body.startsWith("<bash-std")) outputRows.push(row);
   };
   const finish = () => {
-    if (!enabled) return { summaries, outputs, compactions };
+    modelSwitches.sort((a, b) => a.at - b.at);
+    if (!enabled) return { summaries, outputs, compactions, modelSwitches };
     for (const row of outputRows) if (heads.has(row.parentUuid)) outputs.set(row.uuid, row.parentUuid);
     const summaryOf = new Map();
     for (const row of summaryRows) {
@@ -359,7 +383,7 @@ function systemMarkCollector() {
         ...(summaryOf.has(uuid) ? { summary: summaryOf.get(uuid) } : {}) });
     }
     compactions.sort((a, b) => a.at - b.at);
-    return { summaries, outputs, compactions };
+    return { summaries, outputs, compactions, modelSwitches };
   };
   return { add, finish };
 }

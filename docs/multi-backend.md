@@ -180,6 +180,11 @@ main の開始は 2 回目以降の `system/init` とトップレベルの `mess
 - SDK の `env` は環境を**置き換える**（足し算ではない）。`process.env` を必ず広げる
 - そこで Pleiad は入力を async generator で開けたままにし、main が止まっている・裏のタスクが 1 本も無い・流し込んだメッセージが残っていない、
   の 3 つが揃ったとき（と中断のとき）だけ閉じる。上限も `0` にして外し、CLI の stderr はサーバのコンソールへ出す
+  - 「main が止まっている」は `stop_reason` が `end_turn` などで終わったときだけ数える。`tool_use`・`pause_turn` に加え、**`refusal`（安全装置が応答を止めた）も数えない**。
+    Fable の拒否はこの後に CLI が `model_refusal_fallback` で別のモデルに切り替えて続けるため、ここで閉じると途中送信（`control.steer`）が断られ、送った文が「送信待ち」のまま残る。
+    切り替え先が無く本当に止まるときは、結果（`result`）が来た時点で通常どおり閉じる
+  - 安全装置の切り替えは中立の出来事 `modelSwitch`（`phase: switched | stopped`・`from`・`to?`・`notice?`）に正規化する（受け口は Claude だけ。他のエージェントは出さない）。
+    履歴の読み戻しは transcript の `model_refusal_fallback` の行から同じ行を作る（core/system-messages.mjs の `withModelSwitches`）
 - **閉じた入力は開き直せない。まだ続くターンで閉じると host の口だけが黙って死ぬ**（2026-09 実測）。
   SDK MCP サーバ（`mcp__host__*`）の結果も `canUseTool` の返事も、ホストから CLI へは stdin で戻る。
   閉じた後の書き込みは SDK が黙って捨てる（`ProcessTransport: Dropping write to ended stdin stream`）ので、

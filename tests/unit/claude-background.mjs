@@ -265,6 +265,29 @@ export default function (t) {
     a.closer.settle();
     t.ok("閉じた後は何もしない", a.closed === 1 && !a.closer.armed);
 
+    // 安全装置が応答を止めた（stop_reason: refusal）。CLI は別のモデルで同じターンを続けるので、閉じてはいけない（途中送信が断られる）
+    {
+      const k = createTurnTracker();
+      const r = make(k);
+      const feed = (...ms) => { for (const m of ms) { k.observe(m); r.closer.settle(); } };
+      feed(init(), start(), delta("refusal"));
+      t.ok("refusal では main を止まったと数えず、入力を閉じる予約もしない", k.mainActive && !k.canCloseInput() && !r.closer.armed && r.closed === 0);
+      feed({ type: "system", subtype: "model_refusal_fallback" }, start(), delta("end_turn"));
+      t.ok("切り替え後の返答が終わるまで閉じず、終われば閉じる予約が立つ", r.closed === 0 && !k.mainActive && r.closer.armed);
+      r.c.fire();
+      t.ok("切り替え後の返答の後に閉じる", r.closed === 1);
+
+      // 切り替え先が無く、止まったまま終わる: result で閉じられる（入力が開いたまま残らない）
+      const k2 = createTurnTracker();
+      const r2 = make(k2);
+      for (const m of [init(), start(), delta("refusal"), { type: "system", subtype: "model_refusal_no_fallback" }]) { k2.observe(m); r2.closer.settle(); }
+      t.ok("切り替え先が無くても result が来るまでは閉じない", r2.closed === 0);
+      k2.observe(result());
+      r2.closer.settle();
+      r2.c.fire();
+      t.ok("切り替え先が無く終わるときは result で閉じる", r2.closed === 1 && r2.closer.closed);
+    }
+
     const waitable = { canCloseInput: () => true, sawWaitable: true };
     const b = make(waitable);
     b.closer.settle();
