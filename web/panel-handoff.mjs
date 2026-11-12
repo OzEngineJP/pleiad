@@ -9,7 +9,10 @@
 // - 動いている間のコマは「書くだけ」: 両端の姿（頭のアイコンの右端・✖ の左端と大きさ・字形・色・タブの列の色）は、
 //   動き始め（向きが替わったとき・窓の大きさが替わったとき・✖ が替わったとき）に 1 度だけ量って持つ。
 //   どちらの位置も右の欄の左の縁（W − px）と一緒に動くので、量った時の px との差だけ寄せる（毎コマ量り直して強制レイアウトしない）
+// - 動いている間に頭の行の右側の並び・タブの帯が替わっても（ボタンの出し入れ・✖ のタブが足される）、止まるときに 1 コマで跳ばないよう、
+//   終わりに近づいたとき（開くなら q ≥ 0.9・閉じるなら q ≤ 0.1）に 1 度だけ量り直す。強制レイアウトは動き始めと合わせて 2 度
 
+const LATE = 0.9;   // 終わりに近づいた（開くなら q がこれ以上・閉じるなら 1 − これ以下）。量り直す（上の説明）
 const clamp = (value) => Math.min(1, Math.max(0, value));
 const lerp = (a, b, q) => a + (b - a) * q;
 const mix = (a, b, q) => (q <= 0 ? a : q >= 1 ? b : `color-mix(in srgb,${b} ${(q * 100).toFixed(1)}%,${a})`);
@@ -95,11 +98,12 @@ export function createPanelHandoff({ entry, target = () => null, onPress = null 
     entry.style.marginLeft = `${(-rest.gap * q).toFixed(2)}px`;
     x.style.visibility = 'hidden';
     // 量るのは動き始めの 1 コマだけ（上で書いた幅・間を当てた姿）。px が届かない呼び方では毎コマ量る
-    const fresh = !geo;
+    const late = next === 'opening' ? q >= LATE : q <= 1 - LATE;
+    const fresh = !geo || (late && !geo.late);
     if (fresh) {
       const home = entry.getBoundingClientRect(), to = x.getBoundingClientRect();
       const computed = getComputedStyle(x);
-      geo = { x, px, homeRight: home.right, homeTop: home.top, homeHeight: home.height,
+      geo = { x, px, late, homeRight: home.right, homeTop: home.top, homeHeight: home.height,
         toLeft: to.left, toTop: to.top, toHeight: to.height,
         glyph: x.querySelector('svg')?.getBoundingClientRect().width || 18,
         color: computed.color, row: x.parentElement ? getComputedStyle(x.parentElement).backgroundColor : 'transparent' };

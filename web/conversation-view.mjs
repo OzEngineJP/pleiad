@@ -15,7 +15,7 @@
 //     activeBackendId, subagentToolsOf, isBoundaryTool, currentSession, isLoadingSession, backendVocab
 import { el, svgEl } from "./dom.mjs";
 import { layoutBranchSpine } from "./branch-view.mjs";
-import { whileStill } from "./panel-moving.mjs";
+import { whileStill, rightPanelMoving } from "./panel-moving.mjs";
 import { createSessionLoads } from "./session-stream.mjs";
 import { createLiveTurn, ACTIVITY_LABEL } from "./live-turn.mjs";
 import { createHistoryPane } from "./history-pane.mjs";
@@ -128,12 +128,15 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
   function relayoutBranches() { if (!replaying) layoutBranchSpine(thread); }
   // 子の thread は client.mjs の見張りの外。高さが変わったら（画像・折り畳み・返答が伸びる）同じフレームの変化をまとめて置き直す
   // 右の欄の開閉で列の幅が動いている間は毎コマ変わるので置き直さず、止まった合図で 1 回置き直す（web/panel-moving.mjs）
+  // 止まった瞬間にやり直す口は relayoutStill の 1 つだけ。実例を閉じるときに止まった合図の受け口も外す（dispose）
   let spineFrame = null;
-  const relayoutStill = whileStill(() => relayoutBranches());
-  const spineWatch = config.ownSpine && typeof ResizeObserver === "function" ? new ResizeObserver(whileStill(() => {
+  const spineLife = new AbortController();
+  const relayoutStill = whileStill(() => relayoutBranches(), { signal: spineLife.signal });
+  const spineWatch = config.ownSpine && typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+    if (rightPanelMoving()) { relayoutStill(); return; }
     if (spineFrame !== null) return;
     spineFrame = requestAnimationFrame(() => { spineFrame = null; relayoutStill(); });
-  }, () => relayoutBranches())) : null;
+  }) : null;
   spineWatch?.observe(thread);
 
   /**
@@ -830,6 +833,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
   /** 実例を閉じる: 取り置き・描く仕事・タイマーを止める。行は残す（呼ぶ側が本文ごと捨てる）。閉じた実例は使わない */
   function dispose() {
     spineWatch?.disconnect();
+    spineLife.abort();
     if (spineFrame !== null) cancelAnimationFrame(spineFrame);
     spineFrame = null;
     loads.cancel();

@@ -250,7 +250,7 @@ export function setupFilePreview({ getContext, useFile, canUse = null, onLayout,
   let leaving = null;   // 閉じる動きの間だけ、閉じた中身（custom）を持つ。論理の上ではもう閉じている（panel.hidden）
   let quiet = false;
   let wasMoving = false;   // 動いていたか。止まった瞬間を見つけて、列の幅に反応して止めていた処理へ知らせる（web/panel-moving.mjs）
-  const shown = createSpring(0, { preset:'smooth', epsilon:0.002, onUpdate:() => paintMotion() });
+  const shown = createSpring(0, { preset:'smooth', epsilon:0.002, onUpdate:() => paintMotion(), onFail:() => failMotion() });
   const motionOn = () => !reducedMotion() && typeof requestAnimationFrame === 'function' && !hostNode().classList.contains('file-preview-wide');
   const place = value => { quiet = true; shown.set(value); quiet = false; };
   function clearMotion() {
@@ -277,6 +277,18 @@ export function setupFilePreview({ getContext, useFile, canUse = null, onLayout,
     if (wasMoving && !moving) announceSettled();
     wasMoving = moving;
     onMotion?.(moving ? p : (phase === 'open' ? 1 : 0), phase, px);
+  }
+  /**
+   * ばねが例外で外れたとき（web/motion.mjs の _fail）。動いている印を残すと、止めた処理（枝の線・目次）が次の開け閉めまで止まったままになる。
+   * 止まった姿へ当て直し、それも投げるなら印を直に外して、止まった合図を出す
+   */
+  function failMotion() {
+    try { paintMotion(); } catch (error) { console.error('右の欄の動きの片付けで例外が出ました', error); }
+    if (!wasMoving) return;
+    wasMoving = false;
+    hostNode().classList.remove('file-preview-moving');
+    clearMotion();
+    announceSettled();
   }
   /**
    * 右の欄を作業のダイアログ（作業の一覧と詳細の右）へ載せる。載せる間は、開閉の印・幅の変数・動きをそのダイアログへ付け、

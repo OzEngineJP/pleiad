@@ -202,6 +202,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     // 間引いた後で走る頃に右の欄が動き始めていたら、走らせずに止まったときに 1 度（web/panel-moving.mjs）
     else measureTimer = setTimeout(() => { measureTimer = 0; measureStill(); }, wait);
   };
+  // 止まった瞬間にやり直す口はこの 1 つだけ（見張りも間引き後の待ちもここへ通す）
   const measureStill = whileStill(() => invalidate());
 
   // ---- 移動
@@ -274,7 +275,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   // ---- 見張り
   // 筋の高さが変わったとき（発言の追記・畳みの開閉・実寸の確定）と、窓の大きさが変わったときは、全数測定を間引いて 1 度だけ
   // 右の欄の開閉で列の幅が動いている間は毎コマ変わるので測らず、止まった合図で 1 度だけ測る（web/panel-moving.mjs）
-  const resize = new ResizeObserver(whileStill(invalidate));
+  const resize = new ResizeObserver(() => measureStill());
   resize.observe(thread);
   resize.observe(log);
   // 発言の増減だけは並びから取り直す（中身の変化では取り直さない）

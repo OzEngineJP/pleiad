@@ -147,7 +147,7 @@ import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } 
 import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
-import { whileStill } from './panel-moving.mjs';
+import { whileStill, rightPanelMoving } from './panel-moving.mjs';
 import { createSender } from './composer/sender.mjs';
 import { createWorkComposer } from './composer/work-composer.mjs';
 import { createWorkControls } from './composer/work-controls.mjs';
@@ -9330,22 +9330,29 @@ const branches = createBranches({
 // 脇の開閉で会話の幅が動いている間は毎コマ変わるので貼らず、動き終わりに 1 回貼る（setSidebar）。
 // 右の欄の開閉で動いている間も同じ（止まった合図でやり直す。web/panel-moving.mjs）。
 // 同じフレームの高さ変化はまとめ、位置が変わらなければ branch-view 側で SVG 更新を省く。
+// 止まった瞬間にやり直す口は relayoutBranchesStill の 1 つだけ（見張りも onLayout もここへ通す。口が 2 つだと同じやり直しが 2 度走る）
 let branchResizeFrame = null;
-const scheduleBranchRelayout = whileStill(() => {
+let drawnSig = "";   // 筋を最後に貼ったときの会話の寸法
+const sizeSig = () => `${thread.clientWidth}x${thread.clientHeight}`;
+const scheduleBranchRelayout = () => {
+  if (rightPanelMoving()) { relayoutBranchesStill(); return; }   // 動く間は走らせず、止まったときに 1 度
   if (branchResizeFrame !== null) return;
   branchResizeFrame = requestAnimationFrame(() => {
     branchResizeFrame = null;
     // 次のコマまでの間に右の欄が動き始めていたら、止まったときに回す
-    if (!document.body.classList.contains("side-moving")) relayoutBranchesStill();
+    if (document.body.classList.contains("side-moving")) return;
+    // 止まった瞬間の見張りの発火は、直前の止まった合図ですでに今の寸法で貼り終えている。同じ寸法を 2 度貼らない
+    if (sizeSig() === drawnSig) return;
+    relayoutBranchesStill();
   });
-}, () => relayoutBranches());
+};
 if (typeof ResizeObserver === "function") new ResizeObserver(() => {
   if (document.body.classList.contains("side-moving")) return;
   scheduleBranchRelayout();
 }).observe(thread);
 
 /** Layout runs on append as well as resize; the spine exists even before the first turn. */
-function relayoutBranches() { mainView.relayoutBranches(); }
+function relayoutBranches() { mainView.relayoutBranches(); drawnSig = sizeSig(); }
 // 右の欄の開閉の動きの間は走らせず、止まったときに 1 度（開け閉めの最初に onLayout が呼ばれる。列の幅は動いている途中なので置き直しても無駄になる）
 const relayoutBranchesStill = whileStill(() => relayoutBranches());
 
