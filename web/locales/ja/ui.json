@@ -2149,7 +2149,7 @@
     },
     "browserHandoff": {
       "headingMark": "Chrome の操作待ち",
-      "askedLead": "Claude からの依頼 · {{reason}}",
+      "askedLead": "{{agent}} からの依頼 · {{reason}}",
       "reason": {
         "login": "ログイン",
         "captcha": "CAPTCHA",

@@ -1,4 +1,5 @@
-import { browserHandoffView } from '../../web/browser-handoff-card.mjs';
+import { readFileSync } from 'node:fs';
+import { browserHandoffView, handoffSummary } from '../../web/browser-handoff-card.mjs';
 
 export const name = 'browser-handoff-card';
 export const title = 'Chrome の操作待ちのカード: 人が操作している間も頼まれた本文を出し続け、操作中は「あなたが操作中」と戻す入口（「AI に戻す」・「画面を開く」）';
@@ -51,4 +52,25 @@ export default async function (t_) {
   const bare = browserHandoffView({ id: 'card3', sessionId: 's', browserHandoff: { reason: 'captcha', state: 'asked', message: null } }, { el, t, cmd: async () => {} });
   bare.update({ state: 'operating', by: 'pc' });
   t_.ok('本文が無い依頼は、操作中に空の行を足さない', !message(bare) && texts(bare).join('|') === 'あなたが操作中|終わったら「AI に戻す」を押してください', JSON.stringify(texts(bare)));
+
+  // 見出しの「…からの依頼」は、頼んだエージェントの表示名（辞書に Claude を直書きしない。右の欄の映像の行と同じ名前の引き方）
+  const dict = lang => JSON.parse(readFileSync(new URL(`../../web/locales/${lang}/ui.json`, import.meta.url), 'utf8')).chat.browserHandoff;
+  for (const lang of ['ja', 'en']) {
+    const lead = dict(lang).askedLead;
+    t_.ok(`${lang}: askedLead は {{agent}} を取り、Claude を直書きしない`, lead.includes('{{agent}}') && !lead.includes('Claude'), lead);
+  }
+  const ja = dict('ja');
+  const tr = (key, params = {}) => (key === 'chat.browserHandoff.askedLead' ? ja.askedLead : key === 'chat.browserHandoff.reason.login' ? 'ログイン' : key)
+    .replace(/\{\{(\w+)\}\}/g, (_, k) => params[k]);
+  const asked = (names, id = 'fake-session', extra = {}) => browserHandoffView({ id: 'c', sessionId: 'parent', ...extra, browserHandoff: { reason: 'login', state: 'asked', message: null } },
+    { el, t: tr, cmd: async () => {}, agentName: names });
+  const looked = [];
+  const fake = asked(sid => { looked.push(sid); return 'Fake'; });
+  t_.ok('Claude 以外のエージェントでも、見出しとリードがそのエージェントの表示名になる', fake.summary() === 'Fake からの依頼 · ログイン' && texts(fake)[0] === 'Fake からの依頼 · ログイン' && !fake.summary().includes('Claude'), JSON.stringify([fake.summary(), texts(fake)]));
+  t_.ok('Claude では今までどおり「Claude からの依頼」', asked(() => 'Claude').summary() === 'Claude からの依頼 · ログイン');
+  asked(sid => `name-of-${sid}`, null, { targetSessionId: 'child' });
+  const byChild = asked(sid => `name-of-${sid}`, null, { targetSessionId: 'child' });
+  t_.ok('子の会話が頼んだときは、子の会話の id で名前を引く', byChild.summary() === 'name-of-child からの依頼 · ログイン', byChild.summary());
+  t_.ok('名前が分からないときは映像の行と同じ「AI」', asked(() => '').summary() === 'AI からの依頼 · ログイン' && asked(null).summary() === 'AI からの依頼 · ログイン');
+  t_.ok('handoffSummary は connect のときは名前を使わない', handoffSummary(tr, { reason: 'connect' }, 'Fake') === 'chat.browserHandoff.connect.lead');
 }

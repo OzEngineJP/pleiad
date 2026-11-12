@@ -2191,7 +2191,7 @@
     },
     "browserHandoff": {
       "headingMark": "Chrome needs you",
-      "askedLead": "Request from Claude · {{reason}}",
+      "askedLead": "Request from {{agent}} · {{reason}}",
       "reason": {
         "login": "Login",
         "captcha": "CAPTCHA",

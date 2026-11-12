@@ -106,7 +106,7 @@ const RING_MS = 700;
  * @returns {{ banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null, error?: string|null}|null) => void,
  *            ring: (x: number, y: number, size?: {width: number, height: number}) => void, state: () => string|null, refresh: () => void }}
  */
-export function createChromeControlView({ resume, getName = () => 'Claude', onError = () => {} } = {}) {
+export function createChromeControlView({ resume, getName = () => 'AI', onError = () => {} } = {}) {
   let current = null, showBanner = true;
   let busy = false;
   const label = () => t('chromeControl.resume', { name: getName() });
@@ -186,7 +186,7 @@ export function createChromeControlStore() {
 }
 
 /** 今の会話のエージェント名（閉じた行に使う。web/client.mjs が入れる） */
-let agentName = () => 'Claude';
+let agentName = () => 'AI';
 export const setChromeHandoverAgentName = fn => { if (typeof fn === 'function') agentName = fn; };
 // 閉じた窓の静止画は、持ち主の会話を見ている要求にだけサーバーが見せる（core/chrome/window-shots.mjs）。今見ている会話の id を渡す
 let currentSession = () => null;
