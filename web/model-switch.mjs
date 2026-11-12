@@ -9,14 +9,13 @@ const FROM = "\u{E000}from\u{E001}";
 const TO = "\u{E000}to\u{E001}";
 
 /** 訳文の {from}・{to} の位置に、モデル名を太字で置く（訳文と名前を HTML で混ぜない） */
-function withNames(text, { from, to }) {
-  const frag = document.createDocumentFragment();
+function withNames(parent, text, { from, to }) {
   for (const part of text.split(/(\u{E000}(?:from|to)\u{E001})/u)) {
-    if (part === FROM) frag.append(el("b", null, from));
-    else if (part === TO) frag.append(el("b", null, to));
-    else if (part) frag.append(part);
+    if (part === FROM) parent.append(el("b", null, from));
+    else if (part === TO) parent.append(el("b", null, to));
+    else if (part) parent.append(part);
   }
-  return frag;
+  return parent;
 }
 
 /**
@@ -33,7 +32,8 @@ export function modelSwitchNode(m, { name = (id) => id, onUse = null, onRetry = 
     const node = el("div", "m sys turn-failed model-switch");
     const line = el("span");
     const head = el("b", null, t("chat.sys.modelSwitch.stoppedHead"));
-    line.append(head, " ", withNames(t("chat.sys.modelSwitch.stopped", { from: FROM }), { from, to }));
+    line.append(head, " ");
+    withNames(line, t("chat.sys.modelSwitch.stopped", { from: FROM }), { from, to });
     node.append(line);
     if (onRetry) {
       const acts = el("div", "sw-acts");
@@ -52,9 +52,9 @@ export function modelSwitchNode(m, { name = (id) => id, onUse = null, onRetry = 
   const d = el("details", "sys-fold");
   const s = el("summary");
   const label = el("span");
-  label.append(withNames(later
+  withNames(label, later
     ? t("chat.sys.modelSwitch.later", { to: TO, n: m.count })
-    : t("chat.sys.modelSwitch.first", { from: FROM, to: TO }), { from, to }));
+    : t("chat.sys.modelSwitch.first", { from: FROM, to: TO }), { from, to });
   s.append(label);
   if (at) s.append(el("span", "t", at));
   const body = el("div", "sys-body");

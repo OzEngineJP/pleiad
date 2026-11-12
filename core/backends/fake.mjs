@@ -19,7 +19,7 @@
 //   "pre-hold:<ゲート>" … プロンプトを渡す前の接続・準備に当たる区間で、ゲートが開くまで待つ（Devin が session/prompt の前に待つ形）。
 //                    待っている間に中断されたら、渡さないまま（履歴にも残さず）aborted で終わる。ゲートが開けば普通に渡して返す
 //   "switch …" … 安全装置でモデルが切り替わった（modelSwitch: switched。Fable 5.2 → Opus 4.8）後、いつもの echo で返答する。
-//                    "switch-stop …" は切り替え先が無く応答が止まった形（modelSwitch: stopped）で、本文は返さずターンが終わる
+//                    "switch-stop …" は切り替え先が無く応答が止まった形（modelSwitch: stopped）で、本文は返さずターンが終わる（switched は履歴にも切り替えの行として残る。stopped は残らない）
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
 //   "fail-auth"    … ログインの期限切れ（401）で失敗する（Claude と同じ kind: 'auth'・pristine: true。ADR 0212）。
 //                    "fail-auth tool" はツールを 1 回動かしてから失敗する（pristine: false）
@@ -78,6 +78,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { covered, impossible } from "./contract.mjs";
 import { undelivered } from "./undelivered.mjs";
+import { classifySystemMessages } from "../system-messages.mjs";
 import { isReviewMode, fakeScriptAllowed } from "../review-mode.mjs";
 import { runHeld, driveHeld } from "./fake-held.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
@@ -605,6 +606,8 @@ export const backend = {
         const notice = "Fable 5.2 の応答が、安全のための仕組みで止まりました。";
         emit(stopped ? { type: "modelSwitch", phase: "stopped", from: "claude-fable-5-2", notice }
           : { type: "modelSwitch", phase: "switched", from: "claude-fable-5-2", to: "claude-opus-4-8", notice: notice + "Opus 4.8 で続けます。" });
+        // 履歴にも残す（Claude の記録の system 行と同じ。getMessages が classifySystemMessages の marks で行にする）
+        if (!stopped) (s.switches ??= []).push({ uuid: crypto.randomUUID(), at: Date.now(), from: "claude-fable-5-2", to: "claude-opus-4-8", notice: notice + "Opus 4.8 で続けます。" });
         if (stopped) { emit({ type: "turnResult", outcome: "ok" }); return { sessionId: id }; }
       } else if (!plain && text.startsWith("slow")) {
         // 中断できることを測るための台本。signal が来るまで終わらない
@@ -1069,7 +1072,8 @@ export const backend = {
       s.historyFailures--;
       throw new Error("codex -32603: failed to list thread history: thread-store internal error: failed to access thread history: error returned from database: (code: 1546) disk I/O error");
     }
-    return (s?.messages ?? []).map((m) => ({ ...m }));
+    const rows = (s?.messages ?? []).map((m) => ({ ...m }));
+    return s?.switches?.length ? classifySystemMessages(rows, { modelSwitches: s.switches }) : rows;
   },
 
   async setTitle(sessionId, title) {

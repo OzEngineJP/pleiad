@@ -1863,7 +1863,7 @@ function switchCount(m) {
   if (m.nth) return m.nth;
   let n = 0;
   for (const x of state.messages) { if (x?.kind === 'modelSwitch' && x.phase === 'switched') n++; if (x === m) return n; }
-  return n + (state.switchLive ?? 0);
+  return state.switchTotal ?? n;
 }
 
 /** 切り替えの行。履歴（systemHistoryNode）とライブ（conversation-view の modelSwitch）で同じ形 */
@@ -1906,8 +1906,10 @@ function retryWithModel() {
 function trackSwitch(ev) {
   if (ev.type === 'modelSwitch') {
     if (ev.phase !== 'switched' || !ev.to) return;
-    state.switched = { sessionId: ev.sessionId ?? state.current, model: ev.to, from: ev.from, turnLive: true };
-    state.switchLive = (state.switchLive ?? 0) + 1;
+    // ライブの行の「何回目」: 履歴を開いた時点の数（restoreSwitched）に、このターンで受けた分を足す。同じ出来事の描き直しでは数え直さない
+    if (ev.nth === undefined) ev.nth = state.switchTotal = (state.switchTotal ?? 0) + 1;
+    // 選んだモデルが答えているなら、替わった印も使用量の行き先の切り替えも出さない（行は出す）
+    state.switched = answeredByChosen(ev.to) ? null : { sessionId: ev.sessionId ?? state.current, model: ev.to, from: ev.from, turnLive: true };
     controls.paint(); paintHeaderUsage();
   } else if (ev.type === 'turnResult' && !ev.compact && state.switched) {
     if (state.switched.turnLive) state.switched.turnLive = false;
@@ -1917,16 +1919,18 @@ function trackSwitch(ev) {
 
 /** 履歴を開いたとき: 最後の人の発言より後ろに切り替えの行があれば、札と使用量をそのモデルにする */
 function restoreSwitched(id, messages) {
-  state.switchLive = 0;
-  state.switched = null;
   const rows = messages ?? [];
+  state.switchTotal = rows.filter((m) => m?.kind === 'modelSwitch' && m.phase === 'switched').length;
+  state.switched = null;
   for (let i = rows.length - 1; i >= 0; i--) {
     const m = rows[i];
     if (m.role === 'user' && !m.kind) break;
-    if (m.kind === 'modelSwitch' && m.phase === 'switched' && m.to) { state.switched = { sessionId: id, model: m.to, from: m.from, turnLive: false }; break; }
+    if (m.kind === 'modelSwitch' && m.phase === 'switched' && m.to) { if (!answeredByChosen(m.to)) state.switched = { sessionId: id, model: m.to, from: m.from, turnLive: false }; break; }
   }
 }
 
+/** 答えたモデル（id）が、入力欄で選んでいるモデルと同じか（同じなら「替わった」印は要らない） */
+const answeredByChosen = (id) => Boolean(id) && Boolean(state.model) && (id === state.model || modelKeyFor(id) === state.model);
 const switchedHere = () => (state.switched && state.switched.sessionId === state.current ? state.switched.model : null);
 function paintHeaderUsage() { try { controls.paint(); syncTopbar().catch(() => {}); } catch {} }
 
@@ -4745,7 +4749,7 @@ const controls = chatComposer.useControls({
       agentView: (id) => { const b = state.backends.find((x) => x.id === id); return b ? agentRows.condensed(rowAgent(b)) : null; },
       models: modelsReady ? state.models : {}, modelsPending: !modelsReady, model: state.model,
       // 安全装置で切り替わったモデル（選んだモデルの札に「⇄ X」を添える）
-      switched: state.switched && state.switched.sessionId === state.current ? { label: modelDisplayName(state.models ?? {}, state.switched.model) } : null,
+      switched: state.switched && state.switched.sessionId === state.current && !answeredByChosen(state.switched.model) ? { label: modelDisplayName(state.models ?? {}, state.switched.model) } : null,
       efforts: effortsReady ? state.efforts : {}, effortsPending: !effortsReady, effort: state.effort, effortDisabled: !effortsReady || state.effortDisabled,
       accounts: !bot && state.accountShown ? accountOptions(usageSource.get(bid)?.quota) : null, account: state.account,
       endpoint: bot ? null : endpointView(bid),
