@@ -33,5 +33,6 @@
 
 - 新しい流れの出来事・ページの口を足すときは、主の口だけでなく `modal` の口の会話も許可の範囲に入ることを前提にする（`browser-unify-ws` の `scope`・`allowed`、`core/server.mjs` の `wanted`）。
 - 画面は接続し直すたびに `modal` の口を伝え直す（`syncModalWatch({ force: true })`）。伝えないと、モーダルを開いたまま再接続した後、子の欄が映らない。
+- 子の会話を開くとき（`taskThread`）、`modal` の口の見張りは履歴の読み込み（`loadSession`）**より先に**送る（同じ WebSocket なので順に届く）。読み込みの後に送ると、その間に子が出した出来事を落とす。見張りと読み込みはサーバーで別の状態（`watchingModal` と履歴の読み出し）を触るだけで競らない（`tests/unit/child-modal-watch-order.mjs`）。
 - `docs/design-system.md` の作業のダイアログに、右の欄の出し方と一覧の開け閉めを足した。主の右の欄・脇の表示は変わらない。
 - 以降の段（モーダルの入力欄・検索・メニュー、子の進行の即時表示、主を開く入口の整理）は、この 2 つの口を前提に別の ADR で決める。

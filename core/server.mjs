@@ -7706,7 +7706,9 @@ async function prepareTurn(args, hooks, compactionRevision) {
     stream: {
       ...structuredClone(baseline),
       user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id,
-        ...(args.messageId ? { messageId: args.messageId } : {}) },
+        ...(args.messageId ? { messageId: args.messageId } : {}),
+        // 送り手の印。文字起こしが書かれる前の最初の発言は、開き直した画面がここから名札（あなた・追加の指示）を描く（履歴の台帳は渡った後に残る）
+        ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...(args.byHuman ? { sentByHuman: true } : {}) },
       initialMessageId: args.messageId ?? null,
       events: [],
     },
