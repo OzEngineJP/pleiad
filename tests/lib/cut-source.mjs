@@ -36,6 +36,46 @@ export const readConversationView = () => readWeb("conversation-view.mjs");
  */
 export const readClientAndLiveTurn = () => `${readConversationView()}\n${readWeb("client.mjs")}\n${readLiveTurn()}\n${readHistoryPane()}`;
 
+
+/**
+ * 主の会話の mainView（web/conversation-view.mjs）のうち、会話を開く仕事（prepare・adopt・paint・finish）だけを、切り出した関数として vm へ入れる。
+ * 実物の createConversationView は自前の履歴の面・進行中のターンを作るので、描く部分を作りものにしたいテストはこちらを使う。
+ * vm に要るもの: state・sessionLoads・thread・log・historyPane（作りものの持ち物。持たない関数は同名の vm の関数へ回る）・
+ * setUuid・chatEdit・syncEdit・paintCompactions・syncOutboxRows・outboxes・onEvent・batchToolMeasurements・batchTerminalUpdates・batchToolUpdates・
+ * runningTools・closeTurnEl・flushStream・relayoutBranches・scrollToEnd・requestAnimationFrame。
+ * state の messages ほか・displayLoad・initialMessageId は、本物では実例の持ち物へつながる（ここでは state の同名の項目へつなぐ）
+ */
+export function openBridge(viewSource = readConversationView()) {
+  const functions = ["prepare", "adopt", "branchAnchor", "paint", "finish"].map(name => cutFunction(viewSource, name, { withAsync: true })).join("\n");
+  return `const mainView = (() => {
+  let replaying = false, seq = 0;
+  const loads = sessionLoads;
+  const here = () => state.current;
+  const isCurrent = (id, load) => state.current === id && state.displayLoad === load;
+  const hooks = {
+    setUuid: (m, uuid) => setUuid(m, uuid), isEditing: () => chatEdit.active, syncEdit: () => syncEdit(), paintCompactions: () => paintCompactions(),
+    syncOutboxRows: (id) => syncOutboxRows(outboxes.get(id) ?? []), onEvent: (ev, replay) => onEvent(ev, replay),
+    batchPaint: (fn) => batchToolMeasurements(() => batchTerminalUpdates(() => batchToolUpdates(() => runningTools.batch(fn)))),
+  };
+  const liveTurn = { closeTurnEl: () => closeTurnEl(), flushStream: () => flushStream() };
+  const relayoutBranches = () => globalThis.relayoutBranches();
+  const scrollToEnd = () => globalThis.scrollToEnd();
+  const own = globalThis.historyPane;
+  const bound = ${JSON.stringify(HISTORY_STATE_KEYS)};
+  const historyPane = new Proxy(own, {
+    get: (target, key) => bound.includes(key) ? state[key] : key in target ? target[key] : (...args) => globalThis[key](...args),
+    set: (target, key, value) => { if (bound.includes(key)) state[key] = value; else target[key] = value; return true; },
+  });
+  let initialMessageId;
+  ${functions}
+  const mirrored = adopt;
+  return {
+    prepare, adopt: (data) => { mirrored(data); state.initialMessageId = initialMessageId; }, paint, finish, branchAnchor,
+    get replaying() { return replaying; }, set replaying(on) { replaying = on; }, nextSeq: () => ++seq,
+  };
+})();`;
+}
+
 /** createLiveTurn の「状態」の宣言（let turnEl … const toolCards）。切り出した関数と同じ vm に先に入れる */
 export function liveTurnStateDecl(liveSource = readLiveTurn()) {
   const from = liveSource.indexOf("  // 状態\n");

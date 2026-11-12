@@ -523,6 +523,12 @@ const mainView = createConversationView({
     activeBackendId: () => activeBackendId(),
     subagentToolsOf: (id) => subagentToolsOf(id),
     isBoundaryTool: (name, tools) => isBoundaryTool(name, tools),
+    // 会話を開く（mainView.paint）
+    setUuid: (m, uuid) => setUuid(m, uuid),
+    isEditing: () => chatEdit.active,
+    syncOutboxRows: (id) => syncOutboxRows(outboxes.get(id) ?? []),
+    onEvent: (ev, replay) => onEvent(ev, replay),
+    batchPaint: (fn) => batchToolMeasurements(() => batchTerminalUpdates(() => batchToolUpdates(() => liveTurn.runningTools.batch(fn)))),
     // 主の会話の値
     currentSession: () => state.current,
     isBusy: () => state.busy,
@@ -532,6 +538,10 @@ const mainView = createConversationView({
 });
 const { liveTurn, historyPane } = mainView;
 const sessionLoads = mainView.loads;
+// state の同名の項目は、本文の面の持つ状態へつなぐ（会話を開いている最中の読み込み・開いた直後に送った発言の id）
+for (const key of ["displayLoad", "initialMessageId"]) {
+  Object.defineProperty(state, key, { get: () => mainView[key], set: (v) => { mainView[key] = v; }, enumerable: true });
+}
 // state の同名の項目は、部品の持つ状態へつなぐ（読む側は書き換えない）
 Object.defineProperty(state, "toolCards", { get: () => liveTurn.toolCards, enumerable: true });
 for (const key of ["turnEl", "bundle", "pendingUuid", "endedWithText", "turnClosed", "streamEl", "thinkEl"]) {
@@ -9303,13 +9313,7 @@ function paintBranchNames() {
 }
 
 /** A live assistant row can represent several persisted tool/thinking entries. */
-function branchAnchor(mi) {
-  const rows = [...thread.querySelectorAll('.mw[data-key^="m:"]')];
-  return rows.find(w => Number(w.dataset.key.slice(2)) === mi)
-    ?? rows.filter(w => Number(w.dataset.key.slice(2)) <= mi).at(-1)
-    ?? thread.querySelector('.mw[data-key^="live:"]')
-    ?? thread.querySelector('.mw');
-}
+function branchAnchor(mi) { return mainView.branchAnchor(mi); }
 function branchSnapshots() {
   return new Map([...thread.querySelectorAll('.branch-row')].map(r => [r.dataset.key, r.snapshot()]));
 }
@@ -9661,8 +9665,7 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
  * transition は選択前のノード座標。本文の高さを畳まず、ノードを横移動する。
  */
 async function paintSession(id, data, { keepUpTo, transition, loaded = false, load, quiet = false, fresh = false, plan = null } = {}) {
-  // 手前を足している最中の会話を描き替えるとき: 残す行（位置を保つ描き替え・枝の切り替え）は手前まで描き終えてから、そうでなければやめる
-  if (historyPane.backfill) { if (keepUpTo !== undefined || plan) flushBackfill(); else cancelBackfill(); }
+  mainView.prepare({ keepUpTo, plan });
   filePreview.sessionChanged(id);
   const snapshots = branchSnapshots();
   if (keepUpTo !== undefined) saveDraft().catch(() => {});
@@ -9684,9 +9687,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   }
   state.awaitingSession = false;
   state.submitting = false;
-  state.messages = data?.messages ?? [];
-  state.base = data?.base ?? 0;
-  state.earlierCalls = data?.earlierCalls ?? [];
+  mainView.adopt(data);   // 発言・窓の先頭・提示・開いた直後の発言の id は本文の面の持ち物
   state.contextWindow = data?.contextWindow ?? null;
   state.compactionAt = data?.compactionAt ?? null;
   state.compactionPhase = null;
@@ -9695,10 +9696,6 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.rebuilds = data?.rebuilds ?? [];
   paintContextStrip();
   restorePastSubagents(id);
-  state.initialMessageId = data?.initialMessageId;
-  state.presents = data?.presents ?? [];
-  state.presentBase = data?.presentBase ?? 0;
-  historyPane.olderFail = null;
   // 系譜（lineage）は待たずに本文を先に描き、分岐点の印は届いてから付ける（下の family）。
   // 系譜はサーバーが全エージェントの一覧から組むので、待つと開くたびに 1〜3 秒止まっていた。
   // 別の家族の会話へ移ったなら、前の家族で分岐点を描かないように先に忘れる
@@ -9711,58 +9708,12 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   // 読み込み中の再生が終わるまで、送信や読み足しは始めない。
 
   if (navSession !== id) { navSession = id; nav.reset(); toc.reset(); }
-  const scrollAt = log.scrollTop;
-  // 読み直しは、末尾を見ていたなら末尾へ、読み返していたならその位置のまま描き替える
-  const atEnd = log.scrollHeight - log.clientHeight - log.scrollTop < 40;
-  const restoreReading = plan && !atEnd ? holdReading() : null;
-  const retained = plan ? retainThread(plan) : null;
-  if (keepUpTo === undefined) { if (!retained) clearThread(); }
-  else {
-    const last = keepUpTo > 0 ? branchAnchor(keepUpTo - 1) : null;
-    let after = !last;
-    for (const x of [...thread.children]) {
-      if (x.classList.contains('spine')) continue;
-      if (after) x.remove();
-      if (x === last) after = true;
-    }
-  }
-  // Shared DOM survives a fork switch, but its UUID must belong to the selected session.
-  // 静かな読み直しで残した行は同じ会話の同じ発言なので、uuid は変わらない
-  if (!retained) for (const w of thread.querySelectorAll('.mw[data-key^="m:"]')) {
-    const message = state.messages[Number(w.dataset.key.slice(2)) - state.base];
-    const m = w.querySelector('.m[data-role]');
-    if (m && message) {
-      delete m.dataset.uuid;
-      setUuid(m, message.uuid);
-    }
-  }
-  if (!keepComposer) loadDraft();
-  closeTurnEl();
-  // 長い会話を開くときは、末尾の数行を先に描き、手前は idle に足す（ADR 0182: C1）。
-  // 位置を保つ描き替え・枝の切り替え・編集中・開いた直後に送った会話は、全部を描く
-  const split = !retained && keepUpTo === undefined && !transition && (!quiet || atEnd) && !chatEdit.active && !state.initialMessageId ? splitFirstPaint() : null;
-  const added = split ? paintHistory(0, null, split.tail) : paintHistory(keepUpTo ?? 0, retained);
-  if (split) { historyPane.backfill = split.job; log.style.overflowAnchor = 'none'; }
-  syncEdit();
-  paintCompactions();
-  if (state.initialMessageId) {
-    const lastUser = [...thread.querySelectorAll('.mw:has(.m.user:not(.cmd))')].at(-1);
-    if (lastUser) lastUser.dataset.messageId = state.initialMessageId;
-  }
-  syncOutboxRows(outboxes.get(id) ?? []);
-  // Keep incoming display events queued until snapshot restoration catches up.
-  if (load) {
-    const restored = await sessionLoads.replay(load, data, {
-      current: () => state.current === id && state.displayLoad === load,
-      apply: event => onEvent(event, true),
-      paint: fn => {
-        mainView.replaying = true;
-        try { batchToolMeasurements(() => batchTerminalUpdates(() => batchToolUpdates(() => runningTools.batch(fn)))); }
-        finally { mainView.replaying = false; flushStream(); relayoutBranches(); }
-      },
-    });
-    if (!restored) return;
-  }
+  // 読んだ履歴を筋に描き、取り置いた出来事を流し直す（本体は mainView.paint。入力欄の下書きを戻すのは主だけの仕事）
+  const res = await mainView.paint(data, {
+    id, load, keepUpTo, transition, quiet, plan,
+    beforeFirstPaint: () => { if (!keepComposer) loadDraft(); },
+  });
+  if (!res) return;
   state.loadingSession = null;
   $("prompt").disabled = false;
   composerWait.idle();
@@ -9781,7 +9732,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   const groups = placeJunctions({ snapshots });
   const moving = transition ? groups.find(r => r.dataset.key === transition.key) : null;
   if (transition) {
-    for (const node of added) node.animate([{ opacity: .15 }, { opacity: 1 }], { duration: motionDuration(420), easing: EASING });
+    for (const node of res.added) node.animate([{ opacity: .15 }, { opacity: 1 }], { duration: motionDuration(420), easing: EASING });
   }
   // この会話が読み込んだ記録。取り直しは待たない（固定された会話では今のファイルとの突き合わせが入る）
   refreshContextInfo({ force: true }).catch(() => {});
@@ -9795,10 +9746,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   const retired = data?.retired ?? null;
   if (retired) { sys(escText(retired)); $("prompt").disabled = true; $("prompt").placeholder = retired; }
   syncResume();
-  if (keepUpTo === undefined && (!quiet || atEnd)) scrollToEnd(); else if (restoreReading) restoreReading(); else log.scrollTop = scrollAt;
-  prepareHistoryHeights();
-  requestAnimationFrame(maybeLoadOlder);
-  if (historyPane.backfill) scheduleBackfill(historyPane.backfill);
+  mainView.finish(res, { keepUpTo, quiet });
   if (family) family.then(() => {
     if (state.current !== id || load && state.displayLoad !== load) return;
     if (state.busy) { pendingBranchReload = true; return; }

@@ -5,6 +5,7 @@
 //   isRunning() / stopping() / behind() / backgroundCounts() / turnStart()   進行中のターンの問い（live-turn.mjs の hooks と同じ）
 //   aiMsg(opts) / stopComputer(bundle) / onActivity()                          進行中のターンの下請け
 //   isBusy()                                                                   今、送信などで手が塞がっているか（行を足したとき末尾へ付いていくかの判定）
+//   会話を開く（paint）: setUuid(m, uuid) / isEditing() / syncOutboxRows(sessionId) / onEvent(ev, replay) / batchPaint(fn)
 //   歴史の面の下請け（history-pane.mjs の hooks と同じ）: spine, placeJunctions, paintDelegateStates, paintCompactions, syncEdit, paintable,
 //     updateBranches, cmd, select, finalizing, systemHistoryNode, stripActions, userMsg, noteEndpointFailure, linkDelegateCard,
 //     activeBackendId, subagentToolsOf, isBoundaryTool, currentSession, isLoadingSession, backendVocab
@@ -165,6 +166,106 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     toolCardMap: () => liveTurn.toolCards,
   });
 
+  // ---------------------------------------------------------------- 会話を開く（paintSession の実例の仕事）
+
+  // 会話を開いている最中の読み込みと、開いた直後に送った発言の id（履歴の描き方・出来事の流し直しが読む）
+  let displayLoad = null;
+  let initialMessageId;
+  const isCurrent = (id, load) => here() === id && displayLoad === load;
+
+  /** 手前を足している最中の会話を描き替えるとき: 残す行（位置を保つ描き替え・枝の切り替え）は手前まで描き終えてから、そうでなければやめる */
+  function prepare({ keepUpTo, plan }) {
+    if (historyPane.backfill) { if (keepUpTo !== undefined || plan) historyPane.flushBackfill(); else historyPane.cancelBackfill(); }
+  }
+
+  /** 読んだ履歴をこの実例の持ち物にする（発言・窓の先頭・提示・開いた直後の発言の id） */
+  function adopt(data) {
+    historyPane.messages = data?.messages ?? [];
+    historyPane.base = data?.base ?? 0;
+    historyPane.earlierCalls = data?.earlierCalls ?? [];
+    initialMessageId = data?.initialMessageId;
+    historyPane.presents = data?.presents ?? [];
+    historyPane.presentBase = data?.presentBase ?? 0;
+    historyPane.olderFail = null;
+  }
+
+  /** A live assistant row can represent several persisted tool/thinking entries. */
+  function branchAnchor(mi) {
+    const rows = [...thread.querySelectorAll('.mw[data-key^="m:"]')];
+    return rows.find(w => Number(w.dataset.key.slice(2)) === mi)
+      ?? rows.filter(w => Number(w.dataset.key.slice(2)) <= mi).at(-1)
+      ?? thread.querySelector('.mw[data-key^="live:"]')
+      ?? thread.querySelector('.mw');
+  }
+
+  /**
+   * 読んだ履歴を筋に描き、読み込み中に取り置いた出来事を流し直す。読み込みが途中で捨てられたら null。
+   * beforeFirstPaint は、残す行を決めた後・最初に描く前の主だけの仕事（入力欄の下書きを戻す）
+   */
+  async function paint(data, { id, load, keepUpTo, transition, quiet, plan, beforeFirstPaint }) {
+    const scrollAt = log.scrollTop;
+    // 読み直しは、末尾を見ていたなら末尾へ、読み返していたならその位置のまま描き替える
+    const atEnd = log.scrollHeight - log.clientHeight - log.scrollTop < 40;
+    const restoreReading = plan && !atEnd ? historyPane.holdReading() : null;
+    const retained = plan ? historyPane.retainThread(plan) : null;
+    if (keepUpTo === undefined) { if (!retained) historyPane.clearThread(); }
+    else {
+      const last = keepUpTo > 0 ? branchAnchor(keepUpTo - 1) : null;
+      let after = !last;
+      for (const x of [...thread.children]) {
+        if (x.classList.contains('spine')) continue;
+        if (after) x.remove();
+        if (x === last) after = true;
+      }
+    }
+    // Shared DOM survives a fork switch, but its UUID must belong to the selected session.
+    // 静かな読み直しで残した行は同じ会話の同じ発言なので、uuid は変わらない
+    if (!retained) for (const w of thread.querySelectorAll('.mw[data-key^="m:"]')) {
+      const message = historyPane.messages[Number(w.dataset.key.slice(2)) - historyPane.base];
+      const m = w.querySelector('.m[data-role]');
+      if (m && message) {
+        delete m.dataset.uuid;
+        hooks.setUuid(m, message.uuid);
+      }
+    }
+    beforeFirstPaint?.();
+    liveTurn.closeTurnEl();
+    // 長い会話を開くときは、末尾の数行を先に描き、手前は idle に足す（ADR 0182: C1）。
+    // 位置を保つ描き替え・枝の切り替え・編集中・開いた直後に送った会話は、全部を描く
+    const split = !retained && keepUpTo === undefined && !transition && (!quiet || atEnd) && !hooks.isEditing() && !initialMessageId ? historyPane.splitFirstPaint() : null;
+    const added = split ? historyPane.paintHistory(0, null, split.tail) : historyPane.paintHistory(keepUpTo ?? 0, retained);
+    if (split) { historyPane.backfill = split.job; log.style.overflowAnchor = 'none'; }
+    hooks.syncEdit();
+    hooks.paintCompactions();
+    if (initialMessageId) {
+      const lastUser = [...thread.querySelectorAll('.mw:has(.m.user:not(.cmd))')].at(-1);
+      if (lastUser) lastUser.dataset.messageId = initialMessageId;
+    }
+    hooks.syncOutboxRows(id);
+    // Keep incoming display events queued until snapshot restoration catches up.
+    if (load) {
+      const restored = await loads.replay(load, data, {
+        current: () => isCurrent(id, load),
+        apply: event => hooks.onEvent(event, true),
+        paint: fn => {
+          replaying = true;
+          try { hooks.batchPaint(fn); }
+          finally { replaying = false; liveTurn.flushStream(); relayoutBranches(); }
+        },
+      });
+      if (!restored) return null;
+    }
+    return { added, atEnd, scrollAt, restoreReading };
+  }
+
+  /** 描き終えた後の位置決め。末尾へ送るか、読み返していた位置へ戻す。窓の高さの確定と手前の読み足しを始める */
+  function finish(res, { keepUpTo, quiet }) {
+    if (keepUpTo === undefined && (!quiet || res.atEnd)) scrollToEnd(); else if (res.restoreReading) res.restoreReading(); else log.scrollTop = res.scrollAt;
+    historyPane.prepareHistoryHeights();
+    requestAnimationFrame(historyPane.maybeLoadOlder);
+    if (historyPane.backfill) historyPane.scheduleBackfill(historyPane.backfill);
+  }
+
   return {
     role,
     config,
@@ -173,7 +274,12 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     loads, liveTurn, historyPane,
     get replaying() { return replaying; },
     set replaying(on) { replaying = on; },
+    get displayLoad() { return displayLoad; },
+    set displayLoad(load) { displayLoad = load; },
+    get initialMessageId() { return initialMessageId; },
+    set initialMessageId(id) { initialMessageId = id; },
     nextSeq: () => ++seq,
+    prepare, adopt, paint, finish, branchAnchor,
     atBottom, followBottom, scrollToEnd, relayoutBranches, wrap, place, append,
   };
 }
