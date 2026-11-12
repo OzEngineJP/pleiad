@@ -94,23 +94,74 @@ export default async function(t) {
       owners.push({ life, count: () => ran, call: whileStill(() => { ran++; }, { signal: life.signal }) });
     }
     t.ok('whileStill を 50 回作っても、document のリスナーは増えない', listeners === 0, `listeners=${listeners}`);
-    t.ok('作った口は見張りの数に入る', stillWatchers() === before + 50, `${stillWatchers()} vs ${before}`);
+    t.ok('作っただけでは見張りの数は増えない', stillWatchers() === before, `${stillWatchers()} vs ${before}`);
+    t.ok('動いていないときに呼んでも増えない', (owners[0].call(), stillWatchers() === before), `${stillWatchers()} vs ${before}`);
     classes.add(RIGHT_MOVING_CLASS);
     for (const owner of owners) owner.call();
+    t.ok('動いている間に呼ぶと、止めた分を抱えた口だけ増える', stillWatchers() === before + 50, `${stillWatchers()} vs ${before}`);
+    for (const owner of owners) owner.call();
+    t.ok('同じ口を何度呼んでも 1 つのまま', stillWatchers() === before + 50, `${stillWatchers()} vs ${before}`);
+    const ranBefore = owners.map(owner => owner.count());
     for (const owner of owners.slice(0, 25)) owner.life.abort();   // 半分は持ち主が閉じた
     t.ok('閉じた持ち主の分は見張りから外れる', stillWatchers() === before + 25, `${stillWatchers()} vs ${before}`);
     await settle();
-    const ranClosed = owners.slice(0, 25).reduce((n, owner) => n + owner.count(), 0);
-    const ranOpen = owners.slice(25).reduce((n, owner) => n + owner.count(), 0);
+    const ranClosed = owners.slice(0, 25).reduce((n, owner, i) => n + owner.count() - ranBefore[i], 0);
+    const ranOpen = owners.slice(25).reduce((n, owner, i) => n + owner.count() - ranBefore[25 + i], 0);
     t.ok('閉じた持ち主の分は、止まっても走らない', ranClosed === 0, `ran=${ranClosed}`);
     t.ok('閉じていない分は、止まったときに 1 度ずつ走る', ranOpen === 25, `ran=${ranOpen}`);
-    owners[0].call();
-    t.ok('閉じた後は、動いていないときに呼んでも走らない', owners[0].count() === 0);
-    for (const owner of owners.slice(25)) owner.life.abort();
-    t.ok('全部閉じたら見張りの数は元へ戻る', stillWatchers() === before, `${stillWatchers()} vs ${before}`);
+    t.ok('止まってやり直したら、見張りの数は元へ戻る（閉じ方を呼ばなくても）', stillWatchers() === before, `${stillWatchers()} vs ${before}`);
+
+    // 閉じ方を持たない持ち主（signal なし）が作って捨てても、抱えた分は次に止まったときに 1 度で外れる
+    const dropped = [];
+    for (let i = 0; i < 40; i++) { let ran = 0; dropped.push({ count: () => ran, call: whileStill(() => { ran++; }) }); }
+    classes.add(RIGHT_MOVING_CLASS);
+    for (const owner of dropped) owner.call();
+    t.ok('閉じ方を持たない口も、動いている間に呼ぶと増える', stillWatchers() === before + 40, `${stillWatchers()} vs ${before}`);
+    await settle();
+    t.ok('閉じ方を持たない口の分も、止まると元へ戻る', stillWatchers() === before, `${stillWatchers()} vs ${before}`);
+    t.ok('止まったときに 1 度ずつ走った', dropped.every(owner => owner.count() === 1), JSON.stringify(dropped.map(owner => owner.count())));
+    classes.add(RIGHT_MOVING_CLASS);
+    dropped[0].call();
+    await settle();
+    t.ok('次に動いて止まったときも、1 度ずつ走って外れる', dropped[0].count() === 2 && stillWatchers() === before, `${dropped[0].count()} ${stillWatchers()} vs ${before}`);
+
+    // 止まった合図の直後に折り返したら、抱えたまま残り、次に止まったときに走って外れる
+    classes.add(RIGHT_MOVING_CLASS);
+    dropped[1].call();
+    t.ok('折り返しの前: 抱えている', stillWatchers() === before + 1, `${stillWatchers()}`);
+    classes.delete(RIGHT_MOVING_CLASS);
+    announceSettled();
+    await flush();                     // 合図は出て、やり直しは次のコマ待ち
+    classes.add(RIGHT_MOVING_CLASS);   // その間に折り返す
+    nextFrame();
+    t.ok('折り返したあとも抱えたまま残る', stillWatchers() === before + 1 && dropped[1].count() === 1, `${stillWatchers()} ${dropped[1].count()}`);
+    await settle();
+    t.ok('次に止まったときに走って外れる', stillWatchers() === before && dropped[1].count() === 2, `${stillWatchers()} ${dropped[1].count()}`);
+
     const dead = new AbortController(); dead.abort();
-    whileStill(() => {}, { signal: dead.signal });
-    t.ok('閉じた後の signal を渡しても見張りは増えない', stillWatchers() === before, `${stillWatchers()} vs ${before}`);
+    classes.add(RIGHT_MOVING_CLASS);
+    whileStill(() => {}, { signal: dead.signal })();
+    classes.delete(RIGHT_MOVING_CLASS);
+    t.ok('閉じた後の signal を渡して呼んでも見張りは増えない', stillWatchers() === before, `${stillWatchers()} vs ${before}`);
+
+    // 動いている間に抱え、印が外れたあと止まった合図の前に呼ばれて、すぐ走った口（閉じ方なし）。抱えていないのに一覧に残らない
+    const early = [];
+    for (let i = 0; i < 30; i++) { let ran = 0; early.push({ count: () => ran, call: whileStill(() => { ran++; }) }); }
+    classes.add(RIGHT_MOVING_CLASS);
+    for (const owner of early) owner.call();
+    t.ok('抱えた: 動いている間に呼ぶと増える', stillWatchers() === before + 30, `${stillWatchers()} vs ${before}`);
+    classes.delete(RIGHT_MOVING_CLASS);   // 印が外れたが、止まった合図はまだ
+    for (const owner of early) owner.call();
+    t.ok('止まった合図の前に呼ばれてすぐ走った分は、もう抱えていないので一覧から外れる', stillWatchers() === before && early.every(owner => owner.count() === 1), `${stillWatchers()} vs ${before} ${JSON.stringify(early.map(owner => owner.count()))}`);
+    announceSettled();
+    await settle();
+    t.ok('そのあとの止まった合図では、もう走らない（やり直しは重ねない）', stillWatchers() === before && early.every(owner => owner.count() === 1), `${stillWatchers()} ${JSON.stringify(early.map(owner => owner.count()))}`);
+
+    // 1 つだけの口でも同じ（抱えたあと、止まる合図の前にすぐ走った）
+    const empty = whileStill(() => {});
+    classes.add(RIGHT_MOVING_CLASS); empty(); classes.delete(RIGHT_MOVING_CLASS);
+    empty();   // 合図の前にすぐ走る
+    t.ok('抱えが空になった口は、合図を受ける前に一覧から外れている', stillWatchers() === before, `${stillWatchers()} vs ${before}`);
   } finally {
     globalThis.document = saved.document;
     globalThis.requestAnimationFrame = saved.raf;

@@ -13,14 +13,14 @@ import { startServer } from '../lib/server.mjs';
 const install = page => page.evaluate(() => {
   if (window.__cost) return;
   const kinds = { handoff: /panel-handoff\.mjs/, spine: /branch-view\.mjs/, nav: /conversation-nav-view\.mjs/ };
-  const cost = window.__cost = { moving: { handoff: 0, spine: 0, nav: 0 }, still: { handoff: 0, spine: 0, nav: 0 }, passes: 0, settled: 0, stacks: [], samples: [], sampling: false, forceMeasure: false };
+  const cost = window.__cost = { moving: { handoff: 0, spine: 0, nav: 0 }, still: { handoff: 0, spine: 0, nav: 0 }, passes: 0, passesMoving: 0, settled: 0, stacks: [], samples: [], sampling: false, forceMeasure: false };
   const note = (self, key) => {
     const stack = new Error().stack ?? '';
     for (const [kind, re] of Object.entries(kinds)) if (re.test(stack)) {
       const moving = document.body.classList.contains('file-preview-moving');
       (moving ? cost.moving : cost.still)[kind]++;
       // 筋の置き直し 1 回（layoutBranchSpine）は、最後の発言の offsetTop を 1 度読む。止まったあとに何回走ったかの数え
-      if (kind === 'spine' && key === 'offsetTop' && self?.matches?.('.mw.node,.mw.activity')) cost.passes++;
+      if (kind === 'spine' && key === 'offsetTop' && self?.matches?.('.mw.node,.mw.activity')) { cost.passes++; if (moving) cost.passesMoving++; }
       if (moving && kind !== 'handoff' && cost.stacks.length < 6) cost.stacks.push(kind + ': ' + stack.split(String.fromCharCode(10)).slice(2, 7).map(line => line.trim().replace(/^at /, '').replace(/http:\/\/[^/]+\//, '')).join(' < '));
       return;
     }
@@ -53,12 +53,12 @@ const install = page => page.evaluate(() => {
 });
 const reset = (page, { sampling = false, forceMeasure = false } = {}) => page.evaluate(({ sampling, forceMeasure }) => {
   const cost = window.__cost;
-  cost.moving = { handoff: 0, spine: 0, nav: 0 }; cost.still = { handoff: 0, spine: 0, nav: 0 }; cost.passes = 0; cost.settled = 0;
+  cost.moving = { handoff: 0, spine: 0, nav: 0 }; cost.still = { handoff: 0, spine: 0, nav: 0 }; cost.passes = 0; cost.passesMoving = 0; cost.settled = 0;
   cost.samples = []; cost.stacks = []; cost.sampling = sampling; cost.forceMeasure = forceMeasure;
 }, { sampling, forceMeasure });
 const read = page => page.evaluate(() => {
-  const { moving, still, settled, samples, stacks, passes } = window.__cost;
-  return { moving: { ...moving }, still: { ...still }, passes, settled, samples: samples.slice(), stacks: stacks.slice() };
+  const { moving, still, settled, samples, stacks, passes, passesMoving } = window.__cost;
+  return { moving: { ...moving }, still: { ...still }, passes, passesMoving, settled, samples: samples.slice(), stacks: stacks.slice() };
 });
 
 /** 動きが止まるまで待つ（動いている印・片付けの印・受け渡しの絵が全部消える） */
@@ -83,6 +83,8 @@ const clickMid = (page, selector, ratio = 0.1) => page.waitForFunction(({ select
   document.querySelector(selector).click();
   return true;
 }, { selector, ratio }, { timeout: 8000, polling: 'raf' });
+/** 止めた呼び出しを抱えている口の数（止まってやり直したあとは 0 に戻る） */
+const watchers = page => page.evaluate(async () => (await import('/panel-moving.mjs')).stillWatchers());
 const mouseOn = async (page, selector) => {
   const box = await page.locator(selector).first().boundingBox();
   if (!box) throw new Error(`no box for ${selector}`);
@@ -242,6 +244,8 @@ export default async function rightPanelMotionCost({ browser, check }) {
     check('opening: nothing that reacts to the column width measures while the panel moves', open.moving.spine === 0 && open.moving.nav === 0, JSON.stringify({ moving: open.moving, stacks: open.stacks }));
     check('opening: the stopped work runs after the motion ends (spine and nav measure once it settles)', open.still.spine > 0 && open.still.nav > 0 && open.settled >= 1, JSON.stringify({ still: open.still, settled: open.settled }));
 
+    check('opening: after the stop no stopped call is left waiting (the watcher list is empty)', (await watchers(page)) === 0, `watchers=${await watchers(page)}`);
+
     // ---- 閉じる ----
     await reset(page, { sampling: true });
     await closePanel(page);
@@ -253,6 +257,38 @@ export default async function rightPanelMotionCost({ browser, check }) {
     check('closing: the handoff measures at the start only', closed.moving.handoff <= 12 && closed.samples.length >= 12, `${closed.moving.handoff} reads while moving, over ${closed.samples.length} frames`);
     check('closing: nothing that reacts to the column width measures while the panel moves, and it runs once after', closed.moving.spine === 0 && closed.moving.nav === 0 && closed.still.spine > 0 && closed.still.nav > 0 && closed.settled >= 1,
       JSON.stringify({ moving: closed.moving, still: closed.still, settled: closed.settled }));
+    check('closing: after the stop no stopped call is left waiting (the watcher list is empty)', (await watchers(page)) === 0, `watchers=${await watchers(page)}`);
+
+    // ---- 閉じ方を持たない持ち主（会話の目次: Channels のスレッドは開くたびに作って捨てる）: 動いている間に抱えた分は、止まると 1 度で外れる ----
+    const orphan = await page.evaluate(async () => {
+      const { createConversationNav } = await import('/conversation-nav-view.mjs');
+      const { announceSettled, stillWatchers } = await import('/panel-moving.mjs');
+      const frames = n => new Promise(resolve => { const step = left => left <= 0 ? resolve() : requestAnimationFrame(() => step(left - 1)); step(n); });
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:0;top:0;width:200px;height:100px;overflow:hidden;opacity:0;pointer-events:none';
+      document.body.append(host);
+      const logs = [];
+      for (let i = 0; i < 20; i++) {
+        const frame = document.createElement('div'), log = document.createElement('div');
+        log.style.cssText = 'width:150px;height:80px;overflow:auto';
+        frame.append(log); host.append(frame);
+        createConversationNav({ frame, log, thread: log, scrollToEnd() {}, isRunning: () => false, narrow: matchMedia('(max-width: 700px)') });
+        logs.push(log);
+      }
+      await frames(3);
+      const base = stillWatchers();
+      document.body.classList.add('file-preview-moving');
+      logs.forEach((log, i) => { log.style.width = `${100 + i}px`; });
+      await frames(3);
+      const held = stillWatchers();
+      host.remove();   // 閉じ方を呼ばずに捨てる
+      document.body.classList.remove('file-preview-moving');
+      announceSettled();
+      await frames(6);
+      return { base, held, after: stillWatchers() };
+    });
+    check('a table of contents dropped without a disposer holds a stopped call only while the panel moves, and the list is empty after the stop',
+      orphan.held >= orphan.base + 20 && orphan.after === orphan.base, JSON.stringify(orphan));
 
     // ---- 毎コマ量り直す旧来の動き（窓の大きさの変化で量り直させる）と同じ動きか ----
     await reset(page, { sampling: true, forceMeasure: true });
@@ -360,7 +396,7 @@ export default async function rightPanelMotionCost({ browser, check }) {
       const fresh = await probe(page);
       check(`${label}: the spine and the branch rows equal the ones drawn from scratch at that width`, shape(settled) === shape(fresh), JSON.stringify({ width: settled.width, spine: settled.spine?.length, rows: settled.rows.length }));
       check(`${label}: the map dots sit where the turns are`, railOk(settled), JSON.stringify({ shown: settled.railShown, dots: settled.dots.length, turns: settled.turns, worst: worstDot(settled) }));
-      if (r) check(`${label}: the stopped work ran once for the stop (spine passes)`, r.passes === 1, `passes=${r.passes}`);
+      if (r) check(`${label}: the stopped work ran once for the stop (spine passes)`, r.passes === 1, `passes=${r.passes} ${JSON.stringify({ duringMotion: r.passesMoving, moving: r.moving, still: r.still, settled: r.settled })}`);
       if (moved) check(`${label}: the width really changed the drawing (the test is not vacuous)`, settled.width !== moved.width && shape(settled) !== shape(moved), JSON.stringify({ was: moved.width, now: settled.width }));
       return settled;
     };
@@ -458,7 +494,6 @@ export default async function rightPanelMotionCost({ browser, check }) {
     check('switching mid-motion: the page is not left in the moving state', !switched.moving && !switched.leaving && !switched.flier, JSON.stringify(switched));
 
     // ---- 作業のダイアログの子の会話: 右の欄を開け閉めしても、子の筋はゼロから描いた位置と同じ・実例を閉じたあとに見張りが残らない ----
-    const watchers = () => page.evaluate(async () => (await import('/panel-moving.mjs')).stillWatchers());
     // ダイアログの中の欄が wantOpen の姿で止まるまで（開く印と、動いている・片付け中の印・受け渡しの絵が消えるまで）状態で待つ
     const dialogMoving = (wantOpen = true) => page.waitForFunction(open => {
       const dialog = document.querySelector('#workDialog');
@@ -478,7 +513,7 @@ export default async function rightPanelMotionCost({ browser, check }) {
     const goCard = page.locator('.tc[data-tool$="ply_delegate"][data-task-id] .tc-go').first();
     await goCard.waitFor({ state: 'attached', timeout: 30000 });
     await page.waitForFunction(() => !document.querySelector('#send').disabled, null, { timeout: 30000 });
-    const before = await watchers();
+    const before = await watchers(page);
     const childWidths = [];
     for (let round = 1; round <= 3; round++) {
       await goCard.click();
@@ -501,7 +536,7 @@ export default async function rightPanelMotionCost({ browser, check }) {
       await page.waitForFunction(() => !document.querySelector('#workDialog')?.open, null, { timeout: 8000 });
       await page.waitForTimeout(300);
     }
-    check('child conversation: opening and closing the dialog and its panel does not leave still-watchers behind', (await watchers()) === before, `before=${before} after=${await watchers()}`);
+    check('child conversation: opening and closing the dialog and its panel does not leave still-watchers behind', (await watchers(page)) === before, `before=${before} after=${await watchers(page)}`);
     check('child conversation: the panel really changed the child column width (the test is not vacuous)', childWidths.every((w, i) => i % 2 === 0 ? w < childWidths[i + 1] : true) && childWidths.length === 6, JSON.stringify(childWidths));
 
     check('no page errors during the motions', errors.length === 0, errors.join(' | '));
