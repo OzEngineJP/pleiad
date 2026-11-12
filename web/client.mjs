@@ -6605,7 +6605,7 @@ function createModalChildView(item, th) {
       taskNoticeNode: (text, at) => taskNoticeNode(text, at),
       paintInterruptLine: none,
       turnFailedRow: (ev) => turnFailedRow(ev),
-      syncHistory: none,
+      syncHistory: () => { void syncModalChildHistory(view); },
       currentSession: () => childId,
       isBusy: () => false,
       isLoadingSession: () => false,
@@ -6613,6 +6613,52 @@ function createModalChildView(item, th) {
     },
   });
   return view;
+}
+
+/** 描き終えた子の実例の仕上げ: 承認待ち・通知・稼働表示・委譲カードの状態。開いた直後と、ターンの終わりの読み直しで同じ手順 */
+function settleModalChild(mc, data) {
+  const { view, id } = mc, item = mc.owner.item, th = view.thread;
+  // 子が承認を待っていれば、ここで答えられる（子の会話へ移らなくてよい）。同じ承認は依頼元の会話にも中継されている
+  for (const ev of [...(data.permissions ?? []), ...state.pendingPerms.values()]) if (ev.sessionId === id) modalChildPermission(ev);
+  modalChildNotes(item);
+  const cur = bg.view.item;
+  view.setChild({ live: cur.live, waiting: cur.waiting === true });
+  if (cur.live && !view.liveTurn.activity.el?.isConnected) view.liveTurn.activity.show(cur.waiting ? t('activity.waitingApproval') : ACTIVITY_LABEL.running);
+  if (!th.querySelector(':scope > .mw') && !cur.live) th.append(el('div', 'work-head', t('dialog.work.noMessages')));
+  paintDelegateStates(th);
+  tickDetailHead(cur);
+  return cur;
+}
+
+/**
+ * ターンの終わりに、子の実例の履歴を保存された履歴から描き直す（主の syncHistory と同じ時機。ライブで描いた行を履歴の並びに揃える）。
+ * 走っている間に開いた窓・ライブで描いた行（data-key が live:）があるときだけ。静かな読み直し（今の位置を保つ）で、
+ * 読み込みの間に届いた出来事は loads が取り置いて流し直す。重なって呼ばれたら 1 回だけやり直す
+ */
+async function syncModalChildHistory(view) {
+  const mc = modalChild;
+  if (!mc || mc.view !== view || !mc.ready) return;
+  if (mc.syncing) { mc.syncAgain = true; return; }
+  const th = view.thread;
+  if (!view.historyPane.messages.some(m => m?.live) && !th.querySelector(':scope > .mw[data-key^="live:"]')) return;
+  mc.syncing = true;
+  const id = mc.id;
+  const alive = () => modalChild === mc && bg.view === mc.owner && $('workDialog').open;
+  try {
+    const load = view.loads.begin(id);
+    view.displayLoad = load;
+    const data = await loadHistory({ sessionId: id, live: true }, null, { window: true, bulk: false });
+    if (!alive() || view.displayLoad !== load) return;
+    view.adopt(data);
+    const res = await view.paint(data, { id, load, quiet: true });
+    if (!res || !alive()) return;
+    view.finish(res, { quiet: true });
+    settleModalChild(mc, data);
+  } catch { /* 読み直しが切れただけなら今の表示を残す */ }
+  finally {
+    mc.syncing = false;
+    if (mc.syncAgain && alive()) { mc.syncAgain = false; void syncModalChildHistory(view); }
+  }
 }
 
 /** 子の会話を実例で開く。順序は、見張り（watch）→ 末尾の窓の読み込み → 取り置いた出来事の流し直し */
@@ -6654,15 +6700,8 @@ async function openLiveChild(owner) {
     owner.lastReadMs = 0;
     owner.wasLive = item.live;
     owner.instructionRevision = item.instructionRevision;
-    // 子が承認を待っていれば、ここで答えられる（子の会話へ移らなくてよい）。同じ承認は依頼元の会話にも中継されている
-    for (const ev of [...(data.permissions ?? []), ...state.pendingPerms.values()]) if (ev.sessionId === id) modalChildPermission(ev);
-    modalChildNotes(item);
-    const cur = bg.view.item;
-    view.setChild({ live: cur.live, waiting: cur.waiting === true });
-    if (cur.live && !view.liveTurn.activity.el?.isConnected) view.liveTurn.activity.show(cur.waiting ? t('activity.waitingApproval') : ACTIVITY_LABEL.running);
-    if (!th.querySelector(':scope > .mw') && !cur.live) th.append(el('div', 'work-head', t('dialog.work.noMessages')));
-    paintDelegateStates(th);
-    tickDetailHead(cur);
+    settleModalChild(mc, data);
+    if (load.syncHistory) void syncModalChildHistory(view);   // 読み込みの間にターンが終わっていた（主の loadAndPaint の後と同じ）
     if (mc.instrStale) { mc.instrStale = false; refreshModalInstructions(); }
   } catch (e) {
     if (alive()) { loading.remove(); body.replaceChildren(el('div', 'work-head', t('dialog.work.readFailed', { error: e.message }))); }
