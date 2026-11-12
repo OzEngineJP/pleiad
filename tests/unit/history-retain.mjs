@@ -105,9 +105,14 @@ export default async function (t) {
   const source = readClientAndLiveTurn();   // resetLiveTurn は web/live-turn.mjs（ADR 0319 段 6-3）
   const cut = name => {
     const body = cutFunction(source, name);
-    if (!body) throw new Error(`client.mjs と live-turn.mjs に ${name} が無い`);
+    if (!body) throw new Error(`client.mjs・live-turn.mjs・history-pane.mjs に ${name} が無い`);
     return body;
   };
+  // 履歴の面の中の状態（paintingHistory・paintBefore）は、client の place・append からは historyPane 越しに見える（ADR 0319 段 6-4）
+  const PANE_BRIDGE = [
+    "const placeRow = (node, key) => append(node, key);",
+    "const historyPane = { get painting() { return paintingHistory; }, get paintBefore() { return paintBefore; } };",
+  ].join("\n");
   const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows", "paintable"].map(cut).join("\n");
   const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // 履歴の 1 行。本物の historyRow（web/client.mjs）は発言 1 件から行を作る。ここでは中身が決まる作りものにして、行の並びと続きの見出しだけを見る
@@ -129,10 +134,10 @@ export default async function (t) {
     const context = vm.createContext({
       thread, state, activity, el, buildItems, inlineAttachments, showsAsCard, historyRow, log: { scrollTop: 0 }, atBottom: () => false, relayoutBranches() {}, paintDelegateStates() {},
       renderPresent: p => el("div", "m card", `提示 ${p.id ?? p.path}`), savedEvent: p => p,
-      cancelStream: () => { cancelled++; },
+      cancelStream: () => { cancelled++; }, replayPainting: false,
     });
     bindLiveState(state, context);
-    vm.runInContext(`let paintingHistory = false;\nlet paintBefore = null;\n${liveTurnStateDecl()}\n${functions}`, context);
+    vm.runInContext(`let paintingHistory = false;\nlet paintBefore = null;\n${liveTurnStateDecl()}\n${functions}\n${PANE_BRIDGE}`, context);
     Object.assign(state, { streamEl: "s", thinkEl: "t", turnEl: "u", turnClosed: true, bundle: { live: true } });
     return {
       thread, state, activity, context,

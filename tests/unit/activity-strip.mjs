@@ -39,7 +39,7 @@ export default function(t) {
   };
   const ctx = vm.createContext({ el: make, $: id => nodes[id], runMark, satMark, t: key => key, thread, log: {},
     runningTools: { size: 0, clear() {}, el: new N("div") }, matchMedia: () => ({ matches: true }),
-    paintingHistory: false, replayPainting: false, paintBefore: null, atBottom: () => false,
+    historyPane: { painting: false, paintBefore: null }, replayPainting: false, atBottom: () => false,
     painting: () => false, replaying: () => false,   // live-turn.mjs は client の変数を直に読まず、この 2 つで聞く
     Date, setTimeout, clearTimeout, setInterval: fn => { timers.add(fn); return fn; }, clearInterval: fn => timers.delete(fn),
     turnStartHere: () => 1, behindHere: () => behind, stoppingHere: () => false,

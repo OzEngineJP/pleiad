@@ -94,7 +94,8 @@ export default async function (t) {
     // 中断と再開（client.mjs の syncResume / paintInterruptLine、web/interrupt.mjs）。このテストの対象外
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 会話を開くときの窓と手前を足す仕事（ADR 0182）。このテストの対象外
-    WINDOW_MESSAGES, WINDOW_BYTES, backfill: null, paintBefore: null, olderBusy: null, olderFail: null, olderEl: null,
+    // 履歴の面（web/history-pane.mjs の createHistoryPane の実例）の状態。client の paintSession などが historyPane 越しに読み書きする（ADR 0319 段 6-4）
+    WINDOW_MESSAGES, WINDOW_BYTES, historyPane: { backfill: null, paintBefore: null, painting: false, olderFail: null },
     cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0,
     // 子の会話を開く呼び出しの世代（select が他の会話へ移ると古い呼び出しを止める）
     openGate: createOpenGate(),

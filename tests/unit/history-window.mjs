@@ -2,8 +2,8 @@
 //   - 窓（末尾の発言だけ）の切り方・提示の本文の印・遡り（older）・窓の差分。つないだ結果は全量と同じ。古い相手とは今までの形でやりとりする
 //   - 画面の描き方: 末尾を先に描き、手前を idle に足す（splitFirstPaint・backfillChunk ほか。vm で client.mjs から切り出して動かす）
 // サーバーを起動して量と本文の取り方を確かめる試験は tests/unit/server-history-window.mjs。ブラウザーでの位置のずれは tests/browser/history-window.cjs
-import fs from "node:fs/promises";
 import vm from "node:vm";
+import { cutFunction, readClientAndLiveTurn } from "../lib/cut-source.mjs";
 import { buildItems, inlineAttachments } from "../../web/timeline.mjs";
 import {
   serveHistory, serveFrom, serveOlder, joinReply, joinOlder, syncRequest, windowStart, presentBaseFor, stubPresent, messageSig, anchorSig, presentSig, subagentCalls, subagentToolSet,
@@ -205,14 +205,14 @@ export default async function (t) {
   const anchoredItems = buildItems(anchored.messages.slice(300), anchored.presents.slice(anchoredStart), 300, anchoredStart);
   t.ok("窓の提示: 結び付き先が窓の手前の提示は、窓の中では結び付かない提示（anchorMi = -1）として出る", anchoredItems.filter(it => it.kind === "present" && it.p.by === "human").every(it => it.anchorMi === -1 || it.anchorMi >= 300));
 
-  // ---------------------------------------------------------------- 画面の描き方（vm で client.mjs から切り出す）
-  const source = (await fs.readFile(new URL("../../web/client.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  // ---------------------------------------------------------------- 画面の描き方（vm で client.mjs と history-pane.mjs から切り出す）
+  const source = readClientAndLiveTurn();   // 履歴の面は web/history-pane.mjs の createHistoryPane の中（ADR 0319 段 6-4）
   const cut = name => {
-    let from = source.indexOf(`function ${name}(`);
-    if (from < 0) throw new Error(`client.mjs に ${name} が無い`);
-    return source.slice(from, source.indexOf("\n}", from) + 2);
+    const body = cutFunction(source, name);
+    if (!body) throw new Error(`client.mjs・history-pane.mjs に ${name} が無い`);
+    return body;
   };
-  const constant = name => { const m = new RegExp(`const ${name} = \\d+;`).exec(source); if (!m) throw new Error(`client.mjs に ${name} が無い`); return m[0]; };
+  const constant = name => { const m = new RegExp(`const ${name} = \\d+;`).exec(source); if (!m) throw new Error(`client.mjs・history-pane.mjs に ${name} が無い`); return m[0]; };
 
   // 役割: systemHistoryNode の種類と historyRole が揃っている（行を作らずに続きの見出しの判定をするため）
   const systemKinds = new Set([...cut("systemHistoryNode").matchAll(/m\.kind === '(\w+)'/g)].map(m => m[1]));
