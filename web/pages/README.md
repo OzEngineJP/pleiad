@@ -73,5 +73,13 @@ iframe は同じ origin の親から対応する message を送る。
 | `pleiad:env` | `{theme?,lang?}` | `{type:'pleiad:env',env}` |
 | `pleiad:page-command` | `{type:'view',view:'source'|'preview'}` | `{type:'pleiad:page-command',command}` |
 | `pleiad:page-command` | `{type:'changed'}` | 同上 |
+| `pleiad:page-command` | `{type:'reread'}` | 同上（Pleiad のページだけ。触ったかどうかは親が決め、そのまま読み直す） |
 
 テーマと言語はページを再取得せずに更新する。ファイル本文のスナップショットも再利用する。
+
+## ページから親への状態の知らせ
+
+ページは描き始め・描き終え・失敗を親へ `{type:'pleiad:page-state',state:'loading'|'ready'|'failed'}` で知らせる（同じ origin の親だけが受ける）。
+親はこれで、アドレスバーの下の読み込み線とタブの印を出し入れする。
+親は 150ms を超えて待ったときだけ線と印を出し、60 秒待っても `ready` が来なければ失敗として扱う（[ADR 0321](../../docs/adr/0321-browser-file-reread-and-loading-display.md)）。
+`reread` は前の中身を残したまま読み直し、描き終えたところで差し替える。

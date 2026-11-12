@@ -164,7 +164,7 @@ ADR 0294 で、ファイル・フォルダー・git・プラグイン・新し�
 
 - 開いたファイル・フォルダーは `core/page-watch.mjs` がフォルダーごとの `fs.watch` で見張る（150 フォルダー・600 対象まで。250 ms でまとめる）。登録は会話ごとで、同じファイルを 2 会話で開いていてもそれぞれへ届く
 - 変わったら `page:changed`（会話 id とパスだけ。中身・差分は送らない）を、その会話を見ている認証済みの画面へ送り、そのファイルを出している Chrome のタブへは `Runtime.evaluate` で `pleiad:page-command {type:'changed'}` を届ける。右の欄・端末内のページにも同じ命令を `postMessage` で届ける
-- 読み直すかどうかはページが決める（`web/pages/app.mjs`）。人が触っていなければそのまま読み直し、触っていれば「更新を表示」を出して人の操作まで待つ（読んでいる所・入力を消さない）
+- 変更が届いたときに読み直すかどうかはページが決める（`web/pages/app.mjs`）。同じパスをもう一度開いたときと、見ていない間の変更への追いつきは親（右の欄）が決め、`reread` を送る（[ADR 0321](0321-browser-file-reread-and-loading-display.md)）。人が触っていなければそのまま読み直し、触っていれば「更新を表示」を出して人の操作まで待つ（読んでいる所・入力を消さない）
 
 ### 9. 端末（スマホの道）と印の出どころ
 
@@ -186,7 +186,7 @@ HTML・可視化のタブは、画面を作る W1 と隔離配信を作る W2 �
 
 - `pageOpen({sessionId, kind:'file'|'viz', path?, vizHash?, entry?})` は `{url,title,path?,kind,origin}` を返す。W1 は HTML・可視化の URL を組み立てず、ページでも Chrome でも返却 URL を使う。
 - `page:moved {ports:{pages,isolated}, previous:{pages[],isolated[]}}` は、今の port と「かつて Pleiad のリスナーだった port」の一覧を知らせる（会話 id は持たない。全画面へ届く）。画面は現在の URL と履歴の中で前の port を持つものを今の port へ差し替える。入力済みの画面は「更新を表示」を押して確認するまで残す。
-- `page:changed {sessionId,path}` は、未操作なら読み直し、操作後なら「更新を表示」を出す。
+- `page:changed {sessionId,path,stamp}` は、未操作なら読み直し、操作後なら「更新を表示」を出す。`stamp`（`更新時刻:大きさ`）はタブが最後に描いた版との比べに使う。ページは描き始め・描き終え・失敗を `pleiad:page-state` で親へ知らせる（[ADR 0321](0321-browser-file-reread-and-loading-display.md)）。
 - W1 の実装は `web/page-tabs.mjs` と `web/browser-unify.mjs`。試験だけ `tests/lib/page-open.mjs` を依存として渡す。本番は `pageOpen` コマンドを呼び、代わりの URL へ逃がさない。W2 がコマンドを追加すれば、試験用の注入を使わず接続できる。
 - サーバーの入れ替えで線を張り直したあとは、画面はまず見ている会話を `watchSession` で登録し直してから、ファイル・フォルダー・HTML・可視化のタブの `pageOpen` を取り直す（逆の順では、その接続が会話を見ているとサーバーが分かる前の `pageOpen` が INVALID で落ちる）。隔離の URL を開くたびにも `pageResolve` で確かめ、引けなければ同じ道で取り直す。
 - 隔離された HTML の操作検出には `web/pages/activity.mjs` の `installPageActivity` を W2 のページへ載せる（モジュールを配るか、同関数を橋へ組み込む）。親の load 時の `pleiad:page-activity-init` に対し、クリック・選択・スクロール・入力の最初の変化を `pleiad:page-activity {input:boolean}` で親へ返す。親 window を照合し、応答先は受信した正確な origin に限定する。W1 も iframe の window と返却 URL の origin を照合する。この橋はアプリ操作の命令を受けない。
