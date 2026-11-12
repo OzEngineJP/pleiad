@@ -55,8 +55,13 @@ export function taskKind(type) {
   return KIND[type] ?? "other";
 }
 
-/** main が止まったことを表す stop_reason か。tool_use / pause_turn は同じターンが続く */
-const stops = (reason) => reason != null && reason !== "tool_use" && reason !== "pause_turn";
+/**
+ * main が止まったことを表す stop_reason か。tool_use / pause_turn は同じターンが続く。
+ * refusal（安全装置が応答を止めた）も続く: CLI は別のモデルで同じターンをやり直す（system/model_refusal_fallback）ので、
+ * 止まったと数えると入力を閉じてしまい、そのターン中の途中送信（control.steer）が断られる。
+ * やり直せずに終わる場合は result（と session_state_changed idle）が来るので、そこで閉じられる。
+ */
+const stops = (reason) => reason != null && reason !== "tool_use" && reason !== "pause_turn" && reason !== "refusal";
 
 const DONE = new Set(["completed", "failed", "killed", "stopped"]);
 
