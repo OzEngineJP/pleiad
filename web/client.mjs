@@ -6455,7 +6455,7 @@ const liveChildEligible = (item) => Boolean(item) && item.source === 'task' && i
   && !item.host && !item.hostDescendant && childThreadRenderer() === 'live';
 
 /** 実例の本文の面が描く出来事（追加の指示のまわりは除く。指示の一覧を読み直して描く） */
-const MODAL_CHILD_EVENTS = new Set(['text.delta', 'text.end', 'thinking.start', 'thinking.delta', 'tool.start', 'tool.result', 'activity',
+const MODAL_CHILD_EVENTS = new Set(['userMessage', 'userMessage.delivered', 'userMessage.dropped', 'text.delta', 'text.end', 'thinking.start', 'thinking.delta', 'tool.start', 'tool.result', 'activity',
   'taskNotice', 'channelEvent', 'interruptionNote', 'turnResult', 'present', 'turnEnd']);
 
 function modalChildPermission(ev) {

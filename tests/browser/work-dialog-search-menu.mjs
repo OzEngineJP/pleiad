@@ -73,7 +73,9 @@ try {
   const sub = await delegate(parent, 'native', 'bg 1 8', childDir, e => e.type === 'turnEnd' && e.sessionId !== parent && e.sessionId !== child.childId);
   await sleep(1500);
 
-  const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
+  // CHILD_THREAD=reread: 子の本文を従来の読み直しで描く（ADR 0319 段 6-6）。既定は子の役の実例（live。筋は作り直されず、続きの行が足される）
+  const live = process.env.CHILD_THREAD !== 'reread';
+  const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}${live ? '' : '&childThread=reread'}`;
   ab('set', 'viewport', '1280', '800');
   ab('open', pageUrl);
   await wait(() => evaluate(() => !!document.querySelector('#groups .row[data-session]')), 'session list');
@@ -461,12 +463,14 @@ try {
     }, 30);
   });
   await client.cmd('runTurn', { sessionId: child.childId, prompt: 'echo:more from the child' });
-  await wait(() => evaluate(() => window.__rebuilt >= 1), 'the child body was read again');
+  if (live) await wait(() => evaluate(() => document.getElementById('workBody').textContent.includes('more from the child')), 'the child body shows the new reply');
+  else await wait(() => evaluate(() => window.__rebuilt >= 1), 'the child body was read again');
   await sleep(1500);
   const reSamples = evaluate(() => { clearInterval(window.__timer); return window.__samples; });
   const reAfter = reSamples[reSamples.length - 1];
   const summary = (key) => [...new Set(reSamples.map(x => x[key]))];
-  assert.ok(reAfter.rebuilt >= 1, 'rebuilt');
+  if (live) assert.equal(reAfter.rebuilt, 0, 'live: the thread is never rebuilt');
+  else assert.ok(reAfter.rebuilt >= 1, 'rebuilt');
   assert.deepEqual(summary('query'), ['needle-child'], `the search word never changes: ${summary('query')}`);
   assert.deepEqual(summary('active'), [1], `the current match mark is always one: ${summary('active')} ${JSON.stringify(reSamples.filter(x => x.active !== 1).slice(0, 3))}`);
   assert.ok(Math.min(...reSamples.map(x => x.marks)) >= reBefore.marks, `match marks never vanish: ${summary('marks')} (before ${reBefore.marks})`);
