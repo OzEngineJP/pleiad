@@ -141,7 +141,7 @@ export default async function (t) {
         // AI のタブの映像は見るだけ（ADR 0320）。[引き継ぐ]（chromeTakeOver by: screen）を押してから触れる
         const refused = await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: held, input: { type: 'tap', x: 3, y: 3 } }).then(() => null, error => error?.code);
         t.ok(`${variant}: 引き継ぐ前の AI のタブの映像への入力はサーバーが断る`, refused === 'view-only', String(refused));
-        await c.cmd('chromeTakeOver', { sessionId: id, by: 'screen' });
+        await c.cmd('chromeTakeOver', { sessionId: id, by: 'screen', tabId: held });
         await c.cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: held, input: { type: 'tap', x: 3, y: 3 } });
         await c.waitFor(e => e.type === 'permissionUpdate' && e.browserHandoff?.state === 'operating', { from, ms: 10000 });
         await until(() => fixture.mounted?.querySelector('.b2-control'), 10000, 'badge row');

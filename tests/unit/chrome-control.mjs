@@ -170,7 +170,13 @@ export default async function (t) {
       const aiTab = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
       const humanTab = (await r.relay.openForConversation('one', 'https://human.test/')).targetId;
       t.ok('人が開いたタブがあっても、AI のタブは AI が操作したタブのまま', !!humanTab && r.relay.view.current('one') === aiTab, String(r.relay.view.current('one')));
-      const screen = await r.control.takeOver('one', { by: 'screen' });
+      // [引き継ぐ] は画面が映している AI のタブを添える。今の AI のタブと違う（入れ違い）・添えないなら何も引き継がない（ADR 0321）
+      const stale = await r.control.takeOver('one', { by: 'screen', tabId: humanTab });
+      t.ok('[引き継ぐ]（screen）が映していたタブが今の AI のタブでなければ、どのタブも人の操作にしない', r.holder('one', aiTab) === 'ai' && r.holder('one', humanTab) === 'ai' && stale.state !== 'paused',
+        JSON.stringify({ ai: r.holder('one', aiTab), human: r.holder('one', humanTab), state: stale.state }));
+      const bare = await r.control.takeOver('one', { by: 'screen' });
+      t.ok('[引き継ぐ]（screen）が映しているタブを添えなければ引き継がない', r.holder('one', aiTab) === 'ai' && bare.state !== 'paused', JSON.stringify({ ai: r.holder('one', aiTab), state: bare.state }));
+      const screen = await r.control.takeOver('one', { by: 'screen', tabId: aiTab });
       t.ok('[引き継ぐ]（screen）は AI のタブを人の操作にし、人が開いたタブには触れない', r.holder('one', aiTab) === 'human' && r.holder('one', humanTab) === 'ai' && screen.state !== 'paused', JSON.stringify({ ai: r.holder('one', aiTab), human: r.holder('one', humanTab), state: screen.state }));
       await r.control.resume('one');
       const device = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2 });

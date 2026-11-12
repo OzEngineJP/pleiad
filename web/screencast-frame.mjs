@@ -42,7 +42,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
   const flushTap = () => { clearTimeout(tapTimer); tapTimer = null; if (pendingTap) { const value = pendingTap; pendingTap = null; dispatch(value); } };
   const cancelTap = () => { clearTimeout(tapTimer); tapTimer = null; pendingTap = null; };
   const transform = () => { img.style.transformOrigin = '50% 50%'; img.style.transform = `translate(${panX}px,${panY + keyboardPan}px) scale(${zoom})`; };
-  const phoneInput = createPhoneInput({ surface, phone, onError, getRect: rect, getKeyboardRect: () => { const box = rect(); return { ...box, top: box.top - keyboardPan }; }, getMetadata: metadata,
+  const phoneInput = createPhoneInput({ surface, phone, onError, viewOnly, getRect: rect, getKeyboardRect: () => { const box = rect(); return { ...box, top: box.top - keyboardPan }; }, getMetadata: metadata,
     send: value => { flushTap(); return transmit(value); }, onPan: offset => { keyboardPan = offset; transform(); }, onCopy: cut => copySelection(cut) });
   function ripple(event) {
     const box = surface.getBoundingClientRect(), ring = document.createElement('span'); ring.className = 'b2-ripple'; ring.style.left = `${event.clientX - box.left}px`; ring.style.top = `${event.clientY - box.top}px`;
@@ -183,7 +183,7 @@ export function createScreencastInput({ surface, img, getFrame, send = () => {},
     if (cursorPoint && !cursorTimer) cursorTimer = setTimeout(askCursor, 90);
   });
   listen(surface, 'pointerleave', () => { cursorPoint = null; applyCursor('auto'); });
-  return { phoneInput, receive(message) { phoneInput?.receive(message); },
+  return { phoneInput, receive(message) { phoneInput?.receive(message); }, refresh() { phoneInput?.refresh?.(); },
     reset() { cancelTap(); clearTimeout(longTimer); clearTimeout(cursorTimer); cursorTimer = cursorPoint = null; pointers.clear(); gesture = pinch = null; clickStamp = clickCount = 0; clickPoint = null; zoom = 1; panX = panY = keyboardPan = 0; applyCursor('auto'); transform(); phoneInput?.reset(); },
     destroy() { alive = false; cancelTap(); clearTimeout(longTimer); clearTimeout(cursorTimer); for (const dispose of disposers) dispose(); phoneInput?.destroy(); surface.classList.remove('b2-input-surface'); img.style.transform = ''; },
     get zoom() { return zoom; } };

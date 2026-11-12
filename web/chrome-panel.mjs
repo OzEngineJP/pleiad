@@ -162,7 +162,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
         if (!id || ended) return Promise.reject(new Error(t('browser.chromeWindow.inputFailed')));
         // サーバーが「見るだけ」と断った（引き継ぎ・AI への返しが入れ違った）ときは、エラーにせず [引き継ぐ] を強調するだけ
         return cmd('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: state?.tabId ?? undefined, input })
-          .catch(error => { if (error?.code === 'view-only') { inputOptions.onBlocked?.(); return null; } throw error; });
+          .catch(error => { if (error?.code === 'view-only') { if (inputOptions.onRefused) inputOptions.onRefused(state?.tabId ?? null); else inputOptions.onBlocked?.(); return null; } throw error; });
       },
       openLink: url => {
         const id = sessionId;
@@ -481,8 +481,10 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     get hold() { return hold; },
     /** 引き継いだら映像へ入力を移す（Tab・キーがそのまま映像へ届く） */
     focusScreen() { parts?.screen.focus?.({ preventScroll: true }); },
-    /** 映像からの入力を使う（{ phone: () => スマホか, showMenu, viewOnly: () => 見るだけか, onBlocked: () => 見るだけの映像に触れた }） */
+    /** 映像からの入力を使う（{ phone: () => スマホか, showMenu, viewOnly: () => 見るだけか, onBlocked: () => 見るだけの映像に触れた, onRefused: tabId => サーバーが見るだけで断った }） */
     useInput(options) { if (inputOptions) return; inputOptions = options; ensureInput(); },
+    /** 見るだけかが替わった: 確認・ファイル選び・選択の窓を出す／隠す（web/phone-input.mjs の refresh） */
+    refreshInput() { unifiedInput?.refresh?.(); },
     onTabChange(fn) { tabListeners.add(fn); },
     /** 映像の上に重ねる層（web/chrome-control.mjs の overlay）。映像の箱（position: relative）の中へ置く。null で外す */
     mountOverlay(node) {

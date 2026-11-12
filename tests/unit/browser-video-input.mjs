@@ -82,6 +82,45 @@ export default async function (t) {
     } finally { await hub.unwatch(pc, 's'); bridge.close(); holder.forget({ sessionId: 's' }); }
   }
 
+  // ---- AI のタブ（引き継ぐ前は見るだけ。ADR 0321）: 右クリックのメニュー・コピーも断り、カーソルだけ通す。引き継いだら届く
+  {
+    const calls = [];
+    const holder = createTabHolder();
+    const relay = { unify: { tabHolder: holder }, onTabEvent() { return () => {}; } };
+    const host = { onChange() { return () => {}; }, summary: () => ({ tabs: 1, operating: true }), tabs: () => [{ targetId: 'A', windowId: 1 }], current: () => 'A', focus: async () => {},
+      async attach() {
+        return { async send(method, params) { calls.push({ method, params });
+          if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'F' } } };
+          if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
+          if (method === 'Page.addScriptToEvaluateOnNewDocument') return { identifier: 'script' };
+          if (method === 'Runtime.evaluate') return { result: { value: { text: '選択', editable: true, link: 'https://a/b', cursor: 'pointer' } } };
+          return {};
+        }, detach: async () => {} };
+      } };
+    const bridge = createChromeScreencast({ host, relay }), hub = createScreencastHub({ bridge, source: 'chrome' });
+    const pc = { send() {} };
+    const ask = input => screencastCommand({ command: 'browserScreencastInput', args: { source: 'chrome', sessionId: 's', tabId: 'A', input }, chrome: { hub, bridge }, client: pc });
+    const reads = mark => calls.slice(mark).filter(call => call.method === 'Runtime.evaluate').map(call => call.params.expression);
+    const holderOf = () => holder.holder('s', 'A')?.holder ?? 'ai';
+    try {
+      await hub.watch(pc, 's', { width: 560, height: 700 });
+      let mark = calls.length;
+      const menu = await ask({ type: 'menu', x: 5, y: 6 });
+      t.ok('引き継ぐ前の AI のタブでは右クリックのメニューを断る（点の下を読まない）', menu.code === 'view-only' && reads(mark).length === 0 && holderOf() === 'ai', JSON.stringify({ menu, reads: reads(mark) }));
+      mark = calls.length;
+      const copy = await ask({ type: 'copy' });
+      t.ok('引き継ぐ前の AI のタブではコピーを断る（選択を読まない）', copy.code === 'view-only' && reads(mark).length === 0 && holderOf() === 'ai', JSON.stringify({ copy, reads: reads(mark) }));
+      mark = calls.length;
+      const cursor = await ask({ type: 'cursor', x: 30, y: 40 });
+      t.ok('引き継ぐ前でもカーソルの問い合わせだけは通る（人の操作にしない）', cursor.ok && cursor.result?.info?.cursor === 'pointer' && reads(mark).join() === 'globalThis.__plyInput.cursorAt(30,40)' && holderOf() === 'ai',
+        JSON.stringify({ cursor, reads: reads(mark) }));
+      holder.touch({ sessionId: 's', targetId: 'A', by: 'pc' });   // [引き継ぐ]
+      const copied = await ask({ type: 'copy' });
+      const menued = await ask({ type: 'menu', x: 5, y: 6 });
+      t.ok('引き継いだ後はコピーと右クリックのメニューが届く', copied.ok && copied.result?.info?.text === '選択' && menued.ok && menued.result?.info?.link === 'https://a/b', JSON.stringify([copied, menued]));
+    } finally { await hub.unwatch(pc, 's'); bridge.close(); holder.forget({ sessionId: 's' }); }
+  }
+
   // ---- 端末の面（web/screencast-frame.mjs）
   {
     const oldDoc = globalThis.document, oldNav = Object.getOwnPropertyDescriptor(globalThis, 'navigator'), oldFocus = N.prototype.focus, oldBlur = N.prototype.blur;

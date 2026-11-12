@@ -111,7 +111,11 @@ export default async function (t) {
     // ただし AI のタブは引き継ぐ（chromeTakeOver by: screen）までは見るだけ。サーバーが 'view-only' で断る（ADR 0320）
     const refused = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
     t.ok('引き継ぐ前の AI のタブへの入力は view-only で断る', refused.ok === false && refused.code === 'view-only', JSON.stringify(refused));
-    const taken = await remote.ask('chromeTakeOver', { sessionId: id, by: 'screen' });
+    // 画面が映していたタブが今の AI のタブと違えば（入れ違い）、op は通るが引き継がない（ADR 0321）
+    const stale = await remote.ask('chromeTakeOver', { sessionId: id, by: 'screen', tabId: 'stale-tab' });
+    const still = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
+    t.ok('映していたタブが違う「引き継ぐ」では引き継がず、入力は view-only のまま', stale.ok === true && still.ok === false && still.code === 'view-only', JSON.stringify([stale, still]));
+    const taken = await remote.ask('chromeTakeOver', { sessionId: id, by: 'screen', tabId: watch.result.tabId });
     t.ok('「引き継ぐ」（by: screen）は窓を出さずに通る', taken.ok === true, JSON.stringify(taken));
     const input = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
     t.ok('引き継いだあとは見ている端末の入力を受ける', input.ok === true, JSON.stringify(input));

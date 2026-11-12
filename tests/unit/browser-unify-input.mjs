@@ -82,4 +82,65 @@ export default async function (t) {
     t.ok('ダイアログ中に最後の端末を閉じても撮影の停止が詰まらない', stopped);
     t.ok('最後の端末を閉じてもページの大きさを触らない（セッションを外すだけ）', sizeCalls(mark3).length === 0, JSON.stringify(sizeCalls(mark3)));
   } finally { await hub.unwatch(pc, 's'); await hub.unwatch(phone, 's'); bridge.close(); holder.forget({ sessionId: 's' }); }
+
+  // ---- AI のタブ（host.current）は引き継ぐまで見るだけ（ADR 0321）: 画面の封じが抜けても、サーバーが入力を断る
+  {
+    const calls = []; let dialogEvent, hold = null, release = null;
+    const holder = createTabHolder();
+    const relay = { unify: { tabHolder: holder }, onTabEvent() { return () => {}; } };
+    const host = { onChange() { return () => {}; }, summary: () => ({ tabs: 1, operating: true }), tabs: () => [{ targetId: 'A', windowId: 1 }], current: () => 'A', focus: async () => {},
+      async attach(sid, tid, event) {
+        return { async send(method, params) { calls.push({ method, params });
+          if (method === 'Page.getFrameTree') { dialogEvent = event; return { frameTree: { frame: { id: 'F' } } }; }
+          if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
+          if (method === 'Page.addScriptToEvaluateOnNewDocument') return { identifier: 'script' };
+          if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased' && hold) { const wait = hold; hold = null; await wait; }
+          return { result: { value: { text: '選択', editable: true, link: 'https://a/b', cursor: 'pointer' } } };
+        }, detach: async () => {} };
+      } };
+    const bridge = createChromeScreencast({ host, relay }), hub = createScreencastHub({ bridge, source: 'chrome' });
+    const pc = { send() {} }, phone = { send() {} };
+    const ask = (client, input) => screencastCommand({ command: 'browserScreencastInput', args: { source: 'chrome', sessionId: 's', tabId: 'A', input }, chrome: { hub, bridge }, client });
+    const sentInput = mark => calls.slice(mark).filter(call => /^Input\./.test(call.method) || call.method === 'Page.handleJavaScriptDialog' || /selection\(\)|inspect\(/.test(call.params?.expression ?? ''));
+    const holderOf = () => holder.holder('s', 'A')?.holder ?? 'ai';
+    try {
+      await hub.watch(pc, 's', { width: 560, height: 700 });
+      await hub.watch(phone, 's', { device: 'phone', width: 360, height: 640, scale: 2 });
+      for (const [client, input] of [[pc, { type: 'tap', x: 30, y: 40 }], [phone, { type: 'tap', x: 30, y: 40 }], [pc, { type: 'text', text: 'あ' }], [pc, { type: 'key', key: 'Enter' }],
+        [pc, { type: 'scroll', x: 1, y: 1, dy: 100 }], [pc, { type: 'drag', phase: 'start', x: 1, y: 1 }], [pc, { type: 'menu', x: 5, y: 6 }], [pc, { type: 'copy' }]]) {
+        const mark = calls.length;
+        const result = await ask(client, input);
+        t.ok(`引き継ぐ前の AI のタブへの ${client === phone ? 'スマホの ' : ''}${input.type} は view-only で断り、ページへ何も送らず、人の操作にもしない`, result.ok === false && result.code === 'view-only' && sentInput(mark).length === 0 && holderOf() === 'ai',
+          JSON.stringify({ result, sent: sentInput(mark), holder: holderOf() }));
+      }
+      const hovered = await ask(pc, { type: 'cursor', x: 30, y: 40 });
+      t.ok('引き継ぐ前でも、読むだけのカーソルの問い合わせは通る（人の操作にしない）', hovered.ok && hovered.result?.info?.cursor === 'pointer' && holderOf() === 'ai', JSON.stringify(hovered));
+      dialogEvent('Page.javascriptDialogOpening', { type: 'confirm', message: '続ける？' });
+      const mark = calls.length;
+      const answer = await ask(pc, { type: 'dialog', accept: true });
+      t.ok('引き継ぐ前は確認の窓への返答も断る（AI の確認の窓を人が閉じない）', answer.code === 'view-only' && sentInput(mark).length === 0 && holderOf() === 'ai', JSON.stringify({ answer, sent: sentInput(mark) }));
+
+      holder.touch({ sessionId: 's', targetId: 'A', by: 'device' });   // [引き継ぐ]（chromeTakeOver の takeOverTab と同じ印）
+      const accepted = await ask(pc, { type: 'dialog', accept: true });
+      t.ok('引き継いだ後は確認の窓へ返答できる', accepted.ok && calls.some(call => call.method === 'Page.handleJavaScriptDialog' && call.params.accept === true));
+      dialogEvent('Page.javascriptDialogClosed', {});
+      const before = calls.length;
+      const tapped = await ask(phone, { type: 'tap', x: 30, y: 40 });
+      t.ok('引き継いだ後はタップがページへ届く', tapped.ok && calls.slice(before).some(call => call.method === 'Input.dispatchMouseEvent' && call.params.type === 'mouseReleased'), JSON.stringify(tapped));
+
+      // 順番待ちの間に AI へ戻った（60 秒・[AI に戻す]）入力は、届けずに断る
+      hold = new Promise(resolve => { release = resolve; });
+      const first = ask(pc, { type: 'tap', x: 1, y: 1 });
+      while (hold) await new Promise(resolve => setImmediate(resolve));
+      const second = ask(pc, { type: 'tap', x: 2, y: 2 });
+      holder.release('s', 'A');
+      const queuedMark = calls.length;
+      release();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      t.ok('順番待ちの間に AI へ戻った入力は view-only で断り、ページへ送らない', firstResult.ok && secondResult.code === 'view-only' && sentInput(queuedMark).every(call => call.params.x !== 2),
+        JSON.stringify({ firstResult, secondResult, sent: sentInput(queuedMark) }));
+      const after = await ask(pc, { type: 'text', text: 'い' });
+      t.ok('AI へ戻した後は、また見るだけ', after.code === 'view-only' && holderOf() === 'ai');
+    } finally { release?.(); await hub.unwatch(pc, 's'); await hub.unwatch(phone, 's'); bridge.close(); holder.forget({ sessionId: 's' }); }
+  }
 }

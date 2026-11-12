@@ -195,10 +195,12 @@ export function createChromeControl({ relay, os, now = Date.now, capture = null,
   /**
    * 「引き継ぐ」（右の欄の行のボタン。ADR 0320）: AI のタブを、窓を出さずにその画面の人の操作にする（持ち手の touch）。
    * 映像は AI のタブの間は見るだけで、これを押すと触れる。スマホは映像の箱の大きさ（width・height・scale）を添える（無ければ大きさは変えない）
+   * tabId は画面が映している AI のタブ。今の AI のタブと違えば（押す間に AI が別のタブへ移った・古い画面）、何も替えずに今の状態を返す（画面は描き直す。ADR 0321）
    */
-  async function takeOverTab(sessionId, { width, height, scale } = {}) {
+  async function takeOverTab(sessionId, { width, height, scale, tabId } = {}) {
     const targetId = relay.view?.current?.(sessionId) ?? null;
     if (!targetId) throw new ChromeControlError('NO_WINDOW', 'no agent tab to hand over');
+    if (tabId !== targetId) return stateOf(sessionId);
     if (pcTabs.has(sessionId)) return stateOf(sessionId);   // PC の窓を出している間は、そちらが先（早い者勝ち）
     const viewport = width != null || height != null || scale != null ? deviceViewport({ width, height, scale }) : null;
     if ((width != null || height != null || scale != null) && !viewport) throw new ChromeControlError('INVALID', 'the size of the device view is needed');
@@ -207,11 +209,11 @@ export function createChromeControl({ relay, os, now = Date.now, capture = null,
     return stateOf(sessionId);
   }
 
-  async function doTakeOver(sessionId, { by = 'pc', width, height, scale, fromPc = false } = {}) {
+  async function doTakeOver(sessionId, { by = 'pc', width, height, scale, fromPc = false, tabId } = {}) {
     const before = relay.state(sessionId);
     if (!before) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
     if (before.paused) return stateOf(sessionId);   // 持ち越した一時停止の間は、今の状態を返すだけ（「任せる」で解く）
-    if (by === 'screen') return takeOverTab(sessionId, { width, height, scale });
+    if (by === 'screen') return takeOverTab(sessionId, { width, height, scale, tabId });
     if (by === 'device') return takeOverByDevice(sessionId, { width, height, scale, fromPc });
     return operateOnPc(sessionId);
   }
