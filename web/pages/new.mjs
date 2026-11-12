@@ -1,4 +1,4 @@
-import { node, text, icon, api, pageUrl, fileActions, vizActions, request, date } from './bridge.mjs';
+import { node, text, icon, api, pageUrl, fileActions, vizActions, request, date, sessionId } from './bridge.mjs';
 import { folderIcon, fileIcon } from '../icons.mjs';
 import { browserIcon } from '../tab-strip.mjs';
 import { fileRow } from './dir.mjs';
@@ -6,6 +6,20 @@ import { recentSkeleton, foldersSkeleton, gridSkeleton, countSkeleton, afterDela
 
 const glyph = (svg, className) => { svg.classList.add(className); return svg; };
 const VIZ_SHOWN = 5;
+
+/**
+ * [変更] の名札は、git のフォルダーなら「変更」、そうでなければ「git」。どちらかは問い合わせが返るまで分からないので、
+ * 会話ごとに前の結果を覚えておき（sessionStorage。無ければ変数だけ）、同じ名札を最初から出す。初めて開くときだけ、名札の場所に
+ * 固定幅の骨組みを置いて、届いたら名札を入れる（「変更」から「git」へ書き換わるのを見せない。ボタンは最初から押せる）
+ */
+const gitKey = `pleiad:new-git:${sessionId}`;
+const gitKnown = new Map();
+const recallGit = () => {
+  if (gitKnown.has(gitKey)) return gitKnown.get(gitKey);
+  try { const value = sessionStorage.getItem(gitKey); return value === 'repo' || value === 'none' ? value : null; } catch { return null; }
+};
+const rememberGit = value => { gitKnown.set(gitKey, value); try { sessionStorage.setItem(gitKey, value); } catch { /* 覚えられなくても動く */ } };
+const gitLabel = (label, kind, count) => { label.textContent = kind === 'repo' ? text('new.changes', { count }) : text('new.git'); };
 
 /** 見出しの付いた区画。もうあれば（読み直し）前の中身のまま残し、届いたところから差し替える */
 function slot(root, name, key) {
@@ -33,9 +47,14 @@ export async function renderNew(root, { alive = () => true } = {}) {
     for (const kind of ['git', 'plugins']) {
       const link = node('a', 'shortcut'); link.href = pageUrl(kind); link.dataset.kind = kind;
       // i18n-dynamic: new.
-      const label = node('span', '', text(kind === 'git' ? 'new.changesLead' : `new.${kind}`));
+      const known = kind === 'git' ? recallGit() : null;
+      const label = node('span', '', kind === 'git' ? (known === 'none' ? text('new.git') : known === 'repo' ? text('new.changesLead') : '') : text(`new.${kind}`));
       link.append(glyph(browserIcon(kind), 'shortcut-icon'), label);
-      if (kind === 'git') link.append(countSkeleton());
+      if (kind === 'git') {
+        link.append(countSkeleton());
+        // まだ分からない間は名札の代わりに骨組み（読み上げには「変更」を当てておく）
+        if (!known) { label.classList.add('shortcut-pending'); link.setAttribute('aria-label', text('new.changesLead')); }
+      }
       shortcuts.append(link);
     }
     conversation.append(shortcuts);
@@ -49,8 +68,14 @@ export async function renderNew(root, { alive = () => true } = {}) {
     if (!label) return;
     try {
       const result = await api('git', { kind:'changes', only:'count' });
-      if (alive()) label.textContent = result.changes ? text('new.changes', { count:result.changes.total?.files ?? result.changes.files.length }) : text('new.git');
-    } catch { if (alive()) label.textContent = text('new.git'); /* Keep the entry available when git cannot be read. */ }
+      if (alive()) {
+        const repo = Boolean(result.changes);
+        rememberGit(repo ? 'repo' : 'none');
+        gitLabel(label, repo ? 'repo' : 'none', result.changes?.total?.files ?? result.changes?.files.length);
+      }
+    } catch { if (alive()) { gitLabel(label, 'none'); /* Keep the entry available when git cannot be read. */ } }
+    if (!alive()) return;
+    label.classList.remove('shortcut-pending'); gitLink.removeAttribute('aria-label');
     gitLink.querySelector('.cnt')?.remove();
   })();
   const data = await api('recent').finally(() => { for (const stop of cancel) stop(); });

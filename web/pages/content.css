@@ -59,4 +59,5 @@
 .shortcut .cnt{display:inline-block;width:5.2em;height:11px;margin-left:8px;vertical-align:middle}
 @media(max-width:600px){.sk-grid{gap:2px}.sk-row{gap:6px;padding:4px 0}}
 @media(prefers-reduced-motion:reduce){.sk,.sk .history-line,.shortcut .cnt{animation:none}.sk .history-line,.shortcut .cnt{background:var(--sk-a)}}
+.shortcut-pending{display:inline-block;min-width:4.4em;height:11px;border-radius:var(--r-pill);background:var(--sk-a)}.shortcut-pending:empty{vertical-align:middle}
 .shortcut{white-space:nowrap}.shortcut>span:not(.cnt){overflow:hidden;text-overflow:ellipsis}

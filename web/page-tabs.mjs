@@ -176,12 +176,16 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
   /** 鍵・開く先をサーバーへ取り直す（期限切れ・サーバーの入れ替えで外れた見張りの戻し。request は open が覚えている開き方） */
   async function reissue(tab) {
     const page = tab.page ?? {};
+    // 応答を待つ間にタブが別のファイルへ移った（open の置き換え・locate）・閉じた場合は、古い応答で巻き戻さない
+    const placeOf = target => `${target.page?.kind}|${target.page?.path ?? target.request?.path}|${target.page?.vizHash ?? ''}|${target.page?.entry ?? ''}`;
+    const asked = placeOf(tab);
     const request = page.kind === 'viz'
       ? { sessionId:tab.sessionId, kind:'viz', hash:page.vizHash, entry:page.entry, title:page.title, path:page.path, tab:tab.targetId }
       : { sessionId:tab.sessionId, kind:page.kind === 'html' ? 'html' : (tab.request?.kind ?? 'file'),
           path:page.path ?? tab.request?.path, title:page.title ?? tab.title, line:tab.request?.line, tab:tab.targetId };
     const opened = await pageOpen(request);
     if (!opened?.url) throw Object.assign(new Error('invalid-url'), { code:'invalid-url' });
+    if (!list(tab.sessionId).includes(tab) || placeOf(tab) !== asked) return tab;
     const at = new URL(opened.url, origin);
     const was = tab.url;
     applyOpened(tab, opened, at);

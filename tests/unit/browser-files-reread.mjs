@@ -115,6 +115,44 @@ export default async function (t) {
     t.ok('印の無いサーバーとのつなぎ: 従来の決めに戻る', true);
   }
 
+  // ---- reissue の応答を待つ間にタブが別のファイルへ移った・閉じた: 古い応答で巻き戻さない ----
+  {
+    const gate = {};
+    const hold = () => new Promise((resolve) => { gate.release = resolve; });
+    let wait = null;
+    const tabs = createPageTabs({
+      origin: ORIGIN,
+      pageOpen: async (request) => {
+        const mine = wait; wait = null;                                    // 次の 1 回の問い合わせだけを止める
+        if (mine) await mine;
+        return { kind: 'file', path: request.path, stamp: '9:9',
+          suffix: `/_pleiad/s/s1/file?path=${encodeURIComponent(request.path)}`,
+          url: `${ORIGIN}/_pleiad/s/s1/file?path=${encodeURIComponent(request.path)}` };
+      },
+      changed: () => {}, release: () => {}, onError: (error) => { throw error; },
+    });
+    const moved = await tabs.open({ sessionId: 's1', kind: 'file', path: 'D:/w/first.md' });
+    const urlBefore = moved.url;
+    wait = hold();
+    const pending = tabs.reissue(moved);                                   // 応答を待っている
+    await tabs.open({ sessionId: 's1', kind: 'file', path: 'D:/w/second.md' }, moved);   // その間に別のファイルへ移った（置き換え）
+    const urlAfterMove = moved.url;
+    assert.notEqual(urlAfterMove, urlBefore);
+    gate.release(); await pending;
+    assert.equal(moved.url, urlAfterMove, '移った後に届いた古い応答で、前のファイルの URL へ巻き戻さない');
+    assert.equal(moved.page.path, 'D:/w/second.md');
+
+    const closing = await tabs.open({ sessionId: 's1', kind: 'file', path: 'D:/w/third.md' });
+    wait = hold();
+    const pendingClose = tabs.reissue(closing);
+    tabs.close(closing);
+    const reloadBefore = closing.reload;
+    gate.release(); await pendingClose;
+    assert.equal(closing.reload, reloadBefore, '閉じた後に届いた応答では何も起こさない（読み直しも増えない）');
+    assert.equal(tabs.list('s1').includes(closing), false);
+    t.ok('reissue: 待つ間に別のファイルへ移った・閉じたタブへ、古い応答を当てない', true);
+  }
+
   // ---- 新しいタブの件数は、変更のページの total.files と一致する（一時リポジトリ） ----
   try { execFileSync('git', ['--version'], { windowsHide: true }); } catch { t.skip('git が無い'); return; }
   const scratch = realpathSync(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-reread-count-')));
@@ -150,6 +188,13 @@ export default async function (t) {
     sh(repo, 'commit', '-q', '-m', 'second');
     assert.equal(await agree('コミット直後'), 0);
     assert.equal(await activity.changeCount(path.join(scratch, 'not-a-repo-' + Date.now())), null, 'git 管理外は null');
+    // 同時の問い合わせ（タブごとの新しいタブ・追いつき）は同じ 1 回の走りを待つ。終わった後は取り直す
+    await w('shared.txt', '1\n');
+    const [one, two, three] = await Promise.all([activity.changeCount(repo), activity.changeCount(repo), activity.changeCount(repo)]);
+    assert.equal(one, 1); assert.equal(two, 1); assert.equal(three, 1);
+    await w('shared2.txt', '2\n');
+    assert.equal(await activity.changeCount(repo), 2, '前の走りが終わった後は、新しく数え直す（古い数を使い回さない）');
+    t.ok('changeCount: 同時に 3 回呼んでも同じ数が返り、終わった後は数え直す（走りの共有そのものは数えない）', true);
     t.ok('changeCount: 一時リポジトリの 6 つの場面で変更のページの total.files と一致する', true);
   } finally {
     await fs.rm(scratch, { recursive: true, force: true });

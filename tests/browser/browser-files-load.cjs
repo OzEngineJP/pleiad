@@ -29,6 +29,7 @@ async (page) => {
   await page.waitForTimeout(800);
   const login = page.getByRole('button', { name: 'ログイン', exact: true });
   if (await login.count()) { await login.first().click(); await page.waitForTimeout(500); }
+  for (let i = 0; i < 40 && !(await page.locator('#closeOnboarding:visible').count()); i++) await page.waitForTimeout(100);   // 初回の案内は遅れて出ることがある
   if (await page.locator('#closeOnboarding:visible').count()) await page.locator('#closeOnboarding').click();
   await page.locator('.row[data-session="bf-1"]').click();
   await page.waitForTimeout(800);
@@ -54,7 +55,8 @@ async (page) => {
   check(await nf.locator('a.shortcut[data-kind="git"] .cnt').count() === 1, '件数が来るまで「変更」の右に短い骨組みの行');
   const boxes = () => nf.evaluate(() => [...document.querySelectorAll('a.shortcut')].map((a) => { const r = a.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)].join(','); }));
   const before = await boxes();
-  await nf.waitForSelector('.recent-row, [data-slot="recent"] .empty, [data-slot="recent"] p', { timeout: 5000 }).catch(() => {});
+  await nf.waitForSelector('.recent-row, [data-slot="recent"] .empty, [data-slot="recent"] p', { timeout: 5000 });   // 届かなければ（timeout）ここで落ちる
+  const recentBefore = await nf.locator('.recent-row').count();
   check(await nf.locator('a.shortcut[data-kind="git"] .cnt').count() === 1, '最近のファイルの区画は件数を待たずに先に埋まる（件数はまだ）');
   await shot('new-pending');
   await nf.waitForFunction(() => /\d+ ファイル/.test(document.querySelector('a.shortcut[data-kind="git"] span')?.textContent ?? ''), null, { timeout: 8000 });
@@ -80,8 +82,8 @@ async (page) => {
   await page.waitForTimeout(600);
   await page.locator('.bu-new').click();
   const nf2 = await waitFrame(/\/new(\?|$)/);
-  await nf2.waitForFunction(() => document.querySelectorAll('.recent-row').length >= 2, null, { timeout: 8000 });
-  check(true, 'あとから開いたファイルも、新しいタブの最近のファイルに増える');
+  await nf2.waitForFunction((n) => document.querySelectorAll('.recent-row').length > n, recentBefore, { timeout: 8000 });
+  check(await nf2.locator('.recent-row').count() > recentBefore, `あとから開いたファイルが、新しいタブの最近のファイルに増える（${recentBefore} → ${await nf2.locator('.recent-row').count()}）`);
   await shot('recent-grown');
 
   // ---- 3. 待ちの見せ方（PC の幅）: 150ms 未満は何も出さない
@@ -104,12 +106,13 @@ async (page) => {
   await page.waitForTimeout(450);
   check(await page.locator('.bu-load:not([hidden])').count() === 1, 'PC の幅でもアドレスバーの下に読み込み線が出る');
   check(await page.locator('.bu-tab .bu-loading').count() >= 1, 'ファイルのタブにも脈の印が付く');
-  const host = page.locator('#page [aria-busy="true"], .bu-pages [aria-busy="true"]');
+  const host = page.locator('.bu-page-host[aria-busy="true"]');   // 本体側の入れ物（右の欄のページの箱）
   const sf = await waitFrame(/app\.js/);
-  check(await sf.locator('.sk[aria-hidden="true"]').count() >= 1 || await page.locator('.bu-page-sk').count() >= 1, '中身の位置に骨組みが出る（押せず読み上げない）');
-  check(await sf.locator('#app[aria-busy="true"], [aria-busy="true"]').count() >= 1 || await host.count() >= 1, '待っている入れ物に aria-busy が付く');
+  check(await sf.locator('.sk[aria-hidden="true"]').count() >= 1, 'ファイルのページの中身の位置に骨組みが出る（押せず読み上げない）');
+  check(await sf.locator('#content[aria-busy="true"]').count() === 1, 'ページの入れ物（#content）に aria-busy が付く');
+  check(await host.count() === 1, '本体側の入れ物（.bu-page-host）にも aria-busy が付く');
   await shot('loading-code');
-  await page.locator('.bu-load:not([hidden])').waitFor({ state: 'detached', timeout: 8000 }).catch(() => {});
+  await page.locator('.bu-load:not([hidden])').waitFor({ state: 'detached', timeout: 8000 });
   await sf.waitForSelector('main, .code, pre', { timeout: 8000 });
   await page.waitForTimeout(400);
   check(await page.locator('.bu-load:not([hidden])').count() === 0 && await page.locator('.bu-tab .bu-loading').count() === 0, '届いたら線も印も消える');
