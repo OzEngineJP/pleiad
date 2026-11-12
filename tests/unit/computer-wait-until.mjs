@@ -155,14 +155,14 @@ export default async function (t) {
 
   // ---- 決定モデル（偽の OpenRouter） ----
   t.ok('送る本文: model・state（Screenshot と JPEG の data URL）・questions.done（noul・問い・Yes/No）', JSON.stringify(decisionBody('QUJD', 'Is it done?')) === JSON.stringify({
-    model: 'perplexity/pplx-decider-v1.1-27b',
+    model: 'perplexity/pplx-decider-v1.2',
     state: [{ type: 'text', text: 'Screenshot' }, { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,QUJD' } }],
     questions: { done: { type: 'noul', instructions: 'Is it done?', criteria: { true: 'Yes', false: 'No' } } },
   }));
   t.ok('応答の読み方: answers.done.noul（0〜1）だけを読み、形が違えば null', parseDecision({ answers: { done: { type: 'noul', noul: 0.83456 } } }) === 0.835
     && parseDecision({ answers: { done: { type: 'boolean', noul: 0.8 } } }) === null && parseDecision({ answers: { done: { type: 'noul', noul: 1.2 } } }) === null
     && parseDecision({ answers: {} }) === null && parseDecision(null) === null && parseDecision({ answers: { done: { type: 'noul', noul: '0.8' } } }) === null);
-  t.ok('送る画面は長辺 1440', DECIDER_SHOT.maxEdge === 1440 && DECIDER_MODEL === 'perplexity/pplx-decider-v1.1-27b');
+  t.ok('送る画面は長辺 1440', DECIDER_SHOT.maxEdge === 1440 && DECIDER_MODEL === 'perplexity/pplx-decider-v1.2');
 
   const script = [];
   const fake = await startFakeOpenRouter({ decisions: (rec, i) => (script.length ? script.shift() : 0.9) });

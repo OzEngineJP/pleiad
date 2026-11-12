@@ -1,5 +1,5 @@
 // 仮想のキー「Pleiad Plus」（core/api-keys.mjs の plus。docs/plus.md「キー無しの機能」）。
-// 値を持たない・judge:routing と voice にだけ選べる・useEndpoint の表・ログイン時の自動の選択・中継の credit_exhausted の記憶。
+// 値を持たない・judge:routing・voice・computer:decider（wait_until の問い）に選べる・useEndpoint の表・ログイン時の自動の選択・中継の credit_exhausted の記憶。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -46,12 +46,12 @@ export default async function (t) {
       const { apiKeys, secrets } = wire(d, { session });
       await apiKeys.init();
       t.ok('judge:routing と voice に plus を選べる', (await apiKeys.setUse('judge:routing', 'plus')).id === 'plus' && (await apiKeys.setUse('voice', 'plus')).id === 'plus');
-      const err = await rejects(apiKeys.setUse('computer:decider', 'plus'));
-      t.ok('computer:decider には選べない（UNSUPPORTED_USE）', err instanceof ApiKeyError && err.code === 'UNSUPPORTED_USE');
+      t.ok('computer:decider（wait_until の問い）にも plus を選べる（2026-11-13）', (await apiKeys.setUse('computer:decider', 'plus')).id === 'plus' && (await apiKeys.usesState())['computer:decider'] === 'plus');
+      await apiKeys.setUse('computer:decider', null);
       const list = await apiKeys.list();
       const v = list.virtual?.[0];
       t.ok('一覧に { id:"plus", provider:"plus", label:"Pleiad Plus", virtual:true } が出る（値を持たないことが分かる）',
-        v && v.id === 'plus' && v.provider === 'plus' && v.label === 'Pleiad Plus' && v.virtual === true && v.uses.length === 2);
+        v && v.id === 'plus' && v.provider === 'plus' && v.label === 'Pleiad Plus' && v.virtual === true && v.uses.length === 2);   // この時点で plus を選んでいるのは judge:routing と voice
       t.ok('秘密の置き場に plus の値は書かれない', !(await secrets.keys('key:')).includes('key:plus') && (await apiKeys.useKey('voice')) === null);
       t.ok('削除・値の確認・probe の対象にしない',
         (await rejects(apiKeys.remove('plus')))?.code === 'NOT_FOUND' && (await rejects(apiKeys.replace('plus', A)))?.code === 'NOT_FOUND' && (await rejects(apiKeys.check('plus')))?.code === 'NOT_FOUND');
@@ -109,6 +109,33 @@ export default async function (t) {
       const fep = await w3.apiKeys.useEndpoint('voice');
       const err = await rejects(fep.authorization());
       t.ok('ID トークンを取れなければ authorization は PLUS_SIGNED_OUT（null ではなく投げる）', err instanceof ApiKeyError && err.code === 'PLUS_SIGNED_OUT');
+    }
+
+    // ---- useRoute（wait_until の問いが、送る前に使えない理由を知るための口）
+    {
+      const d = await fresh();
+      const session = fakeSession();
+      const { apiKeys } = wire(d, { session });
+      await apiKeys.init();
+      t.ok('選んでいなければ via は null', (await apiKeys.useRoute('computer:decider')).via === null);
+      const { id } = await apiKeys.add({ provider: 'openrouter', label: 'x', key: A });
+      await apiKeys.setUse('computer:decider', id);
+      const k = await apiKeys.useRoute('computer:decider');
+      t.ok('OpenRouter のキー: via=key・endpoint は openrouter・理由なし', k.via === 'key' && k.endpoint.kind === 'openrouter' && k.reason === null);
+      await apiKeys.setUse('computer:decider', 'plus');
+      const ok = await apiKeys.useRoute('computer:decider');
+      t.ok('plus が使える: via=plus・endpoint は <PLUS_API>/v1/proxy/openrouter', ok.via === 'plus' && ok.endpoint.baseUrl === `${API}/v1/proxy/openrouter` && ok.reason === null);
+      for (const [reason, over] of [['logged_out', { signedIn: false }], ['not_plus', { account: { status: 'free' } }], ['not_plus', { account: { status: 'disabled' } }],
+        ['maintenance', { state: 'maintenance' }], ['maintenance', { state: 'off', available: false }]]) {
+        session.set(over);
+        const r = await apiKeys.useRoute('computer:decider');
+        t.ok(`plus を選んだまま ${JSON.stringify(over)}: via=plus・endpoint なし・理由 ${reason}（OpenRouter のキーへは落とさない）`, r.via === 'plus' && r.endpoint === null && r.reason === reason && (await apiKeys.useEndpoint('computer:decider')) === null);
+        session.set({ signedIn: true, available: true, state: 'on', account: { status: 'plus' } });
+      }
+      const ep = (await apiKeys.useRoute('computer:decider')).endpoint;
+      ep.noteCredit('2099-12-01T00:00:00Z');
+      const blocked = await apiKeys.useRoute('computer:decider');
+      t.ok('今月の上限は endpoint.creditBlocked() で分かる（endpoint は返る）', blocked.via === 'plus' && blocked.endpoint.creditBlocked() === true && blocked.reason === null);
     }
 
     // ---- ログイン時の自動の選択

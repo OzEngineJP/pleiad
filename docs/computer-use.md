@@ -307,7 +307,7 @@ JSON-RPC は `initialize` / `ping` / `tools/list` / `tools/call` を自前で処
 - **比べるコマ**: `screenshot` と同じ op に `gray: true, maxEdge: 320` を渡し、対象のディスプレイ（最後の `screenshot` / `switch_display` のもの）を長辺 320 の明るさ（1 画素 1 バイト）で撮る。JPEG は作らない。撮る間隔は撮り始めから次の撮り始めまで 100ms（撮影が遅ければ間を空けずに次を撮る）。
 - **変化と静止**: 前のコマとの差が 6 を超えた画素が 2.0% 以上なら、そのコマで画面が変わった。最後の変化から 400ms 変わらなければ静止。まず変化を待つ。
 - **最初から止まっている画面**: 呼んでから 1 秒の間に変化が無ければ、最初から静止していたとして返す（「画面は最初から止まっていました」）。変化だけを待つと、もう終わっている画面で timeout まで待つため。決定モデルが「いいえ」と答えた後はこの扱いをせず、次の変化と静止を待つ。
-- **問い（`until`）**: 「はい」が「終わった」になる問い。空白を詰め、500 字で切る。静止するたびに 1 回（と、下の「動き続ける画面」で 2 秒ごとに 1 回）、長辺 1440（`maxPixels: 1_300_000`・品質 75）の JPEG を同じディスプレイで撮り直し、OpenRouter の `POST /api/alpha/decisions` で `perplexity/pplx-decider-v1.1-27b` に聞く。
+- **問い（`until`）**: 「はい」が「終わった」になる問い。空白を詰め、500 字で切る。静止するたびに 1 回（と、下の「動き続ける画面」で 2 秒ごとに 1 回）、長辺 1440（`maxPixels: 1_300_000`・品質 75）の JPEG を同じディスプレイで撮り直し、OpenRouter の `POST /api/alpha/decisions` で `perplexity/pplx-decider-v1.2` に聞く。
   - 本文は `state: [{ type: 'text', text: 'Screenshot' }, { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,…' } }]` と `questions.done = { type: 'noul', instructions: until, criteria: { true: 'Yes', false: 'No' } }`。
   - 応答は `answers.done.noul`（「はい」の確率）。読むのは `parseDecision` の 1 か所だけ。
   - 確率が 0.5 以上なら返す。「いいえ」なら次の変化と静止を待って聞き直す。このとき、聞く前に静止したコマと比べる（聞いている間に変わって止まった画面を見落とさない）。締め切りでは「まだ」と最後の確率を返す。

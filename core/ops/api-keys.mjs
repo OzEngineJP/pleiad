@@ -26,6 +26,8 @@ export const apiKeyOps = [
       uses: z.record(z.string(), z.string().nullable()),
       guide: loose.nullable(),
       virtual: z.array(loose).optional(),
+      /** Pleiad Plus の状態（キーを含まない。設定 › コンピューターの操作が Plus の行を描く。core/server.mjs の plusKeyInfo） */
+      plus: loose.optional(),
     }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['apikeys', 'list'] } },
     handler: (ctx) => mapped(() => ctx.apiKeys.list()),
