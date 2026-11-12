@@ -165,13 +165,21 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
    * 未追跡を含み、.gitignore は守る）で、撮影 → 名前だけの差の 2 手で済む（行数・ステージの内訳・2 回目の差を読まない）。
    * 撮影は一時 index の上なので、変更のページの問い合わせ（会話ごとの直列）を待たせず、待たされもしない。git 管理外・失敗は null
    */
+  const counting = new Map();   // 作業ツリーの根 → 進行中の数え（同じ根への問い合わせは 1 回の撮影を共有する）
   async function changeCount(cwd) {
     const info = await git.repoInfo(cwd);
     if (!info) return null;
-    const head = (await git.headCommit(info.root)) ?? EMPTY_TREE;
-    const tree = await git.snapshotTree(info.root);
-    if (!tree) return null;
-    return git.countDiffFiles(info.root, head, tree);
+    // 新しいタブの描画・refreshNewTabs・複数の会話が重なっても、大きいリポジトリで git add -A（撮影）を並べて走らせない
+    const running = counting.get(info.root);
+    if (running) return running;
+    const run = (async () => {
+      const head = (await git.headCommit(info.root)) ?? EMPTY_TREE;
+      const tree = await git.snapshotTree(info.root);
+      if (!tree) return null;
+      return git.countDiffFiles(info.root, head, tree);
+    })().finally(() => counting.delete(info.root));
+    counting.set(info.root, run);
+    return run;
   }
 
   /** 差分の比べる元と先（tree-ish）。commit・from/to は hash だけ。ステージ済みは HEAD と index、変更は index と作業ツリー */

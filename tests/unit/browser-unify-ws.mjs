@@ -127,7 +127,19 @@ export default async function(t) {
     t.ok('ページは pages の port の URL（画面が組み立てない）。開いたファイルは変化の見張りに登る',
       page.kind === 'file' && page.path === file && page.url === `http://localhost:12345${page.suffix}`
       && page.suffix.startsWith('/_pleiad/s/one/file?path=') && watches.some(w => w[0] === 'one' && w[1] === file));
+    // 版の印（ADR 0321）: 「更新時刻（ミリ秒を丸めた整数）:大きさ」。開いた時点のファイルの stat と一致し、関所を通ったパスにだけ付く
+    const statOf = async target => { const stat = await fs.stat(target); return `${Math.round(stat.mtimeMs)}:${stat.size}`; };
+    t.ok('pageOpen（ファイル）は版の印「更新時刻:大きさ」を返す', /^\d+:\d+$/.test(page.stamp ?? '') && page.stamp === await statOf(file), String(page.stamp));
+    const dirPage = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'dir', path:work }, client:clients[0] });
+    t.ok('pageOpen（フォルダー）もフォルダー自身の印を返す', dirPage.kind === 'dir' && dirPage.stamp === await statOf(work), String(dirPage.stamp));
+    const gitPage = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'git' }, client:clients[0] });
+    t.ok('ファイルの無いページ（git）は印を持たない', gitPage.stamp === undefined);
     const html = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'html', path:htmlFile }, client:clients[0] });
+    t.ok('pageOpen（HTML）も同じ形の印を返す', html.stamp === await statOf(htmlFile), String(html.stamp));
+    // 中身を読む口が断るパス（会話のデータ置き場の中のもの）には、開くのも印も出さない
+    const secretFile = path.join(dataDir, 'secret.txt'); await fs.writeFile(secretFile, 'top secret');
+    const refusedOpen = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'file', path:secretFile }, client:clients[0] }).then(value => ({ value }), error => ({ code:error.code }));
+    t.ok('データ置き場の中のファイルは pageOpen が断る（印も返さない）', refusedOpen.value === undefined && typeof refusedOpen.code === 'string', JSON.stringify(refusedOpen));
     const htmlUrl = html?.url ? new URL(html.url) : null;
     t.ok('HTML はフォルダーの印の出どころの /f/<鍵>/（鍵は引け、フォルダーは印と同じ）',
       htmlUrl && /^f[0-9a-f]{16}\.localhost$/.test(htmlUrl.hostname) && htmlUrl.port === '23456'
@@ -203,13 +215,17 @@ export default async function(t) {
 
     // page:changed（変わったファイルを見ている画面と、そのファイルを出しているタブへ）
     const marks = messages.map(list => list.length);
-    ws.pageChanged('one', file);
+    await ws.pageChanged('one', file);
+    t.ok('page:changed は版の印（読める paths のファイルの stat）を運ぶ', messages[0].at(-1).event.stamp === await statOf(file), String(messages[0].at(-1).event.stamp));
     t.ok('page:changed はその会話を見ている認証済みの画面へだけ（0 と 1 は見ている・3 は認証されていない）',
       messages[0].length === marks[0] + 1 && messages[0].at(-1).event.type === 'page:changed' && messages[0].at(-1).event.path === file
       && messages[1].length === marks[1] + 1 && messages[1].at(-1).event.type === 'page:changed' && messages[3].length === marks[3]);
     await new Promise(resolve => setTimeout(resolve, 30));
     t.ok('そのファイルを出しているタブへはページへ「changed」を届ける', calls.some(call => call[0] === 'Runtime.evaluate' && String(call[1]?.expression).includes('"changed"')));
-    ws.pageChanged('one', path.join(work, 'other.md'));
+    await ws.pageChanged('one', path.join(work, 'other.md'));
+    t.ok('消えた（読めない）パスの page:changed は印を付けない', messages[0].at(-1).event.type === 'page:changed' && !('stamp' in messages[0].at(-1).event));
+    await ws.pageChanged('one', secretFile);
+    t.ok('関所が断るパス（データ置き場の中）の page:changed は印を付けない（更新時刻と大きさを漏らさない）', messages[0].at(-1).event.path === secretFile && !('stamp' in messages[0].at(-1).event));
     t.ok('ほかのファイルはタブへ届けない（画面へだけ）', calls.filter(call => String(call[1]?.expression ?? '').includes('"changed"')).length === 1);
 
     // page:moved（port が替わった。見ている画面へ今と前の port を知らせ、残ったタブは本体が付け替える）
