@@ -24,7 +24,7 @@
 .git-page .seg [aria-pressed=true]{background:var(--surface-paper)}
 @media(hover:none){.code-copy{opacity:1}}
 @media(max-width:600px){.folder-grid{gap:2px}.shortcuts{flex-wrap:wrap}.shortcut{min-width:130px}.recent-row{flex-wrap:wrap}.recent-source{white-space:normal}}
-/* 待っている間の骨組み（ADR 0321）。.history-line と同じ形・光（1.6 秒）。ページの中では style.css が無いので、ここで持つ。
+/* 待っている間の骨組み（ADR 0320）。.history-line と同じ形・光（1.6 秒）。ページの中では style.css が無いので、ここで持つ。
    ダークは既定の --surface-2 だと地（--surface-paper）に沈むので、--surface-3 → --surface-thumb にする */
 :root{--sk-a:var(--surface-2);--sk-b:var(--surface-1);--sk-head:var(--surface-2);--sk-head-line:var(--surface-3)}
 :root[data-theme=dark]{--sk-a:var(--surface-3);--sk-b:var(--surface-thumb);--sk-head:var(--surface-1);--sk-head-line:var(--surface-thumb)}

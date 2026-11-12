@@ -33,7 +33,7 @@ const fill = (section, ...children) => { for (const child of [...section.childre
 const hasBody = section => section.querySelector(':scope > :not(h2)') !== null;
 
 /**
- * 新しいタブ。見出しと [変更] [プラグイン] はすぐ出し、件数・最近のファイル・作業フォルダーは届いた順に入れる（ADR 0321）。
+ * 新しいタブ。見出しと [変更] [プラグイン] はすぐ出し、件数・最近のファイル・作業フォルダーは届いた順に入れる（ADR 0320）。
  * 待ちが 150ms を超えた区画だけ骨組みを出す。読み直し（root に前の中身がある）は骨組みも空白も出さない。
  */
 export async function renderNew(root, { alive = () => true } = {}) {

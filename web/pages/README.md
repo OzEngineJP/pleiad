@@ -81,5 +81,5 @@ iframe は同じ origin の親から対応する message を送る。
 
 ページは描き始め・描き終え・失敗を親へ `{type:'pleiad:page-state',state:'loading'|'ready'|'failed'}` で知らせる（同じ origin の親だけが受ける）。
 親はこれで、アドレスバーの下の読み込み線とタブの印を出し入れする。
-親は 150ms を超えて待ったときだけ線と印を出し、60 秒待っても `ready` が来なければ失敗として扱う（[ADR 0321](../../docs/adr/0321-browser-file-reread-and-loading-display.md)）。
+親は 150ms を超えて待ったときだけ線と印を出し、60 秒待っても `ready` が来なければ失敗として扱う（[ADR 0320](../../docs/adr/0320-browser-file-reread-and-loading-display.md)）。
 `reread` は前の中身を残したまま読み直し、描き終えたところで差し替える。

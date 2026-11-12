@@ -11,7 +11,7 @@ const root = document.querySelector('#content');
 let generation = 0;
 let snapshot;
 let rendering = false;
-// 親（右の欄）へ描き始め・描き終え・失敗を知らせる（読み込み線とタブの印の出し入れ。ADR 0321）
+// 親（右の欄）へ描き始め・描き終え・失敗を知らせる（読み込み線とタブの印の出し入れ。ADR 0320）
 const report = state => { if (parent !== window) parent.postMessage({ type:'pleiad:page-state', state }, location.origin); };
 async function render() {
   const current = ++generation, alive = () => current === generation;
@@ -73,7 +73,7 @@ for (const name of ['pointerdown', 'keydown', 'scroll', 'input', 'selectstart', 
   document.addEventListener(name, () => { touched = true; }, { capture:true, passive:true });
 }
 window.addEventListener('pleiad:page-command', event => {
-  // 右の欄からの読み直し（もう一度開いた・戻って見た）。触ったかどうかは親が決めて送ってくるので、そのまま読み直す。前の中身は描き直しまで残す（ADR 0321）
+  // 右の欄からの読み直し（もう一度開いた・戻って見た）。触ったかどうかは親が決めて送ってくるので、そのまま読み直す。前の中身は描き直しまで残す（ADR 0320）
   if (event.detail?.type === 'reread') { void applyChange().catch(error => errorView(root, error)); return; }
   if (event.detail?.type !== 'changed' || !['file', 'dir', 'git', 'attachment', 'new'].includes(page)) return;
   if (!touched) { void applyChange().catch(error => errorView(root, error)); return; }

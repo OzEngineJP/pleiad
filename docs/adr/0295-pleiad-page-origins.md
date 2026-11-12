@@ -1,6 +1,6 @@
 # 0295 Pleiad のページを、本体の画面と別の 2 つの origin（ファイルのページ・隔離）から配る
 
-- 状態: 提案（仮番号。main に入れる直前に振り直す）。ファイルの読み直し（開き直し・見ていない間の変更への追いつき）は [ADR 0321](0321-browser-file-reread-and-loading-display.md) が置き換える
+- 状態: 提案（仮番号。main に入れる直前に振り直す）。ファイルの読み直し（開き直し・見ていない間の変更への追いつき）は [ADR 0320](0320-browser-file-reread-and-loading-display.md) が置き換える
 - 関連: [ADR 0294](0294-one-chrome-window-per-conversation.md)、[ADR 0009](0009-sandboxed-html-with-scripts.md)・[ADR 0042](0042-preview-loads-external-by-default.md)（一部置換）、[ADR 0050](0050-local-file-access.md)、[ADR 0010](0010-os-actions-only-on-host-screen.md)、[ADR 0115](0115-records-in-sqlite.md)、[ADR 0148](0148-agent-browser-in-chrome.md)、[ADR 0151](0151-zero-downtime-update.md)、[ADR 0167](0167-chrome-connection-held-across-updates.md)
 
 ## 状況

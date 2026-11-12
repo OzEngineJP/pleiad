@@ -91,7 +91,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     tab.stamp = tab.nextStamp ?? null; tab.nextStamp = undefined;
     changed(tab);
   }
-  /** 今のタブを読み直すよう頼む（読んでいる所・内容は消さない読み直し。ADR 0321）。触って（入力して）いるタブには出さず「更新を表示」にする */
+  /** 今のタブを読み直すよう頼む（読んでいる所・内容は消さない読み直し。ADR 0320）。触って（入力して）いるタブには出さず「更新を表示」にする */
   function refresh(tab) {
     if (!tab?.local) return false;
     if (tab.dirty) { tab.pending = true; changed(tab); return false; }
@@ -192,7 +192,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     if (tab.page?.kind === 'html') tab.keyIssuedAt = Date.now();
     // 戻ってきた URL が同じなら読み直さない（鍵・見張りはサーバー側で戻った。つなぎ直しで触っていないタブを毎回読み直さない。指摘 9）。
     // 版の印（stamp）が分かるときは、見ていない間にファイルが変わったかで決める: 変わっていて入力が無ければ読み直し、
-    // 入力があれば「更新を表示」。変わっていなければ何もしない（ADR 0321）
+    // 入力があれば「更新を表示」。変わっていなければ何もしない（ADR 0320）
     const stamp = opened.stamp;
     if (stamp !== undefined) {
       const differs = stamp !== tab.stamp || tab.url !== was;

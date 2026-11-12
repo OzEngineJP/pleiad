@@ -1,4 +1,4 @@
-// 右の欄の待っている間の見せ方（ADR 0321）を、実の web/browser-unify.mjs と DOM の代役で確かめる:
+// 右の欄の待っている間の見せ方（ADR 0320）を、実の web/browser-unify.mjs と DOM の代役で確かめる:
 //   60 秒の打ち切り（時間は差し替え）・打ち切りの後に遅れて届いた中身が失敗の文を外す・dispose・pleiad:page-state の扱い・
 //   描きかけのタブへ戻ったときの線と打ち切り・HTML の読み直しの線。
 // 実ブラウザーでの見た目は tests/browser/browser-files-load.cjs（手元の確認）。

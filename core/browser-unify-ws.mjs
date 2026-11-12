@@ -10,7 +10,7 @@ import { readSearchProvider, searchUrl } from './chrome/search-provider.mjs';
 // pageEnv: 画面のテーマの変化をファイルのページへ知らせる（言語はサーバーの既定なので savePref が知らせる）
 // pageOpen: ページ・HTML・可視化の開く先をサーバーが決める（ADR 0295 の 7。画面は port や URL を組み立てない）
 export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress', 'pageResult', 'pageEnv', 'pageOpen', 'pageResolve', 'pageWatch']);
-/** ファイルの版の印（更新時刻:大きさ）。開いた時点と変化の知らせで同じ形にして、画面が見比べる（ADR 0321） */
+/** ファイルの版の印（更新時刻:大きさ）。開いた時点と変化の知らせで同じ形にして、画面が見比べる（ADR 0320） */
 const stampOfStat = stat => `${Math.round(stat.mtimeMs)}:${stat.size}`;
 export const isBrowserUnifyCommand = command => BROWSER_UNIFY_COMMANDS.has(command);
 
@@ -69,7 +69,7 @@ export function createBrowserUnifyWs(deps = {}) {
   };
   const PAGE_KINDS = new Set(['file', 'dir', 'git', 'plugins', 'new', 'attachment']);
   /**
-   * ファイルの版（更新時刻:大きさ）。画面が見ていない間の変更を、戻ったときに見分ける（ADR 0321）。
+   * ファイルの版（更新時刻:大きさ）。画面が見ていない間の変更を、戻ったときに見分ける（ADR 0320）。
    * 中身を読む口（core/pages-routes.mjs）と同じ関所（inspectFile + access）を通ったパスにだけ返す。断られる・読めない・消えたパスは undefined
    * （版から、読めないファイルの更新時刻や大きさが漏れない）
    */

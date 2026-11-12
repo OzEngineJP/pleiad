@@ -1,4 +1,4 @@
-// tests/browser/browser-files-load.cjs の種（ADR 0321）。右の欄のファイルの読み直しと待っている間の見せ方を確かめるための、
+// tests/browser/browser-files-load.cjs の種（ADR 0320）。右の欄のファイルの読み直しと待っている間の見せ方を確かめるための、
 // 使い捨てのリポジトリと fake の会話を 1 つ作る。リポジトリには文書・コード・表・HTML と、未追跡の 300 ファイル（変更の件数が重くなる量）を置く。
 // 使い方: node tests/browser/browser-files-load-seed.mjs <空のデータ置き場> <リポジトリを作る空のフォルダー>
 import { execFileSync } from "node:child_process";

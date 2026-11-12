@@ -127,7 +127,7 @@ export default async function(t) {
     t.ok('ページは pages の port の URL（画面が組み立てない）。開いたファイルは変化の見張りに登る',
       page.kind === 'file' && page.path === file && page.url === `http://localhost:12345${page.suffix}`
       && page.suffix.startsWith('/_pleiad/s/one/file?path=') && watches.some(w => w[0] === 'one' && w[1] === file));
-    // 版の印（ADR 0321）: 「更新時刻（ミリ秒を丸めた整数）:大きさ」。開いた時点のファイルの stat と一致し、関所を通ったパスにだけ付く
+    // 版の印（ADR 0320）: 「更新時刻（ミリ秒を丸めた整数）:大きさ」。開いた時点のファイルの stat と一致し、関所を通ったパスにだけ付く
     const statOf = async target => { const stat = await fs.stat(target); return `${Math.round(stat.mtimeMs)}:${stat.size}`; };
     t.ok('pageOpen（ファイル）は版の印「更新時刻:大きさ」を返す', /^\d+:\d+$/.test(page.stamp ?? '') && page.stamp === await statOf(file), String(page.stamp));
     const dirPage = await openWs.handle({ command:'pageOpen', args:{ sessionId:'one', kind:'dir', path:work }, client:clients[0] });

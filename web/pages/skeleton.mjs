@@ -1,4 +1,4 @@
-// 待っている間の骨組み（ADR 0321）。種類ごとに、届く中身と同じ並び・同じ行の高さで描く（入れ替わっても動かない）。
+// 待っている間の骨組み（ADR 0320）。種類ごとに、届く中身と同じ並び・同じ行の高さで描く（入れ替わっても動かない）。
 // 押せず、読み上げもしない（aria-hidden）。光は .history-line と同じ 1.6 秒（content.css の .sk）。
 import { node, icon } from './bridge.mjs';
 import { folderIcon, fileIcon } from '../icons.mjs';
