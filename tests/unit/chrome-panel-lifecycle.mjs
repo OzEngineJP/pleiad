@@ -78,6 +78,19 @@ export default async function (t) {
       t.ok('映像が止まったあとの open は、見直す', r.starts() === 2);
     }
 
+    // カードの「画面を開く」（openAiTab）: 人が選んでいたタブの固定を外し、AI のタブを映す（ADR 0321）
+    {
+      const r = rig();
+      r.windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
+      r.panel.open();
+      await flush();
+      r.frame(1);
+      r.panel.onMessage({ source: 'chrome', sessionId: 'conv', type: 'state', state: { sequence: 5, tabId: 'H', agentTabId: 'A', pinnedTabId: 'H' } });
+      const pins = () => r.commands.filter(([name]) => name === 'chromePinWindow');
+      await r.panel.openAiTab('conv');
+      t.ok('「画面を開く」は、前に選んだタブの固定を外す（tabId なしで固定し直す）', pins().length === 1 && pins()[0][1].tabId === null && pins()[0][1].windowId === null, JSON.stringify(pins()));
+    }
+
     // 窓が閉じても、タブ列とアドレスバーから開き直せるので、パネルは残る（PC もリモートも）
     {
       const r = rig();

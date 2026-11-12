@@ -41,11 +41,12 @@ const controlInput = z.object({ sessionId: sessionIdShape });
 const windowIdShape = z.number().int().describe('agent:ops.browser.chromePinWindow.windowId');
 const takeOverInput = z.object({
   sessionId: sessionIdShape,
-  by: z.enum(['pc', 'device']).optional().describe('agent:ops.browser.chromeTakeOver.by'),
+  by: z.enum(['pc', 'device', 'screen']).optional().describe('agent:ops.browser.chromeTakeOver.by'),
   width: z.number().positive().max(10000).optional().describe('agent:ops.browser.chromeTakeOver.width'),
   height: z.number().positive().max(10000).optional().describe('agent:ops.browser.chromeTakeOver.height'),
   scale: z.number().positive().max(10).optional().describe('agent:ops.browser.chromeTakeOver.scale'),
   fromPc: z.boolean().optional().describe('agent:ops.browser.chromeTakeOver.fromPc'),
+  tabId: z.string().min(1).max(200).optional().describe('agent:ops.browser.chromeTakeOver.tabId'),
 });
 /** 会話の窓の操作（引き継ぐ・戻す・止める）。Chrome の層が使えなければ UNSUPPORTED、引き継げる窓が無ければ NO_WINDOW */
 const controlOf = (ctx) => {
@@ -184,12 +185,12 @@ export const browserOps = [
     id: 'browser.chromeTakeOver',
     summary: 'agent:ops.browser.chromeTakeOver.summary',
     risk: 'write',
-    riskReason: 'Shows the Chrome window of the conversation to the user and pauses the browser commands of the agent until it is handed back; it never grants anything or touches the user own windows. Screen and remote devices only (not on MCP or CLI)',
+    riskReason: 'With by: pc, shows the Chrome window of the conversation to the user and pauses the browser commands of the agent until it is handed back; with by: device or screen, keeps the window hidden and makes only one tab the person operates, without pausing the agent on its other tabs. It never grants anything or touches the user own windows. Screen and remote devices only (not on MCP or CLI)',
     input: takeOverInput,
     output: controlShape,
     surfaces: { ui: true, mcp: false, cli: false },
     legacyCommand: 'chromeTakeOver',
-    handler: (ctx, { sessionId, by, width, height, scale, fromPc }) => controlRun(ctx, 'takeOver', sessionId, by === 'device' ? { by, width, height, scale, ...(fromPc === true ? { fromPc: true } : {}) } : { by: 'pc' }),
+    handler: (ctx, { sessionId, by, width, height, scale, fromPc, tabId }) => controlRun(ctx, 'takeOver', sessionId, by === 'device' ? { by, width, height, scale, ...(fromPc === true ? { fromPc: true } : {}) } : by === 'screen' ? { by, width, height, scale, tabId } : { by: 'pc' }),
   }),
   defineOp({
     id: 'browser.chromeResume',

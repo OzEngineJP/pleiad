@@ -106,7 +106,7 @@ export default async function (t) {
   const cards = [];
   let relay;
   const askPermission = async opts => {
-    const targetId = relay.view.current(opts.sessionId);
+    const targetId = relay.view.shown(opts.sessionId);   // server.mjs の chromeHandoffProfile と同じ（AI がまだ操作していないときは窓の最初のタブ）
     const info = await relay.cdp.send('Target.getTargetInfo', { targetId });
     const origin = new URL(info.targetInfo.url).origin;
     const windowId = relay.view.tabs(opts.sessionId).find(tab => tab.targetId === targetId)?.windowId;

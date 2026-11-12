@@ -3425,7 +3425,7 @@ function chromeWindowState(sessionId) {
   const summary = chromeRelay.view.summary(sessionId);
   const tabs = chromeRelay.view.tabs(sessionId);
   const windowIds = [...new Set(tabs.map(tab => tab.windowId).filter(id => id != null))];
-  const currentWindowId = tabs.find(tab => tab.targetId === chromeRelay.view.current(sessionId))?.windowId ?? null;
+  const currentWindowId = tabs.find(tab => tab.targetId === chromeRelay.view.shown(sessionId))?.windowId ?? null;
   // 固定は存在するウィンドウだけ（ウィンドウが消えた直後は、映像の側が解くより先にここが読まれる）
   const pinned = chromeScreencast?.pinned(sessionId) ?? null;
   return { windows: summary.windows, operating: summary.operating, windowIds, currentWindowId, pinnedWindowId: windowIds.includes(pinned) ? pinned : null };
@@ -6246,7 +6246,7 @@ async function delegationRoot(sessionId) {
  */
 const approvalIds = createApprovalIds();
 async function chromeLoginOrigin(sessionId) {
-  const targetId = chromeRelay?.view.current(sessionId);
+  const targetId = chromeRelay?.view.shown(sessionId);
   if (!targetId) return null;
   try {
     const info = await chromeRelay.cdp?.send('Target.getTargetInfo', { targetId });
@@ -6255,7 +6255,7 @@ async function chromeLoginOrigin(sessionId) {
   } catch { return null; }
 }
 function chromeHandoffProfile(sessionId) {
-  const targetId = chromeRelay?.view.current(sessionId);
+  const targetId = chromeRelay?.view.shown(sessionId);
   const windowId = chromeRelay?.view.tabs(sessionId).find(tab => tab.targetId === targetId)?.windowId;
   const dir = chromeRelay?.scope.windows?.(sessionId)?.find(window => window.windowId === windowId)?.profile;
   return dir ? { browser: 'chrome', dir } : null;

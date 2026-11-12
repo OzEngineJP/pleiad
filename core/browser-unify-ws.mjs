@@ -216,6 +216,9 @@ export function createBrowserUnifyWs(deps = {}) {
       return { targetId: id ?? null };
     }
     if (!relay.unify.tabInfo.list(sessionId).some(tab => tab.targetId === targetId)) fail('NO_WINDOW');
+    // 引き継ぐ前の AI のタブは見るだけ（ADR 0321）: 移動・戻る・進む・再読み込み・閉じる・表示の切り替えは 'view-only' で断り、持ち手も替えない（人の操作に数えない）。
+    // 引き継ぐのは [引き継ぐ]（chromeTakeOver）だけ。新しいタブ（上の new）は人のタブなので、ここを通らない
+    if (relay.view.current(sessionId) === targetId && relay.unify.tabHolder.holder(sessionId, targetId)?.holder !== 'human') fail('view-only');
     relay.unify.tabHolder.touch({ sessionId, targetId, by });
     if (action === 'close') { await relay.view.closeTab(sessionId, targetId); return {}; }
     const attached = await relay.view.attach(sessionId, targetId, () => {});

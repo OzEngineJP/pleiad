@@ -45,7 +45,7 @@ export function createSecretFill({ relay, secrets, log = () => {} }) {
     if (!known) return say(false, 'notFound', { item });
     if (known.kind !== 'login') return say(false, 'notLogin', { label: known.label });
     const r = relay?.();
-    const targetId = r?.view?.current(sessionId);
+    const targetId = r?.view?.shown(sessionId);
     if (!targetId) return say(false, 'noTab');
     let tab;
     try { tab = await r.view.attach(sessionId, targetId, () => {}); }

@@ -31,13 +31,14 @@ export default async function(t) {
     await Promise.all([work, dataDir, profile].map(dir => fs.mkdir(dir)));
     const file = path.join(work, 'notes.md'); await fs.writeFile(file, '# Notes');
     await fs.writeFile(path.join(profile, 'Preferences'), JSON.stringify({ default_search_provider_data:{ url:'https://search.example/?q={searchTerms}' } }));
-    let emit, detached = 0, touched = [], calls = [], opened = [];
+    let emit, detached = 0, touched = [], calls = [], opened = [], aiTab = null;
+    const holders = new Map();   // 持ち手（無ければ AI）。aiTab は中継の AI のタブ（relay.view.current）
     const tabs = [{ sessionId:'one', targetId:'a', windowId:1, url:'https://example.com/', title:'One' }];
     const relay = {
       onTabEvent(fn) { emit = fn; return () => { emit = null; }; },
-      unify:{ tabInfo:{ list:id => id === 'one' ? tabs : [] }, tabHolder:{ touch:detail => touched.push(detail) } },
+      unify:{ tabInfo:{ list:id => id === 'one' ? tabs : [] }, tabHolder:{ touch:detail => touched.push(detail), holder:(id, targetId) => holders.get(targetId) ?? { holder:'ai' } } },
       async openForConversation(id, url) { opened.push({ id, url }); return { targetId:'new-tab' }; },
-      view:{ async closeTab(id, targetId) { calls.push(['close', id, targetId]); }, async attach() { return {
+      view:{ current:id => id === 'one' ? aiTab : null, async closeTab(id, targetId) { calls.push(['close', id, targetId]); }, async attach() { return {
         async send(method, params) { calls.push([method, params]); return method === 'Page.getNavigationHistory' ? { currentIndex:1, entries:[{ id:10 }, { id:20 }, { id:30 }] } : {}; },
         async detach() { detached++; },
       }; } },
@@ -109,6 +110,26 @@ export default async function(t) {
     tabs[0].page={kind:'file',path:file};
     await ws.navigate({sessionId:'one',targetId:'a',action:'view',view:'source'});
     t.ok('view changes persist in the page URL before painting', calls.at(-1)[1].expression.includes('history.replaceState') && calls.at(-1)[1].expression.includes('source'));
+
+    // 引き継ぐ前の AI のタブは見るだけ（ADR 0321）: アドレスバーの移動・戻る・進む・再読み込み・閉じる・表示の切り替えは、どれも view-only で断り、CDP も持ち手も触らない
+    aiTab = 'a';
+    for (const args of [{ input:'https://moved.example/' }, { action:'back' }, { action:'forward' }, { action:'reload' }, { action:'close' }, { action:'view', view:'preview' }]) {
+      const sent = calls.length, held = touched.length;
+      const code = await ws.navigate({ sessionId:'one', targetId:'a', ...args }, { by:'screen:1' }).then(() => null, error => error.code);
+      t.ok(`the agent tab before take-over refuses ${args.action ?? 'navigate'} with view-only, without CDP and without becoming human`, code === 'view-only' && calls.length === sent && touched.length === held,
+        JSON.stringify({ code, sent:calls.slice(sent), touched:touched.slice(held) }));
+    }
+    await ws.navigate({ sessionId:'one', action:'new', input:'https://fresh.example/' }, { by:'screen:1' });
+    t.ok('while the agent tab is view-only, a typed address still opens in a new human tab', opened.at(-1).url === 'https://fresh.example/' && touched.at(-1).targetId === 'new-tab', JSON.stringify([opened.at(-1), touched.at(-1)]));
+    holders.set('a', { holder:'human' });   // [引き継ぐ] の後
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'reload' }, { by:'screen:1' });
+    t.ok('after take-over the agent tab reloads', calls.at(-1)[0] === 'Page.reload');
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'close' }, { by:'screen:1' });
+    t.ok('after take-over the agent tab closes', calls.at(-1)[0] === 'close' && calls.at(-1)[2] === 'a');
+    holders.clear(); aiTab = 'other';
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'reload' });
+    t.ok('a tab that is not the agent tab works as before even while its holder is ai', calls.at(-1)[0] === 'Page.reload');
+    aiTab = null;
 
     // pageOpen: 開く先はサーバーが決める（ADR 0295 の 7）。ページは pages の port、HTML と可視化は印の出どころ
     const secret = crypto.randomBytes(32);

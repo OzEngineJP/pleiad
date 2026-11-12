@@ -132,7 +132,7 @@ export default async function (t) {
     if (method === 'Input.insertText') page.value = params.text;
     return { result: { value: true } };
   }, async detach() {} };
-  const fill = createSecretFill({ relay: () => ({ view: { current: () => 'target-1', attach: async () => tab } }), secrets: store });
+  const fill = createSecretFill({ relay: () => ({ view: { shown: () => 'target-1', attach: async () => tab } }), secrets: store });
   const done = await fill('s1', { item: id, field: 'password' }, 'ja');
   t.ok('fill_secret: origin が合えば Input.insertText で入れ、返りは文だけ（値は無い）', done.ok && page.value === PW && !done.text.includes(PW) && /GitHub/.test(done.text));
   t.ok('入力したことを残す', (await store.list()).items.find((i) => i.id === id).lastUse?.site === 'github.com');
