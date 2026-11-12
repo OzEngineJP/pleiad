@@ -66,7 +66,7 @@ export async function askDecider({ key, endpoint, jpeg, until, fetch: fetchImpl 
     headers: { Authorization: authorization, 'Content-Type': 'application/json', 'X-Title': 'Pleiad' }, body });
   let authorization;
   try { authorization = endpoint ? await endpoint.authorization() : `Bearer ${key}`; }
-  catch { return { ok: false, code: 'no_key' }; }
+  catch { return { ok: false, code: endpoint ? 'unauthenticated' : 'no_key' }; }   // Pleiad Plus の ID トークンを取れない = ログインが切れた（キーが無いのではない）
   let res;
   try { res = await send(authorization); }
   catch (e) { return { ok: false, code: isTimeout(e) ? 'timeout' : 'network' }; }

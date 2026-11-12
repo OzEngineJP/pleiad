@@ -22,7 +22,7 @@ function fakeSession(plus, over = {}) {
   const calls = { token: 0, forced: 0, status: 0 };
   return {
     snapshot: () => snap,
-    getIdToken: async ({ force } = {}) => { calls.token++; if (force) calls.forced++; return plus.issueIdToken(snap.uid ?? 'u-1'); },
+    getIdToken: async ({ force } = {}) => { if (calls.failToken) throw new Error('token'); calls.token++; if (force) calls.forced++; return plus.issueIdToken(snap.uid ?? 'u-1'); },
     status: async () => { calls.status++; return snap; },
     set: o => Object.assign(snap, o),
     calls,
@@ -93,6 +93,22 @@ export default async function (t) {
         const r = await hh.connect({ sessionId: 'p-' + reason }).call('wait_until', { title: 'x', until: UNTIL });
         t.ok(`${reason}: 送らず、unverified・${reason}・via plus（画面の差分だけで待つ）`, sent().length === b && mark(r).wait.status === 'unverified' && mark(r).wait.reason === reason && mark(r).wait.via === 'plus' && mark(r).wait.checks === 0, JSON.stringify(mark(r).wait) + ' ' + body(r));
       } finally { await hh.close(); session.set({ signedIn: true, available: true, state: 'on', account: plusAccount() }); }
+    }
+
+    // ---- 送る直前に ID トークンを取れなかった（ログインは切れていないと見えているのに）→ キーが無いのではなく unauthenticated
+    {
+      const apiKeys3 = createApiKeys({ dataDir: root, secrets, plus: { apiBase: () => plus.url, session: () => session } });
+      await apiKeys3.init();
+      const h3 = await createHarness({ waitMs: 400, decider: { route: () => apiKeys3.useRoute('computer:decider') } });
+      try {
+        h3.driver.setFrames(() => 90);
+        session.calls.failToken = true;
+        const b3 = sent().length;
+        const r = await h3.connect({ sessionId: 'p-token' }).call('wait_until', { title: 'x', until: UNTIL });
+        const w = mark(r).wait;
+        t.ok('ID トークンを取れない: 送らず、error・unauthenticated・via plus（no_key にしない）', sent().length === b3 && w.status === 'error' && w.reason === 'unauthenticated' && w.via === 'plus', JSON.stringify(w) + ' ' + body(r));
+        t.ok('エージェントが読む文はログインの切れを言い、キーが無いとは言わない', /ログイン|log/i.test(body(r)) && !/キーが(選ばれて|無い|ない)/.test(body(r)), body(r));
+      } finally { session.calls.failToken = false; await h3.close(); }
     }
 
     // ---- 使わない（何も選んでいない）は今までどおり

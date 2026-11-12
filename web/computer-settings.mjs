@@ -116,11 +116,21 @@ export function setupComputerSettings({ cmd, getPrefs, getHostCaps = () => null,
     const deferred = keys?.migration?.state === 'deferred';
     const rows = [];
     // 1. Pleiad Plus（state: off・AGENT_HOST_PLUS=0 なら行ごと出さない。メンテナンス中は出して選べなくする）
-    let plusUnusable = false;
     if (keys && plusRowVisible(keys.plus)) {
       const { row, selectable } = plusKeyRow({ info: keys.plus, checked: viaPlus, onChoose: choosePlus, onLogin: () => cmd('plusLogin').catch(() => {}) });
       rows.push(row);
-      plusUnusable = viaPlus && (!selectable || keys.plus?.limitReached === true);
+      // 選んでいる口が使えないとき: Pleiad Plus の行のすぐ下（枠の中）に 1 文と、直す操作（アカウントを管理）。モック 03 と通話の設定と同じ位置
+      if (viaPlus && (!selectable || keys.plus?.limitReached === true)) {
+        const limit = keys.plus?.limitReached && keys.plus?.signedIn && keys.plus?.status === 'plus' && keys.plus?.state !== 'maintenance';
+        const warn = el('p', 'rm-err', limit ? t('apiKeys.computer.plusLimit') : t('apiKeys.computer.plusUnusable'));
+        warn.setAttribute('role', 'alert');
+        rows.push(warn);
+        if (keys.plus?.profileUrl && keys.plus?.signedIn) {
+          const acts = el('div', 'rm-acts');
+          acts.append(button(t('settings.plus.manage'), () => openExternalLink(keys.plus.profileUrl), 'btn btn-quiet'));
+          rows.push(acts);
+        }
+      }
     }
     // 2. OpenRouter（キーの状態は 2 行目）。移行を保留している間は選べない（問いは使わない）
     if (deferred) {
@@ -128,11 +138,12 @@ export function setupComputerSettings({ cmd, getPrefs, getHostCaps = () => null,
     } else {
       const sub = el('span');
       if (current) { sub.append(statusLine(current)); sub.append(' · ', manageLink(openPage)); }
+      else sub.append(t('apiKeys.delegation.selectKey'));
       const sel = keys ? keySelect({ keys: openrouter, current: current?.id ?? null, noneLabel: t('apiKeys.delegation.selectKey'), noNone: true,
         label: t('apiKeys.computer.selectLabel'), focusKey: 'sel:decider', provider: 'openrouter', choose: chooseKey,
         register: () => { registering = true; focusKey = 'regin:decider'; paintKeys(); } }) : null;
       if (sel) sel.element.addEventListener('click', e => e.stopPropagation());
-      rows.push(keyRadioRow({ name: 'OpenRouter', checked: !!current, disabled: !keys, sub: current ? sub : null, end: sel?.element ?? null,
+      rows.push(keyRadioRow({ name: 'OpenRouter', checked: !!current, disabled: !keys, sub, end: sel?.element ?? null,
         onChoose: () => sel?.open(), focusKey: 'row:decider' }));
     }
     // 3. 使わない
@@ -141,17 +152,6 @@ export function setupComputerSettings({ cmd, getPrefs, getHostCaps = () => null,
     if (registering && keys && !deferred) card.append(registerForm({ provider: 'openrouter', label: t('apiKeys.computer.title'), storage: keys.storage, focusKey: 'regin:decider', onSubmit: registerKey,
       onCancel: () => { registering = false; focusKey = 'sel:decider'; paintKeys(); } }));
     sec.append(card);
-    // 選んだ口が使えないとき: 1 文と、直す操作（アカウントを管理）
-    if (plusUnusable) {
-      const warn = el('p', 'rm-err', keys.plus?.limitReached && keys.plus?.signedIn && keys.plus?.status === 'plus' && keys.plus?.state !== 'maintenance' ? t('apiKeys.computer.plusLimit') : t('apiKeys.computer.plusUnusable'));
-      warn.setAttribute('role', 'alert');
-      sec.append(warn);
-      if (keys.plus?.profileUrl && keys.plus?.signedIn) {
-        const acts = el('div', 'rm-acts');
-        acts.append(button(t('settings.plus.manage'), () => openExternalLink(keys.plus.profileUrl), 'btn btn-quiet'));
-        sec.append(acts);
-      }
-    }
     sec.append(el('p', 'mp-note', t('apiKeys.computer.note')));
     const line = el('p', 'rm-state', keyMessage); line.setAttribute('role', 'status');
     sec.append(line);

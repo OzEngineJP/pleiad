@@ -130,11 +130,19 @@ try {
   await openPage('computer');
   await page.waitForSelector('#computerPanel :text("上限に達しました")');
   ok('上限に達したときは 1 文と「アカウントを管理」', (await computerText()).includes('アカウントを管理'), await computerText());
+  // モック 03: 1 文と「アカウントを管理」は灰色の枠（.nf-card）の中、Pleiad Plus の行のすぐ下（OpenRouter の行の上）
+  const order = await page.evaluate(() => {
+    const g = document.querySelector('#computerPanel [role=radiogroup]');
+    return { card: !!g.closest('.nf-card') && g.closest('.nf-card').contains(g.querySelector('.rm-err')), kids: [...g.children].map(c => c.getAttribute('role') === 'radio' ? 'radio:' + c.querySelector('.rm-nm').textContent : c.className.split(' ')[0]) };
+  });
+  ok('1 文と「アカウントを管理」が枠の中・Pleiad Plus の行と OpenRouter の行の間', order.card && order.kids.join(',') === 'radio:Pleiad Plus,rm-err,rm-acts,radio:OpenRouter,radio:使わない', JSON.stringify(order));
   await shots('settings-plus-limit', '#computerPanel');
 
   // ---- 会話の行の「未確認」（render.mjs を直に呼んで #thread に置く）
   await page.locator('#backToChat').click();
   await page.waitForFunction(() => !document.body.classList.contains('settings'));
+  // 設定から戻ると案内の窓（fake のエージェントしか無いため）が開き直す。幕が画像に写らないよう、この確かめの間だけ畳んで隠す
+  await page.addStyleTag({ content: '#onboardingDialog{display:none !important}' });
   await page.evaluate(async () => {
     const { renderToolCall, applyToolResult } = await import('/render.mjs');
     const thread = document.getElementById('thread');
@@ -156,7 +164,8 @@ try {
   await page.locator('#thread .tc-unv-open').first().scrollIntoViewIfNeeded();
   await shots('thread-unverified', '#thread');
   // リンクで設定 › コンピューターの操作 が開く
-  await page.evaluate(() => document.getElementById('onboardingDialog')?.close());   // 設定から戻ると案内の窓が開き直す（エージェントが fake のため）
+  // 案内の窓の gate（fake のエージェントしか無い）が会話を inert にしているので、実際の押下は dispatchEvent で届ける
+  await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
   await page.locator('#thread .tc-unv-open').first().dispatchEvent('click');
   await page.waitForSelector('#computerPanel:not([hidden])');
   ok('「設定 › コンピューターの操作 を開く」で設定のそのページが開く', true);
