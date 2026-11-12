@@ -135,6 +135,25 @@ export default async function (t) {
     } finally { console.error = savedError; motionClock.thaw(); }
     t.ok('1 本の onUpdate・onEnd が投げても、ほかのばねは終わりまで進み、投げた 1 本は外して onEnd を呼び、例外は console.error へ出す', true);
 
+    // ---- onFail: 投げて外れたときだけ、onEnd の後に 1 度呼ぶ（動いている間だけ付けた印を外す口）。普通に終われば呼ばない ----
+    motionClock.freeze();
+    console.error = (...args) => errors.push(args);
+    try {
+      const order = [];
+      const failing = createSpring(0, { onUpdate: () => { if (order.includes('go')) throw new Error('boom2'); }, onFail: () => order.push('fail') });
+      failing.to(100, { onEnd: () => order.push('end') });
+      order.push('go');
+      motionClock.advance(16);
+      assert.deepEqual(order, ['go', 'end', 'fail'], 'onEnd の後に onFail を 1 度');
+      const fine = createSpring(0, { epsilon: 0.01, onFail: () => order.push('fine-fail') });
+      fine.to(100); motionClock.advance(3000);
+      assert.equal(fine.value, 100); assert.ok(!order.includes('fine-fail'), '普通に終われば onFail は呼ばない');
+      const loudFail = createSpring(0, { onUpdate: () => { throw new Error('x'); }, onFail: () => { throw new Error('y'); } });
+      loudFail.to(1); motionClock.advance(16);
+      assert.equal(motionClock.moving, 0, 'onFail が投げても時計は止まらない');
+    } finally { console.error = savedError; motionClock.thaw(); }
+    t.ok('onFail: 投げて外れたときだけ onEnd の後に 1 度呼ぶ・普通に終われば呼ばない・onFail が投げても止まらない', true);
+
     // ---- 動きを減らす設定: その場で終わり、動いているものも終える ----
     globalThis.matchMedia = q => ({ matches: /reduce/.test(q) });
     assert.equal(reducedMotion(), true);
