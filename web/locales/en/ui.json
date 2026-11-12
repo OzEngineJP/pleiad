@@ -3915,7 +3915,6 @@
     "show": "Show",
     "hide": "Hide",
     "manage": "Manage in Secrets and variables",
-    "useKey": "Key to use",
     "checking": "Checking…",
     "listSeparator": ", ",
     "notEncrypted": "This launch can't encrypt keys (they are stored in a file only you can read).",
@@ -4046,9 +4045,13 @@
     },
     "computer": {
       "title": "Key for wait_until questions",
-      "note": "When wait_until has a question, the captured screen is sent to OpenRouter (Perplexity).",
-      "unset": "Until you choose a key, questions are not used and it waits by screen changes only",
+      "note": "When wait_until has a question, the captured screen is sent to OpenRouter (Perplexity). If you choose Pleiad Plus, it goes through Pleiad Plus's server.",
       "selectLabel": "Key for wait_until questions",
+      "none": "Don't use",
+      "noneSub": "Questions are not used; it waits by screen changes only",
+      "plusChosen": "Using Pleiad Plus for wait_until questions.",
+      "plusLimit": "Pleiad Plus has reached this month's limit, so questions are not used and it waits by screen changes only.",
+      "plusUnusable": "Pleiad Plus is unavailable, so questions are not used and it waits by screen changes only.",
       "chosen": "Using the OpenRouter key for wait_until questions.",
       "unchosen": "wait_until questions no longer use a key.",
       "registered": "Registered the OpenRouter key and using it for wait_until questions."

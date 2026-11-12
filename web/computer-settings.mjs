@@ -1,11 +1,14 @@
 // 設定 › コンピューターの操作（docs/computer-use.md「設定と会話のデータ」、docs/design-system.md「設定 › コンピューターの操作」）。
 // 全体のスイッチ・すべてのアプリを許可・常に許可したアプリ（消せる）・操作できないアプリ（読み取りのみ）。
 // 保存は setPref { key: 'computerUse', value } に全体を渡す。使えない起動（Electron でない・対象外の OS）ではスイッチを止めて理由を書く。
-// wait_until の問い（決定モデル pplx-decider。ADR 0165）に使う OpenRouter のキーは、通話と同じ部品で選ぶ（setApiKeyUse の computer:decider）。選ぶまで画面は送らない。
+// wait_until の問い（決定モデル pplx-decider。ADR 0165）に使う口は、Pleiad Plus / OpenRouter のキー / 使わない の 3 択のラジオ（setApiKeyUse の computer:decider。2026-11-13）。選ぶまで画面は送らない。
 import { t } from './i18n.mjs';
 import { el, svgEl } from './dom.mjs';
 import { computerUsePrefs } from './computer-prefs.mjs';
 import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from './api-key-ui.mjs';
+import { keyRadioRow, keyRadioGroup, plusKeyRow, plusRowVisible } from './plus-key-row.mjs';
+import { openExternalLink } from './link-open.mjs';
+import { button } from './remote-parts.mjs';
 
 // 操作できないアプリの分類（core/computer-use/apps.mjs の固定の一覧の見出し。画面は読み取りのみ）
 const FORBIDDEN = ['terminal', 'password', 'security', 'system', 'agent'];
@@ -79,15 +82,17 @@ export function setupComputerSettings({ cmd, getPrefs, getHostCaps = () => null,
     keys = await apiKeyList(cmd).catch(() => null);
     paintKeys();
   }
-  async function keyCommand(run, done) {
+  async function keyCommand(run, done, focus = 'sel:decider') {
     if (keyBusy) return;
-    keyBusy = true; focusKey = 'sel:decider';
+    keyBusy = true; focusKey = focus;
     try { await run(); keyMessage = done; }
     catch (e) { keyMessage = t('settings.computer.saveFailed', { error: e?.message ?? String(e) }); }
     keyBusy = false;
     await loadKeys();
   }
   const chooseKey = id => keyCommand(() => cmd('setApiKeyUse', { use: 'computer:decider', id }), id ? t('apiKeys.computer.chosen') : t('apiKeys.computer.unchosen'));
+  const choosePlus = () => keyCommand(() => cmd('setApiKeyUse', { use: 'computer:decider', id: 'plus' }), t('apiKeys.computer.plusChosen'), 'plus');
+  const chooseNone = () => keyCommand(() => cmd('setApiKeyUse', { use: 'computer:decider', id: null }), t('apiKeys.computer.unchosen'), 'row:none');
   /** その場で登録して、wait_until の問いに使う（登録先は API キー）。登録の直後に確かめる（キーそのもの。料金はかからない） */
   const registerKey = value => keyCommand(async () => {
     const { id } = await cmd('setApiKey', { provider: 'openrouter', label: '', key: value });
@@ -96,6 +101,7 @@ export function setupComputerSettings({ cmd, getPrefs, getHostCaps = () => null,
     await cmd('invoke', { op: 'apiKeys.check', args: { id } }).catch(() => null);
   }, t('apiKeys.computer.registered'));
 
+  /** 設定 › コンピューターの操作 の「wait_until の問いに使うキー」。Pleiad Plus / OpenRouter / 使わない の 3 択（承認 2026-11-13） */
   function paintKeys() {
     const focused = keyBox.contains(document.activeElement) ? document.activeElement : null;
     const keepFk = focusKey ?? focused?.dataset?.fk ?? null;
@@ -103,28 +109,50 @@ export function setupComputerSettings({ cmd, getPrefs, getHostCaps = () => null,
     const sec = el('section', 'nf-section');
     sec.append(el('h4', null, t('apiKeys.computer.title')));
     const card = el('div', 'nf-card');
-    const row = el('div', 'mp-row');
-    const info = el('div', 'mp-card-info');
-    info.append(el('strong', null, t('apiKeys.useKey')));
     const openrouter = (keys?.keys ?? []).filter(k => k.provider === 'openrouter');
-    const current = openrouter.find(k => k.id === keys?.uses?.['computer:decider']) ?? null;
+    const use = keys?.uses?.['computer:decider'] ?? null;
+    const viaPlus = use === 'plus';
+    const current = viaPlus ? null : openrouter.find(k => k.id === use) ?? null;
     const deferred = keys?.migration?.state === 'deferred';
-    if (deferred) info.append(el('small', null, t('apiKeys.deferredShort')));
-    else if (current) { const small = statusLine(current); small.append(' · ', manageLink(openPage)); info.append(small); }
-    else info.append(el('small', null, t('apiKeys.computer.unset')));
-    row.append(info);
-    // 移行を保留している間は選べない（古い置き場を持たない割り当てなので、移行が済むまで問いは使わない）
-    if (keys && !deferred) {
-      const actions = el('div', 'mp-card-actions ak-sels');
-      actions.append(keySelect({ keys: openrouter, current: current?.id ?? null, label: t('apiKeys.computer.selectLabel'), focusKey: 'sel:decider', provider: 'openrouter', choose: chooseKey,
-        register: () => { registering = true; focusKey = 'regin:decider'; paintKeys(); } }).element);
-      row.append(actions);
+    const rows = [];
+    // 1. Pleiad Plus（state: off・AGENT_HOST_PLUS=0 なら行ごと出さない。メンテナンス中は出して選べなくする）
+    let plusUnusable = false;
+    if (keys && plusRowVisible(keys.plus)) {
+      const { row, selectable } = plusKeyRow({ info: keys.plus, checked: viaPlus, onChoose: choosePlus, onLogin: () => cmd('plusLogin').catch(() => {}) });
+      rows.push(row);
+      plusUnusable = viaPlus && (!selectable || keys.plus?.limitReached === true);
     }
-    card.append(row);
+    // 2. OpenRouter（キーの状態は 2 行目）。移行を保留している間は選べない（問いは使わない）
+    if (deferred) {
+      rows.push(keyRadioRow({ name: 'OpenRouter', checked: false, disabled: true, sub: t('apiKeys.deferredShort') }));
+    } else {
+      const sub = el('span');
+      if (current) { sub.append(statusLine(current)); sub.append(' · ', manageLink(openPage)); }
+      const sel = keys ? keySelect({ keys: openrouter, current: current?.id ?? null, noneLabel: t('apiKeys.delegation.selectKey'), noNone: true,
+        label: t('apiKeys.computer.selectLabel'), focusKey: 'sel:decider', provider: 'openrouter', choose: chooseKey,
+        register: () => { registering = true; focusKey = 'regin:decider'; paintKeys(); } }) : null;
+      if (sel) sel.element.addEventListener('click', e => e.stopPropagation());
+      rows.push(keyRadioRow({ name: 'OpenRouter', checked: !!current, disabled: !keys, sub: current ? sub : null, end: sel?.element ?? null,
+        onChoose: () => sel?.open(), focusKey: 'row:decider' }));
+    }
+    // 3. 使わない
+    rows.push(keyRadioRow({ name: t('apiKeys.computer.none'), sub: t('apiKeys.computer.noneSub'), checked: !viaPlus && !current, disabled: !keys, onChoose: chooseNone, focusKey: 'row:none' }));
+    card.append(keyRadioGroup(t('apiKeys.computer.selectLabel'), rows));
     if (registering && keys && !deferred) card.append(registerForm({ provider: 'openrouter', label: t('apiKeys.computer.title'), storage: keys.storage, focusKey: 'regin:decider', onSubmit: registerKey,
       onCancel: () => { registering = false; focusKey = 'sel:decider'; paintKeys(); } }));
     sec.append(card);
-    if (!deferred) sec.append(el('p', 'mp-note', t('apiKeys.computer.note')));
+    // 選んだ口が使えないとき: 1 文と、直す操作（アカウントを管理）
+    if (plusUnusable) {
+      const warn = el('p', 'rm-err', keys.plus?.limitReached && keys.plus?.signedIn && keys.plus?.status === 'plus' && keys.plus?.state !== 'maintenance' ? t('apiKeys.computer.plusLimit') : t('apiKeys.computer.plusUnusable'));
+      warn.setAttribute('role', 'alert');
+      sec.append(warn);
+      if (keys.plus?.profileUrl && keys.plus?.signedIn) {
+        const acts = el('div', 'rm-acts');
+        acts.append(button(t('settings.plus.manage'), () => openExternalLink(keys.plus.profileUrl), 'btn btn-quiet'));
+        sec.append(acts);
+      }
+    }
+    sec.append(el('p', 'mp-note', t('apiKeys.computer.note')));
     const line = el('p', 'rm-state', keyMessage); line.setAttribute('role', 'status');
     sec.append(line);
     keyBox.replaceChildren(sec);

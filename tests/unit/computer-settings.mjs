@@ -135,12 +135,15 @@ export default async function (t) {
   document.getElementById = id => keyNodes[id];
   const docAdd = document.addEventListener, docRemove = document.removeEventListener;
   document.addEventListener = () => {}; document.removeEventListener = () => {};
+  const oldTextNode = document.createTextNode;
+  document.createTextNode = text => { const node = new N('span'); node.textContent = text; return node; };
   const hadCss = 'CSS' in globalThis;
   if (!hadCss) globalThis.CSS = { escape: v => String(v) };
   const OR1 = { id: 'k1', provider: 'openrouter', label: '', lastCheck: { ok: true, at: '2026-10-07T00:00:00.000Z' } };
   const CB = { id: 'k2', provider: 'custom', label: '社内' };
-  let list = { migration: { state: 'done' }, storage: 'safeStorage', keys: [OR1, CB], uses: { voice: null, 'judge:routing': null, 'computer:decider': null } };
+  let list = { migration: { state: 'done' }, storage: 'safeStorage', keys: [OR1, CB], plus: { state: 'on', available: true, signedIn: true, status: 'free' }, uses: { voice: null, 'judge:routing': null, 'computer:decider': null } };
   const keyCalls = [];
+  const JA_NOTE = 'wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます。Pleiad Plus を選んだときは、Pleiad Plus のサーバーを通ります';
   const opened = [];
   try {
     const kv = setupComputerSettings({
@@ -158,31 +161,68 @@ export default async function (t) {
     keyNodes.computerTab.on.click.forEach(fn => fn());
     await flush();
     const note = q('.mp-note').map(n => n.textContent);
-    t.ok('ページを開くとキーを読み、見出し・「使うキー」・未選択の文・注意書きを出す（通話と同じ部品）',
+    const rowsOf = () => q('.rm-opt');
+    const nameOf = r => r.querySelectorAll('.rm-nm')[0]?.textContent;
+    t.ok('ページを開くとキーを読み、見出し・3 択のラジオ（Pleiad Plus / OpenRouter / 使わない）・注意書きを出す',
       keyCalls.some(([c, a]) => c === 'invoke' && a.op === 'apiKeys.list') && q('.nf-section')[0]?.querySelectorAll('h4')[0]?.textContent === 'wait_until の問いに使うキー'
-      && q('.mp-card-info')[0]?.querySelectorAll('strong')[0]?.textContent === '使うキー' && q('.mp-card-info')[0]?.querySelectorAll('small')[0]?.textContent.includes('キーを選ぶまで')
-      && note.includes('wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます'), JSON.stringify(note));
+      && rowsOf().map(nameOf).join() === 'Pleiad Plus,OpenRouter,使わない' && note.includes(JA_NOTE), JSON.stringify([rowsOf().map(nameOf), note]));
+    t.ok('何も選んでいなければ「使わない」が選ばれ、2 行目は「問いは使わず、画面の差分だけで待ちます」',
+      rowsOf().map(r => r.getAttribute('aria-checked')).join() === 'false,false,true' && rowsOf()[2].querySelectorAll('.rm-sub')[0]?.textContent === '問いは使わず、画面の差分だけで待ちます');
     const btn = q('.ak-selbtn')[0];
-    t.ok('選ぶ欄は OpenRouter のキーだけで、未選択は「使わない」', btn?.getAttribute('aria-label')?.startsWith('wait_until の問いに使うキー: '));
+    t.ok('OpenRouter の選ぶ欄は OpenRouter のキーだけで、未選択は「キーを選ぶ」', btn?.getAttribute('aria-label') === 'wait_until の問いに使うキー: キーを選ぶ');
     btn.onclick();
     const options = q('.li');
-    t.ok('候補は OpenRouter のキーと「使わない」（OpenRouter 以外のキーは出さない）', options.length === 2);
+    t.ok('候補は OpenRouter のキーだけ（「使わない」は別の行・OpenRouter 以外のキーは出さない）', options.length === 1);
     options[0].onclick();
     await flush();
-    t.ok('選ぶと setApiKeyUse { use: computer:decider, id } を送り、状態の行と管理へのリンクが出る',
-      keyCalls.some(([c, a]) => c === 'setApiKeyUse' && a.use === 'computer:decider' && a.id === 'k1') && q('.ak-link').length === 1 && q('p').some(n => n.getAttribute('role') === 'status' && n.textContent.includes('wait_until の問いに使います')));
+    t.ok('選ぶと setApiKeyUse { use: computer:decider, id } を送り、OpenRouter の行の 2 行目に状態と管理へのリンクが出る',
+      keyCalls.some(([c, a]) => c === 'setApiKeyUse' && a.use === 'computer:decider' && a.id === 'k1') && q('.ak-link').length === 1
+      && rowsOf().map(r => r.getAttribute('aria-checked')).join() === 'false,true,false' && q('p').some(n => n.getAttribute('role') === 'status' && n.textContent.includes('wait_until の問いに使います')));
     q('.ak-link')[0].onclick();
     t.ok('「管理」から設定 › API キーへ移る', opened.join() === 'apiKeys');
     list = { ...list, uses: { ...list.uses, 'computer:decider': null } };
     const before = keyCalls.length;
     kv.event({ type: 'apiKeysChanged' });
     await flush();
-    t.ok('apiKeysChanged で読み直す（ほかで外されたら未選択に戻る）', keyCalls.length > before && q('.ak-link').length === 0 && q('.mp-card-info')[0]?.querySelectorAll('small')[0]?.textContent.includes('キーを選ぶまで'));
-    list = { ...list, migration: { state: 'deferred' } };
+    t.ok('apiKeysChanged で読み直す（ほかで外されたら「使わない」に戻る）', keyCalls.length > before && q('.ak-link').length === 0 && rowsOf().map(r => r.getAttribute('aria-checked')).join() === 'false,false,true');
+    // 「使わない」の行から選び直す
+    rowsOf()[1].onclick?.();
+    keyCalls.length = 0;
+    rowsOf()[2].onclick?.();
+    await flush();
+    t.ok('「使わない」の行は選び済みのときも押せ、setApiKeyUse { id: null } を送る', keyCalls.some(([c, a]) => c === 'setApiKeyUse' && a.use === 'computer:decider' && a.id === null));
+
+    // ---- Pleiad Plus の行
+    const plusOk = { state: 'on', available: true, signedIn: true, status: 'plus', email: 'user@example.com', reachable: true, limitReached: false, profileUrl: 'https://plus.example/profile' };
+    list = { ...list, migration: { state: 'done' }, plus: plusOk };
+    kv.event({ type: 'apiKeysChanged' }); await flush();
+    t.ok('Plus が使えるとき: 2 行目はメール・行を選べる', rowsOf()[0].getAttribute('aria-disabled') !== 'true' && q('span').some(n => n.textContent === 'user@example.com'));
+    keyCalls.length = 0;
+    rowsOf()[0].onclick(); await flush();
+    t.ok('Plus の行を選ぶと setApiKeyUse { id: plus } を送り、「Pleiad Plus を wait_until の問いに使います。」を出す',
+      keyCalls.some(([c, a]) => c === 'setApiKeyUse' && a.use === 'computer:decider' && a.id === 'plus') && rowsOf().map(r => r.getAttribute('aria-checked')).join() === 'true,false,false'
+      && q('p').some(n => n.getAttribute('role') === 'status' && n.textContent === 'Pleiad Plus を wait_until の問いに使います。'));
+    t.ok('Plus を選んでいて使えるなら、警告は出さない', q('p').every(n => n.getAttribute('role') !== 'alert'));
+    list = { ...list, plus: { ...plusOk, limitReached: true, resetAt: '2026-12-01T00:00:00.000Z' } };
+    kv.event({ type: 'apiKeysChanged' }); await flush();
+    const alert = q('p').find(n => n.getAttribute('role') === 'alert');
+    t.ok('Plus を選んだまま上限: 1 文の警告と「アカウントを管理」', alert?.textContent === '今月の Pleiad Plus の上限に達したため、問いは使わず画面の差分だけで待ちます。' && q('button').some(b => b.textContent === 'アカウントを管理'));
+    list = { ...list, plus: { ...plusOk, signedIn: false, status: null } };
+    kv.event({ type: 'apiKeysChanged' }); await flush();
+    t.ok('Plus を選んだままログアウト: 行は選べず、「Pleiad Plus を使えないため…」の警告', rowsOf()[0].getAttribute('aria-disabled') === 'true'
+      && q('p').find(n => n.getAttribute('role') === 'alert')?.textContent === 'Pleiad Plus を使えないため、問いは使わず画面の差分だけで待ちます。');
+    list = { ...list, plus: { ...plusOk, state: 'maintenance' } };
+    kv.event({ type: 'apiKeysChanged' }); await flush();
+    t.ok('メンテナンス中: 行は残して選べない', rowsOf().map(nameOf)[0] === 'Pleiad Plus' && rowsOf()[0].getAttribute('aria-disabled') === 'true');
+    list = { ...list, plus: { ...plusOk, state: 'off', available: false } };
+    kv.event({ type: 'apiKeysChanged' }); await flush();
+    t.ok('state が off なら Plus の行は出さない（OpenRouter / 使わない の 2 行）', rowsOf().map(nameOf).join() === 'OpenRouter,使わない');
+
+    list = { ...list, plus: undefined, uses: { ...list.uses, 'computer:decider': null }, migration: { state: 'deferred' } };
     kv.event({ type: 'apiKeysChanged' });
     await flush();
-    t.ok('移行を保留している間は選べない（選ぶ欄と注意書きを出さない）', q('.ak-selbtn').length === 0 && q('.mp-note').length === 0);
-  } finally { document.getElementById = get; document.addEventListener = docAdd; document.removeEventListener = docRemove; if (!hadCss) delete globalThis.CSS; }
+    t.ok('移行を保留している間は OpenRouter の行は選べない（選ぶ欄を出さない）', q('.ak-selbtn').length === 0 && rowsOf().some(r => r.getAttribute('aria-disabled') === 'true'));
+  } finally { document.createTextNode = oldTextNode; document.getElementById = get; document.addEventListener = docAdd; document.removeEventListener = docRemove; if (!hadCss) delete globalThis.CSS; }
 
   // ---- サーバー越し ----
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-computer-e-'));

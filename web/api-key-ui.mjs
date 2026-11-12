@@ -73,7 +73,7 @@ export function spinner(label) {
  * @param {'left'|'right'} [o.align]
  * @param {string} [o.noneLabel]  選んでいないときのボタンの字（既定は apiKeys.select.none）
  */
-export function keySelect({ keys, current, label, focusKey, choose, provider, register, align = 'right', noneLabel }) {
+export function keySelect({ keys, current, label, focusKey, choose, provider, register, align = 'right', noneLabel, noNone = false }) {
   const cur = keys.find(k => k.id === current);
   const text = cur ? keyName(cur) : (noneLabel ?? t('apiKeys.select.none'));
   const wrap = el('span', 'ak-selwrap');
@@ -107,8 +107,11 @@ export function keySelect({ keys, current, label, focusKey, choose, provider, re
       const c = k.lastCheck;
       pop.append(item(keyName(k), c && c.ok === false ? t('apiKeys.select.failedHint') : c?.ok ? t('apiKeys.select.checkedHint', { when: when(c.at) }) : '', k.id === current, () => pick(k.id)));
     }
-    if (keys.length) pop.append(el('div', 'sep'));
-    pop.append(item(t('apiKeys.select.none'), '', !cur, () => pick(null)));
+    // noNone: 「使わない」を別の行（ラジオ）で選ぶ画面では、プルダウンに出さない
+    if (!noNone) {
+      if (keys.length) pop.append(el('div', 'sep'));
+      pop.append(item(t('apiKeys.select.none'), '', !cur, () => pick(null)));
+    }
     if (!keys.length && register) {
       pop.append(el('div', 'sep'));
       pop.append(item(t('apiKeys.select.register', { provider: providerName(provider) || provider }), '', false, () => { close(false); btn.focus(); register(); }));
