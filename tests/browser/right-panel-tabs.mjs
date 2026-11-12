@@ -66,10 +66,14 @@ function stripProblems(s) {
 
 /** 会話を 1 つ作り、作業フォルダーを置く */
 async function prepare(page, base, ws) {
+  // 初回の案内の窓は閉じる口が無く（web/index.html）、使えるエージェントが無いと開く。この試験の対象ではないので出さない
+  await page.addInitScript(() => {
+    for (const key of ['showModal', 'show']) { const original = HTMLDialogElement.prototype[key]; HTMLDialogElement.prototype[key] = function(...args) { if (this.id === 'onboardingDialog') return undefined; return original.apply(this, args); }; }
+  });
   await page.goto(base);
   await page.locator('#prompt').waitFor({ timeout: 30000 });
   await page.waitForTimeout(800);
-  if (await page.locator('#onboardingDialog[open]').count()) await page.locator('#closeOnboarding').click();
+  await page.evaluate(() => document.getElementById('onboardingDialog')?.close());   // 初回の案内の窓は閉じる口が無い（web/index.html）。ほかの実画面の試験と同じに閉じる
   await page.locator('#cwdChip').click();
   await page.locator('#cwdPop .cpath').fill(ws);
   await page.locator('#cwdPop .cpath').press('Enter');
