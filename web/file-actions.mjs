@@ -5,7 +5,7 @@
 // 出さないだけでなく、サーバーも断る（core/server.mjs の revealPath / openPath）。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { folderIcon, openInBrowserIcon, copyIcon, downloadIcon, fileIcon } from './icons.mjs';
+import { folderIcon, openInBrowserIcon, copyIcon, downloadIcon, fileIcon, closeIcon } from './icons.mjs';
 
 const isHtml = path => /\.html?$/i.test(String(path ?? ''));
 
@@ -66,19 +66,47 @@ export function samePath(a, b) {
   return /^[a-z]:\//i.test(x) ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
-let toastTimer;
+const TOAST_MS = 4000;
+// toastHover はポインターが載っている間、toastFocus はフォーカスが中にある間。toastBack はフォーカスが入る前に居た所
+let toastTimer, toastHover = false, toastFocus = false, toastBack = null;
+function hideToast(box) { clearTimeout(toastTimer); toastHover = toastFocus = false; box.hidden = true; }
+/** 消えるまでの時間を数え直す。ポインターが載っている・フォーカスが中にある間は数えない */
+function armToast(box) {
+  clearTimeout(toastTimer);
+  if (!toastHover && !toastFocus) toastTimer = setTimeout(() => hideToast(box), TOAST_MS);
+}
+function createToast() {
+  const box = el('div', 'file-toast');
+  // 読み上げるのは文だけ（✕ の名前まで読ませない）ので、role は文の側に付ける
+  const text = el('span', 'file-toast-text'); text.setAttribute('role', 'status');
+  const close = el('button', 'btn btn-icon file-toast-close'); close.type = 'button'; close.innerHTML = closeIcon;
+  close.title = t('files.toastClose'); close.setAttribute('aria-label', t('files.toastClose'));
+  close.onclick = () => {
+    // キーボードで来て閉じたときは、来る前に居た所へフォーカスを返す
+    const back = box.contains(document.activeElement) ? toastBack : null;
+    hideToast(box);
+    if (back?.isConnected) back.focus();
+  };
+  // タッチは指を置いている間だけ pointerenter〜pointerleave になる（mouseenter だと、ほかを触るまで載ったままになる）
+  box.addEventListener('pointerenter', () => { toastHover = true; armToast(box); });
+  box.addEventListener('pointerleave', () => { toastHover = false; armToast(box); });
+  box.addEventListener('focusin', event => { if (!toastFocus) toastBack = event.relatedTarget ?? null; toastFocus = true; armToast(box); });
+  box.addEventListener('focusout', event => { toastFocus = !!event.relatedTarget && box.contains(event.relatedTarget); armToast(box); });
+  box.append(text, close);
+  return box;
+}
 /**
- * 短い知らせ（コピーした・開けなかった）。数秒で消える。
+ * 短い知らせ（コピーした・開けなかった）。4 秒で消える。右端の ✕ でも消せる。
+ * ポインターが載っている・フォーカスが中にある間は消さず、離れたら 4 秒を数え直す（docs/design-system.md「短い知らせ」）。
  * 拡大表示（モーダルの dialog）が開いていればその中に出す（外に出すと背景の幕の下に隠れる）
  */
 export function notify(text) {
   const host = document.querySelector('dialog[open]') ?? document.body;
-  let box = document.querySelector('.file-toast');
-  if (!box) { box = el('div', 'file-toast'); box.setAttribute('role', 'status'); }
-  if (box.parentNode !== host) host.append(box);
-  box.textContent = text; box.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { box.hidden = true; }, 4000);
+  const box = document.querySelector('.file-toast') ?? createToast();
+  // 置き場所を移すと「離れた」が届かないことがあるので、載っている扱いをやめる
+  if (box.parentNode !== host) { toastHover = toastFocus = false; host.append(box); }
+  box.querySelector('.file-toast-text').textContent = text; box.hidden = false;
+  armToast(box);
 }
 
 /** ダウンロードを始める（<a download> を押すのと同じ）。殻でもブラウザーでも既定のダウンロードになる */

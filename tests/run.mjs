@@ -90,6 +90,8 @@ const SUITES = [
   './unit/url-links.mjs',
   // パスの自動リンク・画像の所在・ファイルの操作メニュー・OS で開く口（OS の窓は開かない）
   './unit/file-actions.mjs',
+  // 短い知らせ（notify）: ✕ で消せる・載せている間とフォーカスが中にある間は消えない・離れたら 4 秒を数え直す
+  './unit/toast.mjs',
   // 右パネルの枠（web/side-panel.mjs）: モードごとの部品・渡さない部品は隠す・可視化の ⋯
   './unit/side-panel.mjs',
   './unit/refresh-batch.mjs',
@@ -991,6 +993,8 @@ const SUITES = [
   './unit/browser-unify-pages.mjs',
   './unit/visualize-card-mouse.mjs',
   './unit/browser-pages.mjs',
+  // ファイルのツリーが読めなかったとき: 描き直しのたびに読み直さない・欄の中の「再試行」・パスと会話が替わったら読み直す
+  './unit/browser-tree.mjs',
 
   // --- B2 映像からの操作・スマホの入力 ---
   './unit/phone-input.mjs',
