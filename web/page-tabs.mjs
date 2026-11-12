@@ -48,7 +48,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
       if (!['viz', 'html', 'file', 'dir', 'git', 'plugins', 'new', 'attachment'].includes(opened?.kind)) throw new Error('invalid-url');
       page = { url: url.href, origin: url.origin, kind: opened.kind, path: opened.path,
         vizHash: opened.hash ?? (kind === 'viz' ? vizHash ?? hash : undefined), entry: opened.entry ?? entry,
-        title: opened.title ?? input.title ?? url.searchParams.get('title') ?? '' };
+        title: opened.title ?? input.title ?? url.searchParams.get('title') ?? '', stamp: opened.stamp };
     } else {
       if (kind === 'html') {
         let url;
@@ -72,7 +72,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     const rawViz = input.viz ?? ((vizHash ?? hash) ? { hash:vizHash ?? hash, entry, title:input.title, path } : null);
     const viz = kind !== 'viz' && rawViz?.hash ? { hash:rawViz.hash ?? '', entry:rawViz.entry ?? '', title:rawViz.title ?? '', path:page.path ?? rawViz.path ?? '' } : null;
     Object.assign(tab, { url:page.url, title:page.title, page:tabPage(page), origin:page.origin,
-      request:{ sessionId, kind, path, ...(viz ? { viz } : {}) }, touched:false, dirty:false, pending:false });
+      request:{ sessionId, kind, path, ...(viz ? { viz } : {}) }, touched:false, dirty:false, pending:false, stamp:page.stamp, nextStamp:undefined });
     if (page.kind === 'html') tab.keyIssuedAt = Date.now();
     tab.history.splice(++tab.position); tab.history.push(page);
     tab.canGoBack = tab.position > 0; tab.canGoForward = false;
@@ -86,7 +86,16 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
       void reissue(tab).catch(error => onError?.(error, tab));
       return;
     }
-    tab.pending = false; tab.touched = false; tab.dirty = false; tab.reload = (tab.reload ?? 0) + 1; changed(tab);
+    tab.pending = false; tab.touched = false; tab.dirty = false; tab.reload = (tab.reload ?? 0) + 1;
+    // 読み直した版: 変化の知らせが運んだ印があればそれ、無ければ分からない（null。次の見比べで 1 回だけ読み直す）
+    tab.stamp = tab.nextStamp ?? null; tab.nextStamp = undefined;
+    changed(tab);
+  }
+  /** 今のタブを読み直すよう頼む（読んでいる所・内容は消さない読み直し。ADR 0320）。触って（入力して）いるタブには出さず「更新を表示」にする */
+  function refresh(tab) {
+    if (!tab?.local) return false;
+    if (tab.dirty) { tab.pending = true; changed(tab); return false; }
+    reload(tab); return true;
   }
   /** ファイルの表示（プレビュー/原文）。隔離の HTML は ?view= で同じ文書の別の出し方を読ませる（core/isolated-routes.mjs） */
   function view(tab, name) {
@@ -135,7 +144,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     if (title) { tab.title = title; if (tab.page) tab.page.title = title; }
     if (resolved?.kind === 'html') { tab.page = { ...tab.page, kind:'html', path:resolved.path }; if (tab.request) tab.request.path = resolved.path; }
     else if (resolved?.kind === 'viz') tab.page = { ...tab.page, kind:'viz', path:resolved.path, vizHash:resolved.hash, entry:resolved.entry };
-    tab.touched = false; tab.dirty = false; tab.pending = false;
+    tab.touched = false; tab.dirty = false; tab.pending = false; tab.stamp = null;
     if (tab.history?.length) tab.history[tab.position] = { ...tab.history[tab.position], url:tab.url, title:tab.title,
       kind:tab.page?.kind, path:tab.page?.path, vizHash:tab.page?.vizHash, entry:tab.page?.entry };
     changed(tab);
@@ -167,20 +176,44 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
   /** 鍵・開く先をサーバーへ取り直す（期限切れ・サーバーの入れ替えで外れた見張りの戻し。request は open が覚えている開き方） */
   async function reissue(tab) {
     const page = tab.page ?? {};
+    // 応答を待つ間にタブが別のファイルへ移った（open の置き換え・locate）・閉じた場合は、古い応答で巻き戻さない
+    const placeOf = target => `${target.page?.kind}|${target.page?.path ?? target.request?.path}|${target.page?.vizHash ?? ''}|${target.page?.entry ?? ''}`;
+    const asked = placeOf(tab);
     const request = page.kind === 'viz'
       ? { sessionId:tab.sessionId, kind:'viz', hash:page.vizHash, entry:page.entry, title:page.title, path:page.path, tab:tab.targetId }
       : { sessionId:tab.sessionId, kind:page.kind === 'html' ? 'html' : (tab.request?.kind ?? 'file'),
           path:page.path ?? tab.request?.path, title:page.title ?? tab.title, line:tab.request?.line, tab:tab.targetId };
     const opened = await pageOpen(request);
     if (!opened?.url) throw Object.assign(new Error('invalid-url'), { code:'invalid-url' });
+    if (!list(tab.sessionId).includes(tab) || placeOf(tab) !== asked) return tab;
     const at = new URL(opened.url, origin);
     const was = tab.url;
     applyOpened(tab, opened, at);
     if (tab.page?.kind === 'html') tab.keyIssuedAt = Date.now();
-    // 戻ってきた URL が同じなら読み直さない（鍵・見張りはサーバー側で戻った。つなぎ直しで触っていないタブを毎回読み直さない。指摘 9）
+    // 戻ってきた URL が同じなら読み直さない（鍵・見張りはサーバー側で戻った。つなぎ直しで触っていないタブを毎回読み直さない。指摘 9）。
+    // 版の印（stamp）が分かるときは、見ていない間にファイルが変わったかで決める: 変わっていて入力が無ければ読み直し、
+    // 入力があれば「更新を表示」。変わっていなければ何もしない（ADR 0320）
+    const stamp = opened.stamp;
+    if (stamp !== undefined) {
+      const differs = stamp !== tab.stamp || tab.url !== was;
+      if (differs && tab.dirty) { tab.pending = true; tab.nextStamp = stamp; changed(tab); }
+      else if (differs) { reload(tab); tab.stamp = stamp; }
+      else changed(tab);
+      return tab;
+    }
     if (isTouched(tab)) { tab.pending = true; changed(tab); }
     else if (tab.url !== was) reload(tab); else changed(tab);
     return tab;
+  }
+  /**
+   * 見ていなかった間に変わったファイルへ追いつく（会話へ戻った・つなぎ直した）。
+   * 対象はファイル・フォルダー・添付・HTML のタブ。版の印が同じなら読み直さない
+   */
+  function catchUp(sessionId) {
+    for (const tab of list(sessionId)) {
+      if (!tab.local || !tab.page?.path || !['file', 'dir', 'html', 'attachment'].includes(tab.page.kind)) continue;
+      reissue(tab).catch(error => onError?.(error, tab));
+    }
   }
   /** page:moved の前の port の URL を今の port へ付け替える（core/isolated-origins.mjs の movedPageUrl と同じ決まり。印は port に依らないので変わらない） */
   function moved(value, { previous = {}, ports = {} } = {}) {
@@ -197,6 +230,8 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     if (message.type === 'page:changed') {
       for (const tab of list(message.sessionId)) {
         if (!tab.page?.path || !samePath(tab.page.path, message.path)) continue;   // 外の URL のタブ（kind:'web'・page なし）は対象外
+        // 読み直した（見せた）ときの版の印は知らせが運ぶ（見えている間の変化の後に、戻ったときの見比べで二重に読み直さない）
+        if (message.stamp) tab.nextStamp = message.stamp;
         if (isTouched(tab)) { tab.pending = true; changed(tab); } else reload(tab);
       }
       return;
@@ -219,7 +254,7 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
   function travel(tab, direction) {
     const position = tab.position + direction, page = tab.history[position]; if (!page) return;
     if (tab.page?.path && (!page.path || !samePath(tab.page.path, page.path))) release?.(tab);
-    tab.position = position; Object.assign(tab, { url:page.url, title:page.title, origin:page.origin, page:tabPage(page), touched:false, dirty:false, pending:false });
+    tab.position = position; Object.assign(tab, { url:page.url, title:page.title, origin:page.origin, page:tabPage(page), touched:false, dirty:false, pending:false, stamp:null });
     // 別の文書に移る: 文書の中の履歴はその文書ので張り直す（前の文書の場所を残すと、戻る/進むが別の文書の場所を指す）
     tab.histTrail = [page.url]; tab.histPos = 0;
     try { tab.view = new URL(page.url).searchParams.get('view') === 'source' ? 'source' : 'preview'; } catch {}
@@ -231,6 +266,6 @@ export function createPageTabs({ pageOpen, origin, changed = () => {}, touched =
     tab.request = { ...tab.request, viz:{ hash:viz.hash ?? '', entry:viz.entry ?? '', title:viz.title ?? '', path:tab.page?.path ?? viz.path ?? '' } };
     changed(tab);
   }
-  return { list, sessionIds: () => [...sessions.keys()], open, activity, reload, event, travel, locate, view, reissue, histGo, histPeek, isTouched, markViz, savedVizOf,
+  return { list, sessionIds: () => [...sessions.keys()], open, activity, reload, refresh, catchUp, event, travel, locate, view, reissue, histGo, histPeek, isTouched, markViz, savedVizOf,
     close(tab) { release?.(tab); sessions.set(tab.sessionId, list(tab.sessionId).filter(item => item !== tab)); changed(tab); } };
 }

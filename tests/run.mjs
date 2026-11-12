@@ -993,6 +993,8 @@ const SUITES = [
   './unit/right-panel-tabs.mjs',
   // 画面内ページのタブ（web/page-tabs.mjs）: サーバーが決める開く先・ページ内移動・更新の扱い・鍵と見張りの取り直し。Pleiad 印の分類（P9）
   './unit/browser-unify-pages.mjs',
+  './unit/browser-files-reread.mjs',
+  './unit/browser-files-load-state.mjs',
   './unit/visualize-card-mouse.mjs',
   './unit/browser-pages.mjs',
   // ファイルのツリーが読めなかったとき: 描き直しのたびに読み直さない・欄の中の「再試行」・パスと会話が替わったら読み直す

@@ -1,6 +1,6 @@
 # 0294 右の欄のタブをまとめ、ページと Chrome の映像を切り替える
 
-- 状態: 提案（仮番号。main に入れる直前に振り直す）
+- 状態: 提案（仮番号。main に入れる直前に振り直す）。決定 5 の 6 の最後の一文「同じ実体パスをもう一度開く操作だけでは読み直さない」は [ADR 0320](0320-browser-file-reread-and-loading-display.md)（承認 2026-11-12）が置き換える
 - 関連: [ADR 0295](0295-pleiad-page-origins.md)（origin と認証）、[ADR 0296](0296-human-touch-takes-tab.md)（操作の受け渡しと入力）、[ADR 0297](0297-screencast-ack-paced-quality.md)（映像）、[ADR 0041](0041-inapp-browser-beside-conversation.md)・[ADR 0079](0079-html-opens-in-inapp-browser.md)・[ADR 0207](0207-html-route-and-remote-browser-panel.md)（置換）、[ADR 0148](0148-agent-browser-in-chrome.md)・[ADR 0154](0154-agent-window-hidden-off-screen.md)・[ADR 0010](0010-os-actions-only-on-host-screen.md)・[ADR 0050](0050-local-file-access.md)
 
 ## 状況

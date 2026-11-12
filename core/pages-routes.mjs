@@ -173,7 +173,7 @@ export function createPagesRoutes(deps = {}) {
             input.worktree = ref.file;
           }
           if (['changes', 'diff'].includes(kind)) input.range = q.get('range') === 'session' ? 'session' : 'uncommitted';
-          if (kind === 'changes') input.only = 'changes';
+          if (kind === 'changes') input.only = q.get('only') === 'count' ? 'count' : 'changes';
           if (kind === 'diff') {
             const raw = q.get('path');
             // core/git-info.mjs runs git with GIT_LITERAL_PATHSPECS=1, so globs and
