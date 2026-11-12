@@ -6671,6 +6671,7 @@ async function syncModalChildHistory(view) {
     if (!res || !alive()) return;
     view.finish(res, { quiet: true });
     settleModalChild(mc, data);
+    modalToc.refresh();   // 筋が作り直されたので、会話内検索の印を待たずに付け直す（開いていれば。debounce の間だけ印が消えるのを避ける）
   } catch { /* 読み直しが切れただけなら今の表示を残す */ }
   finally {
     mc.syncing = false;
