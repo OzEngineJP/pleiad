@@ -24,7 +24,7 @@ export const title = '新しい会話を作っている間に書いた字が消�
 
 const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
   'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
-  'reserveSettings', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings', 'startWorktree'];
+  'reserveSettings', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings', 'startWorktree', 'chooseModel'];
 
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
@@ -96,7 +96,7 @@ export default async function (t) {
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
     localStorage: { setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) ?? null },
     setDrawer: noop, settleDrawer: noop, takeBootPrefetch: () => null, bootSkeleton: false, paintHistorySkeleton: noop, bootHold: null, randomId: () => Math.random().toString(36).slice(2), renderAttached: noop, fitPrompt: noop, clearThread: noop, prepareHistoryHeights: noop, syncTopbar: async () => {},
-    syncWorkEntry: noop, refreshGit: async () => {}, restorePastSubagents: noop, loadTaskCards: async () => {}, paintContextStrip: noop, paintCompactions: noop,
+    restoreSwitched: noop, retryRow: null, resendFrom: noop, syncWorkEntry: noop, refreshGit: async () => {}, restorePastSubagents: noop, loadTaskCards: async () => {}, paintContextStrip: noop, paintCompactions: noop,
     pendingRows: new Map(), renderSessions: noop, pendingAfterDelay: () => noop, side: { keep: noop, showUndo: noop },
     filePreview: { sessionChanged: noop }, setTimeout: () => 1, clearTimeout: noop, el: () => new N('div'), append: noop,
     activity: { show: noop, hide: noop }, sessionLoads: createSessionLoads(), openGate: createOpenGate(),
