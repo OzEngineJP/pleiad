@@ -93,7 +93,11 @@ try {
   console.log(`parent=${parent} child=${child.childId} other=${other.childId}`);
   await sleep(800);
 
-  const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
+  // CHILD_THREAD=reread: 子の本文を従来の読み直しで描く（ADR 0319 段 6-6 の切り替え）。既定は子の役の実例（live）
+  const live = process.env.CHILD_THREAD !== 'reread';
+  const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}${live ? '' : '&childThread=reread'}`;
+  // まとまりの件数: live は発言ごとに切れる（メインと同じ。台本の最初のまとまりは 3 件）、reread は発言をまたいで 6 件
+  const BUNDLE = live ? 3 : 6;
   ab('set', 'viewport', '1280', '520');
   ab('open', pageUrl);
   await wait(() => evaluate(() => !!document.querySelector('#groups .row[data-session]')), 'session list');
@@ -197,14 +201,14 @@ try {
   await sleep(700);   // 開く動き（240ms）が終わってから位置を置く
   const scrollable = evaluate(() => { const w = document.getElementById('workBody'); w.scrollTop = 90; return w.scrollHeight > w.clientHeight + 90 && w.scrollTop === 90; });
   assert.ok(scrollable, 'the detail body can be scrolled');
-  const shape = () => evaluate(() => {
+  const shape = () => evaluate((n) => {
     const b = document.querySelector('#workBody .bundle');
     return {
       expanded: b?.querySelector('.rhead')?.getAttribute('aria-expanded'),
-      detail: [...(b?.querySelectorAll('.tc') ?? [])].slice(0, 6).map(c => c.querySelector('.tc-details')?.open ? 1 : 0).join(''),
+      detail: [...(b?.querySelectorAll('.tc') ?? [])].slice(0, n).map(c => c.querySelector('.tc-details')?.open ? 1 : 0).join(''),
       top: document.getElementById('workBody').scrollTop,
     };
-  });
+  }, BUNDLE);
   // 位置を置いた直後に描き直しや高さの変化で動くことがある。置き直して落ち着いた形を基準にする
   let before = shape();
   for (let tries = 0; before.top !== 90 && tries < 5; tries++) {
@@ -212,9 +216,16 @@ try {
     await sleep(250);
     before = shape();
   }
-  assert.deepEqual(before, { expanded: 'true', detail: '001000', top: 90 }, 'setup');
+  assert.deepEqual(before, { expanded: 'true', detail: live ? '001' : '001000', top: 90 }, 'setup');
   // 読み直し = 筋の要素が作り直されたこと
   const reread = async (label, ms = 8000) => {
+    if (live) {
+      // live: 筋は作り直されない。目印が残ったまま、続きの行が増える
+      evaluate(() => { document.querySelector('#workBody .bg-thread').dataset.stale = '1'; window.__tc0 = document.querySelectorAll('#workBody .bg-thread .tc').length; });
+      await wait(() => evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length > window.__tc0), `grows: ${label}`, ms);
+      assert.equal(evaluate(() => document.querySelector('#workBody .bg-thread')?.dataset.stale), '1', 'the thread element is not rebuilt');
+      return;
+    }
     evaluate(() => { document.querySelector('#workBody .bg-thread').dataset.stale = '1'; });
     await wait(() => evaluate(() => !document.querySelector('#workBody .bg-thread')?.dataset.stale), `reread: ${label}`, ms);
   };
@@ -236,9 +247,14 @@ try {
   const streamFrom = nowMs();
   const sample = [];
   // 開いたまとまりに戻る位置を置き直す（承認のカードが消えて高さが変わった）
-  evaluate(() => { document.getElementById('workBody').scrollTop = 90; });
-  await sleep(300);
-  const pinned = shape();
+  // 末尾に付いて流れていた間の追従（メインと同じ 320ms の合わせ直し）が終わってから置く。置いたあとは末尾でないので、追従は始まらない
+  let pinned;
+  for (let tries = 0; tries < 6; tries++) {
+    evaluate(() => { document.getElementById('workBody').scrollTop = 90; });
+    await sleep(400);
+    pinned = shape();
+    if (pinned.top === 90) break;
+  }
   assert.equal(pinned.top, 90, 'reading position re-set');
   evaluate(() => document.querySelector('#workBody .bundle .rhead').focus({ preventScroll: true }));
   for (let i = 0; i < 3; i++) {
@@ -251,8 +267,11 @@ try {
   const reads = rereads(child.childId, streamFrom);
   const spanMs = nowMs() - streamFrom;
   console.log(`PASS: ${reads} re-reads in ${spanMs}ms while streaming; open bundle/detail, position and focus kept`);
-  assert.ok(reads >= 3, 'the thread is re-read by events');
-  assert.ok(reads <= Math.ceil(spanMs / 350) + 2, `re-reads are throttled (${reads} in ${spanMs}ms)`);
+  if (live) assert.equal(reads, 0, 'live: no loadSession while streaming (the window was read once at open)');
+  else {
+    assert.ok(reads >= 3, 'the thread is re-read by events');
+    assert.ok(reads <= Math.ceil(spanMs / 350) + 2, `re-reads are throttled (${reads} in ${spanMs}ms)`);
+  }
   evaluate(() => document.activeElement?.blur?.());
 
   // 画面の撮影: 流れている間の 1280 と 360
@@ -292,7 +311,8 @@ try {
   assert.equal(heldState.stale, '1', 'no re-read while text is selected');
   assert.ok(heldState.sel.includes('ここまで調べました'), 'the selection is kept');
   evaluate(() => getSelection().removeAllRanges());
-  await wait(() => evaluate(() => !document.querySelector('#workBody .bg-thread')?.dataset.stale), 'the held re-read runs once the selection is gone', 5000);
+  if (live) assert.equal(evaluate(() => document.querySelector('#workBody .bg-thread')?.dataset.stale), '1', 'live: the thread is never rebuilt, so the mark stays');
+  else await wait(() => evaluate(() => !document.querySelector('#workBody .bg-thread')?.dataset.stale), 'the held re-read runs once the selection is gone', 5000);
   console.log('PASS: selected text is not re-read away; the held read runs after the selection is released');
 
   // ---- 5. 次の承認のカードも出来事からすぐ出て、押せばすぐ消える ----
@@ -350,8 +370,8 @@ try {
   await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === child.childId, { ms: 30_000 }).catch(() => {});
   await openCard(child.taskId, 'child again');
   await wait(() => evaluate(() => document.querySelectorAll('#workBody .bg-thread .tc').length >= 6), 'child thread again');
-  const reopened = evaluate(() => ({ expanded: document.querySelector('#workBody .bundle .rhead')?.getAttribute('aria-expanded') ?? null, detail: [...document.querySelectorAll('#workBody .bundle .tc')].slice(0, 6).map(c => c.querySelector('.tc-details')?.open ? 1 : 0).join('') }));
-  assert.deepEqual(reopened, { expanded: 'false', detail: '000000' }, 'reopening starts closed (nothing carried over)');
+  const reopened = evaluate((n) => ({ expanded: document.querySelector('#workBody .bundle .rhead')?.getAttribute('aria-expanded') ?? null, detail: [...document.querySelectorAll('#workBody .bundle .tc')].slice(0, n).map(c => c.querySelector('.tc-details')?.open ? 1 : 0).join('') }), BUNDLE);
+  assert.deepEqual(reopened, { expanded: 'false', detail: '0'.repeat(BUNDLE) }, 'reopening starts closed (nothing carried over)');
   await sleep(1200);
   const dropAt = nowMs();
   evaluate(() => window.__ws.close());

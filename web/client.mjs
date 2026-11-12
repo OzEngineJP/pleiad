@@ -3114,6 +3114,8 @@ function onEvent(ev, replay = false) {
   // 子の会話のモーダルが見ている会話の出来事なら、詳細を読み直す（間引いて。ADR 0315 の段 2）
   if (!replay) followDetail(ev);
   if (!replay && sessionLoads.capture(ev, state.current)) return;
+  // 作業のダイアログが子の会話の実例で開いているなら、その会話の出来事は実例が描く（主が同じ会話を開いているときは主が描く）
+  if (!replay && modalChild && routeModalChild(ev)) return;
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); paintMemoryGeneral(); memorySettings?.refresh(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
   if (ev.type === 'schedules') {
@@ -3132,7 +3134,7 @@ function onEvent(ev, replay = false) {
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
-  if (ev.type === 'permissionSettled') { onPermissionSettled(ev); return; }
+  if (ev.type === 'permissionSettled') { dropModalChildPermission(ev); onPermissionSettled(ev); return; }
   if (ev.type === 'compactionSchedule') {
     if (ev.sessionId === state.current) { state.compactionAt = ev.at; paintContextStrip(); }
     return;
@@ -5917,6 +5919,7 @@ function renderBackground() {
   paintDetailHead(item);
   workComposer?.show(item);
   syncWorkStop();
+  if (bg.view.liveChild) { syncModalChildItem(item); return; }
   const changed = item?.source === 'task' && bg.view.instructionRevision !== item.instructionRevision;
   const becameIdle = bg.view.wasLive && !item?.live;
   // ホストの線がオフライン・オンラインに変わったら、すぐ読み直す（筋の末尾の「ホストがオフライン」の行を替える・追いつく）
@@ -5949,6 +5952,7 @@ function openWork(key, scope = null) {
   bg.narrowDetail = typeof key === 'string';
   if (typeof key === 'string') bg.selected = key;
   else if (!bg.selected || !dialogItems().some(x => x.key === bg.selected && x.live)) bg.selected = dialogItems()[0]?.key ?? null;
+  disposeModalChild();
   bg.view?.follow?.cancel();
   flushDetailSettled(bg.view);
   bg.view = null;
@@ -6125,6 +6129,7 @@ function detailNote(text) {
 /** 詳細を描く。項目の種類ごとに読み方が違うだけで、描く部品は会話と同じ */
 function openDetail(item) {
   const body = $('workBody');
+  disposeModalChild();
   clearTimeout(bg.view?.commandTimer);
   bg.view?.follow?.cancel();
   flushDetailSettled(bg.view);
@@ -6141,8 +6146,9 @@ function openDetail(item) {
   syncWorkStop();
   if (!item) return;
   if (item.source === 'task' && item.childId) refreshOutbox(item.childId).then(() => workComposer?.paintOutbox()).catch(() => {});
-  body.append(el('div', 'work-head', t('dialog.work.loading')));
   // 最初の描画が終わる約束。外から開いた（openConversation）とき、描けた後に検索の発言へ送るために待つ
+  if (liveChildEligible(item)) { bg.view.liveChild = true; bg.view.firstPaint = openLiveChild(bg.view); return; }
+  body.append(el('div', 'work-head', t('dialog.work.loading')));
   bg.view.firstPaint = refreshDetail({ first: true });
 }
 
@@ -6183,7 +6189,7 @@ function followDetail(ev) {
   if (!view?.follow || !$('workDialog').open) return;
   const hit = followsEvent(view.item, state.current, ev);
   if (!hit) return;
-  view.follow.poke(hit);
+  if (!view.liveChild) view.follow.poke(hit);   // 実例で開いている子は、出来事が本文へ流れる。読み直さない
   if (hit.urgent) queueMicrotask(() => { if (bg.view === view && $('workDialog').open) renderBackground(); });
 }
 
@@ -6205,7 +6211,7 @@ function tickDetailHead(item) {
 
 async function refreshDetail({ first = false, force = false, urgent = false } = {}) {
   const view = bg.view;
-  if (!view || !$('workDialog').open) return;
+  if (!view || !$('workDialog').open || view.liveChild) return;
   if (view.busy) { if (force) view.pendingRefresh = true; return; }
   const driven = Boolean(followMode(view.item, state.current));
   if (!first && !force && Date.now() - view.at < (driven ? FOLLOW_INSURANCE_MS : DETAIL_MIN_MS)) return;
@@ -6431,6 +6437,240 @@ async function ledgerThread(item, note, { hostOffline = null } = {}) {
   if (note) th.append(wrap(el('div', 'm sys', note)));
   if (item.error) th.append(wrap(el('div', 'm sys', item.error)));
   return th;
+}
+
+
+// ---------------------------------------------------------------- 子の会話のモーダル（ADR 0319 段 6-6）
+// 作業のダイアログで「委譲の子」（task）を開いたら、本文は子の役の createConversationView の実例が描く（読み直さず、出来事を流す）。
+// 主の会話の本文とは別の実例（別の thread・別の取り置き）。同じ会話を主が開いている間は、主が描き、ここは何も描かない（ADR 0318）。
+// ネイティブのサブエージェント・ホストに任せた子・設定 childThreadRenderer = 'reread'（URL ?childThread=reread）は、従来の読み直し（refreshDetail）のまま。
+let modalChild = null;   // { view, id, owner（bg.view）, ready, instrStale, instrBusy, instrAgain }
+
+/** 子の会話のモーダルの描き方。'live'（既定）か 'reread'（従来の読み直し）。URL の ?childThread=reread が設定より先 */
+function childThreadRenderer() {
+  try { if (new URLSearchParams(location.search).get('childThread') === 'reread') return 'reread'; } catch {}
+  return state.prefs?.childThreadRenderer === 'reread' ? 'reread' : 'live';
+}
+const liveChildEligible = (item) => Boolean(item) && item.source === 'task' && item.group === 'agent' && Boolean(item.childId)
+  && !item.host && !item.hostDescendant && childThreadRenderer() === 'live';
+
+/** 実例の本文の面が描く出来事（追加の指示のまわりは除く。指示の一覧を読み直して描く） */
+const MODAL_CHILD_EVENTS = new Set(['text.delta', 'text.end', 'thinking.start', 'thinking.delta', 'tool.start', 'tool.result', 'activity',
+  'taskNotice', 'channelEvent', 'interruptionNote', 'turnResult', 'present', 'turnEnd']);
+
+function modalChildPermission(ev) {
+  const mc = modalChild;
+  if (!mc || !mc.ready) return;
+  const th = mc.view.thread;
+  if (th.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"]`)) return;
+  const card = ev.kind === 'question' ? questionCard(ev, th) : permissionCard(ev, th);
+  if (!card) return;
+  const act = th.querySelector('.mw.activity');
+  if (act) act.before(card.closest('.mw')); else th.append(card.closest('.mw'));
+}
+
+/** 決着した承認のカードを、モーダルの本文から外す（従来の読み直しでは、決着した承認は履歴に無くカードが消えた。メインは畳んで残す） */
+function dropModalChildPermission(ev) {
+  const th = modalChild?.view?.thread;
+  th?.querySelector(`:scope > .mw[data-key="perm:${CSS.escape(String(ev.id))}"]`)?.remove();
+}
+
+/** 追加の指示の一覧を読み直して、描いてある行の状態を替える（まとめて 1 回）。読み込みの途中なら、描き終えた後に 1 回 */
+function refreshModalInstructions() {
+  const mc = modalChild;
+  if (!mc) return;
+  if (!mc.ready) { mc.instrStale = true; return; }
+  if (mc.instrBusy) { mc.instrAgain = true; return; }
+  mc.instrBusy = true;
+  cmd('agentTaskInstructions', { taskId: mc.owner.item.taskId })
+    .then((r) => { if (modalChild === mc) mc.view.syncInstructions(r.instructions ?? []); })
+    .catch(() => {})
+    .finally(() => { mc.instrBusy = false; if (mc.instrAgain && modalChild === mc) { mc.instrAgain = false; refreshModalInstructions(); } });
+}
+
+/**
+ * onEvent から。モーダルの子の会話の出来事なら、この実例へ流す（true で処理済み）。
+ * 主が同じ会話を開いているときは主が描く（呼ぶ側が見る）。承認の覚え（state.pendingPerms）は全体のまま、カードの置き場だけここで決める
+ */
+function routeModalChild(ev) {
+  const mc = modalChild;
+  if (!mc || ev.sessionId !== mc.id || state.current === mc.id) return false;
+  if (ev.type === 'permission') { modalChildPermission(ev); return true; }
+  const { view } = mc;
+  if (view.isInstructionEvent(ev)) { refreshModalInstructions(); return true; }
+  if (!MODAL_CHILD_EVENTS.has(ev.type)) return false;
+  if (view.loads.capture(ev, mc.id)) return true;
+  view.apply(ev, false);
+  return true;
+}
+
+function modalChildNotes(item) {
+  const mc = modalChild;
+  if (!mc) return;
+  const { view } = mc;
+  const note = (key, text) => {
+    const old = view.thread.querySelector(`:scope > .mw[data-key="${key}"]`);
+    if (!text) { old?.remove(); return; }
+    if (old?.textContent === text) return;
+    old?.remove();
+    view.place(view.wrap(el('div', 'm sys', text), key));
+  };
+  note('note:error', item.error || '');
+  note('note:notification', item.notification === 'unknown' ? t('dialog.tasks.notificationUnknown') : '');
+}
+
+/** 同じ項目を見ている間の一覧の更新（見出し以外）。走っているか・待っているか・指示の受付が変わったら、実例に伝える */
+function syncModalChildItem(item) {
+  const mc = modalChild;
+  if (!mc || mc.owner !== bg.view || !mc.ready) return;
+  const { view } = mc;
+  const was = view.childState.live;
+  view.setChild({ live: item.live, waiting: item.waiting === true });
+  const owner = bg.view;
+  if (!item.live && was) {
+    view.liveTurn.settleStrays?.();
+    view.liveTurn.activity.hide();
+  } else if (item.live && (!view.liveTurn.activity.el?.isConnected || (item.waiting && view.liveTurn.activity.text !== t('activity.waitingApproval')))) {
+    view.liveTurn.activity.show(item.waiting ? t('activity.waitingApproval') : ACTIVITY_LABEL.running);
+  }
+  if (owner.instructionRevision !== item.instructionRevision || was !== item.live) { owner.instructionRevision = item.instructionRevision; refreshModalInstructions(); }
+  owner.wasLive = item.live;
+  modalChildNotes(item);
+  paintDelegateStates(view.thread);
+  tickDetailHead(item);
+}
+
+/** 実例を閉じる（項目を替える・ダイアログを閉じる・'reread' へ替えるとき）。取り置き・タイマー・描く仕事を止める。nav・toc は 1 つを使い回す */
+function disposeModalChild() {
+  const mc = modalChild;
+  if (!mc) return;
+  modalChild = null;
+  mc.view.dispose();
+}
+
+function createModalChildView(item, th) {
+  const childId = item.childId;
+  const modelName = (backend) => modelDisplayName(state.vocab.get(backend)?.models ?? {}, item.model);
+  const none = () => {};
+  let view;
+  view = createConversationView({
+    sessionId: childId, role: 'child', log: $('workBody'), thread: th, frame: $('workBodyFrame'),
+    hooks: {
+      isRunning: () => view.childState.live,
+      stopping: () => state.stopping.has(childId),
+      behind: () => null,
+      backgroundCounts: () => ({ live: 0 }),
+      turnStart: () => null,
+      aiMsg: (opts) => {
+        const backend = opts?.backend ?? item.backend;
+        const m = aiMsg({ ...opts, uuid: undefined, backend });
+        if (item.model) m.querySelector('.who > span:not(.row-be)').textContent = modelName(backend);
+        return m;
+      },
+      onActivity: none,
+      stopComputer: none,
+      spine: () => spine(),
+      placeJunctions: () => [],
+      paintDelegateStates: () => paintDelegateStates(th),
+      paintCompactions: none,
+      syncEdit: none,
+      paintable: (p) => { const e = savedEvent(p); return p?.lazy ? { ...e, lazy: { ...p.lazy, sessionId: childId } } : e; },
+      updateBranches: none,
+      cmd: (command, args, opts) => cmd(command, args, opts),
+      select: none,
+      finalizing: (on) => modalNav.finalizing?.(on),
+      systemHistoryNode: (m) => systemHistoryNode(m),
+      stripActions: (node) => stripActions(node),
+      userMsg: (text, opts) => userMsg(text, opts),
+      noteEndpointFailure: (card, result, sessionId) => noteEndpointFailure(card, result, sessionId),
+      linkDelegateCard: (card, input, result, ctx) => linkDelegateCard(card, input, result, ctx),
+      activeBackendId: () => item.backend ?? activeBackendId(),
+      subagentToolsOf: (id) => subagentToolsOf(id),
+      isBoundaryTool: (name, tools) => isBoundaryTool(name, tools),
+      setUuid: none,   // 子の行は data-uuid を持たない（主の発言の分岐・検索が拾わない）。検索の飛び先は data-hit-uuid
+      isEditing: () => false,
+      outbox: () => [],
+      onEvent: (ev, replay) => {
+        if (modalChild?.view !== view) return;
+        if (view.isInstructionEvent(ev)) { if (replay) modalChild.instrStale = true; return; }
+        if (MODAL_CHILD_EVENTS.has(ev.type)) view.apply(ev, replay);
+      },
+      batchPaint: (fn) => batchToolMeasurements(() => batchTerminalUpdates(() => batchToolUpdates(() => view.liveTurn.runningTools.batch(fn)))),
+      userRaw: (m) => userRaw(m),
+      paintUser: (m, text, presents) => paintUser(m, text, presents),
+      paintUserTools: (m) => paintUserTools(m),
+      markSentBy: (m, sentBy) => markSentBy(m, sentBy),
+      markSentLate: (m, at, planned) => markSentLate(m, at, planned),
+      hhmm: (at) => hhmm(at),
+      taskNoticeNode: (text, at) => taskNoticeNode(text, at),
+      paintInterruptLine: none,
+      turnFailedRow: (ev) => turnFailedRow(ev),
+      syncHistory: none,
+      currentSession: () => childId,
+      isBusy: () => false,
+      isLoadingSession: () => false,
+      backendVocab: (backend) => state.vocab.get(backend),
+    },
+  });
+  return view;
+}
+
+/** 子の会話を実例で開く。順序は、見張り（watch）→ 末尾の窓の読み込み → 取り置いた出来事の流し直し */
+async function openLiveChild(owner) {
+  const item = owner.item;
+  const body = $('workBody');
+  const id = item.childId;
+  disposeModalChild();
+  const th = el('div', 'thread bg-thread');
+  const spineEl = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
+  spineEl.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
+  th.append(spineEl);
+  const loading = el('div', 'work-head', t('dialog.work.loading'));
+  body.replaceChildren(th, loading);
+  modalToc.reset();
+  body.dataset.sessionId = id;
+  body.dataset.paneKind = 'task';
+  syncModalWatch();
+  const view = createModalChildView(item, th);
+  const mc = modalChild = { view, id, owner, ready: false, instrStale: false, instrBusy: false, instrAgain: false };
+  owner.liveChild = true;
+  view.setChild({ backend: item.backend, live: item.live, steer: capsOf(item.backend)?.steer !== false, prompt: item.request, waiting: item.waiting === true });
+  const load = view.loads.begin(id);
+  view.displayLoad = load;
+  const alive = () => modalChild === mc && bg.view === owner && $('workDialog').open;
+  try {
+    const [data, instr] = await Promise.all([
+      loadHistory({ sessionId: id, live: true }, null, { window: true, bulk: false }),
+      cmd('agentTaskInstructions', { taskId: item.taskId }),
+    ]);
+    if (!alive()) return;
+    view.setInstructions(instr.instructions ?? []);
+    view.adopt(data);
+    workComposer?.offerDraft(id, data.draft);
+    if (data.contextWindow) { childContext.set(id, data.contextWindow); syncWorkContext(); }
+    loading.remove();
+    const res = await view.paint(data, { id, load });
+    if (!res || !alive()) return;
+    view.finish(res, {});
+    mc.ready = true;
+    owner.lastReadMs = 0;
+    owner.wasLive = item.live;
+    owner.instructionRevision = item.instructionRevision;
+    // 子が承認を待っていれば、ここで答えられる（子の会話へ移らなくてよい）。同じ承認は依頼元の会話にも中継されている
+    for (const ev of [...(data.permissions ?? []), ...state.pendingPerms.values()]) if (ev.sessionId === id) modalChildPermission(ev);
+    modalChildNotes(item);
+    const cur = bg.view.item;
+    view.setChild({ live: cur.live, waiting: cur.waiting === true });
+    if (cur.live && !view.liveTurn.activity.el?.isConnected) view.liveTurn.activity.show(cur.waiting ? t('activity.waitingApproval') : ACTIVITY_LABEL.running);
+    if (!th.querySelector(':scope > .mw') && !cur.live) th.append(el('div', 'work-head', t('dialog.work.noMessages')));
+    paintDelegateStates(th);
+    tickDetailHead(cur);
+    if (mc.instrStale) { mc.instrStale = false; refreshModalInstructions(); }
+  } catch (e) {
+    if (alive()) { loading.remove(); body.replaceChildren(el('div', 'work-head', t('dialog.work.readFailed', { error: e.message }))); }
+  } finally {
+    flushDetailSettled(owner);
+  }
 }
 
 async function taskThread(item) {
@@ -7092,7 +7332,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { workComposer?.hide(); workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); flushDetailSettled(bg.view); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
+$('workDialog').addEventListener('close', () => { disposeModalChild(); workComposer?.hide(); workSide.end(); clearTimeout(bg.view?.commandTimer); bg.view?.follow?.cancel(); flushDetailSettled(bg.view); bg.view = null; bg.extra.clear(); bg.scope = null; modalToc.reset(); closeModalPane(); delete $('workBody').dataset.paneKind; syncModalWatch(); });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -9295,6 +9535,11 @@ async function revealMessage({ uuid, role, query, speaker }, inModal = false) {
     if (!m && historyPane.backfill) { flushBackfill(); m = find(); }   // 窓の中の、まだ描いていない手前
     // 窓の手前にある発言は、見つかるまで前の発言を読み足す
     while (!m && state.base > 0 && await loadOlder({ reach: uuid })) m = find();
+  } else if (modalChild?.view) {
+    // 実例で開いた子の会話は末尾の窓だけを描く。窓の手前にある発言は、見つかるまで前を読み足す
+    const pane = modalChild.view.historyPane;
+    if (!m && pane.backfill) { pane.flushBackfill(); m = find(); }
+    while (!m && pane.base > 0 && await pane.loadOlder({ reach: uuid })) m = find();
   }
   (inModal ? modalToc : toc).carry(query, { scope: role === 'tool' ? 'tool' : speaker === 'user' ? 'user' : 'answer', uuid });
   if (!m) return;
@@ -9976,7 +10221,8 @@ function connect() {
       modalPresence.reset();
       syncModalWatch({ force: true });
       // 切れていた間の出来事は届いていない。見ている子の詳細を 1 回読み直す
-      bg.view?.follow?.poke({ urgent: true });
+      if (bg.view?.liveChild) { if (modalChild && modalChild.owner === bg.view) openLiveChild(bg.view); }   // 見張りを先に張り直し、窓を読み直す（取り置いた出来事の流し直しまで）
+      else bg.view?.follow?.poke({ urgent: true });
       // 前に開いていた会話の履歴は、一覧の返事を待たずに一緒に頼む（開くのは一覧が届いてからだが、読むのは並べる）
       let saved;
       try { saved = localStorage.getItem("agent-host-current"); } catch {}
