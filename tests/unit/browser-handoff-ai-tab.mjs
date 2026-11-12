@@ -1,5 +1,5 @@
 // AI のタブを別に持ち、引き継ぐまで映像は見るだけ（ADR 0320。ADR 0296 の「映像に触れたら人の操作になる」「引き継ぐのボタンを置かない」の置き換え）:
-//   - 中継: 人が開いたタブは AI のタブを替えない・AI のタブが閉じても人のタブへ戻さない・AI が操作したタブが AI のタブになる
+//   - 中継: 人が開いたタブは AI のタブを替えない（attach・準備のコマンドでも）・AI が明示に操作したタブが AI のタブになる・閉じたら履歴の前の AI のタブへ戻る（popup は開いた元へ）
 //   - サーバー: 引き継ぐ前の AI のタブの映像への入力は 'view-only' で断り、人の操作に数えない・引き継いだあとは通る・人が開いたタブは今までどおり触れる
 //   - 画面の部品: 映像（見るだけの間は送らない）・行（<名前> が Chrome を操作中 [引き継ぐ]）・押したら強調
 import { agent, rig } from '../lib/chrome-relay-rig.mjs';
@@ -31,11 +31,74 @@ export default async function (t) {
       t.ok('AI が開いたタブが AI のタブになる', r.relay.view.current('one') === made, String(r.relay.view.current('one')));
       const human2 = (await r.relay.openForConversation('one', 'https://human2.test/')).targetId;
       t.ok('そのあとに人が開いたタブも、AI のタブを替えない', !!human2 && r.relay.view.current('one') === made, String(r.relay.view.current('one')));
+      t.ok('shown: AI のタブがあれば、最初のタブ（人のタブ）ではなく AI のタブ', r.relay.view.shown('one') === made && r.relay.state('one').lastWindowId === r.fake.targets().find(x => x.targetId === made)?.windowId,
+        JSON.stringify([r.relay.view.shown('one'), r.relay.state('one').lastWindowId]));
+      // agent-browser は、人が開いたタブにも自分から attach し、準備のコマンドを送る（実測 2026-11-12、agent-browser 0.38.1 の順）。それでは AI のタブは移らない
       const sid = (await a.cmd('Target.attachToTarget', { targetId: human, flatten: true })).result.sessionId;
-      t.ok('AI がつないだタブが AI のタブになる（人が開いたタブを AI が使い始めた）', r.relay.view.current('one') === human, String(r.relay.view.current('one')));
+      for (const method of ['Runtime.runIfWaitingForDebugger', 'Page.enable', 'Runtime.enable', 'Network.enable', 'Target.setAutoAttach', 'Page.getFrameTree'])
+        await a.cmd(method, method === 'Target.setAutoAttach' ? { autoAttach: true, waitForDebuggerOnStart: true, flatten: true } : {}, sid);
+      t.ok('人が開いたタブに AI がつないで準備しただけでは、AI のタブは移らない', r.relay.view.current('one') === made, String(r.relay.view.current('one')));
+      // 自動 attach の接続（relay が真似て attach する）でも同じ
+      const b = await agent(await r.relay.endpoint('one'));
+      try {
+        await b.cmd('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+        const human3 = (await r.relay.openForConversation('one', 'https://human3.test/')).targetId;
+        const attached = await until(() => b.events.some(e => e.method === 'Target.attachedToTarget' && e.params.targetInfo.targetId === human3));
+        const bsid = b.events.find(e => e.method === 'Target.attachedToTarget' && e.params.targetInfo.targetId === human3)?.params.sessionId;
+        for (const method of ['Runtime.runIfWaitingForDebugger', 'Page.enable', 'Runtime.enable', 'Page.getFrameTree']) await b.cmd(method, {}, bsid);
+        t.ok('自動 attach の接続が人のタブにつながり準備しても、AI のタブは移らない', attached && r.relay.view.current('one') === made, String(r.relay.view.current('one')));
+      } finally { b.close(); }
       await a.cmd('Runtime.evaluate', { expression: '1' }, sid);
+      t.ok('AI が人のタブを明示に操作したら（Runtime.evaluate）、そのタブが AI のタブになる', r.relay.view.current('one') === human, String(r.relay.view.current('one')));
+      const sid2 = (await a.cmd('Target.attachToTarget', { targetId: human2, flatten: true })).result.sessionId;
+      await a.cmd('Page.bringToFront', {}, sid2);
+      t.ok('タブの明示の切り替え（Page.bringToFront）でも、そのタブが AI のタブになる', r.relay.view.current('one') === human2, String(r.relay.view.current('one')));
+      await a.cmd('Target.closeTarget', { targetId: human2 });
+      t.ok('AI のタブが閉じたら、履歴の 1 つ前の AI のタブへ戻る（人のタブの最初へではない）', await until(() => r.relay.view.current('one') === human), String(r.relay.view.current('one')));
       await a.cmd('Target.closeTarget', { targetId: human });
-      t.ok('AI のタブが閉じても、人のタブへ戻さない（無し）', await until(() => r.relay.view.current('one') === null), String(r.relay.view.current('one')));
+      t.ok('それも閉じたら、さらに前の AI のタブへ戻る', await until(() => r.relay.view.current('one') === made), String(r.relay.view.current('one')));
+
+      // popup: AI のタブが開いた popup を AI が操作 → 閉じたら開いた元へ戻る
+      await a.cmd('Target.setDiscoverTargets', { discover: true });
+      const madeSid = (await a.cmd('Target.attachToTarget', { targetId: made, flatten: true })).result.sessionId;
+      await a.cmd('Runtime.evaluate', { expression: '1' }, madeSid);
+      r.fake.windowOpen(made, 'https://pop.test/', { popup: true });
+      const popupSeen = await until(() => a.events.some(e => e.method === 'Target.targetCreated' && e.params.targetInfo.openerId === made));
+      const popup = a.events.find(e => e.method === 'Target.targetCreated' && e.params.targetInfo.openerId === made)?.params.targetInfo.targetId;
+      t.ok('AI のタブが開いた popup は、開いただけでは AI のタブにならない', popupSeen && r.relay.view.current('one') === made, String(r.relay.view.current('one')));
+      const popSid = (await a.cmd('Target.attachToTarget', { targetId: popup, flatten: true })).result.sessionId;
+      await a.cmd('Runtime.evaluate', { expression: '1' }, popSid);
+      t.ok('popup を AI が操作したら popup が AI のタブ', r.relay.view.current('one') === popup, String(r.relay.view.current('one')));
+      await a.cmd('Target.closeTarget', { targetId: popup });
+      t.ok('popup が閉じたら、開いた元の AI のタブへ戻る', await until(() => r.relay.view.current('one') === made), String(r.relay.view.current('one')));
+
+      // 人が開いたタブの popup も人のタブ（準備では AI のタブにならない）
+      const human4 = (await r.relay.openForConversation('one', 'https://human4.test/')).targetId;
+      r.fake.windowOpen(human4, 'https://pop2.test/');
+      const hp = await until(() => a.events.some(e => e.method === 'Target.targetCreated' && e.params.targetInfo.openerId === human4));
+      const humanPopup = a.events.find(e => e.method === 'Target.targetCreated' && e.params.targetInfo.openerId === human4)?.params.targetInfo.targetId;
+      const hpSid = (await a.cmd('Target.attachToTarget', { targetId: humanPopup, flatten: true })).result.sessionId;
+      await a.cmd('Page.getFrameTree', {}, hpSid);
+      t.ok('人のタブが開いた popup に AI がつないで準備しても、AI のタブは移らない', hp && r.relay.view.current('one') === made, String(r.relay.view.current('one')));
+
+      // エージェントがつなぎ直す（agent-browser の再起動）: 範囲のタブ全部に attach して準備しても、AI のタブは替わらない
+      a.close(); await a.closed;
+      a = await agent(await r.relay.endpoint('one'));
+      const { targetInfos } = (await a.cmd('Target.getTargets')).result;
+      for (const info of [...targetInfos].reverse()) {
+        const s = (await a.cmd('Target.attachToTarget', { targetId: info.targetId, flatten: true })).result.sessionId;
+        await a.cmd('Page.enable', {}, s); await a.cmd('Page.getFrameTree', {}, s);
+      }
+      t.ok('エージェントがつなぎ直して全部のタブにつないでも、AI のタブは前のまま', targetInfos.length >= 3 && r.relay.view.current('one') === made, JSON.stringify([targetInfos.length, r.relay.view.current('one')]));
+
+      // AI のタブを全部閉じた: 人のタブだけ → AI のタブは無し（最初のタブの例外は shown だけ）
+      await a.cmd('Target.closeTarget', { targetId: made });
+      t.ok('AI のタブが全部閉じたら無し（人のタブを AI のタブにしない）', await until(() => r.relay.view.current('one') === null), String(r.relay.view.current('one')));
+      const firstTab = r.relay.view.tabs('one')[0]?.targetId;
+      t.ok('shown は AI のタブが無いときだけ窓の最初のタブ', !!firstTab && r.relay.view.shown('one') === firstTab, JSON.stringify([r.relay.view.shown('one'), firstTab]));
+      // Chrome との接続が切れた: タブは無くなり、AI のタブも無し（古い id を指さない）
+      r.chrome.dropConnections();
+      t.ok('Chrome との接続が切れたら、AI のタブは無し', await until(() => r.relay.view.current('one') === null && r.relay.view.shown('one') === null), String(r.relay.view.shown('one')));
     } finally { a?.close(); await r.stop(); }
   }
 

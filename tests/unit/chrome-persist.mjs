@@ -158,6 +158,36 @@ export default async function (t) {
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
 
+    // ===== 1c. 更新を越えて AI のタブを保つ（ADR 0321）: 窓の最初のタブが人のタブでも、持ち越した AI のタブが AI のタブ。つなぎ直したエージェントの attach・準備では替わらない =====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const a = await newServer(chrome, os);
+      const url = await a.relay.endpoint('conv-1c');
+      const human = (await a.relay.openForConversation('conv-1c', 'https://human.example/')).targetId;
+      const ag = await agent(url);
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const aiTab = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result?.targetId;
+      t.ok('前提: 窓の最初のタブは人が開いたタブ、AI のタブはエージェントが作ったタブ', a.relay.view.tabs('conv-1c')[0]?.targetId === human && a.relay.view.current('conv-1c') === aiTab,
+        JSON.stringify([a.relay.view.tabs('conv-1c'), a.relay.view.current('conv-1c')]));
+      await until(() => a.link.alive && a.link.welcome, 2000);
+      await leave(a);
+      const b = await newServer(chrome, os);
+      await until(() => b.relay.view.tabs('conv-1c').length === 2, 3000, 'carried tabs back in scope');
+      t.ok('更新の後: AI のタブは持ち越した AI のタブ（窓の最初の人のタブではない）', b.relay.view.current('conv-1c') === aiTab && b.relay.view.shown('conv-1c') === aiTab,
+        JSON.stringify([b.relay.view.tabs('conv-1c'), b.relay.view.current('conv-1c'), b.relay.view.shown('conv-1c')]));
+      const ag2 = await agent(url);
+      for (const info of (await ag2.cmd('Target.getTargets')).result.targetInfos) {
+        const s = (await ag2.cmd('Target.attachToTarget', { targetId: info.targetId, flatten: true })).result?.sessionId;
+        await ag2.cmd('Page.enable', {}, s); await ag2.cmd('Page.getFrameTree', {}, s);
+      }
+      t.ok('更新の後につなぎ直したエージェントが全部のタブにつないで準備しても、人のタブは AI のタブにならない（人の印も持ち越す）', b.relay.view.current('conv-1c') === aiTab, String(b.relay.view.current('conv-1c')));
+      ag.close(); ag2.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
     // ===== 1b. 最大化のまま開いた最初の窓（chrome.exe の窓）: 大きさを決めて通常に戻っても隠した位置のまま。更新を越えて引き継げる =====
     {
       await clearChildren();

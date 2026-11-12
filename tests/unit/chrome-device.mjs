@@ -117,7 +117,7 @@ export default async function (t) {
       const other = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
       const sid = (await a.cmd('Target.attachToTarget', { targetId: tab, flatten: true })).result.sessionId;
       const sidOther = (await a.cmd('Target.attachToTarget', { targetId: other, flatten: true })).result.sessionId;
-      await a.cmd('Page.getFrameTree', {}, sid);   // 今のタブを 1 つ目に戻す
+      await a.cmd('Runtime.evaluate', { expression: '1' }, sid);   // 今のタブ（AI のタブ）を 1 つ目に戻す（準備の getFrameTree では移らない。ADR 0321）
       await until(() => r.relay.view.current('one') === tab);
       // AI が自分でページの大きさを決めた（agent-browser の set viewport。中継のセッション経由）
       const windowId = r.fake.targets().find(x => x.targetId === tab)?.windowId;
