@@ -1223,6 +1223,7 @@
     "treeCollapseAll": "Collapse all",
     "treeShowMore": "Show {{count}} more",
     "treeLoadFailed": "Couldn't load",
+    "treeRetry": "Retry",
     "contents": "File contents",
     "save": "Save",
     "saveFile": "Save the current file",
