@@ -10,6 +10,8 @@ import { readSearchProvider, searchUrl } from './chrome/search-provider.mjs';
 // pageEnv: 画面のテーマの変化をファイルのページへ知らせる（言語はサーバーの既定なので savePref が知らせる）
 // pageOpen: ページ・HTML・可視化の開く先をサーバーが決める（ADR 0295 の 7。画面は port や URL を組み立てない）
 export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress', 'pageResult', 'pageEnv', 'pageOpen', 'pageResolve', 'pageWatch']);
+/** ファイルの版の印（更新時刻:大きさ）。開いた時点と変化の知らせで同じ形にして、画面が見比べる（ADR 0320） */
+const stampOfStat = stat => `${Math.round(stat.mtimeMs)}:${stat.size}`;
 export const isBrowserUnifyCommand = command => BROWSER_UNIFY_COMMANDS.has(command);
 
 /** Only authenticated connections explicitly watching this conversation receive tab data. */
@@ -67,6 +69,17 @@ export function createBrowserUnifyWs(deps = {}) {
   };
   const PAGE_KINDS = new Set(['file', 'dir', 'git', 'plugins', 'new', 'attachment']);
   /**
+   * ファイルの版（更新時刻:大きさ）。画面が見ていない間の変更を、戻ったときに見分ける（ADR 0320）。
+   * 中身を読む口（core/pages-routes.mjs）と同じ関所（inspectFile + access）を通ったパスにだけ返す。断られる・読めない・消えたパスは undefined
+   * （版から、読めないファイルの更新時刻や大きさが漏れない）
+   */
+  const stampOf = async (sessionId, file) => {
+    try {
+      const checked = await inspectFile(file, (await deps.access?.(sessionId)) ?? {});
+      return checked && typeof checked === 'object' && checked.stat ? stampOfStat(checked.stat) : undefined;
+    } catch { return undefined; }
+  };
+  /**
    * 「開く先」を決める（pageOpen）。返り値:
    *   - ページ:   { kind, path?, suffix, url }。url はファイルのページの port の URL、suffix は Chrome の無い画面が
    *     本体と同じ出どころで使う /_pleiad/…
@@ -98,13 +111,13 @@ export function createBrowserUnifyWs(deps = {}) {
         if (!key || !deps.secret) fail('UNAVAILABLE');
         deps.pageWatch?.add(sessionId, checked.file, 'file', owner);
         const suffix = title ? `?title=${encodeURIComponent(title)}` : '';
-        return { kind: 'html', path: checked.file, key, cwd: cwd ?? undefined,
+        return { kind: 'html', path: checked.file, key, cwd: cwd ?? undefined, stamp: stampOfStat(checked.stat),
           url: `http://${fileMark(deps.secret, path.dirname(checked.file))}.localhost:${ports.isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(checked.file))}${suffix}` };
       }
       if (file) deps.pageWatch?.add(sessionId, file, page === 'dir' ? 'dir' : 'file', owner);
       const url = new URL(pageUrl(sessionId, page, file, owner));
       if (/^\d{1,9}$/.test(String(input?.line ?? ''))) url.searchParams.set('line', String(input.line));
-      return { kind: page, path: file ?? undefined, cwd: cwd ?? undefined, suffix: `${url.pathname}${url.search}`, url: url.href };
+      return { kind: page, path: file ?? undefined, cwd: cwd ?? undefined, stamp: file ? await stampOf(sessionId, file) : undefined, suffix: `${url.pathname}${url.search}`, url: url.href };
     }
     if (kind === 'viz') {
       const hash = typeof input?.hash === 'string' ? input.hash.toLowerCase() : '';
@@ -229,7 +242,11 @@ export function createBrowserUnifyWs(deps = {}) {
     /** 追っていたファイルが変わった（core/page-watch.mjs の emit から）。その会話を見ている画面と、そのファイルを出しているタブへだけ */
     pageChanged(sessionId, filePath) {
       if (typeof sessionId !== 'string' || !sessionId || typeof filePath !== 'string' || !filePath) return;
-      for (const client of deps.clients?.() ?? []) if (allowed(client, sessionId)) send(client, { type: 'page:changed', sessionId, path: filePath });
+      // 版は非同期の stat で取る（通知のたびにイベントループを塞がない）。消えた・関所が断るパスは版を付けない（画面は読み直しで「無い」を知る）。
+      // 返す Promise は画面への送りが済んだとき（試験が待つ。呼び手は待たなくてよい）
+      const sent = stampOf(sessionId, filePath).then(stamp => {
+        for (const client of deps.clients?.() ?? []) if (allowed(client, sessionId)) send(client, { type: 'page:changed', sessionId, path: filePath, ...(stamp ? { stamp } : {}) });
+      }, () => {});
       const norm = value => String(value ?? '').replaceAll('\\', '/');
       const target = process.platform === 'win32' ? norm(filePath).toLowerCase() : norm(filePath);
       const same = value => (process.platform === 'win32' ? norm(value).toLowerCase() : norm(value)) === target;
@@ -259,6 +276,7 @@ export function createBrowserUnifyWs(deps = {}) {
           } catch { /* タブは既に無い・まだページを読んでいない */ }
         })();
       }
+      return sent;
     },
     /**
      * pages・isolated の port が替わった・サーバーが入れ替わった（server.mjs の startPageListeners から）。

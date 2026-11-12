@@ -13,6 +13,8 @@ import { browserShortcutLabel } from './header-entries.mjs';
 
 /** メニューの行のアイコン（タブの列・アドレスバーと同じ線の絵） */
 const menuIcon = kind => { const svg = browserIcon(kind); svg.classList.add('i'); return svg; };
+/** 待ちを見せ始めるまで（これより短い待ちは何も出さない）と、失敗とみなす上限（ms）。docs/adr/0320 */
+const LOAD_DELAY = 150, LOAD_LIMIT = 60000;
 
 // Right-pane browser styles; injected once when the host reports browserUnify (always, since ADR 0294 stage C1).
 const css = `
@@ -53,7 +55,7 @@ const css = `
 .bu-tab-pick{display:flex;align-items:center;gap:8px;min-width:0;flex:1;height:100%;padding:0;text-align:left}
 .bu-tab-title{overflow:hidden;white-space:nowrap;flex:1;font-size:12px;mask-image:linear-gradient(to right,#000 calc(100% - 18px),transparent)}
 .bu-favicon{width:16px;height:16px;flex:none}.bu-loading{animation:bu-pulse 1s ease-in-out infinite alternate}@keyframes bu-pulse{to{opacity:.3}}
-@media(prefers-reduced-motion:reduce){.bu-loading{animation:none}}
+@media(prefers-reduced-motion:reduce){.bu-loading{animation:none;opacity:.55}}
 /* Tab close: a 16px glyph in a 22px circle, 6px from the right edge. Hover 14% / press 22% of the text colour. */
 .bu-tab-close{width:22px;height:22px;margin-left:2px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;padding:0}
 .bu-tab-close svg{width:16px;height:16px}
@@ -132,11 +134,18 @@ const css = `
 .bu-conv:has(>.run:not([hidden])) input{padding-left:28px}
 .bu-conv .clist{z-index:30}
 .bu-tabrow .bu-tabs{align-self:stretch}
-/* Show loading until the selected mobile tab supplies its first frame or page. */
+/* 2px loading line under the address bar (PC and phone): shown once a wait passes 150 ms, until the tab supplies its content or fails (ADR 0320). */
 .bu-load{position:absolute;left:0;right:20%;bottom:0;height:2px;background:var(--line-blue);animation:bu-load .8s ease-in-out infinite alternate}
 @keyframes bu-load{to{right:0}}
-@media(min-width:601px){.bu-load{display:none}}
 @media(prefers-reduced-motion:reduce){.bu-load{animation:none}}
+/* First load of an isolated HTML / visualization page: one plane over the frame (their content is not ours to draw). */
+.bu-page-sk{position:absolute;inset:0;z-index:2;pointer-events:none;background:var(--surface-paper);animation:bu-sk-in var(--dur) var(--ease-out) both}
+.bu-page-sk .history-line{height:100%;border-radius:0;background:linear-gradient(90deg,var(--surface-1) 40%,var(--surface-3) 50%,var(--surface-1) 60%) 0 0/300% 100% no-repeat}
+[data-theme=dark] .bu-page-sk .history-line{background:linear-gradient(90deg,var(--surface-3) 40%,var(--surface-0) 50%,var(--surface-3) 60%) 0 0/300% 100% no-repeat}
+.bu-page-sk[hidden]{display:none}
+.bu-page-failed{position:absolute;inset:0;z-index:2;display:grid;place-items:center;padding:24px;background:var(--surface-paper);color:var(--ink-weak);font-size:13px;text-align:center}.bu-page-failed[hidden]{display:none}
+@keyframes bu-sk-in{from{opacity:0}}
+@media(prefers-reduced-motion:reduce){.bu-page-sk,.bu-page-sk .history-line{animation:none}}
 .cp-screen>.bu-page-host{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;z-index:5;background:var(--surface-paper)}
 @media(max-width:760px){.browser-unify #filePreview{padding:0;border-radius:0}.browser-unify #filePreview .file-preview-content{border-radius:0}}
 @media(max-width:600px){.bu-tabrow{display:none}.bu-toolbar{height:48px}.bu-overview{position:absolute;inset:0;max-height:none;z-index:40}}
@@ -174,6 +183,8 @@ export function tabLabel(tab) {
  */
 export function createBrowserUnify(deps = {}) {
   const { cmd, state = {}, chrome = () => null, showMenu = () => {}, notify = () => {}, osActions = () => false } = deps;
+  // 待ちを見せ始めるまでと失敗とみなす上限（ms）。試験が短い値へ替えられる（ADR 0320）
+  const loadDelay = deps.loadDelay ?? LOAD_DELAY, loadLimit = deps.loadLimit ?? LOAD_LIMIT;
   // 上の列（会話の題・ウィンドウの番号）の元: chromeWindow イベントの表と、窓のある子の会話の一覧（browser.chromeWindows の行）
   const windowsTbl = deps.windows ?? null;
   const convIds = () => new Set([state.current, ...(deps.conversations?.() ?? []).map(row => row?.sessionId).filter(Boolean)]);
@@ -237,12 +248,18 @@ export function createBrowserUnify(deps = {}) {
       else if (/^(?:[a-z]:[\\/]|[./~])/i.test(input)) { const resolved = await cmd('resolvePath', { sessionId, path:input }); kind = resolved.kind === 'directory' ? 'dir' : 'file'; path = resolved.path; }
       else return null;
     }
-    const existing = path && pages.list(sessionId).find(tab => tab !== replace && tab.page?.kind !== 'viz' && samePath(tab.page?.path, path));
-    if (existing) { if (sessionId === session()) await pick(existing); return existing; }
+    // 置き換え先のタブ自身と同じパスなら、そのタブを読み直す（アドレスバーに同じパスを入れ直した）。別のタブが持っているパスならそのタブへ移る
+    const existing = path && (pages.list(sessionId).find(tab => tab !== replace && tab.page?.kind !== 'viz' && samePath(tab.page?.path, path))
+      ?? (replace && replace.page?.kind !== 'viz' && samePath(replace.page?.path, path) ? replace : null));
+    // 開いているファイルをもう一度開く操作は、前面へ出して読み直す（入力のあるタブだけ「更新を表示」。ADR 0320）。新しいタブの「最近のファイル」も増やす
+    if (existing) { if (sessionId === session()) await pick(existing); pages.refresh(existing); refreshNewTabs(sessionId); return existing; }
     if (replace && !discard(replace)) return replace;
     const tab = await pages.open({ sessionId, kind:kind ?? 'new', path, vizHash, entry, title, line, url }, replace);
-    tab.mode = 'page'; if (sessionId === session()) await pick(tab); return tab;
+    tab.mode = 'page'; if (sessionId === session()) await pick(tab);
+    if (path) refreshNewTabs(sessionId, tab); return tab;
   }
+  /** 開いた・開き直したファイルを「最近のファイル」へ載せるため、その会話の新しいタブを読み直す（見えていなければ選んだときに読む） */
+  function refreshNewTabs(sessionId, except = null) { for (const tab of pages.list(sessionId)) if (tab !== except && tab.local && tab.page?.kind === 'new') pages.refresh(tab); }
   async function navigate(action, args = {}) {
     const sessionId = session(); if (!sessionId) return;
     const tab = tabs().find(item => item.targetId === args.targetId) ?? current();
@@ -316,22 +333,33 @@ export function createBrowserUnify(deps = {}) {
     if (result?.targetId) await pick(tabs().find(item => item.targetId === result.targetId) ?? { targetId:result.targetId });
     return result;
   }
-  // ---- 読み込み線（スマホ。タブを押した直後から、新しい映像・ページが届くまで。古い応答では下ろさない） ----
+  // ---- 読み込み線・タブの印・骨組み（PC もスマホも。待ちが 150ms を超えたら出し、中身が届くか失敗するまで続ける。古い応答では下ろさない。ADR 0320） ----
   const loadLine = document.createElement('div'); loadLine.className = 'bu-load'; loadLine.hidden = true;
-  let loadTicket = null, loadTimer = 0;
+  let loadTicket = null, loadShowTimer = 0, loadCutTimer = 0, loadShown = false;
   function beginLoad(ticket) {
-    clearTimeout(loadTimer);
-    if (!phoneQuery.matches) { loadTicket = null; loadLine.hidden = true; return null; }
-    loadTicket = { sessionId:session(), ...ticket };
-    loadLine.hidden = false;
+    clearTimeout(loadShowTimer); clearTimeout(loadCutTimer);
+    loadTicket = { sessionId:session(), ...ticket }; loadShown = false; loadLine.hidden = true;
     const captured = loadTicket;
-    loadTimer = setTimeout(() => { if (loadTicket === captured) clearLoading(); }, 12000);
+    loadShowTimer = setTimeout(() => { if (loadTicket === captured) { loadShown = true; loadLine.hidden = false; paint(); } }, loadDelay);
+    // 応答が無いまま続く待ちは、この上限で失敗とみなす（長い待ちでも見た目は変えない。ADR 0320）
+    loadCutTimer = setTimeout(() => { if (loadTicket === captured) giveUp(captured); }, loadLimit);
     return loadTicket;
   }
   function clearLoading(ticket = null) {
     if (ticket && loadTicket !== ticket) return;
-    clearTimeout(loadTimer); loadTicket = null; loadLine.hidden = true;
+    clearTimeout(loadShowTimer); clearTimeout(loadCutTimer);
+    const was = loadShown; loadTicket = null; loadShown = false; loadLine.hidden = true;
+    if (was) paint();
   }
+  /** 上限まで待っても届かなかった。線と印を止め、最初の読み込みなら「読み込めませんでした」を出す（読み直しは前の中身を残す） */
+  function giveUp(ticket) {
+    const entry = ticket.local ? frames.get(ticket.targetId) : null;
+    if (entry && (isolated(entry) ? entry.loaded !== true : entry.shown !== true)) entry.failed = true;
+    clearLoading(ticket);
+    if (entry) paintLocal();
+  }
+  /** 待っているタブ（印を脈打たせる）。Chrome のタブは映像側の tab.loading が持つ */
+  const busyTarget = () => (loadShown && loadTicket?.local && loadTicket.sessionId === session() ? loadTicket.targetId : null);
   async function pick(tab) {
     const selection = active = { sessionId:session(), targetId:tab.targetId };
     clearLoading();   // 前の待ち（別のタブへ替えた・古い線）はここで下ろす
@@ -339,7 +367,7 @@ export function createBrowserUnify(deps = {}) {
     if (tab.local && tab.mode !== 'chrome') {
       chrome()?.cancelTabPin?.();
       const entry = frames.get(tab.targetId);
-      if (entry?.loaded !== true) beginLoad({ targetId:tab.targetId, local:true });
+      if (!settled(entry)) beginLoad({ targetId:tab.targetId, local:true });
       paint(); return;
     }
     try {
@@ -518,7 +546,11 @@ export function createBrowserUnify(deps = {}) {
     if (loadTicket?.sessionId && loadTicket.sessionId !== shown) clearLoading();   // 別の会話へ映し替えたら、前の待ちは下ろす
     const running = shown ? windowsTbl?.operating?.(shown) === true : false;
     // タブのチップのエージェントの印（弧。エージェントの今のタブは映像の状態が持つ）
-    const items = tabs().map(row => row.local || live?.agentTabId == null ? row : { ...row, agent: row.targetId === live.agentTabId, agentRunning: running, agentName: deps.agentName?.(shown) });
+    const busy = busyTarget();
+    const items = tabs().map(row => {
+      const item = row.local || live?.agentTabId == null ? row : { ...row, agent: row.targetId === live.agentTabId, agentRunning: running, agentName: deps.agentName?.(shown) };
+      return busy != null && row.targetId === busy ? { ...item, loading:true } : item;
+    });
     strip.update(items, tab?.targetId); address.show(tab, items.length); paintControl(); paintLocal(); paintSwitch(); paintOverview(); deps.onTabsChange?.();
   }
   const pageHost = document.createElement('div'); pageHost.className = 'bu-page-host';
@@ -545,30 +577,55 @@ export function createBrowserUnify(deps = {}) {
     updateNotice.textContent = update.hidden ? '' : t('tabs:display.updated');
     for (const [id, entry] of frames) entry.frame.hidden = id !== tab?.targetId || tab?.mode === 'chrome';
     if (!tab?.local) { local = null; chrome()?.mountPage?.(null); return; }
-    let entry = frames.get(tab.targetId);
+    let entry = frames.get(tab.targetId), began = false;   // began: この描き直しで読み直しを始めた（始めた待ちを下で下ろさない）
     if (!entry) {
       const frame = document.createElement('iframe'); frame.className = 'bu-local-page'; frame.title = tabLabel(tab);
       frame.setAttribute('referrerpolicy', 'no-referrer'); frame.src = tab.url;
-      entry = { frame, sessionId, targetId:tab.targetId, url:tab.url, reload:tab.reload, tab, loaded:false };
+      entry = { frame, sessionId, targetId:tab.targetId, url:tab.url, reload:tab.reload, tab, loaded:false, ready:false, done:false, shown:false, failed:false };
       frames.set(tab.targetId, entry); pageHost.append(frame);
+      if (!(loadTicket?.local && loadTicket.targetId === tab.targetId)) beginLoad({ targetId:tab.targetId, local:true });
       frame.addEventListener('load', () => {
-        entry.loaded = true; followLocal(entry);
-        if (loadTicket?.local && loadTicket.targetId === entry.targetId) clearLoading();
+        entry.loaded = true; entry.rereading = false; followLocal(entry);
+        if (entry.failed && isolated(entry)) { entry.failed = false; if (entry === local) paintPlane(entry); }   // 打ち切りの後に遅れて届いた
+        // 端末内のページ（ファイル・フォルダー・変更・プラグイン・新しいタブ）は、中身を描き終えたと知らせるまで待つ。隔離の HTML・可視化は文書が届いたとき
+        if (isolated(entry) && loadTicket?.local && loadTicket.targetId === entry.targetId) clearLoading();
       });
     } else if ((!tab.pending && entry.url !== tab.url) || entry.reload !== tab.reload) {
       const same = entry.url === tab.url;
-      entry.url = tab.url; entry.reload = tab.reload;
+      entry.url = tab.url; entry.reload = tab.reload; entry.failed = false; began = true;
       // 同じ文書のままの読み直しは中の文書に頼む（src の張り直しは # だけの違いを読み直さない・場所を保てない。指摘 2）。
       // 橋の無い出し方（?view=source の text/plain）は枠を直接読み直す
       const bridged = (() => { try { return new URL(entry.url).searchParams.get('view') !== 'source'; } catch { return false; } })();
-      if (same && bridged && ['html', 'viz'].includes(tab.page?.kind)) pageCommand(entry, { type:'reload' });
-      else { entry.loaded = false; entry.frame.src = tab.url; beginLoad({ targetId:tab.targetId, local:true }); }
+      if (same && bridged && isolated(entry)) { entry.rereading = true; pageCommand(entry, { type:'reload' }); beginLoad({ targetId:tab.targetId, local:true }); }
+      // 端末内のページは枠を空にせず、中の文書が前の中身のまま読み直す（ページを描き終えるまでは次の描き直しで届く。ADR 0320）
+      else if (same && bridged) {
+        beginLoad({ targetId:tab.targetId, local:true });
+        if (entry.ready) { entry.done = false; pageCommand(entry, { type:'reread' }); } else entry.rereadWanted = true;   // 描き終えの知らせが来るまで待ち続ける（途中の描き直しで線を下ろさない）
+      }
+      else { entry.loaded = false; entry.ready = false; entry.done = false; entry.shown = false; entry.frame.src = tab.url; beginLoad({ targetId:tab.targetId, local:true }); }
     }
-    if (loadTicket?.local && loadTicket.targetId === tab.targetId && entry.loaded === true) clearLoading();
+    if (!began && loadTicket?.local && loadTicket.targetId === tab.targetId && settled(entry)) clearLoading();
     entry.frame.title = tabLabel(tab);
     entry.frame.hidden = tab.mode === 'chrome';
     if (tab.mode === 'chrome') { local = null; chrome()?.mountPage?.(null); }
     else { local = entry; chrome()?.mountPage?.(pageHost); }
+    paintPlane(entry);
+  }
+  /** 隔離の origin のページ（HTML・可視化）。中に Pleiad のページアプリが無く、描き終えの知らせは来ない */
+  const isolated = entry => ['html', 'viz'].includes(entry.tab.page?.kind);
+  /** 待ちが終わっているか（隔離のページは文書が届いたとき、Pleiad のページは描き終え・失敗の知らせが来たとき） */
+  const settled = entry => !!entry && (isolated(entry) ? entry.loaded === true && entry.rereading !== true : entry.done === true);
+  /** 最初の読み込みの間の面（隔離のページは中を描けないので、枠の上へ 1 枚。読み直しは前の中身を残す）と、失敗の文 */
+  const planeSk = document.createElement('div'); planeSk.className = 'bu-page-sk'; planeSk.hidden = true; planeSk.setAttribute('aria-hidden', 'true');
+  const planeLine = document.createElement('span'); planeLine.className = 'history-line'; planeSk.append(planeLine);
+  const planeFailed = document.createElement('p'); planeFailed.className = 'bu-page-failed'; planeFailed.hidden = true; planeFailed.setAttribute('role', 'alert');
+  pageHost.append(planeSk, planeFailed);
+  function paintPlane(entry) {
+    const waiting = loadShown && loadTicket?.local && loadTicket.targetId === entry.targetId;
+    pageHost.setAttribute('aria-busy', waiting ? 'true' : 'false');
+    planeSk.hidden = !(waiting && isolated(entry) && entry.loaded !== true);
+    planeFailed.hidden = entry.failed !== true || entry.tab.mode === 'chrome';
+    if (!planeFailed.hidden && !planeFailed.textContent) planeFailed.textContent = t('pages:errors.read-failed');
   }
   let pageEnv = null;
   function followLocal(entry) {
@@ -628,6 +685,18 @@ export function createBrowserUnify(deps = {}) {
   async function localRequest(event) {
     const entry = [...frames.values()].find(item => event.source === item.frame.contentWindow);
     if (!entry || event.origin !== new URL(entry.url).origin) return;
+    if (event.data?.type === 'pleiad:page-state' && event.origin === location.origin) {
+      // 端末内のページが描き始め・描き終え・失敗を知らせる（読み込み線と骨組みの出し入れ。ADR 0320）
+      const state = event.data.state;
+      if (state === 'loading') { entry.ready = false; entry.done = false; if (entry === local && !(loadTicket?.local && loadTicket.targetId === entry.targetId)) beginLoad({ targetId:entry.targetId, local:true }); }
+      else if (state === 'ready' || state === 'failed') {
+        entry.ready = state === 'ready'; entry.done = true; entry.failed = false; entry.loaded = true; if (entry.ready) entry.shown = true;
+        if (loadTicket?.local && loadTicket.targetId === entry.targetId) clearLoading();
+        if (entry.ready && entry.rereadWanted) { entry.rereadWanted = false; entry.done = false; pageCommand(entry, { type:'reread' }); beginLoad({ targetId:entry.targetId, local:true }); }
+        if (entry === local) paintPlane(entry);
+      }
+      return;
+    }
     if (event.data?.type === 'pleiad:page-activity') { pages.activity(entry.tab, event.data.input === true); explorer?.dismiss(); return; }
     if (event.data?.type === 'ply-preview-location' && typeof event.data.href === 'string') {
       // ページの中の移動の報告（LINK_BRIDGE）。アドレス・履歴・見張りを出している文書に追い直す（P3）
@@ -699,6 +768,8 @@ export function createBrowserUnify(deps = {}) {
   }
   return {
     root, tabs:strip, address, navigate,
+    /** 読み込み線の遅延・失敗のタイマーを止める（試験が後片付けのあとにタイマーが走らないように） */
+    dispose() { clearTimeout(loadShowTimer); clearTimeout(loadCutTimer); loadTicket = null; },
     /** その会話のタブ（web/file-preview.mjs の configureBrowserUnify。同じファイルのタブを使い回す） */
     tabsOf:allTabs,
     /** 使い回したタブへ今回の可視化の記録を付ける（web/page-tabs.mjs の markViz） */
@@ -723,6 +794,8 @@ export function createBrowserUnify(deps = {}) {
     async focusTab(tab, sessionId) {
       if (sessionId !== session()) return;
       await pick(tab); chrome()?.open?.();
+      // 会話のリンクで開いているファイルをもう一度開いたときも、アドレスバーと同じに読み直す（入力のあるタブだけ「更新を表示」。ADR 0320）
+      if (tab?.local && tab.page && tab.page.kind !== 'viz') { pages.refresh(tab); refreshNewTabs(sessionId); }
     },
     /**
      * 欄の入口（地球ボタン・スマホの [N]。inapp-browser.md「入口を押したとき」）。
@@ -770,6 +843,10 @@ export function createBrowserUnify(deps = {}) {
       const needTab = () => chrome()?.isOpen?.() === true && !allTabs(id).length && !windowsTbl?.has?.(id);
       // watchSession の返事を待ってからもう一度確かめる（先に tab:info の棚が届くことがある）
       if (needTab()) void cmd('watchSession', { sessionId:id }).catch(() => {}).then(() => { if (needTab()) return openInput(null, id).catch(() => {}); });
+      // 別の会話を見ている間・つなぎが切れている間に変わったファイルは、戻って見たときに追いつく（入力のあるタブは「更新を表示」）
+      if (pages.list(id).some(tab => tab.local && ['file', 'dir', 'html', 'attachment'].includes(tab.page?.kind))) {
+        void cmd('watchSession', { sessionId:id }).catch(() => {}).then(() => pages.catchUp(id));
+      }
       paint();
     },
     /** 会話の一覧（上の列の題・子の窓）が変わった。描き直す */

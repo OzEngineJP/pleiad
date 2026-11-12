@@ -167,6 +167,7 @@ export default async function (t) {
         t.ok(`${variant}: ターンはそのまま終わる（エージェントは続けられる）`, true);
         await turn;
       } finally {
+        ui?.dispose?.();
         ui = null;
         restoreEnv();
       }
