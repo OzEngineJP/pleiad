@@ -32,7 +32,8 @@ import { waitsForNextTurn, injectTaskInstructions } from "./task-instructions.mj
 /**
  * 役ごとの設定。主は今の動きのまま（読むのは child の仕事だけ。主の行は client.mjs の既存の経路が描く）。
  * child は、作業のダイアログの子の会話（client.mjs の readonlyThread・refreshDetail が今描いているもの）と同じ見え方の設定:
- *   branches   分岐の筋（枝の最小化・分岐の先）を出すか。子の会話は 1 本道
+ *   branches   分岐の筋（枝の最小化・分岐の先）を出すか。子の会話は 1 本道（左の縦の線は 1 本道でも引く。layoutBranchSpine は枝の行が無ければ真っすぐな 1 本を引く）
+ *   ownSpine   筋の置き直しを実例が自分で見張る（主は client.mjs が #thread を見張るので false。子は自分の thread の高さが変わったら置き直す）
  *   readonly   履歴の行を historyRow の readonly で描く（Markdown にしない・uuid を持たない・システム側の行の操作を外す・
  *              返答の発言者をモデル名で出す・委譲カードと道具のカードの登録をしない）
  *   menu       発言のメニューの絞り（message-actions.mjs の CHILD_MENU。分岐・編集は出さない）
@@ -45,11 +46,11 @@ import { waitsForNextTurn, injectTaskInstructions } from "./task-instructions.mj
  */
 const ROLES = {
   main: {
-    branches: true, readonly: false, menu: null, edit: true, resend: true, gitBadge: true,
+    branches: true, ownSpine: false, readonly: false, menu: null, edit: true, resend: true, gitBadge: true,
     skipPresent: [], nameTags: false, instructions: false, liveActivity: false, yieldToReader: false,
   },
   child: {
-    branches: false, readonly: true, menu: CHILD_MENU, edit: false, resend: false, gitBadge: false,
+    branches: false, ownSpine: true, readonly: true, menu: CHILD_MENU, edit: false, resend: false, gitBadge: false,
     skipPresent: ["git", "worktree"], nameTags: true, instructions: true, liveActivity: true, yieldToReader: true,
   },
 };
@@ -111,8 +112,15 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     requestAnimationFrame(tick);
   }
 
-  /** 分岐の筋の置き直し。分岐を持たない役（子）は何もしない */
-  function relayoutBranches() { if (!replaying && config.branches) layoutBranchSpine(thread); }
+  /** 筋（左の縦の線）の置き直し。分岐を持たない役（子）も、枝の行が無い 1 本の線を引く（主と同じ線） */
+  function relayoutBranches() { if (!replaying) layoutBranchSpine(thread); }
+  // 子の thread は client.mjs の見張りの外。高さが変わったら（画像・折り畳み・返答が伸びる）同じフレームの変化をまとめて置き直す
+  let spineFrame = null;
+  const spineWatch = config.ownSpine && typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+    if (spineFrame !== null) return;
+    spineFrame = requestAnimationFrame(() => { spineFrame = null; relayoutBranches(); });
+  }) : null;
+  spineWatch?.observe(thread);
 
   /**
    * 発言の入れ物。左の溝（gutter）に筋の節、右に中身。枝の最小化・最大化はこの高さと位置を動かす。
@@ -807,6 +815,9 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
 
   /** 実例を閉じる: 取り置き・描く仕事・タイマーを止める。行は残す（呼ぶ側が本文ごと捨てる）。閉じた実例は使わない */
   function dispose() {
+    spineWatch?.disconnect();
+    if (spineFrame !== null) cancelAnimationFrame(spineFrame);
+    spineFrame = null;
     loads.cancel();
     settling?.abort();
     historyPane.dispose();

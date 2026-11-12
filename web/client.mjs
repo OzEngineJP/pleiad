@@ -6622,9 +6622,7 @@ async function openLiveChild(owner) {
   const id = item.childId;
   disposeModalChild();
   const th = el('div', 'thread bg-thread');
-  const spineEl = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
-  spineEl.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
-  th.append(spineEl);
+  th.append(svgEl('svg', { class: 'spine', 'aria-hidden': 'true' }));   // 線は layoutBranchSpine が引く（主と同じ筋）
   const loading = el('div', 'work-head', t('dialog.work.loading'));
   body.replaceChildren(th, loading);
   modalToc.reset();
@@ -6710,7 +6708,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   // 指示の行はツール呼び出しのまとまりを作る前に差し込む（まとまりの途中の受付位置にも置けるように）
   messages = mergeToolTurns(injectTaskInstructions(instructions, messages));
   const th = el('div', 'thread bg-thread');
-  const spine = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
+  const spine = svgEl('svg', { class: 'spine spine-static', 'aria-hidden': 'true' });
   spine.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
   th.append(spine);
   // ホストの子の長い会話は末尾だけ運ぶ。省いた分は先頭に 1 行（デスクトップ版は「ホストで開く」で全文へ）
