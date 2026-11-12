@@ -69,6 +69,8 @@ try {
   await waitUntil(() => page.evaluate(() => document.getElementById('workBody').textContent.includes('閉後')), 'the second child streams in the modal', 30_000);
   await page.evaluate(() => { window.__closedThread = document.querySelector('#workBody .bg-thread'); });
   await closeChildModal(rig);
+  // 閉じる後始末（実例の dispose。dialog の close イベントの中）が終わってから採る。終わる前に採ると、後始末で消える稼働表示の行まで含んでしまう
+  await waitUntil(() => page.evaluate(() => !document.getElementById('workBody').dataset.paneKind), 'the modal cleanup has run', 5_000, 50);
   const closedSig = () => page.evaluate(() => { const th = window.__closedThread; return th ? th.querySelectorAll('.mw').length + '|' + th.textContent.length : null; });
   const sigAtClose = await closedSig();
   assert.ok(sigAtClose, 'the closed thread node is still referenced');
