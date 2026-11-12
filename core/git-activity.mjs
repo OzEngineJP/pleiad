@@ -160,6 +160,20 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     });
   }
 
+  /**
+   * 新しいタブの「変更 N ファイル」の N だけを軽く数える。変更のページと同じ定義（HEAD と今の作業ツリーの差のファイル数。
+   * 未追跡を含み、.gitignore は守る）で、撮影 → 名前だけの差の 2 手で済む（行数・ステージの内訳・2 回目の差を読まない）。
+   * 撮影は一時 index の上なので、変更のページの問い合わせ（会話ごとの直列）を待たせず、待たされもしない。git 管理外・失敗は null
+   */
+  async function changeCount(cwd) {
+    const info = await git.repoInfo(cwd);
+    if (!info) return null;
+    const head = (await git.headCommit(info.root)) ?? EMPTY_TREE;
+    const tree = await git.snapshotTree(info.root);
+    if (!tree) return null;
+    return git.countDiffFiles(info.root, head, tree);
+  }
+
   /** 差分の比べる元と先（tree-ish）。commit・from/to は hash だけ。ステージ済みは HEAD と index、変更は index と作業ツリー */
   async function diffSource(root, sessionId, range, { stage, commit, from, to } = {}) {
     if (history.isHash(commit)) {
@@ -302,5 +316,5 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     return info ? git.forgetSession(info.root, sessionId) : 0;
   }
 
-  return { status, invalidate, begin, attach, finish, changes, diff, commits, commit, sessionStart, summary, forget, ranges: SESSION_RANGES };
+  return { status, invalidate, begin, attach, finish, changes, changeCount, diff, commits, commit, sessionStart, summary, forget, ranges: SESSION_RANGES };
 }

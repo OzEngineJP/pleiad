@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { classifyAddressInput, resolveAddressInput } from './address-input.mjs';
 import { inspectFile, listTreeFolder } from './file-preview.mjs';
@@ -10,6 +11,8 @@ import { readSearchProvider, searchUrl } from './chrome/search-provider.mjs';
 // pageEnv: 画面のテーマの変化をファイルのページへ知らせる（言語はサーバーの既定なので savePref が知らせる）
 // pageOpen: ページ・HTML・可視化の開く先をサーバーが決める（ADR 0295 の 7。画面は port や URL を組み立てない）
 export const BROWSER_UNIFY_COMMANDS = new Set(['vizOnce', 'chromeAddress', 'pageResult', 'pageEnv', 'pageOpen', 'pageResolve', 'pageWatch']);
+/** ファイルの版の印（更新時刻:大きさ）。開いた時点と変化の知らせで同じ形にして、画面が見比べる（ADR 0321） */
+const stampOfStat = stat => `${Math.round(stat.mtimeMs)}:${stat.size}`;
 export const isBrowserUnifyCommand = command => BROWSER_UNIFY_COMMANDS.has(command);
 
 /** Only authenticated connections explicitly watching this conversation receive tab data. */
@@ -66,6 +69,8 @@ export function createBrowserUnifyWs(deps = {}) {
     return matches.length === 1 ? matches[0] : null;
   };
   const PAGE_KINDS = new Set(['file', 'dir', 'git', 'plugins', 'new', 'attachment']);
+  /** 開いた時点のファイルの版（更新時刻:大きさ）。画面が見ていない間の変更を、戻ったときに見分ける（ADR 0321）。読めなければ undefined */
+  const stampOf = async file => { try { return stampOfStat(await fs.stat(file)); } catch { return undefined; } };
   /**
    * 「開く先」を決める（pageOpen）。返り値:
    *   - ページ:   { kind, path?, suffix, url }。url はファイルのページの port の URL、suffix は Chrome の無い画面が
@@ -98,13 +103,13 @@ export function createBrowserUnifyWs(deps = {}) {
         if (!key || !deps.secret) fail('UNAVAILABLE');
         deps.pageWatch?.add(sessionId, checked.file, 'file', owner);
         const suffix = title ? `?title=${encodeURIComponent(title)}` : '';
-        return { kind: 'html', path: checked.file, key, cwd: cwd ?? undefined,
+        return { kind: 'html', path: checked.file, key, cwd: cwd ?? undefined, stamp: await stampOf(checked.file),
           url: `http://${fileMark(deps.secret, path.dirname(checked.file))}.localhost:${ports.isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(checked.file))}${suffix}` };
       }
       if (file) deps.pageWatch?.add(sessionId, file, page === 'dir' ? 'dir' : 'file', owner);
       const url = new URL(pageUrl(sessionId, page, file, owner));
       if (/^\d{1,9}$/.test(String(input?.line ?? ''))) url.searchParams.set('line', String(input.line));
-      return { kind: page, path: file ?? undefined, cwd: cwd ?? undefined, suffix: `${url.pathname}${url.search}`, url: url.href };
+      return { kind: page, path: file ?? undefined, cwd: cwd ?? undefined, stamp: file ? await stampOf(file) : undefined, suffix: `${url.pathname}${url.search}`, url: url.href };
     }
     if (kind === 'viz') {
       const hash = typeof input?.hash === 'string' ? input.hash.toLowerCase() : '';
@@ -229,7 +234,8 @@ export function createBrowserUnifyWs(deps = {}) {
     /** 追っていたファイルが変わった（core/page-watch.mjs の emit から）。その会話を見ている画面と、そのファイルを出しているタブへだけ */
     pageChanged(sessionId, filePath) {
       if (typeof sessionId !== 'string' || !sessionId || typeof filePath !== 'string' || !filePath) return;
-      for (const client of deps.clients?.() ?? []) if (allowed(client, sessionId)) send(client, { type: 'page:changed', sessionId, path: filePath });
+      let stamp; try { stamp = stampOfStat(statSync(filePath)); } catch { /* 消えた: 版は付けない（画面は読み直しで「無い」を知る） */ }
+      for (const client of deps.clients?.() ?? []) if (allowed(client, sessionId)) send(client, { type: 'page:changed', sessionId, path: filePath, ...(stamp ? { stamp } : {}) });
       const norm = value => String(value ?? '').replaceAll('\\', '/');
       const target = process.platform === 'win32' ? norm(filePath).toLowerCase() : norm(filePath);
       const same = value => (process.platform === 'win32' ? norm(value).toLowerCase() : norm(value)) === target;
