@@ -35,8 +35,8 @@ const FADE_MS = 240;
 const HOLD_MS = 1000;
 /** タブを替えてから、最初の絵が届かないまま骨組みを出すまで */
 const SKELETON_DELAY_MS = 150;
-/** 骨組みを出し続ける上限（絵が届かなかったときに残さない） */
-const SKELETON_MAX_MS = 12000;
+/** 骨組みを出し続ける上限（絵が届かなかったときに残さない）。右の欄の読み込み線の打ち切りと同じ 60 秒（ADR 0320 の 3） */
+const SKELETON_MAX_MS = 60000;
 
 /** 会話の Chrome の窓の知らせ（サーバーの chromeWindow イベント）を会話ごとに覚える。入口の表示と弧が読む */
 export function createWindowTable() {
@@ -437,13 +437,15 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
     cancelTabPin() { pendingTab = null; pinRequest = null; pinGeneration++; endFrameWait(); },
     /**
      * 映すタブを替えた（タブの列・「画面を開く」）。そのタブの最初の絵が届くまで、待ちが 150ms を超えたら骨組みを出す。
-     * 映しているタブをもう一度選んだ（絵は来ない）ときは待たない。follow: AI のタブを追っている（AI が移れば待つタブも移る）
+     * 映しているタブをもう一度選んだ（絵は来ない）ときは待たない。follow: AI のタブを追っている（AI が移れば待つタブも移る）。
+     * 返り値: そのタブの絵をもう映していて、新しい絵が来ないときだけ false（右の欄の読み込み線も出さない。サーバーは同じタブへ付け直さない）
      */
     expectFrame({ tabId = null, follow = false } = {}) {
       endFrameWait();
-      if (!isOpen() || !sessionId || pagePaused || (tabId != null && tabId === state?.tabId)) { paint(); return; }
+      const showing = isOpen() && !!sessionId && !pagePaused && tabId != null && tabId === state?.tabId && !!parts?.sink.frame;
+      if (!isOpen() || !sessionId || pagePaused || (tabId != null && tabId === state?.tabId)) { paint(); return !showing; }
       frameWait = { sessionId, tabId, follow, timer: setTimeout(() => { frameWait = null; paint(); }, SKELETON_MAX_MS) };
-      paint();
+      paint(); return true;
     },
     /** 待ちをやめる（固定に失敗した） */
     cancelFrameWait() { endFrameWait(); paint(); },

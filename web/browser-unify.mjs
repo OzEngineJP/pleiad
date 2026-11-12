@@ -408,8 +408,8 @@ export function createBrowserUnify(deps = {}) {
       // AI が操作中のタブを選ぶ = エージェントを追う（固定を解く。専用の追うボタンは無い）
       const follow = target != null && target === chrome()?.screencastState?.agentTabId;
       const pin = follow ? { windowId:null, tabId:null } : { windowId:tab.windowId ?? null, tabId:target };
-      beginLoad({ targetId:tab.targetId, chrome:target, follow });
-      chrome()?.expectFrame?.({ tabId:target, follow });   // 最初の絵が届くまでの骨組み（150ms を超えたら。ADR 0321）
+      // 最初の絵が届くまでの骨組み（150ms を超えたら。ADR 0321）。もう映しているタブで絵が来ないときは、線も出さない（60 秒残さない）
+      if (chrome()?.expectFrame?.({ tabId:target, follow }) !== false) beginLoad({ targetId:tab.targetId, chrome:target, follow });
       const pending = chrome()?.pinTab ? chrome().pinTab(selection.sessionId, pin) : cmd('chromePinWindow', { sessionId:selection.sessionId, ...pin });
       paint(); await pending;
     } catch (error) { if (active === selection) { clearLoading(); chrome()?.cancelFrameWait?.(); } pinFailed(error); }

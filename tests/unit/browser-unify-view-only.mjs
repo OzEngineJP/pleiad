@@ -35,6 +35,7 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 export default async function (t) {
   const hadDocument = 'document' in globalThis, oldDocument = globalThis.document;
   const restoreEnv = browserEnv();
+  let ui = null;
   try {
     const commands = []; let refuse = false;
     const cmd = async (name, args = {}) => {
@@ -48,7 +49,7 @@ export default async function (t) {
       isOpen: () => true, open() {}, close() {}, mountBrowserChrome(root) { this.mounted = root; }, onOpenChange() {}, onTargetChange() {}, onTabChange() {},
       useInput(options) { this.input = options; }, refreshInput() {}, focusScreen() {}, measure: async () => null };
     const holderStore = createTabHolderStore();
-    const ui = createBrowserUnify({ state: { current: 's', cwd: '' }, chrome: () => fixture, controlStore: createChromeControlStore(), holderStore, notify: () => {}, showMenu: () => {}, cmd });
+    ui = createBrowserUnify({ state: { current: 's', cwd: '' }, chrome: () => fixture, controlStore: createChromeControlStore(), holderStore, notify: () => {}, showMenu: () => {}, cmd });
     ui.capsChanged({ browserUnify: true });
     ui.onEvent({ type: 'tab:info', sessionId: 's', reset: true, tabs: [{ sessionId: 's', targetId: 'A', url: 'https://ai.example/', title: 'AI のページ', canGoBack: true, canGoForward: true }] });
     await settle();
@@ -130,6 +131,7 @@ export default async function (t) {
       t.ok('引き継いだ後のアドレスバーは、そのタブを移す', sent(mark).length === 1 && sent(mark)[0][1].action === 'navigate' && sent(mark)[0][1].targetId === 'B', JSON.stringify(sent(mark)));
     }
   } finally {
+    ui?.dispose?.();   // 読み込み線の遅延・打ち切りのタイマー（PC でも立つ。ADR 0320）を、同じ worker の次の suite へ残さない
     restoreEnv();
     if (!hadDocument) delete globalThis.document; else globalThis.document = oldDocument;
   }
