@@ -83,7 +83,7 @@ export default async function (t) {
     t.ok('中断で片付いた複製に、遅れて押しても ALREADY_RESOLVED', lateAbort?.code === 'ALREADY_RESOLVED');
   } finally { other.close(); c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
-  // ---- 画面の配線（動きは tests/browser/permission-settled.cjs で確かめる）
+  // ---- 画面の配線（動きは tests/browser/work-dialog-keep-open.mjs（子のモーダル）と tests/browser/main-thread-nav.mjs・thread-deck.cjs（主）で確かめる）
   const client = read('web/client.mjs');
   const onEvent = client.slice(client.indexOf('function onEvent('));
   t.ok('画面: permissionSettled は会話の絞り込み（isMine）の前に受ける（開いていない会話の覚えと、子の会話のダイアログのカードを畳むため）',
