@@ -83,3 +83,15 @@ iframe は同じ origin の親から対応する message を送る。
 親はこれで、アドレスバーの下の読み込み線とタブの印を出し入れする。
 親は 150ms を超えて待ったときだけ線と印を出し、60 秒待っても `ready` が来なければ失敗として扱う（[ADR 0320](../../docs/adr/0320-browser-file-reread-and-loading-display.md)）。
 `reread` は前の中身を残したまま読み直し、描き終えたところで差し替える。
+
+## 隔離のページ（HTML・可視化）の読み直しと位置
+
+隔離の origin のページは Pleiad のページアプリを持たず、サーバーが差す橋（`core/isolated-routes.mjs` の `withHead` → `web/visualize-document.mjs` の LINK_BRIDGE）と親が message でやり取りする。
+読み直しでスクロール位置を保つため、次の 2 つが加わる（[ADR 0295](../../docs/adr/0295-pleiad-page-origins.md) の橋の規則のまま。宛先は origin を指定し、受け手は送り元の窓と出どころを確かめる）。
+
+| 向き | message | 意味 |
+| --- | --- | --- |
+| 親 → ページ | `{type:'pleiad:page-command',command:{type:'scroll-restore',x,y}}` | 読み込み直した文書で位置へ戻す。親は読み直しの間に預かった位置だけを送る。橋は見えるまで待ち、見えてから 3 秒ほど高さを追い、利用者が触れたらやめる |
+| ページ → 親 | `{type:'pleiad:page-scroll',x,y}` | `reload` の命令を受けたとき、読み直す直前の位置を命令の送り元の出どころへ返す。枠が見えない間は、見えていたときの最後の位置を返す。親は読み直しの間だけ受ける |
+
+位置はページの window 変数や localStorage には置かない（ユーザーの HTML のスクリプトから見えないよう、親の枠の持ち物として預かる）。

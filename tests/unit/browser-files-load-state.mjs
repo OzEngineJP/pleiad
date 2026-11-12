@@ -234,6 +234,78 @@ export default async function (t) {
       t.ok('HTML・可視化の読み直しの間も、線を出して前の中身を残す', true);
     }
 
+    // ---- 7b. HTML・可視化の読み直しは、読み直す前の位置（縦・横）を橋から預かり、読み込み直した文書へ戻すよう頼む ----
+    {
+      const r = await rig();
+      const tab = await r.ui.openTab({ sessionId: 's1', kind: 'html', path: '/w/long.html' });
+      const frame = r.frameOf(tab);
+      frame.dispatchEvent({ type: 'load' });
+      const restores = () => frame.posted.filter(item => item.message?.command?.type === 'scroll-restore');
+      // 読み直しの外で届いた位置は預からない（読み直しのときだけ戻す）
+      r.say(frame, { type: 'pleiad:page-scroll', x: 5, y: 5 }, ISOLATED);
+      r.ui.onEvent({ type: 'page:changed', sessionId: 's1', path: '/w/long.html', stamp: '4:4' });
+      frame.dispatchEvent({ type: 'load' });
+      assert.equal(restores().length, 0, '読み直しの外で届いた位置は戻さない');
+      // 読み直し: reload を頼み → 位置が届き → 読み込み直したら戻すよう頼む（隔離の出どころ宛て・値は数だけ）
+      r.ui.onEvent({ type: 'page:changed', sessionId: 's1', path: '/w/long.html', stamp: '5:5' });
+      await until(() => frame.posted.filter(item => item.message?.command?.type === 'reload').length >= 2, 1000, 'reload を頼む');
+      r.say(frame, { type: 'pleiad:page-scroll', x: 120, y: 900 }, ORIGIN);
+      r.say({ contentWindow: {} }, { type: 'pleiad:page-scroll', x: 1, y: 1 }, ISOLATED);
+      r.say(frame, { type: 'pleiad:page-scroll', x: 'a', y: 900 }, ISOLATED);
+      assert.equal(restores().length, 0, '読み込み直す前に戻すとは頼まない');
+      frame.dispatchEvent({ type: 'load' });
+      assert.equal(restores().length, 0, '本体の出どころ・知らない窓・数でない値の位置は預からない');
+      r.ui.onEvent({ type: 'page:changed', sessionId: 's1', path: '/w/long.html', stamp: '6:6' });
+      await until(() => frame.posted.filter(item => item.message?.command?.type === 'reload').length >= 3, 1000, '2 回目の reload');
+      r.say(frame, { type: 'pleiad:page-scroll', x: 120, y: 900 }, ISOLATED);
+      assert.equal(restores().length, 0, '読み込み直すまでは戻さない');
+      frame.dispatchEvent({ type: 'load' });
+      assert.equal(restores().length, 1, '読み込み直したら戻すよう 1 回頼む');
+      assert.deepEqual(restores()[0].message.command, { type: 'scroll-restore', x: 120, y: 900 }, '預かった縦・横の位置');
+      assert.equal(restores()[0].origin, ISOLATED, '宛先は隔離の出どころ');
+      frame.dispatchEvent({ type: 'load' });
+      assert.equal(restores().length, 1, '位置は使い切り（次の読み込みで古い位置を戻さない）');
+      // 手動の ⟳ も同じ道（pages.reload）
+      const before = frame.posted.filter(item => item.message?.command?.type === 'reload').length;
+      await r.ui.navigate('reload', { targetId: tab.targetId });
+      await until(() => frame.posted.filter(item => item.message?.command?.type === 'reload').length > before, 1000, '⟳ で reload');
+      r.say(frame, { type: 'pleiad:page-scroll', x: 0, y: 300 }, ISOLATED);
+      frame.dispatchEvent({ type: 'load' });
+      assert.deepEqual(restores().at(-1).message.command, { type: 'scroll-restore', x: 0, y: 300 }, '⟳ の読み直しでも位置を戻す');
+      t.ok('HTML・可視化の読み直し（自動・⟳・更新を表示）: 読み直す前の位置を預かり、読み込み直したあと 1 回だけ戻すよう頼む（隔離の出どころ宛て・外の出どころ/窓/値は預からない）', true);
+    }
+    {
+      // 別のファイルへ替えたタブは戻さない（上から始める）
+      const r = await rig();
+      const tab = await r.ui.openTab({ sessionId: 's1', kind: 'html', path: '/w/one.html' });
+      const frame = r.frameOf(tab);
+      frame.dispatchEvent({ type: 'load' });
+      r.ui.onEvent({ type: 'page:changed', sessionId: 's1', path: '/w/one.html', stamp: '7:7' });
+      await until(() => frame.posted.some(item => item.message?.command?.type === 'reload'), 1000, 'reload');
+      r.say(frame, { type: 'pleiad:page-scroll', x: 10, y: 700 }, ISOLATED);
+      await r.ui.navigate('navigate', { targetId: tab.targetId, input: '/w/two.html' });
+      frame.dispatchEvent({ type: 'load' });
+      assert.equal(frame.posted.filter(item => item.message?.command?.type === 'scroll-restore').length, 0, '別のファイルへ替えたら、前のファイルの位置は戻さない');
+      t.ok('同じタブを別のファイルへ替えたときは、前のファイルの位置を戻さない', true);
+    }
+
+    {
+      // 題（?title）だけが違う URL は同じ文書。枠を張り直さず（位置が飛ぶ）、読み直しで位置を保つ
+      const r = await rig();
+      const tab = await r.ui.openTab({ sessionId: 's1', kind: 'html', path: '/w/titled.html' });
+      const frame = r.frameOf(tab);
+      frame.dispatchEvent({ type: 'load' });
+      const src = frame.src;
+      tab.url = `${tab.url}?title=${encodeURIComponent('題')}`;
+      r.ui.onEvent({ type: 'page:changed', sessionId: 's1', path: '/w/titled.html', stamp: '8:8' });
+      await until(() => frame.posted.some(item => item.message?.command?.type === 'reload'), 1000, '題だけの違いは読み直しを頼む');
+      assert.equal(frame.src, src, '題だけの違いでは枠の src を張り直さない');
+      r.say(frame, { type: 'pleiad:page-scroll', x: 0, y: 640 }, ISOLATED);
+      frame.dispatchEvent({ type: 'load' });
+      assert.deepEqual(frame.posted.filter(item => item.message?.command?.type === 'scroll-restore').at(-1)?.message.command, { type: 'scroll-restore', x: 0, y: 640 }, '題だけが違っても位置を戻す');
+      t.ok('URL が題（?title）だけ違う読み直しは src を張り直さず、位置を戻す', true);
+    }
+
     // ---- 8. 会話のリンクで開いているファイルをもう一度開く（focusTab）は、読み直す ----
     {
       const r = await rig();

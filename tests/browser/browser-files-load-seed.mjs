@@ -19,7 +19,8 @@ w("docs/plan.md", ["# 計画書", "", ...Array.from({ length: 60 }, (_, i) => `�
 w("docs/notes.md", "# メモ\n\n- 一つ目\n- 二つ目\n");
 w("src/app.js", Array.from({ length: 80 }, (_, i) => `export const v${i} = ${i};`).join("\n"));
 w("data.csv", `a,b,c\n${Array.from({ length: 30 }, (_, i) => `${i},${i * 2},${i * 3}`).join("\n")}\n`);
-w("page.html", '<!doctype html><meta charset="utf-8"><title>p</title><h1>HTML ページ</h1><div style="height:1600px">長い</div>');
+w("page.html", '<!doctype html><meta charset="utf-8"><title>p</title><h1>HTML ページ</h1><div style="height:3000px;width:3000px">縦にも横にも長い</div>');
+w("other.html", '<!doctype html><meta charset="utf-8"><title>o</title><h1>別の HTML</h1><div style="height:3000px;width:3000px">長い</div>');
 sh(["add", "-A"]);
 sh(["commit", "-q", "-m", "init"]);
 for (let i = 0; i < 300; i++) w(`gen/f${i}.txt`, `file ${i}\n`);

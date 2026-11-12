@@ -3,6 +3,7 @@
 //   新しいタブは見出しとボタンを先に出す（件数は後・ボタンは動かない・最近は件数を待たない）・
 //   開き直すと読み直す（同じタブ 1 枚のまま問い合わせが増える）・最近のファイルが増える・
 //   150ms 未満は何も出さない・超えたら読み込み線とタブの印と骨組み（PC の幅）・届いたら消える・失敗は止まって文言・動きを減らす設定。
+// HTML のスクロール位置の確認（5b）には、書き換えの口も立てる: node tests/browser/browser-files-load-writer.mjs <リポジトリ>（port 7457）
 // 隔離した AGENT_HOST_BACKENDS=fake のサーバーを先に立てる（トークン browser-files-test、port 7452、AGENT_HOST_LOCALE=ja）。実データには向けない:
 //   node tests/browser/browser-files-load-seed.mjs <空のデータ置き場> <リポジトリを作る空のフォルダー>
 //   AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<データ置き場> AGENT_HOST_PORT=7452 AGENT_HOST_TOKEN=browser-files-test AGENT_HOST_LOCALE=ja node core/server.mjs
@@ -21,7 +22,7 @@ async (page) => {
   await page.route(/\/api\/(git|recent|preview)/, async (route) => {
     const kind = /\/api\/(\w+)/.exec(route.request().url())[1];
     if (kind === 'preview') { asked.preview++; if (delay.previewAbort) return route.abort(); }
-    if (delay[kind]) await new Promise((resolve) => setTimeout(resolve, delay[kind]));
+    if (delay[kind]) await page.waitForTimeout(delay[kind]);
     await route.continue().catch(() => {});
   });
   await page.setViewportSize({ width: 1280, height: 860 });
@@ -147,6 +148,73 @@ async (page) => {
   await shot('loading-reduced');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.waitForTimeout(1500);
+
+  // ---- 5b. HTML の読み直しはスクロール位置（縦・横）を保つ。短くなったら届くところまで・別のファイルへ替えたら上から（ADR 0320 の読み直しの後も位置が飛ばない）
+  delay.preview = 0;
+  const WRITER = 'http://127.0.0.1:7457/write';   // tests/browser/browser-files-load-writer.mjs（run-code の中では fs が使えない）
+  const rewrite = async (name, body) => { const r = await page.request.post(`${WRITER}?name=${name}`, { data: body }); if (!r.ok()) throw Error(`書き換えられない: ${name}`); };
+  const HTML = `${REPO}/page.html`, OTHER = `${REPO}/other.html`;
+  const htmlBody = (title, h, w) => `<!doctype html><meta charset="utf-8"><title>p</title><h1>${title}</h1><div style="height:${h}px;width:${w}px">長い</div>`;
+  const pos = (f) => f.evaluate(() => ({ x: Math.round(scrollX), y: Math.round(scrollY), maxY: document.documentElement.scrollHeight - innerHeight }));
+  const until = async (cond, what, ms = 8000) => { const end = Date.now() + ms; for (;;) { const v = await cond(); if (v) return v; if (Date.now() > end) throw Error(`時間切れ: ${what}`); await page.waitForTimeout(40); } };
+  await rewrite('page.html', htmlBody('HTML ページ', 3000, 3000));
+  await address(HTML);
+  const hf = await waitFrame(/page\.html/);
+  await until(async () => /HTML ページ/.test(await hf.evaluate(() => document.body.innerText).catch(() => '')), 'HTML の初回表示');
+  await hf.evaluate(() => scrollTo(700, 1200));
+  await page.waitForTimeout(300);
+  const p0 = await pos(hf);
+  check(p0.x > 0 && p0.y > 0, `HTML を縦横にスクロールした（${p0.x}, ${p0.y}）`);
+  await rewrite('page.html', htmlBody('更新後の HTML', 3000, 3000));
+  await address(HTML);
+  await until(async () => /更新後の HTML/.test(await hf.evaluate(() => document.body.innerText).catch(() => '')), '読み直した中身');
+  const p1 = await until(async () => { const v = await pos(hf).catch(() => null); return v && v.y === p0.y && v.x === p0.x ? v : null; }, `読み直しの後に位置が戻る（${p0.x}, ${p0.y}）`);
+  check(p1.x === p0.x && p1.y === p0.y, `開き直して中身が更新され、位置（縦・横）が保たれる（${p1.x}, ${p1.y}）`);
+  await shot('html-reread-kept');
+  // ⟳ ボタン
+  await hf.evaluate(() => scrollTo(300, 800));
+  await page.waitForTimeout(300);
+  await page.locator('button.bu-icon[aria-label="再読み込み"]').first().click();
+  await page.waitForTimeout(1200);
+  const p2 = await until(async () => { const v = await pos(hf).catch(() => null); return v && v.y === 800 && v.x === 300 ? v : null; }, '⟳ の後も位置が保たれる');
+  check(p2.y === 800 && p2.x === 300, `⟳ の再読み込みでも位置が保たれる（${p2.x}, ${p2.y}）`);
+  // ページが短くなった: 届くところまで
+  await hf.evaluate(() => scrollTo(0, 1200));
+  await page.waitForTimeout(300);
+  await rewrite('page.html', htmlBody('短くなった HTML', 1400, 100));
+  await address(HTML);
+  await until(async () => /短くなった HTML/.test(await hf.evaluate(() => document.body.innerText).catch(() => '')), '短くなった中身');
+  const p3 = await until(async () => { const v = await pos(hf).catch(() => null); return v && v.maxY > 0 && v.y === v.maxY ? v : null; }, '短くなったら届くところまで');
+  check(p3.y === p3.maxY && p3.y < 1200, `短くなったページでは届くところまでスクロールする（${p3.y} / 最大 ${p3.maxY}）`);
+  // 別のファイルへ替えたタブは上から
+  await hf.evaluate(() => scrollTo(0, 500));
+  await page.waitForTimeout(300);
+  await address(OTHER);
+  await until(async () => /別の HTML/.test(await hf.evaluate(() => document.body.innerText).catch(() => '')), '別の HTML');
+  await page.waitForTimeout(1500);
+  const p4 = await pos(hf);
+  check(p4.x === 0 && p4.y === 0, `別のファイルへ替えたら位置は引き継がず上から始まる（${p4.x}, ${p4.y}）`);
+  // 別の会話へ移って戻る（右の欄は閉じ、枠は見えない間に読み直される。文書は中の位置を知らない）
+  await rewrite('page.html', htmlBody('HTML ページ', 3000, 3000));
+  await address(HTML);
+  await until(async () => /HTML ページ/.test(await hf.evaluate(() => document.body.innerText).catch(() => '')), '戻る前の HTML');
+  await hf.evaluate(() => scrollTo(600, 1100));
+  await page.waitForTimeout(400);
+  const q0 = await pos(hf);
+  check(q0.x === 600 && q0.y === 1100, `会話を移る前にスクロールした（${q0.x}, ${q0.y}）`);
+  const away = await page.locator('.row[data-session]:not([data-session="bf-1"])').first().getAttribute('data-session').catch(() => null);
+  check(!!away, '移り先の別の会話がある');
+  await rewrite('page.html', htmlBody('離れている間に更新', 3000, 3000));
+  await page.locator(`.row[data-session="${away}"]`).click();
+  await page.waitForTimeout(1200);
+  await page.locator('.row[data-session="bf-1"]').click();
+  await page.waitForTimeout(800);
+  if (await page.locator('aside.file-preview').isHidden()) await page.locator('#browserEntry').click();
+  await until(async () => { const f = frameOf(/page\.html/); return f && /離れている間に更新/.test(await f.evaluate(() => document.body.innerText).catch(() => '')); }, '戻った後の更新');
+  const q1 = await until(async () => { const v = await pos(frameOf(/page\.html/)).catch(() => null); return v && v.y === 1100 && v.x === 600 ? v : null; }, '別の会話から戻っても位置が戻る');
+  check(q1.x === 600 && q1.y === 1100, `別の会話へ移って戻り、離れている間に更新されても位置（縦・横）が保たれる（${q1.x}, ${q1.y}）`);
+  await shot('html-reread-away-kept');
+  await rewrite('page.html', htmlBody('HTML ページ', 3000, 3000));
 
   // ---- 6. 失敗: 線と印が止まり、既存の文言が出る
   delay.preview = 0; delay.previewAbort = true;
