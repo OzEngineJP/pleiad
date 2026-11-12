@@ -274,20 +274,13 @@ try {
   const pinned2 = shape();
   const held = pinned.top === pinned2.top && gap1 > 40 && gap() > 40;
   console.log(`wheel-up result (${live ? 'live' : 'reread'}): top ${pinned.top} -> ${pinned2.top}, gap to the end ${gap1} -> ${gap()}, held=${held}`);
-  if (live) {
-    // live: 主と同じ追従（followBottom の rAF の繰り返し）が、流れている間は位置を末尾へ戻す。位置は主と同じ挙動で、ここでは確かめず記録だけする
-    // （ADR 0319 段 6-6 の「追従」。旧モーダルは保った）
-    if (!held) console.log('KNOWN DIFFERENCE (live): the reading position is returned to the end by followBottom while the stream continues');
-  } else {
-    assert.ok(held, `reading position kept after the wheel-up: ${JSON.stringify({ pinned, pinned2 })}`);
-  }
-  const keep = (x) => (live ? { expanded: x.expanded, detail: x.detail } : x);
+  assert.ok(held, `reading position kept after the wheel-up: ${JSON.stringify({ pinned, pinned2 })}`);
   evaluate(() => document.querySelector('#workBody .bundle .rhead').focus({ preventScroll: true }));
   for (let i = 0; i < 3; i++) {
     await reread(`stream ${i}`);
     sample.push(shape());
     const focusKept = evaluate(() => document.activeElement === document.querySelector('#workBody .bundle .rhead'));
-    assert.deepEqual(keep(sample.at(-1)), keep(pinned2), `round ${i}: still open${live ? '' : ' and at the same position'}`);
+    assert.deepEqual(sample.at(-1), pinned2, `round ${i}: still open and at the same position`);
     assert.ok(focusKept, `round ${i}: the focus stays on the bundle head`);
   }
   const reads = rereads(child.childId, streamFrom);
