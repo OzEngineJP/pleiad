@@ -6540,6 +6540,7 @@ function syncModalChildItem(item) {
   if (!item.live && was) {
     view.liveTurn.settleStrays?.();
     view.liveTurn.activity.hide();
+    view.relayoutBranches();   // 稼働表示の行が消えたので、筋の終わりを最後の節に戻す
   } else if (item.live && (!view.liveTurn.activity.el?.isConnected || (item.waiting && !view.thread.querySelector('.tc-appr') && view.liveTurn.activity.text !== t('activity.waitingApproval')))) {
     view.liveTurn.activity.show(modalChildActivityText(view, item));
   }
