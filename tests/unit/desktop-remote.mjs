@@ -281,7 +281,7 @@ export default async function (t) {
     const closeSource = source.match(/window\.on\('close', event => \{[\s\S]*?\n  \}\);/)[0];
     for (const remote of [false, true]) for (const keep of [false, true]) for (const routines of [0, 1]) {
       let close, hidden = 0, exits = 0, prevented = 0;
-      const context = vm.createContext({ quitting: false,
+      const context = vm.createContext({ quitting: false, crashRestarting: false,
         window: { on: (_, fn) => { close = fn; }, hide: () => hidden++ },
         resident: { keepOnClose: () => keepRunning({ remote, keepRunning: keep, routines }) },
         closeSafely: () => exits++,

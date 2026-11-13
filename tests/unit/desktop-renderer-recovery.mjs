@@ -38,13 +38,16 @@ function runMainForRecovery({
   autoExitOnShutdown = true,
   runningWork = 0,
   onDialog = null,
+  hangInstall = false,
+  quitFails = false,
   fakeTimers = false,
 } = {}) {
   const calls = {
-    loads: [], dialogs: [], relaunches: [], quits: 0, messages: [], leaves: [],
-    crashStarts: [], desktopLogs: [], errors: [],
+    loads: [], dialogs: [], relaunches: [], quits: 0, kills: 0, hides: 0,
+    messages: [], leaves: [], crashStarts: [], desktopLogs: [], errors: [],
     chromeGuardStopped: 0, chromeClosedAll: 0,
     scheduledTimers: [], clearedTimers: 0, prunes: 0,
+    updatesOptions: null, updatesInstance: null, residentOptions: null,
   };
   let nextTimerId = 1;
   const activeTimers = new Map();
@@ -76,7 +79,11 @@ function runMainForRecovery({
   worker.postMessage = message => {
     calls.messages.push(message);
     if (message?.type === 'running') {
-      queueMicrotask(() => worker.emit('message', { type: 'running', id: message.id, count: runningWork, scheduled: [] }));
+      // core/server.mjs の runningWork の返し方（main.cjs の runningWork は message.work を読む）
+      queueMicrotask(() => worker.emit('message', { type: 'running', id: message.id, work: { count: runningWork, scheduled: {} } }));
+    }
+    if (message?.type === 'update-lock') {
+      queueMicrotask(() => worker.emit('message', { type: 'update-lock', id: message.id, ok: true }));
     }
     if (message?.type === 'shutdown' && autoExitOnShutdown) {
       queueMicrotask(() => worker.emit('exit', 0));
@@ -89,7 +96,7 @@ function runMainForRecovery({
       queueMicrotask(() => worker.emit('exit'));
     }
   };
-  worker.kill = () => {};
+  worker.kill = () => { calls.kills++; };
 
   const app = new EventEmitter();
   Object.assign(app, {
@@ -114,18 +121,20 @@ function runMainForRecovery({
     constructor() {
       super();
       calls.window = this;
+      this._visible = true;
       this.webContents = new EventEmitter();
       this.webContents.setWindowOpenHandler = () => {};
       this.webContents.session = { setPermissionRequestHandler: () => {} };
       this.webContents.send = () => {};
     }
     isDestroyed() { return Boolean(this._destroyed); }
-    isVisible() { return true; }
+    isVisible() { return this._visible; }
     isMinimized() { return false; }
     removeMenu() {}
     setAppDetails() {}
     loadURL(url) { calls.loads.push(url); return Promise.resolve(); }
-    show() {}
+    show() { this._visible = true; this.emit('show'); }
+    hide() { calls.hides++; this._visible = false; }
     showInactive() {}
     minimize() {}
   }
@@ -155,10 +164,16 @@ function runMainForRecovery({
     powerMonitor,
     screen: new EventEmitter(),
     crashReporter: { start: opts => { calls.crashStarts.push(opts); } },
+    autoUpdater: new EventEmitter(),
   };
 
   let switchReload = null;
   const autoUpdater = new EventEmitter();
+  autoUpdater.quitAndInstall = () => {
+    if (hangInstall) return;
+    if (quitFails) throw new Error('installer did not start');
+    electron.autoUpdater.emit('before-quit-for-update');
+  };
   const wrappedRecovery = {
     ...recovery,
     pruneCrashDumps: (...args) => { calls.prunes++; return recovery.pruneCrashDumps(...args); },
@@ -170,7 +185,21 @@ function runMainForRecovery({
         return worker;
       },
     },
-    './updates.cjs': { Updates: class { constructor() { this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },
+    './updates.cjs': {
+      Updates: class {
+        constructor(options) {
+          this.enabled = false;
+          this.state = { phase: 'idle' };
+          calls.updatesOptions = options;
+          calls.updatesInstance = this;
+        }
+        on() {}
+        async init() {}
+        snapshot() { return this.state; }
+      },
+      isStoreBuild: () => false,
+      updaterEnabled: () => false,
+    },
     './msix.cjs': { packagedIdentity: () => false, stableLauncher: () => 'C:\\inst\\StorePly.exe' },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
@@ -190,7 +219,7 @@ function runMainForRecovery({
     './secret-bridge.cjs': { attachSecretBridge: () => {}, warmSecretStorage: () => true },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
     './file-bridge.cjs': { attachFileBridge: () => {} },
-    './resident.cjs': { attachResident: () => ({ keepOnClose: () => false }) },
+    './resident.cjs': { attachResident: options => { calls.residentOptions = options; return { keepOnClose: () => false }; } },
     './login-item.cjs': loginItem,
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {}, update: () => {}, find: () => null, check: () => { throw new Error('no'); }, entries: () => [] }) },
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: () => {}, handleArgv: () => false }) },
@@ -386,14 +415,21 @@ export default async function (t) {
       t.ok('合計サイズ上限も超えないよう古い方から消す', resBytes.removed === 1 && resBytes.kept === 2 && resBytes.totalBytes === 800
         && fs.readdirSync(reportsDir).sort().join(',') === 'dump-4.dmp,dump-5.dmp');
 
-      // stem が空になる ".dmp" を消すときに attachments フォルダー本体を消さない
+      // stem が空になる ".dmp" や "." / ".." になる "..dmp" / "...dmp" を消すときに attachments/ や crashDumps 本体を消さない
       const dotDmp = path.join(reportsDir, '.dmp');
-      fs.writeFileSync(dotDmp, Buffer.alloc(100));
-      const oldTs = new Date(Date.now() - 1_000_000);
-      fs.utimesSync(dotDmp, oldTs, oldTs);
+      const dotDotDmp = path.join(reportsDir, '..dmp');
+      const dotDotDotDmp = path.join(reportsDir, '...dmp');
+      for (const [offset, p] of [[1_000_000, dotDmp], [990_000, dotDotDmp], [980_000, dotDotDotDmp]]) {
+        fs.writeFileSync(p, Buffer.alloc(100));
+        const ts = new Date(Date.now() - offset);
+        fs.utimesSync(p, ts, ts);
+      }
       recovery.pruneCrashDumps(dumpsDir, { maxFiles: 2, maxBytes: 100_000 });
-      t.ok('名前なしの .dmp を消しても attachments/ 本体（残存添付）を消さない',
-        !fs.existsSync(dotDmp) && fs.existsSync(path.join(attachDir, 'dump-5', 'note.txt')));
+      t.ok('名前なし・"."・".." の .dmp を消しても attachments/ 本体や crashDumpsDir 本体を消さない',
+        !fs.existsSync(dotDmp) && !fs.existsSync(dotDotDmp) && !fs.existsSync(dotDotDotDmp)
+        && fs.existsSync(attachDir)
+        && fs.existsSync(path.join(attachDir, 'dump-5', 'note.txt'))
+        && fs.existsSync(path.join(dumpsDir, 'metadata')));
 
       // dev と配布版での分離確認
       const devApp = { isPackaged: false, name: 'agent-host', setName(n) { this.name = n; }, getName() { return this.name; }, getPath: () => path.join(dir, 'AppData', devApp.name, 'Crashpad') };
@@ -496,6 +532,35 @@ export default async function (t) {
       await tick();
       t.ok('ダイアログで「読み直す」を選べばカウンターを戻して読み直す', reloaded === 3 && restarted === 0);
 
+      // 「読み直す」選択後、reload() の完了待ち中に再び 3 回連続クラッシュしても次のダイアログを塞がない
+      let slowPrompts = 0;
+      let slowReloads = 0;
+      let releaseSlowReload;
+      const slowWin = new EventEmitter();
+      slowWin.webContents = new EventEmitter();
+      slowWin.isDestroyed = () => false;
+      recovery.attachWindowHealth({
+        win: slowWin,
+        label: 'unit-slow-reload',
+        logger,
+        now: () => clock,
+        reload: () => {
+          slowReloads++;
+          if (slowReloads === 3) return new Promise(resolve => { releaseSlowReload = resolve; });
+          return Promise.resolve();
+        },
+        onLoopPrompt: async () => { slowPrompts++; return 'reload'; },
+      });
+      for (let k = 0; k < 3; k++) { slowWin.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 }); await tick(); }
+      const promptsAtFirstLoop = slowPrompts;
+      for (let k = 0; k < 3; k++) { slowWin.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 }); await tick(); }
+      releaseSlowReload?.();
+      await tick();
+      // 読み直し: 1・2 回目の自動 2 回 + 1 回目の確認の「読み直す」（止まったまま）+ 4・5 回目の自動 2 回 + 2 回目の確認の「読み直す」
+      t.ok('reload() 完了待ち中に再発した 3 回目クラッシュでも次の 2 択ダイアログを開ける',
+        promptsAtFirstLoop === 1 && slowPrompts === 2 && slowReloads === 6,
+        JSON.stringify({ promptsAtFirstLoop, slowPrompts, slowReloads }));
+
       // createLoopPrompter は Esc / 閉じる（cancelId: 0）で安全側の「読み直す」になる
       const dialogCalls = [];
       const prompter = recovery.createLoopPrompter({
@@ -564,6 +629,36 @@ export default async function (t) {
           w.emit('show'); w.emit('restore'); await tick();
           t.ok('保留中に closed が発火したら解除されダイアログも出さない', promptCount === 0 && reloadCount === 2);
         }
+      }
+
+      // 同一ティックで show() の直後に終了処理へ入った場合（トレイ終了の show(); quit(); 等）は保留ダイアログを出さず、キャンセル後は復帰できる
+      {
+        const w = new EventEmitter();
+        w.webContents = new EventEmitter();
+        let visible = false;
+        let wQuitting = false;
+        w.isVisible = () => visible;
+        w.isMinimized = () => false;
+        w.isDestroyed = () => false;
+        let promptsG = 0;
+        const healthG = recovery.attachWindowHealth({
+          win: w,
+          label: 'tray-quit-race',
+          isQuitting: () => wQuitting,
+          reload: async () => {},
+          onLoopPrompt: async () => { promptsG++; return 'reload'; },
+        });
+        for (let k = 0; k < 3; k++) { w.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 }); await tick(); }
+        visible = true;
+        w.emit('show');
+        wQuitting = true; // show() の直後に closeSafely() が同期的に exitInProgress を立てる流れ
+        await tick();
+        const promptsDuringQuit = promptsG;
+        wQuitting = false;
+        healthG.checkDeferred();
+        await tick();
+        t.ok('show 直後に同一ターンで終了状態に入ったら保留ダイアログを抑止し、終了キャンセル後に再評価で開ける',
+          promptsDuringQuit === 0 && promptsG === 1);
       }
     }
 
@@ -640,7 +735,7 @@ export default async function (t) {
       t.ok('linked で未接続（!worker.connected）なら切断待ちせず即 relaunch する',
         disc.calls.leaves.includes('restart') && disc.calls.relaunches.length === 1 && disc.calls.quits === 1);
 
-      // linked で leave 応答が返らなくても 2000ms でタイムアウトして再起動へ進む
+      // linked で leave 応答が返らなくても 2000ms でタイムアウトして再起動へ進み、待機中の [X] 閉鎖で relaunch 前に終わらない
       const leaveTimeout = await runMainForRecovery({
         handover: 'on', workerConnected: true, autoExitOnLeave: false, fakeTimers: true,
         onDialog: () => ({ response: 1 }),
@@ -649,12 +744,21 @@ export default async function (t) {
       await tick();
       const leaveWaitTimer = leaveTimeout.activeTimers().find(tm => tm.ms === 2_000);
       const beforeLeaveTimeout = leaveTimeout.calls.relaunches.length;
+      let closePreventedInLeave = false;
+      let quitPreventedInLeave = false;
+      leaveTimeout.calls.window.emit('close', { preventDefault() { closePreventedInLeave = true; } });
+      leaveTimeout.app.emit('before-quit', { preventDefault() { quitPreventedInLeave = true; } });
+      await tick();
+      const quitsDuringLeaveWait = leaveTimeout.calls.quits;
       if (leaveWaitTimer) leaveTimeout.fireTimer(leaveWaitTimer.id);
       await tick();
-      t.ok('linked の離脱待ちは exit 未到着時に 2000ms で切り上げて relaunch する',
-        beforeLeaveTimeout === 0 && Boolean(leaveWaitTimer) && leaveTimeout.calls.relaunches.length === 1 && leaveTimeout.calls.quits === 1);
+      t.ok('linked の離脱待ち中は close/before-quit を抑止し、2000ms タイムアウト後に relaunch・quit する',
+        beforeLeaveTimeout === 0 && quitsDuringLeaveWait === 0
+        && closePreventedInLeave && quitPreventedInLeave
+        && leaveTimeout.calls.hides === 1 && leaveTimeout.calls.dialogs.length === 1
+        && Boolean(leaveWaitTimer) && leaveTimeout.calls.relaunches.length === 1 && leaveTimeout.calls.quits === 1);
 
-      // !linked (utilityProcess) は shutdown 送信後に worker の exit を待ってから relaunch する
+      // !linked (utilityProcess) は shutdown 送信後に worker の exit を待ってから relaunch する（正常終了時は kill しない）
       const utilWait = await runMainForRecovery({
         handover: 'off', autoExitOnShutdown: false,
         onDialog: () => ({ response: 1 }),
@@ -666,13 +770,14 @@ export default async function (t) {
       utilWait.worker.emit('exit', 0);
       await tick();
       await tick();
-      t.ok('!linked (utilityProcess) は shutdown 送信後 worker の exit 完了を待ってから relaunch する',
+      t.ok('!linked (utilityProcess) は shutdown 送信後 worker の exit 完了を待ってから relaunch し、kill しない',
         sentShutdown && beforeUtilExit === 0
+        && utilWait.calls.kills === 0
         && utilWait.calls.relaunches.length === 1
         && utilWait.calls.relaunches[0].execPath === 'C:\\inst\\StorePly.exe'
         && utilWait.calls.quits === 1);
 
-      // !linked で exit が来ない場合は 30000ms タイムアウトで relaunch する
+      // !linked で exit が来ない場合は 30000ms タイムアウトで kill のうえ relaunch する（待機中の close でも中断しない）
       const utilTimeout = await runMainForRecovery({
         handover: 'off', autoExitOnShutdown: false, fakeTimers: true,
         onDialog: () => ({ response: 1 }),
@@ -681,10 +786,15 @@ export default async function (t) {
       await tick();
       const utilWaitTimer = utilTimeout.activeTimers().find(tm => tm.ms === 30_000);
       const beforeUtilTimeout = utilTimeout.calls.relaunches.length;
+      let closePreventedInUtil = false;
+      utilTimeout.calls.window.emit('close', { preventDefault() { closePreventedInUtil = true; } });
+      const quitsDuringUtilWait = utilTimeout.calls.quits;
+      const killsDuringUtilWait = utilTimeout.calls.kills;
       if (utilWaitTimer) utilTimeout.fireTimer(utilWaitTimer.id);
       await tick();
-      t.ok('!linked は worker exit が来ないとき 30000ms タイムアウトで relaunch する',
-        beforeUtilTimeout === 0 && Boolean(utilWaitTimer) && utilTimeout.calls.relaunches.length === 1 && utilTimeout.calls.quits === 1);
+      t.ok('!linked は worker exit が来ないとき 30000ms タイムアウトで worker.kill のうえ relaunch する',
+        beforeUtilTimeout === 0 && quitsDuringUtilWait === 0 && killsDuringUtilWait === 0 && closePreventedInUtil
+        && Boolean(utilWaitTimer) && utilTimeout.calls.kills === 1 && utilTimeout.calls.relaunches.length === 1 && utilTimeout.calls.quits === 1);
 
       // scheduleDumpPrune 統合
       const pruneDebounce = await runMainForRecovery({ handover: 'on', fakeTimers: true });
@@ -732,6 +842,62 @@ export default async function (t) {
       await tick();
       t.ok('powerMonitor shutdown は preventDefault せず以後の復帰を抑止する',
         !prevented && lifecycle.calls.loads.length === loadsAfterCancel);
+
+      // !linked 更新の適用中（before-quit-for-update 前）は復帰を抑止し、適用失敗時は復帰を再開する
+      {
+        const utilUpdate = await runMainForRecovery({ handover: 'off', hangInstall: true, quitFails: false });
+        utilUpdate.calls.updatesInstance.state.phase = 'installing';
+        void utilUpdate.calls.updatesOptions.install().catch(() => {});
+        await tick();
+        const loadsBeforeInstallCrash = utilUpdate.calls.loads.length;
+        utilUpdate.calls.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+        await tick();
+        t.ok('!linked の更新適用中（before-quit-for-update 前）は renderer 落ちでも読み直さない',
+          utilUpdate.calls.loads.length === loadsBeforeInstallCrash);
+
+        const utilUpdateFail = await runMainForRecovery({ handover: 'off', quitFails: true });
+        utilUpdateFail.calls.updatesInstance.state.phase = 'installing';
+        await utilUpdateFail.calls.updatesOptions.install().catch(() => {});
+        utilUpdateFail.calls.updatesInstance.state.phase = 'downloaded';
+        const loadsBeforeAfterFailCrash = utilUpdateFail.calls.loads.length;
+        utilUpdateFail.calls.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+        await tick();
+        t.ok('!linked の更新適用が失敗して戻った後は再び renderer 落ち復帰が動く',
+          utilUpdateFail.calls.loads.length === loadsBeforeAfterFailCrash + 1);
+      }
+
+      // トレイ終了の同期順（show(); quit();）で保留ダイアログを出さず、作業に戻った場合は復帰できる
+      {
+        let releaseTrayQuitDialog;
+        const trayRace = await runMainForRecovery({
+          handover: 'on',
+          runningWork: 1,
+          onDialog: ([, opts]) => {
+            if (opts.title === 'quit.busyTitle') return new Promise(resolve => { releaseTrayQuitDialog = resolve; });
+            return { response: 0 };
+          },
+        });
+        trayRace.calls.window._visible = false;
+        for (let i = 0; i < 3; i++) {
+          trayRace.calls.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+          await tick();
+        }
+        const loadsBeforeTrayQuit = trayRace.calls.loads.length;
+        trayRace.calls.window.show();
+        void trayRace.calls.residentOptions.quit();
+        await tick();
+        await tick();
+        const dialogsDuringTrayQuit = trayRace.calls.dialogs.map(([, o]) => o.title);
+        releaseTrayQuitDialog({ response: 0 });
+        await tick();
+        await tick();
+        const dialogsAfterCancelTrayQuit = trayRace.calls.dialogs.map(([, o]) => o.title);
+        t.ok('トレイ終了（show(); quit();）時は保留クラッシュ確認を抑止し、作業に戻ったら保留確認を開いて復帰できる',
+          dialogsDuringTrayQuit.join(',') === 'quit.busyTitle'
+          && dialogsAfterCancelTrayQuit.join(',') === 'quit.busyTitle,renderer.crashedTitle'
+          && trayRace.calls.loads.length === loadsBeforeTrayQuit + 1,
+          JSON.stringify({ dialogsDuringTrayQuit, dialogsAfterCancelTrayQuit, loads: trayRace.calls.loads.length }));
+      }
     }
 
     // 6. リモートの窓 (desktop/remote-windows.cjs): 共通の復帰と最新 proxy URL の利用・close 時抑止・辞書

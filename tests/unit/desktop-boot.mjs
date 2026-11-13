@@ -52,7 +52,7 @@ class FakeLink extends EventEmitter {
   }
 }
 
-async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false, hangInstall = false, restart = { ok: false, reason: 'failed' }, shellEnv = async () => false } = {}) {
+async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false, hangInstall = false, restart = { ok: false, reason: 'failed' }, shellEnv = async () => false, onLoadURL = null } = {}) {
   const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], bootSteps: [], switches: [], updates: null, restarts: 0, restarterOptions: null, crashStarts: [], relaunches: [] };
   const link = new FakeLink(calls);
   link.connectError = connectError;
@@ -81,8 +81,8 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     }
     isDestroyed() { return false; }
     removeMenu() {}
-    loadURL(url) { calls.loads.push(url); return Promise.resolve(); }
-    show() {}
+    loadURL(url) { calls.loads.push(url); return onLoadURL ? onLoadURL(url, calls) : Promise.resolve(); }
+    show() { calls.shown = (calls.shown ?? 0) + 1; }
   }
   const dialog = { showMessageBox: (...args) => { calls.dialogs.push(args); return new Promise(() => {}); } };
   const electron = {
@@ -270,6 +270,64 @@ export default async function (t) {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, connectError: error });
     t.ok('起動の失敗: 文は describeBootError で作り、起動の失敗のダイアログを出す', calls.dialogs.length === 1 && calls.dialogs[0][0].title === 'boot.failedTitle' && calls.dialogs[0][0].message === 'described:timeout:server.startTimeout', JSON.stringify(calls.dialogs[0]));
     t.ok('起動の失敗: パイプのサーバーは shutdown（kill）せず、つながりだけ切る（居続けるのは孤児の見張りが終わらせる）', calls.left === 'boot-failed' && calls.killed === false);
+  }
+  // 最初の loadURL の間に renderer が落ちると、復帰の読み直し（desktop/renderer-recovery.cjs）が最初の読み込みを中断する（ERR_ABORTED・-3。ADR 0324）。
+  // その中断だけは起動の失敗にしない。ほかの失敗（つながらない等）と、復帰が読み直していない中断は今までどおり起動の失敗
+  {
+    const aborted = () => Object.assign(new Error("ERR_ABORTED (-3) loading 'http://127.0.0.1/'"), { code: 'ERR_ABORTED', errno: -3 });
+    let rejectFirst = null;
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: (_url, c) => {
+      if (c.loads.length === 1) {
+        // 読み込みの途中で renderer が落ちる。Electron は次の loadURL が始まった時点で、前の loadURL を ERR_ABORTED で reject する
+        queueMicrotask(() => c.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 }));
+        return new Promise((_resolve, reject) => { rejectFirst = reject; });
+      }
+      rejectFirst?.(aborted());
+      return Promise.resolve();
+    } });
+    t.ok('起動中の renderer 落ち: 復帰の読み直しで最初の loadURL が中断されても、起動の失敗にせず窓を出して初期化を続ける',
+      calls.loads.length === 2 && calls.dialogs.length === 0 && calls.quits === 0 && calls.shown === 1 && calls.updates !== null,
+      JSON.stringify({ loads: calls.loads, dialogs: calls.dialogs.map(d => d.at(-1)?.title), shown: calls.shown }));
+  }
+  {
+    // ページの確定後に落ちると、Electron 44 は render-process-gone より先に最初の loadURL を ERR_FAILED（-2）で reject する（実測）
+    const failed = Object.assign(new Error("ERR_FAILED (-2) loading 'http://127.0.0.1/'"), { code: 'ERR_FAILED', errno: -2 });
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: (_url, c) => {
+      if (c.loads.length === 1) {
+        setTimeout(() => c.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 }), 15);
+        return Promise.reject(failed);
+      }
+      return Promise.resolve();
+    } });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    for (let i = 0; i < 4; i++) await tick();
+    t.ok('起動中の renderer 落ち: 確定後に落ちて最初の loadURL が ERR_FAILED になり、その後 render-process-gone が届いたら、起動を続けて復帰が読み直す',
+      calls.loads.length === 2 && calls.dialogs.length === 0 && calls.quits === 0 && calls.shown === 1 && calls.updates !== null,
+      JSON.stringify({ loads: calls.loads, dialogs: calls.dialogs.map(d => d.at(-1)?.title), shown: calls.shown }));
+  }
+  {
+    const failed = Object.assign(new Error('ERR_FAILED (-2)'), { code: 'ERR_FAILED', errno: -2 });
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: () => Promise.reject(failed) });
+    const before = calls.dialogs.length;
+    await new Promise(resolve => setTimeout(resolve, 1_100));
+    for (let i = 0; i < 4; i++) await tick();
+    t.ok('ERR_FAILED でも renderer 落ちが 1 秒以内に届かなければ、起動の失敗にする',
+      before === 0 && calls.dialogs.length === 1 && calls.dialogs[0].at(-1).title === 'boot.failedTitle' && calls.shown === undefined,
+      JSON.stringify(calls.dialogs.map(d => d.at(-1))));
+  }
+  {
+    const refused = Object.assign(new Error('ERR_CONNECTION_REFUSED (-102)'), { code: 'ERR_CONNECTION_REFUSED', errno: -102 });
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: () => Promise.reject(refused) });
+    t.ok('最初の loadURL のほかの失敗（つながらない）は、今までどおり起動の失敗のダイアログを出して終わる',
+      calls.dialogs.length === 1 && calls.dialogs[0].at(-1).title === 'boot.failedTitle' && calls.left === 'boot-failed' && calls.shown === undefined,
+      JSON.stringify(calls.dialogs.map(d => d.at(-1))));
+  }
+  {
+    const aborted = Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 });
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: () => Promise.reject(aborted) });
+    t.ok('復帰が読み直していないのに中断（ERR_ABORTED）で終わった最初の loadURL も、起動の失敗にする',
+      calls.dialogs.length === 1 && calls.dialogs[0].at(-1).title === 'boot.failedTitle' && calls.shown === undefined,
+      JSON.stringify(calls.dialogs.map(d => d.at(-1))));
   }
   {
     const { calls, utility } = await start({ env: {} });

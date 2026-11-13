@@ -60,6 +60,7 @@ function pruneCrashDumps(crashDumpsDir, { maxFiles = MAX_CRASH_DUMPS, maxBytes =
     }
   }
   dumps.sort((a, b) => (b.mtimeMs - a.mtimeMs) || (b.size - a.size));
+  const attachmentsRoot = path.resolve(crashDumpsDir, 'attachments');
   for (const item of dumps) {
     if (result.kept < maxFiles && result.totalBytes + item.size <= maxBytes) {
       result.kept++;
@@ -69,9 +70,11 @@ function pruneCrashDumps(crashDumpsDir, { maxFiles = MAX_CRASH_DUMPS, maxBytes =
     try {
       fsSync.unlinkSync(item.filePath);
       result.removed++;
-      if (item.stem) {
-        const attachmentDir = path.join(crashDumpsDir, 'attachments', item.stem);
-        try { fsSync.rmSync(attachmentDir, { recursive: true, force: true }); } catch {}
+      if (item.stem && item.stem !== '.' && item.stem !== '..' && !/[\\/]/.test(item.stem)) {
+        const attachmentDir = path.resolve(attachmentsRoot, item.stem);
+        if (path.dirname(attachmentDir) === attachmentsRoot) {
+          try { fsSync.rmSync(attachmentDir, { recursive: true, force: true }); } catch {}
+        }
       }
     } catch {}
   }
@@ -157,9 +160,18 @@ function attachWindowHealth({ win, label = 'window', reload, onRestart, onLoopPr
   async function openLoopPrompt(details, count) {
     if (promptOpen || isDead()) return;
     promptOpen = true;
+    let choice;
     try {
-      const choice = await onLoopPrompt?.({ win, label, details, count });
-      if (isDead()) return;
+      choice = await onLoopPrompt?.({ win, label, details, count });
+    } catch (error) {
+      logger?.warn?.(`renderer-loop-action window=${label} failed=${error?.message || error}`);
+      return;
+    } finally {
+      // 選択待ちが終わった時点で解除し、reload() の待機中に再び連続クラッシュしても次の確認を塞がない。
+      promptOpen = false;
+    }
+    if (isDead()) return;
+    try {
       if (choice === 'restart') {
         logger?.info?.(`renderer-loop-action window=${label} action=restart`);
         await onRestart?.();
@@ -170,9 +182,16 @@ function attachWindowHealth({ win, label = 'window', reload, onRestart, onLoopPr
       }
     } catch (error) {
       logger?.warn?.(`renderer-loop-action window=${label} failed=${error?.message || error}`);
-    } finally {
-      promptOpen = false;
     }
+  }
+
+  function flushPendingPrompt() {
+    if (!pendingReveal) return;
+    if (win.isDestroyed?.()) { disarmReveal(); return; }
+    if (isQuitting?.() || isHiddenOrMinimized()) return;
+    const { details: d, count: c } = pendingReveal;
+    disarmReveal();
+    void openLoopPrompt(d, c);
   }
 
   function deferLoopPrompt(details, count) {
@@ -184,13 +203,18 @@ function attachWindowHealth({ win, label = 'window', reload, onRestart, onLoopPr
     const state = {
       details,
       count,
+      queued: false,
       onReveal: () => {
-        if (!pendingReveal) return;
-        if (isDead()) { disarmReveal(); return; }
-        if (isHiddenOrMinimized()) return;
-        const { details: d, count: c } = pendingReveal;
-        disarmReveal();
-        void openLoopPrompt(d, c);
+        if (!pendingReveal || state.queued) return;
+        if (win.isDestroyed?.()) { disarmReveal(); return; }
+        if (isQuitting?.() || isHiddenOrMinimized()) return;
+        state.queued = true;
+        // トレイの「終了」は show(); quit(); の順に呼ぶ。終了側が exitInProgress を立ててから見直せるよう 1 拍置く。
+        // 終了の確認が取り消されたら、main の closeSafely が checkDeferred() で見直す。
+        setImmediate(() => {
+          state.queued = false;
+          flushPendingPrompt();
+        });
       },
     };
     pendingReveal = state;
@@ -252,6 +276,7 @@ function attachWindowHealth({ win, label = 'window', reload, onRestart, onLoopPr
 
   return {
     tracker,
+    checkDeferred: flushPendingPrompt,
     dispose() {
       disarmReveal();
       wc?.off?.('render-process-gone', onGone);

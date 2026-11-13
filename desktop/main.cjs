@@ -49,7 +49,7 @@ let remoteWindows;
 // messages はサーバーの message を 1 つの listener で受けて橋へ配る（desktop/worker-messages.cjs）。橋は worker でなくこれに付ける
 let worker, messages, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
 let serverRestarter = null, serverExitHandler = null, activePortFile = null, updateInProgress = false;
-let keepAgentWindows = false, crashRestarting = false, utilityExited = false;
+let keepAgentWindows = false, crashRestarting = false, utilityExited = false, mainHealth = null;
 let chromePill = null;
 let chromeOs = null;   // Chrome の OS の層（boot が作る）。終了のときに、画面の外へ隠したエージェントの窓を片付けるために main が持つ
 // 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
@@ -284,6 +284,19 @@ async function reloadWindow(next, portFile) {
 
 const CRASH_RESTART_LEAVE_WAIT_MS = 2_000;
 const CRASH_RESTART_SHUTDOWN_WAIT_MS = 30_000;
+// 最初の loadURL が ERR_FAILED で終わったとき、render-process-gone を待つ上限（実測では reject の 10〜20ms 後に届く）
+const BOOT_RENDERER_GONE_WAIT_MS = 1_000;
+
+/** renderer 落ち（clean-exit を除く）が届いていれば、または timeoutMs までに届けば true。 */
+function waitRendererGone(contents, already, timeoutMs) {
+  if (already) return Promise.resolve(true);
+  return new Promise(resolve => {
+    const done = gone => { clearTimeout(timer); contents.off?.('render-process-gone', onGone); resolve(gone); };
+    const onGone = (_event, details) => { if (details?.reason !== 'clean-exit') done(true); };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    contents.on('render-process-gone', onGone);
+  });
+}
 
 /** 再起動時に引き継がない 1 回限りの引数（--hidden・--remote-hosts・pleiad://…）を外す。 */
 function relaunchArgs(argv) {
@@ -297,19 +310,20 @@ function relaunchArgs(argv) {
 
 /** サーバーとの切断または終了をタイムアウト付きで待つ。 */
 function waitWorkerExit(target, timeoutMs) {
-  if (!target || typeof target.once !== 'function') return Promise.resolve();
+  if (!target || typeof target.once !== 'function') return Promise.resolve(true);
   return new Promise(resolve => {
     let settled = false;
-    const done = () => {
+    const done = exited => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      target.removeListener?.('exit', done);
-      resolve();
+      target.removeListener?.('exit', onExit);
+      resolve(exited);
     };
-    const timer = setTimeout(done, timeoutMs);
+    const onExit = () => done(true);
+    const timer = setTimeout(() => done(false), timeoutMs);
     timer.unref?.();
-    target.once('exit', done);
+    target.once('exit', onExit);
   });
 }
 
@@ -321,7 +335,6 @@ function waitWorkerExit(target, timeoutMs) {
 async function restartFromCrashLoop() {
   if (crashRestarting) return;
   crashRestarting = true;
-  quitting = true;
   exitInProgress = true;
   const target = worker;
   if (linked && target && typeof target.leave === 'function') {
@@ -332,8 +345,11 @@ async function restartFromCrashLoop() {
   } else if (target) {
     const waitExit = !utilityExited ? waitWorkerExit(target, CRASH_RESTART_SHUTDOWN_WAIT_MS) : null;
     try { target.postMessage?.({ type: 'shutdown', stopHeld: true }); } catch {}
-    if (waitExit) await waitExit;
+    const exited = waitExit ? await waitExit : true;
+    if (!exited && !utilityExited) try { target.kill?.(); } catch {}
   }
+  // 離脱・終了待ちの完了後に初めて quitting を立て、待機中の [X] 閉鎖で relaunch 前にアプリ終了しないようにする。
+  quitting = true;
   const execPath = typeof stableLauncher === 'function' ? stableLauncher() : process.execPath;
   app.relaunch({ execPath, args: relaunchArgs(process.argv) });
   app.quit();
@@ -470,14 +486,18 @@ async function boot() {
     }, 5000);
     dumpPruneTimer.unref?.();
   };
-  attachWindowHealth({
+  const isWindowQuitting = () => quitting || exitInProgress || updateInProgress || updates?.state?.phase === 'installing';
+  let bootLoadPending = true;
+  let bootRecoveryReloaded = false;
+  mainHealth = attachWindowHealth({
     win: window,
     label: 'main',
     logger: desktopLog,
     startedAt: processStartedAt,
-    isQuitting: () => quitting || exitInProgress,
+    isQuitting: isWindowQuitting,
     reload: async () => {
       if (!serverReady) return;
+      if (bootLoadPending) bootRecoveryReloaded = true;
       await reloadWindow(serverReady, portFile);
     },
     onLoopPrompt,
@@ -486,7 +506,7 @@ async function boot() {
   });
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
     icon: path.join(__dirname, 'icon.png'), external, workerRequest,
-    desktopLog, onLoopPrompt, onRestart: restartFromCrashLoop, isQuitting: () => quitting || exitInProgress, startedAt: processStartedAt, onCrashDumped: scheduleDumpPrune });
+    desktopLog, onLoopPrompt, onRestart: restartFromCrashLoop, isQuitting: isWindowQuitting, startedAt: processStartedAt, onCrashDumped: scheduleDumpPrune });
   remoteWindows.attach();
   remoteWindows.attachWorker(messages);
   computerOverlay = attachComputerOverlay(messages, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
@@ -506,6 +526,7 @@ async function boot() {
   window.on('close', event => {
     if (quitting) return;
     event.preventDefault();
+    if (crashRestarting) { window.hide?.(); return; }
     if (resident?.keepOnClose()) { window.hide(); return; }
     closeSafely();
   });
@@ -542,7 +563,23 @@ async function boot() {
   };
   serverExitHandler = onServerExit;
   worker.once('exit', onServerExit);
-  await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}${updateRestartNotice ? '&reason=update-restart' : ''}`);
+  // 最初の読み込みの間に renderer が落ちても、起動の失敗にしない（復帰が読み直す。ADR 0324）。Electron 44 の実測では、
+  // ページの確定前に落ちると復帰の loadURL が最初の loadURL を ERR_ABORTED（-3）で中断し、確定後に落ちると
+  // render-process-gone より先に ERR_FAILED（-2）で reject される。ほかの失敗（つながらない等）は今までどおり起動の失敗
+  let bootRendererGone = false;
+  const onBootRendererGone = (_event, details) => { if (details?.reason !== 'clean-exit') bootRendererGone = true; };
+  window.webContents.on('render-process-gone', onBootRendererGone);
+  try {
+    await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}${updateRestartNotice ? '&reason=update-restart' : ''}`);
+  } catch (error) {
+    const aborted = error?.code === 'ERR_ABORTED' || error?.errno === -3;
+    const failed = error?.code === 'ERR_FAILED' || error?.errno === -2;
+    if (!(bootRecoveryReloaded && aborted) && !(failed && await waitRendererGone(window.webContents, bootRendererGone, BOOT_RENDERER_GONE_WAIT_MS))) throw error;
+    desktopLog?.warn?.(`boot-load-interrupted window=main code=${error?.code ?? error?.errno} action=continue`);
+  } finally {
+    bootLoadPending = false;
+    window.webContents.off?.('render-process-gone', onBootRendererGone);
+  }
   // 自動起動（--hidden）は静かに上がる。トレイに残る構成（resident）なら窓は出さず、トレイから開く。トレイが無い構成ではタスクバーに最小化で置く
   // （窓もトレイも無いと入口が無くなる）。普通の起動は今までどおり前面に出す
   if (loginItem.launchedHidden(process.argv)) { if (!resident?.keepOnClose()) { window.showInactive(); window.minimize(); } }
@@ -593,7 +630,7 @@ function scheduledText(scheduled) {
 }
 
 async function closeSafely() {
-  if (updates?.state.phase === 'installing') return;
+  if (updates?.state.phase === 'installing' || crashRestarting) return;
   if (closing) return;
   closing = true;
   exitInProgress = true;
@@ -619,7 +656,7 @@ ${waiting}` : t('quit.busyMessage'),
     // アプリの終了: 保持役の子も止める（更新と違う。ADR 0270 決定 4）
     quitting = true; worker.postMessage({ type: 'shutdown', stopHeld: true }); app.quit();
   } catch (e) { await dialog.showMessageBox(window, { message: e.message, buttons: [t('common.back')] }); }
-  finally { closing = false; if (!quitting) exitInProgress = false; }
+  finally { closing = false; if (!quitting) { exitInProgress = false; mainHealth?.checkDeferred?.(); } }
 }
 
 ipcMain.handle('ply:choose-folder', async event => {
@@ -675,7 +712,11 @@ else {
   app.on('open-url', (event, url) => { event.preventDefault(); if (handlePlusLink(url)) frontMainWindow(); });
   // 自動起動（--hidden）が、すでに動いている Pleiad に重なっただけなら、窓を前に出さない
   app.on('second-instance', (_event, argv) => { const action = plusLinkArgv(argv); if (action) { worker?.postMessage({ type: 'plus-entrance', action }); frontMainWindow(); return; } if (remoteWindows?.handleArgv(argv)) return; if (launchedHidden(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
-  app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
+  app.on('before-quit', event => {
+    exitInProgress = true;
+    if (!quitting && crashRestarting) { event.preventDefault(); return; }
+    if (!quitting && window) { event.preventDefault(); void closeSafely(); }
+  });
   app.on('will-quit', () => { exitInProgress = true; });
   app.whenReady().then(boot).catch(e => {
     console.error(e.message);
