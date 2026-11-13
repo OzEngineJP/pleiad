@@ -23,13 +23,13 @@ class Updates extends EventEmitter {
     enabled = enabled && !store;
     Object.assign(this, { updater, version, file, enabled, install, prepareCheck });
     this.authenticated = false;
-    this.state = { version, enabled, store, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null };
+    this.state = { version, enabled, store, phase: enabled ? 'idle' : 'unavailable', channel: version.includes('-') ? 'beta' : 'stable', autoCheck: true, autoDownload: true, notice: false, lastChecked: null, previousVersion: null, releases: [] };
     this.busy = false;
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
     // 準備済みの更新があるときの確認（recheck）では、同じ版なら準備済みのまま置き、より新しい版だけを知らせる
-    updater.on('update-available', info => this.recheck === info.version ? undefined : this.patch({ phase: 'available', target: info.version, notes: notesText(info.releaseNotes), progress: null, error: null }));
-    updater.on('update-not-available', () => this.recheck ? undefined : this.patch({ phase: 'current', target: null, notes: '', error: null }));
+    updater.on('update-available', info => this.recheck === info.version ? undefined : this.patch({ phase: 'available', target: info.version, notes: notesText(info.releaseNotes), releases: releaseList(info.plyReleases), progress: null, error: null }));
+    updater.on('update-not-available', () => this.recheck ? undefined : this.patch({ phase: 'current', target: null, notes: '', releases: [], error: null }));
     updater.on('download-progress', p => this.patch({ phase: 'downloading', progress: Math.round(p.percent) }));
     updater.on('update-downloaded', () => this.patch({ phase: 'downloaded', progress: 100, error: null }));
     updater.on('error', e => {
@@ -47,6 +47,10 @@ class Updates extends EventEmitter {
     this.state.autoDownload = saved.autoDownload !== false;
     this.state.autoCheck = saved.autoCheck !== false;
     this.state.notice = Boolean(saved.lastVersion && saved.lastVersion !== this.version);
+    // 更新した直後の画面が「前の版からの変更」を出すために、前に入っていた版を次の更新まで覚えておく。
+    // lastVersion は毎回の起動で今の版に書き換わるので、別の欄に写す。同じ版のまま再起動したときは前の記録を保つ
+    const previous = saved.lastVersion && saved.lastVersion !== this.version ? saved.lastVersion : saved.previousVersion;
+    this.state.previousVersion = typeof previous === 'string' && previous !== this.version ? previous : null;
     this.applyChannel();
     await this.save();
     return this.snapshot();
@@ -59,7 +63,7 @@ class Updates extends EventEmitter {
   }
   async save() {
     await fs.mkdir(path.dirname(this.file), { recursive: true });
-    await fs.writeFile(this.file + '.tmp', JSON.stringify({ channel: this.state.channel, autoCheck: this.state.autoCheck, autoDownload: this.state.autoDownload, lastVersion: this.version }));
+    await fs.writeFile(this.file + '.tmp', JSON.stringify({ channel: this.state.channel, autoCheck: this.state.autoCheck, autoDownload: this.state.autoDownload, lastVersion: this.version, previousVersion: this.state.previousVersion }));
     await fs.rename(this.file + '.tmp', this.file);
   }
   /**
@@ -86,7 +90,7 @@ class Updates extends EventEmitter {
         Object.assign(this.state, { channel: value.channel, autoCheck: value.autoCheck, autoDownload: value.autoDownload });
         try { await this.save(); } catch (e) { this.state = previous; throw e; }
         this.applyChannel();
-        this.patch({ phase: this.enabled ? 'idle' : 'unavailable', target: null, notes: '', error: null });
+        this.patch({ phase: this.enabled ? 'idle' : 'unavailable', target: null, notes: '', releases: [], error: null });
       } else {
         if (!this.enabled) throw new Error(t('update.unavailable'));
         if (action === 'check') {
@@ -130,6 +134,10 @@ function updateError(error, authenticated = false) {
   if (status === 429 || (!authenticated && status === 403)) return authenticated ? t('update.rateLimitedAuth') : t('update.rateLimited');
   if (['ERR_UPDATER_INVALID_SIGNATURE', 'ERR_CHECKSUM_MISMATCH', 'ERR_UPDATER_NO_CHECKSUM'].includes(error?.code)) return t('update.verifyFailed');
   return t('update.networkFailed');
+}
+// 途中の版のノート（update-auth.cjs の notesBetween）。形の合うものだけを通す
+function releaseList(list) {
+  return Array.isArray(list) ? list.filter(r => r && typeof r.version === 'string' && typeof r.body === 'string').map(r => ({ version: r.version, date: String(r.date ?? ''), title: String(r.title ?? ''), body: r.body })) : [];
 }
 function notesText(notes) {
   return (typeof notes === 'string' ? notes : Array.isArray(notes) ? notes.map(n => `${n.version}\n${n.note || ''}`).join('\n\n') : '').slice(0, 30000);

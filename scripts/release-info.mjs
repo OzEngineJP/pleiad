@@ -2,15 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// semver の順。文字列の比較だと 0.1.0-beta.74 が 0.1.0 より新しくなるので、先行版は同じ番号の正式な版より前に置く
-export function compareVersions(a, b) {
-  const [coreA, preA] = a.split('-'), [coreB, preB] = b.split('-');
-  const core = coreA.localeCompare(coreB, undefined, { numeric: true });
-  if (core || preA === preB) return core;
-  if (!preA) return 1;
-  if (!preB) return -1;
-  return preA.localeCompare(preB, undefined, { numeric: true });
-}
+import { compareVersions } from '../web/versions.mjs';
+export { compareVersions };
 export async function generateReleaseInfo({ requireNewNotes = false } = {}) {
   const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
   const files = (await fs.readdir(path.join(root, 'releases'))).filter(f => f.endsWith('.json'));
