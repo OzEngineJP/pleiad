@@ -473,6 +473,7 @@ export const backend = {
     shell: 'host',
     plyShell: true,
     nativeShellOff: true,
+    nativeMcpOff: true,
     approvals: 'interactive',
     mcpApproval: 'agent',
     compatEndpoints: impossible('試験用の身代わりは互換の接続先を持たない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）

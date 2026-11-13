@@ -2,6 +2,7 @@
 // 設定の写しと独立した HOME を使い、担当する指示・Skills・MCP を設定から外す。
 // OpenCode に任せる設定は絶対パスで渡し直す。下位の read が読み込んだ指示は
 // plugin がモデルの文脈から除く（docs/multi-backend.md §2.10）。
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -55,6 +56,10 @@ export function stripOwned(config, owners) {
   const out = { ...config };
   if (owners?.instruction === 'ply') delete out.instructions;
   if (owners?.mcp === 'ply') delete out.mcp;
+  // 名前ごとに止める（ADR 0324）。定義は残し、止める名前だけ enabled: false にする（enabled だけを足しても効かないので定義ごと残す）
+  if (owners?.mcpSuppress?.length && isObject(out.mcp)) {
+    out.mcp = Object.fromEntries(Object.entries(out.mcp).map(([name, def]) => [name, owners.mcpSuppress.includes(name) && isObject(def) ? { ...def, enabled: false } : def]));
+  }
   if (owners?.skill === 'ply') delete out.skills;
   return out;
 }
@@ -127,7 +132,8 @@ async function absoluteInstructions(list, cwd) {
   return out;
 }
 
-const sigOf = (owners) => ['instruction', 'skill', 'mcp'].map((k) => (owners?.[k] === 'ply' ? k[0] : '-')).join('');
+const sigOf = (owners) => ['instruction', 'skill', 'mcp'].map((k) => (owners?.[k] === 'ply' ? k[0] : '-')).join('')
+  + (owners?.mcpSuppress?.length ? `-${createHash('sha1').update(owners.mcpSuppress.join('\n')).digest('hex').slice(0, 8)}` : '');
 
 /** 全体の設定の置き場（写し元）に websearch の設定があるか。あれば既定の差し込みはしない */
 async function globalWebsearch(source) {

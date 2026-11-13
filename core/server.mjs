@@ -7655,11 +7655,12 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
   const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
     { keepNative: !previousContext && baseline.messages.length > 0 });
-  let policy = followed;
+  // どのエージェントのターンか（外部 MCP を名前ごとに中継・止めるために使う。ADR 0324）。読み込み直しも同じエージェントで解く
+  let policy = { ...followed, agent: backend.id };
   // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
   const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-  const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale }) : null;
+  const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
   // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
   // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
   // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す

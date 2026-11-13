@@ -504,6 +504,8 @@ const SUITES = [
   './unit/context-scan.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   './unit/context-settings.mjs',
+  // 外部 MCP を名前 × エージェントで中継する・止める（ADR 0324）
+  './unit/context-agent-mcp.mjs',
   // 探す場所を足す（追加ルート）: 種類ごと・探す形式に従う・形式 2 からの移行
   './unit/context-roots.mjs',
   './unit/server-context.mjs',

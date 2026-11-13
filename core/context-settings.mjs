@@ -47,12 +47,21 @@ const paths = z.array(z.string().trim().min(1).max(4096)).max(64);
 const MAX_SOURCES = SOURCES.length + RETIRED_SOURCES.length;
 const scopeSchema = z.object({ sources: z.array(storedSource).max(MAX_SOURCES), excludePaths: paths }).strict();
 const NAME = z.string().min(1).max(128);
+const AGENT_ID = z.string().regex(/^[a-z0-9_-]{1,32}$/);
+// 外部 MCP の「名前 × エージェント」の設定（ADR 0324）。off: そのエージェントでは使わない、
+// spread: 他のエージェントの設定の定義を、そのエージェントへも広げた。持っていれば「名前ごとのモデル」で、
+// 担当（owner）の 2 択ではなくなる（無ければ従来どおり担当で決める）
+const agentsSchema = z.object({
+  off: z.record(NAME, z.array(AGENT_ID).max(16)).optional(),
+  spread: z.record(NAME, z.array(AGENT_ID).max(16)).optional(),
+}).strict();
 const kindSchema = z.object({
   owner: z.enum(['native', 'ply']),
   user: scopeSchema.nullable(),
   directory: scopeSchema.nullable(),
   disabled: z.array(NAME).max(500).optional(),
   prefer: z.record(NAME, z.string().min(1).max(4096)).optional(),
+  agents: agentsSchema.optional(),
 }).strict();
 const legacySpec = z.object({
   sources: z.array(storedSource).max(MAX_SOURCES),
@@ -121,11 +130,18 @@ export function normalizeKind(kind, value, base, home = os.homedir()) {
   const v = parsed.data;
   if (kind !== 'mcp' && v.disabled) throw new Error(t('context.settings.disabledMcpOnly'));
   if (kind === 'instruction' && v.prefer) throw new Error(t('context.settings.kindInvalid'));
+  if (kind !== 'mcp' && v.agents) throw new Error(t('context.settings.disabledMcpOnly'));
   const scope = s => s && { sources: liveSources(s.sources), excludePaths: resolveAll(s.excludePaths, base, home) };
   const out = { owner: v.owner, user: scope(v.user), directory: scope(v.directory) };
   if (v.disabled?.length) out.disabled = unique(v.disabled).sort();
   if (v.prefer && Object.keys(v.prefer).length) out.prefer = Object.fromEntries(Object.entries(v.prefer).map(([n, p]) => [n, resolveScanPath(p, base, home)]));
+  if (v.agents) out.agents = normalizeAgents(v.agents);
   return out;
+}
+/** 名前 × エージェントの設定を並べ直す（空の名前は消す。名前もエージェントも昇順） */
+export function normalizeAgents(value) {
+  const part = map => Object.fromEntries(Object.entries(map ?? {}).map(([n, ids]) => [n, unique(ids).sort()]).filter(([, ids]) => ids.length).sort(([a], [b]) => a < b ? -1 : 1));
+  return { off: part(value.off), spread: part(value.spread) };
 }
 function normalizeRoots(value, base, home) {
   const parsed = paths.safeParse(value);
@@ -190,10 +206,13 @@ export function resolveConfig(config, key) {
   const plan = {
     user: { roots: Object.fromEntries(KINDS.map(k => [k, [...(defaultRoots[k] ?? [])]])), kinds: Object.fromEntries(KINDS.map(k => [k, kinds[k].value.user])) },
     directory: { roots: Object.fromEntries(KINDS.map(k => [k, [...roots[k].value]])), kinds: Object.fromEntries(KINDS.map(k => [k, kinds[k].value.directory])) },
-    mcp: { disabled: kinds.mcp.value.disabled ?? [], prefer: kinds.mcp.value.prefer ?? {} },
+    mcp: { disabled: kinds.mcp.value.disabled ?? [], prefer: kinds.mcp.value.prefer ?? {}, ...(kinds.mcp.value.agents ? { agents: structuredClone(kinds.mcp.value.agents) } : {}) },
     skill: { prefer: kinds.skill.value.prefer ?? {} },
   };
-  return { owners: Object.fromEntries(KINDS.map(k => [k, kinds[k].value.owner])), plan, kinds, roots };
+  const owners = Object.fromEntries(KINDS.map(k => [k, kinds[k].value.owner]));
+  // 名前ごとのモデル（agents あり）では Pleiad の中継を常に開く。止める・広げるは名前ごとで、担当の 2 択は無い
+  if (kinds.mcp.value.agents) owners.mcp = 'ply';
+  return { owners, plan, kinds, roots };
 }
 
 // ------------------------------------------------------------------ 形式 1・2 → 3

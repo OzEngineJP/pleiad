@@ -45,6 +45,7 @@ export const CAPABILITY_STATES = {
     // ply_shell を受け取り、Bash・PowerShell を disallowedTools で切れる（ADR 0227）
     plyShell: true,
     nativeShellOff: true,
+    nativeMcpOff: true,
     approvals: 'interactive',   // canUseTool
     mcpApproval: 'agent',       // MCP のツールも canUseTool を通る
     plyContext: 'turn',         // ply_context はターンごとのトークンで mcpServers に渡す
@@ -79,6 +80,7 @@ export const CAPABILITY_STATES = {
     // ply_shell を受け取る。Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0227）
     plyShell: true,
     nativeShellOff: impossible('Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0227）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    nativeMcpOff: true,
     forkMessage: covered,       // thread/fork は発言の途中では切れない（Pleiad が写す）
     approvals: 'interactive',
     // MCP のツールの呼び出しは Codex が承認を聞かない。確認なしの承認モードのほかは Pleiad が聞く（server.mjs の mcpApprovalByHost）
@@ -134,6 +136,7 @@ export const CAPABILITY_STATES = {
     // ply_shell はまだ渡さない（MCP は Pleiad のカスタムエージェントでしか渡せず、run_command を外すと作業場所の AGENTS.md を読まなくなる。ADR 0227）
     plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    nativeMcpOff: impossible('会話ごとに 1 つずつ MCP を止める設定が無い（inheritMcp で全止めのみ）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: impossible('agy の stream-json は走っているターンへ入力を足せない'),   // 追加指示は次のターンで渡す // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
     // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
@@ -171,6 +174,7 @@ export const CAPABILITY_STATES = {
     // ply_shell を受け取り、会話の権限で bash を拒否して切れる（ADR 0227。既定は切る: エージェントの記述の shellDefault）
     plyShell: true,
     nativeShellOff: true,
+    nativeMcpOff: true,
     steer: true,   // inbox へ足す
     handover: true,         // 共有のサーバーを保持役に載せ、新しいサーバーがつなぎ直して付け直す（opencode-held.mjs）
     // runArgs の配達物: ブラウザーは shell.env の env と中継の ply_browser に、ply_control は中継と env・指示に、
@@ -208,6 +212,7 @@ export const CAPABILITY_STATES = {
     shell: 'host',
     plyShell: true,
     nativeShellOff: true,              // 会話限定 disabled_tools で native shell tools を外す
+    nativeMcpOff: impossible('会話の開始時にエージェント側の MCP を個別に止める手段が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
@@ -244,6 +249,7 @@ export const CAPABILITY_STATES = {
     shell: 'host',
     plyShell: true,
     nativeShellOff: true,       // agent-profile の disallowedTools で bash を外す（grok-hooks.mjs）
+    nativeMcpOff: impossible('会話ごとにネイティブ設定の MCP を止める手段が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ブラウザー・操作一覧・コンピューター・シェル・委譲を HTTP MCP で、接続情報と秘密の変数を起動環境で渡す。

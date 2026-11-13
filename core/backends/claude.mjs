@@ -1192,7 +1192,7 @@ export const backend = {
           const usage = await q.getContextUsage({ detail: 'summary' });
           if (usage.memoryFiles?.length) throw new Error(t('claude.errors.nativeInstructions'));
         }
-        if (contextRuntime.owners.mcp === 'ply') {
+        if (contextRuntime.owners.mcp === 'ply' && !contextRuntime.mcp?.named) {
           const native = await q.mcpServerStatus();
           const left = unexpectedNativeMcp(native, Object.keys(plyServers));
           if (left.length) throw new Error(t('claude.errors.nativeMcp', { names: left.join(t('claude.listSeparator')) }));
