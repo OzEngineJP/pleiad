@@ -14,6 +14,8 @@ export const title = 'サーバー通し: Claude アカウントごとのモデ�
 
 const TOK_VERIFIED = 'sk-ant-oat01-' + 'V'.repeat(40);
 const TOK_PLAIN = 'sk-ant-oat01-' + 'N'.repeat(40);
+// 削除の確認用（probe ログの呼び名が、ほかのアカウントと重ならない）
+const TOK_GONE = 'sk-ant-oat01-' + 'G'.repeat(40);
 
 const STANDARD_14 = [
   { value: 'default', displayName: 'Default', description: 'Use default model' },
@@ -53,15 +55,17 @@ export default async function (t) {
     tokens: {
       [TOK_VERIFIED]: MYTHOS_16,
       [TOK_PLAIN]: STANDARD_14,
+      [TOK_GONE]: STANDARD_14,
     },
     labels: {
       [TOK_VERIFIED]: 'verified',
       [TOK_PLAIN]: 'plain',
+      [TOK_GONE]: 'gone',
     },
   }));
 
   const cli = await installFakeClaude(cliDir);
-  const api = await startFakeAnthropicApi({ [TOK_VERIFIED]: 'org-verified', [TOK_PLAIN]: 'org-plain' });
+  const api = await startFakeAnthropicApi({ [TOK_VERIFIED]: 'org-verified', [TOK_PLAIN]: 'org-plain', [TOK_GONE]: 'org-gone' });
   const server = await startServer({
     dataDir: scratch,
     env: {
@@ -101,6 +105,26 @@ export default async function (t) {
       await sleep(50);
     }
     await waitTurnFree(parentSid);
+  };
+  // fake の CLI が起動のたびに（一覧を引くときも、会話のターンを走らせるときも）1 行書く記録を、呼び名ごとに数える
+  const probeCounts = () => {
+    const counts = {};
+    const lines = fss.existsSync(probeLog) ? fss.readFileSync(probeLog, 'utf8').split('\n').filter(Boolean) : [];
+    for (const label of lines) counts[label] = (counts[label] ?? 0) + 1;
+    return counts;
+  };
+  // CLI の起動が止むまで待ち（起動の数が window のあいだ変わらない）、そのときの数を返す。数えるのは静かになってから
+  const quiet = async (window = 800, max = 20_000) => {
+    const t0 = Date.now();
+    let last = JSON.stringify(probeCounts());
+    let since = Date.now();
+    while (Date.now() - t0 < max) {
+      await sleep(100);
+      const now = JSON.stringify(probeCounts());
+      if (now !== last) { last = now; since = Date.now(); }
+      else if (Date.now() - since >= window) break;
+    }
+    return probeCounts();
   };
 
   try {
@@ -226,6 +250,17 @@ export default async function (t) {
     assert.equal(routing.warnings.some((w) => w.candidate === `claude@${plainId}:claude-mythos-5-2` && w.reason === 'model_unknown'), true, JSON.stringify(routing.warnings));
     t.ok('delegationRouting: アカウントごとの accountModels で、承認の無いアカウントだけに model_unknown 警告を出し、承認のあるアカウントには出さない', true);
 
+    // 使用量の取り直し（設定 › 委譲を開くたび・5 分ごと）は、アカウントの数だけ一覧の CLI を起こさない。
+    // 一覧が揃った後なら、候補が一覧に無い（承認の無いアカウントの Mythos 5.2）まま取り直しを重ねても、CLI は 1 本も増えない
+    // （監視は手元の一覧だけで読み、一覧を引くのは先読みだけ。ADR 0326）。数える前に、走っている委譲の子を片づけて CLI の起動が止むのを待つ
+    await settleTask(verifiedDel.data.taskId, parentSid);
+    const countsBefore = await quiet();
+    for (let i = 0; i < 6; i++) await c.cmd('delegationRouting', { refresh: true });
+    const countsAfter = await quiet();
+    assert.deepEqual(countsAfter, countsBefore, `取り直しを重ねて一覧の CLI が増えた: ${JSON.stringify(countsBefore)} → ${JSON.stringify(countsAfter)}`);
+    assert.equal(Object.keys(countsBefore).includes('verified') && Object.keys(countsBefore).includes('plain'), true, JSON.stringify(countsBefore));
+    t.ok('delegationRouting: 一覧が揃った後は、取り直しを重ねても、アカウントごとの一覧の CLI を起こさない', true);
+
     // トークンを承認のあるアカウントのものに入れ替えるとキャッシュが無効化され、そのアカウントも Mythos 5.2 を返して警告が消える
     await c.cmd('saveClaudeAccount', { id: plainId, name: 'plain-upgraded', token: TOK_VERIFIED });
     let mPlainUpgraded;
@@ -245,13 +280,32 @@ export default async function (t) {
     assert.equal(routingAfterSwap.warnings.some((w) => w.candidate === `claude@${plainId}:claude-mythos-5-2`), false, JSON.stringify(routingAfterSwap.warnings));
     t.ok('saveClaudeAccount でトークンを入れ替えるとキャッシュを引き直し、委譲の警告も消える', true);
 
-    // 7. 削除・ログとファイルの秘匿確認
+    // 7. 削除: 消したアカウントの一覧は忘れる（引き直せず、ほかのアカウントの一覧で代わりもしない）。消した後は、そのアカウントの CLI を起こさない。
+    // 呼び名がほかと重ならない 3 つ目のアカウントで確かめる（トークンを入れ替えた承認の無いアカウントは、承認のあるアカウントと同じ呼び名になる）
+    const savedGone = await c.cmd('saveClaudeAccount', { name: 'gone', token: TOK_GONE });
+    const goneId = savedGone.id;
+    // 追加すると先読みが始まる。そのアカウントの一覧を引く CLI が起きるまで待つ
+    for (let i = 0; i < 100 && !(probeCounts().gone > 0); i++) {
+      await c.cmd('models', { backend: 'claude', cwd: ROOT, account: goneId });
+      await sleep(100);
+    }
+    assert.equal(probeCounts().gone > 0, true, JSON.stringify(probeCounts()));
+    assert.equal(Object.keys(await c.cmd('models', { backend: 'claude', cwd: ROOT, account: goneId })).length > 0, true);
+    await c.cmd('deleteClaudeAccount', { id: goneId });
+    const countsGone = await quiet();
+    await assert.rejects(c.cmd('models', { backend: 'claude', cwd: ROOT, account: goneId }));
+    await assert.rejects(c.cmd('efforts', { backend: 'claude', cwd: ROOT, model: 'sonnet', account: goneId }));
+    for (let i = 0; i < 4; i++) await c.cmd('delegationRouting', { refresh: true });
+    assert.deepEqual(await quiet(), countsGone, '消したアカウントの CLI を、消した後に起こした');
+    t.ok('deleteClaudeAccount: 消したアカウントの一覧は引けず、委譲の設定を開いても、そのアカウントの CLI を起こさない', true);
+
+    // 削除・ログとファイルの秘匿確認
     await c.cmd('deleteClaudeAccount', { id: verifiedId });
     assert.equal((await c.cmd('claudeAccounts')).accounts.some((a) => a.id === verifiedId), false);
     const probeTrace = fss.existsSync(probeLog) ? await fs.readFile(probeLog, 'utf8') : '';
     assert.equal(probeTrace.includes('verified') && probeTrace.includes('plain'), true, probeTrace);
     const tail = server.tail(400);
-    assert.equal(!tail.includes(TOK_VERIFIED) && !tail.includes(TOK_PLAIN), true);
+    assert.equal([TOK_VERIFIED, TOK_PLAIN, TOK_GONE].every((tok) => !tail.includes(tok)), true);
     t.ok('各アカウント別に CLI が起動され、サーバーログにトークンを一切出力しない', true);
   } finally {
     c.close();
