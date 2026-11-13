@@ -1,53 +1,68 @@
-// 設定 › 委譲の候補の並べ替え（docs/design-system.md「設定 › 委譲」）。
+// 一覧の行の並べ替え（取っ手を引く・押すとメニュー・↑↓ Home End）。設定 › 委譲の候補と、設定 › コンテキストの「Pleiad の指示」が同じ部品を使う
+// （docs/design-system.md「設定 › 委譲」の「候補の並べ替え」、「コンテキスト」の「Pleiad の指示の行」）。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 
 /** 順序を変えた配列。移動できない・順序が同じなら null。元の配列には触れない。 */
-export function moveCandidate(list, candidate, to) {
-  const from = list.indexOf(candidate);
+export function moveItem(list, item, to) {
+  const from = list.indexOf(item);
   if (from < 0 || !Number.isInteger(to) || to < 0 || to >= list.length || from === to) return null;
   const next = [...list];
-  next.splice(from, 1); next.splice(to, 0, candidate);
+  next.splice(from, 1); next.splice(to, 0, item);
   return next;
 }
 
-export function candidateOrder({ root, current, move, settled, showMenu, announce }) {
+/** 行を、dy だけずれた所から今の位置へ 240ms で移す。動きを減らす設定・動かない行では何もしない。 */
+export function slideFrom(node, dy) {
+  if (!dy || typeof node.animate !== 'function' || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return null;
+  return node.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)' });
+}
+
+/**
+ * 並べ替えの取っ手を作る。
+ *   root: 取っ手を置く一覧を含む要素。rowSelector: 動かせる行（一覧の直下）。idOf(row): 行の id。
+ *   face(row): 引いている間に浮かせる部分（既定は行そのもの。行が開いた中身を抱えるときは見出しの行だけを返す）。
+ *   current(group): 今の順序（id の配列）。move(group, id, to, by): 順序を変える（引いて落としたときだけ by は 'drag'）。
+ *   settled(focusKey): ドラッグが終わった。
+ * 一覧の、rowSelector に合わない子（動かせない行・追加のボタン）は、動かせる行の後ろに並んでいること。
+ */
+export function createReorder({ root, rowSelector, idOf, face = row => row, current, move, settled, showMenu, announce }) {
   let drag = null, suppressClick = false, suppressTimer;
   root.addEventListener('pointerdown', () => { suppressClick = false; clearTimeout(suppressTimer); }, true);
   root.addEventListener('click', e => {
     if (suppressClick && e.detail > 0) { suppressClick = false; e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
 
-  function handle(tier, candidate, name) {
+  function handle(group, id, name) {
     const b = el('button', 'rt-grip');
-    b.type = 'button'; b.dataset.fk = `order|${tier}|${candidate}`;
-    b.disabled = current(tier).length < 2;
-    b.setAttribute('aria-label', t('routing.settings.candidateOrder', { name }));
+    b.type = 'button'; b.dataset.fk = `order|${group}|${id}`;
+    b.disabled = current(group).length < 2;
+    b.setAttribute('aria-label', t('common.reorder.label', { name }));
     b.setAttribute('aria-haspopup', 'menu');
-    b.title = t('routing.settings.orderHelp');
+    b.title = t('common.reorder.help');
     b.setAttribute('aria-description', b.title);
     b.innerHTML = '<svg viewBox="0 0 8 14" aria-hidden="true">' + [2, 7, 12].map(y => `<circle cx="2" cy="${y}" r="1.3"/><circle cx="6" cy="${y}" r="1.3"/>`).join('') + '</svg>';
     b.onclick = () => {
-      const list = current(tier), i = list.indexOf(candidate), r = b.getBoundingClientRect();
+      const list = current(group), i = list.indexOf(id), r = b.getBoundingClientRect();
       showMenu(r.left, r.bottom + 4, [
-        { label: t('routing.settings.orderFirst'), disabled: i <= 0, onClick: () => move(tier, candidate, 0) },
-        { label: t('routing.settings.orderUp'), disabled: i <= 0, onClick: () => move(tier, candidate, current(tier).indexOf(candidate) - 1) },
-        { label: t('routing.settings.orderDown'), disabled: i < 0 || i === list.length - 1, onClick: () => move(tier, candidate, current(tier).indexOf(candidate) + 1) },
-        { label: t('routing.settings.orderLast'), disabled: i < 0 || i === list.length - 1, onClick: () => move(tier, candidate, current(tier).length - 1) },
+        { label: t('common.reorder.first'), disabled: i <= 0, onClick: () => move(group, id, 0) },
+        { label: t('common.reorder.up'), disabled: i <= 0, onClick: () => move(group, id, current(group).indexOf(id) - 1) },
+        { label: t('common.reorder.down'), disabled: i < 0 || i === list.length - 1, onClick: () => move(group, id, current(group).indexOf(id) + 1) },
+        { label: t('common.reorder.last'), disabled: i < 0 || i === list.length - 1, onClick: () => move(group, id, current(group).length - 1) },
       ], name);
     };
     b.onkeydown = e => {
       if (e.defaultPrevented || e.isComposing || e.altKey || e.ctrlKey || e.metaKey || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
       e.preventDefault(); e.stopPropagation();
-      const list = current(tier), i = list.indexOf(candidate);
-      move(tier, candidate, e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1 : i + (e.key === 'ArrowUp' ? -1 : 1));
+      const list = current(group), i = list.indexOf(id);
+      move(group, id, e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1 : i + (e.key === 'ArrowUp' ? -1 : 1));
     };
     b.onpointerdown = e => {
       if (drag || b.disabled || e.button !== 0 || !e.isPrimary) return;
-      const row = b.closest('.rt-cand-row'), list = row.parentElement;
+      const row = b.closest(rowSelector), list = row.parentElement;
       b.focus({ preventScroll: true });
-      drag = { tier, candidate, name, row, list, button: b, pointer: e.pointerId, original: [...current(tier)],
-        x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, rect: row.getBoundingClientRect(), active: false, animations: [] };
+      drag = { group, id, name, row, list, button: b, pointer: e.pointerId, original: [...current(group)],
+        x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, rect: face(row).getBoundingClientRect(), active: false, animations: [] };
       document.addEventListener('pointermove', pointerMove, { passive: false, capture: true });
       document.addEventListener('pointerup', pointerUp, true);
       document.addEventListener('pointercancel', cancel, true);
@@ -67,13 +82,13 @@ export function candidateOrder({ root, current, move, settled, showMenu, announc
     e.preventDefault();
     if (!d.active) {
       d.active = true;
-      const style = getComputedStyle(d.row);
-      d.ghost = d.row.cloneNode(true);
+      const source = face(d.row), style = getComputedStyle(source);
+      d.ghost = source.cloneNode(true);
       for (const prop of ['gridTemplateColumns', 'gridTemplateAreas', 'gap', 'padding']) d.ghost.style[prop] = style[prop];
       d.ghost.classList.add('rt-order-ghost'); d.ghost.setAttribute('aria-hidden', 'true'); d.ghost.inert = true;
       d.ghost.querySelectorAll('.pop').forEach(p => p.remove());
       d.ghost.style.width = `${d.rect.width}px`; d.ghost.style.left = `${d.rect.left}px`;
-      d.gap = el('li', 'rt-order-gap'); d.gap.style.height = `${d.rect.height}px`; d.gap.setAttribute('aria-hidden', 'true');
+      d.gap = el(d.row.localName, 'rt-order-gap'); d.gap.style.height = `${d.rect.height}px`; d.gap.setAttribute('aria-hidden', 'true');
       d.row.before(d.gap); d.row.classList.add('rt-order-source');
       document.body.append(d.ghost);
     }
@@ -98,18 +113,20 @@ export function candidateOrder({ root, current, move, settled, showMenu, announc
     d.ghost.style.top = `${d.lastY - (d.y - d.rect.top)}px`;
     d.ghost.style.opacity = d.valid ? '1' : '.45';
     if (!d.valid) return;
-    const rows = [...d.list.children].filter(e => e !== d.row && e !== d.gap);
+    const others = [...d.list.children].filter(e => e !== d.row && e !== d.gap);
+    const rows = others.filter(e => e.matches(rowSelector));
     const top = d.list.getBoundingClientRect().top;
-    const target = rows.find(e => d.lastY < top + e.offsetTop + e.offsetHeight / 2);
+    // 動かせる行のどれよりも下なら、動かせない子（あれば）の手前に入れる
+    const target = rows.find(e => d.lastY < top + e.offsetTop + e.offsetHeight / 2) ?? others.find(e => !e.matches(rowSelector)) ?? null;
     let next = d.gap.nextElementSibling;
     if (next === d.row) next = next.nextElementSibling;
-    if (next === (target ?? null)) return;
+    if (next === target) return;
     const before = new Map(rows.map(e => [e, e.getBoundingClientRect().top]));
     stopAnimations(d);
-    d.list.insertBefore(d.gap, target ?? null);
-    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) for (const row of rows) {
-      const dy = before.get(row) - row.getBoundingClientRect().top;
-      if (dy) d.animations.push(row.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)' }));
+    d.list.insertBefore(d.gap, target);
+    for (const row of rows) {
+      const animation = slideFrom(row, before.get(row) - row.getBoundingClientRect().top);
+      if (animation) d.animations.push(animation);
     }
   }
   function tick() {
@@ -152,14 +169,14 @@ export function candidateOrder({ root, current, move, settled, showMenu, announc
     if (d.button.hasPointerCapture(d.pointer)) d.button.releasePointerCapture(d.pointer);
     let to = -1;
     if (d.active) {
-      const ids = [...d.list.children].filter(e => e !== d.row).map(e => e === d.gap ? d.candidate : e.dataset.candidate);
-      if (commit && d.valid && JSON.stringify(current(d.tier)) === JSON.stringify(d.original)) to = ids.indexOf(d.candidate);
+      const ids = [...d.list.children].filter(e => e !== d.row && (e === d.gap || e.matches(rowSelector))).map(e => e === d.gap ? d.id : idOf(e));
+      if (commit && d.valid && JSON.stringify(current(d.group)) === JSON.stringify(d.original)) to = ids.indexOf(d.id);
       d.gap.remove(); d.ghost.remove(); d.row.classList.remove('rt-order-source');
       suppressClick = true;
       clearTimeout(suppressTimer);
       suppressTimer = setTimeout(() => { suppressClick = false; }, 300);
-      if (to >= 0) move(d.tier, d.candidate, to);
-      else announce(t('routing.settings.orderCancelled'));
+      if (to >= 0) move(d.group, d.id, to, 'drag');
+      else announce(t('common.reorder.cancelled'));
     }
     settled(d.active ? d.button.dataset.fk : '');
   }

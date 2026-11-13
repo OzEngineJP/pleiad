@@ -147,13 +147,15 @@
 .cx-fmt>.cx-sub{flex:none}
 /* 足したのに何も見つからない場所の行 */
 .cx-root .nm{font-family:var(--font-mono);font-size:var(--fs-s)}
-/* Pleiad の指示の並べ替えの取っ手。弱い字の 6 点。触れると本文色 */
-.cx-grip{flex:none;display:grid;place-items:center;width:18px;height:28px;margin:0 -4px;padding:0;border-radius:var(--r-s);background:transparent;color:var(--ink-weak);cursor:grab;opacity:.7}
-.cx-grip svg{width:8px;height:14px;fill:currentColor}
-.cx-grip:hover,.cx-grip:focus-visible{color:var(--ink);opacity:1;background:transparent}
-.cx-grip-gap{flex:none;width:18px;margin:0 -4px}
-.cx-row.dragging{opacity:.5}
-.cx-row.drop-before{box-shadow:0 -2px 0 var(--line-blue)}
+/* Pleiad の指示の並べ替え。取っ手・空き・浮いた行は設定 › 委譲の候補と同じ部品（manage-panel.css の .rt-grip・.rt-order-*）。
+   ここは、この一覧に置くための余白と、行と開いた中身のまとまり（.cx-item）だけ */
+.cx-ply .cx-list{position:relative}
+.cx-item{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cx-row>.rt-grip{flex:none;margin:-2px -4px -2px -6px}
+.cx-grip-gap{flex:none;width:32px;margin:0 -4px 0 -6px}
+.cx-list>.rt-order-gap{border-radius:var(--r-s)}
+.cx-row.rt-order-ghost{background:var(--surface-paper)}
+.cx-row.rt-order-ghost .rt-grip{background:var(--surface-2);color:var(--ink)}
 /* 外部 MCP・エージェント任せ: 各エージェントの登録を並べて見比べる */
 .cx-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px}
 .cx-col{display:flex;flex-direction:column;gap:4px;min-width:0;padding:10px 12px;background:var(--surface-paper);border-radius:var(--r-m)}
@@ -424,6 +426,7 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 @media (max-width:760px){
   /* 設定の左列が残るので本文は 200px ほどになる。行は折り返し、スイッチとログインは次の段の右へ回す */
   .cx-row{flex-wrap:wrap}
+  .cx-row>.rt-grip{min-height:44px}
   .cx-row .cx-open{flex:1 1 140px}
   .cx-row>.btn,.cx-row>.btn+.cx-sw,.cx-row>.cx-open+.cx-sw{margin-left:auto}
   .cx-seg{grid-template-columns:minmax(0,1fr)}

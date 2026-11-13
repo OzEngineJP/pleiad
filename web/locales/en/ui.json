@@ -1696,8 +1696,6 @@
       "onlyAgent": "{{agent}} only",
       "agentJoin": ", ",
       "routingOff": "Not added because automatic delegate selection is off",
-      "gripAria": "Order of “{{name}}” (move with ↑↓)",
-      "gripTitle": "Drag or use ↑↓ to reorder",
       "switchAria": "Add “{{name}}”",
       "edit": "Edit",
       "delete": "Delete",
@@ -3601,7 +3599,17 @@
     "noMatch": "No matches",
     "loading": "Loading…",
     "moreMatches_one": "{{count}} more. Type to narrow down",
-    "moreMatches_other": "{{count}} more. Type to narrow down"
+    "moreMatches_other": "{{count}} more. Type to narrow down",
+    "reorder": {
+      "label": "Reorder {{name}}",
+      "help": "Reorder (drag, click, Up/Down, Home or End)",
+      "first": "Move to first",
+      "up": "Move up",
+      "down": "Move down",
+      "last": "Move to last",
+      "moved": "Moved {{name}} to position {{position}}",
+      "cancelled": "Reordering cancelled"
+    }
   },
   "inbox": {
     "bell": "Notifications",
@@ -4370,14 +4378,6 @@
       "refresh": "Check again",
       "refreshing": "Checking…",
       "candidateRemove": "Remove {{name}}",
-      "candidateOrder": "Reorder {{name}}",
-      "orderHelp": "Reorder (drag, click, Up/Down, Home or End)",
-      "orderFirst": "Move to first",
-      "orderUp": "Move up",
-      "orderDown": "Move down",
-      "orderLast": "Move to last",
-      "orderMoved": "Moved {{name}} to position {{position}}",
-      "orderCancelled": "Reordering cancelled",
       "addCandidate": "+ Add candidate",
       "addTitle": "Add to {{tier}}",
       "addInput": "backend:model",

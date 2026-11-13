@@ -1659,8 +1659,6 @@
       "onlyAgent": "{{agent}} だけ",
       "agentJoin": "・",
       "routingOff": "委譲先の自動選択がオフなので入りません",
-      "gripAria": "「{{name}}」の順番（↑↓ で動かす）",
-      "gripTitle": "ドラッグか ↑↓ で並べ替え",
       "switchAria": "「{{name}}」を入れる",
       "edit": "編集",
       "delete": "削除",
@@ -3505,7 +3503,17 @@
     "input": "入力",
     "noMatch": "一致なし",
     "loading": "読み込み中…",
-    "moreMatches_other": "ほかに {{count}} 件。文字を入れて絞り込んでください"
+    "moreMatches_other": "ほかに {{count}} 件。文字を入れて絞り込んでください",
+    "reorder": {
+      "label": "{{name}} を並べ替え",
+      "help": "並べ替え（ドラッグ・クリック・↑↓、Home・End）",
+      "first": "先頭へ",
+      "up": "上へ",
+      "down": "下へ",
+      "last": "最後へ",
+      "moved": "{{name}} を {{position}} 番目に移動しました",
+      "cancelled": "並べ替えを取り消しました"
+    }
   },
   "inbox": {
     "bell": "通知",
@@ -4264,14 +4272,6 @@
       "refresh": "取り直す",
       "refreshing": "取得中…",
       "candidateRemove": "{{name}} を外す",
-      "candidateOrder": "{{name}} を並べ替え",
-      "orderHelp": "並べ替え（ドラッグ・クリック・↑↓、Home・End）",
-      "orderFirst": "先頭へ",
-      "orderUp": "上へ",
-      "orderDown": "下へ",
-      "orderLast": "最後へ",
-      "orderMoved": "{{name}} を {{position}} 番目に移動しました",
-      "orderCancelled": "並べ替えを取り消しました",
       "addCandidate": "＋ 候補を追加",
       "addTitle": "{{tier}} に追加",
       "addInput": "backend:model",
