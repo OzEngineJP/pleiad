@@ -23,6 +23,7 @@ import { renderChromeProfileLine } from './chrome-profile-menu.mjs';
 import { parseStructure, codeRoles, listClass, markerExtra, lineIndent, nestDepth } from './md-structure.mjs';
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark, unverifiedText, unverifiedMark, unverifiedOpenLink } from './computer-use.mjs';
 import { resetDateText } from './plus-key-row.mjs';
+import { FILE_KEYS } from './file-keys.mjs';
 
 // ---------------------------------------------------------------- エスケープ
 
@@ -1128,7 +1129,6 @@ const TOOL_DRAW = {
 
 // 対象がファイルのツール（見出しにファイルリンクを添える）と、入力の中でパスを持つキー（エージェントごとに名前が違う）
 const FILE_DRAWS = new Set([drawRead, drawWrite, drawEdit, drawMultiEdit]);
-const FILE_KEYS = ["file_path", "notebook_path", "path", "AbsolutePath", "TargetFile"];
 
 // バックエンドが宣言する shape -> 描き方。名前が違っても「何をするツールか」は同じなので、
 // Claude 用に書いた描画をそのまま使い回す（入力のキーが違えば summarizeInput へ落ちる）。

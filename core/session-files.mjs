@@ -4,10 +4,10 @@
 
 // Claude Code のツールの名前。ほかのバックエンドは toolHints の shape（read・write・edit）で見分ける（web/render.mjs と同じ）
 import { vizMark } from './isolated-origins.mjs';
+import { FILE_KEYS } from '../web/file-keys.mjs';
 
 const NAMED = { Read: 'read', Write: 'edited', Edit: 'edited', MultiEdit: 'edited', NotebookEdit: 'edited' };
 const SHAPED = { read: 'read', write: 'edited', edit: 'edited' };
-const FILE_KEYS = ['file_path', 'notebook_path', 'path', 'AbsolutePath', 'TargetFile'];
 
 function targetOf(input) {
   if (!input || typeof input !== 'object') return null;

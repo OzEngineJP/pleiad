@@ -2,7 +2,9 @@
 // 同じツールの承認が続いても見分けが付くよう、入力のうち対象を表す値を 1 つだけ選ぶ。DOM を触らない（tests/unit から直接呼ぶ）。
 
 // 対象を表すキー（エージェントごとに名前が違う）。先にあるものを優先する
-const TARGET_KEYS = ['path', 'file_path', 'notebook_path', 'AbsolutePath', 'TargetFile', 'command', 'cmd', 'url', 'pattern', 'query'];
+import { FILE_KEYS } from './file-keys.mjs';
+
+const TARGET_KEYS = [...FILE_KEYS, 'command', 'cmd', 'url', 'pattern', 'query'];
 
 /** 入力から対象の要約（1 行）。見つからなければ最初の文字列の値、それも無ければ '' */
 export function approvalTarget(input) {
