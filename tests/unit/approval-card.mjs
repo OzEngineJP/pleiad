@@ -15,6 +15,7 @@ export default function (t) {
   t.ok('対象は path → file_path → command → url → pattern の順に最初に見つかったもの',
     approvalTarget({ content: 'x', path: 'a.txt' }) === 'a.txt'
     && approvalTarget({ file_path: 'D:/x/b.md', content: 'y' }) === 'D:/x/b.md'
+    && approvalTarget({ Replacement: 'new', Path: 'C:\\x\\c.json', Target: 'old' }) === 'C:\\x\\c.json'
     && approvalTarget({ description: 'list', command: 'ls -la' }) === 'ls -la'
     && approvalTarget({ url: 'https://example.com', prompt: 'p' }) === 'https://example.com');
   t.ok('対象のキーが無ければ最初の文字列の値。無ければ空', approvalTarget({ n: 1, note: 'hello' }) === 'hello' && approvalTarget({ n: 1 }) === '' && approvalTarget(null) === '');

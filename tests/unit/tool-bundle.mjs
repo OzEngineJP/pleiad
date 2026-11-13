@@ -103,6 +103,12 @@ export default async function (t) {
     t.ok("agy の write_file: 書いた行数", agyWrite?.path === "D:/x/n.mjs" && agyWrite.add === 3, JSON.stringify(agyWrite));
     const agyEdit = toolChange("edit_file", { TargetFile: "D:/x/n.mjs", TargetContent: "a\nb", ReplacementContent: "a\nc\nd" });
     t.ok("agy の edit_file: 変わった行", agyEdit?.del === 1 && agyEdit.add === 2, JSON.stringify(agyEdit));
+    // 新しい agy のファイルのツールは、パスを大文字始まりの Path で渡す
+    applyToolHints({ read_file: { label: "読む", shape: "read" } });
+    const pathCard = renderToolCall("read_file", { Path: "C:\\work\\issue_104.json", StartLine: 1 });
+    t.ok("agy の read_file: Path のパスがカードに出る（パスなしにならない）", text(pathCard.querySelector(".tc-main")).includes("issue_104.json"), text(pathCard.querySelector(".tc-main")));
+    const pathWrite = toolChange("write_file", { Path: "D:/x/n.mjs", Content: "a", CodeContent: "a\nb" });
+    t.ok("agy の write_file: Path でも変更のパスを拾う", pathWrite?.path === "D:/x/n.mjs", JSON.stringify(pathWrite));
     t.ok("shell 形のツールは変更ではない", toolChange("commandExecution", { command: "ls" }) === null);
     const card = renderToolCall("fileChange", { files: ["D:/x/a.mjs", "D:/x/b.mjs"] });
     applyToolResult(card, { text: "ok", isError: false });

@@ -7,7 +7,7 @@ import { vizMark } from './isolated-origins.mjs';
 
 const NAMED = { Read: 'read', Write: 'edited', Edit: 'edited', MultiEdit: 'edited', NotebookEdit: 'edited' };
 const SHAPED = { read: 'read', write: 'edited', edit: 'edited' };
-const FILE_KEYS = ['file_path', 'notebook_path', 'path', 'AbsolutePath', 'TargetFile'];
+import { FILE_KEYS } from '../web/file-keys.mjs';
 
 function targetOf(input) {
   if (!input || typeof input !== 'object') return null;

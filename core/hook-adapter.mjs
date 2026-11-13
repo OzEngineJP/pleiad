@@ -47,7 +47,7 @@ const STOP_TTL = 24 * 60 * 60 * 1000;
 // Tool names: Claude Code / Codex -> Antigravity, and back. Names not listed stay as they are
 const TO_AGY = { Bash: 'run_command', Write: 'write_to_file', Edit: 'replace_file_content', Read: 'view_file', Grep: 'grep_search', Glob: 'find_by_name',
   WebFetch: 'read_url_content', WebSearch: 'search_web' };
-const FROM_AGY = { run_command: 'Bash', write_to_file: 'Write', replace_file_content: 'Edit', multi_replace_file_content: 'Edit', view_file: 'Read',
+const FROM_AGY = { run_command: 'Bash', write_to_file: 'Write', replace_file_content: 'Edit', multi_replace_file_content: 'Edit', view_file: 'Read', read_file: 'Read',
   grep_search: 'Grep', find_by_name: 'Glob', read_url_content: 'WebFetch', search_web: 'WebSearch' };
 // Codex has only the shell among these (file edits are apply_patch, whose input is a patch and cannot be built from agy's arguments)
 const CODEX_FROM_AGY = { run_command: 'Bash' };
@@ -84,7 +84,8 @@ export function argsFromAgy(tool, args) {
       replace_all: a.AllowMultiple === true ? true : undefined });
     case 'multi_replace_file_content': return defined({ file_path: a.TargetFile, edits: Array.isArray(a.ReplacementChunks)
       ? a.ReplacementChunks.map(c => ({ old_string: c?.TargetContent, new_string: c?.ReplacementContent })) : undefined });
-    case 'view_file': return defined({ file_path: a.AbsolutePath, offset: a.StartLine, limit: Number.isInteger(a.StartLine) && Number.isInteger(a.EndLine) ? a.EndLine - a.StartLine : undefined });
+    case 'read_file':
+    case 'view_file': return defined({ file_path: a.AbsolutePath ?? a.Path, offset: a.StartLine, limit: Number.isInteger(a.StartLine) && Number.isInteger(a.EndLine) ? a.EndLine - a.StartLine : undefined });
     case 'grep_search': return defined({ pattern: a.Query, path: a.SearchPath });
     case 'find_by_name': return defined({ pattern: a.Pattern, path: a.SearchDirectory });
     case 'read_url_content': return defined({ url: a.Url });
