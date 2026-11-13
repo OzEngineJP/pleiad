@@ -111,13 +111,15 @@ export function peekDocument(entry, { short = p => p } = {}) {
 export function setupContext({ button: openButton, cmd, show, recentPlaces = () => [], backends = () => [], openDelegation = null, getPrefs = () => ({}) }) {
   const panel = document.getElementById('contextPanel');
   panel.classList.add('context');
+  // 外の AI から Pleiad を使う設定（web/cli-setup.mjs）の置き場。作り直しで消えないよう取っておき、外部 MCP のカードの次へ置く
+  const cliSetup = panel.querySelector('#cliSetup');
   panel.replaceChildren();
   const root = el('div', 'cx');
   const lead = el('p', 'cx-lead', t('context.lead'));
   const status = el('p', 'cx-status'); status.setAttribute('role', 'alert');
   const cards = Object.fromEntries(KINDS.map(k => [k, el('section', 'cx-card')]));
   const toast = el('div', 'cx-toast', t('context.saved')); toast.setAttribute('role', 'status');
-  root.append(lead, status, cards.instruction, cards.skill, cards.mcp, toast);
+  root.append(lead, status, cards.instruction, cards.skill, cards.mcp, ...(cliSetup ? [cliSetup] : []), toast);
   panel.append(root);
 
   let view = null, scan = null, scanning = false, scanVisible = false, ply = null, agents = null, adding = null;

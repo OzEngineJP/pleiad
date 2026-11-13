@@ -463,6 +463,12 @@ const SUITES = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   './unit/mcp-oauth-processes.mjs',
   './unit/desktop-updates.mjs',
+  // 更新のノート（前に入っていた版の記録・途中の版のノートの切り出しと取得・版の比較）
+  './unit/update-release-notes.mjs',
+  // 設定 › バージョンと更新 › リリースノート（web/release-notes.mjs）: 節・畳み・ページング・本文（DOM の代役）
+  './unit/release-notes.mjs',
+  // 設定 › バージョンと更新の画面（web/updates.mjs）: スイッチ・状態の 1 行の role と aria-live・進みの通知での一覧の引き継ぎ（DOM の代役）
+  './unit/updates-view.mjs',
   './unit/release-startup-gate.mjs',
   // 自動更新の確かめ（ADR 0209）: latest.yml の sha512・方針（update-trust.json）で無署名・発行元・固定の指紋を受け入れる・改ざんは止める・CLOSE を必ず呼ぶ・
   // リリースのビルドの署名の方式（none を含む）と無署名の前の橋渡しの確かめ（偽の koffi。Windows では本物の koffi の呼び出しも）

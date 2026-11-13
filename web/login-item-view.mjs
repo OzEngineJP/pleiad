@@ -1,4 +1,4 @@
-// サインイン時の起動（設定 › アプリ情報・更新 › 常駐。ADR 0175）の表示の決め方。state は preload の plyDesktop.loginItem.get() の戻り
+// サインイン時の起動（設定 › 全般 › 常駐。ADR 0175）の表示の決め方。state は preload の plyDesktop.loginItem.get() の戻り
 // （OS の登録を読み直した { supported, reason?, enabled, blocked }）。DOM は web/resident-settings.mjs が持つ。
 
 /**

@@ -44,6 +44,7 @@
     },
     "nav": {
       "agents": "エージェント設定",
+      "general": "全般",
       "apiKeys": "秘密情報と変数",
       "usage": "使用量",
       "appearance": "外観",
@@ -3449,13 +3450,23 @@
     },
     "hint": {
       "applying": "保存と更新の準備が終わるまでお待ちください。Pleiadが終了した後、更新を適用して自動で起動し直します。",
-      "downloading": "このまま作業を続けられます。準備ができたらお知らせします。",
-      "noAutoUpdate": "この評価版は自動更新に対応していません。新しいインストーラーで更新してください。",
-      "browser": "ブラウザー版では更新履歴を確認できます。"
+      "noAutoUpdate": "この評価版は自動更新に対応していません。新しいインストーラーで更新してください。"
     },
     "store": {
       "status": "Microsoft Store から更新されます",
       "hint": "新しいバージョンは Microsoft Store が配ります。すぐに確かめるときは、Microsoft Store の「ライブラリ」で「更新プログラムを取得する」を押してください。"
+    },
+    "notes": {
+      "newVersions": "新しいバージョン",
+      "pastVersions": "これまでのバージョン",
+      "thisUpdate": "今回の更新",
+      "earlierVersions": "以前のバージョン",
+      "fromCount_other": "{{from}} から · {{count}} バージョン",
+      "from": "{{from}} から",
+      "count_other": "{{count}} バージョン",
+      "showMore_other": "ほか {{count}} バージョンを表示",
+      "more": "さらに表示",
+      "current": "現在のバージョン"
     },
     "lastChecked": "最終確認：{{when}}",
     "retry": "再試行",

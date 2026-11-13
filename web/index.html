@@ -111,6 +111,8 @@
     <!-- 設定を開いている間、セッション一覧と入れ替わる。見出しと行は状態・セッションと同じ形 -->
     <nav class="settings-menu" id="settingsNav" data-i18n-aria-label="app.settings">
       <h2 data-i18n="app.settings"></h2>
+      <!-- 全般（常駐など、アプリ全体の動き方）。デスクトップ版だけ出す（web/resident-settings.mjs） -->
+      <button type="button" id="generalTab" aria-controls="generalPanel" data-i18n="settings.nav.general" hidden></button>
       <button type="button" id="setupTab" aria-controls="setupPanel" data-i18n="settings.nav.agents"></button>
       <button type="button" id="apiKeysTab" aria-controls="apiKeysPanel" data-i18n="settings.nav.apiKeys"></button>
       <button type="button" id="usageTab" aria-controls="usagePanel" data-i18n="settings.nav.usage"></button>
@@ -351,42 +353,39 @@
             </div>
           </div>
         </section>
-        <section id="updatesPanel" hidden data-i18n-aria-label="settings.nav.about">
-          <p id="appVersion">Pleiad</p>
-          <p><a class="md-link" href="https://pleiad.dev/docs/" target="_blank" rel="noopener noreferrer" data-i18n="settings.updates.docs"></a></p>
-          <p id="updateStatus" role="status" aria-live="polite" data-i18n="settings.updates.loading"></p>
-          <p id="updateHint"></p>
-          <p id="updateLastChecked" hidden></p>
-          <progress id="updateProgress" max="100" hidden data-i18n-aria-label="settings.updates.downloadProgress"></progress>
-          <div id="updateNotes" class="body" hidden></div>
-          <button type="button" class="btn" id="checkUpdate" hidden data-i18n="settings.updates.check"></button>
-          <button type="button" class="btn btn-primary" id="downloadUpdate" hidden data-i18n="settings.updates.download"></button>
-          <button type="button" class="btn btn-primary" id="installUpdate" hidden data-i18n="settings.updates.install"></button>
-          <div id="updateConfirm" hidden aria-labelledby="updateConfirmTitle">
-            <h3 id="updateConfirmTitle" tabindex="-1" data-i18n="settings.updates.confirmTitle"></h3>
-            <p data-i18n="settings.updates.confirmBody"></p>
-            <div class="update-acts">
-              <button type="button" class="btn" id="cancelInstallUpdate" data-i18n="settings.updates.later"></button>
-              <button type="button" class="btn btn-primary" id="confirmInstallUpdate" data-i18n="settings.updates.confirmInstall"></button>
-            </div>
-          </div>
-          <p id="updateError" role="alert"></p>
-          <div id="updatePreferences" hidden>
-            <label><input type="checkbox" id="updateCheckAutomatic"><span data-i18n="settings.updates.autoCheck"></span></label>
-            <label><input type="checkbox" id="updateBeta"><span data-i18n="settings.updates.beta"></span></label>
-            <label><input type="checkbox" id="updateAutomatic"><span data-i18n="settings.updates.autoDownload"></span></label>          </div>
-          <!-- 常駐（デスクトップ版だけ。web/resident-settings.mjs。設定 › リモートから移した。ADR 0239） -->
+        <!-- 全般（デスクトップ版だけ。web/resident-settings.mjs）。常駐はリモートに限らずアプリ全体の動き方（ADR 0239） -->
+        <section id="generalPanel" hidden data-i18n-aria-label="settings.nav.general">
           <div id="residentSettings" hidden></div>
-          <!-- 外の AI の MCP に pleiad mcp を登録する設定のコピー。ホストの画面だけ（app.cliSetup が通ったら出す。web/cli-setup.mjs、ADR 0090） -->
-          <div id="cliSetup" hidden>
-            <h3 data-i18n="settings.updates.mcpTitle"></h3>
-            <p data-i18n="settings.updates.mcpMigration"></p>
-            <div class="cli-setup-acts">
-              <button type="button" class="btn" id="copyMcpJson" data-i18n="settings.updates.copyMcpJson"></button>
-              <button type="button" class="btn" id="copyMcpClaude" data-i18n="settings.updates.copyMcpClaude"></button>
+        </section>
+        <!-- バージョンと更新（docs/design-system.md「アプリの更新」）。上の枠は版と状態・主ボタン 1 つ、下に更新の設定とリリースノート -->
+        <section id="updatesPanel" hidden data-i18n-aria-label="settings.nav.about">
+          <div class="t-head">
+            <div class="t-id">
+              <p class="t-ver" id="appVersion">Pleiad</p>
+              <p class="t-status" id="updateStatusRow" role="status" aria-live="polite"><span id="updateStatus" data-i18n="settings.updates.loading"></span><span class="t-last" id="updateLastChecked" hidden></span></p>
+              <div class="t-bar" id="updateProgress" role="progressbar" hidden data-i18n-aria-label="settings.updates.downloadProgress"><i></i></div>
+              <p class="t-note" id="updateHint" hidden></p>
+            </div>
+            <div class="t-acts">
+              <button type="button" class="btn btn-quiet" id="checkUpdate" hidden data-i18n="settings.updates.check"></button>
+              <button type="button" class="btn btn-primary" id="downloadUpdate" hidden data-i18n="settings.updates.download"></button>
+              <button type="button" class="btn btn-primary" id="installUpdate" hidden data-i18n="settings.updates.install"></button>
+              <span id="updateConfirm" hidden>
+                <button type="button" class="btn btn-quiet" id="cancelInstallUpdate" data-i18n="settings.updates.later"></button>
+                <button type="button" class="btn btn-primary" id="confirmInstallUpdate" data-i18n="settings.updates.confirmInstall"></button>
+              </span>
             </div>
           </div>
-          <h3 data-i18n="settings.updates.releaseNotes"></h3><div id="releaseHistory"></div>
+          <p class="t-docs"><a class="md-link" href="https://pleiad.dev/docs/" target="_blank" rel="noopener noreferrer" data-i18n="settings.updates.docs"></a></p>
+          <div class="t-prefs" id="updatePreferences" hidden>
+            <div class="rm-mrow"><span class="rm-lbl" data-i18n="settings.updates.autoCheck"></span><button type="button" class="cx-sw" id="updateCheckAutomatic" role="switch" aria-checked="false" data-i18n-aria-label="settings.updates.autoCheck"></button></div>
+            <div class="rm-mrow"><span class="rm-lbl" data-i18n="settings.updates.autoDownload"></span><button type="button" class="cx-sw" id="updateAutomatic" role="switch" aria-checked="false" data-i18n-aria-label="settings.updates.autoDownload"></button></div>
+            <div class="rm-mrow"><span class="rm-lbl" data-i18n="settings.updates.beta"></span><button type="button" class="cx-sw" id="updateBeta" role="switch" aria-checked="false" data-i18n-aria-label="settings.updates.beta"></button></div>
+          </div>
+          <div class="t-sec">
+            <h3 data-i18n="settings.updates.releaseNotes"></h3>
+            <div id="releaseHistory"></div>
+          </div>
         </section>
         <section id="appearancePanel" hidden data-i18n-aria-label="settings.nav.appearance">
           <p data-i18n="settings.appearance.theme.description"></p>
@@ -399,7 +398,18 @@
         </section>
         <!-- 入力（↑ の呼び出し・次のメッセージの候補）。中身は web/input-settings.mjs が作る -->
         <section id="inputPanel" data-i18n-aria-label="settings.nav.input" hidden></section>
-        <section id="contextPanel" data-i18n-aria-label="settings.nav.context" hidden></section>
+        <section id="contextPanel" data-i18n-aria-label="settings.nav.context" hidden>
+          <!-- 外の AI の MCP に pleiad mcp を登録する設定のコピー。ホストの画面だけ（app.cliSetup が通ったら出す。web/cli-setup.mjs、ADR 0090）。
+               web/context.mjs が中を作り直すとき、外の MCP のカードの次へ移す -->
+          <section class="cx-card" id="cliSetup" aria-labelledby="cliSetupTitle" hidden>
+            <div class="cx-khead"><h4 id="cliSetupTitle" data-i18n="settings.updates.mcpTitle"></h4></div>
+            <p class="cx-sub" data-i18n="settings.updates.mcpMigration"></p>
+            <div class="acts">
+              <button type="button" class="btn btn-quiet" id="copyMcpJson" data-i18n="settings.updates.copyMcpJson"></button>
+              <button type="button" class="btn btn-quiet" id="copyMcpClaude" data-i18n="settings.updates.copyMcpClaude"></button>
+            </div>
+          </section>
+        </section>
         <section id="autoCompactionPanel" data-i18n-aria-label="settings.nav.autoCompaction" hidden>
           <div class="auto-compaction-settings">
             <div class="rm-switch"><label class="rm-switch-label" for="autoCompactionEnabled" data-i18n="compaction.autoEnabled"></label><button type="button" class="cx-sw" id="autoCompactionEnabled" role="switch" data-i18n-aria-label="compaction.autoEnabled"></button></div>
