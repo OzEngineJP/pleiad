@@ -10272,7 +10272,7 @@ function notifySwitchedUnsent(sessionId) {
 function syncActiveSubmitWait(sessionId) {
   if (!sessionId || typeof activeSubmits === 'undefined') return;
   const active = activeSubmits.get(sessionId);
-  if (!active || active.cancelled || state.current !== sessionId) return;
+  if (!active || active.cancelled || !active.queueOpts || state.current !== sessionId) return;
   composerWait.queue(active.onCancel, active.queueOpts);
 }
 
@@ -10351,15 +10351,18 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
   }
   const sessionId = state.current;
   if (submittingMessages.has(sessionId) || state.busy || state.loadingSession || composerWait.blocksSend() || retiredHere()) {
-    composerWait.unqueue();
+    // 進行中の送信（別の呼び出し）が張った待ちは壊さない。自分が張ったもの（新しい会話の予約）だけ解く
+    if (waitInfo.hasNewSession && !submittingMessages.has(sessionId)) composerWait.unqueue();
     return;
   }
   const hasContent = Boolean($('prompt').value.trim() || state.attached.length);
+  let pointAfter = false;
   const ticket = { cancelled: false, switched: false, sentDispatched: false, onCancel: null, queueOpts: null };
   const setWaitStage = (phase, text, cancelable) => {
     waitInfo.phase = phase;
     if (!hasContent) return;
-    ticket.queueOpts = { text, kind: cancelable ? 'queued' : 'sending', cancelable };
+    // 取り消せる待ちだけ欄を readonly にする（注記と同じ時点から）。取り消せない待ちは注記と弧だけで、欄は書けるまま
+    ticket.queueOpts = { text, kind: cancelable ? 'queued' : 'sending', cancelable, lock: cancelable ? 'shown' : 'none' };
     ticket.onCancel = cancelable
       ? (reason) => {
           if (reason === 'switch') {
@@ -10407,7 +10410,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
       if (typeof notifySwitchedUnsent === 'function') notifySwitchedUnsent(sessionId);
       return;
     }
-    if (settingsFailure === sessionId) { composerWait.point(); return; }
+    if (settingsFailure === sessionId) { pointAfter = true; return; }
     // 候補が開いたまま blur した場合の後片付けが先に走ると、送信の入力が書き換わる
     slashSkills.close();
     const text = $('prompt').value;
@@ -10415,7 +10418,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
     const attachments = ordered.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
     if (state.sessions.find(s => s.id === sessionId)?.worktreePending) {
-      setWaitStage('worktree', t('chat.composer.waitingSettings'), true);
+      setWaitStage('worktree', t('chat.composer.waitingSettings'), false);
       waitInfo.hadWorktree = true;
       const tWt = monoNow();
       const okWt = await startWorktree();
@@ -10472,7 +10475,11 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
     if (typeof activeSubmits === 'undefined' || activeSubmits.get(sessionId) === ticket) {
       if (typeof activeSubmits !== 'undefined') activeSubmits.delete(sessionId);
       submittingMessages.delete(sessionId);
-      if (state.current === sessionId) composerWait.unqueue();
+      if (state.current === sessionId) {
+        composerWait.unqueue();
+        // 待ちの注記が消えてから、理由の一行を光らせてフォーカスを移す（注記が出ている間は point が効かない）
+        if (pointAfter) composerWait.point();
+      }
       syncRunState();
     }
   }

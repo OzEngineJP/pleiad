@@ -83,11 +83,12 @@ try {
       holdCommand(command, count = Infinity) {
         holdRules.set(command, count);
       },
-      unholdCommand(command) {
+      // corrupt: 止めていた命令を、存在しない会話に向けて流す（サーバーが失敗を返す = 保存の失敗の再現）
+      unholdCommand(command, corrupt = false) {
         holdRules.delete(command);
         const list = held.get(command) ?? [];
         held.delete(command);
-        for (const sendNow of list) sendNow();
+        for (const sendNow of list) sendNow(corrupt);
       },
       countSent(command) {
         return sentLog.filter(x => x.command === command).length;
@@ -107,7 +108,9 @@ try {
             if (remaining === 1) holdRules.delete(cmd);
             else if (Number.isFinite(remaining)) holdRules.set(cmd, remaining - 1);
             if (!held.has(cmd)) held.set(cmd, []);
-            held.get(cmd).push(() => origSend(data));
+            held.get(cmd).push((corrupt) => origSend(corrupt
+              ? JSON.stringify({ ...parsed, args: { ...parsed.args, sessionId: 'no-such-session' } })
+              : data));
             return;
           }
         }
@@ -337,6 +340,115 @@ try {
   await waitUntil(async () => (await readComposer()).noteHidden, '4 note cleared after send');
   console.log('OK 4: single-note transition across newSession queue and post-creation settingsWrite without duplicates');
 
+  // 6. 取り消しの無い待ち（受理）では欄を書けるままにする。別の会話へ移って戻っても書ける
+  await openSession(sA);
+  await page.evaluate(() => window.__wsTest.holdCommand('sendMessage', 1));
+  await setPromptText('echo:AcceptHeld');
+  await page.locator('#send').click();
+  await waitUntil(async () => (await readComposer()).noteText.includes('送信を受け付けています'), '6 sending note shown');
+  assert.equal((await readComposer()).promptReadOnly, false, '6 prompt stays writable while sendMessage is pending');
+  await page.evaluate(() => document.getElementById('prompt').focus());
+  await page.keyboard.type('XY');
+  assert.ok((await readComposer()).promptValue.endsWith('XY'), '6 can type during acceptance wait');
+  await page.locator(`#groups .row[data-session="${sB}"]`).click();
+  await sleep(150);
+  await openSession(sA);
+  await waitUntil(async () => (await readComposer()).noteText.includes('送信を受け付けています'), '6 note restored after returning');
+  assert.equal((await readComposer()).promptReadOnly, false, '6 prompt writable after switching away and back');
+  await page.evaluate(() => document.getElementById('prompt').focus());
+  await page.keyboard.type('Z');
+  assert.ok((await readComposer()).promptValue.includes('Z'), '6 can type after returning');
+  await page.evaluate(() => window.__wsTest.unholdCommand('sendMessage'));
+  await waitUntil(async () => (await readComposer()).noteHidden, '6 note cleared');
+  await sleep(200);
+  await setPromptText('');
+  console.log('OK 6: non-cancelable acceptance wait keeps the prompt writable (also after switching back)');
+
+  // 7. 待ちの最中の Enter が、進行中の待ち（注記・「取り消す」・readonly）を壊さない。応答が返ると 1 回だけ送られる
+  await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
+  await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="model:smart"]').click();
+  await setPromptText('echo:EnterTwice');
+  const sentBefore7 = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
+  await page.locator('#send').click();
+  await waitUntil(async () => { const st = await readComposer(); return !st.noteHidden && st.cancelVisible && st.promptReadOnly; }, '7 waiting note with cancel and readonly');
+  await page.evaluate(() => document.getElementById('prompt').focus());
+  await page.keyboard.press('Enter');
+  await sleep(120);
+  const ui7 = await readComposer();
+  assert.ok(!ui7.noteHidden && ui7.cancelVisible && ui7.promptReadOnly, `7 note/cancel/readonly survive a second Enter: ${JSON.stringify(ui7)}`);
+  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings'));
+  await waitUntil(async () => (await page.evaluate(() => window.__wsTest.countSent('sendMessage'))) > sentBefore7, '7 sent after release');
+  await sleep(300);
+  assert.equal(await page.evaluate(() => window.__wsTest.countSent('sendMessage')), sentBefore7 + 1, '7 sent exactly once');
+  await waitUntil(async () => (await readComposer()).noteHidden, '7 note cleared');
+  console.log('OK 7: second Enter during a wait keeps the wait and sends once');
+
+  // 8. 字も添付も無い Enter は待ちとして登録しない。別の会話へ移って戻っても注記・readonly が出ない
+  await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
+  await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="model:tiny"]').click();
+  await setPromptText('');
+  await page.evaluate(() => document.getElementById('prompt').focus());
+  await page.keyboard.press('Enter');
+  await sleep(60);
+  await page.locator(`#groups .row[data-session="${sB}"]`).click();
+  await sleep(150);
+  await openSession(sA);
+  await sleep(300);
+  const ui8 = await readComposer();
+  assert.ok(ui8.noteHidden && !ui8.promptReadOnly, `8 empty submit leaves no note and no readonly after switching back: ${JSON.stringify(ui8)}`);
+  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings'));
+  await sleep(200);
+  console.log('OK 8: empty Enter registers no wait');
+
+  // 9. 設定の保存の失敗が待ちの後に分かる -> 理由の行が出て、光ってフォーカスが移る
+  await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
+  await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="model:fast"]').click();
+  await setPromptText('echo:FailedSettings');
+  const sentBefore9 = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
+  await page.locator('#send').click();
+  await waitUntil(async () => { const st = await readComposer(); return !st.noteHidden && st.cancelVisible; }, '9 waiting note shown');
+  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings', true));
+  await waitUntil(() => page.evaluate(() => {
+    const n = document.getElementById('composerNote');
+    return n?.dataset.kind === 'held' && n.classList.contains('flash') && document.activeElement === n;
+  }), '9 held reason row is shown, flashed and focused');
+  assert.equal(await page.evaluate(() => window.__wsTest.countSent('sendMessage')), sentBefore9, '9 nothing sent after failed settings');
+  await page.locator('#composerNote button').last().click();
+  await waitUntil(async () => (await readComposer()).noteHidden, '9 hold dismissed');
+  await setPromptText('');
+  console.log('OK 9: failed settings after a visible wait points at the reason row');
+
+  // 10. 速い送信（150ms 未満）は欄を readonly にしない
+  await openSession(sA);
+  await page.evaluate(() => {
+    const p = document.getElementById('prompt');
+    window.__roAdds = 0;
+    // 入力欄の readOnly への代入を数える（欄は属性ではなくプロパティで持つ）。true を入れた回数
+    const proto = Object.getOwnPropertyDescriptor(p, 'readOnly') ? p : Object.getPrototypeOf(p);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'readOnly');
+    let cur = Boolean(p.readOnly);
+    Object.defineProperty(p, 'readOnly', {
+      configurable: true,
+      get: () => (desc?.get ? desc.get.call(p) : cur),
+      set: (v) => { if (v) window.__roAdds++; if (desc?.set) desc.set.call(p, v); else cur = v; },
+    });
+    // 検出できることの確認: readonly を一度入れて戻すと数えられる
+    p.readOnly = true; p.readOnly = false;
+  });
+  await sleep(50);
+  assert.equal(await page.evaluate(() => window.__roAdds), 1, '10 observer detects readonly');
+  await page.evaluate(() => { window.__roAdds = 0; });
+  await setPromptText('echo:FastSend');
+  const userCount10 = await page.locator('#thread .m.user').count();
+  await page.locator('#send').click();
+  await waitUntil(async () => (await page.locator('#thread .m.user').count()) > userCount10, '10 fast message sent');
+  await sleep(300);
+  assert.equal(await page.evaluate(() => window.__roAdds), 0, '10 fast submit never made the prompt readonly');
+  console.log('OK 10: fast submit never sets readonly');
+
   // 報告バッチの送信完了を少し待ってからサーバーを正常停止（close 時に slow-commands.log へフラッシュされる）
   await sleep(300);
   await ctx.close(); ctx = null;
@@ -359,7 +471,7 @@ try {
   for (const entry of entries) {
     for (const k of Object.keys(entry)) assert.ok(allowedTopKeys.has(k), `unexpected key in slow log: ${k}`);
   }
-  for (const forbidden of ['AlphaTitle', 'AlphaBody', 'BetaBody', 'SlowSettingsSend', 'SlowModeSend', 'SlowAcceptSend', 'cancel-keep-draft-secret', 'switched-session-draft-body', 'home-switch-draft-body', 'HomeChainedSend', workDir, dataDir]) {
+  for (const forbidden of ['AlphaTitle', 'AlphaBody', 'BetaBody', 'SlowSettingsSend', 'SlowModeSend', 'SlowAcceptSend', 'cancel-keep-draft-secret', 'switched-session-draft-body', 'home-switch-draft-body', 'HomeChainedSend', 'AcceptHeld', 'EnterTwice', 'FailedSettings', 'FastSend', workDir, dataDir]) {
     assert.ok(!rawLog.includes(forbidden), `slow-commands.log must not contain secret/text/title/path "${forbidden}"`);
   }
   console.log('OK 5: slow-commands.log recorded all 6 kinds with zero message/title/path leakage');

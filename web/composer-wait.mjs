@@ -6,7 +6,9 @@
 //               欄は readonly、箱に aria-busy。150ms を越えたら中の字と案内を隠し、弧・待機文言・流れる棒を出す
 //   failed()    読み込みに失敗した。欄は書ける。欄の上に理由と「もう一度読む」。送信は読み込めるまで押せない（理由を title に）
 //   queue()     新しい会話を作っている間に送信が押された。欄は readonly、150ms を越えたら送信ボタンに弧、
-//               欄の上に「会話ができしだい送ります」と「取り消す」
+//               欄の上に「会話ができしだい送ります」と「取り消す」。opts.lock で欄の扱いを選ぶ:
+//               'now'（既定。予約したとき readonly）・'shown'（注記と同じ 150ms 後から readonly。速い送信は欄に触れない）・
+//               'none'（欄は書けるまま。取り消しの無い待ち = 受理・worktree。注記と弧だけ出す）
 //   hold()      設定（作業ディレクトリなど）を保存できず、解決するまで送らせない。欄は書ける。欄の上に強い字の理由と操作
 //               （再試行・選び直す・取り消す）。送信は押せない見た目（aria-disabled）で、押されたらこの一行へフォーカスを移す。
 //               「再試行」がまた失敗したら focusAction() で出し直した一行の先頭のボタンへ（client.mjs の syncSettingsHold）
@@ -36,7 +38,9 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
   let held = null;          // hold() の { text, actions }。予約・読み込みの失敗の一行が優先し、それが消えたら出し直す
   let heldTitle = null;     // hold の間に差し替える前の送信の title
 
-  const syncReadOnly = () => { prompt.readOnly = mode === 'history' || mode === 'connect' || Boolean(queued); };
+  // 予約の間に欄を書けなくするか。lock: 'now' = 予約したとき（既定）、'shown' = 注記が出る時点（delay 後）から、'none' = 書けるまま
+  const queueLocks = () => Boolean(queued) && (queued.lock === 'now' || (queued.lock === 'shown' && queued.shown));
+  const syncReadOnly = () => { prompt.readOnly = mode === 'history' || mode === 'connect' || queueLocks(); };
 
   const normalizeQueue = (onCancel, opts = {}) => ({
     onCancel: typeof onCancel === 'function' ? onCancel : null,
@@ -44,6 +48,7 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     cancelable: opts.cancelable !== false && typeof onCancel === 'function',
     cancelLabel: typeof opts.cancelLabel === 'string' && opts.cancelLabel ? opts.cancelLabel : t('chat.composer.queuedCancel'),
     kind: typeof opts.kind === 'string' && opts.kind ? opts.kind : 'queued',
+    lock: opts.lock === 'shown' || opts.lock === 'none' ? opts.lock : 'now',
   });
 
   function paintQueuedNote() {
@@ -167,6 +172,8 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
       queued.cancelable = next.cancelable;
       queued.cancelLabel = next.cancelLabel;
       queued.kind = next.kind;
+      queued.lock = next.lock;
+      syncReadOnly();
       if (queued.shown && !held) paintQueuedNote();
       return;
     }
@@ -177,6 +184,7 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
       queueTimer = null;
       if (!queued) return;
       queued.shown = true;
+      syncReadOnly();
       if (!held) paintQueuedNote();
     }, delay);
   }
@@ -243,6 +251,6 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     /** 送信を押せない（書けない待ち・読み込みの失敗） */
     blocksSend: () => mode !== null,
     /** 欄に字・添付を足してよいか */
-    accepts: () => (mode === null || mode === 'failed') && !queued,
+    accepts: () => (mode === null || mode === 'failed') && !queueLocks(),
   };
 }
