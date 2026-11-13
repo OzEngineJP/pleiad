@@ -762,7 +762,7 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 
 1. **`client-pending` / `client-rtt`**（`web/slow-client.mjs`）: 画面の `cmd()` がしきい値（既定 `2000 ms`）を超えて返らないときに未完了を 1 件、完了・失敗・切断時に所要時間を 1 件記録する。サーバーが詰まっている・切断中の分は画面のメモリ（上限 200 件）に持ち、復帰後または `ready` の後に `invoke('app.reportSlow')`（UI 限定・`surfaces: { ui: true, mcp: false, cli: false }`）で非同期に送る（送信や画面を待たせず、失敗しても黙って捨てる。自己記録は除外する）。
 2. **`server-cmd`**（`core/server.mjs`）: WS 命令の受け取りから `reply`（または非 `reply` 終了）までの処理時間がしきい値（既定 `1000 ms`）を超えたときに記録する（`invoke` は `invoke:<op>`、`invoke:app.reportSlow` は除外）。
-3. **`event-loop`**（`core/slow-log.mjs`）: サーバーの `monitorEventLoopDelay` で一定窓（既定 `1000 ms`）の最大遅れがしきい値（既定 `500 ms`）以上のときに、最大・平均・p99・処理中の WS 命令数を記録する。
+3. **`event-loop`**（`core/slow-log.mjs`）: サーバーで 20 ms ごとのタイマーの「予定の時刻と実際の時刻の差」を自分で測り（塞がれた分だけ必ず遅れて発火するので、長い塞ぎを取りこぼさない）、一定窓（既定 `1000 ms`）の最大遅れがしきい値（既定 `500 ms`）以上のときに、最大・平均・p99・処理中の WS 命令数を記録する。最大は自前の遅れと `monitorEventLoopDelay` の最大の大きいほう、平均・p99 は `monitorEventLoopDelay` による。窓はタイマーの発火のたびに閉じるので、塞ぎが終わった直後の発火で行が出る。
 4. **`submit-wait` / `submit-switched`**（`web/client.mjs` の `submit`）: 送信前・送信中の合計待ちがしきい値（既定 `2000 ms`）以上なら工程ごとの内訳（`newSessionMs`・`settingsMs`・`modeMs`・`worktreeMs`・`postSettingsMs`・`sendMs`・`compactMs`）付きで記録する。待ち中に別の会話へ移って未送信で終わったときは経過時間に関わらず `submit-switched` を残す。
 
 しきい値は起動時の環境変数（`AGENT_HOST_SLOW_CLIENT_MS`・`AGENT_HOST_SLOW_SERVER_MS`・`AGENT_HOST_SLOW_LOOP_MS`・`AGENT_HOST_SLOW_LOOP_WINDOW_MS`・`AGENT_HOST_SLOW_SUBMIT_MS`）から変えられ、画面側のしきい値は `ready.slow` で渡す。

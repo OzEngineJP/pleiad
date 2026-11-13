@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 
 /** @type {Readonly<{ clientMs: number, serverMs: number, loopMs: number, loopWindowMs: number, submitMs: number }>} */
 export const DEFAULT_SLOW_THRESHOLDS = Object.freeze({
@@ -169,6 +169,8 @@ export function sanitizeSlowEntry(raw, { defaultSource = 'server', now = Date.no
  * Creates a bounded append-only diagnostic logger (`slow-commands.log`) for slow WS commands,
  * server event-loop stalls, slow client RTTs, and submit wait / switch-away events.
  */
+const LOOP_TICK_MS = 20;
+
 export function createSlowLog({
   dataDir,
   thresholds = readSlowThresholds(),
@@ -184,6 +186,9 @@ export function createSlowLog({
   let closed = false;
   let loopMonitor = null;
   let loopTimer = null;
+  let loopExpected = 0;
+  let loopSelfMax = 0;
+  let loopWindowStart = 0;
   let loopInFlight = null;
 
   async function writeBlock(block) {
@@ -218,13 +223,32 @@ export function createSlowLog({
     return lines.length;
   }
 
+  // 自前の遅れの測定: 20ms ごとのタイマーの「予定の時刻と実際の時刻の差」。塞がれた分だけ必ず遅れて
+  // 発火するので取りこぼさない（monitorEventLoopDelay だけだと、長い塞ぎが記録されない窓があった）
+  function loopTick() {
+    const t = performance.now();
+    const lag = t - loopExpected;
+    if (lag > loopSelfMax) loopSelfMax = lag;
+    if (t - loopWindowStart >= thresholds.loopWindowMs) {
+      sampleLoop();
+      loopWindowStart = t;
+    }
+    loopExpected = performance.now() + LOOP_TICK_MS;
+    loopTimer = setTimeout(loopTick, LOOP_TICK_MS);
+    loopTimer.unref?.();
+  }
+
   function sampleLoop() {
     if (!loopMonitor) return;
+    const pending = performance.now() - loopExpected;
+    const selfMax = Math.max(loopSelfMax, pending);
+    loopSelfMax = 0;
     const rawMax = loopMonitor.max;
     const rawMean = loopMonitor.mean;
     const rawP99 = loopMonitor.percentile(99);
     loopMonitor.reset();
-    const maxMs = Number.isFinite(rawMax) ? Math.round(rawMax / 1e6) : 0;
+    const histMs = Number.isFinite(rawMax) ? Math.round(rawMax / 1e6) : 0;
+    const maxMs = Math.max(histMs, Math.round(selfMax));
     if (maxMs < thresholds.loopMs) return;
     const meanMs = Number.isFinite(rawMean) ? Math.round(rawMean / 1e6) : 0;
     const p99Ms = Number.isFinite(rawP99) ? Math.round(rawP99 / 1e6) : 0;
@@ -279,7 +303,9 @@ export function createSlowLog({
       loopInFlight = typeof getInFlight === 'function' ? getInFlight : null;
       loopMonitor = monitorEventLoopDelay({ resolution: 20 });
       loopMonitor.enable();
-      loopTimer = setInterval(sampleLoop, thresholds.loopWindowMs);
+      loopWindowStart = performance.now();
+      loopExpected = loopWindowStart + LOOP_TICK_MS;
+      loopTimer = setTimeout(loopTick, LOOP_TICK_MS);
       loopTimer.unref?.();
     },
 
@@ -289,7 +315,7 @@ export function createSlowLog({
 
     async close() {
       if (loopTimer) {
-        clearInterval(loopTimer);
+        clearTimeout(loopTimer);
         loopTimer = null;
       }
       if (loopMonitor) {
