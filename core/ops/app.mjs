@@ -51,7 +51,7 @@ export const appOps = [
       json: z.string(),
       claude: z.string(),
     }),
-    // 設定 › アプリ情報の「MCP の設定をコピー」。ホストの PC のパスなので、ホストの画面だけに出す（ADR 0090）
+    // 設定 › プラグインの「MCP の設定をコピー」。ホストの PC のパスなので、ホストの画面だけに出す（ADR 0090）
     surfaces: { ui: true, mcp: false, cli: false },
     hostScreenOnly: true,
     handler: (ctx) => ctx.app.cliSetup(),
