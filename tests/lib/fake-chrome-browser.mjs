@@ -20,6 +20,10 @@
 //     ほかのセッションが有効にしていても外れる。2026-10-08）。s.fe はセッションが最後に送った値。focusEmulated(targetId) は、今そのページで効いているか
 //   - Page.startScreencast・stopScreencast・screencastFrameAck はセッションごとの状態。screencastFrame(targetId) が、始めているセッションへ Page.screencastFrame を流す（実機は ack まで次を出さない）。
 //     screencasting(targetId) は今どのセッションかが始めているか。screencastParams(targetId) はその引数
+//   - ダウンロード（実機 Chrome 157）: Browser.setDownloadBehavior の eventsEnabled は接続全体の旗で、download() が Browser.downloadWillBegin・downloadProgress を
+//     その接続へ sessionId なしで流す。Browser.cancelDownload と browserContextId 付きの命令は、そのプロフィールが既定の context（Target.getBrowserContexts の
+//     defaultBrowserContextId。setDefaultContext で替える）のときだけ効く。Target.getTargets は filter を渡すと cross-site の iframe（parentFrameId 付き）も返し、
+//     iframe の target にもじかに attach できる。同じ process の iframe（sameProcessFrame）は Page.getFrameTree の子のフレームに並ぶ
 //   - ページはとても小さな型（題と、見出し・リンク・ボタンの並び）。Accessibility.getFullAXTree・DOM.getBoxModel・Input.dispatchMouseEvent で押せる
 // 受けたメソッドは calls（{ method, sessionId, params }）に、サーバーに届いた要求（移動）の URL は served に残す。
 import crypto from 'node:crypto';
@@ -55,13 +59,32 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
   let fetchEnableDelayMs = 0;
   let frameSeq = 0;
   let screencastStartDelayMs = 0;   // Page.startScreencast の応答を遅らせる（始まった印は先に付く。開始の途中を試す）
+  const downloadSockets = new Set();   // Browser.setDownloadBehavior の eventsEnabled を付けた接続（接続全体の旗。どのプロフィールのダウンロードも届く）
+  const downloadItems = new Map();     // guid -> { guid, context, state }
+  const downloadBehaviors = [];        // 受けた Browser.setDownloadBehavior の引数
+  const subframes = new Map();         // 同じ process の iframe（target でないフレーム）の id -> { id, parentId, url }
+  let defaultContext = 'CTX-DEFAULT';  // CDP の既定の context（実機では、最後に窓を開いた・使ったプロフィールへ替わる）
 
   const send = (socket, message) => { if (socket.readyState === 1) socket.send(JSON.stringify(message)); };
   const info = t => ({ targetId: t.targetId, type: t.type, title: t.title, url: t.url, attached: [...sessions.values()].some(s => s.targetId === t.targetId), canAccessOpener: false, ...(t.openerId ? { openerId: t.openerId } : {}), browserContextId: t.browserContextId ?? 'CTX-DEFAULT' });
   const toDiscovering = (method, params) => { for (const socket of discovering) send(socket, { method, params }); };
   const sessionsOf = t => [...sessions.values()].filter(s => s.targetId === t.targetId);
   const emit = (t, method, params) => { for (const s of sessionsOf(t)) send(s.socket, { method, params, sessionId: s.id }); };
-  const pageFor = url => pages.get(url) ?? { title: url === 'about:blank' ? 'about:blank' : (/^data:text\/html,<title>(.*)<\/title>/.exec(url)?.[1] ?? url).replace(/^https?:\/\//, ''), elements: [{ role: 'heading', name: url }] };
+  const frameInfo = f => ({ targetId: f.targetId, type: 'iframe', title: f.url, url: f.url, attached: [...sessions.values()].some(s => s.targetId === f.targetId), canAccessOpener: false, parentFrameId: f.tabId, browserContextId: targets.get(f.tabId)?.browserContextId ?? 'CTX-DEFAULT' });
+  /** フレームの木（Page.getFrameTree）。同じ process の iframe は子のフレームとして並ぶ（cross-site の iframe は別の target なので並ばない） */
+  const frameTree = (id, url) => ({ frame: { id, loaderId: hex(), url, securityOrigin: originOf(url), mimeType: 'text/html' },
+    childFrames: [...subframes.values()].filter(f => f.parentId === id).map(f => { const node = frameTree(f.id, f.url); node.frame.parentId = id; return node; }) });
+  /** フレームの id から、そのタブ（page の target）を引く */
+  function tabOfFrame(id) {
+    for (let hops = 0; hops < 16 && id; hops += 1) {
+      const t = targets.get(id);
+      if (t) return t;
+      id = frames.get(id)?.tabId ?? subframes.get(id)?.parentId ?? null;
+    }
+    return null;
+  }
+  const toDownloads = (method, params) => { for (const socket of downloadSockets) send(socket, { method, params }); };
+  const pageFor = url => pages.get(url) ??{ title: url === 'about:blank' ? 'about:blank' : (/^data:text\/html,<title>(.*)<\/title>/.exec(url)?.[1] ?? url).replace(/^https?:\/\//, ''), elements: [{ role: 'heading', name: url }] };
 
   const DEFAULT_BOUNDS = Object.freeze({ left: 0, top: 0, width: 1200, height: 800 });
   const POPUP_BOUNDS = Object.freeze({ left: 0, top: 0, width: 324, height: 298 });
@@ -249,9 +272,41 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
         if (params.discover) { const already = discovering.has(socket); discovering.add(socket); if (!already) for (const t of targets.values()) send(socket, { method: 'Target.targetCreated', params: { targetInfo: info(t) } }); }
         else discovering.delete(socket);
         return {};
-      case 'Target.getTargets': return { targetInfos: [...targets.values()].map(info) };
-      case 'Target.getTargetInfo': { const t = targets.get(params.targetId); if (!t) throw { code: -32602, message: 'No target with given id found' }; return { targetInfo: info(t) }; }
+      // filter を渡したときだけ、cross-site の iframe の target も返す（parentFrameId 付き。実機は [{}] で全部の種類を返す）
+      case 'Target.getTargets': return { targetInfos: [...[...targets.values()].map(info), ...(Array.isArray(params.filter) ? [...frames.values()].map(frameInfo) : [])] };
+      case 'Target.getTargetInfo': {
+        const t = targets.get(params.targetId);
+        if (t) return { targetInfo: info(t) };
+        const f = frames.get(params.targetId);
+        if (f) return { targetInfo: frameInfo(f) };
+        throw { code: -32602, message: 'No target with given id found' };
+      }
+      case 'Target.getBrowserContexts': return { browserContextIds: [], defaultBrowserContextId: defaultContext };
+      // ダウンロード（実機 Chrome 157）: eventsEnabled は接続全体の旗。browserContextId は、今の既定の context のものしか受けない
+      case 'Browser.setDownloadBehavior': {
+        if (params.browserContextId != null && params.browserContextId !== defaultContext) throw { code: -32602, message: `Failed to find browser context for id ${params.browserContextId}` };
+        downloadBehaviors.push({ ...params });
+        if (params.eventsEnabled) downloadSockets.add(socket); else downloadSockets.delete(socket);
+        return {};
+      }
+      // 止められるのは、そのプロフィールが既定の context のときだけ
+      case 'Browser.cancelDownload': {
+        if (params.browserContextId != null && params.browserContextId !== defaultContext) throw { code: -32602, message: `Failed to find browser context for id ${params.browserContextId}` };
+        const item = downloadItems.get(params.guid);
+        if (!item || item.context !== defaultContext || item.state !== 'inProgress') throw { code: -32602, message: 'No download item found for the given GUID' };
+        item.state = 'canceled';
+        setImmediate(() => toDownloads('Browser.downloadProgress', { guid: item.guid, totalBytes: item.total, receivedBytes: item.received, state: 'canceled' }));
+        return {};
+      }
       case 'Target.attachToTarget': {
+        const f = frames.get(params.targetId);
+        if (f) {
+          // cross-site の iframe の target へ、じかに付ける
+          const id = hex();
+          sessions.set(id, { id, targetId: f.targetId, socket, fetch: false, fe: false, frame: true, parent: null, flatten: params.flatten === true });
+          send(socket, { method: 'Target.attachedToTarget', params: { sessionId: id, targetInfo: frameInfo(f), waitingForDebugger: false } });
+          return { sessionId: id };
+        }
         const t = targets.get(params.targetId);
         if (!t) throw { code: -32602, message: 'No target with given id found' };
         const id = hex();
@@ -312,6 +367,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       case 'Fetch.failRequest': { const r = pausedFetch.get(params.requestId); pausedFetch.delete(params.requestId); r?.('fail'); return {}; }
       case 'Target.setAutoAttach': s.autoAttach = { ...params }; return {};
       case 'Runtime.runIfWaitingForDebugger': s.ran = true; s.run?.(); return {};
+      case 'Page.getFrameTree': return { frameTree: frameTree(s.targetId, frames.get(s.targetId).url) };
       default: return {};
     }
   }
@@ -331,7 +387,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
         return { result: { type: 'undefined' } };
       }
       case 'Runtime.callFunctionOn': return { result: { type: 'object', subtype: 'null', value: null } };
-      case 'Page.getFrameTree': return { frameTree: { frame: { id: t.targetId, loaderId: hex(), url: t.url, securityOrigin: originOf(t.url), mimeType: 'text/html' } } };
+      case 'Page.getFrameTree': return { frameTree: frameTree(t.targetId, t.url) };
       case 'Page.navigate': return navigate(t, params.url);
       case 'Page.getNavigationHistory': return { currentIndex: t.index, entries: t.history.map(e => ({ id: e.id, url: e.url, userTypedURL: e.url, title: pageFor(e.url).title, transitionType: 'typed' })) };
       case 'Page.navigateToHistoryEntry': {
@@ -384,6 +440,7 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
       socket.on('close', () => {
         discovering.delete(socket);
         browserFetch.delete(socket);
+        downloadSockets.delete(socket);
         for (const s of [...sessions.values()]) if (s.socket === socket) { sessions.delete(s.id); if (s.fe) { const t = targets.get(s.targetId); if (t) t.focusOn = false; } }
         for (const [id, resolve] of [...pausedFetch]) { pausedFetch.delete(id); resolve('continue'); }
       });
@@ -469,5 +526,33 @@ export function createFakeBrowser({ product, calls, userTabs = USER_TABS } = {})
     },
     /** 利用者がタブを閉じた */
     closeTab(targetId) { const t = targets.get(targetId); if (t) closeTarget(t); },
+    /** 同じ process の iframe（target でないフレーム）を置く。parentId はタブの targetId か、cross-site の iframe の targetId。フレームの id を返す */
+    sameProcessFrame(parentId, url = 'about:blank') { const id = hex(); subframes.set(id, { id, parentId, url }); return id; },
+    /**
+     * ダウンロードが始まった（Browser.downloadWillBegin を、eventsEnabled の接続へ sessionId なしで流す）。frameId は始まったフレーム
+     * （主フレーム＝タブの targetId、cross-site の iframe＝その target の id、同じ process の iframe＝フレームの id、target=_blank＝開いてすぐ消えるタブの targetId）。guid を返す
+     */
+    download(frameId, { url = 'https://files.example/report.zip', name = 'report.zip', guid = crypto.randomUUID(), total = 0 } = {}) {
+      downloadItems.set(guid, { guid, context: tabOfFrame(frameId)?.browserContextId ?? 'CTX-DEFAULT', state: 'inProgress', total, received: 0 });
+      toDownloads('Browser.downloadWillBegin', { frameId, guid, url, suggestedFilename: name });
+      return guid;
+    },
+    /** 進み具合（Browser.downloadProgress）。state は inProgress・completed（filePath 付き）・canceled */
+    downloadProgress(guid, { received = 0, total, state = 'inProgress', filePath } = {}) {
+      const item = downloadItems.get(guid);
+      if (!item) return false;
+      item.received = received; item.state = state;
+      if (total !== undefined) item.total = total;
+      toDownloads('Browser.downloadProgress', { guid, totalBytes: item.total, receivedBytes: received, state, ...(state === 'completed' && filePath ? { filePath } : {}) });
+      return true;
+    },
+    /** ダウンロードの今の状態（inProgress・completed・canceled） */
+    downloadState: guid => downloadItems.get(guid)?.state ?? null,
+    /** 受けた Browser.setDownloadBehavior の引数 */
+    downloadBehaviors: () => downloadBehaviors.map(params => ({ ...params })),
+    /** ダウンロードのイベントを受ける接続の数 */
+    downloadListeners: () => downloadSockets.size,
+    /** CDP の既定の context を替える（利用者が別のプロフィールの窓を開いた・使った） */
+    setDefaultContext(id) { defaultContext = id; },
   };
 }

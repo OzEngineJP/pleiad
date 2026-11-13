@@ -955,6 +955,9 @@ const SUITES = [
   './unit/page-coords.mjs',
   // 中継の 4 つの口（既定は今のまま・差し替えた口が決めた場所で呼ばれる）
   './unit/chrome-relay-hooks.mjs',
+  // 会話の Chrome のウィンドウのダウンロード（会話のタブで始まったものだけ記録・画面へ知らせる・止める・エージェントの命令は断る。ADR 0328）
+  './unit/chrome-downloads.mjs',
+  './unit/server-chrome-downloads.mjs',
   // ページの入口の認証（ページの Cookie・本体の Cookie・?token= を受けない）
   './unit/page-auth.mjs',
   // 2 つのリスナー（Host が違えば 421・GET と HEAD だけ・::1・port の引き継ぎ）と、実際のサーバーで 2 つの port が立つ
@@ -1010,6 +1013,8 @@ const SUITES = [
   './unit/browser-unify-b3.mjs',
   './unit/browser-unify-ws.mjs',
   './unit/browser-unify-tabs.mjs',
+  // Chrome のウィンドウのダウンロードの画面（置き場と字は素の Node。ボタン・一覧・スマホの入口は B1_BROWSER_TEST=1。tests/browser/chrome-downloads.cjs）
+  './unit/chrome-downloads-ui.mjs',
   // 右の欄のタブの列と開け閉めを本物の画面で（B1_BROWSER_TEST=1。tests/browser/right-panel-tabs.mjs）
   './unit/right-panel-tabs.mjs',
   // 右の欄の動きの間は幅に反応する処理を止めて止まったら 1 度だけやり直す・受け渡しは動き始めに量って書くだけ（web/panel-moving.mjs・panel-handoff.mjs）

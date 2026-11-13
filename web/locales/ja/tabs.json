@@ -26,6 +26,20 @@
     "noMatch": "一致するタブはありません",
     "open_other": "ブラウザーを開く（{{count}} 個のタブ）"
   },
+  "downloads": {
+    "title": "ダウンロード",
+    "running_other": "ダウンロード（{{count}} 件が進行中）",
+    "stop": "ダウンロードを止める",
+    "actions": "{{name}} の操作",
+    "failed": "ダウンロードできませんでした",
+    "stopped": "止めました",
+    "close": "閉じる",
+    "line": {
+      "completed": "{{name}} をダウンロードしました · {{size}}",
+      "failed": "{{name}} をダウンロードできませんでした",
+      "canceled": "{{name}} のダウンロードを止めました"
+    }
+  },
   "address": {
     "openTabs_other": "タブ一覧を開く（{{count}} 個）",
     "back": "戻る",

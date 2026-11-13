@@ -25,6 +25,13 @@ const shortText = (value, max) => (typeof value === 'string' ? value.slice(0, ma
 const chromeProfileLine = (value) => ({
   browser: value?.browser === 'edge' ? 'edge' : 'chrome', dir: shortText(value?.dir, 64), name: shortText(value?.name, 100), agent: shortText(value?.agent, 100),
 });
+/** ダウンロードが決着した行の中身。状態は completed・canceled（人が止めた）・failed だけで、保存したパスは終わったものにだけ残す */
+export const chromeDownloadLine = (value) => ({
+  name: shortText(value?.name, 300),
+  state: ['completed', 'canceled', 'failed'].includes(value?.state) ? value.state : 'failed',
+  size: Number.isFinite(value?.size) && value.size > 0 ? Math.floor(value.size) : 0,
+  path: value?.state === 'completed' && typeof value?.path === 'string' && value.path ? value.path.slice(0, 1000) : null,
+});
 
 /** ファイルごとの追記を直列化する（同一セッションへの並行 present で行が壊れないように）。 */
 const appendChains = new Map();
@@ -189,6 +196,8 @@ export async function recordPresent(sessionId, payload) {
     ...(payload.kind === 'chromeHandover' ? { chromeHandover: { seconds: Number.isFinite(payload.chromeHandover?.seconds) ? Math.max(0, Math.round(payload.chromeHandover.seconds)) : 0 } } : {}),
     // エージェントがプロフィールを切り替えた行（core/chrome/profile-choice.mjs）: { browser, dir, name, agent }（表示名とフォルダー名だけ）
     ...(payload.kind === 'chromeProfile' ? { chromeProfile: chromeProfileLine(payload.chromeProfile) } : {}),
+    // 会話の Chrome のウィンドウのダウンロードが決着した行（core/chrome/downloads.mjs）: { name, state, size, path }（path は終わったものだけ）
+    ...(payload.kind === 'chromeDownload' ? { chromeDownload: chromeDownloadLine(payload.chromeDownload) } : {}),
     ...(payload.kind === 'chromeClosed' ? { chromeClosed: { by: ['agent', 'human', 'idle'].includes(payload.chromeClosed?.by) ? payload.chromeClosed.by : 'human' } } : {}),
   };
 

@@ -5,6 +5,7 @@ import { createSpring, reducedMotion } from './motion.mjs';
 const paths = {
   back: 'm14 5-7 7 7 7', forward: 'm10 5 7 7-7 7', reload: 'M20 10a8 8 0 1 0-1 8M20 4v6h-6',
   close: 'm6 6 12 12M6 18 18 6', plus: 'M12 5v14M5 12h14',
+  download: 'M12 4v11M8 12l4 4 4-4M5 19h14', dots: 'M5 12v.01M12 12v.01M19 12v.01',
   file: 'M14 2H6v20h12V6l-4-4v5h5M9 12h6M9 16h6', dir: 'M3 6h7l2 3h9v11H3z',
   viz: 'M4 19V9m8 10V3m8 16v-7M2 21h20',
   web: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z',
@@ -22,7 +23,7 @@ const paths = {
 export function browserIcon(kind, strokeWidth = null) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', String(strokeWidth ?? (kind === 'more' ? 4 : kind === 'panel' ? 1.6 : 1.7))); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round'); svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('stroke-width', String(strokeWidth ?? (kind === 'more' || kind === 'dots' ? 4 : kind === 'panel' ? 1.6 : 1.7))); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round'); svg.setAttribute('aria-hidden', 'true');
   const p = document.createElementNS(svg.namespaceURI, 'path'); p.setAttribute('d', paths[kind] ?? paths.file); svg.append(p); return svg;
 }
 export function browserButton(kind, label, run) {

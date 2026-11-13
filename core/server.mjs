@@ -343,7 +343,8 @@ const chromeRelay = chromeConnection
       snapshot: () => ({ profiles: chromeProfiles?.pending() ?? [], logins: chromeLoginGroups.snapshot() }),
       restore: extra => { chromeProfiles?.restorePending(extra.profiles); chromeLoginGroups.restore(extra.logins); },
     },
-    handoff: chromeHandoffs, turnLive: id => liveTurn(id), turnSignal: id => runtime.turns.get(id)?.ac.signal, connectWaitText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.connectWait') })
+    handoff: chromeHandoffs, turnLive: id => liveTurn(id), turnSignal: id => runtime.turns.get(id)?.ac.signal, connectWaitText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.connectWait'),
+    downloadDeniedText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.downloadDenied') })
   : null;
 // 接続の子が預かっていた状態を受ける（端点・鍵・ポート・隠した窓の印）。前のサーバーの接続（確認待ちも）を引き継ぎ、以後の変化を預け直す
 if (chromeLink && chromeRelay) {
@@ -2121,8 +2122,10 @@ if (chromeProfiles) browserBridge.useProfiles({
   list: (sessionId, locale) => browserProfileOp(sessionId, 'browser.listProfiles', {}, locale),
   use: (sessionId, args, locale) => browserProfileOp(sessionId, 'browser.useProfile', args, locale),
 });
-async function browserProfileOp(sessionId, op, args, locale) {
-  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId }, op, args, opsDeps(locale));
+// ダウンロードの一覧（list_downloads）も ops（browser.listDownloads）を通す。待ちは、ターンの中断の合図で外す
+if (chromeRelay) browserBridge.useDownloads({ list: (sessionId, args, locale, signal) => browserProfileOp(sessionId, 'browser.listDownloads', args, locale, { signal }) });
+async function browserProfileOp(sessionId, op, args, locale, extra = null) {
+  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId }, op, args, extra ? { ...opsDeps(locale), ...extra } : opsDeps(locale));
   if (!result.ok) throw new Error(result.error);
   return result.result;
 }
@@ -3430,6 +3433,12 @@ async function recordChromeWindowClose(sessionId, payload) {
   const record = await history.recordPresent(sessionId, payload);
   emitGlobal({ type: 'present', sessionId, ...record });
 }
+/** 会話の Chrome のウィンドウのダウンロードが決着したときの会話の行（present kind: 'chromeDownload'。ADR 0328）。進行中は出さない */
+async function recordChromeDownload(sessionId, download) {
+  const record = await history.recordPresent(sessionId, { kind: 'chromeDownload', chromeDownload: { name: download.name, state: download.state, size: download.total || download.received, path: download.path } });
+  emitGlobal({ type: 'present', sessionId, ...record });
+}
+chromeRelay?.downloads.onSettled(({ sessionId, download }) => { recordChromeDownload(sessionId, download).catch(error => console.log(`  chrome-downloads: record failed: ${error?.message ?? error}`)); });
 
 /**
  * 会話の Chrome の窓の知らせ（右パネルの Chrome の入口。窓のある会話だけに出し、操作中は弧を出す）。リモートの端末にも流す。
@@ -5140,6 +5149,12 @@ const opsChrome = chromeConnection ? {
   closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
   // 右パネルの映像に映すウィンドウを固定する・解く（core/chrome/screencast.mjs の pin）
   pinWindow: chromeScreencast ? (sessionId, windowId, tabId = null) => chromeScreencast.request('pin', sessionId, { windowId, tabId }) : null,
+  // 会話の Chrome のウィンドウで始まったダウンロード（browser.listDownloads・cancelDownload。core/chrome/downloads.mjs）
+  downloads: chromeRelay ? {
+    list: sessionId => chromeRelay.downloads.list(sessionId),
+    wait: (sessionId, seconds, signal) => chromeRelay.downloads.wait(sessionId, seconds, signal),
+    stop: (sessionId, id) => chromeRelay.downloads.stop(sessionId, id),
+  } : null,
   windows: async parentId => {
     const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
       sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle', waiting: id => Boolean(chromeHandoffs?.current?.(id)) });

@@ -678,6 +678,21 @@
       "input": "f08816c821a8"
     },
     {
+      "id": "browser.cancelDownload",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "542e2ddea21f"
+    },
+    {
       "id": "browser.chromeCloseWindow",
       "risk": "write",
       "riskOf": false,
@@ -876,6 +891,21 @@
       },
       "legacyCommand": null,
       "input": "7f7ac791e818"
+    },
+    {
+      "id": "browser.listDownloads",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "d0b966317da8"
     },
     {
       "id": "browser.listProfiles",
