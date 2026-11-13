@@ -1,9 +1,7 @@
 // ==================== 外部 MCP のカード（設定 › コンテキスト）と、追加・編集のシート ====================
 // docs/design-system.md「コンテキスト」の「外部 MCP」。カードの枠・担当・段（ユーザー／作業場所）・探す形式は web/context.mjs。
-//   エージェントに任せる: 各エージェント（Claude・Codex）の登録を並べて見比べるだけ（読み取りのみ）。renderAgents
-//   Pleiad がそろえる: ユーザーの段の一覧に、つなぐものを名前ごとに 1 行（renderList）。スイッチ（オフ = 名前で外す）、同じ名前の定義が複数あれば
-//   どれを使うか、Pleiad に登録したものはログイン・編集・名前の変更・削除・ログアウト・接続の確認、エージェントの登録は「Pleiad に取り込む」。
-//   段の下に、暗号化されない起動の注記とログインの詳細設定（renderExtras）。
+//   一覧そのもの（名前 × エージェント）は web/mcp-matrix.mjs。ここは行の詳細（peek: ログイン・編集・名前の変更・削除・ログアウト・接続の確認）、
+//   追加・編集のシート、段の下の暗号化されない起動の注記とログインの詳細設定（renderExtras）。
 // 登録は Pleiad 自身の設定（core/ply-mcp.mjs）。Claude や Codex の設定ファイルは書き換えない。秘密は伏せ字（••••）でしか返ってこない。
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
@@ -48,6 +46,7 @@ function icon(kind) {
 }
 const pathKey = p => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const within = (dir, file) => pathKey(file) === pathKey(dir) || pathKey(file).startsWith(pathKey(dir) + '/');
+/** 1 件の定義の同一性（同じものを別のエージェントにも登録しているだけなら、選ばせない） */
 /** 1 件の定義の同一性（同じものを別のエージェントにも登録しているだけなら、選ばせない） */
 const signature = e => e.transport === 'stdio' ? `stdio:${e.command ?? ''} ${(e.args ?? []).join(' ')}` : `http:${e.endpoint ?? ''}`;
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -161,72 +160,6 @@ export function createMcpSection() {
   const messages = new Map();   // 行に出す直近の結果（接続の確認・取り込み・ログイン）
 
   // ---------------------------------------------------------------- 描画
-  /** エージェント任せ: 各エージェントの登録を並べる（Pleiad は読むだけ） */
-  function renderAgents(host, ctx) {
-    const block = el('div', 'cx-block');
-    host.append(block);
-    block.append(el('p', 'cx-sub', t('mcp.agents.lead')));
-    if (!ctx.agents) { block.append(ctx.loading()); return; }
-    const lists = Object.fromEntries(AGENTS.map(([id]) => [id, ctx.agents.agents?.[id] ?? []]));
-    const shown = AGENTS;
-    const cols = el('div', 'cx-cols');
-    for (const [id, label] of shown) {
-      const col = el('div', 'cx-col');
-      col.append(el('b', null, label));
-      if (!lists[id].length) col.append(el('span', 'cx-sub', t('mcp.agents.none')));
-      for (const s of lists[id]) {
-        const line = el('div', 'nm2');
-        line.append(el('span', 'cx-dot off'), el('span', 'n', s.name));
-        if (shown.length > 1 && shown.filter(([o]) => o !== id).every(([o]) => !lists[o].some(x => x.name === s.name))) line.append(el('span', 'only', t('mcp.agents.only', { agent: label })));
-        if (s.disabled) line.append(el('span', 'only', t('mcp.agents.disabled')));
-        line.title = `${transportText(s.transport)} · ${ctx.short(s.path)}`;
-        col.append(line);
-      }
-      cols.append(col);
-    }
-    block.append(cols, el('p', 'cx-sub', t('mcp.agents.foot')));
-  }
-
-  /** Pleiad がそろえる: ユーザーの段の一覧（web/context.mjs の list）に、名前ごとの行と「＋ MCP を追加」を足す */
-  function renderList(list, ctx) {
-    const value = ctx.info.kinds.mcp.value;
-    const groups = new Map();
-    for (const e of ctx.scan.entries.filter(e => e.kind === 'mcp')) groups.set(e.name, [...(groups.get(e.name) ?? []), e]);
-    const registry = new Map((ctx.ply?.servers ?? []).map(s => [s.name, s]));
-    for (const [name, entries] of groups) {
-      const fromPly = entries.find(e => e.origins?.[0]?.source === 'ply');
-      const active = entries.find(e => e.status === 'candidate') ?? null;
-      const disabledByName = Boolean(value.disabled?.includes(name));
-      const excluded = !active && entries.some(e => e.status === 'excluded');
-      const nativeOff = !active && !excluded && entries.every(e => e.status === 'disabled');
-      const shown = active ?? fromPly ?? entries[0];
-      const row = el('div', 'cx-row' + (active ? '' : ' off'));
-      const open = button('', 'cx-open');
-      const key = `mcp:${name}`;
-      open.setAttribute('aria-expanded', String(ctx.opened.has(key)));
-      const body = el('span', 't');
-      body.append(el('span', 'nm', name));
-      const p = el('span', 'p');
-      describe(p, { entries, shown, fromPly, registry, active, nativeOff, disabledByName, value });
-      body.append(p);
-      open.append(icon(shown.transport === 'stdio' ? 'stdio' : 'http'), body);
-      open.onclick = () => { if (ctx.opened.has(key)) ctx.opened.delete(key); else ctx.opened.add(key); ctx.rerender(); };
-      row.append(open);
-      const reg = fromPly ? registry.get(name) : null;
-      if (active && reg?.auth === 'oauth' && ['signed-out', 'expired'].includes(reg.authStatus?.state) && !remoteWindow()) row.append(button(t('mcp.login'), 'btn btn-quiet', () => login(ctx, name)));
-      const sw = button('', 'cx-sw');
-      sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(Boolean(active))); sw.setAttribute('aria-label', t('mcp.switchAria', { name }));
-      sw.disabled = nativeOff;
-      if (nativeOff) sw.title = t('mcp.nativeOffTitle');
-      sw.onclick = () => { sw.setAttribute('aria-checked', String(!active)); ctx.saveKind(v => toggle(v, name, entries, !active, ctx)); };
-      row.append(sw);
-      list.append(row);
-      const choice = choices(name, entries, ctx);
-      if (choice) list.append(choice);
-      if (ctx.opened.has(key)) list.append(peek(ctx, name, entries, fromPly, reg));
-    }
-    if (!groups.size) list.append(el('p', 'cx-empty', t('mcp.empty')));
-  }
   /** 一覧の下の「＋ MCP を追加」（シートを開く） */
   function addButton(ctx) {
     const add = withPlus(button('', 'cx-add', () => openSheet(ctx)), t('mcp.add'));
@@ -239,41 +172,10 @@ export function createMcpSection() {
     host.append(advanced(ctx));
   }
 
-  function describe(p, { entries, shown, fromPly, registry, active, nativeOff, disabledByName, value }) {
-    const bits = [];
-    const reg = fromPly ? registry.get(shown.name) : null;
-    if (reg?.auth === 'oauth') {
-      const state = reg.authStatus?.state;
-      const text = STATES[state] ?? STATES.error;
-      bits.push(['signed-out', 'expired'].includes(state) ? el('span', 'cx-strong', text) : text);
-      if (reg.authStatus?.needsScope) bits.push(el('span', 'cx-strong', t('mcp.describe.needsScope')));
-    }
-    bits.push(transportText(shown.transport));
-    if (reg?.auth === 'bearer') bits.push(t('mcp.auth.token'));
-    if (reg?.auth === 'headers') bits.push(t('mcp.auth.headers'));
-    if (reg?.pending?.length) bits.push(el('span', 'cx-strong', t('mcp.describe.pending')));
-    const sources = [...new Set(entries.flatMap(e => e.origins?.map(o => o.source) ?? []))];
-    if (fromPly) bits.push(sources.length > 1 ? t('mcp.describe.plyOver', { agents: agentList(sources.filter(s => s !== 'ply')) }) : t('mcp.describe.ply'));
-    else if (sources.length === 1) bits.push(t('mcp.describe.only', { agent: agentName(sources[0]) }));
-    else bits.push(sources.length === 2 ? t('mcp.describe.both', { a: agentName(sources[0]), b: agentName(sources[1]) }) : t('mcp.describe.many', { agents: agentList(sources) }));
-    const defs = new Set(entries.filter(e => e.status === 'candidate' || e.shadowedBy === 'choice').map(signature));
-    if (!fromPly && defs.size > 1) {
-      // どちらを使うか: 選んだ定義（prefer）、無ければ先に見つかった方（core/context-scan.mjs）
-      const picked = active && value?.prefer?.[shown.name] && within(value.prefer[shown.name], active.path);
-      bits.push(active ? t('mcp.describe.defsUsing', { n: defs.size, agent: agentName(active.origins?.[0]?.source), by: picked ? t('mcp.describe.byPicked') : t('mcp.describe.byFirst') })
-        : t('mcp.describe.defs', { n: defs.size }));
-    }
-    if (nativeOff) bits.push(t('mcp.describe.nativeOff'));
-    else if (!active && !disabledByName) bits.push(t('mcp.describe.excluded'));
-    if (reg?.authStatus?.message && !reg.authStatus.needsScope) bits.push(reg.authStatus.message);
-    const message = messages.get(shown.name);
-    if (message) bits.push(message);
-    bits.forEach((b, i) => { if (i) p.append(' · '); p.append(b); });
-  }
-
-  const toggle = (value, name, entries, turnOn, ctx) => toggleMcp(value, name, entries, turnOn, ctx.scan.entries);
-
-  /** 同じ名前で中身の違う定義が複数あるとき、どれを使うか */
+  /**
+   * 同じ名前で中身の違う定義が複数あるとき、どれを使うか（prefer）。名前ごとの一覧では、各エージェントは自分の定義を使い、
+   * prefer が効くのは、持っていないエージェントへ広げるときに渡す定義だけ。なので、広げている行（spread）の詳細にだけ出す
+   */
   function choices(name, entries, ctx) {
     if (entries.some(e => e.origins?.[0]?.source === 'ply')) return null;
     const usable = entries.filter(e => e.status === 'candidate' || e.shadowedBy === 'choice');
@@ -297,7 +199,7 @@ export function createMcpSection() {
   }
 
   // ---------------------------------------------------------------- 行の中身
-  function peek(ctx, name, entries, fromPly, reg) {
+  function peek(ctx, name, entries, fromPly, reg, { choice = false } = {}) {
     const box = el('div', 'cx-peek');
     if (fromPly && reg) {
       const facts = el('div', 'fm facts');
@@ -342,6 +244,8 @@ export function createMcpSection() {
       return box;
     }
     // エージェントの登録: 伏せ字の定義を見せ、Pleiad に取り込める
+    const pick = choice ? choices(name, entries, ctx) : null;
+    if (pick) box.append(pick);
     for (const e of entries) {
       const config = ctx.scan.configs?.find(c => pathKey(c.path) === pathKey(e.path));
       const line = el('div', 'row-line');
@@ -633,5 +537,25 @@ export function createMcpSection() {
     return { value: () => Object.fromEntries(rows.filter(r => r.key.value.trim()).map(r => [r.key.value.trim(), r.input.value || (r.masked ? MASK : r.missing ? null : '')])) };
   }
 
-  return { renderAgents, renderList, addButton, renderExtras, openSheet, authEvent };
+  /** 行の下に出す、ログインの状態（OAuth の登録だけ）。ログインが要るときは強調する */
+  function authNote(reg, name = reg?.name) {
+    if (!reg) return null;
+    const bits = [];
+    if (reg.auth === 'oauth') {
+      const state = reg.authStatus?.state, text = STATES[state] ?? STATES.error;
+      bits.push(['signed-out', 'expired'].includes(state) ? el('span', 'cx-strong', text) : text);
+      if (reg.authStatus?.needsScope) bits.push(el('span', 'cx-strong', t('mcp.describe.needsScope')));
+    }
+    if (reg.pending?.length) bits.push(el('span', 'cx-strong', t('mcp.describe.pending')));
+    if (reg.authStatus?.message && !reg.authStatus.needsScope) bits.push(reg.authStatus.message);
+    const message = messages.get(name);
+    if (message) bits.push(message);
+    if (!bits.length) return null;
+    const p = el('span', 'p');
+    bits.forEach((b, i) => { if (i) p.append(' · '); p.append(b); });
+    return p;
+  }
+  /** claude.ai のコネクターのうち、ログインが必要なもの（Claude 側でログインする）。行の下に強調して出す */
+  function connectorNote() { const p = el('span', 'p'); p.append(el('span', 'cx-strong', t('mcp.state.signedOut'))); return p; }
+  return { addButton, renderExtras, openSheet, authEvent, peek, authNote, connectorNote };
 }

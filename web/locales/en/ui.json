@@ -1549,6 +1549,8 @@
       "ownerAria": "Who loads {{kind}} in this location",
       "plyWho": "Managed by Pleiad",
       "nativeNote": "{{agent}} reads them by its own rules",
+      "mcpByAgentWho": "Per agent",
+      "mcpByAgent": "External MCP is set per agent. Change it in Settings › Plugins",
       "loading": "Loading…",
       "offHere": "Turned off for this location",
       "offGlobal": "Turned off in the global settings",
@@ -1718,6 +1720,28 @@
     }
   },
   "mcp": {
+    "matrix": {
+      "groupPly": "Registered in Pleiad",
+      "groupAgent": "Agent settings",
+      "connector": "claude.ai connectors",
+      "locked": "Pleiad cannot turn this off",
+      "searching": "Looking…",
+      "pluginNote": "{{plugin}} plugin",
+      "pluginCalled": "{{name}} from the {{plugin}} plugin",
+      "connectorCalled": "connector {{name}}",
+      "kindPlugin": "Plugin MCP",
+      "originPly": "Also in the settings of {{agents}}",
+      "originAgent": "In the settings of {{agents}}",
+      "originPlugin": "In the plugins of {{agents}}",
+      "originConnector": "In the account of {{agents}}",
+      "agentsAria": "Agents that use {{name}}",
+      "agentAria": "Use {{name}} in {{agent}}",
+      "agentLockedAria": "Use {{name}} in {{agent}} (Pleiad cannot turn this off)",
+      "askAria": "Confirm connecting {{name}} to {{to}} too",
+      "ask": "This connects {{name}} from the settings of {{from}} to {{to}} too",
+      "cancel": "Cancel",
+      "confirm": "Connect"
+    },
     "state": {
       "signedIn": "Signed in",
       "signedOut": "Sign-in required",
@@ -1732,13 +1756,6 @@
       "sse": "Connect to URL (SSE)"
     },
     "join": ", ",
-    "agents": {
-      "lead": "Registered in each agent's settings (Pleiad only reads them and doesn't change them)",
-      "none": "None registered",
-      "only": "{{agent}} only",
-      "disabled": "Disabled",
-      "foot": "Available MCP servers change when you switch agents. To keep them the same, choose “Managed by Pleiad”."
-    },
     "login": "Sign in",
     "loginAgain": "Sign in again",
     "logout": "Sign out",
@@ -1755,19 +1772,13 @@
       "sheetEncrypted": "Saved as a Pleiad setting and connected to every agent. The Claude and Codex settings files are not changed. Tokens and keys are encrypted in the OS keychain (Windows Credential Manager, macOS Keychain, or Linux Secret Service)."
     },
     "describe": {
-      "needsScope": "Additional permissions required",
-      "pending": "Some values missing",
-      "plyOver": "Registered in Pleiad (takes precedence over the same name in {{agents}})",
       "ply": "Registered in Pleiad",
       "only": "Registered only in {{agent}}",
       "both": "Registered in both {{a}} and {{b}}",
       "many": "Registered in {{agents}}",
-      "defsUsing": "{{n}} definitions with the same name · using the one from {{agent}} settings ({{by}})",
-      "defs": "{{n}} definitions with the same name",
-      "byPicked": "your choice",
-      "byFirst": "found first",
-      "nativeOff": "Disabled in the original settings",
-      "excluded": "Excluded"
+      "needsScope": "Additional permissions required",
+      "pending": "Some values missing",
+      "nativeOff": "Disabled in the original settings"
     },
     "auth": {
       "token": "Token",

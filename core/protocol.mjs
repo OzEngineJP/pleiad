@@ -131,6 +131,8 @@ export const COMMANDS = new Set([
   'renamePlyMcp',  // { name, to } -> { name, from, registration }。秘密・OAuth の状態・ロック名を引き継ぐ
   'importPlyMcp',  // { items: [{ format: claude|codex, scope: user|directory|local, cwd?, name, as?, auth? }], includeSecrets? } -> { results: [{ ok, name, auth, pending, needsLogin?, notes, error? }] }。トークンは流用しない
   'setPlyMcpSettings', // { clientMetadataUrl: https URL | null } -> 設定。Client ID Metadata Document の URL（既定は無し）
+  'mcpMatrix', // { cwd?, refresh? } -> { agents: [id], rows: [{ key, name, kind, group, transport, registered, origins, plugin, cells: { <agent>: { state, mode } }, on }], locked, connectors: 'reading'|'ready'|'none' } 外部 MCP の一覧（名前 × エージェント。ADR 0327。読むだけ）
+  'setMcpAgent', // { name, agent, on, place?, cwd? } -> 外部 MCP を名前 × エージェントで入れる・外す。外すときは確認なし、広げるときは呼ぶ側が先に確かめる（ADR 0327）
   'setContextSettings', // { place: null|path, kind, value|null } / { place, kind?, roots|null } / { place, add|remove } -> 即時保存し contextSettings と同じ形を返す
   'scanContext', // { cwd, place?: 'default', scope?: 'user' } -> bounded inventory (entries, the home / Git roots and the MCP config file bodies); never launches tools or changes agents
   // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない。一覧の値は伏せ字

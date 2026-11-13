@@ -1580,6 +1580,16 @@
         "on": "On or off (toggle).",
         "ids": "The item ids in the new order (order)."
       },
+      "setMcpAgent": {
+        "summary": "Turn an external MCP server on or off for one agent (from the next turn). Turning it on, including sharing another agent's definition with it, needs the user's approval.",
+        "name": "Name of the MCP server.",
+        "agent": "Agent id (claude, codex, ...).",
+        "on": "true to use it, false to stop using it."
+      },
+      "mcpMatrix": {
+        "summary": "Read external MCP servers as a name-by-agent table (where each is used and whether it can be switched, including Claude plugin MCPs and claude.ai connectors).",
+        "refresh": "If true, re-read the claude.ai connectors in the background."
+      },
       "refresh": {
         "summary": "Re-read the instructions and Skills pinned to a conversation from the current files (only when it is not running)."
       },

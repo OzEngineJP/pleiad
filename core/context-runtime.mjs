@@ -4,9 +4,10 @@ import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { instructionBody, scanContext } from './context-scan.mjs';
-import { DEFAULT_OWNERS, KINDS, containsPath, legacyPlan, matchesGlobs, normalizePlan, pathKey } from './context-settings.mjs';
+import { DEFAULT_OWNERS, KINDS, SOURCES, containsPath, legacyPlan, matchesGlobs, normalizePlan, pathKey } from './context-settings.mjs';
 import { t, agentT } from './i18n.mjs';
 import { agentOf } from './backends/agents.mjs';
+import { CAPABILITY_STATES } from './backends/agent-marks.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply');
@@ -77,6 +78,10 @@ export function followSettings(previous, settings, { keepNative = false } = {}) 
 export function runtimeSettings(policy) {
   const plan = normalizePlan(structuredClone(policy.plan ?? legacyPlan(policy.user, policy.directory)));
   for (const scope of ['user', 'directory']) for (const k of KINDS) if (policy.owners?.[k] !== 'ply') plan[scope].kinds[k] = null;
+  // 名前ごとのモデルでは、広げる定義を探すため、MCP はすべてのエージェントの設定を探す（探索の設定には従わない）
+  if (plan.mcp?.agents) for (const scope of ['user', 'directory']) {
+    if (plan[scope].kinds.mcp) plan[scope].kinds.mcp = { ...plan[scope].kinds.mcp, sources: SOURCES.filter(s => s !== 'common') };
+  }
   return { cwd: policy.cwd, plan };
 }
 /** 固定の対象は指示と Skills。MCP は接続先の設定なので本文の同一性を約束しない */
@@ -153,17 +158,56 @@ function markChoices(rows, plan, home) {
   }
 }
 
+/**
+ * 名前ごとのモデル（plan.mcp.agents）で、エージェント agent に中継する外部 MCP を決める。
+ *   Pleiad の登録: そのエージェントで off にしていなければ渡す
+ *   エージェントの設定の定義: そのエージェント自身のものは渡さない（自分で読む）。他のエージェントのものは、spread に agent があれば渡す
+ * 戻り: { relay(item) → null | 渡さない理由の鍵, suppress: そのエージェント自身の MCP のうち、止める名前（off か、Pleiad が同じ名前で渡すもの） }
+ */
+export function agentMcpRules(plan, agent) {
+  const rules = plan?.mcp?.agents;
+  if (!rules || !agent) return null;
+  const own = agentOf(agent)?.contextSources ?? [];
+  const off = name => (rules.off?.[name] ?? []).includes(agent);
+  const spread = name => (rules.spread?.[name] ?? []).includes(agent);
+  // そのエージェント自身の設定にあり、有効な定義。自身の設定で無効（status: 'disabled'）の定義は、そのエージェントが持っていないものとして扱う（画面と同じ規則）
+  const isOwn = item => item.status !== 'disabled' && item.origins.some(o => own.includes(o.source));
+  const canStop = CAPABILITY_STATES[agent]?.nativeMcpOff === true;
+  return {
+    // ownNames: このエージェント自身の設定にある名前（走査で先に集める）。自分の MCP を名前ごとに止められないエージェントは、
+    // 同じ名前の定義を Pleiad から渡さず、自分の側を使う（二重につながない。canStop は能力の印 nativeMcpOff から）
+    relay(item, ownNames = new Set()) {
+      const from = item.origins[0].source;
+      if (off(item.name)) return 'agentOff';
+      if (!canStop && ownNames.has(item.name) && !isOwn(item)) return 'agentOwn';
+      if (from === 'ply') return null;
+      if (isOwn(item)) return 'agentOwn';
+      return spread(item.name) ? null : 'agentNotSpread';
+    },
+    canStop,
+    isOwn,
+    off,
+    offNames: () => Object.keys(rules.off ?? {}).filter(off),
+  };
+}
+
 export async function resolveRuntime(policy, options = {}) {
   const owners = policy.owners;
   const kinds = Object.keys(owners).filter(k => owners[k] === 'ply');
   const settings = runtimeSettings(policy);
   // locale は会話の言語（エージェントに渡す前置き・ツールの説明の言語）。探索の設定ではないので scanOptions に入れない
-  const { snapshots, locale, ...scanOptions } = options;
-  const scan = await scanContext(settings, { ...scanOptions, runtime: true });
+  const { snapshots, locale, agent = policy.agent ?? null, ...scanOptions } = options;
+  const mcpRules = agentMcpRules(settings.plan, agent);
+  // 名前ごとのモデルでは、外部 MCP の設定ファイルが 1 つ壊れていても会話を止めない（そのファイルの名前だけ渡さない）。指示・Skills の失敗は従来どおり止める
+  const scan = await scanContext(settings, { ...scanOptions, runtime: true, softMcp: Boolean(mcpRules) });
   const removed = new Set(policy.removedMcp ?? []);
   if (scan.limited || scan.diagnostics.length) throw new Error(t('context.runtime.unresolved', { detail: scan.diagnostics[0]?.message ?? t('context.runtime.scanLimit') }));
   const report = { version: 1, cwd: policy.cwd, owners, at: new Date().toISOString(), entries: [], native: kinds.length < 3, status: 'resolved' };
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
+  const suppress = new Set(), nativeNames = new Set();
+  if (scan.skipped?.length) report.skipped = scan.skipped.map(({ path: file, message }) => ({ path: file, message }));
+  // このエージェント自身の設定にある名前（shadowed・無効の行も含む）。先に集める
+  const ownNames = new Set(mcpRules ? scan.entries.filter(e => e.kind === 'mcp' && mcpRules.isOwn(e)).map(e => e.name) : []);
   for (const item of scan.entries) {
     // scope と root は会話の右パネルが出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分けるのに使う
     const row = { id: item.id, kind: item.kind, name: item.name, path: item.path, scope: item.scope, appliesTo: item.appliesTo, status: item.status, hash: item.hash, origins: item.origins,
@@ -177,7 +221,20 @@ export async function resolveRuntime(policy, options = {}) {
       else { seen.add(key); conditional.push({ ...item, content: instructionBody(item) }); }
       continue;
     }
+    if (mcpRules && item.kind === 'mcp' && mcpRules.isOwn(item)) nativeNames.add(item.name);
     if (item.status !== 'candidate') continue;
+    // 名前ごとのモデル: このエージェントへ中継しない定義。接続せず、ply_context にもツールを出さない
+    if (mcpRules && item.kind === 'mcp') {
+      const why = mcpRules.relay(item, ownNames);
+      if (why) {
+        if (mcpRules.canStop && mcpRules.off(item.name) && mcpRules.isOwn(item)) suppress.add(item.name);
+        row.status = why === 'agentOff' ? 'removed' : 'excluded';
+        // i18n-dynamic: context.runtime.agent
+        row.reason = t(`context.runtime.${why}`);
+        if (row.status === 'removed') row.tools = 0;
+        continue;
+      }
+    }
     // 「この会話では外す」とした外部 MCP。接続せず、ply_context にもツールを出さない
     if (item.kind === 'mcp' && removed.has(item.name)) { row.status = 'removed'; row.reason = t('context.removedHere'); continue; }
     // 同じ実体は範囲を問わず一度だけ渡す。user が先なので、指示の広い適用範囲を残せる。
@@ -205,13 +262,24 @@ export async function resolveRuntime(policy, options = {}) {
     }
   }
   markChoices(report.entries, settings.plan, scan.home);
+  // このエージェントが自分で持っている同じ名前は、Pleiad が渡す側を使うので止める（二重につながない）
+  // 止められないエージェント（canStop でない）は自分の側が勝つので、止める名前は無い
+  if (mcpRules?.canStop) {
+    for (const item of servers) if (nativeNames.has(item.name)) suppress.add(item.name);
+    // 重なって使われなかった行（shadowed）や、この会話で外した行でも、自分の同じ名前の MCP は止める（走査で隠れた行から漏らさない）
+    for (const name of nativeNames) if (mcpRules.off(name) || removed.has(name)) suppress.add(name);
+    // そのエージェントで off にした名前は、走査に出たか・どのファイルにあったか・ファイルを飛ばしたかに関わらず、常に止める。
+    // 無い名前を止めても害は無い（Claude は名前の一致、Codex は設定に在る名前だけ、OpenCode は定義に在る名前だけに効く）
+    for (const key of mcpRules.offNames()) suppress.add(key);
+  }
+  const mcp = mcpRules ? { named: true, suppress: [...suppress].sort() } : { named: false, suppress: [] };
   const prompt = instructions.map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: i.content })).join('\n\n');
   if (Buffer.byteLength(prompt) > 128 * 1024) throw new Error(t('context.runtime.instructionsTooLarge'));
   const pin = contextPin(scan.entries);
   await saveSnapshots(snapshots, scan.entries);
   // scanOptions は instructions_for_path が同じ探索（home など）で解き直すために持つ
   // delivered は渡し済みの本文の控え。会話をまたぐ分は core/server.mjs が差し替える
-  return { policy, owners, report, instructions, conditional, skills, servers, prompt, pin, scanOptions, locale, delivered: {} };
+  return { policy, owners, report, instructions, conditional, skills, servers, prompt, pin, scanOptions, locale, mcp, delivered: {} };
 }
 
 /**

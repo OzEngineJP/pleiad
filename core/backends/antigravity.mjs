@@ -705,7 +705,7 @@ export const backend = {
       // Pleiad の指示（addedInstructions / agentRuntime.instructions）は発言の前に毎ターン足すので、それだけではカスタムエージェントを作らない。
       // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
       const botDirs = botFolders?.additionalDirectories ?? [];
-      const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
+      const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.mcp?.named ? { ...contextRuntime.owners, mcp: 'native' } : contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
         prompt: agentPrompt, cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
         context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
         agents: agentRuntime ? { url: agentRuntime.url, authorization: agentRuntime.headers?.Authorization } : null,
