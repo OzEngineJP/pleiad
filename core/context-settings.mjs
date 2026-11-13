@@ -145,21 +145,27 @@ export function normalizeAgents(value) {
 }
 /**
  * 担当の 2 択（agents が無い設定）を、名前 × エージェントの明示の設定にする。今の接続が変わらないように写す（ADR 0325）。
- *   「Pleiad がそろえる」（owner: ply）: どのエージェントの設定にある名前も、他のエージェントへ広げた形（spread）。Pleiad の登録はすべて on
+ *   「Pleiad がそろえる」（owner: ply）: 探す対象だったエージェント（spreadFrom）の設定にある名前を、他のエージェントへ広げた形（spread）。
+ *     探す対象でなかったエージェントの名前は、そのエージェントの列だけ on。Pleiad の登録はすべて on。
+ *     Claude のプラグイン・claude.ai のコネクター（extras）は、そろえている間 Claude に出ていなかった（strict）ので off
  *   「エージェントに任せる」（owner: native）: Pleiad の登録はどのエージェントでも off のまま（任せる側は登録を渡していなかった）
- * info: { registered: [名前], native: { <agent>: [名前] }（探す対象にしたものだけ） }
+ *   名前で外してあったもの（kind.disabled）は、全エージェントで off（広げない）
+ *   エージェント自身の設定で無効にしてあるもの（disabled）は、広げる元にしない
+ * info: { registered: [名前], native: { <agent>: [名前] }, disabled?: { <agent>: [名前] }, spreadFrom?: [agent]（既定は全部）, extras?: { <agent>: [名前] } }
  */
 export function mcpAgentsFromLegacy(kind, info) {
   const ids = Object.keys(info.native ?? {});
+  const dis = a => new Set(info.disabled?.[a] ?? []);
   const off = {}, spread = {};
   if (kind.owner === 'ply') {
-    const all = unique(Object.values(info.native ?? {}).flat());
+    const all = unique((info.spreadFrom ?? ids).flatMap(a => (info.native[a] ?? []).filter(n => !dis(a).has(n))));
     for (const name of all) {
       const to = ids.filter(a => !info.native[a].includes(name));
       if (to.length) spread[name] = to;
     }
+    for (const [a, keys] of Object.entries(info.extras ?? {})) for (const key of keys) off[key] = unique([...(off[key] ?? []), a]);
   } else for (const name of info.registered ?? []) off[name] = [...ids];
-  for (const name of kind.disabled ?? []) delete spread[name];
+  for (const name of kind.disabled ?? []) { delete spread[name]; off[name] = [...ids]; }
   return normalizeAgents({ off, spread });
 }
 /**
@@ -243,7 +249,7 @@ export function resolveConfig(config, key) {
   const plan = {
     user: { roots: Object.fromEntries(KINDS.map(k => [k, [...(defaultRoots[k] ?? [])]])), kinds: Object.fromEntries(KINDS.map(k => [k, kinds[k].value.user])) },
     directory: { roots: Object.fromEntries(KINDS.map(k => [k, [...roots[k].value]])), kinds: Object.fromEntries(KINDS.map(k => [k, kinds[k].value.directory])) },
-    mcp: { disabled: kinds.mcp.value.disabled ?? [], prefer: kinds.mcp.value.prefer ?? {}, ...(kinds.mcp.value.agents ? { agents: structuredClone(kinds.mcp.value.agents) } : {}) },
+    mcp: { disabled: kinds.mcp.value.agents ? [] : kinds.mcp.value.disabled ?? [], prefer: kinds.mcp.value.prefer ?? {}, ...(kinds.mcp.value.agents ? { agents: structuredClone(kinds.mcp.value.agents) } : {}) },
     skill: { prefer: kinds.skill.value.prefer ?? {} },
   };
   const owners = Object.fromEntries(KINDS.map(k => [k, kinds[k].value.owner]));

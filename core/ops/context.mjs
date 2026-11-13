@@ -15,7 +15,7 @@ import { agentT, t } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { diffRows } from './settings.mjs';
 import { mcpAgentsFromLegacy, toggleMcpAgent } from '../context-settings.mjs';
-import { buildMcpMatrix } from '../context-mcp-matrix.mjs';
+import { buildMcpMatrix, mcpLegacyInfo } from '../context-mcp-matrix.mjs';
 import { byAgent, cwdFor, maskTree, run, sessionFor } from './redact.mjs';
 import { clip, pageOf, PAGE_MAX } from './host.mjs';
 
@@ -76,6 +76,29 @@ function contextChange(view, args) {
   return diffRows(`${where}.${args.kind ?? ''}`, level?.kinds?.[args.kind]?.value ?? null, args.value ?? null);
 }
 
+/**
+ * 一覧（context.mcpMatrix）と更新（context.setMcpAgent）が同じ材料で組み立てるための入力。cwd・place が同じなら同じ一覧になる。
+ * wait: コネクターの一覧が未読なら、読み終えるまで待つ（読めなければ readFailed）
+ */
+async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
+  const dir = (await cwdFor(ctx, cwd)) ?? null;
+  const view = await ctx.context.view(dir);
+  const level = place ? (view.places ?? []).find((p) => p.path === place) ?? view.defaults : view.defaults;
+  const [known, list] = await Promise.all([ctx.context.agentMcp(dir), ctx.mcp.list().catch(() => ({ servers: [] }))]);
+  const servers = list.servers ?? [];
+  // 読み取りの起動で、利用者の stdio の MCP が動かないように、claude.ai 以外の既知の名前（Pleiad の登録すべて・Claude の設定の MCP）を止める
+  const deny = [...servers.map((s) => s.name), ...(known.agents?.claude ?? []).map((s) => s.name)];
+  const claude = Object.hasOwn(known.agents ?? {}, 'claude');
+  const extras = await ctx.context.claudeExtras({ refresh, deny, wait: wait && claude, cwd: dir });
+  const input = {
+    kind: level.kinds.mcp.value, owners: Object.fromEntries(['instruction', 'skill', 'mcp'].map((k) => [k, level.kinds[k]?.value?.owner])),
+    registered: servers.map((s) => ({ name: s.name, transport: s.transport ?? null })),
+    native: known.agents ?? {}, plugins: extras.plugins,
+    connectors: extras.reading && extras.connectors === null ? null : (extras.connectors ?? []),
+  };
+  return { input, extras, level, dir, claude };
+}
+
 export const contextOps = [
   defineOp({
     id: 'context.settings', summary: 'agent:ops.context.settings.summary', risk: 'read',
@@ -96,20 +119,8 @@ export const contextOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'mcp-matrix'] } },
     legacyCommand: 'mcpMatrix',
     handler: (ctx, { cwd, place, refresh }) => run(ctx, async () => {
-      const dir = (await cwdFor(ctx, cwd)) ?? null;
-      const view = await ctx.context.view(dir);
-      const level = place ? (view.places ?? []).find((p) => p.path === place) ?? view.defaults : view.defaults;
-      const [known, list] = await Promise.all([ctx.context.agentMcp(dir), ctx.mcp.list().catch(() => ({ servers: [] }))]);
-      const servers = list.servers ?? [];
-      // 資格情報の要らない登録だけを、読み取りのときに止める名前にする（読み取りの起動で何もつながらないように）
-      const deny = servers.filter((s) => (s.auth ?? 'none') === 'none' && !(s.envKeys?.length)).map((s) => s.name);
-      const extras = await ctx.context.claudeExtras({ refresh: refresh === true, deny });
-      return buildMcpMatrix({
-        kind: level.kinds.mcp.value, owners: Object.fromEntries(['instruction', 'skill', 'mcp'].map((k) => [k, level.kinds[k]?.value?.owner])),
-        registered: servers.map((s) => ({ name: s.name, transport: s.transport ?? null })),
-        native: known.agents ?? {}, plugins: extras.plugins,
-        connectors: extras.reading && extras.connectors === null ? null : (extras.connectors ?? []),
-      });
+      const { input } = await matrixInput(ctx, { cwd, place, refresh: refresh === true });
+      return buildMcpMatrix(input);
     }),
   }),
   defineOp({
@@ -152,20 +163,28 @@ export const contextOps = [
     legacyCommand: 'setMcpAgent',
     handler: (ctx, { name, agent, on, place, cwd }) => run(ctx, async () => {
       const where = place ?? null;
-      const view = await ctx.context.view((await cwdFor(ctx, cwd)) ?? null);
-      const level = where ? (view.places ?? []).find((p) => p.path === where) ?? view.defaults : view.defaults;
-      const kind = level.kinds.mcp.value;
-      const [known, list] = await Promise.all([ctx.context.agentMcp(await cwdFor(ctx, cwd)), ctx.mcp.list().catch(() => ({ servers: [] }))]);
-      const ids = Object.keys(known.agents ?? {});
+      // 「Pleiad がそろえる」の移行（agents が無い）と、コネクターの名前を触るときは、コネクターの一覧を読み終えてから決める
+      const first = await matrixInput(ctx, { cwd, place: where });
+      const kind = first.level.kinds.mcp.value;
+      const needConnectors = first.claude && (name.startsWith('claude.ai ') || (!kind.agents && kind.owner === 'ply'));
+      const { input, extras } = needConnectors && first.input.connectors === null ? await matrixInput(ctx, { cwd, place: where, wait: true }) : first;
+      const ids = Object.keys(input.native);
       if (!ids.includes(agent)) throw new OpError('INVALID', t('context.settings.unknownAgent', { agent }));
-      const info = { registered: (list.servers ?? []).map((s) => s.name), native: Object.fromEntries(ids.map((a) => [a, (known.agents[a] ?? []).map((s) => s.name)])) };
+      // 読めなかったまま「Pleiad がそろえる」を写すと、外してあったコネクターが Claude に開いてしまう。保存しない
+      if (needConnectors && extras.readFailed && extras.connectors === null) throw new OpError('INVALID', t('context.settings.connectorsUnread'));
+      const matrix = buildMcpMatrix(input);
+      const row = matrix.rows.find((r) => r.key === name);
+      if (!row) throw new OpError('INVALID', t('context.settings.unknownMcp', { name }));
+      const cell = row.cells[agent];
+      if (!cell || cell.mode !== 'toggle') throw new OpError('INVALID', t('context.settings.mcpNotPressable', { name, agent }));
+      const info = mcpLegacyInfo(input);
       const current = kind.agents ?? mcpAgentsFromLegacy(kind, info);
       // プラグインの MCP・claude.ai のコネクターは Claude 自身の名前として数える（止めるのは deniedMcpServers）
-      const extras = await ctx.context.claudeExtras();
-      const own = [...extras.plugins.map((p) => p.key), ...(extras.connectors ?? []).map((c) => `claude.ai ${c}`)];
-      const full = own.length ? { ...info, native: { ...info.native, claude: [...(info.native.claude ?? []), ...own] } } : info;
+      const full = { ...info, native: { ...info.native, ...(info.extras?.claude ? { claude: [...(info.native.claude ?? []), ...info.extras.claude] } : {}) } };
       const next = toggleMcpAgent(current, { name, agent, on }, full);
-      const result = await ctx.context.set({ place: where, kind: 'mcp', value: { ...kind, agents: next }, cwd }, ctx.actor);
+      // 名前で外してあったもの（disabled）は agents に写したので、二重に効かせないよう消す
+      const { disabled: _d, ...rest } = kind;
+      const result = await ctx.context.set({ place: where, kind: 'mcp', value: { ...rest, agents: next }, cwd }, ctx.actor);
       return { ok: true, agents: next, defaults: result.defaults };
     }),
   }),

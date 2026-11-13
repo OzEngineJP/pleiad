@@ -183,16 +183,20 @@ async function probeCatalog(cwd, withSettings) {
 }
 sdk.probe ??= probeCatalog;
 
+/** コネクターの読み取りの上限（ms）。画面の待ちはこれ以上にする */
+export const CONNECTOR_PROBE_MS = 20_000;
+
 /** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0325）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
-export async function probeClaudeConnectors({ deny = [] } = {}) {
+export async function probeClaudeConnectors({ deny = [], token = null } = {}) {
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 20_000);
+  const timer = setTimeout(() => ac.abort(), CONNECTOR_PROBE_MS);
   const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
   let q = null;
   try {
     const query = sdk.query ?? (await loadClaudeSdk()).query;
     q = query({ prompt: idle(), options: {
-      pathToClaudeCodeExecutable: claudeExecutable(), env: claudeEnv(process.env), abortController: ac,
+      // token: Pleiad に登録した Claude のアカウント（無ければログイン中のアカウント）。会話と同じ環境で読む
+      pathToClaudeCodeExecutable: claudeExecutable(), env: claudeEnv(process.env, { token }), abortController: ac,
       settingSources: ["user"], settings: { disableAllHooks: true, ...(deny.length ? { deniedMcpServers: deny.map((serverName) => ({ serverName })) } : {}) },
       persistSession: false, stderr: () => {},
     } });
