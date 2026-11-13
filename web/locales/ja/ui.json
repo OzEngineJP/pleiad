@@ -1512,6 +1512,8 @@
       "ownerAria": "この場所で{{kind}}を読み込むのは",
       "plyWho": "Pleiad がそろえる",
       "nativeNote": "{{agent}} が自分の決まりで読みます",
+      "mcpByAgentWho": "エージェントごと",
+      "mcpByAgent": "外部 MCP はエージェントごとに設定してあります。設定 › プラグインで変えます",
       "loading": "読んでいます…",
       "offHere": "この場所では外しています",
       "offGlobal": "全体の設定で外しています",
@@ -1659,8 +1661,6 @@
       "onlyAgent": "{{agent}} だけ",
       "agentJoin": "・",
       "routingOff": "委譲先の自動選択がオフなので入りません",
-      "gripAria": "「{{name}}」の順番（↑↓ で動かす）",
-      "gripTitle": "ドラッグか ↑↓ で並べ替え",
       "switchAria": "「{{name}}」を入れる",
       "edit": "編集",
       "delete": "削除",
@@ -1683,6 +1683,28 @@
     }
   },
   "mcp": {
+    "matrix": {
+      "groupPly": "Pleiad に登録",
+      "groupAgent": "エージェントの設定",
+      "connector": "claude.ai のコネクター",
+      "locked": "Pleiad からは止められません",
+      "searching": "探しています…",
+      "pluginNote": "{{plugin}} のプラグイン",
+      "pluginCalled": "プラグイン {{plugin}} の {{name}}",
+      "connectorCalled": "コネクターの {{name}}",
+      "kindPlugin": "プラグインの MCP",
+      "originPly": "{{agents}} の設定にもあります",
+      "originAgent": "{{agents}} の設定にあります",
+      "originPlugin": "{{agents}} のプラグインにあります",
+      "originConnector": "{{agents}} のアカウントにあります",
+      "agentsAria": "{{name}} を使うエージェント",
+      "agentAria": "{{agent}} で {{name}} を使う",
+      "agentLockedAria": "{{agent}} で {{name}} を使う（Pleiad からは止められません）",
+      "askAria": "{{name}} を {{to}} にもつなぐ確認",
+      "ask": "{{from}} の設定の {{name}} を、{{to}} にもつなぎます",
+      "cancel": "やめる",
+      "confirm": "つなぐ"
+    },
     "state": {
       "signedIn": "ログイン済み",
       "signedOut": "ログインが必要",
@@ -1697,13 +1719,6 @@
       "sse": "URL につなぐ（SSE）"
     },
     "join": "・",
-    "agents": {
-      "lead": "各エージェントの設定に登録されているもの（Pleiad は読むだけで変えません）",
-      "none": "登録はありません",
-      "only": "{{agent}} だけ",
-      "disabled": "無効",
-      "foot": "エージェントを切り替えると使える MCP が変わります。そろえたいときは「Pleiad がそろえる」へ"
-    },
     "login": "ログイン",
     "loginAgain": "ログインし直す",
     "logout": "ログアウト",
@@ -1720,19 +1735,13 @@
       "sheetEncrypted": "Pleiad の設定として保存し、どのエージェントにもつなぎます。Claude や Codex の設定ファイルは書き換えません。トークンや鍵は OS の鍵の保管庫（Windows の資格情報、macOS のキーチェーン、Linux の Secret Service）で暗号化して保存します。"
     },
     "describe": {
-      "needsScope": "追加の権限が必要",
-      "pending": "未入力の値あり",
-      "plyOver": "Pleiad に登録（{{agents}} の同名より優先）",
       "ply": "Pleiad に登録",
       "only": "{{agent}} だけに登録",
       "both": "{{a}} と {{b}} の両方に登録",
       "many": "{{agents}} に登録",
-      "defsUsing": "同じ名前で定義が {{n}} つ · {{agent}} の設定の方を使用（{{by}}）",
-      "defs": "同じ名前で定義が {{n}} つ",
-      "byPicked": "選んだもの",
-      "byFirst": "先に見つかった方",
-      "nativeOff": "元の設定で無効",
-      "excluded": "外しています"
+      "needsScope": "追加の権限が必要",
+      "pending": "未入力の値あり",
+      "nativeOff": "元の設定で無効"
     },
     "auth": {
       "token": "トークン",
@@ -2520,6 +2529,8 @@
       "placeholderTouch": "メッセージを書く",
       "editorLabel": "メッセージ",
       "queued": "会話ができしだい送ります",
+      "waitingSettings": "設定の反映を待っています。終わりしだい送ります",
+      "sending": "送信を受け付けています",
       "queuedCancel": "取り消す",
       "historyLoading": "履歴を読み込み中…",
       "connecting": "接続しています…",
@@ -2598,7 +2609,10 @@
     },
     "send": {
       "unknownPrevious": "前の送信結果を確認できません。元の入力で再試行してください。",
-      "failed": "送信を確認できませんでした。入力は保持しています: {{error}}"
+      "failed": "送信を確認できませんでした。入力は保持しています: {{error}}",
+      "switchedNotice": "「{{title}}」への送信は、別の会話へ移ったので送っていません。入力は下書きに残っています。",
+      "switchedNoticeUntitled": "前の会話への送信は、別の会話へ移ったので送っていません。入力は下書きに残っています。",
+      "openSession": "開く"
     }
   },
   "session": {
@@ -3500,7 +3514,17 @@
     "input": "入力",
     "noMatch": "一致なし",
     "loading": "読み込み中…",
-    "moreMatches_other": "ほかに {{count}} 件。文字を入れて絞り込んでください"
+    "moreMatches_other": "ほかに {{count}} 件。文字を入れて絞り込んでください",
+    "reorder": {
+      "label": "{{name}} を並べ替え",
+      "help": "並べ替え（ドラッグ・クリック・↑↓、Home・End）",
+      "first": "先頭へ",
+      "up": "上へ",
+      "down": "下へ",
+      "last": "最後へ",
+      "moved": "{{name}} を {{position}} 番目に移動しました",
+      "cancelled": "並べ替えを取り消しました"
+    }
   },
   "inbox": {
     "bell": "通知",
@@ -4259,14 +4283,6 @@
       "refresh": "取り直す",
       "refreshing": "取得中…",
       "candidateRemove": "{{name}} を外す",
-      "candidateOrder": "{{name}} を並べ替え",
-      "orderHelp": "並べ替え（ドラッグ・クリック・↑↓、Home・End）",
-      "orderFirst": "先頭へ",
-      "orderUp": "上へ",
-      "orderDown": "下へ",
-      "orderLast": "最後へ",
-      "orderMoved": "{{name}} を {{position}} 番目に移動しました",
-      "orderCancelled": "並べ替えを取り消しました",
       "addCandidate": "＋ 候補を追加",
       "addTitle": "{{tier}} に追加",
       "addInput": "backend:model",

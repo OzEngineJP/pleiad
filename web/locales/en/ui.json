@@ -1549,6 +1549,8 @@
       "ownerAria": "Who loads {{kind}} in this location",
       "plyWho": "Managed by Pleiad",
       "nativeNote": "{{agent}} reads them by its own rules",
+      "mcpByAgentWho": "Per agent",
+      "mcpByAgent": "External MCP is set per agent. Change it in Settings › Plugins",
       "loading": "Loading…",
       "offHere": "Turned off for this location",
       "offGlobal": "Turned off in the global settings",
@@ -1696,8 +1698,6 @@
       "onlyAgent": "{{agent}} only",
       "agentJoin": ", ",
       "routingOff": "Not added because automatic delegate selection is off",
-      "gripAria": "Order of “{{name}}” (move with ↑↓)",
-      "gripTitle": "Drag or use ↑↓ to reorder",
       "switchAria": "Add “{{name}}”",
       "edit": "Edit",
       "delete": "Delete",
@@ -1720,6 +1720,28 @@
     }
   },
   "mcp": {
+    "matrix": {
+      "groupPly": "Registered in Pleiad",
+      "groupAgent": "Agent settings",
+      "connector": "claude.ai connectors",
+      "locked": "Pleiad cannot turn this off",
+      "searching": "Looking…",
+      "pluginNote": "{{plugin}} plugin",
+      "pluginCalled": "{{name}} from the {{plugin}} plugin",
+      "connectorCalled": "connector {{name}}",
+      "kindPlugin": "Plugin MCP",
+      "originPly": "Also in the settings of {{agents}}",
+      "originAgent": "In the settings of {{agents}}",
+      "originPlugin": "In the plugins of {{agents}}",
+      "originConnector": "In the account of {{agents}}",
+      "agentsAria": "Agents that use {{name}}",
+      "agentAria": "Use {{name}} in {{agent}}",
+      "agentLockedAria": "Use {{name}} in {{agent}} (Pleiad cannot turn this off)",
+      "askAria": "Confirm connecting {{name}} to {{to}} too",
+      "ask": "This connects {{name}} from the settings of {{from}} to {{to}} too",
+      "cancel": "Cancel",
+      "confirm": "Connect"
+    },
     "state": {
       "signedIn": "Signed in",
       "signedOut": "Sign-in required",
@@ -1734,13 +1756,6 @@
       "sse": "Connect to URL (SSE)"
     },
     "join": ", ",
-    "agents": {
-      "lead": "Registered in each agent's settings (Pleiad only reads them and doesn't change them)",
-      "none": "None registered",
-      "only": "{{agent}} only",
-      "disabled": "Disabled",
-      "foot": "Available MCP servers change when you switch agents. To keep them the same, choose “Managed by Pleiad”."
-    },
     "login": "Sign in",
     "loginAgain": "Sign in again",
     "logout": "Sign out",
@@ -1757,19 +1772,13 @@
       "sheetEncrypted": "Saved as a Pleiad setting and connected to every agent. The Claude and Codex settings files are not changed. Tokens and keys are encrypted in the OS keychain (Windows Credential Manager, macOS Keychain, or Linux Secret Service)."
     },
     "describe": {
-      "needsScope": "Additional permissions required",
-      "pending": "Some values missing",
-      "plyOver": "Registered in Pleiad (takes precedence over the same name in {{agents}})",
       "ply": "Registered in Pleiad",
       "only": "Registered only in {{agent}}",
       "both": "Registered in both {{a}} and {{b}}",
       "many": "Registered in {{agents}}",
-      "defsUsing": "{{n}} definitions with the same name · using the one from {{agent}} settings ({{by}})",
-      "defs": "{{n}} definitions with the same name",
-      "byPicked": "your choice",
-      "byFirst": "found first",
-      "nativeOff": "Disabled in the original settings",
-      "excluded": "Excluded"
+      "needsScope": "Additional permissions required",
+      "pending": "Some values missing",
+      "nativeOff": "Disabled in the original settings"
     },
     "auth": {
       "token": "Token",
@@ -2574,6 +2583,8 @@
       "placeholderTouch": "Write a message",
       "editorLabel": "Message",
       "queued": "Will send once the conversation is ready",
+      "waitingSettings": "Waiting for settings to apply. Will send when ready",
+      "sending": "Waiting for message to be accepted",
       "queuedCancel": "Cancel",
       "historyLoading": "Loading history…",
       "connecting": "Connecting…",
@@ -2654,7 +2665,10 @@
     },
     "send": {
       "unknownPrevious": "Couldn't confirm the previous send. Retry with the original text.",
-      "failed": "Couldn't confirm the send. Your text is kept: {{error}}"
+      "failed": "Couldn't confirm the send. Your text is kept: {{error}}",
+      "switchedNotice": "Your message to \"{{title}}\" was not sent because you switched conversations. Your text is saved as a draft.",
+      "switchedNoticeUntitled": "Your message to the previous conversation was not sent because you switched conversations. Your text is saved as a draft.",
+      "openSession": "Open"
     }
   },
   "session": {
@@ -3596,7 +3610,17 @@
     "noMatch": "No matches",
     "loading": "Loading…",
     "moreMatches_one": "{{count}} more. Type to narrow down",
-    "moreMatches_other": "{{count}} more. Type to narrow down"
+    "moreMatches_other": "{{count}} more. Type to narrow down",
+    "reorder": {
+      "label": "Reorder {{name}}",
+      "help": "Reorder (drag, click, Up/Down, Home or End)",
+      "first": "Move to first",
+      "up": "Move up",
+      "down": "Move down",
+      "last": "Move to last",
+      "moved": "Moved {{name}} to position {{position}}",
+      "cancelled": "Reordering cancelled"
+    }
   },
   "inbox": {
     "bell": "Notifications",
@@ -4365,14 +4389,6 @@
       "refresh": "Check again",
       "refreshing": "Checking…",
       "candidateRemove": "Remove {{name}}",
-      "candidateOrder": "Reorder {{name}}",
-      "orderHelp": "Reorder (drag, click, Up/Down, Home or End)",
-      "orderFirst": "Move to first",
-      "orderUp": "Move up",
-      "orderDown": "Move down",
-      "orderLast": "Move to last",
-      "orderMoved": "Moved {{name}} to position {{position}}",
-      "orderCancelled": "Reordering cancelled",
       "addCandidate": "+ Add candidate",
       "addTitle": "Add to {{tier}}",
       "addInput": "backend:model",

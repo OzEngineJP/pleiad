@@ -2,6 +2,7 @@
 // 設定の写しと独立した HOME を使い、担当する指示・Skills・MCP を設定から外す。
 // OpenCode に任せる設定は絶対パスで渡し直す。下位の read が読み込んだ指示は
 // plugin がモデルの文脈から除く（docs/multi-backend.md §2.10）。
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -55,6 +56,10 @@ export function stripOwned(config, owners) {
   const out = { ...config };
   if (owners?.instruction === 'ply') delete out.instructions;
   if (owners?.mcp === 'ply') delete out.mcp;
+  // 名前ごとに止める（ADR 0327）。定義は残し、止める名前だけ enabled: false にする（enabled だけを足しても効かないので定義ごと残す）
+  if (owners?.mcpSuppress?.length && isObject(out.mcp)) {
+    out.mcp = Object.fromEntries(Object.entries(out.mcp).map(([name, def]) => [name, owners.mcpSuppress.includes(name) && isObject(def) ? { ...def, enabled: false } : def]));
+  }
   if (owners?.skill === 'ply') delete out.skills;
   return out;
 }
@@ -127,7 +132,39 @@ async function absoluteInstructions(list, cwd) {
   return out;
 }
 
-const sigOf = (owners) => ['instruction', 'skill', 'mcp'].map((k) => (owners?.[k] === 'ply' ? k[0] : '-')).join('');
+const sigOf = (owners) => ['instruction', 'skill', 'mcp'].map((k) => (owners?.[k] === 'ply' ? k[0] : '-')).join('')
+  + (owners?.mcpSuppress?.length ? `-${createHash('sha1').update(owners.mcpSuppress.join('\n')).digest('hex').slice(0, 8)}` : '');
+
+/**
+ * 担当の組み合わせ・止めた名前の組ごとに作る置き場の残す数。超えたうえで、MANAGED_IDLE_MS 以上使っていないものだけ、古い順に消す
+ * （止める名前の組み合わせで増え続けないように。使い始めに印（mtime）を付けるので、いま走っているものや最近使ったものは消さない）
+ */
+export const MANAGED_KEEP = 12;
+export const MANAGED_IDLE_MS = 24 * 60 * 60 * 1000;
+async function pruneManaged(parent, keepRoot) {
+  const names = await fs.readdir(parent).catch(() => []);
+  const rows = [];
+  for (const name of names) {
+    const dir = path.join(parent, name);
+    const st = await fs.stat(dir).catch(() => null);
+    if (st?.isDirectory() && dir !== keepRoot) rows.push({ dir, at: st.mtimeMs });
+  }
+  rows.sort((a, b) => b.at - a.at);
+  const limit = Date.now() - MANAGED_IDLE_MS;
+  for (const { dir, at } of rows.slice(Math.max(0, MANAGED_KEEP - 1))) if (at < limit) await removeTree(dir);
+}
+/** junction の先（利用者の本物のフォルダー）を消さないよう、リンクは外してから置き場を消す */
+async function removeTree(dir) {
+  const walk = async (d) => {
+    for (const e of await fs.readdir(d, { withFileTypes: true }).catch(() => [])) {
+      const p = path.join(d, e.name);
+      if (e.isSymbolicLink()) await unlinkEntry(p);
+      else if (e.isDirectory()) await walk(p);
+    }
+  };
+  await walk(dir);
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+}
 
 /** 全体の設定の置き場（写し元）に websearch の設定があるか。あれば既定の差し込みはしない */
 async function globalWebsearch(source) {
@@ -147,6 +184,9 @@ export async function mirrorGlobalConfig({ dataDir, owners, source = opencodeCon
   const root = path.join(dataDir, 'opencode', 'managed', sigOf(owners));
   const dest = path.join(root, 'opencode');
   await fs.mkdir(dest, { recursive: true });
+  const now = new Date();
+  await fs.utimes(root, now, now).catch(() => {});   // 使った順で古いものを消すための印
+  await pruneManaged(path.dirname(root), root);
   const names = await fs.readdir(source).catch(() => []);
   const keep = new Set();
   for (const name of names) {

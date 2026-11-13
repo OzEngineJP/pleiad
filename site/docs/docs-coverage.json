@@ -35,6 +35,7 @@
     "cap:nativeShellOff": "agents",
     "cap:plyAgents": "agents",
     "cap:plyControl": "agents",
+    "cap:nativeMcpOff": "agents",
     "cap:plyContext": "agents",
     "cap:plyInstructions": "agents",
     "cap:plyShell": "agents",

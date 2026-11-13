@@ -96,6 +96,8 @@ const SUITES = [
   './unit/side-panel.mjs',
   './unit/refresh-batch.mjs',
   './unit/command-reply.mjs',
+  // 遅い命令・イベントループ・送信待ちの診断記録
+  './unit/slow-log.mjs',
   './unit/session-list-delta.mjs',
   './unit/server-session-list-delta.mjs',
 
@@ -504,10 +506,17 @@ const SUITES = [
   './unit/context-scan.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   './unit/context-settings.mjs',
+  // 外部 MCP を名前 × エージェントで中継する・止める（ADR 0327）
+  './unit/context-agent-mcp.mjs',
+  './unit/context-mcp-matrix.mjs',
+  './unit/context-mcp-review.mjs',
+  './unit/context-mcp-exhaustive.mjs',
   // 探す場所を足す（追加ルート）: 種類ごと・探す形式に従う・形式 2 からの移行
   './unit/context-roots.mjs',
   './unit/server-context.mjs',
   './unit/context-ui.mjs',
+  // Pleiad の指示の並べ替え: 取っ手のキーとメニュー・続けて動かす・フォーカス・読み上げ（タッチで引く操作は tests/browser/ply-instructions-reorder.mjs）
+  './unit/ply-instructions-order.mjs',
   // 指示の量（ADR 0056）: 自分で書いた分と Pleiad が足した分・目安・エージェント任せの見積もり
   './unit/instruction-amount.mjs',
   // 気になる所: 違うファイルのほぼ同じ段落・もう無いパス（言語に依存しない判定）・サーバー越しの対象

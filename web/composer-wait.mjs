@@ -6,7 +6,9 @@
 //               欄は readonly、箱に aria-busy。150ms を越えたら中の字と案内を隠し、弧・待機文言・流れる棒を出す
 //   failed()    読み込みに失敗した。欄は書ける。欄の上に理由と「もう一度読む」。送信は読み込めるまで押せない（理由を title に）
 //   queue()     新しい会話を作っている間に送信が押された。欄は readonly、150ms を越えたら送信ボタンに弧、
-//               欄の上に「会話ができしだい送ります」と「取り消す」
+//               欄の上に「会話ができしだい送ります」と「取り消す」。opts.lock で欄の扱いを選ぶ:
+//               'now'（既定。予約したとき readonly）・'shown'（注記と同じ 150ms 後から readonly。速い送信は欄に触れない）・
+//               'none'（欄は書けるまま。取り消しの無い待ち = 受理・worktree。注記と弧だけ出す）
 //   hold()      設定（作業ディレクトリなど）を保存できず、解決するまで送らせない。欄は書ける。欄の上に強い字の理由と操作
 //               （再試行・選び直す・取り消す）。送信は押せない見た目（aria-disabled）で、押されたらこの一行へフォーカスを移す。
 //               「再試行」がまた失敗したら focusAction() で出し直した一行の先頭のボタンへ（client.mjs の syncSettingsHold）
@@ -29,14 +31,46 @@
 export function createComposerWait({ box, prompt, send, note, busyLine, busyText, t, runMark, onChange = () => {},
   delay = 150, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let mode = null;          // null | 'history' | 'connect' | 'failed'
-  let queued = null;        // { onCancel }
+  let queued = null;        // { onCancel, text, cancelable, cancelLabel, kind, shown }
   let busyTimer = null, queueTimer = null;
   let sendIcon = null;      // 弧に差し替える前の送信ボタンの中身
   let sendTitle = null;     // failed の間に差し替える前の title
   let held = null;          // hold() の { text, actions }。予約・読み込みの失敗の一行が優先し、それが消えたら出し直す
   let heldTitle = null;     // hold の間に差し替える前の送信の title
 
-  const syncReadOnly = () => { prompt.readOnly = mode === 'history' || mode === 'connect' || Boolean(queued); };
+  // 予約の間に欄を書けなくするか。lock: 'now' = 予約したとき（既定）、'shown' = 注記が出る時点（delay 後）から、'none' = 書けるまま
+  const queueLocks = () => Boolean(queued) && (queued.lock === 'now' || (queued.lock === 'shown' && queued.shown));
+  const syncReadOnly = () => { prompt.readOnly = mode === 'history' || mode === 'connect' || queueLocks(); };
+
+  const normalizeQueue = (onCancel, opts = {}) => ({
+    onCancel: typeof onCancel === 'function' ? onCancel : null,
+    text: typeof opts.text === 'string' && opts.text ? opts.text : t('chat.composer.queued'),
+    cancelable: opts.cancelable !== false && typeof onCancel === 'function',
+    cancelLabel: typeof opts.cancelLabel === 'string' && opts.cancelLabel ? opts.cancelLabel : t('chat.composer.queuedCancel'),
+    kind: typeof opts.kind === 'string' && opts.kind ? opts.kind : 'queued',
+    lock: opts.lock === 'shown' || opts.lock === 'none' ? opts.lock : 'now',
+  });
+
+  function paintQueuedNote() {
+    if (!queued || !queued.shown) return;
+    if (!sendIcon) {
+      sendIcon = [...send.children];
+      send.classList.add('wait');
+      send.replaceChildren(runMark(queued.text));
+    } else {
+      send.firstChild?.setAttribute?.('aria-label', queued.text);
+      send.firstChild?.setAttribute?.('title', queued.text);
+    }
+    note.replaceChildren();
+    const b = document.createElement('b');
+    b.textContent = queued.text;
+    note.append(runMark(), b);
+    if (queued.cancelable) {
+      note.append(noteButton(queued.cancelLabel, () => { cancel('user'); prompt.focus?.(); }));
+    }
+    note.dataset.kind = queued.kind;
+    note.hidden = false;
+  }
 
   function clearBusy() {
     clearTimer(busyTimer); busyTimer = null;
@@ -129,24 +163,29 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     onChange();
   }
 
-  /** 新しい会話ができるまで送信を待たせる。onCancel は「取り消す」で呼ぶ */
-  function queue(onCancel) {
-    if (queued) return;
-    queued = { onCancel };
+  /** 新しい会話ができるまで・反映が終わるまで送信を待たせる。onCancel は「取り消す」で呼ぶ */
+  function queue(onCancel, opts = {}) {
+    const next = normalizeQueue(onCancel, opts);
+    if (queued) {
+      queued.onCancel = next.onCancel;
+      queued.text = next.text;
+      queued.cancelable = next.cancelable;
+      queued.cancelLabel = next.cancelLabel;
+      queued.kind = next.kind;
+      queued.lock = next.lock;
+      syncReadOnly();
+      if (queued.shown && !held) paintQueuedNote();
+      return;
+    }
+    queued = { ...next, shown: false };
     syncReadOnly();
     clearTimer(queueTimer);
     queueTimer = setTimer(() => {
       queueTimer = null;
       if (!queued) return;
-      sendIcon = [...send.children];
-      send.classList.add('wait');
-      send.replaceChildren(runMark(t('chat.composer.queued')));
-      note.replaceChildren();
-      const b = document.createElement('b');
-      b.textContent = t('chat.composer.queued');
-      note.append(runMark(), b, noteButton(t('chat.composer.queuedCancel'), () => { cancel(); prompt.focus?.(); }));
-      note.dataset.kind = 'queued';
-      note.hidden = false;
+      queued.shown = true;
+      syncReadOnly();
+      if (!held) paintQueuedNote();
     }, delay);
   }
   /** 予約を解く（送った・作れなかった・取り消した）。欄は書けるように戻す（字はそのまま） */
@@ -159,10 +198,10 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     clearNote();
     syncReadOnly();
   }
-  function cancel() {
+  function cancel(reason = 'user') {
     const q = queued;
     unqueue();
-    q?.onCancel?.();
+    q?.onCancel?.(reason);
   }
 
   /** 送らせない理由と操作を欄の上に出す。text は強い字の理由、actions は [{ label, onClick }] */
@@ -212,6 +251,6 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     /** 送信を押せない（書けない待ち・読み込みの失敗） */
     blocksSend: () => mode !== null,
     /** 欄に字・添付を足してよいか */
-    accepts: () => (mode === null || mode === 'failed') && !queued,
+    accepts: () => (mode === null || mode === 'failed') && !queueLocks(),
   };
 }

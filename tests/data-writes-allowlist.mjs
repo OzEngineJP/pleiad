@@ -71,7 +71,7 @@ export const DATA_WRITES = [
     { name: 'run/opencode-env-<uuid>.json', limit: '保持役に載せた OpenCode のターンごとに 1 つ（会話のシェルの環境変数。数 KB）。ターンの終わりに消し、消し損ねは起動時に片付ける', reason: '無停止の更新で付け直す新しいサーバーが読む、秘密情報を含む環境変数（権限 0600。札には名前だけを置く）' },
   ] },
   { file: 'core/backends/opencode-context.mjs', sites: 5, targets: [
-    { name: 'opencode/managed/<担当の組み合わせ>/opencode/…', limit: '担当の組み合わせごとに 1 つ（最大 7）。中身は OpenCode の全体の設定ファイルの写し（数 KB）と junction だけ。ターンごとに作り直す', reason: 'Pleiad 担当のコンテキストのターンの専用の OpenCode に渡す設定の置き場（担当の種類の AGENTS.md・skills・mcp を外した写し。docs/multi-backend.md §2.10）' },
+    { name: 'opencode/managed/<担当の組み合わせ>/opencode/…', limit: '担当の組み合わせ・止めた名前の組ごとに 1 つ（使ったのが新しい 12 個まで。超えたら古いものから消す）。中身は OpenCode の全体の設定ファイルの写し（数 KB）と junction だけ。ターンごとに作り直す', reason: 'Pleiad 担当のコンテキストのターンの専用の OpenCode に渡す設定の置き場（担当の種類の AGENTS.md・skills・mcp を外した写し。docs/multi-backend.md §2.10）' },
   ] },
   { file: 'core/backends/opencode-plugin.mjs', sites: 3, targets: [
     { name: 'opencode/pleiad-plugin-v2/{package.json,index.js}', limit: '固定 2 ファイル（数 KB）', reason: 'OpenCode v2 が読む plugin package。本文が変わったときだけ書き直す' },
@@ -116,6 +116,9 @@ export const DATA_WRITES = [
   { file: 'core/context-settings.mjs', sites: 5, targets: [
     { name: 'context-scans.json', limit: 'ユーザーが設定した場所（places）の数。通常は数個から数十', reason: '探索の設定。件数に上限は無い', unbounded: true },
     { name: 'context-scans.v<N>-backup.json', limit: '形式の移行の前に 1 回だけ（flag wx）', reason: '形式移行前の写し。増えない' },
+  ] },
+  { file: 'core/context-claude-extras.mjs', sites: 1, targets: [
+    { name: 'claude-connectors.json', limit: 'CONNECTOR_CACHE_MAX=200（claude.ai のコネクターの名前。実際は数個）', reason: '最後に読めたコネクターの一覧。次に設定を開いたとき、読み取りを待たずに出すための覚え' },
   ] },
   { file: 'core/agent-accounts.mjs', sites: 2, targets: [
     { name: 'agent-accounts.json', limit: 'MAX_ACCOUNTS=100', reason: 'エージェントごとの登録アカウントの台帳。秘密は別の暗号化ストア' },
@@ -206,6 +209,9 @@ export const DATA_WRITES = [
   ] },
   { file: 'core/backend-shape-diagnostics.mjs', sites: 1, targets: [
     { name: 'backend-shape-errors.log', limit: 'MAX_BYTES=64KiB。超えたら新しい半分だけ残す。同じ組は重複させない', reason: '非公開形式の変化の記録' },
+  ] },
+  { file: 'core/slow-log.mjs', sites: 2, targets: [
+    { name: 'slow-commands.log', limit: 'DEFAULT_SLOW_LOG_MAX_BYTES=128KiB。超えたら新しい半分だけ残す', reason: '遅い WS 命令・イベントループ・送信待ちの診断記録。記録自体が処理や DB を待たせないよう独立した追記ファイルへ書く' },
   ] },
   { file: 'core/computer-use/shots.mjs', sites: 2, targets: [
     { name: 'computer-use/shots.json', limit: '1 会話あたり MAX_SHOTS_PER_SESSION=300、合計 MAX_SHOTS_BYTES=1GiB で古い順に消す', reason: 'スクリーンショットの索引。画像の合計の上限で行数も間接的に抑えられる' },

@@ -756,6 +756,23 @@
       },
       "cliSetup": {
         "summary": "外の AI から pleiad mcp を起動する設定（MCP の設定の JSON と claude mcp add のコマンド）を返す。"
+      },
+      "reportSlow": {
+        "summary": "画面側から見た遅い命令や送信待ちの記録をサーバーの診断ログへ追記する。",
+        "entries": "記録する診断エントリの配列。",
+        "entry": "診断エントリの 1 件（時刻・種類・命令名・時間・会話 ID など。本文やパスは含めない）。",
+        "at": "記録時刻（ISO 8601）。",
+        "kind": "物差しの種類。",
+        "command": "WS 命令の名前。",
+        "ms": "経過時間または所要時間（ミリ秒）。",
+        "sessionId": "対象の会話 ID。",
+        "outcome": "終了時の結果。",
+        "errorCode": "失敗時のエラーコード。",
+        "pendingCount": "同じ時点で応答待ちの命令数。",
+        "wait": "送信待ちの内訳。",
+        "waitPhase": "待っていた工程の名前。",
+        "waitMs": "各工程の待ち時間（ミリ秒）。",
+        "waitFlag": "待ちで通った経路や状態を示す真偽値。"
       }
     },
     "sessions": {
@@ -1569,6 +1586,16 @@
         "agents": "渡すエージェント（save）。",
         "on": "オン・オフ（toggle）。",
         "ids": "並べ替えた項目の id（order）。"
+      },
+      "setMcpAgent": {
+        "summary": "外部 MCP サーバーを、エージェントごとに使う・使わないを切り替える（次のターンから）。使うにする（他のエージェントの設定の定義を広げることを含む）ときはユーザーの承認が要る。",
+        "name": "MCP サーバーの名前。",
+        "agent": "エージェントの id（claude・codex など）。",
+        "on": "true で使う、false で使わない。"
+      },
+      "mcpMatrix": {
+        "summary": "外部 MCP を「名前 × エージェント」の表で読む（どのエージェントで使われるか、押せるか。Claude のプラグインの MCP と claude.ai のコネクターも含む）。",
+        "refresh": "true なら、claude.ai のコネクターを裏で読み直す。"
       },
       "refresh": {
         "summary": "会話に固定した指示・Skills を、今のファイルから読み直す（走っていない会話だけ）。"

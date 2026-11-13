@@ -69,7 +69,11 @@ export function samePath(a, b) {
 const TOAST_MS = 4000;
 // toastHover はポインターが載っている間、toastFocus はフォーカスが中にある間。toastBack はフォーカスが入る前に居た所
 let toastTimer, toastHover = false, toastFocus = false, toastBack = null;
-function hideToast(box) { clearTimeout(toastTimer); toastHover = toastFocus = false; box.hidden = true; }
+function hideToast(box) {
+  clearTimeout(toastTimer); toastHover = toastFocus = false; box.hidden = true;
+  box.classList.remove('has-action');
+  box.querySelector('.file-toast-action')?.remove();
+}
 /** 消えるまでの時間を数え直す。ポインターが載っている・フォーカスが中にある間は数えない */
 function armToast(box) {
   clearTimeout(toastTimer);
@@ -100,12 +104,27 @@ function createToast() {
  * ポインターが載っている・フォーカスが中にある間は消さず、離れたら 4 秒を数え直す（docs/design-system.md「短い知らせ」）。
  * 拡大表示（モーダルの dialog）が開いていればその中に出す（外に出すと背景の幕の下に隠れる）
  */
-export function notify(text) {
+export function notify(text, action = null) {
   const host = document.querySelector('dialog[open]') ?? document.body;
   const box = document.querySelector('.file-toast') ?? createToast();
   // 置き場所を移すと「離れた」が届かないことがあるので、載っている扱いをやめる
   if (box.parentNode !== host) { toastHover = toastFocus = false; host.append(box); }
-  box.querySelector('.file-toast-text').textContent = text; box.hidden = false;
+  box.querySelector('.file-toast-text').textContent = text;
+  box.querySelector('.file-toast-action')?.remove();
+  box.classList.remove('has-action');
+  if (action && typeof action.label === 'string' && typeof action.onClick === 'function') {
+    const act = el('button', 'btn file-toast-action');
+    act.type = 'button';
+    act.textContent = action.label;
+    act.onclick = () => {
+      const handler = action.onClick;
+      hideToast(box);
+      handler();
+    };
+    box.insertBefore(act, box.querySelector('.file-toast-close'));
+    box.classList.add('has-action');
+  }
+  box.hidden = false;
   armToast(box);
 }
 
