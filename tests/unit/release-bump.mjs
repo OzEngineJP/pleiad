@@ -71,6 +71,8 @@ export default async function (t) {
     git(work, 'init', '-q', '-b', 'main');
     for (const [k, v] of [['user.name', 'T'], ['user.email', 't@example.com'], ['core.autocrlf', 'false'], ['commit.gpgsign', 'false'], ['tag.gpgsign', 'false']]) git(work, 'config', k, v);
     for (const f of ['release-info.mjs', 'release-bump.mjs']) fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(work, 'scripts', f));
+    // release-info.mjs は版の比較を web/versions.mjs から読む（画面と同じもの）
+    fs.copyFileSync(path.join(ROOT, 'web', 'versions.mjs'), path.join(work, 'web', 'versions.mjs'));
     fs.writeFileSync(path.join(work, '.gitignore'), 'temporary/\n');
     fs.writeFileSync(path.join(work, 'package.json'), PKG('0.1.0-beta.2'));
     fs.writeFileSync(path.join(work, 'package-lock.json'), LOCK('0.1.0-beta.2'));

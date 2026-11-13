@@ -280,6 +280,7 @@
     "relay": 3419,
     "release-bump": 18209,
     "release-ci-gate": 5459,
+    "release-notes": 60,
     "restart-acp": 75000,
     "restart-agy-idle": 15000,
     "restart-codex-turn": 15000,

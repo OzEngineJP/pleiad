@@ -2,7 +2,7 @@ import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
 import { usableReport, gateKind } from './agent-usable.mjs';
 // ページを足したら、下の `$('<名前>Tab').onclick = () => page('<名>')` も足す（無いと札は出るが切り替わらない）
-const pages = [['setup', 'setupTab', 'setupPanel'], ['apiKeys', 'apiKeysTab', 'apiKeysPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['input', 'inputTab', 'inputPanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['notify', 'notifyTab', 'notifyPanel'], ['voice', 'voiceTab', 'voicePanel'], ['remote', 'remoteTab', 'remotePanel'], ['plus', 'plusTab', 'plusPanel'], ['memory', 'memoryTab', 'memoryPanel'], ['updates', 'updatesTab', 'updatesPanel']];
+const pages = [['general', 'generalTab', 'generalPanel'], ['setup', 'setupTab', 'setupPanel'], ['apiKeys', 'apiKeysTab', 'apiKeysPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['input', 'inputTab', 'inputPanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['notify', 'notifyTab', 'notifyPanel'], ['voice', 'voiceTab', 'voicePanel'], ['remote', 'remoteTab', 'remotePanel'], ['plus', 'plusTab', 'plusPanel'], ['memory', 'memoryTab', 'memoryPanel'], ['updates', 'updatesTab', 'updatesPanel']];
 
 /**
  * folderBrowser はブラウザー版の「フォルダーを選ぶ…」の簡易ブラウザー（web/composer-controls.mjs。入力欄の面と同じ部品）
@@ -184,6 +184,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, kit, capabilities, 
   });
   $('onboardingGear').onclick = () => { welcome.close(); open('setup'); };
   $('setupTab').onclick = () => page();
+  $('generalTab').onclick = () => page('general');
   $('appearanceTab').onclick = () => page('appearance');
   $('inputTab').onclick = () => page('input');
   $('autoCompactionTab').onclick = () => page('autoCompaction');

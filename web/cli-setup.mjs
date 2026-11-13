@@ -1,4 +1,4 @@
-// 設定 › アプリ情報・更新の「外の AI から Pleiad を使う」（ADR 0090）。外の AI（Claude Code など）の MCP の設定に貼る
+// 設定 › プラグインの「外の AI から Pleiad を使う」（ADR 0090。もとは設定 › アプリ情報・更新にあった）。外の AI（Claude Code など）の MCP の設定に貼る
 // pleiad mcp の起動の仕方を、操作の一覧の app.cliSetup（ホストの画面だけ）から取ってクリップボードへ写す。
 // 取れない（リモートの窓・古いサーバー）ときは節ごと出さない。
 import { t } from './i18n.mjs';
