@@ -4,7 +4,7 @@ import { USER_TABS } from '../lib/fake-chrome-browser.mjs';
 import { agent, rig } from '../lib/chrome-relay-rig.mjs';
 
 export const name = 'chrome-downloads';
-export const title = '会話の Chrome のウィンドウのダウンロード: 会話のタブで始まったものだけ記録する・画面へ知らせる・止める・エージェントの命令は断る（偽の Chrome。ADR 9187）';
+export const title = '会話の Chrome のウィンドウのダウンロード: 会話のタブで始まったものだけ記録する・画面へ知らせる・止める・エージェントの命令は断る（偽の Chrome。ADR 0328）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {

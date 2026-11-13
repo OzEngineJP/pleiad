@@ -31,7 +31,7 @@
 // タブの題（右パネルのタブの列。見ている端末にだけ送る）・操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
 // ブラウザーの一本化（ADR 0294〜0297）の口: 移動の検査とコマンドの前後のふるい（page-policy.mjs）・操作の前の門（tab-holder.mjs）・
 // タブの情報（tab-info.mjs）・ページからの頼み（page-bridge.mjs）。出来事は onTabEvent(fn) に 1 本で出す（TAB_EVENTS）。setPagePorts でサーバーの port を受ける
-// ダウンロード（ADR 9187。記録は downloads.mjs）: 上りの接続に Browser.setDownloadBehavior { behavior: 'default', eventsEnabled: true } を送り、
+// ダウンロード（ADR 0328。記録は downloads.mjs）: 上りの接続に Browser.setDownloadBehavior { behavior: 'default', eventsEnabled: true } を送り、
 // ブラウザー全体のダウンロードのイベントのうち、会話のタブで始まったもの（始まったフレームから会話を引けたもの）だけを記録する。保存先は替えない（Chrome のいつもの保存先）。
 // 利用者自身のダウンロードは記録せず、エージェントの接続にはどのダウンロードのイベントも配らない。エージェントからの Browser.setDownloadBehavior・Page.setDownloadBehavior は引き続き断る
 import http from 'node:http';
@@ -124,7 +124,7 @@ class RelayError extends Error {
   constructor(message, code = -32000) { super(message); this.code = code; }
 }
 const denied = what => new RelayError(`${what} denied`);
-/** エージェントからは受けないダウンロードの命令（ADR 9187）。断るときは、理由と次の手の文を返す */
+/** エージェントからは受けないダウンロードの命令（ADR 0328）。断るときは、理由と次の手の文を返す */
 const DOWNLOAD_COMMANDS = new Set(['Browser.setDownloadBehavior', 'Page.setDownloadBehavior', 'Browser.cancelDownload']);
 
 const originOf = value => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.origin : null; } catch { return null; } };
@@ -181,7 +181,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   const tabHolder = (hooks.tabHolder ?? createTabHolder)({ emit: emitTab, now, log });
   const tabInfo = (hooks.tabInfo ?? createTabInfo)({ emit: emitTab, log });
   const pageBridge = (hooks.pageBridge ?? createPageBridge)({ emit: emitTab, ports: () => pagePorts, log });
-  // 会話のタブで始まったダウンロードの記録（ADR 9187）
+  // 会話のタブで始まったダウンロードの記録（ADR 0328）
   const downloads = (hooks.downloads ?? createChromeDownloads)({ emit: emitTab, now, log });
   /** 口の呼び出し（タブの出入りの知らせ）。口が投げても中継は止めない */
   const callHook = (name, fn) => { try { fn(); } catch (error) { log(`chrome-relay: ${name} failed: ${error?.message ?? error}`); } };
@@ -307,7 +307,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const stale = staleSessions; staleSessions = [];
       for (const sessionId of stale) cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});   // 前のサーバーの確認の Fetch は、答える相手が居ない
       await cdp.send('Target.setDiscoverTargets', { discover: true });
-      // ダウンロードのイベントを受ける（ADR 9187）。保存先は替えない（behavior: 'default'）。旗は接続の単位で、どのプロフィールのダウンロードも届く。
+      // ダウンロードのイベントを受ける（ADR 0328）。保存先は替えない（behavior: 'default'）。旗は接続の単位で、どのプロフィールのダウンロードも届く。
       // browserContextId は付けない（既定でないプロフィールの id は断られる。実機）。待たない・断られても（古い Chrome など）つなぐのは止めない
       cdp.send('Browser.setDownloadBehavior', { behavior: 'default', eventsEnabled: true })
         .catch(error => log(`chrome-relay: download events unavailable: ${error?.message ?? error}`));
@@ -644,14 +644,14 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         return;
       }
       case 'Fetch.requestPaused': onBrowserPaused(state, params); return;
-      // ダウンロード。会話のタブで始まったものだけを記録する。エージェントの接続には配らない（ADR 9187）
+      // ダウンロード。会話のタブで始まったものだけを記録する。エージェントの接続には配らない（ADR 0328）
       case 'Browser.downloadWillBegin': onDownloadBegin(state, params); return;
       case 'Browser.downloadProgress': onDownloadProgress(state, params); return;
       default: return;   // ほかのブラウザー全体のイベントは配らない
     }
   }
 
-  // ---- ダウンロード（ADR 9187） ----------------------------------------------------------------
+  // ---- ダウンロード（ADR 0328） ----------------------------------------------------------------
   /** セッションの Page.getFrameTree から、フレームの id を全部読む */
   async function frameIds(send) {
     const tree = await send('Page.getFrameTree', {}).catch(() => null);
@@ -675,7 +675,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     finally { state.cdp.send('Target.detachFromTarget', { sessionId: attached.sessionId }).catch(() => {}); }
   }
   /**
-   * ダウンロードの始まったフレーム（Browser.downloadWillBegin の frameId）から、会話のタブを引く。会話のタブで始まったものでなければ null（実機 Chrome 157。ADR 9187）。
+   * ダウンロードの始まったフレーム（Browser.downloadWillBegin の frameId）から、会話のタブを引く。会話のタブで始まったものでなければ null（実機 Chrome 157。ADR 0328）。
    *   - 主フレームのリンク: frameId はタブの targetId
    *   - target=_blank・window.open: 開いてすぐ消えるタブの targetId。開いた知らせ（openerId 付き）が先に届き、範囲に入っている（onTargetCreated）
    *   - cross-site の iframe: iframe の target の id。Target.getTargets の parentFrameId を親へたどる
@@ -1253,7 +1253,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     while (tab.commits === commits && Date.now() < end && !tab.controller.signal.aborted) await new Promise(resolve => setTimeout(resolve, 10));
   }
 
-  /** ダウンロードの命令を断る（保存先はエージェントに決めさせない。ADR 9187）。文は会話の言語で、押して始める・list_downloads で確かめる、を案内する */
+  /** ダウンロードの命令を断る（保存先はエージェントに決めさせない。ADR 0328）。文は会話の言語で、押して始める・list_downloads で確かめる、を案内する */
   function downloadDenied(client) {
     let text = null;
     try { text = downloadDeniedText?.(client.entry.id) ?? null; } catch { /* 文が引けなければ固定の字 */ }
@@ -1830,7 +1830,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     /** 4 つの口の実体（{ pagePolicy, tabHolder, tabInfo, pageBridge }）。口を持つ段が足した呼び口へ、中継を変えずに外から届くため */
     get unify() { return { pagePolicy, tabHolder, tabInfo, pageBridge }; },
     /**
-     * 会話のタブで始まったダウンロード（ADR 9187）。list はエージェントへ返す形、screen は画面へ出す形（'tab:downloads' と同じ）。
+     * 会話のタブで始まったダウンロード（ADR 0328）。list はエージェントへ返す形、screen は画面へ出す形（'tab:downloads' と同じ）。
      * wait は進行中のものが無くなるか seconds が過ぎるまで待つ。stop は人の「ダウンロードを止める」（{ stopped }）。onSettled は決着の聞き手（会話の行）
      */
     downloads: {

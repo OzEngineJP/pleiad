@@ -1,4 +1,4 @@
-// 会話の Chrome のウィンドウのダウンロードの画面（web/chrome-downloads.mjs。docs/inapp-browser.md「ダウンロード」、ADR 9187）。
+// 会話の Chrome のウィンドウのダウンロードの画面（web/chrome-downloads.mjs。docs/inapp-browser.md「ダウンロード」、ADR 0328）。
 // 一覧の置き場と字は素の Node で、ボタン・一覧・スマホの入口は B1_BROWSER_TEST=1 のときだけ本物のブラウザーで確かめる。
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';

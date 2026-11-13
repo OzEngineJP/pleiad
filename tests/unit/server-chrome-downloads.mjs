@@ -1,4 +1,4 @@
-// 会話の Chrome のウィンドウのダウンロードの、サーバー側の配線（docs/inapp-browser.md「ダウンロード」、ADR 9187）:
+// 会話の Chrome のウィンドウのダウンロードの、サーバー側の配線（docs/inapp-browser.md「ダウンロード」、ADR 0328）:
 //   - 操作（browser.listDownloads・browser.cancelDownload）: エージェントは自分の会話の一覧だけ読める・止めるのは画面とリモートの端末だけ
 //   - ply_browser の list_downloads: 中継のあるホストだけに載る・引数の検査・待ちにターンの中断の合図を渡す
 //   - 会話の行（present kind: 'chromeDownload'）: 決まった項目だけを残す
@@ -18,7 +18,7 @@ import { open } from '../lib/ws-client.mjs';
 import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 export const name = 'server-chrome-downloads';
-export const title = '会話の Chrome のウィンドウのダウンロード（サーバー側）: 操作・ply_browser の list_downloads・会話の行・画面の一覧と「止める」（偽の Chrome・parentPort の身代わり。ADR 9187）';
+export const title = '会話の Chrome のウィンドウのダウンロード（サーバー側）: 操作・ply_browser の list_downloads・会話の行・画面の一覧と「止める」（偽の Chrome・parentPort の身代わり。ADR 0328）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 8000) {

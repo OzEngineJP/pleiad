@@ -65,7 +65,7 @@ export const profileTools = locale => [{
   },
 }];
 
-/** 会話の Chrome のウィンドウで始まったダウンロードの一覧（docs/inapp-browser.md「ダウンロード」、ADR 9187）。中継のあるホストだけに載せる（createBrowserBridge の useDownloads） */
+/** 会話の Chrome のウィンドウで始まったダウンロードの一覧（docs/inapp-browser.md「ダウンロード」、ADR 0328）。中継のあるホストだけに載せる（createBrowserBridge の useDownloads） */
 export const DOWNLOAD_TOOLS = ['list_downloads'];
 export const downloadTools = locale => [{
   name: 'list_downloads',

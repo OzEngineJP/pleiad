@@ -946,7 +946,7 @@ const SUITES = [
   './unit/page-coords.mjs',
   // 中継の 4 つの口（既定は今のまま・差し替えた口が決めた場所で呼ばれる）
   './unit/chrome-relay-hooks.mjs',
-  // 会話の Chrome のウィンドウのダウンロード（会話のタブで始まったものだけ記録・画面へ知らせる・止める・エージェントの命令は断る。ADR 9187）
+  // 会話の Chrome のウィンドウのダウンロード（会話のタブで始まったものだけ記録・画面へ知らせる・止める・エージェントの命令は断る。ADR 0328）
   './unit/chrome-downloads.mjs',
   './unit/server-chrome-downloads.mjs',
   // ページの入口の認証（ページの Cookie・本体の Cookie・?token= を受けない）

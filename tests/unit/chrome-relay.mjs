@@ -94,7 +94,7 @@ export default async function (t) {
         'Target.createBrowserContext', 'Target.disposeBrowserContext', 'Target.exposeDevToolsProtocol', 'Target.setRemoteLocations', 'Target.sendMessageToTarget', 'SystemInfo.getInfo'];
       const replies = await Promise.all(browserDenied.map(method => a1.cmd(method, method === 'Browser.setWindowBounds' ? { windowId: tab.windowId, bounds: { windowState: 'normal' } } : {})));
       t.ok('ブラウザー全体の操作を断る（Browser.close・Storage.*・Cookie の一括・context・窓を戻すなど）', replies.every(m => m.error), browserDenied.filter((_, i) => !replies[i].error).join());
-      // 中継自身が窓の大きさを決める setWindowBounds（windowState なし）と、中継自身がダウンロードのイベントを受けるための setDownloadBehavior（保存先は変えない default。ADR 9187）は除く
+      // 中継自身が窓の大きさを決める setWindowBounds（windowState なし）と、中継自身がダウンロードのイベントを受けるための setDownloadBehavior（保存先は変えない default。ADR 0328）は除く
       const forwarded = r.chrome.calls.filter(c => browserDenied.includes(c.method) && !(c.method === 'Browser.setWindowBounds' && !c.params.bounds?.windowState)
         && !(c.method === 'Browser.setDownloadBehavior' && c.params.behavior === 'default' && !c.params.downloadPath && !c.sessionId));
       t.ok('断ったものは上りへ送っていない', forwarded.length === 0, forwarded.map(c => c.method).join());

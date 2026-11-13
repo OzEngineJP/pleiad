@@ -50,7 +50,7 @@ Pleiad のページへの移動は、自分の会話のページと隔離した�
 
 ## ダウンロード
 
-会話の Chrome のウィンドウのタブで始まったダウンロードは、中継が拾って、エージェントと人の両方に見せる（承認済み（2026-11-14）。[ADR 9187](adr/9187-chrome-window-downloads.md)）。ファイルは Chrome のいつもの保存先に落ち、Pleiad は保存先を替えない。
+会話の Chrome のウィンドウのタブで始まったダウンロードは、中継が拾って、エージェントと人の両方に見せる（承認済み（2026-11-14）。[ADR 0328](adr/0328-chrome-window-downloads.md)）。ファイルは Chrome のいつもの保存先に落ち、Pleiad は保存先を替えない。
 
 中継は Chrome への接続のたびに `Browser.setDownloadBehavior { behavior: 'default', eventsEnabled: true }` を送り、ブラウザー全体のダウンロードのイベントを受ける。そのうち、始まったフレーム（`Browser.downloadWillBegin` の `frameId`）から会話のタブを引けたものだけを記録する。主フレームのリンク、`target=_blank`・`window.open` で開いてすぐ消えるタブ、iframe（cross-site のものも）の中で始まったものを引ける。利用者が普段の窓で始めたダウンロードと、ほかの会話のものは記録しない。ダウンロードのイベントはエージェントの接続には配らない。
 

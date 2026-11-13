@@ -3428,7 +3428,7 @@ async function recordChromeWindowClose(sessionId, payload) {
   const record = await history.recordPresent(sessionId, payload);
   emitGlobal({ type: 'present', sessionId, ...record });
 }
-/** 会話の Chrome のウィンドウのダウンロードが決着したときの会話の行（present kind: 'chromeDownload'。ADR 9187）。進行中は出さない */
+/** 会話の Chrome のウィンドウのダウンロードが決着したときの会話の行（present kind: 'chromeDownload'。ADR 0328）。進行中は出さない */
 async function recordChromeDownload(sessionId, download) {
   const record = await history.recordPresent(sessionId, { kind: 'chromeDownload', chromeDownload: { name: download.name, state: download.state, size: download.total || download.received, path: download.path } });
   emitGlobal({ type: 'present', sessionId, ...record });

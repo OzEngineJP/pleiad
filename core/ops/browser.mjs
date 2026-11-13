@@ -4,7 +4,7 @@
 // 状態を読む操作（chromeStatus）だけが AI・CLI にも出る。つなぐ・切る・確認を前に出すは、設定 › ブラウザーの画面の操作で、
 // ホストの PC の画面だけから呼べる（エージェントがつなぐ道は core の接続の案内 chromeConnection.demand が持つ）。
 // 引き継ぐ（chromeTakeOver）は by: 'device' でリモートの端末から操作する（窓は PC に見せず、端末の映像の箱の大きさでページを描き、映像のセッションで入力を送る）。
-// ダウンロード（listDownloads・cancelDownload。docs/inapp-browser.md「ダウンロード」、ADR 9187）: 会話の Chrome のウィンドウで始まったものの一覧は、エージェントも自分の会話の分を読める
+// ダウンロード（listDownloads・cancelDownload。docs/inapp-browser.md「ダウンロード」、ADR 0328）: 会話の Chrome のウィンドウで始まったものの一覧は、エージェントも自分の会話の分を読める
 // （ply_browser の list_downloads もここを通る）。止めるのは人だけで、画面とリモートの端末から呼ぶ。
 // 許可（chromeConsent）・オンにしてつなぐ（chromeEnable）は、会話の接続のカードのボタン（ADR 0218）。人が押すので、画面とリモートの端末から呼べる（MCP・CLI には出さない）。
 import { z } from 'zod';
@@ -315,7 +315,7 @@ export const browserOps = [
       catch (error) { throw profileError(ctx, error); }
     },
   }),
-  // 会話の Chrome のウィンドウで始まったダウンロード（docs/inapp-browser.md「ダウンロード」、ADR 9187）。本体は core/chrome/downloads.mjs
+  // 会話の Chrome のウィンドウで始まったダウンロード（docs/inapp-browser.md「ダウンロード」、ADR 0328）。本体は core/chrome/downloads.mjs
   defineOp({
     id: 'browser.listDownloads',
     summary: 'agent:ops.browser.listDownloads.summary',

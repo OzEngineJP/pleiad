@@ -1,4 +1,4 @@
-// 会話の Chrome のウィンドウで始まったダウンロードの記録（docs/inapp-browser.md「ダウンロード」、ADR 9187）。
+// 会話の Chrome のウィンドウで始まったダウンロードの記録（docs/inapp-browser.md「ダウンロード」、ADR 0328）。
 //
 // 中継（relay.mjs）が、Chrome のブラウザー全体のイベント（Browser.downloadWillBegin・downloadProgress）のうち、
 // 会話のタブで始まったものだけを begin・progress で渡す。ここは会話ごとの一覧（新しい順）を持ち、変わるたびに emit('tab:downloads', …) で画面へ出す。
@@ -10,7 +10,7 @@
 //   - failed: Chrome が canceled を返した（失敗も、Chrome の側で人が止めたものも、CDP では区別が付かない）
 //   - unknown: Chrome との接続が切れて、結果が分からなくなった進行中のもの。画面には出さない。
 //     つなぎ直した後に同じ guid の進み具合が届いたら、downloading に戻る
-// 止められるか（stoppable）: Browser.cancelDownload は、そのプロフィールが CDP の「既定の context」のときだけ効く（実機 Chrome 157。ADR 9187）。
+// 止められるか（stoppable）: Browser.cancelDownload は、そのプロフィールが CDP の「既定の context」のときだけ効く（実機 Chrome 157。ADR 0328）。
 // 既定の context は最後に使ったプロフィールへ替わるので、中継が setDefaultContext で今の値を渡す。分からない間（null）は止められるものとして扱う
 
 /** 会話ごとに残す数。超えたら、終わった古いものから捨てる */

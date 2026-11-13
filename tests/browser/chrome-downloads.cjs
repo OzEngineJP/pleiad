@@ -1,4 +1,4 @@
-// 会話の Chrome のウィンドウのダウンロードの画面（docs/inapp-browser.md「ダウンロード」、ADR 9187）を、本物のブラウザーで確かめる。
+// 会話の Chrome のウィンドウのダウンロードの画面（docs/inapp-browser.md「ダウンロード」、ADR 0328）を、本物のブラウザーで確かめる。
 // tests/unit/chrome-downloads-ui.mjs から B1_BROWSER_TEST=1 のときだけ呼ばれる。右の欄（web/browser-unify.mjs）だけを立て、
 // サーバーの 'tab:downloads' の代わりに ui.onEvent へ直に渡す。利用者のプロフィールもデータも使わない。
 const http = require('node:http');

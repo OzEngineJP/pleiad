@@ -1,4 +1,4 @@
-// 会話の Chrome のウィンドウで始まったダウンロードの画面（docs/inapp-browser.md「ダウンロード」、ADR 9187）:
+// 会話の Chrome のウィンドウで始まったダウンロードの画面（docs/inapp-browser.md「ダウンロード」、ADR 0328）:
 // 会話ごとの一覧の置き場・アドレスバーのボタン（PC）・一覧（PC は吹き出し、スマホは欄いっぱい）・会話の 1 行。
 // 見た目は docs/design-system.md「会話のブラウザー」。一覧の中身はサーバーの 'tab:downloads'（新しい順の全量）の写しで、ここでは足し引きしない。
 import { t } from './i18n.mjs';
