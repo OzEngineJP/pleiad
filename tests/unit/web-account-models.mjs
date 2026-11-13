@@ -6,7 +6,7 @@
 //   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { lang, setLanguage } from '../../web/i18n.mjs';
+import { lang, setLanguage, t as tr } from '../../web/i18n.mjs';
 import { modelDisplayName } from '../../web/composer-labels.mjs';
 import { cutFunction, readClientAndLiveTurn, readHistoryPane } from '../lib/cut-source.mjs';
 import { setupDelegationSettings } from '../../web/delegation-settings.mjs';
@@ -348,6 +348,66 @@ export default async function (t) {
       for (let i = 0; i < 5; i++) await tick();
       assert.ok(vocabCalls.length > vBefore, 'claudeAccountsChanged で語彙を引き直す');
       t.ok('bot-page: 下書きの account ごとに語彙を引き直し、作成は setAccount の後に update で model を保存する', true);
+
+      // 作れたあとの段（アカウント・モデル）で落ちたとき: bot はもうあるので同じ名前では作り直せない。この画面に「作れませんでした」と留めず、
+      // できた bot の画面へ移して知らせる（消さない）。作る最初の段（bots.create）で落ちたときは、これまでどおり作る画面に留まる
+      const createWith = async (failAt) => {
+        const body2 = el('div');
+        body2.id = 'channelsBody';
+        const title2 = el('div');
+        title2.id = 'channelsPageTitle';
+        document.getElementById = (id) => ({ channelsBody: body2, channelsPageTitle: title2 })[id] ?? null;
+        const calls = [];
+        const shown = [];
+        const failing = {
+          ...pageHost,
+          invoke: async (op, args) => {
+            calls.push(op);
+            if (op === failAt) throw new Error(`${op} failed`);
+            return pageHost.invoke(op, args);
+          },
+        };
+        const page2 = createBotPage(failing);
+        // 実際は web/channels/index.mjs が channels:show を聞いて、各部品の show を同期で呼ぶ。同じ順で聞く
+        const onShow = (ev) => { shown.push(ev.detail); page2.show(ev.detail); };
+        document.addEventListener('channels:show', onShow);
+        try {
+          page2.show({ kind: 'bot', id: 'new' });
+          await tick();
+          await tick();
+          const view = body2.querySelector('#botView');
+          view.querySelector('#botName').value = 'MythosBot';
+          view.querySelector('#botName').dispatchEvent({ type: 'input' });
+          view.querySelector('#botModelChip').click();
+          await tick();
+          await tick();
+          view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === 'account:verified').click();
+          for (let i = 0; i < 5; i++) await tick();
+          view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === 'model:claude-mythos-5-2').click();
+          for (let i = 0; i < 5; i++) await tick();
+          calls.length = 0;
+          view.querySelector('.bp-create').click();
+          for (let i = 0; i < 10; i++) await tick();
+          return { shown, view, error: view.querySelector('.bp-err'), writes: calls.filter((op) => /^bots\.(create|setMode|setAccount|update|delete)$/.test(op)) };
+        } finally {
+          document.removeEventListener('channels:show', onShow);
+        }
+      };
+      for (const failAt of ['bots.setAccount', 'bots.update']) {
+        const r = await createWith(failAt);
+        const want = failAt === 'bots.setAccount' ? ['bots.create', 'bots.setAccount'] : ['bots.create', 'bots.setAccount', 'bots.update'];
+        assert.deepEqual(r.writes, want, `${failAt}: ${JSON.stringify(r.writes)}`);
+        assert.deepEqual(r.shown, [{ kind: 'bot', id: 'b_new_1' }], `${failAt}: できた bot の画面へ移る ${JSON.stringify(r.shown)}`);
+        assert.equal(r.error.textContent, tr('channels:bot.createPartial', { error: `${failAt} failed` }), `${failAt}: 移った後に、作れたが一部が効かなかったと知らせる`);
+        assert.equal(r.error.hidden, false);
+        assert.equal(r.view.querySelector('.bp-create').hidden, true, `${failAt}: できた bot の画面では［作る］を出さない（もう一度押すと同じ名前で落ちる）`);
+      }
+      const early = await createWith('bots.create');
+      assert.deepEqual(early.writes, ['bots.create']);
+      assert.deepEqual(early.shown, [], '作る最初の段で落ちたときは移らない');
+      assert.equal(early.error.textContent, tr('channels:bot.createFailed', { error: 'bots.create failed' }));
+      assert.equal(early.view.querySelector('.bp-create').hidden, false, '作る画面に留まり、やり直せる');
+      t.ok('bot-page: 作れたあとの段（アカウント・モデル）で落ちたら、できた bot の画面へ移して知らせる（消さない）。最初の段で落ちたときは作る画面に留まる', true);
     }
 
     // ---- 4. thread-composer.mjs: vocab / efforts に account を渡し、invalidateVocab で引き直す

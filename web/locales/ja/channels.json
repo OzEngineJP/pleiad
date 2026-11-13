@@ -334,6 +334,7 @@
     },
     "saveFailed": "保存できませんでした: {{error}}",
     "createFailed": "作れませんでした: {{error}}",
+    "createPartial": "bot は作りましたが、一部の設定が効きませんでした。ここで選び直してください: {{error}}",
     "nameRequired": "名前を入れてください",
     "notFound": "この bot は見つかりません",
     "loadFailed": "読み込めませんでした: {{error}}",

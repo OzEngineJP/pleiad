@@ -683,18 +683,26 @@ export function createBotPage(host) {
     setError('');
     createBusy = true;
     paintBusy();
+    // bots.create が返した bot（続く段の返りで置き替える）。作れたあとの段で落ちても bot はもうある（同じ名前では作り直せない）ので、
+    // この画面に「作れませんでした」と留めず、できた bot の画面へ移して、効かなかった設定をそこで選び直してもらう。自動では消さない
+    let bot = null;
     try {
       const withAccount = Boolean(d.account && takesAccount(d.backend));
       const deferModel = withAccount && Boolean(d.model || d.effort);
       const args = { name, icon: d.icon, backend: d.backend, ...(d.iconImage ? { iconImage: d.iconImage } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}), ...(deferModel ? {} : { ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) }) };
-      let bot = await host.invoke('bots.create', args);
+      bot = await host.invoke('bots.create', args);
       if (d.mode && d.mode !== bot.mode) bot = await host.invoke('bots.setMode', { botId: bot.id, mode: d.mode });
       if (withAccount) bot = await host.invoke('bots.setAccount', { botId: bot.id, account: d.account });
       if (deferModel) bot = await host.invoke('bots.update', { botId: bot.id, ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) });
       S.bots.set(bot.id, bot);
       navigate({ kind: 'bot', id: bot.id });
     } catch (e) {
-      setError(t('channels:bot.createFailed', { error: message(e) }));
+      if (!bot) setError(t('channels:bot.createFailed', { error: message(e) }));
+      else {
+        S.bots.set(bot.id, bot);
+        navigate({ kind: 'bot', id: bot.id });   // 開き直し（open）が表示中のエラーを消すので、移した後に出す
+        setError(t('channels:bot.createPartial', { error: message(e) }));
+      }
     } finally {
       createBusy = false;
       paintBusy();

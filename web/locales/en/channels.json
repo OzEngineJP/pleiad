@@ -338,6 +338,7 @@
     },
     "saveFailed": "Couldn’t save: {{error}}",
     "createFailed": "Couldn’t create it: {{error}}",
+    "createPartial": "The bot was created, but some settings weren’t applied. Choose them again here: {{error}}",
     "nameRequired": "Enter a name",
     "notFound": "This bot wasn’t found",
     "loadFailed": "Couldn’t load: {{error}}",
