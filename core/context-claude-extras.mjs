@@ -51,13 +51,12 @@ export function connectorNames(status) {
  *   connectors は、最後に読めた一覧（無ければ null）。読み取りが失敗しても、前の一覧は残す
  */
 export function createConnectorReader({ file, probe, now = () => Date.now() }) {
-  let state = { connectors: null, at: 0 }, loaded = false, running = null;
-  const load = async () => {
-    if (loaded) return;
-    loaded = true;
+  let state = { connectors: null, at: 0 }, loading = null, running = null;
+  // 覚えの読み込みは 1 回だけ。読んでいる最中の呼び出しも、同じ読み込みを待つ（待たないと最初の一覧が空に見える）
+  const load = () => loading ??= (async () => {
     const j = await readJson(file);
     if (Array.isArray(j?.connectors)) state = { connectors: j.connectors.filter(n => typeof n === 'string').slice(0, CONNECTOR_CACHE_MAX), at: Number(j.at) || 0 };
-  };
+  })();
   const save = () => writeAtomic(file, `${JSON.stringify({ connectors: state.connectors, at: state.at })}\n`).catch(() => {});
   return {
     async get() { await load(); return { connectors: state.connectors, reading: running !== null, at: state.at }; },

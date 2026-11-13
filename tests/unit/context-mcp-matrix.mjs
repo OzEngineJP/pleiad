@@ -73,6 +73,9 @@ export default async function (t) {
     t.ok('覚えは小さい JSON で置き場に残る', JSON.parse(await fs.readFile(file, 'utf8')).connectors.length === 2);
     const r2 = createConnectorReader({ file, probe });
     t.ok('次に起動した側は、読み取りを待たず前の一覧をすぐ出せる', (await r2.get()).connectors.join() === 'Gmail,Slack');
+    const r3 = createConnectorReader({ file, probe: async () => { throw new Error('boom'); } });
+    const [, early] = await Promise.all([r3.refresh(), r3.get()]);
+    t.ok('起動直後に読み取りと表示が重なっても、覚えの一覧が見える', early.connectors?.join() === 'Gmail,Slack', early);
     fail = true; await r2.refresh();
     t.ok('読み取りが失敗しても前の一覧を残す', (await r2.get()).connectors.join() === 'Gmail,Slack');
     fail = false;

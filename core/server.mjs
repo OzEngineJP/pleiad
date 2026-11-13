@@ -9654,6 +9654,10 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.setSessionMcp');
         case 'agentMcp':
           return await viaOp('context.agentMcp');
+        case 'mcpMatrix':
+          return await viaOp('context.mcpMatrix');
+        case 'setMcpAgent':
+          return await viaOp('context.setMcpAgent');
         case 'nativeInstructions':
           return await viaOp('context.nativeInstructions');
         case 'contextFindings':

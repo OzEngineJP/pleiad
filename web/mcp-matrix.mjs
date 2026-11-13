@@ -8,7 +8,7 @@
 // 行の詳細（編集・名前の変更・ログイン・削除・取り込み）は web/mcp-config.mjs の peek。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { agentBrand, agentLabel } from './agent-brands.mjs';
+import { agentBrand, agentShortLabel } from './agent-brands.mjs';
 import { ensureBrandMark } from './brand-marks.mjs';
 
 const ICON = {
@@ -20,7 +20,7 @@ const ICON = {
   lock: '<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
 };
 const svg = d => { const s = el('span'); s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`; return s.firstChild; };
-const label = id => agentLabel(id) ?? id;
+const label = id => agentShortLabel(id, id);
 const names = ids => ids.map(label).join('・');
 
 /** エージェントのロゴ。ロゴの無いエージェントは ◇（web/side.mjs の backendLogo と同じ決め） */
@@ -55,7 +55,9 @@ export function createMcpMatrix({ section }) {
   const switchOn = (m, row) => stuck(m, row) || toggles(m, row).some(a => row.cells[a].state === 'on');
 
   /** 変更を先に画面へ反映し、1 つずつ保存して、サーバーの行を取り直す（保存に失敗したら元に戻る） */
-  function apply(ctx, row, changes) {
+  function apply(ctx, row, changes, keep = null) {
+    const back = keep ? `.cx-row[data-key="${CSS.escape(row.key)}"] ${keep}` : null;
+    if (back) focus = back;
     for (const { agent, on } of changes) row.cells[agent].state = on ? 'on' : 'off';
     row.on = ctx.matrix.agents.some(a => row.cells[a].state === 'on');
     ctx.rerender();
@@ -64,7 +66,7 @@ export function createMcpMatrix({ section }) {
         for (const { agent, on } of changes) await ctx.cmd('setMcpAgent', { name: row.key, agent, on });
         await ctx.refreshSettings();
         ctx.toast();
-      } finally { await ctx.reloadMatrix(); }
+      } finally { if (back) focus = back; await ctx.reloadMatrix(); }
     });
   }
 
@@ -77,7 +79,7 @@ export function createMcpMatrix({ section }) {
       const rest = toggles(m, row).filter(a => a !== agent && row.cells[a].state === 'on');
       if (!rest.length && defaults(m, row).length) memory.set(row.key, toggles(m, row).filter(a => row.cells[a].state === 'on'));
     }
-    return apply(ctx, row, [{ agent, on }]);
+    return apply(ctx, row, [{ agent, on }], `.cx-ag[data-agent="${agent}"]`);
   }
   function toggleAll(ctx, row) {
     const m = ctx.matrix;
@@ -85,11 +87,11 @@ export function createMcpMatrix({ section }) {
     if (switchOn(m, row)) {
       const ons = toggles(m, row).filter(a => row.cells[a].state === 'on');
       memory.set(row.key, ons);
-      return apply(ctx, row, ons.map(agent => ({ agent, on: false })));
+      return apply(ctx, row, ons.map(agent => ({ agent, on: false })), '.cx-sw');
     }
     const back = (memory.get(row.key) ?? []).filter(a => toggles(m, row).includes(a));
     const targets = back.length ? back : defaults(m, row);
-    return apply(ctx, row, targets.map(agent => ({ agent, on: true })));
+    return apply(ctx, row, targets.map(agent => ({ agent, on: true })), '.cx-sw');
   }
 
   // i18n-dynamic: ui:mcp.matrix.origin
