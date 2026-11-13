@@ -17,9 +17,13 @@ if (!hasUserDataFlag) {
   const userDataDir = path.join(tmpRoot, 'user-data');
   const childEnv = { ...process.env, PLEIAD_SMOKE_ROOT: tmpRoot };
   delete childEnv.ELECTRON_RUN_AS_NODE;
+  const scriptPath = path.resolve(__filename);
+  const extraArgs = process.argv.slice(1).filter(arg => (
+    path.resolve(arg) !== scriptPath && !arg.startsWith('--user-data-dir=')
+  ));
   const result = spawnSync(
     process.execPath,
-    [__filename, `--user-data-dir=${userDataDir}`],
+    [__filename, `--user-data-dir=${userDataDir}`, ...extraArgs],
     { env: childEnv, stdio: 'inherit' },
   );
   try { fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {}
@@ -111,9 +115,12 @@ let mainWindow = null;
 app.on('browser-window-created', (_event, win) => {
   if (!mainWindow && win.webContents) {
     mainWindow = win;
-    // 無人のスモーク試験でユーザーの作業中の前面を奪わない
+    // 無人のスモーク試験でユーザーの作業中の前面を奪わない（連続クラッシュ判定上は可視扱い）
     win.show = () => {};
+    win.showInactive = () => {};
     win.focus = () => {};
+    win.isVisible = () => true;
+    win.isMinimized = () => false;
   }
 });
 
@@ -125,8 +132,15 @@ app.quit = () => {
   if (allowExit) return nativeQuit();
 };
 
+function cleanupTmp() {
+  if (ownRoot) {
+    try { fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {}
+  }
+}
+
 const timer = setTimeout(() => {
   console.error('TIMEOUT in renderer-crash-smoke');
+  cleanupTmp();
   app.exit(1);
 }, 60_000);
 timer.unref();
@@ -177,13 +191,23 @@ async function runSmoke() {
     return fs.readFileSync(desktopLogFile, 'utf8').includes('did-fail-load');
   }, { label: 'did-fail-load logged' });
 
+  function withTimeout(promise, timeoutMs, label) {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`Timeout waiting for ${label} after ${timeoutMs}ms`)), timeoutMs);
+      promise.then(
+        v => { clearTimeout(t); resolve(v); },
+        e => { clearTimeout(t); reject(e); },
+      );
+    });
+  }
+
   // 3-4. did-finish-load を待ってから DOM を確かめる（crashed 直後の executeJavaScript ハングを避ける）
   async function crashAndWaitReload(label) {
     const gone = new Promise(resolve => mainWindow.webContents.once('render-process-gone', (_e, d) => resolve(d)));
     const loaded = new Promise(resolve => mainWindow.webContents.once('did-finish-load', resolve));
     mainWindow.webContents.forcefullyCrashRenderer();
-    const detail = await gone;
-    await loaded;
+    const detail = await withTimeout(gone, 15_000, `${label}: render-process-gone`);
+    await withTimeout(loaded, 15_000, `${label}: did-finish-load`);
     await waitFor(async () => {
       if (mainWindow.isDestroyed() || mainWindow.webContents.isLoadingMainFrame() || mainWindow.webContents.isCrashed()) return false;
       const url = mainWindow.webContents.getURL();
@@ -207,10 +231,16 @@ async function runSmoke() {
 
   // 5. app の child-process-gone（GPU プロセス終了）が同じ desktop.log に残ること
   const gpuMetric = app.getAppMetrics().find(m => m.type === 'GPU');
+  const expectGpu = !process.argv.includes('--disable-gpu') && !process.argv.includes('--in-process-gpu');
+  if (expectGpu) assert(gpuMetric?.pid, 'expected GPU child process unless --disable-gpu');
   if (gpuMetric?.pid) {
     const goneChild = new Promise(resolve => app.once('child-process-gone', (_e, d) => resolve(d)));
     try { process.kill(gpuMetric.pid); } catch {}
     await Promise.race([goneChild, new Promise(r => setTimeout(r, 3000))]);
+    await waitFor(() => fs.existsSync(desktopLogFile) && fs.readFileSync(desktopLogFile, 'utf8').includes('child-process-gone'), {
+      timeoutMs: 3000,
+      label: 'child-process-gone logged',
+    });
   }
 
   // 6. ダイアログで「読み直す」後は再び 1・2 回は自動復帰、3 回目 (#6) で 1 ('Pleiad を再起動する') を選んで relaunch
@@ -220,18 +250,21 @@ async function runSmoke() {
   mainWindow.webContents.forcefullyCrashRenderer();
   await waitFor(() => recordedDialogs.length === 2 && recordedRelaunches.length === 1, { label: 'crash loop dialog #2 + relaunch' });
 
-  // 7. 5 秒タイマーによる crashDumps/reports の刈り込み（12 件 -> 10 件以下）完了を待つ
+  // 7. 5 秒タイマーによる crashDumps/reports の刈り込み（12 件 -> 10 件以下、かつ実ダンプ生成）完了を待つ
   await waitFor(() => {
     const dmps = fs.readdirSync(reportsDir).filter(f => f.endsWith('.dmp'));
     return dmps.length <= 10;
   }, { timeoutMs: 10_000, label: 'crashDumps pruned <= 10' });
 
   const finalDmps = fs.readdirSync(reportsDir).filter(f => f.endsWith('.dmp'));
+  const realDmps = finalDmps.filter(f => !f.startsWith('smoke-old-'));
+  assert(realDmps.length >= 1, `expected >= 1 real Crashpad .dmp file, got ${JSON.stringify(finalDmps)}`);
   const logText = fs.readFileSync(desktopLogFile, 'utf8');
   assert(logText.includes('render-process-gone'), 'desktop.log must contain render-process-gone');
   assert(logText.includes('renderer-reload'), 'desktop.log must contain renderer-reload');
   assert(logText.includes('renderer-crash-loop'), 'desktop.log must contain renderer-crash-loop');
   assert(logText.includes('did-fail-load'), 'desktop.log must contain did-fail-load');
+  if (gpuMetric?.pid) assert(logText.includes('child-process-gone'), 'desktop.log must contain child-process-gone');
   assert(logText.includes('token=[redacted]'), 'desktop.log must redact token=');
   assert(!logText.includes('SMOKE_SECRET_TOKEN_XYZ'), 'desktop.log must NOT leak raw token');
   assert(recordedDialogs[0].buttons.length === 2, 'dialog must have 2 buttons');
@@ -247,6 +280,7 @@ async function runSmoke() {
     dialogButtons: recordedDialogs[0].buttons,
     relaunches: recordedRelaunches.length,
     remainingDumps: finalDmps.length,
+    realDumps: realDmps.length,
     gpuTested: Boolean(gpuMetric?.pid),
     logLines: logText.trim().split(/\r?\n/),
   };
