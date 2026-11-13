@@ -5,7 +5,7 @@ import { effortCapability } from '../../core/effort.mjs';
 import { KINDS, SIGNALS, DEFAULTS, DEFAULT_JUDGE, DECISION_THRESHOLD, levelOrder, kindOrder, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, pickAccount, sameIdentity, tierAccounts, candidateId,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJudge, judgeDifficulty, normalizeKey, TASK_LIMIT, JUDGE_USE, JUDGE_SERVICE } from '../../core/delegation-judges.mjs';
-import { createUsageMonitor, REFRESH_MS, STALE_MS } from '../../core/delegation-usage.mjs';
+import { createUsageMonitor, createUsageWarm, REFRESH_MS, STALE_MS, WARM_MS } from '../../core/delegation-usage.mjs';
 import { claudeQuota, codexQuota } from '../../core/usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
@@ -547,6 +547,90 @@ export default async function (t) {
     await passiveMonitor.settle();
     t.ok('監視は、アカウントごとに一覧を持つエージェントだけ passive（手元の一覧だけ）で確かめるよう頼む',
       JSON.stringify([...asked].sort()) === JSON.stringify(['claude|a1|true', 'claude||true', 'codex|a2|false', 'codex||false', 'fake||false'].sort()), JSON.stringify(asked));
+  }
+
+  // ---- 使用量の取り置き: 一覧の確かめ直し（warm）の方針（createUsageWarm。ADR 0329）。
+  // アカウントごとに一覧を持つエージェント（'token'）だけ一覧を引き直し（warmModels）、成否・ログイン中の状態によらず 30 分に 1 回まで。
+  // ほかのエージェントは一覧を引かず、これまでどおりログインの確認（auth.status）だけ。時計は差し替えて、30 分の境目を見る
+  {
+    t.ok('確かめ直しを繰り返さない間隔は 30 分', WARM_MS === 30 * 60_000);
+    let clock = 5_000_000;
+    const now = () => clock;
+    const MIN = 60_000;
+
+    // ログイン中のアカウントが未ログインで、登録したアカウントのトークンだけで使うとき。一覧に出ない候補が残り続けても、取り直しのたびに確かめ直さない
+    let tokenWarms = 0, tokenStatus = 0;
+    const loggedOutToken = { id: 'claude', usage: true, capabilities: { accounts: 'token' }, auth: { status: async () => { tokenStatus++; return { loggedIn: false }; } } };
+    const tokenMonitor = createUsageMonitor({
+      backends: () => [loggedOutToken], installed: () => true,
+      read: async () => ({ windows: [], checkedAt: Date.now(), accounts: [] }),
+      candidates: () => ['claude@a1:gone'],
+      scopeForAccount: async (b, acct) => ({ ...b, scoped: acct }),
+      modelKnown: async () => false,
+      warm: createUsageWarm({ warmModels: async b => { if (b.id === 'claude') tokenWarms++; }, now }),
+    });
+    const tokenStart = clock;
+    for (let i = 0; i < 4; i++) { await tokenMonitor.refresh(); await tokenMonitor.settle(); clock += 5 * MIN; }
+    t.ok('アカウントごとに一覧を持つエージェントは、ログイン中が未ログインでも、一覧の確かめ直しは 30 分に 1 回（取り直しを 5 分ごとに重ねても 1 回）',
+      tokenWarms === 1 && tokenStatus === 0 && tokenMonitor.snapshot().claude.accountModels.a1.gone === false, `${tokenWarms} ${tokenStatus}`);
+    clock = tokenStart + WARM_MS - 1;
+    await tokenMonitor.refresh(); await tokenMonitor.settle();
+    t.ok('30 分に 1 ミリ秒足りないあいだは、まだ確かめ直さない', tokenWarms === 1, String(tokenWarms));
+    clock = tokenStart + WARM_MS;
+    await tokenMonitor.refresh(); await tokenMonitor.settle();
+    t.ok('30 分たったら、もう 1 回だけ確かめ直す', tokenWarms === 2, String(tokenWarms));
+    await tokenMonitor.refresh(); await tokenMonitor.settle();
+    t.ok('確かめ直したら、また 30 分は繰り返さない', tokenWarms === 2, String(tokenWarms));
+
+    // 一覧を引くのが失敗し続けても（オフラインなど）同じ。失敗した確かめ直しを、取り直しのたびに（一覧の CLI を起こして）繰り返さない。バックエンドごとに数える
+    const failedIds = [];
+    const failWarm = createUsageWarm({ warmModels: async b => { failedIds.push(b.id); throw new Error('offline'); }, now });
+    const failTokens = [{ id: 'claude', capabilities: { accounts: 'token' } }, { id: 'claude2', capabilities: { accounts: 'token' } }];
+    let rejected = false;
+    for (let i = 0; i < 4; i++) { for (const b of failTokens) await failWarm(b).catch(() => { rejected = true; }); clock += 5 * MIN; }
+    t.ok('一覧を引くのが失敗し続けても 30 分は繰り返さず（バックエンドごとに 1 回）、失敗を呼び出し元へ投げない',
+      JSON.stringify(failedIds) === JSON.stringify(['claude', 'claude2']) && !rejected, JSON.stringify(failedIds));
+    clock += WARM_MS;
+    for (const b of failTokens) await failWarm(b);
+    t.ok('失敗しても、30 分たてばまた確かめ直す', failedIds.length === 4, String(failedIds.length));
+
+    // ほかのエージェント（accounts が 'agent'・アカウントを持たない・何も無い）は、一覧を引く口があっても回さない。ログインの確認だけ（agy はこれで一覧を覚える）。これまでどおり
+    let otherWarms = 0, statusCalls = 0, loggedIn = true;
+    const status = async () => { statusCalls++; return { loggedIn }; };
+    const other = createUsageWarm({ warmModels: async () => { otherWarms++; }, now });
+    const otherBackends = [
+      { id: 'devin', capabilities: {}, warmModels: async () => { otherWarms++; }, auth: { status } },
+      { id: 'grok', capabilities: { accounts: 'agent' }, warmModels: async () => { otherWarms++; }, auth: { status } },
+      { id: 'antigravity', auth: { status } },
+    ];
+    for (let i = 0; i < 3; i++) for (const b of otherBackends) await other(b);
+    t.ok('ほかのエージェントは一覧を引き直さず、ログインを確かめたら 30 分は繰り返さない', otherWarms === 0 && statusCalls === 3, `${otherWarms} ${statusCalls}`);
+    clock += WARM_MS;
+    for (const b of otherBackends) await other(b);
+    t.ok('ほかのエージェントも、30 分たてばまたログインを確かめる（一覧は引かない）', otherWarms === 0 && statusCalls === 6, `${otherWarms} ${statusCalls}`);
+    loggedIn = false; statusCalls = 0;
+    clock += WARM_MS;
+    for (let i = 0; i < 3; i++) for (const b of otherBackends) await other(b);
+    t.ok('未ログインのままなら、ほかのエージェントは取り直しのたびにまた確かめる（これまでどおり）', otherWarms === 0 && statusCalls === 9, `${otherWarms} ${statusCalls}`);
+    statusCalls = 0;
+    await other({ id: 'plain', capabilities: {}, warmModels: async () => { otherWarms++; } });
+    let flaky = 0;
+    const flakyBackend = { id: 'flaky', auth: { status: async () => { flaky++; throw new Error('failed'); } } };
+    await other(flakyBackend); await other(flakyBackend);
+    t.ok('ログインを確かめる口が無ければ何もせず、確かめに失敗したら未ログインと同じに次の取り直しでまた確かめる', otherWarms === 0 && statusCalls === 0 && flaky === 2, `${otherWarms} ${statusCalls} ${flaky}`);
+
+    // 監視を通しても同じ: 一覧に出ない候補があるアカウント付きのエージェント（'agent'）は、公開の前に 1 回だけログインを確かめ、一覧は引き直さない
+    let agentWarmModels = 0, agentStatus = 0;
+    const agentBackend = { id: 'grok', usage: true, capabilities: { accounts: 'agent' }, auth: { status: async () => { agentStatus++; return { loggedIn: true }; } } };
+    const agentMonitor = createUsageMonitor({
+      backends: () => [agentBackend], installed: () => true,
+      read: async () => ({ windows: [], checkedAt: Date.now(), accounts: [] }),
+      candidates: () => ['grok:gone'],
+      modelKnown: async () => false,
+      warm: createUsageWarm({ warmModels: async () => { agentWarmModels++; }, now }),
+    });
+    for (let i = 0; i < 3; i++) { await agentMonitor.refresh(); await agentMonitor.settle(); clock += 5 * MIN; }
+    t.ok('監視を通しても、ほかのエージェントの確かめ直しは一覧を引かず、ログインの確認が 30 分に 1 回', agentWarmModels === 0 && agentStatus === 1 && agentMonitor.snapshot().grok.models.gone === false, `${agentWarmModels} ${agentStatus}`);
   }
 
   // ---- 使用量の取り置き: 古ければ判定と並行して取り直す（ensureFresh）。

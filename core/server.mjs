@@ -26,7 +26,7 @@ import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync, statSync } from 'node:fs';
 import { DIFFICULTIES, SIGNALS, kindOrder, levelOrder, kindAt, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, JUDGE_USE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
-import { createUsageMonitor } from './delegation-usage.mjs';
+import { createUsageMonitor, createUsageWarm } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
 import { createGitActivity } from './git-activity.mjs';
 import * as gitInfo from './git-info.mjs';
@@ -1815,7 +1815,6 @@ async function legacyUseKey(use, service, key) {
   const id = await apiKeys.findByValue(provider, key) ?? (await apiKeys.add({ provider, label: '', key })).id;
   await apiKeys.setUse(use, id);
 }
-const lastWarm = new Map();
 const routingUsage = createUsageMonitor({
   backends: listBackends,
   installed: id => installation(id).installed,
@@ -1836,22 +1835,10 @@ const routingUsage = createUsageMonitor({
     const cwd = passive ? os.homedir() : process.cwd();
     return await validModel(b, model, cwd, '', { passive }) || Boolean(await b.matchModel?.(model, cwd, ...(passive ? [{ passive: true }] : [])).catch(() => null));
   },
-  // 一覧をまだ引いていないバックエンド（agy はログインの確認、Claude 等は warmModels で一覧を覚える）だけ、確かめ直す。
-  // 確かめられたら 30 分は繰り返さない。未ログイン・失敗なら次の取り直し（5 分後）でまた確かめる
-  warm: async b => {
-    if (Date.now() - (lastWarm.get(b.id) ?? 0) < 30 * 60_000) return;
-    let ok = false;
-    if (b.warmModels && installation(b.id).installed) {
-      // アカウントごとに一覧を持つエージェントは、起動時の先読みと同じ作業場所（ホーム）で、ログイン中＋登録済みのアカウントを順に（同じ記憶の置き場を温める）
-      await warmBackendModels(b, accountKind(b) === 'token' ? os.homedir() : process.cwd()).catch(() => {});
-      ok = true;
-    }
-    if (b.auth?.status) {
-      const status = await b.auth.status().catch(() => null);
-      ok = Boolean(status?.loggedIn);
-    }
-    if (ok) lastWarm.set(b.id, Date.now()); else lastWarm.delete(b.id);
-  },
+  // 一覧を引き直す（warmModels）のは、アカウントごとに一覧を持つエージェント（'token'）だけ。起動時の先読みと同じ作業場所（ホーム）で、
+  // ログイン中＋登録済みのアカウントを順に引き、30 分に 1 回まで（成否・ログイン中の状態によらない。未ログインや失敗が続いても繰り返さない）。
+  // ほかのエージェントはこれまでどおり、ログインの確認（agy はこれで一覧を覚える）だけ。方針は createUsageWarm（core/delegation-usage.mjs。ADR 0329）
+  warm: createUsageWarm({ warmModels: b => warmBackendModels(b, os.homedir()) }),
   claudeIdentities: () => claudeAccounts.identities(),
   onChange: () => emitGlobal({ type: 'delegationRoutingChanged', change: 'usage', sessionId: null }),
 });

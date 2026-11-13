@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { backend as claude, setClaudeSdkForTest, probeClaudeCatalogForTest } from '../../core/backends/claude.mjs';
-import { createUsageMonitor } from '../../core/delegation-usage.mjs';
+import { createUsageMonitor, createUsageWarm } from '../../core/delegation-usage.mjs';
 import { buildClaudeModels } from '../../core/backends/claude-models.mjs';
 import { backendForAccount, accountUnavailableBackend } from '../../core/backends/index.mjs';
 import { currentLocale, setLocale } from '../../core/i18n.mjs';
@@ -775,7 +775,8 @@ export default async function (t) {
         const opts = passive ? { passive: true } : {};
         return Object.hasOwn(await b.models(home, opts), model) || await b.validModel(model, home) || Boolean(await b.matchModel(model, home, opts).catch(() => null));
       },
-      warm: warmAll,
+      // server の監視の warm と同じ方針（30 分に 1 回まで。createUsageWarm）で先読みを回す
+      warm: createUsageWarm({ warmModels: warmAll }),
     });
     try {
       // (a) 一覧を 1 つも引いていない間は、取り直しても CLI を起こさない（手元の一覧だけで答える。一覧が無ければ「一覧に無い」とは言わない）

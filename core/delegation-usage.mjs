@@ -12,6 +12,30 @@ import { maskEmail } from './usage.mjs';
 export const REFRESH_MS = 5 * 60_000;
 /** これを超えて古い値は usage_stale（core/delegation-routing.mjs の checkCandidate）。取得間隔の 3 倍 */
 export const STALE_MS = REFRESH_MS * 3;
+/** 一覧の確かめ直し（warm）を繰り返さない間隔。確かめたら、その間は同じバックエンドをもう一度確かめない */
+export const WARM_MS = 30 * 60_000;
+
+/**
+ * 監視の warm の方針（一覧を確かめ直す・登録するのは server.mjs）。バックエンドごとに、WARM_MS のあいだは繰り返さない。
+ *   アカウントごとに一覧を持つエージェント（capabilities.accounts が 'token'）… warmModels を回し、成否・ログイン中のアカウントの状態によらず
+ *       回したら立てる（ログイン中が未ログインでも、登録したアカウントの一覧だけを引く使い方があり、失敗が続いても 5 分ごとに CLI を起こさない）。ADR 0329
+ *   それ以外 … 一覧は引かず、ログインの確認（auth.status。agy はこれで一覧を覚える）だけ。確かめられたら立て、未ログイン・失敗なら次の取り直しでまた確かめる
+ * warmModels(b) は、そのエージェントの一覧をログイン中＋使える登録アカウントの分だけ引く（失敗は呑む）。now は試験用
+ */
+export function createUsageWarm({ warmModels, now = () => Date.now(), intervalMs = WARM_MS }) {
+  const last = new Map();
+  return async b => {
+    if (now() - (last.get(b.id) ?? -Infinity) < intervalMs) return;
+    if (b.capabilities?.accounts === 'token') {
+      await warmModels(b).catch(() => {});
+      last.set(b.id, now());
+      return;
+    }
+    if (!b.auth?.status) return;
+    const status = await b.auth.status().catch(() => null);
+    if (status?.loggedIn) last.set(b.id, now()); else last.delete(b.id);
+  };
+}
 
 /**
  * backends()   … 有効なバックエンド（listBackends）
@@ -21,8 +45,9 @@ export const STALE_MS = REFRESH_MS * 3;
  * modelKnown(b, model, account, { passive }) … そのモデルが一覧にあるか（一覧の id と行の resolvedModel の名前）。一覧を引く前なら warm(b) を 1 回呼んでから見直す。
  *               passive が true のとき（アカウントごとに一覧を持つエージェント。capabilities.accounts が 'token'）は、手元の一覧だけで答えること
  *               （一覧の CLI を起こさない・待たない。取り直しを伴う確かめをしない。起こすのは warm だけ。ADR 0329）
- * warm(b)      … 一覧を確かめ直す。アカウントごとに一覧を持つエージェントでは、アカウントの数だけ時間がかかりうるので、使用量の公開を待たせず、
- *               公開した後に（アカウントを 1 つずつ順に）呼ぶ。一覧が変わったときだけ、もう 1 回知らせる
+ * warm(b)      … 一覧を確かめ直す（繰り返さない間隔・エージェントごとの違いは createUsageWarm）。アカウントごとに一覧を持つエージェントでは、
+ *               アカウントの数だけ時間がかかりうるので、使用量の公開を待たせず、公開した後に（アカウントを 1 つずつ順に）呼ぶ。
+ *               一覧が変わったときだけ、もう 1 回知らせる
  * scopeForAccount(b, account) … 候補に書かれたアカウントの範囲に絞ったバックエンド（使えなければ null）。アカウントごとに一覧を持つエージェントだけに使う
  * claudeIdentities() … { login: { org, email } | null, accounts: [{ id, hasToken, identity }] }
  */
