@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { stringify } from 'yaml';
 import { compareVersions, versionsBetween } from '../../web/versions.mjs';
 const require = createRequire(import.meta.url);
-const { Updates } = require('../../desktop/updates.cjs');
+const { Updates, releaseList } = require('../../desktop/updates.cjs');
 const { prepareUpdateCheck, notesBetween } = require('../../desktop/update-auth.cjs');
 const semver = require('semver');
 export const name = 'update-release-notes';
@@ -99,5 +99,39 @@ export default async function(t) {
     found.fake.checkForUpdates = async () => { found.fake.emit('update-not-available', {}); };
     await found.updates.command('check');
     t.ok('A check that finds nothing clears the notes between versions', found.updates.snapshot().releases.length === 0);
+
+    // ---- 画面へ送る一覧の上限: 件数・版・日付・題・本文の長さ・本文の合計
+    const huge = Array.from({ length: 150 }, (_, i) => ({ version: `1.${150 - i}.0`, date: '2026-11-01', title: '題', body: 'x' }));
+    t.ok('The list is capped at one page of 100', releaseList(huge).length === 100 && releaseList(huge)[0].version === '1.150.0');
+    const long = releaseList([{ version: 'v'.repeat(500), date: 'd'.repeat(500), title: 't'.repeat(5000), body: 'b'.repeat(50000) }])[0];
+    t.ok('Version, date, title and body are cut to their limits', long.version.length === 64 && long.date.length === 32 && long.title.length === 200 && long.body.length === 4000);
+    const heavy = Array.from({ length: 60 }, (_, i) => ({ version: `2.${60 - i}.0`, date: '', title: '', body: 'y'.repeat(4000) }));
+    t.ok('The bodies together are capped', releaseList(heavy).length === 25 && releaseList(heavy).reduce((n, r) => n + r.body.length, 0) <= 100000);
+    t.ok('Anything that is not a list gives an empty list', releaseList(null).length === 0 && releaseList('x').length === 0 && releaseList(undefined).length === 0);
+
+    // ---- 進みの通知では、変わっていない一覧を送らない（変わったとき・最初だけ送る）
+    const sent = [];
+    const noisy = make('0.3.0', { plyReleases: notesOf });
+    await noisy.updates.init();
+    noisy.updates.on('state', state => sent.push(state));
+    noisy.fake.downloadUpdate = async () => { noisy.fake.emit('download-progress', { percent: 10 }); noisy.fake.emit('download-progress', { percent: 60 }); noisy.fake.emit('update-downloaded'); };
+    await noisy.updates.command('preferences', { channel: 'stable', autoDownload: false, autoCheck: true });
+    await noisy.updates.command('check');
+    const afterCheck = sent.length;
+    const found1 = sent.slice(0, afterCheck).filter(s => s.releases?.length === 1);
+    t.ok('The list goes out once when it is found, and the notifications after it leave it out', found1.length === 1 && sent.slice(sent.indexOf(found1[0]) + 1, afterCheck).every(s => !('releases' in s)));
+    await noisy.updates.command('download');
+    const progress = sent.slice(afterCheck);
+    t.ok('Progress and download notifications leave the unchanged list out', progress.length >= 3 && progress.every(s => !('releases' in s)) && progress.some(s => s.progress === 60));
+    t.ok('The snapshot a screen asks for still carries the list', noisy.updates.snapshot().releases.length === 1);
+    const clearing = make('0.3.0', { plyReleases: notesOf });
+    await clearing.updates.init();
+    await clearing.updates.command('preferences', { channel: 'stable', autoDownload: false, autoCheck: true });
+    await clearing.updates.command('check');
+    clearing.updates.on('state', state => sent.push(state));
+    clearing.fake.checkForUpdates = async () => { clearing.fake.emit('update-not-available', {}); };
+    sent.length = 0;
+    await clearing.updates.command('check');
+    t.ok('A cleared list is sent so the screen drops it', sent.some(s => Array.isArray(s.releases) && s.releases.length === 0));
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 }

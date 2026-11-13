@@ -38,7 +38,17 @@ class Updates extends EventEmitter {
     });
   }
   snapshot() { return { ...this.state }; }
-  patch(value) { Object.assign(this.state, value); this.emit('state', this.snapshot()); }
+  patch(value) { Object.assign(this.state, value); this.emit('state', this.broadcast()); }
+  /**
+   * 画面へ送る状態。途中の版のノート（releases。本文で数百 KB になりうる）は、前に送ったものと同じなら外す。
+   * ダウンロードの進みは何度も通知するので、毎回は送らない。画面は外れていたら前に受けた一覧を保つ（web/updates.mjs の paint）
+   */
+  broadcast() {
+    const snapshot = this.snapshot();
+    if (this.sentReleases === snapshot.releases) delete snapshot.releases;
+    else this.sentReleases = snapshot.releases;
+    return snapshot;
+  }
   async init() {
     let saved = {};
     try { saved = JSON.parse(await fs.readFile(this.file, 'utf8')); }
@@ -135,11 +145,23 @@ function updateError(error, authenticated = false) {
   if (['ERR_UPDATER_INVALID_SIGNATURE', 'ERR_CHECKSUM_MISMATCH', 'ERR_UPDATER_NO_CHECKSUM'].includes(error?.code)) return t('update.verifyFailed');
   return t('update.networkFailed');
 }
-// 途中の版のノート（update-auth.cjs の notesBetween）。形の合うものだけを通す
+// 途中の版のノート（update-auth.cjs の notesBetween）。形の合うものだけを通し、件数・題・本文の長さを切る（一覧の 1 ページ = 100 件）
+const RELEASES_LIMIT = 100, VERSION_LIMIT = 64, DATE_LIMIT = 32, TITLE_LIMIT = 200, BODY_LIMIT = 4000, BODIES_LIMIT = 100000;
 function releaseList(list) {
-  return Array.isArray(list) ? list.filter(r => r && typeof r.version === 'string' && typeof r.body === 'string').map(r => ({ version: r.version, date: String(r.date ?? ''), title: String(r.title ?? ''), body: r.body })) : [];
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  let total = 0;
+  for (const r of list) {
+    if (!r || typeof r.version !== 'string' || typeof r.body !== 'string') continue;
+    if (out.length >= RELEASES_LIMIT) break;
+    const body = r.body.slice(0, BODY_LIMIT);
+    total += body.length;
+    if (total > BODIES_LIMIT) break;
+    out.push({ version: r.version.slice(0, VERSION_LIMIT), date: String(r.date ?? '').slice(0, DATE_LIMIT), title: String(r.title ?? '').slice(0, TITLE_LIMIT), body });
+  }
+  return out;
 }
 function notesText(notes) {
   return (typeof notes === 'string' ? notes : Array.isArray(notes) ? notes.map(n => `${n.version}\n${n.note || ''}`).join('\n\n') : '').slice(0, 30000);
 }
-module.exports = { Updates, notesText, isStoreBuild, updaterEnabled };
+module.exports = { Updates, notesText, isStoreBuild, updaterEnabled, releaseList };
