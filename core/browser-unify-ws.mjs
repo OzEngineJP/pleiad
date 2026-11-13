@@ -36,7 +36,7 @@ export function createBrowserUnifyWs(deps = {}) {
   const scope = client => [...new Set([...scopeOf(deps.watching?.(client)), ...scopeOf(deps.watchingModal?.(client))])];
   const allowed = (client, id) => Boolean(id && deps.clients?.().has(client) && scope(client).includes(id));
   const unsubscribe = relay?.onTabEvent((type, payload) => {
-    if (!['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(type)) return;
+    if (!['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport', 'tab:downloads'].includes(type)) return;
     for (const client of deps.clients?.() ?? []) {
       if (!allowed(client, payload.sessionId)) continue;
       if (type === 'tab:page-request' && (!payload.by || payload.by !== clientId(client))) continue;
@@ -310,6 +310,9 @@ export function createBrowserUnifyWs(deps = {}) {
         send(client, { type: 'tab:info', sessionId: id, reset: true, tabs: relay?.unify.tabInfo.list(id) ?? [] });
         // 開き直した画面にも、人の操作中のタブの札を出す（AI のタブは送らない。画面は tab:info の reset で持ち手を忘れる）
         for (const held of relay?.unify.tabHolder?.held?.(id) ?? []) send(client, { ...held, type: 'tab:holder', sessionId: id });
+        // 見始めた画面にも、ダウンロードの一覧（進行中・終わったもの）を出す。画面は tab:info の reset で一覧を忘れるので、あるときだけ送る
+        const downloads = relay?.downloads?.screen(id) ?? [];
+        if (downloads.length) send(client, { type: 'tab:downloads', sessionId: id, downloads });
       }
     },
     /** 画面の接続が切れた: その画面の持ち主ぶんの見張りを外す（ほかの画面の分は残る。server.mjs の detach から） */

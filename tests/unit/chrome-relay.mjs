@@ -94,12 +94,14 @@ export default async function (t) {
         'Target.createBrowserContext', 'Target.disposeBrowserContext', 'Target.exposeDevToolsProtocol', 'Target.setRemoteLocations', 'Target.sendMessageToTarget', 'SystemInfo.getInfo'];
       const replies = await Promise.all(browserDenied.map(method => a1.cmd(method, method === 'Browser.setWindowBounds' ? { windowId: tab.windowId, bounds: { windowState: 'normal' } } : {})));
       t.ok('ブラウザー全体の操作を断る（Browser.close・Storage.*・Cookie の一括・context・窓を戻すなど）', replies.every(m => m.error), browserDenied.filter((_, i) => !replies[i].error).join());
-      // 中継自身が窓の大きさを決める setWindowBounds（windowState なし）は除く
-      const forwarded = r.chrome.calls.filter(c => browserDenied.includes(c.method) && !(c.method === 'Browser.setWindowBounds' && !c.params.bounds?.windowState));
+      // 中継自身が窓の大きさを決める setWindowBounds（windowState なし）と、中継自身がダウンロードのイベントを受けるための setDownloadBehavior（保存先は変えない default。ADR 9187）は除く
+      const forwarded = r.chrome.calls.filter(c => browserDenied.includes(c.method) && !(c.method === 'Browser.setWindowBounds' && !c.params.bounds?.windowState)
+        && !(c.method === 'Browser.setDownloadBehavior' && c.params.behavior === 'default' && !c.params.downloadPath && !c.sessionId));
       t.ok('断ったものは上りへ送っていない', forwarded.length === 0, forwarded.map(c => c.method).join());
       const sessionDenied = [['Target.createTarget', { url: 'about:blank' }], ['Browser.getVersion', {}], ['Storage.getCookies', {}], ['Network.getAllCookies', {}], ['Network.clearBrowserCookies', {}],
         ['Network.clearBrowserCache', {}], ['Page.navigate', { url: 'file:///C:/Windows/win.ini' }], ['Page.navigate', { url: 'chrome://settings' }], ['Page.navigate', { url: 'https://user:pass@example.com/' }],
-        ['Network.setCookie', { name: 'x', value: 'y', domain: 'bank.example' }], ['Network.deleteCookies', { name: 'session' }], ['Network.setCookies', { cookies: [{ name: 'x', value: 'y', url: 'https://bank.example/' }] }]];
+        ['Network.setCookie', { name: 'x', value: 'y', domain: 'bank.example' }], ['Network.deleteCookies', { name: 'session' }], ['Network.setCookies', { cookies: [{ name: 'x', value: 'y', url: 'https://bank.example/' }] }],
+        ['Page.setDownloadBehavior', { behavior: 'allow', downloadPath: 'C:\\Users' }], ['Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: 'C:\\Users', eventsEnabled: true }]];
       const sessionReplies = [];
       for (const [method, params] of sessionDenied) sessionReplies.push(await a1.cmd(method, params, sid1));
       t.ok('セッションの上でも、Target.*・Browser.*・Storage.*・Cookie の一括・file:/chrome: への移動・ほかのサイトの Cookie を断る', sessionReplies.every(m => m.error), sessionDenied.filter((_, i) => !sessionReplies[i].error).map(x => x[0]).join());

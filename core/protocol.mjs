@@ -361,6 +361,10 @@ export const EVENTS = new Set([
   "tab:holder",
   "tab:page-request",
   "tab:viewport",
+  // { downloads: [{ id, name, state, received, total, path, startedAt, stoppable }] } 会話の Chrome のウィンドウで始まったダウンロードの一覧（新しい順・全量。core/chrome/downloads.mjs）
+  "tab:downloads",
+  // { downloads: [{ id, name, state, received, total, path, startedAt, stoppable }] } 会話の Chrome のウィンドウで始まったダウンロードの一覧（新しい順・全量。core/chrome/downloads.mjs）
+  "tab:downloads",
   // { path } 開いているファイル・フォルダーが変わった（core/page-watch.mjs → browser-unify-ws）。その会話を見ている画面と、同じファイルを出しているタブへ
   "page:changed",
   // { ports, previous } ページ・隔離の port が替わった（再起動・ポートの移り）。見ている画面は残ったタブの URL を付け替える

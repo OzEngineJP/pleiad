@@ -4,11 +4,14 @@
 // 状態を読む操作（chromeStatus）だけが AI・CLI にも出る。つなぐ・切る・確認を前に出すは、設定 › ブラウザーの画面の操作で、
 // ホストの PC の画面だけから呼べる（エージェントがつなぐ道は core の接続の案内 chromeConnection.demand が持つ）。
 // 引き継ぐ（chromeTakeOver）は by: 'device' でリモートの端末から操作する（窓は PC に見せず、端末の映像の箱の大きさでページを描き、映像のセッションで入力を送る）。
+// ダウンロード（listDownloads・cancelDownload。docs/inapp-browser.md「ダウンロード」、ADR 9187）: 会話の Chrome のウィンドウで始まったものの一覧は、エージェントも自分の会話の分を読める
+// （ply_browser の list_downloads もここを通る）。止めるのは人だけで、画面とリモートの端末から呼ぶ。
 // 許可（chromeConsent）・オンにしてつなぐ（chromeEnable）は、会話の接続のカードのボタン（ADR 0218）。人が押すので、画面とリモートの端末から呼べる（MCP・CLI には出さない）。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { PROFILE_BROWSERS } from '../../web/chrome-profile-model.mjs';
+import { DOWNLOAD_WAIT_MAX_SECONDS } from '../chrome/downloads.mjs';
 
 const STATES = ['off', 'setup', 'consent', 'permission', 'denied', 'connected', 'unsupported'];
 const stateShape = z.object({
@@ -89,6 +92,24 @@ function profileError(ctx, error) {
   if (error?.code === 'NOT_FOUND') return new OpError('PROFILE_NOT_FOUND', agentT(ctx.locale, 'ops.errors.chromeProfileNotFound', { profile: error.detail?.profile ?? '' }));
   if (error?.code === 'AMBIGUOUS') return new OpError('INVALID', agentT(ctx.locale, 'ops.errors.chromeProfileAmbiguous', { profile: error.detail?.profile ?? '' }));
   return error;
+}
+
+const DOWNLOAD_STATES = ['downloading', 'completed', 'canceled', 'failed', 'unknown'];
+const downloadListShape = z.object({
+  downloads: z.array(z.object({
+    id: z.string(), state: z.enum(DOWNLOAD_STATES), name: z.string(), receivedBytes: z.number(), totalBytes: z.number(),
+    path: z.string().optional(), pageUrl: z.string(), startedAt: z.string(),
+  })).describe('agent:ops.browser.listDownloads.downloads'),
+});
+/** ダウンロードの記録（中継のあるホストだけ。無ければ UNSUPPORTED） */
+const downloadsOf = (ctx) => (ctx.chrome?.downloads && ctx.chrome.status().state !== 'unsupported' ? ctx.chrome.downloads : unavailable(ctx));
+/** 対象の会話。エージェントは自分の会話だけ（省けば自分の会話）。画面は会話を指定する */
+function downloadSession(ctx, given) {
+  const own = ctx.actor?.sessionId ?? null;
+  if (ctx.principal.by === 'agent' && given && given !== own) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.chromeDownloadOwnSession'));
+  const id = ctx.principal.by === 'agent' ? own : given;
+  if (!id) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.sessionRequired'));
+  return id;
 }
 
 export const browserOps = [
@@ -293,5 +314,34 @@ export const browserOps = [
       try { return await choice.use({ sessionId: id, browser: browser ?? null, profile, by: ctx.principal.by }); }
       catch (error) { throw profileError(ctx, error); }
     },
+  }),
+  // 会話の Chrome のウィンドウで始まったダウンロード（docs/inapp-browser.md「ダウンロード」、ADR 9187）。本体は core/chrome/downloads.mjs
+  defineOp({
+    id: 'browser.listDownloads',
+    summary: 'agent:ops.browser.listDownloads.summary',
+    risk: 'read',
+    input: z.object({
+      sessionId: sessionIdShape.optional(),
+      wait: z.number().min(0).max(DOWNLOAD_WAIT_MAX_SECONDS).optional().describe('agent:ops.browser.listDownloads.wait'),
+    }),
+    output: downloadListShape,
+    surfaces: { ui: true, mcp: 'catalog', cli: false },
+    handler: async (ctx, { sessionId, wait }) => {
+      const downloads = downloadsOf(ctx);
+      const id = downloadSession(ctx, sessionId);
+      // ctx.signal: ply_browser の list_downloads が渡す、ターンの中断の合図（人の「止める」で待ちを外す）
+      if (wait) await downloads.wait(id, wait, ctx.signal ?? null);
+      return { downloads: downloads.list(id) };
+    },
+  }),
+  defineOp({
+    id: 'browser.cancelDownload',
+    summary: 'agent:ops.browser.cancelDownload.summary',
+    risk: 'write',
+    riskReason: 'Stops one download in progress that started in the Chrome window of this conversation; Chrome discards the partial file, and nothing already saved is touched. The person presses it in the downloads list. Screen and remote devices only (not on MCP or CLI)',
+    input: z.object({ sessionId: sessionIdShape, id: z.string().min(1).max(200).describe('agent:ops.browser.cancelDownload.id') }),
+    output: z.object({ stopped: z.boolean() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, { sessionId, id }) => ({ stopped: (await downloadsOf(ctx).stop(sessionId, id))?.stopped === true }),
   }),
 ];
