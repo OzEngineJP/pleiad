@@ -17,7 +17,7 @@ import { createAcpSteer, PROTOCOL_REJECT_CODES } from './acp-steer.mjs';
 import { createHeldAcp, heldAcpPlan } from './acp-held.mjs';
 import { writeTurnPlugin, writeNativeShellOffProfile } from './grok-hooks.mjs';
 import { grokQuota } from './grok-usage.mjs';
-import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
+import { CAPABILITY_STATES, AGENT_TRAITS, PLY_CONTEXT_CONFLICTS } from './agent-marks.mjs';
 import { defaultGrokHome, prepareGrokAccount, readGrokCredential } from './grok-accounts.mjs';
 
 /** 札（backendCard）に入れる発言の本文の上限（バイト）。超えたら人に書いた分だけにして、写しは人に書いた分で組み立てる */
@@ -258,7 +258,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
     capabilities: CAPABILITY_STATES.grok,
     plyContextRefusal(owners) {
-      return owners?.instruction === 'ply' || owners?.skill === 'ply'
+      return PLY_CONTEXT_CONFLICTS.grok.some(k => owners?.[k] === 'ply')
         ? t('context.runtime.nativeOwners', { backend: 'Grok Build' })
         : null;
     },

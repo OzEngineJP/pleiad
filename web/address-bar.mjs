@@ -17,7 +17,7 @@ export function addressCrumbs(file) {
 
 export const hasFileViews = tab => (tab?.page?.kind === 'file' && /\.(?:md|markdown|html?|csv|tsv|svg)$/i.test(tab.page.path ?? '')) || tab?.page?.kind === 'html';
 
-export function createAddressBar({ navigate = async () => {}, suggest = async () => ({}), cwd = () => '', onMenu = () => {}, onTabs = () => {}, onClose = () => {}, onDisplay = null, externalFor = null, mobile = () => matchMedia('(max-width: 600px)').matches } = {}) {
+export function createAddressBar({ navigate = async () => {}, suggest = async () => ({}), cwd = () => '', onMenu = () => {}, onTabs = () => {}, onClose = () => {}, onDisplay = null, externalFor = null, extra = [], mobile = () => matchMedia('(max-width: 600px)').matches } = {}) {
   const root = document.createElement('div'); root.className = 'bu-toolbar';
   const back = browserButton('back', t('tabs:address.back'), () => run('back'));
   const forward = browserButton('forward', t('tabs:address.forward'), () => run('forward'));
@@ -45,7 +45,7 @@ export function createAddressBar({ navigate = async () => {}, suggest = async ()
   display.setAttribute('aria-haspopup', 'menu'); display.onclick = () => onDisplay?.(display, tab);
   // 元の HTML のタブの右端の「外で開く」（既定のブラウザー）。出せるときだけ externalFor が動作を返す
   const external = browserButton('external', t('browser.openExternal'), () => externalFor?.(tab)?.()); external.classList.add('bu-external'); external.hidden = true;
-  omni.append(tree, crumbs, views, external, input); root.append(conversation, back, forward, reload, omni, display, count, menu, list, error);
+  omni.append(tree, crumbs, views, external, input); root.append(conversation, back, forward, reload, omni, display, count, ...extra, menu, list, error);
   let tab = null, view = 'preview', ticket = 0, timer = 0, active = -1, suggestions = [], blockedInput = null, lastTotal = 0;
   const savedViews = new Map();
   const reason = code => t(`tabs:address.reasons.${code}`, { defaultValue: t('tabs:address.failed') });

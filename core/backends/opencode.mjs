@@ -233,7 +233,9 @@ server.subscribe(event => dispatch(event, server));
  */
 async function managedServer(contextRuntime, cwd, account = null) {
   const accountEnv = prepareAccount(account);
-  const launch = await managedLaunch({ owners: contextRuntime.owners, cwd, dataDir: account?.dir ?? store.dataDir,
+  // 名前ごとのモデルでは、OpenCode 自身の MCP は消さず、止める名前だけ enabled: false にする（opencode-context.mjs の stripOwned）
+  const owners = contextRuntime.mcp?.named ? { ...contextRuntime.owners, mcp: 'native', mcpSuppress: contextRuntime.mcp.suppress } : contextRuntime.owners;
+  const launch = await managedLaunch({ owners, cwd, dataDir: account?.dir ?? store.dataDir,
     dataHome:path.dirname(opencodeData(account)), ...(account ? {homeSource:path.join(account.dir,'home')} : {}),
     ...(account ? { source: accountEnv.OPENCODE_CONFIG_DIR } : {}) });
   const srv = createOpencodeServer({

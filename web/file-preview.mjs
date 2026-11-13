@@ -849,7 +849,8 @@ export function setupFilePreview({ getContext, useFile, canUse = null, onLayout,
   /** 作業のダイアログの中のリンクで、そのダイアログの右の欄に開けるか（web/client.mjs の getContext が決める） */
   const inModalPane = anchor => Boolean(anchor.closest('#workBody') && unifiedEnabled() && getContext(anchor)?.modal === true);
   document.addEventListener('click', event => {
-    const anchor = event.target.closest('a');
+    // 会話の行の中のファイル名のボタン（.cc-file。ダウンロードした行）もリンクと同じに開く
+    const anchor = event.target.closest('a,button.cc-file');
     if (!anchor || (!anchor.closest('#log') && !anchor.closest('#channelsView') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
     const ref = anchor.dataset.filePath ? { path:anchor.dataset.filePath, line:Number(anchor.dataset.fileLine) || null } : fileReference(anchor.getAttribute('href'));
     if (!ref) return;

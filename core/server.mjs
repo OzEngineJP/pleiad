@@ -1,6 +1,7 @@
 // 先頭に置く: AGENT_HOST_SERVER_LOG があれば、他のモジュールの読み込みの失敗も含めて出力をファイルへ向ける（stdio の無い起動）
 import './server-log-boot.mjs';
 import { createLoadTiming } from './load-timing.mjs';
+import { createSlowLog } from './slow-log.mjs';
 import { effortOptions, validateEffort, effortCapability } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaStore, createUsageStore, agentUsage, readProviderUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
@@ -85,6 +86,8 @@ import { mergeCompactionHistory, attachCompactSummaries } from './compaction-his
 import { slimRow, createListDeltas } from './session-list-delta.mjs';
 import { createBulkReplies } from './bulk-replies.mjs';
 import { createContextSettings } from './context-settings.mjs';
+import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
+import { probeClaudeConnectors } from './backends/claude.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
@@ -250,6 +253,8 @@ const lockWaitedMs = Date.now() - lockFrom;
 if (STARTED_BY_MAIN && lockWaitedMs > 0) console.log(`  [start] got the data lock after ${lockWaitedMs} ms at=${Date.now()}`);
 const migrated = await retryTransient(() => ensureDataSchema(store.dataDir));
 if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
+const slowLog = createSlowLog({ dataDir: store.dataDir });
+let wsInFlight = 0;
 const usageStore = createUsageStore(store.dataDir);
 // Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
 // transcript を読むので起動は待たせない。記録の書き込みとは usageStore の中で直列になる
@@ -338,7 +343,8 @@ const chromeRelay = chromeConnection
       snapshot: () => ({ profiles: chromeProfiles?.pending() ?? [], logins: chromeLoginGroups.snapshot() }),
       restore: extra => { chromeProfiles?.restorePending(extra.profiles); chromeLoginGroups.restore(extra.logins); },
     },
-    handoff: chromeHandoffs, turnLive: id => liveTurn(id), turnSignal: id => runtime.turns.get(id)?.ac.signal, connectWaitText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.connectWait') })
+    handoff: chromeHandoffs, turnLive: id => liveTurn(id), turnSignal: id => runtime.turns.get(id)?.ac.signal, connectWaitText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.connectWait'),
+    downloadDeniedText: id => agentT(runtime.turns.get(id)?.agentLocale ?? currentLocale(), 'browserBridge.downloadDenied') })
   : null;
 // 接続の子が預かっていた状態を受ける（端点・鍵・ポート・隠した窓の印）。前のサーバーの接続（確認待ちも）を引き継ぎ、以後の変化を預け直す
 if (chromeLink && chromeRelay) {
@@ -2203,8 +2209,10 @@ if (chromeProfiles) browserBridge.useProfiles({
   list: (sessionId, locale) => browserProfileOp(sessionId, 'browser.listProfiles', {}, locale),
   use: (sessionId, args, locale) => browserProfileOp(sessionId, 'browser.useProfile', args, locale),
 });
-async function browserProfileOp(sessionId, op, args, locale) {
-  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId }, op, args, opsDeps(locale));
+// ダウンロードの一覧（list_downloads）も ops（browser.listDownloads）を通す。待ちは、ターンの中断の合図で外す
+if (chromeRelay) browserBridge.useDownloads({ list: (sessionId, args, locale, signal) => browserProfileOp(sessionId, 'browser.listDownloads', args, locale, { signal }) });
+async function browserProfileOp(sessionId, op, args, locale, extra = null) {
+  const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId }, op, args, extra ? { ...opsDeps(locale), ...extra } : opsDeps(locale));
   if (!result.ok) throw new Error(result.error);
   return result.result;
 }
@@ -3517,6 +3525,12 @@ async function recordChromeWindowClose(sessionId, payload) {
   const record = await history.recordPresent(sessionId, payload);
   emitGlobal({ type: 'present', sessionId, ...record });
 }
+/** 会話の Chrome のウィンドウのダウンロードが決着したときの会話の行（present kind: 'chromeDownload'。ADR 0328）。進行中は出さない */
+async function recordChromeDownload(sessionId, download) {
+  const record = await history.recordPresent(sessionId, { kind: 'chromeDownload', chromeDownload: { name: download.name, state: download.state, size: download.total || download.received, path: download.path } });
+  emitGlobal({ type: 'present', sessionId, ...record });
+}
+chromeRelay?.downloads.onSettled(({ sessionId, download }) => { recordChromeDownload(sessionId, download).catch(error => console.log(`  chrome-downloads: record failed: ${error?.message ?? error}`)); });
 
 /**
  * 会話の Chrome の窓の知らせ（右パネルの Chrome の入口。窓のある会話だけに出し、操作中は弧を出す）。リモートの端末にも流す。
@@ -4380,6 +4394,8 @@ const opsApp = {
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
+  // 遅い命令・イベントループ・送信待ちの診断ログ（slow-commands.log）
+  reportSlow: (entries) => slowLog.recordClientBatch(entries),
   // 画面が読む走っている作業の全量（turns・permissions・tasks・subagents・background・count）
   runningWork: () => runningWork(),
   // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
@@ -5252,6 +5268,12 @@ const opsChrome = chromeConnection ? {
   closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
   // 右パネルの映像に映すウィンドウを固定する・解く（core/chrome/screencast.mjs の pin）
   pinWindow: chromeScreencast ? (sessionId, windowId, tabId = null) => chromeScreencast.request('pin', sessionId, { windowId, tabId }) : null,
+  // 会話の Chrome のウィンドウで始まったダウンロード（browser.listDownloads・cancelDownload。core/chrome/downloads.mjs）
+  downloads: chromeRelay ? {
+    list: sessionId => chromeRelay.downloads.list(sessionId),
+    wait: (sessionId, seconds, signal) => chromeRelay.downloads.wait(sessionId, seconds, signal),
+    stop: (sessionId, id) => chromeRelay.downloads.stop(sessionId, id),
+  } : null,
   windows: async parentId => {
     const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
       sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle', waiting: id => Boolean(chromeHandoffs?.current?.(id)) });
@@ -5378,8 +5400,30 @@ const opsHooks = {
   unifyPreview: (args) => hooksUnifyPreview(args),
 };
 
+// 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0327）。コネクターは最後に読めた一覧を覚えておく
+// 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす
+const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'),
+  probe: async ({ deny }) => {
+    const account = await accountResolve(getBackend('claude'), await defaultAccount('claude')).catch(() => null); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0327）
+    return probeClaudeConnectors({ deny, token: account?.token ?? null });
+  } });
+
 // コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
 const opsContext = {
+  // deny: 読み取りで起こすとき止める、claude.ai 以外の既知の名前（Claude の設定・Pleiad の登録）。プラグインの名前はここで足す。
+  // wait: コネクターの一覧が無いとき、読み終えるまで待つ（読めなかったら readFailed）
+  claudeExtras: async ({ refresh = false, deny = [], wait = false, cwd = null } = {}) => {
+    const plugins = await readClaudePlugins({ cwd }).catch(() => []);
+    const names = [...new Set([...deny, ...plugins.map(p => p.key)])].filter(n => !n.startsWith('claude.ai '));
+    let got = await claudeConnectors.get();
+    let readFailed = false;
+    if (wait && got.connectors === null) {
+      readFailed = !(await claudeConnectors.refresh({ deny: names }));
+      got = await claudeConnectors.get();
+      readFailed = readFailed || got.connectors === null;
+    } else if (refresh) { void claudeConnectors.refresh({ deny: names }); got = await claudeConnectors.get(); }
+    return { plugins, connectors: got.connectors, needsAuth: got.needsAuth ?? [], reading: got.reading, readFailed };
+  },
   view: (cwd) => contextSettings.view(cwd),
   set: async (args, actor) => {
     const view = await contextSettings.set(args ?? {});
@@ -7804,11 +7848,17 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
   const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
     { keepNative: !previousContext && baseline.messages.length > 0 });
-  let policy = followed;
+  // どのエージェントのターンか（外部 MCP を名前ごとに中継・止めるために使う。ADR 0327）。読み込み直しも同じエージェントで解く
+  let policy = { ...followed, agent: backend.id };
   // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
-  const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-  const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale }) : null;
+  let plyContext = managed(policy) && acceptsPlyContext(backend, policy);
+  let resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
+  // 名前ごとのモデルで、指示・Skills はエージェント任せ、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
+  // （ターンだけの口・中継を起こさない。ADR 0327）
+  if (resolvedContext?.mcp.named && policy.owners.instruction !== 'ply' && policy.owners.skill !== 'ply' && !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length) {
+    plyContext = false; resolvedContext = null;
+  }
   // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
   // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
   // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
@@ -8713,7 +8763,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         // 開けなければ口の無いまま続ける（CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
         if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
           try {
-            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale });
+            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: ctx.policy?.agent ?? backend.id });
             const opened = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
               origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted,
               activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }) });
@@ -9620,6 +9670,8 @@ wss.on("connection", (ws, req) => {
     locale,
     // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
     hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // 遅い命令・送信待ちの診断記録のしきい値（ms）
+    slow: slowLog.clientConfig(),
   }));
   // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
   if (local) hostScreens.add(ws);
@@ -9640,12 +9692,40 @@ wss.on("connection", (ws, req) => {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg?.kind !== P.COMMAND || !P.COMMANDS.has(msg.command)) return;
 
+    const cmdStart = performance.now();
+    const cmdLabel = msg.command === 'invoke' && typeof msg.args?.op === 'string'
+      ? `invoke:${msg.args.op}`
+      : msg.command;
+    const cmdSessionId = typeof msg.args?.sessionId === 'string'
+      ? msg.args.sessionId
+      : (typeof msg.args?.args?.sessionId === 'string' ? msg.args.args.sessionId : undefined);
+    wsInFlight += 1;
+    let settled = false;
+    let replied = false;
+    const finishCmd = () => {
+      if (settled) return;
+      settled = true;
+      wsInFlight = Math.max(0, wsInFlight - 1);
+    };
+
     // Command IDs are scoped to a socket. Broadcast events, never private replies
     // (connection-check receipts and concurrent clients can share the same ID).
     // code: 失敗の種類。画面は文言（言語で変わる）ではなくこれで見分ける
     // extra: 失敗に添える機械が読む欄（invoke の issues）
     // 画面が bulk を添えたコマンドの大きい返事は、中継越しなら WS の外（HTTP の /bulk/<id>）で渡す。WS の後の返事・出来事を待たせない（ADR 0179）
     const reply = (ok, payload, code, extra) => {
+      if (!replied) {
+        replied = true;
+        slowLog.recordServerCommand({
+          command: cmdLabel,
+          ms: performance.now() - cmdStart,
+          sessionId: cmdSessionId,
+          outcome: ok ? 'ok' : 'error',
+          errorCode: !ok && typeof code === 'string' ? code : undefined,
+          inFlight: wsInFlight,
+        });
+      }
+      finishCmd();
       if (ws.readyState !== ws.OPEN) return;
       const bulk = ok && msg.bulk === true && !local ? bulkReplies.offer(secretMasker.json(JSON.stringify(payload ?? null))) : null;
       ws.send(secretMasker.json(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(bulk ? { bulk } : ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) })));
@@ -9794,6 +9874,10 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.setSessionMcp');
         case 'agentMcp':
           return await viaOp('context.agentMcp');
+        case 'mcpMatrix':
+          return await viaOp('context.mcpMatrix');
+        case 'setMcpAgent':
+          return await viaOp('context.setMcpAgent');
         case 'nativeInstructions':
           return await viaOp('context.nativeInstructions');
         case 'contextFindings':
@@ -10663,7 +10747,20 @@ wss.on("connection", (ws, req) => {
       }
     } catch (err) {
       reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
-    } finally { releaseUpdateGate?.(); }
+    } finally {
+      if (!replied) {
+        replied = true;
+        slowLog.recordServerCommand({
+          command: cmdLabel,
+          ms: performance.now() - cmdStart,
+          sessionId: cmdSessionId,
+          outcome: ws.readyState === ws.OPEN ? 'ok' : 'closed',
+          inFlight: wsInFlight,
+        });
+      }
+      finishCmd();
+      releaseUpdateGate?.();
+    }
   });
 });
 
@@ -10808,6 +10905,7 @@ function shutdownServer({ stopHeld = false } = {}) {
     await botHost?.close?.();
     // 内部呼出しの journal（memory_state）の書き込みを待って離す。既存の hooks.internal の注入ターンとは別の経路
     await internalCalls.close().catch(error => console.error('internal call journal shutdown failed:', error?.code ?? error?.message ?? error));
+    await slowLog.close().catch(error => console.error('slow log shutdown failed:', error?.code ?? error?.message ?? error));
     store.closeStore();
     closeDataDb(store.dataDir);
     releaseDataLock();
@@ -10934,6 +11032,7 @@ const listening = new Promise(resolve => server.once('listening', resolve));
 portDeadline = Date.now() + PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
+slowLog.startLoopMonitor({ getInFlight: () => wsInFlight });
 // 中継の移動の検査が本体の port を知る（ページのリスナーが立つ前から、本体の port を断る手当てを効かせる。ADR 0295 の 4）
 chromeRelay?.setPagePorts({ main: server.address().port });
 // ファイルのページと隔離のリスナー。待たない（覚えた port を前のサーバーが放すのを待つことがある）

@@ -18,6 +18,7 @@ import { claudeCompatEnv, writeClaudeFlagSettings, adoptClaudeFlagSettings, reda
 import { writeClaudeEnvFile, adoptClaudeEnvFile } from '../claude-env-file.mjs';
 import { writeClaudeMcpFile, adoptClaudeMcpFile } from '../claude-mcp-file.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
+import { CONNECTOR_WAIT_MS, connectorList } from '../context-claude-extras.mjs';
 import { AUTO_COMPACT_WINDOW_ENV } from '../compaction-settings.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
 import { claudeHookCallbacks, mergeCallbacks } from '../hooks-unify.mjs';
@@ -230,6 +231,33 @@ async function probeCatalog(cwd, withSettings, account = null) {
 sdk.probe ??= probeCatalog;
 // 試験用: 一覧の取得（CLI を起こす 1 回分）そのもの。投げるエラーにトークンが混ざらないことを試験が確かめる
 export const probeClaudeCatalogForTest = (cwd, withSettings, account = null) => probeCatalog(cwd, withSettings, account);
+
+/** コネクターの読み取りの上限（ms）。画面の待ちはこれ以上にする */
+export const CONNECTOR_PROBE_MS = 20_000;
+
+/** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0327）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
+export async function probeClaudeConnectors({ deny = [], token = null } = {}) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), CONNECTOR_PROBE_MS);
+  const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
+  let q = null;
+  try {
+    const query = sdk.query ?? (await loadClaudeSdk()).query;
+    q = query({ prompt: idle(), options: {
+      // token: Pleiad に登録した Claude のアカウント（無ければログイン中のアカウント）。会話と同じ環境で読む
+      pathToClaudeCodeExecutable: claudeExecutable(), env: claudeEnv(process.env, { token }), abortController: ac,
+      settingSources: ["user"], settings: { disableAllHooks: true, ...(deny.length ? { deniedMcpServers: deny.map((serverName) => ({ serverName })) } : {}) },
+      persistSession: false, stderr: () => {},
+    } });
+    await q.initializationResult();
+    await new Promise((resolve) => setTimeout(resolve, CONNECTOR_WAIT_MS));
+    return connectorList(await q.mcpServerStatus());
+  } finally {
+    clearTimeout(timer);
+    try { q?.close?.(); } catch { /* 既に閉じている */ }
+    ac.abort();
+  }
+}
 
 /** anyCatalog を、今の CLI の目印と食い違わない間だけ返す。食い違ったら（版が変わった）忘れる */
 function freshAnyCatalog(scope, cliSig) {
@@ -1306,7 +1334,7 @@ export const backend = {
           const usage = await q.getContextUsage({ detail: 'summary' });
           if (usage.memoryFiles?.length) throw new Error(t('claude.errors.nativeInstructions'));
         }
-        if (contextRuntime.owners.mcp === 'ply') {
+        if (contextRuntime.owners.mcp === 'ply' && !contextRuntime.mcp?.named) {
           const native = await q.mcpServerStatus();
           const left = unexpectedNativeMcp(native, Object.keys(plyServers));
           if (left.length) throw new Error(t('claude.errors.nativeMcp', { names: left.join(t('claude.listSeparator')) }));

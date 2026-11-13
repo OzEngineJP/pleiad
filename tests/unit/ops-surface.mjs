@@ -146,7 +146,8 @@ export default async function (t) {
   // どの read 操作も、秘密らしい名前の欄に目印が入った生の値を受け取っても、返りに出さない（最後の網。実際のデータ置き場でのものは ops-control.mjs）
   const secret = { token: MARKER, apiKey: MARKER, authorization: MARKER };
   const deps = {
-    chrome: { status: () => ({ state: 'connected', reason: null, dialog: false, product: 'Chrome' }), windows: () => [] },
+    chrome: { status: () => ({ state: 'connected', reason: null, dialog: false, product: 'Chrome' }), windows: () => [],
+      downloads: { list: () => [{ id: 'd1', state: 'completed', name: 'a.zip', receivedBytes: 1, totalBytes: 1, path: 'C:/x/a.zip', pageUrl: 'https://a.example/', startedAt: 'a', ...secret }], wait: async () => {}, stop: async () => ({ stopped: false }) } },
     chromeProfiles: { list: async () => ({ profiles: [{ browser: 'chrome', dir: 'Default', name: 'Personal', note: '', ...secret }], current: null, busy: null, ...secret }) },
     locale: 'ja',
     app: { status: async () => ({ version: '0', protocolVersion: 0, startedAt: 0, locale: { setting: 'auto', lang: 'ja' }, running: 0, ...secret }),
@@ -204,13 +205,14 @@ export default async function (t) {
       readPly: async () => ({ id: 'h-1', name: 'n', command: 'echo', ...secret }),
       unifyPreview: async () => ({ imports: [{ id: 'i', digest: 'd', command: 'x', ...secret }], revision: 'r' }),
     },
-    context: { view: async () => ({ defaults: { ...secret }, places: [] }), plyInstructions: () => ({ items: [{ id: 'x', ...secret }] }),
+    context: { view: async () => ({ defaults: { kinds: { instruction: { value: {} }, skill: { value: {} }, mcp: { value: { owner: 'native' } } }, ...secret }, places: [] }), plyInstructions: () => ({ items: [{ id: 'x', ...secret }] }),
       // 中身を読む操作（ADR 0105）
       session: async () => ({ report: { entries: [{ kind: 'mcp', name: 'm', command: 'x', ...secret }] }, owners: {}, pinned: false, changed: null, ...secret }),
       diff: async () => ({ files: [{ path: 'p', before: 'a', after: 'b', ...secret }] }),
       scan: async () => ({ cwd: 'c', entries: [{ kind: 'instruction', content: 'x', ...secret }] }),
       skills: async () => [{ name: 's', description: 'd', ...secret }],
       agentMcp: async () => ({ cwd: 'c', agents: { claude: [{ name: 'm', command: 'node', ...secret }], codex: [] } }),
+      claudeExtras: async () => ({ plugins: [], connectors: [], reading: false }),
       nativeInstructions: async () => ({ cwd: 'c', agent: 'claude', entries: [{ id: 'i', ...secret }] }),
       findings: async () => ({ duplicates: [], missing: [], ...secret }) },
     notify: { status: async () => ({ pc: { done: true, reply: true, failed: true }, relayConnected: true, devices: [{ id: 'd', platform: 'ios', notify: { muted: true } }], ...secret }) },
@@ -273,7 +275,7 @@ export default async function (t) {
   // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
   const samples = {
-    'browser.chromeWindows': [{ sessionId: 's1' }],
+    'browser.chromeWindows': [{ sessionId: 's1' }], 'browser.listDownloads': [{ sessionId: 's1' }],
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
     'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
     'sessions.listMessages': [{ sessionId: 's1' }], 'sessions.changes': [{ sessionId: 's1' }], 'sessions.lineage': [{ sessionId: 's1' }], 'sessions.suggestTitle': [{ sessionId: 's1' }],

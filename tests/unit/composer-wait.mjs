@@ -143,7 +143,65 @@ export default function (t) {
   t.ok('index.html に欄の上の一行と欄の中の待機表示', /id="composerNote"[^>]*role="status"/.test(html) && /id="composerBusy"/.test(html) && /id="composerBusyText"/.test(html));
   const css = read('web/style.css');
   t.ok('style.css: 待ちは 150ms 後の data-wait で字を隠し、流れる棒は reduced-motion で止める', /\.cbox\[data-wait\] :is\(#prompt,#thPrompt,#wkPrompt\)/.test(css) && /\.composer-busy-bar\{animation:none\}/.test(css));
-  const keys = ['queued', 'queuedCancel', 'historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
+  const keys = ['queued', 'waitingSettings', 'sending', 'queuedCancel', 'historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
   const missing = ['ja', 'en'].flatMap(lang => { const c = JSON.parse(read(`web/locales/${lang}/ui.json`)).chat.composer; return keys.filter(k => !c[k]).map(k => `${lang}:${k}`); });
   t.ok('文言は ja・en の辞書にある', missing.length === 0, missing.join(' '));
+
+  // queue の文言切り替え（設定待ち・キャンセル可 → 受理待ち・キャンセル不可）と switch 理由
+  {
+    const { w, prompt, send, note, flush } = setup();
+    const reasons = [];
+    w.queue((r) => reasons.push(r), { text: '[waiting]', cancelable: true, kind: 'queued' });
+    flush();
+    t.ok('150ms 後に指定した待ち文言と取り消すボタンが出る', !note.hidden && note.querySelector('b')?.textContent === '[waiting]' && note.querySelector('button')?.textContent === '[chat.composer.queuedCancel]' && send.classList.contains('wait'));
+    const waitChild = send.children[0];
+    w.queue(null, { text: '[sending]', cancelable: false, kind: 'sending' });
+    t.ok('再待ちでタイマーをやり直さず同じ枠で文言を切り替えて取り消すを外せる',
+      note.querySelector('b')?.textContent === '[sending]' && note.querySelector('button') === null && send.children[0] === waitChild && note.dataset.kind === 'sending');
+    w.cancel('switch');
+    t.ok('cancel(switch) は待ちを解く（onCancel が無い送信中は理由だけ消す）', !w.queued && !prompt.readOnly && note.hidden);
+
+    w.queue((r) => reasons.push(r), { text: '[waiting]', cancelable: true });
+    w.cancel('switch');
+    t.ok('onCancel に cancel の理由（switch / user）が渡る', reasons.length === 1 && reasons[0] === 'switch', JSON.stringify(reasons));
+  }
+
+  // lock: 'shown' は注記と同じ時点から readonly、'none' は書けるまま（取り消しの無い待ち）、'now'（既定）は即時
+  {
+    const { w, prompt, note, flush } = setup();
+    w.queue(() => {}, { text: '[waiting]', cancelable: true, lock: 'shown' });
+    t.ok("lock:'shown' は 150ms までは欄を書ける・字も足せる", !prompt.readOnly && w.accepts() && note.hidden);
+    flush();
+    t.ok("lock:'shown' は注記が出る時点で readonly", prompt.readOnly === true && !w.accepts() && !note.hidden);
+    w.unqueue();
+    t.ok('解くと書ける', !prompt.readOnly);
+    w.queue(() => {}, { text: '[waiting]', cancelable: true, lock: 'shown' });
+    w.unqueue();
+    t.ok('150ms 前に終われば readonly は一度も入らない', !prompt.readOnly);
+  }
+  {
+    const { w, prompt, note, flush } = setup();
+    w.queue(null, { text: '[sending]', cancelable: false, kind: 'sending', lock: 'none' });
+    flush();
+    t.ok("lock:'none' は注記が出ても欄は書けるまま（取り消すも無い）", !note.hidden && !prompt.readOnly && w.accepts() && note.querySelector('button') === null);
+    w.queue(() => {}, { text: '[waiting]', cancelable: true, lock: 'shown' });
+    t.ok('段が取り消せる待ちに変わったら readonly（注記が出ているので即時）', prompt.readOnly === true);
+    w.queue(null, { text: '[sending]', cancelable: false, kind: 'sending', lock: 'none' });
+    t.ok('取り消せない段へ戻ると書ける', !prompt.readOnly);
+    w.unqueue();
+  }
+  {
+    const { w, prompt } = setup();
+    w.queue(() => {});
+    t.ok('既定（新しい会話の予約）は即時に readonly', prompt.readOnly === true);
+  }
+  {
+    // client.mjs の配線: 取り消せない段は lock:'none'・worktree は取り消し無し・ガードは自分の待ちだけ解く・空の送信は待ちにしない
+    const src = read('web/client.mjs');
+    t.ok('submit の worktree の段は取り消し無し', /setWaitStage\('worktree',[^\n]*false\)/.test(src));
+    t.ok("取り消せる段だけ lock:'shown'、取り消せない段は lock:'none'", /lock: cancelable \? 'shown' : 'none'/.test(src));
+    t.ok('二重送信のガードは自分が張った待ちだけ解く', /if \(waitInfo\.hasNewSession && !submittingMessages\.has\(sessionId\)\) composerWait\.unqueue\(\);/.test(src));
+    t.ok('待ちの表示の情報が無い送信は張り直さない', /!active\.queueOpts \|\|/.test(src));
+    t.ok('設定の保存の失敗の point は待ちを片付けた後', /pointAfter = true/.test(src) && /composerWait\.unqueue\(\);\s*\/\/[^\n]*\n\s*if \(pointAfter\) composerWait\.point\(\)/.test(src));
+  }
 }

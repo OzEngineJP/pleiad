@@ -1,9 +1,10 @@
 // ply_browser: エージェントのブラウザー操作のための MCP の口（core/agent-bridge.mjs と同じ型。会話ごとに Bearer の付いた HTTP）。
 // エージェントのブラウザー（PC の Chrome の専用の窓。ADR 0148）を渡すターン（デスクトップ版で中継がある）にだけ渡す。
-// hand_to_user・close_browser_window と、useProfiles で登録するプロフィールの一覧・切り替えを載せる。
+// hand_to_user・close_browser_window と、useProfiles で登録するプロフィールの一覧・切り替え、useDownloads で登録するダウンロードの一覧を載せる。
 import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
 import { HANDOFF_REASONS } from './chrome/handoff.mjs';
+import { DOWNLOAD_WAIT_MAX_SECONDS } from './chrome/downloads.mjs';
 
 export const BROWSER_MCP_PATH = '/mcp/browser';
 export const BROWSER_SERVER = 'ply_browser';
@@ -64,6 +65,18 @@ export const profileTools = locale => [{
   },
 }];
 
+/** 会話の Chrome のウィンドウで始まったダウンロードの一覧（docs/inapp-browser.md「ダウンロード」、ADR 0328）。中継のあるホストだけに載せる（createBrowserBridge の useDownloads） */
+export const DOWNLOAD_TOOLS = ['list_downloads'];
+export const downloadTools = locale => [{
+  name: 'list_downloads',
+  description: agentT(locale, 'browserBridge.listDownloads.description'),
+  inputSchema: {
+    type: 'object',
+    properties: { wait: { type: 'number', minimum: 0, maximum: DOWNLOAD_WAIT_MAX_SECONDS, description: agentT(locale, 'browserBridge.listDownloads.waitDescription') } },
+    additionalProperties: false,
+  },
+}];
+
 /** hand_to_user を待つ 1 回の長さ（ミリ秒）。バックエンドの呼び出しの上限（Claude・Codex は 660 秒）より短くし、超えたら「まだ待っています」で返して呼び直させる */
 export const BROWSER_WAIT_SLICE_MS = 600_000;
 
@@ -102,10 +115,25 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null, fillS
       return { isError: false, content: [{ type: 'text', text: agentT(locale, done.changed ? 'browserBridge.useProfile.done' : 'browserBridge.useProfile.same', { name: done.name, dir: done.dir }) }] };
     } catch (error) { return fail(String(error?.message ?? error)); }
   }
+  let downloads = null;   // { list(sessionId, { wait? }, locale, signal) }（useDownloads で差し込む。ops の browser.listDownloads を呼ぶ）
+  async function downloadCall(binding, params) {
+    const { locale } = binding;
+    const args = params.arguments == null ? {} : params.arguments;
+    if (typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(key => key !== 'wait')
+      || (args.wait !== undefined && !(typeof args.wait === 'number' && args.wait >= 0 && args.wait <= DOWNLOAD_WAIT_MAX_SECONDS)))
+      return fail(agentT(locale, 'browserBridge.invalidTool'));
+    let owner;
+    try { owner = await binding.owner(); } catch (error) { return fail(String(error?.message ?? error)); }
+    if (!owner?.sessionId) return fail(agentT(locale, 'browserBridge.handToUser.noTurn'));
+    // 待ち（wait）は、ターンの中断の合図で外れる（人の「止める」で戻る）
+    try { return { isError: false, content: [{ type: 'text', text: JSON.stringify(await downloads.list(owner.sessionId, args.wait ? { wait: args.wait } : {}, locale, owner.signal ?? null)) }] }; }
+    catch (error) { return fail(String(error?.message ?? error)); }
+  }
   async function callTool(binding, params) {
     // i18n-dynamic: agent:browserBridge.closeWindow.
     const { locale } = binding;
     if (profiles && PROFILE_TOOLS.includes(params?.name)) return profileCall(binding, params);
+    if (downloads && DOWNLOAD_TOOLS.includes(params?.name)) return downloadCall(binding, params);
     if (params?.name === 'fill_secret' && fillSecret && handoffs) {
       const args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments) ? params.arguments : null;
       if (!args || typeof args.item !== 'string' || !args.item || args.item.length > 40 || !['username', 'password'].includes(args.field)
@@ -147,6 +175,8 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null, fillS
   return {
     /** プロフィールのツールの本体を差し込む（null で外す）。差し込んだホストだけ tools/list に載る */
     useProfiles(adapter) { profiles = adapter ?? null; },
+    /** ダウンロードの一覧のツールの本体を差し込む（null で外す）。差し込んだホストだけ tools/list に載る */
+    useDownloads(adapter) { downloads = adapter ?? null; },
     // token は開き直す口の値（省略なら新しく作る。形が違う・使用中なら投げる）。
     // owner は呼び出しの時点の会話を返す: { sessionId, signal, waitSliceMs? }（ターンが無ければ投げる。ply_computer の owner と同じ）
     open({ origin, owner, locale, token: fixed }) {
@@ -179,6 +209,7 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null, fillS
       else if (m.method === 'tools/call') result = await callTool(binding, m.params);
       else return reply(200, { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });
       if (m.method === 'tools/list' && handoffs && profiles) result = { tools: [...result.tools, ...profileTools(locale)] };
+      if (m.method === 'tools/list' && handoffs && downloads) result = { tools: [...result.tools, ...downloadTools(locale)] };
       reply(200, { jsonrpc: '2.0', id: m.id, result });
     },
   };

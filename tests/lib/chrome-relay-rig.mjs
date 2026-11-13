@@ -34,7 +34,7 @@ export function agent(url, options) {
 export const refused = (url, options) => agent(url, options).then(client => { client.close(); return false; }, () => true);
 
 /** 偽の Chrome・偽の OS の層・接続・中継をそろえる。hooks は中継の口の差し替え（createChromeRelay の hooks） */
-export async function rig({ permission = 'auto', connectWaitMs, authorize, handoff, connectWaitText, turnLive, turnSignal, hooks } = {}) {
+export async function rig({ permission = 'auto', connectWaitMs, authorize, handoff, connectWaitText, downloadDeniedText, turnLive, turnSignal, hooks } = {}) {
   const chrome = await startFakeChrome({ permission });
   const os_ = fakeChromeOs({ chrome });
   const conn = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: os_, pollMs: 20 });
@@ -42,7 +42,7 @@ export async function rig({ permission = 'auto', connectWaitMs, authorize, hando
   const asked = [];
   let answer = async () => ({ allow: true });
   const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true };
-  const relay = createChromeRelay({ connection: conn, os: os_, locate, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}), ...(handoff ? { handoff } : {}), ...(connectWaitText ? { connectWaitText } : {}), ...(turnLive ? { turnLive } : {}), ...(turnSignal ? { turnSignal } : {}), ...(hooks ? { hooks } : {}),
+  const relay = createChromeRelay({ connection: conn, os: os_, locate, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}), ...(handoff ? { handoff } : {}), ...(connectWaitText ? { connectWaitText } : {}), ...(downloadDeniedText ? { downloadDeniedText } : {}), ...(turnLive ? { turnLive } : {}), ...(turnSignal ? { turnSignal } : {}), ...(hooks ? { hooks } : {}),
     authorize: authorize ?? (async (request, signal) => { asked.push(request); return answer(request, signal); }) });
   return {
     chrome, conn, relay, logs, asked, fake: chrome.browser, os: os_,

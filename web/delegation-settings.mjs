@@ -23,7 +23,7 @@ import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from './a
 import { keyRadioRow, keyRadioGroup, plusKeyRow, plusRowVisible } from './plus-key-row.mjs';
 import { EFFORT_LEVELS, candidateEffort, tierEffort, withEffort } from './delegation-effort.mjs';
 import { effortSelect, effortFixed } from './effort-select.mjs';
-import { candidateOrder, moveCandidate } from './delegation-order.mjs';
+import { createReorder, moveItem } from './reorder.mjs';
 
 const SERVICE = 'openrouter';
 /** 判定に使うキーの割り当て（API キーの uses の judge:routing） */
@@ -145,17 +145,18 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   orderStatus.setAttribute('role', 'status'); orderStatus.setAttribute('aria-live', 'polite'); orderStatus.setAttribute('aria-atomic', 'true');
   const announceOrder = text => { orderStatus.textContent = text; };
   root.append(head, stateLine, effective, judges, keys, advanced, reset, orderStatus);
-  const ordering = candidateOrder({ root: advancedBody, current: tier => data?.settings.tiers[tier] ?? [], showMenu, announce: announceOrder,
+  const ordering = createReorder({ root: advancedBody, rowSelector: '.rt-cand-row', idOf: row => row.dataset.candidate,
+    current: tier => data?.settings.tiers[tier] ?? [], showMenu, announce: announceOrder,
     move: changeOrder, settled: focus => {
       if (focus) orderFocus = focus;
       if (focus || advancedDirty) paintAdvanced();
     } });
   function changeOrder(tier, candidate, to) {
-    const next = moveCandidate(data.settings.tiers[tier], candidate, to);
+    const next = moveItem(data.settings.tiers[tier], candidate, to);
     if (!next) return;
     orderFocus = `order|${tier}|${candidate}`;
     saveNested('tiers', { ...data.settings.tiers, [tier]: next });
-    announceOrder(t('routing.settings.orderMoved', { name: candidateName(candidate), position: to + 1 }));
+    announceOrder(t('common.reorder.moved', { name: candidateName(candidate), position: to + 1 }));
   }
 
   async function refresh(args = {}) {

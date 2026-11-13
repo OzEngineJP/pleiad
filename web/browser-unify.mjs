@@ -4,6 +4,7 @@ import { createCombo } from './combo.mjs';
 import { runMark } from './arc.mjs';
 import { createAddressBar, hasFileViews } from './address-bar.mjs';
 import { createControlBadge, createTabHolderStore } from './chrome-control.mjs';
+import { createDownloadsUi } from './chrome-downloads.mjs';
 import { pageRequestOf, framePoint } from './page-frame.mjs';
 import { samePath } from './file-actions.mjs';
 import { createPageTabs } from './page-tabs.mjs';
@@ -147,6 +148,34 @@ const css = `
 @keyframes bu-sk-in{from{opacity:0}}
 @media(prefers-reduced-motion:reduce){.bu-page-sk,.bu-page-sk .history-line{animation:none}}
 .cp-screen>.bu-page-host{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;z-index:5;background:var(--surface-paper)}
+/* Downloads of the conversation's Chrome window: the button left of the menu, the list (popover on desktop, sheet on phone). */
+.dl-btn,.bu-more{position:relative}.dl-btn.on{background:var(--surface-3)}
+.dl-ring{position:absolute;inset:0;width:100%!important;height:100%!important;transform:rotate(-90deg);pointer-events:none}
+.dl-ring circle{fill:none;stroke-width:2}.dl-ring .tr{stroke:var(--line)}
+.dl-ring .pg{stroke:var(--ink-blue);stroke-linecap:round;transition:stroke-dashoffset .25s linear}
+.dl-dot{position:absolute;right:5px;top:5px;width:7px;height:7px;border-radius:50%;background:var(--ink-blue);pointer-events:none}
+.dl-pop{position:absolute;z-index:31;right:8px;width:320px;max-width:calc(100% - 16px);max-height:280px;overflow:auto;padding:6px;border-radius:12px;background:var(--surface-paper);box-shadow:0 0 0 1px var(--line),0 8px 24px var(--shadow)}
+.dl-row{position:relative;display:flex;align-items:center;gap:2px;border-radius:8px;min-height:48px;padding-right:4px}
+.dl-row.is-run{padding-bottom:6px}.dl-row:hover{background:var(--surface-hover)}
+.dl-main{flex:1;min-width:0;display:flex;align-items:center;gap:10px;padding:6px 4px 6px 8px;border-radius:8px;color:var(--ink)!important;text-align:left}
+.dl-main:disabled{cursor:default}
+.dl-main>svg{width:18px;height:18px;flex:none;color:var(--ink-weak)}
+.dl-tx{min-width:0;display:flex;flex-direction:column;line-height:1.45}
+.dl-name{font-size:12.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.dl-sub{font-size:11px;color:var(--ink-weak);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.dl-row.bad .dl-sub{color:var(--ink-danger)}
+.dl-row .bu-icon{width:30px;height:30px;color:var(--ink-weak)}.dl-row .bu-icon svg{width:14px;height:14px}
+.dl-bar{position:absolute;left:36px;right:40px;bottom:4px;height:2px;border-radius:1px;background:var(--line);overflow:hidden}
+.dl-bar i{display:block;height:100%;background:var(--ink-blue);transition:width .25s linear}
+@media (prefers-reduced-motion:reduce){.dl-bar i,.dl-ring .pg{transition:none}}
+.dl-sheet{position:absolute;left:0;right:0;top:0;bottom:0;z-index:40;background:var(--surface-paper);color:var(--ink);display:flex;flex-direction:column}
+.dl-sheet-head{display:flex;align-items:center;height:52px;padding:0 4px 0 16px;font-weight:600;font-size:17px;flex:none}.dl-sheet-head span{flex:1}
+.dl-sheet-head .bu-icon{width:44px;height:44px}
+.dl-sheet-list{flex:1;min-height:0;overflow:auto;padding:0 8px 16px}
+.dl-sheet .dl-row{min-height:60px}.dl-sheet .dl-main{gap:12px;padding:8px 4px 8px 8px}.dl-sheet .dl-main>svg{width:22px;height:22px}
+.dl-sheet .dl-name{font-size:15px}.dl-sheet .dl-sub{font-size:12.5px}
+.dl-sheet .dl-row .bu-icon{width:44px;height:44px}.dl-sheet .dl-row .bu-icon svg{width:18px;height:18px}
+.dl-sheet .dl-bar{left:42px;right:50px;bottom:5px}
 @media(max-width:760px){.browser-unify #filePreview{padding:0;border-radius:0}.browser-unify #filePreview .file-preview-content{border-radius:0}}
 /* Phone: the tab list covers the whole panel, so the chrome row must not be its containing block (it is only 48px tall). */
 @media(max-width:600px){.bu-tabrow{display:none}.bu-toolbar{height:48px}.bu-chrome{position:static}.bu-overview{position:absolute;inset:0;max-height:none;z-index:40}}
@@ -484,7 +513,9 @@ export function createBrowserUnify(deps = {}) {
         { label:t('tabs:strip.closeTab'), icon:menuIcon('close'), onClick:() => navigate('close', { targetId:tab.targetId }).catch(failed) }]);
     },
     });
-  const address = createAddressBar({ navigate, cwd:() => state.cwd ?? '', suggest:input => cmd('chromeAddress', { sessionId:session(), input }), onClose:() => chrome()?.close(), onTabs:() => showOverview(),
+  // ダウンロードの入口（PC は ⋮ の左のボタン、スマホは ⋮ のメニューの項目）と一覧。docs/inapp-browser.md「ダウンロード」
+  const downloads = createDownloadsUi({ cmd, session, store:deps.downloadStore, preview:() => deps.preview, phone:() => phoneQuery.matches, notify });
+  const address = createAddressBar({ navigate, cwd:() => state.cwd ?? '', extra:[downloads.button], suggest:input => cmd('chromeAddress', { sessionId:session(), input }), onClose:() => chrome()?.close(), onTabs:() => showOverview(),
     // 元の HTML のタブの、外で開く印（アドレスの右端。OS の操作はサーバーのある PC の画面だけ）
     externalFor:tab => tab?.page?.kind === 'html' && tab.page.path && osActions() ? () => deps.preview?.openExternal?.({ path:tab.page.path, sessionId:tab.sessionId }) : null,
     onDisplay:(anchor, tab) => { const rect = anchor.getBoundingClientRect(); showMenu(rect.left, rect.bottom, [
@@ -505,6 +536,8 @@ export function createBrowserUnify(deps = {}) {
     if (phoneQuery.matches) items.push({ tools:['back', 'forward', 'reload'].map(action => ({ label:t(`tabs:address.${action}`), icon:icon(action),
       disabled:action === 'back' ? !tab?.canGoBack : action === 'forward' ? !tab?.canGoForward : !tab, onClick:() => go(action) })) });
     items.push({ label:t('tabs:strip.new'), icon:icon('plus'), onClick:() => go('new') });
+    const download = phoneQuery.matches ? downloads.menuItem() : null;
+    if (download) items.push({ ...download, icon:icon('download') });
     if (viewHidden && hasFileViews(tab)) items.push({ sep:true }, { label:t('tabs:address.showSource'), icon:icon('source'), checked:view === 'source', onClick:() => setView(view === 'source' ? 'preview' : 'source') });
     if (extra.length) items.push({ sep:true }, ...extra);
     if (!phoneQuery.matches) items.push({ sep:true }, { label:t('tabs:address.closePanel'), icon:icon('panel'), onClick:close });
@@ -555,7 +588,7 @@ export function createBrowserUnify(deps = {}) {
   const ovRun = runMark(); ovRun.hidden = true; ovConv.root.prepend(ovRun);
   const ovCards = document.createElement('div'); ovCards.className = 'bu-ov-cards';
   const ovHead = document.createElement('div'); ovHead.className = 'bu-ov-head'; ovHead.append(ovBack, ovConv.root, ovNew);
-  overview.append(ovHead, ovCards); root.append(overview);
+  overview.append(ovHead, ovCards); root.append(overview, downloads.pop, downloads.sheet);
   let badge = null, ovSig = null;
   function paintOverview() {
     if (overview.hidden) return;
@@ -581,6 +614,7 @@ export function createBrowserUnify(deps = {}) {
   }
   function showOverview() {
     overview.hidden = !overview.hidden; paintControl(); if (overview.hidden) return;
+    downloads.close();
     ovSig = null; paintOverview();
   }
   /** 映像の再開操作（アドレスバーのすぐ下の 1 行）を今の状態にする */
@@ -605,7 +639,7 @@ export function createBrowserUnify(deps = {}) {
       const item = row.local || live?.agentTabId == null ? row : { ...row, agent: row.targetId === live.agentTabId, agentRunning: running, agentName: deps.agentName?.(shown) };
       return busy != null && row.targetId === busy ? { ...item, loading:true } : item;
     });
-    strip.update(items, tab?.targetId); address.show(tab, items.length); paintControl(); paintLocal(); paintSwitch(); paintOverview(); deps.onTabsChange?.();
+    strip.update(items, tab?.targetId); address.show(tab, items.length); paintControl(); paintLocal(); paintSwitch(); paintOverview(); downloads.paint(); deps.onTabsChange?.();
   }
   const pageHost = document.createElement('div'); pageHost.className = 'bu-page-host';
   const frames = new Map(); let local = null, explorer = null;
@@ -837,7 +871,7 @@ export function createBrowserUnify(deps = {}) {
     } catch (error) { if (request.requestId) reply(false, error); }
   }
   return {
-    root, tabs:strip, address, navigate,
+    root, tabs:strip, address, navigate, downloads,
     /** 読み込み線の遅延・失敗のタイマーを止める（試験が後片付けのあとにタイマーが走らないように） */
     dispose() { clearTimeout(loadShowTimer); clearTimeout(loadCutTimer); loadTicket = null; },
     /** その会話のタブ（web/file-preview.mjs の configureBrowserUnify。同じファイルのタブを使い回す） */
@@ -984,7 +1018,7 @@ export function createBrowserUnify(deps = {}) {
           paint();
         });
         deps.controlStore?.onChange?.(id => { if (id === session() || convIds().has(id)) paint(); });
-        phoneQuery.addEventListener?.('change', () => { paintControl(); paintLocal(); });
+        phoneQuery.addEventListener?.('change', () => { paintControl(); paintLocal(); downloads.paint(); });
         window.addEventListener('message', event => { localRequest(event).catch(failed); });
         document.dispatchEvent(new CustomEvent('ply-browser-availability'));
       }
@@ -1003,6 +1037,8 @@ export function createBrowserUnify(deps = {}) {
       if (event.type === 'tab:info') {
         holderStore.event(event);   // 棚と持ち手を揃える（消えたタブ・張り替えでは持ち手も捨てる）
         let list = rows.get(event.sessionId) ?? [];
+        // 見始めた・つなぎ直した: ダウンロードの一覧も忘れる（あれば、すぐ後に 'tab:downloads' が届く）
+        if (event.reset) downloads.forget(event.sessionId);
         if (event.reset) list = event.tabs ?? [];
         else if (event.removed) { for (const tab of pages.list(event.sessionId)) if (tab.chromeId === event.targetId) { delete tab.chromeId; tab.mode = 'page'; } list = list.filter(tab => tab.targetId !== event.targetId); }
         else { const at = list.findIndex(tab => tab.targetId === event.targetId); list = [...list]; if (at < 0) list.push(event); else list[at] = event; }
@@ -1016,6 +1052,9 @@ export function createBrowserUnify(deps = {}) {
       } else if (event.type === 'tab:holder') {
         holderStore.event(event);
         if (event.sessionId === session() || convIds().has(event.sessionId)) paint();
+      } else if (event.type === 'tab:downloads') {
+        downloads.set(event.sessionId, event.downloads);
+        if (event.sessionId === session()) downloads.paint();
       } else if (event.type === 'tab:page-request') pageRequest(event);
     },
   };

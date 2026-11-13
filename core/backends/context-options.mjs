@@ -18,13 +18,17 @@ export function claudeContextOptions(context, { compact = false, hooks = false, 
     ...(context?.owners.instruction === 'ply' || bot ? { autoMemoryEnabled: false } : {}),
     ...(hooks ? { disableAllHooks: true } : {}),
   };
+  const denied = context?.mcp?.named ? context.mcp.suppress ?? [] : [];
+  if (denied.length) settings.deniedMcpServers = denied.map(serverName => ({ serverName }));
   const withSettings = Object.keys(settings).length ? { settings } : {};
   if (!context) return withSettings;
   const { owners } = context;
   return {
     ...withSettings,
     ...(owners.skill === 'ply' ? { skills: [], ...(!compact ? { extraArgs: { 'disable-slash-commands': null } } : {}), disallowedTools: ['Skill'] } : {}),
-    ...(owners.mcp === 'ply' ? { strictMcpConfig: true } : {}),
+    // 名前ごとのモデル（context.mcp.named）では、エージェントの設定は書き換えず、起動のときに名前ごとに止める（deniedMcpServers。
+    // 設定ファイル・SDK で渡したもの・claude.ai のコネクター・プラグインの MCP に効く）。2 択の「Pleiad がそろえる」は全部止める（strict）
+    ...(owners.mcp === 'ply' && !context.mcp?.named ? { strictMcpConfig: true } : {}),
     ...(context.prompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: context.prompt } } : {}),
   };
 }
@@ -51,7 +55,16 @@ export async function codexContextRpc(context, cwd, nativeRpc, { acquire = null 
     config['skills.config'] = data.flatMap(d => d.skills ?? []).map(s => ({ path: s.path, enabled: false }));
     config['features.plugins'] = false;
   }
-  if (context.owners.mcp === 'ply') {
+  if (context.mcp?.named) {
+    // 名前ごとのモデル: 設定に在る名前だけ enabled=false にする（在る名前以外は起動に失敗する）
+    const wanted = new Set(context.mcp.suppress ?? []);
+    if (wanted.size) {
+      const result = await nativeRpc.request('config/read', { cwd, includeLayers: false });
+      if (!result.config) throw new Error(t('backends.context.codexMcp'));
+      // -c の点つきのパーサーは、点や引用符を含む名前を扱えない。そういう名前は止められない
+      for (const name of Object.keys(result.config.mcp_servers ?? {})) if (wanted.has(name) && /^[A-Za-z0-9_-]+$/.test(name)) config[`mcp_servers.${name}.enabled`] = false;
+    }
+  } else if (context.owners.mcp === 'ply') {
     const result = await nativeRpc.request('config/read', { cwd, includeLayers: false });
     if (!result.config) throw new Error(t('backends.context.codexMcp'));
     // Replace the map with disabled, credential-free placeholders. Codex's -c

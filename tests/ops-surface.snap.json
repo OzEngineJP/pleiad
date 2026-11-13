@@ -249,6 +249,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "app.reportSlow",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "b9e2f14262cb"
+    },
+    {
       "id": "app.running",
       "risk": "read",
       "riskOf": false,
@@ -663,6 +678,21 @@
       "input": "f08816c821a8"
     },
     {
+      "id": "browser.cancelDownload",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "542e2ddea21f"
+    },
+    {
       "id": "browser.chromeCloseWindow",
       "risk": "write",
       "riskOf": false,
@@ -861,6 +891,21 @@
       },
       "legacyCommand": null,
       "input": "7f7ac791e818"
+    },
+    {
+      "id": "browser.listDownloads",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "d0b966317da8"
     },
     {
       "id": "browser.listProfiles",
@@ -1592,6 +1637,26 @@
       "input": "2d846c9b3216"
     },
     {
+      "id": "context.mcpMatrix",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "mcp-matrix"
+          ]
+        }
+      },
+      "legacyCommand": "mcpMatrix",
+      "input": "06124f629e22"
+    },
+    {
       "id": "context.nativeInstructions",
       "risk": "read",
       "riskOf": false,
@@ -1690,6 +1755,30 @@
       },
       "legacyCommand": "sessionContext",
       "input": "9b61e58faf57"
+    },
+    {
+      "id": "context.setMcpAgent",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "mcp-agent"
+          ],
+          "positional": [
+            "name",
+            "agent"
+          ]
+        }
+      },
+      "legacyCommand": "setMcpAgent",
+      "input": "b4483a7833e2"
     },
     {
       "id": "context.setPlyInstructions",
@@ -5910,6 +5999,19 @@
     {
       "id": "context.plyInstructions",
       "path": "context instructions",
+      "positional": []
+    },
+    {
+      "id": "context.setMcpAgent",
+      "path": "context mcp-agent",
+      "positional": [
+        "name",
+        "agent"
+      ]
+    },
+    {
+      "id": "context.mcpMatrix",
+      "path": "context mcp-matrix",
       "positional": []
     },
     {

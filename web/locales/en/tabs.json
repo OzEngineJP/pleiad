@@ -27,6 +27,21 @@
     "open_one": "Open browser ({{count}} tab)",
     "open_other": "Open browser ({{count}} tabs)"
   },
+  "downloads": {
+    "title": "Downloads",
+    "running_one": "Downloads ({{count}} in progress)",
+    "running_other": "Downloads ({{count}} in progress)",
+    "stop": "Stop download",
+    "actions": "Actions for {{name}}",
+    "failed": "Couldn't download",
+    "stopped": "Stopped",
+    "close": "Close",
+    "line": {
+      "completed": "Downloaded {{name}} · {{size}}",
+      "failed": "Couldn't download {{name}}",
+      "canceled": "Stopped downloading {{name}}"
+    }
+  },
   "address": {
     "openTabs_one": "Open tab list ({{count}} tab)",
     "openTabs_other": "Open tab list ({{count}} tabs)",

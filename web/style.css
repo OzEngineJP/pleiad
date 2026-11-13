@@ -1117,8 +1117,11 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .file-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:2px 2px 2px 16px;
   display:flex;align-items:center;gap:4px;
   background:var(--surface-paper);color:var(--ink);border-radius:var(--r-pill);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s)}
+.file-toast.has-action{width:min(92vw,520px);padding:8px 8px 8px 16px;border-radius:var(--r-l)}
 .file-toast[hidden]{display:none}
 .file-toast-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-toast.has-action .file-toast-text{white-space:normal;line-height:1.45}
+.file-toast-action{flex:none;color:var(--ink-blue);font-weight:600;padding:4px 10px;border-radius:var(--r-pill);white-space:nowrap}
 /* フォーカスの輪は ✕ の内側に引く（外に引くと、ピルの右端からはみ出す） */
 .file-toast-close{flex:none}
 .file-toast-close:focus-visible{outline-offset:-2px}
@@ -1580,7 +1583,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .conn-note[data-kind=stale] .btn,.conn-note[data-kind=stop] .btn{margin-left:auto;flex:none;font-size:var(--fs-s);color:var(--ink-blue)}
 .conn-note .btn[aria-disabled=true]{cursor:progress}
 /* 予約した送信。塗りをやめて弧を中に（押せないのではなく、待っている） */
-.send.wait,.send.wait:hover{background:var(--surface-3);color:var(--ink);cursor:progress}
+.send.wait,.send.wait:hover,.send.wait:disabled{background:var(--surface-3);color:var(--ink);cursor:progress;opacity:1}
 /* チップと送信の行。折り返さない。送信は常に右端 */
 .crow{display:flex;align-items:center;gap:2px;min-width:0;flex-wrap:nowrap}
 .send{width:34px;height:34px;border-radius:50%;padding:0;margin-left:4px;flex:none}   /* 唯一の塗り */

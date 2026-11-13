@@ -31,6 +31,9 @@
 // タブの題（右パネルのタブの列。見ている端末にだけ送る）・操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
 // ブラウザーの一本化（ADR 0294〜0297）の口: 移動の検査とコマンドの前後のふるい（page-policy.mjs）・操作の前の門（tab-holder.mjs）・
 // タブの情報（tab-info.mjs）・ページからの頼み（page-bridge.mjs）。出来事は onTabEvent(fn) に 1 本で出す（TAB_EVENTS）。setPagePorts でサーバーの port を受ける
+// ダウンロード（ADR 0328。記録は downloads.mjs）: 上りの接続に Browser.setDownloadBehavior { behavior: 'default', eventsEnabled: true } を送り、
+// ブラウザー全体のダウンロードのイベントのうち、会話のタブで始まったもの（始まったフレームから会話を引けたもの）だけを記録する。保存先は替えない（Chrome のいつもの保存先）。
+// 利用者自身のダウンロードは記録せず、エージェントの接続にはどのダウンロードのイベントも配らない。エージェントからの Browser.setDownloadBehavior・Page.setDownloadBehavior は引き続き断る
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
@@ -41,10 +44,13 @@ import { createPagePolicy, safeUrl } from './page-policy.mjs';
 import { createTabHolder, PAUSED_MESSAGE, HUMAN_MESSAGE } from './tab-holder.mjs';
 import { createTabInfo } from './tab-info.mjs';
 import { createPageBridge } from './page-bridge.mjs';
+import { createChromeDownloads } from './downloads.mjs';
 
 export { safeUrl, PAUSED_MESSAGE };
 /** relay.onTabEvent(fn) で出す出来事の名前（fn(type, payload)）。ほかの名前は出さない */
-export const TAB_EVENTS = Object.freeze(['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport']);
+export const TAB_EVENTS = Object.freeze(['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport', 'tab:downloads']);
+/** ダウンロードを止められるか（CDP の既定の context）を引き直す間隔（ms）。進行中のものがある間だけ引く */
+const DOWNLOAD_CONTEXT_MS = 3000;
 
 const KEY_PATH = /^\/devtools\/browser\/([a-f0-9]{48})$/;
 const random = () => crypto.randomBytes(24).toString('hex');
@@ -118,6 +124,8 @@ class RelayError extends Error {
   constructor(message, code = -32000) { super(message); this.code = code; }
 }
 const denied = what => new RelayError(`${what} denied`);
+/** エージェントからは受けないダウンロードの命令（ADR 0328）。断るときは、理由と次の手の文を返す */
+const DOWNLOAD_COMMANDS = new Set(['Browser.setDownloadBehavior', 'Page.setDownloadBehavior', 'Browser.cancelDownload']);
 
 const originOf = value => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.origin : null; } catch { return null; } };
 const hostOf = value => { try { return new URL(value).hostname; } catch { return null; } };
@@ -143,10 +151,11 @@ function committedOrigin(frame) {
  * @param [deps.turnSignal] (sessionId) => 走っているターンの中断の合図。人の「止める」で、その会話の接続待ちを外す
  * @param [deps.carryExtra] 更新を越えて持ち越す、中継の外の状態（{ snapshot() → 小さな object, restore(object) }）。carry の extra に載り、変わったら touch() で預け直す（一時 id のプロフィール選択・ログイン待ちの束ねの鍵。ADR 0167）
  * @param [deps.connectWaitText] (sessionId) => 20 秒待ってもつながらないときに（setup・permission で）エージェントへ返す文。会話の言語。無ければ英語の固定
- * @param [deps.hooks] ブラウザーの一本化の口の差し替え（試験用。{ pagePolicy, tabHolder, tabInfo, pageBridge } の作り方。各モジュールの create* と同じ引数）。無いものは各モジュールの既定
+ * @param [deps.downloadDeniedText] (sessionId) => エージェントのダウンロードの命令（Browser.setDownloadBehavior・Page.setDownloadBehavior・Browser.cancelDownload）を断るときに返す文（理由と次の手。会話の言語）。無ければ英語の固定
+ * @param [deps.hooks] ブラウザーの一本化の口の差し替え（試験用。{ pagePolicy, tabHolder, tabInfo, pageBridge, downloads } の作り方。各モジュールの create* と同じ引数）。無いものは各モジュールの既定
  */
 export function createChromeRelay({ connection, os, locate, log = () => {}, profileFor, profileUsed, scope = createChromeWindows({ os, locate, log, profileFor, profileUsed }), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
-  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null, turnLive = null, turnSignal = () => undefined, carryExtra = null, now = Date.now, hooks = {} } = {}) {
+  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null, downloadDeniedText = null, turnLive = null, turnSignal = () => undefined, carryExtra = null, now = Date.now, hooks = {} } = {}) {
   const entries = new Map();   // 会話の id -> entry
   const byKey = new Map();
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
@@ -172,6 +181,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   const tabHolder = (hooks.tabHolder ?? createTabHolder)({ emit: emitTab, now, log });
   const tabInfo = (hooks.tabInfo ?? createTabInfo)({ emit: emitTab, log });
   const pageBridge = (hooks.pageBridge ?? createPageBridge)({ emit: emitTab, ports: () => pagePorts, log });
+  // 会話のタブで始まったダウンロードの記録（ADR 0328）
+  const downloads = (hooks.downloads ?? createChromeDownloads)({ emit: emitTab, now, log });
   /** 口の呼び出し（タブの出入りの知らせ）。口が投げても中継は止めない */
   const callHook = (name, fn) => { try { fn(); } catch (error) { log(`chrome-relay: ${name} failed: ${error?.message ?? error}`); } };
   /** 口に渡すタブ。attach は中継自身のセッションを付ける（view.attach と同じ形） */
@@ -281,7 +292,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   function bind(cdp) {
     if (up?.cdp === cdp) return Promise.resolve(up);
     if (binding?.cdp === cdp) return binding.promise;
-    const state = { cdp, tabs: new Map(), windows: new Map(), sessions: new Map(), attaching: new Map(), offs: [], frameTabs: new Map(), browserFetch: null };
+    const state = { cdp, tabs: new Map(), windows: new Map(), sessions: new Map(), attaching: new Map(), offs: [], frameTabs: new Map(), browserFetch: null,
+      downloadOwners: new Map(), downloadContextAt: 0 };   // downloadOwners: 持ち主を引いている途中のダウンロード（guid -> { last: 待たせた進み具合 }）
     // 持ち越した窓が、今つなぐ Chrome のものでなければ（Chrome が起動し直された）、その windowId は今の Chrome の別の窓を指す。捨てる
     const browserId = typeof cdp.browserId === 'string' && cdp.browserId ? cdp.browserId : null;
     if (browserId && chromeId && browserId !== chromeId) forgetCarriedWindows('another chrome');
@@ -295,6 +307,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const stale = staleSessions; staleSessions = [];
       for (const sessionId of stale) cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});   // 前のサーバーの確認の Fetch は、答える相手が居ない
       await cdp.send('Target.setDiscoverTargets', { discover: true });
+      // ダウンロードのイベントを受ける（ADR 0328）。保存先は替えない（behavior: 'default'）。旗は接続の単位で、どのプロフィールのダウンロードも届く。
+      // browserContextId は付けない（既定でないプロフィールの id は断られる。実機）。待たない・断られても（古い Chrome など）つなぐのは止めない
+      cdp.send('Browser.setDownloadBehavior', { behavior: 'default', eventsEnabled: true })
+        .catch(error => log(`chrome-relay: download events unavailable: ${error?.message ?? error}`));
       // 移動の検査の口に、つながったことを知らせる（ページの Cookie を入れる）。待たない・口が投げてもつなぐのは止めない
       Promise.resolve().then(() => pagePolicy.connected?.({ send: browserSend(state) }))
         .catch(error => log(`chrome-relay: pagePolicy failed: ${error?.message ?? error}`));
@@ -368,6 +384,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     up = null;
     for (const off of state.offs) off();
     for (const tab of state.tabs.values()) { tab.controller.abort(); tab.fe = null; }
+    callHook('downloads', () => downloads.disconnected());   // 進行中のダウンロードは、結果が分からなくなる
     scope.reset?.(); orphans.clear(); chromeId = null;   // Chrome が閉じた。窓はもう無い（閉じ待ちの windowId も、次の Chrome では別の窓を指す）
     for (const entry of entries.values()) {
       if (!closed) fire(lostListeners, entry.id);   // 窓はもう無い。agent-browser の縛りを捨てさせる（接続はすぐ下で閉じる）
@@ -627,7 +644,136 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         return;
       }
       case 'Fetch.requestPaused': onBrowserPaused(state, params); return;
-      default: return;   // ほかのブラウザー全体のイベント（ダウンロードなど）は配らない
+      // ダウンロード。会話のタブで始まったものだけを記録する。エージェントの接続には配らない（ADR 0328）
+      case 'Browser.downloadWillBegin': onDownloadBegin(state, params); return;
+      case 'Browser.downloadProgress': onDownloadProgress(state, params); return;
+      default: return;   // ほかのブラウザー全体のイベントは配らない
+    }
+  }
+
+  // ---- ダウンロード（ADR 0328） ----------------------------------------------------------------
+  /** セッションの Page.getFrameTree から、フレームの id を全部読む */
+  async function frameIds(send) {
+    const tree = await send('Page.getFrameTree', {}).catch(() => null);
+    const ids = [];
+    const walk = node => { if (node?.frame?.id) ids.push(node.frame.id); for (const child of node?.childFrames ?? []) walk(child); };
+    walk(tree?.frameTree);
+    return ids;
+  }
+  /** タブのフレームの id（同じ process の iframe を含む）。確認のセッションがあれば使い、無ければ中継のセッションを付けて読んで外す */
+  async function tabFrameIds(state, tab) {
+    if (tab.internal) return frameIds((method, params) => state.cdp.send(method, params, tab.internal));
+    const own = await ownSession(state, tab, () => {}).catch(() => null);
+    if (!own) return [];
+    try { return await frameIds(own.send); } finally { own.detach().catch(() => {}); }
+  }
+  /** cross-site の iframe（別の target）の中のフレームの id。読むだけなので、中継の台帳には載せずに付けて外す（iframe の target には、ほかの attach の待ちが無い） */
+  async function iframeFrameIds(state, targetId) {
+    const attached = await state.cdp.send('Target.attachToTarget', { targetId, flatten: true }).catch(() => null);
+    if (!attached?.sessionId) return [];
+    try { return await frameIds((method, params) => state.cdp.send(method, params, attached.sessionId)); }
+    finally { state.cdp.send('Target.detachFromTarget', { sessionId: attached.sessionId }).catch(() => {}); }
+  }
+  /**
+   * ダウンロードの始まったフレーム（Browser.downloadWillBegin の frameId）から、会話のタブを引く。会話のタブで始まったものでなければ null（実機 Chrome 157。ADR 0328）。
+   *   - 主フレームのリンク: frameId はタブの targetId
+   *   - target=_blank・window.open: 開いてすぐ消えるタブの targetId。開いた知らせ（openerId 付き）が先に届き、範囲に入っている（onTargetCreated）
+   *   - cross-site の iframe: iframe の target の id。Target.getTargets の parentFrameId を親へたどる
+   *   - 同じ process の iframe: target でないフレームの id。会話のタブ（とその下の cross-site の iframe）の Page.getFrameTree で探す
+   */
+  async function downloadOwner(state, frameId) {
+    if (typeof frameId !== 'string' || !frameId) return null;
+    const known = id => state.tabs.get(id) ?? state.frameTabs.get(id) ?? null;
+    const direct = known(frameId);
+    if (direct) return direct;
+    if (!state.tabs.size) return null;   // 会話のタブが無ければ、利用者のダウンロードのたびに問い合わせない
+    const info = (await state.cdp.send('Target.getTargetInfo', { targetId: frameId }).catch(() => null))?.targetInfo ?? null;
+    if (up !== state) return null;
+    if (info?.type === 'page') return known(frameId) ?? (info.openerId ? known(info.openerId) : null);
+    if (info && info.type !== 'iframe') return null;
+    const listed = await state.cdp.send('Target.getTargets', { filter: [{}] }).catch(() => null);
+    if (up !== state) return null;
+    const iframes = (listed?.targetInfos ?? []).filter(target => target?.type === 'iframe' && target.targetId);
+    const parentOf = new Map(iframes.map(target => [target.targetId, target.parentFrameId ?? null]));
+    const owners = new Map();   // target でないフレームの id -> タブ
+    const climb = id => {
+      for (let hops = 0; hops < 16 && id; hops += 1) {
+        const tab = known(id) ?? owners.get(id);
+        if (tab) return tab;
+        id = parentOf.get(id);
+      }
+      return null;
+    };
+    const found = climb(frameId);
+    if (found) return found;
+    await Promise.all([...new Set(state.tabs.values())].map(async tab => { for (const id of await tabFrameIds(state, tab)) if (!owners.has(id)) owners.set(id, tab); }));
+    // 会話のタブの下の cross-site の iframe の中も読む（入れ子の分だけ繰り返す）
+    const read = new Set();
+    for (let round = 0; round < 3 && up === state; round += 1) {
+      const tab = climb(frameId);
+      if (tab) return tab;
+      const next = iframes.filter(target => !read.has(target.targetId) && climb(target.targetId));
+      if (!next.length) return null;
+      await Promise.all(next.map(async target => {
+        read.add(target.targetId);
+        const owner = climb(target.targetId);
+        for (const id of await iframeFrameIds(state, target.targetId)) if (!owners.has(id)) owners.set(id, owner);
+      }));
+    }
+    return up === state ? climb(frameId) : null;
+  }
+  /** 始まったページの URL（list_downloads が返す）。開いてすぐ消えるタブ（target=_blank）は、開いた元のタブの URL */
+  function downloadPageUrl(tab, url) {
+    const own = tab.info?.url ?? '';
+    if (tab.opener && (!own || own === 'about:blank' || own === url)) return tab.opener.info?.url ?? own;
+    return own;
+  }
+  /** CDP の既定の context を引き直す（ダウンロードを止められるのは、そのプロフィールが既定のときだけ）。続けては引かない */
+  function refreshDownloadContext(state, force = false) {
+    if (up !== state || state.cdp.closed) return;
+    if (!force && now() - state.downloadContextAt < DOWNLOAD_CONTEXT_MS) return;
+    state.downloadContextAt = now();
+    state.cdp.send('Target.getBrowserContexts', {})
+      .then(result => { if (up === state) callHook('downloads', () => downloads.setDefaultContext(result?.defaultBrowserContextId ?? null)); }, () => {});
+  }
+  function onDownloadBegin(state, params) {
+    const guid = params?.guid;
+    if (typeof guid !== 'string' || !guid || state.downloadOwners.has(guid)) return;
+    const pending = { last: null };
+    state.downloadOwners.set(guid, pending);
+    // 持ち主のタブは、始まりの時点で引く（開いてすぐ消えるタブは、引いている間に範囲から消える）
+    downloadOwner(state, params.frameId).catch(() => null).then(tab => {
+      state.downloadOwners.delete(guid);
+      if (!tab || up !== state) return;   // 利用者自身のダウンロード・ほかの窓のダウンロードは記録しない
+      noteUsed(tab.entry);
+      callHook('downloads', () => {
+        downloads.begin({ sessionId: tab.entry.id, guid, name: params.suggestedFilename, pageUrl: downloadPageUrl(tab, params.url), context: tab.info?.browserContextId ?? null });
+        if (pending.last) downloads.progress(pending.last);
+      });
+      refreshDownloadContext(state, true);
+    });
+  }
+  function onDownloadProgress(state, params) {
+    const pending = state.downloadOwners.get(params?.guid);
+    if (pending) { pending.last = params; return; }   // 持ち主を引いている途中。引けたら最後のものを渡す
+    let known = false;
+    callHook('downloads', () => { known = downloads.progress(params) === true; });
+    if (known && params.state === 'inProgress') refreshDownloadContext(state);
+  }
+  /** 人が「ダウンロードを止める」を押した。止まったら、Chrome の canceled の知らせで記録が canceled になる。断られたら（既定でないプロフィール）止められないものとして出し直す */
+  async function stopDownload(sessionId, guid) {
+    const state = up;
+    const record = state && !state.cdp.closed ? downloads.running(sessionId, guid) : null;
+    if (!record) return { stopped: false };
+    downloads.stopping(guid, true);
+    try {
+      await state.cdp.send('Browser.cancelDownload', { guid, ...(record.context ? { browserContextId: record.context } : {}) });
+      return { stopped: true };
+    } catch (error) {
+      log(`chrome-relay: download stop failed: ${error?.message ?? error}`);
+      downloads.stopping(guid, false);
+      refreshDownloadContext(state, true);
+      return { stopped: false };
     }
   }
 
@@ -1023,6 +1169,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (client.closed || state.cdp.closed) throw new RelayError('the agent connection is closed');
     };
     if (method.startsWith('Target.') && method !== 'Target.setAutoAttach') throw denied('browser command');
+    if (DOWNLOAD_COMMANDS.has(method)) throw downloadDenied(client);
     if (SESSION_DENIED.has(method) || SESSION_DENIED_DOMAINS.some(prefix => method.startsWith(prefix))) throw denied('browser command');
     let forward = params;
     if (method === 'Page.navigate' && !allowUrl(params.url, { sessionId: client.entry.id, via: 'navigate' })) throw denied('navigation');
@@ -1106,7 +1253,15 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     while (tab.commits === commits && Date.now() < end && !tab.controller.signal.aborted) await new Promise(resolve => setTimeout(resolve, 10));
   }
 
+  /** ダウンロードの命令を断る（保存先はエージェントに決めさせない。ADR 0328）。文は会話の言語で、押して始める・list_downloads で確かめる、を案内する */
+  function downloadDenied(client) {
+    let text = null;
+    try { text = downloadDeniedText?.(client.entry.id) ?? null; } catch { /* 文が引けなければ固定の字 */ }
+    return new RelayError(typeof text === 'string' && text ? text : 'browser command denied');
+  }
+
   async function browserCommand(state, client, method, params) {
+    if (DOWNLOAD_COMMANDS.has(method)) throw downloadDenied(client);
     if (!BROWSER_ALLOWED.has(method)) throw denied('browser command');
     const entry = client.entry;
     switch (method) {
@@ -1387,6 +1542,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       clearViewFocus(entry);
       scope.rebind?.(from, to);
       callHook('tabHolder', () => tabHolder.rebind?.(from, to));
+      callHook('downloads', () => downloads.rebind(from, to));
       changed(entry);
       fire(changeListeners, from);   // 前の id はもう中継に無い（state が null → 待機中）。前の id で配った引き継ぎ（ピルなど）を片付けさせる
       notifyView(to, 'rebind', from);
@@ -1456,6 +1612,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       settleEntry(entry);
       closeClients(entry, 1000, 'forgotten');
       scope.forget?.(sessionId);
+      callHook('downloads', () => downloads.forget(sessionId));
       entries.delete(sessionId); byKey.delete(entry.key);
       fire(changeListeners, sessionId);   // 会話がもう中継に無い（state が null → 待機中）
       notifyView(sessionId, 'forget');
@@ -1672,6 +1829,17 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     },
     /** 4 つの口の実体（{ pagePolicy, tabHolder, tabInfo, pageBridge }）。口を持つ段が足した呼び口へ、中継を変えずに外から届くため */
     get unify() { return { pagePolicy, tabHolder, tabInfo, pageBridge }; },
+    /**
+     * 会話のタブで始まったダウンロード（ADR 0328）。list はエージェントへ返す形、screen は画面へ出す形（'tab:downloads' と同じ）。
+     * wait は進行中のものが無くなるか seconds が過ぎるまで待つ。stop は人の「ダウンロードを止める」（{ stopped }）。onSettled は決着の聞き手（会話の行）
+     */
+    downloads: {
+      list: sessionId => downloads.list(sessionId),
+      screen: sessionId => downloads.screen(sessionId),
+      wait: (sessionId, seconds, signal) => downloads.wait(sessionId, seconds, signal),
+      stop: (sessionId, id) => stopDownload(sessionId, id),
+      onSettled: fn => downloads.onSettled(fn),
+    },
     /** タブの出来事（TAB_EVENTS の名前）。fn(type, payload) */
     onTabEvent(fn) { tabEventListeners.add(fn); return () => tabEventListeners.delete(fn); },
     get port() { return address?.port ?? null; },
@@ -1683,6 +1851,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (up && os.capabilities?.().reason === 'pending') for (const tab of up.tabs.values()) up.cdp.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {});
       // ブラウザーの単位の Fetch は接続に残る（接続の子が更新を越えて持つ）。答える相手が居なくなるので外す（利用者のタブの要求を止めたままにしない）
       if (up && up.browserFetch && up.browserFetch !== '[]' && !up.cdp.closed) up.cdp.send('Fetch.disable', {}).catch(() => {});
+      // ダウンロードのイベントの旗は外さない（次のサーバーの bind と順序が入れ替わると、付け直した旗を消してしまう。受ける相手の居ないイベントは捨てられるだけ）
       if (up) teardown(up);
       wss.close(); server.close();
       log('chrome-relay: closed');

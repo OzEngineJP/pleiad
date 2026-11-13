@@ -96,6 +96,8 @@ const SUITES = [
   './unit/side-panel.mjs',
   './unit/refresh-batch.mjs',
   './unit/command-reply.mjs',
+  // 遅い命令・イベントループ・送信待ちの診断記録
+  './unit/slow-log.mjs',
   './unit/session-list-delta.mjs',
   './unit/server-session-list-delta.mjs',
 
@@ -506,10 +508,17 @@ const SUITES = [
   './unit/context-scan.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   './unit/context-settings.mjs',
+  // 外部 MCP を名前 × エージェントで中継する・止める（ADR 0327）
+  './unit/context-agent-mcp.mjs',
+  './unit/context-mcp-matrix.mjs',
+  './unit/context-mcp-review.mjs',
+  './unit/context-mcp-exhaustive.mjs',
   // 探す場所を足す（追加ルート）: 種類ごと・探す形式に従う・形式 2 からの移行
   './unit/context-roots.mjs',
   './unit/server-context.mjs',
   './unit/context-ui.mjs',
+  // Pleiad の指示の並べ替え: 取っ手のキーとメニュー・続けて動かす・フォーカス・読み上げ（タッチで引く操作は tests/browser/ply-instructions-reorder.mjs）
+  './unit/ply-instructions-order.mjs',
   // 指示の量（ADR 0056）: 自分で書いた分と Pleiad が足した分・目安・エージェント任せの見積もり
   './unit/instruction-amount.mjs',
   // 気になる所: 違うファイルのほぼ同じ段落・もう無いパス（言語に依存しない判定）・サーバー越しの対象
@@ -952,6 +961,9 @@ const SUITES = [
   './unit/page-coords.mjs',
   // 中継の 4 つの口（既定は今のまま・差し替えた口が決めた場所で呼ばれる）
   './unit/chrome-relay-hooks.mjs',
+  // 会話の Chrome のウィンドウのダウンロード（会話のタブで始まったものだけ記録・画面へ知らせる・止める・エージェントの命令は断る。ADR 0328）
+  './unit/chrome-downloads.mjs',
+  './unit/server-chrome-downloads.mjs',
   // ページの入口の認証（ページの Cookie・本体の Cookie・?token= を受けない）
   './unit/page-auth.mjs',
   // 2 つのリスナー（Host が違えば 421・GET と HEAD だけ・::1・port の引き継ぎ）と、実際のサーバーで 2 つの port が立つ
@@ -1007,6 +1019,8 @@ const SUITES = [
   './unit/browser-unify-b3.mjs',
   './unit/browser-unify-ws.mjs',
   './unit/browser-unify-tabs.mjs',
+  // Chrome のウィンドウのダウンロードの画面（置き場と字は素の Node。ボタン・一覧・スマホの入口は B1_BROWSER_TEST=1。tests/browser/chrome-downloads.cjs）
+  './unit/chrome-downloads-ui.mjs',
   // 右の欄のタブの列と開け閉めを本物の画面で（B1_BROWSER_TEST=1。tests/browser/right-panel-tabs.mjs）
   './unit/right-panel-tabs.mjs',
   // 右の欄の動きの間は幅に反応する処理を止めて止まったら 1 度だけやり直す・受け渡しは動き始めに量って書くだけ（web/panel-moving.mjs・panel-handoff.mjs）

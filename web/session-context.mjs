@@ -566,6 +566,12 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   }
   function editFace(kind) {
     const value = here()?.kinds[kind].value ?? place.view?.defaults.kinds[kind].value;
+    // 外部 MCP が名前 × エージェントの設定（agents）のときは、この場所だけの 2 択は効かない。設定 › プラグインで変える
+    if (kind === 'mcp' && value?.agents) {
+      const k = kindBox(WORD[kind], t('sessionContext.place.mcpByAgentWho'), true);
+      k.append(el('p', 'cx-sub', t('sessionContext.place.mcpByAgent')));
+      return k;
+    }
     const ply = value?.owner === 'ply';
     const k = kindBox(WORD[kind], ply ? t('sessionContext.place.plyWho') : t('sessionContext.native'), ply);
     if (!value) { k.append(el('p', 'cx-sub', t('sessionContext.place.loading'))); return k; }

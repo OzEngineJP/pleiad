@@ -88,7 +88,7 @@ export const COMMAND_REFUSE = [
   'worktreeCheck', 'worktreeSplit', 'worktreeDiscard', 'worktreeKeep', 'worktreeArchive', 'worktreeRestore',
   'setSessionMcp', 'agentMcp', 'nativeInstructions', 'contextFindings', 'listMcpConfig', 'readMcpServer', 'saveMcpServer',
   'listPlyMcp', 'readPlyMcp', 'savePlyMcp', 'deletePlyMcp', 'mcpAuthStart', 'mcpAuthStatus', 'mcpAuthLogout', 'mcpReconnect',
-  'renamePlyMcp', 'importPlyMcp', 'setPlyMcpSettings', 'setContextSettings', 'scanContext',
+  'renamePlyMcp', 'importPlyMcp', 'setPlyMcpSettings', 'setContextSettings', 'scanContext', 'mcpMatrix', 'setMcpAgent',
   'scanHooks', 'readHook', 'hookTargets', 'saveHooks', 'copyHooks', 'sessionHooks', 'plyHooks', 'readPlyHook', 'savePlyHook',
   'removePlyHook', 'togglePlyHook', 'plyHookPreview', 'hooksUnifyPreview', 'setHooksOwner', 'repairPlyHooks',
   'setAutoCompaction', 'setConversationAutoCompaction', 'runShell', 'stopShell', 'skipShell', 'switchBackend', 'setMode',
