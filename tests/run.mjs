@@ -512,6 +512,8 @@ const SUITES = [
   './unit/context-roots.mjs',
   './unit/server-context.mjs',
   './unit/context-ui.mjs',
+  // Pleiad の指示の並べ替え: 取っ手のキーとメニュー・続けて動かす・フォーカス・読み上げ（タッチで引く操作は tests/browser/ply-instructions-reorder.mjs）
+  './unit/ply-instructions-order.mjs',
   // 指示の量（ADR 0056）: 自分で書いた分と Pleiad が足した分・目安・エージェント任せの見積もり
   './unit/instruction-amount.mjs',
   // 気になる所: 違うファイルのほぼ同じ段落・もう無いパス（言語に依存しない判定）・サーバー越しの対象

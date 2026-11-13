@@ -109,7 +109,7 @@ export function peekDocument(entry, { short = p => p } = {}) {
   return box;
 }
 
-export function setupContext({ button: openButton, cmd, show, recentPlaces = () => [], backends = () => [], openDelegation = null, getPrefs = () => ({}) }) {
+export function setupContext({ button: openButton, cmd, show, showMenu, recentPlaces = () => [], backends = () => [], openDelegation = null, getPrefs = () => ({}) }) {
   const panel = document.getElementById('contextPanel');
   panel.classList.add('context');
   // 外の AI から Pleiad を使う設定（web/cli-setup.mjs）の置き場。作り直しで消えないよう取っておき、外部 MCP のカードの次へ置く
@@ -149,7 +149,7 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     try { await fn(); }
     catch (e) { status.textContent = t('context.saveFailed', { error: e.message }); }
   }
-  const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened });
+  const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened, showMenu });
   // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0045）
   const hooks = createHooksCard({ cmd, work, saved: () => saved(t('hooks.saved')), opened });
   toast.before(hooks.root);

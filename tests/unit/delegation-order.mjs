@@ -1,5 +1,5 @@
 import { setupDelegationSettings } from '../../web/delegation-settings.mjs';
-import { moveCandidate } from '../../web/delegation-order.mjs';
+import { moveItem } from '../../web/reorder.mjs';
 import { normalizeSettings } from '../../core/delegation-routing.mjs';
 import { el } from '../../web/dom.mjs';
 import { N } from '../lib/dom-stub.mjs';
@@ -61,7 +61,7 @@ export default async function (t) {
     release(); held = null; await flush(); await flush();
     t.ok('続けて変えた順序を保存の応答で失わない', stored.tiers.t1.join() === 'fake:b,fake:a,fake:c');
     const original = ['a', 'b', 'c'];
-    t.ok('範囲外や消えた候補の順序は保存しない', moveCandidate(original, 'x', 0) === null && moveCandidate(original, 'a', -1) === null && moveCandidate(original, 'a', 3) === null && moveCandidate(original, 'a', NaN) === null && original.join() === 'a,b,c');
+    t.ok('範囲外や消えた候補の順序は保存しない', moveItem(original, 'x', 0) === null && moveItem(original, 'a', -1) === null && moveItem(original, 'a', 3) === null && moveItem(original, 'a', NaN) === null && original.join() === 'a,b,c');
   } finally {
     document.getElementById = saved.get; document.activeElement = saved.active; N.prototype.focus = saved.focus;
   }
