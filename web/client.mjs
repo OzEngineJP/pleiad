@@ -561,7 +561,8 @@ const mainView = createConversationView({
     currentSession: () => state.current,
     isBusy: () => state.busy,
     isLoadingSession: () => state.loadingSession,
-    backendVocab: (backend) => state.vocab.get(backend),
+    // 発言者のモデル名の引き先。一覧はアカウントごとに違いうる（Mythos など）ので、会話のアカウントがあればその一覧を引く
+    backendVocab: (backend, account = '') => cachedVocabFor(backend, account),
   },
 });
 const { liveTurn, historyPane } = mainView;
@@ -5888,10 +5889,15 @@ function syncRemoteOriginLine() {
     (() => { const label = state.modes?.[state.sessions.find(s => s.id === state.current)?.mode]?.label; return label ? t('session.remoteOrigin.modeIs', { mode: label }) : t('session.remoteOrigin.mode'); })()].join(' · ') : '';
 }
 
+/** 作業の項目の会話のアカウント（項目が持つか、無ければタスクの記録から。ログイン中・持たないものは ''）。モデルの表示名はこのアカウントの一覧で引く */
+function itemAccount(item) {
+  return item?.account ?? (item?.taskId && taskById(item.taskId)?.account) ?? '';
+}
+
 const vocabAsked = new Set();
 /** モデルの表示名。語彙がまだ無いエージェントは取りに行き、取れたら描き直す */
 function modelText(item) {
-  const account = item.account ?? (item.taskId && taskById(item.taskId)?.account) ?? '';
+  const account = itemAccount(item);
   const vocab = cachedVocabFor(item.backend, account, { exact: true });
   const askedKey = JSON.stringify([item.backend, account]);
   if (!vocab && item.backend && !vocabAsked.has(askedKey)) {
@@ -6698,7 +6704,7 @@ function disposeModalChild() {
 
 function createModalChildView(item, th) {
   const childId = item.childId;
-  const account = item.account ?? (item.taskId && taskById(item.taskId)?.account) ?? '';
+  const account = itemAccount(item);
   const modelName = (backend) => modelDisplayName(cachedVocabFor(backend, account)?.models ?? {}, item.model);
   const none = () => {};
   let view;
@@ -6758,7 +6764,7 @@ function createModalChildView(item, th) {
       currentSession: () => childId,
       isBusy: () => false,
       isLoadingSession: () => false,
-      backendVocab: (backend) => state.vocab.get(backend),
+      backendVocab: (backend, acct = '') => cachedVocabFor(backend, acct || account),
     },
   });
   return view;
@@ -6968,7 +6974,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
       prevRole = 'user';
       continue;
     }
-    const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, sessionId,
+    const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, account: itemAccount(item), sessionId,
       // 古い分を省いた筋（base > 0）の最初の発言は会話の途中。依頼ではなく追加の指示として描く
       user: (m) => (it.mi === 0 && !base ? requestNode : m.sentByHuman ? youNode : followUp)(m.text, m.at) });
     prevRole = role;
@@ -7189,7 +7195,7 @@ function pinnedFacts(card, routing) {
   // 依頼元が子の設定を替えたら（ADR 0134）、ply_delegate の返り値は前の委譲先のもの。タスクの記録の今の mode を使う
   const mode = (routing.changed ? task.mode ?? result.mode : result.mode ?? task.mode) ?? '';
   // worktree の子は、パスの代わりに「作業場所」の行（ブランチ付き。paintDelegateWorkspace）が出る
-  return { names: routingNames, mode: mode ? state.vocab.get(routing.target.backend)?.modes?.[mode]?.label ?? mode : '', cwd: task.worktree ? '' : result.cwd ?? task.cwd ?? '',
+  return { names: routingNames, mode: mode ? cachedVocabFor(routing.target.backend, routing.target.account ?? task.account ?? '')?.modes?.[mode]?.label ?? mode : '', cwd: task.worktree ? '' : result.cwd ?? task.cwd ?? '',
     compaction: task.compaction ?? null };
 }
 function delegateDetail(card, routing) {

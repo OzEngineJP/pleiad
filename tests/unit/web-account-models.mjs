@@ -3,8 +3,12 @@
 //   - web/delegation-routing-view.mjs: routingLine / skippedPhrase / routingFailureParts / retryPanel が account を modelName へ渡す
 //   - web/channels/bot-page.mjs: 作成下書きの account 選択で語彙引き直し、作成時は setAccount → update(model/effort)、アカウント更新イベントで S.vocab 破棄
 //   - web/channels/thread-composer.mjs: host.vocab / host.efforts へ account を渡し、invalidateVocab() で取り直す
+//   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { lang, setLanguage } from '../../web/i18n.mjs';
+import { modelDisplayName } from '../../web/composer-labels.mjs';
+import { cutFunction, readClientAndLiveTurn, readHistoryPane } from '../lib/cut-source.mjs';
 import { setupDelegationSettings } from '../../web/delegation-settings.mjs';
 import { routingLine, skippedPhrase, parseRoutingFailure, routingFailureParts, retryPanel } from '../../web/delegation-routing-view.mjs';
 import { createBotPage } from '../../web/channels/bot-page.mjs';
@@ -425,6 +429,45 @@ export default async function (t) {
       } finally {
         tc.destroy();
       }
+    }
+
+    // ---- 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く（最後に読んだ別アカウントの一覧で引かない）
+    {
+      const source = readClientAndLiveTurn();
+      const whoSpan = { textContent: '' };
+      const asked = [];
+      // 一覧の行の名前が、id の形から読んだ名前（Mythos 5.2）と違う形にして、どの一覧で引いたかを見分ける
+      const vocabs = {
+        verified: { models: { 'claude-mythos-5-2': { label: 'Mythos 5.2（一覧の名前）' } } },
+        plain: { models: { sonnet: { label: 'Sonnet 5.5' } } },
+      };
+      const context = vm.createContext({
+        systemHistoryNode: () => undefined,
+        aiMsg: () => ({ querySelector: () => whoSpan, append() {} }),
+        modelDisplayName,
+        backendVocab: (backend, account) => { asked.push([backend, account]); return vocabs[account] ?? null; },
+        toolNodes: () => [], subagentToolsOf: () => new Set(), activeBackendId: () => 'claude', currentSession: () => 's1',
+      });
+      vm.runInContext(`${cutFunction(readHistoryPane(), 'historyRow')}\nthis.historyRow = historyRow;`, context);
+      const speak = (account, extra = {}) => {
+        whoSpan.textContent = '';
+        context.historyRow({ role: 'assistant', model: 'claude-mythos-5-2', toolCalls: [] }, { readonly: true, backend: 'claude', account, ...extra });
+        return whoSpan.textContent;
+      };
+      t.ok('読むだけの筋: 発言者のモデル名は、会話のアカウントの一覧の名前で出す', speak('verified') === 'Mythos 5.2（一覧の名前）' && asked.at(-1)?.join('|') === 'claude|verified', JSON.stringify(asked));
+      t.ok('読むだけの筋: 一覧に無いモデルは、そのアカウントの一覧でも別のアカウントの一覧の名前を借りず、id の形から読む', speak('plain') === 'Mythos 5.2' && asked.at(-1)?.join('|') === 'claude|plain', JSON.stringify(asked));
+      whoSpan.textContent = '';
+      asked.length = 0;
+      context.historyRow({ role: 'assistant', model: 'claude-mythos-5-2', toolCalls: [] }, { backend: 'claude', account: 'verified' });
+      t.ok('読むだけの筋でない行（メインパネル）は発言者の名前を替えず、一覧も引かない', whoSpan.textContent === '' && asked.length === 0);
+
+      // 配線: 詳細の筋・子の会話の面・主の面が、会話のアカウントの一覧（cachedVocabFor）を引く。最後に読んだ一覧（state.vocab）を引かない
+      const body = (name) => cutFunction(source, name);
+      t.ok('詳細の筋は historyRow へ項目のアカウントを渡す', body('readonlyThread').includes('account: itemAccount(item)'));
+      t.ok('子の会話の面の backendVocab は、その会話のアカウントの一覧を引く', body('createModalChildView').includes('backendVocab: (backend, acct = \'\') => cachedVocabFor(backend, acct || account)'));
+      t.ok('主の面の backendVocab も、渡されたアカウントの一覧を引く', source.includes('backendVocab: (backend, account = \'\') => cachedVocabFor(backend, account)')
+        && !source.includes('backendVocab: (backend) => state.vocab.get(backend)'));
+      t.ok('固定の委譲の内訳の承認モードの見出しも、委譲先のアカウントの一覧を引く', body('pinnedFacts').includes('cachedVocabFor(routing.target.backend, routing.target.account ?? task.account ?? \'\')'));
     }
   } finally {
     document.getElementById = saved.getElementById;
