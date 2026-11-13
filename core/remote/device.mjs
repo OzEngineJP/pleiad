@@ -28,6 +28,8 @@ import { readJson, writeJson } from './devices.mjs';
 import { t } from '../i18n.mjs';
 
 const HOST_ID = /^[a-z2-7]{26}$/;
+/** AI の線だけ: ホストが居ない（host-offline）間の張り直しの上限を 5 分に延ばす。張り直しのたびに中継の券を Plus の api へ取り直すので、オフラインのままのホストへの取り直しの頻度を下げる */
+const AGENT_LINK_OFFLINE_MAX_MS = 300_000;
 const secretKeyOf = (hostId, via = 'own') => via === 'plus' ? `host-plus:${hostId}` : `host:${hostId}`;
 /** 取り消された後に Plus で申し込む新しい鍵の置き場（許可されるまで同じ鍵を使う） */
 const pendingKeyOf = hostId => `host-plus-pending:${hostId}`;
@@ -438,7 +440,7 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       const auth = via === 'plus' ? plusAuthFor(hostId) ?? {} : {};
       const link = new DeviceLink({ creds: { ...creds, via }, keyPair, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log, via,
         getIdToken: auth.getIdToken ?? null, getTicket: auth.getTicket ?? null, onReadmit: auth.onReadmit ?? null,
-        ...(proxyOptions.backoff ? { backoff: proxyOptions.backoff } : {}),
+        backoff: { offlineMaxMs: AGENT_LINK_OFFLINE_MAX_MS, ...proxyOptions.backoff },
         ...(proxyOptions.connectTimeoutMs ? { connectTimeoutMs: proxyOptions.connectTimeoutMs } : {}) });
       const agent = new AgentLink({ link, log, ...(proxyOptions.agentRequestTimeoutMs ? { requestTimeoutMs: proxyOptions.agentRequestTimeoutMs } : {}) });
       link.on('status', s => {

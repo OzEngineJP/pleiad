@@ -20,6 +20,8 @@
 //   'stopped'       stop() した
 //
 // 張り直しは 0.5 秒から 30 秒まで倍々（±25% の揺らぎ）。10 秒つながり続けたら初めからに戻す。
+// host-offline（ホストが居ない）が続く間だけは、backoff.offlineMaxMs で別の上限を付けられる
+// （張り直しのたびに券を取り直す線が、オフラインのままのホストへ短い間隔で取り直し続けるのを延ばす。既定は maxMs と同じ）。
 // ストリームは持ち越さない（§4.4）。切れたらチャネルが全ストリームを捨て、プロキシが 502 / 1006 にする。
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
@@ -156,7 +158,7 @@ export class DeviceLink extends EventEmitter {
   /**
    * creds: { hostId, hostPublicKey (Buffer), relayUrl, deviceId, token, via? }
    * keyPair: 端末の静的鍵 { publicKey, privateKey }
-   * backoff: { minMs, maxMs, stableMs }（試験で縮める）
+   * backoff: { minMs, maxMs, stableMs, offlineMaxMs }（試験で縮める。offlineMaxMs は host-offline が続く間の上限。無ければ maxMs）
    * connectTimeoutMs: 中継への接続・ハンドシェイク・HELLO のそれぞれの待ちの上限
    */
   constructor({ creds, keyPair, app = '', name = '', shell = 'desktop', backoff = {}, connectTimeoutMs = 15_000, channelOptions = {}, log = () => {}, via = null, getIdToken = null, getTicket = null, onReadmit = null }) {
@@ -174,6 +176,7 @@ export class DeviceLink extends EventEmitter {
     this.name = String(name);
     this.shell = shell;
     this.backoff = { ...LINK_BACKOFF, ...backoff };
+    this.backoff.offlineMaxMs ??= this.backoff.maxMs;
     this.connectTimeoutMs = connectTimeoutMs;
     this.channelOptions = channelOptions;
     this.log = log;
@@ -301,7 +304,9 @@ export class DeviceLink extends EventEmitter {
       });
       return;
     }
-    const base = Math.min(this.backoff.maxMs, this.backoff.minMs * 2 ** this.attempt);
+    // host-offline が続く間だけ offlineMaxMs まで延ばす。ほかの理由（通信の断・中継の作り直しなど）はいつもの上限に戻る
+    const cap = state === 'host-offline' ? this.backoff.offlineMaxMs : this.backoff.maxMs;
+    const base = Math.min(cap, this.backoff.minMs * 2 ** this.attempt);
     const delay = delayOverride != null ? delayOverride : Math.round(base * (0.75 + Math.random() * 0.5));
     this.attempt++;
     const retryAt = new Date(Date.now() + delay).toISOString();

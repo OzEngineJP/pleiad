@@ -19,7 +19,7 @@ const listeners = [];
 const toWorker = message => { for (const fn of listeners) fn({ data: message }); };
 const device = createRemoteDevice({
   dir, app: 'test', name: process.env.FAKE_REMOTE_DEVICE_NAME || 'laptop-test', platform: 'desktop',
-  proxyOptions: { backoff: { minMs: 100, maxMs: 400, stableMs: 500 }, connectTimeoutMs: 5000 },
+  proxyOptions: { backoff: { minMs: 100, maxMs: 400, stableMs: 500, offlineMaxMs: 4000 }, connectTimeoutMs: 5000 },
   plusAuth: process.env.FAKE_REMOTE_DEVICE_PLUS_ID_TOKEN ? () => ({ getIdToken: async () => process.env.FAKE_REMOTE_DEVICE_PLUS_ID_TOKEN }) : null,
 });
 const service = createRemoteAgentService({ getDevice: async () => device, post: toWorker, log: line => console.log(`  [remote-agent] ${line}`) });

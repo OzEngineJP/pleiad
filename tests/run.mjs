@@ -912,6 +912,8 @@ const SUITES = [
   // リモートの端末側（core/remote/device*.mjs）。中継とホストを立て、端末内プロキシの URL を素の HTTP と ws で叩く
   './unit/remote-device.mjs',
   './unit/remote-close-classify.mjs',
+  // AI の線（agentOpen）の張り直し: ホストが居ない間だけ待ちの上限を延ばす（ほかの切断・窓の線・既定値は今のまま）
+  './unit/remote-agent-backoff.mjs',
   './unit/remote-device-plus.mjs',
   // 画面の殻を端末に持つ（ADR 0181）: 束の形と検証・ホストの /static-bundle・端末の保存と配り・ポートが変わったとき・古いホストと古いアプリ
   './unit/remote-static-bundle.mjs',
