@@ -117,6 +117,9 @@ export const DATA_WRITES = [
     { name: 'context-scans.json', limit: 'ユーザーが設定した場所（places）の数。通常は数個から数十', reason: '探索の設定。件数に上限は無い', unbounded: true },
     { name: 'context-scans.v<N>-backup.json', limit: '形式の移行の前に 1 回だけ（flag wx）', reason: '形式移行前の写し。増えない' },
   ] },
+  { file: 'core/context-claude-extras.mjs', sites: 1, targets: [
+    { name: 'claude-connectors.json', limit: 'CONNECTOR_CACHE_MAX=200（claude.ai のコネクターの名前。実際は数個）', reason: '最後に読めたコネクターの一覧。次に設定を開いたとき、読み取りを待たずに出すための覚え' },
+  ] },
   { file: 'core/agent-accounts.mjs', sites: 2, targets: [
     { name: 'agent-accounts.json', limit: 'MAX_ACCOUNTS=100', reason: 'エージェントごとの登録アカウントの台帳。秘密は別の暗号化ストア' },
   ] },

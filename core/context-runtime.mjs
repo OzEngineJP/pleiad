@@ -180,6 +180,7 @@ export function agentMcpRules(plan, agent) {
     },
     isOwn,
     off,
+    offNames: () => Object.keys(rules.off ?? {}).filter(off),
   };
 }
 
@@ -195,7 +196,7 @@ export async function resolveRuntime(policy, options = {}) {
   const report = { version: 1, cwd: policy.cwd, owners, at: new Date().toISOString(), entries: [], native: kinds.length < 3, status: 'resolved' };
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
   const mcpRules = agentMcpRules(settings.plan, agent);
-  const suppress = new Set(), nativeNames = new Set();
+  const suppress = new Set(), nativeNames = new Set(), seenMcp = new Set();
   for (const item of scan.entries) {
     // scope と root は会話の右パネルが出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分けるのに使う
     const row = { id: item.id, kind: item.kind, name: item.name, path: item.path, scope: item.scope, appliesTo: item.appliesTo, status: item.status, hash: item.hash, origins: item.origins,
@@ -209,7 +210,7 @@ export async function resolveRuntime(policy, options = {}) {
       else { seen.add(key); conditional.push({ ...item, content: instructionBody(item) }); }
       continue;
     }
-    if (mcpRules && item.kind === 'mcp' && mcpRules.isOwn(item)) nativeNames.add(item.name);
+    if (mcpRules && item.kind === 'mcp') { seenMcp.add(item.name); if (mcpRules.isOwn(item)) nativeNames.add(item.name); }
     if (item.status !== 'candidate') continue;
     // 名前ごとのモデル: このエージェントへ中継しない定義。接続せず、ply_context にもツールを出さない
     if (mcpRules && item.kind === 'mcp') {
@@ -252,6 +253,8 @@ export async function resolveRuntime(policy, options = {}) {
   markChoices(report.entries, settings.plan, scan.home);
   // このエージェントが自分で持っている同じ名前は、Pleiad が渡す側を使うので止める（二重につながない）
   if (mcpRules) for (const item of servers) if (nativeNames.has(item.name)) suppress.add(item.name);
+  // 走査に出ない名前（claude.ai のコネクター・プラグインの MCP）を、そのエージェントで使わない設定にしたものも止める名前に加える
+  if (mcpRules) for (const key of mcpRules.offNames()) if (!seenMcp.has(key)) suppress.add(key);
   const mcp = mcpRules ? { named: true, suppress: [...suppress].sort() } : { named: false, suppress: [] };
   const prompt = instructions.map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: i.content })).join('\n\n');
   if (Buffer.byteLength(prompt) > 128 * 1024) throw new Error(t('context.runtime.instructionsTooLarge'));

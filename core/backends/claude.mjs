@@ -18,6 +18,7 @@ import { claudeCompatEnv, writeClaudeFlagSettings, adoptClaudeFlagSettings, reda
 import { writeClaudeEnvFile, adoptClaudeEnvFile } from '../claude-env-file.mjs';
 import { writeClaudeMcpFile, adoptClaudeMcpFile } from '../claude-mcp-file.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
+import { CONNECTOR_WAIT_MS, connectorNames } from '../context-claude-extras.mjs';
 import { AUTO_COMPACT_WINDOW_ENV } from '../compaction-settings.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
 import { claudeHookCallbacks, mergeCallbacks } from '../hooks-unify.mjs';
@@ -181,6 +182,29 @@ async function probeCatalog(cwd, withSettings) {
   }
 }
 sdk.probe ??= probeCatalog;
+
+/** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0324）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
+export async function probeClaudeConnectors({ deny = [] } = {}) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 20_000);
+  const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
+  let q = null;
+  try {
+    const query = sdk.query ?? (await loadClaudeSdk()).query;
+    q = query({ prompt: idle(), options: {
+      pathToClaudeCodeExecutable: claudeExecutable(), env: claudeEnv(process.env), abortController: ac,
+      settingSources: ["user"], settings: { disableAllHooks: true, ...(deny.length ? { deniedMcpServers: deny.map((serverName) => ({ serverName })) } : {}) },
+      persistSession: false, stderr: () => {},
+    } });
+    await q.initializationResult();
+    await new Promise((resolve) => setTimeout(resolve, CONNECTOR_WAIT_MS));
+    return connectorNames(await q.mcpServerStatus());
+  } finally {
+    clearTimeout(timer);
+    try { q?.close?.(); } catch { /* 既に閉じている */ }
+    ac.abort();
+  }
+}
 
 /** anyCatalog を、今の CLI の目印と食い違わない間だけ返す。食い違ったら（版が変わった）忘れる */
 function freshAnyCatalog(cliSig) {

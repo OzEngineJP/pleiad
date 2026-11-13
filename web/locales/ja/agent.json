@@ -1562,6 +1562,10 @@
         "agent": "エージェントの id（claude・codex など）。",
         "on": "true で使う、false で使わない。"
       },
+      "mcpMatrix": {
+        "summary": "外部 MCP を「名前 × エージェント」の表で読む（どのエージェントで使われるか、押せるか。Claude のプラグインの MCP と claude.ai のコネクターも含む）。",
+        "refresh": "true なら、claude.ai のコネクターを裏で読み直す。"
+      },
       "refresh": {
         "summary": "会話に固定した指示・Skills を、今のファイルから読み直す（走っていない会話だけ）。"
       },

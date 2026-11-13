@@ -1563,6 +1563,10 @@
         "agent": "Agent id (claude, codex, ...).",
         "on": "true to use it, false to stop using it."
       },
+      "mcpMatrix": {
+        "summary": "Read external MCP servers as a name-by-agent table (where each is used and whether it can be switched, including Claude plugin MCPs and claude.ai connectors).",
+        "refresh": "If true, re-read the claude.ai connectors in the background."
+      },
       "refresh": {
         "summary": "Re-read the instructions and Skills pinned to a conversation from the current files (only when it is not running)."
       },

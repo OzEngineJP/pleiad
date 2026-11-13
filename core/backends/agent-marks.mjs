@@ -263,6 +263,12 @@ export const CAPABILITY_STATES = {
  * 各エージェントの性質（TRAIT_KEYS の全部。true / false だけ）。
  * 能力ではないので、false は「未対応」ではなく、そのエージェントの特徴（そろえる対象ではない）。
  */
+/**
+ * ply_context（Pleiad の中継）を受け取れない担当の組み合わせ。ここに挙げた種類を Pleiad が担当しているあいだ、そのエージェントには中継を渡さない
+ * （エージェントが自分で読む指示・Skills と重なるため）。Grok だけ。
+ */
+export const PLY_CONTEXT_CONFLICTS = { grok: ['instruction', 'skill'] };
+
 export const AGENT_TRAITS = {
   // 秘密情報は CLAUDE_ENV_FILE（値ファイルを読むスクリプト）で Bash のシェルにだけ届く。PowerShell ツールには渡らない（ADR 0284）
   claude: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, secretsViaEnvFile: true },

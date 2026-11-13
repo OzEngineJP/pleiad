@@ -85,6 +85,8 @@ import { mergeCompactionHistory, attachCompactSummaries } from './compaction-his
 import { slimRow, createListDeltas } from './session-list-delta.mjs';
 import { createBulkReplies } from './bulk-replies.mjs';
 import { createContextSettings } from './context-settings.mjs';
+import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
+import { probeClaudeConnectors } from './backends/claude.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
@@ -5250,8 +5252,16 @@ const opsHooks = {
   unifyPreview: (args) => hooksUnifyPreview(args),
 };
 
+// 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0324）。コネクターは最後に読めた一覧を覚えておく
+const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'), probe: probeClaudeConnectors });
+
 // コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
 const opsContext = {
+  claudeExtras: async ({ refresh = false, deny = [] } = {}) => {
+    if (refresh) void claudeConnectors.refresh({ deny });
+    const [plugins, connectors] = await Promise.all([readClaudePlugins().catch(() => []), claudeConnectors.get()]);
+    return { plugins, connectors: connectors.connectors, reading: connectors.reading };
+  },
   view: (cwd) => contextSettings.view(cwd),
   set: async (args, actor) => {
     const view = await contextSettings.set(args ?? {});
