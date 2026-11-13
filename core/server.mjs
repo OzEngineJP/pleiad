@@ -659,7 +659,7 @@ function warmBackendModels(b, cwd = os.homedir()) {
 }
 /**
  * 起動時・SDK 取得後の先読みのあとで、使用量の取り置き（設定の「一覧に見当たらない」の判定）を取り直す。
- * アカウントごとに一覧を持つエージェントは、判定が手元の一覧だけで答える（一覧の CLI を起こさない。ADR 0326）ので、一覧が揃ってから見直す
+ * アカウントごとに一覧を持つエージェントは、判定が手元の一覧だけで答える（一覧の CLI を起こさない。ADR 0329）ので、一覧が揃ってから見直す
  */
 function warmCatalogs(b) {
   return warmBackendModels(b, os.homedir())
@@ -667,7 +667,7 @@ function warmCatalogs(b) {
     .catch(() => {});
 }
 /**
- * トークン別のアカウント（capabilities.accounts が 'token'）の一覧の記憶を、そのアカウントの分だけ捨てる（追加・トークンの差し替え・削除。ADR 0326）。
+ * トークン別のアカウント（capabilities.accounts が 'token'）の一覧の記憶を、そのアカウントの分だけ捨てる（追加・トークンの差し替え・削除。ADR 0329）。
  * warm なら引き直して使用量の判定も更新する（削除では引き直さない）。対象はエージェントの印から選ぶ（id は書かない）
  */
 function refreshClaudeAccountCatalog(accountId, { warm = false } = {}) {
@@ -1825,7 +1825,7 @@ const routingUsage = createUsageMonitor({
   },
   // 設定画面の「一覧に見当たらない」の注意だけに使う（振り分けは一覧で飛ばさない。ADR 0311）。一覧の id のほか、行の resolvedModel に一致する名前も「ある」。
   // passive（アカウントごとに一覧を持つエージェントを、監視が頼むとき）は、手元の一覧だけで答える（一覧の CLI を起こさない・待たない・取り直しの確かめをしない。
-  // 起こすのは先読み（warm）だけで、アカウントを 1 つずつ順に。先読みと同じ作業場所の一覧を読む。ADR 0326）
+  // 起こすのは先読み（warm）だけで、アカウントを 1 つずつ順に。先読みと同じ作業場所の一覧を読む。ADR 0329）
   modelKnown: async (b, model, _account, { passive = false } = {}) => {
     const cwd = passive ? os.homedir() : process.cwd();
     return await validModel(b, model, cwd, '', { passive }) || Boolean(await b.matchModel?.(model, cwd, ...(passive ? [{ passive: true }] : [])).catch(() => null));
@@ -3097,7 +3097,7 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
 /**
  * モデルの検証。互換の接続先を選んでいる会話（endpointId）は、接続先の一覧＋自由入力なので形だけを見る
  * （`/` や `:` を含む ID も通す。黙って既定に戻さない）。'' は接続先のメインのモデル
- * passive: 手元の一覧だけで判定する（取り直しの確かめをしない。一覧の CLI を起こさない・待たない。使用量の判定用。ADR 0326）
+ * passive: 手元の一覧だけで判定する（取り直しの確かめをしない。一覧の CLI を起こさない・待たない。使用量の判定用。ADR 0329）
  */
 async function validModel(backend, model, cwd, endpointId = '', { passive = false } = {}) {
   if (endpointId) return model === '' || isModelId(model);

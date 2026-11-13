@@ -1,4 +1,4 @@
-// Claude のアカウントごとのモデル一覧・検証・キャッシュ隔離・秘匿・無効化・LRU・Mythos 説明・bot/心拍の backendForAccount（ADR 0326）
+// Claude のアカウントごとのモデル一覧・検証・キャッシュ隔離・秘匿・無効化・LRU・Mythos 説明・bot/心拍の backendForAccount（ADR 0329）
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';

@@ -20,7 +20,7 @@ export const STALE_MS = REFRESH_MS * 3;
  * candidates() … 今の設定の候補（'backend:model' の一覧）
  * modelKnown(b, model, account, { passive }) … そのモデルが一覧にあるか（一覧の id と行の resolvedModel の名前）。一覧を引く前なら warm(b) を 1 回呼んでから見直す。
  *               passive が true のとき（アカウントごとに一覧を持つエージェント。capabilities.accounts が 'token'）は、手元の一覧だけで答えること
- *               （一覧の CLI を起こさない・待たない。取り直しを伴う確かめをしない。起こすのは warm だけ。ADR 0326）
+ *               （一覧の CLI を起こさない・待たない。取り直しを伴う確かめをしない。起こすのは warm だけ。ADR 0329）
  * warm(b)      … 一覧を確かめ直す。アカウントごとに一覧を持つエージェントでは、アカウントの数だけ時間がかかりうるので、使用量の公開を待たせず、
  *               公開した後に（アカウントを 1 つずつ順に）呼ぶ。一覧が変わったときだけ、もう 1 回知らせる
  * scopeForAccount(b, account) … 候補に書かれたアカウントの範囲に絞ったバックエンド（使えなければ null）。アカウントごとに一覧を持つエージェントだけに使う

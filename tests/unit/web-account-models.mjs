@@ -1,7 +1,8 @@
-// 画面のアカウントごとのモデル一覧・表示・選択（ADR 0326）:
+// 画面のアカウントごとのモデル一覧・表示・選択（ADR 0329）:
 //   - web/delegation-settings.mjs: modelsOf(backend, account) と候補追加メニューのアカウント絞り込み
 //   - web/delegation-routing-view.mjs: routingLine / skippedPhrase / routingFailureParts / retryPanel が account を modelName へ渡す
-//   - web/channels/bot-page.mjs: 作成下書きの account 選択で語彙引き直し、作成時は setAccount → update(model/effort)、アカウント更新イベントで S.vocab 破棄
+//   - web/channels/bot-page.mjs: 作成下書きの account 選択で語彙引き直し、作成時は setAccount → update(model/effort)、アカウント更新イベントで S.vocab 破棄。
+//     作成の後の段（アカウント・モデルの設定）で落ちたら、できた bot のページへ移して理由を出す（bot は消さない。最初の段で落ちたときは作る画面に留まる）
 //   - web/channels/thread-composer.mjs: host.vocab / host.efforts へ account を渡し、invalidateVocab() で取り直す
 //   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
 import assert from 'node:assert/strict';

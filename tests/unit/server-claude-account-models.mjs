@@ -258,7 +258,7 @@ export default async function (t) {
 
     // 使用量の取り直し（設定 › 委譲を開くたび・5 分ごと）は、アカウントの数だけ一覧の CLI を起こさない。
     // 一覧が揃った後なら、候補が一覧に無い（承認の無いアカウントの Mythos 5.2）まま取り直しを重ねても、CLI は 1 本も増えない
-    // （監視は手元の一覧だけで読み、一覧を引くのは先読みだけ。ADR 0326）。数える前に、走っている委譲の子を片づけて CLI の起動が止むのを待つ
+    // （監視は手元の一覧だけで読み、一覧を引くのは先読みだけ。ADR 0329）。数える前に、走っている委譲の子を片づけて CLI の起動が止むのを待つ
     await settleTask(verifiedDel.data.taskId, parentSid);
     const countsBefore = await quiet();
     for (let i = 0; i < 6; i++) await c.cmd('delegationRouting', { refresh: true });

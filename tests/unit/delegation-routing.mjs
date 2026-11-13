@@ -471,7 +471,7 @@ export default async function (t) {
     && scopedSnap.claude.accountModels['']?.opus === true, JSON.stringify(scopedSnap.claude.accountModels));
   await scopedMonitor.settle();
 
-  // ---- 使用量の取り置き: アカウントごとに一覧を持つエージェント（capabilities.accounts が 'token'）は、一覧の確かめ直し（warm）を使用量の公開の後に回す（ADR 0326）。
+  // ---- 使用量の取り置き: アカウントごとに一覧を持つエージェント（capabilities.accounts が 'token'）は、一覧の確かめ直し（warm）を使用量の公開の後に回す（ADR 0329）。
   // 公開はアカウントの数に比例して遅れない・確かめ直しはバックエンドごとに 1 本ずつ順に走る・一覧が変わったときだけもう 1 回知らせる
   {
     let warmRunning = 0, warmPeak = 0, warmStarts = 0, lateKnown = false, changes = 0;
