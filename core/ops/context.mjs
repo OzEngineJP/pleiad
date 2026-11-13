@@ -88,7 +88,7 @@ async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
   const servers = list.servers ?? [];
   // 読み取りの起動で、利用者の stdio の MCP が動かないように、claude.ai 以外の既知の名前（Pleiad の登録すべて・Claude の設定の MCP）を止める
   const deny = [...servers.map((s) => s.name), ...(known.agents?.claude ?? []).map((s) => s.name)];
-  const claude = Object.hasOwn(known.agents ?? {}, 'claude'); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0325）
+  const claude = Object.hasOwn(known.agents ?? {}, 'claude'); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0327）
   const extras = await ctx.context.claudeExtras({ refresh, deny, wait: wait && claude, cwd: dir });
   const input = {
     kind: level.kinds.mcp.value, owners: Object.fromEntries(['instruction', 'skill', 'mcp'].map((k) => [k, level.kinds[k]?.value?.owner])),

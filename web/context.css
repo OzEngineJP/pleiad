@@ -471,7 +471,7 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .scx-place .scx-state{font-size:var(--fs-xs)}
 .scx-empty-result{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-s)}
 .scx-state .run svg{animation-duration:1.2s}
-/* ---- 外部 MCP の一覧（名前 × エージェント。ADR 0325） ---- */
+/* ---- 外部 MCP の一覧（名前 × エージェント。ADR 0327） ---- */
 .cx-ags{flex:none;display:grid;grid-template-columns:repeat(6,28px);gap:4px}
 .cx-ag{position:relative;display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:var(--r-s);background:transparent;cursor:pointer;
   transition:background-color var(--dur-fast) var(--ease-out)}

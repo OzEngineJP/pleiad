@@ -106,7 +106,7 @@ export const CAPABILITIES = {
   plyShell: { valid: yes, absent: false, hint: 'true' },
   // エージェントのシェルのツールを会話ごとに切れる（runArgs.shellRuntime.nativeOff。ADR 0227 §3）。切るのは ply_shell を受け取るときだけ
   nativeShellOff: { valid: yes, absent: false, hint: 'true' },
-  // エージェント自身の外部 MCP を会話ごとに名前単位で止められる（contextRuntime.mcp.suppress。ADR 0325）
+  // エージェント自身の外部 MCP を会話ごとに名前単位で止められる（contextRuntime.mcp.suppress。ADR 0327）
   nativeMcpOff: { valid: yes, absent: false, hint: 'true' },
   // 走っているターンへ途中で入力を渡せる（runArgs.control.steer。委譲の追加指示・完了通知）。
   // 無いなら追加指示は待機のまま、次のターンの入力として渡す（server.mjs の childTarget。画面は「次のターンで届く」と出す）

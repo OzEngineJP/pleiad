@@ -112,7 +112,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
   // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
   devinHome = process.env.DEVIN_CONFIG_HOME ? path.join(process.env.DEVIN_CONFIG_HOME, 'devin') : path.join(process.env.APPDATA ?? process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'devin'),
   geminiHome = path.join(home, '.gemini'), grokHome = process.env.GROK_HOME || path.join(home, '.grok'),
-  // softMcp: 名前ごとのモデルで、外部 MCP の設定ファイルが読めない（壊れている・大きすぎる）ときに、そのファイルだけ飛ばして skipped に残す（ADR 0325）
+  // softMcp: 名前ごとのモデルで、外部 MCP の設定ファイルが読めない（壊れている・大きすぎる）ときに、そのファイルだけ飛ばして skipped に残す（ADR 0327）
   softMcp = false } = {}) {
   const { cwd } = settings;
   const userInstructions = userInstructionPaths({ home, claudeHome, codexHome, geminiHome });

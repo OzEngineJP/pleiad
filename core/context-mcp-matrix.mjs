@@ -1,4 +1,4 @@
-// 設定 › プラグイン › 外部 MCP の一覧（名前 × エージェント）の元データ。ADR 0325。
+// 設定 › プラグイン › 外部 MCP の一覧（名前 × エージェント）の元データ。ADR 0327。
 // 画面は行ごとに「全体のスイッチ」と、エージェントごとのアイコンを出す。この関数が、各アイコンが
 //   on / off（今そのエージェントで使われるか）と、押せるか（toggle / locked / blocked / none）を決める。
 // 担当の 2 択のまま（agents が無い）の設定は、mcpAgentsFromLegacy で今の接続と同じ形に読み替えて見せる（書き換えない）。
@@ -7,7 +7,7 @@ import { mcpAgentsFromLegacy } from './context-settings.mjs';
 import { agentOf } from './backends/agents.mjs';
 
 /** 画面に並べるエージェントの順（アイコンの列）。ここに無いエージェントは末尾 */
-// backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+// backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
 export const AGENT_ORDER = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok'];
 const orderOf = id => { const i = AGENT_ORDER.indexOf(id); return i < 0 ? AGENT_ORDER.length : i; };
 
@@ -35,7 +35,7 @@ export function mcpLegacyInfo({ kind, registered = [], native = {}, plugins = []
   const ids = Object.keys(native);
   const sources = new Set([...(kind.user?.sources ?? []), ...(kind.directory?.sources ?? [])]);
   const spreadFrom = !sources.size ? ids : ids.filter(a => (agentOf(a)?.contextSources ?? []).some(s => sources.has(s)));
-  // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+  // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
   const extras = ids.includes('claude') ? { claude: [...plugins.map(p => p.key), ...(connectors ?? []).map(c => `${CONNECTOR_PREFIX}${c}`)] } : {};
   return {
     registered: registered.map(r => r.name),
@@ -90,27 +90,27 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
     rows.push({ key: name, name, kind: 'config', group: reg ? 'ply' : 'agent', transport: (reg ?? Object.values(native).flat().find(s => s.name === name))?.transport ?? null,
       registered: Boolean(reg), origins, plugin: null, cells, on: agents.some(a => cells[a].state === 'on') });
   }
-  // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+  // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
   if (installed.claude !== false && agents.includes('claude')) {
     for (const p of plugins) {
-      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
       const cells = Object.fromEntries(agents.map(a => [a, a === 'claude'
-        // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+        // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
         ? { state: off(p.key, 'claude') ? 'off' : 'on', mode: 'toggle' } : { state: 'off', mode: 'none' }]));
-      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
       rows.push({ key: p.key, name: p.server, kind: 'plugin', group: 'agent', transport: p.transport ?? null, registered: false, origins: ['claude'], plugin: p.plugin, cells, on: !off(p.key, 'claude') });
     }
     for (const c of connectors ?? []) {
       const key = `${CONNECTOR_PREFIX}${c}`;
-      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
       const cells = Object.fromEntries(agents.map(a => [a, a === 'claude'
-        // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+        // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
         ? { state: off(key, 'claude') ? 'off' : 'on', mode: 'toggle' } : { state: 'off', mode: 'none' }]));
-      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
       rows.push({ key, name: c, kind: 'connector', group: 'agent', transport: 'http', needsAuth: needsAuth.includes(c), registered: false, origins: ['claude'], plugin: null, cells, on: !off(key, 'claude') });
     }
   }
-  // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
+  // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
   const claudeHere = installed.claude !== false && agents.includes('claude');
   return {
     agents, rows,

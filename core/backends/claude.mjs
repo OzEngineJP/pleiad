@@ -186,7 +186,7 @@ sdk.probe ??= probeCatalog;
 /** コネクターの読み取りの上限（ms）。画面の待ちはこれ以上にする */
 export const CONNECTOR_PROBE_MS = 20_000;
 
-/** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0325）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
+/** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0327）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
 export async function probeClaudeConnectors({ deny = [], token = null } = {}) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), CONNECTOR_PROBE_MS);

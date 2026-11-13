@@ -10,7 +10,7 @@ import { AGENT_ORDER, buildMcpMatrix, canStopName, mcpLegacyInfo } from '../../c
 export const name = 'context-mcp-exhaustive';
 export const title = '外部 MCP の総当たり: 一覧の表示（on / off / 鍵 / 押せない）が、実行時に実際に使えるかと一致する';
 
-// エージェント × 名前の種類 × 状態（初期・オフ・広げる・この会話では外す）を総当たりで突き合わせる。ADR 0325
+// エージェント × 名前の種類 × 状態（初期・オフ・広げる・この会話では外す）を総当たりで突き合わせる。ADR 0327
 
 export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-mcp-all-')), cwd = path.join(tmp, 'repo'), home = path.join(tmp, 'home');

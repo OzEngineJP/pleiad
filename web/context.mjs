@@ -418,7 +418,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     head.append(title);
     if (scanning && scanVisible) { const label = el('span', 'pending-label'); label.append(runMark(t('pending.searching')), t('pending.searching')); head.append(label); }
     card.append(head);
-    if (kind === 'mcp') {   // 外部 MCP は担当の 2 択を持たず、名前 × エージェントの一覧（web/mcp-matrix.mjs。ADR 0325）
+    if (kind === 'mcp') {   // 外部 MCP は担当の 2 択を持たず、名前 × エージェントの一覧（web/mcp-matrix.mjs。ADR 0327）
       mcpMatrix.render(card, mcpContext());
       mcp.renderExtras(card, mcpContext());
       return;

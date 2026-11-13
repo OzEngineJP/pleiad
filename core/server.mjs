@@ -5266,11 +5266,11 @@ const opsHooks = {
   unifyPreview: (args) => hooksUnifyPreview(args),
 };
 
-// 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0325）。コネクターは最後に読めた一覧を覚えておく
+// 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0327）。コネクターは最後に読めた一覧を覚えておく
 // 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす
 const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'),
   probe: async ({ deny }) => {
-    const account = await accountResolve(getBackend('claude'), await defaultAccount('claude')).catch(() => null); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0325）
+    const account = await accountResolve(getBackend('claude'), await defaultAccount('claude')).catch(() => null); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0327）
     return probeClaudeConnectors({ deny, token: account?.token ?? null });
   } });
 
@@ -7694,14 +7694,14 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
   const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
     { keepNative: !previousContext && baseline.messages.length > 0 });
-  // どのエージェントのターンか（外部 MCP を名前ごとに中継・止めるために使う。ADR 0325）。読み込み直しも同じエージェントで解く
+  // どのエージェントのターンか（外部 MCP を名前ごとに中継・止めるために使う。ADR 0327）。読み込み直しも同じエージェントで解く
   let policy = { ...followed, agent: backend.id };
   // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
   let plyContext = managed(policy) && acceptsPlyContext(backend, policy);
   let resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
   // 名前ごとのモデルで、指示・Skills はエージェント任せ、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
-  // （ターンだけの口・中継を起こさない。ADR 0325）
+  // （ターンだけの口・中継を起こさない。ADR 0327）
   if (resolvedContext?.mcp.named && policy.owners.instruction !== 'ply' && policy.owners.skill !== 'ply' && !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length) {
     plyContext = false; resolvedContext = null;
   }
