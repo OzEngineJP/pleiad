@@ -2,7 +2,7 @@
 //
 // **agy のエフォートは「同じ基底モデルの段違いを選ぶ」だけ**（agy 1.2.8 で確認。docs/multi-backend.md §2.8 にも写した）:
 //   - `agy models` は `id<TAB>表示名` を 1 行ずつ出す。段違いは別の id で並ぶ
-//     （gemini-3.8-flash-high「Gemini 3.8 Flash (High)」/ -medium / -low。gemini-3.1-pro は high / low だけ）
+//     （gemini-3.8-flash-high「Gemini 3.8 Flash (High)」/ -medium / -low。gemini-3.1-pro は high / low だけ。gemini-4-hydrogen は xhigh もある）
 //   - `--effort` は「その基底モデルの段違いの id を選ぶ」フラグ（changelog 1.1.5: "select a model's reasoning-effort
 //     variant"。/model の選択画面も基底モデルでまとめて段をゲージで選ぶ）。関数名も EffortsForBase / ModelForBaseEffort
 //   - 段違いが 1 つしか無いモデル（claude-sonnet-4-6、claude-opus-4-6-thinking、gpt-oss-120b-medium）には効かない
@@ -16,12 +16,13 @@
 
 import { t } from "../i18n.mjs";
 
-/** agy の段の並び（弱い → 強い）。`agy --help` の `--effort (low|medium|high)` */
-export const AGY_LEVELS = ["low", "medium", "high"];
+/** agy の段の並び（弱い → 強い）。xhigh は Gemini 4 Hydrogen だけ（agy 1.5.7）。xhigh の無い系統は 3 段のまま。
+ *  Pleiad は段を id に解決して `--model` だけ渡すので、`agy --effort` が xhigh を受けるかは関係ない */
+export const AGY_LEVELS = ["low", "medium", "high", "xhigh"];
 
 const NL = String.fromCharCode(10);
-const LEVEL_ID = /^(.+)-(low|medium|high)$/;
-const LEVEL_LABEL = /^(.*?)\s*\((low|medium|high)\)\s*$/i;
+const LEVEL_ID = /^(.+)-(low|medium|high|xhigh)$/;
+const LEVEL_LABEL = /^(.*?)\s*\((low|medium|high|xhigh)\)\s*$/i;
 
 /**
  * `agy models` の出力を行に分ける。見出し（Fetching… など）と id でない行は捨てる。

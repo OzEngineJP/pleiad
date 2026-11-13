@@ -20,7 +20,7 @@ const fractionOf = bucket => {
 };
 // モデルの段（「Gemini 3.8 Flash (Low)」の「(Low)」、id の -low など）を外した系統。段の語のほかの括弧（「(Preview)」など）は系統の一部として残す。
 // まとめる鍵は id から（名前のある段と id だけの段を 1 行にする）、表示は名前から取る
-const TIER = 'minimal|low|medium|high|max';
+const TIER = 'minimal|low|medium|high|xhigh|max';
 const familyName = bucket => String(bucket?.name ?? '').replace(new RegExp(`\\s*[（(]\\s*(?:${TIER})\\s*[）)]\\s*$`, 'i'), '').trim();
 const familyKey = bucket => String(bucket?.id ?? '').replace(new RegExp(`-(?:${TIER})$`, 'i'), '') || familyName(bucket);
 // 系統の行は、残りがいちばん少ない段の値とリセットを使う（別の段のリセットを使うと回復を早く見せる）。同じ残りなら有効な時刻のうちいちばん早いもの

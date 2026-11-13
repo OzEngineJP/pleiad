@@ -2,9 +2,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { buildAgyModels } from '../../core/backends/antigravity-models.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
-import { effortOptions, validateEffort } from '../../core/effort.mjs';
+import { effortOptions, validateEffort, effortCapability } from '../../core/effort.mjs';
 export const name = 'effort';
 export const title = 'エフォートの検証・予約・保存・引き継ぎ';
 export default async function(t) {
@@ -13,6 +14,16 @@ export default async function(t) {
   assert.deepEqual(Object.keys(await effortOptions(codex, 'test')), ['', 'low', 'high', 'ultra']);
   await assert.rejects(validateEffort(codex, 'max', 'test'));
   t.ok('Codex のモデル固有の候補と Claude の SDK 語彙を使う', true);
+  // Antigravity: xhigh は Hydrogen の系統の段で、委譲の強さの能力も xhigh を固定の段として返す
+  const agyModels = buildAgyModels(['low', 'medium', 'high', 'xhigh'].map(l => ({ id: `gemini-4-hydrogen-${l}`, label: `Gemini 4 Hydrogen (${l === 'xhigh' ? 'XHigh' : l[0].toUpperCase() + l.slice(1)})` }))
+    .concat([{ id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' }, { id: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' }]), null);
+  const agy = { id: 'antigravity', traits: { effortInModelId: true }, models: async () => agyModels };
+  assert.deepEqual(Object.keys(await effortOptions(agy, 'gemini-4-hydrogen-high')), ['', 'low', 'medium', 'high', 'xhigh']);
+  assert.equal(await validateEffort(agy, 'xhigh', 'gemini-4-hydrogen-high'), 'xhigh');
+  await assert.rejects(validateEffort(agy, 'xhigh', 'gemini-3.8-flash-high'));
+  assert.deepEqual(await effortCapability(agy, 'gemini-4-hydrogen-xhigh'), { levels: [], fixed: 'xhigh' });
+  assert.deepEqual(await effortCapability(agy, 'gemini-4-hydrogen-high'), { levels: [], fixed: 'high' });
+  t.ok('Antigravity の xhigh は Hydrogen の段（選べる・固定の段として返る）', true);
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-effort-'));
   let server, client;
   try {

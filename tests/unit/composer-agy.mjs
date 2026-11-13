@@ -21,6 +21,10 @@ const OUTPUT = [
   ["gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"],
   ["gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"],
   ["gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)"],
+  ["gemini-4-hydrogen-xhigh", "Gemini 4 Hydrogen (XHigh)"],
+  ["gemini-4-hydrogen-high", "Gemini 4 Hydrogen (High)"],
+  ["gemini-4-hydrogen-medium", "Gemini 4 Hydrogen (Medium)"],
+  ["gemini-4-hydrogen-low", "Gemini 4 Hydrogen (Low)"],
   ["claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"],
   ["claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"],
   ["gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"],
@@ -31,7 +35,7 @@ export default async function (t) {
   // ---- agy models の読み取り
   const rows = parseAgyModels(OUTPUT);
   t.ok("見出しを捨て、id と表示名を読む（CRLF でも）",
-    rows.length === 8 && rows[0].id === "gemini-3.8-flash-high" && rows[0].label === "Gemini 3.8 Flash (High)" && rows[7].label === "GPT-OSS 120B (Medium)",
+    rows.length === 12 && rows[0].id === "gemini-3.8-flash-high" && rows[0].label === "Gemini 3.8 Flash (High)" && rows[11].label === "GPT-OSS 120B (Medium)",
     JSON.stringify(rows.slice(0, 2)));
   t.ok("表示名の無い行（古い形）は id を名前にする",
     JSON.stringify(parseAgyModels("Fetching available models..." + NL + "fake-1" + NL + "fake-2  説明" + NL)) === JSON.stringify([{ id: "fake-1", label: "fake-1" }, { id: "fake-2", label: "説明" }]));
@@ -54,6 +58,18 @@ export default async function (t) {
       && m["gpt-oss-120b-medium"].label === "GPT-OSS 120B (Medium)" && m["gpt-oss-120b-medium"].efforts.length === 0,
     JSON.stringify(m["gpt-oss-120b-medium"]));
   t.ok("既定はログの表示名で引いた id", m[""].resolvesTo === "gemini-3.8-flash-high" && m[""].defaultEffort === "high", JSON.stringify(m[""]));
+  // xhigh は Gemini 4 Hydrogen の 4 つ目の段（独立した行にしない）。xhigh の無い系統は 3 段のまま
+  t.ok("xhigh は系統の 4 つ目の段（弱い順）。xhigh の無い系統は 3 段のまま",
+    JSON.stringify(m["gemini-4-hydrogen-xhigh"].efforts) === '["low","medium","high","xhigh"]' && m["gemini-4-hydrogen-xhigh"].family === "gemini-4-hydrogen"
+      && m["gemini-4-hydrogen-xhigh"].defaultEffort === "xhigh" && m["gemini-4-hydrogen-xhigh"].label === "Gemini 4 Hydrogen"
+      && m["gemini-4-hydrogen-medium"].efforts.length === 4 && !m["gemini-4-hydrogen-medium"].hidden
+      && m["gemini-4-hydrogen-xhigh"].hidden && m["gemini-4-hydrogen-high"].hidden && m["gemini-4-hydrogen-low"].hidden
+      && JSON.stringify(m["gemini-3.8-flash-low"].efforts) === '["low","medium","high"]',
+    JSON.stringify(m["gemini-4-hydrogen-xhigh"]));
+  t.ok("xhigh は段の id に解決して --model だけ渡す（--effort は渡さない）",
+    JSON.stringify(agyTarget("gemini-4-hydrogen-high", "xhigh", m)) === '{"model":"gemini-4-hydrogen-xhigh"}'
+      && JSON.stringify(agyTarget("gemini-4-hydrogen-xhigh", "low", m)) === '{"model":"gemini-4-hydrogen-low"}'
+      && JSON.stringify(agyTarget("gemini-3.8-flash-high", "xhigh", m)) === '{"model":"gemini-3.8-flash-high"}');
   const unknown = buildAgyModels(rows, null);
   t.ok("既定が分からなければ「既定（agy の設定）」で段は選べない（理由を添える）",
     unknown[""].label === "既定（agy の設定）" && !unknown[""].resolvesTo && unknown[""].efforts.length === 0 && Boolean(unknown[""].effortReason)
@@ -101,7 +117,7 @@ export default async function (t) {
   t.ok("既定の段が分からず既定に従うときは、チップに段を書かない", modelChipLabel({ "": { label: "既定に従う" } }, "", { "": {}, low: {} }, "") === "既定に従う");
   const ids = modelRowIds(m, "gemini-3.8-flash-low");
   t.ok("一覧は系統ごとに 1 行で、選んでいる段違いの id がその系統を代表する",
-    JSON.stringify(ids) === JSON.stringify(["gemini-3.8-flash-low", "gemini-3.1-pro-high", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"]),
+    JSON.stringify(ids) === JSON.stringify(["gemini-3.8-flash-low", "gemini-3.1-pro-high", "gemini-4-hydrogen-medium", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"]),
     JSON.stringify(ids));
   t.ok("選んでいなければ既定の id が代表し、系統の行に既定の札",
     modelRowIds(m, "")[0] === "gemini-3.8-flash-high" && holdsDefault(m, "gemini-3.8-flash-low") && !holdsDefault(m, "gemini-3.1-pro-high"));

@@ -723,7 +723,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
   見通しが未確認（'unknown'）・未ログイン（'out'）の間は、受動の照会も送信の関所も `agy models` を起こさない。
   取れた一覧は `AGENT_HOST_DATA/antigravity/models.json` に写す（取れた時刻 `fetchedAt` 付き。再起動後も
   保存済みのモデル・エフォートを戻すため）。**写しはログインの証拠にしない**（`authGuess` は動かさない）
-- `agy models` の出力は `id<TAB>表示名`（例 `gemini-3.8-flash-high<TAB>Gemini 3.8 Flash (High)`）。段違いは別の id で並ぶ（1.2.8 で確認）。
+- `agy models` の出力は `id<TAB>表示名`（例 `gemini-3.8-flash-high<TAB>Gemini 3.8 Flash (High)`）。段違いは別の id で並ぶ（1.2.8 で確認）。agy 1.5.7 で `gemini-4-hydrogen-{low,medium,high,xhigh}` が増え、xhigh は Hydrogen の系統の 4 つ目の段になった（ほかの系統は 3 段のまま）。
   既定のモデルは設定ファイルに出ない。agy は起動のたびにログへ `Propagating selected model override to backend: label="…"` を書くので、
   Pleiad は `agy --log-file <一時ファイル> models` で呼び、その label を既定として読む（公開の口ではないので、取れなければ「既定（agy の設定）」）
 - 「既定」（モデル `''`）のターンでも、読んだ既定のモデル（`models[""].resolvesTo`）を `--model` で明示する（`agyTarget`）。
@@ -772,7 +772,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 | 一覧・履歴 | **無し** → Pleiad が控える（§下） |
 | タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界)） |
 | モード | **`--dangerously-skip-permissions` の 1 つだけ**（§下） |
-| モデル・effort | `--model` だけを渡す。**起動時のみ**（liveModel / liveMode は `impossible`。画面へは `false`）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`）を選ぶことと同じなので、段は同じ系統の id に解決して `--model` に載せ、`--effort` と同時には渡さない（agy 1.2.8 で確認。`core/backends/antigravity-models.mjs`） |
+| モデル・effort | `--model` だけを渡す。**起動時のみ**（liveModel / liveMode は `impossible`。画面へは `false`）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`、Hydrogen は `-xhigh` も）を選ぶことと同じなので、段は同じ系統の id に解決して `--model` に載せ、`--effort` と同時には渡さない（`--effort xhigh` を agy に渡す経路は無い。agy 1.2.8 で確認。`core/backends/antigravity-models.mjs`） |
 | 認証 | **端末でのサインインが要る**（Pleiad からは回せない。§下） |
 
 イベントの形:

@@ -147,6 +147,8 @@ export default async function (t) {
   t.ok('Antigravity: 専用の枠は識別語が全部入るモデルだけ', windowsFor('antigravity', 'gemini-3.8-flash-high', aq2.windows).map(w => w.group).join() === 'Gemini Models,Gemini Models'
     && windowsFor('antigravity', 'gemini-4-argon-high', aq2.windows).map(w => w.group).join() === 'Gemini 4 Argon'
     && windowsFor('antigravity', 'claude-sonnet-5-5-high', aq2.windows).map(w => w.group).join() === 'Claude and GPT models');
+  t.ok('Antigravity: gemini-4-hydrogen-* は Argon の専用の枠でなく Gemini Models の枠',
+    ['gemini-4-hydrogen-xhigh', 'gemini-4-hydrogen-low'].every(id => windowsFor('antigravity', id, aq2.windows).map(w => w.group).join() === 'Gemini Models,Gemini Models'));
   // 1.5.2 の形（'All Models' の 1 グループにモデルと段ごとのバケット）は系統ごとの行になり、モデルの系統の行だけが効く
   const aq3 = antigravityQuota({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [{ name: 'All Models', buckets: [
     'Gemini 4 Argon', 'Gemini 3.8 Flash', 'Gemini 3.7 Flash', 'Claude Opus 5.5', 'Claude Sonnet 5.5',

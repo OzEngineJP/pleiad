@@ -90,6 +90,16 @@ async function japaneseCases(t) {
   assert.equal(usedOf(perModel.windows[1], now), 25);
   t.ok('Antigravity のモデルごとの枠は、チップがモデルの系統の行だけを出す（リセットの時刻が無くても値を出す）', true);
 
+  // 専用の枠（'Gemini 4 Argon'）は、識別語（4・argon）が全部モデル名に入るときだけ。Hydrogen は汎用の 'Gemini Models' に当たる
+  const hq = antigravityQuota({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [
+    { name: 'Gemini Models', buckets: [{ window: 'weekly', remaining_fraction: .9 }] },
+    { name: 'Claude and GPT models', buckets: [{ window: 'weekly', remaining_fraction: .5 }] },
+    { name: 'Gemini 4 Argon', buckets: [{ window: 'weekly', remaining_fraction: 0 }] }] } } });
+  for (const id of ['gemini-4-hydrogen-xhigh', 'gemini-4-hydrogen-high', 'gemini-3.8-flash-low']) assert.deepEqual(windowsForModel(hq.windows, id).map(w => w.group), ['Gemini Models'], id);
+  assert.deepEqual(windowsForModel(hq.windows, 'gemini-4-argon-high').map(w => w.group), ['Gemini 4 Argon']);
+  assert.deepEqual(windowsForModel(hq.windows, 'claude-opus-5-5-high').map(w => w.group), ['Claude and GPT models']);
+  t.ok('Antigravity: gemini-4-hydrogen-* は Gemini 4 Argon の枠でなく Gemini Models の枠', true);
+
   // ---- アカウントの行の週の使用量（入力欄と bot のページのアカウントの節。ADR 0224）
   const later = new Date(Date.now() + 86400_000).toISOString();
   const weekly = (used, extra = {}) => ({ label: '週次（7日間）', minutes: 10080, usedPercent: used, resetsAt: later, ...extra });

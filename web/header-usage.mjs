@@ -67,7 +67,7 @@ const modelWords = s => String(s ?? '').toLowerCase().split(/[^a-z0-9]+/).filter
 /**
  * モデルに合う枠だけに絞る。枠の持つ系譜の情報と、モデル名を照合する（server 側の windowsFor と同じ判定）。
  * - w.provider … `openrouter/…` の `/` の前と一致するものだけ（OpenCode）。一致が無ければ空（別の接続先の枠は出せない）
- * - w.group … モデル名の語といちばん合うグループだけ。gemini / claude / gpt の系統名を含むグループに限る（Antigravity）
+ * - w.group … モデル名の語といちばん合うグループだけ。gemini / claude / gpt の系統名を含むグループに限り、専用のグループ（'Gemini 4 Argon'）は系統・汎用の語を除いた名前の語が全部モデル名に入るときだけ（Antigravity）
  * - w.model … モデルと同じ系統（fable/opus/sonnet/haiku）か、系統指定の無い枠だけ（Claude）
  * 系統・グループは合うものが見つからなければ全部返す（モデル名から系統が読めないときに空になる方が悪い）
  */
@@ -86,7 +86,8 @@ export function windowsForModel(windows = [], model = '') {
     const family = ['gemini', 'claude', 'gpt'].find(f => tokens.has(f));
     if (family) {
       const scored = [...new Set(list.map(w => w.group).filter(Boolean))]
-        .filter(g => modelWords(g).includes(family))
+        .filter(g => modelWords(g).includes(family)
+          && modelWords(g).every(x => ['gemini', 'claude', 'gpt', 'model', 'models', 'and', 'the'].includes(x) || tokens.has(x)))
         .map(g => [g, modelWords(g).filter(x => tokens.has(x)).length]);
       if (scored.length) {
         const best = Math.max(...scored.map(([, s]) => s));
