@@ -138,9 +138,12 @@ async function japaneseCases(t) {
   assert.deepEqual(windowsForModel(agyWins, 'claude-sonnet-4.5'), [agyWins[2]]);
   assert.equal(windowsForModel(agyWins, 'mystery-1'), agyWins);
   const cwin = (model, used) => ({ label: 'w', usedPercent: used, resetsAt: later, ...(model ? { model } : {}) });
-  const claudeWins = [cwin(null, 10), cwin('Opus', 20), cwin('Sonnet', 30)];
+  const claudeWins = [cwin(null, 10), cwin('Opus', 20), cwin('Sonnet', 30), cwin('Fable', 45)];
   assert.deepEqual(windowsForModel(claudeWins, 'claude-sonnet-4-5'), [claudeWins[0], claudeWins[2]]);
-  t.ok('接続先・グループ・モデルの系統で会話の枠に絞る（系統が読めなければ全部・別の接続先は空）', true);
+  assert.deepEqual(windowsForModel(claudeWins, 'claude-fable-5-2'), [claudeWins[0], claudeWins[3]]);
+  assert.deepEqual(windowsForModel(claudeWins, 'claude-mythos-5-2'), [claudeWins[0], claudeWins[3]]);
+  assert.deepEqual(windowsForModel(claudeWins, 'claude-mythos-5-1'), [claudeWins[0], claudeWins[3]]);
+  t.ok('接続先・グループ・モデルの系統で会話の枠に絞る（Mythos は Fable の枠・系統が読めなければ全部・別の接続先は空）', true);
 
   // ---- 短い間隔の上限で止まっている枠（providerUsage の held。Issue #111）
   const heldSlots = [

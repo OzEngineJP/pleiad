@@ -1463,7 +1463,7 @@ function setUuid(m, uuid) {
  * 時刻は触れている・焦点がある間だけ見える（style.css。場所は取ったままなので並びは動かない）。右端の操作の列（24px）は ⋯、
  * 時刻の左にコピー（actions: false は操作を持たない行。wireActions が押したときの動きを付ける）
  */
-function whoLine(who, at, { backend, actions = true, model = '' } = {}) {
+function whoLine(who, at, { backend, account = '', actions = true, model = '' } = {}) {
   const w = el("div", "who");
   if (backend) {
     const logo = backendLogo(backend, who);
@@ -1473,7 +1473,7 @@ function whoLine(who, at, { backend, actions = true, model = '' } = {}) {
   }
   w.append(el("span", null, who));
   // 選んだモデルと違うモデルが書いた返答は、名前の後ろにそのモデルを弱い字で添える（「Claude Code · Opus 4.8」）
-  if (model) w.append(el("span", "who-model", `· ${modelDisplayName(state.vocab.get(backend ?? activeBackendId())?.models ?? state.models ?? {}, model)}`));
+  if (model) w.append(el("span", "who-model", `· ${modelDisplayName(cachedVocabFor(backend ?? activeBackendId(), account)?.models ?? state.models ?? {}, model)}`));
   if (actions) {
     const { copy, more } = actionButtons();
     w.classList.add("acts");
@@ -3356,10 +3356,14 @@ function onEvent(ev, replay = false) {
     }
     case 'claudeAccountsChanged':
       claudeAccounts.invalidate();
+      vocabRequests.invalidate();
+      effortsLoader.invalidate();
       syncTopbar().catch(() => {});
+      delegationSettings.event({ change: 'accounts' });
       break;
     case 'agentAccountsChanged':
       agentAccounts.invalidate(); vocabRequests.invalidate(); effortsLoader.invalidate();
+      delegationSettings.event({ change: 'accounts' });
       syncTopbar().catch(() => {});
       break;
     case 'compatEndpointsChanged':
@@ -3652,6 +3656,19 @@ const effortsLoader = createEffortsLoader({ cmd });
 const effortsView = createEffortsView({ loader: effortsLoader });
 const noEfforts = () => ({ '': { label: t('chat.next.useDefault') } });
 const vocabCache = (id, account, cwd) => JSON.stringify([id, account ?? '', cwd ?? '']);
+function cachedVocabFor(backend, account = '', { exact = false } = {}) {
+  if (!backend) return null;
+  const acct = account ?? '';
+  for (const [key, value] of vocabRequests.cache) {
+    const [b, a] = JSON.parse(key);
+    if (b === backend && a === acct) return value;
+  }
+  if (exact) return null;
+  for (const [key, value] of vocabRequests.cache) {
+    if (JSON.parse(key)[0] === backend) return value;
+  }
+  return state.vocab.get(backend) ?? null;
+}
 async function loadVocab(id, account = '', cwd = '') {
   if (!id) return { modes: {}, models: {} };
   const v = await vocabRequests.get(vocabCache(id, account, cwd)) ?? { modes: {}, models: {} };
@@ -4475,7 +4492,7 @@ function cwdOptions() {
 // Claude のアカウントの設定（web/claude-accounts.mjs）。入力欄のチップが候補を引くので、controls より先に作る
 const claudeAccounts = setupClaudeAccounts({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
-  onChange: () => { effortsLoader.invalidate(); syncTopbar().catch(() => {}); } });
+  onChange: () => { vocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); delegationSettings.event({ change: 'accounts' }); } });
 // Claude 以外のエージェントのアカウントの設定（web/agent-accounts.mjs。ADR 0222）
 const agentAccounts = setupAgentAccounts({ cmd, labelOf,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
@@ -4716,10 +4733,16 @@ async function adoptEfforts() {
  */
 function warmAgentChoices(backend) {
   const s = state.sessions.find(x => x.id === state.current);
-  const { homeBot } = composerSelection();
-  loadVocab(backend, '', vocabCwd(s, homeBot)).then(({ models }) => {
+  const { homeBot, backend: curBackend, endpoint: curEndpoint } = composerSelection();
+  const draft = s ? state.drafts.get(s.id) : state.draft;
+  const sameDraft = draft && (!draft.backend || draft.backend === backend);
+  const account = curBackend === backend && curEndpoint ? '' : composerAccount({
+    backend, session: s, draft: sameDraft ? draft : null, prefs: state.prefs, kind: capsOf(backend).accounts, homeBot,
+  });
+  const cwd = vocabCwd(s, homeBot);
+  loadVocab(backend, account, cwd).then(({ models }) => {
     if (state.shownBackend !== backend) return;
-    effortsLoader.load({ backend, model: defaultModelOf(models), cwd: vocabCwd(s, homeBot) }).catch(() => {});
+    effortsLoader.load({ backend, account, model: defaultModelOf(models), cwd }).catch(() => {});
   }).catch(() => {});
 }
 
@@ -5868,12 +5891,14 @@ function syncRemoteOriginLine() {
 const vocabAsked = new Set();
 /** モデルの表示名。語彙がまだ無いエージェントは取りに行き、取れたら描き直す */
 function modelText(item) {
-  const vocab = state.vocab.get(item.backend);
-  if (!vocab && item.backend && !vocabAsked.has(item.backend)) {
-    vocabAsked.add(item.backend);
-    loadVocab(item.backend, '', (item.taskId && taskById(item.taskId)?.cwd) || '').then(() => { if ($('workDialog').open) renderBackground(); }).catch(() => {});
+  const account = item.account ?? (item.taskId && taskById(item.taskId)?.account) ?? '';
+  const vocab = cachedVocabFor(item.backend, account, { exact: true });
+  const askedKey = JSON.stringify([item.backend, account]);
+  if (!vocab && item.backend && !vocabAsked.has(askedKey)) {
+    vocabAsked.add(askedKey);
+    loadVocab(item.backend, account, (item.taskId && taskById(item.taskId)?.cwd) || '').then(() => { if ($('workDialog').open) renderBackground(); }).catch(() => {});
   }
-  const models = vocab?.models ?? {};
+  const models = (vocab ?? cachedVocabFor(item.backend, account))?.models ?? {};
   const name = item.model ? modelDisplayName(models, item.model) : item.source === 'task' ? resolvedModel(models, '').label : '';
   return name && item.effort ? `${name} · ${item.effort}` : name;
 }
@@ -6673,7 +6698,8 @@ function disposeModalChild() {
 
 function createModalChildView(item, th) {
   const childId = item.childId;
-  const modelName = (backend) => modelDisplayName(state.vocab.get(backend)?.models ?? {}, item.model);
+  const account = item.account ?? (item.taskId && taskById(item.taskId)?.account) ?? '';
+  const modelName = (backend) => modelDisplayName(cachedVocabFor(backend, account)?.models ?? {}, item.model);
   const none = () => {};
   let view;
   view = createConversationView({
@@ -7128,9 +7154,20 @@ function retitleDelegate(card, title) {
 
 /** カード -> 結果から読んだ routing（タスクの一覧から外れていても出せるように） */
 const cardRouting = new WeakMap();
+function missingVocabTargets(list) {
+  const seen = new Map();
+  for (const item of list) {
+    const backend = item?.backend;
+    if (!backend) continue;
+    const account = item.account ?? '';
+    const k = JSON.stringify([backend, account]);
+    if (!seen.has(k) && !cachedVocabFor(backend, account, { exact: true })) seen.set(k, [backend, account]);
+  }
+  return [...seen.values()];
+}
 const routingNames = {
   backend: (id) => fallbackName('backend', id, labelOf(id)),
-  model: (backend, model) => (model ? fallbackName('model', backend, modelDisplayName(state.vocab.get(backend)?.models ?? {}, model)) : ''),
+  model: (backend, model, account = '') => (model ? fallbackName('model', backend, modelDisplayName(cachedVocabFor(backend, account)?.models ?? {}, model)) : ''),
 };
 function routingLogo(backend) { return backendLogo(backend, routingNames.backend(backend)); }
 /** カードの入力・出力の JSON（ツールカードの .tc-input / .tc-output の文字）。読めなければ null */
@@ -7194,8 +7231,8 @@ function decorateDelegateCard(card) {
   card.dataset.routed = '1';
   const auto = isAutoRouting(routing);
   // モデル・承認モードの表示名は語彙から。まだ無ければ取りに行き、届いたら理由の行を書き直す
-  const missing = [routing.target, ...(routing.skipped ?? []).map(s => splitCandidate(s.candidate))].map(x => x?.backend).filter(b => b && !state.vocab.has(b));
-  for (const b of new Set(missing)) loadVocab(b, '', taskById(taskId)?.cwd ?? '').then(() => { if (card.dataset.taskId === taskId) paintRouteLine(card, routing); }).catch(() => {});
+  const missing = missingVocabTargets([routing.target, ...(routing.skipped ?? []).map(s => splitCandidate(s.candidate))]);
+  for (const [b, acct] of missing) loadVocab(b, acct, taskById(taskId)?.cwd ?? '').then(() => { if (card.dataset.taskId === taskId) paintRouteLine(card, routing); }).catch(() => {});
   const head = card.querySelector('.tc-head');
   const label = head.querySelector('.tc-label');
   label.textContent = t('timeline.tool.label.delegate');
@@ -7295,8 +7332,8 @@ function decorateFailedDelegate(card, result) {
   };
   paint();
   // モデルの表示名は語彙から。まだ無ければ取りに行き、届いたら書き直す（折りたたみを開いていれば開いたまま）
-  const missing = [...new Set(failure.skipped.map(s => splitCandidate(s.candidate).backend).filter(b => b && !state.vocab.has(b)))];
-  for (const b of missing) loadVocab(b, '', state.cwd || '').then(() => {
+  const missing = missingVocabTargets(failure.skipped.map(s => splitCandidate(s.candidate)));
+  for (const [b, acct] of missing) loadVocab(b, acct, state.cwd || '').then(() => {
     const wasOpen = card.querySelector(':scope > .tc-cands-fold')?.open;
     paint();
     if (wasOpen) card.querySelector(':scope > .tc-cands-fold').open = true;
@@ -7335,13 +7372,13 @@ function paintRetried(card) {
   if (!box) return;
   const retries = allTasks().filter(x => (x.routing?.retry?.of ?? x.retryOf) === card.dataset.taskId);
   // 4 秒ごとの放送で変わっていなければ触らない（「開く」のフォーカスを奪わない）
-  const sig = retries.map(x => `${x.taskId}:${x.status}:${x.model}`).join();
+  const sig = retries.map(x => `${x.taskId}:${x.status}:${x.model}:${x.account ?? ''}`).join();
   if (box.dataset.sig === sig && box.childElementCount === retries.length) return;
   box.dataset.sig = sig;
   box.replaceChildren(...retries.map(task => {
     const row = el('div', 'rt-retried-row');
     row.append(el('span', 'rt-retried-label', t('routing.detail.retried')), routingLogo(task.backend),
-      el('span', 'rt-retried-model', routingNames.model(task.backend, task.model) || task.model || labelOf(task.backend)),
+      el('span', 'rt-retried-model', routingNames.model(task.backend, task.model, task.account ?? '') || task.model || labelOf(task.backend)),
       el('span', 'rt-retried-state', TASK_STATUS[task.status] ?? task.status ?? ''));
     const open = el('button', 'btn', t('dialog.work.open'));
     open.type = 'button';
@@ -7449,7 +7486,7 @@ async function toggleRetry(card, root, button) {
     const taskId = card.dataset.taskId;
     const task = taskById(taskId);
     const routing = task?.routing ?? cardRouting.get(card);
-    for (const b of new Set((data.candidates ?? []).map(c => c.backend).filter(b => b && !state.vocab.has(b)))) await loadVocab(b, '', task?.cwd ?? '').catch(() => {});
+    for (const [b, acct] of missingVocabTargets(data.candidates ?? [])) await loadVocab(b, acct, task?.cwd ?? '').catch(() => {});
     const panel = retryPanel({ candidates: retryCandidates(data.candidates, routing, (data.settings?.levels ?? []).map(l => l.id)), running: TASK_LIVE.has(task?.status),
       names: routingNames, logo: routingLogo,
       run: (args) => cmd('retryAgentTask', { taskId, ...args }),
@@ -8155,7 +8192,7 @@ const channelsUi = setupChannels({
   homeStatusItems: (sessionId) => homeStatusItems(sessionId),
   agentName: (sessionId) => { const s = state.sessions.find((x) => x.id === sessionId); return s ? labelOf(s.backend) : null; },
   // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
-  vocab: (backend, cwd) => loadVocab(backend, '', cwd),
+  vocab: (backend, cwd = '', account = '') => loadVocab(backend, account, cwd),
   quota: (backend) => usageSource.load(backend),
   usageOf: (backend) => usageSource.get(backend),
   agentView: (id) => { const b = state.backends.find((x) => x.id === id); return b ? agentRows.condensed(rowAgent(b)) : null; },
@@ -11036,8 +11073,8 @@ presenceReporter.start();
 modalPresence.start();
 // 設定 › 委譲（委譲先の自動選択）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
-  modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id, '', state.cwd || '')).models : null),
-  modelName: (backend, model) => routingNames.model(backend, model), openPage: name => $(`${name}Tab`)?.click(),
+  modelsOf: async (id, account = '') => (state.backends.some((b) => b.id === id) ? (await loadVocab(id, account, state.cwd || '')).models : null),
+  modelName: (backend, model, account = '') => routingNames.model(backend, model, account), openPage: name => $(`${name}Tab`)?.click(),
   // 使えないアカウントの候補の「ログインし直す」: エージェント設定のそのエージェントのアカウントを開き、その行へフォーカス（ADR 0264）
   openAccount: (backend, account) => capsOf(backend).accounts === 'token' ? claudeAccounts.open({ focus: account })
     : capsOf(backend).accounts ? agentAccounts.open(backend, { focus: account }) : null,

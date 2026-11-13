@@ -249,12 +249,12 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   const rowObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(fitThreadRow) : null;
   rowObserver?.observe(destChip.parentElement);
   let vocabFor = null, vocab = { models: {}, modes: {} };
-  const loadVocab = async (backend, cwd = '') => {
-    // モデルの一覧は作業場所で変わりうる（Claude はその場所のプロジェクト設定が行を変える）ので、鍵に場所を入れる
-    const key = `${backend}${cwd}`;
+  const loadVocab = async (backend, cwd = '', account = '') => {
+    // モデルの一覧はアカウントと作業場所で変わりうる（Claude はアカウントの資格情報と場所の設定が行を変える）ので、鍵に両方を入れる
+    const key = JSON.stringify([backend, account ?? '', cwd ?? '']);
     if (!backend || vocabFor === key) return;
     vocabFor = key;
-    vocab = (await host.vocab?.(backend, cwd).catch(() => null)) ?? { models: {}, modes: {} };
+    vocab = (await host.vocab?.(backend, cwd, account).catch(() => null)) ?? { models: {}, modes: {} };
     paintSettings();
   };
   const leaf = (path) => String(path ?? '').split(/[\\/]/).filter(Boolean).at(-1) ?? '';
@@ -274,7 +274,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       fitThreadRow();
       return;
     }
-    loadVocab(s.backend, s.values?.cwd ?? '');
+    loadVocab(s.backend, s.values?.cwd ?? '', s.account ?? '');
     const v = s.values, d = s.defaults;
     // 既定に従うモデルは、Chats のチップと同じく実際に当たるモデルの名前で出す
     const modelLabel = (vocab.models?.[v.model] ? resolvedModel(vocab.models, v.model).label : '') || v.model || t('chat.model.default');
@@ -355,10 +355,10 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   function loadPanelData(opening = false) {
     const s = destNow().bot && settings(destNow().bot.id);
     if (!s) return;
-    const key = `${s.backend}:${s.values.model}:${s.values.cwd}`;
+    const key = JSON.stringify([s.backend, s.account ?? '', s.values.model ?? '', s.values.cwd ?? '']);
     if (key !== effortKey) {
       effortKey = key; threadEfforts = {};
-      const request = host.efforts?.({ backend: s.backend, model: s.values.model ?? '', cwd: s.values.cwd || undefined });
+      const request = host.efforts?.({ backend: s.backend, ...(s.account ? { account: s.account } : {}), model: s.values.model ?? '', cwd: s.values.cwd || undefined });
       request?.then(value => { if (effortKey === key) { threadEfforts = value ?? {}; repaintPanel(); } }).catch(() => {});
     }
     if (opening) quotaAsked.clear();
@@ -370,7 +370,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const bot = destNow().bot;
     const s = bot && settings(bot.id);
     if (!s) return;
-    await loadVocab(s.backend, s.values?.cwd ?? '');
+    await loadVocab(s.backend, s.values?.cwd ?? '', s.account ?? '');
     const items = Object.entries(vocab.modes ?? {}).map(([id, m]) => ({
       label: m.label ?? id, hint: id === s.defaults.mode ? t('channels:thread.settings.botDefault', { name: bot.name }) : (m.note ?? ''), checked: id === s.values.mode,
       onClick: () => apply({ mode: id }),
@@ -512,6 +512,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       paintHint();
     },
     refresh() { paintHint(); paintDest(); paintSchedules(); c.fit(); },
+    invalidateVocab() { vocabFor = null; effortKey = ''; paintDest(); },
     /** 予定が動いた */
     paintSchedules,
     say,

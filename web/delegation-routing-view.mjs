@@ -71,7 +71,7 @@ const defaultNames = { backend: id => id ?? '', model: (_backend, model) => mode
 /** 「Codex gpt-6-sol」。names は { backend(id), model(backend, model) } */
 export function targetText(target, names = defaultNames) {
   if (!target) return '';
-  const base = [names.backend(target.backend), names.model(target.backend, target.model)].filter(Boolean).join(' ');
+  const base = [names.backend(target.backend), names.model(target.backend, target.model, target.account ?? '')].filter(Boolean).join(' ');
   return target.accountLabel ? [base, target.accountLabel].join(t('routing.line.join')) : base;
 }
 const accountName = row => row.accountLabel || (row.account === '' ? t('routing.detail.loginAccount') : row.account ?? '');
@@ -84,8 +84,8 @@ function untilOf(skipped) {
 
 /** 飛ばした候補の一言（「Sonnet は週次 73% で飛ばした」） */
 export function skippedPhrase(skipped, names = defaultNames) {
-  const { backend, model } = splitCandidate(skipped.candidate);
-  const name = [names.model(backend, model) || model, ...(skipped.account !== undefined ? [accountName(skipped)] : [])].filter(Boolean).join(t('routing.line.join'));
+  const { backend, model, account } = splitCandidate(skipped.candidate);
+  const name = [names.model(backend, model, skipped.account ?? account ?? '') || model, ...(skipped.account !== undefined ? [accountName(skipped)] : [])].filter(Boolean).join(t('routing.line.join'));
   const w = skipped.window;
   if (skipped.reason === 'pace_high' && w?.pace != null) return t('routing.line.skippedPace', { name, window: w.label ?? '', pace: w.pace });
   if (['quota_high', 'pace_unknown'].includes(skipped.reason) && percent(w?.usedPercent) != null)
@@ -258,8 +258,8 @@ export function groupText({ reason, items }, names = defaultNames) {
   const join = t('routing.line.join');
   if (['quota_full', 'quota_high', 'pace_high', 'pace_unknown'].includes(reason)) {
     return items.map(s => {
-      const { backend, model } = splitCandidate(s.candidate);
-      const name = [names.model(backend, model) || model, s.accountLabel].filter(Boolean).join(join);
+      const { backend, model, account } = splitCandidate(s.candidate);
+      const name = [names.model(backend, model, s.account ?? account ?? '') || model, s.accountLabel].filter(Boolean).join(join);
       const w = s.window;
       if (reason === 'pace_high' && w?.pace != null) return t('routing.failure.pace', { name, window: w.label ?? '', pace: w.pace });
       if (percent(w?.usedPercent) != null) return t('routing.failure.percent', { name, window: w.label ?? '', percent: percent(w.usedPercent) });
@@ -311,14 +311,14 @@ export function routingFailureParts(failure, { names = defaultNames, open = () =
   fold.append(el('summary', null, t('routing.failure.tried', { count: failure.skipped.length })));
   const list = el('ul', 'tc-cands');
   for (const s of failure.skipped) {
-    const { backend, model } = splitCandidate(s.candidate);
+    const { backend, model, account } = splitCandidate(s.candidate);
     const li = el('li');
     li.title = s.candidate;
     const w = s.window;
     const reason = skipText(s.reason, s.detail) + (w?.pace != null && s.reason === 'pace_high' ? `${t('routing.line.join')}${w.label ?? ''} ${t('routing.detail.pace', { pace: w.pace })}`
       : percent(w?.usedPercent) != null ? `${t('routing.line.join')}${w.label ?? ''} ${percent(w.usedPercent)}%` : '')
       + (untilOf(s) ? `${t('routing.line.join')}${t('routing.detail.until', { time: fmt.time(untilOf(s)) })}` : '');
-    li.append(el('span', 'tier', tierText(s.tier)), el('span', 'nm', [names.model(backend, model) || model, names.backend(backend), s.accountLabel].filter(Boolean).join(t('routing.line.join'))), el('span', 'rs', reason));
+    li.append(el('span', 'tier', tierText(s.tier)), el('span', 'nm', [names.model(backend, model, s.account ?? account ?? '') || model, names.backend(backend), s.accountLabel].filter(Boolean).join(t('routing.line.join'))), el('span', 'rs', reason));
     for (const a of s.accounts ?? []) {
       const name = a.label || a.account || t('routing.detail.loginAccount');
       const percentText = percent(a.window?.usedPercent);
@@ -360,8 +360,9 @@ function fact(label, value) {
 function candidateCard({ n, backend, model, used, skipped, account, accountLabel, windows, usageAt, effort = null }, { names, logo }) {
   const card = el('div', 'rt-cand' + (used ? ' used' : ''));
   const head = el('div', 'rt-cand-head');
+  const modelAccount = account ?? (skipped ? splitCandidate(skipped.candidate).account : undefined) ?? '';
   head.append(el('span', 'rt-n', String(n)), logo(backend));
-  head.append(el('b', null, [names.model(backend, model) || model, ...(account !== undefined ? [accountName({ account, accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'))));
+  head.append(el('b', null, [names.model(backend, model, modelAccount) || model, ...(account !== undefined ? [accountName({ account, accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'))));
   const state = used ? (effort ? t('routing.detail.usedWith', { effort }) : t('routing.detail.used')) : t('routing.detail.skipped', { reason: skipText(skipped.reason, skipped.detail) });
   head.append(el('span', 'rt-state' + (used ? ' used' : ''), state));
   card.append(head);
@@ -449,7 +450,7 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
 }
 
 /** やり直しの候補の名前（「Sonnet · personal」）。アカウントは、アカウントを登録したエージェントの候補（scoped）だけ */
-const candidateName = (c, names) => [names.model(c.backend, c.model) || c.model,
+const candidateName = (c, names) => [names.model(c.backend, c.model, c.account ?? '') || c.model,
   ...(c.scoped ? [accountName({ account: c.account, accountLabel: c.accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'));
 
 /**

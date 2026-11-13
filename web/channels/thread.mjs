@@ -160,7 +160,8 @@ export function createThread(host) {
     // 組み込みの bot はフォルダーを持たない: チャンネルの作業場所と、Chats の今の作業場所から選ぶ
     const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : []), ...(bot.plain && host.state?.cwd ? [host.state.cwd] : [])])];
     const made = sessionId ?? seen?.sessionId ?? null;
-    return { backend: seen?.backend ?? next.backend ?? row?.backend ?? ((bot.plain && !made && plainBackend) || bot.backend), sessionId: made, values,
+    return { backend: seen?.backend ?? next.backend ?? row?.backend ?? ((bot.plain && !made && plainBackend) || bot.backend),
+      account: bot.plain ? '' : bot.account ?? '', sessionId: made, values,
       defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
   }
   // 目次のボタンは会話の目次（web/conversation-toc.mjs）が自分で受ける
@@ -1068,6 +1069,8 @@ export function createThread(host) {
       // client.mjs が承認の残りを数え直した後に、答え済みのカードを外す
       if (S.threadId) setTimeout(settleCards, 0);
     },
+    claudeAccountsChanged() { composer.invalidateVocab?.(); },
+    agentAccountsChanged() { composer.invalidateVocab?.(); },
   };
 
   // ---------------------------------------------------------------- 開く・閉じる

@@ -443,6 +443,8 @@ const SUITES = [
   './unit/compat-models.mjs',
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   './unit/composer-settings.mjs',
+  // アカウント別のモデル一覧の画面配線（委譲設定・委譲表示・bot ページ・スレッド入力欄。ADR 0326）
+  './unit/web-account-models.mjs',
   // 設定 › 入力（web/input-settings.mjs）: 次の発言の候補の行は、能力の印があるエージェントがいるときだけ（#147）
   './unit/input-settings.mjs',
   './unit/context-transports.mjs',
