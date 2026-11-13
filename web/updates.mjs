@@ -10,7 +10,7 @@ const PHASES = ['idle', 'checking', 'current', 'available', 'downloading', 'down
  */
 export function setupUpdates({ page, open, lock, flush }) {
   const $ = id => document.getElementById(id), bridge = window.plyDesktop;
-  let info, state, busy = false, installing = false, confirming = false, shownNotice = null, failure = '';
+  let info, state, busy = false, installing = false, confirming = false, switchesLocked = false, shownNotice = null, failure = '';
   const deferred = new Set();
   const reduceMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const notes = createReleaseNotes($('releaseHistory'), { reduceMotion });
@@ -18,7 +18,8 @@ export function setupUpdates({ page, open, lock, flush }) {
   const pageOpen = () => document.body.classList.contains('settings') && !$('updatesPanel').hidden;
 
   function paint(value) {
-    state = value;
+    // releases は変わったときだけ送られる（進みの通知では外れる）。外れていたら前の一覧を保つ
+    state = value.releases === undefined && state ? { ...value, releases: state.releases } : value;
     const remote = Boolean(window.plyRemote && !bridge?.update);
     const applying = installing || state.phase === 'installing';
     const downloading = state.phase === 'downloading';
@@ -50,7 +51,9 @@ export function setupUpdates({ page, open, lock, flush }) {
     $('updateStatus').textContent = status;
     $('updateStatusRow').hidden = !status;
     $('updateStatusRow').classList.toggle('strong', strong);
+    // 失敗は assertive（alert）、ふだんは polite（status）。role と aria-live は一緒に替える
     $('updateStatusRow').setAttribute('role', alert ? 'alert' : 'status');
+    $('updateStatusRow').setAttribute('aria-live', alert ? 'assertive' : 'polite');
     $('updateLastChecked').hidden = !showLast;
     $('updateLastChecked').textContent = showLast ? lastChecked : '';
     $('updateHint').hidden = !note;
@@ -66,13 +69,14 @@ export function setupUpdates({ page, open, lock, flush }) {
     if (downloading && !applying && progress !== null) $('updatePromptProgress').value = progress;
     else $('updatePromptProgress').removeAttribute('value');
 
-    // 更新の設定（スイッチ）。作業中・ダウンロード済みの間は変えられない
+    // 更新の設定（スイッチ）。作業中・ダウンロード済みの間は変えられない。disabled にするとキーボードの居場所が押した
+    // スイッチから外れるので、aria-disabled で見せ、押しは toggle の入口で無視する
     const working = busy || ['checking', 'downloading', 'installing'].includes(state.phase);
-    const locked = working || state.phase === 'downloaded';
+    const locked = switchesLocked = working || state.phase === 'downloaded';
     $('updatePreferences').hidden = !state.enabled;
     for (const [id, on] of [['updateCheckAutomatic', state.autoCheck !== false], ['updateAutomatic', state.autoDownload === true], ['updateBeta', state.channel === 'beta']]) {
       $(id).setAttribute('aria-checked', String(on));
-      $(id).disabled = locked;
+      $(id).setAttribute('aria-disabled', String(locked));
       $(id).parentNode.classList.toggle('off', locked);
     }
 
@@ -134,6 +138,7 @@ export function setupUpdates({ page, open, lock, flush }) {
     paint(state); $('settings').focus();
   };
   const toggle = key => {
+    if (switchesLocked) return;
     const next = { channel: state.channel === 'beta' ? 'beta' : 'stable', autoDownload: state.autoDownload === true, autoCheck: state.autoCheck !== false };
     if (key === 'channel') next.channel = next.channel === 'beta' ? 'stable' : 'beta'; else next[key] = !next[key];
     return action('preferences', next);
