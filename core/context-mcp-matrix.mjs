@@ -6,6 +6,7 @@ import { CAPABILITY_STATES, PLY_CONTEXT_CONFLICTS } from './backends/agent-marks
 import { mcpAgentsFromLegacy } from './context-settings.mjs';
 
 /** 画面に並べるエージェントの順（アイコンの列）。ここに無いエージェントは末尾 */
+// backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
 export const AGENT_ORDER = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok'];
 const orderOf = id => { const i = AGENT_ORDER.indexOf(id); return i < 0 ? AGENT_ORDER.length : i; };
 
@@ -57,19 +58,27 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
     rows.push({ key: name, name, kind: 'config', group: reg ? 'ply' : 'agent', transport: (reg ?? native[origins[0]]?.find(s => s.name === name))?.transport ?? null,
       registered: Boolean(reg), origins: reg ? origins : origins.slice(), plugin: null, cells, on: agents.some(a => cells[a].state === 'on') });
   }
+  // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
   if (installed.claude !== false && agents.includes('claude')) {
     for (const p of plugins) {
+      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
       const cells = Object.fromEntries(agents.map(a => [a, a === 'claude'
+        // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
         ? { state: off(p.key, 'claude') ? 'off' : 'on', mode: 'toggle' } : { state: 'off', mode: 'none' }]));
+      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
       rows.push({ key: p.key, name: p.server, kind: 'plugin', group: 'agent', transport: p.transport ?? null, registered: false, origins: ['claude'], plugin: p.plugin, cells, on: !off(p.key, 'claude') });
     }
     for (const c of connectors ?? []) {
       const key = `${CONNECTOR_PREFIX}${c}`;
+      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
       const cells = Object.fromEntries(agents.map(a => [a, a === 'claude'
+        // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
         ? { state: off(key, 'claude') ? 'off' : 'on', mode: 'toggle' } : { state: 'off', mode: 'none' }]));
+      // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
       rows.push({ key, name: c, kind: 'connector', group: 'agent', transport: 'http', registered: false, origins: ['claude'], plugin: null, cells, on: !off(key, 'claude') });
     }
   }
+  // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0324
   const claudeHere = installed.claude !== false && agents.includes('claude');
   return {
     agents, rows,
