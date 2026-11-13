@@ -752,6 +752,23 @@
       },
       "cliSetup": {
         "summary": "Return how to start pleiad mcp from an outside AI (the MCP config JSON and the claude mcp add command)."
+      },
+      "reportSlow": {
+        "summary": "Append client-side slow-command and submit-wait diagnostic entries to the server log.",
+        "entries": "Diagnostic entries to append.",
+        "entry": "One diagnostic entry (timestamp, metric kind, command, duration, session ID; no text or paths).",
+        "at": "Timestamp in ISO 8601.",
+        "kind": "Diagnostic metric kind.",
+        "command": "WS command name.",
+        "ms": "Elapsed or total duration in milliseconds.",
+        "sessionId": "Target conversation ID.",
+        "outcome": "Completion outcome.",
+        "errorCode": "Error code when failed.",
+        "pendingCount": "Number of in-flight commands at the moment of recording.",
+        "wait": "Submit wait phase breakdown.",
+        "waitPhase": "Wait phase name.",
+        "waitMs": "Phase duration in milliseconds.",
+        "waitFlag": "Boolean flag describing the wait path or state."
       }
     },
     "sessions": {

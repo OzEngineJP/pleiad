@@ -96,6 +96,8 @@ const SUITES = [
   './unit/side-panel.mjs',
   './unit/refresh-batch.mjs',
   './unit/command-reply.mjs',
+  // 遅い命令・イベントループ・送信待ちの診断記録
+  './unit/slow-log.mjs',
   './unit/session-list-delta.mjs',
   './unit/server-session-list-delta.mjs',
 
