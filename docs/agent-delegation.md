@@ -5,7 +5,7 @@
 
 Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の子会話を作成できる。
 `kind`（仕事の種類）は必ず書く。`backend`（`claude` / `codex` / `antigravity`）を書けばその委譲先に固定し、
-省けば Pleiad が委譲先を選ぶ（下の「委譲先の自動選択」）。同じバックエンドへの委譲もできる。
+省けば Pleiad が委譲先を選ぶ（下の「委譲先の自動選択」。設定で自動選択を無効にしていれば `backend` も必須で、エージェントに渡す説明もそう書く）。同じバックエンドへの委譲もできる。
 エージェントがシェルから別の CLI を起動する必要はなく、Pleiad の既存バックエンド接続を使う。
 
 ## ツール
@@ -32,7 +32,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ローカルの使用実績（トークン数・参考費用）は返さない。Claude でアカウントを登録していれば `accounts` にアカウントごとの枠を並べ、表示名にメールアドレスが含まれる場合はローカル部を1文字残して伏せる。各行の `account` は `account` に書ける名前（ログイン中のアカウントは `login`、登録したアカウントは内部の id `acct-…`）で、トークンが無い行には `runnable: false`、段に入っているかを `inTiers` で付ける。内部の id は登録のたびに作る乱数で、資格情報ではない（トークンは id を鍵に別に暗号化して保存する）。資格情報・メールアドレスは返さない（[ADR 0205](adr/0205-ai-chooses-claude-account.md)）。
 
 **Claude のアカウントを選ぶ**（`ply_delegate` / `ply_task_send` の `account`。[ADR 0205](adr/0205-ai-chooses-claude-account.md)。`core/server.mjs` の `requestedAccount`）:
-- `ply_delegate` では `backend: "claude"` と一緒のときだけ書ける。`backend` が無ければ `agent:routing.accountPinOnly`、Claude 以外なら `agent:routing.accountClaudeOnly` で断る（自動の振り分けは段の候補のアカウントを使う）。書いた子は親の会話の接続先を継がず公式で走り、`routing.target` に `account`・`accountLabel`（伏せた見出し）を書く
+- `ply_delegate` では `backend: "claude"` と一緒のときだけ書ける。`backend` が無ければ `agent:routing.accountPinOnly`（自動選択が無効なら、先に `backend` を求める `agent:routing.backendRequired`）、Claude 以外なら `agent:routing.accountClaudeOnly` で断る（自動の振り分けは段の候補のアカウントを使う）。書いた子は親の会話の接続先を継がず公式で走り、`routing.target` に `account`・`accountLabel`（伏せた見出し）を書く
 - 書けるのは `ply_usage` の `account` の値。登録に無い名前（`agent:delegation.accountUnknown`）・トークンが無いアカウント（`agent:delegation.accountNoToken`）は、選べる名前を添えて断る。そのモデルの使用枠が満杯と分かっているアカウント（`agent:delegation.accountQuotaFull`。使用量の取り置きと同じ判定）も断る。使用量が分からないだけなら断らない。黙ってほかのアカウントに落とさない
 - `host` と一緒には使えない（`agent:delegation.remote.accountUnsupported`。アカウントはこの PC のもの）。ホスト側でも `account` の付いた依頼は断る
 - 書いたアカウントは、設定 › 委譲の段に入っていなくても使う（明示したもの。2026-10-24、[ADR 0264](adr/0264-delegation-account-scope.md)）
@@ -40,12 +40,12 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 **段の候補とアカウント**（2026-10-24、[ADR 0264](adr/0264-delegation-account-scope.md)。`core/delegation-routing.mjs` の `parseCandidate`・`tierAccounts`・`pickAccount`、`core/server.mjs` の `tierAccountFor`）:
 - 段の候補は「エージェント・モデル・アカウント」の組。id は `backend:model`（アカウントを登録したエージェントではログイン中のアカウント、登録していないエージェントはアカウント無し）と `backend@<acct-…>:model`（登録したアカウント）。最初の `:` の前の `@` から後ろがアカウント（`^[A-Za-z0-9_-]{1,64}$`）。同じモデルを別のアカウントで別の段・別の順に置ける
 - 自動の振り分けが使うのは、どこかの段に入っているアカウントだけ。新しく登録したアカウントは段に入れるまで使わない。保存済みの `backend:model` は読み方でログイン中のアカウントの候補になる（prefs は書き換えない）
-- `account` を書かない固定の委譲（`ply_delegate` の `backend` だけ、`ply_task_send` で別のエージェントへ替える）も段のアカウントだけを使う。継ぐアカウントが段に入っていればそのまま、入っていなければ段のアカウントの中から使用量で選ぶ（`pickAccount`: 余裕あり → 余裕が少ない、同じ組なら苦しくない方、なお同じなら段の順）。そのエージェントのアカウントが 1 つも段に無ければ `agent:delegation.accountNotInTiers` で断り、`backend` を省いて自動の選択で頼むように返す。振り分けを無効にしていても同じ。互換の接続先で走る子には当てない
+- `account` を書かない固定の委譲（`ply_delegate` の `backend` だけ、`ply_task_send` で別のエージェントへ替える）も段のアカウントだけを使う。継ぐアカウントが段に入っていればそのまま、入っていなければ段のアカウントの中から使用量で選ぶ（`pickAccount`: 余裕あり → 余裕が少ない、同じ組なら苦しくない方、なお同じなら段の順）。そのエージェントのアカウントが 1 つも段に無ければ `agent:delegation.accountNotInTiers` で断り、`backend` を省いて自動の選択で頼むように返す。振り分けを無効にしていても同じように断る（返す文だけ `agent:delegation.accountNotInTiersRoutingOff` に替え、自動の選択は勧めず、ほかの `backend` で頼み直すかユーザーに確かめるように返す）。互換の接続先で走る子には当てない
 - 登録を削除したアカウントの候補は、段（と思考の強さの上書き）から外す（`dropAccountCandidates`）
 - 断る理由はすべて書く前に確かめ、断ったら何も作らず何も変えない
 不明な `backend` はエラー。1つのバックエンドの取得失敗はそのバックエンドの `message` に入れ、他は返す。
 
-**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。**委譲を勧める指示は入れない**（委譲するか・どこまで任せるかは、利用者が自分で足した指示で決める。前の版の既定「委譲の進め方」は無くした。[ADR 0210](adr/0210-no-builtin-delegation-push.md)）。依頼元の会話には「委譲先の自動選択の使い方」（`kind` を付けて `backend` を書かない。同じリポジトリに書く子を並べるなら worktree を使うかユーザーに聞くこと・完了通知や `ply_task_status` に「作業場所: worktree …（未取り込み）」とあればそのブランチを元の作業場所へ取り込むのは自分の仕事で競合も自分で解くことも書く。委譲と連動で編集できず、自動選択が無効なら入れない）、委譲された子の会話には「委譲された会話でのコマンドの扱い」（コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え、自分で止める・`Start-Process -Wait` のような無期限待機をしない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。Antigravity の子にも、コマンドの時間上限と PID の管理の指示をカスタムエージェントの本文に足す。親とユーザーの会話には足さない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。編集済みの子向け指示は上書きせず、既定に戻すと新しい文面になる。
+**委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。**委譲を勧める指示は入れない**（委譲するか・どこまで任せるかは、利用者が自分で足した指示で決める。前の版の既定「委譲の進め方」は無くした。[ADR 0210](adr/0210-no-builtin-delegation-push.md)）。依頼元の会話には「委譲先の自動選択の使い方」（`kind` を付けて `backend` を書かない。同じリポジトリに書く子を並べるなら worktree を使うかユーザーに聞くこと・完了通知や `ply_task_status` に「作業場所: worktree …（未取り込み）」とあればそのブランチを元の作業場所へ取り込むのは自分の仕事で競合も自分で解くことも書く。委譲と連動で編集できず、自動選択が無効なら入れない。そのときは `ply_agents` の instructions とツールの説明も「`backend` は必ず書く」の文に替える。下の「自動選択が無効なときにエージェントへ渡す文」）、委譲された子の会話には「委譲された会話でのコマンドの扱い」（コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え、自分で止める・`Start-Process -Wait` のような無期限待機をしない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。Antigravity の子にも、コマンドの時間上限と PID の管理の指示をカスタムエージェントの本文に足す。親とユーザーの会話には足さない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。編集済みの子向け指示は上書きせず、既定に戻すと新しい文面になる。
 
 タスク ID は `ply-task-<UUID>`。Claude / Codex のネイティブサブエージェントとは別に管理する。
 `ply_agents` は専用の接続で注入するため、外部 MCP 中継のハッシュ化されたツール名にならない。
@@ -69,7 +69,14 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 | `visual` | 3D モデリング、生成画像のベクター化、イラスト・ロゴなど、見た目の出来栄えが成果を決める高度なクリエイティブ作業（図・グラフ・画面のモックは含めない。形が決まっていれば `implement`、形を子が決めるなら `ux_change` / `ux_new`） |
 
 `kind` が無い・不正なら、9 種類の一覧（定義つき）を付けたエラーを返す。`backend` を書いたときも `kind` は記録する。
-振り分けが無効な設定で `backend` が無ければ、`backend` を求めるエラー。`backend` 無しで `model` / `effort` を書いたらエラー（黙って捨てない）。
+振り分けが無効な設定で `backend` が無ければ、`backend` を求めるエラー（`agent:routing.backendRequired`。`account`・`model`・`effort` だけを書いた依頼にも、ほかのエラーより先にこれを返す）。振り分けが有効で、`backend` 無しで `model` / `effort` を書いたらエラー（黙って捨てない）。
+
+**自動選択が無効なときにエージェントへ渡す文。** 設定 › 委譲 › 委譲先を自動で選ぶ がオフのあいだは、エージェントに「`backend` を省くと Pleiad が選ぶ」と言わない。有効なときの文は 1 字も変えない（同じバイト列にして、プロンプトのキャッシュを外さない）。
+
+- **替える文**: `ply_agents` の instructions（`agent:bridge.instructions` → `agent:bridge.routingOff.instructions`）、`ply_delegate` の説明の先頭の段（`bridge.tools.ply_delegate` → `bridge.routingOff.ply_delegate`）、`ply_usage` の説明（`bridge.tools.ply_usage` → `bridge.routingOff.ply_usage`）。無効の文は「`kind` と `backend` は必ず書く。自動選択は設定で無効で、`backend` を省くとエラーになる」と言い、ほかの所（`account`・`model`・`isolate`・完了の届き方）は有効の文と同じ。有効の文を直したら無効の文も同じく直す（`tests/unit/i18n-agent.mjs` が、違うのは委譲先の選び方の文だけであることを確かめる）
+- **替えないもの**: ツールの名前と引数（`backend` は無効のときも必須の引数にしない。省いた依頼は上のエラーで導く。`host` を書いた依頼はホストの設定で決まるため）、`kind` の一覧、ホストへ任せる案内（`bridge.hosts` の「`backend` を省けばホストが委譲先を選ぶ」。ホストの設定は端末から分からない）
+- **切り替わる時**: instructions は Pleiad がターンごとに今の設定で作って渡すので、会話の途中で設定を切り替えても次のターンから替わる（Pleiad の指示の「委譲先の自動選択の使い方」を入れる・入れないと同じ時）。ツールの説明は、エージェントが一覧を取り直した時（`tools/list` のたびに今の設定で作る）。エージェントが前の文を持ったまま `backend` を省いて頼んでも、上の `backend` を求めるエラーが正しい使い方を返す
+- **完了の通知**: 上限で止まった子の通知に添える「`backend` を省いた `ply_delegate` は 〜 まで選びません」（`delegation.noticeLimitSkip`・`noticeLimitSkipAccount`）は、無効のあいだは添えない
 
 **流れ**（`backend` が無いとき。`core/server.mjs` の `routeDelegation`。選んだ後は、書いた `backend` と同じく承認の強さの判定・承認カードを通る）:
 

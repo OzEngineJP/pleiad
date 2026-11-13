@@ -1289,7 +1289,8 @@ async function accountLabelOf(id, accounts) {
 /**
  * アカウントを書かない固定の委譲（と ply_task_send でエージェントを替えるとき）のアカウント（ADR 0264）。
  * アカウントを登録したエージェントでは、段ごとの候補に入っているアカウントだけを使う: 継ぐアカウント（wanted）が入っていればそれ、
- * 入っていなければ入っているものの中から使用量で選ぶ。1 つも入っていなければ断る（自動の選択で頼むように返す）。
+ * 入っていなければ入っているものの中から使用量で選ぶ。1 つも入っていなければ断る（自動の選択で頼むように返す。
+ * 自動の選択が無効なら頼めないので、ほかの backend で頼み直すかユーザーに確かめるように返す）。
  * 登録の無いエージェントは wanted のまま（候補にアカウントは無い）
  */
 async function tierAccountFor(backend, wanted, model, lng) {
@@ -1298,7 +1299,7 @@ async function tierAccountFor(backend, wanted, model, lng) {
   if (!rows.length) return wanted;
   const allowed = [...tierAccounts(routingSettingsCache, backend.id)].filter(a => a === '' || rows.some(r => r.id === a));
   if (allowed.includes(wanted)) return wanted;
-  if (!allowed.length) throw new Error(agentT(lng, 'delegation.accountNotInTiers', { agent: backend.label }));
+  if (!allowed.length) throw new Error(routingSettingsCache.enabled ? agentT(lng, 'delegation.accountNotInTiers', { agent: backend.label }) : agentT(lng, 'delegation.accountNotInTiersRoutingOff', { agent: backend.label }));
   return pickAccount({ backend: backend.id, model, accounts: allowed, usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now(), blocked: slotBlocked });
 }
 /** 子のターンが始まるところ（引き継ぎの最中を含む）・分岐の最中。この間は子の設定を書かない（reserveTurnSettings も断る） */
@@ -1701,7 +1702,9 @@ hosts: () => remoteDelegation?.describe() ?? [],
 // backend に書けるエージェントは、有効なもの（AGENT_HOST_BACKENDS）
 backends: () => listBackends().map(b => b.id),
 // ply_delegate の kind に書ける作業の種類（設定 › 委譲で利用者が直せるので、都度設定から引く）
-kinds: () => routingSettingsCache.kinds });
+kinds: () => routingSettingsCache.kinds,
+// 委譲先の自動選択が有効か。無効なら instructions とツールの説明を「backend を必ず書く」文にする（都度設定から引く）
+routing: () => routingSettingsCache.enabled });
 
 // ---- 委譲先の自動選択 ------------------------------------------------------
 // 設定は prefs.json の delegationRouting（未設定の項目は既定値）。自動選択に使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
@@ -1787,9 +1790,10 @@ async function routeDelegation(args, lng, cwd) {
     const chosen = await requestedAccount(args.account, model, lng, backend);
     return { ...args, account: chosen.account, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model, account: chosen.account, accountLabel: chosen.label }) };
   }
+  // 自動選択が無効なら、ほかの引数より先に backend を求める（account だけ書いた依頼に「自動で選ばせるなら account を省いて」と返さない）
+  if (!settings.enabled) throw new Error(agentT(lng, 'routing.backendRequired', { backends: listBackends().map(b => b.id).join(', ') }));
   // account は委譲先を固定したときだけ（自動の振り分けはアカウントも使用量で選ぶ）
   if (args.account !== undefined) throw new Error(agentT(lng, 'routing.accountPinOnly'));
-  if (!settings.enabled) throw new Error(agentT(lng, 'routing.backendRequired', { backends: listBackends().map(b => b.id).join(', ') }));
   if (args.model !== undefined || args.effort !== undefined) throw new Error(agentT(lng, 'routing.pinOnly'));
   // 依頼文は判定のモデルへ送る前に確かめる（agentTasks と同じ上限）
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
@@ -1947,8 +1951,13 @@ async function retryAgentTask({ taskId, candidate, account, stop, approved } = {
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
   return { task };
 }
+/**
+ * このターンに渡す ply_agents の口（url・headers・instructions）。instructions は呼んだ時の設定の文（委譲先の自動選択の ON / OFF）で、
+ * 返した後は変わらない。ターンの中で 1 度だけ呼び、同じ文を使う
+ */
 function agentConnection(turn) {
-  return conversationConnection(turn).runtime;
+  const { url, headers, instructions } = conversationConnection(turn).runtime;
+  return { url, headers, instructions };
 }
 
 /**
@@ -1978,9 +1987,9 @@ function attachAgentsPort(entry, token) {
       if (!live.info.sessionId) throw new Error(agentT(entry.locale, 'delegation.idPending'));
       return live.info.sessionId;
     } });
-  const { close, ...agentRuntime } = binding;
-  entry.runtime = agentRuntime;
-  entry.close = close;
+  // 橋は会話のあいだ開いたままなので、instructions は写さず読むたびに橋から引く（委譲先の自動選択を会話の途中で切り替えても、次のターンから文が合う）
+  entry.runtime = { url: binding.url, headers: binding.headers, get instructions() { return binding.instructions; } };
+  entry.close = binding.close;
 }
 
 /** 札へ入れる、会話の口のトークン（開いていない口は null）。restoreConnection に渡す形 */
@@ -6744,13 +6753,14 @@ function completionNotice(lng, tasks) {
 
 /**
  * 上限で止まった子の完了通知（解除の見込みと、待つか任せ直すか）。
- * 枠がまだ止まっていれば、自動の振り分けがいつまでその枠を選ばないかを添える（解除の見込みより長いことがある。Issue #111）
+ * 枠がまだ止まっていれば、自動の振り分けがいつまでその枠を選ばないかを添える（解除の見込みより長いことがある。Issue #111）。
+ * 自動の振り分けが無効なら添えない（「backend を省いた ply_delegate は」の話で、無効のときは backend を省けない）
  */
 function limitNotice(lng, limit) {
   const resetsAt = limitResetsAt(limit?.resetsAt);
   const head = resetsAt ? agentT(lng, 'delegation.noticeLimit', { time: clockText(resetsAt) }) : agentT(lng, 'delegation.noticeLimitUnknown');
   const held = typeof limit?.backend === 'string' ? limitedSlots.get(limit.backend, limit.model, limitAccount(limit.backend, limit.account)) : null;
-  if (!held) return head;
+  if (!held || !routingSettingsCache.enabled) return head;
   // アカウント全体の枠（5 時間・週）の上限は、そのアカウントのどのモデルも選ばない
   const time = clockText(held.until);
   return [head, held.scope === 'account' ? agentT(lng, 'delegation.noticeLimitSkipAccount', { time }) : agentT(lng, 'delegation.noticeLimitSkip', { time })].join('\n');
@@ -7964,6 +7974,8 @@ async function beginTurn(ctx) {
   if (sessionId && sessionMeta?.worktreePending) await store.setSessionData(sessionId, 'worktreePending', false);
   // 次の発言の候補（Claude はターンの中で予測を受ける。core/prompt-suggestions.mjs）。設定がオフ・委譲の子・bot・圧縮のターンでは頼まない
   const wantsSuggestion = !delegatedChild && !sessionMeta?.bot && !hooks.compact && (await store.getPrefs()).composerSuggestions !== false;
+  // ply_agents の口と、このターンの instructions（委譲先の自動選択の ON / OFF を今の設定で決めた文。渡す文と量の記録で同じものを使う）
+  const agentPort = agentConnection(turn);
   const runArgs = {
     prompt,
     messageId: args.messageId ?? null,
@@ -8014,7 +8026,7 @@ async function beginTurn(ctx) {
     // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
     ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
     // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
-    agentRuntime: !backend.capabilities?.plyAgents ? null : (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
+    agentRuntime: !backend.capabilities?.plyAgents ? null : { ...agentPort, instructions: withAdded(agentPort.instructions, contextRecord.added) },
     // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
     // アカウント（ADR 0222）: Claude はトークン、ほかのエージェントはアカウントの置き場と資格情報
     ...(account?.token ? { oauthToken: account.token } : account ? { account } : {}),
@@ -8043,7 +8055,7 @@ async function beginTurn(ctx) {
   conversationConnection(turn).shellEnv = { ...(runArgs.browserEnv ?? {}), ...(runArgs.controlRuntime?.env ?? {}), ...(runArgs.secretsRuntime?.env ?? {}) };
   // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
   const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: ctx.runtimeContext?.sections ?? null,
-    visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
+    visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentPort.instructions, added: contextRecord.added,
     computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime?.instructions ?? null,
     secrets: runArgs.secretsRuntime?.instructions ?? null, shell: runArgs.shellRuntime?.instructions ?? null });
   if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
