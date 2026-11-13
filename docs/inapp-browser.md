@@ -42,11 +42,23 @@ Chrome は外から渡された URL を最後にアクティブだった窓に�
 
 ### 中継の門
 
-エージェントへの Chrome DevTools Protocol（CDP）の中継は、会話のタブ・iframe・worker と、そこから開いたタブだけを通す。別の会話や普段の窓は一覧・イベント・ログへ出さない。接続ごとの CDP のセッションも照合する。ブラウザー全体の強い操作、ほかの出どころの保存データ、Cookie の一括取得などは断る。
+エージェントへの Chrome DevTools Protocol（CDP）の中継は、会話のタブ・iframe・worker と、そこから開いたタブだけを通す。別の会話や普段の窓は一覧・イベント・ログへ出さない。接続ごとの CDP のセッションも照合する。ブラウザー全体の強い操作、ほかの出どころの保存データ、Cookie の一括取得、ダウンロードの保存先を決める命令などは断る（ダウンロードの読み方は「ダウンロード」の節）。
 
 人の操作のタブでは、`core/chrome/tab-holder.mjs` の `HUMAN_TAB_READS` にある読むためのコマンドと購読の解除だけを通す。snapshot・screenshot・題や URL の読み取り・接続の維持に必要なものに限る。`Runtime.evaluate`・`Runtime.callFunctionOn` は読むつもりでも断る。スクリプトの登録・実行、DOM の変更、タブを閉じること、大きさの変更も断る。`Fetch`・`Debugger`・`Overlay`・`Emulation` の購読は通さない。
 
 Pleiad のページへの移動は、自分の会話のページと隔離した表示だけを許す。別会話のページ、本体のポート、`file:` は断り、ページ内の要求にも検査を掛ける。Cookie の結果から `pleiad_*` を除き、その Cookie の変更も断る。Pleiad のページの橋をエージェントが追加・削除することも許さない。通常の開発サーバーは、本体のポートと区別して開ける。
+
+## ダウンロード
+
+会話の Chrome のウィンドウのタブで始まったダウンロードは、中継が拾って、エージェントと人の両方に見せる（承認済み（2026-11-14）。[ADR 9187](adr/9187-chrome-window-downloads.md)）。ファイルは Chrome のいつもの保存先に落ち、Pleiad は保存先を替えない。
+
+中継は Chrome への接続のたびに `Browser.setDownloadBehavior { behavior: 'default', eventsEnabled: true }` を送り、ブラウザー全体のダウンロードのイベントを受ける。そのうち、始まったフレーム（`Browser.downloadWillBegin` の `frameId`）から会話のタブを引けたものだけを記録する。主フレームのリンク、`target=_blank`・`window.open` で開いてすぐ消えるタブ、iframe（cross-site のものも）の中で始まったものを引ける。利用者が普段の窓で始めたダウンロードと、ほかの会話のものは記録しない。ダウンロードのイベントはエージェントの接続には配らない。
+
+エージェントは `ply_browser` の `list_downloads` で、自分の会話の分を新しい順に読む。状態（`downloading`・`completed`・`canceled`・`failed`・`unknown`）・名前・受け取った量・始まったページの URL と、終わったものは保存された絶対パスが返る。`wait` に秒数（120 まで）を渡すと、進行中のものが終わるまで待つ。`agent-browser download`・`wait --download` など保存先を決める命令（`Browser.setDownloadBehavior`・`Page.setDownloadBehavior`）と `Browser.cancelDownload` は中継が断り、断る文で「押して始め、`list_downloads` で確かめる」を伝える。
+
+人には、右の欄の入口と一覧で見せる（形は [デザインシステム](design-system.md#ダウンロード承認済み2026-11-14)）。入口はその会話にダウンロードの記録がある間だけ出る。進行中のものは一覧の行から止められる（操作 `browser.cancelDownload`。画面とリモートの端末からだけ）。止めるボタンは Chrome が止められるものにだけ出す。Chrome は、会話のプロフィールが CDP の既定の context（最後に使ったプロフィール）のときだけ止める命令を受けるので、中継が既定の context を引き直して、止められるかを記録に付ける。完了・失敗・止めた、のどれかになったダウンロードは会話に 1 行残り、完了の行のファイル名からファイルを開ける。
+
+記録は中継のプロセスの中だけに持つ（`core/chrome/downloads.mjs`。会話ごとに 50 件）。サーバーの更新・再起動で一覧は消え、会話の 1 行は残る。Chrome との接続が切れたとき、進行中のものは `unknown` にして画面から外し、つなぎ直して進み具合が届けば戻す。Chrome が返す `canceled` は、失敗も Chrome の側で人が止めたものも区別が付かないので、Pleiad で止めたもの以外は `failed` にする。
 
 ## 映像とページの大きさ
 
