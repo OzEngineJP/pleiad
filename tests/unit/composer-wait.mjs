@@ -143,7 +143,26 @@ export default function (t) {
   t.ok('index.html に欄の上の一行と欄の中の待機表示', /id="composerNote"[^>]*role="status"/.test(html) && /id="composerBusy"/.test(html) && /id="composerBusyText"/.test(html));
   const css = read('web/style.css');
   t.ok('style.css: 待ちは 150ms 後の data-wait で字を隠し、流れる棒は reduced-motion で止める', /\.cbox\[data-wait\] :is\(#prompt,#thPrompt,#wkPrompt\)/.test(css) && /\.composer-busy-bar\{animation:none\}/.test(css));
-  const keys = ['queued', 'queuedCancel', 'historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
+  const keys = ['queued', 'waitingSettings', 'sending', 'queuedCancel', 'historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
   const missing = ['ja', 'en'].flatMap(lang => { const c = JSON.parse(read(`web/locales/${lang}/ui.json`)).chat.composer; return keys.filter(k => !c[k]).map(k => `${lang}:${k}`); });
   t.ok('文言は ja・en の辞書にある', missing.length === 0, missing.join(' '));
+
+  // queue の文言切り替え（設定待ち・キャンセル可 → 受理待ち・キャンセル不可）と switch 理由
+  {
+    const { w, prompt, send, note, flush } = setup();
+    const reasons = [];
+    w.queue((r) => reasons.push(r), { text: '[waiting]', cancelable: true, kind: 'queued' });
+    flush();
+    t.ok('150ms 後に指定した待ち文言と取り消すボタンが出る', !note.hidden && note.querySelector('b')?.textContent === '[waiting]' && note.querySelector('button')?.textContent === '[chat.composer.queuedCancel]' && send.classList.contains('wait'));
+    const waitChild = send.children[0];
+    w.queue(null, { text: '[sending]', cancelable: false, kind: 'sending' });
+    t.ok('再待ちでタイマーをやり直さず同じ枠で文言を切り替えて取り消すを外せる',
+      note.querySelector('b')?.textContent === '[sending]' && note.querySelector('button') === null && send.children[0] === waitChild && note.dataset.kind === 'sending');
+    w.cancel('switch');
+    t.ok('cancel(switch) は待ちを解く（onCancel が無い送信中は理由だけ消す）', !w.queued && !prompt.readOnly && note.hidden);
+
+    w.queue((r) => reasons.push(r), { text: '[waiting]', cancelable: true });
+    w.cancel('switch');
+    t.ok('onCancel に cancel の理由（switch / user）が渡る', reasons.length === 1 && reasons[0] === 'switch', JSON.stringify(reasons));
+  }
 }

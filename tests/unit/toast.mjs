@@ -131,6 +131,18 @@ export default async function (t) {
     notify('閉じたあと'); settle(box);
     t.ok('ダイアログを閉じたあとは、同じ箱を body に戻して出す', box.parent === body && box.hidden === false && body.querySelectorAll('.file-toast').length === 1 && dialog.querySelectorAll('.file-toast').length === 0);
     clock.advance(4000);
+
+    // 操作ボタン付き notify(text, { label, onClick }) と、通常 notify への戻し
+    let actionClicked = 0;
+    notify('送っていません', { label: '開く', onClick: () => { actionClicked++; } });
+    const actionBtn = box.querySelector('.file-toast-action');
+    t.ok('操作ボタン付きなら .has-action とボタンを ✕ の左に置く', box.classList.contains('has-action') && actionBtn?.textContent === '開く' && box.children.length === 3 && box.children[2] === close);
+    actionBtn.click();
+    t.ok('操作ボタンを押すと onClick が走り、箱が閉じてボタンも消える', actionClicked === 1 && box.hidden === true && !box.classList.contains('has-action') && !box.querySelector('.file-toast-action'));
+
+    notify('操作なしに戻す');
+    t.ok('通常の notify へ戻すと 2 要素だけになる', box.children.length === 2 && !box.classList.contains('has-action'));
+    clock.advance(4000);
   } finally {
     clock.restore();
     document.body = saved.body; document.querySelector = saved.querySelector;

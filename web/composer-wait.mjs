@@ -29,7 +29,7 @@
 export function createComposerWait({ box, prompt, send, note, busyLine, busyText, t, runMark, onChange = () => {},
   delay = 150, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let mode = null;          // null | 'history' | 'connect' | 'failed'
-  let queued = null;        // { onCancel }
+  let queued = null;        // { onCancel, text, cancelable, cancelLabel, kind, shown }
   let busyTimer = null, queueTimer = null;
   let sendIcon = null;      // 弧に差し替える前の送信ボタンの中身
   let sendTitle = null;     // failed の間に差し替える前の title
@@ -37,6 +37,35 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
   let heldTitle = null;     // hold の間に差し替える前の送信の title
 
   const syncReadOnly = () => { prompt.readOnly = mode === 'history' || mode === 'connect' || Boolean(queued); };
+
+  const normalizeQueue = (onCancel, opts = {}) => ({
+    onCancel: typeof onCancel === 'function' ? onCancel : null,
+    text: typeof opts.text === 'string' && opts.text ? opts.text : t('chat.composer.queued'),
+    cancelable: opts.cancelable !== false && typeof onCancel === 'function',
+    cancelLabel: typeof opts.cancelLabel === 'string' && opts.cancelLabel ? opts.cancelLabel : t('chat.composer.queuedCancel'),
+    kind: typeof opts.kind === 'string' && opts.kind ? opts.kind : 'queued',
+  });
+
+  function paintQueuedNote() {
+    if (!queued || !queued.shown) return;
+    if (!sendIcon) {
+      sendIcon = [...send.children];
+      send.classList.add('wait');
+      send.replaceChildren(runMark(queued.text));
+    } else {
+      send.firstChild?.setAttribute?.('aria-label', queued.text);
+      send.firstChild?.setAttribute?.('title', queued.text);
+    }
+    note.replaceChildren();
+    const b = document.createElement('b');
+    b.textContent = queued.text;
+    note.append(runMark(), b);
+    if (queued.cancelable) {
+      note.append(noteButton(queued.cancelLabel, () => { cancel('user'); prompt.focus?.(); }));
+    }
+    note.dataset.kind = queued.kind;
+    note.hidden = false;
+  }
 
   function clearBusy() {
     clearTimer(busyTimer); busyTimer = null;
@@ -129,24 +158,26 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     onChange();
   }
 
-  /** 新しい会話ができるまで送信を待たせる。onCancel は「取り消す」で呼ぶ */
-  function queue(onCancel) {
-    if (queued) return;
-    queued = { onCancel };
+  /** 新しい会話ができるまで・反映が終わるまで送信を待たせる。onCancel は「取り消す」で呼ぶ */
+  function queue(onCancel, opts = {}) {
+    const next = normalizeQueue(onCancel, opts);
+    if (queued) {
+      queued.onCancel = next.onCancel;
+      queued.text = next.text;
+      queued.cancelable = next.cancelable;
+      queued.cancelLabel = next.cancelLabel;
+      queued.kind = next.kind;
+      if (queued.shown && !held) paintQueuedNote();
+      return;
+    }
+    queued = { ...next, shown: false };
     syncReadOnly();
     clearTimer(queueTimer);
     queueTimer = setTimer(() => {
       queueTimer = null;
       if (!queued) return;
-      sendIcon = [...send.children];
-      send.classList.add('wait');
-      send.replaceChildren(runMark(t('chat.composer.queued')));
-      note.replaceChildren();
-      const b = document.createElement('b');
-      b.textContent = t('chat.composer.queued');
-      note.append(runMark(), b, noteButton(t('chat.composer.queuedCancel'), () => { cancel(); prompt.focus?.(); }));
-      note.dataset.kind = 'queued';
-      note.hidden = false;
+      queued.shown = true;
+      if (!held) paintQueuedNote();
     }, delay);
   }
   /** 予約を解く（送った・作れなかった・取り消した）。欄は書けるように戻す（字はそのまま） */
@@ -159,10 +190,10 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     clearNote();
     syncReadOnly();
   }
-  function cancel() {
+  function cancel(reason = 'user') {
     const q = queued;
     unqueue();
-    q?.onCancel?.();
+    q?.onCancel?.(reason);
   }
 
   /** 送らせない理由と操作を欄の上に出す。text は強い字の理由、actions は [{ label, onClick }] */

@@ -755,3 +755,14 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 - **設定**: `voice`（`settings.set`。聞き取り・予備・読み上げのモデル、声、言語、1 回と 1 日の通話の長さの上限、エコー除去、話の区切り（`turnHold`: short・standard・long）、話して止める（`bargeIn`）、効果音（`sounds`: off・few・all）、受け取りの一言（`ackPhrase`）、待ちの実況（`narration`）。上限を上げる向きは AI からは承認カード）。状態は `voice.status`（キーの有無・今日の使用量。キーは返さない）。設定の画面は設定 › 通話。
 - **費用の安全弁**: 1 回の通話の長さの上限（既定 30 分）・1 日の上限（既定 120 分。この PC の日付。日ごとの台帳 `voice-usage.json` は直近 31 日）・声が聞こえないまま 10 分で終了・無音と雑音を送らない（送信ゲート・200ms 未満の声・空の結果）。
 - **デスクトップ・モバイル**: Electron は本体の画面（メインフレーム・同じ origin）の音声入力に限って `media` を許可する。macOS は `NSMicrophoneUsageDescription` と audio-input の entitlement、Android は `RECORD_AUDIO` を足した（実機は未確認）。
+
+## 遅い命令・送信待ちの診断記録（提案（2026-11-14）、[ADR 0325](adr/0325-slow-command-log-and-submit-wait.md)）
+
+実機で「送信を押しても送られない・遅い」の引き金を切り分けるため、データ置き場の `slow-commands.log`（1 行 1 JSON、上限 `128 KiB` で超えたら新しい半分を残す、`core/slow-log.mjs`）に次の 4 つの物差しを残す。**メッセージ本文・タイトル・ファイルパス・設定値・エラー文言の中身は一切記録しない**（許可する欄だけを通す `sanitizeSlowEntry`）。
+
+1. **`client-pending` / `client-rtt`**（`web/slow-client.mjs`）: 画面の `cmd()` がしきい値（既定 `2000 ms`）を超えて返らないときに未完了を 1 件、完了・失敗・切断時に所要時間を 1 件記録する。サーバーが詰まっている・切断中の分は画面のメモリ（上限 200 件）に持ち、復帰後または `ready` の後に `invoke('app.reportSlow')`（UI 限定・`surfaces: { ui: true, mcp: false, cli: false }`）で非同期に送る（送信や画面を待たせず、失敗しても黙って捨てる。自己記録は除外する）。
+2. **`server-cmd`**（`core/server.mjs`）: WS 命令の受け取りから `reply`（または非 `reply` 終了）までの処理時間がしきい値（既定 `1000 ms`）を超えたときに記録する（`invoke` は `invoke:<op>`、`invoke:app.reportSlow` は除外）。
+3. **`event-loop`**（`core/slow-log.mjs`）: サーバーの `monitorEventLoopDelay` で一定窓（既定 `1000 ms`）の最大遅れがしきい値（既定 `500 ms`）以上のときに、最大・平均・p99・処理中の WS 命令数を記録する。
+4. **`submit-wait` / `submit-switched`**（`web/client.mjs` の `submit`）: 送信前・送信中の合計待ちがしきい値（既定 `2000 ms`）以上なら工程ごとの内訳（`newSessionMs`・`settingsMs`・`modeMs`・`worktreeMs`・`postSettingsMs`・`sendMs`・`compactMs`）付きで記録する。待ち中に別の会話へ移って未送信で終わったときは経過時間に関わらず `submit-switched` を残す。
+
+しきい値は起動時の環境変数（`AGENT_HOST_SLOW_CLIENT_MS`・`AGENT_HOST_SLOW_SERVER_MS`・`AGENT_HOST_SLOW_LOOP_MS`・`AGENT_HOST_SLOW_LOOP_WINDOW_MS`・`AGENT_HOST_SLOW_SUBMIT_MS`）から変えられ、画面側のしきい値は `ready.slow` で渡す。
