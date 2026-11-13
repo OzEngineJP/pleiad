@@ -134,10 +134,14 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
   async function askBackend(bot, prompt, prefs) {
     const backendId = pulseBackendId(bot, prefs);
-    const backend = host.getBackend(backendId);
-    if (!backend) throw new Error(`pulse backend unavailable: ${backendId}`);
+    const base = host.getBackend(backendId);
+    if (!base) throw new Error(`pulse backend unavailable: ${backendId}`);
     const cwd = os.homedir();
     const own = backendId === bot.backend;
+    const accountId = own && base.capabilities?.accounts ? bot.account ?? '' : '';
+    const backend = accountId && typeof host.backendForAccount === 'function'
+      ? await host.backendForAccount(base, accountId).catch(() => base)
+      : base;
     const model = await host.resolveModel(null, bot.pulse?.model || prefs.backends?.[backendId]?.model || (!bot.pulse?.backend && !prefs.memoryLearnBackend && own ? bot.model : undefined) || undefined, backend, cwd, '');
     const effort = await host.resolveEffort(null, prefs.backends?.[backendId]?.effort || undefined, backend, model, cwd, null);
     const mode = narrowestMode(backend.modes());
@@ -149,8 +153,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     // 心拍も bot のアカウントの枠で動く（ADR 0224）。bot 自身の backend（アカウントを選べるもの）で走るときだけ
     let out;
     try {
-      out = await host.internalCall({ kind: 'pulse', backend, prompt, model, effort, mode, cwd, locale: locale(), botId: bot.id,
-        accountId: own && backend.capabilities?.accounts ? bot.account ?? '' : '' });
+      out = await host.internalCall({ kind: 'pulse', backend: base, prompt, model, effort, mode, cwd, locale: locale(), botId: bot.id, accountId });
     } catch (e) {
       // 呼出しを始めた後の失敗（部分の使用量を含む）。予算へは呼び出し側で反映する
       e.internalCallAttempted = true;

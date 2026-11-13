@@ -125,8 +125,11 @@ export function createBotSessions({ host, now = Date.now } = {}) {
 
   async function resolve(bot, channel, cwdHint, backendHint = null) {
     // backendHint: スレッドで選んだ backend（組み込みの bot だけ。channels.threadSettings の backend）
-    const backend = host.getBackend((bot.plain && backendHint) || bot.backend);
-    if (!backend) throw new Error(agentT(lang(), 'delegation.backendDisabled'));
+    const base = host.getBackend((bot.plain && backendHint) || bot.backend);
+    if (!base) throw new Error(agentT(lang(), 'delegation.backendDisabled'));
+    const backend = !bot.plain && takesAccount(base) && bot.account && typeof host.backendForAccount === 'function'
+      ? await host.backendForAccount(base, bot.account).catch(() => base)
+      : base;
     const modes = backend.modes();
     const mode = modes[bot.mode] ? bot.mode : defaultMode(modes);
     const cwd = cwdHint ?? pickCwd(bot, channel, modes[mode]);
@@ -165,9 +168,12 @@ export function createBotSessions({ host, now = Date.now } = {}) {
 
     async sync(sessionId, bot) {
       if (bot.plain) return false;   // 組み込みの bot の会話の設定は、スレッドごとに人が選んだもの（bot の既定を持たない）
-      const backend = host.getBackend(bot.backend);
+      const base = host.getBackend(bot.backend);
       const meta = await host.store.get(sessionId);
-      if (!backend || meta.backend !== backend.id) return false;   // backend を変えた bot の古い会話は、次の新しい会話から（そのままにする）
+      if (!base || meta.backend !== base.id) return false;   // backend を変えた bot の古い会話は、次の新しい会話から（そのままにする）
+      const backend = takesAccount(base) && bot.account && typeof host.backendForAccount === 'function'
+        ? await host.backendForAccount(base, bot.account).catch(() => base)
+        : base;
       const modes = backend.modes();
       // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
       // 心拍の会話は読み取りのモードで作る（ADR 0126）。人が bot のモードを変えても替えない

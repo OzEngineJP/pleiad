@@ -531,6 +531,7 @@
       "defaultNote": "Uses your Claude Code settings.",
       "fableFallback": "Top Claude 5 model. For the heaviest work.",
       "fable": "Top model. For the heaviest work.",
+      "mythos": "For verified organizations. Shares the Fable usage limit.",
       "opus": "Smart. For heavy work.",
       "sonnet": "Balances speed and intelligence.",
       "haiku": "Light. For simple work."

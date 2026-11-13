@@ -326,7 +326,10 @@ export function elapsedPercent(w, now) {
 
 const words = s => String(s ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const squash = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const claudeFamily = s => /(fable|opus|sonnet|haiku)/i.exec(String(s ?? ''))?.[1].toLowerCase() ?? null;
+const claudeFamily = s => {
+  const f = /(mythos|fable|opus|sonnet|haiku)/i.exec(String(s ?? ''))?.[1].toLowerCase();
+  return f === 'mythos' ? 'fable' : f ?? null;
+};
 /** agy の使用枠のグループ名で、モデルの系統を指す語 */
 const AGY_FAMILIES = ['gemini', 'claude', 'gpt'];
 /** agy のグループ名にある、モデルを指さない汎用の語（'Claude and GPT models' の 'and'・'models' など） */
@@ -334,7 +337,7 @@ const AGY_GROUP_GENERIC = new Set(['model', 'models', 'and', 'the']);
 
 /**
  * その候補に効く枠。
- *   claude      … 全体の枠（5 時間・週次）と、そのモデルの系統の週次（seven_day_opus / model_scoped）
+ *   claude      … 全体の枠（5 時間・週次）と、そのモデルの系統の週次（seven_day_opus / model_scoped。mythos は fable の枠）
  *   codex       … 主の枠（limitId が codex か無し）と、名前がそのモデルに当たる追加の枠
  *   antigravity … モデル名の語をいちばん多く含むグループの枠（gemini-* → Gemini …、claude-* / gpt-* → Claude and GPT …）。
  *     専用の枠（'Gemini 4 Argon' など）は、系統・汎用の語を除いた名前の語が全部モデルの id に入るときだけ当たる
@@ -643,6 +646,13 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
   return { ok: false, routing: routing(null) };
 }
 
+const modelKnownInUsage = (entry, parsed) => {
+  if (!entry || !parsed) return true;
+  const acctMap = entry.accountModels?.[parsed.account ?? ''];
+  if (acctMap) return acctMap[parsed.model] === true;
+  return entry.models?.[parsed.model] === true;
+};
+
 /**
  * 候補ごとの今の状態（設定画面の段ごとの候補と、各候補の使用量）。settings の全段の候補を重複なく。
  * アカウントを持つ候補（scoped: アカウントを書いた候補・アカウントを登録したエージェントの候補）は、そのアカウントの行の使用量だけ
@@ -663,7 +673,7 @@ export function candidateStates({ settings, usage, now = Date.now(), blocked }) 
       tiers: order.filter(level => (settings.tiers[level] ?? []).includes(candidate)),
       usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}),
       // 一覧に見当たらない（注意だけ。使えるかは CLI が決めるので usable は変えない。ADR 0311）
-      ...(parsed && entry?.available && entry.models?.[parsed.model] !== true ? { modelNotListed: true } : {}),
+      ...(parsed && entry?.available && !modelKnownInUsage(entry, parsed) ? { modelNotListed: true } : {}),
       ...(check.until ? { until: new Date(check.until).toISOString() } : {}),
       ...(check.window ? { window: check.window } : {}),
       checkedAt: at ? new Date(at).toISOString() : null,
@@ -684,7 +694,7 @@ export function formatSkippedCandidates(skipped) {
 /**
  * 設定の検証で知らせること（今のモデル一覧に見当たらない候補・使えないバックエンド・登録に無いアカウント）。黙って消さない。
  * 一覧に無いことは注意で、振り分けは飛ばさない（使えるかは CLI が決める）。
- * 取り置きの usage[backend].models は、一覧の id のほか行の resolvedModel に正確に一致する名前（claude-fable-5-2 など）も「ある」と数える
+ * 取り置きの usage[backend].models / accountModels は、一覧の id のほか行の resolvedModel に正確に一致する名前（claude-fable-5-2 など）も「ある」と数える
  */
 export function settingsWarnings({ settings, usage }) {
   const out = [];
@@ -694,7 +704,7 @@ export function settingsWarnings({ settings, usage }) {
     const missingAccount = Array.isArray(entry?.accounts) ? !entry.accounts.some(a => a.account === (parsed.account ?? '')) : Boolean(parsed.account);
     if (!entry?.available) out.push({ candidate, reason: 'unavailable' });
     else if (missingAccount) out.push({ candidate, reason: 'no_account' });
-    else if (entry.models?.[parsed.model] !== true) out.push({ candidate, reason: 'model_unknown' });
+    else if (!modelKnownInUsage(entry, parsed)) out.push({ candidate, reason: 'model_unknown' });
   }
   return out;
 }

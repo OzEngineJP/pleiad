@@ -45,8 +45,8 @@ function wrapBackend(native) {
 
 /** 先に認証を束縛してから会話のラッパーをかける。入れ子の履歴取得・分岐でも認証を落とさない。 */
 export async function backendForAccount(backend, account) {
-  if (!backend || backend.capabilities?.accounts !== 'agent') return backend;
   const native = nativeBackends.get(backend) ?? backend;
+  if (!native?.capabilities?.accounts || typeof native.forAccount !== 'function') return backend;
   if (!account) return wrapBackend(native);
   const scoped = wrapBackend(await native.forAccount(account));
   nativeBackends.set(scoped, native);

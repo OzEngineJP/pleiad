@@ -23,6 +23,7 @@ export const FALLBACK_MODELS = {
 const ALIASES = ["fable", "opus", "sonnet", "haiku"];
 const NOTES = {
   get fable() { return t("claude.models.fable"); },
+  get mythos() { return t("claude.models.mythos"); },
   get opus() { return t("claude.models.opus"); },
   get sonnet() { return t("claude.models.sonnet"); },
   get haiku() { return t("claude.models.haiku"); },
@@ -55,13 +56,14 @@ export function labelOf(row) {
 
 function entryOf(row, efforts, preferredEffort) {
   const family = familyOf(row.resolvedModel ?? row.value);
+  const noteKey = family ?? (/mythos/i.test(String(row.resolvedModel ?? row.value ?? "")) ? "mythos" : null);
   const levels = row.supportsEffort === false ? [] : [...(row.supportedEffortLevels ?? [])];
   // preferredEffort は、CLI が実際に当てる段（efforts）を利用者の設定のもとで引けなかったときの代わり。
   // effortLevel がそのまま効くとは限らない（claude.mjs の appliedFor）
   const effort = levels.includes(preferredEffort) ? preferredEffort : efforts?.[row.value];
   return {
     label: labelOf(row),
-    note: NOTES[family] ?? String(row.description ?? "").split(" · ").slice(1).join(" · "),
+    note: NOTES[noteKey] ?? String(row.description ?? "").split(" · ").slice(1).join(" · "),
     efforts: levels,
     defaultEffort: levels.includes(effort) ? effort : null,
   };

@@ -38,7 +38,7 @@ export function internalUnavailableError(backend, locale = 'ja') {
  * @param {string} o.dataDir データ置き場（journal の memory_state を開く元）
  * @param {object} o.usageStore createUsageStore（使用量の記録。無ければ使用量は記録しない）
  * @param {(backend: object, id: string) => Promise<object|null>} o.accountResolve server.mjs のアカウント解決（id 空 → null = 既定）
- * @param {(backend: object, account: object) => Promise<object>} o.backendForAccount 'agent' 種のアカウントの束縛（server が種の判定込みで渡す）
+ * @param {(backend: object, account: object) => Promise<object>} o.backendForAccount アカウントを持つ backend（'agent'・'token' 種）のアカウントの束縛（server が種の判定込みで渡す）
  * @param {() => number} [o.now]
  */
 export function createInternalCalls({ dataDir, usageStore, accountResolve, backendForAccount, now = Date.now } = {}) {

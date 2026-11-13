@@ -131,7 +131,10 @@ export default async function (t) {
 
   // ---- 候補に効く枠
   const cq = claudeQuota({ rate_limits: { five_hour: { utilization: 10 }, seven_day: { utilization: 20 }, seven_day_opus: { utilization: 90 }, model_scoped: [{ display_name: 'Fable', utilization: 85 }] } });
-  t.ok('Claude: 全体の枠と、そのモデルの系統の週次だけが効く', windowsFor('claude', 'opus', cq.windows).length === 3 && windowsFor('claude', 'sonnet', cq.windows).length === 2 && windowsFor('claude', 'fable', cq.windows).length === 3);
+  t.ok('Claude: 全体の枠と、そのモデルの系統の週次だけが効く（Mythos は Fable の週次）', windowsFor('claude', 'opus', cq.windows).length === 3 && windowsFor('claude', 'sonnet', cq.windows).length === 2
+    && windowsFor('claude', 'fable', cq.windows).length === 3
+    && windowsFor('claude', 'claude-mythos-5-2', cq.windows).length === 3 && windowsFor('claude', 'claude-mythos-5-2', cq.windows).some(w => String(w.model ?? '').toLowerCase() === 'fable')
+    && windowsFor('claude', 'claude-mythos-5-1', cq.windows).length === 3 && windowsFor('claude', 'claude-mythos-5-1', cq.windows).some(w => String(w.model ?? '').toLowerCase() === 'fable'));
   const xq = codexQuota({ rateLimitsByLimitId: { codex: { limitId: 'codex', primary: { usedPercent: 10, windowDurationMins: 10080 } }, astra: { limitId: 'x1', limitName: 'GPT-6-Astra', primary: { usedPercent: 95, windowDurationMins: 10080 } } } });
   t.ok('Codex: 主の枠はどのモデルにも効き、追加の枠は名前が当たるモデルだけ', windowsFor('codex', 'gpt-6-sol', xq.windows).length === 1 && windowsFor('codex', 'gpt-6-astra', xq.windows).length === 2);
   const aq = antigravityQuota({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [
@@ -414,6 +417,58 @@ export default async function (t) {
   t.ok('CLI が入っていないバックエンドは使えない（使用量も取らない）', snap.codex.available === false && reads === 2);
   t.ok('登録したアカウントは行ごとに判定し（トークンの無い行は no_token）、同じ人かは識別子で分かる', checkCandidate('claude@acct-2:opus', { usage: snap, settings, now: NOW }).detail === 'no_token'
     && sameIdentity(snap.claude.accounts[0].identity, snap.claude.accounts[1].identity) && !sameIdentity(snap.claude.accounts[0].identity, snap.claude.accounts[2].identity));
+
+  const mythosUsage = {
+    claude: {
+      available: true, checkedAt: NOW, windows: [],
+      models: { opus: true },
+      accountModels: { '': { opus: true }, verified: { 'claude-mythos-5-2': true, opus: true }, plain: { opus: true } },
+      accounts: [
+        { account: '', label: 'login', runnable: true, windows: [h5(10), week(10, 50)] },
+        { account: 'verified', label: 'verified', runnable: true, windows: [h5(10), week(85, 50, { model: 'fable' })] },
+        { account: 'plain', label: 'plain', runnable: true, windows: [h5(10), week(10, 50)] },
+      ],
+    },
+  };
+  const mythosCheck = checkCandidate('claude@verified:claude-mythos-5-2', { usage: mythosUsage, settings: softSettings, now: NOW });
+  t.ok('Mythos の候補の判定は Fable の週次の枠で判定する', mythosCheck.ok === true && mythosCheck.deferred === true && mythosCheck.reason === 'quota_high'
+    && mythosCheck.window?.usedPercent === 85, JSON.stringify(mythosCheck));
+  const mythosWarns = settingsWarnings({
+    settings: normalizeSettings({ tiers: { t4: ['claude@verified:claude-mythos-5-2', 'claude@plain:claude-mythos-5-2', 'claude:claude-mythos-5-2'] } }),
+    usage: mythosUsage,
+  });
+  t.ok('accountModels: アカウントごとにあるモデルだけを一覧ありとみなし、無いアカウントだけ警告する',
+    !mythosWarns.some(w => w.candidate === 'claude@verified:claude-mythos-5-2')
+    && mythosWarns.some(w => w.candidate === 'claude@plain:claude-mythos-5-2' && w.reason === 'model_unknown')
+    && mythosWarns.some(w => w.candidate === 'claude:claude-mythos-5-2' && w.reason === 'model_unknown'), JSON.stringify(mythosWarns));
+
+  t.ok('固定の自動委譲の段（t1〜t4）に Mythos は入れない（持たないアカウントがあるので、利用者が候補に書いたときだけ使う）',
+    Object.values(DEFAULTS.tiers).flat().every(c => !/mythos/i.test(c)), JSON.stringify(DEFAULTS.tiers));
+
+  const acctCatalogs = { '': { opus: {} }, 'acct-1': { opus: {}, 'claude-mythos-5-2': {} }, 'acct-2': { opus: {} } };
+  const scopedMonitor = createUsageMonitor({
+    backends: () => [{ id: 'claude', usage: true, capabilities: { accounts: 'token' }, models: async () => acctCatalogs[''] }],
+    installed: () => true,
+    read: async () => ({
+      windows: [], checkedAt: NOW,
+      accounts: [
+        { label: 'login', accountId: null, windows: [h5(10)] },
+        { label: 'verified', accountId: 'acct-1', windows: [h5(10)] },
+        { label: 'plain', accountId: 'acct-2', windows: [h5(10)] },
+      ],
+    }),
+    candidates: () => ['claude:opus', 'claude:claude-mythos-5-2', 'claude@acct-1:claude-mythos-5-2', 'claude@acct-2:claude-mythos-5-2'],
+    scopeForAccount: async (b, acct) => ({ ...b, models: async () => acctCatalogs[acct] ?? {} }),
+    modelKnown: async (b, m) => Object.hasOwn(await b.models(), m),
+    claudeIdentities: async () => ({ login: null, accounts: [{ id: 'acct-1', hasToken: true }, { id: 'acct-2', hasToken: true }] }),
+  });
+  await scopedMonitor.refresh();
+  const scopedSnap = scopedMonitor.snapshot();
+  t.ok('使用量の取り置き: 候補ごとのモデル確認を scopeForAccount 経由でアカウントごとの accountModels に保持する',
+    scopedSnap.claude.accountModels['']?.['claude-mythos-5-2'] === false
+    && scopedSnap.claude.accountModels['acct-1']?.['claude-mythos-5-2'] === true
+    && scopedSnap.claude.accountModels['acct-2']?.['claude-mythos-5-2'] === false
+    && scopedSnap.claude.accountModels['']?.opus === true, JSON.stringify(scopedSnap.claude.accountModels));
 
   // ---- 使用量の取り置き: 古ければ判定と並行して取り直す（ensureFresh）。
   // 待ちの上限は unref のタイマーなので、遅らせる側は必ず実タイマー（setTimeout）にする。

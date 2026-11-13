@@ -728,6 +728,8 @@ const SUITES = [
   // Claude のモデル一覧: { refresh } は TTL・再試行待ちを無視して取り直して待つ
   './unit/claude-model-refresh.mjs',
   './unit/claude-model-match.mjs',
+  // Claude のモデル一覧: アカウントごとの分離・無効化・秘匿・心拍と bot のアカウント解決（ADR 0326）
+  './unit/claude-catalog-accounts.mjs',
   './unit/codex-background.mjs',
   './unit/codex-terminals.mjs',
   './unit/codex-live-messages.mjs',
@@ -820,6 +822,8 @@ const SUITES = [
   './unit/antigravity-accounts.mjs',
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
+  // サーバー通し: Claude のアカウント別モデル一覧・Mythos・委譲・bot・アカウント切替/入替（ADR 0326）
+  './unit/server-claude-account-models.mjs',
   // Claude Agent SDK を配布物に入れず npm から取る（ADR 0208）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意
   './unit/claude-sdk-pin.mjs',
   './unit/claude-sdk.mjs',

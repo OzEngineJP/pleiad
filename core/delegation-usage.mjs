@@ -22,24 +22,51 @@ export const STALE_MS = REFRESH_MS * 3;
  * claudeIdentities() … { login: { org, email } | null, accounts: [{ id, hasToken, identity }] }
  */
 export function createUsageMonitor({ backends, installed = () => true, read, candidates, modelKnown, warm = async () => {}, claudeIdentities = async () => null,
-  intervalMs = REFRESH_MS, onChange = () => {} }) {
+  scopeForAccount = null, intervalMs = REFRESH_MS, onChange = () => {} }) {
   let state = {};
   let running = null, timer = null, again = false;
 
   async function one(b, wanted) {
     // accountable: アカウントを持てるエージェント（登録が無ければ、選ぶのはログイン中のアカウント）
-    const entry = { available: installed(b.id), checkedAt: null, windows: [], models: {}, accountable: Boolean(b.capabilities?.accounts) };
+    const entry = { available: installed(b.id), checkedAt: null, windows: [], models: {}, accountModels: {}, accountable: Boolean(b.capabilities?.accounts) };
     if (!entry.available) return entry;
-    const models = [...new Set(wanted.filter(c => c.backend === b.id).map(c => c.model))];
-    // modelKnown が一覧を引くとき、候補ごとに取りに行かないよう 1 回の確認では一覧の取りかけを分け合う。
+    const byAccount = new Map();
+    for (const c of wanted) {
+      if (c.backend !== b.id) continue;
+      const acct = c.account ?? '';
+      if (!byAccount.has(acct)) byAccount.set(acct, new Set());
+      byAccount.get(acct).add(c.model);
+    }
+    const shareModels = (target) => {
+      if (typeof target?.models !== 'function') return target;
+      const lists = new Map();
+      return { ...target, models: (...args) => { const k = JSON.stringify(args); if (!lists.has(k)) lists.set(k, target.models(...args)); return lists.get(k); } };
+    };
+    // modelKnown が一覧を引くとき、アカウントごとに候補のたびに取り直さないよう 1 回の確認では一覧の取りかけを分け合う。
     // warm の後の再確認では新しい取りかけを許す（一覧が裏で更新されているかもしれない）
     const known = async () => {
-      let list = null;
-      const shared = typeof b.models === 'function' ? { ...b, models: (...args) => (list ??= b.models(...args)) } : b;
-      return Object.fromEntries(await Promise.all(models.map(async m => [m, await modelKnown(shared, m).catch(() => false)])));
+      const accountModels = {};
+      const models = {};
+      await Promise.all([...byAccount.entries()].map(async ([acct, set]) => {
+        let target = b;
+        if (acct && scopeForAccount) {
+          try { target = await scopeForAccount(b, acct); } catch { target = null; }
+        }
+        if (!target) {
+          accountModels[acct] = Object.fromEntries([...set].map(m => [m, false]));
+          return;
+        }
+        const shared = shareModels(target);
+        const entries = await Promise.all([...set].map(async m => [m, await modelKnown(shared, m, acct).catch(() => false)]));
+        accountModels[acct] = Object.fromEntries(entries);
+        for (const [m, ok] of entries) models[m] = Boolean(models[m] || ok);
+      }));
+      return { models, accountModels };
     };
-    entry.models = await known();
-    if (Object.values(entry.models).some(v => !v)) { await warm(b).catch(() => {}); entry.models = await known(); }
+    const applyKnown = (k) => { entry.models = k.models; entry.accountModels = k.accountModels; };
+    applyKnown(await known());
+    const anyMissing = () => Object.values(entry.accountModels).some(map => Object.values(map).some(v => !v));
+    if (anyMissing()) { await warm(b).catch(() => {}); applyKnown(await known()); }
     if (!b.usage) return entry;
     let quota;
     try { quota = await read(b); } catch { return entry; }
@@ -68,10 +95,14 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
 
   async function refreshAll() {
     // 候補は `backend:model`・`backend@<account>:model`（ADR 0264。delegation-routing.mjs の parseCandidate と同じ形）
-    const wanted = candidates().map(c => { const at = c.indexOf(':'); return { backend: c.slice(0, at).split('@')[0], model: c.slice(at + 1) }; });
+    const wanted = candidates().map(c => {
+      const at = c.indexOf(':');
+      const [backend, account] = c.slice(0, at).split('@');
+      return { backend, account: account ?? '', model: c.slice(at + 1) };
+    });
     const list = backends();
     const next = {};
-    await Promise.all(list.map(async b => { next[b.id] = await one(b, wanted).catch(() => ({ available: false, checkedAt: null, windows: [], models: {} })); }));
+    await Promise.all(list.map(async b => { next[b.id] = await one(b, wanted).catch(() => ({ available: false, checkedAt: null, windows: [], models: {}, accountModels: {} })); }));
     state = next;
     onChange();
   }

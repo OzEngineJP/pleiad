@@ -296,7 +296,20 @@ function onControlRequest(m) {
         }
       }
       log(`initialize #${initializes} pending=${pending.length}`);
-      reply({ commands: [], agents: [], models: [{ value: 'default', displayName: 'Default', description: 'fake' }], account: {}, output_style: 'default', available_output_styles: ['default'],
+      let models = [{ value: 'default', displayName: 'Default', description: 'fake' }];
+      if (process.env.FAKE_CLAUDE_MODELS_FILE) {
+        try {
+          const cfg = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_MODELS_FILE, 'utf8'));
+          const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
+          const picked = tok ? (cfg.tokens?.[tok] ?? cfg.default) : (cfg.login ?? cfg.default);
+          if (process.env.FAKE_CLAUDE_PROBE_LOG) {
+            const who = tok ? (cfg.labels?.[tok] ?? 'token') : 'login';
+            fs.appendFileSync(process.env.FAKE_CLAUDE_PROBE_LOG, `${who}\n`);
+          }
+          if (Array.isArray(picked)) models = picked;
+        } catch { /* test fallback */ }
+      }
+      reply({ commands: [], agents: [], models, account: {}, output_style: 'default', available_output_styles: ['default'],
         hooks_applied: true, ...(pending.length ? { pending_permission_requests: pending } : {}) });
       if (initializes > 1) bgChanged();
       return;

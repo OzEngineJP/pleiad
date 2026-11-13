@@ -261,7 +261,7 @@ migrateClaudeUsage({ store: usageStore, projects: path.join(process.env.CLAUDE_C
 const internalCalls = createInternalCalls({
   dataDir: store.dataDir, usageStore,
   accountResolve: (backend, id) => accountResolve(backend, id),
-  backendForAccount: (backend, account) => accountKind(backend) === 'agent' ? backendForAccount(backend, account) : backend,
+  backendForAccount: (backend, account) => accountKind(backend) ? backendForAccount(backend, account) : backend,
 });
 void internalCalls.sweep().catch(e => console.error(`  ${t('internal.sweepFailed')}:`, String(e?.message ?? e)));
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -552,6 +552,7 @@ const claudeLogin = createClaudeLogin({
     if (accountId && !current) throw new Error(t('accounts.deleted'));
     const saved = await claudeAccounts.save({ ...(accountId ? { id: accountId } : {}), name: current?.name ?? name, token });
     quotaStore.invalidate();
+    refreshClaudeAccountCatalog(saved.id, { warm: true });
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
     return saved;
   },
@@ -619,13 +620,59 @@ async function accountResolve(backend, id) {
 }
 async function resolveBackendForSession(sessionId) {
   const b = await rawBackendForSession(sessionId);
-  if (accountKind(b) !== 'agent') return b;
+  const kind = accountKind(b);
+  if (!kind) return b;
   const meta = await store.get(sessionId);
   if (meta.compatEndpoint) return b;
   const id = meta.claudeAccount ?? '';
   if (!id) return b;
-  try { return await backendForAccount(b, await accountResolve(b, id)); }
-  catch (error) { return offlineAccountBackend(b, error); }
+  try {
+    const account = await accountResolve(b, id);
+    if (!account) return b;
+    return await backendForAccount(b, account);
+  } catch (error) {
+    if (kind === 'agent') return offlineAccountBackend(b, error);
+    const unavailable = async () => { throw error; };
+    return {
+      ...b,
+      models: unavailable, validModel: unavailable, matchModel: unavailable,
+      runTurn: unavailable, adoptTurn: unavailable, internalTurn: unavailable, suggestTitle: unavailable,
+    };
+  }
+}
+/** 起動時・SDK 取得後のモデル一覧の先読み。トークン別のエージェントはログイン中＋登録済みの使えるアカウントを順に引く */
+function warmBackendModels(b, cwd = os.homedir()) {
+  if (!b?.warmModels || !installation(b.id).installed) return Promise.resolve();
+  return (async () => {
+    await b.warmModels(cwd).catch(() => {});
+    if (accountKind(b) !== 'token') return;
+    const rows = await accountRows(b).catch(() => []);
+    for (const row of rows) {
+      if (!row.ready) continue;
+      try {
+        const account = await accountResolve(b, row.id);
+        if (!account) continue;
+        const scoped = await backendForAccount(b, account);
+        await scoped.warmModels?.(cwd);
+      } catch { /* 取れないアカウントは次へ */ }
+    }
+  })();
+}
+/**
+ * トークン別のアカウント（capabilities.accounts が 'token'）の一覧の記憶を、そのアカウントの分だけ捨てる（追加・トークンの差し替え・削除。ADR 0326）。
+ * warm なら引き直して使用量の判定も更新する（削除では引き直さない）。対象はエージェントの印から選ぶ（id は書かない）
+ */
+function refreshClaudeAccountCatalog(accountId, { warm = false } = {}) {
+  for (const b of listBackends()) {
+    if (accountKind(b) !== 'token') continue;
+    b.invalidateModels?.(accountId);
+    if (!warm || !ROUTING_USAGE_AUTO || !b.warmModels || !installation(b.id).installed) continue;
+    accountResolve(b, accountId)
+      .then(acct => acct && backendForAccount(b, acct))
+      .then(scoped => scoped?.warmModels?.(os.homedir()))
+      .then(() => { if (routingSettingsCache.enabled) return routingUsage.refresh(); })
+      .catch(() => {});
+  }
 }
 // 互換の接続先（Claude Code の Anthropic 互換 / Codex の Responses 互換。会話ごとに選ぶ。core/compat-endpoints.mjs）。
 // キーは Claude のアカウント・MCP と同じ暗号化の置き場。前の起動で消し損ねたフラグ設定のファイル（キーを含む）は起動時に片付ける
@@ -1755,14 +1802,27 @@ const routingUsage = createUsageMonitor({
   installed: id => installation(id).installed,
   read: providerQuota,
   candidates: () => [...new Set(levelOrder(routingSettingsCache).flatMap(level => routingSettingsCache.tiers[level] ?? []))],
+  scopeForAccount: async (b, acct) => {
+    if (!acct || !accountKind(b)) return b;
+    try { return (await accountResolve(b, acct)) ? await backendForAccount(b, await accountResolve(b, acct)) : null; }
+    catch { return null; }
+  },
   // 設定画面の「一覧に見当たらない」の注意だけに使う（振り分けは一覧で飛ばさない。ADR 0311）。一覧の id のほか、行の resolvedModel に一致する名前も「ある」
   modelKnown: async (b, model) => await validModel(b, model, process.cwd()) || Boolean(await b.matchModel?.(model, process.cwd()).catch(() => null)),
-  // 一覧をまだ引いていないバックエンド（agy はログインの確認で一覧を覚える）だけ、確かめ直す。
+  // 一覧をまだ引いていないバックエンド（agy はログインの確認、Claude 等は warmModels で一覧を覚える）だけ、確かめ直す。
   // 確かめられたら 30 分は繰り返さない。未ログイン・失敗なら次の取り直し（5 分後）でまた確かめる
   warm: async b => {
-    if (!b.auth?.status || Date.now() - (lastWarm.get(b.id) ?? 0) < 30 * 60_000) return;
-    const status = await b.auth.status().catch(() => null);
-    if (status?.loggedIn) lastWarm.set(b.id, Date.now()); else lastWarm.delete(b.id);
+    if (Date.now() - (lastWarm.get(b.id) ?? 0) < 30 * 60_000) return;
+    let ok = false;
+    if (b.warmModels && installation(b.id).installed) {
+      await warmBackendModels(b, process.cwd()).catch(() => {});
+      ok = true;
+    }
+    if (b.auth?.status) {
+      const status = await b.auth.status().catch(() => null);
+      ok = Boolean(status?.loggedIn);
+    }
+    if (ok) lastWarm.set(b.id, Date.now()); else lastWarm.delete(b.id);
   },
   claudeIdentities: () => claudeAccounts.identities(),
   onChange: () => emitGlobal({ type: 'delegationRoutingChanged', change: 'usage', sessionId: null }),
@@ -1863,14 +1923,22 @@ async function delegationRoutingState() {
   // 候補ごとの強さの持ち方（選択肢の元。モデルの一覧から引く）と、会話の既定（エージェント設定の強さ。「会話の既定に従う（今は X）」）。
   // 同じエージェントの一覧を候補ごとに取りに行かないよう、この 1 回の組み立てでは backend.models() の取りかけを分け合う
   const modelLists = new Map();
-  const sharedBackend = backend => {
+  const sharedBackend = (backend, accountId = '') => {
     if (typeof backend?.models !== 'function') return backend;
-    if (!modelLists.has(backend.id)) modelLists.set(backend.id, backend.models(process.cwd()));
-    const list = modelLists.get(backend.id);
+    const key = `${backend.id}|${accountId || ''}`;
+    if (!modelLists.has(key)) {
+      modelLists.set(key, (async () => {
+        const resolved = accountId && accountKind(backend) ? await accountResolve(backend, accountId).catch(() => null) : null;
+        const target = resolved ? await backendForAccount(backend, resolved).catch(() => backend) : backend;
+        return target.models(process.cwd());
+      })());
+    }
+    const list = modelLists.get(key);
     return { ...backend, models: () => list };
   };
   const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now(), blocked: slotBlocked }).map(async c => {
-    const backend = c.backend ? sharedBackend(getBackend(c.backend)) : null;
+    const raw = c.backend ? getBackend(c.backend) : null;
+    const backend = raw ? sharedBackend(raw, c.account ?? '') : null;
     return backend ? { ...c, effort: await effortCapability(backend, c.model, process.cwd()) } : c;
   }));
   const prefs = await store.getPrefs();
@@ -4993,28 +5061,53 @@ const opsAgents = {
  */
 async function changeModel(sessionId, model, { actor, reason, backend: given } = {}) {
   const who = changeBy(actor);
+  await settingsWrites.get(sessionId)?.catch?.(() => {});
   const backend = refuseRetired(await pickBackend(sessionId, given));
+  const meta = await store.get(sessionId);
+  const reserved = meta.nextSettings;
+  const nextBase = !given && reserved?.backend ? getBackend(reserved.backend) : null;
+  const base = nextBase ?? getBackend(backend.id) ?? backend;
+  const sameBase = base.id === backend.id;
   // 互換の接続先の会話はモデル ID を形だけ見る（接続先の一覧＋自由入力）。公式の既定（prefs）には覚えない
-  const endpointId = endpointCapable(backend) ? (await store.get(sessionId)).compatEndpoint ?? '' : '';
-  if (!(await validModel(backend, model, undefined, endpointId))) throw new OpError('INVALID', t('settings.unknownModel', { value: model }));
-  const from = (await store.get(sessionId)).model ?? "";
+  const endpointId = endpointCapable(base)
+    ? (reserved?.endpoint !== undefined ? reserved.endpoint : (sameBase ? meta.compatEndpoint ?? '' : ''))
+    : '';
+  const accountId = !endpointId && accountKind(base)
+    ? (reserved?.account !== undefined ? reserved.account : (sameBase ? meta.claudeAccount ?? '' : ''))
+    : '';
+  const hasOverride = Boolean(reserved && (
+    nextBase && nextBase.id !== backend.id
+    || reserved.endpoint !== undefined
+    || reserved.account !== undefined
+  ));
+  const target = !hasOverride ? backend
+    : (!endpointId && accountId ? await backendForAccount(base, await accountResolve(base, accountId)) : base);
+  const targetCwd = reserved?.cwd || meta.cwd || undefined;
+  if (!(await validModel(target, model, targetCwd, endpointId))) throw new OpError('INVALID', t('settings.unknownModel', { value: model }));
+  const from = (reserved?.model ?? meta.model) ?? "";
   const liveTurn = runtime.turns.get(sessionId);
-  // 走っている最中でも切り替える（できるエージェントだけ。能力の印 liveModel）
+  const nextSwitched = Boolean(reserved && (
+    (reserved.backend && reserved.backend !== backend.id)
+    || (reserved.account !== undefined && reserved.account !== (meta.claudeAccount ?? ''))
+    || (reserved.endpoint !== undefined && reserved.endpoint !== (meta.compatEndpoint ?? ''))
+  ));
+  // 走っている最中でも切り替える（できるエージェントだけ。能力の印 liveModel。次ターンの先が替わっていれば予約を保つ）
   let live = false;
-  if (model && liveTurn?.control.handle && backend.setModelLive) {
+  if (!nextSwitched && model && liveTurn?.control.handle && backend.setModelLive) {
     live = await backend.setModelLive(liveTurn.control.handle, model)
       .catch((err) => { console.error("  モデルの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
   }
-  // ターンが走っていて即時には切り替えられない（非対応・失敗）ときは、今のターンは前のモデルのまま走る。
-  // チップだけ替えて黙らせないよう、承認モード（setMode）と同じく次のターンへの予約にする
-  if (liveTurn && !live) {
-    await reserveTurnSettings({ sessionId, model, ...(who.by === 'human' && !(await store.get(sessionId)).bot ? { rememberModel: true } : {}) });
+  const remember = who.by === 'human' && !meta.bot ? { rememberModel: true } : { keepPrefs: true };
+  // ターンが走っていて即時には切り替えられない（非対応・失敗）ときや次ターンの予約があるときは、予約（nextSettings）にモデルを反映する
+  if ((liveTurn && !live) || reserved) {
+    if (live) await store.setModel(sessionId, model);
+    await reserveTurnSettings({ sessionId, model, ...remember });
   } else {
     await store.setModel(sessionId, model);
     // bot の会話（スレッドだけの設定）で選んだものは、Chats の新しい会話の既定にしない
-    if (!endpointId && who.by === 'human' && !(await store.get(sessionId)).bot) await savePref("model", model, backend.id);
+    if (!endpointId && who.by === 'human' && !meta.bot) await savePref("model", model, target.id);
   }
-  await store.recordChange(sessionId, { ...who, field: "model", from, to: model, ...reason, backend });
+  await store.recordChange(sessionId, { ...who, field: "model", from, to: model, ...reason, backend: target });
   emitGlobal({ type: "model", sessionId, model, by: who.by, live });
   return { live };
 }
@@ -5918,8 +6011,22 @@ function opsDeps(lng = currentLocale()) {
       hasBackend: (id) => Boolean(getBackend(id)),
       knows: async (key, value, backendId) => {
         const list = (backendId ? [getBackend(backendId)] : listBackends()).filter(Boolean);
-        // 語彙はエージェントごとに違う。どれか 1 つでも知っていれば通す
-        return (await Promise.all(list.map(async (b) => (key === 'mode' ? Boolean(b.modes()[value]) : value in (await b.models()))))).some(Boolean);
+        // 語彙はエージェントごとに違う（Claude のアカウントごとにも違う）。どれか 1 つでも知っていれば通す
+        return (await Promise.all(list.map(async (b) => {
+          if (key === 'mode') return Boolean(b.modes()[value]);
+          if (value in (await b.models())) return true;
+          if (!accountKind(b)) return false;
+          const rows = (await accountRows(b).catch(() => [])).filter(a => a.ready);
+          for (const r of rows) {
+            try {
+              const account = await accountResolve(b, r.id);
+              if (!account) continue;
+              const scoped = await backendForAccount(b, account);
+              if (value in (await scoped.models())) return true;
+            } catch { /* 読めないアカウントは次へ */ }
+          }
+          return false;
+        }))).some(Boolean);
       },
       accountIds: async (backendId) => (backendId ? await accountRows(getBackend(backendId)) : (await claudeAccounts.list()).accounts).map(a => a.id),
       changePlyInstructions: (action) => changePlyInstructions(plyInstructionsCache, action, currentLocale()),
@@ -7469,6 +7576,9 @@ botHost = createBotHost({
   // 内部 AI 呼出し（Issue #180。learn・pulse の安いモデルは、会話を作らずここを通る。分離できない印の backend は投げる）
   internalCall: internalCalls.call,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
+  backendForAccount: async (backend, accountId) => !backend || !accountId || !accountKind(backend)
+    ? backend
+    : backendForAccount(backend, await accountResolve(backend, accountId)),
   sessionBusy: id => sessionBusy(id),
   refuseBotDelete: id => refuseDelete(id, { bot: true }),
   // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。走っていれば次のターンから（nextSettings）
@@ -9791,14 +9901,20 @@ wss.on("connection", (ws, req) => {
           const { id, name, token } = msg.args ?? {};
           const saved = await claudeAccounts.save({ id, name, token });
           quotaStore.invalidate();
+          if (!id || (token !== undefined && token !== null && String(token).trim() !== '')) {
+            refreshClaudeAccountCatalog(saved.id, { warm: true });
+          }
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
           return reply(true, { ...saved, ...(await claudeAccounts.list()) });
         }
         case 'deleteClaudeAccount': {
-          claudeLogin.cancelAccount(String(msg.args?.id ?? ''));
-          await claudeAccounts.remove(String(msg.args?.id ?? ''));
-          await dropAccountCandidates(String(msg.args?.id ?? ''));
+          const accountId = String(msg.args?.id ?? '');
+          claudeLogin.cancelAccount(accountId);
+          await claudeAccounts.remove(accountId);
+          refreshClaudeAccountCatalog(accountId);
+          await dropAccountCandidates(accountId);
           quotaStore.invalidate();
+          if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
           return reply(true, await claudeAccounts.list());
         }
@@ -10730,14 +10846,14 @@ async function announce() {
     let wasReady = b.sdk.status().ready;
     b.sdk.onChange((status) => {
       emitGlobal({ type: 'claudeSdk', sessionId: null, status });
-      if (status.ready && !wasReady && b.warmModels && installation(b.id).installed) b.warmModels(os.homedir()).catch(() => {});
+      if (status.ready && !wasReady) warmBackendModels(b, os.homedir()).catch(() => {});
       wasReady = status.ready;
     });
     b.sdk.maintain();
   }
   // モデルの一覧を裏で引いておく。新しい会話・モデル選択が、CLI を起こす 10 秒ほどを待たない。
   // 作業場所は新しい会話の既定（ホーム）。取れなければ一覧の要求のときにまた引く（テストは ROUTING_USAGE_AUTO=off で起こさない）
-  if (ROUTING_USAGE_AUTO) for (const b of listBackends()) if (b.warmModels && installation(b.id).installed) b.warmModels(os.homedir()).catch(() => {});
+  if (ROUTING_USAGE_AUTO) for (const b of listBackends()) warmBackendModels(b, os.homedir()).catch(() => {});
   // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
   if (mainPort.hosted) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
     .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});
