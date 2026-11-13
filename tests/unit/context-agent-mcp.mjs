@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_SCAN, defaultKind, legacyPlan, normalizeAgents, resolveConfig } from '../../core/context-settings.mjs';
+import { DEFAULT_SCAN, defaultKind, legacyPlan, mcpAgentsFromLegacy, normalizeAgents, resolveConfig, toggleMcpAgent } from '../../core/context-settings.mjs';
 import { agentMcpRules, resolveRuntime } from '../../core/context-runtime.mjs';
 import { claudeContextOptions } from '../../core/backends/context-options.mjs';
 
@@ -36,6 +36,27 @@ export default async function (t) {
     t.ok('agents が無ければ従来どおり（担当は native のまま・plan に agents を足さない）', noAgents.owners.mcp === 'native' && !('agents' in noAgents.plan.mcp));
     const withAgents = resolveConfig(conf({ ...defaultKind(), agents: { off: { a: ['codex'] }, spread: {} } }), null);
     t.ok('agents があれば担当は ply（中継を常に開く）で、plan に agents が載る', withAgents.owners.mcp === 'ply' && withAgents.plan.mcp.agents.off.a[0] === 'codex');
+
+    // --- 担当の 2 択 → 名前ごとの設定（今の接続が変わらない）と、切り替え
+    const info = { registered: ['reg'], native: { claude: ['cl', 'both'], codex: ['cx', 'both'], opencode: [] } };
+    const fromPly = mcpAgentsFromLegacy({ owner: 'ply' }, info);
+    t.ok('「Pleiad がそろえる」: どのエージェントの設定の名前も他へ広げた形、登録は off なし',
+      JSON.stringify(fromPly) === JSON.stringify({ off: {}, spread: { both: ['opencode'], cl: ['codex', 'opencode'], cx: ['claude', 'opencode'] } }), fromPly);
+    const fromNative = mcpAgentsFromLegacy({ owner: 'native' }, info);
+    t.ok('「任せる」: Pleiad の登録はどのエージェントでも off のまま・広げない',
+      JSON.stringify(fromNative) === JSON.stringify({ off: { reg: ['claude', 'codex', 'opencode'] }, spread: {} }), fromNative);
+    const withDisabled = mcpAgentsFromLegacy({ owner: 'ply', disabled: ['cl'] }, info);
+    t.ok('今は外してあるコネクター等（disabled）は広げない', !('cl' in withDisabled.spread));
+    const on = toggleMcpAgent(fromNative, { name: 'reg', agent: 'codex', on: true }, info);
+    t.ok('登録を codex で on にする: off から codex が消える', JSON.stringify(on.off.reg) === JSON.stringify(['claude', 'opencode']));
+    const spreadOn = toggleMcpAgent(fromNative, { name: 'cx', agent: 'claude', on: true }, info);
+    t.ok('codex の設定にしかない名前を claude で on にする: spread に claude が入る', JSON.stringify(spreadOn.spread.cx) === JSON.stringify(['claude']));
+    const spreadOff = toggleMcpAgent(spreadOn, { name: 'cx', agent: 'claude', on: false }, info);
+    t.ok('広げたのを off に戻す: spread から消える', !('cx' in spreadOff.spread));
+    const ownOff = toggleMcpAgent(fromPly, { name: 'cl', agent: 'claude', on: false }, info);
+    t.ok('エージェント自身の設定の名前を off にする: off に入る', JSON.stringify(ownOff.off.cl) === JSON.stringify(['claude']));
+    const ownBack = toggleMcpAgent(ownOff, { name: 'cl', agent: 'claude', on: true }, info);
+    t.ok('エージェント自身の設定の名前を on に戻す: off から消える', !('cl' in ownBack.off));
 
     // --- 中継の規則（agent = claude）
     const agents = { off: { reg: ['codex'], cl: ['claude'] }, spread: { cx: ['claude'] } };

@@ -143,6 +143,43 @@ export function normalizeAgents(value) {
   const part = map => Object.fromEntries(Object.entries(map ?? {}).map(([n, ids]) => [n, unique(ids).sort()]).filter(([, ids]) => ids.length).sort(([a], [b]) => a < b ? -1 : 1));
   return { off: part(value.off), spread: part(value.spread) };
 }
+/**
+ * 担当の 2 択（agents が無い設定）を、名前 × エージェントの明示の設定にする。今の接続が変わらないように写す（ADR 0324）。
+ *   「Pleiad がそろえる」（owner: ply）: どのエージェントの設定にある名前も、他のエージェントへ広げた形（spread）。Pleiad の登録はすべて on
+ *   「エージェントに任せる」（owner: native）: Pleiad の登録はどのエージェントでも off のまま（任せる側は登録を渡していなかった）
+ * info: { registered: [名前], native: { <agent>: [名前] }（探す対象にしたものだけ） }
+ */
+export function mcpAgentsFromLegacy(kind, info) {
+  const ids = Object.keys(info.native ?? {});
+  const off = {}, spread = {};
+  if (kind.owner === 'ply') {
+    const all = unique(Object.values(info.native ?? {}).flat());
+    for (const name of all) {
+      const to = ids.filter(a => !info.native[a].includes(name));
+      if (to.length) spread[name] = to;
+    }
+  } else for (const name of info.registered ?? []) off[name] = [...ids];
+  for (const name of kind.disabled ?? []) delete spread[name];
+  return normalizeAgents({ off, spread });
+}
+/**
+ * 名前 name をエージェント agent で使うかを切り替える。
+ *   Pleiad の登録・そのエージェント自身の設定にある名前: off に出し入れする
+ *   他のエージェントの設定にしかない名前: そのエージェントへ広げる（spread）／広げるのをやめる
+ */
+export function toggleMcpAgent(agents, { name, agent, on }, info) {
+  const off = structuredClone(agents.off ?? {}), spread = structuredClone(agents.spread ?? {});
+  const set = (map, add) => {
+    const list = new Set(map[name] ?? []);
+    if (add) list.add(agent); else list.delete(agent);
+    if (list.size) map[name] = [...list]; else delete map[name];
+  };
+  const own = (info.native?.[agent] ?? []).includes(name), registered = (info.registered ?? []).includes(name);
+  if (registered || own) set(off, !on);
+  if (!own && !registered) set(spread, on);
+  else if (!on) set(spread, false);
+  return normalizeAgents({ off, spread });
+}
 function normalizeRoots(value, base, home) {
   const parsed = paths.safeParse(value);
   if (!parsed.success) throw new Error(t('context.settings.rootsInvalid'));
@@ -486,6 +523,8 @@ export function createContextSettings(dataDir, home = os.homedir()) {
         const k = holder.kinds?.mcp;
         if (!k) continue;
         if (k.disabled?.includes(from) && !k.disabled.includes(to)) { k.disabled = unique([...k.disabled, to]).sort(); changed++; }
+        // 名前ごとの設定: 古い名前で止めていたエージェントは、新しい名前でも止めたままにする
+        if (k.agents?.off?.[from] && !k.agents.off[to]) { k.agents.off[to] = [...k.agents.off[from]]; k.agents.off = normalizeAgents({ off: k.agents.off }).off; changed++; }
         if (k.prefer && Object.hasOwn(k.prefer, from) && (!plyFile || same(k.prefer[from], plyFile))) {
           if (!Object.hasOwn(k.prefer, to)) k.prefer[to] = k.prefer[from];
           delete k.prefer[from];

@@ -217,6 +217,7 @@ export async function resolveRuntime(policy, options = {}) {
       if (why) {
         if (mcpRules.off(item.name) && mcpRules.isOwn(item)) suppress.add(item.name);
         row.status = why === 'agentOff' ? 'removed' : 'excluded';
+        // i18n-dynamic: context.runtime.agent
         row.reason = t(`context.runtime.${why}`);
         if (row.status === 'removed') row.tools = 0;
         continue;

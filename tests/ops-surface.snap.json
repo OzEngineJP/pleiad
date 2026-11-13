@@ -1692,6 +1692,30 @@
       "input": "9b61e58faf57"
     },
     {
+      "id": "context.setMcpAgent",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "mcp-agent"
+          ],
+          "positional": [
+            "name",
+            "agent"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "b4483a7833e2"
+    },
+    {
       "id": "context.setPlyInstructions",
       "risk": "guarded",
       "riskOf": false,
@@ -5911,6 +5935,14 @@
       "id": "context.plyInstructions",
       "path": "context instructions",
       "positional": []
+    },
+    {
+      "id": "context.setMcpAgent",
+      "path": "context mcp-agent",
+      "positional": [
+        "name",
+        "agent"
+      ]
     },
     {
       "id": "context.nativeInstructions",

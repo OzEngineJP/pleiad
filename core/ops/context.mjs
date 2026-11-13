@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { agentT, t } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { diffRows } from './settings.mjs';
+import { mcpAgentsFromLegacy, toggleMcpAgent } from '../context-settings.mjs';
 import { byAgent, cwdFor, maskTree, run, sessionFor } from './redact.mjs';
 import { clip, pageOf, PAGE_MAX } from './host.mjs';
 
@@ -103,6 +104,37 @@ export const contextOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'set'] } },
     legacyCommand: 'setContextSettings',
     handler: (ctx, { reason: _r, ...args }) => run(ctx, () => ctx.context.set(args, ctx.actor)),
+  }),
+  defineOp({
+    id: 'context.setMcpAgent', summary: 'agent:ops.context.setMcpAgent.summary', risk: 'guarded',
+    riskReason: 'Turning a server off for an agent only narrows what it can call; turning it on (or spreading it to another agent) connects it, so it is raised to guarded by riskOf',
+    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    input: z.object({
+      name: z.string().min(1).max(128).describe(D('setMcpAgent', 'name')),
+      agent: z.string().max(40).describe(D('setMcpAgent', 'agent')),
+      on: z.boolean().describe(D('setMcpAgent', 'on')),
+      place: z.string().max(4096).nullable().optional().describe(D('setSettings', 'place')),
+      cwd: z.string().max(4096).optional().describe(A('cwd')),
+      reason,
+    }),
+    approvalWords: 'mcp',
+    confirm: async (_ctx, { name, agent, on }) => ({ key: null, before: null, rows: [{ path: `context.mcp.${name}.${agent}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') }],
+      note: t('opsApproval.mcpAgent', { name, agent }), loosens: on !== false }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'mcp-agent'], positional: ['name', 'agent'] } },
+    handler: (ctx, { name, agent, on, place, cwd }) => run(ctx, async () => {
+      const where = place ?? null;
+      const view = await ctx.context.view((await cwdFor(ctx, cwd)) ?? null);
+      const level = where ? (view.places ?? []).find((p) => p.path === where) ?? view.defaults : view.defaults;
+      const kind = level.kinds.mcp.value;
+      const [known, list] = await Promise.all([ctx.context.agentMcp(await cwdFor(ctx, cwd)), ctx.mcp.list().catch(() => ({ servers: [] }))]);
+      const ids = Object.keys(known.agents ?? {});
+      if (!ids.includes(agent)) throw new OpError('INVALID', t('context.settings.unknownAgent', { agent }));
+      const info = { registered: (list.servers ?? []).map((s) => s.name), native: Object.fromEntries(ids.map((a) => [a, (known.agents[a] ?? []).map((s) => s.name)])) };
+      const current = kind.agents ?? mcpAgentsFromLegacy(kind, info);
+      const next = toggleMcpAgent(current, { name, agent, on }, info);
+      const result = await ctx.context.set({ place: where, kind: 'mcp', value: { ...kind, agents: next }, cwd }, ctx.actor);
+      return { ok: true, agents: next, defaults: result.defaults };
+    }),
   }),
   defineOp({
     id: 'context.plyInstructions', summary: 'agent:ops.context.plyInstructions.summary', risk: 'read',
