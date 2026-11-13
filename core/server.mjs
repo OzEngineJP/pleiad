@@ -5283,7 +5283,7 @@ const opsContext = {
       got = await claudeConnectors.get();
       readFailed = readFailed || got.connectors === null;
     } else if (refresh) { void claudeConnectors.refresh({ deny: names }); got = await claudeConnectors.get(); }
-    return { plugins, connectors: got.connectors, reading: got.reading, readFailed };
+    return { plugins, connectors: got.connectors, needsAuth: got.needsAuth ?? [], reading: got.reading, readFailed };
   },
   view: (cwd) => contextSettings.view(cwd),
   set: async (args, actor) => {

@@ -47,6 +47,8 @@ function icon(kind) {
 const pathKey = p => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const within = (dir, file) => pathKey(file) === pathKey(dir) || pathKey(file).startsWith(pathKey(dir) + '/');
 /** 1 件の定義の同一性（同じものを別のエージェントにも登録しているだけなら、選ばせない） */
+/** 1 件の定義の同一性（同じものを別のエージェントにも登録しているだけなら、選ばせない） */
+const signature = e => e.transport === 'stdio' ? `stdio:${e.command ?? ''} ${(e.args ?? []).join(' ')}` : `http:${e.endpoint ?? ''}`;
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** 設定ファイルの書き出し（サーバが MCP 登録だけを伏せ字で書き出したもの）から 1 件を取る */
 function excerpt(config, name) {
@@ -170,8 +172,34 @@ export function createMcpSection() {
     host.append(advanced(ctx));
   }
 
+  /**
+   * 同じ名前で中身の違う定義が複数あるとき、どれを使うか（prefer）。名前ごとの一覧では、各エージェントは自分の定義を使い、
+   * prefer が効くのは、持っていないエージェントへ広げるときに渡す定義だけ。なので、広げている行（spread）の詳細にだけ出す
+   */
+  function choices(name, entries, ctx) {
+    if (entries.some(e => e.origins?.[0]?.source === 'ply')) return null;
+    const usable = entries.filter(e => e.status === 'candidate' || e.shadowedBy === 'choice');
+    if (new Set(usable.map(signature)).size < 2) return null;
+    const box = el('div', 'cx-choice'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('mcp.choice.aria', { name }));
+    box.append(el('span', null, t('mcp.choice.lead')));
+    // 中身が同じものは 1 行にまとめる（同じ定義を複数のエージェントに登録しているだけなので、選ばせる意味がない）
+    const groups = new Map();
+    for (const e of usable) groups.set(signature(e), [...(groups.get(signature(e)) ?? []), e]);
+    for (const list of groups.values()) {
+      const e = list[0], label = el('label'), input = el('input');
+      input.type = 'radio'; input.name = `mcp-choice-${name}`; input.checked = list.some(x => x.status === 'candidate');
+      input.onchange = () => ctx.saveKind(v => { v.prefer = { ...(v.prefer ?? {}), [name]: e.path }; });
+      const sources = [...new Set(list.flatMap(x => x.origins?.map(o => o.source) ?? []))];
+      const how = e.transport === 'stdio' ? t('mcp.choice.local', { command: joinCommand(e.command, e.args) }) : e.endpoint ?? '';
+      label.append(input, document.createTextNode(t('mcp.choice.settings', { agents: agentList(sources) })), el('span', 'cx-mono', how.length > 72 ? `${how.slice(0, 72)}…` : how));
+      label.title = list.map(x => ctx.short(x.path)).join(', ');
+      box.append(label);
+    }
+    return box;
+  }
+
   // ---------------------------------------------------------------- 行の中身
-  function peek(ctx, name, entries, fromPly, reg) {
+  function peek(ctx, name, entries, fromPly, reg, { choice = false } = {}) {
     const box = el('div', 'cx-peek');
     if (fromPly && reg) {
       const facts = el('div', 'fm facts');
@@ -216,6 +244,8 @@ export function createMcpSection() {
       return box;
     }
     // エージェントの登録: 伏せ字の定義を見せ、Pleiad に取り込める
+    const pick = choice ? choices(name, entries, ctx) : null;
+    if (pick) box.append(pick);
     for (const e of entries) {
       const config = ctx.scan.configs?.find(c => pathKey(c.path) === pathKey(e.path));
       const line = el('div', 'row-line');
@@ -508,10 +538,24 @@ export function createMcpSection() {
   }
 
   /** 行の下に出す、ログインの状態（OAuth の登録だけ）。ログインが要るときは強調する */
-  function authNote(reg) {
-    if (reg?.auth !== 'oauth') return null;
-    const state = reg.authStatus?.state, text = STATES[state] ?? STATES.error;
-    return ['signed-out', 'expired'].includes(state) ? el('span', 'cx-strong', text) : text;
+  function authNote(reg, name = reg?.name) {
+    if (!reg) return null;
+    const bits = [];
+    if (reg.auth === 'oauth') {
+      const state = reg.authStatus?.state, text = STATES[state] ?? STATES.error;
+      bits.push(['signed-out', 'expired'].includes(state) ? el('span', 'cx-strong', text) : text);
+      if (reg.authStatus?.needsScope) bits.push(el('span', 'cx-strong', t('mcp.describe.needsScope')));
+    }
+    if (reg.pending?.length) bits.push(el('span', 'cx-strong', t('mcp.describe.pending')));
+    if (reg.authStatus?.message && !reg.authStatus.needsScope) bits.push(reg.authStatus.message);
+    const message = messages.get(name);
+    if (message) bits.push(message);
+    if (!bits.length) return null;
+    const p = el('span', 'p');
+    bits.forEach((b, i) => { if (i) p.append(' · '); p.append(b); });
+    return p;
   }
-  return { addButton, renderExtras, openSheet, authEvent, peek, authNote };
+  /** claude.ai のコネクターのうち、ログインが必要なもの（Claude 側でログインする）。行の下に強調して出す */
+  function connectorNote() { const p = el('span', 'p'); p.append(el('span', 'cx-strong', t('mcp.state.signedOut'))); return p; }
+  return { addButton, renderExtras, openSheet, authEvent, peek, authNote, connectorNote };
 }

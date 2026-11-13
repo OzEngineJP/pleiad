@@ -1739,6 +1739,8 @@
       "only": "{{agent}} だけに登録",
       "both": "{{a}} と {{b}} の両方に登録",
       "many": "{{agents}} に登録",
+      "needsScope": "追加の権限が必要",
+      "pending": "未入力の値あり",
       "nativeOff": "元の設定で無効"
     },
     "auth": {
@@ -1750,7 +1752,9 @@
     },
     "choice": {
       "aria": "{{name}} の定義を選ぶ",
-      "lead": "どちらの定義を使いますか（選ばなければ先に見つかった方）"
+      "lead": "どちらの定義を使いますか（選ばなければ先に見つかった方）",
+      "local": "{{command}}（手元）",
+      "settings": "{{agents}} の設定"
     },
     "fact": {
       "transport": "つなぎ方",

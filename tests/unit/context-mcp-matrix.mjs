@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { buildMcpMatrix, relayBlocked } from '../../core/context-mcp-matrix.mjs';
-import { createConnectorReader, connectorNames, readClaudePlugins } from '../../core/context-claude-extras.mjs';
+import { createConnectorReader, connectorList, connectorNames, readClaudePlugins } from '../../core/context-claude-extras.mjs';
 import { DEFAULT_SCAN, legacyPlan, mcpAgentsFromLegacy } from '../../core/context-settings.mjs';
 import { resolveRuntime } from '../../core/context-runtime.mjs';
 
@@ -84,6 +84,20 @@ export default async function (t) {
     t.ok('読み取りは同時に 1 つだけ', calls === before + 1, calls);
     const again = calls; await r2.refresh();
     t.ok('読めてから 5 分は、開くたびに読み直さない', calls === again, calls);
+
+    // --- NEW-3: ログインが必要なコネクター（実機の状態は needs-auth）を名前と一緒に覚える。古い覚えの形（名前の配列だけ）も読む
+    const authFile = path.join(tmp, 'claude-connectors-auth.json');
+    const ra = createConnectorReader({ file: authFile, probe: async () => connectorList([{ name: 'claude.ai Slack', status: 'connected' }, { name: 'claude.ai Gmail', status: 'needs-auth' }, { name: 'plain', status: 'connected' }]) });
+    await ra.refresh();
+    t.ok('ログインが必要なコネクターを名前つきで返す（needs-auth）', (await ra.get()).needsAuth.join() === 'Gmail' && (await ra.get()).connectors.join() === 'Gmail,Slack');
+    const rb = createConnectorReader({ file: authFile, probe });
+    t.ok('次に起動した側も、覚えからログインが必要な名前を出せる', (await rb.get()).needsAuth.join() === 'Gmail');
+    const oldFile = path.join(tmp, 'claude-connectors-old.json');
+    await fs.writeFile(oldFile, JSON.stringify({ connectors: ['Slack'], at: 1 }));
+    const ro = createConnectorReader({ file: oldFile, probe });
+    t.ok('古い形の覚え（名前の配列だけ）も読める。ログインが必要な名前は無し', (await ro.get()).connectors.join() === 'Slack' && (await ro.get()).needsAuth.length === 0);
+    const mAuth = buildMcpMatrix({ ...base, connectors: ['Gmail', 'Slack'], needsAuth: ['Gmail'] });
+    t.ok('行に needsAuth が付く（Gmail だけ）', mAuth.rows.find(r => r.key === 'claude.ai Gmail').needsAuth === true && mAuth.rows.find(r => r.key === 'claude.ai Slack').needsAuth === false);
 
     // --- 更新の前後で、今の接続が変わらない（担当の 2 択 → 名前ごと）
     await fs.mkdir(path.join(cwd, '.git'), { recursive: true });

@@ -53,10 +53,11 @@ export function mcpLegacyInfo({ kind, registered = [], native = {}, plugins = []
  *   registered  Pleiad の登録 [{ name, transport }]
  *   native      { <agent>: [{ name, transport, disabled }] }（各エージェントの設定にあるもの）
  *   plugins     [{ plugin, server, key, transport }]（Claude のプラグインの MCP。key は止めるときの名前）
- *   connectors  null（読み取り中）| [名前]（読めた一覧）
+ *   connectors  null（未読。reading が true なら読み取り中）| [名前]（読めた一覧。[] は読めて 0 件）
+ *   needsAuth   ログインが必要なコネクターの名前（行に needsAuth: true を付ける）
  *   installed   { <agent>: bool }（そのエージェントを使えるか。使えないエージェントのアイコンは出さない）
  */
-export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plugins = [], connectors = null, reading = false, installed = {} }) {
+export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plugins = [], connectors = null, reading = false, needsAuth = [], installed = {} }) {
   const agents = Object.keys(native).filter(id => installed[id] !== false).sort((a, b) => orderOf(a) - orderOf(b));
   const info = { registered: registered.map(r => r.name), native: Object.fromEntries(Object.keys(native).map(a => [a, native[a].map(s => s.name)])) };
   const rules = kind.agents ?? mcpAgentsFromLegacy(kind, mcpLegacyInfo({ kind, registered, native, plugins, connectors }));
@@ -106,7 +107,7 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
         // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
         ? { state: off(key, 'claude') ? 'off' : 'on', mode: 'toggle' } : { state: 'off', mode: 'none' }]));
       // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
-      rows.push({ key, name: c, kind: 'connector', group: 'agent', transport: 'http', registered: false, origins: ['claude'], plugin: null, cells, on: !off(key, 'claude') });
+      rows.push({ key, name: c, kind: 'connector', group: 'agent', transport: 'http', needsAuth: needsAuth.includes(c), registered: false, origins: ['claude'], plugin: null, cells, on: !off(key, 'claude') });
     }
   }
   // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325

@@ -97,6 +97,7 @@ async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
     // null（1 度も読めていない）と [] （読めて 0 件）は最後まで区別する。null のまま保存すると、止めたはずのコネクターが開く
     connectors: Array.isArray(extras.connectors) ? extras.connectors : null,
     reading: extras.reading === true,
+    needsAuth: Array.isArray(extras.needsAuth) ? extras.needsAuth : [],
   };
   return { input, extras, level, dir, claude };
 }

@@ -1776,6 +1776,8 @@
       "only": "Registered only in {{agent}}",
       "both": "Registered in both {{a}} and {{b}}",
       "many": "Registered in {{agents}}",
+      "needsScope": "Additional permissions required",
+      "pending": "Some values missing",
       "nativeOff": "Disabled in the original settings"
     },
     "auth": {
@@ -1787,7 +1789,9 @@
     },
     "choice": {
       "aria": "Choose the definition for {{name}}",
-      "lead": "Which definition should be used? (If you don't choose, the one found first)"
+      "lead": "Which definition should be used? (If you don't choose, the one found first)",
+      "local": "{{command}} (local)",
+      "settings": "{{agents}} settings"
     },
     "fact": {
       "transport": "Connection",

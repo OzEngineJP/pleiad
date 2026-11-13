@@ -18,7 +18,7 @@ import { claudeCompatEnv, writeClaudeFlagSettings, adoptClaudeFlagSettings, reda
 import { writeClaudeEnvFile, adoptClaudeEnvFile } from '../claude-env-file.mjs';
 import { writeClaudeMcpFile, adoptClaudeMcpFile } from '../claude-mcp-file.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
-import { CONNECTOR_WAIT_MS, connectorNames } from '../context-claude-extras.mjs';
+import { CONNECTOR_WAIT_MS, connectorList } from '../context-claude-extras.mjs';
 import { AUTO_COMPACT_WINDOW_ENV } from '../compaction-settings.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
 import { claudeHookCallbacks, mergeCallbacks } from '../hooks-unify.mjs';
@@ -202,7 +202,7 @@ export async function probeClaudeConnectors({ deny = [], token = null } = {}) {
     } });
     await q.initializationResult();
     await new Promise((resolve) => setTimeout(resolve, CONNECTOR_WAIT_MS));
-    return connectorNames(await q.mcpServerStatus());
+    return connectorList(await q.mcpServerStatus());
   } finally {
     clearTimeout(timer);
     try { q?.close?.(); } catch { /* 既に閉じている */ }

@@ -53,27 +53,41 @@ export const CONNECTOR_TTL_MS = 5 * 60_000;
 
 const CONNECTOR_PREFIX = 'claude.ai ';
 /** mcpServerStatus() の結果から、claude.ai のコネクターの名前だけを取り出す */
-export function connectorNames(status) {
+export function connectorNames(status) { return connectorList(status).map(c => c.name); }
+/** 同じ結果から、名前と接続の状態（実機では needs-auth = ログインが必要）の組を取り出す。名前の昇順 */
+export function connectorList(status) {
   const rows = Array.isArray(status) ? status : Array.isArray(status?.mcpServers) ? status.mcpServers : [];
-  return [...new Set(rows.map(r => r?.name).filter(n => typeof n === 'string' && n.startsWith(CONNECTOR_PREFIX)).map(n => n.slice(CONNECTOR_PREFIX.length)))].sort();
+  const seen = new Map();
+  for (const r of rows) {
+    if (typeof r?.name !== 'string' || !r.name.startsWith(CONNECTOR_PREFIX)) continue;
+    const name = r.name.slice(CONNECTOR_PREFIX.length);
+    seen.set(name, { name, status: typeof r.status === 'string' ? r.status : null });
+  }
+  return [...seen.values()].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 }
+/** ログインが必要なコネクターの状態の値 */
+export const CONNECTOR_NEEDS_AUTH = 'needs-auth';
 
 /**
  * コネクターの読み取り。probe({ deny }) は Claude を話さずに起こし、claude.ai のコネクターの名前の配列を返す関数（失敗は投げる）。
  *   deny: 起こすとき止める名前（資格情報の要らない Pleiad の登録。話しかけないので、読み取りが本物の接続を開かないようにする）
- * 戻り: { get(): { connectors: null|[名前], reading }, refresh({ deny }), whenIdle() }
- *   connectors は、最後に読めた一覧（無ければ null）。読み取りが失敗しても、前の一覧は残す
+ * 戻り: { get(): { connectors: null|[名前], needsAuth: [名前], reading }, refresh({ deny }), whenIdle() }
+ *   connectors は、最後に読めた一覧（無ければ null）。読み取りが失敗しても、前の一覧は残す。needsAuth は、そのうちログインが必要なもの
+ *   probe は名前の配列でも、{ name, status } の配列でもよい。覚えのファイルは { connectors, needsAuth, at }（古い形 = needsAuth の無いものも読む）
  */
 export function createConnectorReader({ file, probe, now = () => Date.now(), ttl = CONNECTOR_TTL_MS }) {
-  let state = { connectors: null, at: 0 }, loading = null, running = null, failed = false;
+  let state = { connectors: null, needsAuth: [], at: 0 }, loading = null, running = null, failed = false;
   // 覚えの読み込みは 1 回だけ。読んでいる最中の呼び出しも、同じ読み込みを待つ（待たないと最初の一覧が空に見える）
   const load = () => loading ??= (async () => {
     const j = await readJson(file);
-    if (Array.isArray(j?.connectors)) state = { connectors: j.connectors.filter(n => typeof n === 'string').slice(0, CONNECTOR_CACHE_MAX), at: Number(j.at) || 0 };
+    if (Array.isArray(j?.connectors)) {
+      const connectors = j.connectors.filter(n => typeof n === 'string').slice(0, CONNECTOR_CACHE_MAX);
+      state = { connectors, needsAuth: (Array.isArray(j.needsAuth) ? j.needsAuth : []).filter(n => connectors.includes(n)), at: Number(j.at) || 0 };
+    }
   })();
-  const save = () => writeAtomic(file, `${JSON.stringify({ connectors: state.connectors, at: state.at })}\n`).catch(() => {});
+  const save = () => writeAtomic(file, `${JSON.stringify({ connectors: state.connectors, needsAuth: state.needsAuth, at: state.at })}\n`).catch(() => {});
   return {
-    async get() { await load(); return { connectors: state.connectors, reading: running !== null, at: state.at, failed }; },
+    async get() { await load(); return { connectors: state.connectors, needsAuth: state.needsAuth, reading: running !== null, at: state.at, failed }; },
     // 戻り: 読めたか（直近 ttl の間に読めた一覧があれば、起こさずに true）。読めなかったときは前の一覧のまま（failed が立つ）
     refresh({ deny = [], force = false } = {}) {
       if (running) return running;
@@ -81,9 +95,11 @@ export function createConnectorReader({ file, probe, now = () => Date.now(), ttl
         await load();
         if (!force && state.connectors && now() - state.at < ttl) return true;
         try {
-          const names = await probe({ deny });
-          if (!Array.isArray(names)) { failed = true; return false; }
-          state = { connectors: [...new Set(names)].sort().slice(0, CONNECTOR_CACHE_MAX), at: now() };
+          const found = await probe({ deny });
+          if (!Array.isArray(found)) { failed = true; return false; }
+          const list = found.map(x => typeof x === 'string' ? { name: x, status: null } : x).filter(x => typeof x?.name === 'string');
+          const connectors = [...new Set(list.map(x => x.name))].sort().slice(0, CONNECTOR_CACHE_MAX);
+          state = { connectors, needsAuth: connectors.filter(n => list.some(x => x.name === n && x.status === CONNECTOR_NEEDS_AUTH)), at: now() };
           failed = false;
           await save();
           return true;

@@ -139,8 +139,9 @@ export function createMcpMatrix({ section }) {
     const from = originMarks(row); if (from) line.append(from);
     body.append(line);
     const reg = row.registered ? (ctx.ply?.servers ?? []).find(s => s.name === row.name) : null;
-    const note = row.kind === 'plugin' ? t('mcp.matrix.pluginNote', { plugin: row.plugin }) : section.authNote(reg);
-    if (note) body.append(el('span', 'p', note));
+    const note = row.kind === 'plugin' ? el('span', 'p', t('mcp.matrix.pluginNote', { plugin: row.plugin }))
+      : row.kind === 'connector' ? (row.needsAuth ? section.connectorNote() : null) : section.authNote(reg, row.name);
+    if (note) body.append(note);
 
     const key = `mcp:${row.name}`;
     const entries = row.kind === 'config' ? (ctx.scan?.entries ?? []).filter(e => e.kind === 'mcp' && e.name === row.name) : [];
@@ -167,7 +168,9 @@ export function createMcpMatrix({ section }) {
     if (ask?.key === row.key) list.append(askEl(ctx, row));
     if (peekable && ctx.opened.has(key)) {
       const fromPly = entries.find(e => e.origins?.[0]?.source === 'ply') ?? (reg ? {} : null);
-      list.append(section.peek(ctx, row.name, entries, Boolean(fromPly && reg), reg));
+      // 同じ名前の定義の選び（prefer）は、持っていないエージェントへ広げている行にだけ出す（そこでしか効かない）
+      const spreading = row.group === 'agent' && m.agents.some(a => row.cells[a].state === 'on' && !row.origins.includes(a));
+      list.append(section.peek(ctx, row.name, entries, Boolean(fromPly && reg), reg, { choice: spreading }));
     }
   }
 
