@@ -235,6 +235,7 @@ Releases は public で、ブラウザーからはログインなしで取得で
 - 資産の URL は名前を含まない。そのため electron-updater は CPU に合う `Pleiad-<版>-win-<arch>.exe` を選べず、`latest.yml` の先頭にある両方入り（2 倍の大きさ）を取っていた。blockmap の URL も作れず、差分の取得が毎回失敗して全体を取っていた（0.8.1 で直した）。
 - 差分の範囲は 1 つずつ要求する。GitHub の配信は、複数の範囲をまとめた要求に 501 を返す。
 - 差分の元は、前回の更新で手元に残したインストーラー（`%LOCALAPPDATA%\agent-host-updater\installer.exe`）。0.8.0 までに残した両方入りは、前の版の両方入りの blockmap と組む。
+- 前の版の blockmap は、キャッシュの `current.blockmap`（electron-updater が、最後に落とした版のものを写す）を使わせず、差分の前に消して、入っている版のものを配布の URL から取り直させる（約 0.17 MB。`desktop/update-auth.cjs` の `getBlockMapFiles`）。`installer.exe` は更新を入れて初めて入っている版に替わるので、入れないまま次の版が出ると、写しは別の版の blockmap になり、組み上げた後の sha512 の検査で落ちて全体（約 169 MB）を取り直していた（beta.14 が入ったまま beta.15・16・17 が出た例）。Mac の zip の差分（`update.zip`）も同じ仕組みで、同じ上書きが及ぶ。
 - 0.7.2 → 0.8.0 の x64 なら、取るのは 228MB のうち 6.8MB になる。
 資格情報があれば使う（GitHub API のレート制限を避けるため）。Electron main が更新確認のたびに、起動環境の `GH_TOKEN` / `GITHUB_TOKEN`、なければ `gh auth token --hostname github.com`（Windows は標準インストール先も探す）の順で探す。
 専用の fine-grained PAT なら配布先の Contents read 権限を与える。ブラウザーの GitHub ログイン状態を自動更新が共有することはない。

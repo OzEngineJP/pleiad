@@ -68,6 +68,12 @@ function newestReleaseProvider() {
       const [oldUrl, newUrl] = await super.getBlockMapFiles(baseUrl, oldVersion, newVersion, oldBlockMapFileBaseUrl);
       const archName = `-${process.arch}.exe.blockmap`;
       const cacheDir = this.updater.downloadedUpdateHelper?.cacheDir;
+      // electron-updater は、落とした版の blockmap を cacheDir/current.blockmap に写し、次の差分で「前の版の blockmap」に使う。
+      // だが installer.exe（差分の元）は、更新を入れて初めて入っている版に替わる。入れないまま次の版が出ると、
+      // 最後に落とした版の blockmap と入っている版のインストーラーという食い違った組になり、組み上げた後の検査で落ちて
+      // 全体を取り直していた。写しは使わせず（消すと取り直す）、入っている版の blockmap を配布の URL から取らせる（約 0.17 MB）。
+      // Mac の zip（update.zip）の差分も同じ仕組みなので、この早期 return より前で消す
+      if (cacheDir) await fs.rm(path.join(cacheDir, 'current.blockmap'), { force: true }).catch(() => {});
       if (!oldUrl.pathname.endsWith(archName) || !cacheDir) return [oldUrl, newUrl];
       // 両方入りは片方だけの約 2 倍の大きさなので、新しいインストーラーとの大きさの比で見分ける
       const newSize = this.fileSizes?.get(baseUrl.href);

@@ -125,6 +125,13 @@ export default async function(t) {
     t.ok('A cached combined installer is paired with the combined block map of the previous release', (await newestProvider.getBlockMapFiles(ownInstaller, '0.8.0', '0.8.1'))[0].href === previous('Pleiad-0.8.0-win.exe.blockmap'));
     await fs.writeFile(path.join(cacheDir, 'installer.exe'), 'x');
     t.ok('A cached installer for this CPU keeps the block map for this CPU', (await newestProvider.getBlockMapFiles(ownInstaller, '0.8.0', '0.8.1'))[0].href === previous(`Pleiad-0.8.0-win-${process.arch}.exe.blockmap`));
+    // 入れないまま次の版が出たとき、cache の current.blockmap は最後に落とした版のもので、installer.exe（入っている版）と組にならない。
+    // 差分の前に写しを消し、electron-updater に入っている版の blockmap を取り直させる
+    const staleBlockMap = path.join(cacheDir, 'current.blockmap');
+    await fs.writeFile(staleBlockMap, 'blockmap of the last downloaded version');
+    await newestProvider.getBlockMapFiles(ownInstaller, '0.8.0', '0.8.2');
+    t.ok('A block map cached from the last download is dropped so the installed version block map is fetched', !(await fs.stat(staleBlockMap).then(() => true, () => false)));
+    await newestProvider.getBlockMapFiles(ownInstaller, '0.8.0', '0.8.2');
     real.downloadedUpdateHelper = null;
     t.ok('Differential ranges are requested one at a time (GitHub answers multi-range requests with 501)', newestProvider.isUseMultipleRangeRequest === false);
     t.ok('Assets without a public URL keep the API URL', newestProvider.resolveFiles({ ...archRelease, assets: archRelease.assets.map(({ browser_download_url, ...a }) => a) })[1].url.href.endsWith('/assets/2'));
