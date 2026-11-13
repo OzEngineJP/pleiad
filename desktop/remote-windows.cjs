@@ -17,6 +17,7 @@ const { t } = require('./i18n.cjs');
 const { createDesktopNotifications } = require('./notifications.cjs');
 const { originOf } = require('./window-trust.cjs');
 const { stableLauncher } = require('./msix.cjs');
+const { attachWindowHealth, createLoopPrompter } = require('./renderer-recovery.cjs');
 
 const HOST_ID = /^[a-z2-7]{26}$/;
 const TITLE_BAR_HEIGHT = 40;   // desktop/main.cjs と web/style.css の --bar-h と同じ
@@ -153,7 +154,9 @@ function drawOverlayBitmap(size = 32) {
  *   desktop/main.cjs の external。隠した Chrome の窓に開かれないよう先に見える窓を前面にしてから shell.openExternal する）
  */
 function createRemoteWindows(deps) {
-  const { app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust, icon, external, workerRequest = null } = deps;
+  const { app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust, icon, external, workerRequest = null,
+    desktopLog = null, onLoopPrompt = null, onRestart = null, isQuitting = () => false, startedAt = Date.now(), onCrashDumped = null } = deps;
+  const loopPrompt = onLoopPrompt || (deps.dialog ? createLoopPrompter({ dialog: deps.dialog, t }) : null);
   const platform = deps.platform ?? process.platform;
   const remoteDir = deps.dir || path.join(app.getPath('userData'), app.isPackaged ? 'remote-hosts' : 'remote-hosts-dev');
   const windows = new Map();       // hostId -> { win, name, origin, notify, state, via }
@@ -207,6 +210,12 @@ function createRemoteWindows(deps) {
 
   function device() {
     devicePromise ??= (async () => {
+      if (deps.createDevice) {
+        const d = deps.createDevice();
+        d.on?.('status', onStatus);
+        d.on?.('agent-state', pushHosts);
+        return d;
+      }
       const { createRemoteDevice } = await import(pathToFileURL(path.join(__dirname, '..', 'core', 'remote', 'device.mjs')).href);
       const { safeStorageCipher } = require('./secret-bridge.cjs');
       // 開発版と配布版が同時に動いても、互いの資格情報とポートの記録を取り合わないよう分ける（server-port.cjs と同じ）
@@ -444,6 +453,26 @@ function createRemoteWindows(deps) {
     const entry = { win, name, origin, state: proxy.status?.state,
       notify: createDesktopNotifications({ Notification, getWindow: () => win, icon }), via };
     windows.set(hostId, entry);
+    attachWindowHealth({
+      win,
+      label: `remote:${hostId}`,
+      logger: desktopLog,
+      startedAt,
+      isQuitting: () => Boolean(isQuitting?.() || !windows.has(hostId)),
+      reload: async () => {
+        const px = await (await device()).proxy(hostId);
+        if (!px?.url || win.isDestroyed?.() || !windows.has(hostId)) return;
+        const nextOrigin = originOf(px.url);
+        if (nextOrigin) {
+          entry.origin = nextOrigin;
+          trust.update(win, { origin: nextOrigin });
+        }
+        await win.loadURL(px.url);
+      },
+      onLoopPrompt: loopPrompt,
+      onRestart,
+      onCrashDumped,
+    });
     // 画面の <title> ではなく、どのホストかが分かる名前を OS に出す（§7.2 の 3）
     win.on('page-title-updated', event => event.preventDefault());
     // 新しい窓は開かせず、行き先で振り分ける（linkTarget）。localhost は画面が知らせる（web/host-only-links.mjs）

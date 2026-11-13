@@ -1,9 +1,12 @@
-const { app, BrowserWindow, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
+const { app, BrowserWindow, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor, crashReporter } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { forkUtility } = require('./process.cjs');
 // 開発版はインストール版と別の名前・userData・データ置き場で起こす（desktop/dev-identity.cjs）。userData・safeStorage を使う前に決める
 require('./dev-identity.cjs').applyDevIdentity({ app, env: process.env });
+const processStartedAt = Date.now();
+const { createDesktopLog } = require('./desktop-log.cjs');
+const { startCrashReporting, attachChildProcessCrashLogging, attachWindowHealth, createLoopPrompter, pruneCrashDumps } = require('./renderer-recovery.cjs');
 const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
 const { packagedIdentity } = require('./msix.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
@@ -55,6 +58,7 @@ let serverReady = null;
 let updateRestartNotice = false;
 // サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
 let bootLogger = null;
+let desktopLog = null, crashReporting = null;
 const pendingServerLog = [];
 const log = line => { console.warn('[server]', line); if (bootLogger) bootLogger.info?.(`[server] ${line}`); else pendingServerLog.push(line); };
 // サーバーの起こし方・付け直し。配布版の名前付きパイプ経路で使い、utilityProcess 経路も保持役と通常起動復元を使う。
@@ -269,11 +273,20 @@ async function chooseLinkedServer(portFile) {
 
 /** 別のサーバー（切り替えの S2・起こし直したサーバー）の ready のポート・トークンで窓を読み直す。同じポートが取れなかったときは origin が変わる（design.md §8） */
 async function reloadWindow(next, portFile) {
+  serverReady = next;
   origin = `http://127.0.0.1:${next.port}`;
   rememberPort(portFile, next.port);
   trust.update(window, { origin });
   if (next.locale) setLocale(next.locale);
   await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
+}
+
+/** 連続クラッシュで利用者が「Pleiad を再起動する」を選んだときに終了処理の問い合わせ無しで起動し直す。 */
+function restartFromCrashLoop() {
+  quitting = true;
+  try { worker?.postMessage?.({ type: 'shutdown', stopHeld: true }); } catch {}
+  app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== '--hidden') });
+  app.quit();
 }
 
 /** 付け直したサーバーが古い版なら、保持役の子を残して通常停止・通常起動する（desktop/switch.cjs）。 */
@@ -393,8 +406,29 @@ async function boot() {
   window.removeMenu();
   trust.register(window, { kind: 'local', origin });
   // 読み込み直した画面は別の版かもしれない。切り替えの表示を持つかは、その画面の hello で知る
+  const onLoopPrompt = createLoopPrompter({ dialog, t });
+  const scheduleDumpPrune = () => {
+    const dir = crashReporting?.crashDumpsDir;
+    if (!dir) return;
+    setTimeout(() => { pruneCrashDumps(dir); }, 5000).unref?.();
+  };
+  attachWindowHealth({
+    win: window,
+    label: 'main',
+    logger: desktopLog,
+    startedAt: processStartedAt,
+    isQuitting: () => quitting || exitInProgress,
+    reload: async () => {
+      if (!serverReady) return;
+      await reloadWindow(serverReady, portFile);
+    },
+    onLoopPrompt,
+    onRestart: restartFromCrashLoop,
+    onCrashDumped: scheduleDumpPrune,
+  });
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
-    icon: path.join(__dirname, 'icon.png'), external, workerRequest });
+    icon: path.join(__dirname, 'icon.png'), external, workerRequest,
+    desktopLog, onLoopPrompt, onRestart: restartFromCrashLoop, isQuitting: () => quitting || exitInProgress, startedAt: processStartedAt, onCrashDumped: scheduleDumpPrune });
   remoteWindows.attach();
   remoteWindows.attachWorker(messages);
   computerOverlay = attachComputerOverlay(messages, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
@@ -572,6 +606,9 @@ function closeAgentWindows() {
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  desktopLog = createDesktopLog(path.join(app.getPath('userData'), 'logs', 'desktop.log'));
+  crashReporting = startCrashReporting({ app, crashReporter, logger: desktopLog });
+  attachChildProcessCrashLogging({ app, logger: desktopLog, startedAt: processStartedAt });
   // 配布版だけプロトコルを OS に登録する。開発（electron .）は electron.exe を登録してしまい、インストール版の登録を奪うので呼ばない
   if (app.isPackaged) app.setAsDefaultProtocolClient('pleiad');
   app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); computerOverlay?.close(); });

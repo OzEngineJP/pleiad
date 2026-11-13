@@ -275,6 +275,9 @@ export const DATA_WRITES = [
   { file: 'desktop/update-log.cjs', sites: 2, targets: [
     { name: '(置き場の外) Electron の userData の logs/updater.log と、1 世代前の updater.log.old', limit: 'MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: '更新ライブラリーの記録。1 行ずつ追記し、回すときは名前を替えるだけ', appendOnly: true },
   ] },
+  { file: 'desktop/desktop-log.cjs', sites: 2, targets: [
+    { name: '(置き場の外) Electron の userData の logs/desktop.log と、1 世代前の desktop.log.old', limit: 'MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: 'renderer の終了・読み込み失敗・無応答・子プロセスの終了の記録。1 行ずつ同期追記し、回すときは名前を替えるだけ', appendOnly: true },
+  ] },
   { file: 'desktop/remote-windows.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData の remote-hosts[-dev]/settings.json', limit: '固定の小ささ（{ plus: { use } }）', reason: '端末のリモート設定（公式の中継を使うか）。変更時に丸ごと書く' },
   ] },

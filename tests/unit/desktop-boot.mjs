@@ -23,6 +23,8 @@ const workerMessages = createRequire(import.meta.url)('../../desktop/worker-mess
 const loginItem = createRequire(import.meta.url)('../../desktop/login-item.cjs');
 const plusLink = createRequire(import.meta.url)('../../desktop/plus-link.cjs');
 const devIdentity = createRequire(import.meta.url)('../../desktop/dev-identity.cjs');
+const rendererRecovery = createRequire(import.meta.url)('../../desktop/renderer-recovery.cjs');
+const desktopLogMock = { createDesktopLog: () => ({ info() {}, warn() {}, error() {} }) };
 // 本物の橋と同じに message の受け手を 1 つ付ける偽物（受け手が worker の listener を増やさないことを見る）
 const listens = (calls, key) => worker => { worker.on('message', () => {}); if (key) calls[key] = worker; return { keepOnClose: () => false, close: () => {} }; };
 
@@ -50,7 +52,7 @@ class FakeLink extends EventEmitter {
 }
 
 async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false, hangInstall = false, restart = { ok: false, reason: 'failed' }, shellEnv = async () => false } = {}) {
-  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], bootSteps: [], switches: [], updates: null, restarts: 0, restarterOptions: null };
+  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], bootSteps: [], switches: [], updates: null, restarts: 0, restarterOptions: null, crashStarts: [], relaunches: [] };
   const link = new FakeLink(calls);
   link.connectError = connectError;
   const utility = new EventEmitter();
@@ -63,7 +65,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   utility.kill = () => { calls.killed = true; };
   const app = new EventEmitter();
   Object.assign(app, {
-    isPackaged: packaged, exit: () => {}, quit: () => { calls.quits++; }, setName: name => { calls.appName = name; }, requestSingleInstanceLock: () => true, whenReady: () => Promise.resolve(),
+    isPackaged: packaged, exit: () => {}, quit: () => { calls.quits++; }, setName: name => { calls.appName = name; }, getName: () => calls.appName || 'agent-host', relaunch: opts => { calls.relaunches.push(opts); }, requestSingleInstanceLock: () => true, whenReady: () => Promise.resolve(),
     setAsDefaultProtocolClient: scheme => { calls.protocolClient = scheme; return true; },
     getPath: name => name === 'userData' ? 'test-user' : 'test-home', getPreferredSystemLanguages: () => ['ja-JP'], getVersion: () => '1.2.3',
   });
@@ -88,6 +90,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
     Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(), screen: calls.screen = new EventEmitter(),
+    crashReporter: { start: opts => { calls.crashStarts.push(opts); } },
     autoUpdater: new EventEmitter(),
   };
   // electron-updater の quitAndInstall: インストーラーを起こした後に before-quit-for-update を出して終わる（node_modules/electron-updater の BaseUpdater）
@@ -105,6 +108,8 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './msix.cjs': { packagedIdentity: () => false },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
+    './desktop-log.cjs': desktopLogMock,
+    './renderer-recovery.cjs': rendererRecovery,
     './external-url.cjs': { externalUrl: url => url },
     './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: (_file, port) => { calls.remembered = port; } },

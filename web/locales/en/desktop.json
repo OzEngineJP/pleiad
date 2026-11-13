@@ -100,6 +100,12 @@
     }
   },
   "chromePill": { "resume": "You are in control · Return to AI" },
+  "renderer": {
+    "crashedTitle": "Window display stopped",
+    "crashedMessage": "The window display closed repeatedly, so automatic reload was stopped. Your saved conversations are kept.",
+    "reload": "Reload",
+    "restart": "Restart Pleiad"
+  },
   "computer": {
     "overlay": {
       "who": "{{agent}} is using your computer",
