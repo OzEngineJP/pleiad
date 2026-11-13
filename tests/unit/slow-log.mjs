@@ -98,13 +98,27 @@ export default async function (t) {
     // イベントループ遅延の記録
     let inflightMock = 3;
     logger.startLoopMonitor({ getInFlight: () => inflightMock });
-    const deadline = Date.now() + 80;
-    while (Date.now() < deadline) { /* block event loop >= 30ms */ }
-    await new Promise((r) => setTimeout(r, 90));
+    // 監視（resolution 20ms の uv タイマー）が動き出すのを待ってから塞ぐ。負荷が高いと
+    // 遅れの記録が次の窓へずれるので、固定の待ちではなく行が出るまで上限つきで塞ぎ直す
+    await new Promise((r) => setTimeout(r, 100));
+    const readLoopRows = async () => {
+      await logger.flush();
+      return fs.readFileSync(logger.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    };
+    const hasLoopRow = (rows) => rows.some((e) => e.kind === 'event-loop' && e.ms >= 30 && typeof e.p99Ms === 'number');
+    const pollUntil = Date.now() + 8000;
+    let afterLoop = [];
+    while (Date.now() < pollUntil) {
+      const deadline = Date.now() + 120;
+      while (Date.now() < deadline) { /* block event loop >= 30ms */ }
+      await new Promise((r) => setTimeout(r, 120));
+      afterLoop = await readLoopRows();
+      if (hasLoopRow(afterLoop)) break;
+    }
     await logger.close();
-    const afterLoop = fs.readFileSync(logger.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    afterLoop = fs.readFileSync(logger.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     t.ok('イベントループの遅れが loopMs を超えたら event-loop 行を残す',
-      afterLoop.some((e) => e.kind === 'event-loop' && e.ms >= 30 && typeof e.p99Ms === 'number'),
+      hasLoopRow(afterLoop),
       JSON.stringify(afterLoop.slice(-5)));
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
