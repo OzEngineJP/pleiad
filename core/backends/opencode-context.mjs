@@ -135,6 +135,32 @@ async function absoluteInstructions(list, cwd) {
 const sigOf = (owners) => ['instruction', 'skill', 'mcp'].map((k) => (owners?.[k] === 'ply' ? k[0] : '-')).join('')
   + (owners?.mcpSuppress?.length ? `-${createHash('sha1').update(owners.mcpSuppress.join('\n')).digest('hex').slice(0, 8)}` : '');
 
+/** 担当の組み合わせ・止めた名前の組ごとに作る置き場の残す数。超えたら、使ったのが古いものから消す（止める名前の組み合わせで増え続けないように） */
+export const MANAGED_KEEP = 12;
+async function pruneManaged(parent, keepRoot) {
+  const names = await fs.readdir(parent).catch(() => []);
+  const rows = [];
+  for (const name of names) {
+    const dir = path.join(parent, name);
+    const st = await fs.stat(dir).catch(() => null);
+    if (st?.isDirectory() && dir !== keepRoot) rows.push({ dir, at: st.mtimeMs });
+  }
+  rows.sort((a, b) => b.at - a.at);
+  for (const { dir } of rows.slice(Math.max(0, MANAGED_KEEP - 1))) await removeTree(dir);
+}
+/** junction の先（利用者の本物のフォルダー）を消さないよう、リンクは外してから置き場を消す */
+async function removeTree(dir) {
+  const walk = async (d) => {
+    for (const e of await fs.readdir(d, { withFileTypes: true }).catch(() => [])) {
+      const p = path.join(d, e.name);
+      if (e.isSymbolicLink()) await unlinkEntry(p);
+      else if (e.isDirectory()) await walk(p);
+    }
+  };
+  await walk(dir);
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
 /** 全体の設定の置き場（写し元）に websearch の設定があるか。あれば既定の差し込みはしない */
 async function globalWebsearch(source) {
   const dir = source ?? opencodeConfigHome();
@@ -153,6 +179,9 @@ export async function mirrorGlobalConfig({ dataDir, owners, source = opencodeCon
   const root = path.join(dataDir, 'opencode', 'managed', sigOf(owners));
   const dest = path.join(root, 'opencode');
   await fs.mkdir(dest, { recursive: true });
+  const now = new Date();
+  await fs.utimes(root, now, now).catch(() => {});   // 使った順で古いものを消すための印
+  await pruneManaged(path.dirname(root), root);
   const names = await fs.readdir(source).catch(() => []);
   const keep = new Set();
   for (const name of names) {

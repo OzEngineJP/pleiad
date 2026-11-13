@@ -111,15 +111,19 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
   opencodeHome = process.env.OPENCODE_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'opencode'), runtime = false, plyServers = null, scopes = ['user', 'directory'],
   // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
   devinHome = process.env.DEVIN_CONFIG_HOME ? path.join(process.env.DEVIN_CONFIG_HOME, 'devin') : path.join(process.env.APPDATA ?? process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'devin'),
-  geminiHome = path.join(home, '.gemini'), grokHome = process.env.GROK_HOME || path.join(home, '.grok') } = {}) {
+  geminiHome = path.join(home, '.gemini'), grokHome = process.env.GROK_HOME || path.join(home, '.grok'),
+  // softMcp: 名前ごとのモデルで、外部 MCP の設定ファイルが読めない（壊れている・大きすぎる）ときに、そのファイルだけ飛ばして skipped に残す（ADR 0325）
+  softMcp = false } = {}) {
   const { cwd } = settings;
   const userInstructions = userInstructionPaths({ home, claudeHome, codexHome, geminiHome });
   // 種類ごと・範囲（user = home / directory = Git ルート〜作業場所）ごとの探し方。形式 1 の { user, directory } も受け付ける
   const plan = scanPlan(settings);
   const disabledNames = new Set(plan.mcp?.disabled ?? []);
-  const entries = [], diagnostics = [], searched = [], configs = [], cache = new Map();
+  const entries = [], diagnostics = [], searched = [], configs = [], skipped = [], cache = new Map();
   let bytes = 0, operations = 0, limited = false;
   function issue(file, message) { if (diagnostics.length < 100) diagnostics.push({ path: file, message }); }
+  /** 外部 MCP の設定ファイルの問題。softMcp なら止めずに skipped へ（そのファイルの名前は渡さない） */
+  function mcpIssue(file, message) { if (!softMcp) return issue(file, message); if (skipped.length < 100) skipped.push({ path: file, message }); }
   function budget() {
     if (++operations > 5000 || bytes >= MAX_TOTAL || entries.length >= MAX_ENTRIES) {
       if (!limited) issue(cwd, t('context.scan.limitReached'));
@@ -127,23 +131,24 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     }
     return true;
   }
-  async function read(file) {
+  async function read(file, soft = false) {
+    const report = soft ? mcpIssue : issue;
     if (!budget()) return null;
     const key = pathKey(file);
     if (cache.has(key)) return cache.get(key);
     try {
       const stat = await fs.stat(file);
       if (!stat.isFile()) return null;
-      if (stat.size > MAX_FILE || bytes + stat.size > MAX_TOTAL) { issue(file, t('context.scan.tooLarge')); return null; }
+      if (stat.size > MAX_FILE || bytes + stat.size > MAX_TOTAL) { report(file, t('context.scan.tooLarge')); return null; }
       const handle = await fs.open(file, 'r');
       let body;
       try { const b = Buffer.alloc(MAX_FILE + 1); const r = await handle.read(b, 0, b.length, 0); body = b.subarray(0, r.bytesRead); }
       finally { await handle.close(); }
-      if (body.length > MAX_FILE) { issue(file, t('context.scan.tooLarge')); return null; }
+      if (body.length > MAX_FILE) { report(file, t('context.scan.tooLarge')); return null; }
       bytes += body.length;
       const result = { text: body.toString('utf8').replace(/^\uFEFF/, ''), real: await fs.realpath(file), bytes: body.length };
       cache.set(key, result); return result;
-    } catch (e) { if (!['ENOENT', 'ENOTDIR'].includes(e.code)) issue(file, t('context.scan.fileUnreadable')); return null; }
+    } catch (e) { if (!['ENOENT', 'ENOTDIR'].includes(e.code)) report(file, t('context.scan.fileUnreadable')); return null; }
   }
   async function list(dir) {
     if (!budget()) return [];
@@ -267,22 +272,24 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
   }
   async function mcp(file, ctx, select) {
     searched.push({ path: file, kind: 'mcp', ...ctx });
-    const data = await read(file);
+    const data = await read(file, true);
     if (!data) return;
+    // 空のファイル（0 バイト・空白だけ）は MCP が 1 つも無いものとして扱う（壊れているのではない）
+    if (!data.text.trim()) return;
     // Devin の設定ファイル（.devin/・DEVIN_CONFIG_HOME の config）は JSONC
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
     const text = ctx.source === 'devin' ? stripJsonc(data.text) : data.text;
     let config;
     try { config = path.extname(file) === '.toml' ? toml(text) : JSON.parse(text); }
-    catch { issue(file, t('context.scan.mcpParse')); return; }
-    if (!record(config)) { issue(file, t('context.scan.mcpInvalid')); return; }
+    catch { mcpIssue(file, t('context.scan.mcpParse')); return; }
+    if (!record(config)) { mcpIssue(file, t('context.scan.mcpInvalid')); return; }
     const servers = select(config);
     if (servers == null) return;
-    if (!record(servers)) { issue(file, t('context.scan.mcpServersInvalid')); return; }
+    if (!record(servers)) { mcpIssue(file, t('context.scan.mcpServersInvalid')); return; }
     const shown = {};
     for (const [name, value] of Object.entries(servers)) {
       if (!budget()) break;
-      if (!record(value)) { issue(file, t('context.scan.mcpServerInvalid')); continue; }
+      if (!record(value)) { mcpIssue(file, t('context.scan.mcpServerInvalid')); continue; }
       shown[name] = safeDefinition(value);
       add(data, file, ctx, { kind: 'mcp', name, status: value.enabled === false || value.disabled === true ? 'disabled' : 'candidate',
         ...(runtime ? { definition: value, hash: digest(JSON.stringify(value)) } : {}), transport: typeof value.command === 'string' ? 'stdio' : typeof (value.url ?? value.baseUrl) === 'string' ? 'http' : 'unknown',
@@ -470,7 +477,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     else item.conflictReason = t('context.scan.conflictName');
   }
   // home と root は画面がツリーの根（「ユーザー」「この場所」）を作るために使う
-  return { previewOnly: true, owner: 'native', cwd, root, home, scannedAt: new Date().toISOString(), entries, searched, configs, diagnostics, limited,
+  return { previewOnly: true, owner: 'native', cwd, root, home, scannedAt: new Date().toISOString(), entries, searched, configs, diagnostics, skipped, limited,
     // i18n-dynamic: context.scan.limitations.
     limitations: ['preview', 'excluded', 'unsupported', 'rules', 'directories', 'mcp', 'ply'].map(k => t(`context.scan.limitations.${k}`)) };
 }

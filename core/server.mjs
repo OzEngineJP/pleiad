@@ -5262,14 +5262,28 @@ const opsHooks = {
 };
 
 // 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0325）。コネクターは最後に読めた一覧を覚えておく
-const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'), probe: probeClaudeConnectors });
+// 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす
+const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'),
+  probe: async ({ deny }) => {
+    const account = await accountResolve(getBackend('claude'), await defaultAccount('claude')).catch(() => null);
+    return probeClaudeConnectors({ deny, token: account?.token ?? null });
+  } });
 
 // コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
 const opsContext = {
-  claudeExtras: async ({ refresh = false, deny = [] } = {}) => {
-    if (refresh) void claudeConnectors.refresh({ deny });
-    const [plugins, connectors] = await Promise.all([readClaudePlugins().catch(() => []), claudeConnectors.get()]);
-    return { plugins, connectors: connectors.connectors, reading: connectors.reading };
+  // deny: 読み取りで起こすとき止める、claude.ai 以外の既知の名前（Claude の設定・Pleiad の登録）。プラグインの名前はここで足す。
+  // wait: コネクターの一覧が無いとき、読み終えるまで待つ（読めなかったら readFailed）
+  claudeExtras: async ({ refresh = false, deny = [], wait = false, cwd = null } = {}) => {
+    const plugins = await readClaudePlugins({ cwd }).catch(() => []);
+    const names = [...new Set([...deny, ...plugins.map(p => p.key)])].filter(n => !n.startsWith('claude.ai '));
+    let got = await claudeConnectors.get();
+    let readFailed = false;
+    if (wait && got.connectors === null) {
+      readFailed = !(await claudeConnectors.refresh({ deny: names }));
+      got = await claudeConnectors.get();
+      readFailed = readFailed || got.connectors === null;
+    } else if (refresh) { void claudeConnectors.refresh({ deny: names }); got = await claudeConnectors.get(); }
+    return { plugins, connectors: got.connectors, reading: got.reading, readFailed };
   },
   view: (cwd) => contextSettings.view(cwd),
   set: async (args, actor) => {
@@ -7679,8 +7693,13 @@ async function prepareTurn(args, hooks, compactionRevision) {
   let policy = { ...followed, agent: backend.id };
   // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
-  const plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-  const resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
+  let plyContext = managed(policy) && acceptsPlyContext(backend, policy);
+  let resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
+  // 名前ごとのモデルで、指示・Skills はエージェント任せ、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
+  // （ターンだけの口・中継を起こさない。ADR 0325）
+  if (resolvedContext?.mcp.named && policy.owners.instruction !== 'ply' && policy.owners.skill !== 'ply' && !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length) {
+    plyContext = false; resolvedContext = null;
+  }
   // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
   // 記録も pin も自動で新しくなる）。指示本文は毎ターン指示欄へ渡し直し、Skills はカタログしか渡していないので技術的な制約は無い。
   // 右パネルの「渡したもの」との食い違いだけが問題なので、読み込み直したことを履歴と会話に残す
@@ -8585,7 +8604,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         // 開けなければ口の無いまま続ける（CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
         if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
           try {
-            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale });
+            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: ctx.policy?.agent ?? backend.id });
             const opened = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
               origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted,
               activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }) });
