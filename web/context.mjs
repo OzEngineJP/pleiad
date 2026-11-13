@@ -468,7 +468,7 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
   /** claude.ai のコネクターは Claude を裏で起こして読むので、読み終わるまで少し間をおいて取り直す（上限あり） */
   function pollConnectors() {
     clearTimeout(matrixTimer);
-    if (matrix?.connectors !== 'reading' || matrixPolls >= 6 || panel.hidden || !panel.isConnected) return;
+    if (matrix?.connectors !== 'reading' || matrixPolls >= 10 || panel.hidden || !panel.isConnected) return;
     matrixPolls++;
     matrixTimer = setTimeout(() => reloadMatrix(), 2500);
   }

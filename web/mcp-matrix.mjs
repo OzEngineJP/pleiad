@@ -63,7 +63,7 @@ export function createMcpMatrix({ section }) {
     ctx.rerender();
     return ctx.work(async () => {
       try {
-        for (const { agent, on } of changes) await ctx.cmd('setMcpAgent', { name: row.key, agent, on });
+        for (const { agent, on } of changes) await ctx.cmd('setMcpAgent', { name: row.key, agent, on, cwd: ctx.cwd });
         await ctx.refreshSettings();
         ctx.toast();
       } finally { if (back) focus = back; await ctx.reloadMatrix(); }
@@ -75,11 +75,13 @@ export function createMcpMatrix({ section }) {
     const spreading = on && row.group === 'agent' && row.kind === 'config' && !row.origins.includes(agent);
     if (spreading && !confirmed.has(row.key)) { ask = { key: row.key, agent }; focus = '.cx-ask .btn-primary'; ctx.rerender(); return; }
     const m = ctx.matrix;
+    let keep = `.cx-ag[data-agent="${agent}"]`;
     if (!on) {
       const rest = toggles(m, row).filter(a => a !== agent && row.cells[a].state === 'on');
+      if (!rest.length) keep = '.cx-sw';   // 最後の 1 つを外すとアイコンが消える。focus はスイッチへ
       if (!rest.length && defaults(m, row).length) memory.set(row.key, toggles(m, row).filter(a => row.cells[a].state === 'on'));
     }
-    return apply(ctx, row, [{ agent, on }], `.cx-ag[data-agent="${agent}"]`);
+    return apply(ctx, row, [{ agent, on }], keep);
   }
   function toggleAll(ctx, row) {
     const m = ctx.matrix;
@@ -105,7 +107,7 @@ export function createMcpMatrix({ section }) {
   function chip(ctx, row, agent) {
     const m = ctx.matrix, cell = row.cells[agent], on = switchOn(m, row);
     if (cell.mode === 'none') { const x = el('span', `cx-ag ${on ? 'na' : 'none'}`); x.setAttribute('aria-hidden', 'true'); return x; }
-    if (cell.mode === 'toggle' && cell.state === 'off' && !on) return el('span', 'cx-ag none');
+    if (cell.mode === 'toggle' && cell.state === 'off' && !on) { const x = el('span', 'cx-ag none'); x.setAttribute('aria-hidden', 'true'); return x; }
     const b = button(`cx-ag be-${agent}`);
     b.dataset.agent = agent;
     b.setAttribute('aria-pressed', String(cell.state === 'on'));
@@ -177,7 +179,7 @@ export function createMcpMatrix({ section }) {
     const cancel = button('btn', t('mcp.matrix.cancel'));
     cancel.onclick = () => { ask = null; focus = `.cx-row[data-key="${CSS.escape(row.key)}"] .cx-ag[data-agent="${to}"]`; ctx.rerender(); };
     const ok = button('btn btn-primary', t('mcp.matrix.confirm'));
-    ok.onclick = () => { confirmed.add(row.key); ask = null; focus = `.cx-row[data-key="${CSS.escape(row.key)}"] .cx-ag[data-agent="${to}"]`; apply(ctx, row, [{ agent: to, on: true }]); };   // 確かめるのは名前ごとに 1 回
+    ok.onclick = () => { confirmed.add(row.key); ask = null; focus = `.cx-row[data-key="${CSS.escape(row.key)}"] .cx-ag[data-agent="${to}"]`; apply(ctx, row, [{ agent: to, on: true }], `.cx-ag[data-agent="${to}"]`); };   // 確かめるのは名前ごとに 1 回
     box.append(cancel, ok);
     return box;
   }

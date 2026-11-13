@@ -1549,6 +1549,8 @@
       "ownerAria": "Who loads {{kind}} in this location",
       "plyWho": "Managed by Pleiad",
       "nativeNote": "{{agent}} reads them by its own rules",
+      "mcpByAgentWho": "Per agent",
+      "mcpByAgent": "External MCP is set per agent. Change it in Settings › Plugins",
       "loading": "Loading…",
       "offHere": "Turned off for this location",
       "offGlobal": "Turned off in the global settings",
@@ -1756,13 +1758,6 @@
       "sse": "Connect to URL (SSE)"
     },
     "join": ", ",
-    "agents": {
-      "lead": "Registered in each agent's settings (Pleiad only reads them and doesn't change them)",
-      "none": "None registered",
-      "only": "{{agent}} only",
-      "disabled": "Disabled",
-      "foot": "Available MCP servers change when you switch agents. To keep them the same, choose “Managed by Pleiad”."
-    },
     "login": "Sign in",
     "loginAgain": "Sign in again",
     "logout": "Sign out",
@@ -1779,19 +1774,11 @@
       "sheetEncrypted": "Saved as a Pleiad setting and connected to every agent. The Claude and Codex settings files are not changed. Tokens and keys are encrypted in the OS keychain (Windows Credential Manager, macOS Keychain, or Linux Secret Service)."
     },
     "describe": {
-      "needsScope": "Additional permissions required",
-      "pending": "Some values missing",
-      "plyOver": "Registered in Pleiad (takes precedence over the same name in {{agents}})",
       "ply": "Registered in Pleiad",
       "only": "Registered only in {{agent}}",
       "both": "Registered in both {{a}} and {{b}}",
       "many": "Registered in {{agents}}",
-      "defsUsing": "{{n}} definitions with the same name · using the one from {{agent}} settings ({{by}})",
-      "defs": "{{n}} definitions with the same name",
-      "byPicked": "your choice",
-      "byFirst": "found first",
-      "nativeOff": "Disabled in the original settings",
-      "excluded": "Excluded"
+      "nativeOff": "Disabled in the original settings"
     },
     "auth": {
       "token": "Token",
@@ -1802,9 +1789,7 @@
     },
     "choice": {
       "aria": "Choose the definition for {{name}}",
-      "lead": "Which definition should be used? (If you don't choose, the one found first)",
-      "local": "{{command}} (local)",
-      "settings": "{{agents}} settings"
+      "lead": "Which definition should be used? (If you don't choose, the one found first)"
     },
     "fact": {
       "transport": "Connection",
