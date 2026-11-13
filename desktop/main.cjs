@@ -8,7 +8,7 @@ const processStartedAt = Date.now();
 const { createDesktopLog } = require('./desktop-log.cjs');
 const { startCrashReporting, attachChildProcessCrashLogging, attachWindowHealth, createLoopPrompter, pruneCrashDumps } = require('./renderer-recovery.cjs');
 const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
-const { packagedIdentity } = require('./msix.cjs');
+const { packagedIdentity, stableLauncher } = require('./msix.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { createUpdateLog } = require('./update-log.cjs');
 const { externalUrl } = require('./external-url.cjs');
@@ -49,6 +49,7 @@ let remoteWindows;
 // messages はサーバーの message を 1 つの listener で受けて橋へ配る（desktop/worker-messages.cjs）。橋は worker でなくこれに付ける
 let worker, messages, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
 let serverRestarter = null, serverExitHandler = null, activePortFile = null, updateInProgress = false;
+let keepAgentWindows = false, crashRestarting = false, utilityExited = false;
 let chromePill = null;
 let chromeOs = null;   // Chrome の OS の層（boot が作る）。終了のときに、画面の外へ隠したエージェントの窓を片付けるために main が持つ
 // 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
@@ -281,11 +282,60 @@ async function reloadWindow(next, portFile) {
   await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
 }
 
-/** 連続クラッシュで利用者が「Pleiad を再起動する」を選んだときに終了処理の問い合わせ無しで起動し直す。 */
-function restartFromCrashLoop() {
+const CRASH_RESTART_LEAVE_WAIT_MS = 2_000;
+const CRASH_RESTART_SHUTDOWN_WAIT_MS = 30_000;
+
+/** 再起動時に引き継がない 1 回限りの引数（--hidden・--remote-hosts・pleiad://…）を外す。 */
+function relaunchArgs(argv) {
+  return (Array.isArray(argv) ? argv.slice(1) : []).filter(arg => (
+    arg !== '--hidden'
+    && arg !== '--remote-hosts'
+    && !String(arg).startsWith('--remote-hosts=')
+    && !/^pleiad:\/\//i.test(String(arg))
+  ));
+}
+
+/** サーバーとの切断または終了をタイムアウト付きで待つ。 */
+function waitWorkerExit(target, timeoutMs) {
+  if (!target || typeof target.once !== 'function') return Promise.resolve();
+  return new Promise(resolve => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      target.removeListener?.('exit', done);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    timer.unref?.();
+    target.once('exit', done);
+  });
+}
+
+/**
+ * 連続クラッシュで利用者が「Pleiad を再起動する」を選んだときに終了処理の問い合わせ無しで起動し直す。
+ * linked（名前付きパイプ接続）ではサーバーを落とさず main だけ離脱・再起動し、
+ * utilityProcess 経路ではサーバーの停止完了を待ってから起動し直す（ADR 0324）。
+ */
+async function restartFromCrashLoop() {
+  if (crashRestarting) return;
+  crashRestarting = true;
   quitting = true;
-  try { worker?.postMessage?.({ type: 'shutdown', stopHeld: true }); } catch {}
-  app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== '--hidden') });
+  exitInProgress = true;
+  const target = worker;
+  if (linked && target && typeof target.leave === 'function') {
+    keepAgentWindows = true;
+    const waitExit = target.connected === true ? waitWorkerExit(target, CRASH_RESTART_LEAVE_WAIT_MS) : null;
+    try { target.leave('restart'); } catch {}
+    if (waitExit) await waitExit;
+  } else if (target) {
+    const waitExit = !utilityExited ? waitWorkerExit(target, CRASH_RESTART_SHUTDOWN_WAIT_MS) : null;
+    try { target.postMessage?.({ type: 'shutdown', stopHeld: true }); } catch {}
+    if (waitExit) await waitExit;
+  }
+  const execPath = typeof stableLauncher === 'function' ? stableLauncher() : process.execPath;
+  app.relaunch({ execPath, args: relaunchArgs(process.argv) });
   app.quit();
 }
 
@@ -338,8 +388,10 @@ async function boot() {
     env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile, AGENT_HOST_RUNTIME_ROOT: utilityHolderRoot },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
+  worker.once('exit', () => { if (!linked) utilityExited = true; });
   messages = createWorkerMessages(worker);
   powerMonitor.on('resume', () => worker?.postMessage({ type: 'wake' }));
+  powerMonitor.on('shutdown', () => { exitInProgress = true; });
   // Consume logs without exposing the private authentication URL.（サーバーは出力を logs\server.log へ向けるので、ここにはほぼ来ない。パイプの経路には stdout・stderr が無い）
   worker.stdout?.on('data', () => {});
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
@@ -407,10 +459,16 @@ async function boot() {
   trust.register(window, { kind: 'local', origin });
   // 読み込み直した画面は別の版かもしれない。切り替えの表示を持つかは、その画面の hello で知る
   const onLoopPrompt = createLoopPrompter({ dialog, t });
+  let dumpPruneTimer = null;
   const scheduleDumpPrune = () => {
     const dir = crashReporting?.crashDumpsDir;
     if (!dir) return;
-    setTimeout(() => { pruneCrashDumps(dir); }, 5000).unref?.();
+    if (dumpPruneTimer) clearTimeout(dumpPruneTimer);
+    dumpPruneTimer = setTimeout(() => {
+      dumpPruneTimer = null;
+      pruneCrashDumps(dir);
+    }, 5000);
+    dumpPruneTimer.unref?.();
   };
   attachWindowHealth({
     win: window,
@@ -538,6 +596,7 @@ async function closeSafely() {
   if (updates?.state.phase === 'installing') return;
   if (closing) return;
   closing = true;
+  exitInProgress = true;
   try {
     const work = await runningWork();
     const waiting = scheduledText(work.scheduled);
@@ -601,7 +660,7 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 // アプリ更新では閉じない。窓は新しい main が exportAgent の印から引き継ぐ（ADR 0167）。引き継げなかった窓は新しい main が CDP で閉じる
 function closeAgentWindows() {
   chromePill?.close();
-  if (updateInProgress) { try { chromeOs?.stopGuard?.(); } catch { /* 見張りが無い層 */ } return; }
+  if (updateInProgress || keepAgentWindows) { try { chromeOs?.stopGuard?.(); } catch { /* 見張りが無い層 */ } return; }
   try { chromeOs?.closeAllAgents?.(); } catch (error) { console.warn('[chrome-os]', `closeAllAgents failed: ${error.message}`); }
 }
 if (!app.requestSingleInstanceLock()) app.quit();

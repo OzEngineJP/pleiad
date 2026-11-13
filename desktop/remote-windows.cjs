@@ -450,7 +450,7 @@ function createRemoteWindows(deps) {
     });
     win.removeMenu();
     trust.register(win, { kind: 'remote', origin, hostId });
-    const entry = { win, name, origin, state: proxy.status?.state,
+    const entry = { win, name, origin, state: proxy.status?.state, closing: false,
       notify: createDesktopNotifications({ Notification, getWindow: () => win, icon }), via };
     windows.set(hostId, entry);
     attachWindowHealth({
@@ -458,7 +458,7 @@ function createRemoteWindows(deps) {
       label: `remote:${hostId}`,
       logger: desktopLog,
       startedAt,
-      isQuitting: () => Boolean(isQuitting?.() || !windows.has(hostId)),
+      isQuitting: () => Boolean(isQuitting?.() || entry.closing || !windows.has(hostId)),
       reload: async () => {
         const px = await (await device()).proxy(hostId);
         if (!px?.url || win.isDestroyed?.() || !windows.has(hostId)) return;
@@ -486,6 +486,7 @@ function createRemoteWindows(deps) {
       if (linkTarget(url, entry.origin) === 'external') openOutside(url);
     });
     win.once('ready-to-show', () => { setOverlay(win); win.show(); });
+    win.on('close', () => { entry.closing = true; });
     win.on('closed', () => {
       windows.delete(hostId);
       d.close(hostId).catch(() => {});   // 手元のプロキシを閉じるだけ。ホストの作業は止めない

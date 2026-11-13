@@ -69,8 +69,10 @@ function pruneCrashDumps(crashDumpsDir, { maxFiles = MAX_CRASH_DUMPS, maxBytes =
     try {
       fsSync.unlinkSync(item.filePath);
       result.removed++;
-      const attachmentDir = path.join(crashDumpsDir, 'attachments', item.stem);
-      try { fsSync.rmSync(attachmentDir, { recursive: true, force: true }); } catch {}
+      if (item.stem) {
+        const attachmentDir = path.join(crashDumpsDir, 'attachments', item.stem);
+        try { fsSync.rmSync(attachmentDir, { recursive: true, force: true }); } catch {}
+      }
     } catch {}
   }
   return result;
@@ -126,6 +128,7 @@ function createLoopPrompter({ dialog, t }) {
       message: t('renderer.crashedMessage'),
       buttons: [t('renderer.reload'), t('renderer.restart')],
       defaultId: 0,
+      cancelId: 0,
       noLink: true,
     };
     const result = win && !win.isDestroyed?.() ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
@@ -140,7 +143,60 @@ function attachWindowHealth({ win, label = 'window', reload, onRestart, onLoopPr
   if (!win) return { tracker, dispose: () => {} };
   const wc = win.webContents;
   let promptOpen = false;
+  let pendingReveal = null;
   const isDead = () => Boolean(win.isDestroyed?.() || isQuitting?.());
+  const isHiddenOrMinimized = () => (typeof win.isVisible === 'function' && !win.isVisible()) || (typeof win.isMinimized === 'function' && win.isMinimized());
+
+  function disarmReveal() {
+    if (!pendingReveal) return;
+    win.off?.('show', pendingReveal.onReveal);
+    win.off?.('restore', pendingReveal.onReveal);
+    pendingReveal = null;
+  }
+
+  async function openLoopPrompt(details, count) {
+    if (promptOpen || isDead()) return;
+    promptOpen = true;
+    try {
+      const choice = await onLoopPrompt?.({ win, label, details, count });
+      if (isDead()) return;
+      if (choice === 'restart') {
+        logger?.info?.(`renderer-loop-action window=${label} action=restart`);
+        await onRestart?.();
+      } else if (choice === 'reload') {
+        logger?.info?.(`renderer-loop-action window=${label} action=reload`);
+        tracker.reset();
+        if (!isDead()) await reload?.();
+      }
+    } catch (error) {
+      logger?.warn?.(`renderer-loop-action window=${label} failed=${error?.message || error}`);
+    } finally {
+      promptOpen = false;
+    }
+  }
+
+  function deferLoopPrompt(details, count) {
+    if (pendingReveal) {
+      pendingReveal.details = details;
+      pendingReveal.count = count;
+      return;
+    }
+    const state = {
+      details,
+      count,
+      onReveal: () => {
+        if (!pendingReveal) return;
+        if (isDead()) { disarmReveal(); return; }
+        if (isHiddenOrMinimized()) return;
+        const { details: d, count: c } = pendingReveal;
+        disarmReveal();
+        void openLoopPrompt(d, c);
+      },
+    };
+    pendingReveal = state;
+    win.on?.('show', state.onReveal);
+    win.on?.('restore', state.onReveal);
+  }
 
   const onGone = async (_event, details = {}) => {
     if (isDead()) return;
@@ -164,24 +220,13 @@ function attachWindowHealth({ win, label = 'window', reload, onRestart, onLoopPr
       return;
     }
     logger?.warn?.(`renderer-crash-loop window=${label} crashes=${state.count}`);
-    if (promptOpen) return;
-    promptOpen = true;
-    try {
-      const choice = await onLoopPrompt?.({ win, label, details, count: state.count });
-      if (isDead()) return;
-      if (choice === 'restart') {
-        logger?.info?.(`renderer-loop-action window=${label} action=restart`);
-        await onRestart?.();
-      } else if (choice === 'reload') {
-        logger?.info?.(`renderer-loop-action window=${label} action=reload`);
-        tracker.reset();
-        if (!isDead()) await reload?.();
-      }
-    } catch (error) {
-      logger?.warn?.(`renderer-loop-action window=${label} failed=${error?.message || error}`);
-    } finally {
-      promptOpen = false;
+    if (promptOpen || pendingReveal) return;
+    if (isHiddenOrMinimized()) {
+      logger?.info?.(`renderer-crash-loop-deferred window=${label} crashes=${state.count}`);
+      deferLoopPrompt(details, state.count);
+      return;
     }
+    await openLoopPrompt(details, state.count);
   };
 
   const onDidFailLoad = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -203,14 +248,17 @@ function attachWindowHealth({ win, label = 'window', reload, onRestart, onLoopPr
   wc?.on?.('did-fail-load', onDidFailLoad);
   win.on?.('unresponsive', onUnresponsive);
   win.on?.('responsive', onResponsive);
+  win.on?.('closed', disarmReveal);
 
   return {
     tracker,
     dispose() {
+      disarmReveal();
       wc?.off?.('render-process-gone', onGone);
       wc?.off?.('did-fail-load', onDidFailLoad);
       win.off?.('unresponsive', onUnresponsive);
       win.off?.('responsive', onResponsive);
+      win.off?.('closed', disarmReveal);
     },
   };
 }

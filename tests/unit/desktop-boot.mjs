@@ -7,6 +7,7 @@
 //     起こし直せない・続けて落ちるなら server-exited。切り替え中・bye closing・off は起こし直さない//   - 更新: 更新ロック → 旧サーバーの通常停止 → 新サーバーの通常起動。
 //     付け直した後は切り替え（desktop/switch.cjs）を始め、S1 を手放している間はサーバーの終了を知らせない
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
@@ -67,7 +68,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   Object.assign(app, {
     isPackaged: packaged, exit: () => {}, quit: () => { calls.quits++; }, setName: name => { calls.appName = name; }, getName: () => calls.appName || 'agent-host', relaunch: opts => { calls.relaunches.push(opts); }, requestSingleInstanceLock: () => true, whenReady: () => Promise.resolve(),
     setAsDefaultProtocolClient: scheme => { calls.protocolClient = scheme; return true; },
-    getPath: name => name === 'userData' ? 'test-user' : 'test-home', getPreferredSystemLanguages: () => ['ja-JP'], getVersion: () => '1.2.3',
+    getPath: name => name === 'crashDumps' ? path.join(os.tmpdir(), 'ply-nonexistent-crashdumps') : name === 'userData' ? 'test-user' : 'test-home', getPreferredSystemLanguages: () => ['ja-JP'], getVersion: () => '1.2.3',
   });
   class BrowserWindow extends EventEmitter {
     constructor() {
@@ -105,7 +106,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   };
   const modules = {
     './updates.cjs': { Updates: class { constructor(options) { calls.updates = options; this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },
-    './msix.cjs': { packagedIdentity: () => false },
+    './msix.cjs': { packagedIdentity: () => false, stableLauncher: () => 'C:\\inst\\Ply.exe' },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
     './desktop-log.cjs': desktopLogMock,
