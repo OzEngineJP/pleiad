@@ -135,8 +135,12 @@ async function absoluteInstructions(list, cwd) {
 const sigOf = (owners) => ['instruction', 'skill', 'mcp'].map((k) => (owners?.[k] === 'ply' ? k[0] : '-')).join('')
   + (owners?.mcpSuppress?.length ? `-${createHash('sha1').update(owners.mcpSuppress.join('\n')).digest('hex').slice(0, 8)}` : '');
 
-/** 担当の組み合わせ・止めた名前の組ごとに作る置き場の残す数。超えたら、使ったのが古いものから消す（止める名前の組み合わせで増え続けないように） */
+/**
+ * 担当の組み合わせ・止めた名前の組ごとに作る置き場の残す数。超えたうえで、MANAGED_IDLE_MS 以上使っていないものだけ、古い順に消す
+ * （止める名前の組み合わせで増え続けないように。使い始めに印（mtime）を付けるので、いま走っているものや最近使ったものは消さない）
+ */
 export const MANAGED_KEEP = 12;
+export const MANAGED_IDLE_MS = 24 * 60 * 60 * 1000;
 async function pruneManaged(parent, keepRoot) {
   const names = await fs.readdir(parent).catch(() => []);
   const rows = [];
@@ -146,7 +150,8 @@ async function pruneManaged(parent, keepRoot) {
     if (st?.isDirectory() && dir !== keepRoot) rows.push({ dir, at: st.mtimeMs });
   }
   rows.sort((a, b) => b.at - a.at);
-  for (const { dir } of rows.slice(Math.max(0, MANAGED_KEEP - 1))) await removeTree(dir);
+  const limit = Date.now() - MANAGED_IDLE_MS;
+  for (const { dir, at } of rows.slice(Math.max(0, MANAGED_KEEP - 1))) if (at < limit) await removeTree(dir);
 }
 /** junction の先（利用者の本物のフォルダー）を消さないよう、リンクは外してから置き場を消す */
 async function removeTree(dir) {

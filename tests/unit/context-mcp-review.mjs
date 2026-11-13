@@ -6,7 +6,7 @@ import { resolveRuntime } from '../../core/context-runtime.mjs';
 import { buildMcpMatrix, canStopName, mcpLegacyInfo } from '../../core/context-mcp-matrix.mjs';
 import { readClaudePlugins } from '../../core/context-claude-extras.mjs';
 import { CAPABILITY_STATES } from '../../core/backends/agent-marks.mjs';
-import { mirrorGlobalConfig, MANAGED_KEEP } from '../../core/backends/opencode-context.mjs';
+import { mirrorGlobalConfig, MANAGED_KEEP, MANAGED_IDLE_MS } from '../../core/backends/opencode-context.mjs';
 import { contextOps } from '../../core/ops/context.mjs';
 import { createContextBridge } from '../../core/context-bridge.mjs';
 
@@ -106,7 +106,13 @@ export default async function (t) {
     await write(path.join(source, 'opencode.json'), '{}');
     for (let i = 0; i < MANAGED_KEEP + 5; i++) await mirrorGlobalConfig({ dataDir, owners: { instruction: 'native', skill: 'native', mcp: 'native', mcpSuppress: [`n${i}`] }, source });
     const left = await fs.readdir(path.join(dataDir, 'opencode', 'managed'));
-    t.ok('置き場は残す数までで、古いものから消える', left.length === MANAGED_KEEP, left.length);
+    t.ok('使ったばかりの置き場は、残す数を超えても消さない（走っているものを巻き込まない）', left.length === MANAGED_KEEP + 5, left.length);
+    const old = new Date(Date.now() - MANAGED_IDLE_MS - 60000);
+    const dirs = (await fs.readdir(path.join(dataDir, 'opencode', 'managed'))).sort();
+    for (const d of dirs.slice(0, 6)) await fs.utimes(path.join(dataDir, 'opencode', 'managed', d), old, old);
+    await mirrorGlobalConfig({ dataDir, owners: { instruction: 'native', skill: 'native', mcp: 'native', mcpSuppress: ['latest'] }, source });
+    const after = await fs.readdir(path.join(dataDir, 'opencode', 'managed'));
+    t.ok('残す数を超え、1 日使っていない置き場だけ消える（古い 6 つが消え、最近のものは残る）', after.length === MANAGED_KEEP + 5 + 1 - 6 && dirs.slice(6).every(d => after.includes(d)), after.length);
 
     // --- L・B・F: context.setMcpAgent の検証と、コネクターの未読の扱い・読み取りで止める名前
     const op = id => contextOps.find(o => o.id === id);

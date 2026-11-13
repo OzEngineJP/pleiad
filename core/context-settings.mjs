@@ -165,7 +165,11 @@ export function mcpAgentsFromLegacy(kind, info) {
       if (to.length) spread[name] = to;
     }
     for (const [a, keys] of Object.entries(info.extras ?? {})) for (const key of keys) off[key] = unique([...(off[key] ?? []), a]);
-  } else for (const name of info.registered ?? []) off[name] = [...ids];
+  } else for (const name of info.registered ?? []) {
+    // 登録を渡さない。ただし同じ名前をそのエージェント自身が持つなら、それは今までどおり使う（off にすると自分の分まで止まる）
+    const to = ids.filter(a => !(info.native[a].includes(name) && !dis(a).has(name)));
+    if (to.length) off[name] = to;
+  }
   for (const name of kind.disabled ?? []) { delete spread[name]; off[name] = [...ids]; }
   return normalizeAgents({ off, spread });
 }

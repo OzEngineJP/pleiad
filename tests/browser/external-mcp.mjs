@@ -37,7 +37,7 @@ try {
   write(path.join(inst, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'Notion' }));
   write(path.join(inst, '.mcp.json'), JSON.stringify({ mcpServers: { notion: { type: 'http', url: 'https://x.invalid/mcp' } } }));
   write(path.join(claudeHome, 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'notion@mk': [{ installPath: inst }] } }));
-  write(path.join(dataDir, 'claude-connectors.json'), JSON.stringify({ connectors: ['Slack'], at: Date.now() }));
+  write(path.join(dataDir, 'claude-connectors.json'), JSON.stringify({ connectors: ['Slack', 'Linear'], needsAuth: ['Linear'], at: Date.now() }));
 
   // どのエージェントの実行ファイルも存在しないものにする（ロゴと一覧のためだけに有効にし、本物は起動しない）
   const bins = Object.fromEntries(['CLAUDE', 'CODEX', 'AGY', 'OPENCODE', 'DEVIN', 'GROK'].map(n => [`AGENT_HOST_${n}_BIN`, path.join(dataDir, `no-such-${n.toLowerCase()}.exe`)]));
@@ -93,6 +93,7 @@ try {
   check(await row(page, 'reg').locator('.cx-src').count() === 0, 'Pleiad に登録の行には Pleiad の印も出どころのロゴも無い（どのエージェントの設定にも無い）');
   check(await row(page, 'Slack').count() === 1 && await row(page, 'notion').count() === 1, 'コネクター（覚えの一覧）とプラグインの MCP も同じ一覧に出る');
   check((await row(page, 'notion').innerText()).includes('Notion のプラグイン'), 'プラグインの行は名前の下にプラグイン名');
+  check((await row(page, 'Linear').innerText()).includes('ログインが必要') && !(await row(page, 'Slack').innerText()).includes('ログインが必要'), 'ログインが必要だったコネクターの行にだけ「ログインが必要」と出る（前回の読み取りの状態）');
   const slackCells = row(page, 'Slack').locator('.cx-ag');
   check(await slackCells.count() >= 1 && await row(page, 'Slack').locator('.cx-ag.na[aria-hidden=true]').count() >= 1 && await row(page, 'Slack').locator('.cx-ag.na[tabindex], .cx-ag.na button').count() === 0, 'コネクターは Claude だけ押せて、他の列は短い線（押せず、タブにも入らない）');
   check(text.includes('claude.ai のコネクター') && text.includes('Pleiad からは止められません'), '凡例は 1 つ（コネクターの雲・鍵）');
@@ -132,10 +133,17 @@ try {
   await page.locator(`${card} .cx-ask button`, { hasText: 'つなぐ' }).click();
   await page.waitForTimeout(800);
   check(await row(page, 'cx').locator('.cx-ag[aria-pressed=true]').count() === 2, 'つなぐなら Claude にも広がる');
+  check(await page.evaluate(() => document.activeElement?.classList.contains('cx-ag')), '確認で「つなぐ」を押した後、フォーカスはアイコンに戻る（文書の先頭へ落ちない）');
   await row(page, 'cx').locator('.cx-ag').nth(0).click();
   await page.waitForTimeout(800);
   check(await page.locator(`${card} .cx-ask`).count() === 0 && await row(page, 'cx').locator('.cx-ag[aria-pressed=true]').count() === 1, '外すときは確認なし');
   void codexIdx;
+  // 行の最後のアイコンを外すと、行はオフになる（アイコンは押せない見た目で残る）。フォーカスは同じ行の全体のスイッチへ移る
+  await row(page, 'cx').locator('.cx-ag[aria-pressed=true]').first().click();
+  await page.waitForTimeout(800);
+  check(await row(page, 'cx').locator('.cx-ag[aria-pressed=true]').count() === 0 && await page.evaluate(() => document.activeElement?.classList.contains('cx-sw')), '最後のアイコンを外すと行はオフになり、フォーカスはその行のスイッチへ移る');
+  await row(page, 'cx').locator('.cx-sw').click();
+  await page.waitForTimeout(800);
 
   // 鍵: 止められないエージェントのアイコンは押せない
   const locked = page.locator(`${card} .cx-ag[aria-disabled=true]`);
