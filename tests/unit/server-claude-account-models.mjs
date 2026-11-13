@@ -16,6 +16,9 @@ const TOK_VERIFIED = 'sk-ant-oat01-' + 'V'.repeat(40);
 const TOK_PLAIN = 'sk-ant-oat01-' + 'N'.repeat(40);
 // 削除の確認用（probe ログの呼び名が、ほかのアカウントと重ならない）
 const TOK_GONE = 'sk-ant-oat01-' + 'G'.repeat(40);
+// 一覧の応答が遅いアカウント（画面の待ち 3 秒より後に取れる。fake の delays で遅らせる）
+const TOK_LATE = 'sk-ant-oat01-' + 'L'.repeat(40);
+const LATE_DELAY_MS = 4_500;
 
 const STANDARD_14 = [
   { value: 'default', displayName: 'Default', description: 'Use default model' },
@@ -56,16 +59,19 @@ export default async function (t) {
       [TOK_VERIFIED]: MYTHOS_16,
       [TOK_PLAIN]: STANDARD_14,
       [TOK_GONE]: STANDARD_14,
+      [TOK_LATE]: MYTHOS_16,
     },
     labels: {
       [TOK_VERIFIED]: 'verified',
       [TOK_PLAIN]: 'plain',
       [TOK_GONE]: 'gone',
+      [TOK_LATE]: 'late',
     },
+    delays: { [TOK_LATE]: LATE_DELAY_MS },
   }));
 
   const cli = await installFakeClaude(cliDir);
-  const api = await startFakeAnthropicApi({ [TOK_VERIFIED]: 'org-verified', [TOK_PLAIN]: 'org-plain', [TOK_GONE]: 'org-gone' });
+  const api = await startFakeAnthropicApi({ [TOK_VERIFIED]: 'org-verified', [TOK_PLAIN]: 'org-plain', [TOK_GONE]: 'org-gone', [TOK_LATE]: 'org-late' });
   const server = await startServer({
     dataDir: scratch,
     env: {
@@ -299,13 +305,29 @@ export default async function (t) {
     assert.deepEqual(await quiet(), countsGone, '消したアカウントの CLI を、消した後に起こした');
     t.ok('deleteClaudeAccount: 消したアカウントの一覧は引けず、委譲の設定を開いても、そのアカウントの CLI を起こさない', true);
 
+    // 8. 一覧が後から届いたとき: 一覧が取れるのが画面の待ち（3 秒）より遅いアカウントは、先に固定の一覧を答える。
+    // 本物の一覧が取れた時点で、サーバーが claudeAccountsChanged で知らせる（画面は固定の一覧を持ち続けず、取り直して Mythos が出る）
+    const savedLate = await c.cmd('saveClaudeAccount', { name: 'late', token: TOK_LATE });
+    const lateId = savedLate.id;
+    const fixedList = await c.cmd('models', { backend: 'claude', cwd: ROOT, account: lateId });
+    assert.equal('claude-mythos-5-2' in fixedList, false, '取れる前は固定の一覧で答える');
+    const afterFixed = c.mark();
+    await c.waitFor((e) => e.type === 'claudeAccountsChanged', { from: afterFixed, ms: 20_000 });
+    // 知らせが届いた時点で、一覧は手元に入っている（待たずに本物の一覧が返る）
+    const askedAt = Date.now();
+    const realList = await c.cmd('models', { backend: 'claude', cwd: ROOT, account: lateId });
+    assert.equal('claude-mythos-5-2' in realList && realList['claude-mythos-5-2'].label === 'Mythos 5.2', true, '知らせのあと、本物の一覧に Mythos が出る');
+    assert.equal(Date.now() - askedAt < 1_500, true, `知らせの時点で一覧が手元に無かった（${Date.now() - askedAt} ms 待った）`);
+    assert.equal('claude-mythos-5-2' in await c.cmd('models', { backend: 'claude', cwd: ROOT }), false, 'ログイン中の一覧に別のアカウントの Mythos を混ぜない');
+    t.ok('一覧が後から届いたアカウント: 固定の一覧で答えたあと、本物の一覧が取れた時点で claudeAccountsChanged が届き、取り直すと Mythos が出る', true);
+
     // 削除・ログとファイルの秘匿確認
     await c.cmd('deleteClaudeAccount', { id: verifiedId });
     assert.equal((await c.cmd('claudeAccounts')).accounts.some((a) => a.id === verifiedId), false);
     const probeTrace = fss.existsSync(probeLog) ? await fs.readFile(probeLog, 'utf8') : '';
     assert.equal(probeTrace.includes('verified') && probeTrace.includes('plain'), true, probeTrace);
     const tail = server.tail(400);
-    assert.equal([TOK_VERIFIED, TOK_PLAIN, TOK_GONE].every((tok) => !tail.includes(tok)), true);
+    assert.equal([TOK_VERIFIED, TOK_PLAIN, TOK_GONE, TOK_LATE].every((tok) => !tail.includes(tok)), true);
     t.ok('各アカウント別に CLI が起動され、サーバーログにトークンを一切出力しない', true);
   } finally {
     c.close();

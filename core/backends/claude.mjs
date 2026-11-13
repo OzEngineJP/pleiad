@@ -153,6 +153,22 @@ function invalidateCatalog(accountId) {
   const s = states.get(key);
   if (s) { s.gen++; states.delete(key); }
 }
+// 一覧が手元に入った・変わったことを知らせる口（サーバーが画面へ取り直しを促す。ADR 0329）。
+// 画面の要求が先に着いて固定の一覧を答えたあと（起動直後・アカウントの追加直後）に本物の一覧が取れても、画面からは見えないので、
+// 取れた時点で知らせる。渡すのはアカウントの id だけ（トークンは渡さない。ログイン中は ''）。
+// 答えていた一覧と同じ中身のとき（TTL の取り直し・別の作業場所の取得）は知らせない
+const catalogListeners = new Set();
+function onCatalogChange(listener) {
+  catalogListeners.add(listener);
+  return () => catalogListeners.delete(listener);
+}
+const sameCatalog = (a, b) => JSON.stringify([a?.rows, a?.efforts]) === JSON.stringify([b?.rows, b?.efforts]);
+function notifyCatalogChange(account) {
+  const id = (typeof account === "string" ? account : account?.id) || "";
+  for (const listener of catalogListeners) {
+    try { listener({ account: id }); } catch { /* 知らせる側の失敗で一覧の取得を巻き込まない */ }
+  }
+}
 
 // CLI の実体（パス・更新時刻・サイズ）の目印。claude update でモデルが増えても（2026-09-29、
 // 2.1.284 で Sonnet 5.5）CATALOG_TTL の 30 分は古い一覧のままだったので、版が変わったら TTL 内でも引き直す。
@@ -286,11 +302,14 @@ function loadCatalog(cwd, pref, { refresh = false, waitProbe = false, passive = 
         e.failed = Date.now();
         return best;
       }
+      // これまで答えていた一覧（無ければ固定の一覧）と中身が違うときだけ、取れたことを知らせる（画面が固定の一覧を持ち続けない）
+      const answered = stand();
       e.value = c; e.failed = 0; scope.coldSince = 0; e.at = Date.now();
       // このアカウントで別の条件の一覧を先に答える stand() には、最後に取れた完全な一覧を持たせる（短い一覧で上書きしない）
       if (catalogIsComplete(c.rows) || !catalogIsComplete(scope.anyCatalog?.rows)) {
         scope.anyCatalog = c; scope.anyCatalogSig = cliSig;
       }
+      if (!answered || !sameCatalog(answered, c)) notifyCatalogChange(account);
       return c;
     })
     .catch((err) => {
@@ -777,6 +796,7 @@ export const backend = {
   warmModels: (cwd) => warmCatalog(cwd),
   forAccount: (account) => account?.id ? makeScopedBackend(account) : backend,
   invalidateModels: (accountId) => invalidateCatalog(accountId),
+  onModelsChanged: (listener) => onCatalogChange(listener),
   // server の共通の確かめ（一覧の確認 → 取り直し）のあと、それでも無いときの最後の判断:
   // 一覧を 1 度も取れていない間（未ログイン・取得が失敗し続けている）は、形の良い id を断らない
   // （使えるかは CLI が確かめる。固定の一覧に無い新しいモデル・保存済みの id を「一覧に無い」で消さない。

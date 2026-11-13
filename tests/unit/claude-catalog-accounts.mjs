@@ -431,6 +431,110 @@ export default async function (t) {
     }
   }
 
+  // ---- 4c. 一覧が手元に入った・変わったときの知らせ（onModelsChanged。ADR 0329）:
+  //          固定の一覧を答えたあとに本物の一覧が取れたとき・中身が変わったときだけ、アカウントの id だけを添えて知らせる
+  {
+    claude.invalidateModels();
+    const behaviour = new Map();
+    const gates = new Map();
+    const realNow = Date.now;
+    const restore = setClaudeSdkForTest({
+      executable: () => 'fake-claude',
+      cliSigThrottleMs: 1e9,
+      probe: async (cwd, isDefault, extra) => {
+        const acc = extra?.accountId ?? 'login';
+        const gate = gates.get(acc);
+        if (gate) { gates.delete(acc); gate.started.resolve(); await gate.promise; }
+        const h = behaviour.get(acc);
+        if (h instanceof Error) throw h;
+        return { rows: typeof h === 'function' ? h() : STANDARD_14, efforts: {}, applied: !isDefault };
+      },
+    });
+    const heard = [];
+    // 先に登録したリスナーが投げても、後ろのリスナーと一覧の取得は巻き込まれない
+    const throwing = claude.onModelsChanged(() => { throw new Error('listener failed'); });
+    const off = claude.onModelsChanged((event) => heard.push(event));
+    const takeHeard = () => heard.splice(0).map((event) => event.account);
+    const origError = console.error;
+    try {
+      console.error = () => {};
+      const extra = { value: 'claude-new-model', displayName: 'New Model', description: '' };
+      behaviour.set('notify-late', () => MYTHOS_16);
+      const late = claude.forAccount({ id: 'notify-late', token: TOK_VERIFIED });
+
+      // 起動直後・アカウントの追加直後: 取れるのが待ち（3 秒）より遅い。画面の要求は固定の一覧で答える
+      const gate = { ...deferred(), started: deferred() };
+      gates.set('notify-late', gate);
+      const first = late.models(w1);
+      await gate.started.promise;
+      Date.now = () => realNow() + 4_000; // 待ちの上限を過ぎた後の要求
+      const fixed = await late.models(w1);
+      Date.now = realNow;
+      assert.equal('claude-mythos-5-2' in fixed, false, '取れていない間は固定の一覧で答える');
+      assert.deepEqual(takeHeard(), [], '取れる前は知らせない');
+      // 本物の一覧が取れたとき、そのアカウントの id で 1 回だけ知らせる（別のリスナーが投げても、一覧の取得も他のリスナーも巻き込まない）
+      gate.resolve();
+      await first;
+      assert.deepEqual(takeHeard(), ['notify-late']);
+      assert.equal('claude-mythos-5-2' in await late.models(w1), true, '知らせたあとの取り直しは本物の一覧を返す');
+      t.ok('固定の一覧を答えたあとに本物の一覧が取れたら、そのアカウントの id で 1 回だけ知らせる（リスナーの失敗に巻き込まれない）', true);
+
+      // 同じ中身の取り直し（TTL が切れたあと）・別の作業場所の取得は知らせない
+      Date.now = () => realNow() + 31 * 60_000;
+      await late.models(w1, { refresh: true });
+      Date.now = realNow;
+      await late.models(w2);
+      await new Promise((r) => setTimeout(r, 30)); // 別の作業場所は手元の答えを返して裏で引く
+      assert.deepEqual(takeHeard(), [], '中身が同じなら知らせない');
+      t.ok('同じ中身の取り直し・別の作業場所の取得では知らせない', true);
+
+      // 中身が変わったとき（新しいモデルが増えた）は知らせる
+      behaviour.set('notify-late', () => [...MYTHOS_16, extra]);
+      Date.now = () => realNow() + 62 * 60_000;
+      await late.models(w1, { refresh: true });
+      Date.now = realNow;
+      assert.deepEqual(takeHeard(), ['notify-late']);
+      assert.equal('claude-new-model' in await late.models(w1), true);
+      t.ok('一覧の中身が変わったときは知らせる', true);
+
+      // ログイン中の一覧は '' で知らせる。トークンは載せない
+      behaviour.set('login', () => STANDARD_14);
+      await claude.models(w1, { refresh: true });
+      const events = heard.splice(0);
+      assert.deepEqual(events.map((event) => event.account), ['']);
+      assert.deepEqual(Object.keys(events[0]), ['account'], '知らせに載せるのはアカウントの id だけ');
+      t.ok('ログイン中の一覧は空の id で知らせ、知らせにトークンを載せない', true);
+
+      // 取っている最中にアカウントを入れ替えた（invalidateModels）ら、古い結果は知らせない
+      const staleGate = { ...deferred(), started: deferred() };
+      gates.set('notify-gone', staleGate);
+      const gone = claude.forAccount({ id: 'notify-gone', token: TOK_PLAIN });
+      const staleRun = gone.models(w1, { refresh: true });
+      await staleGate.started.promise;
+      claude.invalidateModels('notify-gone');
+      staleGate.resolve();
+      await staleRun;
+      assert.deepEqual(takeHeard(), [], '入れ替え・削除で捨てた結果は知らせない');
+      t.ok('取得中に入れ替え・削除（invalidateModels）で捨てた結果は知らせない', true);
+
+      // 外したリスナー（返り値）には届かない
+      off();
+      behaviour.set('notify-late', () => MYTHOS_16);
+      Date.now = () => realNow() + 93 * 60_000;
+      await late.models(w1, { refresh: true });
+      Date.now = realNow;
+      assert.deepEqual(takeHeard(), []);
+      t.ok('外したリスナーには届かない', true);
+    } finally {
+      Date.now = realNow;
+      console.error = origError;
+      off();
+      throwing();
+      restore();
+      claude.invalidateModels();
+    }
+  }
+
   // ---- 5. 心拍（core/brain/pulse.mjs の askBackend）: host.backendForAccount でアカウントへ絞ってからモデル解決・実行する
   {
     const pulseDir = path.join(dir, 'pulse');

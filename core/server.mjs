@@ -682,6 +682,11 @@ function refreshClaudeAccountCatalog(accountId, { warm = false } = {}) {
       .catch(() => {});
   }
 }
+// 一覧が手元に入った・変わったとき（画面の要求が先に着いて固定の一覧を答えたあと、本物の一覧が取れたとき）に画面へ知らせる。
+// 画面は固定の一覧を持ち続けず、同じ取り直し（claudeAccountsChanged）で引き直す。知らせる口を持つのはトークン別のエージェント（ADR 0329）
+for (const b of listBackends()) {
+  if (accountKind(b) === 'token') b.onModelsChanged?.(() => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }));
+}
 // 互換の接続先（Claude Code の Anthropic 互換 / Codex の Responses 互換。会話ごとに選ぶ。core/compat-endpoints.mjs）。
 // キーは Claude のアカウント・MCP と同じ暗号化の置き場。前の起動で消し損ねたフラグ設定のファイル（キーを含む）は起動時に片付ける
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
