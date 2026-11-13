@@ -87,6 +87,13 @@
 | 更新（アプリ） | update |
 | 先行版 | beta |
 | リリースノート | Release notes |
+| 全般（設定のページ。常駐など、アプリ全体の動き方） | General |
+| 新しいバージョン（更新が見つかっている間の、入っている版より新しい版の節） | New versions |
+| これまでのバージョン（見つけた更新より前の版の節） | Past versions |
+| 今回の更新（更新したあと、前に入っていた版から今の版までの節） | This update |
+| 以前のバージョン（今回の更新より前の版の節） | Earlier versions |
+| ほか N バージョンを表示 / さらに表示 | Show N more versions / Show more |
+| 現在のバージョン（一覧の行で、日付のあとに出す印） | Current version |
 | ファイルプレビュー | file preview |
 | たった今 | just now |
 | 使用量の表示を認可 | Authorize usage display |
@@ -204,7 +211,7 @@
 | つなぎ方（端末やホストがどの道でつながるか） | connection（「method」「route」は使わない） |
 | オフライン（許可しているのに今つながっていない） | Offline |
 | 窓（OS のウィンドウ） | window |
-| 常駐（窓を閉じても動かし続ける。設定 › アプリ情報・更新） | keep running (in the tray) |
+| 常駐（窓を閉じても動かし続ける。設定 › 全般） | keep running (in the tray) |
 | フォルダーを送る | Send a folder |
 | 作業フォルダー | working directory |
 | 自動（委譲先を自動で選んだ印） | Auto |
