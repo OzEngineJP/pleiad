@@ -10575,7 +10575,7 @@ const shellComposer = chatComposer.useShell({
   onChange: () => { composerPlain = shellComposer.active; composerShellMode = shellComposer.mode; composerEditor.modeChanged(); fitPrompt(); controls.fit(); syncRunState(); } });
 // 設定 › コンテキストは全体の設定だけ（フォルダーごとは会話の右パネルの「この場所だけ変える」）。
 // 最近の会話の場所は「探す場所を足す」の候補、「設定 › 委譲で変える →」は委譲のページへ
-const context = setupContext({ button: $('openContext'), cmd,
+const context = setupContext({ button: $('openContext'), cmd, showMenu,
   show: () => onboarding.page('context'), recentPlaces: cwdOptions, backends: () => state.backends, getPrefs: () => state.prefs,
   openDelegation: () => { $('delegationTab').click(); $('delegationTab').focus(); } });
 // 会話の右パネル「この会話のコンテキスト」。「…」のメニュー（700px 以下・タッチの画面）から開く
