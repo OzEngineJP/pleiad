@@ -109,6 +109,9 @@ export default async function(t) {
   t.ok('Claude → Codex の入力はそのまま（形がほぼ同じ）', toSourceInput({ from: 'claude', to: 'codex', event: 'PreToolUse', input: CODEX_PRE }).input === CODEX_PRE);
   t.ok('ファイル操作の引数も近い形に直す', argsFromAgy('replace_file_content', { TargetFile: 'a', TargetContent: 'x', ReplacementContent: 'y' }).old_string === 'x'
     && argsToAgy('Write', { file_path: 'a', content: 'c' }, '/w').CodeContent === 'c' && argsFromAgy('view_file', { AbsolutePath: 'f', StartLine: 3, EndLine: 9 }).limit === 6);
+  t.ok('agy の read_file（Path）も Read の file_path にする', argsFromAgy('read_file', { Path: 'f', StartLine: 3, EndLine: 9 }).file_path === 'f'
+    && argsFromAgy('view_file', { Path: 'g' }).file_path === 'g'
+    && toSourceInput({ from: 'claude', to: 'antigravity', event: 'PreToolUse', input: { conversationId: 'c', toolCall: { name: 'read_file', args: { Path: 'f' } } } }).input.tool_input.file_path === 'f');
   const stopIn = toSourceInput({ from: 'claude', to: 'antigravity', event: 'Stop', input: { conversationId: 'c', workspacePaths: ['D:/p'], executionNum: 1, terminationReason: 'NO_TOOL_CALL', fullyIdle: true } });
   t.ok('agy の Stop → Claude の stop_hook_active（2 回目以降）', stopIn.input.stop_hook_active === true && stopIn.input.hook_event_name === 'Stop');
   t.ok('Claude の PostToolUse は成功だけ: agy の失敗したツールでは元のコマンドを動かさない',

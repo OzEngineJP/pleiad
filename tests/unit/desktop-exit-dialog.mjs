@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
@@ -14,6 +15,8 @@ const workerMessages = createRequire(import.meta.url)('../../desktop/worker-mess
 const loginItem = createRequire(import.meta.url)('../../desktop/login-item.cjs');
 const plusLink = createRequire(import.meta.url)('../../desktop/plus-link.cjs');
 const devIdentity = createRequire(import.meta.url)('../../desktop/dev-identity.cjs');
+const rendererRecovery = createRequire(import.meta.url)('../../desktop/renderer-recovery.cjs');
+const desktopLogMock = { createDesktopLog: () => ({ info() {}, warn() {}, error() {} }) };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 async function start({ ready = true, work = { count: 0 }, argv = [], tray = false } = {}) {
@@ -30,12 +33,14 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
   Object.assign(app, {
     isPackaged: false,
     setName: () => {},
+    getName: () => 'Pleiad Dev',
+    relaunch: () => {},
     exit: () => {},
     quit: () => { calls.quits++; },
     requestSingleInstanceLock: () => true,
     setAsDefaultProtocolClient: scheme => { calls.protocolClient = scheme; return true; },
     whenReady: () => Promise.resolve(),
-    getPath: name => name === 'userData' ? 'test-user' : 'test-home',
+    getPath: name => name === 'crashDumps' ? path.join(os.tmpdir(), 'ply-nonexistent-crashdumps') : name === 'userData' ? 'test-user' : 'test-home',
     getPreferredSystemLanguages: () => ['ja-JP'],
     getVersion: () => '0.1.0',
   });
@@ -71,12 +76,15 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
     Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(), screen: new EventEmitter(),
+    crashReporter: { start: () => {} },
   };
   const modules = {
     './updates.cjs': { Updates: class { constructor() { this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },
-    './msix.cjs': { packagedIdentity: () => false },
+    './msix.cjs': { packagedIdentity: () => false, stableLauncher: () => 'C:\\inst\\Ply.exe' },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
+    './desktop-log.cjs': desktopLogMock,
+    './renderer-recovery.cjs': rendererRecovery,
     './external-url.cjs': { externalUrl: url => url },
     './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: () => {} },

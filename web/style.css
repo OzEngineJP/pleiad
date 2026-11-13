@@ -573,8 +573,12 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 :root.desktop #sidebar .side-rail button{-webkit-app-region:no-drag}
 /* macOS は信号の下（検索の行の左）に P の印が来るので、検索の行の左を P の分だけ開ける */
 :root.mac #sidebar > .search{padding-left:50px}
-/* 設定の間は検索の行が無いので、メニューを P の分だけ下げる */
-:root.mac body.settings > #sidebar > .settings-menu{padding-top:36px}
+/* 設定の間は検索の行が無いので、その行（P の印の右。左端は他の OS と同じ 46px）に「会話に戻る」を置き、メニューを P の分だけ下げる。
+   見出しの行に残すと信号に重なる。700px 以下は脇が帯の下に来て P の印も出さないので、どちらも要らない */
+@media (min-width:701px){
+  :root.mac body.settings .back-chat{position:absolute;left:46px;top:var(--p-top);height:32px;margin:0}
+  :root.mac body.settings > #sidebar > .settings-menu{padding-top:36px}
+}
 /* 重ねたダイアログは帯の下の範囲で中央に置く。帯に掛かると右上の閉じるボタンが窓のボタンの下に潜って押せない */
 :root.desktop dialog:modal{top:var(--bar-h)}
 :root.desktop #lightbox img{max-height:calc(92vh - 124px - var(--bar-h))}

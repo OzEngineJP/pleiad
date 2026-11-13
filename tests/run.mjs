@@ -662,6 +662,8 @@ const SUITES = [
   './unit/zdtest-isolation.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
   './unit/desktop-remote.mjs',
+  // renderer 落ちからの復帰・連続クラッシュ打ち切り・desktop.log・ローカル crashDumps の上限（Electron は起こさない）
+  './unit/desktop-renderer-recovery.mjs',
   // スマホの画面（docs/remote.md §8.3・§8.4）: UUID の代わり・長押し・「…」・狭い画面の規則
   './unit/mobile-web.mjs',
   './unit/stream-routing.mjs',

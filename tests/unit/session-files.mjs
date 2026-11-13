@@ -16,6 +16,7 @@ export default async function (t) {
       { name: 'read_file', input: { path: '/w/codex.md' }, at: '2026-11-06T00:04:00Z', result: {} },
       { name: 'NotebookEdit', input: { notebook_path: '/w/n.ipynb' }, at: '2026-11-06T00:05:00Z', result: {} },
       { name: 'Read', input: { file_path: '/w/a.md' }, at: '2026-11-06T00:06:00Z', result: {} },
+      { name: 'read_file', input: { Path: 'C:\\w\\agy.json' }, at: '2026-11-06T00:06:30Z', result: {} },
     ] },
   ];
   const presents = [
@@ -26,7 +27,7 @@ export default async function (t) {
   const files = recentFilesOf({ messages, presents, toolHints: { read_file: { shape: 'read' } }, actor: 'Claude Code' });
   t.ok('読んだ・編集した・添付したファイルを新しい順に、同じパスは新しい 1 つだけ',
     JSON.stringify(files.map(f => [f.path, f.source])) === JSON.stringify([
-      ['/w/attached.png', 'attached'], ['/w/a.md', 'read'], ['/w/n.ipynb', 'edited'], ['/w/codex.md', 'read'], ['/w/b.mjs', 'edited']]));
+      ['/w/attached.png', 'attached'], ['C:\\w\\agy.json', 'read'], ['/w/a.md', 'read'], ['/w/n.ipynb', 'edited'], ['/w/codex.md', 'read'], ['/w/b.mjs', 'edited']]));
   t.ok('失敗したツール・シェル・人の発言・AI の提示・可視化は拾わない',
     !files.some(f => ['/w/fail.mjs', '/w/c.md', '/u/should-not.md', '/w/ai-present.png', '/w/viz.html'].includes(f.path)));
   t.ok('AI のものに担当（バックエンドの名前）を付け、添付には付けない',
