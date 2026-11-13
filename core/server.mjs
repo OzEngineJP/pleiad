@@ -5265,7 +5265,7 @@ const opsHooks = {
 // 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす
 const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'),
   probe: async ({ deny }) => {
-    const account = await accountResolve(getBackend('claude'), await defaultAccount('claude')).catch(() => null);
+    const account = await accountResolve(getBackend('claude'), await defaultAccount('claude')).catch(() => null); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0325）
     return probeClaudeConnectors({ deny, token: account?.token ?? null });
   } });
 
