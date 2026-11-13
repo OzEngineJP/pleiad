@@ -16,6 +16,7 @@ const CODEX = { levels: ['low', 'medium', 'high', 'xhigh'], fixed: null };
 const SONNET = { levels: ['low', 'medium', 'high', 'max'], fixed: null };
 const NONE = { levels: [], fixed: null };
 const FIXED = { levels: [], fixed: 'high' };
+const FIXED_XHIGH = { levels: [], fixed: 'xhigh' };
 
 export default async function (t) {
   // ---- 決め方（画面と core が同じ答えを出す）
@@ -44,6 +45,9 @@ export default async function (t) {
   t.ok('強さを持たない候補は none・モデル名に入る候補は fixed（選ばせない）', candidateEffort({ settings: base, tier: 't1', candidate: 'claude:haiku', capability: NONE }).kind === 'none'
     && candidateEffort({ settings: base, tier: 't1', candidate: 'antigravity:gemini-3.8-flash-high', capability: FIXED }).kind === 'fixed'
     && candidateEffort({ settings: base, tier: 't1', candidate: 'antigravity:gemini-3.8-flash-high', capability: FIXED }).value === 'high');
+  const hx = candidateEffort({ settings: base, tier: 't1', candidate: 'antigravity:gemini-4-hydrogen-xhigh', capability: FIXED_XHIGH });
+  t.ok('Hydrogen の xhigh の id は固定の強さ xhigh として出す（選ばせない。core の decideEffort と同じ）', hx.kind === 'fixed' && hx.value === 'xhigh'
+    && decideEffort({ settings: base, tier: 't1', candidate: 'antigravity:gemini-4-hydrogen-xhigh', capability: FIXED_XHIGH }).effort === 'xhigh');
   t.ok('持ち方が分からない候補（使えないエージェント）は語彙全部を選べる', candidateEffort({ settings: base, tier: 't1', candidate: 'claude:x', capability: undefined }).options.join() === EFFORT_LEVELS.join());
   t.ok('レベルの既定の表示: 値と、既定から外れているか', tierEffort({ settings: normalizeSettings({ efforts: { t3: { '*': 'high' } } }), defaults: base, tier: 't3' }).changed === true
     && tierEffort({ settings: base, defaults: base, tier: 't3' }).changed === false

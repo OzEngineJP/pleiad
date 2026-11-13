@@ -20,6 +20,9 @@ import { t } from "../i18n.mjs";
  *  Pleiad は段を id に解決して `--model` だけ渡すので、`agy --effort` が xhigh を受けるかは関係ない */
 export const AGY_LEVELS = ["low", "medium", "high", "xhigh"];
 
+/** `agy --effort` に渡してよい段（agy --help の (low|medium|high)）。xhigh は段の id（--model）でだけ選ぶ */
+const AGY_FLAG_LEVELS = ["low", "medium", "high"];
+
 const NL = String.fromCharCode(10);
 const LEVEL_ID = /^(.+)-(low|medium|high|xhigh)$/;
 const LEVEL_LABEL = /^(.*?)\s*\((low|medium|high|xhigh)\)\s*$/i;
@@ -126,5 +129,7 @@ export function agyTarget(model, effort, models) {
     return { model: sibling ?? m };
   }
   if (entry) return { model: m };
-  return m ? { model: m } : { effort };
+  // 素の --effort は agy の (low|medium|high) だけ。xhigh は agy が受けるか確かめていないので、段の id に解決できないときは捨てる
+  if (m) return { model: m };
+  return AGY_FLAG_LEVELS.includes(effort) ? { effort } : {};
 }

@@ -1,5 +1,7 @@
 // 委譲先の自動選択（core/delegation-routing.mjs・delegation-judges.mjs・delegation-usage.mjs）。
 // 自動選択のモデルは偽の fetch とだけ話す（本物の OpenRouter へは送らない）。LLM は呼ばない
+import { buildAgyModels } from '../../core/backends/antigravity-models.mjs';
+import { effortCapability } from '../../core/effort.mjs';
 import { KINDS, SIGNALS, DEFAULTS, DEFAULT_JUDGE, DECISION_THRESHOLD, levelOrder, kindOrder, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, pickAccount, sameIdentity, tierAccounts, candidateId,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJudge, judgeDifficulty, normalizeKey, TASK_LIMIT, JUDGE_USE, JUDGE_SERVICE } from '../../core/delegation-judges.mjs';
@@ -516,6 +518,13 @@ export default async function (t) {
   t.ok('決まり方 7: 強さを持たないモデルには送らない（send は空・source none）', d7.send === '' && d7.effort === null && d7.source === 'none' && !('asked' in d7));
   const d8 = decide(undefined, 'antigravity:gemini-3.8-flash-high', 't1', { levels: [], fixed: 'high' });
   t.ok('決まり方 8: 強さがモデル名に入るモデルは送らず、名前の強さを記録する（source model）', d8.send === '' && d8.effort === 'high' && d8.source === 'model');
+  // 実際の agy の一覧から引いた能力で（Hydrogen は xhigh も固定の段として記録する）
+  const hyd = ['low', 'medium', 'high', 'xhigh'].map(l => ({ id: `gemini-4-hydrogen-${l}`, label: `Gemini 4 Hydrogen (${l === 'xhigh' ? 'XHigh' : l[0].toUpperCase() + l.slice(1)})` }));
+  const hydBackend = { id: 'antigravity', traits: { effortInModelId: true }, models: async () => buildAgyModels(hyd, null) };
+  const dx = decide(undefined, 'antigravity:gemini-4-hydrogen-xhigh', 't1', await effortCapability(hydBackend, 'gemini-4-hydrogen-xhigh'));
+  const dh = decide(undefined, 'antigravity:gemini-4-hydrogen-high', 't1', await effortCapability(hydBackend, 'gemini-4-hydrogen-high'));
+  t.ok('決まり方 8b: Hydrogen は id の段を記録する（xhigh → source model・effort xhigh、high → effort high。送らない）',
+    dx.send === '' && dx.effort === 'xhigh' && dx.source === 'model' && dh.send === '' && dh.effort === 'high' && dh.source === 'model');
   const d9 = decide({ t3: { '*': 'low' } }, 'codex:gpt-6-sol', null);
   t.ok('決まり方 9: 段が決まらなければ会話の既定', d9.send === undefined && d9.source === 'conversation');
   t.ok('決まり方 10: 語彙の外の強さしか持たないモデルは送らない', decide(undefined, 'x:y', 't3', { levels: ['minimal'], fixed: null }).source === 'none');

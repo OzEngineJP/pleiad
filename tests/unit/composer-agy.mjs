@@ -89,6 +89,9 @@ export default async function (t) {
       && JSON.stringify(agyTarget("claude-sonnet-4-6", "high", m)) === '{"model":"claude-sonnet-4-6"}');
   t.ok("一覧も既定も分からないときは素の --effort だけ（agy が選ばれているモデルに当てる）",
     JSON.stringify(agyTarget("", "low", unknown)) === '{"effort":"low"}' && JSON.stringify(agyTarget("x-1", "low", {})) === '{"model":"x-1"}');
+  t.ok("一覧を引けないとき、xhigh は --effort として渡さない（model があればそれだけ、無ければ何も渡さない）",
+    JSON.stringify(agyTarget("", "xhigh", unknown)) === "{}" && JSON.stringify(agyTarget("", "xhigh", {})) === "{}"
+      && JSON.stringify(agyTarget("gemini-4-hydrogen-high", "xhigh", {})) === '{"model":"gemini-4-hydrogen-high"}');
 
   // ---- エフォートの候補（core/effort.mjs）
   const agy = { id: "antigravity", models: async () => m };
