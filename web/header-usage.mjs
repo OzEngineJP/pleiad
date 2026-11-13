@@ -83,11 +83,12 @@ export function windowsForModel(windows = [], model = '') {
   if (list.some(w => w.group)) {
     const tokens = new Set(modelWords(m));
     // backend-allow: モデルの系統の語（delegation-routing.mjs の windowsFor と同じ並び）。エージェントの分岐ではない
-    const family = ['gemini', 'claude', 'gpt'].find(f => tokens.has(f));
+    const families = ['gemini', 'claude', 'gpt'];
+    const family = families.find(f => tokens.has(f));
     if (family) {
       const scored = [...new Set(list.map(w => w.group).filter(Boolean))]
         .filter(g => modelWords(g).includes(family)
-          && modelWords(g).every(x => ['gemini', 'claude', 'gpt', 'model', 'models', 'and', 'the'].includes(x) || tokens.has(x)))
+          && modelWords(g).every(x => families.includes(x) || ['model', 'models', 'and', 'the'].includes(x) || tokens.has(x)))
         .map(g => [g, modelWords(g).filter(x => tokens.has(x)).length]);
       if (scored.length) {
         const best = Math.max(...scored.map(([, s]) => s));
