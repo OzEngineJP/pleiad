@@ -20,6 +20,7 @@ import { isPlyDelegateToolName } from './delegate-result.mjs';
 import { renderWorktreeLine } from './worktree-ui.mjs';
 import { renderChromeHandoverLine, renderChromeClosedLine } from './chrome-control.mjs';
 import { renderChromeProfileLine } from './chrome-profile-menu.mjs';
+import { renderChromeDownloadLine } from './chrome-downloads.mjs';
 import { parseStructure, codeRoles, listClass, markerExtra, lineIndent, nestDepth } from './md-structure.mjs';
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark, unverifiedText, unverifiedMark, unverifiedOpenLink } from './computer-use.mjs';
 import { resetDateText } from './plus-key-row.mjs';
@@ -559,6 +560,8 @@ export function renderPresent(ev) {
   // エージェントが Chrome のプロフィールを切り替えた行
   if (e.kind === 'chromeProfile') return renderChromeProfileLine(e);
   if (e.kind === 'chromeClosed') return renderChromeClosedLine(e);
+  // Chrome のウィンドウで終わったダウンロードの行（docs/inapp-browser.md「ダウンロード」）
+  if (e.kind === 'chromeDownload') return renderChromeDownloadLine(e);
   const kind = ["image", "html", "text", "file", "visualization"].includes(e.kind) ? e.kind : "text";
   const card = el("figure", `present present-${kind}`);
 

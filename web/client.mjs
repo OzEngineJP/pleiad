@@ -3160,7 +3160,7 @@ function hasFailedOutbox() {
 function syncOutboxRows(messages) { mainView.syncOutboxRows(messages); }
 
 function onEvent(ev, replay = false) {
-  if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
+  if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport', 'tab:downloads'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
   // 開いているファイルが変わった・ページの port が替わった（ADR 0295 の 6・8）。画面の中のタブは browser-unify がページへ届ける
   if (ev.type === 'page:changed') { loadBrowserUnify().then(ui => ui.onEvent(ev)).catch(() => {}); return; }
   if (ev.type === 'page:moved') {

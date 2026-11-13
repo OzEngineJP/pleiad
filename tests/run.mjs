@@ -1004,6 +1004,8 @@ const SUITES = [
   './unit/browser-unify-b3.mjs',
   './unit/browser-unify-ws.mjs',
   './unit/browser-unify-tabs.mjs',
+  // Chrome のウィンドウのダウンロードの画面（置き場と字は素の Node。ボタン・一覧・スマホの入口は B1_BROWSER_TEST=1。tests/browser/chrome-downloads.cjs）
+  './unit/chrome-downloads-ui.mjs',
   // 右の欄のタブの列と開け閉めを本物の画面で（B1_BROWSER_TEST=1。tests/browser/right-panel-tabs.mjs）
   './unit/right-panel-tabs.mjs',
   // 右の欄の動きの間は幅に反応する処理を止めて止まったら 1 度だけやり直す・受け渡しは動き始めに量って書くだけ（web/panel-moving.mjs・panel-handoff.mjs）
