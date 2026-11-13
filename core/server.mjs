@@ -5261,7 +5261,7 @@ const opsHooks = {
   unifyPreview: (args) => hooksUnifyPreview(args),
 };
 
-// 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0324）。コネクターは最後に読めた一覧を覚えておく
+// 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0325）。コネクターは最後に読めた一覧を覚えておく
 const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'), probe: probeClaudeConnectors });
 
 // コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
@@ -7675,7 +7675,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
   const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
     { keepNative: !previousContext && baseline.messages.length > 0 });
-  // どのエージェントのターンか（外部 MCP を名前ごとに中継・止めるために使う。ADR 0324）。読み込み直しも同じエージェントで解く
+  // どのエージェントのターンか（外部 MCP を名前ごとに中継・止めるために使う。ADR 0325）。読み込み直しも同じエージェントで解く
   let policy = { ...followed, agent: backend.id };
   // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう

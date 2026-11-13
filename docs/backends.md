@@ -64,7 +64,7 @@ Pleiad を更新しても、共有サーバーで走っている OpenCode のタ
 
 旧会話は元の DB を退避し、OpenCode の公式変換が終わった後に同じ会話 ID で再開する。変換で外部ファイルの添付などが欠けた会話は、欠落を通知して再開を止める。元の記録と退避した DB は残る。
 
-外部 MCP は担当の 2 択ではなく名前ごとの一覧で決める（[ADR 0324](adr/0324-external-mcp-by-name-and-agent.md)）。OpenCode 自身の MCP は名前ごとに止められ、止める名前は定義を `enabled:false` で渡す。Claude は `deniedMcpServers`、Codex は `-c mcp_servers.<名前>.enabled=false` で止め、Devin・Grok・Antigravity は止める口が無い（能力の印 `nativeMcpOff`）。Grok は指示・Skills を Pleiad が担当すると `ply_context` を受け取れない。
+外部 MCP は担当の 2 択ではなく名前ごとの一覧で決める（[ADR 0325](adr/0325-external-mcp-by-name-and-agent.md)）。OpenCode 自身の MCP は名前ごとに止められ、止める名前は定義を `enabled:false` で渡す。Claude は `deniedMcpServers`、Codex は `-c mcp_servers.<名前>.enabled=false` で止め、Devin・Grok・Antigravity は止める口が無い（能力の印 `nativeMcpOff`）。Grok は指示・Skills を Pleiad が担当すると `ply_context` を受け取れない。
 
 設定 › プラグインで指示・Skills を「Pleiad がそろえる」にした場所では、Pleiad がそろえたものだけを OpenCode に渡し、OpenCode 自身の AGENTS.md・Skills・MCP は読ませない。
 そのため、そのターンだけ専用の OpenCode を起こす（起動の数秒が足される）。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その会話では読まれない。

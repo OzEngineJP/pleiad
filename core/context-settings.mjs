@@ -48,7 +48,7 @@ const MAX_SOURCES = SOURCES.length + RETIRED_SOURCES.length;
 const scopeSchema = z.object({ sources: z.array(storedSource).max(MAX_SOURCES), excludePaths: paths }).strict();
 const NAME = z.string().min(1).max(128);
 const AGENT_ID = z.string().regex(/^[a-z0-9_-]{1,32}$/);
-// 外部 MCP の「名前 × エージェント」の設定（ADR 0324）。off: そのエージェントでは使わない、
+// 外部 MCP の「名前 × エージェント」の設定（ADR 0325）。off: そのエージェントでは使わない、
 // spread: 他のエージェントの設定の定義を、そのエージェントへも広げた。持っていれば「名前ごとのモデル」で、
 // 担当（owner）の 2 択ではなくなる（無ければ従来どおり担当で決める）
 const agentsSchema = z.object({
@@ -144,7 +144,7 @@ export function normalizeAgents(value) {
   return { off: part(value.off), spread: part(value.spread) };
 }
 /**
- * 担当の 2 択（agents が無い設定）を、名前 × エージェントの明示の設定にする。今の接続が変わらないように写す（ADR 0324）。
+ * 担当の 2 択（agents が無い設定）を、名前 × エージェントの明示の設定にする。今の接続が変わらないように写す（ADR 0325）。
  *   「Pleiad がそろえる」（owner: ply）: どのエージェントの設定にある名前も、他のエージェントへ広げた形（spread）。Pleiad の登録はすべて on
  *   「エージェントに任せる」（owner: native）: Pleiad の登録はどのエージェントでも off のまま（任せる側は登録を渡していなかった）
  * info: { registered: [名前], native: { <agent>: [名前] }（探す対象にしたものだけ） }

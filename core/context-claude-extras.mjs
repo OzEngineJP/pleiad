@@ -1,4 +1,4 @@
-// Claude 側にだけある外部 MCP（プラグインの MCP と claude.ai のコネクター）を読む。ADR 0324。
+// Claude 側にだけある外部 MCP（プラグインの MCP と claude.ai のコネクター）を読む。ADR 0325。
 // どちらも Claude の設定ファイル（.claude.json など）には出ず、ここで読まないと一覧に出せない。
 //   プラグイン: ~/.claude/plugins/installed_plugins.json と各プラグインの .mcp.json（ディスクだけで読める）
 //   コネクター: Claude を起動しないと分からない。画面を開いたときに裏で 1 回だけ起こして読み、直近の一覧を覚えておく

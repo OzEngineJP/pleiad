@@ -183,7 +183,7 @@ async function probeCatalog(cwd, withSettings) {
 }
 sdk.probe ??= probeCatalog;
 
-/** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0324）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
+/** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0325）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
 export async function probeClaudeConnectors({ deny = [] } = {}) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 20_000);

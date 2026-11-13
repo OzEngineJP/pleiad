@@ -1,4 +1,4 @@
-// 設定 › プラグイン › 外部 MCP の打鍵（実ブラウザー。承認済み 2026-11-14、ADR 0324・docs/design-system.md「設定 › 外部 MCP」）:
+// 設定 › プラグイン › 外部 MCP の打鍵（実ブラウザー。承認済み 2026-11-14、ADR 0325・docs/design-system.md「設定 › 外部 MCP」）:
 //   名前 × エージェントの一覧 → 全体のスイッチ → アイコン → 広げる前の確認 → 鍵 → コネクター（読み取り中・読めた後）→ キーボード。
 //   ライト・ダーク・1280・360 で横にはみ出さない。
 // 実行: node tests/browser/external-mcp.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる。EXTERNAL_MCP_SHOTS=<ディレクトリ> で場面ごとに撮る）

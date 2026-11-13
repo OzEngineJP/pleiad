@@ -56,7 +56,7 @@ export function stripOwned(config, owners) {
   const out = { ...config };
   if (owners?.instruction === 'ply') delete out.instructions;
   if (owners?.mcp === 'ply') delete out.mcp;
-  // 名前ごとに止める（ADR 0324）。定義は残し、止める名前だけ enabled: false にする（enabled だけを足しても効かないので定義ごと残す）
+  // 名前ごとに止める（ADR 0325）。定義は残し、止める名前だけ enabled: false にする（enabled だけを足しても効かないので定義ごと残す）
   if (owners?.mcpSuppress?.length && isObject(out.mcp)) {
     out.mcp = Object.fromEntries(Object.entries(out.mcp).map(([name, def]) => [name, owners.mcpSuppress.includes(name) && isObject(def) ? { ...def, enabled: false } : def]));
   }

@@ -1,6 +1,6 @@
 # 共通コンテキストの実行
 
-外部 MCP だけは 2026-11-14 から担当の 2 択を持たず、名前 × エージェントの一覧で決める（[ADR 0324](adr/0324-external-mcp-by-name-and-agent.md)、下の「外部 MCP の名前ごとの中継」）。
+外部 MCP だけは 2026-11-14 から担当の 2 択を持たず、名前 × エージェントの一覧で決める（[ADR 0325](adr/0325-external-mcp-by-name-and-agent.md)、下の「外部 MCP の名前ごとの中継」）。
 
 2026-09-12。設定 › プラグインで、指示・Skills・外部 MCP ごとに「エージェントに任せる」か「Pleiad がそろえる」を選ぶ。既定はエージェント任せ。2026-09-20 から設定は種類ごとに「すべての場所（既定）」と場所ごとの上書きで持つ（`docs/context-management.md`「保存と継承（形式 2）」）。外部 MCP については Pleiad 自身の登録（`<data>/mcp-servers.json`）も持つ。エージェント側の設定ファイルは書き換えない。
 
@@ -138,7 +138,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 
 `sessionHooks { sessionId, cwd, backend }` は会話の右パネル用に、その会話のエージェントで cwd に見つかる定義（`scanHooks` と同じ行）と `hookRuns`（走っているターンの分を含む）を返す。`observable` は発火の通知を受け取れる接続か（Claude と Codex。Antigravity は Pleiad がそろえた会話で Pleiad が渡した分だけ: `observed: 'pleiad'`）。定義は「登録あり · 読み込み未確認」までで、読み込まれた・実行されたとは扱わない。発火の記録は開始と応答を `hookId` で組にし、応答が無いものを完了と推定しない。通知には設定ファイルのパスも command も無い。`hook_name` は「イベント:matcher」（例 `PreToolUse:Bash`）なので、その会話の場所で同じイベント・matcher の Claude の定義が 1 つだけのときその定義の名前で出し、結べなければイベントだけを出す。Codex は app-server の `hook/started`・`hook/completed`（`run.id`・`eventName`・`source`・`status`・`durationMs`）を同じ `hookRun` にする（`codexHookRun`。`source` を残し、出力の `entries` は持ち出さない）。Antigravity は通知を受け取れないので「観測できません」とし、0 件・未実行とは書かない。Grok の `hook_run_started`・`hook_execution`（`runs[].name` は `plugin/<置き場の名前>/hooks:<event>[i].hooks[j]`・`status`・`elapsed_ms`・`blocked`）は届くが、Pleiad の登録の id と結んでいないので、同じく「観測できません」とする。
 
-### 外部 MCP の名前ごとの中継（[ADR 0324](adr/0324-external-mcp-by-name-and-agent.md)）
+### 外部 MCP の名前ごとの中継（[ADR 0325](adr/0325-external-mcp-by-name-and-agent.md)）
 
 `context-scans.json` の外部 MCP に `agents: { off: { 名前: [エージェント] }, spread: { 名前: [エージェント] } }` があると、担当は常に Pleiad（中継は常に開く）として解決し、`agentMcpRules`（`core/context-runtime.mjs`）が名前ごとに決める。無ければ従来の 2 択のまま動き、最初の操作で実効の状態を `agents` に写す（`mcpAgentsFromLegacy`）。
 - Pleiad の登録は、`off[名前]` にそのエージェントが無ければ渡す。エージェント自身の定義は渡さない。他のエージェントの定義は `spread[名前]` にそのエージェントがあるときだけ渡す。
