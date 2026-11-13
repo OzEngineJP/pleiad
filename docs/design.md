@@ -756,7 +756,7 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 - **費用の安全弁**: 1 回の通話の長さの上限（既定 30 分）・1 日の上限（既定 120 分。この PC の日付。日ごとの台帳 `voice-usage.json` は直近 31 日）・声が聞こえないまま 10 分で終了・無音と雑音を送らない（送信ゲート・200ms 未満の声・空の結果）。
 - **デスクトップ・モバイル**: Electron は本体の画面（メインフレーム・同じ origin）の音声入力に限って `media` を許可する。macOS は `NSMicrophoneUsageDescription` と audio-input の entitlement、Android は `RECORD_AUDIO` を足した（実機は未確認）。
 
-## 遅い命令・送信待ちの診断記録（提案（2026-11-14）、[ADR 0325](adr/0325-slow-command-log-and-submit-wait.md)）
+## 遅い命令・送信待ちの診断記録（提案（2026-11-14）、[ADR 0326](adr/0326-slow-command-log-and-submit-wait.md)）
 
 実機で「送信を押しても送られない・遅い」の引き金を切り分けるため、データ置き場の `slow-commands.log`（1 行 1 JSON、上限 `128 KiB` で超えたら新しい半分を残す、`core/slow-log.mjs`）に次の 4 つの物差しを残す。**メッセージ本文・タイトル・ファイルパス・設定値・エラー文言の中身は一切記録しない**（許可する欄だけを通す `sanitizeSlowEntry`）。
 
