@@ -67,11 +67,31 @@ const chevron = () => {
   return svg;
 };
 
+/**
+ * 本文に入った絶対の http(s) でないリンクから href を外す。GitHub の本文の相対リンク・`javascript:`・`#` を押すと、
+ * 設定の画面は file-preview の横取りの外にあり、アプリの窓そのものが遷移してしまう。http(s) は target=_blank のまま（窓の外のブラウザーで開く）
+ */
+export function stripUnsafeLinks(root) {
+  for (const a of root.querySelectorAll('a')) {
+    if (/^https?:\/\//i.test(a.getAttribute('href') ?? '')) continue;
+    for (const name of ['href', 'target', 'data-file-path', 'data-file-line']) a.removeAttribute(name);
+    a.classList.remove('file-link');
+  }
+}
+
+/** 文字列の短い要約（作り直しの要否の比べ用。本文の全文を署名に持たない） */
+function digest(text) {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return `${text.length}:${h.toString(36)}`;
+}
+
 /** 本文。GitHub の本文は Markdown、同梱のノートは見出し + 箇条書き */
 function bodyOf(release) {
   const box = el('div', 'rn-content');
   if (typeof release.body === 'string') {
     box.innerHTML = renderMarkdown(release.body);
+    stripUnsafeLinks(box);
     return box;
   }
   for (const section of Array.isArray(release.sections) ? release.sections : []) {
@@ -178,7 +198,7 @@ export function createReleaseNotes(root, { reduceMotion = () => false } = {}) {
 
   function update({ info, state }) {
     plan = planNotes({ info, state });
-    const next = JSON.stringify([plan.current, plan.groups.map(g => [g.key, g.head, g.detail, g.rows.map(r => r.version), g.rows[0]?.body?.length ?? 0])]);
+    const next = JSON.stringify([plan.current, plan.groups.map(g => [g.key, g.head, g.detail, g.rows.map(r => [r.version, r.date ?? '', r.title ?? '', digest(typeof r.body === 'string' ? r.body : JSON.stringify(r.sections ?? null))])])]);
     if (next === signature) return;
     // 節の組み立てが替わったら（更新が見つかった・更新した）、前の内容で出した分は忘れる。言語が替わっただけなら保つ
     const shape = JSON.stringify(plan.groups.map(g => [g.key, g.rows.map(r => r.version)]));

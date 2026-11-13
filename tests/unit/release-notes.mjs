@@ -1,6 +1,6 @@
 // 設定 › バージョンと更新 › リリースノート（web/release-notes.mjs）: 節の組み立て・畳み・ページング・本文の入れ方・作り直しの保ち方（DOM の代役）
 import { N } from '../lib/dom-stub.mjs';
-import { planNotes, createReleaseNotes, FOLD_LIMIT, FOLD_SHOWN, PAGE } from '../../web/release-notes.mjs';
+import { planNotes, createReleaseNotes, stripUnsafeLinks, FOLD_LIMIT, FOLD_SHOWN, PAGE } from '../../web/release-notes.mjs';
 
 export const name = 'release-notes';
 export const title = '設定 › リリースノート: 更新前・更新後・前の版が無いときの節・6 版までは全部・超えたら 5 版 +「ほか N」・古い版は 10 版ずつ・1 版は開く・本文は textContent / Markdown・作り直しで開いた行を保つ';
@@ -147,6 +147,58 @@ export default async function (t) {
     t.ok('Scrolling to the update heading returns true and scrolls smoothly', sn.scrollToUpdate() === true && scrolled.length === 1 && scrolled[0].node.matches('.rn-gh') && scrolled[0].arg.behavior === 'smooth');
     calmMotion = true; scrolled.length = 0; sn.scrollToUpdate();
     t.ok('With reduced motion the scroll is not smooth', scrolled[0].arg.behavior === 'auto');
+
+    // ---- 本文のリンク: 絶対の http(s) だけ残し、相対・javascript:・# は href を外す（設定の画面は file-preview の横取りの外）
+    const linkBox = new N('div');
+    const mkLink = (href, extra = {}) => {
+      const a = new N('a');
+      a.className = 'md-link';
+      if (href !== null) a.setAttribute('href', href);
+      for (const [k, v] of Object.entries(extra)) a.setAttribute(k, v);
+      linkBox.append(a);
+      return a;
+    };
+    const web = mkLink('https://example.com/a', { target: '_blank', rel: 'noopener noreferrer nofollow' });
+    const plain = mkLink('HTTP://example.com/b', { target: '_blank' });
+    const rel1 = mkLink('docs/readme.md', { 'data-file-path': 'docs/readme.md', 'data-file-line': '3' });
+    rel1.classList.add('file-link');
+    const rel2 = mkLink('/local-file?path=x', { 'data-file-path': 'x' });
+    const script = mkLink('javascript:alert(1)');
+    const hash = mkLink('#section');
+    const none = mkLink(null);
+    const protoRel = mkLink('//evil.example/x');
+    stripUnsafeLinks(linkBox);
+    t.ok('Absolute https links keep href and target', web.getAttribute('href') === 'https://example.com/a' && web.getAttribute('target') === '_blank' && web.getAttribute('rel') !== undefined);
+    t.ok('The scheme is matched without regard to case', plain.getAttribute('href') === 'HTTP://example.com/b');
+    t.ok('A relative link loses href, target and the file markers', [rel1, rel2].every(a => !a.hasAttribute('href') && !a.hasAttribute('target') && !a.hasAttribute('data-file-path') && !a.hasAttribute('data-file-line')) && !rel1.classList.contains('file-link'));
+    t.ok('A javascript: link loses href', !script.hasAttribute('href'));
+    t.ok('A # link loses href', !hash.hasAttribute('href'));
+    t.ok('A protocol-relative link loses href', !protoRel.hasAttribute('href'));
+    t.ok('A link without href stays without href', !none.hasAttribute('href'));
+
+    // ---- 作り直しの要否: 先頭以外の行の本文が替わったら作り直し、同じなら作り直さず開いた行・「さらに表示」を保つ
+    const mdList = body => Array.from({ length: 25 }, (_, i) => rel(`3.${25 - i}.0`, { body: i === 12 ? body : `本文 ${i}` }));
+    const sigRoot = new N('div');
+    const sig = createReleaseNotes(sigRoot, {});
+    const sigInfo = list => ({ info: { version: list[0].version, releases: list }, state: { version: list[0].version } });
+    sig.update(sigInfo(mdList('古い')));
+    heads(sigRoot)[2].onclick();
+    buttonsLike(sigRoot, /さらに表示/)[0].onclick();
+    const keptRows = rows(sigRoot).slice();
+    sig.update(sigInfo(mdList('古い')));
+    t.ok('The same releases do not rebuild the list', rows(sigRoot).length === 20 && rows(sigRoot).every((r, i) => r === keptRows[i]));
+    t.ok('The same releases keep the opened row and the revealed page', rows(sigRoot)[2].classList.contains('open') && heads(sigRoot).length === 20);
+    sig.update(sigInfo(mdList('新しい')));
+    t.ok('A changed body in a row other than the first rebuilds the list', rows(sigRoot).some((r, i) => r !== keptRows[i]));
+    t.ok('A rebuild keeps the opened row and the revealed page', rows(sigRoot)[2].classList.contains('open') && heads(sigRoot).length === 20);
+    const retitled = mdList('新しい'); retitled[7] = { ...retitled[7], title: '別の題' };
+    const beforeTitle = rows(sigRoot).slice();
+    sig.update(sigInfo(retitled));
+    t.ok('A changed title rebuilds the list', rows(sigRoot).some((r, i) => r !== beforeTitle[i]) && all(sigRoot, n => n.matches('.rn-title')).some(n => n.textContent === '別の題'));
+    const redated = retitled.map((r, i) => i === 3 ? { ...r, date: '2026-12-31' } : r);
+    const beforeDate = rows(sigRoot).slice();
+    sig.update(sigInfo(redated));
+    t.ok('A changed date rebuilds the list', rows(sigRoot).some((r, i) => r !== beforeDate[i]));
   } finally {
     N.prototype.focus = focusOrig;
     N.prototype.scrollIntoView = scrollOrig;
