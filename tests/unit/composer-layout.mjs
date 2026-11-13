@@ -119,6 +119,12 @@ export default async function (t) {
   t.ok('リモートの窓で脇が開いている間、Plus の丸は印の行の分だけ上げる（畳んだレールでは最下部のまま。2026-11-09 のずれ直し）',
     /:root\.remote:not\(\.remote-mobile\) #sidebar > \.side-avb\{bottom:40px\}/.test(css)
     && /:root\.remote\.side-closed body:not\(\.settings\) > #sidebar > \.side-avb\{bottom:8px\}/.test(css));
+  // macOS の設定: 見出しの行の「会話に戻る」が信号に重なっていた（2026-11-13）。広い画面は信号の下の P の印の右へ、700px 以下はメニューを下げない
+  const macSettings = /@media \(min-width:701px\)\{\s*:root\.mac body\.settings \.back-chat\{([^}]*)\}\s*:root\.mac body\.settings > #sidebar > \.settings-menu\{padding-top:36px\}\s*\}/.exec(css);
+  t.ok('macOS の設定の「会話に戻る」は信号の下の P の印の右（広い画面だけ）',
+    !!macSettings && /position:absolute/.test(macSettings[1]) && /left:46px/.test(macSettings[1]) && /top:var\(--p-top\)/.test(macSettings[1]));
+  t.ok('macOS の設定のメニューを P の分だけ下げるのは広い画面だけ（700px 以下は P の印を出さない）',
+    !/^:root\.mac body\.settings > #sidebar > \.settings-menu\{padding-top/m.test(css));
   t.ok('簡易ブラウザーの行の輪は内側に描く（一覧のスクロールの箱の端で切れていた）', /\.cbrowse \.copt:focus-visible\{outline-offset:-2px\}/.test(css));
   // 発言の引用は入力欄の引用と同じ左の縦線（docs/design-system.md「4.5 会話」。見た目は tests/browser/message-quote-bar.cjs）
   const Q = String.raw`:is\(\.body,\.post-body,\.th-log-text\) blockquote`;

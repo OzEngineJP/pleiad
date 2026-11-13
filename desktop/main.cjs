@@ -1,11 +1,14 @@
-const { app, BrowserWindow, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
+const { app, BrowserWindow, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor, crashReporter } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { forkUtility } = require('./process.cjs');
 // 開発版はインストール版と別の名前・userData・データ置き場で起こす（desktop/dev-identity.cjs）。userData・safeStorage を使う前に決める
 require('./dev-identity.cjs').applyDevIdentity({ app, env: process.env });
+const processStartedAt = Date.now();
+const { createDesktopLog } = require('./desktop-log.cjs');
+const { startCrashReporting, attachChildProcessCrashLogging, attachWindowHealth, createLoopPrompter, pruneCrashDumps } = require('./renderer-recovery.cjs');
 const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
-const { packagedIdentity } = require('./msix.cjs');
+const { packagedIdentity, stableLauncher } = require('./msix.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { createUpdateLog } = require('./update-log.cjs');
 const { externalUrl } = require('./external-url.cjs');
@@ -46,6 +49,7 @@ let remoteWindows;
 // messages はサーバーの message を 1 つの listener で受けて橋へ配る（desktop/worker-messages.cjs）。橋は worker でなくこれに付ける
 let worker, messages, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
 let serverRestarter = null, serverExitHandler = null, activePortFile = null, updateInProgress = false;
+let keepAgentWindows = false, crashRestarting = false, utilityExited = false, mainHealth = null;
 let chromePill = null;
 let chromeOs = null;   // Chrome の OS の層（boot が作る）。終了のときに、画面の外へ隠したエージェントの窓を片付けるために main が持つ
 // 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
@@ -55,6 +59,7 @@ let serverReady = null;
 let updateRestartNotice = false;
 // サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
 let bootLogger = null;
+let desktopLog = null, crashReporting = null;
 const pendingServerLog = [];
 const log = line => { console.warn('[server]', line); if (bootLogger) bootLogger.info?.(`[server] ${line}`); else pendingServerLog.push(line); };
 // サーバーの起こし方・付け直し。配布版の名前付きパイプ経路で使い、utilityProcess 経路も保持役と通常起動復元を使う。
@@ -269,11 +274,85 @@ async function chooseLinkedServer(portFile) {
 
 /** 別のサーバー（切り替えの S2・起こし直したサーバー）の ready のポート・トークンで窓を読み直す。同じポートが取れなかったときは origin が変わる（design.md §8） */
 async function reloadWindow(next, portFile) {
+  serverReady = next;
   origin = `http://127.0.0.1:${next.port}`;
   rememberPort(portFile, next.port);
   trust.update(window, { origin });
   if (next.locale) setLocale(next.locale);
   await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
+}
+
+const CRASH_RESTART_LEAVE_WAIT_MS = 2_000;
+const CRASH_RESTART_SHUTDOWN_WAIT_MS = 30_000;
+// 最初の loadURL が ERR_FAILED で終わったとき、render-process-gone を待つ上限（実測では reject の 10〜20ms 後に届く）
+const BOOT_RENDERER_GONE_WAIT_MS = 1_000;
+
+/** renderer 落ち（clean-exit を除く）が届いていれば、または timeoutMs までに届けば true。 */
+function waitRendererGone(contents, already, timeoutMs) {
+  if (already) return Promise.resolve(true);
+  return new Promise(resolve => {
+    const done = gone => { clearTimeout(timer); contents.off?.('render-process-gone', onGone); resolve(gone); };
+    const onGone = (_event, details) => { if (details?.reason !== 'clean-exit') done(true); };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    contents.on('render-process-gone', onGone);
+  });
+}
+
+/** 再起動時に引き継がない 1 回限りの引数（--hidden・--remote-hosts・pleiad://…）を外す。 */
+function relaunchArgs(argv) {
+  return (Array.isArray(argv) ? argv.slice(1) : []).filter(arg => (
+    arg !== '--hidden'
+    && arg !== '--remote-hosts'
+    && !String(arg).startsWith('--remote-hosts=')
+    && !/^pleiad:\/\//i.test(String(arg))
+  ));
+}
+
+/** サーバーとの切断または終了をタイムアウト付きで待つ。 */
+function waitWorkerExit(target, timeoutMs) {
+  if (!target || typeof target.once !== 'function') return Promise.resolve(true);
+  return new Promise(resolve => {
+    let settled = false;
+    const done = exited => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      target.removeListener?.('exit', onExit);
+      resolve(exited);
+    };
+    const onExit = () => done(true);
+    const timer = setTimeout(() => done(false), timeoutMs);
+    timer.unref?.();
+    target.once('exit', onExit);
+  });
+}
+
+/**
+ * 連続クラッシュで利用者が「Pleiad を再起動する」を選んだときに終了処理の問い合わせ無しで起動し直す。
+ * linked（名前付きパイプ接続）ではサーバーを落とさず main だけ離脱・再起動し、
+ * utilityProcess 経路ではサーバーの停止完了を待ってから起動し直す（ADR 0324）。
+ */
+async function restartFromCrashLoop() {
+  if (crashRestarting) return;
+  crashRestarting = true;
+  exitInProgress = true;
+  const target = worker;
+  if (linked && target && typeof target.leave === 'function') {
+    keepAgentWindows = true;
+    const waitExit = target.connected === true ? waitWorkerExit(target, CRASH_RESTART_LEAVE_WAIT_MS) : null;
+    try { target.leave('restart'); } catch {}
+    if (waitExit) await waitExit;
+  } else if (target) {
+    const waitExit = !utilityExited ? waitWorkerExit(target, CRASH_RESTART_SHUTDOWN_WAIT_MS) : null;
+    try { target.postMessage?.({ type: 'shutdown', stopHeld: true }); } catch {}
+    const exited = waitExit ? await waitExit : true;
+    if (!exited && !utilityExited) try { target.kill?.(); } catch {}
+  }
+  // 離脱・終了待ちの完了後に初めて quitting を立て、待機中の [X] 閉鎖で relaunch 前にアプリ終了しないようにする。
+  quitting = true;
+  const execPath = typeof stableLauncher === 'function' ? stableLauncher() : process.execPath;
+  app.relaunch({ execPath, args: relaunchArgs(process.argv) });
+  app.quit();
 }
 
 /** 付け直したサーバーが古い版なら、保持役の子を残して通常停止・通常起動する（desktop/switch.cjs）。 */
@@ -325,8 +404,10 @@ async function boot() {
     env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile, AGENT_HOST_RUNTIME_ROOT: utilityHolderRoot },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
+  worker.once('exit', () => { if (!linked) utilityExited = true; });
   messages = createWorkerMessages(worker);
   powerMonitor.on('resume', () => worker?.postMessage({ type: 'wake' }));
+  powerMonitor.on('shutdown', () => { exitInProgress = true; });
   // Consume logs without exposing the private authentication URL.（サーバーは出力を logs\server.log へ向けるので、ここにはほぼ来ない。パイプの経路には stdout・stderr が無い）
   worker.stdout?.on('data', () => {});
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
@@ -393,8 +474,39 @@ async function boot() {
   window.removeMenu();
   trust.register(window, { kind: 'local', origin });
   // 読み込み直した画面は別の版かもしれない。切り替えの表示を持つかは、その画面の hello で知る
+  const onLoopPrompt = createLoopPrompter({ dialog, t });
+  let dumpPruneTimer = null;
+  const scheduleDumpPrune = () => {
+    const dir = crashReporting?.crashDumpsDir;
+    if (!dir) return;
+    if (dumpPruneTimer) clearTimeout(dumpPruneTimer);
+    dumpPruneTimer = setTimeout(() => {
+      dumpPruneTimer = null;
+      pruneCrashDumps(dir);
+    }, 5000);
+    dumpPruneTimer.unref?.();
+  };
+  const isWindowQuitting = () => quitting || exitInProgress || updateInProgress || updates?.state?.phase === 'installing';
+  let bootLoadPending = true;
+  let bootRecoveryReloaded = false;
+  mainHealth = attachWindowHealth({
+    win: window,
+    label: 'main',
+    logger: desktopLog,
+    startedAt: processStartedAt,
+    isQuitting: isWindowQuitting,
+    reload: async () => {
+      if (!serverReady) return;
+      if (bootLoadPending) bootRecoveryReloaded = true;
+      await reloadWindow(serverReady, portFile);
+    },
+    onLoopPrompt,
+    onRestart: restartFromCrashLoop,
+    onCrashDumped: scheduleDumpPrune,
+  });
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
-    icon: path.join(__dirname, 'icon.png'), external, workerRequest });
+    icon: path.join(__dirname, 'icon.png'), external, workerRequest,
+    desktopLog, onLoopPrompt, onRestart: restartFromCrashLoop, isQuitting: isWindowQuitting, startedAt: processStartedAt, onCrashDumped: scheduleDumpPrune });
   remoteWindows.attach();
   remoteWindows.attachWorker(messages);
   computerOverlay = attachComputerOverlay(messages, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
@@ -414,6 +526,7 @@ async function boot() {
   window.on('close', event => {
     if (quitting) return;
     event.preventDefault();
+    if (crashRestarting) { window.hide?.(); return; }
     if (resident?.keepOnClose()) { window.hide(); return; }
     closeSafely();
   });
@@ -450,7 +563,23 @@ async function boot() {
   };
   serverExitHandler = onServerExit;
   worker.once('exit', onServerExit);
-  await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}${updateRestartNotice ? '&reason=update-restart' : ''}`);
+  // 最初の読み込みの間に renderer が落ちても、起動の失敗にしない（復帰が読み直す。ADR 0324）。Electron 44 の実測では、
+  // ページの確定前に落ちると復帰の loadURL が最初の loadURL を ERR_ABORTED（-3）で中断し、確定後に落ちると
+  // render-process-gone より先に ERR_FAILED（-2）で reject される。ほかの失敗（つながらない等）は今までどおり起動の失敗
+  let bootRendererGone = false;
+  const onBootRendererGone = (_event, details) => { if (details?.reason !== 'clean-exit') bootRendererGone = true; };
+  window.webContents.on('render-process-gone', onBootRendererGone);
+  try {
+    await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}${updateRestartNotice ? '&reason=update-restart' : ''}`);
+  } catch (error) {
+    const aborted = error?.code === 'ERR_ABORTED' || error?.errno === -3;
+    const failed = error?.code === 'ERR_FAILED' || error?.errno === -2;
+    if (!(bootRecoveryReloaded && aborted) && !(failed && await waitRendererGone(window.webContents, bootRendererGone, BOOT_RENDERER_GONE_WAIT_MS))) throw error;
+    desktopLog?.warn?.(`boot-load-interrupted window=main code=${error?.code ?? error?.errno} action=continue`);
+  } finally {
+    bootLoadPending = false;
+    window.webContents.off?.('render-process-gone', onBootRendererGone);
+  }
   // 自動起動（--hidden）は静かに上がる。トレイに残る構成（resident）なら窓は出さず、トレイから開く。トレイが無い構成ではタスクバーに最小化で置く
   // （窓もトレイも無いと入口が無くなる）。普通の起動は今までどおり前面に出す
   if (loginItem.launchedHidden(process.argv)) { if (!resident?.keepOnClose()) { window.showInactive(); window.minimize(); } }
@@ -501,9 +630,10 @@ function scheduledText(scheduled) {
 }
 
 async function closeSafely() {
-  if (updates?.state.phase === 'installing') return;
+  if (updates?.state.phase === 'installing' || crashRestarting) return;
   if (closing) return;
   closing = true;
+  exitInProgress = true;
   try {
     const work = await runningWork();
     const waiting = scheduledText(work.scheduled);
@@ -526,7 +656,7 @@ ${waiting}` : t('quit.busyMessage'),
     // アプリの終了: 保持役の子も止める（更新と違う。ADR 0270 決定 4）
     quitting = true; worker.postMessage({ type: 'shutdown', stopHeld: true }); app.quit();
   } catch (e) { await dialog.showMessageBox(window, { message: e.message, buttons: [t('common.back')] }); }
-  finally { closing = false; if (!quitting) exitInProgress = false; }
+  finally { closing = false; if (!quitting) { exitInProgress = false; mainHealth?.checkDeferred?.(); } }
 }
 
 ipcMain.handle('ply:choose-folder', async event => {
@@ -567,11 +697,14 @@ ipcMain.on('ply:title-bar', (event, colors) => {
 // アプリ更新では閉じない。窓は新しい main が exportAgent の印から引き継ぐ（ADR 0167）。引き継げなかった窓は新しい main が CDP で閉じる
 function closeAgentWindows() {
   chromePill?.close();
-  if (updateInProgress) { try { chromeOs?.stopGuard?.(); } catch { /* 見張りが無い層 */ } return; }
+  if (updateInProgress || keepAgentWindows) { try { chromeOs?.stopGuard?.(); } catch { /* 見張りが無い層 */ } return; }
   try { chromeOs?.closeAllAgents?.(); } catch (error) { console.warn('[chrome-os]', `closeAllAgents failed: ${error.message}`); }
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  desktopLog = createDesktopLog(path.join(app.getPath('userData'), 'logs', 'desktop.log'));
+  crashReporting = startCrashReporting({ app, crashReporter, logger: desktopLog });
+  attachChildProcessCrashLogging({ app, logger: desktopLog, startedAt: processStartedAt });
   // 配布版だけプロトコルを OS に登録する。開発（electron .）は electron.exe を登録してしまい、インストール版の登録を奪うので呼ばない
   if (app.isPackaged) app.setAsDefaultProtocolClient('pleiad');
   app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); computerOverlay?.close(); });
@@ -579,7 +712,11 @@ else {
   app.on('open-url', (event, url) => { event.preventDefault(); if (handlePlusLink(url)) frontMainWindow(); });
   // 自動起動（--hidden）が、すでに動いている Pleiad に重なっただけなら、窓を前に出さない
   app.on('second-instance', (_event, argv) => { const action = plusLinkArgv(argv); if (action) { worker?.postMessage({ type: 'plus-entrance', action }); frontMainWindow(); return; } if (remoteWindows?.handleArgv(argv)) return; if (launchedHidden(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
-  app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
+  app.on('before-quit', event => {
+    exitInProgress = true;
+    if (!quitting && crashRestarting) { event.preventDefault(); return; }
+    if (!quitting && window) { event.preventDefault(); void closeSafely(); }
+  });
   app.on('will-quit', () => { exitInProgress = true; });
   app.whenReady().then(boot).catch(e => {
     console.error(e.message);

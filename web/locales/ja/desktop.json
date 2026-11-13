@@ -98,6 +98,12 @@
     }
   },
   "chromePill": { "resume": "あなたが操作中 · AI に戻す" },
+  "renderer": {
+    "crashedTitle": "画面の表示が止まりました",
+    "crashedMessage": "画面の表示が続けて終了したため、自動の読み直しを止めました。保存済みの会話は残っています。",
+    "reload": "読み直す",
+    "restart": "Pleiad を再起動する"
+  },
   "computer": {
     "overlay": {
       "who": "{{agent}} が操作中",

@@ -7,6 +7,7 @@
 //     起こし直せない・続けて落ちるなら server-exited。切り替え中・bye closing・off は起こし直さない//   - 更新: 更新ロック → 旧サーバーの通常停止 → 新サーバーの通常起動。
 //     付け直した後は切り替え（desktop/switch.cjs）を始め、S1 を手放している間はサーバーの終了を知らせない
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
@@ -23,6 +24,8 @@ const workerMessages = createRequire(import.meta.url)('../../desktop/worker-mess
 const loginItem = createRequire(import.meta.url)('../../desktop/login-item.cjs');
 const plusLink = createRequire(import.meta.url)('../../desktop/plus-link.cjs');
 const devIdentity = createRequire(import.meta.url)('../../desktop/dev-identity.cjs');
+const rendererRecovery = createRequire(import.meta.url)('../../desktop/renderer-recovery.cjs');
+const desktopLogMock = { createDesktopLog: () => ({ info() {}, warn() {}, error() {} }) };
 // 本物の橋と同じに message の受け手を 1 つ付ける偽物（受け手が worker の listener を増やさないことを見る）
 const listens = (calls, key) => worker => { worker.on('message', () => {}); if (key) calls[key] = worker; return { keepOnClose: () => false, close: () => {} }; };
 
@@ -49,8 +52,8 @@ class FakeLink extends EventEmitter {
   }
 }
 
-async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false, hangInstall = false, restart = { ok: false, reason: 'failed' }, shellEnv = async () => false } = {}) {
-  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], bootSteps: [], switches: [], updates: null, restarts: 0, restarterOptions: null };
+async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false, hangInstall = false, restart = { ok: false, reason: 'failed' }, shellEnv = async () => false, onLoadURL = null } = {}) {
+  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], bootSteps: [], switches: [], updates: null, restarts: 0, restarterOptions: null, crashStarts: [], relaunches: [] };
   const link = new FakeLink(calls);
   link.connectError = connectError;
   const utility = new EventEmitter();
@@ -63,9 +66,9 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   utility.kill = () => { calls.killed = true; };
   const app = new EventEmitter();
   Object.assign(app, {
-    isPackaged: packaged, exit: () => {}, quit: () => { calls.quits++; }, setName: name => { calls.appName = name; }, requestSingleInstanceLock: () => true, whenReady: () => Promise.resolve(),
+    isPackaged: packaged, exit: () => {}, quit: () => { calls.quits++; }, setName: name => { calls.appName = name; }, getName: () => calls.appName || 'agent-host', relaunch: opts => { calls.relaunches.push(opts); }, requestSingleInstanceLock: () => true, whenReady: () => Promise.resolve(),
     setAsDefaultProtocolClient: scheme => { calls.protocolClient = scheme; return true; },
-    getPath: name => name === 'userData' ? 'test-user' : 'test-home', getPreferredSystemLanguages: () => ['ja-JP'], getVersion: () => '1.2.3',
+    getPath: name => name === 'crashDumps' ? path.join(os.tmpdir(), 'ply-nonexistent-crashdumps') : name === 'userData' ? 'test-user' : 'test-home', getPreferredSystemLanguages: () => ['ja-JP'], getVersion: () => '1.2.3',
   });
   class BrowserWindow extends EventEmitter {
     constructor() {
@@ -78,8 +81,8 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     }
     isDestroyed() { return false; }
     removeMenu() {}
-    loadURL(url) { calls.loads.push(url); return Promise.resolve(); }
-    show() {}
+    loadURL(url) { calls.loads.push(url); return onLoadURL ? onLoadURL(url, calls) : Promise.resolve(); }
+    show() { calls.shown = (calls.shown ?? 0) + 1; }
   }
   const dialog = { showMessageBox: (...args) => { calls.dialogs.push(args); return new Promise(() => {}); } };
   const electron = {
@@ -88,6 +91,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
     Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(), screen: calls.screen = new EventEmitter(),
+    crashReporter: { start: opts => { calls.crashStarts.push(opts); } },
     autoUpdater: new EventEmitter(),
   };
   // electron-updater の quitAndInstall: インストーラーを起こした後に before-quit-for-update を出して終わる（node_modules/electron-updater の BaseUpdater）
@@ -102,9 +106,11 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   };
   const modules = {
     './updates.cjs': { Updates: class { constructor(options) { calls.updates = options; this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },
-    './msix.cjs': { packagedIdentity: () => false },
+    './msix.cjs': { packagedIdentity: () => false, stableLauncher: () => 'C:\\inst\\Ply.exe' },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
     './update-log.cjs': { createUpdateLog: () => ({}) },
+    './desktop-log.cjs': desktopLogMock,
+    './renderer-recovery.cjs': rendererRecovery,
     './external-url.cjs': { externalUrl: url => url },
     './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: (_file, port) => { calls.remembered = port; } },
@@ -264,6 +270,64 @@ export default async function (t) {
     const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, connectError: error });
     t.ok('起動の失敗: 文は describeBootError で作り、起動の失敗のダイアログを出す', calls.dialogs.length === 1 && calls.dialogs[0][0].title === 'boot.failedTitle' && calls.dialogs[0][0].message === 'described:timeout:server.startTimeout', JSON.stringify(calls.dialogs[0]));
     t.ok('起動の失敗: パイプのサーバーは shutdown（kill）せず、つながりだけ切る（居続けるのは孤児の見張りが終わらせる）', calls.left === 'boot-failed' && calls.killed === false);
+  }
+  // 最初の loadURL の間に renderer が落ちると、復帰の読み直し（desktop/renderer-recovery.cjs）が最初の読み込みを中断する（ERR_ABORTED・-3。ADR 0324）。
+  // その中断だけは起動の失敗にしない。ほかの失敗（つながらない等）と、復帰が読み直していない中断は今までどおり起動の失敗
+  {
+    const aborted = () => Object.assign(new Error("ERR_ABORTED (-3) loading 'http://127.0.0.1/'"), { code: 'ERR_ABORTED', errno: -3 });
+    let rejectFirst = null;
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: (_url, c) => {
+      if (c.loads.length === 1) {
+        // 読み込みの途中で renderer が落ちる。Electron は次の loadURL が始まった時点で、前の loadURL を ERR_ABORTED で reject する
+        queueMicrotask(() => c.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 }));
+        return new Promise((_resolve, reject) => { rejectFirst = reject; });
+      }
+      rejectFirst?.(aborted());
+      return Promise.resolve();
+    } });
+    t.ok('起動中の renderer 落ち: 復帰の読み直しで最初の loadURL が中断されても、起動の失敗にせず窓を出して初期化を続ける',
+      calls.loads.length === 2 && calls.dialogs.length === 0 && calls.quits === 0 && calls.shown === 1 && calls.updates !== null,
+      JSON.stringify({ loads: calls.loads, dialogs: calls.dialogs.map(d => d.at(-1)?.title), shown: calls.shown }));
+  }
+  {
+    // ページの確定後に落ちると、Electron 44 は render-process-gone より先に最初の loadURL を ERR_FAILED（-2）で reject する（実測）
+    const failed = Object.assign(new Error("ERR_FAILED (-2) loading 'http://127.0.0.1/'"), { code: 'ERR_FAILED', errno: -2 });
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: (_url, c) => {
+      if (c.loads.length === 1) {
+        setTimeout(() => c.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 }), 15);
+        return Promise.reject(failed);
+      }
+      return Promise.resolve();
+    } });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    for (let i = 0; i < 4; i++) await tick();
+    t.ok('起動中の renderer 落ち: 確定後に落ちて最初の loadURL が ERR_FAILED になり、その後 render-process-gone が届いたら、起動を続けて復帰が読み直す',
+      calls.loads.length === 2 && calls.dialogs.length === 0 && calls.quits === 0 && calls.shown === 1 && calls.updates !== null,
+      JSON.stringify({ loads: calls.loads, dialogs: calls.dialogs.map(d => d.at(-1)?.title), shown: calls.shown }));
+  }
+  {
+    const failed = Object.assign(new Error('ERR_FAILED (-2)'), { code: 'ERR_FAILED', errno: -2 });
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: () => Promise.reject(failed) });
+    const before = calls.dialogs.length;
+    await new Promise(resolve => setTimeout(resolve, 1_100));
+    for (let i = 0; i < 4; i++) await tick();
+    t.ok('ERR_FAILED でも renderer 落ちが 1 秒以内に届かなければ、起動の失敗にする',
+      before === 0 && calls.dialogs.length === 1 && calls.dialogs[0].at(-1).title === 'boot.failedTitle' && calls.shown === undefined,
+      JSON.stringify(calls.dialogs.map(d => d.at(-1))));
+  }
+  {
+    const refused = Object.assign(new Error('ERR_CONNECTION_REFUSED (-102)'), { code: 'ERR_CONNECTION_REFUSED', errno: -102 });
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: () => Promise.reject(refused) });
+    t.ok('最初の loadURL のほかの失敗（つながらない）は、今までどおり起動の失敗のダイアログを出して終わる',
+      calls.dialogs.length === 1 && calls.dialogs[0].at(-1).title === 'boot.failedTitle' && calls.left === 'boot-failed' && calls.shown === undefined,
+      JSON.stringify(calls.dialogs.map(d => d.at(-1))));
+  }
+  {
+    const aborted = Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 });
+    const { calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, onLoadURL: () => Promise.reject(aborted) });
+    t.ok('復帰が読み直していないのに中断（ERR_ABORTED）で終わった最初の loadURL も、起動の失敗にする',
+      calls.dialogs.length === 1 && calls.dialogs[0].at(-1).title === 'boot.failedTitle' && calls.shown === undefined,
+      JSON.stringify(calls.dialogs.map(d => d.at(-1))));
   }
   {
     const { calls, utility } = await start({ env: {} });
