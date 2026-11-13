@@ -24,7 +24,7 @@
 .t-prefs[hidden] { display:none; }
 .t-prefs .rm-mrow { padding-left:0; padding-right:0; }
 .t-prefs .rm-mrow.off { opacity:.4; }
-.t-prefs .cx-sw:disabled { opacity:1; }
+.t-prefs .cx-sw[aria-disabled=true] { cursor:not-allowed; }
 .t-sec { margin:32px 0 0; }
 .t-sec > h3 { margin:0 0 4px; }
 /* リリースノート: 1 つの節に、同じ形の行（版 · 日付 / 題・右の ›）。押すと本文が開く（web/release-notes.mjs） */
@@ -62,5 +62,7 @@
 .update-notice .sub { color: var(--ink-weak); font-size: 11px; margin-top: 2px; }
 .update-notice .sub[hidden] { display: none; }
 /* 外の AI の MCP に pleiad mcp を登録する設定のコピー（web/cli-setup.mjs、ADR 0090） */
-#cliSetup { margin: 8px 0 0; }
-.cli-setup-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+/* 見た目は種類のカード（.cx-card）のまま。中のボタンは外部 MCP などのカードの中と同じ小さい btn */
+#cliSetup[hidden] { display: none; }
+#cliSetup .acts { display: flex; flex-wrap: wrap; gap: 4px; }
+#cliSetup .acts .btn { padding: 3px 10px; font-size: var(--fs-s); }
