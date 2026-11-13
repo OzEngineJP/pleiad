@@ -45,8 +45,8 @@ function wrapBackend(native) {
 
 /** 先に認証を束縛してから会話のラッパーをかける。入れ子の履歴取得・分岐でも認証を落とさない。 */
 export async function backendForAccount(backend, account) {
-  if (!backend || backend.capabilities?.accounts !== 'agent') return backend;
   const native = nativeBackends.get(backend) ?? backend;
+  if (!native?.capabilities?.accounts || typeof native.forAccount !== 'function') return backend;
   if (!account) return wrapBackend(native);
   const scoped = wrapBackend(await native.forAccount(account));
   nativeBackends.set(scoped, native);
@@ -67,6 +67,29 @@ export function offlineAccountBackend(backend, error) {
     getSubagentOrigin: async () => null, getSubagentState: async () => null,
     runTurn: unavailable, compact: unavailable, rewind: unavailable, shell: unavailable,
   });
+}
+
+/**
+ * アカウントを引けない（消した・トークンが無い）会話に渡すバックエンド。ログイン中や別のアカウントの一覧・資格情報へ黙って落とさず、
+ * 引けなかった理由（error）で断る。保存済みの会話は読め、画面でアカウントを選び直せる（種の印 accounts は残す）。
+ *   'agent' 種 … 資格情報が無いと履歴の元に触れないので、Pleiad が持つ分だけ読む（offlineAccountBackend）
+ *   'token' 種 … 履歴は共有の設定フォルダーから読めるので基のまま読み、そのアカウントのトークンを要るもの（一覧・ターン・内部呼出し）だけ断る。
+ *                断るものに合わせて、内部呼出しの能力の印も外す（印を見る側が、無い能力を前提に進まない）。
+ *                印だけでは「非対応」に見えるので、引けなかった理由は accountError に持つ（題の生成など、印を見る前に理由を伝えたい所が読む）
+ */
+export function accountUnavailableBackend(backend, error) {
+  const native = nativeBackends.get(backend) ?? backend;
+  if (native?.capabilities?.accounts !== 'token') return offlineAccountBackend(backend, error);
+  const unavailable = async () => { throw error; };
+  const blocked = {
+    ...backend,
+    accountError: error,
+    capabilities: { ...backend.capabilities, internalCall: false },
+    models: unavailable, validModel: unavailable, matchModel: unavailable, warmModels: unavailable,
+    runTurn: unavailable, adoptTurn: unavailable, internalTurn: unavailable, suggestTitle: unavailable,
+  };
+  nativeBackends.set(blocked, native);   // 選び直したアカウントで束縛し直すときも、元の（トークンを断らない）ネイティブから作る
+  return blocked;
 }
 
 const retired = new Map(Object.entries(RETIRED).map(([id, info]) => [id, retiredBackend(id, info)]));

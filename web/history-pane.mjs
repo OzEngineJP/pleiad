@@ -351,10 +351,10 @@ export function createHistoryPane(hooks) {
    * 分からなければエージェント名のまま）、ツールカードを主の会話の toolCards に登録せず、委譲のカードに「開く」を付けない
    * （openFromCard はメインパネルの会話を親として子を探すので、別の会話の筋では違う子を開く）。
    * linkCards は、読むだけの筋でも、委譲のカードに「開く」を付け、ツールカードをこの実例の toolCards に登録する（子の会話の筋。ctx に子の会話を持たせて開く）。
-   * backend は発言に backend が無いときの発言者。sessionId は Web 検索の失敗に接続先の一文を足すときに引く会話。
+   * backend は発言に backend が無いときの発言者。account はその会話のアカウント（発言者のモデル名は、そのアカウントの一覧で引く。Mythos など一覧がアカウントごとに違うモデルの名前が生の ID に戻らないように）。sessionId は Web 検索の失敗に接続先の一文を足すときに引く会話。
    * user を渡すと人の発言をそれで描く（詳細の最初の発言の「依頼」）
    */
-  function historyRow(m, { cont = false, refs = [], prev = null, readonly = false, linkCards = false, backend, sessionId = currentSession(), user = null, presents = [] } = {}) {
+  function historyRow(m, { cont = false, refs = [], prev = null, readonly = false, linkCards = false, backend, account = '', sessionId = currentSession(), user = null, presents = [] } = {}) {
     const system = systemHistoryNode(m);
     if (system !== undefined) {
       const repeated = system?.matches('.m.sys.interrupted') && prev?.querySelector(':scope .m.sys.interrupted');
@@ -367,7 +367,7 @@ export function createHistoryPane(hooks) {
     if (m.role === "user") node = user ? user(m) : userMsg(m.text, { uuid: readonly ? undefined : m.uuid, at: m.at, presents, markdown: !readonly, scheduledFor: m.scheduledFor, sentBy: m.sentBy });
     else {
       node = aiMsg({ uuid: readonly ? undefined : m.uuid, at: m.at, backend: m.backend ?? backend, cont, model: m.switchedModel });
-      if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(backendVocab(backend)?.models ?? {}, m.model);
+      if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(backendVocab(backend, account)?.models ?? {}, m.model);
       if (m.thinking) node.append(thinkFromText(m.thinking));
       const cards = (m.toolCalls ?? []).map((c) => {
         const card = renderToolCall(c.name, c.input, { id: c.id, at: c.at, startedAt: c.startedAt, endAt: c.endAt });

@@ -61,14 +61,18 @@ export function shortLabel(w) {
   return label.replace(/\s*[（(][^（）()]*[）)]\s*$/, '') || full;
 }
 
-const familyOf = s => /(fable|opus|sonnet|haiku)/i.exec(String(s ?? ''))?.[1].toLowerCase() ?? null;
+/** モデルの系統（Mythos は Fable と同じ使用枠を使うので fable として扱う） */
+const familyOf = s => {
+  const f = /(mythos|fable|opus|sonnet|haiku)/i.exec(String(s ?? ''))?.[1].toLowerCase();
+  return f === 'mythos' ? 'fable' : f ?? null;
+};
 const modelWords = s => String(s ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 
 /**
  * モデルに合う枠だけに絞る。枠の持つ系譜の情報と、モデル名を照合する（server 側の windowsFor と同じ判定）。
  * - w.provider … `openrouter/…` の `/` の前と一致するものだけ（OpenCode）。一致が無ければ空（別の接続先の枠は出せない）
  * - w.group … モデル名の語といちばん合うグループだけ。gemini / claude / gpt の系統名を含むグループに限り、専用のグループ（'Gemini 4 Argon'）は系統・汎用の語を除いた名前の語が全部モデル名に入るときだけ（Antigravity）
- * - w.model … モデルと同じ系統（fable/opus/sonnet/haiku）か、系統指定の無い枠だけ（Claude）
+ * - w.model … モデルと同じ系統（fable/opus/sonnet/haiku。mythos は fable と同じ枠）か、系統指定の無い枠だけ（Claude）
  * 系統・グループは合うものが見つからなければ全部返す（モデル名から系統が読めないときに空になる方が悪い）
  */
 export function windowsForModel(windows = [], model = '') {

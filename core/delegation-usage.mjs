@@ -12,34 +12,114 @@ import { maskEmail } from './usage.mjs';
 export const REFRESH_MS = 5 * 60_000;
 /** これを超えて古い値は usage_stale（core/delegation-routing.mjs の checkCandidate）。取得間隔の 3 倍 */
 export const STALE_MS = REFRESH_MS * 3;
+/** 一覧の確かめ直し（warm）を繰り返さない間隔。確かめたら、その間は同じバックエンドをもう一度確かめない */
+export const WARM_MS = 30 * 60_000;
+
+/**
+ * 監視の warm の方針（一覧を確かめ直す・登録するのは server.mjs）。バックエンドごとに、WARM_MS のあいだは繰り返さない。
+ *   アカウントごとに一覧を持つエージェント（capabilities.accounts が 'token'）… warmModels を回し、成否・ログイン中のアカウントの状態によらず
+ *       回したら立てる（ログイン中が未ログインでも、登録したアカウントの一覧だけを引く使い方があり、失敗が続いても 5 分ごとに CLI を起こさない）。ADR 0329
+ *   それ以外 … 一覧は引かず、ログインの確認（auth.status。agy はこれで一覧を覚える）だけ。確かめられたら立て、未ログイン・失敗なら次の取り直しでまた確かめる
+ * warmModels(b) は、そのエージェントの一覧をログイン中＋使える登録アカウントの分だけ引く（失敗は呑む）。now は試験用
+ */
+export function createUsageWarm({ warmModels, now = () => Date.now(), intervalMs = WARM_MS }) {
+  const last = new Map();
+  return async b => {
+    if (now() - (last.get(b.id) ?? -Infinity) < intervalMs) return;
+    if (b.capabilities?.accounts === 'token') {
+      await warmModels(b).catch(() => {});
+      last.set(b.id, now());
+      return;
+    }
+    if (!b.auth?.status) return;
+    const status = await b.auth.status().catch(() => null);
+    if (status?.loggedIn) last.set(b.id, now()); else last.delete(b.id);
+  };
+}
 
 /**
  * backends()   … 有効なバックエンド（listBackends）
  * installed(id)… CLI が入っているか
  * read(b)      … 使用量（providerQuota）
  * candidates() … 今の設定の候補（'backend:model' の一覧）
- * modelKnown(b, model) … そのモデルが一覧にあるか（一覧の id と行の resolvedModel の名前）。一覧を引く前なら warm(b) を 1 回呼んでから見直す
+ * modelKnown(b, model, account, { passive }) … そのモデルが一覧にあるか（一覧の id と行の resolvedModel の名前）。一覧を引く前なら warm(b) を 1 回呼んでから見直す。
+ *               passive が true のとき（アカウントごとに一覧を持つエージェント。capabilities.accounts が 'token'）は、手元の一覧だけで答えること
+ *               （一覧の CLI を起こさない・待たない。取り直しを伴う確かめをしない。起こすのは warm だけ。ADR 0329）
+ * warm(b)      … 一覧を確かめ直す（繰り返さない間隔・エージェントごとの違いは createUsageWarm）。アカウントごとに一覧を持つエージェントでは、
+ *               アカウントの数だけ時間がかかりうるので、使用量の公開を待たせず、公開した後に（アカウントを 1 つずつ順に）呼ぶ。
+ *               一覧が変わったときだけ、もう 1 回知らせる
+ * scopeForAccount(b, account) … 候補に書かれたアカウントの範囲に絞ったバックエンド（使えなければ null）。アカウントごとに一覧を持つエージェントだけに使う
  * claudeIdentities() … { login: { org, email } | null, accounts: [{ id, hasToken, identity }] }
  */
 export function createUsageMonitor({ backends, installed = () => true, read, candidates, modelKnown, warm = async () => {}, claudeIdentities = async () => null,
-  intervalMs = REFRESH_MS, onChange = () => {} }) {
+  scopeForAccount = null, intervalMs = REFRESH_MS, onChange = () => {} }) {
   let state = {};
   let running = null, timer = null, again = false;
+  // アカウントごとに一覧を持つエージェントの warm は、公開の後に回す。回す先のバックエンド id（まとめて 1 本で順に処理する）
+  let rechecking = null;
+  const recheckIds = new Set();
 
-  async function one(b, wanted) {
-    // accountable: アカウントを持てるエージェント（登録が無ければ、選ぶのはログイン中のアカウント）
-    const entry = { available: installed(b.id), checkedAt: null, windows: [], models: {}, accountable: Boolean(b.capabilities?.accounts) };
-    if (!entry.available) return entry;
-    const models = [...new Set(wanted.filter(c => c.backend === b.id).map(c => c.model))];
-    // modelKnown が一覧を引くとき、候補ごとに取りに行かないよう 1 回の確認では一覧の取りかけを分け合う。
-    // warm の後の再確認では新しい取りかけを許す（一覧が裏で更新されているかもしれない）
-    const known = async () => {
+  /** 候補は `backend:model`・`backend@<account>:model`（ADR 0264。delegation-routing.mjs の parseCandidate と同じ形） */
+  const parseWanted = () => candidates().map(c => {
+    const at = c.indexOf(':');
+    const [backend, account] = c.slice(0, at).split('@');
+    return { backend, account: account ?? '', model: c.slice(at + 1) };
+  });
+  /** アカウントごとに一覧を持つエージェントか（能力の印。id は見ない） */
+  const perAccountList = b => b.capabilities?.accounts === 'token';
+  const anyMissing = k => Object.values(k.accountModels).some(map => Object.values(map).some(v => !v));
+
+  /** そのバックエンドの候補が、候補のアカウントの一覧にあるか（accountModels は '' がログイン中・指定なし。models はアカウントを問わず 1 つでもあれば true） */
+  async function knownFor(b, wanted) {
+    const byAccount = new Map();
+    for (const c of wanted) {
+      if (c.backend !== b.id) continue;
+      const acct = c.account ?? '';
+      if (!byAccount.has(acct)) byAccount.set(acct, new Set());
+      byAccount.get(acct).add(c.model);
+    }
+    // modelKnown が一覧を引くとき、候補のたびに取り直さないよう、1 回の確認では一覧の取りかけを分け合う（最初の呼び出しの 1 本。引数は問わない）。
+    // アカウントの範囲に絞ったバックエンドは、そのアカウントの一覧を別に持つ。範囲に絞らないもの（対象がバックエンドのまま）は 1 本を全員で分け合う
+    const shareModels = target => {
+      if (typeof target?.models !== 'function') return target;
       let list = null;
-      const shared = typeof b.models === 'function' ? { ...b, models: (...args) => (list ??= b.models(...args)) } : b;
-      return Object.fromEntries(await Promise.all(models.map(async m => [m, await modelKnown(shared, m).catch(() => false)])));
+      return { ...target, models: (...args) => (list ??= target.models(...args)) };
     };
-    entry.models = await known();
-    if (Object.values(entry.models).some(v => !v)) { await warm(b).catch(() => {}); entry.models = await known(); }
+    const shared = shareModels(b);
+    const accountModels = {};
+    const models = {};
+    await Promise.all([...byAccount.entries()].map(async ([acct, set]) => {
+      let target = b;
+      if (acct && scopeForAccount && perAccountList(b)) {
+        try { target = await scopeForAccount(b, acct); } catch { target = null; }
+      }
+      if (!target) {
+        accountModels[acct] = Object.fromEntries([...set].map(m => [m, false]));
+        return;
+      }
+      const backend = target === b ? shared : shareModels(target);
+      // アカウントごとに一覧を持つエージェントは、手元の一覧だけで読む（passive）。アカウントの数だけ一覧の CLI が並んで起きない・使用量の公開を待たせない
+      const passive = perAccountList(b);
+      const entries = await Promise.all([...set].map(async m => [m, await modelKnown(backend, m, acct, { passive }).catch(() => false)]));
+      accountModels[acct] = Object.fromEntries(entries);
+      for (const [m, ok] of entries) models[m] = Boolean(models[m] || ok);
+    }));
+    return { models, accountModels };
+  }
+
+  async function one(b, wanted, deferred) {
+    // accountable: アカウントを持てるエージェント（登録が無ければ、選ぶのはログイン中のアカウント）
+    const entry = { available: installed(b.id), checkedAt: null, windows: [], models: {}, accountModels: {}, accountable: Boolean(b.capabilities?.accounts) };
+    if (!entry.available) return entry;
+    const applyKnown = k => { entry.models = k.models; entry.accountModels = k.accountModels; };
+    const first = await knownFor(b, wanted);
+    applyKnown(first);
+    if (anyMissing(first)) {
+      // 一覧に無いモデルは、一覧を確かめ直して（warm）から見直す。アカウントごとに一覧を持つエージェントは、確かめ直しが長引きうる（アカウントの数だけ
+      // CLI を順に起こす）ので、使用量の公開の後に回す（deferred に積む）。ほかのエージェントはこれまでどおりここで待つ
+      if (perAccountList(b)) deferred.add(b.id);
+      else { await warm(b).catch(() => {}); applyKnown(await knownFor(b, wanted)); }
+    }
     if (!b.usage) return entry;
     let quota;
     try { quota = await read(b); } catch { return entry; }
@@ -67,17 +147,46 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
   }
 
   async function refreshAll() {
-    // 候補は `backend:model`・`backend@<account>:model`（ADR 0264。delegation-routing.mjs の parseCandidate と同じ形）
-    const wanted = candidates().map(c => { const at = c.indexOf(':'); return { backend: c.slice(0, at).split('@')[0], model: c.slice(at + 1) }; });
+    const wanted = parseWanted();
     const list = backends();
     const next = {};
-    await Promise.all(list.map(async b => { next[b.id] = await one(b, wanted).catch(() => ({ available: false, checkedAt: null, windows: [], models: {} })); }));
+    const deferred = new Set();
+    await Promise.all(list.map(async b => { next[b.id] = await one(b, wanted, deferred).catch(() => ({ available: false, checkedAt: null, windows: [], models: {}, accountModels: {} })); }));
     state = next;
     onChange();
+    // 公開した後で、一覧の確かめ直し（アカウントごとに一覧を持つエージェント）を回す。公開の遅れは、アカウントの数に比例させない
+    if (deferred.size) scheduleRecheck(deferred);
+  }
+
+  /** 一覧の確かめ直し（warm）→ 見直し。取り直しの 1 回の公開とは別に、変わったときだけ現在の値の models・accountModels を差し替えてもう 1 回知らせる */
+  async function recheck(id) {
+    const b = backends().find(x => x.id === id);
+    if (!b || !installed(b.id)) return;
+    await warm(b).catch(() => {});
+    const k = await knownFor(b, parseWanted());
+    const current = state[id];
+    if (!current) return;
+    if (JSON.stringify([current.models, current.accountModels]) === JSON.stringify([k.models, k.accountModels])) return;
+    state = { ...state, [id]: { ...current, models: k.models, accountModels: k.accountModels } };
+    onChange();
+  }
+  /** 確かめ直しは 1 本で、バックエンドごとに順に回す（同じ取り直しが続けて呼んでも重ならない。一覧の CLI を並べて起こさない） */
+  function scheduleRecheck(ids) {
+    for (const id of ids) recheckIds.add(id);
+    if (rechecking) return;
+    rechecking = (async () => {
+      try {
+        while (recheckIds.size) {
+          const [id] = recheckIds;
+          recheckIds.delete(id);
+          await recheck(id).catch(() => {});
+        }
+      } finally { rechecking = null; }
+    })();
   }
 
   const monitor = {
-    /** 取り直す。走っている最中に呼ばれたら、終わった後にもう 1 回取り直す */
+    /** 取り直す。走っている最中に呼ばれたら、終わった後にもう 1 回取り直す。戻るのは使用量の公開まで（一覧の確かめ直しは待たない） */
     refresh() {
       if (running) { again = true; return running; }
       running = (async () => {
@@ -85,6 +194,10 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
         finally { running = null; }
       })();
       return running;
+    },
+    /** 取り直しと、その後の一覧の確かめ直しがすべて終わるまで待つ（試験用） */
+    async settle() {
+      while (running || rechecking) await Promise.allSettled([running, rechecking].filter(Boolean));
     },
     /** 今の値（同期）。取得中は前回の値 */
     snapshot() { return state; },

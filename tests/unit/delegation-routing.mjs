@@ -5,7 +5,7 @@ import { effortCapability } from '../../core/effort.mjs';
 import { KINDS, SIGNALS, DEFAULTS, DEFAULT_JUDGE, DECISION_THRESHOLD, levelOrder, kindOrder, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, pickAccount, sameIdentity, tierAccounts, candidateId,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJudge, judgeDifficulty, normalizeKey, TASK_LIMIT, JUDGE_USE, JUDGE_SERVICE } from '../../core/delegation-judges.mjs';
-import { createUsageMonitor, REFRESH_MS, STALE_MS } from '../../core/delegation-usage.mjs';
+import { createUsageMonitor, createUsageWarm, REFRESH_MS, STALE_MS, WARM_MS } from '../../core/delegation-usage.mjs';
 import { claudeQuota, codexQuota } from '../../core/usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
@@ -131,7 +131,10 @@ export default async function (t) {
 
   // ---- 候補に効く枠
   const cq = claudeQuota({ rate_limits: { five_hour: { utilization: 10 }, seven_day: { utilization: 20 }, seven_day_opus: { utilization: 90 }, model_scoped: [{ display_name: 'Fable', utilization: 85 }] } });
-  t.ok('Claude: 全体の枠と、そのモデルの系統の週次だけが効く', windowsFor('claude', 'opus', cq.windows).length === 3 && windowsFor('claude', 'sonnet', cq.windows).length === 2 && windowsFor('claude', 'fable', cq.windows).length === 3);
+  t.ok('Claude: 全体の枠と、そのモデルの系統の週次だけが効く（Mythos は Fable の週次）', windowsFor('claude', 'opus', cq.windows).length === 3 && windowsFor('claude', 'sonnet', cq.windows).length === 2
+    && windowsFor('claude', 'fable', cq.windows).length === 3
+    && windowsFor('claude', 'claude-mythos-5-2', cq.windows).length === 3 && windowsFor('claude', 'claude-mythos-5-2', cq.windows).some(w => String(w.model ?? '').toLowerCase() === 'fable')
+    && windowsFor('claude', 'claude-mythos-5-1', cq.windows).length === 3 && windowsFor('claude', 'claude-mythos-5-1', cq.windows).some(w => String(w.model ?? '').toLowerCase() === 'fable'));
   const xq = codexQuota({ rateLimitsByLimitId: { codex: { limitId: 'codex', primary: { usedPercent: 10, windowDurationMins: 10080 } }, astra: { limitId: 'x1', limitName: 'GPT-6-Astra', primary: { usedPercent: 95, windowDurationMins: 10080 } } } });
   t.ok('Codex: 主の枠はどのモデルにも効き、追加の枠は名前が当たるモデルだけ', windowsFor('codex', 'gpt-6-sol', xq.windows).length === 1 && windowsFor('codex', 'gpt-6-astra', xq.windows).length === 2);
   const aq = antigravityQuota({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [
@@ -414,6 +417,221 @@ export default async function (t) {
   t.ok('CLI が入っていないバックエンドは使えない（使用量も取らない）', snap.codex.available === false && reads === 2);
   t.ok('登録したアカウントは行ごとに判定し（トークンの無い行は no_token）、同じ人かは識別子で分かる', checkCandidate('claude@acct-2:opus', { usage: snap, settings, now: NOW }).detail === 'no_token'
     && sameIdentity(snap.claude.accounts[0].identity, snap.claude.accounts[1].identity) && !sameIdentity(snap.claude.accounts[0].identity, snap.claude.accounts[2].identity));
+
+  const mythosUsage = {
+    claude: {
+      available: true, checkedAt: NOW, windows: [],
+      models: { opus: true },
+      accountModels: { '': { opus: true }, verified: { 'claude-mythos-5-2': true, opus: true }, plain: { opus: true } },
+      accounts: [
+        { account: '', label: 'login', runnable: true, windows: [h5(10), week(10, 50)] },
+        { account: 'verified', label: 'verified', runnable: true, windows: [h5(10), week(85, 50, { model: 'fable' })] },
+        { account: 'plain', label: 'plain', runnable: true, windows: [h5(10), week(10, 50)] },
+      ],
+    },
+  };
+  const mythosCheck = checkCandidate('claude@verified:claude-mythos-5-2', { usage: mythosUsage, settings: softSettings, now: NOW });
+  t.ok('Mythos の候補の判定は Fable の週次の枠で判定する', mythosCheck.ok === true && mythosCheck.deferred === true && mythosCheck.reason === 'quota_high'
+    && mythosCheck.window?.usedPercent === 85, JSON.stringify(mythosCheck));
+  const mythosWarns = settingsWarnings({
+    settings: normalizeSettings({ tiers: { t4: ['claude@verified:claude-mythos-5-2', 'claude@plain:claude-mythos-5-2', 'claude:claude-mythos-5-2'] } }),
+    usage: mythosUsage,
+  });
+  t.ok('accountModels: アカウントごとにあるモデルだけを一覧ありとみなし、無いアカウントだけ警告する',
+    !mythosWarns.some(w => w.candidate === 'claude@verified:claude-mythos-5-2')
+    && mythosWarns.some(w => w.candidate === 'claude@plain:claude-mythos-5-2' && w.reason === 'model_unknown')
+    && mythosWarns.some(w => w.candidate === 'claude:claude-mythos-5-2' && w.reason === 'model_unknown'), JSON.stringify(mythosWarns));
+
+  t.ok('固定の自動委譲の段（t1〜t4）に Mythos は入れない（持たないアカウントがあるので、利用者が候補に書いたときだけ使う）',
+    Object.values(DEFAULTS.tiers).flat().every(c => !/mythos/i.test(c)), JSON.stringify(DEFAULTS.tiers));
+
+  const acctCatalogs = { '': { opus: {} }, 'acct-1': { opus: {}, 'claude-mythos-5-2': {} }, 'acct-2': { opus: {} } };
+  const scopedMonitor = createUsageMonitor({
+    backends: () => [{ id: 'claude', usage: true, capabilities: { accounts: 'token' }, models: async () => acctCatalogs[''] }],
+    installed: () => true,
+    read: async () => ({
+      windows: [], checkedAt: NOW,
+      accounts: [
+        { label: 'login', accountId: null, windows: [h5(10)] },
+        { label: 'verified', accountId: 'acct-1', windows: [h5(10)] },
+        { label: 'plain', accountId: 'acct-2', windows: [h5(10)] },
+      ],
+    }),
+    candidates: () => ['claude:opus', 'claude:claude-mythos-5-2', 'claude@acct-1:claude-mythos-5-2', 'claude@acct-2:claude-mythos-5-2'],
+    scopeForAccount: async (b, acct) => ({ ...b, models: async () => acctCatalogs[acct] ?? {} }),
+    modelKnown: async (b, m) => Object.hasOwn(await b.models(), m),
+    claudeIdentities: async () => ({ login: null, accounts: [{ id: 'acct-1', hasToken: true }, { id: 'acct-2', hasToken: true }] }),
+  });
+  await scopedMonitor.refresh();
+  const scopedSnap = scopedMonitor.snapshot();
+  t.ok('使用量の取り置き: 候補ごとのモデル確認を scopeForAccount 経由でアカウントごとの accountModels に保持する',
+    scopedSnap.claude.accountModels['']?.['claude-mythos-5-2'] === false
+    && scopedSnap.claude.accountModels['acct-1']?.['claude-mythos-5-2'] === true
+    && scopedSnap.claude.accountModels['acct-2']?.['claude-mythos-5-2'] === false
+    && scopedSnap.claude.accountModels['']?.opus === true, JSON.stringify(scopedSnap.claude.accountModels));
+  await scopedMonitor.settle();
+
+  // ---- 使用量の取り置き: アカウントごとに一覧を持つエージェント（capabilities.accounts が 'token'）は、一覧の確かめ直し（warm）を使用量の公開の後に回す（ADR 0329）。
+  // 公開はアカウントの数に比例して遅れない・確かめ直しはバックエンドごとに 1 本ずつ順に走る・一覧が変わったときだけもう 1 回知らせる
+  {
+    let warmRunning = 0, warmPeak = 0, warmStarts = 0, lateKnown = false, changes = 0;
+    let releaseWarm;
+    const warmGate = new Promise(r => { releaseWarm = r; });
+    const tokenBackends = ['claude', 'claude2'].map(id => ({ id, usage: true, capabilities: { accounts: 'token' } }));
+    const lateMonitor = createUsageMonitor({
+      backends: () => tokenBackends, installed: () => true,
+      read: async () => ({ windows: [], checkedAt: Date.now(), accounts: [] }),
+      candidates: () => ['claude:late-model', 'claude@a1:late-model', 'claude@a2:late-model', 'claude@a3:late-model', 'claude2:late-model'],
+      scopeForAccount: async (b, acct) => ({ ...b, scoped: acct }),
+      modelKnown: async () => lateKnown,
+      warm: async () => { warmStarts++; warmRunning++; warmPeak = Math.max(warmPeak, warmRunning); await warmGate; lateKnown = true; warmRunning--; },
+      onChange: () => { changes++; },
+    });
+    const outcome = await Promise.race([lateMonitor.refresh().then(() => 'published'), new Promise(r => setTimeout(() => r('blocked'), 1500))]);
+    const published = lateMonitor.snapshot();
+    t.ok('アカウントごとに一覧を持つエージェントの確かめ直し（warm）が終わらなくても、使用量は公開される（公開は確かめ直しを待たない）',
+      outcome === 'published' && changes === 1 && published.claude?.models['late-model'] === false && published.claude?.accountModels.a1?.['late-model'] === false
+      && published.claude2?.models['late-model'] === false, `${outcome} ${changes} ${JSON.stringify(published)}`);
+    t.ok('確かめ直しは公開の後に、バックエンドごとに 1 本ずつ始まる（先のバックエンドが終わるまで次は始まらない）', warmStarts === 1 && warmPeak === 1, `${warmStarts} ${warmPeak}`);
+    releaseWarm();
+    await lateMonitor.settle();
+    const after = lateMonitor.snapshot();
+    t.ok('確かめ直しは順に 1 本ずつ走り、一覧が変わったバックエンドだけ現在の値へ差し替えてもう 1 回知らせる',
+      warmStarts === 2 && warmPeak === 1 && changes === 3 && after.claude.models['late-model'] === true && after.claude.accountModels.a2['late-model'] === true
+      && after.claude2.models['late-model'] === true, `${warmStarts} ${warmPeak} ${changes} ${JSON.stringify(after)}`);
+    await lateMonitor.refresh();
+    await lateMonitor.settle();
+    t.ok('一覧が揃っていれば確かめ直さない（取り直しの公開だけ）', warmStarts === 2 && changes === 4, `${warmStarts} ${changes}`);
+
+    // 一覧に出ないままの候補（別の承認が要るモデルを書いたアカウントなど）。確かめ直しは取り直し 1 回につき 1 回で、アカウントの数に比例させない
+    let missWarms = 0;
+    const missMonitor = createUsageMonitor({
+      backends: () => [tokenBackends[0]], installed: () => true,
+      read: async () => ({ windows: [], checkedAt: Date.now(), accounts: [] }),
+      candidates: () => ['claude@a1:gone', 'claude@a2:gone', 'claude@a3:gone', 'claude@a4:gone', 'claude@a5:gone'],
+      scopeForAccount: async (b, acct) => ({ ...b, scoped: acct }),
+      modelKnown: async () => false,
+      warm: async () => { missWarms++; },
+    });
+    for (let i = 0; i < 3; i++) { await missMonitor.refresh(); await missMonitor.settle(); }
+    t.ok('一覧に出ないままの候補があっても、確かめ直しは取り直し 1 回につき 1 回（アカウントの数だけ起こさない）',
+      missWarms === 3 && Object.values(missMonitor.snapshot().claude.accountModels).every(map => map.gone === false), String(missWarms));
+
+    // アカウントを登録するエージェント（capabilities.accounts が 'agent'）は、これまでどおり一覧の確かめ直しを待ってから公開し、アカウントの範囲には絞らない（ベースの一覧で判定する）
+    let agentWarms = 0, agentScopes = 0, agentKnown = false;
+    const agentMonitor = createUsageMonitor({
+      backends: () => [{ id: 'codex', usage: true, capabilities: { accounts: 'agent' } }], installed: () => true,
+      read: async () => ({ windows: [], checkedAt: Date.now(), accounts: [] }),
+      candidates: () => ['codex@acct-1:gpt-6-sol', 'codex:gpt-6-sol'],
+      scopeForAccount: async () => { agentScopes++; return null; },
+      modelKnown: async () => agentKnown,
+      warm: async () => { agentWarms++; agentKnown = true; },
+    });
+    await agentMonitor.refresh();
+    t.ok('accounts が agent のエージェントは、確かめ直しを待ってから公開し（公開の後に回さない）、アカウントの範囲には絞らない',
+      agentWarms === 1 && agentScopes === 0 && agentMonitor.snapshot().codex.models['gpt-6-sol'] === true && agentMonitor.snapshot().codex.accountModels['acct-1']['gpt-6-sol'] === true,
+      `${agentWarms} ${agentScopes} ${JSON.stringify(agentMonitor.snapshot())}`);
+    await agentMonitor.settle();
+
+    // 監視は、アカウントごとに一覧を持つエージェント（'token'）の一覧を「手元の一覧だけで答えて」と頼む（passive。取り直しの確かめで一覧の CLI を並べて起こさない）。
+    // ほかのエージェントにはこれまでどおり頼む（passive にしない）
+    const asked = [];
+    const passiveMonitor = createUsageMonitor({
+      backends: () => [tokenBackends[0], { id: 'codex', usage: true, capabilities: { accounts: 'agent' } }, { id: 'fake', capabilities: {} }], installed: () => true,
+      read: async () => ({ windows: [], checkedAt: Date.now(), accounts: [] }),
+      candidates: () => ['claude:m', 'claude@a1:m', 'codex:m', 'codex@a2:m', 'fake:m'],
+      scopeForAccount: async (b, acct) => ({ ...b, scoped: acct }),
+      modelKnown: async (b, model, account, opts) => { asked.push(`${b.id}|${account}|${Boolean(opts?.passive)}`); return true; },
+    });
+    await passiveMonitor.refresh();
+    await passiveMonitor.settle();
+    t.ok('監視は、アカウントごとに一覧を持つエージェントだけ passive（手元の一覧だけ）で確かめるよう頼む',
+      JSON.stringify([...asked].sort()) === JSON.stringify(['claude|a1|true', 'claude||true', 'codex|a2|false', 'codex||false', 'fake||false'].sort()), JSON.stringify(asked));
+  }
+
+  // ---- 使用量の取り置き: 一覧の確かめ直し（warm）の方針（createUsageWarm。ADR 0329）。
+  // アカウントごとに一覧を持つエージェント（'token'）だけ一覧を引き直し（warmModels）、成否・ログイン中の状態によらず 30 分に 1 回まで。
+  // ほかのエージェントは一覧を引かず、これまでどおりログインの確認（auth.status）だけ。時計は差し替えて、30 分の境目を見る
+  {
+    t.ok('確かめ直しを繰り返さない間隔は 30 分', WARM_MS === 30 * 60_000);
+    let clock = 5_000_000;
+    const now = () => clock;
+    const MIN = 60_000;
+
+    // ログイン中のアカウントが未ログインで、登録したアカウントのトークンだけで使うとき。一覧に出ない候補が残り続けても、取り直しのたびに確かめ直さない
+    let tokenWarms = 0, tokenStatus = 0;
+    const loggedOutToken = { id: 'claude', usage: true, capabilities: { accounts: 'token' }, auth: { status: async () => { tokenStatus++; return { loggedIn: false }; } } };
+    const tokenMonitor = createUsageMonitor({
+      backends: () => [loggedOutToken], installed: () => true,
+      read: async () => ({ windows: [], checkedAt: Date.now(), accounts: [] }),
+      candidates: () => ['claude@a1:gone'],
+      scopeForAccount: async (b, acct) => ({ ...b, scoped: acct }),
+      modelKnown: async () => false,
+      warm: createUsageWarm({ warmModels: async b => { if (b.id === 'claude') tokenWarms++; }, now }),
+    });
+    const tokenStart = clock;
+    for (let i = 0; i < 4; i++) { await tokenMonitor.refresh(); await tokenMonitor.settle(); clock += 5 * MIN; }
+    t.ok('アカウントごとに一覧を持つエージェントは、ログイン中が未ログインでも、一覧の確かめ直しは 30 分に 1 回（取り直しを 5 分ごとに重ねても 1 回）',
+      tokenWarms === 1 && tokenStatus === 0 && tokenMonitor.snapshot().claude.accountModels.a1.gone === false, `${tokenWarms} ${tokenStatus}`);
+    clock = tokenStart + WARM_MS - 1;
+    await tokenMonitor.refresh(); await tokenMonitor.settle();
+    t.ok('30 分に 1 ミリ秒足りないあいだは、まだ確かめ直さない', tokenWarms === 1, String(tokenWarms));
+    clock = tokenStart + WARM_MS;
+    await tokenMonitor.refresh(); await tokenMonitor.settle();
+    t.ok('30 分たったら、もう 1 回だけ確かめ直す', tokenWarms === 2, String(tokenWarms));
+    await tokenMonitor.refresh(); await tokenMonitor.settle();
+    t.ok('確かめ直したら、また 30 分は繰り返さない', tokenWarms === 2, String(tokenWarms));
+
+    // 一覧を引くのが失敗し続けても（オフラインなど）同じ。失敗した確かめ直しを、取り直しのたびに（一覧の CLI を起こして）繰り返さない。バックエンドごとに数える
+    const failedIds = [];
+    const failWarm = createUsageWarm({ warmModels: async b => { failedIds.push(b.id); throw new Error('offline'); }, now });
+    const failTokens = [{ id: 'claude', capabilities: { accounts: 'token' } }, { id: 'claude2', capabilities: { accounts: 'token' } }];
+    let rejected = false;
+    for (let i = 0; i < 4; i++) { for (const b of failTokens) await failWarm(b).catch(() => { rejected = true; }); clock += 5 * MIN; }
+    t.ok('一覧を引くのが失敗し続けても 30 分は繰り返さず（バックエンドごとに 1 回）、失敗を呼び出し元へ投げない',
+      JSON.stringify(failedIds) === JSON.stringify(['claude', 'claude2']) && !rejected, JSON.stringify(failedIds));
+    clock += WARM_MS;
+    for (const b of failTokens) await failWarm(b);
+    t.ok('失敗しても、30 分たてばまた確かめ直す', failedIds.length === 4, String(failedIds.length));
+
+    // ほかのエージェント（accounts が 'agent'・アカウントを持たない・何も無い）は、一覧を引く口があっても回さない。ログインの確認だけ（agy はこれで一覧を覚える）。これまでどおり
+    let otherWarms = 0, statusCalls = 0, loggedIn = true;
+    const status = async () => { statusCalls++; return { loggedIn }; };
+    const other = createUsageWarm({ warmModels: async () => { otherWarms++; }, now });
+    const otherBackends = [
+      { id: 'devin', capabilities: {}, warmModels: async () => { otherWarms++; }, auth: { status } },
+      { id: 'grok', capabilities: { accounts: 'agent' }, warmModels: async () => { otherWarms++; }, auth: { status } },
+      { id: 'antigravity', auth: { status } },
+    ];
+    for (let i = 0; i < 3; i++) for (const b of otherBackends) await other(b);
+    t.ok('ほかのエージェントは一覧を引き直さず、ログインを確かめたら 30 分は繰り返さない', otherWarms === 0 && statusCalls === 3, `${otherWarms} ${statusCalls}`);
+    clock += WARM_MS;
+    for (const b of otherBackends) await other(b);
+    t.ok('ほかのエージェントも、30 分たてばまたログインを確かめる（一覧は引かない）', otherWarms === 0 && statusCalls === 6, `${otherWarms} ${statusCalls}`);
+    loggedIn = false; statusCalls = 0;
+    clock += WARM_MS;
+    for (let i = 0; i < 3; i++) for (const b of otherBackends) await other(b);
+    t.ok('未ログインのままなら、ほかのエージェントは取り直しのたびにまた確かめる（これまでどおり）', otherWarms === 0 && statusCalls === 9, `${otherWarms} ${statusCalls}`);
+    statusCalls = 0;
+    await other({ id: 'plain', capabilities: {}, warmModels: async () => { otherWarms++; } });
+    let flaky = 0;
+    const flakyBackend = { id: 'flaky', auth: { status: async () => { flaky++; throw new Error('failed'); } } };
+    await other(flakyBackend); await other(flakyBackend);
+    t.ok('ログインを確かめる口が無ければ何もせず、確かめに失敗したら未ログインと同じに次の取り直しでまた確かめる', otherWarms === 0 && statusCalls === 0 && flaky === 2, `${otherWarms} ${statusCalls} ${flaky}`);
+
+    // 監視を通しても同じ: 一覧に出ない候補があるアカウント付きのエージェント（'agent'）は、公開の前に 1 回だけログインを確かめ、一覧は引き直さない
+    let agentWarmModels = 0, agentStatus = 0;
+    const agentBackend = { id: 'grok', usage: true, capabilities: { accounts: 'agent' }, auth: { status: async () => { agentStatus++; return { loggedIn: true }; } } };
+    const agentMonitor = createUsageMonitor({
+      backends: () => [agentBackend], installed: () => true,
+      read: async () => ({ windows: [], checkedAt: Date.now(), accounts: [] }),
+      candidates: () => ['grok:gone'],
+      modelKnown: async () => false,
+      warm: createUsageWarm({ warmModels: async () => { agentWarmModels++; }, now }),
+    });
+    for (let i = 0; i < 3; i++) { await agentMonitor.refresh(); await agentMonitor.settle(); clock += 5 * MIN; }
+    t.ok('監視を通しても、ほかのエージェントの確かめ直しは一覧を引かず、ログインの確認が 30 分に 1 回', agentWarmModels === 0 && agentStatus === 1 && agentMonitor.snapshot().grok.models.gone === false, `${agentWarmModels} ${agentStatus}`);
+  }
 
   // ---- 使用量の取り置き: 古ければ判定と並行して取り直す（ensureFresh）。
   // 待ちの上限は unref のタイマーなので、遅らせる側は必ず実タイマー（setTimeout）にする。

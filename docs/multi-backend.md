@@ -299,7 +299,9 @@ export const backend = {
                                 // refresh: 選ぶときに「一覧に無い」を確かめ直す呼び出し（server の validModel）。
                                 // TTL・受動の間隔を無視して取り直し、結果を待ってよい（直前の失敗・直近の取得から
                                 // 短い間は手元の一覧で答えてよい——確かめが並ぶ経路で CLI を連発しない）。
-                                // 読まない backend はそのまま再判定される
+                                // 読まない backend はそのまま再判定される。
+                                // passive: 手元の一覧だけで答える（CLI を起こさない・待たない。使用量の判定用）。
+                                // アカウントごとに一覧を持つ backend（capabilities.accounts が 'token'。§2.11）が読む
 
   // ---- 実行
   runTurn({ prompt, sessionId, cwd, mode, model, emit, askPermission, signal, control })
@@ -1063,6 +1065,15 @@ plugin は `opencode/pleiad-plugin-v2/` の package として配置する。ツ�
 **移行と更新。** v1 の会話がある場合は、CLI 起動前に SQLite の一貫した `.pleiad-before-v2.db` バックアップを作り、公式変換の完了を待つ。継続する会話は発言・添付まで検証し、欠落があれば原本を残して開始を断る。外部 URL の v1 添付は公式変換で内容を保持できない場合がある。
 
 最初の v1→v2 更新は旧サーバーの作業が終わってから切り替える。以降の共有プロセスは保持役のまま、札・履歴・保留中の承認と質問・active・inbox からターンを復元する。本文は snapshot と差分を重ねず、終了時の全文で補う。plugin は小さな接続先ファイルを毎回読み、新しい Pleiad は MCP の URL も更新する。ポートが変わっても OpenCode を止めない。処理中に切り替わった MCP 呼び出しは一度失敗する場合があり、以降は新しい接続先を使う。
+
+### 2.11 モデルの一覧をアカウントごとに引く（Claude、2026-11）
+
+Claude のモデルの一覧は、アカウント（組織）で変わる（承認された組織のアカウントにだけ出るモデルがある）。`capabilities.accounts` が `'token'` のバックエンド（Claude）は、一覧を引く単位に作業場所のほかアカウントを足し、アカウントごとに引いて確かめる。ADR 0310（作業場所ごと・正確な一致）の続きで、経緯と決めたことは [ADR 0329](adr/0329-claude-per-account-model-catalog.md)。
+
+- **束縛。** サーバーは、会話・委譲先・bot のアカウントごとに `backendForAccount(backend, account)` で束縛した backend を使う（Claude は `forAccount` を実装している）。束縛した `models()`・`warmModels()`・`validModel`・`matchModel`・`runTurn`・`internalTurn` は、そのアカウントのトークンだけを `claudeEnv(process.env, { token })` で渡して動く（設定フォルダーは共有のまま）。削除済み・トークンの無いアカウントは、ログイン中のアカウントへ落とさず、一覧・確かめ・実行を断る backend（`accountUnavailableBackend`。`'agent'` 種の `offlineAccountBackend` と同じ形）で包む
+- **状態。** 一覧の記憶・「どれか 1 件取れた一覧」・起動直後の待ち・進行中の取得・無効化の世代は、鍵 `'login'` / `'account:<id>'`（トークンは入れない）ごとに別。別のアカウントの一覧を代わりに返さず、一覧をまだ取れていないアカウントは、短く待って固定の一覧で答える（そのあいだ形の正しい ID は断らない）
+- **引く時機。** 画面の要求・確かめは手元の一覧で答え、寿命（30 分）を過ぎていれば裏で引き直す。`models(cwd, { passive: true })` は手元の一覧だけで答える（CLI を起こさない・待たない。使用量の取り置きの判定用）。起動時・SDK 取得後の先読み（`warmModels`）は、ログイン中と使える登録アカウントを 1 つずつ順に引く。アカウントの追加・トークンの差し替え・削除は `invalidateModels(accountId)` でそのアカウントの記憶だけを捨て、追加・差し替えは引き直す。一覧が手元に入った・変わったときは `onModelsChanged` の口で知らせ、サーバーが画面へ `claudeAccountsChanged` を送る
+- **画面。** 語彙の要求・取得の鍵にアカウントを入れ、アカウントを替えたら引き直す。アカウントを替えて今のモデルが新しい一覧に無いときは、`accounts: 'agent'` のバックエンドと同じ扱い（会話は `settings.modelUnavailable` で断る）
 
 ## 3. 変えないこと
 

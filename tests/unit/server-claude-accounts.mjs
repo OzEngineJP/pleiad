@@ -129,6 +129,14 @@ export default async function (t) {
     await c.cmd('suggestTitle', { sessionId: forked.sessionId }).then(
       () => t.ok('タイトル生成も別のアカウントへ落とさない', false),
       e => t.ok('タイトル生成も別のアカウントへ落とさない', e.message.includes('削除されています')));
+    // 消したアカウントの会話は一覧に残り、画面が呼ぶものは落ちない。別のアカウント（ログイン中）を選び直せば、また走る
+    const stranded = await row(forked.sessionId);
+    t.ok('消したアカウントの会話も一覧に残る', stranded?.claudeAccount === work);
+    t.ok('消したアカウントの会話でも、アカウントの選択肢は引ける', (await c.cmd('claudeAccounts')).accounts.every(a => a.id !== work));
+    const reselected = await c.cmd('setTurnSettings', { sessionId: forked.sessionId, account: '' });
+    t.ok('消したアカウントの会話でも、別のアカウントを選び直せる', reselected?.account === '');
+    await c.runTurn({ sessionId: forked.sessionId, prompt: 'whoami' });
+    t.ok('選び直した次のターンはそのアカウントで走る', lastText(await c.cmd('loadSession', { sessionId: forked.sessionId })) === 'account:none' && (await row(forked.sessionId)).claudeAccount === '');
 
     const files = [await fs.readFile(path.join(scratch, 'claude-accounts.json'), 'utf8').catch(() => ''), JSON.stringify(readSessions(scratch))];
     t.ok('一覧・会話の記録にトークンを書かない', files.every(text => !text.includes(TOKEN)));

@@ -125,12 +125,51 @@ const MODELS = FALLBACK_MODELS;
 // そのときの段は settings.json の effortLevel で補う（applied: false）。
 // CATALOG_WAIT は手元に一覧が何も無いとき（起動直後の初回）だけ待つ上限。引き直しは 9〜11 秒掛かるので、8 秒待っても
 // 間に合わず固定の一覧で答えていた。起動のときに warmModels で引いておくので、ここで待つのは起動から数秒の間だけにする
-const CATALOG_TTL = 30 * 60_000, CATALOG_RETRY = 60_000, CATALOG_WAIT = 3_000;
+const CATALOG_TTL = 30 * 60_000, CATALOG_RETRY = 60_000, CATALOG_WAIT = 3_000, CATALOG_MAX = 64;
 const PROVIDER_ENV = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
   "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_GATEWAY"];
-// 引く条件（作業場所・段に効く設定）ごとに 1 件。{ value, at, failed, probe, cliSig }
-const catalogs = new Map();
-let anyCatalog = null, anyCatalogSig = null;   // どれか 1 件でも取れたか（別の作業場所の一覧で先に答える stand() の手元の答え）
+// アカウントごとに一覧・再試行待ち・手元の答え・世代を分ける（別のアカウントの一覧を混ぜない）。
+// キーは `'login'` または `'account:<id>'`（トークンそのものはキーにしない）
+const states = new Map();
+const accountScopeKey = (account) => {
+  const id = typeof account === "string" ? account : account?.id;
+  return id ? `account:${id}` : "login";
+};
+function stateFor(account) {
+  const key = accountScopeKey(account);
+  let s = states.get(key);
+  if (!s) {
+    s = { key, gen: 0, catalogs: new Map(), anyCatalog: null, anyCatalogSig: null, coldSince: 0 };
+    states.set(key, s);
+  }
+  return s;
+}
+function invalidateCatalog(accountId) {
+  if (accountId === undefined) {
+    for (const s of states.values()) s.gen++;
+    states.clear();
+    return;
+  }
+  const key = accountScopeKey(accountId);
+  const s = states.get(key);
+  if (s) { s.gen++; states.delete(key); }
+}
+// 一覧が手元に入った・変わったことを知らせる口（サーバーが画面へ取り直しを促す。ADR 0329）。
+// 画面の要求が先に着いて固定の一覧を答えたあと（起動直後・アカウントの追加直後）に本物の一覧が取れても、画面からは見えないので、
+// 取れた時点で知らせる。渡すのはアカウントの id だけ（トークンは渡さない。ログイン中は ''）。
+// 答えていた一覧と同じ中身のとき（TTL の取り直し・別の作業場所の取得）は知らせない
+const catalogListeners = new Set();
+function onCatalogChange(listener) {
+  catalogListeners.add(listener);
+  return () => catalogListeners.delete(listener);
+}
+const sameCatalog = (a, b) => JSON.stringify([a?.rows, a?.efforts]) === JSON.stringify([b?.rows, b?.efforts]);
+function notifyCatalogChange(account) {
+  const id = (typeof account === "string" ? account : account?.id) || "";
+  for (const listener of catalogListeners) {
+    try { listener({ account: id }); } catch { /* 知らせる側の失敗で一覧の取得を巻き込まない */ }
+  }
+}
 
 // CLI の実体（パス・更新時刻・サイズ）の目印。claude update でモデルが増えても（2026-09-29、
 // 2.1.284 で Sonnet 5.5）CATALOG_TTL の 30 分は古い一覧のままだったので、版が変わったら TTL 内でも引き直す。
@@ -150,7 +189,8 @@ function cliSignature() {
 }
 function resetCliSignatureCache() { cliSigAt = 0; cliSigValue = null; }
 
-async function probeCatalog(cwd, withSettings) {
+async function probeCatalog(cwd, withSettings, account = null) {
+  if (account?.id && !account?.token) throw new Error("missing Claude account token");
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 30_000);
   const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
@@ -158,7 +198,10 @@ async function probeCatalog(cwd, withSettings) {
   try {
     const query = sdk.query ?? (await loadClaudeSdk()).query;
     q = query({ prompt: idle(), options: {
-      pathToClaudeCodeExecutable: claudeExecutable(), env: claudeEnv(process.env), abortController: ac,
+      pathToClaudeCodeExecutable: sdk.executable(),
+      // アカウントの指定があるときは会話と同じ共有の設定フォルダ＋そのアカウントのトークンで引く
+      env: claudeEnv(process.env, account?.token ? { token: account.token } : {}),
+      abortController: ac,
       ...(withSettings
         ? { settingSources: ["user", "project", "local"], settings: { disableAllHooks: true }, strictMcpConfig: true, mcpServers: {}, ...(cwd ? { cwd } : {}) }
         : { settingSources: [] }),
@@ -175,6 +218,10 @@ async function probeCatalog(cwd, withSettings) {
       }
     }
     return { rows, efforts, applied: withSettings };
+  } catch (err) {
+    if (!account?.token) throw err;
+    // 元のエラー（message・cause・追加のプロパティ）にはトークンが混ざりうるので渡さない。伏せた文面と、見分けに要る code / kind だけを持つ新しいエラーにする
+    throw Object.assign(new Error(redactToken(err?.message ?? err, account.token)), err?.code ? { code: err.code } : {}, err?.kind ? { kind: err.kind } : {});
   } finally {
     clearTimeout(timer);
     try { q?.close?.(); } catch { /* 既に閉じている */ }
@@ -182,6 +229,8 @@ async function probeCatalog(cwd, withSettings) {
   }
 }
 sdk.probe ??= probeCatalog;
+// 試験用: 一覧の取得（CLI を起こす 1 回分）そのもの。投げるエラーにトークンが混ざらないことを試験が確かめる
+export const probeClaudeCatalogForTest = (cwd, withSettings, account = null) => probeCatalog(cwd, withSettings, account);
 
 /** コネクターの読み取りの上限（ms）。画面の待ちはこれ以上にする */
 export const CONNECTOR_PROBE_MS = 20_000;
@@ -211,73 +260,117 @@ export async function probeClaudeConnectors({ deny = [], token = null } = {}) {
 }
 
 /** anyCatalog を、今の CLI の目印と食い違わない間だけ返す。食い違ったら（版が変わった）忘れる */
-function freshAnyCatalog(cliSig) {
-  if (anyCatalog && cliSig && anyCatalogSig && cliSig !== anyCatalogSig) { anyCatalog = null; anyCatalogSig = null; coldSince = 0; }
-  return anyCatalog;
+function freshAnyCatalog(scope, cliSig) {
+  if (scope.anyCatalog && cliSig && scope.anyCatalogSig && cliSig !== scope.anyCatalogSig) {
+    scope.anyCatalog = null; scope.anyCatalogSig = null; scope.coldSince = 0;
+  }
+  return scope.anyCatalog;
 }
-// 手元に一覧が何も無いまま待ち始めた時刻。待つのは CATALOG_WAIT までを全員で共有する（呼ぶたびに数え直さない。
-// 起動直後は newSession・models・efforts が続けて来るので、数え直すと 3 秒ずつ重なる）
-let coldSince = 0;
-function loadCatalog(cwd, pref, { refresh = false } = {}) {
+/**
+ * 一覧を引かずに、手元にあるものだけで答える（使用量の判定用。CLI を起こさない・待たない・記憶の並びも変えない）。
+ * このアカウント・この条件の一覧（期限切れでも）→ このアカウントで別の条件に取れた一覧 → 無ければ null（呼び出し側は固定の一覧で答える）
+ */
+function passiveCatalog(cwd, pref, account) {
+  const scope = states.get(accountScopeKey(account));
+  if (!scope) return null;
+  const key = pref.custom ? "custom" : `${cwd || ""}|${pref.sig}`, cliSig = cliSignature();
+  const e = scope.catalogs.get(key);
+  if (e?.value && !(e.cliSig && cliSig && e.cliSig !== cliSig)) return e.value;
+  return (freshAnyCatalog(scope, cliSig) && { ...scope.anyCatalog, applied: false }) || null;
+}
+/** 手元の答えを返しながら（または先読みで）裏で引き直している一覧が、どこかのアカウントにあるか */
+function backgroundRefreshBusy() {
+  for (const s of states.values()) for (const x of s.catalogs.values()) if (x.probe && x.background) return true;
+  return false;
+}
+function loadCatalog(cwd, pref, { refresh = false, waitProbe = false, passive = false } = {}, account = null) {
+  if (passive) return Promise.resolve(passiveCatalog(cwd, pref, account));
+  const scope = stateFor(account);
+  const { catalogs, gen } = scope;
   // 別の接続先のときは設定を読まないので、作業場所で結果は変わらない
   const key = pref.custom ? "custom" : `${cwd || ""}|${pref.sig}`, now = Date.now();
   const cliSig = cliSignature();
   let e = catalogs.get(key);
   if (!e) {
-    if (catalogs.size >= 32) catalogs.delete(catalogs.keys().next().value);
-    e = { value: null, at: 0, failed: 0, probe: null, cliSig: null }; catalogs.set(key, e);
+    if (catalogs.size >= CATALOG_MAX) catalogs.delete(catalogs.keys().next().value);
+    e = { value: null, at: 0, failed: 0, probe: null, background: false, cliSig: null }; catalogs.set(key, e);
+  } else {
+    catalogs.delete(key); catalogs.set(key, e);
   }
   // CLI の版が変わっていたら（claude update）、30 分の TTL 内・失敗の再試行待ちの中でも忘れて引き直す
   if (e.cliSig && cliSig && e.cliSig !== cliSig) { e.value = null; e.at = 0; e.failed = 0; }
   if (!refresh && e.value && now - e.at < CATALOG_TTL) return Promise.resolve(e.value);
-  // 手元の答え: この条件の古い一覧 → 別の条件で取れた一覧（段は利用者の設定で補う）。無ければ null（固定の一覧で答える）
-  const stand = () => e.value ?? (freshAnyCatalog(cliSig) && { ...anyCatalog, applied: false }) ?? null;
+  // 手元の答え: このアカウント・この条件の古い一覧 → このアカウントで別の条件に取れた一覧（段は利用者の設定で補う）。無ければ null（固定の一覧で答える）
+  const stand = () => e.value ?? (freshAnyCatalog(scope, cliSig) && { ...scope.anyCatalog, applied: false }) ?? null;
   // 失敗の再試行待ちは取り直し（refresh）でも守る（失敗し続ける間、確かめるたびに CLI を起こして待たせない）
   if (now - e.failed < CATALOG_RETRY) return Promise.resolve(stand());
   // 明示の取り直し（models({ refresh })。選ぶときに「一覧に無い」を確かめ直す呼び出し）は TTL を無視して起こし、
   // 結果を待つ。ただしその条件の一覧を取ってから再試行待ちと同じ間（60 秒）は手元の一覧を返す——「一覧に無い」の
   // 確かめが並ぶ経路（委譲の読み替え・候補ごとの確かめ）で CLI を続けて起こさないため
   if (refresh && e.value && now - e.at < CATALOG_RETRY) return Promise.resolve(e.value);
-  e.probe ??= sdk.probe(cwd, !pref.custom)
+  if (!e.probe) {
+    // 手元の答えを返しながら裏で引き直す呼び出し（取り直し・先読み・初回の待ちではないもの）は、アカウントをまたいでも 1 本ずつにする。
+    // 期限切れの一覧が何件あっても、一覧を開く・使用量を取り直すたびに CLI が並んで起きない（次の呼び出しが順に引く）。
+    // 先読み（waitProbe）は自分で順に並べるので止めないが、走っている間は裏の取り直しを重ねない
+    if (!refresh && !waitProbe && stand() && backgroundRefreshBusy()) return Promise.resolve(stand());
+    e.background = !refresh && (waitProbe || Boolean(stand()));
+  }
+  e.probe ??= (sdk.probe === probeCatalog
+    ? probeCatalog(cwd, !pref.custom, account)
+    : sdk.probe(cwd, !pref.custom, ...(account?.id ? [{ accountId: account.id }] : [])))
     .then((c) => {
+      if (scope.gen !== gen || states.get(scope.key) !== scope) return null;
       e.cliSig = cliSig;
       // CLI がときどき「短い一覧」（系統の別名の行が欠けたもの。claude-models.mjs の catalogIsComplete）を返す。
-      // 手元に完全な一覧（この条件の一覧か、別の条件で取れた一覧）があれば短い一覧で上書きせず、
+      // 手元に完全な一覧（この条件の一覧か、このアカウントの別の条件で取れた一覧）があれば短い一覧で上書きせず、
       // 失敗と同じ間隔で取り直す。完全な一覧を一度も取れていなければ短い一覧も使う（無いよりは出す）
-      const any = freshAnyCatalog(cliSig) && { ...anyCatalog, applied: false };
+      const any = freshAnyCatalog(scope, cliSig) && { ...scope.anyCatalog, applied: false };
       const best = catalogIsComplete(e.value?.rows) ? e.value : (catalogIsComplete(any?.rows) ? any : e.value ?? any);
       if (!catalogIsComplete(c.rows) && catalogIsComplete(best?.rows)) {
         e.failed = Date.now();
         return best;
       }
-      e.value = c; e.failed = 0; coldSince = 0; e.at = Date.now();
-      // 別の条件の一覧を先に答える stand() には、最後に取れた完全な一覧を持たせる（短い一覧で上書きしない）
-      if (catalogIsComplete(c.rows) || !catalogIsComplete(anyCatalog?.rows)) { anyCatalog = c; anyCatalogSig = cliSig; }
+      // これまで答えていた一覧（無ければ固定の一覧）と中身が違うときだけ、取れたことを知らせる（画面が固定の一覧を持ち続けない）
+      const answered = stand();
+      e.value = c; e.failed = 0; scope.coldSince = 0; e.at = Date.now();
+      // このアカウントで別の条件の一覧を先に答える stand() には、最後に取れた完全な一覧を持たせる（短い一覧で上書きしない）
+      if (catalogIsComplete(c.rows) || !catalogIsComplete(scope.anyCatalog?.rows)) {
+        scope.anyCatalog = c; scope.anyCatalogSig = cliSig;
+      }
+      if (!answered || !sameCatalog(answered, c)) notifyCatalogChange(account);
       return c;
     })
     .catch((err) => {
+      if (scope.gen !== gen || states.get(scope.key) !== scope) return null;
       e.failed = Date.now(); e.cliSig = cliSig;
       // SDK を取っていないだけなら黙る（固定の一覧で答える。取った後の引き直しで埋まる）
-      if (!isClaudeSdkMissing(err)) console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err));
+      if (!isClaudeSdkMissing(err)) console.error("  Claude のモデル一覧を取れなかった:", redactToken(String(err?.message ?? err), account?.token));
       return e.value;
     })
-    .finally(() => { e.probe = null; });
-  // 取れなければ手元の答え（古い一覧・別の条件の一覧・無ければ固定の一覧）に戻る
-  if (refresh) return e.probe.then((v) => v ?? stand());
+    .finally(() => { e.probe = null; e.background = false; });
+  // 取れなければ手元の答え（古い一覧・このアカウントの別条件の一覧・無ければ固定の一覧）に戻る
+  // 先読み（waitProbe）も 3 秒で抜けて次のアカウントの CLI を重ねないよう、この probe の完了まで待つ
+  if (refresh || waitProbe) return e.probe.then((v) => v ?? stand());
   // 引き直しは裏で走らせ、手元の答えがあれば待たずに返す（引き直しは CLI を起こして 10 秒ほど掛かる。会話を作る・一覧を開くたびに待たせない）
   const handy = stand();
   if (handy) return Promise.resolve(handy);
   // 手元に何も無い（起動直後の初回）ときだけ待つ。長く掛かる（未ログイン・未導入）ときは固定の一覧で先に答える
-  coldSince ||= now;
-  const left = CATALOG_WAIT - (now - coldSince);
+  scope.coldSince ||= now;
+  const left = CATALOG_WAIT - (now - scope.coldSince);
   if (left <= 0) return Promise.resolve(null);
   return Promise.race([e.probe.then((v) => v ?? stand()), new Promise((resolve) => setTimeout(() => resolve(stand()), left).unref?.())]);
 }
 
-/** 起動のときに一覧を裏で引いておく（最初の会話・一覧の要求が待たない）。作業場所は新しい会話の既定（ホーム）。失敗は黙る（引くときに出す） */
-async function warmCatalog(cwd) {
-  const pref = await preferredSettings(cwd);
-  await loadCatalog(cwd, pref);
+/** 起動のときに一覧を裏で引いておく（最初の会話・一覧の要求が待たない）。複数のアカウントも同時に CLI を起こさず順に引く */
+let warmChain = Promise.resolve();
+async function warmCatalog(cwd, account = null) {
+  const run = async () => {
+    const pref = await preferredSettings(cwd);
+    await loadCatalog(cwd, pref, { waitProbe: true }, account);
+  };
+  const p = warmChain.then(run, run);
+  warmChain = p.catch(() => {});
+  return p;
 }
 // 利用者の設定のモデルとエフォート。env が settings.json より強い（CLI と同じ順）。作業場所ごとに違いうるので cwd で引く。
 // effort は段を利用者の設定のもとで引けなかったとき（applied: false）だけ既定の段に重ねる。
@@ -300,11 +393,37 @@ async function preferredSettings(cwd) {
   preferredCache.set(key, { value, at: Date.now() });
   return value;
 }
-async function claudeModels(cwd, { refresh = false } = {}) {
+// passive: 手元の一覧だけで答える（CLI を起こさない・待たない。無ければ固定の一覧）。使用量の判定が一覧の CLI を起こさないための口
+async function claudeModels(cwd, { refresh = false, passive = false } = {}, account = null) {
   const pref = await preferredSettings(cwd);
-  const c = await loadCatalog(cwd, pref, { refresh });
+  const c = await loadCatalog(cwd, pref, { refresh, passive }, account);
   if (!c) return MODELS;
   return buildClaudeModels({ rows: c.rows, efforts: c.efforts, preferred: pref.model, preferredEffort: c.applied ? null : pref.effort });
+}
+async function validClaudeModel(model, account = null) {
+  if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;
+  if (!model) return true;
+  const scope = states.get(accountScopeKey(account));
+  return !(scope && freshAnyCatalog(scope, cliSignature())) && /^[\w.\-\[\]]+$/.test(model);
+}
+async function matchClaude(name, cwd, account = null, { passive = false } = {}) {
+  const pref = await preferredSettings(cwd);
+  const c = await loadCatalog(cwd, pref, { passive }, account);
+  return matchClaudeModel(await claudeModels(cwd, { passive }, account), c?.rows, name);
+}
+function makeScopedBackend(account) {
+  return {
+    ...backend,
+    get description() { return backend.description; },
+    models: (cwd, { refresh = false, passive = false } = {}) => claudeModels(cwd, { refresh, passive }, account),
+    warmModels: (cwd) => warmCatalog(cwd, account),
+    validModel: (model) => validClaudeModel(model, account),
+    matchModel: (name, cwd, opts) => matchClaude(name, cwd, account, opts),
+    runTurn: (opts, adopt) => backend.runTurn({ ...opts, oauthToken: opts?.oauthToken ?? (opts?.endpoint ? null : account?.token) }, adopt),
+    adoptTurn: (args) => backend.adoptTurn({ ...args, oauthToken: args?.oauthToken ?? (args?.endpoint ? null : account?.token) }),
+    internalTurn: (opts) => backend.internalTurn({ ...opts, oauthToken: opts?.oauthToken ?? (opts?.endpoint ? null : account?.token) }),
+    suggestTitle: (opts) => backend.suggestTitle({ ...opts, oauthToken: opts?.oauthToken ?? (opts?.endpoint ? null : account?.token) }),
+  };
 }
 
 // web/render.mjs の TOOL_LABEL / TOOL_DRAW を補うヒント。
@@ -701,24 +820,19 @@ export const backend = {
   toolHints: TOOL_HINTS,
 
   modes: () => MODES,
-  models: (cwd, { refresh = false } = {}) => claudeModels(cwd, { refresh }),
+  models: (cwd, { refresh = false, passive = false } = {}) => claudeModels(cwd, { refresh, passive }),
   warmModels: (cwd) => warmCatalog(cwd),
+  forAccount: (account) => account?.id ? makeScopedBackend(account) : backend,
+  invalidateModels: (accountId) => invalidateCatalog(accountId),
+  onModelsChanged: (listener) => onCatalogChange(listener),
   // server の共通の確かめ（一覧の確認 → 取り直し）のあと、それでも無いときの最後の判断:
   // 一覧を 1 度も取れていない間（未ログイン・取得が失敗し続けている）は、形の良い id を断らない
   // （使えるかは CLI が確かめる。固定の一覧に無い新しいモデル・保存済みの id を「一覧に無い」で消さない。
   // 一覧が取れたあとは共通側の結果どおり。antigravity の validModel と同じ形）
-  async validModel(model) {
-    if (typeof model !== "string" || model.length > 200 || /[\r\n\x00]/.test(model)) return false;
-    if (!model) return true;
-    return !freshAnyCatalog(cliSignature()) && /^[\w.\-\[\]]+$/.test(model);
-  },
+  validModel: (model) => validClaudeModel(model),
   // 明示して渡された名前（claude-sonnet-5-5 など）を一覧の id に当てる。当たらなければ null
   // （呼び手はそのまま送る。一覧に無い名前を系統名へ縮めない —— 指す版は CLI が決めるので、別の版で走ることがあった）
-  async matchModel(name, cwd) {
-    const pref = await preferredSettings(cwd);
-    const c = await loadCatalog(cwd, pref);
-    return matchClaudeModel(await claudeModels(cwd), c?.rows, name);
-  },
+  matchModel: (name, cwd, opts) => matchClaude(name, cwd, null, opts),
 
   // ---- 実行 ---------------------------------------------------------------
 

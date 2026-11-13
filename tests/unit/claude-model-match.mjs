@@ -74,6 +74,23 @@ export default async function (t) {
       matchClaudeModel(full, COMPLETE_ROWS, "claude-fable-5-2") === "fable");
     t.ok("短い一覧・完全な一覧を catalogIsComplete で見分ける（系統の別名の行の有無）",
       catalogIsComplete(COMPLETE_ROWS) && !catalogIsComplete(SHORT_ROWS) && !catalogIsComplete(null));
+
+    const mythosRows = [
+      ...COMPLETE_ROWS,
+      { value: "claude-mythos-5-2", resolvedModel: "claude-mythos-5-2", displayName: "Mythos 5.2", description: "" },
+      { value: "claude-mythos-5-1", resolvedModel: "claude-mythos-5-1", displayName: "Mythos 5.1", description: "" },
+    ];
+    const withMythos = buildClaudeModels({ rows: mythosRows });
+    t.ok("Mythos は CLI の行のまま（別名 mythos を作らず、空の注記だけ辞書から補う）",
+      withMythos["claude-mythos-5-2"]?.label === "Mythos 5.2"
+      && Boolean(withMythos["claude-mythos-5-2"]?.note)
+      && withMythos["claude-mythos-5-1"]?.label === "Mythos 5.1"
+      && withMythos["claude-mythos-5-1"]?.note === withMythos["claude-mythos-5-2"]?.note
+      && !("mythos" in withMythos) && !("mythos" in full)
+      && catalogIsComplete(mythosRows)
+      && matchClaudeModel(withMythos, mythosRows, "claude-mythos-5-2") === "claude-mythos-5-2"
+      && matchClaudeModel(full, COMPLETE_ROWS, "claude-mythos-5-2") === null,
+      JSON.stringify(withMythos["claude-mythos-5-2"]));
   } finally {
     restore();
     fs.rmSync(dir, { recursive: true, force: true });

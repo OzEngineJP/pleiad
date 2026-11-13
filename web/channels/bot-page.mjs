@@ -634,7 +634,7 @@ export function createBotPage(host) {
 
   /** bot のアカウントを変える（人だけ。bots.setAccount）。'' はログイン中のアカウント。作る画面では下書きに持ち、作った後に付ける */
   async function setAccount(account) {
-    if (S.draft) { S.draft.account = account; paintRun(); return; }
+    if (S.draft) { S.draft.account = account; paintRun(); loadVocab(); return; }
     const botId = S.id;
     setError('');
     await queue(async () => {
@@ -683,15 +683,26 @@ export function createBotPage(host) {
     setError('');
     createBusy = true;
     paintBusy();
+    // bots.create が返した bot（続く段の返りで置き替える）。作れたあとの段で落ちても bot はもうある（同じ名前では作り直せない）ので、
+    // この画面に「作れませんでした」と留めず、できた bot の画面へ移して、効かなかった設定をそこで選び直してもらう。自動では消さない
+    let bot = null;
     try {
-      const args = { name, icon: d.icon, backend: d.backend, ...(d.iconImage ? { iconImage: d.iconImage } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}), ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) };
-      let bot = await host.invoke('bots.create', args);
+      const withAccount = Boolean(d.account && takesAccount(d.backend));
+      const deferModel = withAccount && Boolean(d.model || d.effort);
+      const args = { name, icon: d.icon, backend: d.backend, ...(d.iconImage ? { iconImage: d.iconImage } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}), ...(deferModel ? {} : { ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) }) };
+      bot = await host.invoke('bots.create', args);
       if (d.mode && d.mode !== bot.mode) bot = await host.invoke('bots.setMode', { botId: bot.id, mode: d.mode });
-      if (d.account && takesAccount(d.backend)) bot = await host.invoke('bots.setAccount', { botId: bot.id, account: d.account });
+      if (withAccount) bot = await host.invoke('bots.setAccount', { botId: bot.id, account: d.account });
+      if (deferModel) bot = await host.invoke('bots.update', { botId: bot.id, ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) });
       S.bots.set(bot.id, bot);
       navigate({ kind: 'bot', id: bot.id });
     } catch (e) {
-      setError(t('channels:bot.createFailed', { error: message(e) }));
+      if (!bot) setError(t('channels:bot.createFailed', { error: message(e) }));
+      else {
+        S.bots.set(bot.id, bot);
+        navigate({ kind: 'bot', id: bot.id });   // 開き直し（open）が表示中のエラーを消すので、移した後に出す
+        setError(t('channels:bot.createPartial', { error: message(e) }));
+      }
     } finally {
       createBusy = false;
       paintBusy();
@@ -955,7 +966,11 @@ export function createBotPage(host) {
           // 登録・削除・トークンや資格情報の変更。そのエージェントの一覧を忘れ、見えていれば今の bot のエージェントの一覧を読み直す
           const kind = ev.type === 'claudeAccountsChanged' ? 'token' : 'agent';
           for (const backend of [...S.accounts.keys()]) if (accountKind(backend) === kind && (kind === 'token' || !ev.backend || ev.backend === backend)) S.accounts.delete(backend);
-          if (!root.hidden && accountKind(vm()?.backend) === kind) loadAccounts();
+          for (const key of [...S.vocab.keys()]) {
+            const [backend] = JSON.parse(key);
+            if (accountKind(backend) === kind && (kind === 'token' || !ev.backend || ev.backend === backend)) S.vocab.delete(key);
+          }
+          if (!root.hidden && accountKind(vm()?.backend) === kind) { loadAccounts(); loadVocab(); }
           return;
         }
         default:

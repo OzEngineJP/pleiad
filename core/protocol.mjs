@@ -313,7 +313,7 @@ export const EVENTS = new Set([
   "channelEvent",
   "notificationsChanged", // { unread, waiting } 通知の一覧（ベルのボタン。ADR 0149）の件数が変わった（sessionId は null。リモートの端末にも届く）。中身は notifications.list で取り直す
   "agentAccountsChanged", // 登録アカウントの変更。backend を付けて一覧を取り直す
-  "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す
+  "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す。アカウントごとのモデルの一覧が手元に入った・変わったときも送る（画面は固定の一覧を持ち続けず models も取り直す）
   "compatEndpointsChanged", // 互換の接続先の一覧・既定が変わった（sessionId は null）。中身は compatEndpoints コマンドで取り直す
   "voiceChanged",  // 通話に使うキーの選び直し・差し替え・削除（sessionId は null）。中身は invoke の voice.status で取り直す
   "apiKeysChanged", // API キーの登録・差し替え・削除・割り当て・確認の結果が変わった（sessionId は null）。中身は invoke の apiKeys.list で取り直す

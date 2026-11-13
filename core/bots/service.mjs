@@ -145,9 +145,14 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
   }
 
   /** モデル・エフォートの検査（明示したものだけ。無効なら INVALID）。host が無ければ形だけ */
-  async function checkModelEffort(backendId, model, effort, cwd) {
-    const backend = backendOf(backendId);
-    if (!host || !backend) return;
+  async function checkModelEffort(backendId, model, effort, cwd, account = '') {
+    const raw = backendOf(backendId);
+    if (!host || !raw) return;
+    let backend = raw;
+    if (account && typeof host.backendForAccount === 'function') {
+      try { backend = await host.backendForAccount(raw, account); }
+      catch (e) { throw invalid(`account: ${String(e?.message ?? e)}`); }
+    }
     if (model) {
       const resolved = await host.resolveModel(null, model, backend, cwd, '').catch(() => null);
       if (resolved !== model) throw invalid(`model: unknown for ${backendId}: ${model}`);
@@ -376,7 +381,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       if (input.model !== undefined && input.model !== next.model) { next.model = input.model; row('model', bot.model, next.model); }
       if (input.effort !== undefined && input.effort !== next.effort) { next.effort = input.effort; row('effort', bot.effort, next.effort); }
       if (input.model !== undefined || input.effort !== undefined || input.backend !== undefined) {
-        await checkModelEffort(next.backend, next.model, next.effort, bot.folders[0]?.path ?? os.homedir());
+        await checkModelEffort(next.backend, next.model, next.effort, bot.folders[0]?.path ?? os.homedir(), next.account);
       }
       if (input.folders !== undefined) {
         next.folders = await checkFolders(input.folders);

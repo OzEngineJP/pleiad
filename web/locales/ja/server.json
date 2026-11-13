@@ -529,6 +529,7 @@
       "defaultNote": "Claude Code の設定をそのまま使う",
       "fableFallback": "Claude 5 の最上位。いちばん重い作業向き",
       "fable": "最上位。いちばん重い作業向き",
+      "mythos": "承認された組織向け。使用枠は Fable と共有",
       "opus": "賢い。重い作業向き",
       "sonnet": "速さと賢さのつり合い",
       "haiku": "軽い。単純な作業向き"

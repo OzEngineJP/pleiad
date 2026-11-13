@@ -74,8 +74,8 @@ const newId = prefix => `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
  * @param showMenu   右クリックのメニュー（x, y, items, title）
  * @param labelOf    エージェントの名前
  * @param logo       エージェントのロゴ（backend -> 要素）
- * @param modelsOf   そのエージェントのモデルの一覧（backend -> Promise<{ [id]: { label } }>）
- * @param modelName  モデルの表示名（backend, model -> 文字）
+ * @param modelsOf   そのエージェントのモデルの一覧（(backend, account) -> Promise<{ [id]: { label } }>）
+ * @param modelName  モデルの表示名（(backend, model, account) -> 文字）
  * @param openPage   設定のほかのページへ移る（API キー）
  * @param openAccount エージェント設定のそのエージェントのアカウントを開き、その行へフォーカスを置く（backend, account -> void）
  * @param agents     候補に足せるエージェント（有効なエージェントの id。() -> string[]）
@@ -90,7 +90,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const ui = { selLv: null, renLv: false, delLv: null, delTo: null, openKind: null, delKind: null };
   // 自動選択の面で押した部品（描き直したときにフォーカスを戻す）
   let judgeFocus = '', levelMenu = null;
-  const names = { backend: id => labelOf(id), model: (backend, model) => modelName(backend, model) || model };
+  const names = { backend: id => labelOf(id), model: (backend, model, account = '') => modelName(backend, model, account) || model };
 
   // ---- 設定の中のレベル・作業の種類 ----
   const levels = () => data?.settings.levels ?? [];
@@ -175,8 +175,14 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       keyList = await apiKeyList(cmd).catch(() => null);
     }
     catch (e) { message = t('routing.settings.loadFailed', { error: e.message }); }
-    // 候補の名前は語彙から。まだ読んでいないエージェントの分を読んでから描く
-    await Promise.all([...new Set((data?.candidates ?? []).map(c => c.backend).filter(Boolean))].map(b => modelsOf(b).catch(() => null)));
+    // 候補の名前は語彙から。まだ読んでいないエージェント・アカウントの分を読んでから描く
+    const modelPairs = new Map();
+    for (const c of data?.candidates ?? []) {
+      if (!c?.backend) continue;
+      const a = c.account ?? '';
+      modelPairs.set(`${c.backend}\0${a}`, [c.backend, a]);
+    }
+    await Promise.all([...modelPairs.values()].map(([b, a]) => modelsOf(b, a).catch(() => null)));
     if (serial === refreshSerial) paint();
   }
   async function save(patch) {
@@ -432,14 +438,14 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   /** 候補の名前の文字（「Sonnet · personal」）。読み上げ・並べ替えの知らせ・強さの見出しに使う */
   function candidateName(candidate) {
     const parsed = splitCandidate(candidate);
-    const model = names.model(parsed.backend, parsed.model);
+    const model = names.model(parsed.backend, parsed.model, parsed.account ?? '');
     return scopedOf(parsed) ? [model, accountText(parsed.backend, parsed.account)].join(t('routing.line.join')) : model;
   }
   /** 候補の名前の要素。アカウントは区切りの後ろで折り返す（狭い画面ではアカウントが次の行へ。区切りの前は改行しない空白） */
   function candidateLabel(candidate) {
     const parsed = splitCandidate(candidate);
     const label = el('span', 'rt-label');
-    label.append(names.model(parsed.backend, parsed.model));
+    label.append(names.model(parsed.backend, parsed.model, parsed.account ?? ''));
     if (scopedOf(parsed)) label.append(' ', el('span', 'rt-dot', '·'), ' ', el('span', 'rt-acct', accountText(parsed.backend, parsed.account)));
     return label;
   }
@@ -709,16 +715,35 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     const r = anchor.getBoundingClientRect();
     const backends = [...new Set([...agents(), ...data.candidates.map(c => c.backend)].filter(Boolean))];
     const add = candidate => saveNested('tiers', { ...data.settings.tiers, [tier]: [...list, candidate] });
-    // そのモデルで、まだレベルに無いアカウント（登録の無いエージェントは「アカウント無し」の 1 つ）
-    const free = (backend, model) => (accountsOf(backend) ?? [{ account: '' }]).filter(a => !list.includes(candidateOf(backend, model, a.account)));
+    const byAccount = new Map();
+    const usable = m => (m && Object.keys(m).length ? m : null);
+    // そのモデルが使えて、まだレベルに無いアカウント（登録の無いエージェントは「アカウント無し」の 1 つ）
+    const free = (backend, model) => (accountsOf(backend) ?? [{ account: '' }]).filter(a => {
+      const m = byAccount.get(backend)?.get(a.account ?? '');
+      return (!m || Object.hasOwn(m, model)) && !list.includes(candidateOf(backend, model, a.account));
+    });
     const accountItems = (backend, model) => free(backend, model).map(a => ({ label: accountText(backend, a.account),
       ...(a.ready ? {} : { hint: t('routing.unavailable.no_token') }), onClick: () => add(candidateOf(backend, model, a.account)) }));
     const items = await Promise.all(backends.map(async backend => {
-      const models = await modelsOf(backend).catch(() => null);
+      const accts = accountsOf(backend);
+      let models = null;
+      if (accts?.length) {
+        const per = new Map();
+        const merged = {};
+        const entries = await Promise.all(accts.map(async a => [a.account ?? '', a.ready === false ? null : usable(await modelsOf(backend, a.account ?? '').catch(() => null))]));
+        for (const [acct, m] of entries) {
+          per.set(acct, m);
+          if (m) for (const [id, info] of Object.entries(m)) if (id && !(id in merged)) merged[id] = info;
+        }
+        byAccount.set(backend, per);
+        models = Object.keys(merged).length ? merged : accts.some(a => a.ready !== false) ? null : usable(await modelsOf(backend, '').catch(() => null));
+      } else {
+        models = usable(await modelsOf(backend, '').catch(() => null));
+      }
       const ids = Object.keys(models ?? {}).filter(id => id && free(backend, id).length);
       const modelItem = id => {
         const label = models[id]?.label ?? id, hint = label === id ? '' : id;
-        return accountsOf(backend) ? { label, hint, sub: () => accountItems(backend, id) } : { label, hint, onClick: () => add(candidateOf(backend, id, '')) };
+        return accts ? { label, hint, sub: () => accountItems(backend, id) } : { label, hint, onClick: () => add(candidateOf(backend, id, '')) };
       };
       return { label: labelOf(backend), sub: () => ids.length ? ids.map(modelItem) : [{ label: t('routing.settings.noModels'), disabled: true }] };
     }));
@@ -727,7 +752,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       if (parsed.account != null || !parsed.model || !accountsOf(parsed.backend)) { add(v); return; }
       const rest = accountItems(parsed.backend, parsed.model);
       showMenu(r.left, r.bottom + 4, rest.length ? rest : [{ label: t('routing.settings.accountsAllAdded'), disabled: true }],
-        names.model(parsed.backend, parsed.model));
+        names.model(parsed.backend, parsed.model, free(parsed.backend, parsed.model)[0]?.account ?? ''));
     };
     showMenu(r.left, r.bottom + 4, [...items, { sep: true },
       { input: { placeholder: t('routing.settings.addInput'), onCommit: typed } }],
