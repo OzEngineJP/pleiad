@@ -507,6 +507,7 @@ const SUITES = [
   // 外部 MCP を名前 × エージェントで中継する・止める（ADR 0325）
   './unit/context-agent-mcp.mjs',
   './unit/context-mcp-matrix.mjs',
+  './unit/context-mcp-review.mjs',
   // 探す場所を足す（追加ルート）: 種類ごと・探す形式に従う・形式 2 からの移行
   './unit/context-roots.mjs',
   './unit/server-context.mjs',

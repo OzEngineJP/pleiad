@@ -79,8 +79,11 @@ export default async function (t) {
     fail = true; await r2.refresh();
     t.ok('読み取りが失敗しても前の一覧を残す', (await r2.get()).connectors.join() === 'Gmail,Slack');
     fail = false;
-    const both = [r2.refresh(), r2.refresh()]; await Promise.all(both);
-    t.ok('読み取りは同時に 1 つだけ', calls === 3, calls);
+    const before = calls;
+    const both = [r2.refresh({ force: true }), r2.refresh({ force: true })]; await Promise.all(both);
+    t.ok('読み取りは同時に 1 つだけ', calls === before + 1, calls);
+    const again = calls; await r2.refresh();
+    t.ok('読めてから 5 分は、開くたびに読み直さない', calls === again, calls);
 
     // --- 更新の前後で、今の接続が変わらない（担当の 2 択 → 名前ごと）
     await fs.mkdir(path.join(cwd, '.git'), { recursive: true });
@@ -102,6 +105,34 @@ export default async function (t) {
         t.ok(`更新の前後で ${agent} に見える MCP が同じ（もとは「${owner === 'ply' ? 'Pleiad がそろえる' : '任せる'}」）`, seen(before) === seen(after), { before: seen(before), after: seen(after) });
       }
     }
+
+    // --- 6 エージェント・Antigravity の定義・コネクター・プラグイン・名前で外したもの・探す対象でなかったエージェントを含めても、Claude・Codex の接続が変わらない
+    await write(path.join(cwd, 'opencode.json'), JSON.stringify({ mcp: { oc: { type: 'local', command: ['oc-cmd'] } } }));
+    await write(path.join(cwd, '.devin/mcp_config.json'), JSON.stringify({ mcpServers: { dv: { command: 'dv-cmd' } } }));
+    await write(path.join(home, '.gemini/settings.json'), JSON.stringify({ mcpServers: { ag: { command: 'ag-cmd' } } }));
+    await write(path.join(cwd, '.codex/config.toml'), '[mcp_servers.cx]\ncommand = "cx-cmd"\n[mcp_servers.both]\ncommand = "both-cmd"\n[mcp_servers.cxd]\ncommand = "cxd-cmd"\nenabled = false\n');
+    const six = { claude: ['cl', 'both'], codex: ['cx', 'both', 'cxd'], antigravity: ['ag'], opencode: ['oc'], devin: ['dv'], grok: [] };
+    const extras = { claude: ['claude.ai Gmail', 'plugin:p:s'] };
+    const sixInfo = { registered: ['reg'], native: six, disabled: { codex: ['cxd'] }, spreadFrom: ['claude', 'codex'], extras };
+    for (const [owner, disabled] of [['native', []], ['ply', []], ['ply', ['both']]]) {
+      const kind = { owner, disabled };
+      const before = legacyPlan(scope, scope), after = legacyPlan(scope, scope);
+      after.mcp.agents = mcpAgentsFromLegacy(kind, sixInfo);
+      if (disabled.length) before.mcp.disabled = disabled;
+      for (const agent of ['claude', 'codex']) {
+        const b = await resolveRuntime({ version: 2, cwd, owners: { instruction: 'native', skill: 'native', mcp: owner }, plan: before, agent }, { home, plyServers, agent });
+        const a = await resolveRuntime({ version: 2, cwd, owners: { instruction: 'native', skill: 'native', mcp: 'ply' }, plan: after, agent }, { home, plyServers, agent });
+        const own = six[agent].filter(n => !(sixInfo.disabled[agent] ?? []).includes(n));
+        const ex = agent === 'claude' ? extras.claude : [];
+        const visible = (r, legacyPly) => [...new Set([...r.servers.map(x => x.name),
+          ...(legacyPly ? [] : [...own, ...ex].filter(n => !r.mcp.suppress.includes(n) && !r.servers.some(x => x.name === n)))])].sort().join();
+        t.ok(`6 エージェントの設定でも、更新の前後で ${agent} に見える MCP が同じ（もとは「${owner === 'ply' ? 'Pleiad がそろえる' : '任せる'}」${disabled.length ? '・名前で外してある' : ''}）`,
+          visible(b, owner === 'ply') === visible(a, false), { before: visible(b, owner === 'ply'), after: visible(a, false) });
+      }
+    }
+    // Antigravity は、更新の後も自分の設定の MCP を自分で読む（inheritMcp のまま）。Pleiad は自分の登録だけを渡す
+    const agAfter = await resolveRuntime({ version: 2, cwd, owners: { instruction: 'native', skill: 'native', mcp: 'ply' }, plan: (() => { const x = legacyPlan(scope, scope); x.mcp.agents = mcpAgentsFromLegacy({ owner: 'native' }, sixInfo); return x; })(), agent: 'antigravity' }, { home, plyServers, agent: 'antigravity' });
+    t.ok('Antigravity: 自分の設定は渡さず（自分で読む）、止める名前も作らない', !agAfter.servers.some(x => x.name === 'ag') && agAfter.mcp.suppress.length === 0, { servers: agAfter.servers.map(x => x.name), mcp: agAfter.mcp });
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

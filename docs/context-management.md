@@ -82,7 +82,7 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 - `contextSettings { cwd? }`：画面の形。`defaults` と `places[]`（保存した場所と今の場所）それぞれで、種類ごとの `{ value, override, from }`、種類ごとの追加ルート `roots: { <kind>: { value, override, from } }`、「個別に変更」の数（`overrides`。種類と種類ごとの追加ルートの上書きの数）、`current`（今の場所）、`saved`。設定の画面は `defaults` だけ、会話の右パネルは今の場所（`current`）を使う。
 - `setContextSettings`：1 か所だけ変えて即時保存し、`contextSettings` と同じ形（と `place`）を返す。`{ place: null | パス, kind, value: K | null }`（場所で `null` は既定に戻す）、`{ place, kind?, roots: [...] | null }`（`kind` を省くと 3 種すべて）、`{ place, add: true }` / `{ place, remove: true }`（右パネルの「全体の設定に戻す」は `remove`）。
 - `scanContext { cwd, place?: "default", scope?: "user" }`：保存済み設定から候補・出典・診断・探索場所・根（`home` / `root`）・MCP 設定ファイルごとの登録の書き出し（`configs`）を返す。`place: "default"` は場所の上書きを使わず既定だけで探す。`scope: "user"` はユーザーの範囲（home と既定の追加ルート）だけを探す（設定の画面のユーザーの段。作業場所のファイルを混ぜない）。同一接続の重複スキャンは拒否する。
-- `agentMcp { cwd }`：各エージェント（Claude・Codex）の設定に登録されている外部 MCP。探索の設定に関係なく読むだけ（接続・起動しない）。設定の「エージェントに任せる」と会話の右パネルが見比べに使う。
+- `agentMcp { cwd }`：各エージェント（Claude・Codex・OpenCode・Devin・Grok・Antigravity。読めるもの）の設定に登録されている外部 MCP。探索の設定に関係なく読むだけ（接続・起動しない）。設定の「エージェントに任せる」と会話の右パネルが見比べに使う。
 - `slashSkills { cwd }`：同じ探索結果から、入力欄の先頭 `/` に出すスキルだけを名前順に返す（`skillList()`）。各項目は `{ name, description, hint, from }`。同名は選んだ定義（`prefer`）、無ければ先に見つかった置き場所だけを返し、除外・shadowed は含めない。`hint` は frontmatter の `argument-hint`、または引数の定義から作る。
 - `sessionContext { sessionId }`：その会話の読み込み記録・担当・固定の有無と、固定された会話だけ行う今のファイルとの突き合わせ（`changed`）、Pleiad が入れた指示（`added`）を返す。詳細は `docs/context-runtime.md`。
 - `plyInstructions {}` / `setPlyInstructions { action, … }`：Pleiad の指示の一覧（画面の言語の文・項目ごとと合計のトークン数）と、足す・編集・スイッチ・削除・既定に戻す・並べ替え。`docs/context-runtime.md`「Pleiad の指示」。
@@ -94,7 +94,8 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 ## 外部 MCP の画面（2026-09-20）
 
 設定 › プラグインの「外部 MCP」カードに集約した（旧「MCP 管理」の JSON 直書き画面は廃止）。
-- **（2026-11-14 から設定 › プラグインでは [ADR 0325](adr/0325-external-mcp-by-name-and-agent.md) の名前 × エージェントの一覧。以下は会話の右パネルの場所ごとの 2 択）**
+- **名前 × エージェントの一覧（2026-11-14 から。[ADR 0325](adr/0325-external-mcp-by-name-and-agent.md)）**: 設定 › プラグインでは担当の 2 択を使わない。`context.mcpMatrix` が行（Pleiad の登録・各エージェントの設定・プラグイン・コネクター）とセルを返し、`context.setMcpAgent` が 1 つのセルを保存する（一覧に無い名前・押せないセル・読めていないコネクターはエラーで保存しない）。保存は外部 MCP の `agents`（`off`・`spread`）で、あると `owners.mcp` は常に Pleiad。ルールは ADR 0325 の「決定」。
+- **（以下は旧来の担当の 2 択。設定 › プラグインでは 2026-11-14 から使わず、`agents` が無い保存と会話の右パネルの場所ごとの 2 択に残る）**
 - **エージェントに任せる**: `agentMcp` で各エージェントの登録を 2 列で見比べる。片方にしか無いものに「Claude だけ」。Pleiad は読むだけで変えない。
 - **Pleiad がそろえる**: ユーザーの段に、どの場所でもつなぐもの（Pleiad の登録と、ユーザーの範囲のエージェントの登録）を名前ごとに 1 行。作業場所の `.mcp.json` などは場所ごとなので、会話の右パネルで見る。手元で動かす／URL の区別、どの設定由来か（Pleiad に登録・Claude だけに登録・両方に登録）、ログインの状態と「ログイン」、同じ名前で中身の違う定義があれば「どちらの定義を使いますか」（`prefer`）、スイッチ（オフ = `disabled`）。行を押すと中身: Pleiad の登録は編集・名前を変える・ログイン／ログアウト・接続を確認・削除、エージェントの登録は伏せ字の定義と「Pleiad に取り込む」（`importPlyMcp`。トークンは引き継がない）。読み込む設定ファイルは段の探す形式（ユーザーは Claude の設定・Codex の設定、作業場所は `.mcp.json`・`.codex/config.toml`）。「ログインの詳細設定」（Client ID Metadata Document の URL。既定は空）は折りたたみの奥。暗号化されない起動では平文で保存することを注記する。
 - **名前を変えたとき**（`renamePlyMcp`）: 既定と各場所の設定で名前で指したものも追随させる（`contextSettings.renameMcp`）。`disabled` は新しい名前も外す（古い名前は残す。同じ名前のエージェント側の登録は前と同じく外れたまま）。`prefer` は Pleiad の登録を選んでいたものだけ新しい名前へ移す。戻り値の `settingsUpdated` は書き換えた箇所の数。始まっている会話も次のターンから今の設定（`plan.mcp`）に従う。「この会話では外す」（`removedMcp`）は会話の方針なので名前のまま変えない。
@@ -117,7 +118,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 登録の保存だけでは接続しない。Pleiad 管理の場合は、次の実行時に登録を解決して接続する。
 
-`core/context-settings.mjs` が設定の保存・継承・移行、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › プラグイン）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
+`core/context-settings.mjs` が設定の保存・継承・移行、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-mcp-matrix.mjs` が名前 × エージェントの一覧、`core/context-claude-extras.mjs` が Claude のプラグインとコネクターの読み取り、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › プラグイン）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
 
 ## Hooks（2026-09-27）
 

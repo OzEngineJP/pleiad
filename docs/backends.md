@@ -66,7 +66,7 @@ Pleiad を更新しても、共有サーバーで走っている OpenCode のタ
 
 外部 MCP は担当の 2 択ではなく名前ごとの一覧で決める（[ADR 0325](adr/0325-external-mcp-by-name-and-agent.md)）。OpenCode 自身の MCP は名前ごとに止められ、止める名前は定義を `enabled:false` で渡す。Claude は `deniedMcpServers`、Codex は `-c mcp_servers.<名前>.enabled=false` で止め、Devin・Grok・Antigravity は止める口が無い（能力の印 `nativeMcpOff`）。Grok は指示・Skills を Pleiad が担当すると `ply_context` を受け取れない。
 
-設定 › プラグインで指示・Skills を「Pleiad がそろえる」にした場所では、Pleiad がそろえたものだけを OpenCode に渡し、OpenCode 自身の AGENTS.md・Skills・MCP は読ませない。
+設定 › プラグインで指示・Skills を「Pleiad がそろえる」にした場所では、Pleiad がそろえたものだけを OpenCode に渡し、OpenCode 自身の AGENTS.md・Skills は読ませない。外部 MCP は名前ごとの一覧（上の段落）で決まり、OpenCode 自身の MCP は止めた名前だけ外れる。
 そのため、そのターンだけ専用の OpenCode を起こす（起動の数秒が足される）。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その会話では読まれない。
 
 システム管理者の設定に担当外のコンテキストがあり、隔離できない環境では開始時に理由を表示する。macOS の管理プロファイルがある場合も同様。Windows の専用サーバーは OpenCode のシステム設定用の置き場も隔離する。

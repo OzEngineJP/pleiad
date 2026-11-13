@@ -125,6 +125,9 @@ Claude はネイティブの承認経路を使う。Codex の共通 MCP は Plei
 | Skills | skills=[]、disable-slash-commands（圧縮ターンを除く）、Skill を非公開 | 発見済み SKILL.md の skills.config.enabled=false | `OPENCODE_DISABLE_EXTERNAL_SKILLS`・`OPENCODE_DISABLE_CLAUDE_CODE_SKILLS`、写した置き場に skills を置かない、会話の権限の規則で `skill` を deny |
 | MCP | strictMcpConfig=true | ネイティブ登録を無効なプレースホルダーに置換 | 全体と作業場所の設定から mcp を外す |
 | 指示の注入 | claude_code preset append | thread developerInstructions | `prompt_async` の `system` |
+| MCP（名前ごとの一覧。[ADR 0325](adr/0325-external-mcp-by-name-and-agent.md)） | 止める名前を `deniedMcpServers` に（`strictMcpConfig` にしない） | `-c mcp_servers.<名前>.enabled=false`（名前が `[A-Za-z0-9_-]` だけのとき。それ以外は止められない） | 止める名前の定義を `enabled:false` で渡す |
+
+Devin・Grok・Antigravity は自身の MCP を名前ごとに止める口が無く（能力の印 `nativeMcpOff`）、自身の設定の MCP は自身がつなぐ。同じ名前を Pleiad が中継するとき自身側が勝つので、中継しない。
 
 OpenCode は指示を会話ごとに止める口が無く、Skills の一覧もシステムプロンプトに入るため、Pleiad が担当するターンだけ専用のサーバーを起こし、ターンの終わりに止める（共有のサーバーや他会話には触れない。`core/backends/opencode-context.mjs`）。作業場所の設定を止めるので、エージェントに任せる種類（作業場所の指示ファイル・設定の instructions・`.opencode` の Skills・作業場所の mcp）は絶対パスと `OPENCODE_CONFIG_CONTENT` で渡し直す。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、そのターンでは読まれない。ply_context は中継の口（`/mcp/opencode/ply_context`）で渡す。
 
