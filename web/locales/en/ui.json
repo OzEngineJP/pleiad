@@ -1720,6 +1720,28 @@
     }
   },
   "mcp": {
+    "matrix": {
+      "groupPly": "Registered in Pleiad",
+      "groupAgent": "Agent settings",
+      "connector": "claude.ai connectors",
+      "locked": "Pleiad cannot turn this off",
+      "searching": "Looking…",
+      "pluginNote": "{{plugin}} plugin",
+      "pluginCalled": "{{name}} from the {{plugin}} plugin",
+      "connectorCalled": "connector {{name}}",
+      "kindPlugin": "Plugin MCP",
+      "originPly": "Also in the settings of {{agents}}",
+      "originAgent": "In the settings of {{agents}}",
+      "originPlugin": "In the plugins of {{agents}}",
+      "originConnector": "In the account of {{agents}}",
+      "agentsAria": "Agents that use {{name}}",
+      "agentAria": "Use {{name}} in {{agent}}",
+      "agentLockedAria": "Use {{name}} in {{agent}} (Pleiad cannot turn this off)",
+      "askAria": "Confirm connecting {{name}} to {{to}} too",
+      "ask": "This connects {{name}} from the settings of {{from}} to {{to}} too",
+      "cancel": "Cancel",
+      "confirm": "Connect"
+    },
     "state": {
       "signedIn": "Signed in",
       "signedOut": "Sign-in required",

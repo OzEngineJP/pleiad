@@ -11,7 +11,8 @@ import { el } from './dom.mjs';
 import { runMark } from './arc.mjs';
 import { renderMarkdown } from './render.mjs';
 import { copyIcon } from './icons.mjs';
-import { createMcpSection, unifyConfirm, toggleMcp } from './mcp-config.mjs';
+import { createMcpSection } from './mcp-config.mjs';
+import { createMcpMatrix } from './mcp-matrix.mjs';
 import { createPlyInstructions } from './ply-instructions-card.mjs';
 import { createHooksCard } from './hooks-card.mjs';
 import { t, fmt } from './i18n.mjs';
@@ -123,8 +124,8 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
   panel.append(root);
 
   let view = null, scan = null, scanning = false, scanVisible = false, ply = null, agents = null, adding = null;
-  // 外部 MCP を「Pleiad がそろえる」へ切り替える前の確認を開いているか（ADR 0031。担当はまだ変えていない）
-  let unifying = false;
+  // 外部 MCP の一覧（サーバーが組んだ名前 × エージェントの行。core/context-mcp-matrix.mjs）と、コネクターを読み直す回数
+  let matrix = null, matrixTicket = 0, matrixPolls = 0, matrixTimer = null;
   const opened = new Set();          // 中身を開いている行（id）
   const expanded = new Set();        // 「すべて見る」を押した種類
   let toastTimer, scanTicket = 0;
@@ -178,20 +179,7 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       b.append(el('b', null, title), el('span', null, desc));
       b.dataset.owner = id;
       b.onclick = () => {
-        // 外部 MCP を Pleiad にそろえると、どのエージェントにも同じ MCP がつながる。切り替える前にその場で確かめる（ADR 0031）。
-        // 戻すとき（エージェントに任せる）は各エージェントの元の設定に戻るだけで広がらないので、確かめない
-        // 探している途中（scan がまだ無い）も確かめる側に倒す（探し終えたら確かめの面を描く）
-        if (kind === 'mcp' && id === 'ply' && owner !== 'ply' && !unifying && (!scan || scan.entries.some(e => e.kind === 'mcp'))) {
-          unifying = true; renderCard('mcp');
-          cards.mcp.querySelector('.cx-confirm .btn-primary:not(:disabled)')?.focus();
-          return;
-        }
-        if (kind === 'mcp' && unifying) {
-          if (id !== 'ply') { unifying = false; renderCard('mcp'); cards.mcp.querySelector(`[data-owner=${id}]`)?.focus(); }
-          else cards.mcp.querySelector('.cx-confirm .btn-primary:not(:disabled)')?.focus();
-          return;
-        }
-        if (owner !== id) work(() => saveKind(kind, v => { v.owner = id; }, { rescan: kind === 'mcp' && !agents }));
+        if (owner !== id) work(() => saveKind(kind, v => { v.owner = id; }));
       };
       box.append(b);
     }
@@ -398,10 +386,8 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     const list = el('div', 'cx-list');
     list.setAttribute('role', 'group'); list.setAttribute('aria-label', t('context.tier.listAria', { kind: TEXT[kind].title }));
     if (!scan) list.append(loading());
-    else if (kind === 'mcp') mcp.renderList(list, mcpContext());
     else documentRows(list, kind);
     emptyRoots(list, kind);
-    if (kind === 'mcp') list.append(mcp.addButton(mcpContext()));
     list.append(addPlace(kind));
     tier.append(list);
     return tier;
@@ -432,6 +418,11 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     head.append(title);
     if (scanning && scanVisible) { const label = el('span', 'pending-label'); label.append(runMark(t('pending.searching')), t('pending.searching')); head.append(label); }
     card.append(head);
+    if (kind === 'mcp') {   // 外部 MCP は担当の 2 択を持たず、名前 × エージェントの一覧（web/mcp-matrix.mjs。ADR 0324）
+      mcpMatrix.render(card, mcpContext());
+      mcp.renderExtras(card, mcpContext());
+      return;
+    }
     let host = card;
     if (kind === 'instruction') {
       // 上に Pleiad の指示、下にファイルの指示（担当と 2 段）
@@ -445,36 +436,17 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     host.append(seg(kind, value.owner));
     const agy = antigravityNote(kind);
     if (agy) host.append(agy);
-    if (value.owner !== 'ply') {
-      if (kind === 'mcp' && unifying && !scan) host.append(loading());
-      else if (kind === 'mcp' && unifying) host.append(unifyConfirm({ entries: scan.entries,
-        onCancel: () => { unifying = false; renderCard('mcp'); cards.mcp.querySelector('[data-owner=ply]')?.focus(); },
-        // 担当と除外をまとめて 1 回で保存する
-        onConfirm: ({ on, off }) => work(async () => {
-          const all = scan.entries;
-          const of = name => all.filter(e => e.kind === 'mcp' && e.name === name);
-          await saveKind('mcp', v => {
-            v.owner = 'ply';
-            for (const name of off) toggleMcp(v, name, of(name), false, all);
-            for (const name of on) toggleMcp(v, name, of(name), true, all);
-          }, { rescan: !agents || on.length > 0 || off.length > 0 });   // 外した・戻したものがあれば探し直す（行の状態が変わる）
-          unifying = false;
-          renderCard('mcp');
-        }) }));
-      else if (kind === 'mcp') mcp.renderAgents(host, mcpContext());
-      else host.append(el('p', 'cx-note', TEXT[kind].note));
-      return;
-    }
+    if (value.owner !== 'ply') { host.append(el('p', 'cx-note', TEXT[kind].note)); return; }
     host.append(userTier(kind, value), placeTier(kind, value));
-    if (kind === 'mcp') mcp.renderExtras(host, mcpContext());
   }
   function mcpContext() {
-    return { cmd, cwd: home(), scanCwd: home(), scan, ply, agents, short, backends: backends(), info: info(),
+    return { cmd, cwd: home(), scanCwd: home(), scan, ply, agents, matrix, reloadMatrix, short, backends: backends(), info: info(),
       saveKind: (mutate, options) => work(() => saveKind('mcp', mutate, options)),
       reload: () => loadScan(), refreshSettings: async () => { view = await cmd('contextSettings', {}); renderAll(); }, toast: saved, status: text => { status.textContent = text; }, rerender: () => renderCard('mcp'),
       opened, loading, work };
   }
   const mcp = createMcpSection();
+  const mcpMatrix = createMcpMatrix({ section: mcp });
 
   function renderAll() {
     if (!view) return;
@@ -482,8 +454,26 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
   }
 
   // ---------------------------------------------------------------- 読み込み
+  /** 外部 MCP の一覧だけを取り直す（アイコンの保存のあと・コネクターを読んでいる間） */
+  async function reloadMatrix() {
+    const ticket = ++matrixTicket;
+    try {
+      const grid = await cmd('mcpMatrix', { cwd: home() });
+      if (ticket !== matrixTicket) return;
+      matrix = grid;
+    } catch { return; }
+    renderCard('mcp');
+    pollConnectors();
+  }
+  /** claude.ai のコネクターは Claude を裏で起こして読むので、読み終わるまで少し間をおいて取り直す（上限あり） */
+  function pollConnectors() {
+    clearTimeout(matrixTimer);
+    if (matrix?.connectors !== 'reading' || matrixPolls >= 6 || panel.hidden || !panel.isConnected) return;
+    matrixPolls++;
+    matrixTimer = setTimeout(() => reloadMatrix(), 2500);
+  }
   /** ユーザーの範囲（home と足した場所）だけを探す。作業場所のファイルは場所ごとなので、ここには出さない */
-  async function loadScan() {
+  async function loadScan({ refresh = false } = {}) {
     const ticket = ++scanTicket, target = home();
     if (!target) { scan = { entries: [], configs: [] }; renderAll(); return; }
     scanning = true;
@@ -491,13 +481,15 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     renderAll();
     const timer = setTimeout(() => { if (ticket === scanTicket) { scanVisible = true; renderAll(); } }, 150);
     try {
-      const [found, list, native] = await Promise.all([
+      const [found, list, native, grid] = await Promise.all([
         cmd('scanContext', { cwd: target, place: 'default', scope: 'user' }),
         cmd('listPlyMcp', {}).catch(() => null),
         cmd('agentMcp', { cwd: target }).catch(() => null),
+        cmd('mcpMatrix', { cwd: target, refresh }).catch(() => null),
       ]);
       if (ticket !== scanTicket) return;
       scan = found; ply = list; agents = native;
+      if (grid) { matrix = grid; pollConnectors(); }
     } catch (e) {
       if (ticket !== scanTicket) return;
       status.textContent = e.code === 'SCAN_BUSY' ? '' : t('context.scanFailed', { error: e.message });
@@ -515,15 +507,15 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
       status.textContent = t('context.loadFailed', { error: e.message });
       return;
     }
-    scan = null; adding = null; unifying = false; opened.clear(); expanded.clear();
+    scan = null; matrix = null; matrixPolls = 0; adding = null; opened.clear(); expanded.clear(); mcpMatrix.reset();
     renderAll();
-    await Promise.all([plyInstructions.load(), loadScan(), hooks.load()]);
+    await Promise.all([plyInstructions.load(), loadScan({ refresh: true }), hooks.load()]);
   }
   // どの口（画面・AI・CLI）から変えても、開いている設定のページを取り直す（web/client.mjs が settingsChanged を ply:settings-changed として渡す）
   window.addEventListener('ply:settings-changed', e => {
     const keys = e.detail?.keys ?? [];
     if (!document.body.classList.contains('settings') || panel.hidden) return;
-    if (keys.includes('context.default')) cmd('contextSettings', {}).then(v => { view = v; renderAll(); }).catch(() => {});
+    if (keys.includes('context.default')) cmd('contextSettings', {}).then(v => { view = v; renderAll(); reloadMatrix(); }).catch(() => {});
     if (keys.includes('plyInstructions')) plyInstructions.load();
   });
   // ログインが済んだら一覧の状態を取り直す（web/client.mjs が mcpAuth を ply:mcp-auth として渡す）

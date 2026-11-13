@@ -1683,6 +1683,28 @@
     }
   },
   "mcp": {
+    "matrix": {
+      "groupPly": "Pleiad に登録",
+      "groupAgent": "エージェントの設定",
+      "connector": "claude.ai のコネクター",
+      "locked": "Pleiad からは止められません",
+      "searching": "探しています…",
+      "pluginNote": "{{plugin}} のプラグイン",
+      "pluginCalled": "プラグイン {{plugin}} の {{name}}",
+      "connectorCalled": "コネクターの {{name}}",
+      "kindPlugin": "プラグインの MCP",
+      "originPly": "{{agents}} の設定にもあります",
+      "originAgent": "{{agents}} の設定にあります",
+      "originPlugin": "{{agents}} のプラグインにあります",
+      "originConnector": "{{agents}} のアカウントにあります",
+      "agentsAria": "{{name}} を使うエージェント",
+      "agentAria": "{{agent}} で {{name}} を使う",
+      "agentLockedAria": "{{agent}} で {{name}} を使う（Pleiad からは止められません）",
+      "askAria": "{{name}} を {{to}} にもつなぐ確認",
+      "ask": "{{from}} の設定の {{name}} を、{{to}} にもつなぎます",
+      "cancel": "やめる",
+      "confirm": "つなぐ"
+    },
     "state": {
       "signedIn": "ログイン済み",
       "signedOut": "ログインが必要",

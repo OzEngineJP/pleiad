@@ -468,3 +468,60 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .scx-place .scx-state{font-size:var(--fs-xs)}
 .scx-empty-result{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-s)}
 .scx-state .run svg{animation-duration:1.2s}
+/* ---- 外部 MCP の一覧（名前 × エージェント。ADR 0324） ---- */
+.cx-ags{flex:none;display:grid;grid-template-columns:repeat(6,28px);gap:4px}
+.cx-ag{position:relative;display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:var(--r-s);background:transparent;cursor:pointer;
+  transition:background-color var(--dur-fast) var(--ease-out)}
+.cx-ag .mk{display:block;width:16px;height:16px;fill:currentColor;color:var(--ink)}
+:is(.cx-ag,.cx-tab) :is(.be-codex,.be-devin,.be-grok) .mk,.cx-ag:is(.be-codex,.be-devin,.be-grok) .mk{color:var(--ink-brand)}
+.cx-tab .be-antigravity .mk,.cx-ag.be-antigravity .mk{color:var(--ink-antigravity)}
+/* 使う: 選んだ面（--surface-sel。ダークでも地から浮く）に載せる。使わない: 面を外して輪だけにし、ロゴを薄い無彩色にする */
+.cx-ag[aria-pressed=true]{background:var(--surface-sel)}
+.cx-ag[aria-pressed=true]:not([aria-disabled]):hover{background:var(--surface-3)}
+.cx-ag[aria-pressed=false]{box-shadow:inset 0 0 0 1.5px var(--surface-3)}
+.cx-ag[aria-pressed=false] .mk{opacity:.4;filter:grayscale(1)}
+.cx-ag[aria-pressed=false]:hover .mk{opacity:.75}
+.cx-ag[aria-disabled=true]{cursor:not-allowed}
+.cx-ag.none{visibility:hidden;cursor:default}
+/* そのエージェントでは使えない所（コネクターは Claude だけ）。面もロゴも無い短い線 */
+.cx-ag.na{cursor:default}
+.cx-ag.na::before{content:"";width:8px;height:1.5px;border-radius:1px;background:var(--surface-3)}
+/* 出どころ: 名前の右に、その MCP を自分の設定に持つエージェントの小さなロゴ。面も輪も無く、押せない */
+.cx-row .nl{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0}
+.cx-src{flex:none;display:inline-flex;align-items:center;gap:3px}
+.cx-src .sm{position:relative;display:grid;place-items:center;width:12px;height:12px}
+:is(.cx-src,.cx-legend) .mk{display:block;width:12px;height:12px;fill:currentColor;color:var(--ink)}
+:is(.cx-src,.cx-legend) :is(.be-codex,.be-devin,.be-grok) .mk{color:var(--ink-brand)}
+:is(.cx-src,.cx-legend) .be-antigravity .mk{color:var(--ink-antigravity)}
+.cx-row.off .cx-src{opacity:.5}
+/* 読んでいる間の行 */
+.cx-row.wait{min-height:38px}
+/* カードの中の凡例（アイコンの意味を 1 回だけ書く） */
+.cx-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:var(--fs-s);color:var(--ink-weak);line-height:1.6}
+.cx-legend .li{display:inline-flex;align-items:center;gap:6px}
+.cx-legend .li>svg:not(.mk){width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+/* ロゴと名前の対応は、マウスを載せられない画面でだけ出す */
+.cx-legend.names{display:none;gap:4px 12px}
+.cx-legend.names .li{gap:4px}
+@media (hover:none){.cx-legend.names{display:flex}}
+/* 止められない印（鍵） */
+.lk{flex:none;display:grid;place-items:center;width:14px;height:14px;border-radius:50%;color:var(--ink-weak)}
+.lk svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.cx-ag .lk{position:absolute;right:-4px;bottom:-4px;background:var(--surface-paper);color:var(--ink)}
+.cx-lockline{display:flex;align-items:center;gap:6px}
+/* 広げる前の確認。行のすぐ下に、その場で出す */
+.cx-ask{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px;margin:0 0 4px 36px;padding:8px 8px 8px 12px;background:var(--surface-1);border-radius:var(--r-s);font-size:var(--fs-s)}
+.cx-ask .q{flex:1 1 200px;min-width:0;color:var(--ink);font-weight:600}
+.cx-ask .btn{padding:3px 12px;font-size:var(--fs-s)}
+@media (max-width:700px){
+  /* 狭い幅: 1 段目に名前とスイッチ、2 段目にアイコン（押す面は 40px） */
+  .cx-row.ag{flex-wrap:wrap}
+  .cx-ags{flex:1 0 100%;justify-content:end;grid-template-columns:repeat(6,40px)}
+  .cx-ags:is(.empty,.solo){display:none}
+  .cx-ag{width:40px;height:40px}
+  .cx-ag .mk{width:20px;height:20px}
+  .cx-ag .lk{right:0;bottom:0}
+  .cx-legend.names{display:flex}
+  .cx-ask{margin-left:0}
+  .cx-ask .q{flex-basis:100%}
+}

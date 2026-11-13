@@ -633,5 +633,11 @@ export function createMcpSection() {
     return { value: () => Object.fromEntries(rows.filter(r => r.key.value.trim()).map(r => [r.key.value.trim(), r.input.value || (r.masked ? MASK : r.missing ? null : '')])) };
   }
 
-  return { renderAgents, renderList, addButton, renderExtras, openSheet, authEvent };
+  /** 行の下に出す、ログインの状態（OAuth の登録だけ）。ログインが要るときは強調する */
+  function authNote(reg) {
+    if (reg?.auth !== 'oauth') return null;
+    const state = reg.authStatus?.state, text = STATES[state] ?? STATES.error;
+    return ['signed-out', 'expired'].includes(state) ? el('span', 'cx-strong', text) : text;
+  }
+  return { renderAgents, renderList, addButton, renderExtras, openSheet, authEvent, peek, authNote };
 }
