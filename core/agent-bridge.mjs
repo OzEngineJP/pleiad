@@ -5,8 +5,16 @@ import { DEFAULT_AGENT_IDS } from './backends/agents.mjs';
 
 export const AGENTS_MCP_PATH = '/mcp/agents';
 // 文はエージェントに渡すので会話の言語で引く（agent 名前空間。docs/design.md「多言語対応」）。en は以前の英語の固定文と同じ
-/** ply_agents の instructions。locale は会話の言語、backends は backend に書けるエージェント（有効なもの） */
-export const agentInstructions = (locale, backends = DEFAULT_AGENT_IDS) => agentT(locale, 'bridge.instructions', { backends: [...backends].join(', ') });
+/**
+ * ply_agents の instructions。locale は会話の言語、backends は backend に書けるエージェント（有効なもの）。
+ * routing は委譲先の自動選択（設定 › 委譲）が有効か。無効なら「backend を省くと Pleiad が選ぶ」とは言わず、backend を必ず書かせる文にする
+ * （bridge.routingOff。ツールの説明も同じ。docs/agent-delegation.md「委譲先の自動選択」）。
+ * 有効なときの文は 1 字も変えない（同じバイト列にしてプロンプトのキャッシュを外さない）
+ */
+export const agentInstructions = (locale, backends = DEFAULT_AGENT_IDS, routing = true) => {
+  const vars = { backends: [...backends].join(', ') };
+  return routing ? agentT(locale, 'bridge.instructions', vars) : agentT(locale, 'bridge.routingOff.instructions', vars);
+};
 const str = { type: 'string' };
 const tool = (name, description, properties, required = []) => ({ name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false } });
 // i18n-dynamic: agent:bridge.kinds.
@@ -21,18 +29,22 @@ export const kindDescription = (locale, k) => {
 };
 export const kindList = (locale, kinds = DEFAULT_KINDS) => kinds.map(k => `- ${k.id}: ${kindDescription(locale, k)}`).join('\n');
 const hostList = (locale, hosts) => hosts.map(h => (h.online ? h.name : `${h.name} (${agentT(locale, 'bridge.hostOffline')})`)).join(', ');
-const delegateDescription = (locale, hosts = [], kinds = DEFAULT_KINDS) => [agentT(locale, 'bridge.tools.ply_delegate'), agentT(locale, 'bridge.title'), agentT(locale, 'bridge.kindsIntro'), kindList(locale, kinds),
+const delegateDescription = (locale, hosts = [], kinds = DEFAULT_KINDS, routing = true) => [routing ? agentT(locale, 'bridge.tools.ply_delegate') : agentT(locale, 'bridge.routingOff.ply_delegate'),
+  agentT(locale, 'bridge.title'), agentT(locale, 'bridge.kindsIntro'), kindList(locale, kinds),
   ...(hosts.length ? [agentT(locale, 'bridge.hosts', { hosts: hostList(locale, hosts) })] : [])].join('\n');
 /**
- * ツールの定義。説明は会話の言語。名前と引数（inputSchema）は言語に依らない。
+ * ツールの定義。説明は会話の言語。名前と引数（inputSchema）は言語にも自動選択の ON / OFF にも依らない。
  * backends は backend に書けるエージェント（有効なもの。server は listBackends から渡す。id の一覧をここに持たない）
  * kinds は ply_delegate の kind に書ける作業の種類（設定の kinds。直せるので固定の一覧は持たない）
+ * routing は委譲先の自動選択が有効か。無効なら ply_delegate・ply_usage の説明を、backend を省く使い方を言わない文にする（agentInstructions と同じ）
  */
-export const agentTools = (locale, hosts = [], backends = DEFAULT_AGENT_IDS, kinds = DEFAULT_KINDS) => [
-  // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。kind はどちらでも必須（振り分けの記録にも残す）
+export const agentTools = (locale, hosts = [], backends = DEFAULT_AGENT_IDS, kinds = DEFAULT_KINDS, routing = true) => [
+  // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。自動選択が無効なら backend が無いとエラー（説明もそう書く）。
+  // backend は無効のときも required にしない（省いたら、設定が無効だと言うエラーで導く。ホストへ任せるときはホストの設定で決まる）。
+  // kind はどちらでも必須（振り分けの記録にも残す）
   // host はリモートのホストへ任せる（端末側・ホスト側の両方がオンのホストがあるときだけ出す。docs/agent-delegation.md「リモートのホストへ任せる」）
   // account は backend と一緒に書き、子の登録アカウントを固定する（ply_usage の account の値。ADR 0205）
-  tool('ply_delegate', delegateDescription(locale, hosts, kinds), { kind: { type: 'string', enum: kinds.map(k => k.id) }, task: str, title: str, backend: { type: 'string', enum: [...backends] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str,
+  tool('ply_delegate', delegateDescription(locale, hosts, kinds, routing), { kind: { type: 'string', enum: kinds.map(k => k.id) }, task: str, title: str, backend: { type: 'string', enum: [...backends] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str,
     ...(hosts.length ? { host: str } : {}) }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),
@@ -40,21 +52,25 @@ export const agentTools = (locale, hosts = [], backends = DEFAULT_AGENT_IDS, kin
   tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str, backend: { type: 'string', enum: [...backends] }, model: str, effort: str, account: str }, ['taskId']),
   tool('ply_task_cancel', agentT(locale, 'bridge.tools.ply_task_cancel'), { taskId: str }, ['taskId']),
   tool('ply_task_list', agentT(locale, 'bridge.tools.ply_task_list'), {}),
-  tool('ply_usage', agentT(locale, 'bridge.tools.ply_usage'), { backend: str }),
+  tool('ply_usage', routing ? agentT(locale, 'bridge.tools.ply_usage') : agentT(locale, 'bridge.routingOff.ply_usage'), { backend: str }),
 ];
 // 子タスクを始める・動かすツール。読み取り・計画モードの会話からは呼ばせない（core/server.mjs）。
 // ply_usage や ply_task_status などの読むだけのツールは含めない
 export const DELEGATING_TOOLS = ['ply_delegate', 'ply_task_send'];
 
 // Dedicated, stable names: never remap these tools through the external-MCP hash bridge.
-export function createAgentBridge({ call, hosts = () => [], backends = () => DEFAULT_AGENT_IDS, kinds = () => DEFAULT_KINDS }) {
+// routing は、委譲先の自動選択が今有効かを返す関数（server は設定を読む）。instructions とツールの説明をその時の値で作る
+export function createAgentBridge({ call, hosts = () => [], backends = () => DEFAULT_AGENT_IDS, kinds = () => DEFAULT_KINDS, routing = () => true }) {
   const bindings = new Map();
   return {
     // locale は接続した会話の言語。橋は会話ごとに開くので、instructions・ツールの説明・エラーはその会話の言語で返す。
     // token は開き直す口の値（省略なら新しく作る。形が違う・使用中なら投げる）
     open({ origin, owner, locale, token: fixed }) {
       const token = claimToken(bindings, fixed); bindings.set(token, { owner, locale });
-      return { url: origin + AGENTS_MCP_PATH, headers: { Authorization: `Bearer ${token}` }, instructions: agentInstructions(locale, backends()),
+      // backend の一覧は開いたときのもの（会話のあいだ同じ）。自動選択の ON / OFF だけは読むたびに今の設定で決める:
+      // 会話の途中で設定を変えても、次に読んだ時（server は毎ターン読む）から文が合う。変えなければ同じバイト列
+      const list = [...backends()];
+      return { url: origin + AGENTS_MCP_PATH, headers: { Authorization: `Bearer ${token}` }, get instructions() { return agentInstructions(locale, list, routing()); },
         close: () => bindings.delete(token) };
     },
     async handle(req, res) {
@@ -78,7 +94,7 @@ export function createAgentBridge({ call, hosts = () => [], backends = () => DEF
       let result;
       if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'ply_agents', version: '1.0.0' } };  // instructions は systemPrompt の append だけで渡す（二重にしない。ADR 0169）
       else if (m.method === 'ping') result = {};
-      else if (m.method === 'tools/list') result = { tools: agentTools(locale, hosts(), backends(), kinds()) };
+      else if (m.method === 'tools/list') result = { tools: agentTools(locale, hosts(), backends(), kinds(), routing()) };
       else if (m.method === 'tools/call') {
         try {
           // host の引数は、今使えるホストが無くても受ける（会話の途中で設定が変わっても、説明つきの失敗にする。callAgentOp の host の分岐が理由を言う）

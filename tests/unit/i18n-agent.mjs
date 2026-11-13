@@ -49,6 +49,55 @@ export default async function (t) {
     t.ok(`${locale}: 種類の既定の説明は各 300 字以内`, kinds.every(k => agentT(locale, `bridge.kinds.${k}`).length <= 300));
   }
 
+  // ---- 委譲先の自動選択（設定 › 委譲）が無効なときの文（Issue #29）。無効なら「backend を省くと Pleiad が選ぶ」と言わず、backend を必ず書かせる
+  // 「省けば Pleiad が選ぶ」と読める言い回し（有効なときの文にだけある）
+  const PICKS = { ja: /省(くと|けば)、?\s*Pleiad が|自動の選択|backend を省いた ply_delegate|特定の委譲先が要るときだけ/,
+    en: /omit backend, Pleiad|backend is omitted, Pleiad|[Aa]utomatic selection|without backend (skips|will)|only when a specific target/ };
+  // 無効のときに言うこと（backend は必須・設定で無効・省くと失敗）
+  const MUST = { ja: { instructions: "kind（仕事の種類）と backend（fake, codex）は必ず書く。委譲先の自動選択は設定で無効になっていて、Pleiad は委譲先を選ばない（backend を省くとエラーになる）。",
+    ply_delegate: "kind と backend は必ず書く。委譲先の自動選択は設定で無効になっていて、Pleiad は委譲先を選ばない（backend を省くとエラーになる）。" },
+  en: { instructions: "Always give kind (the kind of work) and backend (fake, codex). Automatic delegate selection is turned off in the settings, so Pleiad does not choose the target (ply_delegate without backend fails).",
+    ply_delegate: "Always give kind and backend. Automatic delegate selection is turned off in the settings, so Pleiad does not choose the target (ply_delegate without backend fails)." } };
+  const sentences = (lng, s) => s.split(lng === "ja" ? "。" : /(?<=[.;]) /).map(x => x.trim()).filter(Boolean);
+  for (const lng of ["ja", "en"]) {
+    const two = ["fake", "codex"], vars = { backends: "fake, codex" };
+    const byName = list => Object.fromEntries(list.map(x => [x.name, x.description]));
+    const on = { instructions: agentInstructions(lng, two, true), ...byName(agentTools(lng, [], two, undefined, true)) };
+    const off = { instructions: agentInstructions(lng, two, false), ...byName(agentTools(lng, [], two, undefined, false)) };
+    // 有効なときの文は辞書の元のキーのまま（1 字も変えない。プロンプトのキャッシュを外さない）。引数を省いたときも有効の文
+    t.ok(`${lng}: 自動選択が有効なら instructions・ツールの説明は元の文のまま`, on.instructions === agentT(lng, "bridge.instructions", vars) && agentInstructions(lng, two) === on.instructions
+      && on.ply_delegate.startsWith(agentT(lng, "bridge.tools.ply_delegate") + "\n") && on.ply_usage === agentT(lng, "bridge.tools.ply_usage")
+      && JSON.stringify(byName(agentTools(lng, [], two))) === JSON.stringify(byName(agentTools(lng, [], two, undefined, true)))
+      && PICKS[lng].test(on.instructions) && PICKS[lng].test(on.ply_delegate) && PICKS[lng].test(on.ply_usage), on.instructions.slice(0, 120));
+    const left = ["instructions", "ply_delegate", "ply_usage"].filter(k => PICKS[lng].test(off[k]));
+    t.ok(`${lng}: 自動選択が無効なら「backend を省くと Pleiad が選ぶ」と読める文がどこにも無い`, left.length === 0, left.map(k => `${k}: ${PICKS[lng].exec(off[k])[0]}`).join(" / "));
+    t.ok(`${lng}: 自動選択が無効なら、backend は必須で、設定で無効なので省くと失敗すると言う`, off.instructions.includes(MUST[lng].instructions) && off.ply_delegate.includes(MUST[lng].ply_delegate),
+      `${off.instructions.slice(0, 200)} / ${off.ply_delegate.slice(0, 200)}`);
+    t.ok(`${lng}: 無効の文は辞書の bridge.routingOff`, off.instructions === agentT(lng, "bridge.routingOff.instructions", vars)
+      && off.ply_delegate.startsWith(agentT(lng, "bridge.routingOff.ply_delegate") + "\n") && off.ply_usage === agentT(lng, "bridge.routingOff.ply_usage"));
+    // 変わるのは ply_delegate と ply_usage の説明だけ。名前・引数（backend は必須にしない。省いたらエラーの文で導く）・ほかのツールの説明・kind の一覧は同じ
+    const names = Object.keys(on).filter(k => on[k] !== off[k]);
+    t.ok(`${lng}: 無効で変わるのは instructions・ply_delegate・ply_usage の文だけ`, names.join() === "instructions,ply_delegate,ply_usage"
+      && JSON.stringify(agentTools(lng, [], two, undefined, true).map(x => [x.name, x.inputSchema])) === JSON.stringify(agentTools(lng, [], two, undefined, false).map(x => [x.name, x.inputSchema]))
+      && on.ply_delegate.slice(on.ply_delegate.indexOf("\n")) === off.ply_delegate.slice(off.ply_delegate.indexOf("\n")), names.join());
+    // 無効の文は、有効の文から委譲先の選び方の文だけを差し替えたもの。有効の文にほかの文を足したら、無効の文にも足す
+    for (const k of ["instructions", "ply_delegate", "ply_usage"]) {
+      const a = sentences(lng, on[k]), b = sentences(lng, off[k]);
+      const onOnly = a.filter(x => !b.includes(x)), offOnly = b.filter(x => !a.includes(x));
+      const stray = onOnly.filter(x => !/backend|kind|自動|automatic/i.test(x));
+      t.ok(`${lng}: ${k} の無効の文は、有効の文と委譲先の選び方の所だけが違う`, onOnly.length > 0 && stray.length === 0 && offOnly.length <= onOnly.length,
+        `有効だけ: ${stray.join(" | ") || onOnly.length} / 無効だけ: ${offOnly.join(" | ")}`);
+    }
+    // ホストへ任せる案内と、直した種類の一覧は無効のときも載る
+    const hosted = agentTools(lng, [{ name: "studio", online: true }], two, [{ id: "implement", name: "Changed", desc: "CUSTOM_KIND_DESCRIPTION" }], false).find(x => x.name === "ply_delegate");
+    t.ok(`${lng}: 無効のときも ply_delegate の説明に種類の一覧とホストの案内が載る`, hosted.description.includes("- implement: CUSTOM_KIND_DESCRIPTION")
+      && hosted.description.endsWith(agentT(lng, "bridge.hosts", { hosts: "studio" })) && Object.hasOwn(hosted.inputSchema.properties, "host"));
+    // 固定の委譲で、段の候補にアカウントが 1 つも無いときの返し: 無効なら「backend を省いて頼む」と言わない
+    const tiersOn = agentT(lng, "delegation.accountNotInTiers", { agent: "Claude" }), tiersOff = agentT(lng, "delegation.accountNotInTiersRoutingOff", { agent: "Claude" });
+    t.ok(`${lng}: account_not_in_tiers の返しは、無効なら backend を省くように言わない`, tiersOff.startsWith("account_not_in_tiers: ") && tiersOff.includes("Claude")
+      && !/backend を省|Omit backend|自動の選択|automatic selection/.test(tiersOff) && /backend を省|Omit backend/.test(tiersOn), tiersOff);
+  }
+
   // 橋は会話ごとに開く。接続した会話の言語で instructions・一覧・エラーを返す
   const bridge = createAgentBridge({ call: async (_owner, _name, _args, { locale } = {}) => { throw new Error(agentT(locale, "delegation.notRunning")); } });
   const server = http.createServer(bridge.handle);
@@ -68,6 +117,36 @@ export default async function (t) {
       c.close();
     }
   } finally { server.closeAllConnections(); await new Promise(r => server.close(r)); }
+
+  // 委譲先の自動選択を会話の途中で切り替える: 開いたままの橋の instructions と tools/list が、読んだ時の設定の文になる。戻すと元の文と同じバイト列
+  let routingOn = true;
+  const switching = createAgentBridge({ call: async () => ({}), backends: () => ["fake", "codex"], routing: () => routingOn });
+  const switchServer = http.createServer(switching.handle);
+  await new Promise(r => switchServer.listen(0, "127.0.0.1", r));
+  try {
+    const origin = `http://127.0.0.1:${switchServer.address().port}`;
+    const list = async c => (await (await fetch(c.url, { method: "POST", headers: { ...c.headers, "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })).json()).result.tools;
+    const texts = async c => { const tools = await list(c); return JSON.stringify([c.instructions, ...["ply_delegate", "ply_usage"].map(n => tools.find(x => x.name === n).description), tools.map(x => x.inputSchema)]); };
+    const expected = (lng, on) => { const tools = agentTools(lng, [], ["fake", "codex"], undefined, on);
+      return JSON.stringify([agentInstructions(lng, ["fake", "codex"], on), ...["ply_delegate", "ply_usage"].map(n => tools.find(x => x.name === n).description), tools.map(x => x.inputSchema)]); };
+    for (const lng of ["ja", "en"]) {
+      routingOn = true;
+      const c = switching.open({ origin, owner: () => "owner", locale: lng });
+      const first = await texts(c);
+      routingOn = false;
+      const off = await texts(c);
+      routingOn = true;
+      const back = await texts(c);
+      t.ok(`${lng} の会話の橋: 自動選択を途中で無効にすると、次に読んだ時から無効の文になり、戻すと元の文と同じ`, first === expected(lng, true) && off === expected(lng, false) && back === first && off !== first,
+        JSON.parse(off)[0].slice(0, 160));
+      c.close();
+    }
+    // 無効の設定で始めた会話は、初めから無効の文
+    routingOn = false;
+    const started = switching.open({ origin, owner: () => "owner", locale: "ja" });
+    t.ok("自動選択が無効の設定で開いた橋は、初めから無効の文", await texts(started) === expected("ja", false));
+    started.close();
+  } finally { switchServer.closeAllConnections(); await new Promise(r => switchServer.close(r)); }
 
   // ---- ply_context: 指示の前置き・Skills の案内・ツールの説明・返り
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "ply-agent-i18n-"));

@@ -204,6 +204,11 @@ export default async function (t) {
     t.ok('null の項目は既定に戻す', state.settings.tiers.t1.join() === 'antigravity:gemini-3.8-flash-high,claude:haiku' && state.settings.enabled === false);
     const off = await call(sid, { kind: 'trivial', task: 'agy-off' });
     t.ok('無効なら backend を求める', off.isError && off.text.includes('backend'));
+    // account だけ書いた依頼にも同じ文で backend を求める（「自動で選ばせるなら account を省いて」とは返さない。Issue #29）
+    const offAccount = await call(sid, { kind: 'trivial', task: 'agy-off', account: 'login' });
+    t.ok('無効なら、account だけ書いた依頼にも backend を求める（自動の選択は勧めない）', offAccount.isError && offAccount.text === off.text, offAccount.text);
+    const offModel = await call(sid, { kind: 'trivial', task: 'agy-off', model: 'gemini-3.8-flash-high' });
+    t.ok('無効なら、model だけ書いた依頼にも backend を求める', offModel.isError && offModel.text === off.text, offModel.text);
     const prefs = JSON.parse(await fs.readFile(path.join(scratch, 'prefs.json'), 'utf8'));
     t.ok('prefs.json には変えた項目だけ', JSON.stringify(prefs.delegationRouting) === '{"enabled":false}', JSON.stringify(prefs.delegationRouting));
     await c.cmd('setDelegationRouting', { settings: { enabled: null } });
@@ -281,6 +286,18 @@ export default async function (t) {
       ?? /^- antigravity:gemini-3\.8-mini-high \(t\d\): recently_limited until (\S+)$/m.exec(loginAfter.text ?? '')?.[1];
     t.ok('（対照）ログイン中のアカウントの会話でも、止まった枠を飛ばし、通知の時刻と一致する',
       loginAfter.data?.routing?.target?.model === 'gemini-3.8-nano-high' && Boolean(loginUntil) && clockText(Date.parse(loginUntil)) === loginTold, JSON.stringify({ loginTold, text: loginAfter.text?.slice(0, 600) }));
+    // 自動の振り分けが無効なら、完了の通知に「backend を省いた ply_delegate は 〜 まで選びません」を添えない（無効のときは backend を省けない。Issue #29）
+    await c.cmd('setDelegationRouting', { settings: { enabled: false } });
+    const offOwner = await parentOn('');
+    const offStopped = await call(offOwner, { kind: 'trivial', backend: 'antigravity', model: 'gemini-3.8-nano-high', task: 'limit-no-reply' });
+    const offRow = await settle(offStopped.data?.taskId);
+    const offNotice = (await c.cmd('loadSession', { sessionId: offOwner })).messages.filter(m => m.internalTaskNotice).map(m => m.text).join('\n');
+    const offHeld = (await c.cmd('providerUsage', { backend: 'antigravity' })).held ?? [];
+    t.ok('（準備）無効の設定で backend を書いて任せた agy の子が上限で止まり、枠が止まっている', offRow?.status === 'failed' && offRow.limit?.backend === 'antigravity'
+      && offHeld.some(x => x.model === offRow.limit.model && x.reason === 'recently_limited'), JSON.stringify({ limit: offRow?.limit ?? offStopped.text.slice(0, 300), offHeld }));
+    t.ok('無効のときの完了の通知は、上限で止まったことだけを言い、backend を省いた依頼の話をしない', /使用量の上限で止まりました|Stopped at a usage limit/.test(offNotice)
+      && !/backend を省いた ply_delegate|ply_delegate without backend/.test(offNotice), offNotice.slice(0, 600));
+    await c.cmd('setDelegationRouting', { settings: { enabled: null } });
     // 後片付け: 走っている子を止める
     for (const task of await c.cmd('agentTasks')) if (['queued', 'running'].includes(task.status)) await c.cmd('cancelAgentTask', { taskId: task.taskId }).catch(() => {});
   } finally {

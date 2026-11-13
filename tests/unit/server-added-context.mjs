@@ -44,6 +44,8 @@ export default async function (t) {
     AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_LOG: log } });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const bridge = agentT('ja', 'bridge.instructions', { backends: 'fake, codex' });
+  // 委譲先の自動選択が無効なときの instructions（backend を必ず書かせる）
+  const bridgeOff = agentT('ja', 'bridge.routingOff.instructions', { backends: 'fake, codex' });
   const listJa = () => resolvePlyInstructions(normalizePlyInstructions(undefined), 'ja');
   const text = id => itemText('ja', listJa().find(i => i.id === id));
   const childText = text('child'), routeText = text('route'), codexPolicyText = text('codexPolicy');
@@ -125,13 +127,19 @@ export default async function (t) {
       && !Object.hasOwn((await prefs()).plyInstructions.items.find(i => i.id === 'child'), 'body'));
     await c.cmd('setPlyInstructions', { action: 'delete', id: mine.id });
 
-    // ---- 振り分けを無効にすると連動の項目を入れない
+    // ---- 振り分けを無効にすると連動の項目を入れない。ply_agents の instructions も「backend を必ず書く」文に替わる（Issue #29）
+    // 自動選択が有効な設定で始めた会話でも、設定を切り替えた次のターンから替わる
+    const before = await ask(sid);
     await c.cmd('setDelegationRouting', { settings: { enabled: false } });
     answer = await ask(sid);
-    t.ok('委譲先の自動選択が無効なら振り分けの使い方は入らない（入れるものが無ければ ply_agents の instructions のまま）', answer === bridge, answer.slice(-160));
+    t.ok('委譲先の自動選択が無効なら振り分けの使い方は入らない（入れるものが無ければ ply_agents の instructions のまま）', answer === bridgeOff, answer.slice(-160));
+    t.ok('無効にした次のターンから、instructions は backend を省く使い方を言わず、backend を必ず書かせる', before === `${bridge}\n\n${routeText}` && answer !== bridge
+      && !answer.includes('backend を省くと、Pleiad が') && answer.includes('kind（仕事の種類）と backend（fake, codex）は必ず書く。委譲先の自動選択は設定で無効になっていて'), answer.slice(0, 200));
     t.ok('記録は routingOff', (await added(sid)).find(r => r.id === 'route')?.reason === 'routingOff');
     t.ok('画面の合計にも数えない', (await c.cmd('plyInstructions')).routing === false);
     await c.cmd('setDelegationRouting', { settings: { enabled: null } });
+    answer = await ask(sid);
+    t.ok('有効に戻すと、次のターンから元の文と同じバイト列に戻る（設定を変えなければ文は変わらない）', answer === before && await ask(sid) === before, answer.slice(0, 160));
 
     // ---- Codex: developerInstructions に入り、ロード済みのスレッドでも次のターンから変わる。エージェントで絞れる
     const codexOnly = (await c.cmd('setPlyInstructions', { action: 'save', name: 'Codex だけ', body: 'CODEX-ONLY', target: 'all', agents: ['codex'] })).items.find(i => i.name === 'Codex だけ');
@@ -164,6 +172,16 @@ export default async function (t) {
     const offTurn = after.filter(e => e.method === 'turn/start').at(-1);
     t.ok('ロード済みのスレッドは外してから読み直し、新しい指示で走る', after.some(e => e.method === 'thread/unsubscribe' && e.threadId === offTurn?.threadId)
       && !offTurn?.developerInstructions?.includes('CODEX-ONLY') && offTurn?.developerInstructions?.includes(bridge), JSON.stringify(after.map(e => e.method)));
+    // Codex の続きの会話でも、自動選択を無効にした次のターンから instructions が替わる（有効の文も振り分けの使い方も残らない）
+    await c.cmd('setDelegationRouting', { settings: { enabled: false } });
+    await c.runTurn({ sessionId: cx, prompt: 'routing off' });
+    const routingOffTurn = (await turnsOf()).at(-1);
+    t.ok('Codex: 自動選択を無効にした次のターンから、developerInstructions は無効の文', routingOffTurn?.developerInstructions?.includes(bridgeOff)
+      && !routingOffTurn.developerInstructions.includes(bridge) && !routingOffTurn.developerInstructions.includes(routeText), String(routingOffTurn?.developerInstructions).slice(0, 200));
+    await c.cmd('setDelegationRouting', { settings: { enabled: null } });
+    await c.runTurn({ sessionId: cx, prompt: 'routing on' });
+    const routingOnTurn = (await turnsOf()).at(-1);
+    t.ok('Codex: 有効に戻すと元の文に戻る', routingOnTurn?.developerInstructions === offTurn?.developerInstructions, String(routingOnTurn?.developerInstructions).slice(0, 200));
 
     // ---- 読み取りのモードでは委譲できないので委譲の項目は入れない（ほかの項目は入る）
     await c.cmd('setPlyInstructions', { action: 'toggle', id: codexOnly.id, on: true });
