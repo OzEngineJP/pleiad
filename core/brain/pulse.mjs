@@ -139,8 +139,9 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     const cwd = os.homedir();
     const own = backendId === bot.backend;
     const accountId = own && base.capabilities?.accounts ? bot.account ?? '' : '';
-    const backend = accountId && typeof host.backendForAccount === 'function'
-      ? await host.backendForAccount(base, accountId).catch(() => base)
+    // アカウントを引けない（消した等）ときは、ログイン中の一覧へ落とさず、使えないバックエンドを受ける（下の resolveModel が断る。心拍は走らせない）
+    const backend = accountId && typeof host.accountBackend === 'function'
+      ? await host.accountBackend(base, accountId)
       : base;
     const model = await host.resolveModel(null, bot.pulse?.model || prefs.backends?.[backendId]?.model || (!bot.pulse?.backend && !prefs.memoryLearnBackend && own ? bot.model : undefined) || undefined, backend, cwd, '');
     const effort = await host.resolveEffort(null, prefs.backends?.[backendId]?.effort || undefined, backend, model, cwd, null);

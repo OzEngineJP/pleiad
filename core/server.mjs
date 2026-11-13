@@ -193,7 +193,7 @@ import { switchBackend, createConversation, deleteUnsentConversation, deleteHidd
 import { rebuildEnabled, REBUILD_LIMITS } from "./context-rebuild.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
-  getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession as rawBackendForSession, backendForAccount, offlineAccountBackend,
+  getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession as rawBackendForSession, backendForAccount, accountUnavailableBackend,
 } from "./backends/index.mjs";
 import { takeBootEnv } from './boot-env.mjs';
 import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from './review-mode.mjs';
@@ -618,27 +618,26 @@ async function accountResolve(backend, id) {
   }
   return agentAccounts.resolve(backend.id, id, { known: other => claudeAccounts.has(other) });
 }
+/**
+ * そのアカウントで束縛したバックエンド。ログイン中（''）・アカウントを持たないエージェントはそのまま。
+ * アカウントを引けない（消した・トークンが無い）ときは、ログイン中や別のアカウントの一覧へ落とさず、使えないバックエンドを返す
+ * （accountUnavailableBackend。保存済みの会話は読め、一覧・ターンは引けなかった理由で断る）。会話・bot・心拍・委譲の設定が同じ道を通る
+ */
+async function scopedOrUnavailable(backend, accountId) {
+  if (!accountId || !accountKind(backend)) return backend;
+  try {
+    const account = await accountResolve(backend, accountId);
+    return account ? await backendForAccount(backend, account) : backend;
+  } catch (error) {
+    return accountUnavailableBackend(backend, error);
+  }
+}
 async function resolveBackendForSession(sessionId) {
   const b = await rawBackendForSession(sessionId);
-  const kind = accountKind(b);
-  if (!kind) return b;
+  if (!accountKind(b)) return b;
   const meta = await store.get(sessionId);
   if (meta.compatEndpoint) return b;
-  const id = meta.claudeAccount ?? '';
-  if (!id) return b;
-  try {
-    const account = await accountResolve(b, id);
-    if (!account) return b;
-    return await backendForAccount(b, account);
-  } catch (error) {
-    if (kind === 'agent') return offlineAccountBackend(b, error);
-    const unavailable = async () => { throw error; };
-    return {
-      ...b,
-      models: unavailable, validModel: unavailable, matchModel: unavailable,
-      runTurn: unavailable, adoptTurn: unavailable, internalTurn: unavailable, suggestTitle: unavailable,
-    };
-  }
+  return scopedOrUnavailable(b, meta.claudeAccount ?? '');
 }
 /** 起動時・SDK 取得後のモデル一覧の先読み。トークン別のエージェントはログイン中＋登録済みの使えるアカウントを順に引く */
 function warmBackendModels(b, cwd = os.homedir()) {
@@ -657,6 +656,15 @@ function warmBackendModels(b, cwd = os.homedir()) {
       } catch { /* 取れないアカウントは次へ */ }
     }
   })();
+}
+/**
+ * 起動時・SDK 取得後の先読みのあとで、使用量の取り置き（設定の「一覧に見当たらない」の判定）を取り直す。
+ * アカウントごとに一覧を持つエージェントは、判定が手元の一覧だけで答える（一覧の CLI を起こさない。ADR 0326）ので、一覧が揃ってから見直す
+ */
+function warmCatalogs(b) {
+  return warmBackendModels(b, os.homedir())
+    .then(() => { if (accountKind(b) === 'token' && routingSettingsCache.enabled && ROUTING_USAGE_AUTO) return routingUsage.refresh(); })
+    .catch(() => {});
 }
 /**
  * トークン別のアカウント（capabilities.accounts が 'token'）の一覧の記憶を、そのアカウントの分だけ捨てる（追加・トークンの差し替え・削除。ADR 0326）。
@@ -1802,20 +1810,29 @@ const routingUsage = createUsageMonitor({
   installed: id => installation(id).installed,
   read: providerQuota,
   candidates: () => [...new Set(levelOrder(routingSettingsCache).flatMap(level => routingSettingsCache.tiers[level] ?? []))],
+  // 候補に書かれたアカウントの一覧で確かめる。アカウントごとに一覧を持つエージェント（'token'）だけ（ほかのエージェントはこれまでどおりバックエンドの一覧）
   scopeForAccount: async (b, acct) => {
-    if (!acct || !accountKind(b)) return b;
-    try { return (await accountResolve(b, acct)) ? await backendForAccount(b, await accountResolve(b, acct)) : null; }
-    catch { return null; }
+    if (!acct || accountKind(b) !== 'token') return b;
+    try {
+      const account = await accountResolve(b, acct);
+      return account ? await backendForAccount(b, account) : null;
+    } catch { return null; }
   },
-  // 設定画面の「一覧に見当たらない」の注意だけに使う（振り分けは一覧で飛ばさない。ADR 0311）。一覧の id のほか、行の resolvedModel に一致する名前も「ある」
-  modelKnown: async (b, model) => await validModel(b, model, process.cwd()) || Boolean(await b.matchModel?.(model, process.cwd()).catch(() => null)),
+  // 設定画面の「一覧に見当たらない」の注意だけに使う（振り分けは一覧で飛ばさない。ADR 0311）。一覧の id のほか、行の resolvedModel に一致する名前も「ある」。
+  // passive（アカウントごとに一覧を持つエージェントを、監視が頼むとき）は、手元の一覧だけで答える（一覧の CLI を起こさない・待たない・取り直しの確かめをしない。
+  // 起こすのは先読み（warm）だけで、アカウントを 1 つずつ順に。先読みと同じ作業場所の一覧を読む。ADR 0326）
+  modelKnown: async (b, model, _account, { passive = false } = {}) => {
+    const cwd = passive ? os.homedir() : process.cwd();
+    return await validModel(b, model, cwd, '', { passive }) || Boolean(await b.matchModel?.(model, cwd, ...(passive ? [{ passive: true }] : [])).catch(() => null));
+  },
   // 一覧をまだ引いていないバックエンド（agy はログインの確認、Claude 等は warmModels で一覧を覚える）だけ、確かめ直す。
   // 確かめられたら 30 分は繰り返さない。未ログイン・失敗なら次の取り直し（5 分後）でまた確かめる
   warm: async b => {
     if (Date.now() - (lastWarm.get(b.id) ?? 0) < 30 * 60_000) return;
     let ok = false;
     if (b.warmModels && installation(b.id).installed) {
-      await warmBackendModels(b, process.cwd()).catch(() => {});
+      // アカウントごとに一覧を持つエージェントは、起動時の先読みと同じ作業場所（ホーム）で、ログイン中＋登録済みのアカウントを順に（同じ記憶の置き場を温める）
+      await warmBackendModels(b, accountKind(b) === 'token' ? os.homedir() : process.cwd()).catch(() => {});
       ok = true;
     }
     if (b.auth?.status) {
@@ -1927,11 +1944,8 @@ async function delegationRoutingState() {
     if (typeof backend?.models !== 'function') return backend;
     const key = `${backend.id}|${accountId || ''}`;
     if (!modelLists.has(key)) {
-      modelLists.set(key, (async () => {
-        const resolved = accountId && accountKind(backend) ? await accountResolve(backend, accountId).catch(() => null) : null;
-        const target = resolved ? await backendForAccount(backend, resolved).catch(() => backend) : backend;
-        return target.models(process.cwd());
-      })());
+      // アカウントを引けない候補（消した・トークンが無い）は、ログイン中の一覧へ落とさず、一覧を引けないものとして扱う（強さの持ち方は空。effortCapability が失敗を握る）
+      modelLists.set(key, (async () => (await scopedOrUnavailable(backend, accountId)).models(process.cwd()))());
     }
     const list = modelLists.get(key);
     return { ...backend, models: () => list };
@@ -3078,9 +3092,14 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
 /**
  * モデルの検証。互換の接続先を選んでいる会話（endpointId）は、接続先の一覧＋自由入力なので形だけを見る
  * （`/` や `:` を含む ID も通す。黙って既定に戻さない）。'' は接続先のメインのモデル
+ * passive: 手元の一覧だけで判定する（取り直しの確かめをしない。一覧の CLI を起こさない・待たない。使用量の判定用。ADR 0326）
  */
-async function validModel(backend, model, cwd, endpointId = '') {
+async function validModel(backend, model, cwd, endpointId = '', { passive = false } = {}) {
   if (endpointId) return model === '' || isModelId(model);
+  if (passive) {
+    if (Object.hasOwn(await backend.models(cwd, { passive: true }), model)) return true;
+    return backend.validModel ? backend.validModel(model, cwd) : false;
+  }
   if (Object.hasOwn(await backend.models(cwd), model)) return true;
   // 一覧の置き場が古い間に「一覧に無い」と誤って断らないよう、取り直して確かめる（{ refresh } を読まない backend はそのまま再判定）
   if (Object.hasOwn(await backend.models(cwd, { refresh: true }), model)) return true;
@@ -4794,6 +4813,8 @@ async function suggestWritableTitleOf(args) {
   if (!sessionId) throw new Error(t('session.required'));
   const backend = await resolveBackendForSession(sessionId);
   if (!backend) throw new Error(t('agents.notFound'));
+  // アカウントを引けない会話（消した・トークンが無い）は、内部呼出しの印が外れている（accountUnavailableBackend）。「対応していない」と取り違えさせず、引けなかった理由で断る
+  if (backend.accountError) throw new Error(t('title.failed', { error: redactToken(backend.accountError?.message ?? backend.accountError, null) }));
   // 題を付けるには内部呼出しを分離して呼べる印が要る（Issue #180。呼べないなら通常の会話へは逃げない）
   if (!capabilityValue(backend.capabilities?.internalCall) || typeof backend.internalTurn !== 'function')
     throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
@@ -7576,9 +7597,12 @@ botHost = createBotHost({
   // 内部 AI 呼出し（Issue #180。learn・pulse の安いモデルは、会話を作らずここを通る。分離できない印の backend は投げる）
   internalCall: internalCalls.call,
   getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
+  // bot のアカウントを検査する側（checkModelEffort）は、引けないアカウントを投げて断る。会話・心拍の側は、投げずに使えないバックエンドを受ける
+  // （ログイン中の一覧へ黙って落とさない。保存済みの会話は読める）
   backendForAccount: async (backend, accountId) => !backend || !accountId || !accountKind(backend)
     ? backend
     : backendForAccount(backend, await accountResolve(backend, accountId)),
+  accountBackend: (backend, accountId) => scopedOrUnavailable(backend, accountId),
   sessionBusy: id => sessionBusy(id),
   refuseBotDelete: id => refuseDelete(id, { bot: true }),
   // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。走っていれば次のターンから（nextSettings）
@@ -10846,14 +10870,14 @@ async function announce() {
     let wasReady = b.sdk.status().ready;
     b.sdk.onChange((status) => {
       emitGlobal({ type: 'claudeSdk', sessionId: null, status });
-      if (status.ready && !wasReady) warmBackendModels(b, os.homedir()).catch(() => {});
+      if (status.ready && !wasReady) warmCatalogs(b);
       wasReady = status.ready;
     });
     b.sdk.maintain();
   }
   // モデルの一覧を裏で引いておく。新しい会話・モデル選択が、CLI を起こす 10 秒ほどを待たない。
   // 作業場所は新しい会話の既定（ホーム）。取れなければ一覧の要求のときにまた引く（テストは ROUTING_USAGE_AUTO=off で起こさない）
-  if (ROUTING_USAGE_AUTO) for (const b of listBackends()) warmBackendModels(b, os.homedir()).catch(() => {});
+  if (ROUTING_USAGE_AUTO) for (const b of listBackends()) warmCatalogs(b);
   // 起動直後の常駐の状態（リモートが無効でも送る。main はそれを見てトレイを出さない）
   if (mainPort.hosted) Promise.all([residentPrefs.loaded, remote.status(), runningWork()])
     .then(([, status, work]) => postResident({ status: withResident(status), work })).catch(() => {});

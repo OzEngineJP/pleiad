@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
+import { backend as claude, setClaudeSdkForTest, probeClaudeCatalogForTest } from '../../core/backends/claude.mjs';
+import { createUsageMonitor } from '../../core/delegation-usage.mjs';
 import { buildClaudeModels } from '../../core/backends/claude-models.mjs';
-import { backendForAccount } from '../../core/backends/index.mjs';
+import { backendForAccount, accountUnavailableBackend } from '../../core/backends/index.mjs';
 import { currentLocale, setLocale } from '../../core/i18n.mjs';
 import { createBrainStore } from '../../core/brain/store.mjs';
 import { createPulse } from '../../core/brain/pulse.mjs';
@@ -118,7 +119,9 @@ export default async function (t) {
         const tok = options?.env?.CLAUDE_CODE_OAUTH_TOKEN ?? '';
         seenProbes.push({ cwd: options?.cwd, hasTok: Boolean(tok), isVerified: tok === TOK_VERIFIED, isPlain: tok === TOK_PLAIN });
         if (mode === 'leak-error' && tok === TOK_VERIFIED) {
-          throw new Error(`HTTP 401 bearer ${TOK_VERIFIED}`);
+          // message・cause・追加の項目のどこにもトークンが混ざる失敗（見分けに要る code だけは残る）
+          throw Object.assign(new Error(`HTTP 401 bearer ${TOK_VERIFIED}`, { cause: new Error(`upstream rejected ${TOK_VERIFIED}`) }),
+            { code: 'E401', detail: `Authorization: Bearer ${TOK_VERIFIED}` });
         }
         const rows = tok === TOK_VERIFIED ? MYTHOS_16 : STANDARD_14;
         return {
@@ -154,12 +157,22 @@ export default async function (t) {
       assert.equal('claude-mythos-5-2' in mMissing, false);
       t.ok('トークンが無いアカウントの models は CLI を起こさず静的フォールバック', true);
 
-      // エラーにトークンが混ざってもログ・エラー文から伏せる
+      // エラーにトークンが混ざっても、ログと、投げ直すエラー（message・cause・追加の項目・stack）から伏せる
       mode = 'leak-error';
+      const logsBefore = logs.length;
       await verified.models(w2, { refresh: true });
-      const verifiedErrLogs = logs.filter((l) => l.includes('claude') || l.includes('401') || l.includes('トークン') || l.includes(TOK_VERIFIED));
+      const newLogs = logs.slice(logsBefore);
+      assert.ok(newLogs.some((l) => l.includes('モデル一覧を取れなかった')), `失敗のログが出ていること: ${JSON.stringify(newLogs)}`);
       assert.equal(logs.some((l) => l.includes(TOK_VERIFIED)), false, 'ログに生のトークンを出さない');
-      t.ok('probe 失敗のエラーやログに生トークンを残さない', verifiedErrLogs.every((l) => !l.includes(TOK_VERIFIED)));
+      let thrown = null;
+      try { await probeClaudeCatalogForTest(w2, true, { id: 'acct-q-verified', token: TOK_VERIFIED }); } catch (e) { thrown = e; }
+      assert.ok(thrown, 'トークンの混ざった失敗は投げ直される');
+      assert.equal(String(thrown.message).includes(TOK_VERIFIED), false, 'message にトークンを残さない');
+      assert.equal('cause' in thrown, false, '元のエラー（cause）を渡さない');
+      assert.equal('detail' in thrown, false, '元のエラーの追加の項目を渡さない');
+      assert.equal(thrown.code, 'E401', '見分けに要る code だけは残す');
+      assert.equal(JSON.stringify(thrown, Object.getOwnPropertyNames(thrown)).includes(TOK_VERIFIED), false, 'stack にもトークンを残さない');
+      t.ok('probe 失敗のログが出ていて、ログと投げ直すエラー（message・cause・追加の項目・stack）に生トークンを残さない', true);
     } finally {
       console.error = origError;
       restore();
@@ -267,18 +280,152 @@ export default async function (t) {
       assert.equal(calls.get(`plain-iso|${w1}`), plainCountBefore);
       t.ok('invalidateModels(accountId): 取得中の古い結果をキャッシュに書かず、他のアカウントのキャッシュも壊さない', true);
 
-      // CATALOG_MAX (64) の LRU 上限確認: 32 件超の 40 件を積んでも最初の要素が追い出されない
-      const accounts40 = Array.from({ length: 40 }, (_, i) => {
-        const id = `lru-acct-${i}`;
-        customRows.set(id, () => STANDARD_14);
-        return claude.forAccount({ id, token: TOK_PLAIN });
-      });
-      for (const a of accounts40) await a.models(w1);
-      const c0Before = calls.get(`lru-acct-0|${w1}`);
-      await accounts40[0].models(w1);
-      assert.equal(calls.get(`lru-acct-0|${w1}`), c0Before);
-      t.ok('キャッシュ上限を 32 件超へ広げたため 40 件のアカウント登録でも 1 件目が追い出されない', true);
+      // 一覧の記憶の上限（claude.mjs の CATALOG_MAX = 64）: 同じアカウントで、作業場所を上限より多く引く。
+      // 上限を超えて追い出されるのは「最も長く触っていない 1 件」だけで、途中で触った作業場所と新しい作業場所は残る。
+      // （作業場所が上限以下なら追い出しの経路に入らず、上限が 1 でも通ってしまうので、必ず上限を 1 つ超えるところまで引く）
+      const CATALOG_MAX = 64;
+      const lruCwds = Array.from({ length: CATALOG_MAX + 1 }, (_, i) => path.join(dir, `lru-${i}`));
+      const lruCount = (cwd) => calls.get(`lru-iso|${cwd}`) ?? 0;
+      customRows.set('lru-iso', () => STANDARD_14);
+      const lruIso = claude.forAccount({ id: 'lru-iso', token: TOK_PLAIN });
+      // 最初の 64 件は取り直し（refresh）で確実に 1 回ずつ引く（通常の呼び出しは手元の答えがあると裏で引くので、回数が揺れる）
+      for (const cwd of lruCwds.slice(0, CATALOG_MAX)) await lruIso.models(cwd, { refresh: true });
+      assert.equal(lruCwds.slice(0, CATALOG_MAX).every((cwd) => lruCount(cwd) === 1), true, '上限までは 1 回ずつ引いて、全部残っている');
+      // 先頭（最も古い）を触って、最近使った側へ寄せる（記憶に残っているので引かない）
+      await lruIso.models(lruCwds[0]);
+      assert.equal(lruCount(lruCwds[0]), 1);
+      // 上限を 1 つ超える 65 件目を引く → 最も長く触っていない 2 件目（lru-1）だけが追い出される
+      await lruIso.models(lruCwds[CATALOG_MAX], { refresh: true });
+      assert.equal(lruCount(lruCwds[CATALOG_MAX]), 1);
+      // 残っているものは、通常の呼び出しで引き直さない（引き直せば回数が増える。裏の引き直しが走る暇を与えてから数える）
+      const kept = [0, 2, 3, 31, 32, 62, 63, 64];
+      for (const i of kept) await lruIso.models(lruCwds[i]);
+      await new Promise((r) => setTimeout(r, 30));
+      assert.deepEqual(kept.map((i) => lruCount(lruCwds[i])), kept.map(() => 1), '触った先頭と新しい作業場所と途中のものは残る');
+      // 追い出されたのは 2 件目だけ: 取り直すと CLI をもう 1 回起こす
+      await lruIso.models(lruCwds[1], { refresh: true });
+      assert.equal(lruCount(lruCwds[1]), 2, '追い出された作業場所は引き直す');
+      t.ok('一覧の記憶の上限（64）を超えて引いても、追い出されるのは最も長く触っていない 1 件だけで、途中で触った作業場所は残る', true);
     } finally {
+      restore();
+      claude.invalidateModels();
+    }
+  }
+
+  // ---- 4b. 失敗の再試行待ち・warmModels の直列・入れ替え／削除で一覧を忘れる・互換の接続先でアカウントのトークンを渡さない（アカウントごと）
+  {
+    claude.invalidateModels();
+    const calls = new Map();
+    const startOrder = [];
+    const behaviour = new Map();
+    let inflight = 0, peak = 0;
+    const origError = console.error;
+    const realNow = Date.now;
+    const restore = setClaudeSdkForTest({
+      executable: () => 'fake-claude',
+      cliSigThrottleMs: 1e9,
+      probe: async (cwd, isDefault, extra) => {
+        const acc = extra?.accountId ?? 'login';
+        calls.set(acc, (calls.get(acc) ?? 0) + 1);
+        startOrder.push(acc);
+        inflight++; peak = Math.max(peak, inflight);
+        try {
+          // CLI が答えるまでの間（これが重なると peak が 2 以上になる）
+          await new Promise((r) => setTimeout(r, 15));
+          const h = behaviour.get(acc);
+          if (h instanceof Error) throw h;
+          return { rows: typeof h === 'function' ? h() : STANDARD_14, efforts: {}, applied: !isDefault };
+        } finally { inflight--; }
+      },
+    });
+    try {
+      console.error = () => {}; // 失敗のログは試験の出力に混ぜない
+      const upOnly = () => [...STANDARD_14, { value: 'claude-up-only', displayName: 'Up Only', description: '' }];
+      const down = claude.forAccount({ id: 'retry-down', token: TOK_PLAIN });
+      const up = claude.forAccount({ id: 'retry-up', token: TOK_VERIFIED });
+      behaviour.set('retry-down', new Error('offline'));
+      behaviour.set('retry-up', upOnly);
+
+      // 失敗した直後の再試行待ち（60 秒）の間は、取り直し（refresh）でも CLI を起こし直さず、固定の一覧で答える
+      const failedList = await down.models(w1, { refresh: true });
+      assert.equal(calls.get('retry-down'), 1);
+      assert.equal('claude-up-only' in failedList, false);
+      await down.models(w1, { refresh: true });
+      await down.models(w1);
+      await down.models(w1, { refresh: true });
+      assert.equal(calls.get('retry-down'), 1, '再試行待ちの間は、取り直しでも CLI を起こし直さない');
+      // 別のアカウントは待ちに巻き込まれず、引ける。引けたあとも、待ちの間のアカウントへその一覧を貸さない
+      const upList = await up.models(w1, { refresh: true });
+      assert.equal('claude-up-only' in upList, true);
+      assert.equal(calls.get('retry-up'), 1);
+      const downWhileUp = await down.models(w1, { refresh: true });
+      assert.equal('claude-up-only' in downWhileUp, false, '別のアカウントの一覧を貸さない');
+      assert.equal(calls.get('retry-down'), 1);
+      assert.equal(await down.validModel('claude-up-only'), true, 'まだ一度も引けていないアカウントは、形の良い ID を断らない（別のアカウントの一覧では裁かない）');
+      // 待ちが明けたら（60 秒後）また引く
+      Date.now = () => realNow() + 61_000;
+      behaviour.set('retry-down', () => [...STANDARD_14, { value: 'claude-down-back', displayName: 'Down Back', description: '' }]);
+      const downBack = await down.models(w1, { refresh: true });
+      Date.now = realNow;
+      assert.equal(calls.get('retry-down'), 2, '待ちが明けたら起こし直す');
+      assert.equal('claude-down-back' in downBack, true);
+      assert.equal('claude-up-only' in downBack, false);
+      assert.equal(calls.get('retry-up'), 1, '別のアカウントの待ちや再開は、このアカウントに影響しない');
+      t.ok('失敗の再試行待ちはアカウントごと: 待ちの間は取り直しでも CLI を起こし直さず、ほかのアカウントの一覧を貸さず、明けたら引き直す', true);
+
+      // warmModels は、アカウントが何件あっても（ログイン中も含めて）CLI を同時に起こさず、呼んだ順に 1 本ずつ引く。1 件が失敗しても続きを止めない
+      calls.clear(); startOrder.length = 0; inflight = 0; peak = 0;
+      const warmIds = ['warm-a', 'warm-b', 'warm-c'];
+      const warmers = warmIds.map((id) => claude.forAccount({ id, token: TOK_PLAIN }));
+      behaviour.set('warm-b', new Error('warm failed'));
+      await Promise.all([claude.warmModels(w1), ...warmers.map((a) => a.warmModels(w1))]);
+      assert.equal(peak, 1, 'warm は CLI を同時に起こさない');
+      assert.deepEqual(startOrder, ['login', ...warmIds], '呼んだ順に 1 本ずつ引く');
+      assert.deepEqual(['login', ...warmIds].map((id) => calls.get(id)), [1, 1, 1, 1], '失敗した 1 件があっても、後ろのアカウントを引く');
+      t.ok('warmModels は、ログイン中と登録アカウントの一覧を同時に起こさず順に引き、1 件の失敗で続きを止めない', true);
+
+      // トークンの入れ替え・アカウントの削除（invalidateModels(accountId)）で、そのアカウントの一覧を忘れる。ほかのアカウントの一覧は残る
+      calls.clear();
+      behaviour.set('swap-iso', () => STANDARD_14);
+      behaviour.set('keep-iso', () => STANDARD_14);
+      const swap = claude.forAccount({ id: 'swap-iso', token: TOK_PLAIN });
+      const keep = claude.forAccount({ id: 'keep-iso', token: TOK_PLAIN });
+      assert.equal('claude-mythos-5-2' in await swap.models(w1, { refresh: true }), false);
+      await keep.models(w1, { refresh: true });
+      assert.equal(await swap.validModel('claude-mythos-5-2'), false, '一覧を引いたあとは、一覧に無い ID を断る');
+      // 入れ替え: 同じ id のまま新しいトークン（承認のあるアカウントのもの）で引き直す
+      claude.invalidateModels('swap-iso');
+      behaviour.set('swap-iso', () => MYTHOS_16);
+      const swapped = claude.forAccount({ id: 'swap-iso', token: TOK_VERIFIED });
+      assert.equal(await swapped.validModel('claude-mythos-5-2'), true, '忘れた直後は一覧を持たない（引くまでは形の良い ID を断らない）');
+      assert.equal('claude-mythos-5-2' in await swapped.models(w1, { refresh: true }), true, '入れ替え後は新しい一覧を引く');
+      assert.equal(calls.get('swap-iso'), 2);
+      assert.equal(calls.get('keep-iso'), 1);
+      // 削除: 忘れたあとは、引かれず、一覧も残らない（同じ id で未登録の状態に戻る）
+      claude.invalidateModels('swap-iso');
+      const before = [...startOrder];
+      assert.equal(await swapped.validModel('claude-mythos-5-2'), true);
+      assert.deepEqual(startOrder, before, '削除したあとの確認は CLI を起こさない');
+      await keep.models(w1);
+      assert.equal(calls.get('keep-iso'), 1, 'ほかのアカウントの一覧は残る');
+      t.ok('トークンの入れ替え・削除（invalidateModels(accountId)）でそのアカウントの一覧だけを忘れ、削除後に CLI を起こさず、ほかのアカウントの一覧は残す', true);
+
+      // 互換の接続先の会話では、アカウントのトークンを渡さない（接続先の鍵で走る。アカウントの一覧でも裁かない）。公式のときはアカウントのトークンを渡す
+      const seenRuns = [];
+      const origRun = claude.runTurn;
+      claude.runTurn = (opts) => { seenRuns.push({ endpoint: Boolean(opts?.endpoint), token: opts?.oauthToken ?? null }); return (async function* () {})(); };
+      try {
+        const scoped = claude.forAccount({ id: 'compat-iso', token: TOK_VERIFIED });
+        scoped.runTurn({ endpoint: { id: 'ep-compat', baseUrl: 'http://127.0.0.1:1' } });
+        scoped.runTurn({});
+        scoped.runTurn({ oauthToken: TOK_PLAIN });
+      } finally { claude.runTurn = origRun; }
+      assert.deepEqual(seenRuns.map((r) => [r.endpoint, r.token]), [[true, null], [false, TOK_VERIFIED], [false, TOK_PLAIN]],
+        '互換の接続先ではアカウントのトークンを足さず、公式では足す（呼び出し側が渡したトークンはそのまま）');
+      t.ok('互換の接続先の会話にはアカウントのトークンを渡さず、公式の会話には渡す', true);
+    } finally {
+      Date.now = realNow;
+      console.error = origError;
       restore();
       claude.invalidateModels();
     }
@@ -301,10 +448,11 @@ export default async function (t) {
     clock += 1000;
 
     const scopedCalls = [];
+    let loginListReads = 0;   // ログイン中（アカウントを絞らない）の一覧を読んだ回数。アカウントを引けないときも、ここへは落ちない
     const baseBackend = {
       id: 'claude',
       capabilities: { accounts: 'token', internalCall: true },
-      models: async () => ({ 'claude-haiku-4-5-20251001': {}, 'claude-mythos-5-2': {} }),
+      models: async () => { loginListReads++; return { 'claude-haiku-4-5-20251001': {}, 'claude-mythos-5-2': {} }; },
       modes: () => ({ plan: { scope: 'readonly', autonomy: 'never' } }),
       internalTurn: async () => ({ text: '{}' }),
       forAccount: (account) => ({
@@ -330,11 +478,15 @@ export default async function (t) {
       usageStore: {},
       listBackends: () => [baseBackend],
       getBackend: () => baseBackend,
-      backendForAccount: async (b, acctId) => {
+      // server の bot の道具 accountBackend と同じ形: アカウントの範囲に絞ったバックエンド。引けないときは、断る（使えない）バックエンドを返す
+      accountBackend: async (b, acctId) => {
         scopedCalls.push({ backend: b.id, acctId });
-        return b.forAccount({ id: acctId });
+        return acctId === 'acct-gone' ? accountUnavailableBackend(b, new Error('account not found')) : b.forAccount({ id: acctId });
       },
-      resolveModel: async (_cur, m, b) => (b.accountId === 'acct-verified' && 'claude-mythos-5-2' in await b.models() ? 'claude-mythos-5-2' : (m || 'haiku')),
+      resolveModel: async (_cur, m, b) => {
+        const list = await b.models();   // 引けなければここで断る（server の resolveModel と同じ）
+        return b.accountId === 'acct-verified' && 'claude-mythos-5-2' in list ? 'claude-mythos-5-2' : (m || 'haiku');
+      },
       resolveEffort: async () => null,
       internalCall: async ({ backend, accountId, model }) => {
         scopedCalls.push({ internalCallBackend: backend.id, accountId, model });
@@ -350,7 +502,18 @@ export default async function (t) {
       assert.equal(res.ran, true);
       assert.ok(scopedCalls.some((c) => c.acctId === 'acct-verified'), JSON.stringify(scopedCalls));
       assert.ok(scopedCalls.some((c) => c.internalCallBackend === 'claude' && c.accountId === 'acct-verified' && c.model === 'claude-mythos-5-2'), JSON.stringify(scopedCalls));
-      t.ok('心拍の askBackend は backendForAccount でアカウントへ絞ってからモデル解決・実行する', true);
+      t.ok('心拍の askBackend は accountBackend でアカウントへ絞ってからモデル解決・実行する', true);
+
+      // アカウントを引けない（消した等）bot: ログイン中の一覧へ落とさず、使えないバックエンドを受けて断る（内部呼出しは起こさない）
+      scopedCalls.length = 0;
+      bot.account = 'acct-gone';
+      const gone = await pulse.beat(bot.id, { force: true });
+      assert.equal(gone.did, 'error', JSON.stringify(gone));
+      assert.match(gone.error, /account not found/);
+      assert.ok(scopedCalls.some((c) => c.acctId === 'acct-gone'), JSON.stringify(scopedCalls));
+      assert.ok(!scopedCalls.some((c) => c.internalCallBackend), '引けないアカウントでは内部呼出しを起こさない');
+      assert.equal(loginListReads, 0, 'ログイン中の一覧へ落とさない');
+      t.ok('心拍: アカウントを引けないときは、ログイン中の一覧へ落とさず、内部呼出しも起こさずに断る', true);
     } finally {
       pulse.stop();
       brain.close();
@@ -361,11 +524,12 @@ export default async function (t) {
   // ---- 6. bot 会話同期（core/bots/sessions.mjs）: 承認のあるアカウントで Mythos を持つ bot を承認の無いアカウントへ切り替えると既存会話のモデルを既定へ戻す（agent 揃い）
   {
     const sessMap = new Map();
+    let loginReads = 0, creations = 0;   // ログイン中（アカウントを絞らない）の一覧を読んだ回数・会話を作った回数
     const baseBackend = {
       id: 'claude',
       capabilities: { accounts: 'token' },
       modes: () => ({ default: { label: 'Default', scope: 'workspace', autonomy: 'ask' } }),
-      models: async () => ({ sonnet: {} }),
+      models: async () => { loginReads++; return { sonnet: {} }; },
       forAccount: (account) => ({
         id: 'claude',
         capabilities: { accounts: 'token' },
@@ -376,9 +540,13 @@ export default async function (t) {
     const host = {
       currentLocale: () => 'ja',
       getBackend: () => baseBackend,
-      backendForAccount: async (b, acctId) => (acctId ? b.forAccount({ id: acctId }) : b),
-      createConversation: async () => 'bot-sess-1',
-      resolveModel: async (_sid, given, backend) => (given && given in await backend.models() ? given : ''),
+      // server の bot の道具 accountBackend と同じ形: 引けない（消した等）アカウントは、断る（使えない）バックエンドを返す
+      accountBackend: async (b, acctId) => (acctId === 'acct-gone' ? accountUnavailableBackend(b, new Error('account not found')) : acctId ? b.forAccount({ id: acctId }) : b),
+      createConversation: async () => { creations++; return 'bot-sess-1'; },
+      resolveModel: async (_sid, given, backend) => {
+        const list = await backend.models();   // 引けなければここで断る（server の resolveModel と同じ。モデルを指定しない bot でも一覧は読む）
+        return given && given in list ? given : '';
+      },
       resolveEffort: async () => '',
       store: {
         get: async (id) => sessMap.get(id) ?? {},
@@ -400,6 +568,158 @@ export default async function (t) {
     assert.equal(sessMap.get(created.sessionId).model, '');
     assert.equal(sessMap.get(created.sessionId).claudeAccount, 'acct-plain');
     t.ok('bot のアカウント切替で既存会話のモデルを新アカウントの一覧で再検証し、無ければ既定へ戻す', true);
+
+    // アカウントを引けない（消した等）bot: ログイン中の一覧へ落とさず、引けなかった理由で断る
+    const goneBot = { ...bot, id: 'b_gone', account: 'acct-gone', model: '' };
+    const made = creations;
+    await assert.rejects(() => botSessions.create({ bot: goneBot, kind: 'dm', rootText: 'hi' }), /account not found/);
+    assert.equal(creations, made, '引けないアカウントでは会話を作らない');
+    // 既存の会話: モデルを別の一覧で書き換えない（モデルを持つ会話は、持ったまま。ログイン中の一覧には無いので、落ちていれば '' になる）
+    sessMap.set('bot-sess-gone', { backend: 'claude', cwd: w1, mode: 'default', model: 'claude-mythos-5-2', claudeAccount: 'acct-verified', bot: { botId: 'b_sync', kind: 'dm' } });
+    await assert.rejects(() => botSessions.sync('bot-sess-gone', { ...bot, account: 'acct-gone', model: 'claude-mythos-5-2' }), /account not found/);
+    assert.equal(sessMap.get('bot-sess-gone').model, 'claude-mythos-5-2', '引けないアカウントでは、別の一覧でモデルを書き換えない');
+    assert.equal(sessMap.get('bot-sess-gone').claudeAccount, 'acct-verified');
+    assert.equal(loginReads, 0, 'ログイン中の一覧へ落とさない');
+    t.ok('bot のアカウントを引けないときは、ログイン中の一覧へ落とさず、会話を作らず・既存の会話のモデルを書き換えずに断る', true);
+  }
+
+  // ---- 6b. accountUnavailableBackend: アカウントを引けない（消した・トークンが無い）会話に渡すバックエンド
+  {
+    claude.invalidateModels();
+    const home = path.join(dir, 'home-unavailable');
+    await fs.mkdir(home, { recursive: true });
+    const restore = setClaudeSdkForTest({
+      executable: () => 'fake-claude',
+      cliSigThrottleMs: 1e9,
+      probe: async (cwd, isDefault, extra) => ({ rows: extra?.accountId === 'acct-verified' ? MYTHOS_16 : STANDARD_14, efforts: {}, applied: !isDefault }),
+    });
+    try {
+      const error = new Error('account not found');
+      const base = await backendForAccount(claude, null);
+      assert.ok(base.capabilities.internalCall, '前提: 基のバックエンドは内部呼出しに対応している');
+      const blocked = accountUnavailableBackend(base, error);
+      // アカウントの資格情報を要るものは、引けなかった理由で断る
+      for (const member of ['models', 'validModel', 'matchModel', 'warmModels', 'runTurn', 'adoptTurn', 'internalTurn', 'suggestTitle']) {
+        await assert.rejects(() => blocked[member](home, 'claude-mythos-5-2'), /account not found/, member);
+      }
+      // 断るものに合わせて、内部呼出しの能力の印も外す。アカウントを選べる印は残す（画面でアカウントを選び直せる）
+      assert.equal(blocked.capabilities.internalCall, false);
+      assert.equal(blocked.capabilities.accounts, 'token');
+      // 印を外しただけでは「非対応」に見えるので、引けなかった理由を持つ（題の生成などが、非対応と取り違えさせずに理由を伝える）
+      assert.equal(blocked.accountError, error);
+      assert.equal(base.accountError, undefined, '基のバックエンドは理由を持たない');
+      // 履歴は共有の設定フォルダーから読める（基のまま）
+      for (const member of ['listSessions', 'getSession', 'getMessages']) assert.equal(blocked[member], base[member], member);
+      assert.equal(blocked.id, 'claude');
+      // 選び直したアカウントで束縛し直すと、そのアカウントの一覧で動く（断るのは引けなかった会話だけ）
+      const rebound = await backendForAccount(blocked, { id: 'acct-verified', token: TOK_VERIFIED });
+      assert.ok('claude-mythos-5-2' in await rebound.models(home), '選び直したアカウントの一覧で引ける');
+      assert.equal(rebound.capabilities.internalCall, base.capabilities.internalCall);
+      // 別のアカウントの一覧・ログイン中の一覧は返さない（断った後に、承認の無いアカウントの一覧が混ざらない）
+      assert.ok(!('claude-mythos-5-2' in await (await backendForAccount(blocked, { id: 'acct-plain', token: TOK_PLAIN })).models(home)));
+      // 'agent' 種は、資格情報が無いと履歴の元にも触れないので、Pleiad が持つ分だけ読む（これまでどおり）
+      const agentBlocked = accountUnavailableBackend({ id: 'agentish', label: 'Agentish', capabilities: { accounts: 'agent' }, traits: {}, modes: () => ({}) }, error);
+      await assert.rejects(() => agentBlocked.models(home), /account not found/);
+      assert.equal(agentBlocked.capabilities.accounts, 'agent');
+      assert.equal(agentBlocked.accountError, undefined, 'agent 種はこれまでどおり（理由の持ち方を足さない）');
+      t.ok('アカウントを引けない会話のバックエンド: トークンを要るものだけ断り、履歴は読め、アカウントは選び直せる（agent 種は Pleiad が持つ分だけ読む）', true);
+    } finally {
+      restore();
+      claude.invalidateModels();
+    }
+  }
+
+  // ---- 7. 使用量の監視（core/delegation-usage.mjs）と一覧の CLI: 取り直しで一覧の CLI を並べて起こさず、取り直しを重ねても増やさず、公開をアカウントの数で遅らせない
+  {
+    claude.invalidateModels();
+    // サーバー（core/server.mjs）は、先読みと監視が同じ作業場所（ホーム）の一覧を読む。その写し
+    const home = path.join(dir, 'home');
+    await fs.mkdir(home, { recursive: true });
+    const starts = [];
+    let inflight = 0, peak = 0, gate = null;
+    const accountIds = ['mon-v1', 'mon-p1', 'mon-v2', 'mon-p2', 'mon-p3'];
+    const verifiedIds = new Set(['mon-v1', 'mon-v2']);
+    const registry = new Map(accountIds.map((id) => [id, { id, token: verifiedIds.has(id) ? TOK_VERIFIED : TOK_PLAIN }]));
+    const scopedOf = (id) => claude.forAccount(registry.get(id));
+    const realNow = Date.now;
+    const restore = setClaudeSdkForTest({
+      executable: () => 'fake-claude',
+      cliSigThrottleMs: 1e9,
+      probe: async (cwd, isDefault, extra) => {
+        const acc = extra?.accountId ?? 'login';
+        starts.push(acc);
+        inflight++; peak = Math.max(peak, inflight);
+        try {
+          // gate が立っている間は、CLI の答えをここで止める（止めている間に、ほかの CLI が起きないことを見る）
+          await (gate ? gate.promise : new Promise((r) => setTimeout(r, 10)));
+          return { rows: verifiedIds.has(acc) ? MYTHOS_16 : STANDARD_14, efforts: {}, applied: !isDefault };
+        } finally { inflight--; }
+      },
+    });
+    // 先読み: ログイン中 → 登録アカウントを 1 つずつ（server の warmBackendModels と同じ順）
+    const warmAll = async () => {
+      await claude.warmModels(home).catch(() => {});
+      for (const id of accountIds) await scopedOf(id).warmModels(home).catch(() => {});
+    };
+    const monitor = createUsageMonitor({
+      backends: () => [claude],
+      read: async () => null,
+      candidates: () => ['claude:sonnet', ...accountIds.map((id) => `claude@${id}:claude-mythos-5-2`)],
+      scopeForAccount: async (_b, id) => (registry.has(id) ? scopedOf(id) : null),
+      // 監視は passive（手元の一覧だけ）で頼む。server の modelKnown も同じ形で答える
+      modelKnown: async (b, model, _account, { passive = false } = {}) => {
+        const opts = passive ? { passive: true } : {};
+        return Object.hasOwn(await b.models(home, opts), model) || await b.validModel(model, home) || Boolean(await b.matchModel(model, home, opts).catch(() => null));
+      },
+      warm: warmAll,
+    });
+    try {
+      // (a) 一覧を 1 つも引いていない間は、取り直しても CLI を起こさない（手元の一覧だけで答える。一覧が無ければ「一覧に無い」とは言わない）
+      await monitor.refresh();
+      await monitor.settle();
+      assert.deepEqual(starts, [], '一覧が無い間の使用量の取り直しは CLI を起こさない');
+      assert.equal(monitor.snapshot().claude.accountModels['mon-p1']['claude-mythos-5-2'], true, '一覧を引く前は、候補を「一覧に無い」と言わない');
+
+      // (b) 起動の先読み: CLI は同時に 1 本だけ、ログイン中 → 登録アカウントの順。そのあとの取り直しは各アカウントの手元の一覧で判定し、CLI を起こさない
+      await warmAll();
+      assert.equal(peak, 1, '先読みは一覧の CLI を同時に起こさない');
+      assert.deepEqual(starts, ['login', ...accountIds], '先読みは、ログイン中 → 登録アカウントを 1 つずつ');
+      await monitor.refresh();
+      await monitor.settle();
+      const mythosKnown = Object.fromEntries(accountIds.map((id) => [id, monitor.snapshot().claude.accountModels[id]['claude-mythos-5-2']]));
+      assert.deepEqual(mythosKnown, { 'mon-v1': true, 'mon-p1': false, 'mon-v2': true, 'mon-p2': false, 'mon-p3': false }, 'アカウントごとの手元の一覧で判定する');
+      assert.equal(starts.length, accountIds.length + 1, '一覧が揃ったあとの取り直しは、一覧に無い候補があっても CLI を起こさない');
+
+      // (c) 取り直しを重ねても CLI は増えない
+      for (let i = 0; i < 3; i++) { await monitor.refresh(); await monitor.settle(); }
+      assert.equal(starts.length, accountIds.length + 1, '取り直しを重ねても CLI は増えない');
+      t.ok('使用量の監視: 一覧が無い間・揃っている間は、取り直しても一覧の CLI を起こさず、先読みはログイン中 → アカウントを 1 つずつ順に引く', true);
+
+      // (d) 一覧の期限（30 分）が切れたあとの取り直し: 公開は一覧の CLI を待たない。確かめ直し（先読み）は 1 本ずつ。確かめ直しの最中に取り直しを重ねても CLI は増えない
+      Date.now = () => realNow() + 31 * 60_000;
+      gate = deferred();
+      const base = starts.length;
+      const outcome = await Promise.race([monitor.refresh().then(() => 'published'), new Promise((r) => setTimeout(() => r('blocked'), 1500))]);
+      assert.equal(outcome, 'published', '使用量の公開は、一覧の確かめ直し（CLI）を待たない');
+      for (let i = 0; i < 100 && inflight < 1; i++) await new Promise((r) => setTimeout(r, 10));
+      assert.equal(inflight, 1, '確かめ直しが始まっている（CLI が 1 本、止められている）');
+      for (let i = 0; i < 3; i++) await monitor.refresh();
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(starts.length - base, 1, '確かめ直しの最中は CLI が 1 本だけ（取り直しを重ねても、アカウントの数だけ並べて起こさない）');
+      assert.equal(starts[base], 'login');
+      assert.equal(peak, 1);
+      const release = gate;
+      gate = null;
+      release.resolve();
+      await monitor.settle();
+      assert.deepEqual(starts.slice(base), ['login', ...accountIds], '期限切れの一覧は、ログイン中と各アカウントを 1 回ずつ、順に引き直す');
+      assert.equal(peak, 1, '一覧の CLI は同時に 1 本だけ');
+      t.ok('使用量の監視: 一覧の期限が切れたあとも、公開は一覧の CLI を待たず、確かめ直しは 1 本ずつ・取り直しを重ねても CLI は増えない（アカウントの数だけ並べて起こさない）', true);
+    } finally {
+      Date.now = realNow;
+      restore();
+      claude.invalidateModels();
+    }
   }
 
   await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });

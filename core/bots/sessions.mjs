@@ -127,8 +127,10 @@ export function createBotSessions({ host, now = Date.now } = {}) {
     // backendHint: スレッドで選んだ backend（組み込みの bot だけ。channels.threadSettings の backend）
     const base = host.getBackend((bot.plain && backendHint) || bot.backend);
     if (!base) throw new Error(agentT(lang(), 'delegation.backendDisabled'));
-    const backend = !bot.plain && takesAccount(base) && bot.account && typeof host.backendForAccount === 'function'
-      ? await host.backendForAccount(base, bot.account).catch(() => base)
+    // bot のアカウントの一覧で、モデル・エフォートを決める。アカウントを引けない（消した等）ときは、ログイン中の一覧へ落とさず、
+    // host.accountBackend が使えないバックエンドを返す（下の resolveModel が引けなかった理由で断る。会話は作らない）
+    const backend = !bot.plain && takesAccount(base) && bot.account && typeof host.accountBackend === 'function'
+      ? await host.accountBackend(base, bot.account)
       : base;
     const modes = backend.modes();
     const mode = modes[bot.mode] ? bot.mode : defaultMode(modes);
@@ -171,8 +173,9 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const base = host.getBackend(bot.backend);
       const meta = await host.store.get(sessionId);
       if (!base || meta.backend !== base.id) return false;   // backend を変えた bot の古い会話は、次の新しい会話から（そのままにする）
-      const backend = takesAccount(base) && bot.account && typeof host.backendForAccount === 'function'
-        ? await host.backendForAccount(base, bot.account).catch(() => base)
+      // アカウントを引けないとき（消した等）は、別の一覧でモデルを書き換えない（下の resolveModel が断り、syncSessions が記録する。承認モードは先に揃う）
+      const backend = takesAccount(base) && bot.account && typeof host.accountBackend === 'function'
+        ? await host.accountBackend(base, bot.account)
         : base;
       const modes = backend.modes();
       // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
