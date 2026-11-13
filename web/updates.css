@@ -1,19 +1,59 @@
-#appVersion { font-size: 15px; font-weight: 600; }
-#updatePreferences { display: grid; gap: 12px; margin: 20px 0; }
-#updatePreferences label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-#updateHint, #updateLastChecked { color: var(--ink-weak); font-size: 12px; }
-#updateConfirm { padding: 16px; margin: 16px 0; background: var(--surface-1); border-radius: 14px; }
-#updateConfirm h3 { margin-top: 0; }
-#updateError { color: var(--ink); font-weight: 600; }
-#updateNotes { overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
-#updateNotes :is(h1, h2, h3) { font-size: 14px; margin: 12px 0 6px; }
-#updateNotes > :first-child { margin-top: 0; }
-#updateProgress, #updatePromptProgress { width: 100%; }
-#updatePromptProgress { margin-top: 8px; }
-#releaseHistory details { padding: 12px 0; }
-#releaseHistory summary { cursor: pointer; overflow-wrap: anywhere; }
-#releaseHistory h4 { margin-bottom: 8px; }
-#releaseHistory li { margin-bottom: 8px; }
+/* 設定 › バージョンと更新（docs/design-system.md「アプリの更新」）。上の枠: 版・状態の 1 行・主ボタン 1 つ */
+.t-head { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:12px 16px; }
+.t-id { flex:1 1 200px; min-width:0; }
+.t-ver { margin:0; font-size:var(--fs-xl); font-weight:600; color:var(--ink-strong); line-height:1.4; }
+.t-status { display:flex; flex-wrap:wrap; gap:0 12px; margin:4px 0 0; line-height:1.7; overflow-wrap:anywhere; }
+.t-status[hidden] { display:none; }
+.t-status.strong > span:first-child { font-weight:600; color:var(--ink-strong); }
+.t-last, .t-note { color:var(--ink-weak); font-size:var(--fs-s); }
+.t-last { align-self:center; }
+.t-note { margin:6px 0 0; }
+.t-acts { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-left:auto; }
+.t-acts #updateConfirm { display:flex; gap:8px; }
+.t-acts #updateConfirm[hidden] { display:none; }
+/* 進み。数が分かるときは幅で、分からないとき（適用の準備）は行き来する帯で */
+.t-bar { position:relative; height:4px; max-width:320px; margin:10px 0 2px; border-radius:var(--r-pill); background:var(--surface-3); overflow:hidden; }
+.t-bar[hidden] { display:none; }
+.t-bar i { position:absolute; inset:0 auto 0 0; border-radius:var(--r-pill); background:var(--fill-primary); color:var(--on-fill); transition:width var(--dur) linear; }
+.t-bar.ind i { width:36%; animation:t-ind 1.4s ease-in-out infinite; }
+@keyframes t-ind { from { left:-36%; } to { left:100%; } }
+@media (prefers-reduced-motion:reduce) { .t-bar.ind i { animation:none; left:32%; } }
+.t-docs { margin:8px 0 0; }
+.t-docs a { font-size:var(--fs-s); color:var(--ink-weak); }
+.t-prefs { margin:24px 0 0; }
+.t-prefs[hidden] { display:none; }
+.t-prefs .rm-mrow { padding-left:0; padding-right:0; }
+.t-prefs .rm-mrow.off { opacity:.4; }
+.t-prefs .cx-sw[aria-disabled=true] { cursor:not-allowed; }
+.t-sec { margin:32px 0 0; }
+.t-sec > h3 { margin:0 0 4px; }
+/* リリースノート: 1 つの節に、同じ形の行（版 · 日付 / 題・右の ›）。押すと本文が開く（web/release-notes.mjs） */
+.rn-group + .rn-group { margin-top:20px; }
+.rn-gh { display:flex; align-items:center; gap:8px; min-height:32px; font-size:var(--fs-s); font-weight:600; color:var(--ink-weak); letter-spacing:.04em; }
+.rn-gh span { font-weight:400; letter-spacing:0; }
+.rn-list { display:flex; flex-direction:column; gap:2px; }
+.rn-row { margin:0 -8px; }
+.rn-head { display:flex; align-items:flex-start; gap:12px; width:100%; text-align:left; padding:8px; border:0; background:transparent; color:inherit; font:inherit; border-radius:var(--r-m); cursor:pointer; transition:background-color var(--dur-fast) var(--ease-out); }
+.rn-head:hover { background:var(--surface-hover); }
+.rn-txt { flex:1; min-width:0; }
+.rn-meta { display:block; font-size:var(--fs-s); color:var(--ink-weak); }
+.rn-title { display:block; color:var(--ink-strong); overflow-wrap:anywhere; }
+.rn-row.open > .rn-head .rn-title { font-weight:600; }
+.rn-chev { flex:none; width:16px; height:16px; margin-top:4px; color:var(--ink-weak); transition:transform var(--dur) var(--ease-out); }
+.rn-row.open > .rn-head .rn-chev { transform:rotate(90deg); }
+/* 開け閉めは高さを 0fr ↔ 1fr で動かす。閉じている間は見えず、キーボードも届かない（visibility を動きの後に切り替える） */
+.rn-body { display:grid; grid-template-rows:0fr; transition:grid-template-rows var(--dur) var(--ease-out); }
+.rn-row.open > .rn-body { grid-template-rows:1fr; }
+.rn-body > div { overflow:hidden; min-height:0; padding:0 8px; visibility:hidden; transition:visibility 0s var(--dur); }
+.rn-row.open > .rn-body > div { visibility:visible; transition-delay:0s; }
+.rn-content { overflow-wrap:anywhere; }
+.rn-content :is(h1, h2, h3, h4) { margin:10px 0 4px; font-size:var(--fs); color:var(--ink-strong); }
+.rn-content ul { margin:0 0 6px; padding-left:20px; }
+.rn-content li { margin-bottom:6px; line-height:1.7; overflow-wrap:anywhere; }
+.rn-content > :last-child { margin-bottom:14px; }
+.rn-more { margin:8px 0 0; }
+.rn-in { animation:rn-in var(--dur) var(--ease-out); }
+@keyframes rn-in { from { opacity:0; transform:translateY(-4px); } }
 #settings.has-update { position: relative; }
 #settings.has-update::after { content: '•'; position: absolute; top: -4px; right: 0; color: var(--ink); }
 .update-notice { padding: 12px; background: var(--surface-2); border-radius: 14px; font-size: 12px; }
@@ -21,7 +61,8 @@
 .update-notice .btn { margin-top: 8px; }
 .update-notice .sub { color: var(--ink-weak); font-size: 11px; margin-top: 2px; }
 .update-notice .sub[hidden] { display: none; }
-.update-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 /* 外の AI の MCP に pleiad mcp を登録する設定のコピー（web/cli-setup.mjs、ADR 0090） */
-#cliSetup { margin: 20px 0; }
-.cli-setup-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+/* 見た目は種類のカード（.cx-card）のまま。中のボタンは外部 MCP などのカードの中と同じ小さい btn */
+#cliSetup[hidden] { display: none; }
+#cliSetup .acts { display: flex; flex-wrap: wrap; gap: 4px; }
+#cliSetup .acts .btn { padding: 3px 10px; font-size: var(--fs-s); }

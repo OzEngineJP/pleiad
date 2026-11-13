@@ -1,4 +1,4 @@
-// サインイン時の起動の画面（設定 › アプリ情報・更新 › 常駐）の表示の決め方。DOM を持たない部分（web/login-item-view.mjs）を確かめる
+// サインイン時の起動の画面（設定 › 全般 › 常駐）の表示の決め方。DOM を持たない部分（web/login-item-view.mjs）を確かめる
 import { loginItemView } from '../../web/login-item-view.mjs';
 
 export const name = 'login-item-ui';

@@ -40,7 +40,7 @@ CIのElectron本体の取得は `scripts/prepare-electron.mjs` が行う。通�
 
 ## 利用者の操作
 
-設定の左メニュー「アプリ情報・更新」にバージョン、変更履歴、更新の状態、受け取る更新をまとめる。
+設定の左メニュー「アプリ情報・更新」にバージョン、更新の状態と操作、更新の設定、リリースノートをまとめる（見え方は [design-system.md](design-system.md)「アプリの更新」）。
 ブラウザー版と、release 設定を使わずに作ったパッケージ（`npm run desktop:pack`・`Desktop packages`）では履歴を読めるが自動更新はしない。Microsoft Store 版は Store が更新するので、electron-updater を使わず、Store で更新する案内を出す（[microsoft-store.md](microsoft-store.md)「自動更新」）。
 release 設定（`electron-builder.release.cjs`）だけが `plyRelease: true` と配布先を埋め込む。Windows の無署名の配布（`PLY_WINDOWS_SIGNING=none`）もこの設定で作るので、自動更新を持つ。
 
@@ -53,7 +53,14 @@ release 設定（`electron-builder.release.cjs`）だけが `plyRelease: true` �
 更新設定は Electron userData の `updates.json` に保存する。初回インストールでは更新通知を出さず、
 バージョン変更後に一度だけ通知する。リロードでの再通知を防ぐ記録は sessionStorage に持つ。
 オンボーディングの履歴は別のまま。過去のリリースノートはアプリに同梱し、オフラインでも読める。
-配布元から取得した更新概要は実行可能な HTML として挿入しない。
+配布元から取得した更新概要は実行可能な HTML として挿入しない（Markdown として `renderMarkdown` を通す）。
+
+### リリースノートの取り方
+
+- 入っている版以前: 同梱の `web/release-info.json`（`scripts/release-info.mjs` が `releases/<version>.json` から作る）。
+- 見つけた版・その間の版: 更新を確認するたびに GitHub の Releases の一覧（`/releases`）を 1 回読み、入っている版より新しく見つけた版までの本文を `state.releases`（`{version, date, title, body}`）にする。先行版（prerelease）のノートも、安定版だけを受け取る人に出す（途中でどんな変更があったかを見せるため）。一覧が取れない・空のときは、最新の版の本文だけの `state.notes` を使う。
+- 前に入っていた版: 版が替わった最初の起動で、前の版を `updates.json` の `previousVersion` に保存し、次の更新まで残す（同じ版の再起動では替えない。いまの版と同じ値は捨てる）。画面はこれで「今回の更新」の範囲を決める。新しく入れた人には無いので、見出し無しの一覧にする。
+- 版の並びは semver（先行版は同じ番号の正式な版より前。`beta.9 < beta.10` は数で比べる）。`web/versions.mjs` の `compareVersions` / `versionsBetween`。
 
 ### 更新UX
 
@@ -194,7 +201,7 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 
 ## サインイン時の起動
 
-設定 › アプリ情報・更新 › 常駐の「サインイン時に Pleiad を起動する」（既定オフ。[ADR 0175](adr/0175-launch-at-login.md)）。委譲のホストの PC が再起動したあとも Pleiad が上がるようにする。
+設定 › 全般 › 常駐の「サインイン時に Pleiad を起動する」（既定オフ。[ADR 0175](adr/0175-launch-at-login.md)）。委譲のホストの PC が再起動したあとも Pleiad が上がるようにする。
 
 - 登録: Windows は `HKCU\...\Run` に `process.execPath`（インストーラーが置く `$INSTDIR\Ply.exe`）と `--hidden`。版ごとの実行場所ではなく main の exe なので、更新（無停止の更新を含む）をまたいでも有効で、古い版のパスは残らない。入れ先が変わった再インストールで古いパスが残ったときは、起動のたびに今の exe へ直す
 - 状態: 画面は毎回 OS から読む。ほかの道で外されればオフに見える。タスクマネージャー・Windows の設定で無効にされた登録は、オフのまま「無効になっている」と出す

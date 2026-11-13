@@ -424,7 +424,7 @@ const authz = {
 - 許可のスイッチは中継の設定が無くても入れられる（設定が揃うまではつながらず、ペアリングも始められない）
 - 承認のダイアログはどの画面にいても出る（承認待ちと同じく差し色の「承認を待っている」）。＋ の流れで待っている間は流れの中で聞く
 - 画面は管理の面の上に置く `.rm-*`（`web/manage-panel.css`）。設定の状態はサーバー側（WS コマンド）に置くので、リモートの窓からも この PC へ は見える・触れる（全権限のため）
-- 常駐の設定は 設定 › アプリ情報・更新 に移した（§6.3）
+- 常駐の設定は 設定 › 全般 に置く（§6.3。アプリ情報・更新 から 2026-11-13 に移した）
 
 QR の画像は `web/vendor/qrcode-generator.mjs`（kazuhikoarase/qrcode-generator 2.0.4、MIT。取得元と版はファイルの頭）を同梱して SVG に描く（誤り訂正 M、余白 4 マス、明暗テーマによらず白地 `--surface-qr` に濃い点 `--ink-qr`）。
 
@@ -443,9 +443,9 @@ WS コマンド（`core/protocol.mjs`）: `setRemoteDeviceAgent { id, stopAll? }
 
 - **推奨: リモートを有効にしたら「窓を閉じてもホストを続ける」を既定でオン**にし、トレイ（macOS はメニューバー）に残す。トレイのメニュー: 状態（中継 · 接続中の端末 N · 実行中 N）、「Pleiad を開く」、「終了」（実行中なら今と同じ確認）
 - **ルーティン**: 一時停止していないものが 1 件以上あれば、リモートの有効・無効や「窓を閉じてもホストを続ける」の設定にかかわらずトレイに残す。メニューとツールチップに「ルーティン N 件のために常駐しています」を添える。「終了」は従来どおりホストを終了し、ルーティンも止まる。
-- 画面は 設定 › アプリ情報・更新 › 常駐（`web/resident-settings.mjs`。2026-10-21 に 設定 › リモートから移した。リモートに限らずアプリ全体の動き方なので）: 「ウィンドウを閉じても動かし続ける（トレイに残す）」「サインイン時に Pleiad を起動する（ウィンドウは出さずに起動）」のスイッチと、「スリープ」の「作業中だけ防ぐ / 防がない」。デスクトップ版のホストだけに出す
+- 画面は 設定 › 全般 › 常駐（`web/resident-settings.mjs`。2026-10-21 に 設定 › リモートから アプリ情報・更新 へ、2026-11-13 に 全般 へ移した。リモートに限らずアプリ全体の動き方なので）: 「ウィンドウを閉じても動かし続ける（トレイに残す）」「サインイン時に Pleiad を起動する（ウィンドウは出さずに起動）」のスイッチと、「スリープ」の「作業中だけ防ぐ / 防がない」。デスクトップ版のホストだけに出す
 - スリープ: リモートが有効な場合だけ「作業中だけ防ぐ（既定）/ 防がない」。作業中 = ターンが走っているか承認待ちがあるとき、`powerSaveBlocker.start('prevent-app-suspension')`。画面は消えてよい。以前あった「リモートが有効な間は防ぐ」（`'always'`）は 2026-10-21 に廃止した（何もしていない間も PC を起こし続け、電気代と熱の割に得るものが無い）。保存されていた `'always'` は読み込み時に `'working'` へ移して書き直す。ルーティンだけの常駐ではスリープを抑止しない（PC がスリープ中の予定は動かない）
-- ログイン時の自動起動は任意（`app.setLoginItemSettings`）。既定はオフ。設定 › アプリ情報・更新 › 常駐の「サインイン時に Pleiad を起動する」と、設定 `launchAtLogin`（[ADR 0175](adr/0175-launch-at-login.md)、[desktop-releases.md](desktop-releases.md)）
+- ログイン時の自動起動は任意（`app.setLoginItemSettings`）。既定はオフ。設定 › 全般 › 常駐の「サインイン時に Pleiad を起動する」と、設定 `launchAtLogin`（[ADR 0175](adr/0175-launch-at-login.md)、[desktop-releases.md](desktop-releases.md)）
 
 実装（2026-09-23）: 設定は `<data>/remote/resident.json` の `{ keepRunning, sleep }`（`core/remote/resident.mjs`。既定 `true` / `'working'`）。WS コマンド `setRemoteResident { keepRunning?, sleep? }`、`RemoteStatus.resident = { available, keepRunning, sleep }`（`available` はデスクトップ版のホストのとき）。
 サーバーは起動時と、リモートの状態・実行中の作業（`broadcastRunning`）・ルーティン（`routinesChanged`）が変わるたびに、parentPort で `{ type: 'resident', state: { remote, routines, keepRunning, sleep, working, running, waiting, devices, relay, locale } }` を送る（同じ内容は送らない）。`routines` は `botHost.opsDeps().routines.list()` のうち `paused: false` の件数。口が無い・0 件なら従来のリモートの条件だけで判断する。作業中 = `runningWork().count > 0`。
@@ -525,7 +525,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 | フォルダー選択 `plyDesktop.chooseFolder`（`web/composer-controls.mjs:207`、`web/context.mjs:245,457`） | OS のダイアログで**手元の**パスを返す | preload で出さない。画面は既にブリッジの有無で分けているので、ブラウザー版と同じ `listDirs` の簡易ブラウザー（ホストのフォルダー）になる。コンテキストの「フォルダーを選ぶ…」は出ず、パスの入力と候補だけ |
 | Claude のアカウントの認可（`web/claude-accounts.mjs:42` の `desktop()`） | デスクトップ版ならサーバーがホストの画面でブラウザーを開く | `desktop()` を「`plyDesktop` があり `plyRemote` が無い」に変える。端末側でリンクを開き、コードを貼り戻す（今のブラウザー版と同じ。戻り先がループバックではないのでリモートでも完了できる） |
 | Claude CLI の `auth login`（`core/auth/claude-cli.mjs`）、Codex の ChatGPT ログイン（`core/backends/codex.mjs:1511`）、外部 MCP の OAuth（戻り先がホストの `127.0.0.1`。`core/mcp-oauth.mjs:12,64,185`）、Antigravity のログイン（`core/backends/index.mjs:120`） | 戻り先がホストのループバック・端末でしか受け取れない | **ホストの PC で済ませる。** リモートの窓（とモバイル）ではログインの操作の代わりに「このログインはホストの PC で行ってください。」の一文を出す（`plyRemote` の有無で分ける）。状態の表示（ログイン済み・未ログイン）はそのまま見える。ホストで待っているログインの［やめる］はリモートの窓でも押せる（URL・コマンドはホストの窓にだけ出す。ADR 0243） |
-| アプリの更新 `plyDesktop.update`（`web/updates.mjs:3`） | 手元のアプリの更新 | 出さない（手元のアプリの更新はローカルの窓で）。「アプリ情報・更新」はホストの版（`ready.version`）を出し、「ホストの Pleiad の更新はホストで行います」 |
+| アプリの更新 `plyDesktop.update`（`web/updates.mjs:12`） | 手元のアプリの更新 | 出さない（手元のアプリの更新はローカルの窓で）。「アプリ情報・更新」はホストの版（`ready.version`）を出し、「ホストの Pleiad の更新はホストで行います」 |
 | 貼り付けた HTML の画像（https。[ADR 0141](adr/0141-rich-paste.md)） | ホストが取りに行く（WS の `attachImport`。画面の fetch は CORS で読めず、Electron の main はリモートの窓・モバイルでは使えない）。置き場・返す形は添付と同じ | そのまま。取りに行くのはホストの PC のネットワークから（公開アドレスの https だけ。ホストの LAN の内側へは届かない） |
 | 完了通知 `plyDesktop.notifyCompletion`（`web/notifications.mjs:20`） | 手元の OS 通知 | そのまま使う。本文の頭にホスト名。押すとそのリモートの窓の会話を開く |
 | 窓の枠 `web/index.html:20`（`desktop` の class） | `plyDesktop` の有無 | そのまま（リモートの窓も同じ枠）。`plyRemote` があれば `remote` の class も |

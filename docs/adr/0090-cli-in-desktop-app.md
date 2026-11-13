@@ -25,7 +25,7 @@
 - Ply.exe は Electron で、`ELECTRON_RUN_AS_NODE=1` で Node として動く（サーバーの子プロセスが既に使っている。fuse の RunAsNode は止めていない）。Node を別に配らずに済む。
 - PATH を会話ごとの env（`PLEIAD_CONTROL_*` と同じ所）ではなくサーバーのプロセスに足すのは、どのエージェントにも同じ値で、Codex の app-server（1 プロセスで全会話）にも `!` の行にも漏れなく届くため。会話ごとに変える値ではない。
 - 外の AI の設定の `command` に `.cmd` を書かない: Node（Claude Code など）は Windows で `.cmd` をシェル無しで起動できない（`spawn EINVAL`）。実行ファイルを直に指せば、どの OS・どのクライアントでも同じ形で動く。
-- 設定の場所は「アプリ情報」: このインストールの場所に依る情報で、外部 MCP（設定 › プラグイン）は Pleiad が**使う** MCP の節なので向きが逆になる。
+- （2026-11-13 の追記: 置き場所は設定 › プラグインの外部 MCP の下へ移した。[ADR 0323](0323-settings-about-update-redesign.md)）設定の場所は「アプリ情報」: このインストールの場所に依る情報で、外部 MCP（設定 › プラグイン）は Pleiad が**使う** MCP の節なので向きが逆になる。
 
 ## 影響
 

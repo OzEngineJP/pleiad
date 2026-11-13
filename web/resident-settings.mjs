@@ -1,20 +1,21 @@
-// 設定 › アプリ情報・更新 › 常駐（docs/remote.md §6.3、ADR 0175・0239）。デスクトップ版だけ（RemoteStatus.resident.available）。
+// 設定 › 全般 › 常駐（docs/remote.md §6.3、ADR 0175・0239）。デスクトップ版だけ（RemoteStatus.resident.available）。
 // ウィンドウを閉じても動かし続ける・サインイン時に起動する・スリープ（作業中だけ防ぐ / 防がない）。
-// 常駐はリモートに限らずアプリ全体の動き方なので、設定 › リモートから移した。見え方は web/manage-panel.css の .rm-*。
+// 常駐はリモートに限らずアプリ全体の動き方なので、設定 › リモートから移し、さらに「全般」のページへ置いた。見え方は web/manage-panel.css の .rm-*。
+// デスクトップ版だけの設定なので、使えないときは「全般」のメニューごと出さない（内蔵ブラウザー・Pleiad Plus と同じ）。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { loginItemView } from './login-item-view.mjs';
 import { groupHead, switchButton, segment, errorLine, paintInto } from './remote-parts.mjs';
 
 export function setupResidentSettings({ cmd }) {
-  const root = document.getElementById('residentSettings');
+  const root = document.getElementById('residentSettings'), tab = document.getElementById('generalTab');
   /** RemoteStatus.resident と、サインイン時の起動（OS から読み直した状態）・操作中・失敗 */
   let resident = null, login = null, busy = false, message = '';
   // OS にサインインしたら起動する（desktop/login-item.cjs）。この窓（ローカルのデスクトップ版）だけ
   const loginBridge = window.plyDesktop?.loginItem && !window.plyRemote ? window.plyDesktop.loginItem : null;
 
   function paint() {
-    root.hidden = !resident?.available;
+    root.hidden = tab.hidden = !resident?.available;
     if (root.hidden) return;
     const view = loginBridge ? loginItemView(login) : { visible: false };
     paintInto(root, JSON.stringify([resident, view, busy, message]), () => {
@@ -69,6 +70,6 @@ export function setupResidentSettings({ cmd }) {
   }
 
   // 開くたびに OS から読み直す（OS の設定で変えられていることがある）
-  document.getElementById('updatesTab').addEventListener('click', () => refresh());
+  tab.addEventListener('click', () => refresh());
   return { refresh, event };
 }

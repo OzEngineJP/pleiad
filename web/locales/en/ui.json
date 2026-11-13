@@ -44,6 +44,7 @@
     },
     "nav": {
       "agents": "Agents",
+      "general": "General",
       "apiKeys": "Secrets and variables",
       "usage": "Usage",
       "appearance": "Appearance",
@@ -3541,13 +3542,26 @@
     },
     "hint": {
       "applying": "Please wait while saving and preparing the update. After Pleiad quits, the update is applied and Pleiad restarts automatically.",
-      "downloading": "You can keep working. You'll be notified when it's ready.",
-      "noAutoUpdate": "This preview build doesn't support automatic updates. Update with a new installer.",
-      "browser": "In the browser version, you can view the release history."
+      "noAutoUpdate": "This preview build doesn't support automatic updates. Update with a new installer."
     },
     "store": {
       "status": "Updated through the Microsoft Store",
       "hint": "New versions come from the Microsoft Store. To check now, open Library in the Microsoft Store and select Get updates."
+    },
+    "notes": {
+      "newVersions": "New versions",
+      "pastVersions": "Past versions",
+      "thisUpdate": "This update",
+      "earlierVersions": "Earlier versions",
+      "fromCount_one": "From {{from}} · {{count}} version",
+      "fromCount_other": "From {{from}} · {{count}} versions",
+      "from": "From {{from}}",
+      "count_one": "{{count}} version",
+      "count_other": "{{count}} versions",
+      "showMore_one": "Show {{count}} more version",
+      "showMore_other": "Show {{count}} more versions",
+      "more": "Show more",
+      "current": "Current version"
     },
     "lastChecked": "Last checked: {{when}}",
     "retry": "Retry",

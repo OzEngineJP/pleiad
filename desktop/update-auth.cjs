@@ -91,18 +91,60 @@ function newestReleaseProvider() {
     get isUseMultipleRangeRequest() {
       return false;
     }
+    // 見つけた版に、入っている版からの途中の版のノートを添える（画面の「新しいバージョン」の一覧）。
+    // 一覧が取れなかったときは何も添えず、画面は見つけた版のノートだけを出す（確認は失敗させない）
+    async getLatestVersion() {
+      this.releaseList = null;
+      const result = await super.getLatestVersion();
+      const current = this.updater.currentVersion?.version;
+      const releases = current ? notesBetween(this.releaseList, current, result.version, semver) : [];
+      if (releases.length) result.plyReleases = releases;
+      return result;
+    }
     async getLatestVersionInfo(cancellationToken) {
       const json = 'application/vnd.github.v3+json';
+      const listUrl = new URL(`${this.basePath}?per_page=100`, this.baseUrl);
       // 標準の実装は失敗を包み直して HTTP の状態コードを落とすので、状態コードでエラー文を分けられるよう自前で取る
       if (!this.updater.allowPrerelease) {
         const url = new URL(`${this.basePath}/latest`, this.baseUrl);
-        return JSON.parse(await this.httpRequest(url, this.configureHeaders(json), cancellationToken));
+        const latest = JSON.parse(await this.httpRequest(url, this.configureHeaders(json), cancellationToken));
+        // 正式な版だけを受ける利用者にも、途中の先行版のノートを見せるので、一覧も取る。失敗しても更新の確認は続ける
+        try { this.releaseList = JSON.parse(await this.httpRequest(listUrl, this.configureHeaders(json), cancellationToken)); } catch { this.releaseList = null; }
+        return latest;
       }
-      const url = new URL(`${this.basePath}?per_page=100`, this.baseUrl);
-      const list = JSON.parse(await this.httpRequest(url, this.configureHeaders(json), cancellationToken));
+      const list = JSON.parse(await this.httpRequest(listUrl, this.configureHeaders(json), cancellationToken));
+      this.releaseList = list;
       return newestRelease(list, semver);
     }
   };
+}
+
+const NOTE_LIMIT = 4000, NOTES_LIMIT = 100000;
+/**
+ * GitHub の Releases の一覧から、from < 版 ≤ to の版のノートを新しい順で作る。
+ * 本文は配布時に作った「# Pleiad 版 / 日付 · 題 / 見出しと箇条書き」の形（scripts/release-info.mjs）。先頭の 2 つを題と日付に分ける。
+ * 本文は信用できない入力なので、ここでは文字数を切るだけで、画面が renderMarkdown を通して出す
+ */
+function notesBetween(list, from, to, semver) {
+  if (!Array.isArray(list) || !semver.valid(from) || !semver.valid(to)) return [];
+  const out = [];
+  let total = 0;
+  const entries = list.filter(release => release && !release.draft && semver.valid(String(release.tag_name ?? '').replace(/^v/, '')))
+    .map(release => ({ release, version: semver.valid(String(release.tag_name).replace(/^v/, '')) }))
+    .filter(({ version }) => semver.gt(version, from) && semver.lte(version, to))
+    .sort((a, b) => semver.rcompare(a.version, b.version));
+  for (const { release, version } of entries) {
+    let body = typeof release.body === 'string' ? release.body.replace(/\r\n/g, '\n').trim() : '';
+    let date = typeof release.published_at === 'string' ? release.published_at.slice(0, 10) : '';
+    let title = typeof release.name === 'string' ? release.name : '';
+    const head = /^# [^\n]*\n+(\d{4}-\d{2}-\d{2}) · ([^\n]*)(?:\n+|$)/.exec(body);
+    if (head) { date = head[1]; title = head[2]; body = body.slice(head[0].length); }
+    body = body.slice(0, NOTE_LIMIT);
+    total += body.length;
+    if (total > NOTES_LIMIT) break;
+    out.push({ version, date, title, body });
+  }
+  return out;
 }
 
 function newestRelease(list, semver) {
@@ -126,4 +168,4 @@ async function prepareUpdateCheck(updater, configFile, authOptions) {
   return { authenticated: Boolean(token) };
 }
 
-module.exports = { resolveGitHubToken, prepareUpdateCheck, newestRelease };
+module.exports = { resolveGitHubToken, prepareUpdateCheck, newestRelease, notesBetween };

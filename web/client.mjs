@@ -10364,7 +10364,7 @@ function connect() {
       for (const wake of [...onlineWaiters]) wake();
       // Chrome の窓の表はつなぎ直しで作り直す（サーバーは続けて今の分を送る）
       chromeWindows.clear(); chromeControlStore.clear(); tabHolderStore.clear(); deviceOperating.clear(); browserEntry?.paint(); paintChromeControl();
-      // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
+      // 設定 › プラグインの「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
       // 同じ答えで、添付の札に出どころを付けるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
@@ -11013,7 +11013,7 @@ const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboardin
 // 設定 › Pleiad Plus（docs/plus.md「設定 › Pleiad Plus」）
 const plusSettings = setupPlusSettings({ cmd, page: onboarding.page, getPrefs: () => state.prefs });
 paintSideFoot();   // 脇の下端の丸と名（status が届くまで「使えない」の出し方）
-// 設定 › アプリ情報・更新 › 常駐（デスクトップ版だけ。状態は remoteStatus の resident）
+// 設定 › 全般 › 常駐（デスクトップ版だけ。状態は remoteStatus の resident）
 const residentSettings = setupResidentSettings({ cmd });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
 const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getBackends: () => state.backends });
