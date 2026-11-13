@@ -340,7 +340,9 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
       // locale は会話の言語。agy（antigravity）はエージェント定義の文と中継のエラーをこの言語で作る。
       // shape: 担当と渡すツールの名前。会話のあいだプロセスを生かすバックエンド（antigravity）は、これが変わったら起こし直す
       // （設定の変更で担当や外部 MCP が変わっても、起動時に受け取ったツール一覧のままになるため）
-      const shape = hash([runtime.owners, binding.tools.map(tool => tool.name), runtime.mcp?.suppress ?? []]);
+      // 止める名前（名前ごとの一覧）は、あるときだけ含める。無ければ今までの値のまま（更新の直後に待機中のエージェントを起こし直さない）
+      const suppress = runtime.mcp?.suppress ?? [];
+      const shape = hash([runtime.owners, binding.tools.map(tool => tool.name), ...(suppress.length ? [suppress] : [])]);
       // held: 保持役の子に付け直した外部 MCP の id（起こし直していない。状態が残っている）
       const heldIds = [...binding.leases].filter(([, lease]) => lease?.held).map(([id]) => id);
       // sections: prompt の内訳（Pleiad が足した文の量を数える。core/instruction-amount.mjs）

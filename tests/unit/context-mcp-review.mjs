@@ -8,6 +8,7 @@ import { readClaudePlugins } from '../../core/context-claude-extras.mjs';
 import { CAPABILITY_STATES } from '../../core/backends/agent-marks.mjs';
 import { mirrorGlobalConfig, MANAGED_KEEP } from '../../core/backends/opencode-context.mjs';
 import { contextOps } from '../../core/ops/context.mjs';
+import { createContextBridge } from '../../core/context-bridge.mjs';
 
 export const name = 'context-mcp-review';
 export const title = '外部 MCP のレビューの直し（自分の側を勝たせる・移行・壊れた設定の読み飛ばし・同名の止め漏れ・プラグインの範囲）';
@@ -132,6 +133,18 @@ export default async function (t) {
     const n0 = saved.length;
     t.ok('L: コネクターが未読のまま触っても ok を返さず、保存しない（読めなかったと伝える）', (await call(unread, { name: 'claude.ai Gmail', agent: 'claude', on: true }))?.code === 'INVALID' && saved.length === n0);
     t.ok('F・K: コネクターを触るときは、読み終えるまで待つ指定（wait）で読む', unread.seen === undefined || fake.seen.wait === true, fake.seen);
+    // --- NEW-6: 止める名前が無いとき、shape（待機中のエージェントを起こし直すかの印）は今までの値のまま
+    const bridge = createContextBridge();
+    const shapeOf = async mcp => {
+      const rt = await resolveRuntime(policy(null), { home, plyServers: { file: path.join(tmp, 'ply-mcp.json'), servers: [] } });
+      const conn = await bridge.open({ runtime: { ...rt, mcp }, prompt: '', origin: 'http://127.0.0.1:1', isActive: () => true });
+      const shape = conn.shape; await conn.close(); return shape;
+    };
+    const s0 = await shapeOf(undefined), s1 = await shapeOf({ named: true, suppress: [] }), s2 = await shapeOf({ named: false, suppress: [] }), s3 = await shapeOf({ named: true, suppress: ['x'] });
+    t.ok('NEW-6 止める名前が無ければ shape は今までと同じ（更新の直後に待機中のエージェントを起こし直さない）', s0 === s1 && s1 === s2, { s0, s1, s2 });
+    t.ok('NEW-6 止める名前があれば shape が変わる（起こし直す）', s3 !== s0);
+    await bridge.dispose();
+
     // --- NEW-1: 未読（null）と、読めて 0 件（[]）を最後まで区別する。context.setMcpAgent を実際の ctx の形で呼ぶ 5 つの場合
     const UNREAD = '読めなかった', pick = (e, id) => e?.message?.includes('コネクター') ? 'unread' : e ? e.code : 'saved';
     const run5 = async (agentsMap, extras, args = { name: 'cl', agent: 'claude', on: false }) => {
