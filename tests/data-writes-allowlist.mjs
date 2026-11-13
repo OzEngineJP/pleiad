@@ -207,6 +207,9 @@ export const DATA_WRITES = [
   { file: 'core/backend-shape-diagnostics.mjs', sites: 1, targets: [
     { name: 'backend-shape-errors.log', limit: 'MAX_BYTES=64KiB。超えたら新しい半分だけ残す。同じ組は重複させない', reason: '非公開形式の変化の記録' },
   ] },
+  { file: 'core/slow-log.mjs', sites: 2, targets: [
+    { name: 'slow-commands.log', limit: 'DEFAULT_SLOW_LOG_MAX_BYTES=128KiB。超えたら新しい半分だけ残す', reason: '遅い WS 命令・イベントループ・送信待ちの診断記録。記録自体が処理や DB を待たせないよう独立した追記ファイルへ書く' },
+  ] },
   { file: 'core/computer-use/shots.mjs', sites: 2, targets: [
     { name: 'computer-use/shots.json', limit: '1 会話あたり MAX_SHOTS_PER_SESSION=300、合計 MAX_SHOTS_BYTES=1GiB で古い順に消す', reason: 'スクリーンショットの索引。画像の合計の上限で行数も間接的に抑えられる' },
     { name: 'computer-use/shots/<id>.jpg', limit: '1 枚 1 ファイル', reason: '成果物（書き換えない）' },

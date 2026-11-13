@@ -249,6 +249,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "app.reportSlow",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "b9e2f14262cb"
+    },
+    {
       "id": "app.running",
       "risk": "read",
       "riskOf": false,

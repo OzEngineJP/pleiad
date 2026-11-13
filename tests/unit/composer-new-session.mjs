@@ -23,7 +23,7 @@ export const name = 'composer-new-session';
 export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・作成中の作業場所と設定の反映・読み込み失敗で欄が戻る';
 
 const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
-  'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
+  'syncRunState', 'sessionTitleOf', 'notifySwitchedUnsent', 'syncActiveSubmitWait', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
   'reserveSettings', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings', 'startWorktree', 'chooseModel'];
 
 export default async function (t) {
@@ -48,9 +48,11 @@ export default async function (t) {
   const calls = [];
   const waiting = [];
   let failSave = null;   // saveDraft をこのメッセージで失敗させる
+  let holdSend = null;   // sendMessage の応答を止める（遅い送信受理テスト用）
   const cmd = (command, args = {}) => {
     calls.push({ command, args });
     if (command === 'saveDraft' && failSave) return Promise.reject(new Error(failSave));
+    if (command === 'sendMessage' && holdSend) return new Promise(res => { const fn = holdSend; holdSend = null; fn(res); });
     if (command === 'newSession' || command === 'loadSession') return new Promise((res, rej) => waiting.push({ command, args, res, rej }));
     return Promise.resolve(command === 'listMessages' ? [] : {});
   };
@@ -109,6 +111,8 @@ export default async function (t) {
     isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }), relayoutBranches: noop, branchIsFresh: () => true, promptPlaceholder: () => '',
     ACTIVITY_LABEL: {}, attachMenu: null, setDraftNote: noop,
     isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop, paint: noop }, retiredHere: () => null, submittingMessages: new Set(),
+    activeSubmits: new Map(), openConversation: noop,
+    slowClient: { track: (_c, _a, p) => p, recordSubmitWait: noop, recordSubmitSwitched: noop, configure: noop, flush: noop },
     connStatus: { blocksSend: () => false },
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの弧を合わせる呼び出しだけ受ける
     nav: { syncRunning: noop, reset: noop }, navSession: null, toc: { reset: () => {}, refresh: () => {} },
@@ -125,7 +129,7 @@ export default async function (t) {
     // 入力欄の「編集中」（web/composer/edit-mode.mjs・client.mjs の chatEdit / syncEdit）。このテストの対象外（編集中ではない会話だけ）
     chatEdit: { active: false, sending: false, snapshot: () => null, reset: noop, restore: noop }, syncEdit: noop, syncEditTail: noop,
     // 入力欄の ↑ の呼び出し・次のメッセージの候補・設定 › 入力（web/composer/recall.mjs・suggestion.mjs・web/input-settings.mjs）。このテストの対象外
-    chatRecall: { release: noop, reset: noop, input: noop, active: false }, chatSuggestion: { set: noop, refresh: noop }, suggestions: new Map(), dropSuggestion: noop, inputSettings: { paint: noop },
+    chatRecall: { release: noop, reset: noop, input: noop, active: false }, chatSuggestion: { set: noop, refresh: noop }, suggestions: new Map(), dropSuggestion: noop, noteSent: noop, inputSettings: { paint: noop },
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
     syncResume: noop, syncWorkStop: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
@@ -582,6 +586,137 @@ export default async function (t) {
   await run('submit()');
   t.ok('最初の送信直前に worktree を作り、その cwd で送る',
     calls.filter(c => c.command === 'sendMessage').at(-1)?.args.cwd === 'C:/home.pleiad/one' && !planned.worktreePending);
+
+  // ---- 送信前の待ち（設定反映・受付）・取り消し・別の会話への移動 ----
+  context.cmd = cmdBefore;
+  const slowWaits = [];
+  const slowSwitches = [];
+  const notifyCalls = [];
+  const openedSessions = [];
+  context.notify = (msg, action) => notifyCalls.push({ msg, action });
+  context.openConversation = (id) => openedSessions.push(id);
+  context.slowClient = {
+    track: (_c, _a, p) => p,
+    recordSubmitWait: (entry) => slowWaits.push(entry),
+    recordSubmitSwitched: (entry) => slowSwitches.push(entry),
+    configure: noop,
+    flush: noop,
+  };
+  const sendCallsBefore = () => calls.filter(c => c.command === 'sendMessage').length;
+
+  const switchTo = async (id) => {
+    const sel = run(`select(${JSON.stringify(id)})`);
+    const cached = state.drafts.get(id);
+    await reply('loadSession', cached ? { messages: [], draft: { ...cached } } : { messages: [] });
+    if (releaseRefresh) releaseRefresh();
+    await sel;
+    await settle();
+  };
+
+  // (a) settingsWrite が遅い間: 150ms で注記が出て、取り消しで欄とボタンが戻り、遅延解決しても送らない・通知しない
+  let resolveSettings;
+  state.sessions = [
+    { id: 's_wait', title: '待機テスト会話', cwd: 'C:/home', backend: 'fake', model: '' },
+    { id: 's_other', title: '別の会話', cwd: 'C:/home', backend: 'fake', model: '' },
+  ];
+  await switchTo('s_wait');
+  context.settingsWrite = new Promise(r => { resolveSettings = r; });
+  prompt.value = '設定待ちの下書き';
+  const beforeA = sendCallsBefore();
+  const submitAP = run('submit()');
+  await settle();
+  t.ok('設定反映待ちに入ると 150ms 前でも送信中は二重に送れず、取り消す前はまだ注記を出さない',
+    $('send').disabled && $('composerNote').hidden);
+  flushTimers();
+  const noteTextOf = () => $('composerNote').shown ?? $('composerNote').textContent ?? '';
+  t.ok('150ms 超の settingsWrite 待ちで waitingSettings 注記と取り消しボタンが出、欄は readonly になる',
+    !$('composerNote').hidden && noteTextOf().includes('chat.composer.waitingSettings')
+    && Boolean($('composerNote').querySelector('button')) && $('send').classList.contains('wait') && prompt.readOnly);
+  $('composerNote').querySelector('button').onclick();
+  await settle();
+  t.ok('waitingSettings 中に取り消すと即座に注記が消え、送信ボタン活性・欄編集可・下書きが残る',
+    $('composerNote').hidden && !$('send').disabled && !prompt.readOnly && prompt.value === '設定待ちの下書き');
+  resolveSettings();
+  await submitAP;
+  await settle();
+  t.ok('取り消し後に settingsWrite が終わっても送信されず、他会話切り替え通知も出ない',
+    sendCallsBefore() === beforeA && notifyCalls.length === 0 && slowSwitches.length === 0);
+
+  // (b) settingsWrite 待ち中に別の会話へ移る -> 注記消滅、元の会話へ戻れば待機表示復帰、別会話中に完了なら送らず通知 + 開く
+  let resolveSettingsB;
+  context.settingsWrite = new Promise(r => { resolveSettingsB = r; });
+  const submitBP = run('submit()');
+  await settle();
+  flushTimers();
+  t.ok('待ち中に注記が出ている状態で別会話へ切り替える前の準備ができている', !$('composerNote').hidden);
+  await switchTo('s_other');
+  const draftAfterLeave1 = state.drafts.get('s_wait')?.text;
+  t.ok('別の会話へ切り替えると前の会話の待機注記は隠れ、新会話の欄が書ける',
+    $('composerNote').hidden && !prompt.readOnly && !$('send').disabled);
+  await switchTo('s_wait');
+  const promptAfterReturn = prompt.value;
+  flushTimers();
+  t.ok('まだ待ち終わらないうちに元の会話へ戻ると、waitingSettings の注記と無効状態が復帰する',
+    !$('composerNote').hidden && noteTextOf().includes('chat.composer.waitingSettings') && $('send').disabled);
+  await switchTo('s_other');
+  const beforeB = sendCallsBefore();
+  resolveSettingsB();
+  await submitBP;
+  await settle();
+  t.ok('別会話を見ている間に settingsWrite が終わると送らず、下書きは元会話に残り、タイトル付き通知と開くが記録される',
+    sendCallsBefore() === beforeB && state.drafts.get('s_wait')?.text === '設定待ちの下書き'
+    && notifyCalls.length === 1 && notifyCalls[0].msg === 'chat.send.switchedNotice'
+    && notifyCalls[0].action?.label === 'chat.send.openSession'
+    && slowSwitches.some(s => s.sessionId === 's_wait' && s.wait?.hadSettingsWrite && s.wait?.switched),
+    JSON.stringify({ draftAfterLeave1, promptAfterReturn, draftAfterLeave2: state.drafts.get('s_wait')?.text, diff: sendCallsBefore() - beforeB, notifyCalls, slowSwitches }));
+  notifyCalls[0].action.onClick();
+  t.ok('通知の開くを押すと待機していた元の会話を開く', openedSessions.at(-1) === 's_wait');
+
+  // (c) Home の新規会話作成中に別の会話へ切り替えた場合も黙って捨てず、下書きを新しい会話へ引き継いで通知する
+  notifyCalls.length = 0;
+  slowSwitches.length = 0;
+  openedSessions.length = 0;
+  context.settingsWrite = Promise.resolve();
+  const startCP = run('startNew()');
+  await settle();
+  prompt.value = '新規作成中の下書き';
+  const beforeC = sendCallsBefore();
+  const submitCP = run('submit()');
+  await settle();
+  await switchTo('s_other');
+  await reply('newSession', { sessionId: 's_created_switch', cwd: 'C:/home', backend: 'fake', model: '' });
+  await settle();
+  if (releaseRefresh) releaseRefresh();
+  await startCP;
+  await submitCP;
+  await settle();
+  t.ok('新規会話の作成完了前に別会話へ移ると送らず、無題通知を出し、新会話に下書きを移し、submit-switched を記録する',
+    sendCallsBefore() === beforeC && state.drafts.get('s_created_switch')?.text === '新規作成中の下書き'
+    && notifyCalls.length === 1 && notifyCalls[0].msg === 'chat.send.switchedNoticeUntitled'
+    && slowSwitches.some(s => s.sessionId === 's_created_switch' && s.wait?.hasNewSession),
+    JSON.stringify({ diff: sendCallsBefore() - beforeC, draft: state.drafts.get('s_created_switch'), notifyCalls, slowSwitches }));
+  notifyCalls[0].action.onClick();
+  t.ok('新規会話の未送信通知から開くで作成した会話を開ける', openedSessions.at(-1) === 's_created_switch');
+
+  // (d) sendMessage 自体の応答が遅いとき: 取り消し無し sending 注記に移行し、完了で submit-wait を記録する
+  let resolveSendD;
+  await switchTo('s_wait');
+  holdSend = (res) => { resolveSendD = res; };
+  prompt.value = '遅い送信メッセージ';
+  const submitDP = run('submit()');
+  await settle();
+  flushTimers();
+  t.ok('sendMessage の受理待ちが 150ms を超えると取り消し無し sending 注記になる',
+    !$('composerNote').hidden && noteTextOf().includes('chat.composer.sending') && !$('composerNote').querySelector('button'));
+  resolveSendD({ ok: true, id: 'm_slow_d' });
+  await submitDP;
+  await settle();
+  t.ok('sendMessage 完了で送信注記が消え、submit-wait に outcome=sent と sendMs が記録される',
+    $('composerNote').hidden && !$('send').disabled
+    && slowWaits.some(w => w.sessionId === 's_wait' && w.outcome === 'sent' && typeof w.wait?.sendMs === 'number'),
+    JSON.stringify({ noteHidden: $('composerNote').hidden, sendDisabled: $('send').disabled, err: $('settingsError').textContent, slowWaits }));
+  context.notify = noop;
+  context.openConversation = noop;
 
   // 予定の 1 行と × の役割。既存の wt-compact の部品を使う。
   const notice = new Map();

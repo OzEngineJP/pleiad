@@ -2518,6 +2518,8 @@
       "placeholderTouch": "メッセージを書く",
       "editorLabel": "メッセージ",
       "queued": "会話ができしだい送ります",
+      "waitingSettings": "設定の反映を待っています。終わりしだい送ります",
+      "sending": "送信を受け付けています",
       "queuedCancel": "取り消す",
       "historyLoading": "履歴を読み込み中…",
       "connecting": "接続しています…",
@@ -2596,7 +2598,10 @@
     },
     "send": {
       "unknownPrevious": "前の送信結果を確認できません。元の入力で再試行してください。",
-      "failed": "送信を確認できませんでした。入力は保持しています: {{error}}"
+      "failed": "送信を確認できませんでした。入力は保持しています: {{error}}",
+      "switchedNotice": "「{{title}}」への送信は、別の会話へ移ったので送っていません。入力は下書きに残っています。",
+      "switchedNoticeUntitled": "前の会話への送信は、別の会話へ移ったので送っていません。入力は下書きに残っています。",
+      "openSession": "開く"
     }
   },
   "session": {

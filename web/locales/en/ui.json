@@ -2572,6 +2572,8 @@
       "placeholderTouch": "Write a message",
       "editorLabel": "Message",
       "queued": "Will send once the conversation is ready",
+      "waitingSettings": "Waiting for settings to apply. Will send when ready",
+      "sending": "Waiting for message to be accepted",
       "queuedCancel": "Cancel",
       "historyLoading": "Loading history…",
       "connecting": "Connecting…",
@@ -2652,7 +2654,10 @@
     },
     "send": {
       "unknownPrevious": "Couldn't confirm the previous send. Retry with the original text.",
-      "failed": "Couldn't confirm the send. Your text is kept: {{error}}"
+      "failed": "Couldn't confirm the send. Your text is kept: {{error}}",
+      "switchedNotice": "Your message to \"{{title}}\" was not sent because you switched conversations. Your text is saved as a draft.",
+      "switchedNoticeUntitled": "Your message to the previous conversation was not sent because you switched conversations. Your text is saved as a draft.",
+      "openSession": "Open"
     }
   },
   "session": {

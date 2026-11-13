@@ -1,6 +1,7 @@
 // 先頭に置く: AGENT_HOST_SERVER_LOG があれば、他のモジュールの読み込みの失敗も含めて出力をファイルへ向ける（stdio の無い起動）
 import './server-log-boot.mjs';
 import { createLoadTiming } from './load-timing.mjs';
+import { createSlowLog } from './slow-log.mjs';
 import { effortOptions, validateEffort, effortCapability } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaStore, createUsageStore, agentUsage, readProviderUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
@@ -250,6 +251,8 @@ const lockWaitedMs = Date.now() - lockFrom;
 if (STARTED_BY_MAIN && lockWaitedMs > 0) console.log(`  [start] got the data lock after ${lockWaitedMs} ms at=${Date.now()}`);
 const migrated = await retryTransient(() => ensureDataSchema(store.dataDir));
 if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
+const slowLog = createSlowLog({ dataDir: store.dataDir });
+let wsInFlight = 0;
 const usageStore = createUsageStore(store.dataDir);
 // Claude の記録に入っていた会話の累計を、ターンの分へ一度だけ直す（core/usage-migrations.mjs、ADR 0053）。
 // transcript を読むので起動は待たせない。記録の書き込みとは usageStore の中で直列になる
@@ -4288,6 +4291,8 @@ const opsApp = {
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
+  // 遅い命令・イベントループ・送信待ちの診断ログ（slow-commands.log）
+  reportSlow: (entries) => slowLog.recordClientBatch(entries),
   // 画面が読む走っている作業の全量（turns・permissions・tasks・subagents・background・count）
   runningWork: () => runningWork(),
   // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
@@ -9481,6 +9486,8 @@ wss.on("connection", (ws, req) => {
     locale,
     // 送信予定の時刻をこの PC の時刻でも添えるため（見ている端末と時刻帯が違うとき。ADR 0103）
     hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // 遅い命令・送信待ちの診断記録のしきい値（ms）
+    slow: slowLog.clientConfig(),
   }));
   // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
   if (local) hostScreens.add(ws);
@@ -9501,12 +9508,40 @@ wss.on("connection", (ws, req) => {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg?.kind !== P.COMMAND || !P.COMMANDS.has(msg.command)) return;
 
+    const cmdStart = performance.now();
+    const cmdLabel = msg.command === 'invoke' && typeof msg.args?.op === 'string'
+      ? `invoke:${msg.args.op}`
+      : msg.command;
+    const cmdSessionId = typeof msg.args?.sessionId === 'string'
+      ? msg.args.sessionId
+      : (typeof msg.args?.args?.sessionId === 'string' ? msg.args.args.sessionId : undefined);
+    wsInFlight += 1;
+    let settled = false;
+    let replied = false;
+    const finishCmd = () => {
+      if (settled) return;
+      settled = true;
+      wsInFlight = Math.max(0, wsInFlight - 1);
+    };
+
     // Command IDs are scoped to a socket. Broadcast events, never private replies
     // (connection-check receipts and concurrent clients can share the same ID).
     // code: 失敗の種類。画面は文言（言語で変わる）ではなくこれで見分ける
     // extra: 失敗に添える機械が読む欄（invoke の issues）
     // 画面が bulk を添えたコマンドの大きい返事は、中継越しなら WS の外（HTTP の /bulk/<id>）で渡す。WS の後の返事・出来事を待たせない（ADR 0179）
     const reply = (ok, payload, code, extra) => {
+      if (!replied) {
+        replied = true;
+        slowLog.recordServerCommand({
+          command: cmdLabel,
+          ms: performance.now() - cmdStart,
+          sessionId: cmdSessionId,
+          outcome: ok ? 'ok' : 'error',
+          errorCode: !ok && typeof code === 'string' ? code : undefined,
+          inFlight: wsInFlight,
+        });
+      }
+      finishCmd();
       if (ws.readyState !== ws.OPEN) return;
       const bulk = ok && msg.bulk === true && !local ? bulkReplies.offer(secretMasker.json(JSON.stringify(payload ?? null))) : null;
       ws.send(secretMasker.json(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(bulk ? { bulk } : ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) })));
@@ -10518,7 +10553,20 @@ wss.on("connection", (ws, req) => {
       }
     } catch (err) {
       reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
-    } finally { releaseUpdateGate?.(); }
+    } finally {
+      if (!replied) {
+        replied = true;
+        slowLog.recordServerCommand({
+          command: cmdLabel,
+          ms: performance.now() - cmdStart,
+          sessionId: cmdSessionId,
+          outcome: ws.readyState === ws.OPEN ? 'ok' : 'closed',
+          inFlight: wsInFlight,
+        });
+      }
+      finishCmd();
+      releaseUpdateGate?.();
+    }
   });
 });
 
@@ -10663,6 +10711,7 @@ function shutdownServer({ stopHeld = false } = {}) {
     await botHost?.close?.();
     // 内部呼出しの journal（memory_state）の書き込みを待って離す。既存の hooks.internal の注入ターンとは別の経路
     await internalCalls.close().catch(error => console.error('internal call journal shutdown failed:', error?.code ?? error?.message ?? error));
+    await slowLog.close().catch(error => console.error('slow log shutdown failed:', error?.code ?? error?.message ?? error));
     store.closeStore();
     closeDataDb(store.dataDir);
     releaseDataLock();
@@ -10789,6 +10838,7 @@ const listening = new Promise(resolve => server.once('listening', resolve));
 portDeadline = Date.now() + PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
+slowLog.startLoopMonitor({ getInFlight: () => wsInFlight });
 // 中継の移動の検査が本体の port を知る（ページのリスナーが立つ前から、本体の port を断る手当てを効かせる。ADR 0295 の 4）
 chromeRelay?.setPagePorts({ main: server.address().port });
 // ファイルのページと隔離のリスナー。待たない（覚えた port を前のサーバーが放すのを待つことがある）
