@@ -120,6 +120,26 @@ export default async function (t) {
     t.ok('イベントループの遅れが loopMs を超えたら event-loop 行を残す',
       hasLoopRow(afterLoop),
       JSON.stringify(afterLoop.slice(-5)));
+
+    // 窓が回り続ける実物の形: 窓（500ms）より長い塞ぎを何度繰り返しても、毎回 event-loop 行が残る
+    // （monitorEventLoopDelay だけだと、長い塞ぎがどの窓にも現れないことがあった。自前のタイマー遅れで確実に拾う）
+    const dir2 = path.join(tmpDir, 'steady');
+    const steady = createSlowLog({ dataDir: dir2, thresholds: { clientMs: 50, serverMs: 50, loopMs: 300, loopWindowMs: 500, submitMs: 50 } });
+    steady.startLoopMonitor();
+    await new Promise((r) => setTimeout(r, 600));
+    const lens = [];
+    for (let i = 0; i < 5; i += 1) {
+      const len = 600 + i * 100;
+      const until = Date.now() + len;
+      while (Date.now() < until) { /* block */ }
+      lens.push(len);
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    await steady.close();
+    const steadyRows = fs.readFileSync(steady.logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.kind === 'event-loop');
+    t.ok('窓が回り続けても、塞いだ回数ぶん event-loop 行が残り、ms は塞いだ長さに近い',
+      steadyRows.length >= lens.length && lens.every((len) => steadyRows.some((e) => e.ms >= len - 20 && e.ms <= len + 400)),
+      JSON.stringify({ lens, ms: steadyRows.map((e) => e.ms) }));
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
