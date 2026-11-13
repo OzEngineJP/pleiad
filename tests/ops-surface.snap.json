@@ -1608,7 +1608,7 @@
           ]
         }
       },
-      "legacyCommand": null,
+      "legacyCommand": "mcpMatrix",
       "input": "06124f629e22"
     },
     {
@@ -1732,7 +1732,7 @@
           ]
         }
       },
-      "legacyCommand": null,
+      "legacyCommand": "setMcpAgent",
       "input": "b4483a7833e2"
     },
     {

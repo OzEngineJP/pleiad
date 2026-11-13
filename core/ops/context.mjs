@@ -94,6 +94,7 @@ export const contextOps = [
     }),
     output: z.object({ agents: z.array(z.string()), rows: z.array(loose), locked: z.boolean(), connectors: z.string() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'mcp-matrix'] } },
+    legacyCommand: 'mcpMatrix',
     handler: (ctx, { cwd, place, refresh }) => run(ctx, async () => {
       const dir = (await cwdFor(ctx, cwd)) ?? null;
       const view = await ctx.context.view(dir);
@@ -148,6 +149,7 @@ export const contextOps = [
     confirm: async (_ctx, { name, agent, on }) => ({ key: null, before: null, rows: [{ path: `context.mcp.${name}.${agent}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') }],
       note: t('opsApproval.mcpAgent', { name, agent }), loosens: on !== false }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'mcp-agent'], positional: ['name', 'agent'] } },
+    legacyCommand: 'setMcpAgent',
     handler: (ctx, { name, agent, on, place, cwd }) => run(ctx, async () => {
       const where = place ?? null;
       const view = await ctx.context.view((await cwdFor(ctx, cwd)) ?? null);
