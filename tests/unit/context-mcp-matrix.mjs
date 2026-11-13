@@ -46,7 +46,7 @@ export default async function (t) {
     const plug = rich.rows.find(r => r.kind === 'plugin'), conn = rich.rows.find(r => r.kind === 'connector');
     t.ok('プラグインの MCP は Claude だけ押せて、プラグイン名を持つ', plug.plugin === 'Notion' && plug.cells.claude.mode === 'toggle' && plug.cells.codex.mode === 'none');
     t.ok('コネクターは claude.ai <名前> の行で、Claude だけ押せる', conn.key === 'claude.ai Slack' && conn.cells.claude.mode === 'toggle' && conn.cells.grok.mode === 'none' && conn.group === 'agent');
-    t.ok('読み取り中（null）は connectors が reading、空なら none、あれば ready', buildMcpMatrix({ ...base, connectors: null }).connectors === 'reading' && buildMcpMatrix({ ...base, connectors: [] }).connectors === 'none' && rich.connectors === 'ready');
+    t.ok('読み取り中（null）は connectors が reading、読めなかった（null で読み取り中でない）・空なら none、あれば ready', buildMcpMatrix({ ...base, connectors: null, reading: true }).connectors === 'reading' && buildMcpMatrix({ ...base, connectors: null }).connectors === 'none' && buildMcpMatrix({ ...base, connectors: [] }).connectors === 'none' && rich.connectors === 'ready');
     const noClaude = buildMcpMatrix({ ...base, native: { codex: native.codex }, installed: { claude: false }, connectors: ['Slack'], plugins: [{ plugin: 'P', server: 's', key: 'plugin:P:s' }] });
     t.ok('Claude が無ければ行も凡例も出さない', noClaude.rows.every(r => r.kind === 'config') && noClaude.connectors === 'none');
 

@@ -170,7 +170,8 @@ export function agentMcpRules(plan, agent) {
   const own = agentOf(agent)?.contextSources ?? [];
   const off = name => (rules.off?.[name] ?? []).includes(agent);
   const spread = name => (rules.spread?.[name] ?? []).includes(agent);
-  const isOwn = item => item.origins.some(o => own.includes(o.source));
+  // そのエージェント自身の設定にあり、有効な定義。自身の設定で無効（status: 'disabled'）の定義は、そのエージェントが持っていないものとして扱う（画面と同じ規則）
+  const isOwn = item => item.status !== 'disabled' && item.origins.some(o => own.includes(o.source));
   const canStop = CAPABILITY_STATES[agent]?.nativeMcpOff === true;
   return {
     // ownNames: このエージェント自身の設定にある名前（走査で先に集める）。自分の MCP を名前ごとに止められないエージェントは、
@@ -203,7 +204,7 @@ export async function resolveRuntime(policy, options = {}) {
   if (scan.limited || scan.diagnostics.length) throw new Error(t('context.runtime.unresolved', { detail: scan.diagnostics[0]?.message ?? t('context.runtime.scanLimit') }));
   const report = { version: 1, cwd: policy.cwd, owners, at: new Date().toISOString(), entries: [], native: kinds.length < 3, status: 'resolved' };
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
-  const suppress = new Set(), nativeNames = new Set(), seenMcp = new Set();
+  const suppress = new Set(), nativeNames = new Set();
   if (scan.skipped?.length) report.skipped = scan.skipped.map(({ path: file, message }) => ({ path: file, message }));
   // このエージェント自身の設定にある名前（shadowed・無効の行も含む）。先に集める
   const ownNames = new Set(mcpRules ? scan.entries.filter(e => e.kind === 'mcp' && mcpRules.isOwn(e)).map(e => e.name) : []);
@@ -220,7 +221,7 @@ export async function resolveRuntime(policy, options = {}) {
       else { seen.add(key); conditional.push({ ...item, content: instructionBody(item) }); }
       continue;
     }
-    if (mcpRules && item.kind === 'mcp') { seenMcp.add(item.name); if (mcpRules.isOwn(item)) nativeNames.add(item.name); }
+    if (mcpRules && item.kind === 'mcp' && mcpRules.isOwn(item)) nativeNames.add(item.name);
     if (item.status !== 'candidate') continue;
     // 名前ごとのモデル: このエージェントへ中継しない定義。接続せず、ply_context にもツールを出さない
     if (mcpRules && item.kind === 'mcp') {
@@ -267,9 +268,9 @@ export async function resolveRuntime(policy, options = {}) {
     for (const item of servers) if (nativeNames.has(item.name)) suppress.add(item.name);
     // 重なって使われなかった行（shadowed）や、この会話で外した行でも、自分の同じ名前の MCP は止める（走査で隠れた行から漏らさない）
     for (const name of nativeNames) if (mcpRules.off(name) || removed.has(name)) suppress.add(name);
-    // 走査に出ない名前（claude.ai のコネクター・プラグインの MCP）を、そのエージェントで使わない設定にしたものも止める名前に加える。
-    // 設定ファイルを飛ばした（skipped）ときも、止めた名前はここで止め続ける
-    for (const key of mcpRules.offNames()) if (!seenMcp.has(key)) suppress.add(key);
+    // そのエージェントで off にした名前は、走査に出たか・どのファイルにあったか・ファイルを飛ばしたかに関わらず、常に止める。
+    // 無い名前を止めても害は無い（Claude は名前の一致、Codex は設定に在る名前だけ、OpenCode は定義に在る名前だけに効く）
+    for (const key of mcpRules.offNames()) suppress.add(key);
   }
   const mcp = mcpRules ? { named: true, suppress: [...suppress].sort() } : { named: false, suppress: [] };
   const prompt = instructions.map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: i.content })).join('\n\n');

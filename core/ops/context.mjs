@@ -94,7 +94,9 @@ async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
     kind: level.kinds.mcp.value, owners: Object.fromEntries(['instruction', 'skill', 'mcp'].map((k) => [k, level.kinds[k]?.value?.owner])),
     registered: servers.map((s) => ({ name: s.name, transport: s.transport ?? null })),
     native: known.agents ?? {}, plugins: extras.plugins,
-    connectors: extras.reading && extras.connectors === null ? null : (extras.connectors ?? []),
+    // null（1 度も読めていない）と [] （読めて 0 件）は最後まで区別する。null のまま保存すると、止めたはずのコネクターが開く
+    connectors: Array.isArray(extras.connectors) ? extras.connectors : null,
+    reading: extras.reading === true,
   };
   return { input, extras, level, dir, claude };
 }
@@ -167,11 +169,12 @@ export const contextOps = [
       const first = await matrixInput(ctx, { cwd, place: where });
       const kind = first.level.kinds.mcp.value;
       const needConnectors = first.claude && (name.startsWith('claude.ai ') || (!kind.agents && kind.owner === 'ply'));
-      const { input, extras } = needConnectors && first.input.connectors === null ? await matrixInput(ctx, { cwd, place: where, wait: true }) : first;
+      const { input } = needConnectors && first.input.connectors === null ? await matrixInput(ctx, { cwd, place: where, wait: true }) : first;
       const ids = Object.keys(input.native);
       if (!ids.includes(agent)) throw new OpError('INVALID', t('context.settings.unknownAgent', { agent }));
       // 読めなかったまま「Pleiad がそろえる」を写すと、外してあったコネクターが Claude に開いてしまう。保存しない
-      if (needConnectors && extras.readFailed && extras.connectors === null) throw new OpError('INVALID', t('context.settings.connectorsUnread'));
+      // 待っても読めなかったとき（読み取りの失敗・Claude が起動できない）。未読のまま保存しない
+      if (needConnectors && input.connectors === null) throw new OpError('INVALID', t('context.settings.connectorsUnread'));
       const matrix = buildMcpMatrix(input);
       const row = matrix.rows.find((r) => r.key === name);
       if (!row) throw new OpError('INVALID', t('context.settings.unknownMcp', { name }));

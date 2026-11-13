@@ -160,7 +160,8 @@ export function mcpAgentsFromLegacy(kind, info) {
   if (kind.owner === 'ply') {
     const all = unique((info.spreadFrom ?? ids).flatMap(a => (info.native[a] ?? []).filter(n => !dis(a).has(n))));
     for (const name of all) {
-      const to = ids.filter(a => !info.native[a].includes(name));
+      // 自身の設定で無効の定義は「持っていない」扱い（画面・実行時と同じ規則）なので、そのエージェントへも広げる
+      const to = ids.filter(a => !(info.native[a].includes(name) && !dis(a).has(name)));
       if (to.length) spread[name] = to;
     }
     for (const [a, keys] of Object.entries(info.extras ?? {})) for (const key of keys) off[key] = unique([...(off[key] ?? []), a]);
@@ -180,7 +181,7 @@ export function toggleMcpAgent(agents, { name, agent, on }, info) {
     if (add) list.add(agent); else list.delete(agent);
     if (list.size) map[name] = [...list]; else delete map[name];
   };
-  const own = (info.native?.[agent] ?? []).includes(name), registered = (info.registered ?? []).includes(name);
+  const own = (info.native?.[agent] ?? []).includes(name) && !(info.disabled?.[agent] ?? []).includes(name), registered = (info.registered ?? []).includes(name);
   if (registered || own) set(off, !on);
   if (!own && !registered) set(spread, on);
   else if (!on) set(spread, false);

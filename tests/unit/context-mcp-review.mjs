@@ -79,7 +79,11 @@ export default async function (t) {
     const owners = { instruction: 'native', skill: 'native', mcp: 'native' };
     const m = buildMcpMatrix({ kind: { owner: 'native' }, owners, registered: [], native, installed: {} });
     const row = k => m.rows.find(r => r.key === k);
-    t.ok('自分の設定で無効にしてある MCP は off で押せない', row('dis').cells.claude.state === 'off' && row('dis').cells.claude.mode === 'locked');
+    t.ok('自分の設定で無効にしてある MCP は「持っていない」扱い: 登録も他の設定も無ければ列は off・押せない・ロゴ無し', row('dis').cells.claude.state === 'off' && row('dis').cells.claude.mode === 'none' && row('dis').origins.length === 0);
+    const m2 = buildMcpMatrix({ kind: { owner: 'native', agents: { off: {}, spread: {} } }, owners, registered: [{ name: 'dis' }], native, installed: {} });
+    t.ok('無効の定義と Pleiad の登録: 登録の行で on（off で切り替える）', m2.rows.find(r => r.key === 'dis').cells.claude.state === 'on' && m2.rows.find(r => r.key === 'dis').cells.claude.mode === 'toggle' && m2.rows.find(r => r.key === 'dis').registered);
+    const m3 = buildMcpMatrix({ kind: { owner: 'native', agents: { off: {}, spread: {} } }, owners, registered: [], native: { ...native, codex: [{ name: 'dis', transport: 'stdio' }] }, installed: {} });
+    t.ok('無効の定義と他のエージェントの有効な定義: 広げる行（off・押せる）。ロゴは有効な側だけ', m3.rows.find(r => r.key === 'dis').cells.claude.state === 'off' && m3.rows.find(r => r.key === 'dis').cells.claude.mode === 'toggle' && m3.rows.find(r => r.key === 'dis').origins.join() === 'codex');
     t.ok('無効の MCP は他のエージェントへ広げる元にならない（押せない）', row('dis').cells.codex.mode === 'none');
     t.ok('Codex の止められない名前（点を含む）は鍵', row('a.b').cells.codex.mode === 'locked' && row('ok').cells.codex.mode === 'toggle');
     t.ok('canStopName', canStopName('codex', 'ok') && !canStopName('codex', 'a.b') && canStopName('claude', 'a.b') && !canStopName('devin', 'x'));
@@ -128,10 +132,26 @@ export default async function (t) {
     const n0 = saved.length;
     t.ok('L: コネクターが未読のまま触っても ok を返さず、保存しない（読めなかったと伝える）', (await call(unread, { name: 'claude.ai Gmail', agent: 'claude', on: true }))?.code === 'INVALID' && saved.length === n0);
     t.ok('F・K: コネクターを触るときは、読み終えるまで待つ指定（wait）で読む', unread.seen === undefined || fake.seen.wait === true, fake.seen);
-    const legacyPly = fake({ kind: { owner: 'ply' }, agentsMap: nat, extras: { plugins: [], connectors: null, reading: false, readFailed: true } });
-    t.ok('B: 「Pleiad がそろえる」でコネクターが読めなかったら、Claude が使えるときは保存しない', (await call(legacyPly, { name: 'cl', agent: 'claude', on: false }))?.code === 'INVALID' && saved.length === n0);
-    const noClaude = fake({ kind: { owner: 'ply' }, agentsMap: { codex: nat.codex }, extras: { plugins: [], connectors: null, reading: false, readFailed: true } });
-    t.ok('B: Claude が使えないなら、そのまま保存する', (await call(noClaude, { name: 'a.b', agent: 'codex', on: true })) === null || true);
+    // --- NEW-1: 未読（null）と、読めて 0 件（[]）を最後まで区別する。context.setMcpAgent を実際の ctx の形で呼ぶ 5 つの場合
+    const UNREAD = '読めなかった', pick = (e, id) => e?.message?.includes('コネクター') ? 'unread' : e ? e.code : 'saved';
+    const run5 = async (agentsMap, extras, args = { name: 'cl', agent: 'claude', on: false }) => {
+      const before = saved.length, waits = [];
+      const c = fake({ kind: { owner: 'ply' }, agentsMap, extras: o => { waits.push(o.wait === true); return extras(o); } });
+      const err = await call(c, args);
+      return { err, saved: saved.length - before, waits, last: saved[saved.length - 1] };
+    };
+    const cold = await run5(nat, o => o.wait ? { plugins: [], connectors: ['Gmail'], reading: false, readFailed: false } : { plugins: [], connectors: null, reading: false, readFailed: false });
+    t.ok('NEW-1 cold（1 度も読んでいない）: 読み取りを起こして待ち、読めたら保存する。コネクターは Claude で off', cold.err === null && cold.waits.includes(true) && cold.saved === 1 && cold.last.value.agents.off['claude.ai Gmail']?.join() === 'claude', cold);
+    const failedRead = await run5(nat, () => ({ plugins: [], connectors: null, reading: false, readFailed: true }));
+    t.ok('NEW-1 読み取り失敗: 待っても読めなければ保存せず、コネクターが読めなかった旨のエラー（unknownMcp ではない）', pick(failedRead.err) === 'unread' && failedRead.saved === 0 && failedRead.err.code === 'INVALID', failedRead);
+    const inProgress = await run5(nat, o => o.wait ? { plugins: [], connectors: ['Slack'], reading: false, readFailed: false } : { plugins: [], connectors: null, reading: true, readFailed: false });
+    t.ok('NEW-1 読み取り中: 読み終えるまで待ってから保存する', inProgress.err === null && inProgress.saved === 1 && inProgress.last.value.agents.off['claude.ai Slack']?.join() === 'claude', inProgress);
+    const zeroItems = await run5(nat, () => ({ plugins: [], connectors: [], reading: false, readFailed: false }));
+    t.ok('NEW-1 読めて 0 件: 待たずにそのまま保存する（未読とは別）', zeroItems.err === null && zeroItems.saved === 1 && !zeroItems.waits.includes(true) && !Object.keys(zeroItems.last.value.agents.off).some(k => k.startsWith('claude.ai ')), zeroItems);
+    const noClaudeCase = await run5({ codex: [{ name: 'ok', transport: 'stdio' }] }, o => ({ plugins: [], connectors: null, reading: false, readFailed: true }), { name: 'ok', agent: 'codex', on: false });
+    t.ok('NEW-1 Claude が使えない: コネクターを待たずに保存する', noClaudeCase.err === null && noClaudeCase.saved === 1 && !noClaudeCase.waits.includes(true), noClaudeCase);
+    const rowUnread = await run5(nat, () => ({ plugins: [], connectors: null, reading: false, readFailed: true }), { name: 'claude.ai Gmail', agent: 'claude', on: true });
+    t.ok('NEW-1 未読のままコネクターの行を触る: 「読めませんでした」で、一覧に無いとは言わない', pick(rowUnread.err) === 'unread' && rowUnread.saved === 0, rowUnread);
     const plug = fake({ kind: { owner: 'native' }, agentsMap: nat, extras: { plugins: [{ key: 'plugin:p:s', plugin: 'p', server: 's', transport: 'stdio' }], connectors: [], reading: false, readFailed: false } });
     t.ok('L: プラグインの MCP を Claude 以外で切り替えるのは保存しない', (await call(plug, { name: 'plugin:p:s', agent: 'codex', on: true }))?.code === 'INVALID');
     const mx = fake({ kind: { owner: 'native' }, agentsMap: nat, extras: ready });

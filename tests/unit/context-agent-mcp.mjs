@@ -74,7 +74,7 @@ export default async function (t) {
 
     const rtx = await resolveRuntime(policy(agents), { home, plyServers, agent: 'codex' });
     t.ok('codex: 登録は off、codex 自身の設定は渡さない、広げていない claude の定義も渡さない', names(rtx).length === 0, names(rtx));
-    t.ok('codex: 止める名前は無い（off は reg だけで codex 自身の設定には無い）', rtx.mcp.suppress.length === 0, rtx.mcp);
+    t.ok('codex: off にした名前は、codex の設定に無くても止める名前に入れる（無い名前を止めても害は無い。Codex は設定に在る名前だけに効かせる）', rtx.mcp.suppress.join() === 'reg', rtx.mcp);
 
     // 同じ名前を Pleiad も持つとき、エージェント自身の側は止める（二重につながない）
     const dupPlyServers = { file: plyServers.file, servers: [{ name: 'both', definition: { transport: 'stdio', command: 'reg-both', args: [] } }] };

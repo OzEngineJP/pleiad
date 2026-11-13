@@ -56,7 +56,7 @@ export function mcpLegacyInfo({ kind, registered = [], native = {}, plugins = []
  *   connectors  null（読み取り中）| [名前]（読めた一覧）
  *   installed   { <agent>: bool }（そのエージェントを使えるか。使えないエージェントのアイコンは出さない）
  */
-export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plugins = [], connectors = null, installed = {} }) {
+export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plugins = [], connectors = null, reading = false, installed = {} }) {
   const agents = Object.keys(native).filter(id => installed[id] !== false).sort((a, b) => orderOf(a) - orderOf(b));
   const info = { registered: registered.map(r => r.name), native: Object.fromEntries(Object.keys(native).map(a => [a, native[a].map(s => s.name)])) };
   const rules = kind.agents ?? mcpAgentsFromLegacy(kind, mcpLegacyInfo({ kind, registered, native, plugins, connectors }));
@@ -67,18 +67,16 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
   const rows = [];
   for (const name of names) {
     const reg = registered.find(r => r.name === name) ?? null;
-    const origins = agents.filter(a => info.native[a].includes(name));
+    // 自身の設定で無効の定義は「そのエージェントが持っていない」扱い（画面も実行時も同じ規則。ロゴも出さない）
+    const origins = agents.filter(a => info.native[a].includes(name) && !disabledIn(a, name));
     const cells = {};
     for (const a of agents) {
       const own = origins.includes(a);
-      if (own && disabledIn(a, name)) {
-        // 自分の設定で無効にしてある名前: 使われない（鍵つきの off。広げる元にもしない）
-        cells[a] = { state: 'off', mode: 'locked' };
-      } else if (own) {
+      if (own) {
         // 自分の設定にある名前。止められるのは、起動のときに名前で止める手があるエージェントだけ
         const stop = canStopName(a, name);
         cells[a] = { state: stop && off(name, a) ? 'off' : 'on', mode: stop ? 'toggle' : 'locked' };
-      } else if (!reg && !origins.some(o => !disabledIn(o, name))) {
+      } else if (!reg && !origins.length) {
         // どのエージェントの設定でも無効の名前: 広げる元が無い
         cells[a] = { state: 'off', mode: 'none' };
       } else if (reg) {
@@ -88,8 +86,8 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
         cells[a] = relayBlocked(a, owners) ? { state: 'off', mode: 'blocked' } : { state: spread(name, a) ? 'on' : 'off', mode: 'toggle' };
       }
     }
-    rows.push({ key: name, name, kind: 'config', group: reg ? 'ply' : 'agent', transport: (reg ?? native[origins[0]]?.find(s => s.name === name))?.transport ?? null,
-      registered: Boolean(reg), origins: reg ? origins : origins.slice(), plugin: null, cells, on: agents.some(a => cells[a].state === 'on') });
+    rows.push({ key: name, name, kind: 'config', group: reg ? 'ply' : 'agent', transport: (reg ?? Object.values(native).flat().find(s => s.name === name))?.transport ?? null,
+      registered: Boolean(reg), origins, plugin: null, cells, on: agents.some(a => cells[a].state === 'on') });
   }
   // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0325
   if (installed.claude !== false && agents.includes('claude')) {
@@ -116,6 +114,7 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
   return {
     agents, rows,
     locked: rows.some(r => agents.some(a => r.cells[a].mode === 'locked' || r.cells[a].mode === 'blocked')),
-    connectors: !claudeHere ? 'none' : connectors === null ? 'reading' : connectors.length ? 'ready' : 'none',
+    // null（未読）で読み取り中なら reading、読み取りが終わって読めなかったなら none（読めた 0 件と区別するのは保存側）
+    connectors: !claudeHere ? 'none' : connectors === null ? (reading ? 'reading' : 'none') : connectors.length ? 'ready' : 'none',
   };
 }
