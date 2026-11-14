@@ -9,6 +9,7 @@
 import { el } from "./dom.mjs";
 import { t } from "./i18n.mjs";
 import { renderAssistantMarkdown, renderPresent, renderToolCall, applyToolResult } from "./render.mjs";
+import { lazyInputOf } from "./tool-input-lazy.mjs";
 import { Bundle, splitToolCalls } from "./tool-bundle.mjs";
 import { isComputerTool } from "./computer-use.mjs";
 import { modelDisplayName } from "./composer-labels.mjs";
@@ -370,7 +371,7 @@ export function createHistoryPane(hooks) {
       if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(backendVocab(backend, account)?.models ?? {}, m.model);
       if (m.thinking) node.append(thinkFromText(m.thinking));
       const cards = (m.toolCalls ?? []).map((c) => {
-        const card = renderToolCall(c.name, c.input, { id: c.id, at: c.at, startedAt: c.startedAt, endAt: c.endAt });
+        const card = renderToolCall(c.name, c.input, { id: c.id, at: c.at, startedAt: c.startedAt, endAt: c.endAt, lazyInput: lazyInputOf(c, sessionId) });
         if (c.result) {
           // endAt（正規化が tool_result の時刻を持つとき）を結果に乗せて渡す。畳んだ仮の発言は result.at（サーバーの時計）が既にある
           const res = c.result && typeof c.result === 'object' ? { ...c.result, at: c.endAt ?? c.result.at } : c.result;
@@ -471,7 +472,7 @@ export function createHistoryPane(hooks) {
       showOlder('loading');
       let joined = null;
       try {
-        const data = await cmd('loadSession', { sessionId: id, lazy: true,
+        const data = await cmd('loadSession', { sessionId: id, lazy: true, lazyInput: true,
           older: { ...request, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: anchorSig(prev.messages[0]), ...(reach ? { reach } : {}) } }, { bulk: true });
         if (!same()) { if (currentSession() === id) hideOlder(); return false; }   // 会話が替わった・窓が替わった: 捨てる
         joined = joinOlder(prev, data, request);

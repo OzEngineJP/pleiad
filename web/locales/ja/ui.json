@@ -2988,6 +2988,9 @@
         "fork": "分岐"
       },
       "noPath": "（パスなし）",
+      "inputLoading": "全文を読み込み中…",
+      "inputFailed": "全文を読み込めませんでした",
+      "inputRetry": "もう一度読み込む",
       "diff": "差分（−{{del}} / +{{add}}）",
       "diffMore_other": "…あと {{n}} 行",
       "background": "背景で実行",

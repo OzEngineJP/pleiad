@@ -3,11 +3,15 @@
 //   - syncRequest / serveFrom / joinReply: loadSession を「今持っている先頭の続きだけ」にする（画面が頼み、サーバーが切り、画面がつなぐ）
 //   - serveHistory / windowStart / presentBaseFor / stubPresent: 会話を開くときに末尾の窓だけを運び（base = 窓の最初の発言の通し番号）、
 //     大きい提示の本文（Visualize の HTML・画像）は印（lazy）だけにする。古い側は serveOlder で遡って運ぶ（ADR 0182）
+//   - stubMessage / inputSig: ツール呼び出しの input の大きい文字列（コマンド・書き込みの本文・画像のデータ）も、頭だけにして印（lazyInput）を付ける。
+//     全文は行を開いたときに /tool-input から取る（頼みに lazyInput: true がある時だけ。ADR 0335）
 // 中身の同じ発言を見分けるのは、発言全体の署名（messageSig）。uuid・本文だけでなく、後から付いたツールの結果・
 // 圧縮の印など、行の見た目に効く値が変わっても「違う」になる（web/branches.mjs の commonPrefix は本文とツール名しか見ない）。
 import { buildItems, inlineAttachments } from "./timeline.mjs";
 import { visualizeReferences } from "./visualize-reference.mjs";
 import { hash53 } from "./hash53.mjs";
+import { changeKind, changeOf } from "./tool-change.mjs";
+import { isPlyDelegateToolName } from "./delegate-result.mjs";
 
 const messageSigs = new WeakMap();
 /** 発言 1 件の署名。同じオブジェクトなら 1 度しか数えない */
@@ -210,21 +214,111 @@ const intArg = (v, max = Number.MAX_SAFE_INTEGER) => Number.isInteger(v) && v >=
  * 窓の最初が AI の発言なら、手前の人の発言（20 件まで）に寄せる（連続する AI の発言の「続き」の形が窓の頭で変わらないように）。
  * 寄せる分にも容量の上限（頼んだ bytes。無ければ WINDOW_BYTES）を付け、超えるなら寄せず、AI の発言が頭の窓を許す
  * （ツールの結果の大きい AI の発言が続く会話で、さかのぼりだけで窓が上限の数倍にならないように）
+ * measure は発言 1 件の大きさの数え方（既定は JSON の長さ）。入力を頭だけにして運ぶ頼み（ADR 0335）は、運ぶ形の大きさで数える
  */
-export function windowStart(messages, count, bytes = 0, end = messages.length) {
+export function windowStart(messages, count, bytes = 0, end = messages.length, measure = sizeOf) {
   const limit = Math.min(count, MAX_WINDOW_MESSAGES);
   let i = end, size = 0;
   while (i > 0 && end - i < limit) {
     if (bytes > 0 && end - i >= MIN_WINDOW && size >= bytes) break;
     i--;
-    if (bytes > 0) size += sizeOf(messages[i]);
+    if (bytes > 0) size += measure(messages[i]);
   }
   const lookback = bytes > 0 ? bytes : WINDOW_BYTES;
   for (let k = 0, extra = 0; i > 0 && messages[i]?.role !== "user" && k < 20; k++) {
-    if (extra + sizeOf(messages[i - 1]) > lookback) break;
-    extra += sizeOf(messages[--i]);
+    if (extra + measure(messages[i - 1]) > lookback) break;
+    extra += measure(messages[--i]);
   }
   return i;
+}
+
+// ---------------------------------------------------------------- ツール呼び出しの入力の遅延（ADR 0335）
+
+/** 入力の大きい文字列に残す頭の長さ。行の要約（1 行目の 160 字まで）・開く前の見た目に足りる */
+export const INPUT_HEAD = 200;
+/** 大きい文字列を探す入れ子の深さの上限（壊れた・悪意のある入力でも全部は辿らない。これより深い文字列は全文のまま運ぶ） */
+const MAX_INPUT_DEPTH = 16;
+
+/** 入力 1 件の署名。呼び出しの印（lazyInput.sig）と、/tool-input が取りに来た入力を照らすのに使う */
+export const inputSig = (input) => hash53(JSON.stringify(input) ?? "");
+
+/** 頭だけの文字列。切り口が絵文字などの組（サロゲートペア）の前半なら 1 字手前で切る。切ったことが分かるよう「…」を足す */
+function cutText(text) {
+  let end = INPUT_HEAD;
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end--;
+  return `${text.slice(0, end)}…`;
+}
+
+/** value の中の LAZY_MIN 以上の文字列を頭だけにした写し。変えるところが無ければ value そのもの（写しを作らない） */
+function headOf(value, depth) {
+  if (typeof value === "string") return value.length >= LAZY_MIN ? cutText(value) : value;
+  if (value === null || typeof value !== "object" || depth >= MAX_INPUT_DEPTH) return value;
+  let out = null;
+  if (Array.isArray(value)) {
+    value.forEach((item, k) => {
+      const head = headOf(item, depth + 1);
+      if (head !== item) { out ??= value.slice(); out[k] = head; }
+    });
+    return out ?? value;
+  }
+  for (const key of Object.keys(value)) {
+    const head = headOf(value[key], depth + 1);
+    if (head !== value[key]) { out ??= { ...value }; out[key] = head; }
+  }
+  return out ?? value;
+}
+
+// 入力のオブジェクトごとに、頭・大きさ・署名・量を 1 度だけ作る（同じ会話を何度も運んでも、数 MiB の入力を数え直さない）。
+// 呼び出し（結果などが後から付く）は覚えず、入力だけを覚える。大きい文字列が無い入力は false
+const inputInfos = new WeakMap();
+
+/**
+ * 呼び出し 1 件の、入力を頭だけにして印（lazyInput = { size, sig, change? }）を付けた写し。元は変えない。
+ *   size = 入力の JSON の長さ / sig = inputSig / change = 行の右端の「−N +M」（編集・書き込みの量。画面が全文から数える代わりにサーバーが数えて添える）。
+ *   change は、量を持つツールなら { path, del, add }、持たないと分かっているツール（hints が分かっている）なら null、
+ *   バックエンドの申告（hints）が分からず種類を決められないときは付けない（画面が頭だけの入力から数える）
+ * 運ばないもの: id の無い呼び出し（全文を指せない）・入力が文字列を持たない・LAZY_MIN 以上の文字列が無い・
+ *   委譲の呼び出し（names = サブエージェントのツール名・ply_delegate。依頼文を画面の状態から読むので全文のまま）
+ */
+function stubCall(call, names, hints) {
+  if (call === null || typeof call !== "object" || typeof call.id !== "string" || !call.id) return call;
+  const input = call.input;
+  if (input === null || typeof input !== "object") return call;
+  if (names.has(call.name) || isPlyDelegateToolName(call.name)) return call;
+  let info = inputInfos.get(input);
+  if (info === undefined) {
+    const head = headOf(input, 0);
+    if (head === input) info = false;
+    else { const json = JSON.stringify(input); info = { head, size: json.length, sig: hash53(json), change: new Map() }; }
+    inputInfos.set(input, info);
+  }
+  if (!info) return call;
+  const lazyInput = { size: info.size, sig: info.sig };
+  const kind = changeKind(call.name, hints?.[call.name]?.shape);
+  if (kind) {
+    if (!info.change.has(kind)) info.change.set(kind, changeOf(kind, input));
+    lazyInput.change = info.change.get(kind);
+  } else if (hints) lazyInput.change = null;
+  return { ...call, input: info.head, lazyInput };
+}
+
+/**
+ * 発言の toolCalls の入力の大きい文字列を頭だけにして印を付けた写し（stubCall）。変える呼び出しが無ければ message そのもの。
+ * tools は subagentCalls と同じ（委譲の呼び出しを見分ける名前の集合、または発言の backend から引く関数）。
+ * hintsOf は発言の backend から toolHints（バックエンドが申告したツールの shape）を引く関数（無ければ量は添えない）
+ */
+export function stubMessage(message, tools = null, hintsOf = null) {
+  const calls = message?.toolCalls;
+  if (!Array.isArray(calls) || !calls.length) return message;
+  const names = (typeof tools === "function" ? tools(message.backend) : null) ?? subagentToolSet(typeof tools === "function" ? null : tools);
+  const hints = typeof hintsOf === "function" ? hintsOf(message.backend) : undefined;
+  let out = null;
+  calls.forEach((call, k) => {
+    const stub = stubCall(call, names, hints);
+    if (stub !== call) { out ??= calls.slice(); out[k] = stub; }
+  });
+  return out ? { ...message, toolCalls: out } : message;
 }
 
 /**
@@ -269,27 +363,33 @@ const stubAll = (presents, from, lazy) => lazy ? presents.map((p, k) => stubPres
  *   - tail（件数）: 末尾の窓。応答に base・total・presentBase・presentTotal を足す（差分の印 from は無い）
  *   - それ以外: 全量（lazy なら提示は印）
  * 応答の base の有無が、この仕組みを知っているサーバーの印になる（画面は base が無ければ窓なし・提示は全文として扱う）。
- * tools は subagentCalls と同じ（委譲の呼び出しを見分ける名前の集合、または発言の backend から引く関数）
+ * 頼みに lazyInput: true があるときだけ、ツール呼び出しの input の大きい文字列を頭だけにして印（lazyInput）を付ける（stubMessage。ADR 0335）。
+ * 提示の印（lazy）とは別の頼みにしてある（lazy だけを知っている古い画面に、取りに行けない入力を運ばない）。
+ * 画面は運ばれた形の発言で署名（messageSig・anchorSig）を数えるので、差分・遡りの照合（check）も、このときは頭だけにした形で数える
+ * tools は subagentCalls と同じ（委譲の呼び出しを見分ける名前の集合、または発言の backend から引く関数）。
+ * hintsOf は発言の backend から toolHints を引く関数（印に添える変えた量の種類を決める。stubMessage）
  */
-export function serveHistory(body, args, tools = null) {
-  if (args?.older && typeof args.older === "object") return serveOlder(body, args.older, args.lazy === true);
+export function serveHistory(body, args, tools = null, hintsOf = null) {
+  const inputLazy = args?.lazyInput === true;
+  const view = inputLazy ? (m) => stubMessage(m, tools, hintsOf) : (m) => m;
+  if (args?.older && typeof args.older === "object") return serveOlder(body, args.older, args.lazy === true, view);
   const lazy = args?.lazy === true;
   const tail = intArg(args?.tail), windowed = tail !== null && tail > 0;
   const base = intArg(args?.base) ?? 0, presentBase = intArg(args?.presentBase) ?? 0;
-  if (!lazy && !windowed && !base && !presentBase) return serveFrom(body, args);
+  if (!lazy && !windowed && !base && !presentBase && !inputLazy) return serveFrom(body, args);
   const messages = body.messages ?? [], presents = body.presents ?? [];
-  const start = windowed ? windowStart(messages, tail, intArg(args?.tailBytes) ?? 0) : 0;
+  const start = windowed ? windowStart(messages, tail, intArg(args?.tailBytes) ?? 0, messages.length, inputLazy ? (m) => sizeOf(view(m)) : sizeOf) : 0;
   const from = intArg(args?.from), presentFrom = intArg(args?.presentFrom);
   // 差分が合うときは続きだけ。ただし窓を頼んでいるのに続きが窓（tail・tailBytes と頭寄せで決まる末尾の窓）に収まらない
   // （from が窓の手前にある）ときは、差分をやめて下の窓の応答を返す。つなぎ直した画面に窓より大きい続きを一度に送らない
   if (from !== null && presentFrom !== null && base <= from && presentBase <= presentFrom && from <= messages.length && presentFrom <= presents.length
     && (!windowed || from >= start)
-    && digestOf(messages, from, messageSig, base) === args.check && digestOf(presents, presentFrom, presentSig, presentBase) === args.presentCheck) {
-    return { ...body, messages: messages.slice(from), presents: stubAll(presents.slice(presentFrom), presentFrom, lazy), from, total: messages.length, base, presentFrom, presentTotal: presents.length, presentBase, ...earlierOf(messages, base, tools) };
+    && digestOf(messages, from, (m) => messageSig(view(m)), base) === args.check && digestOf(presents, presentFrom, presentSig, presentBase) === args.presentCheck) {
+    return { ...body, messages: messages.slice(from).map(view), presents: stubAll(presents.slice(presentFrom), presentFrom, lazy), from, total: messages.length, base, presentFrom, presentTotal: presents.length, presentBase, ...earlierOf(messages, base, tools) };
   }
-  if (!windowed) return { ...body, presents: stubAll(presents, 0, lazy), base: 0, total: messages.length, presentBase: 0, presentTotal: presents.length };
+  if (!windowed) return { ...body, ...(inputLazy ? { messages: messages.map(view) } : {}), presents: stubAll(presents, 0, lazy), base: 0, total: messages.length, presentBase: 0, presentTotal: presents.length };
   const pb = presentBaseFor(messages, presents, start);
-  return { ...body, messages: messages.slice(start), presents: stubAll(presents.slice(pb), pb, lazy), base: start, total: messages.length, presentBase: pb, presentTotal: presents.length, ...earlierOf(messages, start, tools) };
+  return { ...body, messages: messages.slice(start).map(view), presents: stubAll(presents.slice(pb), pb, lazy), base: start, total: messages.length, presentBase: pb, presentTotal: presents.length, ...earlierOf(messages, start, tools) };
 }
 
 /**
@@ -297,19 +397,20 @@ export function serveHistory(body, args, tools = null) {
  * reach の発言が窓の手前にあるときは、count・bytes を超えてでもそこまでを 1 回で運ぶ（検索の抜粋から古い発言へ飛ぶとき。2000 件・REACH_BYTES が上限）。
  * before の発言の署名が合わない（手前が書き換わった・圧縮・件数が減った）ときは { stale: true } を返し、画面は読み直す。
  * 合うときは { older: true, messages, presents, base, presentBase } （手前の分だけ。画面は窓の前につなぐ）
+ * view は発言を運ぶ形にする関数（入力を頭だけにする頼み。serveHistory）。画面が持っている発言の署名は運ばれた形で数えているので、照合もその形で数える
  */
-export function serveOlder(body, older, lazy) {
+export function serveOlder(body, older, lazy, view = (m) => m) {
   const messages = body.messages ?? [], presents = body.presents ?? [];
   const before = intArg(older.before), presentBefore = intArg(older.presentBefore);
-  if (before === null || presentBefore === null || before <= 0 || before >= messages.length || presentBefore > presents.length || anchorSig(messages[before]) !== older.check) return { stale: true };
+  if (before === null || presentBefore === null || before <= 0 || before >= messages.length || presentBefore > presents.length || anchorSig(view(messages[before])) !== older.check) return { stale: true };
   let count = intArg(older.count) || WINDOW_MESSAGES, bytes = intArg(older.bytes) ?? 0;
   if (typeof older.reach === "string" && older.reach) {
     const at = messages.findIndex((m, i) => i < before && m?.uuid === older.reach);
     if (at >= 0 && before - at > count) { count = before - at; bytes = Math.max(bytes, REACH_BYTES); }
   }
-  const start = windowStart(messages, count, bytes, before);
+  const start = windowStart(messages, count, bytes, before, (m) => sizeOf(view(m)));
   const pb = Math.min(presentBefore, presentBaseFor(messages, presents, start));
-  return { older: true, messages: messages.slice(start, before), presents: stubAll(presents.slice(pb, presentBefore), pb, lazy), base: start, presentBase: pb, until: before, presentUntil: presentBefore, total: messages.length };
+  return { older: true, messages: messages.slice(start, before).map(view), presents: stubAll(presents.slice(pb, presentBefore), pb, lazy), base: start, presentBase: pb, until: before, presentUntil: presentBefore, total: messages.length };
 }
 
 /**

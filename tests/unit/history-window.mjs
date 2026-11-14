@@ -365,7 +365,9 @@ export default async function (t) {
   t.ok("配線: 会話を開く読み込み（loadAndPaint の窓・枝の切り替え・遡り）は bulk を付け、syncHistory と全量の読み込みには付けない",
     /\{ window: true, bulk: true \}\)/.test(cut("loadAndPaint")) && /bulk: true/.test(cut("changeBranch")) && /bulk: true/.test(cut("loadOlder"))
     && !/bulk/.test(cut("syncHistory")));
-  t.ok("配線: 窓の頼みは lazy・tail・tailBytes を添える。遡りは older を頼む", /lazy: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES/.test(cut("loadHistory")) && /older:/.test(cut("loadOlder")));
+  t.ok("配線: 窓の頼みは lazy・lazyInput・tail・tailBytes を添える（ADR 0335）。遡りは older を頼み、lazy・lazyInput を添える",
+    /lazy: true, lazyInput: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES/.test(cut("loadHistory")) && /older:/.test(cut("loadOlder"))
+    && /lazy: true, lazyInput: true,\s*older:/.test(cut("loadOlder")));
   t.ok("配線: 手前の発言が要る操作（遡り・目次・会話の中の検索）は、描いていない手前を先に描き切る", /flushBackfill\(\)/.test(cut("loadOlder")) && /flushBackfill\(\)/.test(cut("loadAllOlder")) && /flushBackfill\(\)/.test(cut("revealMessage")));
   t.ok("配線: 会話を描き直す・替えるときは手前の仕事を捨てる", /cancelBackfill\(\)/.test(cut("clearThread")));
   t.ok("配線: 手前の読み足しは、手前を足している間は始めない", /backfill/.test(cut("maybeLoadOlder")));

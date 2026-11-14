@@ -41,4 +41,5 @@
 - 静かな読み直しで窓ごと置き換わる（窓が足りなくなる）と、読み足した分は捨てて窓から取り直す。
 - 系譜の読み込み（枝の印）は、窓の手前を会話の概要（`outline`）で埋めて通し番号を揃える（`web/branches.mjs`）。概要は本文を運ばず、指紋と人の発言の抜粋だけ（[ADR 0334](0334-lineage-outline-digest.md)）。
 - テスト: `tests/unit/history-window.mjs`・`tests/unit/server-history-window.mjs`（窓・印・読み足し・差分・互換・bulk の配線）、`tests/browser/history-window.cjs`（デスクトップの広い画面で、末尾で開く・読み足しで位置が動かない・提示の本文の遅延・検索から古い発言へ・枝の切り替え）。
+- ツール呼び出しの入力の大きい文字列も、提示の本文と同じ形（印・HTTP で取る）で頭だけにして運ぶ。頼みの旗 `lazyInput` は `lazy` と別にし、古い画面には全文を返す（[ADR 0335](0335-tool-input-lazy.md)）。
 - 仕様の今の形は `docs/design.md`「会話を開くときの窓」と `docs/design-system.md`「会話を開く間の見せ方」。
