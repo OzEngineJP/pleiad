@@ -68,12 +68,15 @@ export default async function (t) {
       '全部広げる': () => ({ off: {}, spread: Object.fromEntries(names.map(n => [n, ids])) }),
       '1 つおきにオフ・広げる': () => ({ off: Object.fromEntries(names.filter((_, i) => i % 2).map(n => [n, ids.filter((_, j) => j % 2)])), spread: Object.fromEntries(names.filter((_, i) => !(i % 2)).map(n => [n, ids.filter((_, j) => !(j % 2))])) }),
     };
+    // 実行時は会話の cwd（repo）で決まるので、一覧は repo の場所ごとの設定（place）として組む: repo の作業場所に定義がある名前を渡す。
+    // 全体の設定の一覧は、作業場所の定義で鍵にしない（一覧を出した場所で変わらない。下の「全体の一覧」の試験。ADR 0330 の再レビュー E）
+    const workspace = Object.fromEntries(ids.map(id => [id, native[id].filter(s => !s.disabled && s.scopes.some(x => x !== 'user')).map(s => s.name)]));
     const bad = [];
     for (const [label, make] of Object.entries(states)) {
       const agents = make();
       const kind = { owner: 'native', disabled: [], agents };
       const plan = legacyPlan(scope, scope); plan.mcp.agents = agents;
-      const matrix = buildMcpMatrix({ kind, owners: { instruction: 'native', skill: 'native' }, registered, native, installed: {} });
+      const matrix = buildMcpMatrix({ kind, owners: { instruction: 'native', skill: 'native' }, registered, native, installed: {}, workspace });
       for (const id of ids) {
         const rt = await runtimeOf(plan, id, []);
         for (const n of names) {
@@ -88,6 +91,19 @@ export default async function (t) {
       }
     }
     t.ok(`一覧の表示と実際に使えるかが一致（${Object.keys(states).length} 状態 × ${ids.length} エージェント × ${names.length} 名前）`, bad.length === 0, JSON.stringify(bad.slice(0, 6)));
+
+    // --- 全体の一覧: 作業場所にも定義がある名前でも、ユーザーの設定にある名前は押せる（off は、作業場所の定義の無い会話で効く）。
+    // repo の会話では止まらず、右パネルの行に鍵の理由（nativeLock: workspace）を出す
+    const offAll = { off: Object.fromEntries(names.map(n => [n, ids])), spread: {} };
+    const globalMatrix = buildMcpMatrix({ kind: { owner: 'native', disabled: [], agents: offAll }, owners: { instruction: 'native', skill: 'native' }, registered, native, installed: {} });
+    const planOff = legacyPlan(scope, scope); planOff.mcp.agents = offAll;
+    const rtDevin = await runtimeOf(planOff, 'devin', []);
+    const wsUser = native.devin.filter(s => !s.disabled && s.scopes.includes('user') && s.scopes.some(x => x !== 'user')).map(s => s.name);
+    const rowsOf = n => rtDevin.report.entries.filter(e => e.kind === 'mcp' && e.name === n && e.status === 'excluded');
+    t.ok('全体の一覧: Devin のユーザーの設定にあり作業場所にもある名前（cl）は押せる。repo の会話では止めず、行に nativeLock: workspace',
+      wsUser.includes('cl') && wsUser.every(n => globalMatrix.rows.find(r => r.key === n)?.cells.devin.mode === 'toggle')
+        && wsUser.every(n => !rtDevin.mcp.suppress.includes(n) && rowsOf(n).some(e => e.nativeLock === 'workspace')),
+      JSON.stringify({ wsUser, suppress: rtDevin.mcp.suppress, rows: wsUser.map(n => rowsOf(n).map(e => e.nativeLock)) }));
 
     // --- この会話では外す: 中継するものは使えず、止められる自分の定義も止まる（止められないエージェントの自分の定義は残る）
     const removedBad = [];

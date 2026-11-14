@@ -7,7 +7,7 @@ import { instructionBody, scanContext } from './context-scan.mjs';
 import { DEFAULT_OWNERS, KINDS, SOURCES, containsPath, legacyPlan, matchesGlobs, normalizePlan, pathKey } from './context-settings.mjs';
 import { t, agentT } from './i18n.mjs';
 import { agentOf } from './backends/agents.mjs';
-import { CAPABILITY_STATES } from './backends/agent-marks.mjs';
+import { nativeMcpOffMode } from './backends/mcp-off-home.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply');
@@ -172,26 +172,33 @@ export function agentMcpRules(plan, agent) {
   const spread = name => (rules.spread?.[name] ?? []).includes(agent);
   // そのエージェント自身の設定にあり、有効な定義。自身の設定で無効（status: 'disabled'）の定義は、そのエージェントが持っていないものとして扱う（画面と同じ規則）
   const isOwn = item => item.status !== 'disabled' && item.origins.some(o => own.includes(o.source));
-  // 能力の印 nativeMcpOff: true はどの定義も止められ、'user' はユーザーの設定の定義だけ止められる（ADR 0330）
-  const mode = CAPABILITY_STATES[agent]?.nativeMcpOff;
-  const canStop = mode === true || mode === 'user';
+  // 止める手（能力の印 nativeMcpOff を、この PC で使えるかまで含めて読む。ADR 0330）:
+  //   true    どの定義も止められる。Pleiad が同じ名前を渡すときも、自分の側を止めて Pleiad の側を使う
+  //   'user'  ユーザーの設定の定義だけ止められる（Devin。写しの置き場で止める）。止めるのは、利用者がそのエージェントで off にした、
+  //           またはこの会話で外した、自身のユーザーの設定にある名前だけ。名前が重なるだけ・Pleiad にだけある名前の off では止めず、今までと同じ起動にする
+  //   null    止める手が無い（リンクを作れない PC の 'user' も）。自分の側が勝つ
+  const mode = nativeMcpOffMode(agent);
+  const full = mode === true;
   /** 自身のこの定義を起動のときに止められるか */
-  const stoppable = item => mode === true || (mode === 'user' && item.scope === 'user');
+  const stoppable = item => full || (mode === 'user' && item.scope === 'user');
   return {
-    // fixedNames: このエージェント自身の設定にあり、止められない定義を含む名前（走査で先に集める。fixedNamesOf）。
-    // その名前は同じ名前の定義を Pleiad から渡さず、自分の側を使う（二重につながない）
-    relay(item, fixedNames = new Set()) {
+    // ownNames: このエージェント自身の設定にある名前（走査で先に集める）。fixedNames: そのうち止められない定義を含む名前（fixedNamesOf）。
+    // 全部は止められないエージェントは、同じ名前の定義を Pleiad から渡さず、自分の側を使う（二重につながない）
+    relay(item, ownNames = new Set(), fixedNames = new Set()) {
       const from = item.origins[0].source;
-      if (off(item.name)) return 'agentOff';
-      if (fixedNames.has(item.name) && !isOwn(item)) return 'agentOwn';
+      // off にしても止められない自分の定義は、自分で読んで使い続ける（右パネルは「自分の側を使う」。画面の鍵と同じ）
+      if (off(item.name)) return isOwn(item) && fixedNames.has(item.name) ? 'agentOwn' : 'agentOff';
+      if (!full && ownNames.has(item.name) && !isOwn(item)) return 'agentOwn';
       if (from === 'ply') return null;
       if (isOwn(item)) return 'agentOwn';
       return spread(item.name) ? null : 'agentNotSpread';
     },
-    canStop,
+    mode,
     isOwn,
     stoppable,
-    /** 走査の行 entries のうち、自身の設定にあって止められない定義を含む名前（自身の設定で無効の定義・shadowed の行も数える） */
+    /** 走査の行 entries のうち、自身の設定にある名前（自身の設定で無効の定義は数えない。shadowed の行は数える） */
+    ownNamesOf: entries => new Set(entries.filter(e => e.kind === 'mcp' && isOwn(e)).map(e => e.name)),
+    /** そのうち、止められない定義を含む名前（会話の cwd の作業場所の設定にもある名前など） */
     fixedNamesOf: entries => new Set(entries.filter(e => e.kind === 'mcp' && isOwn(e) && !stoppable(e)).map(e => e.name)),
     off,
     offNames: () => Object.keys(rules.off ?? {}).filter(off),
@@ -213,8 +220,11 @@ export async function resolveRuntime(policy, options = {}) {
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
   const suppress = new Set(), nativeNames = new Set();
   if (scan.skipped?.length) report.skipped = scan.skipped.map(({ path: file, message }) => ({ path: file, message }));
-  // このエージェント自身の設定にあって止められない名前（shadowed の行も含む）。先に集める
+  // このエージェント自身の設定にある名前と、そのうち止められない名前（shadowed の行も含む）。先に集める
+  const ownNames = mcpRules ? mcpRules.ownNamesOf(scan.entries) : new Set();
   const fixedNames = mcpRules ? mcpRules.fixedNamesOf(scan.entries) : new Set();
+  // ユーザーの設定の定義だけ止められるエージェントで、止められる自分の定義がある名前（'user' の止める名前の候補）
+  const stoppableNames = new Set(mcpRules?.mode === 'user' ? scan.entries.filter(e => e.kind === 'mcp' && mcpRules.isOwn(e) && mcpRules.stoppable(e)).map(e => e.name) : []);
   for (const item of scan.entries) {
     // scope と root は会話の右パネルが出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分けるのに使う
     const row = { id: item.id, kind: item.kind, name: item.name, path: item.path, scope: item.scope, appliesTo: item.appliesTo, status: item.status, hash: item.hash, origins: item.origins,
@@ -232,12 +242,14 @@ export async function resolveRuntime(policy, options = {}) {
     if (item.status !== 'candidate') continue;
     // 名前ごとのモデル: このエージェントへ中継しない定義。接続せず、ply_context にもツールを出さない
     if (mcpRules && item.kind === 'mcp') {
-      const why = mcpRules.relay(item, fixedNames);
+      const why = mcpRules.relay(item, ownNames, fixedNames);
       if (why) {
-        if (mcpRules.canStop && mcpRules.off(item.name) && mcpRules.isOwn(item)) suppress.add(item.name);
+        if (mcpRules.mode === true && mcpRules.off(item.name) && mcpRules.isOwn(item)) suppress.add(item.name);
         row.status = why === 'agentOff' ? 'removed' : 'excluded';
         // i18n-dynamic: context.runtime.agent
         row.reason = t(`context.runtime.${why}`);
+        // off にしたのに止められない自分の定義（会話の cwd の作業場所の設定にもある名前）。画面の鍵の理由と同じ値（reason: 'workspace' / 'own'）
+        if (mcpRules.off(item.name) && mcpRules.isOwn(item) && fixedNames.has(item.name)) row.nativeLock = mcpRules.mode === 'user' ? 'workspace' : 'own';
         if (row.status === 'removed') row.tools = 0;
         continue;
       }
@@ -269,9 +281,9 @@ export async function resolveRuntime(policy, options = {}) {
     }
   }
   markChoices(report.entries, settings.plan, scan.home);
-  // このエージェントが自分で持っている同じ名前は、Pleiad が渡す側を使うので止める（二重につながない）
-  // 止められないエージェント（canStop でない）は自分の側が勝つので、止める名前は無い
-  if (mcpRules?.canStop) {
+  // どの定義も止められるエージェント（mode が true）: 自分で持っている同じ名前は、Pleiad が渡す側を使うので止める（二重につながない）
+  // 止められないエージェントは自分の側が勝つので、止める名前は無い
+  if (mcpRules?.mode === true) {
     for (const item of servers) if (nativeNames.has(item.name)) suppress.add(item.name);
     // 重なって使われなかった行（shadowed）や、この会話で外した行でも、自分の同じ名前の MCP は止める（走査で隠れた行から漏らさない）
     for (const name of nativeNames) if (mcpRules.off(name) || removed.has(name)) suppress.add(name);
@@ -279,6 +291,9 @@ export async function resolveRuntime(policy, options = {}) {
     // 無い名前を止めても害は無い（Claude は名前の一致、Codex は設定に在る名前だけ、OpenCode は定義に在る名前だけに効く）
     for (const key of mcpRules.offNames()) suppress.add(key);
   }
+  // ユーザーの設定の定義だけ止められるエージェント（mode が 'user'）: 利用者がそのエージェントで off にした、またはこの会話で外した、
+  // 自身のユーザーの設定にある名前だけ止める。名前が重なるだけ（Pleiad の側は渡さず自分の側を使う）・Pleiad にだけある名前の off では止めない（今までと同じ起動）
+  if (mcpRules?.mode === 'user') for (const key of [...mcpRules.offNames(), ...removed]) if (stoppableNames.has(key)) suppress.add(key);
   // 止められない定義を含む名前は止めない（作業場所の定義が勝つので、ユーザーの定義だけ止めても使われ続ける。画面は鍵）
   const mcp = mcpRules ? { named: true, suppress: [...suppress].filter(n => !fixedNames.has(n)).sort() } : { named: false, suppress: [] };
   const prompt = instructions.map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: i.content })).join('\n\n');

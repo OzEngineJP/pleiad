@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { stripJsonc } from '../context-scan.mjs';
-import { claimMcpOffHome, syncMcpOffHome } from './mcp-off-home.mjs';
+import { canLinkMcpOffHome, claimMcpOffHome, settleMcpOffHomes, syncMcpOffHome } from './mcp-off-home.mjs';
 
 const IMPORTS = ['agents_standard', 'cursor', 'windsurf', 'claude', 'copilot', 'opencode', 'zed'];
 const TURN_CONFIG_MAX_BYTES = 1024 * 1024;
@@ -47,8 +47,9 @@ const readJsonc = async (file) => {
  * config.json に mcpServers が残っている（Devin が mcp_config.json へ移す前の形）ときは、写しの config.json からは除き、
  * その定義を写しの mcp_config.json に移す（リンクのままだと、Devin の移し替えが本物の config.json を書き換える）。
  * 作業場所の .devin/mcp_config.json・.mcp.json の定義はここでは止まらない（能力の印 nativeMcpOff: 'user'）
+ * 写しの中で Devin が置き換えたファイル（認証情報の更新など）は本物へ運ぶ。運べない中身は kept（既定は root の隣の mcp-off-kept）に残す（settleMcpOffHome）
  */
-export async function prepareDevinMcpOff({ root, source, suppress }) {
+export async function prepareDevinMcpOff({ root, source, suppress, kept = path.join(path.dirname(root), 'mcp-off-kept') }) {
   const target = await claimMcpOffHome(root, source, suppress);
   const mcp = (await readJsonc(path.join(source, 'mcp_config.json'))) ?? {};
   const config = await readJsonc(path.join(source, 'config.json'));
@@ -57,13 +58,15 @@ export async function prepareDevinMcpOff({ root, source, suppress }) {
   for (const name of new Set(suppress)) servers[name] = { ...(servers[name] && typeof servers[name] === 'object' ? servers[name] : {}), disabled: true };
   const generated = { 'mcp_config.json': `${JSON.stringify({ ...mcp, mcpServers: servers }, null, 2)}\n` };
   if (moved) { const { mcpServers: _m, ...rest } = config; generated['config.json'] = `${JSON.stringify(rest, null, 2)}\n`; }
-  await syncMcpOffHome({ source, target: path.join(target, 'devin'), generated });
+  await syncMcpOffHome({ source, target: path.join(target, 'devin'), generated, kept });
   return target;
 }
 
 /**
  * Native turns keep the user's configuration and credentials in their original locations.
- * mcpOff: 止める Devin 自身の MCP の名前（contextRuntime.mcp.suppress）。あるときだけ DEVIN_CONFIG_HOME を写しに替える（prepareDevinMcpOff）
+ * mcpOff: 止める Devin 自身の MCP の名前（contextRuntime.mcp.suppress）。あるときだけ DEVIN_CONFIG_HOME を写しに替える（prepareDevinMcpOff）。
+ * シンボリックリンクを作れない PC（canLinkMcpOffHome）や、写しのリンクを作れなかったときは、写しを使わず今までと同じ起動にする
+ * （画面は鍵にしてあるので、保存してある off でターンを止めない）
  */
 export async function prepareDevinLaunch({ command, cwd, env = process.env, dataDir = env.AGENT_HOST_DATA ?? path.join(os.homedir(), '.agent-host'), metadata = false, turnConfig = null, mcpOff = [] }) {
   const base = path.join(dataDir, 'devin');
@@ -71,7 +74,12 @@ export async function prepareDevinLaunch({ command, cwd, env = process.env, data
   await fs.mkdir(sessions, { recursive: true, mode: 0o700 });
   const launch = { command: [...command], cwd: path.resolve(cwd), env: { ...env, DEVIN_SESSIONS_DIR: sessions } };
   if (!metadata) {
-    if (mcpOff.length) launch.env.DEVIN_CONFIG_HOME = await prepareDevinMcpOff({ root: path.join(base, 'mcp-off'), source: devinConfigDir(env), suppress: mcpOff });
+    // 前のターンの写しに残った Devin の更新（止める名前を on に戻した後も）を、本物へ運んでおく
+    await settleMcpOffHomes(path.join(base, 'mcp-off'), devinConfigDir(env)).catch(() => {});
+    if (mcpOff.length && canLinkMcpOffHome(dataDir)) {
+      try { launch.env.DEVIN_CONFIG_HOME = await prepareDevinMcpOff({ root: path.join(base, 'mcp-off'), source: devinConfigDir(env), suppress: mcpOff }); }
+      catch (error) { if (error?.code !== 'MCP_OFF_LINK_FAILED') throw error; }
+    }
     if (turnConfig) {
       const turnConfigs = path.join(base, 'turn-configs');
       await fs.mkdir(turnConfigs, { recursive: true, mode: 0o700 });
