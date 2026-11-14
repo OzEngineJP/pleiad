@@ -11,6 +11,7 @@
 // （electron-builder は署名 → afterSign の公証 → dmg・zip の順。docs/desktop-releases.md「macOS の配布」）。
 // 署名・鍵・公証の手順には触れない。環境変数はそのまま子に継がせるだけで、値は出力にもファイルにも残さない。
 import fs from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -71,7 +72,7 @@ export function parseArgs(argv) {
   return { command, args, clean };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let options;
   try { options = parseArgs(process.argv.slice(2)); }
   catch (error) { console.error(error.message); process.exit(2); }

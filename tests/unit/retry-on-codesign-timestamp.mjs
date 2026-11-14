@@ -2,6 +2,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { runWithTimestampRetry, parseArgs, RETRY_DELAYS_MS, TIMESTAMP_ERROR } from '../../scripts/retry-on-codesign-timestamp.mjs';
 
 export const name = 'retry-on-codesign-timestamp';
@@ -77,5 +79,20 @@ fs.writeFileSync(${JSON.stringify(marker)}, '1'); console.error('The timestamp s
       const code = await runWithTimestampRetry({ command: process.execPath, args: [script], clean: [stale], delaysMs: [0, 0], log: l => logs.push(l) });
       t.ok('本物の子でも、タイムスタンプで落ちた後に作りかけを消してやり直し、通る', code === 0 && logs.length === 1, `${code} ${logs}`);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  { // コマンドとして起こす入口（引数の解釈・直に実行されたかの判定・終了コードの受け渡し）。待ちの要る場面は起こさない
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+    const rel = 'scripts/retry-on-codesign-timestamp.mjs';
+    const cli = (script, args, cwd = root) => spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8' });
+    const a = cli(path.join(root, rel), ['--clean', 'dist-desktop', '--', process.execPath, '-e', 'process.exit(3)']);
+    t.ok('入口: 子の終了コード 3 がそのまま返る', a.status === 3, `${a.status} ${a.stderr}`);
+    const b = cli(path.join(root, rel), ['--', process.execPath, '-e', 'console.log("built-ok")']);
+    t.ok('入口: 成功する子の標準出力がそのまま流れ、exit 0', b.status === 0 && b.stdout.includes('built-ok'), `${b.status} ${b.stdout}`);
+    const c = cli(rel, ['--clean', 'dist-desktop', '--', process.execPath, '-e', 'console.log("rel-ok"); process.exit(4)']);
+    t.ok('入口: 相対パス（cwd がリポジトリのルート）で呼んでも同じ（実行され、終了コードが返る）', c.status === 4 && c.stdout.includes('rel-ok'), `${c.status} ${c.stdout} ${c.stderr}`);
+    const d1 = cli(path.join(root, rel), []);
+    const d2 = cli(path.join(root, rel), ['--clean', 'x']);
+    const d3 = cli(path.join(root, rel), ['--']);
+    t.ok('入口: -- や command が無ければ exit 2', d1.status === 2 && d2.status === 2 && d3.status === 2, `${d1.status} ${d2.status} ${d3.status}`);
   }
 }
