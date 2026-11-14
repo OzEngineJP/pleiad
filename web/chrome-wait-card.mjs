@@ -4,6 +4,8 @@
 // 「許可」は出さない（ここから許可しても、つながるのはホストの Chrome の側で、進まない）。押せるのは「Chrome を使わずに続けてもらう」だけ。
 // 枠（見出し・置き場・名簿への登録・決着の畳み）は client.mjs の chromeWaitCard、中身とボタンはここが持つ。
 
+import { renderMarkdown } from './render.mjs';
+
 // i18n-dynamic: ui:chat.chromeWait.
 const K = 'chat.chromeWait.';
 const ADDRESS = 'chrome://inspect/#remote-debugging';
@@ -64,6 +66,9 @@ export function chromeWaitView(ev, { el, t, cmd, now = () => Date.now(), spinner
 
   const reasonText = () => t(`chat.browserHandoff.reason.${REASONS.includes(w.reason) ? w.reason : 'other'}`);
 
+  /** 頼まれた文。会話の AI の返答と同じ Markdown の描画（畳まず全部出す） */
+  const request = text => { const box = el('div', 'body cw-message'); box.innerHTML = renderMarkdown(text); return box; };
+
   function paintBody() {
     const kind = waitState(w);
     if (kind === 'setup') {
@@ -79,9 +84,9 @@ export function chromeWaitView(ev, { el, t, cmd, now = () => Date.now(), spinner
     } else if (kind === 'denied') {
       body.replaceChildren(lead('denied.lead'), note('denied.note'));
     } else if (kind === 'operating') {
-      body.replaceChildren(lead('operating.lead'), ...(w.message ? [el('p', 'cw-message', w.message)] : []));
+      body.replaceChildren(lead('operating.lead'), ...(w.message ? [request(w.message)] : []));
     } else {
-      body.replaceChildren(lead('asked.lead', { reason: reasonText() }), ...(w.message ? [el('p', 'cw-message', w.message)] : []));
+      body.replaceChildren(lead('asked.lead', { reason: reasonText() }), ...(w.message ? [request(w.message)] : []));
     }
     if (!online) body.append(note('offline'));
   }

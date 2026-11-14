@@ -25,7 +25,8 @@ const words = {
   'chat.browserHandoff.reason.login': 'ログイン', 'chat.browserHandoff.reason.other': 'その他',
 };
 const t = (key, vars = {}) => (words[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '');
-const flat = node => (typeof node === 'string' ? node : [node.textContent, ...(node.children ?? []).map(flat)].join(''));
+// 依頼の文は renderMarkdown の HTML を innerHTML に入れる（偽の el は DOM を持たないので、タグを除いた字で読む）
+const flat = node => (typeof node === 'string' ? node : [node.textContent, node.innerHTML?.replace(/<[^>]+>/g, '') ?? '', ...(node.children ?? []).map(flat)].join(''));
 const bodyText = view => view.body.children.map(flat).join('\n');
 const lead = view => flat(view.body.children[0]);
 const T0 = Date.parse('2026-10-11T00:00:00Z');
@@ -62,6 +63,17 @@ export default async function (t_) {
   t_.ok('操作の依頼（asked）: 理由と、依頼の本文を出す', lead(op) === 'MSI の Chrome で操作してください（ログイン）' && bodyText(op).includes('ログインしてください'), bodyText(op));
   op.update({ state: 'operating' });
   t_.ok('操作中（operating）でも、依頼の本文を消さない', lead(op) === 'MSI で操作しています' && bodyText(op).includes('ログインしてください'), bodyText(op));
+
+  // 長い依頼・Markdown・危ない入力（会話の返答と同じ renderMarkdown。畳まない）
+  const steps = ['手順は次のとおりです。', '', '1. example.com を開く', '2. **ユーザー名**を入れる', '', '- 終わったら戻す', '', '結びの段落。'].join('\n');
+  const rich = mk({ chromeWait: { reason: 'login', state: 'asked', message: `${'あ'.repeat(600)}\n\n${steps}` } });
+  const msg = view => view.body.children.find(c => c.className === 'body cw-message');
+  const html = msg(rich)?.innerHTML ?? '';
+  t_.ok('200 字・400 字を超える依頼も欠けずに出る', html.includes('あ'.repeat(600)) && html.includes('結びの段落。'));
+  t_.ok('番号付きリスト・箇条書き・太字・段落が renderMarkdown で出て、畳まない', /<ol[ >]/.test(html) && /<ul[ >]/.test(html) && /<(strong|b)>ユーザー名<\/(strong|b)>/.test(html) && !/fold/.test(html), html);
+  const bad = mk({ chromeWait: { reason: 'login', state: 'operating', message: '<script>alert(1)</script>\n\n[押す](javascript:alert(2)) と [ok](https://example.com/)' } });
+  const badHtml = msg(bad)?.innerHTML ?? '';
+  t_.ok('<script> は字として出て、javascript: のリンクは作られない（操作中も同じ描画）', !/<script/i.test(badHtml) && badHtml.includes('&lt;script&gt;') && !/href="javascript:/i.test(badHtml) && /href="https:\/\/example\.com\/"/.test(badHtml), badHtml);
 
   // オフライン
   v.setOnline(false);

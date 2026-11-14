@@ -180,7 +180,7 @@ import { chromeLinkEnabled, openChromeLink, shutdownHolderIfIdle } from './chrom
 import { chromeHomes, readLastUsedProfile } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
-import { createChromeHandoffs } from './chrome/handoff.mjs';
+import { createChromeHandoffs, handoffTitleLine } from './chrome/handoff.mjs';
 import { createProfileChoice } from './chrome/profile-choice.mjs';
 import { listBrowserProfiles } from './chrome/profiles.mjs';
 import { createChromeControl } from './chrome/control.mjs';
@@ -313,7 +313,7 @@ const chromeHandoffs = chromeConnection ? createChromeHandoffs({
   turnSignal: id => runtime.turns.get(id)?.ac.signal,
   continueTurn: (sessionId, { kind, messageId }) => continueAfterHandoff(sessionId, kind, messageId),
   // 接続の案内の題は「{エージェント} が Chrome への接続の許可を待っています」（通知・一覧で、何を待っているかが分かるように。ADR 0218）
-  titleFor: ({ reason, message, sessionId }) => reason === 'connect' ? t('permission.browserHandoffConnect', { agent: runtime.turns.get(sessionId)?.backend.label ?? t('permission.agentFallback') }) : t('permission.browserHandoff', { message: message ?? '' }),
+  titleFor: ({ reason, message, sessionId }) => reason === 'connect' ? t('permission.browserHandoffConnect', { agent: runtime.turns.get(sessionId)?.backend.label ?? t('permission.agentFallback') }) : t('permission.browserHandoff', { message: handoffTitleLine(message) }),
   // 確認なし・制限なしのモード（範囲 full・自律 never。web/composer-controls.mjs の isDanger と同じ）の会話は、Pleiad の中の許可を飛ばす（ADR 0218）
   agentLabel: id => runtime.turns.get(id)?.backend.label ?? null,
   autoConsent: id => { const live = runtime.turns.get(id); if (!live) return false; const m = modePosition(live.backend.modes()?.[live.info.mode]); return m.scope === 'full' && m.autonomy === 'never'; },
@@ -7169,7 +7169,7 @@ async function settleWorktreesOf(sessionId) {
 // ホストの子の承認は、依頼元の会話の中継のカードとして出す（手元の委譲の中継と同じ runtime.waiting。ただし答えはホストへ運ぶ）
 /** 端末へ中継する Chrome の操作待ちの印。端末のカードが「ホストの Chrome で何をするか」を書き分けるのに要る分だけ（core/chrome/handoff.mjs の状態） */
 const chromeWaitOf = bh => ({ reason: bh?.reason ?? null, state: bh?.state ?? null, dialog: bh?.dialog === true,
-  message: typeof bh?.message === 'string' ? bh.message.slice(0, 400) : null });
+  message: typeof bh?.message === 'string' ? bh.message : null });
 const remoteCards = {
   open(c) {
     const id = crypto.randomUUID();

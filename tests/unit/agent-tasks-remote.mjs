@@ -202,6 +202,10 @@ export default async function (t) {
         emit({ t: 'relay', relay: { id: 'rtool', taskId: ID(4), requesterSessionId: 'conv', receipt: 'rc4', kind: 'tool', toolName: 'Bash', input: {} } });
         const ccw = opened.find(c => c.relayId === 'rcw'), ctool = opened.find(c => c.relayId === 'rtool');
         t.ok('取り込み: Chrome の操作待ちの印（chromeWait）はカードへ引き継ぎ、ふつうの承認には付かない', ccw?.chromeWait?.reason === 'connect' && ctool && ctool.chromeWait === undefined, JSON.stringify([ccw?.chromeWait, ctool?.chromeWait]));
+        // 長い依頼の文（400 字超・改行つき）は、端末のカードまで欠けずに届く（上限を置かない。docs/design-system.md §4.5）
+        const longAsk = `${'あ'.repeat(700)}\n\n1. 開く\n2. 押す`;
+        emit({ t: 'relay', relay: { id: 'rlong', taskId: ID(4), requesterSessionId: 'conv', receipt: 'rc9', kind: 'tool', toolName: 'ply_browser', input: {}, chromeWait: { reason: 'login', state: 'asked', message: longAsk } } });
+        t.ok('取り込み: 400 字を超える依頼の文も、改行ごと欠けずにカードへ載る', opened.find(c => c.relayId === 'rlong')?.chromeWait?.message === longAsk);
         // Chrome の操作待ちの更新（relayUpdate）と、つなぎ直しの送り直し
         emit({ t: 'relayUpdate', id: 'rcw', chromeWait: { reason: 'connect', state: 'permission', dialog: true, message: null, extra: 'x' } });
         emit({ t: 'relayUpdate', id: 'rtool', chromeWait: { reason: 'connect', state: 'permission' } });

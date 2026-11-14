@@ -245,7 +245,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
   const cleanChromeWait = (w, askedAt = null) => {
     if (!w || typeof w !== 'object') return null;
     const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
-    return { reason: str(w.reason, 40), state: str(w.state, 20), dialog: w.dialog === true, message: str(w.message, 400),
+    return { reason: str(w.reason, 40), state: str(w.state, 20), dialog: w.dialog === true, message: typeof w.message === 'string' ? w.message : null,
       ...(typeof askedAt === 'string' ? { since: askedAt } : {}) };
   };
 

@@ -8,6 +8,8 @@
 // 「PC で操作する」に分ける（第 7 段）。
 // 人が操作している間のカードは「あなたが操作中」・頼まれた本文・「画面を開く」・「AI に戻す」を出す（戻す入口はどの画面からも届く。ADR 0296）。
 
+import { renderMarkdown } from './render.mjs';
+
 const CHROME_INSPECT_ADDRESS = 'chrome://inspect/#remote-debugging';
 // i18n-dynamic: ui:chat.browserHandoff.
 const K = 'chat.browserHandoff.';
@@ -159,20 +161,22 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
     }
   }
 
+  /** 頼まれた文。会話の AI の返答と同じ Markdown の描画（番号の手順・箇条書き・太字・リンク。畳まず全部出す） */
+  const request = text => { const box = el('div', 'body bh-message'); box.innerHTML = renderMarkdown(text); return box; };
+
   function paintRequest() {
     const lead = el('div', 'bh-lead');
     if (h.state === 'operating') {
       lead.textContent = t(`${K}operating`);
       // 人が操作している間も、頼まれたこと（asked のときと同じ本文）と戻す案内を出し続ける
-      body.replaceChildren(lead, ...(h.message ? [el('p', 'bh-message', h.message)] : []), note(t(`${K}returnHint`)));
+      body.replaceChildren(lead, ...(h.message ? [request(h.message)] : []), note(t(`${K}returnHint`)));
       buttons = [
         ...(openScreen ? [button(t('control:openScreen'), () => openScreen(targetSessionId()), 'btn btn-quiet')] : []),
         // 「AI に戻す」は人のタブを全部 AI に戻す（releaseAll はサーバー側）
         button(t('tabs:display.resume'), () => cmd('chromeResume', { sessionId: targetSessionId() }), 'btn btn-primary')];
     } else {
-      lead.textContent = handoffSummary(t, h, askedBy());
-      body.replaceChildren(lead);
-      if (h.message) body.append(el('p', 'bh-message', h.message));
+      // 見出しの行（handoffSummary）が「だれからの何の依頼か」を言うので、本文には同じ文を出さず、依頼の文だけを出す
+      body.replaceChildren(...(h.message ? [request(h.message)] : []));
       buttons = operateHere
         ? [decline(), button(t(`${K}operateOnPc`), () => cmd('chromeTakeOver', { sessionId: targetSessionId() })), button(t(`${K}operateHere`), takeOverHere, 'btn btn-primary')]
         : [decline(), button(t(`${K}operate`), () => cmd('chromeTakeOver', { sessionId: targetSessionId() }), 'btn btn-primary')];
