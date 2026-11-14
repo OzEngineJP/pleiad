@@ -1,4 +1,4 @@
-# 0330 Devin 自身の MCP を名前で止める（設定の置き場の写し）。Grok は鍵のまま
+# 0335 Devin 自身の MCP を名前で止める（設定の置き場の写し）。Grok は鍵のまま
 
 - 状態: 提案（2026-11-15。同日のレビューを受けて書き直した）
 - 関係: [ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP を名前 × エージェントの一覧にする）の「Devin・Grok は鍵」のうち、Devin のユーザーの設定の定義だけを変える。Grok・Antigravity は変えない。

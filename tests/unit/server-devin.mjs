@@ -90,7 +90,7 @@ export default async function (t) {
     t.ok('別 cwd は別プロセスで起動し native 設定の場所を保つ', await fs.realpath(observed.cwd) === await fs.realpath(other) && observed.configHome === nativeConfig,
       JSON.stringify({ cwd: observed.cwd, configHome: observed.configHome, other, nativeConfig }));
 
-    // ---- Devin 自身の MCP を名前で止める（名前ごとのモデルの off。ADR 0330）: 止める名前があるターンだけ、設定の置き場を写しに替える
+    // ---- Devin 自身の MCP を名前で止める（名前ごとのモデルの off。ADR 0335）: 止める名前があるターンだけ、設定の置き場を写しに替える
     {
       const mcpCwd = path.join(root, 'mcp-off-project');
       await fs.mkdir(path.join(mcpCwd, '.git'), { recursive: true });
@@ -110,7 +110,7 @@ export default async function (t) {
       await setOff({});
       const onEnv = await envOf();
       t.ok('止める名前が無くなった次のターンは、本物の設定の置き場に戻る（今までと同じ起動）', onEnv.configHome === nativeConfig, onEnv.configHome);
-      // Devin の設定に無い名前（Pleiad にだけある名前）を Devin の列で off にしても、写しでは起動しない（ADR 0330 の再レビュー B）
+      // Devin の設定に無い名前（Pleiad にだけある名前）を Devin の列で off にしても、写しでは起動しない（ADR 0335 の再レビュー B）
       await setOff({ 'pleiad-only': ['devin'] });
       const otherEnv = await envOf();
       t.ok('Devin の設定に無い名前の off は、本物の設定の置き場のまま起動する（写しを作らない）', otherEnv.configHome === nativeConfig, otherEnv.configHome);

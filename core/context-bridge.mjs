@@ -346,7 +346,7 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
       // held: 保持役の子に付け直した外部 MCP の id（起こし直していない。状態が残っている）
       const heldIds = [...binding.leases].filter(([, lease]) => lease?.held).map(([id]) => id);
       // sections: prompt の内訳（Pleiad が足した文の量を数える。core/instruction-amount.mjs）
-      // markUnstopped: 止めるはずだった自分の MCP（mcp.suppress）を、起動のときに止められなかった（写しの置き場のリンクを作れなかった。ADR 0330）。
+      // markUnstopped: 止めるはずだった自分の MCP（mcp.suppress）を、起動のときに止められなかった（写しの置き場のリンクを作れなかった。ADR 0335）。
       // その行を「自分の側を使う」に戻し、鍵の理由 'nolinks' を付ける（右パネルが、off なのにつながっていることと、その理由を出す）
       const markUnstopped = async (names = []) => {
         const set = new Set(names);

@@ -6,7 +6,7 @@ import { stripJsonc } from '../context-scan.mjs';
 import { canLinkMcpOffHome, claimMcpOffHome, pruneMcpOffKept, settleMcpOffHomes, syncMcpOffHome } from './mcp-off-home.mjs';
 
 /**
- * 写しの中で Devin が新しく作ったとき、本物の置き場へ運んでよい名前（ADR 0330）。Devin が設定の置き場の直下に作ると分かっているものだけ
+ * 写しの中で Devin が新しく作ったとき、本物の置き場へ運んでよい名前（ADR 0335）。Devin が設定の置き場の直下に作ると分かっているものだけ
  * （config.json: 設定。credentials.toml: ログインの認証情報。mcp_config.json: MCP の定義）。ほかの名前（一時ファイルなど）は運ばない。
  * 本物に既にある名前を Devin が置き換えたものは、この一覧に無くても運ぶ（settleMcpOffHome）
  */
@@ -48,7 +48,7 @@ const readJsonc = async (file) => {
 };
 
 /**
- * Devin 自身の MCP を名前で止めるターンの設定の置き場（ADR 0330）。DEVIN_CONFIG_HOME に渡す場所を返す。
+ * Devin 自身の MCP を名前で止めるターンの設定の置き場（ADR 0335）。DEVIN_CONFIG_HOME に渡す場所を返す。
  * 本物の置き場（source。%APPDATA%\devin など）を写し、写しの mcp_config.json だけ、止める名前に disabled: true を付けて書く。
  * 本物に無い名前（Claude の ~/.claude.json などからの取り込み）は { disabled: true } の項目を足す（取り込みより mcp_config.json が勝つ）。
  * config.json に mcpServers が残っている（Devin が mcp_config.json へ移す前の形）ときは、写しの config.json からは除き、

@@ -6,7 +6,7 @@ import { syncMcpOffHome, claimMcpOffHome, mcpOffHomeDir, settleMcpOffHome, settl
 import { prepareDevinMcpOff, prepareDevinLaunch, DEVIN_CARRY } from '../../core/backends/devin-config.mjs';
 
 export const name = 'mcp-off-home';
-export const title = 'Devin 自身の MCP を名前で止める設定の置き場の写し（本物は書き換えず、止める名前だけ写しに書く。ADR 0330）';
+export const title = 'Devin 自身の MCP を名前で止める設定の置き場の写し（本物は書き換えず、止める名前だけ写しに書く。ADR 0335）';
 
 const read = p => fs.readFile(p, 'utf8');
 const exists = p => fs.lstat(p).then(() => true, () => false);
@@ -49,7 +49,7 @@ export default async function (t) {
     t.ok('本物の置き場のファイルは増えも減りもしない（生成するファイルを本物に書かない）',
       (await fs.readdir(source)).sort().join() === sourceBefore && await read(path.join(source, 'gen.toml')) === 'real');
 
-    // ---- 写しの中で置き換わったファイルを本物へ運ぶ（settle。ADR 0330 の再レビュー A・F）
+    // ---- 写しの中で置き換わったファイルを本物へ運ぶ（settle。ADR 0335 の再レビュー A・F）
     const s2 = path.join(root, 'settle-src'), t2 = path.join(root, 'settle-overlay'), kept = path.join(root, 'kept');
     await fs.mkdir(s2, { recursive: true });
     await fs.writeFile(path.join(s2, 'auth.json'), '{"v":1}');

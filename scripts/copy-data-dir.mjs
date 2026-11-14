@@ -34,7 +34,7 @@ const SKIP_DIRS = new Set(['remote']);
 // 外れたときに起きるのは「写しに無害なファイルが 1 つ足りない」だけで、秘密が漏れる向きには外れない（写しは画面と測定にしか使わない）
 const isSecret = name => /secret/i.test(name);
 // 場所で除くフォルダー（データ置き場からの相対。区切りは /）。devin/mcp-off-kept は、Devin の写しの置き場から本物へ運べなかった・置き換える前の
-// 設定と認証情報（credentials.toml など）の控えで、名前に secret を含まなくても秘密を含みうる（ADR 0330）
+// 設定と認証情報（credentials.toml など）の控えで、名前に secret を含まなくても秘密を含みうる（ADR 0335）
 const SKIP_PATHS = new Set(['devin/mcp-off-kept']);
 const LIGHT_SKIP_DIRS = new Set(['conversations', 'uploads', 'presents', 'context-snapshots', 'agent-browser', 'claude-login-tmp', 'mcp-locks', 'computer-use', 'antigravity', 'claude-usage', 'run', 'hooks-runtime']);
 // worktree の台帳は写さない。写すと、写しで立てたサーバーが起動の後の整理（core/worktrees.mjs の reconcile・sweep）で本物のリポジトリの
