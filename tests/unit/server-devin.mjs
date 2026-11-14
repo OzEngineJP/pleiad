@@ -110,6 +110,11 @@ export default async function (t) {
       await setOff({});
       const onEnv = await envOf();
       t.ok('止める名前が無くなった次のターンは、本物の設定の置き場に戻る（今までと同じ起動）', onEnv.configHome === nativeConfig, onEnv.configHome);
+      // Devin の設定に無い名前（Pleiad にだけある名前）を Devin の列で off にしても、写しでは起動しない（ADR 0330 の再レビュー B）
+      await setOff({ 'pleiad-only': ['devin'] });
+      const otherEnv = await envOf();
+      t.ok('Devin の設定に無い名前の off は、本物の設定の置き場のまま起動する（写しを作らない）', otherEnv.configHome === nativeConfig, otherEnv.configHome);
+      await setOff({});
       await fs.rm(path.join(nativeConfig, 'devin'), { recursive: true, force: true });
     }
     // ply_control は ACP の mcpServers（type: 'http'）と会話束縛の CLI の env で届く（印 plyControl。ブラウザーは Chrome の層が無い試験では渡らない）
