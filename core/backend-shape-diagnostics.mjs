@@ -6,7 +6,7 @@ const VERIFIED = Object.freeze({ codex: '0.160.0', claude: '2.1.303', antigravit
 const KINDS = Object.freeze({
   codex: new Set(['rollout-unreadable', 'rollout-session-meta', 'rollout-turn-id']),
   // cost-state-*: 使用量の開始時点（transcript の cost-state。core/backends/claude-cost-state.mjs）が読めない
-  claude: new Set(['transcript-shape', 'transcript-unreadable', 'subagent-shape', 'subagent-unreadable', 'subagent-meta', 'cost-state-shape', 'cost-state-missing']),
+  claude: new Set(['transcript-shape', 'transcript-unreadable', 'transcript-slim-leak', 'subagent-shape', 'subagent-unreadable', 'subagent-slim-leak', 'subagent-meta', 'cost-state-shape', 'cost-state-missing']),
   antigravity: new Set(['stream-json-shape']),
 });
 const queues = new Map();
