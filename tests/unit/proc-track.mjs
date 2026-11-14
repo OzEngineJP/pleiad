@@ -67,16 +67,25 @@ export default async function (t) {
   // ---- Windows の実機: run() が追跡した子が Start-Process で残した detached の孫を拾う
   if (process.platform === 'win32') {
     const dir = tempDir();
+    let pingPid = 0;
     try {
-      await run('powershell.exe', ['-NoProfile', '-Command', "Start-Process -WindowStyle Hidden ping -ArgumentList '-t','127.0.0.1'"], { cwd: dir });
+      // 見るのはこの試験が起こした ping だけ（PC 上のほかの ping は数えない・止めない）
+      const started = await run('powershell.exe', ['-NoProfile', '-Command', "(Start-Process -WindowStyle Hidden ping -ArgumentList '-t','127.0.0.1' -PassThru).Id"], { cwd: dir });
+      pingPid = Number(started.stdout.trim().split(/\s+/).pop()) || 0;
       await sleep(700);
-      const pings = () => run('powershell.exe', ['-NoProfile', '-Command', "(Get-Process ping -ErrorAction SilentlyContinue).Id -join ','"], { windowsHide: true });
-      const before = (await pings()).stdout.trim();
+      const before = pingPid > 0 && isAlive(pingPid);
       const r = await killUnder(dir);
-      const after = (await pings()).stdout.trim();
+      await sleep(300);
+      const after = pingPid > 0 && isAlive(pingPid);
       t.ok('実機: Start-Process で木から外れた子（ping）も、cwd が中の追跡の子の子孫として止める',
-        before.length > 0 && r.killed >= 1 && after.length === 0, JSON.stringify({ before, after, ...r }));
-    } finally { removeDir(dir); }
+        before && r.killed >= 1 && !after, JSON.stringify({ pingPid, before, after, ...r }));
+    } finally {
+      // 判定が落ちた・例外のときも、起こした ping（-t は終わらない）を残さない。その pid が ping のときだけ止める
+      if (pingPid > 0 && isAlive(pingPid)) {
+        await run('powershell.exe', ['-NoProfile', '-Command', `Get-Process -Id ${pingPid} -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'ping' } | Stop-Process -Force`], { windowsHide: true }).catch(() => {});
+      }
+      removeDir(dir);
+    }
   }
 
   // ---- 保持役の子: cwd が中のものを木ごと止める
