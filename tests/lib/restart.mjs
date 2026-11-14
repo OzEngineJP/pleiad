@@ -25,6 +25,8 @@
 //   - startServer を 2 回呼んで 2 台を並べる試験は、それぞれのサーバーに付く。restart() は最後に登録した 1 台を対象にする
 //   - サーバーの child・port・token・tail() を直に見る試験は、起こし直した後の値をハンドル越しに読み直すこと（同じハンドルは古い値のまま）
 const KEY = Symbol.for('pleiad.test.restart');
+/** ランナーが suite の後の global の戻しから外すのに使う（tests/lib/global-restore.mjs）。ランナー自身が suite ごとに入れ直す項目 */
+export const RESTART_GLOBAL_KEY = KEY;
 const log = line => console.log(`  [restart] ${line}`);
 
 export const restartMode = () => globalThis[KEY] ?? null;

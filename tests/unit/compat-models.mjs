@@ -14,6 +14,7 @@ import { endpointChipLabel } from '../../web/composer-labels.mjs';
 import { createCompatEndpoints, normalizeModels } from '../../core/compat-endpoints.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
 import { startFakeCompatApi } from '../lib/fake-compat-api.mjs';
+import { keepProps } from '../lib/keep-props.mjs';
 
 export const name = 'compat-models';
 export const title = '互換の接続先のモデル: 表示名（anthropic/ と [1m]）・検索（AND・件数の上限・自由入力）・display_name の保存と旧形式';
@@ -36,6 +37,16 @@ function key(target, k) {
 }
 
 export default async function (t) {
+  // combo は document.activeElement で「打っている最中か」を見る。この suite の間は null（何にも焦点が無い）にして、終わりに元へ戻す
+  const restoreFocus = keepProps(document, ['activeElement']);
+  try {
+    return await body(t);
+  } finally {
+    restoreFocus();
+  }
+}
+
+async function body(t) {
   // ---- 1. 表示名
   const L = compatModelLabel;
   t.ok('anthropic/ の後にさらに / があれば名前空間を隠し、[1m] は札に', JSON.stringify(L('anthropic/deepseek/deepseek-v4.1-flash[1m]')) === JSON.stringify({ id: 'anthropic/deepseek/deepseek-v4.1-flash[1m]', text: 'deepseek/deepseek-v4.1-flash', oneM: true }));
