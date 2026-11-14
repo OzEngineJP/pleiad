@@ -6,12 +6,23 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { t as translate, setLanguage } from '../../web/i18n.mjs';
 import { N, installDomStub } from '../lib/dom-stub.mjs';
+import { keepProps } from '../lib/keep-props.mjs';
 import { isManagedContext, isBrowserShortcut, browserShortcutLabel, browserEntryMark, setupBrowserEntry } from '../../web/header-entries.mjs';
 
 export const name = 'header-entries';
 export const title = '会話の頭の行: 目次と右の欄のボタン・近道と開け閉め・角の印（人が触っているタブがあれば ⏸、エージェントの操作中は弧）';
 
 export default async function (t) {
+  // installDomStub() が document と location を新しい代役に差し替えるので、終わりに元へ戻す（同じ worker の次の suite に渡さない）
+  const restoreDom = keepProps(globalThis, ['document', 'location']);
+  try {
+    return await body(t);
+  } finally {
+    restoreDom();
+  }
+}
+
+async function body(t) {
   {
     await setLanguage('ja');
     assert.equal(translate('tabs:strip.open', { count:2 }), 'ブラウザーを開く（2 個のタブ）');
