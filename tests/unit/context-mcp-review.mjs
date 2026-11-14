@@ -27,10 +27,10 @@ export default async function (t) {
     const plyServers = servers => ({ file: path.join(tmp, 'ply-mcp.json'), servers: servers.map(n => ({ name: n, definition: { transport: 'stdio', command: `${n}-cmd`, args: [] } })) });
 
     // --- A: 自分の MCP を止められないエージェントは、自分の側が勝つ
-    // ADR 0330: Grok は全部の定義、Devin はユーザーの設定の定義だけ止められる（'user'）。Antigravity は止める手が無い
-    t.ok('止める手の印: Antigravity は無し、Devin はユーザーの設定だけ（user）、Claude・Codex・OpenCode・Grok は全部（true）',
-      ![true, 'user'].includes(CAPABILITY_STATES.antigravity?.nativeMcpOff) && CAPABILITY_STATES.devin?.nativeMcpOff === 'user'
-        && ['claude', 'codex', 'opencode', 'grok'].every(a => CAPABILITY_STATES[a]?.nativeMcpOff === true));
+    // ADR 0330: Devin はユーザーの設定の定義だけ止められる（'user'）。Antigravity・Grok は止めない（Grok は写しの置き場で認証の更新が本物に届かない）
+    t.ok('止める手の印: Antigravity・Grok は無し、Devin はユーザーの設定だけ（user）、Claude・Codex・OpenCode は全部（true）',
+      ['antigravity', 'grok'].every(a => ![true, 'user'].includes(CAPABILITY_STATES[a]?.nativeMcpOff)) && CAPABILITY_STATES.devin?.nativeMcpOff === 'user'
+        && ['claude', 'codex', 'opencode'].every(a => CAPABILITY_STATES[a]?.nativeMcpOff === true));
     await write(path.join(home, '.gemini/config/mcp_config.json'), JSON.stringify({ mcpServers: { own: { command: 'own-cmd' }, reg: { command: 'ag-reg' } } }));
     const ag = await resolveRuntime(policy({ off: {}, spread: {} }), { home, plyServers: plyServers(['reg', 'extra']), agent: 'antigravity' });
     t.ok('Antigravity: 自分の設定の名前は渡さず、同じ名前の Pleiad の登録も渡さない（自分の側が勝つ）。Pleiad だけの登録は渡す', names(ag).join() === 'extra', names(ag));
@@ -90,9 +90,9 @@ export default async function (t) {
     t.ok('無効の MCP は他のエージェントへ広げる元にならない（押せない）', row('dis').cells.codex.mode === 'none');
     t.ok('Codex の止められない名前（点を含む）は鍵', row('a.b').cells.codex.mode === 'locked' && row('ok').cells.codex.mode === 'toggle');
     t.ok('canStopName', canStopName('codex', 'ok') && !canStopName('codex', 'a.b') && canStopName('claude', 'a.b') && !canStopName('antigravity', 'x')
-      && canStopName('devin', 'x', ['user']) && !canStopName('devin', 'x', ['user', 'directory']) && !canStopName('devin', 'x', ['directory']) && canStopName('grok', 'x', ['directory']));
+      && canStopName('devin', 'x', ['user']) && !canStopName('devin', 'x', ['user', 'directory']) && !canStopName('devin', 'x', ['directory']) && !canStopName('grok', 'x', ['user']));
     t.ok('nativeStopBlock: 止められない理由（own / workspace）',
-      nativeStopBlock('antigravity', 'x') === 'own' && nativeStopBlock('codex', 'a.b') === 'own' && nativeStopBlock('devin', 'x', ['directory']) === 'workspace' && nativeStopBlock('devin', 'x', ['user']) === null);
+      nativeStopBlock('antigravity', 'x') === 'own' && nativeStopBlock('grok', 'x', ['user']) === 'own' && nativeStopBlock('codex', 'a.b') === 'own' && nativeStopBlock('devin', 'x', ['directory']) === 'workspace' && nativeStopBlock('devin', 'x', ['user']) === null);
     const lm = mcpLegacyInfo({ kind: { owner: 'ply', user: { sources: ['claude'] }, directory: { sources: ['claude'] } }, registered: [], native: { claude: [{ name: 'c' }], codex: [{ name: 'x' }] }, plugins: [{ key: 'plugin:p:s' }], connectors: ['Gmail'] });
     t.ok('mcpLegacyInfo: 探す対象・コネクター・プラグインを写す', lm.spreadFrom.join() === 'claude' && lm.extras.claude.join() === 'plugin:p:s,claude.ai Gmail', lm);
 

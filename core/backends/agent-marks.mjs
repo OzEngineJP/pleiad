@@ -251,9 +251,9 @@ export const CAPABILITY_STATES = {
     shell: 'host',
     plyShell: true,
     nativeShellOff: true,       // agent-profile の disallowedTools で bash を外す（grok-hooks.mjs）
-    // 止める名前があるターンだけ、GROK_HOME を写しに替え、写しの config.toml の disabled_mcp_servers で止める（ADR 0330）。
-    // disabled_mcp_servers は利用者の設定・取り込み・作業場所の .grok/config.toml・.mcp.json のどれにも効く
-    nativeMcpOff: true,
+    // disabled_mcp_servers は効くが、GROK_HOME を写しに替えると Grok の auth.json の更新（一時ファイルからの rename）が本物に届かず、
+    // ログインが切れうる。写しのコードは入れていない。外す前に確かめることは ADR 0330 の「鍵を外す前に確かめること」
+    nativeMcpOff: impossible('会話ごとにネイティブ設定の MCP を止める手段が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ブラウザー・操作一覧・コンピューター・シェル・委譲を HTTP MCP で、接続情報と秘密の変数を起動環境で渡す。

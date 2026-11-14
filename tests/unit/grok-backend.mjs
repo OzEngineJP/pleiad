@@ -386,29 +386,14 @@ export default async function (t) {
       mark = calls.length;
       await turn({ cwd });
       t.ok('既定 Grok 会話は追加アカウントの認証ホームを使わない', of('session/new', mark)[0]?.env?.GROK_HOME === defaultHome);
-      // 9. Grok 自身の MCP を名前で止めるターン（ADR 0330）: 止める名前があるときだけ、GROK_HOME を写しに替える
+      // 9. Grok 自身の MCP は名前で止めない（能力の印 nativeMcpOff は impossible。ADR 0330）。止める名前が届いても、今までと同じ起動
       fs.mkdirSync(defaultHome, { recursive: true });
       fs.writeFileSync(path.join(defaultHome, 'config.toml'), '[mcp_servers.gone]\ncommand = "gone"\n');
-      fs.writeFileSync(path.join(defaultHome, 'auth.json'), '{"fixture":true}');
       mark = calls.length;
-      const named = await turn({ cwd, contextRuntime: { prompt: '', mcp: { named: true, suppress: ['gone'] } } });
-      const offHome = of('session/new', mark)[0]?.env?.GROK_HOME;
-      const offConfig = offHome ? fs.readFileSync(path.join(offHome, 'config.toml'), 'utf8') : '';
-      t.ok('止める名前があるターンは、写しの GROK_HOME（本物の中身＋disabled_mcp_servers の config.toml・本物の設定へのリンク）で起動する',
-        offHome && offHome !== defaultHome && path.relative(path.join(dataDir, 'grok-mcp-off'), offHome).split(path.sep).length === 1
-        && offConfig.startsWith('disabled_mcp_servers = ["gone"]') && offConfig.includes('[mcp_servers.gone]\ncommand = "gone"\n')
-        && !fs.lstatSync(path.join(offHome, 'config.toml')).isSymbolicLink()
-        && fs.readFileSync(path.join(defaultHome, 'config.toml'), 'utf8') === '[mcp_servers.gone]\ncommand = "gone"\n'
-        && fs.lstatSync(path.join(offHome, 'auth.json')).isSymbolicLink() && !fs.existsSync(path.join(defaultHome, 'managed_config.toml')), offHome);
-      mark = calls.length;
-      await turn({ cwd, sessionId: named.sessionId, contextRuntime: { prompt: '', mcp: { named: true, suppress: ['gone'] } } });
-      const resumedHome = of('session/resume', mark)[0]?.env?.GROK_HOME ?? of('session/load', mark)[0]?.env?.GROK_HOME;
-      t.ok('同じ止める名前で再開したターンも同じ写しを使う（会話の記録は本物の sessions へのリンク）', resumedHome === offHome
-        && fs.lstatSync(path.join(offHome, 'sessions')).isSymbolicLink() && fs.existsSync(path.join(defaultHome, 'sessions')), resumedHome);
-      mark = calls.length;
-      await turn({ cwd, sessionId: named.sessionId, contextRuntime: { prompt: '', mcp: { named: true, suppress: [] } } });
-      const clearedHome = of('session/resume', mark)[0]?.env?.GROK_HOME ?? of('session/load', mark)[0]?.env?.GROK_HOME;
-      t.ok('止める名前が無くなった次のターンは、本物の GROK_HOME に戻る（今までと同じ起動）', clearedHome === defaultHome, clearedHome);
+      await turn({ cwd, contextRuntime: { prompt: '', mcp: { named: true, suppress: ['gone'] } } });
+      t.ok('止める名前が届いても、本物の GROK_HOME のまま起動し、写しを作らない（auth.json の更新が本物に届かなくなるのを避ける）',
+        of('session/new', mark)[0]?.env?.GROK_HOME === defaultHome && !fs.existsSync(path.join(dataDir, 'grok-mcp-off'))
+        && fs.readFileSync(path.join(defaultHome, 'config.toml'), 'utf8') === '[mcp_servers.gone]\ncommand = "gone"\n');
     } finally {
       if (previousHome === undefined) delete process.env.AGENT_HOST_GROK_HOME;
       else process.env.AGENT_HOST_GROK_HOME = previousHome;

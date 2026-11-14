@@ -19,7 +19,6 @@ import { writeTurnPlugin, writeNativeShellOffProfile } from './grok-hooks.mjs';
 import { grokQuota } from './grok-usage.mjs';
 import { CAPABILITY_STATES, AGENT_TRAITS, PLY_CONTEXT_CONFLICTS } from './agent-marks.mjs';
 import { defaultGrokHome, prepareGrokAccount, readGrokCredential } from './grok-accounts.mjs';
-import { prepareGrokMcpOff } from './grok-mcp-off.mjs';
 
 /** 札（backendCard）に入れる発言の本文の上限（バイト）。超えたら人に書いた分だけにして、写しは人に書いた分で組み立てる */
 const CARD_TEXT_MAX = 16 * 1024;
@@ -568,12 +567,6 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             held = plan ? createHeldAcp({ client: plan.client }) : null;
             if (args.shellRuntime?.nativeOff) shellProfile = await writeNativeShellOffProfile(path.join(dataDir, 'grok-shell-policy'));
             const launchArgs = [...spawnArgs(model, effort), ...(shellProfile ? ['--agent-profile', shellProfile.file] : [])];
-            // 名前ごとの外部 MCP で Grok 自身の MCP を止める名前があるターンだけ、GROK_HOME を写しに替える（grok-mcp-off.mjs。ADR 0330）。
-            // 写しの元は、このターンの GROK_HOME（互換の接続先の置き場・アカウントの置き場・~/.grok）。止める名前が無いターンは今までと同じ起動
-            const suppress = args.contextRuntime?.mcp?.named ? args.contextRuntime.mcp.suppress ?? [] : [];
-            if (suppress.length) {
-              extraEnv = { ...extraEnv, GROK_HOME: await prepareGrokMcpOff({ root: path.join(dataPath(), 'grok-mcp-off'), source: extraEnv.GROK_HOME ?? homeForScope(), suppress }) };
-            }
             client = await openClient(cwd, launchArgs, handlers, extraEnv, { held });
             // Grok reads the agent profile during ACP startup; the live process retains the resolved policy.
             shellProfile?.cleanup(); shellProfile = null;

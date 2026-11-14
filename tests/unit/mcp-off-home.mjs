@@ -2,12 +2,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { syncMcpOffHome, claimMcpOffHome, mcpOffHomeDir, MCP_OFF_KEEP, MCP_OFF_IDLE_MS } from '../../core/backends/mcp-off-home.mjs';
-import { grokConfigWithDisabled, prepareGrokMcpOff } from '../../core/backends/grok-mcp-off.mjs';
-import { parseToml } from '../../core/toml.mjs';
 import { prepareDevinMcpOff, prepareDevinLaunch } from '../../core/backends/devin-config.mjs';
 
 export const name = 'mcp-off-home';
-export const title = 'Grok・Devin 自身の MCP を名前で止める設定の置き場の写し（本物は書き換えず、止める名前だけ写しに書く。ADR 0330）';
+export const title = 'Devin 自身の MCP を名前で止める設定の置き場の写し（本物は書き換えず、止める名前だけ写しに書く。ADR 0330）';
 
 const read = p => fs.readFile(p, 'utf8');
 const exists = p => fs.lstat(p).then(() => true, () => false);
@@ -70,44 +68,6 @@ export default async function (t) {
     const recentRoot = path.join(root, 'recent');
     for (let i = 0; i < MCP_OFF_KEEP + 2; i++) await claimMcpOffHome(recentRoot, keepSrc, [`r${i}`]);
     t.ok('片付け: 最近使った写しは数を超えても消さない（いま走っている会話の写しを消さない）', (await fs.readdir(recentRoot)).length === MCP_OFF_KEEP + 2 && made.length === MCP_OFF_KEEP + 2);
-
-    // ---- Grok
-    const NOTE = ' # Added by Pleiad for this conversation (MCP servers turned off for Grok)';
-    const realToml = 'model = "m"\n\n[mcp_servers.a]\ncommand = "a"\n';
-    t.ok('Grok: 本物の config.toml の先頭（最上位の表）に disabled_mcp_servers を足す（名前は並べ直し・重ねない。表の中に入れない）',
-      grokConfigWithDisabled(realToml, ['z', 'y', 'z']) === `disabled_mcp_servers = ["y","z"]${NOTE}\n${realToml}`
-      && grokConfigWithDisabled('', ['q"x']) === `disabled_mcp_servers = ["q\\"x"]${NOTE}\n`
-      && JSON.stringify(parseToml(grokConfigWithDisabled('[mcp_servers.a]\ncommand = "a"\n', ['a'])).mcp_servers) === '{"a":{"command":"a"}}');
-    t.ok('Grok: 本物にある 1 行の disabled_mcp_servers は、本物の名前と合わせて置き換える',
-      grokConfigWithDisabled('# top\ndisabled_mcp_servers = ["x"] # mine\nmodel = "m"\n[t]\nk = 1\n', ['b']) === `# top\ndisabled_mcp_servers = ["b","x"]${NOTE}\nmodel = "m"\n[t]\nk = 1\n`);
-    const refused = text => { try { grokConfigWithDisabled(text, ['b']); return null; } catch (e) { return e.code; } };
-    t.ok('Grok: 本物の書き方を読み違えうるとき（複数行の配列・名前でない値・TOML として読めない）は、止めずに知らせる',
-      refused('disabled_mcp_servers = [\n  "x",\n]\n') === 'MCP_OFF_UNSUPPORTED' && refused('disabled_mcp_servers = "x"\n') === 'MCP_OFF_UNSUPPORTED'
-      && refused('model = \n') === 'MCP_OFF_UNSUPPORTED' && refused('[t]\ndisabled_mcp_servers = ["x"]\n') === null);
-    const grokHome = path.join(root, 'grok-home');
-    await fs.mkdir(grokHome);
-    await fs.writeFile(path.join(grokHome, 'config.toml'), '[mcp_servers.gone]\ncommand = "gone"\n');
-    await fs.writeFile(path.join(grokHome, 'managed_config.toml'), 'org = true\n');
-    await fs.writeFile(path.join(grokHome, 'managed_config.lock'), '');
-    const grokTarget = await prepareGrokMcpOff({ root: path.join(root, 'grok-mcp-off'), source: grokHome, suppress: ['gone'] });
-    const offConfig = await read(path.join(grokTarget, 'config.toml'));
-    t.ok('Grok: 写しの config.toml は止める名前＋本物の中身。本物の config.toml は元のまま。managed_config.toml はリンク、ロックは写さない',
-      offConfig === `disabled_mcp_servers = ["gone"]${NOTE}\n[mcp_servers.gone]\ncommand = "gone"\n` && !(await isLink(path.join(grokTarget, 'config.toml')))
-      && await read(path.join(grokHome, 'config.toml')) === '[mcp_servers.gone]\ncommand = "gone"\n'
-      && await isLink(path.join(grokTarget, 'managed_config.toml')) && !(await exists(path.join(grokTarget, 'managed_config.lock'))));
-    // 前の版の写し・Grok の同期が写しに残した普通の managed_config.toml: 本物に無ければ消し、あればリンクに戻す
-    const staleHome = path.join(root, 'grok-home-2');
-    await fs.mkdir(staleHome);
-    const staleTarget = await claimMcpOffHome(path.join(root, 'grok-mcp-off'), staleHome, ['gone']);
-    await fs.writeFile(path.join(staleTarget, 'managed_config.toml'), '[[denied_mcp_servers]]\nserver_name = "gone"\n');
-    await prepareGrokMcpOff({ root: path.join(root, 'grok-mcp-off'), source: staleHome, suppress: ['gone'] });
-    await fs.rm(path.join(grokTarget, 'managed_config.toml')); await fs.writeFile(path.join(grokTarget, 'managed_config.toml'), 'synced');
-    await prepareGrokMcpOff({ root: path.join(root, 'grok-mcp-off'), source: grokHome, suppress: ['gone'] });
-    t.ok('Grok: 写しにだけある managed_config.toml は消し、本物にあるものはリンクに戻す（本物と違う管理の設定で起動しない）',
-      !(await exists(path.join(staleTarget, 'managed_config.toml'))) && await isLink(path.join(grokTarget, 'managed_config.toml'))
-      && await read(path.join(grokHome, 'managed_config.toml')) === 'org = true\n' && (await fs.readdir(staleHome)).every(n => n !== 'managed_config.toml'));
-    t.ok('Grok: 会話の記録（sessions）は本物に作って写しからリンクする（止める名前の有無で記録が分かれない）',
-      await exists(path.join(grokHome, 'sessions')) && await isLink(path.join(grokTarget, 'sessions')));
 
     // ---- Devin
     const devinRoot = path.join(root, 'devin-cfg'), devinDir = path.join(devinRoot, 'devin');

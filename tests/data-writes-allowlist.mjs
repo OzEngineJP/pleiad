@@ -87,9 +87,9 @@ export const DATA_WRITES = [
     { name: 'antigravity/context/<pid>-<乱数>/…', limit: '1 ターン分の一時の home。数ファイル', reason: '終了時に消す一時ファイル' },
   ] },
   { file: 'core/backends/mcp-off-home.mjs', sites: 2, targets: [
-    { name: 'grok-mcp-off/<組み合わせ>/config.toml, devin/mcp-off/<組み合わせ>/devin/{mcp_config.json,config.json}（とリンク）',
+    { name: 'devin/mcp-off/<組み合わせ>/devin/{mcp_config.json,config.json}（とリンク）',
       limit: '本物の設定の置き場 × 止める名前の組ごとに 1 つ（使ったのが新しい 12 個まで。超えて 24 時間使っていないものは古い順に消す。MCP_OFF_KEEP）。中身は本物の設定ファイルの写し（数 KB）とリンクだけ',
-      reason: 'Grok・Devin 自身の MCP を名前で止めるターンに渡す設定の置き場（ADR 0330）。利用者の本物の設定ファイルを書き換えずに止めるため、止める名前を書いた写しだけを Pleiad が書く' },
+      reason: 'Devin 自身の MCP を名前で止めるターンに渡す設定の置き場（ADR 0330）。利用者の本物の設定ファイルを書き換えずに止めるため、止める名前を書いた写しだけを Pleiad が書く' },
   ] },
   { file: 'core/backends/grok-accounts.mjs', sites: 1, targets: [
     { name: 'accounts/grok/<account-id>/auth.json', limit: '登録した Grok アカウントごとに 1 ファイル', reason: 'Grok CLI が読むアカウント別ホームの認証情報。Pleiad の保護されたデータ置き場に保存し、既定の ~/.grok は変更しない' },

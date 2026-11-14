@@ -1,6 +1,6 @@
 // エージェント自身の MCP を名前で止める会話のための、設定の置き場の写し（ADR 0330）。
-// Grok（GROK_HOME）・Devin（DEVIN_CONFIG_HOME）は、会話ごとに MCP を名前で止める引数を持たない。そこで、止める名前があるターンだけ、
-// 本物の置き場（利用者の ~/.grok・%APPDATA%\devin など）を写した置き場を Pleiad のデータ置き場に作り、そちらを指して起動する。
+// Devin（DEVIN_CONFIG_HOME）は、会話ごとに MCP を名前で止める引数を持たない。そこで、止める名前があるターンだけ、
+// 本物の置き場（利用者の %APPDATA%\devin など）を写した置き場を Pleiad のデータ置き場に作り、そちらを指して起動する。
 //   - 本物のディレクトリはジャンクション（Windows）／シンボリックリンク、ファイルはシンボリックリンクで写す。
 //     エージェントが書く認証情報・会話の記録・ログは、リンクを通って本物に書かれる（写しに分かれない）
 //   - 止める名前を書いたファイル（generated）だけを Pleiad が書く。本物の置き場のファイルは読むだけで、書き換えない
@@ -74,10 +74,8 @@ export async function claimMcpOffHome(root, source, suppress) {
  * 写しの中にエージェントが作ったファイル・ディレクトリで、本物に同じ名前が無いものは消さない（写しだけの DB など）。
  * 消すのは、もう要らないリンクと、本物と同じ名前の普通のファイル（リンクに戻す）だけ
  */
-export async function syncMcpOffHome({ source, target, generated = {}, skip = () => false, shared = [] }) {
+export async function syncMcpOffHome({ source, target, generated = {}, skip = () => false }) {
   await fs.mkdir(target, { recursive: true, mode: 0o700 });
-  // shared: 写しと本物で必ず同じにするディレクトリ（会話の記録など）。本物にまだ無ければ空で作る（無いままだと、エージェントが写しの中に作り、記録が分かれる）
-  for (const name of shared) await fs.mkdir(path.join(source, name), { recursive: true, mode: 0o700 });
   const entries = await fs.readdir(source, { withFileTypes: true }).catch(e => (e.code === 'ENOENT' ? [] : Promise.reject(e)));
   const want = new Map();
   for (const entry of entries) {
