@@ -35,6 +35,14 @@ export default async function (t) {
   const byBytes = windowStart(heavy, 50, 20_000);
   t.ok("窓: 大きさの目安（bytes）に当たったら件数に届かなくても止める。ただし最低 6 件は運ぶ", 400 - byBytes < 20 && 400 - byBytes >= 6, `${400 - byBytes} 件`);
   t.ok("窓: 頼みの件数が壊れていても数え切らない（上限）", windowStart(long, 10 ** 9) === 0 && windowStart(long, -5) >= 0);
+  // 頭寄せのさかのぼりにも容量の上限（頼んだ bytes。無ければ WINDOW_BYTES）。大きい AI の発言が続くときは超えてさかのぼらず、AI 頭の窓を許す
+  const fatBack = conversation(40);
+  for (const i of [33, 34, 35, 37]) fatBack[i] = { ...fatBack[i], role: "assistant", text: "あ".repeat(200_000) };
+  const fatStart = windowStart(fatBack, 5, 250_000);
+  t.ok("窓: さかのぼりが頼んだ大きさを超えるなら寄せをやめ、窓の頭は AI の発言のまま", fatBack[fatStart].role === "assistant" && fatStart === 34, `start ${fatStart}`);
+  t.ok("窓: 寄せで足した分は頼んだ大きさの中（次の 1 件を足すと超える分は足さない）", JSON.stringify(fatBack.slice(fatStart, 35)).length <= 250_000);
+  const smallBack = conversation(40).map((m, i) => [33, 34, 35].includes(i) ? { ...m, role: "assistant" } : m);
+  t.ok("窓: さかのぼりが容量内なら今までどおり人の発言まで寄せる・bytes を頼まなければ WINDOW_BYTES が上限", windowStart(smallBack, 5, 250_000) === 32 && windowStart(fatBack, 5) === windowStart(fatBack, 5, WINDOW_BYTES));
 
   // ---------------------------------------------------------------- 提示の本文の印
   const small = { kind: "visualization", content: "<p>x</p>" }, big = { kind: "visualization", content: "x".repeat(LAZY_MIN), caption: "図" };
@@ -182,6 +190,11 @@ export default async function (t) {
   t.ok("窓の差分: 窓の中が違えば差分にせず、窓を返す（画面は置き換える）", !("from" in changed) && changed.base === win.base && joinReply(mine, changed, diffRequest) === null);
   const staleBase = serveHistory(clone(server), { ...winArgs, ...syncRequest(mine.messages.slice(0, 20), mine.presents, { base: win.base + 10, presentBase: win.presentBase }) });
   t.ok("窓の差分: 窓の位置がずれた頼み（先頭が合わない）も窓を返す", !("from" in staleBase));
+  // 差分が合っても、続きが窓に収まらない（from が窓の手前）なら窓を返す。離れている間に大きく育った会話で、窓より大きい続きを一度に送らない
+  const staleTail = syncRequest(server.messages.slice(0, 100), []);
+  const instead = serveHistory(clone(server), { ...winArgs, ...staleTail });
+  t.ok("窓の差分: 差分は合うが続きが窓に収まらない頼みには、差分ではなく窓を返す（画面は置き換える）",
+    !("from" in instead) && instead.base === win.base && same(instead.messages, win.messages) && instead.messages.length <= WINDOW_MESSAGES + 20 && joinReply(mine, instead, staleTail) === null);
 
   // 新しい画面 × 古いサーバー: 古いサーバーは base を知らず、窓の頼みの署名（窓の中だけ）は全量の先頭の署名と合わないので、全量が返る。画面は全量を窓なし（base 0）として使う
   const oldHost = serveFrom(clone(server), { ...winArgs, ...diffRequest });
