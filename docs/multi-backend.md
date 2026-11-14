@@ -1132,6 +1132,8 @@ Codex の会話の履歴（`getMessages`・`getCompactions`・`getSubagentMessag
 
 app-server のページ読みなら、codex の公開の口だけで済み、どの CODEX_HOME でも同じに動く。
 
+**差分読みは入れていない（[ADR 0332](adr/0332-codex-history-keeps-full-paged-read.md)）.** Claude の transcript（ADR 0330）と違い、開くたびに全ページを読む。実機で測った全ページ読みは、アイテム 1,300〜3,800 件の会話で 0.2〜0.4 秒（イベントループの止まりは最大 36 ms）、171 件で 26〜45 ms。会話ごとのアイテム数の中央値は 20 件で、1,000 件以上は 2,226 会話のうち 45 会話。app-server 0.160 の `thread/items/list` は `cursor: { type: "item", itemId }`（`turnId` が必須）で「この後ろだけ」を返すので、差分読みの道は技術的にはある。進行中のアイテムは同じ id のまま更新され、完了済みのターンの書き換え（圧縮・巻き戻し・編集）を見抜く強い印も無いため、遅さに見合わないと判断した。見直す条件と入れるときの形は ADR に書いた。
+
 **試験.**
 
 - `tests/unit/codex-history.mjs`: 偽の app-server。読み方・上限超え・時間切れ・overflow を確かめる。
