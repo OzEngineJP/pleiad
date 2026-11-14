@@ -474,6 +474,7 @@ const SUITES = [
   // 設定 › バージョンと更新の画面（web/updates.mjs）: スイッチ・状態の 1 行の role と aria-live・進みの通知での一覧の引き継ぎ（DOM の代役）
   './unit/updates-view.mjs',
   './unit/release-startup-gate.mjs',
+  './unit/retry-on-codesign-timestamp.mjs',
   // 自動更新の確かめ（ADR 0209）: latest.yml の sha512・方針（update-trust.json）で無署名・発行元・固定の指紋を受け入れる・改ざんは止める・CLOSE を必ず呼ぶ・
   // リリースのビルドの署名の方式（none を含む）と無署名の前の橋渡しの確かめ（偽の koffi。Windows では本物の koffi の呼び出しも）
   './unit/desktop-update-signature.mjs',

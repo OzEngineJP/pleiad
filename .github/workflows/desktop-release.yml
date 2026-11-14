@@ -79,7 +79,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: node scripts/release-unsigned-guard.mjs
       - run: node tests/run.mjs --jobs 2
-      - run: npm run desktop:dist -- --config electron-builder.release.cjs --publish never
+      - name: Build and sign
+        if: runner.os != 'macOS'
+        run: npm run desktop:dist -- --config electron-builder.release.cjs --publish never
+      # macOS は、codesign のタイムスタンプ（Apple のサーバー）に届かないエラーのときだけ、dist-desktop を消して 120 秒・240 秒あけて最大 2 回やり直す
+      # （scripts/retry-on-codesign-timestamp.mjs。ほかの失敗はそのまま落とす）
+      - name: Build, sign and notarize
+        if: runner.os == 'macOS'
+        run: node scripts/retry-on-codesign-timestamp.mjs --clean dist-desktop -- npm run desktop:dist -- --config electron-builder.release.cjs --publish never
       - name: Verify Windows signatures
         if: runner.os == 'Windows'
         shell: pwsh
@@ -97,7 +104,7 @@ jobs:
             if ($signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne $env:PLY_WIN_PUBLISHER) { throw 'Unexpected signing publisher' }
           }
       # stapler（公証 ticket の lookup）は Apple のサーバーへ出る。一時的な切れ（NSURLErrorDomain・終了コード 68・CloudKit の問い合わせの失敗など）
-      # だけを、15 秒・30 秒と間を空けて 3 回まで試し直し、試し直すたびに ::warning:: を残す。
+      # だけを、30 秒・60 秒・120 秒・240 秒と間を空けて 5 回まで試し直し、試し直すたびに ::warning:: を残す。
       # 署名・公証の本当の失敗は試し直さずそのまま落とす
       - name: Verify macOS signature and notarization
         if: runner.os == 'macOS'
@@ -119,9 +126,9 @@ jobs:
               else
                 transient=0
               fi
-              if [ "$transient" -eq 0 ] || [ "$attempt" -ge 3 ]; then return "$status"; fi
-              echo "::warning:: $* failed with a transient error (attempt $attempt of 3); retrying"
-              sleep $((attempt * 15))
+              if [ "$transient" -eq 0 ] || [ "$attempt" -ge 5 ]; then return "$status"; fi
+              echo "::warning:: $* failed with a transient error (attempt $attempt of 5); retrying"
+              sleep $((15 << attempt))
               attempt=$((attempt + 1))
             done
           }
