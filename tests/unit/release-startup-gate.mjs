@@ -70,9 +70,22 @@ export default async function(t) {
           if (file === 'evaluation-release.yml') {
             assert.ok(/verify_apple spctl --assess/.test(verify.run), `${file}/${jobName} must retry transient spctl failures`);
           }
+          // 待ちは 30・60・120・240 秒の最大 5 回（15 << attempt）。2 回呼ぶ evaluation の最悪 900 秒がジョブの 45 分に収まる
+          assert.ok(/\[ "\$attempt" -ge 5 \]/.test(verify.run) && /attempt \$attempt of 5/.test(verify.run) && /sleep \$\(\(15 << attempt\)\)/.test(verify.run),
+            `${file}/${jobName} must retry up to 5 times waiting 30/60/120/240 s`);
+          // mac のビルドは、タイムスタンプのエラーだけ試し直す包みを通して呼ぶ（裸の desktop:dist に戻したらここで落とす）
+          const build = steps.find(s => /desktop:dist/.test(s.run ?? '') && (/--mac/.test(s.run) || s.if === "runner.os == 'macOS'"));
+          const wrapper = file === 'evaluation-release.yml' ? 'release-prep/scripts/retry-on-codesign-timestamp.mjs' : 'scripts/retry-on-codesign-timestamp.mjs';
+          assert.ok(build && build.run.startsWith(`node ${wrapper} --clean dist-desktop -- npm run desktop:dist`), `${file}/${jobName} must build macOS through the timestamp retry wrapper`);
         }
       }
     }
+    const evaluationText = await fs.readFile(new URL('.github/workflows/evaluation-release.yml', root), 'utf8');
+    const evaluation = parse(evaluationText);
+    // 古いタグのやり直しでも動くよう、準備・包みはワークフローの commit（release-prep）から呼ぶ。最悪の待ちは job の上限に収まる
+    assert.equal(evaluation.jobs.mac['timeout-minutes'], 45);
+    assert.ok(evaluation.jobs.mac.steps.some(s => s.uses?.startsWith('actions/checkout@') && s.with?.path === 'release-prep' && s.with['sparse-checkout'] === 'scripts'));
+    assert.ok(!/run: npm run desktop:dist .*--mac/.test(evaluationText), 'mac build must not call desktop:dist directly');
     t.ok('Every release packaging job must pass the real UI startup gate before upload', true);
   } finally { await fs.rm(scratch, { recursive: true, force: true }); }
 }
