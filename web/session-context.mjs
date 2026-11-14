@@ -963,7 +963,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   }
   function mcp(data) {
     const ply = managed(data, 'mcp');
-    // off にしたのにエージェント自身の側を止められなかった行（nativeLock。作業場所の定義・リンクを作れない PC。ADR 0335）も出す。
+    // off にしたのにエージェント自身の側を止められなかった行（nativeLock。作業場所の定義・リンクを作れない PC。ADR 0336）も出す。
     // エージェントが自分でつなぐので「使う」側に置き、一覧と同じ鍵のアイコンと吹き出しで理由を出す
     const rows = data.report.entries.filter(e => e.kind === 'mcp' && (['connected', 'standby', 'starting', 'pending', 'needs-auth', 'failed', 'removed'].includes(e.status)
       || (e.status === 'excluded' && e.nativeLock)));
@@ -1062,7 +1062,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const list = cached.agents[s.backend] ?? [];
     if (!list.length) { k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.none', { agent: label }))); return; }
     k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.list', { agent: label, count: list.length })));
-    // off にしたのに止められなかった名前（記録の unstopped。ADR 0335）は、右端に設定の一覧と同じ鍵つきのアイコン
+    // off にしたのに止められなかった名前（記録の unstopped。ADR 0336）は、右端に設定の一覧と同じ鍵つきのアイコン
     const locks = new Map((data.report.unstopped ?? []).map(u => [u.name, u.nativeLock]));
     const rowOf = x => {
       const r = el('div', 'scx-item'); const body = el('div', 't');

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 export const name = 'context-tabs-browser';
-export const title = '設定 › プラグイン・右パネルの 4 タブ・まとまり・絞り込み・鍵の吹き出し・Devin の自分の名前（ADR 0335）を本物の画面で';
+export const title = '設定 › プラグイン・右パネルの 4 タブ・まとまり・絞り込み・鍵の吹き出し・Devin の自分の名前（ADR 0336）を本物の画面で';
 // B1_BROWSER_TEST=1 のときだけ、本物の Chrome でつなぐ（tests/browser/context-tabs-and-lock-tip.mjs を別のプロセスで走らせる）
 export default async function (t) {
   if (process.env.B1_BROWSER_TEST !== '1') { t.note('Set B1_BROWSER_TEST=1 for the real-page Playwright checks.'); return; }

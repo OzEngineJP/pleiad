@@ -386,7 +386,7 @@ export default async function (t) {
       mark = calls.length;
       await turn({ cwd });
       t.ok('既定 Grok 会話は追加アカウントの認証ホームを使わない', of('session/new', mark)[0]?.env?.GROK_HOME === defaultHome);
-      // 9. Grok 自身の MCP は名前で止めない（能力の印 nativeMcpOff は impossible。ADR 0335）。止める名前が届いても、今までと同じ起動
+      // 9. Grok 自身の MCP は名前で止めない（能力の印 nativeMcpOff は impossible。ADR 0336）。止める名前が届いても、今までと同じ起動
       fs.mkdirSync(defaultHome, { recursive: true });
       fs.writeFileSync(path.join(defaultHome, 'config.toml'), '[mcp_servers.gone]\ncommand = "gone"\n');
       mark = calls.length;

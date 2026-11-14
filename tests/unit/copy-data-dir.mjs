@@ -44,7 +44,7 @@ export default async function (t) {
     await fs.mkdir(path.join(src, 'conversations'));
     await fs.writeFile(path.join(src, 'conversations', 'a.json'), '{"messages":[]}');
     await fs.writeFile(path.join(src, 'handoff-abc.json'), '{}');
-    // Devin の写しの置き場の控え（ADR 0335）。名前に secret を含まない認証情報の控えが入る
+    // Devin の写しの置き場の控え（ADR 0336）。名前に secret を含まない認証情報の控えが入る
     await fs.mkdir(path.join(src, 'devin', 'mcp-off-kept'), { recursive: true });
     await fs.writeFile(path.join(src, 'devin', 'mcp-off-kept', '2026-11-15-ab-x-replaced-credentials.toml'), 'SECRET');
     await fs.mkdir(path.join(src, 'devin', 'sessions'), { recursive: true });

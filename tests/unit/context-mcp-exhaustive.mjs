@@ -26,7 +26,7 @@ export default async function (t) {
     await write(path.join(cwd, '.codex/config.toml'), '[mcp_servers.cx]\ncommand = "cx"\n[mcp_servers."a.b"]\ncommand = "dot"\n');
     await write(path.join(cwd, 'opencode.json'), JSON.stringify({ mcp: { oc: { type: 'local', command: ['oc'] } } }));
     await write(path.join(cwd, '.grok/config.toml'), '[mcp_servers.gk]\ncommand = "gk"\n');
-    // ucl（Claude のユーザーの設定だけ）／cl はユーザーの設定にもある（作業場所にもある名前。ユーザーの設定だけ止められるエージェントでは鍵。ADR 0335）
+    // ucl（Claude のユーザーの設定だけ）／cl はユーザーの設定にもある（作業場所にもある名前。ユーザーの設定だけ止められるエージェントでは鍵。ADR 0336）
     await write(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { ucl: { command: 'ucl' }, cl: { command: 'cl-user' } } }));
     const def = c => ({ transport: 'stdio', command: c, args: [] });
     const plyServers = { file: path.join(tmp, 'ply-mcp.json'), servers: [
@@ -56,7 +56,7 @@ export default async function (t) {
       ['reg', 'cl', 'ucl', 'cx', 'a.b', 'both', 'dis', 'disreg', 'oc', 'gk'].every(n => names.includes(n)), JSON.stringify({ names, native: Object.fromEntries(ids.map(i => [i, native[i].map(s => s.name)])) }));
 
     const ownEnabled = (id, n) => native[id].some(s => s.name === n && !s.disabled);
-    // 止められるか（作業場所にも定義がある名前は、ユーザーの設定だけ止められるエージェントでは止まらない。ADR 0335）
+    // 止められるか（作業場所にも定義がある名前は、ユーザーの設定だけ止められるエージェントでは止まらない。ADR 0336）
     const stoppable = (id, n) => canStopName(id, n, native[id].find(s => s.name === n)?.scopes);
     // 止める名前に入っていても、止められない名前（Codex の点つき）は実際には止まらない（core/backends/context-options.mjs）
     const usableAt = (rt, id, n) => rt.servers.some(s => s.name === n) || (ownEnabled(id, n) && !((rt.mcp.suppress ?? []).includes(n) && stoppable(id, n)));
@@ -70,7 +70,7 @@ export default async function (t) {
       '1 つおきにオフ・広げる': () => ({ off: Object.fromEntries(names.filter((_, i) => i % 2).map(n => [n, ids.filter((_, j) => j % 2)])), spread: Object.fromEntries(names.filter((_, i) => !(i % 2)).map(n => [n, ids.filter((_, j) => !(j % 2))])) }),
     };
     // 実行時は会話の cwd（repo）で決まるので、一覧は repo の場所ごとの設定（place）として組む: repo の作業場所に定義がある名前を渡す。
-    // 全体の設定の一覧は、作業場所の定義で鍵にしない（一覧を出した場所で変わらない。下の「全体の一覧」の試験。ADR 0335 の再レビュー E）
+    // 全体の設定の一覧は、作業場所の定義で鍵にしない（一覧を出した場所で変わらない。下の「全体の一覧」の試験。ADR 0336 の再レビュー E）
     const workspace = Object.fromEntries(ids.map(id => [id, native[id].filter(s => !s.disabled && s.scopes.some(x => x !== 'user')).map(s => s.name)]));
     const bad = [];
     for (const [label, make] of Object.entries(states)) {
@@ -107,7 +107,7 @@ export default async function (t) {
       JSON.stringify({ wsUser, suppress: rtDevin.mcp.suppress, rows: wsUser.map(n => rowsOf(n).map(e => e.nativeLock)) }));
 
     // --- この会話では外す: 中継するものは使えず、止められる自分の定義も止まる（止められないエージェントの自分の定義は残る）。
-    // ユーザーの設定の定義だけ止められるエージェント（Devin。'user'）は、外しただけでは自分の側を止めない（保存した off だけで止める。ADR 0335 の N2）
+    // ユーザーの設定の定義だけ止められるエージェント（Devin。'user'）は、外しただけでは自分の側を止めない（保存した off だけで止める。ADR 0336 の N2）
     const removedBad = [];
     const plan0 = legacyPlan(scope, scope); plan0.mcp.agents = { off: {}, spread: Object.fromEntries(names.map(n => [n, ids])) };
     for (const id of ids) {

@@ -4,7 +4,7 @@
 //   - Skills 絞り込み（入力フォーカス維持・自動展開・0 件表示・Escape 解除）
 //   - 鍵の吹き出し（静的な凡例行なし・ホバー・フォーカス・タップ・Escape・スクロール非表示・title 無し・aria-disabled）
 //   - 1280 / 360・ライト / ダークで横はみ出し無し・押し先サイズ確保
-//   - Devin の自分の名前（ADR 0335）: 一覧の Devin のアイコンを off → 読み込み直しても off → on に戻す・
+//   - Devin の自分の名前（ADR 0336）: 一覧の Devin のアイコンを off → 読み込み直しても off → on に戻す・
 //     リンクを作れない PC の鍵（nolinks）・会話の右パネルの止められなかった行の鍵（workspace）。偽の Devin（tests/lib/fake-devin.mjs）と別の置き場で
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -447,7 +447,7 @@ try {
     await ctx.close();
   }
 
-  // ==================== 4. Devin の自分の名前（ADR 0335） ====================
+  // ==================== 4. Devin の自分の名前（ADR 0336） ====================
   // 別のデータ置き場・home・Devin の設定の置き場（DEVIN_CONFIG_HOME）で、偽の Devin を使うサーバーを立てる。
   // devBoth は Claude と Devin の設定に、wsdup は Devin のユーザーの設定と作業場所（repoD/.devin）の両方にある
   const dvRoot = path.join(dataDir, 'devin-part');

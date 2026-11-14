@@ -125,7 +125,7 @@ export function createContextSession({ store, snapshots, plyServers = async () =
       if (e.kind !== 'mcp') continue;
       for (const source of new Set(e.origins.map(o => o.source))) for (const [id, sources] of owners) {
         if (!sources.includes(source)) continue;
-        // 同じ名前は最初の定義を出し、scopes に有効な定義のある範囲を集める（作業場所にもある名前を止められないエージェントの鍵。ADR 0335）
+        // 同じ名前は最初の定義を出し、scopes に有効な定義のある範囲を集める（作業場所にもある名前を止められないエージェントの鍵。ADR 0336）
         const seen = agents[id].find(s => s.name === e.name);
         if (seen) { if (e.status !== 'disabled' && !seen.scopes.includes(e.scope)) seen.scopes.push(e.scope); continue; }
         agents[id].push({ name: e.name, transport: e.transport, endpoint: e.endpoint ?? null, command: e.command ?? null, path: e.path, scope: e.scope,

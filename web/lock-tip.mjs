@@ -5,7 +5,7 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 
-// nolinks: ユーザーの設定だけ止められるエージェント（Devin）で、この PC ではリンクを作れない（Windows の開発者モードが off。ADR 0335）
+// nolinks: ユーザーの設定だけ止められるエージェント（Devin）で、この PC ではリンクを作れない（Windows の開発者モードが off。ADR 0336）
 export const LOCK_REASONS = new Set(['own', 'workspace', 'relay', 'admin', 'linked', 'nolinks']);
 
 // i18n-dynamic: context.lockReason.

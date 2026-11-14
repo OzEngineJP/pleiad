@@ -33,7 +33,7 @@ export function nativeContextReport(policy, cwd, backend, at = new Date(), unsto
 /**
  * off にしたのにエージェント自身の側を止められなかった名前（行の nativeLock）を、名前ごとに 1 つ。
  * 中継も止める名前も無いのでエージェント任せの道にしたターンでも、記録（nativeContextReport の unstopped）に残し、
- * 右パネルのエージェント任せの一覧で、その名前に設定の一覧と同じ鍵を付ける（ADR 0335）
+ * 右パネルのエージェント任せの一覧で、その名前に設定の一覧と同じ鍵を付ける（ADR 0336）
  */
 export function unstoppedMcp(report) {
   const out = [];
@@ -184,7 +184,7 @@ export function agentMcpRules(plan, agent) {
   const spread = name => (rules.spread?.[name] ?? []).includes(agent);
   // そのエージェント自身の設定にあり、有効な定義。自身の設定で無効（status: 'disabled'）の定義は、そのエージェントが持っていないものとして扱う（画面と同じ規則）
   const isOwn = item => item.status !== 'disabled' && item.origins.some(o => own.includes(o.source));
-  // 止める手（能力の印 nativeMcpOff を、この PC で使えるかまで含めて読む。ADR 0335）:
+  // 止める手（能力の印 nativeMcpOff を、この PC で使えるかまで含めて読む。ADR 0336）:
   //   true    どの定義も止められる。Pleiad が同じ名前を渡すときも、自分の側を止めて Pleiad の側を使う
   //   'user'  ユーザーの設定の定義だけ止められる（Devin。写しの置き場で止める）。止めるのは、利用者がそのエージェントで off にして保存した、
   //           自身のユーザーの設定にある名前だけ。この会話で外した（removedMcp）・名前が重なるだけ・Pleiad にだけある名前の off では止めず、今までと同じ起動にする

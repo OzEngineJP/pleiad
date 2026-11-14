@@ -29,7 +29,7 @@ export default async function (t) {
     const plyServers = servers => ({ file: path.join(tmp, 'ply-mcp.json'), servers: servers.map(n => ({ name: n, definition: { transport: 'stdio', command: `${n}-cmd`, args: [] } })) });
 
     // --- A: 自分の MCP を止められないエージェントは、自分の側が勝つ
-    // ADR 0335: Devin はユーザーの設定の定義だけ止められる（'user'）。Antigravity・Grok は止めない（Grok は写しの置き場で認証の更新が本物に届かない）
+    // ADR 0336: Devin はユーザーの設定の定義だけ止められる（'user'）。Antigravity・Grok は止めない（Grok は写しの置き場で認証の更新が本物に届かない）
     t.ok('止める手の印: Antigravity・Grok は無し、Devin はユーザーの設定だけ（user）、Claude・Codex・OpenCode は全部（true）',
       ['antigravity', 'grok'].every(a => ![true, 'user'].includes(CAPABILITY_STATES[a]?.nativeMcpOff)) && CAPABILITY_STATES.devin?.nativeMcpOff === 'user'
         && ['claude', 'codex', 'opencode'].every(a => CAPABILITY_STATES[a]?.nativeMcpOff === true));
@@ -39,7 +39,7 @@ export default async function (t) {
     t.ok('Antigravity: 止める名前は作らない（止める手が無い）', ag.mcp.suppress.length === 0, ag.mcp);
     await fs.rm(path.join(home, '.gemini'), { recursive: true, force: true });
 
-    // --- ADR 0335 の再レビュー（B・C・E）: Devin（ユーザーの設定の定義だけ止められる）は、利用者が Devin 自身の名前を off にしたときだけ止める。
+    // --- ADR 0336 の再レビュー（B・C・E）: Devin（ユーザーの設定の定義だけ止められる）は、利用者が Devin 自身の名前を off にしたときだけ止める。
     // 期待値は merge-base（34b3075d）の結果（Devin は止める手が無く、自分の側が勝つ）を写したもの。何も止めていないときは前と同じ起動
     setMcpOffLinker(() => {}); // リンクを作れる PC（実際のリンクは作らない。写しの置き場は使わない試験）
     const dhome = path.join(tmp, 'dhome'), devinHome = path.join(dhome, 'devin'), repoB = path.join(tmp, 'repoB');

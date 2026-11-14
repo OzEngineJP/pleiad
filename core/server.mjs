@@ -7844,7 +7844,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   let resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
   // 名前ごとのモデルで、指示・Skills はエージェント任せ、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
   // （ターンだけの口・中継を起こさない。ADR 0327）
-  // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0335）
+  // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0336）
   let unstopped = [];
   if (resolvedContext?.mcp.named && policy.owners.instruction !== 'ply' && policy.owners.skill !== 'ply' && !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length) {
     unstopped = unstoppedMcp(resolvedContext.report);

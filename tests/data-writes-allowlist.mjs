@@ -89,7 +89,7 @@ export const DATA_WRITES = [
   { file: 'core/backends/mcp-off-home.mjs', sites: 9, targets: [
     { name: 'devin/mcp-off/<組み合わせ>/devin/{mcp_config.json,config.json}（とリンク）',
       limit: '本物の設定の置き場 × 止める名前の組ごとに 1 つ（使ったのが新しい 12 個まで。超えて 24 時間使っていないものは古い順に消す。MCP_OFF_KEEP）。中身は本物の設定ファイルの写し（数 KB）とリンクだけ',
-      reason: 'Devin 自身の MCP を名前で止めるターンに渡す設定の置き場（ADR 0335）。利用者の本物の設定ファイルを書き換えずに止めるため、止める名前を書いた写しだけを Pleiad が書く' },
+      reason: 'Devin 自身の MCP を名前で止めるターンに渡す設定の置き場（ADR 0336）。利用者の本物の設定ファイルを書き換えずに止めるため、止める名前を書いた写しだけを Pleiad が書く' },
     { name: 'devin/mcp-off/<組み合わせ>/devin.pleiad.json',
       limit: '写し 1 つにつき 1 ファイル。本物の置き場と kept のパス、Pleiad が書くファイルの名前と指紋、本物へ運んでよい新しい名前（1 KiB 未満）',
       reason: '写しの中で置き換わったファイルを本物へ運ぶとき（settle）に、運ぶ先と Pleiad が書いたファイルかを見分ける記録。写しと一緒に消す' },
@@ -101,7 +101,7 @@ export const DATA_WRITES = [
       reason: 'この PC でシンボリックリンク・ジャンクションを作れるか（写しの置き場を作れるか）を確かめる。作れない PC は Devin の名前の off を鍵にする' },
     { name: '(置き場の外) 利用者の Devin の設定の置き場（%APPDATA%\\devin など）の、写しの中で Devin が置き換えた・作ったファイル',
       limit: 'Devin が写しの中で書いた中身そのまま（1 ファイルずつ。Devin が自分で書く大きさ）。一時ファイルらしい名前・SQLite の DB・ロック・Pleiad が書くファイルは運ばない',
-      reason: '写しの中で Devin が rename で置き換えた認証情報・設定を本物へ運ぶ（写しを使わないターンなら Devin が本物に書く中身）。運ばないと、写しを消すときに失われる（ADR 0335 の再レビュー A）' },
+      reason: '写しの中で Devin が rename で置き換えた認証情報・設定を本物へ運ぶ（写しを使わないターンなら Devin が本物に書く中身）。運ばないと、写しを消すときに失われる（ADR 0336 の再レビュー A）' },
   ] },
   { file: 'core/backends/grok-accounts.mjs', sites: 1, targets: [
     { name: 'accounts/grok/<account-id>/auth.json', limit: '登録した Grok アカウントごとに 1 ファイル', reason: 'Grok CLI が読むアカウント別ホームの認証情報。Pleiad の保護されたデータ置き場に保存し、既定の ~/.grok は変更しない' },
