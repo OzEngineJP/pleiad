@@ -47,8 +47,10 @@ try {
   // 前の版が残した学習の隠れた会話。新経路はもう消さない（一覧・検索から外すだけ。Issue #180）
   const oldLearners = Array.from({ length: 25 }, (_, i) => `old-learner-${i}`);
   oldLearners.forEach((id, i) => side.set(id, { backend: 'fake', createdAt: 1000 + i, bot: { botId: 'b_learner', kind: 'learner' } }));
+  // fake の会話の一覧（fake.listSessions）は同じプロセスの全 suite で共有する。この試験の会話（side）だけを見せる
+  const listSessions = async () => [...side].map(([id, meta]) => ({ id, ...meta }));
   const learner = createMemoryLearner({ dataDir: dir, channels, bots: { get: async () => null }, memory, host, clock,
-    readMessages: async (id) => fake.getMessages(id),
+    readMessages: async (id) => fake.getMessages(id), listSessions,
   });
   const first = await learner.runNow();
   assert.equal(first.changed, 1);
@@ -106,7 +108,7 @@ try {
   assert.deepEqual(channelAdoption.sources.map((source) => source.kind), ['post', 'post']);
   assert.notEqual(channelAdoption.sources[0].postId, channelAdoption.sources[1].postId);
   const restarted = createMemoryLearner({ dataDir: dir, channels, bots: { get: async () => null }, memory, host, clock,
-    readMessages: async (id) => fake.getMessages(id) });
+    readMessages: async (id) => fake.getMessages(id), listSessions });
   await restarted.start();
   assert.equal((await restarted.runNow()).read, 0, '再起動後も保存したカーソルから再開する');
   assert.equal(calls, 5, '再起動後に同じ発言でエージェントを呼び直さない');
