@@ -33,7 +33,7 @@ export default async function(t) {
         && (m.text ?? "") === (source.messages[i].text ?? "")) &&
       outline.messages.every(m => (m.toolCalls ?? []).every(call => Object.keys(call).join() === "name")) &&
       outline.presents === undefined);
-    // 系譜の照合用の概要（ADR 0333）。本文もツール名も運ばず、指紋と人の発言の抜粋だけ。画面が全文の窓から数える指紋と同じ値になる
+    // 系譜の照合用の概要（ADR 0334）。本文もツール名も運ばず、指紋と人の発言の抜粋だけ。画面が全文の窓から数える指紋と同じ値になる
     const digest = await c.cmd("loadSession", { sessionId: id, outline: { digest: true } });
     t.ok("outline: { digest: true } は指紋と人の発言の抜粋だけを返し、本文・ツール名を運ばない",
       digest.messages.length === source.messages.length && source.messages.length > 0 &&

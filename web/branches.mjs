@@ -1,6 +1,6 @@
 // Session lineage and fork boundaries. Rendering and motion live in branch-view.mjs.
 // Claude forks reassign UUIDs, so shared history is compared by role, content and tools.
-// 家族のほかの枝は全文でなく概要（outline の digest。指紋と抜粋だけ。web/outline.mjs・ADR 0333）で持つ。
+// 家族のほかの枝は全文でなく概要（outline の digest。指紋と抜粋だけ。web/outline.mjs・ADR 0334）で持つ。
 // 今開いている枝の窓は全文なので、照合は全文どうし・概要どうし・全文と概要のどれでも同じ結果になる。
 import { t } from "./i18n.mjs";
 import { excerptOf, promptExcerpt, sameContent } from "./outline.mjs";

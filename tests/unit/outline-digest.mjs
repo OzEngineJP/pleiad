@@ -1,4 +1,4 @@
-// 系譜の照合用の概要（outline の digest。web/outline.mjs・ADR 0333）。
+// 系譜の照合用の概要（outline の digest。web/outline.mjs・ADR 0334）。
 // 本文を運ばず、本文とツール名の指紋 fp と人の発言の抜粋 ex だけにしても、分岐点の判定・札の抜粋・窓の手前の埋めが
 // 全文のときと同じ結果になること、新旧の画面とサーバーの組み合わせで壊れないことを見る。
 import { createBranches, commonPrefix } from "../../web/branches.mjs";

@@ -1,4 +1,4 @@
-// 系譜（枝の印）の照合に使う会話の「概要」（outline）の、指紋と抜粋（ADR 0333）。
+// 系譜（枝の印）の照合に使う会話の「概要」（outline）の、指紋と抜粋（ADR 0334）。
 // サーバー（core/server.mjs の loadSession の outline）と画面（web/branches.mjs）が同じ関数を使う。
 // 画面の照合は「同じ発言か」と「札に出す先頭の抜粋」しか本文を見ない。全文を運ばずに、この 2 つだけを渡す。
 import { hash53 } from "./hash53.mjs";
