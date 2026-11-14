@@ -57,7 +57,7 @@ ADR 0327 の一覧で、Grok・Devin 自身の設定にある MCP は鍵だっ�
 - **一覧の鍵（`reason: 'workspace'`）は、場所ごとの設定の一覧でだけ付ける**（`core/context-mcp-matrix.mjs` の `buildMcpMatrix` の `workspace`、`core/ops/context.mjs` の `matrixInput`）。
   - 全体の設定の一覧は、一覧を出した場所の作業場所の定義で鍵にしない（設定画面の場所に関わらず同じ）。Devin のユーザーの設定にある名前は押せ、off は作業場所に同じ名前の定義が無い会話で効く。
   - 場所ごとの設定（`place`）の一覧は、その場所の作業場所の定義がある名前を鍵にする。
-  - 実行時は会話の cwd で決める。作業場所の定義があって止まらなかった名前は、右パネルの行に `nativeLock: 'workspace'` を付ける（画面がこれを出すのは `web/` の変更が要る）。
+  - 実行時は会話の cwd で決める。作業場所の定義があって止まらなかった名前は、右パネルの行に `nativeLock: 'workspace'` を付ける（右パネルはその行に一覧と同じ鍵と理由を出す）。
 
 ### Grok: 鍵のまま（`nativeMcpOff: impossible`）
 
