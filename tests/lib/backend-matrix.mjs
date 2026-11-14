@@ -36,7 +36,7 @@ export const ABOUT = {
   computerUse: 'コンピューターの操作（ply_computer）。画像の渡し方',
   plyShell: 'Pleiad のシェルのツール（ply_shell）を受け取る',
   nativeShellOff: 'エージェントのシェルのツールを会話ごとに切れる（ply_shell だけにする）',
-  nativeMcpOff: 'エージェント自身の外部 MCP を会話ごとに名前単位で止められる',
+  nativeMcpOff: 'エージェント自身の外部 MCP を会話ごとに名前単位で止められる（user: ユーザーの設定の定義だけ。作業場所の設定にもある名前は止められない。シンボリックリンクを作れる PC だけ）',
   shell: '入力欄の `!`（host: Pleiad が走らせる / native: エージェントが走らせる）',
   steer: '走っている作業へ追加指示を途中で渡す（— なら次のターンで渡す）',
   handover: '更新で走っているターンを止めない（無停止の更新。新しいサーバーが付け直す）',

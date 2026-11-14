@@ -6,6 +6,7 @@ import { resolveRuntime } from '../../core/context-runtime.mjs';
 import { scanContext } from '../../core/context-scan.mjs';
 import { AGENTS } from '../../core/backends/agents.mjs';
 import { AGENT_ORDER, buildMcpMatrix, canStopName, mcpLegacyInfo } from '../../core/context-mcp-matrix.mjs';
+import { nativeMcpOffMode } from '../../core/backends/mcp-off-home.mjs';
 
 export const name = 'context-mcp-exhaustive';
 export const title = '外部 MCP の総当たり: 一覧の表示（on / off / 鍵 / 押せない）が、実行時に実際に使えるかと一致する';
@@ -25,6 +26,8 @@ export default async function (t) {
     await write(path.join(cwd, '.codex/config.toml'), '[mcp_servers.cx]\ncommand = "cx"\n[mcp_servers."a.b"]\ncommand = "dot"\n');
     await write(path.join(cwd, 'opencode.json'), JSON.stringify({ mcp: { oc: { type: 'local', command: ['oc'] } } }));
     await write(path.join(cwd, '.grok/config.toml'), '[mcp_servers.gk]\ncommand = "gk"\n');
+    // ucl（Claude のユーザーの設定だけ）／cl はユーザーの設定にもある（作業場所にもある名前。ユーザーの設定だけ止められるエージェントでは鍵。ADR 0336）
+    await write(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { ucl: { command: 'ucl' }, cl: { command: 'cl-user' } } }));
     const def = c => ({ transport: 'stdio', command: c, args: [] });
     const plyServers = { file: path.join(tmp, 'ply-mcp.json'), servers: [
       { name: 'reg', definition: def('reg') }, { name: 'both', definition: def('both-ply') }, { name: 'disreg', definition: def('disreg-ply') }] };
@@ -41,18 +44,22 @@ export default async function (t) {
     for (const e of scan.entries) {
       if (e.kind !== 'mcp') continue;
       for (const source of new Set(e.origins.map(o => o.source))) for (const id of ids) {
-        if (!(AGENTS[id].contextSources ?? []).filter(s => s !== 'common').includes(source) || native[id].some(s => s.name === e.name)) continue;
-        native[id].push({ name: e.name, transport: e.transport, disabled: e.status === 'disabled' });
+        if (!(AGENTS[id].contextSources ?? []).filter(s => s !== 'common').includes(source)) continue;
+        const seen = native[id].find(s => s.name === e.name);
+        if (seen) { if (e.status !== 'disabled' && !seen.scopes.includes(e.scope)) seen.scopes.push(e.scope); continue; }
+        native[id].push({ name: e.name, transport: e.transport, scope: e.scope, scopes: e.status === 'disabled' ? [] : [e.scope], disabled: e.status === 'disabled' });
       }
     }
     const registered = plyServers.servers.map(s => ({ name: s.name, transport: 'stdio' }));
     const names = [...new Set([...registered.map(r => r.name), ...Object.values(native).flat().map(s => s.name)])].sort();
     t.ok('前提: 名前の種類がそろっている（登録・各エージェントの設定・無効・止められない名前）',
-      ['reg', 'cl', 'cx', 'a.b', 'both', 'dis', 'disreg', 'oc', 'gk'].every(n => names.includes(n)), JSON.stringify({ names, native: Object.fromEntries(ids.map(i => [i, native[i].map(s => s.name)])) }));
+      ['reg', 'cl', 'ucl', 'cx', 'a.b', 'both', 'dis', 'disreg', 'oc', 'gk'].every(n => names.includes(n)), JSON.stringify({ names, native: Object.fromEntries(ids.map(i => [i, native[i].map(s => s.name)])) }));
 
     const ownEnabled = (id, n) => native[id].some(s => s.name === n && !s.disabled);
+    // 止められるか（作業場所にも定義がある名前は、ユーザーの設定だけ止められるエージェントでは止まらない。ADR 0336）
+    const stoppable = (id, n) => canStopName(id, n, native[id].find(s => s.name === n)?.scopes);
     // 止める名前に入っていても、止められない名前（Codex の点つき）は実際には止まらない（core/backends/context-options.mjs）
-    const usableAt = (rt, id, n) => rt.servers.some(s => s.name === n) || (ownEnabled(id, n) && !((rt.mcp.suppress ?? []).includes(n) && canStopName(id, n)));
+    const usableAt = (rt, id, n) => rt.servers.some(s => s.name === n) || (ownEnabled(id, n) && !((rt.mcp.suppress ?? []).includes(n) && stoppable(id, n)));
     const runtimeOf = async (plan, id, removed) => resolveRuntime(policyOf(plan, removed), { home, plyServers, agent: id });
 
     // --- 名前ごとのモデル: 画面の表示 = 実行時に使えるか
@@ -62,12 +69,15 @@ export default async function (t) {
       '全部広げる': () => ({ off: {}, spread: Object.fromEntries(names.map(n => [n, ids])) }),
       '1 つおきにオフ・広げる': () => ({ off: Object.fromEntries(names.filter((_, i) => i % 2).map(n => [n, ids.filter((_, j) => j % 2)])), spread: Object.fromEntries(names.filter((_, i) => !(i % 2)).map(n => [n, ids.filter((_, j) => !(j % 2))])) }),
     };
+    // 実行時は会話の cwd（repo）で決まるので、一覧は repo の場所ごとの設定（place）として組む: repo の作業場所に定義がある名前を渡す。
+    // 全体の設定の一覧は、作業場所の定義で鍵にしない（一覧を出した場所で変わらない。下の「全体の一覧」の試験。ADR 0336 の再レビュー E）
+    const workspace = Object.fromEntries(ids.map(id => [id, native[id].filter(s => !s.disabled && s.scopes.some(x => x !== 'user')).map(s => s.name)]));
     const bad = [];
     for (const [label, make] of Object.entries(states)) {
       const agents = make();
       const kind = { owner: 'native', disabled: [], agents };
       const plan = legacyPlan(scope, scope); plan.mcp.agents = agents;
-      const matrix = buildMcpMatrix({ kind, owners: { instruction: 'native', skill: 'native' }, registered, native, installed: {} });
+      const matrix = buildMcpMatrix({ kind, owners: { instruction: 'native', skill: 'native' }, registered, native, installed: {}, workspace });
       for (const id of ids) {
         const rt = await runtimeOf(plan, id, []);
         for (const n of names) {
@@ -76,24 +86,38 @@ export default async function (t) {
           const real = usableAt(rt, id, n);
           if (shown !== real) bad.push({ label, id, n, cell, real, servers: rt.servers.map(s => s.name), suppress: rt.mcp.suppress });
           // 鍵のセルは止められないエージェントの自分の定義だけ。押せるセルは止められる
-          if (cell.mode === 'locked' && !(ownEnabled(id, n) && !canStopName(id, n))) bad.push({ label, id, n, cell, why: 'locked' });
+          if (cell.mode === 'locked' && !(ownEnabled(id, n) && !stoppable(id, n))) bad.push({ label, id, n, cell, why: 'locked' });
           if (cell.mode === 'none' && real) bad.push({ label, id, n, cell, why: 'none-but-usable' });
         }
       }
     }
     t.ok(`一覧の表示と実際に使えるかが一致（${Object.keys(states).length} 状態 × ${ids.length} エージェント × ${names.length} 名前）`, bad.length === 0, JSON.stringify(bad.slice(0, 6)));
 
-    // --- この会話では外す: 中継するものは使えず、止められる自分の定義も止まる（止められないエージェントの自分の定義は残る）
+    // --- 全体の一覧: 作業場所にも定義がある名前でも、ユーザーの設定にある名前は押せる（off は、作業場所の定義の無い会話で効く）。
+    // repo の会話では止まらず、右パネルの行に鍵の理由（nativeLock: workspace）を出す
+    const offAll = { off: Object.fromEntries(names.map(n => [n, ids])), spread: {} };
+    const globalMatrix = buildMcpMatrix({ kind: { owner: 'native', disabled: [], agents: offAll }, owners: { instruction: 'native', skill: 'native' }, registered, native, installed: {} });
+    const planOff = legacyPlan(scope, scope); planOff.mcp.agents = offAll;
+    const rtDevin = await runtimeOf(planOff, 'devin', []);
+    const wsUser = native.devin.filter(s => !s.disabled && s.scopes.includes('user') && s.scopes.some(x => x !== 'user')).map(s => s.name);
+    const rowsOf = n => rtDevin.report.entries.filter(e => e.kind === 'mcp' && e.name === n && e.status === 'excluded');
+    t.ok('全体の一覧: Devin のユーザーの設定にあり作業場所にもある名前（cl）は押せる。repo の会話では止めず、行に nativeLock: workspace',
+      wsUser.includes('cl') && wsUser.every(n => globalMatrix.rows.find(r => r.key === n)?.cells.devin.mode === 'toggle')
+        && wsUser.every(n => !rtDevin.mcp.suppress.includes(n) && rowsOf(n).some(e => e.nativeLock === 'workspace')),
+      JSON.stringify({ wsUser, suppress: rtDevin.mcp.suppress, rows: wsUser.map(n => rowsOf(n).map(e => e.nativeLock)) }));
+
+    // --- この会話では外す: 中継するものは使えず、止められる自分の定義も止まる（止められないエージェントの自分の定義は残る）。
+    // ユーザーの設定の定義だけ止められるエージェント（Devin。'user'）は、外しただけでは自分の側を止めない（保存した off だけで止める。ADR 0336 の N2）
     const removedBad = [];
     const plan0 = legacyPlan(scope, scope); plan0.mcp.agents = { off: {}, spread: Object.fromEntries(names.map(n => [n, ids])) };
     for (const id of ids) {
       const rt = await runtimeOf(plan0, id, names);
       for (const n of names) {
-        const expected = ownEnabled(id, n) && !canStopName(id, n);
+        const expected = ownEnabled(id, n) && (!stoppable(id, n) || nativeMcpOffMode(id) === 'user');
         if (usableAt(rt, id, n) !== expected) removedBad.push({ id, n, servers: rt.servers.map(s => s.name), suppress: rt.mcp.suppress });
       }
     }
-    t.ok('この会話では外した名前は、止められないエージェントの自分の定義だけが残る', removedBad.length === 0, JSON.stringify(removedBad.slice(0, 6)));
+    t.ok('この会話では外した名前は、止められないエージェントと Devin（ユーザーの設定だけ止められる）の自分の定義だけが残る', removedBad.length === 0, JSON.stringify(removedBad.slice(0, 6)));
 
     // --- 旧 2 択の変換直後: 変換の前後で接続が同じ（旧「Pleiad がそろえる」「任せる」）
     const legacyBad = [];
@@ -109,7 +133,7 @@ export default async function (t) {
         for (const n of names) {
           // 変換前: 「そろえる」は Pleiad が全部を中継し（有効な定義だけ）、止められないエージェントは自分のも使う。「任せる」は自分の定義だけ（登録は渡さない）
           const before = owner === 'ply'
-            ? rtOld.servers.some(s => s.name === n) || (ownEnabled(id, n) && !canStopName(id, n))
+            ? rtOld.servers.some(s => s.name === n) || (ownEnabled(id, n) && !stoppable(id, n))
             : ownEnabled(id, n);
           const after = usableAt(rtNew, id, n);
           const screen = matrixOld.rows.find(r => r.key === n)?.cells[id]?.state === 'on';

@@ -76,6 +76,12 @@ function contextChange(view, args) {
   return diffRows(`${where}.${args.kind ?? ''}`, level?.kinds?.[args.kind]?.value ?? null, args.value ?? null);
 }
 
+/** agentMcp の結果から、エージェントごとに作業場所の設定（user 以外の範囲）に有効な定義がある名前 */
+function workspaceNames(known) {
+  return Object.fromEntries(Object.entries(known?.agents ?? {}).map(([agent, list]) => [agent,
+    [...new Set(list.filter((s) => !s.disabled && (s.scopes ?? (s.scope ? [s.scope] : [])).some((x) => x !== 'user')).map((s) => s.name))]]));
+}
+
 /**
  * 一覧（context.mcpMatrix）と更新（context.setMcpAgent）が同じ材料で組み立てるための入力。cwd・place が同じなら同じ一覧になる。
  * wait: コネクターの一覧が未読なら、読み終えるまで待つ（読めなければ readFailed）
@@ -84,7 +90,11 @@ async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
   const dir = (await cwdFor(ctx, cwd)) ?? null;
   const view = await ctx.context.view(dir);
   const level = place ? (view.places ?? []).find((p) => p.path === place) ?? view.defaults : view.defaults;
-  const [known, list] = await Promise.all([ctx.context.agentMcp(dir), ctx.mcp.list().catch(() => ({ servers: [] }))]);
+  // 場所ごとの設定（place）では、その場所の作業場所の設定に定義がある名前を、ユーザーの設定の定義しか止められないエージェントで鍵にする。
+  // 全体の設定は一覧を出した場所（cwd）に関わらず鍵にしない（core/context-mcp-matrix.mjs の buildMcpMatrix の workspace）
+  const placeDir = place && level !== view.defaults ? place : null;
+  const [known, list, atPlace] = await Promise.all([ctx.context.agentMcp(dir), ctx.mcp.list().catch(() => ({ servers: [] })),
+    placeDir ? ctx.context.agentMcp(placeDir).catch(() => null) : null]);
   const servers = list.servers ?? [];
   // 読み取りの起動で、利用者の stdio の MCP が動かないように、claude.ai 以外の既知の名前（Pleiad の登録すべて・Claude の設定の MCP）を止める
   const deny = [...servers.map((s) => s.name), ...(known.agents?.claude ?? []).map((s) => s.name)];
@@ -98,6 +108,7 @@ async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
     connectors: Array.isArray(extras.connectors) ? extras.connectors : null,
     reading: extras.reading === true,
     needsAuth: Array.isArray(extras.needsAuth) ? extras.needsAuth : [],
+    workspace: placeDir ? workspaceNames(atPlace) : null,
   };
   return { input, extras, level, dir, claude };
 }

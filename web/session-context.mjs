@@ -29,6 +29,7 @@ import {
   groupEntries, bundleSwitchState, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
 } from './context-tabs.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
+import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
 import { unifySessionBox, unifyConfirmPanel, resetPlan, unsupportedAgentText } from './hooks-unify-ui.mjs';
 
@@ -962,8 +963,11 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   }
   function mcp(data) {
     const ply = managed(data, 'mcp');
-    const rows = data.report.entries.filter(e => e.kind === 'mcp' && ['connected', 'standby', 'starting', 'pending', 'needs-auth', 'failed', 'removed'].includes(e.status));
-    const k = kindBox('MCP', ply ? t('sessionContext.mcp.who', { count: rows.filter(e => e.status !== 'removed').length }) : t('sessionContext.native'), ply);
+    // off にしたのにエージェント自身の側を止められなかった行（nativeLock。作業場所の定義・リンクを作れない PC。ADR 0336）も出す。
+    // エージェントが自分でつなぐので「使う」側に置き、一覧と同じ鍵のアイコンと吹き出しで理由を出す
+    const rows = data.report.entries.filter(e => e.kind === 'mcp' && (['connected', 'standby', 'starting', 'pending', 'needs-auth', 'failed', 'removed'].includes(e.status)
+      || (e.status === 'excluded' && e.nativeLock)));
+    const k = kindBox('MCP', ply ? t('sessionContext.mcp.who', { count: rows.filter(e => e.status !== 'removed' && e.status !== 'excluded').length }) : t('sessionContext.native'), ply);
     if (!ply) { nativeMcp(k, data); return k; }
     if (!rows.length) k.append(el('p', 'cx-sub', t('sessionContext.mcp.none')));
     const primaryFree = !data.changed?.differs;
@@ -972,7 +976,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const pending = removedPending.get(raw.name);
       const e = pending ? { ...raw, status: pending.removed ? 'removed' : (raw.status === 'removed' ? 'connected' : raw.status) } : raw;
       const row = el('div', 'scx-item');
-      const dot = el('span', 'cx-dot' + (e.status === 'connected' ? ' on' : e.status === 'starting' ? ' up' : e.status === 'failed' ? '' : ' off'));
+      const unstopped = e.status === 'excluded' && Boolean(e.nativeLock);
+      const dot = el('span', 'cx-dot' + (e.status === 'connected' || unstopped ? ' on' : e.status === 'starting' ? ' up' : e.status === 'failed' ? '' : ' off'));
       const body = el('div', 't');
       body.append(el('div', 'nm', e.name));
       const p = el('div', 'p');
@@ -983,6 +988,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       else if (e.status === 'starting') p.textContent = where + t('sessionContext.mcp.starting');
       else if (e.status === 'pending') p.textContent = where + (e.reason ?? t('sessionContext.mcp.pending'));
       else if (e.status === 'removed') p.textContent = t('sessionContext.mcp.removed');
+      else if (unstopped) p.textContent = where + (e.reason ?? '');
       else if (e.status === 'failed') p.append(el('span', 'cx-fail', t('sessionContext.mcp.failed')), ` · ${e.reason ?? t('sessionContext.mcp.unknownReason')}`);
       else {
         waiting = true;
@@ -999,6 +1005,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const fromPly = e.origins?.[0]?.source === 'ply';
       if (e.status === 'needs-auth' && fromPly && e.auth === 'oauth' && !login?.dataset?.done) acts.append(button(t('sessionContext.mcp.login'), primaryFree ? 'btn btn-primary' : 'btn btn-quiet', () => startLogin(e.name)));
       if (e.status === 'needs-auth' && e.auth !== 'oauth') acts.append(button(t('sessionContext.mcp.openSettings'), 'btn', () => openSettings()));
+      if (unstopped && session()?.backend) acts.append(lockedAgentChip(session().backend, { mode: 'locked', reason: e.nativeLock, state: 'on' }, e.name));
       if (['needs-auth', 'failed', 'removed'].includes(raw.status) || pending) {
         const sw = button('', 'cx-sw', () => setRemoved(e.name, e.status !== 'removed'));
         sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(e.status !== 'removed'));
@@ -1055,7 +1062,15 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const list = cached.agents[s.backend] ?? [];
     if (!list.length) { k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.none', { agent: label }))); return; }
     k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.list', { agent: label, count: list.length })));
-    const rowOf = x => { const r = el('div', 'scx-item'); const body = el('div', 't'); body.append(el('div', null, x.name), el('div', 'p', x.disabled ? t('sessionContext.nativeMcp.disabled', { path: shortPath(x.path) }) : shortPath(x.path))); r.append(el('span', 'cx-dot off'), body); return r; };
+    // off にしたのに止められなかった名前（記録の unstopped。ADR 0336）は、右端に設定の一覧と同じ鍵つきのアイコン
+    const locks = new Map((data.report.unstopped ?? []).map(u => [u.name, u.nativeLock]));
+    const rowOf = x => {
+      const r = el('div', 'scx-item'); const body = el('div', 't');
+      body.append(el('div', null, x.name), el('div', 'p', x.disabled ? t('sessionContext.nativeMcp.disabled', { path: shortPath(x.path) }) : shortPath(x.path)));
+      r.append(el('span', 'cx-dot off'), body);
+      if (locks.has(x.name) && !x.disabled) { const acts = el('div', 'acts'); acts.append(lockedAgentChip(s.backend, { mode: 'locked', reason: locks.get(x.name), state: 'on' }, x.name)); r.append(acts); }
+      return r;
+    };
     list.slice(0, 5).forEach(x => k.append(rowOf(x)));
     if (list.length > 5) k.append(fold(t('sessionContext.more', { count: list.length - 5 }), list.slice(5).map(rowOf)));
   }

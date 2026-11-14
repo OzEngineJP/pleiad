@@ -62,7 +62,7 @@ export const CAPABILITY_CONTRACTS = {
   computerUse: { suites: ['computer-bridge'], agents: DELIVERY_AGENTS },
   plyShell: { suites: ['shell-bridge', 'shell-delivery'], agents: DELIVERY_AGENTS },
   nativeShellOff: { suites: ['shell-delivery'], agents: { devin: 'backend-delivery' } },
-  nativeMcpOff: { suites: ['context-runtime'], agents: { opencode: 'server-opencode-context' } },
+  nativeMcpOff: { suites: ['context-runtime', 'context-mcp-review', 'context-mcp-exhaustive', 'mcp-off-home'], agents: { opencode: 'server-opencode-context', devin: 'server-devin' } },
   shell: { suites: ['server-shell'] },
   steer: { suites: ['server-delegation-steer', 'server-delegation-steer-acp', 'task-instructions'] },
   handover: { suites: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'] },

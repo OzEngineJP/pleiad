@@ -44,6 +44,11 @@ export default async function (t) {
     await fs.mkdir(path.join(src, 'conversations'));
     await fs.writeFile(path.join(src, 'conversations', 'a.json'), '{"messages":[]}');
     await fs.writeFile(path.join(src, 'handoff-abc.json'), '{}');
+    // Devin の写しの置き場の控え（ADR 0336）。名前に secret を含まない認証情報の控えが入る
+    await fs.mkdir(path.join(src, 'devin', 'mcp-off-kept'), { recursive: true });
+    await fs.writeFile(path.join(src, 'devin', 'mcp-off-kept', '2026-11-15-ab-x-replaced-credentials.toml'), 'SECRET');
+    await fs.mkdir(path.join(src, 'devin', 'sessions'), { recursive: true });
+    await fs.writeFile(path.join(src, 'devin', 'sessions', 'a.json'), '{}');
     const before = await fs.readdir(src);
 
     const dst = path.join(root, 'full');
@@ -51,6 +56,7 @@ export default async function (t) {
     const names = await fs.readdir(dst);
     t.ok('remote/・*-secrets.json・control.json・ロック（pleiad.lock*）を写さない', !names.includes('remote') && !names.some(name => /secrets|control|\.lock|pleiad\.lock/.test(name)), names.join(','));
     t.ok('worktree の台帳（worktrees.json）を写さない（写しのサーバーが本物の worktree を片付けに行かない）', !names.includes('worktrees.json'), names.join(','));
+    t.ok('Devin の設定・認証情報の控え（devin/mcp-off-kept）は写さず、devin/ のほかのものは写す', !(await exists(path.join(dst, 'devin', 'mcp-off-kept'))) && await exists(path.join(dst, 'devin', 'sessions', 'a.json')));
     const deep = await fs.readdir(path.join(dst, 'plugins'));
     t.ok('名前に secret を含むものは、大小・形・階層を問わず写さない（secret-values.json・書きかけの .tmp・下の階層のファイルとフォルダー）',
       !names.some(name => /secret/i.test(name)) && JSON.stringify(deep) === JSON.stringify(['settings.json']), `${names.join(',')} | ${deep.join(',')}`);

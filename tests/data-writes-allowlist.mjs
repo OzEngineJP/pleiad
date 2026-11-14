@@ -86,6 +86,23 @@ export const DATA_WRITES = [
   { file: 'core/backends/antigravity-context.mjs', sites: 3, targets: [
     { name: 'antigravity/context/<pid>-<乱数>/…', limit: '1 ターン分の一時の home。数ファイル', reason: '終了時に消す一時ファイル' },
   ] },
+  { file: 'core/backends/mcp-off-home.mjs', sites: 9, targets: [
+    { name: 'devin/mcp-off/<組み合わせ>/devin/{mcp_config.json,config.json}（とリンク）',
+      limit: '本物の設定の置き場 × 止める名前の組ごとに 1 つ（使ったのが新しい 12 個まで。超えて 24 時間使っていないものは古い順に消す。MCP_OFF_KEEP）。中身は本物の設定ファイルの写し（数 KB）とリンクだけ',
+      reason: 'Devin 自身の MCP を名前で止めるターンに渡す設定の置き場（ADR 0336）。利用者の本物の設定ファイルを書き換えずに止めるため、止める名前を書いた写しだけを Pleiad が書く' },
+    { name: 'devin/mcp-off/<組み合わせ>/devin.pleiad.json',
+      limit: '写し 1 つにつき 1 ファイル。本物の置き場と kept のパス、Pleiad が書くファイルの名前と指紋、本物へ運んでよい新しい名前（1 KiB 未満）',
+      reason: '写しの中で置き換わったファイルを本物へ運ぶとき（settle）に、運ぶ先と Pleiad が書いたファイルかを見分ける記録。写しと一緒に消す' },
+    { name: 'devin/mcp-off-kept/<日時>-<乱数>-<組み合わせ>-[replaced-]<名前>',
+      limit: 'MCP_OFF_KEPT_MAX=50 個まで・MCP_OFF_KEPT_MAX_AGE_MS=30 日まで（どちらかを超えたら古いものから消す。ターンを起こすたびにも消す）。中身は Devin の設定・認証情報のファイル 1 つ（数 KB）か、写しの中で作られたフォルダー 1 つ。秘密を含みうるので scripts/copy-data-dir.mjs は写さない',
+      reason: '写しの中の Devin の書き込みを本物へ運べないとき（本物のほうが新しい・Pleiad が書く mcp_config.json の書き換え・古い写しを消すときに運べなかったもの）と、本物へ運ぶ前の本物の中身（replaced-）を、消さずに残す場所' },
+    { name: '.mcp-off-link-probe-<乱数>/{file,dir,file-link,dir-link}',
+      limit: '空のファイル 1 つ・空のディレクトリ 1 つ・リンク 2 つ。作ってすぐ消す。作れると分かったらプロセスの間は作らない。作れない PC では、一覧を出すときなどに 2 秒（MCP_OFF_NOLINK_RECHECK_MS）以上空けて作り直す',
+      reason: 'この PC でシンボリックリンク・ジャンクションを作れるか（写しの置き場を作れるか）を確かめる。作れない PC は Devin の名前の off を鍵にする' },
+    { name: '(置き場の外) 利用者の Devin の設定の置き場（%APPDATA%\\devin など）の、写しの中で Devin が置き換えた・作ったファイル',
+      limit: 'Devin が写しの中で書いた中身そのまま（1 ファイルずつ。Devin が自分で書く大きさ）。一時ファイルらしい名前・SQLite の DB・ロック・Pleiad が書くファイルは運ばない',
+      reason: '写しの中で Devin が rename で置き換えた認証情報・設定を本物へ運ぶ（写しを使わないターンなら Devin が本物に書く中身）。運ばないと、写しを消すときに失われる（ADR 0336 の再レビュー A）' },
+  ] },
   { file: 'core/backends/grok-accounts.mjs', sites: 1, targets: [
     { name: 'accounts/grok/<account-id>/auth.json', limit: '登録した Grok アカウントごとに 1 ファイル', reason: 'Grok CLI が読むアカウント別ホームの認証情報。Pleiad の保護されたデータ置き場に保存し、既定の ~/.grok は変更しない' },
   ] },

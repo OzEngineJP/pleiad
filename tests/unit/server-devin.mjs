@@ -89,6 +89,34 @@ export default async function (t) {
     // 子の process.cwd() は実体のパスを返す（macOS の一時フォルダーは /var → /private/var のリンクを通る）ので、実体のパスで比べる
     t.ok('別 cwd は別プロセスで起動し native 設定の場所を保つ', await fs.realpath(observed.cwd) === await fs.realpath(other) && observed.configHome === nativeConfig,
       JSON.stringify({ cwd: observed.cwd, configHome: observed.configHome, other, nativeConfig }));
+
+    // ---- Devin 自身の MCP を名前で止める（名前ごとのモデルの off。ADR 0336）: 止める名前があるターンだけ、設定の置き場を写しに替える
+    {
+      const mcpCwd = path.join(root, 'mcp-off-project');
+      await fs.mkdir(path.join(mcpCwd, '.git'), { recursive: true });
+      await fs.mkdir(path.join(nativeConfig, 'devin'), { recursive: true });
+      const nativeMcp = JSON.stringify({ mcpServers: { zz: { command: 'zz' }, keep: { command: 'keep' } } });
+      await fs.writeFile(path.join(nativeConfig, 'devin', 'mcp_config.json'), nativeMcp);
+      const scanNone = { sources: [], excludePaths: [] };
+      const setOff = off => c.cmd('setContextSettings', { cwd: mcpCwd, place: mcpCwd, kind: 'mcp', value: { owner: 'native', user: scanNone, directory: scanNone, agents: { off, spread: {} } } });
+      const envOf = async () => JSON.parse((await c.runTurn({ backend: 'devin', cwd: mcpCwd, prompt: '[env]', model: 'swe-2-high' })).events.filter(e => e.type === 'text.delta').map(e => e.text).join(''));
+      await setOff({ zz: ['devin'] });
+      const offEnv = await envOf();
+      const offMcp = JSON.parse(await fs.readFile(path.join(offEnv.configHome, 'devin', 'mcp_config.json'), 'utf8'));
+      t.ok('止める名前があるターンは、写しの設定の置き場で起動し、写しの mcp_config.json だけ止める名前に disabled を付ける（本物は書き換えない）',
+        offEnv.configHome !== nativeConfig && path.relative(path.join(root, 'data', 'devin', 'mcp-off'), offEnv.configHome).split(path.sep).length === 1
+        && offMcp.mcpServers.zz.disabled === true && !offMcp.mcpServers.keep.disabled && await fs.readFile(path.join(nativeConfig, 'devin', 'mcp_config.json'), 'utf8') === nativeMcp,
+        JSON.stringify({ configHome: offEnv.configHome, offMcp }));
+      await setOff({});
+      const onEnv = await envOf();
+      t.ok('止める名前が無くなった次のターンは、本物の設定の置き場に戻る（今までと同じ起動）', onEnv.configHome === nativeConfig, onEnv.configHome);
+      // Devin の設定に無い名前（Pleiad にだけある名前）を Devin の列で off にしても、写しでは起動しない（ADR 0336 の再レビュー B）
+      await setOff({ 'pleiad-only': ['devin'] });
+      const otherEnv = await envOf();
+      t.ok('Devin の設定に無い名前の off は、本物の設定の置き場のまま起動する（写しを作らない）', otherEnv.configHome === nativeConfig, otherEnv.configHome);
+      await setOff({});
+      await fs.rm(path.join(nativeConfig, 'devin'), { recursive: true, force: true });
+    }
     // ply_control は ACP の mcpServers（type: 'http'）と会話束縛の CLI の env で届く（印 plyControl。ブラウザーは Chrome の層が無い試験では渡らない）
     t.ok('ply_control を mcpServers で渡し、会話束縛の CLI の環境変数が届く', observed.mcpServers?.includes('ply_control') && observed.seenEnv?.includes('PLEIAD_CONTROL_URL') && observed.seenEnv?.includes('PLEIAD_CONTROL_TOKEN'), JSON.stringify({ mcpServers: observed.mcpServers, seenEnv: observed.seenEnv }));
 

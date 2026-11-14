@@ -6,7 +6,7 @@
 // 動いているサーバーの DB のファイルをそのままコピーしない。WAL に未反映の分が -wal にあり、途中の写しは壊れる）。
 //   写さないもの: remote/（同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す）・名前に secret を含むもの（秘密の値。下の isSecret）・
 //                 *.lock・pleiad.lock*（データ置き場のロック）・control.json（接続情報）・
-//                 worktrees.json（worktree の台帳。下の skipFile）
+//                 worktrees.json（worktree の台帳。下の skipFile）・devin/mcp-off-kept/（Devin の設定・認証情報の控え。下の SKIP_PATHS）
 //   --keep-tasks  写しの agent_tasks（委譲のタスク）を残す。既定は空にする（委譲の続きを走らせない）。
 //                 委譲のタスクが載る送信量（running など）を測るときだけ使う
 //   --light       conversations/（会話の本文）・handoff-*.json・uploads/・presents/ などの大きなものを写さない（移行や 1 回の更新の時間を測るだけなら要らない）
@@ -33,28 +33,33 @@ const SKIP_DIRS = new Set(['remote']);
 // 名前を 1 つずつ挙げるやり方は、次に足される秘密の置き場（名前の形が違うもの・書きかけの .tmp）を黙って写す。広く除けば、
 // 外れたときに起きるのは「写しに無害なファイルが 1 つ足りない」だけで、秘密が漏れる向きには外れない（写しは画面と測定にしか使わない）
 const isSecret = name => /secret/i.test(name);
+// 場所で除くフォルダー（データ置き場からの相対。区切りは /）。devin/mcp-off-kept は、Devin の写しの置き場から本物へ運べなかった・置き換える前の
+// 設定と認証情報（credentials.toml など）の控えで、名前に secret を含まなくても秘密を含みうる（ADR 0336）
+const SKIP_PATHS = new Set(['devin/mcp-off-kept']);
 const LIGHT_SKIP_DIRS = new Set(['conversations', 'uploads', 'presents', 'context-snapshots', 'agent-browser', 'claude-login-tmp', 'mcp-locks', 'computer-use', 'antigravity', 'claude-usage', 'run', 'hooks-runtime']);
 // worktree の台帳は写さない。写すと、写しで立てたサーバーが起動の後の整理（core/worktrees.mjs の reconcile・sweep）で本物のリポジトリの
 // worktree を自分のものとして片付けに行く（git worktree prune・取り込み済みのブランチの削除・変更の無い worktree の削除。2026-10-18 に起きた）
 const skipFile = name => isSecret(name) || /\.lock$/.test(name) || /^pleiad\.lock/.test(name) || name === 'control.json' || name === 'worktrees.json' || /^pleiad\.db(-wal|-shm)?$/.test(name)
   || (flag('--light') && name.startsWith('handoff-')) || (!flag('--keep-tasks') && name === 'agent-tasks.json');
 let files = 0, bytes = 0;
-function copyDir(from, to, top) {
+function copyDir(from, to, rel = '') {
+  const top = rel === '';
   fs.mkdirSync(to, { recursive: true });
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
     const source = path.join(from, entry.name), target = path.join(to, entry.name);
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
-      if (isSecret(entry.name)) continue;
+      const at = top ? entry.name : `${rel}/${entry.name}`;
+      if (isSecret(entry.name) || SKIP_PATHS.has(at.toLowerCase())) continue;
       if (top && (SKIP_DIRS.has(entry.name) || (flag('--light') && LIGHT_SKIP_DIRS.has(entry.name)))) continue;
-      copyDir(source, target, false);
+      copyDir(source, target, at);
     } else if (entry.isFile() && !skipFile(entry.name)) {
       fs.copyFileSync(source, target);
       files++; bytes += fs.statSync(target).size;
     }
   }
 }
-copyDir(src, out, true);
+copyDir(src, out);
 
 // DB は読み取り専用の接続で VACUUM INTO する（node:sqlite の警告は、この 1 回の読み込みの間だけ捨てる）
 const dbFile = path.join(src, 'pleiad.db');

@@ -386,6 +386,14 @@ export default async function (t) {
       mark = calls.length;
       await turn({ cwd });
       t.ok('既定 Grok 会話は追加アカウントの認証ホームを使わない', of('session/new', mark)[0]?.env?.GROK_HOME === defaultHome);
+      // 9. Grok 自身の MCP は名前で止めない（能力の印 nativeMcpOff は impossible。ADR 0336）。止める名前が届いても、今までと同じ起動
+      fs.mkdirSync(defaultHome, { recursive: true });
+      fs.writeFileSync(path.join(defaultHome, 'config.toml'), '[mcp_servers.gone]\ncommand = "gone"\n');
+      mark = calls.length;
+      await turn({ cwd, contextRuntime: { prompt: '', mcp: { named: true, suppress: ['gone'] } } });
+      t.ok('止める名前が届いても、本物の GROK_HOME のまま起動し、写しを作らない（auth.json の更新が本物に届かなくなるのを避ける）',
+        of('session/new', mark)[0]?.env?.GROK_HOME === defaultHome && !fs.existsSync(path.join(dataDir, 'grok-mcp-off'))
+        && fs.readFileSync(path.join(defaultHome, 'config.toml'), 'utf8') === '[mcp_servers.gone]\ncommand = "gone"\n');
     } finally {
       if (previousHome === undefined) delete process.env.AGENT_HOST_GROK_HOME;
       else process.env.AGENT_HOST_GROK_HOME = previousHome;

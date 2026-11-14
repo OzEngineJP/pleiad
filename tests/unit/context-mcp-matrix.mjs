@@ -27,8 +27,11 @@ export default async function (t) {
       row('reg').group === 'ply' && m.agents.every(a => row('reg').cells[a].state === 'off'));
     t.ok('エージェントの設定にだけある名前は「エージェントの設定」の組で、持つエージェントは on', row('cl').group === 'agent' && row('cl').cells.claude.state === 'on' && row('cl').origins.join() === 'claude');
     t.ok('同じ名前を持つエージェントはすべて出どころに入る', row('both').origins.join() === 'claude,codex');
-    t.ok('止められるエージェント（claude・codex・opencode）は toggle、Devin は鍵', row('cl').cells.claude.mode === 'toggle' && row('dv').cells.devin.mode === 'locked');
-    t.ok('鍵があれば locked が真', m.locked === true);
+    t.ok('止められるエージェントは toggle（Devin のユーザーの設定の定義も。ADR 0336）', row('cl').cells.claude.mode === 'toggle' && row('dv').cells.devin.mode === 'toggle');
+    const withAg = buildMcpMatrix({ ...base, native: { ...native, antigravity: [{ name: 'ag', transport: 'stdio' }] } });
+    t.ok('鍵があれば locked が真（Antigravity 自身の定義は鍵・理由は own）、無ければ偽',
+      withAg.rows.find(r => r.key === 'ag').cells.antigravity.mode === 'locked' && withAg.rows.find(r => r.key === 'ag').cells.antigravity.reason === 'own'
+      && withAg.locked === true && m.locked === false);
     t.ok('他のエージェントの設定にだけある名前は、広げていなければ off で、押せる', row('cx').cells.claude.state === 'off' && row('cx').cells.claude.mode === 'toggle');
 
     // 「Pleiad がそろえる」: 今そろっている名前は全部 on
