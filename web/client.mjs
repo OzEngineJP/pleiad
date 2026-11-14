@@ -6742,7 +6742,8 @@ function createModalChildView(item, th) {
       paintable: (p) => { const e = savedEvent(p); return p?.lazy ? { ...e, lazy: { ...p.lazy, sessionId: childId } } : e; },
       updateBranches: none,
       cmd: (command, args, opts) => cmd(command, args, opts),
-      select: none,
+      // 手前の読み足しがつながらなかったとき（historyPane.loadOlder）の読み直し。主の select(reload) と同じく、窓を読み直して描き替える
+      select: (_id, opts) => (opts?.reload ? syncModalChildHistory(view, { force: true }) : undefined),
       finalizing: (on) => modalNav.finalizing?.(on),
       systemHistoryNode: (m) => systemHistoryNode(m),
       stripActions: (node) => stripActions(node),
@@ -6806,30 +6807,38 @@ function settleModalChild(mc, data) {
  * 走っている間に開いた窓・ライブで描いた行（data-key が live:）があるときだけ。静かな読み直し（今の位置を保つ）で、
  * 読み込みの間に届いた出来事は loads が取り置いて流し直す。重なって呼ばれたら 1 回だけやり直す
  */
-async function syncModalChildHistory(view) {
+async function syncModalChildHistory(view, { force = false } = {}) {
   const mc = modalChild;
   if (!mc || mc.view !== view || !mc.ready) return;
-  if (mc.syncing) { mc.syncAgain = true; return; }
+  if (mc.syncing) { mc.syncAgain = true; if (force) mc.syncForce = true; return; }
   const th = view.thread;
-  if (!view.historyPane.messages.some(m => m?.live) && !th.querySelector(':scope > .mw[data-key^="live:"]')) return;
+  if (!force && !view.historyPane.messages.some(m => m?.live) && !th.querySelector(':scope > .mw[data-key^="live:"]')) return;
   mc.syncing = true;
   const id = mc.id;
   const alive = () => modalChild === mc && bg.view === mc.owner && $('workDialog').open;
   try {
     const load = view.loads.begin(id);
     view.displayLoad = load;
-    const data = await loadHistory({ sessionId: id, live: true }, null, { window: true, bulk: false });
+    // 主の静かな読み直し（loadAndPaint）と同じ読み方: 今持っている窓の続きだけを頼み（差分。ADR 0062）、大きい返事は WS の外で受ける（bulk。ADR 0179）。
+    // 返事は出来事より後に届くが、読み込み（load）を頼む前に始めてあるので、その間の出来事は取り置かれ、streamSeq で流し直される（順序は保たれる）。
+    // 描く行は残さず全部描き直す（retainPlan の items は子の項目＝追加の指示・依頼を含まない並びなので、子の筋の添字と合わない）
+    const pane = view.historyPane;
+    const prev = pane.messages.length ? { messages: pane.messages, presents: pane.presents, base: pane.base, presentBase: pane.presentBase } : null;
+    const data = await loadHistory({ sessionId: id, live: true }, prev, { window: true, bulk: true });
     if (!alive() || view.displayLoad !== load) return;
     view.adopt(data);
     const res = await view.paint(data, { id, load, quiet: true });
     if (!res || !alive()) return;
     view.finish(res, { quiet: true });
     settleModalChild(mc, data);
+    if (load.syncHistory) mc.syncAgain = true;   // 流し直しの間にターンが終わった（主の loadAndPaint の後と同じ。下の finally がもう 1 回読む）
     modalToc.refresh();   // 筋が作り直されたので、会話内検索の印を待たずに付け直す（開いていれば。debounce の間だけ印が消えるのを避ける）
   } catch { /* 読み直しが切れただけなら今の表示を残す */ }
   finally {
     mc.syncing = false;
-    if (mc.syncAgain && alive()) { mc.syncAgain = false; void syncModalChildHistory(view); }
+    const syncForce = mc.syncForce === true;
+    mc.syncForce = false;
+    if (mc.syncAgain && alive()) { mc.syncAgain = false; void syncModalChildHistory(view, { force: syncForce }); }
   }
 }
 
@@ -6839,7 +6848,7 @@ async function openLiveChild(owner) {
   const body = $('workBody');
   const id = item.childId;
   disposeModalChild();
-  const th = el('div', 'thread bg-thread');
+  const th = el('div', 'thread bg-thread live-child');   // live-child: 画面外の行を省く（style.css の content-visibility）。実寸の確定は historyPane の担当で、読むだけの筋（readonlyThread）には付けない
   th.append(svgEl('svg', { class: 'spine', 'aria-hidden': 'true' }));   // 線は layoutBranchSpine が引く（主と同じ筋）
   const loading = el('div', 'work-head', t('dialog.work.loading'));
   body.replaceChildren(th, loading);
@@ -6856,7 +6865,7 @@ async function openLiveChild(owner) {
   const alive = () => modalChild === mc && bg.view === owner && $('workDialog').open;
   try {
     const [data, instr] = await Promise.all([
-      loadHistory({ sessionId: id, live: true }, null, { window: true, bulk: false }),
+      loadHistory({ sessionId: id, live: true }, null, { window: true, bulk: true }),   // 主の openConversation と同じく大きい返事は WS の外（bulk）で受ける
       cmd('agentTaskInstructions', { taskId: item.taskId }),
     ]);
     if (!alive()) return;
@@ -10815,6 +10824,7 @@ const modalToc = createConversationToc({ thread: workThread, log: $('workBody'),
     panelOpen: (key) => filePreview.mounted() === $('workDialog') && filePreview.panelOpen(key),
   },
   narrow: navNarrow, button: $('workTocEntry'), host: $('workDialog'), keyScope: $('workDialog'),
+  onOpen: () => modalChild?.view.historyPane.loadAllOlder(),   // 主と同じ（窓の手前の発言を全部読んでから目次・検索の一覧にする。ADR 0182）。読むだけの筋（modalChild なし）は全部描いてある
   inertNodes: () => [$('workOpenList'), $('workCloseList'), $('workDialog').querySelector(':scope > header'), $('workSplit')] });
 // 会話の右パネル「git」（ADR 0085）。返答の下の要約行・委譲カードの「変更」・狭い画面の「…」・近道（Ctrl+Shift+G）から開く
 gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),

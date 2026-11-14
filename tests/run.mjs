@@ -695,6 +695,8 @@ const SUITES = [
   './unit/conversation-view-child.mjs',
   // 作業のダイアログの子の実例への出来事の振り分け（ADR 0319 段 6-6）: 主が同じ会話なら主・別の会話と閉じたあとは描かない・読み込み中は取り置く
   './unit/modal-child-routing.mjs',
+  // 子の実例の履歴の読み方を主にそろえる（ADR 0319 段 6-6 の追補）: 差分の読み直し・bulk と出来事の順序・画面外の行を省く・目次の onOpen・閉じた実例は読み足さない
+  './unit/child-modal-history-read.mjs',
   // loadSession の差分（ADR 0062）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
   './unit/history-sync.mjs',
   './unit/server-history-diff.mjs',
