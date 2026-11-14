@@ -298,8 +298,10 @@ try {
     await page.waitForFunction(() => !document.querySelector('.cx-tip.on'), { timeout: 3000 });
     check(true, '相手の鍵が描き直しで DOM から外れると、吹き出しは古い位置に残らず消える');
     await page.evaluate(() => { const { row, holder } = window.__lockRow; holder.replaceWith(row); });
-    // 同じ位置の新しい鍵に置き換わり、マウスがまだ上にあるときは、出し直してよい（出すなら新しい鍵の理由で、鍵の上に出る）
-    await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+    // 描き直しの後も、鍵にマウスを載せ直せば吹き出しが出る。
+    // 一度外へ出してから載せる: 同じ要素を戻しただけだと、ブラウザーがホバーの相手を更新する前後で pointerover が出るかどうかが変わり、試験が不安定になる
+    await page.mouse.move(2, 2);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 3000 });
     await page.evaluate(() => {
       const a = document.querySelector('.cx-tip.on') && document.querySelector('[data-tip]:hover');

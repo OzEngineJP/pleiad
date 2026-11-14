@@ -227,12 +227,13 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('on'), 1800);
   }
-  async function work(fn) {
+  async function work(fn, { redraw } = {}) {
     try { await fn(); }
     catch (e) {
       status.textContent = t('context.saveFailed', { error: e.message });
-      // スイッチなどは押した瞬間に見た目だけ先に変えている。保存できなかったときは、保存されている状態から描き直す
-      try { renderAll(); } catch { /* 描き直せなくても失敗の表示は残す */ }
+      // スイッチは押した瞬間に見た目だけ先に変えている。保存できなかったときは、その種類のカードを保存されている状態から描き直す。
+      // 入力欄のある操作（追加・編集）では描き直さない（打った文字を消さないため）
+      if (redraw) { try { renderCard(redraw); } catch { /* 描き直せなくても失敗の表示は残す */ } }
     }
   }
   const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened, showMenu, onCount: n => { plyCount = n; updateCounts(); } });
@@ -351,7 +352,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       sw.dataset.cxFk = `sw:${entry.id}`;
       sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(!off));
       sw.setAttribute('aria-label', kind === 'skill' ? t('context.row.offerAria', { name: entry.name }) : t('context.row.provideAria', { name: entry.name }));
-      sw.onclick = () => { sw.setAttribute('aria-checked', String(off)); work(() => saveKind(kind, v => { for (const e of entry.group) toggleExclude(v, e, off); })); };
+      sw.onclick = () => { sw.setAttribute('aria-checked', String(off)); work(() => saveKind(kind, v => { for (const e of entry.group) toggleExclude(v, e, off); }), { redraw: kind }); };
       row.append(open, ...(tokens ? [tokens] : []), sw);
       list.append(row);
       if (usable) list.append(skillChoice(entry, usable));
@@ -409,7 +410,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       sw.onclick = () => {
         const include = swState.checked !== 'true';
         sw.setAttribute('aria-checked', String(include));
-        work(() => saveKind(kind, v => toggleExcludeMany(v, items.flatMap(e => e.group), include)));
+        work(() => saveKind(kind, v => toggleExcludeMany(v, items.flatMap(e => e.group), include)), { redraw: kind });
       };
       row.append(tw, body, ...(tokens ? [tokens] : []), sw);
       list.append(row);
