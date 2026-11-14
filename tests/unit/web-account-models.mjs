@@ -17,6 +17,7 @@ import { createThreadComposer } from '../../web/channels/thread-composer.mjs';
 import { COMPOSER_PARTS, rememberComposerTemplate } from '../../web/composer/composer.mjs';
 import { el } from '../../web/dom.mjs';
 import { N } from '../lib/dom-stub.mjs';
+import { keepProps } from '../lib/keep-props.mjs';
 
 export const name = 'web-account-models';
 export const title = '画面: 委譲設定・委譲表示・bot ページ・スレッド入力欄のアカウント別モデル一覧';
@@ -27,39 +28,18 @@ export default async function (t) {
   const prevLang = lang;
   await setLanguage('ja');
 
+  // 差し替える項目は、元の記述を控えて finally で戻す。元から無かった項目は delete する
+  // （値 undefined で残すと、同じ worker で後に流れる suite の `in` の判定が「ある」と読む）
+  const restores = [
+    keepProps(document, ['getElementById', 'createElement', 'createTextNode', 'createRange', 'createTreeWalker', 'body', 'dispatchEvent', 'addEventListener', 'removeEventListener', 'visibilityState', 'documentElement', 'activeElement']),
+    keepProps(N.prototype, ['click', 'focus', 'getBoundingClientRect', 'closest', 'matches', 'cloneNode', 'nodeType', 'parentElement']),
+    keepProps(globalThis, ['NodeFilter', 'getComputedStyle', 'MutationObserver', 'getSelection', 'requestAnimationFrame', 'window', 'innerHeight', 'matchMedia', 'addEventListener', 'removeEventListener', 'CSS', 'localStorage']),
+  ];
+  // 差し替えた関数の中から呼ぶ元の実装
   const saved = {
-    getElementById: document.getElementById,
     createElement: document.createElement,
-    createTextNode: document.createTextNode,
-    createRange: document.createRange,
-    createTreeWalker: document.createTreeWalker,
-    body: document.body,
-    NodeFilter: globalThis.NodeFilter,
-    dispatchEvent: document.dispatchEvent,
-    addEventListener: document.addEventListener,
-    removeEventListener: document.removeEventListener,
-    visibilityState: document.visibilityState,
-    documentElement: document.documentElement,
-    activeElement: document.activeElement,
-    click: N.prototype.click,
-    focus: N.prototype.focus,
-    getBoundingClientRect: N.prototype.getBoundingClientRect,
-    closest: N.prototype.closest,
     matches: N.prototype.matches,
-    cloneNode: N.prototype.cloneNode,
-    nodeType: N.prototype.nodeType,
     parentElementDesc: Object.getOwnPropertyDescriptor(N.prototype, 'parentElement'),
-    getComputedStyle: globalThis.getComputedStyle,
-    MutationObserver: globalThis.MutationObserver,
-    getSelection: globalThis.getSelection,
-    requestAnimationFrame: globalThis.requestAnimationFrame,
-    window: globalThis.window,
-    innerHeight: globalThis.innerHeight,
-    matchMedia: globalThis.matchMedia,
-    addEvGlobal: globalThis.addEventListener,
-    removeEvGlobal: globalThis.removeEventListener,
-    CSS: globalThis.CSS,
-    localStorage: globalThis.localStorage,
   };
 
   try {
@@ -531,39 +511,7 @@ export default async function (t) {
       t.ok('固定の委譲の内訳の承認モードの見出しも、委譲先のアカウントの一覧を引く', body('pinnedFacts').includes('cachedVocabFor(routing.target.backend, routing.target.account ?? task.account ?? \'\')'));
     }
   } finally {
-    document.getElementById = saved.getElementById;
-    document.createElement = saved.createElement;
-    document.createTextNode = saved.createTextNode;
-    document.createRange = saved.createRange;
-    document.createTreeWalker = saved.createTreeWalker;
-    document.body = saved.body;
-    globalThis.NodeFilter = saved.NodeFilter;
-    document.dispatchEvent = saved.dispatchEvent;
-    document.addEventListener = saved.addEventListener;
-    document.removeEventListener = saved.removeEventListener;
-    document.visibilityState = saved.visibilityState;
-    document.documentElement = saved.documentElement;
-    document.activeElement = saved.activeElement;
-    N.prototype.click = saved.click;
-    N.prototype.focus = saved.focus;
-    N.prototype.getBoundingClientRect = saved.getBoundingClientRect;
-    N.prototype.closest = saved.closest;
-    N.prototype.matches = saved.matches;
-    N.prototype.cloneNode = saved.cloneNode;
-    N.prototype.nodeType = saved.nodeType;
-    if (saved.parentElementDesc) Object.defineProperty(N.prototype, 'parentElement', saved.parentElementDesc);
-    else delete N.prototype.parentElement;
-    globalThis.getComputedStyle = saved.getComputedStyle;
-    globalThis.MutationObserver = saved.MutationObserver;
-    globalThis.getSelection = saved.getSelection;
-    globalThis.requestAnimationFrame = saved.requestAnimationFrame;
-    globalThis.window = saved.window;
-    globalThis.innerHeight = saved.innerHeight;
-    globalThis.matchMedia = saved.matchMedia;
-    globalThis.addEventListener = saved.addEvGlobal;
-    globalThis.removeEventListener = saved.removeEvGlobal;
-    globalThis.CSS = saved.CSS;
-    globalThis.localStorage = saved.localStorage;
+    for (const restore of restores) restore();
     await setLanguage(prevLang);
   }
 }

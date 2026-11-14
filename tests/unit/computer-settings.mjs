@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { N } from '../lib/dom-stub.mjs';
+import { keepProps } from '../lib/keep-props.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { computerAppRow, computerUsePrefs, validComputerUse, COMPUTER_APP_LIMIT } from '../../web/computer-prefs.mjs';
@@ -74,7 +75,7 @@ export default async function (t) {
   } finally { await fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 
   // ---- 設定の節 ----
-  const get = document.getElementById;
+  const restoreGet = keepProps(document, ['getElementById']);
   const nodes = { computerPanel: new N('section') };
   document.getElementById = id => nodes[id];
   let prefs = { computerUse: { enabled: true, allowAllApps: false, introduced: true, alwaysAllowed: [NOTEPAD, CALC] } };
@@ -128,17 +129,18 @@ export default async function (t) {
     t.ok('対象外の OS の理由', all('.cu-unsupported')[0].textContent === 'Windows または macOS 14 以上の PC で使えます。');
     caps = null; view.paint();
     t.ok('hostCapabilities が届く前は使えるものとして描く', mainSwitch.disabled === false && all('.cu-unsupported')[0].hidden === true);
-  } finally { document.getElementById = get; }
+  } finally { restoreGet(); }
 
   // ---- wait_until の問いに使うキー（設定 › API キーの割り当て computer:decider） ----
   const keyNodes = { computerPanel: new N('section'), computerTab: new N('button') };
+  // 差し替える項目は、元から無かったものを delete して戻す（値 undefined で残すと、同じ worker で後に流れる suite の `in` の判定が「ある」と読む）
+  const restoreDocument = keepProps(document, ['getElementById', 'addEventListener', 'removeEventListener', 'createTextNode']);
+  const restoreCss = keepProps(globalThis, ['CSS']);
   document.getElementById = id => keyNodes[id];
-  const docAdd = document.addEventListener, docRemove = document.removeEventListener;
   document.addEventListener = () => {}; document.removeEventListener = () => {};
-  const oldTextNode = document.createTextNode;
   document.createTextNode = text => { const node = new N('span'); node.textContent = text; return node; };
-  const hadCss = 'CSS' in globalThis;
-  if (!hadCss) globalThis.CSS = { escape: v => String(v) };
+  // 使える CSS.escape があるかで見る。プロパティの有無で見ると、ほかの suite が値 undefined で残した CSS を「ある」と読み、代わりを入れずに落ちる
+  if (typeof globalThis.CSS?.escape !== 'function') globalThis.CSS = { escape: v => String(v) };
   const OR1 = { id: 'k1', provider: 'openrouter', label: '', lastCheck: { ok: true, at: '2026-10-07T00:00:00.000Z' } };
   const CB = { id: 'k2', provider: 'custom', label: '社内' };
   let list = { migration: { state: 'done' }, storage: 'safeStorage', keys: [OR1, CB], plus: { state: 'on', available: true, signedIn: true, status: 'free' }, uses: { voice: null, 'judge:routing': null, 'computer:decider': null } };
@@ -222,7 +224,7 @@ export default async function (t) {
     kv.event({ type: 'apiKeysChanged' });
     await flush();
     t.ok('移行を保留している間は OpenRouter の行は選べない（選ぶ欄を出さない）', q('.ak-selbtn').length === 0 && rowsOf().some(r => r.getAttribute('aria-disabled') === 'true'));
-  } finally { document.createTextNode = oldTextNode; document.getElementById = get; document.addEventListener = docAdd; document.removeEventListener = docRemove; if (!hadCss) delete globalThis.CSS; }
+  } finally { restoreDocument(); restoreCss(); }
 
   // ---- サーバー越し ----
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-computer-e-'));
