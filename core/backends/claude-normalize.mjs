@@ -350,12 +350,16 @@ function systemMarkCollector() {
     if (!boundary && !summary && !mark && !attachment) return;
     if (!row || typeof row !== "object" || typeof row.uuid !== "string" || row.isSidechain) return;
     parentOf.set(row.uuid, row.parentUuid ?? null);
-    if (row.type === "system" && row.subtype === "compact_boundary") { boundaries.set(row.uuid, row); return; }
+    // finish に要るフィールドだけ持つ（コマンド出力・要約の本文の行は大きい。ADR 0330）
+    if (row.type === "system" && row.subtype === "compact_boundary") {
+      boundaries.set(row.uuid, { timestamp: row.timestamp, compactMetadata: row.compactMetadata ?? row.compact_metadata });
+      return;
+    }
     if (row.type !== "user" || row.isMeta) return;
-    if (row.isCompactSummary === true) { summaryRows.push(row); return; }
+    if (row.isCompactSummary === true) { summaryRows.push({ uuid: row.uuid, parentUuid: row.parentUuid, text: userText(row) }); return; }
     const body = userText(row).trimStart();
     if (body.startsWith("<command-name>") || body.startsWith("<command-message>") || body.startsWith("<bash-input>")) heads.add(row.uuid);
-    else if (body.startsWith("<local-command-std") || body.startsWith("<bash-std")) outputRows.push(row);
+    else if (body.startsWith("<local-command-std") || body.startsWith("<bash-std")) outputRows.push({ uuid: row.uuid, parentUuid: row.parentUuid });
   };
   const finish = () => {
     const summaries = new Map();
@@ -371,10 +375,10 @@ function systemMarkCollector() {
       for (let hops = 0; cursor && !boundaries.has(cursor) && hops < 3; hops++) cursor = parentOf.get(cursor) ?? null;
       const boundaryId = cursor && boundaries.has(cursor) ? cursor : null;
       summaries.set(row.uuid, boundaryId);
-      if (boundaryId && !summaryOf.has(boundaryId)) summaryOf.set(boundaryId, userText(row).trim());
+      if (boundaryId && !summaryOf.has(boundaryId)) summaryOf.set(boundaryId, row.text.trim());
     }
     for (const [uuid, row] of boundaries) {
-      const meta = row.compactMetadata ?? row.compact_metadata ?? {};
+      const meta = row.compactMetadata ?? {};
       const before = meta.preTokens ?? meta.pre_tokens;
       const after = meta.postTokens ?? meta.post_tokens;
       compactions.push({ id: `native:${uuid}`, nativeId: uuid, phase: "complete",
@@ -577,21 +581,74 @@ export function stopHookFollowUps(text) {
 const isQueuedCommandRow = (row) => row?.type === 'attachment' && typeof row.uuid === 'string'
   && row.attachment?.type === 'queued_command' && typeof row.attachment.prompt === 'string';
 
+// ---- 差分読みで保持する「蒸留」形（ADR 0330）----
+// 大きい行をまるごと保持するとヒープが transcript なみに育つので、SDK の選別（getSessionMessages）が
+// 実際に読むフィールドだけに縮めて持ち、返り値に載った行は行のバイト位置から読み直して message を戻す。
+// SDK が読むのは、構造のフィールド（uuid・parentUuid・type・isSidechain・teamName・isMeta・
+// compactMetadata・attachment・origin・timestamp など）と、message の id / role / stop_reason /
+// content（中断印や <local-command-…> タグの startsWith、各ブロックの type・id・tool_use_id・is_error）だけ。
+// startsWith は最長で約 330 字なので、先頭 DISTILLED_PREFIX 字を残せば結果は変わらない。
+export const SLIM_LINE_BYTES = 1024;   // これを超える行は蒸留する
+const SLIM_ROW_EST_BYTES = 8192;        // 保持量の見積もりで 1 行に数える上限（蒸留形の実測はもっと小さい）
+const DISTILLED_PREFIX = 1024;
+const distillText = (s) => (s.length <= DISTILLED_PREFIX ? s : s.slice(0, DISTILLED_PREFIX));
+const distillBlock = (b) => {
+  if (typeof b !== "object" || b === null) return b;
+  if (b.type === "text") return { type: "text", text: typeof b.text === "string" ? distillText(b.text) : b.text };
+  if (b.type === "tool_result") return { type: "tool_result", tool_use_id: b.tool_use_id, is_error: b.is_error,
+    content: typeof b.content === "string" ? distillText(b.content) : null };
+  if (b.type === "tool_use") return { type: "tool_use", id: b.id };
+  return { type: b.type };
+};
+const distillMessage = (m) => {
+  if (typeof m !== "object" || m === null) return m;
+  return { role: m.role, id: m.id, model: m.model, stop_reason: m.stop_reason,
+    content: typeof m.content === "string" ? distillText(m.content)
+      : Array.isArray(m.content) ? m.content.map(distillBlock) : m.content };
+};
+// queued_command だけは SDK が中身（prompt・source_uuid・delivery_id など）を読むので丸ごと残す
+const distillAttachment = (a) => {
+  if (typeof a !== "object" || a === null) return a;
+  return a.type === "queued_command" ? a : { type: a.type };
+};
+// SDK の選別・返り値が触らない大きいフィールド（message 本文・toolUseResult・progress の data など）は落とす
+const slimEntry = (row) => ({
+  ...row,
+  message: distillMessage(row.message),
+  attachment: distillAttachment(row.attachment),
+  toolUseResult: undefined, data: undefined, content: undefined,
+  snapshot: undefined, summary: undefined, result: undefined,
+});
+
 /**
  * transcript の行を 1 行ずつ受け取る解釈器。追加分だけを後から足せるよう状態を持つ（ADR 0330）。
  * 最後の改行で終わっていない行（書きかけの末尾）は feedTail に渡す。
  * feedTail の行がまだ伸びた（行の続きが後から来た）ときは、unfeedTail で取り消してから
  * 完結した形で feed / feedTail し直す。JSON として読めた末尾（tailParsed）は取り消せない
  * （entries・collectors に載る）。その行は書き手が完結させた行なので、後に来るのは改行か別の行だけ。
+ *
+ * feed / feedTail にファイル内のバイト位置（offset・byteLen）を渡すと、大きい行は蒸留形にして持ち、
+ * 蒸留した message → {offset, len} を slimIndex に残す。渡さない読み方（parseSessionTranscript など
+ * 文字列だけの入口）では蒸留しない（呼び出し後に捨てるので縮める意味がない）。
  */
 export function createSessionParser() {
   const entries = [], rows = [];
   const marks = systemMarkCollector(), followUps = followUpCollector();
-  let candidates = 0, valid = 0, version = null, lineNumber = 0;
-  let tail = '', tailRow, tailCandidates = 0, tailValid = 0;
-  const feed = (line) => {
+  const slimIndex = new Map();   // 蒸留した message -> {offset, len}
+  let candidates = 0, valid = 0, version = null, lineNumber = 0, keptBytes = 0;
+  let tail = '', tailRow, tailCandidates = 0, tailValid = 0, tailKept = 0;
+  const slim = (row, offset, byteLen) => {
+    if (typeof row !== "object" || row === null || Array.isArray(row)) return row;
+    if (offset == null || byteLen == null || byteLen <= SLIM_LINE_BYTES) return row;
+    const s = slimEntry(row);
+    if (typeof s.message === "object" && s.message !== null) slimIndex.set(s.message, { offset, len: byteLen });
+    return s;
+  };
+  const feed = (line, offset, byteLen) => {
     let row;
-    try { row = JSON.parse(line); entries.push(row); } catch {}
+    try { row = JSON.parse(line); } catch {}
+    if (row) entries.push(slim(row, offset, byteLen));
+    if (byteLen != null) keptBytes += Math.min(byteLen, SLIM_ROW_EST_BYTES);
     if (lineNumber++ < 20 && version === null && typeof row?.version === 'string') version = row.version;
     marks.add(line, row);
     followUps.add(line, row);
@@ -606,9 +663,10 @@ export function createSessionParser() {
   };
   return {
     feed,
-    feedTail(line) {
+    feedTail(line, offset, byteLen) {
       tail = line;
-      tailRow = feed(line);
+      tailKept = byteLen != null ? Math.min(byteLen, SLIM_ROW_EST_BYTES) : 0;
+      tailRow = feed(line, offset, byteLen);
       tailCandidates = 0;
       tailValid = 0;
       if (line.includes('"attachment"') && line.includes('queued_command')) {
@@ -622,9 +680,12 @@ export function createSessionParser() {
       lineNumber -= 1;
       candidates -= tailCandidates;
       valid -= tailValid;
+      keptBytes -= tailKept;
     },
     get tail() { return tail; },
     get tailParsed() { return tailRow !== undefined; },
+    get kept() { return keptBytes; },
+    slimIndex,
     // finish は読むたびに呼ぶ。rows・marks・followUps は呼び出しごとの写し
     finish() {
       return { entries, rows: candidates ? rows.slice() : [], marks: marks.finish(), followUps: followUps.finish(),
@@ -803,22 +864,36 @@ export function invalidQueuedCommandTranscript(text) {
  */
 export function createSubagentParser() {
   const rows = new Map();
-  let leaf = null, tail = '', tailRow;
-  const feed = (line) => {
+  const slimIndex = new Map();   // 蒸留した message -> {offset, len}（createSessionParser と同じ仕組み）
+  let leaf = null, tail = '', tailRow, keptBytes = 0, tailKept = 0;
+  const feed = (line, offset, byteLen) => {
     if (!line.trim()) return;
     let row;
     try { row = JSON.parse(line); } catch { return; }   // 書きかけの最後の行など
     if (typeof row?.uuid !== "string") return;
-    rows.set(row.uuid, row);
-    if (row.type === "user" || row.type === "assistant") leaf = row;
+    if (byteLen != null) keptBytes += Math.min(byteLen, SLIM_ROW_EST_BYTES);
+    let stored = row;
+    if (offset != null && byteLen != null && byteLen > SLIM_LINE_BYTES) {
+      stored = slimEntry(row);
+      if (typeof stored.message === "object" && stored.message !== null) slimIndex.set(stored.message, { offset, len: byteLen });
+    }
+    rows.set(row.uuid, stored);
+    if (row.type === "user" || row.type === "assistant") leaf = stored;
     return row;
   };
   return {
     feed,
-    feedTail(line) { tail = line; tailRow = feed(line); },
-    unfeedTail() {},
+    feedTail(line, offset, byteLen) {
+      tail = line;
+      const before = keptBytes;
+      tailRow = feed(line, offset, byteLen);
+      tailKept = keptBytes - before;
+    },
+    unfeedTail() { keptBytes -= tailKept; },
     get tail() { return tail; },
     get tailParsed() { return tailRow !== undefined; },
+    get kept() { return keptBytes; },
+    slimIndex,
     finish({ toolUseId = null, limit = 0 } = {}) {
       const chain = [];
       const seen = new Set();

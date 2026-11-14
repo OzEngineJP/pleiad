@@ -34,7 +34,7 @@ import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, catalogIsComplete, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
 import { normalizeSdkMessage, isClaudeAuthError, isClaudeModelError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, createSubagentParser, invalidSubagentTranscript } from "./claude-normalize.mjs";
-import { createTranscriptReader, readAppendedText, trackTail, trackHead, trackTailAfterAppend, feedAppended } from "./claude-transcript.mjs";
+import { createTranscriptReader, readAppendedText, trackTail, trackHead, trackTailAfterAppend, feedAppended, hydrateSlim } from "./claude-transcript.mjs";
 import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
@@ -645,8 +645,14 @@ function toRow(s) {
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 const subagentFiles = new Map();   // "sessionId/agentId" -> transcript のパス。置き場は変わらない
-const subagentReads = new Map();   // "sessionId/agentId" -> { stamp, size, ino, dev, head, tail, tailStart, windowStart, window, parser, version }。running の配信が 4 秒ごとに読みに来る
+const subagentReads = new Map();   // "sessionId/agentId" -> { stamp, size, ino, dev, head, tail, tailStart, windowStart, window, parser, version, bytes }。running の配信が 4 秒ごとに読みに来る
 const subagentBusy = new Map();    // "sessionId/agentId" -> 直列化のための promise。差分の追記状態を並行に触らない
+const SUBAGENT_CACHE_BYTES = 64 * 1024 * 1024;   // 蒸留した行で数える保持量の上限（ADR 0330）
+let subagentBytes = 0;
+const dropSubagent = (key) => {
+  const s = subagentReads.get(key);
+  if (s) { subagentBytes -= s.bytes; subagentReads.delete(key); }
+};
 
 /**
  * サブエージェントの transcript を自分で読む。SDK の getSubagentMessages は最後の 1 件しか返さない
@@ -691,21 +697,36 @@ async function readSubagentEntriesNow(sessionId, agentId, key, { limit }) {
     let state = subagentReads.get(key);
     if (state?.stamp !== stamp) {
       const delta = await readAppendedText(fs, file, stat, state);
-      if (delta && feedAppended(state.parser, delta.region)) {
+      if (delta && feedAppended(state.parser,
+          delta.chunk.subarray(state.tailStart - state.windowStart), state.tailStart)) {
         Object.assign(state, trackTailAfterAppend(state, stat.size, delta.chunk, state.parser.tail), { stamp, size: stat.size });
+        subagentBytes += state.parser.kept - state.bytes;
+        state.bytes = state.parser.kept;
+        subagentReads.delete(key);
+        subagentReads.set(key, state);
+        while (subagentReads.size && (subagentReads.size > 24 || subagentBytes > SUBAGENT_CACHE_BYTES)) {
+          dropSubagent(subagentReads.keys().next().value);   // 追記で育っても上限を守る
+        }
       } else {
-        const text = await fs.readFile(file, "utf8");
+        dropSubagent(key);
+        const buf = await fs.readFile(file);
+        const text = buf.toString('utf8');
         const version = transcriptVersion(text);
         if (invalidSubagentTranscript(text)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-shape', detectedVersion: version });
         const parser = createSubagentParser();
-        const lines = text.split('\n');
-        for (let i = 0; i < lines.length - 1; i++) parser.feed(lines[i]);
-        parser.feedTail(lines[lines.length - 1]);
+        for (let at = 0; at <= buf.length;) {
+          const end = buf.indexOf(0x0a, at);
+          if (end < 0) { parser.feedTail(buf.toString('utf8', at), at, buf.length - at); break; }
+          parser.feed(buf.toString('utf8', at, end), at, end - at);
+          at = end + 1;
+        }
         state = { file, stamp, size: stat.size, ino: stat.ino, dev: stat.dev,
-          head: trackHead(text), ...trackTail(text, stat.size), parser, version };
-        subagentReads.delete(key);
+          head: trackHead(buf), ...trackTail(buf), parser, version, bytes: parser.kept };
         subagentReads.set(key, state);
-        if (subagentReads.size > 24) subagentReads.delete(subagentReads.keys().next().value);   // 古いものから捨てる
+        subagentBytes += parser.kept;
+        while (subagentReads.size && (subagentReads.size > 24 || subagentBytes > SUBAGENT_CACHE_BYTES)) {
+          dropSubagent(subagentReads.keys().next().value);   // 古いものから捨てる
+        }
       }
     }
     const metaText = await fs.readFile(file.replace(/\.jsonl$/, ".meta.json"), "utf8").catch(() => null);
@@ -714,11 +735,14 @@ async function readSubagentEntriesNow(sessionId, agentId, key, { limit }) {
       try { meta = JSON.parse(metaText); } catch {}
     }
     if (typeof meta?.toolUseId !== 'string') await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-meta', detectedVersion: state.version });
-    return state.parser.finish({ toolUseId: typeof meta?.toolUseId === "string" ? meta.toolUseId : null, limit });
+    const raw = state.parser.finish({ toolUseId: typeof meta?.toolUseId === "string" ? meta.toolUseId : null, limit });
+    // 蒸留した message を行から読み直して戻す。途中で差し替わっていたら読めなかった扱い（SDK へ落とす）
+    if (await hydrateSlim(fs, file, raw, state.parser.slimIndex) < 0) { dropSubagent(key); return null; }
+    return raw;
   } catch {
     if (subagentFiles.has(key)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-unreadable', detectedVersion: null });
     subagentFiles.delete(key);
-    subagentReads.delete(key);
+    dropSubagent(key);
     return null;
   }
 }
