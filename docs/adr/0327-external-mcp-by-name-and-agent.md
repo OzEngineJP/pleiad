@@ -66,4 +66,4 @@
 
 ## 後の変更（2026-11-15）
 
-- [ADR 0330](0330-context-tabs-and-lock-tooltip.md) で、設定 › プラグインと右パネルを 4 タブ（指示・Skills・外部 MCP・Hooks）に分け、外部 MCP カード下の「Pleiad からは止められません」の凡例を鍵付き項目の吹き出し（`web/lock-tip.mjs`）へ移した。名前 × エージェントの一覧と `context-scans.json` の保存形式・実行時の規則はこの ADR のまま保つ。
+- [ADR 0331](0331-context-tabs-and-lock-tooltip.md) で、設定 › プラグインと右パネルを 4 タブ（指示・Skills・外部 MCP・Hooks）に分け、外部 MCP カード下の「Pleiad からは止められません」の凡例を鍵付き項目の吹き出し（`web/lock-tip.mjs`）へ移した。名前 × エージェントの一覧と `context-scans.json` の保存形式・実行時の規則はこの ADR のまま保つ。
