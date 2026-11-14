@@ -169,11 +169,12 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       const all = (scan.entries ?? []).filter(e => e.kind === kind && !seen.has(e.id) && seen.add(e.id));
       return kind === 'skill' ? new Set(all.map(e => e.name)).size : all.length;
     };
+    // 件数は「Pleiad が渡す件数」。担当が「エージェントに任せる」の種類は Pleiad が数えられないので、0 ではなく出さない（null）
     const instOwner = kinds?.instruction?.value?.owner;
-    const instUser = instOwner === 'ply' ? countScan('instruction') : 0;
-    const instruction = !view || (instOwner === 'ply' && instUser == null && plyCount == null)
+    const instUser = instOwner === 'ply' ? countScan('instruction') : null;
+    const instruction = !view || instOwner !== 'ply' || (instUser == null && plyCount == null)
       ? null : (plyCount ?? 0) + (instUser ?? 0);
-    const skill = !view ? null : kinds?.skill?.value?.owner === 'ply' ? countScan('skill') : 0;
+    const skill = !view || kinds?.skill?.value?.owner !== 'ply' ? null : countScan('skill');
     tabBar.setCounts({ instruction, skill, mcp: mcpCount, hooks: hooksCount });
   }
 

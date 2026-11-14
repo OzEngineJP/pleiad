@@ -239,7 +239,7 @@ export default async function (t) {
       if (command === 'scanContext') return { entries: computeEntries(scanEntries, kindsState), budget: { total: 4000, used: 200 } };
       if (command === 'plyInstructions') return { items: [{ id: 'ply-1', name: 'ルール1', on: true, tokens: 8, text: 'x', target: 'all', tag: 'user', agents: ['claude'] }], agents: [{ id: 'claude', label: 'Claude' }], total: 8, routing: false };
       if (command === 'scanHooks') return { entries: [{ id: 'hk-1', name: '保存時チェック', event: 'PostToolUse', agent: 'antigravity', scope: 'user', enabled: true, command: 'echo ok', type: 'command' }], files: [], home: '/home/u', order: {} };
-      if (command === 'plyHooks') return { owner: 'native', entries: [] };
+      if (command === 'plyHooks') return { defaults: { value: { owner: kindsState.hooks.value.owner } }, entries: [{ id: 'hk-1', name: '保存時チェック', event: 'PostToolUse', agent: 'claude', enabled: true, command: 'echo ok', type: 'command' }] };
       if (command === 'listPlyMcp') return { servers: [{ id: 'm1', name: 'local', transport: 'stdio', command: 'node', args: [] }] };
       if (command === 'agentMcp') return { agents: {} };
       if (command === 'mcpMatrix') return {
@@ -402,6 +402,20 @@ export default async function (t) {
     t.ok('1 件の切替に失敗したときも、同じく元の状態へ描き直される', oneSw().getAttribute('aria-checked') === beforeOne && skillEx() === 0);
     failSettings = false;
 
+    // 担当が「エージェントに任せる」の種類は Pleiad が数えられないので、件数は 0 ではなく出さない（右パネルと同じ定義）
+    const cnt = (root, pre, k) => root.querySelector(`#${pre}-tab-${k} .c`);
+    const noCount = (root, pre, k) => { const c = cnt(root, pre, k); return !c || c.hidden === true || !c.textContent; };
+    for (const k of ['instruction', 'skill', 'hooks']) kindsState[k].value.owner = 'native';
+    await ctxPage.openPage();
+    await settle();
+    t.ok('設定: 担当がエージェントに任せるなら、指示・Skills・Hooks のタブは件数を出さない（0 にしない）',
+      ['instruction', 'skill', 'hooks'].every(k => noCount(p, 'cx', k)) && !noCount(p, 'cx', 'mcp'),
+      ['instruction', 'skill', 'hooks', 'mcp'].map(k => cnt(p, 'cx', k)?.textContent).join(','));
+    for (const k of ['instruction', 'skill', 'hooks']) kindsState[k].value.owner = 'ply';
+    await ctxPage.openPage();
+    await settle();
+    t.ok('設定: 担当を Pleiad に戻すと件数が戻る', ['instruction', 'skill', 'hooks'].every(k => !noCount(p, 'cx', k)));
+
     // ---------------- 2. 会話の右パネル編集モード（web/session-context.mjs） ----------------
     const rightScroller = new PanelNode('div');
     rightScroller.className = 'file-preview-content';
@@ -411,6 +425,7 @@ export default async function (t) {
       instruction: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
       skill: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
       mcp: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
+      hooks: { value: { owner: 'ply' } },
     };
     const rightWrites = [];
     let failRight = false;
@@ -444,7 +459,7 @@ export default async function (t) {
       }
       if (command === 'scanContext' || command === 'nativeInstructions') return { entries: computeEntries(rightEntries, placeKinds) };
       if (command === 'plyInstructions') return { items: [{ id: 'p1', name: '基本', on: true, tokens: 5, text: 'x', target: 'all', tag: 'user', agents: ['claude'] }], agents: [{ id: 'claude', label: 'Claude' }], total: 5, routing: false };
-      if (command === 'plyHooks') return { place: { value: { owner: 'ply' } }, defaults: { value: { owner: 'ply' } }, hooks: [{ id: 'h1', name: 'hook1', enabled: true, scope: 'project', event: 'PostToolUse', targets: ['claude'] }] };
+      if (command === 'plyHooks') return { place: { value: { owner: placeKinds.hooks.value.owner } }, defaults: { value: { owner: placeKinds.hooks.value.owner } }, hooks: [{ id: 'h1', name: 'hook1', enabled: true, scope: 'project', event: 'PostToolUse', targets: ['claude'] }] };
       if (command === 'listPlyMcp') return { servers: [{ id: 'm1', name: 'reg-mcp', transport: 'stdio', command: 'x', args: [] }] };
       if (command === 'agentMcp') return { agents: {} };
       if (command === 'mcpMatrix') return { agents: ['claude'], rows: [{ key: 'r1', name: 'gh', kind: 'config', group: 'agent', origins: ['claude'], cells: { claude: { mode: 'toggle', state: 'on' } } }] };
@@ -561,6 +576,16 @@ export default async function (t) {
     await panelBody.querySelector('[data-act="placeDone"]').onclick();
     await settle();
     t.ok('編集終了で通常面へ戻る', panelBody.querySelectorAll('[role="tab"]').length === 0);
+
+    for (const k of ['instruction', 'skill']) placeKinds[k].value.owner = 'native';
+    placeKinds.hooks.value.owner = 'native';
+    rightPanel.open();
+    await settle();
+    await panelBody.querySelector('[data-act="placeStart"]').onclick();
+    await settle();
+    const rNo = k => { const c = panelBody.querySelector(`#scx-tab-${k} .c`); return !c || c.hidden === true || !c.textContent; };
+    t.ok('右パネル: 担当がエージェントに任せるなら、指示・Skills・Hooks のタブは件数を出さない（設定と同じ定義）',
+      panelBody.querySelectorAll('[role="tab"]').length === 4 && ['instruction', 'skill', 'hooks'].every(rNo), ['instruction', 'skill', 'hooks'].map(k => panelBody.querySelector(`#scx-tab-${k} .c`)?.textContent).join(','));
   } finally {
     dom.restore();
     await setLanguage('ja');

@@ -703,14 +703,14 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const val = kindVal(k);
       if (k === 'mcp' && val?.agents) return null;
       if (!val || !support.supported) return null;
-      if (val.owner !== 'ply') return 0;
+      if (val.owner !== 'ply') return null;
       if (!editScan) return null;
       const rows = uniqueRows((editScan.entries ?? []).filter(e => e.kind === k && e.status !== 'duplicate'));
       return k === 'mcp' ? new Set(rows.map(e => e.name)).size : rows.length;
     };
     const hooksCount = !hView || hView.unreadable || !hVal
       ? null
-      : hVal.owner !== 'ply' ? 0 : (hView.hooks ?? []).filter(h => h.enabled).length;
+      : hVal.owner !== 'ply' ? null : (hView.hooks ?? []).filter(h => h.enabled).length;
     return {
       instruction: scanCount('instruction'),
       skill: scanCount('skill'),

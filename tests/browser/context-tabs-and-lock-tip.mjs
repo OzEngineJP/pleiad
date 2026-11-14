@@ -112,8 +112,8 @@ try {
       const ready = await page.waitForFunction(() => {
         const tab = document.querySelector('#contextPanel .cx-tabs [role="tab"]');
         const r = tab?.getBoundingClientRect();
-        // 4 つの種類の件数がそろうまで待つ（探索・外部 MCP・Hooks は遅れて届く）
-        const counted = ['instruction', 'skill', 'mcp', 'hooks'].every(id => {
+        // 指示・Skills・外部 MCP の件数がそろうまで待つ（探索・外部 MCP は遅れて届く。Hooks は担当がエージェントに任せるので件数を出さない）
+        const counted = ['instruction', 'skill', 'mcp'].every(id => {
           const cnt = document.querySelector(`#cx-tab-${id} .c`);
           return cnt && !cnt.hidden && Number(cnt.textContent) > 0;
         });
@@ -150,7 +150,7 @@ try {
     const tabs = await page.locator('#contextPanel .cx-tabs [role="tab"]').evaluateAll(els =>
       els.map(e => ({ id: e.dataset.tab, selected: e.getAttribute('aria-selected'), cnt: e.querySelector('.c')?.textContent, h: e.getBoundingClientRect().height })));
     check(tabs.map(x => x.id).join(',') === 'instruction,skill,mcp,hooks', '設定 › プラグインが 4 タブを正しい順で出す', tabs);
-    check(tabs[0].selected === 'true' && Number(tabs[0].cnt) >= 10 && Number(tabs[1].cnt) >= 11 && Number(tabs[2].cnt) >= 3 && Number(tabs[3].cnt) >= 1, '各タブに件数バッジが出る', tabs);
+    check(tabs[0].selected === 'true' && Number(tabs[0].cnt) >= 10 && Number(tabs[1].cnt) >= 11 && Number(tabs[2].cnt) >= 3 && !tabs[3].cnt, '件数バッジが出る（担当がエージェントに任せる Hooks は件数を出さない）', tabs);
     check(await page.locator('#cx-panel-mcp #cliSetup').count() === 1, '「外の AI から Pleiad を使う」は外部 MCP タブの中に入る');
     check(await page.locator('#cx-panel-instruction #cxInstructionBudget').count() === 1 && await page.locator('#cx-panel-instruction .cx-seg').count() >= 1, '段 2・3 までの担当 2 択と量の目安を保つ');
 

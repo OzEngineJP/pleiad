@@ -282,9 +282,9 @@ export function createHooksCard({ cmd, work, saved, opened, onCount }) {
     for (const f of (scan.files ?? []).filter(f => f.allOff)) tier.append(el('p', 'cx-note', t(f.agent === 'claude' ? 'hooks.file.allOffClaude' : 'hooks.file.allOffCodex', { path: short(f.path) })));
   }
   function notifyCount() {
-    if (!scan && !ply) { onCount?.(null); return; }
-    if (owner() === 'ply' && ply) { onCount?.(ply.entries?.length ?? 0); return; }
-    if (scan) onCount?.(scan.entries?.length ?? 0);
+    // 件数は「Pleiad が渡す件数」。担当がエージェントに任せるなら Pleiad は数えられないので出さない（右パネルと同じ）
+    if (!ply || owner() !== 'ply') { onCount?.(null); return; }
+    onCount?.(ply.entries?.length ?? 0);
   }
   function render() {
     root.replaceChildren();
