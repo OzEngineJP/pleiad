@@ -136,6 +136,74 @@ export default async function (t) {
     before = reads; await changing(ID); await changing(ID);
     t.ok('読んでいる間に変わった版は保持しない', reads === before + 2);
 
+    // --- 追記読み（ADR 0330）: 末尾の窓を照合して増えた分だけを読み、結果は全部読み直しと同じ ---
+    const APP = '00000000-1111-4111-8111-00000000000a';
+    const appFile = path.join(project, `${APP}.jsonl`);
+    let opens = 0;
+    const io2 = { ...io, open: async (...args) => { opens++; return fs.open(...args); } };
+    const growing = createTranscriptReader({ projects: () => path.join(dir, 'projects'), io: io2, selectMessages });
+    const grownRows = [
+      user('g1', null, 'first', { version: '2.1.288' }),
+      assistant('g2', 'g1', [{ type: 'text', text: 'answer' }]),
+    ];
+    const fragment = '{"type":"user","uuid":"g3","parentUuid":"g2","timestamp":"2026-10-01T00:00:02Z","message":{"role":"user","content":"ste';
+    await fs.writeFile(appFile, jsonl(grownRows) + fragment);
+    const seed = await growing(APP);
+    t.ok('書きかけの末尾のある版も最初は全部読む', seed.entries.length === 2);
+    const sameAs = async (snapshot, label) => {
+      const fresh = parseSessionTranscript(await fs.readFile(appFile, 'utf8'));
+      assert.deepEqual(snapshot.rows, fresh.rows);
+      assert.deepEqual([...snapshot.followUps], [...fresh.followUps]);
+      assert.deepEqual(snapshot.marks, fresh.marks);
+      assert.equal(snapshot.version, fresh.version);
+      assert.equal(snapshot.invalidQueued, fresh.invalidQueued);
+      assert.deepEqual(snapshot.entries, await getSessionMessages(APP));
+      t.ok(label, true);
+    };
+    let readsBefore = reads;
+    await fs.appendFile(appFile, 'er"}}\n' + jsonl([assistant('g4', 'g3', [{ type: 'text', text: 'steered' }])]));
+    await sameAs(await growing(APP), '書きかけの行が完結しても全部読み直しと同じ結果');
+    t.ok('追記は readFile せず窓の照合と差分だけ読む', reads === readsBefore && opens === 1);
+    await fs.appendFile(appFile, jsonl([
+      { type: 'attachment', uuid: 'gq', parentUuid: 'g4', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: 'queued' } },
+      assistant('g5', 'gq', [{ type: 'text', text: 'after queued' }]),
+    ]));
+    await sameAs(await growing(APP), '追記で増えた途中送信の行も全部読み直しと同じ結果');
+    // 書きかけが queued_command の途中の版 → 完結しても invalidQueued が全部読み直しと同じ
+    await fs.appendFile(appFile, '{"type":"attachment","queued_command":');
+    t.ok('書きかけの途中送信の形も全部読み直しと同じ', (await growing(APP)).invalidQueued === parseSessionTranscript(await fs.readFile(appFile, 'utf8')).invalidQueued);
+    await fs.appendFile(appFile, 'bad"}\n');
+    t.ok('書きかけのまま壊れて完結した行も全部読み直しと同じ', (await growing(APP)).invalidQueued === parseSessionTranscript(await fs.readFile(appFile, 'utf8')).invalidQueued);
+    // 縮んだ版は差分にせず全部読み直す
+    await fs.writeFile(appFile, jsonl(grownRows));
+    const shrunk = await growing(APP);
+    t.ok('縮んだ版は全部読み直す', shrunk.entries.length === 2 && shrunk.entries.every(e => e.uuid !== 'g3'));
+    // 大きくなっても中身が違う（書き換え）版は、先頭・末尾の窓で見抜いて全部読み直す
+    const rewrittenRows = [user('h1', null, 'rewritten', { version: '2.1.288' }), ...Array.from({ length: 30 }, (_, i) => assistant(`h${i + 2}`, i ? `h${i + 1}` : 'h1', [{ type: 'text', text: 'x'.repeat(200) }]))];
+    await fs.writeFile(appFile, jsonl(rewrittenRows));
+    const rewritten = await growing(APP);
+    t.ok('大きくなったが中身の違う版は全部読み直す', rewritten.entries.every(e => e.uuid.startsWith('h')));
+    t.ok('直後の同じ版はキャッシュから返す', await growing(APP) === rewritten);
+
+    // サブエージェントの transcript も同じ窓照合で差分読みする（ADR 0330）
+    const SUB = '00000000-1111-4111-8111-00000000000b';
+    const agentId = 'abcdef';
+    const subDir = path.join(project, SUB, 'subagents');
+    await fs.mkdir(subDir, { recursive: true });
+    const subFile = path.join(subDir, `agent-${agentId}.jsonl`);
+    await fs.writeFile(subFile.replace(/\.jsonl$/, '.meta.json'), JSON.stringify({ toolUseId: 'toolu_parent' }));
+    await fs.writeFile(subFile, jsonl([
+      user('s1', null, 'task', { sessionId: SUB }),
+      assistant('s2', 's1', [{ type: 'text', text: 'working' }], { sessionId: SUB }),
+    ]));
+    const firstSub = await backend.getSubagentMessages(SUB, agentId, {});
+    await fs.appendFile(subFile, jsonl([assistant('s3', 's2', [{ type: 'text', text: 'done' }], { sessionId: SUB })]));
+    const secondSub = await backend.getSubagentMessages(SUB, agentId, {});
+    t.ok('サブエージェントの追記も差分で読み全部読み直しと同じ', secondSub.length === firstSub.length + 1 && secondSub.at(-1).text === 'done');
+    await fs.writeFile(subFile, jsonl([user('t1', null, 'replaced', { sessionId: SUB })]));
+    const replacedSub = await backend.getSubagentMessages(SUB, agentId, {});
+    t.ok('サブエージェントの縮んだ版も全部読み直す', replacedSub.length === 1 && replacedSub[0].text === 'replaced');
+
     const bad = parseSessionTranscript(jsonl([{ type: 'attachment', uuid: 'bad', attachment: { type: 'queued_command', prompt: 5 } }]) + '{"type":"attachment","queued_command":');
     t.ok('壊れた途中送信の形を検出する', bad.invalidQueued);
     let now = 0; const lines = [];

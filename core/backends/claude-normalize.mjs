@@ -316,9 +316,8 @@ export function transcriptSystemMarks(text) {
 }
 
 function systemMarkCollector() {
-  const summaries = new Map();
-  const outputs = new Map();
-  const compactions = [];
+  // summaries・outputs・compactions は add 時の行ではなく finish のたびに組み直す
+  // （差分読みの途中経過でも同じ写しを返すため。modelSwitches は写しを返す）
   // 安全装置でモデルが替わった行（system:model_refusal_fallback）。transcript の行は camelCase
   const modelSwitches = [];
   const needs =['"compact_boundary"', '"isCompactSummary":true', "<local-command-std", "<bash-std"];
@@ -359,8 +358,11 @@ function systemMarkCollector() {
     else if (body.startsWith("<local-command-std") || body.startsWith("<bash-std")) outputRows.push(row);
   };
   const finish = () => {
+    const summaries = new Map();
+    const outputs = new Map();
+    const compactions = [];
     modelSwitches.sort((a, b) => a.at - b.at);
-    if (!enabled) return { summaries, outputs, compactions, modelSwitches };
+    if (!enabled) return { summaries, outputs, compactions, modelSwitches: [...modelSwitches] };
     for (const row of outputRows) if (heads.has(row.parentUuid)) outputs.set(row.uuid, row.parentUuid);
     const summaryOf = new Map();
     for (const row of summaryRows) {
@@ -383,7 +385,7 @@ function systemMarkCollector() {
         ...(summaryOf.has(uuid) ? { summary: summaryOf.get(uuid) } : {}) });
     }
     compactions.sort((a, b) => a.at - b.at);
-    return { summaries, outputs, compactions, modelSwitches };
+    return { summaries, outputs, compactions, modelSwitches: [...modelSwitches] };
   };
   return { add, finish };
 }
@@ -572,15 +574,22 @@ export function stopHookFollowUps(text) {
   return collector.finish();
 }
 
-/** 1 回の行走査・JSON 解析を SDK と extras で共有する。本文は戻り値に残さない。 */
-export function parseSessionTranscript(text) {
+const isQueuedCommandRow = (row) => row?.type === 'attachment' && typeof row.uuid === 'string'
+  && row.attachment?.type === 'queued_command' && typeof row.attachment.prompt === 'string';
+
+/**
+ * transcript の行を 1 行ずつ受け取る解釈器。追加分だけを後から足せるよう状態を持つ（ADR 0330）。
+ * 最後の改行で終わっていない行（書きかけの末尾）は feedTail に渡す。
+ * feedTail の行がまだ伸びた（行の続きが後から来た）ときは、unfeedTail で取り消してから
+ * 完結した形で feed / feedTail し直す。JSON として読めた末尾（tailParsed）は取り消せない
+ * （entries・collectors に載る）。その行は書き手が完結させた行なので、後に来るのは改行か別の行だけ。
+ */
+export function createSessionParser() {
   const entries = [], rows = [];
   const marks = systemMarkCollector(), followUps = followUpCollector();
   let candidates = 0, valid = 0, version = null, lineNumber = 0;
-  // split の配列と大きい行の文字列を保持しない。
-  for (let at = 0; at <= text.length;) {
-    const end = text.indexOf('\n', at);
-    const line = text.slice(at, end < 0 ? text.length : end);
+  let tail = '', tailRow, tailCandidates = 0, tailValid = 0;
+  const feed = (line) => {
     let row;
     try { row = JSON.parse(line); entries.push(row); } catch {}
     if (lineNumber++ < 20 && version === null && typeof row?.version === 'string') version = row.version;
@@ -590,14 +599,51 @@ export function parseSessionTranscript(text) {
       if (row?.type === 'attachment' && row.uuid) rows.push(row);
       if (line.includes('queued_command')) {
         candidates++;
-        if (row?.type === 'attachment' && typeof row.uuid === 'string' && row.attachment?.type === 'queued_command' && typeof row.attachment.prompt === 'string') valid++;
+        if (isQueuedCommandRow(row)) valid++;
       }
     }
-    if (end < 0) break;
+    return row;
+  };
+  return {
+    feed,
+    feedTail(line) {
+      tail = line;
+      tailRow = feed(line);
+      tailCandidates = 0;
+      tailValid = 0;
+      if (line.includes('"attachment"') && line.includes('queued_command')) {
+        tailCandidates = 1;
+        if (isQueuedCommandRow(tailRow)) tailValid = 1;
+      }
+    },
+    // 取り消せるのは読めなかった末尾だけ。行番号と queued_command の数えだけ戻す
+    // （壊れた行は entries・rows・collectors の行の記録に載っていない。印だけは完結した行でも立つので戻さない）
+    unfeedTail() {
+      lineNumber -= 1;
+      candidates -= tailCandidates;
+      valid -= tailValid;
+    },
+    get tail() { return tail; },
+    get tailParsed() { return tailRow !== undefined; },
+    // finish は読むたびに呼ぶ。rows・marks・followUps は呼び出しごとの写し
+    finish() {
+      return { entries, rows: candidates ? rows.slice() : [], marks: marks.finish(), followUps: followUps.finish(),
+        version, invalidQueued: candidates > 0 && candidates !== valid };
+    },
+  };
+}
+
+/** 1 回の行走査・JSON 解析を SDK と extras で共有する。本文は戻り値に残さない。 */
+export function parseSessionTranscript(text) {
+  const parser = createSessionParser();
+  // split の配列と大きい行の文字列を保持しない。
+  for (let at = 0; at <= text.length;) {
+    const end = text.indexOf('\n', at);
+    if (end < 0) { parser.feedTail(text.slice(at)); break; }
+    parser.feed(text.slice(at, end));
     at = end + 1;
   }
-  return { entries, rows: candidates ? rows : [], marks: marks.finish(), followUps: followUps.finish(),
-    version, invalidQueued: candidates > 0 && candidates !== valid };
+  return parser.finish();
 }
 
 function followUpCollector() {
@@ -751,31 +797,51 @@ export function invalidQueuedCommandTranscript(text) {
  * @param toolUseId 生んだ委譲ツールの id（meta.json の toolUseId）。各エントリの parent_tool_use_id に載せる
  * @param limit 返す上限。超えたら最初の 1 件（依頼文）と末尾を残す。走っている子の「いま」が見えるように
  */
-export function subagentEntries(text, { toolUseId = null, limit = 0 } = {}) {
+/**
+ * サブエージェントの transcript の解釈器。追加分だけを後から足せるよう状態を持つ（ADR 0330）。
+ * 書きかけの末尾は feedTail。解釈できなかった末尾は状態に残らないので unfeedTail は何もしない。
+ */
+export function createSubagentParser() {
   const rows = new Map();
-  let leaf = null;
-  for (const line of String(text ?? "").split("\n")) {
-    if (!line.trim()) continue;
+  let leaf = null, tail = '', tailRow;
+  const feed = (line) => {
+    if (!line.trim()) return;
     let row;
-    try { row = JSON.parse(line); } catch { continue; }   // 書きかけの最後の行など
-    if (typeof row?.uuid !== "string") continue;
+    try { row = JSON.parse(line); } catch { return; }   // 書きかけの最後の行など
+    if (typeof row?.uuid !== "string") return;
     rows.set(row.uuid, row);
     if (row.type === "user" || row.type === "assistant") leaf = row;
-  }
-  const chain = [];
-  const seen = new Set();
-  for (let row = leaf; row && !seen.has(row.uuid); row = row.parentUuid ? rows.get(row.parentUuid) : null) {
-    seen.add(row.uuid);
-    if (row.type === "user" || row.type === "assistant") chain.push(row);
-  }
-  chain.reverse();
-  const kept = limit > 0 && chain.length > limit ? [chain[0], ...chain.slice(chain.length - (limit - 1))] : chain;
-  return kept.map((row) => ({
-    type: row.type,
-    uuid: row.uuid,
-    session_id: row.sessionId,
-    message: row.message,
-    parent_tool_use_id: toolUseId ?? null,
-    timestamp: row.timestamp,
-  }));
+    return row;
+  };
+  return {
+    feed,
+    feedTail(line) { tail = line; tailRow = feed(line); },
+    unfeedTail() {},
+    get tail() { return tail; },
+    get tailParsed() { return tailRow !== undefined; },
+    finish({ toolUseId = null, limit = 0 } = {}) {
+      const chain = [];
+      const seen = new Set();
+      for (let row = leaf; row && !seen.has(row.uuid); row = row.parentUuid ? rows.get(row.parentUuid) : null) {
+        seen.add(row.uuid);
+        if (row.type === "user" || row.type === "assistant") chain.push(row);
+      }
+      chain.reverse();
+      const kept = limit > 0 && chain.length > limit ? [chain[0], ...chain.slice(chain.length - (limit - 1))] : chain;
+      return kept.map((row) => ({
+        type: row.type,
+        uuid: row.uuid,
+        session_id: row.sessionId,
+        message: row.message,
+        parent_tool_use_id: toolUseId ?? null,
+        timestamp: row.timestamp,
+      }));
+    },
+  };
+}
+
+export function subagentEntries(text, options = {}) {
+  const parser = createSubagentParser();
+  for (const line of String(text ?? "").split("\n")) parser.feed(line);
+  return parser.finish(options);
 }
