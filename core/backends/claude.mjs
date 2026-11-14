@@ -33,8 +33,8 @@ import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, catalogIsComplete, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
-import { normalizeSdkMessage, isClaudeAuthError, isClaudeModelError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, createSubagentParser, invalidSubagentTranscript } from "./claude-normalize.mjs";
-import { createTranscriptReader, readAppendedText, trackTail, trackHead, trackTailAfterAppend, feedAppended, hydrateSlim, slimLeak } from "./claude-transcript.mjs";
+import { normalizeSdkMessage, isClaudeAuthError, isClaudeModelError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, createSubagentParser } from "./claude-normalize.mjs";
+import { createTranscriptReader, readAppendedText, trackTail, trackHead, trackTailAfterAppend, feedAppended, feedBufferLines, hydrateSlim, slimLeak } from "./claude-transcript.mjs";
 import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
@@ -660,13 +660,6 @@ const dropSubagent = (key) => {
  * 置き場は組み立てず、projects の下を探す。
  * 追記しかない版は、親の transcript と同じく窓を照合して差分だけを読む（claude-transcript.mjs・ADR 0330）。
  */
-function transcriptVersion(text) {
-  for (const line of String(text).split('\n').slice(0, 20)) {
-    try { const row = JSON.parse(line); if (typeof row?.version === 'string') return row.version; } catch {}
-  }
-  return null;
-}
-
 async function readSubagentEntries(sessionId, agentId, { limit = 0 } = {}) {
   if (!SAFE_ID.test(String(sessionId ?? "")) || !SAFE_ID.test(String(agentId ?? ""))) return null;
   const key = `${sessionId}/${agentId}`;
@@ -710,18 +703,12 @@ async function readSubagentEntriesNow(sessionId, agentId, key, { limit }) {
       } else {
         dropSubagent(key);
         const buf = await fs.readFile(file);
-        const text = buf.toString('utf8');
-        const version = transcriptVersion(text);
-        if (invalidSubagentTranscript(text)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-shape', detectedVersion: version });
+        // 行の解釈は区切ってイベントループへ返す（ADR 0332）。版と形の検査は解釈器が feed で畳み込む
         const parser = createSubagentParser();
-        for (let at = 0; at <= buf.length;) {
-          const end = buf.indexOf(0x0a, at);
-          if (end < 0) { parser.feedTail(buf.toString('utf8', at), at, buf.length - at); break; }
-          parser.feed(buf.toString('utf8', at, end), at, end - at);
-          at = end + 1;
-        }
+        await feedBufferLines(parser, buf);
+        if (parser.invalid) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-shape', detectedVersion: parser.version });
         state = { file, stamp, size: stat.size, ino: stat.ino, dev: stat.dev,
-          head: trackHead(buf), ...trackTail(buf), parser, version, bytes: parser.kept };
+          head: trackHead(buf), ...trackTail(buf), parser, version: parser.version, bytes: parser.kept };
         subagentReads.set(key, state);
         subagentBytes += parser.kept;
         while (subagentReads.size && (subagentReads.size > 24 || subagentBytes > SUBAGENT_CACHE_BYTES)) {
@@ -745,7 +732,7 @@ async function readSubagentEntriesNow(sessionId, agentId, key, { limit }) {
       await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-slim-leak', detectedVersion: state.version });
       const buf = await fs.readFile(file);
       const whole = createSubagentParser();
-      for (const line of buf.toString('utf8').split('\n')) whole.feed(line);
+      await feedBufferLines(whole, buf, { offsets: false });
       return whole.finish({ toolUseId, limit });
     }
     return raw;

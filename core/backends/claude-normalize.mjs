@@ -871,10 +871,20 @@ export function createSubagentParser() {
   const rows = new Map();
   const slimIndex = new Map();   // 蒸留した message -> {offset, len}（createSessionParser と同じ仕組み）
   let leaf = null, tail = '', tailRow, keptBytes = 0, tailKept = 0;
-  const feed = (line, offset, byteLen) => {
+  // 版の検出（transcriptVersion: 先頭 20 行の最初の row.version）と形の検査
+  // （invalidSubagentTranscript と同じ判定）を feed に畳み込み、全部読みで本文の文字列を作らない
+  let version = null, lineNumber = 0, messages = 0, sawMessageField = false, shapeInvalid = false;
+  const feed = (line, offset, byteLen, tailLine = false) => {
+    const n = lineNumber++;
     if (!line.trim()) return;
+    if (line.includes('"message"')) sawMessageField = true;
     let row;
-    try { row = JSON.parse(line); } catch { return; }   // 書きかけの最後の行など
+    try { row = JSON.parse(line); } catch { if (!tailLine) shapeInvalid = true; return; }   // 書きかけの最後の行など
+    if (n < 20 && version === null && typeof row?.version === 'string') version = row.version;
+    if (row?.type === "user" || row?.type === "assistant") {
+      messages++;
+      if (typeof row.uuid !== 'string' || !row.message || typeof row.message !== 'object') shapeInvalid = true;
+    }
     if (typeof row?.uuid !== "string") return;
     if (byteLen != null) keptBytes += Math.min(byteLen, SLIM_ROW_EST_BYTES);
     let stored = row;
@@ -891,13 +901,15 @@ export function createSubagentParser() {
     feedTail(line, offset, byteLen) {
       tail = line;
       const before = keptBytes;
-      tailRow = feed(line, offset, byteLen);
+      tailRow = feed(line, offset, byteLen, true);
       tailKept = keptBytes - before;
     },
-    unfeedTail() { keptBytes -= tailKept; },
+    unfeedTail() { keptBytes -= tailKept; lineNumber -= 1; },
     get tail() { return tail; },
     get tailParsed() { return tailRow !== undefined; },
     get kept() { return keptBytes; },
+    get version() { return version; },
+    get invalid() { return shapeInvalid || (messages === 0 && sawMessageField); },
     slimIndex,
     finish({ toolUseId = null, limit = 0 } = {}) {
       const chain = [];
