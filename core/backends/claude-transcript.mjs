@@ -1,7 +1,7 @@
 // 同じ版の transcript を getMessages / getCompactions / outline / older で共有する。
 // 追記しかない版は、前回の末尾の窓を照合してから差分だけを読み、増えた行だけを解釈する（ADR 0330）。
 // 初めて開く大きい記録の全部読みは、行の解釈を TRANSCRIPT_PARSE_SLICE_MS ごとに区切って
-// イベントループへ返す（ADR 0332）。
+// イベントループへ返す（ADR 0333）。
 // 保持するのは解釈済みの行の「蒸留」形（claude-normalize.mjs。大きい行はバイト位置と選別に要る
 // フィールドだけ）で、返す履歴は蒸留した message を行から読み直して戻す。
 import fs from 'node:fs/promises';
@@ -93,7 +93,7 @@ export function feedAppended(parser, bytes, offset) {
 
 /**
  * Buffer 全体を行に切って parser へ流す。sliceMs ごとにいったんイベントループへ返すので、
- * 初めて開く大きい transcript の全部読みでサーバー全体を長く止めない（ADR 0332）。
+ * 初めて開く大きい transcript の全部読みでサーバー全体を長く止めない（ADR 0333）。
  * offsets=true のとき行のバイト位置を feed / feedTail へ渡す（蒸留と読み直しに使う）。
  * 区切りで待っているあいだにファイルが変わっても、呼び出し側が末尾の stamp 照合で掴み直す。
  */

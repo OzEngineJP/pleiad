@@ -295,7 +295,7 @@ export default async function (t) {
     const bigSub = await backend.getSubagentMessages(SUB, agentId, {});
     t.ok('サブエージェントの大きい行も行から読み直す', bigSub.at(-1).text === 'w'.repeat(2500));
 
-    // --- 初回の全部読みを区切ってイベントループへ返す（ADR 0332）---
+    // --- 初回の全部読みを区切ってイベントループへ返す（ADR 0333）---
     // sliceMs: 0 は 1 行ごとに区切る。区切った結果は一気に読んだときと同じ
     const SLICED = '00000000-1111-4111-8111-00000000000e';
     const slicedFile = path.join(project, `${SLICED}.jsonl`);
@@ -338,7 +338,7 @@ export default async function (t) {
     loopDelay.disable();
     t.ok(`区切った全部読みはイベントループを 100 ms 以上止めない（実測 ${Math.round(loopDelay.max / 1e6)} ms）`, loopDelay.max < 100 * 1e6);
 
-    // 子の transcript の版と形の検査は解釈器の feed に畳み込んだ（invalidSubagentTranscript と同じ判定。ADR 0332）
+    // 子の transcript の版と形の検査は解釈器の feed に畳み込んだ（invalidSubagentTranscript と同じ判定。ADR 0333）
     const shape = async (text) => { const p = createSubagentParser(); await feedBufferLines(p, Buffer.from(text)); return p; };
     const goodSub = jsonl([user('u', null, 'ok', { sessionId: 's', version: '2.1.288' }), assistant('a', 'u', [{ type: 'text', text: 'hi' }], { sessionId: 's' })]);
     for (const text of [

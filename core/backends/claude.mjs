@@ -703,7 +703,7 @@ async function readSubagentEntriesNow(sessionId, agentId, key, { limit }) {
       } else {
         dropSubagent(key);
         const buf = await fs.readFile(file);
-        // 行の解釈は区切ってイベントループへ返す（ADR 0332）。版と形の検査は解釈器が feed で畳み込む
+        // 行の解釈は区切ってイベントループへ返す（ADR 0333）。版と形の検査は解釈器が feed で畳み込む
         const parser = createSubagentParser();
         await feedBufferLines(parser, buf);
         if (parser.invalid) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-shape', detectedVersion: parser.version });
