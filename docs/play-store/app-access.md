@@ -4,7 +4,7 @@ Play の審査員は、アプリの制限された部分に入る方法を「ア
 
 Pleiad のアプリは、ホスト（PC の Pleiad）とペアリングするまで、ホストの一覧・ペアリング・通知の設定の画面しか無い。ペアリングのコードは 5 分・1 回で切れ、ホストの持ち主の承認が要る（[remote.md](../remote.md) §3.3）ので、今の作りのままでは使い回せる入り方を渡せない。
 
-[ADR 0263](../adr/0263-accounts-and-hosted-relay.md)（提案）で公式の中継を使うアプリにログインが入ると、審査用のホストに加えて審査用のテストアカウント（使い回せ、2 段階認証なし）も要る。
+アプリには Pleiad Plus（運営する公式の中継とアカウント。[ADR 0263](../adr/0263-accounts-and-hosted-relay.md)）への**任意**のログインがある。ログインしなくても、ペアリングのコードでホストを追加して全部の機能を使えるので、審査用のホストへは下の「決めたこと」のコードで入れる（ログインは要らない）。ただし Plus のログインの先（公式の中継に並ぶホスト・アカウントの管理）は、アプリの中の「ログインで制限された部分」に当たる。Play は、審査に要るものすべて（ログイン情報を含む）を、いつでも使え・使い回せ・2 段階認証を迂回できる形で出すことを求める（上の 2 つのリンク）。ADR 0263 の「審査」も、審査用のテストアカウント（使い回せ、2 段階認証なし。アカウントの削除を試されても審査用のホストと招待が壊れないよう、削除してよい使い捨てのものを別に）を求める。そこで、審査用のテストアカウントを**追加で**出す（下の英語の文の 6）。
 
 ## 決めたこと
 
@@ -42,6 +42,7 @@ node core/review-invite.mjs revoke             # 取り消す（入った端末�
 | `〈pleiad://pair?...〉` | `show --code-only` の出力（1 行。中継の URL・ホストの鍵・招待の秘密が入っている。招待を作り直すと変わる） |
 | `〈date, UTC〉` / `〈日時〉` | `show` の `Expires` の日時（UTC）。例 `2027-01-08 00:00 UTC` / 日本語の文では日本時間に直して書いてよい |
 | `〈email〉` / `〈メールアドレス〉` | 審査員の連絡を受ける、Play Console の連絡先と同じ宛先 |
+| `〈test account〉` / `〈テストアカウント〉` | 審査用の Plus のテストアカウント。Google か Apple のアカウントで、使い回せて 2 段階認証・ワンタイム パスワードが無いもの（審査員がログインの画面でそのまま入れること）。ID とパスワードはこのリポジトリに書かず、Play Console の「アプリへのアクセス」の欄だけに入れる。削除を試されても困らない使い捨てにする |
 | `〈video URL〉` | 急ぎの文で、通知の流れを見せる動画（[foreground-service.md](foreground-service.md)）の URL |
 
 fake のバックエンドは、会話の最初の言葉で台本を選ぶ（`core/backends/fake.mjs`）。審査モードで通す台本は次だけで、それ以外は言葉をそのまま返す。
@@ -74,6 +75,8 @@ Pleiad is a remote client for Pleiad running on a PC. For review we run a dedica
 4. To see an approval: start a new conversation and send "ask". The agent asks for approval; tap Allow.
 5. To test notifications (foreground service, remoteMessaging): go back to the host list, open "Notification settings", turn on "Notify this device" and allow notifications. Open the host, start a new conversation, send "ask-later" and close the app right away (notifications are not shown for a conversation you are looking at). About 20 seconds later an "◆ Waiting for approval" notification arrives; tap it to open the conversation. Turning the switch off stops the service.
 
+6. Optional: signing in to Pleiad Plus is not needed for the steps above. To try it, tap the Pleiad Plus entrance on the host list and sign in with this test account: 〈test account〉. "Manage account" opens the account page in the browser. Please do not delete this account.
+
 If the host does not respond, please contact us at 〈email〉 and we will fix it right away.
 ```
 
@@ -90,6 +93,8 @@ Pleiad は、PC で動く Pleiad につなぐためのアプリです。審査�
 4. 承認を見るには、新しい会話で「ask」と送ります。エージェントが承認を求めるので「許可」を押します。
 5. 通知（前面サービス、remoteMessaging）を試すには、ホストの一覧に戻って通知の設定を開き、「この端末に知らせる」をオンにして通知を許可します。ホストを開いて新しい会話で「ask-later」と送り、すぐにアプリを閉じます（見ている会話の通知は出ません）。20 秒ほどで「◆ 承認を待っています」の通知が届き、押すと会話が開きます。オフにするとサービスは止まります。
 
+6. 任意: ここまでの手順に Pleiad Plus のログインは要りません。試すときは、ホストの一覧の Pleiad Plus の入口を押し、このテストアカウントでログインします: 〈テストアカウント〉。「アカウントを管理」を押すと、ブラウザーでアカウントのページが開きます。このアカウントは削除しないでください。
+
 ホストが応えないときは、〈メールアドレス〉へご連絡ください。すぐに直します。
 ```
 
@@ -98,5 +103,5 @@ Pleiad は、PC で動く Pleiad につなぐためのアプリです。審査�
 審査用の機械が止まって直るまでに審査が来そうなときだけ使う。Play の要件（審査に要るものを出す）を満たさないので、差し戻されうる。
 
 ```text
-Pleiad is a companion app for Pleiad on a PC (https://pleiad.dev/). All content (conversations, approvals, notifications) lives on the user's own PC and is reached through a relay server that the user runs; there are no accounts. Our review host is temporarily unavailable. A video of the full flow is here: 〈video URL〉. Please contact us at 〈email〉 and we will send a working pairing code right away.
+Pleiad is a companion app for Pleiad on a PC (https://pleiad.dev/). All content (conversations, approvals, notifications) lives on the user's own PC and is reached through a relay server (the user's own, or the Pleiad Plus relay after signing in). Our review host is temporarily unavailable. A video of the full flow is here: 〈video URL〉. Please contact us at 〈email〉 and we will send a working pairing code and a test account for the optional Plus sign-in right away.
 ```
