@@ -754,6 +754,7 @@ const SUITES = [
   './unit/event-session-id.mjs',
   './unit/lineage.mjs',
   './unit/branches.mjs',
+  './unit/outline-digest.mjs',
   // 見た目の規則。web/ の CSS と index.html を lint する（docs/design-system.md §5）
   './unit/design-lint.mjs',
   // 操作のメニューを開く「…」はどこでも縦の 3 点（docs/design-system.md「「…」の形」・ADR 0313）

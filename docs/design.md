@@ -250,7 +250,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 ターンが終わったとき（`syncHistory`）と、つなぎ直したときの静かな読み直し（`select(..., { reload: true })`）は、持っている履歴の続きだけを読み、変わった所から後ろだけ描く（[ADR 0062](adr/0062-incremental-session-load.md)。issue #37）。
 
-- **通信**: `loadSession` に `from`（持っている発言の数から末尾の 2 件を引いた位置）・`check`（その先頭の署名の並びの値）・`presentFrom`（持っている提示の数）・`presentCheck` を付けると、サーバーは先頭が合うときだけ `messages` を `from` 以降・`presents` を `presentFrom` 以降に切り、`from`・`total`・`presentFrom`・`presentTotal` を足して返す。合わなければ（途中の発言や提示が書き換わった・履歴が短くなった・頼みが壊れている）全量で、`from` の印は無い。画面は印と件数が合うときだけ先頭につなぎ、合わなければ全量を取り直す。会話を開くとき・枝の切り替え・`outline` は全量。署名と切り出しとつなぎは `web/history-sync.mjs`（`messageSig`・`presentSig`・`syncRequest`・`serveFrom`・`joinReply`）。
+- **通信**: `loadSession` に `from`（持っている発言の数から末尾の 2 件を引いた位置）・`check`（その先頭の署名の並びの値）・`presentFrom`（持っている提示の数）・`presentCheck` を付けると、サーバーは先頭が合うときだけ `messages` を `from` 以降・`presents` を `presentFrom` 以降に切り、`from`・`total`・`presentFrom`・`presentTotal` を足して返す。合わなければ（途中の発言や提示が書き換わった・履歴が短くなった・頼みが壊れている）全量で、`from` の印は無い。画面は印と件数が合うときだけ先頭につなぎ、合わなければ全量を取り直す。会話を開くとき・枝の切り替え・`outline` は全量（`outline: { digest: true }` は系譜の照合用で、本文を運ばず、発言ごとの指紋と人の発言の抜粋だけを返す。[ADR 0333](adr/0333-lineage-outline-digest.md)）。署名と切り出しとつなぎは `web/history-sync.mjs`（`messageSig`・`presentSig`・`syncRequest`・`serveFrom`・`joinReply`）。
 - **描画**: 静かな読み直しは `clearThread` せず、今の画面と読み直した履歴を、描く行の並び（`buildItems`）で先頭から比べる（`retainPlan`）。ツールの結果・本文・uuid・圧縮の区切り・提示（`visualize` の印と添付の結び付き）のどれが変わっても「違う」になり、最初に違う項目から後ろだけ描き直す。発言に取り込んで描く人の添付（`inlineAttachments`）が変わった（結び付いた・外れた）発言も「違う」とし、残した行の分の取り込み済みも数え直す。ツールのまとまり（`Bundle`）は発言の行の中にあるので、行ごと残る。残すのは履歴から描いた行（`data-h`）で、ライブで描いた行・稼働表示・圧縮の区切り・分岐点の行は外して描き直す（`retainThread`）。先頭が違えば今までどおり全部描き直す。
 - **位置**: 末尾を見ていたなら末尾へ。読み返していたなら、基準の行（`historyAnchor`）が同じ高さに来るよう戻す（`holdReading`）。
 

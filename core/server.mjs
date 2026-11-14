@@ -192,6 +192,7 @@ import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { serveHistory, subagentToolSet } from "../web/history-sync.mjs";
+import { digestOf } from "../web/outline.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, deleteConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { rebuildEnabled, REBUILD_LIMITS } from "./context-rebuild.mjs";
 import { familyOf } from "./lineage.mjs";
@@ -10275,8 +10276,10 @@ wss.on("connection", (ws, req) => {
             if (!msg.args?.outline) data.messages = decorateScheduled(data.messages, sidecar.scheduledSends);
             timing.add('decorate', performance.now() - decorating);
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
-            // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
-            if (msg.args?.outline) return loadReply(true, { messages: data.messages.map(m => ({
+            // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる。
+            // `outline: { digest: true }` で頼まれたら、本文も運ばず、本文とツール名の指紋と人の発言の抜粋だけを返す（web/outline.mjs・ADR 0333）。
+            // `outline: true`（古い画面）は今までの形。本文・ツール名を返す
+            if (msg.args?.outline) return loadReply(true, { messages: msg.args.outline?.digest === true ? data.messages.map(digestOf) : data.messages.map(m => ({
               uuid: m.uuid, role: m.role, text: m.text, tools: m.tools,
               ...(m.toolCalls ? { toolCalls: m.toolCalls.map(call => ({ name: call.name })) } : {}),
             })) });

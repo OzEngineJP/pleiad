@@ -165,7 +165,7 @@ export const COMMANDS = new Set([
   "abort",           // { sessionId?, reason?: user|update|quit } -> { aborted, reason }。sessionId 省略は全部。reason 省略・不正は user。止めた会話は interrupted { at, reason } で残る
   "resume",          // { sessionId } -> { sent: "outbox"|"text", count }。中断した会話を続ける（保留・送れなかった未送信を送り直す。無ければ理由ごとの文を送る）。実行中（SESSION_RUNNING）・中断していない（NOT_INTERRUPTED）・結果不明の未送信がある（OUTBOX_UNKNOWN）会話は断る
   "listSessions",
-  "loadSession",     // 履歴（本文 + present）を読み直す。outline: true は系譜の照合用に骨だけ返す。watch: true はこの接続が開いた会話として登録する（下の watchSession）。from・check・presentFrom・presentCheck を付けると、持っている先頭が合うときだけ続きを返す（ADR 0062）
+  "loadSession",     // 履歴（本文 + present）を読み直す。outline: true は系譜の照合用に骨だけ返す（本文・ツール名つき）。outline: { digest: true } は本文を運ばず、本文とツール名の指紋と人の発言の抜粋だけを返す（ADR 0333）。watch: true はこの接続が開いた会話として登録する（下の watchSession）。from・check・presentFrom・presentCheck を付けると、持っている先頭が合うときだけ続きを返す（ADR 0062）
   "watchSession",    // { sessionId, slot? } 開いている会話を登録し直す。登録した接続には、流れの出来事をその会話の分だけ送る（turnEnd は全部。ADR 0024）。slot は main（既定）か modal（作業のダイアログが映す子の会話。ADR 0315）。窓口ごとに 1 つ、sessionId が null なら空にする
   "newSession",      // 空のセッションを開始する（最初の runTurn まで id は無い）。draft を渡すと入力欄の下書きとして保存する（送らない。「見直しを頼む」）
   "saveDraft",
