@@ -100,8 +100,8 @@ export default async function (t) {
   const loads = [];
   let b = createBranches({ cmd: fakeCmd(lineage, { P: parent, C: child }, loads), onSwitch: () => {}, titleOf: (id) => titles[id] });
   let fam = await b.load("C", child);
-  t.ok("家族の読み直しは outline で頼む（全文を運ばない）",
-    loads.length > 0 && loads.every((a) => a.outline === true), JSON.stringify(loads));
+  t.ok("家族の読み直しは outline の digest で頼む（本文を運ばない。詳しくは outline-digest）",
+    loads.length > 0 && loads.every((a) => a.outline?.digest === true), JSON.stringify(loads));
   t.ok("atMessage から分岐点が決まる（親の添字 3）", fam?.rows.get("C")?.k === 3, String(fam?.rows.get("C")?.k));
   let j = b.junctions("C");
   t.ok("子から見て、分岐点の後に親の残り 2 件の印", j.get(3)?.[0]?.id === "P" && j.get(3)?.[0]?.n === 2 && j.get(3)?.[0]?.back === true,

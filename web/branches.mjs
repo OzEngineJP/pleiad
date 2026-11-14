@@ -1,7 +1,10 @@
 // Session lineage and fork boundaries. Rendering and motion live in branch-view.mjs.
 // Claude forks reassign UUIDs, so shared history is compared by role, content and tools.
+// 家族のほかの枝は全文でなく概要（outline の digest。指紋と抜粋だけ。web/outline.mjs・ADR 0333）で持つ。
+// 今開いている枝の窓は全文なので、照合は全文どうし・概要どうし・全文と概要のどれでも同じ結果になる。
 import { t } from "./i18n.mjs";
-const toolNames = (m) => (m.toolCalls ?? []).map((c) => c.name).concat(m.tools ?? []).join("\0");
+import { excerptOf, promptExcerpt, sameContent } from "./outline.mjs";
+export { excerptOf };
 
 /**
  * 2 つの発言が同じものか。uuid が一致すれば同じ。**一致しなくても**役割・本文・ツール名が同じなら同じ。
@@ -12,7 +15,7 @@ const toolNames = (m) => (m.toolCalls ?? []).map((c) => c.name).concat(m.tools ?
 function same(a, b) {
   if (!a || !b) return false;
   if (a.uuid && b.uuid && a.uuid === b.uuid) return true;
-  return a.role === b.role && (a.text ?? "") === (b.text ?? "") && toolNames(a) === toolNames(b);
+  return sameContent(a, b);
 }
 
 /** 共通接頭辞の長さ */
@@ -38,9 +41,6 @@ export function nodeKeys(junctions, messageCount) {
   return out;
 }
 
-/** 札に出す発言の抜粋。1 行に畳み、長ければ切る（札は省略で縮むので、全文は title と読み上げ名で渡す） */
-export const excerptOf = (text) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
-
 export function createBranches({ cmd, titleOf }) {
   const cache = new Map();     // sessionId -> { lastModified, messages }
   let family = null;           // { rootId, rows: Map<id, { id, title, parent, createdAt, messages, k }> }
@@ -49,8 +49,10 @@ export function createBranches({ cmd, titleOf }) {
   async function messagesOf(row) {
     const hit = cache.get(row.id);
     if (hit && hit.lastModified === row.lastModified) return hit.messages;
-    // outline は照合に要る分（uuid・役割・本文・ツール名）だけを返す。家族に大きな会話があると全文は数十MBになる
-    const data = await cmd("loadSession", { sessionId: row.id, outline: true }).catch(() => null);
+    // 概要（outline の digest）は照合に要る分（uuid・役割・本文とツール名の指紋・人の発言の抜粋）だけを返す。家族に大きな会話があると全文は数十MBになる。
+    // digest を知らない（古い）サーバーは outline を真偽として読み、全文の形（text・tools・toolCalls）で返す。照合はどちらの形でも同じ。
+    // 流れの出来事とは関わらない読み出しなので、返事が大きい中継越しは WS の外（bulk。ADR 0179）で受けてよい
+    const data = await cmd("loadSession", { sessionId: row.id, outline: { digest: true } }, { bulk: true }).catch(() => null);
     if (!data) return hit?.messages ?? [];
     const messages = data?.messages ?? [];
     cache.set(row.id, { lastModified: row.lastModified, messages });
@@ -173,8 +175,8 @@ export function createBranches({ cmd, titleOf }) {
     return entries.map((e) => {
       if (count.get(e.name) < 2 || !family?.rows.has(e.id)) return e;
       const messages = (e.id === current?.id && current.messages ? current.messages : family.rows.get(e.id).messages) ?? [];
-      const prompt = messages.slice(Math.max(0, messages.length - e.n)).find((m) => m.role === "user" && String(m.text ?? "").trim());
-      return { ...e, label: ordinalName(e.id), excerpt: prompt ? excerptOf(prompt.text) : null };
+      const prompt = messages.slice(Math.max(0, messages.length - e.n)).find((m) => m.role === "user" && promptExcerpt(m));
+      return { ...e, label: ordinalName(e.id), excerpt: prompt ? promptExcerpt(prompt) : null };
     });
   }
 

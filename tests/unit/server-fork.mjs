@@ -4,6 +4,7 @@ import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 import { checkFork } from "../lib/fork-contract.mjs";
+import { excerptOf, fingerprint } from "../../web/outline.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
@@ -32,6 +33,18 @@ export default async function(t) {
         && (m.text ?? "") === (source.messages[i].text ?? "")) &&
       outline.messages.every(m => (m.toolCalls ?? []).every(call => Object.keys(call).join() === "name")) &&
       outline.presents === undefined);
+    // 系譜の照合用の概要（ADR 0333）。本文もツール名も運ばず、指紋と人の発言の抜粋だけ。画面が全文の窓から数える指紋と同じ値になる
+    const digest = await c.cmd("loadSession", { sessionId: id, outline: { digest: true } });
+    t.ok("outline: { digest: true } は指紋と人の発言の抜粋だけを返し、本文・ツール名を運ばない",
+      digest.messages.length === source.messages.length && source.messages.length > 0 &&
+      digest.messages.every((m, i) => {
+        const full = source.messages[i];
+        return m.uuid === full.uuid && m.role === full.role && m.fp === fingerprint(full)
+          && !("text" in m) && !("toolCalls" in m) && !("tools" in m)
+          && (m.role === "user" && String(full.text ?? "").trim() ? m.ex === excerptOf(full.text) : !("ex" in m));
+      }) && digest.messages.some(m => typeof m.ex === "string") && digest.presents === undefined);
+    t.ok("outline: true（古い画面）は digest を頼まなければ今までの形のまま",
+      outline.messages.every(m => !("fp" in m) && !("ex" in m)));
     const rootChild = await c.cmd('fork', { sessionId: id, beforeMessageId: source.messages[0].uuid });
     const emptyHistory = await c.cmd('loadSession', { sessionId: rootChild.sessionId });
     t.ok('first-message fork starts empty', emptyHistory.messages.length === 0 && emptyHistory.presents.length === 0);
