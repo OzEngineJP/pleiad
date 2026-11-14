@@ -5,7 +5,7 @@
 //   - wait は sliceMs で waiting（カードは残る）、signal で aborted。ターンの中で誰にも返していない答えは次の wait が返し、ターンの終わりで捨てる
 //   - ターンの外で戻した・つながった → 「続けてください」が 1 回だけ。busy・断った・中断のときは送らない
 import { readFileSync } from 'node:fs';
-import { createChromeHandoffs, continuationMessageId, HANDOFF_REASONS } from '../../core/chrome/handoff.mjs';
+import { createChromeHandoffs, continuationMessageId, handoffTitleLine, HANDOFF_REASONS } from '../../core/chrome/handoff.mjs';
 import { handToUserResult } from '../../core/browser-bridge.mjs';
 
 export const name = 'chrome-handoff';
@@ -165,7 +165,17 @@ export default async function (t) {
     t.ok('別の会話の依頼は別のカード', r.handoffs.ask('s2', { reason: 'other', message: 'z' }) !== h1 && r.cards.length === 2);
     const long = rig({ connection: 'connected' });
     long.handoffs.ask('s1', { reason: 'nonsense', message: 'a'.repeat(500) });
-    t.ok('知らない reason は other、message は 200 字で切る', long.cards[0].opts.browserHandoff.reason === 'other' && long.cards[0].opts.browserHandoff.message.length === 200);
+    t.ok('知らない reason は other。message は 200 字を超えても切らない', long.cards[0].opts.browserHandoff.reason === 'other' && long.cards[0].opts.browserHandoff.message.length === 500);
+    const steps = ['手順は次のとおりです。', '', '1. 開く', '2. 押す', '', '結び。'].join('\n');
+    const multi = rig({ connection: 'connected' });
+    multi.handoffs.ask('s1', { reason: 'login', message: `  ${steps}\n  ` });
+    t.ok('改行を含む依頼は、前後の空白だけ取って、そのまま台帳に載る', multi.cards[0].opts.browserHandoff.message === steps, JSON.stringify(multi.cards[0].opts.browserHandoff.message));
+    t.ok('題は最初の 1 行だけ（改行ごと全文は入れない）', handoffTitleLine(steps) === '手順は次のとおりです。' && handoffTitleLine('\n\n  先頭の空行は飛ばす\n2 行目') === '先頭の空行は飛ばす');
+    t.ok('題は 80 字まで・切ったら「…」・ちょうど 80 字は切らない', handoffTitleLine('あ'.repeat(81)) === `${'あ'.repeat(80)}…` && handoffTitleLine('あ'.repeat(80)) === 'あ'.repeat(80) && handoffTitleLine(null) === '');
+    const blank = rig({ connection: 'connected' });
+    blank.handoffs.ask('s1', { reason: 'login', message: '   ' });
+    t.ok('空の文・文字でない値は null', blank.cards[0].opts.browserHandoff.message === null);
+    r.handoffs.close(); multi.handoffs.close(); blank.handoffs.close();
     r.handoffs.close(); long.handoffs.close();
   }
   {
@@ -380,6 +390,8 @@ export default async function (t) {
     t.ok('server: 受信箱の行は Chrome の操作待ちを chrome として開く', /chrome: Boolean\(payload\.browserHandoff \|\| payload\.chromeWait\)/.test(server));
     t.ok('server: 端末の人の答え（relay の answer）も、Chrome の操作待ちへの「許可」は HANDOFF_ONLY で断る', /if \(browserHandoff && allow === true\) return 'HANDOFF_ONLY';/.test(server));
     t.ok('server: 端末の「断る」は chromeSkipped の印で子へ返る', /!allow && browserHandoff \? \{ messageKey: 'chromeSkipped' \}/.test(server));
+    t.ok('server: 端末へ中継する chromeWait の message は切らない（400 字の上限を置かない）', /message: typeof bh\?\.message === 'string' \? bh\.message : null/.test(server));
+    t.ok('server: カードの題は handoffTitleLine（最初の 1 行・80 字まで）で作る', /browserHandoff', \{ message: handoffTitleLine\(message\) \}/.test(server));
     t.ok('server: 端末のカード（remoteCards.open）へ chromeWait を渡す', /\.\.\.\(c\.chromeWait \? \{ chromeWait: c\.chromeWait \} : \{\}\)/.test(server));
     t.ok('server: 一般の「許可」では Chrome の操作待ちを進めない（allow:true は HANDOFF_ONLY で断る）', /browserHandoff && allow === true\) return reply\(false, t\('approval\.browserHandoffAllow'\), 'HANDOFF_ONLY'\)/.test(server));
     t.ok('server: ターンの始まり・終わりで turnChanged、会話の削除で forget', /chromeHandoffs\?\.turnChanged\([^)]*true\)/.test(server) && /chromeHandoffs\?\.turnChanged\([^)]*false\)/.test(server) && /chromeHandoffs\?\.forget\(/.test(server));

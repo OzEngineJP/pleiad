@@ -12,21 +12,23 @@ const el = (tag, cls = null, value = '') => ({ tag, className: cls, textContent:
 const words = { 'chat.browserHandoff.operating': 'あなたが操作中', 'control:openScreen': '画面を開く', 'chat.browserHandoff.operate': 'Chrome で操作する',
   'tabs:display.resume': 'AI に戻す', 'chat.browserHandoff.returnHint': '終わったら「AI に戻す」を押してください' };
 const t = key => words[key] ?? key;
-const texts = view => view.body.children.map(child => child.textContent);
-const message = view => view.body.children.find(child => child.className === 'bh-message');
+// 依頼の文は renderMarkdown の HTML を innerHTML に入れる（この偽の el は DOM を持たないので、タグを除いた字で比べる）
+const plain = node => node?.innerHTML?.replace(/<[^>]+>/g, '');
+const texts = view => view.body.children.map(child => child.innerHTML === undefined ? child.textContent : plain(child));
+const message = view => view.body.children.find(child => child.className === 'body bh-message');
 const hint = view => view.body.children.find(child => child.className === 'browser-setting-note');
 
 export default async function (t_) {
   const commands = [], opened = [];
   const view = browserHandoffView({ id: 'card', sessionId: 's', browserHandoff: { reason: 'other', state: 'asked', message: '同意のチェックを入れて「アプリを作成」を押してください', dialog: false } },
     { el, t, cmd: async (name, args) => { commands.push([name, args]); }, openScreen: id => opened.push(id) });
-  t_.ok('お願いの段階では本文を出す', message(view)?.textContent === '同意のチェックを入れて「アプリを作成」を押してください', JSON.stringify(texts(view)));
+  t_.ok('お願いの段階では本文を出す', plain(message(view)) === '同意のチェックを入れて「アプリを作成」を押してください', JSON.stringify(texts(view)));
 
   await view.buttons.at(-1).onclick();
   // サーバーの差し替えの便りは変わった項目だけを運ぶ（handoff.mjs の patch）。本文はその前の値のまま残る
   view.update({ state: 'operating', by: 'pc', windowTitle: 'アプリを作成 - Google Cloud' });
-  t_.ok('引き継いだあと（あなたが操作中）も本文が消えない', message(view)?.textContent === '同意のチェックを入れて「アプリを作成」を押してください', JSON.stringify(texts(view)));
-  t_.ok('操作中は「あなたが操作中」・本文・戻す案内・窓の題だけ（自動で戻る文は出さない）', texts(view).join('|') === `あなたが操作中|${message(view).textContent}|終わったら「AI に戻す」を押してください|アプリを作成 - Google Cloud`, JSON.stringify(texts(view)));
+  t_.ok('引き継いだあと（あなたが操作中）も本文が消えない', plain(message(view)) === '同意のチェックを入れて「アプリを作成」を押してください', JSON.stringify(texts(view)));
+  t_.ok('操作中は「あなたが操作中」・本文・戻す案内・窓の題だけ（自動で戻る文は出さない）', texts(view).join('|') === `あなたが操作中|${plain(message(view))}|終わったら「AI に戻す」を押してください|アプリを作成 - Google Cloud`, JSON.stringify(texts(view)));
   t_.ok('案内は「終わったら『AI に戻す』を押してください」（秒で自動で戻るとは言わない）', hint(view)?.textContent === '終わったら「AI に戻す」を押してください', hint(view)?.textContent);
   t_.ok('ボタンは「画面を開く」（控えめ）と「AI に戻す」（主ボタン）', view.buttons.length === 2 && view.buttons[0].textContent === '画面を開く' && view.buttons[0].className === 'btn btn-quiet' && view.buttons[1].textContent === 'AI に戻す' && view.buttons[1].className === 'btn btn-primary', JSON.stringify(view.buttons.map(b => [b.textContent, b.className])));
   const sent = commands.length;
@@ -42,7 +44,7 @@ export default async function (t_) {
   // 端末で操作している間も同じ
   const device = browserHandoffView({ id: 'card2', sessionId: 's', browserHandoff: { reason: 'login', state: 'asked', message: 'ログインしてください' } }, { el, t, cmd: async () => {} });
   device.update({ state: 'operating', by: 'device' });
-  t_.ok('別の端末で操作している間も本文が消えない', message(device)?.textContent === 'ログインしてください', JSON.stringify(texts(device)));
+  t_.ok('別の端末で操作している間も本文が消えない', plain(message(device)) === 'ログインしてください', JSON.stringify(texts(device)));
   t_.ok('別の端末でも「AI に戻す」を出す', device.buttons.length === 1 && device.buttons[0].textContent === 'AI に戻す', JSON.stringify(device.buttons.map(b => b.textContent)));
 
   // 子の会話のカード（targetSessionId）にはその会話へ戻す命令を送る
@@ -54,6 +56,22 @@ export default async function (t_) {
   const bare = browserHandoffView({ id: 'card3', sessionId: 's', browserHandoff: { reason: 'captcha', state: 'asked', message: null } }, { el, t, cmd: async () => {} });
   bare.update({ state: 'operating', by: 'pc' });
   t_.ok('本文が無い依頼は、操作中に空の行を足さない', !message(bare) && texts(bare).join('|') === 'あなたが操作中|終わったら「AI に戻す」を押してください', JSON.stringify(texts(bare)));
+
+  // 頼んだ状態: 見出しと同じ太字の行は本文に出さず、依頼の文だけを出す。長い文も欠けず、会話の返答と同じ Markdown で描く（docs/design-system.md §4.5）
+  const steps = ['ログインの手順は次のとおりです。', '', '1. example.com を開く', '2. **ユーザー名**を入れる', '3. 「ログイン」を押す', '', '- 終わったら戻す', '', '結びの段落。'].join('\n');
+  const long = `${'あ'.repeat(600)}\n\n${steps}`;
+  const rich = browserHandoffView({ id: 'r', sessionId: 's', browserHandoff: { reason: 'login', state: 'asked', message: long } }, { el, t, cmd: async () => {} });
+  t_.ok('頼んだ状態は本文だけ（見出しと同じ太字の行 .bh-lead は出さない）', rich.body.children.length === 1 && rich.body.children[0].className === 'body bh-message', JSON.stringify(rich.body.children.map(c => c.className)));
+  const html = message(rich).innerHTML;
+  t_.ok('200 字・400 字を超える依頼も欠けずに出る', html.includes('あ'.repeat(600)) && html.includes('結びの段落。'));
+  t_.ok('番号付きリスト・箇条書き・太字・段落が会話の返答と同じ描画（renderMarkdown）で出る', /<ol[ >]/.test(html) && (html.match(/<li/g) || []).length === 4 && /<ul[ >]/.test(html) && /<(strong|b)>ユーザー名<\/(strong|b)>/.test(html) && (html.match(/<p>/g) || []).length >= 3, html);
+  t_.ok('畳みの部品は付けない', !/fold/.test(html));
+  const opLong = browserHandoffView({ id: 'r2', sessionId: 's', browserHandoff: { reason: 'login', state: 'operating', by: 'pc', message: steps } }, { el, t, cmd: async () => {} });
+  t_.ok('「あなたが操作中」の状態も同じ描画で、状態の行は残す', opLong.body.children[0].textContent === 'あなたが操作中' && /<ol[ >]/.test(message(opLong).innerHTML));
+  // 危ない入力は無害のまま
+  const bad = browserHandoffView({ id: 'r3', sessionId: 's', browserHandoff: { reason: 'login', state: 'asked', message: '<script>alert(1)</script>\n\n[押す](javascript:alert(2)) と [ok](https://example.com/)' } }, { el, t, cmd: async () => {} });
+  const badHtml = message(bad).innerHTML;
+  t_.ok('<script> は字として出て実行されない・javascript: のリンクは作られない', !/<script/i.test(badHtml) && badHtml.includes('&lt;script&gt;') && !/href="javascript:/i.test(badHtml) && /href="https:\/\/example\.com\/"/.test(badHtml), badHtml);
 
   // 見出しの「…からの依頼」は、頼んだエージェントの表示名（辞書に Claude を直書きしない。右の欄の映像の行と同じ名前の引き方）
   const dict = lang => JSON.parse(readFileSync(new URL(`../../web/locales/${lang}/ui.json`, import.meta.url), 'utf8')).chat.browserHandoff;
@@ -69,7 +87,7 @@ export default async function (t_) {
     { el, t: tr, cmd: async () => {}, agentName: names });
   const looked = [];
   const fake = asked(sid => { looked.push(sid); return 'Fake'; });
-  t_.ok('Claude 以外のエージェントでも、見出しとリードがそのエージェントの表示名になる', fake.summary() === 'Fake からの依頼 · ログイン' && texts(fake)[0] === 'Fake からの依頼 · ログイン' && !fake.summary().includes('Claude'), JSON.stringify([fake.summary(), texts(fake)]));
+  t_.ok('Claude 以外のエージェントでも、見出しがそのエージェントの表示名になる', fake.summary() === 'Fake からの依頼 · ログイン' && !fake.summary().includes('Claude'), fake.summary());
   t_.ok('Claude では今までどおり「Claude からの依頼」', asked(() => 'Claude').summary() === 'Claude からの依頼 · ログイン');
   asked(sid => `name-of-${sid}`, null, { targetSessionId: 'child' });
   const byChild = asked(sid => `name-of-${sid}`, null, { targetSessionId: 'child' });
@@ -81,7 +99,7 @@ export default async function (t_) {
   // サーバーが依頼に載せた表示名（h.agent）が先。子の会話が一覧に無くても、親のエージェントの名前に化けない
   const carried = browserHandoffView({ id: 'c', sessionId: 'parent', targetSessionId: 'child', browserHandoff: { reason: 'login', state: 'asked', message: null, agent: 'Codex' } },
     { el, t: tr, cmd: async () => {}, agentName: () => 'Claude' });
-  t_.ok('依頼に載った表示名（h.agent）を先に使う', carried.summary() === 'Codex からの依頼 · ログイン' && texts(carried)[0] === 'Codex からの依頼 · ログイン', carried.summary());
+  t_.ok('依頼に載った表示名（h.agent）を先に使う', carried.summary() === 'Codex からの依頼 · ログイン', carried.summary());
 
   // 実物の chromeAgentName（web/client.mjs）を、一覧が子を含まない・エージェントの一覧が後から届く状態で通す
   const clientSrc = readWeb('client.mjs');
@@ -94,12 +112,12 @@ ${cutFunction(clientSrc, 'chromeAgentName')}`, sandbox);
   const early = asked(real, null, { targetSessionId: 'child' });
   t_.ok('未着のうちの見出しは辞書の既定名', early.summary() === 'AI からの依頼 · ログイン', early.summary());
   const waiting = asked(real, null, { targetSessionId: 'listed' });
-  t_.ok('未着のうちに作ったカードは既定名', waiting.summary() === 'AI からの依頼 · ログイン' && texts(waiting)[0] === 'AI からの依頼 · ログイン');
+  t_.ok('未着のうちに作ったカードは既定名', waiting.summary() === 'AI からの依頼 · ログイン');
   sandbox.state.backends = [{ id: 'claude', label: 'Claude' }, { id: 'codex', label: 'Codex' }];
   t_.ok('一覧が届けば、親の会話と一覧にある別の会話はそれぞれのエージェントの名前', real('parent') === 'Claude' && real('listed') === 'Codex', JSON.stringify([real('parent'), real('listed')]));
   t_.ok('一覧に無い子の会話は、親のエージェントの名前で代用しない', real('child') === '', real('child'));
   waiting.refresh();
-  t_.ok('名前が分かった後は、未着の間に作ったカードの見出しと本文が引き直して正しくなる', waiting.summary() === 'Codex からの依頼 · ログイン' && texts(waiting)[0] === 'Codex からの依頼 · ログイン', JSON.stringify([waiting.summary(), texts(waiting)]));
+  t_.ok('名前が分かった後は、未着の間に作ったカードの見出しが引き直して正しくなる', waiting.summary() === 'Codex からの依頼 · ログイン', waiting.summary());
   t_.ok('一覧に無い子のカードは既定名のまま（親の名前にならない）', early.summary() === 'AI からの依頼 · ログイン');
   const late = asked(real, null, { targetSessionId: 'listed' });
   t_.ok('子が一覧に載れば、見出しがその子のエージェントになる', late.summary() === 'Codex からの依頼 · ログイン', late.summary());

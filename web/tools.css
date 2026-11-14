@@ -394,6 +394,8 @@ dialog.tc-shot-dlg::backdrop{background:var(--surface-veil)}
 .card>.bh-body{min-width:0;padding:2px 16px 4px;font-size:var(--fs-s)}
 .bh-body>.bh-lead{color:var(--ink-strong);font-weight:600;font-size:var(--fs)}
 .bh-body .browser-setting-note{margin:4px 0 0;color:var(--ink-weak)}
+/* 頼まれた文は会話の AI の返答と同じ Markdown（.body の描画）。字も本文と同じ 14px（docs/design-system.md §4.5） */
+.bh-body>.bh-message{margin:2px 0 4px;font-size:var(--fs);line-height:var(--lh);color:var(--ink)}
 .bh-body>.cu-ap{padding:0}
 .bh-steps{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
 .bh-steps li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;align-items:start}

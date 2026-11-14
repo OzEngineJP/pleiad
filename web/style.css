@@ -1246,6 +1246,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .card.done .card-head{padding:8px 16px}
 .card .code-block{margin:4px 12px 0;border-radius:var(--r-s);max-height:200px;overflow:auto}
 .card .code-block pre{padding:10px 16px}
+.card :is(.bh-message,.cw-message) .code-block{margin:.4em 0}
 .card-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end;padding:10px 12px 10px 16px;flex-wrap:wrap}
 .card-actions .res{margin-right:auto;font-size:var(--fs-s);color:var(--ink-weak)}
 .card.done{opacity:.55}
@@ -2567,8 +2568,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .cw-steps li{display:flex;gap:10px;align-items:flex-start}
 .cw-steps .n{display:grid;place-items:center;width:20px;height:20px;margin-top:1px;border-radius:50%;background:var(--surface-2);font-size:var(--fs-xs);font-weight:600;flex:none}
 .cw-addr{font:var(--fs-s) var(--font-mono);background:var(--surface-2);border-radius:var(--r-s);padding:1px 6px;overflow-wrap:anywhere}
-.cw-note,.cw-message{margin:4px 0 0;font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
-.cw-message{color:var(--ink)}
+.cw-note{margin:4px 0 0;font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
+/* 頼まれた文は会話の AI の返答と同じ Markdown（.body の描画）。字も本文と同じ 14px。コードの枠は本文の幅に合わせる（§4.5） */
+.cw-message{margin:4px 0 0;font-size:var(--fs);line-height:var(--lh);color:var(--ink)}
 .card-actions .res.cw-live:empty{display:none}
 .cw-card.relay-offline .cw-lead,.cw-card.relay-offline .cw-steps{opacity:.6}
 @media (max-width:480px){.cw-card .card-actions .res.cw-live{flex-basis:100%}}

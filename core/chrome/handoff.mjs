@@ -19,7 +19,6 @@
 import crypto from 'node:crypto';
 
 export const HANDOFF_REASONS = ['login', 'captcha', 'two_factor', 'payment', 'other'];
-const MESSAGE_MAX = 200;
 const CONNECT_STATES = new Set(['setup', 'consent', 'permission', 'denied']);
 
 /** 「続けてください」の送信の id。カードの id から決まる UUID の形の値（同じ id・同じ引数の outbox.accept は 1 件にまとまる） */
@@ -28,8 +27,15 @@ export function continuationMessageId(cardId) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+/** 依頼の文からカードの題に使う分: 最初の空でない 1 行の 80 字まで。切ったら「…」（改行ごと全文は入れない。docs/design-system.md §4.5） */
+export const handoffTitleLine = message => {
+  const first = String(message ?? '').split(/\r?\n/).map(s => s.trim()).find(Boolean) ?? '';
+  const chars = Array.from(first);
+  return chars.length > 80 ? `${chars.slice(0, 80).join('')}…` : first;
+};
+
 const cleanMessage = value => {
-  const text = typeof value === 'string' ? value.trim().slice(0, MESSAGE_MAX) : '';
+  const text = typeof value === 'string' ? value.trim() : '';
   return text || null;
 };
 
