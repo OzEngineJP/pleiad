@@ -24,6 +24,8 @@ import { createShots as createComputerShots } from './computer-use/shots.mjs';
 import { parentPortComputer, fakeComputerDriver } from './computer-use/driver.mjs';
 import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync, statSync } from 'node:fs';
+import { gzip as gzipCallback } from 'node:zlib';
+import { promisify } from 'node:util';
 import { DIFFICULTIES, SIGNALS, kindOrder, levelOrder, kindAt, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, JUDGE_USE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor, createUsageWarm } from './delegation-usage.mjs';
@@ -448,7 +450,9 @@ import { createPageWatch } from './page-watch.mjs';
 import { PAGES_PATH, pageRequestOk, pagesCookie } from './page-auth.mjs';
 import { COMMON_HEADERS, sendStatus } from './page-listener.mjs';
 
-const PORT = Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
+// /tool-input の返事（数 MiB の入力）を縮める
+const gzipAsync = promisify(gzipCallback);
+const PORT =Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
 const HOST = BOOT_ENV.AGENT_HOST_BIND ?? "127.0.0.1";
 const TOKEN = BOOT_ENV.AGENT_HOST_TOKEN ?? crypto.randomBytes(16).toString("hex");
 
@@ -2705,6 +2709,32 @@ const server = http.createServer(async (req, res) => {
       }
       const buf = Buffer.from(found, 'utf8');
       res.writeHead(200, { ...safe, 'content-type':'text/plain; charset=utf-8', 'content-length':buf.length });
+      return res.end(req.method === 'HEAD' ? undefined : buf);
+    }
+    // ツール呼び出しの入力（input）の全文を 1 件ずつ返す（ADR 0335）。loadSession は入力の大きい文字列を頭だけにして運び（lazyInput の印）、
+    // 画面は行を開いたときだけここから全文を取る。呼び出しの id と、入力の署名（inputSig）の両方が合うものだけを返す。
+    // 入力は記録に追記されるだけで変わらず、署名が URL に入っているので、(sessionId, id, sig) ごとに長く覚えさせてよい。JSON で返し、画面の外では実行されない形（nosniff・sandbox）にする
+    if (url.pathname === '/tool-input') {
+      const sessionId = url.searchParams.get('sessionId'), id = url.searchParams.get('id'), sigRaw = url.searchParams.get('sig');
+      const sig = sigRaw !== null && /^\d{1,16}$/.test(sigRaw) ? Number(sigRaw) : null;
+      const valid = Boolean(sessionId) && Boolean(id) && id.length <= 512 && sig !== null;
+      let found = null;
+      if (valid) {
+        const turn = runtime.turns.get(sessionId);
+        // 走っているターンの、まだ記録に載っていない呼び出し（畳んだ発言。loadSession の窓の発言と同じ並び）
+        const extra = turn ? [...turn.stream.messages, ...liveSnapshot(turn.stream, { backend: turn.backend?.id ?? null, model: turn.info?.model || null }).messages] : [];
+        found = await history.findToolInput(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, sig, extra }).catch(() => null);
+      }
+      if (found === null) {
+        res.writeHead(valid ? 404 : 400, { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
+        return res.end('not found');
+      }
+      let buf = Buffer.from(JSON.stringify(found), 'utf8');
+      const headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, max-age=31536000, immutable', 'x-content-type-options':'nosniff',
+        'content-security-policy':"sandbox; default-src 'none'", vary:'Accept-Encoding' };
+      // 数 MiB の文字列は縮むので、受け手が gzip を受けるなら縮めて返す（中継越しの画面に効く。core/bulk-replies.mjs と同じ）
+      if (/\bgzip\b/i.test(String(req.headers['accept-encoding'] ?? ''))) { buf = await gzipAsync(buf, { level: 6 }); headers['content-encoding'] = 'gzip'; }
+      res.writeHead(200, { ...headers, 'content-length':buf.length });
       return res.end(req.method === 'HEAD' ? undefined : buf);
     }
     // PDF.js is loaded only when a PDF is opened. Expose its browser assets,
@@ -10259,6 +10289,8 @@ wss.on("connection", (ws, req) => {
               if (!subagentToolNames.has(key)) subagentToolNames.set(key, subagentToolSet(getBackend(key)?.subagentTools));
               return subagentToolNames.get(key);
             };
+            // 入力を頭だけにして運ぶとき（lazyInput。ADR 0335）、編集・書き込みの量の種類は発言を出したエージェントの申告（toolHints の shape）で決める
+            const toolHintsOf = (id) => getBackend(id ?? backend?.id ?? "")?.toolHints;
             // A later completion cannot be acknowledged by an older history snapshot.
             const sidecar = await timing.run('sidecar', () => store.get(sessionId));
             // 確実な旧内部会話は通常の読み出しに返さない（Issue #180。ネイティブ id の直接指定でも同じ境界）
@@ -10311,9 +10343,9 @@ wss.on("connection", (ws, req) => {
             };
             if (msg.args?.older && read.turn && !msg.args?.live) {
               const { messages, presents } = liveBody(read.turn);
-              return loadReply(true, serve({ messages, presents }, msg.args, subagentToolsOf));
+              return loadReply(true, serve({ messages, presents }, msg.args, subagentToolsOf, toolHintsOf));
             }
-            if (!msg.args?.live) return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf));
+            if (!msg.args?.live) return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf, toolHintsOf));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -10327,9 +10359,9 @@ wss.on("connection", (ws, req) => {
                 messages, presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events }, streamCursor: streamSequence, permissions,
                 initialMessageId: turn.stream.initialMessageId,
-              }, msg.args, subagentToolsOf));
+              }, msg.args, subagentToolsOf, toolHintsOf));
             }
-            return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf));
+            return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf, toolHintsOf));
           } finally {
             liveReads.delete(read);
             timing.finish(msg.args?.outline ? 'outline' : msg.args?.older ? 'older' : msg.args?.live ? 'live' : 'open');

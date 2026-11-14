@@ -25,6 +25,8 @@ import { parseStructure, codeRoles, listClass, markerExtra, lineIndent, nestDept
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark, unverifiedText, unverifiedMark, unverifiedOpenLink } from './computer-use.mjs';
 import { resetDateText } from './plus-key-row.mjs';
 import { FILE_KEYS } from './file-keys.mjs';
+import { lineCount, diffLines, changeOf } from './tool-change.mjs';
+import { isLazyInput, fetchToolInput } from './tool-input-lazy.mjs';
 
 // ---------------------------------------------------------------- エスケープ
 
@@ -728,7 +730,6 @@ function shortPath(p, keep = 2) {
   return parts.length <= keep ? s : `…${separator}${parts.slice(-keep).join(separator)}`;
 }
 
-const lineCount = (s) => (String(s ?? "") ? String(s).split("\n").length : 0);
 const fmtN = (n) => fmt.number(n);
 
 /** JSON にして返す。循環などで壊れても表示は止めない */
@@ -828,18 +829,6 @@ function foldCode(summary, body, lang, open) {
 
 const DIFF_MAX = 30; // 片側あたりの表示行数。これを超えたら残数だけ出す
 
-/** 行単位。前後の一致部分を落として、変わったところだけ残す */
-function diffLines(oldS, newS) {
-  const a = String(oldS ?? "").split("\n");
-  const b = String(newS ?? "").split("\n");
-  let pre = 0;
-  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
-  let post = 0;
-  while (post < a.length - pre && post < b.length - pre &&
-         a[a.length - 1 - post] === b[b.length - 1 - post]) post++;
-  return { del: a.slice(pre, a.length - post), add: b.slice(pre, b.length - post) };
-}
-
 /** 記号の列（+ / −）と面の階調だけで見せる差分の枠。色は付けない（docs/design-system.md §2.2） */
 function diffBox(oldS, newS) {
   const { del, add } = diffLines(oldS, newS);
@@ -874,24 +863,7 @@ export function toolChange(name, input) {
   const kind = raw === "MultiEdit" || draw === drawMultiEdit ? "multi"
     : raw === "Write" || draw === drawWrite ? "write"
     : raw === "Edit" || raw === "NotebookEdit" || draw === drawEdit ? "edit" : null;
-  if (!kind) return null;
-  const path = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v);
-  if (!path) {
-    // Codex の fileChange は変更したパスの一覧だけを持つ（量は分からないので 0。数えるのはファイルの数だけ）
-    const paths = Array.isArray(inp.files) ? inp.files.filter((p) => typeof p === "string" && p) : [];
-    return paths.length ? { path: paths[0], paths, del: 0, add: 0 } : null;
-  }
-  if (kind === "write") return { path, del: 0, add: lineCount(inp.content ?? inp.CodeContent) };
-  if (kind === "edit") {
-    const { del, add } = diffLines(inp.old_string ?? inp.TargetContent, inp.new_string ?? inp.ReplacementContent);
-    return { path, del: del.length, add: add.length };
-  }
-  let del = 0, add = 0;
-  for (const e of Array.isArray(inp.edits) ? inp.edits : []) {
-    const d = diffLines(e?.old_string, e?.new_string);
-    del += d.del.length; add += d.add.length;
-  }
-  return { path, del, add };
+  return changeOf(kind, inp);   // 計算はサーバーと共通（web/tool-change.mjs）
 }
 
 // ------------------------------------------------------------ ツール別の描画
@@ -1406,10 +1378,12 @@ function updateWhen(card) {
  * 開いた中身は「主面 ⇄ 入力」の 2 枚のタブ（1 面だけのツールはタブなし）。
  * @param {string} name ツール名（モデル由来。信用しない）
  * @param {object} input ツール入力（同上）
- * @param {{id?:string, open?:boolean, compact?:boolean, at?:number|string, startedAt?:number|string, endAt?:number|string}} [opts]
+ * @param {{id?:string, open?:boolean, compact?:boolean, at?:number|string, startedAt?:number|string, endAt?:number|string, lazyInput?:object}} [opts]
  *        id: tool_use_id を data 属性に持たせる（後から結果を突き合わせるため）
  *        open: 折りたたみを開いた状態で作る / compact: 余白を詰める
  *        at・startedAt: 始まりの時刻（サーバーの時計か ISO）/ endAt: 終わりの時刻
+ *        lazyInput: input が頭だけのとき（ADR 0335）の { sessionId, id, sig, size?, change? }（web/tool-input-lazy.mjs の lazyInputOf）。
+ *          行は頭だけの input で描き、開かれたら全文を取って開いた中身を描き直す。change は行の右端の量をサーバーが全文から数えたもの
  * @returns {HTMLElement}
  */
 export function renderToolCall(name, input, opts) {
@@ -1446,12 +1420,13 @@ export function renderToolCall(name, input, opts) {
   // 描き分け。対象がファイルのツールは、バックエンドごとに違うパスのキーを file_path に揃えて渡す
   // （押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
   const draw = TOOL_DRAW[raw] ?? (computer ? drawComputer : raw.startsWith("mcp__") ? drawMcp : drawUnknown);
-  let drawInp = inp;
-  if (FILE_DRAWS.has(draw) && !inp.file_path) {
-    const target = FILE_KEYS.map((k) => inp[k]).find((v) => typeof v === "string" && v)
-      ?? (Array.isArray(inp.files) ? inp.files.find((p) => typeof p === "string" && p) : null);
-    if (target) drawInp = { ...inp, file_path: target };
-  }
+  const drawInputOf = (source) => {
+    const given = source && typeof source === "object" && !Array.isArray(source) ? source : {};
+    if (!FILE_DRAWS.has(draw) || given.file_path) return given;
+    const target = FILE_KEYS.map((k) => given[k]).find((v) => typeof v === "string" && v)
+      ?? (Array.isArray(given.files) ? given.files.find((p) => typeof p === "string" && p) : null);
+    return target ? { ...given, file_path: target } : given;
+  };
 
   const runKind = draw === drawRead ? "read" : draw === drawGrep || draw === drawGlob ? "search"
     : draw === drawWebFetch || draw === drawWebSearch ? "search" : draw === drawEdit || draw === drawWrite ? "write" : "run";
@@ -1461,41 +1436,86 @@ export function renderToolCall(name, input, opts) {
   line.append(tic(face.icon));
   line.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (computer ? computerVerb(raw) : raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
 
-  // 開いた中身: 主面（.tc-pane-main）＋「入力」の面（.tc-pane-input）。1 面だけのツールはタブを出さない
-  const paneMain = el("div", "tc-pane tc-pane-main on");
-  paneMain.setAttribute("role", "tabpanel");
-  if (face.tab) {
-    const paneInput = el("div", "tc-pane tc-pane-input");
-    paneInput.setAttribute("role", "tabpanel");
-    paneMain.tcInputPane = paneInput;
-    const tabs = el("div", "seg tc-tabs");
-    tabs.setAttribute("role", "tablist");
-    tabs.setAttribute("aria-label", t("timeline.tool.content"));
-    const bMain = tabButton(t(`timeline.tool.tab.${face.tab}`), face.icon);
-    const bInput = tabButton(t("timeline.tool.tab.input"), "arrow");
-    tabs.append(bMain, bInput);
-    wireTabs(tabs, [bMain, bInput], [paneMain, paneInput], () => { card.toolPaneChosen = true; });
-    body.append(tabs, paneMain, paneInput);
-    // 「入力」の面: キーと値の格子 ＋ 生の入力 JSON の折りたたみ（コンピューター操作は題を除く）
-    const kvInp = draw === drawComputer
-      ? Object.fromEntries(Object.entries(drawInp).filter(([k]) => k !== "title")) : drawInp;
-    fillInputPane(paneInput, kvInp, raw);
-  } else {
-    body.append(paneMain);
-  }
+  // 開いた中身: 主面（.tc-pane-main）＋「入力」の面（.tc-pane-input）。1 面だけのツールはタブを出さない。
+  // 入力が印（lazyInput）のときは、頭だけの入力で 1 度描き、行が開かれたら全文を取って同じ関数で body を描き直す（下の fillLazy）。
+  // target は 1 行目の面（描き直すときは捨てる行を渡す。行そのものは頭だけの入力で描いたまま変えない）
+  const fillBody = (source, target) => {
+    const dInp = drawInputOf(source);
+    const paneMain = el("div", "tc-pane tc-pane-main on");
+    paneMain.setAttribute("role", "tabpanel");
+    if (face.tab) {
+      const paneInput = el("div", "tc-pane tc-pane-input");
+      paneInput.setAttribute("role", "tabpanel");
+      paneMain.tcInputPane = paneInput;
+      const tabs = el("div", "seg tc-tabs");
+      tabs.setAttribute("role", "tablist");
+      tabs.setAttribute("aria-label", t("timeline.tool.content"));
+      const bMain = tabButton(t(`timeline.tool.tab.${face.tab}`), face.icon);
+      const bInput = tabButton(t("timeline.tool.tab.input"), "arrow");
+      tabs.append(bMain, bInput);
+      wireTabs(tabs, [bMain, bInput], [paneMain, paneInput], () => { card.toolPaneChosen = true; });
+      body.append(tabs, paneMain, paneInput);
+      // 「入力」の面: キーと値の格子 ＋ 生の入力 JSON の折りたたみ（コンピューター操作は題を除く）
+      const kvInp = draw === drawComputer
+        ? Object.fromEntries(Object.entries(dInp).filter(([k]) => k !== "title")) : dInp;
+      fillInputPane(paneInput, kvInp, raw);
+    } else {
+      body.append(paneMain);
+    }
 
-  draw(paneMain, line, drawInp, raw);
-  // 1 面だけのツール（TODO）はタブを出さず、描いた中身の後ろに生の JSON の小さな折りたたみを残す
-  if (!face.tab) paneMain.append(rawJsonFold(drawInp));
-  // 主面が空なら「入力」を既定にする（差分・一覧が主面に入ったツールは主タブが既定）
-  card.toolHasInputContent = Boolean(paneMain.querySelector(".tc-diff, .tc-todo, .tc-batch"));
-  selectPane(card, card.toolHasInputContent ? "main" : "input");
+    draw(paneMain, target, dInp, raw);
+    // 1 面だけのツール（TODO）はタブを出さず、描いた中身の後ろに生の JSON の小さな折りたたみを残す
+    if (!face.tab) paneMain.append(rawJsonFold(dInp));
+    // 主面が空なら「入力」を既定にする（差分・一覧が主面に入ったツールは主タブが既定）
+    card.toolHasInputContent = Boolean(paneMain.querySelector(".tc-diff, .tc-todo, .tc-batch"));
+    selectPane(card, card.toolHasInputContent ? "main" : "input");
 
-  card.toolChange = toolChange(raw, drawInp);
-  if (draw === drawShell) {
-    card.shellCommand = String(drawInp.command ?? "");
-    card.shellPrompt = raw === "PowerShell" ? "PS> " : "$ ";
-    paneMain.append(termView(card.shellCommand, card.shellPrompt, "", null, true));
+    card.toolChange = toolChange(raw, dInp);
+    if (draw === drawShell) {
+      card.shellCommand = String(dInp.command ?? "");
+      card.shellPrompt = raw === "PowerShell" ? "PS> " : "$ ";
+      paneMain.append(termView(card.shellCommand, card.shellPrompt, "", null, true));
+    }
+  };
+  fillBody(inp, line);
+
+  // 入力の大きい中身が印のとき: 行の右端の量（−N +M）はサーバーが全文から数えて印に添えている。閉じた見た目は頭だけの入力で足りる
+  const lazy = isLazyInput(o.lazyInput) ? o.lazyInput : null;
+  if (lazy) {
+    if ("change" in lazy) card.toolChange = lazy.change ?? null;
+    card.toolInputLazy = true;
+    let state = "idle";   // idle（まだ）| loading | done
+    const fillLazy = () => {
+      if (state !== "idle") return;
+      state = "loading";
+      body.querySelector(":scope > .tc-lazy-note")?.remove();   // 前に失敗した印が残っていれば外す
+      card.classList.add("tc-lazy-loading");
+      const note = el("div", "tc-lazy-note", t("timeline.tool.inputLoading"));
+      note.setAttribute("role", "status");
+      body.prepend(note);
+      fetchToolInput(lazy).then((full) => {
+        // 描き直す前に、いま開いている面を覚える（取っている間に人が切り替えたかもしれない）
+        const onInput = Boolean(body.querySelector(".tc-pane-input.on"));
+        body.replaceChildren();
+        fillBody(full, el("span"));
+        if (card.toolPaneChosen) selectPane(card, onInput ? "input" : "main");
+        // 結果は描き直した body の外に残っていない（出力・端末面は body の中）。覚えている結果を積み直す
+        if (card.toolResult !== undefined) applyToolResult(card, card.toolResult);
+        card.toolInputLazy = false;
+        card.classList.remove("tc-lazy-loading");
+        state = "done";
+      }).catch(() => {
+        state = "idle";
+        card.classList.remove("tc-lazy-loading");
+        const retry = el("button", "btn btn-quiet", t("timeline.tool.inputRetry"));
+        retry.type = "button";
+        retry.onclick = (e) => { e.preventDefault(); e.stopPropagation(); note.remove(); fillLazy(); };
+        note.replaceChildren(el("span", null, t("timeline.tool.inputFailed")), retry);
+        note.setAttribute("role", "alert");
+      });
+    };
+    details.addEventListener("toggle", () => { if (details.open) fillLazy(); });
+    if (o.open) fillLazy();
   }
 
   // 右端: 結果（走っている間は弧と経過秒。web/tool-bundle.mjs）。時刻のボタン。開閉の印
@@ -1598,6 +1618,8 @@ function decorateComputerRow(node, head, resEl, info, result) {
 export function applyToolResult(node, result) {
   if (!node || typeof node.querySelector !== "function") return node;
 
+  // 入力の全文を取り直して開いた中身を描き直すとき（renderToolCall の fillLazy）に、積み直せるよう結果を覚える
+  node.toolResult = result;
   node.restoreToolRow?.();
   if (node.querySelector(".tc-details")?.open) node.toolPaneChosen = true;
   // 呼び直されても二重に付かないよう、前回の結果を落としてから積む

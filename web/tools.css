@@ -153,6 +153,11 @@
 .tc-add .g{color:var(--ink-blue);font-weight:700}
 .tc-diff-more{color:var(--ink-weak)}
 
+/* ---- 大きい入力の全文を取りに行く間の一言（ADR 0335）。行を開いたときだけ、中の先頭に出る ---- */
+
+.tc-lazy-note{display:flex;align-items:center;gap:8px;margin:0 0 6px;color:var(--ink-weak);font-size:var(--fs-s)}
+.tc-lazy-note .btn{padding:0 8px}
+
 /* ---- TodoWrite ---- */
 
 .tc-todo{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-s)}

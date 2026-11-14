@@ -696,12 +696,17 @@ const SUITES = [
   './unit/conversation-view-child.mjs',
   // 作業のダイアログの子の実例への出来事の振り分け（ADR 0319 段 6-6）: 主が同じ会話なら主・別の会話と閉じたあとは描かない・読み込み中は取り置く
   './unit/modal-child-routing.mjs',
+  // 子の実例の履歴の読み方を主にそろえる（ADR 0319 段 6-6 の追補）: 差分の読み直し・bulk と出来事の順序・画面外の行を省く・目次の onOpen・閉じた実例は読み足さない
+  './unit/child-modal-history-read.mjs',
   // loadSession の差分（ADR 0062）: 合うときだけ続きを返す・つないだ結果は全量と同じ・合わなければ全量・画面の頼み方
   './unit/history-sync.mjs',
   './unit/server-history-diff.mjs',
   // 会話を開く速さ (ADR 0182): 末尾の窓だけ運ぶ・大きい提示の本文は印（/present-body で取る）・遡りでつなぐと全量と同じ・手前を後から足す描き方（vm）
   './unit/history-window.mjs',
   './unit/server-history-window.mjs',
+  // ツール呼び出しの入力（input）の大きい文字列も、窓では頭だけの印にして運ぶ (ADR 0335): 印の形・古い頼みは全文・差分と遡りの署名・開いたら /tool-input で全文
+  './unit/tool-input-lazy.mjs',
+  './unit/server-tool-input.mjs',
   // 返答の本文は 1 コマに 1 回だけ描く・流れの終わりでは描き切る・会話を切り替えたら別の会話へ描かない
   './unit/stream-frames.mjs',
   './unit/work-attribution.mjs',

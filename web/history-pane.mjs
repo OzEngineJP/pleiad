@@ -9,6 +9,7 @@
 import { el } from "./dom.mjs";
 import { t } from "./i18n.mjs";
 import { renderAssistantMarkdown, renderPresent, renderToolCall, applyToolResult } from "./render.mjs";
+import { lazyInputOf } from "./tool-input-lazy.mjs";
 import { Bundle, splitToolCalls } from "./tool-bundle.mjs";
 import { isComputerTool } from "./computer-use.mjs";
 import { modelDisplayName } from "./composer-labels.mjs";
@@ -370,7 +371,7 @@ export function createHistoryPane(hooks) {
       if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(backendVocab(backend, account)?.models ?? {}, m.model);
       if (m.thinking) node.append(thinkFromText(m.thinking));
       const cards = (m.toolCalls ?? []).map((c) => {
-        const card = renderToolCall(c.name, c.input, { id: c.id, at: c.at, startedAt: c.startedAt, endAt: c.endAt });
+        const card = renderToolCall(c.name, c.input, { id: c.id, at: c.at, startedAt: c.startedAt, endAt: c.endAt, lazyInput: lazyInputOf(c, sessionId) });
         if (c.result) {
           // endAt（正規化が tool_result の時刻を持つとき）を結果に乗せて渡す。畳んだ仮の発言は result.at（サーバーの時計）が既にある
           const res = c.result && typeof c.result === 'object' ? { ...c.result, at: c.endAt ?? c.result.at } : c.result;
@@ -463,15 +464,15 @@ export function createHistoryPane(hooks) {
     if (olderBusy) return olderBusy;
     flushBackfill();   // 手前の行は、いま描いてある一番上の行の手前に足す。窓の中の手前を先に描き終える
     const id = currentSession(), before = base;
-    if (!id || before <= 0 || !messages.length || isLoadingSession()) return Promise.resolve(false);
+    if (disposed || !id || before <= 0 || !messages.length || isLoadingSession()) return Promise.resolve(false);   // 閉じた実例は読み足さない（目次を開いたまま閉じたときの loadAllOlder が、捨てた筋へ足し続けない）
     const prev = { messages, presents, base: before, presentBase };
     const request = { before, presentBefore: presentBase };
-    const same = () => currentSession() === id && base === before && messages === prev.messages;
+    const same = () => !disposed && currentSession() === id && base === before && messages === prev.messages;
     const run = (async () => {
       showOlder('loading');
       let joined = null;
       try {
-        const data = await cmd('loadSession', { sessionId: id, lazy: true,
+        const data = await cmd('loadSession', { sessionId: id, lazy: true, lazyInput: true,
           older: { ...request, count: WINDOW_MESSAGES, bytes: WINDOW_BYTES, check: anchorSig(prev.messages[0]), ...(reach ? { reach } : {}) } }, { bulk: true });
         if (!same()) { if (currentSession() === id) hideOlder(); return false; }   // 会話が替わった・窓が替わった: 捨てる
         joined = joinOlder(prev, data, request);

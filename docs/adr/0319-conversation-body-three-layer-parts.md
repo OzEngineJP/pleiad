@@ -1,6 +1,6 @@
 # 0319 会話の本文の描画を 3 層の部品（createLiveTurn → createHistoryPane → createConversationView）に分け、主を先に動かして、モーダルの子を同じ部品に載せる
 
-- 状態: 承認（2026-11-12）。[0315](0315-two-watch-slots-modal-right-pane.md)〜[0318](0318-child-conversations-only-in-modal.md) に続く段 6。段 6-3（進行中のターン）・段 6-4（履歴の面）・段 6-5（本文の面）は主の会話を動かさない移し替えとして実装済み。段 6-6（モーダルの子を子の役の実例へ載せ替え）は実装済み
+- 状態: 承認（2026-11-12）。[0315](0315-two-watch-slots-modal-right-pane.md)〜[0318](0318-child-conversations-only-in-modal.md) に続く段 6。段 6-3（進行中のターン）・段 6-4（履歴の面）・段 6-5（本文の面）は主の会話を動かさない移し替えとして実装済み。段 6-6（モーダルの子を子の役の実例へ載せ替え）は実装済み。段 6-6 の追補（子の実例の履歴の読み方を主にそろえる）も実装済み
 - 承認の内容: プロダクトオーナーが「子の会話のモーダルを主と同じ部品で作り直す」の残り（本文の描画の共通化）を「すぐやる。共通化すべき」として承認した
 - 前提: [0318](0318-child-conversations-only-in-modal.md)（子の会話はモーダルだけで開く）・[0317](0317-modal-child-composer-stop-name-tags.md)（モーダルの名札・入力欄・中断）
 
@@ -76,6 +76,19 @@
 - **重さ**（`tests/perf/child-modal-weight.mjs`、300 発言＋ツール 50、CPU 4 倍・3 回ずつ交互。段 6-6 の前 → 後）: モーダルを開く 745〜1032 ms → 276〜353 ms／DOM 9,323 → 2,133 要素／loadSession 2 回・142 KB → 1 回・16.7 KB／流れている間の loadSession 10〜15 回 → 0 回／longtask 合計 8.6〜10 s → 0.4〜3.7 s。主は変わらない（開く 408〜562 ms・2,132 要素・1 回・12 KB）。
 - **試験**: `tests/unit/conversation-view-child.mjs`（子の役の hooks・指示・dispose）、`tests/browser/child-modal-main-independence.mjs`（子が流れる間は主が、親が流れる間はモーダルが変わらない。`CHILD_THREAD=reread` でも流せる）。`work-dialog-keep-open`・`work-dialog-search-menu` は `CHILD_THREAD=reread` で従来の経路、既定で新しい経路を確かめる（新しい経路は流れている間の読み直しが 0 回・ツールのまとめ方が主と同じ、を期待値にした）。
 
+## 段 6-6 の追補（子の実例の履歴の読み方を主にそろえる）
+
+段 6-6 で載せ替えたモーダルの子（既定の `'live'` の経路）は、履歴の読み方が主の画面と 4 点で違っていた（`openLiveChild`・`syncModalChildHistory`・`createModalChildView`・`modalToc`）。段 6-7（古い経路の撤去）の前に、そろえた。主の経路は変えていない。
+
+- **差分の読み直し**: ターンが終わったあとの静かな読み直し（`syncModalChildHistory`）が、`loadHistory` へ前に持っている窓（`historyPane` の `messages`・`presents`・`base`・`presentBase`）を渡す。今までは `prev = null` で、窓を毎回丸ごと読み直していた。いまは主の `loadAndPaint` と同じく `loadSession` に `from`（持っている末尾の少し手前）と `check`（持っているものの署名）を付けて頼み（ADR 0062）、返事は末尾の差分だけになる。窓の頭が食い違ったときは `joinReply` が `false` を返し、窓を頼み直す（従来どおり）。
+  - **描く側は主と同じ形にならない（変えなかった所）**: 主は `retainPlan` で、読み直しの前後で変わらなかった行の DOM を残す。子の `itemsOf` は `child.items`（依頼・追加の指示の行を足し、親の記録の行を除く）を通すので、読んだ発言の番号と描く行の番号が合わず、`retainPlan` の `plan` を渡せない。子は従来どおり全部を描き直す（`quiet: true`。読んでいる位置は `finish` が保つ）。減るのは通信量と読む量で、DOM の描き直しは減らない。描く行の列が履歴の番号と一対一になれば渡せるが、この追補では扱わない。
+- **大きい返事は WS の外で受ける（bulk。ADR 0179）**: `syncModalChildHistory` と `openLiveChild` の `loadHistory` に `bulk: true` を付ける（主の `openConversation`・`loadAndPaint` と同じ）。**出来事との順序は保たれる**（確かめて変えた）。理由は 3 つ。① 読み直しの前に `view.loads.begin(id)` で取り置きを始めるので、返事が WS の出来事より遅れて届いても、その間の出来事は `view.loads.capture`（`routeModalChild` が通す）で取り置かれる。② 返事の適用（`view.loads.replay`）は、返事に入っている流れの出来事（`data.stream.events`）を先に、取り置いた出来事のうち `streamSeq` が返事の `streamCursor` より新しいものを後に流す。順を決めるのは到着順ではなく `streamSeq` なので、返事が遅れても逆にならず、二重にもならない。③ ターンの終わりが取り置きの中に来たとき（`load.syncHistory`）は、主の `loadAndPaint` と同じく、もう 1 回読み直す（この追補で足した。今までは取り置きの間に来たターンの終わりの読み直しが無かった）。サーバーは中継越し（`x-forwarded-for` などの印がある接続）で返事が 64 KB 以上のときだけ bulk にする（`core/bulk-replies.mjs`）。ホストの PC の画面（ループバック）では今までどおり WS で返る。従来の読み直し（`refreshDetail`。`'reread'`・ネイティブのサブエージェント・ホスト委譲の子）には触れない。
+- **画面の外の行を描かない**: 主の `#thread > .mw:not(.activity):not(.height-ready)` の `content-visibility:auto` は、モーダルの子の筋（`<div class="thread bg-thread">`）に当たっていなかった。実寸の確定（`createHeightSettler`）は、モーダルでも `historyPane.prepareHistoryHeights()`（`finish`・`paintOlder` から）で働いていたので、足りなかったのは CSS だけだった。子の筋に専用の目印 `live-child` を付け（`.thread.bg-thread.live-child`）、`:is(#thread, .thread.live-child) > .mw:not(.activity):not(.height-ready)` に広げた。`.bg-thread` 全体には広げない: 読み取り専用の `.bg-thread`（`readonlyThread`）には実寸の確定が無く、`.height-ready` が付かない行が `content-visibility:auto` のまま残って、高さが仮（160px）のままになるため。
+- **目次を開くと手前を全部読み足す**: 主の `toc` は `onOpen: loadAllOlder`、モーダルの `modalToc` は何も付けていなかった。理由は記録に無い。ADR 0316（モーダルの目次）は、子の履歴を全部読んでいた時代のもので、子が窓つきになった段 6-6 の後も付け忘れていたと判断し、`modalToc` に `onOpen: () => modalChild?.view.historyPane.loadAllOlder()` を付けて、主と同じにした。モーダルの検索から開く移動は、もともと `loadOlder({ reach })` で手前を読む。
+- **付けた補い**（そろえた結果として要るもの）: ① 子の `select` hook は、手前の読み足しがつながらなかったとき（`historyPane.loadOlder` の `reload`）に `syncModalChildHistory(view, { force: true })` を呼ぶ（今までは何もせず、読み足しの失敗が黙って残った。`force` は「生きた行が無くても読む」で、読み直しが重なったときも引き継ぐ）。② 閉じた実例の `historyPane.loadOlder`・`loadAllOlder` は、`disposed` を見て手前を読み足さない（目次を開いたままモーダルを閉じても、捨てた実例へ読み足し続けない）。
+- **変えなかったこと**: `childThreadRenderer: 'reread'`・ネイティブのサブエージェント・ホスト委譲の子の経路（従来の読み直し）。主の画面。窓の大きさ（`WINDOW_MESSAGES`・`WINDOW_BYTES`）。主の `syncHistory`（ライブの行へ履歴の添字を付けるだけの経路。子の読み直しの相手は、主の静かな読み直し `loadAndPaint`）。
+- **試験**: `tests/unit/child-modal-history-read.mjs`（差分の `from`/`check` と窓を渡す・bulk の遅れた返事が出来事より前の状態として先に適用される・ターンの終わりが取り置きの間に来たら読み直しがもう 1 回走る・`.live-child` の CSS・`onOpen`・`select` の reload・閉じた実例が読み足さない。それぞれ元に戻すと落ちることを確かめた）、`tests/browser/child-modal-history-read.mjs`（実ブラウザーで、差分の要求・中継越しの本物の `/bulk/` の返事を止めている間に次のターンを流しても順と回数が崩れない・`content-visibility`・目次で手前を全部読む）。
+
 ## 理由
 
 - 同じ本文を 2 通りに持つと、主の修正がモーダルに届かず、モーダルは主と違う表示のままになる。部品を 1 つにすれば、直した所が両方に効く。
@@ -96,4 +109,5 @@
 - `client.mjs` のソースを切り出して試験していた単体試験は、`client.mjs`・`conversation-view.mjs`・`live-turn.mjs`・`history-pane.mjs` を合わせて切り出す（`tests/lib/cut-source.mjs`。`openBridge()` が主の面を試験の中に組み立てる）。期待は変えていない。
 - 段 6-5 で `client.mjs` から、履歴を開く仕事の実例の部分・出来事を本文へ描く仕事・送った発言の行と配達の合図・筋への行の置き方が `web/conversation-view.mjs` へ動く。主の動き・見た目・外から見える DOM は変えない。
 - 段 6-5 の試験: `tests/unit/conversation-view-child.mjs`（子の役の設定・3 つの部品が主の値を直に読まない走査）・`tests/browser/conversation-view-independence.mjs`（別の会話の実例と主が互いに影響しない）。
+- 段 6-6 の追補で、モーダルの子の筋に `live-child` の class が増える（`<div class="thread bg-thread live-child">`）。主の外から見える DOM は変わらない。モーダルの子の読み直しは、持っている窓の続きだけを頼み、中継越しでは大きい返事が WS の外で届く。
 - 試験: `tests/unit/activity-strip.mjs`・`stream-frames.mjs`・`stream-prefix.mjs`・`session-stream.mjs`・`history-retain.mjs`・`tool-elapsed.mjs`、`tests/browser/main-thread-nav.mjs`・`work-dialog-live-stream.mjs`・`work-dialog-keep-open.mjs`、重さの測定は `tests/perf/child-modal-weight.mjs`。
