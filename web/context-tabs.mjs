@@ -15,9 +15,11 @@ const ICON_CHEVRON = '<path d="m9 6 6 6-6 6"/>';
 const ICON_FIND = '<circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/>';
 
 function svgIcon(d) {
-  const host = el('span');
-  host.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
-  return host.firstChild;
+  const s = document.createElementNS?.('http://www.w3.org/2000/svg', 'svg') ?? el('span');
+  s.setAttribute('viewBox', '0 0 24 24');
+  s.setAttribute('aria-hidden', 'true');
+  s.innerHTML = d;
+  return s;
 }
 
 export const chevronIcon = () => svgIcon(ICON_CHEVRON);
@@ -53,9 +55,12 @@ function lastSegment(p) {
 export function brandMark(id) {
   const brand = agentBrand(id);
   if (brand?.mark) {
-    const host = el('span');
-    host.innerHTML = `<svg class="mk" viewBox="0 0 24 24" aria-hidden="true"><use href="#${ensureBrandMark(brand.logo)}"/></svg>`;
-    return host.firstChild;
+    const s = document.createElementNS?.('http://www.w3.org/2000/svg', 'svg') ?? el('span');
+    s.setAttribute('class', 'mk');
+    s.setAttribute('viewBox', '0 0 24 24');
+    s.setAttribute('aria-hidden', 'true');
+    s.innerHTML = `<use href="#${ensureBrandMark(brand.logo)}"/>`;
+    return s;
   }
   if (brand) {
     const img = el('img', 'mk');

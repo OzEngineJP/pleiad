@@ -101,6 +101,13 @@
 .cx-tabs{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:4px;margin:-6px 0;padding:6px 0;background:var(--surface-paper)}
 .settings-content .cx-tabs{top:-24px}
 .settings-content:has(#contextPanel:not([hidden])){scroll-padding-top:64px}
+.file-preview-content:has(.scx .cx-tabs){scroll-padding-top:64px}
+.scx .cx-tabs{background:var(--surface-0);margin:0;padding:4px 0 6px}
+.scx .cx-tab[aria-selected=true]{background:var(--surface-paper)}
+.scx-kind .cx-find{background:var(--surface-1)}
+.scx-edit-list{display:flex;flex-direction:column;gap:2px}
+.scx-edit-list .scx-grp{margin:6px 0 2px}
+.scx-edit-list .cx-row{padding:6px 4px}
 .cx-tab{display:inline-flex;align-items:baseline;gap:6px;min-height:32px;padding:6px 14px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer;white-space:nowrap;
   transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
 .cx-tab:hover{background:var(--surface-hover);color:var(--ink)}
@@ -456,8 +463,8 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
   /* 設定の左列が残るので本文は 200px ほどになる。行は折り返し、スイッチとログインは次の段の右へ回す */
   .cx-row{flex-wrap:wrap}
   .cx-row>.rt-grip{min-height:44px}
-  .cx-row .cx-open{flex:1 1 140px}
-  .cx-row>.btn,.cx-row>.btn+.cx-sw,.cx-row>.cx-open+.cx-sw{margin-left:auto}
+  .cx-row>.t,.cx-row .cx-open{flex:1 1 140px}
+  .cx-row>.btn,.cx-row>.btn+.cx-sw,.cx-row>.cx-open+.cx-sw,.cx-row>.t+.cx-sw,.cx-row>.cx-tok+.cx-sw{margin-left:auto}
   .cx-seg{grid-template-columns:minmax(0,1fr)}
   .cx-cols{grid-template-columns:minmax(0,1fr)}
   .cx-sec .r{margin-left:0}

@@ -23,7 +23,11 @@ import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { DEFAULT_BUDGET, instructionAmount } from './instruction-amount.mjs';
 import { findingCount, reviewDraft, reviewUrged } from './context-review.mjs';
-import { toggleExclude } from './context.mjs';
+import { toggleExclude, toggleExcludeMany } from './context.mjs';
+import {
+  CONTEXT_TABS, readTabStorage, writeTabStorage,
+  groupEntries, bundleSwitchState, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
+} from './context-tabs.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
 import { unifySessionBox, unifyConfirmPanel, resetPlan, unsupportedAgentText } from './hooks-unify-ui.mjs';
@@ -52,6 +56,7 @@ const base = p => String(p ?? '').split(/[\\/]/).pop();
 /** ホーム（C:\Users\名前・/home/名前・/Users/名前）の下は ~ で短くする */
 const shortPath = p => { const m = /^([A-Za-z]:)?[\\/](?:Users|home)[\\/][^\\/]+/.exec(String(p ?? '')); return m ? `~${String(p).slice(m[0].length)}` : String(p ?? ''); };
 const dir = p => String(p ?? '').replace(/[\\/][^\\/]*$/, '');
+const escCss = s => globalThis.CSS?.escape ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&');
 /** 同じ行（id）を 1 つに。外したファイルは探索が出典ごとに別の行で返す（core/context-scan.mjs の add） */
 export const uniqueRows = rows => { const seen = new Set(); return rows.filter(e => !seen.has(e.id) && seen.add(e.id)); };
 /** 行の出どころ。足した場所（root）で見つかったもの／ユーザーの範囲（home）／この場所と親フォルダー（Git のルートから作業場所まで） */
@@ -116,6 +121,23 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let hooksPlace = { cwd: null, view: null }, hooksConfirm = null;
   // 同じ名前の Skill の定義の選択肢を［変更］で開いている名前（ADR 0290）
   const choiceOpen = new Set();
+  // 「この場所だけ変える」の 4 タブ・フォルダーのまとまり・Skills 絞り込み（段 1）
+  const EDIT_TAB_KEY = 'ply-session-context-tab';
+  let editTab = readTabStorage(EDIT_TAB_KEY, CONTEXT_TABS, 'instruction');
+  const editBundleOpen = new Map();
+  let editSkillQuery = '', editSkillHost = null, skillPaintArgs = null;
+  let lastTabBar = null, lastTabPanels = null;
+  const editSkillFind = createFindBar({
+    placeholder: t('context.find.placeholder'),
+    ariaLabel: t('context.find.aria'),
+    onInput: q => {
+      editSkillQuery = q;
+      if (editSkillHost && editSkillHost.isConnected !== false && skillPaintArgs) {
+        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.entries, skillPaintArgs.offText);
+      }
+    },
+  });
+  const resetEditState = () => { editBundleOpen.clear(); editSkillQuery = ''; editSkillFind.clear(); editSkillHost = null; skillPaintArgs = null; };
 
   const title = t('sessionContext.title');
   function subtitle(data) {
@@ -162,7 +184,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let shownFor = null;
   function render() {
     // 別の会話へ移った。前の会話の差分・ログインの途中経過・変えている途中は持ち越さない
-    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; reviewError = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; unifying = false; hooksConfirm = null; choiceOpen.clear(); }
+    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; reviewError = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; unifying = false; hooksConfirm = null; choiceOpen.clear(); resetEditState(); }
     const data = info();
     const box = el('div', 'scx');
     if (data?.pending || data?.error) box.append(stateLine(t(data.pending
@@ -190,8 +212,38 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       n.append(el('p', 'cx-strong', t('sessionContext.failed.title')), el('p', 'cx-sub', t('sessionContext.failed.hint')));
       box.append(n);
     }
-    if (edit) box.append(...KINDS.flatMap(k => [editFace(k), ...(k === 'instruction' && data.added?.length ? [addedEditFace()] : [])]), hooksEditFace());
-    else {
+    if (edit) {
+      const tabBar = createTabBar({
+        tabs: [
+          { id: 'instruction', label: t('context.tabs.instruction') },
+          { id: 'skill', label: t('context.tabs.skill') },
+          { id: 'mcp', label: t('context.tabs.mcp') },
+          { id: 'hooks', label: t('context.tabs.hooks') },
+        ],
+        active: editTab,
+        idPrefix: 'scx',
+        ariaLabel: t('context.tabs.aria'),
+        onSelect: (id, opts) => selectEditTab(id, opts),
+      });
+      tabBar.setCounts(editCounts());
+      const panels = Object.fromEntries(CONTEXT_TABS.map(id => {
+        const p = el('div', 'cx-tabpanel');
+        p.id = `scx-panel-${id}`;
+        p.setAttribute('role', 'tabpanel');
+        p.setAttribute('aria-labelledby', `scx-tab-${id}`);
+        p.hidden = id !== editTab;
+        return [id, p];
+      }));
+      panels.instruction.append(editFace('instruction'), ...(data.added?.length ? [addedEditFace()] : []));
+      panels.skill.append(editFace('skill'));
+      panels.mcp.append(editFace('mcp'));
+      panels.hooks.append(hooksEditFace());
+      lastTabBar = tabBar;
+      lastTabPanels = panels;
+      box.append(tabBar.root, ...CONTEXT_TABS.map(id => panels[id]));
+    } else {
+      lastTabBar = null;
+      lastTabPanels = null;
       box.append(instructions(data));
       if (data.added?.length) box.append(addedBox(data));
       box.append(skills(data), mcp(data), ...hookBoxes(data));
@@ -472,7 +524,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         place.view = await cmd('setContextSettings', { cwd: place.cwd, place: place.cwd, remove: true });
         await loadEditScan();
       }, '[data-act=placeDone]')));
-      const done = button(t('sessionContext.place.done'), 'btn btn-quiet', () => { edit = false; editScan = null; refresh(); focusIn('[data-act=placeStart]'); });
+      const done = button(t('sessionContext.place.done'), 'btn btn-quiet', () => { edit = false; editScan = null; resetEditState(); refresh(); focusIn('[data-act=placeStart]'); });
       done.dataset.act = 'placeDone';
       acts.append(done);
     } else {
@@ -485,7 +537,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     return face;
   }
   async function startEdit() {
-    edit = true; editScan = null; unifying = false; hooksConfirm = null;
+    edit = true; editScan = null; unifying = false; hooksConfirm = null; resetEditState();
     hooksPlace = { cwd: place.cwd, view: null };
     cmd('plyHooks', { cwd: place.cwd }).then(v => { if (hooksPlace.cwd === place.cwd) { hooksPlace.view = v; refresh(); } }).catch(() => {});
     refresh();
@@ -615,13 +667,154 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       });
       return k;
     }
-    grouped(k, entries, e => {
-      const on = e.status !== 'excluded';
-      const where = kind === 'skill' ? dir(dir(e.path)) : dir(e.path);
-      return switchRow(e, on, [shortPath(where), on ? '' : offText].filter(Boolean).join(' · '), false,
-        () => savePlaceKind(kind, v => toggleExclude(v, e, !on), `[data-row="${e.id}"] .cx-sw`));
-    });
+    if (kind === 'skill') {
+      const host = el('div', 'scx-edit-list');
+      editSkillHost = host;
+      skillPaintArgs = { entries, offText };
+      paintEditEntries(host, 'skill', entries, offText);
+      k.append(editSkillFind.root, host);
+    } else {
+      const host = el('div', 'scx-edit-list');
+      paintEditEntries(host, kind, entries, offText);
+      k.append(host);
+    }
     return k;
+  }
+  function editCounts() {
+    const support = contextSupport();
+    const hView = hooksPlace.view;
+    const hVal = hView?.place?.value ?? hView?.defaults?.value;
+    const kindVal = k => here()?.kinds[k].value ?? place.view?.defaults.kinds[k].value;
+    const scanCount = k => {
+      const val = kindVal(k);
+      if (k === 'mcp' && val?.agents) return null;
+      if (!val || !support.supported) return null;
+      if (val.owner !== 'ply') return 0;
+      if (!editScan) return null;
+      const rows = uniqueRows((editScan.entries ?? []).filter(e => e.kind === k && e.status !== 'duplicate'));
+      return k === 'mcp' ? new Set(rows.map(e => e.name)).size : rows.length;
+    };
+    const hooksCount = !hView || hView.unreadable || !hVal
+      ? null
+      : hVal.owner !== 'ply' ? 0 : (hView.hooks ?? []).filter(h => h.enabled).length;
+    return {
+      instruction: scanCount('instruction'),
+      skill: scanCount('skill'),
+      mcp: scanCount('mcp'),
+      hooks: hooksCount,
+    };
+  }
+  function selectEditTab(id, { focus = false } = {}) {
+    if (!CONTEXT_TABS.includes(id)) return;
+    const changed = editTab !== id;
+    editTab = id;
+    writeTabStorage(EDIT_TAB_KEY, id);
+    if (changed && editSkillQuery) {
+      editSkillQuery = '';
+      editSkillFind.clear();
+      if (editSkillHost && editSkillHost.isConnected !== false && skillPaintArgs) {
+        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.entries, skillPaintArgs.offText);
+      }
+    }
+    lastTabBar?.setActive(id, { focus });
+    if (lastTabPanels) for (const [k, p] of Object.entries(lastTabPanels)) p.hidden = k !== id;
+    if (changed) {
+      const box = lastTabBar?.root?.parentElement;
+      const scroller = box?.closest?.('.file-preview-content') ?? box?.parentElement;
+      if (scroller && 'scrollTop' in scroller) scroller.scrollTop = 0;
+    }
+  }
+  function editDocRow(kind, e, { child = false, displayName = null, offText }) {
+    const on = e.status !== 'excluded';
+    const row = el('div', 'cx-row' + (on ? '' : ' off') + (child ? ' kid' : ''));
+    row.dataset.row = e.id;
+    row.append(el('span', 'cx-lead0'));
+    const body = el('span', 't');
+    const nl = el('span', 'nl');
+    nl.append(el('span', 'nm', displayName ?? e.name));
+    if (!child) {
+      const marks = originMarks(entryOrigins(e));
+      if (marks) nl.append(marks);
+    }
+    body.append(nl);
+    const where = kind === 'skill' ? dir(dir(e.path)) : dir(e.path);
+    const note = e.status === 'conditional' ? t('context.row.conditional', { paths: (e.paths ?? []).join(', ') }) : '';
+    const subText = [child ? '' : shortPath(where), note, on ? '' : offText].filter(Boolean).join(' · ');
+    if (subText) body.append(el('span', 'p', subText));
+    const sw = button('', 'cx-sw', () => savePlaceKind(kind, v => toggleExclude(v, e, !on), `[data-row="${escCss(e.id)}"] .cx-sw`));
+    sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(on));
+    sw.setAttribute('aria-label', t('sessionContext.place.switchAria', { path: shortPath(e.path), name: e.name }));
+    sw.disabled = editBusy;
+    row.append(body, sw);
+    return row;
+  }
+  function paintEditEntries(host, kind, entries, offText) {
+    host.replaceChildren();
+    const query = kind === 'skill' ? editSkillQuery.toLowerCase() : '';
+    const hit = entry => !query || String(entry.name ?? '').toLowerCase().includes(query);
+    let shown = 0;
+    for (const g of GROUPS) {
+      const tierEntries = entries.filter(e => groupOf(e) === g);
+      if (!tierEntries.length) continue;
+      const blocks = groupEntries(kind, tierEntries);
+      const visibleBlocks = blocks.filter(block => block.type === 'row'
+        ? hit(block.entry)
+        : block.items.some(({ entry }) => hit(entry)));
+      if (!visibleBlocks.length) continue;
+      host.append(el('p', 'scx-grp', t(`sessionContext.group.${g}`)));
+      for (const block of visibleBlocks) {
+        if (block.type === 'row') {
+          shown++;
+          host.append(editDocRow(kind, block.entry, { child: false, displayName: block.childLabel, offText }));
+          continue;
+        }
+        const kids = block.items.filter(({ entry }) => hit(entry));
+        shown += kids.length;
+        const bKey = `${kind}|${g}|${block.key}`;
+        const open = Boolean(query) || (editBundleOpen.has(bKey) ? editBundleOpen.get(bKey) : block.defaultOpen);
+        const items = block.items.map(i => i.entry);
+        const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
+        const swState = bundleSwitchState(items, e => e.status !== 'excluded', actionLabel);
+        const row = el('div', 'cx-row grp' + (swState.checked === 'false' ? ' off' : ''));
+        row.dataset.bundle = bKey;
+        const tw = button('', 'cx-ic cx-tw');
+        const fk = `scx-bundle:${bKey}`;
+        tw.dataset.cxFk = fk;
+        tw.setAttribute('aria-expanded', String(open));
+        tw.setAttribute('aria-label', block.label);
+        tw.append(chevronIcon());
+        const flip = () => {
+          if (query) return;
+          editBundleOpen.set(bKey, !open);
+          paintEditEntries(host, kind, entries, offText);
+          focusIn(`[data-cx-fk="${escCss(fk)}"]`);
+        };
+        tw.onclick = flip;
+        const body = el('span', 't' + (query ? '' : ' tap'));
+        if (!query) body.onclick = flip;
+        const nl = el('span', 'nl');
+        nl.append(el('span', 'nm', block.label), el('span', 'cnt', String(block.items.length)));
+        const marks = originMarks(block.origins);
+        if (marks) nl.append(marks);
+        body.append(nl, el('span', 'p', shortPath(block.folder)));
+        const sw = button('', 'cx-sw', () => {
+          const include = swState.checked !== 'true';
+          sw.setAttribute('aria-checked', String(include));
+          savePlaceKind(kind, v => toggleExcludeMany(v, items, include), `[data-bundle="${escCss(bKey)}"] .cx-sw`);
+        });
+        sw.setAttribute('role', 'checkbox'); sw.setAttribute('aria-checked', swState.checked);
+        sw.setAttribute('aria-label', swState.ariaLabel);
+        sw.disabled = editBusy;
+        row.append(tw, body, sw);
+        host.append(row);
+        if (open) for (const { entry, childLabel } of kids) host.append(editDocRow(kind, entry, { child: true, displayName: childLabel, offText }));
+      }
+    }
+    if (query && !shown) {
+      const none = el('div', 'cx-row');
+      none.append(el('span', 'cx-lead0'), el('span', 'p', t('context.find.none')));
+      host.append(none);
+    }
   }
   function switchRow(e, on, sub, dot, onToggle) {
     const row = el('div', 'scx-item' + (on ? '' : ' off'));
@@ -1135,14 +1328,25 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     for (const part of backendCache.values()) if (!part.pending) part.stale = true;
     for (const cache of [nativeCache, findingsCache]) for (const part of cache.values()) if (!part.pending) part.stale = true;
     preview.openPanel({ key: KEY, title, subtitle: data.report ? subtitle(data) : '', body: render(), label: title, element: chip,
-      onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; unifying = false; } });
+      onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; unifying = false; resetEditState(); } });
   }
   /** 記録が変わったとき（ターンの開始・読み込み直し・外す）。開いていれば描き直す */
   function refresh() {
     // 閉じているときは描かない（描くと作業場所の設定やエージェント任せの指示の見積もりを読みに行く）
     if (preview.panelOpen(KEY)) {
+      const activeEl = document.activeElement;
+      const wasFind = activeEl === editSkillFind.input;
+      const sel = wasFind ? [activeEl.selectionStart, activeEl.selectionEnd] : null;
+      const tabId = activeEl?.getAttribute?.('role') === 'tab' && activeEl?.id?.startsWith('scx-tab-')
+        ? activeEl.dataset?.tab : null;
       const data = info() ?? {};
       preview.updatePanel(KEY, { subtitle: data.report ? subtitle(data) : '', body: render() });
+      if (wasFind) {
+        editSkillFind.input.focus();
+        if (sel?.[0] != null) editSkillFind.input.setSelectionRange?.(sel[0], sel[1]);
+      } else if (tabId) {
+        document.getElementById?.(`scx-tab-${tabId}`)?.focus();
+      }
     }
   }
   return { open, refresh, isOpen: () => preview.panelOpen(KEY) };
