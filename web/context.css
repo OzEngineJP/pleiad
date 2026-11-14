@@ -29,7 +29,7 @@
   box-shadow:0 1px 2px var(--shadow);transition:transform var(--dur-fast) var(--ease-out)}
 .cx-sw[aria-checked=true]{background:var(--fill-primary);color:var(--on-fill)}
 .cx-sw[aria-checked=true]::after{transform:translateX(14px)}
-.cx-sw:disabled{opacity:.4;cursor:not-allowed}
+.cx-sw:is(:disabled,[aria-disabled=true]){opacity:.4;cursor:not-allowed}
 
 /* 「エージェントに任せる／Pleiad がそろえる」。選んだ方が白へ持ち上がる（輪は描かない） */
 .cx-seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;background:var(--surface-2);border-radius:var(--r-m)}
@@ -511,6 +511,12 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .lk{flex:none;display:grid;place-items:center;width:14px;height:14px;border-radius:50%;color:var(--ink-weak)}
 .lk svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 .cx-ag .lk{position:absolute;right:-4px;bottom:-4px;background:var(--surface-paper);color:var(--ink)}
+/* 鍵の吹き出し（追補 1。見た目は web/tools.css の .tc-when-pop に合わせる） */
+.cx-tip{position:fixed;z-index:40;left:0;top:0;width:max-content;max-width:min(340px,calc(100vw - 16px));padding:6px 12px;border-radius:var(--r-s);
+  background:var(--surface-paper);box-shadow:0 4px 16px var(--shadow);font-size:var(--fs-xs);line-height:1.6;color:var(--ink);text-wrap:balance;
+  pointer-events:none;opacity:0;visibility:hidden;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
+.cx-tip.on{opacity:1;visibility:visible;transition-delay:0s}
+@media (prefers-reduced-motion:reduce){.cx-tip{transition:none}}
 .cx-lockline{display:flex;align-items:center;gap:6px}
 /* 広げる前の確認。行のすぐ下に、その場で出す */
 .cx-ask{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px;margin:0 0 4px 36px;padding:8px 8px 8px 12px;background:var(--surface-1);border-radius:var(--r-s);font-size:var(--fs-s)}

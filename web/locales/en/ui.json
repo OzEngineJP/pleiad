@@ -1656,6 +1656,14 @@
     },
     "showAll": "Show all ({{n}})",
     "antigravityNote": "In antigravity conversations, when instruction files are left to the agent, agy can no longer read AGENTS.md and GEMINI.md in the workspace on its own, so Pleiad looks them up and prepends their content to each message.",
+    "lockReason": {
+      "own": "In {{agent}}'s settings, so Pleiad cannot turn this off",
+      "workspace": "{{agent}} reads this from the workspace, so Pleiad cannot turn this off",
+      "relay": "Pleiad cannot pass this to {{agent}}",
+      "admin": "Set for {{agent}} by an administrator",
+      "linked": "Passed to {{agent}} according to delegation settings"
+    },
+    "lockAria": "{{label}} ({{reason}})",
     "roots": {
       "add": "Add a location to search",
       "addAria": "Path of the folder to search",
@@ -1736,7 +1744,6 @@
       "originConnector": "In the account of {{agents}}",
       "agentsAria": "Agents that use {{name}}",
       "agentAria": "Use {{name}} in {{agent}}",
-      "agentLockedAria": "Use {{name}} in {{agent}} (Pleiad cannot turn this off)",
       "askAria": "Confirm connecting {{name}} to {{to}} too",
       "ask": "This connects {{name}} from the settings of {{from}} to {{to}} too",
       "cancel": "Cancel",

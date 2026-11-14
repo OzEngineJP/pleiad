@@ -1619,6 +1619,14 @@
     },
     "showAll": "すべて見る（{{n}} 件）",
     "antigravityNote": "antigravity の会話では、指示ファイルがエージェント任せのままのとき、ワークスペースの AGENTS.md・GEMINI.md は agy が自分で読めなくなるため、その内容を Pleiad が発言の前に足して渡します",
+    "lockReason": {
+      "own": "{{agent}} の設定にあるため、Pleiad からは止められません",
+      "workspace": "{{agent}} が作業場所から直接読むため、Pleiad からは止められません",
+      "relay": "{{agent}} には Pleiad から渡せません",
+      "admin": "管理者が {{agent}} に設定しています",
+      "linked": "{{agent}} には委譲の設定に合わせて渡します"
+    },
+    "lockAria": "{{label}}（{{reason}}）",
     "roots": {
       "add": "探す場所を足す",
       "addAria": "探すフォルダーのパス",
@@ -1699,7 +1707,6 @@
       "originConnector": "{{agents}} のアカウントにあります",
       "agentsAria": "{{name}} を使うエージェント",
       "agentAria": "{{agent}} で {{name}} を使う",
-      "agentLockedAria": "{{agent}} で {{name}} を使う（Pleiad からは止められません）",
       "askAria": "{{name}} を {{to}} にもつなぐ確認",
       "ask": "{{from}} の設定の {{name}} を、{{to}} にもつなぎます",
       "cancel": "やめる",

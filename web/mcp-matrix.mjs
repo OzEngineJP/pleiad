@@ -10,6 +10,7 @@ import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { agentBrand, agentShortLabel } from './agent-brands.mjs';
 import { ensureBrandMark } from './brand-marks.mjs';
+import { ensureLockTips, lockReasonText, lockAriaLabel } from './lock-tip.mjs';
 
 const ICON = {
   url: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/>',
@@ -117,9 +118,10 @@ export function createMcpMatrix({ section }) {
       b.title = label(agent);
       b.onclick = () => toggleCell(ctx, row, agent);
     } else {
+      const reason = lockReasonText(label(agent), cell);
       b.setAttribute('aria-disabled', 'true');
-      b.setAttribute('aria-label', t('mcp.matrix.agentLockedAria', { agent: label(agent), name: calledOf(row) }));
-      b.title = `${label(agent)}（${t('mcp.matrix.locked')}）`;
+      b.dataset.tip = reason;
+      b.setAttribute('aria-label', lockAriaLabel(t('mcp.matrix.agentAria', { agent: label(agent), name: calledOf(row) }), reason));
       b.append(lockGlyph());
     }
     return b;
@@ -155,9 +157,18 @@ export function createMcpMatrix({ section }) {
     } else { head = el('span', 'cx-open'); head.append(ic, body); }
 
     const sw = button('cx-sw');
-    sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(on)); sw.setAttribute('aria-label', t('mcp.switchAria', { name: calledOf(row) }));
-    if (isStuck) { sw.disabled = true; sw.title = t('mcp.matrix.locked'); }
-    sw.onclick = () => toggleAll(ctx, row);
+    const swLabel = t('mcp.switchAria', { name: calledOf(row) });
+    sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(on)); sw.setAttribute('aria-label', swLabel);
+    if (isStuck) {
+      const lockAgent = m.agents.find(a => row.cells[a].mode === 'locked' || row.cells[a].mode === 'blocked')
+        ?? m.agents.find(a => row.cells[a].state === 'on');
+      const reason = lockAgent ? lockReasonText(label(lockAgent), row.cells[lockAgent]) : t('mcp.matrix.locked');
+      sw.setAttribute('aria-disabled', 'true');
+      sw.dataset.tip = reason;
+      sw.setAttribute('aria-label', lockAriaLabel(swLabel, reason));
+    } else {
+      sw.onclick = () => toggleAll(ctx, row);
+    }
 
     const ags = el('div', 'cx-ags'); ags.setAttribute('role', 'group'); ags.setAttribute('aria-label', t('mcp.matrix.agentsAria', { name: calledOf(row) }));
     for (const a of m.agents) ags.append(chip(ctx, row, a));
@@ -216,10 +227,10 @@ export function createMcpMatrix({ section }) {
     const rows = m.rows.filter(r => r.kind !== 'plugin' || !connectorOn(r));
     host.append(group(ctx, t('mcp.matrix.groupPly'), rows.filter(r => r.group === 'ply'), { add: true }));
     host.append(group(ctx, t('mcp.matrix.groupAgent'), rows.filter(r => r.group === 'agent'), { wait: m.connectors === 'reading' }));
+    ensureLockTips();
     const legend = el('div', 'cx-legend');
     const li = (glyph, text) => { const i = el('span', 'li'); i.append(glyph, document.createTextNode(text)); return i; };
     if (rows.some(r => r.kind === 'connector') || m.connectors === 'reading') legend.append(li(svg(ICON.connector), t('mcp.matrix.connector')));
-    if (m.locked) legend.append(li(lockGlyph(), t('mcp.matrix.locked')));
     if (legend.children.length) host.append(legend);
     if (focus) { const sel = focus; focus = null; host.querySelector(sel)?.focus(); }
   }
