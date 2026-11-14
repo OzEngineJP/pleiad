@@ -34,7 +34,7 @@ import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, catalogIsComplete, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
 import { normalizeSdkMessage, isClaudeAuthError, isClaudeModelError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, createSubagentParser, invalidSubagentTranscript } from "./claude-normalize.mjs";
-import { createTranscriptReader, readAppendedText, trackTail, trackHead, trackTailAfterAppend, feedAppended, hydrateSlim } from "./claude-transcript.mjs";
+import { createTranscriptReader, readAppendedText, trackTail, trackHead, trackTailAfterAppend, feedAppended, hydrateSlim, slimLeak } from "./claude-transcript.mjs";
 import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
@@ -735,9 +735,19 @@ async function readSubagentEntriesNow(sessionId, agentId, key, { limit }) {
       try { meta = JSON.parse(metaText); } catch {}
     }
     if (typeof meta?.toolUseId !== 'string') await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-meta', detectedVersion: state.version });
-    const raw = state.parser.finish({ toolUseId: typeof meta?.toolUseId === "string" ? meta.toolUseId : null, limit });
+    const toolUseId = typeof meta?.toolUseId === "string" ? meta.toolUseId : null;
+    const raw = state.parser.finish({ toolUseId, limit });
     // 蒸留した message を行から読み直して戻す。途中で差し替わっていたら読めなかった扱い（SDK へ落とす）
     if (await hydrateSlim(fs, file, raw, state.parser.slimIndex) < 0) { dropSubagent(key); return null; }
+    if (slimLeak(raw)) {
+      // 蒸留形が返り値に残る版 → 蒸留せず全部読み直して返す。記録には載せない
+      dropSubagent(key);
+      await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-slim-leak', detectedVersion: state.version });
+      const buf = await fs.readFile(file);
+      const whole = createSubagentParser();
+      for (const line of buf.toString('utf8').split('\n')) whole.feed(line);
+      return whole.finish({ toolUseId, limit });
+    }
     return raw;
   } catch {
     if (subagentFiles.has(key)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-unreadable', detectedVersion: null });
@@ -754,6 +764,7 @@ const readSessionTranscript = createTranscriptReader({
     sessionStore: { load: async () => entries, append: async () => { throw new Error('Read-only transcript'); } },
   }),
   onUnreadable: () => recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-unreadable', detectedVersion: null }),
+  onSlimLeak: (version) => recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-slim-leak', detectedVersion: version }),
 });
 
 /**

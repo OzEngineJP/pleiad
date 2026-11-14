@@ -591,20 +591,25 @@ const isQueuedCommandRow = (row) => row?.type === 'attachment' && typeof row.uui
 export const SLIM_LINE_BYTES = 1024;   // これを超える行は蒸留する
 const SLIM_ROW_EST_BYTES = 8192;        // 保持量の見積もりで 1 行に数える上限（蒸留形の実測はもっと小さい）
 const DISTILLED_PREFIX = 1024;
+// 蒸留した形の印。enumerable なので spread や Object.assign で写るが、JSON には出ない。
+// SDK が行や message を組み直した版では hydrate の目印（同じ message オブジェクト）が外れるので、
+// 返り値にこの印が残っていたら安全網（蒸留なしの読み直し）に落とす
+export const SLIM_MARK = Symbol('claude-slim');
+const marked = (o) => { o[SLIM_MARK] = true; return o; };
 const distillText = (s) => (s.length <= DISTILLED_PREFIX ? s : s.slice(0, DISTILLED_PREFIX));
 const distillBlock = (b) => {
   if (typeof b !== "object" || b === null) return b;
-  if (b.type === "text") return { type: "text", text: typeof b.text === "string" ? distillText(b.text) : b.text };
-  if (b.type === "tool_result") return { type: "tool_result", tool_use_id: b.tool_use_id, is_error: b.is_error,
-    content: typeof b.content === "string" ? distillText(b.content) : null };
-  if (b.type === "tool_use") return { type: "tool_use", id: b.id };
-  return { type: b.type };
+  if (b.type === "text") return marked({ type: "text", text: typeof b.text === "string" ? distillText(b.text) : b.text });
+  if (b.type === "tool_result") return marked({ type: "tool_result", tool_use_id: b.tool_use_id, is_error: b.is_error,
+    content: typeof b.content === "string" ? distillText(b.content) : null });
+  if (b.type === "tool_use") return marked({ type: "tool_use", id: b.id });
+  return marked({ type: b.type });
 };
 const distillMessage = (m) => {
   if (typeof m !== "object" || m === null) return m;
-  return { role: m.role, id: m.id, model: m.model, stop_reason: m.stop_reason,
+  return marked({ role: m.role, id: m.id, model: m.model, stop_reason: m.stop_reason,
     content: typeof m.content === "string" ? distillText(m.content)
-      : Array.isArray(m.content) ? m.content.map(distillBlock) : m.content };
+      : Array.isArray(m.content) ? m.content.map(distillBlock) : m.content });
 };
 // queued_command だけは SDK が中身（prompt・source_uuid・delivery_id など）を読むので丸ごと残す
 const distillAttachment = (a) => {

@@ -4,7 +4,7 @@
 // フィールドだけ）で、返す履歴は蒸留した message を行から読み直して戻す。
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createSessionParser } from './claude-normalize.mjs';
+import { createSessionParser, SLIM_MARK } from './claude-normalize.mjs';
 
 export const TRANSCRIPT_CACHE_BYTES = 320 * 1024 * 1024;
 export const TRANSCRIPT_CACHE_ENTRIES = 4;
@@ -121,8 +121,28 @@ export async function hydrateSlim(io, file, messages, slimIndex) {
   }
 }
 
+/**
+ * 返す履歴に蒸留した形（message・ブロックの SLIM_MARK）が残っていたら true。
+ * hydrate は「SDK が返した message が蒸留したオブジェクトそのもの」のときだけ戻せるので、
+ * SDK が行や message を組み直す版では印が残る → その版は蒸留なしで読み直す（安全網。ADR 0330）。
+ */
+export function slimLeak(entries) {
+  if (!Array.isArray(entries)) return false;
+  for (const m of entries) {
+    const msg = m?.message;
+    if (msg && typeof msg === 'object') {
+      if (msg[SLIM_MARK]) return true;
+      if (Array.isArray(msg.content)) for (const b of msg.content) {
+        if (b && typeof b === 'object' && b[SLIM_MARK]) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** キャッシュする上限は「保持するメモリ」（蒸留した行＋戻した message の見積もりバイト数）。本文は保持しない。 */
 export function createTranscriptReader({ projects, selectMessages, onUnreadable = async () => {},
+  onSlimLeak = async () => {},
   io = fs, maxBytes = TRANSCRIPT_CACHE_BYTES, maxEntries = TRANSCRIPT_CACHE_ENTRIES }) {
   const files = new Map(), recent = new Map(), pending = new Map(), busy = new Map();
   let bytes = 0;
@@ -181,6 +201,27 @@ export function createTranscriptReader({ projects, selectMessages, onUnreadable 
         const cached = recent.get(file);
         if (cached?.stamp === version) return cached.value;
 
+        // offsets=true: 大きい行は蒸留して保持し、返す分だけ読み直す。false: 全部の行を保持（安全網）
+        const parseWhole = async (offsets) => {
+          const buf = await io.readFile(file);
+          timing?.('transcript.read', performance.now() - started);
+          const parsing = performance.now();
+          const p = createSessionParser();
+          for (let at = 0; at <= buf.length;) {
+            const end = buf.indexOf(0x0a, at);
+            if (end < 0) {
+              const line = buf.toString('utf8', at);
+              offsets ? p.feedTail(line, at, buf.length - at) : p.feedTail(line);
+              break;
+            }
+            const line = buf.toString('utf8', at, end);
+            offsets ? p.feed(line, at, end - at) : p.feed(line);
+            at = end + 1;
+          }
+          timing?.('transcript.extras', performance.now() - parsing);
+          return { parser: p, tracked: trackTail(buf), head: trackHead(buf) };
+        };
+
         let parser, tracked, head;
         const delta = await readAppendedText(io, file, stat, cached);
         if (delta && feedAppended(cached.parser,
@@ -191,19 +232,7 @@ export function createTranscriptReader({ projects, selectMessages, onUnreadable 
         } else {
           // 追記ではない・途中が書き換わった・解釈済みの末尾が化けた → 全部読み直し
           discard(file);
-          const buf = await io.readFile(file);
-          timing?.('transcript.read', performance.now() - started);
-          const parsing = performance.now();
-          parser = createSessionParser();
-          for (let at = 0; at <= buf.length;) {
-            const end = buf.indexOf(0x0a, at);
-            if (end < 0) { parser.feedTail(buf.toString('utf8', at), at, buf.length - at); break; }
-            parser.feed(buf.toString('utf8', at, end), at, end - at);
-            at = end + 1;
-          }
-          tracked = trackTail(buf);
-          head = trackHead(buf);
-          timing?.('transcript.extras', performance.now() - parsing);
+          ({ parser, tracked, head } = await parseWhole(true));
         }
         const { entries, ...extras } = parser.finish();
         const selecting = performance.now();
@@ -215,6 +244,15 @@ export function createTranscriptReader({ projects, selectMessages, onUnreadable 
         const hydrated = messages === null ? 0 : await hydrateSlim(io, file, messages, parser.slimIndex);
         timing?.('transcript.hydrate', performance.now() - hydrating);
         if (hydrated < 0) { discard(file); return null; }   // 読み直し中に差し替わった → 読めなかった扱い
+        if (messages !== null && slimLeak(messages)) {
+          // SDK が行や message を組み直して蒸留形が返り値に残った → 蒸留せず全部読み直して返す。記録には載せない
+          discard(file);
+          await onSlimLeak(extras.version);
+          const whole = await parseWhole(false);
+          const { entries: wholeEntries, ...wholeExtras } = whole.parser.finish();
+          const wholeMessages = await selectMessages(sessionId, wholeEntries.slice()).catch(() => null);
+          return { ...wholeExtras, entries: wholeMessages };
+        }
         const value = { ...extras, entries: messages };
         // 読みながら追記・置換された版を次の要求へ持ち越さない。
         // 保持量の見積もり: 蒸留した行（kept）＋読み直して戻した message のバイト数

@@ -45,6 +45,7 @@ transcript は育ち続けるログで、数百 MB に届く。実機の 270 MB 
 - `message` は role・id・stop_reason・content の骨だけにし、文字列は先頭 1,024 字に縮める。SDK の判定（中断印・`<local-command-…>` などの `startsWith`、ブロックの `type`・`id`・`tool_use_id`・`is_error`）は先頭とこの骨で決まる
 - `queued_command` の attachment は SDK が中身（prompt・source_uuid など）を読むので丸ごと残す。ほかの大きいフィールド（`toolUseResult`・`data`・`snapshot`・`summary`・`result` など、選別が読まないもの）は落とす
 - 蒸留した `message` ごとにファイル内のバイト位置（`offset`・`len`）を `slimIndex` に残す。SDK が選んで返した行の `message` が蒸留形なら、その位置の行だけを `open` + `read` で読み直して本物の `message` に戻す（`hydrateSlim`）。読み直し中に差し替わっていた版は保持しない
+- 蒸留した `message` とブロックには印（`SLIM_MARK`、enumerable な Symbol）を付ける。読み直しは「返ってきた `message` が蒸留したオブジェクトそのもの」のときだけできるので、SDK が行や `message` を組み直す版では印が返り値に残る → その版は蒸留せず全部読み直して返し（`recordBackendShapeMismatch` で `transcript-slim-leak`・子は `subagent-slim-leak` を記録）、記録にも載せない
 - SDK（`jM`・`ou`・`xC`・`RC` ほか）と下流（`transcriptToMessages`・履歴の組み立て）は入力行を書き換えない（`ou` は `{...row}` の写しを Map に置き換える、`getMessages` は `structuredClone` してから触る）ことをコードと試験で確かめた。守るための複製は入れない
 
 ### 5. キャッシュの上限は「保持するメモリ」で数える

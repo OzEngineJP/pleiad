@@ -208,30 +208,72 @@ export default async function (t) {
     // 同じ版を 2 回読み、追記をはさんで 3 回目を読む。毎回全部読み直しと同じ結果になること
     const BIG = '00000000-1111-4111-8111-00000000000c';
     const bigFile = path.join(project, `${BIG}.jsonl`);
-    const toolResult = { type: 'user', uuid: 'b4', parentUuid: 'b3', timestamp: '2026-10-01T00:00:00Z',
-      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'z'.repeat(2500) }] } };
+    const toolResultArr = { type: 'user', uuid: 'b8', parentUuid: 'b7', timestamp: '2026-10-01T00:00:00Z',
+      message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'tu9', content: [{ type: 'text', text: 'r'.repeat(2500) }] },
+        { type: 'tool_result', tool_use_id: 'tu8', is_error: true,
+          content: [{ type: 'text', text: '[Request interrupted by user] ' + 'i'.repeat(2000) }] } ] } };
     await fs.writeFile(bigFile, jsonl([
       user('b1', null, 'big start', { version: '2.1.288' }),
-      user('b2', 'b1', 'x'.repeat(3000)),
+      assistant('ba', 'b1', [{ type: 'text', text: 'before compact' }]),
+      { type: 'system', subtype: 'compact_boundary', uuid: 'bc', parentUuid: 'ba', timestamp: '2026-10-01T00:00:01Z', compactMetadata: { trigger: 'auto', preTokens: 900, postTokens: 100 } },
+      user('bs', 'bc', 'summary ' + 's'.repeat(1800), { isCompactSummary: true }),
+      user('b2', 'bs', 'x'.repeat(3000)),
       user('b3', 'b2', '[Request interrupted by user]' + 'y'.repeat(2000)),
-      toolResult,
-      assistant('b5', 'b4', [{ type: 'text', text: 'after big' }]),
+      assistant('b5', 'b3', [{ type: 'text', text: 'after big' }]),
+      // 同じ message.id に分かれた大きい assistant の行
+      assistant('b6', 'b5', [], { message: { role: 'assistant', id: 'msg_dup', model: 'claude', content: [{ type: 'text', text: 'a'.repeat(1500) }] } }),
+      assistant('b7', 'b6', [], { message: { role: 'assistant', id: 'msg_dup', model: 'claude', content: [{ type: 'text', text: 'a'.repeat(1500) }, { type: 'tool_use', id: 'tu8', name: 'Read', input: { file_path: '/x/' + 'f'.repeat(2100) } }] } }),
+      toolResultArr,
+      { type: 'attachment', uuid: 'bq', parentUuid: 'b8', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: 'queued ' + 'q'.repeat(1600) } },
+      assistant('b9', 'bq', [{ type: 'text', text: 'after queued ' + 't'.repeat(1500) }]),
     ]));
     const bigRead = make();
+    const sameBig = async (snapshot) => {
+      const fresh = parseSessionTranscript(await fs.readFile(bigFile, 'utf8'));
+      assert.deepEqual(snapshot.rows, fresh.rows);
+      assert.deepEqual([...snapshot.followUps], [...fresh.followUps]);
+      assert.deepEqual(snapshot.marks, fresh.marks);
+      assert.equal(snapshot.version, fresh.version);
+      assert.equal(snapshot.invalidQueued, fresh.invalidQueued);
+      assert.deepEqual(snapshot.entries, await getSessionMessages(BIG));
+    };
     const bigSnap = await bigRead(BIG);
-    assert.deepEqual(bigSnap.entries, await getSessionMessages(BIG));
+    await sameBig(bigSnap);
     const bigEntry = bigSnap.entries.find(e => e.uuid === 'b2');
     t.ok('蒸留した行の履歴は行から読み直して全部読み直しと同じ', bigEntry?.message?.content === 'x'.repeat(3000));
     t.ok('同じ版の再読は読み直した行の値を返す', (await bigRead(BIG)) === bigSnap);
     readsBefore = reads;
-    await fs.appendFile(bigFile, jsonl([assistant('b6', 'b5', [{ type: 'text', text: 'p'.repeat(3000) }])]));
+    await fs.appendFile(bigFile, jsonl([assistant('b10', 'b9', [{ type: 'text', text: 'p'.repeat(3000) }])]));
     const bigSnap2 = await bigRead(BIG);
-    assert.deepEqual(bigSnap2.entries, await getSessionMessages(BIG));
-    const bigEntry6 = bigSnap2.entries.find(e => e.uuid === 'b6');
-    t.ok('追記の大きい行も行から読み直して全部読み直しと同じ', reads === readsBefore && bigEntry6?.message?.content?.[0]?.text === 'p'.repeat(3000));
+    await sameBig(bigSnap2);
+    const bigEntry10 = bigSnap2.entries.find(e => e.uuid === 'b10');
+    t.ok('追記の大きい行も行から読み直して全部読み直しと同じ', reads === readsBefore && bigEntry10?.message?.content?.[0]?.text === 'p'.repeat(3000));
     const entriesBefore = JSON.stringify(bigSnap2.entries);
     transcriptToMessages(mergeQueuedCommands(bigSnap2.entries, bigSnap2.rows), { followUps: bigSnap2.followUps });
     t.ok('下流の変換は読み込みの行を書き換えない', JSON.stringify(bigSnap2.entries) === entriesBefore);
+
+    // 安全網: SDK が行や message を組み直して蒸留形が返り値に残る版は、蒸留なしで読み直す（保持しない）
+    const rebuild = (e) => ({ ...e, message: e.message && typeof e.message === 'object'
+      ? { ...e.message, content: Array.isArray(e.message.content) ? e.message.content.map(b => ({ ...b })) : e.message.content }
+      : e.message });
+    let rebuilds = 0, leaks = 0;
+    const rebuilding = createTranscriptReader({
+      projects: () => path.join(dir, 'projects'), io,
+      selectMessages: async (id, entries) => {
+        rebuilds++;
+        return entries.filter(e => e?.type === 'user' || e?.type === 'assistant').map(rebuild);
+      },
+      onSlimLeak: async () => { leaks++; },
+    });
+    const leaked = await rebuilding(BIG);
+    const whole = parseSessionTranscript(await fs.readFile(bigFile, 'utf8'));
+    assert.deepEqual(leaked.entries, whole.entries.filter(e => e?.type === 'user' || e?.type === 'assistant').map(rebuild));
+    const leakedEntry = leaked.entries.find(e => e.uuid === 'b2');
+    t.ok('蒸留形が残る版は蒸留なしで読み直して同じ結果（1 回記録）',
+      leakedEntry?.message?.content === 'x'.repeat(3000) && rebuilds === 2 && leaks === 1);
+    await rebuilding(BIG);
+    t.ok('漏れた版は保持せず次も安全網が働く', rebuilds === 4 && leaks === 2);
 
     // 保持の上限は「保持するメモリ」: 蒸留した行で数えるので、本文が大きくても差分読みの記録を保てる
     const FAT = '00000000-1111-4111-8111-00000000000d';
