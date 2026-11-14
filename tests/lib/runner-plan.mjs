@@ -29,7 +29,9 @@ export const USAGE = `使い方: node tests/run.mjs [絞り込み…] [オプシ
 
 環境変数:
   PLEIAD_TEST_SUITE_TIMEOUT_MS  suite ごとの上限を固定の値（ミリ秒）にする。0 で上限なし（既定は重みの 5 倍と 180 秒の大きい方。--jobs 2 以上）
-  PLEIAD_TEST_PROGRESS_MS       長い suite の「実行中: <名前>」の間隔（ミリ秒。既定 120000）`;
+  PLEIAD_TEST_PROGRESS_MS       長い suite の「実行中: <名前>」の間隔（ミリ秒。既定 120000）
+  PLEIAD_TEST_GLOBALS           suite の後に global（globalThis・試験用の document・process.env）を suite の前の状態へ戻す動き。on（既定。戻して、値のある変化だけ suite の出力に 1 行知らせる）・
+                                diff（知らせない分も含め、全部の変化を suite ごとに出す）・off（戻さない。原因の切り分け用）`;
 
 const intIn = (name, text, min, max) => {
   if (!/^\d+$/.test(text)) throw new ArgError(`${name} は整数: ${JSON.stringify(text)}`);

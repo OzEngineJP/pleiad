@@ -17,6 +17,8 @@
 //
 // どちらでも: 登録した suite はちょうど 1 回ずつ走り、走らなかったもの・二重に走ったもの・worker が途中で死んだものは失敗にする。
 // worktree の見張り（テストの後に本体の git に worktree が増えていない）は suite ごとに worker の中で見て、全体の前後でも親が見る。
+// global の戻し: suite の終わりに、suite が globalThis・試験用の document・process.env に残したものを、suite の前の状態へ戻す（--jobs 1 も worker も同じ。範囲と理由は tests/lib/global-restore.mjs）。
+//                     戻したことは suite の出力に `[global] …` と出る（判定には数えない）。PLEIAD_TEST_GLOBALS=diff で全部の変化を、off で戻さない昔の動きにできる。
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +29,7 @@ import { installRestartFromEnv, uninstallRestartMode } from "./restart.mjs";
 import { waitForTestHolders } from "./server.mjs";
 import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
 import { installDomStub } from "./dom-stub.mjs";
+import { GLOBALS_ENV, createGlobalGuard, globalsModeFromEnv } from "./global-restore.mjs";
 import { reapOwned, killTagged, WORKER_TAG_ENV } from "./process-reap.mjs";
 import { isRetryable, buildRetryEntry, retryLines, reportRetriesToCi } from "./runner-retry.mjs";
 import { ArgError, USAGE, parseArgs, loadRegistry, loadWeights, weightOf, isWeighted, heaviestFirst, assignShards, planHash, readTimeoutEnv, suiteLimitMs } from "./runner-plan.mjs";
@@ -45,23 +48,34 @@ const spanText = (ms) => { const s = Math.round(ms / 1000); return s >= 60 ? `${
 /**
  * 各 suite の後に、本体の git の worktree が増えていないかを見る。後始末はしない（並行する別の作業のものかもしれない。理由は tests/lib/worktree-guard.mjs）。
  * parallel のときは、ほかの worker の suite の間に増えたものかもしれないことを、詳細に添える。
+ *
+ * もう 1 つ、suite が global（globalThis・試験用の document・process.env）に残したものを、すべての後始末が終わった後に suite の前の状態へ戻す。
+ * 同じ worker・同じプロセスで次に流れる suite に、残りが届かないようにするため（範囲・残すもの・知らせ方は tests/lib/global-restore.mjs）。
+ * 戻したことは suite の出力に `[global] …` と出る。判定には数えず、戻す処理が失敗しても suite の結果は変えない。--jobs 1 も worker も、このメソッドを通る。
  */
-export function createGuardedRunner({ root, parallel = false }) {
+export function createGuardedRunner({ root, parallel = false, globals = createGlobalGuard() }) {
   let seen = null;
   return {
     async prime() { seen = await snapshotPleiadWorktrees(root); },
     async run(mod, expectedName) {
-      const suite = await runCase(mod);
-      // suite の仕掛け（待ち・タイマー・接続）は次の suite に持ち越さない。PLEIAD_TEST_RESTART の指定は、次の suite 用に新しく入れ直す
-      uninstallRestartMode();
-      installRestartFromEnv();
-      for (const problem of await waitForTestHolders()) suite.ok("テスト用の保持役が suite 終了後に idle で終わる", false, problem);
-      if (expectedName && mod.name !== expectedName) suite.ok("登録した名前と export const name が一致する", false, `登録 ${expectedName} / 実際 ${mod.name}`);
-      const now = await snapshotPleiadWorktrees(root);
-      const leaked = leakedWorktrees(seen, now);
-      if (leaked.length) suite.ok("テストの後に本体の git の worktree が増えていない", false, leaked.join(", ") + (parallel ? "（並列実行中: 同時に走っている別の worker の suite のものかもしれない。単独で流して確かめる）" : ""));
-      seen = now ?? seen;
-      return suite;
+      // suite は import 済み（import 時に足された global は戻さない。--jobs 1 は全 suite を先に import するので、揃えるには suite の本体の間だけを見るしかない）
+      const globalsBefore = globals.begin();
+      try {
+        const suite = await runCase(mod);
+        // suite の仕掛け（待ち・タイマー・接続）は次の suite に持ち越さない。PLEIAD_TEST_RESTART の指定は、次の suite 用に新しく入れ直す
+        uninstallRestartMode();
+        installRestartFromEnv();
+        for (const problem of await waitForTestHolders()) suite.ok("テスト用の保持役が suite 終了後に idle で終わる", false, problem);
+        if (expectedName && mod.name !== expectedName) suite.ok("登録した名前と export const name が一致する", false, `登録 ${expectedName} / 実際 ${mod.name}`);
+        const now = await snapshotPleiadWorktrees(root);
+        const leaked = leakedWorktrees(seen, now);
+        if (leaked.length) suite.ok("テストの後に本体の git の worktree が増えていない", false, leaked.join(", ") + (parallel ? "（並列実行中: 同時に走っている別の worker の suite のものかもしれない。単独で流して確かめる）" : ""));
+        seen = now ?? seen;
+        return suite;
+      } finally {
+        // 待ちの後（遅れて動く処理を、できるだけ拾う）の 1 回だけ。出力は suite の出力の末尾に付く（worker では suite の出力と一緒に親へ渡る）
+        for (const line of globals.end(globalsBefore)) console.log(line);
+      }
     },
   };
 }
@@ -494,6 +508,11 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
     console.error(`環境変数が不正: ${e.message}`);
     return 2;
   }
+  let globalsMode;
+  try { globalsMode = globalsModeFromEnv(); } catch (e) {
+    console.error(`環境変数が不正: ${e.message}`);
+    return 2;
+  }
   const limitOf = (name) => suiteLimitMs(weights, name, timeoutEnv.fixedMs);
   const progressMs = timeoutEnv.progressMs;
   const jobs = Math.min(args.jobs, selected.length);
@@ -507,6 +526,7 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
   }
 
   if (testEnv.scrubbedEnv.length) console.log(`  実行元の制御用の環境変数を外した: ${testEnv.scrubbedEnv.join(", ")}`);
+  if (globalsMode !== "on") console.log(`  ${GLOBALS_ENV}=${globalsMode}: ${globalsMode === "off" ? "suite の後に global を戻さない" : "suite ごとに global の変化を全部出す"}`);
   if (args.jobs > 1 || args.shard) {
     const unweighted = selected.filter((e) => !isWeighted(weights, e.name)).length;
     console.log(`  ${args.shard ? `shard ${args.shard.index}/${args.shard.total}（重み ${(shardSumMs / 1000).toFixed(0)} 秒）` : "全体"}: ${selected.length} 本 / worker ${jobs} 本${jobs !== args.jobs ? `（--jobs ${args.jobs} は本数に合わせて減らした）` : ""}${unweighted ? ` / 重みの無い ${unweighted} 本は ${weights.defaultMs}ms で数えた` : ""}`);

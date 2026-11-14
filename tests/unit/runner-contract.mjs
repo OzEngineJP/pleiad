@@ -7,6 +7,7 @@
 //   - 流し直し: --retry-failed 1 は落ちた suite だけを新しい worker で 1 回流し直し、通れば緑・2 回目も落ちれば赤。流し直したことは端末・timings・Actions の注釈とまとめに残す。既定（指定なし）は流し直さない。ランナーの整合の失敗は流し直さない
 //   - 上限: 結果を返さない suite は、suite ごとの時間の上限（重みの 5 倍と 180 秒の大きい方。試験では PLEIAD_TEST_SUITE_TIMEOUT_MS で縮める）で、名前・そこまでの出力を出して worker を木ごと止め、失敗に数える。残りは新しい worker で続く。--retry-failed では流し直す。長い suite は「実行中: <名前>」を出す
 //   - 隔離: worker は親の AGENT_HOST_DATA を使わず、worker ごとの一時ディレクトリを作って消す。実行元の制御用の環境変数（PLEIAD_CONTROL_* など）はテストに届かない。子プロセスは残らない
+//   - global の戻し: suite の終わりに、ランナーが globalThis・document（代役）・N.prototype・process.env を suite の前の状態へ戻す（足された項目は消し、消された・替えられた項目は元へ）。ライブラリが 1 回だけ足す global（KEEP_GLOBALS）は残す。--jobs 1（同じプロセス）と --jobs 2（worker）で同じ動き。戻せない項目・戻す処理の例外は suite の結果を変えない。値のある変化は suite の出力に 1 行で知らせ、PLEIAD_TEST_GLOBALS=diff で全部、off で昔の動き（戻さない）
 // 実際の tests/run.mjs は --list（走らせない）で見る。走らせるのは tests/lib/runner-fixtures/ の小さな試験用 suite（入口は tests/lib/runner-fixture-entry.mjs）。
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -17,9 +18,11 @@ import { ownedDescendants, reapOwned, killTagged, WORKER_TAG_ENV } from "../lib/
 import { Suite } from "../lib/harness.mjs";
 import { isRetryable, buildRetryEntry, reportRetriesToCi } from "../lib/runner-retry.mjs";
 import { ArgError, DEFAULT_JOBS, parseArgs, extractSuiteName, loadRegistry, loadWeights, assignShards, heaviestFirst, weightOf, suiteLimitMs, readTimeoutEnv, SUITE_LIMIT_FLOOR_MS, SUITE_LIMIT_FACTOR, PROGRESS_MS } from "../lib/runner-plan.mjs";
+import { snapshotGlobals, restoreGlobals, formatReport, createGlobalGuard, defaultTargets, globalsModeFromEnv, KEEP_GLOBALS, RUNNER_OWNED_GLOBALS } from "../lib/global-restore.mjs";
+import { RESTART_GLOBAL_KEY } from "../lib/restart.mjs";
 
 export const name = "runner-contract";
-export const title = "テストランナー: 引数・登録・分割・worker・異常系・環境の隔離（--jobs / --shard）";
+export const title = "テストランナー: 引数・登録・分割・worker・異常系・環境の隔離・global の戻し（--jobs / --shard）";
 
 const RUN = path.join(ROOT, "tests", "run.mjs");
 const ENTRY = path.join(ROOT, "tests", "lib", "runner-fixture-entry.mjs");
@@ -481,6 +484,228 @@ export default async function (t) {
       const j2 = await fixtureRun(["./fx-pass-a.mjs", "./fx-pass-b.mjs"], ["--jobs", "2", "--timings", path.join(tmp, "limit-j2.json")], NOENV);
       const J2 = read(path.join(tmp, "limit-j2.json"));
       t.ok("--jobs 2 の timings には suite ごとの上限が入る（重みの 5 倍と 180 秒の大きい方）", j2.code === 0 && J2.suites.every((x) => x.limitMs === SUITE_LIMIT_FLOOR_MS), JSON.stringify(J2.suites.map((x) => x.limitMs)));
+    }
+
+    // ---- global の戻し（suite が global に残したものが、同じ worker の次の suite に届かない）----------------------------------------------
+    {
+      // 部品: 代役の対象（本物の global には触れない）で、控える・戻す・知らせるを見る
+      const target = (label, object, extra = {}) => ({ label, kind: "object", object, ...extra });
+      /** 控えて、change で汚して、戻す。戻した項目の一覧と、on・diff で出る行を返す */
+      const cycle = (targets, change) => {
+        const snap = snapshotGlobals(targets);
+        change();
+        const items = restoreGlobals(snap);
+        return { snap, items, on: formatReport(items, "on"), diff: formatReport(items, "diff") };
+      };
+      const summary = (items) => items.map((i) => `${i.what}:${i.key}:${i.how}${i.quiet ? ":quiet" : ""}`).sort();
+      const entriesOf = (o) => JSON.stringify(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
+      // 通ったときは補足を出さない（補足は失敗の手がかり。通るたびに数十行の出力が出ると、全件の出力が読みにくくなる）
+      const judge = (label, pass, detail = "") => t.ok(label, pass, pass ? "" : detail);
+
+      {
+        const SYM = Symbol("fx.unit");
+        const o = { stay: 1, swapped: { gen: 0 }, removed: "r" };
+        const first = o.swapped;
+        const c = cycle([target("fake", o)], () => { o.added = { v: 1 }; o[SYM] = "s"; delete o.removed; o.swapped = { gen: 1 }; });
+        judge("戻す（部品）: 足された項目（文字列・Symbol）は消え、消された項目と替えられた項目は元へ戻る。戻した後にもう一度戻しても何も起きない",
+          !("added" in o) && !(SYM in o) && o.removed === "r" && o.swapped === first && o.stay === 1 && restoreGlobals(c.snap).length === 0
+          && same(summary(c.items), ["added:Symbol(fx.unit):restored", "added:added:restored", "changed:swapped:restored", "removed:removed:restored"]), JSON.stringify(summary(c.items)));
+      }
+      {
+        const o = { gone: undefined, valued: 1, hollowToValue: undefined };
+        const c = cycle([target("fake", o)], () => { o.CSS = undefined; delete o.gone; o.valued = undefined; o.hollowToValue = 5; });
+        judge("戻す（部品）: 元の不具合の形（代入で戻したつもりで、値 undefined の自前の項目が残る）も消える。消された値の無い項目も戻り、値が変わったものも戻る",
+          !Object.hasOwn(o, "CSS") && Object.hasOwn(o, "gone") && o.gone === undefined && o.valued === 1 && Object.hasOwn(o, "hollowToValue") && o.hollowToValue === undefined
+          && same(summary(c.items), ["added:CSS:restored:quiet", "changed:hollowToValue:restored", "changed:valued:restored", "removed:gone:restored:quiet"]), JSON.stringify(summary(c.items)));
+        judge("知らせる（部品）: 値の無い項目だけが変わった分は、on では知らせず（毎回出すと本物の知らせが埋もれる）、diff だけが「値の無い項目」と出す。値が変わったものは on でも知らせる",
+          c.on.length === 1 && c.on[0].includes("valued") && c.on[0].includes("hollowToValue") && !c.on[0].includes("CSS") && !c.on[0].includes("gone")
+          && c.diff.some((l) => l.includes("CSS（値の無い項目）")) && c.diff.some((l) => l.includes("gone（値の無い項目）")), JSON.stringify({ on: c.on, diff: c.diff }));
+      }
+      {
+        const o = {};
+        const c = cycle([target("fake", o, { keep: [{ key: "libKey", why: "試験用の理由" }] })], () => { o.libKey = { init: true }; o.other = 1; });
+        judge("残す項目（KEEP）: ライブラリが 1 回だけ足す項目は足されても残り、一覧に当たらない項目だけ消える。on では残した項目を知らせず、diff は「残した」と出す",
+          Object.hasOwn(o, "libKey") && !Object.hasOwn(o, "other") && same(summary(c.items), ["added:libKey:kept:quiet", "added:other:restored"])
+          && c.on.length === 1 && c.on[0].includes("other") && !c.on[0].includes("libKey") && c.diff.some((l) => l.includes("libKey は残した（KEEP_GLOBALS")), JSON.stringify({ items: summary(c.items), on: c.on, diff: c.diff }));
+      }
+      {
+        const OWN = Symbol.for("fx.unit.owned");
+        const o = { [OWN]: "before" };
+        const c = cycle([target("fake", o, { owned: [{ key: OWN, why: "ランナーが入れ直す" }] })], () => { o[OWN] = "after"; o.fresh = 1; });
+        judge("ランナー自身が入れ直す項目（RUNNER_OWNED_GLOBALS）は、見ない・戻さない・知らせない", o[OWN] === "after" && !("fresh" in o) && same(summary(c.items), ["added:fresh:restored"]), JSON.stringify(summary(c.items)));
+      }
+      {
+        const o = { fixed: 1 };
+        Object.defineProperty(o, "fixed", { writable: true, configurable: false });
+        let c = null;
+        const e = throws(() => { c = cycle([target("fake", o)], () => { Object.defineProperty(o, "sticky", { value: 1, configurable: false }); Object.defineProperty(o, "fixed", { writable: false }); }); });
+        judge("戻せない項目（configurable でない足された項目・writable を締められた項目）は、例外を出さず、戻したとは言わずに名前と理由を知らせる",
+          e === null && o.sticky === 1 && Object.getOwnPropertyDescriptor(o, "fixed").writable === false && same(summary(c.items), ["added:sticky:failed", "changed:fixed:failed"])
+          && c.on.length === 1 && /sticky は消せなかった（configurable でない）/.test(c.on[0]) && /fixed は戻せなかった/.test(c.on[0]) && !c.on[0].includes("KEEP_GLOBALS"), JSON.stringify({ e: e && String(e), on: c?.on }));
+      }
+      {
+        const raw = {};
+        let phase = "normal";
+        const proxy = new Proxy(raw, {
+          deleteProperty() { throw new Error("trap-delete"); },
+          ownKeys(base) { if (phase === "ownKeys") throw new Error("trap-ownKeys"); return Reflect.ownKeys(base); },
+        });
+        let c1 = null;
+        let c2 = null;
+        let c3 = null;
+        const e = throws(() => {
+          c1 = cycle([target("proxy", proxy)], () => { raw.added = 1; });                    // 消す処理が例外
+          const snap = snapshotGlobals([target("proxy", proxy)]);
+          phase = "ownKeys";
+          c2 = { items: restoreGlobals(snap) };                                              // 戻すときに一覧が読めない
+          c3 = { items: restoreGlobals(snapshotGlobals([target("proxy", proxy)])) };         // 控えるときに一覧が読めない
+        });
+        judge("対象が例外を投げても（消す・一覧を読む・控える）、戻す処理は例外を出さず、戻せなかった理由を 1 行で知らせる",
+          e === null && same(summary(c1.items), ["added:added:failed"]) && same(summary(c2.items), ["restore::failed"]) && same(summary(c3.items), ["snapshot::failed"])
+          && formatReport(c1.items)[0].includes("消せなかった（trap-delete）") && formatReport(c2.items)[0].includes("戻す途中で失敗した（trap-ownKeys）") && formatReport(c3.items)[0].includes("控えられなかった（trap-ownKeys）"),
+          JSON.stringify({ e: e && String(e), c1: c1?.items, c2: c2?.items, c3: c3?.items }));
+      }
+      {
+        const o = {};
+        const guard = createGlobalGuard({ mode: "on", targets: [target("fake", o)] });
+        const snap = guard.begin();
+        o.leftover = "x";
+        const lines = guard.end(snap);
+        judge("ガード: begin で控え、end で戻して、suite の出力に出す行（文字列の配列）を返す", !("leftover" in o) && lines.length === 1 && lines[0].startsWith("  [global] ") && lines[0].includes("leftover") && guard.mode === "on");
+        const off = createGlobalGuard({ mode: "off", targets: [target("fake", o)] });
+        const offSnap = off.begin();
+        o.leftover = "y";
+        judge("ガード（off）: 控えず・戻さず・出さない（昔の動き）", offSnap === null && same(off.end(offSnap), []) && o.leftover === "y" && off.mode === "off");
+        const noTargets = createGlobalGuard({ mode: "on", targets: () => { throw new Error("targets-boom"); } });
+        const brokenLines = noTargets.end(noTargets.begin());
+        const weird = createGlobalGuard({ mode: "on", targets: [] });
+        let weirdLines = null;
+        const weirdError = throws(() => { weirdLines = weird.end({}); });
+        judge("ガード: 対象の一覧が作れない・控えが壊れていても例外は出さず、suite の結果に影響しない旨を 1 行で知らせる（戻す処理の失敗が suite を落とさない）",
+          brokenLines.length === 1 && brokenLines[0].includes("控えられなかった（targets-boom）") && weirdError === null && weirdLines.length === 1 && weirdLines[0].includes("戻す処理が失敗した（suite の結果には影響しない）"), JSON.stringify({ brokenLines, weirdLines }));
+      }
+      {
+        const env = { KEEP_ME: "keep-me-value", GONE: "gone-secret-value", CHANGED: "orig-secret-value" };
+        const origin = entriesOf(env);
+        const c = cycle([{ label: "process.env", kind: "env", object: env }], () => { env.NEWVAR = "new-secret-value"; delete env.GONE; env.CHANGED = "changed-secret-value"; });
+        const text = c.diff.join("\n");
+        judge("環境変数（部品）: 足された・消された・替えられた名前が元へ戻る。知らせるのは名前だけで、値（秘密になりうる）は行に出ない",
+          entriesOf(env) === origin && same(summary(c.items), ["added:NEWVAR:restored", "changed:CHANGED:restored", "removed:GONE:restored"]) && ["NEWVAR", "GONE", "CHANGED"].every((n) => text.includes(n)) && !/secret-value|keep-me-value/.test(text), text);
+        const probeName = `PLEIAD_RC_ENV_PROBE_${process.pid}`;
+        const real = cycle([{ label: "process.env", kind: "env", object: process.env }], () => { process.env[probeName] = "1"; });
+        judge("環境変数（本物の process.env）: 足した名前が戻る", !(probeName in process.env) && same(summary(real.items), [`added:${probeName}:restored`]), JSON.stringify(summary(real.items)));
+      }
+      {
+        const o = {};
+        Object.defineProperty(o, "lazyA", { get() { return 42; }, configurable: true, enumerable: true });
+        Object.defineProperty(o, "lazyB", { get() { return 42; }, configurable: true, enumerable: true });
+        const c = cycle([target("fake", o)], () => {
+          Object.defineProperty(o, "lazyA", { value: 42, writable: true, configurable: true, enumerable: true });   // 触られて、値の項目になっただけ（値は同じ）
+          Object.defineProperty(o, "lazyB", { value: 43, writable: true, configurable: true, enumerable: true });   // 値まで替わった
+        });
+        judge("遅延の項目（getter が、触られて値の項目に置き換わっただけ。値が同じ）は戻さず、知らせない。値まで替わっていれば元の getter へ戻す",
+          Object.getOwnPropertyDescriptor(o, "lazyA").value === 42 && typeof Object.getOwnPropertyDescriptor(o, "lazyB").get === "function" && o.lazyB === 42
+          && same(summary(c.items), ["changed:lazyA:left:quiet", "changed:lazyB:restored"]) && c.on.length === 1 && c.on[0].includes("lazyB") && !c.on[0].includes("lazyA")
+          && c.diff.some((l) => l.includes("lazyA") && l.includes("そのままにした")), JSON.stringify({ items: summary(c.items), on: c.on }));
+      }
+      {
+        const raw = { lazy: 1 };
+        let fired = false;
+        const proxy = new Proxy(raw, {
+          getOwnPropertyDescriptor(base, key) {
+            // 記述子を読んだだけで、別の項目が足される遅延の項目（V8 の遅延の data 項目。読み込まれる undici が configurable でない global を足す形）
+            if (key === "lazy" && !fired) { fired = true; Object.defineProperty(base, "late", { value: 1, configurable: false }); }
+            return Reflect.getOwnPropertyDescriptor(base, key);
+          },
+        });
+        const c = cycle([target("lazy", proxy)], () => {});
+        judge("控えるために記述子を読んだ途中で足された項目（遅延の項目が読み込むライブラリの global）は、suite が足したものとして扱わない（消せない失敗を毎回知らせない）", fired && Object.hasOwn(raw, "late") && c.items.length === 0, JSON.stringify(summary(c.items)));
+      }
+      {
+        const o = { swapped: 1 };
+        const many = cycle([target("globalThis", o)], () => { for (let i = 1; i <= 10; i++) o[`leak${String(i).padStart(2, "0")}`] = i; });
+        const changedOnly = cycle([target("globalThis", o)], () => { o.swapped = 2; });
+        const doc = {};
+        const onDocument = cycle([target("document", doc)], () => { doc.activeElement = null; });
+        judge("知らせる行: 名前は 8 件まで（残りは「ほか N 件」）。globalThis に足された項目を消したときだけ、KEEP_GLOBALS へ足す案内が付く（KEEP_GLOBALS は globalThis にしか効かないので、document に足された項目には付けない）",
+          many.on.length === 1 && many.on[0].includes("leak08") && !many.on[0].includes("leak09") && many.on[0].includes("ほか 2 件") && many.on[0].includes("KEEP_GLOBALS")
+          && changedOnly.on.length === 1 && !changedOnly.on[0].includes("KEEP_GLOBALS")
+          && onDocument.on.length === 1 && onDocument.on[0].includes("activeElement") && !onDocument.on[0].includes("KEEP_GLOBALS") && !Object.hasOwn(doc, "activeElement")
+          && same(formatReport([]), []), JSON.stringify({ many: many.on, changedOnly: changedOnly.on, onDocument: onDocument.on }));
+      }
+      {
+        const keepKeys = KEEP_GLOBALS.map((k) => k.key);
+        judge("KEEP_GLOBALS: 項目ごとに理由が書いてあり、重複せず、今ある 3 件（zod の 2 つ・graceful-fs の queue）が入っている。ライブラリの global の名前が変わったら、この一覧と fx-g-dirty の判定が先に落ちる",
+          Object.isFrozen(KEEP_GLOBALS) && KEEP_GLOBALS.every((k) => (typeof k.key === "string" || typeof k.key === "symbol") && typeof k.why === "string" && k.why.trim().length > 10) && new Set(keepKeys).size === keepKeys.length
+          && keepKeys.includes("__zod_globalConfig") && keepKeys.includes("__zod_globalRegistry") && keepKeys.includes(Symbol.for("graceful-fs.queue")));
+        judge("RUNNER_OWNED_GLOBALS: ランナーが suite のたびに入れ直す再起動用の項目（RESTART_GLOBAL_KEY）が入っている", Object.isFrozen(RUNNER_OWNED_GLOBALS) && RUNNER_OWNED_GLOBALS.some((o) => o.key === RESTART_GLOBAL_KEY && o.why.length > 10));
+        const targets = defaultTargets();
+        const labels = targets.map((x) => x.label);
+        const hasDocument = typeof globalThis.document === "object" && globalThis.document !== null;
+        judge("既定の対象: globalThis（KEEP とランナー自身の項目つき）・document（代役が object のときだけ）・N.prototype・process.env（環境変数は名前と値で扱う）",
+          labels[0] === "globalThis" && targets[0].keep === KEEP_GLOBALS && targets[0].owned === RUNNER_OWNED_GLOBALS && labels.includes("N.prototype") && labels.includes("document") === hasDocument
+          && targets.find((x) => x.label === "process.env")?.kind === "env" && targets.find((x) => x.label === "process.env")?.object === process.env, labels.join());
+        const modeOf = (v) => globalsModeFromEnv({ PLEIAD_TEST_GLOBALS: v });
+        judge("PLEIAD_TEST_GLOBALS: 無い・空 → on。on・diff・off（前後の空白は無視）。おかしな値は例外にする（黙って既定に戻さない）",
+          globalsModeFromEnv({}) === "on" && modeOf("") === "on" && modeOf("on") === "on" && modeOf(" diff ") === "diff" && modeOf("off") === "off"
+          && ["bogus", "1", "true", "ON"].every((v) => String(throws(() => modeOf(v))?.message).includes("PLEIAD_TEST_GLOBALS")));
+      }
+
+      // 実際の流れ: fx-g-dirty が globalThis・document・N.prototype・process.env に足す・消す・替えるをした後に、同じ worker で fx-g-probe が流れて、何が残っているかを記録する。
+      // fx-g-hold は --jobs 2 で fx-g-dirty と fx-g-probe を同じ worker に続けて流すための保持役（重い順に配るので、hold が 1 本をふさぎ、もう 1 本に dirty → probe が続く）
+      const gWeights = path.join(tmp, "g-weights.json");
+      fs.writeFileSync(gWeights, JSON.stringify({ schema: 1, defaultMs: 100, suites: { "fx-g-hold": 900, "fx-g-dirty": 50, "fx-g-probe": 10 } }));
+      const gDirty = ["./fx-g-dirty.mjs", "./fx-g-probe.mjs"];
+      const gHold = ["./fx-g-hold.mjs", ...gDirty];
+      const gRun = async (tag, files, args, env = {}) => {
+        const out = path.join(tmp, `g-${tag}`);
+        fs.mkdirSync(out);
+        const timings = path.join(tmp, `g-${tag}.json`);
+        const r = await fixtureRun(files, [...args, "--timings", timings], { PLEIAD_TEST_GLOBALS: undefined, RUNNER_FIXTURE_WEIGHTS: gWeights, RUNNER_FIXTURE_OUT: out, ...env });
+        return { ...r, dirty: readJsonIf(path.join(out, "g-dirty.json")), probe: readJsonIf(path.join(out, "g-probe.json")), T: readJsonIf(timings), lines: r.stdout.split("\n").filter((l) => l.includes("[global]")) };
+      };
+      const [on1, on2, off1, off2, diff1, badMode] = await Promise.all([
+        gRun("on1", gDirty, ["--jobs", "1"]),
+        gRun("on2", gHold, ["--jobs", "2"]),
+        gRun("off1", gDirty, ["--jobs", "1"], { PLEIAD_TEST_GLOBALS: "off" }),
+        gRun("off2", gHold, ["--jobs", "2"], { PLEIAD_TEST_GLOBALS: "off" }),
+        gRun("diff1", gDirty, ["--jobs", "1"], { PLEIAD_TEST_GLOBALS: "diff" }),
+        fixtureRun(["./fx-pass-a.mjs"], ["--jobs", "1"], { PLEIAD_TEST_GLOBALS: "bogus" }),
+      ]);
+      const SHAPES = {
+        "globalThis（足す・値の無い項目を足す・Symbol を足す・消す・値を替える・記述子を替える）": ["global:add", "global:add-hollow", "global:add-symbol", "global:remove", "global:swap-value", "global:swap-descriptor"],
+        "document（足す・値の無い項目を足す・消す・メソッドを替える・document と location 自体を替える）": ["document:add", "document:add-hollow", "document:remove", "document:swap", "document:replace-object", "location:replace-object"],
+        "N.prototype（足す・消す・替える）": ["proto:add", "proto:swap", "proto:remove"],
+        "process.env（足す・消す・替える）": ["env:add", "env:remove", "env:change"],
+      };
+      const shown = (g) => JSON.stringify(g.probe);
+      for (const [group, shapes] of Object.entries(SHAPES)) {
+        judge(`${group}: 戻す仕組みを外すと（off）、次の suite に残りが届く。この試験が残りを見られていることの確認（--jobs 1・--jobs 2）`, [off1, off2].every((g) => g.probe && shapes.every((s) => g.probe.leaks.includes(s))), `${shown(off1)} ${shown(off2)}`);
+        judge(`${group}: 戻す仕組みがあれば、同じ worker の次の suite に何も届かない（--jobs 1・--jobs 2）`, [on1, on2].every((g) => g.probe && shapes.every((s) => !g.probe.leaks.includes(s))), `${shown(on1)} ${shown(on2)}`);
+      }
+      judge("次の suite は fx-g-dirty と同じプロセス（--jobs 1）・同じ worker（--jobs 2。親ではない）で流れた", !!on1.dirty && on1.dirty.pid === on1.probe?.pid && on1.probe?.inWorker === false
+        && !!on2.dirty && on2.dirty.pid === on2.probe?.pid && on2.probe?.inWorker === true && on2.dirty.pid !== process.pid && !!off2.dirty && off2.dirty.pid === off2.probe?.pid, JSON.stringify([on1.dirty, on1.probe?.pid, on2.dirty, on2.probe?.pid, off2.dirty, off2.probe?.pid]));
+      judge("残すと決めた項目（zod の __zod_globalConfig・__zod_globalRegistry・graceful-fs の queue）は戻されずに残る。戻せない項目（configurable でない）も残る。--jobs 1・--jobs 2 の両方で同じ",
+        [on1, on2].every((g) => same(g.probe?.kept, ["keep:zod-config", "keep:zod-registry", "keep:graceful-fs", "keep:sticky"])), `${shown(on1)} ${shown(on2)}`);
+      const suiteOf = (g, n) => g.T?.suites.find((s) => s.name === n);
+      judge("戻す仕組みは suite の結果を変えない: 戻せない項目があっても、fx-g-dirty の 2 判定・fx-g-probe の 1 判定は通り、終了コードは 0（on・diff・off、--jobs 1・2 のどれも同じ。zod のキーの名前が変わると、fx-g-dirty の判定が落ちる）",
+        [on1, on2, off1, off2, diff1].every((g) => g.code === 0 && suiteOf(g, "fx-g-dirty")?.status === "pass" && suiteOf(g, "fx-g-dirty")?.judgements === 2 && suiteOf(g, "fx-g-probe")?.status === "pass" && suiteOf(g, "fx-g-probe")?.judgements === 1 && g.T?.totals?.failedJudgements === 0),
+        JSON.stringify([on1, on2, off1, off2, diff1].map((g) => [g.code, g.T?.suites.map((s) => [s.name, s.status, s.judgements])])));
+
+      const NAMES = ["__fxGAdded", "Symbol(fx.g.sym)", "__fxGRemoved", "__fxGSwapped", "__fxGDescriptor", "fxDocAdded", "createElementNS", "createElement ", "fxProtoAdded", "matches", "after", "FX_G_ADDED", "FX_G_REMOVED", "FX_G_CHANGED", "__fxGSticky"];
+      const VALUES = ["added-by-dirty", "sym-by-dirty", "removed-original", "descriptor-original", "descriptor-replaced", "doc-added", "doc-swapped", "doc-replaced", "proto-added", "proto-swapped", "env-added", "env-changed", "env-removed-original", "env-changed-original", "replaced.invalid"];
+      judge("既定（on）: 値のある変化は、suite の出力の末尾に 1 行（[global]）で知らせる。戻した項目の名前は出て、値（環境変数の値も）は出ない",
+        [on1, on2].every((g) => g.lines.length === 1 && g.lines[0].startsWith("  [global] ") && NAMES.every((n) => g.lines[0].includes(n)) && VALUES.every((v) => !g.stdout.includes(v)) && /__fxGSticky は消せなかった/.test(g.lines[0])), `${on1.lines.join("\n")}`);
+      judge("既定（on）: 値の無い項目と、残した項目（KEEP_GLOBALS）は知らせない（毎回出すと本物の知らせが埋もれる）。足された項目を消したときは、KEEP_GLOBALS の案内が付く",
+        [on1, on2].every((g) => !/__fxGHollow|fxDocHollow|__zod_global|graceful-fs/.test(g.stdout) && g.lines[0]?.includes("KEEP_GLOBALS へ")), on1.stdout.slice(-900));
+      judge("--jobs 1 と --jobs 2 は、知らせる行も同じ（同じプロセス・worker のどちらでも同じ動き）", on1.lines.length === 1 && same(on1.lines, on2.lines), JSON.stringify([on1.lines, on2.lines]));
+      const diffText = diff1.lines.join("\n");
+      judge("PLEIAD_TEST_GLOBALS=diff: 知らせない分（値の無い項目・残した項目）も含めて、対象と種類ごとに 1 行ずつ全部出す。先頭に、そのモードで走っていると出す",
+        diff1.lines.length > 10 && diff1.lines.every((l) => l.startsWith("  [global] ")) && diffText.includes("__fxGHollow（値の無い項目）") && diffText.includes("fxDocHollow（値の無い項目）")
+        && /__zod_globalConfig[^\n]*残した（KEEP_GLOBALS/.test(diffText) && diffText.includes("Symbol(graceful-fs.queue)") && VALUES.every((v) => !diff1.stdout.includes(v)) && diff1.stdout.includes("PLEIAD_TEST_GLOBALS=diff"), diff1.stdout.slice(-1200));
+      judge("PLEIAD_TEST_GLOBALS=off: 戻さず・知らせず、そのモードで走っていると先頭に出す（昔の動き。原因の切り分け用）。既定では、モードの行は出ない",
+        [off1, off2].every((g) => g.lines.length === 0 && g.stdout.includes("PLEIAD_TEST_GLOBALS=off")) && [on1, on2].every((g) => !g.stdout.includes("PLEIAD_TEST_GLOBALS=")));
+      judge("PLEIAD_TEST_GLOBALS がおかしな値なら、何も走らせず終了コード 2（黙って既定に戻さない）", badMode.code === 2 && !badMode.stdout.includes("── fx-") && badMode.stderr.includes("PLEIAD_TEST_GLOBALS"), `${badMode.code} ${badMode.stderr.slice(0, 200)}`);
     }
 
     // ---- 不正な引数・登録は、何も走らせない -------------------------------------------------------------------------------------
