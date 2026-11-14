@@ -30,7 +30,7 @@ const plus = () => {
 
 // i18n-dynamic: context.ply.target.
 // i18n-dynamic: context.ply.targetOpt.
-export function createPlyInstructions({ cmd, work, saved, openDelegation, opened, showMenu }) {
+export function createPlyInstructions({ cmd, work, saved, openDelegation, opened, showMenu, onCount }) {
   const root = el('div', 'cx-block cx-ply');
   // 並べ替えの結果の読み上げ。描き直しても外さない
   const status = el('div', 'visually-hidden');
@@ -55,6 +55,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
   // 同じ中身なら描き直さない（保存の後に届く「設定が変わった」の知らせで、動いている途中の行を作り直さない）
   function apply(next) {
     state = next;
+    onCount?.(state ? state.items.length : 0);
     if (signature() !== painted) render();
   }
   async function load() {

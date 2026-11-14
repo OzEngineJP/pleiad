@@ -97,6 +97,35 @@
 .cx-fold>summary:hover{color:var(--ink)}
 .cx-fold>.cx-card,.cx-fold>.cx-block{margin-top:8px}
 
+/* まとまり・タブ（承認済みモック 2026-11-15） */
+.cx-tabs{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:4px;margin:-6px 0;padding:6px 0;background:var(--surface-paper)}
+.settings-content .cx-tabs{top:-24px}
+.settings-content:has(#contextPanel:not([hidden])){scroll-padding-top:64px}
+.cx-tab{display:inline-flex;align-items:baseline;gap:6px;min-height:32px;padding:6px 14px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer;white-space:nowrap;
+  transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.cx-tab:hover{background:var(--surface-hover);color:var(--ink)}
+.cx-tab[aria-selected=true]{background:var(--surface-1);color:var(--ink-blue);font-weight:600}
+.cx-tab .c{font-size:var(--fs-xs);font-weight:400;color:var(--ink-weak);font-variant-numeric:tabular-nums}
+.cx-tabpanel{display:flex;flex-direction:column;gap:16px;min-width:0}
+.cx-tabpanel[hidden]{display:none}
+.cx-lead0{flex:none;width:26px}
+.cx-ic.cx-tw{cursor:pointer;background:transparent;padding:0}
+.cx-ic.cx-tw:hover{background:var(--surface-2)}
+.cx-tw svg{transition:transform var(--dur-fast) var(--ease-out)}
+.cx-tw[aria-expanded=true] svg{transform:rotate(90deg)}
+.cx-row .t.tap{cursor:pointer}
+.cx-row .cnt{flex:none;padding:0 6px;border-radius:var(--r-pill);background:var(--surface-1);font-size:var(--fs-xs);color:var(--ink-weak);font-variant-numeric:tabular-nums}
+.cx-row.kid>.cx-lead0{position:relative;align-self:stretch}
+.cx-row.kid>.cx-lead0::before{content:"";position:absolute;left:12px;top:-7px;bottom:-7px;width:1.5px;border-radius:1px;background:var(--surface-3)}
+.cx-row.kid+.cx-peek,.cx-row.kid+.cx-choice,.cx-peek.kid{margin-left:36px}
+.cx-sw[aria-checked=mixed]{background:var(--fill-primary);color:var(--on-fill)}
+.cx-sw[aria-checked=mixed]::after{top:8.5px;left:10px;width:14px;height:3px;border-radius:2px;transform:none}
+.cx-find{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--surface-paper);border-radius:var(--r-pill);color:var(--ink-weak)}
+.cx-find svg{flex:none;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.cx-find input{flex:1;min-width:0;padding:0;background:transparent;color:var(--ink);outline:none}
+.cx-find:focus-within{outline:2px solid var(--line-blue);outline-offset:1px}
+@media (prefers-reduced-motion:reduce){.cx-tw svg,.cx-tab{transition:none}}
+
 /* ==================== ② 設定 › コンテキスト ==================== */
 .cx{display:flex;flex-direction:column;gap:16px;padding-bottom:4px}
 .cx-lead{margin:0;font-size:var(--fs-s);color:var(--ink-weak);line-height:1.8}
@@ -523,6 +552,8 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .cx-ask .q{flex:1 1 200px;min-width:0;color:var(--ink);font-weight:600}
 .cx-ask .btn{padding:3px 12px;font-size:var(--fs-s)}
 @media (max-width:700px){
+  .cx-tabs{gap:2px}
+  .cx-tab{min-height:40px;padding:6px 10px}
   /* 狭い幅: 1 段目に名前とスイッチ、2 段目にアイコン（押す面は 40px） */
   .cx-row.ag{flex-wrap:wrap}
   .cx-ags{flex:1 0 100%;justify-content:end;grid-template-columns:repeat(6,40px)}

@@ -61,6 +61,7 @@ try {
         document.getElementById('onboardingDialog')?.close();
         if (!document.body.classList.contains('settings')) document.getElementById('settings')?.click();
         document.getElementById('openContext')?.click();
+        document.querySelector('#contextPanel [role=tab][data-tab="mcp"]')?.click();
       });
       await page.waitForTimeout(500);
       if (await page.locator('#contextPanel [data-kind=mcp] .cx-sw').first().isVisible()) break;

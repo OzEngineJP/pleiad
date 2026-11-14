@@ -1617,7 +1617,23 @@
       "note": "ユーザーとこの場所の指示の合計がこれを超えると、会話の右パネルで知らせます（会話は止めません）",
       "invalid": "{{min}}〜{{max}} の整数で入れてください"
     },
-    "showAll": "すべて見る（{{n}} 件）",
+    "tabs": {
+      "aria": "プラグインの種類",
+      "instruction": "指示",
+      "skill": "Skills",
+      "mcp": "外部 MCP",
+      "hooks": "Hooks"
+    },
+    "find": {
+      "placeholder": "絞り込む",
+      "aria": "Skills を絞り込む",
+      "none": "見つかりません"
+    },
+    "bundle": {
+      "partialAria": "{{label}}（一部: {{total}} 件中 {{on}} 件がオン）",
+      "offerAria": "{{name}} をまとめて案内する",
+      "provideAria": "{{name}} をまとめて渡す"
+    },
     "antigravityNote": "antigravity の会話では、指示ファイルがエージェント任せのままのとき、ワークスペースの AGENTS.md・GEMINI.md は agy が自分で読めなくなるため、その内容を Pleiad が発言の前に足して渡します",
     "lockReason": {
       "own": "{{agent}} の設定にあるため、Pleiad からは止められません",

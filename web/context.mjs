@@ -17,8 +17,10 @@ import { createPlyInstructions } from './ply-instructions-card.mjs';
 import { createHooksCard } from './hooks-card.mjs';
 import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
+import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
+const TAB_KEY = 'ply-context-tab';
 const TEXT = {
   instruction: {
     title: t('context.instruction.title'), owned: t('context.instruction.files'),
@@ -45,8 +47,6 @@ const TEXT = {
     formats: { user: [['claude', t('context.mcp.sourceClaude')], ['codex', t('context.mcp.sourceCodex')], ['opencode', t('context.mcp.sourceOpencode')], ['devin', t('context.mcp.sourceDevin')], ['antigravity', t('context.mcp.sourceAntigravity')], ['grok', t('context.mcp.sourceGrok')]], directory: [['claude', '.mcp.json'], ['codex', '.codex/config.toml'], ['opencode', 'opencode.json'], ['devin', '.devin/mcp_config.json'], ['antigravity', '.gemini/settings.json'], ['grok', '.grok/config.toml']] },
   },
 };
-const SHOWN = 8;   // Skills は多いので最初はこれだけ並べ、「すべて見る」で残りを出す
-
 export const pathKey = p => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 export const within = (dir, file) => pathKey(file) === pathKey(dir) || pathKey(file).startsWith(pathKey(dir) + '/');
 const parent = p => String(p ?? '').replace(/[\\/][^\\/]+$/, '');
@@ -58,7 +58,15 @@ export function toggleExclude(value, entry, include) {
   const scope = (entry.scope ?? entry.origins?.[0]?.scope) === 'user' ? 'user' : 'directory';
   value[scope] ??= { sources: [], excludePaths: [] };
   const list = value[scope].excludePaths;
-  value[scope].excludePaths = include ? list.filter(p => !within(p, entry.path) && !within(p, entry.realPath ?? entry.path)) : [...list, entry.path];
+  if (include) {
+    value[scope].excludePaths = list.filter(p => !within(p, entry.path) && !within(p, entry.realPath ?? entry.path));
+  } else if (!list.some(p => pathKey(p) === pathKey(entry.path))) {
+    value[scope].excludePaths = [...list, entry.path];
+  }
+}
+/** まとまりのスイッチで複数件を 1 回の保存で切り替える */
+export function toggleExcludeMany(value, entries, include) {
+  for (const entry of entries ?? []) toggleExclude(value, entry, include);
 }
 function button(text, className = 'btn', onClick) {
   const b = el('button', className, text);
@@ -120,15 +128,88 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   const status = el('p', 'cx-status'); status.setAttribute('role', 'alert');
   const cards = Object.fromEntries(KINDS.map(k => [k, el('section', 'cx-card')]));
   const toast = el('div', 'cx-toast', t('context.saved')); toast.setAttribute('role', 'status');
-  root.append(lead, status, cards.instruction, cards.skill, cards.mcp, ...(cliSetup ? [cliSetup] : []), toast);
-  panel.append(root);
 
   let view = null, scan = null, scanning = false, scanVisible = false, ply = null, agents = null, adding = null;
   // 外部 MCP の一覧（サーバーが組んだ名前 × エージェントの行。core/context-mcp-matrix.mjs）と、コネクターを読み直す回数
   let matrix = null, matrixTicket = 0, matrixPolls = 0, matrixTimer = null;
   const opened = new Set();          // 中身を開いている行（id）
-  const expanded = new Set();        // 「すべて見る」を押した種類
+  const bundleOpen = new Map();      // まとまりごとの明示的な開閉状態（キー -> boolean）
+  let skillQuery = '', skillListHost = null, placeTierEl = null;
+  let plyCount = null, mcpCount = null, hooksCount = null;
   let toastTimer, scanTicket = 0;
+
+  let activeTab = readTabStorage(TAB_KEY, CONTEXT_TABS, 'instruction');
+  const tabPanels = Object.fromEntries(CONTEXT_TABS.map(id => {
+    const p = el('div', 'cx-tabpanel');
+    p.id = `cx-panel-${id}`;
+    p.setAttribute('role', 'tabpanel');
+    p.setAttribute('aria-labelledby', `cx-tab-${id}`);
+    p.hidden = id !== activeTab;
+    return [id, p];
+  }));
+  tabPanels.instruction.append(cards.instruction);
+  tabPanels.skill.append(cards.skill);
+  tabPanels.mcp.append(cards.mcp, ...(cliSetup ? [cliSetup] : []));
+
+  const skillFind = createFindBar({
+    placeholder: t('context.find.placeholder'),
+    ariaLabel: t('context.find.aria'),
+    onInput: q => {
+      skillQuery = q;
+      if (skillListHost?.isConnected) paintTierList(skillListHost, 'skill');
+      if (placeTierEl?.isConnected) placeTierEl.hidden = Boolean(skillQuery);
+    },
+  });
+
+  function updateCounts() {
+    const kinds = view?.defaults?.kinds;
+    const countScan = kind => {
+      if (!scan) return null;
+      const seen = new Set();
+      const all = (scan.entries ?? []).filter(e => e.kind === kind && !seen.has(e.id) && seen.add(e.id));
+      return kind === 'skill' ? new Set(all.map(e => e.name)).size : all.length;
+    };
+    const instOwner = kinds?.instruction?.value?.owner;
+    const instUser = instOwner === 'ply' ? countScan('instruction') : 0;
+    const instruction = !view || (instOwner === 'ply' && instUser == null && plyCount == null)
+      ? null : (plyCount ?? 0) + (instUser ?? 0);
+    const skill = !view ? null : kinds?.skill?.value?.owner === 'ply' ? countScan('skill') : 0;
+    tabBar.setCounts({ instruction, skill, mcp: mcpCount, hooks: hooksCount });
+  }
+
+  function selectTab(id, { focus = false } = {}) {
+    if (!CONTEXT_TABS.includes(id)) return;
+    const changed = activeTab !== id;
+    activeTab = id;
+    writeTabStorage(TAB_KEY, id);
+    if (changed && skillQuery) {
+      skillQuery = '';
+      skillFind.clear();
+      if (skillListHost?.isConnected) paintTierList(skillListHost, 'skill');
+      if (placeTierEl?.isConnected) placeTierEl.hidden = false;
+    }
+    for (const k of CONTEXT_TABS) tabPanels[k].hidden = k !== id;
+    tabBar.setActive(id, { focus });
+    if (changed) {
+      const sc = panel.closest('.settings-content');
+      if (sc) { sc.scrollTo?.(0, 0); sc.scrollTop = 0; }
+    }
+  }
+
+  const tabBar = createTabBar({
+    tabs: [
+      { id: 'instruction', label: t('context.tabs.instruction') },
+      { id: 'skill', label: t('context.tabs.skill') },
+      { id: 'mcp', label: t('context.tabs.mcp') },
+      { id: 'hooks', label: t('context.tabs.hooks') },
+    ],
+    active: activeTab,
+    idPrefix: 'cx',
+    ariaLabel: t('context.tabs.aria'),
+    onSelect: selectTab,
+  });
+  root.append(lead, status, tabBar.root, tabPanels.instruction, tabPanels.skill, tabPanels.mcp, tabPanels.hooks, toast);
+  panel.append(root);
 
   const home = () => view?.home ?? '';
   const short = p => {
@@ -149,10 +230,10 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     try { await fn(); }
     catch (e) { status.textContent = t('context.saveFailed', { error: e.message }); }
   }
-  const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened, showMenu });
+  const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened, showMenu, onCount: n => { plyCount = n; updateCounts(); } });
   // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0045）
-  const hooks = createHooksCard({ cmd, work, saved: () => saved(t('hooks.saved')), opened });
-  toast.before(hooks.root);
+  const hooks = createHooksCard({ cmd, work, saved: () => saved(t('hooks.saved')), opened, onCount: n => { hooksCount = n; updateCounts(); } });
+  tabPanels.hooks.append(hooks.root);
 
   // ---------------------------------------------------------------- 保存（その場で。全体の設定）
   async function saveKind(kind, mutate, { rescan = true } = {}) {
@@ -208,9 +289,18 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots')));
     return p;
   }
+  function paintTierList(list, kind) {
+    list.replaceChildren();
+    if (!scan) list.append(loading());
+    else documentRows(list, kind);
+    if (kind !== 'skill' || !skillQuery) {
+      emptyRoots(list, kind);
+      list.append(addPlace(kind));
+    }
+  }
   /**
-   * 指示・Skills の行（ユーザーの範囲で見つかったもの）。スイッチはユーザーの除外（excludePaths）を出し入れする。
-   * Skills は名前ごとに 1 行（同じ名前の定義が複数あっても使うのは 1 つ。外部 MCP のカードと同じ形。ADR 0290）
+   * 指示・Skills の行（ユーザーの範囲で見つかったもの）。フォルダー・置き場ごとに 1 行のまとまりにし、開くと 1 件ずつ並ぶ。
+   * スイッチはユーザーの除外（excludePaths）を出し入れする。Skills は名前ごとに 1 行（同じ名前の定義が複数あっても使うのは 1 つ。ADR 0290）
    */
   function documentRows(list, kind) {
     // 外したファイルは探索が出典ごとに別の行で返すので、同じ行（id）は 1 つにする
@@ -220,26 +310,40 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     for (const e of all) { const key = kind === 'skill' ? e.name : e.id; byName.set(key, [...(byName.get(key) ?? []), e]); }
     const entries = [...byName.values()].map(group => ({ ...(group.find(e => e.status === 'candidate') ?? group[0]), group }));
     if (!entries.length) { list.append(el('p', 'cx-empty', kind === 'skill' ? t('context.skill.none') : t('context.instruction.none'))); return; }
-    const shown = kind === 'skill' && !expanded.has(kind) ? entries.slice(0, SHOWN) : entries;
-    for (const entry of shown) {
+    const query = kind === 'skill' ? skillQuery.toLowerCase() : '';
+    const hit = entry => !query || String(entry.name ?? '').toLowerCase().includes(query);
+    const blocks = groupEntries(kind, entries);
+    let shown = 0;
+
+    function fileRow(entry, child, displayName) {
       const off = entry.group.every(e => e.status === 'excluded');
       const usable = skillChoices(entry);
-      const row = el('div', 'cx-row' + (off ? ' off' : ''));
+      const row = el('div', 'cx-row' + (off ? ' off' : '') + (child ? ' kid' : ''));
+      row.append(el('span', 'cx-lead0'));
       const open = button('', 'cx-open');
+      open.dataset.cxFk = `open:${entry.id}`;
       open.setAttribute('aria-expanded', String(opened.has(entry.id)));
       const body = el('span', 't');
-      body.append(el('span', 'nm', entry.name));
+      const nl = el('span', 'nl');
+      nl.append(el('span', 'nm', displayName ?? entry.name));
+      if (!child) {
+        const marks = originMarks(entryOrigins(entry));
+        if (marks) nl.append(marks);
+      }
+      body.append(nl);
       const where = kind === 'skill' ? parent(parent(entry.path)) : parent(entry.path);
       const note = entry.status === 'shadowed' ? t('context.row.shadowed') : entry.status === 'conditional' ? t('context.row.conditional', { paths: entry.paths.join(', ') }) : '';
       const want = info().kinds.skill.value.prefer?.[entry.name];
-      body.append(el('span', 'p', usable
+      const subText = usable
         ? t('sessionContext.skill.choice', { n: usable.length, place: short(where), by: want && pathKey(want) === pathKey(entry.path) ? t('sessionContext.mcp.byPrefer') : t('sessionContext.mcp.byFirst') })
-        : [short(where), entry.root ? t('context.roots.extra') : '', note].filter(Boolean).join(' · ')));
+        : [child ? '' : short(where), entry.root ? t('context.roots.extra') : '', note].filter(Boolean).join(' · ');
+      if (subText) body.append(el('span', 'p', subText));
       open.append(body);
       open.onclick = () => { if (opened.has(entry.id)) opened.delete(entry.id); else opened.add(entry.id); renderCard(kind); };
       // 指示の行の右端の量（渡す本文の見積もり。core/context-scan.mjs の tokens。ADR 0056）
       const tokens = kind === 'instruction' && Number.isFinite(entry.tokens) ? el('span', 'cx-tok', t('sessionContext.amount.about', { n: fmt.number(entry.tokens) })) : null;
       const sw = button('', 'cx-sw');
+      sw.dataset.cxFk = `sw:${entry.id}`;
       sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(!off));
       sw.setAttribute('aria-label', kind === 'skill' ? t('context.row.offerAria', { name: entry.name }) : t('context.row.provideAria', { name: entry.name }));
       sw.onclick = () => { sw.setAttribute('aria-checked', String(off)); work(() => saveKind(kind, v => { for (const e of entry.group) toggleExclude(v, e, off); })); };
@@ -248,11 +352,68 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       if (usable) list.append(skillChoice(entry, usable));
       if (opened.has(entry.id)) {
         const peek = peekDocument(entry, { short });
+        if (child) peek.classList.add('kid');
         if (entry.root) peek.append(rootActs(kind, entry.root));
         list.append(peek);
       }
     }
-    if (shown.length < entries.length) list.append(button(t('context.showAll', { n: entries.length }), 'btn cx-more-rows', () => { expanded.add(kind); renderCard(kind); }));
+
+    for (const block of blocks) {
+      if (block.type === 'row') {
+        if (!hit(block.entry)) continue;
+        shown++;
+        fileRow(block.entry, false, block.childLabel);
+        continue;
+      }
+      const kids = block.items.filter(({ entry }) => hit(entry));
+      if (query && !kids.length) continue;
+      shown += kids.length;
+      const open = Boolean(query) || (bundleOpen.has(block.key) ? bundleOpen.get(block.key) : block.defaultOpen);
+      const items = block.items.map(i => i.entry);
+      const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
+      const swState = bundleSwitchState(items, e => !e.group.every(g => g.status === 'excluded'), actionLabel);
+      const row = el('div', 'cx-row grp' + (swState.checked === 'false' ? ' off' : ''));
+      const tw = button('', 'cx-ic cx-tw');
+      tw.dataset.cxFk = `bundle:${block.key}`;
+      tw.setAttribute('aria-expanded', String(open));
+      tw.setAttribute('aria-label', block.label);
+      tw.append(chevronIcon());
+      const flip = () => { if (query) return; bundleOpen.set(block.key, !open); renderCard(kind); };
+      tw.onclick = flip;
+      const body = el('span', 't' + (query ? '' : ' tap'));
+      if (!query) body.onclick = flip;
+      const nl = el('span', 'nl');
+      nl.append(el('span', 'nm', block.label), el('span', 'cnt', String(block.items.length)));
+      const marks = originMarks(block.origins);
+      if (marks) nl.append(marks);
+      body.append(nl, el('span', 'p', short(block.folder)));
+      let tokOn = 0, tokTotal = 0;
+      if (kind === 'instruction') {
+        for (const e of items) {
+          if (!Number.isFinite(e.tokens)) continue;
+          tokTotal += e.tokens;
+          if (!e.group.every(g => g.status === 'excluded')) tokOn += e.tokens;
+        }
+      }
+      const tokens = kind === 'instruction' && tokTotal > 0 ? el('span', 'cx-tok', t('sessionContext.amount.about', { n: fmt.number(tokOn || tokTotal) })) : null;
+      const sw = button('', 'cx-sw');
+      sw.dataset.cxFk = `bundle-sw:${block.key}`;
+      sw.setAttribute('role', 'checkbox'); sw.setAttribute('aria-checked', swState.checked);
+      sw.setAttribute('aria-label', swState.ariaLabel);
+      sw.onclick = () => {
+        const include = swState.checked !== 'true';
+        sw.setAttribute('aria-checked', String(include));
+        work(() => saveKind(kind, v => toggleExcludeMany(v, items.flatMap(e => e.group), include)));
+      };
+      row.append(tw, body, ...(tokens ? [tokens] : []), sw);
+      list.append(row);
+      if (open) for (const { entry, childLabel } of kids) fileRow(entry, true, childLabel);
+    }
+    if (query && !shown) {
+      const none = el('div', 'cx-row');
+      none.append(el('span', 'cx-lead0'), el('span', 'p', t('context.find.none')));
+      list.append(none);
+    }
   }
   /** 同じ名前の Skill の、選べる定義（中身の実体が 2 つ以上あるとき）。無ければ null */
   function skillChoices(entry) {
@@ -383,18 +544,21 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   function userTier(kind, value) {
     const tier = el('div', 'cx-tier');
     tier.append(tierHead(t('context.tier.user')), formats(kind, 'user', value));
+    if (kind === 'skill') tier.append(skillFind.root);
     const list = el('div', 'cx-list');
     list.setAttribute('role', 'group'); list.setAttribute('aria-label', t('context.tier.listAria', { kind: TEXT[kind].title }));
-    if (!scan) list.append(loading());
-    else documentRows(list, kind);
-    emptyRoots(list, kind);
-    list.append(addPlace(kind));
+    if (kind === 'skill') skillListHost = list;
+    paintTierList(list, kind);
     tier.append(list);
     return tier;
   }
   function placeTier(kind, value) {
     const tier = el('div', 'cx-tier');
     tier.append(tierHead(t('context.tier.place'), t('context.tier.placeSub')), formats(kind, 'directory', value));
+    if (kind === 'skill') {
+      placeTierEl = tier;
+      tier.hidden = Boolean(skillQuery);
+    }
     return tier;
   }
   /**
@@ -409,6 +573,11 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   }
   function renderCard(kind) {
     const card = cards[kind], value = info().kinds[kind].value;
+    const active = document.activeElement;
+    const wasFind = kind === 'skill' && active === skillFind.input;
+    const findSel = wasFind ? [skillFind.input.selectionStart, skillFind.input.selectionEnd] : null;
+    const fk = !wasFind && active && card.contains(active) ? active.dataset?.cxFk : '';
+    if (kind === 'skill') { skillListHost = null; placeTierEl = null; }
     card.replaceChildren();
     card.dataset.kind = kind;
     const head = el('div', 'cx-khead');
@@ -436,8 +605,14 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     host.append(seg(kind, value.owner));
     const agy = antigravityNote(kind);
     if (agy) host.append(agy);
-    if (value.owner !== 'ply') { host.append(el('p', 'cx-note', TEXT[kind].note)); return; }
-    host.append(userTier(kind, value), placeTier(kind, value));
+    if (value.owner === 'ply') host.append(userTier(kind, value), placeTier(kind, value));
+    else host.append(el('p', 'cx-note', TEXT[kind].note));
+    if (wasFind && skillFind.input.isConnected) {
+      skillFind.input.focus({ preventScroll: true });
+      if (findSel?.[0] != null) try { skillFind.input.setSelectionRange(findSel[0], findSel[1]); } catch {}
+    } else if (fk) {
+      card.querySelector(`[data-cx-fk="${CSS.escape(fk)}"]`)?.focus({ preventScroll: true });
+    }
   }
   function mcpContext() {
     return { cmd, cwd: home(), scanCwd: home(), scan, ply, agents, matrix, reloadMatrix, short, backends: backends(), info: info(),
@@ -446,11 +621,12 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       opened, loading, work };
   }
   const mcp = createMcpSection();
-  const mcpMatrix = createMcpMatrix({ section: mcp });
+  const mcpMatrix = createMcpMatrix({ section: mcp, onCount: n => { mcpCount = n; updateCounts(); } });
 
   function renderAll() {
     if (!view) return;
     for (const kind of KINDS) renderCard(kind);
+    updateCounts();
   }
 
   // ---------------------------------------------------------------- 読み込み
@@ -507,7 +683,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       status.textContent = t('context.loadFailed', { error: e.message });
       return;
     }
-    scan = null; matrix = null; matrixPolls = 0; adding = null; opened.clear(); expanded.clear(); mcpMatrix.reset();
+    scan = null; matrix = null; matrixPolls = 0; adding = null; opened.clear(); bundleOpen.clear(); skillQuery = ''; skillFind.clear(); plyCount = null; mcpCount = null; hooksCount = null; mcpMatrix.reset();
     renderAll();
     await Promise.all([plyInstructions.load(), loadScan({ refresh: true }), hooks.load()]);
   }

@@ -1654,7 +1654,23 @@
       "note": "When your user and location instructions together exceed this, the conversation's side panel says so (the conversation is not stopped)",
       "invalid": "Enter a whole number from {{min}} to {{max}}"
     },
-    "showAll": "Show all ({{n}})",
+    "tabs": {
+      "aria": "Plugin categories",
+      "instruction": "Instructions",
+      "skill": "Skills",
+      "mcp": "External MCP",
+      "hooks": "Hooks"
+    },
+    "find": {
+      "placeholder": "Filter",
+      "aria": "Filter skills",
+      "none": "No matching skills"
+    },
+    "bundle": {
+      "partialAria": "{{label}} (partial: {{on}} of {{total}} enabled)",
+      "offerAria": "Offer all in {{name}}",
+      "provideAria": "Provide all in {{name}}"
+    },
     "antigravityNote": "In antigravity conversations, when instruction files are left to the agent, agy can no longer read AGENTS.md and GEMINI.md in the workspace on its own, so Pleiad looks them up and prepends their content to each message.",
     "lockReason": {
       "own": "In {{agent}}'s settings, so Pleiad cannot turn this off",

@@ -41,7 +41,7 @@ const lockGlyph = () => { const k = el('span', 'lk'); k.append(svg(ICON.lock)); 
  * section は createMcpSection() の戻り（peek・authNote を使う）。
  * 戻り: { render(host, ctx) }。ctx は web/context.mjs の mcpContext() に matrix・reloadMatrix を足したもの
  */
-export function createMcpMatrix({ section }) {
+export function createMcpMatrix({ section, onCount }) {
   const memory = new Map();       // 全体をオフにする前に使っていたエージェント（この画面を開いている間だけ。戻すときの並び）
   const confirmed = new Set();    // 広げる確認を済ませた名前（名前ごとに 1 回）
   let ask = null;                 // { key, agent }
@@ -217,7 +217,7 @@ export function createMcpMatrix({ section }) {
   /** host（種類のカード）へ、ロゴと名前の対応・2 つの組・凡例を描く。ログインの詳細設定は呼び出し側が続ける */
   function render(host, ctx) {
     const m = ctx.matrix;
-    if (!m || !ctx.scan) { host.append(ctx.loading()); return; }
+    if (!m || !ctx.scan) { onCount?.(null); host.append(ctx.loading()); return; }
     const legendNames = el('div', 'cx-legend names'); legendNames.setAttribute('aria-hidden', 'true');
     for (const a of m.agents) { const i = el('span', `li be-${a}`); i.append(mark(a), document.createTextNode(label(a))); legendNames.append(i); }
     host.append(legendNames);
@@ -225,6 +225,7 @@ export function createMcpMatrix({ section }) {
     const lower = s => String(s ?? '').toLowerCase();
     const connectorOn = row => m.rows.some(c => c.kind === 'connector' && c.cells.claude?.state === 'on' && [lower(row.name), lower(row.plugin)].includes(lower(c.name)));
     const rows = m.rows.filter(r => r.kind !== 'plugin' || !connectorOn(r));
+    onCount?.(rows.length);
     host.append(group(ctx, t('mcp.matrix.groupPly'), rows.filter(r => r.group === 'ply'), { add: true }));
     host.append(group(ctx, t('mcp.matrix.groupAgent'), rows.filter(r => r.group === 'agent'), { wait: m.connectors === 'reading' }));
     ensureLockTips();
