@@ -63,3 +63,7 @@
 - コネクターの最後に読めた一覧を `<data>/claude-connectors.json` に小さな JSON で残す（`tests/data-writes-allowlist.mjs`）。
 - Grok は指示・Skills を「Pleiad がそろえる」にすると `ply_context` を受け取れない（`PLY_CONTEXT_CONFLICTS`）。その間、中継に頼る Grok の列は鍵と同じ見た目で押せない。
 - 会話の右パネルの「この場所だけ変える」の MCP の 2 択は残る（場所ごとの一覧は別の仕事）。
+
+## 後の変更（2026-11-15）
+
+- [ADR 0330](0330-context-tabs-and-lock-tooltip.md) で、設定 › プラグインと右パネルを 4 タブ（指示・Skills・外部 MCP・Hooks）に分け、外部 MCP カード下の「Pleiad からは止められません」の凡例を鍵付き項目の吹き出し（`web/lock-tip.mjs`）へ移した。名前 × エージェントの一覧と `context-scans.json` の保存形式・実行時の規則はこの ADR のまま保つ。
