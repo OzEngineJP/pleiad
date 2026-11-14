@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
-import { createTranscriptReader } from '../../core/backends/claude-transcript.mjs';
-import { parseSessionTranscript, mergeQueuedCommands, transcriptToMessages } from '../../core/backends/claude-normalize.mjs';
+import { createTranscriptReader, feedBufferLines } from '../../core/backends/claude-transcript.mjs';
+import { parseSessionTranscript, mergeQueuedCommands, transcriptToMessages, createSubagentParser, invalidSubagentTranscript } from '../../core/backends/claude-normalize.mjs';
 import { classifySystemMessages } from '../../core/system-messages.mjs';
 import { backend } from '../../core/backends/claude.mjs';
 import { createLoadTiming } from '../../core/load-timing.mjs';
@@ -293,6 +294,66 @@ export default async function (t) {
     await fs.appendFile(subFile, jsonl([assistant('s4', 's3', [{ type: 'text', text: 'w'.repeat(2500) }], { sessionId: SUB })]));
     const bigSub = await backend.getSubagentMessages(SUB, agentId, {});
     t.ok('サブエージェントの大きい行も行から読み直す', bigSub.at(-1).text === 'w'.repeat(2500));
+
+    // --- 初回の全部読みを区切ってイベントループへ返す（ADR 0332）---
+    // sliceMs: 0 は 1 行ごとに区切る。区切った結果は一気に読んだときと同じ
+    const SLICED = '00000000-1111-4111-8111-00000000000e';
+    const slicedFile = path.join(project, `${SLICED}.jsonl`);
+    await fs.writeFile(slicedFile, jsonl(Array.from({ length: 300 }, (_, i) =>
+      user(`v${i}`, i ? `v${i - 1}` : null, 'x'.repeat(4000), i === 0 ? { version: '2.1.288' } : {}))));
+    const slicedSnap = await make({ sliceMs: 0 })(SLICED);
+    const slicedFresh = parseSessionTranscript(await fs.readFile(slicedFile, 'utf8'));
+    assert.deepEqual(slicedSnap.rows, slicedFresh.rows);
+    assert.deepEqual(slicedSnap.marks, slicedFresh.marks);
+    assert.deepEqual(slicedSnap.entries, await getSessionMessages(SLICED));
+    t.ok('区切った全部読みは一気に読んだときと同じ結果', true);
+
+    // 区切りのあいだに追記された版は保持せず、次の要求で読み直す。
+    // readFile が返った直後に追記を始め、SDK の選別の中で追記の終わりを待つ（確実に「読み中の追記」にする）
+    let appending = null;
+    const midWrite = createTranscriptReader({
+      projects: () => path.join(dir, 'projects'), sliceMs: 0,
+      selectMessages: async (id, entries) => { await appending; return selectMessages(id, entries); },
+      io: { ...io, readFile: async (...args) => {
+        const buf = await io.readFile(...args);
+        appending ??= fs.appendFile(slicedFile, jsonl([user('v-mid', 'v299', 'appended during parse')]));
+        return buf;
+      } },
+    });
+    const duringSnap = await midWrite(SLICED);
+    await appending;
+    const midReads = reads;
+    const afterWrite = await midWrite(SLICED);
+    t.ok('読み中に追記された版は読んだ時点の履歴を返す', !duringSnap.entries.some(e => e.uuid === 'v-mid'));
+    t.ok('区切りのあいだに追記された版は保持せず読み直す', reads === midReads + 1 && afterWrite.entries.some(e => e.uuid === 'v-mid'));
+
+    // 偽の大きいデータで、区切った全部読みがイベントループを閾値以上に止めないこと。
+    // 区切らない同じ読みは ~180 ms 止まる（87 MB・10,000 行）ので 100 ms が境目になる
+    const LOOP = '00000000-1111-4111-8111-00000000000f';
+    await fs.writeFile(path.join(project, `${LOOP}.jsonl`), jsonl(Array.from({ length: 10000 }, (_, i) =>
+      user(`e${i}`, i ? `e${i - 1}` : null, 'z'.repeat(9000), i === 0 ? { version: '2.1.288' } : {}))));
+    const loopDelay = monitorEventLoopDelay();
+    loopDelay.enable();
+    await make({ selectMessages: async () => [] })(LOOP);
+    loopDelay.disable();
+    t.ok(`区切った全部読みはイベントループを 100 ms 以上止めない（実測 ${Math.round(loopDelay.max / 1e6)} ms）`, loopDelay.max < 100 * 1e6);
+
+    // 子の transcript の版と形の検査は解釈器の feed に畳み込んだ（invalidSubagentTranscript と同じ判定。ADR 0332）
+    const shape = async (text) => { const p = createSubagentParser(); await feedBufferLines(p, Buffer.from(text)); return p; };
+    const goodSub = jsonl([user('u', null, 'ok', { sessionId: 's', version: '2.1.288' }), assistant('a', 'u', [{ type: 'text', text: 'hi' }], { sessionId: 's' })]);
+    for (const text of [
+      goodSub,
+      goodSub + '{"bad mid"}\n',          // 途中の読めない行は違反
+      goodSub + '{"bad tail"',            // 書きかけの末尾だけは違反に数えない
+      jsonl([{ type: 'user', uuid: 'u', message: null }]),
+      jsonl([{ type: 'system', data: 'x "message" y' }]),   // 発言 0 件で "message" が残る
+      '',
+    ]) {
+      const p = await shape(text);
+      assert.equal(p.invalid, invalidSubagentTranscript(text), JSON.stringify(text).slice(0, 60));
+    }
+    t.ok('畳み込んだ形の検査は本文を見る検査と同じ判定', true);
+    t.ok('畳み込んだ版の検出は先頭 20 行の最初の version を返す', (await shape(goodSub)).version === '2.1.288');
 
     const bad = parseSessionTranscript(jsonl([{ type: 'attachment', uuid: 'bad', attachment: { type: 'queued_command', prompt: 5 } }]) + '{"type":"attachment","queued_command":');
     t.ok('壊れた途中送信の形を検出する', bad.invalidQueued);

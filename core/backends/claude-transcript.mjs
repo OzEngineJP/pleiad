@@ -1,5 +1,7 @@
 // 同じ版の transcript を getMessages / getCompactions / outline / older で共有する。
 // 追記しかない版は、前回の末尾の窓を照合してから差分だけを読み、増えた行だけを解釈する（ADR 0330）。
+// 初めて開く大きい記録の全部読みは、行の解釈を TRANSCRIPT_PARSE_SLICE_MS ごとに区切って
+// イベントループへ返す（ADR 0332）。
 // 保持するのは解釈済みの行の「蒸留」形（claude-normalize.mjs。大きい行はバイト位置と選別に要る
 // フィールドだけ）で、返す履歴は蒸留した message を行から読み直して戻す。
 import fs from 'node:fs/promises';
@@ -7,7 +9,9 @@ import path from 'node:path';
 import { createSessionParser, SLIM_MARK } from './claude-normalize.mjs';
 
 export const TRANSCRIPT_CACHE_BYTES = 320 * 1024 * 1024;
-export const TRANSCRIPT_CACHE_ENTRIES = 4;
+export const TRANSCRIPT_CACHE_ENTRIES = 16;
+// 全部読みの行の解釈を区切る長さ（ms）。この時間ごとに setImmediate でイベントループへ返す
+export const TRANSCRIPT_PARSE_SLICE_MS = 20;
 // 追記かどうかの照合に使う窓: 先頭と末尾（書きかけの行を含む末尾）のバイト数
 const APPEND_WINDOW = 4096;
 const stamp = s => `${s.mtimeMs}:${s.size}:${s.ctimeMs}:${s.ino}:${s.dev}`;
@@ -88,6 +92,31 @@ export function feedAppended(parser, bytes, offset) {
 }
 
 /**
+ * Buffer 全体を行に切って parser へ流す。sliceMs ごとにいったんイベントループへ返すので、
+ * 初めて開く大きい transcript の全部読みでサーバー全体を長く止めない（ADR 0332）。
+ * offsets=true のとき行のバイト位置を feed / feedTail へ渡す（蒸留と読み直しに使う）。
+ * 区切りで待っているあいだにファイルが変わっても、呼び出し側が末尾の stamp 照合で掴み直す。
+ */
+export async function feedBufferLines(parser, buf, { offsets = true, sliceMs = TRANSCRIPT_PARSE_SLICE_MS } = {}) {
+  let sliceStart = performance.now();
+  for (let at = 0; at <= buf.length;) {
+    const end = buf.indexOf(0x0a, at);
+    if (end < 0) {
+      const line = buf.toString('utf8', at);
+      offsets ? parser.feedTail(line, at, buf.length - at) : parser.feedTail(line);
+      break;
+    }
+    const line = buf.toString('utf8', at, end);
+    offsets ? parser.feed(line, at, end - at) : parser.feed(line);
+    at = end + 1;
+    if (performance.now() - sliceStart >= sliceMs) {
+      await new Promise(resolve => setImmediate(resolve));
+      sliceStart = performance.now();
+    }
+  }
+}
+
+/**
  * selectMessages（SDK）が蒸留した message をそのまま返してきた分を、行のバイト位置から読み直して
  * 本物の message に戻す。戻した行のバイト数を返し、読めない・別の版に差し替わったときは -1
  * （呼び出し側はこの版をキャッシュせず、必要なら全部読み直す）。
@@ -143,7 +172,8 @@ export function slimLeak(entries) {
 /** キャッシュする上限は「保持するメモリ」（蒸留した行＋戻した message の見積もりバイト数）。本文は保持しない。 */
 export function createTranscriptReader({ projects, selectMessages, onUnreadable = async () => {},
   onSlimLeak = async () => {},
-  io = fs, maxBytes = TRANSCRIPT_CACHE_BYTES, maxEntries = TRANSCRIPT_CACHE_ENTRIES }) {
+  io = fs, maxBytes = TRANSCRIPT_CACHE_BYTES, maxEntries = TRANSCRIPT_CACHE_ENTRIES,
+  sliceMs = TRANSCRIPT_PARSE_SLICE_MS }) {
   const files = new Map(), recent = new Map(), pending = new Map(), busy = new Map();
   let bytes = 0;
   const discard = file => {
@@ -207,17 +237,7 @@ export function createTranscriptReader({ projects, selectMessages, onUnreadable 
           timing?.('transcript.read', performance.now() - started);
           const parsing = performance.now();
           const p = createSessionParser();
-          for (let at = 0; at <= buf.length;) {
-            const end = buf.indexOf(0x0a, at);
-            if (end < 0) {
-              const line = buf.toString('utf8', at);
-              offsets ? p.feedTail(line, at, buf.length - at) : p.feedTail(line);
-              break;
-            }
-            const line = buf.toString('utf8', at, end);
-            offsets ? p.feed(line, at, end - at) : p.feed(line);
-            at = end + 1;
-          }
+          await feedBufferLines(p, buf, { offsets, sliceMs });
           timing?.('transcript.extras', performance.now() - parsing);
           return { parser: p, tracked: trackTail(buf), head: trackHead(buf) };
         };
