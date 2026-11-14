@@ -3,7 +3,7 @@
 //   on / off（今そのエージェントで使われるか）と、押せるか（toggle / locked / blocked / none）を決める。
 // 担当の 2 択のまま（agents が無い）の設定は、mcpAgentsFromLegacy で今の接続と同じ形に読み替えて見せる（書き換えない）。
 import { PLY_CONTEXT_CONFLICTS } from './backends/agent-marks.mjs';
-import { nativeMcpOffMode } from './backends/mcp-off-home.mjs';
+import { mcpOffBlockedByLinks, nativeMcpOffMode } from './backends/mcp-off-home.mjs';
 import { mcpAgentsFromLegacy } from './context-settings.mjs';
 import { agentOf } from './backends/agents.mjs';
 
@@ -25,13 +25,14 @@ export const canStopNative = agent => nativeMcpOffMode(agent) !== null;
 /**
  * そのエージェント自身の設定にある名前 name を、起動のときに止められないなら、その理由（止められるなら null）。
  *   scopes  その名前の定義がある範囲（'user' | 'directory'）
- *   'own'        止める手が無い（能力の印 nativeMcpOff が無い・リンクを作れない PC の 'user'）か、名前の形が止める手に合わない
+ *   'own'        止める手が無い（能力の印 nativeMcpOff が無い）か、名前の形が止める手に合わない
+ *   'nolinks'    写しの置き場で止める手（nativeMcpOff: 'user'）はあるが、この PC ではシンボリックリンクを作れない（Windows の開発者モードが off）
  *   'workspace'  ユーザーの設定の定義しか止められない（nativeMcpOff: 'user'）のに、作業場所の設定にも定義がある
  * Codex は点や引用符を含む名前を -c のパーサーが扱えず止められない（core/backends/context-options.mjs と同じ規則）
  */
 export function nativeStopBlock(agent, name, scopes = ['user']) {
   const mode = nativeMcpOffMode(agent);
-  if (mode === null) return 'own';
+  if (mode === null) return mcpOffBlockedByLinks(agent) ? 'nolinks' : 'own';
   // backend-allow: Codex の -c の名前の規則（core/backends/context-options.mjs の codexContextRpc と同じ）
   if (agent === 'codex' && !/^[A-Za-z0-9_-]+$/.test(name)) return 'own';
   if (mode === 'user' && scopes.some(s => s !== 'user')) return 'workspace';
@@ -98,7 +99,7 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
       const own = origins.includes(a);
       if (own) {
         // 自分の設定にある名前。止められるのは、起動のときに名前で止める手があるエージェントだけ。
-        // 止められない鍵には理由（reason: 'own' | 'workspace'）を付ける（nativeStopBlock）
+        // 止められない鍵には理由（reason: 'own' | 'nolinks' | 'workspace'）を付ける（nativeStopBlock）
         const block = nativeStopBlock(a, name, scopesIn(a, name));
         cells[a] = block ? { state: 'on', mode: 'locked', reason: block } : { state: off(name, a) ? 'off' : 'on', mode: 'toggle' };
       } else if (!reg && !origins.length) {

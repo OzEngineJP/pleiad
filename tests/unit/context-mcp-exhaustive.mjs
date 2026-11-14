@@ -6,6 +6,7 @@ import { resolveRuntime } from '../../core/context-runtime.mjs';
 import { scanContext } from '../../core/context-scan.mjs';
 import { AGENTS } from '../../core/backends/agents.mjs';
 import { AGENT_ORDER, buildMcpMatrix, canStopName, mcpLegacyInfo } from '../../core/context-mcp-matrix.mjs';
+import { nativeMcpOffMode } from '../../core/backends/mcp-off-home.mjs';
 
 export const name = 'context-mcp-exhaustive';
 export const title = '外部 MCP の総当たり: 一覧の表示（on / off / 鍵 / 押せない）が、実行時に実際に使えるかと一致する';
@@ -105,17 +106,18 @@ export default async function (t) {
         && wsUser.every(n => !rtDevin.mcp.suppress.includes(n) && rowsOf(n).some(e => e.nativeLock === 'workspace')),
       JSON.stringify({ wsUser, suppress: rtDevin.mcp.suppress, rows: wsUser.map(n => rowsOf(n).map(e => e.nativeLock)) }));
 
-    // --- この会話では外す: 中継するものは使えず、止められる自分の定義も止まる（止められないエージェントの自分の定義は残る）
+    // --- この会話では外す: 中継するものは使えず、止められる自分の定義も止まる（止められないエージェントの自分の定義は残る）。
+    // ユーザーの設定の定義だけ止められるエージェント（Devin。'user'）は、外しただけでは自分の側を止めない（保存した off だけで止める。ADR 0330 の N2）
     const removedBad = [];
     const plan0 = legacyPlan(scope, scope); plan0.mcp.agents = { off: {}, spread: Object.fromEntries(names.map(n => [n, ids])) };
     for (const id of ids) {
       const rt = await runtimeOf(plan0, id, names);
       for (const n of names) {
-        const expected = ownEnabled(id, n) && !stoppable(id, n);
+        const expected = ownEnabled(id, n) && (!stoppable(id, n) || nativeMcpOffMode(id) === 'user');
         if (usableAt(rt, id, n) !== expected) removedBad.push({ id, n, servers: rt.servers.map(s => s.name), suppress: rt.mcp.suppress });
       }
     }
-    t.ok('この会話では外した名前は、止められないエージェントの自分の定義だけが残る', removedBad.length === 0, JSON.stringify(removedBad.slice(0, 6)));
+    t.ok('この会話では外した名前は、止められないエージェントと Devin（ユーザーの設定だけ止められる）の自分の定義だけが残る', removedBad.length === 0, JSON.stringify(removedBad.slice(0, 6)));
 
     // --- 旧 2 択の変換直後: 変換の前後で接続が同じ（旧「Pleiad がそろえる」「任せる」）
     const legacyBad = [];

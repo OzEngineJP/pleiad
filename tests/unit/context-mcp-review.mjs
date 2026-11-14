@@ -58,8 +58,9 @@ export default async function (t) {
     const b3 = await dv({ off: { donly: ['devin'] }, spread: {} });
     t.ok('B: Devin の設定にだけある名前を off: その名前だけ止める（ほかは前と同じ）', cmds(b3) === 'reg:reg-cmd' && b3.mcp.suppress.join() === 'donly', { s: cmds(b3), m: b3.mcp });
     const b4 = await dv({ off: {}, spread: {} }, { removedMcp: ['donly', 'reg'] });
-    t.ok('B: 「この会話では外す」は、Devin のユーザーの設定にある名前だけ止める（利用者が外した名前。Pleiad にだけある名前では写しで起動しない）',
-      b4.mcp.suppress.join() === 'donly' && cmds(b4) === '', { s: cmds(b4), m: b4.mcp });
+    const b4row = b4.report.entries.find(e => e.kind === 'mcp' && e.name === 'donly');
+    t.ok('B: 「この会話では外す」だけでは Devin 自身の側を止めない（前と同じ起動。止めるのは Devin で off にして保存した名前だけ。N2）',
+      b4.mcp.suppress.length === 0 && cmds(b4) === '' && b4row?.status === 'excluded', { s: cmds(b4), m: b4.mcp, row: b4row?.status });
     const b4b = await dv({ off: {}, spread: {} }, { removedMcp: ['reg'] });
     t.ok('B: Pleiad にだけある名前を「この会話では外す」: 止める名前は空（前と同じ起動）', b4b.mcp.suppress.length === 0 && cmds(b4b) === '', { s: cmds(b4b), m: b4b.mcp });
     const b5 = await dv({ off: { gone: ['devin'] }, spread: {} });
@@ -78,7 +79,10 @@ export default async function (t) {
     const c0 = await dv({ off: { donly: ['devin'], both: ['devin'] }, spread: {} });
     t.ok('C: リンクを作れない PC は、Devin の名前を off にしてあっても止めない（前と同じ起動。ターンは止めない）',
       !canLinkMcpOffHome() && nativeMcpOffMode('devin') === null && nativeMcpOffMode('claude') === true && c0.mcp.suppress.length === 0 && cmds(c0) === 'reg:reg-cmd', { m: c0.mcp, s: cmds(c0) });
-    t.ok('C: 一覧では Devin の自分の名前の鍵の理由は own（新しい理由は作らない）', nativeStopBlock('devin', 'x', ['user']) === 'own' && !canStopNative('devin') && canStopNative('codex'));
+    const c0row = c0.report.entries.find(e => e.kind === 'mcp' && e.name === 'donly');
+    t.ok('C: 一覧では Devin の自分の名前の鍵の理由は nolinks（開発者モードが off）。止める手の無いエージェントは own のまま',
+      nativeStopBlock('devin', 'x', ['user']) === 'nolinks' && nativeStopBlock('antigravity', 'x', ['user']) === 'own' && !canStopNative('devin') && canStopNative('codex'));
+    t.ok('C: 右パネルの行は「自分の側を使う」と鍵の理由 nolinks（一覧と同じ）', c0row?.status === 'excluded' && c0row.nativeLock === 'nolinks', c0row);
     setMcpOffLinker(() => {});
 
     // --- D: 関係の無い MCP の設定が壊れていても、そのファイルだけ読み飛ばしてターンは続く
@@ -210,10 +214,11 @@ export default async function (t) {
     setMcpOffLinker(() => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); });
     const cC = await cellOf({ cwd }, 'du', 'devin');
     const n2 = saved.length;
-    t.ok('C: リンクを作れない PC は Devin の自分の名前を鍵（reason: own）にし、保存しない。Claude の名前は押せるまま',
-      cC?.mode === 'locked' && cC.reason === 'own' && (await call(placed, { name: 'du', agent: 'devin', on: false }))?.code === 'INVALID' && saved.length === n2
+    t.ok('C: リンクを作れない PC は Devin の自分の名前を鍵（reason: nolinks）にし、保存しない。Claude の名前は押せるまま',
+      cC?.mode === 'locked' && cC.reason === 'nolinks' && (await call(placed, { name: 'du', agent: 'devin', on: false }))?.code === 'INVALID' && saved.length === n2
         && (await cellOf({ cwd }, 'cl', 'claude'))?.mode === 'toggle', cC);
     setMcpOffLinker(() => {});
+    t.ok('C: リンクを作れるようになったら、次に一覧を出すときから押せる（setMcpAgent も同じ判定）', (await cellOf({ cwd }, 'du', 'devin'))?.mode === 'toggle');
     const n0 = saved.length;
     t.ok('L: コネクターが未読のまま触っても ok を返さず、保存しない（読めなかったと伝える）', (await call(unread, { name: 'claude.ai Gmail', agent: 'claude', on: true }))?.code === 'INVALID' && saved.length === n0);
     t.ok('F・K: コネクターを触るときは、読み終えるまで待つ指定（wait）で読む', unread.seen === undefined || fake.seen.wait === true, fake.seen);
@@ -227,6 +232,21 @@ export default async function (t) {
     const s0 = await shapeOf(undefined), s1 = await shapeOf({ named: true, suppress: [] }), s2 = await shapeOf({ named: false, suppress: [] }), s3 = await shapeOf({ named: true, suppress: ['x'] });
     t.ok('NEW-6 止める名前が無ければ shape は今までと同じ（更新の直後に待機中のエージェントを起こし直さない）', s0 === s1 && s1 === s2, { s0, s1, s2 });
     t.ok('NEW-6 止める名前があれば shape が変わる（起こし直す）', s3 !== s0);
+    // N10: 写しのリンクを作れず止められなかった名前は、実行時の報告の行を「自分の側を使う」に戻し、鍵の理由 nolinks を付けて知らせる
+    {
+      const rt = await resolveRuntime(policy(null), { home, plyServers: { file: path.join(tmp, 'ply-mcp.json'), servers: [] } });
+      rt.report.entries.push({ id: 'x1', kind: 'mcp', name: 'donly', status: 'removed', reason: 'off', tools: 0 }, { id: 'x2', kind: 'mcp', name: 'other', status: 'removed', reason: 'off', tools: 0 });
+      let changes = 0;
+      const conn = await bridge.open({ runtime: { ...rt, mcp: { named: true, suppress: ['donly'] } }, prompt: '', origin: 'http://127.0.0.1:1', isActive: () => true, changed: async () => { changes++; } });
+      const before = changes;
+      await conn.markUnstopped(['donly']);
+      const [r1, r2] = ['donly', 'other'].map(n => rt.report.entries.find(e => e.name === n));
+      t.ok('N10: 止められなかった名前の行だけ excluded・nativeLock: nolinks にし、保存する（ほかの行は変えない）',
+        r1.status === 'excluded' && r1.nativeLock === 'nolinks' && !('tools' in r1) && r2.status === 'removed' && !r2.nativeLock && changes === before + 1, { r1, r2, changes, before });
+      await conn.markUnstopped(['donly']);
+      t.ok('N10: 2 度目は何も変えず、保存もしない', changes === before + 1);
+      await conn.close();
+    }
     await bridge.dispose();
 
     // --- NEW-1: 未読（null）と、読めて 0 件（[]）を最後まで区別する。context.setMcpAgent を実際の ctx の形で呼ぶ 5 つの場合

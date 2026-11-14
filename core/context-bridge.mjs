@@ -346,7 +346,22 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
       // held: 保持役の子に付け直した外部 MCP の id（起こし直していない。状態が残っている）
       const heldIds = [...binding.leases].filter(([, lease]) => lease?.held).map(([id]) => id);
       // sections: prompt の内訳（Pleiad が足した文の量を数える。core/instruction-amount.mjs）
-      return { owners: runtime.owners, mcp: runtime.mcp ?? { named: false, suppress: [] }, prompt: helpers.prompt, sections: helpers.sections, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, held: heldIds, close };
+      // markUnstopped: 止めるはずだった自分の MCP（mcp.suppress）を、起動のときに止められなかった（写しの置き場のリンクを作れなかった。ADR 0330）。
+      // その行を「自分の側を使う」に戻し、鍵の理由 'nolinks' を付ける（右パネルが、off なのにつながっていることと、その理由を出す）
+      const markUnstopped = async (names = []) => {
+        const set = new Set(names);
+        let touched = false;
+        for (const row of runtime.report.entries) {
+          if (row.kind !== 'mcp' || !set.has(row.name) || row.status !== 'removed' || row.nativeLock) continue;
+          row.status = 'excluded';
+          row.reason = t('context.runtime.agentOwn');
+          row.nativeLock = 'nolinks';
+          delete row.tools;
+          touched = true;
+        }
+        if (touched && !binding.closed) await changed();
+      };
+      return { owners: runtime.owners, mcp: runtime.mcp ?? { named: false, suppress: [] }, prompt: helpers.prompt, sections: helpers.sections, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, held: heldIds, close, markUnstopped };
     } catch (e) { binding.discard = true; await close(); throw e; }
     finally { opening.delete(binding); }
   }

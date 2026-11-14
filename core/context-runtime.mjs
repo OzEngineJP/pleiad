@@ -7,7 +7,7 @@ import { instructionBody, scanContext } from './context-scan.mjs';
 import { DEFAULT_OWNERS, KINDS, SOURCES, containsPath, legacyPlan, matchesGlobs, normalizePlan, pathKey } from './context-settings.mjs';
 import { t, agentT } from './i18n.mjs';
 import { agentOf } from './backends/agents.mjs';
-import { nativeMcpOffMode } from './backends/mcp-off-home.mjs';
+import { mcpOffBlockedByLinks, nativeMcpOffMode } from './backends/mcp-off-home.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply');
@@ -174,8 +174,8 @@ export function agentMcpRules(plan, agent) {
   const isOwn = item => item.status !== 'disabled' && item.origins.some(o => own.includes(o.source));
   // 止める手（能力の印 nativeMcpOff を、この PC で使えるかまで含めて読む。ADR 0330）:
   //   true    どの定義も止められる。Pleiad が同じ名前を渡すときも、自分の側を止めて Pleiad の側を使う
-  //   'user'  ユーザーの設定の定義だけ止められる（Devin。写しの置き場で止める）。止めるのは、利用者がそのエージェントで off にした、
-  //           またはこの会話で外した、自身のユーザーの設定にある名前だけ。名前が重なるだけ・Pleiad にだけある名前の off では止めず、今までと同じ起動にする
+  //   'user'  ユーザーの設定の定義だけ止められる（Devin。写しの置き場で止める）。止めるのは、利用者がそのエージェントで off にして保存した、
+  //           自身のユーザーの設定にある名前だけ。この会話で外した（removedMcp）・名前が重なるだけ・Pleiad にだけある名前の off では止めず、今までと同じ起動にする
   //   null    止める手が無い（リンクを作れない PC の 'user' も）。自分の側が勝つ
   const mode = nativeMcpOffMode(agent);
   const full = mode === true;
@@ -248,8 +248,8 @@ export async function resolveRuntime(policy, options = {}) {
         row.status = why === 'agentOff' ? 'removed' : 'excluded';
         // i18n-dynamic: context.runtime.agent
         row.reason = t(`context.runtime.${why}`);
-        // off にしたのに止められない自分の定義（会話の cwd の作業場所の設定にもある名前）。画面の鍵の理由と同じ値（reason: 'workspace' / 'own'）
-        if (mcpRules.off(item.name) && mcpRules.isOwn(item) && fixedNames.has(item.name)) row.nativeLock = mcpRules.mode === 'user' ? 'workspace' : 'own';
+        // off にしたのに止められない自分の定義（会話の cwd の作業場所の設定にもある名前・リンクを作れない PC）。画面の鍵の理由と同じ値（reason: 'workspace' / 'nolinks' / 'own'）
+        if (mcpRules.off(item.name) && mcpRules.isOwn(item) && fixedNames.has(item.name)) row.nativeLock = mcpRules.mode === 'user' ? 'workspace' : mcpOffBlockedByLinks(agent) ? 'nolinks' : 'own';
         if (row.status === 'removed') row.tools = 0;
         continue;
       }
@@ -291,9 +291,10 @@ export async function resolveRuntime(policy, options = {}) {
     // 無い名前を止めても害は無い（Claude は名前の一致、Codex は設定に在る名前だけ、OpenCode は定義に在る名前だけに効く）
     for (const key of mcpRules.offNames()) suppress.add(key);
   }
-  // ユーザーの設定の定義だけ止められるエージェント（mode が 'user'）: 利用者がそのエージェントで off にした、またはこの会話で外した、
-  // 自身のユーザーの設定にある名前だけ止める。名前が重なるだけ（Pleiad の側は渡さず自分の側を使う）・Pleiad にだけある名前の off では止めない（今までと同じ起動）
-  if (mcpRules?.mode === 'user') for (const key of [...mcpRules.offNames(), ...removed]) if (stoppableNames.has(key)) suppress.add(key);
+  // ユーザーの設定の定義だけ止められるエージェント（mode が 'user'）: 利用者がそのエージェントで off にして保存した、自身のユーザーの設定にある名前だけ止める。
+  // この会話で外した名前（removedMcp）は止めない（Pleiad の側を渡さないだけ。自分の側は今までどおり使う）。名前が重なるだけ（Pleiad の側は渡さず自分の側を使う）・
+  // Pleiad にだけある名前の off でも止めない（今までと同じ起動）
+  if (mcpRules?.mode === 'user') for (const key of mcpRules.offNames()) if (stoppableNames.has(key)) suppress.add(key);
   // 止められない定義を含む名前は止めない（作業場所の定義が勝つので、ユーザーの定義だけ止めても使われ続ける。画面は鍵）
   const mcp = mcpRules ? { named: true, suppress: [...suppress].filter(n => !fixedNames.has(n)).sort() } : { named: false, suppress: [] };
   const prompt = instructions.map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: i.content })).join('\n\n');

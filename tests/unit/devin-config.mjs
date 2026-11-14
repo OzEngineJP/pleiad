@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { prepareDevinLaunch, devinTurnConfig, METADATA_CONFIG } from '../../core/backends/devin-config.mjs';
+import { prepareDevinLaunch, prepareDevinMcpOff, devinTurnConfig, METADATA_CONFIG } from '../../core/backends/devin-config.mjs';
 
 export const name = 'devin-config';
 export const title = 'Devin native 設定と認証を保ち、metadata と専用セッションの置き場を分ける';
@@ -49,5 +49,13 @@ export default async function (t) {
     t.ok('empty hook owners keep native imports and the shared holder untouched', true);
     await assert.rejects(prepareDevinLaunch({ command: ['fake'], cwd, env, dataDir: root, turnConfig: { marker: 'x'.repeat(1024 * 1024) } }), { code: 'DEVIN_CONFIG_TOO_LARGE' });
     t.ok('oversized turn configs are rejected before writing', true);
+    // 先頭に BOM の付いた設定（メモ帳などで保存した UTF-8）も読んで止める（N4）
+    const bomHome = path.join(root, 'bom-config'), bomDir = path.join(bomHome, 'devin');
+    await fs.mkdir(bomDir, { recursive: true });
+    await fs.writeFile(path.join(bomDir, 'mcp_config.json'), '\uFEFF{ "mcpServers": { "a": { "command": "x" } } }');
+    await fs.writeFile(path.join(bomDir, 'config.json'), '\uFEFF{ "model": "m" }');
+    const bomTarget = await prepareDevinMcpOff({ root: path.join(root, 'bom-off'), source: bomDir, suppress: ['a'] });
+    const bomOut = JSON.parse(await fs.readFile(path.join(bomTarget, 'devin', 'mcp_config.json'), 'utf8'));
+    t.ok('BOM の付いた mcp_config.json・config.json も読める（止める名前に disabled を付ける）', bomOut.mcpServers.a.disabled === true && bomOut.mcpServers.a.command === 'x', JSON.stringify(bomOut));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }
