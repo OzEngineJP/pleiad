@@ -1677,7 +1677,8 @@
       "workspace": "{{agent}} reads this from the workspace, so Pleiad cannot turn this off",
       "relay": "Pleiad cannot pass this to {{agent}}",
       "admin": "Set for {{agent}} by an administrator",
-      "linked": "Passed to {{agent}} according to delegation settings"
+      "linked": "Passed to {{agent}} according to delegation settings",
+      "nolinks": "Developer Mode is off in Windows, so Pleiad cannot turn this off"
     },
     "lockAria": "{{label}} ({{reason}})",
     "roots": {

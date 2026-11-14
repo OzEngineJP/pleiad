@@ -89,7 +89,7 @@ import { createContextSettings } from './context-settings.mjs';
 import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
-import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
+import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
 import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
@@ -7844,7 +7844,10 @@ async function prepareTurn(args, hooks, compactionRevision) {
   let resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
   // 名前ごとのモデルで、指示・Skills はエージェント任せ、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
   // （ターンだけの口・中継を起こさない。ADR 0327）
+  // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0335）
+  let unstopped = [];
   if (resolvedContext?.mcp.named && policy.owners.instruction !== 'ply' && policy.owners.skill !== 'ply' && !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length) {
+    unstopped = unstoppedMcp(resolvedContext.report);
     plyContext = false; resolvedContext = null;
   }
   // 開始時の固定と違う＝指示・Skills が変わった。止めずに今の内容で続ける（resolvedContext が今のファイルで解き直した結果なので、
@@ -7862,7 +7865,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   if (resolvedContext) resolvedContext.delivered = delivered;
   // エージェント任せにしたターンでも固定（pin）は捨てない。Pleiad 担当を受け取れるエージェントへ戻したときに突き合わせる
   const contextRecord = { policy: refreshedContext || appliedSettings ? { ...policy, refreshedAt: new Date().toISOString() } : policy,
-    pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend),
+    pin: resolvedContext?.pin ?? (plyContext ? null : previousContext?.pin ?? null), report: resolvedContext?.report ?? nativeContextReport(policy, cwd, backend, undefined, unstopped),
     delivered: { backend: backend.id, entries: delivered },
     // Pleiad が足した文の量（ADR 0056）。渡す文が出そろった所（下の runArgs の後）で数え直す。それまでは前のターンの値を見せる
     ...(previousContext?.plyParts ? { plyParts: previousContext.plyParts } : {}) };

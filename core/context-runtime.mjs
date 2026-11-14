@@ -25,10 +25,22 @@ export const acceptsPlyContext = (backend, policy) => !plyContextRefusal(backend
  * Pleiad がコンテキストを開かないターンの記録。担当が Pleiad でも受け取れないバックエンド（組み合わせ）だったときは、
  * エージェント任せ（native）として扱ったことと理由を残す
  */
-export function nativeContextReport(policy, cwd, backend, at = new Date()) {
+export function nativeContextReport(policy, cwd, backend, at = new Date(), unstopped = []) {
   const reason = managed(policy) ? plyContextRefusal(backend, policy) : null;
   return { version: 1, cwd, owners: policy.owners, status: 'native', entries: [], at: at.toISOString(),
-    ...(reason ? { guardedBackend: backend.id, reason } : {}) };
+    ...(reason ? { guardedBackend: backend.id, reason } : {}), ...(unstopped.length ? { unstopped } : {}) };
+}
+/**
+ * off にしたのにエージェント自身の側を止められなかった名前（行の nativeLock）を、名前ごとに 1 つ。
+ * 中継も止める名前も無いのでエージェント任せの道にしたターンでも、記録（nativeContextReport の unstopped）に残し、
+ * 右パネルのエージェント任せの一覧で、その名前に設定の一覧と同じ鍵を付ける（ADR 0335）
+ */
+export function unstoppedMcp(report) {
+  const out = [];
+  for (const e of report?.entries ?? []) {
+    if (e.kind === 'mcp' && e.nativeLock && !out.some(x => x.name === e.name)) out.push({ name: e.name, nativeLock: e.nativeLock });
+  }
+  return out;
 }
 /**
  * 会話の方針。最初の送信で記録し、以後はターンごとに今の設定（と作業場所）で解き直す（followSettings。core/server.mjs の runTurn）。

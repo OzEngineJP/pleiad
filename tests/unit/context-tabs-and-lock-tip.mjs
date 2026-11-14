@@ -225,8 +225,8 @@ export default async function (t) {
     await setLanguage('ja');
 
     // 1. 鍵の理由コードと文言（5 種類 + cell.reason 優先 + mode フォールバック）
-    t.ok('LOCK_REASONS は 5 種類の理由コードを持つ',
-      ['own', 'workspace', 'relay', 'admin', 'linked'].every(k => LOCK_REASONS.has(k)) && LOCK_REASONS.size === 5);
+    t.ok('LOCK_REASONS は 6 種類の理由コードを持つ（nolinks は ADR 0335）',
+      ['own', 'workspace', 'relay', 'admin', 'linked', 'nolinks'].every(k => LOCK_REASONS.has(k)) && LOCK_REASONS.size === 6);
 
     t.ok('lockReasonKey は cell.reason を優先し、無ければ mode から決める',
       lockReasonKey({ mode: 'locked', reason: 'admin' }) === 'admin'
@@ -242,6 +242,7 @@ export default async function (t) {
       relay: lockReasonText('Grok', { mode: 'blocked' }),
       admin: lockReasonText('Devin', { reason: 'admin' }),
       linked: lockReasonText('Codex', { reason: 'linked' }),
+      nolinks: lockReasonText('Devin', { mode: 'locked', reason: 'nolinks' }),
     };
     t.ok('日本語の 5 種類の理由文がモック追補 1 の文言と一致する',
       reasonsJa.own === 'Claude の設定にあるため、Pleiad からは止められません'
@@ -249,6 +250,7 @@ export default async function (t) {
       && reasonsJa.relay === 'Grok には Pleiad から渡せません'
       && reasonsJa.admin === '管理者が Devin に設定しています'
       && reasonsJa.linked === 'Codex には委譲の設定に合わせて渡します');
+    t.ok('nolinks の理由文（Windows の開発者モードが off）', reasonsJa.nolinks === 'Windows の開発者モードがオフのため、Pleiad からは止められません', reasonsJa.nolinks);
 
     t.ok('lockAriaLabel は元の名前に括弧で理由を添える',
       lockAriaLabel('Claude の 設定', reasonsJa.own) === 'Claude の 設定（Claude の設定にあるため、Pleiad からは止められません）');

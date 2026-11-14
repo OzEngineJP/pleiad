@@ -4,13 +4,15 @@
 //   - Skills 絞り込み（入力フォーカス維持・自動展開・0 件表示・Escape 解除）
 //   - 鍵の吹き出し（静的な凡例行なし・ホバー・フォーカス・タップ・Escape・スクロール非表示・title 無し・aria-disabled）
 //   - 1280 / 360・ライト / ダークで横はみ出し無し・押し先サイズ確保
+//   - Devin の自分の名前（ADR 0335）: 一覧の Devin のアイコンを off → 読み込み直しても off → on に戻す・
+//     リンクを作れない PC の鍵（nolinks）・会話の右パネルの止められなかった行の鍵（workspace）。偽の Devin（tests/lib/fake-devin.mjs）と別の置き場で
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { startServer } from '../lib/server.mjs';
+import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 const require = createRequire(import.meta.url);
@@ -283,8 +285,12 @@ try {
     check(!lockAttr.hasTitle && !lockAttr.disabledProp && lockAttr.ariaDisabled === 'true' && Boolean(lockAttr.tip) && lockAttr.aria.includes(lockAttr.tip),
       '鍵アイコンは title を持たず aria-disabled="true" で、読み上げ名に理由を含む', lockAttr);
 
-    // ホバーで出て外れて閉じる
-    const box = await lockedCell.boundingBox();
+    // ホバーで出て外れて閉じる（一覧は読み取りが終わると描き直すので、描き直しで外れた瞬間に当たったら、枠が取れるまで待ち直す）
+    let box = null;
+    for (let i = 0; i < 20 && !box; i++) {
+      await lockedCell.waitFor({ state: 'visible', timeout: 5000 });
+      box = await lockedCell.boundingBox();
+    }
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 3000 });
     check((await page.locator('.cx-tip.on').innerText()) === lockAttr.tip, '鍵アイコンのホバーで吹き出しに理由が出る');
@@ -439,6 +445,174 @@ try {
       await closeSettings(page);
     }
     await ctx.close();
+  }
+
+  // ==================== 4. Devin の自分の名前（ADR 0335） ====================
+  // 別のデータ置き場・home・Devin の設定の置き場（DEVIN_CONFIG_HOME）で、偽の Devin を使うサーバーを立てる。
+  // devBoth は Claude と Devin の設定に、wsdup は Devin のユーザーの設定と作業場所（repoD/.devin）の両方にある
+  const dvRoot = path.join(dataDir, 'devin-part');
+  const dvHome = path.join(dvRoot, 'home'), dvConf = path.join(dvRoot, 'devin-config'), repoD = path.join(dvRoot, 'repoD');
+  write(path.join(dvHome, '.claude.json'), JSON.stringify({ mcpServers: { devBoth: { command: 'both-cmd' } } }));
+  write(path.join(dvConf, 'devin', 'mcp_config.json'), JSON.stringify({ mcpServers: { devBoth: { command: 'both-devin' }, wsdup: { command: 'wsdup-user' } } }));
+  fs.mkdirSync(repoD, { recursive: true });
+  execFileSync('git', ['init', '--quiet', repoD]);
+  write(path.join(repoD, '.devin', 'mcp_config.json'), JSON.stringify({ mcpServers: { wsdup: { command: 'wsdup-ws' } } }));
+  const dvBins = Object.fromEntries(['CLAUDE', 'CODEX', 'AGY', 'OPENCODE', 'GROK'].map(n => [`AGENT_HOST_${n}_BIN`, path.join(dvRoot, `no-such-${n.toLowerCase()}.exe`)]));
+  const dvEnv = extra => ({
+    AGENT_HOST_BACKENDS: 'fake,claude,devin', USERPROFILE: dvHome, HOME: dvHome,
+    CLAUDE_CONFIG_DIR: path.join(dvHome, '.claude'), CODEX_HOME: path.join(dvHome, '.codex'), DEVIN_CONFIG_HOME: dvConf,
+    // 一覧の探索の home（tests/lib/server.mjs は既定でデータ置き場の scan-home にする）。Claude の .claude.json を出どころにして、Devin を外しても行が残るようにする
+    PLEIAD_SCAN_HOME: dvHome,
+    AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, ...dvBins, ...extra,
+  });
+  const dvRow = (page, name) => page.locator(`#contextPanel [data-kind=mcp] .cx-row[data-key="${name}"]`);
+  const dvCell = (page, name) => dvRow(page, name).locator('.cx-ag[data-agent="devin"]');
+  // 指示・Skills は 0 件なので、openSettingsContext（3 つの件数を待つ）ではなく、外部 MCP のタブと Devin のアイコンを待つ
+  const openDevinList = async page => {
+    await page.waitForSelector('#settings', { state: 'attached', timeout: 15000 });
+    for (let i = 0; i < 10; i++) {
+      await page.evaluate(() => {
+        document.getElementById('onboardingDialog')?.close();
+        if (!document.body.classList.contains('settings')) document.getElementById('settings')?.click();
+        document.getElementById('openContext')?.click();
+        document.getElementById('cx-tab-mcp')?.click();
+      });
+      if (await dvCell(page, 'devBoth').waitFor({ state: 'visible', timeout: 1500 }).then(() => true, () => false)) return;
+    }
+    throw new Error('openDevinList timed out');
+  };
+  const dvServers = [];
+  const dvClients = [];
+  try {
+    // ---- 4a. リンクを作れる PC: Devin の自分の名前のアイコンは押せる。off → 保存 → 読み込み直しても off → on に戻す
+    const dvServer = await startServer({ dataDir: path.join(dvRoot, 'data'), env: dvEnv({}) });
+    dvServers.push(dvServer);
+    const dvClient = await open({ ...dvServer, autoAllow: true });
+    dvClients.push(dvClient);
+    await dvClient.cmd('onboardingSeen');
+    const dvUrl = `http://127.0.0.1:${dvServer.port}/?token=${dvServer.token}`;
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(dvUrl, { waitUntil: 'load' });
+    await openDevinList(page);
+    const cell = dvCell(page, 'devBoth');
+    check(await cell.getAttribute('aria-disabled') === null && await cell.locator('.lk').count() === 0 && await cell.getAttribute('aria-pressed') === 'true',
+      'Devin の自分の名前のアイコンは鍵が無く押せる（初めは on）', { disabled: await cell.getAttribute('aria-disabled'), pressed: await cell.getAttribute('aria-pressed') });
+    await cell.click();
+    await page.waitForFunction(() => document.querySelector('#contextPanel [data-kind=mcp] .cx-row[data-key="devBoth"] .cx-ag[data-agent="devin"]')?.getAttribute('aria-pressed') === 'false', null, { timeout: 10000 }).catch(async e => { console.log('ROW', await dvRow(page, 'devBoth').evaluate(r => r.outerHTML).catch(() => 'none')); throw e; });
+    const offSaved = async () => {
+      const m = await dvClient.cmd('mcpMatrix', { cwd: dvHome });
+      return m.rows.find(r => r.key === 'devBoth')?.cells?.devin?.state;
+    };
+    let saved;
+    for (let i = 0; i < 40 && (saved = await offSaved()) !== 'off'; i++) await new Promise(r => setTimeout(r, 250));
+    check(saved === 'off', 'Devin のアイコンを押すと off になり、保存される（サーバーの一覧も off）', saved);
+    await page.reload({ waitUntil: 'load' });
+    await openDevinList(page);
+    check(await dvCell(page, 'devBoth').getAttribute('aria-pressed') === 'false' && await dvRow(page, 'devBoth').locator('.cx-ag[data-agent="claude"]').getAttribute('aria-pressed') === 'true',
+      '読み込み直しても Devin は off のまま（Claude は on のまま）');
+    await dvCell(page, 'devBoth').click();
+    await page.waitForFunction(() => document.querySelector('#contextPanel [data-kind=mcp] .cx-row[data-key="devBoth"] .cx-ag[data-agent="devin"]')?.getAttribute('aria-pressed') === 'true', null, { timeout: 10000 });
+    for (let i = 0; i < 40 && (saved = await offSaved()) !== 'on'; i++) await new Promise(r => setTimeout(r, 250));
+    check(saved === 'on', 'もう一度押すと on に戻り、保存される', saved);
+
+    // ---- 4b. 会話の右パネル: 作業場所にも定義がある名前（wsdup）を Devin で off にした会話。Devin は作業場所の定義を自分で読むので止められない
+    const wsReason = 'Devin が作業場所から直接読むため、Pleiad からは止められません';
+    const wsRowSel = '.file-preview-content .scx .scx-item';
+    const nameOf = (r) => r.querySelector('.t > div')?.textContent;
+    const openSessionPanel = async (sessionId) => {
+      await page.reload({ waitUntil: 'load' });
+      await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
+      await page.waitForSelector(`[data-session="${sessionId}"]`, { state: 'visible', timeout: 15000 });
+      await page.locator(`[data-session="${sessionId}"]`).first().click();
+      await page.setViewportSize({ width: 700, height: 900 });
+      await page.locator('#sessionMore').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('#sessionMore').click();
+      await page.getByRole('menuitem', { name: /プラグイン/ }).click();
+      await page.waitForFunction(sel => [...document.querySelectorAll(sel)].some(r => r.querySelector('.t > div')?.textContent === 'wsdup' && r.querySelector('.cx-ag[aria-disabled="true"]')), wsRowSel, { timeout: 15000 })
+        .catch(async e => { console.log('PANEL', await page.evaluate(() => document.querySelector('.file-preview-content')?.innerText ?? 'none')); throw e; });
+      await page.setViewportSize({ width: 1280, height: 900 });
+    };
+    const wsRowOf = () => page.locator(wsRowSel).filter({ has: page.locator('.cx-ag[aria-disabled="true"]') }).filter({ hasText: /wsdup/ }).first();
+    const lockFacts = async (row) => {
+      const lock = row.locator('.cx-ag[aria-disabled="true"]');
+      return {
+        name: await row.evaluate(nameOf),
+        dot: await row.locator('.cx-dot').getAttribute('class'),
+        sub: await row.locator('.p').first().innerText(),
+        tip: await lock.getAttribute('data-tip'), aria: await lock.getAttribute('aria-label'), title: await lock.getAttribute('title'),
+        glyph: await lock.locator('.lk').count(), agent: await lock.getAttribute('data-agent'),
+      };
+    };
+    const lockOk = f => f.name === 'wsdup' && f.agent === 'devin' && f.glyph === 1 && f.tip === wsReason && f.aria === `Devin で wsdup を使う（${wsReason}）` && !f.title;
+    const hoverTip = async (row, label) => {
+      await row.locator('.cx-ag[aria-disabled="true"]').hover();
+      await page.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 2000 });
+      check((await page.locator('.cx-tip.on').innerText()).includes(wsReason), label);
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('.cx-tip.on'), null, { timeout: 2000 });
+    };
+
+    // 4b-1. 止められなかった名前しか無い会話: 中継も止める名前も無いのでエージェント任せの道（記録の unstopped だけ残す）。
+    // エージェント任せの一覧の wsdup の行の右端に、設定の一覧と同じ鍵。ほかの行（devBoth）には付けない
+    await dvClient.cmd('setMcpAgent', { name: 'wsdup', agent: 'devin', on: false, cwd: dvHome });
+    const turn = await dvClient.runTurn({ backend: 'devin', cwd: repoD, prompt: 'hello', model: 'swe-2-medium' }, { ms: 60000 });
+    check(turn.outcome === 'ok', '偽の Devin で会話を 1 ターン進める', turn.outcome);
+    const rec1 = await dvClient.cmd('sessionContext', { sessionId: turn.sessionId });
+    check(rec1.report.status === 'native' && JSON.stringify(rec1.report.unstopped) === JSON.stringify([{ name: 'wsdup', nativeLock: 'workspace' }]),
+      'エージェント任せの記録に、止められなかった名前（wsdup / workspace）を残す', rec1.report);
+    await openSessionPanel(turn.sessionId);
+    const n1 = await lockFacts(wsRowOf());
+    check(lockOk(n1) && /\boff\b/.test(n1.dot) && n1.sub.includes('mcp_config.json'),
+      '右パネル（エージェント任せの一覧）: wsdup の行に一覧と同じ鍵つきの Devin のアイコン（吹き出しの文・読み上げ名・title 無し）。点と下段のパスは今のまま', n1);
+    const others = await page.locator(wsRowSel).evaluateAll(rows => rows.filter(r => r.querySelector('.t > div')?.textContent === 'devBoth').map(r => r.querySelectorAll('.cx-ag').length));
+    check(others.length > 0 && others.every(n => n === 0), '右パネル（エージェント任せの一覧）: off にしていない名前（devBoth）には鍵を付けない', others);
+    await hoverTip(wsRowOf(), '右パネル（エージェント任せの一覧）: 鍵のアイコンへ載せると workspace の理由の吹き出しが出る');
+
+    // 4b-2. 止める名前（devBoth）もある会話: Pleiad が解いた記録のまま。wsdup の行は「つながっている」点・理由の文・同じ鍵
+    await dvClient.cmd('setMcpAgent', { name: 'devBoth', agent: 'devin', on: false, cwd: dvHome });
+    const turn2 = await dvClient.runTurn({ backend: 'devin', cwd: repoD, prompt: 'hello', model: 'swe-2-medium' }, { ms: 60000 });
+    check(turn2.outcome === 'ok', '偽の Devin で、止める名前のある会話を 1 ターン進める', turn2.outcome);
+    await openSessionPanel(turn2.sessionId);
+    const n2 = await lockFacts(wsRowOf());
+    check(lockOk(n2) && /\bon\b/.test(n2.dot) && n2.sub.includes('このエージェント自身の設定にあるので'),
+      '右パネル（Pleiad の一覧）: off なのに止められなかった行は、点が on・下段にエージェントが自分で読む理由・一覧と同じ鍵', n2);
+    await hoverTip(wsRowOf(), '右パネル（Pleiad の一覧）: 鍵のアイコンへ載せると workspace の理由の吹き出しが出る');
+    await dvClient.cmd('setMcpAgent', { name: 'devBoth', agent: 'devin', on: true, cwd: dvHome });
+    await ctx.close();
+    dvClient.close();
+    dvClients.length = 0;
+    await dvServer.stop();
+    dvServers.length = 0;
+
+    // ---- 4c. リンクを作れない PC（AGENT_HOST_FAKE_NO_LINKS=1）: Devin の自分の名前は鍵（nolinks）と理由の文
+    const nlServer = await startServer({ dataDir: path.join(dvRoot, 'data-nolinks'), env: dvEnv({ AGENT_HOST_FAKE_NO_LINKS: '1' }) });
+    dvServers.push(nlServer);
+    const nlClient = await open({ ...nlServer, autoAllow: true });
+    dvClients.push(nlClient);
+    await nlClient.cmd('onboardingSeen');
+    const nlCtx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
+    const nlPage = await nlCtx.newPage();
+    nlPage.on('pageerror', e => errors.push(e.message));
+    await nlPage.goto(`http://127.0.0.1:${nlServer.port}/?token=${nlServer.token}`, { waitUntil: 'load' });
+    await openDevinList(nlPage);
+    const nlReason = 'Windows の開発者モードがオフのため、Pleiad からは止められません';
+    const nl = dvCell(nlPage, 'devBoth');
+    const nlFacts = { disabled: await nl.getAttribute('aria-disabled'), tip: await nl.getAttribute('data-tip'), aria: await nl.getAttribute('aria-label'), title: await nl.getAttribute('title'), glyph: await nl.locator('.lk').count(), pressed: await nl.getAttribute('aria-pressed') };
+    check(nlFacts.disabled === 'true' && nlFacts.glyph === 1 && nlFacts.tip === nlReason && nlFacts.aria === `Devin で devBoth を使う（${nlReason}）` && !nlFacts.title,
+      'リンクを作れない PC: Devin の自分の名前は鍵つきで押せず、理由は nolinks の文（読み上げ名にも入る）', nlFacts);
+    await nl.hover();
+    await nlPage.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 2000 });
+    check((await nlPage.locator('.cx-tip.on').innerText()).includes(nlReason), 'リンクを作れない PC: 鍵へ載せると nolinks の理由の吹き出しが出る');
+    await nl.click({ force: true });
+    await nlPage.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 2000 });
+    check(await nl.getAttribute('aria-pressed') === nlFacts.pressed, 'リンクを作れない PC: 鍵のアイコンを押しても状態は変わらない');
+    check(await dvRow(nlPage, 'devBoth').locator('.cx-ag[data-agent="claude"]').getAttribute('aria-disabled') === null, 'リンクを作れない PC でも、Claude のアイコンは押せるまま');
+    await nlCtx.close();
+  } finally {
+    for (const c of dvClients) c.close();
+    for (const s of dvServers) await s.stop().catch(() => {});
   }
 
   check(errors.length === 0, 'ページ例外（pageerror）が出ない', errors);

@@ -38,6 +38,24 @@ const button = (cls, text) => { const b = el('button', cls, text); b.type = 'but
 const lockGlyph = () => { const k = el('span', 'lk'); k.append(svg(ICON.lock)); return k; };
 
 /**
+ * 鍵つきのエージェントのアイコン（一覧のセルと、会話の右パネルの止められなかった行で同じ形）。
+ * cell は { mode, reason?, state? }。吹き出し（data-tip）と読み上げ名「{元の名前}（{理由}）」を付ける
+ */
+export function lockedAgentChip(agent, cell, name) {
+  const b = button(`cx-ag be-${agent}`);
+  b.dataset.agent = agent;
+  b.setAttribute('aria-pressed', String(cell.state === 'on'));
+  b.append(mark(agent));
+  const reason = lockReasonText(label(agent), cell);
+  b.setAttribute('aria-disabled', 'true');
+  b.dataset.tip = reason;
+  b.setAttribute('aria-label', lockAriaLabel(t('mcp.matrix.agentAria', { agent: label(agent), name }), reason));
+  b.append(lockGlyph());
+  ensureLockTips();
+  return b;
+}
+
+/**
  * section は createMcpSection() の戻り（peek・authNote を使う）。
  * 戻り: { render(host, ctx) }。ctx は web/context.mjs の mcpContext() に matrix・reloadMatrix を足したもの
  */
@@ -109,21 +127,14 @@ export function createMcpMatrix({ section, onCount }) {
     const m = ctx.matrix, cell = row.cells[agent], on = switchOn(m, row);
     if (cell.mode === 'none') { const x = el('span', `cx-ag ${on ? 'na' : 'none'}`); x.setAttribute('aria-hidden', 'true'); return x; }
     if (cell.mode === 'toggle' && cell.state === 'off' && !on) { const x = el('span', 'cx-ag none'); x.setAttribute('aria-hidden', 'true'); return x; }
+    if (cell.mode !== 'toggle') return lockedAgentChip(agent, cell, calledOf(row));
     const b = button(`cx-ag be-${agent}`);
     b.dataset.agent = agent;
     b.setAttribute('aria-pressed', String(cell.state === 'on'));
     b.append(mark(agent));
-    if (cell.mode === 'toggle') {
-      b.setAttribute('aria-label', t('mcp.matrix.agentAria', { agent: label(agent), name: calledOf(row) }));
-      b.title = label(agent);
-      b.onclick = () => toggleCell(ctx, row, agent);
-    } else {
-      const reason = lockReasonText(label(agent), cell);
-      b.setAttribute('aria-disabled', 'true');
-      b.dataset.tip = reason;
-      b.setAttribute('aria-label', lockAriaLabel(t('mcp.matrix.agentAria', { agent: label(agent), name: calledOf(row) }), reason));
-      b.append(lockGlyph());
-    }
+    b.setAttribute('aria-label', t('mcp.matrix.agentAria', { agent: label(agent), name: calledOf(row) }));
+    b.title = label(agent);
+    b.onclick = () => toggleCell(ctx, row, agent);
     return b;
   }
 

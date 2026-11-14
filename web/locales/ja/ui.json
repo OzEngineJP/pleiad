@@ -1640,7 +1640,8 @@
       "workspace": "{{agent}} が作業場所から直接読むため、Pleiad からは止められません",
       "relay": "{{agent}} には Pleiad から渡せません",
       "admin": "管理者が {{agent}} に設定しています",
-      "linked": "{{agent}} には委譲の設定に合わせて渡します"
+      "linked": "{{agent}} には委譲の設定に合わせて渡します",
+      "nolinks": "Windows の開発者モードがオフのため、Pleiad からは止められません"
     },
     "lockAria": "{{label}}（{{reason}}）",
     "roots": {

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_SCAN, legacyPlan, mcpAgentsFromLegacy, resolveConfig, defaultKind } from '../../core/context-settings.mjs';
-import { resolveRuntime } from '../../core/context-runtime.mjs';
+import { nativeContextReport, resolveRuntime, unstoppedMcp } from '../../core/context-runtime.mjs';
 import { buildMcpMatrix, canStopName, canStopNative, mcpLegacyInfo, nativeStopBlock } from '../../core/context-mcp-matrix.mjs';
 import { canLinkMcpOffHome, nativeMcpOffMode, setMcpOffLinker } from '../../core/backends/mcp-off-home.mjs';
 import { readClaudePlugins } from '../../core/context-claude-extras.mjs';
@@ -74,6 +74,11 @@ export default async function (t) {
     t.ok('E: 作業場所の定義の無い会話（repoA）では、ユーザーの設定の名前を止める', eA.mcp.suppress.join() === 'wsdup', eA.mcp);
     t.ok('E: 同じ名前を作業場所で定義している会話（repoB）では止めない（作業場所の定義が勝つ）。右パネルの行は「自分の側を使う」と鍵の理由（nativeLock: workspace）',
       eB.mcp.suppress.length === 0 && rowB?.nativeLock === 'workspace', { m: eB.mcp, row: rowB });
+    // 中継も止める名前も無いターンはエージェント任せの記録にするが、止められなかった名前は unstopped に残す（右パネルの鍵）
+    const nativeB = nativeContextReport({ owners: { instruction: 'native', skill: 'native', mcp: 'ply' } }, repoB, { id: 'devin' }, new Date(0), unstoppedMcp(eB.report));
+    t.ok('E: エージェント任せの記録にも、止められなかった名前を名前ごとに 1 つ残す（unstopped: wsdup / workspace）',
+      nativeB.status === 'native' && nativeB.entries.length === 0 && JSON.stringify(nativeB.unstopped) === JSON.stringify([{ name: 'wsdup', nativeLock: 'workspace' }]), nativeB);
+    t.ok('E: 止められなかった名前が無ければ unstopped は付けない', !('unstopped' in nativeContextReport({ owners: {} }, repoB, { id: 'devin' }, new Date(0), unstoppedMcp(eA.report))), unstoppedMcp(eA.report));
     // C: リンクを作れない PC は、最初から鍵（止める手が無い）
     setMcpOffLinker(() => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); });
     const c0 = await dv({ off: { donly: ['devin'], both: ['devin'] }, spread: {} });

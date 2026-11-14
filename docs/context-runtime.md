@@ -132,6 +132,7 @@ Devin は、止める名前があるターンだけ、設定の置き場の写�
 - 止める名前に入れるのは、Devin のユーザーの設定にある名前（Claude からの取り込みを含む）のうち、利用者が Devin の列で off にして保存した名前だけ。Pleiad にだけある名前の off・名前が重なるだけ・右パネルの「この会話では外す」では写しで起動しない（Pleiad の側を渡さないだけ。外した名前の行は「自分の側を使う」）。
 - 写しは「本物の置き場 × 止める名前の組」ごとに 1 つ。12 個を超えて 1 日以上使っていないものを古い順に消す（消す前に、下の settle で置き換わったファイルを本物へ運ぶ）。本物の設定が読めない・別の形のときは `MCP_OFF_UNSUPPORTED` でターンを始めない。
 - シンボリックリンクを作れない PC（Windows の既定）では、データ置き場の中で確かめ（`canLinkMcpOffHome`。作れたら覚え、作れなければ一覧を出すたびに確かめ直す）、Devin の自分の名前を一覧で鍵（`reason: 'nolinks'`）にし、右パネルの行に `nativeLock: 'nolinks'` を付ける。実行時も写しを使わず今までと同じ起動にする。写しのリンクを作る途中で失敗したときもターンは止めず、止められなかった名前の行を「自分の側を使う」に戻して `nativeLock: 'nolinks'` を付ける（`markUnstopped`）。
+  中継する MCP も止める名前も無いのでエージェント任せの道にしたターン（ADR 0327）でも、止められなかった名前は記録の `unstopped: [{ name, nativeLock }]` に残す（`unstoppedMcp`）。
 - 写しの中で Devin が rename で置き換えたファイル（認証情報・設定）は消さずに本物へ運ぶ（`settleMcpOffHome`）。写しのほうが新しければ、本物の今の中身を kept に `replaced-` で残してからその中身で本物を置き換え、mtime をそろえてリンクに戻す。本物のほうが新しければ写しの中身を `<data>/devin/mcp-off-kept/` に残してリンクに戻す。写しの中で新しく作られたファイルは、運ぶ一覧（`DEVIN_CARRY`: `config.json`・`credentials.toml`・`mcp_config.json`）にある名前だけ本物へ写し、ほかは kept に移す。kept は 50 個・30 日まで。秘密が入りうるので、データ置き場の写し（`scripts/copy-data-dir.mjs`）では写さない。Pleiad が書く `mcp_config.json` を Devin が書き換えた分は本物へ運ばず kept に残す。最後の更新から 5 秒たっていないファイルは次の機会に回す。運ぶのは、写しをそろえるとき・Devin のターンを起こすとき・古い写しを消す前。
 
 Antigravity は自身の MCP を名前ごとに止める口が無い（能力の印 `nativeMcpOff`）。止められない定義（Antigravity の定義・Devin の作業場所の定義）は自身がつなぐ。同じ名前を Pleiad が中継するとき自身側が勝つので、中継しない。
