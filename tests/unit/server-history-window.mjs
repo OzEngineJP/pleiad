@@ -1,7 +1,7 @@
 // loadSession の窓と本文の遅延をサーバー越しに確かめる（ADR 0182）。300 発言・大きい提示 12 件の会話で、
 //   - 窓の頼み（lazy・tail）は末尾の窓だけを運び、大きい提示の本文は印（lazy）にする。応答は全量よりずっと小さい
 //   - 遡り（older）を base が 0 になるまで繰り返すと、全量と同じ並びになる（手前が書き換わったら stale）
-//   - 窓から出す差分は、窓の中だけを数えた署名で合う
+//   - 窓から出す差分は、窓の中だけを数えた署名で合う。差分が合っても続きが窓に収まらない頼み（from が窓の手前）には窓を返す
 //   - GET /present-body が本文を長く覚えさせる形で返す（時刻で指した分だけ。通し番号だけの分は覚えさせない）。頼みの無い古い画面は今までどおりの全量
 //   - 窓の手前のサブエージェントの呼び出しは earlierCalls で運ぶ。遡りは特定の発言（reach）まで 1 回で届く
 //   - 走っているターンで開いた窓（印を付ける前）に続けて、印を付けた読み出しから遡っても stale にならない（anchorSig）
@@ -128,6 +128,11 @@ export default async function (t) {
     const changed = syncRequest(win.messages.map((m, i) => i === 3 ? { ...m, text: "手元だけ違う" } : m), win.presents, { base: win.base, presentBase: win.presentBase });
     const mismatch = await client.cmd("loadSession", { sessionId: ID, lazy: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES, ...changed });
     t.ok("窓の差分: 窓の中が違えば差分にせず、窓を返す", !("from" in mismatch) && mismatch.base === win.base && mismatch.messages.length === win.messages.length);
+    // 差分は合っても、続きが窓に収まらない頼み（離れている間に大きく育った会話。from が窓の手前）には窓を返す
+    const staleTail = syncRequest(full.messages.slice(0, 100), []);
+    const instead = await client.cmd("loadSession", { sessionId: ID, lazy: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES, ...staleTail });
+    t.ok("窓の差分: 続きが窓に収まらない頼みには差分ではなく窓を返し、応答は窓の大きさ（画面は置き換える）",
+      !("from" in instead) && instead.base === win.base && same(instead.messages, win.messages) && size(instead) < fullSize * 0.2, `base ${instead.base}`);
 
     // ---------------------------------------------------------------- 本文
     const target = bigs[0];
