@@ -3052,6 +3052,9 @@
         "fork": "Branch"
       },
       "noPath": "(no path)",
+      "inputLoading": "Loading the full text…",
+      "inputFailed": "Couldn't load the full text",
+      "inputRetry": "Try again",
       "diff": "Diff (−{{del}} / +{{add}})",
       "diffMore_one": "…{{n}} more line",
       "diffMore_other": "…{{n}} more lines",

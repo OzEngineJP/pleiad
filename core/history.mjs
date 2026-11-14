@@ -14,6 +14,7 @@ import * as store from "./store.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
 import { splitLeadingNotes } from "./system-messages.mjs";
 import { cleanBundle, entryName, htmlOnlyBundle } from "./viz-bundle.mjs";
+import { inputSig } from "../web/history-sync.mjs";
 
 const PRESENT_DIR = path.join(store.dataDir, "presents");
 
@@ -262,6 +263,25 @@ export async function findPresentBody(sessionId, backend, { i, at, field }) {
   if (!at) return null;
   const found = presents.find(p => p?.at === at && body(p) !== null);
   return found ? body(found) : null;
+}
+
+/**
+ * 会話のツール呼び出しの入力（input）の全文を 1 つ探す（画面が /tool-input で取りに行く。ADR 0334）。
+ * loadSession は入力の大きい文字列を頭だけにして運び、呼び出しの id と入力の署名（inputSig）を印にする。ここはその 2 つが合う呼び出しの入力を返す。
+ * 署名が合わなければ（記録が書き換わった・巻き戻した後）別の入力を返さず null。
+ * extra は走っているターンの発言（まだ記録に載っていない呼び出し）。記録より先に見る（メモリの中だけで済む）
+ */
+export async function findToolInput(sessionId, backend, { id, sig, extra = [] }) {
+  if (!sessionId || typeof id !== 'string' || !id || !Number.isFinite(sig)) return null;
+  const find = (messages) => {
+    for (const message of messages ?? []) {
+      for (const call of message?.toolCalls ?? []) {
+        if (call?.id === id && call.input !== null && typeof call.input === 'object' && inputSig(call.input) === sig) return call.input;
+      }
+    }
+    return null;
+  };
+  return find(extra) ?? find(backend?.getMessages ? await backend.getMessages(sessionId) : []);
 }
 
 /** Bind human attachments to a durable message UUID (some agents do not record timestamps). */

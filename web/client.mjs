@@ -9607,7 +9607,8 @@ function placeJunctions({ snapshots = branchSnapshots() } = {}) {
 async function loadHistory(args, prev = null, { window = false, bulk = false } = {}) {
   // 会話を開く読み込み（window）は、末尾の窓だけを頼み、大きい提示の本文は印にしてもらう（ADR 0182）。
   // この仕組みを知らないサーバーは窓の頼みを無視して全量を返す（応答に base が無い）ので、base 0・本文付きの提示として扱う
-  const extra = window ? { lazy: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES } : {};
+  // lazyInput は、ツールの入力の大きい文字列も頭だけにして運んでもらう（ADR 0334）。知らないサーバーは無視して全文を返す（その形のまま持つ）
+  const extra = window ? { lazy: true, lazyInput: true, tail: WINDOW_MESSAGES, tailBytes: WINDOW_BYTES } : {};
   const request = prev ? syncRequest(prev.messages, prev.presents, { base: prev.base ?? 0, presentBase: prev.presentBase ?? 0 }) : null;
   const opened = (data) => ({ ...data, base: Number.isInteger(data?.base) ? data.base : 0, presentBase: Number.isInteger(data?.presentBase) ? data.presentBase : 0 });
   const data = await cmd("loadSession", { ...args, ...extra, ...request }, { bulk });
