@@ -124,13 +124,22 @@ function installDom() {
   scroller.append(contextPanel);
   body.append(scroller, openBtn);
 
+  const timers = new Set();
   const saved = {
     document: globalThis.document,
     window: globalThis.window,
     localStorage: globalThis.localStorage,
     CSS: globalThis.CSS,
     requestAnimationFrame: globalThis.requestAnimationFrame,
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
   };
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    const id = saved.setTimeout((...a) => { timers.delete(id); return fn(...a); }, ms, ...args);
+    timers.add(id);
+    return id;
+  };
+  globalThis.clearTimeout = id => { timers.delete(id); return saved.clearTimeout(id); };
   globalThis.document = {
     body,
     activeElement: body,
@@ -156,11 +165,15 @@ function installDom() {
   return {
     body, scroller, contextPanel, openBtn, store,
     restore() {
+      for (const id of timers) saved.clearTimeout(id);
+      timers.clear();
       globalThis.document = saved.document;
       globalThis.window = saved.window;
       globalThis.localStorage = saved.localStorage;
       globalThis.CSS = saved.CSS;
       globalThis.requestAnimationFrame = saved.requestAnimationFrame;
+      globalThis.setTimeout = saved.setTimeout;
+      globalThis.clearTimeout = saved.clearTimeout;
     },
   };
 }

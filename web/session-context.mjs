@@ -575,9 +575,21 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function showToast() {
     toastOn = true;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastOn = false; document.querySelector('.scx-toast')?.classList.remove('on'); }, 1800);
+    toastTimer = setTimeout(() => {
+      toastOn = false;
+      if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+        document.querySelector('.scx-toast')?.classList.remove('on');
+      }
+    }, 1800);
+    toastTimer?.unref?.();
   }
-  function focusIn(selector) { requestAnimationFrame(() => document.querySelector(`.scx ${selector}`)?.focus()); }
+  function focusIn(selector) {
+    requestAnimationFrame(() => {
+      if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+        document.querySelector(`.scx ${selector}`)?.focus();
+      }
+    });
+  }
 
   // ---------------------------------------------------------------- 「この場所だけ変える」の間の種類の面
   function contextSupport() {
