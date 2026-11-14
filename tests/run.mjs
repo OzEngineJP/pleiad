@@ -519,6 +519,11 @@ const SUITES = [
   './unit/context-roots.mjs',
   './unit/server-context.mjs',
   './unit/context-ui.mjs',
+  // 設定 › プラグイン・右パネルの 4 タブ・フォルダーまとまり・絞り込み・鍵の吹き出し（web/context-tabs.mjs・lock-tip.mjs・context.mjs・session-context.mjs）
+  './unit/context-tabs-and-lock-tip.mjs',
+  './unit/context-panel-tabs.mjs',
+  // 同じ画面を本物の Chrome で（B1_BROWSER_TEST=1。tests/browser/context-tabs-and-lock-tip.mjs）
+  './unit/context-tabs-browser.mjs',
   // Pleiad の指示の並べ替え: 取っ手のキーとメニュー・続けて動かす・フォーカス・読み上げ（タッチで引く操作は tests/browser/ply-instructions-reorder.mjs）
   './unit/ply-instructions-order.mjs',
   // 指示の量（ADR 0056）: 自分で書いた分と Pleiad が足した分・目安・エージェント任せの見積もり
@@ -750,6 +755,7 @@ const SUITES = [
   './unit/event-session-id.mjs',
   './unit/lineage.mjs',
   './unit/branches.mjs',
+  './unit/outline-digest.mjs',
   // 見た目の規則。web/ の CSS と index.html を lint する（docs/design-system.md §5）
   './unit/design-lint.mjs',
   // 操作のメニューを開く「…」はどこでも縦の 3 点（docs/design-system.md「「…」の形」・ADR 0313）

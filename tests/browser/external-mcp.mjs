@@ -61,6 +61,7 @@ try {
         document.getElementById('onboardingDialog')?.close();
         if (!document.body.classList.contains('settings')) document.getElementById('settings')?.click();
         document.getElementById('openContext')?.click();
+        document.querySelector('#contextPanel [role=tab][data-tab="mcp"]')?.click();
       });
       await page.waitForTimeout(500);
       if (await page.locator('#contextPanel [data-kind=mcp] .cx-sw').first().isVisible()) break;
@@ -96,7 +97,7 @@ try {
   check((await row(page, 'Linear').innerText()).includes('ログインが必要') && !(await row(page, 'Slack').innerText()).includes('ログインが必要'), 'ログインが必要だったコネクターの行にだけ「ログインが必要」と出る（前回の読み取りの状態）');
   const slackCells = row(page, 'Slack').locator('.cx-ag');
   check(await slackCells.count() >= 1 && await row(page, 'Slack').locator('.cx-ag.na[aria-hidden=true]').count() >= 1 && await row(page, 'Slack').locator('.cx-ag.na[tabindex], .cx-ag.na button').count() === 0, 'コネクターは Claude だけ押せて、他の列は短い線（押せず、タブにも入らない）');
-  check(text.includes('claude.ai のコネクター') && text.includes('Pleiad からは止められません'), '凡例は 1 つ（コネクターの雲・鍵）');
+  check(text.includes('claude.ai のコネクター') && !text.includes('Pleiad からは止められません'), '凡例はコネクターの雲だけ（鍵の凡例は無い）');
   await shot(page, 'light-1280');
 
   // 全体のスイッチ: 切ると全部 off、入れると前の並びに戻る
@@ -145,9 +146,14 @@ try {
   await row(page, 'cx').locator('.cx-sw').click();
   await page.waitForTimeout(800);
 
-  // 鍵: 止められないエージェントのアイコンは押せない
+  // 鍵: 止められないエージェントのアイコンは押せず、title は外してホバーで吹き出しが出る
   const locked = page.locator(`${card} .cx-ag[aria-disabled=true]`);
-  check(await locked.count() > 0 && await locked.first().locator('.lk').count() === 1, '止められないエージェントは鍵付きで押せない（aria-disabled）');
+  check(await locked.count() > 0 && await locked.first().locator('.lk').count() === 1 && !(await locked.first().getAttribute('title')), '止められないエージェントは鍵付きで押せず（aria-disabled）、title は無い');
+  await locked.first().hover();
+  await page.waitForTimeout(220);
+  check(await page.locator('.cx-tip.on').isVisible() && (await page.locator('.cx-tip').innerText()).includes('止められません'), '鍵のアイコンへ載せると理由の吹き出しが出る');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
   const beforePressed = await locked.first().getAttribute('aria-pressed');
   await locked.first().click({ force: true });
   await page.waitForTimeout(400);

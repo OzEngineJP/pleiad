@@ -508,7 +508,7 @@ plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus
 2. **帯の色**: ~~リモートの窓は帯を `--fill-primary`~~（2026-09-23 にやめた。利用者の決定）。帯はローカルと同じ `--surface-0`（点のグリッド）で、脇を閉じても・プレビューを並べても変えない。
    窓のボタンの地と記号は、既存の `paintTitleBar`（`web/client.mjs`）が `.titlebar` の `--bar-end` と `--ink` を読んで `setTitleBar` で送る。画面が送るまでの一瞬は `desktop/remote-windows.cjs` の `REMOTE_BAR`（ローカルと同じ脇の面の色）。
    見分けは、差しの青の印（1）と、OS の窓タイトル・タスクバーの重ねアイコン（3）で行う。塗りの例外（design-system §2.3）は無くなった
-3. **OS の窓タイトルとタスクバー**: `Pleiad — リモート: desktop-home`（`page-title-updated` を止めて main が付ける）。Windows はタスクバーのボタンに `setOverlayIcon`（⇄ の小さな印、説明「リモート」）。macOS はタイトルと Dock メニューの窓の名前で見分ける
+3. **OS の窓タイトルとタスクバー**: `Pleiad — リモート: desktop-home`（`page-title-updated` を止めて main が付ける）。Windows はタスクバーのボタンに `setOverlayIcon`（⇄ の小さな印、説明「リモート」）。リモートの窓を閉じるとき（`close`）に `setOverlayIcon(null, '')` で外し、別のリモートの窓が開いていればそちらへ付け直し、最後のリモートの窓ならローカルの窓からも外す。macOS はタイトルと Dock メニューの窓の名前で見分ける
 
 画面は preload から「リモートの窓であること」とホスト名を受け取って描く:
 

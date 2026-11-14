@@ -33,8 +33,8 @@ import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, catalogIsComplete, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
-import { normalizeSdkMessage, isClaudeAuthError, isClaudeModelError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, subagentEntries, invalidSubagentTranscript } from "./claude-normalize.mjs";
-import { createTranscriptReader } from "./claude-transcript.mjs";
+import { normalizeSdkMessage, isClaudeAuthError, isClaudeModelError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, createSubagentParser } from "./claude-normalize.mjs";
+import { createTranscriptReader, readAppendedText, trackTail, trackHead, trackTailAfterAppend, feedAppended, feedBufferLines, hydrateSlim, slimLeak } from "./claude-transcript.mjs";
 import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
@@ -645,23 +645,33 @@ function toRow(s) {
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 const subagentFiles = new Map();   // "sessionId/agentId" -> transcript のパス。置き場は変わらない
-const subagentReads = new Map();   // "sessionId/agentId:limit" -> { stamp, entries }。running の配信が 4 秒ごとに読みに来る
+const subagentReads = new Map();   // "sessionId/agentId" -> { stamp, size, ino, dev, head, tail, tailStart, windowStart, window, parser, version, bytes }。running の配信が 4 秒ごとに読みに来る
+const subagentBusy = new Map();    // "sessionId/agentId" -> 直列化のための promise。差分の追記状態を並行に触らない
+const SUBAGENT_CACHE_BYTES = 64 * 1024 * 1024;   // 蒸留した行で数える保持量の上限（ADR 0330）
+let subagentBytes = 0;
+const dropSubagent = (key) => {
+  const s = subagentReads.get(key);
+  if (s) { subagentBytes -= s.bytes; subagentReads.delete(key); }
+};
 
 /**
  * サブエージェントの transcript を自分で読む。SDK の getSubagentMessages は最後の 1 件しか返さない
  * （claude-normalize.mjs の subagentEntries）。見つからなければ null（呼び出し側が SDK へ落とす）。
  * 置き場は組み立てず、projects の下を探す。
+ * 追記しかない版は、親の transcript と同じく窓を照合して差分だけを読む（claude-transcript.mjs・ADR 0330）。
  */
-function transcriptVersion(text) {
-  for (const line of String(text).split('\n').slice(0, 20)) {
-    try { const row = JSON.parse(line); if (typeof row?.version === 'string') return row.version; } catch {}
-  }
-  return null;
-}
-
 async function readSubagentEntries(sessionId, agentId, { limit = 0 } = {}) {
   if (!SAFE_ID.test(String(sessionId ?? "")) || !SAFE_ID.test(String(agentId ?? ""))) return null;
   const key = `${sessionId}/${agentId}`;
+  const prev = subagentBusy.get(key) ?? Promise.resolve();
+  const run = prev.then(() => readSubagentEntriesNow(sessionId, agentId, key, { limit }), () => readSubagentEntriesNow(sessionId, agentId, key, { limit }));
+  const marker = run.catch(() => {});
+  subagentBusy.set(key, marker);
+  marker.finally(() => { if (subagentBusy.get(key) === marker) subagentBusy.delete(key); });
+  return run;
+}
+
+async function readSubagentEntriesNow(sessionId, agentId, key, { limit }) {
   try {
     if (!subagentFiles.has(key)) {
       const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
@@ -677,25 +687,59 @@ async function readSubagentEntries(sessionId, agentId, { limit = 0 } = {}) {
     if (!file) return null;
     const stat = await fs.stat(file);
     const stamp = `${stat.mtimeMs}:${stat.size}`;
-    const slot = `${key}:${limit}`;
-    if (subagentReads.get(slot)?.stamp === stamp) return subagentReads.get(slot).entries;
-    const text = await fs.readFile(file, "utf8");
-    const version = transcriptVersion(text);
-    if (invalidSubagentTranscript(text)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-shape', detectedVersion: version });
+    let state = subagentReads.get(key);
+    if (state?.stamp !== stamp) {
+      const delta = await readAppendedText(fs, file, stat, state);
+      if (delta && feedAppended(state.parser,
+          delta.chunk.subarray(state.tailStart - state.windowStart), state.tailStart)) {
+        Object.assign(state, trackTailAfterAppend(state, stat.size, delta.chunk, state.parser.tail), { stamp, size: stat.size });
+        subagentBytes += state.parser.kept - state.bytes;
+        state.bytes = state.parser.kept;
+        subagentReads.delete(key);
+        subagentReads.set(key, state);
+        while (subagentReads.size && (subagentReads.size > 24 || subagentBytes > SUBAGENT_CACHE_BYTES)) {
+          dropSubagent(subagentReads.keys().next().value);   // 追記で育っても上限を守る
+        }
+      } else {
+        dropSubagent(key);
+        const buf = await fs.readFile(file);
+        // 行の解釈は区切ってイベントループへ返す（ADR 0333）。版と形の検査は解釈器が feed で畳み込む
+        const parser = createSubagentParser();
+        await feedBufferLines(parser, buf);
+        if (parser.invalid) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-shape', detectedVersion: parser.version });
+        state = { file, stamp, size: stat.size, ino: stat.ino, dev: stat.dev,
+          head: trackHead(buf), ...trackTail(buf), parser, version: parser.version, bytes: parser.kept };
+        subagentReads.set(key, state);
+        subagentBytes += parser.kept;
+        while (subagentReads.size && (subagentReads.size > 24 || subagentBytes > SUBAGENT_CACHE_BYTES)) {
+          dropSubagent(subagentReads.keys().next().value);   // 古いものから捨てる
+        }
+      }
+    }
     const metaText = await fs.readFile(file.replace(/\.jsonl$/, ".meta.json"), "utf8").catch(() => null);
     let meta = null;
     if (metaText !== null) {
       try { meta = JSON.parse(metaText); } catch {}
     }
-    if (typeof meta?.toolUseId !== 'string') await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-meta', detectedVersion: version });
-    const withOrigin = subagentEntries(text, { toolUseId: typeof meta?.toolUseId === "string" ? meta.toolUseId : null, limit });
-    subagentReads.delete(slot);
-    subagentReads.set(slot, { stamp, entries: withOrigin });
-    if (subagentReads.size > 24) subagentReads.delete(subagentReads.keys().next().value);   // 古いものから捨てる
-    return withOrigin;
+    if (typeof meta?.toolUseId !== 'string') await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-meta', detectedVersion: state.version });
+    const toolUseId = typeof meta?.toolUseId === "string" ? meta.toolUseId : null;
+    const raw = state.parser.finish({ toolUseId, limit });
+    // 蒸留した message を行から読み直して戻す。途中で差し替わっていたら読めなかった扱い（SDK へ落とす）
+    if (await hydrateSlim(fs, file, raw, state.parser.slimIndex) < 0) { dropSubagent(key); return null; }
+    if (slimLeak(raw)) {
+      // 蒸留形が返り値に残る版 → 蒸留せず全部読み直して返す。記録には載せない
+      dropSubagent(key);
+      await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-slim-leak', detectedVersion: state.version });
+      const buf = await fs.readFile(file);
+      const whole = createSubagentParser();
+      await feedBufferLines(whole, buf, { offsets: false });
+      return whole.finish({ toolUseId, limit });
+    }
+    return raw;
   } catch {
     if (subagentFiles.has(key)) await recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'subagent-unreadable', detectedVersion: null });
     subagentFiles.delete(key);
+    dropSubagent(key);
     return null;
   }
 }
@@ -707,6 +751,7 @@ const readSessionTranscript = createTranscriptReader({
     sessionStore: { load: async () => entries, append: async () => { throw new Error('Read-only transcript'); } },
   }),
   onUnreadable: () => recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-unreadable', detectedVersion: null }),
+  onSlimLeak: (version) => recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'claude', kind: 'transcript-slim-leak', detectedVersion: version }),
 });
 
 /**

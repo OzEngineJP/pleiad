@@ -396,8 +396,29 @@ function createRemoteWindows(deps) {
   }
 
   function setOverlay(win) {
-    if (platform !== 'win32' || !nativeImage) return;
+    if (platform !== 'win32' || !nativeImage || win?.isDestroyed?.()) return;
     try { win.setOverlayIcon(nativeImage.createFromBitmap(drawOverlayBitmap(32), { width: 32, height: 32 }), t('remote.overlay')); } catch {}
+  }
+
+  function clearOverlay(win) {
+    if (platform !== 'win32' || win?.isDestroyed?.()) return;
+    try { win.setOverlayIcon(null, ''); } catch {}
+  }
+
+  // Windows のタスクバーの印は AppUserModelID ごとに 1 つのボタンへ載るため、閉じる窓で外したあと、
+  // 開いたままの別リモート窓があれば付け直し、最後のリモート窓ならローカルの窓からも外す
+  function syncTaskbarOverlay({ closingWin = null } = {}) {
+    if (platform !== 'win32') return;
+    if (closingWin) clearOverlay(closingWin);
+    const active = [];
+    for (const entry of windows.values()) {
+      if (!entry.closing && !entry.win.isDestroyed?.()) active.push(entry.win);
+    }
+    if (active.length > 0) {
+      for (const win of active) setOverlay(win);
+      return;
+    }
+    for (const win of localWindows()) clearOverlay(win);
   }
 
   function focus(win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
@@ -485,16 +506,25 @@ function createRemoteWindows(deps) {
       event.preventDefault();
       if (linkTarget(url, entry.origin) === 'external') openOutside(url);
     });
-    win.once('ready-to-show', () => { setOverlay(win); win.show(); });
-    win.on('close', () => { entry.closing = true; });
+    win.once('ready-to-show', () => {
+      if (win.isDestroyed() || entry.closing) return;
+      setOverlay(win);
+      win.show();
+    });
+    win.on('close', () => {
+      entry.closing = true;
+      syncTaskbarOverlay({ closingWin: win });
+    });
     win.on('closed', () => {
+      const wasClosing = entry.closing;
       windows.delete(hostId);
+      if (!wasClosing) syncTaskbarOverlay();
       d.close(hostId).catch(() => {});   // 手元のプロキシを閉じるだけ。ホストの作業は止めない
       pushHosts();
     });
     pushHosts();
     try { await win.loadURL(sessionId ? `${proxy.url}&open=${encodeURIComponent(sessionId)}` : proxy.url); } catch { /* 読み込みの失敗（中断など）でも窓は出す。案内はプロキシが返す */ }
-    if (!win.isDestroyed()) { setOverlay(win); focus(win); }
+    if (!win.isDestroyed() && !entry.closing) { setOverlay(win); focus(win); }
   }
 
   /** リモートの窓のリンクを、この PC の既定のブラウザーで（http も。linkTarget が 'external' と決めたものだけ来る） */

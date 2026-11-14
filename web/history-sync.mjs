@@ -7,21 +7,7 @@
 // 圧縮の印など、行の見た目に効く値が変わっても「違う」になる（web/branches.mjs の commonPrefix は本文とツール名しか見ない）。
 import { buildItems, inlineAttachments } from "./timeline.mjs";
 import { visualizeReferences } from "./visualize-reference.mjs";
-
-/** 文字列の 53 ビットの署名（cyrb53）。暗号用ではなく、同じ中身かを見分けるだけ */
-function hash53(text, seed = 0) {
-  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
-  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
-  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
-}
+import { hash53 } from "./hash53.mjs";
 
 const messageSigs = new WeakMap();
 /** 発言 1 件の署名。同じオブジェクトなら 1 度しか数えない */
@@ -221,7 +207,9 @@ const intArg = (v, max = Number.MAX_SAFE_INTEGER) => Number.isInteger(v) && v >=
 
 /**
  * 末尾の窓の最初の発言の通し番号。最後の count 件・およそ bytes（0 なら件数だけ）までを運び、最低 MIN_WINDOW 件は運ぶ。
- * 窓の最初が AI の発言なら、手前の人の発言（20 件まで）に寄せる（連続する AI の発言の「続き」の形が窓の頭で変わらないように）
+ * 窓の最初が AI の発言なら、手前の人の発言（20 件まで）に寄せる（連続する AI の発言の「続き」の形が窓の頭で変わらないように）。
+ * 寄せる分にも容量の上限（頼んだ bytes。無ければ WINDOW_BYTES）を付け、超えるなら寄せず、AI の発言が頭の窓を許す
+ * （ツールの結果の大きい AI の発言が続く会話で、さかのぼりだけで窓が上限の数倍にならないように）
  */
 export function windowStart(messages, count, bytes = 0, end = messages.length) {
   const limit = Math.min(count, MAX_WINDOW_MESSAGES);
@@ -231,7 +219,11 @@ export function windowStart(messages, count, bytes = 0, end = messages.length) {
     i--;
     if (bytes > 0) size += sizeOf(messages[i]);
   }
-  for (let k = 0; i > 0 && messages[i]?.role !== "user" && k < 20; k++) i--;
+  const lookback = bytes > 0 ? bytes : WINDOW_BYTES;
+  for (let k = 0, extra = 0; i > 0 && messages[i]?.role !== "user" && k < 20; k++) {
+    if (extra + sizeOf(messages[i - 1]) > lookback) break;
+    extra += sizeOf(messages[--i]);
+  }
   return i;
 }
 
@@ -273,7 +265,7 @@ const stubAll = (presents, from, lazy) => lazy ? presents.map((p, k) => stubPres
  * サーバー側。loadSession の応答を、頼みに合わせた形にする。
  *   - 窓・遅延の頼みが無い（古い画面）: serveFrom（これまでの形そのまま）
  *   - older（遡り）: 手前の発言と提示だけ（serveOlder）
- *   - from・check（差分。窓があれば base 付き）が合う: 続きだけ。lazy なら提示は印にする
+ *   - from・check（差分。窓があれば base 付き）が合う: 続きだけ。lazy なら提示は印にする。ただし窓を頼んでいて続きが窓に収まらない（from が窓の手前）なら、差分にせず窓を返す
  *   - tail（件数）: 末尾の窓。応答に base・total・presentBase・presentTotal を足す（差分の印 from は無い）
  *   - それ以外: 全量（lazy なら提示は印）
  * 応答の base の有無が、この仕組みを知っているサーバーの印になる（画面は base が無ければ窓なし・提示は全文として扱う）。
@@ -286,13 +278,16 @@ export function serveHistory(body, args, tools = null) {
   const base = intArg(args?.base) ?? 0, presentBase = intArg(args?.presentBase) ?? 0;
   if (!lazy && !windowed && !base && !presentBase) return serveFrom(body, args);
   const messages = body.messages ?? [], presents = body.presents ?? [];
+  const start = windowed ? windowStart(messages, tail, intArg(args?.tailBytes) ?? 0) : 0;
   const from = intArg(args?.from), presentFrom = intArg(args?.presentFrom);
+  // 差分が合うときは続きだけ。ただし窓を頼んでいるのに続きが窓（tail・tailBytes と頭寄せで決まる末尾の窓）に収まらない
+  // （from が窓の手前にある）ときは、差分をやめて下の窓の応答を返す。つなぎ直した画面に窓より大きい続きを一度に送らない
   if (from !== null && presentFrom !== null && base <= from && presentBase <= presentFrom && from <= messages.length && presentFrom <= presents.length
+    && (!windowed || from >= start)
     && digestOf(messages, from, messageSig, base) === args.check && digestOf(presents, presentFrom, presentSig, presentBase) === args.presentCheck) {
     return { ...body, messages: messages.slice(from), presents: stubAll(presents.slice(presentFrom), presentFrom, lazy), from, total: messages.length, base, presentFrom, presentTotal: presents.length, presentBase, ...earlierOf(messages, base, tools) };
   }
   if (!windowed) return { ...body, presents: stubAll(presents, 0, lazy), base: 0, total: messages.length, presentBase: 0, presentTotal: presents.length };
-  const start = windowStart(messages, tail, intArg(args?.tailBytes) ?? 0);
   const pb = presentBaseFor(messages, presents, start);
   return { ...body, messages: messages.slice(start), presents: stubAll(presents.slice(pb), pb, lazy), base: start, total: messages.length, presentBase: pb, presentTotal: presents.length, ...earlierOf(messages, start, tools) };
 }

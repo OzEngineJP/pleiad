@@ -4,6 +4,7 @@
 //   - preload の出し分け: リモートの窓に同じ PC のブリッジ（chooseFolder・update・openRemoteHosts・hosts）を出さない
 //   - 画面のバッジ（web/remote-badge.mjs）: plyRemote の有無・状態の添え書き・再試行・この窓を閉じる
 //   - 本体の文言（desktop/i18n.cjs）: desktop の辞書を言語ごとに引く
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -337,6 +338,244 @@ ${emitSource}`, context);
     context.mainPort = createMainPort({});
     await context.postResident();
     t.ok('通常のサーバー版にはデスクトップの通知を送らない', sent.length === 4);
+  }
+
+  // ---------------------------------------------------------------- タスクバーの重ねアイコン（close で外す・複数窓の維持）
+  {
+    const hostId1 = HOST_ID;
+    const hostId2 = 'bcdefghijklmnopqrstuvwxyza';
+    const setupHarness = ({ platform = 'win32', plusUse = true } = {}) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-desktop-remote-overlay-'));
+      const remoteDir = path.join(dir, 'remote-hosts-dev');
+      fs.mkdirSync(remoteDir, { recursive: true });
+      fs.writeFileSync(path.join(remoteDir, 'settings.json'), JSON.stringify({ plus: { use: plusUse } }));
+
+      const timeline = [];
+      const createdWindows = [];
+      const ipcHandles = new Map();
+      const ipcListeners = new Map();
+      let nextPort = 52001;
+      const ports = new Map();
+      const portOf = id => {
+        if (!ports.has(id)) ports.set(id, nextPort++);
+        return ports.get(id);
+      };
+      const records = [
+        { hostId: hostId1, hostName: 'desk1', relayUrl: 'https://relay.example.net', via: 'plus', port: portOf(hostId1) },
+        { hostId: hostId2, hostName: 'desk2', relayUrl: 'https://relay.example.net', via: 'plus', port: portOf(hostId2) },
+      ];
+      let removed = new Set();
+      let loadQueue = null;
+
+      class FakeWindow extends EventEmitter {
+        constructor(opts = {}) {
+          super();
+          this.label = opts._label || `remote#${createdWindows.length + 1}`;
+          this._destroyed = false;
+          this.overlayCalls = [];
+          this.webContents = new EventEmitter();
+          this.webContents.mainFrame = { url: opts._url || 'about:blank' };
+          this.webContents.setWindowOpenHandler = () => {};
+          this.webContents.session = { setPermissionRequestHandler: () => {} };
+          this.webContents.send = () => {};
+          this.webContents.reload = () => {};
+          this.webContents.isDestroyed = () => this._destroyed;
+          if (!opts._local) createdWindows.push(this);
+        }
+        isDestroyed() { return this._destroyed; }
+        isMinimized() { return false; }
+        removeMenu() {}
+        show() {}
+        focus() {}
+        setTitle() {}
+        setTitleBarOverlay() {}
+        setOverlayIcon(overlay, description) {
+          this.overlayCalls.push({ overlay, description, destroyed: this._destroyed });
+          timeline.push({ label: this.label, hasIcon: overlay !== null, description, destroyed: this._destroyed });
+        }
+        loadURL(u) {
+          this.webContents.mainFrame.url = u;
+          if (loadQueue) return new Promise(resolve => loadQueue.push(resolve));
+          return Promise.resolve();
+        }
+        close() {
+          if (this._destroyed) return;
+          let prevented = false;
+          this.emit('close', { preventDefault() { prevented = true; } });
+          if (prevented) return;
+          this._destroyed = true;
+          this.emit('closed');
+        }
+      }
+
+      const trust = createWindowTrust();
+      const localWin = new FakeWindow({ _local: true, _label: 'local', _url: 'http://127.0.0.1:7420/' });
+      trust.register(localWin, { kind: 'local', origin: 'http://127.0.0.1:7420' });
+
+      const fakeDevice = {
+        on() {},
+        async list() { return records.filter(r => !removed.has(r.hostId)); },
+        pickHostRecord(rows, id) { return rows.find(r => r.hostId === id) || null; },
+        async open(id) {
+          const port = portOf(id);
+          return { port, url: `http://127.0.0.1:${port}/?token=tok-${id}`, status: { state: 'connected' } };
+        },
+        async proxy(id) {
+          const port = portOf(id);
+          return { url: `http://127.0.0.1:${port}/?token=tok-${id}` };
+        },
+        async close() {},
+        async disconnect() {},
+        async remove(id) { removed.add(id); },
+        async closeAll() {},
+      };
+
+      const rwInstance = rw.createRemoteWindows({
+        app: { getPath: () => dir, getAppPath: () => dir, isPackaged: false, getVersion: () => '1.2.3', on() {}, setUserTasks() {} },
+        dir: remoteDir,
+        platform,
+        BrowserWindow: FakeWindow,
+        session: { fromPartition: () => ({ setPermissionRequestHandler: () => {} }) },
+        ipcMain: {
+          handle: (ch, fn) => ipcHandles.set(ch, fn),
+          on: (ch, fn) => ipcListeners.set(ch, fn),
+        },
+        nativeImage: { createFromBitmap: (buf, size) => ({ kind: 'overlay', size, bytes: buf.length }) },
+        nativeTheme: { shouldUseDarkColors: false, on() {} },
+        Notification: class {},
+        Menu: { buildFromTemplate: () => ({}) },
+        safeStorage: {},
+        trust,
+        icon: 'icon.png',
+        external: () => {},
+        createDevice: () => fakeDevice,
+        onLoopPrompt: async () => 'restart',
+        onRestart: async () => {},
+        isQuitting: () => false,
+      });
+      rwInstance.attach();
+
+      const senderOf = win => ({ sender: win.webContents, senderFrame: win.webContents.mainFrame });
+      const invokeIpc = (ch, win, ...args) => ipcHandles.get(ch)(senderOf(win), ...args);
+      const sendIpc = (ch, win, ...args) => ipcListeners.get(ch)(senderOf(win), ...args);
+
+      return {
+        dir, localWin, createdWindows, timeline, rwInstance, invokeIpc, sendIpc,
+        deferLoads: () => { loadQueue = []; return () => { const q = loadQueue; loadQueue = null; q.forEach(fn => fn()); }; },
+        cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+      };
+    };
+
+    // 1. 1 枚だけ開いて閉じると、閉じる窓とローカルの窓で印を外す
+    {
+      const h = setupHarness();
+      try {
+        await h.rwInstance.openHost(hostId1);
+        const w1 = h.createdWindows[0];
+        t.ok('単一のリモート窓: 開いた時に重ねアイコンを付ける',
+          w1.overlayCalls.length >= 1 && w1.overlayCalls.at(-1).overlay !== null && w1.overlayCalls.at(-1).description === 'リモート',
+          JSON.stringify(w1.overlayCalls));
+        w1.close();
+        t.ok('単一のリモート窓: 閉じる時に壊れる前に setOverlayIcon(null, "") で外し、ローカルの窓からも外す',
+          w1.overlayCalls.at(-1).overlay === null && w1.overlayCalls.at(-1).description === '' && w1.overlayCalls.at(-1).destroyed === false
+          && h.localWin.overlayCalls.at(-1)?.overlay === null && h.localWin.overlayCalls.at(-1)?.description === '',
+          JSON.stringify(h.timeline));
+      } finally { h.cleanup(); }
+    }
+
+    // 2. 2 枚開いて 1 枚だけ閉じると、閉じた窓で外した後に残りのリモート窓へ付け直し、最後を閉じたときだけローカルからも外す
+    {
+      const h = setupHarness();
+      try {
+        await h.rwInstance.openHost(hostId1);
+        await h.rwInstance.openHost(hostId2);
+        const [w1, w2] = h.createdWindows;
+        const lenBeforeClose = h.timeline.length;
+        w1.close();
+        const afterFirstClose = h.timeline.slice(lenBeforeClose);
+        const clearIdx = afterFirstClose.findIndex(e => e.label === w1.label && e.hasIcon === false && e.destroyed === false);
+        const reapplyIdx = afterFirstClose.findIndex(e => e.label === w2.label && e.hasIcon === true && e.destroyed === false);
+        t.ok('複数窓で 1 枚だけ閉じた: 閉じる窓を外したあとに残りの窓の印を付け直し、ローカルからは外さない',
+          clearIdx !== -1 && reapplyIdx > clearIdx && h.localWin.overlayCalls.length === 0,
+          JSON.stringify(afterFirstClose));
+
+        const lenBeforeSecondClose = h.timeline.length;
+        w2.close();
+        const afterSecondClose = h.timeline.slice(lenBeforeSecondClose);
+        t.ok('最後のリモート窓を閉じた: その窓とローカルの窓の両方で印を外す',
+          afterSecondClose.some(e => e.label === w2.label && e.hasIcon === false && e.destroyed === false)
+          && afterSecondClose.some(e => e.label === 'local' && e.hasIcon === false && e.destroyed === false),
+          JSON.stringify(afterSecondClose));
+      } finally { h.cleanup(); }
+    }
+
+    // 3. バッジの閉じる・ホスト削除・Plus をオフの全経路で close を通して外れる
+    {
+      const h1 = setupHarness();
+      try {
+        await h1.rwInstance.openHost(hostId1);
+        const w1 = h1.createdWindows[0];
+        h1.sendIpc('ply:remote-close', w1);
+        t.ok('バッジの「この窓を閉じる」(ply:remote-close) でも外れる',
+          w1.isDestroyed() && w1.overlayCalls.at(-1)?.overlay === null && h1.localWin.overlayCalls.at(-1)?.overlay === null);
+      } finally { h1.cleanup(); }
+
+      const h2 = setupHarness();
+      try {
+        await h2.rwInstance.openHost(hostId1);
+        const w2 = h2.createdWindows[0];
+        await h2.invokeIpc('ply:hosts-remove', h2.localWin, hostId1, 'plus');
+        t.ok('設定のホスト削除 (ply:hosts-remove) でも外れる',
+          w2.isDestroyed() && w2.overlayCalls.at(-1)?.overlay === null && h2.localWin.overlayCalls.at(-1)?.overlay === null);
+      } finally { h2.cleanup(); }
+
+      const h3 = setupHarness();
+      try {
+        await h3.rwInstance.openHost(hostId1);
+        await h3.rwInstance.openHost(hostId2);
+        const [w3, w4] = h3.createdWindows;
+        await h3.invokeIpc('ply:hosts-set-plus-use', h3.localWin, false);
+        t.ok('「Pleiad Plus を使う」をオフ (ply:hosts-set-plus-use) で両方閉じても両方外れ、最後にローカルも外れる',
+          w3.isDestroyed() && w4.isDestroyed()
+          && w3.overlayCalls.at(-1)?.overlay === null && w4.overlayCalls.at(-1)?.overlay === null
+          && h3.localWin.overlayCalls.at(-1)?.overlay === null,
+          JSON.stringify({ w3: w3.overlayCalls, w4: w4.overlayCalls, local: h3.localWin.overlayCalls }));
+      } finally { h3.cleanup(); }
+    }
+
+    // 4. 読み込み途中や ready-to-show 前に閉じ始めた窓には後から印を付け直さない
+    {
+      const h = setupHarness();
+      try {
+        const resolveLoads = h.deferLoads();
+        const openP = h.rwInstance.openHost(hostId1);
+        await new Promise(r => setTimeout(r, 10));
+        const w1 = h.createdWindows[0];
+        w1.emit('close', { preventDefault() {} });
+        const countAtClose = w1.overlayCalls.length;
+        w1.emit('ready-to-show');
+        resolveLoads();
+        await openP;
+        t.ok('close 発火後に ready-to-show / loadURL 完了が来ても印を付け直さない',
+          w1.overlayCalls.length === countAtClose && w1.overlayCalls.at(-1)?.overlay === null,
+          JSON.stringify(w1.overlayCalls));
+        w1._destroyed = true;
+        w1.emit('closed');
+      } finally { h.cleanup(); }
+    }
+
+    // 5. macOS / Linux では重ねアイコンを付け外ししない
+    for (const plat of ['darwin', 'linux']) {
+      const h = setupHarness({ platform: plat });
+      try {
+        await h.rwInstance.openHost(hostId1);
+        const w1 = h.createdWindows[0];
+        w1.emit('ready-to-show');
+        w1.close();
+        t.ok(`${plat} では setOverlayIcon を呼ばない`,
+          w1.overlayCalls.length === 0 && h.localWin.overlayCalls.length === 0);
+      } finally { h.cleanup(); }
+    }
   }
 
   // ---------------------------------------------------------------- 本体の文言
