@@ -341,8 +341,10 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             const selection = resolveDevinModel(list, args.model ?? '');
             check();
             // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
+            // 名前ごとの外部 MCP で Devin 自身の MCP を止める名前があるターンだけ、設定の置き場を写しに替える（devin-config.mjs の prepareDevinMcpOff。ADR 0330）
             const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv },
-              turnConfig: devinTurnConfig({ hooksRuntime: args.hooksRuntime, nativeShellOff: Boolean(args.shellRuntime?.nativeOff) }) });
+              turnConfig: devinTurnConfig({ hooksRuntime: args.hooksRuntime, nativeShellOff: Boolean(args.shellRuntime?.nativeOff) }),
+              mcpOff: args.contextRuntime?.mcp?.named ? args.contextRuntime.mcp.suppress ?? [] : [] });
             // ACP の起動時設定はプロセス全体に適用される。会話限定設定を共有保持役へ混ぜない。
             const plan = launch.cleanup ? null : await heldAcpPlan({ dataDir, argv: launch.command, envName: 'AGENT_HOST_DEVIN_HOLDER' });
             held = plan ? createHeldAcp({ client: plan.client }) : null;

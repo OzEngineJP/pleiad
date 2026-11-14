@@ -386,6 +386,27 @@ export default async function (t) {
       mark = calls.length;
       await turn({ cwd });
       t.ok('既定 Grok 会話は追加アカウントの認証ホームを使わない', of('session/new', mark)[0]?.env?.GROK_HOME === defaultHome);
+      // 9. Grok 自身の MCP を名前で止めるターン（ADR 0330）: 止める名前があるときだけ、GROK_HOME を写しに替える
+      fs.mkdirSync(defaultHome, { recursive: true });
+      fs.writeFileSync(path.join(defaultHome, 'config.toml'), '[mcp_servers.gone]\ncommand = "gone"\n');
+      fs.writeFileSync(path.join(defaultHome, 'auth.json'), '{"fixture":true}');
+      mark = calls.length;
+      const named = await turn({ cwd, contextRuntime: { prompt: '', mcp: { named: true, suppress: ['gone'] } } });
+      const offHome = of('session/new', mark)[0]?.env?.GROK_HOME;
+      const offManaged = offHome ? fs.readFileSync(path.join(offHome, 'managed_config.toml'), 'utf8') : '';
+      t.ok('止める名前があるターンは、写しの GROK_HOME（止める名前を書いた managed_config.toml・本物の設定へのリンク）で起動する',
+        offHome && offHome !== defaultHome && path.relative(path.join(dataDir, 'grok-mcp-off'), offHome).split(path.sep).length === 1
+        && offManaged.includes('[[denied_mcp_servers]]\nserver_name = "gone"') && fs.readFileSync(path.join(offHome, 'config.toml'), 'utf8').includes('gone')
+        && fs.lstatSync(path.join(offHome, 'auth.json')).isSymbolicLink() && !fs.existsSync(path.join(defaultHome, 'managed_config.toml')), offHome);
+      mark = calls.length;
+      await turn({ cwd, sessionId: named.sessionId, contextRuntime: { prompt: '', mcp: { named: true, suppress: ['gone'] } } });
+      const resumedHome = of('session/resume', mark)[0]?.env?.GROK_HOME ?? of('session/load', mark)[0]?.env?.GROK_HOME;
+      t.ok('同じ止める名前で再開したターンも同じ写しを使う（会話の記録は本物の sessions へのリンク）', resumedHome === offHome
+        && fs.lstatSync(path.join(offHome, 'sessions')).isSymbolicLink() && fs.existsSync(path.join(defaultHome, 'sessions')), resumedHome);
+      mark = calls.length;
+      await turn({ cwd, sessionId: named.sessionId, contextRuntime: { prompt: '', mcp: { named: true, suppress: [] } } });
+      const clearedHome = of('session/resume', mark)[0]?.env?.GROK_HOME ?? of('session/load', mark)[0]?.env?.GROK_HOME;
+      t.ok('止める名前が無くなった次のターンは、本物の GROK_HOME に戻る（今までと同じ起動）', clearedHome === defaultHome, clearedHome);
     } finally {
       if (previousHome === undefined) delete process.env.AGENT_HOST_GROK_HOME;
       else process.env.AGENT_HOST_GROK_HOME = previousHome;

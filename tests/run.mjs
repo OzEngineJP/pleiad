@@ -258,6 +258,7 @@ const SUITES = [
   './unit/devin-acp.mjs',
   './unit/devin-variants.mjs',
   './unit/devin-config.mjs',
+  './unit/mcp-off-home.mjs',
   './unit/devin-normalize.mjs',
   './unit/devin-meter.mjs',
   './unit/server-devin-meter.mjs',

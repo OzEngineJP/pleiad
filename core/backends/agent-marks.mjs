@@ -212,7 +212,9 @@ export const CAPABILITY_STATES = {
     shell: 'host',
     plyShell: true,
     nativeShellOff: true,              // 会話限定 disabled_tools で native shell tools を外す
-    nativeMcpOff: impossible('会話の開始時にエージェント側の MCP を個別に止める手段が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 止める名前があるターンだけ、設定の置き場（DEVIN_CONFIG_HOME）を写しに替え、写しの mcp_config.json で disabled にする（ADR 0330）。
+    // 作業場所の .devin/mcp_config.json・.mcp.json の定義は写しの外で、同じ名前なら作業場所が勝つので止められない（'user'）
+    nativeMcpOff: 'user',
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
@@ -249,7 +251,9 @@ export const CAPABILITY_STATES = {
     shell: 'host',
     plyShell: true,
     nativeShellOff: true,       // agent-profile の disallowedTools で bash を外す（grok-hooks.mjs）
-    nativeMcpOff: impossible('会話ごとにネイティブ設定の MCP を止める手段が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 止める名前があるターンだけ、GROK_HOME を写しに替え、写しの managed_config.toml の denied_mcp_servers で止める（ADR 0330）。
+    // denied_mcp_servers は利用者の設定・取り込み・作業場所の .grok/config.toml・.mcp.json のどれにも効く
+    nativeMcpOff: true,
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ブラウザー・操作一覧・コンピューター・シェル・委譲を HTTP MCP で、接続情報と秘密の変数を起動環境で渡す。

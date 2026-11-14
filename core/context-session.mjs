@@ -124,8 +124,12 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     for (const e of scan.entries) {
       if (e.kind !== 'mcp') continue;
       for (const source of new Set(e.origins.map(o => o.source))) for (const [id, sources] of owners) {
-        if (!sources.includes(source) || agents[id].some(s => s.name === e.name)) continue;
-        agents[id].push({ name: e.name, transport: e.transport, endpoint: e.endpoint ?? null, command: e.command ?? null, path: e.path, scope: e.scope, disabled: e.status === 'disabled' });
+        if (!sources.includes(source)) continue;
+        // 同じ名前は最初の定義を出し、scopes に有効な定義のある範囲を集める（作業場所にもある名前を止められないエージェントの鍵。ADR 0330）
+        const seen = agents[id].find(s => s.name === e.name);
+        if (seen) { if (e.status !== 'disabled' && !seen.scopes.includes(e.scope)) seen.scopes.push(e.scope); continue; }
+        agents[id].push({ name: e.name, transport: e.transport, endpoint: e.endpoint ?? null, command: e.command ?? null, path: e.path, scope: e.scope,
+          scopes: e.status === 'disabled' ? [] : [e.scope], disabled: e.status === 'disabled' });
       }
     }
     return { cwd: scan.cwd, agents, diagnostics: scan.diagnostics };

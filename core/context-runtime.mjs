@@ -172,20 +172,27 @@ export function agentMcpRules(plan, agent) {
   const spread = name => (rules.spread?.[name] ?? []).includes(agent);
   // そのエージェント自身の設定にあり、有効な定義。自身の設定で無効（status: 'disabled'）の定義は、そのエージェントが持っていないものとして扱う（画面と同じ規則）
   const isOwn = item => item.status !== 'disabled' && item.origins.some(o => own.includes(o.source));
-  const canStop = CAPABILITY_STATES[agent]?.nativeMcpOff === true;
+  // 能力の印 nativeMcpOff: true はどの定義も止められ、'user' はユーザーの設定の定義だけ止められる（ADR 0330）
+  const mode = CAPABILITY_STATES[agent]?.nativeMcpOff;
+  const canStop = mode === true || mode === 'user';
+  /** 自身のこの定義を起動のときに止められるか */
+  const stoppable = item => mode === true || (mode === 'user' && item.scope === 'user');
   return {
-    // ownNames: このエージェント自身の設定にある名前（走査で先に集める）。自分の MCP を名前ごとに止められないエージェントは、
-    // 同じ名前の定義を Pleiad から渡さず、自分の側を使う（二重につながない。canStop は能力の印 nativeMcpOff から）
-    relay(item, ownNames = new Set()) {
+    // fixedNames: このエージェント自身の設定にあり、止められない定義を含む名前（走査で先に集める。fixedNamesOf）。
+    // その名前は同じ名前の定義を Pleiad から渡さず、自分の側を使う（二重につながない）
+    relay(item, fixedNames = new Set()) {
       const from = item.origins[0].source;
       if (off(item.name)) return 'agentOff';
-      if (!canStop && ownNames.has(item.name) && !isOwn(item)) return 'agentOwn';
+      if (fixedNames.has(item.name) && !isOwn(item)) return 'agentOwn';
       if (from === 'ply') return null;
       if (isOwn(item)) return 'agentOwn';
       return spread(item.name) ? null : 'agentNotSpread';
     },
     canStop,
     isOwn,
+    stoppable,
+    /** 走査の行 entries のうち、自身の設定にあって止められない定義を含む名前（自身の設定で無効の定義・shadowed の行も数える） */
+    fixedNamesOf: entries => new Set(entries.filter(e => e.kind === 'mcp' && isOwn(e) && !stoppable(e)).map(e => e.name)),
     off,
     offNames: () => Object.keys(rules.off ?? {}).filter(off),
   };
@@ -206,8 +213,8 @@ export async function resolveRuntime(policy, options = {}) {
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
   const suppress = new Set(), nativeNames = new Set();
   if (scan.skipped?.length) report.skipped = scan.skipped.map(({ path: file, message }) => ({ path: file, message }));
-  // このエージェント自身の設定にある名前（shadowed・無効の行も含む）。先に集める
-  const ownNames = new Set(mcpRules ? scan.entries.filter(e => e.kind === 'mcp' && mcpRules.isOwn(e)).map(e => e.name) : []);
+  // このエージェント自身の設定にあって止められない名前（shadowed の行も含む）。先に集める
+  const fixedNames = mcpRules ? mcpRules.fixedNamesOf(scan.entries) : new Set();
   for (const item of scan.entries) {
     // scope と root は会話の右パネルが出どころ（ユーザー／この場所と親フォルダー／追加した場所）で分けるのに使う
     const row = { id: item.id, kind: item.kind, name: item.name, path: item.path, scope: item.scope, appliesTo: item.appliesTo, status: item.status, hash: item.hash, origins: item.origins,
@@ -225,7 +232,7 @@ export async function resolveRuntime(policy, options = {}) {
     if (item.status !== 'candidate') continue;
     // 名前ごとのモデル: このエージェントへ中継しない定義。接続せず、ply_context にもツールを出さない
     if (mcpRules && item.kind === 'mcp') {
-      const why = mcpRules.relay(item, ownNames);
+      const why = mcpRules.relay(item, fixedNames);
       if (why) {
         if (mcpRules.canStop && mcpRules.off(item.name) && mcpRules.isOwn(item)) suppress.add(item.name);
         row.status = why === 'agentOff' ? 'removed' : 'excluded';
@@ -272,7 +279,8 @@ export async function resolveRuntime(policy, options = {}) {
     // 無い名前を止めても害は無い（Claude は名前の一致、Codex は設定に在る名前だけ、OpenCode は定義に在る名前だけに効く）
     for (const key of mcpRules.offNames()) suppress.add(key);
   }
-  const mcp = mcpRules ? { named: true, suppress: [...suppress].sort() } : { named: false, suppress: [] };
+  // 止められない定義を含む名前は止めない（作業場所の定義が勝つので、ユーザーの定義だけ止めても使われ続ける。画面は鍵）
+  const mcp = mcpRules ? { named: true, suppress: [...suppress].filter(n => !fixedNames.has(n)).sort() } : { named: false, suppress: [] };
   const prompt = instructions.map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: i.content })).join('\n\n');
   if (Buffer.byteLength(prompt) > 128 * 1024) throw new Error(t('context.runtime.instructionsTooLarge'));
   const pin = contextPin(scan.entries);

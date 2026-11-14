@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_SCAN, legacyPlan, mcpAgentsFromLegacy, resolveConfig, defaultKind } from '../../core/context-settings.mjs';
 import { resolveRuntime } from '../../core/context-runtime.mjs';
-import { buildMcpMatrix, canStopName, mcpLegacyInfo } from '../../core/context-mcp-matrix.mjs';
+import { buildMcpMatrix, canStopName, mcpLegacyInfo, nativeStopBlock } from '../../core/context-mcp-matrix.mjs';
 import { readClaudePlugins } from '../../core/context-claude-extras.mjs';
 import { CAPABILITY_STATES } from '../../core/backends/agent-marks.mjs';
 import { mirrorGlobalConfig, MANAGED_KEEP, MANAGED_IDLE_MS } from '../../core/backends/opencode-context.mjs';
@@ -27,8 +27,10 @@ export default async function (t) {
     const plyServers = servers => ({ file: path.join(tmp, 'ply-mcp.json'), servers: servers.map(n => ({ name: n, definition: { transport: 'stdio', command: `${n}-cmd`, args: [] } })) });
 
     // --- A: 自分の MCP を止められないエージェントは、自分の側が勝つ
-    t.ok('止められない印（nativeMcpOff なし）: Antigravity・Devin・Grok',
-      ['antigravity', 'devin', 'grok'].every(a => CAPABILITY_STATES[a]?.nativeMcpOff !== true) && ['claude', 'codex', 'opencode'].every(a => CAPABILITY_STATES[a]?.nativeMcpOff === true));
+    // ADR 0330: Grok は全部の定義、Devin はユーザーの設定の定義だけ止められる（'user'）。Antigravity は止める手が無い
+    t.ok('止める手の印: Antigravity は無し、Devin はユーザーの設定だけ（user）、Claude・Codex・OpenCode・Grok は全部（true）',
+      ![true, 'user'].includes(CAPABILITY_STATES.antigravity?.nativeMcpOff) && CAPABILITY_STATES.devin?.nativeMcpOff === 'user'
+        && ['claude', 'codex', 'opencode', 'grok'].every(a => CAPABILITY_STATES[a]?.nativeMcpOff === true));
     await write(path.join(home, '.gemini/config/mcp_config.json'), JSON.stringify({ mcpServers: { own: { command: 'own-cmd' }, reg: { command: 'ag-reg' } } }));
     const ag = await resolveRuntime(policy({ off: {}, spread: {} }), { home, plyServers: plyServers(['reg', 'extra']), agent: 'antigravity' });
     t.ok('Antigravity: 自分の設定の名前は渡さず、同じ名前の Pleiad の登録も渡さない（自分の側が勝つ）。Pleiad だけの登録は渡す', names(ag).join() === 'extra', names(ag));
@@ -87,7 +89,10 @@ export default async function (t) {
     t.ok('無効の定義と他のエージェントの有効な定義: 広げる行（off・押せる）。ロゴは有効な側だけ', m3.rows.find(r => r.key === 'dis').cells.claude.state === 'off' && m3.rows.find(r => r.key === 'dis').cells.claude.mode === 'toggle' && m3.rows.find(r => r.key === 'dis').origins.join() === 'codex');
     t.ok('無効の MCP は他のエージェントへ広げる元にならない（押せない）', row('dis').cells.codex.mode === 'none');
     t.ok('Codex の止められない名前（点を含む）は鍵', row('a.b').cells.codex.mode === 'locked' && row('ok').cells.codex.mode === 'toggle');
-    t.ok('canStopName', canStopName('codex', 'ok') && !canStopName('codex', 'a.b') && canStopName('claude', 'a.b') && !canStopName('devin', 'x'));
+    t.ok('canStopName', canStopName('codex', 'ok') && !canStopName('codex', 'a.b') && canStopName('claude', 'a.b') && !canStopName('antigravity', 'x')
+      && canStopName('devin', 'x', ['user']) && !canStopName('devin', 'x', ['user', 'directory']) && !canStopName('devin', 'x', ['directory']) && canStopName('grok', 'x', ['directory']));
+    t.ok('nativeStopBlock: 止められない理由（own / workspace）',
+      nativeStopBlock('antigravity', 'x') === 'own' && nativeStopBlock('codex', 'a.b') === 'own' && nativeStopBlock('devin', 'x', ['directory']) === 'workspace' && nativeStopBlock('devin', 'x', ['user']) === null);
     const lm = mcpLegacyInfo({ kind: { owner: 'ply', user: { sources: ['claude'] }, directory: { sources: ['claude'] } }, registered: [], native: { claude: [{ name: 'c' }], codex: [{ name: 'x' }] }, plugins: [{ key: 'plugin:p:s' }], connectors: ['Gmail'] });
     t.ok('mcpLegacyInfo: 探す対象・コネクター・プラグインを写す', lm.spreadFrom.join() === 'claude' && lm.extras.claude.join() === 'plugin:p:s,claude.ai Gmail', lm);
 
@@ -127,15 +132,18 @@ export default async function (t) {
       },
       mcp: { list: async () => ({ servers: [{ name: 'reg', transport: 'stdio' }] }) },
     });
-    const nat = { claude: [{ name: 'cl', transport: 'stdio' }], codex: [{ name: 'a.b', transport: 'stdio' }], devin: [{ name: 'dv', transport: 'stdio' }] };
+    const nat = { claude: [{ name: 'cl', transport: 'stdio' }], codex: [{ name: 'a.b', transport: 'stdio' }], antigravity: [{ name: 'ag', transport: 'stdio' }],
+      devin: [{ name: 'dv', transport: 'stdio', scope: 'directory', scopes: ['directory'] }, { name: 'du', transport: 'stdio', scope: 'user', scopes: ['user'] }] };
     const call = (ctx, args) => op('context.setMcpAgent').handler(ctx, args).then(() => null, e => e);
     const ready = { plugins: [], connectors: [], reading: false, readFailed: false };
     const c1 = fake({ kind: { owner: 'native' }, agentsMap: nat, extras: ready });
     t.ok('L: 一覧に無い名前は保存しない', (await call(c1, { name: 'nope', agent: 'claude', on: true }))?.code === 'INVALID' && !saved.length);
     t.ok('L: 鍵（止められないエージェント・止められない名前）は保存しない',
-      (await call(c1, { name: 'dv', agent: 'devin', on: false }))?.code === 'INVALID' && (await call(c1, { name: 'a.b', agent: 'codex', on: false }))?.code === 'INVALID' && !saved.length);
+      (await call(c1, { name: 'ag', agent: 'antigravity', on: false }))?.code === 'INVALID' && (await call(c1, { name: 'dv', agent: 'devin', on: false }))?.code === 'INVALID'
+        && (await call(c1, { name: 'a.b', agent: 'codex', on: false }))?.code === 'INVALID' && !saved.length);
     t.ok('L: 押せる切り替えは保存し、古い disabled は消す', (await call(fake({ kind: { owner: 'native', disabled: ['x'] }, agentsMap: nat, extras: ready }), { name: 'cl', agent: 'claude', on: false })) === null && saved.length === 1 && !('disabled' in saved[0].value) && saved[0].value.agents.off.cl.join() === 'claude');
     const unread = fake({ kind: { owner: 'native', agents: { off: {}, spread: {} } }, agentsMap: nat, extras: { plugins: [], connectors: null, reading: true, readFailed: true } });
+    t.ok('L: Devin のユーザーの設定だけの名前は押せる（保存する）', (await call(c1, { name: 'du', agent: 'devin', on: false })) === null && saved.length === 2 && saved[1].value.agents.off.du.join() === 'devin');
     const n0 = saved.length;
     t.ok('L: コネクターが未読のまま触っても ok を返さず、保存しない（読めなかったと伝える）', (await call(unread, { name: 'claude.ai Gmail', agent: 'claude', on: true }))?.code === 'INVALID' && saved.length === n0);
     t.ok('F・K: コネクターを触るときは、読み終えるまで待つ指定（wait）で読む', unread.seen === undefined || fake.seen.wait === true, fake.seen);

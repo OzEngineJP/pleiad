@@ -25,6 +25,8 @@ export default async function (t) {
     await write(path.join(cwd, '.codex/config.toml'), '[mcp_servers.cx]\ncommand = "cx"\n[mcp_servers."a.b"]\ncommand = "dot"\n');
     await write(path.join(cwd, 'opencode.json'), JSON.stringify({ mcp: { oc: { type: 'local', command: ['oc'] } } }));
     await write(path.join(cwd, '.grok/config.toml'), '[mcp_servers.gk]\ncommand = "gk"\n');
+    // ucl（Claude のユーザーの設定だけ）／cl はユーザーの設定にもある（作業場所にもある名前。ユーザーの設定だけ止められるエージェントでは鍵。ADR 0330）
+    await write(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { ucl: { command: 'ucl' }, cl: { command: 'cl-user' } } }));
     const def = c => ({ transport: 'stdio', command: c, args: [] });
     const plyServers = { file: path.join(tmp, 'ply-mcp.json'), servers: [
       { name: 'reg', definition: def('reg') }, { name: 'both', definition: def('both-ply') }, { name: 'disreg', definition: def('disreg-ply') }] };
@@ -41,18 +43,22 @@ export default async function (t) {
     for (const e of scan.entries) {
       if (e.kind !== 'mcp') continue;
       for (const source of new Set(e.origins.map(o => o.source))) for (const id of ids) {
-        if (!(AGENTS[id].contextSources ?? []).filter(s => s !== 'common').includes(source) || native[id].some(s => s.name === e.name)) continue;
-        native[id].push({ name: e.name, transport: e.transport, disabled: e.status === 'disabled' });
+        if (!(AGENTS[id].contextSources ?? []).filter(s => s !== 'common').includes(source)) continue;
+        const seen = native[id].find(s => s.name === e.name);
+        if (seen) { if (e.status !== 'disabled' && !seen.scopes.includes(e.scope)) seen.scopes.push(e.scope); continue; }
+        native[id].push({ name: e.name, transport: e.transport, scope: e.scope, scopes: e.status === 'disabled' ? [] : [e.scope], disabled: e.status === 'disabled' });
       }
     }
     const registered = plyServers.servers.map(s => ({ name: s.name, transport: 'stdio' }));
     const names = [...new Set([...registered.map(r => r.name), ...Object.values(native).flat().map(s => s.name)])].sort();
     t.ok('前提: 名前の種類がそろっている（登録・各エージェントの設定・無効・止められない名前）',
-      ['reg', 'cl', 'cx', 'a.b', 'both', 'dis', 'disreg', 'oc', 'gk'].every(n => names.includes(n)), JSON.stringify({ names, native: Object.fromEntries(ids.map(i => [i, native[i].map(s => s.name)])) }));
+      ['reg', 'cl', 'ucl', 'cx', 'a.b', 'both', 'dis', 'disreg', 'oc', 'gk'].every(n => names.includes(n)), JSON.stringify({ names, native: Object.fromEntries(ids.map(i => [i, native[i].map(s => s.name)])) }));
 
     const ownEnabled = (id, n) => native[id].some(s => s.name === n && !s.disabled);
+    // 止められるか（作業場所にも定義がある名前は、ユーザーの設定だけ止められるエージェントでは止まらない。ADR 0330）
+    const stoppable = (id, n) => canStopName(id, n, native[id].find(s => s.name === n)?.scopes);
     // 止める名前に入っていても、止められない名前（Codex の点つき）は実際には止まらない（core/backends/context-options.mjs）
-    const usableAt = (rt, id, n) => rt.servers.some(s => s.name === n) || (ownEnabled(id, n) && !((rt.mcp.suppress ?? []).includes(n) && canStopName(id, n)));
+    const usableAt = (rt, id, n) => rt.servers.some(s => s.name === n) || (ownEnabled(id, n) && !((rt.mcp.suppress ?? []).includes(n) && stoppable(id, n)));
     const runtimeOf = async (plan, id, removed) => resolveRuntime(policyOf(plan, removed), { home, plyServers, agent: id });
 
     // --- 名前ごとのモデル: 画面の表示 = 実行時に使えるか
@@ -76,7 +82,7 @@ export default async function (t) {
           const real = usableAt(rt, id, n);
           if (shown !== real) bad.push({ label, id, n, cell, real, servers: rt.servers.map(s => s.name), suppress: rt.mcp.suppress });
           // 鍵のセルは止められないエージェントの自分の定義だけ。押せるセルは止められる
-          if (cell.mode === 'locked' && !(ownEnabled(id, n) && !canStopName(id, n))) bad.push({ label, id, n, cell, why: 'locked' });
+          if (cell.mode === 'locked' && !(ownEnabled(id, n) && !stoppable(id, n))) bad.push({ label, id, n, cell, why: 'locked' });
           if (cell.mode === 'none' && real) bad.push({ label, id, n, cell, why: 'none-but-usable' });
         }
       }
@@ -89,7 +95,7 @@ export default async function (t) {
     for (const id of ids) {
       const rt = await runtimeOf(plan0, id, names);
       for (const n of names) {
-        const expected = ownEnabled(id, n) && !canStopName(id, n);
+        const expected = ownEnabled(id, n) && !stoppable(id, n);
         if (usableAt(rt, id, n) !== expected) removedBad.push({ id, n, servers: rt.servers.map(s => s.name), suppress: rt.mcp.suppress });
       }
     }
@@ -109,7 +115,7 @@ export default async function (t) {
         for (const n of names) {
           // 変換前: 「そろえる」は Pleiad が全部を中継し（有効な定義だけ）、止められないエージェントは自分のも使う。「任せる」は自分の定義だけ（登録は渡さない）
           const before = owner === 'ply'
-            ? rtOld.servers.some(s => s.name === n) || (ownEnabled(id, n) && !canStopName(id, n))
+            ? rtOld.servers.some(s => s.name === n) || (ownEnabled(id, n) && !stoppable(id, n))
             : ownEnabled(id, n);
           const after = usableAt(rtNew, id, n);
           const screen = matrixOld.rows.find(r => r.key === n)?.cells[id]?.state === 'on';

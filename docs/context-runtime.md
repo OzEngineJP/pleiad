@@ -127,7 +127,12 @@ Claude はネイティブの承認経路を使う。Codex の共通 MCP は Plei
 | 指示の注入 | claude_code preset append | thread developerInstructions | `prompt_async` の `system` |
 | MCP（名前ごとの一覧。[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)） | 止める名前を `deniedMcpServers` に（`strictMcpConfig` にしない） | `-c mcp_servers.<名前>.enabled=false`（名前が `[A-Za-z0-9_-]` だけのとき。それ以外は止められない） | 止める名前の定義を `enabled:false` で渡す |
 
-Devin・Grok・Antigravity は自身の MCP を名前ごとに止める口が無く（能力の印 `nativeMcpOff`）、自身の設定の MCP は自身がつなぐ。同じ名前を Pleiad が中継するとき自身側が勝つので、中継しない。
+Grok と Devin は、止める名前があるターンだけ、設定の置き場の写しで起動して自身の MCP を名前ごとに止める（[ADR 0330](adr/0330-grok-devin-native-mcp-off.md)、`core/backends/mcp-off-home.mjs`）。写しは本物の置き場のディレクトリ・ファイルへのリンクと、Pleiad が書く 1 ファイルでできていて、利用者の設定ファイルは書き換えない。止める名前が無いターンは今までと同じ起動。
+- Grok（`nativeMcpOff: true`）: `GROK_HOME` を `<data>/grok-mcp-off/<組>/` に替え、`managed_config.toml`（本物の中身＋`[[denied_mcp_servers]] server_name = "<名前>"`）を書く。ユーザーの設定・Claude からの取り込み・作業場所の `.grok/config.toml`・`.mcp.json` のどの定義も止まる。`sessions` は本物に作ってからリンクし、SQLite の DB と `managed_config.lock` は写さない。
+- Devin（`nativeMcpOff: 'user'`）: `DEVIN_CONFIG_HOME` を `<data>/devin/mcp-off/<組>/` に替え、`devin/mcp_config.json`（止める名前に `disabled: true`）を書く。ユーザーの設定の定義と Claude の `~/.claude.json` からの取り込みは止まる。作業場所の `.devin/mcp_config.json`・`.mcp.json` の定義は止まらない（作業場所が勝つ）ので、作業場所にも定義がある名前は一覧で鍵（`reason: 'workspace'`）にし、止める名前にも入れない。
+- 写しは「本物の置き場 × 止める名前の組」ごとに 1 つ。12 個を超えて 1 日以上使っていないものを古い順に消す。写しを作れない（シンボリックリンクの権限が無い）ときは `MCP_OFF_LINK_FAILED`、本物の設定が読めない・別の形のときは `MCP_OFF_UNSUPPORTED` でターンを始めない。
+
+Antigravity は自身の MCP を名前ごとに止める口が無い（能力の印 `nativeMcpOff`）。止められない定義（Antigravity の定義・Devin の作業場所の定義）は自身がつなぐ。同じ名前を Pleiad が中継するとき自身側が勝つので、中継しない。
 
 OpenCode は指示を会話ごとに止める口が無く、Skills の一覧もシステムプロンプトに入るため、Pleiad が担当するターンだけ専用のサーバーを起こし、ターンの終わりに止める（共有のサーバーや他会話には触れない。`core/backends/opencode-context.mjs`）。作業場所の設定を止めるので、エージェントに任せる種類（作業場所の指示ファイル・設定の instructions・`.opencode` の Skills・作業場所の mcp）は絶対パスと `OPENCODE_CONFIG_CONTENT` で渡し直す。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、そのターンでは読まれない。ply_context は中継の口（`/mcp/opencode/ply_context`）で渡す。
 
@@ -145,7 +150,8 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 
 `context-scans.json` の外部 MCP に `agents: { off: { 名前: [エージェント] }, spread: { 名前: [エージェント] } }` があると、担当は常に Pleiad（中継は常に開く）として解決し、`agentMcpRules`（`core/context-runtime.mjs`）が名前ごとに決める。無ければ従来の 2 択のまま動き、最初の操作で実効の状態を `agents` に写す（`mcpAgentsFromLegacy`）。
 - Pleiad の登録は、`off[名前]` にそのエージェントが無ければ渡す。エージェント自身の定義は渡さない。他のエージェントの定義は `spread[名前]` にそのエージェントがあるときだけ渡す。
-- エージェント自身の MCP を名前ごとに止めるのは起動のとき: Claude は `settings.deniedMcpServers`（`claude.ai <名前>`・`plugin:<プラグイン>:<名前>` も同じ）、Codex は `-c mcp_servers.<名前>.enabled=false`、OpenCode は定義を `enabled:false` で渡す。Devin・Grok・Antigravity は止める口が無い（`nativeMcpOff: impossible`）。エージェントの設定ファイルは書き換えない。
+- エージェント自身の MCP を名前ごとに止めるのは起動のとき: Claude は `settings.deniedMcpServers`（`claude.ai <名前>`・`plugin:<プラグイン>:<名前>` も同じ）、Codex は `-c mcp_servers.<名前>.enabled=false`、OpenCode は定義を `enabled:false` で渡す。Grok・Devin は設定の置き場の写しで止める（上の「バックエンドの抑止」、[ADR 0330](adr/0330-grok-devin-native-mcp-off.md)。Devin は作業場所の定義を止められない）。Antigravity は止める口が無い（`nativeMcpOff: impossible`）。エージェントの設定ファイルは書き換えない。
+- 一覧の鍵のセルには理由（`reason`）が付く: `'own'`（止める手が無い）・`'workspace'`（作業場所の定義を止められないエージェントで、作業場所にも定義がある）・`'relay'`（中継を受け取れない組み合わせ）。
 - 一覧は `context.mcpMatrix`（`core/context-mcp-matrix.mjs`）。プラグインの MCP は `core/context-claude-extras.mjs` がディスクから読み、コネクターは設定を開いたときに裏で Claude を 1 回起こして読む（資格情報の要らない Pleiad の登録は `deniedMcpServers` で止めて話しかけない）。最後に読めた一覧は `<data>/claude-connectors.json` に覚え、次はすぐ出す。
 - Grok は指示・Skills を Pleiad が担当すると `ply_context` を受け取れない（`PLY_CONTEXT_CONFLICTS`）。そのとき中継に頼る Grok の列は押せない。
 
