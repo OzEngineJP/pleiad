@@ -1,36 +1,92 @@
-# 0330 Grok・Devin 自身の MCP を名前で止める（設定の置き場の写し）
+# 0330 Devin 自身の MCP を名前で止める（設定の置き場の写し）。Grok は鍵のまま
 
-- 状態: 提案（2026-11-15）
-- 関係: [ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP を名前 × エージェントの一覧にする）の「Devin・Grok は鍵」を変える。Antigravity は変えない。
+- 状態: 提案（2026-11-15。同日のレビューを受けて書き直した）
+- 関係: [ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP を名前 × エージェントの一覧にする）の「Devin・Grok は鍵」のうち、Devin のユーザーの設定の定義だけを変える。Grok・Antigravity は変えない。
 
 ## 状況
 
-ADR 0327 の一覧で、Grok・Devin 自身の設定にある MCP は鍵だった（能力の印 `nativeMcpOff: impossible`）。どちらの CLI にも、会話ごとに MCP を名前で止める引数が無い。
-- Grok: 起動の引数・ACP の `session/new` に止める口が無い。一方、GROK_HOME の `config.toml` の最上位の `disabled_mcp_servers`（名前の配列）は、利用者の `config.toml`・Claude の設定からの取り込み・作業場所の `.grok/config.toml`・`.mcp.json` のどの定義にも効く（実機で確認、Grok 1.0.62、2026-11-15）。
-  - `managed_config.toml`・`requirements.toml` の `[[denied_mcp_servers]]` も起動のときは効くが、使わない。ログインした会話では、Grok が起動の直後に管理の設定をサーバーと同期し、写しに書いたファイルを消す（同じ実機で確認）。会話の途中で設定を読み直すと止めが外れうる。
-  - 作業場所の定義（`.grok/config.toml`・`.mcp.json`）は、Grok が信頼したフォルダー（`~/.grok/trusted_folders.toml`）でしか起動しない。これは止める名前の有無に関係しない、今までの動き。
+ADR 0327 の一覧で、Grok・Devin 自身の設定にある MCP は鍵だった（能力の印 `nativeMcpOff: impossible`）。どちらの CLI にも、会話ごとに MCP を名前で止める引数が無い。止め方は「起動のときに Pleiad が止める」だけで、利用者の設定ファイルは書き換えない（ADR 0327）。
+
 - Devin: 起動の `--config` は `config.json` の置き換えで、MCP は `mcp_config.json` から読む。`DEVIN_CONFIG_HOME/devin/mcp_config.json` の `disabled: true` は、ユーザーの設定の定義と、Claude の `~/.claude.json` からの取り込み（同じ名前なら mcp_config.json が勝つ）を止める。作業場所の `.devin/mcp_config.json`・`.mcp.json` の定義は止まらない（作業場所の定義が勝つ。実機で確認、Devin 3000.11.92、2026-11-15）。
-- 止め方は「起動のときに Pleiad が止める」だけ（ADR 0327）。利用者の設定ファイルは書き換えない。
+- Grok: 起動の引数・ACP の `session/new` に止める口が無い。設定の置き場（GROK_HOME）の写しで止める形を作ったが、レビューで認証情報が失われることがわかった（下の「Grok を鍵に戻した理由」）。
+
+最初の版（commit `940658c0`・`654edcaa`）は Grok・Devin の両方を写しで止めた。同じ日のレビュー（A〜M）で、次のことがわかった。
+
+- 写しの中でエージェントが rename で書いたファイル（Grok の `auth.json` の token の更新など）を、次のターンの前に消していた（A）
+- 何も新しく止めていない人も写しで起動していた（Pleiad にだけある名前の off・名前が重なるだけで、止める名前に入った）（B）
+- シンボリックリンクを作れない PC では、ターンが英語のエラーで止まった（C）
+- 一覧の「作業場所の定義」の鍵を、設定画面の場所で決めていた（会話の場所と違う）（E）
 
 ## 決定
 
-- **止める名前があるターンだけ、設定の置き場の写しで起動する**（`core/backends/mcp-off-home.mjs`）。Grok は GROK_HOME、Devin は DEVIN_CONFIG_HOME を写しに替える。止める名前が無いターンは今までと同じ起動（環境変数も引数も変えない）。
-  - 写しは本物の置き場のディレクトリをジャンクション（Windows）／シンボリックリンク、ファイルをシンボリックリンクでつなぐ。認証情報・会話の記録・ログの書き込みはリンクを通って本物に届き、写しに分かれない。
-  - 止める名前を書いたファイルだけを Pleiad が写しに書く。Grok は `config.toml`（本物の中身の先頭に `disabled_mcp_servers`。本物にもあれば名前を合わせる。書いた結果を読み直し、「本物の中身＋止める名前」にならなければ止めずにエラー）、Devin は `mcp_config.json`（止める名前に `disabled: true`、本物に無い名前は `{ disabled: true }` を足す）。
-  - SQLite の DB（`*.db` と `-wal`・`-shm`）はリンクしない（本物と写しから同時に開くと壊れうる）。Grok の `managed_config.lock` も写さない。写しにだけある普通の `managed_config.toml`（Grok の同期が写しに作ったもの）は、本物に無ければ次のターンの前に消す。
-  - Grok の `sessions` は本物に作ってからリンクする（止める名前の有無・再開・分岐で記録が分かれない）。
-  - Devin の `config.json` に `mcpServers` が残っている（Devin が `mcp_config.json` へ移す前の形）ときは、写しの `config.json` から外し、写しの `mcp_config.json` に移す（リンクのままだと、Devin の移し替えが本物の `config.json` を書き換える）。
-  - 写しは「本物の置き場 × 止める名前の組」ごとに 1 つで、同じ組の会話は共有する。使うたびに印（mtime）を付け、12 個を超えて 1 日以上使っていないものだけを古い順に消す（OpenCode の写しと同じ規則）。
-- **能力の印 `nativeMcpOff` に `'user'` を足す**。`true` はユーザーの設定・作業場所の設定のどちらの定義も止められる、`'user'` はユーザーの設定の定義だけ止められる。Grok は `true`、Devin は `'user'`。Antigravity は `impossible` のまま。
-- **一覧の鍵に理由を付ける**（`reason`）。`'own'` は止める手が無い（印が無い・Codex の点つきの名前）、`'workspace'` は `'user'` のエージェントで作業場所の設定にも定義がある名前、`'relay'` は中継を受け取れない担当の組み合わせ（`mode: 'blocked'`）。`'admin'`（管理者の設定）は今は使わない。
-  - Devin の名前の範囲は、走査の行の `scope` から決める（`core/context-session.mjs` の `agentMcp` が有効な定義の範囲を `scopes` に集める）。
-  - 実行時も同じ規則: `'user'` のエージェントで作業場所の定義を含む名前は、止める名前に入れず（入れても使われ続ける）、同じ名前を Pleiad から中継しない（自身側が勝つ。ADR 0327 の鍵と同じ）。
-- **反映は次のターンから**。どちらもターンごとに CLI を起こすので、次のターンの起動で写しを使う／使わなくなる。保持役（無停止の更新）に載るターンも、起動の環境変数に写しの場所を渡す。
+### Devin: 利用者が Devin 自身の名前を止めたときだけ、設定の置き場の写しで起動する
+
+- **止める名前**（`contextRuntime.mcp.suppress`）に入れるのは、Devin のユーザーの設定にある名前（Claude の `~/.claude.json` のユーザーの定義からの取り込みも含む）のうち、利用者が Devin の列で off にした名前と、この会話で外した名前だけ（`core/context-runtime.mjs` の `agentMcpRules`・`resolveRuntime`）。
+  - Pleiad にだけある名前の off・この会話で外した名前は、止める名前に入れない（Pleiad の側を渡さないだけ。今までと同じ起動）。
+  - 名前が Pleiad の登録と Devin の設定で重なるだけなら、今までと同じ（自分の側を使い、Pleiad の側は渡さない。止める名前は空。写しで起動しない）。
+  - 重なる名前を Devin の列で off にしたら、自分の側を止め、Pleiad の側も渡さない。
+  - 作業場所の定義もある名前は止めない（作業場所の定義が勝つので、ユーザーの定義だけ止めても使われ続ける）。右パネルの行に鍵の理由（`nativeLock: 'workspace'`）を付ける。
+  - Claude・Codex・OpenCode（どの定義も止められる）の規則は変えない。
+- **止める名前があるターンだけ写しで起動する**（`core/backends/mcp-off-home.mjs`、`core/backends/devin-config.mjs` の `prepareDevinLaunch`）。DEVIN_CONFIG_HOME を `<データ置き場>/devin/mcp-off/<組>/` に替える。止める名前が無いターンは今までと同じ起動（環境変数も引数も変えない）。
+  - 写しは本物の置き場（`%APPDATA%\devin` など）のディレクトリをジャンクション（Windows）／シンボリックリンク、ファイルをシンボリックリンクでつなぐ。ファイルの中を書き換える書き込み・ディレクトリの中（`cli/` の会話の記録・ログ・`sessions.db`）への書き込みは、リンクを通って本物に届く。
+  - Pleiad が写しに書くのは `mcp_config.json`（止める名前に `disabled: true`。本物に無い名前（Claude からの取り込み）は `{ "disabled": true }` を足す）だけ。Devin の `config.json` に `mcpServers` が残っている（Devin が `mcp_config.json` へ移す前の形）ときは、写しの `config.json` から外して写しの `mcp_config.json` に移す（リンクのままだと、Devin の移し替えが本物の `config.json` を書き換える）。
+  - SQLite の DB（`*.db` と `-wal`・`-shm`・`-journal`）はリンクしない（本物と写しから同時に開くと壊れうる）。
+  - 写しは「本物の置き場 × 止める名前の組」ごとに 1 つで、同じ組の会話は共有する。使うたびに印（mtime）を付け、12 個を超えて 24 時間以上使っていないものだけを古い順に消す（OpenCode の写しと同じ規則）。
+- **写しの中で置き換わったファイルは本物へ運ぶ（settle）**。Devin は設定を一時ファイルからの rename で書く（バイナリの文字列 `Failed to create temp file for atomic write…rename`）。写しの中でそうすると、本物へのリンクが普通のファイルに置き換わり、書いた中身は写しにだけ残る。これを消さず、次のように扱う（`settleMcpOffHome`）。
+  - 本物と同じ名前のファイル: 中身が同じならリンクに戻す。写しのほうが新しい（mtime）なら、その中身で本物を置き換えて（一時ファイルからの rename）、リンクに戻す。本物のほうが新しい（写しの外で本物が更新された）なら、本物を正とし、写しの中身は `<データ置き場>/devin/mcp-off-kept/` に移して残し、リンクに戻す。
+  - 本物に無い名前のファイル（写しの中で新しく作られた）: 本物へ写して（本物に同じ名前ができていたら写さない）、リンクに替える。一時ファイルらしい名前（`.tmp` など）・SQLite の DB・`*.lock` は運ばない。
+  - Pleiad が書く `mcp_config.json` を Devin が書き換えた（`devin mcp add` など）: 本物へは運ばない（止める名前の `disabled` と、本物の JSONC のコメントの消えた形を本物へ書かないため）。中身は kept に残し、写しは書き直す。
+  - 書きかけを運ばないよう、最後の更新から 5 秒たっていないファイルは次の機会に回す。運ぶ間に Devin がまた書いたら、リンクに戻さない。
+  - 運ぶ機会: 写しをそろえるとき（その組のターンの起動）・Devin のターンを起こすとき（止める名前の無いターンも。同じ本物の置き場の写しすべて）・古い写しを消す前。
+  - Pleiad が利用者の設定の置き場に書くのはここだけで、書く中身は Devin が写しの中で書いたもの（写しを使わないターンなら Devin が本物に書く中身）。
+  - kept は 50 個まで（古いものから消す）。写しの隣の `<組>/devin.pleiad.json` に、本物の置き場・kept・Pleiad が書いたファイルの指紋を記録し、運ぶときに読む。
+- **シンボリックリンクを作れない PC では、最初から鍵**（`canLinkMcpOffHome`）。Windows の既定（開発者モードが off）では作れない。データ置き場の中で 1 度だけファイルのリンクとディレクトリのジャンクションを作って確かめ、結果をプロセスの間持つ。
+  - 作れないなら、能力の印 `'user'` を「止める手が無い」として読む（`nativeMcpOffMode` が `null`）。一覧の Devin の列の自分の名前は鍵（`reason: 'own'`）で、保存しない（`setMcpAgent` が断る）。
+  - 実行時も写しを使わず、今までと同じ起動にする。前に保存した off があってもターンは止めない。写しを作る途中でリンクに失敗した（権限が変わった）ときも同じで、次に一覧を出すときに確かめ直す。
+- **一覧の鍵（`reason: 'workspace'`）は、場所ごとの設定の一覧でだけ付ける**（`core/context-mcp-matrix.mjs` の `buildMcpMatrix` の `workspace`、`core/ops/context.mjs` の `matrixInput`）。
+  - 全体の設定の一覧は、一覧を出した場所の作業場所の定義で鍵にしない（設定画面の場所に関わらず同じ）。Devin のユーザーの設定にある名前は押せ、off は作業場所に同じ名前の定義が無い会話で効く。
+  - 場所ごとの設定（`place`）の一覧は、その場所の作業場所の定義がある名前を鍵にする。
+  - 実行時は会話の cwd で決める。作業場所の定義があって止まらなかった名前は、右パネルの行に `nativeLock: 'workspace'` を付ける（画面がこれを出すのは `web/` の変更が要る）。
+
+### Grok: 鍵のまま（`nativeMcpOff: impossible`）
+
+写しで止める作り（commit `654edcaa` に残す）は消し、Grok 自身の MCP は ADR 0327 のとおり鍵にする。使わないコードは周りの変更に追いつかず腐るので残さない。確かめたことは下に残す。
+
+### 能力の印と鍵の理由
+
+- 能力の印 `nativeMcpOff` に `'user'` を足す。`true` はユーザーの設定・作業場所の設定のどちらの定義も止められる、`'user'` はユーザーの設定の定義だけ止められる（写しの置き場を使うので、リンクを作れる PC だけ）。Devin は `'user'`。Grok・Antigravity は `impossible`。
+- 一覧の鍵に理由を付ける（`reason`）。`'own'` は止める手が無い（印が無い・Codex の点つきの名前・リンクを作れない PC の Devin）、`'workspace'` は `'user'` のエージェントで、場所ごとの設定の場所の作業場所にも定義がある名前、`'relay'` は中継を受け取れない担当の組み合わせ（`mode: 'blocked'`）。`'admin'`（管理者の設定）は今は使わない。
+- 反映は次のターンから。Devin はターンごとに CLI を起こすので、次のターンの起動で写しを使う／使わなくなる。保持役（無停止の更新）に載るターンも、そのターンの起動の環境変数で子を起こす。
+
+## Grok を鍵に戻した理由と、確かめたこと
+
+Grok 1.0.62（2026-11-15）で確かめた。本物の Grok にはこれ以上ターンを送らない。
+
+- **止める口は効く**: GROK_HOME の `config.toml` の最上位の `disabled_mcp_servers`（名前の配列）は、利用者の `config.toml`・Claude の設定からの取り込み・作業場所の `.grok/config.toml`・`.mcp.json` のどの定義にも効いた（実機）。
+- **`managed_config.toml`・`requirements.toml` の `[[denied_mcp_servers]]` は使えない**: 起動のときは効くが、ログインした会話では Grok が起動の直後に管理の設定をサーバーと同期し、写しに書いたファイルを消した（実機）。
+- **認証情報が失われる（鍵に戻した理由）**: Grok は `auth.json` を一時ファイルからの rename で書く（バイナリの文字列 `auth: failed to ensure owner-only permissions after rename`）。写しの中で token を更新すると、リンクが普通のファイルに置き換わり、ローテーションされた新しい refresh token は写しにだけ残る。本物の `~/.grok/auth.json` には無効になった古い token が残り、ターミナルの Grok・止める名前の無いターン・使用量の取得・アカウントごとの home がログアウトされうる。`mcp_credentials.json`・`settings_cache.json`・`models_cache.json` も同じ。偽の home で rename による置き換えを再現した（レビューの `q1-links.log`）。本物の Grok で token が失われるところまでは見ていない。
+- **`GROK_AUTH_PATH` は確かめていない**: 使い捨ての home の実験で、Grok は GROK_HOME ではなく `GROK_AUTH_PATH` の場所の `auth.json` を読んだ（レビューの `q2-authpath.log`）。書き込み・ロックも同じ場所に向くかは確かめていない。これを使うと、利用者のログインの読み方を Pleiad が変えることになるので、使う前に利用者（依頼元）の同意が要る。`mcp_credentials.json` などには効かない。
+- **`config.toml` の形によっては止められない（D）**: 写しの `config.toml` は本物の中身の先頭に `disabled_mcp_servers = [...]` を足す作りだった。
+  - BOM 付きの UTF-8 の `config.toml` は、BOM がファイルの途中に移り、`parseToml` が読めない（`illegal character in key`）。止める名前のあるターンが「1 行の配列で書いて」という原因と合わないエラーで止まる。
+  - 本物の `disabled_mcp_servers` が複数行の配列・文字列の中にキーの文字が入っている形は、書き換えられずに止まる（安全側だが、画面に鍵が出ない）。
+  - CRLF のファイルは通るが、足した行だけが LF になる。
+- **写しの中にだけ残る・消える書き込み**: 写しの中で作られたディレクトリ（memories など）は写しに残り、本物の中身を隠す。写しにだけある `trusted_folders.toml` は、本物の側に同じ名前ができた時点で消える。`/config` などで写しの `config.toml` に書いた変更は、次のターンで作り直されて失われる。
+
+### Grok の鍵を外す前に確かめること
+
+1. **何を**: 写しの中の `auth.json`・`mcp_credentials.json` の更新が本物に届くこと。Devin と同じ settle（写しのほうが新しければ本物へ運ぶ）で足りるか、`GROK_AUTH_PATH` を使うか（使うなら同意を取る）。BOM・CRLF・複数行の `disabled_mcp_servers` の `config.toml`。写しにだけ残るディレクトリ・`trusted_folders.toml` の扱い。ログインした会話で、管理の設定の同期が写しの `config.toml` を書き換えないこと。
+2. **どう**: 使い捨ての `GROK_HOME`（偽の auth）で、access token の期限を短くして更新を起こし、ターンの後に本物（使い捨ての home）の `auth.json` が新しい token になっていることを見る。本物の `~/.grok` では試さない。commit `654edcaa` のコードと `tests/unit/mcp-off-home.mjs` の Grok の部分を戻し、settle の試験を Grok の名前で足す。
+3. **戻し方**: 能力の印 `CAPABILITY_STATES.grok.nativeMcpOff` を `impossible` に戻せば、一覧は鍵になり、実行時は写しを使わない（保存した off は Pleiad の側を渡さないだけになる）。写しの置き場（`<データ置き場>/grok-mcp-off/`）は、中のリンク（ジャンクション）を 1 つずつ外してから消す。外さずにエクスプローラーなどで消すと、本物の `~/.grok` の中身まで消えるおそれがある。
 
 ## 影響
 
-- 写しを作れない（Windows でシンボリックリンクを作る権限が無い。開発者モードか管理者が要る）ときは、ターンを始めずに `MCP_OFF_LINK_FAILED` のエラーにする。本物の `config.toml` が TOML として読めない・`disabled_mcp_servers` を 1 行の配列以外の形で書いてある、または Devin の `mcp_config.json` が読めないときは `MCP_OFF_UNSUPPORTED`。どちらも止めずにつなぐことはしない。
-- ターンの外の起動（Grok の会話の一覧・読み出し・分岐のための起動、Devin のモデル一覧）は写しを使わない。MCP はターンでしかつながらない前提。
-- 写しの中にエージェントが作る DB（Grok の `worktrees.db` など）は、写しごとに別になる。
-- Grok が会話の途中で写しの `config.toml` に書いたもの（設定の変更）は、本物に届かず、次のターンで本物の中身から作り直す。写しにまだ無いファイル（`trusted_folders.toml` など）を Grok が作ると、写しにだけ残る。
-- 画面（`web/`）は、鍵のセルの `reason` を出すと理由がわかる（今はどの鍵も同じ表示）。
+- **写しの中にだけ残るもの**（Devin）: 写しの中で新しく作られたディレクトリは運ばない（写しに残り、写しと一緒に消える）。Devin の設定の置き場の最上位は `config.json`・`credentials.toml`・`mcp_config.json`・`cli/` で、`cli/` はジャンクションなので中の書き込みは本物に届く。最上位に新しいディレクトリを作る Devin の機能は見つけていない。写しの中で作られた SQLite の DB も写しごとに別になる。
+- **kept に移るもの**（Devin）: 写しを使うターンの間に `devin mcp add` などで `mcp_config.json` を変えた分と、写しの外で本物が先に更新されたファイルの写し側の中身。利用者には、その変更が本物に入っていないように見える（Devin を写しで起動しないターンで、もう一度やり直す）。kept の中身は手で戻せる。
+- **本物に無いファイルを運ぶ**: 写しの中で作られたファイルを本物へ写すので、写しを使う間に本物から消したファイルが、写しに普通のファイルとして残っていれば本物へ戻ることがある（写しの中のリンクは本物から消えれば外すので、置き換わったファイルだけ）。
+- **同時に動く会話**（J）: 同じ組の会話は同じ写しを共有する。片方の Devin が動いている間に、もう片方のそろえが置き換わったファイルを運ぶと、リンクに戻すまでの間（rename 1 回）だけ Devin から見えるファイルが替わる。最後の更新から 5 秒たっていないファイルは運ばないので、書いている最中のファイルには触らない。Pleiad が書く `mcp_config.json` は、本物の中身が変わったときだけ書き直す。Devin がそのファイルを開いている間に書き直すと Windows では失敗しうる（そのターンは `MCP_OFF` のエラーにならず、写しの作り直しの失敗としてターンが始まらない）。
+- **24 時間の片付け**（J）: 写しの印を付けるのはターンの起動のときだけ。1 つのターンが 24 時間を超えて続き、その間にほかの組の写しが 12 個以上使われると、使用中の写しが片付けの対象になりうる。片付ける前に置き換わったファイルは本物へ運ぶ。起きる見込みは小さいので、使用中の印（ロック）は付けない。
+- **空の `{ "disabled": true }` の定義**（K）: Claude の `~/.claude.json` から取り込んだ名前を止めるとき、写しの `mcp_config.json` に `command` の無い `{ "disabled": true }` の項目を足す。Pleiad にだけある名前では足さない（B）。Devin がこの形を受け付けて取り込みの定義を止めることは、実機で確かめる（再レビューの報告に結果を書く）。
+- **リンクを作れない PC**: Devin の自分の名前は鍵になる。開発者モードを後から on にしたら、Pleiad を起動し直すと押せるようになる。
+- **データ置き場の写し**: `scripts/copy-data-dir.mjs` はリンクを飛ばすが、写しの中の普通のファイル（Pleiad が書く `mcp_config.json`、まだ運んでいない置き換わったファイル）は写す。`mcp_config.json` には MCP の秘密（環境変数など）が入りうる。
+- ターンの外の起動（Devin のモデル一覧）は写しを使わない。MCP はターンでしかつながらない前提。
+- 画面（`web/`）は、鍵のセルの `reason` と右パネルの行の `nativeLock` を出すと理由がわかる（今はどの鍵も同じ表示）。

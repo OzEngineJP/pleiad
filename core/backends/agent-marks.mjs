@@ -213,7 +213,8 @@ export const CAPABILITY_STATES = {
     plyShell: true,
     nativeShellOff: true,              // 会話限定 disabled_tools で native shell tools を外す
     // 止める名前があるターンだけ、設定の置き場（DEVIN_CONFIG_HOME）を写しに替え、写しの mcp_config.json で disabled にする（ADR 0330）。
-    // 作業場所の .devin/mcp_config.json・.mcp.json の定義は写しの外で、同じ名前なら作業場所が勝つので止められない（'user'）
+    // 作業場所の .devin/mcp_config.json・.mcp.json の定義は写しの外で、同じ名前なら作業場所が勝つので止められない（'user'）。
+    // 写しはリンクでつなぐので、シンボリックリンクを作れない PC では止める手が無いものとして読む（mcp-off-home.mjs の nativeMcpOffMode）
     nativeMcpOff: 'user',
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
@@ -252,7 +253,7 @@ export const CAPABILITY_STATES = {
     plyShell: true,
     nativeShellOff: true,       // agent-profile の disallowedTools で bash を外す（grok-hooks.mjs）
     // disabled_mcp_servers は効くが、GROK_HOME を写しに替えると Grok の auth.json の更新（一時ファイルからの rename）が本物に届かず、
-    // ログインが切れうる。写しのコードは入れていない。外す前に確かめることは ADR 0330 の「鍵を外す前に確かめること」
+    // ログインが切れうる。写しのコードは入れていない。外す前に確かめることは ADR 0330 の「Grok の鍵を外す前に確かめること」
     nativeMcpOff: impossible('会話ごとにネイティブ設定の MCP を止める手段が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
