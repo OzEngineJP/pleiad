@@ -40,6 +40,8 @@ export default async function (t) {
   keep(own(globalThis, "__zod_globalConfig"), "keep:zod-config");
   keep(own(globalThis, "__zod_globalRegistry"), "keep:zod-registry");
   keep(own(globalThis, Symbol.for("graceful-fs.queue")), "keep:graceful-fs");
+  keep(own(globalThis, Symbol.for("undici.globalDispatcher.1")), "keep:undici");
+  keep("NoDefaultCurrentDirectoryInExePath" in process.env, "keep:env");
   keep(own(globalThis, "__fxGSticky"), "keep:sticky");
 
   fs.writeFileSync(path.join(process.env.RUNNER_FIXTURE_OUT, "g-probe.json"), JSON.stringify({ pid: process.pid, inWorker: typeof process.send === "function", leaks, kept }));

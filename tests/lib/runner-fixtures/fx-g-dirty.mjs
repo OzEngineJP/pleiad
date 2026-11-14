@@ -11,6 +11,9 @@ globalThis.__fxGSwapped = { gen: "original" };
 Object.defineProperty(globalThis, "__fxGDescriptor", { value: "descriptor-original", writable: true, enumerable: false, configurable: true });
 process.env.FX_G_REMOVED = "env-removed-original";
 process.env.FX_G_CHANGED = "env-changed-original";
+// 試験を流しているシェルが継いでいるかもしれない名前（Claude Code や Pleiad のシェルは持つ）を、この suite の前には無い状態にする。
+// 本体が足す形（KEEP_ENV の項目が「足された」）を、手元のシェルの環境に関わらず同じにするため
+delete process.env.NoDefaultCurrentDirectoryInExePath;
 
 export default async function (t) {
   state.document = globalThis.document;
@@ -42,12 +45,18 @@ export default async function (t) {
   process.env.FX_G_ADDED = "env-added";
   delete process.env.FX_G_REMOVED;
   process.env.FX_G_CHANGED = "env-changed";
+  // ライブラリが最初に読まれたとき 1 回だけ足す環境変数（KEEP_ENV）。Claude の SDK は、読み込まれたときに同じ名前へ "1" を代入する（形だけ写す）
+  process.env.NoDefaultCurrentDirectoryInExePath = "1";
 
   // ライブラリが最初に読まれたとき 1 回だけ足す項目（KEEP_GLOBALS）。suite が最初に読み込んでしまう形。zod は本物を読む
   await import("zod");
   // graceful-fs が足す項目と同じ形（同じ Symbol・getter だけの configurable でない項目）。本物を読むと fs を書き換えてしまうので、形だけ写す
   const queue = Symbol.for("graceful-fs.queue");
   if (!Object.hasOwn(globalThis, queue)) Object.defineProperty(globalThis, queue, { get() { return []; } });
+  // undici（Node の fetch）が足す項目と同じ形（同じ Symbol・設定不可の値の項目）。本物の fetch を使うと接続の部品まで作るので、形だけ写す。
+  // Node 24 は控えるための記述子の読みで先に読み込まれていて、ここでは足さない（Node 22 は suite の本体が初めて使う）
+  const dispatcher = Symbol.for("undici.globalDispatcher.1");
+  if (!Object.hasOwn(globalThis, dispatcher)) Object.defineProperty(globalThis, dispatcher, { value: { simulatedBy: "fx-g-dirty" }, writable: true, enumerable: false, configurable: false });
 
   // 戻せないもの（configurable でない）。戻せなくても suite の結果は変わらず、知らせる行に名前が出る
   Object.defineProperty(globalThis, "__fxGSticky", { value: "sticky", configurable: false });

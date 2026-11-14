@@ -7,7 +7,7 @@
 //   - 流し直し: --retry-failed 1 は落ちた suite だけを新しい worker で 1 回流し直し、通れば緑・2 回目も落ちれば赤。流し直したことは端末・timings・Actions の注釈とまとめに残す。既定（指定なし）は流し直さない。ランナーの整合の失敗は流し直さない
 //   - 上限: 結果を返さない suite は、suite ごとの時間の上限（重みの 5 倍と 180 秒の大きい方。試験では PLEIAD_TEST_SUITE_TIMEOUT_MS で縮める）で、名前・そこまでの出力を出して worker を木ごと止め、失敗に数える。残りは新しい worker で続く。--retry-failed では流し直す。長い suite は「実行中: <名前>」を出す
 //   - 隔離: worker は親の AGENT_HOST_DATA を使わず、worker ごとの一時ディレクトリを作って消す。実行元の制御用の環境変数（PLEIAD_CONTROL_* など）はテストに届かない。子プロセスは残らない
-//   - global の戻し: suite の終わりに、ランナーが globalThis・document（代役）・N.prototype・process.env を suite の前の状態へ戻す（足された項目は消し、消された・替えられた項目は元へ）。ライブラリが 1 回だけ足す global（KEEP_GLOBALS）は残す。--jobs 1（同じプロセス）と --jobs 2（worker）で同じ動き。戻せない項目・戻す処理の例外は suite の結果を変えない。値のある変化は suite の出力に 1 行で知らせ、PLEIAD_TEST_GLOBALS=diff で全部、off で昔の動き（戻さない）
+//   - global の戻し: suite の終わりに、ランナーが globalThis・document（代役）・N.prototype・process.env を suite の前の状態へ戻す（足された項目は消し、消された・替えられた項目は元へ）。ライブラリが 1 回だけ足す global（KEEP_GLOBALS）と環境変数（KEEP_ENV）は残す。--jobs 1（同じプロセス）と --jobs 2（worker）で同じ動き。戻せない項目・戻す処理の例外は suite の結果を変えない。値のある変化は suite の出力に 1 行で知らせ、PLEIAD_TEST_GLOBALS=diff で全部、off で昔の動き（戻さない）
 // 実際の tests/run.mjs は --list（走らせない）で見る。走らせるのは tests/lib/runner-fixtures/ の小さな試験用 suite（入口は tests/lib/runner-fixture-entry.mjs）。
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -18,7 +18,7 @@ import { ownedDescendants, reapOwned, killTagged, WORKER_TAG_ENV } from "../lib/
 import { Suite } from "../lib/harness.mjs";
 import { isRetryable, buildRetryEntry, reportRetriesToCi } from "../lib/runner-retry.mjs";
 import { ArgError, DEFAULT_JOBS, parseArgs, extractSuiteName, loadRegistry, loadWeights, assignShards, heaviestFirst, weightOf, suiteLimitMs, readTimeoutEnv, SUITE_LIMIT_FLOOR_MS, SUITE_LIMIT_FACTOR, PROGRESS_MS } from "../lib/runner-plan.mjs";
-import { snapshotGlobals, restoreGlobals, formatReport, createGlobalGuard, defaultTargets, globalsModeFromEnv, KEEP_GLOBALS, RUNNER_OWNED_GLOBALS } from "../lib/global-restore.mjs";
+import { snapshotGlobals, restoreGlobals, formatReport, createGlobalGuard, defaultTargets, globalsModeFromEnv, KEEP_GLOBALS, KEEP_ENV, RUNNER_OWNED_GLOBALS } from "../lib/global-restore.mjs";
 import { RESTART_GLOBAL_KEY } from "../lib/restart.mjs";
 
 export const name = "runner-contract";
@@ -596,6 +596,45 @@ export default async function (t) {
         judge("環境変数（本物の process.env）: 足した名前が戻る", !(probeName in process.env) && same(summary(real.items), [`added:${probeName}:restored`]), JSON.stringify(summary(real.items)));
       }
       {
+        // 環境変数の残す一覧（KEEP_ENV）は KEEP_GLOBALS と同じ考え方。残すのは「足された」ときだけで、値を替えられた・消された名前は、一覧にあっても今までどおり元へ戻す
+        const keepEnv = [{ key: "LIB_ONCE", why: "試験用の理由" }];
+        const envOf = (object) => ({ label: "process.env", kind: "env", object, keep: keepEnv });
+        const added = { STAY: "stay-secret-value" };
+        const a = cycle([envOf(added)], () => { added.LIB_ONCE = "once-secret-value"; added.OTHER_NEW = "other-secret-value"; });
+        const changed = { LIB_ONCE: "orig-secret-value" };
+        const b = cycle([envOf(changed)], () => { changed.LIB_ONCE = "changed-secret-value"; });
+        const removed = { LIB_ONCE: "orig-secret-value" };
+        const c = cycle([envOf(removed)], () => { delete removed.LIB_ONCE; });
+        const text = [a, b, c].flatMap((x) => [...x.on, ...x.diff]).join("\n");
+        judge("残す環境変数（KEEP_ENV の形・部品）: 足された名前は値のまま残り、一覧に当たらない名前だけ消える。on では残した名前を知らせず、diff は「残した」と出す。知らせるのは名前だけで、値は出ない",
+          added.LIB_ONCE === "once-secret-value" && !("OTHER_NEW" in added) && added.STAY === "stay-secret-value" && same(summary(a.items), ["added:LIB_ONCE:kept:quiet", "added:OTHER_NEW:restored"])
+          && a.on.length === 1 && a.on[0].includes("OTHER_NEW") && !a.on[0].includes("LIB_ONCE") && a.diff.some((l) => l.includes("LIB_ONCE は残した（KEEP_ENV の項目）")) && !/secret-value/.test(text),
+          JSON.stringify({ items: summary(a.items), on: a.on, diff: a.diff }));
+        judge("残す環境変数（KEEP_ENV の形・部品）: 残すのは足されたときだけ。一覧にある名前でも、値を替えられた分・消された分は今までどおり元へ戻る",
+          changed.LIB_ONCE === "orig-secret-value" && same(summary(b.items), ["changed:LIB_ONCE:restored"]) && removed.LIB_ONCE === "orig-secret-value" && same(summary(c.items), ["removed:LIB_ONCE:restored"]),
+          JSON.stringify([summary(b.items), summary(c.items)]));
+      }
+      {
+        // 本物の一覧の項目の形。この 2 つが一覧に無いと、足されたものとして消される（globalDispatcher は消せずに知らせが出る・環境変数は消えて同じ worker では置き直されない）
+        const dispatcher = Symbol.for("undici.globalDispatcher.1");
+        const noDefault = "NoDefaultCurrentDirectoryInExePath";
+        const addDispatcher = (o) => Object.defineProperty(o, dispatcher, { value: { simulatedBy: "runner-contract" }, writable: true, enumerable: false, configurable: false });
+        const g1 = {};
+        const withList = cycle([target("fake", g1, { keep: KEEP_GLOBALS })], () => addDispatcher(g1));
+        const g0 = {};
+        const withoutList = cycle([target("fake", g0, { keep: KEEP_GLOBALS.filter((k) => k.key !== dispatcher) })], () => addDispatcher(g0));
+        const e1 = {};
+        const envWith = cycle([{ label: "process.env", kind: "env", object: e1, keep: KEEP_ENV }], () => { e1[noDefault] = "1"; });
+        const e0 = {};
+        const envWithout = cycle([{ label: "process.env", kind: "env", object: e0, keep: KEEP_ENV.filter((k) => k.key !== noDefault) }], () => { e0[noDefault] = "1"; });
+        judge("本物の一覧: Node の fetch（undici）の configurable でない globalDispatcher と、Claude の SDK の NoDefaultCurrentDirectoryInExePath は、足されても残り、on では知らせない。一覧に無ければ、前者は「消せなかった」、後者は消される（この 2 項目が一覧に要る理由）",
+          Object.hasOwn(g1, dispatcher) && same(summary(withList.items), ["added:Symbol(undici.globalDispatcher.1):kept:quiet"]) && withList.on.length === 0 && withList.diff.some((l) => l.includes("Symbol(undici.globalDispatcher.1) は残した（KEEP_GLOBALS の項目）"))
+          && Object.hasOwn(g0, dispatcher) && same(summary(withoutList.items), ["added:Symbol(undici.globalDispatcher.1):failed"]) && withoutList.on.length === 1 && withoutList.on[0].includes("消せなかった")
+          && e1[noDefault] === "1" && same(summary(envWith.items), [`added:${noDefault}:kept:quiet`]) && envWith.on.length === 0 && envWith.diff.some((l) => l.includes(`${noDefault} は残した（KEEP_ENV の項目）`))
+          && !(noDefault in e0) && same(summary(envWithout.items), [`added:${noDefault}:restored`]) && envWithout.on.length === 1,
+          JSON.stringify({ withList: summary(withList.items), withoutList: summary(withoutList.items), envWith: summary(envWith.items), envWithout: summary(envWithout.items) }));
+      }
+      {
         const o = {};
         Object.defineProperty(o, "lazyA", { get() { return 42; }, configurable: true, enumerable: true });
         Object.defineProperty(o, "lazyB", { get() { return 42; }, configurable: true, enumerable: true });
@@ -627,7 +666,17 @@ export default async function (t) {
         const changedOnly = cycle([target("globalThis", o)], () => { o.swapped = 2; });
         const doc = {};
         const onDocument = cycle([target("document", doc)], () => { doc.activeElement = null; });
-        judge("知らせる行: 名前は 8 件まで（残りは「ほか N 件」）。globalThis に足された項目を消したときだけ、KEEP_GLOBALS へ足す案内が付く（KEEP_GLOBALS は globalThis にしか効かないので、document に足された項目には付けない）",
+        const envKept = { SWAPPED: "swapped-secret-value" };
+        const envOf = () => ({ label: "process.env", kind: "env", object: envKept, keep: KEEP_ENV });
+        const envOnly = cycle([envOf()], () => { envKept.LEAK_ENV = "leak-secret-value"; });
+        const envChanged = cycle([envOf()], () => { envKept.SWAPPED = "changed-secret-value"; });
+        const both = cycle([target("globalThis", o), envOf()], () => { o.leakBoth = 1; envKept.LEAK_BOTH = "both-secret-value"; });
+        judge("知らせる行（環境変数）: process.env に足された項目を消したときは KEEP_ENV へ、globalThis と両方なら KEEP_GLOBALS・KEEP_ENV へ足す案内が付く。値が替わっただけなら付かない。名前だけが出て、値は出ない",
+          envOnly.on.length === 1 && envOnly.on[0].includes("LEAK_ENV") && envOnly.on[0].includes("KEEP_ENV へ") && !envOnly.on[0].includes("KEEP_GLOBALS")
+          && envChanged.on.length === 1 && envChanged.on[0].includes("SWAPPED") && !envChanged.on[0].includes("KEEP_ENV") && !envChanged.on[0].includes("KEEP_GLOBALS")
+          && both.on.length === 1 && both.on[0].includes("leakBoth") && both.on[0].includes("LEAK_BOTH") && both.on[0].includes("KEEP_GLOBALS・KEEP_ENV へ")
+          && !/secret-value/.test([envOnly, envChanged, both].flatMap((x) => [...x.on, ...x.diff]).join("\n")) && !("LEAK_ENV" in envKept) && !("LEAK_BOTH" in envKept) && envKept.SWAPPED === "swapped-secret-value", JSON.stringify({ envOnly: envOnly.on, envChanged: envChanged.on, both: both.on }));
+        judge("知らせる行: 名前は 8 件まで（残りは「ほか N 件」）。足された項目を消したときだけ、残す一覧へ足す案内が付く（globalThis には KEEP_GLOBALS。それぞれの一覧はその対象にしか効かないので、document に足された項目には付けない）",
           many.on.length === 1 && many.on[0].includes("leak08") && !many.on[0].includes("leak09") && many.on[0].includes("ほか 2 件") && many.on[0].includes("KEEP_GLOBALS")
           && changedOnly.on.length === 1 && !changedOnly.on[0].includes("KEEP_GLOBALS")
           && onDocument.on.length === 1 && onDocument.on[0].includes("activeElement") && !onDocument.on[0].includes("KEEP_GLOBALS") && !Object.hasOwn(doc, "activeElement")
@@ -635,16 +684,21 @@ export default async function (t) {
       }
       {
         const keepKeys = KEEP_GLOBALS.map((k) => k.key);
-        judge("KEEP_GLOBALS: 項目ごとに理由が書いてあり、重複せず、今ある 3 件（zod の 2 つ・graceful-fs の queue）が入っている。ライブラリの global の名前が変わったら、この一覧と fx-g-dirty の判定が先に落ちる",
+        judge("KEEP_GLOBALS: 項目ごとに理由が書いてあり、重複せず、今ある 4 件（zod の 2 つ・graceful-fs の queue・Node の fetch（undici）の globalDispatcher）が入っている。ライブラリの global の名前が変わったら、この一覧と fx-g-dirty の判定が先に落ちる",
           Object.isFrozen(KEEP_GLOBALS) && KEEP_GLOBALS.every((k) => (typeof k.key === "string" || typeof k.key === "symbol") && typeof k.why === "string" && k.why.trim().length > 10) && new Set(keepKeys).size === keepKeys.length
-          && keepKeys.includes("__zod_globalConfig") && keepKeys.includes("__zod_globalRegistry") && keepKeys.includes(Symbol.for("graceful-fs.queue")));
+          && keepKeys.includes("__zod_globalConfig") && keepKeys.includes("__zod_globalRegistry") && keepKeys.includes(Symbol.for("graceful-fs.queue")) && keepKeys.includes(Symbol.for("undici.globalDispatcher.1")));
+        const envKeys = KEEP_ENV.map((k) => k.key);
+        judge("KEEP_ENV: KEEP_GLOBALS と同じ形（項目ごとに理由が書いてあり、重複しない。名前は文字列）で、今ある 1 件（Claude の SDK が読み込まれたとき 1 回だけ代入する NoDefaultCurrentDirectoryInExePath）が入っている",
+          Object.isFrozen(KEEP_ENV) && KEEP_ENV.every((k) => typeof k.key === "string" && k.key.length > 0 && typeof k.why === "string" && k.why.trim().length > 10) && new Set(envKeys).size === envKeys.length
+          && envKeys.includes("NoDefaultCurrentDirectoryInExePath"));
         judge("RUNNER_OWNED_GLOBALS: ランナーが suite のたびに入れ直す再起動用の項目（RESTART_GLOBAL_KEY）が入っている", Object.isFrozen(RUNNER_OWNED_GLOBALS) && RUNNER_OWNED_GLOBALS.some((o) => o.key === RESTART_GLOBAL_KEY && o.why.length > 10));
         const targets = defaultTargets();
         const labels = targets.map((x) => x.label);
         const hasDocument = typeof globalThis.document === "object" && globalThis.document !== null;
-        judge("既定の対象: globalThis（KEEP とランナー自身の項目つき）・document（代役が object のときだけ）・N.prototype・process.env（環境変数は名前と値で扱う）",
+        const envTarget = targets.find((x) => x.label === "process.env");
+        judge("既定の対象: globalThis（KEEP_GLOBALS とランナー自身の項目つき）・document（代役が object のときだけ）・N.prototype・process.env（環境変数は名前と値で扱う。KEEP_ENV つき）",
           labels[0] === "globalThis" && targets[0].keep === KEEP_GLOBALS && targets[0].owned === RUNNER_OWNED_GLOBALS && labels.includes("N.prototype") && labels.includes("document") === hasDocument
-          && targets.find((x) => x.label === "process.env")?.kind === "env" && targets.find((x) => x.label === "process.env")?.object === process.env, labels.join());
+          && envTarget?.kind === "env" && envTarget?.object === process.env && envTarget?.keep === KEEP_ENV, labels.join());
         const modeOf = (v) => globalsModeFromEnv({ PLEIAD_TEST_GLOBALS: v });
         judge("PLEIAD_TEST_GLOBALS: 無い・空 → on。on・diff・off（前後の空白は無視）。おかしな値は例外にする（黙って既定に戻さない）",
           globalsModeFromEnv({}) === "on" && modeOf("") === "on" && modeOf("on") === "on" && modeOf(" diff ") === "diff" && modeOf("off") === "off"
@@ -685,8 +739,8 @@ export default async function (t) {
       }
       judge("次の suite は fx-g-dirty と同じプロセス（--jobs 1）・同じ worker（--jobs 2。親ではない）で流れた", !!on1.dirty && on1.dirty.pid === on1.probe?.pid && on1.probe?.inWorker === false
         && !!on2.dirty && on2.dirty.pid === on2.probe?.pid && on2.probe?.inWorker === true && on2.dirty.pid !== process.pid && !!off2.dirty && off2.dirty.pid === off2.probe?.pid, JSON.stringify([on1.dirty, on1.probe?.pid, on2.dirty, on2.probe?.pid, off2.dirty, off2.probe?.pid]));
-      judge("残すと決めた項目（zod の __zod_globalConfig・__zod_globalRegistry・graceful-fs の queue）は戻されずに残る。戻せない項目（configurable でない）も残る。--jobs 1・--jobs 2 の両方で同じ",
-        [on1, on2].every((g) => same(g.probe?.kept, ["keep:zod-config", "keep:zod-registry", "keep:graceful-fs", "keep:sticky"])), `${shown(on1)} ${shown(on2)}`);
+      judge("残すと決めた項目（zod の __zod_globalConfig・__zod_globalRegistry・graceful-fs の queue・undici の globalDispatcher・Claude の SDK の環境変数 NoDefaultCurrentDirectoryInExePath）は戻されずに残る。戻せない項目（configurable でない）も残る。--jobs 1・--jobs 2 の両方で同じ",
+        [on1, on2].every((g) => same(g.probe?.kept, ["keep:zod-config", "keep:zod-registry", "keep:graceful-fs", "keep:undici", "keep:env", "keep:sticky"])), `${shown(on1)} ${shown(on2)}`);
       const suiteOf = (g, n) => g.T?.suites.find((s) => s.name === n);
       judge("戻す仕組みは suite の結果を変えない: 戻せない項目があっても、fx-g-dirty の 2 判定・fx-g-probe の 1 判定は通り、終了コードは 0（on・diff・off、--jobs 1・2 のどれも同じ。zod のキーの名前が変わると、fx-g-dirty の判定が落ちる）",
         [on1, on2, off1, off2, diff1].every((g) => g.code === 0 && suiteOf(g, "fx-g-dirty")?.status === "pass" && suiteOf(g, "fx-g-dirty")?.judgements === 2 && suiteOf(g, "fx-g-probe")?.status === "pass" && suiteOf(g, "fx-g-probe")?.judgements === 1 && g.T?.totals?.failedJudgements === 0),
@@ -696,13 +750,14 @@ export default async function (t) {
       const VALUES = ["added-by-dirty", "sym-by-dirty", "removed-original", "descriptor-original", "descriptor-replaced", "doc-added", "doc-swapped", "doc-replaced", "proto-added", "proto-swapped", "env-added", "env-changed", "env-removed-original", "env-changed-original", "replaced.invalid"];
       judge("既定（on）: 値のある変化は、suite の出力の末尾に 1 行（[global]）で知らせる。戻した項目の名前は出て、値（環境変数の値も）は出ない",
         [on1, on2].every((g) => g.lines.length === 1 && g.lines[0].startsWith("  [global] ") && NAMES.every((n) => g.lines[0].includes(n)) && VALUES.every((v) => !g.stdout.includes(v)) && /__fxGSticky は消せなかった/.test(g.lines[0])), `${on1.lines.join("\n")}`);
-      judge("既定（on）: 値の無い項目と、残した項目（KEEP_GLOBALS）は知らせない（毎回出すと本物の知らせが埋もれる）。足された項目を消したときは、KEEP_GLOBALS の案内が付く",
-        [on1, on2].every((g) => !/__fxGHollow|fxDocHollow|__zod_global|graceful-fs/.test(g.stdout) && g.lines[0]?.includes("KEEP_GLOBALS へ")), on1.stdout.slice(-900));
+      judge("既定（on）: 値の無い項目と、残した項目（KEEP_GLOBALS・KEEP_ENV）は知らせない（毎回出すと本物の知らせが埋もれる）。足された項目を消したときは、KEEP_GLOBALS・KEEP_ENV の案内が付く",
+        [on1, on2].every((g) => !/__fxGHollow|fxDocHollow|__zod_global|graceful-fs|undici|NoDefaultCurrentDirectoryInExePath/.test(g.stdout) && g.lines[0]?.includes("KEEP_GLOBALS・KEEP_ENV へ")), on1.stdout.slice(-900));
       judge("--jobs 1 と --jobs 2 は、知らせる行も同じ（同じプロセス・worker のどちらでも同じ動き）", on1.lines.length === 1 && same(on1.lines, on2.lines), JSON.stringify([on1.lines, on2.lines]));
       const diffText = diff1.lines.join("\n");
       judge("PLEIAD_TEST_GLOBALS=diff: 知らせない分（値の無い項目・残した項目）も含めて、対象と種類ごとに 1 行ずつ全部出す。先頭に、そのモードで走っていると出す",
         diff1.lines.length > 10 && diff1.lines.every((l) => l.startsWith("  [global] ")) && diffText.includes("__fxGHollow（値の無い項目）") && diffText.includes("fxDocHollow（値の無い項目）")
-        && /__zod_globalConfig[^\n]*残した（KEEP_GLOBALS/.test(diffText) && diffText.includes("Symbol(graceful-fs.queue)") && VALUES.every((v) => !diff1.stdout.includes(v)) && diff1.stdout.includes("PLEIAD_TEST_GLOBALS=diff"), diff1.stdout.slice(-1200));
+        && /__zod_globalConfig[^\n]*残した（KEEP_GLOBALS/.test(diffText) && diffText.includes("Symbol(graceful-fs.queue)") && /NoDefaultCurrentDirectoryInExePath[^\n]*残した（KEEP_ENV/.test(diffText)
+        && VALUES.every((v) => !diff1.stdout.includes(v)) && diff1.stdout.includes("PLEIAD_TEST_GLOBALS=diff"), diff1.stdout.slice(-1200));
       judge("PLEIAD_TEST_GLOBALS=off: 戻さず・知らせず、そのモードで走っていると先頭に出す（昔の動き。原因の切り分け用）。既定では、モードの行は出ない",
         [off1, off2].every((g) => g.lines.length === 0 && g.stdout.includes("PLEIAD_TEST_GLOBALS=off")) && [on1, on2].every((g) => !g.stdout.includes("PLEIAD_TEST_GLOBALS=")));
       judge("PLEIAD_TEST_GLOBALS がおかしな値なら、何も走らせず終了コード 2（黙って既定に戻さない）", badMode.code === 2 && !badMode.stdout.includes("── fx-") && badMode.stderr.includes("PLEIAD_TEST_GLOBALS"), `${badMode.code} ${badMode.stderr.slice(0, 200)}`);
