@@ -1,4 +1,5 @@
-// 履歴の発言の実寸を確定する（style.css の `#thread > .mw:not(.activity):not(.height-ready)`）。
+// 履歴の発言の実寸を確定する（style.css の `:is(#thread,.thread.live-child) > .mw:not(.activity):not(.height-ready)`。
+// 主の #thread と、モーダルの子の実例の筋（.live-child）。どちらも createHistoryPane が 1 つずつ持つ）。
 //
 // 画面外の発言は content-visibility:auto と仮の高さ（160px）で並べ、開くときのレイアウトを省く。
 // ところが仮の高さと実寸の差が大きいので、スクロールで行が見え始めるたびに高さが変わり、レイアウトが繰り返される。

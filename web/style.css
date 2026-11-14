@@ -735,8 +735,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
    高さを畳むために中身は overflow:hidden を持つ。節は溝の側にあるので切られない */
 .mw{display:grid;grid-template-columns:var(--gut,72px) minmax(0,1fr);grid-template-rows:1fr;opacity:1;transform:none;min-width:0;
   transition:grid-template-rows var(--dur-slow) var(--ease-organic),opacity var(--dur-slow) var(--ease-organic),transform var(--dur-slow) var(--ease-organic)}
-/* 初期表示では画面外の発言を省き、client.mjs が末尾から小分けに実寸を確定する。 */
-#thread > .mw:not(.activity):not(.height-ready){content-visibility:auto;contain-intrinsic-size:auto 160px}
+/* 初期表示では画面外の発言を省き、web/history-heights.mjs が見えている所の近くから小分けに実寸を確定する。
+   主の #thread と、モーダルの子の実例の筋（.live-child。openLiveChild が付ける）だけ。読むだけの筋（.bg-thread 単独）には確定の担当が無いので広げない */
+:is(#thread,.thread.live-child) > .mw:not(.activity):not(.height-ready){content-visibility:auto;contain-intrinsic-size:auto 160px}
 /* 700px 以下は溝を 40px に（本文の幅を取り戻す）。筋は x=20 のまま、分岐の曲線（web/branch-view.mjs）は溝の外の自分の行に描くので崩れない */
 @media (max-width:700px){:is(.thread,.bg-thread){--gut:24px}}
 .mw-gutter,.mw-body{min-height:0;overflow:hidden;min-width:0}

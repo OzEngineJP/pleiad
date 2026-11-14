@@ -463,10 +463,10 @@ export function createHistoryPane(hooks) {
     if (olderBusy) return olderBusy;
     flushBackfill();   // 手前の行は、いま描いてある一番上の行の手前に足す。窓の中の手前を先に描き終える
     const id = currentSession(), before = base;
-    if (!id || before <= 0 || !messages.length || isLoadingSession()) return Promise.resolve(false);
+    if (disposed || !id || before <= 0 || !messages.length || isLoadingSession()) return Promise.resolve(false);   // 閉じた実例は読み足さない（目次を開いたまま閉じたときの loadAllOlder が、捨てた筋へ足し続けない）
     const prev = { messages, presents, base: before, presentBase };
     const request = { before, presentBefore: presentBase };
-    const same = () => currentSession() === id && base === before && messages === prev.messages;
+    const same = () => !disposed && currentSession() === id && base === before && messages === prev.messages;
     const run = (async () => {
       showOlder('loading');
       let joined = null;
