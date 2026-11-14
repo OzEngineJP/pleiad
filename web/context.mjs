@@ -228,7 +228,11 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   }
   async function work(fn) {
     try { await fn(); }
-    catch (e) { status.textContent = t('context.saveFailed', { error: e.message }); }
+    catch (e) {
+      status.textContent = t('context.saveFailed', { error: e.message });
+      // スイッチなどは押した瞬間に見た目だけ先に変えている。保存できなかったときは、保存されている状態から描き直す
+      try { renderAll(); } catch { /* 描き直せなくても失敗の表示は残す */ }
+    }
   }
   const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened, showMenu, onCount: n => { plyCount = n; updateCounts(); } });
   // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0045）
@@ -369,7 +373,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       if (query && !kids.length) continue;
       shown += kids.length;
       const open = Boolean(query) || (bundleOpen.has(block.key) ? bundleOpen.get(block.key) : block.defaultOpen);
-      const items = block.items.map(i => i.entry);
+      // 絞り込み中は、まとまりのスイッチも見えている（当たった）行だけが対象（状態も切替も）
+      const items = (query ? kids : block.items).map(i => i.entry);
       const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
       const swState = bundleSwitchState(items, e => !e.group.every(g => g.status === 'excluded'), actionLabel);
       const row = el('div', 'cx-row grp' + (swState.checked === 'false' ? ' off' : ''));

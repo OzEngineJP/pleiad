@@ -240,6 +240,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       panels.hooks.append(hooksEditFace());
       lastTabBar = tabBar;
       lastTabPanels = panels;
+      // 保存に失敗したときの知らせ（編集中は種類ごとの面に出る場所が無いので、タブ帯の上に出す）
+      if (notice) { const f = el('p', 'cx-status', notice); f.setAttribute('role', 'alert'); box.append(f); }
       box.append(tabBar.root, ...CONTEXT_TABS.map(id => panels[id]));
     } else {
       lastTabBar = null;
@@ -784,7 +786,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         shown += kids.length;
         const bKey = `${kind}|${g}|${block.key}`;
         const open = Boolean(query) || (editBundleOpen.has(bKey) ? editBundleOpen.get(bKey) : block.defaultOpen);
-        const items = block.items.map(i => i.entry);
+        // 絞り込み中は、スイッチも見えている（当たった）行だけが対象（状態も切替も）
+        const items = (query ? kids : block.items).map(i => i.entry);
         const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
         const swState = bundleSwitchState(items, e => e.status !== 'excluded', actionLabel);
         const row = el('div', 'cx-row grp' + (swState.checked === 'false' ? ' off' : ''));

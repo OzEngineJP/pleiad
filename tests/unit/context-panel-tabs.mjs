@@ -216,6 +216,7 @@ export default async function (t) {
       return { ...e, status: excluded ? 'excluded' : (e.defaultStatus ?? 'candidate') };
     });
     const settingsWrites = [];
+    let failSettings = false;
     const rootsState = { instruction: { value: [] }, skill: { value: [] }, mcp: { value: [] } };
     const cloneSettings = () => ({
       home: '/home/u',
@@ -226,6 +227,7 @@ export default async function (t) {
     const settingsCmd = async (command, payload) => {
       if (command === 'contextSettings') return cloneSettings();
       if (command === 'setContextSettings') {
+        if (failSettings) throw new Error('boom-settings');
         settingsWrites.push(payload);
         if (payload?.kind && payload?.value) {
           const v = kindsState[payload.kind].value;
@@ -362,6 +364,44 @@ export default async function (t) {
     t.ok('Escape で絞り込みを解除して通常一覧に戻る',
       findInput.value === '' && !p.querySelector('#cx-panel-skill').textContent.includes('見つかりません'));
 
+    // 絞り込み中のまとまりスイッチは、見えている行だけを切り替える（状態も見えている行だけから決める）
+    const skillEx = () => kindsState.skill.value.user.excludePaths.length;
+    t.ok('絞り込みの前は Skills の除外が 0 件', skillEx() === 0);
+    findInput.value = 'tool-7';
+    findInput.dispatchEvent({ type: 'input' });
+    await settle();
+    const fSw = () => p.querySelector('#cx-panel-skill .cx-row.grp .cx-sw');
+    t.ok('絞り込み中のまとまりスイッチは見えている 1 行だけからオンと決まる', fSw().getAttribute('aria-checked') === 'true');
+    fSw().onclick();
+    await settle();
+    t.ok('絞り込み中のまとまりスイッチで、当たった 1 件だけが除外に入る（9 件ではない）',
+      skillEx() === 1 && fSw().getAttribute('aria-checked') === 'false', `excl=${skillEx()}`);
+    findInput.value = '';
+    findInput.dispatchEvent({ type: 'input' });
+    await settle();
+    const mixedSw = [...p.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].find(x => x.getAttribute('aria-checked') === 'mixed');
+    t.ok('絞り込みを消すとまとまり全体の状態（一部）に戻る', Boolean(mixedSw));
+    mixedSw.onclick();
+    await settle();
+    t.ok('一部のまとまりスイッチを押すと除外が 0 件に戻る', skillEx() === 0);
+
+    // 保存に失敗したときは、押した瞬間に変えた見た目を、保存されている状態から描き直す
+    const oneSw = () => p.querySelector('#cx-panel-skill .cx-row:not(.grp) .cx-sw, #cx-panel-skill .cx-row.kid .cx-sw');
+    const grpOf = () => [...p.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')][0];
+    const beforeGrp = grpOf().getAttribute('aria-checked');
+    failSettings = true;
+    grpOf().onclick();
+    await settle();
+    t.ok('まとめて切り替える保存に失敗したら、スイッチは保存されている状態（元のまま）に描き直され、失敗が出る',
+      grpOf().getAttribute('aria-checked') === beforeGrp && skillEx() === 0
+      && p.querySelector('.cx-status')?.textContent.includes('boom-settings'),
+      `checked=${grpOf().getAttribute('aria-checked')} before=${beforeGrp} status=${p.querySelector('.cx-status')?.textContent}`);
+    const beforeOne = oneSw().getAttribute('aria-checked');
+    oneSw().onclick();
+    await settle();
+    t.ok('1 件の切替に失敗したときも、同じく元の状態へ描き直される', oneSw().getAttribute('aria-checked') === beforeOne && skillEx() === 0);
+    failSettings = false;
+
     // ---------------- 2. 会話の右パネル編集モード（web/session-context.mjs） ----------------
     const rightScroller = new PanelNode('div');
     rightScroller.className = 'file-preview-content';
@@ -373,6 +413,7 @@ export default async function (t) {
       mcp: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
     };
     const rightWrites = [];
+    let failRight = false;
     const rightEntries = [
       { id: 're-1', kind: 'instruction', scope: 'dir', rule: true, defaultStatus: 'candidate', name: 'a.md', path: '/repo/.claude/rules/a.md', tokens: 10, origins: [{ source: 'claude', path: '/repo/.claude/rules/a.md', scope: 'dir' }] },
       { id: 're-2', kind: 'instruction', scope: 'dir', rule: true, defaultStatus: 'candidate', name: 'b.md', path: '/repo/.claude/rules/b.md', tokens: 10, origins: [{ source: 'claude', path: '/repo/.claude/rules/b.md', scope: 'dir' }] },
@@ -389,6 +430,7 @@ export default async function (t) {
         places: [{ current: true, saved: false, cwd: '/repo', kinds: structuredClone(placeKinds), roots: { instruction: { sources: ['claude'] }, skill: { sources: ['claude'] }, mcp: { sources: ['claude'] } } }],
       };
       if (command === 'setContextSettings') {
+        if (failRight) throw new Error('boom-right');
         rightWrites.push(payload);
         if (payload?.kind && payload?.value) {
           const v = placeKinds[payload.kind].value;
@@ -486,6 +528,35 @@ export default async function (t) {
     await settle();
     t.ok('右パネル Skills で 0 件なら「見つかりません」が出る',
       panelBody.querySelector('#scx-panel-skill').textContent.includes('見つかりません'));
+
+    // 絞り込み中のまとまりスイッチは見えている行だけ。保存の失敗は保存されている状態から描き直す
+    const placeEx = () => placeKinds.skill.value.directory.excludePaths.length;
+    scxFind.value = 'sk-3';
+    scxFind.dispatchEvent({ type: 'input' });
+    await settle();
+    const scxFSw = () => panelBody.querySelector('#scx-panel-skill .cx-row.grp .cx-sw');
+    t.ok('右パネルの絞り込み中のスイッチは見えている 1 行だけからオンと決まる', scxFSw().getAttribute('aria-checked') === 'true');
+    await scxFSw().onclick();
+    await settle();
+    t.ok('右パネルの絞り込み中のまとまりスイッチで、当たった 1 件だけが除外に入る',
+      placeEx() === 1 && scxFSw().getAttribute('aria-checked') === 'false', `excl=${placeEx()}`);
+    scxFind.value = '';
+    scxFind.dispatchEvent({ type: 'input' });
+    await settle();
+    const scxMixed = [...panelBody.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].find(x => x.getAttribute('aria-checked') === 'mixed');
+    t.ok('右パネルでも、絞り込みを消すと「一部」に戻る', Boolean(scxMixed));
+    await scxMixed.onclick();
+    await settle();
+    t.ok('右パネルの一部のスイッチを押すと除外が 0 件に戻る', placeEx() === 0);
+    const scxGrp = () => panelBody.querySelector('#scx-panel-skill .cx-row.grp .cx-sw');
+    const scxBefore = scxGrp().getAttribute('aria-checked');
+    failRight = true;
+    await scxGrp().onclick();
+    await settle();
+    t.ok('右パネルでも、まとめて切り替える保存に失敗したら保存されている状態へ描き直し、失敗が出る',
+      scxGrp().getAttribute('aria-checked') === scxBefore && placeEx() === 0 && panelBody.textContent.includes('boom-right'),
+      `checked=${scxGrp().getAttribute('aria-checked')} before=${scxBefore}`);
+    failRight = false;
 
     await panelBody.querySelector('[data-act="placeDone"]').onclick();
     await settle();

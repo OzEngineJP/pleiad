@@ -24,7 +24,7 @@ export function lockAriaLabel(baseLabel, reason) {
   return t('context.lockAria', { label: baseLabel, reason });
 }
 
-let bound = false, tip = null, who = null, tapped = null, tm = null, lastPointer = '';
+let bound = false, tip = null, who = null, tapped = null, tm = null, lastPointer = '', watch = null;
 
 function resetState() {
   clearTimeout(tm);
@@ -75,7 +75,22 @@ export function hideLockTip() {
   tm = null;
   who = null;
   tapped = null;
+  watch?.disconnect?.();
   tip?.classList?.remove('on');
+}
+
+/** 出ている間だけ、相手が描き直しで外されていないかを見る（外されたら消す。マウスがまだ同じ鍵の上なら出し直す） */
+function watchAnchor() {
+  if (typeof MutationObserver !== 'function' || !document.body) return;
+  watch ??= new MutationObserver(() => {
+    if (!who || who.isConnected !== false) return;
+    hideLockTip();
+    let again = null;
+    try { again = document.querySelector('[data-tip]:hover'); } catch { /* :hover を使えない環境では出し直さない */ }
+    if (again) tm = setTimeout(() => { if (again.isConnected !== false) show(again); }, 150);
+  });
+  watch.disconnect();
+  watch.observe(document.body, { childList: true, subtree: true });
 }
 
 function place(anchor) {
@@ -104,7 +119,7 @@ function show(anchor) {
   who = anchor;
   tip.textContent = anchor.dataset.tip;
   place(anchor);
-  if (who === anchor) tip.classList.add('on');
+  if (who === anchor) { tip.classList.add('on'); watchAnchor(); }
 }
 
 /** 1 回だけ文書へリスナーを付ける（Node の DOM スタブなど addEventListener が無いときは何もしない） */
@@ -167,6 +182,8 @@ export function ensureLockTips() {
 
 /** テスト間で状態を初期化する */
 export const _resetLockTipForTest = () => {
+  watch?.disconnect?.();
+  watch = null;
   tip?.remove?.();
   tip = null;
   bound = false;

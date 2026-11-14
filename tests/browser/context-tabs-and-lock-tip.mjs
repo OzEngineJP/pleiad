@@ -109,13 +109,16 @@ try {
         document.getElementById('openContext')?.click();
         if (tid) document.getElementById(`cx-tab-${tid}`)?.click();
       }, tabId ?? null);
-      await page.waitForTimeout(350);
-      const ready = await page.evaluate(() => {
-        const cnt = document.querySelector('#cx-tab-instruction .c');
+      const ready = await page.waitForFunction(() => {
         const tab = document.querySelector('#contextPanel .cx-tabs [role="tab"]');
         const r = tab?.getBoundingClientRect();
-        return document.body.classList.contains('settings') && r && r.height > 0 && cnt && !cnt.hidden && Number(cnt.textContent) > 0;
-      });
+        // 4 つの種類の件数がそろうまで待つ（探索・外部 MCP・Hooks は遅れて届く）
+        const counted = ['instruction', 'skill', 'mcp', 'hooks'].every(id => {
+          const cnt = document.querySelector(`#cx-tab-${id} .c`);
+          return cnt && !cnt.hidden && Number(cnt.textContent) > 0;
+        });
+        return document.body.classList.contains('settings') && r && r.height > 0 && counted;
+      }, { timeout: 1500 }).then(() => true, () => false);
       if (ready) return;
     }
     throw new Error('openSettingsContext timed out');
@@ -126,7 +129,6 @@ try {
       document.getElementById('onboardingDialog')?.close();
     });
     await page.waitForFunction(() => !document.body.classList.contains('settings'), { timeout: 5000 });
-    await page.waitForTimeout(100);
     await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
   };
 
@@ -154,9 +156,9 @@ try {
 
     // スクロールしてもタブ帯が上に残る（sticky）。高さが画面を超えるよう一時的にビューポートを低くして確認する
     await page.setViewportSize({ width: 1280, height: 500 });
-    await page.waitForTimeout(100);
+    await page.waitForFunction(() => innerHeight === 500);
     await page.evaluate(() => { document.querySelector('.settings-content').scrollTop = 240; });
-    await page.waitForTimeout(100);
+    await page.waitForFunction(() => document.querySelector('.settings-content').scrollTop > 100, { timeout: 5000 });
     const stickyPos = await page.evaluate(() => {
       const scEl = document.querySelector('.settings-content');
       const sc = scEl.getBoundingClientRect();
@@ -243,6 +245,26 @@ try {
     await findInput.press('Escape');
     check((await findInput.inputValue()) === '' && !(await page.locator('#cx-panel-skill').innerText()).includes('見つかりません'), '絞り込み欄の Escape で条件を消す');
 
+    // 絞り込み中のまとまりスイッチは、見えている（当たった）行だけを切り替える
+    const userSkillExcludes = async () => {
+      const v = await client.cmd('contextSettings', {});
+      return v.defaults.kinds.skill.value.user.excludePaths.length;
+    };
+    check((await userSkillExcludes()) === 0, '絞り込みの前は Skills の除外が 0 件');
+    await findInput.fill('u-skill-1');
+    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, { timeout: 5000 });
+    const filteredGrp = page.locator('#cx-panel-skill .cx-row.grp');
+    check((await filteredGrp.count()) === 1 && (await filteredGrp.locator('.cx-sw').getAttribute('aria-checked')) === 'true', '絞り込み中のまとまりスイッチは見えている行だけからオンと決まる');
+    await filteredGrp.locator('.cx-sw').click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', { timeout: 10000 });
+    check((await userSkillExcludes()) === 1, '絞り込み中のまとまりスイッチで、当たった 1 件だけが除外に入る（9 件ではない）');
+    await findInput.press('Escape');
+    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), { timeout: 5000 });
+    check(true, '絞り込みを消すとまとまり全体の状態（一部）に戻る');
+    await page.locator('#cx-panel-skill .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
+    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), { timeout: 10000 });
+    check((await userSkillExcludes()) === 0, 'まとまりスイッチで除外が 0 件に戻る');
+
     // 外部 MCP タブ + 鍵の吹き出し（追補 1）
     await page.locator('#cx-tab-mcp').click();
     await page.waitForSelector('#contextPanel [data-kind=mcp] .cx-ag[data-tip]', { state: 'visible', timeout: 15000 });
@@ -266,6 +288,30 @@ try {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 3000 });
     check((await page.locator('.cx-tip.on').innerText()) === lockAttr.tip, '鍵アイコンのホバーで吹き出しに理由が出る');
+    // 描き直し（外部 MCP の一覧は読み込み中 2.5 秒ごとに描き直す）で相手の鍵が外されたら、吹き出しも消える
+    await lockedCell.evaluate(e => {
+      const row = e.closest('.cx-row.ag');
+      const holder = document.createComment('lock-tip-test');
+      row.replaceWith(holder);
+      window.__lockRow = { row, holder };
+    });
+    await page.waitForFunction(() => !document.querySelector('.cx-tip.on'), { timeout: 3000 });
+    check(true, '相手の鍵が描き直しで DOM から外れると、吹き出しは古い位置に残らず消える');
+    await page.evaluate(() => { const { row, holder } = window.__lockRow; holder.replaceWith(row); });
+    // 同じ位置の新しい鍵に置き換わり、マウスがまだ上にあるときは、出し直してよい（出すなら新しい鍵の理由で、鍵の上に出る）
+    await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+    await page.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 3000 });
+    await page.evaluate(() => {
+      const a = document.querySelector('.cx-tip.on') && document.querySelector('[data-tip]:hover');
+      if (a) a.replaceWith(a.cloneNode(true));
+    });
+    await page.waitForFunction(() => {
+      const on = document.querySelector('.cx-tip.on');
+      if (!on) return true;
+      const a = document.querySelector('[data-tip]:hover');
+      return Boolean(a) && a.isConnected && on.textContent === a.dataset.tip;
+    }, { timeout: 3000 });
+    check(true, '鍵が新しい要素に置き換わっても、吹き出しは消えるか、新しい鍵の理由で出し直される');
     await page.mouse.move(10, 10);
     await page.waitForFunction(() => !document.querySelector('.cx-tip.on'), { timeout: 3000 });
     check(true, 'ホバーが外れると吹き出しが閉じる');
@@ -346,11 +392,24 @@ try {
     await scxFind.press('Escape');
     check((await scxFind.inputValue()) === '', '右パネル Skills の Escape で入力が空に戻る');
 
+    // 右パネルでも、絞り込み中のまとまりスイッチは当たった行だけを切り替える
+    await scxFind.fill('r-skill-1');
+    await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, { timeout: 5000 });
+    const scxOnly = page.locator('#scx-panel-skill .cx-row.grp .cx-sw');
+    check((await scxOnly.count()) === 1 && (await scxOnly.getAttribute('aria-checked')) === 'true', '右パネルの絞り込み中のスイッチは見えている行だけからオンと決まる');
+    await scxOnly.click();
+    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', { timeout: 10000 });
+    await scxFind.press('Escape');
+    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), { timeout: 5000 });
+    check(true, '右パネルでも、絞り込み中の一括切替は当たった 1 件だけで、消すと「一部」に戻る');
+    await page.locator('#scx-panel-skill .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
+    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), { timeout: 10000 });
+
     // ==================== 3. 360px 狭幅 & ダークモードの横はみ出し・サイズ検査 ====================
     for (const scheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme: scheme });
       await page.setViewportSize({ width: 360, height: 760 });
-      await page.waitForTimeout(200);
+      await page.waitForFunction(() => innerWidth === 360);
       const rpLayout = await page.evaluate(() => {
         const sc = document.querySelector('.file-preview-content');
         const tabH = Math.min(...[...document.querySelectorAll('.scx .cx-tab')].map(e => e.getBoundingClientRect().height));
@@ -361,7 +420,7 @@ try {
       await openSettingsContext(page, 'instruction');
       for (const tabId of ['instruction', 'skill', 'mcp', 'hooks']) {
         await page.locator(`#cx-tab-${tabId}`).click();
-        await page.waitForTimeout(150);
+        await page.waitForFunction(id => document.getElementById(`cx-tab-${id}`)?.getAttribute('aria-selected') === 'true' && !document.getElementById(`cx-panel-${id}`)?.hidden, tabId, { timeout: 5000 });
         const sLayout = await page.evaluate(() => {
           const sc = document.querySelector('.settings-content');
           const tabH = Math.min(...[...document.querySelectorAll('#contextPanel .cx-tab')].map(e => e.getBoundingClientRect().height));

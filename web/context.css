@@ -548,7 +548,8 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .lk svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 .cx-ag .lk{position:absolute;right:-4px;bottom:-4px;background:var(--surface-paper);color:var(--ink)}
 /* 鍵の吹き出し（追補 1。見た目は web/tools.css の .tc-when-pop に合わせる） */
-.cx-tip{position:fixed;z-index:40;left:0;top:0;width:max-content;max-width:min(340px,calc(100vw - 16px));padding:6px 12px;border-radius:var(--r-s);
+/* z-index は、右パネル（狭い幅で 45）・メニュー（50）・通知（60）より上（ドラッグの影 120 より下）。下だと右パネルの鍵の吹き出しが隠れる */
+.cx-tip{position:fixed;z-index:70;left:0;top:0;width:max-content;max-width:min(340px,calc(100vw - 16px));padding:6px 12px;border-radius:var(--r-s);
   background:var(--surface-paper);box-shadow:0 4px 16px var(--shadow);font-size:var(--fs-xs);line-height:1.6;color:var(--ink);text-wrap:balance;
   pointer-events:none;opacity:0;visibility:hidden;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
 .cx-tip.on{opacity:1;visibility:visible;transition-delay:0s}
