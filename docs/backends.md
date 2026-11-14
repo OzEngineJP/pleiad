@@ -64,7 +64,7 @@ Pleiad を更新しても、共有サーバーで走っている OpenCode のタ
 
 旧会話は元の DB を退避し、OpenCode の公式変換が終わった後に同じ会話 ID で再開する。変換で外部ファイルの添付などが欠けた会話は、欠落を通知して再開を止める。元の記録と退避した DB は残る。
 
-外部 MCP は担当の 2 択ではなく名前ごとの一覧で決める（[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）。OpenCode 自身の MCP は名前ごとに止められ、止める名前は定義を `enabled:false` で渡す。Claude は `deniedMcpServers`、Codex は `-c mcp_servers.<名前>.enabled=false` で止める。Grok と Devin は、止める名前があるターンだけ設定の置き場の写し（本物へのリンク＋Pleiad が書く 1 ファイル）で起動して止める（[ADR 0330](adr/0330-grok-devin-native-mcp-off.md)）。Grok は GROK_HOME の写しの `managed_config.toml` の `[[denied_mcp_servers]]` で、どの設定の定義も止まる。Devin は DEVIN_CONFIG_HOME の写しの `mcp_config.json` の `disabled: true` で、ユーザーの設定の定義（Claude からの取り込みを含む）だけ止まり、作業場所の設定にもある名前は鍵（`reason: 'workspace'`）。Antigravity は止める口が無い（能力の印 `nativeMcpOff`）。Grok は指示・Skills を Pleiad が担当すると `ply_context` を受け取れない。
+外部 MCP は担当の 2 択ではなく名前ごとの一覧で決める（[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）。OpenCode 自身の MCP は名前ごとに止められ、止める名前は定義を `enabled:false` で渡す。Claude は `deniedMcpServers`、Codex は `-c mcp_servers.<名前>.enabled=false` で止める。Grok と Devin は、止める名前があるターンだけ設定の置き場の写し（本物へのリンク＋Pleiad が書く 1 ファイル）で起動して止める（[ADR 0330](adr/0330-grok-devin-native-mcp-off.md)）。Grok は GROK_HOME の写しの `config.toml`（本物の中身＋最上位の `disabled_mcp_servers`）で、どの設定の定義も止まる。Devin は DEVIN_CONFIG_HOME の写しの `mcp_config.json` の `disabled: true` で、ユーザーの設定の定義（Claude からの取り込みを含む）だけ止まり、作業場所の設定にもある名前は鍵（`reason: 'workspace'`）。Antigravity は止める口が無い（能力の印 `nativeMcpOff`）。Grok は指示・Skills を Pleiad が担当すると `ply_context` を受け取れない。
 
 設定 › プラグインで指示・Skills を「Pleiad がそろえる」にした場所では、Pleiad がそろえたものだけを OpenCode に渡し、OpenCode 自身の AGENTS.md・Skills は読ませない。外部 MCP は名前ごとの一覧（上の段落）で決まり、OpenCode 自身の MCP は止めた名前だけ外れる。
 そのため、そのターンだけ専用の OpenCode を起こす（起動の数秒が足される）。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その会話では読まれない。

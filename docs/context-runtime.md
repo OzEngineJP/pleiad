@@ -128,7 +128,7 @@ Claude はネイティブの承認経路を使う。Codex の共通 MCP は Plei
 | MCP（名前ごとの一覧。[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)） | 止める名前を `deniedMcpServers` に（`strictMcpConfig` にしない） | `-c mcp_servers.<名前>.enabled=false`（名前が `[A-Za-z0-9_-]` だけのとき。それ以外は止められない） | 止める名前の定義を `enabled:false` で渡す |
 
 Grok と Devin は、止める名前があるターンだけ、設定の置き場の写しで起動して自身の MCP を名前ごとに止める（[ADR 0330](adr/0330-grok-devin-native-mcp-off.md)、`core/backends/mcp-off-home.mjs`）。写しは本物の置き場のディレクトリ・ファイルへのリンクと、Pleiad が書く 1 ファイルでできていて、利用者の設定ファイルは書き換えない。止める名前が無いターンは今までと同じ起動。
-- Grok（`nativeMcpOff: true`）: `GROK_HOME` を `<data>/grok-mcp-off/<組>/` に替え、`managed_config.toml`（本物の中身＋`[[denied_mcp_servers]] server_name = "<名前>"`）を書く。ユーザーの設定・Claude からの取り込み・作業場所の `.grok/config.toml`・`.mcp.json` のどの定義も止まる。`sessions` は本物に作ってからリンクし、SQLite の DB と `managed_config.lock` は写さない。
+- Grok（`nativeMcpOff: true`）: `GROK_HOME` を `<data>/grok-mcp-off/<組>/` に替え、`config.toml`（本物の中身の先頭に `disabled_mcp_servers = ["<名前>", …]`。本物にもあれば名前を合わせる）を書く。ユーザーの設定・Claude からの取り込み・作業場所の `.grok/config.toml`・`.mcp.json` のどの定義も止まる。`sessions` は本物に作ってからリンクし、SQLite の DB と `managed_config.lock` は写さない。`managed_config.toml`・`requirements.toml` の `denied_mcp_servers` は使わない（ログインした会話では、Grok が起動の直後に管理の設定をサーバーと同期し、写しに書いたファイルを消す）。
 - Devin（`nativeMcpOff: 'user'`）: `DEVIN_CONFIG_HOME` を `<data>/devin/mcp-off/<組>/` に替え、`devin/mcp_config.json`（止める名前に `disabled: true`）を書く。ユーザーの設定の定義と Claude の `~/.claude.json` からの取り込みは止まる。作業場所の `.devin/mcp_config.json`・`.mcp.json` の定義は止まらない（作業場所が勝つ）ので、作業場所にも定義がある名前は一覧で鍵（`reason: 'workspace'`）にし、止める名前にも入れない。
 - 写しは「本物の置き場 × 止める名前の組」ごとに 1 つ。12 個を超えて 1 日以上使っていないものを古い順に消す。写しを作れない（シンボリックリンクの権限が無い）ときは `MCP_OFF_LINK_FAILED`、本物の設定が読めない・別の形のときは `MCP_OFF_UNSUPPORTED` でターンを始めない。
 

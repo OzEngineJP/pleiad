@@ -393,10 +393,12 @@ export default async function (t) {
       mark = calls.length;
       const named = await turn({ cwd, contextRuntime: { prompt: '', mcp: { named: true, suppress: ['gone'] } } });
       const offHome = of('session/new', mark)[0]?.env?.GROK_HOME;
-      const offManaged = offHome ? fs.readFileSync(path.join(offHome, 'managed_config.toml'), 'utf8') : '';
-      t.ok('止める名前があるターンは、写しの GROK_HOME（止める名前を書いた managed_config.toml・本物の設定へのリンク）で起動する',
+      const offConfig = offHome ? fs.readFileSync(path.join(offHome, 'config.toml'), 'utf8') : '';
+      t.ok('止める名前があるターンは、写しの GROK_HOME（本物の中身＋disabled_mcp_servers の config.toml・本物の設定へのリンク）で起動する',
         offHome && offHome !== defaultHome && path.relative(path.join(dataDir, 'grok-mcp-off'), offHome).split(path.sep).length === 1
-        && offManaged.includes('[[denied_mcp_servers]]\nserver_name = "gone"') && fs.readFileSync(path.join(offHome, 'config.toml'), 'utf8').includes('gone')
+        && offConfig.startsWith('disabled_mcp_servers = ["gone"]') && offConfig.includes('[mcp_servers.gone]\ncommand = "gone"\n')
+        && !fs.lstatSync(path.join(offHome, 'config.toml')).isSymbolicLink()
+        && fs.readFileSync(path.join(defaultHome, 'config.toml'), 'utf8') === '[mcp_servers.gone]\ncommand = "gone"\n'
         && fs.lstatSync(path.join(offHome, 'auth.json')).isSymbolicLink() && !fs.existsSync(path.join(defaultHome, 'managed_config.toml')), offHome);
       mark = calls.length;
       await turn({ cwd, sessionId: named.sessionId, contextRuntime: { prompt: '', mcp: { named: true, suppress: ['gone'] } } });

@@ -251,8 +251,8 @@ export const CAPABILITY_STATES = {
     shell: 'host',
     plyShell: true,
     nativeShellOff: true,       // agent-profile の disallowedTools で bash を外す（grok-hooks.mjs）
-    // 止める名前があるターンだけ、GROK_HOME を写しに替え、写しの managed_config.toml の denied_mcp_servers で止める（ADR 0330）。
-    // denied_mcp_servers は利用者の設定・取り込み・作業場所の .grok/config.toml・.mcp.json のどれにも効く
+    // 止める名前があるターンだけ、GROK_HOME を写しに替え、写しの config.toml の disabled_mcp_servers で止める（ADR 0330）。
+    // disabled_mcp_servers は利用者の設定・取り込み・作業場所の .grok/config.toml・.mcp.json のどれにも効く
     nativeMcpOff: true,
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
