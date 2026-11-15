@@ -31,11 +31,27 @@ export default async function (t) {
   const orig = { fetch: globalThis.fetch, parser: globalThis.DOMParser, body: globalThis.document.body };
   installBrowserBits(fetches);
   try {
-    setAgentBrands([
+    const list = [
       { id: 'antigravity', label: 'Antigravity', brand: { logo: 'antigravity.svg', mark: true } },
       { id: 'claude', label: 'Claude', brand: { logo: 'claude.svg', mark: false } },
       { id: 'fake', label: 'Fake', brand: null },
-    ]);
+    ];
+    setAgentBrands([]);
+    assert.equal(setAgentBrands(list), true);
+    assert.equal(setAgentBrands(structuredClone(list)), false);
+    assert.equal(setAgentBrands([...list].reverse()), false, '順番だけなら表示の対応は変わらない');
+    assert.equal(setAgentBrands(list.map(b => ({ ...b, available: false }))), false, '表示に使わない値は比較しない');
+    for (const patch of [
+      { label: 'Changed' }, { shortLabel: 'Short' }, { contextAt: 'conversation' },
+      { brand: { logo: 'different.svg', mark: true } }, { brand: { logo: 'antigravity.svg', mark: false } }, { brand: null },
+    ]) {
+      assert.equal(setAgentBrands(list.map((b, i) => i ? b : { ...b, ...patch })), true, JSON.stringify(patch));
+      assert.equal(setAgentBrands(list), true);
+    }
+    assert.equal(setAgentBrands(list.slice(1)), true, 'エージェントが減った');
+    assert.equal(setAgentBrands(list), true, 'エージェントが増えた');
+    assert.equal(setAgentBrands([...list, null, {}]), false, 'id の無い行は対応に入れない');
+    t.ok('表示の対応が変わった到着だけを区別する', true);
     preloadBrandMarks([{ id: 'antigravity', brand: { logo: 'antigravity.svg', mark: true } }, { id: 'claude', brand: { logo: 'claude.svg', mark: false } }]);
 
     // mark 型は文書内参照。外部参照（ファイル名つき）は出さない
