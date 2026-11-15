@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { stripJsonc } from '../context-scan.mjs';
+import { t } from '../i18n.mjs';
 import { canLinkMcpOffHome, claimMcpOffHome, pruneMcpOffKept, settleMcpOffHomes, syncMcpOffHome } from './mcp-off-home.mjs';
 
 /**
@@ -197,7 +198,7 @@ export async function prepareDevinLaunch({ command, cwd, env = process.env, data
       await pruneTurnConfigs(turnConfigs);
       // 写しには利用者の設定（プロキシの URL などを含みうる）が入る: 利用者だけが読める置き場に 0600 で作り、ターンの終わりに消す。中身はログに出さない
       const content = JSON.stringify(overlayDevinConfig(user, turnConfig));
-      if (Buffer.byteLength(content) > TURN_CONFIG_MAX_BYTES) throw Object.assign(new Error('Devin turn config exceeds 1 MiB'), { code: 'DEVIN_CONFIG_TOO_LARGE' });
+      if (Buffer.byteLength(content) > TURN_CONFIG_MAX_BYTES) throw Object.assign(new Error(t('devin.errors.turnConfigTooLarge')), { code: 'DEVIN_CONFIG_TOO_LARGE' });
       const configPath = path.join(turnConfigs, `${crypto.randomUUID()}.json`);
       await fs.writeFile(configPath, content, { mode: 0o600, flag: 'wx' });
       launch.command.push('--config', configPath);

@@ -758,7 +758,8 @@
       "explicitModelRequired": "No free default model is available. Select a model explicitly",
       "selectionUnavailable": "The advertised Devin CLI choices do not confirm this model setting ({{setting}})",
       "selectionNotAcknowledged": "Devin CLI did not acknowledge the model setting ({{setting}})",
-      "startFailed": "Could not start Devin CLI"
+      "startFailed": "Could not start Devin CLI",
+      "turnConfigTooLarge": "Cannot start this Devin turn: config.json in the Devin settings folder exceeds 1 MiB once the settings Pleiad passes for this conversation (hooks for Devin, the Pleiad shell) are added on top. Remove unused entries to make config.json smaller, then send again. (If this place passes no hooks to Devin and does not use the Pleiad shell, Pleiad starts Devin without adding anything.)"
     },
     "auth": {
       "loginRunning": "Sign-in is already running",

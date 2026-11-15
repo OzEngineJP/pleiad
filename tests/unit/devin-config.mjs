@@ -59,8 +59,9 @@ export default async function (t) {
     assert.equal(devinTurnConfig({ hooksRuntime: { supplied: [] } }), null);
     assert.equal(devinTurnConfig(), null);
     t.ok('empty hook owners keep native imports and the shared holder untouched', true);
-    await assert.rejects(prepareDevinLaunch({ command: ['fake'], cwd, env, dataDir: root, turnConfig: { marker: 'x'.repeat(1024 * 1024) } }), { code: 'DEVIN_CONFIG_TOO_LARGE' });
-    t.ok('oversized turn configs are rejected before writing', true);
+    await assert.rejects(prepareDevinLaunch({ command: ['fake'], cwd, env, dataDir: root, turnConfig: { marker: 'x'.repeat(1024 * 1024) } }),
+      e => e.code === 'DEVIN_CONFIG_TOO_LARGE' && e.message.includes('config.json') && e.message.includes('1 MiB'));
+    t.ok('oversized turn configs are rejected before writing, naming config.json and the 1 MiB limit', true);
     // 先頭に BOM の付いた設定（メモ帳などで保存した UTF-8）も読んで止める（N4）
     const bomHome = path.join(root, 'bom-config'), bomDir = path.join(bomHome, 'devin');
     await fs.mkdir(bomDir, { recursive: true });
