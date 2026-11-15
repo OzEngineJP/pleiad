@@ -15,9 +15,13 @@ const IMPORTS = ['agents_standard', 'cursor', 'windsurf', 'claude', 'copilot', '
 const TURN_CONFIG_MAX_BYTES = 1024 * 1024;
 export const METADATA_CONFIG = Object.freeze({ read_config_from: Object.fromEntries(IMPORTS.map(id => [id, false])), hooks: {}, auto_update: false, notify: 'never' });
 
-export function devinTurnConfig({ hooksRuntime = null, nativeShellOff = false } = {}) {
+export function devinTurnConfig({ hooksRuntime = null, nativeShellOff = false, docs = null } = {}) {
   const config = {};
   const supplied = hooksRuntime?.supplied ?? [];
+  const docFormats = [...new Set([
+    ...(docs?.instruction?.devinDisableFormats ?? []),
+    ...(docs?.skill?.devinDisableFormats ?? []),
+  ])];
   if (supplied.length) {
     config.read_config_from = Object.fromEntries(IMPORTS.map(id => [id, false]));
     const hooks = {};
@@ -29,6 +33,8 @@ export function devinTurnConfig({ hooksRuntime = null, nativeShellOff = false } 
       (hooks[d.event] ??= []).push({ matcher: typeof d.matcher === 'string' ? d.matcher : '', hooks: [handler] });
     }
     config.hooks = hooks;
+  } else if (docFormats.length) {
+    config.read_config_from = Object.fromEntries(docFormats.map(id => [id, false]));
   }
   if (nativeShellOff) config.disabled_tools = ['exec', 'shell_command', 'write_to_process', 'kill_shell', 'get_output'];
   return Object.keys(config).length ? config : null;

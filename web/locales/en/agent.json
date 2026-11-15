@@ -1579,13 +1579,14 @@
       },
       "setPlyInstructions": {
         "summary": "Change one of Pleiad's instructions. It changes how agents behave, so the user must approve.",
-        "action": "save (add or change), toggle, delete (your own items), reset (default items) or order.",
+        "action": "save (add or change), toggle, toggleAgent (per agent), delete (your own items), reset (default items) or order.",
         "id": "The item id (omit on save to add).",
         "name": "The item name (save).",
         "body": "The instruction text (save).",
         "target": "all, parent or child (save).",
         "agents": "Which agents get it (save).",
-        "on": "On or off (toggle).",
+        "agent": "Agent id (toggleAgent).",
+        "on": "On or off (toggle or toggleAgent).",
         "ids": "The item ids in the new order (order)."
       },
       "setMcpAgent": {
@@ -1597,6 +1598,25 @@
       "mcpMatrix": {
         "summary": "Read external MCP servers as a name-by-agent table (where each is used and whether it can be switched, including Claude plugin MCPs and claude.ai connectors).",
         "refresh": "If true, re-read the claude.ai connectors in the background."
+      },
+      "docMatrix": {
+        "summary": "Read instructions or Skills as an item-by-agent table (where each is used and whether it can be switched).",
+        "kind": "instruction or skill.",
+        "place": "A working directory path. null or default for the default (all places)."
+      },
+      "setDocAgent": {
+        "summary": "Turn an instruction or Skill on or off for one agent (from the next turn). Turning it on, including sharing it with another agent, needs the user's approval.",
+        "kind": "instruction or skill.",
+        "key": "Item key (__workspace__, skill:<name>, or file:<path>).",
+        "agent": "Agent id (claude, codex, ...).",
+        "on": "true to use it, false to stop using it."
+      },
+      "setDocRow": {
+        "summary": "Turn one or more instructions or Skills on or off across agents (from the next turn). Turning them on needs the user's approval.",
+        "kind": "instruction or skill.",
+        "key": "Item key (__workspace__, skill:<name>, or file:<path>). Omit when passing keys.",
+        "keys": "Array of item keys to switch together.",
+        "on": "true to turn on, false to turn off."
       },
       "refresh": {
         "summary": "Re-read the instructions and Skills pinned to a conversation from the current files (only when it is not running)."

@@ -933,6 +933,10 @@
       "unknownAgent": "知らないエージェントです: {{agent}}",
       "unknownMcp": "この名前の外部 MCP は一覧にありません: {{name}}",
       "mcpNotPressable": "{{name}} は {{agent}} では切り替えられません",
+      "unknownDocItem": "この項目の指示・Skill は一覧にありません: {{key}}",
+      "docNotPressable": "{{name}} は {{agent}} では切り替えられません",
+      "docRowLocked": "{{name}} はすべてのエージェントが固定されているため切り替えられません",
+      "docTargetRequired": "切り替える項目を指定してください",
       "connectorsUnread": "claude.ai のコネクターの一覧を読めませんでした。少し待ってからもう一度お試しください",
       "kindInvalid": "プラグインの設定の形式が不正です",
       "disabledMcpOnly": "名前で外す設定は外部 MCP だけです",
@@ -1429,6 +1433,12 @@
     "plyInstructions": "Pleiad の指示を変えます。会話ごとにエージェントへ足す指示が変わります。",
     "sessionMcp": "この会話の外部 MCP「{{name}}」を変えます。",
     "mcpAgent": "外部 MCP「{{name}}」を、{{agent}} で使うかどうかを変えます。",
+    "docAgent": "{{kind}}「{{name}}」を、{{agent}} で使うかどうかを変えます。",
+    "docRow": "{{kind}}「{{name}}」を使うかどうかを変えます。",
+    "kind": {
+      "instruction": "指示",
+      "skill": "Skill"
+    },
     "shellRun": "会話「{{title}}」のシェルでコマンドを動かします（{{cwd}}）。",
     "switchBackend": "会話「{{title}}」のエージェントを {{backend}} に切り替えます。承認モードは切り替え先の最初のモードになります。",
     "everywhere": "すべての場所"

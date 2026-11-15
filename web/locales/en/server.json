@@ -935,6 +935,10 @@
       "unknownAgent": "Unknown agent: {{agent}}",
       "unknownMcp": "No external MCP with this name is in the list: {{name}}",
       "mcpNotPressable": "{{name}} cannot be switched for {{agent}}",
+      "unknownDocItem": "No instruction or Skill with this key is in the list: {{key}}",
+      "docNotPressable": "{{name}} cannot be switched for {{agent}}",
+      "docRowLocked": "{{name}} has no switchable agents",
+      "docTargetRequired": "Specify at least one item key to switch.",
       "connectorsUnread": "Couldn't read the list of claude.ai connectors. Wait a moment and try again",
       "kindInvalid": "The plugin settings are malformed.",
       "disabledMcpOnly": "Removing by name is only available for external MCP servers.",
@@ -1436,6 +1440,12 @@
     "plyInstructions": "Changes Pleiad's instructions. The instructions added to agents in each conversation will change.",
     "sessionMcp": "Changes the external MCP \"{{name}}\" in this conversation.",
     "mcpAgent": "Changes whether the external MCP \"{{name}}\" is used by {{agent}}.",
+    "docAgent": "Changes whether {{kind}} \"{{name}}\" is used by {{agent}}.",
+    "docRow": "Changes whether {{kind}} \"{{name}}\" is used.",
+    "kind": {
+      "instruction": "instruction",
+      "skill": "Skill"
+    },
     "shellRun": "Runs a command in the shell of the conversation \"{{title}}\" ({{cwd}}).",
     "switchBackend": "Switches the agent of the conversation \"{{title}}\" to {{backend}}. The approval mode becomes the first mode of that agent.",
     "everywhere": "every place"

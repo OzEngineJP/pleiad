@@ -133,6 +133,9 @@ export const COMMANDS = new Set([
   'setPlyMcpSettings', // { clientMetadataUrl: https URL | null } -> 設定。Client ID Metadata Document の URL（既定は無し）
   'mcpMatrix', // { cwd?, refresh? } -> { agents: [id], rows: [{ key, name, kind, group, transport, registered, origins, plugin, cells: { <agent>: { state, mode } }, on }], locked, connectors: 'reading'|'ready'|'none' } 外部 MCP の一覧（名前 × エージェント。ADR 0327。読むだけ）
   'setMcpAgent', // { name, agent, on, place?, cwd? } -> 外部 MCP を名前 × エージェントで入れる・外す。外すときは確認なし、広げるときは呼ぶ側が先に確かめる（ADR 0327）
+  'docMatrix', // { kind, cwd?, place? } -> 指示・Skills の一覧（項目 × エージェント。ADR 0337。読むだけ）
+  'setDocAgent', // { kind, key, agent, on, place?, cwd? } -> 指示・Skills の 1 項目をエージェントごとに入れる・外す（ADR 0337）
+  'setDocRow', // { kind, key?, keys?, on, place?, cwd? } -> 指示・Skills の 1 項目または束をまとめてオン・オフにする（ADR 0337）
   'setContextSettings', // { place: null|path, kind, value|null } / { place, kind?, roots|null } / { place, add|remove } -> 即時保存し contextSettings と同じ形を返す
   'scanContext', // { cwd, place?: 'default', scope?: 'user' } -> bounded inventory (entries, the home / Git roots and the MCP config file bodies); never launches tools or changes agents
   // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない。一覧の値は伏せ字

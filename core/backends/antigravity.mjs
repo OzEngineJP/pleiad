@@ -705,7 +705,13 @@ export const backend = {
       // Pleiad の指示（addedInstructions / agentRuntime.instructions）は発言の前に毎ターン足すので、それだけではカスタムエージェントを作らない。
       // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
       const botDirs = botFolders?.additionalDirectories ?? [];
-      const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.mcp?.named ? { ...contextRuntime.owners, mcp: 'native' } : contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
+      const baseOwners = contextRuntime?.mcp?.named ? { ...contextRuntime.owners, mcp: 'native' } : contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' };
+      const ownersForAgent = contextRuntime?.docs ? {
+        ...baseOwners,
+        ...(contextRuntime.docs.instruction ? { instruction: !contextRuntime.docs.instruction.untouchedNative && contextRuntime.docs.instruction.suppress.length > 0 ? 'ply' : 'native' } : {}),
+        ...(contextRuntime.docs.skill ? { skill: !contextRuntime.docs.skill.untouchedNative && contextRuntime.docs.skill.suppress.length > 0 ? 'ply' : 'native' } : {}),
+      } : baseOwners;
+      const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: ownersForAgent,
         prompt: agentPrompt, cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
         context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
         agents: agentRuntime ? { url: agentRuntime.url, authorization: agentRuntime.headers?.Authorization } : null,
@@ -1016,7 +1022,10 @@ export const backend = {
         // 探索が失敗してもターンは続けるが、黙って落とさない: 失敗・診断（読めなかったファイル・上限超過）は記録に残し、
         // コンソールにも出す（sessionContext の nativeInjected.error / diagnostics で見える）
         let injected = [], scanError = null, scanDiagnostics = null, scanLimited = false, injectedRan = false;
-        if (session.keys?.custom && contextRuntime?.owners?.instruction !== 'ply') {
+        const skipNativeInject = contextRuntime?.docs?.instruction
+          ? (!contextRuntime.docs.instruction.untouchedNative && contextRuntime.docs.instruction.suppress.length > 0)
+          : contextRuntime?.owners?.instruction === 'ply';
+        if (session.keys?.custom && !skipNativeInject) {
           injectedRan = true;
           const scan = await nativeInstructionEntries(cwd, 'antigravity', scanOptions).catch(e => ({ entries: null, error: String(e?.message ?? e) }));
           injected = scan?.entries ?? [];

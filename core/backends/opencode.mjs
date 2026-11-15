@@ -36,6 +36,17 @@ const instructionOmissions=messages=>{
   const omitted=messages.filter(m=>m.info.type==='synthetic' && m.info.metadata?.instruction?.paths);
   return {omitMessageIDs:omitted.map(m=>m.info.id),omitTexts:omitted.map(m=>m.info.text).filter(Boolean)};
 };
+export function effectiveOpencodeOwners(contextRuntime) {
+  const owners = contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' };
+  const docs = contextRuntime?.docs;
+  if (!docs) return owners;
+  return {
+    ...owners,
+    ...(docs.instruction ? { instruction: !docs.instruction.untouchedNative && docs.instruction.suppress.length > 0 ? 'ply' : 'native' } : {}),
+    ...(docs.skill ? { skill: !docs.skill.untouchedNative && docs.skill.suppress.length > 0 ? 'ply' : 'native' } : {}),
+  };
+}
+
 function instructionContext(srv,account) {
   const cache=new Map();
   return {
@@ -234,7 +245,8 @@ server.subscribe(event => dispatch(event, server));
 async function managedServer(contextRuntime, cwd, account = null) {
   const accountEnv = prepareAccount(account);
   // 名前ごとのモデルでは、OpenCode 自身の MCP は消さず、止める名前だけ enabled: false にする（opencode-context.mjs の stripOwned）
-  const owners = contextRuntime.mcp?.named ? { ...contextRuntime.owners, mcp: 'native', mcpSuppress: contextRuntime.mcp.suppress } : contextRuntime.owners;
+  const baseOwners = effectiveOpencodeOwners(contextRuntime);
+  const owners = contextRuntime.mcp?.named ? { ...baseOwners, mcp: 'native', mcpSuppress: contextRuntime.mcp.suppress } : baseOwners;
   const launch = await managedLaunch({ owners, cwd, dataDir: account?.dir ?? store.dataDir,
     dataHome:path.dirname(opencodeData(account)), ...(account ? {homeSource:path.join(account.dir,'home')} : {}),
     ...(account ? { source: accountEnv.OPENCODE_CONFIG_DIR } : {}) });
@@ -576,7 +588,7 @@ export const backend = {
     const card = adopt?.card ?? null;
     const { permission, permissionKey } = args.suggestionOnly
       ? { permission: [rule('*', 'deny')], permissionKey: 'suggestion-only' }
-      : sessionPermission(mode, { noSkill: args.contextRuntime?.owners?.skill === 'ply', shellRuntime: args.shellRuntime });
+      : sessionPermission(mode, { noSkill: effectiveOpencodeOwners(args.contextRuntime).skill === 'ply', shellRuntime: args.shellRuntime });
     let fresh = false;
     try {
       await srv.ensure();
@@ -623,7 +635,7 @@ export const backend = {
     const servers = opencodeRelay.bind(sessionId, { runtimes, env: variables, account:relayAccount, system:systemText(args),
       resolveChild:async id=>(await srv.request('GET',`/session/${encodeURIComponent(id)}`))?.parentID,
       prepareChild:prepareEnvironment,
-      context:args.contextRuntime?.owners?.instruction==='ply' ? instructions.context : null,
+      context: effectiveOpencodeOwners(args.contextRuntime).instruction === 'ply' ? instructions.context : null,
       hooks: {
         beforeTool: async p => {
           if(p.tool==='opencode_session_move' && modeOf(mode)!=='yolo')return {block:t('opencode.errors.moveRestricted')};
@@ -965,7 +977,7 @@ export const backend = {
     const { sessionId, emit, cwd, trigger = 'manual' } = args;
     const directory = (await directoryOf(sessionId, srv)) ?? cwd;
     const servers=opencodeRelay.bind(sessionId,{account:account?.id ?? 'login',system:systemText(args),runtimes:relayRuntimes(args),
-      context:args.contextRuntime?.owners?.instruction==='ply'?instructionContext(srv,account).context:null,
+      context:effectiveOpencodeOwners(args.contextRuntime).instruction==='ply'?instructionContext(srv,account).context:null,
     });
     await ensureRelay(directory,servers,srv);
     const msgs = await srv.request('GET', `/session/${sessionId}/message`, { directory });

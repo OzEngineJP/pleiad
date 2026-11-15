@@ -91,9 +91,11 @@ import { createContextSettings } from './context-settings.mjs';
 import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
-import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
+import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
-import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
+import { DEFAULT_OWNERS, SOURCES, pathKey, scanDirectory } from './context-settings.mjs';
+import { DOC_KINDS, WORKSPACE_SUMMARY_KEY, createContextAgents, setDocRowRule, toggleDocAgentRule } from './context-agents.mjs';
+import { buildDocMatrix, snapshotBaselineAgents } from './context-doc-matrix.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
 import { noteMcpContact, watchMcpContacts } from './mcp-contact.mjs';
@@ -537,6 +539,7 @@ const IMAGE_MIME = /^image\//;
 // Native sessions opened outside this host may not have sidecar metadata yet.
 const workspaceRoots = new Set([process.cwd()]);
 const contextSettings = createContextSettings(store.dataDir);
+const contextAgents = createContextAgents(store.dataDir);
 // 担当が Pleiad の外部 MCP。登録は Pleiad 自身の設定（エージェントの設定ファイルは書き換えない）、秘密は safeStorage で暗号化して置く
 // 暗号器は 1 つを使い回す（main の口の応答は id で引くので、2 つ作ると同じ id を取り合う）
 const secretCipher = defaultCipher();
@@ -5426,6 +5429,54 @@ const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 
     return probeClaudeConnectors({ deny, token: account?.token ?? null });
   } });
 
+async function syncContextAgentsOnSet(args = {}) {
+  if (!args?.place) return;
+  if (args.remove) await contextAgents.removePlace(args.place);
+  else if (Object.hasOwn(args, 'value') && args.value === null && DOC_KINDS.includes(args.kind)) {
+    await contextAgents.removePlace(args.place, args.kind);
+  }
+}
+
+async function docScanContext({ kind, cwd, place }) {
+  const isDefault = place === null || place === 'default' || (!place && !cwd);
+  const scanDir = isDefault ? os.homedir() : await scanDirectory(place ?? cwd);
+  const scopes = isDefault ? ['user'] : ['user', 'directory'];
+  const effective = await contextSettings.get(scanDir, isDefault ? { level: 'default' } : {});
+  const scanPlan = {
+    user: { kinds: { [kind]: { sources: [...SOURCES], excludePaths: [] } }, roots: effective.plan.user.roots },
+    directory: { kinds: { [kind]: { sources: [...SOURCES], excludePaths: [] } }, roots: effective.plan.directory.roots },
+    ...(kind === 'skill' ? { skill: effective.plan.skill } : {}),
+  };
+  const [scan, rawConfig, docAgents] = await Promise.all([
+    scanContext({ cwd: scanDir, plan: scanPlan }, { plyServers: await plyMcp.scanInput(), scopes }),
+    contextSettings.read(),
+    contextAgents.read(),
+  ]);
+  const matrixCwd = isDefault ? null : scanDir;
+  return { scan, rawConfig, docAgents, scanDir, isDefault, matrixCwd };
+}
+
+function serializeDocRow(row) {
+  const compactCopy = (c) => ({
+    id: c.id, name: c.name, path: c.path, realPath: c.realPath ?? c.path, scope: c.scope,
+    appliesTo: c.appliesTo ?? null, root: c.root ?? null, status: c.status, shadowedBy: c.shadowedBy ?? null,
+    tokens: c.tokens ?? null, bytes: c.bytes ?? null, description: c.description ?? null,
+    paths: c.paths ?? null, rule: c.rule ?? null, references: c.references ?? null,
+    extensions: c.extensions ?? null, origins: c.origins ?? [],
+  });
+  const c = row.chosen;
+  return {
+    key: row.key, kind: row.kind, id: row.id, name: row.name, path: row.path, realPath: row.realPath,
+    scope: row.scope, appliesTo: row.appliesTo, root: c.root ?? null, tokens: c.tokens ?? null,
+    bytes: c.bytes ?? null, description: c.description ?? null, paths: c.paths ?? null,
+    isRule: Boolean(c.rule), references: c.references ?? null, extensions: c.extensions ?? null,
+    status: c.status, conditional: row.conditional, content: c.content ?? '',
+    origins: row.origins, duplicates: row.duplicates.map(compactCopy),
+    rule: row.rule, cells: row.cells, rowLocked: row.rowLocked, rowMixed: row.rowMixed,
+    rowSwitchOn: row.rowSwitchOn, anyOn: row.anyOn,
+  };
+}
+
 // コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
 const opsContext = {
   // deny: 読み取りで起こすとき止める、claude.ai 以外の既知の名前（Claude の設定・Pleiad の登録）。プラグインの名前はここで足す。
@@ -5442,11 +5493,111 @@ const opsContext = {
     } else if (refresh) { void claudeConnectors.refresh({ deny: names }); got = await claudeConnectors.get(); }
     return { plugins, connectors: got.connectors, needsAuth: got.needsAuth ?? [], reading: got.reading, readFailed };
   },
-  view: (cwd) => contextSettings.view(cwd),
+  view: async (cwd) => {
+    const [v, docAgents] = await Promise.all([contextSettings.view(cwd), contextAgents.read()]);
+    const attach = (p, key) => {
+      const entry = key ? docAgents.places[pathKey(key)] : docAgents.defaults;
+      if (!entry) return p;
+      const kinds = { ...p.kinds };
+      let extra = 0;
+      for (const k of DOC_KINDS) {
+        if (!entry[k]) continue;
+        kinds[k] = { ...kinds[k], docOverride: true };
+        if (key && !kinds[k].override) { kinds[k].override = true; extra++; }
+      }
+      return key ? { ...p, kinds, overrides: (p.overrides ?? 0) + extra } : { ...p, kinds };
+    };
+    return { ...v, defaults: attach(v.defaults, null), places: v.places.map((p) => attach(p, p.path)) };
+  },
   set: async (args, actor) => {
-    const view = await contextSettings.set(args ?? {});
+    await syncContextAgentsOnSet(args);
+    const saved = await contextSettings.set(args ?? {});
+    const v = await opsContext.view(args?.cwd ?? (args?.remove ? null : args?.place || null));
     settingsChanged(['context.default'], actor);
-    return view;
+    return { ...v, place: saved.place };
+  },
+  docMatrix: async ({ kind, cwd, place } = {}) => {
+    if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
+    const { scan, rawConfig, docAgents, matrixCwd } = await docScanContext({ kind, cwd, place });
+    const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: rawConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home });
+    return {
+      kind, cwd: scan.cwd, home: scan.home, root: scan.root,
+      touched: matrix.touched, agentsPlace: matrix.agentsPlace, legacyPlace: matrix.legacyPlace,
+      legacyOwner: matrix.legacyOwner, prefer: matrix.legacyRule?.prefer ?? {},
+      agents: matrix.agents, summaryRow: matrix.summaryRow, rows: matrix.rows.map(serializeDocRow),
+      searched: scan.searched, skipped: scan.skipped, diagnostics: scan.diagnostics, limited: scan.limited,
+    };
+  },
+  setDocAgent: async ({ kind, key, agent, on, place, cwd } = {}, actor) => {
+    if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
+    const where = !place || place === 'default' ? null : await scanDirectory(place);
+    const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
+    const nextCfg = await contextAgents.mutate(async (cfg) => {
+      const freshRaw = await contextSettings.read();
+      const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: freshRaw, docAgentsConfig: cfg, cwd: matrixCwd, home: scan.home });
+      if (!matrix.agents.includes(agent)) throw new OpError('INVALID', t('context.settings.unknownAgent', { agent }));
+      const row = key === WORKSPACE_SUMMARY_KEY ? matrix.summaryRow : matrix.byKey.get(key);
+      if (!row) throw new OpError('INVALID', t('context.settings.unknownDocItem', { key }));
+      const cell = row.cells[agent];
+      if (!cell || cell.locked) throw new OpError('INVALID', t('context.settings.docNotPressable', { name: row.name ?? key, agent }));
+      const placeKey = where ? pathKey(where) : null;
+      const holder = placeKey ? (cfg.places[placeKey] ??= {}) : cfg.defaults;
+      if (!holder[kind] || (!matrix.touched && matrix.agentsDepth < matrix.legacyDepth)) {
+        holder[kind] = { agents: snapshotBaselineAgents({ kind, entries: scan.entries, legacyConfig: freshRaw, docAgentsConfig: cfg, place: where, home: scan.home }) };
+      }
+      const entryOrSummary = key === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
+      const curRule = holder[kind].agents[key] ?? row.rule;
+      holder[kind].agents[key] = toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on));
+      return cfg;
+    });
+    if (where) {
+      const cur = await contextSettings.view(where);
+      if (!cur.places.some((p) => p.saved && pathKey(p.path) === pathKey(where))) {
+        await contextSettings.set({ place: where, add: true, cwd: scanDir });
+      }
+    }
+    settingsChanged(['context.default'], actor);
+    return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
+  },
+  setDocRow: async ({ kind, key, keys, on, place, cwd } = {}, actor) => {
+    if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
+    const list = [...new Set([...(Array.isArray(keys) ? keys : []), ...(key ? [key] : [])])];
+    if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
+    const where = !place || place === 'default' ? null : await scanDirectory(place);
+    const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
+    const nextCfg = await contextAgents.mutate(async (cfg) => {
+      const freshRaw = await contextSettings.read();
+      const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: freshRaw, docAgentsConfig: cfg, cwd: matrixCwd, home: scan.home });
+      const targets = list.map((k) => {
+        const row = k === WORKSPACE_SUMMARY_KEY ? matrix.summaryRow : matrix.byKey.get(k);
+        if (!row) throw new OpError('INVALID', t('context.settings.unknownDocItem', { key: k }));
+        return { k, row };
+      });
+      const pressable = targets.filter((tRow) => !tRow.row.rowLocked);
+      if (!pressable.length) {
+        const first = targets[0].row;
+        throw new OpError('INVALID', t('context.settings.docRowLocked', { name: first.name ?? first.key }));
+      }
+      const placeKey = where ? pathKey(where) : null;
+      const holder = placeKey ? (cfg.places[placeKey] ??= {}) : cfg.defaults;
+      if (!holder[kind] || (!matrix.touched && matrix.agentsDepth < matrix.legacyDepth)) {
+        holder[kind] = { agents: snapshotBaselineAgents({ kind, entries: scan.entries, legacyConfig: freshRaw, docAgentsConfig: cfg, place: where, home: scan.home }) };
+      }
+      for (const { k, row } of pressable) {
+        const entryOrSummary = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
+        const curRule = holder[kind].agents[k] ?? row.rule;
+        holder[kind].agents[k] = setDocRowRule(kind, entryOrSummary, curRule, Boolean(on));
+      }
+      return cfg;
+    });
+    if (where) {
+      const cur = await contextSettings.view(where);
+      if (!cur.places.some((p) => p.saved && pathKey(p.path) === pathKey(where))) {
+        await contextSettings.set({ place: where, add: true, cwd: scanDir });
+      }
+    }
+    settingsChanged(['context.default'], actor);
+    return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
   },
   plyInstructions: () => plyInstructionsState(),
   plyInstructionItems: () => plyInstructionsCache,
@@ -6130,7 +6281,7 @@ function opsDeps(lng = currentLocale()) {
       contextRebuild: applyContextRebuild,
       routing: applyRoutingSettings,
       plyInstructions: applyPlyInstructions,
-      context: (args) => contextSettings.set(args),
+      context: async (args) => { await syncContextAgentsOnSet(args); return contextSettings.set(args); },
     },
     // 設定を変えたことを全画面へ配り、会話に束縛された呼び出しならその会話の変更の記録に残す（by: 'agent'・via・bySession）
     recordSetting: async ({ key, before, after, reason, actor }) => {
@@ -7864,7 +8015,9 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 方針（担当・探索の計画）はターンごとに今の設定と作業場所で解き直す。設定の変更は始まっている会話にも次のターンから効く。
   // 「この会話では外す」MCP と開始時刻は会話の方針として引き継ぐ（followSettings）。コンテキストの記録が無いまま送信済みの会話
   // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
-  const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
+  const [rawContextCfg, docAgentsCfg] = await Promise.all([contextSettings.read(), contextAgents.read()]);
+  const effectiveSettings = attachDocPolicy(await contextSettings.get(cwd), rawContextCfg, docAgentsCfg);
+  const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, effectiveSettings,
     { keepNative: !previousContext && baseline.messages.length > 0 });
   // どのエージェントのターンか（外部 MCP を名前ごとに中継・止めるために使う。ADR 0327）。読み込み直しも同じエージェントで解く
   let policy = { ...followed, agent: backend.id };
@@ -7872,11 +8025,20 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
   let plyContext = managed(policy) && acceptsPlyContext(backend, policy);
   let resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
-  // 名前ごとのモデルで、指示・Skills はエージェント任せ、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
-  // （ターンだけの口・中継を起こさない。ADR 0327）
+  // 名前ごとのモデルで、指示・Skills がエージェントそのまま、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
+  // （ターンだけの口・中継を起こさない。ADR 0327 / ADR 0337）
   // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0336）
   let unstopped = [];
-  if (resolvedContext?.mcp.named && policy.owners.instruction !== 'ply' && policy.owners.skill !== 'ply' && !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length) {
+  const mcpUntouched = resolvedContext?.mcp.named
+    ? !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length
+    : policy.owners.mcp !== 'ply' && !resolvedContext?.servers.length;
+  const instUntouched = resolvedContext?.docs?.instruction
+    ? resolvedContext.docs.instruction.untouchedNative
+    : policy.owners.instruction !== 'ply';
+  const skillUntouched = resolvedContext?.docs?.skill
+    ? resolvedContext.docs.skill.untouchedNative
+    : policy.owners.skill !== 'ply';
+  if (resolvedContext && mcpUntouched && instUntouched && skillUntouched) {
     unstopped = unstoppedMcp(resolvedContext.report);
     plyContext = false; resolvedContext = null;
   }
@@ -9899,6 +10061,12 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.mcpMatrix');
         case 'setMcpAgent':
           return await viaOp('context.setMcpAgent');
+        case 'docMatrix':
+          return await viaOp('context.docMatrix');
+        case 'setDocAgent':
+          return await viaOp('context.setDocAgent');
+        case 'setDocRow':
+          return await viaOp('context.setDocRow');
         case 'nativeInstructions':
           return await viaOp('context.nativeInstructions');
         case 'contextFindings':

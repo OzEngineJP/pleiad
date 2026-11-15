@@ -204,6 +204,82 @@ export const contextOps = [
     }),
   }),
   defineOp({
+    id: 'context.docMatrix', summary: 'agent:ops.context.docMatrix.summary', risk: 'read',
+    input: z.object({
+      kind: z.enum(['instruction', 'skill']).describe(D('docMatrix', 'kind')),
+      cwd: cwdArg,
+      place: z.string().max(4096).nullable().optional().describe(D('docMatrix', 'place')),
+      limit, cursor, maxChars,
+    }),
+    output: z.object({ kind: z.enum(['instruction', 'skill']), agents: z.array(z.string()), rows: z.array(loose) }).passthrough(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'doc-matrix'] } },
+    legacyCommand: 'docMatrix',
+    uiHandler: (ctx, { kind, cwd, place }) => exclusive(ctx, () => ctx.context.docMatrix({ kind, cwd, place })),
+    handler: (ctx, { kind, cwd, place, limit: n, cursor: c, maxChars: chars = CONTEXT_CHARS_DEFAULT }) => run(ctx, async () => {
+      const dir = place === undefined ? await cwdFor(ctx, cwd) : cwd;
+      const got = await exclusive(ctx, () => ctx.context.docMatrix({ kind, cwd: dir, place }));
+      const page = pageOf(ctx, got.rows ?? [], { limit: n, cursor: c });
+      return maskTree({
+        ...got,
+        rows: page.items.map((r) => entryRow(r, chars)),
+        total: page.total,
+        next: page.next,
+      });
+    }),
+  }),
+  defineOp({
+    id: 'context.setDocAgent', summary: 'agent:ops.context.setDocAgent.summary', risk: 'write',
+    riskReason: 'Turning an instruction or Skill off for an agent only narrows its context; turning it on or spreading it across agents adds context so it is raised to guarded by riskOf',
+    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    input: z.object({
+      kind: z.enum(['instruction', 'skill']).describe(D('setDocAgent', 'kind')),
+      key: z.string().min(1).max(4096).describe(D('setDocAgent', 'key')),
+      agent: z.string().max(40).describe(D('setDocAgent', 'agent')),
+      on: z.boolean().describe(D('setDocAgent', 'on')),
+      place: z.string().max(4096).nullable().optional().describe(D('setSettings', 'place')),
+      cwd: z.string().max(4096).optional().describe(A('cwd')),
+      reason,
+    }),
+    approvalWords: 'context',
+    // i18n-dynamic: server:opsApproval.kind.
+    confirm: async (_ctx, { kind, key, agent, on }) => ({
+      key: null, before: null,
+      rows: [{ path: `context.${kind}.${key}.${agent}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') }],
+      note: t('opsApproval.docAgent', { kind: t(`opsApproval.kind.${kind}`), name: key, agent }),
+      loosens: on !== false,
+    }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'doc-agent'], positional: ['kind', 'key', 'agent'] } },
+    legacyCommand: 'setDocAgent',
+    handler: (ctx, { kind, key, agent, on, place, cwd }) => run(ctx, () => ctx.context.setDocAgent({ kind, key, agent, on, place, cwd }, ctx.actor)),
+  }),
+  defineOp({
+    id: 'context.setDocRow', summary: 'agent:ops.context.setDocRow.summary', risk: 'write',
+    riskReason: 'Turning instruction or Skill rows off narrows context; turning them on adds context so it is raised to guarded by riskOf',
+    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    input: z.object({
+      kind: z.enum(['instruction', 'skill']).describe(D('setDocRow', 'kind')),
+      key: z.string().min(1).max(4096).optional().describe(D('setDocRow', 'key')),
+      keys: z.array(z.string().min(1).max(4096)).max(1000).optional().describe(D('setDocRow', 'keys')),
+      on: z.boolean().describe(D('setDocRow', 'on')),
+      place: z.string().max(4096).nullable().optional().describe(D('setSettings', 'place')),
+      cwd: z.string().max(4096).optional().describe(A('cwd')),
+      reason,
+    }),
+    approvalWords: 'context',
+    confirm: async (_ctx, { kind, key, keys, on }) => {
+      const label = key ?? (keys?.length ? `${keys[0]}${keys.length > 1 ? ` (+${keys.length - 1})` : ''}` : '');
+      return {
+        key: null, before: null,
+        rows: [{ path: `context.${kind}.${label}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') }],
+        note: t('opsApproval.docRow', { kind: t(`opsApproval.kind.${kind}`), name: label }),
+        loosens: on !== false,
+      };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'doc-row'], positional: ['kind'] } },
+    legacyCommand: 'setDocRow',
+    handler: (ctx, { kind, key, keys, on, place, cwd }) => run(ctx, () => ctx.context.setDocRow({ kind, key, keys, on, place, cwd }, ctx.actor)),
+  }),
+  defineOp({
     id: 'context.plyInstructions', summary: 'agent:ops.context.plyInstructions.summary', risk: 'read',
     input: z.object({}),
     output: z.object({ items: z.array(loose) }).passthrough(),
@@ -214,12 +290,13 @@ export const contextOps = [
   defineOp({
     id: 'context.setPlyInstructions', summary: 'agent:ops.context.setPlyInstructions.summary', risk: 'guarded',
     input: z.object({
-      action: z.enum(['save', 'toggle', 'delete', 'reset', 'order']).describe(D('setPlyInstructions', 'action')),
+      action: z.enum(['save', 'toggle', 'toggleAgent', 'delete', 'reset', 'order']).describe(D('setPlyInstructions', 'action')),
       id: z.string().max(100).optional().describe(D('setPlyInstructions', 'id')),
       name: z.string().max(200).optional().describe(D('setPlyInstructions', 'name')),
       body: z.string().max(20000).optional().describe(D('setPlyInstructions', 'body')),
       target: z.string().max(20).optional().describe(D('setPlyInstructions', 'target')),
       agents: z.array(z.string().max(40)).max(10).optional().describe(D('setPlyInstructions', 'agents')),
+      agent: z.string().max(40).optional().describe(D('setPlyInstructions', 'agent')),
       on: z.boolean().optional().describe(D('setPlyInstructions', 'on')),
       ids: z.array(z.string().max(100)).max(100).optional().describe(D('setPlyInstructions', 'ids')),
       reason,
@@ -229,7 +306,7 @@ export const contextOps = [
       const before = ctx.context.plyInstructionItems();
       let after = null;
       try { after = ctx.context.previewPlyInstructions(action); } catch { after = null; }
-      const pick = (list) => (list ? Object.fromEntries(list.map((i) => [i.id, { on: i.on !== false, ...(i.name ? { name: i.name } : {}), ...(i.body ? { body: i.body } : {}), ...(i.target ? { target: i.target } : {}) }])) : null);
+      const pick = (list) => (list ? Object.fromEntries(list.map((i) => [i.id, { on: i.on !== false, ...(i.name ? { name: i.name } : {}), ...(i.body ? { body: i.body } : {}), ...(i.target ? { target: i.target } : {}), ...(i.agents ? { agents: i.agents } : {}) }])) : null);
       return { key: null, before, rows: diffRows('plyInstructions', pick(before), pick(after)), note: t('opsApproval.plyInstructions'), loosens: true };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'set-instructions'] } },

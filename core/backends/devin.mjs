@@ -343,7 +343,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
             // 名前ごとの外部 MCP で Devin 自身の MCP を止める名前があるターンだけ、設定の置き場を写しに替える（devin-config.mjs の prepareDevinMcpOff。ADR 0336）
             const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv },
-              turnConfig: devinTurnConfig({ hooksRuntime: args.hooksRuntime, nativeShellOff: Boolean(args.shellRuntime?.nativeOff) }),
+              turnConfig: devinTurnConfig({ hooksRuntime: args.hooksRuntime, nativeShellOff: Boolean(args.shellRuntime?.nativeOff), docs: args.contextRuntime?.docs ?? null }),
               mcpOff: args.contextRuntime?.mcp?.named ? args.contextRuntime.mcp.suppress ?? [] : [] });
             // 写しのリンクを作れず、止める名前を止められなかった: 右パネルの行に「止められなかった」の印を付ける（ターンは今までと同じ起動で続ける）
             if (launch.mcpOffFailed?.length) await Promise.resolve(args.contextRuntime?.markUnstopped?.(launch.mcpOffFailed)).catch(() => {});
