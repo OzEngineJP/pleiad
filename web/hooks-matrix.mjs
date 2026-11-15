@@ -116,8 +116,9 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
   }
   const reload = () => load();
 
+  /** タブの件数: どれかのエージェントで実行する Hook の数（作業場所のまとめの行は Hook ではないので数えない）。読めないときは隠す */
   function count() {
-    onCount?.(Array.isArray(grid?.rows) && !grid.unreadable ? grid.rows.filter(r => r.on).length : null);
+    onCount?.(Array.isArray(grid?.rows) && !grid.unreadable ? grid.rows.filter(r => r.on && r.kind !== 'ws').length : null);
   }
 
   /** 押した操作を送る。押す前の表を取っておき、失敗したら戻して描き直し、理由は work が下の固定の位置に出す */

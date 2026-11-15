@@ -539,6 +539,10 @@ const SUITES = [
   './unit/context-panel-tabs.mjs',
   // 同じ画面を本物の Chrome で（B1_BROWSER_TEST=1。tests/browser/context-tabs-and-lock-tip.mjs）
   './unit/context-tabs-browser.mjs',
+  // 設定 › プラグイン › Hooks の Hook × エージェントの表と右の欄の「この場所で使うか」を本物の Chrome で（B1_BROWSER_TEST=1。tests/browser/hooks-matrix.mjs。ADR 0338）
+  './unit/hooks-matrix-browser.mjs',
+  // 同じ表の、ブラウザーで作れない形（管理者の Hook・Grok Build の設定の Hook）と鍵の文・確認の注意・保存の失敗で戻す（DOM の代役）
+  './unit/hooks-matrix-ui.mjs',
   // Pleiad の指示の並べ替え: 取っ手のキーとメニュー・続けて動かす・フォーカス・読み上げ（タッチで引く操作は tests/browser/ply-instructions-reorder.mjs）
   './unit/ply-instructions-order.mjs',
   // 指示の量（ADR 0056）: 自分で書いた分と Pleiad が足した分・目安・エージェント任せの見積もり

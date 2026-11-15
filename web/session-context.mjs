@@ -785,7 +785,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       return new Set(rows.map(e => e.name)).size;
     };
     // この場所で使う Hook（here のある行のうち、使う・どれかのエージェントで実行するもの）
-    const hooksCount = !hView?.rows || hView.unreadable ? null : hView.rows.filter(r => r.here?.use && r.on).length;
+    const hooksCount = !hView?.rows || hView.unreadable ? null : hView.rows.filter(r => r.here?.use && r.on && r.kind !== 'ws').length;
     return {
       instruction: docCount('instruction'),
       skill: docCount('skill'),
@@ -1318,13 +1318,13 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       k.append(fix);
       return k;
     }
-    const rows = (view.rows ?? []).filter(r => r.here);
+    const rows = (view.rows ?? []).filter(r => r.here && r.kind !== 'ws');
     if (!rows.length) { k.append(el('p', 'cx-sub', t('sessionContext.place.none'))); return k; }
     const reload = () => { showToast(); loadHooks(info(), true); return loadHooksPlace(); };
     for (const r of rows) {
       const use = r.here.use;
       const runs = Object.entries(r.cells ?? {}).filter(([, c]) => c.state === 'on').map(([a]) => agentShortLabel(a, agentLabel(a))).join('・');
-      const sub = [r.group === 'ply' ? 'Pleiad' : r.kind === 'ws' ? null : agentLabel(r.agent), hookRowSub(r),
+      const sub = [r.group === 'ply' ? 'Pleiad' : agentLabel(r.agent), hookRowSub(r),
         !use ? t('sessionContext.place.offHere') : !r.on ? t('sessionContext.hooks.offAll') : t('sessionContext.hooks.runsOn', { agents: runs })].filter(Boolean).join(' · ');
       const name = hookRowName(r);
       const row = switchRow({ id: r.key, name, path: '' }, use, sub, true,

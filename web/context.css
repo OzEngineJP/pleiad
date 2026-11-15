@@ -480,6 +480,8 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .scx-state .run svg{animation-duration:1.2s}
 /* ---- 外部 MCP の一覧（名前 × エージェント。ADR 0327） ---- */
 .cx-ags{flex:none;display:grid;grid-template-columns:repeat(6,28px);gap:4px}
+/* 押せるマスが無い行（.empty）も同じ幅にして、行のスイッチの列をそろえる（style.css の汎用の .empty の余白を打ち消す） */
+.cx-ags.empty{padding:0}
 .cx-ag{position:relative;display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:var(--r-s);background:transparent;cursor:pointer;
   transition:background-color var(--dur-fast) var(--ease-out)}
 .cx-ag .mk{display:block;width:16px;height:16px;fill:currentColor;color:var(--ink)}

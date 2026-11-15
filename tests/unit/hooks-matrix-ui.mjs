@@ -1,0 +1,230 @@
+// 設定 › プラグイン › Hooks の表（web/hooks-matrix.mjs · ADR 0338）を DOM の代役で動かす。
+// 実ブラウザーでは作れない形（管理者の Hook・Grok Build の設定の Hook）と、鍵の文・行が切れたときのセル・
+// ほかのエージェントへ広げる前の確認（注意の一覧）・保存に失敗したときの戻しを確かめる。
+// 実ブラウザーの通しは tests/browser/hooks-matrix.mjs。
+import assert from 'node:assert/strict';
+import { N } from '../lib/dom-stub.mjs';
+import { setLanguage, t as tr } from '../../web/i18n.mjs';
+import { setAgentBrands } from '../../web/agent-brands.mjs';
+import { AGENTS, agentPresentation } from '../../core/backends/agents.mjs';
+import { savedText } from '../../web/context-matrix.mjs';
+import { createHooksMatrix, hookCellView, hookTip } from '../../web/hooks-matrix.mjs';
+
+export const name = 'hooks-matrix-ui';
+export const title = '設定 › プラグイン › Hooks の表: 鍵の文・管理者の行・確認と注意・保存の失敗で戻す';
+
+// ---- 属性と子孫の選択子が使える最小の DOM（context-panel-tabs と同じ考え方） ----
+function parse(sel) {
+  const attrs = [], classes = [];
+  let id = null;
+  let rest = sel.trim().replace(/\[([^\]=]+)(?:="([^"]*)")?\]/g, (_, k, v) => { attrs.push([k.trim(), v ?? null]); return ''; });
+  rest = rest.replace(/#([^\s.#]+)/g, (_, v) => { id = v; return ''; });
+  rest = rest.replace(/\.([^\s.#]+)/g, (_, v) => { classes.push(v); return ''; });
+  return { tag: rest.trim() ? rest.trim().toUpperCase() : null, id, classes, attrs };
+}
+function one(node, sel) {
+  if (!(node instanceof N)) return false;
+  const { tag, id, classes, attrs } = parse(sel);
+  if (tag && node.tagName !== tag) return false;
+  if (id && node.id !== id) return false;
+  const cls = node._classes();
+  if (classes.some(c => !cls.includes(c))) return false;
+  return attrs.every(([k, v]) => node.hasAttribute(k) && (v === null || String(node.getAttribute(k)) === v));
+}
+class D extends N {
+  get disabled() { return this.hasAttribute('disabled'); }
+  set disabled(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); }
+  set type(v) { this.attrs.type = v; }
+  focus() { globalThis.document.activeElement = this; }
+  matches(sel) { return sel.split(',').some(p => one(this, p)); }
+  closest(sel) { for (let x = this; x instanceof N; x = x.parent) if (x.matches(sel)) return x; return null; }
+  querySelectorAll(sel) {
+    const parts = sel.split(',').map(s => s.trim()).filter(Boolean);
+    const chain = (n, p) => {
+      const toks = p.split(/\s+/);
+      if (!one(n, toks.at(-1))) return false;
+      let cur = n.parent;
+      for (let i = toks.length - 2; i >= 0; i--) {
+        while (cur && !one(cur, toks[i])) cur = cur.parent;
+        if (!cur) return false;
+        cur = cur.parent;
+      }
+      return true;
+    };
+    const out = [];
+    const walk = n => { for (const c of n.children) if (c instanceof N) { if (parts.some(p => chain(c, p))) out.push(c); walk(c); } };
+    walk(this);
+    return out;
+  }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
+}
+function installDom() {
+  const saved = { document: globalThis.document, CSS: globalThis.CSS };
+  const body = new D('body');
+  globalThis.document = {
+    body, activeElement: body,
+    createElement: tag => new D(tag),
+    createElementNS: (_ns, tag) => new D(tag),
+    createTextNode: text => { const n = new D('span'); n.textContent = text; return n; },
+    addEventListener() {},
+  };
+  globalThis.CSS = { escape: s => String(s) };
+  return { body, restore() { globalThis.document = saved.document; globalThis.CSS = saved.CSS; } };
+}
+const settle = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
+
+const AG = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok'];
+const none = () => ({ mode: 'none', state: 'off' });
+/** 登録（オン・Claude で実行・Codex へは初めて広げる＝確認と注意 1 件）、管理者の Hook、Grok Build の設定の Hook、作業場所のまとめ */
+function makeGrid() {
+  const cells = (o) => Object.fromEntries(AG.map(a => [a, o[a] ?? none()]));
+  return {
+    agents: AG, adopted: true, revision: 'r1', orphans: [],
+    rows: [
+      { key: 'h-1', kind: 'reg', group: 'ply', agent: 'claude', name: '保存の後に整える', event: 'PostToolUse', matcher: 'Edit', command: 'node fmt.js', on: true, switchable: true,
+        cells: cells({ claude: { mode: 'toggle', state: 'on' }, codex: { mode: 'toggle', state: 'off', needsConfirm: true, warnings: [{ code: 'toolMeaning' }, { code: 'postBlock' }] } }) },
+      { key: 'hk-admin', kind: 'native', group: 'admin', agent: 'claude', event: 'Stop', matcher: null, command: 'audit.cmd', on: true, switchable: false,
+        switchLock: { reason: 'managed', detail: 'managed', agent: 'claude' },
+        cells: cells({ claude: { mode: 'locked', state: 'on', reason: 'managed', detail: 'managed' } }) },
+      { key: 'hk-grok', kind: 'native', group: 'own', agent: 'grok', event: 'SessionStart', matcher: null, command: 'echo grok-own', on: true, switchable: false,
+        switchLock: { reason: 'own', detail: 'grokOwn', agent: 'grok' },
+        cells: cells({ grok: { mode: 'locked', state: 'on', reason: 'own', detail: 'grokOwn' }, claude: { mode: 'locked', state: 'off', reason: 'relay', detail: 'grokOwn' } }) },
+      { key: 'ws:hooks', kind: 'ws', group: 'place', agent: null, on: true, switchable: false, switchLock: { reason: 'place', detail: 'followsWorkspace' },
+        cells: cells({ claude: { mode: 'locked', state: 'on', reason: 'place', detail: 'followsWorkspace' } }) },
+    ],
+  };
+}
+
+export default async function (t) {
+  const dom = installDom();
+  try {
+    await setLanguage('ja');
+    setAgentBrands(Object.keys(AGENTS).map(id => ({ id, ...agentPresentation(id) })));
+
+    // ---- 1. 鍵の文（細目ごと） ----
+    assert.equal(hookTip({ reason: 'own', detail: 'devinImports', agent: 'devin' }), tr('hooks.matrix.tip.devinImports', { agent: 'Devin' }));
+    assert.match(hookTip({ reason: 'own', detail: 'devinImports', agent: 'devin' }), /^Devin が Claude Code の設定から取り込む/);
+    assert.equal(hookTip({ reason: 'relay', detail: 'grokOwn', agent: 'claude' }), tr('hooks.matrix.tip.grokOwnOther', { agent: 'Claude' }));
+    assert.equal(hookTip({ reason: 'own', detail: 'grokOwn', agent: 'grok' }), tr('hooks.matrix.tip.grokOwn', { agent: 'Grok' }));
+    assert.equal(hookTip({ reason: 'managed', detail: 'managed', agent: 'claude' }), tr('hooks.matrix.tip.managed', { agent: 'Claude' }));
+    // 細目に文が無い relay は「{エージェント} には渡せません。{理由}」、どれでもなければ共通の文に任せる（null）
+    const relay = hookTip({ reason: 'relay', detail: 'noSuchDetail', agent: 'opencode', reasons: [{ code: 'noSuchDetail' }] });
+    assert.ok(relay.startsWith('OpenCode には渡せません。'), relay);
+    assert.equal(hookTip({ reason: 'own', detail: 'noSuchDetail', agent: 'codex' }), null);
+    assert.equal(hookTip({}), null);
+    t.ok('鍵の文は細目（detail）ごと。Grok の設定の Hook はほかのエージェントでは別の文、文の無い relay は理由をつなぐ', true);
+
+    // ---- 2. セルの見え方 ----
+    const g0 = makeGrid();
+    const [reg, admin, grokRow] = g0.rows;
+    assert.deepEqual(AG.map(a => hookCellView(admin, a).state), ['lockon', 'na', 'na', 'na', 'na', 'na'], '管理者の Hook: 自分のセルは鍵つきのオン、ほかは短い線');
+    assert.equal(hookCellView(admin, 'claude').cell.tip, tr('hooks.matrix.tip.managed', { agent: 'Claude' }));
+    assert.equal(hookCellView(grokRow, 'claude').state, 'lockoff');
+    assert.equal(hookCellView(grokRow, 'claude').cell.tip, tr('hooks.matrix.tip.grokOwnOther', { agent: 'Claude' }));
+    assert.deepEqual(['claude', 'codex'].map(a => hookCellView(reg, a).state), ['on', 'off']);
+    const offReg = { ...reg, on: false, cells: { ...reg.cells, claude: { mode: 'toggle', state: 'off' } } };
+    assert.equal(hookCellView(offReg, 'claude').state, 'hide', '行が切れていれば押せるセルは隠す');
+    assert.equal(hookCellView({ ...grokRow, on: false }, 'claude').state, 'hide', '行が切れていれば鍵つきのオフも隠す');
+    assert.equal(hookCellView({ ...admin, on: false }, 'claude').state, 'lockon', '鍵つきのオン（止められない）は行が切れていても見せる');
+    t.ok('セル: 管理者の行は自分だけ鍵つき・ほかは線、Grok の設定の Hook は鍵の文つき、行が切れたら押せるセルを隠す', true);
+
+    // ---- 3. 表を描く（DOM） ----
+    const calls = [], savedMsgs = [], failures = [], counts = [];
+    let failNext = false;
+    const cmd = async (op, args) => {
+      calls.push([op, args]);
+      if (op === 'hooksMatrix') return makeGrid();
+      if (op === 'plyHooks' || op === 'scanHooks') return null;
+      if (op === 'setHookAgent' || op === 'setHookRow') {
+        if (failNext) { failNext = false; throw new Error('書き込めませんでした（試験）'); }
+        return { ok: true };
+      }
+      return null;
+    };
+    const card = createHooksMatrix({
+      cmd, work: fn => fn().catch(e => failures.push(e.message)),
+      saved: s => savedMsgs.push(s), failed: s => failures.push(s), opened: new Set(), onCount: n => counts.push(n),
+    });
+    dom.body.append(card.root);
+    await card.load();
+    const row = key => card.root.querySelector(`.cx-row[data-key="${key}"]`);
+    const chip = (key, a) => row(key)?.querySelector(`.cx-ag[data-agent="${a}"]`);
+    const sw = key => row(key)?.querySelector('.cx-sw');
+
+    assert.equal(counts.at(-1), 3, '件数は実行する行の数（作業場所のまとめの行は数えない）');
+    assert.equal(card.root.querySelectorAll('.cx-row').length, 4);
+    assert.equal(card.root.querySelectorAll('.cx-seg').length, 0, '担当の 2 択は無い');
+
+    // 管理者の行: 行のスイッチは鍵、セルは自分だけ鍵つき、ほかは短い線
+    assert.equal(sw('hk-admin').getAttribute('aria-disabled'), 'true');
+    assert.equal(sw('hk-admin').dataset.tip, tr('hooks.matrix.tip.managed', { agent: 'Claude' }));
+    assert.equal(sw('hk-admin').onclick, undefined, '鍵の行のスイッチは押しても何もしない');
+    assert.equal(chip('hk-admin', 'claude').getAttribute('aria-disabled'), 'true');
+    assert.equal(row('hk-admin').querySelectorAll('span.cx-ag.na').length, 5);
+    assert.ok(row('hk-admin').querySelector('.cbadge'), '管理者の印');
+    // Grok の設定の Hook: Grok は止められない、Claude には渡せない（どちらも文つき）
+    assert.equal(sw('hk-grok').dataset.tip, tr('hooks.matrix.tip.grokOwn', { agent: 'Grok' }));
+    assert.equal(chip('hk-grok', 'claude').dataset.tip, tr('hooks.matrix.tip.grokOwnOther', { agent: 'Claude' }));
+    assert.match(chip('hk-grok', 'claude').getAttribute('aria-label'), /Claude で echo grok-own を実行する/);
+    // 押せるセルの読み上げ名
+    assert.equal(chip('h-1', 'codex').getAttribute('aria-label'), 'Codex で node fmt.js を実行する');
+    t.ok('管理者の行は行のスイッチもセルも鍵（ほかは線）、Grok の設定の Hook の鍵の文、読み上げ名「{エージェント} で {名前} を実行する」', true);
+
+    // ---- 4. ほかのエージェントへ初めて広げる: その場で確かめ、注意を並べる ----
+    chip('h-1', 'codex').click();
+    let ask = card.root.querySelector('.cx-ask');
+    assert.ok(ask, '確認が出る');
+    assert.equal(ask.querySelector('.q').textContent, 'Pleiad の設定の Hook を、Codex でも実行します');
+    assert.deepEqual(ask.querySelectorAll('.hk-warns li').map(li => li.textContent), [tr('hooks.warn.toolMeaning'), tr('hooks.warn.postBlock')]);
+    assert.ok(!ask.querySelectorAll('.hk-warns li').some(li => /hooks\.warn\./.test(li.textContent)), '注意の文は鍵のままにしない');
+    assert.equal(ask.parent.children[ask.parent.children.indexOf(ask) - 1], row('h-1'), '押した行のすぐ下');
+    assert.equal(document.activeElement, ask.querySelector('.btn-primary'), '「実行する」へ移る');
+    assert.equal(calls.filter(c => c[0] === 'setHookAgent').length, 0, '確かめる前は保存しない');
+    ask.querySelectorAll('button')[0].click();
+    assert.equal(card.root.querySelector('.cx-ask'), null, 'やめると消える');
+    assert.equal(calls.filter(c => c[0] === 'setHookAgent').length, 0, 'やめても保存しない');
+    t.ok('初めて広げるときはその場で 1 回確かめ、渡すときの注意を並べる。やめれば何も保存しない', true);
+
+    // ---- 5. 保存に失敗したら元に戻し、理由を出す ----
+    chip('h-1', 'codex').click();
+    failNext = true;
+    card.root.querySelector('.cx-ask .btn-primary').click();
+    assert.equal(chip('h-1', 'codex').getAttribute('aria-pressed'), 'true', '押した瞬間に見た目を変える');
+    await settle();
+    assert.deepEqual(calls.filter(c => c[0] === 'setHookAgent').map(c => [c[1].key, c[1].agent, c[1].on, c[1].revision]), [['h-1', 'codex', true, 'r1']]);
+    assert.equal(chip('h-1', 'codex').getAttribute('aria-pressed'), 'false', '失敗したら元に戻す');
+    assert.deepEqual(failures, ['書き込めませんでした（試験）'], '理由は work の失敗の道（下の固定の位置）へ');
+    assert.equal(savedMsgs.length, 0, '失敗は「保存しました」にしない');
+    t.ok('保存に失敗したら見た目を元に戻し、理由は固定の位置（work）へ渡す', true);
+
+    // 一度確かめた組み合わせは聞き直さない（その場で 1 回だけ）。今度は保存できる
+    chip('h-1', 'codex').click();
+    assert.equal(card.root.querySelector('.cx-ask'), null, '確かめ済みは聞き直さない');
+    await settle();
+    assert.equal(calls.filter(c => c[0] === 'setHookAgent').length, 2);
+    assert.deepEqual(savedMsgs, [savedText(false)], '保存の知らせは段 2 と同じ決まり');
+
+    // 行のスイッチ: 1 回の書き込み（setHookRow）
+    sw('h-1').click();
+    await settle();
+    assert.deepEqual(calls.filter(c => c[0] === 'setHookRow').map(c => [c[1].key, c[1].on]), [['h-1', false]]);
+    assert.equal(calls.filter(c => c[0] === 'setHookAgent').length, 2, '行のスイッチはセルごとに書かない');
+    t.ok('確かめ済みの組み合わせは聞き直さず、行のスイッチは 1 回の書き込み', true);
+
+    // ---- 6. 読めない一覧: 0 件と取り違えず、理由と直す操作を出す ----
+    const broken = createHooksMatrix({
+      cmd: async op => (op === 'hooksMatrix' ? { agents: AG, unreadable: true, error: 'hooks-agents.json を読めません（試験）', rows: [] } : null),
+      work: fn => fn(), saved: () => {}, failed: () => {}, opened: new Set(), onCount: n => counts.push(n),
+    });
+    await broken.load();
+    const note = broken.root.querySelector('.hk-broken');
+    assert.ok(note && note.getAttribute('role') === 'alert');
+    assert.match(note.textContent, /hooks-agents\.json を読めません/);
+    assert.equal(note.querySelector('button').textContent, tr('context.repairDocAgents'));
+    assert.equal(counts.at(-1), null, '読めないときは件数を隠す');
+    assert.equal(broken.root.querySelectorAll('.cx-row').length, 0);
+    t.ok('読めない hooks-agents.json は理由と「直す」を出し、件数を隠す', true);
+  } finally {
+    dom.restore();
+  }
+}
