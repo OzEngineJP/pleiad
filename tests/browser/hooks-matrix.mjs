@@ -135,6 +135,98 @@ try {
     return { code: r.status, err: r.stderr };
   };
 
+  // サーバーの hooks.list の応答を使い、既存の登録と、追加した直後の登録を端まで操作する。
+  const registeredCrud = async (page, phase, viaAdd, toggle = false) => {
+    const name = `登録の操作 ${phase} ${viaAdd ? '追加' : '既存'}`;
+    const original = `echo reg-${phase}-${viaAdd ? 'new' : 'old'}`;
+    const edited = `${original}-edited`;
+    const sheet = page.locator('dialog.hk-ply-sheet');
+    const saveSheet = async () => {
+      await sheet.getByRole('button', { name: T('hooks.unify.sheetReview'), exact: true }).click();
+      await sheet.locator('.hk-confirm .hk-check input').check();
+      await sheet.getByRole('button', { name: T('hooks.unify.save'), exact: true }).click();
+      await sheet.waitFor({ state: 'detached' });
+    };
+    let key;
+    if (viaAdd) {
+      await page.locator('#cx-panel-hooks').getByRole('button', { name: T('hooks.add'), exact: true }).click();
+      await sheet.waitFor({ state: 'visible' });
+      await sheet.getByLabel(T('hooks.sheet.name'), { exact: true }).fill(name);
+      await sheet.locator('select').nth(1).selectOption('Stop');
+      await sheet.getByLabel(T('hooks.sheet.command'), { exact: true }).fill(original);
+      await saveSheet();
+      key = (await client.cmd('plyHooks')).hooks.find(h => h.name === name)?.id;
+    } else {
+      key = (await client.cmd('savePlyHook', { value: { name, agent: 'claude', event: 'Stop', matcher: '', command: original, targets: ['claude', 'codex'] } })).id;
+      await page.reload({ waitUntil: 'load' });
+      await openHooks(page);
+    }
+    const row = rowOf(page, key);
+    await row.waitFor({ state: 'visible' });
+    await row.locator('.cx-open').click();
+    const detail = page.locator('#cx-panel-hooks .hk-details').filter({ has: page.locator('.hk-peek', { hasText: original }) });
+    const peek = detail.locator('.hk-peek');
+    await peek.waitFor({ state: 'visible', timeout: 5000 });
+    check((await peek.innerText()).includes(original), `${phase}・${viaAdd ? '追加直後' : '既存'}: 登録の定義の箱が出る`);
+    await peek.getByRole('button', { name: T('hooks.edit'), exact: true }).click();
+    await sheet.waitFor({ state: 'visible' });
+    check(await sheet.getByLabel(T('hooks.sheet.command'), { exact: true }).inputValue() === original, `${phase}: 編集シートに元のコマンドが入る`);
+    await sheet.getByLabel(T('hooks.sheet.command'), { exact: true }).fill(edited);
+    await saveSheet();
+    await page.waitForFunction(({ key, edited }) => document.querySelector(`#cx-panel-hooks .cx-row[data-key="${key}"] .nm`)?.textContent === edited, { key, edited });
+    check((await client.cmd('readPlyHook', { id: key })).command === edited, `${phase}: 編集したコマンドが保存されて行にも反映される`);
+    check(fs.existsSync(agentsFile) === (phase !== 'before'), `${phase}: 追加・編集だけで移行状態を変えない`);
+    if (toggle) {
+      for (const on of [true, false, true]) {
+        const current = (await client.cmd('hooksMatrix', { trust: false })).rows.find(r => r.key === key);
+        if (current.on !== on) await swOf(page, key).click();
+        await page.waitForFunction(({ key, on }) => document.querySelector(`#cx-panel-hooks .cx-row[data-key="${key}"] .cx-sw`)?.getAttribute('aria-checked') === String(on), { key, on });
+        // スイッチは先に見た目を変える。前の保存の通知ではなく、今回の保存と読み直しを待つ。
+        let persisted = false;
+        for (let i = 0; i < 100; i++) {
+          persisted = (await client.cmd('hooksMatrix', { trust: false })).rows.find(r => r.key === key).on === on;
+          if (persisted) break;
+          await page.waitForTimeout(50);
+        }
+        await page.waitForFunction(() => !document.querySelector('#cx-panel-hooks .pending-label'));
+        check(persisted, `${phase}: 登録の行を ${on ? 'オン' : 'オフ'} に保存できる`);
+      }
+      // Claude を外して off に残る選択も作り、削除後の残りを調べる。
+      await cellOf(page, key, 'claude').click();
+      await page.waitForFunction(({ key }) => document.querySelector(`#cx-panel-hooks .cx-row[data-key="${key}"] .cx-ag[data-agent="claude"]`)?.getAttribute('aria-pressed') === 'false'
+        || document.querySelector(`#cx-panel-hooks .cx-row[data-key="${key}"]`)?.classList.contains('off'), { key });
+      // 保存を待つ（表の楽観的な表示だけでは確認しない）。
+      for (let i = 0; i < 100 && !JSON.parse(fs.readFileSync(agentsFile, 'utf8')).off[key]?.includes('claude'); i++) await page.waitForTimeout(50);
+      check(JSON.parse(fs.readFileSync(agentsFile, 'utf8')).off[key]?.includes('claude'), `${phase}: 削除前にエージェントごとの off が保存されている`);
+    }
+    if (await row.locator('.cx-open').getAttribute('aria-expanded') !== 'true') await row.locator('.cx-open').click();
+    const currentPeek = page.locator('#cx-panel-hooks .hk-peek').filter({ hasText: edited });
+    await currentPeek.getByRole('button', { name: T('hooks.delete'), exact: true }).click();
+    await currentPeek.locator('.hk-ask').getByRole('button', { name: T('hooks.confirm.delete'), exact: true }).click();
+    await row.waitFor({ state: 'detached' });
+    const matrix = await client.cmd('hooksMatrix', { trust: false });
+    check(!(await client.cmd('plyHooks')).hooks.some(h => h.id === key) && !matrix.rows.some(r => r.key === key), `${phase}: 削除すると登録と表の行が消える`);
+    if (toggle) {
+      const state = JSON.parse(fs.readFileSync(agentsFile, 'utf8'));
+      check(state.off[key]?.includes('claude') && !matrix.orphans.some(o => o.key === key), `${phase}: off の残りはあるが行も行き先不明の表示も作らない`);
+    } else check(!fs.existsSync(agentsFile), 'before: 削除も移行前のまま完了する');
+  };
+
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'ja-JP' });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(baseUrl, { waitUntil: 'load' });
+    await openHooks(page);
+    await registeredCrud(page, 'before', false);
+    await registeredCrud(page, 'before', true);
+    await registeredCrud(page, 'before', false, true);
+    check(fs.existsSync(agentsFile), 'before: 登録の行の最初のオンで移行できる');
+    // 次の移行前の検査に戻す。削除済みの試験用登録の選択だけなので、本物の設定には触れない。
+    fs.unlinkSync(agentsFile);
+    await ctx.close();
+  }
+
   // 事実と定義は同じ詳細の面で、見出しと値を別の列に組む。文字があるだけの検査では inline の崩れを見逃す。
   {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
@@ -143,7 +235,8 @@ try {
     await page.goto(baseUrl, { waitUntil: 'load' });
     await openHooks(page);
     for (const width of [1280, 360]) for (const theme of ['light', 'dark']) {
-      await page.setViewportSize({ width, height: 900 });
+      // 狭い幅では定義が縦に伸びる。編集・削除まで同じ撮影に収める。
+      await page.setViewportSize({ width, height: width === 360 ? 1800 : 900 });
       await page.emulateMedia({ colorScheme: theme });
       for (const [kind, key] of [['native', nativeKey], ['reg', regKey]]) {
         await rowOf(page, key).locator('.cx-open').click();
@@ -173,10 +266,11 @@ try {
           const value = getComputedStyle(probe).backgroundColor; probe.remove(); return value;
         });
         check(layout.background === paper && layout.radius > 0 && layout.padding > 0
-          && (layout.gap === null ? kind === 'reg' : layout.gap >= 8 && layout.gap === layout.parentGap && layout.sameLeft),
+          && layout.gap >= 8 && layout.gap === layout.parentGap && layout.sameLeft,
           `${width}・${theme}・${kind}: 紙の面・角丸・余白と、定義までの間隔`, layout);
         check((await noOverflow(page)).ok, `${width}・${theme}・${kind}: 詳細が横にはみ出さない`, await noOverflow(page));
         await shoot(page, `plugin-polish-facts-${kind}-${width}-${theme}.png`);
+        if (kind === 'reg') await shoot(page, `plugin-polish-reg-detail-${width}-${theme}.png`, detail);
         if (kind === 'native') {
           // 値だけを長い表示用の試験データに替える。保存・スキャン・行の組み立ては変えず、折り返しを検査する。
           await facts.evaluate(fm => {
@@ -373,6 +467,17 @@ try {
       && await page.locator('#cx-panel-hooks .hk-adopt').count() === 1 && /hooks-agents\.broken-/.test(repairedToast),
       '［直す］で壊れたファイルを消さずに隣へ退避し（移行前の動きに戻る）、一覧と移行前の説明を出し、退避先を知らせる', { files: fs.readdirSync(store), repairedToast });
     fs.writeFileSync(agentsFile, good);
+    await ctx.close();
+  }
+
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'ja-JP' });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(baseUrl, { waitUntil: 'load' });
+    await openHooks(page);
+    await registeredCrud(page, 'after', false, true);
+    await registeredCrud(page, 'after', true, true);
     await ctx.close();
   }
 

@@ -83,12 +83,12 @@ const settle = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(
 const AG = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok'];
 const none = () => ({ mode: 'none', state: 'off' });
 /** 登録（オン・Claude で実行・Codex へは初めて広げる＝確認と注意 1 件）、管理者の Hook、Grok Build の設定の Hook、作業場所のまとめ */
-function makeGrid() {
+function makeGrid(regKey = 'h-1') {
   const cells = (o) => Object.fromEntries(AG.map(a => [a, o[a] ?? none()]));
   return {
     agents: AG, adopted: true, revision: 'r1', orphans: [],
     rows: [
-      { key: 'h-1', kind: 'reg', group: 'ply', agent: 'claude', name: '保存の後に整える', event: 'PostToolUse', matcher: 'Edit', command: 'node fmt.js', on: true, switchable: true,
+      { key: regKey, kind: 'reg', group: 'ply', agent: 'claude', name: '保存の後に整える', event: 'PostToolUse', matcher: 'Edit', command: 'node fmt.js', on: true, switchable: true,
         cells: cells({ claude: { mode: 'toggle', state: 'on' }, codex: { mode: 'toggle', state: 'off', needsConfirm: true, warnings: [{ code: 'toolMeaning' }, { code: 'postBlock' }] } }) },
       { key: 'hk-admin', kind: 'native', group: 'admin', agent: 'claude', event: 'Stop', matcher: null, command: 'audit.cmd', on: true, switchable: false,
         switchLock: { reason: 'managed', detail: 'managed', agent: 'claude' },
@@ -104,7 +104,11 @@ function makeGrid() {
 
 export default async function (t) {
   const dom = installDom();
+  const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-hooks-view-ui-'));
   try {
+    const fixture = createPlyHooks(fixtureDir);
+    const { id: fixtureId } = await fixture.save({ name: '保存の後に整える', agent: 'claude', event: 'PostToolUse', matcher: 'Edit', command: 'node fmt.js', targets: ['claude', 'codex'] });
+    const fixtureView = await fixture.view();
     await setLanguage('ja');
     setAgentBrands(Object.keys(AGENTS).map(id => ({ id, ...agentPresentation(id) })));
 
@@ -140,8 +144,9 @@ export default async function (t) {
     let failNext = false;
     const cmd = async (op, args) => {
       calls.push([op, args]);
-      if (op === 'hooksMatrix') return makeGrid();
-      if (op === 'plyHooks' || op === 'scanHooks') return null;
+      if (op === 'hooksMatrix') return makeGrid(fixtureId);
+      if (op === 'plyHooks') return structuredClone(fixtureView);
+      if (op === 'scanHooks') return null;
       if (op === 'setHookAgent' || op === 'setHookRow') {
         if (failNext) { failNext = false; throw new Error('書き込めませんでした（試験）'); }
         return { ok: true };
@@ -157,6 +162,14 @@ export default async function (t) {
     const row = key => card.root.querySelector(`.cx-row[data-key="${key}"]`);
     const chip = (key, a) => row(key)?.querySelector(`.cx-ag[data-agent="${a}"]`);
     const sw = key => row(key)?.querySelector('.cx-sw');
+
+    row(fixtureId).querySelector('.cx-open').click();
+    const definition = card.root.querySelector('.hk-details .hk-peek');
+    assert.ok(definition, 'hooks.list の本物の応答から登録の定義を開く');
+    assert.ok(definition.textContent.includes('node fmt.js'));
+    assert.deepEqual(definition.querySelector('.acts').querySelectorAll('button').map(b => b.textContent), [tr('hooks.edit'), tr('hooks.delete')]);
+    row(fixtureId).querySelector('.cx-open').click();
+    t.ok('登録の一覧は core の view を使い、詳細に定義・編集・削除を出す', true);
 
     assert.equal(counts.at(-1), 3, '件数は実行する行の数（作業場所のまとめの行は数えない）');
     assert.equal(card.root.querySelectorAll('.cx-row').length, 4);
@@ -174,17 +187,17 @@ export default async function (t) {
     assert.equal(chip('hk-grok', 'claude').dataset.tip, tr('hooks.matrix.tip.grokOwnOther', { agent: 'Claude' }));
     assert.match(chip('hk-grok', 'claude').getAttribute('aria-label'), /Claude で echo grok-own を実行する/);
     // 押せるセルの読み上げ名
-    assert.equal(chip('h-1', 'codex').getAttribute('aria-label'), 'Codex で node fmt.js を実行する');
+    assert.equal(chip(fixtureId, 'codex').getAttribute('aria-label'), 'Codex で node fmt.js を実行する');
     t.ok('管理者の行は行のスイッチもセルも鍵（ほかは線）、Grok の設定の Hook の鍵の文、読み上げ名「{エージェント} で {名前} を実行する」', true);
 
     // ---- 4. ほかのエージェントへ初めて広げる: その場で確かめ、注意を並べる ----
-    chip('h-1', 'codex').click();
+    chip(fixtureId, 'codex').click();
     let ask = card.root.querySelector('.cx-ask');
     assert.ok(ask, '確認が出る');
     assert.equal(ask.querySelector('.q').textContent, 'Pleiad の設定の Hook を、Codex でも実行します');
     assert.deepEqual(ask.querySelectorAll('.hk-warns li').map(li => li.textContent), [tr('hooks.warn.toolMeaning'), tr('hooks.warn.postBlock')]);
     assert.ok(!ask.querySelectorAll('.hk-warns li').some(li => /hooks\.warn\./.test(li.textContent)), '注意の文は鍵のままにしない');
-    assert.equal(ask.parent.children[ask.parent.children.indexOf(ask) - 1], row('h-1'), '押した行のすぐ下');
+    assert.equal(ask.parent.children[ask.parent.children.indexOf(ask) - 1], row(fixtureId), '押した行のすぐ下');
     assert.equal(document.activeElement, ask.querySelector('.btn-primary'), '「実行する」へ移る');
     assert.equal(calls.filter(c => c[0] === 'setHookAgent').length, 0, '確かめる前は保存しない');
     ask.querySelectorAll('button')[0].click();
@@ -193,28 +206,28 @@ export default async function (t) {
     t.ok('初めて広げるときはその場で 1 回確かめ、渡すときの注意を並べる。やめれば何も保存しない', true);
 
     // ---- 5. 保存に失敗したら元に戻し、理由を出す ----
-    chip('h-1', 'codex').click();
+    chip(fixtureId, 'codex').click();
     failNext = true;
     card.root.querySelector('.cx-ask .btn-primary').click();
-    assert.equal(chip('h-1', 'codex').getAttribute('aria-pressed'), 'true', '押した瞬間に見た目を変える');
+    assert.equal(chip(fixtureId, 'codex').getAttribute('aria-pressed'), 'true', '押した瞬間に見た目を変える');
     await settle();
-    assert.deepEqual(calls.filter(c => c[0] === 'setHookAgent').map(c => [c[1].key, c[1].agent, c[1].on, c[1].revision]), [['h-1', 'codex', true, 'r1']]);
-    assert.equal(chip('h-1', 'codex').getAttribute('aria-pressed'), 'false', '失敗したら元に戻す');
+    assert.deepEqual(calls.filter(c => c[0] === 'setHookAgent').map(c => [c[1].key, c[1].agent, c[1].on, c[1].revision]), [[fixtureId, 'codex', true, 'r1']]);
+    assert.equal(chip(fixtureId, 'codex').getAttribute('aria-pressed'), 'false', '失敗したら元に戻す');
     assert.deepEqual(failures, ['書き込めませんでした（試験）'], '理由は work の失敗の道（下の固定の位置）へ');
     assert.equal(savedMsgs.length, 0, '失敗は「保存しました」にしない');
     t.ok('保存に失敗したら見た目を元に戻し、理由は固定の位置（work）へ渡す', true);
 
     // 一度確かめた組み合わせは聞き直さない（その場で 1 回だけ）。今度は保存できる
-    chip('h-1', 'codex').click();
+    chip(fixtureId, 'codex').click();
     assert.equal(card.root.querySelector('.cx-ask'), null, '確かめ済みは聞き直さない');
     await settle();
     assert.equal(calls.filter(c => c[0] === 'setHookAgent').length, 2);
     assert.deepEqual(savedMsgs, [savedText(false)], '保存の知らせは段 2 と同じ決まり');
 
     // 行のスイッチ: 1 回の書き込み（setHookRow）
-    sw('h-1').click();
+    sw(fixtureId).click();
     await settle();
-    assert.deepEqual(calls.filter(c => c[0] === 'setHookRow').map(c => [c[1].key, c[1].on]), [['h-1', false]]);
+    assert.deepEqual(calls.filter(c => c[0] === 'setHookRow').map(c => [c[1].key, c[1].on]), [[fixtureId, false]]);
     assert.equal(calls.filter(c => c[0] === 'setHookAgent').length, 2, '行のスイッチはセルごとに書かない');
     t.ok('確かめ済みの組み合わせは聞き直さず、行のスイッチは 1 回の書き込み', true);
 
@@ -381,5 +394,6 @@ export default async function (t) {
     }
   } finally {
     dom.restore();
+    await fs.rm(fixtureDir, { recursive: true, force: true });
   }
 }
