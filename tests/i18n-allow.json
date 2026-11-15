@@ -34,6 +34,7 @@
     "ui:changeLog.by.agent",
     "ui:changeLog.by.ply",
     "ui:chat.shell.exit",
+    "ui:hooks.matrix.wsRow",
     "ui:hooks.row.matcher",
     "ui:hooks.scope.skill",
     "ui:browser.menu.devtools",

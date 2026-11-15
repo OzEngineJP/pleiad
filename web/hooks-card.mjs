@@ -1,30 +1,21 @@
-// ==================== Hooks のカード（設定 › コンテキスト）と、追加・編集のシート ====================
-// docs/design-system.md「コンテキスト」の「Hooks」、ADR 0045。
+// ==================== エージェントの設定の Hook の部品（行の名前・状態・詳細）と、追加・編集のシート ====================
+// docs/design-system.md「Hooks」、ADR 0045・0338。一覧（Hook × エージェントの表）は web/hooks-matrix.mjs。
 // 実行するのは各エージェント。Pleiad は元の設定ファイル（core/hooks-config.mjs）を読み、利用者が明示した編集だけを書く。
-//   担当の 2 択は「設定を誰が用意するか」。「Pleiad がそろえる」へ変える前・戻す前は、その場の確認の面を出す（web/hooks-unify-ui.mjs。ADR 0049）。
-//   担当が Pleiad のときは、Pleiad の登録の一覧と、止めているネイティブの hooks を出す
-//   ユーザーの段: 見つかった定義を イベント順（既定）／エージェント別 3 列 で並べる。行を押すと定義・出どころ・状態（②）
-//   止める操作はエージェントごと: Claude Code はスイッチなし、Codex は信頼状態を取れないので /hooks を案内、Antigravity は名前単位の enabled
-//   作業場所の段: 探すファイルの形だけ。場所ごとの定義は会話の右パネル（web/session-context.mjs）
-// 追加・編集のシート（③）は command 型だけ。書く前に、書き先ごとの差分を確かめる（書き直しが要る TOML はそこで許可を取る）。
+//   行の詳細（peekHook）: 出どころ・定義の単位・状態と、伏せ字の定義。Antigravity は名前単位の enabled のスイッチも詳細に置く
+// 追加・編集のシート（openHookSheet）は command 型だけ。書く前に、書き先ごとの差分を確かめる（書き直しが要る TOML はそこで許可を取る）。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { runMark } from './arc.mjs';
 import { codeBlock } from './render.mjs';
 import { copyIcon } from './icons.mjs';
 import { lineDiff, diffView } from './line-diff.mjs';
-import { unifyConfirmPanel, plyRegistryTier, brokenNotice } from './hooks-unify-ui.mjs';
 
 export const HOOK_AGENTS = [['claude', 'Claude Code'], ['codex', 'Codex'], ['antigravity', 'Antigravity']];
 /** Pleiad がそろえるときの渡し先（ネイティブの Hooks の表を持たず、Pleiad が Claude Code の形を真似て渡す Devin CLI・OpenCode・Grok Build を足す。core/hooks-config.mjs の UNIFY_TARGETS） */
 // backend-allow: 渡し先の名前の表（core/hooks-config.mjs の UNIFY_TARGETS と同じ並び。ネイティブの Hooks の表 HOOK_AGENTS と同じく画面が持つ）
 export const UNIFY_TARGETS = [...HOOK_AGENTS, ['opencode', 'OpenCode'], ['devin', 'Devin CLI'], ['grok', 'Grok Build']];
 export const agentLabel = id => UNIFY_TARGETS.find(([k]) => k === id)?.[1] ?? id;
-// 「登録なし」でも一覧に出す主なイベント（すべて見るとき）
-const MAIN_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SessionEnd'];
 // ツールの名前で絞るイベント（シートの matcher の例）
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']);
-const SHOWN = 7;
 
 // i18n-dynamic: hooks.event.
 // i18n-dynamic: hooks.file.allOff
@@ -76,24 +67,14 @@ const plus = () => {
   s.innerHTML = '<path d="M12 5v14M5 12h14"/>';
   return s;
 };
-function addButton(text, onClick) {
+export function addButton(text, onClick) {
   const b = button('', 'cx-add', onClick);
   b.append(plus(), document.createTextNode(text));
   return b;
 }
-const badge = text => el('span', 'cbadge', text);
-
-// i18n-dynamic: hooks.copy.from.
-/** 写せない行の理由（辞書のキーの末尾）。写せるなら null。管理者・プラグイン・Skill・command 以外・写した定義（アダプター越し）からは写さない */
-export function copyBlocked(e) {
-  if (e.readOnly) return e.scope === 'skill' ? 'skill' : 'readOnly';
-  if (e.type !== 'command' || !e.editable) return 'notCommand';
-  if (e.adapter) return 'alreadyCopy';
-  return null;
-}
 
 /** 行の中身（②）。出どころ・定義の単位・matcher・型・timeout・async・状態と、伏せ字の定義 */
-export function peekHook(e, { short = p => p, onEdit = null, onDelete = null, onToggle = null, onCopy = null } = {}) {
+export function peekHook(e, { short = p => p, onEdit = null, onDelete = null, onToggle = null } = {}) {
   const box = el('div', 'cx-peek hk-peek');
   const line = el('div', 'row-line');
   line.append(el('span', 'cx-path', short(e.path)));
@@ -141,16 +122,7 @@ export function peekHook(e, { short = p => p, onEdit = null, onDelete = null, on
   const acts = el('div', 'acts');
   if (e.editable && onEdit) acts.append(button(t('hooks.edit'), 'btn', () => onEdit(e)));
   if (e.editable && onDelete) acts.append(button(t('hooks.delete'), 'btn', () => onDelete(e)));
-  let why = null;
-  if (onCopy) {
-    // 写せない行も押せないボタンを置き、理由の一行を添える（押せない理由が見えないボタンにしない）
-    const blocked = copyBlocked(e);
-    const b = button(t('hooks.copy.open'), 'btn', () => onCopy(e));
-    if (blocked) { why = el('p', 'msg', t(`hooks.copy.from.${blocked}`)); why.id = `hkCopyWhy-${e.id}`; b.disabled = true; b.setAttribute('aria-describedby', why.id); }
-    acts.append(b);
-  }
   if (acts.children.length) box.append(acts);
-  if (why) box.append(why);
   return box;
 }
 /** Antigravity の名前単位のスイッチ。同じ名前のすべてのイベントに効く */
@@ -160,196 +132,6 @@ export function agySwitch(e, onToggle) {
   sw.setAttribute('aria-label', t('hooks.row.agySwitch', { name: e.name }));
   sw.onclick = () => { sw.setAttribute('aria-checked', String(!e.enabled)); sw.disabled = true; onToggle(e, !e.enabled); };
   return sw;
-}
-
-// ---------------------------------------------------------------- 設定 › コンテキストのカード
-export function createHooksCard({ cmd, work, saved, opened, onCount }) {
-  const root = el('section', 'cx-card hk-card');
-  root.dataset.kind = 'hooks';
-  let scan = null, loading = false, layout = 'events', expanded = false, home = '';
-  // Pleiad の登録と担当（plyHooks）。confirm は開いている切り替えの確認（'ply' | 'native' | null）
-  let ply = null, confirm = null;
-  const short = p => (home && String(p).toLowerCase().replace(/\\/g, '/').startsWith(home.toLowerCase().replace(/\\/g, '/')) ? `~${String(p).slice(home.length)}` : String(p ?? ''));
-
-  let ticket = 0;
-  /** 一覧を先に出し、Codex の信頼状態（hooks/list。app-server の起動を待つことがある）は後から重ねる */
-  async function load() {
-    const mine = ++ticket;
-    loading = true; render();
-    try { const [first, view] = await Promise.all([cmd('scanHooks', { scope: 'user' }), cmd('plyHooks', {}).catch(() => null)]); if (mine !== ticket) return; scan = first; ply = view; home = scan.home ?? ''; }
-    catch (e) { if (mine !== ticket) return; scan = { entries: [], files: [], failed: e.message }; }
-    finally { if (mine === ticket) loading = false; }
-    render();
-    if (!scan.trustPending) return;
-    const withTrust = await cmd('scanHooks', { scope: 'user', trust: true }).catch(() => null);
-    if (mine !== ticket || !withTrust) return;
-    scan = withTrust;
-    render();
-  }
-  const reload = () => load();
-  /** Antigravity の enabled を元ファイルへ書く */
-  function toggle(e, enabled) {
-    const file = scan.files.find(f => f.path === e.path);
-    return work(async () => {
-      const r = await cmd('saveHooks', { items: [{ op: 'enable', agent: e.agent, scope: e.scope, base: e.base, file: e.path, revision: file?.revision, loc: { name: e.name }, enabled }] });
-      if (!r.results[0].ok) { await reload(); throw new Error(r.results[0].error); }
-      saved(); await reload();
-    });
-  }
-  const sheetCtx = () => ({ cmd, scan, short, onSaved: async () => { saved(); await reload(); } });
-
-  const owner = () => ply?.defaults?.value?.owner ?? 'native';
-  function seg() {
-    const box = el('div', 'cx-seg'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('hooks.ownerAria'));
-    for (const [id, title, desc] of [['native', t('context.owner.agent'), t('hooks.owner.agent')], ['ply', t('context.owner.ply'), t('hooks.owner.ply')]]) {
-      const b = button('', 'cx-opt');
-      // 確認の面を開いている間も、選んでいるのは今の担当（決めるまで切り替えない。ADR 0031）
-      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(id === owner())); b.dataset.owner = id;
-      b.append(el('b', null, title), el('span', null, desc));
-      // 読めない・壊れた hooks.json のあいだは担当を変えない（直す操作を先に出す）
-      b.disabled = !ply || ply.unreadable || Boolean(ply.problems?.length);
-      b.onclick = () => {
-        if (id === owner()) { if (confirm) { confirm = null; render(); } return; }
-        confirm = id; render();
-        root.querySelector('.hk-unify')?.scrollIntoView?.({ block: 'nearest' });
-      };
-      box.append(b);
-    }
-    return box;
-  }
-  function row(list, e) {
-    const r = el('div', 'cx-row' + (e.agent === 'antigravity' && !e.enabled ? ' off' : ''));
-    const open = button('', 'cx-open');
-    open.setAttribute('aria-expanded', String(opened.has(`hook:${e.id}`)));
-    const body = el('span', 't');
-    const nm = el('span', 'nm');
-    nm.append(el('span', e.name ? null : 'hk-cmd', rowName(e)), badge(agentLabel(e.agent)));
-    body.append(nm, el('span', 'p', metaText(e)));
-    if (e.name && e.command) body.append(el('span', 'p hk-cmd', e.command));
-    open.append(body);
-    open.onclick = () => { const k = `hook:${e.id}`; if (opened.has(k)) opened.delete(k); else opened.add(k); render(); root.querySelector(`[data-hook="${e.id}"] .cx-open`)?.focus(); };
-    r.dataset.hook = e.id;
-    r.append(open, el('span', 'hk-state', stateText(e)));
-    if (e.agent === 'antigravity' && !e.readOnly) r.append(agySwitch(e, toggle));
-    list.append(r);
-    if (opened.has(`hook:${e.id}`)) list.append(peekHook(e, { short,
-      onEdit: x => openHookSheet(sheetCtx(), { entry: x }), onDelete: x => openHookSheet(sheetCtx(), { entry: x, remove: true }),
-      onCopy: x => openCopySheet(sheetCtx(), x) }));
-  }
-  function eventList(entries, { all = false, max = SHOWN } = {}) {
-    const list = el('div', 'cx-list');
-    list.setAttribute('role', 'group'); list.setAttribute('aria-label', t('hooks.listAria'));
-    const events = [...new Set([...entries.map(e => e.event), ...(all ? MAIN_EVENTS : [])])].sort((a, b) => order(scan, a) - order(scan, b));
-    let shown = 0;
-    for (const ev of events) {
-      const rows = entries.filter(e => e.event === ev);
-      if (!all && shown >= max) break;
-      const head = el('div', 'hk-ev');
-      head.append(el('b', null, eventLabel(ev)), el('span', 'cx-mono', ev));
-      if (!rows.length) head.append(el('span', null, t('hooks.none')));
-      list.append(head);
-      for (const e of rows) { if (!all && shown >= max) break; row(list, e); shown++; }
-    }
-    if (!entries.length && !all) list.append(el('p', 'cx-empty', t('hooks.emptyUser')));
-    const nEvents = new Set(entries.map(e => e.event)).size;
-    if (entries.length > max || expanded) list.append(button(expanded ? t('hooks.collapse') : t('hooks.showAll', { events: nEvents, n: entries.length }), 'btn cx-more-rows', () => { expanded = !expanded; render(); }));
-    return list;
-  }
-  function agentColumns(entries) {
-    const cols = el('div', 'cx-cols hk-cols');
-    for (const [id, label] of HOOK_AGENTS) {
-      const col = el('div', 'cx-col');
-      const mine = entries.filter(e => e.agent === id);
-      const h = el('b', null, label); h.append(badge(t('hooks.count', { n: mine.length })));
-      col.append(h);
-      if (mine.length) col.append(eventList(mine, { all: false, max: expanded ? Infinity : SHOWN }));
-      else {
-        col.append(el('span', 'cx-sub', t('hooks.agentNone')));
-        for (const f of (scan.files ?? []).filter(f => f.agent === id && f.scope === 'user')) col.append(el('span', 'cx-path', short(f.path)));
-      }
-      col.append(addButton(t('hooks.add'), () => openHookSheet(sheetCtx(), { agents: [id] })));
-      cols.append(col);
-    }
-    return cols;
-  }
-  /** 読めなかったファイル・全体の停止。0 件と取り違えないよう一覧の上に出す */
-  function fileNotes(tier) {
-    for (const f of (scan.files ?? []).filter(f => f.status === 'error' || f.partial)) {
-      const n = el('p', 'cx-note');
-      n.append(el('span', 'cx-strong', f.status === 'error' ? t('hooks.file.error', { agent: agentLabel(f.agent) }) : t('hooks.file.partial', { agent: agentLabel(f.agent) })), ` ${short(f.path)} · ${f.error ?? ''}`);
-      tier.append(n);
-    }
-    for (const f of (scan.files ?? []).filter(f => f.allOff)) tier.append(el('p', 'cx-note', t(f.agent === 'claude' ? 'hooks.file.allOffClaude' : 'hooks.file.allOffCodex', { path: short(f.path) })));
-  }
-  function notifyCount() {
-    // 件数は「Pleiad が渡す件数」。担当がエージェントに任せるなら Pleiad は数えられないので出さない（右パネルと同じ）
-    if (!ply || owner() !== 'ply') { onCount?.(null); return; }
-    onCount?.(ply.entries?.length ?? 0);
-  }
-  function render() {
-    root.replaceChildren();
-    notifyCount();
-    const head = el('div', 'cx-khead');
-    const title = el('h4', null, 'Hooks'); title.id = 'cxKind-hooks';
-    root.setAttribute('aria-labelledby', title.id);
-    head.append(title, el('span', 'cx-sub hk-lead', t('hooks.lead')));
-    if (loading && scan) { const label = el('span', 'pending-label'); label.append(runMark(t('pending.searching')), t('pending.searching')); head.append(label); }
-    root.append(head, seg());
-    root.append(el('p', 'cx-sub', t('hooks.runBy')));
-    const broken = brokenNotice(ply, { cmd, onRepaired: view => { ply = view; saved(); render(); } });
-    if (broken) root.append(broken);
-    if (confirm) root.append(unifyConfirmPanel({ cmd, direction: confirm, short,
-      onDone: view => { ply = view; confirm = null; saved(); render(); root.querySelector(`[data-owner="${owner()}"]`)?.focus(); },
-      onCancel: () => { confirm = null; render(); root.querySelector(`[data-owner="${owner()}"]`)?.focus(); } }));
-    // 担当が Pleiad: Pleiad の登録と、止めているネイティブの hooks（ユーザーの範囲。作業場所の分は会話の右パネル）
-    if (owner() === 'ply' && scan && !confirm) {
-      root.append(plyRegistryTier({ cmd, view: ply, opened, short, work,
-        stopped: (scan.entries ?? []).filter(e => e.agent === 'claude' || ['user', 'project'].includes(e.scope)),
-        onChanged: (view, didSave) => { ply = view; if (didSave) saved(); render(); } }));
-      const place = el('div', 'cx-tier');
-      const ph = el('div', 'cx-tierh');
-      ph.append(el('span', 'n', t('context.tier.place')), el('span', null, t('context.tier.placeSub')));
-      place.append(ph, el('p', 'cx-sub', t('hooks.unify.placeNote')));
-      root.append(place);
-      return;
-    }
-    const tier = el('div', 'cx-tier');
-    const entries = (scan?.entries ?? []).slice().sort((a, b) => order(scan, a.event) - order(scan, b.event));
-    const counts = HOOK_AGENTS.map(([id, label]) => t('hooks.agentCount', { agent: label, n: entries.filter(e => e.agent === id).length })).join(' / ');
-    const th = el('div', 'cx-tierh');
-    th.append(el('span', 'n', t('context.tier.user')), el('span', null, scan ? t('hooks.found', { counts }) : ''));
-    tier.append(th);
-    if (!scan) {
-      if (loading) {
-        const p = el('p', 'cx-empty'); p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots')));
-        tier.append(p);
-      }
-      root.append(tier); return;
-    }
-    if (scan.failed) tier.append(el('p', 'cx-note', t('hooks.scanFailed', { error: scan.failed })));
-    fileNotes(tier);
-    const bar = el('div', 'hk-bar');
-    bar.append(el('span', 'cx-sub', t('hooks.summary', { events: new Set(entries.map(e => e.event)).size, n: entries.length })));
-    const chips = el('div', 'cx-chips'); chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', t('hooks.layoutAria'));
-    for (const [id, text] of [['events', t('hooks.layout.events')], ['agents', t('hooks.layout.agents')]]) {
-      const b = button(text, 'cx-chip', () => { layout = id; render(); root.querySelector(`[data-layout=${id}]`)?.focus(); });
-      b.dataset.layout = id; b.setAttribute('aria-pressed', String(layout === id));
-      chips.append(b);
-    }
-    bar.append(chips);
-    tier.append(bar);
-    tier.append(layout === 'events' ? eventList(entries, { all: expanded }) : agentColumns(entries));
-    if (layout === 'events') tier.append(addButton(t('hooks.add'), () => openHookSheet(sheetCtx(), {})));
-    tier.append(el('p', 'cx-sub', t('hooks.userFoot')));
-    const place = el('div', 'cx-tier');
-    const ph = el('div', 'cx-tierh');
-    ph.append(el('span', 'n', t('context.tier.place')), el('span', null, t('context.tier.placeSub')));
-    place.append(ph, el('p', 'cx-sub cx-mono', '.claude/settings.json · .claude/settings.local.json · .codex/hooks.json · .codex/config.toml · .agents/hooks.json'),
-      el('p', 'cx-sub', t('hooks.placeNote')));
-    root.append(tier, place);
-  }
-  render();
-  return { root, load, reload };
 }
 
 // ---------------------------------------------------------------- 追加・編集・削除のシート（③）と書く前の確認
@@ -623,202 +405,3 @@ export async function openHookSheet(ctx, opts = {}) {
   dialog.showModal();
   heading.focus();
 }
-
-// ---------------------------------------------------------------- 他のエージェントへ写す（④。ADR 0047）
-// i18n-dynamic: hooks.copy.reason.
-// i18n-dynamic: hooks.copy.warn.
-// i18n-dynamic: hooks.copy.status.
-/**
- * 1 つの定義を他のエージェントへ写す前の確認（外部 MCP・追加のシートと同じ <dialog>）。
- * 写す先ごとに、元 → 写した後（イベント・matcher・timeout・コマンド）、実際に書く本文の差分（サーバーの dryRun）、書き先、
- * 写せない・確認が必要な理由、確かめること（意味の違い）を並べる。行のスイッチは既定オフで、写せる（ready）行だけ選べる。
- * 実行範囲の確認のチェックを入れ、1 件以上選ぶまで確定できない。元の定義はサーバーがファイルから読み直す（画面の値は使わない）
- */
-export async function openCopySheet(ctx, entry) {
-  document.querySelector('dialog.hk-sheet')?.remove();
-  const dialog = el('dialog', 'mcp-sheet hk-sheet hk-copy-sheet');
-  const form = el('form');
-  form.onsubmit = ev => ev.preventDefault();
-  dialog.append(form);
-  dialog.addEventListener('close', () => dialog.remove());
-  document.body.append(dialog);
-  const heading = el('h3', null, t('hooks.copy.title'));
-  heading.tabIndex = -1;
-  dialog.setAttribute('aria-label', heading.textContent);
-  const to = HOOK_AGENTS.map(([id]) => id).filter(a => a !== entry.agent);
-  const fileRev = ctx.scan?.files?.find(f => f.path === entry.path)?.revision;
-  const source = { agent: entry.agent, scope: entry.scope, base: entry.base ?? undefined, file: entry.path,
-    loc: { event: entry.event, group: entry.group, handler: entry.handler, name: entry.name }, ...(fileRev ? { revision: fileRev } : {}) };
-  const state = { scope: entry.scope === 'user' ? 'user' : 'project', base: entry.base ?? '',
-    rows: Object.fromEntries(to.map(a => [a, { on: false, name: '', matcher: '', allow: false }])) };
-  let dry = null, ticket = 0, busy = false;
-  const matcherText = m => (m === null || m === undefined ? t('hooks.fact.none') : m || '*');
-  const seconds = n => (Number.isFinite(n) ? t('hooks.fact.seconds', { n }) : t('hooks.fact.default'));
-
-  // 元の定義（どの写し先でも同じなので 1 回だけ）
-  const src = el('div', 'cx-note hk-where hk-src');
-  const srcHead = el('div', 'hk-whereline');
-  srcHead.append(el('b', null, t('hooks.copy.source')), el('span', null, `${agentLabel(entry.agent)} · ${scopeLabel(entry)} · ${eventLabel(entry.event)} · ${entry.event}`));
-  const srcCode = el('div');
-  srcCode.innerHTML = codeBlock(JSON.stringify(entry.matcher === null || entry.matcher === undefined ? entry.definition : { matcher: entry.matcher, ...entry.definition }, null, 2), 'json');
-  src.append(srcHead, el('span', 'cx-mono', ctx.short(entry.path)), srcCode);
-  // 書き先のスコープ
-  const field = (text, control) => { const box = el('div', 'mcp-field'), label = el('label', 'hk-label'); label.append(text, control); box.append(label); return box; };
-  const scopeSelect = el('select'); scopeSelect.className = 'hk-input';
-  for (const [v, text] of [['user', t('hooks.scope.user')], ['project', t('hooks.scope.project')]]) { const o = el('option', null, text); o.value = v; scopeSelect.append(o); }
-  scopeSelect.value = state.scope;
-  const base = el('input'); base.className = 'hk-input mono'; base.value = state.base; base.placeholder = t('context.folderPath'); base.autocomplete = 'off'; base.spellcheck = false;
-  const baseField = field(t('hooks.sheet.base'), base);
-  const changed = () => { ack.checked = false; for (const row of Object.values(state.rows)) { row.on = false; row.allow = false; } refresh(); };
-  scopeSelect.onchange = () => { state.scope = scopeSelect.value; baseField.hidden = state.scope === 'user'; changed(); };
-  base.onchange = () => { state.base = base.value.trim(); changed(); };
-  baseField.hidden = state.scope === 'user';
-  const range = el('p', 'cx-strong hk-warn');
-  const rowsBox = el('div', 'hk-copyrows');
-  const ackLabel = el('label', 'hk-check'), ack = el('input'); ack.type = 'checkbox';
-  ackLabel.append(ack, document.createTextNode(t('hooks.copy.ack')));
-  ack.onchange = () => paintGo();
-  const status = el('p', 'mcp-error'); status.setAttribute('role', 'alert');
-  const go = button('', 'btn btn-primary');
-  const acts = el('div', 'mcp-acts');
-  acts.append(button(t('mcp.cancel'), 'btn', () => dialog.close()), go);
-  const box = el('div', 'hk-confirm');
-  box.append(el('p', 'mcp-note', t('hooks.copy.lead', { agent: agentLabel(entry.agent) })), src, field(t('hooks.sheet.scope'), scopeSelect), baseField, range, rowsBox, ackLabel, status, acts);
-  form.append(heading, box);
-
-  const targetOf = a => ({ agent: a, scope: state.scope, ...(state.scope === 'user' ? {} : { base: state.base }),
-    ...(a === 'antigravity' && state.rows[a].name ? { name: state.rows[a].name } : {}), ...(state.rows[a].matcher ? { matcher: state.rows[a].matcher } : {}) });
-  const selectable = r => r.ok && r.status === 'ready';
-  const chosen = () => (dry?.results ?? []).filter(r => selectable(r) && state.rows[r.agent]?.on);
-  function paintGo() {
-    const list = chosen();
-    go.textContent = t('hooks.copy.go', { n: list.length });
-    go.disabled = busy || !ack.checked || !list.length || list.some(r => r.reformatsFile && !state.rows[r.agent].allow);
-  }
-  /** 書かずに変換の結果と書く本文を取り直す（スコープ・名前・matcher を変えたとき） */
-  async function refresh() {
-    const mine = ++ticket;
-    range.textContent = state.scope === 'user' ? t('hooks.copy.rangeUser') : t('hooks.copy.rangeProject');
-    dry = null; paintGo();
-    if (state.scope !== 'user' && !state.base) { rowsBox.replaceChildren(el('p', 'mcp-note', t('hooks.sheet.baseNeeded'))); return; }
-    rowsBox.replaceChildren(el('p', 'cx-sub', t('hooks.copy.loading')));
-    let r;
-    try { r = await ctx.cmd('copyHooks', { source, targets: to.map(targetOf), dryRun: true }); }
-    catch (e) { if (mine === ticket) { const p = el('p', 'mcp-error', e.message); p.setAttribute('role', 'alert'); rowsBox.replaceChildren(p); } return; }
-    if (mine !== ticket) return;
-    dry = r;
-    rowsBox.replaceChildren(...r.results.map(rowCard));
-    paintGo();
-  }
-  /** 写す先を 1 つ入れ直す欄（Antigravity の名前・写す先の matcher）。「確かめる」で dryRun を取り直す */
-  function redo(label, value, placeholder, apply) {
-    const line = el('div', 'hk-redo');
-    const i = el('input'); i.className = 'hk-input mono'; i.value = value; i.placeholder = placeholder; i.autocomplete = 'off'; i.spellcheck = false;
-    const l = el('label', 'hk-label'); l.append(label, i);
-    const b = button(t('hooks.copy.recheck'), 'btn', () => { apply(i.value.trim()); changed(); });
-    i.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); b.click(); } };
-    line.append(l, b);
-    return line;
-  }
-  function rowCard(r) {
-    const a = r.agent, st = state.rows[a];
-    if (!selectable(r)) st.on = false;
-    const card = el('div', 'hk-target hk-copyrow'); card.dataset.agent = a;
-    const head = el('div', 'row-line hk-copyhead');
-    const sw = button('', 'cx-sw');
-    sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(st.on)); sw.setAttribute('aria-label', t('hooks.copy.switch', { agent: agentLabel(a) }));
-    sw.disabled = !selectable(r);
-    sw.onclick = () => { st.on = !st.on; sw.setAttribute('aria-checked', String(st.on)); paintGo(); };
-    head.append(el('b', null, t('hooks.copy.to', { agent: agentLabel(a) })), el('span', 'hk-state', t(`hooks.copy.status.${r.error ? 'blocked' : r.status}`)), sw);
-    card.append(head);
-    if (r.error) { card.append(el('p', 'cx-strong', t('hooks.confirm.cannot', { error: r.error }))); return card; }
-    // 写せない理由・確認が必要な理由（強い字）
-    if (r.reasons?.length) {
-      const ul = el('ul', 'hk-reasons cx-strong');
-      for (const x of r.reasons) ul.append(el('li', null, t(`hooks.copy.reason.${x.code}`, x.params ?? {})));
-      card.append(ul);
-      if (!selectable(r)) sw.setAttribute('aria-describedby', ul.id = `hk-copy-reason-${a}`);
-    }
-    const blocked = r.status === 'blocked';
-    // 元 → 写した後
-    const facts = el('div', 'fm facts');
-    const put = (k, v) => facts.append(el('span', 'k', k), el('span', 'v', v));
-    // 対応するイベントが無い先は、matcher を並べない（写した後の形が無い）
-    const noEvent = r.reasons?.some(x => x.code === 'event');
-    put(t('hooks.fact.event'), noEvent ? `${r.event} → ${t('hooks.copy.noEvent')}` : r.event);
-    if (!noEvent) put('matcher', `${matcherText(dry.source.matcher)} → ${r.matcher === null ? t('hooks.fact.none') : r.matcher === '' && r.matcherStatus === 'review' ? '—' : matcherText(r.matcher)}`);
-    if (!blocked) {
-      put('timeout', `${seconds(dry.source.timeout)} → ${seconds(r.timeout)}${r.innerTimeout ? ` ${t('hooks.copy.innerTimeout', { n: r.innerTimeout })}` : ''}`);
-      if (r.name) put(t('hooks.sheet.name'), r.name);
-      put(t('hooks.copy.command'), r.adapter ? t('hooks.copy.viaAdapter') : t('hooks.copy.sameCommand'));
-    }
-    card.append(facts);
-    // 入れ直す欄: agy の名前（いつでも変えられる）、写す先の matcher（自動で訳せないとき）
-    if (!blocked && a === 'antigravity') card.append(redo(t('hooks.copy.name'), st.name || r.name || '', 'audit', v => { st.name = v; }));
-    if (!blocked && (r.reasons.some(x => x.review === 'matcher') || r.matcherStatus === 'chosen'))
-      card.append(redo(t('hooks.copy.matcher', { agent: agentLabel(a) }), st.matcher, a === 'antigravity' ? 'run_command' : 'Bash', v => { st.matcher = v; }));
-    if (r.adapter && !blocked) {
-      card.append(el('p', 'mcp-note', r.adapter.exists ? t('hooks.copy.adapterReuse', { path: ctx.short(r.adapter.path) }) : t('hooks.copy.adapterWrite', { path: ctx.short(r.adapter.path) })));
-      if (state.scope === 'project') card.append(el('p', 'cx-strong', t('hooks.copy.projectAdapterRepo')));
-    }
-    // 実際に書く本文の差分（伏せ字済み）
-    // matcher を確かめる前は、仮の matcher（全件）で作った本文を見せない
-    if (r.reasons?.some(x => x.review === 'matcher')) card.append(el('p', 'mcp-note', t('hooks.copy.diffPending')));
-    else if (r.after !== undefined) {
-      card.append(el('span', 'hk-lang', t('hooks.copy.diff', { format: String(r.format ?? '').toUpperCase() })), diffView(lineDiff(r.before ?? '', r.after ?? '')));
-      if (r.hiddenChange) card.append(el('p', 'mcp-note cx-strong', t('hooks.confirm.hiddenChange')));
-    }
-    if (r.path) card.append(el('p', 'cx-sub hk-copywhere', t('hooks.copy.where', { scope: t(`hooks.scope.${r.scope === 'local' ? 'local' : r.scope}`), path: ctx.short(r.path) })));
-    // 確かめること（意味の違い）
-    if (r.warnings?.length) {
-      const d = el('div', 'hk-warns');
-      d.append(el('b', null, t('hooks.copy.warnTitle', { n: r.warnings.length })));
-      const ul = el('ul');
-      for (const w of r.warnings) ul.append(el('li', null, t(`hooks.copy.warn.${w.code}`, w.params ?? {})));
-      d.append(ul);
-      card.append(d);
-    }
-    if (a === 'codex' && !blocked) card.append(el('p', 'mcp-note', t('hooks.copy.codexBefore')));
-    if (r.reformatsFile && !blocked) {
-      const l = el('label', 'hk-check'), allow = el('input'); allow.type = 'checkbox'; allow.checked = st.allow;
-      allow.onchange = () => { st.allow = allow.checked; paintGo(); };
-      l.append(allow, document.createTextNode(r.reason === 'comments' ? t('hooks.confirm.lostComments', { n: r.lostComments })
-        : r.reason === 'jsonValues' ? t('hooks.confirm.jsonValues') : t('hooks.confirm.reformat', { n: r.lostComments ?? 0 })));
-      card.append(l);
-    }
-    return card;
-  }
-  go.onclick = async () => {
-    const list = chosen();
-    busy = true; paintGo(); status.textContent = '';
-    let result;
-    try {
-      result = await ctx.cmd('copyHooks', { source: { ...source, revision: dry.source.revision },
-        targets: list.map(r => ({ ...targetOf(r.agent), revision: r.revision })), allowReformat: list.some(r => r.reformatsFile && state.rows[r.agent].allow) });
-    } catch (e) { busy = false; status.textContent = e.message; paintGo(); return; }
-    // 結果: 書けた先と書けなかった先を分けて出す（書けた分は戻さない）。Codex は写しても審査するまで動かない
-    const done = el('div', 'hk-confirm');
-    const failed = result.results.filter(r => !r.ok).length;
-    done.append(el('p', 'hk-q', failed ? t('hooks.copy.partial', { ok: result.results.length - failed, failed }) : t('hooks.copy.done', { n: result.results.length })));
-    for (const r of result.results) {
-      const card = el('div', 'hk-target');
-      const h = el('div', 'row-line');
-      h.append(el('b', null, t('hooks.copy.to', { agent: agentLabel(r.agent) })), el('span', 'cx-path', r.path ? ctx.short(r.path) : ''));
-      card.append(h, el('p', r.ok ? 'cx-sub' : 'cx-strong', r.ok ? t('hooks.copy.written') : t('hooks.confirm.failed', { error: r.error || r.reasons?.map(x => t(`hooks.copy.reason.${x.code}`, x.params ?? {})).join(' ') || t('hooks.copy.status.blocked') })));
-      if (r.ok && r.agent === 'codex') card.append(el('p', 'cx-strong', t('hooks.copy.codexAfter')));
-      if (r.ok && r.name) card.append(el('p', 'cx-sub', t('hooks.copy.agyAfter', { name: r.name })));
-      done.append(card);
-    }
-    const close = el('div', 'mcp-acts');
-    close.append(button(t('hooks.copy.close'), 'btn btn-primary', () => dialog.close()));
-    done.append(close);
-    form.replaceChildren(heading, done);
-    heading.focus();
-    await ctx.onSaved?.();
-  };
-  paintGo();
-  dialog.showModal();
-  heading.focus();
-  await refresh();
-}
-

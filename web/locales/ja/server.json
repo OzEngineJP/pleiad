@@ -1383,6 +1383,13 @@
     }
   },
   "plyHooks": {
+    "write": {
+      "failed": "Hooks の設定を保存できませんでした。{{reason}}",
+      "isDir": "データの置き場で、{{file}} と同じ名前のフォルダーがファイルの場所をふさいでいます",
+      "denied": "データの置き場の {{file}} に書き込めません（ほかのプログラムが開いているか、書き込みが許されていません）",
+      "full": "ディスクの空きが足りません",
+      "other": "ファイルに書き込めませんでした（{{code}}）"
+    },
     "invalid": "Hook の登録の形が正しくありません",
     "name": "名前を 1〜80 文字で入れてください",
     "agent": "コマンドの形（どのエージェント向けに書いたか）を選んでください",
@@ -1408,7 +1415,7 @@
       "grokTrustUnknown": "~/.grok/trusted_folders.toml があるので、この作業場所を Grok が信頼しているか分かりません",
       "duplicate": "同じイベント・matcher・コマンドが、このエージェントで既に動いています（1 回だけ動かします）"
     },
-    "unreadable": "Hook × エージェントの設定ファイル（hooks-agents.json）を読めません（壊れているか、知らない版です）。止めたはずの Hook が動かないよう、会話を始めません。設定 › プラグイン › Hooks の「修復」（操作 hooks.repair）か「以前の担当へ戻す」（hooks.resetAgents）で直してください。どちらも壊れたファイルを消さずに hooks-agents.broken-<時刻>.json へ退避し、以前の Hooks の担当（任せる・そろえる）の動きに戻します",
+    "unreadable": "Hook × エージェントの設定ファイル（hooks-agents.json）を読めません（壊れているか、知らない版です）。止めたはずの Hook が動かないよう、会話を始めません。設定 › プラグイン › Hooks の「壊れたファイルを退避して直す」（操作 hooks.repair）で直してください。壊れたファイルは消さずに hooks-agents.broken-<時刻>.json へ退避し、以前の Hooks の担当（任せる・そろえる）の動きに戻します",
     "stale": "Hooks の一覧が変わりました。開き直してから操作してください",
     "noRow": "Hook の行（{{key}}）が見つかりません。一覧を開き直してください",
     "notPressable": "Hook の行（{{key}}）の {{agent}} は押せないセルです",

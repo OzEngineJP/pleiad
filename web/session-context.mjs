@@ -30,8 +30,10 @@ import {
 import { freshAgents, rowSwitch, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, savedText } from './context-matrix.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { lockedAgentChip } from './mcp-matrix.mjs';
-import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
-import { unifySessionBox, unifyConfirmPanel, resetPlan, unsupportedAgentText } from './hooks-unify-ui.mjs';
+import { openHookSheet, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
+import { unifySessionBox, unsupportedAgentText } from './hooks-unify-ui.mjs';
+import { hookRowName, hookRowSub } from './hooks-matrix.mjs';
+import { agentShortLabel } from './agent-brands.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -124,7 +126,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   // Hooks（sessionHooks の戻り）。会話・場所・実行中かが変わったら取り直す
   let hooks = { key: null, data: null };
   // 「この場所だけ変える」の間の Hooks の担当（plyHooks { cwd }）と、開いている切り替えの確認（'ply' | 'native' | null。ADR 0049）
-  let hooksPlace = { cwd: null, view: null }, hooksConfirm = null;
+  let hooksPlace = { cwd: null, view: null };
   // 同じ名前の Skill の定義の選択肢を［変更］で開いている名前（ADR 0290）
   const choiceOpen = new Set();
   // 「この場所だけ変える」の 4 タブ・フォルダーのまとまり・Skills 絞り込み（段 1）
@@ -194,7 +196,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let shownFor = null;
   function render() {
     // 別の会話へ移った。前の会話の差分・ログインの途中経過・変えている途中は持ち越さない
-    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; reviewError = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; unifying = false; hooksConfirm = null; choiceOpen.clear(); resetEditState(); }
+    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; reviewError = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; unifying = false; choiceOpen.clear(); resetEditState(); }
     const data = info();
     const box = el('div', 'scx');
     if (data?.pending || data?.error) box.append(stateLine(t(data.pending
@@ -549,12 +551,19 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     return face;
   }
   async function startEdit() {
-    edit = true; editScan = null; unifying = false; hooksConfirm = null; resetEditState();
-    hooksPlace = { cwd: place.cwd, view: null };
-    cmd('plyHooks', { cwd: place.cwd }).then(v => { if (hooksPlace.cwd === place.cwd) { hooksPlace.view = v; refresh(); } }).catch(() => {});
+    edit = true; editScan = null; unifying = false; resetEditState();
+    loadHooksPlace();
     refresh();
     focusIn('[data-act=placeDone]');
     await loadEditScan();
+  }
+  /** この場所の Hook × エージェントの表（hooks.matrix の cwd つき。各行の here が「この場所で使うか」） */
+  function loadHooksPlace() {
+    const cwd = place.cwd;
+    hooksPlace = { cwd, view: hooksPlace.cwd === cwd ? hooksPlace.view : null };
+    return cmd('hooksMatrix', { cwd, trust: false })
+      .then(v => { if (hooksPlace.cwd === cwd) { hooksPlace.view = v; refresh(); } })
+      .catch(e => { if (hooksPlace.cwd === cwd) { hooksPlace.view = { failed: e.message }; refresh(); } });
   }
   async function loadEditScan({ skipRefresh = false } = {}) {
     const cwd = place.cwd;
@@ -764,7 +773,6 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function editCounts() {
     const support = contextSupport();
     const hView = hooksPlace.view;
-    const hVal = hView?.place?.value ?? hView?.defaults?.value;
     const kindVal = k => here()?.kinds[k].value ?? place.view?.defaults.kinds[k].value;
     const docCount = k => editDocs[k] ? editDocs[k].rows.filter(r => r.rowSwitchOn).length : null;
     const scanCount = k => {
@@ -776,9 +784,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const rows = uniqueRows((editScan.entries ?? []).filter(e => e.kind === k && e.status !== 'duplicate'));
       return new Set(rows.map(e => e.name)).size;
     };
-    const hooksCount = !hView || hView.unreadable || !hVal
-      ? null
-      : hVal.owner !== 'ply' ? null : (hView.hooks ?? []).filter(h => h.enabled).length;
+    // この場所で使う Hook（here のある行のうち、使う・どれかのエージェントで実行するもの）
+    const hooksCount = !hView?.rows || hView.unreadable ? null : hView.rows.filter(r => r.here?.use && r.on).length;
     return {
       instruction: docCount('instruction'),
       skill: docCount('skill'),
@@ -1206,16 +1213,13 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const h = hooks.data;
     // Hooks を Pleiad がそろえた会話: そのターンの記録（渡した・止めた・渡せなかった・漏れ）と発火の記録
     if (h?.unify?.owner === 'ply') {
-      const box = unifySessionBox(h.unify, { kindBox, short: shortPath, agents: hookAgentNames() });
-      if (h.owner !== 'ply') box.append(el('p', 'cx-strong', t('hooks.unify.session.nextNative')));
-      return [box, hookRuns(h)];
+      return [unifySessionBox(h.unify, { kindBox, short: shortPath, agents: hookAgentNames() }), hookRuns(h)];
     }
     const k = kindBox('Hooks', t('sessionContext.native'), false);
     if (!h) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.reading'))); return [k]; }
     if (h.failed) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.failed', { error: h.failed }))); return [k]; }
     if (h.unify?.unsupportedAgent || (h.owner === 'ply' && !h.agent)) { k.append(el('p', 'cx-sub', unsupportedAgentText(hookAgentNames()))); return [k]; }
     if (!h.agent || !h.report) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.unknownAgent', { agent: backendLabel() }))); return [k]; }
-    if (h.owner === 'ply') k.append(el('p', 'cx-strong', t('hooks.unify.session.nextPly')));
     k.append(el('p', 'cx-sub', h.observable ? t('sessionContext.hooks.lead') : t('sessionContext.hooks.leadUnobserved')));
     const ctx = { cmd, scan: h.report, short: shortPath, onSaved: async () => { showToast(); loadHooks(info() ?? data, true); } };
     for (const f of h.report.files.filter(f => f.status === 'error')) k.append(el('p', 'cx-strong', t('sessionContext.hooks.fileError', { path: shortPath(f.path), error: f.error ?? '' })));
@@ -1238,12 +1242,6 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const edit = button(t('hooks.edit'), 'btn', () => openHookSheet(ctx, { entry: e }));
         edit.setAttribute('aria-label', t('sessionContext.hooks.editAria', { name: rowName(e) }));
         acts.append(edit);
-        // 他のエージェントへ写す（作業場所の定義は右パネルにしか並ばない）。写した定義（アダプター越し）からは写さない
-        if (!copyBlocked(e)) {
-          const copy = button(t('hooks.copy.open'), 'btn', () => openCopySheet(ctx, e));
-          copy.setAttribute('aria-label', t('sessionContext.hooks.copyAria', { name: rowName(e) }));
-          acts.append(copy);
-        }
         body.append(acts);
       }
       row.append(dot, body);
@@ -1304,51 +1302,44 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     return k;
   }
 
-  /** 「この場所だけ変える」の間の Hooks の面: 担当の 2 択（変える前にその場で確認）と、この場所で渡す登録のスイッチ */
+  /**
+   * 「この場所だけ変える」の間の Hooks の面: 各行は「この場所で使うか」のスイッチだけ（hooks.setPlace）。
+   * どのエージェントで実行するかは設定 › プラグイン › Hooks の表で決める（ここでは見せるだけ）
+   */
   function hooksEditFace() {
     const view = hooksPlace.view;
-    const value = view?.place?.value ?? view?.defaults?.value;
-    const ply = value?.owner === 'ply';
-    const k = kindBox('Hooks', ply ? t('sessionContext.place.plyWho') : t('sessionContext.native'), ply);
-    if (view?.unreadable) { k.append(el('p', 'cx-strong', t('hooks.unify.unreadable'))); return k; }
-    if (!value) { k.append(el('p', 'cx-sub', t('sessionContext.place.loading'))); return k; }
-    const seg = el('div', 'cx-seg'); seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', t('sessionContext.place.ownerAria', { kind: 'Hooks' }));
-    for (const id of ['native', 'ply']) {
-      const b = button('', 'cx-opt');
-      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(value.owner === id)); b.dataset.owner = `hooks:${id}`;
-      b.append(el('b', null, OWNER[id][0]), el('span', null, t(id === 'ply' ? 'hooks.owner.ply' : 'hooks.owner.agent')));
-      b.onclick = () => { hooksConfirm = value.owner === id ? null : { direction: id, reset: false }; refresh(); focusIn(hooksConfirm ? '.hk-unify' : `[data-owner="hooks:${id}"]`); };
-      seg.append(b);
-    }
-    k.append(seg);
-    const saved = v => { hooksPlace.view = v; hooksConfirm = null; showToast(); loadHooks(info(), true); refresh(); };
-    if (hooksConfirm) {
-      k.append(unifyConfirmPanel({ cmd, cwd: place.cwd, direction: hooksConfirm.direction, reset: hooksConfirm.reset, short: shortPath, onDone: saved,
-        onCancel: () => { hooksConfirm = null; refresh(); focusIn(`[data-owner="hooks:${value.owner}"]`); } }));
+    const k = kindBox('Hooks', t('sessionContext.hooks.placeWho'), true);
+    if (!view) { k.append(el('p', 'cx-sub', t('sessionContext.place.loading'))); return k; }
+    if (view.failed) { k.append(el('p', 'cx-strong', t('hooks.matrix.loadFailed', { error: view.failed }))); return k; }
+    if (view.unreadable) {
+      k.append(el('p', 'cx-strong', view.error ?? t('hooks.reason.unreadable')));
+      const fix = el('p', 'cx-sub');
+      fix.append(button(t('sessionContext.hooks.openSettings'), 'cx-link', () => openSettings()));
+      k.append(fix);
       return k;
     }
-    if (view.place?.override) {
-      // 上の設定に戻すと担当が変わるなら、切り替えと同じ確認を通す（止めていたネイティブが再開する・動いていたものが止まるため）
-      const reset = button(t('hooks.unify.placeReset'), 'btn', () => {
-        const plan = resetPlan(view);
-        if (plan.confirm) { hooksConfirm = { direction: plan.confirm, reset: true }; refresh(); focusIn('.hk-unify'); return; }
-        placeWork(async () => saved(await cmd('setHooksOwner', { place: place.cwd, cwd: place.cwd, value: null, revision: view.revision })));
-      });
-      k.append(reset);
-    }
-    if (!ply) { k.append(el('p', 'cx-sub', t('sessionContext.place.nativeNote', { agent: backendLabel() }))); return k; }
-    // この場所で渡す登録（オフ = この場所では渡さない。登録そのものは消さない）
-    const off = new Set(value.disabled ?? []);
-    const hooksList = (view.hooks ?? []).filter(h => h.enabled);
-    if (!hooksList.length) k.append(el('p', 'cx-sub', t('hooks.unify.registryEmpty')));
-    for (const h of hooksList) {
-      const on = !off.has(h.id);
-      const row = switchRow({ id: h.id, name: h.name, path: '' }, on, [h.event, h.targets.map(agentLabel).join(', '), on ? '' : t('hooks.unify.offHere')].filter(Boolean).join(' · '), true,
-        () => placeWork(async () => saved(await cmd('setHooksOwner', { place: place.cwd, cwd: place.cwd, revision: view.revision,
-          value: { owner: 'ply', disabled: on ? [...off, h.id] : [...off].filter(x => x !== h.id) } }))));
-      row.querySelector('.cx-sw')?.setAttribute('aria-label', t('hooks.unify.placeSwitchAria', { name: h.name }));
+    const rows = (view.rows ?? []).filter(r => r.here);
+    if (!rows.length) { k.append(el('p', 'cx-sub', t('sessionContext.place.none'))); return k; }
+    const reload = () => { showToast(); loadHooks(info(), true); return loadHooksPlace(); };
+    for (const r of rows) {
+      const use = r.here.use;
+      const runs = Object.entries(r.cells ?? {}).filter(([, c]) => c.state === 'on').map(([a]) => agentShortLabel(a, agentLabel(a))).join('・');
+      const sub = [r.group === 'ply' ? 'Pleiad' : r.kind === 'ws' ? null : agentLabel(r.agent), hookRowSub(r),
+        !use ? t('sessionContext.place.offHere') : !r.on ? t('sessionContext.hooks.offAll') : t('sessionContext.hooks.runsOn', { agents: runs })].filter(Boolean).join(' · ');
+      const name = hookRowName(r);
+      const row = switchRow({ id: r.key, name, path: '' }, use, sub, true,
+        () => placeWork(async () => {
+          await cmd('setHookPlace', { place: place.cwd, key: r.key, use: !use, revision: view.revision });
+          await reload();
+          return false;
+        }, `[data-row="${CSS.escape(r.key)}"] .cx-sw`));
+      const sw = row.querySelector('.cx-sw');
+      sw?.setAttribute('aria-label', t('sessionContext.hooks.placeSwitchAria', { name }));
       k.append(row);
     }
+    const foot = el('p', 'cx-sub');
+    foot.append(t('sessionContext.hooks.placeFoot'), ' ', button(t('sessionContext.hooks.openSettings'), 'cx-link', () => openSettings()));
+    k.append(foot);
     return k;
   }
 

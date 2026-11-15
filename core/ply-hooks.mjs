@@ -23,6 +23,17 @@ import { pathKey, containsPath, scanDirectory } from './context-settings.mjs';
 import { writeAtomic } from './atomic-file.mjs';
 import { t } from './i18n.mjs';
 
+export const HOOKS_WRITE_FAILED = 'HOOKS_WRITE_FAILED';
+// 書き込みの失敗を、生の Node の誤り（EISDIR: illegal operation …）でなく利用者の言葉で返す（指示・Skills の表の context-agents.json と同じ決まり）
+const WRITE_REASONS = { EISDIR: 'isDir', EACCES: 'denied', EPERM: 'denied', EBUSY: 'denied', EROFS: 'denied', ENOSPC: 'full' };
+// i18n-dynamic: server:plyHooks.write.isDir
+// i18n-dynamic: server:plyHooks.write.denied
+// i18n-dynamic: server:plyHooks.write.full
+/** Hooks のデータ（hooks.json・hooks-agents.json）を書けなかったときの誤り。file はファイル名だけ（置き場のパスは出さない） */
+export const hooksWriteFailed = (cause, file) => cause?.code === HOOKS_WRITE_FAILED ? cause : Object.assign(new Error(t('plyHooks.write.failed', {
+  reason: WRITE_REASONS[cause?.code] ? t(`plyHooks.write.${WRITE_REASONS[cause.code]}`, { file }) : t('plyHooks.write.other', { code: cause?.code ?? 'unknown' }),
+})), { code: HOOKS_WRITE_FAILED, cause });
+
 export const VERSION = 1;
 export const OWNERS = ['native', 'ply'];
 const MAX_HOOKS = 200;
@@ -157,10 +168,12 @@ export function createPlyHooks(dataDir) {
     return config;
   }
   async function write(config) {
-    await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
-    // 作るときから 0600（一時ファイルのうちも、置き換えた直後も広い権限にしない）
-    await writeAtomic(file, JSON.stringify(plain(config), null, 2), { mode: 0o600 });
-    try { await fs.chmod(file, 0o600); } catch (e) { if (process.platform !== 'win32') throw e; }
+    try {
+      await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
+      // 作るときから 0600（一時ファイルのうちも、置き換えた直後も広い権限にしない）
+      await writeAtomic(file, JSON.stringify(plain(config), null, 2), { mode: 0o600 });
+      try { await fs.chmod(file, 0o600); } catch (e) { if (process.platform !== 'win32') throw e; }
+    } catch (e) { throw hooksWriteFailed(e, path.basename(file)); }
   }
   // 読むのも書くのも同じ列に並べる（読み・変更・書き込みの間に別の保存が挟まらないように）
   const run = fn => { const next = queue.catch(() => {}).then(fn); queue = next; return next; };
@@ -308,13 +321,14 @@ export function createPlyHooks(dataDir) {
     return run(async () => {
       let text = null;
       try { text = await fs.readFile(file, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-      if (text === null) return;
+      if (text === null) return null;
       let config = null;
       try { config = parseConfig(JSON.parse(text)); } catch {}
       const backup = path.join(dataDir, `hooks.broken-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
       await fs.writeFile(backup, text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       await write(config ? { ...config, problems: [] } : empty());
-    }).then(() => view(cwd));
+      return backup;
+    }).then(async backup => ({ ...(await view(cwd)), ...(backup ? { backup } : {}) }));
   }
   return { file, read: () => run(read), resolve, resolveForTurn, view, readHook, save, remove, toggle, setOwner, repair };
 }

@@ -17,8 +17,9 @@ export function lockReasonKey(cell) {
   return cell?.mode === 'blocked' ? 'relay' : 'own';
 }
 
-/** エージェント名とセルから吹き出しの文を作る */
+/** エージェント名とセルから吹き出しの文を作る。cell.tip があればそれ（Hooks の表は理由の細目 detail ごとの文。web/hooks-matrix.mjs） */
 export function lockReasonText(agentName, cell) {
+  if (typeof cell?.tip === 'string' && cell.tip) return cell.tip;
   return t(`context.lockReason.${lockReasonKey(cell)}`, { agent: agentName });
 }
 

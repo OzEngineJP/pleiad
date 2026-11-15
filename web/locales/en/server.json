@@ -1385,6 +1385,13 @@
     }
   },
   "plyHooks": {
+    "write": {
+      "failed": "Could not save the hooks settings. {{reason}}",
+      "isDir": "In the data folder, a folder with the same name as {{file}} is in the file's place",
+      "denied": "Cannot write {{file}} in the data folder (another program has it open, or writing is not allowed)",
+      "full": "Not enough disk space",
+      "other": "Could not write the file ({{code}})"
+    },
     "invalid": "The hook registration is not in a valid form",
     "name": "Enter a name of 1–80 characters",
     "agent": "Choose which agent the command is written for",
@@ -1410,7 +1417,7 @@
       "grokTrustUnknown": "~/.grok/trusted_folders.toml exists, so whether Grok trusts this workspace is unknown",
       "duplicate": "The same event, matcher and command already runs on this agent (it runs only once)"
     },
-    "unreadable": "The hook × agent settings file (hooks-agents.json) cannot be read (it is broken or from an unknown version). The conversation is not started so that hooks you turned off do not run. Fix it with Repair (the hooks.repair operation) or Go back to the previous owner (hooks.resetAgents) in Settings › Plugins › Hooks. Both keep the broken file as hooks-agents.broken-<time>.json instead of deleting it and go back to the previous hooks owner (leave to agents / Pleiad aligns)",
+    "unreadable": "The hook × agent settings file (hooks-agents.json) cannot be read (it is broken or from an unknown version). The conversation is not started so that hooks you turned off do not run. Fix it with \"Move the broken file aside and repair\" (the hooks.repair operation) in Settings › Plugins › Hooks. The broken file is kept as hooks-agents.broken-<time>.json instead of being deleted, and hooks go back to the previous owner (leave to agents / Pleiad aligns)",
     "stale": "The hooks list has changed. Reopen it and try again",
     "noRow": "The hook row ({{key}}) was not found. Reopen the list",
     "notPressable": "The {{agent}} cell of the hook row ({{key}}) cannot be pressed",

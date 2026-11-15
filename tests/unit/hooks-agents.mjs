@@ -10,7 +10,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createPlyHooks } from '../../core/ply-hooks.mjs';
+import { createPlyHooks, hooksWriteFailed } from '../../core/ply-hooks.mjs';
 import { createHooksConfig } from '../../core/hooks-config.mjs';
 import { createHooksAgents, nativeRowKey, parseState, WS_KEY, LOCK_REASONS, FILE_NAME } from '../../core/hooks-agents.mjs';
 import { prepareHooksTurn } from '../../core/hooks-unify.mjs';
@@ -18,6 +18,7 @@ import { classifyNativeRun, codexHooksState } from '../../core/hooks-plan.mjs';
 import { devinTurnConfig } from '../../core/backends/devin-config.mjs';
 import { containsPath } from '../../core/context-settings.mjs';
 import { registry } from '../../core/ops/index.mjs';
+import { t as T } from '../../core/i18n.mjs';
 
 export const name = 'hooks-agents';
 export const title = 'Hook × エージェント: 行 ID・移行の式・旧の保存と同じ動き・一覧と実行時の一致・二重に動かさない・鍵の理由・操作の承認';
@@ -326,7 +327,7 @@ export default async function (t) {
       try { await freshTurn(CLAUDE); } catch (e) { e1 = e; }
       try { await newTurn(CLAUDE); } catch (e) { e2 = e; }
       t.ok(`${label}: 会話を断る（読めた選択でも止めるものがあれば断る。hooks.json の担当が Pleiad のときと同じ側）`, e1?.code === 'HOOKS_REFUSED' && e2?.code === 'HOOKS_REFUSED', `${e1?.code} ${e2?.code}`);
-      t.ok(`${label}: 断る文が、実際にある直す操作（hooks.repair・hooks.resetAgents）と退避を案内する`, /hooks.repair/.test(e1?.message) && /hooks.resetAgents/.test(e1?.message) && /hooks-agents.broken-/.test(e1?.message)
+      t.ok(`${label}: 断る文が、実際にある直す操作（画面の「壊れたファイルを退避して直す」= hooks.repair）と退避を案内する（画面に出さない hooks.resetAgents は案内しない）`, /hooks.repair/.test(e1?.message) && !/hooks.resetAgents/.test(e1?.message) && /hooks-agents.broken-/.test(e1?.message)
         && registry.get('hooks.repair') && registry.get('hooks.resetAgents'));
       const m = await ha.matrix({ cwd: repo });
       t.ok(`${label}: 一覧は投げずに unreadable と直す操作を返す（画面の Hooks のタブが出す）`, m.unreadable === true && m.rows.length === 0 && m.repair.join() === 'hooks.repair,hooks.resetAgents' && m.adopted === true, JSON.stringify(m).slice(0, 300));
@@ -357,6 +358,18 @@ export default async function (t) {
     await fs.writeFile(ha.file, goodText);
     await ha.reset();
     t.ok('移行前へ戻す: 読めるファイルは消し（退避しない）、旧の担当の動きへ戻る', !await ha.exists() && (await brokenFiles()).length === 0 && await newTurn(CLAUDE) === null);
+
+    // ---------------------------------------------------------------- 書けない: 生の Node の誤り（EISDIR: illegal operation …）でなく利用者の言葉で返す
+    // （読めて書けない状態は OS ごとに作り方が違う（同じ名前のフォルダーは読みでも UNREADABLE になる）ので、変換の部分を直に見る）
+    const head = T('plyHooks.write.failed', { reason: '' }).trim();
+    const raw = code => Object.assign(new Error(`${code}: illegal operation on a directory, open 'C:\\data\\hooks-agents.json'`), { code });
+    const conv = Object.fromEntries(['EISDIR', 'EPERM', 'ENOSPC', 'EIO'].map(c => [c, hooksWriteFailed(raw(c), FILE_NAME)]));
+    t.ok('書けないときは HOOKS_WRITE_FAILED で、文は「Hooks の設定を保存できませんでした」から始まり、Node の誤りの文とパスを出さない',
+      Object.values(conv).every(e => e.code === 'HOOKS_WRITE_FAILED' && e.message.startsWith(head) && !/illegal operation|C:\\data/.test(e.message) && e.cause?.code),
+      JSON.stringify(Object.values(conv).map(e => e.message)));
+    t.ok('書けない理由ごとの文（同じ名前のフォルダー・開けない・空きが無い）はファイル名を示し、知らない理由はコードだけ添える',
+      conv.EISDIR.message.includes(FILE_NAME) && conv.EPERM.message.includes(FILE_NAME) && conv.ENOSPC.message === T('plyHooks.write.failed', { reason: T('plyHooks.write.full') })
+      && conv.EIO.message.includes('EIO') && hooksWriteFailed(conv.EISDIR, 'x') === conv.EISDIR);
 
     // ---------------------------------------------------------------- 渡せないセル（relay）
     const ss = await plyHooks.save({ name: 'ctx', agent: CLAUDE, event: 'SessionStart', matcher: '', command: 'node ctx.mjs', targets: [CLAUDE] });

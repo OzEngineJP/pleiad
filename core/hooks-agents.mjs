@@ -15,7 +15,7 @@ import { deliverable, nativeFate, planHooks, suppliedSummary, unsupportedSummary
 import { importCandidate, rowSummary, adapterSource, writeAdapterTo, grokNativeHooks, GROK_COMPAT_HOOK_ENV } from './hooks-unify.mjs';
 import { parseAdapterCommand, safeAdapterPath } from './hooks-copy.mjs';
 import { parseToml } from './toml.mjs';
-import { resolveOwner } from './ply-hooks.mjs';
+import { resolveOwner, hooksWriteFailed } from './ply-hooks.mjs';
 
 // backend-allow: 元の集合と止め方がエージェントごとに違う（ADR 0338「元の集合」「実行時」）
 const CLAUDE = 'claude', CODEX = 'codex', AGY = 'antigravity', GROK = 'grok', DEVIN = 'devin';
@@ -575,9 +575,11 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     return backup;
   }
   async function write(state) {
-    await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
-    await writeAtomic(file, JSON.stringify(plainState(state), null, 2), { mode: 0o600 });
-    try { await fs.chmod(file, 0o600); } catch (e) { if (process.platform !== 'win32') throw e; }
+    try {
+      await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
+      await writeAtomic(file, JSON.stringify(plainState(state), null, 2), { mode: 0o600 });
+      try { await fs.chmod(file, 0o600); } catch (e) { if (process.platform !== 'win32') throw e; }
+    } catch (e) { throw hooksWriteFailed(e, FILE_NAME); }
   }
 
   /** その場所（cwd が無ければユーザーの範囲だけ）の行。turn: true ならターンの準備（Codex の信頼は確かめない） */
@@ -624,8 +626,11 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     return { cwd, rows, byKey, report, config, grokEnv, claudeAllOff, agyBad, platform };
   }
 
+  // 画面は code（HOOKS_BROKEN）で「壊れたファイルを退避して直す」（hooks.repair）を出す
   function checkLegacy(config) {
-    if (config.problems?.some(p => ['hook', 'duplicate', 'tooMany'].includes(p.kind)) || config.brokenDefaults || Object.keys(config.brokenPlaces ?? {}).length) throw invalid('hooksAgents.legacyBroken');
+    if (config.problems?.some(p => ['hook', 'duplicate', 'tooMany'].includes(p.kind)) || config.brokenDefaults || Object.keys(config.brokenPlaces ?? {}).length) {
+      throw Object.assign(new Error(t('hooksAgents.legacyBroken')), { code: 'HOOKS_BROKEN' });
+    }
   }
   /** 移行済みの選択。まだなら、そのときの実効の状態を写して作る（保存はしない） */
   async function current() {
