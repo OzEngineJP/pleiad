@@ -324,13 +324,11 @@ try {
 
     // Skills タブ + 絞り込み欄
     await page.locator('#cx-tab-skill').click();
-    // 段 2 では Skills の行を先に組むので、行があるだけでなく、タブが切り替わって見えているのを待つ（見えていない間の innerText は区切りが無い）
-    await page.waitForFunction(() => {
-      const grps = [...document.querySelectorAll('#cx-panel-skill .cx-row.grp')];
-      return grps.length >= 2 && grps.every(e => e.checkVisibility());
-    }, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.grp').length >= 2, { timeout: 10000 });
     await shoot(page, 'context-agents-1280-light-skills.png');
-    const skillGrps = await page.locator('#cx-panel-skill .cx-row.grp').evaluateAll(els => els.map(e => ({
+    // 探すのと読むのを 1 回の evaluate で行う。locator.evaluateAll は探すのと読むのが別の呼び出しで、その間に直前の保存の書き直しが
+    // 来ると、外れた古い行の innerText（区切りの無い文字）を読んで落ちた
+    const skillGrps = await page.evaluate(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp')].map(e => ({
       text: e.innerText.replace(/\s+/g, ' ').trim(),
       expanded: e.querySelector('.cx-tw')?.getAttribute('aria-expanded'),
     })));
