@@ -853,6 +853,25 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
   }
 
   /**
+   * その場所の Devin のターンで、Pleiad が Hook を渡すため Devin の取り込み（read_config_from）が全部止まるか。
+   * 移行済みは forTurn の stopImports（compat.devin: 'off' で渡すものがある）、移行前は旧「そろえる」（担当が ply で渡すものがある。devinTurnConfig の既定）と同じ規則。
+   * 指示・Skills の表（core/context-doc-matrix.mjs の devinImportsStopped）が、取り込む物の Devin のマスを鍵つきのオフに見せるのに使う。
+   * 読めない・分からないときは false（表は今までどおり。ターンは別に断る）
+   */
+  async function devinImportsStopped(cwd) {
+    try {
+      const stored = await read();
+      if (!stored) {
+        const owner = await plyHooks.resolve(cwd);
+        return owner?.owner === 'ply' && planHooks({ hooks: owner.hooks, owner, agent: DEVIN, platform }).supplied.length > 0;
+      }
+      if (effectiveAt(stored, cwd).agents.compat?.devin !== 'off') return false;
+      const plan = await turnPlan(DEVIN, cwd, stored);
+      return Boolean(plan && plan.s.compat?.devin === 'off' && plan.deliver.length > 0);
+    } catch { return false; }
+  }
+
+  /**
    * 設定 › プラグイン › Hooks の一覧（hooks.matrix）。外部 MCP の一覧（context.mcpMatrix）と同じ形: 行 × エージェントのセル。
    * cwd があればその場所で効く選択（場所の上書き・この場所で使わない）と、その場所の作業場所の定義の行を並べる
    */
@@ -904,5 +923,5 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     });
   }
 
-  return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, reset, repair, turnPlan, forTurn, hooksForTurn };
+  return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, reset, repair, turnPlan, forTurn, hooksForTurn, devinImportsStopped };
 }

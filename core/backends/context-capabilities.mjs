@@ -191,12 +191,17 @@ const LOCK_CHECKS = {
   // Devin の取り込みを止めると read_config_from が形式ごとに Hooks・MCP まで止める（2026-11-15 の本物の確かめ）。
   // 指示と Skills の表では Devin の取り込みを止めないと決めた（ADR 0337 §決定 8）。Devin が自分で読む物は、まとめの行も含めて鍵付きでオン
   // Devin 自身の置き場（.devin・.cognition・設定の置き場）とユーザーの Devin の物は own、ほかの形式から取り込む物は bundled（止めると Hooks・MCP も止まる）
-  devin(kind, entryOrSummary) {
-    if (entryOrSummary === '__workspace__') return { lockedOn: true, reason: 'bundled' };
+  // ctx.devinImportsStopped: その場所の Devin のターンで、Pleiad が Hook を渡すため取り込み（read_config_from）が全部止まる
+  // （Hooks の旧「そろえる」から移った compat.devin: 'off'。core/hooks-agents.mjs の devinImportsStopped）。取り込む物は読まれないので鍵つきでオフ
+  devin(kind, entryOrSummary, ctx) {
+    // 旧「そろえる」の場所（legacyOwner: 'ply'）は、鍵のマスも Pleiad が渡す（resolveLegacyPlyDoc）ので、取り込みが止まっても届く
+    const stopped = ctx?.devinImportsStopped && ctx?.legacyOwner !== 'ply';
+    const imported = stopped ? { lockedOn: false, reason: 'devinHooks' } : { lockedOn: true, reason: 'bundled' };
+    if (entryOrSummary === '__workspace__') return imported;
     const origins = entryOrigins(entryOrSummary).filter((o) => !o.custom && NATIVE_READERS.devin(kind, o));
     if (!origins.length) return null;
     const own = origins.filter((o) => isDevinOwnPath(o.path) || isDevinOwnPath(o.realPath) || (o.source === 'devin' && o.scope === 'user'));
-    return own.length ? { lockedOn: true, reason: scopeLockReason(own) } : { lockedOn: true, reason: 'bundled' };
+    return own.length ? { lockedOn: true, reason: scopeLockReason(own) } : imported;
   },
   grok(kind, entryOrSummary) {
     if (entryOrSummary === '__workspace__') {
@@ -210,8 +215,9 @@ const LOCK_CHECKS = {
 
 /**
  * Lock descriptor for an external instruction/skill cell `(agent, kind, entryOrSummary)`.
- * Returns null if user-toggleable, or `{ lockedOn: boolean, reason: 'own' | 'workspace' | 'relay' | 'bundled' }`.
+ * Returns null if user-toggleable, or `{ lockedOn: boolean, reason: 'own' | 'workspace' | 'relay' | 'bundled' | 'devinHooks' }`.
  * `ctx.legacyOwner` is the legacy owner ('native' | 'ply') of `kind` at the place (some locks depend on it).
+ * `ctx.devinImportsStopped` is true when Devin's imports stop at the place because Pleiad supplies hooks to Devin.
  */
 export function docCellLock(agent, kind, entryOrSummary, ctx = null) {
   return LOCK_CHECKS[agent]?.(kind, entryOrSummary, ctx) ?? null;

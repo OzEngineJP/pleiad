@@ -306,7 +306,8 @@ export async function resolveRuntime(policy, options = {}) {
   const owners = policy.owners;
   const kinds = Object.keys(owners).filter(k => owners[k] === 'ply');
   // locale は会話の言語（エージェントに渡す前置き・ツールの説明の言語）。探索の設定ではないので scanOptions に入れない
-  const { snapshots, locale, agent = policy.agent ?? null, forceInstructionCoarse = false, ...scanOptions } = options;
+  // devinImportsStopped: Devin のターンで、Pleiad が Hook を渡すため Devin の取り込みが止まる（指示・Skills の表の Devin のマス。docCellLock）
+  const { snapshots, locale, agent = policy.agent ?? null, forceInstructionCoarse = false, devinImportsStopped = false, ...scanOptions } = options;
   const settings = runtimeSettings(policy, { agent });
   const mcpRules = agentMcpRules(settings.plan, agent);
   // 名前ごとのモデルでは、外部 MCP の設定ファイルが 1 つ壊れていても会話を止めない（そのファイルの名前だけ渡さない）。指示・Skills の失敗は従来どおり止める
@@ -318,10 +319,10 @@ export async function resolveRuntime(policy, options = {}) {
   const docInstActive = Boolean(docActive.instruction && agent && policy.rawConfig && policy.docAgents);
   const docSkillActive = Boolean(docActive.skill && agent && policy.rawConfig && policy.docAgents);
   const instrRes = docInstActive
-    ? resolveDocForAgent({ kind: 'instruction', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home, forceCoarseDeliver: forceInstructionCoarse })
+    ? resolveDocForAgent({ kind: 'instruction', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home, forceCoarseDeliver: forceInstructionCoarse, devinImportsStopped })
     : null;
   const skillRes = docSkillActive
-    ? resolveDocForAgent({ kind: 'skill', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home })
+    ? resolveDocForAgent({ kind: 'skill', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home, devinImportsStopped })
     : null;
   const docs = (instrRes || skillRes) ? { instruction: instrRes, skill: skillRes } : null;
   const instrDoc = docs?.instruction ?? null;
@@ -438,7 +439,7 @@ export async function resolveRuntime(policy, options = {}) {
   await saveSnapshots(snapshots, scan.entries);
   // scanOptions は instructions_for_path が同じ探索（home など）で解き直すために持つ
   // delivered は渡し済みの本文の控え。会話をまたぐ分は core/server.mjs が差し替える
-  return { policy, owners, report, instructions, conditional, skills, servers, prompt, pin, scanOptions, locale, mcp, docs, agent, delivered: {} };
+  return { policy, owners, report, instructions, conditional, skills, servers, prompt, pin, scanOptions, locale, mcp, docs, agent, devinImportsStopped: Boolean(devinImportsStopped), delivered: {} };
 }
 
 /**
@@ -515,7 +516,7 @@ export function contextTools(runtime, userPrompt = '') {
       const childPolicy = runtime.docs?.instruction
         ? { ...runtime.policy, cwd }
         : { ...runtime.policy, cwd, owners: { ...DEFAULT_OWNERS, instruction: 'ply' } };
-      const child = await resolveRuntime(childPolicy, { ...runtime.scanOptions, locale, agent: runtime.agent, forceInstructionCoarse: Boolean(runtime.docs?.instruction?.suppress?.length && !DOC_AGENT_TRAITS[runtime.agent]?.perFileInstructionExclude) });
+      const child = await resolveRuntime(childPolicy, { ...runtime.scanOptions, locale, agent: runtime.agent, devinImportsStopped: Boolean(runtime.devinImportsStopped), forceInstructionCoarse: Boolean(runtime.docs?.instruction?.suppress?.length && !DOC_AGENT_TRAITS[runtime.agent]?.perFileInstructionExclude) });
       // 開始時に渡したものは実体パスでも突き合わせる。子の探索は実体パスの作業場所で解くので、会話の作業場所が
       // 8.3 短縮名・junction 越しだと適用範囲が別の表記になり、id が変わって同じファイルを渡し直してしまう
       const nativeKeep = runtime.docs?.instruction?.nativeKeep ?? [];

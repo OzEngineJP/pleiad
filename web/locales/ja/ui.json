@@ -1642,7 +1642,8 @@
       "admin": "管理者が {{agent}} に設定しています",
       "linked": "{{agent}} には委譲の設定に合わせて渡します",
       "nolinks": "Windows の開発者モードがオフのため、Pleiad からは止められません",
-      "bundled": "{{agent}} では止めると Hooks などほかの設定も一緒に止まるため、ここでは止められません"
+      "bundled": "{{agent}} では止めると Hooks などほかの設定も一緒に止まるため、ここでは止められません",
+      "devinHooks": "この場所では Pleiad が {{agent}} へ Hook を渡すため、{{agent}} は Claude Code などの設定から取り込みません（Hooks の表で {{agent}} に渡す Hook を止めると読みます）"
     },
     "lockAria": "{{label}}（{{reason}}）",
     "roots": {

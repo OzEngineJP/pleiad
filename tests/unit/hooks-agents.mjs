@@ -152,8 +152,21 @@ export default async function (t) {
     const devOn = await ha.matrix({ cwd: repo });
     t.ok('入れ直すと、渡すターンは取り込みを止める（Claude の定義の Devin の列は devinCompatOff）', importsStopped(await newTurn(DEVIN)) && ids(await newTurn(DEVIN)) === devReg.id
       && cell(devOn, stopRow.key, DEVIN).state === 'off' && cell(devOn, stopRow.key, DEVIN).detail === 'devinCompatOff');
+    // 指示・Skills の表が Devin のマスを合わせる判定（段 2 のレビュー S2）: ターンの取り込みを止めるかと同じ答え
+    await ha.setRow({ key: devReg.id, on: false, cwd: repo });
+    const predOff = await ha.devinImportsStopped(repo);
+    await ha.setRow({ key: devReg.id, on: true, cwd: repo });
+    const predOn = await ha.devinImportsStopped(repo);
+    t.ok('devinImportsStopped（移行後）: Devin へ渡す Hook があるときだけ true（ターンの取り込みの止め方と同じ）', predOn === true && predOff === false, JSON.stringify({ predOn, predOff }));
     await ha.reset();
+    await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [] } });
+    const predLegacy = !(await ha.exists()) && await ha.devinImportsStopped(repo);
+    await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [devReg.id] } });
+    const predLegacyNone = await ha.devinImportsStopped(repo);
     await plyHooks.setOwner({ place: null, value: { owner: 'native' } });
+    const predNative = await ha.devinImportsStopped(repo);
+    t.ok('devinImportsStopped（移行前）: 旧「そろえる」で Devin へ渡す登録があるときだけ true（登録を外す・任せるは false）',
+      predLegacy === true && predLegacyNone === false && predNative === false && importsStopped(legacyDevOff) === false, JSON.stringify({ predLegacy, predLegacyNone, predNative }));
     await plyHooks.remove(devReg.id);
 
     // ---------------------------------------------------------------- 最初の操作で写す
