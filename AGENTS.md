@@ -1,167 +1,59 @@
 # 開発規則
 
-このリポジトリの変更作業では、以下を標準手順とする。ユーザーから個別の指示がある場合は、その指示を優先する。
+このリポジトリの変更作業の標準手順。ユーザーの個別の指示を優先する。
 
-## 作業開始
+## 足す前に
 
-- 修正前に `git status --short --branch` と `git worktree list` を確認する。
-- 最新のローカル `main` から、作業ごとに専用ブランチと worktree を作成する。`main` の作業ディレクトリで直接修正しない。
-- worktree は原則としてメインの作業ディレクトリ配下の `temporary/worktrees/<作業名>` に置く。操作時は確認済みの絶対パスを使う。
-- 例: `git worktree add -b fix/<作業名> <worktreeの絶対パス> main`
-- 既存の未コミット変更、未追跡ファイル、他の作業用ブランチ・worktree は保持する。無断で stash、破棄、上書きしない。
+- 機能・コード・試験・文書・ADR・この文書のどれでも、足す前に「減らす・既存へ寄せる・共通化する」案を先に考える。機能の採否は `docs/design.md`「2.1 セッションを離れずに済むこと」（3 つに寄与しないものは入れない）。
+- 遅さ・不安定さは、先に測ってボトルネックを特定してから直す（`docs/dev-verification.md`「重さと動きを測る」）。
+- lint・試験で止められる決まりはここに書かず、機械で止める。止まったら失敗の文言に従う。
 
-## 構成と環境変数
+## 作業の流れ（ADR 0003）
 
-```
-core/     Node の HTTP + WebSocket サーバー。バックエンドに依存しない
-  backends/  エージェント 1 種類 = 1 ファイル（一覧は agents.mjs。テスト用の fake を含む）。契約（能力の印・イベント）は contract.mjs
-  ops/       操作の一覧（レジストリ）。画面・MCP・CLI へ外に出す機能の正本（`docs/design.md`「操作の一覧」）
-bin/      CLI（`pleiad`。走っている Pleiad の操作の一覧を使う薄いクライアントと `pleiad mcp`。Node の組み込みだけ。`docs/design.md`「操作の一覧」）
-web/      画面。素の ESM でビルドは無い。サーバーがリクエストごとにディスクから読む
-desktop/  Electron の main / preload と自動更新
-mobile/   モバイル版（Capacitor）
-relay/    リモート接続の中継サーバー（docs/remote.md）
-tests/    run.mjs（npm test）と e2e.mjs（npm run test:e2e）
-scripts/  リリースと署名
-docs/     設計（design.md）・見た目（design-system.md）・ADR（adr/）
-```
+- 始める前に `git status --short --branch` と `git worktree list` を見る。既存の未コミット変更・他のブランチと worktree には触れない（stash・破棄・上書きしない）。
+- 最新の `main` から作業ごとにブランチと worktree を作る: `git worktree add -b fix/<作業名> <メインの作業ディレクトリ>/temporary/worktrees/<作業名> main`。実装・試験・コミットは worktree の中で行い、依頼に要る変更だけを、対象を明示してステージする。
+- `node_modules` は、依存が `main` と同じなら PowerShell の `cmd /c mklink /J <worktree>\node_modules <メイン>\node_modules` で足りる。**`git worktree remove` の前に `cmd /c rmdir <worktree>\node_modules` で外す**（外さずに remove するとメイン側の中身まで消える）。electron-builder でパッケージを作るときだけ `npm ci`。
+- 検証が通ったらコミットし、メインの作業ディレクトリで `main` にマージする（都度の確認は要らない）。直前に `main` が進んでいれば worktree に取り込んで検証し直す。意図の分からない競合はユーザーに聞く。push はユーザーに頼まれたときだけ。
+- 終わったら worktree を `git worktree remove`、ブランチを `git branch -d` で消す（強制しない）。報告は、変更・検証結果・コミット・main への反映・サーバーの状態と、残った手順とその理由。
 
-core が web へ流すのは正規化イベントだけで、バックエンドごとのプロトコルは漏らさない（`docs/multi-backend.md` §2.2）。
+## 構成
 
-| 環境変数 | 意味 |
-|---|---|
-| `AGENT_HOST_TOKEN` | 固定のトークン（既定は起動ごとにランダム） |
-| `AGENT_HOST_PORT` | 既定 7420。予約済み・使用中なら空きポートへ移る |
-| `AGENT_HOST_BIND` | 既定 `127.0.0.1` |
-| `AGENT_HOST_DATA` | データ置き場（既定 `~/.agent-host`。開発のデスクトップ版 `npm run desktop` は `~/.agent-host-dev`。`desktop/dev-identity.cjs`・[ADR 0255](docs/adr/0255-separate-dev-desktop-identity.md)） |
-| `AGENT_HOST_BACKENDS` | 使うバックエンド（カンマ区切り。既定はエージェントの記述 `core/backends/agents.mjs` の fake を除く全部） |
-| `AGENT_HOST_CLAUDE_BIN` | Claude Code の実行ファイル（既定 `claude`） |
-| `AGENT_HOST_CODEX_BIN` | codex の実行ファイル（既定 `codex`） |
-| `AGENT_HOST_AGY_BIN` | Antigravity CLI の実行ファイル（既定 `agy`） |
-| `AGENT_HOST_OPENCODE_BIN` | OpenCode の実行ファイル（既定 `opencode`。npm の包みなら中の `opencode.exe` を直に起こす）。試験は身代わり `node tests/lib/fake-opencode.mjs` |
-| `AGENT_HOST_DEVIN_BIN` | Devin CLI の実行ファイル（既定 `devin`）。試験では身代わりに差し替え、本物の資格情報を使わない |
-| `AGENT_HOST_GROK_BIN` | Grok Build の実行ファイル（既定 `grok`）。試験では身代わりに差し替え、本物の資格情報を使わない |
-| `AGENT_HOST_SHELL_ENV` | `off` なら、デスクトップ版（macOS・Linux）の main がサーバーを起こす前にログインシェルの環境を読み込まない（戻し道。`desktop/shell-env.cjs`・ADR 0213）。読み込み中のシェルには `PLEIAD_RESOLVING_SHELL_ENV=1` を付け、入れ子にしない |
-| `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
-| `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
-| `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
-| `AGENT_HOST_AGENT_BROWSER_PRESTART` | `off` で、Windows のターンの初めに agent-browser のデーモンを先に起こす処理（ADR 0285）を止める。テストが使う（`tests/lib/server.mjs`。偽の中継の試験が PATH の上の実物を起こし、作業場所を掴んだまま残るのを防ぐ） |
-| `AGENT_HOST_HANDOVER` | Electron main とサーバーの通信方式を選ぶ旧名の設定。`on` は名前付きパイプのサーバー（配布版の通常経路）、`off` は `utilityProcess`（開発の通常経路）。どちらも `core/process.mjs` の `start()` で保持役を使い、同じ通常起動で子とターンを復元する。これは復元の条件ではない。配布版は既定で `on`、開発版は既定で `off`。開発版で `on` を試すには `AGENT_HOST_RUNTIME_RESOURCES` が要る。実行場所や Job の条件が合わない場合は `utilityProcess` に落ちる |
-| `AGENT_HOST_SERVER_LOG` | main の子でない形のサーバー（stdio が無い）が標準出力・標準エラーを書くファイル（`core/server-log.mjs`。1 MB で `.old` へ回す。トークンは伏せる）。`on` の main が実行場所の `logs\server.log` を、`off`（`utilityProcess`）の main が `userData\logs\server.log`（開発版は `server-dev.log`）を渡す。無ければ今のとおり標準出力 |
-| `AGENT_HOST_RUNTIME_ROOT` / `AGENT_HOST_RUNTIME_KEY` | サーバーが走っている版ごとの実行場所の置き場と版の名前。サーバーがその版の使用中の印（`core/runtime-use.mjs`）を付ける。`on` の main が渡す。この表の `AGENT_HOST_PORT`・`BIND`・`TOKEN`・`HANDOVER`・`SERVER_LOG`・`RUNTIME_*`・main が渡す `AGENT_HOST_SYSTEM_LOCALE` は起動の時だけのもので、サーバーは読んだ後に process.env から外し、エージェントの CLI・`!` の行・MCP へ渡さない（`core/boot-env.mjs`） |
-| `AGENT_HOST_RUNTIME_RESOURCES` | 実行場所を組む元の `resources\`（既定は `process.resourcesPath`）。パッケージ版でない `electron .` のハーネスが、`npm run desktop:pack` の `dist-desktop\win-unpacked\resources` を指して `AGENT_HOST_HANDOVER=on` を試すためのもの |
-| `AGENT_HOST_RUNTIME_DIR` | 版ごとの実行場所の置き場（既定 `%LOCALAPPDATA%\agent-host-runtime`。`$INSTDIR` と同じ文字列で始まる場所は使えない。テスト・ハーネス用）。`PLEIAD_NODE_CACHE` は、ビルドが取る公式の Node のキャッシュ（既定 `~/.cache/pleiad/node-runtime`） |
-| `PLEIAD_HOLDER_DATA` / `PLEIAD_HOLDER_ROOT` / `PLEIAD_HOLDER_KEY` / `PLEIAD_HOLDER_APP_VERSION` / `PLEIAD_HOLDER_IDLE_MS` | ターンの保持役（`core/holder/`。無停止の更新 段階 2 の 2a）の起動口 `core/holder/main.mjs` の引数。サーバー側の `launchHolder`（`core/holder/client.mjs`）が、detached で起こすときに渡す（データ置き場・版ごとの実行場所の置き場・実行場所の版の名前・版・idle で終わるまでの ms）。利用者が設定するものではない。サーバーのターンには、fake の台本 `held:`（2b-5）と、Claude（2c。既定で載せる。`AGENT_HOST_CLAUDE_HOLDER=off` で載せない）・agy・Codex・OpenCode・`!` の行（段階 3。`AGENT_HOST_AGY_HOLDER`・`AGENT_HOST_CODEX_HOLDER`・`AGENT_HOST_OPENCODE_HOLDER`・`AGENT_HOST_SHELL_HOLDER`）に配線している（`AGENT_HOST_RUNTIME_ROOT` が実行場所の置き場。無ければデータ置き場ごとの一時の置き場。`core/process.mjs`） |
-| `AGENT_HOST_CLAUDE_HOLDER` | `off` なら Claude の CLI を保持役の子に載せない。既定は載せる（`core/backends/claude-held.mjs`）。載せるのは、`AGENT_HOST_RUNTIME_ROOT` がある、CLI の版が付け直しを確かめた下限（`HELD_CLI_MIN_VERSION` = 2.1.284）以上で同じ major、保持役につなげる、のときだけ。bot の会話も通常ターンとして起動復元する。圧縮ターンは保持役に載せず、停止後の新しいサーバーが冪等な圧縮をやり直す。外れたターンは起動時に中断として記録する。起動用の変数（`core/boot-env.mjs`）なので会話のシェルへ渡さない |
-| `AGENT_HOST_CLAUDE_SDK` | Claude Agent SDK をどこから読むか（`core/claude-sdk.mjs` の `claudeSdkSource`。[ADR 0208](docs/adr/0208-fetch-claude-agent-sdk-at-runtime.md)）。`local` はアプリの `node_modules`、`download` はデータ置き場の `claude-sdk/<版>/`（無ければ npm のレジストリから取る）。何も書かなければ、アプリの直下の `node_modules/@anthropic-ai/claude-agent-sdk` があれば `local`（開発・テスト）、無ければ `download`（配布物）。配布物の経路を開発版で試すときは `download` と一時の `AGENT_HOST_DATA` を付ける |
-| `AGENT_HOST_CLAUDE_SDK_REGISTRY` | Claude Agent SDK の取得元のオリジン（既定 `https://registry.npmjs.org`）。テストの偽のレジストリ用。https のほかは loopback の http だけを許す |
-| `AGENT_HOST_AGY_HOLDER` | agy を保持役の子に載せるか（無停止の更新 段階 3。`core/backends/antigravity-held.mjs`）。`on` は載せる・`off` は載せない（今の流れ。サーバーが agy を直に起こす）。**無ければ、`AGENT_HOST_RUNTIME_ROOT`（パッケージ版の main が渡す実行場所の置き場）があるときだけ載せる**（置き場の無い起動・テストは何も変わらない）。載せるのは、shell 無しで起こせる実行ファイル（`.cmd` は載せない）で、bot の会話でなく、保持役につなげるとき。外れたら今の流れ。会話ごとの agy が保持役の子（policy `none`）になり、走っているターンは切り替えを待たせずに新しいサーバーへ引き継ぐ。起動用の変数（`core/boot-env.mjs`）なので会話のシェルへ渡さない |
-| `PLY_RELAY_RETRY_MS` | agy の中継（`core/agy-context-relay.mjs`）が、Pleiad の口へ**つながる前**の失敗を再試行する上限（既定 6000 ms。`0` で再試行しない）。サーバーが入れ替わる間の数秒を agy に見せない。つながった後の切れは二重実行を避けて再試行しない。agy の env には渡さない・試験が短くするためのもの |
-| `AGENT_HOST_AGY_IDLE_MS` | 次の発言を待つ agy（ターンを終えた会話ごとの agy）を止めるまでの ms（既定 30 分。`0` 以下・数でない値・setTimeout の上限 2^31−1 を超える値は止めない。`core/backends/antigravity.mjs` の `idleDelay`）。動いている agy は起動の時にしか資格情報を読まないので、長く生かすとログインの切り替えを古い方で書き戻す（`docs/multi-backend.md` §2.8）。止めた会話の次のターンは `--conversation` で起こし直す。保持役に載せた idle の agy は、サーバーを入れ替えた後は次の起動が止める（`sweepIdleAtStart`） |
-| `AGENT_HOST_SHELL_HOLDER` | 互換用の設定名。長く生きる `!` のシェルは既定で保持役に載せ、通常起動で再接続する（`core/shell-held.mjs`）。置き場は実行場所（`AGENT_HOST_RUNTIME_ROOT`）かデータ置き場ごとの一時の置き場（`core/process.mjs` の `defaultHolderRoot`）。サーバーの切り替えは作業の終了を待たない。起動用の変数なので会話のシェルへ渡さない |
-| `AGENT_HOST_PLY_SHELL_HOLDER` | `off` なら、ply_shell のジョブを保持役に載せず、今の流れ（サーバーの子）で走らせる（ADR 0270 段 2a。`core/ply-shell-held.mjs`）。**既定は載せる**: 置き場は `AGENT_HOST_SHELL_HOLDER` と同じ（`AGENT_HOST_RUNTIME_ROOT`、無ければデータ置き場ごとの一時の置き場）。載せたジョブは、サーバーを入れ替えても止まらず、新しいサーバーが起動で保持役の子の一覧から拾い、`output`・`list` で読める。保持役につなげない・起こせないときは今の流れ。起動用の変数（`core/boot-env.mjs`）なので会話のシェルへ渡さない |
-| `AGENT_HOST_MCP_HOLDER` | 外部の stdio MCP を保持役の子にするか（ADR 0270 段 2c。`core/context-mcp-held.mjs`）。`off` は今の流れ（サーバーの子）。`on` は載せる。**無ければ、実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があるときだけ載せる**（2b の Devin・Grok・Codex のターン専用と同じ既定。`npm start`・テストは置き場が無いので今の流れ）。載せると、サーバーを止めて起こし直しても MCP の子と中の状態（ハンドシェイク・呼び出しの回数など）が残り、新しいサーバーが起動で札（`label.k = 'mcp'`）を読み、次の利用で付く（`initialize` は送り直さず、札に残した結果を読み直す）。サーバーの終わりでは止めない（止めるのはアプリの終了と、warm の idle・worktree を消す前）。起動用の変数（`core/boot-env.mjs`）なので会話のシェルへ渡さない |
-| `AGENT_HOST_DEVIN_HOLDER` | `off` なら Devin CLI の ACP の子を保持役に載せない（ADR 0270 段 2b。`core/backends/acp-held.mjs`）。既定は `AGENT_HOST_RUNTIME_ROOT` があるとき載せる。載せたターンは通常停止後も続き、承認・質問・途中送信を保持役の `jsonrpc` と札から復元する。起動用の変数（`core/boot-env.mjs`）なので会話のシェルへ渡さない |
-| `AGENT_HOST_GROK_HOLDER` | Grok CLI の ACP の子を保持役に載せるか（ADR 0270 段 2b）。意味・既定・載せない条件は `AGENT_HOST_DEVIN_HOLDER` と同じ |
-| `AGENT_HOST_CODEX_TURN_HOLDER` | `off` なら、Codex のターン専用の app-server（Pleiad がコンテキストを担当する会話。1 ターン 1 本）を保持役に載せない（今の流れ）。それ以外は、実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があるとき載せる（ADR 0270 段 2b。`core/backends/codex-held.mjs` の `acquireHeldTurnAppServer`）。載せたターンは、サーバーを普通に止めて起こし直しても続く（起動で札の `dedicated` を見て、その子に話す `CodexRpc` を作る）。圧縮のターンは載せない。起動用の変数（`core/boot-env.mjs`）なので会話のシェルへ渡さない |
-| `AGENT_HOST_HOLDER_IDLE_MS` | 保持役が、子も親も居ないまま終わるまでの ms（`core/process.mjs` の `start` が `PLEIAD_HOLDER_IDLE_MS` として渡す）。既定は 10 分。テストは 5000 にして、後片付けで保持役を残さない。起動用の変数（`core/boot-env.mjs`）なので会話のシェルへ渡さない |
-| `AGENT_HOST_CHROME_LINK` | `off` なら、Chrome への ws を接続の子（保持役の子。`core/chrome/link.mjs`・`link-child.mjs`。ADR 0167）に持たせず、サーバーの中で張る（更新で接続が切れ、確認が出直す今の形）。**既定は持たせる**: 実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があり、引き継ぎが有効なとき。接続の子につなげない・起こせないときも今の形。起動用の変数（`core/boot-env.mjs`）なので会話のシェルへ渡さない |
-| `AGENT_HOST_CODEX_HOLDER` | 互換用の設定名。共有の `codex app-server` は既定で保持役に載り、通常起動で再接続する（`core/backends/codex-held.mjs`）。Pleiad がコンテキストを担当する会話のターン専用 app-server は `AGENT_HOST_CODEX_TURN_HOLDER`（下）。起動用の変数なので会話のシェルへ渡さない |
-| `AGENT_HOST_OPENCODE_HOLDER` | 互換用の設定名。共有の `opencode serve` は既定で保持役に載り、通常起動で再接続する（`core/backends/opencode-held.mjs`）。起動用の変数なので会話のシェルへ渡さない |
-| サーバーの起動復元 | 通常起動でデータベースと保持役の子一覧を照合し、自分の走行中ターンやジョブを復元する。復元専用の環境変数や起動引数はない（ADR 0270） |
-| `AGENT_HOST_IMAGE_IMPORT_TEST_ORIGIN` | 貼り付けた画像の取り込み（ADR 0141）の確認用。`AGENT_HOST_BACKENDS` が `fake` だけのときに限り、origin のホストがループバック（127.0.0.1・::1・localhost）なら効き、検査をやめて、どの https の URL もこの origin へ向け替える。本物のバックエンドと並べたときや、ループバックでない origin は無視する（`tests/unit/image-import.mjs`） |
-| `AGENT_HOST_VOICE_API` | 通話モード（`core/voice/`）の OpenRouter の送り先（既定 `https://openrouter.ai/api/v1`）。テストの偽物用（`tests/lib/fake-openrouter.mjs`）。`tests/lib/server.mjs` は既定で閉じたポートへ向け、本物へは送らない |
-| `AGENT_HOST_FAKE_VOICE_REPLY` | fake バックエンドの通話の確認用。`{ when, steps }`（または `{ when, script }`。配列なら発言ごと）の JSON ファイルを渡すと、本文が `when` と一致した発言に `steps` の台本（`script` ならそのままの台本）で返す（声で話した言葉は台本の接頭辞を持てないため。`docs/voice-call.md`） |
-| `AGENT_HOST_CHROME_USER_DATA` | Pleiad が `DevToolsActivePort` を読む Chrome の `User Data` を、このディレクトリだけに差し替える（OS に依らない。既定は Windows の `%LOCALAPPDATA%\Google\Chrome\User Data`）。テストは存在しない一時ディレクトリへ向け（`tests/lib/test-env.mjs`）、実機の確かめは `--user-data-dir` を付けて起こした確かめ専用の Chrome を指す（利用者の Chrome に触れない。`docs/inapp-browser.md`「Chrome への接続」）。確認の窓はそのポートを待ち受けるプロセスの窓だけを見る |
-| `AGENT_HOST_AGY_SUGGEST_HOME` | Antigravity の会話の次の発言の候補を作る agy の使い捨てのホーム（既定は一時フォルダーの下の `pleiad-agy-suggest`。`core/backends/antigravity-suggest.mjs`）。`tests/lib/server.mjs` が試験のデータ置き場の下へ向ける（利用者の一時フォルダーに残さない） |
-| `AGENT_HOST_PAGES_PORT` / `AGENT_HOST_ISOLATED_PORT` | ファイルのページ・隔離のリスナーの port（試験用。`0` で空いた port）。無ければデータ置き場の `page-ports.json` の port を試し、塞がっていれば取り直して覚える。環境変数で決めた port は覚えない。どちらも loopback だけで待つ |
-| `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
-| `AGENT_HOST_TASK_BACKGROUND_MINUTES` | 委譲の子が返答を終えて裏の作業だけを待つ間、依頼元へ「まだ走っている」を知らせ直す周期（分。既定 30、`0` で知らせない。小数も可）。裏の作業は止めない。最初の知らせは待ち始めて 1 分後（周期がそれより短ければ周期）。ADR 0170・`docs/agent-delegation.md`「子に残った裏の作業」。前の `AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS`（10 分で止める）は廃止 |
+core/（サーバー。backends/ はエージェント 1 種類 1 ファイル、ops/ は画面・MCP・CLI へ出す操作の正本）・web/（画面。ビルド無し）・desktop/（Electron）・mobile/・relay/・bin/（CLI）・tests/・scripts/・docs/（`design.md`・`design-system.md`・`adr/`）。Node.js 22.13 以上。
 
-デスクトップ版は `npm run desktop`、インストーラーの生成は `npm run desktop:dist`（対象 OS で実行）。リリースの運用は `docs/desktop-releases.md`。版上げは `node scripts/release-bump.mjs <版>`（`npm run release:bump -- <版>`）の 1 本で行い（版・原稿・`release:prepare`・原稿の検査・commit・タグ。push は `--push` のときだけ）、タグの前に手元の `npm test` 全部は流さない（CI の結果を `ci-gate` が読む。ADR 0162）。
+環境変数: `AGENT_HOST_PORT`（既定 7420。使用中なら空きへ移る）・`AGENT_HOST_DATA`（既定 `~/.agent-host`）・`AGENT_HOST_BACKENDS`・各 CLI の実行ファイル（`AGENT_HOST_CLAUDE_BIN`・`AGENT_HOST_CODEX_BIN`・`AGENT_HOST_AGY_BIN`・`AGENT_HOST_OPENCODE_BIN`・`AGENT_HOST_DEVIN_BIN`・`AGENT_HOST_GROK_BIN`）。ほかの `AGENT_HOST_*` は使う所のコードと ADR にある（`git grep <名前>`）。
 
-## 実装と検証
+## 試験
 
-- 作業用 worktree 内で実装・検証・コミットを行い、依頼に必要な変更だけを含める。
-- 開発環境は Node.js 22.13 以上（`node:sqlite` を使う。ADR 0115）。依存関係の導入には `npm ci` を使う。
-- 作成直後の worktree には `node_modules` が無い。依存が `main` と同じなら、PowerShell から `cmd /c mklink /J <worktreeの絶対パス>\node_modules <メインの作業ディレクトリの絶対パス>\node_modules` でジャンクションを張れば足りる（Bash tool の `cmd //c mklink` は失敗する）。外すときは `cmd /c rmdir <worktreeの絶対パス>\node_modules`（`rm -rf` はリンク先の実体を消す恐れがある）。**ジャンクションを外す前に `git worktree remove` すると、remove がジャンクションを辿ってメイン側の `node_modules` の中身まで消す**（外す処理が失敗したまま remove しない。Bash tool 経由の PowerShell で `$_` を使うと bash に食われて静かに失敗する。2026-10-18 実例）。ただし electron-builder でパッケージを作る（`desktop:pack`・`desktop:dist`・`desktop:store`）ときは、ジャンクションでは依存をたどれず中身が欠けるので `npm ci` で入れる（`docs/microsoft-store.md`「作り方」）。
-- テストは必ず作業用 worktree の中で実行する。`main` の作業ディレクトリで `npm test` を走らせても worktree の変更は検証できない。
-- 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
-- 画面・AI・CLI へ外に出す機能は、WS の case を足すだけにせず `core/ops/` に操作として定義する（ADR 0081）。足し忘れは `npm test` の ops-coverage が落とす（`tests/ops-baseline.json` の `todo` は増やせない）。設定（prefs.json）を足す・変えるときは `core/ops/settings.mjs` の `defineSetting`（危険度・`normalize`・`write`）に書き、`store.setPref` を直に呼ばない（画面の `setPref` も AI の `settings.set` も同じ定義を通る。`ops-coverage` が落とす）。操作の危険度・出す口を変えたら `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface` で snapshot を更新し、差分を確認する。
-- エージェントごとに違う振る舞いは、`core/backends/` の外で id（`'claude'` など）を比べずに、能力の印（`core/backends/capability-marks.mjs`。エージェントごとの状態は `core/backends/agent-marks.mjs`）かエージェントの記述（`core/backends/agents.mjs`）から引く（`docs/multi-backend.md`「エージェントを足す」、ADR 0220・0273・0274）。印は 4 つの状態（対応の値・`covered`・`impossible('理由')`・`todo('#Issue')`）で全部のキーに書き、`false` は書かない。性質（`traits`。`effortInModelId`・`instructionsAtStart`・`failureDiagnostics`・`promptDelivery`）は能力ではないので、`agent-marks.mjs` の `AGENT_TRAITS` に `true` / `false` だけで書く（状態は持たない。画面・一覧・公開文書に出さない）。現役のエージェントは `NO_CAPABILITIES` を使えない。未実装（`todo`）は `tests/backend-todos.json` の基準より増やせない（減らしたら `node tests/lib/backend-todos.mjs --update-baseline`）。id の直書きは `npm test` の backends-lint が数え、増やせない（基準 `tests/backends-baseline.json` の更新は減らすときだけ。`node tests/lint-backends.mjs --update-baseline`）。エージェントの id をキー・要素にする一覧への入れ忘れは agent-lists（`tests/lint-agent-lists.mjs`・試験は unit/agent-lists.mjs）が拾う。README・AGENTS.md の名簿と環境変数の表も記述と照合する。一覧は `node tests/lib/backend-matrix.mjs` で端末に出す（文書の写しは持たない。性質は出さない）。
-- 子を起こす API（`node:child_process`・`utilityProcess.fork`）は口（`core/process.mjs`・`desktop/process.cjs`）に集める（ADR 0270 の規則 ①）。コピー後も単独実行する `core/hook-adapter.mjs` の fallback は lint の固定例外に含む。生の `spawnChild` は保持役本体と lint の固定例外一覧にあるファイルだけが import できる。一覧は移行中の基準ではなく決まった例外で、理由は `tests/lint-child-process.mjs` に 1 行ずつ記す。
+- コード変更後は worktree の中で `npm test`（LLM を呼ばない）。1 本は `node tests/run.mjs <名前>`、ほかの引数は `tests/run.mjs` の冒頭。全件は 10 分を超えることがあるので、ログに書いて最後まで待ち、打ち切った結果を通過としない。
+- `npm run test:e2e` は本物の LLM を呼ぶので、実サービスとの接続を確かめる変更でだけ流す。文書だけの変更は内容と `git diff --check` の確認でよい。
+- 試験・画面の確かめでつまずいたら、先に `docs/dev-verification.md`。
 
-## サーバーの再起動と子プロセス
+## 画面の確かめ
 
-- ① 長く生きる子プロセスは保持役だけが起こす。短いコマンドは `core/process.mjs` の `run()`、保持役自身は `detach()` を使う。生の `spawnChild()` は保持役本体と child-process-lint の固定例外だけが使う。
-- ② 続きに要る状態はデータベースか保持役の記録に置く。メモリは表示や処理用の写しとして組み直す。
-- ③ サーバーの起動処理が復元処理を行う。通常起動でデータベースと保持役の子一覧を照合し、再接続して記録を再生する。特別な引き継ぎ起動を作らない。
-- 開発用 `utilityProcess` と配布用の名前付きパイプは Electron とサーバーの接続方式だけが異なる。保持役の場所・通常起動での復元・更新時の停止と再起動は同じである（ADR 0270「段 4b の実装」）。
-- 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」、訳語は `docs/i18n-glossary.md` に従う）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
-  - `web/locales/*/ui.json` は `JSON.stringify(…, null, 2)` の整形と一致しないので、読んで書き直さず、キーは文字の置き換えで足す。`sed '/"connected"/d'` のような行単位の削除は別の節の同じキーまで消すので使わない。
-- コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。1 本だけなら `node tests/run.mjs <ケース名>`。Pleiad の会話のシェルから流しても、継いだ Pleiad の変数（`AGENT_HOST_`・`PLEIAD_`・`PLY_`・`AGENT_BROWSER_` で始まるもの）は外して走る（`env -u` は要らない。残る利用者の上書きは `tests/lib/inherited-env.mjs`）。test-env を読まない入口でも、`tests/lib/server.mjs` はテストのサーバーへ起動用の変数（`core/boot-env.mjs`）と `PLEIAD_CLI_*`・`PLEIAD_CONTROL_*` を継がない。
-  - 全件の順次実行は 10 分を超えることがある。長い実行はログへ保存して最後まで待つ。途中で打ち切った結果を通過とみなさない。
-  - `npm test` は利用可能な CPU 数に応じて最大 12 worker を使う（32 コアの Windows で 8 / 12 / 16 worker を全件測定。16 は最速だが繰り返し実行で suite が揺れ、12 は 3 分以内で通過）。`node tests/run.mjs --jobs 1` は従来どおり同じプロセスで登録順に実行する。`--jobs N` で本数を指定できる。スイートごとの時間・判定数・skip は `--timings <JSONの保存先>` で記録できる。CI は共有ランナーの負荷を抑えるため `--jobs 2` を明示する。
-  - `--retry-failed 1` は、落ちた suite だけを新しい worker で 1 回流し直し、通れば緑にする。**CI のワークフロー（`test.yml`・release の fallback）だけが付ける**。手元の `npm test` は既定の 0 で流し直さない（手元で通ったのに揺れる試験を隠さないため）。流し直したことは、端末・`--timings` の `retried`・Actions の警告の注釈とジョブのまとめに必ず残る。ランナーの整合の失敗（worker の死・名前の不一致・worktree の漏れ）は流し直さない（ADR 0162）。
-  - ランナーは suite の終わりに、`globalThis`・試験用の `document`（と `N.prototype`）・`process.env` を suite の前の状態へ戻す（足された項目は消し、消された・替えられた項目は元へ。`--jobs 1` と `--jobs N` で同じ。`tests/lib/global-restore.mjs`）。suite の後片付けが `globalThis.X = 前の値` の形で値 `undefined` の項目を残しても、同じ worker の次の suite には届かない（以前は `web-account-models` の残りで `computer-settings` が worker ごと落ちた）。自分で戻すなら `tests/lib/keep-props.mjs` の `keepProps`（記述子で戻す）を使う。
-  - ライブラリが初期化で 1 回だけ足す global（zod の `__zod_globalConfig`・Node の fetch の `Symbol(undici.globalDispatcher.1)` など）は `global-restore.mjs` の `KEEP_GLOBALS` に、環境変数（Claude の SDK が代入する `NoDefaultCurrentDirectoryInExePath`）は `KEEP_ENV` に、理由つきで足して残す。足し忘れた項目は戻され、その suite の出力に `[global] … を消した。残してよい項目なら … KEEP_GLOBALS・KEEP_ENV へ` と出る。値のある変化は 1 行で出て、`PLEIAD_TEST_GLOBALS=diff` で全部、`off` で戻さない（原因の切り分け）。
-  - 手元のシェルが継いでいる環境変数は、ライブラリが同じ値を代入しても「足された」ことにならず、手元では漏れに見えない（Claude Code・Pleiad のシェルは `NoDefaultCurrentDirectoryInExePath` を継ぐ）。CI や素の端末で初めて `[global]` が出ることがあるので、手元で 0 件でも CI で 0 件とは限らない。
-  - suite ごとの時間の上限（`--jobs N` のとき。`tests/lib/runner-plan.mjs` の `suiteLimitMs`）: 重み（`tests/suite-weights.json`）の 5 倍と 180 秒の大きい方。結果を返さない suite があっても、CI が黙って 30 分止まらないように、過ぎたら親が suite の名前・そこまでの出力・上限を出し、worker を木ごと止め、その suite を失敗に数えて、残りを新しい worker で続ける。`--retry-failed 1` では止めた suite も流し直す（揺れで止まったものは新しい worker で通ることがあり、止まり続けるものは 2 回止められて赤のまま。流し直したことは注釈に残る）。`PLEIAD_TEST_SUITE_TIMEOUT_MS` で全 suite の上限を固定の値にでき、0 で上限なしにできる。`--jobs 1` は同じプロセスなので止められない。長く走っている suite は `PLEIAD_TEST_PROGRESS_MS`（既定 120 秒）ごとに「実行中: <名前>（経過 …）」と出る。`tests/lib/ws-client.mjs` の `cmd` も、開いていない接続への送信は即座に、返事が来ないときは 60 秒（`cmd(name, args, { ms })` で延ばせる）で、コマンド名を入れて拒否する。
-  - 分けて流す場合は `node tests/run.mjs --shard 1/3`、`--shard 2/3`、`--shard 3/3` の全分割を同じ版・時間重みで実行し、すべての通過を確認する。`--list --json` は実行対象の一覧。名前で絞る場合は従来どおり部分一致なので、短い名前は別のスイートも選ぶ。
-- `npm run test:e2e` は実際の LLM を呼び出すため、実サービスとの接続確認が必要な変更で実行する。
-- 現在は独立したビルドコマンドはない。文書のみの変更では、内容と `git diff --check` の確認を行えばよい。
-- UI の変更では必要に応じてブラウザーで表示・操作を確認する。`agent-browser` を使い（会話に専用の Chrome が渡されていればそれ）、無ければ `playwright-cli`。ユーザーによるツール・ブラウザー指定があればそれに従う。
-  - LLM を呼ばずに画面を見るなら、fake バックエンドを別ポート・別のデータ置き場で立てる（実データを汚さないため）: `AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<一時ディレクトリ> AGENT_HOST_PORT=7499 node core/server.mjs`。トークン付き URL は起動ログに出る。tests/browser/*.cjs は日本語の文言で要素を引くので、OS が日本語でなければ `AGENT_HOST_LOCALE=ja` も付ける。
-  - 指定ポートが埋まっていると空きポートへ移る。止めるときは起動したプロセスの PID か、起動ログの実際のポートで引いた PID を使う。**指定したポート番号で PID を引いて止めない**（そのポートを持っていた別の作業のサーバーを殺す）。
-  - 実データで測るときは `node scripts/copy-data-dir.mjs <temporary/ の下の写し先>` で `~/.agent-host` を写し（手でコピーしない。**`remote/`・名前に `secret` を含むもの（`secret-values.json` など）・worktree の台帳 `worktrees.json` は写さない**。台帳を写すと、写しのサーバーが起動の後の整理で本物のリポジトリの worktree を片付けに行く。DB は動いている間にファイルをコピーせず、読み取り専用の接続で `VACUUM INTO` する。写しの `agent_tasks` は既定で空になる）、`AGENT_HOST_DATA=<写し>` で立てる。理由: リモートを有効にした置き場の写しは同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す。委譲の続きも走らせないため。写しには会話の中身も入るので、測り終えたら消す。委譲のタスクが載る送信量（`running` など）を測るときだけは `--keep-tasks` で残す（`docs/dev-verification.md`「重さと動きを測る」）。
-  - fake の台本・種の置き方・測り方・デスクトップ版のハーネス、`playwright-cli` の落とし穴は `docs/dev-verification.md`。テストやブラウザーの確認でつまずいたら先に見る。
-- コミット前に差分を確認し、対象ファイルを明示してステージする。検証が失敗した場合は原因を調べ、未解決のまま完了扱いにしない。
+- `agent-browser`（会話に専用の Chrome があればそれ）、無ければ `playwright-cli`。LLM を呼ばずに見るなら fake を別ポート・一時のデータ置き場で立てる（`docs/dev-verification.md`「fake で画面を出す」）。
+- 自分が立てたサーバーは、起動ログの実際のポートか PID で止める。指定したポート番号で引いて止めない（別の作業のサーバーを止める）。
+- 実データで測るときは `node scripts/copy-data-dir.mjs <temporary/ の下>` で写し（手でコピーしない）、測り終えたら消す。
 
-## データ置き場の保存（ADR 0115）
+## 設計の決まり
 
-- **データ置き場に、記録の件数や会話の長さとともに大きくなる単一ファイルを作らない。** 件数・長さ・時間で増える記録は、DB（`pleiad.db`。`core/db.mjs`）の行にし、書くのは変わった行だけにする。会話の記録・委譲のタスク・使用量・会話の索引は、すでに行になっている。
-- JSON ファイル（`writeAtomic`・`fs.writeFile`・`jsonFile` など）で丸ごと書くのは、**上限の決まったもの**（設定・台帳・固定の小ささの印）だけ。書く箇所を足すときは `tests/data-writes-allowlist.mjs` に、ファイル名・上限（定数名と値）・理由を書く。`npm test` の `data-writes` が、`core/`・`desktop/`・`bin/` の書き込み（別名・FileHandle・ストリーム・コピー・リネームを含む）でリストに無いものを落とす。上限を書けないものは、行にする。
-- 「上限が決まっていない」書き先は、許可リストの `unbounded: true` の既知の例外だけ（会話の本文・記憶の markdown など）。**増やさない**（`data-writes` が件数を数える）。行へ移したときに減らす。追記だけのログ（`appendOnly: true`。1 回の更新が 1 行の追記で、更新の重さが大きさに比例しない）は例外に数えないが、理由を書く。スレッドの状態や進みの印のように、数が使うほど増えて更新のたびに全体を書き直すものは、JSON にせず DB の行にする。
-- 件数・会話の長さで増える項目を会話の記録（`store.setSessionData` の受け付ける項目）へ足すときは、大きくなりうるかを先に考える。件数に上限が無いなら、上限（会話あたりの件数・古いものを捨てる）を決めるか、別の行・表にする。`tests/unit/store-write-scale.mjs`（会話・タスク・使用量を 2,000 件入れて、1 件の更新が全体を直列化しないことを見る）を通す。
-- **データ置き場は 1 つのプロセスだけが持つ**（`core/data-lock.mjs`。`pleiad.lock.db` の SQLite の排他ロック。OS がプロセスの終了で外すので、PID の生死では判断しない。`pleiad.lock` の PID は持ち主の表示だけ）。サーバー（と、それを経由する `store`・`usage`・`agent-tasks`・`conversations`）以外でデータ置き場の DB を開く道具は、読み取り専用の接続（`core/db.mjs` の `openReadOnly`）だけにする。書く道具を足さない（サーバーが動いている間に別のプロセスが書くと、消した会話が欠けた形で戻るなど記録が壊れる）。テストが DB へ直に書くときは、サーバー・store を止めている間に `tests/lib/data-store.mjs` を使う。
-- 公開関数（`core/store.mjs`）は、DB への書き込みが失敗したら例外を返し、メモリの記録を書く前のままにする。DB を先に書き、書けたらメモリへ反映する。書けなかった分を黙ってメモリに残さない。**例外が返るので、保存を呼ぶときは必ず await・return・`.catch` のどれかで受ける**（待たずに呼ぶと、処理されない拒否になる。`core/server.mjs` には念のための `unhandledRejection` の受け止めがあるが、頼らない）。`tests/unit/server-store-failures.mjs` が、書き込みを全部失敗させたサーバーで `[unhandledRejection]` が出ないことを見る。
-- **テストは、利用者の本物のデータ置き場（`~/.agent-host`）を開かない。** `tests/run.mjs` は最初の import（`tests/lib/test-env.mjs`）で、`AGENT_HOST_DATA` が無ければ一時ディレクトリにし、本物の置き場を `PLEIAD_TEST_GUARD_HOME` に入れる。値がある間、`core/test-guard.mjs` が、その中を DB・ロック・形式の移行・設定の JSON で開こうとすると例外にする（`AGENT_HOST_DATA` を本物へ向けても、子プロセス・サーバーでも）。理由: 開いただけで形式の移行が走る作りなので、置き場を指定しないテスト（core を同じプロセスに読み込む）が、利用者のデータを書き換えた（2026-10-03）。テストを足すときは、core を読み込んで置き場を開くなら、自分の一時ディレクトリを `AGENT_HOST_DATA`・`dataDir` で渡す。`tests/unit/test-guard.mjs` が守りを確かめる。
-- DB の形（表・形式番号）を変える変更は、形式番号を上げ、`core/schema-migration.mjs` の形（写し → 取り込み → 読み戻して突き合わせ → 番号の更新。失敗したら元に触れない）で移行を足す（`docs/desktop-releases.md`「適用とデータ保護」）。
+- 設計は `docs/design.md`、画面は `docs/design-system.md`、訳語は `docs/i18n-glossary.md`。
+- サーバーはいつ落ちてもよい作りにする: 続きに要る状態は DB か保持役の記録に置き、通常の起動で復元する（ADR 0270）。
+- データ置き場の保存は ADR 0115。DB の形を変えるときは形式番号を上げ、`core/schema-migration.mjs` の形で移行を足す（`docs/desktop-releases.md`「適用とデータ保護」）。
+- リリースは `docs/desktop-releases.md`。
 
-## 使い捨てのもの（temporary/）
+## 使い捨てのもの（ADR 0002）
 
-- モック・調査や提案のメモ・スクリーンショット・一回きりのスクリプトは、メインの作業ディレクトリの `temporary/` に置き、コミットしない（`.gitignore` 済み）。worktree の中の `temporary/` は worktree と一緒に消えるので、worktree で作業していても絶対パスでメイン側に書く。
-- 置き場は `temporary/mockups/<題>.html`・`temporary/reports/<題>.md`・`temporary/screenshots/<題>-<場面>.png`・`temporary/scripts/`。題は英小文字とハイフン（例 `background-panel`）。改訂は上書きし、並べて比べる版だけ `-v2` などを付ける。
-- コミットするのはコード・テストと、今の動きを書いた文書（`docs/`）と ADR（`docs/adr/`）だけ。モックで承認された形は、モックへのリンクではなく決まった形と日付を `docs/design-system.md` などの本文に書く（「承認済み（2026-09-25）」）。理由を残す価値があれば ADR にする。コード・テストのコメントもモックではなく文書の節を指す。
-- 調査の結論のうち残すものは、要点だけを該当する文書に書く。経過と材料は `temporary/reports/` に残す。
+- モック・メモ・スクリーンショット・一回きりのスクリプトは、メインの作業ディレクトリの `temporary/` に絶対パスで書く（worktree の中のものは worktree と一緒に消える）。コミットしない。
+- コミットするのはコード・試験・今の動きを書いた文書と ADR だけ。承認された形は、モックへのリンクでなく形と日付を文書の本文に書く。
 
-## 決定の記録（ADR）
+## ADR（ADR 0001）
 
-- 元に戻すのが高くつく決定（データの正本・プロトコル・保存形式・外部との接続）、安全と権限に関わる決定、`docs/design.md` の「思想」「やらない」を変える決定、ユーザーが承認した UI の案、開発・運用の決まりは `docs/adr/NNNN-<題>.md` に書く（`docs/adr/0001-record-decisions-in-adr.md`）。実装の修正や既存の規則の範囲内の手直しには書かない。
-- 書式は「状態・状況・決定・理由・影響」。状態は `提案` → `承認（日付）` → `置換（NNNN）`／`却下`。`承認` にするのはユーザーの承認を受けたときだけ。`提案` のまま main に入れてよい。承認後は本文を書き換えず、変えるときは新しい ADR で置き換える。
-- 長く並行するブランチの ADR は仮の番号で書き、main に入れる直前にその時点の main の最大の次から振り直す（main 側の番号と重なるため）。番号だけの参照（`ADR 0094`）は、その行が main の版にあれば main の ADR、ブランチの版だけにあれば振り直す側として見分ける。ファイル名つきの参照は名前で決まる。振り直しは main を取り込む**前**にブランチの上でコミットしておくと、ブランチの中の番号はすべてブランチ側の ADR なので機械的に置き換えられる（取り込んだ後は main の同じ番号と混ざる）。前の回の仮番号の参照が残りやすいので、置き換えの後に `docs/adr/` に無いファイルへのリンクと、その範囲の番号を grep で確かめる（2026-10-03、0.6.0 で `ADR 0098` が 4 か所残っていた）。
-- living doc（design.md・design-system.md など）は今の形だけを書き、理由は `（[ADR NNNN](adr/…)）` で ADR を指す。
+- 書くのは ADR 0001「ADR が要るとき」に当たり、理由を残さないと同じ議論をやり直すものだけ。実装の修正・既存の決まりの範囲の手直し・調査の経過には書かない。
+- `承認` にするのはユーザーの承認を受けたときだけ。living doc は今の形だけを書き、理由は ADR を指す。
+- 長く並行するブランチの ADR は、main を取り込む前に、main の最大の次から番号を振り直し、`docs/adr/` に無いリンクを grep で確かめる。
 
-## main への反映
+## サーバーの起動と確認
 
-- 検証が通った変更をコミットし、メインの作業ディレクトリで `main` にマージする。ここまでを通常作業として、都度の確認なしで進める。
-- マージ直前に `main` と作業ツリーの状態を再確認する。作業中に `main` が進んだ場合は、作業用 worktree に取り込み、統合後の内容を再確認してからマージする。
-- 競合は作業用 worktree 内で解決し、影響する検証を再実行する。意図を判断できない競合はユーザーに確認する。
-- 他の変更を巻き込む操作や、履歴の強制的な書き換えは行わない。
-- リモートへの push は、ユーザーから明示的に依頼された場合だけ行う。
-
-## サーバー起動・確認
-
-- マージ後は `main` の作業ディレクトリから `npm start` でサーバーを起動し、応答を確認する。依存関係が変わった場合は起動前に `npm ci` を実行する。
-- 既定のアドレスは `127.0.0.1:7420`。`AGENT_HOST_BIND` と `AGENT_HOST_PORT` で変更でき、指定ポートが使えない場合は空きポートに切り替わるため、実際の URL は起動ログで確認する。
-- 認証付き URL で画面が取得できることを確認する。認証なしのアクセスは正常でも HTTP 401 になるため、401 だけで画面の動作確認済みとはしない。トークンをコミットや共有ログに含めない。
-- 既存サーバーがある場合は、対象リポジトリのプロセスとポートを確認する。文書のみの変更など、再起動が不要なら既存サーバーの応答確認でよい。
-- インストール版の Pleiad から起動されたシェルには、旧版が渡した `ELECTRON_RUN_AS_NODE=1` や起動時だけの `AGENT_HOST_*` が残る場合がある。サーバーは起動後にこれらを環境から外し、エージェントの子へ渡さない。残っているシェルから手動でサーバーを起こすときは `env -u` で旧設定を外すか `tests/run.mjs` を使う。`electron.exe` は `env -u ELECTRON_RUN_AS_NODE` を付けて起動する（付けないと Node として動く）。
-- **再起動すると実行中のターンが終了する。** 停止前に UI の実行中表示または WebSocket の `running` コマンドで実行中の作業が 0 件であることを確認する。実行中なら完了を待つ。確認できない場合や中断が必要な場合は、理由を伝えてユーザーに確認する。
-- 再起動時は確認済みの対象サーバーだけを停止する。他の Node.js プロセスを一括停止しない。Windows でバックグラウンド起動する場合は `Start-Process -WindowStyle Hidden` を使う（窓を前に出さない）。`-RedirectStandardOutput`・`-RedirectStandardError` は付けない（起こしたサーバーがシェルの出力のパイプを継いで握り、エージェントのシェルのツールが戻らなくなる。2026-10-18 に OpenCode の会話が 2 時間止まった）。ログが要るなら `Start-Process cmd -WindowStyle Hidden -ArgumentList '/c','node core/server.mjs > <ログ> 2>&1'` のように、起こした先で書き出す。
-
-## 完了と後片付け
-
-- main への反映とサーバーの動作確認後、今回作成した worktree に未コミット変更がなく、ブランチが main にマージ済みであることを確認する。
-- 今回の worktree を `git worktree remove <確認済みの絶対パス>` で削除し、作業ブランチを `git branch -d <ブランチ名>` で削除する。強制削除は使わない。
-- 完了報告には変更内容、検証結果、コミット、main への反映状況、サーバーの状態を簡潔に記載する。未完了の手順がある場合は理由を明示する。
+- マージ後はメインの作業ディレクトリで `npm start`（依存が変わったら先に `npm ci`）。実際の URL は起動ログで見て、トークン付きの URL で画面が取れることを確かめる（401 だけでは確かめたことにならない）。トークンをコミット・ログに残さない。文書だけの変更なら、今のサーバーの応答の確認でよい。
+- **再起動すると走っているターンが終わる。** 止める前に画面か WS の `running` で 0 件を確かめ、走っていれば待つ。確かめられない・中断が要るときはユーザーに聞く。止めるのは確かめた対象だけ（Node を一括で止めない）。
+- Windows で裏に立てるなら `Start-Process -WindowStyle Hidden`。`-RedirectStandardOutput`・`-RedirectStandardError` は付けない（シェルのツールが戻らなくなる）。ログは `Start-Process cmd -WindowStyle Hidden -ArgumentList '/c','node core/server.mjs > <ログ> 2>&1'`。
