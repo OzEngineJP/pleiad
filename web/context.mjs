@@ -19,7 +19,7 @@ import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
 import { agentShortLabel } from './agent-brands.mjs';
-import { agentChip, agentLegend, agentStrip, askBanner, docLockReason, docRowLockSummary, rowSwitch } from './context-matrix.mjs';
+import { MATRIX_ICON, agentChip, agentLegend, agentStrip, askBanner, docLockReason, docRowLockSummary, matrixSvg, rowSwitch } from './context-matrix.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
 const TAB_KEY = 'ply-context-tab';
@@ -809,7 +809,10 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       list.setAttribute('aria-label', t('context.tier.place'));
       const row = el('div', 'cx-row ag' + (!summary.anyOn ? ' off' : ''));
       row.dataset.key = summary.key;
-      row.append(el('span', 'cx-lead0'));
+      const ic = el('span', 'cx-ic');
+      ic.setAttribute('aria-hidden', 'true');
+      ic.append(matrixSvg(MATRIX_ICON.folder));
+      row.append(ic);
       const body = el('span', 't');
       const nl = el('span', 'nl');
       nl.append(el('span', 'nm', label));
@@ -914,6 +917,16 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     renderCard('mcp');
     pollConnectors();
   }
+  async function callDocRetry(fn) {
+    for (let i = 0; i < 15; i++) {
+      try { return await fn(); }
+      catch (e) {
+        if (e.code !== 'SCAN_BUSY') throw e;
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+    throw Object.assign(new Error('SCAN_BUSY'), { code: 'SCAN_BUSY' });
+  }
   /** 指示・Skills の名前 × エージェントの一覧だけを取り直す */
   async function reloadDocMatrix(kind) {
     if (kind !== 'instruction' && kind !== 'skill') return;
@@ -921,7 +934,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     if (!target) { docMatrices[kind] = null; renderCard(kind); updateCounts(); return; }
     const ticket = ++docTickets[kind];
     try {
-      const grid = await cmd('docMatrix', { kind, cwd: target, place: 'default' });
+      const grid = await callDocRetry(() => cmd('docMatrix', { kind, cwd: target, place: 'default' }));
       if (ticket !== docTickets[kind]) return;
       if (Array.isArray(grid?.rows)) docMatrices[kind] = grid;
     } catch { return; }
@@ -952,13 +965,20 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     renderAll();
     const timer = setTimeout(() => { if (ticket === scanTicket) { scanVisible = true; renderAll(); } }, 150);
     try {
-      const [found, list, native, grid, instGrid, skillGrid] = await Promise.all([
-        cmd('scanContext', { cwd: target, place: 'default', scope: 'user' }),
+      // scanContext と docMatrix はサーバー側で scanLock を共有するため、この 3 本は直列に流して SCAN_BUSY 衝突を避ける
+      const scanAndDocs = (async () => {
+        const found = await cmd('scanContext', { cwd: target, place: 'default', scope: 'user' });
+        if (ticket !== scanTicket) return { found, instGrid: null, skillGrid: null };
+        const instGrid = await callDocRetry(() => cmd('docMatrix', { kind: 'instruction', cwd: target, place: 'default' })).catch(() => null);
+        if (ticket !== scanTicket) return { found, instGrid, skillGrid: null };
+        const skillGrid = await callDocRetry(() => cmd('docMatrix', { kind: 'skill', cwd: target, place: 'default' })).catch(() => null);
+        return { found, instGrid, skillGrid };
+      })();
+      const [{ found, instGrid, skillGrid }, list, native, grid] = await Promise.all([
+        scanAndDocs,
         cmd('listPlyMcp', {}).catch(() => null),
         cmd('agentMcp', { cwd: target }).catch(() => null),
         cmd('mcpMatrix', { cwd: target, refresh }).catch(() => null),
-        cmd('docMatrix', { kind: 'instruction', cwd: target, place: 'default' }).catch(() => null),
-        cmd('docMatrix', { kind: 'skill', cwd: target, place: 'default' }).catch(() => null),
       ]);
       if (ticket !== scanTicket) return;
       scan = found; ply = list; agents = native;

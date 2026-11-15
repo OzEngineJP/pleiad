@@ -133,7 +133,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
     const linked = item.tag === 'linked', off = !item.on || (linked && !state.routing);
     const r = el('div', 'cx-row ag' + (off ? ' off' : ''));
     r.dataset.id = item.id;
-    if (linked) { const gap = el('span', 'cx-lead0'); gap.setAttribute('aria-hidden', 'true'); r.append(gap); }
+    if (linked) { const gap = el('span', 'cx-grip-gap'); gap.setAttribute('aria-hidden', 'true'); r.append(gap); }
     else r.append(reorder.handle('ply', item.id, item.name));
     const open = button('', 'cx-open');
     open.dataset.fk = `open|${item.id}`;

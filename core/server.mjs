@@ -5439,7 +5439,10 @@ async function syncContextAgentsOnSet(args = {}) {
 
 async function docScanContext({ kind, cwd, place }) {
   const isDefault = place === null || place === 'default' || (!place && !cwd);
-  const scanDir = isDefault ? os.homedir() : await scanDirectory(place ?? cwd);
+  const defaultDir = SCAN_OPTIONS.home
+    ? await fs.access(SCAN_OPTIONS.home).then(() => SCAN_OPTIONS.home, () => store.dataDir)
+    : os.homedir();
+  const scanDir = isDefault ? defaultDir : await scanDirectory(place ?? cwd);
   const scopes = isDefault ? ['user'] : ['user', 'directory'];
   const effective = await contextSettings.get(scanDir, isDefault ? { level: 'default' } : {});
   const scanPlan = {
@@ -5448,7 +5451,7 @@ async function docScanContext({ kind, cwd, place }) {
     ...(kind === 'skill' ? { skill: effective.plan.skill } : {}),
   };
   const [scan, rawConfig, docAgents] = await Promise.all([
-    scanContext({ cwd: scanDir, plan: scanPlan }, { plyServers: await plyMcp.scanInput(), scopes }),
+    scanContext({ cwd: scanDir, plan: scanPlan }, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), scopes }),
     contextSettings.read(),
     contextAgents.read(),
   ]);

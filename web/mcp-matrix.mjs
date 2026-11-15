@@ -10,7 +10,7 @@ import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { agentShortLabel } from './agent-brands.mjs';
 import { brandMark as mark } from './context-tabs.mjs';
-import { ensureLockTips, lockReasonText } from './lock-tip.mjs';
+import { ensureLockTips, lockAriaLabel, lockReasonText } from './lock-tip.mjs';
 import { MATRIX_ICON as ICON, matrixSvg as svg, matrixButton as button, lockedAgentChip, agentLegend } from './context-matrix.mjs';
 
 export { lockedAgentChip };

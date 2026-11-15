@@ -188,7 +188,6 @@
 .cx-ply .cx-list{position:relative}
 .cx-item{display:flex;flex-direction:column;gap:2px;min-width:0}
 .cx-row>.rt-grip{flex:none;margin:-2px -4px -2px -6px}
-.cx-row.ag>.rt-grip{flex:none;width:26px;height:26px;margin:0}
 .cx-grip-gap{flex:none;width:32px;margin:0 -4px 0 -6px}
 .cx-sw0{flex:none;width:34px}
 .cx-list>.rt-order-gap{border-radius:var(--r-s)}

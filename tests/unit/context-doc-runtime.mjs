@@ -208,7 +208,7 @@ export default async function (t) {
       opWrite.ok === true && opGuarded.pending === true,
       JSON.stringify({ opWrite, opGuarded }));
 
-    host = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake', HOME: home, USERPROFILE: home } });
+    host = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake', HOME: home, USERPROFILE: home, PLEIAD_SCAN_HOME: home } });
     client = await open(host);
 
     const initM = await client.cmd('docMatrix', { kind: 'instruction', place: 'default' });

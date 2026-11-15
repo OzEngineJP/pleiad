@@ -564,11 +564,11 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       throw Object.assign(new Error('SCAN_BUSY'), { code: 'SCAN_BUSY' });
     };
     editDocLoading = true;
-    const [scanRes, instRes, skillRes] = await Promise.allSettled([
-      retryBusy(() => cmd('scanContext', { cwd })),
-      retryBusy(() => cmd('docMatrix', { kind: 'instruction', cwd, place: cwd })),
-      retryBusy(() => cmd('docMatrix', { kind: 'skill', cwd, place: cwd })),
-    ]);
+    // scanLock 衝突を避けるため直列に取得し、他要求との競合時だけ retryBusy で待って取り直す
+    const wrap = fn => retryBusy(fn).then(value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason }));
+    const scanRes = await wrap(() => cmd('scanContext', { cwd }));
+    const instRes = await wrap(() => cmd('docMatrix', { kind: 'instruction', cwd, place: cwd }));
+    const skillRes = await wrap(() => cmd('docMatrix', { kind: 'skill', cwd, place: cwd }));
     if (place.cwd !== cwd) return;
     editDocLoading = false;
     if (scanRes.status === 'fulfilled') editScan = scanRes.value;

@@ -1,9 +1,11 @@
-// 設定 › プラグインと会話の右パネル（段 1）のブラウザ統合テスト:
+// 設定 › プラグインと会話の右パネル（段 2）のブラウザ統合テスト:
 //   - 4 タブ・件数・スクロール追従（sticky）・タブ切替時の先頭戻しと記憶・キーボード操作
+//   - 指示・Skills は「名前 × 6 エージェント」一覧、担当 2 択と「探す形式」は無し（Hooks のみ担当 2 択を保つ）
+//   - Pleiad の指示（Grok 押下可 + 委譲と連動は linked 鍵）、作業場所 summaryRow、量の目安の折りたたみ
+//   - 他エージェントへ広げる前の行内確認（.cx-ask）、鍵の吹き出し（own / workspace / relay / nolinks）、リロード永続化
 //   - フォルダーまとまり（>8 折りたたみ・展開後の親ロゴ/パス非重複・mixed 一括切替）
 //   - Skills 絞り込み（入力フォーカス維持・自動展開・0 件表示・Escape 解除）
-//   - 鍵の吹き出し（静的な凡例行なし・ホバー・フォーカス・タップ・Escape・スクロール非表示・title 無し・aria-disabled）
-//   - 1280 / 360・ライト / ダークで横はみ出し無し・押し先サイズ確保
+//   - 会話の右パネル編集（行スイッチのみ・エージェント列/担当 2 択なし）・1280 / 360・ライト / ダークで横はみ出し無し・押し先サイズ確保
 //   - Devin の自分の名前（ADR 0336）: 一覧の Devin のアイコンを off → 読み込み直しても off → on に戻す・
 //     リンクを作れない PC の鍵（nolinks）・会話の右パネルの止められなかった行の鍵（workspace）。偽の Devin（tests/lib/fake-devin.mjs）と別の置き場で
 import assert from 'node:assert/strict';
@@ -35,11 +37,18 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-cxtabs-ui-'));
 const home = path.join(dataDir, 'home');
 const repo = path.join(dataDir, 'repo');
 const write = (p, s) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, s); };
+const shotDir = process.env.SHOT_DIR || '';
+const shoot = async (page, name) => {
+  if (!shotDir) return;
+  fs.mkdirSync(shotDir, { recursive: true });
+  await page.screenshot({ path: path.join(shotDir, name), fullPage: false });
+};
 
 let server, client, browser;
 try {
-  // ユーザー側（設定 › プラグインで表示）: CLAUDE.md + 9 rules + 9 .claude/skills + 2 .agents/skills + MCP + Hook
+  // ユーザー側（設定 › プラグインで表示）: CLAUDE.md + GEMINI.md + 9 rules + 9 .claude/skills + 2 .agents/skills + MCP + Hook
   write(path.join(home, '.claude/CLAUDE.md'), '# User Instructions\nAlways be concise.\n');
+  write(path.join(home, '.gemini/GEMINI.md'), '# Gemini User Instructions\nExplain briefly.\n');
   for (let i = 0; i < 9; i++) {
     write(path.join(home, `.claude/rules/sec/rule-${i}.md`), `# Security rule ${i}\nCheck input ${i}.\n`);
   }
@@ -77,6 +86,7 @@ try {
     env: {
       AGENT_HOST_BACKENDS: 'fake,claude,codex,antigravity,opencode,devin,grok',
       USERPROFILE: home, HOME: home,
+      PLEIAD_SCAN_HOME: home,
       CODEX_HOME: path.join(home, '.codex'),
       CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
       AGENT_HOST_GROK_HOME: path.join(home, '.grok'),
@@ -88,15 +98,13 @@ try {
   client = await open({ ...server, autoAllow: true });
   await client.cmd('onboardingSeen');
   await client.cmd('savePlyMcp', { name: 'reg', mode: 'add', value: { transport: 'stdio', command: 'reg-cmd', args: [] } });
-  const tier = { sources: ['common', 'claude', 'codex'], excludePaths: [] };
+  const tier = { sources: ['common', 'claude', 'codex', 'antigravity'], excludePaths: [] };
   for (const kind of ['instruction', 'skill']) {
-    await client.cmd('setContextSettings', { cwd: repo, place: null, kind, value: { owner: 'ply', user: tier, directory: tier } });
+    await client.cmd('setContextSettings', { cwd: repo, place: null, kind, value: { owner: 'native', user: tier, directory: tier } });
   }
   const managed = await client.cmd('newSession', { cwd: repo, backend: 'fake' });
   await client.runTurn({ ...managed, prompt: 'echo:プラグイン画面を確認' });
-  for (const kind of ['instruction', 'skill', 'mcp']) {
-    await client.cmd('setContextSettings', { cwd: repo, place: repo, kind, value: { owner: 'ply', user: tier, directory: tier } });
-  }
+  await client.cmd('setContextSettings', { cwd: repo, place: repo, kind: 'mcp', value: { owner: 'ply', user: tier, directory: tier } });
 
   browser = await chromium.launch({ executablePath: chromiumPath() });
   const errors = [];
@@ -120,10 +128,18 @@ try {
           return cnt && !cnt.hidden && Number(cnt.textContent) > 0;
         });
         return document.body.classList.contains('settings') && r && r.height > 0 && counted;
-      }, { timeout: 1500 }).then(() => true, () => false);
+      }, null, { timeout: 1500 }).then(() => true, () => false);
       if (ready) return;
     }
-    throw new Error('openSettingsContext timed out');
+    const diag = await page.evaluate(() => ({
+      settingsCls: document.body.classList.contains('settings'),
+      status: document.querySelector('#contextPanel .cx-status')?.textContent ?? '',
+      tabs: [...document.querySelectorAll('#contextPanel .cx-tabs [role="tab"]')].map(e => ({ id: e.id, cnt: e.querySelector('.c')?.textContent, hidden: e.querySelector('.c')?.hidden })),
+      instEmpty: document.querySelector('#cx-panel-instruction .cx-empty')?.textContent ?? '',
+      skillEmpty: document.querySelector('#cx-panel-skill .cx-empty')?.textContent ?? '',
+      mcpEmpty: document.querySelector('#cx-panel-mcp .cx-empty')?.textContent ?? '',
+    }));
+    throw new Error(`openSettingsContext timed out errors=${JSON.stringify(errors)} diag=${JSON.stringify(diag)}`);
   }
   const closeSettings = async page => {
     await page.evaluate(() => {
@@ -152,9 +168,45 @@ try {
     const tabs = await page.locator('#contextPanel .cx-tabs [role="tab"]').evaluateAll(els =>
       els.map(e => ({ id: e.dataset.tab, selected: e.getAttribute('aria-selected'), cnt: e.querySelector('.c')?.textContent, h: e.getBoundingClientRect().height })));
     check(tabs.map(x => x.id).join(',') === 'instruction,skill,mcp,hooks', '設定 › プラグインが 4 タブを正しい順で出す', tabs);
-    check(tabs[0].selected === 'true' && Number(tabs[0].cnt) >= 10 && Number(tabs[1].cnt) >= 11 && Number(tabs[2].cnt) >= 3 && !tabs[3].cnt, '件数バッジが出る（担当がエージェントに任せる Hooks は件数を出さない）', tabs);
+    check(tabs[0].selected === 'true' && Number(tabs[0].cnt) >= 12 && Number(tabs[1].cnt) >= 11 && Number(tabs[2].cnt) >= 3 && !tabs[3].cnt, '件数バッジが出る（担当がエージェントに任せる Hooks は件数を出さない）', tabs);
     check(await page.locator('#cx-panel-mcp #cliSetup').count() === 1, '「外の AI から Pleiad を使う」は外部 MCP タブの中に入る');
-    check(await page.locator('#cx-panel-instruction #cxInstructionBudget').count() === 1 && await page.locator('#cx-panel-instruction .cx-seg').count() >= 1, '段 2・3 までの担当 2 択と量の目安を保つ');
+    const foldOpen0 = await page.locator('#cx-panel-instruction details.cx-fold').evaluate(el => el.open);
+    check(
+      await page.locator('#cx-panel-instruction .cx-seg').count() === 0
+      && await page.locator('#cx-panel-skill .cx-seg').count() === 0
+      && await page.locator('#cx-panel-hooks .cx-seg').count() === 1
+      && foldOpen0 === false
+      && await page.locator('#cx-panel-instruction details.cx-fold #cxInstructionBudget').count() === 1
+      && await page.locator('#cx-panel-instruction [data-key="__workspace__"] .cx-sw').count() === 1
+      && await page.locator('#cx-panel-skill [data-key="__workspace__"] .cx-sw').count() === 1
+      && await page.locator('#cx-panel-instruction .cx-legend.names').count() >= 1,
+      '段 2: 指示・Skills は担当 2 択無し（Hooks のみ維持）、量の目安は初期折りたたみ、作業場所 summaryRow・凡例を表示',
+    );
+    await page.locator('#cx-panel-instruction details.cx-fold > summary').click();
+    check(await page.locator('#cx-panel-instruction details.cx-fold').evaluate(el => el.open) === true, '量の目安の折りたたみを開くと中身が見える');
+    await page.locator('#cx-panel-instruction details.cx-fold > summary').click();
+
+    // Pleiad の指示: Grok を含む 6 エージェント押下可、委譲と連動（linked）は鍵つき・行スイッチ無し
+    const plyGrokBtn = page.locator('#cx-panel-instruction .cx-ply .cx-row.ag').first().locator('.cx-ag[data-agent="grok"]');
+    const beforePlyGrok = await plyGrokBtn.getAttribute('aria-pressed');
+    const plyLinked = page.locator('#cx-panel-instruction .cx-ply .cx-row.ag').filter({ has: page.locator('.cbadge', { hasText: /連動|linked/i }) }).first();
+    check(
+      await plyGrokBtn.getAttribute('aria-disabled') === null
+      && await plyLinked.locator('.cx-sw').count() === 0
+      && await plyLinked.locator('.cx-ag[aria-disabled="true"][data-tip]').count() >= 1,
+      'Pleiad の指示: Grok ボタンは押下可で、連動行には行スイッチが無く鍵つき',
+    );
+    await plyGrokBtn.click();
+    await page.waitForFunction((want) => {
+      const b = document.querySelector('#cx-panel-instruction .cx-ply .cx-row.ag .cx-ag[data-agent="grok"]');
+      return b && b.getAttribute('aria-pressed') === want;
+    }, beforePlyGrok === 'true' ? 'false' : 'true', { timeout: 5000 });
+    check(true, 'Pleiad の指示で Grok アイコンの切り替えが保存される');
+    await plyGrokBtn.click();
+    await page.waitForFunction((want) => {
+      const b = document.querySelector('#cx-panel-instruction .cx-ply .cx-row.ag .cx-ag[data-agent="grok"]');
+      return b && b.getAttribute('aria-pressed') === want;
+    }, beforePlyGrok, { timeout: 5000 });
 
     // スクロールしてもタブ帯が上に残る（sticky）。高さが画面を超えるよう一時的にビューポートを低くして確認する
     await page.setViewportSize({ width: 1280, height: 500 });
@@ -216,10 +268,62 @@ try {
     await mixSw.click();
     await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
     check(true, 'mixed スイッチ押下でまとめて有効へ戻る');
+    await shoot(page, 'context-agents-1280-light-inst.png');
+
+    // GEMINI.md: own/relay の鍵、他エージェントへ広げる前の確認（.cx-ask）→ やめる → 渡す → リロード後も永続
+    const agyRow = page.locator('#cx-panel-instruction .cx-row.ag', { hasText: 'GEMINI.md' });
+    const agyOwn = agyRow.locator('.cx-ag[data-agent="antigravity"]');
+    const agyGrok = agyRow.locator('.cx-ag[data-agent="grok"]');
+    check(
+      await agyOwn.getAttribute('aria-disabled') === 'true' && (await agyOwn.getAttribute('data-tip')).includes('止められません')
+      && await agyGrok.getAttribute('aria-disabled') === 'true' && await agyGrok.getAttribute('aria-pressed') === 'false'
+      && (await agyGrok.getAttribute('data-tip')).includes('渡せません'),
+      'GEMINI.md で Antigravity は own 鍵 on、Grok は relay 鍵 off',
+    );
+    await agyGrok.hover();
+    await page.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 3000 });
+    await shoot(page, 'context-agents-1280-light-inst-locktip.png');
+    await page.mouse.move(2, 2);
+    await page.waitForFunction(() => !document.querySelector('.cx-tip.on'), { timeout: 3000 });
+    await agyRow.locator('.cx-ag[data-agent="claude"]').click();
+    await page.waitForSelector('#cx-panel-instruction .cx-ask', { state: 'visible', timeout: 5000 });
+    await shoot(page, 'context-agents-1280-light-inst-ask.png');
+    await page.locator('#cx-panel-instruction .cx-ask button').first().click();
+    await page.waitForFunction(() => !document.querySelector('#cx-panel-instruction .cx-ask'), { timeout: 5000 });
+    const focusedAfterCancel = await page.evaluate(() => document.activeElement?.getAttribute('data-agent'));
+    check(
+      focusedAfterCancel === 'claude' && await agyRow.locator('.cx-ag[data-agent="claude"]').getAttribute('aria-pressed') === 'false',
+      '広げる確認「やめる」で未保存のまま元の Claude セルへフォーカスを戻す',
+      focusedAfterCancel,
+    );
+    await agyRow.locator('.cx-ag[data-agent="claude"]').click();
+    await page.waitForSelector('#cx-panel-instruction .cx-ask .btn-primary', { state: 'visible', timeout: 5000 });
+    await page.locator('#cx-panel-instruction .cx-ask .btn-primary').click();
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll('#cx-panel-instruction .cx-row.ag')];
+      const r = rows.find(x => x.textContent.includes('GEMINI.md'));
+      return !document.querySelector('#cx-panel-instruction .cx-ask') && r?.querySelector('.cx-ag[data-agent="claude"]')?.getAttribute('aria-pressed') === 'true';
+    }, { timeout: 10000 });
+    check(true, '広げる確認「渡す」で GEMINI.md の Claude セルがオンになり保存される');
+
+    await page.reload({ waitUntil: 'load' });
+    await openSettingsContext(page, 'instruction');
+    check(
+      await page.locator('#cx-panel-instruction .cx-row.ag', { hasText: 'GEMINI.md' }).locator('.cx-ag[data-agent="claude"]').getAttribute('aria-pressed') === 'true',
+      '再読み込み後も setDocAgent で広げた設定（GEMINI.md → Claude）が保持される',
+    );
+    // 元の状態へ戻す（オフ時は確認なし）
+    await page.locator('#cx-panel-instruction .cx-row.ag', { hasText: 'GEMINI.md' }).locator('.cx-ag[data-agent="claude"]').click();
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll('#cx-panel-instruction .cx-row.ag')];
+      const r = rows.find(x => x.textContent.includes('GEMINI.md'));
+      return r?.querySelector('.cx-ag[data-agent="claude"]')?.getAttribute('aria-pressed') === 'false';
+    }, { timeout: 10000 });
 
     // Skills タブ + 絞り込み欄
     await page.locator('#cx-tab-skill').click();
     await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.grp').length >= 2, { timeout: 10000 });
+    await shoot(page, 'context-agents-1280-light-skills.png');
     const skillGrps = await page.locator('#cx-panel-skill .cx-row.grp').evaluateAll(els => els.map(e => ({
       text: e.innerText.replace(/\s+/g, ' ').trim(),
       expanded: e.querySelector('.cx-tw')?.getAttribute('aria-expanded'),
@@ -247,25 +351,47 @@ try {
     await findInput.press('Escape');
     check((await findInput.inputValue()) === '' && !(await page.locator('#cx-panel-skill').innerText()).includes('見つかりません'), '絞り込み欄の Escape で条件を消す');
 
-    // 絞り込み中のまとまりスイッチは、見えている（当たった）行だけを切り替える
-    const userSkillExcludes = async () => {
-      const v = await client.cmd('contextSettings', {});
-      return v.defaults.kinds.skill.value.user.excludePaths.length;
+    // 絞り込み中のまとまりスイッチは、見えている（当たった）行だけを切り替える（Stage 2: docMatrix 保存・旧 excludePaths は汚さない）
+    const skillMatrixState = async () => {
+      const m = await client.cmd('docMatrix', { kind: 'skill', cwd: home, place: 'default' });
+      const u1 = m.rows.find(r => r.name === 'u-skill-1');
+      const otherOff = m.rows.filter(r => r.name.startsWith('u-skill-') && r.name !== 'u-skill-1' && !r.rowSwitchOn).length;
+      const legacy = await client.cmd('contextSettings', {});
+      return {
+        touched: m.touched,
+        u1On: Boolean(u1?.rowSwitchOn),
+        otherOff,
+        legacyExcludes: legacy.defaults.kinds.skill.value.user.excludePaths.length,
+      };
     };
-    check((await userSkillExcludes()) === 0, '絞り込みの前は Skills の除外が 0 件');
+    const beforeFilterSkill = await skillMatrixState();
+    check(beforeFilterSkill.u1On && beforeFilterSkill.legacyExcludes === 0, '絞り込みの前は Skills が有効で旧 excludePaths は 0 件', beforeFilterSkill);
     await findInput.fill('u-skill-1');
-    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, { timeout: 5000 });
+    const pollUntil = async (readFn, pred, timeoutMs = 5000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (true) {
+        const statusErr = (await page.locator('#contextPanel .cx-status').textContent().catch(() => ''))?.trim();
+        if (statusErr) throw new Error(`Settings error status appeared: ${statusErr}`);
+        const val = await readFn();
+        if (pred(val) || Date.now() >= deadline) return val;
+        await new Promise(r => setTimeout(r, 50));
+      }
+    };
+    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
     const filteredGrp = page.locator('#cx-panel-skill .cx-row.grp');
     check((await filteredGrp.count()) === 1 && (await filteredGrp.locator('.cx-sw').getAttribute('aria-checked')) === 'true', '絞り込み中のまとまりスイッチは見えている行だけからオンと決まる');
     await filteredGrp.locator('.cx-sw').click();
-    await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', { timeout: 10000 });
-    check((await userSkillExcludes()) === 1, '絞り込み中のまとまりスイッチで、当たった 1 件だけが除外に入る（9 件ではない）');
+    await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
+    const afterFilterOff = await pollUntil(skillMatrixState, s => s.touched && !s.u1On && s.otherOff === 0 && s.legacyExcludes === 0);
+    check(afterFilterOff.touched && !afterFilterOff.u1On && afterFilterOff.otherOff === 0 && afterFilterOff.legacyExcludes === 0,
+      '絞り込み中のまとまりスイッチで、当たった u-skill-1 だけが context-agents にオフ保存され旧 excludePaths は増えない', afterFilterOff);
     await findInput.press('Escape');
-    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), { timeout: 5000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), null, { timeout: 5000 });
     check(true, '絞り込みを消すとまとまり全体の状態（一部）に戻る');
     await page.locator('#cx-panel-skill .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
-    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), { timeout: 10000 });
-    check((await userSkillExcludes()) === 0, 'まとまりスイッチで除外が 0 件に戻る');
+    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), null, { timeout: 10000 });
+    const afterRestoreSkill = await pollUntil(skillMatrixState, s => s.u1On && s.otherOff === 0);
+    check(afterRestoreSkill.u1On && afterRestoreSkill.otherOff === 0, 'まとまりスイッチで u-skill-1 を含む全件が有効に戻る', afterRestoreSkill);
 
     // 外部 MCP タブ + 鍵の吹き出し（追補 1）
     await page.locator('#cx-tab-mcp').click();
@@ -294,6 +420,7 @@ try {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 3000 });
     check((await page.locator('.cx-tip.on').innerText()) === lockAttr.tip, '鍵アイコンのホバーで吹き出しに理由が出る');
+    await shoot(page, 'context-agents-1280-light-mcp-locktip.png');
     // 描き直し（外部 MCP の一覧は読み込み中 2.5 秒ごとに描き直す）で相手の鍵が外されたら、吹き出しも消える
     await lockedCell.evaluate(e => {
       const row = e.closest('.cx-row.ag');
@@ -365,11 +492,20 @@ try {
     check((await page.locator('.file-preview-content .scx .cx-tabs').count()) === 0, '右パネル通常面（編集前）には 4 タブを出さない');
 
     await page.locator('.file-preview-content .scx [data-act="placeStart"]').click();
-    await page.waitForFunction(() => Number(document.querySelector('#scx-tab-instruction .c')?.textContent) >= 10, { timeout: 15000 });
+    await page.waitForFunction(() => Number(document.querySelector('#scx-tab-instruction .c')?.textContent) >= 10, null, { timeout: 15000 });
     const scxTabs = await page.locator('.file-preview-content .scx .cx-tabs [role="tab"]').evaluateAll(els =>
       els.map(e => ({ id: e.dataset.tab, cnt: e.querySelector('.c')?.textContent })));
     check(scxTabs.map(x => x.id).join(',') === 'instruction,skill,mcp,hooks' && Number(scxTabs[0].cnt) >= 10 && Number(scxTabs[1].cnt) >= 9,
       '右パネル「この場所だけ変える」に入ると 4 タブ・件数が出る', scxTabs);
+    check(
+      await page.locator('#scx-panel-instruction .cx-seg, #scx-panel-skill .cx-seg').count() === 0
+      && await page.locator('#scx-panel-instruction .cx-ags, #scx-panel-skill .cx-ags').count() === 0
+      && await page.locator('#scx-panel-hooks .cx-seg').count() === 1
+      && await page.locator('#scx-panel-instruction .cx-row', { hasText: 'CLAUDE.md' }).first().locator('.cx-sw').count() === 1
+      && await page.locator('#scx-panel-instruction .cx-row', { hasText: 'AGENTS.md' }).first().locator('.cx-sw').count() === 1,
+      '右パネル編集: 指示・Skills には担当 2 択とエージェント列を出さず、利用者 CLAUDE.md と作業場所 AGENTS.md の行スイッチを出し、Hooks は保つ',
+    );
+    await shoot(page, 'context-agents-1280-light-panel-inst.png');
 
     // 右パネルの 9 件 rules まとまり（リポジトリ dir tier）の開閉と mixed 一括切替
     const scxArchGrp = page.locator('#scx-panel-instruction .cx-row.grp', { hasText: 'rules' }).last();
@@ -380,21 +516,22 @@ try {
     await page.waitForFunction(() => {
       const grpSws = [...document.querySelectorAll('#scx-panel-instruction .cx-row.grp .cx-sw')];
       return grpSws.some(s => s.getAttribute('aria-checked') === 'mixed');
-    }, { timeout: 10000 });
+    }, null, { timeout: 10000 });
     await page.locator('#scx-panel-instruction .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
     await page.waitForFunction(() => {
       const grpSws = [...document.querySelectorAll('#scx-panel-instruction .cx-row.grp .cx-sw')];
       return grpSws.every(s => s.getAttribute('aria-checked') === 'true');
-    }, { timeout: 10000 });
+    }, null, { timeout: 10000 });
     check(true, '右パネルでも一部オフで mixed になり、一括で元へ戻る');
 
     // 右パネルの sticky & Skills 絞り込み
     await page.locator('#scx-tab-skill').click();
     await page.waitForSelector('#scx-panel-skill .cx-find input', { state: 'visible', timeout: 10000 });
+    await shoot(page, 'context-agents-1280-light-panel-skills.png');
     const scxFind = page.locator('#scx-panel-skill .cx-find input');
     await scxFind.click();
     await scxFind.pressSequentially('r-skill-4');
-    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.kid .nm')].some(n => n.textContent === 'r-skill-4'), { timeout: 5000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.kid .nm')].some(n => n.textContent === 'r-skill-4'), null, { timeout: 5000 });
     await scxFind.fill('no-right-skill-xyz');
     check((await page.locator('#scx-panel-skill').innerText()).includes('見つかりません'), '右パネル Skills でも 0 件で「見つかりません」が出る');
     await scxFind.press('Escape');
@@ -402,37 +539,47 @@ try {
 
     // 右パネルでも、絞り込み中のまとまりスイッチは当たった行だけを切り替える
     await scxFind.fill('r-skill-1');
-    await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
     const scxOnly = page.locator('#scx-panel-skill .cx-row.grp .cx-sw');
     check((await scxOnly.count()) === 1 && (await scxOnly.getAttribute('aria-checked')) === 'true', '右パネルの絞り込み中のスイッチは見えている行だけからオンと決まる');
     await scxOnly.click();
-    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
     await scxFind.press('Escape');
-    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), { timeout: 5000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), null, { timeout: 5000 });
     check(true, '右パネルでも、絞り込み中の一括切替は当たった 1 件だけで、消すと「一部」に戻る');
     await page.locator('#scx-panel-skill .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
-    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), { timeout: 10000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), null, { timeout: 10000 });
 
     // ==================== 3. 360px 狭幅 & ダークモードの横はみ出し・サイズ検査 ====================
+    await page.setViewportSize({ width: 360, height: 760 });
+    await page.waitForFunction(() => innerWidth === 360);
     for (const scheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme: scheme });
-      await page.setViewportSize({ width: 360, height: 760 });
-      await page.waitForFunction(() => innerWidth === 360);
+      if (scheme === 'dark') {
+        await page.locator('#scx-tab-instruction').click();
+        await page.waitForFunction(() => !document.getElementById('scx-panel-instruction')?.hidden
+          && getComputedStyle(document.getElementById('scx-tab-skill')).backgroundColor === 'rgba(0, 0, 0, 0)', null, { timeout: 5000 });
+        await shoot(page, 'context-agents-360-dark-panel-inst.png');
+      }
       const rpLayout = await page.evaluate(() => {
         const sc = document.querySelector('.file-preview-content');
         const tabH = Math.min(...[...document.querySelectorAll('.scx .cx-tab')].map(e => e.getBoundingClientRect().height));
         return { pageOver: document.documentElement.scrollWidth > innerWidth, scOver: sc.scrollWidth > sc.clientWidth, tabH };
       });
       check(!rpLayout.pageOver && !rpLayout.scOver && rpLayout.tabH >= 38, `360px ${scheme} 右パネル編集で横にはみ出さない`, rpLayout);
-
+    }
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
       await openSettingsContext(page, 'instruction');
       for (const tabId of ['instruction', 'skill', 'mcp', 'hooks']) {
         await page.locator(`#cx-tab-${tabId}`).click();
         await page.waitForFunction(id => document.getElementById(`cx-tab-${id}`)?.getAttribute('aria-selected') === 'true' && !document.getElementById(`cx-panel-${id}`)?.hidden, tabId, { timeout: 5000 });
+        if (scheme === 'light' && tabId === 'instruction') await shoot(page, 'context-agents-360-light-inst.png');
+        if (scheme === 'dark' && tabId === 'skill') await shoot(page, 'context-agents-360-dark-skills.png');
         const sLayout = await page.evaluate(() => {
           const sc = document.querySelector('.settings-content');
           const tabH = Math.min(...[...document.querySelectorAll('#contextPanel .cx-tab')].map(e => e.getBoundingClientRect().height));
-          const agSizes = [...document.querySelectorAll('#contextPanel [data-kind=mcp] .cx-ag')].filter(e => e.offsetParent).map(e => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height));
+          const agSizes = [...document.querySelectorAll('#contextPanel button.cx-ag')].filter(e => e.offsetParent).map(e => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height));
           return {
             pageOver: document.documentElement.scrollWidth > innerWidth,
             scOver: sc.scrollWidth > sc.clientWidth,
@@ -474,12 +621,18 @@ try {
       await page.evaluate(() => {
         document.getElementById('onboardingDialog')?.close();
         if (!document.body.classList.contains('settings')) document.getElementById('settings')?.click();
-        document.getElementById('openContext')?.click();
+        if (document.getElementById('contextPanel')?.hidden !== false) document.getElementById('openContext')?.click();
         document.getElementById('cx-tab-mcp')?.click();
       });
       if (await dvCell(page, 'devBoth').waitFor({ state: 'visible', timeout: 1500 }).then(() => true, () => false)) return;
     }
-    throw new Error('openDevinList timed out');
+    const diag = await page.evaluate(() => ({
+      bodyClass: document.body.className,
+      panelHidden: document.getElementById('contextPanel')?.hidden ?? null,
+      status: document.getElementById('contextPanel')?.querySelector('.cx-status')?.textContent ?? null,
+      text: document.getElementById('contextPanel')?.innerText?.slice(0, 300) ?? null,
+    })).catch(() => null);
+    throw new Error(`openDevinList timed out ${JSON.stringify({ diag, errors })}`);
   };
   const dvServers = [];
   const dvClients = [];
