@@ -399,9 +399,9 @@ export default async function (t) {
     catch (e) { deeperErr = e; }
     const subMatrix = await client.cmd('docMatrix', { kind: 'instruction', cwd: subDir, place: subDir });
     await client.cmd('setContextSettings', { place: subDir, remove: true });
-    t.ok('表を触った場所: 効かない旧い設定の変更は INVALID で断り（表で決めていること・context.setDocAgent・value: null を言う）、保存しない。表より深い場所の旧い上書きは効くので通す',
+    t.ok('表を触った場所: 効かない旧い設定の変更は INVALID で断り（表で決めていること・やめ方を言う。画面の人には操作名を出さない）、保存しない。表より深い場所の旧い上書きは効くので通す',
       legacyErr?.code === 'INVALID' && /表で決めています/.test(String(legacyErr?.message ?? ''))
-      && /context\.setDocAgent/.test(String(legacyErr?.message ?? '')) && /value: null/.test(String(legacyErr?.message ?? ''))
+      && /全体の設定に戻す/.test(String(legacyErr?.message ?? '')) && !/context\.set|value: null/.test(String(legacyErr?.message ?? ''))
       && scansAfter === scansBefore && !deeperErr && subMatrix.touched === false,
       JSON.stringify({ legacy: legacyErr?.message, code: legacyErr?.code, same: scansAfter === scansBefore, deeper: deeperErr?.message, subTouched: subMatrix.touched }));
 

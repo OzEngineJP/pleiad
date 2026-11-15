@@ -946,9 +946,12 @@
         "full": "There isn't enough free disk space.",
         "other": "The file couldn't be written ({{code}})."
       },
+      "legacyAfterTouchOps": " (Ops: context.setDocAgent and context.setDocRow for the table cells; context.setSettings with value: null to clear the place's settings)",
+      "docPlaceUndoFailed": "The instructions and Skills table was saved, but registering the place failed ({{error}}) and the table change couldn't be undone ({{undo}}). Only the table change remains. Press the same cell again to retry registering the place",
+      "docRemoveAfterLegacy": "The place's settings were cleared, but its settings in the instructions and Skills table couldn't be removed ({{error}}). The table settings remain, so this place still follows the table. Press \"Reset to the global settings\" again",
       "legacyAfterTouch": {
-        "instruction": "Instructions at {{place}} are decided by the instructions and Skills table in Settings > Plugins. Changing the old settings (owner, sources, exclusions) would not change what reaches which agent, so nothing was saved. Switch the cells in the table instead (ops context.setDocAgent and context.setDocRow). To stop using the table and go back to the old settings, clear the place's settings (\"Reset to the global settings\" in a conversation's right panel, or context.setSettings with value: null)",
-        "skill": "Skills at {{place}} are decided by the instructions and Skills table in Settings > Plugins. Changing the old settings (owner, sources, exclusions) would not change what reaches which agent, so nothing was saved. Switch the cells in the table instead (ops context.setDocAgent and context.setDocRow). To stop using the table and go back to the old settings, clear the place's settings (\"Reset to the global settings\" in a conversation's right panel, or context.setSettings with value: null)"
+        "instruction": "Instructions at {{place}} are decided by the instructions and Skills table in Settings > Plugins. Changing the old settings (owner, sources, exclusions) would not change what reaches which agent, so nothing was saved. Switch the cells in the table instead. To stop using the table and go back to the old settings, clear the place's settings (\"Reset to the global settings\" in a conversation's right panel)",
+        "skill": "Skills at {{place}} are decided by the instructions and Skills table in Settings > Plugins. Changing the old settings (owner, sources, exclusions) would not change what reaches which agent, so nothing was saved. Switch the cells in the table instead. To stop using the table and go back to the old settings, clear the place's settings (\"Reset to the global settings\" in a conversation's right panel)"
       },
       "connectorsUnread": "Couldn't read the list of claude.ai connectors. Wait a moment and try again",
       "kindInvalid": "The plugin settings are malformed.",
@@ -959,8 +962,8 @@
       "migrateUnverified": "Could not verify the plugin settings migration. The original settings were not changed.",
       "unreadable": "Cannot read the plugin settings. Check context-scans.json.",
       "docAgentsUnreadable": "Cannot read the settings file of the instructions and Skills table (context-agents.json): it is broken, or has an unknown version or unknown fields. Conversations will not start, so that instructions and Skills you turned off are not passed. Fix it with \"Move the broken file aside and repair\" in Settings › Plugins (operation context.repairDocAgents). The broken file is not deleted: it is moved to context-agents.broken-<time>.json, and the behaviour before the table was touched comes back",
-      "docAgentsPlacesLimit": "Not saved: the instructions and Skills table reached its limit of {{max}} places with their own settings. Settings for folders that no longer exist were removed. Press \"Reset to the global settings\" in the right panel of a conversation at a place you no longer use to reduce the places, then try again",
-      "docAgentsKeysLimit": "Not saved: the instructions and Skills table reached its limit of {{max}} per-item settings in total. Settings for folders and files that no longer exist were removed. Press \"Reset to the global settings\" in the right panel of a conversation at a place you no longer use to reduce the places, then try again",
+      "docAgentsPlacesLimit": "Not saved: the instructions and Skills table reached its limit of {{max}} places with their own settings, even after removing settings for folders that no longer exist. Press \"Reset to the global settings\" in the right panel of a conversation at a place you no longer use to reduce the places, then try again",
+      "docAgentsKeysLimit": "Not saved: the instructions and Skills table reached its limit of {{max}} per-item settings in total, even after removing settings for folders and files that no longer exist. Press \"Reset to the global settings\" in the right panel of a conversation at a place you no longer use to reduce the places, then try again",
       "nothingToChange": "Specify what to change."
     },
     "session": {
