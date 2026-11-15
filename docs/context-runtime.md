@@ -1,8 +1,8 @@
 # 共通コンテキストの実行
 
-外部 MCP だけは 2026-11-14 から担当の 2 択を持たず、名前 × エージェントの一覧で決める（[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)、下の「外部 MCP の名前ごとの中継」）。
+外部 MCP は 2026-11-14 から担当の 2 択を持たず、名前 × エージェントの一覧で決める（[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)、下の「外部 MCP の名前ごとの中継」）。指示・Skills も 2026-11-15 から設定 › プラグインの担当の 2 択を廃し、名前ごと・エージェントごとの一覧（`<data>/context-agents.json`）で決める（[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)、下の「指示・Skills の名前ごとの決定」）。どちらも、最初に操作するまで既存の `context-scans.json` の実効状態のまま動きを変えない。
 
-2026-09-12。設定 › プラグインで、指示・Skills・外部 MCP ごとに「エージェントに任せる」か「Pleiad がそろえる」を選ぶ。既定はエージェント任せ。2026-09-20 から設定は種類ごとに「すべての場所（既定）」と場所ごとの上書きで持つ（`docs/context-management.md`「保存と継承（形式 2）」）。外部 MCP については Pleiad 自身の登録（`<data>/mcp-servers.json`）も持つ。エージェント側の設定ファイルは書き換えない。
+2026-09-12（従来の基盤）。設定は種類ごとに「すべての場所（既定）」と場所ごとの上書きで持つ（`docs/context-management.md`）。外部 MCP については Pleiad 自身の登録（`<data>/mcp-servers.json`）も持つ。エージェント側の設定ファイルは書き換えない。
 
 ## セッションと適用範囲
 
@@ -62,13 +62,13 @@ Skills は名前・説明・ID・元のディレクトリのみを一覧とし�
 
 ## Pleiad の指示
 
-指示ファイル・Skills・外部 MCP とは別に、Pleiad 自身が会話に毎ターン入れる指示の一覧を持つ（`core/ply-instructions.mjs`、[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)）。種類の担当によらず、`plyInstructions` の印を持つ会話（現在の全エージェント）に入る。渡す欄はバックエンドごとの `addedInstructions` の実装が決める（Claude は `systemPrompt.append`、Codex は `developerInstructions`、ACP の系統と antigravity は発言の本文の前）。`plyAgents` の印を持つ会話では ply_agents の instructions の後ろに足す。記録はどちらも `contextSession.added`。委譲と連動の項目（`route`）だけは、委譲の橋（`plyAgents`）を持たないエージェントには入れない（記録の理由 `noBridge`）。
+指示ファイル・Skills・外部 MCP とは別に、Pleiad 自身が会話に毎ターン入れる指示の一覧を持つ（`core/ply-instructions.mjs`、[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)）。種類の担当や場所によらず、`plyInstructions` の印を持つ会話（本番 6 エージェントすべて。Grok を含む）に入る。渡す欄はバックエンドごとの `addedInstructions` の実装が決める（Claude は `systemPrompt.append`、Codex は `developerInstructions`、ACP の系統と antigravity は発言の本文の前）。`plyAgents` の印を持つ会話では ply_agents の instructions の後ろに足す。記録はどちらも `contextSession.added`。委譲と連動の項目（`route`）だけは、委譲の橋（`plyAgents`）を持たないエージェントには入れない（記録の理由 `noBridge`）。
 
 - **項目**: 既定の 2 項目（`child` 委譲された会話でのコマンドの扱い = コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え自分で止める・`Start-Process -Wait` のような無期限待機をしない（委譲の深さに上限は無いので、さらに委譲してよい）、`codexPolicy` Codex の実行前の拒否 = 承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。委譲された会話・Codex だけが既定。docs/multi-backend.md「Codex の実行前の拒否」）、自分で足した項目（`u-…`。名前・本文・入れる会話 `all` / `parent` / `child`・エージェント = 本番のエージェント全部から選ぶ。保存済みの「Claude・Codex だけ」は当時の全部なので、一度だけ今の全部へ広げる（[ADR 0268](adr/0268-widen-legacy-instruction-agents.md)））、委譲と連動の項目（`route` 委譲先の自動選択の使い方 = `kind` を付け `backend` は書かない。いつも最後）。既定の項目は編集でき、編集していなければ文面は辞書（`agent:guide.*`）から会話の言語で引く（Pleiad の更新で新しい文面になる）。編集したら保存した文のまま（「既定に戻す」で辞書の文へ戻る。既定と同じ内容で保存しても編集扱いにしない）。`route` は編集・スイッチを持たない。
 - **入れる文**: 項目ごとに見出し「<名前>（Pleiad が追加した指示）:」（`agent:guide.heading`）と本文。並びの順に空行でつなぐ。
 - **経路**: `ply_agents` の instructions の後ろに足し、同じ指示欄で渡す（Claude は `systemPrompt.append`、Codex は `developerInstructions`）。橋（`ply_agents`）は会話ごとに使い回すので、足すのはターンごと（`core/server.mjs` の `runTurn`）。MCP の initialize の instructions とツールの説明には入れない。
 - **入れる条件**（`turnInstructions`。入れないときは理由を記録する）: スイッチが入っている（`off`）、入れる会話が合う（依頼元 = 会話の記録に `delegation` が無い、委譲された会話 = ある。`target`）、エージェントが選ばれている（fake などそれ以外はどれにも当たる。`agent`）、`route` は委譲先の自動選択が有効（`routingOff`）、`route` は読み取り・計画モードの依頼元には入れない（`ply_delegate` を受け付けないため。`readOnly`。委譲された子には読み取りのモードでも `child` を入れる）。
-- **保存**: `prefs.json` の `plyInstructions`（`{ items: [{ id, on, name?, body?, target?, agents? }] }`。並びが入る順。既定の項目は編集したときだけ `name` などを持つ）。すべての場所に共通（場所ごとには持たない）。`plyInstructions` / `setPlyInstructions`（`action`: `save` / `toggle` / `delete` / `reset` / `order`）で読み書きし、画面は設定 › プラグインの「指示」のカード。**前の版の `addedContext`**（`{ delegation: false }` で委譲の指示を切っていた）は、`plyInstructions` が無い間は `child` を切った状態として読み、初めて保存したときに消す（`codexPolicy` は前の版に無かったので入れたまま）。保存済みの並びに無い既定の項目は、既定の位置に足して読む。**前の版の既定の項目 `delegate`**（委譲の進め方 = 委譲を基本にする・この会話でやること）は無くした（[ADR 0210](adr/0210-no-builtin-delegation-push.md)）。保存に残っていれば、本文を編集していないものは捨て、編集していたものは自分で足した指示（id `u-delegate`。名前を編集していなければ前の版の名前）に変えて、並びの位置・スイッチのまま読む。
+- **保存**: `prefs.json` の `plyInstructions`（`{ items: [{ id, on, name?, body?, target?, agents? }] }`。並びが入る順。既定の項目は編集したときだけ `name` などを持つ）。すべての場所に共通（場所ごとには持たない）。`plyInstructions` / `setPlyInstructions`（`action`: `save` / `toggle` / `toggleAgent` / `delete` / `reset` / `order`）で読み書きし、画面は設定 › プラグインの「指示」のカード（各行にも 6 エージェントの列を持ち、`toggleAgent` で切り替えられる）。**前の版の `addedContext`**（`{ delegation: false }` で委譲の指示を切っていた）は、`plyInstructions` が無い間は `child` を切った状態として読み、初めて保存したときに消す（`codexPolicy` は前の版に無かったので入れたまま）。保存済みの並びに無い既定の項目は、既定の位置に足して読む。**前の版の既定の項目 `delegate`**（委譲の進め方 = 委譲を基本にする・この会話でやること）は無くした（[ADR 0210](adr/0210-no-builtin-delegation-push.md)）。保存に残っていれば、本文を編集していないものは捨て、編集していたものは自分で足した指示（id `u-delegate`。名前を編集していなければ前の版の名前）に変えて、並びの位置・スイッチのまま読む。
 - **トークン数**: 画面に出す数は `web/token-estimate.mjs` の見積もり（英数字・記号は 4 文字で 1、それ以外は 1 文字で 1。見出しを含む）。サーバーと画面で同じ数になる。
 - **効く時期**: 次のターンから、始まっている会話にも。Codex のロード済みのスレッドは `thread/resume` で指示欄が変わらないので、前に渡した指示と違えば `thread/unsubscribe` してから読み直す（接続先を変えたときと同じ。指示だけの違いで外せなかったときは止めずに前の指示で続ける）。
 - **記録**: ターンごとに `contextSession.added`（`[{ id, name, target, agents, inserted: true, text } | { id, name, target, agents, inserted: false, reason }]`）に残し、`sessionContext` の `added` で返す。会話の右パネルの「Pleiad の指示」と頭の札「Pleiad の指示 n」はこれだけから作る（前の版の記録 `{ id: 'delegation', variant, text }` も読む）。「新しい内容で会話を続ける」は `added` をそのまま残す。
@@ -137,11 +137,23 @@ Devin は、止める名前があるターンだけ、設定の置き場の写�
 
 Antigravity は自身の MCP を名前ごとに止める口が無い（能力の印 `nativeMcpOff`）。止められない定義（Antigravity の定義・Devin の作業場所の定義）は自身がつなぐ。同じ名前を Pleiad が中継するとき自身側が勝つので、中継しない。
 
-OpenCode は指示を会話ごとに止める口が無く、Skills の一覧もシステムプロンプトに入るため、Pleiad が担当するターンだけ専用のサーバーを起こし、ターンの終わりに止める（共有のサーバーや他会話には触れない。`core/backends/opencode-context.mjs`）。作業場所の設定を止めるので、エージェントに任せる種類（作業場所の指示ファイル・設定の instructions・`.opencode` の Skills・作業場所の mcp）は絶対パスと `OPENCODE_CONFIG_CONTENT` で渡し直す。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、そのターンでは読まれない。ply_context は中継の口（`/mcp/opencode/ply_context`）で渡す。
+OpenCode は指示を会話ごとに止める口が無く、Skills の一覧もシステムプロンプトに入るため、指示・Skills がエージェント既定の状態から外れるターン（抑止または別由来の追加があるターン。外部 MCP のみの抑止や未変更ターンは共有サーバー）だけ専用の `opencode serve` を起こし、ターンの終わりに止める（共有サーバーや他会話には触れない。`core/backends/opencode-context.mjs`、`PLEIAD_OPENCODE_INSTRUCTION_OWNER`）。作業場所の設定を止めるため、残す指示ファイル・設定の instructions・Skills・作業場所の mcp は絶対パスと `OPENCODE_CONFIG_CONTENT`（`'skill'` ツール抑止を含む）で渡し直す。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その専用サーバーを使うターンでは読まれない。ply_context は中継の口（`/mcp/opencode/ply_context`）で渡す。
 
 Claude は設定ソースと権限を保持し、Pleiad 管理時は初期化結果を確認するまでユーザー入力を送らない。Codex は管理対象のターン専用 app-server を作り、共有 RPC や他会話の設定を書き換えない。Skills または MCP の共通管理では plugins を無効にするため、その影響を設定画面に明示する。元の設定ファイルを書き換える抑止は行わない。
 
 Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad の置き場の `.agents/agents/ply-context/agent.md`、`--add-dir <置き場> --agent ply-context`）で Pleiad のコンテキストを受け取る（`core/backends/antigravity-context.mjs`）。本文に指示と Skills の一覧、`mcpServers` に ply_context への stdio 中継（`core/agy-context-relay.mjs`）を書き、Skills・MCP がエージェント担当なら `inheritCustomizations` / `inheritMcp` で agy 自身の読み込みを残す。カスタムエージェントはワークスペースの AGENTS.md・GEMINI.md を自分で読まないため、指示がエージェント任せの会話では Pleiad がネイティブと同じ探索（`nativeInstructionEntries`）で拾って発言の前に毎ターン足す（issue #107。渡した分は記録の `nativeInjected` に残る）。ply_agents（委譲の橋）も同じ中継に束ねて渡し、その説明と Pleiad の指示は発言の前に毎ターン足す。エージェント定義は起動時にしか渡せず、同じ会話の再開では開始時の定義を持ち越す既知の制約があるため、確実に届ける文は発言への前置きにする。
+
+### 指示・Skills の名前ごとの決定（[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）
+
+`context-agents.json` と `context-scans.json` から `buildDocMatrix` と `resolveDocForAgent`（`core/context-doc-matrix.mjs`）が画面の表示状態と実行時プランを単一の規則から導出する。
+
+- **未操作の挙動維持**: `(place, kind)` が未操作かつレガシー担当が `'native'`（`untouchedNative`）の間は、抑止も注入も行わず従来どおりエージェント自身の読込に任せる。初めてセルまたは行スイッチを操作した瞬間に、その時点の `docAgentsFromLegacy` を保存する。
+- **個別抑止とグループ抑止**: Claude の `claudeMdExcludes` / `skills` 除外や Codex の `skills.config.enabled=false` のように個別に止められるものは、残すネイティブ行をそのままネイティブ維持し、外からの追加や衝突差し替えだけ `ply_context` で補う。Codex の指示（`project_doc_max_bytes=0`）や OpenCode のような一括抑止では、1 件でも抑止・再配布が発生すると種類全体を抑止して残す項目も `ply_context` / `OPENCODE_CONFIG_CONTENT` で再配布する。
+- **Devin CLI**: 自前設定（`%APPDATA%/devin/*`・`~/.devin/*`・`<ws>/.devin/*`・`DEVIN_CONFIG_HOME` の置き場と、`.agents/skills`・`~/.codeium`・`~/.copilot` の Skills）は鍵（`own` / `workspace`）で残し、取り込み形式（`claude`・`agents_standard`・`cursor`・`windsurf`・`copilot`・`opencode`）は全停止または同形式内にオフ行がある場合に `--config` で `read_config_from[fmt] = false` を渡して止め、残す行を `ply_context` で再配布する。形式ごとに指示と Skills がまとめて止まるため、片方の表に触れたターンは、もう片方の種類も表で解いて巻き込まれる物を渡し直す（`context-runtime.mjs` の `docActiveKinds` と `coupleDevinFormats`）。実機 `devin acp` は `initialize` ではなく `session/new` 時に `--config` を読むため、一時ファイルはすぐには消さない（寿命は devin.mjs に従う）。なお `read_config_from[fmt] = false` は同形式のネイティブ MCP 取り込みも止めるため、アクティブな外部 MCP は外部 MCP 中継で補う。
+- **Codex の全体の指示**: `~/.codex/AGENTS.md`（`AGENTS.override.md`）は `project_doc_max_bytes=0` では止まらず main も止めていないので、オンのまま鍵（`own`）にする。
+- **Antigravity の Skills**: 自分で読む Skill を 1 つでも止めると `inheritCustomizations: false` になり、Hooks・プラグイン・サブエージェントも一緒に消える。main でもそうなる旧い「Pleiad がそろえる」の場所でだけ押せるようにし、それ以外の場所では自分で読む Skill とまとめ行をオンのまま鍵（`bundled`）にする。自分で読まない Skill を広げるマスは、外部 MCP を Pleiad がそろえるときと同じカスタムエージェント（`inheritCustomizations: true`）に `load_skill` を足すだけで押せる。
+- **押したときの保存**: 画面の操作（`setDocAgent` / `setDocRow`）は `applyDocTouch`（`core/context-doc-matrix.mjs`）1 つを通る。場所の行をオンに戻すと、その場所の上書きが無いときの状態に戻す（main で除外を外したときと同じ）。旧い `excludePaths` は保存された絶対パスと、その実体の下で数える。
+- **Grok Build**: `GROK_HOME` の写しを作らない方針（[ADR 0336](adr/0336-grok-devin-native-mcp-off.md)）から、外部ファイル由来の指示・Skills はすべて鍵（Grok 自身が読むものはオン＋`own`/`workspace`、その他はオフ＋`relay`）とし、`Pleiad の指示`（`plyInstructions`）のみ 6 列に含めて切替可能とする。なお分離した一時 `GROK_HOME`（`projectTrusted: false`）下では実機 `grok 1.0.62` はワークスペース側の `AGENTS.md` を読まずグローバル `GROK_HOME/Agents.md` のみをネイティブ読込することを確認済み。
 
 ## Hooks
 
@@ -209,7 +221,7 @@ Codex の未送信会話や、ホストが履歴を写した分岐・バック�
 
 `sessionContext {sessionId}` と会話の右パネル「この会話のプラグイン」（会話の頭の札・タイトル行の入口から開く）で、指示の供給元、Skills の案内／使ったもの、MCP の接続成否・ツール数・呼び出し回数、要ログイン・失敗の理由、除外理由を確認できる。記録は「モデルが理解した」という推定ではなく、Pleiad が渡した／接続した事実。ネイティブ担当の内部一覧を共通記録に含めたとは扱わない。エージェント任せの MCP は、そのエージェントの設定に登録されているもの（`agentMcp`）を読み取りのみで並べ、接続の成否は Pleiad から見えないと書く。antigravity で Pleiad 担当を扱わなかった会話は、記録の `guardedBackend` と `reason` を出す。
 
-右パネルは種類ごとの行を出どころで分ける: 記録の行の `root`（足した場所で見つかった）→「追加した場所」、`scope: 'user'` →「ユーザー」、それ以外 →「この場所と親フォルダー」（記録の行は `scope` と `root` を持つ。前の版の記録は `origins[0].scope` で分ける）。一番上の作業場所の面は `contextSettings { cwd }` の今の場所から「全体の設定どおり／<親> の設定どおり／このフォルダーだけの設定 · n 項目」を出す。「この場所だけ変える」を押すと、その場所の設定で探し直した結果（`scanContext { cwd }`）に担当の 2 択と行のスイッチを付け、変えたものをその場所の上書き（`setContextSettings { place: cwd, kind, value }`。指示・Skills は見つかった範囲の `excludePaths`、MCP は `disabled`）として保存する。「全体の設定に戻す」はその場所の上書きを消す（`{ place: cwd, remove: true }`）。効くのは次のターンから。
+右パネルは種類ごとの行を出どころで分ける: 記録の行の `root`（足した場所で見つかった）→「追加した場所」、`scope: 'user'` →「ユーザー」、それ以外 →「この場所と親フォルダー」（記録の行は `scope` と `root` を持つ。前の版の記録は `origins[0].scope` で分ける）。一番上の作業場所の面は `contextSettings { cwd }` の今の場所から「全体の設定どおり／<親> の設定どおり／このフォルダーだけの設定 · n 項目」を出す。「この場所だけ変える」を押すと、指示・Skills は `docMatrix { cwd, place: cwd }` に基づいて担当の 2 択や「探す形式」を出さず行ごとのスイッチ（`setDocRow { kind, key | keys, on, place: cwd, cwd }`）で `context-agents.json` に場所ごとの上書きを保存する（外部 MCP は `agents` 未移行時に `setContextSettings { place: cwd, kind, value }` を保存し、移行済み行では設定画面へ案内する）。「全体の設定に戻す」はその場所の上書き（`context-scans.json` と `context-agents.json` の双方）を消す（`{ place: cwd, remove: true }`）。効くのは次のターンから。
 戻りは `{ report, owners, pinned, changed, startedAt, refreshedAt, removedMcp, added }`（`added` は上の「Pleiad の指示」）。`report` が記録（外部 MCP の行には Pleiad の登録の認証方式 `auth` も付く）、`owners` はその会話が始まった時点の担当、`pinned` は固定の有無。`changed` は固定された会話でだけ行う今のファイルとの突き合わせで、`{ differs, paths, files }`（`differs` が正否、`paths` は変わったと分かったファイルの手掛かり、`files` は `{ path, name, kind, before, after, modifiedAt }`。会話中に `instructions_for_path` で読み足した子階層の指示が混じることがある）。ネイティブ担当の会話では探索を走らせず `null` を返す（`docs/design-system.md` §9）。
 
 - `npm test -- context-runtime`：実 MCP クライアントと fixture、セッション分離・永続化・遅延読み込み。

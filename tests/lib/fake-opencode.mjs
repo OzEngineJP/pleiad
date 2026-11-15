@@ -600,7 +600,7 @@ if (process.env.FAKE_OPENCODE_STARTED_FILE) { try { (await import('node:fs')).ap
 `); } catch {} }
 // 起こされたときの設定（Pleiad 担当のコンテキストの専用のサーバーの確かめ。試験が FAKE_OPENCODE_LAUNCH_FILE を付けたときだけ）
 if (process.env.FAKE_OPENCODE_LAUNCH_FILE) {
-  const flags = Object.fromEntries(['OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_DISABLE_CLAUDE_CODE_PROMPT', 'OPENCODE_DISABLE_EXTERNAL_SKILLS', 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS']
+  const flags = Object.fromEntries(['OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_DISABLE_CLAUDE_CODE_PROMPT', 'OPENCODE_DISABLE_EXTERNAL_SKILLS', 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS', 'PLEIAD_OPENCODE_INSTRUCTION_OWNER']
     .filter((k) => process.env[k]).map((k) => [k, process.env[k]]));
   (await import('node:fs')).appendFileSync(process.env.FAKE_OPENCODE_LAUNCH_FILE, `${JSON.stringify({ pid: process.pid, flags, xdg: process.env.XDG_CONFIG_HOME ?? null, config: CONFIG })}
 `);

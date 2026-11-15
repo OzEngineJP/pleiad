@@ -1299,6 +1299,8 @@
     "subtitle": {
       "startedAt": "{{time}} に開始 · 設定の変更は次のターンから反映",
       "started": "設定の変更は次のターンから反映",
+      "startedAtFresh": "{{time}} に開始 · 設定の変更は新しい会話から反映",
+      "startedFresh": "設定の変更は新しい会話から反映",
       "refreshed": "{{text}} · {{time}} に読み込み直し"
     },
     "agent": "エージェント",
@@ -1553,43 +1555,25 @@
       "ply": "Pleiad がそろえる"
     },
     "instruction": {
-      "agent": "Claude は CLAUDE.md、Codex は AGENTS.md を各自の決まりで読む",
-      "ply": "どのエージェントにも同じものを渡す",
-      "note": "Pleiad は指示ファイルを渡しません。どのファイルが読まれるかはエージェント次第です。",
-      "sourceCommon": "AGENTS.md（共通）",
-      "sourceCodex": "Codex 形式",
-      "sourceOpencode": "OpenCode 形式",
-      "sourceDevin": "Devin 形式",
-      "sourceAntigravity": "Antigravity 形式",
-      "sourceGrok": "Grok 形式",
       "title": "指示",
-      "files": "指示ファイル",
-      "fileTitle": "ファイルの指示（CLAUDE.md・AGENTS.md）",
       "none": "見つかった指示ファイルはありません"
     },
     "skill": {
-      "agent": "各エージェントが自分の skills フォルダーを読む",
-      "ply": "一覧を渡し、必要な時だけ本文を読ませる",
-      "note": "Pleiad は何も渡しません。どの Skill が使えるかはエージェント次第です。",
-      "sourceCommon": ".agents/skills（共通）",
+      "title": "Skills",
       "none": "見つかった Skill はありません"
     },
     "mcp": {
       "title": "外部 MCP",
       "agent": "各エージェントが自分の MCP 設定どおりに接続する",
-      "ply": "どのエージェントにも同じ MCP をつなぐ",
-      "sourceClaude": "Claude の設定",
-      "sourceCodex": "Codex の設定",
-      "sourceOpencode": "OpenCode の設定",
-      "sourceDevin": "Devin の設定",
-      "sourceAntigravity": "Antigravity の設定",
-      "sourceGrok": "Grok の設定"
+      "ply": "どのエージェントにも同じ MCP をつなぐ"
     },
     "copyPath": "パスをコピー",
     "copied": "コピーしました",
     "emptyFile": "（空のファイル）",
-    "lead": "エージェントへ何を渡すかを決めます。始まっている会話にも次のターンから反映します。",
-    "saved": "保存しました · 次のターンから反映",
+    "lead": "エージェントへ何を渡すかを決めます。始まっている会話にも次のターンから反映します（Antigravity と Grok は新しい会話から）。",
+    "saved": "保存しました",
+    "savedFresh": "保存しました。Antigravity と Grok は、新しい会話から反映します",
+    "savedReloadFailed": "保存しました。表を読み直せませんでした（{{error}}）。開き直すと最新の状態を表示します",
     "saveFailed": "保存できませんでした：{{error}}",
     "cancel": "やめる",
     "add": "追加",
@@ -1601,8 +1585,6 @@
       "noCandidates": "候補はありません",
       "pathRequired": "フォルダーのパスを入れてください"
     },
-    "ownerAria": "{{kind}}を読み込むのは",
-    "formats": "探す形式",
     "searching": "探しています",
     "searchingDots": "探しています…",
     "row": {
@@ -1634,14 +1616,33 @@
       "offerAria": "{{name}} をまとめて案内する",
       "provideAria": "{{name}} をまとめて渡す"
     },
-    "antigravityNote": "antigravity の会話では、指示ファイルがエージェント任せのままのとき、ワークスペースの AGENTS.md・GEMINI.md は agy が自分で読めなくなるため、その内容を Pleiad が発言の前に足して渡します",
+    "workspaceRow": {
+      "instruction": "CLAUDE.md・AGENTS.md",
+      "skill": ".claude/skills・.agents/skills",
+      "instructionSub": "それぞれのエージェントが作業場所から読みます",
+      "skillSub": "作業場所の Skills をそのまま読み込みます"
+    },
+    "matrix": {
+      "agentSettings": "エージェントの設定",
+      "tokensTotal": "約 {{n}} トークン",
+      "agentsAria": "{{name}} を使うエージェント",
+      "agentAria": "{{agent}} で {{name}} を使う",
+      "askAria": "{{name}} を {{to}} にも渡す確認",
+      "ask": "{{from}} の設定の {{name}} を、{{to}} にも渡します",
+      "askBundle": "{{from}} の設定の {{name}}（{{count}} 件）を、{{to}} にも渡します",
+      "cancel": "やめる",
+      "confirm": "渡す",
+      "locked": "Pleiad からは止められません",
+      "originCommon": "共通"
+    },
     "lockReason": {
       "own": "{{agent}} の設定にあるため、Pleiad からは止められません",
       "workspace": "{{agent}} が作業場所から直接読むため、Pleiad からは止められません",
       "relay": "{{agent}} には Pleiad から渡せません",
       "admin": "管理者が {{agent}} に設定しています",
       "linked": "{{agent}} には委譲の設定に合わせて渡します",
-      "nolinks": "Windows の開発者モードがオフのため、Pleiad からは止められません"
+      "nolinks": "Windows の開発者モードがオフのため、Pleiad からは止められません",
+      "bundled": "{{agent}} では止めると Hooks などほかの設定も一緒に止まるため、ここでは止められません"
     },
     "lockAria": "{{label}}（{{reason}}）",
     "roots": {
@@ -1654,11 +1655,12 @@
     },
     "scanFailed": "探せませんでした：{{error}}",
     "loadFailed": "プラグインの設定を読めませんでした：{{error}}",
+    "repairDocAgents": "壊れたファイルを退避して直す",
+    "repairedDocAgents": "直しました。壊れたファイルは {{file}} として残しています",
     "tier": {
       "user": "ユーザー",
       "place": "作業場所",
       "placeSub": "Git のルートから作業フォルダーまで",
-      "formatsAria": "{{tier}}で探す形式",
       "listAria": "ユーザーで見つかった{{kind}}"
     },
     "ply": {
@@ -1683,8 +1685,6 @@
         "parent": "依頼元の会話だけ",
         "child": "委譲された会話だけ"
       },
-      "onlyAgent": "{{agent}} だけ",
-      "agentJoin": "・",
       "routingOff": "委譲先の自動選択がオフなので入りません",
       "switchAria": "「{{name}}」を入れる",
       "edit": "編集",

@@ -935,6 +935,21 @@
       "unknownAgent": "Unknown agent: {{agent}}",
       "unknownMcp": "No external MCP with this name is in the list: {{name}}",
       "mcpNotPressable": "{{name}} cannot be switched for {{agent}}",
+      "unknownDocItem": "No instruction or Skill with this key is in the list: {{key}}",
+      "docNotPressable": "{{name}} cannot be switched for {{agent}}",
+      "docRowLocked": "{{name}} cannot be switched with the row switch (a locked agent reads it itself, so it would stay on, or no agent can be switched). Switch the unlocked cells one by one instead",
+      "docTargetRequired": "Specify at least one item key to switch.",
+      "docAgentsWrite": {
+        "failed": "Couldn't save the instructions and Skills table. {{reason}}",
+        "isDir": "A folder named context-agents.json is in the place of the file in the data folder.",
+        "denied": "context-agents.json in the data folder can't be written (another program has it open, or writing isn't allowed).",
+        "full": "There isn't enough free disk space.",
+        "other": "The file couldn't be written ({{code}})."
+      },
+      "legacyAfterTouch": {
+        "instruction": "Instructions at {{place}} are decided by the instructions and Skills table in Settings > Plugins. Changing the old settings (owner, sources, exclusions) would not change what reaches which agent, so nothing was saved. Switch the cells in the table instead (ops context.setDocAgent and context.setDocRow). To stop using the table and go back to the old settings, clear the place's settings (\"Reset to the global settings\" in a conversation's right panel, or context.setSettings with value: null)",
+        "skill": "Skills at {{place}} are decided by the instructions and Skills table in Settings > Plugins. Changing the old settings (owner, sources, exclusions) would not change what reaches which agent, so nothing was saved. Switch the cells in the table instead (ops context.setDocAgent and context.setDocRow). To stop using the table and go back to the old settings, clear the place's settings (\"Reset to the global settings\" in a conversation's right panel, or context.setSettings with value: null)"
+      },
       "connectorsUnread": "Couldn't read the list of claude.ai connectors. Wait a moment and try again",
       "kindInvalid": "The plugin settings are malformed.",
       "disabledMcpOnly": "Removing by name is only available for external MCP servers.",
@@ -943,6 +958,9 @@
       "migrateDiffers": "Could not migrate the plugin settings to the new format (the result would change for {{place}}). The original settings were not changed.",
       "migrateUnverified": "Could not verify the plugin settings migration. The original settings were not changed.",
       "unreadable": "Cannot read the plugin settings. Check context-scans.json.",
+      "docAgentsUnreadable": "Cannot read the settings file of the instructions and Skills table (context-agents.json): it is broken, or has an unknown version or unknown fields. Conversations will not start, so that instructions and Skills you turned off are not passed. Fix it with \"Move the broken file aside and repair\" in Settings › Plugins (operation context.repairDocAgents). The broken file is not deleted: it is moved to context-agents.broken-<time>.json, and the behaviour before the table was touched comes back",
+      "docAgentsPlacesLimit": "Not saved: the instructions and Skills table reached its limit of {{max}} places with their own settings. Settings for folders that no longer exist were removed. Press \"Reset to the global settings\" in the right panel of a conversation at a place you no longer use to reduce the places, then try again",
+      "docAgentsKeysLimit": "Not saved: the instructions and Skills table reached its limit of {{max}} per-item settings in total. Settings for folders and files that no longer exist were removed. Press \"Reset to the global settings\" in the right panel of a conversation at a place you no longer use to reduce the places, then try again",
       "nothingToChange": "Specify what to change."
     },
     "session": {
@@ -1457,6 +1475,13 @@
     "plyInstructions": "Changes Pleiad's instructions. The instructions added to agents in each conversation will change.",
     "sessionMcp": "Changes the external MCP \"{{name}}\" in this conversation.",
     "mcpAgent": "Changes whether the external MCP \"{{name}}\" is used by {{agent}}.",
+    "docAgent": "Changes whether {{kind}} \"{{name}}\" is used by {{agent}}.",
+    "docRow": "Changes whether {{kind}} \"{{name}}\" is used.",
+    "docAgentsRepair": "Moves the unreadable settings file of the instructions and Skills table (context-agents.json) to context-agents.broken-<time>.json (it is not deleted) and returns to the behaviour before the table was touched. Instructions and Skills turned off in the table are passed again as the legacy settings say.",
+    "kind": {
+      "instruction": "instruction",
+      "skill": "Skill"
+    },
     "shellRun": "Runs a command in the shell of the conversation \"{{title}}\" ({{cwd}}).",
     "switchBackend": "Switches the agent of the conversation \"{{title}}\" to {{backend}}. The approval mode becomes the first mode of that agent.",
     "everywhere": "every place"

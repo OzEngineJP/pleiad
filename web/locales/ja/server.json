@@ -933,6 +933,21 @@
       "unknownAgent": "知らないエージェントです: {{agent}}",
       "unknownMcp": "この名前の外部 MCP は一覧にありません: {{name}}",
       "mcpNotPressable": "{{name}} は {{agent}} では切り替えられません",
+      "unknownDocItem": "この項目の指示・Skill は一覧にありません: {{key}}",
+      "docNotPressable": "{{name}} は {{agent}} では切り替えられません",
+      "docRowLocked": "{{name}} は行のスイッチでは切り替えられません（鍵の付いたエージェントが自分で読むため止まらないか、切り替えられるエージェントがありません）。鍵の無いマスがあれば、マスを押して切り替えてください",
+      "docTargetRequired": "切り替える項目を指定してください",
+      "docAgentsWrite": {
+        "failed": "指示・Skills の表の設定を保存できませんでした。{{reason}}",
+        "isDir": "データの置き場で、context-agents.json と同じ名前のフォルダーがファイルの場所をふさいでいます",
+        "denied": "データの置き場の context-agents.json に書き込めません（ほかのプログラムが開いているか、書き込みが許されていません）",
+        "full": "ディスクの空きが足りません",
+        "other": "ファイルに書き込めませんでした（{{code}}）"
+      },
+      "legacyAfterTouch": {
+        "instruction": "{{place}} の指示は、設定 › プラグインの指示・Skills の表で決めています。旧い設定（担当・探す形式・除外）を変えても、どのエージェントに何が渡るかは変わらないので、保存しませんでした。表のマスで切り替えてください（操作 context.setDocAgent・context.setDocRow）。表をやめて旧い設定に戻すなら、場所の設定を消してください（会話の右パネルの「全体の設定に戻す」、または context.setSettings に value: null）",
+        "skill": "{{place}} の Skills は、設定 › プラグインの指示・Skills の表で決めています。旧い設定（担当・探す形式・除外）を変えても、どのエージェントに何が渡るかは変わらないので、保存しませんでした。表のマスで切り替えてください（操作 context.setDocAgent・context.setDocRow）。表をやめて旧い設定に戻すなら、場所の設定を消してください（会話の右パネルの「全体の設定に戻す」、または context.setSettings に value: null）"
+      },
       "connectorsUnread": "claude.ai のコネクターの一覧を読めませんでした。少し待ってからもう一度お試しください",
       "kindInvalid": "プラグインの設定の形式が不正です",
       "disabledMcpOnly": "名前で外す設定は外部 MCP だけです",
@@ -941,6 +956,9 @@
       "migrateDiffers": "プラグインの設定を新しい形式へ移せませんでした（{{place}} で結果が変わるため）。元の設定は変更していません",
       "migrateUnverified": "プラグインの設定の移行を確かめられませんでした。元の設定は変更していません",
       "unreadable": "プラグインの設定を読み込めません。context-scans.json を確認してください",
+      "docAgentsUnreadable": "指示・Skills の表の設定ファイル（context-agents.json）を読めません（壊れているか、知らない版・知らない項目があります）。外したはずの指示・Skills が渡らないよう、会話を始めません。設定 › プラグインの「壊れたファイルを退避して直す」（操作 context.repairDocAgents）で直してください。壊れたファイルは消さずに context-agents.broken-<時刻>.json へ移し、表を触る前の動きに戻します",
+      "docAgentsPlacesLimit": "指示・Skills の表で、場所ごとの設定が上限（{{max}} か所）に達したため保存しませんでした。もう無いフォルダーの設定は外しました。使っていない場所の会話の右の欄で「全体の設定に戻す」を押して、場所の設定を減らしてから押し直してください",
+      "docAgentsKeysLimit": "指示・Skills の表で、名前ごとの設定が上限（合わせて {{max}} 件）に達したため保存しませんでした。もう無いフォルダー・ファイルの設定は外しました。使っていない場所の会話の右の欄で「全体の設定に戻す」を押して、場所の設定を減らしてから押し直してください",
       "nothingToChange": "変更する項目を指定してください"
     },
     "session": {
@@ -1450,6 +1468,13 @@
     "plyInstructions": "Pleiad の指示を変えます。会話ごとにエージェントへ足す指示が変わります。",
     "sessionMcp": "この会話の外部 MCP「{{name}}」を変えます。",
     "mcpAgent": "外部 MCP「{{name}}」を、{{agent}} で使うかどうかを変えます。",
+    "docAgent": "{{kind}}「{{name}}」を、{{agent}} で使うかどうかを変えます。",
+    "docRow": "{{kind}}「{{name}}」を使うかどうかを変えます。",
+    "docAgentsRepair": "読めない指示・Skills の表の設定ファイル（context-agents.json）を context-agents.broken-<時刻>.json へ移し（消しません）、表を触る前の動きに戻します。表で外していた指示・Skills は、旧い設定のとおり渡り直します。",
+    "kind": {
+      "instruction": "指示",
+      "skill": "Skill"
+    },
     "shellRun": "会話「{{title}}」のシェルでコマンドを動かします（{{cwd}}）。",
     "switchBackend": "会話「{{title}}」のエージェントを {{backend}} に切り替えます。承認モードは切り替え先の最初のモードになります。",
     "everywhere": "すべての場所"

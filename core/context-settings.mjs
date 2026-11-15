@@ -546,5 +546,5 @@ export function createContextSettings(dataDir, home = os.homedir()) {
       return changed;
     });
   }
-  return { get, view, set, renameMcp, file };
+  return { get, view, set, renameMcp, file, read: () => queue(read) };
 }

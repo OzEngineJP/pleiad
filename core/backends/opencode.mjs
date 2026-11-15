@@ -15,7 +15,7 @@ import { createOpencodeServer } from './opencode-server.mjs';
 import { createTurnMapper, messagesToNormalized, sessionRow, errorOf, retryOf } from './opencode-normalize.mjs';
 import { writePlugin, writeRelayConfig } from './opencode-plugin.mjs';
 import { createHookRunner } from './opencode-hooks.mjs';
-import { managedLaunch } from './opencode-context.mjs';
+import { effectiveOpencodeOwners, managedLaunch } from './opencode-context.mjs';
 import { configureOpencodeHeld, acquireHeldOpencode, heldOpencode, accountHeldOpencode, writeOpencodeEnvFile, adoptOpencodeEnvFile } from './opencode-held.mjs';
 import { computerPrompt } from './computer-delivery.mjs';
 import { undelivered } from './undelivered.mjs';
@@ -36,6 +36,7 @@ const instructionOmissions=messages=>{
   const omitted=messages.filter(m=>m.info.type==='synthetic' && m.info.metadata?.instruction?.paths);
   return {omitMessageIDs:omitted.map(m=>m.info.id),omitTexts:omitted.map(m=>m.info.text).filter(Boolean)};
 };
+
 function instructionContext(srv,account) {
   const cache=new Map();
   return {
@@ -234,7 +235,8 @@ server.subscribe(event => dispatch(event, server));
 async function managedServer(contextRuntime, cwd, account = null) {
   const accountEnv = prepareAccount(account);
   // 名前ごとのモデルでは、OpenCode 自身の MCP は消さず、止める名前だけ enabled: false にする（opencode-context.mjs の stripOwned）
-  const owners = contextRuntime.mcp?.named ? { ...contextRuntime.owners, mcp: 'native', mcpSuppress: contextRuntime.mcp.suppress } : contextRuntime.owners;
+  const baseOwners = effectiveOpencodeOwners(contextRuntime);
+  const owners = contextRuntime.mcp?.named ? { ...baseOwners, mcp: 'native', mcpSuppress: contextRuntime.mcp.suppress } : baseOwners;
   const launch = await managedLaunch({ owners, cwd, dataDir: account?.dir ?? store.dataDir,
     dataHome:path.dirname(opencodeData(account)), ...(account ? {homeSource:path.join(account.dir,'home')} : {}),
     ...(account ? { source: accountEnv.OPENCODE_CONFIG_DIR } : {}) });
@@ -246,7 +248,7 @@ async function managedServer(contextRuntime, cwd, account = null) {
     origin: () => opencodeRelay.whenOrigin(),
     currentOrigin: () => opencodeRelay.origin(),
     env: async () => ({ ...(await serverEnv(launch.config,account)), ...accountEnv, ...launch.env,
-      PLEIAD_OPENCODE_INSTRUCTION_OWNER:contextRuntime.owners?.instruction ?? 'native',
+      PLEIAD_OPENCODE_INSTRUCTION_OWNER:baseOwners.instruction ?? 'native',
       ...(account ? { OPENCODE_CONFIG_DIR: path.join(launch.env.XDG_CONFIG_HOME, 'opencode') } : {}) }),
   });
   srv.accountKey = accountKey(account);
@@ -576,7 +578,7 @@ export const backend = {
     const card = adopt?.card ?? null;
     const { permission, permissionKey } = args.suggestionOnly
       ? { permission: [rule('*', 'deny')], permissionKey: 'suggestion-only' }
-      : sessionPermission(mode, { noSkill: args.contextRuntime?.owners?.skill === 'ply', shellRuntime: args.shellRuntime });
+      : sessionPermission(mode, { noSkill: effectiveOpencodeOwners(args.contextRuntime).skill === 'ply', shellRuntime: args.shellRuntime });
     let fresh = false;
     try {
       await srv.ensure();
@@ -623,7 +625,7 @@ export const backend = {
     const servers = opencodeRelay.bind(sessionId, { runtimes, env: variables, account:relayAccount, system:systemText(args),
       resolveChild:async id=>(await srv.request('GET',`/session/${encodeURIComponent(id)}`))?.parentID,
       prepareChild:prepareEnvironment,
-      context:args.contextRuntime?.owners?.instruction==='ply' ? instructions.context : null,
+      context: effectiveOpencodeOwners(args.contextRuntime).instruction === 'ply' ? instructions.context : null,
       hooks: {
         beforeTool: async p => {
           if(p.tool==='opencode_session_move' && modeOf(mode)!=='yolo')return {block:t('opencode.errors.moveRestricted')};
@@ -965,7 +967,7 @@ export const backend = {
     const { sessionId, emit, cwd, trigger = 'manual' } = args;
     const directory = (await directoryOf(sessionId, srv)) ?? cwd;
     const servers=opencodeRelay.bind(sessionId,{account:account?.id ?? 'login',system:systemText(args),runtimes:relayRuntimes(args),
-      context:args.contextRuntime?.owners?.instruction==='ply'?instructionContext(srv,account).context:null,
+      context:effectiveOpencodeOwners(args.contextRuntime).instruction==='ply'?instructionContext(srv,account).context:null,
     });
     await ensureRelay(directory,servers,srv);
     const msgs = await srv.request('GET', `/session/${sessionId}/message`, { directory });

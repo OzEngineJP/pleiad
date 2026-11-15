@@ -10,6 +10,13 @@ import { t, fmt } from './i18n.mjs';
 import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { createReorder, moveItem, slideFrom } from './reorder.mjs';
+import { freshAgents, agentChip, agentLegend, agentStrip, rowSwitch } from './context-matrix.mjs';
+
+/** Antigravity・Grok に渡る Pleiad の指示（並び・中身・オン・オフ）が変わったか。変わったときだけ「新しい会話から反映」と添える */
+function freshChanged(before, after) {
+  const reach = (s, agent) => JSON.stringify((s?.items ?? []).filter(i => i.on && (i.agents ?? []).includes(agent)).map(i => [i.id, i.name, i.body, i.target]));
+  return freshAgents().some(agent => reach(before, agent) !== reach(after, agent));
+}
 
 const TARGETS = ['all', 'parent', 'child'];
 const NAME_SLOT = '\u0001';   // core/ply-instructions.mjs の見出しの型の、名前の位置
@@ -39,7 +46,8 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
   const announce = text => { status.textContent = text; };
   // wantFocus: 次の描き直しでフォーカスを置く操作（data-fk）。dirty: ドラッグ中に来た描き直しを終わるまで待たせている。
   // painted: 最後に描いた中身。ordering: 保存の応答を待っている並べ替えの数
-  let state = null, wantFocus = '', dirty = false, painted = '', ordering = 0;
+  // confirmed: サーバーが最後に返した中身の写し（行のスイッチは押した行を先に書き換えるので、同じ物を指さない）
+  let state = null, confirmed = null, wantFocus = '', dirty = false, painted = '', ordering = 0;
   const key = id => `ply:${id}`;
   const movable = () => (state?.items ?? []).filter(i => i.tag !== 'linked');
   const signature = () => `${JSON.stringify(state)}\n${[...opened].filter(k => k.startsWith('ply:')).join('\n')}`;
@@ -55,6 +63,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
   // 同じ中身なら描き直さない（保存の後に届く「設定が変わった」の知らせで、動いている途中の行を作り直さない）
   function apply(next) {
     state = next;
+    confirmed = structuredClone(next);
     onCount?.(state ? state.items.length : 0);
     if (signature() !== painted) render();
   }
@@ -65,7 +74,8 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
   }
   async function change(args, focus) {
     state = await cmd('setPlyInstructions', args);
-    saved();
+    saved(freshChanged(confirmed, state));
+    confirmed = structuredClone(state);
     if (focus) wantFocus = focus;
     render();
   }
@@ -87,7 +97,8 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
       try { saving = await cmd('setPlyInstructions', { action: 'order', ids: next }); } catch (e) { failed = e; }
       ordering--;
       if (failed) { if (!ordering) await load(); throw failed; }
-      saved();
+      saved(freshChanged(confirmed, saving));
+      confirmed = structuredClone(saving);
       if (!ordering) apply(saving);
     });
   }
@@ -108,6 +119,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
     sec.append(title, el('span', 'r', state ? t('context.ply.scope', { tokens: fmt.number(state.total) }) : t('context.ply.scopePlain')));
     root.append(sec);
     if (!state) { root.append(el('p', 'cx-empty', t('context.ply.unavailable'))); return; }
+    if (state.agents?.length) root.append(agentLegend(state.agents));
     const list = el('div', 'cx-list');
     list.setAttribute('role', 'group'); list.setAttribute('aria-labelledby', title.id);
     for (const item of state.items) {
@@ -129,7 +141,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
 
   function row(item) {
     const linked = item.tag === 'linked', off = !item.on || (linked && !state.routing);
-    const r = el('div', 'cx-row' + (off ? ' off' : ''));
+    const r = el('div', 'cx-row ag' + (off ? ' off' : ''));
     r.dataset.id = item.id;
     if (linked) { const gap = el('span', 'cx-grip-gap'); gap.setAttribute('aria-hidden', 'true'); r.append(gap); }
     else r.append(reorder.handle('ply', item.id, item.name));
@@ -140,8 +152,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
     const nm = el('span', 'nm', item.name);
     const badge = item.tag === 'default' ? (item.modified ? t('context.ply.badge.modified') : t('context.ply.badge.default')) : linked ? t('context.ply.badge.linked') : '';
     if (badge) nm.append(el('span', 'cbadge', badge));
-    const only = item.agents.length === (state?.agents?.length ?? item.agents.length) ? '' : t('context.ply.onlyAgent', { agent: item.agents.map(a => state?.agents?.find(x => x.id === a)?.label ?? a).join(t('context.ply.agentJoin')) });
-    const sub = [t(`context.ply.target.${item.target}`), only, linked && !state.routing ? t('context.ply.routingOff') : ''].filter(Boolean).join(' · ');
+    const sub = [t(`context.ply.target.${item.target}`), linked && !state.routing ? t('context.ply.routingOff') : ''].filter(Boolean).join(' · ');
     body.append(nm, el('span', 'p', sub));
     open.append(body);
     open.onclick = () => {
@@ -150,12 +161,71 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
       render();
     };
     r.append(open);
-    if (!linked) {
-      const sw = button('', 'cx-sw');
-      sw.dataset.fk = `sw|${item.id}`;
-      sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(item.on)); sw.setAttribute('aria-label', t('context.ply.switchAria', { name: item.name }));
-      sw.onclick = () => { sw.setAttribute('aria-checked', String(!item.on)); work(() => change({ action: 'toggle', id: item.id, on: !item.on }, sw.dataset.fk)); };
-      r.append(sw);
+    if (linked) {
+      const sw0 = el('span', 'cx-sw0'); sw0.setAttribute('aria-hidden', 'true'); r.append(sw0);
+    } else {
+      r.append(rowSwitch({
+        checked: item.on,
+        labelText: t('context.ply.switchAria', { name: item.name }),
+        key: `sw|${item.id}`,
+        keyAttr: 'fk',
+        onToggle: () => {
+          const prevOn = item.on;
+          item.on = !prevOn;
+          wantFocus = `sw|${item.id}`;
+          render();
+          work(async () => {
+            try { await change({ action: 'toggle', id: item.id, on: !prevOn }, `sw|${item.id}`); }
+            catch (e) { item.on = prevOn; render(); throw e; }
+          });
+        },
+      }));
+    }
+    if (state.agents?.length) {
+      r.append(agentStrip({
+        agents: state.agents,
+        labelText: t('context.matrix.agentsAria', { name: item.name }),
+        renderCell: a => {
+          if (linked) {
+            return agentChip({
+              agent: a.id,
+              state: state.routing ? 'lockon' : 'lockoff',
+              cell: { on: Boolean(state.routing), locked: true, reason: 'linked' },
+              name: item.name,
+              agentLabel: a.label,
+              ariaLabel: t('context.matrix.agentAria', { agent: a.label, name: item.name }),
+              key: `ag|${item.id}|${a.id}`,
+              keyAttr: 'fk',
+            });
+          }
+          if (!item.on) return agentChip({ agent: a.id, state: 'hide', name: item.name });
+          const has = item.agents.includes(a.id);
+          return agentChip({
+            agent: a.id,
+            state: has ? 'on' : 'off',
+            name: item.name,
+            agentLabel: a.label,
+            ariaLabel: t('context.matrix.agentAria', { agent: a.label, name: item.name }),
+            key: `ag|${item.id}|${a.id}`,
+            keyAttr: 'fk',
+            onToggle: () => {
+              const prevOn = item.on, prevAgents = [...item.agents];
+              const rem = prevAgents.filter(x => x !== a.id);
+              const nextAgents = has ? (rem.length ? rem : [a.id]) : state.agents.map(x => x.id).filter(x => x === a.id || prevAgents.includes(x));
+              const nextOn = has ? rem.length > 0 : true;
+              const keepFk = nextOn ? `ag|${item.id}|${a.id}` : `sw|${item.id}`;
+              item.on = nextOn;
+              item.agents = nextAgents;
+              wantFocus = keepFk;
+              render();
+              work(async () => {
+                try { await change({ action: 'toggleAgent', id: item.id, agent: a.id, on: !has }, keepFk); }
+                catch (e) { item.on = prevOn; item.agents = prevAgents; wantFocus = `ag|${item.id}|${a.id}`; render(); throw e; }
+              });
+            },
+          });
+        },
+      }));
     }
     return r;
   }

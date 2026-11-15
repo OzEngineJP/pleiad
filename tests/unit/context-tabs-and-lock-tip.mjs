@@ -225,8 +225,9 @@ export default async function (t) {
     await setLanguage('ja');
 
     // 1. 鍵の理由コードと文言（5 種類 + cell.reason 優先 + mode フォールバック）
-    t.ok('LOCK_REASONS は 6 種類の理由コードを持つ（nolinks は ADR 0336）',
-      ['own', 'workspace', 'relay', 'admin', 'linked', 'nolinks'].every(k => LOCK_REASONS.has(k)) && LOCK_REASONS.size === 6);
+    t.ok('LOCK_REASONS は 7 種類の理由コードを持つ（nolinks は ADR 0336、bundled は ADR 0337 の Antigravity の Skill）',
+      ['own', 'workspace', 'relay', 'admin', 'linked', 'nolinks', 'bundled'].every(k => LOCK_REASONS.has(k)) && LOCK_REASONS.size === 7
+      && !lockReasonText('Antigravity', { reason: 'bundled' }).includes('context.lockReason'));
 
     t.ok('lockReasonKey は cell.reason を優先し、無ければ mode から決める',
       lockReasonKey({ mode: 'locked', reason: 'admin' }) === 'admin'

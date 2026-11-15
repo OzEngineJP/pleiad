@@ -1606,13 +1606,14 @@
       },
       "setPlyInstructions": {
         "summary": "Pleiad の指示を 1 つ変える。エージェントの振る舞いが変わるので、ユーザーの承認が要る。",
-        "action": "save（足す・変える）・toggle・delete（自分で足したもの）・reset（既定の項目）・order。",
+        "action": "save（足す・変える）・toggle・toggleAgent（エージェントごと）・delete（自分で足したもの）・reset（既定の項目）・order。",
         "id": "項目の id（save で省くと足す）。",
         "name": "項目の名前（save）。",
         "body": "指示の本文（save）。",
         "target": "all・parent・child（save）。",
         "agents": "渡すエージェント（save）。",
-        "on": "オン・オフ（toggle）。",
+        "agent": "エージェントの id（toggleAgent）。",
+        "on": "オン・オフ（toggle・toggleAgent）。",
         "ids": "並べ替えた項目の id（order）。"
       },
       "setMcpAgent": {
@@ -1624,6 +1625,29 @@
       "mcpMatrix": {
         "summary": "外部 MCP を「名前 × エージェント」の表で読む（どのエージェントで使われるか、押せるか。Claude のプラグインの MCP と claude.ai のコネクターも含む）。",
         "refresh": "true なら、claude.ai のコネクターを裏で読み直す。"
+      },
+      "docMatrix": {
+        "summary": "指示・Skills を「項目 × エージェント」の表で読む（どのエージェントで使われるか、押せるか）。",
+        "kind": "instruction（指示）か skill（Skills）。",
+        "place": "作業場所のパス。null または default で既定（すべての場所）。"
+      },
+      "setDocAgent": {
+        "summary": "指示・Skills の項目を、エージェントごとに使う・使わないを切り替える（次のターンから）。使う（他のエージェントへ広げることを含む）・使わないのどちらもユーザーの承認が要る。",
+        "kind": "instruction（指示）か skill（Skills）。",
+        "key": "項目のキー（__workspace__・skill:<名前>・file:<パス>）。",
+        "keys": "同じエージェントのマスをまとめて切り替える、ほかの項目のキーの並び（key と合わせて 1 回で保存する）。",
+        "agent": "エージェントの id（claude・codex など）。",
+        "on": "true で使う、false で使わない。"
+      },
+      "setDocRow": {
+        "summary": "指示・Skills の 1 項目または束を行ごとにオン・オフにする（次のターンから）。オフは鍵の無いエージェントを全部止め、オンはオフにする前に戻す（前が無ければ自分で読むエージェントだけ。ほかのエージェントへは広げない）。どちらもユーザーの承認が要る。",
+        "kind": "instruction（指示）か skill（Skills）。",
+        "key": "項目のキー（__workspace__・skill:<名前>・file:<パス>）。keys を渡すときは省ける。",
+        "keys": "まとめて切り替える項目のキーの並び。",
+        "on": "true でオン、false でオフ。"
+      },
+      "repairDocAgents": {
+        "summary": "読めない指示・Skills の表の設定ファイル（context-agents.json）を context-agents.broken-<時刻>.json へ移し（消さない）、表を触る前の動きに戻す。読めるときは何もしない。ユーザーの承認が要る。"
       },
       "refresh": {
         "summary": "会話に固定した指示・Skills を、今のファイルから読み直す（走っていない会話だけ）。"

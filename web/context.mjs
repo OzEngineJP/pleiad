@@ -18,34 +18,15 @@ import { createHooksCard } from './hooks-card.mjs';
 import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
+import { agentShortLabel } from './agent-brands.mjs';
+import { freshAgents, MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocRowLocal, askBanner, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, matrixSvg, recalcDocRow, rowSwitch, savedText } from './context-matrix.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
 const TAB_KEY = 'ply-context-tab';
-const TEXT = {
-  instruction: {
-    title: t('context.instruction.title'), owned: t('context.instruction.files'),
-    agent: [t('context.owner.agent'), t('context.instruction.agent')],
-    ply: [t('context.owner.ply'), t('context.instruction.ply')],
-    note: t('context.instruction.note'),
-    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
-    formats: { user: [['common', t('context.instruction.sourceCommon')], ['claude', 'CLAUDE.md'], ['codex', t('context.instruction.sourceCodex')], ['opencode', t('context.instruction.sourceOpencode')], ['devin', t('context.instruction.sourceDevin')], ['antigravity', t('context.instruction.sourceAntigravity')], ['grok', t('context.instruction.sourceGrok')]] },
-  },
-  skill: {
-    title: 'Skills', owned: 'Skills',
-    agent: [t('context.owner.agent'), t('context.skill.agent')],
-    ply: [t('context.owner.ply'), t('context.skill.ply')],
-    note: t('context.skill.note'),
-    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
-    formats: { user: [['common', t('context.skill.sourceCommon')], ['claude', '.claude/skills'], ['codex', '.codex/skills'], ['opencode', '.opencode/skills'], ['devin', '.devin/skills'], ['antigravity', '.gemini/skills'], ['grok', '.grok/skills']] },
-  },
-  mcp: {
-    title: t('context.mcp.title'), owned: t('context.mcp.title'),
-    agent: [t('context.owner.agent'), t('context.mcp.agent')],
-    ply: [t('context.owner.ply'), t('context.mcp.ply')],
-    // ユーザーはエージェントの設定（~/.claude.json・~/.codex/config.toml）、作業場所はプロジェクトの設定ファイル
-    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
-    formats: { user: [['claude', t('context.mcp.sourceClaude')], ['codex', t('context.mcp.sourceCodex')], ['opencode', t('context.mcp.sourceOpencode')], ['devin', t('context.mcp.sourceDevin')], ['antigravity', t('context.mcp.sourceAntigravity')], ['grok', t('context.mcp.sourceGrok')]], directory: [['claude', '.mcp.json'], ['codex', '.codex/config.toml'], ['opencode', 'opencode.json'], ['devin', '.devin/mcp_config.json'], ['antigravity', '.gemini/settings.json'], ['grok', '.grok/config.toml']] },
-  },
+const KIND_TITLE = {
+  instruction: () => t('context.instruction.title'),
+  skill: () => t('context.skill.title'),
+  mcp: () => t('context.mcp.title'),
 };
 export const pathKey = p => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 export const within = (dir, file) => pathKey(file) === pathKey(dir) || pathKey(file).startsWith(pathKey(dir) + '/');
@@ -132,9 +113,22 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   let view = null, scan = null, scanning = false, scanVisible = false, ply = null, agents = null, adding = null;
   // 外部 MCP の一覧（サーバーが組んだ名前 × エージェントの行。core/context-mcp-matrix.mjs）と、コネクターを読み直す回数
   let matrix = null, matrixTicket = 0, matrixPolls = 0, matrixTimer = null;
+  // 指示・Skills の名前 × エージェントの一覧（core/context-doc-matrix.mjs）
+  const docMatrices = { instruction: null, skill: null };
+  const docTickets = { instruction: 0, skill: 0 };
+  let docAsk = null;
+  const docConfirmed = new Set();
+  let docFocus = null;
+  let budgetFoldOpen = false;
   const opened = new Set();          // 中身を開いている行（id）
   const bundleOpen = new Map();      // まとまりごとの明示的な開閉状態（キー -> boolean）
-  let skillQuery = '', skillListHost = null, placeTierEl = null;
+  let skillQuery = '', skillListHost = null, placeTierEl = null, instTotalEl = null;
+  /** 「エージェントの設定」の見出しの右: どれかのエージェントに渡っているファイルの指示の量の合計（モックの「約 2,960 トークン」） */
+  function paintInstTotal() {
+    if (!instTotalEl) return;
+    const n = (docMatrices.instruction?.rows ?? []).reduce((a, e) => a + (e.anyOn && Number.isFinite(e.tokens) ? e.tokens : 0), 0);
+    instTotalEl.textContent = n > 0 ? t('context.matrix.tokensTotal', { n: fmt.number(n) }) : '';
+  }
   let plyCount = null, mcpCount = null, hooksCount = null;
   let toastTimer, scanTicket = 0;
 
@@ -162,19 +156,11 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   });
 
   function updateCounts() {
-    const kinds = view?.defaults?.kinds;
-    const countScan = kind => {
-      if (!scan) return null;
-      const seen = new Set();
-      const all = (scan.entries ?? []).filter(e => e.kind === kind && !seen.has(e.id) && seen.add(e.id));
-      return kind === 'skill' ? new Set(all.map(e => e.name)).size : all.length;
-    };
-    // 件数は「Pleiad が渡す件数」。担当が「エージェントに任せる」の種類は Pleiad が数えられないので、0 ではなく出さない（null）
-    const instOwner = kinds?.instruction?.value?.owner;
-    const instUser = instOwner === 'ply' ? countScan('instruction') : null;
-    const instruction = !view || instOwner !== 'ply' || (instUser == null && plyCount == null)
-      ? null : (plyCount ?? 0) + (instUser ?? 0);
-    const skill = !view || kinds?.skill?.value?.owner !== 'ply' ? null : countScan('skill');
+    const dmInst = docMatrices.instruction;
+    const dmSkill = docMatrices.skill;
+    const instUser = Array.isArray(dmInst?.rows) ? dmInst.rows.filter(r => r.anyOn).length : null;
+    const instruction = instUser == null && plyCount == null ? null : (plyCount ?? 0) + (instUser ?? 0);
+    const skill = Array.isArray(dmSkill?.rows) ? dmSkill.rows.filter(r => r.anyOn).length : null;
     tabBar.setCounts({ instruction, skill, mcp: mcpCount, hooks: hooksCount });
   }
 
@@ -223,20 +209,34 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   function saved(text = t('context.saved')) {
     status.textContent = '';
     toast.textContent = text;
+    toast.classList.remove('err');
+    toast.removeAttribute('aria-hidden');
     toast.classList.add('on');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('on'), 1800);
   }
+  /**
+   * 保存の失敗。先頭の文（role=alert で読み上げる）に加えて、成功の知らせと同じ下の固定の位置にも出す（レビュー S4）。
+   * 長い表の下の行で失敗しても、見ている位置で理由が読める。下の札は読み上げを重ねない（aria-hidden）
+   */
+  function failed(message) {
+    status.textContent = message;
+    toast.textContent = message;
+    toast.setAttribute('aria-hidden', 'true');
+    toast.classList.add('on', 'err');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('on', 'err'), 8000);
+  }
   async function work(fn, { redraw } = {}) {
     try { await fn(); }
     catch (e) {
-      status.textContent = t('context.saveFailed', { error: e.message });
+      failed(t('context.saveFailed', { error: e.message }));
       // スイッチは押した瞬間に見た目だけ先に変えている。保存できなかったときは、その種類のカードを保存されている状態から描き直す。
       // 入力欄のある操作（追加・編集）では描き直さない（打った文字を消さないため）
       if (redraw) { try { renderCard(redraw); } catch { /* 描き直せなくても失敗の表示は残す */ } }
     }
   }
-  const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened, showMenu, onCount: n => { plyCount = n; updateCounts(); } });
+  const plyInstructions = createPlyInstructions({ cmd, work, saved: (fresh) => saved(savedText(fresh)), openDelegation, opened, showMenu, onCount: n => { plyCount = n; updateCounts(); } });
   // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0045）
   const hooks = createHooksCard({ cmd, work, saved: () => saved(t('hooks.saved')), opened, onCount: n => { hooksCount = n; updateCounts(); } });
   tabPanels.hooks.append(hooks.root);
@@ -258,37 +258,222 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   }
 
   // ---------------------------------------------------------------- 種類のカード
-  function seg(kind, owner) {
-    const box = el('div', 'cx-seg'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('context.ownerAria', { kind: TEXT[kind].owned }));
-    for (const [id, [title, desc]] of [['native', TEXT[kind].agent], ['ply', TEXT[kind].ply]]) {
-      const b = button('', 'cx-opt');
-      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(owner === id));
-      b.append(el('b', null, title), el('span', null, desc));
-      b.dataset.owner = id;
-      b.onclick = () => {
-        if (owner !== id) work(() => saveKind(kind, v => { v.owner = id; }));
-      };
-      box.append(b);
-    }
-    return box;
+  const originText = row => entryOrigins(row);
+
+  function applyDocAgentLocal(row, agentIds, agent, on) {
+    const c = row.cells[agent];
+    if (!c || c.locked) return;
+    c.on = Boolean(on);
+    c.mode = on ? (c.native ? 'native' : 'spread') : 'off';
+    recalcDocRow(row, agentIds);
   }
-  /** 探す形式の札。その段（user = ユーザー、directory = 作業場所）だけを変える */
-  function formats(kind, scope, value) {
-    const row = el('div', 'cx-fmt');
-    const label = scope === 'user' ? t('context.tier.user') : t('context.tier.place');
-    const box = el('div', 'cx-chips'); box.setAttribute('role', 'group'); box.setAttribute('aria-label', t('context.tier.formatsAria', { tier: label }));
-    for (const [id, text] of TEXT[kind].formats[scope] ?? TEXT[kind].formats.user) {
-      const b = button(text, 'cx-chip');
-      const on = Boolean(value[scope]?.sources.includes(id));
-      b.setAttribute('aria-pressed', String(on));
-      b.onclick = () => work(() => saveKind(kind, v => {
-        v[scope] ??= { sources: [], excludePaths: [] };
-        v[scope].sources = on ? v[scope].sources.filter(s => s !== id) : [...new Set([...v[scope].sources, id])];
-      }));
-      box.append(b);
+
+  function findDocRow(doc, key) {
+    if (!doc) return null;
+    if (doc.summaryRow?.key === key) return doc.summaryRow;
+    return doc.rows.find(r => r.key === key) ?? null;
+  }
+
+  function needsExpandAsk(kind, row, agent) {
+    const cell = row.cells?.[agent];
+    if (!cell || cell.on || cell.locked || cell.native) return null;
+    if (row.scope === 'workspace' || row.key === '__workspace__') return null;
+    if (Array.isArray(row.rule?.spread) && row.rule.spread.length > 0) return null;
+    // 共通の置き場（.agents の下）の物は、そこを読むエージェント（Codex）の名前でなく「共通」と言う（モックの originCommon。レビュー S9）
+    if (row.origins?.length && row.origins.every(o => o.source === 'common')) return 'common';
+    const origins = originText(row);
+    if (origins.length) return origins[0];
+    return row.origins?.some(o => o.source === 'common') ? 'common' : null;
+  }
+
+  function runDocMutation(kind, mutateLocal, runRemote) {
+    const doc = docMatrices[kind];
+    if (!doc) return;
+    const prev = structuredClone(doc);
+    mutateLocal(doc);
+    renderCard(kind);
+    updateCounts();
+    work(async () => {
+      try { await runRemote(); }
+      catch (e) {
+        docMatrices[kind] = prev;
+        throw e;
+      }
+      // 保存はできた。読み直し（失敗しても投げず、誤りを返す）の後の表と押す前の表を比べて、知らせの文を選ぶ
+      const reloadError = await reloadDocMatrix(kind);
+      saved(savedText(docFreshChanged(prev, docMatrices[kind])));
+      if (reloadError) status.textContent = t('context.savedReloadFailed', { error: reloadError.message });
+    }, { redraw: kind });
+  }
+
+  function toggleDocCell(kind, row, agent, fkKey) {
+    const doc = docMatrices[kind];
+    const cell = row.cells[agent];
+    if (!doc || !cell || cell.locked) return;
+    const nextOn = !cell.on;
+    if (nextOn) {
+      const from = needsExpandAsk(kind, row, agent);
+      if (from && !docConfirmed.has(`${kind}:${row.key}`)) {
+        docAsk = { kind, key: row.key, agent, from, name: row.name, fk: fkKey };
+        docFocus = '.cx-ask .btn-primary';
+        renderCard(kind);
+        return;
+      }
     }
-    row.append(el('span', 'cx-sub', t('context.formats')), box);
-    return row;
+    if (docAsk?.kind === kind && docAsk.key === row.key) docAsk = null;
+    const staysOn = nextOn || doc.agents.some(a => a !== agent && row.cells[a]?.on);
+    docFocus = `[data-cx-fk="${CSS.escape(staysOn ? fkKey : `sw:${row.key}`)}"]`;
+    runDocMutation(
+      kind,
+      d => { const r = findDocRow(d, row.key); if (r) applyDocAgentLocal(r, d.agents, agent, nextOn); },
+      () => cmd('setDocAgent', { kind, key: row.key, agent, on: nextOn, place: 'default', cwd: home() }),
+    );
+  }
+
+  function toggleDocRow(kind, row, on) {
+    if (docAsk?.kind === kind && docAsk.key === row.key) docAsk = null;
+    docFocus = `[data-cx-fk="${CSS.escape(`sw:${row.key}`)}"]`;
+    runDocMutation(
+      kind,
+      d => { const r = findDocRow(d, row.key); if (r) applyDocRowLocal(r, d.agents, on); },
+      () => cmd('setDocRow', { kind, key: row.key, on, place: 'default', cwd: home() }),
+    );
+  }
+
+  function bundleAgentState(doc, items, agent) {
+    const anyRowOn = items.some(r => r.anyOn);
+    if (!anyRowOn) return { state: 'hide', cell: null };
+    const pressable = items.filter(r => !r.cells[agent]?.locked);
+    if (!pressable.length) {
+      const onItems = items.filter(r => r.cells[agent]?.on);
+      const cell = onItems[0]?.cells[agent] ?? items[0]?.cells[agent] ?? { on: false, locked: true };
+      return { state: onItems.length > 0 ? 'lockon' : 'lockoff', cell: { ...cell, on: onItems.length > 0, locked: true } };
+    }
+    const active = items.filter(r => r.anyOn);
+    const vals = active.map(r => Boolean(r.cells[agent]?.on));
+    const state = vals.every(Boolean) ? 'on' : vals.some(Boolean) ? 'mixed' : 'off';
+    return { state, cell: null, pressable };
+  }
+
+  function toggleDocBundleCell(kind, block, items, agent, state, fkKey) {
+    const doc = docMatrices[kind];
+    if (!doc) return;
+    const pressable = items.filter(r => !r.cells[agent]?.locked);
+    if (!pressable.length) return;
+    const nextOn = state !== 'on';
+    const activePressable = pressable.filter(r => r.anyOn);
+    const targets = nextOn ? (activePressable.length ? activePressable : pressable) : pressable;
+    if (nextOn) {
+      let from = null;
+      for (const r of targets) {
+        const hit = needsExpandAsk(kind, r, agent);
+        if (hit) { from = hit; break; }
+      }
+      const askKey = `bundle:${block.key}`;
+      if (from && !docConfirmed.has(`${kind}:${askKey}`)) {
+        docAsk = { kind, key: askKey, agent, from, name: block.label, count: targets.length, keys: targets.map(r => r.key), fk: fkKey };
+        docFocus = '.cx-ask .btn-primary';
+        renderCard(kind);
+        return;
+      }
+    }
+    if (docAsk?.kind === kind && docAsk.key === `bundle:${block.key}`) docAsk = null;
+    const targetKeys = targets.map(r => r.key);
+    const anyStaysOn = nextOn || items.some(r => doc.agents.some(a => {
+      if (a === agent && targetKeys.includes(r.key)) return false;
+      return Boolean(r.cells[a]?.on);
+    }));
+    docFocus = `[data-cx-fk="${CSS.escape(anyStaysOn ? fkKey : `bundle-sw:${block.key}`)}"]`;
+    runDocMutation(
+      kind,
+      d => { for (const k of targetKeys) { const r = findDocRow(d, k); if (r) applyDocAgentLocal(r, d.agents, agent, nextOn); } },
+      // 複数の名前を 1 回の操作で書く（途中で止まって半端に残らない。レビュー S3）
+      () => cmd('setDocAgent', { kind, key: targetKeys[0], keys: targetKeys, agent, on: nextOn, place: 'default', cwd: home() }),
+    );
+  }
+
+  function toggleDocBundleRow(kind, block, items, nextOn) {
+    const pressableKeys = items.filter(r => !r.rowLocked).map(r => r.key);
+    if (!pressableKeys.length) return;
+    if (docAsk?.kind === kind && docAsk.key === `bundle:${block.key}`) docAsk = null;
+    docFocus = `[data-cx-fk="${CSS.escape(`bundle-sw:${block.key}`)}"]`;
+    runDocMutation(
+      kind,
+      d => { for (const k of pressableKeys) { const r = findDocRow(d, k); if (r) applyDocRowLocal(r, d.agents, nextOn); } },
+      () => cmd('setDocRow', { kind, keys: pressableKeys, on: nextOn, place: 'default', cwd: home() }),
+    );
+  }
+
+  function docAskEl(kind) {
+    const a = docAsk;
+    const to = agentShortLabel(a.agent, a.agent);
+    const from = a.from === 'common' ? t('context.matrix.originCommon') : agentShortLabel(a.from, a.from);
+    const text = a.count
+      ? t('context.matrix.askBundle', { from, name: a.name, count: a.count, to })
+      : t('context.matrix.ask', { from, name: a.name, to });
+    return askBanner({
+      ariaLabel: t('context.matrix.askAria', { name: a.name, to }),
+      text,
+      cancelLabel: t('context.matrix.cancel'),
+      confirmLabel: t('context.matrix.confirm'),
+      onCancel: () => {
+        docFocus = `[data-cx-fk="${CSS.escape(a.fk)}"]`;
+        docAsk = null;
+        renderCard(kind);
+      },
+      onConfirm: () => {
+        docConfirmed.add(`${kind}:${a.key}`);
+        docFocus = `[data-cx-fk="${CSS.escape(a.fk)}"]`;
+        docAsk = null;
+        if (a.keys) {
+          const keys = [...a.keys];
+          runDocMutation(
+            kind,
+            d => { for (const k of keys) { const r = findDocRow(d, k); if (r) applyDocAgentLocal(r, d.agents, a.agent, true); } },
+            () => cmd('setDocAgent', { kind, key: keys[0], keys, agent: a.agent, on: true, place: 'default', cwd: home() }),
+          );
+        } else {
+          runDocMutation(
+            kind,
+            d => { const r = findDocRow(d, a.key); if (r) applyDocAgentLocal(r, d.agents, a.agent, true); },
+            () => cmd('setDocAgent', { kind, key: a.key, agent: a.agent, on: true, place: 'default', cwd: home() }),
+          );
+        }
+      },
+    });
+  }
+
+  function rowAgentStrip(kind, doc, row, displayName) {
+    return agentStrip({
+      agents: doc.agents,
+      labelText: t('context.matrix.agentsAria', { name: displayName }),
+      renderCell: a => {
+        const cell = row.cells[a];
+        if (!row.anyOn) return agentChip({ agent: a, state: 'hide', name: displayName });
+        const fk = `ag:${row.key}:${a}`;
+        if (cell.locked) {
+          return agentChip({
+            agent: a,
+            state: cell.on ? 'lockon' : 'lockoff',
+            cell,
+            name: displayName,
+            ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: displayName }),
+            key: fk,
+            keyAttr: 'cxFk',
+          });
+        }
+        return agentChip({
+          agent: a,
+          state: cell.on ? 'on' : 'off',
+          cell,
+          name: displayName,
+          ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: displayName }),
+          key: fk,
+          keyAttr: 'cxFk',
+          onToggle: () => toggleDocCell(kind, row, a, fk),
+        });
+      },
+    });
   }
   function loading() {
     const p = el('p', 'cx-empty');
@@ -297,8 +482,10 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   }
   function paintTierList(list, kind) {
     list.replaceChildren();
-    if (!scan) list.append(loading());
-    else documentRows(list, kind);
+    const doc = docMatrices[kind];
+    if (kind === 'instruction') paintInstTotal();
+    if (!doc) list.append(scanning ? loading() : el('p', 'cx-empty', kind === 'skill' ? t('context.skill.none') : t('context.instruction.none')));
+    else documentRows(list, kind, doc);
     if (kind !== 'skill' || !skillQuery) {
       emptyRoots(list, kind);
       list.append(addPlace(kind));
@@ -306,15 +493,10 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   }
   /**
    * 指示・Skills の行（ユーザーの範囲で見つかったもの）。フォルダー・置き場ごとに 1 行のまとまりにし、開くと 1 件ずつ並ぶ。
-   * スイッチはユーザーの除外（excludePaths）を出し入れする。Skills は名前ごとに 1 行（同じ名前の定義が複数あっても使うのは 1 つ。ADR 0290）
+   * 名前 × エージェントごとのスイッチ（core/context-doc-matrix.mjs）で、渡す・止めるを切り替える。
    */
-  function documentRows(list, kind) {
-    // 外したファイルは探索が出典ごとに別の行で返すので、同じ行（id）は 1 つにする
-    const seen = new Set();
-    const all = (scan?.entries ?? []).filter(e => e.kind === kind && !seen.has(e.id) && seen.add(e.id));
-    const byName = new Map();
-    for (const e of all) { const key = kind === 'skill' ? e.name : e.id; byName.set(key, [...(byName.get(key) ?? []), e]); }
-    const entries = [...byName.values()].map(group => ({ ...(group.find(e => e.status === 'candidate') ?? group[0]), group }));
+  function documentRows(list, kind, doc) {
+    const entries = doc.rows ?? [];
     if (!entries.length) { list.append(el('p', 'cx-empty', kind === 'skill' ? t('context.skill.none') : t('context.instruction.none'))); return; }
     const query = kind === 'skill' ? skillQuery.toLowerCase() : '';
     const hit = entry => !query || String(entry.name ?? '').toLowerCase().includes(query);
@@ -322,39 +504,46 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     let shown = 0;
 
     function fileRow(entry, child, displayName) {
-      const off = entry.group.every(e => e.status === 'excluded');
+      const off = !entry.anyOn;
       const usable = skillChoices(entry);
-      const row = el('div', 'cx-row' + (off ? ' off' : '') + (child ? ' kid' : ''));
+      const row = el('div', 'cx-row ag' + (off ? ' off' : '') + (child ? ' kid' : ''));
+      row.dataset.key = entry.key;
       row.append(el('span', 'cx-lead0'));
       const open = button('', 'cx-open');
       open.dataset.cxFk = `open:${entry.id}`;
       open.setAttribute('aria-expanded', String(opened.has(entry.id)));
       const body = el('span', 't');
       const nl = el('span', 'nl');
-      nl.append(el('span', 'nm', displayName ?? entry.name));
+      const nameText = displayName ?? entry.name;
+      nl.append(el('span', 'nm', nameText));
       if (!child) {
         const marks = originMarks(entryOrigins(entry));
         if (marks) nl.append(marks);
       }
       body.append(nl);
       const where = kind === 'skill' ? parent(parent(entry.path)) : parent(entry.path);
-      const note = entry.status === 'shadowed' ? t('context.row.shadowed') : entry.status === 'conditional' ? t('context.row.conditional', { paths: entry.paths.join(', ') }) : '';
-      const want = info().kinds.skill.value.prefer?.[entry.name];
+      const note = entry.status === 'shadowed' ? t('context.row.shadowed') : entry.conditional && Array.isArray(entry.paths) ? t('context.row.conditional', { paths: entry.paths.join(', ') }) : '';
+      const want = doc.prefer?.[entry.name] ?? view?.defaults?.kinds?.skill?.value?.prefer?.[entry.name];
       const subText = usable
         ? t('sessionContext.skill.choice', { n: usable.length, place: short(where), by: want && pathKey(want) === pathKey(entry.path) ? t('sessionContext.mcp.byPrefer') : t('sessionContext.mcp.byFirst') })
         : [child ? '' : short(where), entry.root ? t('context.roots.extra') : '', note].filter(Boolean).join(' · ');
       if (subText) body.append(el('span', 'p', subText));
       open.append(body);
       open.onclick = () => { if (opened.has(entry.id)) opened.delete(entry.id); else opened.add(entry.id); renderCard(kind); };
-      // 指示の行の右端の量（渡す本文の見積もり。core/context-scan.mjs の tokens。ADR 0056）
       const tokens = kind === 'instruction' && Number.isFinite(entry.tokens) ? el('span', 'cx-tok', t('sessionContext.amount.about', { n: fmt.number(entry.tokens) })) : null;
-      const sw = button('', 'cx-sw');
-      sw.dataset.cxFk = `sw:${entry.id}`;
-      sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(!off));
-      sw.setAttribute('aria-label', kind === 'skill' ? t('context.row.offerAria', { name: entry.name }) : t('context.row.provideAria', { name: entry.name }));
-      sw.onclick = () => { sw.setAttribute('aria-checked', String(off)); work(() => saveKind(kind, v => { for (const e of entry.group) toggleExclude(v, e, off); }), { redraw: kind }); };
-      row.append(open, ...(tokens ? [tokens] : []), sw);
+      const swLabel = kind === 'skill' ? t('context.row.offerAria', { name: entry.name }) : t('context.row.provideAria', { name: entry.name });
+      const sw = rowSwitch({
+        role: 'switch',
+        checked: entry.rowSwitchOn,
+        labelText: swLabel,
+        disabledReason: entry.rowLocked ? docLockReason(doc, entry) : null,
+        key: `sw:${entry.key}`,
+        keyAttr: 'cxFk',
+        onToggle: () => toggleDocRow(kind, entry, !entry.rowSwitchOn),
+      });
+      row.append(open, ...(tokens ? [tokens] : []), sw, rowAgentStrip(kind, doc, entry, entry.name));
       list.append(row);
+      if (docAsk?.kind === kind && docAsk.key === entry.key) list.append(docAskEl(kind));
       if (usable) list.append(skillChoice(entry, usable));
       if (opened.has(entry.id)) {
         const peek = peekDocument(entry, { short });
@@ -375,11 +564,13 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       if (query && !kids.length) continue;
       shown += kids.length;
       const open = Boolean(query) || (bundleOpen.has(block.key) ? bundleOpen.get(block.key) : block.defaultOpen);
-      // 絞り込み中は、まとまりのスイッチも見えている（当たった）行だけが対象（状態も切替も）
       const items = (query ? kids : block.items).map(i => i.entry);
+      const anyBundleOn = items.some(e => e.anyOn);
       const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
-      const swState = bundleSwitchState(items, e => !e.group.every(g => g.status === 'excluded'), actionLabel);
-      const row = el('div', 'cx-row grp' + (swState.checked === 'false' ? ' off' : ''));
+      const swState = bundleSwitchState(items, e => e.rowSwitchOn, actionLabel);
+      const allLocked = docBundleLocked(items);
+      const row = el('div', 'cx-row ag grp' + (anyBundleOn ? '' : ' off'));
+      row.dataset.key = `bundle:${block.key}`;
       const tw = button('', 'cx-ic cx-tw');
       tw.dataset.cxFk = `bundle:${block.key}`;
       tw.setAttribute('aria-expanded', String(open));
@@ -399,21 +590,52 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
         for (const e of items) {
           if (!Number.isFinite(e.tokens)) continue;
           tokTotal += e.tokens;
-          if (!e.group.every(g => g.status === 'excluded')) tokOn += e.tokens;
+          if (e.anyOn) tokOn += e.tokens;
         }
       }
       const tokens = kind === 'instruction' && tokTotal > 0 ? el('span', 'cx-tok', t('sessionContext.amount.about', { n: fmt.number(tokOn || tokTotal) })) : null;
-      const sw = button('', 'cx-sw');
-      sw.dataset.cxFk = `bundle-sw:${block.key}`;
-      sw.setAttribute('role', 'checkbox'); sw.setAttribute('aria-checked', swState.checked);
-      sw.setAttribute('aria-label', swState.ariaLabel);
-      sw.onclick = () => {
-        const include = swState.checked !== 'true';
-        sw.setAttribute('aria-checked', String(include));
-        work(() => saveKind(kind, v => toggleExcludeMany(v, items.flatMap(e => e.group), include)), { redraw: kind });
-      };
-      row.append(tw, body, ...(tokens ? [tokens] : []), sw);
+      const sw = rowSwitch({
+        role: 'checkbox',
+        checked: swState.checked === 'true',
+        mixed: swState.checked === 'mixed',
+        labelText: swState.ariaLabel,
+        disabledReason: allLocked ? docRowLockSummary(doc, items) : null,
+        key: `bundle-sw:${block.key}`,
+        keyAttr: 'cxFk',
+        onToggle: () => toggleDocBundleRow(kind, block, items, swState.checked !== 'true'),
+      });
+      const ags = agentStrip({
+        agents: doc.agents,
+        labelText: t('context.matrix.agentsAria', { name: block.label }),
+        renderCell: a => {
+          const st = bundleAgentState(doc, items, a);
+          if (st.state === 'hide') return agentChip({ agent: a, state: 'hide', name: block.label });
+          const fk = `bundle-ag:${block.key}:${a}`;
+          if (st.state === 'lockon' || st.state === 'lockoff') {
+            return agentChip({
+              agent: a,
+              state: st.state,
+              cell: st.cell,
+              name: block.label,
+              ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: block.label }),
+              key: fk,
+              keyAttr: 'cxFk',
+            });
+          }
+          return agentChip({
+            agent: a,
+            state: st.state,
+            name: block.label,
+            ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: block.label }),
+            key: fk,
+            keyAttr: 'cxFk',
+            onToggle: () => toggleDocBundleCell(kind, block, items, a, st.state, fk),
+          });
+        },
+      });
+      row.append(tw, body, ...(tokens ? [tokens] : []), sw, ags);
       list.append(row);
+      if (docAsk?.kind === kind && docAsk.key === `bundle:${block.key}`) list.append(docAskEl(kind));
       if (open) for (const { entry, childLabel } of kids) fileRow(entry, true, childLabel);
     }
     if (query && !shown) {
@@ -424,9 +646,12 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   }
   /** 同じ名前の Skill の、選べる定義（中身の実体が 2 つ以上あるとき）。無ければ null */
   function skillChoices(entry) {
-    if (entry.kind !== 'skill') return null;
+    if (entry.kind !== 'skill' || !Array.isArray(entry.duplicates) || entry.duplicates.length < 2) return null;
     const real = new Map();
-    for (const e of entry.group.filter(e => e.status === 'candidate' || e.shadowedBy === 'choice')) if (!real.has(pathKey(e.realPath ?? e.path))) real.set(pathKey(e.realPath ?? e.path), e);
+    for (const e of entry.duplicates) {
+      const k = pathKey(e.realPath ?? e.path);
+      if (!real.has(k)) real.set(k, e);
+    }
     return real.size > 1 ? [...real.values()] : null;
   }
   /** どちらの定義を使うかの選択肢（外部 MCP のカードの choices と同じ形）。全体の設定の prefer に保存する */
@@ -435,7 +660,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     box.append(el('span', null, t('mcp.choice.lead')));
     for (const e of usable) {
       const label = el('label'), input = el('input');
-      input.type = 'radio'; input.name = `skill-choice-${entry.name}`; input.checked = e.status === 'candidate';
+      input.type = 'radio'; input.name = `skill-choice-${entry.name}`; input.checked = pathKey(e.path) === pathKey(entry.path);
       input.onchange = () => work(() => saveKind('skill', v => { v.prefer = { ...(v.prefer ?? {}), [entry.name]: e.path }; }));
       label.append(input, document.createTextNode(short(parent(parent(e.path)))), el('span', 'cx-mono', entry.name));
       box.append(label);
@@ -518,13 +743,19 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
    * 自分で書いた指示の目安（ADR 0056）。担当によらず、会話の右パネルの「指示の量」が自分で書いた分（ユーザー＋この場所）にだけ当てる。
    * prefs.json の instructionBudget に保存し、既定と同じ値なら消す（既定が変わったときに追う）
    */
-  function budgetRow() {
+  function budgetRow({ withLabel = true } = {}) {
     const row = el('div', 'cx-budget');
-    const label = el('label', 'n', t('context.budget.label'));
     const input = el('input');
     input.type = 'number'; input.min = String(MIN_BUDGET); input.max = String(MAX_BUDGET); input.step = '100';
-    input.id = label.htmlFor = 'cxInstructionBudget';
+    input.id = 'cxInstructionBudget';
     input.value = String(budgetOf(getPrefs()));
+    if (withLabel) {
+      const label = el('label', 'n', t('context.budget.label'));
+      label.htmlFor = input.id;
+      row.append(label);
+    } else {
+      input.setAttribute('aria-label', t('context.budget.label'));
+    }
     const box = el('span', 'rt-number-row');
     box.append(input, el('span', 'rt-unit', t('context.budget.unit')));
     const error = el('p', 'cx-sub err'); error.setAttribute('role', 'alert');
@@ -537,7 +768,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       error.textContent = '';
       work(async () => { await cmd('setPref', { key: 'instructionBudget', value: value === DEFAULT_BUDGET ? null : value }); saved(); });
     };
-    row.append(label, box, el('p', 'cx-sub', t('context.budget.note')), error);
+    row.append(box, el('p', 'cx-sub', t('context.budget.note')), error);
     return row;
   }
 
@@ -548,38 +779,60 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     if (sub) h.append(el('span', null, sub));
     return h;
   }
-  function userTier(kind, value) {
+  function userTier(kind) {
     const tier = el('div', 'cx-tier');
-    tier.append(tierHead(t('context.tier.user')), formats(kind, 'user', value));
+    tier.append(tierHead(t('context.tier.user')));
     if (kind === 'skill') tier.append(skillFind.root);
     const list = el('div', 'cx-list');
-    list.setAttribute('role', 'group'); list.setAttribute('aria-label', t('context.tier.listAria', { kind: TEXT[kind].title }));
+    list.setAttribute('role', 'group'); list.setAttribute('aria-label', t('context.tier.listAria', { kind: KIND_TITLE[kind]() }));
     if (kind === 'skill') skillListHost = list;
     paintTierList(list, kind);
     tier.append(list);
     return tier;
   }
-  function placeTier(kind, value) {
+  function placeTier(kind, doc) {
     const tier = el('div', 'cx-tier');
-    tier.append(tierHead(t('context.tier.place'), t('context.tier.placeSub')), formats(kind, 'directory', value));
+    tier.append(tierHead(t('context.tier.place'), t('context.tier.placeSub')));
     if (kind === 'skill') {
       placeTierEl = tier;
       tier.hidden = Boolean(skillQuery);
     }
+    if (doc?.summaryRow) {
+      const summary = doc.summaryRow;
+      const label = kind === 'skill' ? t('context.workspaceRow.skill') : t('context.workspaceRow.instruction');
+      const sub = kind === 'skill' ? t('context.workspaceRow.skillSub') : t('context.workspaceRow.instructionSub');
+      const list = el('div', 'cx-list');
+      list.setAttribute('role', 'group');
+      list.setAttribute('aria-label', t('context.tier.place'));
+      const row = el('div', 'cx-row ag' + (!summary.anyOn ? ' off' : ''));
+      row.dataset.key = summary.key;
+      const ic = el('span', 'cx-ic');
+      ic.setAttribute('aria-hidden', 'true');
+      ic.append(matrixSvg(MATRIX_ICON.folder));
+      row.append(ic);
+      const body = el('span', 't');
+      const nl = el('span', 'nl');
+      nl.append(el('span', 'nm', label));
+      body.append(nl, el('span', 'p', sub));
+      const swLabel = kind === 'skill' ? t('context.row.offerAria', { name: label }) : t('context.row.provideAria', { name: label });
+      const sw = rowSwitch({
+        role: 'switch',
+        checked: summary.rowSwitchOn,
+        labelText: swLabel,
+        disabledReason: summary.rowLocked ? docRowLockSummary(doc, [summary]) : null,
+        key: `sw:${summary.key}`,
+        keyAttr: 'cxFk',
+        onToggle: () => toggleDocRow(kind, summary, !summary.rowSwitchOn),
+      });
+      row.append(body, sw, rowAgentStrip(kind, doc, summary, label));
+      list.append(row);
+      tier.append(list);
+    }
     return tier;
   }
-  /**
-   * antigravity で指示以外（Skills・MCP）だけを Pleiad にした組み合わせの説明。
-   * Pleiad の渡し方（カスタムエージェント）ではワークスペースの AGENTS.md・GEMINI.md を agy が自分で読まなくなるため、
-   * 指示ファイルがエージェント任せのときは、Pleiad がその内容を探索して発言の前に足して渡す（issue #107）
-   */
-  function antigravityNote(kind) {
-    if (kind === 'instruction' || !backends().some(b => b.id === 'antigravity')) return null;
-    if (info().kinds[kind].value.owner !== 'ply' || info().kinds.instruction.value.owner === 'ply') return null;
-    return el('p', 'cx-sub', t('context.antigravityNote'));
-  }
   function renderCard(kind) {
-    const card = cards[kind], value = info().kinds[kind].value;
+    const card = cards[kind];
+    if (!card || !view) return;
     const active = document.activeElement;
     const wasFind = kind === 'skill' && active === skillFind.input;
     const findSel = wasFind ? [skillFind.input.selectionStart, skillFind.input.selectionEnd] : null;
@@ -588,7 +841,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     card.replaceChildren();
     card.dataset.kind = kind;
     const head = el('div', 'cx-khead');
-    const title = el('h4', null, TEXT[kind].title);
+    const title = el('h4', null, KIND_TITLE[kind]());
     title.id = `cxKind-${kind}`;
     card.setAttribute('aria-labelledby', title.id);
     head.append(title);
@@ -599,24 +852,38 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       mcp.renderExtras(card, mcpContext());
       return;
     }
+    const doc = docMatrices[kind];
     let host = card;
     if (kind === 'instruction') {
-      // 上に Pleiad の指示、下にファイルの指示（担当と 2 段）
+      // 上に Pleiad の指示（項目ごとのエージェント選択つき）、下にファイルの指示（「エージェントの設定」2 段）＋畳んだ目安
       card.append(plyInstructions.root);
       host = el('div', 'cx-block');
       const sec = el('div', 'cx-sec');
-      sec.append(el('span', 'n', t('context.instruction.fileTitle')));
-      host.append(sec, budgetRow());
+      instTotalEl = el('span', 'r cx-doc-total');
+      sec.append(el('span', 'n', t('context.matrix.agentSettings')), instTotalEl);
+      host.append(sec);
       card.append(host);
+    } else if (kind === 'skill') {
+      const sec = el('div', 'cx-sec');
+      sec.append(el('span', 'n', t('context.matrix.agentSettings')));
+      host.append(sec);
     }
-    host.append(seg(kind, value.owner));
-    const agy = antigravityNote(kind);
-    if (agy) host.append(agy);
-    if (value.owner === 'ply') host.append(userTier(kind, value), placeTier(kind, value));
-    else host.append(el('p', 'cx-note', TEXT[kind].note));
+    host.append(userTier(kind), placeTier(kind, doc));
+    if (doc?.agents?.length) card.append(agentLegend(doc.agents));
+    if (kind === 'instruction') {
+      const fold = el('details', 'cx-fold');
+      fold.open = budgetFoldOpen;
+      fold.ontoggle = () => { budgetFoldOpen = fold.open; };
+      fold.append(el('summary', null, t('context.budget.label')), budgetRow({ withLabel: false }));
+      card.append(fold);
+    }
+    const pendingFocus = docFocus;
+    docFocus = null;
     if (wasFind && skillFind.input.isConnected) {
       skillFind.input.focus({ preventScroll: true });
       if (findSel?.[0] != null) try { skillFind.input.setSelectionRange(findSel[0], findSel[1]); } catch {}
+    } else if (pendingFocus) {
+      card.querySelector(pendingFocus)?.focus({ preventScroll: true });
     } else if (fk) {
       card.querySelector(`[data-cx-fk="${CSS.escape(fk)}"]`)?.focus({ preventScroll: true });
     }
@@ -624,7 +891,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   function mcpContext() {
     return { cmd, cwd: home(), scanCwd: home(), scan, ply, agents, matrix, reloadMatrix, short, backends: backends(), info: info(),
       saveKind: (mutate, options) => work(() => saveKind('mcp', mutate, options)),
-      reload: () => loadScan(), refreshSettings: async () => { view = await cmd('contextSettings', {}); renderAll(); }, toast: saved, status: text => { status.textContent = text; }, rerender: () => renderCard('mcp'),
+      reload: () => loadScan(), refreshSettings: async () => { view = await cmd('contextSettings', {}); renderAll(); },
+      toast: ({ agents = [] } = {}) => saved(savedText(agents.some(a => freshAgents().includes(a)))), status: text => { status.textContent = text; }, rerender: () => renderCard('mcp'),
       opened, loading, work };
   }
   const mcp = createMcpSection();
@@ -648,6 +916,30 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     renderCard('mcp');
     pollConnectors();
   }
+  async function callDocRetry(fn) {
+    for (let i = 0; i < 15; i++) {
+      try { return await fn(); }
+      catch (e) {
+        if (e.code !== 'SCAN_BUSY') throw e;
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+    throw Object.assign(new Error('SCAN_BUSY'), { code: 'SCAN_BUSY' });
+  }
+  /** 指示・Skills の名前 × エージェントの一覧だけを取り直す */
+  async function reloadDocMatrix(kind) {
+    if (kind !== 'instruction' && kind !== 'skill') return;
+    const target = home();
+    if (!target) { docMatrices[kind] = null; renderCard(kind); updateCounts(); return; }
+    const ticket = ++docTickets[kind];
+    try {
+      const grid = await callDocRetry(() => cmd('docMatrix', { kind, cwd: target, place: 'default' }));
+      if (ticket !== docTickets[kind]) return;
+      if (Array.isArray(grid?.rows)) docMatrices[kind] = grid;
+    } catch (e) { return e; }
+    renderCard(kind);
+    updateCounts();
+  }
   /** claude.ai のコネクターは Claude を裏で起こして読むので、読み終わるまで少し間をおいて取り直す（上限あり） */
   function pollConnectors() {
     clearTimeout(matrixTimer);
@@ -658,14 +950,31 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   /** ユーザーの範囲（home と足した場所）だけを探す。作業場所のファイルは場所ごとなので、ここには出さない */
   async function loadScan({ refresh = false } = {}) {
     const ticket = ++scanTicket, target = home();
-    if (!target) { scan = { entries: [], configs: [] }; renderAll(); return; }
+    if (!target) {
+      scan = { entries: [], configs: [] };
+      docMatrices.instruction = null;
+      docMatrices.skill = null;
+      renderAll();
+      return;
+    }
+    const docInstTicket = ++docTickets.instruction;
+    const docSkillTicket = ++docTickets.skill;
     scanning = true;
     scanVisible = false;
     renderAll();
     const timer = setTimeout(() => { if (ticket === scanTicket) { scanVisible = true; renderAll(); } }, 150);
     try {
-      const [found, list, native, grid] = await Promise.all([
-        cmd('scanContext', { cwd: target, place: 'default', scope: 'user' }),
+      // scanContext と docMatrix はサーバー側で scanLock を共有するため、この 3 本は直列に流して SCAN_BUSY 衝突を避ける
+      const scanAndDocs = (async () => {
+        const found = await cmd('scanContext', { cwd: target, place: 'default', scope: 'user' });
+        if (ticket !== scanTicket) return { found, instGrid: null, skillGrid: null };
+        const instGrid = await callDocRetry(() => cmd('docMatrix', { kind: 'instruction', cwd: target, place: 'default' })).catch(() => null);
+        if (ticket !== scanTicket) return { found, instGrid, skillGrid: null };
+        const skillGrid = await callDocRetry(() => cmd('docMatrix', { kind: 'skill', cwd: target, place: 'default' })).catch(() => null);
+        return { found, instGrid, skillGrid };
+      })();
+      const [{ found, instGrid, skillGrid }, list, native, grid] = await Promise.all([
+        scanAndDocs,
         cmd('listPlyMcp', {}).catch(() => null),
         cmd('agentMcp', { cwd: target }).catch(() => null),
         cmd('mcpMatrix', { cwd: target, refresh }).catch(() => null),
@@ -673,6 +982,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       if (ticket !== scanTicket) return;
       scan = found; ply = list; agents = native;
       if (grid) { matrix = grid; pollConnectors(); }
+      if (Array.isArray(instGrid?.rows) && docInstTicket === docTickets.instruction) docMatrices.instruction = instGrid;
+      if (Array.isArray(skillGrid?.rows) && docSkillTicket === docTickets.skill) docMatrices.skill = skillGrid;
     } catch (e) {
       if (ticket !== scanTicket) return;
       status.textContent = e.code === 'SCAN_BUSY' ? '' : t('context.scanFailed', { error: e.message });
@@ -688,9 +999,27 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     } catch (e) {
       view = null;
       status.textContent = t('context.loadFailed', { error: e.message });
+      // 指示・Skills の表の設定ファイルが読めない（会話を断っている）ときは、ここから退避して直せる（レビュー M6。操作 context.repairDocAgents）
+      if (e.code === 'DOC_AGENTS_UNREADABLE') {
+        const fix = button(t('context.repairDocAgents'), 'btn', async () => {
+          fix.disabled = true;
+          try {
+            const r = await cmd('repairDocAgents', {});
+            await open();
+            if (r?.backup) status.textContent = t('context.repairedDocAgents', { file: r.backup });
+          } catch (err) {
+            fix.disabled = false;
+            status.textContent = t('context.loadFailed', { error: err.message });
+            status.append(' ', fix);
+          }
+        });
+        status.append(' ', fix);
+      }
       return;
     }
-    scan = null; matrix = null; matrixPolls = 0; adding = null; opened.clear(); bundleOpen.clear(); skillQuery = ''; skillFind.clear(); plyCount = null; mcpCount = null; hooksCount = null; mcpMatrix.reset();
+    scan = null; matrix = null; matrixPolls = 0;
+    docMatrices.instruction = null; docMatrices.skill = null; docAsk = null; docConfirmed.clear(); docFocus = null;
+    adding = null; opened.clear(); bundleOpen.clear(); skillQuery = ''; skillFind.clear(); plyCount = null; mcpCount = null; hooksCount = null; mcpMatrix.reset();
     renderAll();
     await Promise.all([plyInstructions.load(), loadScan({ refresh: true }), hooks.load()]);
   }
@@ -698,7 +1027,13 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   window.addEventListener('ply:settings-changed', e => {
     const keys = e.detail?.keys ?? [];
     if (!document.body.classList.contains('settings') || panel.hidden) return;
-    if (keys.includes('context.default')) cmd('contextSettings', {}).then(v => { view = v; renderAll(); reloadMatrix(); }).catch(() => {});
+    if (keys.includes('context.default')) cmd('contextSettings', {}).then(v => {
+      view = v;
+      renderAll();
+      reloadMatrix();
+      reloadDocMatrix('instruction');
+      reloadDocMatrix('skill');
+    }).catch(() => {});
     if (keys.includes('plyInstructions')) plyInstructions.load();
   });
   // ログインが済んだら一覧の状態を取り直す（web/client.mjs が mcpAuth を ply:mcp-auth として渡す）

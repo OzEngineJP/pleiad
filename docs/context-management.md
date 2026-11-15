@@ -1,9 +1,10 @@
 # コンテキスト管理：標準配置の探索と MCP 登録
 
 2026-09-12。第1段階として、設定の「コンテキスト」ページから探索元を保存し、指示ファイル・Skills・MCP の候補を確認できる。
-2026-09-15 にツリーとプレビューの 2 列にした画面は、2026-09-20 に承認済みの 1 画面へ置き換えた（ツリー・「読み込み担当」「探索の設定」・保存ボタン 4 つを廃止）。2026-09-27 から設定の画面は**全体の設定だけ**を扱う（範囲のプルダウンを廃止）。種類ごと（指示・Skills・外部 MCP）に「エージェントに任せる／Pleiad がそろえる」を選び、その下の 2 段で、ユーザー（home と足した場所）の探す形式・見つかったもの（スイッチ）・探す場所、作業場所（Git ルート〜作業フォルダー）の探す形式を決める。場所ごとの設定は会話の右パネルの「この場所だけ変える」から（`docs/context-runtime.md`「利用記録と検証」）。変更はその場で保存し「保存しました · 次のターンから反映」を出す（2026-09-23 から、始まっている会話にも次のターンから効く）。見た目の規則は `docs/design-system.md` §9「コンテキスト」。理由は [ADR 0014](adr/0014-context-default-agent-managed.md)・[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)。
-「指示」のカードの上には「Pleiad の指示」（Pleiad が毎ターン入れる指示の一覧。種類の担当・場所によらない）。仕様は [共通コンテキストの実行](context-runtime.md)「Pleiad の指示」。
-探索 API は `previewOnly: true` の候補一覧。Pleiad がそろえる種類は実行時に解決して会話へ渡す。実行時の抑止・適用時期・利用記録・会話の右パネルは [共通コンテキストの実行](context-runtime.md) を参照。既定はエージェント任せのまま。
+2026-09-12。第1段階として、設定の「コンテキスト」ページから探索元を保存し、指示ファイル・Skills・MCP の候補を確認できる。
+2026-09-15 にツリーとプレビューの 2 列にした画面は、2026-09-20 に承認済みの 1 画面へ置き換えた（ツリー・「読み込み担当」「探索の設定」・保存ボタン 4 つを廃止）。2026-09-27 から設定の画面は**全体の設定だけ**を扱う（範囲のプルダウンを廃止）。その後、外部 MCP（2026-11-14、[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）と指示・Skills（2026-11-15、[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）は設定 › プラグインで担当の 2 択と「探す形式」の札を廃し、**名前ごと・エージェントごと**の一覧（全体スイッチ＋6 エージェントのアイコン）へ移行した（Hooks だけは引き続き担当の 2 択を残す）。指示・Skills のセル単位ルールは `<data>/context-agents.json`（`version: 1`）に持ち、最初の操作まで既存の `context-scans.json`（`version: 3`）の実効設定のまま動かして挙動を変えない。追加ルートの追加・削除と自分で書いた指示の目安、既定設定の土台は引き続き `context-scans.json` に保存する。場所ごとの上書きは会話の右パネルの「この場所だけ変える」から行い（指示・Skills は `setDocRow` で行スイッチごとに上書き、`docs/context-runtime.md`「利用記録と検証」）、変更はその場で保存して「保存しました · 次のターンから反映」を出す（2026-09-23 から、始まっている会話にも次のターンから効く）。見た目の規則は `docs/design-system.md` §9「コンテキスト」。過去の土台は [ADR 0014](adr/0014-context-default-agent-managed.md)・[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)。
+「指示」のカードの上には「Pleiad の指示」（Pleiad が毎ターン入れる指示の一覧。ファイルの担当・場所によらず、項目ごとに 6 エージェントを選べる）。仕様は [共通コンテキストの実行](context-runtime.md)「Pleiad の指示」。
+探索 API は `previewOnly: true` の候補一覧を返し、`docMatrix`（`core/context-doc-matrix.mjs`）と `resolveDocForAgent` が画面の表示状態と実行時の受け渡しを同じ規則で導出する。実行時の抑止・適用時期・利用記録・会話の右パネルは [共通コンテキストの実行](context-runtime.md) を参照。既定（未操作の既定設定）はエージェント任せの挙動を保つ。
 
 ## 保存と継承（形式 3）
 
@@ -79,13 +80,15 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 
 ## API と構成
 
-- `contextSettings { cwd? }`：画面の形。`defaults` と `places[]`（保存した場所と今の場所）それぞれで、種類ごとの `{ value, override, from }`、種類ごとの追加ルート `roots: { <kind>: { value, override, from } }`、「個別に変更」の数（`overrides`。種類と種類ごとの追加ルートの上書きの数）、`current`（今の場所）、`saved`。設定の画面は `defaults` だけ、会話の右パネルは今の場所（`current`）を使う。
+- `contextSettings { cwd? }`：画面の形。`defaults` と `places[]`（保存した場所と今の場所）それぞれで、種類ごとの `{ value, override, from }`、種類ごとの追加ルート `roots: { <kind>: { value, override, from } }`、「個別に変更」の数（`overrides`。種類と種類ごとの追加ルート・セル設定の上書きの数）、`current`（今の場所）、`saved`。設定の画面は `defaults` だけ、会話の右パネルは今の場所（`current`）を使う。
 - `setContextSettings`：1 か所だけ変えて即時保存し、`contextSettings` と同じ形（と `place`）を返す。`{ place: null | パス, kind, value: K | null }`（場所で `null` は既定に戻す）、`{ place, kind?, roots: [...] | null }`（`kind` を省くと 3 種すべて）、`{ place, add: true }` / `{ place, remove: true }`（右パネルの「全体の設定に戻す」は `remove`）。
 - `scanContext { cwd, place?: "default", scope?: "user" }`：保存済み設定から候補・出典・診断・探索場所・根（`home` / `root`）・MCP 設定ファイルごとの登録の書き出し（`configs`）を返す。`place: "default"` は場所の上書きを使わず既定だけで探す。`scope: "user"` はユーザーの範囲（home と既定の追加ルート）だけを探す（設定の画面のユーザーの段。作業場所のファイルを混ぜない）。同一接続の重複スキャンは拒否する。
-- `agentMcp { cwd }`：各エージェント（Claude・Codex・OpenCode・Devin・Grok・Antigravity。読めるもの）の設定に登録されている外部 MCP。探索の設定に関係なく読むだけ（接続・起動しない）。設定の「エージェントに任せる」と会話の右パネルが見比べに使う。
+- `docMatrix { kind, cwd?, place? }`（`kind`: `'instruction' | 'skill'`）：`context-agents.json` と `scanContext`・レガシー既定設定から、名前 × エージェント 6 者のマトリクス（`agents`, `summaryRow`, `rows` と各セルの状態・鍵理由）を返す。
+- `setDocAgent { kind, key, agent, on, place?, cwd? }` / `setDocRow { kind, key?, keys?, on, place?, cwd? }`：指示・Skills の 1 セルまたは行（フォルダまとまりは `keys` で複数）を即時保存する。未操作の `(place, kind)` を初めて触った瞬間に、現在効いている実効状態（`docAgentsFromLegacy`）を `context-agents.json` へ写してから更新する。AI・CLI から呼ぶときは、入れる・外すのどちらも `guarded`（会話の承認の札。紐づかない CLI は画面へ回す）で、今の除外（`setContextSettings`）と同じ強さ（ADR 0337 §決定 6）。
+- `agentMcp { cwd }`：各エージェント（Claude・Codex・OpenCode・Devin・Grok・Antigravity。読めるもの）の設定に登録されている外部 MCP。探索の設定に関係なく読むだけ（接続・起動しない）。会話の右パネルや見比べで使う。
 - `slashSkills { cwd }`：同じ探索結果から、入力欄の先頭 `/` に出すスキルだけを名前順に返す（`skillList()`）。各項目は `{ name, description, hint, from }`。同名は選んだ定義（`prefer`）、無ければ先に見つかった置き場所だけを返し、除外・shadowed は含めない。`hint` は frontmatter の `argument-hint`、または引数の定義から作る。
 - `sessionContext { sessionId }`：その会話の読み込み記録・担当・固定の有無と、固定された会話だけ行う今のファイルとの突き合わせ（`changed`）、Pleiad が入れた指示（`added`）を返す。詳細は `docs/context-runtime.md`。
-- `plyInstructions {}` / `setPlyInstructions { action, … }`：Pleiad の指示の一覧（画面の言語の文・項目ごとと合計のトークン数）と、足す・編集・スイッチ・削除・既定に戻す・並べ替え。`docs/context-runtime.md`「Pleiad の指示」。
+- `plyInstructions {}` / `setPlyInstructions { action, … }`：Pleiad の指示の一覧（画面の言語の文・項目ごとと合計のトークン数・対象エージェント一覧）と、足す・編集・スイッチ（`toggle`）・エージェント単位の切替（`toggleAgent`）・削除・既定に戻す・並べ替え。`docs/context-runtime.md`「Pleiad の指示」。
 - `listMcpConfig { cwd, format, scope }`：保存先・リビジョン・登録名のみを返す。
 - `readMcpServer { cwd, format, scope, name }`：明示的に開いた1件の定義を返す。`env`・ヘッダー（`headers`・`http_headers`）の値・`oauth.clientSecret`・URL のクエリと userinfo は伏せ字（`••••`）で返し、キーの名前だけ見せる。`saveMcpServer` の `edit` は、伏せ字のままの値を今の定義の値に戻して書く（前の値が無い伏せ字は断る）。値そのものが要る取り込み（`importPlyMcp`）はサーバーの中で `getWithSecrets` を使う。
 - `saveMcpServer { cwd, format, scope, name, value, revision, mode, allowReformat? }`：`mode` は add / edit。既存登録を誤って上書きしないよう区別する。
@@ -94,7 +97,8 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 ## 外部 MCP の画面（2026-09-20）
 
 設定 › プラグインの「外部 MCP」カードに集約した（旧「MCP 管理」の JSON 直書き画面は廃止）。
-- **名前 × エージェントの一覧（2026-11-14 から。[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）**: 設定 › プラグインでは担当の 2 択を使わない。`context.mcpMatrix` が行（Pleiad の登録・各エージェントの設定・プラグイン・コネクター）とセルを返し、`context.setMcpAgent` が 1 つのセルを保存する（一覧に無い名前・押せないセル・読めていないコネクターはエラーで保存しない）。保存は外部 MCP の `agents`（`off`・`spread`）で、あると `owners.mcp` は常に Pleiad。ルールは ADR 0327 の「決定」。
+- **指示・Skills の名前 × エージェントの一覧（2026-11-15 から。[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）**: 設定 › プラグインでは担当の 2 択と「探す形式」の札を廃し、`<data>/context-agents.json`（`version: 1`、`MAX_PLACES = 100`、`MAX_AGENT_KEYS = 2000`）の `defaults` / `places[cwd]` 配下に `instruction` / `skill` ごとの `agents: { [key]: { off, spread } }` を持つ。`key` は指示が `file:<正規化パス>`、Skills が `skill:<名前>`（同名は `prefer`、無ければ先に見つかった定義を代表として 1 行にまとめる）、作業場所のまとめ行が `__workspace__`。最初の操作まで `context-scans.json` の実効設定から導出（`docAgentsFromLegacy`）して挙動を変えない。止められない・渡せないセルは鍵付き（`own`・`workspace`・`relay`）になり、Grok は外部ファイル由来の行がすべて鍵のまま（`Pleiad の指示` だけ 6 者すべて切替可）。
+- **名前 × エージェントの一覧（外部 MCP、2026-11-14 から。[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）**: 設定 › プラグインでは担当の 2 択を使わない。`context.mcpMatrix` が行（Pleiad の登録・各エージェントの設定・プラグイン・コネクター）とセルを返し、`context.setMcpAgent` が 1 つのセルを保存する（一覧に無い名前・押せないセル・読めていないコネクターはエラーで保存しない）。保存は外部 MCP の `agents`（`off`・`spread`）で、あると `owners.mcp` は常に Pleiad。ルールは ADR 0327 の「決定」。
 - **（以下は旧来の担当の 2 択。設定 › プラグインでは 2026-11-14 から使わず、`agents` が無い保存と会話の右パネルの場所ごとの 2 択に残る）**
 - **エージェントに任せる**: `agentMcp` で各エージェントの登録を 2 列で見比べる。片方にしか無いものに「Claude だけ」。Pleiad は読むだけで変えない。
 - **Pleiad がそろえる**: ユーザーの段に、どの場所でもつなぐもの（Pleiad の登録と、ユーザーの範囲のエージェントの登録）を名前ごとに 1 行。作業場所の `.mcp.json` などは場所ごとなので、会話の右パネルで見る。手元で動かす／URL の区別、どの設定由来か（Pleiad に登録・Claude だけに登録・両方に登録）、ログインの状態と「ログイン」、同じ名前で中身の違う定義があれば「どちらの定義を使いますか」（`prefer`）、スイッチ（オフ = `disabled`）。行を押すと中身: Pleiad の登録は編集・名前を変える・ログイン／ログアウト・接続を確認・削除、エージェントの登録は伏せ字の定義と「Pleiad に取り込む」（`importPlyMcp`。トークンは引き継がない）。読み込む設定ファイルは段の探す形式（ユーザーは Claude の設定・Codex の設定、作業場所は `.mcp.json`・`.codex/config.toml`）。「ログインの詳細設定」（Client ID Metadata Document の URL。既定は空）は折りたたみの奥。暗号化されない起動では平文で保存することを注記する。
@@ -118,7 +122,7 @@ JSON は他のキーを保持して整形保存。通常の TOML テーブルで
 
 登録の保存だけでは接続しない。Pleiad 管理の場合は、次の実行時に登録を解決して接続する。
 
-`core/context-settings.mjs` が設定の保存・継承・移行、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-mcp-matrix.mjs` が名前 × エージェントの一覧、`core/context-claude-extras.mjs` が Claude のプラグインとコネクターの読み取り、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › プラグイン）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
+`core/context-settings.mjs` が設定の保存・継承・移行、`core/context-agents.mjs` が指示・Skills の名前ごと・エージェントごとのルール保存（`context-agents.json`）とレガシー変換（`docAgentsFromLegacy`）、`core/context-doc-matrix.mjs` が表示用マトリクス構築と実行時解決（`buildDocMatrix`・`resolveDocForAgent`）、`core/context-scan.mjs` が探索、`core/mcp-config.mjs` がエージェント側の登録の読み書き、`core/context-mcp-matrix.mjs` が外部 MCP の名前 × エージェントの一覧、`core/context-claude-extras.mjs` が Claude のプラグインとコネクターの読み取り、`core/context-session.mjs` が会話ごとの操作。UI は `web/context.mjs`（設定 › プラグイン）、`web/context-matrix.mjs`（一覧と 6 エージェント列の共有部品）、`web/mcp-config.mjs`（外部 MCP のカードとシート）、`web/ply-instructions-card.mjs`（Pleiad の指示と 6 エージェント列）、`web/session-context.mjs`（会話の右パネル）。実行時は `core/context-runtime.mjs` と `core/context-bridge.mjs` を介して各バックエンドに供給し、会話に利用記録を保存する。TOML / YAML は `smol-toml` / `yaml` で解析し、設定を正規表現だけで読まない。
 
 ## Hooks（2026-09-27）
 

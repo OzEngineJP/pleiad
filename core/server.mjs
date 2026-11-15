@@ -91,9 +91,11 @@ import { createContextSettings } from './context-settings.mjs';
 import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
-import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
+import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
-import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
+import { DEFAULT_OWNERS, normalizeKind, pathKey, pruneInherited, scanDirectory } from './context-settings.mjs';
+import { DOC_KINDS, createContextAgents, resolveEffectiveDocSource } from './context-agents.mjs';
+import { DocTouchError, applyDocTouch, buildDocMatrix, docScanPlan } from './context-doc-matrix.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
 import { noteMcpContact, watchMcpContacts } from './mcp-contact.mjs';
@@ -538,6 +540,7 @@ const IMAGE_MIME = /^image\//;
 // Native sessions opened outside this host may not have sidecar metadata yet.
 const workspaceRoots = new Set([process.cwd()]);
 const contextSettings = createContextSettings(store.dataDir);
+const contextAgents = createContextAgents(store.dataDir);
 // 担当が Pleiad の外部 MCP。登録は Pleiad 自身の設定（エージェントの設定ファイルは書き換えない）、秘密は safeStorage で暗号化して置く
 // 暗号器は 1 つを使い回す（main の口の応答は id で引くので、2 つ作ると同じ id を取り合う）
 const secretCipher = defaultCipher();
@@ -5442,6 +5445,118 @@ const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 
     return probeClaudeConnectors({ deny, token: account?.token ?? null });
   } });
 
+/**
+ * 表（context-agents.json）を触った後の旧い設定（担当・探す形式・除外）の変更は、表の結果を変えないことが多い。
+ * 通るなら効く、効かないなら断る（レビュー S1）: 保存した後の表を前と比べ、どのエージェントに何が渡るかが同じなら保存しない。
+ * 旧い設定の場所が表より深くなる（表を触っていない深さに旧い上書きを足す）・Skills の使う方（prefer）を変える、のように効くものは通す
+ */
+async function refuseIneffectiveLegacy(args = {}) {
+  const { kind } = args;
+  if (!DOC_KINDS.includes(kind) || args.remove || !Object.hasOwn(args, 'value') || args.value === null) return;
+  const [legacy, docAgents] = await Promise.all([contextSettings.read(), contextAgents.read()]);
+  const dir = args.place ? await scanDirectory(args.place) : null;
+  if (!resolveEffectiveDocSource(legacy, docAgents, dir, kind).touched) return;
+  const next = structuredClone(legacy);
+  const key = dir ? pathKey(dir) : null;
+  const target = key ? (next.places[key] ??= { path: dir, kinds: {} }) : next.defaults;
+  try { target.kinds[kind] = normalizeKind(kind, args.value, dir ?? SCAN_OPTIONS.home ?? os.homedir(), SCAN_OPTIONS.home ?? os.homedir()); }
+  catch { return; } // 形の誤りは保存の側（contextSettings.set）の誤りで返す
+  if (key) pruneInherited(next, key);
+  if (!resolveEffectiveDocSource(next, docAgents, dir, kind).touched) return;
+  const { scan, matrixCwd } = await docScanContext({ kind, cwd: dir, place: dir ?? 'default' });
+  const shape = (legacyConfig) => {
+    const m = buildDocMatrix({ kind, entries: scan.entries, legacyConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home });
+    return JSON.stringify({ owner: m.legacyOwner, summary: m.summaryRow?.cells ?? null, rows: m.rows.map((r) => [r.key, r.chosen?.path ?? null, r.cells]) });
+  };
+  if (shape(legacy) !== shape(next)) return;
+  // i18n-dynamic: server:context.settings.legacyAfterTouch.instruction
+  // i18n-dynamic: server:context.settings.legacyAfterTouch.skill
+  throw new OpError('INVALID', t(`context.settings.legacyAfterTouch.${kind}`, { place: dir ?? t('context.settings.defaultPlace') }));
+}
+
+/**
+ * 表のマスを書き、場所の設定（context-scans.json）にまだ無ければ場所を足す。2 つの保存の間で落ちたら、表の書き込みを戻す（レビュー S6）。
+ * 表の規則だけが残り、場所が保存済みでない（右パネルの「全体の設定に戻す」で消せない）状態を作らない
+ */
+async function touchDocPlace(mutator, where, scanDir) {
+  let before = null;
+  const nextCfg = await contextAgents.mutate(async (cfg) => { before = structuredClone(cfg); return mutator(cfg); });
+  if (where) {
+    try {
+      const cur = await contextSettings.view(where);
+      if (!cur.places.some((p) => p.saved && pathKey(p.path) === pathKey(where))) {
+        await contextSettings.set({ place: where, add: true, cwd: scanDir });
+      }
+    } catch (err) {
+      await contextAgents.mutate(() => before).catch(() => {});
+      throw err;
+    }
+  }
+  return nextCfg;
+}
+
+async function syncContextAgentsOnSet(args = {}) {
+  await refuseIneffectiveLegacy(args);
+  if (!args?.place) return;
+  if (args.remove) await contextAgents.removePlace(args.place);
+  else if (Object.hasOwn(args, 'value') && args.value === null && DOC_KINDS.includes(args.kind)) {
+    await contextAgents.removePlace(args.place, args.kind);
+  }
+}
+
+async function docScanContext({ kind, cwd, place }) {
+  const isDefault = place === null || place === 'default' || (!place && !cwd);
+  const defaultDir = SCAN_OPTIONS.home
+    ? await fs.access(SCAN_OPTIONS.home).then(() => SCAN_OPTIONS.home, () => store.dataDir)
+    : os.homedir();
+  const scanDir = isDefault ? defaultDir : await scanDirectory(place ?? cwd);
+  const scopes = isDefault ? ['user'] : ['user', 'directory'];
+  const effective = await contextSettings.get(scanDir, isDefault ? { level: 'default' } : {});
+  const scanPlan = docScanPlan(effective.plan, kind);
+  const [scan, rawConfig, docAgents] = await Promise.all([
+    scanContext({ cwd: scanDir, plan: scanPlan }, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), scopes }),
+    contextSettings.read(),
+    contextAgents.read(),
+  ]);
+  const matrixCwd = isDefault ? null : scanDir;
+  return { scan, rawConfig, docAgents, scanDir, isDefault, matrixCwd };
+}
+
+/** applyDocTouch を呼び、押せない物の誤りを利用者の言葉の OpError にする */
+function docTouch(cfg, args) {
+  try {
+    return applyDocTouch(cfg, args);
+  } catch (e) {
+    // i18n-dynamic: server:context.settings.unknownAgent
+    // i18n-dynamic: server:context.settings.unknownDocItem
+    // i18n-dynamic: server:context.settings.docNotPressable
+    // i18n-dynamic: server:context.settings.docRowLocked
+    if (e instanceof DocTouchError) throw new OpError('INVALID', t(`context.settings.${e.code}`, e.params));
+    throw e;
+  }
+}
+
+function serializeDocRow(row) {
+  const compactCopy = (c) => ({
+    id: c.id, name: c.name, path: c.path, realPath: c.realPath ?? c.path, scope: c.scope,
+    appliesTo: c.appliesTo ?? null, root: c.root ?? null, status: c.status, shadowedBy: c.shadowedBy ?? null,
+    tokens: c.tokens ?? null, bytes: c.bytes ?? null, description: c.description ?? null,
+    paths: c.paths ?? null, rule: c.rule ?? null, references: c.references ?? null,
+    extensions: c.extensions ?? null, origins: c.origins ?? [],
+  });
+  const c = row.chosen;
+  return {
+    key: row.key, kind: row.kind, id: row.id, name: row.name, path: row.path, realPath: row.realPath,
+    scope: row.scope, appliesTo: row.appliesTo, root: c.root ?? null, tokens: c.tokens ?? null,
+    bytes: c.bytes ?? null, description: c.description ?? null, paths: c.paths ?? null,
+    isRule: Boolean(c.rule), references: c.references ?? null, extensions: c.extensions ?? null,
+    status: c.status, conditional: row.conditional, content: c.content ?? '',
+    origins: row.origins, duplicates: row.duplicates.map(compactCopy),
+    rule: row.rule, cells: row.cells, rowLocked: row.rowLocked, rowMixed: row.rowMixed,
+    rowSwitchOn: row.rowSwitchOn, anyOn: row.anyOn,
+  };
+}
+
 // コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
 const opsContext = {
   // deny: 読み取りで起こすとき止める、claude.ai 以外の既知の名前（Claude の設定・Pleiad の登録）。プラグインの名前はここで足す。
@@ -5458,11 +5573,85 @@ const opsContext = {
     } else if (refresh) { void claudeConnectors.refresh({ deny: names }); got = await claudeConnectors.get(); }
     return { plugins, connectors: got.connectors, needsAuth: got.needsAuth ?? [], reading: got.reading, readFailed };
   },
-  view: (cwd) => contextSettings.view(cwd),
+  view: async (cwd) => {
+    const [v, docAgents] = await Promise.all([contextSettings.view(cwd), contextAgents.read()]);
+    const attach = (p, key) => {
+      const entry = key ? docAgents.places[pathKey(key)] : docAgents.defaults;
+      if (!entry) return p;
+      const kinds = { ...p.kinds };
+      let extra = 0;
+      for (const k of DOC_KINDS) {
+        if (!entry[k]) continue;
+        kinds[k] = { ...kinds[k], docOverride: true };
+        if (key && !kinds[k].override) { kinds[k].override = true; extra++; }
+      }
+      return key ? { ...p, kinds, overrides: (p.overrides ?? 0) + extra } : { ...p, kinds };
+    };
+    return { ...v, defaults: attach(v.defaults, null), places: v.places.map((p) => attach(p, p.path)) };
+  },
   set: async (args, actor) => {
-    const view = await contextSettings.set(args ?? {});
+    await syncContextAgentsOnSet(args);
+    const saved = await contextSettings.set(args ?? {});
+    const v = await opsContext.view(args?.cwd ?? (args?.remove ? null : args?.place || null));
     settingsChanged(['context.default'], actor);
-    return view;
+    return { ...v, place: saved.place };
+  },
+  docMatrix: async ({ kind, cwd, place } = {}) => {
+    if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
+    const { scan, rawConfig, docAgents, matrixCwd } = await docScanContext({ kind, cwd, place });
+    const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: rawConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home });
+    // inheritedOn: この場所の上書き（表と旧い設定の両方）が無かったときの行のスイッチ。右パネルの「全体の設定で外しています」と
+    // 「この場所で外しています」を行ごとに分ける（レビュー S8）。この場所に何も無ければ今の値と同じ
+    const pk = matrixCwd ? pathKey(matrixCwd) : null;
+    let inherited = null;
+    if (pk && (docAgents.places?.[pk]?.[kind] || rawConfig.places?.[pk]?.kinds?.[kind])) {
+      const agentsBase = structuredClone(docAgents), legacyBase = structuredClone(rawConfig);
+      if (agentsBase.places?.[pk]) delete agentsBase.places[pk][kind];
+      if (legacyBase.places?.[pk]?.kinds) delete legacyBase.places[pk].kinds[kind];
+      const base = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: legacyBase, docAgentsConfig: agentsBase, cwd: matrixCwd, home: scan.home });
+      inherited = new Map(base.rows.map((r) => [r.key, r.rowSwitchOn]));
+    }
+    return {
+      kind, cwd: scan.cwd, home: scan.home, root: scan.root,
+      touched: matrix.touched, agentsPlace: matrix.agentsPlace, legacyPlace: matrix.legacyPlace,
+      legacyOwner: matrix.legacyOwner, prefer: matrix.legacyRule?.prefer ?? {},
+      agents: matrix.agents, summaryRow: matrix.summaryRow,
+      rows: matrix.rows.map((r) => ({ ...serializeDocRow(r), inheritedOn: inherited?.has(r.key) ? inherited.get(r.key) : r.rowSwitchOn })),
+      searched: scan.searched, skipped: scan.skipped, diagnostics: scan.diagnostics, limited: scan.limited,
+    };
+  },
+  // keys: まとまりのチップ・確認の後の広げで、複数の名前の同じエージェントのマスを 1 回で書く（レビュー S3）
+  setDocAgent: async ({ kind, key, keys, agent, on, place, cwd } = {}, actor) => {
+    if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
+    const list = [...new Set([...(key ? [key] : []), ...(Array.isArray(keys) ? keys : [])])];
+    if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
+    const where = !place || place === 'default' ? null : await scanDirectory(place);
+    const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
+    const nextCfg = await touchDocPlace(async (cfg) => docTouch(cfg, {
+      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
+      place: where, placeKey: where ? pathKey(where) : null, agent, keys: list, on,
+    }), where, scanDir);
+    settingsChanged(['context.default'], actor);
+    return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
+  },
+  setDocRow: async ({ kind, key, keys, on, place, cwd } = {}, actor) => {
+    if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
+    const list = [...new Set([...(Array.isArray(keys) ? keys : []), ...(key ? [key] : [])])];
+    if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
+    const where = !place || place === 'default' ? null : await scanDirectory(place);
+    const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
+    const nextCfg = await touchDocPlace(async (cfg) => docTouch(cfg, {
+      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
+      place: where, placeKey: where ? pathKey(where) : null, keys: list, on,
+    }), where, scanDir);
+    settingsChanged(['context.default'], actor);
+    return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
+  },
+  // 読めない context-agents.json を context-agents.broken-<時刻>.json へ退避し、表を触る前の動きに戻す（レビュー M6）。読めるなら何もしない
+  repairDocAgents: async (actor) => {
+    const done = await contextAgents.repair();
+    if (done) settingsChanged(['context.default'], actor);
+    return { ok: true, repaired: Boolean(done), backup: done?.backup ?? null };
   },
   plyInstructions: () => plyInstructionsState(),
   plyInstructionItems: () => plyInstructionsCache,
@@ -6146,7 +6335,7 @@ function opsDeps(lng = currentLocale()) {
       contextRebuild: applyContextRebuild,
       routing: applyRoutingSettings,
       plyInstructions: applyPlyInstructions,
-      context: (args) => contextSettings.set(args),
+      context: async (args) => { await syncContextAgentsOnSet(args); return contextSettings.set(args); },
     },
     // 設定を変えたことを全画面へ配り、会話に束縛された呼び出しならその会話の変更の記録に残す（by: 'agent'・via・bySession）
     recordSetting: async ({ key, before, after, reason, actor }) => {
@@ -7880,19 +8069,21 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 方針（担当・探索の計画）はターンごとに今の設定と作業場所で解き直す。設定の変更は始まっている会話にも次のターンから効く。
   // 「この会話では外す」MCP と開始時刻は会話の方針として引き継ぐ（followSettings）。コンテキストの記録が無いまま送信済みの会話
   // （この機能より前の会話）はエージェント任せのまま。作業場所を変えたときの探し直しは下の読み込み直し（refreshedContext）で知らせる
-  const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, await contextSettings.get(cwd),
+  const [rawContextCfg, docAgentsCfg] = await Promise.all([contextSettings.read(), contextAgents.read()]);
+  const effectiveSettings = attachDocPolicy(await contextSettings.get(cwd), rawContextCfg, docAgentsCfg);
+  const { policy: followed, changed: settingsChanged } = followSettings(previousContext?.policy ?? null, effectiveSettings,
     { keepNative: !previousContext && baseline.messages.length > 0 });
   // どのエージェントのターンか（外部 MCP を名前ごとに中継・止めるために使う。ADR 0327）。読み込み直しも同じエージェントで解く
   let policy = { ...followed, agent: backend.id };
   // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
   let plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-  let resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
-  // 名前ごとのモデルで、指示・Skills はエージェント任せ、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
-  // （ターンだけの口・中継を起こさない。ADR 0327）
+  let resolvedContext = plyContext ? await resolveRuntime(policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
+  // 名前ごとのモデルで、指示・Skills がエージェントそのまま、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
+  // （ターンだけの口・中継を起こさない。ADR 0327 / ADR 0337）
   // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0336）
   let unstopped = [];
-  if (resolvedContext?.mcp.named && policy.owners.instruction !== 'ply' && policy.owners.skill !== 'ply' && !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length) {
+  if (nativeEquivalentTurn(policy, resolvedContext)) {
     unstopped = unstoppedMcp(resolvedContext.report);
     plyContext = false; resolvedContext = null;
   }
@@ -8800,7 +8991,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         // 開けなければ口の無いまま続ける（CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
         if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
           try {
-            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: ctx.policy?.agent ?? backend.id });
+            const resolved = await resolveRuntime(ctx.policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: ctx.policy?.agent ?? backend.id });
             const opened = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
               origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted,
               activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }) });
@@ -9915,6 +10106,14 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.mcpMatrix');
         case 'setMcpAgent':
           return await viaOp('context.setMcpAgent');
+        case 'docMatrix':
+          return await viaOp('context.docMatrix');
+        case 'setDocAgent':
+          return await viaOp('context.setDocAgent');
+        case 'setDocRow':
+          return await viaOp('context.setDocRow');
+        case 'repairDocAgents':
+          return await viaOp('context.repairDocAgents');
         case 'nativeInstructions':
           return await viaOp('context.nativeInstructions');
         case 'contextFindings':
