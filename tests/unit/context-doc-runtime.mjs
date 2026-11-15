@@ -285,6 +285,8 @@ export default async function (t) {
       HOME: osHome,
       USERPROFILE: osHome,
       PLEIAD_SCAN_HOME: home,
+      // OpenCode の置き場は XDG_CONFIG_HOME が先に効く（core/context-scan.mjs）。CI の runner はこれを持つので、試験の home の下へ向ける
+      XDG_CONFIG_HOME: path.join(home, '.config'),
     } });
     client = await open(host);
 
