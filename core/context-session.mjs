@@ -46,7 +46,7 @@ export async function nativeInstructionEntries(cwd, agent, scanOptions = {}) {
   return { cwd: scan.cwd, agent, entries, diagnostics: scan.diagnostics, limited: scan.limited };
 }
 
-// devinImportsStopped(cwd): その場所の Devin のターンで、Pleiad が Hook を渡すため Devin の取り込みが止まるか（core/hooks-agents.mjs）
+// devinImportsStopped(cwd, agent): その場所のそのエージェントのターンで、Pleiad が Hook を渡すため取り込みが止まるか（Devin だけ。core/hooks-agents.mjs の importsStoppedFor）
 export function createContextSession({ store, snapshots, plyServers = async () => null, liveRecord = () => null, isRunning = () => false, scanOptions = {}, devinImportsStopped = async () => false }) {
   async function saved(sessionId) {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('context.session.sessionRequired'));
@@ -60,7 +60,7 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     const record = await saved(sessionId);
     if (!record.pin) throw new Error(t('context.session.notManaged'));
     if (isRunning(sessionId)) throw new Error(t('context.session.busy'));
-    const devin = record.policy?.agent === 'devin' && await devinImportsStopped(record.policy.cwd);
+    const devin = await devinImportsStopped(record.policy?.cwd, record.policy?.agent);
     const runtime = await resolveRuntime(record.policy, { ...scanOptions, plyServers: await plyServers(), snapshots, devinImportsStopped: devin });
     // MCP は次のターンでつなぎ直す。それまでは直前のターンの様子（接続中・要ログイン・失敗と回数）を残す
     const before = new Map((record.report?.entries ?? []).filter(e => e.kind === 'mcp').map(e => [e.id, e]));

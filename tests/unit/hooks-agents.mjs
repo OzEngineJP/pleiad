@@ -159,6 +159,8 @@ export default async function (t) {
     await ha.setRow({ key: devReg.id, on: true, cwd: repo });
     const predOn = await ha.devinImportsStopped(repo);
     t.ok('devinImportsStopped（移行後）: Devin へ渡す Hook があるときだけ true（ターンの取り込みの止め方と同じ）', predOn === true && predOff === false, JSON.stringify({ predOn, predOff }));
+    const forDevin = await ha.importsStoppedFor(DEVIN, repo), forOther = await ha.importsStoppedFor('claude', repo);
+    t.ok('importsStoppedFor: Devin は devinImportsStopped と同じ答え、ほかのエージェントは false', forDevin === true && forOther === false, JSON.stringify({ forDevin, forOther }));
     await ha.reset();
     await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [] } });
     const predLegacy = !(await ha.exists()) && await ha.devinImportsStopped(repo);

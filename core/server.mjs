@@ -1123,7 +1123,7 @@ const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
 const SCAN_OPTIONS = process.env.PLEIAD_SCAN_HOME ? { home: process.env.PLEIAD_SCAN_HOME } : {};
 const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOTS, plyServers: () => plyMcp.scanInput(),
   liveRecord: id => runtime.turns.get(id)?.contextRecord ?? null, isRunning: id => runtime.turns.has(id), scanOptions: SCAN_OPTIONS,
-  devinImportsStopped: cwd => hooksAgents.devinImportsStopped(cwd) });
+  devinImportsStopped: (cwd, agent) => hooksAgents.importsStoppedFor(agent, cwd) });
 const mcpConfig = createMcpConfig();
 // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。読むのと、利用者が明示した編集だけ
 const hooksConfig = createHooksConfig();
@@ -8101,7 +8101,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
   let plyContext = managed(policy) && acceptsPlyContext(backend, policy);
   let resolvedContext = plyContext ? await resolveRuntime(policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id,
-    devinImportsStopped: backend.id === 'devin' && await hooksAgents.devinImportsStopped(cwd) }) : null;
+    devinImportsStopped: await hooksAgents.importsStoppedFor(backend.id, cwd) }) : null;
   // 名前ごとのモデルで、指示・Skills がエージェントそのまま、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
   // （ターンだけの口・中継を起こさない。ADR 0327 / ADR 0337）
   // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0336）
@@ -9016,7 +9016,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
           try {
             const agentId = ctx.policy?.agent ?? backend.id;
             const resolved = await resolveRuntime(ctx.policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: agentId,
-              devinImportsStopped: agentId === 'devin' && await hooksAgents.devinImportsStopped(ctx.cwd) });
+              devinImportsStopped: await hooksAgents.importsStoppedFor(agentId, ctx.cwd) });
             const opened = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
               origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted,
               activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }) });

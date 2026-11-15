@@ -13,6 +13,7 @@ import { runMark } from './arc.mjs';
 import { agentShortLabel } from './agent-brands.mjs';
 import { MATRIX_ICON, agentChip, agentLegend, agentStrip, askBanner, matrixSvg, rowSwitch, savedText } from './context-matrix.mjs';
 import { addButton, agentLabel, eventLabel, openHookSheet, peekHook, scopeLabel } from './hooks-card.mjs';
+import { originMarks } from './context-tabs.mjs';
 import { openPlyHookSheet, plyPeek, reasonText, warnText } from './hooks-unify-ui.mjs';
 
 function button(text, className = 'btn', onClick) {
@@ -30,7 +31,7 @@ const short3 = a => agentShortLabel(a, agentLabel(a));
  */
 export function hookTip({ reason, detail, agent, reasons } = {}) {
   const name = agent ? short3(agent) : '';
-  if (detail === 'grokOwn' && agent && agent !== 'grok') return t('hooks.matrix.tip.grokOwnOther', { agent: name });
+  if (detail === 'grokOwn' && reason === 'relay') return t('hooks.matrix.tip.grokOwnOther', { agent: name });
   const key = `hooks.matrix.tip.${detail}`, s = detail ? t(key, { agent: name }) : key;
   if (s !== key) return s;
   if (reason === 'relay') {
@@ -41,6 +42,7 @@ export function hookTip({ reason, detail, agent, reasons } = {}) {
 }
 
 /** 行の名前（Antigravity の名前つきの定義は名前、ほかはコマンド） */
+// backend-allow: 名前つきの定義を持つのは Antigravity だけ（hooks-card と同じ）
 export const hookRowName = r => r.kind === 'ws' ? t('hooks.matrix.wsRow') : (r.name && r.agent === 'antigravity' ? r.name : r.command || r.name || r.event || r.key);
 /** 行の下の段: イベント · matcher */
 export function hookRowSub(r) {
@@ -245,7 +247,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       box.append(peekHook(e, { short,
         onEdit: x => openHookSheet(sheetCtx(), { entry: x }),
         onDelete: x => openHookSheet(sheetCtx(), { entry: x, remove: true }),
-        onToggle: e.agent === 'antigravity' && !e.readOnly ? agyToggle : null }));
+        onToggle: e.agent === 'antigravity' && !e.readOnly ? agyToggle : null })); // backend-allow: 有効のスイッチを持つのは Antigravity の定義だけ（hooks-card と同じ）
     }
     if (!entries.length && row.command) box.append(el('p', 'cx-sub hk-cmd', row.command));
     return box;
@@ -265,7 +267,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     if (row.group === 'admin') nl.append(el('span', 'cbadge', t('hooks.scope.managed')));
     else if (['plugin', 'skill'].includes(row.scope)) nl.append(el('span', 'cbadge', row.scope === 'plugin' && row.plugin ? row.plugin : scopeLabel(row)));
     if (row.copyOf) { const from = grid.rows.find(x => x.key === row.copyOf)?.agent; if (from) nl.append(el('span', 'cbadge', t('hooks.row.copied', { agent: short3(from) }))); }
-    if (row.kind !== 'reg' && row.kind !== 'ws' && row.agent) nl.append(el('span', 'cbadge hk-from', short3(row.agent)));
+    if (row.kind !== 'reg' && row.kind !== 'ws' && row.agent) { const from = originMarks([row.agent]); if (from) nl.append(from); }
     body.append(nl, el('span', 'p', hookRowSub(row)));
     if (row.kind === 'ws') r.append(body);
     else {
@@ -301,6 +303,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       n.append(el('span', 'cx-strong', f.status === 'error' ? t('hooks.file.error', { agent: agentLabel(f.agent) }) : t('hooks.file.partial', { agent: agentLabel(f.agent) })), ` ${short(f.path)} · ${f.error ?? ''}`);
       host.append(n);
     }
+    // backend-allow: 全部オフの注記の文はファイルの種類ごと（Claude の disableAllHooks と Codex の hooks の止め方）
     for (const f of (scan?.files ?? []).filter(f => f.allOff)) host.append(el('p', 'cx-note', t(f.agent === 'claude' ? 'hooks.file.allOffClaude' : 'hooks.file.allOffCodex', { path: short(f.path) })));
   }
 

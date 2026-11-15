@@ -914,6 +914,9 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
    * 指示・Skills の表（core/context-doc-matrix.mjs の devinImportsStopped）が、取り込む物の Devin のマスを鍵つきのオフに見せるのに使う。
    * 読めない・分からないときは false（表は今までどおり。ターンは別に断る）
    */
+  /** エージェントを問わない口: Devin のときだけ devinImportsStopped、ほかは false（呼ぶ側にエージェントの id を書かせない） */
+  async function importsStoppedFor(agent, cwd) { return agent === DEVIN && devinImportsStopped(cwd); }
+
   async function devinImportsStopped(cwd) {
     try {
       const stored = await read();
@@ -983,5 +986,5 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     });
   }
 
-  return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, reset, repair, turnPlan, forTurn, hooksForTurn, devinImportsStopped };
+  return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, reset, repair, turnPlan, forTurn, hooksForTurn, devinImportsStopped, importsStoppedFor };
 }

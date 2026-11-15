@@ -1413,7 +1413,7 @@
   "hooksAgents": {
     "evidence": {
       "stoppedWithOthers": "Claude Code・Antigravity・Grok の互換は 1 つずつ止める口が無く、まとめて止めて渡し直します。渡し直せない定義は一緒に止まります（ADR 0338）",
-      "devinConfig": "Devin の --config には、利用者の Devin の設定（read_config_from を含む）に Pleiad の Hook を重ねたものを渡します",
+      "devinConfig": "Devin の --config には、利用者の Devin の設定に Pleiad の Hook を重ねたものを渡します",
       "codexTrustAtTurn": "Codex の信頼の状態はターンの直前には確かめません。一覧を開いたときの状態で広げます",
       "grokTrustUnknown": "~/.grok/trusted_folders.toml があるので、この作業場所を Grok が信頼しているか分かりません",
       "duplicate": "同じイベント・matcher・コマンドが、このエージェントで既に動いています（1 回だけ動かします）"

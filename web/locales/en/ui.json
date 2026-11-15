@@ -4680,7 +4680,7 @@
       "permissionRequest": "The details of PermissionRequest answers (such as rule updates) differ between agents.",
       "inputShape": "Tool input is converted to a close shape (shell, file operations, search). Input for other tools is passed as it is.",
       "stoppedWithOthers": "This agent cannot stop hooks one at a time, so they are stopped together and passed again. Definitions that cannot be passed again stop too.",
-      "devinConfig": "Devin receives it through a settings file for that turn only (--config). Your Devin settings (permissions, read_config_from) stay as they are, with Pleiad's hook added on top.",
+      "devinConfig": "Devin receives it through a settings file for that turn only (--config). Your Devin settings (permissions and the rest) stay as they are, with Pleiad's hook added on top.",
       "codexTrustAtTurn": "Codex's trust state is not checked right before the turn; it is passed based on the state when the list was opened.",
       "grokTrustUnknown": "It is not known whether Grok trusts this workspace (because ~/.grok/trusted_folders.toml exists).",
       "duplicate": "The same event, matcher and command already run in this agent (it runs only once).",
