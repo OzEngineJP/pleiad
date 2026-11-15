@@ -109,7 +109,7 @@ function buildSingleRow({ kind, entryOrSummary, key, scope, sourceState, home, c
   } else {
     rule = resolveRuleForItem(agentsChain, key, scope);
   }
-  const cells = evaluateDocCells(kind, entryOrSummary, rule);
+  const cells = evaluateDocCells(kind, entryOrSummary, rule, { legacyOwner: legacyRule?.owner ?? 'native' });
   return { rule, cells, ...summarizeRowMeta(cells) };
 }
 
@@ -184,14 +184,8 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
 function buildGroupedLegacyRow(kind, item, legacyRule, home, cwd) {
   const combined = { ...item.chosen, origins: item.origins };
   const included = item.copies.some((c) => legacyEntryIncluded(kind, c, legacyRule, { home, cwd }));
-  let rule;
-  if (!included) {
-    const off = DOC_AGENT_IDS.filter((a) => !docCellLock(a, kind, combined));
-    rule = { off, spread: [] };
-  } else {
-    rule = docAgentsFromLegacy(kind, combined, legacyRule, { home, cwd });
-  }
-  const cells = evaluateDocCells(kind, combined, rule);
+  const rule = docAgentsFromLegacy(kind, combined, legacyRule, { home, cwd, included });
+  const cells = evaluateDocCells(kind, combined, rule, { legacyOwner: legacyRule?.owner ?? 'native' });
   return { rule, cells, ...summarizeRowMeta(cells) };
 }
 
@@ -264,6 +258,7 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
   }
 
   const traits = DOC_AGENT_TRAITS[agent] ?? {};
+  const lockCtx = { legacyOwner: matrix.legacyOwner };
   const active = [];
   const desiredSuppress = [];
   const desiredDeliver = [];
@@ -291,13 +286,13 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
       // Prefer matches a native copy, but other conflicting native copies must be suppressed if stoppable.
       nativeKept.push({ row, entry: row.chosen });
       for (const c of conflictingCopies) {
-        if (!docCellLock(agent, kind, c)) desiredSuppress.push(c);
+        if (!docCellLock(agent, kind, c, lockCtx)) desiredSuppress.push(c);
       }
     } else {
       // Chosen file is NOT natively read by this agent. Suppress any shadowing native copy and deliver chosen.
       let allShadowStopped = true;
       for (const c of nativeCopies) {
-        if (docCellLock(agent, kind, c)) {
+        if (docCellLock(agent, kind, c, lockCtx)) {
           allShadowStopped = false;
         } else {
           desiredSuppress.push(c);
@@ -341,7 +336,7 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
       // and re-deliver every stoppable nativeKeep item via Pleiad.
       nativeKeep = [];
       for (const { row, entry } of nativeKept) {
-        if (docCellLock(agent, kind, entry)?.lockedOn) {
+        if (docCellLock(agent, kind, entry, lockCtx)?.lockedOn) {
           nativeKeep.push(entry);
         } else {
           deliver.push(entry);
@@ -359,7 +354,7 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
     && canRelayDocToAgent(agent)
     && matrix.summaryRow.rule?.spread?.includes(agent)
     && !matrix.summaryRow.rule?.off?.includes(agent)
-    && !docCellLock(agent, kind, WORKSPACE_SUMMARY_KEY),
+    && !docCellLock(agent, kind, WORKSPACE_SUMMARY_KEY, lockCtx),
   );
   const untouchedNative = desiredSuppress.length === 0 && deliver.length === 0 && devinDisableFormats.size === 0 && !spreadSummary;
   return {

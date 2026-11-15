@@ -16,6 +16,7 @@ import {
 } from './context-settings.mjs';
 import {
   DOC_AGENT_IDS,
+  DOC_AGENT_TRAITS,
   canRelayDocToAgent,
   docCellLock,
   entryOrigins,
@@ -216,13 +217,16 @@ export function legacyEntryIncluded(kind, entryOrSummary, legacyRule, { home = o
 
 /** Convert legacy `(owner, sources, excludePaths)` state for an item/summary into Stage 2 `{ off, spread }`. */
 export function docAgentsFromLegacy(kind, entryOrSummary, legacyRule, opts = {}) {
-  const included = legacyEntryIncluded(kind, entryOrSummary, legacyRule, opts);
+  const included = typeof opts.included === 'boolean' ? opts.included : legacyEntryIncluded(kind, entryOrSummary, legacyRule, opts);
   const off = [];
   const spread = [];
   const isPly = legacyRule?.owner === 'ply';
+  const ctx = { legacyOwner: legacyRule?.owner ?? 'native' };
   for (const agent of DOC_AGENT_IDS) {
-    if (docCellLock(agent, kind, entryOrSummary)) continue;
+    if (docCellLock(agent, kind, entryOrSummary, ctx)) continue;
     if (!included) {
+      // 旧い「Pleiad がそろえる」でも、自分で読む物を止めていなかったエージェント（Devin）は、外していた物もそのまま読んでいた
+      if (isPly && DOC_AGENT_TRAITS[agent]?.legacyPlyKeepsNative && isEntryNativeTo(agent, kind, entryOrSummary)) continue;
       off.push(agent);
       continue;
     }
@@ -237,14 +241,14 @@ export function docAgentsFromLegacy(kind, entryOrSummary, legacyRule, opts = {})
  * Evaluate exact display & runtime cell states for all 6 agents from a stored `{ off, spread }` rule.
  * Locks always take precedence so immutable CLI behaviors remain honest.
  */
-export function evaluateDocCells(kind, entryOrSummary, storedRule) {
+export function evaluateDocCells(kind, entryOrSummary, storedRule, ctx = null) {
   const rule = storedRule ?? { off: [], spread: [] };
   const offSet = new Set(rule.off ?? []);
   const spreadSet = new Set(rule.spread ?? []);
   const cells = {};
   for (const agent of DOC_AGENT_IDS) {
     const isNat = isEntryNativeTo(agent, kind, entryOrSummary);
-    const lock = docCellLock(agent, kind, entryOrSummary);
+    const lock = docCellLock(agent, kind, entryOrSummary, ctx);
     if (lock) {
       const on = Boolean(lock.lockedOn);
       cells[agent] = {
@@ -270,8 +274,8 @@ export function evaluateDocCells(kind, entryOrSummary, storedRule) {
 }
 
 /** Toggle a single agent cell on `(kind, entryOrSummary)`. Locked cells remain unchanged. */
-export function toggleDocAgentRule(kind, entryOrSummary, currentRule, agent, on) {
-  if (!AGENT_IDX.has(agent) || docCellLock(agent, kind, entryOrSummary)) {
+export function toggleDocAgentRule(kind, entryOrSummary, currentRule, agent, on, ctx = null) {
+  if (!AGENT_IDX.has(agent) || docCellLock(agent, kind, entryOrSummary, ctx)) {
     return normalizeAgentValue(currentRule);
   }
   const off = new Set(currentRule?.off ?? []);
@@ -288,11 +292,11 @@ export function toggleDocAgentRule(kind, entryOrSummary, currentRule, agent, on)
 }
 
 /** Turn all unlocked deliverable cells of a row ON or OFF together (whole-row / right-panel switch). */
-export function setDocRowRule(kind, entryOrSummary, currentRule, on) {
+export function setDocRowRule(kind, entryOrSummary, currentRule, on, ctx = null) {
   let next = normalizeAgentValue(currentRule);
   for (const agent of DOC_AGENT_IDS) {
-    if (docCellLock(agent, kind, entryOrSummary)) continue;
-    next = toggleDocAgentRule(kind, entryOrSummary, next, agent, on);
+    if (docCellLock(agent, kind, entryOrSummary, ctx)) continue;
+    next = toggleDocAgentRule(kind, entryOrSummary, next, agent, on, ctx);
   }
   return next;
 }

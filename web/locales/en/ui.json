@@ -1677,7 +1677,8 @@
       "relay": "Pleiad cannot pass this to {{agent}}",
       "admin": "Set for {{agent}} by an administrator",
       "linked": "Passed to {{agent}} according to delegation settings",
-      "nolinks": "Developer Mode is off in Windows, so Pleiad cannot turn this off"
+      "nolinks": "Developer Mode is off in Windows, so Pleiad cannot turn this off",
+      "bundled": "Turning this off in {{agent}} would also turn off its Hooks and plugins, so it cannot be turned off here"
     },
     "lockAria": "{{label}} ({{reason}})",
     "roots": {

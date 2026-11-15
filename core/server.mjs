@@ -5550,7 +5550,7 @@ const opsContext = {
       }
       const entryOrSummary = key === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
       const curRule = holder[kind].agents[key] ?? row.rule;
-      holder[kind].agents[key] = toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on));
+      holder[kind].agents[key] = toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on), { legacyOwner: matrix.legacyOwner });
       return cfg;
     });
     if (where) {
@@ -5589,7 +5589,7 @@ const opsContext = {
       for (const { k, row } of pressable) {
         const entryOrSummary = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
         const curRule = holder[kind].agents[k] ?? row.rule;
-        holder[kind].agents[k] = setDocRowRule(kind, entryOrSummary, curRule, Boolean(on));
+        holder[kind].agents[k] = setDocRowRule(kind, entryOrSummary, curRule, Boolean(on), { legacyOwner: matrix.legacyOwner });
       }
       return cfg;
     });

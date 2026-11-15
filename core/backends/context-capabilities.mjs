@@ -23,11 +23,12 @@ export function entryOrigins(entry) {
       scope: o.scope ?? entry.scope ?? 'workspace',
       path: normalizeSlashPath(o.path ?? entry.path ?? entry.realPath ?? ''),
       realPath: normalizeSlashPath(o.realPath ?? o.path ?? entry.realPath ?? entry.path ?? ''),
+      custom: Boolean(o.root ?? entry.root),
     }));
   }
   const p = normalizeSlashPath(entry.path ?? entry.realPath ?? '');
   const rp = normalizeSlashPath(entry.realPath ?? entry.path ?? '');
-  return [{ source: entry.source ?? 'common', scope: entry.scope ?? 'workspace', path: p, realPath: rp }];
+  return [{ source: entry.source ?? 'common', scope: entry.scope ?? 'workspace', path: p, realPath: rp, custom: Boolean(entry.root) }];
 }
 
 const isAgentsSkillsPath = (p) => /(?:^|\/)\.agents\/skills(?:\/|$)/i.test(p);
@@ -69,7 +70,11 @@ export function devinImportFormat(kind, pathStr, originSource) {
 
 const NATIVE_READERS = {
   claude(kind, origin) {
-    if (kind === 'instruction') return origin.source === 'claude';
+    // Claude Code も作業場所の AGENTS.md を読む（main の CLAUDE_MD_EXCLUDES が **/AGENTS.md を止めているのと同じ。本物で確かめた）
+    if (kind === 'instruction') {
+      return origin.source === 'claude'
+        || (origin.source === 'common' && origin.scope !== 'user' && /(?:^|\/)AGENTS\.md$/i.test(origin.path));
+    }
     return origin.source === 'claude';
   },
   codex(kind, origin) {
@@ -114,7 +119,8 @@ export function isEntryNativeTo(agent, kind, entryOrSummary) {
   if (entryOrSummary === '__workspace__') return true;
   const check = NATIVE_READERS[agent];
   if (!check) return false;
-  return entryOrigins(entryOrSummary).some((o) => check(kind, o));
+  // 「探す場所」に足したフォルダー（entry.root）はどのエージェントも自分では読まない（main の nativeInstructionEntries も roots: [] で探す）
+  return entryOrigins(entryOrSummary).some((o) => !o.custom && check(kind, o));
 }
 
 /** Return the list of agents that natively read `entryOrSummary`. */
@@ -133,11 +139,22 @@ function scopeLockReason(origins) {
 
 const LOCK_CHECKS = {
   claude: () => null,
-  codex: () => null,
-  opencode: () => null,
-  antigravity(kind, entryOrSummary) {
+  // Codex の全体の指示（~/.codex/AGENTS.md・AGENTS.override.md）は project_doc_max_bytes では止まらず、main も止めていない
+  codex(kind, entryOrSummary) {
     if (entryOrSummary === '__workspace__' || kind !== 'instruction') return null;
-    const lockedOrigins = entryOrigins(entryOrSummary).filter((o) => o.source === 'antigravity' && o.scope === 'user');
+    const own = entryOrigins(entryOrSummary).some((o) => !o.custom && o.source === 'codex' && o.scope === 'user');
+    return own ? { lockedOn: true, reason: 'own' } : null;
+  },
+  opencode: () => null,
+  antigravity(kind, entryOrSummary, ctx) {
+    // Antigravity は自分で読む Skills を 1 つでも止めると inheritCustomizations: false になり、Hooks・プラグイン・サブエージェントも一緒に消える。
+    // main でもそうなる旧い「Pleiad がそろえる」の場所でだけ押せるようにし、それ以外では止められない鍵にする
+    if (kind === 'skill') {
+      if (ctx?.legacyOwner === 'ply') return null;
+      return entryOrSummary === '__workspace__' || isEntryNativeTo('antigravity', kind, entryOrSummary) ? { lockedOn: true, reason: 'bundled' } : null;
+    }
+    if (entryOrSummary === '__workspace__') return null;
+    const lockedOrigins = entryOrigins(entryOrSummary).filter((o) => !o.custom && o.source === 'antigravity' && o.scope === 'user');
     return lockedOrigins.length ? { lockedOn: true, reason: 'own' } : null;
   },
   devin(kind, entryOrSummary) {
@@ -145,7 +162,7 @@ const LOCK_CHECKS = {
       return kind === 'skill' ? { lockedOn: true, reason: 'workspace' } : null;
     }
     const origins = entryOrigins(entryOrSummary);
-    const matching = origins.filter((o) => (
+    const matching = origins.filter((o) => !o.custom && (
       isDevinOwnPath(o.path) || isDevinOwnPath(o.realPath)
       || (kind === 'skill' && (isAgentsSkillsPath(o.path) || isAgentsSkillsPath(o.realPath)))
     ));
@@ -155,7 +172,7 @@ const LOCK_CHECKS = {
     if (entryOrSummary === '__workspace__') {
       return { lockedOn: true, reason: 'workspace' };
     }
-    const matching = entryOrigins(entryOrSummary).filter((o) => NATIVE_READERS.grok(kind, o));
+    const matching = entryOrigins(entryOrSummary).filter((o) => !o.custom && NATIVE_READERS.grok(kind, o));
     if (matching.length) return { lockedOn: true, reason: scopeLockReason(matching) };
     return { lockedOn: false, reason: 'relay' };
   },
@@ -163,10 +180,11 @@ const LOCK_CHECKS = {
 
 /**
  * Lock descriptor for an external instruction/skill cell `(agent, kind, entryOrSummary)`.
- * Returns null if user-toggleable, or `{ lockedOn: boolean, reason: 'own' | 'workspace' | 'relay' }`.
+ * Returns null if user-toggleable, or `{ lockedOn: boolean, reason: 'own' | 'workspace' | 'relay' | 'bundled' }`.
+ * `ctx.legacyOwner` is the legacy owner ('native' | 'ply') of `kind` at the place (some locks depend on it).
  */
-export function docCellLock(agent, kind, entryOrSummary) {
-  return LOCK_CHECKS[agent]?.(kind, entryOrSummary) ?? null;
+export function docCellLock(agent, kind, entryOrSummary, ctx = null) {
+  return LOCK_CHECKS[agent]?.(kind, entryOrSummary, ctx) ?? null;
 }
 
 /** Whether Claude uses native `claudeMdExcludes` per-file suppression (always true) or per-name skills list. */
@@ -175,7 +193,7 @@ export const DOC_AGENT_TRAITS = Object.freeze({
   codex: { perFileInstructionExclude: false, perNameSkillList: false, perPathSkillDisable: true, customInstructionPath: true, relay: true },
   antigravity: { perFileInstructionExclude: false, perNameSkillList: false, customAgentRequired: true, relay: true },
   opencode: { perFileInstructionExclude: false, perNameSkillList: false, managedServeOnDiff: true, relay: true },
-  devin: { perFileInstructionExclude: false, perNameSkillList: false, readConfigFrom: true, mcpCompensationFormats: ['claude', 'cursor'], relay: true },
+  devin: { perFileInstructionExclude: false, perNameSkillList: false, readConfigFrom: true, mcpCompensationFormats: ['claude', 'cursor'], relay: true, legacyPlyKeepsNative: true },
   grok: { perFileInstructionExclude: false, perNameSkillList: false, relay: false },
 });
 

@@ -20,6 +20,7 @@ import {
   setDocRowRule,
   toggleDocAgentRule,
 } from '../../core/context-agents.mjs';
+import { docCellLock } from '../../core/backends/context-capabilities.mjs';
 import { DEFAULT_SOURCES, VERSION as SCANS_VERSION, createContextSettings, defaultKind, pathKey } from '../../core/context-settings.mjs';
 
 export const name = 'context-agents';
@@ -86,8 +87,10 @@ export default async function (t) {
       kind: 'instruction', name: 'AGENTS.md', path: path.join(home, '.codex', 'AGENTS.md'), scope: 'user',
       origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }],
     }, plyRule, { home, cwd: repo });
-    t.ok('旧「探す形式」で外していた出どころはロックなし全エージェントが off',
-      excludedBySource.off.includes('claude') && excludedBySource.off.includes('codex') && !excludedBySource.off.includes('grok'));
+    // ~/.codex/AGENTS.md は Codex が必ず読む（main の project_doc_max_bytes でも止まらない）ので Codex のセルは鍵（オンのまま）
+    t.ok('旧「探す形式」で外していた出どころはロックなし全エージェントが off（Codex 自身の全体の指示は鍵でオンのまま）',
+      excludedBySource.off.includes('claude') && !excludedBySource.off.includes('codex') && !excludedBySource.off.includes('grok')
+      && docCellLock('codex', 'instruction', { kind: 'instruction', path: path.join(home, '.codex', 'AGENTS.md'), scope: 'user', origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }] })?.lockedOn === true);
 
     t.ok('旧 excludePaths に当たるパスは legacyEntryIncluded が false',
       !legacyEntryIncluded('instruction', instA, plyExcludedPath, { home, cwd: repo }));

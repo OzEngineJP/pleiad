@@ -71,7 +71,7 @@ export default async function (t) {
           agents: {
             [WORKSPACE_SUMMARY_KEY]: { off: [], spread: [] },
             [keyRepoClaude]: { off: ['claude'], spread: [] },
-            [keyRepoAgents]: { off: [], spread: ['claude'] },
+            [keyRepoAgents]: { off: [], spread: [] },
             [keyUserClaude]: { off: [], spread: [] },
           },
         },
@@ -101,8 +101,10 @@ export default async function (t) {
       && clOpts.settings.claudeMdExcludes.every((p) => /\/repo\/claude\.md$/i.test(p))
       && !clOpts.settings.claudeMdExcludes.includes('**/CLAUDE.md'),
       JSON.stringify({ docInst: clRuntime.docs?.instruction, excludes: clOpts.settings?.claudeMdExcludes, keyRepoClaude }));
-    t.ok('Claude: ネイティブの s-claude は untouchedNative なため Skill を止めず、AGENTS.md を注入する',
-      clOpts.skills === undefined && clRuntime.prompt.includes('REPO_AGENTS_COMMON')
+    // Claude Code は作業場所の AGENTS.md を自分で読む（本物で確かめた）。広げる対象ではなく、注入もしない
+    t.ok('Claude: ネイティブの s-claude は untouchedNative なため Skill を止めず、作業場所の AGENTS.md は自分で読む物として注入しない',
+      clOpts.skills === undefined && !clRuntime.prompt.includes('REPO_AGENTS_COMMON')
+      && clRuntime.report.entries.some((e) => e.name === 'AGENTS.md' && e.status === 'native')
       && clRuntime.report.entries.some((e) => e.name === 'CLAUDE.md' && e.scope === 'user' && e.status === 'native' && e.tokens > 0));
 
     // Skill を 2 つのうち 1 つだけオフにした場合（Claude で s-claude オフ・新スキル s-kept 残し）
