@@ -73,16 +73,18 @@
 .cx-confirm .cx-row .p .spread{color:var(--ink-strong);font-weight:600}
 .cx-confirm .acts{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
 /* 行を押すと下に開く中身。本文だけが中で流れる */
-.cx-peek{display:flex;flex-direction:column;gap:8px;margin:0 4px 6px;padding:10px 12px;background:var(--surface-1);border-radius:var(--r-m);font-size:var(--fs-s);min-width:0}
+.cx-peek,.hk-details{display:flex;flex-direction:column;gap:8px;margin:0 4px 6px;padding:10px 12px;background:var(--surface-1);border-radius:var(--r-m);font-size:var(--fs-s);min-width:0}
+/* Hooks は事実の表と定義の詳細を同じ面に並べる。定義の箱の余白を二重に取らない */
+.hk-details>.cx-peek{margin:0;padding:0}
 .cx-peek .body{max-height:320px;overflow:auto;font-size:var(--fs-s)}
 .cx-peek .body>:first-child{margin-top:0}
 .cx-peek .codeblock,.cx-peek pre{margin:0;max-height:260px;overflow:auto}
 .cx-peek .acts{display:flex;flex-wrap:wrap;gap:4px}
 .cx-peek .acts .btn{padding:3px 10px;font-size:var(--fs-s)}
-.cx-peek .fm{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s)}
-.cx-peek .fm .k{color:var(--ink-weak);font-family:var(--font-mono);font-size:var(--fs-xs)}
-.cx-peek .fm .v{overflow-wrap:anywhere}
-.cx-peek .facts .k{font-family:var(--font);font-size:var(--fs-s)}
+:is(.cx-peek,.hk-details) .fm{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s)}
+:is(.cx-peek,.hk-details) .fm .k{color:var(--ink-weak);font-family:var(--font-mono);font-size:var(--fs-xs)}
+:is(.cx-peek,.hk-details) .fm .v{overflow-wrap:anywhere}
+:is(.cx-peek,.hk-details) .facts .k{font-family:var(--font);font-size:var(--fs-s)}
 .cx-peek .row-line{display:flex;align-items:center;gap:6px;min-width:0}
 .cx-peek .row-line .cx-path{flex:1}
 .cx-peek .btn-icon{width:24px;height:24px;flex:none}

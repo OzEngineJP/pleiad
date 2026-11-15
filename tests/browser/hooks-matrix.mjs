@@ -135,6 +135,71 @@ try {
     return { code: r.status, err: r.stderr };
   };
 
+  // 事実と定義は同じ詳細の面で、見出しと値を別の列に組む。文字があるだけの検査では inline の崩れを見逃す。
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(baseUrl, { waitUntil: 'load' });
+    await openHooks(page);
+    for (const width of [1280, 360]) for (const theme of ['light', 'dark']) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: theme });
+      for (const [kind, key] of [['native', nativeKey], ['reg', regKey]]) {
+        await rowOf(page, key).locator('.cx-open').click();
+        const detail = page.locator('#cx-panel-hooks .hk-details');
+        const facts = detail.locator(':scope > .hk-facts');
+        await facts.scrollIntoViewIfNeeded();
+        if (process.env.FACTS_BEFORE) await shoot(page, 'plugin-polish-facts-before.png');
+        const layout = await facts.evaluate(fm => {
+          const css = getComputedStyle(fm), parent = getComputedStyle(fm.parentElement);
+          const pairs = [...fm.querySelectorAll('.k')].map(k => {
+            const v = k.nextElementSibling, a = k.getBoundingClientRect(), b = v.getBoundingClientRect();
+            return { kx: a.left, vx: b.left, kr: a.right, ky: a.top, vy: b.top };
+          });
+          const peek = fm.nextElementSibling;
+          return { display: css.display, pairs, background: css.backgroundColor,
+            radius: parseFloat(css.borderTopLeftRadius), padding: parseFloat(css.paddingLeft),
+            gap: peek ? peek.getBoundingClientRect().top - fm.getBoundingClientRect().bottom : null,
+            parentGap: parseFloat(parent.rowGap),
+            sameLeft: !peek || Math.abs(peek.getBoundingClientRect().left - fm.getBoundingClientRect().left) < 1 };
+        });
+        check(layout.display === 'grid' && layout.pairs.length >= 2
+          && layout.pairs.every(p => p.vx > p.kx && p.vx > p.kr && Math.abs(p.ky - p.vy) < 1)
+          && layout.pairs.every(p => Math.abs(p.vx - layout.pairs[0].vx) < 1),
+          `${width}・${theme}・${kind}: 事実の見出しと値はそろった別の列`, layout);
+        const paper = await facts.evaluate(el => {
+          const probe = document.createElement('span'); probe.style.background = 'var(--surface-paper)'; el.append(probe);
+          const value = getComputedStyle(probe).backgroundColor; probe.remove(); return value;
+        });
+        check(layout.background === paper && layout.radius > 0 && layout.padding > 0
+          && (layout.gap === null ? kind === 'reg' : layout.gap >= 8 && layout.gap === layout.parentGap && layout.sameLeft),
+          `${width}・${theme}・${kind}: 紙の面・角丸・余白と、定義までの間隔`, layout);
+        check((await noOverflow(page)).ok, `${width}・${theme}・${kind}: 詳細が横にはみ出さない`, await noOverflow(page));
+        await shoot(page, `plugin-polish-facts-${kind}-${width}-${theme}.png`);
+        if (kind === 'native') {
+          // 値だけを長い表示用の試験データに替える。保存・スキャン・行の組み立ては変えず、折り返しを検査する。
+          await facts.evaluate(fm => {
+            const values = fm.querySelectorAll('.v');
+            values[0].textContent = '~/projects/' + 'long-directory-name-'.repeat(10) + '/.claude/settings.json';
+            const reason = values[values.length - 1];
+            reason.textContent = [reason.textContent, reason.textContent, reason.textContent].join(' / ');
+          });
+          const wraps = await facts.locator('.v').evaluateAll(values => values.every(v => v.scrollWidth <= v.clientWidth + 1));
+          check(wraps && (await noOverflow(page)).ok, `${width}・${theme}: 長いパスと複数の理由も折り返す`, { wraps, ...await noOverflow(page) });
+          await shoot(page, `plugin-polish-facts-long-${width}-${theme}.png`, facts);
+        }
+        await rowOf(page, key).locator('.cx-open').click();
+      }
+      // 作業場所は開閉のないまとめ行。詳細を開く動作をこの CSS の修正では足さない。
+      const workspace = rowOf(page, 'ws:hooks');
+      check(await workspace.locator('.cx-open').count() === 0, `${width}・${theme}: 作業場所は詳細を開かないまとめ行`);
+      await workspace.scrollIntoViewIfNeeded();
+      await shoot(page, `plugin-polish-facts-workspace-summary-${width}-${theme}.png`);
+    }
+    await ctx.close();
+  }
+
   // ==================== 1. 1280・ライト: 設定 › プラグイン › Hooks ====================
   {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
