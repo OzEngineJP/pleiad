@@ -35,9 +35,14 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const AGENT_IDX = new Map(DOC_AGENT_IDS.map((id, i) => [id, i]));
 const sortAgents = (ids) => [...new Set(ids)].filter((id) => AGENT_IDX.has(id)).sort((a, b) => AGENT_IDX.get(a) - AGENT_IDX.get(b));
 
-const agentEntrySchema = z.object({
+const agentRuleSchema = z.object({
   off: z.array(z.string()).optional(),
   spread: z.array(z.string()).optional(),
+}).strict();
+
+// was: 行のスイッチでオフにする前の規則。行のスイッチでオンに戻すときに使う（ADR 0337 §決定 4。マスを押すと消える）
+const agentEntrySchema = agentRuleSchema.extend({
+  was: agentRuleSchema.optional(),
 }).strict();
 
 // legacyOwner: この段を初めて触ったときの旧い担当（context-scans.json の owner）。旧い「Pleiad がそろえる」の場所は、触った後も
@@ -78,6 +83,7 @@ function normalizeKindOverride(raw) {
   for (const [k, v] of Object.entries(raw.agents)) {
     if (!k) continue;
     agents[k] = normalizeAgentValue(v);
+    if (isObj(v?.was)) agents[k].was = normalizeAgentValue(v.was);
   }
   return { agents, ...(raw.legacyOwner === 'ply' || raw.legacyOwner === 'native' ? { legacyOwner: raw.legacyOwner } : {}) };
 }
@@ -314,14 +320,55 @@ export function toggleDocAgentRule(kind, entryOrSummary, currentRule, agent, on,
   return { off: sortAgents(off), spread: sortAgents(spread) };
 }
 
-/** Turn all unlocked deliverable cells of a row ON or OFF together (whole-row / right-panel switch). */
-export function setDocRowRule(kind, entryOrSummary, currentRule, on, ctx = null) {
-  let next = normalizeAgentValue(currentRule);
-  for (const agent of DOC_AGENT_IDS) {
-    if (docCellLock(agent, kind, entryOrSummary, ctx)) continue;
-    next = toggleDocAgentRule(kind, entryOrSummary, next, agent, on, ctx);
+/** 規則で、鍵の無いマスのうちオンになるエージェント */
+export function unlockedOnAgents(kind, entryOrSummary, rule, ctx = null) {
+  if (!rule) return [];
+  const cells = evaluateDocCells(kind, entryOrSummary, rule, ctx);
+  return DOC_AGENT_IDS.filter((a) => !cells[a].locked && cells[a].on);
+}
+
+/**
+ * 出どころのエージェント（自分で読むエージェント）だけをオンにした規則。ほかのエージェントへの広げ（spread）は外す。鍵のマスの覚えはそのまま。
+ * 自分で読むエージェントが 1 つも無い物（「探す場所」に足したフォルダーの物）は、Pleiad が出どころなので、渡せる全エージェントをオンにする
+ */
+export function nativeOnlyDocRule(kind, entryOrSummary, currentRule, ctx = null) {
+  const cur = normalizeAgentValue(currentRule);
+  const unlocked = DOC_AGENT_IDS.filter((a) => !docCellLock(a, kind, entryOrSummary, ctx));
+  const natives = unlocked.filter((a) => isEntryNativeTo(a, kind, entryOrSummary));
+  if (!natives.length && !DOC_AGENT_IDS.some((a) => isEntryNativeTo(a, kind, entryOrSummary))) {
+    let next = cur;
+    for (const a of unlocked) next = toggleDocAgentRule(kind, entryOrSummary, next, a, true, ctx);
+    return next;
   }
-  return next;
+  const off = new Set(cur.off);
+  const spread = new Set(cur.spread);
+  for (const a of unlocked) {
+    if (natives.includes(a)) off.delete(a);
+    else { spread.delete(a); off.add(a); }
+  }
+  return { off: sortAgents(off), spread: sortAgents(spread) };
+}
+
+/**
+ * 行のスイッチ（設定の行・右パネルの「この場所で使う」・まとまり）。ADR 0337 §決定 4。
+ * - オフ: 鍵の無いマスを全部オフにし、オフにする前の規則を was に覚える（すでにオフなら前の was を保つ）
+ * - オン: was があり、戻すと鍵の無いマスのどれかがオンになるなら、それに戻す。無ければ出どころのエージェントだけオン（nativeOnlyDocRule）。
+ *   ほかのエージェントへ広げるのは、マスを押して確認を通ったときだけ
+ */
+export function setDocRowRule(kind, entryOrSummary, currentRule, on, ctx = null) {
+  const cur = normalizeAgentValue(currentRule);
+  const was = isObj(currentRule?.was) ? normalizeAgentValue(currentRule.was) : null;
+  if (!on) {
+    let next = cur;
+    for (const agent of DOC_AGENT_IDS) {
+      if (docCellLock(agent, kind, entryOrSummary, ctx)) continue;
+      next = toggleDocAgentRule(kind, entryOrSummary, next, agent, false, ctx);
+    }
+    const keep = unlockedOnAgents(kind, entryOrSummary, cur, ctx).length ? cur : was;
+    return keep ? { ...next, was: { off: keep.off, spread: keep.spread } } : next;
+  }
+  if (was && unlockedOnAgents(kind, entryOrSummary, was, ctx).length) return was;
+  return nativeOnlyDocRule(kind, entryOrSummary, cur, ctx);
 }
 
 /** Create an atomic serialized reader/writer store for `<dataDir>/context-agents.json`. */

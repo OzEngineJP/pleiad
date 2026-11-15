@@ -183,10 +183,51 @@ export function docLockReason(doc, row) {
   return lockAgent ? lockReasonText(agentShortLabel(lockAgent, lockAgent), row.cells[lockAgent]) : t('context.matrix.locked');
 }
 
-/** まとまり内のすべての行がロックされているときの理由文 */
+/** まとまりのスイッチの理由文。鍵つきでオンの行があれば、その行の理由（その行が残るのでスイッチが変わらない） */
 export function docRowLockSummary(doc, items) {
-  for (const r of items) {
-    if (r.rowLocked) return docLockReason(doc, r);
+  const r = items.find(e => e.rowLocked && e.rowSwitchOn) ?? items.find(e => e.rowLocked);
+  return r ? docLockReason(doc, r) : t('context.matrix.locked');
+}
+
+/**
+ * まとまりのスイッチを押せないか。全部の行が押せないか、鍵つきでオンの行が 1 つでもあれば押せない
+ * （押してもオンのまま変わらない、を作らない。ADR 0337 §決定 4）
+ */
+export function docBundleLocked(items) {
+  return items.every(e => e.rowLocked) || items.some(e => e.rowLocked && e.rowSwitchOn);
+}
+
+/**
+ * 行のスイッチの見え方（core/context-doc-matrix.mjs の summarizeRowMeta と同じ）。
+ * どれかのエージェントに渡っていればオン（鍵つきでオンも数える）。鍵つきでオンのマスが残る行は押せない
+ */
+export function recalcDocRow(row, agentIds) {
+  const unlocked = agentIds.filter(a => !row.cells[a]?.locked);
+  const unlockedOn = unlocked.filter(a => row.cells[a]?.on);
+  const lockedOn = agentIds.filter(a => row.cells[a]?.locked && row.cells[a]?.on);
+  const onCount = unlockedOn.length + lockedOn.length;
+  row.rowLocked = unlocked.length === 0 || lockedOn.length > 0;
+  row.rowMixed = onCount > 0 && onCount < unlocked.length + lockedOn.length;
+  row.rowSwitchOn = onCount > 0;
+  row.anyOn = onCount > 0;
+}
+
+/**
+ * 行のスイッチを押した直後の見た目（保存の後に読み直す）。core/context-agents.mjs の setDocRowRule と同じ規則:
+ * オフは鍵の無いマスを全部オフ。オンはオフにする前（rule.was）に戻し、無ければ出どころ（自分で読む）のエージェントだけ。
+ * 自分で読むエージェントが無い物（探す場所に足したフォルダー）は、渡せる全エージェント
+ */
+export function applyDocRowLocal(row, agentIds, on) {
+  const was = row.rule?.was;
+  const anyNative = agentIds.some(a => row.cells[a]?.native);
+  for (const a of agentIds) {
+    const c = row.cells[a];
+    if (!c || c.locked) continue;
+    let next = false;
+    if (on && was) next = c.native ? !(was.off ?? []).includes(a) : (was.spread ?? []).includes(a);
+    else if (on) next = anyNative ? Boolean(c.native) : true;
+    c.on = next;
+    c.mode = next ? (c.native ? 'native' : 'spread') : 'off';
   }
-  return t('context.matrix.locked');
+  recalcDocRow(row, agentIds);
 }

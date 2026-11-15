@@ -937,7 +937,7 @@
       "mcpNotPressable": "{{name}} cannot be switched for {{agent}}",
       "unknownDocItem": "No instruction or Skill with this key is in the list: {{key}}",
       "docNotPressable": "{{name}} cannot be switched for {{agent}}",
-      "docRowLocked": "{{name}} has no switchable agents",
+      "docRowLocked": "{{name}} cannot be switched with the row switch (a locked agent reads it itself, so it would stay on, or no agent can be switched). Switch the unlocked cells one by one instead",
       "docTargetRequired": "Specify at least one item key to switch.",
       "connectorsUnread": "Couldn't read the list of claude.ai connectors. Wait a moment and try again",
       "kindInvalid": "The plugin settings are malformed.",

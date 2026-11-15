@@ -1605,14 +1605,15 @@
         "place": "A working directory path. null or default for the default (all places)."
       },
       "setDocAgent": {
-        "summary": "Turn an instruction or Skill on or off for one agent (from the next turn). Turning it on, including sharing it with another agent, needs the user's approval.",
+        "summary": "Turn an instruction or Skill on or off for one agent (from the next turn). Both turning it on (including sharing it with another agent) and turning it off need the user's approval.",
         "kind": "instruction or skill.",
         "key": "Item key (__workspace__, skill:<name>, or file:<path>).",
+        "keys": "More item keys whose cell for the same agent is switched together with key, saved at once.",
         "agent": "Agent id (claude, codex, ...).",
         "on": "true to use it, false to stop using it."
       },
       "setDocRow": {
-        "summary": "Turn one or more instructions or Skills on or off across agents (from the next turn). Turning them on needs the user's approval.",
+        "summary": "Turn one or more instructions or Skills on or off as whole rows (from the next turn). Off stops every unlocked agent; on restores the state before it was turned off (or, if none, only the agents that read it themselves; it is not shared with other agents). Both need the user's approval.",
         "kind": "instruction or skill.",
         "key": "Item key (__workspace__, skill:<name>, or file:<path>). Omit when passing keys.",
         "keys": "Array of item keys to switch together.",

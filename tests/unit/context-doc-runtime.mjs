@@ -274,6 +274,11 @@ export default async function (t) {
     const osHome = path.join(tmp, 'os-home');
     await fs.mkdir(path.join(osHome, '.claude'), { recursive: true });
     await fs.writeFile(path.join(osHome, '.claude', 'CLAUDE.md'), 'NEVER_SCAN_OS_HOME\n');
+    // まとまりの 1 回の書き込み（レビュー S3）に使う 20 個の Skills
+    for (let i = 0; i < 20; i++) {
+      const n = `bulk-${String(i).padStart(2, '0')}`;
+      await write(path.join(home, '.claude', 'skills', n, 'SKILL.md'), `---\nname: ${n}\ndescription: bulk ${i}\n---\nBULK_${i}`);
+    }
     host = await startServer({ dataDir, env: {
       AGENT_HOST_BACKENDS: 'fake,devin',
       AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`,
@@ -295,6 +300,23 @@ export default async function (t) {
     t.ok('WS setDocAgent 後は touched=true になり、Codex が spread ON で永続化される',
       afterToggle.touched === true && afterToggle.rows.find((r) => r.key === userRow.key).cells.codex.on === true);
 
+    // まとまりのチップ・確認の後の広げは、20 個の名前を 1 回の操作で書く（レビュー S3: 途中で止まって半端に残らない・1.5 秒以内）
+    const skBefore = await client.cmd('docMatrix', { kind: 'skill', place: 'default' });
+    const bulkKeys = skBefore.rows.filter((r) => /^bulk-\d+$/.test(r.name)).map((r) => r.key);
+    let bulkErr = null;
+    try {
+      await client.cmd('setDocAgent', { kind: 'skill', key: bulkKeys[0], keys: [...bulkKeys, 'skill:no-such-skill'], agent: 'codex', on: true, place: 'default' });
+    } catch (e) { bulkErr = e; }
+    const skMid = await client.cmd('docMatrix', { kind: 'skill', place: 'default' });
+    const bulkStart = performance.now();
+    await client.cmd('setDocAgent', { kind: 'skill', key: bulkKeys[0], keys: bulkKeys, agent: 'codex', on: true, place: 'default' });
+    const bulkMs = Math.round(performance.now() - bulkStart);
+    const skAfter = await client.cmd('docMatrix', { kind: 'skill', place: 'default' });
+    const codexOn = (m) => bulkKeys.filter((k) => m.rows.find((r) => r.key === k)?.cells.codex.on).length;
+    t.ok('setDocAgent の keys: 20 個の名前を 1 回で書き（1.5 秒以内）、知らない名前が混ざればどれも書かない',
+      bulkKeys.length === 20 && bulkErr && codexOn(skBefore) === 0 && codexOn(skMid) === 0 && codexOn(skAfter) === 20 && bulkMs < 1500,
+      JSON.stringify({ n: bulkKeys.length, err: bulkErr?.message, before: codexOn(skBefore), mid: codexOn(skMid), after: codexOn(skAfter), bulkMs }));
+
     // agent handler 側（ページネーション・maskTree・maxChars）も ops 経由で検査
     const opDocM = await registry.invoke(
       { by: 'agent', via: 'mcp', sessionId: 's1' },
@@ -305,14 +327,24 @@ export default async function (t) {
     t.ok('AI 向け context.docMatrix handler は limit=1 でページ分割し total・next を返す',
       opDocM.ok && opDocM.result.rows.length === 1 && opDocM.result.total >= 2 && Boolean(opDocM.result.next));
 
-    // setDocRow で場所のまとめ切り替え + setContextSettings({ remove: true }) で同期削除
+    // setDocRow で場所のまとめ切り替え + setContextSettings({ remove: true }) で同期削除。
+    // AGENTS.md は Devin・Grok が自分で読む（鍵つきでオン）ので行のスイッチでは止まらず、断る（押したのに変わらない、を作らない）。
+    // 押せる行（Devin・Grok が読まない GEMINI.md）で、その場所だけの設定を確かめる
+    await write(path.join(repo, 'GEMINI.md'), 'REPO_GEMINI_INST');
     const wsM = await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo });
-    await client.cmd('setDocRow', { kind: 'instruction', key: docItemKey(wsM.rows.find((r) => r.name === 'AGENTS.md')), on: false, place: repo, cwd: repo });
+    let agentsRowErr = null;
+    try {
+      await client.cmd('setDocRow', { kind: 'instruction', key: docItemKey(wsM.rows.find((r) => r.name === 'AGENTS.md')), on: false, place: repo, cwd: repo });
+    } catch (e) { agentsRowErr = e; }
+    await client.cmd('setDocRow', { kind: 'instruction', key: docItemKey(wsM.rows.find((r) => r.name === 'GEMINI.md')), on: false, place: repo, cwd: repo });
     const afterPlaceEdit = await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo });
-    t.ok('WS setDocRow(place) でその場所だけの設定ができ、AGENTS.md のアンロックセルが全て off になる',
-      afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.claude.on === false
-      && afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.codex.on === false
-      && afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.grok.on === true);
+    const geminiAfter = afterPlaceEdit.rows.find((r) => r.name === 'GEMINI.md');
+    const agentsAfter = afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md');
+    t.ok('WS setDocRow(place): 押せる行は鍵の無いマスが全部 off になり、鍵つきでオンの残る AGENTS.md は断って変えない',
+      Object.values(geminiAfter.cells).every((c) => c.locked || !c.on) && geminiAfter.rowSwitchOn === false
+      && /行のスイッチ/.test(String(agentsRowErr?.message ?? '')) && agentsAfter.rowLocked === true && agentsAfter.rowSwitchOn === true
+      && JSON.stringify(agentsAfter.cells) === JSON.stringify(wsM.rows.find((r) => r.name === 'AGENTS.md').cells),
+      JSON.stringify({ err: agentsRowErr?.message, gemini: geminiAfter.cells, agents: agentsAfter.cells }));
 
     // prepareTurn の resolveRuntime も HOME/USERPROFILE ではなく PLEIAD_SCAN_HOME(SCAN_OPTIONS) で解決する
     // Devin は自分で取り込む物を止めないので、Devin が読まないユーザーの Codex の指示を Devin へ広げて、Pleiad が渡す物を作る

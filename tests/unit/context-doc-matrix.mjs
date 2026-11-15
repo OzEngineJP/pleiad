@@ -7,8 +7,10 @@ import {
   normalizeDocAgentsConfig,
 } from '../../core/context-agents.mjs';
 import {
+  DocTouchError,
   applyDocTouch,
   buildDocMatrix,
+  resolveDocForAgent,
   snapshotBaselineAgents,
 } from '../../core/context-doc-matrix.mjs';
 import {
@@ -52,6 +54,9 @@ export default async function (t) {
   const userDevin = mkInst(path.join(home, 'AppData', 'Roaming', 'devin', 'AGENTS.md'), 'devin', 'user');
   const wsClaude = mkInst(path.join(repo, '.claude', 'rules', 'guide.md'), 'claude', 'directory');
   const wsAgents = mkInst(path.join(repo, 'AGENTS.md'), 'common', 'directory');
+  // Devin・Grok が自分で読まない物（鍵つきでオンのマスが無く、行のスイッチを押せる）
+  const userOpen = mkInst(path.join(home, '.config', 'opencode', 'AGENTS.md'), 'opencode', 'user');
+  const wsGemini = mkInst(path.join(repo, 'GEMINI.md'), 'antigravity', 'directory');
 
   const nativeRaw = {
     version: SCANS_VERSION,
@@ -185,18 +190,19 @@ export default async function (t) {
     && !Object.hasOwn(baseRepoNative, docItemKey(userClaude)),
     JSON.stringify({ ply: baseRepoFresh[docItemKey(userClaude)], native: baseRepoNative[docItemKey(userClaude)] ?? null }));
 
-  // 右の欄で行を止めて戻すと、この場所の上書きが無いときの動き（全体の表で Codex にだけ広げた）に戻り、全エージェントをオンにはしない
-  const placeEntries = [userClaude, wsClaude, wsAgents];
+  // 右の欄で行を止めて戻すと、この場所の上書きが無いときの動き（全体の表で Codex にだけ広げた）に戻り、全エージェントをオンにはしない。
+  // （.claude/rules の物は Devin・Grok が自分で読む鍵つきでオンなので行は押せない。押せる GEMINI.md で確かめる）
+  const placeEntries = [userClaude, wsGemini, wsAgents];
   const touchCfg = normalizeDocAgentsConfig({
     version: 1,
-    defaults: { instruction: { agents: { [docItemKey(wsClaude)]: { off: [], spread: ['codex'] } } } },
+    defaults: { instruction: { agents: { [docItemKey(wsGemini)]: { off: [], spread: ['codex'] } } } },
     places: {},
   });
   const pressRow = (on) => applyDocTouch(touchCfg, {
     kind: 'instruction', entries: placeEntries, legacyConfig: nativeRaw, matrixCwd: repo, home,
-    place: repo, placeKey: pathKey(repo), agent: null, keys: [docItemKey(wsClaude)], on,
+    place: repo, placeKey: pathKey(repo), agent: null, keys: [docItemKey(wsGemini)], on,
   });
-  const ruleOf = () => buildDocMatrix({ kind: 'instruction', entries: placeEntries, legacyConfig: nativeRaw, docAgentsConfig: touchCfg, cwd: repo, home }).byKey.get(docItemKey(wsClaude));
+  const ruleOf = () => buildDocMatrix({ kind: 'instruction', entries: placeEntries, legacyConfig: nativeRaw, docAgentsConfig: touchCfg, cwd: repo, home }).byKey.get(docItemKey(wsGemini));
   const beforeRow = ruleOf();
   pressRow(false);
   const offRow = ruleOf();
@@ -204,8 +210,109 @@ export default async function (t) {
   const backRow = ruleOf();
   const onAgents = (row) => Object.keys(row.cells).filter((a) => row.cells[a].on).sort().join(',');
   t.ok('右の欄の行を止めて戻すと、押す前のマスに戻る（全エージェントをオンにしない）',
-    !offRow.rowSwitchOn && onAgents(backRow) === onAgents(beforeRow) && !backRow.cells.opencode.on && backRow.cells.codex.on,
+    !offRow.rowSwitchOn && onAgents(backRow) === onAgents(beforeRow) && onAgents(backRow) === 'antigravity,codex',
     `${onAgents(beforeRow)} → ${onAgents(offRow)} → ${onAgents(backRow)}`);
+
+  // ---- 行のスイッチの規則（ADR 0337 §決定 4・レビュー M4）
+  const defEntries = [userClaude, userCodex, userOpen, wsClaude, wsAgents];
+  const defMatrix = (cfg) => buildDocMatrix({ kind: 'instruction', entries: defEntries, legacyConfig: nativeRaw, docAgentsConfig: cfg, cwd: null, home });
+  const defPress = (cfg, key, on, agent = null) => applyDocTouch(cfg, {
+    kind: 'instruction', entries: defEntries, legacyConfig: nativeRaw, matrixCwd: null, home,
+    place: null, placeKey: null, agent, keys: [key], on,
+  });
+  const onSet = (row) => Object.keys(row.cells).filter((a) => row.cells[a].on).sort().join(',');
+  // 自分の物（~/.codex/AGENTS.md は Codex の鍵つきでオン）: 行のスイッチはオンに見え、押せない（押しても変わらない、を作らない）
+  const codexRow = defMatrix(emptyDocAgentsConfig()).byKey.get(docItemKey(userCodex));
+  let lockedErr = null;
+  try { defPress(emptyDocAgentsConfig(), docItemKey(userCodex), false); } catch (e) { lockedErr = e; }
+  t.ok('鍵つきでオンのマスがある行: 行のスイッチはオン・押せない（setDocRow は docRowLocked で断る）',
+    codexRow.rowSwitchOn === true && codexRow.rowLocked === true && codexRow.anyOn === true
+    && lockedErr instanceof DocTouchError && lockedErr.code === 'docRowLocked',
+    JSON.stringify({ on: codexRow.rowSwitchOn, locked: codexRow.rowLocked, err: lockedErr?.code }));
+
+  // Claude の物は Grok・Devin が自分で読む（鍵つきでオン）ので押せない
+  t.ok('Claude のユーザーの物: Grok・Devin の鍵つきでオンが残るので行のスイッチは押せない',
+    defMatrix(emptyDocAgentsConfig()).byKey.get(docItemKey(userClaude)).rowLocked === true);
+  // OpenCode の物を Codex にも広げてから、行をオフ → オン で、オフにする前（OpenCode・Codex）に戻る
+  const rowCfg = emptyDocAgentsConfig();
+  const ucKey = docItemKey(userOpen);
+  defPress(rowCfg, ucKey, true, 'codex');
+  const spreadOn = onSet(defMatrix(rowCfg).byKey.get(ucKey));
+  defPress(rowCfg, ucKey, false);
+  const offState = defMatrix(rowCfg).byKey.get(ucKey);
+  const wasSaved = rowCfg.defaults.instruction.agents[ucKey]?.was;
+  defPress(rowCfg, ucKey, true);
+  const backState = onSet(defMatrix(rowCfg).byKey.get(ucKey));
+  t.ok('行のスイッチ: オフ→オンで、オフにする前の状態に戻る（was に覚え、戻したら消える）',
+    spreadOn === 'codex,opencode' && offState.rowSwitchOn === false && onSet(offState) === ''
+    && wasSaved?.spread?.includes('codex') && backState === 'codex,opencode'
+    && rowCfg.defaults.instruction.agents[ucKey].was === undefined,
+    JSON.stringify({ spreadOn, off: onSet(offState), wasSaved, backState }));
+  // 保存の形でも was が残る（読み直しても戻せる）
+  defPress(rowCfg, ucKey, false);
+  const reread = normalizeDocAgentsConfig(JSON.parse(JSON.stringify(rowCfg)));
+  defPress(reread, ucKey, true);
+  t.ok('was は保存を読み直しても残り、オンで戻せる',
+    onSet(defMatrix(reread).byKey.get(ucKey)) === 'codex,opencode');
+
+  // 前の状態が無ければ、出どころのエージェント（自分で読む OpenCode）だけオン。ほかへは広げない
+  const freshCfg = normalizeDocAgentsConfig({ version: 1, defaults: { instruction: { agents: { [WORKSPACE_SUMMARY_KEY]: { off: [], spread: [] }, [ucKey]: { off: ['claude', 'codex', 'antigravity', 'opencode', 'devin'], spread: [] } } } }, places: {} });
+  defPress(freshCfg, ucKey, true);
+  t.ok('前の状態が無い行をオン: 出どころのエージェントだけオン（確認なしに全員へ広げない）',
+    onSet(defMatrix(freshCfg).byKey.get(ucKey)) === 'opencode',
+    onSet(defMatrix(freshCfg).byKey.get(ucKey)));
+  // マスを押すと覚えた前の状態は消える（マスで決めた形が新しい基準）
+  defPress(rowCfg, ucKey, false);
+  defPress(rowCfg, ucKey, true, 'codex');
+  t.ok('マスを押すと was は消える', rowCfg.defaults.instruction.agents[ucKey].was === undefined
+    && onSet(defMatrix(rowCfg).byKey.get(ucKey)) === 'codex');
+
+  // 「探す場所」に足したフォルダーの物は自分で読むエージェントが無いので、オンは渡せる全エージェント（Grok は渡せない）
+  const rootDoc = { ...mkInst(path.join(home, 'notes', 'extra.md'), 'common', 'user'), root: path.join(home, 'notes') };
+  rootDoc.origins = [{ path: rootDoc.path, source: 'common', scope: 'user', custom: true }];
+  const rootEntries = [userClaude, rootDoc];
+  const rootKey = docItemKey(rootDoc);
+  const rootCfg = normalizeDocAgentsConfig({ version: 1, defaults: { instruction: { agents: { [WORKSPACE_SUMMARY_KEY]: { off: [], spread: [] }, [rootKey]: { off: ['claude', 'codex', 'antigravity', 'opencode', 'devin'], spread: [] } } } }, places: {} });
+  applyDocTouch(rootCfg, { kind: 'instruction', entries: rootEntries, legacyConfig: nativeRaw, matrixCwd: null, home, place: null, placeKey: null, agent: null, keys: [rootKey], on: true });
+  const rootRow = buildDocMatrix({ kind: 'instruction', entries: rootEntries, legacyConfig: nativeRaw, docAgentsConfig: rootCfg, cwd: null, home }).byKey.get(rootKey);
+  t.ok('自分で読むエージェントが無い物（探す場所の物）のオンは、渡せる全エージェント',
+    onSet(rootRow) === 'antigravity,claude,codex,devin,opencode', onSet(rootRow));
+
+  // まとまりのチップ・確認の後の広げは、複数の名前を 1 回で書く（レビュー S3）
+  const bundleCfg = emptyDocAgentsConfig();
+  const skA = mkSkill('alpha', path.join(home, '.claude', 'skills', 'alpha', 'SKILL.md'), 'claude', 'user');
+  const skB = mkSkill('beta', path.join(home, '.claude', 'skills', 'beta', 'SKILL.md'), 'claude', 'user');
+  const skEntries = [skA, skB];
+  applyDocTouch(bundleCfg, { kind: 'skill', entries: skEntries, legacyConfig: nativeRaw, matrixCwd: null, home, place: null, placeKey: null, agent: 'codex', keys: [docItemKey(skA), docItemKey(skB)], on: true });
+  const skM = buildDocMatrix({ kind: 'skill', entries: skEntries, legacyConfig: nativeRaw, docAgentsConfig: bundleCfg, cwd: null, home });
+  t.ok('setDocAgent の keys: 複数の名前の同じエージェントのマスを 1 回で書く',
+    skM.byKey.get(docItemKey(skA)).cells.codex.on && skM.byKey.get(docItemKey(skB)).cells.codex.on);
+
+  // ---- 場所のまとめの行（CLAUDE.md・AGENTS.md）が、場所のファイルの行と実行時に届く（レビュー M3）
+  const sumCfg = emptyDocAgentsConfig();
+  const sumEntries = [userClaude, wsClaude, wsAgents];
+  applyDocTouch(sumCfg, {
+    kind: 'instruction', entries: sumEntries, legacyConfig: nativeRaw, matrixCwd: repo, home,
+    place: repo, placeKey: pathKey(repo), agent: 'claude', keys: [WORKSPACE_SUMMARY_KEY], on: false,
+  });
+  const sumM = buildDocMatrix({ kind: 'instruction', entries: sumEntries, legacyConfig: nativeRaw, docAgentsConfig: sumCfg, cwd: repo, home });
+  const sumClaude = resolveDocForAgent({ kind: 'instruction', agent: 'claude', entries: sumEntries, legacyConfig: nativeRaw, docAgentsConfig: sumCfg, cwd: repo, home });
+  const suppressed = new Set(sumClaude.suppress.map((c) => pathKey(c.path)));
+  t.ok('場所のまとめの行で Claude を外すと、その場所の作業場所の行の Claude も外れ、実行時に止まる（ユーザーの物は変わらない）',
+    !sumM.summaryRow.cells.claude.on
+    && !sumM.byKey.get(docItemKey(wsClaude)).cells.claude.on && !sumM.byKey.get(docItemKey(wsAgents)).cells.claude.on
+    && sumM.byKey.get(docItemKey(userClaude)).cells.claude.on
+    && suppressed.has(pathKey(wsClaude.path)) && suppressed.has(pathKey(wsAgents.path)),
+    JSON.stringify({ suppress: [...suppressed], rows: sumM.rows.map((r) => [r.name, r.cells.claude.on]) }));
+  applyDocTouch(sumCfg, {
+    kind: 'instruction', entries: sumEntries, legacyConfig: nativeRaw, matrixCwd: repo, home,
+    place: repo, placeKey: pathKey(repo), agent: 'claude', keys: [WORKSPACE_SUMMARY_KEY], on: true,
+  });
+  const sumBack = buildDocMatrix({ kind: 'instruction', entries: sumEntries, legacyConfig: nativeRaw, docAgentsConfig: sumCfg, cwd: repo, home });
+  t.ok('場所のまとめの行で Claude を戻すと、作業場所の行の Claude も戻る',
+    sumBack.summaryRow.cells.claude.on && sumBack.byKey.get(docItemKey(wsClaude)).cells.claude.on && sumBack.byKey.get(docItemKey(wsAgents)).cells.claude.on);
+  t.ok('まとめの行は Devin・Grok が鍵つきでオンなので、行のスイッチはオンで押せない',
+    sumBack.summaryRow.rowSwitchOn === true && sumBack.summaryRow.rowLocked === true);
 
   // ---- Pleiad の指示（Grok 解放・委譲と連動だけ別扱い・toggleAgent）
   const initList = normalizePlyInstructions(null, null, 'ja');

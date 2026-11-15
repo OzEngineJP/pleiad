@@ -19,7 +19,7 @@ import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
 import { agentShortLabel } from './agent-brands.mjs';
-import { MATRIX_ICON, agentChip, agentLegend, agentStrip, askBanner, docLockReason, docRowLockSummary, matrixSvg, rowSwitch } from './context-matrix.mjs';
+import { MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocRowLocal, askBanner, docBundleLocked, docLockReason, docRowLockSummary, matrixSvg, recalcDocRow, rowSwitch } from './context-matrix.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
 const TAB_KEY = 'ply-context-tab';
@@ -246,26 +246,6 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   // ---------------------------------------------------------------- 種類のカード
   const originText = row => entryOrigins(row);
 
-  function recalcDocRow(row, agentIds) {
-    const unlocked = agentIds.filter(a => !row.cells[a]?.locked);
-    const unlockedOn = unlocked.filter(a => row.cells[a]?.on);
-    const anyLockedOn = agentIds.some(a => row.cells[a]?.locked && row.cells[a]?.on);
-    row.rowLocked = unlocked.length === 0;
-    row.rowMixed = unlockedOn.length > 0 && unlockedOn.length < unlocked.length;
-    row.rowSwitchOn = row.rowLocked ? anyLockedOn : unlockedOn.length > 0;
-    row.anyOn = unlockedOn.length > 0 || anyLockedOn;
-  }
-
-  function applyDocRowLocal(row, agentIds, on) {
-    for (const a of agentIds) {
-      const c = row.cells[a];
-      if (!c || c.locked) continue;
-      c.on = Boolean(on);
-      c.mode = on ? (c.native ? 'native' : 'spread') : 'off';
-    }
-    recalcDocRow(row, agentIds);
-  }
-
   function applyDocAgentLocal(row, agentIds, agent, on) {
     const c = row.cells[agent];
     if (!c || c.locked) return;
@@ -390,11 +370,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     runDocMutation(
       kind,
       d => { for (const k of targetKeys) { const r = findDocRow(d, k); if (r) applyDocAgentLocal(r, d.agents, agent, nextOn); } },
-      async () => {
-        for (const k of targetKeys) {
-          await cmd('setDocAgent', { kind, key: k, agent, on: nextOn, place: 'default', cwd: home() });
-        }
-      },
+      // 複数の名前を 1 回の操作で書く（途中で止まって半端に残らない。レビュー S3）
+      () => cmd('setDocAgent', { kind, key: targetKeys[0], keys: targetKeys, agent, on: nextOn, place: 'default', cwd: home() }),
     );
   }
 
@@ -436,11 +413,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
           runDocMutation(
             kind,
             d => { for (const k of keys) { const r = findDocRow(d, k); if (r) applyDocAgentLocal(r, d.agents, a.agent, true); } },
-            async () => {
-              for (const k of keys) {
-                await cmd('setDocAgent', { kind, key: k, agent: a.agent, on: true, place: 'default', cwd: home() });
-              }
-            },
+            () => cmd('setDocAgent', { kind, key: keys[0], keys, agent: a.agent, on: true, place: 'default', cwd: home() }),
           );
         } else {
           runDocMutation(
@@ -578,7 +551,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       const anyBundleOn = items.some(e => e.anyOn);
       const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
       const swState = bundleSwitchState(items, e => e.rowSwitchOn, actionLabel);
-      const allLocked = items.every(e => e.rowLocked);
+      const allLocked = docBundleLocked(items);
       const row = el('div', 'cx-row ag grp' + (anyBundleOn ? '' : ' off'));
       row.dataset.key = `bundle:${block.key}`;
       const tw = button('', 'cx-ic cx-tw');

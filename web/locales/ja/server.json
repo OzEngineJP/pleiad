@@ -935,7 +935,7 @@
       "mcpNotPressable": "{{name}} は {{agent}} では切り替えられません",
       "unknownDocItem": "この項目の指示・Skill は一覧にありません: {{key}}",
       "docNotPressable": "{{name}} は {{agent}} では切り替えられません",
-      "docRowLocked": "{{name}} はすべてのエージェントが固定されているため切り替えられません",
+      "docRowLocked": "{{name}} は行のスイッチでは切り替えられません（鍵の付いたエージェントが自分で読むため止まらないか、切り替えられるエージェントがありません）。鍵の無いマスがあれば、マスを押して切り替えてください",
       "docTargetRequired": "切り替える項目を指定してください",
       "connectorsUnread": "claude.ai のコネクターの一覧を読めませんでした。少し待ってからもう一度お試しください",
       "kindInvalid": "プラグインの設定の形式が不正です",

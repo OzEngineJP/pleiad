@@ -33,8 +33,11 @@ export function createMcpMatrix({ section, onCount }) {
   const toggles = (m, row) => m.agents.filter(a => row.cells[a].mode === 'toggle');
   /** 全体をオンにしたときの既定。Pleiad の登録はどのエージェントにも、エージェントの設定は持っているエージェントに */
   const defaults = (m, row) => toggles(m, row).filter(a => row.group === 'ply' || row.origins.includes(a));
-  const stuck = (m, row) => !defaults(m, row).length && !toggles(m, row).some(a => row.cells[a].state === 'on');
-  const switchOn = (m, row) => stuck(m, row) || toggles(m, row).some(a => row.cells[a].state === 'on');
+  // 行のスイッチは指示・Skills の表と同じ規則（ADR 0337 §決定 4）: どれかのエージェントで使っていればオン（鍵つきでオンも数える）、
+  // 全部オフのときだけオフ。鍵つきでオンのマスが残る行と、オンにしても使うエージェントが無い行は押せない（押しても変わらない、を作らない）
+  const lockedOn = (m, row) => m.agents.filter(a => row.cells[a].mode === 'locked' && row.cells[a].state === 'on');
+  const stuck = (m, row) => lockedOn(m, row).length > 0 || (!defaults(m, row).length && !toggles(m, row).some(a => row.cells[a].state === 'on'));
+  const switchOn = (m, row) => m.agents.some(a => row.cells[a].state === 'on');
 
   /** 変更を先に画面へ反映し、1 つずつ保存して、サーバーの行を取り直す（保存に失敗したら元に戻る） */
   function apply(ctx, row, changes, keep = null) {
@@ -134,7 +137,7 @@ export function createMcpMatrix({ section, onCount }) {
     const swLabel = t('mcp.switchAria', { name: calledOf(row) });
     sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(on)); sw.setAttribute('aria-label', swLabel);
     if (isStuck) {
-      const lockAgent = m.agents.find(a => row.cells[a].mode === 'locked' || row.cells[a].mode === 'blocked')
+      const lockAgent = lockedOn(m, row)[0] ?? m.agents.find(a => row.cells[a].mode === 'locked' || row.cells[a].mode === 'blocked')
         ?? m.agents.find(a => row.cells[a].state === 'on');
       const reason = lockAgent ? lockReasonText(label(lockAgent), row.cells[lockAgent]) : t('mcp.matrix.locked');
       sw.setAttribute('aria-disabled', 'true');

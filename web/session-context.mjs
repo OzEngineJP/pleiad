@@ -27,7 +27,7 @@ import {
   CONTEXT_TABS, readTabStorage, writeTabStorage,
   groupEntries, bundleSwitchState, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
 } from './context-tabs.mjs';
-import { rowSwitch, docLockReason, docRowLockSummary } from './context-matrix.mjs';
+import { rowSwitch, docBundleLocked, docLockReason, docRowLockSummary } from './context-matrix.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
@@ -867,7 +867,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const items = (query ? kids : block.items).map(i => i.entry);
         const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
         const swState = bundleSwitchState(items, e => Boolean(e.rowSwitchOn), actionLabel);
-        const allLocked = items.every(e => e.rowLocked);
+        const allLocked = docBundleLocked(items);
         const pressableKeys = items.filter(e => !e.rowLocked).map(e => e.key);
         const anyBundleOn = items.some(e => e.anyOn);
         const row = el('div', 'cx-row grp' + (anyBundleOn ? '' : ' off'));

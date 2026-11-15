@@ -24,6 +24,7 @@ import {
   resolveRuleForItem,
   setDocRowRule,
   toggleDocAgentRule,
+  unlockedOnAgents,
 } from './context-agents.mjs';
 
 /**
@@ -91,14 +92,20 @@ export function groupDocEntries(kind, entries = [], preferMap = {}) {
   return items;
 }
 
-function summarizeRowMeta(cells) {
+/**
+ * 行のスイッチの見え方（ADR 0337 §決定 4。web/context.mjs の recalcDocRow と同じ）。
+ * どれかのエージェントに実際に渡っていればオン（鍵つきでオンのマスも数える）、全部オフのときだけオフ、一部なら「一部」。
+ * 鍵つきでオンのマスが残る行は、押してもスイッチが変わらないので押せない（rowLocked）
+ */
+export function summarizeRowMeta(cells) {
   const unlocked = DOC_AGENT_IDS.filter((a) => !cells[a].locked);
   const unlockedOn = unlocked.filter((a) => cells[a].on);
-  const anyLockedOn = DOC_AGENT_IDS.some((a) => cells[a].locked && cells[a].on);
-  const rowLocked = unlocked.length === 0;
-  const rowMixed = unlockedOn.length > 0 && unlockedOn.length < unlocked.length;
-  const rowSwitchOn = unlocked.length > 0 ? unlockedOn.length > 0 : anyLockedOn;
-  return { rowLocked, rowMixed, rowSwitchOn, anyOn: unlockedOn.length > 0 || anyLockedOn };
+  const lockedOn = DOC_AGENT_IDS.filter((a) => cells[a].locked && cells[a].on);
+  const onCount = unlockedOn.length + lockedOn.length;
+  const rowLocked = unlocked.length === 0 || lockedOn.length > 0;
+  const rowMixed = onCount > 0 && onCount < unlocked.length + lockedOn.length;
+  const rowSwitchOn = onCount > 0;
+  return { rowLocked, rowMixed, rowSwitchOn, anyOn: onCount > 0 };
 }
 
 function mergeWorkspaceFallback(legacyBase, wsRule) {
@@ -263,17 +270,21 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
     return { k, row };
   });
   let pressable;
-  if (agent) {
-    pressable = targets.slice(0, 1);
+  if (agent && targets.length === 1) {
+    pressable = targets;
     const { k, row } = pressable[0];
     const cell = row.cells[agent];
     if (!cell || cell.locked) throw new DocTouchError('docNotPressable', { name: row.name ?? k, agent });
+  } else if (agent) {
+    // まとまりのチップ・確認の後の広げは、複数の名前を 1 回で書く（途中で止まって半端に残らない。レビュー S3）。鍵のマスの名前は飛ばす
+    pressable = targets.filter((tRow) => tRow.row.cells[agent] && !tRow.row.cells[agent].locked);
+    if (!pressable.length) throw new DocTouchError('docNotPressable', { name: targets[0].row.name ?? targets[0].k, agent });
   } else {
     pressable = targets.filter((tRow) => !tRow.row.rowLocked);
     if (!pressable.length) throw new DocTouchError('docRowLocked', { name: targets[0].row.name ?? targets[0].row.key });
   }
-  // 場所の行を「使う」に戻すときは、全エージェントをオンにせず、この場所の上書きが無いときの動き（全体の表・旧い保存）に戻す。
-  // main の右パネルで除外を外したときと同じ（外す前の担当の渡し方に戻る）。戻した先が全部オフのときだけ、全エージェントをオンにする
+  // 行のスイッチでオンに戻すときは、(1) この場所でオフにする前の規則（was）、(2) 場所の行なら、この場所の上書きが無いときの動き
+  // （全体の表・旧い保存。main の右パネルで除外を外したときと同じ）、(3) 出どころのエージェントだけ、の順に戻す（ADR 0337 §決定 4）
   let restore = null;
   if (!agent && placeKey && on) {
     const without = structuredClone(cfg);
@@ -286,17 +297,33 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
     const { legacyOwner } = resolveEffectiveDocSource(legacyConfig, cfg, place ?? null, kind);
     holder[kind] = { agents: snapshotBaselineAgents({ kind, entries, legacyConfig, docAgentsConfig: cfg, place, home }), legacyOwner };
   }
+  // 場所のまとめの行（CLAUDE.md・AGENTS.md）は、明示の規則を持つ作業場所の行には届かない（場所を初めて触ると全部の行の規則を写す）。
+  // まとめの行を押したら、その場所で明示の規則を持つ作業場所の行にも同じ操作をする（レビュー M3）
+  if (placeKey && pressable.some((p) => p.k === WORKSPACE_SUMMARY_KEY)) {
+    const chain = resolveEffectiveDocSource(legacyConfig, cfg, place ?? null, kind).agentsChain;
+    const seen = new Set(pressable.map((p) => p.k));
+    for (const row of matrix.rows) {
+      if (seen.has(row.key) || row.scope === 'user' || !hasExplicitRule(chain, row.key)) continue;
+      if (agent ? (!row.cells[agent] || row.cells[agent].locked) : row.rowLocked) continue;
+      pressable.push({ k: row.key, row });
+    }
+  }
+  const ctx = { legacyOwner: matrix.legacyOwner };
   for (const { k, row } of pressable) {
     const entryOrSummary = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
-    const inherited = restore ? (k === WORKSPACE_SUMMARY_KEY ? restore.summaryRow : restore.byKey.get(k)) : null;
-    if (inherited?.rowSwitchOn && !inherited.rowLocked) {
-      holder[kind].agents[k] = { off: [...(inherited.rule.off ?? [])], spread: [...(inherited.rule.spread ?? [])] };
+    const curRule = holder[kind].agents[k] ?? row.rule;
+    if (agent) {
+      holder[kind].agents[k] = toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on), ctx);
       continue;
     }
-    const curRule = holder[kind].agents[k] ?? row.rule;
-    holder[kind].agents[k] = agent
-      ? toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on), { legacyOwner: matrix.legacyOwner })
-      : setDocRowRule(kind, entryOrSummary, curRule, Boolean(on), { legacyOwner: matrix.legacyOwner });
+    if (on && !curRule?.was) {
+      const inherited = restore ? (k === WORKSPACE_SUMMARY_KEY ? restore.summaryRow : restore.byKey.get(k)) : null;
+      if (inherited && unlockedOnAgents(kind, entryOrSummary, inherited.rule, ctx).length) {
+        holder[kind].agents[k] = { off: [...(inherited.rule.off ?? [])], spread: [...(inherited.rule.spread ?? [])] };
+        continue;
+      }
+    }
+    holder[kind].agents[k] = setDocRowRule(kind, entryOrSummary, curRule, Boolean(on), ctx);
   }
   return cfg;
 }

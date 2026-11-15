@@ -235,6 +235,7 @@ export const contextOps = [
     input: z.object({
       kind: z.enum(['instruction', 'skill']).describe(D('setDocAgent', 'kind')),
       key: z.string().min(1).max(4096).describe(D('setDocAgent', 'key')),
+      keys: z.array(z.string().min(1).max(4096)).max(1000).optional().describe(D('setDocAgent', 'keys')),
       agent: z.string().max(40).describe(D('setDocAgent', 'agent')),
       on: z.boolean().describe(D('setDocAgent', 'on')),
       place: z.string().max(4096).nullable().optional().describe(D('setSettings', 'place')),
@@ -243,16 +244,16 @@ export const contextOps = [
     }),
     approvalWords: 'context',
     // i18n-dynamic: server:opsApproval.kind.
-    confirm: async (_ctx, { kind, key, agent, on }) => ({
+    confirm: async (_ctx, { kind, key, keys, agent, on }) => ({
       key: null, before: null,
-      rows: [{ path: `context.${kind}.${key}.${agent}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') }],
-      note: t('opsApproval.docAgent', { kind: t(`opsApproval.kind.${kind}`), name: key, agent }),
+      rows: [...new Set([key, ...(keys ?? [])])].map((k) => ({ path: `context.${kind}.${k}.${agent}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') })),
+      note: t('opsApproval.docAgent', { kind: t(`opsApproval.kind.${kind}`), name: keys?.length > 1 ? `${key} (+${new Set([key, ...keys]).size - 1})` : key, agent }),
       // 外す向きも、エージェントが守る決まりを減らすので緩める変更として扱う（setSettings の除外と同じ）
       loosens: true,
     }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'doc-agent'], positional: ['kind', 'key', 'agent'] } },
     legacyCommand: 'setDocAgent',
-    handler: (ctx, { kind, key, agent, on, place, cwd }) => run(ctx, () => ctx.context.setDocAgent({ kind, key, agent, on, place, cwd }, ctx.actor)),
+    handler: (ctx, { kind, key, keys, agent, on, place, cwd }) => run(ctx, () => ctx.context.setDocAgent({ kind, key, keys, agent, on, place, cwd }, ctx.actor)),
   }),
   defineOp({
     id: 'context.setDocRow', summary: 'agent:ops.context.setDocRow.summary', risk: 'guarded',

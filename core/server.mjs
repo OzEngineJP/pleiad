@@ -5541,13 +5541,16 @@ const opsContext = {
       searched: scan.searched, skipped: scan.skipped, diagnostics: scan.diagnostics, limited: scan.limited,
     };
   },
-  setDocAgent: async ({ kind, key, agent, on, place, cwd } = {}, actor) => {
+  // keys: まとまりのチップ・確認の後の広げで、複数の名前の同じエージェントのマスを 1 回で書く（レビュー S3）
+  setDocAgent: async ({ kind, key, keys, agent, on, place, cwd } = {}, actor) => {
     if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
+    const list = [...new Set([...(key ? [key] : []), ...(Array.isArray(keys) ? keys : [])])];
+    if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
     const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
     const nextCfg = await contextAgents.mutate(async (cfg) => docTouch(cfg, {
       kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
-      place: where, placeKey: where ? pathKey(where) : null, agent, keys: [key], on,
+      place: where, placeKey: where ? pathKey(where) : null, agent, keys: list, on,
     }));
     if (where) {
       const cur = await contextSettings.view(where);
