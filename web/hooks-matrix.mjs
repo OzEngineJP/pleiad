@@ -434,5 +434,5 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     else if (fk) root.querySelector(`[data-cx-fk="${CSS.escape(fk)}"]`)?.focus({ preventScroll: true });
   }
   render();
-  return { root, load, reload, get grid() { return grid; } };
+  return { root, load, reload, render, get grid() { return grid; } };
 }

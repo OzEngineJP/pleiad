@@ -3635,6 +3635,7 @@ async function loadBackends(early = null) {
   renameHandoffCards();
   // ロゴと短い名前（エージェントの記述）。脇の行・入口のチップ・入力欄の区切りがここから引く
   setAgentBrands(state.backends);
+  context.refreshBrands();
   // mark 型のロゴを文書内シンボルとして先に読み始める（開く前に届いていればちかちかしない）
   preloadBrandMarks(state.backends);
   for (const b of state.backends) { applyToolHints(b.toolHints); applySubagentTools(b.subagentTools); }

@@ -908,6 +908,30 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     updateCounts();
   }
 
+  /** 一覧が遅れて届いたときは保持済みの表だけを描き直す。保存・探索・タブの選び直しはしない。 */
+  function refreshBrands() {
+    if (!view) return;
+    const active = document.activeElement;
+    const route = [];
+    if (active && panel.contains(active)) {
+      for (let node = active; node !== panel; node = node.parentElement) route.unshift(Array.from(node.parentElement.children).indexOf(node));
+    }
+    const sc = panel.closest('.settings-content');
+    const scroll = sc ? [sc.scrollLeft, sc.scrollTop] : null;
+    const selection = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+    plyInstructions.render();
+    renderAll();
+    hooks.render();
+    // 確認のボタンや MCP の詳細の操作は、フォーカス用のキーを持たないものもある。
+    // データも開閉も同じなので、同じ位置の要素へ戻す（ロゴの中は操作対象ではない）。
+    if (route.length) {
+      const target = route.reduce((node, index) => node?.children[index], panel);
+      target?.focus?.({ preventScroll: true });
+      if (selection) target?.setSelectionRange?.(...selection);
+    }
+    if (scroll) { sc.scrollLeft = scroll[0]; sc.scrollTop = scroll[1]; }
+  }
+
   // ---------------------------------------------------------------- 読み込み
   /** 外部 MCP の一覧だけを取り直す（アイコンの保存のあと・コネクターを読んでいる間） */
   async function reloadMatrix() {
@@ -1053,5 +1077,5 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   /** 設定のコンテキストのページを開く（いつも全体の設定） */
   function openPage() { show(); return open(); }
   openButton.onclick = () => openPage();
-  return { openPage, get scanning() { return scanning; } };
+  return { openPage, refreshBrands, get scanning() { return scanning; } };
 }
