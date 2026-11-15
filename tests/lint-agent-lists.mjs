@@ -212,7 +212,8 @@ function resolver(files) {
     } else if (f?.imports.has(name)) {
       const target = f.imports.get(name);
       if (target.startsWith('.')) {
-        const p = path.normalize(path.join(path.dirname(file), target));
+        // 一覧の鍵は `/` 区切りの相対パス。Windows でも同じ鍵で引く（`\` のままだと import 先を引けず、広げた一覧を見逃す）
+        const p = path.posix.normalize(path.posix.join(path.posix.dirname(file), target));
         found = resolve(p, name, [...via, key]) ?? { ids: new Set(), missing: new Set([name]) };
       }
     }
@@ -251,6 +252,7 @@ export const ALLOWED = [
   { file: 'core/hooks-copy.mjs', expect: 'nativeHooks', reason: 'Hooks の設定を別エージェントの形に写すときの対象（native だけ）' },
   { file: 'core/hook-adapter.mjs', expect: 'nativeHooks', reason: 'Hooks の機構を持つエージェントだけを扱う単独ファイル（import しない）' },
   { file: 'core/hooks-unify.mjs', expect: 'nativeHooks', reason: 'Hooks の統合で native 側の鍵を扱う一覧' },
+  { file: 'core/hooks-agents.mjs', expect: 'nativeHooks', reason: '旧「Pleiad がそろえる」から移すとき、作業場所の Hooks の行で止める相手（作業場所の定義を自分で持つエージェント = HOOK_AGENTS。ADR 0338）' },
   { file: 'web/hooks-card.mjs', expect: 'nativeHooks', reason: 'Hooks の機構を持つエージェントの欄（HOOK_AGENTS）' },
   // 互換エンドポイント（capabilities.compatEndpoints: true のエージェントだけ）
   { file: 'web/compat-endpoints.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの画面の対象' },
