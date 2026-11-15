@@ -4588,6 +4588,8 @@
       "stripAria": "{{name}} を実行するエージェント",
       "ask": "{{from}} の設定の Hook を、{{to}} でも実行します",
       "askAria": "{{name}} を {{to}} でも実行する確認",
+      "askStop": "この操作で、この場所の Devin の取り込み（read_config_from）が止まります",
+      "askStopAria": "{{name}} を変えると Devin の取り込みが止まる確認",
       "confirm": "実行する",
       "loadFailed": "Hooks の一覧を読めませんでした: {{error}}",
       "repaired": "直しました。",

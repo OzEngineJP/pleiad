@@ -621,6 +621,85 @@ export default async function (t) {
     const resetOp = await as('bypass', 'hooks.resetAgents', {});
     t.ok('hooks.resetAgents: 移行前へ戻す', resetOp.ok && !await ha.exists());
     t.ok('移行前へ戻すと、旧い担当の操作はまた通る', (await asHuman('hooks.setOwner', { place: repo, value: { owner: 'ply' } })).ok);
+    // ---------------------------------------------------------------- Devin の取り込みが止まり始める操作（3 回目のレビューの必須）
+    // 旧「そろえる」で Devin へ向けた登録がある人の、実際の移行結果から: 止まっていない状態から止まる状態へ変える操作は、どの入口でも
+    // 一覧が印を付け（セル stopsDevinImports・行 switchConfirm・この場所で使う here.confirm）、試算（dry）・承認のカード・戻りが知らせる
+    {
+      const other = path.join(tmp, 'other');
+      await fs.mkdir(other, { recursive: true });
+      const both = await plyHooks.save({ name: 'both', agent: CLAUDE, event: 'Stop', matcher: '', command: 'node both.mjs', targets: [CLAUDE, DEVIN] });
+      const only = await plyHooks.save({ name: 'only', agent: CLAUDE, event: 'Stop', matcher: '', command: 'node only.mjs', targets: [DEVIN] });
+      await plyHooks.setOwner({ place: repo, value: null });
+      // 全体を先に「そろえる」にしてから、other だけ「任せる」（全体と同じ値の場所は保存のときに畳まれる）
+      await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [] } });
+      await plyHooks.setOwner({ place: other, value: { owner: 'native' } });
+      const stopText = T('opsApproval.hooksDevinImportsStop', { note: '' }).trim();
+      const rowOf = (m, k) => m.rows.find(r => r.key === k);
+      const stops = (m, k) => cell(m, k, DEVIN).stopsDevinImports === true && cell(m, k, DEVIN).needsConfirm === true && warnCodes(m, k).includes('devinImportsStop');
+      const m0 = await ha.matrix({ cwd: repo });
+      t.ok('移行の結果の一覧: 元の対象に Devin を含む行の Devin のマス（広げる確認は要らない）も、入れると取り込みが止まり始めるので確認の印（stopsDevinImports）',
+        !(await ha.exists()) && cell(m0, both.id, DEVIN).state === 'off' && stops(m0, both.id), JSON.stringify(cell(m0, both.id, DEVIN)));
+      t.ok('Devin だけの行の行スイッチにも印（switchConfirm・devinImportsStop）。入っている行・Devin の無い行には付かない',
+        rowOf(m0, only.id).switchConfirm?.warnings?.[0]?.code === 'devinImportsStop' && !rowOf(m0, both.id).switchConfirm && !rowOf(m0, reg.id).switchConfirm,
+        JSON.stringify(rowOf(m0, only.id)));
+      const mOther = await ha.matrix({ cwd: other });
+      t.ok('取り込みの止まらない場所（任せるの場所の上書き）では、同じマスに止まる印を付けない',
+        cell(mOther, both.id, DEVIN).stopsDevinImports !== true && !rowOf(mOther, only.id).switchConfirm, JSON.stringify(cell(mOther, both.id, DEVIN)));
+      const dry = [await ha.setAgent({ key: both.id, agent: DEVIN, on: true, cwd: repo, dry: true }), await ha.setRow({ key: only.id, on: true, cwd: repo, dry: true }),
+        await ha.setGroup({ group: 'ply', on: true, cwd: repo, dry: true }), await ha.setGroup({ group: 'ply', agent: DEVIN, on: true, cwd: repo, dry: true })];
+      const dryOther = await ha.setAgent({ key: both.id, agent: DEVIN, on: true, cwd: other, dry: true });
+      t.ok('試算（dry）: マス・行・まとまり（全体・Devin だけ）は devinImportsStop。止まらない場所では false。何も書かない',
+        dry.every(r => r.devinImportsStop === true) && dryOther.devinImportsStop === false && !(await ha.exists()), JSON.stringify({ dry, dryOther }));
+
+      // AI・CLI（hooks.set*）: 承認待ちになり、カードの文が取り込みが止まることを知らせる
+      let lastReq = null;
+      const approve0 = deps.approve;
+      deps.approve = async req => { lastReq = req; return approve0(req); };
+      const noteOf = async (op, args) => { lastReq = null; const r = await card(op, args); return r ? String(lastReq?.change?.note ?? '') : null; };
+      const notes = { agent: await noteOf('hooks.setAgent', { key: both.id, agent: DEVIN, on: true }), row: await noteOf('hooks.setRow', { key: only.id, on: true }),
+        group: await noteOf('hooks.setGroup', { group: 'ply', on: true }), groupDevin: await noteOf('hooks.setGroup', { group: 'ply', agent: DEVIN, on: true }) };
+      const plain = await noteOf('hooks.setAgent', { key: reg.id, agent: CLAUDE, on: true });
+      t.ok('hooks.setAgent（元の対象に Devin を含む行の Devin）・setRow（Devin だけの行）・setGroup: 承認待ちになり、カードの文に取り込みが止まること',
+        Object.values(notes).every(n => n !== null && n.includes(stopText)) && plain !== null && !plain.includes(stopText) && !(await ha.exists()), JSON.stringify({ notes, plain }));
+      const ran = await as('bypass', 'hooks.setAgent', { key: both.id, agent: DEVIN, on: true });
+      t.ok('承認されて動いた操作の戻りに devinImportsStop、実際に取り込みが止まる（devinImportsStopped）',
+        ran.ok && ran.result.devinImportsStop === true && await ha.devinImportsStopped(repo) === true, JSON.stringify(ran));
+      const m1 = await ha.matrix({ cwd: repo });
+      const second = await as('bypass', 'hooks.setRow', { key: only.id, on: true });
+      t.ok('既に止まっている場所: 2 つ目の Devin のマス・行には止まる印を付けず、戻りにも devinImportsStop を付けない',
+        cell(m1, only.id, DEVIN).stopsDevinImports !== true && !rowOf(m1, only.id).switchConfirm && second.ok && second.result.devinImportsStop === undefined,
+        JSON.stringify({ cell: cell(m1, only.id, DEVIN), second }));
+      await ha.setAgent({ key: both.id, agent: DEVIN, on: false, cwd: repo });
+      await ha.setRow({ key: only.id, on: false, cwd: repo });
+      const m2 = await ha.matrix({ cwd: repo });
+      t.ok('Devin のマスを切って取り込みが戻ると、もう一度入れるときにまた印が付く（聞き直す）', await ha.devinImportsStopped(repo) === false && stops(m2, both.id));
+
+      // この場所で使う（setPlace use: true）: この場所だけ外していた Devin の行を戻すと止まり始める
+      await ha.setPlace({ place: repo, key: only.id, use: false });
+      await ha.setRow({ key: only.id, on: true });
+      const m3 = await ha.matrix({ cwd: repo });
+      const placeDry = await ha.setPlace({ place: repo, key: only.id, use: true, dry: true });
+      const placeNote = await noteOf('hooks.setPlace', { place: repo, key: only.id, use: true });
+      t.ok('この場所で使う: 押すと止まり始める行に here.confirm、試算は devinImportsStop、承認のカードの文も知らせる',
+        await ha.devinImportsStopped(repo) === false && rowOf(m3, only.id).here?.use === false && rowOf(m3, only.id).here?.confirm?.warnings?.[0]?.code === 'devinImportsStop'
+        && placeDry.devinImportsStop === true && placeNote?.includes(stopText), JSON.stringify({ here: rowOf(m3, only.id).here, placeDry, placeNote }));
+      const placed = await as('bypass', 'hooks.setPlace', { place: repo, key: only.id, use: true });
+      t.ok('この場所で使う: 戻りに devinImportsStop、その場所で取り込みが止まる', placed.ok && placed.result.devinImportsStop === true && await ha.devinImportsStopped(repo) === true, JSON.stringify(placed));
+
+      // 元に戻す（setPlace reset: true）: 止まらない場所の上書き（任せる）を消して、止まっている全体へ戻ると止まり始める
+      const resetDry = await ha.setPlace({ place: other, reset: true, dry: true });
+      const resetNote = await noteOf('hooks.setPlace', { place: other, reset: true });
+      const resetRan = await as('bypass', 'hooks.setPlace', { place: other, reset: true });
+      t.ok('場所の上書きを戻す（reset）: 試算・承認のカード・戻りが知らせ、その場所で取り込みが止まる',
+        resetDry.devinImportsStop === true && resetNote?.includes(stopText) && resetRan.ok && resetRan.result.devinImportsStop === true && await ha.devinImportsStopped(other) === true,
+        JSON.stringify({ resetDry, resetNote, resetRan }));
+      deps.approve = approve0;
+      await ha.reset();
+      await plyHooks.setOwner({ place: other, value: null });
+      await plyHooks.setOwner({ place: null, value: { owner: 'native' } });
+      await plyHooks.remove(both.id);
+      await plyHooks.remove(only.id);
+    }
     t.ok('利用者の設定ファイルは最後まで書き換えない', await userUnchanged());
   } finally {
     if (!containsPath(tempRoot, tmp) || !path.basename(tmp).startsWith('ply-hooks-agents-')) throw new Error('unexpected test path');

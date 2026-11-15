@@ -157,11 +157,15 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
   }
   const findRow = key => grid?.rows?.find(r => r.key === key) ?? null;
 
-  function toggleCell(row, agent, fk) {
+  /**
+   * now: 確認の帯で「実行する」を押した後。広げる確認は行とエージェントの組で覚えるが、Devin の取り込みが止まり始める確認（stopsDevinImports）は
+   * 覚えない（Devin のマスを切って取り込みが戻った後に、もう一度入れるときも聞く）。どちらも core の一覧の印だけで決める
+   */
+  function toggleCell(row, agent, fk, now = false) {
     const cell = row.cells[agent];
     if (!cell || cell.mode !== 'toggle') return;
     const on = cell.state !== 'on';
-    if (on && cell.needsConfirm && !confirmed.has(`${row.key}:${agent}`)) {
+    if (!now && cell.needsConfirm && (cell.stopsDevinImports || (on && !confirmed.has(`${row.key}:${agent}`)))) {
       ask = { key: row.key, agent, fk };
       focus = '.cx-ask .btn-primary';
       render();
@@ -173,8 +177,15 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     mutate(g => { const r = g.rows.find(x => x.key === row.key); if (r) applyCellLocal(r, agent, on); },
       revision => cmd('setHookAgent', { key: row.key, agent, on, revision }));
   }
-  function toggleRow(row) {
+  /** 行のスイッチ。押すと Devin の取り込みが止まり始める行（core の switchConfirm）は、保存の前に確認の帯を出す（覚えない）。now: 帯で押した後 */
+  function toggleRow(row, now = false) {
     const on = !row.on;
+    if (!now && row.switchConfirm) {
+      ask = { key: row.key, agent: null, fk: `sw:${row.key}`, row: true };
+      focus = '.cx-ask .btn-primary';
+      render();
+      return;
+    }
     if (ask?.key === row.key) ask = null;
     focus = `[data-cx-fk="${CSS.escape(`sw:${row.key}`)}"]`;
     mutate(g => { const r = g.rows.find(x => x.key === row.key); if (r) applyRowLocal(r, on); },
@@ -183,21 +194,24 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
 
   function askEl(row) {
     const a = ask;
-    const to = short3(a.agent);
-    const from = row.kind === 'reg' ? 'Pleiad' : short3(row.agent);
     const name = hookRowName(row);
-    const warnings = row.cells[a.agent]?.warnings ?? [];
+    const cell = a.row ? null : row.cells[a.agent];
+    // 行のスイッチ・取り込みが止まり始めるマスは「Devin の取り込みが止まる」、ほかは「でも実行する」（広げる確認）
+    const stops = a.row || cell?.stopsDevinImports === true;
+    const warnings = (a.row ? row.switchConfirm?.warnings : cell?.warnings) ?? [];
+    const to = a.row ? null : short3(a.agent);
     const box = askBanner({
-      ariaLabel: t('hooks.matrix.askAria', { name, to }),
-      text: t('hooks.matrix.ask', { from, to }),
+      ariaLabel: stops ? t('hooks.matrix.askStopAria', { name }) : t('hooks.matrix.askAria', { name, to }),
+      text: stops ? t('hooks.matrix.askStop') : t('hooks.matrix.ask', { from: row.kind === 'reg' ? 'Pleiad' : short3(row.agent), to }),
       cancelLabel: t('context.matrix.cancel'),
       confirmLabel: t('hooks.matrix.confirm'),
       onCancel: () => { focus = `[data-cx-fk="${CSS.escape(a.fk)}"]`; ask = null; render(); },
       onConfirm: () => {
-        confirmed.add(`${a.key}:${a.agent}`);
+        if (!a.row && cell?.needsConfirm) confirmed.add(`${a.key}:${a.agent}`);
         ask = null;
         const r = findRow(a.key);
-        if (r) toggleCell(r, a.agent, a.fk);
+        if (r && a.row) toggleRow(r, true);
+        else if (r) toggleCell(r, a.agent, a.fk, true);
       },
     });
     if (warnings.length) {

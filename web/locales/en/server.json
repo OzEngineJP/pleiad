@@ -1482,6 +1482,7 @@
     "hooksRow": "Changes whether the hook \"{{name}}\" is used (the per-agent choices are kept).",
     "hooksGroup": "Changes the {{agent}} column of the hook group ({{group}}) at once.",
     "hooksPlace": "Changes whether the hook \"{{name}}\" is used in {{place}}.",
+    "hooksDevinImportsStop": "{{note}} This change stops Devin's imports (read_config_from): the repository's AGENTS.md and the instructions, skills, MCP servers and hooks imported from Claude Code and others no longer reach Devin (they come back once every hook given to Devin is stopped).",
     "hooksAgentsReset": "Clears the hook × agent choices and goes back to the previous hooks owner (leave to agents / Pleiad aligns).",
     "contextSettings": "Changes the context settings for {{place}}. The instructions, Skills and external MCP every conversation gets will change.",
     "plyInstructions": "Changes Pleiad's instructions. The instructions added to agents in each conversation will change.",

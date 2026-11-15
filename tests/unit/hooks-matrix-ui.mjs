@@ -1,17 +1,24 @@
 // 設定 › プラグイン › Hooks の表（web/hooks-matrix.mjs · ADR 0338）を DOM の代役で動かす。
 // 実ブラウザーでは作れない形（管理者の Hook・Grok Build の設定の Hook）と、鍵の文・行が切れたときのセル・
 // ほかのエージェントへ広げる前の確認（注意の一覧）・保存に失敗したときの戻しを確かめる。
+// 段 8 は core の一覧（実際の移行結果）をそのまま渡し、Devin の取り込みが止まり始める操作の確認の帯を確かめる。
 // 実ブラウザーの通しは tests/browser/hooks-matrix.mjs。
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { N } from '../lib/dom-stub.mjs';
 import { setLanguage, t as tr } from '../../web/i18n.mjs';
 import { setAgentBrands } from '../../web/agent-brands.mjs';
 import { AGENTS, agentPresentation } from '../../core/backends/agents.mjs';
 import { savedText } from '../../web/context-matrix.mjs';
 import { createHooksMatrix, hookAgentLabel, hookCellView, hookTip } from '../../web/hooks-matrix.mjs';
+import { createPlyHooks } from '../../core/ply-hooks.mjs';
+import { createHooksConfig } from '../../core/hooks-config.mjs';
+import { createHooksAgents } from '../../core/hooks-agents.mjs';
 
 export const name = 'hooks-matrix-ui';
-export const title = '設定 › プラグイン › Hooks の表: 鍵の文・管理者の行・確認と注意・保存の失敗で戻す・使っていないエージェントの短い名前・空のマス・確かめ済みを捨てる';
+export const title = '設定 › プラグイン › Hooks の表: 鍵の文・管理者の行・確認と注意・保存の失敗で戻す・使っていないエージェントの短い名前・空のマス・確かめ済みを捨てる・Devin の取り込みが止まり始める前の確認';
 
 // ---- 属性と子孫の選択子が使える最小の DOM（context-panel-tabs と同じ考え方） ----
 function parse(sel) {
@@ -281,6 +288,97 @@ export default async function (t) {
     assert.ok(card7.root.querySelector('.cx-ask'), '消して作り直した行は、もう一度確かめる');
     t.ok('広げる前の確かめ済みは、行が一覧から消えたら捨てる（作り直した行で聞き直す）', true);
     setAgentBrands(Object.keys(AGENTS).map(id => ({ id, ...agentPresentation(id) })));
+    // ---- 8. Devin の取り込みが止まり始める操作（3 回目のレビューの必須）: 実際の移行結果の一覧で、保存の前に確認の帯 ----
+    // 試験のセルに印を書かず、旧「そろえる」で Devin へ向けた登録がある人の移行結果（core の一覧）をそのまま画面に渡す
+    {
+      const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-hooks-matrix-ui-')));
+      try {
+        const home = path.join(tmp, 'home'), data = path.join(tmp, 'data'), repo = path.join(tmp, 'repo');
+        await fs.mkdir(path.join(repo, '.git'), { recursive: true });
+        await fs.mkdir(path.join(home, '.claude'), { recursive: true });
+        await fs.writeFile(path.join(home, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo native' }] }] } }));
+        const hooksConfig = createHooksConfig({ home, claudeHome: path.join(home, '.claude'), codexHome: path.join(home, '.codex'), geminiHome: path.join(home, '.gemini'), claudeManaged: [] });
+        const plyHooks = createPlyHooks(data);
+        const both = (await plyHooks.save({ name: 'both', agent: 'claude', event: 'Stop', matcher: '', command: 'node both.mjs', targets: ['claude', 'devin'] })).id;
+        const only = (await plyHooks.save({ name: 'only', agent: 'claude', event: 'Stop', matcher: '', command: 'node only.mjs', targets: ['devin'] })).id;
+        await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [] } });
+        const ha = createHooksAgents({ dataDir: data, hooksConfig, plyHooks, findNode: async () => process.execPath, grokHome: path.join(tmp, 'grok') });
+        const calls8 = [], jobs = [];
+        const card8 = createHooksMatrix({
+          cmd: async (op, args) => {
+            calls8.push([op, args]);
+            if (op === 'hooksMatrix') return ha.matrix({ trust: false });
+            if (op === 'setHookAgent') return ha.setAgent({ key: args.key, agent: args.agent, on: args.on, expect: args.revision ?? null });
+            if (op === 'setHookRow') return ha.setRow({ key: args.key, on: args.on, expect: args.revision ?? null });
+            return null;
+          },
+          work: fn => { jobs.push(fn()); }, saved: () => {}, failed: () => {}, opened: new Set(), onCount: () => {},
+        });
+        dom.body.append(card8.root);
+        await card8.load();
+        const done = async () => { while (jobs.length) await jobs.shift(); await settle(); };
+        const chip8 = (key, a) => card8.root.querySelector(`.cx-row[data-key="${key}"]`)?.querySelector(`.cx-ag[data-agent="${a}"]`);
+        const sw8 = key => card8.root.querySelector(`.cx-row[data-key="${key}"]`)?.querySelector('.cx-sw');
+        const ask8 = () => card8.root.querySelector('.cx-ask');
+        const writes = () => calls8.filter(c => c[0] === 'setHookAgent' || c[0] === 'setHookRow').length;
+        const stopQ = tr('hooks.matrix.askStop');
+
+        // (1) 元の対象に Devin を含む行の Devin のマス（入れると取り込みが止まり始める。広げる確認は要らない）
+        // 行が切れていると押せるマスは隠れるので、移行前は「both」の行は Claude で入っている
+        assert.equal(await ha.exists(), false, '試験の置き場: 移行前');
+        chip8(both, 'devin').click();
+        assert.ok(ask8(), '(1) 帯が出る');
+        assert.equal(ask8().querySelector('.q').textContent, stopQ, '(1) 帯の文は「Devin の取り込みが止まります」');
+        assert.equal(ask8().getAttribute('aria-label'), tr('hooks.matrix.askStopAria', { name: 'node both.mjs' }));
+        assert.ok([...ask8().querySelectorAll('.hk-warns li')].some(li => li.textContent === tr('hooks.warn.devinImportsStop')), '(1) 帯の中に取り込みが止まる注意（core の warnings）');
+        ask8().querySelectorAll('button')[0].click();
+        await done();
+        assert.equal(ask8(), null);
+        assert.equal(writes(), 0, '(1)「やめる」は何も保存しない');
+        assert.equal(await ha.exists(), false, '(1)「やめる」では移行もしない');
+        assert.equal(await ha.devinImportsStopped(repo), false);
+        chip8(both, 'devin').click();
+        ask8().querySelector('.btn-primary').click();
+        await done();
+        assert.deepEqual(calls8.filter(c => c[0] === 'setHookAgent').map(c => [c[1].key, c[1].agent, c[1].on]), [[both, 'devin', true]], '(1)「実行する」で保存する');
+        assert.equal(await ha.devinImportsStopped(repo), true, '(1) 保存の後は取り込みが止まる');
+        t.ok('(1) 元の対象に Devin を含む行の Devin のマス: 帯が出て、「やめる」は何も保存せず、「実行する」で保存して取り込みが止まる', true);
+
+        // 既に止まっている: 2 つ目の Devin（Devin だけの行の行スイッチ）はこの理由では聞かない
+        sw8(only).click();
+        assert.equal(ask8(), null, '既に止まっている場所の 2 つ目の Devin は聞かない');
+        await done();
+        assert.equal(calls8.filter(c => c[0] === 'setHookRow').length, 1);
+        // 両方切って取り込みが戻った後、もう一度入れるときは聞き直す（覚えない）
+        sw8(only).click(); await done();
+        chip8(both, 'devin').click(); await done();
+        assert.equal(await ha.devinImportsStopped(repo), false, '両方切ると取り込みが戻る');
+        chip8(both, 'devin').click();
+        assert.equal(ask8()?.querySelector('.q')?.textContent, stopQ, '取り込みが戻った後に入れ直すときは聞き直す');
+        ask8().querySelectorAll('button')[0].click();
+        t.ok('既に止まっている場所の 2 つ目の Devin は聞かず、Devin を切って取り込みが戻った後は聞き直す', true);
+
+        // (2) Devin だけの行の行スイッチ
+        const n0 = writes(), file0 = await fs.readFile(ha.file, 'utf8');
+        sw8(only).click();
+        assert.equal(ask8()?.querySelector('.q')?.textContent, stopQ, '(2) 行スイッチでも帯が出る');
+        assert.equal(ask8().getAttribute('aria-label'), tr('hooks.matrix.askStopAria', { name: 'node only.mjs' }));
+        ask8().querySelectorAll('button')[0].click();
+        await done();
+        assert.equal(writes(), n0, '(2)「やめる」は何も保存しない');
+        assert.equal(await fs.readFile(ha.file, 'utf8'), file0, '(2) ファイルもそのまま');
+        sw8(only).click();
+        ask8().querySelector('.btn-primary').click();
+        await done();
+        const lastRow = calls8.filter(c => c[0] === 'setHookRow').at(-1)?.[1];
+        assert.deepEqual([writes(), lastRow?.key, lastRow?.on], [n0 + 1, only, true], '(2)「実行する」で保存する');
+        assert.equal(await ha.devinImportsStopped(repo), true, '(2) 保存の後は取り込みが止まる');
+        t.ok('(2) Devin だけの行の行スイッチ: 帯が出て、「やめる」は何も保存せず、「実行する」で保存して取り込みが止まる', true);
+        card8.root.remove?.();
+      } finally {
+        await fs.rm(tmp, { recursive: true, force: true });
+      }
+    }
   } finally {
     dom.restore();
   }

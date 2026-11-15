@@ -4703,6 +4703,8 @@
       "stripAria": "Agents that run {{name}}",
       "ask": "Also run the hook from {{from}}'s settings in {{to}}",
       "askAria": "Confirm running {{name}} in {{to}} too",
+      "askStop": "This change stops Devin's imports (read_config_from) in this place",
+      "askStopAria": "Confirm that changing {{name}} stops Devin's imports",
       "confirm": "Run",
       "loadFailed": "Could not read the hooks list: {{error}}",
       "repaired": "Fixed.",

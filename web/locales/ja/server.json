@@ -1475,6 +1475,7 @@
     "hooksRow": "Hook「{{name}}」を使うかを変えます（エージェントごとの選択は覚えたままです）。",
     "hooksGroup": "Hooks の組（{{group}}）の {{agent}} の列をまとめて変えます。",
     "hooksPlace": "{{place}} で Hook「{{name}}」を使うかを変えます。",
+    "hooksDevinImportsStop": "{{note}}この変更で、Devin の取り込み（read_config_from）が止まります。リポジトリの AGENTS.md と、Claude Code などから取り込む指示・Skills・MCP・Hooks が Devin に届かなくなります（Devin へ渡す Hook をすべて止めると戻ります）。",
     "hooksAgentsReset": "Hook × エージェントの選択を消し、以前の Hooks の担当（任せる・そろえる）の動きに戻します。",
     "contextSettings": "{{place}}のコンテキストの設定を変えます。全部の会話に渡る指示・Skills・外部 MCP が変わります。",
     "plyInstructions": "Pleiad の指示を変えます。会話ごとにエージェントへ足す指示が変わります。",

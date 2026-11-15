@@ -8,6 +8,8 @@
 //   - キーボード（行のスイッチ・マス）とフォーカスの戻り先、行の詳細
 //   - 読めない hooks-agents.json の理由と、ここから直す操作
 //   - 会話の右の欄: 行ごとの「この場所で使うか」だけ（hooks.setPlace）
+//   - Devin の取り込みが止まり始める操作（旧「そろえる」で Devin へ向けた登録の、実際の移行結果）: Devin のマス・Devin だけの行の行スイッチ・
+//     右の欄の「この場所で使う」で、保存の前に確認の帯。やめるは何も保存せず、実行するで止まる（hooks-r3-*.png）
 //   - 1280 / 360・ライト / ダークで横にはみ出さない。SHOT_DIR を渡すと撮る（hooks-agents-*.png）
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,6 +18,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { createPlyHooks } from '../../core/ply-hooks.mjs';
+import { createHooksConfig } from '../../core/hooks-config.mjs';
+import { createHooksAgents } from '../../core/hooks-agents.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_CORE || 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core');
@@ -410,6 +415,119 @@ try {
     await page.waitForFunction(k => document.querySelector(`#scx-panel-hooks [data-row="${CSS.escape(k)}"] .cx-sw`)?.getAttribute('aria-checked') === 'true', repoRow.key, { timeout: 10000 });
     check((await client.cmd('hooksMatrix', { cwd: repo, trust: false })).rows.find(r => r.key === repoRow.key).here.use === true, '右の欄のスイッチを入れ直すと、この場所で使うに戻る');
     await ctx.close();
+  }
+
+  // ==================== 5. Devin の取り込みが止まり始める操作（3 回目のレビューの必須） ====================
+  // 旧「そろえる」で Devin へ向けた登録がある人の、実際の移行結果（試験の側で印を書かない）。どの入口でも、保存の前に確認の帯を出す:
+  //   (1) 元の対象に Devin を含む行の Devin のマス (2) Devin だけの行の行スイッチ (3) 会話の右の欄の「この場所で使う」
+  {
+    await client.cmd('resetHooksAgents');
+    await client.cmd('savePlyHook', { value: { name: 'both', agent: 'claude', event: 'Stop', command: 'node both.mjs', targets: ['claude', 'devin'] } });
+    await client.cmd('savePlyHook', { value: { name: 'only', agent: 'claude', event: 'Stop', command: 'node only.mjs', targets: ['devin'] } });
+    // 取り込みが止まるか（実行時と同じ物差し: core の devinImportsStopped）を、サーバーと同じ置き場から読むだけで確かめる
+    const plyHooksR = createPlyHooks(store);
+    // 担当（旧「そろえる」）は画面の確認の面からしか変えられないので、試験の置き場へ同じ core で書く（毎回ファイルから読むのでサーバーにも効く）
+    await plyHooksR.setOwner({ place: null, value: { owner: 'ply', disabled: [] } });
+    const haR = createHooksAgents({ dataDir: store, plyHooks: plyHooksR, findNode: async () => process.execPath, grokHome: path.join(home, '.grok'),
+      hooksConfig: createHooksConfig({ home, claudeHome: path.join(home, '.claude'), codexHome: path.join(home, '.codex'), geminiHome: path.join(home, '.gemini'), claudeManaged: [] }) });
+    const stoppedAt = cwd => haR.devinImportsStopped(cwd);
+    const waitStopped = async (cwd, want) => { for (let i = 0; i < 40; i++) { if (await stoppedAt(cwd) === want) return true; await new Promise(r => setTimeout(r, 250)); } return false; };
+    const m5 = await client.cmd('hooksMatrix', { trust: false });
+    const bothKey = m5.rows.find(r => r.command === 'node both.mjs')?.key, onlyKey = m5.rows.find(r => r.command === 'node only.mjs')?.key;
+    check(m5.adopted === false && m5.compat?.devin === 'off' && bothKey && onlyKey && !fs.existsSync(agentsFile) && await stoppedAt(repo) === false,
+      '試験の置き場: 旧「そろえる」で Devin へ向けた登録が 2 つ（元の対象に Devin を含む行・Devin だけの行）ある移行前。取り込みは止まっていない', { adopted: m5.adopted, compat: m5.compat });
+
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(baseUrl, { waitUntil: 'load' });
+    await openHooks(page, `#cx-panel-hooks [data-key="${bothKey}"]`);
+    const ask = page.locator('#cx-panel-hooks .cx-ask');
+    const askFacts = () => ask.evaluate(el => ({ q: el.querySelector('.q')?.textContent, aria: el.getAttribute('aria-label'), warns: [...el.querySelectorAll('.hk-warns li')].map(li => li.textContent),
+      prev: el.previousElementSibling?.dataset.key, focus: document.activeElement?.textContent }));
+
+    // (1) 元の対象に Devin を含む行の Devin のマス
+    await cellOf(page, bothKey, 'devin').click();
+    await ask.waitFor({ state: 'visible', timeout: 3000 });
+    const a1 = await askFacts();
+    check(a1.q === T('hooks.matrix.askStop') && a1.aria === T('hooks.matrix.askStopAria', { name: 'node both.mjs' }) && a1.prev === bothKey
+      && a1.warns.includes(T('hooks.warn.devinImportsStop')) && a1.focus === T('hooks.matrix.confirm'),
+      '(1) 元の対象に Devin を含む行の Devin のマス: 保存の前に「Devin の取り込みが止まります」の帯（注意つき・フォーカスは［実行する］）', a1);
+    await shoot(page, 'hooks-r3-cell.png', page.locator('#cx-panel-hooks'));
+    await ask.locator('button', { hasText: T('context.matrix.cancel') }).click();
+    await page.waitForFunction(() => !document.querySelector('#cx-panel-hooks .cx-ask'), { timeout: 3000 });
+    await page.waitForTimeout(300);
+    check(!fs.existsSync(agentsFile) && await cellOf(page, bothKey, 'devin').getAttribute('aria-pressed') === 'false' && await stoppedAt(repo) === false,
+      '(1)［やめる］は何も保存しない（移行もしない）');
+    await cellOf(page, bothKey, 'devin').click();
+    await ask.waitFor({ state: 'visible', timeout: 3000 });
+    await ask.locator('button', { hasText: T('hooks.matrix.confirm') }).click();
+    check(await waitStopped(repo, true) && fs.existsSync(agentsFile), '(1)［実行する］で保存し、取り込みが止まる（devinImportsStopped が true）');
+    await client.cmd('setHookAgent', { key: bothKey, agent: 'devin', on: false });
+    check(await waitStopped(repo, false), 'Devin のマスを切ると取り込みが戻る（次の試しの前の状態）');
+
+    // (2) Devin だけの行の行スイッチ
+    await page.reload({ waitUntil: 'load' });
+    await openHooks(page, `#cx-panel-hooks [data-key="${onlyKey}"]`);
+    await swOf(page, onlyKey).click();
+    await ask.waitFor({ state: 'visible', timeout: 3000 });
+    const a2 = await askFacts();
+    check(a2.q === T('hooks.matrix.askStop') && a2.aria === T('hooks.matrix.askStopAria', { name: 'node only.mjs' }) && a2.prev === onlyKey && a2.warns.includes(T('hooks.warn.devinImportsStop')),
+      '(2) Devin だけの行の行スイッチ: 保存の前に同じ帯', a2);
+    await shoot(page, 'hooks-r3-row.png', page.locator('#cx-panel-hooks'));
+    const file2 = fs.readFileSync(agentsFile, 'utf8');
+    await ask.locator('button', { hasText: T('context.matrix.cancel') }).click();
+    await page.waitForFunction(() => !document.querySelector('#cx-panel-hooks .cx-ask'), { timeout: 3000 });
+    await page.waitForTimeout(300);
+    check(fs.readFileSync(agentsFile, 'utf8') === file2 && await swOf(page, onlyKey).getAttribute('aria-checked') === 'false' && await stoppedAt(repo) === false
+      && await page.evaluate(k => document.activeElement?.dataset?.cxFk === `sw:${k}`, onlyKey),
+      '(2)［やめる］は何も保存せず、行のスイッチへフォーカスが戻る');
+    await swOf(page, onlyKey).click();
+    await ask.waitFor({ state: 'visible', timeout: 3000 });
+    await ask.locator('button', { hasText: T('hooks.matrix.confirm') }).click();
+    check(await waitStopped(repo, true), '(2)［実行する］で保存し、取り込みが止まる');
+    check((await noOverflow(page)).ok, '帯を出した後も横にはみ出さない');
+    await ctx.close();
+
+    // (3) 会話の右の欄の「この場所で使う」: この場所だけ外していた Devin の行を戻すと止まり始める
+    await client.cmd('setHookPlace', { place: repo, key: onlyKey, use: false });
+    check(await waitStopped(repo, false), '試験の置き場: この場所だけ Devin の行を使わない（この場所では止まっていない）');
+    const ctx3 = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
+    const p3 = await ctx3.newPage();
+    p3.on('pageerror', e => errors.push(e.message));
+    await p3.goto(baseUrl, { waitUntil: 'load' });
+    await p3.evaluate(() => document.getElementById('onboardingDialog')?.close());
+    await p3.waitForSelector(`[data-session="${managed.sessionId}"]`, { state: 'visible', timeout: 15000 });
+    await p3.locator(`[data-session="${managed.sessionId}"]`).first().click();
+    await p3.setViewportSize({ width: 700, height: 900 });
+    await p3.locator('#sessionMore').waitFor({ state: 'visible', timeout: 10000 });
+    await p3.locator('#sessionMore').click();
+    await p3.getByRole('menuitem', { name: /プラグイン/ }).click();
+    await p3.waitForSelector('.file-preview-content .scx [data-act="placeStart"]', { state: 'visible', timeout: 15000 });
+    await p3.setViewportSize({ width: 1280, height: 900 });
+    await p3.locator('.file-preview-content .scx [data-act="placeStart"]').click();
+    await p3.locator('#scx-tab-hooks').click();
+    const placeSw = p3.locator(`#scx-panel-hooks [data-row="${onlyKey}"] .cx-sw`);
+    await placeSw.waitFor({ state: 'visible', timeout: 15000 });
+    const pAsk = p3.locator('#scx-panel-hooks .scx-hooks-ask');
+    await placeSw.click();
+    await pAsk.waitFor({ state: 'visible', timeout: 3000 });
+    // フォーカスは次の描画（requestAnimationFrame）で［実行する］へ移る
+    await p3.waitForFunction(() => document.activeElement?.closest?.('.scx-hooks-ask'), null, { timeout: 3000 }).catch(() => {});
+    const a3 = await pAsk.evaluate(el => ({ q: el.querySelector('.q')?.textContent, warns: [...el.querySelectorAll('.hk-warns li')].map(li => li.textContent), focus: document.activeElement?.textContent }));
+    check(a3.q === T('hooks.matrix.askStop') && a3.warns.includes(T('hooks.warn.devinImportsStop')) && a3.focus === T('hooks.matrix.confirm'),
+      '(3) 右の欄の「この場所で使う」: 押すと取り込みが止まり始める行は、保存の前に同じ帯', a3);
+    const file3 = fs.readFileSync(agentsFile, 'utf8');
+    await pAsk.locator('button', { hasText: T('context.matrix.cancel') }).click();
+    await p3.waitForFunction(() => !document.querySelector('#scx-panel-hooks .scx-hooks-ask'), { timeout: 3000 });
+    await p3.waitForTimeout(300);
+    check(fs.readFileSync(agentsFile, 'utf8') === file3 && await placeSw.getAttribute('aria-checked') === 'false' && await stoppedAt(repo) === false,
+      '(3)［やめる］は何も保存しない');
+    await placeSw.click();
+    await pAsk.waitFor({ state: 'visible', timeout: 3000 });
+    await pAsk.locator('button', { hasText: T('hooks.matrix.confirm') }).click();
+    check(await waitStopped(repo, true), '(3)［実行する］で保存し、この場所で取り込みが止まる');
+    await ctx3.close();
   }
 
   check(errors.length === 0, 'ページ例外（pageerror）が出ない', errors);

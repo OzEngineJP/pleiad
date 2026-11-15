@@ -56,6 +56,16 @@ async function agentsRow(ctx, key, cwd) {
   const m = await ctx.hooks.agents.matrix({ cwd: cwd ?? null, trust: false }).catch(() => null);
   return { matrix: m, row: m?.rows.find((r) => r.key === key) ?? null };
 }
+/**
+ * 承認のカードの文に、この操作で Devin の取り込みが止まり始める（core の試算 dry の devinImportsStop）ことを足す（ADR 0338）。
+ * 試算が読めない・断られるなら足さない（実行の時に同じ理由で断る）。外す向きで write のまま通る操作（Pleiad の登録を外す・使わない）は、
+ * Devin へ渡すものを減らすだけで取り込みを止め始めないので、試算しない（riskOf が guarded にした操作だけここを通る）
+ */
+async function withStopNote(note, preview) {
+  let stops = false;
+  try { stops = (await preview())?.devinImportsStop === true; } catch { stops = false; }
+  return stops ? t('opsApproval.hooksDevinImportsStop', { note }) : note;
+}
 const rowLabel = (row, key) => row?.name ?? (row ? `${row.event ?? ''} ${maskText(row.command ?? '')}`.trim() : key);
 const agentKey = z.string().min(1).max(40);
 const revision = z.string().max(100).optional().describe(D('setAgent', 'revision'));
@@ -308,14 +318,16 @@ const defs = [
     approvalWords: 'hooks',
     confirm: async (ctx, { key, agent, on, cwd: dir }) => {
       const { matrix, row } = await agentsRow(ctx, key, dir);
+      const note = await withStopNote(t('opsApproval.hooksAgent', { name: rowLabel(row, key), agent }),
+        async () => ctx.hooks.agents.setAgent({ key, agent, on, cwd: (await cwdFor(ctx, dir)) ?? null, dry: true }));
       return { key: null, before: matrix?.revision ?? null, rows: [{ path: `hooks.agents.${key}.${agent}`, before: JSON.stringify(row?.cells?.[agent]?.state ?? null), after: JSON.stringify(on ? 'on' : 'off') }],
-        note: t('opsApproval.hooksAgent', { name: rowLabel(row, key), agent }), loosens: on !== false || !isReg(key) };
+        note, loosens: on !== false || !isReg(key) };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'agent'], positional: ['key', 'agent'] } },
     legacyCommand: 'setHookAgent',
     handler: (ctx, { key, agent, on, cwd: dir, revision: expect }) => run(ctx, async () => {
       const r = await ctx.hooks.agents.setAgent({ key, agent, on, cwd: (await cwdFor(ctx, dir)) ?? null, expect: expect ?? null });
-      return { ok: true, revision: r.revision, place: r.place };
+      return { ok: true, revision: r.revision, place: r.place, ...(r.devinImportsStop ? { devinImportsStop: true } : {}) };
     }),
   }),
   defineOp({
@@ -325,14 +337,16 @@ const defs = [
     approvalWords: 'hooks',
     confirm: async (ctx, { key, on, cwd: dir }) => {
       const { matrix, row } = await agentsRow(ctx, key, dir);
+      const note = await withStopNote(t('opsApproval.hooksRow', { name: rowLabel(row, key) }),
+        async () => ctx.hooks.agents.setRow({ key, on, cwd: (await cwdFor(ctx, dir)) ?? null, dry: true }));
       return { key: null, before: matrix?.revision ?? null, rows: [{ path: `hooks.agents.${key}`, before: JSON.stringify(row ? row.on : null), after: JSON.stringify(on) }],
-        note: t('opsApproval.hooksRow', { name: rowLabel(row, key) }), loosens: on !== false || !isReg(key) };
+        note, loosens: on !== false || !isReg(key) };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'row'], positional: ['key'] } },
     legacyCommand: 'setHookRow',
     handler: (ctx, { key, on, cwd: dir, revision: expect }) => run(ctx, async () => {
       const r = await ctx.hooks.agents.setRow({ key, on, cwd: (await cwdFor(ctx, dir)) ?? null, expect: expect ?? null });
-      return { ok: true, revision: r.revision, place: r.place };
+      return { ok: true, revision: r.revision, place: r.place, ...(r.devinImportsStop ? { devinImportsStop: true } : {}) };
     }),
   }),
   defineOp({
@@ -347,14 +361,16 @@ const defs = [
     approvalWords: 'hooks',
     confirm: async (ctx, { group, agent, on, cwd: dir }) => {
       const m = await ctx.hooks.agents.matrix({ cwd: (dir ?? null), trust: false }).catch(() => null);
+      const note = await withStopNote(t('opsApproval.hooksGroup', { group, agent: agent ?? '*' }),
+        async () => ctx.hooks.agents.setGroup({ group, agent: agent ?? null, on, cwd: (await cwdFor(ctx, dir)) ?? null, dry: true }));
       return { key: null, before: m?.revision ?? null, rows: [{ path: `hooks.agents.group.${group}${agent ? `.${agent}` : ''}`, before: null, after: JSON.stringify(on) }],
-        note: t('opsApproval.hooksGroup', { group, agent: agent ?? '*' }), loosens: on !== false || group !== 'ply' };
+        note, loosens: on !== false || group !== 'ply' };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'group'], positional: ['group'] } },
     legacyCommand: 'setHookGroup',
     handler: (ctx, { group, agent, on, cwd: dir, revision: expect }) => run(ctx, async () => {
       const r = await ctx.hooks.agents.setGroup({ group, agent: agent ?? null, on, cwd: (await cwdFor(ctx, dir)) ?? null, expect: expect ?? null });
-      return { ok: true, revision: r.revision, place: r.place };
+      return { ok: true, revision: r.revision, place: r.place, ...(r.devinImportsStop ? { devinImportsStop: true } : {}) };
     }),
   }),
   defineOp({
@@ -373,13 +389,15 @@ const defs = [
       const { matrix, row } = key ? await agentsRow(ctx, key, place) : { matrix: null, row: null };
       return { key: null, before: matrix?.revision ?? null,
         rows: [{ path: reset ? `hooks.agents.places.${place}.agents` : `hooks.agents.places.${place}.${key}`, before: reset ? null : JSON.stringify(row?.here?.use ?? null), after: reset ? 'null' : JSON.stringify(use !== false) }],
-        note: t('opsApproval.hooksPlace', { place, name: reset ? '*' : rowLabel(row, key) }), loosens: !(use === false && reset !== true && isReg(key)) };
+        note: await withStopNote(t('opsApproval.hooksPlace', { place, name: reset ? '*' : rowLabel(row, key) }),
+          () => ctx.hooks.agents.setPlace({ place, key: key ?? null, use: use !== false, reset: reset === true, dry: true })),
+        loosens: !(use === false && reset !== true && isReg(key)) };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'place'], positional: ['place', 'key'] } },
     legacyCommand: 'setHookPlace',
     handler: (ctx, { place, key, use, reset, revision: expect }) => run(ctx, async () => {
       const r = await ctx.hooks.agents.setPlace({ place, key: key ?? null, use: use !== false, reset: reset === true, expect: expect ?? null });
-      return { ok: true, revision: r.revision };
+      return { ok: true, revision: r.revision, ...(r.devinImportsStop ? { devinImportsStop: true } : {}) };
     }),
   }),
   defineOp({

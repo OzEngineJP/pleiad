@@ -317,6 +317,19 @@ export function cellsFor(inv, s, skip, A) {
   }
   return cellsOnce(inv, s, skip, A, false);
 }
+/**
+ * その選択で、Devin のターンの取り込み（read_config_from）が止まるか: compat.devin が 'off' で、Devin へ渡すものがある。
+ * 実行時（turnPlan → devinImportsStopped・forTurn の stopImports）と同じ物差し。止まっていない選択から止まる選択へ変える操作は、
+ * どの入口（マス・行・まとまり・この場所で使う・場所の上書きを戻す）でも保存の前に知らせる（devinImportsStop。ADR 0338）
+ */
+export function devinStopsAt(inv, s, skip) {
+  if (s.compat?.devin !== 'off') return false;
+  return [...cellsOnce(inv, s, skip, DEVIN, true).values()].some(c => c._deliver && c.state === 'on');
+}
+/** s から next へ変えると取り込みが止まり始めるか（すでに止まっていれば false。2 つ目の Devin のマスはこの理由では聞かない） */
+export const devinStopStarts = (inv, s, skip, next, nextSkip = skip) => next.compat?.devin === 'off' && devinStopsAt(inv, next, nextSkip) && !devinStopsAt(inv, s, skip);
+/** 取り込みが止まり始めるときの印（セル・行・この場所で使う。画面はこれで確認の帯を出し、作り直さない） */
+const stopMark = () => ({ warnings: [warn('devinImportsStop')] });
 // devinStops: Devin へ渡すものができると取り込みが止まる場所か（compat.devin: 'off'。セルの注意の文を選ぶ）
 function cellsOnce(inv, s, skip, A, devinStops) {
   const cells = new Map();
@@ -366,7 +379,7 @@ function cellsOnce(inv, s, skip, A, devinStops) {
     // Devin: 取り込みが止まる場所（compat.devin: 'off'）なら、入れると Devin が自分で読んでいた物が届かなくなる（devinImportsStop）
     if (A === DEVIN) warnings.push(warn(devinStops ? 'devinImportsStop' : 'devinConfig'));
     if (row.agent === CODEX) warnings.push(warn('codexTrustAtTurn'));
-    cells.set(row.key, { state: desired ? 'on' : 'off', _role: 'spread', _deliver: desired ? del : null, _desired: desired, needsConfirm: !base,
+    cells.set(row.key, { state: desired ? 'on' : 'off', _role: 'spread', _deliver: desired ? del : null, _desired: desired, needsConfirm: !base, _spread: !base,
       ...(warnings.length ? { warnings } : {}) });
   }
   // 作業場所の行（全体の一覧では中身が分からないので、渡し直せる 1 つの定義とみなす）
@@ -441,6 +454,9 @@ export function flipAgents(s, row, A, on, inv) {
  */
 export function decideModes(inv, s, skip, A, cells = cellsFor(inv, s, skip, A)) {
   const mismatched = new Set([...cells].filter(([, c]) => c._mismatch).map(([k]) => k));
+  // 押すと Devin の取り込みが止まり始めるか（compat.devin: 'off' の選択だけ試す。今止まっているかは 1 回だけ数える）
+  let stopNow = null;
+  const startsStop = st => s.compat?.devin === 'off' && !(stopNow ??= devinStopsAt(inv, s, skip)) && devinStopsAt(inv, st, skip);
   for (const row of inv.rows) {
     const c = cells.get(row.key);
     // 作業場所の定義は作業場所の 1 行（ws:hooks）に従う。この場所の行で押せるのは「この場所で使う」だけ
@@ -457,6 +473,12 @@ export function decideModes(inv, s, skip, A, cells = cellsFor(inv, s, skip, A)) 
     else lockUnit(c, A);
     if (c.mode === 'toggle' && !on && c.needsConfirm !== true) delete c.needsConfirm;
     if (c.mode !== 'toggle' || on) delete c.needsConfirm;
+    // 元の集合に Devin がある行の Devin のマスでも、押すと取り込みが止まり始めるなら確認する（広げる確認とは別。画面は覚えずに毎回聞く）
+    if (c.mode === 'toggle' && startsStop(s2)) {
+      c.needsConfirm = true;
+      c.stopsDevinImports = true;
+      if (!(c.warnings ?? []).some(w => w.code === 'devinImportsStop')) c.warnings = [...(c.warnings ?? []), ...stopMark().warnings];
+    }
   }
   return cells;
 }
@@ -666,8 +688,11 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     if (expect && expect !== stateRevision(stored) && expect !== stateRevision(state)) throw Object.assign(new Error(t('hooksAgents.stale')), { code: 'CONFLICT' });
   };
 
-  /** 選択を変えて保存する。edit(agents, inv, eff) は新しい agents を返す。place があればその場所の上書きを、無ければ全体を変える */
-  function change({ cwd = null, expect = null }, edit) {
+  /**
+   * 選択を変えて保存する。edit(agents, inv, eff) は新しい agents を返す。place があればその場所の上書きを、無ければ全体を変える。
+   * dry: 書かずに結果だけ返す（承認のカードの試算）。戻りの devinImportsStop: この変更で Devin の取り込みが止まり始める
+   */
+  function change({ cwd = null, expect = null, dry = false }, edit) {
     return run(async () => {
       const { state: stored } = await current();
       const inv = await inventory({ cwd });
@@ -676,6 +701,8 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       const eff = effectiveAt(state, cwd);
       const target = eff.agentsFrom ? state.places[eff.agentsFrom].agents : state;
       const next = await edit({ off: target.off, spread: target.spread, unused: target.unused, compat: target.compat }, inv, eff);
+      const devinImportsStop = devinStopStarts(inv, eff.agents, eff.skip, { ...next, enable: next.enable ?? [] });
+      if (dry) return { devinImportsStop, revision: stateRevision(state) };
       const enable = next.enable ?? [];
       delete next.enable;
       const clean = normAgents(next);
@@ -684,7 +711,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       for (const id of enable) await plyHooks.toggle(id, true);
       state.seen = nextSeen(state, inv, orphans);
       await write(state);
-      return { state, place: eff.agentsFrom ? state.places[eff.agentsFrom].path : null, revision: stateRevision(state) };
+      return { state, place: eff.agentsFrom ? state.places[eff.agentsFrom].path : null, revision: stateRevision(state), devinImportsStop };
     });
   }
   const pressCell = (inv, eff, key, A) => {
@@ -697,13 +724,13 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
   };
 
   /** セル 1 つ（hooks.setAgent） */
-  const setAgent = ({ key, agent, on, cwd = null, expect = null }) => change({ cwd, expect }, (s, inv, eff) => {
+  const setAgent = ({ key, agent, on, cwd = null, expect = null, dry = false }) => change({ cwd, expect, dry }, (s, inv, eff) => {
     const { row, cell } = pressCell(inv, eff, key, agent);
     if ((cell.state === 'on') === on) return s;
     return flipAgents({ ...s, enable: [] }, row, agent, on, inv);
   });
   /** 行の全体のスイッチ（hooks.setRow）。rowSwitchPlan の決まり。押せない（鍵つきでオンのマスが残るなど）なら断る */
-  const setRow = ({ key, on, cwd = null, expect = null }) => change({ cwd, expect }, (s, inv, eff) => {
+  const setRow = ({ key, on, cwd = null, expect = null, dry = false }) => change({ cwd, expect, dry }, (s, inv, eff) => {
     const row = inv.byKey.get(key);
     if (!row) throw invalid('hooksAgents.noRow', { key });
     const plan = rowSwitchPlan(inv, { ...s, enable: [] }, eff.skip, row, on);
@@ -714,7 +741,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
    * 組の 1 つのエージェントの列（押せるセルだけ。広げる確認が要るセルは入れない）か、組の全部の行のスイッチ（hooks.setGroup）。1 回の書き込み。
    * 行のスイッチは rowSwitchPlan を 1 行ずつ重ねる。押せない行が 1 つでもあれば、どれも変えずに断る（半分だけ入った状態を作らない）
    */
-  const setGroup = ({ group, agent = null, on, cwd = null, expect = null }) => change({ cwd, expect }, (s, inv, eff) => {
+  const setGroup = ({ group, agent = null, on, cwd = null, expect = null, dry = false }) => change({ cwd, expect, dry }, (s, inv, eff) => {
     let cur = { ...s, enable: [] };
     const rows = inv.rows.filter(r => r.group === group && r.kind !== 'grokOwn' && r.scope !== 'managed');
     for (const row of rows) {
@@ -725,18 +752,22 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
         continue;
       }
       const cell = decideModes(inv, cur, eff.skip, agent).get(row.key);
-      if (cell?.mode === 'toggle' && (cell.state === 'on') !== on && !(on && cell.needsConfirm)) cur = flipAgents(cur, row, agent, on, inv);
+      // 広げる確認が要るセル（元の集合に無い）は入れない。取り込みが止まり始めるだけのセルは入れる（承認のカードが知らせる）
+      if (cell?.mode === 'toggle' && (cell.state === 'on') !== on && !(on && cell._spread)) cur = flipAgents(cur, row, agent, on, inv);
     }
     return cur;
   });
-  /** この場所で使う（hooks.setPlace）。reset: true は移行で書いた場所の上書き（agents）を消す */
-  const setPlace = ({ place, key = null, use = true, reset = false, expect = null }) => run(async () => {
+  /** この場所で使う（hooks.setPlace）。reset: true は移行で書いた場所の上書き（agents）を消す。dry・devinImportsStop は change と同じ */
+  const setPlace = ({ place, key = null, use = true, reset = false, expect = null, dry = false }) => run(async () => {
     if (typeof place !== 'string' || !path.isAbsolute(place)) throw invalid('hooksAgents.badPlace');
     const { state: stored } = await current();
     const inv = await inventory({ cwd: place, turn: true });
-    const { state, orphans } = resolveRekeys(stored, inv);
-    checkExpect(expect, stored, state);
+    const { state: read0, orphans } = resolveRekeys(stored, inv);
+    checkExpect(expect, stored, read0);
+    // dry: 写しで試す（読んだ選択・lastGood を変えない）
+    const state = dry ? structuredClone(read0) : read0;
     const pk = pathKey(place);
+    const was = effectiveAt(state, place);
     const entry = state.places[pk] ?? { path: path.resolve(place) };
     if (reset) delete entry.agents;
     else {
@@ -747,9 +778,12 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       entry.skip = [...list].sort();
     }
     if (entry.skip || entry.agents) state.places[pk] = entry; else delete state.places[pk];
+    const now = effectiveAt(state, place);
+    const devinImportsStop = devinStopStarts(inv, was.agents, was.skip, now.agents, now.skip);
+    if (dry) return { devinImportsStop, revision: stateRevision(stored) };
     state.seen = nextSeen(state, inv, orphans);
     await write(state);
-    return { state, revision: stateRevision(state) };
+    return { state, revision: stateRevision(state), devinImportsStop };
   });
   /** 移行前へ戻す（ファイルを消す。旧の担当の動きへ戻る）。読めないファイルは消さずに退避する（backup に退避先） */
   const reset = () => run(async () => {
@@ -956,11 +990,17 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     const { inv, eff, cells } = v;
     const s = eff.agents;
     const before = Object.fromEntries(UNIFY_TARGETS.map(A => [A, cellsFor(inv, s, eff.skip, A)]));
+    // 行のスイッチ・この場所で使うを押すと Devin の取り込みが止まり始めるか（compat.devin: 'off' のときだけ試す）
+    const stopNow = s.compat?.devin === 'off' && devinStopsAt(inv, s, eff.skip);
+    const starts = (next, skip = eff.skip) => !stopNow && next.compat?.devin === 'off' && devinStopsAt(inv, next, skip);
     const rows = inv.rows.map(row => {
       const byAgent = Object.fromEntries(UNIFY_TARGETS.map(A => [A, publicCell(cells[A].get(row.key) ?? { state: 'off', mode: 'none' })]));
       const pressable = !(row.scope === 'managed' || row.kind === 'grokOwn');
       const rowOn = Object.values(byAgent).some(c => c.state === 'on');
-      const lock = rowSwitchPlan(inv, s, eff.skip, row, !rowOn, before).lock ?? null;
+      const plan = rowSwitchPlan(inv, s, eff.skip, row, !rowOn, before);
+      const lock = plan.lock ?? null;
+      const useHere = !eff.skip.has(row.key);
+      const hereSkip = () => { const k = new Set(eff.skip); if (useHere) k.add(row.key); else k.delete(row.key); return k; };
       const out = { key: row.key, kind: row.kind, group: row.group, agent: row.agent, scope: row.scope, event: row.event, matcher: row.matcher ?? null,
         command: row.command ? maskText(row.command) : '', ...(row.name ? { name: row.name } : {}), ...(row.path ? { path: row.path } : {}),
         ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.copyOf ? { copyOf: row.copyOf } : {}),
@@ -968,8 +1008,10 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
         on: rowOn, unused: s.unused.includes(row.key) || (row.kind === 'reg' && !row.hook.enabled),
         // switchable: 行のスイッチを押せるか（rowSwitchPlan。押しても変わらない・ほかが黙って変わるなら false）。switchLock: そのときの鍵の理由
         switchable: !lock, ...(lock ? { switchLock: lock } : {}),
-        // 場所ごと: この場所で使う（cwd があるときだけ）
-        ...(cwd && pressable ? { here: { use: !eff.skip.has(row.key) } } : {}),
+        // switchConfirm: 行のスイッチを押すと Devin の取り込みが止まり始める（画面は保存の前に確認の帯を出す。セルの stopsDevinImports と同じ）
+        ...(plan.next && starts(plan.next) ? { switchConfirm: stopMark() } : {}),
+        // 場所ごと: この場所で使う（cwd があるときだけ）。confirm: 押すと取り込みが止まり始める印
+        ...(cwd && pressable ? { here: { use: useHere, ...(starts(s, hereSkip()) ? { confirm: stopMark() } : {}) } } : {}),
         // scanIds: hooks.scan の行の id（同じ定義が 2 つあれば 2 つ）。画面はこれで編集のシート・行の詳細と結ぶ（中身で突き合わせない）
         ...(row.kind === 'native' ? { status: row.fate, scanIds: row.members.map(m => m.entry?.id).filter(x => typeof x === 'string') } : {}),
         ...(row.kind === 'reg' ? { targets: row.hook.targets, enabled: row.hook.enabled } : {}),

@@ -27,11 +27,11 @@ import {
   CONTEXT_TABS, readTabStorage, writeTabStorage,
   groupEntries, bundleSwitchState, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
 } from './context-tabs.mjs';
-import { freshAgents, rowSwitch, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, savedText } from './context-matrix.mjs';
+import { askBanner, freshAgents, rowSwitch, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, savedText } from './context-matrix.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
-import { unifySessionBox, unsupportedAgentText } from './hooks-unify-ui.mjs';
+import { unifySessionBox, unsupportedAgentText, warnText } from './hooks-unify-ui.mjs';
 import { hookAgentLabel, hookRowName, hookRowSub, rememberAgentLabels } from './hooks-matrix.mjs';
 
 const KEY = 'session-context';
@@ -125,7 +125,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   // Hooks（sessionHooks の戻り）。会話・場所・実行中かが変わったら取り直す
   let hooks = { key: null, data: null };
   // 「この場所だけ変える」の間の Hooks の担当（plyHooks { cwd }）と、開いている切り替えの確認（'ply' | 'native' | null。ADR 0049）
-  let hooksPlace = { cwd: null, view: null };
+  // hooksAsk: 「この場所で使う」を押すと Devin の取り込みが止まり始める行（core の here.confirm）の、保存の前の確認の帯を出している行の key
+  let hooksPlace = { cwd: null, view: null }, hooksAsk = null;
   // 同じ名前の Skill の定義の選択肢を［変更］で開いている名前（ADR 0290）
   const choiceOpen = new Set();
   // 「この場所だけ変える」の 4 タブ・フォルダーのまとまり・Skills 絞り込み（段 1）
@@ -144,7 +145,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       }
     },
   });
-  const resetEditState = () => { editBundleOpen.clear(); editSkillQuery = ''; editSkillFind.clear(); editSkillHost = null; skillPaintArgs = null; editDocs = { instruction: null, skill: null }; editDocLoading = false; };
+  const resetEditState = () => { editBundleOpen.clear(); editSkillQuery = ''; editSkillFind.clear(); editSkillHost = null; skillPaintArgs = null; editDocs = { instruction: null, skill: null }; editDocLoading = false; hooksAsk = null; };
 
   const title = t('sessionContext.title');
   function subtitle(data) {
@@ -1326,21 +1327,42 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const rows = (view.rows ?? []).filter(r => r.here && r.kind !== 'ws');
     if (!rows.length) { k.append(el('p', 'cx-sub', t('sessionContext.place.none'))); return k; }
     const reload = () => { showToast(); loadHooks(info(), true); return loadHooksPlace(); };
+    const save = (r, use) => placeWork(async () => {
+      await cmd('setHookPlace', { place: place.cwd, key: r.key, use: !use, revision: view.revision });
+      await reload();
+      return false;
+    }, `[data-row="${CSS.escape(r.key)}"] .cx-sw`);
     for (const r of rows) {
       const use = r.here.use;
       const runs = Object.entries(r.cells ?? {}).filter(([, c]) => c.state === 'on').map(([a]) => hookAgentLabel(a)).join(t('app.listSeparator'));
       const sub = [r.group === 'ply' ? 'Pleiad' : agentLabel(r.agent), hookRowSub(r),
         !use ? t('sessionContext.place.offHere') : !r.on ? t('sessionContext.hooks.offAll') : t('sessionContext.hooks.runsOn', { agents: runs })].filter(Boolean).join(' · ');
       const name = hookRowName(r);
+      // 押すと Devin の取り込みが止まり始める（here.confirm）なら、保存の前に確認の帯を出す（覚えない）
       const row = switchRow({ id: r.key, name, path: '' }, use, sub, true,
-        () => placeWork(async () => {
-          await cmd('setHookPlace', { place: place.cwd, key: r.key, use: !use, revision: view.revision });
-          await reload();
-          return false;
-        }, `[data-row="${CSS.escape(r.key)}"] .cx-sw`));
+        () => { if (r.here.confirm) { hooksAsk = r.key; refresh(); focusIn('.scx-hooks-ask .btn-primary'); } else save(r, use); });
       const sw = row.querySelector('.cx-sw');
       sw?.setAttribute('aria-label', t('sessionContext.hooks.placeSwitchAria', { name }));
       k.append(row);
+      if (hooksAsk === r.key && r.here.confirm) {
+        const box = askBanner({
+          ariaLabel: t('hooks.matrix.askStopAria', { name }),
+          text: t('hooks.matrix.askStop'),
+          cancelLabel: t('context.matrix.cancel'),
+          confirmLabel: t('hooks.matrix.confirm'),
+          onCancel: () => { hooksAsk = null; refresh(); focusIn(`[data-row="${CSS.escape(r.key)}"] .cx-sw`); },
+          onConfirm: () => { hooksAsk = null; save(r, use); },
+        });
+        box.classList.add('scx-hooks-ask');
+        const warnings = r.here.confirm.warnings ?? [];
+        if (warnings.length) {
+          const list = el('ul', 'hk-warns');
+          for (const w of warnings) list.append(el('li', null, warnText(w)));
+          box.querySelector('.q')?.after(list);
+          box.classList.add('has-warns');
+        }
+        k.append(box);
+      }
     }
     const foot = el('p', 'cx-sub');
     foot.append(t('sessionContext.hooks.placeFoot'), ' ', button(t('sessionContext.hooks.openSettings'), 'cx-link', () => openSettings()));
