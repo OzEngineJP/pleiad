@@ -174,7 +174,7 @@ Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.m
 - **保存**（`core/hooks-agents.mjs`）: `<data>/hooks-agents.json`（0600）。`{ version: 1, off, spread, unused, compat: { grok, devin }, places, adoptedFrom }`。`hooks.json` には書かない（古い版はこのファイルを知らず、担当で今までどおり動く）。無ければ移行前。
 - **触るまで何も変えない**: 移行前の一覧は、開くたびに今の担当の動きを写して見せるだけ。最初に押したとき、写した状態に押した変更を足して保存する。式（旧「任せる」は登録を `off = targets`、旧「そろえる」は止めていた定義と作業場所を `off`・Grok の互換を `off` など）は ADR 0338「移行」。4 つの組で、移行の前後に各エージェントのターンで動く Hook が同じことを試験で確かめる。
 - **セル**: `{ state: on|off, mode: toggle|locked|none, reason?: own|workspace|relay|admin, detail?, warnings?, needsConfirm? }`。一覧と実行時は同じ関数（`cellsFor`・`decideModes`）で決める。押してもそのセルが変わらない・ほかのセルが黙って止まるものは鍵。鍵の `detail` の一覧は ADR 0338「鍵と理由」。
-- **操作**（`core/ops/hooks.mjs`）: `hooks.matrix`（`hooksMatrix`）・`hooks.setAgent`（`setHookAgent { key, agent, on, cwd?, revision? }`）・`hooks.setRow`・`hooks.setGroup`・`hooks.setPlace`・`hooks.resetAgents`。外す向きは `write`、入れる・広げる・戻す向きは承認（`guarded`、`approvalWords: 'hooks'`）。`revision` は保存の中身の hash（移行の時刻は入れない）で、違えば `CONFLICT`。
+- **操作**（`core/ops/hooks.mjs`）: `hooks.matrix`（`hooksMatrix`）・`hooks.setAgent`（`setHookAgent { key, agent, on, cwd?, revision? }`）・`hooks.setRow`・`hooks.setGroup`・`hooks.setPlace`・`hooks.resetAgents`。Pleiad の登録（`h-…`）・組 `ply` を外す向きは `write`（`togglePlyHook` の無効と同じ）。エージェントの設定の定義・作業場所の Hooks・組 `own`/`place` を外す向き、場所の上書きを消す向き、入れる・広げる・戻す向きは承認（`guarded`、`approvalWords: 'hooks'`。`setHooksOwner` と同じ強さ）。`revision` は保存の中身の hash（移行の時刻は入れない）で、違えば `CONFLICT`。
 - **移行済みの人の旧の操作**: 担当の切り替え（`setHooksOwner`）と「写す」は移行済みの動きに効かない（画面の仕事で消す）。登録の追加・編集・オンオフ（`savePlyHook`・`togglePlyHook`）とネイティブの編集はそのまま使う。
 
 ### 他のエージェントへ写す（第 2 段）

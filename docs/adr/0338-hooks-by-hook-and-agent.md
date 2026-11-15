@@ -108,7 +108,10 @@
 - `hooks.matrix`（read）: `{ adopted, agents, groups, cwd, place, skipFrom, compat, grok, claudeAllOff, trustPending, revision, rows: [{ key, group, agent, source, scope, event, matcher, command（伏せ字）, on, switchable, here?, status?, targets?, enabled?, cells: { <A>: { state, mode, reason?, detail?, warnings?, needsConfirm?, copy?, reasons? } } }] }`。`needsConfirm` は、押すと広げるセル（元の集合に無く、今オフで押せる）だけに `true` で付く。
 - `revision` は保存の中身の hash（移行の時刻 `adoptedFrom.at` は入れない。移行前の一覧は開くたびに写し直すため）。操作に `revision` を渡すと、違えば `CONFLICT` で断る。押せないセルは `INVALID`（`hooksAgents.notPressable`）。
 - `hooks.setAgent`（セル）・`hooks.setRow`（全体のスイッチ）・`hooks.setGroup`（組のセル・組のスイッチ）・`hooks.setPlace`（この場所で使う・場所の上書きを戻す）・`hooks.resetAgents`（移行前へ戻す）。
-- 承認（AGENTS.md・ADR 0327）: 外す向き（狭める）は `write`、入れる・広げる・戻す向き（ほかのエージェントのターンでコマンドを動かす＝関所を緩める）は `riskOf` で `guarded`（`approvalWords: 'hooks'`、`loosens: true`）。
+- 承認（AGENTS.md・ADR 0095・0327）: 同じ結果になる今の操作と同じ強さにそろえる（write の操作で guarded の変更ができると抜け道になる。ADR 0095）。
+  - Pleiad の登録（`h-…`）を外す向き（`setAgent`・`setRow` の `on: false`、`setGroup { group: 'ply', on: false }`、`setPlace { key: h-…, use: false }`）は `write`（今の `togglePlyHook` の `enabled: false` と同じ）。
+  - エージェントの設定の定義（`hk-…`）・作業場所の Hooks（`ws:hooks`）・組 `own`/`place` を外す向き、場所の上書きを消す向き（`setPlace { reset: true }`）は `guarded`（利用者の見張りの Hook を止めるので、`hooks.setOwner`・`hooks.saveNative` と同じ）。承認カードは `loosens: true`（関所を変える側として出す）。
+  - 入れる・広げる・戻す向き（ほかのエージェントのターンでコマンドを動かす＝関所を緩める）は、どの行も `riskOf` で `guarded`（`approvalWords: 'hooks'`、`loosens: true`）。
 
 ## 理由
 

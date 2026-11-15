@@ -1544,23 +1544,23 @@
         "summary": "Returns the hooks list (hook × agent). Each cell has on/off, whether it can be pressed, the lock reason and warnings."
       },
       "setAgent": {
-        "summary": "Turns one agent cell of a hook row on or off. Turning it on needs the user's approval. Cells that cannot be pressed (mode is not toggle) are refused.",
+        "summary": "Turns one agent cell of a hook row on or off. Turning it on, or turning off an agent's own definition (hk-…) or the workspace hooks (ws:hooks), needs the user's approval (turning off a Pleiad registration does not). Cells that cannot be pressed (mode is not toggle) are refused.",
         "key": "The row key from hooks.matrix (h-… is a Pleiad registration, hk-… is a definition in an agent's settings, ws:hooks is the workspace hooks).",
         "agent": "The agent id (claude, codex, antigravity, opencode, devin, grok).",
         "on": "true turns it on, false turns it off.",
         "revision": "The revision from hooks.matrix. Nothing is saved if it changed (omit to skip the check)."
       },
       "setRow": {
-        "summary": "Uses or stops using a whole hook row. Using it needs the user's approval. The per-agent choices are kept.",
+        "summary": "Uses or stops using a whole hook row. Using it, or stopping an agent's own definition or the workspace hooks, needs the user's approval. The per-agent choices are kept.",
         "on": "true uses it, false stops using it."
       },
       "setGroup": {
-        "summary": "Changes one agent column (pressable cells only) of a hook group (ply, own, place), or the switches of every row in the group.",
+        "summary": "Changes one agent column (pressable cells only) of a hook group (ply, own, place), or the switches of every row in the group. Turning on, or turning off own or place, needs the user's approval.",
         "group": "The group. ply is Pleiad registrations, own is agent settings, place is the workspace.",
         "agent": "The agent id. Omit to change the switch of every row in the group."
       },
       "setPlace": {
-        "summary": "Decides per place whether a hook is used there. Using it needs the user's approval.",
+        "summary": "Decides per place whether a hook is used there. Using it, not using an agent's own definition or the workspace hooks, or dropping the override needs the user's approval.",
         "place": "The absolute path of the workspace.",
         "use": "true uses it in this place, false does not (default true).",
         "reset": "true removes that place's per-agent override (copied from the previous owner)."

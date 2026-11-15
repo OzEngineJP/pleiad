@@ -1,7 +1,8 @@
 // hooks.*: Hooks。各エージェントの元の設定ファイルの定義（core/hooks-config.mjs）と、Pleiad 自身の登録と担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）。
 // 画面の WS コマンド（scanHooks・savePlyHook など）はこの操作を呼ぶ薄い外側（ADR 0095）。本体はサーバーが ctx.hooks で渡す（core/server.mjs の opsDeps）。
 // Hooks はエージェントの操作のたびに任意のコマンドを動かすので、書き込み（保存・写す・有効にする・担当・修復・削除）は guarded。
-// 例外: 書く前の確認（dryRun）は書かないので write、無効にする向き（togglePlyHook の enabled: false）は関所を狭めるので write（riskOf が上げる）。
+// 例外: 書く前の確認（dryRun）は書かないので write、無効にする向き（togglePlyHook の enabled: false、一覧で Pleiad の登録を外す向き）は関所を狭めるので write（riskOf が上げる）。
+// 一覧（hooks.set*）でエージェントの設定の定義・作業場所の Hooks を外す向きは、利用者の見張りの Hook を止めるので hooks.setOwner と同じ guarded。
 // 返りのコマンドはモジュールが形で伏せる（maskText）。agent にはさらに、会話の記録に載るコマンドも伏せる。
 // 定義 1 つを読む hooks.read・hooks.readPly（readHook・readPlyHook。ADR 0094）は、画面の編集のシートには元のコマンドを、agent には形で伏せたコマンドを返す。
 import { z } from 'zod';
@@ -50,7 +51,12 @@ async function agentsRow(ctx, key, cwd) {
 const rowLabel = (row, key) => row?.name ?? (row ? `${row.event ?? ''} ${maskText(row.command ?? '')}`.trim() : key);
 const agentKey = z.string().min(1).max(40);
 const revision = z.string().max(100).optional().describe(D('setAgent', 'revision'));
-const NARROWS = 'Turning a hook off (for an agent, a row, a group, or a place) only narrows what runs; turning it on starts running a command, so it is raised to guarded by riskOf';
+// 外す向きの強さは、同じ結果になる今の操作にそろえる（ADR 0095・0338）。
+//   Pleiad の登録（h-…）を外す = togglePlyHook の enabled: false と同じ write。
+//   エージェントの設定の定義（hk-…）・作業場所の Hooks（ws:hooks）・組 own / place を外す = 利用者の見張りの Hook を止めるので、
+//   hooks.setOwner・hooks.saveNative と同じ guarded（承認のカード）。入れる向きは、コマンドが動き始めるのでいつも guarded
+const isReg = (key) => typeof key === 'string' && key.startsWith('h-');
+const NARROWS = 'Turning a Pleiad registration (h-…) off only narrows what runs, like hooks.toggle with enabled: false. Turning off an agent\'s own definition (hk-…), the workspace hooks (ws:hooks) or the own/place groups stops a hook the user set in the agent\'s settings, like hooks.setOwner, and turning anything on starts running a command, so riskOf raises those to guarded';
 
 const WRITE_PREVIEW = 'A dry run (dryRun: true) writes nothing and only returns the planned change; writing is raised to guarded by riskOf (hooks run arbitrary commands)';
 
@@ -280,7 +286,7 @@ export const hookOps = [
   }),
   defineOp({
     id: 'hooks.setAgent', summary: 'agent:ops.hooks.setAgent.summary', risk: 'write', riskReason: NARROWS,
-    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    riskOf: (_ctx, { on, key }) => (on === false && isReg(key) ? 'write' : 'guarded'),
     input: z.object({
       key: z.string().min(1).max(40).describe(D('setAgent', 'key')),
       agent: agentKey.describe(D('setAgent', 'agent')),
@@ -291,7 +297,7 @@ export const hookOps = [
     confirm: async (ctx, { key, agent, on, cwd: dir }) => {
       const { matrix, row } = await agentsRow(ctx, key, dir);
       return { key: null, before: matrix?.revision ?? null, rows: [{ path: `hooks.agents.${key}.${agent}`, before: JSON.stringify(row?.cells?.[agent]?.state ?? null), after: JSON.stringify(on ? 'on' : 'off') }],
-        note: t('opsApproval.hooksAgent', { name: rowLabel(row, key), agent }), loosens: on !== false };
+        note: t('opsApproval.hooksAgent', { name: rowLabel(row, key), agent }), loosens: on !== false || !isReg(key) };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'agent'], positional: ['key', 'agent'] } },
     legacyCommand: 'setHookAgent',
@@ -302,13 +308,13 @@ export const hookOps = [
   }),
   defineOp({
     id: 'hooks.setRow', summary: 'agent:ops.hooks.setRow.summary', risk: 'write', riskReason: NARROWS,
-    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    riskOf: (_ctx, { on, key }) => (on === false && isReg(key) ? 'write' : 'guarded'),
     input: z.object({ key: z.string().min(1).max(40).describe(D('setAgent', 'key')), on: z.boolean().describe(D('setRow', 'on')), cwd, revision, reason }),
     approvalWords: 'hooks',
     confirm: async (ctx, { key, on, cwd: dir }) => {
       const { matrix, row } = await agentsRow(ctx, key, dir);
       return { key: null, before: matrix?.revision ?? null, rows: [{ path: `hooks.agents.${key}`, before: JSON.stringify(row ? row.on : null), after: JSON.stringify(on) }],
-        note: t('opsApproval.hooksRow', { name: rowLabel(row, key) }), loosens: on !== false };
+        note: t('opsApproval.hooksRow', { name: rowLabel(row, key) }), loosens: on !== false || !isReg(key) };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'row'], positional: ['key'] } },
     legacyCommand: 'setHookRow',
@@ -319,7 +325,7 @@ export const hookOps = [
   }),
   defineOp({
     id: 'hooks.setGroup', summary: 'agent:ops.hooks.setGroup.summary', risk: 'write', riskReason: NARROWS,
-    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    riskOf: (_ctx, { on, group }) => (on === false && group === 'ply' ? 'write' : 'guarded'),
     input: z.object({
       group: z.enum(['ply', 'own', 'place']).describe(D('setGroup', 'group')),
       agent: agentKey.optional().describe(D('setGroup', 'agent')),
@@ -330,7 +336,7 @@ export const hookOps = [
     confirm: async (ctx, { group, agent, on, cwd: dir }) => {
       const m = await ctx.hooks.agents.matrix({ cwd: (dir ?? null), trust: false }).catch(() => null);
       return { key: null, before: m?.revision ?? null, rows: [{ path: `hooks.agents.group.${group}${agent ? `.${agent}` : ''}`, before: null, after: JSON.stringify(on) }],
-        note: t('opsApproval.hooksGroup', { group, agent: agent ?? '*' }), loosens: on !== false };
+        note: t('opsApproval.hooksGroup', { group, agent: agent ?? '*' }), loosens: on !== false || group !== 'ply' };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'group'], positional: ['group'] } },
     legacyCommand: 'setHookGroup',
@@ -341,8 +347,8 @@ export const hookOps = [
   }),
   defineOp({
     id: 'hooks.setPlace', summary: 'agent:ops.hooks.setPlace.summary', risk: 'write',
-    riskReason: 'Not using a hook in a place only narrows what runs there; using it again (or dropping the place override) is raised to guarded by riskOf',
-    riskOf: (_ctx, { use, reset }) => (use === false && reset !== true ? 'write' : 'guarded'),
+    riskReason: 'Not using a Pleiad registration (h-…) in a place only narrows what runs there. Not using an agent\'s own definition or the workspace hooks there, using a hook again, or dropping the place override is raised to guarded by riskOf',
+    riskOf: (_ctx, { use, reset, key }) => (use === false && reset !== true && isReg(key) ? 'write' : 'guarded'),
     input: z.object({
       place: z.string().min(1).max(4096).describe(D('setPlace', 'place')),
       key: z.string().min(1).max(40).optional().describe(D('setAgent', 'key')),
@@ -355,7 +361,7 @@ export const hookOps = [
       const { matrix, row } = key ? await agentsRow(ctx, key, place) : { matrix: null, row: null };
       return { key: null, before: matrix?.revision ?? null,
         rows: [{ path: reset ? `hooks.agents.places.${place}.agents` : `hooks.agents.places.${place}.${key}`, before: reset ? null : JSON.stringify(row?.here?.use ?? null), after: reset ? 'null' : JSON.stringify(use !== false) }],
-        note: t('opsApproval.hooksPlace', { place, name: reset ? '*' : rowLabel(row, key) }), loosens: !(use === false && reset !== true) };
+        note: t('opsApproval.hooksPlace', { place, name: reset ? '*' : rowLabel(row, key) }), loosens: !(use === false && reset !== true && isReg(key)) };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'place'], positional: ['place', 'key'] } },
     legacyCommand: 'setHookPlace',

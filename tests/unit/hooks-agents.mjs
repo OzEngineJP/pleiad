@@ -6,7 +6,7 @@
 //   - 二重に動かさない・切った行は動かさない・入れていないエージェントでは動かさない
 //   - 鍵の理由（own・workspace・relay・admin）・押せないセルは断る・古い revision は断る・読めないファイルは会話を止める
 //   - 実行時の部品: Codex の出どころごとの止め・Devin の取り込みの止め・Claude の分類（まとめて止めないターン）
-//   - 操作（hooks.*）: 切る向きは write、入れる向きは guarded（承認のカード）
+//   - 操作（hooks.*）: Pleiad の登録を外す向きは write（togglePlyHook と同じ）。エージェントの設定の定義・作業場所・組 own / place を外す向きと、入れる向きは guarded（承認のカード。hooks.setOwner と同じ）
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -311,10 +311,29 @@ export default async function (t) {
       return registry.invoke({ by: 'agent', via: 'mcp', sessionId: 's1' }, id, args, deps); };
     const listed = await as('ask', 'hooks.matrix', {});
     t.ok('hooks.matrix: 会話の作業場所の一覧。agent にもコマンドの秘密は出ない', listed.ok && listed.result.cwd === repo && !JSON.stringify(listed).includes('SECRET-HA-1'), JSON.stringify(listed).slice(0, 300));
-    const narrow = await as('ask', 'hooks.setAgent', { key: stopRow.key, agent: CLAUDE, on: false });
-    t.ok('hooks.setAgent: 切る向きは write（承認の要る会話でも通る）', narrow.ok && !calls.some(c => c[0] === 'approve'), JSON.stringify(narrow));
-    const widen = await as('ask', 'hooks.setAgent', { key: stopRow.key, agent: CLAUDE, on: true });
-    t.ok('hooks.setAgent: 入れる向きは guarded（承認のカード）', calls.some(c => c[0] === 'approve' && c[1] === 'hooks.setAgent') && widen.pending === true, JSON.stringify(widen));
+    // 外す向き: Pleiad の登録は承認なし（togglePlyHook の enabled: false と同じ）。利用者の見張りの Hook を止める向きは承認のカード（hooks.setOwner と同じ）
+    const approvals = () => calls.filter(c => c[0] === 'approve').length;
+    const noCard = async (op, args) => { const n = approvals(); const r = await as('ask', op, args); return r.ok && approvals() === n ? r : null; };
+    const card = async (op, args) => { const n = approvals(); const r = await as('ask', op, args); return r.pending === true && approvals() === n + 1 ? r : null; };
+    t.ok('hooks.setAgent・setRow・setGroup・setPlace: Pleiad の登録・組 ply を外す向きは write（承認の要る会話でも通る）',
+      !!await noCard('hooks.setAgent', { key: reg.id, agent: CODEX, on: false }) && !!await noCard('hooks.setRow', { key: reg.id, on: false })
+      && !!await noCard('hooks.setGroup', { group: 'ply', on: false }) && !!await noCard('hooks.setPlace', { place: repo, key: reg.id, use: false }));
+    t.ok('hooks.setAgent・setRow: エージェントの設定の定義（hk-）・作業場所の Hooks（ws:hooks）を外す向きは guarded（承認のカード）',
+      !!await card('hooks.setAgent', { key: stopRow.key, agent: CLAUDE, on: false }) && !!await card('hooks.setRow', { key: stopRow.key, on: false })
+      && !!await card('hooks.setAgent', { key: WS_KEY, agent: CLAUDE, on: false }) && !!await card('hooks.setRow', { key: WS_KEY, on: false }));
+    t.ok('hooks.setGroup: 組 own・place を外す向きは guarded', !!await card('hooks.setGroup', { group: 'own', agent: CLAUDE, on: false }) && !!await card('hooks.setGroup', { group: 'place', on: false }));
+    t.ok('hooks.setPlace: エージェントの設定の定義・作業場所の Hooks をその場所で使わない向き・上書きを消す向きは guarded',
+      !!await card('hooks.setPlace', { place: repo, key: stopRow.key, use: false }) && !!await card('hooks.setPlace', { place: repo, key: WS_KEY, use: false })
+      && !!await card('hooks.setPlace', { place: repo, reset: true }));
+    const widen = await card('hooks.setAgent', { key: stopRow.key, agent: CLAUDE, on: true });
+    t.ok('入れる向きは、どの行でも guarded（承認のカード）', !!widen && !!await card('hooks.setAgent', { key: reg.id, agent: CLAUDE, on: true })
+      && !!await card('hooks.setRow', { key: reg.id, on: true }) && !!await card('hooks.setGroup', { group: 'ply', on: true }) && !!await card('hooks.setPlace', { place: repo, key: reg.id, use: true }));
+    const bypassNative = await as('bypass', 'hooks.setAgent', { key: stopRow.key, agent: CLAUDE, on: false });
+    t.ok('承認の要らない会話（full・never）なら、ネイティブを外す向きもそのまま通る', bypassNative.ok, JSON.stringify(bypassNative));
+    await as('bypass', 'hooks.setAgent', { key: stopRow.key, agent: CLAUDE, on: true });
+    await as('bypass', 'hooks.setRow', { key: reg.id, on: true });
+    await as('bypass', 'hooks.setGroup', { group: 'ply', on: true });
+    await as('bypass', 'hooks.setPlace', { place: repo, key: reg.id, use: true });
     t.ok('hooks.setRow: 読み取りの会話は断る', (await as('plan', 'hooks.setRow', { key: stopRow.key, on: true })).code === 'READ_ONLY_MODE');
     const human = await registry.invoke({ by: 'human', via: 'ui', local: true }, 'hooks.setAgent', { key: stopRow.key, agent: CLAUDE, on: true, cwd: repo }, deps);
     t.ok('人（画面）の操作はそのまま通り、revision を返す', human.ok && typeof human.result.revision === 'string', JSON.stringify(human));
