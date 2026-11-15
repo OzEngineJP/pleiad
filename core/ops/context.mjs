@@ -5,6 +5,9 @@
 //   setSettings・setPlyInstructions は guarded。どちらも全部の会話のエージェントに渡る文脈を変える（どのフォルダーの指示・Skills を読むか、
 //   担当を Pleiad にして Pleiad の MCP の登録をつなぐか、会話ごとに足す指示の本文）。同じ値を変える settings.set の
 //   context.default・plyInstructions も guarded（ADR 0088）なので、こちらだけ緩めると抜け道になる。
+//   setDocAgent・setDocRow（名前×エージェントの表。ADR 0337）も、入れる・外すのどちらの向きも guarded。外すのは「守るべき決まり」を減らすので、
+//   外部 MCP（setMcpAgent。外すと呼べる道具が減るだけ）と違い、今の除外（setSettings）と同じ強さにする。指示も Skills も同じ（レビュー M1）。
+//   表の Pleiad の指示のマスは setPlyInstructions（guarded）を通る。
 //   refresh は write（その会話の固定した文脈を、今のファイルから読み直すだけ。読む場所は変わらない）。
 //   setSessionMcp は write で、外した MCP を戻す向き（removed: false）だけ riskOf が guarded に上げる（戻すと次のターンでつなぎ直す）。
 // 中身を読む操作（session・diff・scan・skills・agentMcp・nativeInstructions・findings。ADR 0105）は read。画面（人）には今までの形を返し（uiHandler）、
@@ -228,9 +231,7 @@ export const contextOps = [
     }),
   }),
   defineOp({
-    id: 'context.setDocAgent', summary: 'agent:ops.context.setDocAgent.summary', risk: 'write',
-    riskReason: 'Turning an instruction or Skill off for an agent only narrows its context; turning it on or spreading it across agents adds context so it is raised to guarded by riskOf',
-    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    id: 'context.setDocAgent', summary: 'agent:ops.context.setDocAgent.summary', risk: 'guarded',
     input: z.object({
       kind: z.enum(['instruction', 'skill']).describe(D('setDocAgent', 'kind')),
       key: z.string().min(1).max(4096).describe(D('setDocAgent', 'key')),
@@ -246,16 +247,15 @@ export const contextOps = [
       key: null, before: null,
       rows: [{ path: `context.${kind}.${key}.${agent}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') }],
       note: t('opsApproval.docAgent', { kind: t(`opsApproval.kind.${kind}`), name: key, agent }),
-      loosens: on !== false,
+      // 外す向きも、エージェントが守る決まりを減らすので緩める変更として扱う（setSettings の除外と同じ）
+      loosens: true,
     }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'doc-agent'], positional: ['kind', 'key', 'agent'] } },
     legacyCommand: 'setDocAgent',
     handler: (ctx, { kind, key, agent, on, place, cwd }) => run(ctx, () => ctx.context.setDocAgent({ kind, key, agent, on, place, cwd }, ctx.actor)),
   }),
   defineOp({
-    id: 'context.setDocRow', summary: 'agent:ops.context.setDocRow.summary', risk: 'write',
-    riskReason: 'Turning instruction or Skill rows off narrows context; turning them on adds context so it is raised to guarded by riskOf',
-    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    id: 'context.setDocRow', summary: 'agent:ops.context.setDocRow.summary', risk: 'guarded',
     input: z.object({
       kind: z.enum(['instruction', 'skill']).describe(D('setDocRow', 'kind')),
       key: z.string().min(1).max(4096).optional().describe(D('setDocRow', 'key')),
@@ -272,7 +272,7 @@ export const contextOps = [
         key: null, before: null,
         rows: [{ path: `context.${kind}.${label}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') }],
         note: t('opsApproval.docRow', { kind: t(`opsApproval.kind.${kind}`), name: label }),
-        loosens: on !== false,
+        loosens: true,
       };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'doc-row'], positional: ['kind'] } },

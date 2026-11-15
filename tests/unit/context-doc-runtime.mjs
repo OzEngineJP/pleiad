@@ -248,21 +248,28 @@ export default async function (t) {
     await bridge.dispose(); server.close(); connection = null; bridge = null; server = null;
 
     // ---- 3. ops riskOf & 実サーバー統合検査 (WS: docMatrix / setDocAgent / setDocRow / setPlyInstructions / 場所削除連動)
-    const opWrite = await registry.invoke(
-      { by: 'agent', via: 'mcp', sessionId: 's1', mode: { scope: 'workspace', autonomy: 'ask' } },
-      'context.setDocAgent',
-      { kind: 'instruction', key: 'file:/x', agent: 'claude', on: false },
-      { context: { setDocAgent: async () => ({ ok: true }) }, modeOf: async () => ({ scope: 'workspace', autonomy: 'ask' }), reason: 'off' },
-    );
+    // 外す向きも承認が要る（指示も Skills も。今の除外 setSettings と同じ強さ。レビュー M1）。会話に紐づかない CLI は画面へ回す
+    const askMode = { scope: 'workspace', autonomy: 'ask' };
+    const offCalled = [];
+    const offCtx = (tag) => ({ context: { setDocAgent: async () => { offCalled.push(tag); return { ok: true }; }, setDocRow: async () => { offCalled.push(tag); return { ok: true }; } }, modeOf: async () => askMode, approve: async () => ({ pending: true, requestId: `req-${tag}` }), reason: 'off' });
+    const offAgentInst = await registry.invoke({ by: 'agent', via: 'mcp', sessionId: 's1', mode: askMode }, 'context.setDocAgent', { kind: 'instruction', key: 'file:/x', agent: 'claude', on: false }, offCtx('agent-inst'));
+    const offAgentSkill = await registry.invoke({ by: 'agent', via: 'mcp', sessionId: 's1', mode: askMode }, 'context.setDocAgent', { kind: 'skill', key: 'skill:x', agent: 'claude', on: false }, offCtx('agent-skill'));
+    const offRowInst = await registry.invoke({ by: 'agent', via: 'mcp', sessionId: 's1', mode: askMode }, 'context.setDocRow', { kind: 'instruction', key: 'file:/x', on: false, place: '/p' }, offCtx('row-inst'));
+    const offRowSkill = await registry.invoke({ by: 'agent', via: 'mcp', sessionId: 's1', mode: askMode }, 'context.setDocRow', { kind: 'skill', keys: ['skill:x'], on: false, place: '/p' }, offCtx('row-skill'));
+    const offUnbound = await registry.invoke({ by: 'agent', via: 'cli', sessionId: null }, 'context.setDocRow', { kind: 'instruction', key: 'file:/x', on: false, place: '/p' }, offCtx('unbound'));
+    const offHuman = await registry.invoke({ by: 'human', via: 'ui' }, 'context.setDocAgent', { kind: 'instruction', key: 'file:/x', agent: 'claude', on: false }, offCtx('human'));
+    t.ok('ops: 外す向き（setDocAgent / setDocRow の on:false）も、指示・Skills とも ask の会話では承認待ち、紐づかない CLI は断る、人の画面はそのまま通る',
+      [offAgentInst, offAgentSkill, offRowInst, offRowSkill].every(r => r.pending === true)
+        && offUnbound.ok === false && offUnbound.code === 'NEEDS_UI'
+        && offHuman.ok === true && offCalled.join(',') === 'human',
+      JSON.stringify({ offAgentInst, offAgentSkill, offRowInst, offRowSkill, offUnbound, offHuman, offCalled }));
     const opGuarded = await registry.invoke(
       { by: 'agent', via: 'mcp', sessionId: 's1', mode: { scope: 'workspace', autonomy: 'ask' } },
       'context.setDocAgent',
       { kind: 'instruction', key: 'file:/x', agent: 'claude', on: true },
       { context: { setDocAgent: async () => ({ ok: true }) }, modeOf: async () => ({ scope: 'workspace', autonomy: 'ask' }), approve: async () => ({ pending: true, requestId: 'req-1' }), reason: 'on' },
     );
-    t.ok('ops riskOf: setDocAgent(on=false) は write で即実行、on=true は guarded で承認待ち',
-      opWrite.ok === true && opGuarded.pending === true,
-      JSON.stringify({ opWrite, opGuarded }));
+    t.ok('ops: setDocAgent(on=true) も guarded で承認待ち', opGuarded.pending === true, JSON.stringify({ opGuarded }));
 
     const osHome = path.join(tmp, 'os-home');
     await fs.mkdir(path.join(osHome, '.claude'), { recursive: true });

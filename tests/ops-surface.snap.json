@@ -1778,8 +1778,8 @@
     },
     {
       "id": "context.setDocAgent",
-      "risk": "write",
-      "riskOf": true,
+      "risk": "guarded",
+      "riskOf": false,
       "scope": "global",
       "modeGate": true,
       "hostScreenOnly": false,
@@ -1803,8 +1803,8 @@
     },
     {
       "id": "context.setDocRow",
-      "risk": "write",
-      "riskOf": true,
+      "risk": "guarded",
+      "riskOf": false,
       "scope": "global",
       "modeGate": true,
       "hostScreenOnly": false,
