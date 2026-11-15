@@ -507,6 +507,9 @@ try {
       && await page.locator('#scx-panel-instruction .cx-row', { hasText: 'AGENTS.md' }).first().locator('.cx-sw').count() === 1,
       '右パネル編集: 指示・Skills には担当 2 択とエージェント列を出さず、利用者 CLAUDE.md と作業場所 AGENTS.md の行スイッチを出し、Hooks は保つ',
     );
+    const scxTok = await page.locator('#scx-panel-instruction .cx-row', { hasText: 'AGENTS.md' }).first().locator('.cx-tok').textContent().catch(() => null);
+    check(/^約 [\d,]+$/.test(scxTok ?? '') && await page.locator('#scx-panel-skill .cx-tok').count() === 0,
+      '右パネル編集: 指示の行の右に量を出し（モックどおり）、Skills には出さない', scxTok);
     await shoot(page, 'context-agents-1280-light-panel-inst.png');
 
     // 右パネルの 9 件 rules まとまり（リポジトリ dir tier）の開閉と mixed 一括切替

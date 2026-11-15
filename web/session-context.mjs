@@ -833,7 +833,9 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       onToggle: () => saveDocRow(kind, { key: e.key }, !on, `[data-cx-fk="${escCss(`scx-sw:${e.key}`)}"]`),
     });
     if (editBusy) sw.disabled = true;
-    row.append(body, sw);
+    // 指示の行の右端の量（設定の表と同じ。モックどおり編集中も出す）
+    const tokens = kind === 'instruction' && Number.isFinite(e.tokens) ? [el('span', 'cx-tok', about(e.tokens))] : [];
+    row.append(body, ...tokens, sw);
     return row;
   }
   function paintEditEntries(host, kind, doc, offText) {
@@ -905,7 +907,10 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
           },
         });
         if (editBusy) sw.disabled = true;
-        row.append(tw, body, sw);
+        // まとまりの量: 渡っている物の合計（どれも渡っていなければ全体）。設定の表と同じ数え方
+        const tok = kind === 'instruction' ? items.reduce((a, x) => (Number.isFinite(x.tokens) ? { all: a.all + x.tokens, on: a.on + (x.anyOn ? x.tokens : 0) } : a), { all: 0, on: 0 }) : null;
+        const tokens = tok && tok.all > 0 ? [el('span', 'cx-tok', about(tok.on || tok.all))] : [];
+        row.append(tw, body, ...tokens, sw);
         host.append(row);
         if (open) for (const { entry, childLabel } of kids) host.append(editDocRow(kind, doc, entry, { child: true, displayName: childLabel, offText }));
       }
