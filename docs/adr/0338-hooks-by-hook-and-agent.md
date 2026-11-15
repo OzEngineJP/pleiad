@@ -107,7 +107,7 @@
   - `compat.grok = 'off'`（Claude・Cursor・Codex の互換の読み込み元を止めていた）。
   - Devin へ向けた登録は `off[id] = ['devin']` から始め、`compat.devin` は Devin へ向けた登録があれば `'off'`（無ければ `'native'`）。
     - main は Devin の `--config` を起動の直後に消していた。Devin CLI はそのファイルを起動の後の `session/new` で読むので、旧「そろえる」でも、登録は Devin で動かず、取り込みも止まっていなかった（2026-11-15 実機。main の会話の記録は「渡した」と書いていた）。
-    - 更新しただけで Devin の動きが変わらないよう、Devin のマスはオフ（取り込みは動く）から始める。利用者が Devin のマスを入れて渡すものができたターンから、旧の規則どおり取り込みが止まる（そのマスの注意は `devinImportsStop`）。
+    - 更新しただけで Devin の動きが変わらないよう、Devin のマスはオフ（取り込みは動く）から始める。利用者が Devin のマスを入れて渡すものができたターンから、旧の規則どおり取り込みが止まる（そのマスの注意は `devinImportsStop`）。止まっていない場所を止まる状態に変える操作は、どの入口（マス・行のスイッチ・まとまりのスイッチ・会話の右の欄の「この場所で使う」・場所の上書きを戻す（`setPlace` の `reset`））でも保存の前に知らせる（下の「画面」「操作」）。
   - 移行前（`adopted: false`）のターンは Devin へ何も渡さない（`prepareHooksTurn` の旧い道は、`HOOK_VIA` が `config` のエージェントでは `null`）。指示・Skills・外部 MCP の表が使う `devinImportsStopped` も、移行前はいつも `false`。
 - 場所ごとに担当を変えていた人: その場所の担当と `disabled` で同じ計算をして `places[].agents` に書く。
 - 写しを持つ人: 写し（相手のファイルの、アダプター越しのコマンド。`parseAdapterCommand`）は相手のエージェント自身の行のまま。元の行の、その相手の列は鍵（`copyExists`）で、状態は写しの状態。黙って消さず、二重に動かさない。
@@ -149,6 +149,7 @@
 - 設定 › プラグイン › Hooks を、指示・Skills・外部 MCP と同じ共有の部品（`agentChip`・`rowSwitch`・`askBanner`・`agentLegend`・`web/lock-tip.mjs`）の表にした（`web/hooks-matrix.mjs`）。担当の 2 択とその確認・取り込みの選択・「ほかのエージェントへ写す」は画面から消した。旧カードの状態の文は行の詳細へ移した。
 - アイコンは「そのエージェントのターンで実行する」。`MATRIX_ICON` に「実行する」の記号は無いので、新しい記号を作らず、指示・Skills と同じエージェントのロゴにした。読み上げ名は「{エージェント} で {名前} を実行する」。
 - 広げる（`needsConfirm`）ときだけ、押した行の下で「{出どころ} の設定の Hook を、{相手} でも実行します」と聞き、`warnings` を箇条で並べる。注意があっても入れられる。
+- 押すと Devin の取り込みが止まり始める操作は、広げるかどうかに関わらず、保存の前に押した行の下で「この操作で、この場所の Devin の取り込み（read_config_from）が止まります」と聞く。表のマス（`stopsDevinImports`）・行のスイッチ（`switchConfirm`）・右の欄の「この場所で使う」（`here.confirm`）の印は core の一覧が付け、画面は作り直さない。既に止まっている場所の 2 つ目の Devin では聞かない。この確認は覚えず、Devin を切って取り込みが戻った後に入れ直すときはまた聞く。まとまりのスイッチと場所の上書きを戻す操作は画面に無く、エージェント・CLI からは承認のカードで知らせる。
 - 作業場所の Hooks は 1 行（`ws:hooks`）にまとめ、件数には数えない。場所ごとに使うかは会話の右の欄の「この場所で使うか」（`setHookPlace`）で選ぶ。右の欄にエージェントのアイコンは出さない。
 - 移行前（`adopted: false`）は開いただけでは保存せず、最初に押したときに移行する。`hooks.resetAgents` は画面に置かない（押すと、移行してから選んだものが黙って全部消える。戻したいときは CLI・MCP から呼ぶ）。
 - 行き先の無くなった選択（`orphans`）は、件数の注記だけを出す（捨てる操作はまだ置いていない）。
@@ -156,7 +157,8 @@
 
 ### 操作（`context.mcpMatrix` に当たるもの）
 
-- `hooks.matrix`（read）: `{ adopted, agents, groups, cwd, place, skipFrom, compat, grok, claudeAllOff, trustPending, revision, orphans: [{ key, agent, scope, path, event, reason, candidates, off, spread, unused, places }], rows: [{ key, group, agent, source, scope, event, matcher, command（伏せ字）, scanIds?, on, switchable, here?, status?, targets?, enabled?, cells: { <A>: { state, mode, reason?, detail?, warnings?, needsConfirm?, copy?, reasons? } } }] }`。`needsConfirm` は、押すと広げるセル（元の集合に無く、今オフで押せる）だけに `true` で付く。
+- `hooks.matrix`（read）: `{ adopted, agents, groups, cwd, place, skipFrom, compat, grok, claudeAllOff, trustPending, revision, orphans: [{ key, agent, scope, path, event, reason, candidates, off, spread, unused, places }], rows: [{ key, group, agent, source, scope, event, matcher, command（伏せ字）, scanIds?, on, switchable, here?, status?, targets?, enabled?, switchConfirm?, cells: { <A>: { state, mode, reason?, detail?, warnings?, needsConfirm?, stopsDevinImports?, copy?, reasons? } } }] }`。`needsConfirm` は、押すと広げるセル（元の集合に無く、今オフで押せる）と、押すと Devin の取り込みが止まり始めるセル（`stopsDevinImports: true`、`warnings` に `devinImportsStop`）に `true` で付く。止まり始めるかは実行時と同じ物差し（`compat.devin` が `off` で、Devin へ渡すものができる）で、止まっていない状態から止まる状態へ変わるときだけ印を付ける。行の `switchConfirm: { warnings }` は、行のスイッチを入れると止まり始める行、`here.confirm` は、この場所で使うに戻すと止まり始める行に付く。
+- `hooks.setAgent`・`setRow`・`setGroup`・`setPlace` は `dry: true` で、何も書かずに `{ devinImportsStop, revision }` を返す。エージェント・CLI から呼ぶと、止まり始める操作は承認待ちになり、承認のカードの文に取り込みが止まることを足す（`opsApproval.hooksDevinImportsStop`）。動いた操作の戻りにも `devinImportsStop: true` を付ける。
 - `revision` は保存の中身の hash（移行の時刻 `adoptedFrom.at` は入れない。移行前の一覧は開くたびに写し直すため）。操作に `revision` を渡すと、違えば `CONFLICT` で断る。押せないセルは `INVALID`（`hooksAgents.notPressable`）。
 - `hooks.setAgent`（セル）・`hooks.setRow`（全体のスイッチ）・`hooks.setGroup`（組のセル・組のスイッチ）・`hooks.setPlace`（この場所で使う・場所の上書きを戻す）・`hooks.resetAgents`（移行前へ戻す）。
 - 承認（AGENTS.md・ADR 0095・0327）: 同じ結果になる今の操作と同じ強さにそろえる（write の操作で guarded の変更ができると抜け道になる。ADR 0095）。
