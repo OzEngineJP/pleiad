@@ -231,7 +231,7 @@ export default async function (t) {
     const labels = Object.fromEntries(AG.map(a => [a, agentPresentation(a).shortLabel ?? a]));
     const cells7 = (o) => Object.fromEntries(AG.map(a => [a, o[a] ?? none()]));
     const devReg = () => ({ key: 'h-2', kind: 'reg', group: 'ply', agent: 'claude', name: 'dev', event: 'Stop', matcher: null, command: 'node dev.mjs', on: true, switchable: true,
-      cells: cells7({ claude: { mode: 'toggle', state: 'on' }, devin: { mode: 'toggle', state: 'off', needsConfirm: true, warnings: [{ code: 'devinImportsStop' }] },
+      cells: cells7({ claude: { mode: 'toggle', state: 'on' }, codex: { mode: 'toggle', state: 'on' }, devin: { mode: 'toggle', state: 'off', needsConfirm: true, warnings: [{ code: 'devinImportsStop' }] },
         grok: { mode: 'locked', state: 'off', reason: 'relay', detail: 'noSuchDetail', reasons: [{ code: 'noSuchDetail' }] } }) });
     const wsRow = { key: 'ws:hooks', kind: 'ws', group: 'place', agent: null, on: true, switchable: false, switchLock: { reason: 'place', detail: 'followsWorkspace' },
       cells: cells7({ claude: { mode: 'toggle', state: 'on' }, antigravity: { mode: 'toggle', state: 'off', empty: true } }) };
@@ -240,7 +240,7 @@ export default async function (t) {
     const grid7 = () => ({ agents: AG, labels, adopted: true, revision: 'r7', orphans: [], rows: [...(withDev ? [devReg()] : []), wsRow] });
     const card7 = createHooksMatrix({
       cmd: async (op, args) => { calls7.push([op, args]); return op === 'hooksMatrix' ? grid7() : op === 'setHookAgent' ? { ok: true } : null; },
-      work: fn => fn(), saved: () => {}, failed: () => {}, opened: new Set(),
+      work: fn => fn(), saved: () => {}, failed: () => {}, opened: new Set(['hook:h-2']),
     });
     dom.body.append(card7.root);
     await card7.load();
@@ -254,6 +254,8 @@ export default async function (t) {
     assert.equal(card7.root.querySelector('.cx-ask .q').textContent, 'Pleiad の設定の Hook を、Devin でも実行します');
     assert.match(card7.root.querySelector('.cx-ask').getAttribute('aria-label'), /Devin でも実行する確認$/);
     assert.ok(!/Devin CLI|Grok Build/.test(card7.root.textContent), '表のどこにも正式名の長い名前を出さない');
+    assert.ok(card7.root.querySelector('.cx-row[data-key="h-2"] ~ .hk-details .hk-facts, .hk-details .hk-facts')?.textContent.includes(`Claude${tr('app.listSeparator')}Codex`),
+      '行の詳細の「動いている」も辞書の区切りで並べる');
     t.ok('使っていないエージェント（Devin・Grok）も、確認の帯・読み上げ名・鍵の文で短い名前（一覧の labels）', true);
 
     // 空のマス（この場所に定義が無い）: 吹き出しと読み上げ名に「定義がありません」。押せるまま

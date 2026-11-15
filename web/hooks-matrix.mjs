@@ -236,7 +236,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     const put = (k, v) => { if (v) box.append(el('span', 'k', k), el('span', 'v', v)); };
     put(t('hooks.matrix.fact.where'), row.kind === 'reg' ? 'Pleiad（hooks.json）' : row.path ? short(row.path) : '');
     const runs = grid.agents.filter(a => row.cells[a]?.state === 'on').map(short3);
-    put(t('hooks.matrix.fact.runs'), runs.length ? runs.join('、') : t('hooks.matrix.fact.none'));
+    put(t('hooks.matrix.fact.runs'), runs.length ? runs.join(t('app.listSeparator')) : t('hooks.matrix.fact.none'));
     const locks = [];
     if (row.switchLock) { const s = hookTip(row.switchLock); if (s) locks.push(s); }
     for (const a of grid.agents) {
