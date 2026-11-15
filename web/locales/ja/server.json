@@ -757,6 +757,11 @@
       "selectionUnavailable": "Devin CLI の選択肢ではモデル設定を確認できません（{{setting}}）",
       "selectionNotAcknowledged": "Devin CLI がモデル設定を確認しませんでした（{{setting}}）",
       "startFailed": "Devin CLI を起動できませんでした",
+      "userConfigInvalid": "Devin のこのターンを始められません。Devin の設定フォルダーの config.json に問題があります（{{reason}}）。この会話の設定を安全に重ねられないため、config.json を直してから、もう一度送ってください。",
+      "configUnreadable": "ファイルを読み取れません",
+      "configInvalidJson": "JSON の書き方が正しくありません",
+      "configNotObject": "全体が JSON のオブジェクトになっていません",
+      "configInvalidValue": "{{key}} の値を Devin が受け付けません",
       "turnConfigTooLarge": "Devin のこのターンを始められません。Devin の設定フォルダーの config.json に、この会話で Pleiad が渡す設定（Devin へ渡す Hook・Pleiad のシェル）を重ねると 1 MiB を超えます。config.json の使っていない項目を減らして小さくしてから、もう一度送ってください（この場所で Devin へ Hook を渡さず、Pleiad のシェルも使わなければ、重ねずに始めます）"
     },
     "auth": {

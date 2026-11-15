@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { prepareDevinLaunch, prepareDevinMcpOff, devinTurnConfig, overlayDevinConfig, METADATA_CONFIG } from '../../core/backends/devin-config.mjs';
 import { canLinkMcpOffHome } from '../../core/backends/mcp-off-home.mjs';
+import { currentLocale, setLocale } from '../../core/i18n.mjs';
 
 export const name = 'devin-config';
 export const title = 'Devin native 設定と認証を保ち、metadata と専用セッションの置き場を分ける';
@@ -131,6 +132,18 @@ export default async function (t) {
       await assert.rejects(prepareDevinLaunch({ command: ['fake'], cwd, env: h.env, dataDir: root, turnConfig: part }),
         e => e.code === 'DEVIN_USER_CONFIG_INVALID' && !e.message.includes('secret-value-123') && /config\.json/.test(e.message), name);
     }
+    const priorLocale = currentLocale();
+    try {
+      for (const lang of ['ja', 'en']) {
+        setLocale(lang);
+        const h = await userHome(`localized-${lang}`, '{ secret-value-123');
+        await assert.rejects(prepareDevinLaunch({ command: ['fake'], cwd, env: h.env, dataDir: root, turnConfig: part }),
+          e => e.code === 'DEVIN_USER_CONFIG_INVALID' && e.message.includes('config.json') && !e.message.includes('secret-value-123')
+            && e.message.includes(lang === 'ja' ? 'ターンを始められません' : 'Cannot start this Devin turn')
+            && e.message.includes(lang === 'ja' ? '直して' : 'Fix config.json') && e.message.includes(lang === 'ja' ? 'JSON の書き方' : 'JSON syntax'));
+      }
+    } finally { setLocale(priorLocale); }
+    t.ok('設定が壊れたときは日本語・英語で、ターンを始められない理由・ファイル・直し方を示す（中身は載せない）', true);
     const unreadable = await userHome('refuse-unreadable');
     await fs.mkdir(path.join(unreadable.dir, 'config.json'));
     await assert.rejects(prepareDevinLaunch({ command: ['fake'], cwd, env: unreadable.env, dataDir: root, turnConfig: part }), { code: 'DEVIN_USER_CONFIG_INVALID' });
