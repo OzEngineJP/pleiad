@@ -66,8 +66,8 @@ Pleiad を更新しても、共有サーバーで走っている OpenCode のタ
 
 外部 MCP は担当の 2 択ではなく名前ごとの一覧で決める（[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）。OpenCode 自身の MCP は名前ごとに止められ、止める名前は定義を `enabled:false` で渡す。Claude は `deniedMcpServers`、Codex は `-c mcp_servers.<名前>.enabled=false` で止める。Devin は、利用者が Devin 自身の名前を止めたターンだけ設定の置き場の写し（本物へのリンク＋Pleiad が書く 1 ファイル）で起動して止める（[ADR 0336](adr/0336-grok-devin-native-mcp-off.md)）。DEVIN_CONFIG_HOME の写しの `mcp_config.json` の `disabled: true` で、ユーザーの設定の定義（Claude からの取り込みを含む）だけ止まる。作業場所の設定にもある名前は止まらない（場所ごとの設定の一覧で鍵 `reason: 'workspace'`）。シンボリックリンクを作れない PC では鍵（`reason: 'nolinks'`）。右パネルの「この会話では外す」だけでは Devin 自身の側を止めない。写しの中で Devin が置き換えたファイルは本物へ運ぶ。Grok・Antigravity は止める口が無い（能力の印 `nativeMcpOff`。Grok は写しで止めると認証情報の更新が本物に届かないので鍵のまま）。Grok は指示・Skills を Pleiad が担当すると `ply_context` を受け取れない。
 
-設定 › プラグインで指示・Skills を「Pleiad がそろえる」にした場所では、Pleiad がそろえたものだけを OpenCode に渡し、OpenCode 自身の AGENTS.md・Skills は読ませない。外部 MCP は名前ごとの一覧（上の段落）で決まり、OpenCode 自身の MCP は止めた名前だけ外れる。
-そのため、そのターンだけ専用の OpenCode を起こす（起動の数秒が足される）。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その会話では読まれない。
+設定 › プラグインまたは会話の場所設定により、OpenCode の指示・Skills がエージェント既定の状態（ネイティブのみ・変更なし）から外れるターン（1 件以上の抑止、他エージェント由来の再配布、または `prefer` による別定義の適用）では、そのターンだけ専用の `opencode serve` を起動して `PLEIAD_OPENCODE_INSTRUCTION_OWNER` と `OPENCODE_CONFIG_CONTENT`（保持分の再配布や `'skill'` ツール抑止を含む）を渡し、OpenCode 自身のグローバル／プロジェクト側読込と切り離す（未変更のターンは従来の共有サーバー経路のまま）。外部 MCP は名前ごとの一覧（上の段落）で決まり、OpenCode 自身の MCP は止めた名前だけ外れる。
+専用の `opencode serve` を使うターンでは起動の数秒が足され、作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その会話では読まれない。
 
 システム管理者の設定に担当外のコンテキストがあり、隔離できない環境では開始時に理由を表示する。macOS の管理プロファイルがある場合も同様。Windows の専用サーバーは OpenCode のシステム設定用の置き場も隔離する。
 
@@ -98,9 +98,7 @@ Devin CLI のモデルは、モデル系列の代表と、思考の強さ・速�
 利用上限や請求額を保証する表示ではなく、残り使用枠を取得できないときは「不明」とする。
 
 Pleiad が読むネイティブ設定の一覧が不明なときは、指示量や MCP の一覧を推定しない。
-これは Devin 自身がネイティブ設定を読まないという保証ではない。Pleiad 管理のコンテキストを受け取れない場合は担当の切替を無効にし、
-保存済みの担当が Pleiad でも、この会話では適用されない理由を表示する。
-Pleiad 管理のコンテキストは MCP と注入文として配達するが、担当分のネイティブ読込を止める処理は未実装で、二重読込を防ぐ所有者分離が残る（[対応状況](https://github.com/OzEngineJP/pleiad/issues/108)）。
+これは Devin 自身がネイティブ設定を読まないという保証ではない。指示・Skills のセル単位設定（[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）では、Devin 自身の置き場（`%APPDATA%/devin/*`・`~/.devin/*`・`<ws>/.devin/*` と `.agents/skills`）は `read_config_from` で止められないためオンのまま鍵（`own` / `workspace`）とし、`claude`・`agents_standard`（作業場所まとめ行含む）・`cursor`・`windsurf`・`copilot`・`opencode` 等の取り込み形式は `read_config_from[fmt] = false` で止めて、同じ形式で残す行を `ply_context` で再配布する（`--config` 一時ファイルは実機 `devin acp` が `session/new` で参照するためターン終了の `finally` まで保持する）。なお同一形式の `read_config_from[fmt] = false` はその形式のネイティブ MCP 取り込みも止めるため、アクティブな外部 MCP は Pleiad 側の中継で補う。
 通常の会話では利用者のネイティブ設定とログインを保ち、会話データの置き場だけを Pleiad 専用に分ける。
 Windows では CLI 本体が予期せず先に終了した場合、既存の `taskkill` による終了処理だけでは残った子プロセスをすべて回収できる保証はない。
 
@@ -115,7 +113,7 @@ Devin と Grok は、CLI が承認候補に `allow_always` を返したときだ
 
 Grok のコンピューター操作の画像はファイル経由で渡す。CLI 1.0.62 では、MCPの画像と保存先を渡し、画像ファイルを開いて内容を読む経路を確認した。
 Pleiad 管理のコンテキスト、複数アカウント、無停止更新、候補の生成などの残件は [対応状況の管理](https://github.com/OzEngineJP/pleiad/issues/108)で追跡する。
-Pleiad に管理を任せない指示・Skills・MCPは、引き続き Grok 自身の設定が適用される。
+外部設定ファイル由来の指示・Skills（[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）および外部 MCP（[ADR 0336](adr/0336-grok-devin-native-mcp-off.md)）について、Grok は設定ディレクトリの写しを作らない方針のためセルを鍵のまま（Grok が自分で読むものはオン＋`own`/`workspace`、その他はオフ＋`relay`）とする。一方「Pleiad の指示」（`plyInstructions`）は発言前注入で毎ターン制御でき、Grok 列も項目ごとにオン／オフできる。
 
 Devin でも Pleiad のシェルツールと入力欄の `!` が使える。両者ともネイティブシェルを無効化する機能とは別である。
 
