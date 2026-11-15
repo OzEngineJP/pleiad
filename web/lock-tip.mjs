@@ -83,6 +83,19 @@ export function hideLockTip() {
   tip?.classList?.remove('on');
 }
 
+/** ロゴ・名前だけの描き直しで、開いている鍵の吹き出しを同じ位置の新しい相手へ移す。 */
+export function preserveLockTip(root) {
+  if (!who || !tip?.classList.contains('on') || !root.contains(who)) return () => {};
+  const route = [], wasTapped = tapped === who;
+  for (let node = who; node !== root; node = node.parentElement) route.unshift(Array.from(node.parentElement.children).indexOf(node));
+  return () => {
+    const anchor = route.reduce((node, index) => node?.children[index], root);
+    if (!anchor?.dataset?.tip) { hideLockTip(); return; }
+    if (wasTapped) tapped = anchor;
+    show(anchor);
+  };
+}
+
 /** 出ている間だけ、相手が描き直しで外されていないかを見る（外されたら消す。マウスがまだ同じ鍵の上なら出し直す） */
 function watchAnchor() {
   if (typeof MutationObserver !== 'function' || !document.body) return;

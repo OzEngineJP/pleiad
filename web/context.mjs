@@ -18,6 +18,7 @@ import { createHooksMatrix } from './hooks-matrix.mjs';
 import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
+import { preserveLockTip } from './lock-tip.mjs';
 import { agentShortLabel } from './agent-brands.mjs';
 import { freshAgents, MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocRowLocal, askBanner, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, matrixSvg, recalcDocRow, rowSwitch, savedText } from './context-matrix.mjs';
 
@@ -908,6 +909,43 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     updateCounts();
   }
 
+  /** 一覧が遅れて届いたときは保持済みの表だけを描き直す。保存・探索・タブの選び直しはしない。 */
+  function refreshBrands() {
+    if (!view) return;
+    const restoreTip = preserveLockTip(panel);
+    // 未保存のフォーム（追加場所・指示の量・MCP の詳細設定と名前変更）は、値・エラー・操作を同じ要素のまま戻す。
+    const drafts = KINDS.flatMap(kind => [...cards[kind].querySelectorAll('.cx-addbox, .cx-fold, .cx-peek .cx-inline')].map(box => {
+      const route = [];
+      for (let node = box.parentElement; node !== cards[kind]; node = node.parentElement) route.unshift(Array.from(node.parentElement.children).indexOf(node));
+      return { kind, box, route, index: Array.from(box.parentElement.children).indexOf(box) };
+    }));
+    const active = document.activeElement;
+    const route = [];
+    if (active && panel.contains(active)) {
+      for (let node = active; node !== panel; node = node.parentElement) route.unshift(Array.from(node.parentElement.children).indexOf(node));
+    }
+    const sc = panel.closest('.settings-content');
+    const scroll = sc ? [sc.scrollLeft, sc.scrollTop] : null;
+    const selection = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+    plyInstructions.render();
+    renderAll();
+    hooks.render();
+    for (const { kind, box, route, index } of drafts) {
+      const parent = route.reduce((node, i) => node?.children[i], cards[kind]);
+      if (box.classList.contains('cx-inline')) parent?.append(box);
+      else parent?.children[index]?.replaceWith(box);
+    }
+    // 確認のボタンや MCP の詳細の操作は、フォーカス用のキーを持たないものもある。
+    // データも開閉も同じなので、同じ位置の要素へ戻す（ロゴの中は操作対象ではない）。
+    if (route.length) {
+      const target = route.reduce((node, index) => node?.children[index], panel);
+      target?.focus?.({ preventScroll: true });
+      if (selection) target?.setSelectionRange?.(...selection);
+    }
+    if (scroll) { sc.scrollLeft = scroll[0]; sc.scrollTop = scroll[1]; }
+    restoreTip();
+  }
+
   // ---------------------------------------------------------------- 読み込み
   /** 外部 MCP の一覧だけを取り直す（アイコンの保存のあと・コネクターを読んでいる間） */
   async function reloadMatrix() {
@@ -1053,5 +1091,5 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   /** 設定のコンテキストのページを開く（いつも全体の設定） */
   function openPage() { show(); return open(); }
   openButton.onclick = () => openPage();
-  return { openPage, get scanning() { return scanning; } };
+  return { openPage, refreshBrands, get scanning() { return scanning; } };
 }

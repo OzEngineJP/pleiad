@@ -759,6 +759,11 @@
       "selectionUnavailable": "The advertised Devin CLI choices do not confirm this model setting ({{setting}})",
       "selectionNotAcknowledged": "Devin CLI did not acknowledge the model setting ({{setting}})",
       "startFailed": "Could not start Devin CLI",
+      "userConfigInvalid": "Cannot start this Devin turn. There is a problem with config.json in the Devin settings folder ({{reason}}). Pleiad cannot safely add this conversation’s settings. Fix config.json and send your message again.",
+      "configUnreadable": "the file cannot be read",
+      "configInvalidJson": "the JSON syntax is invalid",
+      "configNotObject": "the top-level value is not a JSON object",
+      "configInvalidValue": "Devin does not accept the value of {{key}}",
       "turnConfigTooLarge": "Cannot start this Devin turn: config.json in the Devin settings folder exceeds 1 MiB once the settings Pleiad passes for this conversation (hooks for Devin, the Pleiad shell) are added on top. Remove unused entries to make config.json smaller, then send again. (If this place passes no hooks to Devin and does not use the Pleiad shell, Pleiad starts Devin without adding anything.)"
     },
     "auth": {

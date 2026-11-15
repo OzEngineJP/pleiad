@@ -98,8 +98,7 @@ const DEVIN_KEY_CHECKS = {
   read_config_from: v => isObject(v) && IMPORTS.every(id => v[id] === undefined || v[id] === null || typeof v[id] === 'boolean'),
   disabled_tools: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
 };
-const userConfigError = (reason) => Object.assign(new Error(`Cannot start this Devin turn: config.json in the Devin settings folder ${reason}. `
-  + 'Pleiad adds this conversation\'s settings on top of your Devin settings and cannot do so safely. Fix the file and try again.'), { code: 'DEVIN_USER_CONFIG_INVALID' });
+const userConfigError = reason => Object.assign(new Error(t('devin.errors.userConfigInvalid', { reason })), { code: 'DEVIN_USER_CONFIG_INVALID' });
 
 /**
  * 利用者の Devin の設定（config.json）を読む。無い・空なら null。
@@ -108,11 +107,11 @@ const userConfigError = (reason) => Object.assign(new Error(`Cannot start this D
  */
 export async function readDevinUserConfig(file) {
   let text;
-  try { text = await fs.readFile(file, 'utf8'); } catch (error) { if (error?.code === 'ENOENT') return null; throw userConfigError('cannot be read'); }
+  try { text = await fs.readFile(file, 'utf8'); } catch (error) { if (error?.code === 'ENOENT') return null; throw userConfigError(t('devin.errors.configUnreadable')); }
   if (!text.replace(BOM, '').trim()) return null;
   let value;
-  try { value = parseDevinJsonc(text); } catch { throw userConfigError('is not valid JSON'); }
-  if (!isObject(value)) throw userConfigError('is not a JSON object');
+  try { value = parseDevinJsonc(text); } catch { throw userConfigError(t('devin.errors.configInvalidJson')); }
+  if (!isObject(value)) throw userConfigError(t('devin.errors.configNotObject'));
   return value;
 }
 
@@ -129,7 +128,7 @@ export function overlayDevinConfig(user, part) {
   if (!part) return user ?? null;
   const base = isObject(user) ? user : {};
   for (const key of Object.keys(part)) {
-    if (base[key] !== undefined && DEVIN_KEY_CHECKS[key] && !DEVIN_KEY_CHECKS[key](base[key])) throw userConfigError(`has a "${key}" value that Devin ignores`);
+    if (base[key] !== undefined && DEVIN_KEY_CHECKS[key] && !DEVIN_KEY_CHECKS[key](base[key])) throw userConfigError(t('devin.errors.configInvalidValue', { key }));
   }
   const merged = { ...base };
   for (const [key, value] of Object.entries(part)) {

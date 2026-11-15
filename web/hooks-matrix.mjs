@@ -274,7 +274,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     const box = el('div', 'hk-details');
     box.append(facts(row));
     if (row.kind === 'reg') {
-      const h = ply?.entries?.find(x => x.id === row.key);
+      const h = ply?.hooks?.find(x => x.id === row.key);
       if (h) box.append(plyPeek(h, { cmd, work, onChanged: async (_view, didSave) => { if (didSave) saved(t('hooks.saved')); await reload(); } }));
       return box;
     }
@@ -434,5 +434,5 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     else if (fk) root.querySelector(`[data-cx-fk="${CSS.escape(fk)}"]`)?.focus({ preventScroll: true });
   }
   render();
-  return { root, load, reload, get grid() { return grid; } };
+  return { root, load, reload, render, get grid() { return grid; } };
 }

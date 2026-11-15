@@ -20,4 +20,14 @@ export default async function (t) {
   // 通過の行の後に落ちた（片付けの失敗など）ときも、終わりの出力を見せる
   t.ok('ブラウザ試験（tests/browser/hooks-matrix.mjs）がすべて通る', code === 0 && Boolean(pass),
     code === 0 && pass ? `${pass[1]} 判定` : `exit ${code}\n${out.split('\n').slice(-12).join('\n')}`);
+  const late = fileURLToPath(new URL('../browser/plugin-brands-late.mjs', import.meta.url));
+  const result = await new Promise(resolve => {
+    const child = spawn(process.execPath, [late], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => child.kill(), 120000);
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { out += d; });
+    child.on('close', code => { clearTimeout(timer); resolve({ code, out }); });
+  });
+  t.ok('一覧が遅れて届く 4 タブでロゴ・短い名前・開いた操作を保つ', result.code === 0 && result.out.includes('PASS:'), result.out);
 }
