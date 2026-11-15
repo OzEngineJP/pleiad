@@ -1617,6 +1617,26 @@
       "input": "5b5c3443aba4"
     },
     {
+      "id": "context.docMatrix",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "doc-matrix"
+          ]
+        }
+      },
+      "legacyCommand": "docMatrix",
+      "input": "744037160df0"
+    },
+    {
       "id": "context.findings",
       "risk": "read",
       "riskOf": false,
@@ -1717,6 +1737,26 @@
       "input": "d25acaa13541"
     },
     {
+      "id": "context.repairDocAgents",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "doc-repair"
+          ]
+        }
+      },
+      "legacyCommand": "repairDocAgents",
+      "input": "ce3e34a61c8e"
+    },
+    {
       "id": "context.scan",
       "risk": "read",
       "riskOf": false,
@@ -1755,6 +1795,54 @@
       },
       "legacyCommand": "sessionContext",
       "input": "9b61e58faf57"
+    },
+    {
+      "id": "context.setDocAgent",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "doc-agent"
+          ],
+          "positional": [
+            "kind",
+            "key",
+            "agent"
+          ]
+        }
+      },
+      "legacyCommand": "setDocAgent",
+      "input": "5eb3251e43e8"
+    },
+    {
+      "id": "context.setDocRow",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "doc-row"
+          ],
+          "positional": [
+            "kind"
+          ]
+        }
+      },
+      "legacyCommand": "setDocRow",
+      "input": "bc55163ed5b0"
     },
     {
       "id": "context.setMcpAgent",
@@ -1798,7 +1886,7 @@
         }
       },
       "legacyCommand": "setPlyInstructions",
-      "input": "ea97bb332f04"
+      "input": "9b3498699162"
     },
     {
       "id": "context.setSessionMcp",
@@ -5990,6 +6078,32 @@
       "id": "context.diff",
       "path": "context diff",
       "positional": []
+    },
+    {
+      "id": "context.setDocAgent",
+      "path": "context doc-agent",
+      "positional": [
+        "kind",
+        "key",
+        "agent"
+      ]
+    },
+    {
+      "id": "context.docMatrix",
+      "path": "context doc-matrix",
+      "positional": []
+    },
+    {
+      "id": "context.repairDocAgents",
+      "path": "context doc-repair",
+      "positional": []
+    },
+    {
+      "id": "context.setDocRow",
+      "path": "context doc-row",
+      "positional": [
+        "kind"
+      ]
     },
     {
       "id": "context.findings",

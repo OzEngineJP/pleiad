@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dir } from './antigravity-store.mjs';
+import { docStopsNative } from './context-capabilities.mjs';
 import { t, agentT } from '../i18n.mjs';
 
 export const AGENT_NAME = 'ply-context';
@@ -61,6 +62,32 @@ export function contextRefusal(owners = {}) {
   // Skills・MCP を Pleiad にする組み合わせを断っていた。今はそのファイルを Pleiad が発言の前に足して渡す
   // （core/backends/antigravity.mjs の注入。issue #107）ので、どの組み合わせでも受ける
   return null;
+}
+
+/**
+ * 会話用のエージェント定義に渡す担当（agentDefinition の owners）。名前ごとのモデル（ADR 0337）で、エージェント自身の分を
+ * 止める名前があるときだけ 'ply'（指示は作業場所の指示ファイルの注入をやめる・Skills は inheritCustomizations: false）。
+ * 外部 MCP を名前ごとに中継するときは inheritMcp を切らない（ADR 0327）。core/backends/antigravity.mjs と試験が同じ関数を使う
+ */
+export function antigravityAgentOwners(contextRuntime) {
+  const baseOwners = contextRuntime?.mcp?.named ? { ...contextRuntime.owners, mcp: 'native' } : contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' };
+  if (!contextRuntime?.docs) return baseOwners;
+  const stops = docStopsNative;
+  return {
+    ...baseOwners,
+    ...(contextRuntime.docs.instruction ? { instruction: stops(contextRuntime.docs.instruction) ? 'ply' : 'native' } : {}),
+    ...(contextRuntime.docs.skill ? { skill: stops(contextRuntime.docs.skill) ? 'ply' : 'native' } : {}),
+  };
+}
+
+/**
+ * 作業場所の指示ファイル（AGENTS.md・GEMINI.md）を Pleiad が発言の前に足す注入（nativeInstructionEntries）を、このターンはやめるか。
+ * 指示の担当が Pleiad（旧い保存）か、名前ごとのモデルで止める指示があるとき。core/backends/antigravity.mjs と試験が同じ関数を使う
+ */
+export function antigravitySkipsNativeInstructions(contextRuntime) {
+  return contextRuntime?.docs?.instruction
+    ? docStopsNative(contextRuntime.docs.instruction)
+    : contextRuntime?.owners?.instruction === 'ply';
 }
 
 /**

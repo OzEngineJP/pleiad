@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { opencodeData } from './opencode-accounts.mjs';
+import { docStopsNative } from './context-capabilities.mjs';
 import { t } from '../i18n.mjs';
 
 const GLOBAL_CONFIG_FILES = ['config.json', 'opencode.json', 'opencode.jsonc'];
@@ -52,6 +53,22 @@ export function mergeConfig(base, next) {
 }
 
 /** Pleiad が担当する種類のキーを外す */
+/**
+ * 専用のサーバーに渡す担当（指示・Skills・MCP のどれを OpenCode に読ませないか）。名前ごとのモデル（ADR 0337）で触れた種類は、
+ * OpenCode 自身の分を止める名前があるときだけ 'ply'（OpenCode は全部まとめてしか止められない）。触れていない種類は旧い担当のまま。
+ * core/backends/opencode.mjs と試験（tests/lib/context-doc-fixture.mjs）が同じ関数を使う
+ */
+export function effectiveOpencodeOwners(contextRuntime) {
+  const owners = contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' };
+  const docs = contextRuntime?.docs;
+  if (!docs) return owners;
+  return {
+    ...owners,
+    ...(docs.instruction ? { instruction: docStopsNative(docs.instruction) ? 'ply' : 'native' } : {}),
+    ...(docs.skill ? { skill: docStopsNative(docs.skill) ? 'ply' : 'native' } : {}),
+  };
+}
+
 export function stripOwned(config, owners) {
   const out = { ...config };
   if (owners?.instruction === 'ply') delete out.instructions;

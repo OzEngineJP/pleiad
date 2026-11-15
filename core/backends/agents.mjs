@@ -26,6 +26,8 @@ import path from 'node:path';
  *             'plugin' はエージェントが自分で走らせる hooks のファイルを、その会話だけのプラグインとして渡す（Grok）。hooksAs が null なら null
  * contextSources  エージェントが自分で読む指示・Skills・MCP の読み込み元（core/context-settings.mjs の SOURCES）。
  *             エージェント任せの会話の「指示の量」の見積もりと、エージェントの設定に登録された MCP の一覧に使う。null は読み方を知らない
+ * contextAt   エージェントが自分で読む指示・Skills・MCP の設定を読み込む時点。'turn' は始まっている会話にも次のターンから届く、
+ *             'conversation' は会話を始めるときだけ読む（始まっている会話には届かない）。画面の保存の知らせ（ADR 0337 §7）が引く
  * shellDefault  エージェントのシェルのツールの既定（設定 shellTool。ADR 0227 §3）。'native' はエージェントのもの、'ply' は Pleiad の ply_shell だけ
  *             （能力の印 nativeShellOff が無いエージェントは 'native' のまま）
  * shellTools  シェルのコマンドを走らせるネイティブのツールの名前（tool.start の name。大文字と小文字を区別する）。長いコマンドの知らせ・
@@ -57,6 +59,7 @@ export const AGENTS = {
     hooksVia: null,
     shellTools: ['Bash', 'PowerShell'],
     shellDefault: 'native',
+    contextAt: 'turn',
   },
   codex: {
     module: './codex.mjs',
@@ -70,6 +73,7 @@ export const AGENTS = {
     hooksVia: null,
     shellTools: ['commandExecution'],
     shellDefault: 'native',
+    contextAt: 'turn',
   },
   antigravity: {
     module: './antigravity.mjs',
@@ -89,6 +93,7 @@ export const AGENTS = {
     hooksVia: null,
     shellTools: ['run_command'],
     shellDefault: 'native',
+    contextAt: 'conversation',
   },
   opencode: {
     module: './opencode.mjs',
@@ -110,6 +115,7 @@ export const AGENTS = {
     // bash が裏で起こしたサーバーを待って戻らなくなる（v1.19.3。2026-10-18）ので、既定で ply_shell だけにする
     shellTools: ['bash', 'shell'],
     shellDefault: 'ply',
+    contextAt: 'turn',
   },
   devin: {
     module: './devin.mjs',
@@ -130,6 +136,7 @@ export const AGENTS = {
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。devin-normalize.mjs）
     shellTools: [],
     shellDefault: 'native',
+    contextAt: 'turn',
   },
   grok: {
     module: './grok.mjs',
@@ -151,6 +158,7 @@ export const AGENTS = {
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。grok-normalize.mjs）
     shellTools: [],
     shellDefault: 'native',
+    contextAt: 'conversation',
   },
   fake: {
     module: './fake.mjs',
@@ -164,10 +172,11 @@ export const AGENTS = {
     hooksVia: null,
     shellTools: ['fake_shell'],
     shellDefault: 'native',
+    contextAt: 'turn',
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault', 'contextAt']);
 
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));
@@ -197,5 +206,5 @@ export function rebuildIdleMinutes(id) {
 /** 画面に渡す記述（describeBackends に載せる分） */
 export function agentPresentation(id) {
   const a = agentOf(id);
-  return { shortLabel: a?.shortLabel ?? null, brand: a?.brand ? { ...a.brand } : null, idleCompaction: idleCompactionKey(id) };
+  return { shortLabel: a?.shortLabel ?? null, brand: a?.brand ? { ...a.brand } : null, idleCompaction: idleCompactionKey(id), contextAt: a?.contextAt ?? null };
 }

@@ -342,7 +342,15 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
       // （設定の変更で担当や外部 MCP が変わっても、起動時に受け取ったツール一覧のままになるため）
       // 止める名前（名前ごとの一覧）は、あるときだけ含める。無ければ今までの値のまま（更新の直後に待機中のエージェントを起こし直さない）
       const suppress = runtime.mcp?.suppress ?? [];
-      const shape = hash([runtime.owners, binding.tools.map(tool => tool.name), ...(suppress.length ? [suppress] : [])]);
+      const docSig = runtime.docs
+        ? [[
+            (runtime.docs.instruction?.suppress ?? []).map(x => x.realPath),
+            (runtime.docs.instruction?.deliver ?? []).map(x => x.realPath),
+            (runtime.docs.skill?.suppress ?? []).map(x => x.id),
+            (runtime.docs.skill?.deliver ?? []).map(x => x.id),
+          ]]
+        : [];
+      const shape = hash([runtime.owners, binding.tools.map(tool => tool.name), ...(suppress.length ? [suppress] : []), ...docSig]);
       // held: 保持役の子に付け直した外部 MCP の id（起こし直していない。状態が残っている）
       const heldIds = [...binding.leases].filter(([, lease]) => lease?.held).map(([id]) => id);
       // sections: prompt の内訳（Pleiad が足した文の量を数える。core/instruction-amount.mjs）
@@ -361,7 +369,7 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
         }
         if (touched && !binding.closed) await changed();
       };
-      return { owners: runtime.owners, mcp: runtime.mcp ?? { named: false, suppress: [] }, prompt: helpers.prompt, sections: helpers.sections, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, held: heldIds, close, markUnstopped };
+      return { owners: runtime.owners, mcp: runtime.mcp ?? { named: false, suppress: [] }, docs: runtime.docs ?? null, prompt: helpers.prompt, sections: helpers.sections, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, held: heldIds, close, markUnstopped };
     } catch (e) { binding.discard = true; await close(); throw e; }
     finally { opening.delete(binding); }
   }

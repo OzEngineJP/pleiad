@@ -510,6 +510,19 @@ const SUITES = [
   './unit/context-scan.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   './unit/context-settings.mjs',
+  // Stage 2: 指示・Skills を名前 × エージェントで管理・評価・実行時適用する（ADR 0337）
+  './unit/context-agents.mjs',
+  './unit/context-doc-matrix.mjs',
+  './unit/context-doc-runtime.mjs',
+  './unit/context-doc-main-equivalence.mjs',
+  './unit/context-doc-main-touch-default.mjs',
+  './unit/context-doc-main-touch-instPly.mjs',
+  './unit/context-doc-main-touch-skillPly.mjs',
+  './unit/context-doc-main-touch-bothPly.mjs',
+  './unit/context-doc-main-touch-placePly.mjs',
+  './unit/context-doc-main-touch-instPlyExclude.mjs',
+  './unit/context-doc-main-touch-skillPlyExclude.mjs',
+  './unit/context-doc-main-touch-bothPlyRoots.mjs',
   // 外部 MCP を名前 × エージェントで中継する・止める（ADR 0327）
   './unit/context-agent-mcp.mjs',
   './unit/context-mcp-matrix.mjs',
