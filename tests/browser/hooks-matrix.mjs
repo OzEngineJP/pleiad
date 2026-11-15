@@ -153,11 +153,13 @@ try {
         adopt: p.querySelector('.hk-adopt')?.textContent ?? null,
         adoptOff: p.querySelector('.hk-adopt-off')?.textContent ?? null,
         legend: !!p.querySelector('.cx-legend'),
+        lead: (() => { const l = document.querySelector('#contextPanel .cx-lead'); return l ? { hidden: l.hidden, shown: l.getClientRects().length > 0 } : null; })(),
       };
     }, { regKey, nativeKey });
     check(shape.seg === 0 && shape.blocks === 2 && shape.reg && shape.regOff && shape.native && !shape.repoStop && shape.legend,
       'Hooks は「Pleiad に登録」と「エージェントの設定」の 2 つのまとまりで、担当の 2 択は無く、作業場所の定義は設定のページに並べない', shape);
-    check(shape.ws === T('hooks.matrix.wsRow'), '作業場所は 1 行（.claude\\settings.json・.codex\\hooks.json）', shape.ws);
+    check(shape.ws === T('hooks.matrix.wsRow') && !shape.ws.includes('\\'), '作業場所は 1 行（.claude/settings.json と .codex/hooks.json。区切りは / で、OS で変えない）', shape.ws);
+    check(shape.lead && shape.lead.hidden && !shape.lead.shown, 'Hooks のタブでは、プラグインの見出しの文（反映の時点は指示・Skills・外部 MCP の話）を出さない', shape.lead);
     check(shape.adopt === T('hooks.matrix.adopted') && shape.adoptOff === T('hooks.matrix.adoptedOff'),
       '移行前: 開いただけでは保存しないことと、以前の「任せる」の登録がオフに見える理由を出す', shape);
     check(!fs.existsSync(agentsFile), '移行前: ページを開いただけでは hooks-agents.json を書かない');

@@ -16,6 +16,7 @@ import { importCandidate, rowSummary, adapterSource, writeAdapterTo, grokNativeH
 import { parseAdapterCommand, safeAdapterPath } from './hooks-copy.mjs';
 import { parseToml } from './toml.mjs';
 import { resolveOwner, hooksWriteFailed } from './ply-hooks.mjs';
+import { agentPresentation } from './backends/agents.mjs';
 
 // backend-allow: 元の集合と止め方がエージェントごとに違う（ADR 0338「元の集合」「実行時」）
 const CLAUDE = 'claude', CODEX = 'codex', AGY = 'antigravity', GROK = 'grok', DEVIN = 'devin';
@@ -25,6 +26,9 @@ export const WS_KEY = 'ws:hooks';
 export const VERSION = 1;
 export const LOCK_REASONS = Object.freeze(['own', 'workspace', 'relay', 'admin']);
 const ORDER = [CLAUDE, CODEX, AGY, 'opencode', DEVIN, GROK]; // backend-allow: 一覧の列の並び（外部 MCP の一覧と同じ）
+// 列の短い名前（エージェントの記述の shortLabel）。画面の短い名前は有効なエージェントの分しか届かないので、使っていないエージェントの列も短い名前で出せるよう一覧に載せる
+const COLUMNS = () => [...UNIFY_TARGETS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+const COLUMN_LABELS = () => Object.fromEntries(COLUMNS().map(a => [a, agentPresentation(a).shortLabel ?? a]));
 const KEY_RE = /^(?:h-[0-9a-f]{12}|hk-[0-9a-f]{16}|ws:hooks)$/;
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 const refuse = (key, params = {}) => Object.assign(new Error(t(key, params)), { code: 'HOOKS_REFUSED' });
@@ -945,7 +949,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     catch (e) {
       // 読めない: 投げずに、画面が直す操作（hooks.repair・hooks.resetAgents）を出せる形で返す。止めたはずの Hook が動かないよう、会話は断ったまま
       if (e.code !== 'UNREADABLE') throw e;
-      return { unreadable: true, error: e.message, repair: ['hooks.repair', 'hooks.resetAgents'], agents: [...UNIFY_TARGETS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)),
+      return { unreadable: true, error: e.message, repair: ['hooks.repair', 'hooks.resetAgents'], agents: COLUMNS(), labels: COLUMN_LABELS(),
         adopted: true, revision: '', cwd, place: null, skipFrom: null, compat: null, grok: null, claudeAllOff: false, trustPending: false, groups: [], rows: [], orphans: [] };
     }
     await keepSeen(v);
@@ -972,7 +976,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
         cells: byAgent };
       return out;
     });
-    return { agents: [...UNIFY_TARGETS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)), adopted: v.adopted, revision: v.revision, cwd,
+    return { agents: COLUMNS(), labels: COLUMN_LABELS(), adopted: v.adopted, revision: v.revision, cwd,
       place: eff.agentsFrom ? v.state.places[eff.agentsFrom].path : null, skipFrom: eff.skipFrom ? v.state.places[eff.skipFrom].path : null,
       compat: s.compat, grok: inv.grokEnv, claudeAllOff: inv.claudeAllOff, trustPending: inv.report.trustPending === true,
       groups: ['ply', 'own', 'place', 'admin'].filter(g => rows.some(r => r.group === g)), rows,

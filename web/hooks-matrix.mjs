@@ -3,7 +3,7 @@
 // 「そのエージェントのターンで実行する」と読み替える。表の中身はサーバーが組む（hooks.matrix。core/hooks-agents.mjs）。
 //   - Pleiad に登録: <data>/hooks.json の登録。追加・編集・削除はシート（web/hooks-unify-ui.mjs）
 //   - エージェントの設定 › ユーザー: 各エージェントの設定の Hook（管理者・Grok Build の設定は鍵つき）。詳細は行を開く（web/hooks-card.mjs の peekHook）
-//   - エージェントの設定 › 作業場所: 1 行（.claude\settings.json・.codex\hooks.json）。場所ごとの中身と「この場所で使うか」は会話の右の欄
+//   - エージェントの設定 › 作業場所: 1 行（.claude/settings.json と .codex/hooks.json）。場所ごとの中身と「この場所で使うか」は会話の右の欄
 // 押せないセル・スイッチは鍵（web/lock-tip.mjs）で、文は理由の細目（detail）ごと（hooks.matrix.tip.*）。
 // ほかのエージェントへ初めて広げるときは、その場で 1 回だけ確かめ、渡すときの注意（warnings）を並べる（それでも入れられる）。
 // 押した瞬間に見た目を変え、保存できなければ元へ戻して、下の固定の位置に理由を出す（work → context.saveFailed）。
@@ -11,7 +11,7 @@ import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
 import { agentShortLabel } from './agent-brands.mjs';
-import { MATRIX_ICON, agentChip, agentLegend, agentStrip, askBanner, matrixSvg, rowSwitch, savedText } from './context-matrix.mjs';
+import { MATRIX_ICON, agentChip, agentLegend, agentStrip, askBanner, lockedAgentChip, matrixSvg, rowSwitch, savedText } from './context-matrix.mjs';
 import { addButton, agentLabel, eventLabel, openHookSheet, peekHook, scopeLabel } from './hooks-card.mjs';
 import { originMarks } from './context-tabs.mjs';
 import { openPlyHookSheet, plyPeek, reasonText, warnText } from './hooks-unify-ui.mjs';
@@ -22,7 +22,16 @@ function button(text, className = 'btn', onClick) {
   if (onClick) b.onclick = onClick;
   return b;
 }
-const short3 = a => agentShortLabel(a, agentLabel(a));
+// 列の短い名前。画面の短い名前（agent-brands）は有効なエージェントの分しか届かないので、無いものは一覧が載せる短い名前（hooks.matrix の labels）、
+// それも無ければ正式名（Devin CLI など）
+const listLabels = new Map();
+/** 一覧（hooks.matrix）が載せる列の短い名前を覚える（設定の表・会話の右の欄の両方が呼ぶ） */
+export function rememberAgentLabels(labels) {
+  if (labels && typeof labels === 'object') for (const [id, s] of Object.entries(labels)) if (typeof s === 'string' && s) listLabels.set(id, s);
+}
+/** エージェントの短い名前（確認の帯・読み上げ名・鍵の文・右の欄で同じもの） */
+export const hookAgentLabel = a => agentShortLabel(a, listLabels.get(a) ?? agentLabel(a));
+const short3 = hookAgentLabel;
 
 // i18n-dynamic: hooks.matrix.tip.
 /**
@@ -66,6 +75,8 @@ export function hookCellView(row, agent) {
     return { state: on ? 'lockon' : 'lockoff', cell: { ...cell, on, locked: true, ...(tip ? { tip } : {}) } };
   }
   if (!row.on) return { state: 'hide', cell: null };
+  // この場所にこのエージェントの作業場所の Hook が無い（core の empty。場所を指定した一覧だけ）。押しても今の場所では何も変わらないが、ほかの場所では効くので押せるまま
+  if (cell.empty) return { state: cell.state === 'on' ? 'on' : 'off', cell: { ...cell, note: t('hooks.matrix.emptyHere') } };
   return { state: cell.state === 'on' ? 'on' : 'off', cell };
 }
 
@@ -103,6 +114,8 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       const [m, view, sc] = await Promise.all([cmd('hooksMatrix', { trust: false }), cmd('plyHooks', {}).catch(() => null), cmd('scanHooks', { scope: 'user' }).catch(() => null)]);
       if (mine !== ticket) return;
       grid = m; ply = view; scan = sc; home = sc?.home ?? home; loadError = null;
+      rememberAgentLabels(m?.labels);
+      forgetGone();
     } catch (e) {
       if (mine !== ticket) return;
       grid = null; loadError = e;
@@ -112,11 +125,17 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     const [m2, sc2] = await Promise.all([grid?.trustPending ? cmd('hooksMatrix', { trust: true }).catch(() => null) : null,
       scan?.trustPending ? cmd('scanHooks', { scope: 'user', trust: true }).catch(() => null) : null]);
     if (mine !== ticket) return;
-    if (m2) grid = m2;
+    if (m2) { grid = m2; rememberAgentLabels(m2.labels); forgetGone(); }
     if (sc2) scan = sc2;
     render();
   }
   const reload = () => load();
+  /** 広げる前の確かめ済み（confirmed）は、読み直した一覧に無い行の分を捨てる。行を消して作り直したら、もう一度聞く */
+  function forgetGone() {
+    if (!Array.isArray(grid?.rows) || grid.unreadable) return;
+    const keys = new Set(grid.rows.map(r => r.key));
+    for (const c of [...confirmed]) if (!keys.has(c.slice(0, c.lastIndexOf(':')))) confirmed.delete(c);
+  }
 
   /** タブの件数: どれかのエージェントで実行する Hook の数（作業場所のまとめの行は Hook ではないので数えない）。読めないときは隠す */
   function count() {
@@ -201,9 +220,12 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
         const v = hookCellView(row, a);
         if (v.state === 'na' || v.state === 'hide') return agentChip({ agent: a, state: v.state, name });
         const fk = `ag:${row.key}:${a}`;
-        const ariaLabel = t('hooks.matrix.runAria', { agent: short3(a), name });
-        if (v.state === 'lockon' || v.state === 'lockoff') return agentChip({ agent: a, state: v.state, cell: v.cell, name, ariaLabel, key: fk, keyAttr: 'cxFk' });
-        return agentChip({ agent: a, state: v.state, cell: v.cell, name, ariaLabel, key: fk, keyAttr: 'cxFk', onToggle: () => toggleCell(row, a, fk) });
+        const label = short3(a);
+        const ariaLabel = t('hooks.matrix.runAria', { agent: label, name });
+        if (v.state === 'lockon' || v.state === 'lockoff') return lockedAgentChip(a, v.cell, name, { ariaLabel, key: fk, keyAttr: 'cxFk', agentLabel: label });
+        const note = v.cell?.note;
+        return agentChip({ agent: a, state: v.state, cell: v.cell, name, agentLabel: label, key: fk, keyAttr: 'cxFk', onToggle: () => toggleCell(row, a, fk),
+          ariaLabel: note ? t('hooks.matrix.noteAria', { label: ariaLabel, note }) : ariaLabel, title: note ? `${label}: ${note}` : label });
       },
     });
   }

@@ -85,6 +85,8 @@ export default async function (t) {
     const before = await ha.matrix({ cwd: repo });
     t.ok('移行前の一覧: adopted: false で、移行したらこうなる形を返す（見るだけでは書かない）', before.adopted === false && !await ha.exists()
       && before.agents.join() === AGENTS.join() && before.groups.join() === 'ply,own,place,admin');
+    t.ok('一覧は列の短い名前（エージェントの記述の shortLabel）を載せる。使っていないエージェントの列も画面が短い名前で出せる',
+      AGENTS.every(a => typeof before.labels?.[a] === 'string') && before.labels.devin === 'Devin' && before.labels.grok === 'Grok', JSON.stringify(before.labels));
     const cell = (m, key, a) => m.rows.find(r => r.key === key)?.cells[a];
     t.ok('任せる: 登録は動いていなかったので切れたまま、エージェントの定義は元のエージェントで入り',
       cell(before, reg.id, CLAUDE).state === 'off' && cell(before, stopRow.key, CLAUDE).state === 'on' && cell(before, codexRow.key, CODEX).state === 'on'

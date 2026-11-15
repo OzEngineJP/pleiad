@@ -105,6 +105,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   const cliSetup = panel.querySelector('#cliSetup');
   panel.replaceChildren();
   const root = el('div', 'cx');
+  // 見出しの文（反映の時点）は指示・Skills・外部 MCP の話。Hooks のタブでは出さない（Hooks はカードの中の説明に任せる）
   const lead = el('p', 'cx-lead', t('context.lead'));
   const status = el('p', 'cx-status'); status.setAttribute('role', 'alert');
   const cards = Object.fromEntries(KINDS.map(k => [k, el('section', 'cx-card')]));
@@ -176,6 +177,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       if (placeTierEl?.isConnected) placeTierEl.hidden = false;
     }
     for (const k of CONTEXT_TABS) tabPanels[k].hidden = k !== id;
+    lead.hidden = id === 'hooks';
     tabBar.setActive(id, { focus });
     if (changed) {
       const sc = panel.closest('.settings-content');
@@ -195,6 +197,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     ariaLabel: t('context.tabs.aria'),
     onSelect: selectTab,
   });
+  lead.hidden = activeTab === 'hooks';
   root.append(lead, status, tabBar.root, tabPanels.instruction, tabPanels.skill, tabPanels.mcp, tabPanels.hooks, toast);
   panel.append(root);
 

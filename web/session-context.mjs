@@ -32,8 +32,7 @@ import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
 import { unifySessionBox, unsupportedAgentText } from './hooks-unify-ui.mjs';
-import { hookRowName, hookRowSub } from './hooks-matrix.mjs';
-import { agentShortLabel } from './agent-brands.mjs';
+import { hookAgentLabel, hookRowName, hookRowSub, rememberAgentLabels } from './hooks-matrix.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -562,7 +561,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const cwd = place.cwd;
     hooksPlace = { cwd, view: hooksPlace.cwd === cwd ? hooksPlace.view : null };
     return cmd('hooksMatrix', { cwd, trust: false })
-      .then(v => { if (hooksPlace.cwd === cwd) { hooksPlace.view = v; refresh(); } })
+      .then(v => { rememberAgentLabels(v?.labels); if (hooksPlace.cwd === cwd) { hooksPlace.view = v; refresh(); } })
       .catch(e => { if (hooksPlace.cwd === cwd) { hooksPlace.view = { failed: e.message }; refresh(); } });
   }
   async function loadEditScan({ skipRefresh = false } = {}) {
@@ -1212,7 +1211,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function hookAgentNames() {
     const part = backendCache.get('backends');
     const list = Array.isArray(part?.value) ? part.value : [];
-    return list.filter(b => b.capabilities?.hooks).map(b => labelOf(b.id)).join('・');
+    return list.filter(b => b.capabilities?.hooks).map(b => labelOf(b.id)).join(t('app.listSeparator'));
   }
   function hookBoxes(data) {
     loadHooks(data);
@@ -1329,7 +1328,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const reload = () => { showToast(); loadHooks(info(), true); return loadHooksPlace(); };
     for (const r of rows) {
       const use = r.here.use;
-      const runs = Object.entries(r.cells ?? {}).filter(([, c]) => c.state === 'on').map(([a]) => agentShortLabel(a, agentLabel(a))).join('・');
+      const runs = Object.entries(r.cells ?? {}).filter(([, c]) => c.state === 'on').map(([a]) => hookAgentLabel(a)).join(t('app.listSeparator'));
       const sub = [r.group === 'ply' ? 'Pleiad' : agentLabel(r.agent), hookRowSub(r),
         !use ? t('sessionContext.place.offHere') : !r.on ? t('sessionContext.hooks.offAll') : t('sessionContext.hooks.runsOn', { agents: runs })].filter(Boolean).join(' · ');
       const name = hookRowName(r);

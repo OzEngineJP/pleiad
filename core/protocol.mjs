@@ -157,7 +157,7 @@ export const COMMANDS = new Set([
   'setHooksOwner',     // { place: null|path, value: { owner, disabled } | null, revision（確認票）, imports?: [{ id, digest }] } -> plyHooks と同じ形と added。取り込む定義はファイルから読み直し、digest と照合する
   'repairPlyHooks',    // { cwd? } -> plyHooks と同じ形。壊れた hooks.json を退避し、読めた部分だけで書き直す
   // Hook × エージェント（<data>/hooks-agents.json。core/hooks-agents.mjs、ADR 0338）。外部 MCP の一覧と同じ形
-  'hooksMatrix',       // { cwd?, trust? } -> { agents, adopted, revision, place, skipFrom, compat, groups, rows: [{ key, kind, group, agent, scope, event, matcher, command（伏せ字）, on, unused, switchable, here?, status?, cells: { <agent>: { state, mode, reason?, detail?, unknown?, warnings?, needsConfirm? } } }] }
+  'hooksMatrix',       // { cwd?, trust? } -> { agents, labels（列の短い名前）, adopted, revision, place, skipFrom, compat, groups, rows: [{ key, kind, group, agent, scope, event, matcher, command（伏せ字）, on, unused, switchable, here?, status?, cells: { <agent>: { state, mode, reason?, detail?, unknown?, warnings?, needsConfirm?, empty?（cwd つきで、この場所に定義が無い） } } }] }
   'setHookAgent',      // { key, agent, on, cwd?, revision? } -> { ok, revision, place }。押せないセルは断る。移行前なら今の動きを写してから変える
   'setHookRow',        // { key, on, cwd?, revision? } -> { ok, revision, place }
   'setHookGroup',      // { group: ply|own|place, agent?, on, cwd?, revision? } -> { ok, revision, place }

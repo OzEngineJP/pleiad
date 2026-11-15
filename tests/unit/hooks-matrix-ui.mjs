@@ -8,10 +8,10 @@ import { setLanguage, t as tr } from '../../web/i18n.mjs';
 import { setAgentBrands } from '../../web/agent-brands.mjs';
 import { AGENTS, agentPresentation } from '../../core/backends/agents.mjs';
 import { savedText } from '../../web/context-matrix.mjs';
-import { createHooksMatrix, hookCellView, hookTip } from '../../web/hooks-matrix.mjs';
+import { createHooksMatrix, hookAgentLabel, hookCellView, hookTip } from '../../web/hooks-matrix.mjs';
 
 export const name = 'hooks-matrix-ui';
-export const title = '設定 › プラグイン › Hooks の表: 鍵の文・管理者の行・確認と注意・保存の失敗で戻す';
+export const title = '設定 › プラグイン › Hooks の表: 鍵の文・管理者の行・確認と注意・保存の失敗で戻す・使っていないエージェントの短い名前・空のマス・確かめ済みを捨てる';
 
 // ---- 属性と子孫の選択子が使える最小の DOM（context-panel-tabs と同じ考え方） ----
 function parse(sel) {
@@ -224,6 +224,61 @@ export default async function (t) {
     assert.equal(counts.at(-1), null, '読めないときは件数を隠す');
     assert.equal(broken.root.querySelectorAll('.cx-row').length, 0);
     t.ok('読めない hooks-agents.json は理由と「直す」を出し、件数を隠す', true);
+
+    // ---- 7. 使っていないエージェント（画面の短い名前が届かない）も短い名前・空のマス・消して作り直した行は聞き直す ----
+    // 画面の短い名前は有効なエージェントの分だけ（describeBackends）。Devin・Grok を使っていない人の表
+    setAgentBrands(['claude', 'codex'].map(id => ({ id, ...agentPresentation(id) })));
+    const labels = Object.fromEntries(AG.map(a => [a, agentPresentation(a).shortLabel ?? a]));
+    const cells7 = (o) => Object.fromEntries(AG.map(a => [a, o[a] ?? none()]));
+    const devReg = () => ({ key: 'h-2', kind: 'reg', group: 'ply', agent: 'claude', name: 'dev', event: 'Stop', matcher: null, command: 'node dev.mjs', on: true, switchable: true,
+      cells: cells7({ claude: { mode: 'toggle', state: 'on' }, devin: { mode: 'toggle', state: 'off', needsConfirm: true, warnings: [{ code: 'devinImportsStop' }] },
+        grok: { mode: 'locked', state: 'off', reason: 'relay', detail: 'noSuchDetail', reasons: [{ code: 'noSuchDetail' }] } }) });
+    const wsRow = { key: 'ws:hooks', kind: 'ws', group: 'place', agent: null, on: true, switchable: false, switchLock: { reason: 'place', detail: 'followsWorkspace' },
+      cells: cells7({ claude: { mode: 'toggle', state: 'on' }, antigravity: { mode: 'toggle', state: 'off', empty: true } }) };
+    let withDev = true;
+    const calls7 = [];
+    const grid7 = () => ({ agents: AG, labels, adopted: true, revision: 'r7', orphans: [], rows: [...(withDev ? [devReg()] : []), wsRow] });
+    const card7 = createHooksMatrix({
+      cmd: async (op, args) => { calls7.push([op, args]); return op === 'hooksMatrix' ? grid7() : op === 'setHookAgent' ? { ok: true } : null; },
+      work: fn => fn(), saved: () => {}, failed: () => {}, opened: new Set(),
+    });
+    dom.body.append(card7.root);
+    await card7.load();
+    const chip7 = (key, a) => card7.root.querySelector(`.cx-row[data-key="${key}"]`)?.querySelector(`.cx-ag[data-agent="${a}"]`);
+    assert.equal(hookAgentLabel('devin'), 'Devin', '一覧の短い名前を使う（正式名の Devin CLI にしない）');
+    assert.equal(hookAgentLabel('grok'), 'Grok');
+    assert.equal(chip7('h-2', 'devin').getAttribute('aria-label'), 'Devin で node dev.mjs を実行する');
+    assert.equal(chip7('h-2', 'devin').getAttribute('title'), 'Devin');
+    assert.ok(chip7('h-2', 'grok').dataset.tip.startsWith('Grok には渡せません。'), chip7('h-2', 'grok').dataset.tip);
+    chip7('h-2', 'devin').click();
+    assert.equal(card7.root.querySelector('.cx-ask .q').textContent, 'Pleiad の設定の Hook を、Devin でも実行します');
+    assert.match(card7.root.querySelector('.cx-ask').getAttribute('aria-label'), /Devin でも実行する確認$/);
+    assert.ok(!/Devin CLI|Grok Build/.test(card7.root.textContent), '表のどこにも正式名の長い名前を出さない');
+    t.ok('使っていないエージェント（Devin・Grok）も、確認の帯・読み上げ名・鍵の文で短い名前（一覧の labels）', true);
+
+    // 空のマス（この場所に定義が無い）: 吹き出しと読み上げ名に「定義がありません」。押せるまま
+    const empty = chip7('ws:hooks', 'antigravity');
+    assert.ok(!empty.hasAttribute('aria-disabled'), '鍵にしない（ほかの場所では効く）');
+    assert.equal(typeof empty.onclick, 'function', '押せる');
+    assert.equal(empty.getAttribute('title'), `Antigravity: ${tr('hooks.matrix.emptyHere')}`);
+    assert.match(empty.getAttribute('aria-label'), /（この場所には定義がありません）$/);
+    assert.equal(chip7('ws:hooks', 'claude').getAttribute('title'), 'Claude', '定義のあるマスはふつうの名前だけ');
+    t.ok('作業場所の行の空のマスは「この場所には定義がありません」の吹き出しと読み上げ名を出し、押せるまま', true);
+
+    // 確かめ済みは、行を消して作り直したら捨てる
+    card7.root.querySelector('.cx-ask .btn-primary').click();
+    await settle();
+    assert.equal(calls7.filter(c => c[0] === 'setHookAgent').length, 1, '確かめて保存した');
+    chip7('h-2', 'devin').click();
+    assert.equal(card7.root.querySelector('.cx-ask'), null, '同じ行の間は聞き直さない');
+    await settle();
+    withDev = false; await card7.reload();
+    assert.ok(!chip7('h-2', 'devin'), '行が消えた');
+    withDev = true; await card7.reload();
+    chip7('h-2', 'devin').click();
+    assert.ok(card7.root.querySelector('.cx-ask'), '消して作り直した行は、もう一度確かめる');
+    t.ok('広げる前の確かめ済みは、行が一覧から消えたら捨てる（作り直した行で聞き直す）', true);
+    setAgentBrands(Object.keys(AGENTS).map(id => ({ id, ...agentPresentation(id) })));
   } finally {
     dom.restore();
   }
