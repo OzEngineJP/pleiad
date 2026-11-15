@@ -8,13 +8,8 @@ import { DEFAULT_OWNERS, KINDS, SOURCES, containsPath, legacyPlan, matchesGlobs,
 import { t, agentT } from './i18n.mjs';
 import { agentOf } from './backends/agents.mjs';
 import { mcpOffBlockedByLinks, nativeMcpOffMode } from './backends/mcp-off-home.mjs';
-import {
-  DOC_AGENT_TRAITS,
-  compensatedMcpFormats,
-  docToolRequirements,
-  mcpEntryMatchesFormat,
-} from './backends/context-capabilities.mjs';
-import { coupleDevinFormats, resolveDocForAgent } from './context-doc-matrix.mjs';
+import { DOC_AGENT_TRAITS, docToolRequirements } from './backends/context-capabilities.mjs';
+import { resolveDocForAgent } from './context-doc-matrix.mjs';
 import { resolveEffectiveDocSource as resolveDocSource } from './context-agents.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -158,35 +153,20 @@ export function followSettings(previous, settings, { keepNative = false } = {}) 
   return { policy, changed };
 }
 /** 会話の方針から探索設定を作る。Pleiad が担当する種類（または Stage 2 で対象の種類）を探す */
-/**
- * 名前×エージェントの表で解く種類。表に触れた種類のほか、Devin では、片方の種類に触れたら、もう片方（表に触れていない旧い担当のまま）も表で解く。
- * Devin の read_config_from は形式ごとに指示と Skills をまとめて止めるので、片方で止めた形式に巻き込まれる物を、もう片方の表で拾って渡し直す（coupleDevinFormats）。
- * 旧い「Pleiad がそろえる」でも、外していた物を Devin は自分で読んでいた（Pleiad は渡していない）ので、表で解かないと巻き込まれて消える
- */
-function docActiveKinds(policy, agent) {
-  const active = {
+/** 名前×エージェントの表で解く種類（表に触れた種類）。Devin の取り込みは表で止めないので、種類どうしは巻き込まない（ADR 0337 §決定 8） */
+function docActiveKinds(policy) {
+  return {
     instruction: !policy.keepNative && Boolean(policy.docSourceState?.instruction?.touched),
     skill: !policy.keepNative && Boolean(policy.docSourceState?.skill?.touched),
   };
-  if (agent && DOC_AGENT_TRAITS[agent]?.readConfigFrom && (active.instruction || active.skill)) {
-    for (const k of ['instruction', 'skill']) active[k] = true;
-  }
-  return active;
 }
 export function runtimeSettings(policy, options = {}) {
   const plan = normalizePlan(structuredClone(policy.plan ?? legacyPlan(policy.user, policy.directory)));
-  const agent = options.agent ?? policy.agent ?? null;
-  const docActive = docActiveKinds(policy, agent);
-  const scanMcpForComp = Boolean(
-    (docActive.instruction || docActive.skill)
-    && agent && DOC_AGENT_TRAITS[agent]?.mcpCompensationFormats?.length,
-  );
+  const docActive = docActiveKinds(policy);
   for (const scope of ['user', 'directory']) {
     for (const k of KINDS) {
       if (docActive[k]) {
         plan[scope].kinds[k] = { ...(plan[scope].kinds[k] ?? {}), sources: [...SOURCES], excludePaths: [] };
-      } else if (k === 'mcp' && scanMcpForComp && policy.owners?.mcp !== 'ply') {
-        plan[scope].kinds.mcp = { ...(plan[scope].kinds.mcp ?? {}), sources: SOURCES.filter(s => s !== 'common'), excludePaths: [] };
       } else if (policy.owners?.[k] !== 'ply') {
         plan[scope].kinds[k] = null;
       }
@@ -331,7 +311,7 @@ export async function resolveRuntime(policy, options = {}) {
   const removed = new Set(policy.removedMcp ?? []);
   if (scan.limited || scan.diagnostics.length) throw new Error(t('context.runtime.unresolved', { detail: scan.diagnostics[0]?.message ?? t('context.runtime.scanLimit') }));
 
-  const docActive = docActiveKinds(policy, agent);
+  const docActive = docActiveKinds(policy);
   const docInstActive = Boolean(docActive.instruction && agent && policy.rawConfig && policy.docAgents);
   const docSkillActive = Boolean(docActive.skill && agent && policy.rawConfig && policy.docAgents);
   const instrRes = docInstActive
@@ -340,8 +320,7 @@ export async function resolveRuntime(policy, options = {}) {
   const skillRes = docSkillActive
     ? resolveDocForAgent({ kind: 'skill', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home })
     : null;
-  const docs = (instrRes || skillRes) ? coupleDevinFormats({ instruction: instrRes, skill: skillRes }) : null;
-  const compFormats = docs ? compensatedMcpFormats(agent, docs) : [];
+  const docs = (instrRes || skillRes) ? { instruction: instrRes, skill: skillRes } : null;
   const instrDoc = docs?.instruction ?? null;
   const skillDoc = docs?.skill ?? null;
   const instrDeliverPaths = instrDoc ? new Set(instrDoc.deliver.map((e) => pathKey(e.realPath))) : null;
@@ -380,10 +359,7 @@ export async function resolveRuntime(policy, options = {}) {
     if (item.status !== 'candidate') continue;
     // 名前ごとのモデル: このエージェントへ中継しない定義。接続せず、ply_context にもツールを出さない
     if (mcpRules && item.kind === 'mcp') {
-      let why = mcpRules.relay(item, ownNames, fixedNames);
-      if (why === 'agentOwn' && !mcpRules.off(item.name) && compFormats.length && mcpEntryMatchesFormat(item, compFormats)) {
-        why = null;
-      }
+      const why = mcpRules.relay(item, ownNames, fixedNames);
       if (why) {
         if (mcpRules.mode === true && mcpRules.off(item.name) && mcpRules.isOwn(item)) suppress.add(item.name);
         row.status = why === 'agentOff' ? 'removed' : 'excluded';
@@ -392,11 +368,6 @@ export async function resolveRuntime(policy, options = {}) {
         // off にしたのに止められない自分の定義（会話の cwd の作業場所の設定にもある名前・リンクを作れない PC）。画面の鍵の理由と同じ値（reason: 'workspace' / 'nolinks' / 'own'）
         if (mcpRules.off(item.name) && mcpRules.isOwn(item) && fixedNames.has(item.name)) row.nativeLock = mcpRules.mode === 'user' ? 'workspace' : mcpOffBlockedByLinks(agent) ? 'nolinks' : 'own';
         if (row.status === 'removed') row.tools = 0;
-        continue;
-      }
-    } else if (item.kind === 'mcp' && owners.mcp !== 'ply') {
-      if (!compFormats.length || !mcpEntryMatchesFormat(item, compFormats)) {
-        row.status = 'native';
         continue;
       }
     }

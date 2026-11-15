@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { compensatedMcpFormats, isEntryNativeTo, mayReadNatively } from '../../core/backends/context-capabilities.mjs';
+import { isEntryNativeTo, mayReadNatively } from '../../core/backends/context-capabilities.mjs';
 import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { claudeContextOptions, codexContextRpc } from '../../core/backends/context-options.mjs';
 import { devinTurnConfig } from '../../core/backends/devin-config.mjs';
@@ -209,7 +209,7 @@ export default async function (t) {
     t.ok('Antigravity: Skill 抑制無しのとき inheritCustomizations: true、抑制ありで false',
       agDefKeep.includes('inheritCustomizations: true') && agDefSuppressSkill.includes('inheritCustomizations: false'));
 
-    // Devin: Claude 由来を止めると read_config_from.claude=false + .mcp.json 補填
+    // Devin: 取り込みは表で止めない（ADR 0337 §決定 8）。Claude 形式の指示を off と書いても鍵付きでオンのまま、--config も MCP も main と同じ
     const dvOffAgents = normalizeDocAgentsConfig({
       version: 1,
       defaults: { instruction: { agents: { [keyRepoClaude]: { off: ['devin'], spread: [] } } } },
@@ -217,21 +217,16 @@ export default async function (t) {
     });
     const dvPolicy = contextPolicy(attachDocPolicy(baseSettings, rawCfg, dvOffAgents));
     const dvRuntime = await resolveRuntime(dvPolicy, { home, agent: 'devin' });
-    const dvCfg = devinTurnConfig({ docs: dvRuntime.docs });
-    t.ok('Devin: Claude 指示停止で read_config_from.claude=false になり、.mcp.json を補填対象に入れる',
-      dvCfg?.read_config_from?.claude === false
-      && compensatedMcpFormats('devin', dvRuntime.docs).includes('claude')
-      && dvRuntime.servers.some((s) => s.name === 'claudemcp')
-      && !dvRuntime.servers.some((s) => s.name === 'cursormcp'));
-    // read_config_from.claude=false は Claude 形式の Skills（.claude/skills）も止めるので、表に触れていない Skills の側で拾って Pleiad が渡す
-    const dvSkill = dvRuntime.docs?.skill;
-    const clOffRuntime = await resolveRuntime(contextPolicy({ ...attachDocPolicy(baseSettings, rawCfg, dvOffAgents), agent: 'claude' }), { home, agent: 'claude' });
-    t.ok('Devin: 指示で Claude 形式を止めると、巻き込まれる .claude/skills の Skill を Pleiad が渡す（Claude では Skills は触らない）',
-      Boolean(dvSkill?.deliver.some((e) => e.name === 's-claude'))
-      && !dvSkill.nativeKeep.some((e) => e.name === 's-claude')
-      && dvSkill.nativeKeep.some((e) => e.name === 's-common')
-      && (clOffRuntime.docs?.skill == null || clOffRuntime.docs.skill.deliver.length === 0),
-      JSON.stringify({ deliver: dvSkill?.deliver.map((e) => e.name), keep: dvSkill?.nativeKeep.map((e) => e.name), claude: clOffRuntime.docs?.skill?.deliver.map((e) => e.name) }));
+    const dvCfg = devinTurnConfig({ hooksRuntime: null });
+    t.ok('Devin: 取り込む物を off と書いても止めず（suppress 空）、--config を作らず、Claude 形式の MCP を Pleiad から渡さない',
+      dvCfg === null
+      && (dvRuntime.docs?.instruction?.suppress.length ?? 0) === 0
+      && !dvRuntime.servers.some((s) => s.name === 'claudemcp')
+      && dvRuntime.docs?.skill == null,
+      JSON.stringify({ suppress: dvRuntime.docs?.instruction?.suppress.map((e) => e.path), servers: dvRuntime.servers.map((s) => s.name) }));
+    const dvMatrix = resolveDocForAgent({ kind: 'instruction', agent: 'devin', entries: [], legacyConfig: rawCfg, docAgentsConfig: dvOffAgents, cwd: repo, home }).matrix;
+    t.ok('Devin: まとめの行（CLAUDE.md・AGENTS.md）の Devin のマスは鍵付きでオン（止めると Hooks・MCP も止まる）',
+      dvMatrix.summaryRow.cells.devin.locked && dvMatrix.summaryRow.cells.devin.on && dvMatrix.summaryRow.cells.devin.reason === 'bundled');
 
     // Grok: resolveDocForAgent は常に untouchedNative=true / suppress=[] / deliver=[]
     const grokDoc = resolveDocForAgent({ kind: 'instruction', agent: 'grok', entries: [], legacyConfig: rawCfg, docAgentsConfig: mixedDocAgents, cwd: repo, home });
@@ -313,6 +308,10 @@ export default async function (t) {
       && afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.grok.on === true);
 
     // prepareTurn の resolveRuntime も HOME/USERPROFILE ではなく PLEIAD_SCAN_HOME(SCAN_OPTIONS) で解決する
+    // Devin は自分で取り込む物を止めないので、Devin が読まないユーザーの Codex の指示を Devin へ広げて、Pleiad が渡す物を作る
+    await write(path.join(home, '.codex', 'AGENTS.md'), 'USER_CODEX_INST');
+    const keyUserCodex = docItemKey({ kind: 'instruction', path: path.join(home, '.codex', 'AGENTS.md') });
+    await client.cmd('setDocAgent', { kind: 'instruction', key: keyUserCodex, agent: 'devin', on: true, place: repo, cwd: repo });
     const sScanHome = await client.cmd('newSession', { cwd: repo, backend: 'devin' });
     await client.runTurn({ ...sScanHome, prompt: 'echo:scan-home', model: 'swe-2-high' }, { ms: 60_000 });
     const scanHomeRec = await client.cmd('sessionContext', sScanHome);

@@ -1642,7 +1642,7 @@
       "admin": "管理者が {{agent}} に設定しています",
       "linked": "{{agent}} には委譲の設定に合わせて渡します",
       "nolinks": "Windows の開発者モードがオフのため、Pleiad からは止められません",
-      "bundled": "{{agent}} では止めると Hooks やプラグインも一緒に止まるため、ここでは止められません"
+      "bundled": "{{agent}} では止めると Hooks などほかの設定も一緒に止まるため、ここでは止められません"
     },
     "lockAria": "{{label}}（{{reason}}）",
     "roots": {

@@ -157,7 +157,6 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: '3000.11.92' }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
       case 'session/new': {
         const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast', used: 120000, window: 262000,
-          configExistsAtNew: configIndex >= 0 ? fs.existsSync(argv[configIndex + 1]) : null,
           // 起動で届いたもの（mcpServers・Pleiad からの環境変数）。配達物の試験が読む
           mcpServers: p.mcpServers ?? [], seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_|DELIVERY_)/.test(k)) };
         persist(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
@@ -312,7 +311,6 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         let reply = `fixture: ${text}`;
         if (text.includes('[env]')) reply = JSON.stringify({ cwd: process.cwd(), configHome: process.env.DEVIN_CONFIG_HOME ?? null, sessions: process.env.DEVIN_SESSIONS_DIR,
           mcpServers: (session.mcpServers ?? []).map(s => s.name), seenEnv: session.seenEnv ?? [], prompt: text });
-        if (text.includes('[turn-config-alive]')) reply = JSON.stringify({ existsAtNew: session.configExistsAtNew ?? null, turnConfig });
         // ply_context（Pleiad のコンテキストの口）を MCP 越しに実際に叩く。[context-tools] は一覧、末尾の行の context:{...} は tools/call
         const contextServer = (session.mcpServers ?? []).find(s => s?.name === 'ply_context' && s.url);
         const contextCall = async (method, params) => {

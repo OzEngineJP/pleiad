@@ -225,8 +225,8 @@ export async function planTurn(tree, fx, { cwd, agent, codexSkillPaths, glue }) 
     outputs.antigravity = { customAgent: Boolean(rc), inheritCustomizations: owners.skill !== 'ply', skipInject };
   }
   if (agent === 'devin') {
-    // main の devinTurnConfig は docs を受けない（渡しても無視される）
-    outputs.devin = { turnConfig: tree.devinCfg.devinTurnConfig({ hooksRuntime: null, nativeShellOff: false, docs: rc?.docs ?? null }) };
+    // devinTurnConfig は指示・Skills を受けない（Devin の取り込みは表で止めない。ADR 0337 §決定 8）
+    outputs.devin = { turnConfig: tree.devinCfg.devinTurnConfig({ hooksRuntime: null, nativeShellOff: false }) };
   }
   if (agent === 'opencode') {
     // main: core/backends/opencode.mjs の managedServer（owners = contextRuntime.owners）・sessionPermission の noSkill・context

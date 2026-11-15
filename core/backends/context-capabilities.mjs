@@ -188,18 +188,15 @@ const LOCK_CHECKS = {
     const lockedOrigins = entryOrigins(entryOrSummary).filter((o) => !o.custom && o.source === 'antigravity' && o.scope === 'user');
     return lockedOrigins.length ? { lockedOn: true, reason: 'own' } : null;
   },
+  // Devin の取り込みを止めると read_config_from が形式ごとに Hooks・MCP まで止める（2026-11-15 の本物の確かめ）。
+  // 指示と Skills の表では Devin の取り込みを止めないと決めた（ADR 0337 §決定 8）。Devin が自分で読む物は、まとめの行も含めて鍵付きでオン
+  // Devin 自身の置き場（.devin・.cognition・設定の置き場）とユーザーの Devin の物は own、ほかの形式から取り込む物は bundled（止めると Hooks・MCP も止まる）
   devin(kind, entryOrSummary) {
-    if (entryOrSummary === '__workspace__') {
-      return kind === 'skill' ? { lockedOn: true, reason: 'workspace' } : null;
-    }
-    const origins = entryOrigins(entryOrSummary);
-    // ユーザーの Devin の物（DEVIN_CONFIG_HOME の置き場・~/.codeium・~/.copilot の Skills を含む）は、止まることを本物で確かめられないので鍵
-    const matching = origins.filter((o) => !o.custom && NATIVE_READERS.devin(kind, o) && (
-      isDevinOwnPath(o.path) || isDevinOwnPath(o.realPath)
-      || (kind === 'skill' && (isAgentsSkillsPath(o.path) || isAgentsSkillsPath(o.realPath)))
-      || (o.source === 'devin' && o.scope === 'user')
-    ));
-    return matching.length ? { lockedOn: true, reason: scopeLockReason(matching) } : null;
+    if (entryOrSummary === '__workspace__') return { lockedOn: true, reason: 'bundled' };
+    const origins = entryOrigins(entryOrSummary).filter((o) => !o.custom && NATIVE_READERS.devin(kind, o));
+    if (!origins.length) return null;
+    const own = origins.filter((o) => isDevinOwnPath(o.path) || isDevinOwnPath(o.realPath) || (o.source === 'devin' && o.scope === 'user'));
+    return own.length ? { lockedOn: true, reason: scopeLockReason(own) } : { lockedOn: true, reason: 'bundled' };
   },
   grok(kind, entryOrSummary) {
     if (entryOrSummary === '__workspace__') {
@@ -226,46 +223,9 @@ export const DOC_AGENT_TRAITS = Object.freeze({
   codex: { perFileInstructionExclude: false, perNameSkillList: false, perPathSkillDisable: true, customInstructionPath: true, relay: true },
   antigravity: { perFileInstructionExclude: false, perNameSkillList: false, customAgentRequired: true, relay: true },
   opencode: { perFileInstructionExclude: false, perNameSkillList: false, managedServeOnDiff: true, relay: true },
-  devin: { perFileInstructionExclude: false, perNameSkillList: false, readConfigFrom: true, mcpCompensationFormats: ['claude', 'cursor'], relay: true, legacyPlyKeepsNative: true },
+  devin: { perFileInstructionExclude: false, perNameSkillList: false, relay: true, legacyPlyKeepsNative: true },
   grok: { perFileInstructionExclude: false, perNameSkillList: false, relay: false },
 });
-
-/** Map `(kind, origins)` to all Devin `read_config_from` keys affected by an entry. */
-export function devinFormatsForEntry(kind, entry) {
-  const out = new Set();
-  for (const o of entryOrigins(entry)) {
-    const fmt = devinImportFormat(kind, o.path, o.source, o.scope);
-    if (fmt) out.add(fmt);
-  }
-  return [...out];
-}
-
-/** Collect all disabled `read_config_from` keys for Devin across instruction + skill docs. */
-export function devinEffectiveDisabledFormats(docs) {
-  const set = new Set();
-  for (const kind of ['instruction', 'skill']) {
-    for (const fmt of docs?.[kind]?.devinDisableFormats ?? []) set.add(fmt);
-  }
-  return [...set];
-}
-
-/** Formats whose native MCP configs are suppressed when disabled via `read_config_from` and need Pleiad relay. */
-export function compensatedMcpFormats(agent, docs) {
-  const formats = DOC_AGENT_TRAITS[agent]?.mcpCompensationFormats;
-  if (!formats?.length) return [];
-  const disabled = new Set(devinEffectiveDisabledFormats(docs));
-  return formats.filter((f) => disabled.has(f));
-}
-
-/** True when an MCP entry stems from one of the compensated native import formats (e.g. 'claude', 'cursor'). */
-export function mcpEntryMatchesFormat(entry, formats = []) {
-  if (!formats.length || !entry) return false;
-  const set = new Set(formats);
-  return entryOrigins(entry).some((o) => (
-    (set.has('claude') && (o.source === 'claude' || isClaudePath(o.path) || /\.mcp\.json$/i.test(o.path) || /\.claude\.json$/i.test(o.path)))
-    || (set.has('cursor') && isCursorPath(o.path))
-  ));
-}
 
 /** Determine whether `ply_context` should expose `load_skill` / `instructions_for_path` for `agent`. */
 export function docToolRequirements(agent, docs, conditionalCount = 0, instructionsCount = 0) {

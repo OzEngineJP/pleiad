@@ -8,7 +8,6 @@ import {
   DOC_AGENT_IDS,
   DOC_AGENT_TRAITS,
   canRelayDocToAgent,
-  devinFormatsForEntry,
   docCellLock,
   entryOrigins,
   isEntryNativeTo,
@@ -304,7 +303,6 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
  * - `nativeKeep`: entries kept natively by `agent` without suppression
  * - `suppress`: native copies/paths that must be stopped on `agent`
  * - `deliver`: entries that Pleiad must deliver via system injection / ply_context
- * - `devinDisableFormats`: Devin `read_config_from` keys that must be set to false
  */
 export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, docAgentsConfig, cwd = null, home = os.homedir(), forceCoarseDeliver = false }) {
   const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig, cwd, home });
@@ -327,7 +325,6 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
       nativeKeep: active.map((a) => a.entry),
       suppress: [],
       deliver: [],
-      devinDisableFormats: [],
     };
   }
 
@@ -386,49 +383,26 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
 
   // Handle coarse/group suppression fallout cleanly:
   // If agent stops all-at-once (no perFileInstructionExclude / perNameSkillList), suppressing ANY item
-  // forces kept native items into `deliver`. For Devin, disabling a read_config_from format forces
-  // kept items in that format into `deliver`.
+  // forces kept native items into `deliver`. Devin never stops its own imports (every native cell is locked on).
   let nativeKeep = nativeKept.map((x) => x.entry);
   const deliver = [...desiredDeliver];
-  const devinDisableFormats = new Set();
 
-  if (traits.readConfigFrom) {
-    for (const s of desiredSuppress) {
-      for (const fmt of devinFormatsForEntry(kind, s)) devinDisableFormats.add(fmt);
-    }
-    if (devinDisableFormats.size > 0) {
-      nativeKeep = [];
-      for (const { entry } of nativeKept) {
-        const fmts = devinFormatsForEntry(kind, entry);
-        if (fmts.some((f) => devinDisableFormats.has(f))) {
-          deliver.push(entry);
-        } else {
-          nativeKeep.push(entry);
-        }
-      }
-    }
-  } else {
-    const canFilterIndividually = kind === 'instruction'
-      ? traits.perFileInstructionExclude
-      : (traits.perNameSkillList || traits.perPathSkillDisable);
-    if (!canFilterIndividually && (desiredSuppress.length > 0 || forceCoarseDeliver)) {
-      // Coarse stop suppresses ALL stoppable native items; keep unstoppable native items (`locked: 'own'/'workspace'`),
-      // and re-deliver every stoppable nativeKeep item via Pleiad.
-      nativeKeep = [];
-      for (const { row, entry } of nativeKept) {
-        if (docCellLock(agent, kind, entry, lockCtx)?.lockedOn) {
-          nativeKeep.push(entry);
-        } else {
-          deliver.push(entry);
-        }
+  const canFilterIndividually = kind === 'instruction'
+    ? traits.perFileInstructionExclude
+    : (traits.perNameSkillList || traits.perPathSkillDisable);
+  if (!canFilterIndividually && (desiredSuppress.length > 0 || forceCoarseDeliver)) {
+    // Coarse stop suppresses ALL stoppable native items; keep unstoppable native items (`locked: 'own'/'workspace'`),
+    // and re-deliver every stoppable nativeKeep item via Pleiad.
+    nativeKeep = [];
+    for (const { entry } of nativeKept) {
+      if (docCellLock(agent, kind, entry, lockCtx)?.lockedOn) {
+        nativeKeep.push(entry);
+      } else {
+        deliver.push(entry);
       }
     }
   }
 
-  // If `perNameSkillList` (Claude `skills: [keptNames]`): if any kept skill came from a non-native source or `deliver`
-  // overlaps native suppression (Wait: Claude can pass BOTH `skills: ['native-skill']` AND `ply_context.load_skill` for spread skills!
-  // EXCEPT if a native skill conflicts by name with a non-native chosen `prefer` skill — wait: omitting that name from `skills: [...]`
-  // stops ONLY that shadowed native skill while keeping other native skills native!).
   const spreadSummary = Boolean(
     kind === 'instruction'
     && canRelayDocToAgent(agent)
@@ -436,7 +410,7 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
     && !matrix.summaryRow.rule?.off?.includes(agent)
     && !docCellLock(agent, kind, WORKSPACE_SUMMARY_KEY, lockCtx),
   );
-  const untouchedNative = desiredSuppress.length === 0 && deliver.length === 0 && devinDisableFormats.size === 0 && !spreadSummary;
+  const untouchedNative = desiredSuppress.length === 0 && deliver.length === 0 && !spreadSummary;
   return {
     matrix,
     agent,
@@ -447,29 +421,7 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
     nativeKeep,
     suppress: desiredSuppress,
     deliver,
-    devinDisableFormats: [...devinDisableFormats],
   };
-}
-
-/**
- * Devin の read_config_from は、形式ごとに指示と Skills をまとめて止める（core/backends/devin-config.mjs）。
- * 片方の種類で形式を止めると、もう片方の種類でその形式から自分で読んでいた物も読まなくなるので、残す物（nativeKeep）のうち
- * 止める形式に入る物を Pleiad から渡し直す（deliver）。docs は { instruction, skill } で、解いていない種類は null のまま返す
- */
-export function coupleDevinFormats(docs) {
-  const disabled = new Set([...(docs?.instruction?.devinDisableFormats ?? []), ...(docs?.skill?.devinDisableFormats ?? [])]);
-  if (!disabled.size) return docs;
-  const out = { ...docs };
-  for (const kind of ['instruction', 'skill']) {
-    const res = docs[kind];
-    if (!res) continue;
-    const keep = [];
-    const moved = [];
-    for (const entry of res.nativeKeep) (devinFormatsForEntry(kind, entry).some((f) => disabled.has(f)) ? moved : keep).push(entry);
-    if (!moved.length) continue;
-    out[kind] = { ...res, nativeKeep: keep, deliver: [...res.deliver, ...moved], untouchedNative: false, hasWork: true };
-  }
-  return out;
 }
 
 /** Utility: resolve entries scoped cleanly for `cwd` check (matches containsPath for place deletion/queries). */

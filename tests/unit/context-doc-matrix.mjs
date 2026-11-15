@@ -76,8 +76,9 @@ export default async function (t) {
   });
   t.ok('未操作時は touched が false、agents は 6 エージェント',
     !mNative.touched && mNative.agents.join(',') === 'claude,codex,antigravity,opencode,devin,grok');
-  t.ok('summaryRow(__workspace__): 指示は Grok だけ workspace ロック on、Skill は Devin と Grok が workspace ロック on',
-    mNative.summaryRow.cells.grok.locked && mNative.summaryRow.cells.grok.reason === 'workspace' && !mNative.summaryRow.cells.codex.locked);
+  t.ok('summaryRow(__workspace__): 指示は Grok が workspace・Devin が bundled のロック on（Devin の取り込みは止めない）',
+    mNative.summaryRow.cells.grok.locked && mNative.summaryRow.cells.grok.reason === 'workspace' && !mNative.summaryRow.cells.codex.locked
+    && mNative.summaryRow.cells.devin.locked && mNative.summaryRow.cells.devin.reason === 'bundled' && mNative.summaryRow.cells.devin.on);
 
   const clRow = mNative.byKey.get(docItemKey(userClaude));
   const cxRow = mNative.byKey.get(docItemKey(userCodex));
@@ -112,9 +113,9 @@ export default async function (t) {
   const buildRow = mSkill.byKey.get('skill:build');
   t.ok('同名 Skill は 1 行にまとまり、prefer 指定側を chosen とし duplicates に全コピーを持つ',
     mSkill.rows.length === 1 && buildRow.chosen.path === dupClaude.path && buildRow.duplicates.length === 2
-    && buildRow.cells.devin.locked && buildRow.cells.devin.reason === 'workspace');
-  t.ok('Skill の summaryRow(__workspace__) は Devin と Grok が workspace ロック',
-    mSkill.summaryRow.cells.devin.locked && mSkill.summaryRow.cells.devin.reason === 'workspace'
+    && buildRow.cells.devin.locked && buildRow.cells.devin.reason === 'bundled');
+  t.ok('Skill の summaryRow(__workspace__) は Devin が bundled・Grok が workspace のロック',
+    mSkill.summaryRow.cells.devin.locked && mSkill.summaryRow.cells.devin.reason === 'bundled'
     && mSkill.summaryRow.cells.grok.locked && mSkill.summaryRow.cells.grok.reason === 'workspace');
 
   // ---- snapshotBaselineAgents の 3 パターンと defaults->workspace フォールバック
