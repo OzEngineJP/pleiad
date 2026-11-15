@@ -182,6 +182,8 @@ try {
       && await page.locator('#cx-panel-instruction .cx-legend.names').count() >= 1,
       '段 2: 指示・Skills は担当 2 択無し（Hooks のみ維持）、量の目安は初期折りたたみ、作業場所 summaryRow・凡例を表示',
     );
+    const instTotal = await page.locator('#cx-panel-instruction .cx-sec > .cx-doc-total').textContent();
+    check(/^約 [\d,]+ トークン$/.test(instTotal ?? ''), '「エージェントの設定」の見出しの右に、渡っているファイルの指示の量の合計を出す（モックどおり）', instTotal);
     await page.locator('#cx-panel-instruction details.cx-fold > summary').click();
     check(await page.locator('#cx-panel-instruction details.cx-fold').evaluate(el => el.open) === true, '量の目安の折りたたみを開くと中身が見える');
     await page.locator('#cx-panel-instruction details.cx-fold > summary').click();

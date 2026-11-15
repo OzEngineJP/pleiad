@@ -1661,6 +1661,7 @@
     },
     "matrix": {
       "agentSettings": "Agent settings",
+      "tokensTotal": "~{{n}} tokens",
       "agentsAria": "Agents using {{name}}",
       "agentAria": "Use {{name}} in {{agent}}",
       "askAria": "Confirm providing {{name}} to {{to}} too",

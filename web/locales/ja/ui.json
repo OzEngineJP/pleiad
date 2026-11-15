@@ -1624,6 +1624,7 @@
     },
     "matrix": {
       "agentSettings": "エージェントの設定",
+      "tokensTotal": "約 {{n}} トークン",
       "agentsAria": "{{name}} を使うエージェント",
       "agentAria": "{{agent}} で {{name}} を使う",
       "askAria": "{{name}} を {{to}} にも渡す確認",

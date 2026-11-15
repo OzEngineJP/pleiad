@@ -122,7 +122,13 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   let budgetFoldOpen = false;
   const opened = new Set();          // 中身を開いている行（id）
   const bundleOpen = new Map();      // まとまりごとの明示的な開閉状態（キー -> boolean）
-  let skillQuery = '', skillListHost = null, placeTierEl = null;
+  let skillQuery = '', skillListHost = null, placeTierEl = null, instTotalEl = null;
+  /** 「エージェントの設定」の見出しの右: どれかのエージェントに渡っているファイルの指示の量の合計（モックの「約 2,960 トークン」） */
+  function paintInstTotal() {
+    if (!instTotalEl) return;
+    const n = (docMatrices.instruction?.rows ?? []).reduce((a, e) => a + (e.anyOn && Number.isFinite(e.tokens) ? e.tokens : 0), 0);
+    instTotalEl.textContent = n > 0 ? t('context.matrix.tokensTotal', { n: fmt.number(n) }) : '';
+  }
   let plyCount = null, mcpCount = null, hooksCount = null;
   let toastTimer, scanTicket = 0;
 
@@ -487,6 +493,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   function paintTierList(list, kind) {
     list.replaceChildren();
     const doc = docMatrices[kind];
+    if (kind === 'instruction') paintInstTotal();
     if (!doc) list.append(scanning ? loading() : el('p', 'cx-empty', kind === 'skill' ? t('context.skill.none') : t('context.instruction.none')));
     else documentRows(list, kind, doc);
     if (kind !== 'skill' || !skillQuery) {
@@ -862,7 +869,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       card.append(plyInstructions.root);
       host = el('div', 'cx-block');
       const sec = el('div', 'cx-sec');
-      sec.append(el('span', 'n', t('context.matrix.agentSettings')));
+      instTotalEl = el('span', 'r cx-doc-total');
+      sec.append(el('span', 'n', t('context.matrix.agentSettings')), instTotalEl);
       host.append(sec);
       card.append(host);
     } else if (kind === 'skill') {
