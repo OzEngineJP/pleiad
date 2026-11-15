@@ -73,7 +73,7 @@
 | Codex のユーザー・作業場所・プラグイン・管理者 | Codex（信頼されていない・無効・書き換えられたものは空） |
 | Antigravity のユーザー・作業場所 | Antigravity（無効のものは空） |
 | Grok 自身（`~/.grok/hooks`・`config.toml`） | Grok |
-| Devin の Claude からの取り込み | 未確認（実機で確かめる。確かめられなければ Devin の列は鍵） |
+| Devin の Claude からの取り込み | Devin（`read_config_from` の既定。Claude の設定の定義を Devin が自分で読んで動かす。2026-11-15 実機で、作業場所の Claude の Stop が Devin のターンで動いた）。取り込みが止まるターン（下の `compat.devin`）では届かない |
 
 ### セルの状態（一覧と実行時が同じ規則を使う）
 
@@ -95,7 +95,7 @@
 - `'workspace'`: 作業場所の定義。`followsWorkspace`（この場所の一覧の作業場所の定義は、作業場所の 1 行 `ws:hooks` に従う）・`placeNoSpread`（作業場所の定義はほかのエージェントへ広げない）・`grokWorkspace`・`grokTrustUnknown`（Grok のフォルダーの信頼）・`noWorkspaceHooks`（OpenCode は作業場所の Hooks を読まない）・`devinCompatOff`。
 - `'relay'`: そのエージェントへ渡せない（`detail` は `deliverable` の理由の code。`reasons` に根拠を付ける）。
 - 押せるように見えて何も変わらないセルは作らない（`decideModes`: 押した後の状態を計算し、そのセルが変わり、ほかのセルが黙って止まらないときだけ `mode: 'toggle'`）。
-- セルの `warnings`（`[{ code, params, evidence }]`）: 渡すときの注意（アダプター越し・Stop の意味の違いなど `deliverable` の warnings、Devin の `devinConfig`（そのターンは Devin の取り込みも止まる）、Codex の `codexTrustAtTurn`、`grokTrustUnknown`、`stoppedWithOthers`（渡し直せずに一緒に止まっている））。
+- セルの `warnings`（`[{ code, params, evidence }]`）: 渡すときの注意（アダプター越し・Stop の意味の違いなど `deliverable` の warnings、Devin の `devinConfig`（取り込みが続く場所。利用者の Devin の設定に重ねて渡す）と `devinImportsStop`（`compat.devin` が `off` の場所。入れたターンから Devin の取り込みが全部止まり、AGENTS.md と Claude などから取り込む指示・Skills・MCP・Hooks が Devin に届かなくなる。Devin へ渡す Hook をすべて止めると、また取り込む）、Codex の `codexTrustAtTurn`、`grokTrustUnknown`、`stoppedWithOthers`（渡し直せずに一緒に止まっている））。
 
 ### 移行（触るまで何も変えない。最初に押したとき、そのときの実効の状態を写す）
 
@@ -104,10 +104,14 @@
   - Pleiad が止めていた定義（`nativeFate` が `stopped`）は、元のエージェントを `off` に入れる。止めずに動き続けていたもの（`kept`）はそのまま。
   - 作業場所の定義も止めていたので `off['ws:hooks'] = [claude, codex, antigravity]`。
   - 登録は `targets` のとおり（オフのものは空のまま）。場所で外していた登録（`disabled`）は `unused`。
-  - `compat.grok = 'off'`（Claude・Cursor・Codex の互換の読み込み元を止めていた）。`compat.devin = 'off'`（Devin へ渡すものがあるターンは取り込みを止めていた。渡すものが無いターンは今までどおり取り込む）。
+  - `compat.grok = 'off'`（Claude・Cursor・Codex の互換の読み込み元を止めていた）。
+  - Devin へ向けた登録は `off[id] = ['devin']` から始め、`compat.devin` は Devin へ向けた登録があれば `'off'`（無ければ `'native'`）。
+    - main は Devin の `--config` を起動の直後に消していた。Devin CLI はそのファイルを起動の後の `session/new` で読むので、旧「そろえる」でも、登録は Devin で動かず、取り込みも止まっていなかった（2026-11-15 実機。main の会話の記録は「渡した」と書いていた）。
+    - 更新しただけで Devin の動きが変わらないよう、Devin のマスはオフ（取り込みは動く）から始める。利用者が Devin のマスを入れて渡すものができたターンから、旧の規則どおり取り込みが止まる（そのマスの注意は `devinImportsStop`）。
+  - 移行前（`adopted: false`）のターンは Devin へ何も渡さない（`prepareHooksTurn` の旧い道は、`HOOK_VIA` が `config` のエージェントでは `null`）。指示・Skills・外部 MCP の表が使う `devinImportsStopped` も、移行前はいつも `false`。
 - 場所ごとに担当を変えていた人: その場所の担当と `disabled` で同じ計算をして `places[].agents` に書く。
 - 写しを持つ人: 写し（相手のファイルの、アダプター越しのコマンド。`parseAdapterCommand`）は相手のエージェント自身の行のまま。元の行の、その相手の列は鍵（`copyExists`）で、状態は写しの状態。黙って消さず、二重に動かさない。
-- 写しの式: `on(行, A) = 旧の会話の記録で A のターンに動くもの`。テスト（`tests/unit/hooks-agents.mjs`）で、4 つの組（旧「任せる」・旧「そろえる」・写しを持つ人・場所ごとに変えていた人）について、移行の前後で各エージェントのターンに動く Hook が同じことを確かめる。
+- 写しの式: `on(行, A) = 旧の A のターンで実際に動くもの`（Devin だけは会話の記録と実際が違っていたので、実際の動き）。更新しただけの人のターンは、main の値で固定した試験（`tests/unit/hooks-main-pinned.mjs`）で比べる。テスト（`tests/unit/hooks-agents.mjs`）で、4 つの組（旧「任せる」・旧「そろえる」・写しを持つ人・場所ごとに変えていた人）について、移行の前後で各エージェントのターンに動く Hook が同じことを確かめる。
 
 ### 実行時（エージェント A のターン、場所 cwd）
 
@@ -122,6 +126,9 @@
   - Grok: Claude のユーザーの定義を Grok の列で止めたときだけ `GROK_CLAUDE_HOOKS_ENABLED=false` で起こし、止めないユーザーの定義をプラグインの置き場で渡し直す。Cursor の互換は `compat.grok` が `off` のときだけ止める（旧「そろえる」）。Grok 自身の hooks は止めない。
   - OpenCode: 渡すだけ（コールバック）。利用者のプラグインは一覧に出さない。
   - Devin: 渡すものがあるターンは `--config`（`read_config_from` は `compat.devin` のとおり）。`compat.devin` が `off` なら、旧「そろえる」と同じく、渡すものがあるターンだけ Devin の取り込み（MCP・ルールを含む）も止まる（`runtime.stopImports`。渡すものが無いターンは `null` で、今までと同じ起動）。`--config` のファイルは Devin のプロセスが終わるまで消さない（Devin CLI は起動の後の `session/new` のときに読む。起動の直後に消していたため、旧「そろえる」でも渡したものが載っていなかった。2026-11-15 実機。閉じずに残ったものは次の起動で 1 日を過ぎた分だけ消す）。
+    - 取り込みが止まる場所では、指示・Skills の表（`core/context-doc-matrix.mjs`）と外部 MCP の表（`core/context-mcp-matrix.mjs` の `importStopped`）で、取り込んだだけの物の Devin のマスを鍵つきのオフ（`devinHooks`）に見せる（表示だけで、実行時は変えない。2026-11-15 実機で、Devin のマスを入れると Claude・Cursor から取り込んだ MCP は Devin で起動されなかった）。Devin 自身の設定の物は鍵にしない。
+    - Devin へ渡す Hook をすべて止めると、確認なしで取り込みに戻る（取り込みを広げる向きだが、旧「そろえる」と同じ。確認は足していない）。
+    - `--config` を読まれるようにしたので、渡すものがあるターンの `--config` に載るほかの物も効くようになった。シェルの制限（`shellTool.devin === 'ply'` の `disabled_tools`）は Hooks の表と別に付き、main では読まれず効いていなかった。これも利用者の `config.json` に重ねるので、利用者のファイルが壊れていると、シェルの制限だけのターンでも `DEVIN_USER_CONFIG_INVALID` で断る。
     - **`--config` は利用者の `config.json` を置き換える**（重ねない。2026-11-15 実機 3000.11.92）。そのまま渡すと、利用者の hooks・`permissions` の allow/deny・`read_config_from`・`agent.model`・`devin.org_id` が黙って外れる。`mcp_config.json`・`credentials.toml`・作業場所の `.devin/` は影響を受けない。Devin に重ねる口は無い。
     - そこで渡すファイルは、利用者の `config.json`（MCP を切るターンは、MCP を外した置き場の写しの `config.json`）を土台に、Pleiad の分だけを重ねたものにする（`overlayDevinConfig`）。
       - hooks: イベントごとに利用者の後ろへ足す。
@@ -165,7 +172,8 @@
 
 ## 影響
 
-- 新: `core/hooks-agents.mjs`（保存・行 ID・元の集合・セルの規則・移行の式・一覧・ターンで動く Hook）。
+- 新: `core/hooks-agents.mjs`（保存・行 ID・元の集合・セルの規則・移行の式・一覧・ターンで動く Hook）。一覧は列の短い名前（`labels`。エージェントの記述の `shortLabel`）を返す。画面の短い名前は有効なエージェントの分しか届かないため。場所を指定した一覧では、その場所に定義が無い作業場所のマスに `empty` を付ける（設定の画面は場所を指定しないので出ない。会話の右の欄・AI・CLI から場所つきで呼んだときだけ）。
+- 変: `core/context-session.mjs`・`core/context-scan.mjs`・`core/context-mcp-matrix.mjs`（取り込みが止まる場所の外部 MCP の Devin のマスの鍵）。
 - 変: `core/hooks-unify.mjs`（移行済みのターンの準備）、`core/hooks-plan.mjs`（Codex の行ごとの止め・agy のアダプターの絶対パス）、`core/backends/claude.mjs`・`codex.mjs`・`devin*.mjs`・`antigravity-context.mjs`、`core/ops/hooks.mjs`、`core/server.mjs`（`opsHooks`）、`tests/data-writes-allowlist.mjs`。
 - 画面の文言の鍵だけ `web/locales/{en,ja}/{agent,server}.json` に足した（鍵・注意・断りの文。画面の部品は触っていない）。
 - 画面: `web/hooks-matrix.mjs`（新）、`web/context.mjs`（タブ）・`web/session-context.mjs`（右の欄）・`web/hooks-card.mjs`（行の詳細とシートだけ残した）・`web/hooks-unify-ui.mjs`（理由・注意の文、登録の詳細とシート、会話の Hooks の面だけ残した）、`web/context.css`。旧の担当の 2 択・取り込み・写すの画面と、その文言・CSS は消した。
@@ -191,3 +199,17 @@ Devin の `--config` に利用者の設定を重ねる直しは、試験用の�
 - (3) シェルの制限: `disabled_tools` が足され、hooks は (2) と同じく動く。ただしコマンドは ply_shell で走り、Devin の `Exec(...)` の allow/deny は当たらない（ply_shell は Pleiad の承認だけを通る。ほかのエージェントの ply_shell と同じ性質で、`--config` とは別。今までも、置き換えで deny は外れていた）。
 - (4) 戻す: (1) と同じ動き（`--config` 無し）。
 - どのターンの後も写しは残らず、利用者の `config.json` は `version` 以外変わらなかった。
+
+旧「そろえる」の人の Devin を main と比べた（2026-11-15、本物の Devin、試験用のデータ置き場と作業場所。作業場所に Claude の Stop と AGENTS.md、Pleiad の登録を Devin へ向けた）。
+
+| 場合 | 渡したファイル | 登録 | 作業場所の Claude の Stop（取り込み） | 答え（作業場所の AGENTS.md の合言葉） |
+|---|---|---|---|---|
+| main・旧「そろえる」 | 取り込みを全部止め登録を載せたものを書いたが、起動の直後に消えた（`{"version":1}` の残りが溜まる） | 動かない（記録は「渡した」） | 動く | 答えた |
+| main・旧「任せる」 | 無し | 動かない | 動く | 答えた |
+| この版・移行前と移行の後 | 無し | 動かない（Devin のマスはオフ、注意は `devinImportsStop`） | 動く | 答えた |
+| この版・Devin のマスを入れた | 取り込みを止め登録を載せたもの（ターンの間残る） | 1 回 | 動かない | 答えない |
+| この版・もう一度切った | 無し | 動かない | 動く | 答えた |
+| この版・旧「任せる」で Devin のマスを入れた | 登録だけを重ねたもの（取り込みは止めない。注意は `devinConfig`） | 1 回 | 動く | 答えた |
+
+- 外部 MCP: 取り込みが続く場所では Claude・Cursor の MCP が Devin で起動された。Devin のマスを入れると起動されず、外部 MCP の表の Devin のマスは `devinHooks` の鍵になった。
+- 指示・Skills: Devin のマスを入れると、取り込む物の Devin のマスが `devinHooks` の鍵になった。Devin 自身の Skill はオンのまま。
