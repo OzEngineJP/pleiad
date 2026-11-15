@@ -27,7 +27,7 @@ import {
   CONTEXT_TABS, readTabStorage, writeTabStorage,
   groupEntries, bundleSwitchState, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
 } from './context-tabs.mjs';
-import { FRESH_AGENTS, rowSwitch, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, savedText } from './context-matrix.mjs';
+import { freshAgents, rowSwitch, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, savedText } from './context-matrix.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
@@ -149,7 +149,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function subtitle(data) {
     const started = data.startedAt ?? data.report?.at;
     // Antigravity・Grok は会話を始めるときだけ設定を読む。その会話では「次のターンから」と言わない（レビュー S8）
-    const fresh = FRESH_AGENTS.includes(session()?.backend);
+    const fresh = freshAgents().includes(session()?.backend);
     const text = started
       ? (fresh ? t('sessionContext.subtitle.startedAtFresh', { time: stamp(started) }) : t('sessionContext.subtitle.startedAt', { time: stamp(started) }))
       : (fresh ? t('sessionContext.subtitle.startedFresh') : t('sessionContext.subtitle.started'));

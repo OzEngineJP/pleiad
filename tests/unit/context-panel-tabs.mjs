@@ -2,6 +2,8 @@
 // 4 タブ・フォルダーまとまり（>8 で閉じる・一部は checkbox mixed で一括切替）・Skills の絞り込み。
 import { N } from '../lib/dom-stub.mjs';
 import { setLanguage } from '../../web/i18n.mjs';
+import { setAgentBrands } from '../../web/agent-brands.mjs';
+import { AGENTS, agentPresentation } from '../../core/backends/agents.mjs';
 import { setupContext } from '../../web/context.mjs';
 import { setupSessionContext } from '../../web/session-context.mjs';
 import { buildDocMatrix, snapshotBaselineAgents } from '../../core/context-doc-matrix.mjs';
@@ -186,6 +188,8 @@ export default async function (t) {
   const dom = installDom();
   try {
     await setLanguage('ja');
+    // 画面は「会話を始めるときだけ設定を読むエージェント」をエージェントの記述（contextAt）から引く（client.mjs の loadBackends と同じ）
+    setAgentBrands(Object.keys(AGENTS).map((id) => ({ id, ...agentPresentation(id) })));
 
     // ---------------- 1. 設定 › プラグイン（web/context.mjs · Stage 2） ----------------
     // ユーザーの段で source が codex の指示は ~/.codex/AGENTS.md だけで、Codex が必ず読む（Codex の列は鍵）。ここでは押せる行にするため OpenCode の物だけにする。

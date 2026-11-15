@@ -49,7 +49,7 @@ export default async function (t) {
     t.ok('既定のレジストリは試験用以外を記述順に含む（CLI を起動せず読める）', defaults.map((b) => b.id).join() === DEFAULT_AGENT_IDS.join(), defaults.map((b) => b.id).join());
     for (const b of defaults) {
       const a = agentPresentation(b.id);
-      t.ok(`${b.id}: 画面の記述はエージェントの記述から来る`, b.shortLabel === a.shortLabel && JSON.stringify(b.brand) === JSON.stringify(a.brand) && b.idleCompaction === a.idleCompaction);
+      t.ok(`${b.id}: 画面の記述はエージェントの記述から来る`, b.shortLabel === a.shortLabel && JSON.stringify(b.brand) === JSON.stringify(a.brand) && b.idleCompaction === a.idleCompaction && b.contextAt === a.contextAt);
     }
     // サブエージェントを呼ぶツール名の申告（画面の委譲カード・過去の一覧が見る）。申告の無いエージェントは空
     const DECLARED = { claude: ['Task', 'Agent'], codex: ['subAgentActivity', 'collabAgentToolCall'], opencode: ['task', 'subagent'] };

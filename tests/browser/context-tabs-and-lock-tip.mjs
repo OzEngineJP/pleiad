@@ -46,14 +46,17 @@ const shoot = async (page, name) => {
 
 let server, client, browser;
 try {
-  // ユーザー側（設定 › プラグインで表示）: CLAUDE.md + GEMINI.md + 9 rules + 9 .claude/skills + 2 .agents/skills + MCP + Hook
+  // ユーザー側（設定 › プラグインで表示）: CLAUDE.md + GEMINI.md + 9 rules（探す場所に足した ~/team-rules）+ 9 .codex/skills + 2 .agents/skills + MCP + Hook
+  // 押して切り替える rules・Skills は、Devin・Grok が自分で読まない置き場に置く。.claude/ などエージェントの置き場の物は Devin か Grok のマスが
+  // 鍵つきでオンなので、行のスイッチを押せない（ADR 0337 §4「行のスイッチ」）。rules はどの置き場も Devin か Grok が読むので、探す場所に足したフォルダーに置く
+  const teamRoot = path.join(home, 'team-rules');
   write(path.join(home, '.claude/CLAUDE.md'), '# User Instructions\nAlways be concise.\n');
   write(path.join(home, '.gemini/GEMINI.md'), '# Gemini User Instructions\nExplain briefly.\n');
   for (let i = 0; i < 9; i++) {
-    write(path.join(home, `.claude/rules/sec/rule-${i}.md`), `# Security rule ${i}\nCheck input ${i}.\n`);
+    write(path.join(teamRoot, `.claude/rules/sec/rule-${i}.md`), `# Security rule ${i}\nCheck input ${i}.\n`);
   }
   for (let i = 0; i < 9; i++) {
-    write(path.join(home, `.claude/skills/u-skill-${i}/SKILL.md`), `---\nname: u-skill-${i}\ndescription: User skill ${i}\n---\n# u-skill-${i}\n`);
+    write(path.join(home, `.codex/skills/u-skill-${i}/SKILL.md`), `---\nname: u-skill-${i}\ndescription: User skill ${i}\n---\n# u-skill-${i}\n`);
   }
   for (const name of ['extra-a', 'extra-b']) {
     write(path.join(home, `.agents/skills/${name}/SKILL.md`), `---\nname: ${name}\ndescription: Agent skill ${name}\n---\n# ${name}\n`);
@@ -68,7 +71,7 @@ try {
   write(grokStub, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n');
   if (process.platform !== 'win32') fs.chmodSync(grokStub, 0o755);
 
-  // リポジトリ側（会話の右パネルで表示）: AGENTS.md + 9 rules + 9 .claude/skills + .mcp.json
+  // リポジトリ側（会話の右パネルで表示）: AGENTS.md + 9 rules（.claude/rules。Devin・Grok の鍵で行のスイッチは押せない）+ 9 .codex/skills + .mcp.json
   fs.mkdirSync(repo, { recursive: true });
   execFileSync('git', ['init', '--quiet', repo]);
   write(path.join(repo, 'AGENTS.md'), '# Repo Instructions\nFollow test rules.\n');
@@ -76,7 +79,7 @@ try {
     write(path.join(repo, `.claude/rules/arch/r-${i}.md`), `# Arch rule ${i}\nLayering ${i}.\n`);
   }
   for (let i = 0; i < 9; i++) {
-    write(path.join(repo, `.claude/skills/r-skill-${i}/SKILL.md`), `---\nname: r-skill-${i}\ndescription: Repo skill ${i}\n---\n# r-skill-${i}\n`);
+    write(path.join(repo, `.codex/skills/r-skill-${i}/SKILL.md`), `---\nname: r-skill-${i}\ndescription: Repo skill ${i}\n---\n# r-skill-${i}\n`);
   }
   write(path.join(repo, '.mcp.json'), JSON.stringify({ mcpServers: { repoMcp: { command: 'repo-cmd' } } }));
 
@@ -97,10 +100,19 @@ try {
 
   client = await open({ ...server, autoAllow: true });
   await client.cmd('onboardingSeen');
+  await client.cmd('setContextSettings', { place: null, kind: 'instruction', roots: [teamRoot] });
   await client.cmd('savePlyMcp', { name: 'reg', mode: 'add', value: { transport: 'stdio', command: 'reg-cmd', args: [] } });
   const tier = { sources: ['common', 'claude', 'codex', 'antigravity'], excludePaths: [] };
   for (const kind of ['instruction', 'skill']) {
     await client.cmd('setContextSettings', { cwd: repo, place: null, kind, value: { owner: 'native', user: tier, directory: tier } });
+  }
+  // 探す場所に足したフォルダーの物は、どのエージェントも自分では読まないので、既定ではどこにも渡らない（件数に数えない）。
+  // 利用者が Claude へ広げた状態にしておく（Claude のマスは鍵が無いので、行のスイッチを押せる）
+  {
+    const m = await client.cmd('docMatrix', { kind: 'instruction', cwd: home, place: null });
+    const teamKeys = m.rows.filter(r => String(r.path ?? r.key).replace(/\\/g, '/').includes('/team-rules/')).map(r => r.key);
+    if (teamKeys.length !== 9) throw new Error(`探す場所に足した rules が 9 件見つからない: ${teamKeys.length}`);
+    for (const key of teamKeys) await client.cmd('setDocAgent', { kind: 'instruction', key, agent: 'claude', on: true, cwd: home, place: null });
   }
   const managed = await client.cmd('newSession', { cwd: repo, backend: 'fake' });
   await client.runTurn({ ...managed, prompt: 'echo:プラグイン画面を確認' });
@@ -254,7 +266,7 @@ try {
     await page.locator('#cx-tab-instruction').click();
 
     // フォルダーまとまり（>8 で初期折りたたみ・子に親ロゴ重複なし・一部で checkbox mixed・一括切替）
-    const grp = page.locator('#cx-panel-instruction .cx-row.grp', { hasText: 'rules' });
+    const grp = page.locator('#cx-panel-instruction .cx-row.grp', { hasText: 'team-rules' });
     check((await grp.locator('.cx-tw').getAttribute('aria-expanded')) === 'false', '8 件超の rules まとまりは最初閉じている');
     check((await page.locator('#cx-panel-instruction .cx-row.kid').count()) === 0, '閉じた rules の子は出ていない');
     await grp.locator('.cx-tw').click();
@@ -332,7 +344,7 @@ try {
       text: e.innerText.replace(/\s+/g, ' ').trim(),
       expanded: e.querySelector('.cx-tw')?.getAttribute('aria-expanded'),
     })));
-    const grp9 = skillGrps.find(g => /\.claude[\\/]skills/.test(g.text) && /\b9\b/.test(g.text));
+    const grp9 = skillGrps.find(g => /\.codex[\\/]skills/.test(g.text) && /\b9\b/.test(g.text));
     const grp2 = skillGrps.find(g => /\.agents[\\/]skills/.test(g.text) && /\b2\b/.test(g.text));
     check(grp9 && grp9.expanded === 'false' && grp2 && grp2.expanded === 'true',
       'Skills の 9 件まとまりは初期折りたたみ、2 件まとまりは最初から開いている', skillGrps);
@@ -514,8 +526,8 @@ try {
       '右パネル編集: 指示の行の右に量を出し（モックどおり）、Skills には出さない', scxTok);
     await shoot(page, 'context-agents-1280-light-panel-inst.png');
 
-    // 右パネルの 9 件 rules まとまり（リポジトリ dir tier）の開閉と mixed 一括切替
-    const scxArchGrp = page.locator('#scx-panel-instruction .cx-row.grp', { hasText: 'rules' }).last();
+    // 右パネルの 9 件 rules まとまりの開閉と mixed 一括切替（リポジトリの .claude/rules は鍵で押せないので、探す場所に足した team-rules で試す）
+    const scxArchGrp = page.locator('#scx-panel-instruction .cx-row.grp', { hasText: 'team-rules' }).last();
     await scxArchGrp.locator('.cx-tw').click();
     const scxKids = page.locator('#scx-panel-instruction .cx-row.kid');
     check((await scxKids.count()) >= 9, '右パネルでも >8 のまとまりを開いて子行を出せる');

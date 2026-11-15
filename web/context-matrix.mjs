@@ -3,15 +3,15 @@
 
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { agentShortLabel } from './agent-brands.mjs';
+import { agentShortLabel, conversationContextAgents } from './agent-brands.mjs';
 import { brandMark } from './context-tabs.mjs';
 import { ensureLockTips, lockReasonText, lockAriaLabel } from './lock-tip.mjs';
 
 /**
- * 会話を始めるときだけ設定を読むエージェント。始まっている会話には次のターンでも届かないので、
+ * 会話を始めるときだけ設定を読むエージェント（エージェントの記述の contextAt）。始まっている会話には次のターンでも届かないので、
  * ここに渡る物が変わった保存のときだけ「Antigravity と Grok は、新しい会話から反映します」と添える（レビューの決定 (b)）
  */
-export const FRESH_AGENTS = ['antigravity', 'grok'];
+export const freshAgents = () => conversationContextAgents();
 
 /** 指示・Skills の表の前と後で、Antigravity・Grok のマスのオン・オフが変わったか（前と後の両方にある行だけ比べる。読み直しで増えた・消えた行は数えない） */
 export function docFreshChanged(before, after) {
@@ -20,7 +20,7 @@ export function docFreshChanged(before, after) {
   for (const [key, row] of b) {
     const prev = a.get(key);
     if (!prev) continue;
-    if (FRESH_AGENTS.some((agent) => (prev.cells?.[agent]?.on === true) !== (row.cells?.[agent]?.on === true))) return true;
+    if (freshAgents().some((agent) => (prev.cells?.[agent]?.on === true) !== (row.cells?.[agent]?.on === true))) return true;
   }
   return false;
 }

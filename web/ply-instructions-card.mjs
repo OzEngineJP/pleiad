@@ -10,12 +10,12 @@ import { t, fmt } from './i18n.mjs';
 import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { createReorder, moveItem, slideFrom } from './reorder.mjs';
-import { FRESH_AGENTS, agentChip, agentLegend, agentStrip, rowSwitch } from './context-matrix.mjs';
+import { freshAgents, agentChip, agentLegend, agentStrip, rowSwitch } from './context-matrix.mjs';
 
 /** Antigravity・Grok に渡る Pleiad の指示（並び・中身・オン・オフ）が変わったか。変わったときだけ「新しい会話から反映」と添える */
 function freshChanged(before, after) {
   const reach = (s, agent) => JSON.stringify((s?.items ?? []).filter(i => i.on && (i.agents ?? []).includes(agent)).map(i => [i.id, i.name, i.body, i.target]));
-  return FRESH_AGENTS.some(agent => reach(before, agent) !== reach(after, agent));
+  return freshAgents().some(agent => reach(before, agent) !== reach(after, agent));
 }
 
 const TARGETS = ['all', 'parent', 'child'];

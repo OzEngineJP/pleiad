@@ -19,7 +19,7 @@ import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
 import { agentShortLabel } from './agent-brands.mjs';
-import { FRESH_AGENTS, MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocRowLocal, askBanner, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, matrixSvg, recalcDocRow, rowSwitch, savedText } from './context-matrix.mjs';
+import { freshAgents, MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocRowLocal, askBanner, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, matrixSvg, recalcDocRow, rowSwitch, savedText } from './context-matrix.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
 const TAB_KEY = 'ply-context-tab';
@@ -892,7 +892,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     return { cmd, cwd: home(), scanCwd: home(), scan, ply, agents, matrix, reloadMatrix, short, backends: backends(), info: info(),
       saveKind: (mutate, options) => work(() => saveKind('mcp', mutate, options)),
       reload: () => loadScan(), refreshSettings: async () => { view = await cmd('contextSettings', {}); renderAll(); },
-      toast: ({ agents = [] } = {}) => saved(savedText(agents.some(a => FRESH_AGENTS.includes(a)))), status: text => { status.textContent = text; }, rerender: () => renderCard('mcp'),
+      toast: ({ agents = [] } = {}) => saved(savedText(agents.some(a => freshAgents().includes(a)))), status: text => { status.textContent = text; }, rerender: () => renderCard('mcp'),
       opened, loading, work };
   }
   const mcp = createMcpSection();

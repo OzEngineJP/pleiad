@@ -974,7 +974,7 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 
 1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`DESCRIPTOR_KEYS` を全部書く（使わないものは null）。
    `brand` のロゴは `web/brand/` に、`cli` の `searchDirs` はそのエージェントの配置先に合わせる。`contextSources` に新しい読み込み元を書くなら、
-   `core/context-scan.mjs` に読み方を足す。レジストリ・CLI の探し方・自動の圧縮の設定の行・画面のロゴと短い名前・委譲の行き先は、ここから作るので触らない。
+   `core/context-scan.mjs` に読み方を足す。レジストリ・CLI の探し方・自動の圧縮の設定の行・画面のロゴと短い名前・委譲の行き先・保存の知らせ（`contextAt`。会話を始めるときだけ設定を読むなら `'conversation'`）は、ここから作るので触らない。
 2. **印の状態と性質**（`core/backends/agent-marks.mjs`）。`CAPABILITY_STATES` に `CAPABILITIES` の全部のキーを 4 つの状態で書き、
    `AGENT_TRAITS` に `TRAITS` の全部のキーを `true` / `false` で書く。バックエンドはそこから `capabilities: CAPABILITY_STATES.<id>`・
    `traits: AGENT_TRAITS.<id>` と読む（写しを持たない）。試験用の fake だけは環境変数で印を切り替えるので capabilities を自分に持つ。
