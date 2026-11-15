@@ -324,7 +324,11 @@ try {
 
     // Skills タブ + 絞り込み欄
     await page.locator('#cx-tab-skill').click();
-    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.grp').length >= 2, { timeout: 10000 });
+    // 段 2 では Skills の行を先に組むので、行があるだけでなく、タブが切り替わって見えているのを待つ（見えていない間の innerText は区切りが無い）
+    await page.waitForFunction(() => {
+      const grps = [...document.querySelectorAll('#cx-panel-skill .cx-row.grp')];
+      return grps.length >= 2 && grps.every(e => e.checkVisibility());
+    }, { timeout: 10000 });
     await shoot(page, 'context-agents-1280-light-skills.png');
     const skillGrps = await page.locator('#cx-panel-skill .cx-row.grp').evaluateAll(els => els.map(e => ({
       text: e.innerText.replace(/\s+/g, ' ').trim(),
