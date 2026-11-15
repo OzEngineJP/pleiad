@@ -5436,6 +5436,8 @@ const opsHooks = {
   unifyPreview: (args) => hooksUnifyPreview(args),
   // Hook × エージェントの一覧と更新（hooks.matrix・hooks.setAgent など。ADR 0338）
   agents: hooksAgents,
+  // Hooks を書き換えた操作の後（core/ops/hooks.mjs）。開いている画面が取り直す
+  changed: actor => settingsChanged(['hooks'], actor),
 };
 
 // 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0327）。コネクターは最後に読めた一覧を覚えておく

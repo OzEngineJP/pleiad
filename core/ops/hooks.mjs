@@ -68,7 +68,7 @@ const NARROWS = 'Turning a Pleiad registration (h-…) off only narrows what run
 
 const WRITE_PREVIEW = 'A dry run (dryRun: true) writes nothing and only returns the planned change; writing is raised to guarded by riskOf (hooks run arbitrary commands)';
 
-export const hookOps = [
+const defs = [
   // ---- 各エージェントの設定ファイル
   defineOp({
     id: 'hooks.scan', summary: 'agent:ops.hooks.scan.summary', risk: 'read',
@@ -395,3 +395,18 @@ export const hookOps = [
     handler: (ctx) => run(ctx, () => ctx.hooks.agents.reset()),
   }),
 ];
+
+/**
+ * Hooks を書き換える操作。終わったら全画面へ settingsChanged（hooks）を配る（ctx.hooks.changed。どの口から変えても、開いている
+ * 設定のページ・会話の右のパネルを取り直す。指示・Skills の表の Devin の取り込むマスも Hooks で変わる。ADR 0338）。書く前の確認（dryRun）は配らない
+ */
+const CHANGES = new Set(['hooks.saveNative', 'hooks.copy', 'hooks.save', 'hooks.remove', 'hooks.toggle', 'hooks.setOwner', 'hooks.repair',
+  'hooks.setAgent', 'hooks.setRow', 'hooks.setGroup', 'hooks.setPlace', 'hooks.resetAgents']);
+export const hookOps = defs.map((op) => (!CHANGES.has(op.id) ? op : Object.freeze({
+  ...op,
+  handler: async (ctx, args) => {
+    const result = await op.handler(ctx, args);
+    if (args?.dryRun !== true) ctx.hooks?.changed?.(ctx.actor);
+    return result;
+  },
+})));
