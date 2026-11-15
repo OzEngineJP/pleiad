@@ -117,7 +117,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   const removedPending = new Map();
   let chip = null;
   // 作業場所の設定（contextSettings）と、「この場所だけ変える」の間の探索結果
-  let place = { cwd: null, view: null, loading: false }, edit = false, editScan = null, editBusy = false, toastTimer = null, toastOn = false, toastFresh = false;
+  let place = { cwd: null, view: null, loading: false }, edit = false, editScan = null, editBusy = false, toastTimer = null, toastOn = false, toastFresh = false, toastPruned = null;
   let editDocs = { instruction: null, skill: null }, editDocLoading = false;
   // この場所の外部 MCP を「Pleiad がそろえる」へ切り替える前の確認を開いているか（ADR 0031）
   let unifying = false;
@@ -263,7 +263,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const foot = el('p', 'scx-foot');
     foot.append(t('sessionContext.foot.lead'), button(t('sessionContext.foot.link'), 'cx-link', () => openSettings()));
     box.append(foot);
-    const toast = el('div', 'cx-toast scx-toast' + (toastOn ? ' on' : ''), savedText(toastFresh)); toast.setAttribute('role', 'status');
+    const toast = el('div', 'cx-toast scx-toast' + (toastOn ? ' on' : ''), savedText(toastFresh, toastPruned)); toast.setAttribute('role', 'status');
     box.append(toast);
     return box;
   }
@@ -597,7 +597,13 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   async function placeWork(fn, focus) {
     if (editBusy) return;
     editBusy = true; notice = '';
-    try { toastFresh = (await fn()) === true; showToast(); }
+    // fn は true（Antigravity・Grok に渡る物が変わった）か、{ fresh, pruned }（上限に届いて外した数も言う）を返す
+    try {
+      const r = await fn();
+      toastFresh = r === true || r?.fresh === true;
+      toastPruned = r?.pruned ?? null;
+      showToast();
+    }
     catch (e) { notice = t('context.saveFailed', { error: e.message }); }
     finally { editBusy = false; refresh(); if (focus) focusIn(focus); }
   }
@@ -614,7 +620,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function saveDocRow(kind, target, on, focus) {
     return placeWork(async () => {
       const before = editDocs[kind];
-      await cmd('setDocRow', { kind, ...target, on, place: place.cwd, cwd: place.cwd });
+      const res = await cmd('setDocRow', { kind, ...target, on, place: place.cwd, cwd: place.cwd });
       // 保存はできた。読み直しだけ失敗したときは「保存できませんでした」でなく、読み直せなかったと言う（レビュー S9）
       const [view] = await Promise.allSettled([
         cmd('contextSettings', { cwd: place.cwd }),
@@ -622,7 +628,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       ]);
       if (view.status === 'fulfilled') place.view = view.value;
       else notice = t('context.savedReloadFailed', { error: view.reason?.message ?? '' });
-      return docFreshChanged(before, editDocs[kind]);
+      return { fresh: docFreshChanged(before, editDocs[kind]), pruned: res?.pruned ?? null };
     }, focus);
   }
   function showToast() {

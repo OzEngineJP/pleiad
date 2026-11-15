@@ -1573,6 +1573,8 @@
     "lead": "エージェントへ何を渡すかを決めます。始まっている会話にも次のターンから反映します（Antigravity と Grok は新しい会話から）。",
     "saved": "保存しました",
     "savedFresh": "保存しました。Antigravity と Grok は、新しい会話から反映します",
+    "savedPrunedPlaces_other": "。上限に届いたため、もう無いフォルダーの設定を {{count}} か所外しました",
+    "savedPrunedKeys_other": "。上限に届いたため、もう無いファイルの設定を {{count}} 件外しました",
     "savedReloadFailed": "保存しました。表を読み直せませんでした（{{error}}）。開き直すと最新の状態を表示します",
     "saveFailed": "保存できませんでした：{{error}}",
     "cancel": "やめる",

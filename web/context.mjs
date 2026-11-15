@@ -294,14 +294,15 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     renderCard(kind);
     updateCounts();
     work(async () => {
-      try { await runRemote(); }
+      let res = null;
+      try { res = await runRemote(); }
       catch (e) {
         docMatrices[kind] = prev;
         throw e;
       }
       // 保存はできた。読み直し（失敗しても投げず、誤りを返す）の後の表と押す前の表を比べて、知らせの文を選ぶ
       const reloadError = await reloadDocMatrix(kind);
-      saved(savedText(docFreshChanged(prev, docMatrices[kind])));
+      saved(savedText(docFreshChanged(prev, docMatrices[kind]), res?.pruned));
       if (reloadError) status.textContent = t('context.savedReloadFailed', { error: reloadError.message });
     }, { redraw: kind });
   }
