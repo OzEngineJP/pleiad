@@ -135,6 +135,27 @@ export default async function (t) {
     await compare('場所ごとの担当（その外は任せる）', tmp);
     await plyHooks.setOwner({ place: repo, value: { owner: 'native' } });
 
+    // Devin へ渡す登録がある「そろえる」から移った人: Devin の取り込みは、渡すものがあるターンだけ止める（旧と同じ）
+    const devReg = await plyHooks.save({ name: 'dev', agent: CLAUDE, event: 'Stop', matcher: '', command: 'node dev.mjs', targets: [DEVIN] });
+    const importsStopped = r => !!devinTurnConfig({ hooksRuntime: r?.runtime ?? null })?.read_config_from;
+    await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [] } });
+    await compare('そろえる・Devin へ渡す登録がある');
+    await ha.setRow({ key: devReg.id, on: false, cwd: repo });
+    const devOff = await ha.matrix({ cwd: repo });
+    await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [devReg.id] } });
+    const legacyDevOff = await legacyTurn(DEVIN);
+    t.ok('移行の後に Devin へ渡す登録を切る: 渡すものが無いターンは Devin の取り込みを止めない（旧「そろえる」で登録を外したときと同じ）',
+      (await ha.read()).compat.devin === 'off' && !importsStopped(await newTurn(DEVIN)) && !importsStopped(legacyDevOff), JSON.stringify((await newTurn(DEVIN))?.record ?? null));
+    t.ok('そのときの一覧: Claude の定義の Devin の列は取り込みのとおり（入り・devinImports）', cell(devOff, stopRow.key, DEVIN).state === 'on' && cell(devOff, stopRow.key, DEVIN).detail === 'devinImports'
+      && cell(devOff, WS_KEY, DEVIN).detail === 'devinImports');
+    await ha.setRow({ key: devReg.id, on: true, cwd: repo });
+    const devOn = await ha.matrix({ cwd: repo });
+    t.ok('入れ直すと、渡すターンは取り込みを止める（Claude の定義の Devin の列は devinCompatOff）', importsStopped(await newTurn(DEVIN)) && ids(await newTurn(DEVIN)) === devReg.id
+      && cell(devOn, stopRow.key, DEVIN).state === 'off' && cell(devOn, stopRow.key, DEVIN).detail === 'devinCompatOff');
+    await ha.reset();
+    await plyHooks.setOwner({ place: null, value: { owner: 'native' } });
+    await plyHooks.remove(devReg.id);
+
     // ---------------------------------------------------------------- 最初の操作で写す
     const m1 = await ha.matrix({ cwd: repo });
     const firstTouch = await ha.setAgent({ key: reg.id, agent: CLAUDE, on: true, cwd: repo, expect: m1.revision });

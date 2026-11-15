@@ -173,6 +173,16 @@ const warn = code => ({ code, evidence: t(`hooksAgents.evidence.${code}`) });
  * セル: { state: on|off, mode: toggle|locked|none, reason?, detail?, unknown?, warnings?, needsConfirm? } と内部の _role・_deliver・_unit・_mismatch・_desired
  */
 export function cellsFor(inv, s, skip, A) {
+  // Devin の取り込みの止め（compat.devin: 'off'。旧「そろえる」から）は、Devin へ渡すものがあるターンだけ効く（旧と同じ）。
+  // 渡すものが無ければ取り込みが動くので、Claude の定義の Devin の列は取り込みのとおり（devinImports）に見せる
+  if (A === DEVIN && s.compat?.devin === 'off') {
+    const cells = cellsOnce(inv, s, skip, A);
+    if ([...cells.values()].some(c => c._deliver && c.state === 'on')) return cells;
+    return cellsOnce(inv, { ...s, compat: { ...s.compat, devin: 'native' } }, skip, A);
+  }
+  return cellsOnce(inv, s, skip, A);
+}
+function cellsOnce(inv, s, skip, A) {
   const cells = new Map();
   const wsOn = !s.unused.includes(WS_KEY) && !has(s.off, WS_KEY, A);
   const units = new Map();
@@ -602,7 +612,8 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     const summarize = () => supplied.map(x => ({ ...suppliedSummary(x), via, ...(agent === AGY ? { name: `pleiad-${x.hook.id}` } : {}) }));
 
     if (agent === DEVIN) {
-      const stopImports = s.compat.devin === 'off';
+      // 旧「そろえる」と同じく、渡すものがあるターンだけ取り込みを止める（渡すものが無ければ今までと同じ起動）
+      const stopImports = s.compat.devin === 'off' && supplied.length > 0;
       if (!stopImports && !supplied.length) return null;
       if (stopImports) record.stopped.push({ agent, scope: 'compat', name: 'Devin imports', event: null, matcher: null, command: '', path: null });
       record.supplied = summarize();

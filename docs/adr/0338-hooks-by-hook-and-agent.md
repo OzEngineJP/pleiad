@@ -68,7 +68,7 @@
 - `'admin'`: Claude・Codex の管理者の定義（`managed`。オンのまま）。
 - `'own'`: エージェント自身が読むので、1 つずつは止められない・広げられない。
   - `grokOwn`（Grok 自身の hooks）・`plugin`（Claude 以外のプラグイン）・`pluginOrSkill`（プラグイン・Skill の定義をほかへ広げる）・`nativeInactive`（エージェント自身が無効にしている定義）。
-  - `devinImports`: Devin が Claude の設定から取り込む定義。Devin の列はオン（取り込みのとおり）で押せない。`compat.devin` を切り替える操作は無く、旧「そろえる」からの移行でだけ `off` になる（そのときは `'workspace'`・`devinCompatOff`）。
+  - `devinImports`: Devin が Claude の設定から取り込む定義。Devin の列はオン（取り込みのとおり）で押せない。`compat.devin` を切り替える操作は無く、旧「そろえる」からの移行でだけ `off` になる。`off` でも、止まるのは Devin へ渡すものがあるターンだけ（旧と同じ）なので、その場所で Devin へ渡すものがあるときだけ `'workspace'`・`devinCompatOff`（切り）、無ければ `devinImports`（入り）に見せる（`cellsFor` が渡すものの有無で決める）。
   - `copyExists`: 既に写しがある組（写しの側で切り替える。セルに `copy`（写しの行 ID））。
   - `claudeAllOff`: 利用者の Claude の設定が `disableAllHooks`（Claude の列は止まったまま）。
   - `claudeAllOrNothing`・`grokAllOrNothing`・`agySameName`・`stoppedWithOthers`: 押すと、渡し直せないほかの定義が黙って一緒に止まる（Claude は全部止めて渡し直す、Grok の互換はまとめて止める、Antigravity は名前で止める）。
@@ -101,7 +101,7 @@
   - Antigravity: 名前で止める（置き場の `.agents/hooks.json` の `{ enabled: false }`）。同じ名前のほかのオンの定義は `pleiad-*` で渡し直す。アダプターは置き場の絶対パスで書く（今の agy は置き場の hook を `.agents` 以外のフォルダーで動かし、相対パスでは見つからなかった。2026-11-15 実機。置き場のパスに空白・安全でない文字があれば相対パスのまま）。第 2 段の `inheritCustomizations` 用に、このターンで動く Hook を返す入口 `hooksForTurn(agent, cwd)` を出す。
   - Grok: Claude のユーザーの定義を Grok の列で止めたときだけ `GROK_CLAUDE_HOOKS_ENABLED=false` で起こし、止めないユーザーの定義をプラグインの置き場で渡し直す。Cursor の互換は `compat.grok` が `off` のときだけ止める（旧「そろえる」）。Grok 自身の hooks は止めない。
   - OpenCode: 渡すだけ（コールバック）。利用者のプラグインは一覧に出さない。
-  - Devin: 渡すものがあるターンは `--config`（`read_config_from` は `compat.devin` のとおり）。`compat.devin` が `off` なら、旧「そろえる」と同じく、そのターンは Devin の取り込み（MCP・ルールを含む）も止まる。`--config` のファイルは Devin のプロセスが終わるまで消さない（Devin CLI は起動の後の `session/new` のときに読む。起動の直後に消していたため、旧「そろえる」でも渡したものが載っていなかった。2026-11-15 実機。閉じずに残ったものは次の起動で 1 日を過ぎた分だけ消す）。
+  - Devin: 渡すものがあるターンは `--config`（`read_config_from` は `compat.devin` のとおり）。`compat.devin` が `off` なら、旧「そろえる」と同じく、渡すものがあるターンだけ Devin の取り込み（MCP・ルールを含む）も止まる（`runtime.stopImports`。渡すものが無いターンは `null` で、今までと同じ起動）。`--config` のファイルは Devin のプロセスが終わるまで消さない（Devin CLI は起動の後の `session/new` のときに読む。起動の直後に消していたため、旧「そろえる」でも渡したものが載っていなかった。2026-11-15 実機。閉じずに残ったものは次の起動で 1 日を過ぎた分だけ消す）。
 
 ### 操作（`context.mcpMatrix` に当たるもの。画面はまだ呼ばない）
 
