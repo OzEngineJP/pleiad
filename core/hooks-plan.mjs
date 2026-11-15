@@ -110,12 +110,21 @@ export function grokHooksFile(supplied, { adapterPath, node = 'node' }) {
 }
 
 const snake = e => e.replace(/[A-Z]/g, (c, i) => (i ? '_' : '') + c.toLowerCase());
+const normPath = p => { const s = String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, ''); return /^[A-Za-z]:\//.test(s) ? s.toLowerCase() : s; };
+/** hooks/list の 1 件が、探索の行（path・event・group・handler）と同じ定義か。key は `<sourcePath>:<snake のイベント>:<group>:<handler>` */
+export function codexKeyMatches(h, row) {
+  const m = /:([a-z_]+):(\d+):(\d+)$/.exec(String(h?.key ?? ''));
+  if (!m) return false;
+  const source = typeof h.sourcePath === 'string' ? h.sourcePath : String(h.key).slice(0, m.index);
+  return normPath(source) === normPath(row.path) && m[1] === snake(row.event) && Number(m[2]) === row.group && Number(m[3]) === row.handler;
+}
 /**
  * Codex の hooks.state。probe は同じ表を起動の -c で渡した app-server の hooks/list（source: sessionFlags の定義の currentHash）、
- * list はその会話の app-server の hooks/list（ネイティブの定義）。
+ * list はその会話の app-server の hooks/list（ネイティブの定義）。stopRows（ADR 0338）があれば、その行（path・event・group・handler）の key だけを止め（{ source } は出どころごと止める）、
+ * ほかのユーザー・プロジェクトの定義は動き続ける（kept）。
  * 戻り: { state, stopped（止めるネイティブ）, kept（止めない出どころ: プラグイン・管理者）, untrusted（hash が取れなかった自分の定義の数） }
  */
-export function codexHooksState({ table, probe = [], list = [] }) {
+export function codexHooksState({ table, probe = [], list = [], stopRows = null }) {
   const state = {};
   const flags = probe.flatMap(d => d?.hooks ?? []).filter(h => h?.source === 'sessionFlags' && h.key && h.currentHash);
   let expected = 0;
@@ -127,7 +136,7 @@ export function codexHooksState({ table, probe = [], list = [] }) {
   const stopped = [], kept = [];
   for (const h of list.flatMap(d => d?.hooks ?? [])) {
     if (!h?.key || h.source === 'sessionFlags') continue;
-    if (CODEX_STOP_SOURCES.has(h.source)) { state[h.key] = { ...(state[h.key] ?? {}), enabled: false }; stopped.push(h); }
+    if (CODEX_STOP_SOURCES.has(h.source) && (!stopRows || stopRows.some(r => r.source ? r.source === h.source : codexKeyMatches(h, r)))) { state[h.key] = { ...(state[h.key] ?? {}), enabled: false }; stopped.push(h); }
     else kept.push(h);
   }
   return { state, stopped, kept, untrusted: expected - Object.values(state).filter(s => s.trusted_hash).length };
@@ -222,6 +231,8 @@ export function nativeFate(row) {
 export function classifyNativeRun({ record, backend, pleiad = false, name = '', event = '', leak = false }) {
   if (record?.owner !== 'ply' || pleiad) return { leak: false, unknownNative: false };
   if (backend !== 'claude') return { leak: leak === true, unknownNative: false };
+  // Hook × エージェント（ADR 0338）で Claude をまとめて止めていないターンは、ネイティブの定義が動いてよい
+  if (record.mode === 'agents' && !record.stopAll) return { leak: false, unknownNative: false };
   const at = String(name).indexOf(':'), matcher = at < 0 ? null : String(name).slice(at + 1);
   const hit = (record.stopped ?? []).some(r => r.event === event && (matcher === null ? !r.matcher || r.matcher === '*' : r.matcher === matcher));
   return { leak: hit, unknownNative: !hit };

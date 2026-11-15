@@ -762,7 +762,7 @@ async function codexHooksConfig(runtime, rpc, cwd, { probe = probeHookHashes } =
   if (problem) throw new Error(t('codex.errors.hooksList', { detail: problem }));
   // 渡す登録すべての trusted_hash が取れなければ始めない。hash の無い登録を Codex は動かさず、ネイティブだけを止めることになる
   const probed = Object.keys(runtime.table).length ? await probe(runtime.table, cwd).catch(e => { throw new Error(t('codex.errors.hooksTrust', { detail: String(e?.message ?? e).slice(0, 200) })); }) : [];
-  const { state, stopped, kept, untrusted } = codexHooksState({ table: runtime.table, probe: probed, list });
+  const { state, stopped, kept, untrusted } = codexHooksState({ table: runtime.table, probe: probed, list, ...(runtime.stopRows ? { stopRows: runtime.stopRows } : {}) });
   if (untrusted) throw new Error(t('codex.errors.hooksTrust', { detail: `${untrusted}` }));
   const row = h => ({ key: h.key, source: h.source, event: h.eventName ? h.eventName[0].toUpperCase() + h.eventName.slice(1) : null, path: h.sourcePath ?? '',
     command: h.command ? maskText(h.command) : '', matcher: typeof h.matcher === 'string' ? h.matcher : null, ...(h.pluginId ? { plugin: h.pluginId } : {}) });
@@ -782,7 +782,8 @@ function codexHookRun(method, params, hooksRuntime = null) {
   const one = mine.length === 1 ? mine[0].hook : null;
   return { type: 'hookRun', phase: method === 'hook/started' ? 'started' : 'response', hookId: String(run.id ?? ''), name: one?.name ?? event, event, source,
     ...(pleiad ? { pleiad: true, ...(one ? { id: one.id } : {}) } : {}),
-    ...(hooksRuntime && ['user', 'project'].includes(source) ? { leak: true } : {}),
+    // 行ごとに止める会話（ADR 0338。stopRows）は、動き続けるユーザー・プロジェクトの定義もあるので、出どころだけでは漏れと言えない
+    ...(hooksRuntime && !hooksRuntime.stopRows && ['user', 'project'].includes(source) ? { leak: true } : {}),
     ...(method === 'hook/completed' ? { outcome: HOOK_OUTCOME[run.status] ?? 'error', ...(Number.isInteger(run.durationMs) ? { ms: run.durationMs } : {}) } : {}) };
 }
 /** 公式の provider の id（config.toml の model_provider、無ければ openai）。互換から公式へ戻すときに明示する */

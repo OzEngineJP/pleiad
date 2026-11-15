@@ -2411,6 +2411,26 @@
       "input": "2a25f7c7c09a"
     },
     {
+      "id": "hooks.matrix",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "matrix"
+          ]
+        }
+      },
+      "legacyCommand": "hooksMatrix",
+      "input": "b0c09d596fd8"
+    },
+    {
       "id": "hooks.read",
       "risk": "read",
       "riskOf": false,
@@ -2497,6 +2517,26 @@
       "input": "2b3554901af9"
     },
     {
+      "id": "hooks.resetAgents",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "reset-agents"
+          ]
+        }
+      },
+      "legacyCommand": "resetHooksAgents",
+      "input": "af780a94a65d"
+    },
+    {
       "id": "hooks.save",
       "risk": "guarded",
       "riskOf": false,
@@ -2577,6 +2617,53 @@
       "input": "c75aa5072de2"
     },
     {
+      "id": "hooks.setAgent",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "agent"
+          ],
+          "positional": [
+            "key",
+            "agent"
+          ]
+        }
+      },
+      "legacyCommand": "setHookAgent",
+      "input": "b2b711461a10"
+    },
+    {
+      "id": "hooks.setGroup",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "group"
+          ],
+          "positional": [
+            "group"
+          ]
+        }
+      },
+      "legacyCommand": "setHookGroup",
+      "input": "c15548e025a8"
+    },
+    {
       "id": "hooks.setOwner",
       "risk": "guarded",
       "riskOf": false,
@@ -2595,6 +2682,53 @@
       },
       "legacyCommand": "setHooksOwner",
       "input": "ece98b454bc4"
+    },
+    {
+      "id": "hooks.setPlace",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "place"
+          ],
+          "positional": [
+            "place",
+            "key"
+          ]
+        }
+      },
+      "legacyCommand": "setHookPlace",
+      "input": "5706b49d727e"
+    },
+    {
+      "id": "hooks.setRow",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "row"
+          ],
+          "positional": [
+            "key"
+          ]
+        }
+      },
+      "legacyCommand": "setHookRow",
+      "input": "1c24a03fef20"
     },
     {
       "id": "hooks.toggle",
@@ -6201,9 +6335,24 @@
       "positional": []
     },
     {
+      "id": "hooks.setAgent",
+      "path": "hooks agent",
+      "positional": [
+        "key",
+        "agent"
+      ]
+    },
+    {
       "id": "hooks.copy",
       "path": "hooks copy",
       "positional": []
+    },
+    {
+      "id": "hooks.setGroup",
+      "path": "hooks group",
+      "positional": [
+        "group"
+      ]
     },
     {
       "id": "hooks.list",
@@ -6211,9 +6360,22 @@
       "positional": []
     },
     {
+      "id": "hooks.matrix",
+      "path": "hooks matrix",
+      "positional": []
+    },
+    {
       "id": "hooks.setOwner",
       "path": "hooks owner",
       "positional": []
+    },
+    {
+      "id": "hooks.setPlace",
+      "path": "hooks place",
+      "positional": [
+        "place",
+        "key"
+      ]
     },
     {
       "id": "hooks.read",
@@ -6238,6 +6400,18 @@
       "id": "hooks.repair",
       "path": "hooks repair",
       "positional": []
+    },
+    {
+      "id": "hooks.resetAgents",
+      "path": "hooks reset-agents",
+      "positional": []
+    },
+    {
+      "id": "hooks.setRow",
+      "path": "hooks row",
+      "positional": [
+        "key"
+      ]
     },
     {
       "id": "hooks.save",

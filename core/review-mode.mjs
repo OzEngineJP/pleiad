@@ -91,6 +91,7 @@ export const COMMAND_REFUSE = [
   'renamePlyMcp', 'importPlyMcp', 'setPlyMcpSettings', 'setContextSettings', 'scanContext', 'mcpMatrix', 'setMcpAgent',
   'scanHooks', 'readHook', 'hookTargets', 'saveHooks', 'copyHooks', 'sessionHooks', 'plyHooks', 'readPlyHook', 'savePlyHook',
   'removePlyHook', 'togglePlyHook', 'plyHookPreview', 'hooksUnifyPreview', 'setHooksOwner', 'repairPlyHooks',
+  'hooksMatrix', 'setHookAgent', 'setHookRow', 'setHookGroup', 'setHookPlace', 'resetHooksAgents',
   'setAutoCompaction', 'setConversationAutoCompaction', 'runShell', 'stopShell', 'skipShell', 'switchBackend', 'setMode',
   'revealPath', 'openPath', 'openDefault', 'authLogin', 'authLogout', 'authSubmit', 'authCancel',
   'plusStatus', 'plusLogin', 'plusLoginCancel', 'plusLogout',

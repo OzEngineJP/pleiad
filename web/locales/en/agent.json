@@ -1540,6 +1540,34 @@
         "summary": "Turn a Pleiad hook registration on or off. Turning it on needs the user's approval.",
         "enabled": "true for on, false for off (default true)."
       },
+      "matrix": {
+        "summary": "Returns the hooks list (hook × agent). Each cell has on/off, whether it can be pressed, the lock reason and warnings."
+      },
+      "setAgent": {
+        "summary": "Turns one agent cell of a hook row on or off. Turning it on needs the user's approval. Cells that cannot be pressed (mode is not toggle) are refused.",
+        "key": "The row key from hooks.matrix (h-… is a Pleiad registration, hk-… is a definition in an agent's settings, ws:hooks is the workspace hooks).",
+        "agent": "The agent id (claude, codex, antigravity, opencode, devin, grok).",
+        "on": "true turns it on, false turns it off.",
+        "revision": "The revision from hooks.matrix. Nothing is saved if it changed (omit to skip the check)."
+      },
+      "setRow": {
+        "summary": "Uses or stops using a whole hook row. Using it needs the user's approval. The per-agent choices are kept.",
+        "on": "true uses it, false stops using it."
+      },
+      "setGroup": {
+        "summary": "Changes one agent column (pressable cells only) of a hook group (ply, own, place), or the switches of every row in the group.",
+        "group": "The group. ply is Pleiad registrations, own is agent settings, place is the workspace.",
+        "agent": "The agent id. Omit to change the switch of every row in the group."
+      },
+      "setPlace": {
+        "summary": "Decides per place whether a hook is used there. Using it needs the user's approval.",
+        "place": "The absolute path of the workspace.",
+        "use": "true uses it in this place, false does not (default true).",
+        "reset": "true removes that place's per-agent override (copied from the previous owner)."
+      },
+      "resetAgents": {
+        "summary": "Clears the hook × agent choices and goes back to the previous hooks owner. Needs the user's approval."
+      },
       "setOwner": {
         "summary": "Change who owns hooks (leave to the agent / Pleiad unifies). The user must approve.",
         "place": "A working directory path. null or omitted for the default everywhere.",

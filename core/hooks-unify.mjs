@@ -128,6 +128,11 @@ const refuse = (key, params = {}) => Object.assign(new Error(t(key, params)), { 
  */
 export async function prepareHooksTurn({ agent, cwd, ctx }) {
   const { plyHooks, hooksConfig, dataDir, findNode, platform = process.platform, now = new Date(), context = null, grokHome = process.env.GROK_HOME || path.join(os.homedir(), '.grok') } = ctx;
+  // Hook × エージェントへ移行済み（hooks-agents.json が在る）なら、そちらで決める（ADR 0338）。読めなければ会話を止める
+  if (ctx.hooksAgents && await ctx.hooksAgents.exists()) {
+    try { return await ctx.hooksAgents.forTurn({ agent, cwd, ctx: { context, now } }); }
+    catch (e) { if (e.code === 'UNREADABLE') throw refuse('hooksAgents.unreadable'); throw e; }
+  }
   // hooks を受け取れないエージェント（fake など）: 担当を読めなくても会話は止めない（渡すものが無い）。記録だけ残す
   // Pleiad が別のエージェントの形を真似て渡すエージェント: コールバックで渡すもの（OpenCode）は止めるネイティブの設定ファイルが無く、
   // 登録はバックエンドが受け取り、Pleiad の中で走らせる（core/backends/opencode-hooks.mjs）。プラグインで渡すもの（Grok）は下
@@ -279,10 +284,11 @@ export const GROK_COMPAT_HOOK_ENV = Object.freeze({
  * 作業場所の git の根から作業場所までの .grok/hooks/*.json（フォルダーの信頼が要る。~/.grok/docs/user-guide/10-hooks.md）。
  * managed_config.toml・requirements.toml（管理者）は読まない。コマンドは伏せ字にする
  */
-async function grokNativeHooks(agent, cwd, grokHome) {
+export async function grokNativeHooks(agent, cwd, grokHome) {
   const roots = [{ dir: path.join(grokHome, 'hooks'), scope: 'user' }];
   const ancestors = [];
-  for (let d = path.resolve(cwd); ; d = path.dirname(d)) {
+  // cwd が無い（設定の画面の全体の一覧）ときは、ユーザーの置き場だけを読む
+  if (cwd) for (let d = path.resolve(cwd); ; d = path.dirname(d)) {
     ancestors.unshift(d);
     try { await fs.stat(path.join(d, '.git')); break; } catch {}
     if (path.dirname(d) === d) { ancestors.splice(0, ancestors.length, path.resolve(cwd)); break; }

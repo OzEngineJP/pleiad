@@ -1384,6 +1384,21 @@
     "brokenEntries": "Hooks are managed by Pleiad here, but hooks.json has registrations that cannot be read, so the message was not sent (a Pleiad guard might be missing). Fix it in Settings › Context › Hooks",
     "changedSinceReview": "The hook registrations or owner changed after the review. Open the review again"
   },
+  "hooksAgents": {
+    "evidence": {
+      "stoppedWithOthers": "Claude Code, Antigravity and Grok's compatibility loading cannot stop hooks one by one, so they are stopped together and re-delivered. Definitions that cannot be re-delivered stop with them (ADR 0338)",
+      "devinConfig": "Devin's --config replaces Devin's settings for that turn (including read_config_from)",
+      "codexTrustAtTurn": "Codex trust is not rechecked just before the turn. The state when the list was opened is used",
+      "grokTrustUnknown": "~/.grok/trusted_folders.toml exists, so whether Grok trusts this workspace is unknown",
+      "duplicate": "The same event, matcher and command already runs on this agent (it runs only once)"
+    },
+    "unreadable": "The hook × agent settings file (hooks-agents.json) cannot be read. The conversation is not started so that hooks you turned off do not run. Fix it in Settings › Plugins › Hooks",
+    "stale": "The hooks list has changed. Reopen it and try again",
+    "noRow": "The hook row ({{key}}) was not found. Reopen the list",
+    "notPressable": "The {{agent}} cell of the hook row ({{key}}) cannot be pressed",
+    "badPlace": "Give the place as an absolute path",
+    "legacyBroken": "Part of the hooks registration file (hooks.json) cannot be read, so the current behaviour cannot be copied. Repair it first"
+  },
   "hooksUnify": {
     "prepareFailed": "Could not prepare the hooks managed by Pleiad, so the message was not sent (to avoid running the agent's own hooks twice): {{error}}",
     "importFailed": "Some definitions cannot be imported (the file changed, or the form cannot be imported). Open the review again",
@@ -1432,6 +1447,11 @@
     "hooksOwner_one": "Changes who owns hooks for {{place}} ({{count}} import).",
     "hooksOwner_other": "Changes who owns hooks for {{place}} ({{count}} imports).",
     "hooksRepair": "Backs up the broken hooks registration file and rewrites it with the parts that could be read.",
+    "hooksAgent": "Changes whether the hook \"{{name}}\" runs on {{agent}} turns.",
+    "hooksRow": "Changes whether the hook \"{{name}}\" is used (the per-agent choices are kept).",
+    "hooksGroup": "Changes the {{agent}} column of the hook group ({{group}}) at once.",
+    "hooksPlace": "Changes whether the hook \"{{name}}\" is used in {{place}}.",
+    "hooksAgentsReset": "Clears the hook × agent choices and goes back to the previous hooks owner (leave to agents / Pleiad aligns).",
     "contextSettings": "Changes the context settings for {{place}}. The instructions, Skills and external MCP every conversation gets will change.",
     "plyInstructions": "Changes Pleiad's instructions. The instructions added to agents in each conversation will change.",
     "sessionMcp": "Changes the external MCP \"{{name}}\" in this conversation.",

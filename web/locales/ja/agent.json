@@ -1539,6 +1539,34 @@
         "summary": "Pleiad の Hook の登録を有効・無効にする。有効にするときはユーザーの承認が要る。",
         "enabled": "true で有効、false で無効（既定 true）。"
       },
+      "matrix": {
+        "summary": "Hooks の一覧（Hook × エージェント）を返す。セルごとに入り・切り・押せるか・鍵の理由・警告がある。"
+      },
+      "setAgent": {
+        "summary": "Hook の行の 1 つのエージェントのセルを入れる・外す。入れるときはユーザーの承認が要る。押せないセル（mode が toggle でない）は断る。",
+        "key": "hooks.matrix の行の key（h-… は Pleiad の登録、hk-… はエージェントの設定の定義、ws:hooks は作業場所の Hooks）。",
+        "agent": "エージェントの id（claude・codex・antigravity・opencode・devin・grok）。",
+        "on": "true で入れる、false で外す。",
+        "revision": "hooks.matrix の revision。変わっていれば保存しない（省けば照合しない）。"
+      },
+      "setRow": {
+        "summary": "Hook の行の全体を使う・使わない。使うときはユーザーの承認が要る。エージェントごとの選択は覚えたまま。",
+        "on": "true で使う、false で使わない。"
+      },
+      "setGroup": {
+        "summary": "Hooks の組（ply・own・place）の 1 つのエージェントの列（押せるセルだけ）か、組の全部の行をまとめて変える。",
+        "group": "組。ply は Pleiad の登録、own はエージェントの設定、place は作業場所。",
+        "agent": "エージェントの id。省くと組の全部の行のスイッチ。"
+      },
+      "setPlace": {
+        "summary": "場所ごとに、Hook をその場所で使うか決める。使うときはユーザーの承認が要る。",
+        "place": "作業場所の絶対パス。",
+        "use": "true でこの場所で使う、false で使わない（既定 true）。",
+        "reset": "true で、その場所のエージェントごとの上書き（以前の担当から写したもの）を消す。"
+      },
+      "resetAgents": {
+        "summary": "Hook × エージェントの選択を消して、以前の Hooks の担当の動きに戻す。ユーザーの承認が要る。"
+      },
       "setOwner": {
         "summary": "Hooks の担当（エージェントに任せる／Pleiad がそろえる）を変える。ユーザーの承認が要る。",
         "place": "作業場所のパス。null か省くと全体の既定。",

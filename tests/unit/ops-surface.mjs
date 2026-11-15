@@ -204,6 +204,7 @@ export default async function (t) {
       read: async () => ({ agent: 'claude', scope: 'user', path: 'p', command: 'echo', ...secret }),
       readPly: async () => ({ id: 'h-1', name: 'n', command: 'echo', ...secret }),
       unifyPreview: async () => ({ imports: [{ id: 'i', digest: 'd', command: 'x', ...secret }], revision: 'r' }),
+      agents: { matrix: async () => ({ agents: [], adopted: false, revision: 'r', rows: [{ key: 'hk-0000000000000000', command: 'x', ...secret }] }) },
     },
     context: { view: async () => ({ defaults: { kinds: { instruction: { value: {} }, skill: { value: {} }, mcp: { value: { owner: 'native' } } }, ...secret }, places: [] }), plyInstructions: () => ({ items: [{ id: 'x', ...secret }] }),
       // 中身を読む操作（ADR 0105）

@@ -133,6 +133,7 @@ import { stopHeldAgy } from './backends/antigravity.mjs';
 import { sweepIdleAtStart } from './backends/antigravity-held.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
+import { createHooksAgents } from './hooks-agents.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
@@ -1124,6 +1125,10 @@ const mcpConfig = createMcpConfig();
 const hooksConfig = createHooksConfig();
 // Pleiad 自身の Hooks の登録と、Hooks の担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）
 const plyHooks = createPlyHooks(store.dataDir);
+// Hooks × エージェント（<data>/hooks-agents.json。core/hooks-agents.mjs、ADR 0338）。在れば担当の 2 択の代わりにこれでターンの Hooks を決める
+// Codex の信頼は一覧のときだけ app-server で重ねる（ターンの直前には確かめない）
+const hooksAgents = createHooksAgents({ dataDir: store.dataDir, hooksConfig, plyHooks, findNode: findNodeOnPath,
+  codexTrust: (report, cwd, trust) => withCodexTrust(report, cwd ?? os.homedir(), { trust: trust !== false }) });
 const HOOK_LEAKS_MAX = 20;
 /**
  * 切り替えの確認の材料。cwd があればその場所（ユーザーと Git のルートから cwd まで）、無ければユーザーの範囲だけ。
@@ -5416,6 +5421,8 @@ const opsHooks = {
   repair: (cwd) => plyHooks.repair({ cwd }),
   // 担当を変える前の見込み（hooks.unifyPreview。ADR 0105）
   unifyPreview: (args) => hooksUnifyPreview(args),
+  // Hook × エージェントの一覧と更新（hooks.matrix・hooks.setAgent など。ADR 0338）
+  agents: hooksAgents,
 };
 
 // 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0327）。コネクターは最後に読めた一覧を覚えておく
@@ -7909,7 +7916,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
   // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
   let hooksTurn = null;
-  try { if (backend.capabilities?.hooks) hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+  try { if (backend.capabilities?.hooks) hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, hooksAgents, dataDir: store.dataDir, findNode: findNodeOnPath,
     context: { owners: policy.owners, delivered: plyContext } } }); }
   catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
   if (hooksTurn) contextRecord.hooks = hooksTurn.record;
@@ -8777,7 +8784,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         syncRunningPoll();
         // Pleiad の Hooks の登録（札の hooks があるターン）。Claude は 2 回目の initialize でコールバックを渡し直す（2c）ので、今の設定で組み直す。
         // 記録（contextRecord.hooks）は札の会話の記録のまま。組めなければ渡さない（そのターンの残りで Pleiad の Hooks が動かない）
-        const hooksTurn = ctx.card.hooks && backend.capabilities?.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+        const hooksTurn = ctx.card.hooks && backend.capabilities?.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, hooksAgents, dataDir: store.dataDir, findNode: findNodeOnPath,
           context: { owners: ctx.policy?.owners ?? {}, delivered: false } } }).catch(e => { console.error(`  Hooks を組み直せない（${sessionId}）:`, String(e?.message ?? e)); return null; }) : null;
         // ply_context の口（Pleiad がコンテキストを担当する会話。2c）。札のトークンで開き直す。外部の stdio MCP は、保持役の子が居ればその子のまま
         // （状態が残る。ADR 0270 段 2c）、居なければこのターンのために起こし直す（R15。ツールの名前は項目の id とツールの名前から決まるので同じ）。
@@ -9942,6 +9949,18 @@ wss.on("connection", (ws, req) => {
           return await viaOp('hooks.setOwner');
         case 'repairPlyHooks':
           return await viaOp('hooks.repair');
+        case 'hooksMatrix':
+          return await viaOp('hooks.matrix');
+        case 'setHookAgent':
+          return await viaOp('hooks.setAgent');
+        case 'setHookRow':
+          return await viaOp('hooks.setRow');
+        case 'setHookGroup':
+          return await viaOp('hooks.setGroup');
+        case 'setHookPlace':
+          return await viaOp('hooks.setPlace');
+        case 'resetHooksAgents':
+          return await viaOp('hooks.resetAgents');
         // 探索は接続ごとに 1 つずつ（context.scan・context.skills。ADR 0105）。走っている間の 2 つ目は SCAN_BUSY
         case 'scanContext':
           return await viaOp('context.scan');

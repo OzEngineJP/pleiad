@@ -18,8 +18,11 @@ export const METADATA_CONFIG = Object.freeze({ read_config_from: Object.fromEntr
 export function devinTurnConfig({ hooksRuntime = null, nativeShellOff = false } = {}) {
   const config = {};
   const supplied = hooksRuntime?.supplied ?? [];
+  // 取り込み（Claude などの設定の hooks・MCP・ルール）を止めるか。旧「Pleiad がそろえる」は渡すものがあるターンだけ止める。
+  // Hook × エージェントの一覧（ADR 0338）は stopImports で決める（止めずに渡すときは read_config_from を書かない。取り込みはそのまま動く。実機で確認）
+  const stopImports = hooksRuntime ? (typeof hooksRuntime.stopImports === 'boolean' ? hooksRuntime.stopImports : supplied.length > 0) : false;
+  if (stopImports) config.read_config_from = Object.fromEntries(IMPORTS.map(id => [id, false]));
   if (supplied.length) {
-    config.read_config_from = Object.fromEntries(IMPORTS.map(id => [id, false]));
     const hooks = {};
     for (const { hook, d } of supplied) {
       if (typeof hook?.command !== 'string' || !hook.command.trim()) continue;

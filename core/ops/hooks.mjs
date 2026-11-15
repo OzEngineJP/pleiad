@@ -42,6 +42,16 @@ const findHook = (view, id) => (view?.hooks ?? []).find((h) => h.id === id) ?? n
 const keepCommand = (ctx, command, original, where) => (typeof command === 'string' && hasMask(command)
   ? restoreMasked(ctx, command, typeof original === 'string' ? maskText(original) : undefined, original, where) : command);
 
+/** Hook × エージェントの一覧の行 1 つ（承認カードの名前）。読めなければ key のまま */
+async function agentsRow(ctx, key, cwd) {
+  const m = await ctx.hooks.agents.matrix({ cwd: cwd ?? null, trust: false }).catch(() => null);
+  return { matrix: m, row: m?.rows.find((r) => r.key === key) ?? null };
+}
+const rowLabel = (row, key) => row?.name ?? (row ? `${row.event ?? ''} ${maskText(row.command ?? '')}`.trim() : key);
+const agentKey = z.string().min(1).max(40);
+const revision = z.string().max(100).optional().describe(D('setAgent', 'revision'));
+const NARROWS = 'Turning a hook off (for an agent, a row, a group, or a place) only narrows what runs; turning it on starts running a command, so it is raised to guarded by riskOf';
+
 const WRITE_PREVIEW = 'A dry run (dryRun: true) writes nothing and only returns the planned change; writing is raised to guarded by riskOf (hooks run arbitrary commands)';
 
 export const hookOps = [
@@ -256,5 +266,114 @@ export const hookOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'repair'] } },
     legacyCommand: 'repairPlyHooks',
     handler: (ctx, { cwd: dir }) => run(ctx, async () => shown(ctx, await ctx.hooks.repair((await cwdFor(ctx, dir)) ?? null))),
+  }),
+
+  // ---- Hook × エージェント（<data>/hooks-agents.json。core/hooks-agents.mjs、ADR 0338）。外部 MCP の一覧（context.mcpMatrix・setMcpAgent）と同じ形
+  // 移行していなければ、今の担当の動きを写した形を返す（押した時点で写して保存する）。押せないセル（mode が toggle でない）は断る
+  defineOp({
+    id: 'hooks.matrix', summary: 'agent:ops.hooks.matrix.summary', risk: 'read',
+    input: z.object({ cwd, trust: z.boolean().optional().describe(D('scan', 'trust')) }),
+    output: z.object({ agents: z.array(z.string()), rows: z.array(loose), adopted: z.boolean(), revision: z.string() }).passthrough(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'matrix'] } },
+    legacyCommand: 'hooksMatrix',
+    handler: (ctx, { cwd: dir, trust }) => run(ctx, async () => shown(ctx, await ctx.hooks.agents.matrix({ cwd: (await cwdFor(ctx, dir)) ?? null, trust: trust !== false }))),
+  }),
+  defineOp({
+    id: 'hooks.setAgent', summary: 'agent:ops.hooks.setAgent.summary', risk: 'write', riskReason: NARROWS,
+    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    input: z.object({
+      key: z.string().min(1).max(40).describe(D('setAgent', 'key')),
+      agent: agentKey.describe(D('setAgent', 'agent')),
+      on: z.boolean().describe(D('setAgent', 'on')),
+      cwd, revision, reason,
+    }),
+    approvalWords: 'hooks',
+    confirm: async (ctx, { key, agent, on, cwd: dir }) => {
+      const { matrix, row } = await agentsRow(ctx, key, dir);
+      return { key: null, before: matrix?.revision ?? null, rows: [{ path: `hooks.agents.${key}.${agent}`, before: JSON.stringify(row?.cells?.[agent]?.state ?? null), after: JSON.stringify(on ? 'on' : 'off') }],
+        note: t('opsApproval.hooksAgent', { name: rowLabel(row, key), agent }), loosens: on !== false };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'agent'], positional: ['key', 'agent'] } },
+    legacyCommand: 'setHookAgent',
+    handler: (ctx, { key, agent, on, cwd: dir, revision: expect }) => run(ctx, async () => {
+      const r = await ctx.hooks.agents.setAgent({ key, agent, on, cwd: (await cwdFor(ctx, dir)) ?? null, expect: expect ?? null });
+      return { ok: true, revision: r.revision, place: r.place };
+    }),
+  }),
+  defineOp({
+    id: 'hooks.setRow', summary: 'agent:ops.hooks.setRow.summary', risk: 'write', riskReason: NARROWS,
+    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    input: z.object({ key: z.string().min(1).max(40).describe(D('setAgent', 'key')), on: z.boolean().describe(D('setRow', 'on')), cwd, revision, reason }),
+    approvalWords: 'hooks',
+    confirm: async (ctx, { key, on, cwd: dir }) => {
+      const { matrix, row } = await agentsRow(ctx, key, dir);
+      return { key: null, before: matrix?.revision ?? null, rows: [{ path: `hooks.agents.${key}`, before: JSON.stringify(row ? row.on : null), after: JSON.stringify(on) }],
+        note: t('opsApproval.hooksRow', { name: rowLabel(row, key) }), loosens: on !== false };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'row'], positional: ['key'] } },
+    legacyCommand: 'setHookRow',
+    handler: (ctx, { key, on, cwd: dir, revision: expect }) => run(ctx, async () => {
+      const r = await ctx.hooks.agents.setRow({ key, on, cwd: (await cwdFor(ctx, dir)) ?? null, expect: expect ?? null });
+      return { ok: true, revision: r.revision, place: r.place };
+    }),
+  }),
+  defineOp({
+    id: 'hooks.setGroup', summary: 'agent:ops.hooks.setGroup.summary', risk: 'write', riskReason: NARROWS,
+    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    input: z.object({
+      group: z.enum(['ply', 'own', 'place']).describe(D('setGroup', 'group')),
+      agent: agentKey.optional().describe(D('setGroup', 'agent')),
+      on: z.boolean().describe(D('setRow', 'on')),
+      cwd, revision, reason,
+    }),
+    approvalWords: 'hooks',
+    confirm: async (ctx, { group, agent, on, cwd: dir }) => {
+      const m = await ctx.hooks.agents.matrix({ cwd: (dir ?? null), trust: false }).catch(() => null);
+      return { key: null, before: m?.revision ?? null, rows: [{ path: `hooks.agents.group.${group}${agent ? `.${agent}` : ''}`, before: null, after: JSON.stringify(on) }],
+        note: t('opsApproval.hooksGroup', { group, agent: agent ?? '*' }), loosens: on !== false };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'group'], positional: ['group'] } },
+    legacyCommand: 'setHookGroup',
+    handler: (ctx, { group, agent, on, cwd: dir, revision: expect }) => run(ctx, async () => {
+      const r = await ctx.hooks.agents.setGroup({ group, agent: agent ?? null, on, cwd: (await cwdFor(ctx, dir)) ?? null, expect: expect ?? null });
+      return { ok: true, revision: r.revision, place: r.place };
+    }),
+  }),
+  defineOp({
+    id: 'hooks.setPlace', summary: 'agent:ops.hooks.setPlace.summary', risk: 'write',
+    riskReason: 'Not using a hook in a place only narrows what runs there; using it again (or dropping the place override) is raised to guarded by riskOf',
+    riskOf: (_ctx, { use, reset }) => (use === false && reset !== true ? 'write' : 'guarded'),
+    input: z.object({
+      place: z.string().min(1).max(4096).describe(D('setPlace', 'place')),
+      key: z.string().min(1).max(40).optional().describe(D('setAgent', 'key')),
+      use: z.boolean().optional().describe(D('setPlace', 'use')),
+      reset: z.boolean().optional().describe(D('setPlace', 'reset')),
+      revision, reason,
+    }),
+    approvalWords: 'hooks',
+    confirm: async (ctx, { place, key, use, reset }) => {
+      const { matrix, row } = key ? await agentsRow(ctx, key, place) : { matrix: null, row: null };
+      return { key: null, before: matrix?.revision ?? null,
+        rows: [{ path: reset ? `hooks.agents.places.${place}.agents` : `hooks.agents.places.${place}.${key}`, before: reset ? null : JSON.stringify(row?.here?.use ?? null), after: reset ? 'null' : JSON.stringify(use !== false) }],
+        note: t('opsApproval.hooksPlace', { place, name: reset ? '*' : rowLabel(row, key) }), loosens: !(use === false && reset !== true) };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'place'], positional: ['place', 'key'] } },
+    legacyCommand: 'setHookPlace',
+    handler: (ctx, { place, key, use, reset, revision: expect }) => run(ctx, async () => {
+      const r = await ctx.hooks.agents.setPlace({ place, key: key ?? null, use: use !== false, reset: reset === true, expect: expect ?? null });
+      return { ok: true, revision: r.revision };
+    }),
+  }),
+  defineOp({
+    id: 'hooks.resetAgents', summary: 'agent:ops.hooks.resetAgents.summary', risk: 'guarded',
+    input: z.object({ reason }),
+    approvalWords: 'hooks',
+    confirm: async (ctx) => {
+      const m = await ctx.hooks.agents.matrix({ cwd: null, trust: false }).catch(() => null);
+      return { key: null, before: m?.revision ?? null, rows: [{ path: 'hooks.agents', before: JSON.stringify(m?.adopted ?? null), after: 'false' }], note: t('opsApproval.hooksAgentsReset'), loosens: true };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'reset-agents'] } },
+    legacyCommand: 'resetHooksAgents',
+    handler: (ctx) => run(ctx, () => ctx.hooks.agents.reset()),
   }),
 ];

@@ -1382,6 +1382,21 @@
     "brokenEntries": "Hooks を Pleiad がそろえる場所ですが、hooks.json に読めない登録があるので送信を止めました（Pleiad のガードが抜けるおそれがあるため）。設定 › コンテキストの Hooks で直してください",
     "changedSinceReview": "確認した後に Hooks の登録か担当が変わりました。確認の面を開き直してください"
   },
+  "hooksAgents": {
+    "evidence": {
+      "stoppedWithOthers": "Claude Code・Antigravity・Grok の互換は 1 つずつ止める口が無く、まとめて止めて渡し直します。渡し直せない定義は一緒に止まります（ADR 0338）",
+      "devinConfig": "Devin の --config は、そのターンの Devin の設定（read_config_from を含む）を置き換えます",
+      "codexTrustAtTurn": "Codex の信頼の状態はターンの直前には確かめません。一覧を開いたときの状態で広げます",
+      "grokTrustUnknown": "~/.grok/trusted_folders.toml があるので、この作業場所を Grok が信頼しているか分かりません",
+      "duplicate": "同じイベント・matcher・コマンドが、このエージェントで既に動いています（1 回だけ動かします）"
+    },
+    "unreadable": "Hook × エージェントの設定ファイル（hooks-agents.json）を読めません。止めたはずの Hook が動かないよう、会話を始めません。設定 › プラグイン › Hooks で直してください",
+    "stale": "Hooks の一覧が変わりました。開き直してから操作してください",
+    "noRow": "Hook の行（{{key}}）が見つかりません。一覧を開き直してください",
+    "notPressable": "Hook の行（{{key}}）の {{agent}} は押せないセルです",
+    "badPlace": "場所は絶対パスで指定してください",
+    "legacyBroken": "Hooks の登録ファイル（hooks.json）に読めない所があるので、今の動きを写せません。先に修復してください"
+  },
   "hooksUnify": {
     "prepareFailed": "Pleiad がそろえる Hooks を準備できなかったので、送信を止めました（ネイティブの hooks と二重に動くのを防ぐため）: {{error}}",
     "importFailed": "取り込めない定義があります（ファイルが変わったか、取り込めない形です）。確認の画面を開き直してください",
@@ -1425,6 +1440,11 @@
     "hooksEnable": "Pleiad の Hook「{{name}}」の有効・無効を変えます（{{command}}）。",
     "hooksOwner_other": "{{place}}の Hooks の担当を変えます（取り込み {{count}} 件）。",
     "hooksRepair": "壊れた Hooks の登録ファイルを退避し、読めた部分だけで書き直します。",
+    "hooksAgent": "Hook「{{name}}」を {{agent}} のターンで実行するかを変えます。",
+    "hooksRow": "Hook「{{name}}」を使うかを変えます（エージェントごとの選択は覚えたままです）。",
+    "hooksGroup": "Hooks の組（{{group}}）の {{agent}} の列をまとめて変えます。",
+    "hooksPlace": "{{place}} で Hook「{{name}}」を使うかを変えます。",
+    "hooksAgentsReset": "Hook × エージェントの選択を消し、以前の Hooks の担当（任せる・そろえる）の動きに戻します。",
     "contextSettings": "{{place}}のコンテキストの設定を変えます。全部の会話に渡る指示・Skills・外部 MCP が変わります。",
     "plyInstructions": "Pleiad の指示を変えます。会話ごとにエージェントへ足す指示が変わります。",
     "sessionMcp": "この会話の外部 MCP「{{name}}」を変えます。",
