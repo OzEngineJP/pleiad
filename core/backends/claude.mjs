@@ -975,8 +975,9 @@ export const backend = {
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
     // Pleiad の担当の設定（claudeContextOptions の settings）も同じファイルに入れる
-    // Hooks を Pleiad がそろえる会話（hooksRuntime。ADR 0049）は、ネイティブの hooks をフラグ設定の disableAllHooks で止め、登録をコールバックで渡す
-    const contextOptions = claudeContextOptions(contextRuntime, { compact: Boolean(compact), hooks: Boolean(hooksRuntime), bot: Boolean(botInstructions) });
+    // Hooks を Pleiad がそろえる会話（hooksRuntime。ADR 0049）は、ネイティブの hooks をフラグ設定の disableAllHooks で止め、登録をコールバックで渡す。
+    // Hook × エージェントの一覧（ADR 0338）で止める行が無いターンは stopAll: false（ネイティブはそのまま動き、渡すものだけをコールバックで足す）
+    const contextOptions = claudeContextOptions(contextRuntime, { compact: Boolean(compact), hooks: Boolean(hooksRuntime) && hooksRuntime.stopAll !== false, bot: Boolean(botInstructions) });
     const compactDiagnostic = compact ? createClaudeCompactDiagnostic() : null;
     // 付け直しは、旧サーバーが書いたファイルを札から引き継ぐ（CLI は起動のときだけ読む。ターンの終わりにこちらが消す）
     const flag = adopt ? adoptClaudeFlagSettings(store.dataDir, adopt.card.flag) : endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;

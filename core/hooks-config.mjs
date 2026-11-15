@@ -211,6 +211,14 @@ function summary(h) {
 
 // 行 → 元の定義（伏せ字でない handler と group の matcher）。画面へ返す行には載せない
 const RAW = new WeakMap();
+/** scan で返した行の元の定義（{ row, handler, matcher, groupKeys }。無ければ null）。読み直さずに使う（Hook × エージェントの一覧。ADR 0338） */
+export const rawOf = row => (RAW.has(row) ? { row, ...structuredClone(RAW.get(row)) } : null);
+/** Claude の管理者の設定ファイルの置き場（新しい置き場が先。https://docs.claude.com/en/docs/claude-code/settings） */
+export function claudeManagedFiles(platform = process.platform) {
+  if (platform === 'win32') return ['C:\\Program Files\\ClaudeCode\\managed-settings.json', 'C:\\ProgramData\\ClaudeCode\\managed-settings.json'];
+  if (platform === 'darwin') return ['/Library/Application Support/ClaudeCode/managed-settings.json'];
+  return ['/etc/claude-code/managed-settings.json'];
+}
 
 /**
  * hooks の置き場 1 つを行に直す。group / handler は元の並びの番号（編集の指し先）。
@@ -319,7 +327,7 @@ async function fileLocationKey(file) {
 
 export function createHooksConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME || path.join(home, '.codex'),
   claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), geminiHome = path.join(home, '.gemini'),
-  findNode = findNodeOnPath, platform = process.platform } = {}) {
+  findNode = findNodeOnPath, platform = process.platform, claudeManaged = claudeManagedFiles(platform) } = {}) {
   const places = { home, codexHome, claudeHome, geminiHome };
   let writes = Promise.resolve();
 
@@ -359,7 +367,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
    * scopes: user（home）と directory（Git のルートから cwd まで）。設定の画面のユーザーの段は ['user'] だけ。
    * 返す files はファイルごとの状態（missing / none = 登録 0 件 / ok / error）。登録 0 件と読み取り失敗を分けるため
    */
-  async function scan({ cwd = null, scopes = ['user', 'directory'], agents = HOOK_AGENTS } = {}) {
+  async function scan({ cwd = null, scopes = ['user', 'directory'], agents = HOOK_AGENTS, managed = false } = {}) {
     const files = [], entries = [], diagnostics = [];
     let root = cwd;
     const ancestors = [];
@@ -416,6 +424,22 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     // Claude のプラグインの hooks（有効にしたプラグインの hooks/hooks.json と plugin.json の hooks）。読むだけ。
     // 「Pleiad がそろえる」ではフラグ設定の disableAllHooks で一緒に止まるので、切り替えの確認に並べる（ADR 0049）
     if (agents.includes('claude') && scopes.includes('user')) entries.push(...await claudePluginRows(ancestors, diagnostics));
+    // Claude の管理者の設定（managed-settings.json）の hooks。読むだけで、止めない（disableAllHooks でも止まらない）。
+    // Hook × エージェントの一覧（ADR 0338）だけが managed: true で読む（今の Hooks の画面の一覧は変えない）
+    // backend-allow: 管理者の設定（managed-settings.json）は Claude Code だけにある
+    if (managed && agents.includes('claude')) {
+      for (const file of claudeManaged) {
+        const v = await readJson(file);
+        if (v === null) continue;
+        if (record(v?.hooks)) {
+          // backend-allow: 管理者の設定は Claude Code の hooks の形
+          const { rows, problems } = rowsOf('claude', v.hooks, { agent: 'claude', scope: 'managed', base: null, path: file, format: 'json', kind: 'claude-managed', readOnly: true, stop: 'none' });
+          if (problems.length) diagnostics.push({ path: file, message: t('hooks.file.partial') });
+          entries.push(...rows);
+        }
+        break; // 先に見つかったファイルだけを Claude が読む（新しい置き場が勝つ）
+      }
+    }
     // agy の enabled: false は、ユーザーと作業場所にある同じ名前の定義をまとめて止める（実機で確認。2026-09-27）
     const offNames = new Set(entries.filter(e => e.agent === 'antigravity' && e.enabled === false).map(e => e.name));
     for (const e of entries) if (e.agent === 'antigravity' && e.enabled && offNames.has(e.name)) e.stoppedBySameName = true;

@@ -4,7 +4,7 @@
 //   Antigravity: Pleiad の一時の置き場（--add-dir）の .agents/hooks.json に、登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの { enabled: false }
 // 変換（イベント・matcher・入出力）は第 2 段の core/hooks-copy.mjs と core/hook-adapter.mjs をそのまま使う。
 import { HOOK_AGENTS, HOOK_EVENTS, HOOK_EMULATED, HOOK_VIA } from './hooks-config.mjs';
-import { convertHook, ADAPTER_MARGIN, adapterCommand, defaultTimeout } from './hooks-copy.mjs';
+import { convertHook, ADAPTER_MARGIN, adapterCommand, defaultTimeout, safeAdapterPath } from './hooks-copy.mjs';
 
 // Claude の SDK のコールバックで渡せないイベント。SessionStart はコールバックが呼ばれない（実機で確認。2026-09-28、Agent SDK 0.3.258）。
 // Setup は CLI の --init / --maintenance のときだけで、Pleiad の会話では起きない
@@ -14,6 +14,8 @@ const AGY_TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
 // Codex の hooks の state で止める出どころ（hooks/list の source）。プラグイン・管理者の定義は止めない（ADR 0045）
 export const CODEX_STOP_SOURCES = new Set(['user', 'project']);
 export const AGY_NAME_PREFIX = 'pleiad-';
+// agy の置き場の .agents の中のアダプターのフォルダー
+export const AGY_ADAPTER_DIR = 'pleiad-hooks';
 
 /**
  * 1 件の登録を、あるエージェントへ渡せる形にする（純粋）。登録が対象にしていなければ null。
@@ -110,12 +112,21 @@ export function grokHooksFile(supplied, { adapterPath, node = 'node' }) {
 }
 
 const snake = e => e.replace(/[A-Z]/g, (c, i) => (i ? '_' : '') + c.toLowerCase());
+const normPath = p => { const s = String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, ''); return /^[A-Za-z]:\//.test(s) ? s.toLowerCase() : s; };
+/** hooks/list の 1 件が、探索の行（path・event・group・handler）と同じ定義か。key は `<sourcePath>:<snake のイベント>:<group>:<handler>` */
+export function codexKeyMatches(h, row) {
+  const m = /:([a-z_]+):(\d+):(\d+)$/.exec(String(h?.key ?? ''));
+  if (!m) return false;
+  const source = typeof h.sourcePath === 'string' ? h.sourcePath : String(h.key).slice(0, m.index);
+  return normPath(source) === normPath(row.path) && m[1] === snake(row.event) && Number(m[2]) === row.group && Number(m[3]) === row.handler;
+}
 /**
  * Codex の hooks.state。probe は同じ表を起動の -c で渡した app-server の hooks/list（source: sessionFlags の定義の currentHash）、
- * list はその会話の app-server の hooks/list（ネイティブの定義）。
+ * list はその会話の app-server の hooks/list（ネイティブの定義）。stopRows（ADR 0338）があれば、その行（path・event・group・handler）の key だけを止め（{ source } は出どころごと止める）、
+ * ほかのユーザー・プロジェクトの定義は動き続ける（kept）。
  * 戻り: { state, stopped（止めるネイティブ）, kept（止めない出どころ: プラグイン・管理者）, untrusted（hash が取れなかった自分の定義の数） }
  */
-export function codexHooksState({ table, probe = [], list = [] }) {
+export function codexHooksState({ table, probe = [], list = [], stopRows = null }) {
   const state = {};
   const flags = probe.flatMap(d => d?.hooks ?? []).filter(h => h?.source === 'sessionFlags' && h.key && h.currentHash);
   let expected = 0;
@@ -127,7 +138,7 @@ export function codexHooksState({ table, probe = [], list = [] }) {
   const stopped = [], kept = [];
   for (const h of list.flatMap(d => d?.hooks ?? [])) {
     if (!h?.key || h.source === 'sessionFlags') continue;
-    if (CODEX_STOP_SOURCES.has(h.source)) { state[h.key] = { ...(state[h.key] ?? {}), enabled: false }; stopped.push(h); }
+    if (CODEX_STOP_SOURCES.has(h.source) && (!stopRows || stopRows.some(r => r.source ? r.source === h.source : codexKeyMatches(h, r)))) { state[h.key] = { ...(state[h.key] ?? {}), enabled: false }; stopped.push(h); }
     else kept.push(h);
   }
   return { state, stopped, kept, untrusted: expected - Object.values(state).filter(s => s.trusted_hash).length };
@@ -135,14 +146,14 @@ export function codexHooksState({ table, probe = [], list = [] }) {
 
 /**
  * Antigravity の一時の置き場の .agents/hooks.json。登録は pleiad-<id> の名前で、コマンドは置き場の .agents からの相対パスのアダプター越し
- * （置き場の hook は <置き場>/.agents で動く。アダプターが stdin の workspacePaths から利用者の作業場所に直す）。
+ * （書くときに agyHooksFileAt で絶対パスに直す。アダプターが stdin の workspacePaths から利用者の作業場所に直す）。
  * nativeNames はユーザー・作業場所の定義の名前（止める）。プラグインの名前は入れない
  */
 export function agyHooksFile({ supplied, nativeNames = [], adapterName }) {
   // 名前はエージェントの設定ファイルから来る外の値。`__proto__` なども普通の名前として出すため、Map で組んで Object.fromEntries で
   // own property にする（普通の {} への代入だと `__proto__` は prototype の設定になり、JSON に出ず止まらない）
   const out = new Map();
-  const rel = `pleiad-hooks/${adapterName}`;
+  const rel = `${AGY_ADAPTER_DIR}/${adapterName}`;
   const natives = new Set(nativeNames);
   for (const s of supplied) {
     const name = `${AGY_NAME_PREFIX}${s.hook.id}`;
@@ -155,6 +166,23 @@ export function agyHooksFile({ supplied, nativeNames = [], adapterName }) {
   }
   for (const n of natives) out.set(n, new Map([['enabled', false]]));
   return Object.fromEntries([...out].map(([k, v]) => [k, Object.fromEntries(v)]));
+}
+
+/**
+ * agy の hooks.json のアダプターのパスを、置き場の .agents からの相対パスから絶対パス（スラッシュ区切り・引用なし）に直す（純粋）。
+ * 今の agy（2026-11-15 実機）は --add-dir の置き場の hook を .agents 以外のフォルダーで動かし、相対パスではアダプターが見つからない。
+ * 置き場のパスに空白・安全でない文字があるときは引用なしで書けないので、相対パスのまま返す。
+ * 形の比較（hooksShape）は相対パスの形で取る（置き場の名前は会話ごとに変わるため）
+ */
+export function agyHooksFileAt(file, agentsDir) {
+  const base = String(agentsDir ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!base || /\s/.test(base) || !safeAdapterPath(base)) return file;
+  const prefix = `node ${AGY_ADAPTER_DIR}/`;
+  const fix = h => h && typeof h.command === 'string' && h.command.startsWith(prefix) ? { ...h, command: `node ${base}/${h.command.slice(5)}` } : h;
+  const event = list => Array.isArray(list) ? list.map(e => Array.isArray(e?.hooks) ? { ...e, hooks: e.hooks.map(fix) } : fix(e)) : list;
+  // 名前は外の値（`__proto__` も普通の名前）。Object.entries → Object.fromEntries で own property のまま写す
+  return Object.fromEntries(Object.entries(file).map(([name, spec]) => [name,
+    spec && typeof spec === 'object' && !Array.isArray(spec) ? Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, event(v)])) : spec]));
 }
 
 /**
@@ -222,6 +250,8 @@ export function nativeFate(row) {
 export function classifyNativeRun({ record, backend, pleiad = false, name = '', event = '', leak = false }) {
   if (record?.owner !== 'ply' || pleiad) return { leak: false, unknownNative: false };
   if (backend !== 'claude') return { leak: leak === true, unknownNative: false };
+  // Hook × エージェント（ADR 0338）で Claude をまとめて止めていないターンは、ネイティブの定義が動いてよい
+  if (record.mode === 'agents' && !record.stopAll) return { leak: false, unknownNative: false };
   const at = String(name).indexOf(':'), matcher = at < 0 ? null : String(name).slice(at + 1);
   const hit = (record.stopped ?? []).some(r => r.event === event && (matcher === null ? !r.matcher || r.matcher === '*' : r.matcher === matcher));
   return { leak: hit, unknownNative: !hit };

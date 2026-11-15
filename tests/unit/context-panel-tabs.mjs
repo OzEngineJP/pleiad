@@ -348,6 +348,17 @@ export default async function (t) {
       }
       if (command === 'scanHooks') return { entries: [{ id: 'hk-1', name: '保存時チェック', event: 'PostToolUse', agent: 'antigravity', scope: 'user', enabled: true, command: 'echo ok', type: 'command' }], files: [], home: '/home/u', order: {} };
       if (command === 'plyHooks') return { defaults: { value: { owner: kindsState.hooks.value.owner } }, entries: [{ id: 'hk-1', name: '保存時チェック', event: 'PostToolUse', agent: 'claude', enabled: true, command: 'echo ok', type: 'command' }] };
+      if (command === 'hooksMatrix') return hooksUnreadable
+        ? { unreadable: true, error: 'hooks-agents.json が読めません', repair: [], rows: [] }
+        : {
+          agents: ['claude', 'codex'], adopted: true, revision: 'r1', groups: [], orphans: [],
+          rows: [
+            { key: 'ply:hk-1', kind: 'reg', group: 'ply', agent: null, scope: 'user', event: 'PostToolUse', command: 'echo ok', name: '保存時チェック', on: true, switchable: true, enabled: true, targets: ['claude'],
+              cells: { claude: { state: 'on', mode: 'toggle' }, codex: { state: 'off', mode: 'toggle' } } },
+            { key: 'native:hk-2', kind: 'native', group: 'own', agent: 'claude', scope: 'user', event: 'Stop', command: 'echo bye', on: false, switchable: true, status: 'off', scanIds: ['hk-2'],
+              cells: { claude: { state: 'off', mode: 'toggle' }, codex: { state: 'off', mode: 'toggle' } } },
+          ],
+        };
       if (command === 'listPlyMcp') return { servers: [{ id: 'm1', name: 'local', transport: 'stdio', command: 'node', args: [] }] };
       if (command === 'agentMcp') return { agents: {} };
       if (command === 'mcpMatrix') return {
@@ -359,6 +370,7 @@ export default async function (t) {
       return {};
     };
     const settingsWrites = [];
+    let hooksUnreadable = false;
 
     const ctxPage = setupContext({
       button: dom.openBtn,
@@ -399,10 +411,12 @@ export default async function (t) {
     const instPanel = p.querySelector('#cx-panel-instruction');
     const skillPanel = p.querySelector('#cx-panel-skill');
     const fold = instPanel.querySelector('details.cx-fold');
-    t.ok('指示・Skills タブから担当 2 択（.cx-seg）が消え、Hooks だけに残り、指示の量の目安は畳まれて作業場所 summaryRow がある',
+    t.ok('指示・Skills・Hooks のどのタブにも担当 2 択（.cx-seg）が無く、Hooks は登録とエージェントの設定の行を出し、指示の量の目安は畳まれて作業場所 summaryRow がある',
       instPanel.querySelectorAll('.cx-seg').length === 0
       && skillPanel.querySelectorAll('.cx-seg').length === 0
-      && p.querySelectorAll('#cx-panel-hooks .cx-seg').length === 1
+      && p.querySelectorAll('#cx-panel-hooks .cx-seg').length === 0
+      && p.querySelector('#cx-panel-hooks [data-key="ply:hk-1"]') != null
+      && p.querySelector('#cx-panel-hooks [data-key="native:hk-2"]') != null
       && fold != null && fold.open === false
       && fold.querySelector('#cxInstructionBudget') != null
       && instPanel.querySelector(`[data-key="${WORKSPACE_SUMMARY_KEY}"] .cx-sw`) != null
@@ -632,14 +646,21 @@ export default async function (t) {
     t.ok('1 件の切替に失敗したときも元の状態へ描き直される', oneSw().getAttribute('aria-checked') === beforeOne);
     failDoc = false;
 
-    // Hooks だけは旧来のまま「エージェントに任せる」で件数を非表示（指示・Skills は件数を維持）
+    // Hooks の担当 2 択は無くなった（段 3）。件数を隠すのは hooks-agents.json が読めず数えられないときだけ
     const cnt = (root, pre, k) => root.querySelector(`#${pre}-tab-${k} .c`);
     const noCount = (root, pre, k) => { const c = cnt(root, pre, k); return !c || c.hidden === true || !c.textContent; };
     kindsState.hooks.value.owner = 'native';
     await ctxPage.openPage();
     await settle();
-    t.ok('Hooks がエージェント任せのとき Hooks タブだけ件数を隠し、指示・Skills は件数を保つ',
-      noCount(p, 'cx', 'hooks') && !noCount(p, 'cx', 'instruction') && !noCount(p, 'cx', 'skill'));
+    t.ok('旧来の担当が「エージェントに任せる」でも Hooks タブは件数（実行する行の数）を出す',
+      cnt(p, 'cx', 'hooks')?.textContent === '1' && !noCount(p, 'cx', 'instruction'));
+    hooksUnreadable = true;
+    await ctxPage.openPage();
+    await settle();
+    t.ok('hooks-agents.json が読めないときは Hooks タブだけ件数を隠し、直し方の面を出す',
+      noCount(p, 'cx', 'hooks') && !noCount(p, 'cx', 'instruction') && !noCount(p, 'cx', 'skill')
+      && p.querySelector('#cx-panel-hooks').textContent.includes('hooks-agents.json'));
+    hooksUnreadable = false;
     kindsState.hooks.value.owner = 'ply';
     await ctxPage.openPage();
     await settle();
@@ -658,6 +679,8 @@ export default async function (t) {
     let rightDocAgents = emptyDocAgentsConfig();
     const rightWrites = [];
     let failRight = false;
+    let placeHooksUse = true, placeHooksUnreadable = false;
+    const placeHooksWrites = [];
     // 作業場所の .claude の下の物は Devin（取り込み）と Grok が自分で読み、止められない（鍵つきでオン）ので、行のスイッチは押せない（決定 (a)）。
     // 行のスイッチの操作を試すため、指示は Antigravity だけが読む .agent/rules、Skills は Codex だけが読む .codex/skills に置く
     // （作業場所の .agent/skills は Antigravity が名前ごとに止められず、鍵つきでオンになる）
@@ -710,6 +733,21 @@ export default async function (t) {
       if (command === 'scanContext' || command === 'nativeInstructions') return { entries: rightEntries.map(e => ({ ...e, status: e.defaultStatus ?? 'candidate' })) };
       if (command === 'plyInstructions') return { items: [{ id: 'p1', name: '基本', on: true, tokens: 5, text: 'x', target: 'all', tag: 'user', agents: ['claude'] }], agents: [{ id: 'claude', label: 'Claude' }], total: 5, routing: false };
       if (command === 'plyHooks') return { place: { value: { owner: placeKinds.hooks.value.owner } }, defaults: { value: { owner: placeKinds.hooks.value.owner } }, hooks: [{ id: 'h1', name: 'hook1', enabled: true, scope: 'project', event: 'PostToolUse', targets: ['claude'] }] };
+      if (command === 'hooksMatrix') return placeHooksUnreadable
+        ? { unreadable: true, error: 'hooks-agents.json が読めません', repair: [], rows: [] }
+        : {
+          agents: ['claude'], adopted: true, revision: `p${placeHooksWrites.length}`, cwd: '/repo', groups: [], orphans: [],
+          rows: [
+            { key: 'ply:h1', kind: 'reg', group: 'ply', agent: null, scope: 'project', event: 'PostToolUse', command: 'x', name: 'hook1', on: true, switchable: true, enabled: true, targets: ['claude'],
+              here: { use: placeHooksUse }, cells: { claude: { state: placeHooksUse ? 'on' : 'off', mode: 'toggle' } } },
+          ],
+        };
+      if (command === 'setHookPlace') {
+        if (failRight) throw new Error('boom-right');
+        placeHooksWrites.push(payload);
+        placeHooksUse = payload.use;
+        return { ok: true };
+      }
       if (command === 'listPlyMcp') return { servers: [{ id: 'm1', name: 'reg-mcp', transport: 'stdio', command: 'x', args: [] }] };
       if (command === 'agentMcp') return { agents: {} };
       if (command === 'mcpMatrix') return { agents: ['claude'], rows: [{ key: 'r1', name: 'gh', kind: 'config', group: 'agent', origins: ['claude'], cells: { claude: { mode: 'toggle', state: 'on' } } }] };
@@ -833,14 +871,43 @@ export default async function (t) {
     await settle();
     t.ok('編集終了で通常面へ戻る', panelBody.querySelectorAll('[role="tab"]').length === 0);
 
-    placeKinds.hooks.value.owner = 'native';
+    // 右パネルの Hooks: 行は「この場所で使うか」のスイッチだけ（hooks.setPlace）。失敗したら元へ描き直す
+    rightPanel.open();
+    await settle();
+    await panelBody.querySelector('[data-act="placeStart"]').onclick();
+    await settle();
+    const hookSw = () => panelBody.querySelector('#scx-panel-hooks [data-row="ply:h1"] .cx-sw');
+    t.ok('右パネルの Hooks は行ごとに「この場所で使う」スイッチだけを出し、担当 2 択もエージェントのアイコン列も無い',
+      hookSw()?.getAttribute('aria-checked') === 'true'
+      && panelBody.querySelectorAll('#scx-panel-hooks .cx-seg, #scx-panel-hooks .cx-ags').length === 0,
+      `sw=${hookSw()?.getAttribute('aria-checked')}`);
+    await hookSw().onclick();
+    await settle();
+    t.ok('右パネルの Hooks のスイッチは hooks.setPlace に場所・行・使うか・revision を 1 回で送り、読み直した状態を出す',
+      placeHooksWrites.length === 1 && placeHooksWrites[0].place === '/repo' && placeHooksWrites[0].key === 'ply:h1'
+      && placeHooksWrites[0].use === false && placeHooksWrites[0].revision === 'p0'
+      && hookSw()?.getAttribute('aria-checked') === 'false'
+      && panelBody.querySelector('#scx-tab-hooks .c')?.textContent === '0',
+      JSON.stringify(placeHooksWrites));
+    failRight = true;
+    await hookSw().onclick();
+    await settle();
+    t.ok('右パネルの Hooks のスイッチの保存に失敗したら、元の状態のまま失敗が出る',
+      hookSw()?.getAttribute('aria-checked') === 'false' && panelBody.textContent.includes('boom-right'));
+    failRight = false;
+    await panelBody.querySelector('[data-act="placeDone"]').onclick();
+    await settle();
+
+    placeHooksUnreadable = true;
     rightPanel.open();
     await settle();
     await panelBody.querySelector('[data-act="placeStart"]').onclick();
     await settle();
     const rNo = k => { const c = panelBody.querySelector(`#scx-tab-${k} .c`); return !c || c.hidden === true || !c.textContent; };
-    t.ok('右パネル: Hooks がエージェントに任せるなら Hooks タブは件数を出さず、指示・Skills は件数を保つ',
-      panelBody.querySelectorAll('[role="tab"]').length === 4 && rNo('hooks') && !rNo('instruction') && !rNo('skill'));
+    t.ok('右パネル: hooks-agents.json が読めないなら Hooks タブは件数を出さず理由を出し、指示・Skills は件数を保つ',
+      panelBody.querySelectorAll('[role="tab"]').length === 4 && rNo('hooks') && !rNo('instruction') && !rNo('skill')
+      && panelBody.querySelector('#scx-panel-hooks')?.textContent.includes('hooks-agents.json'));
+    placeHooksUnreadable = false;
   } finally {
     dom.restore();
     await setLanguage('ja');

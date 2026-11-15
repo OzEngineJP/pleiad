@@ -64,7 +64,7 @@ export const DATA_WRITES = [
   ] },
   { file: 'core/backends/devin-config.mjs', sites: 3, targets: [
     { name: 'devin/metadata-config/devin/config.json', limit: '固定 1 ファイル。METADATA_CONFIG の 7 個の import 無効化と hooks/auto_update/notify だけ（1 KiB 未満）', reason: 'モデル一覧の取得を専用 cwd と固定設定で行う。利用者の設定・認証情報をコピーせず、会話数によって増えない' },
-    { name: 'devin/turn-configs/<uuid>.json', limit: '最大 1 MiB・会話ごとに 1 ファイル', reason: 'Hooks / nativeShellOff を会話単位で適用し、ACP 初期化が設定を読んだ直後に削除する' },
+    { name: 'devin/turn-configs/<uuid>.json', limit: '最大 1 MiB・会話ごとに 1 ファイル', reason: 'Hooks / nativeShellOff を会話単位で適用し、Devin のプロセスが終わったら削除する（Devin は session/new のときに読む。閉じずに残ったものは 1 日で消す）。Devin の --config は利用者の config.json を置き換えるので、中身は利用者の config.json に Pleiad の分を重ねたもの（利用者のファイルには書かない。所有者だけが読める 0600）' },
     { name: 'devin/metadata-config/devin/mcp_config.json', limit: '固定 1 ファイル。{"mcpServers":{}} の 17 bytes', reason: 'metadata 専用の空 MCP 設定。会話やカタログを保存せず、同じ固定パスだけを書き直す' },
   ] },
   { file: 'core/backends/opencode-held.mjs', sites: 1, targets: [
@@ -189,6 +189,10 @@ export const DATA_WRITES = [
   { file: 'core/ply-hooks.mjs', sites: 2, targets: [
     { name: 'hooks.json', limit: 'hooks の登録・担当・場所ごとの設定。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'hooks.broken-<日時>.json', limit: '修復ボタンを押すたびに 1 個', reason: '壊れた設定の退避' },
+  ] },
+  { file: 'core/hooks-agents.mjs', sites: 2, targets: [
+    { name: 'hooks-agents.json', limit: 'Hook × エージェントの選択。行（登録・エージェントの設定の定義）と場所の数まで。ユーザーが数十個まで。seen（書き換えた定義の突き合わせ）はエージェント・scope・ファイル・イベントの組の数まで', reason: '設定の台帳（ADR 0338）' },
+    { name: 'hooks-agents.broken-<日時>.json', limit: '読めないファイルを修復・戻すの操作で直すたびに 1 個（名前を変えるだけで中身は書かない）', reason: '読めない選択のファイルの退避（ADR 0338「保存」）' },
   ] },
   { file: 'core/notify/settings.mjs', sites: 1, targets: [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },

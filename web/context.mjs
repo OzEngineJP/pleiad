@@ -14,7 +14,7 @@ import { copyIcon } from './icons.mjs';
 import { createMcpSection } from './mcp-config.mjs';
 import { createMcpMatrix } from './mcp-matrix.mjs';
 import { createPlyInstructions } from './ply-instructions-card.mjs';
-import { createHooksCard } from './hooks-card.mjs';
+import { createHooksMatrix } from './hooks-matrix.mjs';
 import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
@@ -105,6 +105,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   const cliSetup = panel.querySelector('#cliSetup');
   panel.replaceChildren();
   const root = el('div', 'cx');
+  // 見出しの文（反映の時点）は指示・Skills・外部 MCP の話。Hooks のタブでは出さない（Hooks はカードの中の説明に任せる）
   const lead = el('p', 'cx-lead', t('context.lead'));
   const status = el('p', 'cx-status'); status.setAttribute('role', 'alert');
   const cards = Object.fromEntries(KINDS.map(k => [k, el('section', 'cx-card')]));
@@ -176,6 +177,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       if (placeTierEl?.isConnected) placeTierEl.hidden = false;
     }
     for (const k of CONTEXT_TABS) tabPanels[k].hidden = k !== id;
+    lead.hidden = id === 'hooks';
     tabBar.setActive(id, { focus });
     if (changed) {
       const sc = panel.closest('.settings-content');
@@ -195,6 +197,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     ariaLabel: t('context.tabs.aria'),
     onSelect: selectTab,
   });
+  lead.hidden = activeTab === 'hooks';
   root.append(lead, status, tabBar.root, tabPanels.instruction, tabPanels.skill, tabPanels.mcp, tabPanels.hooks, toast);
   panel.append(root);
 
@@ -237,8 +240,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     }
   }
   const plyInstructions = createPlyInstructions({ cmd, work, saved: (fresh) => saved(savedText(fresh)), openDelegation, opened, showMenu, onCount: n => { plyCount = n; updateCounts(); } });
-  // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0045）
-  const hooks = createHooksCard({ cmd, work, saved: () => saved(t('hooks.saved')), opened, onCount: n => { hooksCount = n; updateCounts(); } });
+  // 4 つ目の種類。Hook × エージェントの表（<data>/hooks-agents.json。ADR 0338）。各エージェントの元の設定を読み、書くのは利用者が明示した編集だけ（ADR 0045）
+  const hooks = createHooksMatrix({ cmd, work, saved, failed, status, opened, onCount: n => { hooksCount = n; updateCounts(); } });
   tabPanels.hooks.append(hooks.root);
 
   // ---------------------------------------------------------------- 保存（その場で。全体の設定）
@@ -1036,6 +1039,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       reloadDocMatrix('skill');
     }).catch(() => {});
     if (keys.includes('plyInstructions')) plyInstructions.load();
+    // Hooks の表と、Hooks で変わる指示・Skills の表の Devin の取り込むマス（ADR 0338）
+    if (keys.includes('hooks')) { hooks.reload(); reloadDocMatrix('instruction'); reloadDocMatrix('skill'); }
   });
   // ログインが済んだら一覧の状態を取り直す（web/client.mjs が mcpAuth を ply:mcp-auth として渡す）
   window.addEventListener('ply:mcp-auth', e => {

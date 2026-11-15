@@ -121,7 +121,7 @@ function mergeWorkspaceFallback(legacyBase, wsRule) {
   };
 }
 
-function buildSingleRow({ kind, entryOrSummary, key, scope, sourceState, home, cwd }) {
+function buildSingleRow({ kind, entryOrSummary, key, scope, sourceState, home, cwd, devinImportsStopped = false }) {
   const { touched, legacyRule, agentsChain } = sourceState;
   let rule;
   if (!touched) {
@@ -133,15 +133,16 @@ function buildSingleRow({ kind, entryOrSummary, key, scope, sourceState, home, c
   } else {
     rule = resolveRuleForItem(agentsChain, key, scope);
   }
-  const cells = evaluateDocCells(kind, entryOrSummary, rule, { legacyOwner: sourceState.legacyOwner });
+  const cells = evaluateDocCells(kind, entryOrSummary, rule, { legacyOwner: sourceState.legacyOwner, devinImportsStopped });
   return { rule, cells, ...summarizeRowMeta(cells) };
 }
 
 /**
  * Build full UI + runtime matrix for `(kind, entries, legacyConfig, docAgentsConfig, cwd)`.
  * Notice `summaryRow` evaluates `'__workspace__'` so global Settings and inherited workspace items agree.
+ * `devinImportsStopped`: Devin's imports stop at `cwd` because Pleiad supplies hooks to Devin (docCellLock).
  */
-export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConfig, cwd = null, home = os.homedir(), preferMap = null }) {
+export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConfig, cwd = null, home = os.homedir(), preferMap = null, devinImportsStopped = false }) {
   const sourceState = resolveEffectiveDocSource(legacyConfig, docAgentsConfig, cwd, kind);
   const items = groupDocEntries(kind, entries, preferMap ?? sourceState.legacyRule?.prefer ?? legacyConfig?.prefer ?? {});
 
@@ -153,6 +154,7 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
     sourceState,
     home,
     cwd,
+    devinImportsStopped,
   });
   const summaryRow = {
     key: WORKSPACE_SUMMARY_KEY,
@@ -170,7 +172,7 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
       : item.chosen;
     const evalInput = itemForLegacy;
     const evaluated = !sourceState.touched && item.copies.length > 1
-      ? buildGroupedLegacyRow(kind, item, sourceState.legacyRule, home, cwd)
+      ? buildGroupedLegacyRow(kind, item, sourceState.legacyRule, home, cwd, devinImportsStopped)
       : buildSingleRow({
           kind,
           entryOrSummary: evalInput,
@@ -179,6 +181,7 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
           sourceState,
           home,
           cwd,
+          devinImportsStopped,
         });
 
     const row = {
@@ -198,6 +201,7 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
     agentsDepth: sourceState.agentsDepth,
     legacyRule: sourceState.legacyRule,
     legacyOwner: sourceState.legacyOwner,
+    devinImportsStopped: Boolean(devinImportsStopped),
     agents: [...DOC_AGENT_IDS],
     summaryRow,
     rows,
@@ -205,11 +209,11 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
   };
 }
 
-function buildGroupedLegacyRow(kind, item, legacyRule, home, cwd) {
+function buildGroupedLegacyRow(kind, item, legacyRule, home, cwd, devinImportsStopped = false) {
   const combined = { ...item.chosen, origins: item.origins };
   const included = item.copies.some((c) => legacyEntryIncluded(kind, c, legacyRule, { home, cwd }));
   const rule = docAgentsFromLegacy(kind, combined, legacyRule, { home, cwd, included });
-  const cells = evaluateDocCells(kind, combined, rule, { legacyOwner: legacyRule?.owner ?? 'native' });
+  const cells = evaluateDocCells(kind, combined, rule, { legacyOwner: legacyRule?.owner ?? 'native', devinImportsStopped });
   return { rule, cells, ...summarizeRowMeta(cells) };
 }
 
@@ -223,9 +227,9 @@ function sameRule(a, b) {
  * Snapshot writable `{ [key]: { off, spread } }` baseline for `(placeOrDefault, kind)` on first edit.
  * Preserves pre-edit effective behavior for all items at that place before applying the requested toggle.
  */
-export function snapshotBaselineAgents({ kind, entries = [], legacyConfig, docAgentsConfig, place = null, home = os.homedir() }) {
+export function snapshotBaselineAgents({ kind, entries = [], legacyConfig, docAgentsConfig, place = null, home = os.homedir(), devinImportsStopped = false }) {
   const cwd = place ?? null;
-  const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig, cwd, home });
+  const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig, cwd, home, devinImportsStopped });
   // When Stage 2 already governs this place via defaults or an ancestor override, start with an empty per-place override map so untouched keys keep inheriting dynamically.
   if (place && matrix.touched) return {};
   // 場所の上書きを作った後に、この場所が上の段から引き継ぐ表（この場所の自分の段は除く）
@@ -261,8 +265,8 @@ export class DocTouchError extends Error {
  * 初めて触れる場所（か旧い保存の方が深い場所）は、触る前の動きを写した基準を先に書いてから変える。
  * agent があれば keys[0] の 1 マス、無ければ keys の行ごと。core/server.mjs と試験（tests/unit/context-doc-main-equivalence.mjs）が同じ関数を使う
  */
-export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd = null, home = os.homedir(), place = null, placeKey = null, agent = null, keys, on }) {
-  const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig: cfg, cwd: matrixCwd, home });
+export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd = null, home = os.homedir(), place = null, placeKey = null, agent = null, keys, on, devinImportsStopped = false }) {
+  const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig: cfg, cwd: matrixCwd, home, devinImportsStopped });
   if (agent && !matrix.agents.includes(agent)) throw new DocTouchError('unknownAgent', { agent });
   const targets = keys.map((k) => {
     const row = k === WORKSPACE_SUMMARY_KEY ? matrix.summaryRow : matrix.byKey.get(k);
@@ -289,13 +293,13 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
   if (!agent && placeKey && on) {
     const without = structuredClone(cfg);
     if (without.places[placeKey]) delete without.places[placeKey][kind];
-    restore = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig: without, cwd: matrixCwd, home });
+    restore = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig: without, cwd: matrixCwd, home, devinImportsStopped });
   }
   const holder = placeKey ? (cfg.places[placeKey] ??= {}) : cfg.defaults;
   if (!holder[kind] || (!matrix.touched && matrix.agentsDepth < matrix.legacyDepth)) {
     // 触る前のこの段の旧い担当も写す（触った後も、旧い「Pleiad がそろえる」の止め方を保つ。resolveDocForAgent の legacyPly）
     const { legacyOwner } = resolveEffectiveDocSource(legacyConfig, cfg, place ?? null, kind);
-    holder[kind] = { agents: snapshotBaselineAgents({ kind, entries, legacyConfig, docAgentsConfig: cfg, place, home }), legacyOwner };
+    holder[kind] = { agents: snapshotBaselineAgents({ kind, entries, legacyConfig, docAgentsConfig: cfg, place, home, devinImportsStopped }), legacyOwner };
   }
   // 場所のまとめの行（CLAUDE.md・AGENTS.md）は、明示の規則を持つ作業場所の行には届かない（場所を初めて触ると全部の行の規則を写す）。
   // まとめの行を押したら、その場所で明示の規則を持つ作業場所の行にも同じ操作をする（レビュー M3）
@@ -308,7 +312,7 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
       pressable.push({ k: row.key, row });
     }
   }
-  const ctx = { legacyOwner: matrix.legacyOwner };
+  const ctx = { legacyOwner: matrix.legacyOwner, devinImportsStopped: matrix.devinImportsStopped };
   for (const { k, row } of pressable) {
     const entryOrSummary = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
     const curRule = holder[kind].agents[k] ?? row.rule;
@@ -338,8 +342,8 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
  * - `suppress`: native copies/paths that must be stopped on `agent`
  * - `deliver`: entries that Pleiad must deliver via system injection / ply_context
  */
-export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, docAgentsConfig, cwd = null, home = os.homedir(), forceCoarseDeliver = false }) {
-  const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig, cwd, home });
+export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, docAgentsConfig, cwd = null, home = os.homedir(), forceCoarseDeliver = false, devinImportsStopped = false }) {
+  const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig, cwd, home, devinImportsStopped });
 
   // Strict zero-change guarantee before Stage 2 touches this place/kind and legacy owner is native.
   if (!matrix.touched && matrix.legacyOwner === 'native') {
@@ -363,7 +367,7 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
   }
 
   const traits = DOC_AGENT_TRAITS[agent] ?? {};
-  const lockCtx = { legacyOwner: matrix.legacyOwner };
+  const lockCtx = { legacyOwner: matrix.legacyOwner, devinImportsStopped: matrix.devinImportsStopped };
   if (matrix.legacyOwner === 'ply') return resolveLegacyPlyDoc(matrix, kind, agent, lockCtx);
   const active = [];
   const desiredSuppress = [];

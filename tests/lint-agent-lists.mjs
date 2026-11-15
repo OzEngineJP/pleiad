@@ -266,6 +266,7 @@ export const ALLOWED = [
   { file: 'core/computer-use/apps.mjs', ids: ['claude', 'codex'], reason: 'computer-use が起動したと見なす CLI の実行ファイル名（プロセス名との照合）' },
   { file: 'core/backend-shape-diagnostics.mjs', ids: ['claude', 'codex', 'antigravity'], reason: '会話ログの形の診断・検証済みの版を持つバックエンド（ログを読む実装があるものだけ）' },
   { file: 'core/ops/mcp.mjs', ids: ['claude', 'codex', 'devin'], reason: 'MCP の操作が扱える形式（core/mcp-config.mjs と同じ 3 形式）' },
+  { file: 'core/hooks-agents.mjs', ids: ['grok', 'devin'], reason: 'compat: Claude の設定の Hooks を自分で取り込むエージェントの取り込みの止め方（Grok の互換・Devin の取り込み。ADR 0338）' },
   { file: 'site/main.js', ids: ['claude', 'codex'], reason: 'デモの描画のためのチップの表（対応エージェントの名簿ではない）' },
   { file: 'site/tools/build-site.mjs', ids: ['claude', 'antigravity'], reason: 'サイトのロゴの素材名（openai はロゴのファイル名でエージェントの id ではない）' },
   { file: 'site/tools/check-i18n.mjs', ids: ['claude', 'antigravity'], reason: '英語版の {name} 置き換えの素材名（openai はロゴのファイル名でエージェントの id ではない）' },

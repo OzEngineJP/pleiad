@@ -180,7 +180,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 | Codex | ターンごとに、その会話の app-server の `hooks/list`（その cwd）を取り、`source` が `user`・`project` の key に `enabled: false`。プラグイン・管理者は止めない。`features.hooks=false` は使わない | `thread/start`・`thread/resume` の `config` の `hooks`（表。登録 1 件を 1 つの group）と `hooks.state` の `trusted_hash`。hash は同じ表を起動の `-c hooks=…` で渡した app-server（プローブ）の `hooks/list` の `currentHash`（`source: sessionFlags`。表ごとに覚える）。アダプター越しは `node "<data>/hooks-runtime/hook-adapter-<hash>.mjs" …`（PATH の node） | `hook/started`・`hook/completed`。`source: sessionFlags` は Pleiad の分、`user`・`project` は漏れ |
 | OpenCode | ネイティブの形が無い（フックは JS のプラグイン）ので止めない。利用者のプラグインはそのまま動く | Claude Code の形を真似て渡す（エージェントの記述の `hooksAs: 'claude'`。`deliverable` は Claude へ渡すときと同じに組み立て、SessionStart も渡せる）。ツールの前後は Pleiad のプラグインの `tool.execute.before` / `after` が中継の口 `/mcp/opencode/hook` を呼び、Pleiad が `claudeHookCallbacks` で走らせる（止める答えはプラグインが例外にして、ツールの失敗として理由をモデルへ返す。`updatedInput` は OpenCode の入力の形へ戻す。PostToolUse の止める理由・足す文脈はツールの結果に足す）。SessionStart（新しい会話の最初のターン）・UserPromptSubmit（止める答えなら送らない。足す文脈は `system`）・Stop（続けさせる理由を次の発言として渡す。3 回まで）はバックエンドが走らせる。ツール名と入力は Claude の形へ写す（`bash` → `Bash`、`filePath` → `file_path` など。`core/backends/opencode-hooks.mjs`） | コールバックの入口と出口で自分で記録（`observed: 'pleiad'`）。ネイティブのプラグインの発火は観測できない |
 | Grok | ネイティブ（`$GROK_HOME/hooks/*.json`（既定 `~/.grok`）・`config.toml` の `[[hooks.<イベント>]]`・git の根から作業場所までの `.grok/hooks/*.json`）はセッションごとに止められないので止めない（`kept`。コマンドは伏せ字）。Claude・Cursor・Codex 互換の読み込み元は、渡すターンの CLI を `GROK_CLAUDE_HOOKS_ENABLED`・`GROK_CURSOR_HOOKS_ENABLED`・`GROK_CODEX_HOOKS_ENABLED`=`false` で起こして止める（`stopped` の `compat`） | Claude Code の形を真似る（記述の `hooksAs: 'claude'`・`hooksVia: 'plugin'`）。ターンごとの置き場 `<data>/grok-hooks/<pid>-<乱数>/hooks/hooks.json`（`grokHooksFile`。登録 1 件を 1 つの group、アダプター越しは `<先>` = claude）を `session/new`・`session/load` の `_meta.pluginDirs` で渡し、Grok が自分で走らせる。プラグインはその会話だけで保存されないので、毎ターン渡す。置き場はターンの終わりに消し、持ち主のプロセスが居ない残りは、プロセスの最初の書き込みのときに消す（`core/backends/grok-hooks.mjs`）。`async` は Grok が読まず終わるまで待つので渡さない（`asyncGrok`）。Grok が起こさないイベントも渡さない | 発火の知らせは届くが、登録と結んでいないので観測できない |
-| Antigravity | 一時の置き場（`--add-dir`）の `.agents/hooks.json` に、ユーザーと作業場所の定義の名前ごとの `{ "enabled": false }`（プラグインの名前は入れない）。カスタムエージェントは使わない（コンテキストを Pleiad が渡すときだけ今までどおり） | 同じファイルの `pleiad-<id>` の名前で、置き場の `.agents/pleiad-hooks/hook-adapter-<hash>.mjs` を相対パス（引用なし）で動かす。アダプターは stdin の `workspacePaths` から利用者の作業場所に直し、PreToolUse で何も言わなければ `allow` を返す | アダプターが 6 番目の引数（登録の id）で置き場の `runs.jsonl` に書き、ターンの終わりに読む（上限ずつ最後の改行まで。読み終えた分が 1 MiB を超えたら `runs.jsonl.1` へ入れ替え、アダプターは 8 MiB を超えたら書かない）。ネイティブの発火は観測できない |
+| Antigravity | 一時の置き場（`--add-dir`）の `.agents/hooks.json` に、ユーザーと作業場所の定義の名前ごとの `{ "enabled": false }`（プラグインの名前は入れない）。カスタムエージェントは使わない（コンテキストを Pleiad が渡すときだけ今までどおり） | 同じファイルの `pleiad-<id>` の名前で、置き場の `.agents/pleiad-hooks/hook-adapter-<hash>.mjs` を絶対パス（スラッシュ区切り・引用なし。`agyHooksFileAt`）で動かす（今の agy は置き場の hook を `.agents` 以外のフォルダーで動かす。2026-11-15 実機。置き場のパスに空白・安全でない文字があれば相対パスのまま）。アダプターは stdin の `workspacePaths` から利用者の作業場所に直し、PreToolUse で何も言わなければ `allow` を返す | アダプターが 6 番目の引数（登録の id）で置き場の `runs.jsonl` に書き、ターンの終わりに読む（上限ずつ最後の改行まで。読み終えた分が 1 MiB を超えたら `runs.jsonl.1` へ入れ替え、アダプターは 8 MiB を超えたら書かない）。ネイティブの発火は観測できない |
 
 - **Codex のロード済みのスレッド**: resume は hooks の `config` を無視するので、渡した hooks の config の指紋（`loadedHooks`。渡さないときは空）が前と違えば `thread/unsubscribe` してから resume する。追跡していないスレッド（どの config でロードしたか分からないもの）に hooks を渡すときも先に外す（`unloadForHooks`）。外せなければターンを始めない（`codex.errors.hooksUnsubscribeFailed`）。担当を戻したときも同じ。**圧縮**（`backend.compact`。PreCompact / PostCompact が動く）も同じ config を渡し、同じく外してから読み直す。
 - **Codex の一覧と信頼**: `hooks/list` が欠けている・形が違う・cwd ごとの `errors` があればターンを始めない（`codex.errors.hooksList`。`codexListProblem`）。渡す登録すべての `trusted_hash` を取れない（プローブの失敗を含む）ときも始めない（`codex.errors.hooksTrust`。ネイティブだけを止めて続けない）。プローブ（`probeHookHashes`）は同じ表を同時に頼まれたら 1 本を分け合い、失敗は 30 秒のあいだ覚えて起こし直さず、新しく使った 50 表まで覚える。
@@ -188,6 +188,27 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 - **止められないもの**: Claude の管理者の hooks、Codex・agy のプラグイン・管理者の hooks、Grok のネイティブの hooks。会話の記録の `kept` と、切り替えの確認の「止めずに動き続けるもの」に出す。ただし Grok は、会話の記録の `kept` にユーザー・作業場所・`config.toml` の分だけを出し、インストールしたプラグインと管理者（`managed_config.toml` など）の分は出さない。切り替えの確認にも出ない（`scanHooks` が Grok を探さない）。
 - **Grok の確かめたこと**（Grok 1.0.62、2026-10-19 実機）: `_meta.pluginDirs` の PreToolUse の deny は、`session/new` でも、前の置き場を消した後の別プロセスの `session/load` でも、権限の確認より前に効き、ツールは走らない。`_meta` の無い `session/load` ではフックは走らない（保存されない）。フックの入力の `tool_name` は Grok の名前（`run_terminal_command` など）で、matcher は Claude の名前（`Bash`）でも当たる。Claude の形のスクリプトが `tool_name === 'Bash'` を見ていると当たらない。アダプター越しの別の形（agy・Codex）も、写す表（`core/hook-adapter.mjs`）に Grok の名前が無いので、ツール名と入力は Grok のまま届く。Pleiad の起こし方（`grok agent stdio`）では `session/load` の値が効いた（次のターンの置き場が走り、消した前のターンの置き場は走らない）。公式の手引き（`~/.grok/docs/user-guide/09-plugins.md`）では、daemon の経路の `session/load` は値を無視して `session/new` の置き場を使い続けるので、その経路ではこの渡し方は 2 ターン目から効かない。
 - 右パネル（`sessionHooks`）は、走っているターンか保存した `contextSession.hooks` を `unify`、今の場所の担当を `owner` として返す。画面は design-system.md「Hooks」。
+
+### Hook × エージェントの一覧の会話（[ADR 0338](adr/0338-hooks-by-hook-and-agent.md)）
+
+`<data>/hooks-agents.json` が在れば（移行済み）、担当の 2 択の代わりに、ターンごとにそのエージェントのセルの状態で止める・渡す（`core/hooks-agents.mjs` の `forTurn`。`prepareHooksTurn` が呼ぶ）。無ければ上の「Pleiad がそろえる」のまま。読めなければ会話を断る（このプロセスで最後に読めた選択で、そのターンに止めるもの・渡すもの・互換の止めが無かったエージェントだけ続ける。`hooks.json` が読めないときと同じ側。ADR 0338「保存」）。
+
+- **今までと同じ起動**: 止めるものも渡すものも無く、互換の止めも無いターンは `null`（会話の記録も作らない）。何も触っていない人のターンは今までと同じ経路で起動する。
+- **止める・渡す**（want = そのエージェントでオンの行、native = 自分で動かす行）: 止める = native − want、渡す = want − native と巻き添えの渡し直し。渡し方は上の表と同じ（`via`）:
+
+  | エージェント | 止め方 | 渡し方（記録の `via`） |
+  |---|---|---|
+  | Claude Code | 止める行があるときだけ `disableAllHooks`（記録の `stopAll`）。止めない行はコールバックで渡し直す | `callback` |
+  | Codex | `hooks/list` のうち `runtime.stopRows`（ファイル・イベント・group・handler）に当たる key だけ `enabled: false`。作業場所の 1 行は `{ source: 'project' }` | `threadConfig`（本物では未確認） |
+  | Antigravity | 置き場の `.agents/hooks.json` に止める名前の `{ enabled: false }`。同じ名前のオンの定義は渡し直す | `agyFile` |
+  | Grok | Claude のユーザーの定義を止めるときだけ `GROK_CLAUDE_HOOKS_ENABLED=false`（記録の `grok:compat`）、止めない定義は渡し直す。Grok 自身の hooks は止めない | `plugin`（`_meta.pluginDirs`） |
+  | OpenCode | 止めない（利用者のプラグインは一覧に出さない） | `callback` |
+  | Devin | `compat.devin` が `off` のときだけ取り込み（`read_config_from`）を止める。Devin の列の Claude の定義は鍵 | `config`（`--config`。プロセスが終わるまで残す） |
+
+- **Devin の `--config`**: Devin CLI は起動の後（`session/new`）にファイルを読むので、ファイルは Devin のプロセスを閉じるときに消す（`openClient` の `close`）。閉じずに残ったもの（`<data>/devin/turn-configs/<uuid>.json`）は次の起動で 1 日を過ぎた分だけ消す（`pruneTurnConfigs`）。2026-11-15 までは起動の直後に消していて、旧「そろえる」でも渡したものが載っていなかった。
+- **記録**: `sessionHooks` の `unify` は `{ owner: 'ply', mode: 'agents', at, agent, revision, supplied: [{ id, name, from, event, matcher, adapter, via }], stopped, kept, skipped, unsupported, stopAll? }`。
+- **第 2 段の入口**: `hooksForTurn(agent, cwd)` は、そのターンで動く Hook（行 ID・出どころ・イベント・コマンド）を返す（`inheritCustomizations` 用）。
+- **右の欄の「この場所で使うか」**: 「この場所だけ変える」の Hooks の面は `hooksMatrix { cwd }` のうち `here` を持つ行（作業場所のまとめの行 `ws:hooks` は除く）を出し、スイッチは `setHookPlace { place, key, use, revision }`（`places[].skip`）を 1 回書く。次のターンの `forTurn` が同じセルの規則で読む。
 
 ## 圧縮と会話 ID
 

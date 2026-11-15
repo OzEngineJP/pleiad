@@ -1,6 +1,6 @@
 // 設定 › プラグインと会話の右パネル（段 2）のブラウザ統合テスト:
 //   - 4 タブ・件数・スクロール追従（sticky）・タブ切替時の先頭戻しと記憶・キーボード操作
-//   - 指示・Skills は「名前 × 6 エージェント」一覧、担当 2 択と「探す形式」は無し（Hooks のみ担当 2 択を保つ）
+//   - 指示・Skills・Hooks は「名前 × 6 エージェント」一覧、担当 2 択と「探す形式」は無し（段 3 で Hooks も表になった）
 //   - Pleiad の指示（Grok 押下可 + 委譲と連動は linked 鍵）、作業場所 summaryRow、量の目安の折りたたみ
 //   - 他エージェントへ広げる前の行内確認（.cx-ask）、鍵の吹き出し（own / workspace / relay / nolinks）、リロード永続化
 //   - フォルダーまとまり（>8 折りたたみ・展開後の親ロゴ/パス非重複・mixed 一括切替）
@@ -134,7 +134,7 @@ try {
       const ready = await page.waitForFunction(() => {
         const tab = document.querySelector('#contextPanel .cx-tabs [role="tab"]');
         const r = tab?.getBoundingClientRect();
-        // 指示・Skills・外部 MCP の件数がそろうまで待つ（探索・外部 MCP は遅れて届く。Hooks は担当がエージェントに任せるので件数を出さない）
+        // 指示・Skills・外部 MCP の件数がそろうまで待つ（探索・外部 MCP は遅れて届く。Hooks の件数は下で別に確かめる）
         const counted = ['instruction', 'skill', 'mcp'].every(id => {
           const cnt = document.querySelector(`#cx-tab-${id} .c`);
           return cnt && !cnt.hidden && Number(cnt.textContent) > 0;
@@ -180,19 +180,19 @@ try {
     const tabs = await page.locator('#contextPanel .cx-tabs [role="tab"]').evaluateAll(els =>
       els.map(e => ({ id: e.dataset.tab, selected: e.getAttribute('aria-selected'), cnt: e.querySelector('.c')?.textContent, h: e.getBoundingClientRect().height })));
     check(tabs.map(x => x.id).join(',') === 'instruction,skill,mcp,hooks', '設定 › プラグインが 4 タブを正しい順で出す', tabs);
-    check(tabs[0].selected === 'true' && Number(tabs[0].cnt) >= 12 && Number(tabs[1].cnt) >= 11 && Number(tabs[2].cnt) >= 3 && !tabs[3].cnt, '件数バッジが出る（担当がエージェントに任せる Hooks は件数を出さない）', tabs);
+    check(tabs[0].selected === 'true' && Number(tabs[0].cnt) >= 12 && Number(tabs[1].cnt) >= 11 && Number(tabs[2].cnt) >= 3 && tabs[3].cnt === '1', '件数バッジが出る（Hooks は実行する行の数＝利用者の settings.json の 1 件）', tabs);
     check(await page.locator('#cx-panel-mcp #cliSetup').count() === 1, '「外の AI から Pleiad を使う」は外部 MCP タブの中に入る');
     const foldOpen0 = await page.locator('#cx-panel-instruction details.cx-fold').evaluate(el => el.open);
     check(
       await page.locator('#cx-panel-instruction .cx-seg').count() === 0
       && await page.locator('#cx-panel-skill .cx-seg').count() === 0
-      && await page.locator('#cx-panel-hooks .cx-seg').count() === 1
+      && await page.locator('#cx-panel-hooks .cx-seg').count() === 0
       && foldOpen0 === false
       && await page.locator('#cx-panel-instruction details.cx-fold #cxInstructionBudget').count() === 1
       && await page.locator('#cx-panel-instruction [data-key="__workspace__"] .cx-sw').count() === 1
       && await page.locator('#cx-panel-skill [data-key="__workspace__"] .cx-sw').count() === 1
       && await page.locator('#cx-panel-instruction .cx-legend.names').count() >= 1,
-      '段 2: 指示・Skills は担当 2 択無し（Hooks のみ維持）、量の目安は初期折りたたみ、作業場所 summaryRow・凡例を表示',
+      '段 2・3: 指示・Skills・Hooks に担当 2 択が無く、量の目安は初期折りたたみ、作業場所 summaryRow・凡例を表示',
     );
     const instTotal = await page.locator('#cx-panel-instruction .cx-sec > .cx-doc-total').textContent();
     check(/^約 [\d,]+ トークン$/.test(instTotal ?? ''), '「エージェントの設定」の見出しの右に、渡っているファイルの指示の量の合計を出す（モックどおり）', instTotal);
@@ -513,13 +513,17 @@ try {
       els.map(e => ({ id: e.dataset.tab, cnt: e.querySelector('.c')?.textContent })));
     check(scxTabs.map(x => x.id).join(',') === 'instruction,skill,mcp,hooks' && Number(scxTabs[0].cnt) >= 10 && Number(scxTabs[1].cnt) >= 9,
       '右パネル「この場所だけ変える」に入ると 4 タブ・件数が出る', scxTabs);
+    // Hooks の表（hooks.matrix の cwd つき）は遅れて届く
+    await page.waitForFunction(() => document.querySelector('#scx-panel-hooks [data-row] .cx-sw'), null, { timeout: 15000 }).catch(() => {});
     check(
       await page.locator('#scx-panel-instruction .cx-seg, #scx-panel-skill .cx-seg').count() === 0
       && await page.locator('#scx-panel-instruction .cx-ags, #scx-panel-skill .cx-ags').count() === 0
-      && await page.locator('#scx-panel-hooks .cx-seg').count() === 1
+      && await page.locator('#scx-panel-hooks .cx-seg, #scx-panel-hooks .cx-ags').count() === 0
+      && await page.locator('#scx-panel-hooks [data-row] .cx-sw').count() === 1
       && await page.locator('#scx-panel-instruction .cx-row', { hasText: 'CLAUDE.md' }).first().locator('.cx-sw').count() === 1
       && await page.locator('#scx-panel-instruction .cx-row', { hasText: 'AGENTS.md' }).first().locator('.cx-sw').count() === 1,
-      '右パネル編集: 指示・Skills には担当 2 択とエージェント列を出さず、利用者 CLAUDE.md と作業場所 AGENTS.md の行スイッチを出し、Hooks は保つ',
+      '右パネル編集: 指示・Skills・Hooks には担当 2 択とエージェント列を出さず、利用者 CLAUDE.md・作業場所 AGENTS.md・利用者の Hook の行スイッチを出す',
+      await page.locator('#scx-panel-hooks').textContent(),
     );
     const scxTok = await page.locator('#scx-panel-instruction .cx-row', { hasText: 'AGENTS.md' }).first().locator('.cx-tok').textContent().catch(() => null);
     check(/^約 [\d,]+$/.test(scxTok ?? '') && await page.locator('#scx-panel-skill .cx-tok').count() === 0,

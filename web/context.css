@@ -394,18 +394,10 @@ details.scx-ply>summary:hover .n{color:var(--ink-blue)}
 .hk-card .cx-opt:disabled{cursor:not-allowed;opacity:.6}
 .hk-card .cx-opt:disabled:hover{background:transparent;color:var(--ink-weak)}
 /* 件数と並べ方の札 */
-.hk-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 8px}
 /* イベントの見出し（一覧の中の区切り）。弱い小さな字に、イベント名の等幅 */
-.hk-ev{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:10px 8px 2px;font-size:var(--fs-xs);color:var(--ink-weak)}
-.hk-ev:first-child{padding-top:4px}
-.hk-ev b{font-size:var(--fs-s);font-weight:600;color:var(--ink)}
 .hk-cmd{font-family:var(--font-mono);font-size:var(--fs-s);overflow-wrap:anywhere}
 .cx-row .p.hk-cmd{font-size:var(--fs-xs)}
 .hk-state{flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
-.hk-cols .cx-list{padding:0;background:transparent}
-.hk-cols .cx-col>b{display:flex;align-items:center;gap:4px}
-.hk-cols .cx-row{flex-wrap:wrap}
-.hk-cols .hk-state{width:100%;text-align:right}
 .hk-peek .hk-toggle{justify-content:space-between}
 /* 追加・編集のシート */
 .hk-sheet{width:min(560px,calc(100vw - 24px))}
@@ -443,23 +435,12 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .hk-target .row-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;min-width:0}
 .hk-target .row-line .cx-path{overflow-wrap:anywhere}
 .hk-confirm>.hk-check{align-self:flex-start;border-radius:var(--r-m)}
-/* 他のエージェントへ写す前の確認（写す先ごとの面） */
-.hk-src{gap:6px;background:var(--surface-1)}
-.hk-src .cx-mono{overflow-wrap:anywhere}
-.hk-copyrows{display:flex;flex-direction:column;gap:10px}
-.hk-copyhead{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0}
-.hk-copyhead>b{flex:1 1 auto;min-width:0;color:var(--ink)}
-.hk-copyhead .hk-state{margin-left:auto}
-.hk-copyrow .fm{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s);font-size:var(--fs-s)}
-.hk-copyrow .fm .k{color:var(--ink-weak)}
-.hk-copyrow .fm .v{overflow-wrap:anywhere;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink)}
-.hk-reasons,.hk-warns ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px;font-size:var(--fs-s);line-height:1.6}
-.hk-warns{display:flex;flex-direction:column;gap:4px;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s);color:var(--ink-weak)}
-.hk-warns b{font-size:var(--fs-s);color:var(--ink)}
+/* ほかのエージェントへ初めて広げる確認（web/hooks-matrix.mjs）: 問いの下に渡すときの注意を並べ、ボタンは次の段の右 */
+.cx-ask.has-warns .q{flex-basis:100%}
+.cx-ask .hk-warns{flex:1 1 100%;margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px;color:var(--ink-weak);font-weight:400;line-height:1.6}
 .hk-redo{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px 8px}
 .hk-redo .hk-label{flex:1 1 180px;font-size:var(--fs-s)}
 .hk-redo .hk-input{background:var(--surface-paper)}
-.hk-copywhere{overflow-wrap:anywhere}
 
 /* ---- 狭い画面。2 列を縦に積む ---- */
 @media (max-width:760px){
@@ -478,23 +459,10 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
   .hk-pair,.hk-maprow{grid-template-columns:minmax(0,1fr)}
   .hk-maprow{gap:2px}
 }
-/* Pleiad がそろえる（ADR 0049）: 切り替えの確認・登録の一覧・右パネル */
-.hk-unify .hk-warn{margin:0}
-.hk-unify>.cx-sub,.hk-unify>.cx-note{margin:0}
-.hk-unify-sec>summary{color:var(--ink);font-weight:600}
-.hk-unify-sec .cx-list{margin-top:6px}
-.hk-unify-row{flex-wrap:wrap}
-.hk-unify-row .t{flex:1 1 220px;min-width:0}
-.hk-unify-row>.hk-state{max-width:100%;text-align:right}
-.hk-import{display:inline-flex;align-items:center;gap:8px;margin-left:auto}
-.hk-unify-reg{display:flex;flex-direction:column;gap:8px;margin-top:6px}
-.hk-unify-reg .fm,.hk-how{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;font-size:var(--fs-s)}
-.hk-unify-reg .fm{padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s)}
-.hk-unify-reg .fm .k,.hk-how .k{color:var(--ink-weak)}
-.hk-unify-reg .fm .v,.hk-how .v{overflow-wrap:anywhere;color:var(--ink)}
-.hk-unify-reg .hk-cmd{font-size:var(--fs-xs)}
-.hk-stopped>summary{color:var(--ink)}
-.hk-stopped .cx-list{margin-top:6px}
+/* Pleiad の登録の詳細（渡し方の表） */
+.hk-how{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;font-size:var(--fs-s)}
+.hk-how .k{color:var(--ink-weak)}
+.hk-how .v{overflow-wrap:anywhere;color:var(--ink)}
 .hk-ask{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .hk-ask .cx-sub{flex:1 1 180px}
 
@@ -512,6 +480,8 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .scx-state .run svg{animation-duration:1.2s}
 /* ---- 外部 MCP の一覧（名前 × エージェント。ADR 0327） ---- */
 .cx-ags{flex:none;display:grid;grid-template-columns:repeat(6,28px);gap:4px}
+/* 押せるマスが無い行（.empty）も同じ幅にして、行のスイッチの列をそろえる（style.css の汎用の .empty の余白を打ち消す） */
+.cx-ags.empty{padding:0}
 .cx-ag{position:relative;display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:var(--r-s);background:transparent;cursor:pointer;
   transition:background-color var(--dur-fast) var(--ease-out)}
 .cx-ag .mk{display:block;width:16px;height:16px;fill:currentColor;color:var(--ink)}

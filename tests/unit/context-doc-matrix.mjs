@@ -99,6 +99,46 @@ export default async function (t) {
   t.ok('Devin ユーザー自身のパス: Devin=own ロック ON、.agents/skills はロック',
     dvRow.cells.devin.locked && dvRow.cells.devin.reason === 'own' && dvRow.cells.devin.on);
 
+  // ---- 段 2 のレビュー S2: Pleiad が Devin へ Hook を渡す場所では Devin の取り込みが止まる。取り込む物は鍵つきのオフ、自分の物は鍵つきのオン
+  const mStopped = buildDocMatrix({
+    kind: 'instruction',
+    entries: [userClaude, userCodex, userGemini, userDevin, wsClaude, wsAgents],
+    legacyConfig: nativeRaw,
+    docAgentsConfig: emptyDocAgentsConfig(),
+    cwd: repo,
+    home,
+    devinImportsStopped: true,
+  });
+  const stClaude = mStopped.byKey.get(docItemKey(userClaude));
+  t.ok('取り込みが止まる場所: Claude の指示の Devin は devinHooks の鍵つきでオフ、ほかのエージェントは変わらない',
+    stClaude.cells.devin.locked && !stClaude.cells.devin.on && stClaude.cells.devin.reason === 'devinHooks'
+    && stClaude.cells.claude.on && !stClaude.cells.claude.locked && stClaude.cells.grok.reason === 'own');
+  t.ok('取り込みが止まる場所: 作業場所のまとめの Devin も devinHooks の鍵つきでオフ',
+    mStopped.summaryRow.cells.devin.locked && !mStopped.summaryRow.cells.devin.on && mStopped.summaryRow.cells.devin.reason === 'devinHooks');
+  t.ok('取り込みが止まる場所でも、Devin 自身の置き場の指示は own の鍵つきでオン（read_config_from に関わらず読む）',
+    mStopped.byKey.get(docItemKey(userDevin)).cells.devin.on && mStopped.byKey.get(docItemKey(userDevin)).cells.devin.reason === 'own');
+  const resStopped = resolveDocForAgent({
+    kind: 'instruction', agent: 'devin',
+    entries: [userClaude, userCodex, userDevin, wsClaude, wsAgents],
+    legacyConfig: nativeRaw, docAgentsConfig: emptyDocAgentsConfig(), cwd: repo, home, devinImportsStopped: true,
+  });
+  t.ok('取り込みが止まる場所の Devin のターン: 鍵つきのオフの物は読んだことにも渡したことにもしない（自分の物だけ使う）',
+    !resStopped.active.some((a) => a.entry.path === userClaude.path)
+    && !resStopped.deliver.some((e) => e.path === userClaude.path)
+    && resStopped.active.some((a) => a.entry.path === userDevin.path));
+  const mStoppedPly = buildDocMatrix({
+    kind: 'instruction',
+    entries: [userClaude, userCodex, userDevin, wsClaude, wsAgents],
+    legacyConfig: plyDefaultsRaw,
+    docAgentsConfig: emptyDocAgentsConfig(),
+    cwd: repo,
+    home,
+    devinImportsStopped: true,
+  });
+  t.ok('旧「そろえる」の指示の場所（legacyOwner: ply）は、取り込みが止まっても Pleiad が渡すので Devin のマスは bundled のまま',
+    mStoppedPly.legacyOwner === 'ply' && mStoppedPly.byKey.get(docItemKey(userClaude)).cells.devin.reason === 'bundled'
+    && mStoppedPly.byKey.get(docItemKey(userClaude)).cells.devin.on);
+
   // ---- 同名 Skill の prefer 優先と重なり
   const dupClaude = mkSkill('build', path.join(repo, '.claude', 'skills', 'build', 'SKILL.md'), 'claude', 'directory', 'shadowed');
   const dupAgents = mkSkill('build', path.join(repo, '.agents', 'skills', 'build', 'SKILL.md'), 'common', 'directory', 'candidate');

@@ -70,8 +70,8 @@ export function matrixButton(cls, text) {
 }
 
 /** 鍵つきで押せないエージェントアイコン（MCP・指示・Skills・Pleiad の指示・テストで共通） */
-export function lockedAgentChip(agent, cell, name, { ariaLabel, key, keyAttr = 'fk' } = {}) {
-  const short = agentShortLabel(agent, agent);
+export function lockedAgentChip(agent, cell, name, { ariaLabel, key, keyAttr = 'fk', agentLabel = null } = {}) {
+  const short = agentLabel ?? agentShortLabel(agent, agent);
   const on = cell.on !== undefined ? Boolean(cell.on) : cell.state === 'on';
   const b = matrixButton(`cx-ag be-${agent}`);
   b.setAttribute('aria-pressed', String(on));

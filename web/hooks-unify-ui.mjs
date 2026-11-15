@@ -1,14 +1,11 @@
-// ==================== Hooks を「Pleiad がそろえる」の画面（ADR 0049） ====================
-// docs/design-system.md「Hooks」の「Pleiad がそろえる」。
-//   - 切り替えの確認（unifyConfirmPanel）: 担当を変える前にその場で出す面（ADR 0031 に倣う。モーダルは使わない）。
-//     止まるネイティブの hooks（行ごとに「Pleiad に取り込む」）、動き続けるもの、Pleiad の登録として動くもの、エージェントごとに渡せないもの。
-//     戻すときは再開するネイティブの hooks を見せる。決めると担当と取り込みを 1 回で保存する（setHooksOwner）
-//   - Pleiad の登録の一覧（plyRegistryTier）と追加・編集のシート（openPlyHookSheet）。登録は <data>/hooks.json で、エージェントの設定ファイルは書かない
+// ==================== Pleiad の Hook の登録の部品と、会話の右パネルの記録（ADR 0049・0338） ====================
+// docs/design-system.md「Hooks」。設定 › プラグイン › Hooks の表（web/hooks-matrix.mjs）が使う部品:
+//   - 渡せない理由（reasonText）・渡し方の 1 行（deliveryText）。文は hooks.reason.*・hooks.warn.*（「写す」でなく「渡す・実行する」の言い方）
+//   - Pleiad の登録の詳細（plyPeek）と追加・編集のシート（openPlyHookSheet）。登録は <data>/hooks.json で、エージェントの設定ファイルは書かない
 //   - 会話の右パネルの面（unifySessionBox）: 渡した hooks・止めたネイティブ・渡せなかったもの・漏れ
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { runMark } from './arc.mjs';
-import { HOOK_AGENTS, UNIFY_TARGETS, agentLabel, eventLabel, scopeLabel } from './hooks-card.mjs';
+import { HOOK_AGENTS, UNIFY_TARGETS, agentLabel, eventLabel } from './hooks-card.mjs';
 
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']);
 function button(text, className = 'btn', onClick) {
@@ -17,24 +14,19 @@ function button(text, className = 'btn', onClick) {
   if (onClick) b.onclick = onClick;
   return b;
 }
-const badge = text => el('span', 'cbadge', text);
-function sw(on, label, onClick, disabled = false) {
-  const b = button('', 'cx-sw', onClick);
-  b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', String(on)); b.setAttribute('aria-label', label);
-  b.disabled = disabled;
-  return b;
-}
-// i18n-dynamic: hooks.copy.reason.
-// i18n-dynamic: hooks.unify.reason.
-/** 渡せない理由の文。第 2 段の理由（hooks.copy.reason.*）に無いものは hooks.unify.reason.* */
+// i18n-dynamic: hooks.reason.
+/** 渡せない理由の文（hooks.reason.*）。知らないコードはコードのまま */
 export function reasonText(r) {
-  const own = `hooks.unify.reason.${r.code}`, s = t(own, r.params ?? {});
-  if (s !== own) return s;
-  const copy = `hooks.copy.reason.${r.code}`, c = t(copy, r.params ?? {});
-  return c === copy ? r.code : c;
+  const k = `hooks.reason.${r.code}`, s = t(k, r.params ?? {});
+  return s === k ? r.code : s;
 }
-// i18n-dynamic: hooks.unify.importWhy.
-const importWhy = code => { const k = `hooks.unify.importWhy.${code}`, s = t(k); return s === k ? code : s; };
+// i18n-dynamic: hooks.warn.
+/** 渡すときの注意の文（hooks.warn.*）。知らないコードは「動きが少し違う」とコードを添える */
+export function warnText(w) {
+  const k = `hooks.warn.${w.code}`, s = t(k, w.params ?? {});
+  return s === k ? t('hooks.warn.other', { code: w.code }) : s;
+}
+
 // i18n-dynamic: hooks.unify.via.
 /** その登録をエージェントへどう渡すか（1 行） */
 export function deliveryText(agent, d) {
@@ -44,281 +36,15 @@ export function deliveryText(agent, d) {
   return d.adapter ? t('hooks.unify.viaAdapter', { via }) : via;
 }
 const rowTitle = r => r.name ?? r.command ?? r.event;
-function nativeLine(r) {
-  const bits = [agentLabel(r.agent), r.plugin ? t('hooks.unify.pluginName', { name: r.plugin }) : scopeLabel(r), `${eventLabel(r.event)} · ${r.event}`];
-  if (r.matcher) bits.push(t('hooks.row.matcher', { matcher: r.matcher }));
-  return bits.join(' · ');
-}
 
 // ---------------------------------------------------------------- 画面の小さな決まり（テストで確かめる）
 /** 登録のシートの matcher の上書き: 保存済みの値から始め、渡さない先・コマンドの形と同じエージェントの分だけ外す */
 export const initialOverrides = hook => ({ ...(hook?.matchers ?? {}) });
 export const sheetMatchers = ({ overrides, agent, targets }) =>
   Object.fromEntries(Object.entries(overrides).filter(([a, v]) => v && a !== agent && targets.includes(a)));
-/**
- * 右パネルの「Hooks を全体の設定に戻す」: 上書きを外したときの担当（view.place.inherited、無ければ既定）が今と違えば確認を通す。
- * 戻り: { confirm: 'ply' | 'native' }（切り替えと同じ確認）| { direct: true }（担当は変わらない）
- */
-export function resetPlan(view) {
-  const now = view?.place?.value?.owner ?? view?.defaults?.value?.owner ?? 'native';
-  const up = (view?.place?.inherited?.value ?? view?.defaults?.value)?.owner ?? 'native';
-  return up !== now ? { confirm: up } : { direct: true };
-}
-/** 取り込む行を足し引きしたら、確認のチェックを戻す（確認した対象と違うものを保存しない） */
-export function pickChange(state, row) {
-  const picked = new Map(state.picked);
-  if (picked.has(row.id)) picked.delete(row.id); else picked.set(row.id, row.digest);
-  return { picked, ack: false };
-}
 
-// ---------------------------------------------------------------- 切り替えの確認
-/**
- * direction: 'ply'（そろえる）| 'native'（エージェントに任せるへ戻す）。cwd があればその場所の上書きとして保存する（右パネルの「この場所だけ変える」）。
- * reset: 場所の上書きを外して上の設定に戻す（担当が変わるときも、この確認を通す。保存は value: null）。
- * onDone(view) は保存した後の担当と登録の形、onCancel は何も保存しない。
- * 保存には確認票（プレビューの revision と、取り込む行の digest）を付け、確認の後に登録・担当・元の定義が変わっていれば保存されない
- */
-export function unifyConfirmPanel({ cmd, cwd = null, direction, reset = false, short = p => p, onDone, onCancel }) {
-  const box = el('div', 'cx-confirm hk-unify');
-  box.setAttribute('role', 'group');
-  const q = el('p', 'q', direction === 'ply' ? t('hooks.unify.question') : t('hooks.unify.returnQuestion'));
-  q.id = `hkUnify${Math.random().toString(36).slice(2, 8)}`;
-  box.setAttribute('aria-labelledby', q.id);
-  const loading = el('p', 'cx-sub');
-  loading.append(runMark(t('hooks.unify.loading')), ` ${t('hooks.unify.loading')}`);
-  box.append(q, loading);
-  const picked = new Map();   // 行の id -> digest（確認票）
-  const switches = [];
-  let data = null, busy = false;
-  const status = el('p', 'mcp-error'); status.setAttribute('role', 'alert');
-  const ackLabel = el('label', 'hk-check'), ack = el('input'); ack.type = 'checkbox';
-  ackLabel.append(ack, document.createTextNode(direction === 'ply' ? t('hooks.unify.ack') : t('hooks.unify.ackReturn')));
-  const ok = button('', 'btn btn-primary');
-  const cancel = button(t('mcp.cancel'), 'btn', () => onCancel());
-  const paintOk = () => {
-    ok.textContent = direction === 'ply' ? (picked.size ? t('hooks.unify.confirmImport', { n: picked.size }) : t('hooks.unify.confirm')) : t('hooks.unify.confirmReturn');
-    ok.disabled = busy || !data || !ack.checked;
-    // 保存の間は対象と取り消しを変えられない（見えている取り込み対象と送った対象を食い違わせない）
-    cancel.disabled = busy; ack.disabled = busy;
-    for (const s of switches) s.disabled = busy;
-  };
-  ack.onchange = paintOk;
-  ok.onclick = async () => {
-    busy = true; paintOk(); status.textContent = '';
-    try {
-      const view = await cmd('setHooksOwner', { place: cwd, cwd, value: reset ? null : { owner: direction, disabled: data.owner?.disabled ?? [] },
-        revision: data.revision, imports: direction === 'ply' ? [...picked].map(([id, digest]) => ({ id, digest })) : [] });
-      onDone(view);
-    } catch (e) { busy = false; status.textContent = e.message; paintOk(); }
-  };
-  const acts = el('div', 'acts');
-  acts.append(cancel, ok);
-  paintOk();
-
-  const section = (title, count, open = true) => {
-    const d = el('details', 'cx-fold hk-unify-sec');
-    d.open = open;
-    d.append(el('summary', null, t('hooks.unify.section', { title, n: count })));
-    return d;
-  };
-  cmd('hooksUnifyPreview', { cwd, direction }).then(r => {
-    data = r;
-    loading.remove();
-    const warn = el('p', 'cx-strong hk-warn', direction === 'ply' ? t('hooks.unify.warn') : t('hooks.unify.returnWarn'));
-    const lead = el('p', 'cx-sub', reset ? t('hooks.unify.resetLead') : direction === 'ply' ? (cwd ? t('hooks.unify.leadPlace') : t('hooks.unify.leadUser')) : t('hooks.unify.returnLead'));
-    box.append(warn, lead);
-    // この組み合わせ・この状態では、そろえた会話を始めない（その理由を先に出す）
-    if (direction === 'ply' && r.agySkillsConflict) box.append(el('p', 'cx-strong hk-warn', t('hooks.unify.agySkillsConflict')));
-    if (direction === 'ply' && r.incomplete?.includes('antigravity')) box.append(el('p', 'cx-strong hk-warn', t('hooks.unify.agyIncomplete')));
-    for (const f of r.files ?? []) box.append(el('p', 'cx-note', t(f.partial ? 'hooks.unify.filePartial' : 'hooks.unify.fileError', { agent: agentLabel(f.agent), path: short(f.path), error: f.error ?? '' })));
-    // i18n-dynamic: hooks.unify.import
-    // i18n-dynamic: hooks.unify.file
-    /** 取り込みのスイッチ。変えたら確認のチェックを戻す（確認した対象と違うものを保存しない） */
-    const importSwitch = (s, label) => {
-      const toggle = sw(false, t(label, { name: rowTitle(s) }), () => {
-        const next = pickChange({ picked, ack: ack.checked }, s);
-        picked.clear(); for (const [k, v] of next.picked) picked.set(k, v);
-        toggle.setAttribute('aria-checked', String(picked.has(s.id)));
-        ack.checked = next.ack;
-        paintOk(); paintRegistry();
-      });
-      switches.push(toggle);
-      const wrap = el('span', 'hk-import');
-      wrap.append(el('span', 'hk-state', label === 'hooks.unify.importOffSwitch' ? t('hooks.unify.importOff') : t('hooks.unify.import')), toggle);
-      return wrap;
-    };
-    const rowOf = (s, { inactive = false } = {}) => {
-      const row = el('div', 'cx-row hk-unify-row');
-      const body = el('span', 't');
-      body.append(el('span', 'nm hk-cmd', rowTitle(s)), el('span', 'p', nativeLine(s)));
-      if (s.name && s.command) body.append(el('span', 'p hk-cmd', s.command));
-      if (s.unverified) body.append(el('span', 'p', t('hooks.unify.skillUnverified')));
-      if (inactive) body.append(el('span', 'p', inactiveText(s)));
-      row.append(body);
-      if (direction === 'ply') row.append(s.importable ? importSwitch(s, inactive ? 'hooks.unify.importOffSwitch' : 'hooks.unify.importSwitch') : el('span', 'hk-state', s.reasons.map(importWhy).join(' ')));
-      return row;
-    };
-    // 止まる（戻すときは再開する）ネイティブの hooks
-    const stops = section(direction === 'ply' ? t('hooks.unify.stops') : t('hooks.unify.resumes'), r.stops.length);
-    const list = el('div', 'cx-list');
-    for (const s of r.stops) list.append(rowOf(s));
-    if (!r.stops.length) list.append(el('p', 'cx-empty', direction === 'ply' ? t('hooks.unify.noStops') : t('hooks.unify.noResumes')));
-    stops.append(list);
-    if (direction === 'ply') stops.append(el('p', 'cx-sub', t('hooks.unify.importNote')));
-    box.append(stops);
-    // 元の設定で動いていないもの（止めても戻しても変わらない。取り込むならオフで）
-    if (r.inactive?.length) {
-      const sec = section(t('hooks.unify.inactive'), r.inactive.length, direction === 'ply');
-      const il = el('div', 'cx-list');
-      for (const s of r.inactive) il.append(rowOf(s, { inactive: true }));
-      sec.append(il, el('p', 'cx-sub', direction === 'ply' ? t('hooks.unify.inactiveNote') : t('hooks.unify.inactiveReturnNote')));
-      box.append(sec);
-    }
-    // 動き続けるもの（止め方の無い出どころ）
-    if (r.keeps.length) {
-      const keeps = section(t('hooks.unify.keeps'), r.keeps.length, false);
-      const kl = el('div', 'cx-list');
-      for (const k of r.keeps) { const row = el('div', 'cx-row'); const b = el('span', 't'); b.append(el('span', 'nm hk-cmd', rowTitle(k)), el('span', 'p', nativeLine(k))); row.append(b); kl.append(row); }
-      keeps.append(kl, el('p', 'cx-sub', t('hooks.unify.keepsNote')));
-      box.append(keeps);
-    }
-    // Pleiad の登録として動くもの（戻すときは渡さなくなるもの）と、エージェントごとの渡し方
-    const reg = section(direction === 'ply' ? t('hooks.unify.registry') : t('hooks.unify.registryStops'), r.registry.filter(h => h.enabled).length);
-    const regList = el('div', 'hk-unify-reg');
-    reg.append(regList);
-    box.append(reg);
-    function paintRegistry() {
-      regList.replaceChildren();
-      const chosen = [...r.stops, ...(r.inactive ?? [])].filter(s => picked.has(s.id));
-      const rows = [...r.registry.filter(h => h.enabled && !h.disabledHere).map(h => ({ ...h, imported: false })),
-        ...(direction === 'ply' ? chosen.filter(s => !s.wasOff).map(s => ({ name: rowTitle(s), agent: s.agent, event: s.event, matcher: s.matcher, command: s.command, imported: true,
-          targets: Object.fromEntries(HOOK_AGENTS.map(([a]) => [a, a === s.agent ? { status: s.agent === 'claude' && ['SessionStart', 'Setup'].includes(s.event) ? 'blocked' : 'ok',
-            reasons: s.agent === 'claude' && ['SessionStart', 'Setup'].includes(s.event) ? [{ code: 'claudeCallback', params: { event: s.event } }] : [], adapter: a === 'antigravity' } : null])) })) : [])];
-      for (const h of rows) {
-        const card = el('div', 'hk-target');
-        const head = el('div', 'row-line');
-        head.append(el('b', null, h.name), badge(t('hooks.unify.form', { agent: agentLabel(h.agent) })), ...(h.imported ? [badge(t('hooks.unify.importing'))] : []));
-        card.append(head, el('span', 'cx-sub', `${eventLabel(h.event)} · ${h.event}${h.matcher ? ` · ${t('hooks.row.matcher', { matcher: h.matcher })}` : ''}`), el('span', 'cx-mono hk-cmd', h.command ?? ''));
-        const facts = el('div', 'fm facts');
-        for (const [a, label] of UNIFY_TARGETS) { const d = h.targets?.[a]; if (!d) continue; facts.append(el('span', 'k', label), el('span', 'v' + (d.status === 'ok' ? '' : ' cx-strong'), deliveryText(a, d))); }
-        card.append(facts);
-        regList.append(card);
-      }
-      if (!rows.length) regList.append(el('p', 'cx-empty', direction === 'ply' ? t('hooks.unify.noRegistry') : t('hooks.unify.noRegistryStops')));
-      reg.querySelector('summary').textContent = t('hooks.unify.section', { title: direction === 'ply' ? t('hooks.unify.registry') : t('hooks.unify.registryStops'), n: rows.length });
-    }
-    paintRegistry();
-    // エージェントごとに渡せないもの・止められないもの（報告の制約）
-    // i18n-dynamic: hooks.unify.limit.
-    const keys = ['claudeSessionStart', 'claudeManaged', 'codexPlugins', 'afterStart', 'agySkills', 'agyNames'];
-    const limits = section(t('hooks.unify.limits'), keys.length, direction === 'ply');
-    const ul = el('ul', 'hk-reasons');
-    for (const k of keys) ul.append(el('li', null, t(`hooks.unify.limit.${k}`)));
-    limits.append(ul);
-    if (direction === 'ply') box.append(limits);
-    box.append(ackLabel, status, acts);
-    paintOk();
-  }).catch(e => { loading.replaceChildren(el('span', 'mcp-error', t('hooks.unify.previewFailed', { error: e.message }))); box.append(acts); });
-  return box;
-}
-/** 元の設定で動いていない理由（agy の enabled:false・同じ名前で停止、Codex の /hooks で停止・未審査・変更あり） */
-function inactiveText(s) {
-  if (s.agent === 'antigravity') return s.stoppedBySameName ? t('hooks.state.agySame') : t('hooks.state.agyOff');
-  if (s.trust && s.trust.enabled === false) return t('hooks.trust.off');
-  // i18n-dynamic: hooks.trust.
-  return s.trust?.status ? t(`hooks.trust.${s.trust.status}`) : '';
-}
-
-// ---------------------------------------------------------------- hooks.json が壊れているとき
-/**
- * 壊れた部分（読めない登録・担当・重複）や、ファイルが丸ごと読めないことを知らせ、直す操作を出す（ADR 0049）。
- * 壊れている間、担当が Pleiad の（または担当が分からない）場所のそろえた会話は始まらず、上書き保存もしない。
- * 「壊れた部分を外して保存し直す」は元のファイルを退避し、読めた部分だけで書き直す（担当を読めなかった場所はエージェント任せになる）
- */
-export function brokenNotice(view, { cmd, onRepaired }) {
-  if (!view?.unreadable && !view?.problems?.length) return null;
-  const box = el('div', 'scx-notice hk-broken');
-  box.setAttribute('role', 'status');
-  box.append(el('p', 'cx-strong', view.unreadable ? t('hooks.unify.unreadable') : t('hooks.unify.problems', { n: view.problems.length })));
-  // i18n-dynamic: hooks.unify.problem.
-  if (!view.unreadable) {
-    const ul = el('ul', 'hk-reasons');
-    for (const p of view.problems.slice(0, 6)) ul.append(el('li', null, t(`hooks.unify.problem.${p.kind}`, { name: p.name ?? p.id ?? `#${(p.index ?? 0) + 1}`, place: p.place ?? '' })));
-    box.append(ul);
-  }
-  box.append(el('p', 'cx-sub', t('hooks.unify.brokenEffect')));
-  const acts = el('div', 'acts');
-  const fix = button(t('hooks.unify.repair'), 'btn', () => {
-    const ask = el('div', 'acts hk-ask');
-    const go = button(t('hooks.unify.repairGo'), 'btn btn-primary', async () => {
-      go.disabled = true;
-      try { onRepaired(await cmd('repairPlyHooks', {})); } catch (e) { go.disabled = false; ask.append(el('p', 'mcp-error', e.message)); }
-    });
-    ask.append(el('span', 'cx-sub', t('hooks.unify.repairConfirm')), button(t('mcp.cancel'), 'btn', () => ask.replaceWith(acts)), go);
-    acts.replaceWith(ask);
-    go.focus();
-  });
-  acts.append(fix);
-  box.append(acts);
-  return box;
-}
-
-// ---------------------------------------------------------------- Pleiad の登録の一覧（担当が Pleiad のとき。モック ①）
-/**
- * view: plyHooks の戻り、stopped: 止めているネイティブの行（設定の画面はユーザーの範囲）。onChanged(view) で描き直す
- */
-export function plyRegistryTier({ cmd, view, stopped = [], opened, short = p => p, onChanged, work }) {
-  const tier = el('div', 'cx-tier');
-  const th = el('div', 'cx-tierh');
-  th.append(el('span', 'n', t('hooks.unify.registryTier')), el('span', null, t('hooks.unify.registryTierSub')));
-  tier.append(th);
-  const list = el('div', 'cx-list');
-  list.setAttribute('role', 'group'); list.setAttribute('aria-label', t('hooks.unify.registryAria'));
-  const hooks = [...(view?.hooks ?? [])].sort((a, b) => a.event.localeCompare(b.event));
-  let lastEvent = null;
-  for (const h of hooks) {
-    if (h.event !== lastEvent) {
-      lastEvent = h.event;
-      const head = el('div', 'hk-ev');
-      head.append(el('b', null, eventLabel(h.event)), el('span', 'cx-mono', h.event));
-      list.append(head);
-    }
-    const r = el('div', 'cx-row' + (h.enabled ? '' : ' off'));
-    r.dataset.plyHook = h.id;
-    const open = button('', 'cx-open');
-    const key = `plyhook:${h.id}`;
-    open.setAttribute('aria-expanded', String(opened.has(key)));
-    const body = el('span', 't');
-    const nm = el('span', 'nm');
-    nm.append(el('span', null, h.name), ...h.targets.map(a => badge(agentLabel(a))));
-    body.append(nm, el('span', 'p', [t('hooks.unify.form', { agent: agentLabel(h.agent) }), h.matcher ? t('hooks.row.matcher', { matcher: h.matcher }) : null,
-      h.importedFrom ? t('hooks.unify.importedFrom', { agent: agentLabel(h.importedFrom.agent), scope: t(`hooks.scope.${h.importedFrom.scope}`) }) : null].filter(Boolean).join(' · ')), el('span', 'p hk-cmd', h.command));
-    open.append(body);
-    open.onclick = () => { if (opened.has(key)) opened.delete(key); else opened.add(key); onChanged(view); };
-    const toggle = sw(h.enabled, t('hooks.unify.toggleAria', { name: h.name }), () => work(async () => {
-      toggle.disabled = true;
-      onChanged(await cmd('togglePlyHook', { id: h.id, enabled: !h.enabled }), true);
-    }));
-    r.append(open, toggle);
-    list.append(r);
-    if (opened.has(key)) list.append(plyPeek(h, { cmd, onChanged, work }));
-  }
-  if (!hooks.length) list.append(el('p', 'cx-empty', t('hooks.unify.registryEmpty')));
-  tier.append(list);
-  const add = button('', 'cx-add', () => openPlyHookSheet({ cmd, onSaved: v => onChanged(v, true) }));
-  add.append(document.createTextNode(`＋ ${t('hooks.add')}`));
-  tier.append(add, el('p', 'cx-sub', t('hooks.unify.registryFoot')));
-  // 止めているネイティブの hooks（件数と中身。モック ①）
-  const d = el('details', 'cx-fold hk-stopped');
-  d.append(el('summary', null, t('hooks.unify.stoppedNative', { n: stopped.length })));
-  const sl = el('div', 'cx-list');
-  for (const s of stopped) { const row = el('div', 'cx-row'); const b = el('span', 't'); b.append(el('span', 'nm hk-cmd', rowTitle(s)), el('span', 'p', nativeLine(s))); row.append(b); sl.append(row); }
-  if (!stopped.length) sl.append(el('p', 'cx-empty', t('hooks.unify.noStops')));
-  d.append(sl, el('p', 'cx-sub', t('hooks.unify.stoppedNote')));
-  tier.append(d);
-  return tier;
-}
-function plyPeek(h, { cmd, onChanged, work }) {
+/** Pleiad の登録の詳細（行を開いたとき）。onChanged(view, true) は編集・削除の後 */
+export function plyPeek(h, { cmd, onChanged, work }) {
   const box = el('div', 'cx-peek hk-peek');
   const facts = el('div', 'fm facts');
   const put = (k, v) => { if (v !== null && v !== undefined && v !== '') facts.append(el('span', 'k', k), el('span', 'v', String(v))); };
@@ -399,7 +125,7 @@ export async function openPlyHookSheet({ cmd, hook = null, onSaved }) {
     overrideBox.append(el('span', 'hk-label', t('hooks.unify.matcherOverrides')));
     for (const a of others) {
       const i = input(overrides[a] ?? '', t('hooks.unify.matcherAuto'), true);
-      i.setAttribute('aria-label', t('hooks.copy.matcher', { agent: agentLabel(a) }));
+      i.setAttribute('aria-label', t('hooks.unify.matcherFor', { agent: agentLabel(a) }));
       i.oninput = () => { overrides[a] = i.value.trim(); };
       const line = el('label', 'hk-maprow');
       line.append(el('span', null, agentLabel(a)), i);
@@ -450,12 +176,11 @@ export async function openPlyHookSheet({ cmd, hook = null, onSaved }) {
       if (d.status === 'ok' && d.matcher !== undefined && d.matcher !== null && TOOL_EVENTS.has(d.event)) card.append(el('p', 'cx-sub', t('hooks.row.matcher', { matcher: d.matcher || '*' })));
       if (d.reasons?.some(x => /^matcher/.test(x.code) || x.code === 'partialTools')) {
         const i = input(overrides[a] ?? '', a === 'antigravity' ? 'run_command' : 'Bash', true);
-        const again = button(t('hooks.copy.recheck'), 'btn', () => { overrides[a] = i.value.trim(); paintOverrides(); review(value()); });
-        const line = el('div', 'hk-redo'); const l = el('label', 'hk-label'); l.append(t('hooks.copy.matcher', { agent: label }), i); line.append(l, again);
+        const again = button(t('hooks.unify.recheck'), 'btn', () => { overrides[a] = i.value.trim(); paintOverrides(); review(value()); });
+        const line = el('div', 'hk-redo'); const l = el('label', 'hk-label'); l.append(t('hooks.unify.matcherFor', { agent: label }), i); line.append(l, again);
         card.append(line);
       }
-      // i18n-dynamic: hooks.copy.warn.
-      for (const w of d.warnings ?? []) card.append(el('p', 'mcp-note', t(`hooks.copy.warn.${w.code}`, w.params ?? {})));
+      for (const w of d.warnings ?? []) card.append(el('p', 'mcp-note', warnText(w)));
       box.append(card);
     }
     const ackLabel = el('label', 'hk-check'), ack = el('input'); ack.type = 'checkbox';

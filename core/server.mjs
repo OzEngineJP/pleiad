@@ -135,6 +135,7 @@ import { stopHeldAgy } from './backends/antigravity.mjs';
 import { sweepIdleAtStart } from './backends/antigravity-held.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
+import { createHooksAgents } from './hooks-agents.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
@@ -1121,12 +1122,17 @@ const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
 // 会話の探索（contextSession）とバックエンドが探す分（agy の注入。runArgs.scanOptions）に同じものを渡す
 const SCAN_OPTIONS = process.env.PLEIAD_SCAN_HOME ? { home: process.env.PLEIAD_SCAN_HOME } : {};
 const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOTS, plyServers: () => plyMcp.scanInput(),
-  liveRecord: id => runtime.turns.get(id)?.contextRecord ?? null, isRunning: id => runtime.turns.has(id), scanOptions: SCAN_OPTIONS });
+  liveRecord: id => runtime.turns.get(id)?.contextRecord ?? null, isRunning: id => runtime.turns.has(id), scanOptions: SCAN_OPTIONS,
+  devinImportsStopped: (cwd, agent) => hooksAgents.importsStoppedFor(agent, cwd) });
 const mcpConfig = createMcpConfig();
 // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。読むのと、利用者が明示した編集だけ
 const hooksConfig = createHooksConfig();
 // Pleiad 自身の Hooks の登録と、Hooks の担当（<data>/hooks.json。core/ply-hooks.mjs、ADR 0049）
 const plyHooks = createPlyHooks(store.dataDir);
+// Hooks × エージェント（<data>/hooks-agents.json。core/hooks-agents.mjs、ADR 0338）。在れば担当の 2 択の代わりにこれでターンの Hooks を決める
+// Codex の信頼は一覧のときだけ app-server で重ねる（ターンの直前には確かめない）
+const hooksAgents = createHooksAgents({ dataDir: store.dataDir, hooksConfig, plyHooks, findNode: findNodeOnPath,
+  codexTrust: (report, cwd, trust) => withCodexTrust(report, cwd ?? os.homedir(), { trust: trust !== false }) });
 const HOOK_LEAKS_MAX = 20;
 /**
  * 切り替えの確認の材料。cwd があればその場所（ユーザーと Git のルートから cwd まで）、無ければユーザーの範囲だけ。
@@ -5415,10 +5421,23 @@ const opsHooks = {
     }
     return plyHooks.setOwner({ place, value: args.value ?? null, add, cwd: args.cwd ?? place, expect: args.revision });
   },
-  // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）
-  repair: (cwd) => plyHooks.repair({ cwd }),
+  // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）。
+  // 読めない hooks-agents.json（Hook × エージェントの一覧。ADR 0338）は退避して移行前の動きへ戻す。そのとき hooks.json が無事なら書き直さない
+  repair: async (cwd) => {
+    const agents = await hooksAgents.repair();
+    if (agents) {
+      const v = await plyHooks.view(cwd);
+      if (!v.unreadable && !v.problems?.length) return { ...v, agentsBackup: agents.backup };
+      return { ...(await plyHooks.repair({ cwd })), agentsBackup: agents.backup };
+    }
+    return plyHooks.repair({ cwd });
+  },
   // 担当を変える前の見込み（hooks.unifyPreview。ADR 0105）
   unifyPreview: (args) => hooksUnifyPreview(args),
+  // Hook × エージェントの一覧と更新（hooks.matrix・hooks.setAgent など。ADR 0338）
+  agents: hooksAgents,
+  // Hooks を書き換えた操作の後（core/ops/hooks.mjs）。開いている画面が取り直す
+  changed: actor => settingsChanged(['hooks'], actor),
 };
 
 // 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0327）。コネクターは最後に読めた一覧を覚えておく
@@ -5447,9 +5466,9 @@ async function refuseIneffectiveLegacy(args = {}, actor = null) {
   catch { return; } // 形の誤りは保存の側（contextSettings.set）の誤りで返す
   if (key) pruneInherited(next, key);
   if (!resolveEffectiveDocSource(next, docAgents, dir, kind).touched) return;
-  const { scan, matrixCwd } = await docScanContext({ kind, cwd: dir, place: dir ?? 'default' });
+  const { scan, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd: dir, place: dir ?? 'default' });
   const shape = (legacyConfig) => {
-    const m = buildDocMatrix({ kind, entries: scan.entries, legacyConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home });
+    const m = buildDocMatrix({ kind, entries: scan.entries, legacyConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home, devinImportsStopped });
     return JSON.stringify({ owner: m.legacyOwner, summary: m.summaryRow?.cells ?? null, rows: m.rows.map((r) => [r.key, r.chosen?.path ?? null, r.cells]) });
   };
   if (shape(legacy) !== shape(next)) return;
@@ -5521,7 +5540,9 @@ async function docScanContext({ kind, cwd, place }) {
     contextAgents.read(),
   ]);
   const matrixCwd = isDefault ? null : scanDir;
-  return { scan, rawConfig, docAgents, scanDir, isDefault, matrixCwd };
+  // その場所の Devin のターンで、Pleiad が Hook を渡すため Devin の取り込みが止まるか（指示・Skills の表の Devin のマスを事実に合わせる。段 2 のレビュー S2）
+  const devinImportsStopped = await hooksAgents.devinImportsStopped(matrixCwd);
+  return { scan, rawConfig, docAgents, scanDir, isDefault, matrixCwd, devinImportsStopped };
 }
 
 /** applyDocTouch を呼び、押せない物の誤りを利用者の言葉の OpError にする */
@@ -5599,8 +5620,8 @@ const opsContext = {
   },
   docMatrix: async ({ kind, cwd, place } = {}) => {
     if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
-    const { scan, rawConfig, docAgents, matrixCwd } = await docScanContext({ kind, cwd, place });
-    const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: rawConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home });
+    const { scan, rawConfig, docAgents, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd, place });
+    const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: rawConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home, devinImportsStopped });
     // inheritedOn: この場所の上書き（表と旧い設定の両方）が無かったときの行のスイッチ。右パネルの「全体の設定で外しています」と
     // 「この場所で外しています」を行ごとに分ける（レビュー S8）。この場所に何も無ければ今の値と同じ
     const pk = matrixCwd ? pathKey(matrixCwd) : null;
@@ -5609,7 +5630,7 @@ const opsContext = {
       const agentsBase = structuredClone(docAgents), legacyBase = structuredClone(rawConfig);
       if (agentsBase.places?.[pk]) delete agentsBase.places[pk][kind];
       if (legacyBase.places?.[pk]?.kinds) delete legacyBase.places[pk].kinds[kind];
-      const base = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: legacyBase, docAgentsConfig: agentsBase, cwd: matrixCwd, home: scan.home });
+      const base = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: legacyBase, docAgentsConfig: agentsBase, cwd: matrixCwd, home: scan.home, devinImportsStopped });
       inherited = new Map(base.rows.map((r) => [r.key, r.rowSwitchOn]));
     }
     return {
@@ -5627,9 +5648,9 @@ const opsContext = {
     const list = [...new Set([...(key ? [key] : []), ...(Array.isArray(keys) ? keys : [])])];
     if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
-    const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
+    const { scan, scanDir, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
     const nextCfg = await touchDocPlace(async (cfg) => docTouch(cfg, {
-      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
+      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home, devinImportsStopped,
       place: where, placeKey: where ? pathKey(where) : null, agent, keys: list, on,
     }), where, scanDir);
     settingsChanged(['context.default'], actor);
@@ -5640,9 +5661,9 @@ const opsContext = {
     const list = [...new Set([...(Array.isArray(keys) ? keys : []), ...(key ? [key] : [])])];
     if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
-    const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
+    const { scan, scanDir, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
     const nextCfg = await touchDocPlace(async (cfg) => docTouch(cfg, {
-      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
+      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home, devinImportsStopped,
       place: where, placeKey: where ? pathKey(where) : null, keys: list, on,
     }), where, scanDir);
     settingsChanged(['context.default'], actor);
@@ -8079,7 +8100,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
   let plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-  let resolvedContext = plyContext ? await resolveRuntime(policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
+  let resolvedContext = plyContext ? await resolveRuntime(policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id,
+    devinImportsStopped: await hooksAgents.importsStoppedFor(backend.id, cwd) }) : null;
   // 名前ごとのモデルで、指示・Skills がエージェントそのまま、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
   // （ターンだけの口・中継を起こさない。ADR 0327 / ADR 0337）
   // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0336）
@@ -8117,7 +8139,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
   // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
   let hooksTurn = null;
-  try { if (backend.capabilities?.hooks) hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+  try { if (backend.capabilities?.hooks) hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, hooksAgents, dataDir: store.dataDir, findNode: findNodeOnPath,
     context: { owners: policy.owners, delivered: plyContext } } }); }
   catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
   if (hooksTurn) contextRecord.hooks = hooksTurn.record;
@@ -8985,14 +9007,16 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         syncRunningPoll();
         // Pleiad の Hooks の登録（札の hooks があるターン）。Claude は 2 回目の initialize でコールバックを渡し直す（2c）ので、今の設定で組み直す。
         // 記録（contextRecord.hooks）は札の会話の記録のまま。組めなければ渡さない（そのターンの残りで Pleiad の Hooks が動かない）
-        const hooksTurn = ctx.card.hooks && backend.capabilities?.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+        const hooksTurn = ctx.card.hooks && backend.capabilities?.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, hooksAgents, dataDir: store.dataDir, findNode: findNodeOnPath,
           context: { owners: ctx.policy?.owners ?? {}, delivered: false } } }).catch(e => { console.error(`  Hooks を組み直せない（${sessionId}）:`, String(e?.message ?? e)); return null; }) : null;
         // ply_context の口（Pleiad がコンテキストを担当する会話。2c）。札のトークンで開き直す。外部の stdio MCP は、保持役の子が居ればその子のまま
         // （状態が残る。ADR 0270 段 2c）、居なければこのターンのために起こし直す（R15。ツールの名前は項目の id とツールの名前から決まるので同じ）。
         // 開けなければ口の無いまま続ける（CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
         if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
           try {
-            const resolved = await resolveRuntime(ctx.policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: ctx.policy?.agent ?? backend.id });
+            const agentId = ctx.policy?.agent ?? backend.id;
+            const resolved = await resolveRuntime(ctx.policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: agentId,
+              devinImportsStopped: await hooksAgents.importsStoppedFor(agentId, ctx.cwd) });
             const opened = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
               origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted,
               activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }) });
@@ -10158,6 +10182,18 @@ wss.on("connection", (ws, req) => {
           return await viaOp('hooks.setOwner');
         case 'repairPlyHooks':
           return await viaOp('hooks.repair');
+        case 'hooksMatrix':
+          return await viaOp('hooks.matrix');
+        case 'setHookAgent':
+          return await viaOp('hooks.setAgent');
+        case 'setHookRow':
+          return await viaOp('hooks.setRow');
+        case 'setHookGroup':
+          return await viaOp('hooks.setGroup');
+        case 'setHookPlace':
+          return await viaOp('hooks.setPlace');
+        case 'resetHooksAgents':
+          return await viaOp('hooks.resetAgents');
         // 探索は接続ごとに 1 つずつ（context.scan・context.skills。ADR 0105）。走っている間の 2 つ目は SCAN_BUSY
         case 'scanContext':
           return await viaOp('context.scan');

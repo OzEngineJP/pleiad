@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { dir } from './antigravity-store.mjs';
 import { docStopsNative } from './context-capabilities.mjs';
 import { t, agentT } from '../i18n.mjs';
+import { agyHooksFileAt } from '../hooks-plan.mjs';
 
 export const AGENT_NAME = 'ply-context';
 const RELAY = fileURLToPath(new URL('../agy-context-relay.mjs', import.meta.url));
@@ -142,13 +143,14 @@ export async function prepareAgent({ owners, prompt, cwd, url, authorization, lo
   }
   // Hooks を Pleiad がそろえる会話（ADR 0049）: 置き場の .agents/hooks.json に登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの
   // { enabled: false } を書く。agy は --add-dir の .agents/hooks.json も読み、同じ名前の enabled:false はスコープをまたいで止める（実機で確認。2026-09-28）。
-  // アダプターは置き場の .agents/pleiad-hooks/ に置き、発火の記録（runs.jsonl）もそこに書かせる
+  // アダプターは置き場の .agents/pleiad-hooks/ に置き、発火の記録（runs.jsonl）もそこに書かせる。コマンドのアダプターは絶対パスにする
+  // （今の agy は置き場の hook を .agents 以外で動かし、相対パスでは見つからない。2026-11-15 実機）
   let runs = null;
   if (hooks) {
     const dir = path.join(home, '.agents', 'pleiad-hooks');
     await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
     await fs.promises.writeFile(path.join(dir, hooks.adapter.name), hooks.adapter.text, { encoding: 'utf8', mode: 0o600 });
-    await fs.promises.writeFile(path.join(home, '.agents', 'hooks.json'), `${JSON.stringify(hooks.file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await fs.promises.writeFile(path.join(home, '.agents', 'hooks.json'), `${JSON.stringify(agyHooksFileAt(hooks.file, path.join(home, '.agents')), null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     runs = path.join(dir, 'runs.jsonl');
   }
   return {

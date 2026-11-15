@@ -758,7 +758,8 @@
       "explicitModelRequired": "No free default model is available. Select a model explicitly",
       "selectionUnavailable": "The advertised Devin CLI choices do not confirm this model setting ({{setting}})",
       "selectionNotAcknowledged": "Devin CLI did not acknowledge the model setting ({{setting}})",
-      "startFailed": "Could not start Devin CLI"
+      "startFailed": "Could not start Devin CLI",
+      "turnConfigTooLarge": "Cannot start this Devin turn: config.json in the Devin settings folder exceeds 1 MiB once the settings Pleiad passes for this conversation (hooks for Devin, the Pleiad shell) are added on top. Remove unused entries to make config.json smaller, then send again. (If this place passes no hooks to Devin and does not use the Pleiad shell, Pleiad starts Devin without adding anything.)"
     },
     "auth": {
       "loginRunning": "Sign-in is already running",
@@ -1388,6 +1389,13 @@
     }
   },
   "plyHooks": {
+    "write": {
+      "failed": "Could not save the hooks settings. {{reason}}",
+      "isDir": "In the data folder, a folder with the same name as {{file}} is in the file's place",
+      "denied": "Cannot write {{file}} in the data folder (another program has it open, or writing is not allowed)",
+      "full": "Not enough disk space",
+      "other": "Could not write the file ({{code}})"
+    },
     "invalid": "The hook registration is not in a valid form",
     "name": "Enter a name of 1–80 characters",
     "agent": "Choose which agent the command is written for",
@@ -1404,6 +1412,24 @@
     "ownerUnknown": "The hooks owner for this location cannot be read from hooks.json, so the message was not sent (hooks that should be off might run). Fix it in Settings › Context › Hooks",
     "brokenEntries": "Hooks are managed by Pleiad here, but hooks.json has registrations that cannot be read, so the message was not sent (a Pleiad guard might be missing). Fix it in Settings › Context › Hooks",
     "changedSinceReview": "The hook registrations or owner changed after the review. Open the review again"
+  },
+  "hooksAgents": {
+    "evidence": {
+      "stoppedWithOthers": "Claude Code, Antigravity and Grok's compatibility loading cannot stop hooks one by one, so they are stopped together and re-delivered. Definitions that cannot be re-delivered stop with them (ADR 0338)",
+      "devinConfig": "Devin's --config gets your Devin settings with Pleiad's hooks added on top",
+      "devinImportsStop": "Here, giving it to Devin stops all of Devin's imports (read_config_from). The repository's AGENTS.md and the instructions, skills, MCP servers and hooks imported from Claude Code and others no longer reach Devin",
+      "codexTrustAtTurn": "Codex trust is not rechecked just before the turn. The state when the list was opened is used",
+      "grokTrustUnknown": "~/.grok/trusted_folders.toml exists, so whether Grok trusts this workspace is unknown",
+      "duplicate": "The same event, matcher and command already runs on this agent (it runs only once)"
+    },
+    "unreadable": "The hook × agent settings file (hooks-agents.json) cannot be read (it is broken or from an unknown version). The conversation is not started so that hooks you turned off do not run. Fix it with \"Move the broken file aside and repair\" (the hooks.repair operation) in Settings › Plugins › Hooks. The broken file is kept as hooks-agents.broken-<time>.json instead of being deleted, and hooks go back to the previous owner (leave to agents / Pleiad aligns)",
+    "stale": "The hooks list has changed. Reopen it and try again",
+    "noRow": "The hook row ({{key}}) was not found. Reopen the list",
+    "notPressable": "The {{agent}} cell of the hook row ({{key}}) cannot be pressed",
+    "rowLocked": "The row switch of the hook row ({{key}}) cannot be pressed: it keeps running in {{agent}} when turned off, other rows would change with it, or no agent would run it when turned on ({{detail}}; see switchLock on the row in hooks.matrix)",
+    "badPlace": "Give the place as an absolute path",
+    "legacyBroken": "Part of the hooks registration file (hooks.json) cannot be read, so the current behaviour cannot be copied. Repair it first",
+    "legacyMoved": "Hooks have moved to the hook × agent list, so {{op}} has no effect on what runs (nothing was done). Use the list operations instead: read it with hooks.matrix and change it with hooks.setAgent (a cell), hooks.setRow (a row), hooks.setGroup (a group) or hooks.setPlace (use in this place). To go back to the previous owner (leave to the agent / Pleiad unifies), use hooks.resetAgents"
   },
   "hooksUnify": {
     "prepareFailed": "Could not prepare the hooks managed by Pleiad, so the message was not sent (to avoid running the agent's own hooks twice): {{error}}",
@@ -1452,7 +1478,13 @@
     "hooksEnable": "Turns the Pleiad hook \"{{name}}\" on or off ({{command}}).",
     "hooksOwner_one": "Changes who owns hooks for {{place}} ({{count}} import).",
     "hooksOwner_other": "Changes who owns hooks for {{place}} ({{count}} imports).",
-    "hooksRepair": "Backs up the broken hooks registration file and rewrites it with the parts that could be read.",
+    "hooksRepair": "Backs up the broken hooks registration file and rewrites it with the parts that could be read. If the hook × agent settings file cannot be read, it is also moved aside and the previous hooks owner applies again.",
+    "hooksAgent": "Changes whether the hook \"{{name}}\" runs on {{agent}} turns.",
+    "hooksRow": "Changes whether the hook \"{{name}}\" is used (the per-agent choices are kept).",
+    "hooksGroup": "Changes the {{agent}} column of the hook group ({{group}}) at once.",
+    "hooksPlace": "Changes whether the hook \"{{name}}\" is used in {{place}}.",
+    "hooksDevinImportsStop": "{{note}} This change stops Devin's imports (read_config_from): the repository's AGENTS.md and the instructions, skills, MCP servers and hooks imported from Claude Code and others no longer reach Devin (they come back once every hook given to Devin is stopped).",
+    "hooksAgentsReset": "Clears the hook × agent choices and goes back to the previous hooks owner (leave to agents / Pleiad aligns).",
     "contextSettings": "Changes the context settings for {{place}}. The instructions, Skills and external MCP every conversation gets will change.",
     "plyInstructions": "Changes Pleiad's instructions. The instructions added to agents in each conversation will change.",
     "sessionMcp": "Changes the external MCP \"{{name}}\" in this conversation.",

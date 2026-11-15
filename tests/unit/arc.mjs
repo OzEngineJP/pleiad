@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { N } from '../lib/dom-stub.mjs';
 import { runMark, satMark, stillMark } from '../../web/arc.mjs';
-import { createHooksCard } from '../../web/hooks-card.mjs';
+import { createHooksMatrix } from '../../web/hooks-matrix.mjs';
 
 export const name = 'arc';
 export const title = '走っている印: rAF を使わない・点の数・hooks の読み込み前後';
@@ -23,17 +23,17 @@ export default async function (t) {
 
     let release;
     const pending = new Promise(resolve => { release = resolve; });
-    const card = createHooksCard({
-      cmd: (name) => name === 'scanHooks' ? pending : Promise.resolve(null),
-      work: fn => fn(), saved: () => {}, opened: new Set(),
+    const card = createHooksMatrix({
+      cmd: (name) => name === 'hooksMatrix' ? pending : Promise.resolve(null),
+      work: fn => fn(), saved: () => {}, failed: () => {}, opened: new Set(),
     });
     assert.equal(card.root.querySelectorAll('.run').length, 0, '作成直後は読み込み前');
     const loading = card.load();
     assert.equal(card.root.querySelectorAll('.run').length, 1, '読み込み中だけ印を置く');
-    release({ entries: [], files: [] });
+    release({ agents: ['claude'], adopted: true, revision: 'r', rows: [], groups: [], orphans: [] });
     await loading;
     assert.equal(card.root.querySelectorAll('.run').length, 0, '読み込みが終われば外す');
-    t.ok('hooks は scan 開始まで印を置かない', true);
+    t.ok('hooks は一覧の読み込み開始まで印を置かない', true);
   } finally {
     globalThis.requestAnimationFrame = oldRaf;
     document.createTextNode = oldTextNode;

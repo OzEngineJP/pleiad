@@ -7,7 +7,8 @@ import { t } from './i18n.mjs';
 
 // nolinks: ユーザーの設定だけ止められるエージェント（Devin）で、この PC ではリンクを作れない（Windows の開発者モードが off。ADR 0336）
 // bundled: 止めると Hooks・プラグインも一緒に止まる（Antigravity の Skills。ADR 0337）
-export const LOCK_REASONS = new Set(['own', 'workspace', 'relay', 'admin', 'linked', 'nolinks', 'bundled']);
+// devinHooks: その場所では Pleiad が Devin へ Hook を渡すため、Devin の取り込みが止まって読まれない（ADR 0338。段 2 のレビュー S2）
+export const LOCK_REASONS = new Set(['own', 'workspace', 'relay', 'admin', 'linked', 'nolinks', 'bundled', 'devinHooks']);
 
 // i18n-dynamic: context.lockReason.
 /** セル（{ mode, reason? }）から理由のキーを選ぶ。reason が無ければ mode から決める */
@@ -16,8 +17,9 @@ export function lockReasonKey(cell) {
   return cell?.mode === 'blocked' ? 'relay' : 'own';
 }
 
-/** エージェント名とセルから吹き出しの文を作る */
+/** エージェント名とセルから吹き出しの文を作る。cell.tip があればそれ（Hooks の表は理由の細目 detail ごとの文。web/hooks-matrix.mjs） */
 export function lockReasonText(agentName, cell) {
+  if (typeof cell?.tip === 'string' && cell.tip) return cell.tip;
   return t(`context.lockReason.${lockReasonKey(cell)}`, { agent: agentName });
 }
 

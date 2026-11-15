@@ -10,7 +10,7 @@ import { codexHooksConfig, probeHookHashes } from '../../core/backends/codex.mjs
 import { createHooksConfig, findNodeOnPath } from '../../core/hooks-config.mjs';
 import { runCommand } from '../../core/hook-adapter.mjs';
 import { writeAtomic } from '../../core/atomic-file.mjs';
-import { initialOverrides, sheetMatchers, resetPlan, pickChange } from '../../web/hooks-unify-ui.mjs';
+import { initialOverrides, sheetMatchers } from '../../web/hooks-unify-ui.mjs';
 import { containsPath } from '../../core/context-settings.mjs';
 
 export const name = 'hooks-unify-review';
@@ -131,9 +131,6 @@ export default async function (t) {
       && JSON.stringify(sheetMatchers({ overrides: initialOverrides(saved), agent: 'codex', targets: ['codex'] })) === '{}');
 
     // ---- 必須 9: 「Hooks を全体の設定に戻す」で担当が変わるなら確認を通す
-    t.ok('9: 全体は native・この場所は ply → 戻すと native になるので確認（戻す向き）', resetPlan({ defaults: { value: { owner: 'native' } }, place: { value: { owner: 'ply' }, override: true, inherited: null } }).confirm === 'native');
-    t.ok('9: 全体は ply・この場所は native → 確認（そろえる向き）', resetPlan({ defaults: { value: { owner: 'ply' } }, place: { value: { owner: 'native' }, override: true, inherited: { value: { owner: 'ply' } } } }).confirm === 'ply');
-    t.ok('9: 担当が変わらなければそのまま戻す', resetPlan({ defaults: { value: { owner: 'ply' } }, place: { value: { owner: 'ply', disabled: ['h-000000000001'] }, override: true, inherited: { value: { owner: 'ply' } } } }).direct === true);
     const inherited = await createPlyHooks(path.join(tmp, 'd9'));
     await inherited.setOwner({ place: null, value: { owner: 'native', disabled: [] } });
     await inherited.setOwner({ place: cwd, value: { owner: 'ply', disabled: [] } });
@@ -218,11 +215,6 @@ export default async function (t) {
     now += 31_000;
     await probeHookHashes(table2, cwd, { spawn, now: () => now }).catch(() => {});
     t.ok('16: 失敗は 30 秒のあいだ覚えて起こし直さず、過ぎたらもう一度試す', afterFail === 2 && spawns === 3);
-
-    // ---- 推奨 17: 取り込む行を変えたら確認のチェックを戻す
-    const s0 = { picked: new Map(), ack: true };
-    const s1 = pickChange(s0, { id: 'x', digest: 'd' });
-    t.ok('17: 取り込みを足すと確認のチェックが外れる（digest も持つ）', s1.ack === false && s1.picked.get('x') === 'd' && pickChange({ ...s1, ack: true }, { id: 'x' }).ack === false);
 
     // ---- 任意: Claude の出どころの分からないネイティブの発火を漏れと断定しない
     const record = { owner: 'ply', stopped: [{ event: 'PreToolUse', matcher: 'Bash' }] };

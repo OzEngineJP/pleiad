@@ -8,7 +8,7 @@
 // - nativeInstructions: エージェント任せの指示。そのエージェントが読む規則で探し、量を見積もる（読むだけ）
 // - findings: 指示の量の面の「気になる所」（重複・無いパス。core/context-findings.mjs。読むだけ）
 import fs from 'node:fs/promises';
-import { scanContext } from './context-scan.mjs';
+import { scanContext, mcpImportFile } from './context-scan.mjs';
 import { KINDS, pathKey } from './context-settings.mjs';
 import { pinChanges, readSnapshot, resolveRuntime } from './context-runtime.mjs';
 import { contextFindings } from './context-findings.mjs';
@@ -46,7 +46,8 @@ export async function nativeInstructionEntries(cwd, agent, scanOptions = {}) {
   return { cwd: scan.cwd, agent, entries, diagnostics: scan.diagnostics, limited: scan.limited };
 }
 
-export function createContextSession({ store, snapshots, plyServers = async () => null, liveRecord = () => null, isRunning = () => false, scanOptions = {} }) {
+// devinImportsStopped(cwd, agent): その場所のそのエージェントのターンで、Pleiad が Hook を渡すため取り込みが止まるか（Devin だけ。core/hooks-agents.mjs の importsStoppedFor）
+export function createContextSession({ store, snapshots, plyServers = async () => null, liveRecord = () => null, isRunning = () => false, scanOptions = {}, devinImportsStopped = async () => false }) {
   async function saved(sessionId) {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('context.session.sessionRequired'));
     const record = (await store.get(sessionId)).contextSession;
@@ -59,7 +60,8 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     const record = await saved(sessionId);
     if (!record.pin) throw new Error(t('context.session.notManaged'));
     if (isRunning(sessionId)) throw new Error(t('context.session.busy'));
-    const runtime = await resolveRuntime(record.policy, { ...scanOptions, plyServers: await plyServers(), snapshots });
+    const devin = await devinImportsStopped(record.policy?.cwd, record.policy?.agent);
+    const runtime = await resolveRuntime(record.policy, { ...scanOptions, plyServers: await plyServers(), snapshots, devinImportsStopped: devin });
     // MCP は次のターンでつなぎ直す。それまでは直前のターンの様子（接続中・要ログイン・失敗と回数）を残す
     const before = new Map((record.report?.entries ?? []).filter(e => e.kind === 'mcp').map(e => [e.id, e]));
     for (const row of runtime.report.entries) {
@@ -121,16 +123,23 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'mcp' ? scope : null]));
     const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} }, skill: { prefer: {} } } }, scanOptions);
     const agents = Object.fromEntries(owners.map(([id]) => [id, []]));
+    // 自分の設定の定義か（読み込み元がそのエージェント自身で、ほかの道具から取り込むファイルではない）。取り込みが止まる場所の鍵に使う
+    const ownIn = (e, id) => e.status !== 'disabled' && e.origins.some(o => o.source === id && !mcpImportFile(o.path));
     for (const e of scan.entries) {
       if (e.kind !== 'mcp') continue;
       for (const source of new Set(e.origins.map(o => o.source))) for (const [id, sources] of owners) {
         if (!sources.includes(source)) continue;
         // 同じ名前は最初の定義を出し、scopes に有効な定義のある範囲を集める（作業場所にもある名前を止められないエージェントの鍵。ADR 0336）
         const seen = agents[id].find(s => s.name === e.name);
-        if (seen) { if (e.status !== 'disabled' && !seen.scopes.includes(e.scope)) seen.scopes.push(e.scope); continue; }
+        if (seen) { if (e.status !== 'disabled' && !seen.scopes.includes(e.scope)) seen.scopes.push(e.scope); seen.own ||= ownIn(e, id); continue; }
         agents[id].push({ name: e.name, transport: e.transport, endpoint: e.endpoint ?? null, command: e.command ?? null, path: e.path, scope: e.scope,
-          scopes: e.status === 'disabled' ? [] : [e.scope], disabled: e.status === 'disabled' });
+          scopes: e.status === 'disabled' ? [] : [e.scope], disabled: e.status === 'disabled', own: ownIn(e, id) });
       }
+    }
+    // その場所で取り込みが止まるエージェント（Devin が Pleiad から Hook を受け取る場所）: 取り込んだだけの定義は届かない（importStopped。表示の鍵だけで、実行時は変えない）
+    for (const [id, list] of Object.entries(agents)) {
+      const stopped = list.some(s => !s.own) && await devinImportsStopped(cwd, id).catch(() => false);
+      for (const s of list) { if (stopped && !s.own && !s.disabled) s.importStopped = true; delete s.own; }
     }
     return { cwd: scan.cwd, agents, diagnostics: scan.diagnostics };
   }

@@ -8,7 +8,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createPlyHooks, normalizeHook } from '../../core/ply-hooks.mjs';
-import { deliverable, planHooks, codexHooksTable, codexHooksState, agyHooksFile, claudeIdentityOutput } from '../../core/hooks-plan.mjs';
+import { deliverable, planHooks, codexHooksTable, codexHooksState, agyHooksFile, agyHooksFileAt, claudeIdentityOutput } from '../../core/hooks-plan.mjs';
 import { claudeHookCallbacks, importCandidate, unifyPreview, readAgyRuns, mergeCallbacks, prepareHooksTurn, GROK_COMPAT_HOOK_ENV } from '../../core/hooks-unify.mjs';
 import { claudeContextOptions } from '../../core/backends/context-options.mjs';
 import { adapt, sameAgentOutput } from '../../core/hook-adapter.mjs';
@@ -101,6 +101,16 @@ export default async function (t) {
     t.ok('agy の hooks.json: 登録は pleiad-<id>・相対パスのアダプター（引用なし）・記録の id', mine?.PreToolUse?.[0]?.matcher === 'run_command'
       && /^node pleiad-hooks\/hook-adapter-abc\.mjs claude antigravity PreToolUse 600 \S+ h-000000000001$/.test(mine.PreToolUse[0].hooks[0].command), JSON.stringify(file));
     t.ok('agy の hooks.json: ネイティブの名前ごとに { enabled: false }', file.user_probe?.enabled === false && file.ws_probe?.enabled === false && Object.keys(file.ws_probe).length === 1);
+    // 今の agy は置き場の hook を .agents 以外で動かす（2026-11-15 実機）。書くときはアダプターを置き場の絶対パスにする
+    const at = agyHooksFileAt(file, 'C:\\data\\antigravity\\context\\1-ab\\.agents\\');
+    t.ok('agy の hooks.json を書く形: アダプターは置き場の絶対パス（スラッシュ区切り・引用なし）、ほかはそのまま', /^node C:\/data\/antigravity\/context\/1-ab\/\.agents\/pleiad-hooks\/hook-adapter-abc\.mjs claude antigravity PreToolUse 600 \S+ h-000000000001$/.test(at['pleiad-h-000000000001'].PreToolUse[0].hooks[0].command)
+      && at['pleiad-h-000000000001'].PreToolUse[0].matcher === 'run_command' && at.user_probe?.enabled === false
+      && mine.PreToolUse[0].hooks[0].command.startsWith('node pleiad-hooks/'), JSON.stringify(at));
+    t.ok('置き場のパスに空白・安全でない文字があれば相対パスのまま', JSON.stringify(agyHooksFileAt(file, 'C:/a b/.agents')) === JSON.stringify(file)
+      && JSON.stringify(agyHooksFileAt(file, 'C:/a&b/.agents')) === JSON.stringify(file) && agyHooksFileAt(file, '') === file);
+    const odd = agyHooksFileAt(JSON.parse('{"__proto__":{"enabled":false},"x":{"Stop":[{"type":"command","command":"node pleiad-hooks/a.mjs"}]}}'), 'C:/d/.agents');
+    t.ok('名前が __proto__ でも own property のまま写す', Object.hasOwn(odd, '__proto__') && JSON.stringify(odd).includes('"__proto__":{"enabled":false}')
+      && odd.x.Stop[0].command === 'node C:/d/.agents/pleiad-hooks/a.mjs', JSON.stringify(odd));
 
     // ---------------------------------------------------------------- Claude のフラグ設定
     t.ok('Hooks を Pleiad がそろえる Claude の会話はフラグ設定に disableAllHooks', claudeContextOptions(null, { hooks: true }).settings?.disableAllHooks === true

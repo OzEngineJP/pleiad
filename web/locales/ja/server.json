@@ -756,7 +756,8 @@
       "explicitModelRequired": "無料の既定モデルがありません。利用するモデルを明示的に選択してください",
       "selectionUnavailable": "Devin CLI の選択肢ではモデル設定を確認できません（{{setting}}）",
       "selectionNotAcknowledged": "Devin CLI がモデル設定を確認しませんでした（{{setting}}）",
-      "startFailed": "Devin CLI を起動できませんでした"
+      "startFailed": "Devin CLI を起動できませんでした",
+      "turnConfigTooLarge": "Devin のこのターンを始められません。Devin の設定フォルダーの config.json に、この会話で Pleiad が渡す設定（Devin へ渡す Hook・Pleiad のシェル）を重ねると 1 MiB を超えます。config.json の使っていない項目を減らして小さくしてから、もう一度送ってください（この場所で Devin へ Hook を渡さず、Pleiad のシェルも使わなければ、重ねずに始めます）"
     },
     "auth": {
       "loginRunning": "ログインが既に走っている",
@@ -1386,6 +1387,13 @@
     }
   },
   "plyHooks": {
+    "write": {
+      "failed": "Hooks の設定を保存できませんでした。{{reason}}",
+      "isDir": "データの置き場で、{{file}} と同じ名前のフォルダーがファイルの場所をふさいでいます",
+      "denied": "データの置き場の {{file}} に書き込めません（ほかのプログラムが開いているか、書き込みが許されていません）",
+      "full": "ディスクの空きが足りません",
+      "other": "ファイルに書き込めませんでした（{{code}}）"
+    },
     "invalid": "Hook の登録の形が正しくありません",
     "name": "名前を 1〜80 文字で入れてください",
     "agent": "コマンドの形（どのエージェント向けに書いたか）を選んでください",
@@ -1402,6 +1410,24 @@
     "ownerUnknown": "この場所の Hooks の担当を hooks.json から読めないので、送信を止めました（止めるはずの hooks が動くおそれがあるため）。設定 › コンテキストの Hooks で直してください",
     "brokenEntries": "Hooks を Pleiad がそろえる場所ですが、hooks.json に読めない登録があるので送信を止めました（Pleiad のガードが抜けるおそれがあるため）。設定 › コンテキストの Hooks で直してください",
     "changedSinceReview": "確認した後に Hooks の登録か担当が変わりました。確認の面を開き直してください"
+  },
+  "hooksAgents": {
+    "evidence": {
+      "stoppedWithOthers": "Claude Code・Antigravity・Grok の互換は 1 つずつ止める口が無く、まとめて止めて渡し直します。渡し直せない定義は一緒に止まります（ADR 0338）",
+      "devinConfig": "Devin の --config には、利用者の Devin の設定に Pleiad の Hook を重ねたものを渡します",
+      "devinImportsStop": "この場所では Devin へ渡すと、Devin の取り込み（read_config_from）が全部止まります。リポジトリの AGENTS.md と、Claude Code などから取り込む指示・Skills・MCP・Hooks が Devin に届かなくなります",
+      "codexTrustAtTurn": "Codex の信頼の状態はターンの直前には確かめません。一覧を開いたときの状態で広げます",
+      "grokTrustUnknown": "~/.grok/trusted_folders.toml があるので、この作業場所を Grok が信頼しているか分かりません",
+      "duplicate": "同じイベント・matcher・コマンドが、このエージェントで既に動いています（1 回だけ動かします）"
+    },
+    "unreadable": "Hook × エージェントの設定ファイル（hooks-agents.json）を読めません（壊れているか、知らない版です）。止めたはずの Hook が動かないよう、会話を始めません。設定 › プラグイン › Hooks の「壊れたファイルを退避して直す」（操作 hooks.repair）で直してください。壊れたファイルは消さずに hooks-agents.broken-<時刻>.json へ退避し、以前の Hooks の担当（任せる・そろえる）の動きに戻します",
+    "stale": "Hooks の一覧が変わりました。開き直してから操作してください",
+    "noRow": "Hook の行（{{key}}）が見つかりません。一覧を開き直してください",
+    "notPressable": "Hook の行（{{key}}）の {{agent}} は押せないセルです",
+    "rowLocked": "Hook の行（{{key}}）の行のスイッチは押せません。切っても {{agent}} で動き続けるか、ほかの行が一緒に変わるか、入れても動くエージェントがありません（{{detail}}。理由は hooks.matrix の行の switchLock）",
+    "badPlace": "場所は絶対パスで指定してください",
+    "legacyBroken": "Hooks の登録ファイル（hooks.json）に読めない所があるので、今の動きを写せません。先に修復してください",
+    "legacyMoved": "Hooks は Hook × エージェントの一覧に移っているので、{{op}} は今の動きに効きません（実行しませんでした）。一覧の操作を使ってください: hooks.matrix で見て、hooks.setAgent（セル）・hooks.setRow（行）・hooks.setGroup（組）・hooks.setPlace（この場所で使う）で変えます。以前の担当（エージェントに任せる／Pleiad がそろえる）へ戻すなら hooks.resetAgents"
   },
   "hooksUnify": {
     "prepareFailed": "Pleiad がそろえる Hooks を準備できなかったので、送信を止めました（ネイティブの hooks と二重に動くのを防ぐため）: {{error}}",
@@ -1445,7 +1471,13 @@
     "hooksRemove": "Pleiad の Hook「{{name}}」を消します。",
     "hooksEnable": "Pleiad の Hook「{{name}}」の有効・無効を変えます（{{command}}）。",
     "hooksOwner_other": "{{place}}の Hooks の担当を変えます（取り込み {{count}} 件）。",
-    "hooksRepair": "壊れた Hooks の登録ファイルを退避し、読めた部分だけで書き直します。",
+    "hooksRepair": "壊れた Hooks の登録ファイルを退避し、読めた部分だけで書き直します。Hook × エージェントの設定ファイルが読めなければ、それも退避して以前の Hooks の担当の動きに戻します。",
+    "hooksAgent": "Hook「{{name}}」を {{agent}} のターンで実行するかを変えます。",
+    "hooksRow": "Hook「{{name}}」を使うかを変えます（エージェントごとの選択は覚えたままです）。",
+    "hooksGroup": "Hooks の組（{{group}}）の {{agent}} の列をまとめて変えます。",
+    "hooksPlace": "{{place}} で Hook「{{name}}」を使うかを変えます。",
+    "hooksDevinImportsStop": "{{note}}この変更で、Devin の取り込み（read_config_from）が止まります。リポジトリの AGENTS.md と、Claude Code などから取り込む指示・Skills・MCP・Hooks が Devin に届かなくなります（Devin へ渡す Hook をすべて止めると戻ります）。",
+    "hooksAgentsReset": "Hook × エージェントの選択を消し、以前の Hooks の担当（任せる・そろえる）の動きに戻します。",
     "contextSettings": "{{place}}のコンテキストの設定を変えます。全部の会話に渡る指示・Skills・外部 MCP が変わります。",
     "plyInstructions": "Pleiad の指示を変えます。会話ごとにエージェントへ足す指示が変わります。",
     "sessionMcp": "この会話の外部 MCP「{{name}}」を変えます。",
