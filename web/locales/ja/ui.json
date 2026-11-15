@@ -1655,6 +1655,8 @@
     },
     "scanFailed": "探せませんでした：{{error}}",
     "loadFailed": "プラグインの設定を読めませんでした：{{error}}",
+    "repairDocAgents": "壊れたファイルを退避して直す",
+    "repairedDocAgents": "直しました。壊れたファイルは {{file}} として残しています",
     "tier": {
       "user": "ユーザー",
       "place": "作業場所",

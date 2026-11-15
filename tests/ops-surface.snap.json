@@ -1737,6 +1737,26 @@
       "input": "d25acaa13541"
     },
     {
+      "id": "context.repairDocAgents",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "doc-repair"
+          ]
+        }
+      },
+      "legacyCommand": "repairDocAgents",
+      "input": "ce3e34a61c8e"
+    },
+    {
       "id": "context.scan",
       "risk": "read",
       "riskOf": false,
@@ -6071,6 +6091,11 @@
     {
       "id": "context.docMatrix",
       "path": "context doc-matrix",
+      "positional": []
+    },
+    {
+      "id": "context.repairDocAgents",
+      "path": "context doc-repair",
       "positional": []
     },
     {

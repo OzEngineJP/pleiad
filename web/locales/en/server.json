@@ -947,6 +947,9 @@
       "migrateDiffers": "Could not migrate the plugin settings to the new format (the result would change for {{place}}). The original settings were not changed.",
       "migrateUnverified": "Could not verify the plugin settings migration. The original settings were not changed.",
       "unreadable": "Cannot read the plugin settings. Check context-scans.json.",
+      "docAgentsUnreadable": "Cannot read the settings file of the instructions and Skills table (context-agents.json): it is broken, or has an unknown version or unknown fields. Conversations will not start, so that instructions and Skills you turned off are not passed. Fix it with \"Move the broken file aside and repair\" in Settings › Plugins (operation context.repairDocAgents). The broken file is not deleted: it is moved to context-agents.broken-<time>.json, and the behaviour before the table was touched comes back",
+      "docAgentsPlacesLimit": "Not saved: the instructions and Skills table reached its limit of {{max}} places with their own settings. Settings for folders that no longer exist were removed. Press \"Reset to the global settings\" in the right panel of a conversation at a place you no longer use to reduce the places, then try again",
+      "docAgentsKeysLimit": "Not saved: the instructions and Skills table reached its limit of {{max}} per-item settings in total. Settings for folders and files that no longer exist were removed. Press \"Reset to the global settings\" in the right panel of a conversation at a place you no longer use to reduce the places, then try again",
       "nothingToChange": "Specify what to change."
     },
     "session": {
@@ -1442,6 +1445,7 @@
     "mcpAgent": "Changes whether the external MCP \"{{name}}\" is used by {{agent}}.",
     "docAgent": "Changes whether {{kind}} \"{{name}}\" is used by {{agent}}.",
     "docRow": "Changes whether {{kind}} \"{{name}}\" is used.",
+    "docAgentsRepair": "Moves the unreadable settings file of the instructions and Skills table (context-agents.json) to context-agents.broken-<time>.json (it is not deleted) and returns to the behaviour before the table was touched. Instructions and Skills turned off in the table are passed again as the legacy settings say.",
     "kind": {
       "instruction": "instruction",
       "skill": "Skill"

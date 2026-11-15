@@ -1619,6 +1619,9 @@
         "keys": "Array of item keys to switch together.",
         "on": "true to turn on, false to turn off."
       },
+      "repairDocAgents": {
+        "summary": "Move an unreadable instructions and Skills table settings file (context-agents.json) to context-agents.broken-<time>.json (not deleted) and return to the behaviour before the table was touched. Does nothing when the file is readable. Needs the user's approval."
+      },
       "refresh": {
         "summary": "Re-read the instructions and Skills pinned to a conversation from the current files (only when it is not running)."
       },

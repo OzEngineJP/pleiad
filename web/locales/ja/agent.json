@@ -1618,6 +1618,9 @@
         "keys": "まとめて切り替える項目のキーの並び。",
         "on": "true でオン、false でオフ。"
       },
+      "repairDocAgents": {
+        "summary": "読めない指示・Skills の表の設定ファイル（context-agents.json）を context-agents.broken-<時刻>.json へ移し（消さない）、表を触る前の動きに戻す。読めるときは何もしない。ユーザーの承認が要る。"
+      },
       "refresh": {
         "summary": "会話に固定した指示・Skills を、今のファイルから読み直す（走っていない会話だけ）。"
       },

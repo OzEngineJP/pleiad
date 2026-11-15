@@ -368,6 +368,27 @@ export default async function (t) {
     t.ok('setContextSettings(remove: true) で context-agents.json の該当 place も同期削除される',
       !Object.hasOwn(agentsDisk.places ?? {}, pathKey(repo)));
 
+    // 読めない context-agents.json（レビュー M6）: 会話を断り、設定のページも読めず、context.repairDocAgents で退避して直すと会話が通る
+    const agentsFile = path.join(dataDir, 'context-agents.json');
+    await fs.writeFile(agentsFile, '{"version": 9, "defaults": {}, "places": {}}');
+    let refused = null;
+    try { await client.runTurn({ ...sNative, prompt: 'echo:broken-agents' }, { ms: 60_000 }); } catch (e) { refused = e; }
+    let viewErr = null;
+    try { await client.cmd('contextSettings', {}); } catch (e) { viewErr = e; }
+    t.ok('読めない context-agents.json では会話を断り（ファイル名と直し方を言う）、設定のページは DOC_AGENTS_UNREADABLE を返す',
+      /context-agents\.json/.test(String(refused?.message ?? '')) && /context\.repairDocAgents/.test(String(refused?.message ?? ''))
+      && viewErr?.code === 'DOC_AGENTS_UNREADABLE',
+      JSON.stringify({ refused: refused?.message, view: viewErr?.code }));
+    const repairedRes = await client.cmd('repairDocAgents', {});
+    const dataFiles = await fs.readdir(dataDir);
+    let afterRepairErr = null;
+    try { await client.runTurn({ ...sNative, prompt: 'echo:after-repair' }, { ms: 60_000 }); } catch (e) { afterRepairErr = e; }
+    t.ok('repairDocAgents は context-agents.broken-<時刻>.json へ移して（中身はそのまま）、会話が通るようにする',
+      repairedRes?.repaired === true && /^context-agents\.broken-.+\.json$/.test(repairedRes.backup ?? '')
+      && dataFiles.includes(repairedRes.backup) && !dataFiles.includes('context-agents.json')
+      && (await fs.readFile(path.join(dataDir, repairedRes.backup), 'utf8')).includes('"version": 9') && !afterRepairErr,
+      JSON.stringify({ repairedRes, afterRepair: afterRepairErr?.message }));
+
     // 既定も含めて消して完全 untouched 状態のセッションを実行
     await fs.rm(path.join(dataDir, 'context-agents.json'), { force: true });
     await client.runTurn({ ...sNative, prompt: 'echo:zero-change' }, { ms: 60_000 });

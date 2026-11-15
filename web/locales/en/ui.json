@@ -1692,6 +1692,8 @@
     },
     "scanFailed": "Couldn't search: {{error}}",
     "loadFailed": "Couldn't load the plugin settings: {{error}}",
+    "repairDocAgents": "Move the broken file aside and repair",
+    "repairedDocAgents": "Repaired. The broken file is kept as {{file}}",
     "tier": {
       "user": "User",
       "place": "Working directory",

@@ -5580,6 +5580,12 @@ const opsContext = {
     settingsChanged(['context.default'], actor);
     return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
   },
+  // 読めない context-agents.json を context-agents.broken-<時刻>.json へ退避し、表を触る前の動きに戻す（レビュー M6）。読めるなら何もしない
+  repairDocAgents: async (actor) => {
+    const done = await contextAgents.repair();
+    if (done) settingsChanged(['context.default'], actor);
+    return { ok: true, repaired: Boolean(done), backup: done?.backup ?? null };
+  },
   plyInstructions: () => plyInstructionsState(),
   plyInstructionItems: () => plyInstructionsCache,
   previewPlyInstructions: (action) => changePlyInstructions(plyInstructionsCache, action, currentLocale()),
@@ -10039,6 +10045,8 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.setDocAgent');
         case 'setDocRow':
           return await viaOp('context.setDocRow');
+        case 'repairDocAgents':
+          return await viaOp('context.repairDocAgents');
         case 'nativeInstructions':
           return await viaOp('context.nativeInstructions');
         case 'contextFindings':

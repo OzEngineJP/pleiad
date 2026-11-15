@@ -945,6 +945,9 @@
       "migrateDiffers": "プラグインの設定を新しい形式へ移せませんでした（{{place}} で結果が変わるため）。元の設定は変更していません",
       "migrateUnverified": "プラグインの設定の移行を確かめられませんでした。元の設定は変更していません",
       "unreadable": "プラグインの設定を読み込めません。context-scans.json を確認してください",
+      "docAgentsUnreadable": "指示・Skills の表の設定ファイル（context-agents.json）を読めません（壊れているか、知らない版・知らない項目があります）。外したはずの指示・Skills が渡らないよう、会話を始めません。設定 › プラグインの「壊れたファイルを退避して直す」（操作 context.repairDocAgents）で直してください。壊れたファイルは消さずに context-agents.broken-<時刻>.json へ移し、表を触る前の動きに戻します",
+      "docAgentsPlacesLimit": "指示・Skills の表で、場所ごとの設定が上限（{{max}} か所）に達したため保存しませんでした。もう無いフォルダーの設定は外しました。使っていない場所の会話の右の欄で「全体の設定に戻す」を押して、場所の設定を減らしてから押し直してください",
+      "docAgentsKeysLimit": "指示・Skills の表で、名前ごとの設定が上限（合わせて {{max}} 件）に達したため保存しませんでした。もう無いフォルダー・ファイルの設定は外しました。使っていない場所の会話の右の欄で「全体の設定に戻す」を押して、場所の設定を減らしてから押し直してください",
       "nothingToChange": "変更する項目を指定してください"
     },
     "session": {
@@ -1435,6 +1438,7 @@
     "mcpAgent": "外部 MCP「{{name}}」を、{{agent}} で使うかどうかを変えます。",
     "docAgent": "{{kind}}「{{name}}」を、{{agent}} で使うかどうかを変えます。",
     "docRow": "{{kind}}「{{name}}」を使うかどうかを変えます。",
+    "docAgentsRepair": "読めない指示・Skills の表の設定ファイル（context-agents.json）を context-agents.broken-<時刻>.json へ移し（消しません）、表を触る前の動きに戻します。表で外していた指示・Skills は、旧い設定のとおり渡り直します。",
     "kind": {
       "instruction": "指示",
       "skill": "Skill"

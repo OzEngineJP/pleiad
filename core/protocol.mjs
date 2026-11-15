@@ -136,6 +136,7 @@ export const COMMANDS = new Set([
   'docMatrix', // { kind, cwd?, place? } -> 指示・Skills の一覧（項目 × エージェント。ADR 0337。読むだけ）
   'setDocAgent', // { kind, key, agent, on, place?, cwd? } -> 指示・Skills の 1 項目をエージェントごとに入れる・外す（ADR 0337）
   'setDocRow', // { kind, key?, keys?, on, place?, cwd? } -> 指示・Skills の 1 項目または束をまとめてオン・オフにする（ADR 0337）
+  'repairDocAgents', // {} -> 読めない context-agents.json を context-agents.broken-<時刻>.json へ退避し、表を触る前の動きに戻す（ADR 0337）
   'setContextSettings', // { place: null|path, kind, value|null } / { place, kind?, roots|null } / { place, add|remove } -> 即時保存し contextSettings と同じ形を返す
   'scanContext', // { cwd, place?: 'default', scope?: 'user' } -> bounded inventory (entries, the home / Git roots and the MCP config file bodies); never launches tools or changes agents
   // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。コマンドは実行しない。一覧の値は伏せ字

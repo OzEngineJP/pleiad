@@ -1,7 +1,12 @@
 /**
  * Persistent per-item × per-agent matrix rules for external instructions and skills (ADR 0337).
- * Stored in <dataDir>/context-agents.json (version 1) so beta.31 context-scans.json strict validation
- * never breaks on downgrade. Legacy settings govern any (place, kind) until that depth is first touched.
+ * Stored in <dataDir>/context-agents.json (version 1), separate from context-scans.json, so the strict
+ * validation of context-scans.json in beta.31 does not fail after a downgrade. beta.31 ignores this file,
+ * so the table settings do not apply after a downgrade (the legacy settings do).
+ * Legacy settings govern any (place, kind) until that depth is first touched.
+ * A broken file, an unknown version, or an unknown key is unreadable: conversations are refused (like a broken
+ * context-scans.json) until the user repairs it with context.repairDocAgents, which moves the file aside to
+ * context-agents.broken-<time>.json (never deletes it) and returns to the behaviour before the table was touched.
  */
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -9,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { writeAtomic } from './atomic-file.mjs';
+import { t } from './i18n.mjs';
 import {
   DEFAULT_SOURCES,
   containsPath,
@@ -28,8 +34,13 @@ export const DOC_KINDS = ['instruction', 'skill'];
 export const DOC_AGENTS_FILE = 'context-agents.json';
 export const DOC_AGENTS_VERSION = 1;
 export const WORKSPACE_SUMMARY_KEY = '__workspace__';
+// 上限の理由は ADR 0337 §決定 10（会話ごとに全部を読むので、ファイルを小さく保つ）
 export const MAX_PLACES = 100;
 export const MAX_AGENT_KEYS = 2000;
+// 退避した読めないファイル（context-agents.broken-<時刻>.json）を残す数。超えたら古い物から消す（今退避した物は必ず残る）
+export const MAX_BROKEN_BACKUPS = 5;
+export const DOC_AGENTS_UNREADABLE = 'DOC_AGENTS_UNREADABLE';
+export const DOC_AGENTS_LIMIT = 'DOC_AGENTS_LIMIT';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const AGENT_IDX = new Map(DOC_AGENT_IDS.map((id, i) => [id, i]));
@@ -114,8 +125,23 @@ export function countAgentKeys(config) {
   return total;
 }
 
+/** 上限を超えたときの誤り（code: DOC_AGENTS_LIMIT）。次に何をすればよいかを利用者の言葉で言う */
+function limitError(which) {
+  // i18n-dynamic: server:context.settings.docAgentsPlacesLimit
+  // i18n-dynamic: server:context.settings.docAgentsKeysLimit
+  const key = which === 'places' ? 'docAgentsPlacesLimit' : 'docAgentsKeysLimit';
+  return Object.assign(new Error(t(`context.settings.${key}`, { max: which === 'places' ? MAX_PLACES : MAX_AGENT_KEYS })), { code: DOC_AGENTS_LIMIT });
+}
+
+/** 上限を超えた物の種類（'places' / 'keys'）。超えていなければ null */
+export function docAgentsOverLimit(config) {
+  if (Object.keys(config.places ?? {}).length > MAX_PLACES) return 'places';
+  if (countAgentKeys(config) > MAX_AGENT_KEYS) return 'keys';
+  return null;
+}
+
 /** Validate and normalize parsed JSON from context-agents.json. Throws if malformed or over limits. */
-export function normalizeDocAgentsConfig(raw) {
+export function normalizeDocAgentsConfig(raw, { limits = true } = {}) {
   if (raw == null) return emptyDocAgentsConfig();
   const parsed = fileSchema.parse(raw);
   const defaults = normalizePlaceOverride(parsed.defaults);
@@ -126,12 +152,8 @@ export function normalizeDocAgentsConfig(raw) {
     if (Object.keys(val).length) places[normKey] = val;
   }
   const normalized = { version: DOC_AGENTS_VERSION, defaults, places };
-  if (Object.keys(normalized.places).length > MAX_PLACES) {
-    throw new Error(`context-agents places limit exceeded (${MAX_PLACES})`);
-  }
-  if (countAgentKeys(normalized) > MAX_AGENT_KEYS) {
-    throw new Error(`context-agents total key limit exceeded (${MAX_AGENT_KEYS})`);
-  }
+  const over = limits ? docAgentsOverLimit(normalized) : null;
+  if (over) throw limitError(over);
   return normalized;
 }
 
@@ -371,10 +393,52 @@ export function setDocRowRule(kind, entryOrSummary, currentRule, on, ctx = null)
   return nativeOnlyDocRule(kind, entryOrSummary, cur, ctx);
 }
 
+/**
+ * パスがもう無いか。無いと言えるのは ENOENT で、しかもドライブ（根）はあるときだけ。
+ * 外したドライブ・つながっていない共有フォルダーの物は「ある」として残す（つなぎ直したら設定が戻る）
+ */
+async function gone(p) {
+  try { await fs.stat(p); return false; } catch (e) {
+    if (e?.code !== 'ENOENT') return false;
+    try { await fs.stat(path.parse(path.resolve(p)).root); return true; } catch { return false; }
+  }
+}
+
+/**
+ * 書く前の掃除（レビュー M7・S5）。
+ * - フォルダーがもう無い場所の設定は、いつも外す（消したフォルダー・消した worktree の設定が溜まって上限に届かないように）
+ * - それでも上限を超えるときだけ、もう無いファイルの指示の設定（file: のキー。名前を変えた・消したファイルの覚え）を外す。
+ *   上限に届かないうちは残す（ブランチを替えて一時的に無いだけのファイルの設定を失わないため）
+ * Skills の名前（skill: のキー）は、ある・無いを名前から確かめられないので外さない
+ */
+async function pruneGone(cfg) {
+  for (const key of Object.keys(cfg.places ?? {})) {
+    if (await gone(key)) delete cfg.places[key];
+  }
+  if (!docAgentsOverLimit(cfg)) return cfg;
+  const levels = [cfg.defaults, ...Object.values(cfg.places)];
+  const checked = new Map();
+  for (const level of levels) {
+    for (const kind of DOC_KINDS) {
+      const agents = level?.[kind]?.agents;
+      if (!agents) continue;
+      for (const key of Object.keys(agents)) {
+        if (!key.startsWith('file:')) continue;
+        if (!checked.has(key)) checked.set(key, await gone(key.slice('file:'.length)));
+        if (checked.get(key)) delete agents[key];
+      }
+    }
+  }
+  return cfg;
+}
+
 /** Create an atomic serialized reader/writer store for `<dataDir>/context-agents.json`. */
-export function createContextAgents(dataDir) {
+export function createContextAgents(dataDir, { now = () => new Date() } = {}) {
   const file = path.join(dataDir, DOC_AGENTS_FILE);
   let queue = Promise.resolve();
+
+  // 読めない（壊れた JSON・知らない版・知らない項目・上限を超えた中身・読み取りの失敗）ときの誤り。会話はこれで断る（context-scans.json と同じ）
+  const unreadable = (cause) => Object.assign(new Error(t('context.settings.docAgentsUnreadable'), { cause }), { code: DOC_AGENTS_UNREADABLE });
 
   const read = async () => {
     let text;
@@ -382,23 +446,63 @@ export function createContextAgents(dataDir) {
       text = await fs.readFile(file, 'utf8');
     } catch (err) {
       if (err?.code === 'ENOENT') return emptyDocAgentsConfig();
-      throw err;
+      throw unreadable(err);
     }
-    return normalizeDocAgentsConfig(JSON.parse(text));
+    try {
+      return normalizeDocAgentsConfig(JSON.parse(text));
+    } catch (err) {
+      throw unreadable(err);
+    }
   };
 
-  const mutate = (fn) => {
-    const run = queue.then(async () => {
-      const current = await read();
-      const nextRaw = await fn(structuredClone(current));
-      const next = normalizeDocAgentsConfig(nextRaw);
-      await fs.mkdir(dataDir, { recursive: true });
-      await writeAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
-      return next;
-    });
+  const serial = (fn) => {
+    const run = queue.then(fn);
     queue = run.catch(() => {});
     return run;
   };
+
+  // 読めないファイルの上には書かない（read が断る）。上限は掃除の後に確かめる
+  const mutate = (fn) => serial(async () => {
+    const current = await read();
+    const nextRaw = await fn(structuredClone(current));
+    const next = normalizeDocAgentsConfig(await pruneGone(normalizeDocAgentsConfig(nextRaw, { limits: false })));
+    await fs.mkdir(dataDir, { recursive: true });
+    await writeAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
+    return next;
+  });
+
+  /**
+   * 読めないファイルを context-agents.broken-<時刻>.json へ移す（消さない）。移した先の名前を返す。
+   * 前に退避した物が MAX_BROKEN_BACKUPS を超えたら、古い物から消す（置き場を際限なく増やさない）
+   */
+  const moveAside = async () => {
+    const stamp = now().toISOString().replace(/[:.]/g, '-');
+    let name = null;
+    for (let i = 0; !name; i++) {
+      const candidate = `context-agents.broken-${stamp}${i ? `-${i}` : ''}.json`;
+      if (await fs.stat(path.join(dataDir, candidate)).then(() => true, () => false)) continue;
+      await fs.rename(file, path.join(dataDir, candidate));
+      name = candidate;
+    }
+    const backups = [];
+    for (const f of await fs.readdir(dataDir).catch(() => [])) {
+      if (f === name || !/^context-agents\.broken-.+\.json$/.test(f)) continue;
+      const st = await fs.stat(path.join(dataDir, f)).catch(() => null);
+      if (st?.isFile()) backups.push({ f, at: st.mtimeMs });
+    }
+    backups.sort((a, b) => b.at - a.at || b.f.localeCompare(a.f));
+    for (const { f } of backups.slice(MAX_BROKEN_BACKUPS - 1)) await fs.rm(path.join(dataDir, f), { force: true }).catch(() => {});
+    return name;
+  };
+
+  /**
+   * 壊れたファイルを退避して直す（操作 context.repairDocAgents）。読めるなら何もしない（null）。
+   * 退避した後はファイルが無いので、表を触る前の動き（旧い設定）に戻る
+   */
+  const repair = () => serial(async () => {
+    try { await read(); return null; } catch (e) { if (e?.code !== DOC_AGENTS_UNREADABLE) throw e; }
+    return { backup: await moveAside() };
+  });
 
   const removePlace = (place, kind = null) => mutate((cfg) => {
     const key = pathKey(place);
@@ -420,5 +524,5 @@ export function createContextAgents(dataDir) {
     return cfg;
   });
 
-  return { file, read, mutate, removePlace, prunePlaces };
+  return { file, read, mutate, removePlace, prunePlaces, repair };
 }

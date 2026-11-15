@@ -59,6 +59,10 @@ export default async function (t) {
     let keysErr = null;
     try { normalizeDocAgentsConfig(tooManyKeys); } catch (e) { keysErr = e; }
     t.ok(`総キー数上限 (${MAX_AGENT_KEYS}) 超過を拒む`, Boolean(keysErr));
+    t.ok('上限の誤りは code DOC_AGENTS_LIMIT で、英語の生の文ではなく次にすることを言う（レビュー M7）',
+      placesErr?.code === 'DOC_AGENTS_LIMIT' && keysErr?.code === 'DOC_AGENTS_LIMIT'
+      && /全体の設定に戻す|Reset to the global settings/.test(placesErr.message) && !/limit exceeded/.test(placesErr.message + keysErr.message),
+      JSON.stringify([placesErr?.message, keysErr?.message]));
 
     // ---- アイテム識別キー
     const instA = { kind: 'instruction', name: 'CLAUDE.md', path: path.join(home, '.claude', 'CLAUDE.md'), scope: 'user', origins: [{ path: path.join(home, '.claude', 'CLAUDE.md'), source: 'claude', scope: 'user' }] };
@@ -200,6 +204,96 @@ export default async function (t) {
     const afterPrune = await storeAgents.read();
     t.ok('prunePlaces は keepKeys 以外の place を除く',
       Boolean(afterPrune.places[pathKey(repo)]) && !afterPrune.places[pathKey(sub)]);
+
+    // ---- 書くときの掃除と上限（レビュー M7・S5）
+    const pruneDir = path.join(tmp, 'prune-data');
+    const pruneStore = createContextAgents(pruneDir);
+    const goneFile = path.join(tmp, 'gone', 'CLAUDE.md');
+    await pruneStore.mutate((cfg) => {
+      for (let i = 0; i < MAX_PLACES + 5; i++) cfg.places[pathKey(path.join(tmp, 'gone', `p-${i}`))] = { instruction: { agents: {} } };
+      cfg.places[pathKey(repo)] = { instruction: { agents: { [`file:${goneFile.replace(/\\/g, '/')}`]: { off: ['claude'], spread: [] } } } };
+      return cfg;
+    });
+    const pruned = await pruneStore.read();
+    t.ok('書くとき、フォルダーがもう無い場所の設定を外す（上限に届く前に。あるフォルダーの設定と、無いファイルの覚えは上限までは残す）',
+      Object.keys(pruned.places).length === 1 && Boolean(pruned.places[pathKey(repo)]?.instruction?.agents[`file:${goneFile.replace(/\\/g, '/')}`]),
+      JSON.stringify(Object.keys(pruned.places).length));
+
+    // 上限を超えるときだけ、もう無いファイルの覚え（名前を変えた・消したファイル）を外す
+    await pruneStore.mutate((cfg) => {
+      for (let i = 0; i < MAX_AGENT_KEYS + 5; i++) cfg.defaults.instruction = { agents: { ...(cfg.defaults.instruction?.agents ?? {}), [`file:${path.join(tmp, 'gone', `f-${i}.md`).replace(/\\/g, '/')}`]: { off: ['claude'], spread: [] } } };
+      return cfg;
+    });
+    const prunedKeys = await pruneStore.read();
+    t.ok('上限を超えるときは、もう無いファイルの設定を外して保存できる', countAgentKeys(prunedKeys) === 0, String(countAgentKeys(prunedKeys)));
+
+    // 外せない物（あるフォルダーの場所・Skills の名前）で超えると、日本語の上限の誤りで断り、ファイルは変えない
+    const realPlaces = path.join(tmp, 'real-places');
+    for (let i = 0; i <= MAX_PLACES; i++) await fs.mkdir(path.join(realPlaces, `p-${i}`), { recursive: true });
+    const beforeLimit = await fs.readFile(pruneStore.file, 'utf8');
+    let placeLimitErr = null;
+    try {
+      await pruneStore.mutate((cfg) => {
+        for (let i = 0; i <= MAX_PLACES; i++) cfg.places[pathKey(path.join(realPlaces, `p-${i}`))] = { skill: { agents: {} } };
+        return cfg;
+      });
+    } catch (e) { placeLimitErr = e; }
+    let keyLimitErr = null;
+    try {
+      await pruneStore.mutate((cfg) => {
+        cfg.defaults.skill = { agents: {} };
+        for (let i = 0; i <= MAX_AGENT_KEYS; i++) cfg.defaults.skill.agents[`skill:s-${i}`] = { off: ['claude'], spread: [] };
+        return cfg;
+      });
+    } catch (e) { keyLimitErr = e; }
+    t.ok('外せない物で上限を超えると DOC_AGENTS_LIMIT で断り、ファイルは書かない',
+      placeLimitErr?.code === 'DOC_AGENTS_LIMIT' && keyLimitErr?.code === 'DOC_AGENTS_LIMIT'
+      && /上限（100 か所）|limit of 100 places/.test(placeLimitErr.message) && /2000/.test(keyLimitErr.message)
+      && (await fs.readFile(pruneStore.file, 'utf8')) === beforeLimit,
+      JSON.stringify([placeLimitErr?.message, keyLimitErr?.message]));
+
+    // ---- 読めないファイル（レビュー M6）: 会話を断る誤りにし、上書きせず、退避して直せる
+    for (const [label, body] of [['壊れた JSON', '{"version": 1, '], ['知らない版', '{"version": 2, "defaults": {}, "places": {}}'], ['知らない項目', '{"version": 1, "defaults": {}, "places": {}, "future": true}']]) {
+      const brokenDir = path.join(tmp, `broken-${label.length}-${body.length}`);
+      await fs.mkdir(brokenDir, { recursive: true });
+      const brokenStore = createContextAgents(brokenDir, { now: () => new Date('2026-11-15T10:20:30.456Z') });
+      await fs.writeFile(brokenStore.file, body);
+      let readErr = null;
+      try { await brokenStore.read(); } catch (e) { readErr = e; }
+      let writeErr = null;
+      try { await brokenStore.mutate((cfg) => cfg); } catch (e) { writeErr = e; }
+      t.ok(`${label}: read は code DOC_AGENTS_UNREADABLE とファイル名・直し方を言う誤りで断り、mutate は上書きしない`,
+        readErr?.code === 'DOC_AGENTS_UNREADABLE' && /context-agents\.json/.test(readErr.message) && /context\.repairDocAgents/.test(readErr.message)
+        && writeErr?.code === 'DOC_AGENTS_UNREADABLE' && (await fs.readFile(brokenStore.file, 'utf8')) === body,
+        JSON.stringify({ read: readErr?.message, write: writeErr?.message }));
+      // 同じ名前の退避が先にあれば -1 を付ける（上書きしない）
+      await fs.writeFile(path.join(brokenDir, 'context-agents.broken-2026-11-15T10-20-30-456Z.json'), 'OLD');
+      const repaired = await brokenStore.repair();
+      const files = (await fs.readdir(brokenDir)).sort();
+      t.ok(`${label}: repair は context-agents.broken-<時刻>.json へ移し（消さない・先の退避を上書きしない）、read は空に戻る。読めるなら何もしない`,
+        repaired?.backup === 'context-agents.broken-2026-11-15T10-20-30-456Z-1.json'
+        && (await fs.readFile(path.join(brokenDir, repaired.backup), 'utf8')) === body
+        && (await fs.readFile(path.join(brokenDir, 'context-agents.broken-2026-11-15T10-20-30-456Z.json'), 'utf8')) === 'OLD'
+        && !files.includes(DOC_AGENTS_FILE)
+        && JSON.stringify(await brokenStore.read()) === JSON.stringify(emptyDocAgentsConfig())
+        && (await brokenStore.repair()) === null,
+        JSON.stringify({ repaired, files }));
+    }
+    // 退避は MAX_BROKEN_BACKUPS（5）まで。超えたら古い物から消し、今退避した物は残す
+    const manyDir = path.join(tmp, 'broken-many');
+    await fs.mkdir(manyDir, { recursive: true });
+    for (let i = 0; i < 7; i++) {
+      const f = path.join(manyDir, `context-agents.broken-old-${i}.json`);
+      await fs.writeFile(f, `OLD${i}`);
+      await fs.utimes(f, new Date(Date.UTC(2026, 0, 1 + i)), new Date(Date.UTC(2026, 0, 1 + i)));
+    }
+    const manyStore = createContextAgents(manyDir, { now: () => new Date('2026-11-15T00:00:00.000Z') });
+    await fs.writeFile(manyStore.file, '{');
+    const manyRes = await manyStore.repair();
+    const left = (await fs.readdir(manyDir)).filter((f) => f.startsWith('context-agents.broken-')).sort();
+    t.ok('退避は 5 つまで残し、古い物から消す（今退避した物は残る）',
+      left.length === 5 && left.includes(manyRes.backup) && left.includes('context-agents.broken-old-6.json') && !left.includes('context-agents.broken-old-2.json'),
+      JSON.stringify(left));
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

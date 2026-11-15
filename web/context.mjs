@@ -981,6 +981,22 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     } catch (e) {
       view = null;
       status.textContent = t('context.loadFailed', { error: e.message });
+      // 指示・Skills の表の設定ファイルが読めない（会話を断っている）ときは、ここから退避して直せる（レビュー M6。操作 context.repairDocAgents）
+      if (e.code === 'DOC_AGENTS_UNREADABLE') {
+        const fix = button(t('context.repairDocAgents'), 'btn', async () => {
+          fix.disabled = true;
+          try {
+            const r = await cmd('repairDocAgents', {});
+            await open();
+            if (r?.backup) status.textContent = t('context.repairedDocAgents', { file: r.backup });
+          } catch (err) {
+            fix.disabled = false;
+            status.textContent = t('context.loadFailed', { error: err.message });
+            status.append(' ', fix);
+          }
+        });
+        status.append(' ', fix);
+      }
       return;
     }
     scan = null; matrix = null; matrixPolls = 0;
