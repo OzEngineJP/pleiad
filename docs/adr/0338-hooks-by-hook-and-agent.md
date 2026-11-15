@@ -1,6 +1,6 @@
 # 0338 Hooks を、Hook × エージェントの一覧にする（担当の 2 択をやめる。保存・実行時・操作）
 
-- 状態: 提案（2026-11-15。第 3 段のうち core の保存・実行時・操作。画面は別の仕事）
+- 状態: 採用（2026-11-15。第 3 段のうち core の保存・実行時・操作を実装した。画面は別の仕事。実機での確かめは末尾「確かめ」）
 - 関係: [ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP を名前 × エージェントの一覧にする）と同じ形にする。[ADR 0049](0049-hooks-pleiad-managed.md)（Pleiad がそろえる）の渡し方・止め方を使い回し、担当の 2 択（`hooks.json` の `defaults`・`places` の `owner`）を、触った人から置き換える。[ADR 0047](0047-hooks-copy-adapter.md)（写す）の変換をそのまま使う。
 
 ## 状況
@@ -64,11 +64,18 @@
 
 ### 鍵と理由（`reason`）
 
-- `'admin'`: Claude・Codex の管理者の定義（オンのまま。ほかの列は `mode: 'none'` で、点で出す）。
-- `'own'`: エージェント自身が読むので止められない・ほかへ広げられない。Claude・Codex・Antigravity のプラグイン、Claude の Skill の hooks、Grok 自身の hooks、Devin の取り込み（未確認の間）、既に写しがある組（`detail: 'copyExists'`。写しの側で切り替える）、Claude で止めると渡し直せないものが巻き添えになるとき（`detail: 'claudeAllOrNothing'`）。
-- `'workspace'`: 作業場所の定義を止められないエージェント（Grok・OpenCode）の作業場所の行、Grok のフォルダーの信頼が分からないときの Claude の作業場所の定義。
-- `'relay'`: そのエージェントへ渡せない（イベントが無い・ツールが写せない・アダプターが要るのに node が無いなど。理由の code と根拠を付ける）。
-- 押せるように見えて何も変わらないセルは作らない。
+セルの `reason` は 4 つ、`detail` はその中の訳（英字の code。画面の文言は画面の仕事で足す。注意の `evidence` だけ `web/locales/*/server.json` の `hooksAgents.evidence.*` で文にして返す）。
+- `'admin'`: Claude・Codex の管理者の定義（`managed`。オンのまま）。
+- `'own'`: エージェント自身が読むので、1 つずつは止められない・広げられない。
+  - `grokOwn`（Grok 自身の hooks）・`plugin`（Claude 以外のプラグイン）・`pluginOrSkill`（プラグイン・Skill の定義をほかへ広げる）・`nativeInactive`（エージェント自身が無効にしている定義）。
+  - `devinImports`: Devin が Claude の設定から取り込む定義。Devin の列はオン（取り込みのとおり）で押せない。`compat.devin` を切り替える操作は無く、旧「そろえる」からの移行でだけ `off` になる（そのときは `'workspace'`・`devinCompatOff`）。
+  - `copyExists`: 既に写しがある組（写しの側で切り替える。セルに `copy`（写しの行 ID））。
+  - `claudeAllOff`: 利用者の Claude の設定が `disableAllHooks`（Claude の列は止まったまま）。
+  - `claudeAllOrNothing`・`grokAllOrNothing`・`agySameName`・`stoppedWithOthers`: 押すと、渡し直せないほかの定義が黙って一緒に止まる（Claude は全部止めて渡し直す、Grok の互換はまとめて止める、Antigravity は名前で止める）。
+- `'workspace'`: 作業場所の定義。`followsWorkspace`（この場所の一覧の作業場所の定義は、作業場所の 1 行 `ws:hooks` に従う）・`placeNoSpread`（作業場所の定義はほかのエージェントへ広げない）・`grokWorkspace`・`grokTrustUnknown`（Grok のフォルダーの信頼）・`noWorkspaceHooks`（OpenCode は作業場所の Hooks を読まない）・`devinCompatOff`。
+- `'relay'`: そのエージェントへ渡せない（`detail` は `deliverable` の理由の code。`reasons` に根拠を付ける）。
+- 押せるように見えて何も変わらないセルは作らない（`decideModes`: 押した後の状態を計算し、そのセルが変わり、ほかのセルが黙って止まらないときだけ `mode: 'toggle'`）。
+- セルの `warnings`（`[{ code, params, evidence }]`）: 渡すときの注意（アダプター越し・Stop の意味の違いなど `deliverable` の warnings、Devin の `devinConfig`（そのターンは Devin の取り込みも止まる）、Codex の `codexTrustAtTurn`、`grokTrustUnknown`、`stoppedWithOthers`（渡し直せずに一緒に止まっている））。
 
 ### 移行（触るまで何も変えない。最初に押したとき、そのときの実効の状態を写す）
 
@@ -89,16 +96,17 @@
 - 渡し方は「Pleiad がそろえる」の経路（`deliverable`・`claudeHookCallbacks`・`codexHooksTable`・`agyHooksFile`・`grokHooksFile`・OpenCode のコールバック・Devin の `--config`）をそのまま使う。エージェントの設定ファイルは書き換えない。相手のファイルへ書く道は足さない。
 - 同じ A に同じイベント・matcher・コマンドが 2 つ渡る（登録とその取り込み元など）ときは 1 つにする。
 - エージェントごと:
-  - Claude: 1 つずつ止める口が無い。止める行があるときだけ `disableAllHooks` にして、止めない行をコールバックで渡し直す。渡し直せないもの（SessionStart・Setup、Skill の hooks、`CLAUDE_PLUGIN_DATA` を使うもの、コマンドでないもの）が巻き添えになるなら、その場所の Claude の列は鍵（`claudeAllOrNothing`）。実行時に状態がずれていたら（新しく足された定義など）ターンを始めない（`hooksAgents.claudeAllOrNothing`）。管理者は止めない。
-  - Codex: `hooks/list` の key のうち、止める行の key だけ `enabled: false`（`runtime.stopKeys`）。止めない行は動き続ける。**本物では未確認**（週次の上限のため走らせない）。
-  - Antigravity: 名前で止める（置き場の `.agents/hooks.json` の `{ enabled: false }`）。同じ名前のほかのオンの定義は `pleiad-*` で渡し直す。第 2 段の `inheritCustomizations` 用に、このターンで動く Hook を返す入口 `hooksForTurn(agent, cwd)` を出す。
+  - Claude: 1 つずつ止める口が無い。止める行があるときだけ `disableAllHooks` にして（記録の `stopAll`）、止めない行をコールバックで渡し直す。渡し直せないもの（SessionStart・Setup、Skill の hooks、`CLAUDE_PLUGIN_DATA` を使うもの、コマンドでないもの）が巻き添えになるセルは、一覧では押せない（`claudeAllOrNothing`）。押した後に足された定義などで実行時にずれたときは、渡し直せないものは一緒に止まり、セルに `stoppedWithOthers` の注意が出る。管理者は止めない。
+  - Codex: `hooks/list` の定義のうち、止める行（`runtime.stopRows`: ファイル・イベント・group・handler の番号。作業場所の 1 行を止めるときは `{ source: 'project' }`）に当たる key だけ `enabled: false`。止めない行は動き続ける。**本物では未確認**（週次の上限のため走らせなかった。今の「そろえる」の経路の上に、止める key の絞り込みを足しただけ）。
+  - Antigravity: 名前で止める（置き場の `.agents/hooks.json` の `{ enabled: false }`）。同じ名前のほかのオンの定義は `pleiad-*` で渡し直す。アダプターは置き場の絶対パスで書く（今の agy は置き場の hook を `.agents` 以外のフォルダーで動かし、相対パスでは見つからなかった。2026-11-15 実機。置き場のパスに空白・安全でない文字があれば相対パスのまま）。第 2 段の `inheritCustomizations` 用に、このターンで動く Hook を返す入口 `hooksForTurn(agent, cwd)` を出す。
   - Grok: Claude のユーザーの定義を Grok の列で止めたときだけ `GROK_CLAUDE_HOOKS_ENABLED=false` で起こし、止めないユーザーの定義をプラグインの置き場で渡し直す。Cursor の互換は `compat.grok` が `off` のときだけ止める（旧「そろえる」）。Grok 自身の hooks は止めない。
   - OpenCode: 渡すだけ（コールバック）。利用者のプラグインは一覧に出さない。
-  - Devin: 渡すものがあるターンは `--config`（`read_config_from` をすべて false）。旧「そろえる」と同じく、そのターンは Devin の取り込み（MCP・ルールを含む）も止まる。
+  - Devin: 渡すものがあるターンは `--config`（`read_config_from` は `compat.devin` のとおり）。`compat.devin` が `off` なら、旧「そろえる」と同じく、そのターンは Devin の取り込み（MCP・ルールを含む）も止まる。`--config` のファイルは Devin のプロセスが終わるまで消さない（Devin CLI は起動の後の `session/new` のときに読む。起動の直後に消していたため、旧「そろえる」でも渡したものが載っていなかった。2026-11-15 実機。閉じずに残ったものは次の起動で 1 日を過ぎた分だけ消す）。
 
 ### 操作（`context.mcpMatrix` に当たるもの。画面はまだ呼ばない）
 
-- `hooks.matrix`（read）: `{ adopted, agents, groups, rows: [{ key, group, source, scope, event, matcher, command（伏せ字）, on, cells: { <A>: { state, mode, reason?, detail? } }, needsConfirm: [A], status }], place?, revision }`。
+- `hooks.matrix`（read）: `{ adopted, agents, groups, cwd, place, skipFrom, compat, grok, claudeAllOff, trustPending, revision, rows: [{ key, group, agent, source, scope, event, matcher, command（伏せ字）, on, switchable, here?, status?, targets?, enabled?, cells: { <A>: { state, mode, reason?, detail?, warnings?, needsConfirm?, copy?, reasons? } } }] }`。`needsConfirm` は、押すと広げるセル（元の集合に無く、今オフで押せる）だけに `true` で付く。
+- `revision` は保存の中身の hash（移行の時刻 `adoptedFrom.at` は入れない。移行前の一覧は開くたびに写し直すため）。操作に `revision` を渡すと、違えば `CONFLICT` で断る。押せないセルは `INVALID`（`hooksAgents.notPressable`）。
 - `hooks.setAgent`（セル）・`hooks.setRow`（全体のスイッチ）・`hooks.setGroup`（組のセル・組のスイッチ）・`hooks.setPlace`（この場所で使う・場所の上書きを戻す）・`hooks.resetAgents`（移行前へ戻す）。
 - 承認（AGENTS.md・ADR 0327）: 外す向き（狭める）は `write`、入れる・広げる・戻す向き（ほかのエージェントのターンでコマンドを動かす＝関所を緩める）は `riskOf` で `guarded`（`approvalWords: 'hooks'`、`loosens: true`）。
 
@@ -110,6 +118,20 @@
 
 ## 影響
 
-- 新: `core/hooks-agents.mjs`（保存・行 ID・元の集合・セルの規則・移行の式・ターンで動く Hook）、`core/hooks-matrix.mjs`（一覧を組む）。
-- 変: `core/hooks-unify.mjs`（移行済みのターンの準備）、`core/hooks-plan.mjs`（Codex の key ごとの止め）、`core/backends/claude.mjs`・`codex.mjs`・`grok.mjs`・`devin*.mjs`（止める範囲の受け取り）、`core/ops/hooks.mjs`、`core/server.mjs`（`opsHooks`）、`tests/data-writes-allowlist.mjs`。
+- 新: `core/hooks-agents.mjs`（保存・行 ID・元の集合・セルの規則・移行の式・一覧・ターンで動く Hook）。
+- 変: `core/hooks-unify.mjs`（移行済みのターンの準備）、`core/hooks-plan.mjs`（Codex の行ごとの止め・agy のアダプターの絶対パス）、`core/backends/claude.mjs`・`codex.mjs`・`devin*.mjs`・`antigravity-context.mjs`、`core/ops/hooks.mjs`、`core/server.mjs`（`opsHooks`）、`tests/data-writes-allowlist.mjs`。
+- 画面の文言の鍵だけ `web/locales/{en,ja}/{agent,server}.json` に足した（鍵・注意・断りの文。画面の部品は触っていない）。
 - 画面（`web/`）は変えない。今の Hooks の画面（担当の 2 択・写す）は移行前の人にはそのまま動く。移行済みの人には担当の 2 択が効かない（第 3 段の画面の仕事で消す）。
+
+## 確かめ（2026-11-15、試験用のデータ置き場・作業場所・別のポートのサーバー。利用者の設定ファイルは書き換えていないことを hash で確かめた）
+
+エージェントごとに (1) 何も触らない (2) 1 つオフ (3) ほかのエージェントの Hook を広げる (4) 戻す、を本物のターンで見た。
+
+| エージェント | (1) | (2) | (3) | (4) |
+|---|---|---|---|---|
+| Claude | 本物 | 本物（利用者の Stop を止め、作業場所の定義は渡し直されて動いた） | 本物（agy の登録がコールバックで 1 回） | 本物 |
+| OpenCode | 本物 | 本物 | 本物（Claude の登録がコールバックで 1 回） | 本物 |
+| Devin | 本物（作業場所の定義。利用者の Stop は Devin のターンでは跡を残さず観測できない） | 本物（取り込みは鍵のまま動き続ける） | 本物（`--config` で 1 回。直した後） | 本物 |
+| Antigravity | 本物 | 本物（作業場所の 1 行を止めた） | 直す前は本物で失敗（アダプターが見つからない）。直した後は Gemini の週次の上限で走らせられず、同じコマンドを 3 つのフォルダーから動かして確かめただけ | 未確認（試験だけ） |
+| Grok | 本物（利用者の Stop が互換で動いた。会話の記録は残らない＝起動は今までどおり） | 本物（利用者の Stop を止めた） | 本物（Claude の登録がプラグインで 1 回） | 未確認（会話の上限のため。試験だけ） |
+| Codex | 未確認（週次の上限） | 未確認 | 未確認 | 未確認 |
