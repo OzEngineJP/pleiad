@@ -115,7 +115,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
       throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
     }) });
-    try { await client.start(); await launch.cleanup?.().catch(() => {}); return client; }
+    // turnConfig (--config) の一時ファイルは session/new / session/load 時まで読まれるため、起動直後ではなくターン終了後に消す
+    try { await client.start(); return client; }
     catch (error) { await launch.cleanup?.().catch(() => {}); await client.close().catch(() => {}); throw error; }
   }
   async function cwdFor(id) {
@@ -201,7 +202,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         let client, closePromise, sessionId = args.sessionId ?? null, mapper, verified = null, selectedMode = null, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null;
         let latestSession = null, latestSnapshot = null, latestMode = null;
         // 保持役（無停止の更新 段 2b）: 子を載せたターンだけ
-        let held = null, promptId = null, replaying = false, sentText = '', shownText = '';
+        let held = null, launch = null, promptId = null, replaying = false, sentText = '', shownText = '';
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
         const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
@@ -342,7 +343,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             check();
             // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
             // 名前ごとの外部 MCP で Devin 自身の MCP を止める名前があるターンだけ、設定の置き場を写しに替える（devin-config.mjs の prepareDevinMcpOff。ADR 0336）
-            const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv },
+            launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv },
               turnConfig: devinTurnConfig({ hooksRuntime: args.hooksRuntime, nativeShellOff: Boolean(args.shellRuntime?.nativeOff), docs: args.contextRuntime?.docs ?? null }),
               mcpOff: args.contextRuntime?.mcp?.named ? args.contextRuntime.mcp.suppress ?? [] : [] });
             // 写しのリンクを作れず、止める名前を止められなかった: 右パネルの行に「止められなかった」の印を付ける（ターンは今までと同じ起動で続ける）
@@ -478,6 +479,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
               outcome = 'error';
             }
           }
+          await launch?.cleanup?.().catch(() => {});
           if (sessionId) active.delete(sessionId);
           if (sessionId) liveControls.delete(sessionId);
           if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }

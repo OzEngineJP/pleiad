@@ -8027,7 +8027,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // Pleiad 担当のコンテキストを受け取れないバックエンド（antigravity）では、担当が Pleiad でもエージェント任せとして扱う。
   // 開いても届かない上に、外部 MCP へ無駄に接続（stdio なら起動）してしまう
   let plyContext = managed(policy) && acceptsPlyContext(backend, policy);
-  let resolvedContext = plyContext ? await resolveRuntime(policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
+  let resolvedContext = plyContext ? await resolveRuntime(policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: backend.id }) : null;
   // 名前ごとのモデルで、指示・Skills がエージェントそのまま、中継する MCP も止める名前も 0 なら、エージェント任せの道と同じにする
   // （ターンだけの口・中継を起こさない。ADR 0327 / ADR 0337）
   // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0336）
@@ -8949,7 +8949,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         // 開けなければ口の無いまま続ける（CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
         if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
           try {
-            const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: ctx.policy?.agent ?? backend.id });
+            const resolved = await resolveRuntime(ctx.policy, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale, agent: ctx.policy?.agent ?? backend.id });
             const opened = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
               origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted,
               activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }) });

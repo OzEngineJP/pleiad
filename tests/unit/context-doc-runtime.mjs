@@ -25,7 +25,8 @@ import {
 } from '../../core/context-runtime.mjs';
 import { DEFAULT_SCAN, DEFAULT_SOURCES, createContextSettings, pathKey } from '../../core/context-settings.mjs';
 import { registry } from '../../core/ops/index.mjs';
-import { startServer } from '../lib/server.mjs';
+import { ROOT, startServer } from '../lib/server.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 export const name = 'context-doc-runtime';
@@ -208,7 +209,16 @@ export default async function (t) {
       opWrite.ok === true && opGuarded.pending === true,
       JSON.stringify({ opWrite, opGuarded }));
 
-    host = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake', HOME: home, USERPROFILE: home, PLEIAD_SCAN_HOME: home } });
+    const osHome = path.join(tmp, 'os-home');
+    await fs.mkdir(path.join(osHome, '.claude'), { recursive: true });
+    await fs.writeFile(path.join(osHome, '.claude', 'CLAUDE.md'), 'NEVER_SCAN_OS_HOME\n');
+    host = await startServer({ dataDir, env: {
+      AGENT_HOST_BACKENDS: 'fake,devin',
+      AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`,
+      HOME: osHome,
+      USERPROFILE: osHome,
+      PLEIAD_SCAN_HOME: home,
+    } });
     client = await open(host);
 
     const initM = await client.cmd('docMatrix', { kind: 'instruction', place: 'default' });
@@ -241,6 +251,15 @@ export default async function (t) {
       afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.claude.on === false
       && afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.grok.on === true);
 
+    // prepareTurn の resolveRuntime も HOME/USERPROFILE ではなく PLEIAD_SCAN_HOME(SCAN_OPTIONS) で解決する
+    const sScanHome = await client.cmd('newSession', { cwd: repo, backend: 'devin' });
+    await client.runTurn({ ...sScanHome, prompt: 'echo:scan-home', model: 'swe-2-high' }, { ms: 60_000 });
+    const scanHomeRec = await client.cmd('sessionContext', sScanHome);
+    const recPaths = (scanHomeRec?.report?.entries ?? []).map((e) => String(e.path ?? '').toLowerCase());
+    t.ok('WS ターン実行時も os.homedir() ではなく PLEIAD_SCAN_HOME から指示を読む',
+      recPaths.some((p) => p.startsWith(home.toLowerCase())) && !recPaths.some((p) => p.includes('os-home')),
+      JSON.stringify(recPaths));
+
     // 未操作と変更ありでゼロ変更バイパスを確認（fake セッションの contextSession で native vs ply）
     const sNative = await client.cmd('newSession', { cwd: repo, backend: 'fake' });
     // fake backend でも、スキル未編集（all native）時は Stage 2 touched(instruction)=true なので instruction だけ active
@@ -270,6 +289,7 @@ export default async function (t) {
     if (server) server.close();
     client?.close();
     if (host) await host.stop().catch(() => {});
+    await cleanupTestHolder(dataDir).catch(() => {});
     await fs.rm(tmp, { recursive: true, force: true });
   }
 }

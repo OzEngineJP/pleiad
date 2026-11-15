@@ -157,6 +157,23 @@ export default async function (t) {
     const skillText = skillTurn.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     t.ok('Skill の本文を load_skill で読める', skillTurn.outcome === 'ok' && skillText.includes('DEMO-SKILL-BODY'), skillText.slice(0, 200));
 
+    // ---- Stage 2: --config の一時ファイルは session/new 時まで残り、ターン完了後に削除される
+    {
+      const s2Cwd = path.join(root, 'stage2-devin-project');
+      await fs.mkdir(path.join(s2Cwd, '.git'), { recursive: true });
+      await fs.writeFile(path.join(s2Cwd, 'AGENTS.md'), 'KEEP_AGENTS');
+      await fs.writeFile(path.join(s2Cwd, 'CLAUDE.md'), 'DROP_CLAUDE');
+      const mat = await c.cmd('docMatrix', { kind: 'instruction', place: s2Cwd, cwd: s2Cwd });
+      const claudeRow = mat.rows.find(r => r.name === 'CLAUDE.md');
+      await c.cmd('setDocAgent', { kind: 'instruction', key: claudeRow.key, agent: 'devin', on: false, place: s2Cwd, cwd: s2Cwd });
+      const cfgTurn = await c.runTurn({ backend: 'devin', cwd: s2Cwd, prompt: '[turn-config-alive]', model: 'swe-2-high' });
+      const cfgBody = JSON.parse(cfgTurn.events.filter(e => e.type === 'text.delta').map(e => e.text).join(''));
+      const remainingTurnCfgs = await fs.readdir(path.join(root, 'data', 'devin', 'turn-configs')).catch(() => []);
+      t.ok('Devin Stage 2: --config は session/new 時も存在して claude=false を渡し、ターン終了後に削除される',
+        cfgBody.existsAtNew === true && cfgBody.turnConfig?.read_config_from?.claude === false && remainingTurnCfgs.length === 0,
+        JSON.stringify({ cfgBody, remainingTurnCfgs }));
+    }
+
     for (const marker of ['model', 'thought_level', 'speed', 'mode']) {
       const turn = await c.runTurn({ backend: 'devin', cwd, prompt: `[${marker}-drift]`, model: 'swe-2-high' });
       t.ok(`実行中の確認済み設定の変更を拒否する（${marker}）`, turn.outcome === 'error');

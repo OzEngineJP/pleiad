@@ -258,7 +258,7 @@ async function managedServer(contextRuntime, cwd, account = null) {
     origin: () => opencodeRelay.whenOrigin(),
     currentOrigin: () => opencodeRelay.origin(),
     env: async () => ({ ...(await serverEnv(launch.config,account)), ...accountEnv, ...launch.env,
-      PLEIAD_OPENCODE_INSTRUCTION_OWNER:contextRuntime.owners?.instruction ?? 'native',
+      PLEIAD_OPENCODE_INSTRUCTION_OWNER:baseOwners.instruction ?? 'native',
       ...(account ? { OPENCODE_CONFIG_DIR: path.join(launch.env.XDG_CONFIG_HOME, 'opencode') } : {}) }),
   });
   srv.accountKey = accountKey(account);
