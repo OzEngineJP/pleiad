@@ -175,6 +175,7 @@ const saveSchema = z.object({
 const actionSchema = z.discriminatedUnion('action', [
   saveSchema,
   z.object({ action: z.literal('toggle'), id: z.string(), on: z.boolean() }).strict(),
+  z.object({ action: z.literal('toggleAgent'), id: z.string(), agent: z.enum(AGENTS), on: z.boolean() }).strict(),
   z.object({ action: z.literal('delete'), id: z.string() }).strict(),
   z.object({ action: z.literal('reset'), id: z.string() }).strict(),
   z.object({ action: z.literal('order'), ids: z.array(z.string()).max(MAX_ITEMS) }).strict(),
@@ -182,30 +183,56 @@ const actionSchema = z.discriminatedUnion('action', [
 
 /**
  * 1 つ変えた新しい並びを返す（元の list は変えない）。locale は既定の項目の編集を「既定と同じか」で比べる言語（画面の言語）。
- *   save   { id?, name, body, target, agents }  id が無ければ足す（連動の項目の前 = 最後）。既定の項目は既定と同じ値なら編集扱いにしない
- *   toggle { id, on } / delete { id }（自分で足したものだけ）/ reset { id }（既定の項目だけ）/ order { ids }（保存した項目の並べ替え）
+ *   save        { id?, name, body, target, agents }  id が無ければ足す（連動の項目の前 = 最後）。既定の項目は既定と同じ値なら編集扱いにしない
+ *   toggle      { id, on } / toggleAgent { id, agent, on } / delete { id }（自分で足したものだけ）/ reset { id }（既定の項目だけ）/ order { ids }（保存した項目の並べ替え）
  */
 export function changePlyInstructions(list, args, locale) {
   const parsed = actionSchema.safeParse(args ?? {});
   if (!parsed.success) throw new Error(t('plyInstructions.invalid'));
   const a = parsed.data, next = list.map(item => ({ ...item }));
   const at = id => { const i = next.findIndex(item => item.id === id); if (i < 0) throw new Error(t('plyInstructions.notFound')); return i; };
+  const applySave = (i, value, onOverride) => {
+    const item = next[i];
+    const on = onOverride ?? item.on;
+    if (!isBuiltin(item.id)) next[i] = { ...item, ...value, on };
+    else {
+      const plain = { id: item.id, on };
+      const same = value.name === builtinName(locale, item.id) && value.body === builtinBody(locale, item.id).trim()
+        && value.target === BUILTIN[item.id].target && value.agents.join() === builtinAgents(item.id).join();
+      next[i] = same ? plain : { ...plain, ...value };
+    }
+  };
   if (a.action === 'save') {
     const value = { name: a.name, body: a.body, target: a.target, agents: AGENTS.filter(x => a.agents.includes(x)) };
     if (!a.id) {
       if (next.length >= MAX_ITEMS) throw new Error(t('plyInstructions.tooMany', { count: MAX_ITEMS }));
       next.push({ id: `u-${crypto.randomBytes(6).toString('hex')}`, on: true, ...value });
     } else {
-      const i = at(a.id), item = next[i];
-      if (!isBuiltin(item.id)) next[i] = { ...item, ...value };
-      else {
-        const plain = { id: item.id, on: item.on };
-        const same = value.name === builtinName(locale, item.id) && value.body === builtinBody(locale, item.id).trim()
-          && value.target === BUILTIN[item.id].target && value.agents.join() === builtinAgents(item.id).join();
-        next[i] = same ? plain : { ...plain, ...value };
-      }
+      applySave(at(a.id), value);
     }
   } else if (a.action === 'toggle') next[at(a.id)].on = a.on;
+  else if (a.action === 'toggleAgent') {
+    const i = at(a.id), item = next[i];
+    const curAgents = item.agents ?? builtinAgents(item.id);
+    let nextOn = item.on;
+    let nextAgents = curAgents;
+    if (a.on) {
+      nextAgents = !item.on ? [a.agent] : AGENTS.filter(x => x === a.agent || curAgents.includes(x));
+      nextOn = true;
+    } else if (item.on) {
+      const rem = AGENTS.filter(x => curAgents.includes(x) && x !== a.agent);
+      if (rem.length === 0) { nextOn = false; nextAgents = [a.agent]; }
+      else nextAgents = rem;
+    }
+    const base = isBuiltin(item.id)
+      ? {
+          name: item.name ?? builtinName(locale, item.id),
+          body: item.body ?? builtinBody(locale, item.id).trim(),
+          target: item.target ?? BUILTIN[item.id].target,
+        }
+      : { name: item.name, body: item.body, target: item.target };
+    applySave(i, { ...base, agents: AGENTS.filter(x => nextAgents.includes(x)) }, nextOn);
+  }
   else if (a.action === 'delete') {
     if (isBuiltin(a.id)) throw new Error(t('plyInstructions.builtinDelete'));
     next.splice(at(a.id), 1);

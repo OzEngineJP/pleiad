@@ -112,6 +112,19 @@ export default async function (t) {
     const i = (await launches()).at(-1);
     t.ok('組み合わせ: Skills を任せれば .opencode の Skills を skills.paths で渡し直し、外の Skills は止めない', (i.config.skills?.paths ?? []).map((p) => path.resolve(p)).includes(path.join(cwd, '.opencode', 'skills'))
       && !i.flags.OPENCODE_DISABLE_EXTERNAL_SKILLS && i.flags.OPENCODE_DISABLE_PROJECT_CONFIG === '1' && (await fs.readdir(path.join(i.xdg, 'opencode'))).includes('skills'), JSON.stringify(i));
+    // Stage 2: docAgents で一部（全体の AGENTS.md）を外すと、owners.instruction='native' のままでも
+    // managedServer が PLEIAD_OPENCODE_INSTRUCTION_OWNER='ply' で起動して再圧縮ガードが効く
+    const ocGlobalMat = await client.cmd('docMatrix', { kind: 'instruction', place: cwd, cwd });
+    const ocGlobalRow = ocGlobalMat.rows.find((r) => path.resolve(r.path ?? '') === path.join(cfg, 'opencode', 'AGENTS.md'));
+    await client.cmd('setDocAgent', { kind: 'instruction', key: ocGlobalRow.key, agent: 'opencode', on: false, place: cwd, cwd });
+    const s2OcTurn = await client.runTurn({ backend: 'opencode', cwd, prompt: 'show-system', mode: 'full', model: 'fake/echo' }, { ms: 60_000 });
+    const s2OcLaunch = (await launches()).at(-1);
+    const s2OcBody = text(s2OcTurn);
+    t.ok('Stage 2 OpenCode: setDocAgent で一部を抑止すると PLEIAD_OPENCODE_INSTRUCTION_OWNER=ply が渡り、保持分だけ system に入る',
+      s2OcTurn.outcome === 'ok' && s2OcLaunch.flags.PLEIAD_OPENCODE_INSTRUCTION_OWNER === 'ply'
+      && s2OcBody.includes('PROJECT-RULE-OC') && !s2OcBody.includes('GLOBAL-RULE'),
+      JSON.stringify({ flags: s2OcLaunch.flags, snippet: s2OcBody.slice(0, 300) }));
+
     // プロセスが消えるまでには少し間がある（Linux）。決め打ちで待たず、消えるまで待つ（上限 10 秒）
     const gone = async () => (await launches()).slice(1).every((x) => !alive(x.pid));
     for (let n = 0; n < 200 && !(await gone()); n++) await new Promise((r) => setTimeout(r, 50));

@@ -23,11 +23,11 @@ import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { DEFAULT_BUDGET, instructionAmount } from './instruction-amount.mjs';
 import { findingCount, reviewDraft, reviewUrged } from './context-review.mjs';
-import { toggleExclude, toggleExcludeMany } from './context.mjs';
 import {
   CONTEXT_TABS, readTabStorage, writeTabStorage,
   groupEntries, bundleSwitchState, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
 } from './context-tabs.mjs';
+import { freshAgents, rowSwitch, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, savedText } from './context-matrix.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
@@ -40,9 +40,10 @@ const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills
 const SOURCE = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', devin: 'Devin', antigravity: 'Antigravity', grok: 'Grok', common: t('sessionContext.source.common'), ply: 'Pleiad' };
 const GROUPS = ['user', 'dir', 'extra'];
 // 「この場所だけ変える」の担当の 2 択（設定の画面と同じ文）
+// 指示・Skills は名前 × エージェントの表で決める（ADR 0337）。担当の 2 択が残るのは外部 MCP だけ
 const OWNER = {
-  native: [t('context.owner.agent'), { instruction: t('context.instruction.agent'), skill: t('context.skill.agent'), mcp: t('context.mcp.agent') }],
-  ply: [t('context.owner.ply'), { instruction: t('context.instruction.ply'), skill: t('context.skill.ply'), mcp: t('context.mcp.ply') }],
+  native: [t('context.owner.agent'), { mcp: t('context.mcp.agent') }],
+  ply: [t('context.owner.ply'), { mcp: t('context.mcp.ply') }],
 };
 const SKILLS_SHOWN = 6;
 const HOOKS_SHOWN = 4;   // 右パネルに並べるユーザーの Hooks（残りは畳む）
@@ -76,8 +77,11 @@ const REASON = {
   disabled: () => t('sessionContext.reason.disabled'),
   unsupported: () => t('sessionContext.reason.unsupported'),
 };
-/** Pleiad が担当した種類か（antigravity で扱わなかった会話は、担当が Pleiad でもエージェント任せ） */
-const managed = (info, kind) => info?.report?.status !== 'native' && (info.owners ?? info.report?.owners ?? {})[kind] === 'ply';
+/** Pleiad が担当した種類、または Stage 2 で解決結果が出ている種類か（antigravity で扱わなかった会話は、エージェント任せ） */
+const managed = (info, kind) => info?.report?.status !== 'native' && (
+  (info.owners ?? info.report?.owners ?? {})[kind] === 'ply'
+  || (kind !== 'mcp' && (info?.report?.entries ?? []).some(e => e.kind === kind))
+);
 /** Pleiad の指示の記録 1 件。前の版の記録（{ id: 'delegation', variant, text }）も読む */
 const addedItem = a => ({ ...a, inserted: a.inserted ?? Boolean(a.variant), name: a.name ?? t('sessionContext.added.delegation') });
 
@@ -113,7 +117,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   const removedPending = new Map();
   let chip = null;
   // 作業場所の設定（contextSettings）と、「この場所だけ変える」の間の探索結果
-  let place = { cwd: null, view: null, loading: false }, edit = false, editScan = null, editBusy = false, toastTimer = null, toastOn = false;
+  let place = { cwd: null, view: null, loading: false }, edit = false, editScan = null, editBusy = false, toastTimer = null, toastOn = false, toastFresh = false, toastPruned = null;
+  let editDocs = { instruction: null, skill: null }, editDocLoading = false;
   // この場所の外部 MCP を「Pleiad がそろえる」へ切り替える前の確認を開いているか（ADR 0031）
   let unifying = false;
   // Hooks（sessionHooks の戻り）。会話・場所・実行中かが変わったら取り直す
@@ -134,16 +139,20 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     onInput: q => {
       editSkillQuery = q;
       if (editSkillHost && editSkillHost.isConnected !== false && skillPaintArgs) {
-        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.entries, skillPaintArgs.offText);
+        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.doc);
       }
     },
   });
-  const resetEditState = () => { editBundleOpen.clear(); editSkillQuery = ''; editSkillFind.clear(); editSkillHost = null; skillPaintArgs = null; };
+  const resetEditState = () => { editBundleOpen.clear(); editSkillQuery = ''; editSkillFind.clear(); editSkillHost = null; skillPaintArgs = null; editDocs = { instruction: null, skill: null }; editDocLoading = false; };
 
   const title = t('sessionContext.title');
   function subtitle(data) {
     const started = data.startedAt ?? data.report?.at;
-    const text = started ? t('sessionContext.subtitle.startedAt', { time: stamp(started) }) : t('sessionContext.subtitle.started');
+    // Antigravity・Grok は会話を始めるときだけ設定を読む。その会話では「次のターンから」と言わない（レビュー S8）
+    const fresh = freshAgents().includes(session()?.backend);
+    const text = started
+      ? (fresh ? t('sessionContext.subtitle.startedAtFresh', { time: stamp(started) }) : t('sessionContext.subtitle.startedAt', { time: stamp(started) }))
+      : (fresh ? t('sessionContext.subtitle.startedFresh') : t('sessionContext.subtitle.started'));
     return data.refreshedAt ? t('sessionContext.subtitle.refreshed', { text, time: stamp(data.refreshedAt) }) : text;
   }
   const backendLabel = () => labelOf(session()?.backend) || t('sessionContext.agent');
@@ -254,7 +263,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const foot = el('p', 'scx-foot');
     foot.append(t('sessionContext.foot.lead'), button(t('sessionContext.foot.link'), 'cx-link', () => openSettings()));
     box.append(foot);
-    const toast = el('div', 'cx-toast scx-toast' + (toastOn ? ' on' : ''), t('context.saved')); toast.setAttribute('role', 'status');
+    const toast = el('div', 'cx-toast scx-toast' + (toastOn ? ' on' : ''), savedText(toastFresh, toastPruned)); toast.setAttribute('role', 'status');
     box.append(toast);
     return box;
   }
@@ -311,7 +320,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const native = managedHere ? null : nativeFound(data);
     const unknown = !managedHere && !Array.isArray(native.value?.entries);
     const estimated = !managedHere && !unknown;
-    const rows = managedHere ? data.report.entries.filter(e => e.kind === 'instruction' && e.status === 'supplied') : native?.value?.entries ?? [];
+    const rows = managedHere ? data.report.entries.filter(e => e.kind === 'instruction' && (e.status === 'supplied' || e.status === 'native')) : native?.value?.entries ?? [];
     const parts = data.plyParts ?? null;
     const a = instructionAmount({ rows, parts: parts ?? [], budget: budget() });
     const n = v => fmt.number(v);
@@ -525,7 +534,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (edit) {
       if (st.over) acts.append(button(t('sessionContext.place.reset'), 'btn', () => placeWork(async () => {
         place.view = await cmd('setContextSettings', { cwd: place.cwd, place: place.cwd, remove: true });
-        await loadEditScan();
+        await loadEditScan({ skipRefresh: true });
       }, '[data-act=placeDone]')));
       const done = button(t('sessionContext.place.done'), 'btn btn-quiet', () => { edit = false; editScan = null; resetEditState(); refresh(); focusIn('[data-act=placeStart]'); });
       done.dataset.act = 'placeDone';
@@ -547,22 +556,54 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     focusIn('[data-act=placeDone]');
     await loadEditScan();
   }
-  async function loadEditScan() {
+  async function loadEditScan({ skipRefresh = false } = {}) {
     const cwd = place.cwd;
-    for (let i = 0; i < 20; i++) {
-      try { editScan = await cmd('scanContext', { cwd }); break; }
-      catch (e) {
-        if (e.code !== 'SCAN_BUSY') { notice = t('sessionContext.place.scanFailed', { error: e.message }); editScan = { entries: [] }; break; }
-        await new Promise(r => setTimeout(r, 300));
+    const retryBusy = async fn => {
+      for (let i = 0; i < 20; i++) {
+        try { return await fn(); }
+        catch (e) {
+          if (e.code !== 'SCAN_BUSY') throw e;
+          await new Promise(r => setTimeout(r, 300));
+        }
       }
+      throw Object.assign(new Error('SCAN_BUSY'), { code: 'SCAN_BUSY' });
+    };
+    editDocLoading = true;
+    // scanLock 衝突を避けるため直列に取得し、他要求との競合時だけ retryBusy で待って取り直す
+    const wrap = fn => retryBusy(fn).then(value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason }));
+    const scanRes = await wrap(() => cmd('scanContext', { cwd }));
+    const instRes = await wrap(() => cmd('docMatrix', { kind: 'instruction', cwd, place: cwd }));
+    const skillRes = await wrap(() => cmd('docMatrix', { kind: 'skill', cwd, place: cwd }));
+    if (place.cwd !== cwd) return;
+    editDocLoading = false;
+    if (scanRes.status === 'fulfilled') editScan = scanRes.value;
+    else {
+      if (!editScan) editScan = { entries: [] };
+      notice = t('sessionContext.place.scanFailed', { error: scanRes.reason?.message ?? '' });
     }
-    if (place.cwd === cwd) refresh();
+    if (instRes.status === 'fulfilled' && Array.isArray(instRes.value?.rows)) editDocs.instruction = instRes.value;
+    else if (instRes.status === 'rejected') {
+      editDocs.instruction ??= { rows: [], agents: [] };
+      notice = t('sessionContext.place.scanFailed', { error: instRes.reason?.message ?? '' });
+    }
+    if (skillRes.status === 'fulfilled' && Array.isArray(skillRes.value?.rows)) editDocs.skill = skillRes.value;
+    else if (skillRes.status === 'rejected') {
+      editDocs.skill ??= { rows: [], agents: [] };
+      notice = t('sessionContext.place.scanFailed', { error: skillRes.reason?.message ?? '' });
+    }
+    if (!skipRefresh) refresh();
   }
   /** この場所の設定を 1 つ変えて保存し、探し直す。focus は描き直した後に戻す先 */
   async function placeWork(fn, focus) {
     if (editBusy) return;
     editBusy = true; notice = '';
-    try { await fn(); showToast(); }
+    // fn は true（Antigravity・Grok に渡る物が変わった）か、{ fresh, pruned }（上限に届いて外した数も言う）を返す
+    try {
+      const r = await fn();
+      toastFresh = r === true || r?.fresh === true;
+      toastPruned = r?.pruned ?? null;
+      showToast();
+    }
     catch (e) { notice = t('context.saveFailed', { error: e.message }); }
     finally { editBusy = false; refresh(); if (focus) focusIn(focus); }
   }
@@ -572,7 +613,22 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const value = structuredClone(here()?.kinds[kind].value ?? place.view.defaults.kinds[kind].value);
       mutate(value);
       place.view = await cmd('setContextSettings', { cwd: place.cwd, place: place.cwd, kind, value });
-      await loadEditScan();
+      await loadEditScan({ skipRefresh: true });
+    }, focus);
+  }
+  /** この場所の指示・Skills を名前単位でオン／オフする（全エージェント一括。この場所の上書きを自動で作る） */
+  function saveDocRow(kind, target, on, focus) {
+    return placeWork(async () => {
+      const before = editDocs[kind];
+      const res = await cmd('setDocRow', { kind, ...target, on, place: place.cwd, cwd: place.cwd });
+      // 保存はできた。読み直しだけ失敗したときは「保存できませんでした」でなく、読み直せなかったと言う（レビュー S9）
+      const [view] = await Promise.allSettled([
+        cmd('contextSettings', { cwd: place.cwd }),
+        loadEditScan({ skipRefresh: true }),
+      ]);
+      if (view.status === 'fulfilled') place.view = view.value;
+      else notice = t('context.savedReloadFailed', { error: view.reason?.message ?? '' });
+      return { fresh: docFreshChanged(before, editDocs[kind]), pruned: res?.pruned ?? null };
     }, focus);
   }
   function showToast() {
@@ -632,6 +688,36 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     return box;
   }
   function editFace(kind) {
+    if (kind === 'instruction' || kind === 'skill') {
+      const doc = editDocs[kind];
+      const activeCount = doc ? doc.rows.filter(r => r.rowSwitchOn).length : 0;
+      const who = !doc
+        ? t('sessionContext.place.loading')
+        : kind === 'instruction'
+          ? t('sessionContext.instruction.who', { count: activeCount })
+          : t('sessionContext.skill.who', { count: activeCount });
+      const k = kindBox(WORD[kind], who, activeCount > 0);
+      if (!doc && editDocLoading) {
+        const p = el('p', 'cx-sub');
+        p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots')));
+        k.append(p);
+        return k;
+      }
+      if (!doc || !doc.rows.length) {
+        k.append(el('p', 'cx-sub', t('sessionContext.place.none')));
+        return k;
+      }
+      const host = el('div', 'scx-edit-list');
+      if (kind === 'skill') {
+        editSkillHost = host;
+        skillPaintArgs = { doc };
+        k.append(editSkillFind.root, host);
+      } else {
+        k.append(host);
+      }
+      paintEditEntries(host, kind, doc);
+      return k;
+    }
     const value = here()?.kinds[kind].value ?? place.view?.defaults.kinds[kind].value;
     // 外部 MCP が名前 × エージェントの設定（agents）のときは、この場所だけの 2 択は効かない。設定 › プラグインで変える
     if (kind === 'mcp' && value?.agents) {
@@ -670,29 +756,15 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const offText = own ? t('sessionContext.place.offHere') : t('sessionContext.place.offGlobal');
     const entries = uniqueRows((editScan.entries ?? []).filter(e => e.kind === kind && e.status !== 'duplicate'));
     if (!entries.length) { k.append(el('p', 'cx-sub', t('sessionContext.place.none'))); return k; }
-    if (kind === 'mcp') {
-      // 名前ごとに 1 行（同じ名前の定義が複数あっても、つなぐのは 1 つ）
-      const byName = new Map();
-      for (const e of entries) byName.set(e.name, [...(byName.get(e.name) ?? []), e]);
-      const rows = [...byName.values()].map(list => ({ ...(list.find(e => e.status === 'candidate') ?? list[0]), list }));
-      grouped(k, rows, e => {
-        const on = e.list.some(x => x.status === 'candidate');
-        return switchRow(e, on, [shortPath(e.path), on ? '' : offText].filter(Boolean).join(' · '), true,
-          () => savePlaceKind('mcp', v => toggleMcp(v, e.name, e.list, !on, editScan.entries), `[data-row="${e.id}"] .cx-sw`));
-      });
-      return k;
-    }
-    if (kind === 'skill') {
-      const host = el('div', 'scx-edit-list');
-      editSkillHost = host;
-      skillPaintArgs = { entries, offText };
-      paintEditEntries(host, 'skill', entries, offText);
-      k.append(editSkillFind.root, host);
-    } else {
-      const host = el('div', 'scx-edit-list');
-      paintEditEntries(host, kind, entries, offText);
-      k.append(host);
-    }
+    // 名前ごとに 1 行（同じ名前の定義が複数あっても、つなぐのは 1 つ）
+    const byName = new Map();
+    for (const e of entries) byName.set(e.name, [...(byName.get(e.name) ?? []), e]);
+    const rows = [...byName.values()].map(list => ({ ...(list.find(e => e.status === 'candidate') ?? list[0]), list }));
+    grouped(k, rows, e => {
+      const on = e.list.some(x => x.status === 'candidate');
+      return switchRow(e, on, [shortPath(e.path), on ? '' : offText].filter(Boolean).join(' · '), true,
+        () => savePlaceKind('mcp', v => toggleMcp(v, e.name, e.list, !on, editScan.entries), `[data-row="${e.id}"] .cx-sw`));
+    });
     return k;
   }
   function editCounts() {
@@ -700,6 +772,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const hView = hooksPlace.view;
     const hVal = hView?.place?.value ?? hView?.defaults?.value;
     const kindVal = k => here()?.kinds[k].value ?? place.view?.defaults.kinds[k].value;
+    const docCount = k => editDocs[k] ? editDocs[k].rows.filter(r => r.rowSwitchOn).length : null;
     const scanCount = k => {
       const val = kindVal(k);
       if (k === 'mcp' && val?.agents) return null;
@@ -707,14 +780,14 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       if (val.owner !== 'ply') return null;
       if (!editScan) return null;
       const rows = uniqueRows((editScan.entries ?? []).filter(e => e.kind === k && e.status !== 'duplicate'));
-      return k === 'mcp' ? new Set(rows.map(e => e.name)).size : rows.length;
+      return new Set(rows.map(e => e.name)).size;
     };
     const hooksCount = !hView || hView.unreadable || !hVal
       ? null
       : hVal.owner !== 'ply' ? null : (hView.hooks ?? []).filter(h => h.enabled).length;
     return {
-      instruction: scanCount('instruction'),
-      skill: scanCount('skill'),
+      instruction: docCount('instruction'),
+      skill: docCount('skill'),
       mcp: scanCount('mcp'),
       hooks: hooksCount,
     };
@@ -728,7 +801,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       editSkillQuery = '';
       editSkillFind.clear();
       if (editSkillHost && editSkillHost.isConnected !== false && skillPaintArgs) {
-        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.entries, skillPaintArgs.offText);
+        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.doc);
       }
     }
     lastTabBar?.setActive(id, { focus });
@@ -739,10 +812,12 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       if (scroller && 'scrollTop' in scroller) scroller.scrollTop = 0;
     }
   }
-  function editDocRow(kind, e, { child = false, displayName = null, offText }) {
-    const on = e.status !== 'excluded';
-    const row = el('div', 'cx-row' + (on ? '' : ' off') + (child ? ' kid' : ''));
+  function editDocRow(kind, doc, e, { child = false, displayName = null }) {
+    const on = Boolean(e.rowSwitchOn);
+    const off = !e.anyOn;
+    const row = el('div', 'cx-row' + (off ? ' off' : '') + (child ? ' kid' : ''));
     row.dataset.row = e.id;
+    row.dataset.key = e.key;
     row.append(el('span', 'cx-lead0'));
     const body = el('span', 't');
     const nl = el('span', 'nl');
@@ -753,18 +828,30 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     }
     body.append(nl);
     const where = kind === 'skill' ? dir(dir(e.path)) : dir(e.path);
-    const note = e.status === 'conditional' ? t('context.row.conditional', { paths: (e.paths ?? []).join(', ') }) : '';
-    const subText = [child ? '' : shortPath(where), note, on ? '' : offText].filter(Boolean).join(' · ');
+    const note = (e.conditional || e.status === 'conditional') ? t('context.row.conditional', { paths: (e.paths ?? []).join(', ') }) : '';
+    // どこで外しているかは行ごとに決める（レビュー S8）。この場所の上書きが無くても外れている行（inheritedOn: false）は全体の設定、
+    // 上書きのせいで外れている行はこの場所。ほかの行を押してこの場所の上書きができても、注記は変わらない
+    const offText = e.inheritedOn === false ? t('sessionContext.place.offGlobal') : t('sessionContext.place.offHere');
+    const subText = [child ? '' : shortPath(where), note, !on && !e.rowLocked ? offText : ''].filter(Boolean).join(' · ');
     if (subText) body.append(el('span', 'p', subText));
-    const sw = button('', 'cx-sw', () => savePlaceKind(kind, v => toggleExclude(v, e, !on), `[data-row="${escCss(e.id)}"] .cx-sw`));
-    sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(on));
-    sw.setAttribute('aria-label', t('sessionContext.place.switchAria', { path: shortPath(e.path), name: e.name }));
-    sw.disabled = editBusy;
-    row.append(body, sw);
+    const sw = rowSwitch({
+      role: 'switch',
+      checked: on,
+      labelText: t('sessionContext.place.switchAria', { path: shortPath(e.path), name: e.name }),
+      disabledReason: e.rowLocked ? docLockReason(doc, e) : null,
+      key: `scx-sw:${e.key}`,
+      keyAttr: 'cxFk',
+      onToggle: () => saveDocRow(kind, { key: e.key }, !on, `[data-cx-fk="${escCss(`scx-sw:${e.key}`)}"]`),
+    });
+    if (editBusy) sw.disabled = true;
+    // 指示の行の右端の量（設定の表と同じ。モックどおり編集中も出す）
+    const tokens = kind === 'instruction' && Number.isFinite(e.tokens) ? [el('span', 'cx-tok', about(e.tokens))] : [];
+    row.append(body, ...tokens, sw);
     return row;
   }
-  function paintEditEntries(host, kind, entries, offText) {
+  function paintEditEntries(host, kind, doc) {
     host.replaceChildren();
+    const entries = doc?.rows ?? [];
     const query = kind === 'skill' ? editSkillQuery.toLowerCase() : '';
     const hit = entry => !query || String(entry.name ?? '').toLowerCase().includes(query);
     let shown = 0;
@@ -780,7 +867,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       for (const block of visibleBlocks) {
         if (block.type === 'row') {
           shown++;
-          host.append(editDocRow(kind, block.entry, { child: false, displayName: block.childLabel, offText }));
+          host.append(editDocRow(kind, doc, block.entry, { child: false, displayName: block.childLabel }));
           continue;
         }
         const kids = block.items.filter(({ entry }) => hit(entry));
@@ -790,8 +877,11 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         // 絞り込み中は、スイッチも見えている（当たった）行だけが対象（状態も切替も）
         const items = (query ? kids : block.items).map(i => i.entry);
         const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
-        const swState = bundleSwitchState(items, e => e.status !== 'excluded', actionLabel);
-        const row = el('div', 'cx-row grp' + (swState.checked === 'false' ? ' off' : ''));
+        const swState = bundleSwitchState(items, e => Boolean(e.rowSwitchOn), actionLabel);
+        const allLocked = docBundleLocked(items);
+        const pressableKeys = items.filter(e => !e.rowLocked).map(e => e.key);
+        const anyBundleOn = items.some(e => e.anyOn);
+        const row = el('div', 'cx-row grp' + (anyBundleOn ? '' : ' off'));
         row.dataset.bundle = bKey;
         const tw = button('', 'cx-ic cx-tw');
         const fk = `scx-bundle:${bKey}`;
@@ -802,7 +892,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const flip = () => {
           if (query) return;
           editBundleOpen.set(bKey, !open);
-          paintEditEntries(host, kind, entries, offText);
+          paintEditEntries(host, kind, doc);
           focusIn(`[data-cx-fk="${escCss(fk)}"]`);
         };
         tw.onclick = flip;
@@ -813,17 +903,27 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const marks = originMarks(block.origins);
         if (marks) nl.append(marks);
         body.append(nl, el('span', 'p', shortPath(block.folder)));
-        const sw = button('', 'cx-sw', () => {
-          const include = swState.checked !== 'true';
-          sw.setAttribute('aria-checked', String(include));
-          savePlaceKind(kind, v => toggleExcludeMany(v, items, include), `[data-bundle="${escCss(bKey)}"] .cx-sw`);
+        const nextOn = swState.checked !== 'true';
+        const sw = rowSwitch({
+          role: 'checkbox',
+          checked: swState.checked === 'true',
+          mixed: swState.checked === 'mixed',
+          labelText: swState.ariaLabel,
+          disabledReason: allLocked ? docRowLockSummary(doc, items) : null,
+          key: `scx-bundle-sw:${bKey}`,
+          keyAttr: 'cxFk',
+          onToggle: () => {
+            if (!pressableKeys.length) return;
+            saveDocRow(kind, { keys: pressableKeys }, nextOn, `[data-cx-fk="${escCss(`scx-bundle-sw:${bKey}`)}"]`);
+          },
         });
-        sw.setAttribute('role', 'checkbox'); sw.setAttribute('aria-checked', swState.checked);
-        sw.setAttribute('aria-label', swState.ariaLabel);
-        sw.disabled = editBusy;
-        row.append(tw, body, sw);
+        if (editBusy) sw.disabled = true;
+        // まとまりの量: 渡っている物の合計（どれも渡っていなければ全体）。設定の表と同じ数え方
+        const tok = kind === 'instruction' ? items.reduce((a, x) => (Number.isFinite(x.tokens) ? { all: a.all + x.tokens, on: a.on + (x.anyOn ? x.tokens : 0) } : a), { all: 0, on: 0 }) : null;
+        const tokens = tok && tok.all > 0 ? [el('span', 'cx-tok', about(tok.on || tok.all))] : [];
+        row.append(tw, body, ...tokens, sw);
         host.append(row);
-        if (open) for (const { entry, childLabel } of kids) host.append(editDocRow(kind, entry, { child: true, displayName: childLabel, offText }));
+        if (open) for (const { entry, childLabel } of kids) host.append(editDocRow(kind, doc, entry, { child: true, displayName: childLabel }));
       }
     }
     if (query && !shown) {
@@ -858,7 +958,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function instructions(data) {
     const ply = managed(data, 'instruction');
     const rows = data.report.entries.filter(e => e.kind === 'instruction');
-    const given = rows.filter(e => e.status === 'supplied' || e.status === 'loaded');
+    const given = rows.filter(e => e.status === 'supplied' || e.status === 'loaded' || e.status === 'native');
     const k = kindBox(WORD.instruction, ply ? t('sessionContext.instruction.who', { count: given.length }) : t('sessionContext.native'), ply);
     if (!ply) {
       k.append(el('p', 'cx-sub', t('sessionContext.instruction.native', { agent: backendLabel() })));
@@ -873,16 +973,20 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       }
       return k;
     }
-    grouped(k, given, e => item('✓', e.name, e.status === 'loaded' ? t('sessionContext.instruction.loaded', { path: shortPath(dir(e.path)) }) : shortPath(dir(e.path)), { on: true, tokens: e.tokens }).row);
+    grouped(k, given, e => item('✓', e.name, e.status === 'loaded'
+      ? t('sessionContext.instruction.loaded', { path: shortPath(dir(e.path)) })
+      : e.status === 'native'
+        ? `${shortPath(dir(e.path))} · ${t('sessionContext.native')}`
+        : shortPath(dir(e.path)), { on: true, tokens: e.tokens }).row);
     if (!given.length) k.append(el('p', 'cx-sub', t('sessionContext.instruction.none')));
-    const left = rows.filter(e => !['supplied', 'loaded'].includes(e.status));
+    const left = rows.filter(e => !['supplied', 'loaded', 'native'].includes(e.status));
     if (left.length) k.append(fold(t('sessionContext.instruction.notGiven', { count: left.length }), left.map(e => item('–', e.name, `${shortPath(dir(e.path))} · ${reasonOf(e)}`).row)));
     return k;
   }
   function skills(data) {
     const ply = managed(data, 'skill');
     const rows = data.report.entries.filter(e => e.kind === 'skill');
-    const offered = rows.filter(e => ['available', 'manual-only', 'loaded'].includes(e.status));
+    const offered = rows.filter(e => ['available', 'manual-only', 'loaded', 'native'].includes(e.status));
     const k = kindBox('Skills', ply ? t('sessionContext.skill.who', { count: offered.length }) : t('sessionContext.native'), ply);
     if (!ply) { k.append(el('p', 'cx-sub', t('sessionContext.skill.native', { agent: backendLabel() }))); return k; }
     // 使ったものを先に。多いので最初の数件だけ並べ、残りは畳む
@@ -890,7 +994,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     // 同じ名前の定義が複数あったとき、使わなかった方（core/context-runtime.mjs の markChoices）
     const unused = rows.filter(e => e.shadowedBy === 'choice');
     const make = e => {
-      const { row, body } = item('✓', e.name, [shortPath(dir(dir(e.path))), e.status === 'loaded' ? t('sessionContext.skill.usedMark') : e.status === 'manual-only' ? t('sessionContext.skill.manualOnly') : ''].filter(Boolean).join(' · '), { on: true });
+      const note = e.status === 'loaded' ? t('sessionContext.skill.usedMark') : e.status === 'manual-only' ? t('sessionContext.skill.manualOnly') : e.status === 'native' ? t('sessionContext.native') : '';
+      const { row, body } = item('✓', e.name, [shortPath(dir(dir(e.path))), note].filter(Boolean).join(' · '), { on: true });
       if (e.choice) body.append(...skillChoice(e, [e, ...unused.filter(x => x.name === e.name)]));
       return row;
     };

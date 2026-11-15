@@ -1320,6 +1320,8 @@
     "subtitle": {
       "startedAt": "Started {{time}} · settings changes apply from the next turn",
       "started": "Settings changes apply from the next turn",
+      "startedAtFresh": "Started {{time}} · settings changes apply in new conversations",
+      "startedFresh": "Settings changes apply in new conversations",
       "refreshed": "{{text}} · reloaded {{time}}"
     },
     "agent": "The agent",
@@ -1590,43 +1592,30 @@
       "ply": "Managed by Pleiad"
     },
     "instruction": {
-      "agent": "Claude reads CLAUDE.md and Codex reads AGENTS.md by their own rules",
-      "ply": "Give every agent the same files",
-      "note": "Pleiad provides no instruction files. Which files are read depends on the agent.",
-      "sourceCommon": "AGENTS.md (shared)",
-      "sourceCodex": "Codex format",
-      "sourceOpencode": "OpenCode format",
-      "sourceDevin": "Devin format",
-      "sourceAntigravity": "Antigravity format",
-      "sourceGrok": "Grok format",
       "title": "Instructions",
-      "files": "instruction files",
-      "fileTitle": "Instructions from files (CLAUDE.md, AGENTS.md)",
       "none": "No instruction files found"
     },
     "skill": {
-      "agent": "Each agent reads its own skills folder",
-      "ply": "Provide the list and load the body only when needed",
-      "note": "Pleiad provides nothing. Which skills are available depends on the agent.",
-      "sourceCommon": ".agents/skills (shared)",
+      "title": "Skills",
       "none": "No skills found"
     },
     "mcp": {
       "title": "External MCP",
       "agent": "Each agent connects according to its own MCP settings",
-      "ply": "Connect the same MCP servers to every agent",
-      "sourceClaude": "Claude settings",
-      "sourceCodex": "Codex settings",
-      "sourceOpencode": "OpenCode settings",
-      "sourceDevin": "Devin settings",
-      "sourceAntigravity": "Antigravity settings",
-      "sourceGrok": "Grok settings"
+      "ply": "Connect the same MCP servers to every agent"
     },
     "copyPath": "Copy path",
     "copied": "Copied",
     "emptyFile": "(empty file)",
-    "lead": "Choose what to provide to agents. Conversations already started pick up changes from their next turn.",
-    "saved": "Saved · applies from the next turn",
+    "lead": "Choose what to provide to agents. Conversations already running pick up changes from the next turn (Antigravity and Grok from new conversations).",
+    "saved": "Saved",
+    "savedFresh": "Saved. Antigravity and Grok pick up changes in new conversations.",
+    "savedPrunedPlaces_one": ". The limit was reached, so the settings for {{count}} folder that no longer exists were removed.",
+    "savedPrunedPlaces_other": ". The limit was reached, so the settings for {{count}} folders that no longer exist were removed.",
+    "savedPrunedKeys_one": ". The limit was reached, so the settings for {{count}} file that no longer exists were removed.",
+    "savedPrunedKeys_other": ". The limit was reached, so the settings for {{count}} files that no longer exist were removed.",
+    "savedPrunedBoth": ". The limit was reached, so the settings for folders ({{places}}) and files ({{keys}}) that no longer exist were removed.",
+    "savedReloadFailed": "Saved, but the table couldn't be reloaded ({{error}}). Reopen it to see the latest state.",
     "saveFailed": "Couldn't save: {{error}}",
     "cancel": "Cancel",
     "add": "Add",
@@ -1638,8 +1627,6 @@
       "noCandidates": "No suggestions",
       "pathRequired": "Enter a folder path."
     },
-    "ownerAria": "Who loads {{kind}}",
-    "formats": "Formats to search",
     "searching": "Searching",
     "searchingDots": "Searching…",
     "row": {
@@ -1671,14 +1658,33 @@
       "offerAria": "Offer all in {{name}}",
       "provideAria": "Provide all in {{name}}"
     },
-    "antigravityNote": "In antigravity conversations, when instruction files are left to the agent, agy can no longer read AGENTS.md and GEMINI.md in the workspace on its own, so Pleiad looks them up and prepends their content to each message.",
+    "workspaceRow": {
+      "instruction": "CLAUDE.md · AGENTS.md",
+      "skill": ".claude/skills · .agents/skills",
+      "instructionSub": "Read from the workspace by each agent",
+      "skillSub": "Skills read from the workspace"
+    },
+    "matrix": {
+      "agentSettings": "Agent settings",
+      "tokensTotal": "~{{n}} tokens",
+      "agentsAria": "Agents using {{name}}",
+      "agentAria": "Use {{name}} in {{agent}}",
+      "askAria": "Confirm providing {{name}} to {{to}} too",
+      "ask": "This provides {{name}} from {{from}}'s settings to {{to}} too",
+      "askBundle": "This provides {{name}} ({{count}} items) from {{from}}'s settings to {{to}} too",
+      "cancel": "Cancel",
+      "confirm": "Provide",
+      "locked": "Pleiad cannot turn this off",
+      "originCommon": "Shared"
+    },
     "lockReason": {
       "own": "In {{agent}}'s settings, so Pleiad cannot turn this off",
       "workspace": "{{agent}} reads this from the workspace, so Pleiad cannot turn this off",
       "relay": "Pleiad cannot pass this to {{agent}}",
       "admin": "Set for {{agent}} by an administrator",
       "linked": "Passed to {{agent}} according to delegation settings",
-      "nolinks": "Developer Mode is off in Windows, so Pleiad cannot turn this off"
+      "nolinks": "Developer Mode is off in Windows, so Pleiad cannot turn this off",
+      "bundled": "Turning this off in {{agent}} would also turn off other settings such as Hooks, so it cannot be turned off here"
     },
     "lockAria": "{{label}} ({{reason}})",
     "roots": {
@@ -1691,11 +1697,12 @@
     },
     "scanFailed": "Couldn't search: {{error}}",
     "loadFailed": "Couldn't load the plugin settings: {{error}}",
+    "repairDocAgents": "Move the broken file aside and repair",
+    "repairedDocAgents": "Repaired. The broken file is kept as {{file}}",
     "tier": {
       "user": "User",
       "place": "Working directory",
       "placeSub": "From the Git root to the working folder",
-      "formatsAria": "Formats to search in {{tier}}",
       "listAria": "{{kind}} found for the user"
     },
     "ply": {
@@ -1720,8 +1727,6 @@
         "parent": "Requesting conversations only",
         "child": "Delegated conversations only"
       },
-      "onlyAgent": "{{agent}} only",
-      "agentJoin": ", ",
       "routingOff": "Not added because automatic delegate selection is off",
       "switchAria": "Add “{{name}}”",
       "edit": "Edit",

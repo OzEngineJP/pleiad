@@ -8,9 +8,13 @@ import { DEFAULT_OWNERS, KINDS, SOURCES, containsPath, legacyPlan, matchesGlobs,
 import { t, agentT } from './i18n.mjs';
 import { agentOf } from './backends/agents.mjs';
 import { mcpOffBlockedByLinks, nativeMcpOffMode } from './backends/mcp-off-home.mjs';
+import { DOC_AGENT_TRAITS, docToolRequirements } from './backends/context-capabilities.mjs';
+import { resolveDocForAgent } from './context-doc-matrix.mjs';
+import { resolveEffectiveDocSource as resolveDocSource } from './context-agents.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
-export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply');
+export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply')
+  || Boolean(policy?.docSourceState?.instruction?.touched || policy?.docSourceState?.skill?.touched);
 /**
  * このバックエンドが、この担当の組み合わせで Pleiad のコンテキスト（ply_context）を受け取れないなら、その理由。受け取れるなら null。
  * capabilities.plyContext が false なら常に受け取れない。backend.plyContextRefusal(owners) は組み合わせごとの制約
@@ -18,7 +22,13 @@ export const managed = policy => Object.values(policy?.owners ?? {}).includes('p
  */
 export function plyContextRefusal(backend, policy) {
   if (backend?.capabilities?.plyContext === false) return t('context.runtime.refused', { backend: backend.label ?? backend.id });
-  return backend?.plyContextRefusal?.(policy?.owners ?? {}) ?? null;
+  const owners = { ...(policy?.owners ?? {}) };
+  // 表に触れた種類は表が決める。旧い「Pleiad がそろえる」の場所を触った後は、main と同じく Pleiad の担当として扱う（Grok は受けない）
+  for (const k of ['instruction', 'skill']) {
+    const st = policy?.docSourceState?.[k];
+    if (st?.touched) owners[k] = st.legacyOwner === 'ply' ? 'ply' : 'native';
+  }
+  return backend?.plyContextRefusal?.(owners) ?? null;
 }
 export const acceptsPlyContext = (backend, policy) => !plyContextRefusal(backend, policy);
 /**
@@ -43,12 +53,61 @@ export function unstoppedMcp(report) {
   return out;
 }
 /**
+ * 解いたコンテキストが、エージェント任せの道と同じ結果になるか（指示・Skills がエージェントそのまま、中継する MCP も止める名前も 0）。
+ * true ならターンだけの口・中継を起こさず、エージェント任せの道で走らせる（core/server.mjs の runTurn。ADR 0327 / ADR 0337）。
+ * 名前ごとのモデルに触れていない種類は、旧い担当（owners）が 'ply' でない限りそのまま。試験（tests/unit/context-doc-main-equivalence.mjs）も同じ関数を使う
+ */
+export function nativeEquivalentTurn(policy, resolvedContext) {
+  if (!resolvedContext) return false;
+  const mcpUntouched = resolvedContext.mcp?.named
+    ? !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length
+    : policy.owners.mcp !== 'ply' && !resolvedContext.servers?.length;
+  const instUntouched = resolvedContext.docs?.instruction
+    ? resolvedContext.docs.instruction.untouchedNative
+    : policy.owners.instruction !== 'ply';
+  const skillUntouched = resolvedContext.docs?.skill
+    ? resolvedContext.docs.skill.untouchedNative
+    : policy.owners.skill !== 'ply';
+  return Boolean(mcpUntouched && instUntouched && skillUntouched);
+}
+/**
  * 会話の方針。最初の送信で記録し、以後はターンごとに今の設定（と作業場所）で解き直す（followSettings。core/server.mjs の runTurn）。
  * 形式 2 は探索の計画（plan。core/context-settings.mjs）をそのまま持つ。形式 1（user / directory の探索設定）の記録も読める。
  * at は最初に方針を決めた時刻、removedMcp は「この会話では外す」とした外部 MCP の名前
  */
+function slicePlacesForCwd(places, cwd) {
+  if (!places || typeof places !== 'object') return {};
+  if (!cwd) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(places)) {
+    if (containsPath(k, cwd) || containsPath(cwd, k)) out[k] = v;
+  }
+  return out;
+}
+
+export function attachDocPolicy(settings, rawConfig, docAgents) {
+  if (!settings) return settings;
+  const cwd = settings.cwd ?? null;
+  const docSourceState = {
+    instruction: resolveDocSource(rawConfig, docAgents, cwd, 'instruction'),
+    skill: resolveDocSource(rawConfig, docAgents, cwd, 'skill'),
+  };
+  const scopedRaw = rawConfig ? { ...rawConfig, places: slicePlacesForCwd(rawConfig.places, cwd) } : rawConfig;
+  const scopedDocAgents = docAgents ? { ...docAgents, places: slicePlacesForCwd(docAgents.places, cwd) } : docAgents;
+  return { ...settings, rawConfig: scopedRaw, docAgents: scopedDocAgents, docSourceState };
+}
+
 export function contextPolicy(settings, at = new Date()) {
-  return { version: 2, cwd: settings.cwd, at: at.toISOString(), owners: structuredClone(settings.owners ?? DEFAULT_OWNERS), plan: structuredClone(settings.plan) };
+  return {
+    version: 2,
+    cwd: settings.cwd,
+    at: at.toISOString(),
+    owners: structuredClone(settings.owners ?? DEFAULT_OWNERS),
+    plan: structuredClone(settings.plan),
+    ...(settings.rawConfig ? { rawConfig: settings.rawConfig } : {}),
+    ...(settings.docAgents ? { docAgents: settings.docAgents } : {}),
+    ...(settings.docSourceState ? { docSourceState: settings.docSourceState } : {}),
+  };
 }
 const textResult = text => ({ content: [{ type: 'text', text }] });
 const properties = { type: 'object', properties: { id: { type: 'string' }, full: { type: 'boolean' } }, required: ['id'], additionalProperties: false };
@@ -80,16 +139,42 @@ export function followSettings(previous, settings, { keepNative = false } = {}) 
   if (pathKey(previous.cwd ?? '') !== pathKey(policy.cwd ?? '')) return { policy, changed: [] };
   const before = runtimeSettings(previous).plan, after = runtimeSettings(policy).plan;
   // 追加で探すフォルダーは種類ごと。Pleiad が探している種類でだけ数える
-  const changed = KINDS.filter(k => (previous.owners?.[k] ?? 'native') !== policy.owners[k]
-    || !isDeepStrictEqual(before.user.kinds[k], after.user.kinds[k]) || !isDeepStrictEqual(before.directory.kinds[k], after.directory.kinds[k])
-    || (k === 'mcp' && policy.owners.mcp === 'ply' && !isDeepStrictEqual(before.mcp, after.mcp))
-    || (policy.owners[k] === 'ply' && (!isDeepStrictEqual(before.user.roots[k], after.user.roots[k]) || !isDeepStrictEqual(before.directory.roots[k], after.directory.roots[k]))));
+  const changed = KINDS.filter(k => {
+    const prevTouched = !previous.keepNative && Boolean(previous.docSourceState?.[k]?.touched);
+    const nextTouched = !policy.keepNative && Boolean(policy.docSourceState?.[k]?.touched);
+    if (prevTouched || nextTouched) {
+      return !isDeepStrictEqual(previous.docSourceState?.[k], policy.docSourceState?.[k])
+        || (!prevTouched && (previous.owners?.[k] ?? 'native') !== policy.owners[k])
+        || !isDeepStrictEqual(before.user.roots[k], after.user.roots[k])
+        || !isDeepStrictEqual(before.directory.roots[k], after.directory.roots[k]);
+    }
+    return (previous.owners?.[k] ?? 'native') !== policy.owners[k]
+      || !isDeepStrictEqual(before.user.kinds[k], after.user.kinds[k]) || !isDeepStrictEqual(before.directory.kinds[k], after.directory.kinds[k])
+      || (k === 'mcp' && policy.owners.mcp === 'ply' && !isDeepStrictEqual(before.mcp, after.mcp))
+      || (policy.owners[k] === 'ply' && (!isDeepStrictEqual(before.user.roots[k], after.user.roots[k]) || !isDeepStrictEqual(before.directory.roots[k], after.directory.roots[k])));
+  });
   return { policy, changed };
 }
-/** 会話の方針から探索設定を作る。Pleiad が担当する種類だけを探す（担当がエージェントの種類は探さない） */
-export function runtimeSettings(policy) {
+/** 会話の方針から探索設定を作る。Pleiad が担当する種類（または Stage 2 で対象の種類）を探す */
+/** 名前×エージェントの表で解く種類（表に触れた種類）。Devin の取り込みは表で止めないので、種類どうしは巻き込まない（ADR 0337 §決定 8） */
+function docActiveKinds(policy) {
+  return {
+    instruction: !policy.keepNative && Boolean(policy.docSourceState?.instruction?.touched),
+    skill: !policy.keepNative && Boolean(policy.docSourceState?.skill?.touched),
+  };
+}
+export function runtimeSettings(policy, options = {}) {
   const plan = normalizePlan(structuredClone(policy.plan ?? legacyPlan(policy.user, policy.directory)));
-  for (const scope of ['user', 'directory']) for (const k of KINDS) if (policy.owners?.[k] !== 'ply') plan[scope].kinds[k] = null;
+  const docActive = docActiveKinds(policy);
+  for (const scope of ['user', 'directory']) {
+    for (const k of KINDS) {
+      if (docActive[k]) {
+        plan[scope].kinds[k] = { ...(plan[scope].kinds[k] ?? {}), sources: [...SOURCES], excludePaths: [] };
+      } else if (policy.owners?.[k] !== 'ply') {
+        plan[scope].kinds[k] = null;
+      }
+    }
+  }
   // 名前ごとのモデルでは、広げる定義を探すため、MCP はすべてのエージェントの設定を探す（探索の設定には従わない）
   if (plan.mcp?.agents) for (const scope of ['user', 'directory']) {
     if (plan[scope].kinds.mcp) plan[scope].kinds.mcp = { ...plan[scope].kinds.mcp, sources: SOURCES.filter(s => s !== 'common') };
@@ -220,15 +305,34 @@ export function agentMcpRules(plan, agent) {
 export async function resolveRuntime(policy, options = {}) {
   const owners = policy.owners;
   const kinds = Object.keys(owners).filter(k => owners[k] === 'ply');
-  const settings = runtimeSettings(policy);
   // locale は会話の言語（エージェントに渡す前置き・ツールの説明の言語）。探索の設定ではないので scanOptions に入れない
-  const { snapshots, locale, agent = policy.agent ?? null, ...scanOptions } = options;
+  const { snapshots, locale, agent = policy.agent ?? null, forceInstructionCoarse = false, ...scanOptions } = options;
+  const settings = runtimeSettings(policy, { agent });
   const mcpRules = agentMcpRules(settings.plan, agent);
   // 名前ごとのモデルでは、外部 MCP の設定ファイルが 1 つ壊れていても会話を止めない（そのファイルの名前だけ渡さない）。指示・Skills の失敗は従来どおり止める
   const scan = await scanContext(settings, { ...scanOptions, runtime: true, softMcp: Boolean(mcpRules) });
   const removed = new Set(policy.removedMcp ?? []);
   if (scan.limited || scan.diagnostics.length) throw new Error(t('context.runtime.unresolved', { detail: scan.diagnostics[0]?.message ?? t('context.runtime.scanLimit') }));
-  const report = { version: 1, cwd: policy.cwd, owners, at: new Date().toISOString(), entries: [], native: kinds.length < 3, status: 'resolved' };
+
+  const docActive = docActiveKinds(policy);
+  const docInstActive = Boolean(docActive.instruction && agent && policy.rawConfig && policy.docAgents);
+  const docSkillActive = Boolean(docActive.skill && agent && policy.rawConfig && policy.docAgents);
+  const instrRes = docInstActive
+    ? resolveDocForAgent({ kind: 'instruction', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home, forceCoarseDeliver: forceInstructionCoarse })
+    : null;
+  const skillRes = docSkillActive
+    ? resolveDocForAgent({ kind: 'skill', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home })
+    : null;
+  const docs = (instrRes || skillRes) ? { instruction: instrRes, skill: skillRes } : null;
+  const instrDoc = docs?.instruction ?? null;
+  const skillDoc = docs?.skill ?? null;
+  const instrDeliverPaths = instrDoc ? new Set(instrDoc.deliver.map((e) => pathKey(e.realPath))) : null;
+  const instrActivePaths = instrDoc ? new Set(instrDoc.active.map((a) => pathKey(a.entry.realPath))) : null;
+  const skillDeliverIds = skillDoc ? new Set(skillDoc.deliver.map((e) => e.id)) : null;
+  const skillNativeIds = skillDoc ? new Set(skillDoc.nativeKeep.map((e) => e.id)) : null;
+
+  const isNative = kinds.length < 3 && !(instrDoc && !instrDoc.untouchedNative) && !(skillDoc && !skillDoc.untouchedNative);
+  const report = { version: 1, cwd: policy.cwd, owners, at: new Date().toISOString(), entries: [], native: isNative, status: 'resolved' };
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
   const suppress = new Set(), nativeNames = new Set();
   if (scan.skipped?.length) report.skipped = scan.skipped.map(({ path: file, message }) => ({ path: file, message }));
@@ -245,6 +349,10 @@ export async function resolveRuntime(policy, options = {}) {
     report.entries.push(row);
     // paths 付きの rules は開始時に渡さない。instructions_for_path が当たるファイルのときだけ返す（行は conditional のまま）
     if (item.status === 'conditional') {
+      if (instrDeliverPaths && !instrDeliverPaths.has(pathKey(item.realPath))) {
+        row.status = instrActivePaths.has(pathKey(item.realPath)) ? 'native' : 'excluded';
+        continue;
+      }
       const key = `rule:${pathKey(item.realPath)}:${item.pathsBase ?? ''}`;
       if (seen.has(key)) row.status = 'duplicate';
       else { seen.add(key); conditional.push({ ...item, content: instructionBody(item) }); }
@@ -268,6 +376,21 @@ export async function resolveRuntime(policy, options = {}) {
     }
     // 「この会話では外す」とした外部 MCP。接続せず、ply_context にもツールを出さない
     if (item.kind === 'mcp' && removed.has(item.name)) { row.status = 'removed'; row.reason = t('context.removedHere'); continue; }
+    // Stage 2: 指示・Skills は名前×エージェントの結果に沿って、残すネイティブと抑止対象を分ける
+    if (item.kind === 'instruction' && instrDeliverPaths) {
+      const rp = pathKey(item.realPath);
+      if (!instrDeliverPaths.has(rp)) {
+        row.status = instrActivePaths.has(rp) ? 'native' : 'excluded';
+        if (row.status === 'native') row.tokens = item.tokens;
+        continue;
+      }
+    }
+    if (item.kind === 'skill' && skillDeliverIds) {
+      if (!skillDeliverIds.has(item.id)) {
+        row.status = skillNativeIds.has(item.id) ? 'native' : 'excluded';
+        continue;
+      }
+    }
     // 同じ実体は範囲を問わず一度だけ渡す。user が先なので、指示の広い適用範囲を残せる。
     const key = `${item.kind}:${pathKey(item.realPath)}:${item.kind === 'mcp' ? item.name : ''}`;
     if (seen.has(key)) { row.status = 'duplicate'; continue; }
@@ -315,7 +438,7 @@ export async function resolveRuntime(policy, options = {}) {
   await saveSnapshots(snapshots, scan.entries);
   // scanOptions は instructions_for_path が同じ探索（home など）で解き直すために持つ
   // delivered は渡し済みの本文の控え。会話をまたぐ分は core/server.mjs が差し替える
-  return { policy, owners, report, instructions, conditional, skills, servers, prompt, pin, scanOptions, locale, mcp, delivered: {} };
+  return { policy, owners, report, instructions, conditional, skills, servers, prompt, pin, scanOptions, locale, mcp, docs, agent, delivered: {} };
 }
 
 /**
@@ -340,14 +463,17 @@ export function contextTools(runtime, userPrompt = '') {
   const active = runtime.skills.filter(s => !s.metadata?.['disable-model-invocation'] || invoked.has(s.name));
   const locale = runtime.locale;
   const tools = [];
-  if (runtime.owners.skill === 'ply') tools.push({ name: 'load_skill', description: agentT(locale, 'context.tools.load_skill'), inputSchema: properties });
-  if (runtime.owners.instruction === 'ply') tools.push({ name: 'instructions_for_path', description: agentT(locale, 'context.tools.instructions_for_path'), inputSchema: properties });
+  const req = runtime.docs
+    ? docToolRequirements(runtime.agent, runtime.docs, runtime.conditional?.length ?? 0, runtime.instructions?.length ?? 0)
+    : { needLoadSkill: runtime.owners.skill === 'ply', needInstructionsForPath: runtime.owners.instruction === 'ply' };
+  if (req.needLoadSkill) tools.push({ name: 'load_skill', description: agentT(locale, 'context.tools.load_skill'), inputSchema: properties });
+  if (req.needInstructionsForPath) tools.push({ name: 'instructions_for_path', description: agentT(locale, 'context.tools.instructions_for_path'), inputSchema: properties });
   const catalog = active.map(s => agentT(locale, 'context.prompt.skillLine', { name: s.name, description: s.description, id: s.id, dir: path.dirname(s.realPath) })).join('\n');
   // paths 付きの rules は本文を渡さず、どのファイルで読み足すべきかだけを示す
   const scoped = (runtime.conditional ?? []).map(i => agentT(locale, 'context.prompt.scopedLine', { paths: i.paths.join(', '), base: i.pathsBase ?? runtime.policy.cwd }));
-  const descendants = runtime.owners.instruction === 'ply' ? agentT(locale, 'context.prompt.descendants') : '';
-  const rules = runtime.owners.instruction === 'ply' && scoped.length ? agentT(locale, 'context.prompt.scopedRules', { rules: [...new Set(scoped)].join('\n') }) : '';
-  const skillList = runtime.owners.skill === 'ply' ? agentT(locale, 'context.prompt.skills', { catalog: catalog || agentT(locale, 'context.prompt.none') }) : '';
+  const descendants = req.needInstructionsForPath ? agentT(locale, 'context.prompt.descendants') : '';
+  const rules = req.needInstructionsForPath && scoped.length ? agentT(locale, 'context.prompt.scopedRules', { rules: [...new Set(scoped)].join('\n') }) : '';
+  const skillList = req.needLoadSkill ? agentT(locale, 'context.prompt.skills', { catalog: catalog || agentT(locale, 'context.prompt.none') }) : '';
   const prompt = [runtime.prompt, descendants, rules, skillList].filter(Boolean).join('\n\n');
   // 量を数えるための内訳（右パネルの「指示の量」。ADR 0056）。指示ファイルの本文は記録の行（tokens）で数えるので、
   // ここはファイルを包む文（「〈パス〉の指示（適用範囲: …）:」）と案内、Skills の一覧だけ
@@ -386,10 +512,15 @@ export function contextTools(runtime, userPrompt = '') {
       const root = await fs.realpath(runtime.policy.cwd).catch(() => runtime.policy.cwd);
       if (!containsPath(root, real)) throw new Error(agentT(locale, 'context.errors.outsideWorkspace'));
       const cwd = (await fs.stat(real).catch(() => null))?.isDirectory() ? real : path.dirname(real);
-      const child = await resolveRuntime({ ...runtime.policy, cwd, owners: { ...DEFAULT_OWNERS, instruction: 'ply' } }, { ...runtime.scanOptions, locale });
+      const childPolicy = runtime.docs?.instruction
+        ? { ...runtime.policy, cwd }
+        : { ...runtime.policy, cwd, owners: { ...DEFAULT_OWNERS, instruction: 'ply' } };
+      const child = await resolveRuntime(childPolicy, { ...runtime.scanOptions, locale, agent: runtime.agent, forceInstructionCoarse: Boolean(runtime.docs?.instruction?.suppress?.length && !DOC_AGENT_TRAITS[runtime.agent]?.perFileInstructionExclude) });
       // 開始時に渡したものは実体パスでも突き合わせる。子の探索は実体パスの作業場所で解くので、会話の作業場所が
       // 8.3 短縮名・junction 越しだと適用範囲が別の表記になり、id が変わって同じファイルを渡し直してしまう
-      const added = child.instructions.filter(i => !runtime.instructions.some(p => p.id === i.id || pathKey(p.realPath) === pathKey(i.realPath)));
+      const nativeKeep = runtime.docs?.instruction?.nativeKeep ?? [];
+      const added = child.instructions.filter(i => !runtime.instructions.some(p => p.id === i.id || pathKey(p.realPath) === pathKey(i.realPath))
+        && !nativeKeep.some(k => k.id === i.id || pathKey(k.realPath) === pathKey(i.realPath)));
       // paths 付きの rules は、要求されたパスそのものが glob に当たるものだけ。ユーザーの rules の glob は会話の作業場所から見る
       const rules = child.conditional.filter(i => matchesGlobs(i.paths, i.pathsBase ?? root, real));
       for (const entry of child.report.entries) if (!runtime.report.entries.some(e => e.id === entry.id)) runtime.report.entries.push({ ...entry, status: entry.status === 'supplied' ? 'loaded' : entry.status });

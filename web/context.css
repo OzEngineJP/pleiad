@@ -95,7 +95,7 @@
 .cx-fold>summary::before{content:"＋ "}
 .cx-fold[open]>summary::before{content:"－ "}
 .cx-fold>summary:hover{color:var(--ink)}
-.cx-fold>.cx-card,.cx-fold>.cx-block{margin-top:8px}
+.cx-fold>.cx-card,.cx-fold>.cx-block,.cx-fold>.cx-budget{margin-top:8px}
 
 /* まとまり・タブ（承認済みモック 2026-11-15） */
 .cx-tabs{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:4px;margin:-6px 0;padding:6px 0;background:var(--surface-paper)}
@@ -189,6 +189,7 @@
 .cx-item{display:flex;flex-direction:column;gap:2px;min-width:0}
 .cx-row>.rt-grip{flex:none;margin:-2px -4px -2px -6px}
 .cx-grip-gap{flex:none;width:32px;margin:0 -4px 0 -6px}
+.cx-sw0{flex:none;width:34px}
 .cx-list>.rt-order-gap{border-radius:var(--r-s)}
 .cx-row.rt-order-ghost{background:var(--surface-paper)}
 .cx-row.rt-order-ghost .rt-grip{background:var(--surface-2);color:var(--ink)}
@@ -215,6 +216,8 @@
 .cx-toast{position:sticky;bottom:12px;align-self:center;z-index:5;margin-top:-8px;padding:6px 16px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink);
   box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);opacity:0;pointer-events:none;transition:opacity var(--dur) var(--ease-out)}
 .cx-toast.on{opacity:1}
+/* 保存の失敗（レビュー S4）。成功と同じ下の固定の位置に、赤い字で長めに出す */
+.cx-toast.err{color:var(--ink-danger);max-width:min(560px,calc(100% - 24px));border-radius:var(--r-m);white-space:normal}
 
 /* 外部 MCP の追加・編集シート（<dialog>） */
 .mcp-sheet{width:min(460px,calc(100vw - 24px));max-height:calc(100dvh - 32px);padding:0;border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);
@@ -517,6 +520,7 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 /* 使う: 選んだ面（--surface-sel。ダークでも地から浮く）に載せる。使わない: 面を外して輪だけにし、ロゴを薄い無彩色にする */
 .cx-ag[aria-pressed=true]{background:var(--surface-sel)}
 .cx-ag[aria-pressed=true]:not([aria-disabled]):hover{background:var(--surface-3)}
+.cx-ag[aria-pressed=mixed]{background:linear-gradient(135deg,var(--surface-sel) 50%,transparent 50%);box-shadow:inset 0 0 0 1.5px var(--surface-3)}
 .cx-ag[aria-pressed=false]{box-shadow:inset 0 0 0 1.5px var(--surface-3)}
 .cx-ag[aria-pressed=false] .mk{opacity:.4;filter:grayscale(1)}
 .cx-ag[aria-pressed=false]:hover .mk{opacity:.75}

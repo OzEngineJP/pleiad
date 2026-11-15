@@ -1579,13 +1579,14 @@
       },
       "setPlyInstructions": {
         "summary": "Change one of Pleiad's instructions. It changes how agents behave, so the user must approve.",
-        "action": "save (add or change), toggle, delete (your own items), reset (default items) or order.",
+        "action": "save (add or change), toggle, toggleAgent (per agent), delete (your own items), reset (default items) or order.",
         "id": "The item id (omit on save to add).",
         "name": "The item name (save).",
         "body": "The instruction text (save).",
         "target": "all, parent or child (save).",
         "agents": "Which agents get it (save).",
-        "on": "On or off (toggle).",
+        "agent": "Agent id (toggleAgent).",
+        "on": "On or off (toggle or toggleAgent).",
         "ids": "The item ids in the new order (order)."
       },
       "setMcpAgent": {
@@ -1597,6 +1598,29 @@
       "mcpMatrix": {
         "summary": "Read external MCP servers as a name-by-agent table (where each is used and whether it can be switched, including Claude plugin MCPs and claude.ai connectors).",
         "refresh": "If true, re-read the claude.ai connectors in the background."
+      },
+      "docMatrix": {
+        "summary": "Read instructions or Skills as an item-by-agent table (where each is used and whether it can be switched).",
+        "kind": "instruction or skill.",
+        "place": "A working directory path. null or default for the default (all places)."
+      },
+      "setDocAgent": {
+        "summary": "Turn an instruction or Skill on or off for one agent (from the next turn). Both turning it on (including sharing it with another agent) and turning it off need the user's approval.",
+        "kind": "instruction or skill.",
+        "key": "Item key (__workspace__, skill:<name>, or file:<path>).",
+        "keys": "More item keys whose cell for the same agent is switched together with key, saved at once.",
+        "agent": "Agent id (claude, codex, ...).",
+        "on": "true to use it, false to stop using it."
+      },
+      "setDocRow": {
+        "summary": "Turn one or more instructions or Skills on or off as whole rows (from the next turn). Off stops every unlocked agent; on restores the state before it was turned off (or, if none, only the agents that read it themselves; it is not shared with other agents). Both need the user's approval.",
+        "kind": "instruction or skill.",
+        "key": "Item key (__workspace__, skill:<name>, or file:<path>). Omit when passing keys.",
+        "keys": "Array of item keys to switch together.",
+        "on": "true to turn on, false to turn off."
+      },
+      "repairDocAgents": {
+        "summary": "Move an unreadable instructions and Skills table settings file (context-agents.json) to context-agents.broken-<time>.json (not deleted) and return to the behaviour before the table was touched. Does nothing when the file is readable. Needs the user's approval."
       },
       "refresh": {
         "summary": "Re-read the instructions and Skills pinned to a conversation from the current files (only when it is not running)."

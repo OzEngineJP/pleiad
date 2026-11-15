@@ -156,9 +156,12 @@ export function createContextSession({ store, snapshots, plyServers = async () =
   async function findings(sessionId, cwd, agent) {
     const record = await saved(sessionId);
     const report = record.report;
-    const managed = report.status !== 'native' && (record.policy?.owners ?? report.owners ?? {}).instruction === 'ply';
+    const docTouched = Boolean(record.policy?.docSourceState?.instruction?.touched);
+    const managed = report.status !== 'native' && ((record.policy?.owners ?? report.owners ?? {}).instruction === 'ply' || docTouched);
     const where = managed ? report.cwd ?? cwd : cwd;
-    const rows = managed ? report.entries.filter(e => e.kind === 'instruction' && e.status === 'supplied') : (await nativeScan(where, agent)).entries;
+    const rows = managed
+      ? report.entries.filter(e => e.kind === 'instruction' && (e.status === 'supplied' || (docTouched && e.status === 'native')))
+      : (await nativeScan(where, agent)).entries;
     if (!rows) return null;
     return contextFindings(rows, { cwd: where });
   }

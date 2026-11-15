@@ -1,5 +1,8 @@
+import path from 'node:path';
 import { CodexRpc } from './codex-rpc.mjs';
 import { t } from '../i18n.mjs';
+import { pathKey } from '../context-settings.mjs';
+import { docStopsNative, normalizeSlashPath } from './context-capabilities.mjs';
 
 // 指示を Pleiad が担当するとき、Claude Code に読ませない指示ファイル。
 // AGENTS.md も含める: CLI 2.1.280 は CLAUDE.md と同じく Project の指示として読む（2026-09-23 確認）。
@@ -13,9 +16,23 @@ export const CLAUDE_MD_EXCLUDES = ['**/CLAUDE.md', '**/CLAUDE.local.md', '**/AGE
  * 組み込みのメモリは本物のホーム（~/.claude/projects/…/memory）へ確認なしに書いてしまう（2026-10-03 の実機の確認）
  */
 export function claudeContextOptions(context, { compact = false, hooks = false, bot = false } = {}) {
+  const docInst = context?.docs?.instruction;
+  const docSkill = context?.docs?.skill;
+  const instSuppress = docInst ? (!docInst.untouchedNative ? docInst.suppress : []) : null;
+  // 旧い「Pleiad がそろえる」の場所は、触った後も main と同じグロブで止める（表に無い入れ子の CLAUDE.md・CLAUDE.local.md・ほかの rules も）
+  const excludeList = docInst?.legacyPly
+    ? CLAUDE_MD_EXCLUDES
+    : docInst
+    ? [...new Set(instSuppress.flatMap((e) => {
+        const raw = e.path ? path.resolve(e.path).replace(/\\/g, '/') : '';
+        const real = (e.realPath ?? e.path) ? path.resolve(e.realPath ?? e.path).replace(/\\/g, '/') : '';
+        return [raw, real, normalizeSlashPath(e.path), normalizeSlashPath(e.realPath ?? e.path)];
+      }).filter(Boolean))]
+    : (context?.owners.instruction === 'ply' ? CLAUDE_MD_EXCLUDES : []);
+  const autoMemOff = docInst ? Boolean(docInst.legacyPly || bot) : (context?.owners.instruction === 'ply' || bot);
   const settings = {
-    ...(context?.owners.instruction === 'ply' ? { claudeMdExcludes: CLAUDE_MD_EXCLUDES } : {}),
-    ...(context?.owners.instruction === 'ply' || bot ? { autoMemoryEnabled: false } : {}),
+    ...(excludeList.length ? { claudeMdExcludes: excludeList } : {}),
+    ...(autoMemOff ? { autoMemoryEnabled: false } : {}),
     ...(hooks ? { disableAllHooks: true } : {}),
   };
   const denied = context?.mcp?.named ? context.mcp.suppress ?? [] : [];
@@ -23,9 +40,23 @@ export function claudeContextOptions(context, { compact = false, hooks = false, 
   const withSettings = Object.keys(settings).length ? { settings } : {};
   if (!context) return withSettings;
   const { owners } = context;
+  let skillOpt = {};
+  if (docSkill?.legacyPly) {
+    skillOpt = { skills: [], ...(!compact ? { extraArgs: { 'disable-slash-commands': null } } : {}), disallowedTools: ['Skill'] };
+  } else if (docSkill) {
+    if (!docSkill.untouchedNative && docSkill.suppress.length > 0) {
+      if (docSkill.nativeKeep.length > 0) {
+        skillOpt = { skills: [...new Set(docSkill.nativeKeep.map((e) => e.name))] };
+      } else {
+        skillOpt = { skills: [], ...(!compact ? { extraArgs: { 'disable-slash-commands': null } } : {}), disallowedTools: ['Skill'] };
+      }
+    }
+  } else if (owners.skill === 'ply') {
+    skillOpt = { skills: [], ...(!compact ? { extraArgs: { 'disable-slash-commands': null } } : {}), disallowedTools: ['Skill'] };
+  }
   return {
     ...withSettings,
-    ...(owners.skill === 'ply' ? { skills: [], ...(!compact ? { extraArgs: { 'disable-slash-commands': null } } : {}), disallowedTools: ['Skill'] } : {}),
+    ...skillOpt,
     // 名前ごとのモデル（context.mcp.named）では、エージェントの設定は書き換えず、起動のときに名前ごとに止める（deniedMcpServers。
     // 設定ファイル・SDK で渡したもの・claude.ai のコネクター・プラグインの MCP に効く）。2 択の「Pleiad がそろえる」は全部止める（strict）
     ...(owners.mcp === 'ply' && !context.mcp?.named ? { strictMcpConfig: true } : {}),
@@ -48,8 +79,21 @@ export function unexpectedNativeMcp(status, passed) {
 }
 export async function codexContextRpc(context, cwd, nativeRpc, { acquire = null } = {}) {
   const config = {};
-  if (context.owners.instruction === 'ply') config.project_doc_max_bytes = 0;
-  if (context.owners.skill === 'ply') {
+  const docInst = context.docs?.instruction;
+  const docSkill = context.docs?.skill;
+  const stopInst = docInst ? docStopsNative(docInst) : context.owners.instruction === 'ply';
+  if (stopInst) config.project_doc_max_bytes = 0;
+  if (docSkill && !docSkill.legacyPly) {
+    if (!docSkill.untouchedNative && docSkill.suppress.length > 0) {
+      const { data } = await nativeRpc.request('skills/list', { cwds: [cwd], forceReload: true });
+      if (!Array.isArray(data)) throw new Error(t('backends.context.codexSkills'));
+      const suppressed = new Set(docSkill.suppress.flatMap((e) => [pathKey(e.path), pathKey(e.realPath ?? e.path)]));
+      config['skills.config'] = data.flatMap(d => d.skills ?? [])
+        .filter((s) => suppressed.has(pathKey(s.path)))
+        .map(s => ({ path: s.path, enabled: false }));
+      if (docSkill.nativeKeep.length === 0) config['features.plugins'] = false;
+    }
+  } else if (docSkill?.legacyPly || (!docSkill && context.owners.skill === 'ply')) {
     const { data } = await nativeRpc.request('skills/list', { cwds: [cwd], forceReload: true });
     if (!Array.isArray(data)) throw new Error(t('backends.context.codexSkills'));
     config['skills.config'] = data.flatMap(d => d.skills ?? []).map(s => ({ path: s.path, enabled: false }));

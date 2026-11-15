@@ -66,7 +66,7 @@ try {
 
   // ---------------------------------------------------------------- 360px 幅・タッチ
   {
-    const { ctx, page } = await openContext({ viewport: { width: 360, height: 760 }, hasTouch: true, isMobile: true });
+    const { ctx, page } = await openContext({ viewport: { width: 360, height: 1080 }, hasTouch: true, isMobile: true });
     const cdp = await ctx.newCDPSession(page);
     const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }] });
     const wait = ms => page.waitForTimeout(ms);
@@ -89,6 +89,8 @@ try {
     check(style.label === `${await nameOf(page, a)} を並べ替え` && style.popup === 'menu', '取っ手の名前は「〈名前〉を並べ替え」で、メニューを持つと伝える', style);
 
     // 取っ手を引いて、2 つ目の行の下へ
+    await page.evaluate(() => document.querySelector('.cx-ply .cx-list').scrollIntoView({ block: 'center' }));
+    await wait(200);
     const from = await grip(page, a), under = await rowBox(page, b);
     await drag(from.x, from.y, under.y + under.height * 0.8, { during: async () => {
       const mid = await read(page);
@@ -104,7 +106,7 @@ try {
     await page.evaluate(() => document.querySelector('.cx-ply .cx-list').scrollIntoView({ block: 'center' }));
     await wait(200);
     const start = await grip(page, a), linked = await rowBox(page, linkedId);
-    check(linked.y + linked.height < 760 - 60, '一覧が画面に収まっている（端の自動スクロールの帯に掛からない）', linked);
+    check(linked.y + linked.height < 1080 - 60, '一覧が画面に収まっている（端の自動スクロールの帯に掛からない）', linked);
     await drag(start.x, start.y, linked.y + linked.height * 0.9);
     now = await read(page);
     check(now.movable.at(-1) === a && now.ids.at(-1) === linkedId, '「委譲と連動」の行より下へは入らず、動かせる行の最後に入る', now);
