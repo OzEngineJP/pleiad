@@ -17,9 +17,10 @@ export const MATRIX_ICON = {
 };
 
 export function matrixSvg(body) {
-  const s = el('span');
-  s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
-  return s.firstChild;
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true');
+  s.innerHTML = body;
+  return s;
 }
 
 export function matrixLockGlyph() {

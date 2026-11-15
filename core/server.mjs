@@ -5460,6 +5460,10 @@ function docTouch(cfg, args) {
   try {
     return applyDocTouch(cfg, args);
   } catch (e) {
+    // i18n-dynamic: server:context.settings.unknownAgent
+    // i18n-dynamic: server:context.settings.unknownDocItem
+    // i18n-dynamic: server:context.settings.docNotPressable
+    // i18n-dynamic: server:context.settings.docRowLocked
     if (e instanceof DocTouchError) throw new OpError('INVALID', t(`context.settings.${e.code}`, e.params));
     throw e;
   }
