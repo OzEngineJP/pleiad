@@ -1619,6 +1619,7 @@
     "savedPrunedPlaces_other": ". The limit was reached, so the settings for {{count}} folders that no longer exist were removed.",
     "savedPrunedKeys_one": ". The limit was reached, so the settings for {{count}} file that no longer exists were removed.",
     "savedPrunedKeys_other": ". The limit was reached, so the settings for {{count}} files that no longer exist were removed.",
+    "savedPrunedBoth": ". The limit was reached, so the settings for folders ({{places}}) and files ({{keys}}) that no longer exist were removed.",
     "savedReloadFailed": "Saved, but the table couldn't be reloaded ({{error}}). Reopen it to see the latest state.",
     "saveFailed": "Couldn't save: {{error}}",
     "cancel": "Cancel",

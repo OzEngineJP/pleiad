@@ -1,6 +1,6 @@
 // playwright-cli run-code --filename=tests/browser/composer-fit.cjs
 // 入力欄の下の行の詰め方（docs/design-system.md「入力欄と上端」・web/composer-controls.mjs の fitComposerRow）。
-// fake バックエンドを別ポート・別のデータ置き場で立て、最初の案内を済ませてから流す（AGENTS.md）。
+// fake バックエンドを別ポート・別のデータ置き場で立て、最初の案内を済ませてから流す（docs/dev-verification.md「fake で画面を出す」）。
 // 新しい会話の入力欄で、幅（360・412）× 状態（待機・実行中 = 中断のボタン・通話中 = マイクとスピーカー）× 作業ディレクトリの名前（短い・長い）を作り、
 // 詰める順が「段 → 名前を … で詰める（宛先とモデル 4 字・作業ディレクトリ 7 字まで）→ 作業ディレクトリ → 承認モード → 宛先とモデル の順にアイコンだけ」で、
 // 送信が行に収まることを確かめる。実行中・通話中は DOM で形だけ作る（fake では止まったまま走らせ続けられず、headless ではマイクが無い）。

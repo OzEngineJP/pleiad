@@ -95,7 +95,8 @@
 **方式。** i18next（版固定）。キーは意味のキー（`settings.appearance.language.title`）で、日本語が正本（ja の辞書）。辞書は `web/locales/<言語>/<名前空間>.json`（入れ子の JSON。キーの `.` が階層）。名前空間は `ui`（画面）・`server`（core が画面へ返す文言）・`agent`（エージェントに渡す文）・`desktop`（Electron）。対応言語は ja と en、足りないキーは en へ落ちる。複数形は i18next の接尾辞（`_one` / `_other`。言語ごとに `Intl.PluralRules` の分類。ja は `_other` だけ）で `count` を渡す。差し込みは `{{name}}`。訳文は HTML としてエスケープしない（textContent で入れるか escText を通す）。
 - 画面: `web/i18n.mjs`。ビルドしないので、`web/index.html` の import map で `i18next` を `/vendor/i18next.mjs`（core/server.mjs が `node_modules/i18next/dist/esm/i18next.js` を配る。PDF.js と同じ専用の口）へ向ける。モジュールのトップレベルで今の言語と en の `ui` を fetch してから抜けるので、import した側は読み込みの時点から `t()` を使える。静的な HTML は `data-i18n`（中身）・`data-i18n-title`・`data-i18n-aria-label`・`data-i18n-placeholder` にキーを書き、起動時に `applyDom(document)` が埋める。日付・数は `fmt`（number / dateTime / time / list / elapsed / relative）を使い、`toLocaleString` を直接呼ばない。相対時刻の語（「たった今」「3分前」）は辞書にある。
 - サーバー: `core/i18n.mjs`。同じ辞書を fs で読む別のインスタンスで、`t()` の既定の名前空間は `server`。サーバーは全体で 1 つの言語を持つ（ローカルの 1 人の利用者が前提）。
-- ログ（console.*）は訳さない（AGENTS.md がログの文言に依存している）。会話の中身・状態の名前・保存済みの変更理由は訳さない。
+- ログ（console.*）は訳さない。会話の中身・状態の名前・保存済みの変更理由は訳さない。
+- `web/locales/*/ui.json` は `JSON.stringify(…, null, 2)` の整形と一致しないので、読んで書き直さず、キーは文字の置き換えで足す（`sed` の行単位の削除は別の節の同じキーまで消す）。
 - 用語の英訳は `docs/i18n-glossary.md`（ja → en の対応表）に従う。新しい語を訳したらそこに足す。
 
 **保存される文言（2026-09-23、段階 server/web）。** 変更履歴・イベントの理由は従来どおり `reason`（日本語の文。過去の記録・旧い画面との互換のため残す）に加え、新しい記録には `reasonKey`（`ui` の `saved.reason.*`）と `reasonParams` を持たせる（`core/server.mjs` の `savedReason(key, params)`）。添付の見出しも同様に `caption` に加え `captionKey` / `captionParams` を持つ。画面は `web/saved-text.mjs` がキーのある分だけ今の言語に訳し直し、キーが無い・辞書に無いものは保存された文のまま出す。新しい会話の既定タイトルは保存しない（`title: ""`）。一覧・行・通知は画面側が既定名を出し、既定タイトルを保存していた過去の記録の「新しいセッション」はそのまま出る。

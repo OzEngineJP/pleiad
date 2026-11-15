@@ -405,13 +405,28 @@ export function setDocRowRule(kind, entryOrSummary, currentRule, on, ctx = null)
 }
 
 /**
- * パスがもう無いか。無いと言えるのは ENOENT で、しかもドライブ（根）はあるときだけ。
- * 外したドライブ・つながっていない共有フォルダーの物は「ある」として残す（つなぎ直したら設定が戻る）
+ * POSIX（macOS・Linux）で、外付け・ネットワークの物がつながる先のフォルダー（マウント先）。該当しなければ null。
+ * /Volumes/<名前>・/mnt/<名前>・/media/<利用者>/<名前>・/run/media/<利用者>/<名前> の下のパスは、その <名前> までを返す。
+ * 根 / はいつも在るので、Windows の「ドライブの根」と同じ考えで、このフォルダーが無いときは「もう無い」と言わないために使う
  */
-async function gone(p) {
-  try { await fs.stat(p); return false; } catch (e) {
+export function posixMountPointOf(p) {
+  const m = /^\/(?:Volumes|mnt|media\/[^/]+|run\/media\/[^/]+)\/[^/]+(?=\/|$)/.exec(String(p));
+  return m ? m[0] : null;
+}
+
+/**
+ * パスがもう無いか。無いと言えるのは ENOENT で、しかもドライブ（根）・マウント先はあるときだけ。
+ * 外したドライブ・つながっていない共有フォルダー・マウントされていない外付けの物は「ある」として残す（つなぎ直したら設定が戻る）。
+ * マウント先が在っても空なら、つながっていない（Linux は解除後も空のフォルダーが残る）ので「ある」として残す
+ */
+export async function pathIsGone(p, io = fs) {
+  try { await io.stat(p); return false; } catch (e) {
     if (e?.code !== 'ENOENT') return false;
-    try { await fs.stat(path.parse(path.resolve(p)).root); return true; } catch { return false; }
+    const mount = posixMountPointOf(p);
+    if (mount) {
+      try { return (await io.readdir(mount)).length > 0; } catch { return false; }
+    }
+    try { await io.stat(path.parse(path.resolve(p)).root); return true; } catch { return false; }
   }
 }
 
@@ -419,17 +434,27 @@ async function gone(p) {
  * 書く前の掃除（レビュー M7・S5、2 回目のレビュー B1）。上限（場所 MAX_PLACES・キー MAX_AGENT_KEYS）を超える書き込みのときだけ、超える分を外す。
  * - フォルダーが無いだけでは外さない。ブランチ替え・worktree の付け直し・名前替えの間に別の場所を押しても、
  *   フォルダーが戻ったときに設定が残る（止めていた指示・Skills が黙って渡り始めない）
- * - 超えるときは、まずもう無いフォルダーの場所を、書いた順（古い順）に 1 つずつ、上限に収まるまで外す
+ * - 超えるときは、まずもう無いフォルダーの場所を、ファイルの並び順（その場所が最初に表に入った順）に 1 つずつ、上限に収まるまで外す。
+ *   超えたのがキーだけのときは、キーを持たない場所は外さない（外しても超過は減らない）。つながっていない外付け・ネットワークの場所（ドライブの根・マウント先が無い）は「もう無い」に数えない
  * - それでも超えるときは、もう無いファイルの指示の設定（file: のキー。名前を変えた・消したファイルの覚え）を、収まるまで外す
  * Skills の名前（skill: のキー）は、ある・無いを名前から確かめられないので外さない。外しても超えるなら、書かずに断る（limitError）。
  * 外した数を cfg を変えて返す（保存の知らせで利用者に言う。黙って外さない）
  */
+function placeKeyCount(level) {
+  let n = 0;
+  for (const kind of DOC_KINDS) n += Object.keys(level?.[kind]?.agents ?? {}).length;
+  return n;
+}
+
 async function pruneGone(cfg) {
   const pruned = { places: 0, keys: 0 };
   if (!docAgentsOverLimit(cfg)) return pruned;
   for (const key of Object.keys(cfg.places ?? {})) {
-    if (!docAgentsOverLimit(cfg)) return pruned;
-    if (await gone(key)) { delete cfg.places[key]; pruned.places++; }
+    const over = docAgentsOverLimit(cfg);
+    if (!over) return pruned;
+    // 超過がキーだけのときは、キーを 1 つも持たない場所を外しても超過は減らない。外さない（レビュー S-1）
+    if (over === 'keys' && !placeKeyCount(cfg.places[key])) continue;
+    if (await pathIsGone(key)) { delete cfg.places[key]; pruned.places++; }
   }
   const checked = new Map();
   for (const level of [cfg.defaults, ...Object.values(cfg.places)]) {
@@ -439,7 +464,7 @@ async function pruneGone(cfg) {
       for (const key of Object.keys(agents)) {
         if (docAgentsOverLimit(cfg) !== 'keys') return pruned;
         if (!key.startsWith('file:')) continue;
-        if (!checked.has(key)) checked.set(key, await gone(key.slice('file:'.length)));
+        if (!checked.has(key)) checked.set(key, await pathIsGone(key.slice('file:'.length)));
         if (checked.get(key)) { delete agents[key]; pruned.keys++; }
       }
     }

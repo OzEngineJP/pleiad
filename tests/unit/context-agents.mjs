@@ -15,6 +15,8 @@ import {
   evaluateDocCells,
   legacyEntryIncluded,
   normalizeDocAgentsConfig,
+  pathIsGone,
+  posixMountPointOf,
   resolveEffectiveDocSource,
   resolveRuleForItem,
   setDocRowRule,
@@ -367,6 +369,59 @@ export default async function (t) {
       && /上限（100 か所）|limit of 100 places/.test(placeLimitErr.message) && /2000/.test(keyLimitErr.message)
       && (await fs.readFile(pruneStore.file, 'utf8')) === beforeLimit,
       JSON.stringify([placeLimitErr?.message, keyLimitErr?.message]));
+
+    // S-1: 超えたのがキーだけのとき、キーを持たない「もう無い場所」（旧い担当だけを持つ）は外さない。キーを持つ無い場所だけ外す
+    const s1Dir = path.join(tmp, 's1-data');
+    const s1Store = createContextAgents(s1Dir);
+    const s1Empty = pathKey(path.join(goneRoot, 's1-empty'));
+    const s1Keyed = pathKey(path.join(goneRoot, 's1-keyed'));
+    const s1Defaults = {};
+    for (let i = 0; i < MAX_AGENT_KEYS - 1; i++) s1Defaults[`skill:s-${i}`] = { off: ['claude'], spread: [] };
+    await fs.mkdir(s1Dir, { recursive: true });
+    await fs.writeFile(s1Store.file, JSON.stringify({
+      version: DOC_AGENTS_VERSION,
+      defaults: { skill: { agents: s1Defaults } },
+      places: {
+        [s1Empty]: { instruction: { agents: {}, legacyOwner: 'ply' } },
+        [s1Keyed]: { instruction: { agents: { [goneFileKey(7)]: { off: ['claude'], spread: [] } } } },
+      },
+    }, null, 2));
+    const s1Result = await s1Store.mutate((cfg) => {
+      cfg.defaults.skill.agents['skill:over-1'] = { off: ['claude'], spread: [] };
+      return cfg;
+    }, { withPruned: true });
+    t.ok('超えたのがキーだけなら、キーを持たない無い場所は外さず、キーを持つ無い場所だけ外す（外した数もその分だけ）',
+      Object.hasOwn(s1Result.config.places, s1Empty) && !Object.hasOwn(s1Result.config.places, s1Keyed)
+      && s1Result.config.places[s1Empty].instruction.legacyOwner === 'ply'
+      && s1Result.pruned.places === 1 && s1Result.pruned.keys === 0 && countAgentKeys(s1Result.config) === MAX_AGENT_KEYS,
+      JSON.stringify({ places: Object.keys(s1Result.config.places), pruned: s1Result.pruned, n: countAgentKeys(s1Result.config) }));
+
+    // S-3: POSIX の外付け・ネットワークのマウント先。判定は Windows の上でも POSIX の形のパスで確かめる
+    t.ok('マウント先の切り出し: /Volumes・/mnt・/media/<利用者>・/run/media/<利用者> の <名前> まで。それ以外は null',
+      posixMountPointOf('/Volumes/USB/a/CLAUDE.md') === '/Volumes/USB'
+      && posixMountPointOf('/mnt/nas') === '/mnt/nas'
+      && posixMountPointOf('/media/u/disk/x') === '/media/u/disk'
+      && posixMountPointOf('/run/media/u/disk/x/y') === '/run/media/u/disk'
+      && posixMountPointOf('/home/u/work') === null && posixMountPointOf('/mnt') === null && posixMountPointOf('/media/u') === null
+      && posixMountPointOf('/Volumesx/a') === null && posixMountPointOf('C:\Volumes\a\b') === null);
+    const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    // 世界: missing の下は無い。mounts は { マウント先: 中の数 }。それ以外は在る（根 / を含む）
+    const fakeIo = (missing, mounts) => ({
+      stat: async (x) => { if (missing.some((m) => x === m || x.startsWith(`${m}/`))) throw enoent(); },
+      readdir: async (x) => { if (!Object.hasOwn(mounts, x)) throw enoent(); return Array.from({ length: mounts[x] }, (_, i) => `f${i}`); },
+    });
+    const posixCase = async (target, missing, mounts) => pathIsGone(target, fakeIo(missing, mounts));
+    t.ok('POSIX: マウントされていない外付け・ネットワーク（マウント先のフォルダーが無い）は「もう無い」に数えない',
+      (await posixCase('/Volumes/USB/proj', ['/Volumes/USB', '/Volumes/USB/proj'], {})) === false
+      && (await posixCase('/mnt/nas/proj', ['/mnt/nas'], {})) === false
+      && (await posixCase('/media/u/disk/proj', ['/media/u/disk'], {})) === false
+      && (await posixCase('/run/media/u/disk/proj', ['/run/media/u/disk'], {})) === false);
+    t.ok('POSIX: マウント先が在っても空（解除後に残る空のフォルダー）なら数えない。中身があれば、そこに無いので「もう無い」',
+      (await posixCase('/mnt/usb/proj', ['/mnt/usb/proj'], { '/mnt/usb': 0 })) === false
+      && (await posixCase('/mnt/usb/proj', ['/mnt/usb/proj'], { '/mnt/usb': 3 })) === true);
+    t.ok('POSIX: マウント先でない普通のフォルダーが無いときは「もう無い」。在るときは在る',
+      (await posixCase('/home/u/gone/proj', ['/home/u/gone'], {})) === true
+      && (await posixCase('/home/u/here', [], {})) === false);
 
     // ---- 読めないファイル（レビュー M6）: 会話を断る誤りにし、上書きせず、退避して直せる
     for (const [label, body] of [['壊れた JSON', '{"version": 1, '], ['知らない版', '{"version": 2, "defaults": {}, "places": {}}'], ['知らない項目', '{"version": 1, "defaults": {}, "places": {}, "future": true}']]) {
