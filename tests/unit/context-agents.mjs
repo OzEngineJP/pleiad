@@ -223,28 +223,126 @@ export default async function (t) {
     t.ok('prunePlaces は keepKeys 以外の place を除く',
       Boolean(afterPrune.places[pathKey(repo)]) && !afterPrune.places[pathKey(sub)]);
 
-    // ---- 書くときの掃除と上限（レビュー M7・S5）
+    // ---- 書くときの掃除と上限（レビュー M7・S5、2 回目のレビュー B1）
+    // フォルダーが無いだけでは消さない。上限を超える書き込みのときだけ、超える分を、もう無い場所・ファイルから古い順に外す
+    const fileKey = (p) => docItemKey({ kind: 'instruction', path: p });
+    const emptyScans = {
+      version: SCANS_VERSION,
+      defaults: { kinds: { instruction: defaultKind(), skill: defaultKind(), mcp: defaultKind() }, roots: { instruction: [], skill: [], mcp: [] } },
+      places: {},
+    };
+
+    // B1 の筋（exp-prune と同じ）: A・B に設定 → A を一時的に改名 → B を書く → A を戻す → A の設定が残り、A で止めた指示は渡らないまま
+    const b1Dir = path.join(tmp, 'b1-data');
+    const b1Store = createContextAgents(b1Dir);
+    const projA = path.join(tmp, 'b1', 'projA');
+    const projB = path.join(tmp, 'b1', 'projB');
+    for (const p of [projA, projB]) {
+      await fs.mkdir(p, { recursive: true });
+      await fs.writeFile(path.join(p, 'CLAUDE.md'), '# x\n');
+    }
+    const keyA = fileKey(path.join(projA, 'CLAUDE.md'));
+    const keyB = fileKey(path.join(projB, 'CLAUDE.md'));
+    await b1Store.mutate((cfg) => {
+      cfg.places[pathKey(projA)] = { instruction: { agents: { [keyA]: { off: ['claude'], spread: [] } } } };
+      cfg.places[pathKey(projB)] = { instruction: { agents: { [keyB]: { off: ['codex'], spread: [] } } } };
+      return cfg;
+    });
+    const projAMoved = `${projA}-moved`;
+    await fs.rename(projA, projAMoved);
+    let b1Result;
+    try {
+      b1Result = await b1Store.mutate((cfg) => {
+        cfg.places[pathKey(projB)].instruction.agents[keyB] = { off: ['codex', 'claude'], spread: [] };
+        return cfg;
+      }, { withPruned: true });
+    } finally {
+      await fs.rename(projAMoved, projA);
+    }
+    const b1After = await b1Store.read();
+    const srcA = resolveEffectiveDocSource(emptyScans, b1After, projA, 'instruction');
+    const ruleA = resolveRuleForItem(srcA.agentsChain, keyA, 'directory');
+    t.ok('一時的に無いフォルダーの場所の設定は、別の場所を書いても消えない（2 回目のレビュー B1）',
+      Boolean(b1After.places[pathKey(projA)]?.instruction?.agents?.[keyA])
+      && b1Result.pruned.places === 0 && b1Result.pruned.keys === 0,
+      JSON.stringify({ places: Object.keys(b1After.places), pruned: b1Result.pruned }));
+    t.ok('フォルダーが戻った後も、A の会話では止めた指示（claude オフ）が渡らないまま',
+      srcA.touched && Array.isArray(ruleA?.off) && ruleA.off.includes('claude'),
+      JSON.stringify({ touched: srcA.touched, ruleA }));
+
+    // 上限に実際に届く場面（保存を直接作る）: 場所 100 か所のうち、もう無いのは 3 か所（古い順に g-0・g-1・g-2）
+    const limitRoot = path.join(tmp, 'limit-places');
+    const goneRoot = path.join(tmp, 'limit-gone');
+    const realKey = async (i) => {
+      const p = path.join(limitRoot, `r-${i}`);
+      await fs.mkdir(p, { recursive: true });
+      return pathKey(p);
+    };
+    const goneKey = (i) => pathKey(path.join(goneRoot, `g-${i}`));
+    const fullPlaces = {};
+    fullPlaces[await realKey(0)] = { skill: { agents: {} } };
+    fullPlaces[goneKey(0)] = { skill: { agents: {} } };
+    fullPlaces[await realKey(1)] = { skill: { agents: {} } };
+    fullPlaces[goneKey(1)] = { skill: { agents: {} } };
+    fullPlaces[goneKey(2)] = { skill: { agents: {} } };
+    for (let i = 2; Object.keys(fullPlaces).length < MAX_PLACES; i++) fullPlaces[await realKey(i)] = { skill: { agents: {} } };
+    const limitDir = path.join(tmp, 'limit-data');
+    const limitStore = createContextAgents(limitDir);
+    await fs.mkdir(limitDir, { recursive: true });
+    await fs.writeFile(limitStore.file, JSON.stringify({ version: DOC_AGENTS_VERSION, defaults: {}, places: fullPlaces }, null, 2));
+    const newPlaces = [await realKey(500), await realKey(501)];
+    const placesResult = await limitStore.mutate((cfg) => {
+      for (const k of newPlaces) cfg.places[k] = { skill: { agents: {} } };
+      return cfg;
+    }, { withPruned: true });
+    const placesAfter = Object.keys(placesResult.config.places);
+    t.ok(`場所が上限（${MAX_PLACES}）を超える書き込みでは、もう無い場所を古い順に超える分だけ外し、外した数を返す`,
+      placesResult.pruned.places === 2 && placesResult.pruned.keys === 0
+      && placesAfter.length === MAX_PLACES
+      && !placesAfter.includes(goneKey(0)) && !placesAfter.includes(goneKey(1)) && placesAfter.includes(goneKey(2))
+      && newPlaces.every((k) => placesAfter.includes(k)),
+      JSON.stringify({ pruned: placesResult.pruned, n: placesAfter.length }));
+    const placesOnDisk = JSON.parse(await fs.readFile(limitStore.file, 'utf8'));
+    t.ok('外した結果がそのまま保存される（読み直しても同じ）',
+      Object.keys(placesOnDisk.places).length === MAX_PLACES && Object.hasOwn(placesOnDisk.places, goneKey(2)));
+
+    // キーが上限（2000）に届く場面: あるファイル 1 件・もう無いファイル 3 件・Skills の名前 1996 件 → Skills を 2 件足す
+    const keysDir = path.join(tmp, 'limit-keys-data');
+    const keysStore = createContextAgents(keysDir);
+    const realFile = path.join(limitRoot, 'r-0', 'CLAUDE.md');
+    await fs.writeFile(realFile, '# x\n');
+    const goneFileKey = (i) => fileKey(path.join(goneRoot, `f-${i}.md`));
+    const fullAgents = { [fileKey(realFile)]: { off: ['claude'], spread: [] } };
+    for (let i = 0; i < 3; i++) fullAgents[goneFileKey(i)] = { off: ['claude'], spread: [] };
+    for (let i = 0; Object.keys(fullAgents).length < MAX_AGENT_KEYS; i++) fullAgents[`skill:s-${i}`] = { off: ['claude'], spread: [] };
+    await fs.mkdir(keysDir, { recursive: true });
+    await fs.writeFile(keysStore.file, JSON.stringify({ version: DOC_AGENTS_VERSION, defaults: { instruction: { agents: fullAgents } }, places: {} }, null, 2));
+    const keysResult = await keysStore.mutate((cfg) => {
+      cfg.defaults.skill = { agents: { 'skill:new-1': { off: ['claude'], spread: [] }, 'skill:new-2': { off: ['claude'], spread: [] } } };
+      return cfg;
+    }, { withPruned: true });
+    const keysAfter = keysResult.config.defaults.instruction.agents;
+    t.ok(`キーが上限（${MAX_AGENT_KEYS}）を超える書き込みでは、もう無いファイルの設定を古い順に超える分だけ外し、あるファイルと Skills は残す`,
+      keysResult.pruned.keys === 2 && keysResult.pruned.places === 0
+      && countAgentKeys(keysResult.config) === MAX_AGENT_KEYS
+      && !keysAfter[goneFileKey(0)] && !keysAfter[goneFileKey(1)] && Boolean(keysAfter[goneFileKey(2)])
+      && Boolean(keysAfter[fileKey(realFile)]) && Boolean(keysResult.config.defaults.skill.agents['skill:new-2']),
+      JSON.stringify({ pruned: keysResult.pruned, n: countAgentKeys(keysResult.config) }));
+
+    // 上限に届かない書き込みでは、もう無い場所・ファイルがあっても外さない
+    const underResult = await keysStore.mutate((cfg) => {
+      delete cfg.defaults.skill.agents['skill:new-2'];
+      return cfg;
+    }, { withPruned: true });
+    t.ok('上限に届かない書き込みでは、もう無いファイルの設定も外さない（外した数は 0）',
+      underResult.pruned.keys === 0 && underResult.pruned.places === 0 && Boolean(underResult.config.defaults.instruction.agents[goneFileKey(2)]));
+
     const pruneDir = path.join(tmp, 'prune-data');
     const pruneStore = createContextAgents(pruneDir);
-    const goneFile = path.join(tmp, 'gone', 'CLAUDE.md');
     await pruneStore.mutate((cfg) => {
-      for (let i = 0; i < MAX_PLACES + 5; i++) cfg.places[pathKey(path.join(tmp, 'gone', `p-${i}`))] = { instruction: { agents: {} } };
-      cfg.places[pathKey(repo)] = { instruction: { agents: { [`file:${goneFile.replace(/\\/g, '/')}`]: { off: ['claude'], spread: [] } } } };
+      for (let i = 0; i < 5; i++) cfg.places[goneKey(100 + i)] = { instruction: { agents: {} } };
       return cfg;
     });
-    const pruned = await pruneStore.read();
-    t.ok('書くとき、フォルダーがもう無い場所の設定を外す（上限に届く前に。あるフォルダーの設定と、無いファイルの覚えは上限までは残す）',
-      Object.keys(pruned.places).length === 1 && Boolean(pruned.places[pathKey(repo)]?.instruction?.agents[`file:${goneFile.replace(/\\/g, '/')}`]),
-      JSON.stringify(Object.keys(pruned.places).length));
-
-    // 上限を超えるときだけ、もう無いファイルの覚え（名前を変えた・消したファイル）を外す
-    await pruneStore.mutate((cfg) => {
-      for (let i = 0; i < MAX_AGENT_KEYS + 5; i++) cfg.defaults.instruction = { agents: { ...(cfg.defaults.instruction?.agents ?? {}), [`file:${path.join(tmp, 'gone', `f-${i}.md`).replace(/\\/g, '/')}`]: { off: ['claude'], spread: [] } } };
-      return cfg;
-    });
-    const prunedKeys = await pruneStore.read();
-    t.ok('上限を超えるときは、もう無いファイルの設定を外して保存できる', countAgentKeys(prunedKeys) === 0, String(countAgentKeys(prunedKeys)));
-
     // 外せない物（あるフォルダーの場所・Skills の名前）で超えると、日本語の上限の誤りで断り、ファイルは変えない
     const realPlaces = path.join(tmp, 'real-places');
     for (let i = 0; i <= MAX_PLACES; i++) await fs.mkdir(path.join(realPlaces, `p-${i}`), { recursive: true });

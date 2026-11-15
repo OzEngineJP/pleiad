@@ -3,20 +3,16 @@
 //   行: 並べ替えの取っ手（入る順。web/reorder.mjs。設定 › 委譲の候補と同じ部品）・名前・札（既定／既定から変更／委譲と連動）・入れる会話（弱い字）・スイッチ。
 //   押すと下に中身（Markdown）と「編集」「削除」（既定は「既定に戻す」。委譲と連動は「設定 › 委譲で変える →」だけ）。
 //   「＋ 指示を追加」と「編集」は同じシート（<dialog>。外部 MCP の追加シートと同じ形）。
-// 変更はその場で保存し（setPlyInstructions）、カードの知らせ「保存しました · 次のターンから反映」を出す。
+// 変更はその場で保存し（setPlyInstructions）、カードの知らせ「保存しました」を出す。Pleiad の指示はどのエージェントにも毎ターン入れ直すので
+// （Antigravity・Grok は発言の前に足す。core/backends/antigravity.mjs・grok.mjs）、始まっている会話にも次のターンから届く。
+// 「新しい会話から反映」は付けない（2026-11-15、Grok の本物で、同じ会話の次のターンに切り替えが届くことを確かめた）。
 // 描き直しても、フォーカスは同じ行の同じ操作（data-fk）に残す。
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { createReorder, moveItem, slideFrom } from './reorder.mjs';
-import { freshAgents, agentChip, agentLegend, agentStrip, rowSwitch } from './context-matrix.mjs';
-
-/** Antigravity・Grok に渡る Pleiad の指示（並び・中身・オン・オフ）が変わったか。変わったときだけ「新しい会話から反映」と添える */
-function freshChanged(before, after) {
-  const reach = (s, agent) => JSON.stringify((s?.items ?? []).filter(i => i.on && (i.agents ?? []).includes(agent)).map(i => [i.id, i.name, i.body, i.target]));
-  return freshAgents().some(agent => reach(before, agent) !== reach(after, agent));
-}
+import { agentChip, agentLegend, agentStrip, rowSwitch } from './context-matrix.mjs';
 
 const TARGETS = ['all', 'parent', 'child'];
 const NAME_SLOT = '\u0001';   // core/ply-instructions.mjs の見出しの型の、名前の位置
@@ -74,7 +70,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
   }
   async function change(args, focus) {
     state = await cmd('setPlyInstructions', args);
-    saved(freshChanged(confirmed, state));
+    saved(false);
     confirmed = structuredClone(state);
     if (focus) wantFocus = focus;
     render();
@@ -97,7 +93,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
       try { saving = await cmd('setPlyInstructions', { action: 'order', ids: next }); } catch (e) { failed = e; }
       ordering--;
       if (failed) { if (!ordering) await load(); throw failed; }
-      saved(freshChanged(confirmed, saving));
+      saved(false);
       confirmed = structuredClone(saving);
       if (!ordering) apply(saving);
     });

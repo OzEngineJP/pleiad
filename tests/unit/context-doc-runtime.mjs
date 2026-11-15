@@ -399,11 +399,43 @@ export default async function (t) {
     catch (e) { deeperErr = e; }
     const subMatrix = await client.cmd('docMatrix', { kind: 'instruction', cwd: subDir, place: subDir });
     await client.cmd('setContextSettings', { place: subDir, remove: true });
-    t.ok('表を触った場所: 効かない旧い設定の変更は INVALID で断り（表で決めていること・context.setDocAgent・value: null を言う）、保存しない。表より深い場所の旧い上書きは効くので通す',
+    t.ok('表を触った場所: 効かない旧い設定の変更は INVALID で断り（表で決めていること・やめ方を言う。画面の人には操作名を出さない）、保存しない。表より深い場所の旧い上書きは効くので通す',
       legacyErr?.code === 'INVALID' && /表で決めています/.test(String(legacyErr?.message ?? ''))
-      && /context\.setDocAgent/.test(String(legacyErr?.message ?? '')) && /value: null/.test(String(legacyErr?.message ?? ''))
+      && /全体の設定に戻す/.test(String(legacyErr?.message ?? '')) && !/context\.set|value: null/.test(String(legacyErr?.message ?? ''))
       && scansAfter === scansBefore && !deeperErr && subMatrix.touched === false,
       JSON.stringify({ legacy: legacyErr?.message, code: legacyErr?.code, same: scansAfter === scansBefore, deeper: deeperErr?.message, subTouched: subMatrix.touched }));
+
+    // 同じ断りを AI の会話（ply_control。人の画面以外）から受けたときは、代わりの操作名を足す（2 回目のレビュー S1）
+    const agentTurn = await client.runTurn({ prompt: 'control-info', sessionId: null, cwd: repo, backend: 'fake', mode: 'bypass' }, { ms: 30_000 });
+    const agentInfo = JSON.parse((await client.cmd('loadSession', { sessionId: agentTurn.sessionId })).messages.at(-1).text);
+    const agentRes = await fetch(`${agentInfo.envUrl}/api/ops/context.setSettings`, { method: 'POST',
+      headers: { authorization: `Bearer ${agentInfo.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ place: repo, cwd: repo, kind: 'instruction',
+        value: { ...instValue, user: { ...(instValue.user ?? { sources: ['common', 'claude', 'codex'] }), excludePaths: ['no-such-instruction-file.md'] } } }) });
+    const agentBody = await agentRes.json().catch(() => null);
+    const scansAfterAgent = await fs.readFile(path.join(dataDir, 'context-scans.json'), 'utf8').catch(() => null);
+    t.ok('AI の会話から同じ旧い設定を変えると、同じ断りに代わりの操作名（context.setDocAgent・value: null）が付き、保存しない',
+      agentBody?.ok === false && agentBody.code === 'INVALID' && /表で決めています/.test(String(agentBody.error ?? ''))
+      && /context\.setDocAgent/.test(String(agentBody.error ?? '')) && /value: null/.test(String(agentBody.error ?? ''))
+      && scansAfterAgent === scansBefore,
+      JSON.stringify({ status: agentRes.status, body: agentBody, same: scansAfterAgent === scansBefore }));
+
+    // 場所の設定を消すとき、旧い設定（context-scans.json）の保存が失敗したら、表の場所の設定も消さない（2 回目のレビュー: 消す順）。
+    // 旧い設定を先に保存し、通ってから表の場所を消す。読めない context-scans.json で保存を失敗させる（どの OS でも同じに落ちる）
+    const scansFile = path.join(dataDir, 'context-scans.json');
+    const tableFile = path.join(dataDir, 'context-agents.json');
+    const repoKey = (cfg) => Object.keys(cfg?.places ?? {}).find((k) => k === pathKey(repo));
+    const tableBefore = JSON.parse(await fs.readFile(tableFile, 'utf8'));
+    const scansSaved = await fs.readFile(scansFile, 'utf8');
+    await fs.writeFile(scansFile, '{ broken', 'utf8');
+    let removeErr = null;
+    try { await client.cmd('setContextSettings', { place: repo, remove: true }); } catch (e) { removeErr = e; }
+    await fs.writeFile(scansFile, scansSaved, 'utf8');
+    const tableAfter = JSON.parse(await fs.readFile(tableFile, 'utf8'));
+    t.ok('場所の設定を消す: 旧い設定の保存が失敗したら、表の場所の設定も残る（失敗を返す）',
+      Boolean(removeErr) && Boolean(repoKey(tableBefore))
+      && JSON.stringify(tableAfter.places[repoKey(tableBefore)]) === JSON.stringify(tableBefore.places[repoKey(tableBefore)]),
+      JSON.stringify({ err: removeErr?.message, before: Boolean(repoKey(tableBefore)), after: Boolean(repoKey(tableAfter)) }));
 
     // 未操作と変更ありでゼロ変更バイパスを確認（fake セッションの contextSession で native vs ply）
     const sNative = await client.cmd('newSession', { cwd: repo, backend: 'fake' });

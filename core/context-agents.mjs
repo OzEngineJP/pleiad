@@ -416,31 +416,35 @@ async function gone(p) {
 }
 
 /**
- * 書く前の掃除（レビュー M7・S5）。
- * - フォルダーがもう無い場所の設定は、いつも外す（消したフォルダー・消した worktree の設定が溜まって上限に届かないように）
- * - それでも上限を超えるときだけ、もう無いファイルの指示の設定（file: のキー。名前を変えた・消したファイルの覚え）を外す。
- *   上限に届かないうちは残す（ブランチを替えて一時的に無いだけのファイルの設定を失わないため）
- * Skills の名前（skill: のキー）は、ある・無いを名前から確かめられないので外さない
+ * 書く前の掃除（レビュー M7・S5、2 回目のレビュー B1）。上限（場所 MAX_PLACES・キー MAX_AGENT_KEYS）を超える書き込みのときだけ、超える分を外す。
+ * - フォルダーが無いだけでは外さない。ブランチ替え・worktree の付け直し・名前替えの間に別の場所を押しても、
+ *   フォルダーが戻ったときに設定が残る（止めていた指示・Skills が黙って渡り始めない）
+ * - 超えるときは、まずもう無いフォルダーの場所を、書いた順（古い順）に 1 つずつ、上限に収まるまで外す
+ * - それでも超えるときは、もう無いファイルの指示の設定（file: のキー。名前を変えた・消したファイルの覚え）を、収まるまで外す
+ * Skills の名前（skill: のキー）は、ある・無いを名前から確かめられないので外さない。外しても超えるなら、書かずに断る（limitError）。
+ * 外した数を cfg を変えて返す（保存の知らせで利用者に言う。黙って外さない）
  */
 async function pruneGone(cfg) {
+  const pruned = { places: 0, keys: 0 };
+  if (!docAgentsOverLimit(cfg)) return pruned;
   for (const key of Object.keys(cfg.places ?? {})) {
-    if (await gone(key)) delete cfg.places[key];
+    if (!docAgentsOverLimit(cfg)) return pruned;
+    if (await gone(key)) { delete cfg.places[key]; pruned.places++; }
   }
-  if (!docAgentsOverLimit(cfg)) return cfg;
-  const levels = [cfg.defaults, ...Object.values(cfg.places)];
   const checked = new Map();
-  for (const level of levels) {
+  for (const level of [cfg.defaults, ...Object.values(cfg.places)]) {
     for (const kind of DOC_KINDS) {
       const agents = level?.[kind]?.agents;
       if (!agents) continue;
       for (const key of Object.keys(agents)) {
+        if (docAgentsOverLimit(cfg) !== 'keys') return pruned;
         if (!key.startsWith('file:')) continue;
         if (!checked.has(key)) checked.set(key, await gone(key.slice('file:'.length)));
-        if (checked.get(key)) delete agents[key];
+        if (checked.get(key)) { delete agents[key]; pruned.keys++; }
       }
     }
   }
-  return cfg;
+  return pruned;
 }
 
 /** Create an atomic serialized reader/writer store for `<dataDir>/context-agents.json`. */
@@ -472,18 +476,20 @@ export function createContextAgents(dataDir, { now = () => new Date() } = {}) {
     return run;
   };
 
-  // 読めないファイルの上には書かない（read が断る）。上限は掃除の後に確かめる
-  const mutate = (fn) => serial(async () => {
+  // 読めないファイルの上には書かない（read が断る）。上限は掃除の後に確かめる。
+  // withPruned: true なら { config, pruned: { places, keys } }（上限に届いて外した、もう無い場所・ファイルの設定の数）を返す
+  const mutate = (fn, { withPruned = false } = {}) => serial(async () => {
     const current = await read();
-    const nextRaw = await fn(structuredClone(current));
-    const next = normalizeDocAgentsConfig(await pruneGone(normalizeDocAgentsConfig(nextRaw, { limits: false })));
+    const nextRaw = normalizeDocAgentsConfig(await fn(structuredClone(current)), { limits: false });
+    const pruned = await pruneGone(nextRaw);
+    const next = normalizeDocAgentsConfig(nextRaw);
     try {
       await fs.mkdir(dataDir, { recursive: true });
       await writeAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
     } catch (err) {
       throw writeFailed(err);
     }
-    return next;
+    return withPruned ? { config: next, pruned } : next;
   });
 
   /**

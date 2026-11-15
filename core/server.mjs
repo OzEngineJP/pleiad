@@ -5453,7 +5453,7 @@ const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 
  * 通るなら効く、効かないなら断る（レビュー S1）: 保存した後の表を前と比べ、どのエージェントに何が渡るかが同じなら保存しない。
  * 旧い設定の場所が表より深くなる（表を触っていない深さに旧い上書きを足す）・Skills の使う方（prefer）を変える、のように効くものは通す
  */
-async function refuseIneffectiveLegacy(args = {}) {
+async function refuseIneffectiveLegacy(args = {}, actor = null) {
   const { kind } = args;
   if (!DOC_KINDS.includes(kind) || args.remove || !Object.hasOwn(args, 'value') || args.value === null) return;
   const [legacy, docAgents] = await Promise.all([contextSettings.read(), contextAgents.read()]);
@@ -5474,7 +5474,9 @@ async function refuseIneffectiveLegacy(args = {}) {
   if (shape(legacy) !== shape(next)) return;
   // i18n-dynamic: server:context.settings.legacyAfterTouch.instruction
   // i18n-dynamic: server:context.settings.legacyAfterTouch.skill
-  throw new OpError('INVALID', t(`context.settings.legacyAfterTouch.${kind}`, { place: dir ?? t('context.settings.defaultPlace') }));
+  // 画面の人が読む文には操作名を出さない。AI・CLI（人の画面以外）には代わりの操作名を足す（2 回目のレビュー）
+  const text = t(`context.settings.legacyAfterTouch.${kind}`, { place: dir ?? t('context.settings.defaultPlace') });
+  throw new OpError('INVALID', actor?.by === 'human' ? text : `${text}${t('context.settings.legacyAfterTouchOps')}`);
 }
 
 /**
@@ -5483,7 +5485,7 @@ async function refuseIneffectiveLegacy(args = {}) {
  */
 async function touchDocPlace(mutator, where, scanDir) {
   let before = null;
-  const nextCfg = await contextAgents.mutate(async (cfg) => { before = structuredClone(cfg); return mutator(cfg); });
+  const { config, pruned } = await contextAgents.mutate(async (cfg) => { before = structuredClone(cfg); return mutator(cfg); }, { withPruned: true });
   if (where) {
     try {
       const cur = await contextSettings.view(where);
@@ -5491,20 +5493,36 @@ async function touchDocPlace(mutator, where, scanDir) {
         await contextSettings.set({ place: where, add: true, cwd: scanDir });
       }
     } catch (err) {
-      await contextAgents.mutate(() => before).catch(() => {});
+      // 戻しも失敗したら握りつぶさない。表の変更だけが残ったことを、保存の失敗として言う（2 回目のレビュー）
+      try { await contextAgents.mutate(() => before); }
+      catch (undoErr) {
+        throw Object.assign(new Error(t('context.settings.docPlaceUndoFailed', { error: err?.message ?? String(err), undo: undoErr?.message ?? String(undoErr) })), { code: 'DOC_AGENTS_PARTIAL', cause: err });
+      }
       throw err;
     }
   }
-  return nextCfg;
+  return { config, pruned };
 }
 
-async function syncContextAgentsOnSet(args = {}) {
-  await refuseIneffectiveLegacy(args);
-  if (!args?.place) return;
-  if (args.remove) await contextAgents.removePlace(args.place);
-  else if (Object.hasOwn(args, 'value') && args.value === null && DOC_KINDS.includes(args.kind)) {
-    await contextAgents.removePlace(args.place, args.kind);
+/**
+ * 旧い設定の保存（contextSettings.set）と、表（context-agents.json）の場所の設定の後始末を、この順で行う。
+ * 場所の設定を消す（remove・種類の value: null）ときは、旧い設定を保存できてから表の場所を消す。
+ * 先に表を消すと、旧い設定の保存が失敗したときに表だけ消える（2 回目のレビュー）
+ */
+async function setContextSettingsWithDocAgents(args = {}, actor = null) {
+  await refuseIneffectiveLegacy(args, actor);
+  const saved = await contextSettings.set(args ?? {});
+  if (args?.place) {
+    const removeKind = args.remove ? null
+      : (Object.hasOwn(args, 'value') && args.value === null && DOC_KINDS.includes(args.kind) ? args.kind : undefined);
+    if (removeKind !== undefined) {
+      try { await contextAgents.removePlace(args.place, removeKind); }
+      catch (err) {
+        throw Object.assign(new Error(t('context.settings.docRemoveAfterLegacy', { error: err?.message ?? String(err) })), { code: err?.code ?? 'DOC_AGENTS_PARTIAL', cause: err });
+      }
+    }
   }
+  return saved;
 }
 
 async function docScanContext({ kind, cwd, place }) {
@@ -5595,8 +5613,7 @@ const opsContext = {
     return { ...v, defaults: attach(v.defaults, null), places: v.places.map((p) => attach(p, p.path)) };
   },
   set: async (args, actor) => {
-    await syncContextAgentsOnSet(args);
-    const saved = await contextSettings.set(args ?? {});
+    const saved = await setContextSettingsWithDocAgents(args ?? {}, actor);
     const v = await opsContext.view(args?.cwd ?? (args?.remove ? null : args?.place || null));
     settingsChanged(['context.default'], actor);
     return { ...v, place: saved.place };
@@ -5637,7 +5654,7 @@ const opsContext = {
       place: where, placeKey: where ? pathKey(where) : null, agent, keys: list, on,
     }), where, scanDir);
     settingsChanged(['context.default'], actor);
-    return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
+    return { ok: true, defaults: nextCfg.config.defaults, pruned: nextCfg.pruned, ...(where ? { place: where } : {}) };
   },
   setDocRow: async ({ kind, key, keys, on, place, cwd } = {}, actor) => {
     if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
@@ -5650,7 +5667,7 @@ const opsContext = {
       place: where, placeKey: where ? pathKey(where) : null, keys: list, on,
     }), where, scanDir);
     settingsChanged(['context.default'], actor);
-    return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
+    return { ok: true, defaults: nextCfg.config.defaults, pruned: nextCfg.pruned, ...(where ? { place: where } : {}) };
   },
   // 読めない context-agents.json を context-agents.broken-<時刻>.json へ退避し、表を触る前の動きに戻す（レビュー M6）。読めるなら何もしない
   repairDocAgents: async (actor) => {
@@ -6340,7 +6357,7 @@ function opsDeps(lng = currentLocale()) {
       contextRebuild: applyContextRebuild,
       routing: applyRoutingSettings,
       plyInstructions: applyPlyInstructions,
-      context: async (args) => { await syncContextAgentsOnSet(args); return contextSettings.set(args); },
+      context: async (args) => setContextSettingsWithDocAgents(args, { by: 'agent' }),
     },
     // 設定を変えたことを全画面へ配り、会話に束縛された呼び出しならその会話の変更の記録に残す（by: 'agent'・via・bySession）
     recordSetting: async ({ key, before, after, reason, actor }) => {

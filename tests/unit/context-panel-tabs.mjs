@@ -437,6 +437,9 @@ export default async function (t) {
     t.ok('Pleiad の指示で Grok アイコンを押すと setPlyInstructions toggleAgent が保存される',
       plyWrites.some(w => w.action === 'toggleAgent' && w.id === 'ply-1' && w.agent === 'grok' && w.on === true)
       && plyItemsState[0].agents.includes('grok'));
+    // Pleiad の指示は Grok にも毎ターン入れ直すので、始まっている会話にも次のターンから届く。「新しい会話から反映」は出さない
+    t.ok('Pleiad の指示で Grok を変えた保存の知らせは「保存しました」だけ（新しい会話から、と言わない）',
+      p.querySelector('.cx-toast')?.textContent === '保存しました', p.querySelector('.cx-toast')?.textContent);
 
     failPly = true;
     instPanel.querySelectorAll('.cx-ply .cx-row.ag')[0].querySelectorAll('.cx-ag')[5].onclick();

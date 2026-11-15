@@ -25,8 +25,19 @@ export function docFreshChanged(before, after) {
   return false;
 }
 
-/** 保存の知らせの文。fresh = Antigravity・Grok に渡る物が変わった */
-export const savedText = (fresh) => (fresh ? t('context.savedFresh') : t('context.saved'));
+/**
+ * 保存の知らせの文。fresh = Antigravity・Grok に渡る物が変わった。
+ * pruned = 上限に届いて外した、もう無いフォルダー・ファイルの設定の数（{ places, keys }。黙って外さない。2 回目のレビュー B1）
+ */
+export const savedText = (fresh, pruned = null) => {
+  let text = fresh ? t('context.savedFresh') : t('context.saved');
+  const extra = [];
+  if (pruned?.places > 0) extra.push(t('context.savedPrunedPlaces', { count: pruned.places }));
+  if (pruned?.keys > 0) extra.push(t('context.savedPrunedKeys', { count: pruned.keys }));
+  // 続ける文は区切り（。・. ）から始まる。前の文の終わりの句点は重ねない
+  if (extra.length) text = text.replace(/[.。]$/, '') + extra.join('');
+  return text;
+};
 
 export const MATRIX_ICON = {
   url: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/>',
