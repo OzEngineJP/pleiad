@@ -29,7 +29,8 @@ export const name = 'context-agents';
 export const title = 'Stage 2 保存 (context-agents.json): スキーマ・キー・旧形式対応・深さ継承・ベータ31互換';
 
 export default async function (t) {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-context-agents-'));
+  // 実体のパスにする（CI の Windows は一時フォルダーが 8.3 の短い名前で、ジャンクションの実体と表記が合わない）
+  const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-context-agents-')));
   const home = path.join(tmp, 'home');
   const repo = path.join(tmp, 'work', 'repo');
   const sub = path.join(repo, 'packages', 'app');
