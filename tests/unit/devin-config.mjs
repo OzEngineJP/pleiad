@@ -42,6 +42,17 @@ export default async function (t) {
     if (process.platform !== 'win32') t.ok('Scoped turn config is owner-only', ((await fs.stat(turnPath)).mode & 0o777) === 0o600);
     await scoped.cleanup();
     await assert.rejects(fs.stat(turnPath), { code: 'ENOENT' });
+    // 閉じる処理が走らずに残った会話限定の設定（サーバーが落ちた）は、次の起動で 1 日を過ぎたものだけ消す
+    const turnDir = path.dirname(turnPath);
+    const stale = path.join(turnDir, '00000000-0000-4000-8000-000000000000.json'), fresh = path.join(turnDir, '11111111-1111-4111-8111-111111111111.json'), other = path.join(turnDir, 'keep.txt');
+    for (const f of [stale, fresh, other]) await fs.writeFile(f, '{}');
+    const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    await fs.utimes(stale, old, old); await fs.utimes(other, old, old);
+    const next = await prepareDevinLaunch({ command: ['fake'], cwd, env, dataDir: root, turnConfig });
+    const left = await fs.readdir(turnDir);
+    t.ok('1 日を過ぎた会話限定の設定の残りだけを消す（新しいもの・ほかの名前は残す）',
+      !left.includes(path.basename(stale)) && left.includes(path.basename(fresh)) && left.includes('keep.txt') && left.includes(path.basename(next.command.at(-1))), JSON.stringify(left));
+    await next.cleanup();
     assert.deepEqual(await fs.readdir(configHome), ['keep.json']);
     t.ok('Hooks and native shell policy are confined to the turn config', turnConfig.read_config_from.claude === false && turnConfig.hooks.PreToolUse.length === 1 && turnConfig.disabled_tools.includes('exec'));
     assert.equal(devinTurnConfig({ hooksRuntime: { supplied: [] } }), null);

@@ -115,8 +115,14 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
       throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
     }) });
-    try { await client.start(); await launch.cleanup?.().catch(() => {}); return client; }
-    catch (error) { await launch.cleanup?.().catch(() => {}); await client.close().catch(() => {}); throw error; }
+    // 会話限定の設定（--config）は、プロセスが終わるまで消さない。Devin CLI は起動の後（session/new のとき）に読むので、
+    // 起動の直後に消すと Hooks・シェルの制限が載らない（2026-11-15 実機で確認）
+    if (launch.cleanup) {
+      const close = client.close.bind(client);
+      client.close = async (...a) => { try { return await close(...a); } finally { await launch.cleanup().catch(() => {}); } };
+    }
+    try { await client.start(); return client; }
+    catch (error) { await client.close().catch(() => {}); throw error; }
   }
   async function cwdFor(id) {
     if (rows.has(id)) return rows.get(id).cwd;

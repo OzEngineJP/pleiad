@@ -13,6 +13,18 @@ import { canLinkMcpOffHome, claimMcpOffHome, pruneMcpOffKept, settleMcpOffHomes,
 export const DEVIN_CARRY = Object.freeze(['config.json', 'credentials.toml', 'mcp_config.json']);
 const IMPORTS = ['agents_standard', 'cursor', 'windsurf', 'claude', 'copilot', 'opencode', 'zed'];
 const TURN_CONFIG_MAX_BYTES = 1024 * 1024;
+/** 会話限定の設定の残り（サーバーが落ちて閉じる処理が走らなかったもの）を消すまでの時間 */
+export const TURN_CONFIG_STALE_MS = 24 * 60 * 60 * 1000;
+
+async function pruneTurnConfigs(dir, now = Date.now()) {
+  let names = [];
+  try { names = await fs.readdir(dir); } catch { return; }
+  for (const name of names) {
+    if (!/^[0-9a-f-]{36}\.json$/.test(name)) continue;
+    const file = path.join(dir, name);
+    try { if (now - (await fs.stat(file)).mtimeMs > TURN_CONFIG_STALE_MS) await fs.rm(file, { force: true }); } catch {}
+  }
+}
 export const METADATA_CONFIG = Object.freeze({ read_config_from: Object.fromEntries(IMPORTS.map(id => [id, false])), hooks: {}, auto_update: false, notify: 'never' });
 
 export function devinTurnConfig({ hooksRuntime = null, nativeShellOff = false } = {}) {
@@ -96,6 +108,7 @@ export async function prepareDevinLaunch({ command, cwd, env = process.env, data
     if (turnConfig) {
       const turnConfigs = path.join(base, 'turn-configs');
       await fs.mkdir(turnConfigs, { recursive: true, mode: 0o700 });
+      await pruneTurnConfigs(turnConfigs);
       const content = JSON.stringify(turnConfig);
       if (Buffer.byteLength(content) > TURN_CONFIG_MAX_BYTES) throw Object.assign(new Error('Devin turn config exceeds 1 MiB'), { code: 'DEVIN_CONFIG_TOO_LARGE' });
       const configPath = path.join(turnConfigs, `${crypto.randomUUID()}.json`);

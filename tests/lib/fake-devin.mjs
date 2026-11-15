@@ -6,8 +6,14 @@ import { DatabaseSync } from 'node:sqlite';
 
 const argv = process.argv.slice(2), command = argv.find(value => ['models', 'auth', 'acp', 'version', '--version'].includes(value));
 const configIndex = argv.indexOf('--config');
-const turnConfig = configIndex >= 0 ? JSON.parse(fs.readFileSync(argv[configIndex + 1], 'utf8')) : null;
-if (process.env.FAKE_DEVIN_CONFIG_CAPTURE && turnConfig) fs.writeFileSync(process.env.FAKE_DEVIN_CONFIG_CAPTURE, JSON.stringify(turnConfig));
+// 本物の Devin CLI は --config を起動の直後ではなく session/new・session/load のときに読む（起動の後に消すと Hooks が載らない。2026-11-15 実機で確認）。
+// 偽物も会話を作るときに読み、そのとき無ければ写さない
+const captureTurnConfig = () => {
+  if (configIndex < 0 || !process.env.FAKE_DEVIN_CONFIG_CAPTURE) return;
+  let turnConfig = null;
+  try { turnConfig = JSON.parse(fs.readFileSync(argv[configIndex + 1], 'utf8')); } catch { return; }
+  fs.writeFileSync(process.env.FAKE_DEVIN_CONFIG_CAPTURE, JSON.stringify(turnConfig));
+};
 // 呼ばれた回数を試験が数える口（FAKE_DEVIN_LOG のファイルに 1 起動ごとにコマンド名を 1 行足す。fake-codex.mjs の FAKE_CODEX_LOG と同じ）
 if (process.env.FAKE_DEVIN_LOG) fs.appendFileSync(process.env.FAKE_DEVIN_LOG, `${command ?? argv.join(' ')}\n`);
 // 実機（3000.11.92）の形: model の選択肢は系列の代表だけで、thought_level・speed の
@@ -156,6 +162,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'fixture/no-reply': return;
       case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: '3000.11.92' }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
       case 'session/new': {
+        captureTurnConfig();
         const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast', used: 120000, window: 262000,
           // 起動で届いたもの（mcpServers・Pleiad からの環境変数）。配達物の試験が読む
           mcpServers: p.mcpServers ?? [], seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_|DELIVERY_)/.test(k)) };
@@ -163,6 +170,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         result = { sessionId: session.sessionId, configOptions: configs(session) }; break;
       }
       case 'session/load': {
+        captureTurnConfig();
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
         // ターンごとに届く接続先（ply_context の口はターンごとのトークン）。再開でもその回の分を覚える
