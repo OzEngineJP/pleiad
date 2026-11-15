@@ -167,7 +167,7 @@ function fakeBackend(tree, id) {
   return { id, label: id, capabilities: { plyContext: 'turn' }, ...(conflicts ? { plyContextRefusal: owners => conflicts.some(k => owners?.[k] === 'ply') ? 'refused' : null } : {}) };
 }
 
-/** エージェントが自分で読む指示・Skills（エージェントの読み込み元で、除外なしに探す）。Claude は作業場所の AGENTS.md も読む（CLI 2.1.280 の実測） */
+/** エージェントが自分で読む指示・Skills（エージェントの読み込み元で、除外なしに探す）。Claude は作業場所の AGENTS.md も候補に入れる（実際に読むかは sees で、横の CLAUDE.md の有無で決める） */
 // main の contextSources と実物が違う所（実物で確かめた補正。2026-11-15）:
 // - OpenCode は .claude/skills・~/.claude/skills も読む（opencode.exe の OPENCODE_DISABLE_CLAUDE_CODE_SKILLS。main も「Pleiad がそろえる」でこれを渡して止めている）
 // - Devin は ~/.config/opencode/AGENTS.md を読まない（devin.exe の opencode の取り込みは mcp.rs だけ。main の agents.mjs の注釈も「MCP のインポート」）
@@ -308,7 +308,13 @@ export function sees(agent, native, plan) {
     const n = native.instruction;
     if (agent === 'claude') {
       const ex = out.claude?.settings?.claudeMdExcludes ?? [];
-      return n.filter(e => !ex.some(p => claudeExcludes(p, e)));
+      const kept = n.filter(e => !ex.some(p => claudeExcludes(p, e)));
+      // 作業場所の AGENTS.md は、同じフォルダーの CLAUDE.md・.claude/CLAUDE.md・CLAUDE.local.md が無いか、どれも外したときだけ
+      // 代わりに読む（Claude Code 2.1.322 の本物で 4 つの置き方を確かめた。2026-11-15）
+      const dirOf = e => keyOf(e.realPath ?? e.path).replace(/\/[^/]*$/, '');
+      const claudeMdDirs = new Set(kept.filter(e => /^(?:claude|claude\.local)\.md$/i.test(base(e.realPath ?? e.path)) && e.sources?.includes('claude'))
+        .map(e => { const d = dirOf(e); return d.endsWith('/.claude') ? d.slice(0, -'/.claude'.length) : d; }));
+      return kept.filter(e => e.sources?.includes('claude') || !/^agents\.md$/i.test(base(e.realPath ?? e.path)) || !claudeMdDirs.has(dirOf(e)));
     }
     // project_doc_max_bytes = 0 は作業場所の AGENTS.md を読まない。~/.codex/AGENTS.md は読む
     if (agent === 'codex') return out.codex?.project_doc_max_bytes === 0 ? n.filter(e => e.scope === 'user') : n;

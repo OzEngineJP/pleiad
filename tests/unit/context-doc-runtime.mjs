@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { compensatedMcpFormats } from '../../core/backends/context-capabilities.mjs';
+import { compensatedMcpFormats, isEntryNativeTo, mayReadNatively } from '../../core/backends/context-capabilities.mjs';
 import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { claudeContextOptions, codexContextRpc } from '../../core/backends/context-options.mjs';
 import { devinTurnConfig } from '../../core/backends/devin-config.mjs';
@@ -95,17 +95,66 @@ export default async function (t) {
     // Claude runtime & options
     const clRuntime = await resolveRuntime(mixedPolicy, { home, agent: 'claude' });
     const clOpts = claudeContextOptions({ owners: mixedPolicy.owners, docs: clRuntime.docs, prompt: clRuntime.prompt });
-    t.ok('Claude: オフにした CLAUDE.md だけが claudeMdExcludes に入り、他は止めない',
-      clOpts.settings?.claudeMdExcludes?.length >= 1
-      && clOpts.settings.claudeMdExcludes.some((p) => p.endsWith('/repo/CLAUDE.md'))
-      && clOpts.settings.claudeMdExcludes.every((p) => /\/repo\/claude\.md$/i.test(p))
+    // Claude Code は作業場所の AGENTS.md を、同じフォルダーに CLAUDE.md・.claude/CLAUDE.md・CLAUDE.local.md が無いときだけ代わりに読む（2.1.322 で本物で確かめた）。
+    // ここは横に CLAUDE.md があるので、Claude の AGENTS.md は既定でオフ。CLAUDE.md を外すと読み始めるので、一緒に外す
+    t.ok('Claude: オフにした CLAUDE.md と、それを外すと代わりに読み始める同じ場所の AGENTS.md が claudeMdExcludes に入り、ほかは止めない',
+      clOpts.settings?.claudeMdExcludes?.some((p) => p.endsWith('/repo/CLAUDE.md'))
+      && clOpts.settings.claudeMdExcludes.some((p) => p.endsWith('/repo/AGENTS.md'))
+      && clOpts.settings.claudeMdExcludes.every((p) => /\/repo\/(?:claude|agents)\.md$/i.test(p))
       && !clOpts.settings.claudeMdExcludes.includes('**/CLAUDE.md'),
-      JSON.stringify({ docInst: clRuntime.docs?.instruction, excludes: clOpts.settings?.claudeMdExcludes, keyRepoClaude }));
-    // Claude Code は作業場所の AGENTS.md を自分で読む（本物で確かめた）。広げる対象ではなく、注入もしない
-    t.ok('Claude: ネイティブの s-claude は untouchedNative なため Skill を止めず、作業場所の AGENTS.md は自分で読む物として注入しない',
+      JSON.stringify({ excludes: clOpts.settings?.claudeMdExcludes }));
+    const clAgentsRow = clRuntime.docs?.instruction?.matrix?.rows?.find((r) => r.name === 'AGENTS.md');
+    t.ok('Claude: ネイティブの s-claude は untouchedNative なため Skill を止めず、横に CLAUDE.md がある AGENTS.md は表でオフ・注入もしない',
       clOpts.skills === undefined && !clRuntime.prompt.includes('REPO_AGENTS_COMMON')
-      && clRuntime.report.entries.some((e) => e.name === 'AGENTS.md' && e.status === 'native')
-      && clRuntime.report.entries.some((e) => e.name === 'CLAUDE.md' && e.scope === 'user' && e.status === 'native' && e.tokens > 0));
+      && clAgentsRow?.cells?.claude?.on === false && clAgentsRow?.cells?.claude?.native === false
+      && clAgentsRow?.cells?.codex?.on === true
+      && clRuntime.report.entries.some((e) => e.name === 'CLAUDE.md' && e.scope === 'user' && e.status === 'native' && e.tokens > 0),
+      JSON.stringify({ cells: clAgentsRow?.cells }));
+
+    // 置き方ごとの「Claude が自分で読むか」（本物の 4 つの置き方と同じ）
+    const layout = async (name, files) => {
+      const dir = path.join(tmp, 'layouts', name);
+      for (const f of files) await write(path.join(dir, f), 'x');
+      await write(path.join(dir, 'AGENTS.md'), 'x');
+      return { kind: 'instruction', name: 'AGENTS.md', path: path.join(dir, 'AGENTS.md'), scope: 'directory', origins: [{ path: path.join(dir, 'AGENTS.md'), source: 'common', scope: 'directory' }] };
+    };
+    const lyAlone = await layout('alone', []);
+    const lyBeside = await layout('beside', ['CLAUDE.md']);
+    const lyDot = await layout('dot', [path.join('.claude', 'CLAUDE.md')]);
+    const lyLocal = await layout('local', ['CLAUDE.local.md']);
+    t.ok('Claude: AGENTS.md だけの場所では自分で読み、CLAUDE.md・.claude/CLAUDE.md・CLAUDE.local.md が横にあると読まない（どれも外せば読み始める物として数える）',
+      isEntryNativeTo('claude', 'instruction', lyAlone)
+      && !isEntryNativeTo('claude', 'instruction', lyBeside)
+      && !isEntryNativeTo('claude', 'instruction', lyDot)
+      && !isEntryNativeTo('claude', 'instruction', lyLocal)
+      && [lyAlone, lyBeside, lyDot, lyLocal].every((e) => mayReadNatively('claude', 'instruction', e))
+      && [lyBeside, lyDot, lyLocal].every((e) => isEntryNativeTo('codex', 'instruction', e) && isEntryNativeTo('opencode', 'instruction', e)));
+
+    // AGENTS.md を Claude に広げると、Pleiad が渡し、Claude の自分での読み込みは外す（CLAUDE.md は止めない）
+    const clSpreadPolicy = contextPolicy(attachDocPolicy(baseSettings, rawCfg, normalizeDocAgentsConfig({
+      version: 1,
+      defaults: { instruction: { agents: { [keyRepoAgents]: { off: [], spread: ['claude'] } } } },
+      places: {},
+    })));
+    const clSpreadRuntime = await resolveRuntime(clSpreadPolicy, { home, agent: 'claude' });
+    const clSpreadOpts = claudeContextOptions({ owners: clSpreadPolicy.owners, docs: clSpreadRuntime.docs, prompt: clSpreadRuntime.prompt });
+    t.ok('Claude: 横に CLAUDE.md がある AGENTS.md を広げると、Pleiad が本文を渡し、AGENTS.md だけを claudeMdExcludes に入れる',
+      clSpreadRuntime.prompt.includes('REPO_AGENTS_COMMON')
+      && clSpreadOpts.settings?.claudeMdExcludes?.some((p) => p.endsWith('/repo/AGENTS.md'))
+      && clSpreadOpts.settings.claudeMdExcludes.every((p) => /\/repo\/agents\.md$/i.test(p)),
+      JSON.stringify({ excludes: clSpreadOpts.settings?.claudeMdExcludes }));
+
+    // ほかのエージェントのセルだけを触った場所では、Claude の起動は今までと同じ（AGENTS.md も外さない）
+    const devinOnlyPolicy = contextPolicy(attachDocPolicy(baseSettings, rawCfg, normalizeDocAgentsConfig({
+      version: 1,
+      defaults: { instruction: { agents: { [keyRepoAgents]: { off: ['devin'], spread: [] } } } },
+      places: {},
+    })));
+    const devinOnlyRuntime = await resolveRuntime(devinOnlyPolicy, { home, agent: 'claude' });
+    const devinOnlyOpts = claudeContextOptions({ owners: devinOnlyPolicy.owners, docs: devinOnlyRuntime.docs, prompt: devinOnlyRuntime.prompt });
+    t.ok('Claude: Devin のセルだけを触った場所では claudeMdExcludes を渡さず、注入もしない',
+      !devinOnlyOpts.settings?.claudeMdExcludes && !devinOnlyRuntime.prompt.includes('REPO_AGENTS_COMMON') && !devinOnlyRuntime.prompt.includes('REPO_CLAUDE_SECRET'),
+      JSON.stringify({ settings: devinOnlyOpts.settings }));
 
     // Skill を 2 つのうち 1 つだけオフにした場合（Claude で s-claude オフ・新スキル s-kept 残し）
     await write(path.join(repo, '.claude', 'skills', 's-kept', 'SKILL.md'), '---\nname: s-kept\ndescription: Kept\n---\nKEPT');
@@ -260,6 +309,7 @@ export default async function (t) {
     const afterPlaceEdit = await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo });
     t.ok('WS setDocRow(place) でその場所だけの設定ができ、AGENTS.md のアンロックセルが全て off になる',
       afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.claude.on === false
+      && afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.codex.on === false
       && afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md').cells.grok.on === true);
 
     // prepareTurn の resolveRuntime も HOME/USERPROFILE ではなく PLEIAD_SCAN_HOME(SCAN_OPTIONS) で解決する

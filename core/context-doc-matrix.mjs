@@ -12,6 +12,7 @@ import {
   docCellLock,
   entryOrigins,
   isEntryNativeTo,
+  mayReadNatively,
 } from './backends/context-capabilities.mjs';
 import {
   WORKSPACE_SUMMARY_KEY,
@@ -336,6 +337,8 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
   const desiredSuppress = [];
   const desiredDeliver = [];
   const nativeKept = [];
+  // 既定では読まないが、ほかの物を外すと読み始める物（Claude の AGENTS.md は、横の CLAUDE.md を外すと読む）。何かを外すときだけ一緒に外す
+  const latentOff = [];
 
   for (const row of matrix.rows) {
     const cell = row.cells[agent];
@@ -345,6 +348,7 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
       if (nativeCopies.length && !cell?.locked) {
         desiredSuppress.push(...nativeCopies);
       }
+      if (!cell?.locked) latentOff.push(...row.copies.filter((c) => !nativeCopies.includes(c) && mayReadNatively(agent, kind, c)));
       continue;
     }
 
@@ -364,7 +368,8 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
     } else {
       // Chosen file is NOT natively read by this agent. Suppress any shadowing native copy and deliver chosen.
       let allShadowStopped = true;
-      for (const c of nativeCopies) {
+      // Pleiad が渡すときは、ほかの物を外したときに自分でも読み始める写しも外す（二重に入らないように）
+      for (const c of row.copies.filter((x) => mayReadNatively(agent, kind, x))) {
         if (docCellLock(agent, kind, c, lockCtx)) {
           allShadowStopped = false;
         } else {
@@ -376,6 +381,8 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
       }
     }
   }
+
+  if (desiredSuppress.length > 0) desiredSuppress.push(...latentOff);
 
   // Handle coarse/group suppression fallout cleanly:
   // If agent stops all-at-once (no perFileInstructionExclude / perNameSkillList), suppressing ANY item

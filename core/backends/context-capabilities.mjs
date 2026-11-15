@@ -2,6 +2,7 @@
  * Per-agent capabilities and native readership rules for external instructions and skills (ADR 0337).
  * All agent-specific literals live under core/backends/ so core/ and web/ stay agent-agnostic.
  */
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_AGENT_IDS } from './agents.mjs';
 
@@ -78,12 +79,20 @@ export function devinImportFormat(kind, pathStr, originSource, scope = null) {
   return null;
 }
 
+const isWorkspaceAgentsMd = (origin) => origin.source === 'common' && origin.scope !== 'user' && /(?:^|\/)AGENTS\.md$/i.test(origin.path);
+
+/** 同じフォルダーに Claude Code の指示（CLAUDE.md・.claude/CLAUDE.md・CLAUDE.local.md）があるか */
+function claudeMdBeside(file) {
+  const dir = path.dirname(file);
+  return ['CLAUDE.md', path.join('.claude', 'CLAUDE.md'), 'CLAUDE.local.md'].some((f) => fsSync.existsSync(path.join(dir, f)));
+}
+
 const NATIVE_READERS = {
   claude(kind, origin) {
-    // Claude Code も作業場所の AGENTS.md を読む（main の CLAUDE_MD_EXCLUDES が **/AGENTS.md を止めているのと同じ。本物で確かめた）
+    // Claude Code は作業場所の AGENTS.md を、同じフォルダーに CLAUDE.md・.claude/CLAUDE.md・CLAUDE.local.md が無いときだけ代わりに読む
+    // （2.1.322 で 4 つの置き方を本物で確かめた。2026-11-15）。CLAUDE.md を claudeMdExcludes で外すと読み始めるので、止めるときは mayReadNatively で外す
     if (kind === 'instruction') {
-      return origin.source === 'claude'
-        || (origin.source === 'common' && origin.scope !== 'user' && /(?:^|\/)AGENTS\.md$/i.test(origin.path));
+      return origin.source === 'claude' || (isWorkspaceAgentsMd(origin) && !claudeMdBeside(origin.path));
     }
     return origin.source === 'claude';
   },
@@ -134,6 +143,15 @@ export function isEntryNativeTo(agent, kind, entryOrSummary) {
   if (!check) return false;
   // 「探す場所」に足したフォルダー（entry.root）はどのエージェントも自分では読まない（main の nativeInstructionEntries も roots: [] で探す）
   return entryOrigins(entryOrSummary).some((o) => !o.custom && check(kind, o));
+}
+
+/**
+ * Whether `agent` may load `entryOrSummary` by itself in some session, even if it does not by default.
+ * Claude Code reads a workspace AGENTS.md once the CLAUDE.md beside it is excluded, so a stopped or relayed AGENTS.md is always excluded on Claude.
+ */
+export function mayReadNatively(agent, kind, entryOrSummary) {
+  if (isEntryNativeTo(agent, kind, entryOrSummary)) return true;
+  return agent === 'claude' && kind === 'instruction' && entryOrigins(entryOrSummary).some((o) => !o.custom && isWorkspaceAgentsMd(o));
 }
 
 /** Return the list of agents that natively read `entryOrSummary`. */
