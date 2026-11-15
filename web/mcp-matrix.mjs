@@ -8,52 +8,15 @@
 // 行の詳細（編集・名前の変更・ログイン・削除・取り込み）は web/mcp-config.mjs の peek。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { agentBrand, agentShortLabel } from './agent-brands.mjs';
-import { ensureBrandMark } from './brand-marks.mjs';
-import { ensureLockTips, lockReasonText, lockAriaLabel } from './lock-tip.mjs';
+import { agentShortLabel } from './agent-brands.mjs';
+import { brandMark as mark } from './context-tabs.mjs';
+import { ensureLockTips, lockReasonText } from './lock-tip.mjs';
+import { MATRIX_ICON as ICON, matrixSvg as svg, matrixButton as button, lockedAgentChip, agentLegend } from './context-matrix.mjs';
 
-const ICON = {
-  url: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/>',
-  stdio: '<path d="m5 8 4 4-4 4M12 16h7"/>',
-  // 製品の資材: 雲は web/git-icons.mjs の cloudIcon、プラグは web/conversation-usage.mjs の plugins
-  connector: '<path d="M7 18.5h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.2 9.6 4.5 4.5 0 0 0 7 18.5z"/>',
-  plugin: '<path d="M9 3v4m6-4v4M6 7h12v3.5a6 6 0 0 1-12 0zM12 16.5V21"/>',
-  lock: '<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
-};
-const svg = d => { const s = el('span'); s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`; return s.firstChild; };
+export { lockedAgentChip };
+
 const label = id => agentShortLabel(id, id);
 const names = ids => ids.map(label).join('・');
-
-/** エージェントのロゴ。ロゴの無いエージェントは ◇（web/side.mjs の backendLogo と同じ決め） */
-function mark(id) {
-  const brand = agentBrand(id);
-  if (brand?.mark) {
-    const s = el('span'); s.innerHTML = `<svg class="mk" viewBox="0 0 24 24" aria-hidden="true"><use href="#${ensureBrandMark(brand.logo)}"/></svg>`;
-    return s.firstChild;
-  }
-  if (brand) { const i = el('img', 'mk'); i.src = `./brand/${brand.logo}`; i.alt = ''; i.draggable = false; return i; }
-  return el('span', 'mk', '◇');
-}
-const button = (cls, text) => { const b = el('button', cls, text); b.type = 'button'; return b; };
-const lockGlyph = () => { const k = el('span', 'lk'); k.append(svg(ICON.lock)); return k; };
-
-/**
- * 鍵つきのエージェントのアイコン（一覧のセルと、会話の右パネルの止められなかった行で同じ形）。
- * cell は { mode, reason?, state? }。吹き出し（data-tip）と読み上げ名「{元の名前}（{理由}）」を付ける
- */
-export function lockedAgentChip(agent, cell, name) {
-  const b = button(`cx-ag be-${agent}`);
-  b.dataset.agent = agent;
-  b.setAttribute('aria-pressed', String(cell.state === 'on'));
-  b.append(mark(agent));
-  const reason = lockReasonText(label(agent), cell);
-  b.setAttribute('aria-disabled', 'true');
-  b.dataset.tip = reason;
-  b.setAttribute('aria-label', lockAriaLabel(t('mcp.matrix.agentAria', { agent: label(agent), name }), reason));
-  b.append(lockGlyph());
-  ensureLockTips();
-  return b;
-}
 
 /**
  * section は createMcpSection() の戻り（peek・authNote を使う）。
@@ -229,8 +192,7 @@ export function createMcpMatrix({ section, onCount }) {
   function render(host, ctx) {
     const m = ctx.matrix;
     if (!m || !ctx.scan) { onCount?.(null); host.append(ctx.loading()); return; }
-    const legendNames = el('div', 'cx-legend names'); legendNames.setAttribute('aria-hidden', 'true');
-    for (const a of m.agents) { const i = el('span', `li be-${a}`); i.append(mark(a), document.createTextNode(label(a))); legendNames.append(i); }
+    const legendNames = agentLegend(m.agents);
     host.append(legendNames);
     // 同じサービスのコネクターが使われている間は、プラグインの MCP は一覧に出ない（コネクターを止めると現れる。Claude Code の動き）
     const lower = s => String(s ?? '').toLowerCase();

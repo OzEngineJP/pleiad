@@ -57,6 +57,7 @@
     "channels:routines.where.dm",
     "ui:chat.browserHandoff.reason.captcha",
     "server:opsApproval.kind.skill",
+    "ui:context.skill.title",
     "ui:context.tabs.skill",
     "ui:context.tabs.hooks",
     "ui:settings.remote.groups.plus"

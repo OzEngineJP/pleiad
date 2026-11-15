@@ -49,11 +49,11 @@ export default async function (t) {
       await nodes(body).find(n => n.dataset?.act === 'placeStart').onclick();
       await settle();
       const choices = () => nodes(body).filter(n => n.dataset?.owner?.endsWith(':ply') && !n.dataset.owner.startsWith('hooks:'));
-      t.ok(`能力の確認待ちは Pleiad 担当を選べない（${capability}/${owner}）`, choices().length === 3 && choices().every(n => n.disabled));
+      t.ok(`能力の確認待ちは Pleiad 担当を選べない（${capability}/${owner}）`, choices().length === 1 && choices().every(n => n.disabled));
       resolveBackends([{ id: 'agent-under-test', capabilities: { plyContext: capability } }]);
       await settle();
       const unavailable = capability === false;
-      t.ok(`能力から担当の選べる状態を決める（${capability}/${owner}）`, choices().length === 3 && choices().every(n => Boolean(n.disabled) === unavailable));
+      t.ok(`能力から担当の選べる状態を決める（${capability}/${owner}）`, choices().length === 1 && choices().every(n => Boolean(n.disabled) === unavailable));
       t.ok(`保存済みの担当の選択表示を保つ（${capability}/${owner}）`, choices().every(n => n.getAttribute('aria-checked') === String(owner === 'ply')) && writes === 0);
       if (unavailable) {
         t.ok(`非対応の理由と設定を保持する説明が出る（${owner}）`, body.textContent.includes('Example Agent') && body.textContent.includes('保存済みの担当は保持'));
@@ -88,7 +88,7 @@ export default async function (t) {
       panel.open(); await settle();
       await nodes(body).find(n => n.dataset?.act === 'placeStart').onclick(); await settle();
       const choices = () => nodes(body).filter(n => n.dataset?.owner?.endsWith(':ply') && !n.dataset.owner.startsWith('hooks:'));
-      t.ok(`不完全な能力応答では担当を選べず理由と再試行を出す（${label}）`, choices().length === 3 && choices().every(n => n.disabled)
+      t.ok(`不完全な能力応答では担当を選べず理由と再試行を出す（${label}）`, choices().length === 1 && choices().every(n => n.disabled)
         && body.textContent.includes('受け取れるか確認できません') && nodes(body).some(n => n.tagName === 'BUTTON' && n.textContent === '再試行'));
       t.ok(`能力が不明でも保存済み担当は保持する（${label}）`, choices().every(n => n.getAttribute('aria-checked') === 'true') && writes === 0);
       for (const choice of choices()) choice.onclick(); await settle();

@@ -4,6 +4,8 @@ import { N } from '../lib/dom-stub.mjs';
 import { setLanguage } from '../../web/i18n.mjs';
 import { setupContext } from '../../web/context.mjs';
 import { setupSessionContext } from '../../web/session-context.mjs';
+import { buildDocMatrix, snapshotBaselineAgents } from '../../core/context-doc-matrix.mjs';
+import { WORKSPACE_SUMMARY_KEY, docItemKey, emptyDocAgentsConfig, setDocRowRule, toggleDocAgentRule } from '../../core/context-agents.mjs';
 
 export const name = 'context-panel-tabs';
 export const title = '設定 › プラグインと会話の右パネル編集モードの 4 タブ・まとまり・絞り込み';
@@ -49,6 +51,8 @@ class PanelNode extends N {
   set value(v) { this.attrs.value = String(v ?? ''); }
   get checked() { return this.hasAttribute('checked'); }
   set checked(v) { if (v) this.setAttribute('checked', ''); else this.removeAttribute('checked'); }
+  get open() { return this.hasAttribute('open'); }
+  set open(v) { if (v) this.setAttribute('open', ''); else this.removeAttribute('open'); }
   set innerHTML(v) {
     super.innerHTML = v;
     const m = /^<([a-z]+)/i.exec(String(v).trim());
@@ -183,41 +187,84 @@ export default async function (t) {
   try {
     await setLanguage('ja');
 
-    // ---------------- 1. 設定 › プラグイン（web/context.mjs） ----------------
+    // ---------------- 1. 設定 › プラグイン（web/context.mjs · Stage 2） ----------------
     const rules = Array.from({ length: 9 }, (_, i) => ({
       id: `r${i}`, kind: 'instruction', scope: 'user', rule: true, defaultStatus: 'candidate',
-      name: `r${i}.md`, path: `/home/u/.claude/rules/sec/r${i}.md`,
-      tokens: 10, origins: [{ source: 'claude', path: `/home/u/.claude/rules/sec/r${i}.md`, scope: 'user' }, { source: 'codex', path: `/home/u/.claude/rules/sec/r${i}.md`, scope: 'user' }],
+      name: `r${i}.md`, path: `/home/u/.opencode/rules/sec/r${i}.md`, realPath: `/home/u/.opencode/rules/sec/r${i}.md`,
+      tokens: 10, origins: [{ source: 'opencode', path: `/home/u/.opencode/rules/sec/r${i}.md`, scope: 'user' }, { source: 'codex', path: `/home/u/.opencode/rules/sec/r${i}.md`, scope: 'user' }],
     }));
     const skills = [
-      { id: 's-dup-1', kind: 'skill', scope: 'user', defaultStatus: 'candidate', name: 'deploy', path: '/home/u/.claude/skills/deploy/SKILL.md', tokens: 20, origins: [{ source: 'claude', path: '/home/u/.claude/skills/deploy/SKILL.md', scope: 'user' }] },
-      { id: 's-dup-2', kind: 'skill', scope: 'user', defaultStatus: 'shadowed', shadowedBy: 'choice', name: 'deploy', path: '/home/u/.agents/skills/deploy/SKILL.md', tokens: 20, origins: [{ source: 'codex', path: '/home/u/.agents/skills/deploy/SKILL.md', scope: 'user' }] },
+      { id: 's-dup-1', kind: 'skill', scope: 'user', defaultStatus: 'candidate', name: 'deploy', path: '/home/u/.claude/skills/deploy/SKILL.md', realPath: '/home/u/.claude/skills/deploy/SKILL.md', tokens: 20, origins: [{ source: 'claude', path: '/home/u/.claude/skills/deploy/SKILL.md', scope: 'user' }] },
+      { id: 's-dup-2', kind: 'skill', scope: 'user', defaultStatus: 'shadowed', shadowedBy: 'choice', name: 'deploy', path: '/home/u/.agents/skills/deploy/SKILL.md', realPath: '/home/u/.agents/skills/deploy/SKILL.md', tokens: 20, origins: [{ source: 'codex', path: '/home/u/.agents/skills/deploy/SKILL.md', scope: 'user' }] },
       ...Array.from({ length: 9 }, (_, i) => ({
         id: `s-big-${i}`, kind: 'skill', scope: 'user', defaultStatus: 'candidate', name: `tool-${i}`,
-        path: `/home/u/.codex/skills/tool-${i}/SKILL.md`, tokens: 12, origins: [{ source: 'codex', path: `/home/u/.codex/skills/tool-${i}/SKILL.md`, scope: 'user' }],
+        path: `/home/u/.codex/skills/tool-${i}/SKILL.md`, realPath: `/home/u/.codex/skills/tool-${i}/SKILL.md`, tokens: 12, origins: [{ source: 'codex', path: `/home/u/.codex/skills/tool-${i}/SKILL.md`, scope: 'user' }],
       })),
     ];
     const scanEntries = [
-      { id: 'u-agents', kind: 'instruction', scope: 'user', defaultStatus: 'candidate', name: 'AGENTS.md', path: '/home/u/.claude/CLAUDE.md', tokens: 15, origins: [{ source: 'claude', path: '/home/u/.claude/CLAUDE.md', scope: 'user' }] },
+      { id: 'u-agy', kind: 'instruction', scope: 'user', defaultStatus: 'candidate', name: 'GEMINI.md', path: '/home/u/.gemini/GEMINI.md', realPath: '/home/u/.gemini/GEMINI.md', tokens: 15, origins: [{ source: 'antigravity', path: '/home/u/.gemini/GEMINI.md', scope: 'user' }] },
       ...rules,
       ...skills,
     ];
 
     const kindsState = {
-      instruction: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
-      skill: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
+      instruction: { value: { owner: 'native', user: { sources: ['claude', 'codex', 'antigravity', 'opencode'], excludePaths: [] }, directory: { sources: ['claude', 'codex', 'antigravity', 'opencode'], excludePaths: [] } } },
+      skill: { value: { owner: 'native', user: { sources: ['claude', 'codex'], excludePaths: [] }, directory: { sources: ['claude', 'codex'], excludePaths: [] }, prefer: {} } },
       mcp: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
       hooks: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
     };
-    const computeEntries = (entries, kindsMap) => entries.map(e => {
-      const val = (kindsMap[e.kind]?.value ?? kindsMap[e.kind]) ?? {};
-      const tier = e.scope === 'user' ? val.user : val.directory;
-      const excluded = (tier?.excludePaths ?? []).some(p => p === e.path);
-      return { ...e, status: excluded ? 'excluded' : (e.defaultStatus ?? 'candidate') };
-    });
-    const settingsWrites = [];
-    let failSettings = false;
+    let docAgentsCfg = emptyDocAgentsConfig();
+    const docWrites = [];
+    const plyWrites = [];
+    let plyItemsState = [
+      { id: 'ply-1', name: 'ルール1', on: true, tokens: 8, text: 'x', target: 'all', tag: 'user', agents: ['claude'] },
+      { id: 'ply-link', name: '委譲ルール', on: true, tokens: 4, text: 'y', target: 'parent', tag: 'linked', agents: ['claude', 'grok'] },
+    ];
+    let failDoc = false, failPly = false;
     const rootsState = { instruction: { value: [] }, skill: { value: [] }, mcp: { value: [] } };
+    const toRawLegacy = (kinds) => ({
+      version: 1,
+      defaults: {
+        roots: { instruction: [], skill: [], mcp: [] },
+        kinds: Object.fromEntries(Object.entries(kinds).map(([k, v]) => [k, structuredClone(v.value)])),
+      },
+      places: {},
+    });
+    const serializeRow = (r) => ({
+      ...r,
+      id: r.chosen.id,
+      name: r.chosen.name,
+      path: r.chosen.path,
+      realPath: r.chosen.realPath ?? r.chosen.path,
+      scope: r.chosen.scope,
+      tokens: r.chosen.tokens ?? null,
+      isRule: Boolean(r.chosen.rule),
+      conditional: Boolean(r.chosen.conditional),
+      status: r.chosen.status,
+      content: '',
+      duplicates: r.duplicates.map(d => ({ ...d })),
+    });
+    const scanDocsFor = (kind, entries, kinds) => entries.filter(e => e.kind === kind).map(e => ({
+      ...e,
+      status: e.defaultStatus ?? 'candidate',
+    }));
+    const makeDocMatrix = (kind, entries, kinds, cfg, cwd) => {
+      const m = buildDocMatrix({ kind, entries: scanDocsFor(kind, entries, kinds), legacyConfig: toRawLegacy(kinds), docAgentsConfig: cfg, cwd, home: '/home/u' });
+      return {
+        kind,
+        cwd: cwd ?? '/home/u',
+        home: '/home/u',
+        root: cwd ?? '/home/u',
+        touched: m.touched,
+        agentsPlace: m.agentsPlace,
+        legacyPlace: m.legacyPlace,
+        legacyOwner: m.legacyOwner,
+        prefer: kinds.skill?.value?.prefer ?? {},
+        agents: m.agents,
+        summaryRow: m.summaryRow,
+        rows: m.rows.map(serializeRow),
+      };
+    };
     const cloneSettings = () => ({
       home: '/home/u',
       defaults: { kinds: structuredClone(kindsState), roots: structuredClone(rootsState) },
@@ -227,17 +274,71 @@ export default async function (t) {
     const settingsCmd = async (command, payload) => {
       if (command === 'contextSettings') return cloneSettings();
       if (command === 'setContextSettings') {
-        if (failSettings) throw new Error('boom-settings');
         settingsWrites.push(payload);
         if (payload?.kind && payload?.value) {
           const v = kindsState[payload.kind].value;
-          if (payload.value.user) v.user = { ...v.user, ...payload.value.user };
-          if (payload.value.directory) v.directory = { ...v.directory, ...payload.value.directory };
+          Object.assign(v, structuredClone(payload.value));
         }
         return cloneSettings();
       }
-      if (command === 'scanContext') return { entries: computeEntries(scanEntries, kindsState), budget: { total: 4000, used: 200 } };
-      if (command === 'plyInstructions') return { items: [{ id: 'ply-1', name: 'ルール1', on: true, tokens: 8, text: 'x', target: 'all', tag: 'user', agents: ['claude'] }], agents: [{ id: 'claude', label: 'Claude' }], total: 8, routing: false };
+      if (command === 'scanContext') return { entries: scanEntries.map(e => ({ ...e, status: e.defaultStatus ?? 'candidate' })), budget: { total: 4000, used: 200 } };
+      if (command === 'docMatrix') return makeDocMatrix(payload.kind, scanEntries, kindsState, docAgentsCfg, null);
+      if (command === 'setDocRow') {
+        if (failDoc) throw new Error('boom-settings');
+        docWrites.push({ command, ...payload });
+        const entries = scanDocsFor(payload.kind, scanEntries, kindsState);
+        const raw = toRawLegacy(kindsState);
+        const m = buildDocMatrix({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: docAgentsCfg, cwd: null, home: '/home/u' });
+        docAgentsCfg.defaults[payload.kind] ??= { agents: snapshotBaselineAgents({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: docAgentsCfg, place: null, home: '/home/u' }) };
+        const keys = payload.keys ?? [payload.key];
+        for (const k of keys) {
+          const row = k === WORKSPACE_SUMMARY_KEY ? m.summaryRow : m.byKey.get(k);
+          const cur = docAgentsCfg.defaults[payload.kind].agents[k] ?? row.rule;
+          const input = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
+          docAgentsCfg.defaults[payload.kind].agents[k] = setDocRowRule(payload.kind, input, cur, payload.on);
+        }
+        return { ok: true, defaults: docAgentsCfg.defaults };
+      }
+      if (command === 'setDocAgent') {
+        if (failDoc) throw new Error('boom-settings');
+        docWrites.push({ command, ...payload });
+        const entries = scanDocsFor(payload.kind, scanEntries, kindsState);
+        const raw = toRawLegacy(kindsState);
+        const m = buildDocMatrix({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: docAgentsCfg, cwd: null, home: '/home/u' });
+        docAgentsCfg.defaults[payload.kind] ??= { agents: snapshotBaselineAgents({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: docAgentsCfg, place: null, home: '/home/u' }) };
+        const row = payload.key === WORKSPACE_SUMMARY_KEY ? m.summaryRow : m.byKey.get(payload.key);
+        const cur = docAgentsCfg.defaults[payload.kind].agents[payload.key] ?? row.rule;
+        const input = payload.key === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
+        docAgentsCfg.defaults[payload.kind].agents[payload.key] = toggleDocAgentRule(payload.kind, input, cur, payload.agent, payload.on);
+        return { ok: true, defaults: docAgentsCfg.defaults };
+      }
+      if (command === 'plyInstructions') return {
+        items: structuredClone(plyItemsState),
+        agents: [
+          { id: 'claude', label: 'Claude' },
+          { id: 'codex', label: 'Codex' },
+          { id: 'antigravity', label: 'Antigravity' },
+          { id: 'opencode', label: 'OpenCode' },
+          { id: 'devin', label: 'Devin' },
+          { id: 'grok', label: 'Grok' },
+        ],
+        total: plyItemsState.filter(x => x.on).reduce((s, x) => s + x.tokens, 0),
+        routing: true,
+      };
+      if (command === 'setPlyInstructions') {
+        if (failPly) throw new Error('boom-ply');
+        plyWrites.push(payload);
+        if (payload?.action === 'toggleAgent') {
+          const item = plyItemsState.find(x => x.id === payload.id);
+          if (item) {
+            const set = new Set(item.agents);
+            if (payload.on) set.add(payload.agent);
+            else set.delete(payload.agent);
+            item.agents = [...set];
+          }
+        }
+        return settingsCmd('plyInstructions');
+      }
       if (command === 'scanHooks') return { entries: [{ id: 'hk-1', name: '保存時チェック', event: 'PostToolUse', agent: 'antigravity', scope: 'user', enabled: true, command: 'echo ok', type: 'command' }], files: [], home: '/home/u', order: {} };
       if (command === 'plyHooks') return { defaults: { value: { owner: kindsState.hooks.value.owner } }, entries: [{ id: 'hk-1', name: '保存時チェック', event: 'PostToolUse', agent: 'claude', enabled: true, command: 'echo ok', type: 'command' }] };
       if (command === 'listPlyMcp') return { servers: [{ id: 'm1', name: 'local', transport: 'stdio', command: 'node', args: [] }] };
@@ -250,6 +351,7 @@ export default async function (t) {
       if (command === 'backends') return [{ id: 'claude', name: 'Claude', capabilities: { plyContext: 'turn' } }];
       return {};
     };
+    const settingsWrites = [];
 
     const ctxPage = setupContext({
       button: dom.openBtn,
@@ -275,7 +377,7 @@ export default async function (t) {
       && panels[2].querySelector('#cliSetup') != null);
 
     t.ok('タブ件数に重複を除いた Skills 数と Pleiad 指示＋スキャン指示、MCP、Hooks が反映される',
-      p.querySelector('#cx-tab-instruction .c')?.textContent === '11'
+      p.querySelector('#cx-tab-instruction .c')?.textContent === '12'
       && p.querySelector('#cx-tab-skill .c')?.textContent === '10'
       && p.querySelector('#cx-tab-mcp .c')?.textContent === '1'
       && p.querySelector('#cx-tab-hooks .c')?.textContent === '1',
@@ -286,7 +388,44 @@ export default async function (t) {
         p.querySelector('#cx-tab-hooks .c')?.textContent,
       ].join(','));
 
-    // スクロール先頭リセット + タブ記憶 + 担当 2 択の維持
+    // 段 2: 指示・Skills には担当 2 択と「探す形式」の札が無く、目安は <details class="cx-fold"> に畳まれ、作業場所 summaryRow と凡例がある
+    const instPanel = p.querySelector('#cx-panel-instruction');
+    const skillPanel = p.querySelector('#cx-panel-skill');
+    const fold = instPanel.querySelector('details.cx-fold');
+    t.ok('指示・Skills タブから担当 2 択（.cx-seg）が消え、Hooks だけに残り、指示の量の目安は畳まれて作業場所 summaryRow がある',
+      instPanel.querySelectorAll('.cx-seg').length === 0
+      && skillPanel.querySelectorAll('.cx-seg').length === 0
+      && p.querySelectorAll('#cx-panel-hooks .cx-seg').length === 1
+      && fold != null && fold.open === false
+      && fold.querySelector('#cxInstructionBudget') != null
+      && instPanel.querySelector(`[data-key="${WORKSPACE_SUMMARY_KEY}"] .cx-sw`) != null
+      && skillPanel.querySelector(`[data-key="${WORKSPACE_SUMMARY_KEY}"] .cx-sw`) != null
+      && instPanel.querySelectorAll('.cx-legend.names').length >= 1);
+
+    // Pleiad の指示: Grok を含む 6 エージェントが押せて、「委譲と連動」は鍵（linked）・全体スイッチ無し
+    const plyRows = instPanel.querySelectorAll('.cx-ply .cx-row.ag');
+    const plyGrokBtn = plyRows[0]?.querySelectorAll('.cx-ag')[5];
+    const plyLinkedRow = plyRows[1];
+    t.ok('Pleiad の指示: 通常行に 6 エージェント（Grok 押下可）、連動行に行スイッチ無し＋linked 鍵がある',
+      plyRows.length === 2
+      && plyGrokBtn?.dataset.agent === 'grok' && plyGrokBtn?.getAttribute('aria-disabled') == null
+      && plyLinkedRow?.querySelector('.cx-sw') == null
+      && plyLinkedRow?.querySelector('.cx-ag[aria-disabled="true"]') != null);
+    plyGrokBtn.onclick();
+    await settle();
+    t.ok('Pleiad の指示で Grok アイコンを押すと setPlyInstructions toggleAgent が保存される',
+      plyWrites.some(w => w.action === 'toggleAgent' && w.id === 'ply-1' && w.agent === 'grok' && w.on === true)
+      && plyItemsState[0].agents.includes('grok'));
+
+    failPly = true;
+    instPanel.querySelectorAll('.cx-ply .cx-row.ag')[0].querySelectorAll('.cx-ag')[5].onclick();
+    await settle();
+    t.ok('Pleiad の指示の保存失敗時は表示を元の保存状態に戻す',
+      plyItemsState[0].agents.includes('grok')
+      && instPanel.querySelectorAll('.cx-ply .cx-row.ag')[0].querySelectorAll('.cx-ag')[5].getAttribute('aria-pressed') === 'true');
+    failPly = false;
+
+    // スクロール先頭リセット + タブ記憶
     dom.scroller.scrollTop = 240;
     p.querySelector('#cx-tab-mcp').onclick();
     await settle();
@@ -296,168 +435,240 @@ export default async function (t) {
     p.querySelector('#cx-tab-instruction').onclick();
     await settle();
 
-    t.ok('段 2・3 までの担当 2 択と指示の量の目安を残している',
-      p.querySelector('#cxInstructionBudget') != null && p.querySelectorAll('.cx-seg').length >= 1);
-
-    // 9 件の rules まとまりは初期折りたたみ → 開く（親ロゴ・パス繰り返し無し）→ 子 1 つオフで mixed → まとめ切替で 1 回保存
-    const ruleBundle = p.querySelector('#cx-panel-instruction .cx-row.grp');
+    // 9 件の rules まとまりは初期折りたたみ → 開く（親ロゴ・パス繰り返し無し）→ 子 1 つオフで mixed → まとめ切替で 1 回 setDocRow
+    const ruleBundle = instPanel.querySelector('.cx-row.grp');
     t.ok('8 件超の指示フォルダーまとまりは最初は折りたたまれている',
       ruleBundle != null && ruleBundle.querySelector('.cx-tw').getAttribute('aria-expanded') === 'false'
-      && p.querySelectorAll('#cx-panel-instruction .cx-row.kid').length === 0);
+      && instPanel.querySelectorAll('.cx-row.kid').length === 0);
 
     ruleBundle.querySelector('.cx-tw').onclick();
     await settle();
-    const ruleKids = p.querySelectorAll('#cx-panel-instruction .cx-row.kid');
+    const ruleKids = instPanel.querySelectorAll('.cx-row.kid');
     t.ok('まとまりを開くと 9 件の .cx-row.kid が出て、子の行には出どころのロゴを繰り返さない',
       ruleKids.length === 9 && ruleKids.every(k => k.querySelector('.cx-src') == null));
 
+    // 行単位で子 1 つオフ → mixed → 一括 setDocRow
     ruleKids[0].querySelector('.cx-sw').onclick();
     await settle();
-    const grpSwAfterOne = p.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw');
+    const grpSwAfterOne = instPanel.querySelector('.cx-row.grp .cx-sw');
     t.ok('子 1 件を切るとまとまりスイッチが role="checkbox" の aria-checked="mixed" になる',
       grpSwAfterOne.getAttribute('role') === 'checkbox'
       && grpSwAfterOne.getAttribute('aria-checked') === 'mixed');
 
-    const beforeWrites = settingsWrites.length;
+    const beforeDocWrites = docWrites.length;
     grpSwAfterOne.onclick();
     await settle();
-    const grpSwAfterBatch = p.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw');
-    t.ok('mixed 状態のまとまりスイッチを押すと 1 回の保存ですべて有効に戻る',
-      settingsWrites.length === beforeWrites + 1
-      && grpSwAfterBatch?.getAttribute('aria-checked') === 'true'
-      && kindsState.instruction.value.user.excludePaths.length === 0,
-      `writes=${settingsWrites.length - beforeWrites} checked=${grpSwAfterBatch?.getAttribute('aria-checked')} excl=${kindsState.instruction.value.user.excludePaths.length}`);
+    const grpSwAfterBatch = instPanel.querySelector('.cx-row.grp .cx-sw');
+    t.ok('mixed 状態のまとまりスイッチを押すと 1 回の setDocRow 保存ですべて有効に戻る',
+      docWrites.length === beforeDocWrites + 1 && docWrites.at(-1).command === 'setDocRow' && docWrites.at(-1).keys?.length === 9
+      && grpSwAfterBatch?.getAttribute('aria-checked') === 'true');
 
     grpSwAfterBatch.onclick();
     await settle();
-    t.ok('全有効のまとまりスイッチを押すと 1 回の保存ですべて無効になる',
-      settingsWrites.length === beforeWrites + 2
-      && p.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false'
-      && kindsState.instruction.value.user.excludePaths.length === 9);
+    t.ok('全有効のまとまりスイッチを押すと 1 回の setDocRow ですべて無効になり、オフ行のアイコン群が隠れる',
+      docWrites.length === beforeDocWrites + 2 && docWrites.at(-1).on === false
+      && instPanel.querySelector('.cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false'
+      && instPanel.querySelectorAll('.cx-row.grp .cx-ag.none').length === 6);
 
-    // Skills タブ: 絞り込み欄を壊さず保ち、当たったまとまりが開き、0 件で「見つかりません」、Escape で戻る
+    // 全有効へ戻し、鍵つきセル・広げる確認・最後の 1 つをオフでスイッチへフォーカス移動を確かめる
+    instPanel.querySelector('.cx-row.grp .cx-sw').onclick();
+    await settle();
+    const agyKey = docItemKey({ kind: 'instruction', path: '/home/u/.gemini/GEMINI.md', realPath: '/home/u/.gemini/GEMINI.md' });
+    const agyRow = instPanel.querySelector(`[data-key="${agyKey}"]`);
+    const agyOwnChip = agyRow.querySelector('.cx-ag[data-agent="antigravity"]');
+    const agyGrokChip = agyRow.querySelector('.cx-ag[data-agent="grok"]');
+    const dwBeforeLock = docWrites.length;
+    t.ok('GEMINI.md の Antigravity セルは own 鍵・Grok セルは relay 鍵つきで押せない',
+      agyOwnChip?.getAttribute('aria-disabled') === 'true' && agyOwnChip?.dataset.tip?.includes('止められません')
+      && agyGrokChip?.getAttribute('aria-disabled') === 'true' && agyGrokChip?.getAttribute('aria-pressed') === 'false'
+      && agyGrokChip?.dataset.tip?.includes('渡せません'));
+    agyOwnChip?.onclick?.();
+    await settle();
+    t.ok('鍵つきセルを押しても保存しない', docWrites.length === dwBeforeLock);
+
+    // 非ネイティブセル（GEMINI.md を Claude に広げる）を押すと確認バナー（.cx-ask）が出る → やめる → もう一度押して 渡す
+    const agyClaudeChip = agyRow.querySelector('.cx-ag[data-agent="claude"]');
+    agyClaudeChip.onclick();
+    await settle();
+    t.ok('初めて他エージェントへ広げるとき確認バナーが出て未保存のまま待つ',
+      instPanel.querySelector('.cx-ask') != null && docWrites.length === dwBeforeLock);
+    instPanel.querySelectorAll('.cx-ask button')[0].onclick();
+    await settle();
+    t.ok('「やめる」でバナーが閉じ未保存のまま元のセルにフォーカスを戻す',
+      instPanel.querySelector('.cx-ask') == null && docWrites.length === dwBeforeLock
+      && globalThis.document.activeElement?.dataset?.cxFk === `ag:${agyKey}:claude`);
+
+    instPanel.querySelector(`[data-key="${agyKey}"] .cx-ag[data-agent="claude"]`).onclick();
+    await settle();
+    instPanel.querySelector('.cx-ask .btn-primary').onclick();
+    await settle();
+    t.ok('「渡す」で setDocAgent が保存され、該当セルがオンになる',
+      docWrites.length === dwBeforeLock + 1 && docWrites.at(-1).command === 'setDocAgent'
+      && docWrites.at(-1).agent === 'claude' && docWrites.at(-1).on === true
+      && instPanel.querySelector(`[data-key="${agyKey}"] .cx-ag[data-agent="claude"]`)?.getAttribute('aria-pressed') === 'true');
+
+    // 作業場所の summaryRow スイッチ
+    const wsSw = instPanel.querySelector(`[data-key="${WORKSPACE_SUMMARY_KEY}"] .cx-sw`);
+    wsSw.onclick();
+    await settle();
+    t.ok('作業場所 summaryRow のスイッチ操作で __workspace__ が setDocRow 保存される',
+      docWrites.at(-1).key === WORKSPACE_SUMMARY_KEY && docWrites.at(-1).on === false);
+
+    // ユーザー行 r0.md の最後のオンエージェントをオフにするとフォーカスが行スイッチ sw: へ移る
+    const firstKid = instPanel.querySelectorAll('.cx-row.kid')[0];
+    const firstKey = firstKid.dataset.key;
+    for (let guard = 0; guard < 6; guard++) {
+      const row = instPanel.querySelector(`[data-key="${CSS.escape(firstKey)}"]`);
+      const onBtn = row?.querySelectorAll('.cx-ag[aria-pressed="true"]').find(b => b.getAttribute('aria-disabled') !== 'true');
+      if (!onBtn) break;
+      onBtn.onclick();
+      await settle();
+    }
+    t.ok('最後のエージェントをオフにしたらフォーカスが行のスイッチへ移る',
+      globalThis.document.activeElement?.dataset?.cxFk === `sw:${firstKey}`);
+    // 戻しておく
+    instPanel.querySelector(`[data-key="${CSS.escape(firstKey)}"] .cx-sw`).onclick();
+    await settle();
+
+    // Skills タブ: 絞り込み・まとまりスイッチ・エラーロールバック
     p.querySelector('#cx-tab-skill').onclick();
     await settle();
-    const findInput = p.querySelector('#cx-panel-skill .cx-find input');
+    const findInput = skillPanel.querySelector('.cx-find input');
     t.ok('Skills タブに 9 件以上のまとまりがあり最初は閉じている',
-      p.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1,
-      `kids=${p.querySelectorAll('#cx-panel-skill .cx-row.kid').length}`); // deploy の 1 件まとまりだけ展開、9 件の user は閉じ
+      skillPanel.querySelectorAll('.cx-row.kid').length === 1
+      && skillPanel.querySelectorAll('.cx-row.grp').length === 2
+      && skillPanel.querySelectorAll('.cx-row.grp .cx-tw').some(tw => tw.getAttribute('aria-expanded') === 'false')
+      && skillPanel.querySelector('[data-key="skill:deploy"]') != null);
     findInput.focus();
     findInput.value = 'tool-7';
     findInput.setSelectionRange(6, 6);
     findInput.dispatchEvent({ type: 'input' });
     await settle();
-    const findInputAfter = p.querySelector('#cx-panel-skill .cx-find input');
+    const findInputAfter = skillPanel.querySelector('.cx-find input');
     t.ok('絞り込み中も input 要素を差し替えず、当たったまとまりが自動で開く',
       findInputAfter === findInput && findInputAfter.value === 'tool-7'
-      && p.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1
-      && p.querySelector('#cx-panel-skill .cx-row.kid .nm')?.textContent === 'tool-7');
+      && skillPanel.querySelectorAll('.cx-row.kid').length === 1
+      && skillPanel.querySelector('.cx-row.kid .nm')?.textContent === 'tool-7');
 
     findInput.value = 'no-match-xyz';
     findInput.dispatchEvent({ type: 'input' });
     await settle();
     t.ok('一致 0 件で「見つかりません」を表示する',
-      p.querySelector('#cx-panel-skill').textContent.includes('見つかりません'));
+      skillPanel.textContent.includes('見つかりません'));
 
     findInput.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {}, stopPropagation() {} });
     await settle();
     t.ok('Escape で絞り込みを解除して通常一覧に戻る',
-      findInput.value === '' && !p.querySelector('#cx-panel-skill').textContent.includes('見つかりません'));
+      findInput.value === '' && !skillPanel.textContent.includes('見つかりません'));
 
-    // 絞り込み中のまとまりスイッチは、見えている行だけを切り替える（状態も見えている行だけから決める）
-    const skillEx = () => kindsState.skill.value.user.excludePaths.length;
-    t.ok('絞り込みの前は Skills の除外が 0 件', skillEx() === 0);
     findInput.value = 'tool-7';
     findInput.dispatchEvent({ type: 'input' });
     await settle();
-    const fSw = () => p.querySelector('#cx-panel-skill .cx-row.grp .cx-sw');
+    const fSw = () => skillPanel.querySelector('.cx-row.grp .cx-sw');
     t.ok('絞り込み中のまとまりスイッチは見えている 1 行だけからオンと決まる', fSw().getAttribute('aria-checked') === 'true');
     fSw().onclick();
     await settle();
-    t.ok('絞り込み中のまとまりスイッチで、当たった 1 件だけが除外に入る（9 件ではない）',
-      skillEx() === 1 && fSw().getAttribute('aria-checked') === 'false', `excl=${skillEx()}`);
+    t.ok('絞り込み中のまとまりスイッチで、当たった 1 件だけが setDocRow オフになる（9 件ではない）',
+      docWrites.at(-1).command === 'setDocRow' && docWrites.at(-1).keys?.length === 1 && docWrites.at(-1).on === false
+      && fSw().getAttribute('aria-checked') === 'false');
     findInput.value = '';
     findInput.dispatchEvent({ type: 'input' });
     await settle();
-    const mixedSw = [...p.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].find(x => x.getAttribute('aria-checked') === 'mixed');
+    const mixedSw = [...skillPanel.querySelectorAll('.cx-row.grp .cx-sw')].find(x => x.getAttribute('aria-checked') === 'mixed');
     t.ok('絞り込みを消すとまとまり全体の状態（一部）に戻る', Boolean(mixedSw));
     mixedSw.onclick();
     await settle();
-    t.ok('一部のまとまりスイッチを押すと除外が 0 件に戻る', skillEx() === 0);
+    t.ok('一部のまとまりスイッチを押すと全有効に戻る',
+      skillPanel.querySelectorAll('.cx-row.grp .cx-sw').every(x => x.getAttribute('aria-checked') === 'true'));
 
-    // 保存に失敗したときは、押した瞬間に変えた見た目を、保存されている状態から描き直す
-    const oneSw = () => p.querySelector('#cx-panel-skill .cx-row:not(.grp) .cx-sw, #cx-panel-skill .cx-row.kid .cx-sw');
-    const grpOf = () => [...p.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')][0];
+    // 保存失敗時のロールバック
+    const oneSw = () => skillPanel.querySelector('.cx-row:not(.grp) .cx-sw, .cx-row.kid .cx-sw');
+    const grpOf = () => [...skillPanel.querySelectorAll('.cx-row.grp .cx-sw')][0];
     const beforeGrp = grpOf().getAttribute('aria-checked');
-    failSettings = true;
+    failDoc = true;
     grpOf().onclick();
     await settle();
-    t.ok('まとめて切り替える保存に失敗したら、スイッチは保存されている状態（元のまま）に描き直され、失敗が出る',
-      grpOf().getAttribute('aria-checked') === beforeGrp && skillEx() === 0
-      && p.querySelector('.cx-status')?.textContent.includes('boom-settings'),
-      `checked=${grpOf().getAttribute('aria-checked')} before=${beforeGrp} status=${p.querySelector('.cx-status')?.textContent}`);
+    t.ok('まとめて切り替える保存に失敗したら、スイッチは元の状態に描き直され、失敗が出る',
+      grpOf().getAttribute('aria-checked') === beforeGrp && p.querySelector('.cx-status')?.textContent.includes('boom-settings'));
     const beforeOne = oneSw().getAttribute('aria-checked');
     oneSw().onclick();
     await settle();
-    t.ok('1 件の切替に失敗したときも、同じく元の状態へ描き直される', oneSw().getAttribute('aria-checked') === beforeOne && skillEx() === 0);
-    failSettings = false;
+    t.ok('1 件の切替に失敗したときも元の状態へ描き直される', oneSw().getAttribute('aria-checked') === beforeOne);
+    failDoc = false;
 
-    // 担当が「エージェントに任せる」の種類は Pleiad が数えられないので、件数は 0 ではなく出さない（右パネルと同じ定義）
+    // Hooks だけは旧来のまま「エージェントに任せる」で件数を非表示（指示・Skills は件数を維持）
     const cnt = (root, pre, k) => root.querySelector(`#${pre}-tab-${k} .c`);
     const noCount = (root, pre, k) => { const c = cnt(root, pre, k); return !c || c.hidden === true || !c.textContent; };
-    for (const k of ['instruction', 'skill', 'hooks']) kindsState[k].value.owner = 'native';
+    kindsState.hooks.value.owner = 'native';
     await ctxPage.openPage();
     await settle();
-    t.ok('設定: 担当がエージェントに任せるなら、指示・Skills・Hooks のタブは件数を出さない（0 にしない）',
-      ['instruction', 'skill', 'hooks'].every(k => noCount(p, 'cx', k)) && !noCount(p, 'cx', 'mcp'),
-      ['instruction', 'skill', 'hooks', 'mcp'].map(k => cnt(p, 'cx', k)?.textContent).join(','));
-    for (const k of ['instruction', 'skill', 'hooks']) kindsState[k].value.owner = 'ply';
+    t.ok('Hooks がエージェント任せのとき Hooks タブだけ件数を隠し、指示・Skills は件数を保つ',
+      noCount(p, 'cx', 'hooks') && !noCount(p, 'cx', 'instruction') && !noCount(p, 'cx', 'skill'));
+    kindsState.hooks.value.owner = 'ply';
     await ctxPage.openPage();
     await settle();
-    t.ok('設定: 担当を Pleiad に戻すと件数が戻る', ['instruction', 'skill', 'hooks'].every(k => !noCount(p, 'cx', k)));
 
-    // ---------------- 2. 会話の右パネル編集モード（web/session-context.mjs） ----------------
+    // ---------------- 2. 会話の右パネル編集モード（web/session-context.mjs · Stage 2） ----------------
     const rightScroller = new PanelNode('div');
     rightScroller.className = 'file-preview-content';
     dom.body.append(rightScroller);
     let panelBody = null, panelOpened = false;
     const placeKinds = {
-      instruction: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
-      skill: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
+      instruction: { value: { owner: 'native', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
+      skill: { value: { owner: 'native', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] }, prefer: {} } },
       mcp: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
       hooks: { value: { owner: 'ply' } },
     };
+    let rightDocAgents = emptyDocAgentsConfig();
     const rightWrites = [];
     let failRight = false;
     const rightEntries = [
-      { id: 're-1', kind: 'instruction', scope: 'dir', rule: true, defaultStatus: 'candidate', name: 'a.md', path: '/repo/.claude/rules/a.md', tokens: 10, origins: [{ source: 'claude', path: '/repo/.claude/rules/a.md', scope: 'dir' }] },
-      { id: 're-2', kind: 'instruction', scope: 'dir', rule: true, defaultStatus: 'candidate', name: 'b.md', path: '/repo/.claude/rules/b.md', tokens: 10, origins: [{ source: 'claude', path: '/repo/.claude/rules/b.md', scope: 'dir' }] },
-      { id: 'rm-1', kind: 'mcp', scope: 'dir', defaultStatus: 'candidate', name: 'gh', path: '/repo/.mcp.json', tokens: 10, origins: [{ source: 'claude', path: '/repo/.mcp.json', scope: 'dir' }] },
+      { id: 're-1', kind: 'instruction', scope: 'directory', rule: true, defaultStatus: 'candidate', name: 'a.md', path: '/repo/.claude/rules/a.md', realPath: '/repo/.claude/rules/a.md', tokens: 10, origins: [{ source: 'claude', path: '/repo/.claude/rules/a.md', scope: 'directory' }] },
+      { id: 're-2', kind: 'instruction', scope: 'directory', rule: true, defaultStatus: 'candidate', name: 'b.md', path: '/repo/.claude/rules/b.md', realPath: '/repo/.claude/rules/b.md', tokens: 10, origins: [{ source: 'claude', path: '/repo/.claude/rules/b.md', scope: 'directory' }] },
+      { id: 'rm-1', kind: 'mcp', scope: 'directory', defaultStatus: 'candidate', name: 'gh', path: '/repo/.mcp.json', realPath: '/repo/.mcp.json', tokens: 10, origins: [{ source: 'claude', path: '/repo/.mcp.json', scope: 'directory' }] },
       ...Array.from({ length: 9 }, (_, i) => ({
-        id: `rs-${i}`, kind: 'skill', scope: 'dir', defaultStatus: 'candidate', name: `sk-${i}`, path: `/repo/.claude/skills/sk-${i}/SKILL.md`, tokens: 12, origins: [{ source: 'claude', path: `/repo/.claude/skills/sk-${i}/SKILL.md`, scope: 'dir' }],
+        id: `rs-${i}`, kind: 'skill', scope: 'directory', defaultStatus: 'candidate', name: `sk-${i}`, path: `/repo/.claude/skills/sk-${i}/SKILL.md`, realPath: `/repo/.claude/skills/sk-${i}/SKILL.md`, tokens: 12, origins: [{ source: 'claude', path: `/repo/.claude/skills/sk-${i}/SKILL.md`, scope: 'directory' }],
       })),
     ];
 
     const scCmd = async (command, payload) => {
       if (command === 'backends') return [{ id: 'fake', capabilities: { plyContext: 'turn' } }];
-      if (command === 'contextSettings') return {
-        defaults: { kinds: structuredClone(placeKinds), roots: {} },
-        places: [{ current: true, saved: false, cwd: '/repo', kinds: structuredClone(placeKinds), roots: { instruction: { sources: ['claude'] }, skill: { sources: ['claude'] }, mcp: { sources: ['claude'] } } }],
-      };
-      if (command === 'setContextSettings') {
-        if (failRight) throw new Error('boom-right');
-        rightWrites.push(payload);
-        if (payload?.kind && payload?.value) {
-          const v = placeKinds[payload.kind].value;
-          if (payload.value.user) v.user = { ...v.user, ...payload.value.user };
-          if (payload.value.directory) v.directory = { ...v.directory, ...payload.value.directory };
-        }
+      if (command === 'contextSettings') {
+        const hasPlace = Boolean(rightDocAgents.places['/repo']);
+        const kinds = structuredClone(placeKinds);
+        if (hasPlace) for (const k of ['instruction', 'skill']) if (rightDocAgents.places['/repo'][k]) kinds[k].override = true;
         return {
           defaults: { kinds: structuredClone(placeKinds), roots: {} },
-          places: [{ current: true, saved: true, cwd: '/repo', kinds: structuredClone(placeKinds), roots: { instruction: { sources: ['claude'] }, skill: { sources: ['claude'] }, mcp: { sources: ['claude'] } } }],
+          places: [{ current: true, saved: hasPlace, overrides: hasPlace ? 1 : 0, cwd: '/repo', kinds, roots: {} }],
         };
       }
-      if (command === 'scanContext' || command === 'nativeInstructions') return { entries: computeEntries(rightEntries, placeKinds) };
+      if (command === 'setContextSettings') {
+        if (failRight) throw new Error('boom-right');
+        rightWrites.push({ command, ...payload });
+        if (payload?.remove) rightDocAgents.places = {};
+        return scCmd('contextSettings');
+      }
+      if (command === 'docMatrix') return makeDocMatrix(payload.kind, rightEntries, placeKinds, rightDocAgents, '/repo');
+      if (command === 'setDocRow') {
+        if (failRight) throw new Error('boom-right');
+        rightWrites.push({ command, ...payload });
+        const entries = scanDocsFor(payload.kind, rightEntries, placeKinds);
+        const raw = toRawLegacy(placeKinds);
+        const m = buildDocMatrix({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: rightDocAgents, cwd: '/repo', home: '/home/u' });
+        const placeHolder = (rightDocAgents.places['/repo'] ??= {});
+        if (!placeHolder[payload.kind]) {
+          placeHolder[payload.kind] = { agents: snapshotBaselineAgents({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: rightDocAgents, place: '/repo', home: '/home/u' }) };
+        }
+        const keys = payload.keys ?? [payload.key];
+        for (const k of keys) {
+          const row = k === WORKSPACE_SUMMARY_KEY ? m.summaryRow : m.byKey.get(k);
+          const cur = placeHolder[payload.kind].agents[k] ?? row.rule;
+          const input = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
+          placeHolder[payload.kind].agents[k] = setDocRowRule(payload.kind, input, cur, payload.on);
+        }
+        return { ok: true, defaults: rightDocAgents.defaults, place: '/repo' };
+      }
+      if (command === 'scanContext' || command === 'nativeInstructions') return { entries: rightEntries.map(e => ({ ...e, status: e.defaultStatus ?? 'candidate' })) };
       if (command === 'plyInstructions') return { items: [{ id: 'p1', name: '基本', on: true, tokens: 5, text: 'x', target: 'all', tag: 'user', agents: ['claude'] }], agents: [{ id: 'claude', label: 'Claude' }], total: 5, routing: false };
       if (command === 'plyHooks') return { place: { value: { owner: placeKinds.hooks.value.owner } }, defaults: { value: { owner: placeKinds.hooks.value.owner } }, hooks: [{ id: 'h1', name: 'hook1', enabled: true, scope: 'project', event: 'PostToolUse', targets: ['claude'] }] };
       if (command === 'listPlyMcp') return { servers: [{ id: 'm1', name: 'reg-mcp', transport: 'stdio', command: 'x', args: [] }] };
@@ -476,7 +687,7 @@ export default async function (t) {
       },
       session: () => ({ id: 's1', backend: 'fake', cwd: '/repo' }),
       labelOf: () => 'Fake',
-      info: () => ({ report: { status: 'ply', cwd: '/repo', entries: computeEntries(rightEntries, placeKinds) }, owners: { instruction: 'ply', skill: 'ply', mcp: 'ply', hooks: 'ply' } }),
+      info: () => ({ report: { status: 'ply', cwd: '/repo', entries: rightEntries.map(e => ({ ...e, status: e.kind === 'instruction' ? 'supplied' : 'available' })) }, owners: { instruction: 'ply', skill: 'ply', mcp: 'ply', hooks: 'ply' } }),
       refreshInfo() {},
       openSettings() {},
     });
@@ -500,6 +711,10 @@ export default async function (t) {
         panelBody.querySelector('#scx-tab-hooks .c')?.textContent,
       ].join(','));
 
+    t.ok('右パネルの指示・Skills 編集面には担当 2 択も 6 エージェントアイコン列も出さず、行スイッチだけを出す',
+      panelBody.querySelectorAll('#scx-panel-instruction .cx-seg, #scx-panel-skill .cx-seg').length === 0
+      && panelBody.querySelectorAll('#scx-panel-instruction .cx-ags, #scx-panel-skill .cx-ags').length === 0);
+
     // まとまりと一括切替
     const scxInstGrp = panelBody.querySelector('#scx-panel-instruction .cx-row.grp');
     t.ok('右パネル編集モードの 2 件まとまりは開いて .cx-row.kid を出し、子に個別スイッチがある',
@@ -508,14 +723,15 @@ export default async function (t) {
     await panelBody.querySelectorAll('#scx-panel-instruction .cx-row.kid .cx-sw')[0].onclick();
     await settle();
     const scxMixSw = panelBody.querySelector('#scx-panel-instruction .cx-row.grp .cx-sw');
-    t.ok('右パネルでも子 1 つオフでまとまりスイッチが checkbox mixed になる',
-      scxMixSw.getAttribute('role') === 'checkbox' && scxMixSw.getAttribute('aria-checked') === 'mixed');
+    t.ok('右パネルでも子 1 つオフでまとまりスイッチが checkbox mixed になり、この場所だけ上書きが作られる',
+      scxMixSw.getAttribute('role') === 'checkbox' && scxMixSw.getAttribute('aria-checked') === 'mixed'
+      && rightWrites.at(-1).command === 'setDocRow' && rightWrites.at(-1).place === '/repo');
 
     const rwBefore = rightWrites.length;
     await scxMixSw.onclick();
     await settle();
-    t.ok('右パネルの mixed スイッチ押下で残りも一括 1 回保存になり全有効に戻る',
-      rightWrites.length === rwBefore + 1
+    t.ok('右パネルの mixed スイッチ押下で残りも一括 1 回 setDocRow 保存になり全有効に戻る',
+      rightWrites.length === rwBefore + 1 && rightWrites.at(-1).command === 'setDocRow' && rightWrites.at(-1).keys?.length === 2
       && panelBody.querySelector('#scx-panel-instruction .cx-row.grp .cx-sw').getAttribute('aria-checked') === 'true');
 
     // タブ切替 → スクロールリセット・記憶、Skills 絞り込み
@@ -545,7 +761,6 @@ export default async function (t) {
       panelBody.querySelector('#scx-panel-skill').textContent.includes('見つかりません'));
 
     // 絞り込み中のまとまりスイッチは見えている行だけ。保存の失敗は保存されている状態から描き直す
-    const placeEx = () => placeKinds.skill.value.directory.excludePaths.length;
     scxFind.value = 'sk-3';
     scxFind.dispatchEvent({ type: 'input' });
     await settle();
@@ -553,8 +768,9 @@ export default async function (t) {
     t.ok('右パネルの絞り込み中のスイッチは見えている 1 行だけからオンと決まる', scxFSw().getAttribute('aria-checked') === 'true');
     await scxFSw().onclick();
     await settle();
-    t.ok('右パネルの絞り込み中のまとまりスイッチで、当たった 1 件だけが除外に入る',
-      placeEx() === 1 && scxFSw().getAttribute('aria-checked') === 'false', `excl=${placeEx()}`);
+    t.ok('右パネルの絞り込み中のまとまりスイッチで、当たった 1 件だけが setDocRow オフになる',
+      rightWrites.at(-1).command === 'setDocRow' && rightWrites.at(-1).keys?.length === 1 && rightWrites.at(-1).on === false
+      && scxFSw().getAttribute('aria-checked') === 'false');
     scxFind.value = '';
     scxFind.dispatchEvent({ type: 'input' });
     await settle();
@@ -562,14 +778,15 @@ export default async function (t) {
     t.ok('右パネルでも、絞り込みを消すと「一部」に戻る', Boolean(scxMixed));
     await scxMixed.onclick();
     await settle();
-    t.ok('右パネルの一部のスイッチを押すと除外が 0 件に戻る', placeEx() === 0);
+    t.ok('右パネルの一部のスイッチを押すと全有効に戻る',
+      panelBody.querySelector('#scx-panel-skill .cx-row.grp .cx-sw').getAttribute('aria-checked') === 'true');
     const scxGrp = () => panelBody.querySelector('#scx-panel-skill .cx-row.grp .cx-sw');
     const scxBefore = scxGrp().getAttribute('aria-checked');
     failRight = true;
     await scxGrp().onclick();
     await settle();
     t.ok('右パネルでも、まとめて切り替える保存に失敗したら保存されている状態へ描き直し、失敗が出る',
-      scxGrp().getAttribute('aria-checked') === scxBefore && placeEx() === 0 && panelBody.textContent.includes('boom-right'),
+      scxGrp().getAttribute('aria-checked') === scxBefore && panelBody.textContent.includes('boom-right'),
       `checked=${scxGrp().getAttribute('aria-checked')} before=${scxBefore}`);
     failRight = false;
 
@@ -577,15 +794,14 @@ export default async function (t) {
     await settle();
     t.ok('編集終了で通常面へ戻る', panelBody.querySelectorAll('[role="tab"]').length === 0);
 
-    for (const k of ['instruction', 'skill']) placeKinds[k].value.owner = 'native';
     placeKinds.hooks.value.owner = 'native';
     rightPanel.open();
     await settle();
     await panelBody.querySelector('[data-act="placeStart"]').onclick();
     await settle();
     const rNo = k => { const c = panelBody.querySelector(`#scx-tab-${k} .c`); return !c || c.hidden === true || !c.textContent; };
-    t.ok('右パネル: 担当がエージェントに任せるなら、指示・Skills・Hooks のタブは件数を出さない（設定と同じ定義）',
-      panelBody.querySelectorAll('[role="tab"]').length === 4 && ['instruction', 'skill', 'hooks'].every(rNo), ['instruction', 'skill', 'hooks'].map(k => panelBody.querySelector(`#scx-tab-${k} .c`)?.textContent).join(','));
+    t.ok('右パネル: Hooks がエージェントに任せるなら Hooks タブは件数を出さず、指示・Skills は件数を保つ',
+      panelBody.querySelectorAll('[role="tab"]').length === 4 && rNo('hooks') && !rNo('instruction') && !rNo('skill'));
   } finally {
     dom.restore();
     await setLanguage('ja');

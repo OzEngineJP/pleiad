@@ -115,7 +115,7 @@ export function bundleFolder(kind, entry) {
   }
   const sep = Math.max(full.lastIndexOf('/'), full.lastIndexOf('\\'));
   const dirPart = sep >= 0 ? full.slice(0, sep) : '';
-  if (entry?.rule && dirPart) {
+  if ((entry?.isRule ?? entry?.rule) && dirPart) {
     const re = /(?:^|[\\/])rules(?=$|[\\/])/gi;
     let m, last = null;
     while ((m = re.exec(dirPart)) !== null) last = m;
