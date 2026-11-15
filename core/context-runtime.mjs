@@ -14,7 +14,7 @@ import {
   docToolRequirements,
   mcpEntryMatchesFormat,
 } from './backends/context-capabilities.mjs';
-import { resolveDocForAgent } from './context-doc-matrix.mjs';
+import { coupleDevinFormats, resolveDocForAgent } from './context-doc-matrix.mjs';
 import { resolveEffectiveDocSource as resolveDocSource } from './context-agents.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -53,6 +53,24 @@ export function unstoppedMcp(report) {
     if (e.kind === 'mcp' && e.nativeLock && !out.some(x => x.name === e.name)) out.push({ name: e.name, nativeLock: e.nativeLock });
   }
   return out;
+}
+/**
+ * 解いたコンテキストが、エージェント任せの道と同じ結果になるか（指示・Skills がエージェントそのまま、中継する MCP も止める名前も 0）。
+ * true ならターンだけの口・中継を起こさず、エージェント任せの道で走らせる（core/server.mjs の runTurn。ADR 0327 / ADR 0337）。
+ * 名前ごとのモデルに触れていない種類は、旧い担当（owners）が 'ply' でない限りそのまま。試験（tests/unit/context-doc-main-equivalence.mjs）も同じ関数を使う
+ */
+export function nativeEquivalentTurn(policy, resolvedContext) {
+  if (!resolvedContext) return false;
+  const mcpUntouched = resolvedContext.mcp?.named
+    ? !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length
+    : policy.owners.mcp !== 'ply' && !resolvedContext.servers?.length;
+  const instUntouched = resolvedContext.docs?.instruction
+    ? resolvedContext.docs.instruction.untouchedNative
+    : policy.owners.instruction !== 'ply';
+  const skillUntouched = resolvedContext.docs?.skill
+    ? resolvedContext.docs.skill.untouchedNative
+    : policy.owners.skill !== 'ply';
+  return Boolean(mcpUntouched && instUntouched && skillUntouched);
 }
 /**
  * 会話の方針。最初の送信で記録し、以後はターンごとに今の設定（と作業場所）で解き直す（followSettings。core/server.mjs の runTurn）。
@@ -140,13 +158,25 @@ export function followSettings(previous, settings, { keepNative = false } = {}) 
   return { policy, changed };
 }
 /** 会話の方針から探索設定を作る。Pleiad が担当する種類（または Stage 2 で対象の種類）を探す */
-export function runtimeSettings(policy, options = {}) {
-  const plan = normalizePlan(structuredClone(policy.plan ?? legacyPlan(policy.user, policy.directory)));
-  const agent = options.agent ?? policy.agent ?? null;
-  const docActive = {
+/**
+ * 名前×エージェントの表で解く種類。表に触れた種類のほか、Devin では、片方の種類に触れたら、もう片方（表に触れていない旧い担当のまま）も表で解く。
+ * Devin の read_config_from は形式ごとに指示と Skills をまとめて止めるので、片方で止めた形式に巻き込まれる物を、もう片方の表で拾って渡し直す（coupleDevinFormats）。
+ * 旧い「Pleiad がそろえる」でも、外していた物を Devin は自分で読んでいた（Pleiad は渡していない）ので、表で解かないと巻き込まれて消える
+ */
+function docActiveKinds(policy, agent) {
+  const active = {
     instruction: !policy.keepNative && Boolean(policy.docSourceState?.instruction?.touched),
     skill: !policy.keepNative && Boolean(policy.docSourceState?.skill?.touched),
   };
+  if (agent && DOC_AGENT_TRAITS[agent]?.readConfigFrom && (active.instruction || active.skill)) {
+    for (const k of ['instruction', 'skill']) active[k] = true;
+  }
+  return active;
+}
+export function runtimeSettings(policy, options = {}) {
+  const plan = normalizePlan(structuredClone(policy.plan ?? legacyPlan(policy.user, policy.directory)));
+  const agent = options.agent ?? policy.agent ?? null;
+  const docActive = docActiveKinds(policy, agent);
   const scanMcpForComp = Boolean(
     (docActive.instruction || docActive.skill)
     && agent && DOC_AGENT_TRAITS[agent]?.mcpCompensationFormats?.length,
@@ -301,22 +331,25 @@ export async function resolveRuntime(policy, options = {}) {
   const removed = new Set(policy.removedMcp ?? []);
   if (scan.limited || scan.diagnostics.length) throw new Error(t('context.runtime.unresolved', { detail: scan.diagnostics[0]?.message ?? t('context.runtime.scanLimit') }));
 
-  const docInstActive = !policy.keepNative && Boolean(policy.docSourceState?.instruction?.touched && agent && policy.rawConfig && policy.docAgents);
-  const docSkillActive = !policy.keepNative && Boolean(policy.docSourceState?.skill?.touched && agent && policy.rawConfig && policy.docAgents);
+  const docActive = docActiveKinds(policy, agent);
+  const docInstActive = Boolean(docActive.instruction && agent && policy.rawConfig && policy.docAgents);
+  const docSkillActive = Boolean(docActive.skill && agent && policy.rawConfig && policy.docAgents);
   const instrRes = docInstActive
     ? resolveDocForAgent({ kind: 'instruction', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home, forceCoarseDeliver: forceInstructionCoarse })
     : null;
   const skillRes = docSkillActive
     ? resolveDocForAgent({ kind: 'skill', agent, entries: scan.entries, legacyConfig: policy.rawConfig, docAgentsConfig: policy.docAgents, cwd: policy.cwd, home: scan.home })
     : null;
-  const docs = (instrRes || skillRes) ? { instruction: instrRes, skill: skillRes } : null;
+  const docs = (instrRes || skillRes) ? coupleDevinFormats({ instruction: instrRes, skill: skillRes }) : null;
   const compFormats = docs ? compensatedMcpFormats(agent, docs) : [];
-  const instrDeliverPaths = instrRes ? new Set(instrRes.deliver.map((e) => pathKey(e.realPath))) : null;
-  const instrActivePaths = instrRes ? new Set(instrRes.active.map((a) => pathKey(a.entry.realPath))) : null;
-  const skillDeliverIds = skillRes ? new Set(skillRes.deliver.map((e) => e.id)) : null;
-  const skillNativeIds = skillRes ? new Set(skillRes.nativeKeep.map((e) => e.id)) : null;
+  const instrDoc = docs?.instruction ?? null;
+  const skillDoc = docs?.skill ?? null;
+  const instrDeliverPaths = instrDoc ? new Set(instrDoc.deliver.map((e) => pathKey(e.realPath))) : null;
+  const instrActivePaths = instrDoc ? new Set(instrDoc.active.map((a) => pathKey(a.entry.realPath))) : null;
+  const skillDeliverIds = skillDoc ? new Set(skillDoc.deliver.map((e) => e.id)) : null;
+  const skillNativeIds = skillDoc ? new Set(skillDoc.nativeKeep.map((e) => e.id)) : null;
 
-  const isNative = kinds.length < 3 && !(instrRes && !instrRes.untouchedNative) && !(skillRes && !skillRes.untouchedNative);
+  const isNative = kinds.length < 3 && !(instrDoc && !instrDoc.untouchedNative) && !(skillDoc && !skillDoc.untouchedNative);
   const report = { version: 1, cwd: policy.cwd, owners, at: new Date().toISOString(), entries: [], native: isNative, status: 'resolved' };
   const instructions = [], conditional = [], skills = [], servers = [], seen = new Set(), names = new Map();
   const suppress = new Set(), nativeNames = new Set();

@@ -6,7 +6,7 @@ import { compensatedMcpFormats } from '../../core/backends/context-capabilities.
 import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { claudeContextOptions, codexContextRpc } from '../../core/backends/context-options.mjs';
 import { devinTurnConfig } from '../../core/backends/devin-config.mjs';
-import { effectiveOpencodeOwners } from '../../core/backends/opencode.mjs';
+import { effectiveOpencodeOwners } from '../../core/backends/opencode-context.mjs';
 import {
   WORKSPACE_SUMMARY_KEY,
   docItemKey,
@@ -174,6 +174,15 @@ export default async function (t) {
       && compensatedMcpFormats('devin', dvRuntime.docs).includes('claude')
       && dvRuntime.servers.some((s) => s.name === 'claudemcp')
       && !dvRuntime.servers.some((s) => s.name === 'cursormcp'));
+    // read_config_from.claude=false は Claude 形式の Skills（.claude/skills）も止めるので、表に触れていない Skills の側で拾って Pleiad が渡す
+    const dvSkill = dvRuntime.docs?.skill;
+    const clOffRuntime = await resolveRuntime(contextPolicy({ ...attachDocPolicy(baseSettings, rawCfg, dvOffAgents), agent: 'claude' }), { home, agent: 'claude' });
+    t.ok('Devin: 指示で Claude 形式を止めると、巻き込まれる .claude/skills の Skill を Pleiad が渡す（Claude では Skills は触らない）',
+      Boolean(dvSkill?.deliver.some((e) => e.name === 's-claude'))
+      && !dvSkill.nativeKeep.some((e) => e.name === 's-claude')
+      && dvSkill.nativeKeep.some((e) => e.name === 's-common')
+      && (clOffRuntime.docs?.skill == null || clOffRuntime.docs.skill.deliver.length === 0),
+      JSON.stringify({ deliver: dvSkill?.deliver.map((e) => e.name), keep: dvSkill?.nativeKeep.map((e) => e.name), claude: clOffRuntime.docs?.skill?.deliver.map((e) => e.name) }));
 
     // Grok: resolveDocForAgent は常に untouchedNative=true / suppress=[] / deliver=[]
     const grokDoc = resolveDocForAgent({ kind: 'instruction', agent: 'grok', entries: [], legacyConfig: rawCfg, docAgentsConfig: mixedDocAgents, cwd: repo, home });

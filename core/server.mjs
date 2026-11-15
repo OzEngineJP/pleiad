@@ -91,11 +91,11 @@ import { createContextSettings } from './context-settings.mjs';
 import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
-import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
+import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
-import { DEFAULT_OWNERS, SOURCES, pathKey, scanDirectory } from './context-settings.mjs';
-import { DOC_KINDS, WORKSPACE_SUMMARY_KEY, createContextAgents, setDocRowRule, toggleDocAgentRule } from './context-agents.mjs';
-import { buildDocMatrix, snapshotBaselineAgents } from './context-doc-matrix.mjs';
+import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
+import { DOC_KINDS, createContextAgents } from './context-agents.mjs';
+import { DocTouchError, applyDocTouch, buildDocMatrix, docScanPlan } from './context-doc-matrix.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
 import { noteMcpContact, watchMcpContacts } from './mcp-contact.mjs';
@@ -5445,11 +5445,7 @@ async function docScanContext({ kind, cwd, place }) {
   const scanDir = isDefault ? defaultDir : await scanDirectory(place ?? cwd);
   const scopes = isDefault ? ['user'] : ['user', 'directory'];
   const effective = await contextSettings.get(scanDir, isDefault ? { level: 'default' } : {});
-  const scanPlan = {
-    user: { kinds: { [kind]: { sources: [...SOURCES], excludePaths: [] } }, roots: effective.plan.user.roots },
-    directory: { kinds: { [kind]: { sources: [...SOURCES], excludePaths: [] } }, roots: effective.plan.directory.roots },
-    ...(kind === 'skill' ? { skill: effective.plan.skill } : {}),
-  };
+  const scanPlan = docScanPlan(effective.plan, kind);
   const [scan, rawConfig, docAgents] = await Promise.all([
     scanContext({ cwd: scanDir, plan: scanPlan }, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), scopes }),
     contextSettings.read(),
@@ -5457,6 +5453,16 @@ async function docScanContext({ kind, cwd, place }) {
   ]);
   const matrixCwd = isDefault ? null : scanDir;
   return { scan, rawConfig, docAgents, scanDir, isDefault, matrixCwd };
+}
+
+/** applyDocTouch を呼び、押せない物の誤りを利用者の言葉の OpError にする */
+function docTouch(cfg, args) {
+  try {
+    return applyDocTouch(cfg, args);
+  } catch (e) {
+    if (e instanceof DocTouchError) throw new OpError('INVALID', t(`context.settings.${e.code}`, e.params));
+    throw e;
+  }
 }
 
 function serializeDocRow(row) {
@@ -5535,24 +5541,10 @@ const opsContext = {
     if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
     const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
-    const nextCfg = await contextAgents.mutate(async (cfg) => {
-      const freshRaw = await contextSettings.read();
-      const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: freshRaw, docAgentsConfig: cfg, cwd: matrixCwd, home: scan.home });
-      if (!matrix.agents.includes(agent)) throw new OpError('INVALID', t('context.settings.unknownAgent', { agent }));
-      const row = key === WORKSPACE_SUMMARY_KEY ? matrix.summaryRow : matrix.byKey.get(key);
-      if (!row) throw new OpError('INVALID', t('context.settings.unknownDocItem', { key }));
-      const cell = row.cells[agent];
-      if (!cell || cell.locked) throw new OpError('INVALID', t('context.settings.docNotPressable', { name: row.name ?? key, agent }));
-      const placeKey = where ? pathKey(where) : null;
-      const holder = placeKey ? (cfg.places[placeKey] ??= {}) : cfg.defaults;
-      if (!holder[kind] || (!matrix.touched && matrix.agentsDepth < matrix.legacyDepth)) {
-        holder[kind] = { agents: snapshotBaselineAgents({ kind, entries: scan.entries, legacyConfig: freshRaw, docAgentsConfig: cfg, place: where, home: scan.home }) };
-      }
-      const entryOrSummary = key === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
-      const curRule = holder[kind].agents[key] ?? row.rule;
-      holder[kind].agents[key] = toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on), { legacyOwner: matrix.legacyOwner });
-      return cfg;
-    });
+    const nextCfg = await contextAgents.mutate(async (cfg) => docTouch(cfg, {
+      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
+      place: where, placeKey: where ? pathKey(where) : null, agent, keys: [key], on,
+    }));
     if (where) {
       const cur = await contextSettings.view(where);
       if (!cur.places.some((p) => p.saved && pathKey(p.path) === pathKey(where))) {
@@ -5568,31 +5560,10 @@ const opsContext = {
     if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
     const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
-    const nextCfg = await contextAgents.mutate(async (cfg) => {
-      const freshRaw = await contextSettings.read();
-      const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: freshRaw, docAgentsConfig: cfg, cwd: matrixCwd, home: scan.home });
-      const targets = list.map((k) => {
-        const row = k === WORKSPACE_SUMMARY_KEY ? matrix.summaryRow : matrix.byKey.get(k);
-        if (!row) throw new OpError('INVALID', t('context.settings.unknownDocItem', { key: k }));
-        return { k, row };
-      });
-      const pressable = targets.filter((tRow) => !tRow.row.rowLocked);
-      if (!pressable.length) {
-        const first = targets[0].row;
-        throw new OpError('INVALID', t('context.settings.docRowLocked', { name: first.name ?? first.key }));
-      }
-      const placeKey = where ? pathKey(where) : null;
-      const holder = placeKey ? (cfg.places[placeKey] ??= {}) : cfg.defaults;
-      if (!holder[kind] || (!matrix.touched && matrix.agentsDepth < matrix.legacyDepth)) {
-        holder[kind] = { agents: snapshotBaselineAgents({ kind, entries: scan.entries, legacyConfig: freshRaw, docAgentsConfig: cfg, place: where, home: scan.home }) };
-      }
-      for (const { k, row } of pressable) {
-        const entryOrSummary = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
-        const curRule = holder[kind].agents[k] ?? row.rule;
-        holder[kind].agents[k] = setDocRowRule(kind, entryOrSummary, curRule, Boolean(on), { legacyOwner: matrix.legacyOwner });
-      }
-      return cfg;
-    });
+    const nextCfg = await contextAgents.mutate(async (cfg) => docTouch(cfg, {
+      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
+      place: where, placeKey: where ? pathKey(where) : null, keys: list, on,
+    }));
     if (where) {
       const cur = await contextSettings.view(where);
       if (!cur.places.some((p) => p.saved && pathKey(p.path) === pathKey(where))) {
@@ -8032,16 +8003,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // （ターンだけの口・中継を起こさない。ADR 0327 / ADR 0337）
   // off にしたのに止められなかった名前（作業場所の定義・リンクを作れない PC）だけは、エージェント任せの記録にも残す（右パネルの鍵。ADR 0336）
   let unstopped = [];
-  const mcpUntouched = resolvedContext?.mcp.named
-    ? !resolvedContext.servers.length && !resolvedContext.mcp.suppress.length
-    : policy.owners.mcp !== 'ply' && !resolvedContext?.servers.length;
-  const instUntouched = resolvedContext?.docs?.instruction
-    ? resolvedContext.docs.instruction.untouchedNative
-    : policy.owners.instruction !== 'ply';
-  const skillUntouched = resolvedContext?.docs?.skill
-    ? resolvedContext.docs.skill.untouchedNative
-    : policy.owners.skill !== 'ply';
-  if (resolvedContext && mcpUntouched && instUntouched && skillUntouched) {
+  if (nativeEquivalentTurn(policy, resolvedContext)) {
     unstopped = unstoppedMcp(resolvedContext.report);
     plyContext = false; resolvedContext = null;
   }

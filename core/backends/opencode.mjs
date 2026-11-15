@@ -15,7 +15,7 @@ import { createOpencodeServer } from './opencode-server.mjs';
 import { createTurnMapper, messagesToNormalized, sessionRow, errorOf, retryOf } from './opencode-normalize.mjs';
 import { writePlugin, writeRelayConfig } from './opencode-plugin.mjs';
 import { createHookRunner } from './opencode-hooks.mjs';
-import { managedLaunch } from './opencode-context.mjs';
+import { effectiveOpencodeOwners, managedLaunch } from './opencode-context.mjs';
 import { configureOpencodeHeld, acquireHeldOpencode, heldOpencode, accountHeldOpencode, writeOpencodeEnvFile, adoptOpencodeEnvFile } from './opencode-held.mjs';
 import { computerPrompt } from './computer-delivery.mjs';
 import { undelivered } from './undelivered.mjs';
@@ -36,16 +36,6 @@ const instructionOmissions=messages=>{
   const omitted=messages.filter(m=>m.info.type==='synthetic' && m.info.metadata?.instruction?.paths);
   return {omitMessageIDs:omitted.map(m=>m.info.id),omitTexts:omitted.map(m=>m.info.text).filter(Boolean)};
 };
-export function effectiveOpencodeOwners(contextRuntime) {
-  const owners = contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' };
-  const docs = contextRuntime?.docs;
-  if (!docs) return owners;
-  return {
-    ...owners,
-    ...(docs.instruction ? { instruction: !docs.instruction.untouchedNative && docs.instruction.suppress.length > 0 ? 'ply' : 'native' } : {}),
-    ...(docs.skill ? { skill: !docs.skill.untouchedNative && docs.skill.suppress.length > 0 ? 'ply' : 'native' } : {}),
-  };
-}
 
 function instructionContext(srv,account) {
   const cache=new Map();

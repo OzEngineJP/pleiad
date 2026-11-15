@@ -3,8 +3,7 @@
  * Guarantees Settings UI, Right Panel, and runtime per-agent execution derive from the exact same rules.
  */
 import os from 'node:os';
-import path from 'node:path';
-import { containsPath, pathKey } from './context-settings.mjs';
+import { SOURCES, containsPath, pathKey } from './context-settings.mjs';
 import {
   DOC_AGENT_IDS,
   DOC_AGENT_TRAITS,
@@ -23,7 +22,22 @@ import {
   legacyEntryIncluded,
   resolveEffectiveDocSource,
   resolveRuleForItem,
+  setDocRowRule,
+  toggleDocAgentRule,
 } from './context-agents.mjs';
+
+/**
+ * 設定の表（名前 × エージェント）を作るための探索の計画。どのエージェントの分も並べるため、形式は全部・除外は無しで探し、
+ * 探す場所（roots）と Skills の設定だけ今の保存（effectivePlan。core/context-settings.mjs の get の plan）から取る。
+ * core/server.mjs の docScanContext と試験（tests/unit/context-doc-main-equivalence.mjs）が同じ関数を使う
+ */
+export function docScanPlan(effectivePlan, kind) {
+  return {
+    user: { kinds: { [kind]: { sources: [...SOURCES], excludePaths: [] } }, roots: effectivePlan.user.roots },
+    directory: { kinds: { [kind]: { sources: [...SOURCES], excludePaths: [] } }, roots: effectivePlan.directory.roots },
+    ...(kind === 'skill' ? { skill: effectivePlan.skill } : {}),
+  };
+}
 
 function sameFile(a, b) {
   if (!a || !b) return false;
@@ -204,9 +218,10 @@ export function snapshotBaselineAgents({ kind, entries = [], legacyConfig, docAg
   const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig, cwd, home });
   // When Stage 2 already governs this place via defaults or an ancestor override, start with an empty per-place override map so untouched keys keep inheriting dynamically.
   if (place && matrix.touched) return {};
-  const parentDir = place && path.dirname(place) !== place ? path.dirname(place) : null;
-  const parentMatrix = place
-    ? buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig, cwd: parentDir, home })
+  // 場所の上書きを作った後に、この場所が上の段から引き継ぐ表（この場所の自分の段は除く）
+  const placeKey = place ? pathKey(place) : null;
+  const above = place
+    ? resolveEffectiveDocSource(legacyConfig, docAgentsConfig, place, kind).agentsChain.filter((level) => level.place !== placeKey)
     : null;
   const out = {};
   if (!place || !matrix.touched) {
@@ -214,13 +229,71 @@ export function snapshotBaselineAgents({ kind, entries = [], legacyConfig, docAg
   }
   for (const row of matrix.rows) {
     if (!place && row.scope !== 'user') continue;
-    if (place && row.scope === 'user') {
-      const parentRule = parentMatrix?.byKey.get(row.key)?.rule;
-      if (!parentRule || sameRule(row.rule, parentRule)) continue;
-    }
+    // ユーザーの物は、上の段に同じ規則があれば写さずに引き継ぐ。上の段に規則が無い名前は、上書きを作ると「自分の物だけ読む」になるので、
+    // 触る前の動き（旧「Pleiad がそろえる」の広げ方など）と違えば写す
+    if (place && row.scope === 'user' && sameRule(row.rule, resolveRuleForItem(above, row.key, row.scope))) continue;
     out[row.key] = { ...row.rule };
   }
   return out;
+}
+
+/** applyDocTouch が押せない物を押されたときの誤り。code は locales の context.settings.<code> */
+export class DocTouchError extends Error {
+  constructor(code, params = {}) {
+    super(code);
+    this.code = code;
+    this.params = params;
+  }
+}
+
+/**
+ * 表のスイッチ 1 回分（設定のマス = setDocAgent、行のスイッチ = setDocRow）を cfg（context-agents.json の中身）に書く。
+ * 初めて触れる場所（か旧い保存の方が深い場所）は、触る前の動きを写した基準を先に書いてから変える。
+ * agent があれば keys[0] の 1 マス、無ければ keys の行ごと。core/server.mjs と試験（tests/unit/context-doc-main-equivalence.mjs）が同じ関数を使う
+ */
+export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd = null, home = os.homedir(), place = null, placeKey = null, agent = null, keys, on }) {
+  const matrix = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig: cfg, cwd: matrixCwd, home });
+  if (agent && !matrix.agents.includes(agent)) throw new DocTouchError('unknownAgent', { agent });
+  const targets = keys.map((k) => {
+    const row = k === WORKSPACE_SUMMARY_KEY ? matrix.summaryRow : matrix.byKey.get(k);
+    if (!row) throw new DocTouchError('unknownDocItem', { key: k });
+    return { k, row };
+  });
+  let pressable;
+  if (agent) {
+    pressable = targets.slice(0, 1);
+    const { k, row } = pressable[0];
+    const cell = row.cells[agent];
+    if (!cell || cell.locked) throw new DocTouchError('docNotPressable', { name: row.name ?? k, agent });
+  } else {
+    pressable = targets.filter((tRow) => !tRow.row.rowLocked);
+    if (!pressable.length) throw new DocTouchError('docRowLocked', { name: targets[0].row.name ?? targets[0].row.key });
+  }
+  // 場所の行を「使う」に戻すときは、全エージェントをオンにせず、この場所の上書きが無いときの動き（全体の表・旧い保存）に戻す。
+  // main の右パネルで除外を外したときと同じ（外す前の担当の渡し方に戻る）。戻した先が全部オフのときだけ、全エージェントをオンにする
+  let restore = null;
+  if (!agent && placeKey && on) {
+    const without = structuredClone(cfg);
+    if (without.places[placeKey]) delete without.places[placeKey][kind];
+    restore = buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig: without, cwd: matrixCwd, home });
+  }
+  const holder = placeKey ? (cfg.places[placeKey] ??= {}) : cfg.defaults;
+  if (!holder[kind] || (!matrix.touched && matrix.agentsDepth < matrix.legacyDepth)) {
+    holder[kind] = { agents: snapshotBaselineAgents({ kind, entries, legacyConfig, docAgentsConfig: cfg, place, home }) };
+  }
+  for (const { k, row } of pressable) {
+    const entryOrSummary = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
+    const inherited = restore ? (k === WORKSPACE_SUMMARY_KEY ? restore.summaryRow : restore.byKey.get(k)) : null;
+    if (inherited?.rowSwitchOn && !inherited.rowLocked) {
+      holder[kind].agents[k] = { off: [...(inherited.rule.off ?? [])], spread: [...(inherited.rule.spread ?? [])] };
+      continue;
+    }
+    const curRule = holder[kind].agents[k] ?? row.rule;
+    holder[kind].agents[k] = agent
+      ? toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on), { legacyOwner: matrix.legacyOwner })
+      : setDocRowRule(kind, entryOrSummary, curRule, Boolean(on), { legacyOwner: matrix.legacyOwner });
+  }
+  return cfg;
 }
 
 /**
@@ -369,6 +442,27 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
     deliver,
     devinDisableFormats: [...devinDisableFormats],
   };
+}
+
+/**
+ * Devin の read_config_from は、形式ごとに指示と Skills をまとめて止める（core/backends/devin-config.mjs）。
+ * 片方の種類で形式を止めると、もう片方の種類でその形式から自分で読んでいた物も読まなくなるので、残す物（nativeKeep）のうち
+ * 止める形式に入る物を Pleiad から渡し直す（deliver）。docs は { instruction, skill } で、解いていない種類は null のまま返す
+ */
+export function coupleDevinFormats(docs) {
+  const disabled = new Set([...(docs?.instruction?.devinDisableFormats ?? []), ...(docs?.skill?.devinDisableFormats ?? [])]);
+  if (!disabled.size) return docs;
+  const out = { ...docs };
+  for (const kind of ['instruction', 'skill']) {
+    const res = docs[kind];
+    if (!res) continue;
+    const keep = [];
+    const moved = [];
+    for (const entry of res.nativeKeep) (devinFormatsForEntry(kind, entry).some((f) => disabled.has(f)) ? moved : keep).push(entry);
+    if (!moved.length) continue;
+    out[kind] = { ...res, nativeKeep: keep, deliver: [...res.deliver, ...moved], untouchedNative: false, hasWork: true };
+  }
+  return out;
 }
 
 /** Utility: resolve entries scoped cleanly for `cwd` check (matches containsPath for place deletion/queries). */

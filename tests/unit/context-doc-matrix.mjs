@@ -7,6 +7,7 @@ import {
   normalizeDocAgentsConfig,
 } from '../../core/context-agents.mjs';
 import {
+  applyDocTouch,
   buildDocMatrix,
   snapshotBaselineAgents,
 } from '../../core/context-doc-matrix.mjs';
@@ -171,6 +172,39 @@ export default async function (t) {
   });
   t.ok('defaults 未操作の place 初回スナップショットはその場所の directory 行のルールを写す',
     Object.hasOwn(baseRepoFresh, docItemKey(wsClaude)) && baseRepoFresh[docItemKey(wsClaude)].spread.includes('codex'));
+
+  // 旧「Pleiad がそろえる」のユーザーの物は、場所を初めて触るときに写す（写さないと、その場所だけ旧い広げが消える）。
+  // 旧「任せる」のユーザーの物は上の段と同じなので写さない（全体の表を後で変えたら、その場所にも効く）
+  const baseRepoNative = snapshotBaselineAgents({
+    kind: 'instruction', entries: [userClaude, wsClaude, wsAgents], legacyConfig: nativeRaw,
+    docAgentsConfig: emptyDocAgentsConfig(), place: repo, home,
+  });
+  t.ok('場所の初回スナップショット: 旧 ply のユーザー行は広げを写し、旧「任せる」のユーザー行は写さない',
+    baseRepoFresh[docItemKey(userClaude)]?.spread.includes('codex') === true
+    && !Object.hasOwn(baseRepoNative, docItemKey(userClaude)),
+    JSON.stringify({ ply: baseRepoFresh[docItemKey(userClaude)], native: baseRepoNative[docItemKey(userClaude)] ?? null }));
+
+  // 右の欄で行を止めて戻すと、この場所の上書きが無いときの動き（全体の表で Codex にだけ広げた）に戻り、全エージェントをオンにはしない
+  const placeEntries = [userClaude, wsClaude, wsAgents];
+  const touchCfg = normalizeDocAgentsConfig({
+    version: 1,
+    defaults: { instruction: { agents: { [docItemKey(wsClaude)]: { off: [], spread: ['codex'] } } } },
+    places: {},
+  });
+  const pressRow = (on) => applyDocTouch(touchCfg, {
+    kind: 'instruction', entries: placeEntries, legacyConfig: nativeRaw, matrixCwd: repo, home,
+    place: repo, placeKey: pathKey(repo), agent: null, keys: [docItemKey(wsClaude)], on,
+  });
+  const ruleOf = () => buildDocMatrix({ kind: 'instruction', entries: placeEntries, legacyConfig: nativeRaw, docAgentsConfig: touchCfg, cwd: repo, home }).byKey.get(docItemKey(wsClaude));
+  const beforeRow = ruleOf();
+  pressRow(false);
+  const offRow = ruleOf();
+  pressRow(true);
+  const backRow = ruleOf();
+  const onAgents = (row) => Object.keys(row.cells).filter((a) => row.cells[a].on).sort().join(',');
+  t.ok('右の欄の行を止めて戻すと、押す前のマスに戻る（全エージェントをオンにしない）',
+    !offRow.rowSwitchOn && onAgents(backRow) === onAgents(beforeRow) && !backRow.cells.opencode.on && backRow.cells.codex.on,
+    `${onAgents(beforeRow)} → ${onAgents(offRow)} → ${onAgents(backRow)}`);
 
   // ---- Pleiad の指示（Grok 解放・委譲と連動だけ別扱い・toggleAgent）
   const initList = normalizePlyInstructions(null, null, 'ja');

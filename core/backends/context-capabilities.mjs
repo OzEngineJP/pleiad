@@ -34,24 +34,34 @@ export function entryOrigins(entry) {
 const isAgentsSkillsPath = (p) => /(?:^|\/)\.agents\/skills(?:\/|$)/i.test(p);
 const isClaudePath = (p) => /(?:^|\/)(?:\.claude(?:\/|$)|CLAUDE(?:\.local)?\.md$)/i.test(p);
 const isCursorPath = (p) => /(?:^|\/)\.cursor\//i.test(p);
-const isWindsurfDirPath = (p) => /(?:^|\/)\.windsurf\//i.test(p);
-const isCopilotPath = (p) => /(?:^|\/)\.github\/(?:copilot-instructions\.md|instructions\/|skills\/)/i.test(p);
+// Devin の取り込み（devin 1.x の `devin skills list` / `rules list` と `read_config_from` で実測）:
+// 作業場所の .windsurf/rules・.windsurf/skills は windsurf、.github/skills は copilot で止まる。.github/copilot-instructions.md は読まない。
+// ユーザーの ~/.codeium/windsurf*/skills・~/.copilot/skills は main の探し方が Devin の物として並べる所（実物は本物の HOME に書けず未確認なので鍵）
+const isWindsurfDirPath = (p) => /(?:^|\/)(?:\.windsurf|\.codeium\/windsurf(?:-next|-insiders)?)\//i.test(p);
+const isCopilotPath = (p) => /(?:^|\/)(?:\.github|\.copilot)\/skills\//i.test(p);
 const isOpenCodeDirPath = (p) => /(?:^|\/)\.opencode\//i.test(p);
 const isIsolatedAgentConfigDir = (p) => /(?:^|\/)\.(?:codex|config\/opencode|grok)\//i.test(p);
+// 作業場所の .windsurf/global_rules.md は main の探し方では Devin の物だが、devin 1.x は読まない（rules list に出ない）
+const isWindsurfWorkspaceGlobalRules = (p) => /(?:^|\/)\.windsurf\/global_rules\.md$/i.test(p);
 
-/** True if path belongs to Devin's unstoppable own dirs (%APPDATA%/devin, .devin, .cognition). */
+/**
+ * True if path belongs to Devin's unstoppable own dirs: <設定の置き場>/devin（%APPDATA%・~/.config・DEVIN_CONFIG_HOME）、
+ * その隣の cognition、~/.devin、作業場所の .devin・.cognition（`devin skills paths` が並べ、read_config_from の対象外）
+ */
 export function isDevinOwnPath(p) {
   const s = normalizeSlashPath(p);
-  return /(?:^|\/)(?:\.devin|\.cognition)(?:\/|$)/i.test(s) || /\/appdata\/roaming\/devin(?:\/|$)/i.test(s);
+  return /(?:^|\/)(?:\.devin|\.cognition)(?:\/|$)/i.test(s) || /\/(?:appdata\/roaming|\.config)\/(?:devin|cognition)(?:\/|$)/i.test(s);
 }
 
 /**
  * Map a scanned origin to Devin's `read_config_from` key if Devin natively imports and can suppress it.
  * Returns null if Devin owns it unconditionally or does not natively import it.
  */
-export function devinImportFormat(kind, pathStr, originSource) {
+export function devinImportFormat(kind, pathStr, originSource, scope = null) {
   const p = normalizeSlashPath(pathStr);
   if (!p || isDevinOwnPath(p)) return null;
+  // ユーザーの Devin の置き場（DEVIN_CONFIG_HOME などで場所が変わっても）は Devin 自身の物。~/.codeium・~/.copilot の Skills だけ取り込みの形式で数える
+  if (originSource === 'devin' && scope === 'user' && !isWindsurfDirPath(p) && !isCopilotPath(p)) return null;
   if (kind === 'skill' && isAgentsSkillsPath(p)) return null;
   if (originSource === 'claude' || isClaudePath(p)) return 'claude';
   if (isCursorPath(p)) return 'cursor';
@@ -102,9 +112,12 @@ const NATIVE_READERS = {
       || (origin.source === 'common' && isAgentsSkillsPath(origin.path));
   },
   devin(kind, origin) {
+    if (kind === 'instruction' && origin.scope !== 'user' && isWindsurfWorkspaceGlobalRules(origin.path)) return false;
     if (isDevinOwnPath(origin.path) || isDevinOwnPath(origin.realPath)) return true;
+    // main の探し方が Devin の物として並べる所（DEVIN_CONFIG_HOME の置き場・cognition・~/.codeium・~/.copilot の Skills）
+    if (origin.source === 'devin') return true;
     if (kind === 'skill' && (isAgentsSkillsPath(origin.path) || isAgentsSkillsPath(origin.realPath))) return true;
-    return devinImportFormat(kind, origin.path, origin.source) !== null;
+    return devinImportFormat(kind, origin.path, origin.source, origin.scope) !== null;
   },
   grok(_kind, origin) {
     return origin.source === 'grok' || origin.source === 'common' || origin.source === 'claude';
@@ -162,9 +175,11 @@ const LOCK_CHECKS = {
       return kind === 'skill' ? { lockedOn: true, reason: 'workspace' } : null;
     }
     const origins = entryOrigins(entryOrSummary);
-    const matching = origins.filter((o) => !o.custom && (
+    // ユーザーの Devin の物（DEVIN_CONFIG_HOME の置き場・~/.codeium・~/.copilot の Skills を含む）は、止まることを本物で確かめられないので鍵
+    const matching = origins.filter((o) => !o.custom && NATIVE_READERS.devin(kind, o) && (
       isDevinOwnPath(o.path) || isDevinOwnPath(o.realPath)
       || (kind === 'skill' && (isAgentsSkillsPath(o.path) || isAgentsSkillsPath(o.realPath)))
+      || (o.source === 'devin' && o.scope === 'user')
     ));
     return matching.length ? { lockedOn: true, reason: scopeLockReason(matching) } : null;
   },
@@ -201,7 +216,7 @@ export const DOC_AGENT_TRAITS = Object.freeze({
 export function devinFormatsForEntry(kind, entry) {
   const out = new Set();
   for (const o of entryOrigins(entry)) {
-    const fmt = devinImportFormat(kind, o.path, o.source);
+    const fmt = devinImportFormat(kind, o.path, o.source, o.scope);
     if (fmt) out.add(fmt);
   }
   return [...out];

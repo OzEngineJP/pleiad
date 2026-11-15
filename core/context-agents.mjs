@@ -4,6 +4,7 @@
  * never breaks on downgrade. Legacy settings govern any (place, kind) until that depth is first touched.
  */
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
@@ -11,7 +12,6 @@ import { writeAtomic } from './atomic-file.mjs';
 import {
   DEFAULT_SOURCES,
   containsPath,
-  matchesGlobs,
   pathKey,
 } from './context-settings.mjs';
 import {
@@ -189,6 +189,23 @@ export function resolveRuleForItem(agentsChain, key, scope) {
   return { off: [], spread: [] };
 }
 
+const exclusionReal = new Map();
+/** 旧い除外のパスと、その実体（シンボリックリンク・ジャンクションの先）。実体は覚えておく（表を作るたびに同期で引かない） */
+function legacyExclusions(list) {
+  const out = [];
+  for (const p of list ?? []) {
+    out.push(p);
+    if (!exclusionReal.has(p)) {
+      let real = null;
+      try { real = fsSync.realpathSync.native(p); } catch {}
+      exclusionReal.set(p, real);
+    }
+    const real = exclusionReal.get(p);
+    if (real && real !== p) out.push(real);
+  }
+  return out;
+}
+
 /**
  * Determine whether `entryOrSummary` was active under legacy `legacyRule`.
  * When `legacyRule.owner === 'native'`, Pleiad did zero filtering at runtime so all existing entries are native-active.
@@ -204,12 +221,8 @@ export function legacyEntryIncluded(kind, entryOrSummary, legacyRule, { home = o
     const allowed = scopeRule?.sources ?? DEFAULT_SOURCES;
     const sourceOk = o.source === 'custom' || allowed.includes(o.source);
     if (!sourceOk) continue;
-    const base = o.scope === 'user' ? home : (cwd || entryOrSummary.appliesTo || home);
-    const excluded = (scopeRule?.excludePaths?.length ?? 0) > 0 && (
-      matchesGlobs(scopeRule.excludePaths, base, entryOrSummary.path)
-      || (entryOrSummary.realPath && matchesGlobs(scopeRule.excludePaths, base, entryOrSummary.realPath))
-      || (o.path && matchesGlobs(scopeRule.excludePaths, base, o.path))
-    );
+    // 旧い除外は絶対パス（保存のときに解決済み）で、その物かその下を外す。main の探し方（context-scan.mjs の exclusions）と同じく、除外のパスとその実体の両方で比べる
+    const excluded = legacyExclusions(scopeRule?.excludePaths).some((x) => [o.path, entryOrSummary.path, entryOrSummary.realPath].some((f) => f && containsPath(x, f)));
     if (!excluded) return true;
   }
   return false;

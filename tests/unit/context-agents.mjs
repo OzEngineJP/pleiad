@@ -72,7 +72,8 @@ export default async function (t) {
     // ---- 旧形式からの写し（docAgentsFromLegacy / legacyEntryIncluded）
     const nativeRule = { owner: 'native', user: { sources: [...DEFAULT_SOURCES], excludePaths: [] }, directory: { sources: [...DEFAULT_SOURCES], excludePaths: [] } };
     const plyRule = { owner: 'ply', user: { sources: ['common', 'claude'], excludePaths: [] }, directory: { sources: ['common', 'claude', 'codex'], excludePaths: [] } };
-    const plyExcludedPath = { owner: 'ply', user: { sources: ['common', 'claude', 'codex'], excludePaths: ['.claude/CLAUDE.md'] }, directory: { sources: ['common', 'claude'], excludePaths: ['blocked.md'] } };
+    // 保存された除外は絶対パス（normalizeKind が保存のときに解決する）
+    const plyExcludedPath = { owner: 'ply', user: { sources: ['common', 'claude', 'codex'], excludePaths: [path.join(home, '.claude', 'CLAUDE.md')] }, directory: { sources: ['common', 'claude'], excludePaths: [path.join(repo, 'blocked.md')] } };
 
     const fromNative = docAgentsFromLegacy('instruction', instA, nativeRule, { home, cwd: repo });
     t.ok('旧「エージェントに任せる」は off=[]・spread=[]（Grok 等ロックセル以外）',
@@ -94,6 +95,18 @@ export default async function (t) {
 
     t.ok('旧 excludePaths に当たるパスは legacyEntryIncluded が false',
       !legacyEntryIncluded('instruction', instA, plyExcludedPath, { home, cwd: repo }));
+    // 除外はその物とその下を外す（フォルダーを外すと中の物も外れる）。除外がジャンクションなら、その実体の下の物も外す（main の探し方と同じ）
+    const realDir = path.join(tmp, 'real-rules');
+    const linkDir = path.join(tmp, 'link-rules');
+    await fs.mkdir(realDir, { recursive: true });
+    await fs.writeFile(path.join(realDir, 'guide.md'), '# guide');
+    await fs.symlink(realDir, linkDir, 'junction');
+    const inReal = { kind: 'instruction', name: 'guide.md', path: path.join(realDir, 'guide.md'), realPath: path.join(realDir, 'guide.md'), scope: 'directory', origins: [{ path: path.join(realDir, 'guide.md'), source: 'claude', scope: 'directory' }] };
+    const dirRule = (p) => ({ owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [p] } });
+    t.ok('旧 excludePaths: フォルダーの除外は中の物を外し、ジャンクションの除外は実体の下の物も外す。外の物は外さない',
+      !legacyEntryIncluded('instruction', inReal, dirRule(realDir), { home, cwd: repo })
+      && !legacyEntryIncluded('instruction', inReal, dirRule(linkDir), { home, cwd: repo })
+      && legacyEntryIncluded('instruction', inReal, dirRule(path.join(tmp, 'real')), { home, cwd: repo }));
 
     t.ok('__workspace__ まとめ行は旧 directory.sources が空なら除外扱い',
       !legacyEntryIncluded('instruction', WORKSPACE_SUMMARY_KEY, { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: [], excludePaths: [] } }, { home, cwd: repo }));

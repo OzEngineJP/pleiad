@@ -64,6 +64,32 @@ export function contextRefusal(owners = {}) {
 }
 
 /**
+ * 会話用のエージェント定義に渡す担当（agentDefinition の owners）。名前ごとのモデル（ADR 0337）で、エージェント自身の分を
+ * 止める名前があるときだけ 'ply'（指示は作業場所の指示ファイルの注入をやめる・Skills は inheritCustomizations: false）。
+ * 外部 MCP を名前ごとに中継するときは inheritMcp を切らない（ADR 0327）。core/backends/antigravity.mjs と試験が同じ関数を使う
+ */
+export function antigravityAgentOwners(contextRuntime) {
+  const baseOwners = contextRuntime?.mcp?.named ? { ...contextRuntime.owners, mcp: 'native' } : contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' };
+  if (!contextRuntime?.docs) return baseOwners;
+  const stops = doc => !doc.untouchedNative && doc.suppress.length > 0;
+  return {
+    ...baseOwners,
+    ...(contextRuntime.docs.instruction ? { instruction: stops(contextRuntime.docs.instruction) ? 'ply' : 'native' } : {}),
+    ...(contextRuntime.docs.skill ? { skill: stops(contextRuntime.docs.skill) ? 'ply' : 'native' } : {}),
+  };
+}
+
+/**
+ * 作業場所の指示ファイル（AGENTS.md・GEMINI.md）を Pleiad が発言の前に足す注入（nativeInstructionEntries）を、このターンはやめるか。
+ * 指示の担当が Pleiad（旧い保存）か、名前ごとのモデルで止める指示があるとき。core/backends/antigravity.mjs と試験が同じ関数を使う
+ */
+export function antigravitySkipsNativeInstructions(contextRuntime) {
+  return contextRuntime?.docs?.instruction
+    ? (!contextRuntime.docs.instruction.untouchedNative && contextRuntime.docs.instruction.suppress.length > 0)
+    : contextRuntime?.owners?.instruction === 'ply';
+}
+
+/**
  * agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める）。
  * locale は会話の言語（説明・見出し・注意書きはエージェントが読むので、その言語で書く。agent 名前空間）
  * computerEnabled は ply_computer（`--computer`）を足すか（docs/computer-use.md「エージェントへの渡し方」）。

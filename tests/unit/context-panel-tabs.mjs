@@ -188,10 +188,11 @@ export default async function (t) {
     await setLanguage('ja');
 
     // ---------------- 1. 設定 › プラグイン（web/context.mjs · Stage 2） ----------------
+    // ユーザーの段で source が codex の指示は ~/.codex/AGENTS.md だけで、Codex が必ず読む（Codex の列は鍵）。ここでは押せる行にするため OpenCode の物だけにする
     const rules = Array.from({ length: 9 }, (_, i) => ({
       id: `r${i}`, kind: 'instruction', scope: 'user', rule: true, defaultStatus: 'candidate',
       name: `r${i}.md`, path: `/home/u/.opencode/rules/sec/r${i}.md`, realPath: `/home/u/.opencode/rules/sec/r${i}.md`,
-      tokens: 10, origins: [{ source: 'opencode', path: `/home/u/.opencode/rules/sec/r${i}.md`, scope: 'user' }, { source: 'codex', path: `/home/u/.opencode/rules/sec/r${i}.md`, scope: 'user' }],
+      tokens: 10, origins: [{ source: 'opencode', path: `/home/u/.opencode/rules/sec/r${i}.md`, scope: 'user' }],
     }));
     const skills = [
       { id: 's-dup-1', kind: 'skill', scope: 'user', defaultStatus: 'candidate', name: 'deploy', path: '/home/u/.claude/skills/deploy/SKILL.md', realPath: '/home/u/.claude/skills/deploy/SKILL.md', tokens: 20, origins: [{ source: 'claude', path: '/home/u/.claude/skills/deploy/SKILL.md', scope: 'user' }] },

@@ -52,6 +52,22 @@ export function mergeConfig(base, next) {
 }
 
 /** Pleiad が担当する種類のキーを外す */
+/**
+ * 専用のサーバーに渡す担当（指示・Skills・MCP のどれを OpenCode に読ませないか）。名前ごとのモデル（ADR 0337）で触れた種類は、
+ * OpenCode 自身の分を止める名前があるときだけ 'ply'（OpenCode は全部まとめてしか止められない）。触れていない種類は旧い担当のまま。
+ * core/backends/opencode.mjs と試験（tests/lib/context-doc-fixture.mjs）が同じ関数を使う
+ */
+export function effectiveOpencodeOwners(contextRuntime) {
+  const owners = contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' };
+  const docs = contextRuntime?.docs;
+  if (!docs) return owners;
+  return {
+    ...owners,
+    ...(docs.instruction ? { instruction: !docs.instruction.untouchedNative && docs.instruction.suppress.length > 0 ? 'ply' : 'native' } : {}),
+    ...(docs.skill ? { skill: !docs.skill.untouchedNative && docs.skill.suppress.length > 0 ? 'ply' : 'native' } : {}),
+  };
+}
+
 export function stripOwned(config, owners) {
   const out = { ...config };
   if (owners?.instruction === 'ply') delete out.instructions;
