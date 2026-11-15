@@ -4,6 +4,13 @@
 //   - Devin は main の「実際の動き」で固定する。main は --config を作っていたが、Devin が読む前に消していたので、登録は Devin で動かず、取り込み（AGENTS.md・
 //     Claude Code などの指示・Skills・MCP・Hooks）も止まっていなかった（2026-11-15 に本物の Devin で確かめた。目印の Hook は動かず、AGENTS.md の合言葉を答えた）
 //   - 比べるのは、移行の前（hooks-agents.json が無い）と、移行した直後（そのときの実効の状態を書いた後）の両方
+//   - PINNED の採り方（取り直すとき。Devin の欄は採らない）:
+//       1. main の commit を別の worktree に出す（git worktree add --detach <作業用>/main-wt d786872e）
+//       2. この試験の写しを作り、import の '../../core/' をすべて <作業用>/main-wt/core/ に替え、createHooksAgents の import と ha を外す（main には無い）。
+//          scene は「AGENTS ごとに shape(a, await turn(a, cwd, false)) を JSON で書き出す」だけに替え、移行の直後の段（main には無い）と後片付けは流さない
+//       3. 写しを node で流し、書き出した値のうち Devin 以外の 5 エージェントを PINNED へ写す。Devin は DEVIN_MAIN のまま（main の準備処理は --config の
+//          計画を返すが、上のとおり実際には効かなかった。準備処理の出力からは採らない。本物の Devin で確かめ直すときだけ変える）
+//       4. 中のリンク（node_modules などの ReparsePoint）を外してから git worktree remove で消す
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,7 +33,7 @@ const DEVIN_MAIN = { supplied: [], imports: 'run' };
 const IDLE = { claude: { supplied: [], stopAll: false }, codex: { supplied: [], off: [] }, antigravity: { supplied: [], names: [] }, opencode: { supplied: [] }, devin: DEVIN_MAIN, grok: { supplied: [], env: null } };
 const all = (claude, codex, agy, opencode, grok) => ({ claude: { supplied: claude, stopAll: true }, codex: { supplied: codex, off: CODEX_OFF },
   antigravity: { supplied: agy, names: ['audit'] }, opencode: { supplied: opencode }, devin: DEVIN_MAIN, grok: { supplied: grok, env: OFF_ENV } });
-// main の prepareHooksTurn の値（Devin だけ実際の動き）。書き出しの道具: 0.42.5-beta.33 の core を同じ入力で動かした
+// main の prepareHooksTurn の値（Devin だけ実際の動き）。0.42.5-beta.33 の core を同じ入力で動かした（採り方は先頭の注）
 const PINNED = {
   makaseru: IDLE,
   soroeru: all(['all', 'cx', 'tool'], ['all', 'cx'], ['all'], ['all', 'tool'], ['all', 'tool']),
