@@ -124,7 +124,7 @@
 - 新: `core/hooks-agents.mjs`（保存・行 ID・元の集合・セルの規則・移行の式・一覧・ターンで動く Hook）。
 - 変: `core/hooks-unify.mjs`（移行済みのターンの準備）、`core/hooks-plan.mjs`（Codex の行ごとの止め・agy のアダプターの絶対パス）、`core/backends/claude.mjs`・`codex.mjs`・`devin*.mjs`・`antigravity-context.mjs`、`core/ops/hooks.mjs`、`core/server.mjs`（`opsHooks`）、`tests/data-writes-allowlist.mjs`。
 - 画面の文言の鍵だけ `web/locales/{en,ja}/{agent,server}.json` に足した（鍵・注意・断りの文。画面の部品は触っていない）。
-- 画面（`web/`）は変えない。今の Hooks の画面（担当の 2 択・写す）は移行前の人にはそのまま動く。移行済みの人には担当の 2 択が効かない（第 3 段の画面の仕事で消す）。
+- 画面（`web/`）は変えない。今の Hooks の画面（担当の 2 択・写す）は移行前の人にはそのまま動く。移行済みの人には、旧の操作（担当の切り替え `hooks.setOwner`・場所ごとの担当・取り込み・切り替えの確認 `hooks.unifyPreview`・写す `hooks.copy`）を `HOOKS_MOVED` で断り、エラーの文で一覧の操作と `hooks.resetAgents` を案内する（効かないのに効いたように見えるのを防ぐ。画面からも消すのは第 3 段の画面の仕事）。
 
 ## 確かめ（2026-11-15、試験用のデータ置き場・作業場所・別のポートのサーバー。利用者の設定ファイルは書き換えていないことを hash で確かめた）
 

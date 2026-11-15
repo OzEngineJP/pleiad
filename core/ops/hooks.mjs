@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { t } from '../i18n.mjs';
 import { HOOK_AGENTS, maskText } from '../hooks-config.mjs';
-import { defineOp } from './registry.mjs';
+import { defineOp, OpError } from './registry.mjs';
 import { diffRows } from './settings.mjs';
 import { byAgent, cwdFor, hasMask, restoreMasked, run, sessionFor } from './redact.mjs';
 
@@ -28,6 +28,14 @@ function maskCommands(value) {
 const shown = (ctx, value) => (byAgent(ctx) ? maskCommands(value) : value);
 /** 定義 1 つの command（元の文字列）: 人にはそのまま、agent には形で伏せる */
 const masked = (ctx, value) => (ctx.principal.by === 'human' || typeof value?.command !== 'string' ? value : { ...value, command: maskText(value.command) });
+
+/**
+ * Hook × エージェントの一覧に移った（hooks-agents.json がある）人の、旧い担当の操作（担当の切り替え・場所ごとの担当・取り込み・切り替えの確認・写す）は、
+ * 実行時に効かないので、効いたように見せず理由と新しい操作の名前で断る（ADR 0338）。承認のカードを出す前（riskOf）に断る
+ */
+async function refuseIfMoved(ctx, op) {
+  if (await ctx.hooks?.agents?.exists?.()) throw new OpError('HOOKS_MOVED', t('hooksAgents.legacyMoved', { op }));
+}
 
 /** 書く前の確認（dryRun）は書かないので write のまま、書くときだけ guarded */
 const unlessDryRun = (_ctx, args) => (args.dryRun === true ? 'write' : 'guarded');
@@ -128,7 +136,7 @@ export const hookOps = [
   }),
   defineOp({
     id: 'hooks.copy', summary: 'agent:ops.hooks.copy.summary', risk: 'write', riskReason: WRITE_PREVIEW,
-    riskOf: unlessDryRun,
+    riskOf: async (ctx, args) => { await refuseIfMoved(ctx, 'hooks.copy'); return unlessDryRun(ctx, args); },
     input: z.object({
       source: loose.describe(D('copy', 'source')),
       targets: z.array(loose).min(1).max(6).describe(D('copy', 'targets')),
@@ -239,10 +247,14 @@ export const hookOps = [
     output: z.object({ revision: z.unknown() }).passthrough(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'unify-preview'] } },
     legacyCommand: 'hooksUnifyPreview',
-    handler: (ctx, { cwd: dir, direction }) => run(ctx, async () => shown(ctx, await ctx.hooks.unifyPreview({ cwd: dir === null ? null : (await cwdFor(ctx, dir)) ?? null, direction: direction ?? 'ply' }))),
+    handler: async (ctx, { cwd: dir, direction }) => {
+      await refuseIfMoved(ctx, 'hooks.unifyPreview');
+      return run(ctx, async () => shown(ctx, await ctx.hooks.unifyPreview({ cwd: dir === null ? null : (await cwdFor(ctx, dir)) ?? null, direction: direction ?? 'ply' })));
+    },
   }),
   defineOp({
     id: 'hooks.setOwner', summary: 'agent:ops.hooks.setOwner.summary', risk: 'guarded',
+    riskOf: async (ctx) => { await refuseIfMoved(ctx, 'hooks.setOwner'); return 'guarded'; },
     input: z.object({
       place: z.string().max(4096).nullable().optional().describe(D('setOwner', 'place')),
       value: z.object({ owner: z.enum(['native', 'ply']), disabled: z.array(z.string().max(100)).max(200).optional() }).passthrough().nullable().optional().describe(D('setOwner', 'value')),

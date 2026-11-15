@@ -327,7 +327,15 @@ export default async function (t) {
     const calls = [];
     const deps = { locale: 'ja', calls, modeOf: async () => deps.mode, audit: async e => calls.push(['audit', e.op, e.risk]),
       approve: async req => { calls.push(['approve', req.op]); return { pending: true, requestId: 'setting-x' }; },
-      sessionCwd: async () => repo, sessionBackend: async () => CLAUDE, hooks: { agents: ha } };
+      sessionCwd: async () => repo, sessionBackend: async () => CLAUDE,
+      hooks: { agents: ha, view: async () => null, setOwner: async () => { calls.push(['setOwner']); return { ok: true }; },
+        unifyPreview: async () => { calls.push(['unifyPreview']); return { revision: 'r' }; }, copy: async () => { calls.push(['copy']); return { results: [] }; } } };
+    const legacyOps = [['hooks.setOwner', { place: repo, value: { owner: 'ply' } }], ['hooks.setOwner', { place: null, value: { owner: 'ply' }, imports: [{ id: 'x', digest: 'y' }] }],
+      ['hooks.unifyPreview', { cwd: repo }], ['hooks.copy', { source: { agent: CLAUDE }, targets: [{ agent: CODEX }], dryRun: true }], ['hooks.copy', { source: { agent: CLAUDE }, targets: [{ agent: CODEX }] }]];
+    const asHuman = (id, args) => registry.invoke({ by: 'human', via: 'ui', local: true }, id, args, deps);
+    const passed = [];
+    for (const [id, args] of legacyOps) { const r = await asHuman(id, args); if (r.ok) passed.push(id); }
+    t.ok('移行前: 旧い担当の操作（担当・場所ごとの担当・取り込み・切り替えの確認・写す）は今までどおり通る', passed.length === legacyOps.length && !await ha.exists(), passed.join());
     const as = async (mode, id, args) => { deps.mode = { bypass: { scope: 'full', autonomy: 'never' }, ask: { scope: 'workspace', autonomy: 'ask' }, plan: { scope: 'readonly', autonomy: 'ask' } }[mode];
       return registry.invoke({ by: 'agent', via: 'mcp', sessionId: 's1' }, id, args, deps); };
     const listed = await as('ask', 'hooks.matrix', {});
@@ -360,8 +368,17 @@ export default async function (t) {
     t.ok('人（画面）の操作はそのまま通り、revision を返す', human.ok && typeof human.result.revision === 'string', JSON.stringify(human));
     const badCell = await as('bypass', 'hooks.setAgent', { key: adminRow.key, agent: CLAUDE, on: false });
     t.ok('agent が押せないセルを押すと INVALID で返す（人の画面には例外のまま届く）', badCell.code === 'INVALID', JSON.stringify(badCell));
+    // 移行済み: 旧い担当の操作は効かないので、理由と新しい操作の名前で断る（承認のカードを出す前・中身を呼ぶ前）
+    const before2 = calls.length;
+    const moved = [];
+    for (const [id, args] of legacyOps) moved.push(await asHuman(id, args), await as('ask', id, args));
+    t.ok('移行済み: 旧い担当の操作は、人の画面からも agent からも HOOKS_MOVED で断り、中身も承認のカードも呼ばない', await ha.exists() && moved.every(r => r.ok === false && r.code === 'HOOKS_MOVED')
+      && !calls.slice(before2).some(c => ['setOwner', 'unifyPreview', 'copy', 'approve'].includes(c[0])), JSON.stringify(moved.find(r => r.code !== 'HOOKS_MOVED') ?? null));
+    t.ok('断りの文は、何をすればよいか（一覧の操作の名前・戻す操作）を示す', ['hooks.matrix', 'hooks.setAgent', 'hooks.setRow', 'hooks.setGroup', 'hooks.setPlace', 'hooks.resetAgents'].every(n => moved[0].error.includes(n))
+      && moved[0].error.includes('hooks.setOwner'), moved[0].error);
     const resetOp = await as('bypass', 'hooks.resetAgents', {});
     t.ok('hooks.resetAgents: 移行前へ戻す', resetOp.ok && !await ha.exists());
+    t.ok('移行前へ戻すと、旧い担当の操作はまた通る', (await asHuman('hooks.setOwner', { place: repo, value: { owner: 'ply' } })).ok);
     t.ok('利用者の設定ファイルは最後まで書き換えない', await userUnchanged());
   } finally {
     if (!containsPath(tempRoot, tmp) || !path.basename(tmp).startsWith('ply-hooks-agents-')) throw new Error('unexpected test path');

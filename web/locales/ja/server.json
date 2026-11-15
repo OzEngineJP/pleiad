@@ -1395,7 +1395,8 @@
     "noRow": "Hook の行（{{key}}）が見つかりません。一覧を開き直してください",
     "notPressable": "Hook の行（{{key}}）の {{agent}} は押せないセルです",
     "badPlace": "場所は絶対パスで指定してください",
-    "legacyBroken": "Hooks の登録ファイル（hooks.json）に読めない所があるので、今の動きを写せません。先に修復してください"
+    "legacyBroken": "Hooks の登録ファイル（hooks.json）に読めない所があるので、今の動きを写せません。先に修復してください",
+    "legacyMoved": "Hooks は Hook × エージェントの一覧に移っているので、{{op}} は今の動きに効きません（実行しませんでした）。一覧の操作を使ってください: hooks.matrix で見て、hooks.setAgent（セル）・hooks.setRow（行）・hooks.setGroup（組）・hooks.setPlace（この場所で使う）で変えます。以前の担当（エージェントに任せる／Pleiad がそろえる）へ戻すなら hooks.resetAgents"
   },
   "hooksUnify": {
     "prepareFailed": "Pleiad がそろえる Hooks を準備できなかったので、送信を止めました（ネイティブの hooks と二重に動くのを防ぐため）: {{error}}",
