@@ -2,7 +2,7 @@ import path from 'node:path';
 import { CodexRpc } from './codex-rpc.mjs';
 import { t } from '../i18n.mjs';
 import { pathKey } from '../context-settings.mjs';
-import { normalizeSlashPath } from './context-capabilities.mjs';
+import { docStopsNative, normalizeSlashPath } from './context-capabilities.mjs';
 
 // 指示を Pleiad が担当するとき、Claude Code に読ませない指示ファイル。
 // AGENTS.md も含める: CLI 2.1.280 は CLAUDE.md と同じく Project の指示として読む（2026-09-23 確認）。
@@ -19,14 +19,17 @@ export function claudeContextOptions(context, { compact = false, hooks = false, 
   const docInst = context?.docs?.instruction;
   const docSkill = context?.docs?.skill;
   const instSuppress = docInst ? (!docInst.untouchedNative ? docInst.suppress : []) : null;
-  const excludeList = docInst
+  // 旧い「Pleiad がそろえる」の場所は、触った後も main と同じグロブで止める（表に無い入れ子の CLAUDE.md・CLAUDE.local.md・ほかの rules も）
+  const excludeList = docInst?.legacyPly
+    ? CLAUDE_MD_EXCLUDES
+    : docInst
     ? [...new Set(instSuppress.flatMap((e) => {
         const raw = e.path ? path.resolve(e.path).replace(/\\/g, '/') : '';
         const real = (e.realPath ?? e.path) ? path.resolve(e.realPath ?? e.path).replace(/\\/g, '/') : '';
         return [raw, real, normalizeSlashPath(e.path), normalizeSlashPath(e.realPath ?? e.path)];
       }).filter(Boolean))]
     : (context?.owners.instruction === 'ply' ? CLAUDE_MD_EXCLUDES : []);
-  const autoMemOff = docInst ? Boolean(bot) : (context?.owners.instruction === 'ply' || bot);
+  const autoMemOff = docInst ? Boolean(docInst.legacyPly || bot) : (context?.owners.instruction === 'ply' || bot);
   const settings = {
     ...(excludeList.length ? { claudeMdExcludes: excludeList } : {}),
     ...(autoMemOff ? { autoMemoryEnabled: false } : {}),
@@ -38,7 +41,9 @@ export function claudeContextOptions(context, { compact = false, hooks = false, 
   if (!context) return withSettings;
   const { owners } = context;
   let skillOpt = {};
-  if (docSkill) {
+  if (docSkill?.legacyPly) {
+    skillOpt = { skills: [], ...(!compact ? { extraArgs: { 'disable-slash-commands': null } } : {}), disallowedTools: ['Skill'] };
+  } else if (docSkill) {
     if (!docSkill.untouchedNative && docSkill.suppress.length > 0) {
       if (docSkill.nativeKeep.length > 0) {
         skillOpt = { skills: [...new Set(docSkill.nativeKeep.map((e) => e.name))] };
@@ -76,9 +81,9 @@ export async function codexContextRpc(context, cwd, nativeRpc, { acquire = null 
   const config = {};
   const docInst = context.docs?.instruction;
   const docSkill = context.docs?.skill;
-  const stopInst = docInst ? (!docInst.untouchedNative && docInst.suppress.length > 0) : context.owners.instruction === 'ply';
+  const stopInst = docInst ? docStopsNative(docInst) : context.owners.instruction === 'ply';
   if (stopInst) config.project_doc_max_bytes = 0;
-  if (docSkill) {
+  if (docSkill && !docSkill.legacyPly) {
     if (!docSkill.untouchedNative && docSkill.suppress.length > 0) {
       const { data } = await nativeRpc.request('skills/list', { cwds: [cwd], forceReload: true });
       if (!Array.isArray(data)) throw new Error(t('backends.context.codexSkills'));
@@ -88,7 +93,7 @@ export async function codexContextRpc(context, cwd, nativeRpc, { acquire = null 
         .map(s => ({ path: s.path, enabled: false }));
       if (docSkill.nativeKeep.length === 0) config['features.plugins'] = false;
     }
-  } else if (context.owners.skill === 'ply') {
+  } else if (docSkill?.legacyPly || (!docSkill && context.owners.skill === 'ply')) {
     const { data } = await nativeRpc.request('skills/list', { cwds: [cwd], forceReload: true });
     if (!Array.isArray(data)) throw new Error(t('backends.context.codexSkills'));
     config['skills.config'] = data.flatMap(d => d.skills ?? []).map(s => ({ path: s.path, enabled: false }));

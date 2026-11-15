@@ -66,9 +66,10 @@ export function groupDocEntries(kind, entries = [], preferMap = {}) {
   const items = [];
   for (const group of byKey.values()) {
     const preferredPath = kind === 'skill' ? preferMap?.[group.copies[0].name] : null;
-    const chosen = (preferredPath
+    const preferredCopy = preferredPath
       ? group.copies.find((c) => pathKey(c.path) === pathKey(preferredPath) || pathKey(c.realPath ?? c.path) === pathKey(preferredPath))
-      : null) ?? group.copies.find((c) => c.status === 'candidate') ?? group.copies[0];
+      : null;
+    const chosen = preferredCopy ?? group.copies.find((c) => c.status === 'candidate') ?? group.copies[0];
     items.push({
       key: group.key,
       kind,
@@ -80,6 +81,8 @@ export function groupDocEntries(kind, entries = [], preferMap = {}) {
       appliesTo: chosen.appliesTo ?? null,
       conditional: chosen.conditional ?? null,
       chosen,
+      // 利用者がどの写しを使うか選んだか。選んでいない同じ名前の写しは、main と同じくエージェント自身に選ばせる（止めない）
+      preferred: Boolean(preferredCopy),
       copies: group.copies,
       origins: group.origins,
       duplicates: group.copies.length > 1 ? group.copies.slice() : [],
@@ -123,7 +126,7 @@ function buildSingleRow({ kind, entryOrSummary, key, scope, sourceState, home, c
   } else {
     rule = resolveRuleForItem(agentsChain, key, scope);
   }
-  const cells = evaluateDocCells(kind, entryOrSummary, rule, { legacyOwner: legacyRule?.owner ?? 'native' });
+  const cells = evaluateDocCells(kind, entryOrSummary, rule, { legacyOwner: sourceState.legacyOwner });
   return { rule, cells, ...summarizeRowMeta(cells) };
 }
 
@@ -187,7 +190,7 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
     legacyDepth: sourceState.legacyDepth,
     agentsDepth: sourceState.agentsDepth,
     legacyRule: sourceState.legacyRule,
-    legacyOwner: sourceState.legacyRule?.owner ?? 'native',
+    legacyOwner: sourceState.legacyOwner,
     agents: [...DOC_AGENT_IDS],
     summaryRow,
     rows,
@@ -279,7 +282,9 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
   }
   const holder = placeKey ? (cfg.places[placeKey] ??= {}) : cfg.defaults;
   if (!holder[kind] || (!matrix.touched && matrix.agentsDepth < matrix.legacyDepth)) {
-    holder[kind] = { agents: snapshotBaselineAgents({ kind, entries, legacyConfig, docAgentsConfig: cfg, place, home }) };
+    // 触る前のこの段の旧い担当も写す（触った後も、旧い「Pleiad がそろえる」の止め方を保つ。resolveDocForAgent の legacyPly）
+    const { legacyOwner } = resolveEffectiveDocSource(legacyConfig, cfg, place ?? null, kind);
+    holder[kind] = { agents: snapshotBaselineAgents({ kind, entries, legacyConfig, docAgentsConfig: cfg, place, home }), legacyOwner };
   }
   for (const { k, row } of pressable) {
     const entryOrSummary = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
@@ -330,6 +335,7 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
 
   const traits = DOC_AGENT_TRAITS[agent] ?? {};
   const lockCtx = { legacyOwner: matrix.legacyOwner };
+  if (matrix.legacyOwner === 'ply') return resolveLegacyPlyDoc(matrix, kind, agent, lockCtx);
   const active = [];
   const desiredSuppress = [];
   const desiredDeliver = [];
@@ -354,7 +360,10 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
     const chosenIsNative = isEntryNativeTo(agent, kind, row.chosen);
     const conflictingCopies = nativeCopies.filter((c) => !sameFile(c, row.chosen));
 
-    if (chosenIsNative && conflictingCopies.length === 0) {
+    if (!row.preferred && nativeCopies.length > 0) {
+      // 写しを選んでいない物は、エージェントが自分で読む写しのどれかをそのまま読む（main と同じ。表のほかのマスを押しても変わらない。レビュー M2）
+      nativeKept.push({ row, entry: chosenIsNative ? row.chosen : nativeCopies[0] });
+    } else if (chosenIsNative && conflictingCopies.length === 0) {
       nativeKept.push({ row, entry: row.chosen });
     } else if (chosenIsNative && conflictingCopies.length > 0) {
       // Prefer matches a native copy, but other conflicting native copies must be suppressed if stoppable.
@@ -420,6 +429,46 @@ export function resolveDocForAgent({ kind, agent, entries = [], legacyConfig, do
     active,
     nativeKeep,
     suppress: desiredSuppress,
+    deliver,
+  };
+}
+
+/**
+ * 旧い「Pleiad がそろえる」の場所を触った後（legacyPly）。main と同じく、エージェントが自分で読む物はまとめて止め
+ * （Claude は claudeMdExcludes のグロブと自動メモリ、Codex は project_doc_max_bytes=0、ほかも main の止め方）、表でオンの物を Pleiad が渡す。
+ * 表に無い物（入れ子の CLAUDE.md・CLAUDE.local.md・ほかの .claude/rules）は止めたまま instructions_for_path で渡す。
+ * 鍵のマス（止められない自分の物）は自分でも読み、旧い保存で外していなければ Pleiad も渡す（main と同じ）
+ */
+function resolveLegacyPlyDoc(matrix, kind, agent, lockCtx) {
+  const active = [];
+  const nativeKeep = [];
+  const deliver = [];
+  const suppress = [];
+  const relay = canRelayDocToAgent(agent);
+  for (const row of matrix.rows) {
+    const cell = row.cells[agent];
+    for (const c of row.copies) {
+      if (mayReadNatively(agent, kind, c) && !docCellLock(agent, kind, c, lockCtx)) suppress.push(c);
+    }
+    if (!cell?.on) continue;
+    active.push({ row, entry: row.chosen, mode: cell.mode });
+    if (cell.locked) {
+      if (cell.native) nativeKeep.push(row.chosen);
+      if (relay && !(row.rule?.off ?? []).includes(agent)) deliver.push(row.chosen);
+    } else if (relay) {
+      deliver.push(row.chosen);
+    }
+  }
+  return {
+    matrix,
+    agent,
+    legacyPly: true,
+    untouchedNative: false,
+    hasWork: true,
+    spreadSummary: false,
+    active,
+    nativeKeep,
+    suppress,
     deliver,
   };
 }

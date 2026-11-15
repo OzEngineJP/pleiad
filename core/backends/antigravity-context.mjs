@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dir } from './antigravity-store.mjs';
+import { docStopsNative } from './context-capabilities.mjs';
 import { t, agentT } from '../i18n.mjs';
 
 export const AGENT_NAME = 'ply-context';
@@ -71,7 +72,7 @@ export function contextRefusal(owners = {}) {
 export function antigravityAgentOwners(contextRuntime) {
   const baseOwners = contextRuntime?.mcp?.named ? { ...contextRuntime.owners, mcp: 'native' } : contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' };
   if (!contextRuntime?.docs) return baseOwners;
-  const stops = doc => !doc.untouchedNative && doc.suppress.length > 0;
+  const stops = docStopsNative;
   return {
     ...baseOwners,
     ...(contextRuntime.docs.instruction ? { instruction: stops(contextRuntime.docs.instruction) ? 'ply' : 'native' } : {}),
@@ -85,7 +86,7 @@ export function antigravityAgentOwners(contextRuntime) {
  */
 export function antigravitySkipsNativeInstructions(contextRuntime) {
   return contextRuntime?.docs?.instruction
-    ? (!contextRuntime.docs.instruction.untouchedNative && contextRuntime.docs.instruction.suppress.length > 0)
+    ? docStopsNative(contextRuntime.docs.instruction)
     : contextRuntime?.owners?.instruction === 'ply';
 }
 

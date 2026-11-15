@@ -227,13 +227,20 @@ export const DOC_AGENT_TRAITS = Object.freeze({
   grok: { perFileInstructionExclude: false, perNameSkillList: false, relay: false },
 });
 
+/**
+ * 名前×エージェントの結果（core/context-doc-matrix.mjs の resolveDocForAgent）で、エージェントが自分で読む物を止めるか。
+ * 旧い「Pleiad がそろえる」の場所を触った後（legacyPly）は、main と同じくまとめて止める
+ */
+export const docStopsNative = (doc) => Boolean(doc && !doc.untouchedNative && (doc.legacyPly || doc.suppress.length > 0));
+
 /** Determine whether `ply_context` should expose `load_skill` / `instructions_for_path` for `agent`. */
 export function docToolRequirements(agent, docs, conditionalCount = 0, instructionsCount = 0) {
   const traits = DOC_AGENT_TRAITS[agent] ?? {};
-  const needLoadSkill = Boolean(docs?.skill && docs.skill.deliver.length > 0);
+  const needLoadSkill = Boolean(docs?.skill && (docs.skill.legacyPly || docs.skill.deliver.length > 0));
   const needInstructionsForPath = Boolean(
     docs?.instruction
-    && (conditionalCount > 0
+    && (docs.instruction.legacyPly
+      || conditionalCount > 0
       || instructionsCount > 0
       || (!traits.perFileInstructionExclude && docs.instruction.suppress.length > 0)
       || docs.instruction.spreadSummary),

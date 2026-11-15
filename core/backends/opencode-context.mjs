@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { opencodeData } from './opencode-accounts.mjs';
+import { docStopsNative } from './context-capabilities.mjs';
 import { t } from '../i18n.mjs';
 
 const GLOBAL_CONFIG_FILES = ['config.json', 'opencode.json', 'opencode.jsonc'];
@@ -63,8 +64,8 @@ export function effectiveOpencodeOwners(contextRuntime) {
   if (!docs) return owners;
   return {
     ...owners,
-    ...(docs.instruction ? { instruction: !docs.instruction.untouchedNative && docs.instruction.suppress.length > 0 ? 'ply' : 'native' } : {}),
-    ...(docs.skill ? { skill: !docs.skill.untouchedNative && docs.skill.suppress.length > 0 ? 'ply' : 'native' } : {}),
+    ...(docs.instruction ? { instruction: docStopsNative(docs.instruction) ? 'ply' : 'native' } : {}),
+    ...(docs.skill ? { skill: docStopsNative(docs.skill) ? 'ply' : 'native' } : {}),
   };
 }
 

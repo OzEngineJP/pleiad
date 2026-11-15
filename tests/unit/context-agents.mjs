@@ -89,8 +89,10 @@ export default async function (t) {
       origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }],
     }, plyRule, { home, cwd: repo });
     // ~/.codex/AGENTS.md は Codex が必ず読む（main の project_doc_max_bytes でも止まらない）ので Codex のセルは鍵（オンのまま）
-    t.ok('旧「探す形式」で外していた出どころはロックなし全エージェントが off（Codex 自身の全体の指示は鍵でオンのまま）',
-      excludedBySource.off.includes('claude') && !excludedBySource.off.includes('codex') && !excludedBySource.off.includes('grok')
+    // 鍵のマスでも、旧い「Pleiad がそろえる」で外していた物は off に覚える（触った後も Pleiad が渡さない。表のマスは鍵でオンのまま）。Grok には渡せないので書かない
+    t.ok('旧「探す形式」で外していた出どころは全エージェントが off（Codex 自身の全体の指示は鍵でオンのまま、off にも覚える）',
+      excludedBySource.off.includes('claude') && excludedBySource.off.includes('codex') && !excludedBySource.off.includes('grok')
+      && evaluateDocCells('instruction', { kind: 'instruction', path: path.join(home, '.codex', 'AGENTS.md'), scope: 'user', origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }] }, excludedBySource, { legacyOwner: 'ply' }).codex.on === true
       && docCellLock('codex', 'instruction', { kind: 'instruction', path: path.join(home, '.codex', 'AGENTS.md'), scope: 'user', origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }] })?.lockedOn === true);
 
     t.ok('旧 excludePaths に当たるパスは legacyEntryIncluded が false',

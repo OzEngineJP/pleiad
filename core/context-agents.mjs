@@ -40,8 +40,11 @@ const agentEntrySchema = z.object({
   spread: z.array(z.string()).optional(),
 }).strict();
 
+// legacyOwner: この段を初めて触ったときの旧い担当（context-scans.json の owner）。旧い「Pleiad がそろえる」の場所は、触った後も
+// エージェントが自分で読む物をまとめて止め（Claude の自動メモリ・表に無い入れ子の CLAUDE.md も含む）、オンの物を Pleiad が渡す（ADR 0337 §決定 9）
 const kindOverrideSchema = z.object({
   agents: z.record(z.string(), agentEntrySchema),
+  legacyOwner: z.enum(['native', 'ply']).optional(),
 }).strict();
 
 const placeOverrideSchema = z.object({
@@ -76,7 +79,7 @@ function normalizeKindOverride(raw) {
     if (!k) continue;
     agents[k] = normalizeAgentValue(v);
   }
-  return { agents };
+  return { agents, ...(raw.legacyOwner === 'ply' || raw.legacyOwner === 'native' ? { legacyOwner: raw.legacyOwner } : {}) };
 }
 
 function normalizePlaceOverride(raw) {
@@ -150,18 +153,21 @@ export function resolveEffectiveDocSource(legacyConfig, docAgentsConfig, cwd, ki
 
   const agentsChain = [];
   if (docAgentsConfig?.defaults?.[kind]) {
-    agentsChain.push({ depth: 0, place: null, agents: docAgentsConfig.defaults[kind].agents });
+    agentsChain.push({ depth: 0, place: null, agents: docAgentsConfig.defaults[kind].agents, legacyOwner: docAgentsConfig.defaults[kind].legacyOwner ?? null });
   }
   for (const p of ancestorKeys(docAgentsConfig?.places, cwdKey)) {
     const ov = docAgentsConfig.places[p]?.[kind];
-    if (ov) agentsChain.push({ depth: placeDepth(p), place: p, agents: ov.agents });
+    if (ov) agentsChain.push({ depth: placeDepth(p), place: p, agents: ov.agents, legacyOwner: ov.legacyOwner ?? null });
   }
 
   const deepestLegacy = legacyChain.at(-1);
   const deepestAgents = agentsChain.at(-1) ?? null;
   const touched = Boolean(deepestAgents && deepestAgents.depth >= deepestLegacy.depth);
+  // 触った後の旧い担当は、触ったときに写した値（無ければ今の旧い保存）。触った後に旧い保存が変わっても、表の意味は変えない
+  const liveOwner = deepestLegacy.rule?.owner === 'ply' ? 'ply' : 'native';
   return {
     touched,
+    legacyOwner: touched ? (deepestAgents.legacyOwner ?? liveOwner) : liveOwner,
     legacyRule: deepestLegacy.rule,
     legacyPlace: deepestLegacy.place,
     legacyDepth: deepestLegacy.depth,
@@ -236,7 +242,11 @@ export function docAgentsFromLegacy(kind, entryOrSummary, legacyRule, opts = {})
   const isPly = legacyRule?.owner === 'ply';
   const ctx = { legacyOwner: legacyRule?.owner ?? 'native' };
   for (const agent of DOC_AGENT_IDS) {
-    if (docCellLock(agent, kind, entryOrSummary, ctx)) continue;
+    if (docCellLock(agent, kind, entryOrSummary, ctx)) {
+      // 鍵のマスは表では変わらない。旧い「Pleiad がそろえる」で外していた物だけ off に覚え、触った後も Pleiad が渡さない（main と同じ）
+      if (isPly && !included && canRelayDocToAgent(agent)) off.push(agent);
+      continue;
+    }
     if (!included) {
       // 旧い「Pleiad がそろえる」でも、自分で読む物を止めていなかったエージェント（Devin）は、外していた物もそのまま読んでいた
       if (isPly && DOC_AGENT_TRAITS[agent]?.legacyPlyKeepsNative && isEntryNativeTo(agent, kind, entryOrSummary)) continue;

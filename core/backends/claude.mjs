@@ -21,7 +21,7 @@ import { claudeExecutable } from '../cli-installation.mjs';
 import { CONNECTOR_WAIT_MS, connectorList } from '../context-claude-extras.mjs';
 import { AUTO_COMPACT_WINDOW_ENV } from '../compaction-settings.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
-import { normalizeSlashPath } from './context-capabilities.mjs';
+import { docStopsNative, normalizeSlashPath } from './context-capabilities.mjs';
 import { claudeHookCallbacks, mergeCallbacks } from '../hooks-unify.mjs';
 import { undelivered } from './undelivered.mjs';
 import { z } from "zod";
@@ -1375,11 +1375,11 @@ export const backend = {
       if (contextRuntime) {
         await q.initializationResult();
         const docInst = contextRuntime.docs?.instruction;
-        if (docInst ? (!docInst.untouchedNative && docInst.suppress.length > 0) : contextRuntime.owners.instruction === 'ply') {
+        if (docInst ? docStopsNative(docInst) : contextRuntime.owners.instruction === 'ply') {
           // 指示ファイルは最初のプロンプトを処理するときに読まれることが多く、ここではまだ空のことがある。
           // 止める本体は claudeMdExcludes（context-options.mjs）で、この確認は取りこぼしを拾う保険
           const usage = await q.getContextUsage({ detail: 'summary' });
-          if (docInst) {
+          if (docInst && !docInst.legacyPly) {
             const suppressed = new Set(docInst.suppress.flatMap((e) => [normalizeSlashPath(e.path), normalizeSlashPath(e.realPath ?? e.path)]).filter(Boolean));
             if (usage.memoryFiles?.some((m) => suppressed.has(normalizeSlashPath(typeof m === 'string' ? m : (m?.path ?? ''))))) {
               throw new Error(t('claude.errors.nativeInstructions'));

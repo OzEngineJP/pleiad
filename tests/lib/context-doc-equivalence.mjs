@@ -5,7 +5,10 @@
 // A. 触っていない人: 旧い保存の組み合わせ × 作業場所 × 6 エージェントの計画（起動の設定・Pleiad が渡す物）が main と同じ
 // B. 表の初期のマス: 設定（全体）と右の欄（作業場所）のマスのオン／オフが、main でそのエージェントが実際に見ていた物と同じ
 // C/D. 押せるマスを 1 つずつ押す: 押したマスの物だけ、そのエージェントの見え方が変わり（ほかのエージェント・ほかの物は変わらない）、
-//      押した後の表とエージェントの見え方がそろう。押し戻すと、main と同じ見え方に戻る
+//      押した後の表とエージェントの見え方がそろう。押し戻すと、main と同じ見え方に戻る。
+//      さらに (a) 押していないエージェントは計画（起動の設定・Pleiad が渡す物・ply_context を開くか）が main と同じ、
+//      (b) 押したエージェントは、押した物を渡す・止める仕組みの設定（launchRest で除く欄）以外の起動の設定が main と同じ
+//      （旧「Pleiad がそろえる」の場所で 1 マス押すと、Claude の自動メモリ・表に無い入れ子の指示の止め方が消えていた。レビュー M2）
 //
 // 「見え方」は tests/lib/context-doc-fixture.mjs の sees（起動の設定からエージェントが見る物を出す見立て）で、
 // 新しいコードの判定（core/backends/context-capabilities.mjs）とは別に書いてある。
@@ -24,6 +27,35 @@ const FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'context-doc-main-plans.jso
 // 足すときは、ここと同じ名前の試験を tests/unit に作り、tests/run.mjs に入れる
 export const TOUCH_COMBOS = ['default', 'instPly', 'skillPly', 'bothPly', 'placePly', 'instPlyExclude', 'skillPlyExclude', 'bothPlyRoots'];
 const MAX_DETAIL = 12;
+
+// (a) で main と比べる計画の欄。owners は旧い保存の担当をそのまま写した物で、表に触れた種類は表が決める（起動には効かない）ので比べない。
+// fallback（Pleiad が探してから、エージェント任せと同じなので ply_context を開かなかった印）も比べない。表に触れた後は探してから決めるので立つが、
+// 起動の設定・渡す物・ply_context を開くかは main と同じ（それを plyContext・outputs・delivered で比べる）
+const planCore = plan => ({ plyContext: plan.plyContext, outputs: plan.outputs, delivered: plan.delivered });
+/**
+ * (b) 押したエージェントの起動の設定から、押した種類の物を渡す・止める仕組みの欄を除いた残り。残りは main と同じでなければならない。
+ * null は、起動の設定がまるごと仕組みの欄（Antigravity・OpenCode・Grok）で比べる物が無いこと
+ */
+function launchRest(agent, kind, outputs) {
+  const o = structuredClone(outputs?.[agent] ?? null);
+  if (!o) return o;
+  if (agent === 'claude') {
+    delete o.systemPrompt;
+    if (kind === 'instruction' && o.settings) delete o.settings.claudeMdExcludes;
+    if (kind === 'skill') { delete o.skills; delete o.disallowedTools; delete o.extraArgs; }
+    if (o.settings && !Object.keys(o.settings).length) delete o.settings;
+    return orNull(o);
+  }
+  if (agent === 'codex') {
+    if (kind === 'instruction') delete o.project_doc_max_bytes;
+    if (kind === 'skill') { delete o['skills.config']; delete o['features.plugins']; }
+    return orNull(o);
+  }
+  if (agent === 'devin') return o;
+  return null;
+}
+// 空の起動の設定（{}）と、設定を作らない起動（無し）は同じ起動
+const orNull = o => (o && typeof o === 'object' && !Object.keys(o).length ? null : o);
 
 /**
  * plans: A と B を確かめる。touch: C/D で押して確かめる組み合わせ（TOUCH_COMBOS の中の物）
@@ -65,17 +97,18 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
       // Codex の app-server が返す Skills（native と同じ。記録は <R> なので今の根に戻す）
       const untok = p => path.normalize(p.replace('<R>', fx.root.replace(/\\/g, '/')));
       const nativeCodexPaths = Object.fromEntries(Object.keys(CWDS).map(c => [c, recorded.native[c].codex.skill.map(s => untok(s.path))]));
-      const treeSees = async (cwd, agent) => {
+      const treePlan = async (cwd, agent) => {
         const plan = tok(await planTurn(tree, fx, { cwd: CWDS[cwd](fx), agent, codexSkillPaths: nativeCodexPaths[cwd], glue: 'tree' }));
-        return sees(agent, recorded.native[cwd][agent], plan);
+        return { plan, sees: sees(agent, recorded.native[cwd][agent], plan) };
       };
-      // 作業場所 2 × エージェント 6 の見え方（読むだけなので並べて採る）
-      const allSees = async () => {
+      // 作業場所 2 × エージェント 6 の見え方（読むだけなので並べて採る）。withPlans なら計画も返す（{ sees, plans }）
+      const allSees = async ({ withPlans = false } = {}) => {
         const pairs = Object.keys(CWDS).flatMap(c => AGENT_IDS.map(a => [c, a]));
-        const got = await Promise.all(pairs.map(([c, a]) => treeSees(c, a)));
+        const got = await Promise.all(pairs.map(([c, a]) => treePlan(c, a)));
         const out = Object.fromEntries(Object.keys(CWDS).map(c => [c, {}]));
-        pairs.forEach(([c, a], i) => { out[c][a] = got[i]; });
-        return out;
+        const plans = Object.fromEntries(Object.keys(CWDS).map(c => [c, {}]));
+        pairs.forEach(([c, a], i) => { out[c][a] = got[i].sees; plans[c][a] = got[i].plan; });
+        return withPlans ? { sees: out, plans } : out;
       };
       const settings = tree.settings.createContextSettings(fx.dataDir, fx.home);
       const docAgents = tree.agentsMod.createContextAgents(fx.dataDir);
@@ -164,7 +197,7 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
     // ---- C/D ----（組み合わせごとに別の木を作り、並べて走らせる。1 つの組み合わせの中の押し方は順番どおり）
     const touchCombo = async (combo) => {
       const cfx = await makeFixture(path.join(root, `touch-${combo}`));
-      const { allSees, docView, press, rowLabel, consistency } = bind(cfx);
+      const { allSees, docView, press, rowLabel, rowKeys, consistency } = bind(cfx);
       const baseline = Object.fromEntries(Object.keys(CWDS).map(c => [c, Object.fromEntries(AGENT_IDS.map(a => [a, mainSees(combo, c, a)]))]));
       const fails = [];
       let presses = 0;
@@ -197,10 +230,28 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
                 if (moved.length && !(row.key === WS && r.scope !== 'user')) fails.push(`${label}: ほかの行 ${rowLabel(kind, r)} も ${moved.join(',')} が変わった`);
               }
               // エージェントの見え方: 押した物だけ、押したエージェントだけ変わる。両方の種類・両方の作業場所の表とそろう
-              const [got, ...placeViews] = await Promise.all([
-                allSees(),
+              const [{ sees: got, plans: gotPlans }, ...placeViews] = await Promise.all([
+                allSees({ withPlans: true }),
                 ...Object.keys(CWDS).flatMap(c => DOC_KINDS.map(k => docView(k, c).then(v => ({ c, k, v })))),
               ]);
+              // (a) 押していないエージェント（表のマスが変わらなかったエージェント）は、どの作業場所でも計画が main と同じ
+              // (b) 押したエージェントは、押した物を渡す・止める仕組み以外の起動の設定が main と同じで、見え方は押した物だけ変わる
+              const pressedKeys = new Set(row.key === WS ? [...workspaceKeys(kind, 'repo'), ...workspaceKeys(kind, 'sub')] : rowKeys(kind, row));
+              for (const c of Object.keys(CWDS)) for (const a of AGENT_IDS) {
+                const main = recorded.plans[combo][c][a];
+                if (!changedAgents.includes(a)) {
+                  if (!isDeepStrictEqual(planCore(gotPlans[c][a]), planCore(main))) {
+                    const diff = Object.keys(planCore(main)).filter(k => !isDeepStrictEqual(planCore(gotPlans[c][a])[k], planCore(main)[k]));
+                    const brief = diff.map(k => `${k}=${JSON.stringify(planCore(gotPlans[c][a])[k]).slice(0, 160)} main=${JSON.stringify(planCore(main)[k]).slice(0, 160)}`).join(' ');
+                    fails.push(`${label}: (a) 押していない ${a}@${c} の計画が main と違う（${diff.join(',')}） ${brief}`);
+                  }
+                  continue;
+                }
+                if (!isDeepStrictEqual(launchRest(a, kind, gotPlans[c][a].outputs), launchRest(a, kind, main.outputs))) fails.push(`${label}: (b) 押した ${a}@${c} の、押した物以外の起動の設定が main と違う ${JSON.stringify(launchRest(a, kind, gotPlans[c][a].outputs))}`);
+                const before = new Set(baseline[c][a][kind]), now = new Set(got[c][a][kind]);
+                const moved = [...before].filter(k => !now.has(k)).concat([...now].filter(k => !before.has(k))).filter(k => !pressedKeys.has(k));
+                if (moved.length) fails.push(`${label}: (b) 押した ${a}@${c} で押していない物も見え方が変わった ${moved.slice(0, 3).join(',')}`);
+              }
               for (const { c, k, v } of placeViews) consistency(k, v.matrix, got[c], `${label} → ${k}@${c}`, fails);
               for (const c of Object.keys(CWDS)) for (const a of AGENT_IDS) {
                 const otherKind = kind === 'skill' ? 'instruction' : 'skill';
