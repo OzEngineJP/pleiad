@@ -1415,7 +1415,7 @@
   "hooksAgents": {
     "evidence": {
       "stoppedWithOthers": "Claude Code, Antigravity and Grok's compatibility loading cannot stop hooks one by one, so they are stopped together and re-delivered. Definitions that cannot be re-delivered stop with them (ADR 0338)",
-      "devinConfig": "Devin's --config replaces Devin's settings for that turn (including read_config_from)",
+      "devinConfig": "Devin's --config gets your Devin settings (including read_config_from) with Pleiad's hooks added on top",
       "codexTrustAtTurn": "Codex trust is not rechecked just before the turn. The state when the list was opened is used",
       "grokTrustUnknown": "~/.grok/trusted_folders.toml exists, so whether Grok trusts this workspace is unknown",
       "duplicate": "The same event, matcher and command already runs on this agent (it runs only once)"

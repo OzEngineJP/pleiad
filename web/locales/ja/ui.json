@@ -4565,7 +4565,7 @@
       "permissionRequest": "PermissionRequest の答えの細部（ルールの更新など）はエージェントごとに違います。",
       "inputShape": "ツールの入力は近い形に直します（シェル・ファイル操作・検索）。ほかのツールの入力はそのまま渡します。",
       "stoppedWithOthers": "このエージェントでは Hook を 1 つずつ止められず、まとめて止めて渡し直します。渡し直せない定義は一緒に止まります。",
-      "devinConfig": "Devin には、そのターンだけの設定（--config）で渡します。そのターンの Devin の設定の読み込み（read_config_from）は、この設定に置き換わります。",
+      "devinConfig": "Devin には、そのターンだけの設定（--config）で渡します。利用者の Devin の設定（許可・read_config_from）はそのまま使い、そこに Pleiad の Hook を重ねます。",
       "codexTrustAtTurn": "Codex の信頼の状態はターンの直前には確かめず、一覧を開いたときの状態で渡します。",
       "grokTrustUnknown": "Grok がこの作業場所を信頼しているか分かりません（~/.grok/trusted_folders.toml があるため）。",
       "duplicate": "同じイベント・matcher・コマンドが、このエージェントで既に動いています（1 回だけ動かします）。",
