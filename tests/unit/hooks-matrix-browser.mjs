@@ -17,5 +17,7 @@ export default async function (t) {
     child.on('close', c => { clearTimeout(timer); resolve({ code: c, out: buf }); });
   });
   const pass = /PASS: (\d+) 判定すべて通過/.exec(out);
-  t.ok('ブラウザ試験（tests/browser/hooks-matrix.mjs）がすべて通る', code === 0 && Boolean(pass), pass ? `${pass[1]} 判定` : out.split('\n').slice(-12).join('\n'));
+  // 通過の行の後に落ちた（片付けの失敗など）ときも、終わりの出力を見せる
+  t.ok('ブラウザ試験（tests/browser/hooks-matrix.mjs）がすべて通る', code === 0 && Boolean(pass),
+    code === 0 && pass ? `${pass[1]} 判定` : `exit ${code}\n${out.split('\n').slice(-12).join('\n')}`);
 }

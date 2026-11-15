@@ -417,5 +417,5 @@ try {
   if (client) client.close();
   if (server) await server.stop().catch(() => {});
   try { fs.chmodSync(agentsFile, 0o644); } catch {}
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
