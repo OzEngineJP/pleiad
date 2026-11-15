@@ -512,6 +512,7 @@ const SUITES = [
   './unit/context-settings.mjs',
   // Stage 2: 指示・Skills を名前 × エージェントで管理・評価・実行時適用する（ADR 0337）
   './unit/context-agents.mjs',
+  './unit/context-agents-pruned.mjs',
   './unit/context-doc-matrix.mjs',
   './unit/context-doc-runtime.mjs',
   './unit/context-doc-main-equivalence.mjs',

@@ -32,8 +32,10 @@ export function docFreshChanged(before, after) {
 export const savedText = (fresh, pruned = null) => {
   let text = fresh ? t('context.savedFresh') : t('context.saved');
   const extra = [];
-  if (pruned?.places > 0) extra.push(t('context.savedPrunedPlaces', { count: pruned.places }));
-  if (pruned?.keys > 0) extra.push(t('context.savedPrunedKeys', { count: pruned.keys }));
+  // 場所とキーの両方を外したときは「上限に届いたため」を 1 回にまとめる
+  if (pruned?.places > 0 && pruned?.keys > 0) extra.push(t('context.savedPrunedBoth', { places: pruned.places, keys: pruned.keys }));
+  else if (pruned?.places > 0) extra.push(t('context.savedPrunedPlaces', { count: pruned.places }));
+  else if (pruned?.keys > 0) extra.push(t('context.savedPrunedKeys', { count: pruned.keys }));
   // 続ける文は区切り（。・. ）から始まる。前の文の終わりの句点は重ねない
   if (extra.length) text = text.replace(/[.。]$/, '') + extra.join('');
   return text;
