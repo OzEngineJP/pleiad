@@ -509,6 +509,8 @@ const SUITES = [
   './unit/server-hooks-unify-review.mjs',
   // Hook × エージェントの一覧（ADR 0338）: 行 ID・移行の式・旧の保存と同じ動き・一覧と実行時の一致
   './unit/hooks-agents.mjs',
+  // 同じく、更新しただけの人のターンを main の値で固定して比べる（期待値をこのブランチの旧い道から作らない）
+  './unit/hooks-main-pinned.mjs',
   './unit/context-scan.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   './unit/context-settings.mjs',
