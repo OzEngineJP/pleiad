@@ -458,6 +458,50 @@ function lockUnit(c, A) {
   c.mode = 'locked'; c.reason = 'own';
   c.detail = A === CLAUDE ? 'claudeAllOrNothing' : A === GROK ? 'grokAllOrNothing' : A === AGY ? 'agySameName' : 'stoppedWithOthers';
 }
+/**
+ * 行のスイッチを押したときの選択（純粋。指示・Skills の行のスイッチと同じ決まり。ADR 0337・0338）。
+ *   切る: 行を unused にする（エージェントごとの選択は off・spread に覚えたまま）。
+ *   入れる: unused から外して覚えた選択に戻す。どのエージェントでも動かないなら、覚えた選択を消して元の集合（登録は targets、
+ *           定義はそれを自分で動かすエージェント）に戻す。ほかのエージェントへは広げない（広げるのはマスの確認だけ）。
+ *   すでにオン（どれかのマスがオン）の行を入れても変えない。
+ * 押せないとき: { lock: { reason, detail, agent } }。鍵つきでオンのマスが残る（切っても動き続ける）、ほかの行が黙って止まる
+ * （渡し直せずに一緒に止まる。セルの押せる・押せないの decideModes と同じ物差し）、入れても動くエージェントが無い。押せるとき: { next }（s.enable つき）。
+ * Devin の取り込みの止め（compat.devin: 'off'）は、Devin へ渡すものが無くなると取り込みが戻る。そのときほかの行の Devin の列が変わるのは、
+ * セルを押したときと同じく事実のとおり（鍵の理由 devinImports・devinCompatOff で見せる）
+ */
+export function rowSwitchPlan(inv, s, skip, row, on, before = null) {
+  if (row.scope === 'managed') return { lock: { reason: 'admin', detail: 'managed', agent: row.agent } };
+  if (row.kind === 'grokOwn') return { lock: { reason: 'own', detail: 'grokOwn', agent: GROK } };
+  const cellsAt = st => Object.fromEntries(UNIFY_TARGETS.map(A => [A, cellsFor(inv, st, skip, A)]));
+  const was = before ?? cellsAt(s);
+  const onAt = cs => UNIFY_TARGETS.some(A => cs[A].get(row.key)?.state === 'on');
+  if (on && onAt(was) && !rowIsOff(row, s)) return { next: { ...s, enable: s.enable ?? [] } };
+  const next = structuredClone({ off: s.off, spread: s.spread, unused: s.unused, compat: s.compat, enable: s.enable ?? [] });
+  if (on) {
+    next.unused = next.unused.filter(k => k !== row.key);
+    if (row.kind === 'reg' && !row.hook.enabled) next.enable = [...new Set([...next.enable, row.key])];
+  } else next.unused = [...new Set([...next.unused, row.key])].sort();
+  let after = cellsAt(next);
+  if (on && !onAt(after)) {
+    delete next.off[row.key];
+    delete next.spread[row.key];
+    after = cellsAt(next);
+  }
+  for (const A of UNIFY_TARGETS) {
+    const c = after[A].get(row.key);
+    if (!on && c?.state === 'on') return { lock: { reason: c.reason ?? 'own', detail: c.detail ?? 'stoppedWithOthers', agent: A } };
+    for (const [k, x] of after[A]) {
+      if (k === row.key || !x._mismatch || was[A].get(k)?._mismatch) continue;
+      const l = {}; lockUnit(l, A); return { lock: { reason: l.reason, detail: l.detail, agent: A } };
+    }
+  }
+  if (on && !onAt(after)) {
+    const c = UNIFY_TARGETS.map(A => [A, after[A].get(row.key)]).find(([, x]) => x?.mode === 'locked' && x.reason);
+    return { lock: c ? { reason: c[1].reason, detail: c[1].detail, agent: c[0] } : { reason: 'relay', detail: 'nothingToRun', agent: row.agent ?? null } };
+  }
+  return { next };
+}
+
 /** 外へ出すセル（内部の印を落とす） */
 export const publicCell = c => Object.fromEntries(Object.entries(c).filter(([k]) => !k.startsWith('_')));
 
@@ -642,23 +686,30 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     if ((cell.state === 'on') === on) return s;
     return flipAgents({ ...s, enable: [] }, row, agent, on, inv);
   });
-  /** 行の全体のスイッチ（hooks.setRow）。切るとエージェントごとの選択は覚えたまま */
-  const setRow = ({ key, on, cwd = null, expect = null }) => change({ cwd, expect }, (s, inv) => {
+  /** 行の全体のスイッチ（hooks.setRow）。rowSwitchPlan の決まり。押せない（鍵つきでオンのマスが残るなど）なら断る */
+  const setRow = ({ key, on, cwd = null, expect = null }) => change({ cwd, expect }, (s, inv, eff) => {
     const row = inv.byKey.get(key);
     if (!row) throw invalid('hooksAgents.noRow', { key });
-    if (row.scope === 'managed' || row.kind === 'grokOwn') throw invalid('hooksAgents.notPressable', { key, agent: '*' });
-    const next = { ...s, unused: on ? s.unused.filter(k => k !== key) : [...new Set([...s.unused, key])], enable: [] };
-    if (on && row.kind === 'reg' && !row.hook.enabled) next.enable = [key];
-    return next;
+    const plan = rowSwitchPlan(inv, { ...s, enable: [] }, eff.skip, row, on);
+    if (plan.lock) throw invalid('hooksAgents.rowLocked', { key, agent: plan.lock.agent ?? '*', detail: plan.lock.detail });
+    return plan.next;
   });
-  /** 組の 1 つのエージェントの列（押せるセルだけ）か、組の全部の行のスイッチ（hooks.setGroup） */
+  /**
+   * 組の 1 つのエージェントの列（押せるセルだけ。広げる確認が要るセルは入れない）か、組の全部の行のスイッチ（hooks.setGroup）。1 回の書き込み。
+   * 行のスイッチは rowSwitchPlan を 1 行ずつ重ねる。押せない行が 1 つでもあれば、どれも変えずに断る（半分だけ入った状態を作らない）
+   */
   const setGroup = ({ group, agent = null, on, cwd = null, expect = null }) => change({ cwd, expect }, (s, inv, eff) => {
     let cur = { ...s, enable: [] };
     const rows = inv.rows.filter(r => r.group === group && r.kind !== 'grokOwn' && r.scope !== 'managed');
     for (const row of rows) {
-      if (!agent) { cur = { ...cur, unused: on ? cur.unused.filter(k => k !== row.key) : [...new Set([...cur.unused, row.key])] }; if (on && row.kind === 'reg' && !row.hook.enabled) cur.enable = [...cur.enable, row.key]; continue; }
+      if (!agent) {
+        const plan = rowSwitchPlan(inv, cur, eff.skip, row, on);
+        if (plan.lock) throw invalid('hooksAgents.rowLocked', { key: row.key, agent: plan.lock.agent ?? '*', detail: plan.lock.detail });
+        cur = plan.next;
+        continue;
+      }
       const cell = decideModes(inv, cur, eff.skip, agent).get(row.key);
-      if (cell?.mode === 'toggle' && (cell.state === 'on') !== on) cur = flipAgents(cur, row, agent, on, inv);
+      if (cell?.mode === 'toggle' && (cell.state === 'on') !== on && !(on && cell.needsConfirm)) cur = flipAgents(cur, row, agent, on, inv);
     }
     return cur;
   });
@@ -887,15 +938,19 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     await keepSeen(v);
     const { inv, eff, cells } = v;
     const s = eff.agents;
+    const before = Object.fromEntries(UNIFY_TARGETS.map(A => [A, cellsFor(inv, s, eff.skip, A)]));
     const rows = inv.rows.map(row => {
       const byAgent = Object.fromEntries(UNIFY_TARGETS.map(A => [A, publicCell(cells[A].get(row.key) ?? { state: 'off', mode: 'none' })]));
       const pressable = !(row.scope === 'managed' || row.kind === 'grokOwn');
+      const rowOn = Object.values(byAgent).some(c => c.state === 'on');
+      const lock = rowSwitchPlan(inv, s, eff.skip, row, !rowOn, before).lock ?? null;
       const out = { key: row.key, kind: row.kind, group: row.group, agent: row.agent, scope: row.scope, event: row.event, matcher: row.matcher ?? null,
         command: row.command ? maskText(row.command) : '', ...(row.name ? { name: row.name } : {}), ...(row.path ? { path: row.path } : {}),
         ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.copyOf ? { copyOf: row.copyOf } : {}),
         // 行の全体のスイッチ（MCP と同じく、どれかのセルが入っていれば入り）。切ってもエージェントごとの選択は覚えたまま
-        on: Object.values(byAgent).some(c => c.state === 'on'), unused: s.unused.includes(row.key) || (row.kind === 'reg' && !row.hook.enabled),
-        switchable: pressable,
+        on: rowOn, unused: s.unused.includes(row.key) || (row.kind === 'reg' && !row.hook.enabled),
+        // switchable: 行のスイッチを押せるか（rowSwitchPlan。押しても変わらない・ほかが黙って変わるなら false）。switchLock: そのときの鍵の理由
+        switchable: !lock, ...(lock ? { switchLock: lock } : {}),
         // 場所ごと: この場所で使う（cwd があるときだけ）
         ...(cwd && pressable ? { here: { use: !eff.skip.has(row.key) } } : {}),
         // scanIds: hooks.scan の行の id（同じ定義が 2 つあれば 2 つ）。画面はこれで編集のシート・行の詳細と結ぶ（中身で突き合わせない）

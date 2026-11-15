@@ -1414,6 +1414,7 @@
     "stale": "The hooks list has changed. Reopen it and try again",
     "noRow": "The hook row ({{key}}) was not found. Reopen the list",
     "notPressable": "The {{agent}} cell of the hook row ({{key}}) cannot be pressed",
+    "rowLocked": "The row switch of the hook row ({{key}}) cannot be pressed: it keeps running in {{agent}} when turned off, other rows would change with it, or no agent would run it when turned on ({{detail}}; see switchLock on the row in hooks.matrix)",
     "badPlace": "Give the place as an absolute path",
     "legacyBroken": "Part of the hooks registration file (hooks.json) cannot be read, so the current behaviour cannot be copied. Repair it first",
     "legacyMoved": "Hooks have moved to the hook × agent list, so {{op}} has no effect on what runs (nothing was done). Use the list operations instead: read it with hooks.matrix and change it with hooks.setAgent (a cell), hooks.setRow (a row), hooks.setGroup (a group) or hooks.setPlace (use in this place). To go back to the previous owner (leave to the agent / Pleiad unifies), use hooks.resetAgents"

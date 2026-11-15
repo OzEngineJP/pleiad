@@ -364,7 +364,12 @@ export default async function (t) {
     const mRelay = await ha.matrix({ cwd: repo });
     const relay = cell(mRelay, ss.id, CLAUDE);
     t.ok('Pleiad が渡せないセルは鍵（relay）で理由のコード付き（Claude の SessionStart はコールバックで渡せない）', relay.mode === 'locked' && relay.reason === 'relay' && relay.detail === 'claudeCallback', JSON.stringify(relay));
-    await ha.setRow({ key: ss.id, on: true, cwd: repo });
+    // 入れても動くエージェントが無い行のスイッチは押せない（押しても変わらない、を作らない。ADR 0337 §決定 4）。理由は渡せないマスの鍵
+    const relayRow = mRelay.rows.find(r => r.key === ss.id);
+    const relayRefused = await ha.setRow({ key: ss.id, on: true, cwd: repo }).then(() => null, e => e.message);
+    t.ok('入れても動くエージェントが無い行は、行のスイッチが鍵（switchLock は渡せないマスの理由）で、操作も断る',
+      relayRow.on === false && relayRow.switchable === false && relayRow.switchLock?.detail === 'claudeCallback' && relayRow.switchLock?.agent === CLAUDE
+      && typeof relayRefused === 'string' && relayRefused.includes(ss.id), JSON.stringify({ relayRow: { on: relayRow.on, switchable: relayRow.switchable, switchLock: relayRow.switchLock }, relayRefused }));
     const relayTurn = await newTurn(CLAUDE);
     // 止めるものも渡すものも無ければ今までと同じ起動（null）。理由は一覧のセルが持つ
     t.ok('渡せない登録は渡さない（ほかに変えるものが無ければ起動は今までと同じ）', !(relayTurn?.runtime.supplied ?? []).some(x => x.hook.id === ss.id) && (relayTurn === null || relayTurn.record.unsupported.some(u => u.id === ss.id)), JSON.stringify(relayTurn?.record ?? null));
@@ -462,12 +467,69 @@ export default async function (t) {
       t.ok('(d) 選択の無い行を消しても、ほかの行の選択は付け替わらず、前の行き先の無い選択は残る', m.orphans.some(o => o.key === A3.key) === false && cell(m, B3.key, CLAUDE).state === 'on' && cell(m, C.key, CLAUDE).state === 'off'
         && m.orphans.some(o => o.key === A1.key), JSON.stringify(m.orphans.map(o => [o.key, o.reason])));
       await fs.writeFile(rkSettings, JSON.stringify({ hooks: { Stop: [cmd('node c.mjs')] } }));
-      await hb.setRow({ key: C.key, on: false, cwd: rkRepo });
+      // Claude の定義の行は Devin が取り込むので（devinImports の鍵つきでオン）行のスイッチは押せない。マスで書き込む
+      await hb.setAgent({ key: C.key, agent: CLAUDE, on: false, cwd: rkRepo });
       m = await hb.matrix({ cwd: rkRepo });
       t.ok('(d) 外していない行を消しても、外した行の選択は付け替わらない', cell(m, C.key, CLAUDE).state === 'off');
       t.ok('(b) 外した行を消した（現れた行が無い）: 行き先の無い選択（gone）として返す', m.orphans.some(o => o.key === G1.key && o.reason === 'gone' && o.event === 'PreToolUse' && o.off.includes(CLAUDE)), JSON.stringify(m.orphans.map(o => [o.key, o.reason])));
       t.ok('覚えた組は revision に入れない（一覧を開いて保存しても版は変わらない）', (await hb.matrix({ cwd: rkRepo })).revision === m.revision);
     }
+
+    // ---------------------------------------------------------------- 行のスイッチ（指示・Skills の行のスイッチと同じ決まり。ADR 0337・0338）
+    {
+      const rowOf = (mm, k) => mm.rows.find(r => r.key === k);
+      const states = (mm, k) => Object.fromEntries(AGENTS.filter(a => rowOf(mm, k).cells[a]).map(a => [a, cell(mm, k, a).state]));
+      let m = await ha.matrix({ cwd: repo });
+      // (b) 任せるから移る前の登録（どのエージェントでも動いていない）: 戻す先が無いので元の集合（targets）だけで入る。ほかへは広げない
+      t.ok('行のスイッチ（移行前）: 任せるの登録は切れていて押せる', !await ha.exists() && rowOf(m, reg.id).on === false && rowOf(m, reg.id).switchable === true, JSON.stringify(rowOf(m, reg.id)));
+      await ha.setRow({ key: reg.id, on: true, cwd: repo, expect: m.revision });
+      m = await ha.matrix({ cwd: repo });
+      t.ok('戻す先の無い行を入れる: 元の集合（登録の targets の Claude・Codex）だけが入り、ほかのエージェントへは広げない',
+        cell(m, reg.id, CLAUDE).state === 'on' && cell(m, reg.id, CODEX).state === 'on' && [OPENCODE, GROK, AGY, DEVIN].every(a => cell(m, reg.id, a)?.state !== 'on'), JSON.stringify(states(m, reg.id)));
+      // (g) すでにオンの行を入れても変えない
+      const onAgain = JSON.stringify(m.rows.map(r => [r.key, states(m, r.key)]));
+      await ha.setRow({ key: reg.id, on: true, cwd: repo });
+      const m2 = await ha.matrix({ cwd: repo });
+      t.ok('すでにオンの行を入れても、どのマスも変わらない', JSON.stringify(m2.rows.map(r => [r.key, states(m2, r.key)])) === onAgain);
+      // (e) 組の列のスイッチは、広げる確認の要るマスを入れない（確認はマスで 1 つずつ）
+      const wide = [OPENCODE, GROK, AGY, DEVIN].find(a => cell(m, reg.id, a)?.mode === 'toggle' && cell(m, reg.id, a).needsConfirm);
+      t.ok('登録にはほかのエージェントへ広げるマス（確認の要るマス）がある', !!wide, JSON.stringify(Object.fromEntries(AGENTS.map(a => [a, cell(m, reg.id, a)]))));
+      await ha.setGroup({ group: 'ply', agent: wide, on: true, cwd: repo });
+      m = await ha.matrix({ cwd: repo });
+      t.ok('組の列を入れても、確認の要るマス（広げる）は入らない', cell(m, reg.id, wide).state === 'off', `${wide} ${JSON.stringify(cell(m, reg.id, wide))}`);
+      // (a) 切ってから入れると、エージェントごとの選択（Codex を切った・ほかへ広げた）に戻る
+      await ha.setAgent({ key: reg.id, agent: CODEX, on: false, cwd: repo });
+      await ha.setAgent({ key: reg.id, agent: wide, on: true, cwd: repo });
+      m = await ha.matrix({ cwd: repo });
+      const picked = JSON.stringify(states(m, reg.id));
+      await ha.setRow({ key: reg.id, on: false, cwd: repo });
+      m = await ha.matrix({ cwd: repo });
+      t.ok('行を切る: どのエージェントでも切れ、行は off', rowOf(m, reg.id).on === false && Object.values(states(m, reg.id)).every(v => v !== 'on'), JSON.stringify(states(m, reg.id)));
+      await ha.setRow({ key: reg.id, on: true, cwd: repo });
+      m = await ha.matrix({ cwd: repo });
+      t.ok('行を入れ直す: 覚えた選択（Codex は切ったまま・広げた先は入ったまま）に戻る', JSON.stringify(states(m, reg.id)) === picked
+        && cell(m, reg.id, CODEX).state === 'off' && cell(m, reg.id, wide).state === 'on', `${picked} → ${JSON.stringify(states(m, reg.id))}`);
+      // (c) 切っても鍵つきでオンが残る行（Claude の定義は Devin が取り込む）: 行のスイッチは押せず、操作も断る
+      const stopSw = rowOf(m, stopRow.key);
+      const fileBefore = await fs.readFile(ha.file, 'utf8');
+      const stopRefused = await ha.setRow({ key: stopRow.key, on: false, cwd: repo }).then(() => null, e => e);
+      t.ok('鍵つきでオンのマスが残る行（Claude の定義 × Devin の取り込み）: 行のスイッチは押せない（switchLock は devinImports）',
+        stopSw.on === true && stopSw.switchable === false && stopSw.switchLock?.detail === 'devinImports' && stopSw.switchLock?.agent === DEVIN, JSON.stringify(stopSw.switchLock ?? null));
+      t.ok('その行を切る操作は断り（INVALID・行の ID 入り）、ファイルは変えない', stopRefused?.code === 'INVALID' && stopRefused.message.includes(stopRow.key) && await fs.readFile(ha.file, 'utf8') === fileBefore,
+        stopRefused?.message);
+      t.ok('作業場所の 1 行も、Devin が取り込むので行のスイッチは押せない', rowOf(m, WS_KEY).switchable === false && rowOf(m, WS_KEY).switchLock?.detail === 'devinImports', JSON.stringify(rowOf(m, WS_KEY).switchLock ?? null));
+      // (d) 管理者の行
+      t.ok('管理者の行: 行のスイッチは鍵（admin）', rowOf(m, adminRow.key).switchable === false && rowOf(m, adminRow.key).switchLock?.reason === 'admin');
+      // (f) 組の行のスイッチ: 押せない行が 1 つでもあれば、どれも変えずに断る（1 回の書き込み。半分だけ入った状態を作らない）
+      const revBefore = m.revision;
+      const groupRefused = await ha.setGroup({ group: 'own', on: false, cwd: repo }).then(() => null, e => e);
+      t.ok('組の行のスイッチ: 押せない行があれば断り、ほかの行も変えない（revision もファイルもそのまま）',
+        groupRefused?.code === 'INVALID' && (await ha.matrix({ cwd: repo })).revision === revBefore && await fs.readFile(ha.file, 'utf8') === fileBefore, groupRefused?.message);
+      // 一覧の行のスイッチ（on）は、鍵つきでオンのマスも数える
+      t.ok('行の on: 鍵つきでオンのマスだけが動いていても on', m.rows.every(r => r.on === Object.values(r.cells).some(c => c.state === 'on')));
+      await ha.reset();
+    }
+
 
     // ---------------------------------------------------------------- 操作（hooks.*）
     const calls = [];
