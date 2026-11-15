@@ -1,6 +1,6 @@
 # ADR 0337: 設定 › プラグインの指示・Skills を「名前ごと・エージェントごと」の行にする（段 2）
 
-- Status: Accepted
+- Status: 提案（2026-11-15。引き継いだ担当が、実装と本物での確かめに合わせて書き直した）
 - Date: 2026-11-15
 - Related: ADR 0327（外部 MCP の名前×エージェント一覧）, ADR 0331（段 1：4 タブ・フォルダー束・鍵吹き出し）, ADR 0336（Grok・Devin の写しホームを見送り）, `temporary/mockups/context-tabs-matrix-report.md`
 
@@ -64,6 +64,11 @@ ADR 0327 で外部 MCP を「名前ごと × 6 エージェント」の一覧に
 3. **初回編集時の実体化**
    - 利用者が `(placeOrDefault, kind)` で初めて行またはセルを切り替えた瞬間、現在のスキャン結果と継承元（親ディレクトリの `agents` 設定または `docAgentsFromLegacy`）から全項目の `agents` 状態を切り出して `context-agents.json` に確定保存し、当該操作を反映する。
    - 未接続・読込前のプレースホルダのみにならないよう、`context-agents.json` 未登録の間は未編集フラグを保ち、既存 `sources` / `excludePaths` は後方互換の読み取り専用フォールバックとして扱う。
+   - 押したときの保存は `core/context-doc-matrix.mjs` の `applyDocTouch` 1 つにまとめ、画面の操作（`setDocAgent` / `setDocRow`）・試験が同じ関数を通る。表の初期のマスと実行時の計画も、同じ `resolveDocForAgent` から出す。
+   - 旧い「Pleiad がそろえる」の場所を初めて触るときは、ユーザーの物の行の広げ（`spread`）も写す（写さないと、その場所だけ旧い広げが消える）。
+   - 旧い `excludePaths` は保存されている絶対パスで、その下の物と、リンクの実体の下の物を除外として数える（main の探し方と同じ）。
+4. **場所の行を「使う」に戻すとき**
+   - 右パネルや場所の行のスイッチで行をオンに戻すと、全エージェントをオンにせず、その場所の上書きが無いときの状態（継承元のマス）に戻す。main で除外を外したときの動きと同じ。
 
 ### 4. エージェント別の実行時抑止・再配布と鍵の規則
 
@@ -72,10 +77,10 @@ ADR 0336 の教訓（写しホーム `GROK_HOME` 等で認証切れ・無関係�
 | エージェント | 指示（`instruction`）の止め方・鍵 | Skills（`skill`）の止め方・鍵 |
 |---|---|---|
 | **Claude** | `claudeMdExcludes` で実ファイル単位（`CLAUDE.md`, `AGENTS.md`, `.claude/rules/*.md`）に個別抑止。維持または代理配布分のみ既定注入／`instructions_for_path`。鍵なし。 | 保持したいスキルがネイティブ版と一致する場合は `skills: [keptNames]` を渡して絞り込み。内容が `prefer` で別ソースへ差し替わる・全オフにする場合は `skills: []` + `disable-slash-commands` + `Skill` ツール抑止の上で `ply_context.load_skill` へ載せる。無改変時は `skills: "all"` のまま維持。鍵なし。 |
-| **Codex** | ネイティブと差が出る場合のみ `project_doc_max_bytes = 0` で一括停止し、残す非条件付き指示を `developerInstructions`、条件付きを `instructions_for_path` で再配布。鍵なし。 | `skills/config` でオフ対象・`prefer` で上書きされたネイティブパス単位に `enabled: false`。代理配布分（別ソースや `prefer` 差し替え分）は `ply_context.load_skill`。鍵なし。 |
-| **Antigravity** | ユーザー `~/.gemini/GEMINI.md` はカスタムエージェントでも止められないため **オンのまま鍵（`own`）**。ワークスペース指示（`__workspace__` / `<ws>/AGENTS.md` / `GEMINI.md`）は `--agent ply-context` + `nativeInjected` のフィルタ＋`instructions_for_path` で切替可。 | ネイティブと差が出る場合は `--agent ply-context` の `inheritCustomizations: false` で一括停止し、残す・代理配布するスキルを `ply_context.load_skill` で再配布。鍵なし。 |
+| **Codex** | ネイティブと差が出る場合のみ `project_doc_max_bytes = 0` で一括停止し、残す非条件付き指示を `developerInstructions`、条件付きを `instructions_for_path` で再配布。ユーザーの `~/.codex/AGENTS.md`（`AGENTS.override.md`）は `project_doc_max_bytes` では止まらず main も止めていないため **オンのまま鍵（`own`）**。 | `skills/config` でオフ対象・`prefer` で上書きされたネイティブパス単位に `enabled: false`。代理配布分（別ソースや `prefer` 差し替え分）は `ply_context.load_skill`。鍵なし。 |
+| **Antigravity** | ユーザー `~/.gemini/GEMINI.md` はカスタムエージェントでも止められないため **オンのまま鍵（`own`）**。ワークスペース指示（`__workspace__` / `<ws>/AGENTS.md` / `GEMINI.md`）は `--agent ply-context` + `nativeInjected` のフィルタ＋`instructions_for_path` で切替可。 | Antigravity が自分で読む Skill を 1 つでも止めると `inheritCustomizations: false` になり、Hooks・プラグイン・サブエージェントも一緒に消える。このため、main でもそうなる旧い「Pleiad がそろえる」の場所でだけ押せる（`--agent ply-context` の `inheritCustomizations: false` で一括停止し、残す・代理配布するスキルを `ply_context.load_skill` で再配布）。それ以外の場所では、自分で読む Skill とまとめ行は **オンのまま鍵（`bundled`）**。自分で読まない Skill を広げるマスは押せる。本物の Antigravity では未確認（使用枠の都合）。 |
 | **OpenCode** | ネイティブと差が出るターンは専用の管理 `serve`（`managedLaunch`：空の `OPENCODE_CONFIG_DIR` と `OPENCODE_DISABLE_PROJECT_CONFIG=1`）で起動してネイティブ指示を止め、維持・配布分のみ `system` / `instructions_for_path` で渡す（1 件でも変えると管理 `serve` 経路になる点は報告へ明記）。鍵なし。 | ネイティブと差が出るターンは `managedLaunch` 上で `skill: deny` + `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1` + 隔離 `HOME` により `.opencode/skills` / `.claude/skills` / `.agents/skills` を停止し、維持・配布分を `ply_context.load_skill` で渡す。無改変時は既存の起動経路を維持。鍵なし。 |
-| **Devin** | 写しホームは作らない。自前パス（`%APPDATA%/devin/*`, `~/.devin/*`, `<ws>/.devin/*`）は `read_config_from` で止まらないため **オンのまま鍵（`own` / `workspace`）**。インポート形式（`agents_standard`, `claude`, `cursor`, `windsurf`, `copilot`, `opencode`）は全停止または同一形式グループ内にオフ行がある場合 `read_config_from[fmt] = false` で止め、同グループ内の維持行は `ply_context` で再配布。よってグローバル指示 `__workspace__`（`CLAUDE.md・AGENTS.md`）は切替可。実機 `devin --config <path> acp` は `initialize` ではなく `session/new` で `--config` を読むため、一時 `--config` ファイルの削除（`launch.cleanup()`）はターン終了の `finally` まで遅延する。なお `read_config_from[fmt] = false` は同形式のネイティブ MCP 取り込みも止めるため、該当 MCP は外部 MCP 中継で補う。 | 写しホームは作らない。自前スキル（`.devin/skills`, `.cognition/skills`, `%APPDATA%/devin/skills`）と共通 `.agents/skills`（グローバル行 `__workspace__` `.claude\skills・.agents\skills` を含む）は止まらないため **オンのまま鍵（`own` / `workspace`）**。`.claude/skills` 等インポート形式の行は `read_config_from[fmt] = false`＋`ply_context.load_skill` で切替可。**重要**：`read_config_from.claude = false`（または `cursor = false`）を使うターンでは、Devin CLI が `.mcp.json` / `~/.claude.json` 等も同時に読まなくなるため、Devin で有効な該当ソース MCP があれば自動的に `ply_context` リレーへ補完する。 |
+| **Devin** | 写しホームは作らない。自前パス（`%APPDATA%/devin/*`, `~/.devin/*`, `<ws>/.devin/*`）は `read_config_from` で止まらないため **オンのまま鍵（`own` / `workspace`）**。インポート形式（`agents_standard`, `claude`, `cursor`, `windsurf`, `copilot`, `opencode`）は全停止または同一形式グループ内にオフ行がある場合 `read_config_from[fmt] = false` で止め、同グループ内の維持行は `ply_context` で再配布。よってグローバル指示 `__workspace__`（`CLAUDE.md・AGENTS.md`）は切替可。作業場所の `.windsurf/global_rules.md` は Devin が読まない物として数える。`read_config_from` は形式ごとに指示と Skills をまとめて止めるので、片方の表で止めた形式に巻き込まれる物は、もう片方の表から Pleiad が渡し直す（`coupleDevinFormats`。表に触れていない種類も、そのターンは表で解く）。一時 `--config` ファイルの寿命は段 3 の担当の `c99f39b1`（プロセスを閉じるときに消し、残った物は次の起動で 1 日を過ぎた分を消す）に揃える。なお `read_config_from[fmt] = false` は同形式のネイティブ MCP 取り込みも止めるため、該当 MCP は外部 MCP 中継で補う。 | 写しホームは作らない。自前スキル（`.devin/skills`, `.cognition/skills`, `%APPDATA%/devin/skills`、`DEVIN_CONFIG_HOME` の置き場）、main が Devin の物として並べる `~/.codeium`・`~/.copilot` の Skills、共通 `.agents/skills`（グローバル行 `__workspace__` `.claude\skills・.agents\skills` を含む）は、止まることを確かめられないため **オンのまま鍵（`own` / `workspace`）**。入れてある Devin（3000.11.92）は `codex`・`kiro` の取り込みを持たないので、`~/.codex` などの Skill は Devin が読まない物として数える（新しい版の文書には `codex`・`kiro`・`cloud` があり、版を上げるときに確かめ直す）。`.claude/skills` 等インポート形式の行は `read_config_from[fmt] = false`＋`ply_context.load_skill` で切替可。**重要**：`read_config_from.claude = false`（または `cursor = false`）を使うターンでは、Devin CLI が `.mcp.json` / `~/.claude.json` 等も同時に読まなくなるため、Devin で有効な該当ソース MCP があれば自動的に `ply_context` リレーへ補完する。 |
 | **Grok** | `GROK_HOME` の写しは使わない（ADR 0336）。ファイル由来の指示・Skills は全て鍵（Grok が自分で読む Grok/共通/Claude 系はオン＋`own`/`workspace`、その他はオフ＋`relay`）。**例外として `Pleiad の指示`（`plyInstructions`）は今も Grok に渡せるため鍵を外し 6 エージェントすべて切替可とする**（右端「委譲と連動」セルのみ `linked` 鍵）。 | ファイル由来は指示と同様に全て鍵（自前・共通・Claude 系はオン＋`own`/`workspace`、その他はオフ＋`relay`）。 |
 
 無改変状態（あるエージェントについて、有効指示セット＝そのエージェントのネイティブ読込指示セット かつ 有効スキルセット＝そのエージェントのネイティブ読込スキルセット）では、そのエージェントに対して余計な抑制・代理起動を発動せず、従来通りの起動経路・引数・環境を維持する。

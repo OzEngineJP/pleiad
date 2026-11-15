@@ -98,7 +98,7 @@ Devin CLI のモデルは、モデル系列の代表と、思考の強さ・速�
 利用上限や請求額を保証する表示ではなく、残り使用枠を取得できないときは「不明」とする。
 
 Pleiad が読むネイティブ設定の一覧が不明なときは、指示量や MCP の一覧を推定しない。
-これは Devin 自身がネイティブ設定を読まないという保証ではない。指示・Skills のセル単位設定（[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）では、Devin 自身の置き場（`%APPDATA%/devin/*`・`~/.devin/*`・`<ws>/.devin/*` と `.agents/skills`）は `read_config_from` で止められないためオンのまま鍵（`own` / `workspace`）とし、`claude`・`agents_standard`（作業場所まとめ行含む）・`cursor`・`windsurf`・`copilot`・`opencode` 等の取り込み形式は `read_config_from[fmt] = false` で止めて、同じ形式で残す行を `ply_context` で再配布する（`--config` 一時ファイルは実機 `devin acp` が `session/new` で参照するためターン終了の `finally` まで保持する）。なお同一形式の `read_config_from[fmt] = false` はその形式のネイティブ MCP 取り込みも止めるため、アクティブな外部 MCP は Pleiad 側の中継で補う。
+これは Devin 自身がネイティブ設定を読まないという保証ではない。指示・Skills のセル単位設定（[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）では、Devin 自身の置き場（`%APPDATA%/devin/*`・`~/.devin/*`・`<ws>/.devin/*`・`DEVIN_CONFIG_HOME` の置き場と、`.agents/skills`・`~/.codeium`・`~/.copilot` の Skills）は `read_config_from` で止まることを確かめられないためオンのまま鍵（`own` / `workspace`）とし、`claude`・`agents_standard`（作業場所まとめ行含む）・`cursor`・`windsurf`・`copilot`・`opencode` 等の取り込み形式は `read_config_from[fmt] = false` で止めて、同じ形式で残す行を `ply_context` で再配布する。`read_config_from` は形式ごとに指示と Skills をまとめて止めるので、片方で止めた形式に巻き込まれる物は、もう片方の表から渡し直す。入れてある Devin（3000.11.92）は `codex`・`kiro` の取り込みを持たない（新しい版の文書にはあり、版を上げるときに確かめ直す）。`--config` 一時ファイルの寿命は devin.mjs（プロセスを閉じるときに消す）に従う。なお同一形式の `read_config_from[fmt] = false` はその形式のネイティブ MCP 取り込みも止めるため、アクティブな外部 MCP は Pleiad 側の中継で補う。
 通常の会話では利用者のネイティブ設定とログインを保ち、会話データの置き場だけを Pleiad 専用に分ける。
 Windows では CLI 本体が予期せず先に終了した場合、既存の `taskkill` による終了処理だけでは残った子プロセスをすべて回収できる保証はない。
 
