@@ -4,7 +4,7 @@
 //   Antigravity: Pleiad の一時の置き場（--add-dir）の .agents/hooks.json に、登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの { enabled: false }
 // 変換（イベント・matcher・入出力）は第 2 段の core/hooks-copy.mjs と core/hook-adapter.mjs をそのまま使う。
 import { HOOK_AGENTS, HOOK_EVENTS, HOOK_EMULATED, HOOK_VIA } from './hooks-config.mjs';
-import { convertHook, ADAPTER_MARGIN, adapterCommand, defaultTimeout } from './hooks-copy.mjs';
+import { convertHook, ADAPTER_MARGIN, adapterCommand, defaultTimeout, safeAdapterPath } from './hooks-copy.mjs';
 
 // Claude の SDK のコールバックで渡せないイベント。SessionStart はコールバックが呼ばれない（実機で確認。2026-09-28、Agent SDK 0.3.258）。
 // Setup は CLI の --init / --maintenance のときだけで、Pleiad の会話では起きない
@@ -14,6 +14,8 @@ const AGY_TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
 // Codex の hooks の state で止める出どころ（hooks/list の source）。プラグイン・管理者の定義は止めない（ADR 0045）
 export const CODEX_STOP_SOURCES = new Set(['user', 'project']);
 export const AGY_NAME_PREFIX = 'pleiad-';
+// agy の置き場の .agents の中のアダプターのフォルダー
+export const AGY_ADAPTER_DIR = 'pleiad-hooks';
 
 /**
  * 1 件の登録を、あるエージェントへ渡せる形にする（純粋）。登録が対象にしていなければ null。
@@ -144,14 +146,14 @@ export function codexHooksState({ table, probe = [], list = [], stopRows = null 
 
 /**
  * Antigravity の一時の置き場の .agents/hooks.json。登録は pleiad-<id> の名前で、コマンドは置き場の .agents からの相対パスのアダプター越し
- * （置き場の hook は <置き場>/.agents で動く。アダプターが stdin の workspacePaths から利用者の作業場所に直す）。
+ * （書くときに agyHooksFileAt で絶対パスに直す。アダプターが stdin の workspacePaths から利用者の作業場所に直す）。
  * nativeNames はユーザー・作業場所の定義の名前（止める）。プラグインの名前は入れない
  */
 export function agyHooksFile({ supplied, nativeNames = [], adapterName }) {
   // 名前はエージェントの設定ファイルから来る外の値。`__proto__` なども普通の名前として出すため、Map で組んで Object.fromEntries で
   // own property にする（普通の {} への代入だと `__proto__` は prototype の設定になり、JSON に出ず止まらない）
   const out = new Map();
-  const rel = `pleiad-hooks/${adapterName}`;
+  const rel = `${AGY_ADAPTER_DIR}/${adapterName}`;
   const natives = new Set(nativeNames);
   for (const s of supplied) {
     const name = `${AGY_NAME_PREFIX}${s.hook.id}`;
@@ -164,6 +166,23 @@ export function agyHooksFile({ supplied, nativeNames = [], adapterName }) {
   }
   for (const n of natives) out.set(n, new Map([['enabled', false]]));
   return Object.fromEntries([...out].map(([k, v]) => [k, Object.fromEntries(v)]));
+}
+
+/**
+ * agy の hooks.json のアダプターのパスを、置き場の .agents からの相対パスから絶対パス（スラッシュ区切り・引用なし）に直す（純粋）。
+ * 今の agy（2026-11-15 実機）は --add-dir の置き場の hook を .agents 以外のフォルダーで動かし、相対パスではアダプターが見つからない。
+ * 置き場のパスに空白・安全でない文字があるときは引用なしで書けないので、相対パスのまま返す。
+ * 形の比較（hooksShape）は相対パスの形で取る（置き場の名前は会話ごとに変わるため）
+ */
+export function agyHooksFileAt(file, agentsDir) {
+  const base = String(agentsDir ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!base || /\s/.test(base) || !safeAdapterPath(base)) return file;
+  const prefix = `node ${AGY_ADAPTER_DIR}/`;
+  const fix = h => h && typeof h.command === 'string' && h.command.startsWith(prefix) ? { ...h, command: `node ${base}/${h.command.slice(5)}` } : h;
+  const event = list => Array.isArray(list) ? list.map(e => Array.isArray(e?.hooks) ? { ...e, hooks: e.hooks.map(fix) } : fix(e)) : list;
+  // 名前は外の値（`__proto__` も普通の名前）。Object.entries → Object.fromEntries で own property のまま写す
+  return Object.fromEntries(Object.entries(file).map(([name, spec]) => [name,
+    spec && typeof spec === 'object' && !Array.isArray(spec) ? Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, event(v)])) : spec]));
 }
 
 /**
