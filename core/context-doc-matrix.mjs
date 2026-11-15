@@ -316,6 +316,8 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
       holder[kind].agents[k] = toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on), ctx);
       continue;
     }
+    // すでにどれかの押せるマスがオンの行は変えない（受け継いだ規則を自分の規則として書き出しもしない）
+    if (on && unlockedOnAgents(kind, entryOrSummary, curRule, ctx).length) continue;
     if (on && !curRule?.was) {
       const inherited = restore ? (k === WORKSPACE_SUMMARY_KEY ? restore.summaryRow : restore.byKey.get(k)) : null;
       if (inherited && unlockedOnAgents(kind, entryOrSummary, inherited.rule, ctx).length) {

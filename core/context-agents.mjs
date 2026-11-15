@@ -398,6 +398,8 @@ export function setDocRowRule(kind, entryOrSummary, currentRule, on, ctx = null)
     const keep = unlockedOnAgents(kind, entryOrSummary, cur, ctx).length ? cur : was;
     return keep ? { ...next, was: { off: keep.off, spread: keep.spread } } : next;
   }
+  // すでにどれかの押せるマスがオンの行は変えない（まとまりのスイッチを「一部」からオンにしたとき、オンの行の広げを消したり広げたりしない）
+  if (unlockedOnAgents(kind, entryOrSummary, cur, ctx).length) return cur;
   if (was && unlockedOnAgents(kind, entryOrSummary, was, ctx).length) return was;
   return nativeOnlyDocRule(kind, entryOrSummary, cur, ctx);
 }

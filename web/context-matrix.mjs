@@ -239,6 +239,8 @@ export function recalcDocRow(row, agentIds) {
  * 自分で読むエージェントが無い物（探す場所に足したフォルダー）は、渡せる全エージェント
  */
 export function applyDocRowLocal(row, agentIds, on) {
+  // すでにどれかの押せるマスがオンの行は変えない（core/context-agents.mjs の setDocRowRule と同じ）
+  if (on && agentIds.some(a => row.cells[a] && !row.cells[a].locked && row.cells[a].on)) return;
   const was = row.rule?.was;
   const anyNative = agentIds.some(a => row.cells[a]?.native);
   for (const a of agentIds) {

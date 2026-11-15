@@ -169,6 +169,24 @@ export default async function (t) {
     t.ok('setDocRowRule(false) は非ロックエージェント全てを off にし、spread を空にする',
       rowOff.spread.length === 0 && rowOff.off.includes('claude') && rowOff.off.includes('codex') && !rowOff.off.includes('grok'));
 
+    // すでにどれかの押せるマスがオンの行は、行のスイッチをオンにしても変えない（まとまりのスイッチを「一部」からオンにしたとき）
+    const rowOnSpread = setDocRowRule('instruction', instA, toggledCodexOn, true);
+    t.ok('setDocRowRule(true) はオンの行の広げ（Codex）を消さない',
+      rowOnSpread.spread.join(',') === 'codex' && rowOnSpread.off.length === 0);
+    const teamDir = path.join(home, 'team-rules');
+    const teamFile = path.join(teamDir, '.claude', 'rules', 'r.md');
+    const instCustom = { kind: 'instruction', name: 'r.md', path: teamFile, scope: 'user', root: teamDir,
+      origins: [{ path: teamFile, source: 'claude', scope: 'user', root: teamDir }] };
+    const customClaude = toggleDocAgentRule('instruction', instCustom, { off: [], spread: [] }, 'claude', true);
+    const rowOnCustom = setDocRowRule('instruction', instCustom, customClaude, true);
+    const customCells = evaluateDocCells('instruction', instCustom, rowOnCustom);
+    t.ok('探す場所に足したフォルダーの行が Claude だけオンなら、setDocRowRule(true) で他のエージェントへ広げない',
+      customCells.claude.on === true && ['codex', 'antigravity', 'opencode', 'devin', 'grok'].every(a => !customCells[a].on));
+    const rowOffCustom = setDocRowRule('instruction', instCustom, rowOnCustom, false);
+    const rowBackCustom = evaluateDocCells('instruction', instCustom, setDocRowRule('instruction', instCustom, rowOffCustom, true));
+    t.ok('オフにしてからオンにすると、前の状態（Claude だけ）に戻る',
+      rowBackCustom.claude.on === true && ['codex', 'antigravity', 'opencode', 'devin', 'grok'].every(a => !rowBackCustom[a].on));
+
     // ---- 永続化・place 削除・旧 context-scans.json (.strict()) 非汚染保証
     const dataDir = path.join(tmp, 'data');
     await fs.mkdir(repo, { recursive: true });
