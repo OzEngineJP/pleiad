@@ -937,6 +937,17 @@
       "docNotPressable": "{{name}} は {{agent}} では切り替えられません",
       "docRowLocked": "{{name}} は行のスイッチでは切り替えられません（鍵の付いたエージェントが自分で読むため止まらないか、切り替えられるエージェントがありません）。鍵の無いマスがあれば、マスを押して切り替えてください",
       "docTargetRequired": "切り替える項目を指定してください",
+      "docAgentsWrite": {
+        "failed": "指示・Skills の表の設定を保存できませんでした。{{reason}}",
+        "isDir": "データの置き場で、context-agents.json と同じ名前のフォルダーがファイルの場所をふさいでいます",
+        "denied": "データの置き場の context-agents.json に書き込めません（ほかのプログラムが開いているか、書き込みが許されていません）",
+        "full": "ディスクの空きが足りません",
+        "other": "ファイルに書き込めませんでした（{{code}}）"
+      },
+      "legacyAfterTouch": {
+        "instruction": "{{place}} の指示は、設定 › プラグインの指示・Skills の表で決めています。旧い設定（担当・探す形式・除外）を変えても、どのエージェントに何が渡るかは変わらないので、保存しませんでした。表のマスで切り替えてください（操作 context.setDocAgent・context.setDocRow）。表をやめて旧い設定に戻すなら、場所の設定を消してください（会話の右パネルの「全体の設定に戻す」、または context.setSettings に value: null）",
+        "skill": "{{place}} の Skills は、設定 › プラグインの指示・Skills の表で決めています。旧い設定（担当・探す形式・除外）を変えても、どのエージェントに何が渡るかは変わらないので、保存しませんでした。表のマスで切り替えてください（操作 context.setDocAgent・context.setDocRow）。表をやめて旧い設定に戻すなら、場所の設定を消してください（会話の右パネルの「全体の設定に戻す」、または context.setSettings に value: null）"
+      },
       "connectorsUnread": "claude.ai のコネクターの一覧を読めませんでした。少し待ってからもう一度お試しください",
       "kindInvalid": "プラグインの設定の形式が不正です",
       "disabledMcpOnly": "名前で外す設定は外部 MCP だけです",

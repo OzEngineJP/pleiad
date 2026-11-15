@@ -216,6 +216,8 @@
 .cx-toast{position:sticky;bottom:12px;align-self:center;z-index:5;margin-top:-8px;padding:6px 16px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink);
   box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);opacity:0;pointer-events:none;transition:opacity var(--dur) var(--ease-out)}
 .cx-toast.on{opacity:1}
+/* 保存の失敗（レビュー S4）。成功と同じ下の固定の位置に、赤い字で長めに出す */
+.cx-toast.err{color:var(--ink-danger);max-width:min(560px,calc(100% - 24px));border-radius:var(--r-m);white-space:normal}
 
 /* 外部 MCP の追加・編集シート（<dialog>） */
 .mcp-sheet{width:min(460px,calc(100vw - 24px));max-height:calc(100dvh - 32px);padding:0;border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);

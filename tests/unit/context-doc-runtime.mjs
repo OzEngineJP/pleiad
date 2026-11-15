@@ -346,6 +346,29 @@ export default async function (t) {
       && JSON.stringify(agentsAfter.cells) === JSON.stringify(wsM.rows.find((r) => r.name === 'AGENTS.md').cells),
       JSON.stringify({ err: agentsRowErr?.message, gemini: geminiAfter.cells, agents: agentsAfter.cells }));
 
+    // 右パネルの「この場所で外しています / 全体の設定で外しています」は行ごとの inheritedOn で決める（レビュー S8）。
+    // この場所だけで外した行は、場所の設定を除けばオン（inheritedOn=true）。全体でも外すと、場所の設定を除いてもオフ（false）。
+    // 外していない行（AGENTS.md）はそのままオン
+    t.ok('docMatrix(place) の inheritedOn: この場所だけで外した行は true、外していない行は true',
+      geminiAfter.inheritedOn === true && agentsAfter.inheritedOn === true,
+      JSON.stringify({ gemini: geminiAfter.inheritedOn, agents: agentsAfter.inheritedOn }));
+    // 全体の設定（place: 'default'）に出るのはユーザーの段の物だけ。どのエージェントも鍵をかけない OpenCode の全体の指示（~/.config/opencode/AGENTS.md）で試す
+    const userOc = path.join(home, '.config', 'opencode', 'AGENTS.md');
+    await write(userOc, 'USER_OPENCODE_INST');
+    const userOcKey = docItemKey({ kind: 'instruction', path: userOc });
+    const findUserOc = (m) => m.rows.find((r) => docItemKey(r) === userOcKey);
+    await client.cmd('setDocRow', { kind: 'instruction', key: userOcKey, on: false, place: 'default', cwd: repo });
+    const ugOff = findUserOc(await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo }));
+    t.ok('docMatrix(place) の inheritedOn: 全体の設定で外した行は false（「全体の設定で外しています」）',
+      ugOff?.rowSwitchOn === false && ugOff?.inheritedOn === false,
+      JSON.stringify({ on: ugOff?.rowSwitchOn, inheritedOn: ugOff?.inheritedOn }));
+    await client.cmd('setDocRow', { kind: 'instruction', key: userOcKey, on: true, place: 'default', cwd: repo });
+    const ugBack = findUserOc(await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo }));
+    const geminiStill = (await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo })).rows.find((r) => r.name === 'GEMINI.md' && docItemKey(r) !== userOcKey);
+    t.ok('全体の設定を戻すとその行はオン、この場所だけで外した行は外したまま inheritedOn=true（ほかの行の注記は変わらない）',
+      ugBack?.rowSwitchOn === true && ugBack?.inheritedOn === true && geminiStill?.rowSwitchOn === false && geminiStill?.inheritedOn === true,
+      JSON.stringify({ ugBack: [ugBack?.rowSwitchOn, ugBack?.inheritedOn], gemini: [geminiStill?.rowSwitchOn, geminiStill?.inheritedOn] }));
+
     // prepareTurn の resolveRuntime も HOME/USERPROFILE ではなく PLEIAD_SCAN_HOME(SCAN_OPTIONS) で解決する
     // Devin は自分で取り込む物を止めないので、Devin が読まないユーザーの Codex の指示を Devin へ広げて、Pleiad が渡す物を作る
     await write(path.join(home, '.codex', 'AGENTS.md'), 'USER_CODEX_INST');
@@ -358,6 +381,29 @@ export default async function (t) {
     t.ok('WS ターン実行時も os.homedir() ではなく PLEIAD_SCAN_HOME から指示を読む',
       recPaths.some((p) => p.startsWith(home.toLowerCase())) && !recPaths.some((p) => p.includes('os-home')),
       JSON.stringify(recPaths));
+
+    // 表を触った場所の旧い設定（レビュー S1）: 何も変わらない変更は理由と代わりの操作を言って断り、効く変更（表より深い場所の上書き）は通す
+    const legacyView = await client.cmd('contextSettings', { cwd: repo });
+    const instValue = structuredClone(legacyView.places.find((p) => p.current).kinds.instruction.value);
+    const scansBefore = await fs.readFile(path.join(dataDir, 'context-scans.json'), 'utf8').catch(() => null);
+    let legacyErr = null;
+    try {
+      await client.cmd('setContextSettings', { place: repo, cwd: repo, kind: 'instruction',
+        value: { ...instValue, user: { ...(instValue.user ?? { sources: ['common', 'claude', 'codex'] }), excludePaths: ['no-such-instruction-file.md'] } } });
+    } catch (e) { legacyErr = e; }
+    const scansAfter = await fs.readFile(path.join(dataDir, 'context-scans.json'), 'utf8').catch(() => null);
+    const subDir = path.join(repo, 'legacy-sub');
+    await fs.mkdir(subDir, { recursive: true });
+    let deeperErr = null;
+    try { await client.cmd('setContextSettings', { place: subDir, cwd: subDir, kind: 'instruction', value: { ...instValue, owner: instValue.owner === 'ply' ? 'native' : 'ply' } }); }
+    catch (e) { deeperErr = e; }
+    const subMatrix = await client.cmd('docMatrix', { kind: 'instruction', cwd: subDir, place: subDir });
+    await client.cmd('setContextSettings', { place: subDir, remove: true });
+    t.ok('表を触った場所: 効かない旧い設定の変更は INVALID で断り（表で決めていること・context.setDocAgent・value: null を言う）、保存しない。表より深い場所の旧い上書きは効くので通す',
+      legacyErr?.code === 'INVALID' && /表で決めています/.test(String(legacyErr?.message ?? ''))
+      && /context\.setDocAgent/.test(String(legacyErr?.message ?? '')) && /value: null/.test(String(legacyErr?.message ?? ''))
+      && scansAfter === scansBefore && !deeperErr && subMatrix.touched === false,
+      JSON.stringify({ legacy: legacyErr?.message, code: legacyErr?.code, same: scansAfter === scansBefore, deeper: deeperErr?.message, subTouched: subMatrix.touched }));
 
     // 未操作と変更ありでゼロ変更バイパスを確認（fake セッションの contextSession で native vs ply）
     const sNative = await client.cmd('newSession', { cwd: repo, backend: 'fake' });

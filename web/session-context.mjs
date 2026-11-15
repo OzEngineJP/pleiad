@@ -27,7 +27,7 @@ import {
   CONTEXT_TABS, readTabStorage, writeTabStorage,
   groupEntries, bundleSwitchState, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
 } from './context-tabs.mjs';
-import { rowSwitch, docBundleLocked, docLockReason, docRowLockSummary } from './context-matrix.mjs';
+import { FRESH_AGENTS, rowSwitch, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, savedText } from './context-matrix.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
@@ -40,9 +40,10 @@ const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills
 const SOURCE = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', devin: 'Devin', antigravity: 'Antigravity', grok: 'Grok', common: t('sessionContext.source.common'), ply: 'Pleiad' };
 const GROUPS = ['user', 'dir', 'extra'];
 // 「この場所だけ変える」の担当の 2 択（設定の画面と同じ文）
+// 指示・Skills は名前 × エージェントの表で決める（ADR 0337）。担当の 2 択が残るのは外部 MCP だけ
 const OWNER = {
-  native: [t('context.owner.agent'), { instruction: t('context.instruction.agent'), skill: t('context.skill.agent'), mcp: t('context.mcp.agent') }],
-  ply: [t('context.owner.ply'), { instruction: t('context.instruction.ply'), skill: t('context.skill.ply'), mcp: t('context.mcp.ply') }],
+  native: [t('context.owner.agent'), { mcp: t('context.mcp.agent') }],
+  ply: [t('context.owner.ply'), { mcp: t('context.mcp.ply') }],
 };
 const SKILLS_SHOWN = 6;
 const HOOKS_SHOWN = 4;   // 右パネルに並べるユーザーの Hooks（残りは畳む）
@@ -116,7 +117,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   const removedPending = new Map();
   let chip = null;
   // 作業場所の設定（contextSettings）と、「この場所だけ変える」の間の探索結果
-  let place = { cwd: null, view: null, loading: false }, edit = false, editScan = null, editBusy = false, toastTimer = null, toastOn = false;
+  let place = { cwd: null, view: null, loading: false }, edit = false, editScan = null, editBusy = false, toastTimer = null, toastOn = false, toastFresh = false;
   let editDocs = { instruction: null, skill: null }, editDocLoading = false;
   // この場所の外部 MCP を「Pleiad がそろえる」へ切り替える前の確認を開いているか（ADR 0031）
   let unifying = false;
@@ -138,7 +139,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     onInput: q => {
       editSkillQuery = q;
       if (editSkillHost && editSkillHost.isConnected !== false && skillPaintArgs) {
-        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.doc, skillPaintArgs.offText);
+        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.doc);
       }
     },
   });
@@ -147,7 +148,11 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   const title = t('sessionContext.title');
   function subtitle(data) {
     const started = data.startedAt ?? data.report?.at;
-    const text = started ? t('sessionContext.subtitle.startedAt', { time: stamp(started) }) : t('sessionContext.subtitle.started');
+    // Antigravity・Grok は会話を始めるときだけ設定を読む。その会話では「次のターンから」と言わない（レビュー S8）
+    const fresh = FRESH_AGENTS.includes(session()?.backend);
+    const text = started
+      ? (fresh ? t('sessionContext.subtitle.startedAtFresh', { time: stamp(started) }) : t('sessionContext.subtitle.startedAt', { time: stamp(started) }))
+      : (fresh ? t('sessionContext.subtitle.startedFresh') : t('sessionContext.subtitle.started'));
     return data.refreshedAt ? t('sessionContext.subtitle.refreshed', { text, time: stamp(data.refreshedAt) }) : text;
   }
   const backendLabel = () => labelOf(session()?.backend) || t('sessionContext.agent');
@@ -258,7 +263,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const foot = el('p', 'scx-foot');
     foot.append(t('sessionContext.foot.lead'), button(t('sessionContext.foot.link'), 'cx-link', () => openSettings()));
     box.append(foot);
-    const toast = el('div', 'cx-toast scx-toast' + (toastOn ? ' on' : ''), t('context.saved')); toast.setAttribute('role', 'status');
+    const toast = el('div', 'cx-toast scx-toast' + (toastOn ? ' on' : ''), savedText(toastFresh)); toast.setAttribute('role', 'status');
     box.append(toast);
     return box;
   }
@@ -592,7 +597,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   async function placeWork(fn, focus) {
     if (editBusy) return;
     editBusy = true; notice = '';
-    try { await fn(); showToast(); }
+    try { toastFresh = (await fn()) === true; showToast(); }
     catch (e) { notice = t('context.saveFailed', { error: e.message }); }
     finally { editBusy = false; refresh(); if (focus) focusIn(focus); }
   }
@@ -608,12 +613,16 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   /** この場所の指示・Skills を名前単位でオン／オフする（全エージェント一括。この場所の上書きを自動で作る） */
   function saveDocRow(kind, target, on, focus) {
     return placeWork(async () => {
+      const before = editDocs[kind];
       await cmd('setDocRow', { kind, ...target, on, place: place.cwd, cwd: place.cwd });
-      const [view] = await Promise.all([
+      // 保存はできた。読み直しだけ失敗したときは「保存できませんでした」でなく、読み直せなかったと言う（レビュー S9）
+      const [view] = await Promise.allSettled([
         cmd('contextSettings', { cwd: place.cwd }),
         loadEditScan({ skipRefresh: true }),
       ]);
-      place.view = view;
+      if (view.status === 'fulfilled') place.view = view.value;
+      else notice = t('context.savedReloadFailed', { error: view.reason?.message ?? '' });
+      return docFreshChanged(before, editDocs[kind]);
     }, focus);
   }
   function showToast() {
@@ -692,22 +701,15 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         k.append(el('p', 'cx-sub', t('sessionContext.place.none')));
         return k;
       }
-      const norm = p => String(p ?? '').toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
-      const own = Boolean(here()?.saved && (
-        here()?.kinds?.[kind]?.override
-        || here()?.kinds?.[kind]?.docOverride
-        || (doc.agentsPlace && place.cwd && norm(doc.agentsPlace) === norm(place.cwd))
-      ));
-      const offText = own ? t('sessionContext.place.offHere') : t('sessionContext.place.offGlobal');
       const host = el('div', 'scx-edit-list');
       if (kind === 'skill') {
         editSkillHost = host;
-        skillPaintArgs = { doc, offText };
+        skillPaintArgs = { doc };
         k.append(editSkillFind.root, host);
       } else {
         k.append(host);
       }
-      paintEditEntries(host, kind, doc, offText);
+      paintEditEntries(host, kind, doc);
       return k;
     }
     const value = here()?.kinds[kind].value ?? place.view?.defaults.kinds[kind].value;
@@ -793,7 +795,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       editSkillQuery = '';
       editSkillFind.clear();
       if (editSkillHost && editSkillHost.isConnected !== false && skillPaintArgs) {
-        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.doc, skillPaintArgs.offText);
+        paintEditEntries(editSkillHost, 'skill', skillPaintArgs.doc);
       }
     }
     lastTabBar?.setActive(id, { focus });
@@ -804,7 +806,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       if (scroller && 'scrollTop' in scroller) scroller.scrollTop = 0;
     }
   }
-  function editDocRow(kind, doc, e, { child = false, displayName = null, offText }) {
+  function editDocRow(kind, doc, e, { child = false, displayName = null }) {
     const on = Boolean(e.rowSwitchOn);
     const off = !e.anyOn;
     const row = el('div', 'cx-row' + (off ? ' off' : '') + (child ? ' kid' : ''));
@@ -821,6 +823,9 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     body.append(nl);
     const where = kind === 'skill' ? dir(dir(e.path)) : dir(e.path);
     const note = (e.conditional || e.status === 'conditional') ? t('context.row.conditional', { paths: (e.paths ?? []).join(', ') }) : '';
+    // どこで外しているかは行ごとに決める（レビュー S8）。この場所の上書きが無くても外れている行（inheritedOn: false）は全体の設定、
+    // 上書きのせいで外れている行はこの場所。ほかの行を押してこの場所の上書きができても、注記は変わらない
+    const offText = e.inheritedOn === false ? t('sessionContext.place.offGlobal') : t('sessionContext.place.offHere');
     const subText = [child ? '' : shortPath(where), note, !on && !e.rowLocked ? offText : ''].filter(Boolean).join(' · ');
     if (subText) body.append(el('span', 'p', subText));
     const sw = rowSwitch({
@@ -838,7 +843,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     row.append(body, ...tokens, sw);
     return row;
   }
-  function paintEditEntries(host, kind, doc, offText) {
+  function paintEditEntries(host, kind, doc) {
     host.replaceChildren();
     const entries = doc?.rows ?? [];
     const query = kind === 'skill' ? editSkillQuery.toLowerCase() : '';
@@ -856,7 +861,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       for (const block of visibleBlocks) {
         if (block.type === 'row') {
           shown++;
-          host.append(editDocRow(kind, doc, block.entry, { child: false, displayName: block.childLabel, offText }));
+          host.append(editDocRow(kind, doc, block.entry, { child: false, displayName: block.childLabel }));
           continue;
         }
         const kids = block.items.filter(({ entry }) => hit(entry));
@@ -881,7 +886,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const flip = () => {
           if (query) return;
           editBundleOpen.set(bKey, !open);
-          paintEditEntries(host, kind, doc, offText);
+          paintEditEntries(host, kind, doc);
           focusIn(`[data-cx-fk="${escCss(fk)}"]`);
         };
         tw.onclick = flip;
@@ -912,7 +917,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const tokens = tok && tok.all > 0 ? [el('span', 'cx-tok', about(tok.on || tok.all))] : [];
         row.append(tw, body, ...tokens, sw);
         host.append(row);
-        if (open) for (const { entry, childLabel } of kids) host.append(editDocRow(kind, doc, entry, { child: true, displayName: childLabel, offText }));
+        if (open) for (const { entry, childLabel } of kids) host.append(editDocRow(kind, doc, entry, { child: true, displayName: childLabel }));
       }
     }
     if (query && !shown) {

@@ -188,11 +188,13 @@ export default async function (t) {
     await setLanguage('ja');
 
     // ---------------- 1. 設定 › プラグイン（web/context.mjs · Stage 2） ----------------
-    // ユーザーの段で source が codex の指示は ~/.codex/AGENTS.md だけで、Codex が必ず読む（Codex の列は鍵）。ここでは押せる行にするため OpenCode の物だけにする
+    // ユーザーの段で source が codex の指示は ~/.codex/AGENTS.md だけで、Codex が必ず読む（Codex の列は鍵）。ここでは押せる行にするため OpenCode の物だけにする。
+    // ~/.opencode/ の下は Devin も取り込み（read_config_from の opencode）、止めると Hooks・MCP も止まるので鍵つきでオンになる（ADR 0337 §8）。
+    // 鍵の無い行にするため、Devin が読まない OpenCode の設定の置き場（~/.config/opencode）に置く
     const rules = Array.from({ length: 9 }, (_, i) => ({
       id: `r${i}`, kind: 'instruction', scope: 'user', rule: true, defaultStatus: 'candidate',
-      name: `r${i}.md`, path: `/home/u/.opencode/rules/sec/r${i}.md`, realPath: `/home/u/.opencode/rules/sec/r${i}.md`,
-      tokens: 10, origins: [{ source: 'opencode', path: `/home/u/.opencode/rules/sec/r${i}.md`, scope: 'user' }],
+      name: `r${i}.md`, path: `/home/u/.config/opencode/rules/sec/r${i}.md`, realPath: `/home/u/.config/opencode/rules/sec/r${i}.md`,
+      tokens: 10, origins: [{ source: 'opencode', path: `/home/u/.config/opencode/rules/sec/r${i}.md`, scope: 'user' }],
     }));
     const skills = [
       { id: 's-dup-1', kind: 'skill', scope: 'user', defaultStatus: 'candidate', name: 'deploy', path: '/home/u/.claude/skills/deploy/SKILL.md', realPath: '/home/u/.claude/skills/deploy/SKILL.md', tokens: 20, origins: [{ source: 'claude', path: '/home/u/.claude/skills/deploy/SKILL.md', scope: 'user' }] },
@@ -508,12 +510,30 @@ export default async function (t) {
       && docWrites.at(-1).agent === 'claude' && docWrites.at(-1).on === true
       && instPanel.querySelector(`[data-key="${agyKey}"] .cx-ag[data-agent="claude"]`)?.getAttribute('aria-pressed') === 'true');
 
-    // 作業場所の summaryRow スイッチ
-    const wsSw = instPanel.querySelector(`[data-key="${WORKSPACE_SUMMARY_KEY}"] .cx-sw`);
-    wsSw.onclick();
+    // 保存の知らせ（レビューの決定 (b)）: Antigravity・Grok のマスが変わったときだけ「新しい会話から反映します」、ほかは「保存しました」
+    const toastEl = p.querySelector('.cx-toast');
+    t.ok('Claude のマスだけ変えた保存は「保存しました」だけを出す',
+      toastEl?.textContent === '保存しました' && !toastEl.classList.contains('err'), toastEl?.textContent);
+    const r0Key = docItemKey({ kind: 'instruction', path: '/home/u/.config/opencode/rules/sec/r0.md', realPath: '/home/u/.config/opencode/rules/sec/r0.md' });
+    const dwBeforeAg = docWrites.length;
+    instPanel.querySelector(`[data-key="${r0Key}"] .cx-ag[data-agent="antigravity"]`).onclick();
     await settle();
-    t.ok('作業場所 summaryRow のスイッチ操作で __workspace__ が setDocRow 保存される',
-      docWrites.at(-1).key === WORKSPACE_SUMMARY_KEY && docWrites.at(-1).on === false);
+    instPanel.querySelector('.cx-ask .btn-primary')?.onclick();
+    await settle();
+    t.ok('Antigravity のマスを変えた保存は「Antigravity と Grok は、新しい会話から反映します」を出す',
+      docWrites.length === dwBeforeAg + 1 && docWrites.at(-1).agent === 'antigravity'
+      && /Antigravity と Grok は、新しい会話から反映します/.test(toastEl?.textContent ?? ''), toastEl?.textContent);
+
+    // 作業場所の summaryRow スイッチ。作業場所の CLAUDE.md・AGENTS.md は Devin（取り込み）と Grok が自分で読み、止められない（鍵つきでオン）。
+    // 行のスイッチはオンのまま変わらないので、押せない見た目と鍵の理由にする（レビューの決定 (a)。押したのに変わらない、を作らない）
+    const wsSw = instPanel.querySelector(`[data-key="${WORKSPACE_SUMMARY_KEY}"] .cx-sw`);
+    const dwBeforeWs = docWrites.length;
+    wsSw.click?.();
+    await settle();
+    t.ok('作業場所 summaryRow は鍵つきでオンのマスが残るので、スイッチはオンのまま押せない（aria-disabled・鍵の理由・保存しない）',
+      wsSw.getAttribute('aria-checked') === 'true' && wsSw.getAttribute('aria-disabled') === 'true'
+      && Boolean(wsSw.dataset.tip) && typeof wsSw.onclick !== 'function' && docWrites.length === dwBeforeWs,
+      JSON.stringify({ checked: wsSw.getAttribute('aria-checked'), disabled: wsSw.getAttribute('aria-disabled'), tip: wsSw.dataset.tip }));
 
     // ユーザー行 r0.md の最後のオンエージェントをオフにするとフォーカスが行スイッチ sw: へ移る
     const firstKid = instPanel.querySelectorAll('.cx-row.kid')[0];
@@ -583,14 +603,22 @@ export default async function (t) {
       skillPanel.querySelectorAll('.cx-row.grp .cx-sw').every(x => x.getAttribute('aria-checked') === 'true'));
 
     // 保存失敗時のロールバック
-    const oneSw = () => skillPanel.querySelector('.cx-row:not(.grp) .cx-sw, .cx-row.kid .cx-sw');
-    const grpOf = () => [...skillPanel.querySelectorAll('.cx-row.grp .cx-sw')][0];
+    const oneSw = () => skillPanel.querySelectorAll('.cx-row:not(.grp) .cx-sw, .cx-row.kid .cx-sw').find(x => x.getAttribute('aria-disabled') !== 'true');
+    // ~/.claude/skills の物は Devin が取り込み、止められない（鍵つきでオン）ので、そのまとまりのスイッチは押せない（決定 (a)）。押せるまとまりで試す
+    const grpOf = () => [...skillPanel.querySelectorAll('.cx-row.grp .cx-sw')].find(x => x.getAttribute('aria-disabled') !== 'true');
     const beforeGrp = grpOf().getAttribute('aria-checked');
     failDoc = true;
     grpOf().onclick();
     await settle();
     t.ok('まとめて切り替える保存に失敗したら、スイッチは元の状態に描き直され、失敗が出る',
-      grpOf().getAttribute('aria-checked') === beforeGrp && p.querySelector('.cx-status')?.textContent.includes('boom-settings'));
+      grpOf().getAttribute('aria-checked') === beforeGrp && p.querySelector('.cx-status')?.textContent.includes('boom-settings')
+      // 長い表の下の行で失敗しても見えるよう、固定の位置のトーストにも失敗を出す（レビュー S4）
+      && p.querySelector('.cx-toast.on.err')?.textContent.includes('boom-settings'));
+    // 押せる 1 件（Devin が取り込まない ~/.codex/skills の物）は閉じたまとまりの中にあるので、開いてから試す
+    if (!oneSw()) {
+      const openGrp = skillPanel.querySelectorAll('.cx-row.grp').find(g => g.querySelector('.cx-sw')?.getAttribute('aria-disabled') !== 'true');
+      if (openGrp?.querySelector('.cx-tw')?.getAttribute('aria-expanded') === 'false') { openGrp.querySelector('.cx-tw').onclick(); await settle(); }
+    }
     const beforeOne = oneSw().getAttribute('aria-checked');
     oneSw().onclick();
     await settle();
@@ -615,20 +643,23 @@ export default async function (t) {
     dom.body.append(rightScroller);
     let panelBody = null, panelOpened = false;
     const placeKinds = {
-      instruction: { value: { owner: 'native', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
-      skill: { value: { owner: 'native', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] }, prefer: {} } },
+      instruction: { value: { owner: 'native', user: { sources: ['claude', 'antigravity'], excludePaths: [] }, directory: { sources: ['claude', 'antigravity'], excludePaths: [] } } },
+      skill: { value: { owner: 'native', user: { sources: ['claude', 'codex'], excludePaths: [] }, directory: { sources: ['claude', 'codex'], excludePaths: [] }, prefer: {} } },
       mcp: { value: { owner: 'ply', user: { sources: ['claude'], excludePaths: [] }, directory: { sources: ['claude'], excludePaths: [] } } },
       hooks: { value: { owner: 'ply' } },
     };
     let rightDocAgents = emptyDocAgentsConfig();
     const rightWrites = [];
     let failRight = false;
+    // 作業場所の .claude の下の物は Devin（取り込み）と Grok が自分で読み、止められない（鍵つきでオン）ので、行のスイッチは押せない（決定 (a)）。
+    // 行のスイッチの操作を試すため、指示は Antigravity だけが読む .agent/rules、Skills は Codex だけが読む .codex/skills に置く
+    // （作業場所の .agent/skills は Antigravity が名前ごとに止められず、鍵つきでオンになる）
     const rightEntries = [
-      { id: 're-1', kind: 'instruction', scope: 'directory', rule: true, defaultStatus: 'candidate', name: 'a.md', path: '/repo/.claude/rules/a.md', realPath: '/repo/.claude/rules/a.md', tokens: 10, origins: [{ source: 'claude', path: '/repo/.claude/rules/a.md', scope: 'directory' }] },
-      { id: 're-2', kind: 'instruction', scope: 'directory', rule: true, defaultStatus: 'candidate', name: 'b.md', path: '/repo/.claude/rules/b.md', realPath: '/repo/.claude/rules/b.md', tokens: 10, origins: [{ source: 'claude', path: '/repo/.claude/rules/b.md', scope: 'directory' }] },
+      { id: 're-1', kind: 'instruction', scope: 'directory', rule: true, defaultStatus: 'candidate', name: 'a.md', path: '/repo/.agent/rules/a.md', realPath: '/repo/.agent/rules/a.md', tokens: 10, origins: [{ source: 'antigravity', path: '/repo/.agent/rules/a.md', scope: 'directory' }] },
+      { id: 're-2', kind: 'instruction', scope: 'directory', rule: true, defaultStatus: 'candidate', name: 'b.md', path: '/repo/.agent/rules/b.md', realPath: '/repo/.agent/rules/b.md', tokens: 10, origins: [{ source: 'antigravity', path: '/repo/.agent/rules/b.md', scope: 'directory' }] },
       { id: 'rm-1', kind: 'mcp', scope: 'directory', defaultStatus: 'candidate', name: 'gh', path: '/repo/.mcp.json', realPath: '/repo/.mcp.json', tokens: 10, origins: [{ source: 'claude', path: '/repo/.mcp.json', scope: 'directory' }] },
       ...Array.from({ length: 9 }, (_, i) => ({
-        id: `rs-${i}`, kind: 'skill', scope: 'directory', defaultStatus: 'candidate', name: `sk-${i}`, path: `/repo/.claude/skills/sk-${i}/SKILL.md`, realPath: `/repo/.claude/skills/sk-${i}/SKILL.md`, tokens: 12, origins: [{ source: 'claude', path: `/repo/.claude/skills/sk-${i}/SKILL.md`, scope: 'directory' }],
+        id: `rs-${i}`, kind: 'skill', scope: 'directory', defaultStatus: 'candidate', name: `sk-${i}`, path: `/repo/.codex/skills/sk-${i}/SKILL.md`, realPath: `/repo/.codex/skills/sk-${i}/SKILL.md`, tokens: 12, origins: [{ source: 'codex', path: `/repo/.codex/skills/sk-${i}/SKILL.md`, scope: 'directory' }],
       })),
     ];
 

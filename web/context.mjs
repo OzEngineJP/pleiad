@@ -19,7 +19,7 @@ import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
 import { agentShortLabel } from './agent-brands.mjs';
-import { MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocRowLocal, askBanner, docBundleLocked, docLockReason, docRowLockSummary, matrixSvg, recalcDocRow, rowSwitch } from './context-matrix.mjs';
+import { FRESH_AGENTS, MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocRowLocal, askBanner, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, matrixSvg, recalcDocRow, rowSwitch, savedText } from './context-matrix.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
 const TAB_KEY = 'ply-context-tab';
@@ -209,20 +209,34 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   function saved(text = t('context.saved')) {
     status.textContent = '';
     toast.textContent = text;
+    toast.classList.remove('err');
+    toast.removeAttribute('aria-hidden');
     toast.classList.add('on');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('on'), 1800);
   }
+  /**
+   * 保存の失敗。先頭の文（role=alert で読み上げる）に加えて、成功の知らせと同じ下の固定の位置にも出す（レビュー S4）。
+   * 長い表の下の行で失敗しても、見ている位置で理由が読める。下の札は読み上げを重ねない（aria-hidden）
+   */
+  function failed(message) {
+    status.textContent = message;
+    toast.textContent = message;
+    toast.setAttribute('aria-hidden', 'true');
+    toast.classList.add('on', 'err');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('on', 'err'), 8000);
+  }
   async function work(fn, { redraw } = {}) {
     try { await fn(); }
     catch (e) {
-      status.textContent = t('context.saveFailed', { error: e.message });
+      failed(t('context.saveFailed', { error: e.message }));
       // スイッチは押した瞬間に見た目だけ先に変えている。保存できなかったときは、その種類のカードを保存されている状態から描き直す。
       // 入力欄のある操作（追加・編集）では描き直さない（打った文字を消さないため）
       if (redraw) { try { renderCard(redraw); } catch { /* 描き直せなくても失敗の表示は残す */ } }
     }
   }
-  const plyInstructions = createPlyInstructions({ cmd, work, saved: () => saved(), openDelegation, opened, showMenu, onCount: n => { plyCount = n; updateCounts(); } });
+  const plyInstructions = createPlyInstructions({ cmd, work, saved: (fresh) => saved(savedText(fresh)), openDelegation, opened, showMenu, onCount: n => { plyCount = n; updateCounts(); } });
   // 4 つ目の種類。担当・探索の設定（context-scans.json）には入れず、各エージェントの元の設定を読む（ADR 0045）
   const hooks = createHooksCard({ cmd, work, saved: () => saved(t('hooks.saved')), opened, onCount: n => { hooksCount = n; updateCounts(); } });
   tabPanels.hooks.append(hooks.root);
@@ -265,6 +279,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     if (!cell || cell.on || cell.locked || cell.native) return null;
     if (row.scope === 'workspace' || row.key === '__workspace__') return null;
     if (Array.isArray(row.rule?.spread) && row.rule.spread.length > 0) return null;
+    // 共通の置き場（.agents の下）の物は、そこを読むエージェント（Codex）の名前でなく「共通」と言う（モックの originCommon。レビュー S9）
+    if (row.origins?.length && row.origins.every(o => o.source === 'common')) return 'common';
     const origins = originText(row);
     if (origins.length) return origins[0];
     return row.origins?.some(o => o.source === 'common') ? 'common' : null;
@@ -278,14 +294,15 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     renderCard(kind);
     updateCounts();
     work(async () => {
-      try {
-        await runRemote();
-        saved();
-        await reloadDocMatrix(kind);
-      } catch (e) {
+      try { await runRemote(); }
+      catch (e) {
         docMatrices[kind] = prev;
         throw e;
       }
+      // 保存はできた。読み直し（失敗しても投げず、誤りを返す）の後の表と押す前の表を比べて、知らせの文を選ぶ
+      const reloadError = await reloadDocMatrix(kind);
+      saved(savedText(docFreshChanged(prev, docMatrices[kind])));
+      if (reloadError) status.textContent = t('context.savedReloadFailed', { error: reloadError.message });
     }, { redraw: kind });
   }
 
@@ -874,7 +891,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   function mcpContext() {
     return { cmd, cwd: home(), scanCwd: home(), scan, ply, agents, matrix, reloadMatrix, short, backends: backends(), info: info(),
       saveKind: (mutate, options) => work(() => saveKind('mcp', mutate, options)),
-      reload: () => loadScan(), refreshSettings: async () => { view = await cmd('contextSettings', {}); renderAll(); }, toast: saved, status: text => { status.textContent = text; }, rerender: () => renderCard('mcp'),
+      reload: () => loadScan(), refreshSettings: async () => { view = await cmd('contextSettings', {}); renderAll(); },
+      toast: ({ agents = [] } = {}) => saved(savedText(agents.some(a => FRESH_AGENTS.includes(a)))), status: text => { status.textContent = text; }, rerender: () => renderCard('mcp'),
       opened, loading, work };
   }
   const mcp = createMcpSection();
@@ -918,7 +936,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       const grid = await callDocRetry(() => cmd('docMatrix', { kind, cwd: target, place: 'default' }));
       if (ticket !== docTickets[kind]) return;
       if (Array.isArray(grid?.rows)) docMatrices[kind] = grid;
-    } catch { return; }
+    } catch (e) { return e; }
     renderCard(kind);
     updateCounts();
   }

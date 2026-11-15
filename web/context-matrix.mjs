@@ -7,6 +7,27 @@ import { agentShortLabel } from './agent-brands.mjs';
 import { brandMark } from './context-tabs.mjs';
 import { ensureLockTips, lockReasonText, lockAriaLabel } from './lock-tip.mjs';
 
+/**
+ * 会話を始めるときだけ設定を読むエージェント。始まっている会話には次のターンでも届かないので、
+ * ここに渡る物が変わった保存のときだけ「Antigravity と Grok は、新しい会話から反映します」と添える（レビューの決定 (b)）
+ */
+export const FRESH_AGENTS = ['antigravity', 'grok'];
+
+/** 指示・Skills の表の前と後で、Antigravity・Grok のマスのオン・オフが変わったか（前と後の両方にある行だけ比べる。読み直しで増えた・消えた行は数えない） */
+export function docFreshChanged(before, after) {
+  const rows = (d) => new Map([...(d?.rows ?? []), ...(d?.summaryRow ? [d.summaryRow] : [])].map((r) => [r.key, r]));
+  const a = rows(before), b = rows(after);
+  for (const [key, row] of b) {
+    const prev = a.get(key);
+    if (!prev) continue;
+    if (FRESH_AGENTS.some((agent) => (prev.cells?.[agent]?.on === true) !== (row.cells?.[agent]?.on === true))) return true;
+  }
+  return false;
+}
+
+/** 保存の知らせの文。fresh = Antigravity・Grok に渡る物が変わった */
+export const savedText = (fresh) => (fresh ? t('context.savedFresh') : t('context.saved'));
+
 export const MATRIX_ICON = {
   url: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/>',
   stdio: '<path d="m5 8 4 4-4 4M12 16h7"/>',

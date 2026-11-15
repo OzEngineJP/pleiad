@@ -93,8 +93,8 @@ import { probeClaudeConnectors } from './backends/claude.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
-import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
-import { DOC_KINDS, createContextAgents } from './context-agents.mjs';
+import { DEFAULT_OWNERS, normalizeKind, pathKey, pruneInherited, scanDirectory } from './context-settings.mjs';
+import { DOC_KINDS, createContextAgents, resolveEffectiveDocSource } from './context-agents.mjs';
 import { DocTouchError, applyDocTouch, buildDocMatrix, docScanPlan } from './context-doc-matrix.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
@@ -5429,7 +5429,58 @@ const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 
     return probeClaudeConnectors({ deny, token: account?.token ?? null });
   } });
 
+/**
+ * 表（context-agents.json）を触った後の旧い設定（担当・探す形式・除外）の変更は、表の結果を変えないことが多い。
+ * 通るなら効く、効かないなら断る（レビュー S1）: 保存した後の表を前と比べ、どのエージェントに何が渡るかが同じなら保存しない。
+ * 旧い設定の場所が表より深くなる（表を触っていない深さに旧い上書きを足す）・Skills の使う方（prefer）を変える、のように効くものは通す
+ */
+async function refuseIneffectiveLegacy(args = {}) {
+  const { kind } = args;
+  if (!DOC_KINDS.includes(kind) || args.remove || !Object.hasOwn(args, 'value') || args.value === null) return;
+  const [legacy, docAgents] = await Promise.all([contextSettings.read(), contextAgents.read()]);
+  const dir = args.place ? await scanDirectory(args.place) : null;
+  if (!resolveEffectiveDocSource(legacy, docAgents, dir, kind).touched) return;
+  const next = structuredClone(legacy);
+  const key = dir ? pathKey(dir) : null;
+  const target = key ? (next.places[key] ??= { path: dir, kinds: {} }) : next.defaults;
+  try { target.kinds[kind] = normalizeKind(kind, args.value, dir ?? SCAN_OPTIONS.home ?? os.homedir(), SCAN_OPTIONS.home ?? os.homedir()); }
+  catch { return; } // 形の誤りは保存の側（contextSettings.set）の誤りで返す
+  if (key) pruneInherited(next, key);
+  if (!resolveEffectiveDocSource(next, docAgents, dir, kind).touched) return;
+  const { scan, matrixCwd } = await docScanContext({ kind, cwd: dir, place: dir ?? 'default' });
+  const shape = (legacyConfig) => {
+    const m = buildDocMatrix({ kind, entries: scan.entries, legacyConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home });
+    return JSON.stringify({ owner: m.legacyOwner, summary: m.summaryRow?.cells ?? null, rows: m.rows.map((r) => [r.key, r.chosen?.path ?? null, r.cells]) });
+  };
+  if (shape(legacy) !== shape(next)) return;
+  // i18n-dynamic: server:context.settings.legacyAfterTouch.instruction
+  // i18n-dynamic: server:context.settings.legacyAfterTouch.skill
+  throw new OpError('INVALID', t(`context.settings.legacyAfterTouch.${kind}`, { place: dir ?? t('context.settings.defaultPlace') }));
+}
+
+/**
+ * 表のマスを書き、場所の設定（context-scans.json）にまだ無ければ場所を足す。2 つの保存の間で落ちたら、表の書き込みを戻す（レビュー S6）。
+ * 表の規則だけが残り、場所が保存済みでない（右パネルの「全体の設定に戻す」で消せない）状態を作らない
+ */
+async function touchDocPlace(mutator, where, scanDir) {
+  let before = null;
+  const nextCfg = await contextAgents.mutate(async (cfg) => { before = structuredClone(cfg); return mutator(cfg); });
+  if (where) {
+    try {
+      const cur = await contextSettings.view(where);
+      if (!cur.places.some((p) => p.saved && pathKey(p.path) === pathKey(where))) {
+        await contextSettings.set({ place: where, add: true, cwd: scanDir });
+      }
+    } catch (err) {
+      await contextAgents.mutate(() => before).catch(() => {});
+      throw err;
+    }
+  }
+  return nextCfg;
+}
+
 async function syncContextAgentsOnSet(args = {}) {
+  await refuseIneffectiveLegacy(args);
   if (!args?.place) return;
   if (args.remove) await contextAgents.removePlace(args.place);
   else if (Object.hasOwn(args, 'value') && args.value === null && DOC_KINDS.includes(args.kind)) {
@@ -5533,11 +5584,23 @@ const opsContext = {
     if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
     const { scan, rawConfig, docAgents, matrixCwd } = await docScanContext({ kind, cwd, place });
     const matrix = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: rawConfig, docAgentsConfig: docAgents, cwd: matrixCwd, home: scan.home });
+    // inheritedOn: この場所の上書き（表と旧い設定の両方）が無かったときの行のスイッチ。右パネルの「全体の設定で外しています」と
+    // 「この場所で外しています」を行ごとに分ける（レビュー S8）。この場所に何も無ければ今の値と同じ
+    const pk = matrixCwd ? pathKey(matrixCwd) : null;
+    let inherited = null;
+    if (pk && (docAgents.places?.[pk]?.[kind] || rawConfig.places?.[pk]?.kinds?.[kind])) {
+      const agentsBase = structuredClone(docAgents), legacyBase = structuredClone(rawConfig);
+      if (agentsBase.places?.[pk]) delete agentsBase.places[pk][kind];
+      if (legacyBase.places?.[pk]?.kinds) delete legacyBase.places[pk].kinds[kind];
+      const base = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: legacyBase, docAgentsConfig: agentsBase, cwd: matrixCwd, home: scan.home });
+      inherited = new Map(base.rows.map((r) => [r.key, r.rowSwitchOn]));
+    }
     return {
       kind, cwd: scan.cwd, home: scan.home, root: scan.root,
       touched: matrix.touched, agentsPlace: matrix.agentsPlace, legacyPlace: matrix.legacyPlace,
       legacyOwner: matrix.legacyOwner, prefer: matrix.legacyRule?.prefer ?? {},
-      agents: matrix.agents, summaryRow: matrix.summaryRow, rows: matrix.rows.map(serializeDocRow),
+      agents: matrix.agents, summaryRow: matrix.summaryRow,
+      rows: matrix.rows.map((r) => ({ ...serializeDocRow(r), inheritedOn: inherited?.has(r.key) ? inherited.get(r.key) : r.rowSwitchOn })),
       searched: scan.searched, skipped: scan.skipped, diagnostics: scan.diagnostics, limited: scan.limited,
     };
   },
@@ -5548,16 +5611,10 @@ const opsContext = {
     if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
     const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
-    const nextCfg = await contextAgents.mutate(async (cfg) => docTouch(cfg, {
+    const nextCfg = await touchDocPlace(async (cfg) => docTouch(cfg, {
       kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
       place: where, placeKey: where ? pathKey(where) : null, agent, keys: list, on,
-    }));
-    if (where) {
-      const cur = await contextSettings.view(where);
-      if (!cur.places.some((p) => p.saved && pathKey(p.path) === pathKey(where))) {
-        await contextSettings.set({ place: where, add: true, cwd: scanDir });
-      }
-    }
+    }), where, scanDir);
     settingsChanged(['context.default'], actor);
     return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
   },
@@ -5567,16 +5624,10 @@ const opsContext = {
     if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
     const { scan, scanDir, matrixCwd } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
-    const nextCfg = await contextAgents.mutate(async (cfg) => docTouch(cfg, {
+    const nextCfg = await touchDocPlace(async (cfg) => docTouch(cfg, {
       kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home,
       place: where, placeKey: where ? pathKey(where) : null, keys: list, on,
-    }));
-    if (where) {
-      const cur = await contextSettings.view(where);
-      if (!cur.places.some((p) => p.saved && pathKey(p.path) === pathKey(where))) {
-        await contextSettings.set({ place: where, add: true, cwd: scanDir });
-      }
-    }
+    }), where, scanDir);
     settingsChanged(['context.default'], actor);
     return { ok: true, defaults: nextCfg.defaults, ...(where ? { place: where } : {}) };
   },

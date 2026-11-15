@@ -40,6 +40,15 @@ export const MAX_AGENT_KEYS = 2000;
 // 退避した読めないファイル（context-agents.broken-<時刻>.json）を残す数。超えたら古い物から消す（今退避した物は必ず残る）
 export const MAX_BROKEN_BACKUPS = 5;
 export const DOC_AGENTS_UNREADABLE = 'DOC_AGENTS_UNREADABLE';
+export const DOC_AGENTS_WRITE_FAILED = 'DOC_AGENTS_WRITE_FAILED';
+// 書き込みの失敗を、生の Node の誤り（EISDIR: illegal operation …）でなく利用者の言葉で返す（レビュー S4）
+const WRITE_REASONS = { EISDIR: 'isDir', EACCES: 'denied', EPERM: 'denied', EBUSY: 'denied', EROFS: 'denied', ENOSPC: 'full' };
+// i18n-dynamic: server:context.settings.docAgentsWrite.isDir
+// i18n-dynamic: server:context.settings.docAgentsWrite.denied
+// i18n-dynamic: server:context.settings.docAgentsWrite.full
+const writeFailed = (cause) => Object.assign(new Error(t('context.settings.docAgentsWrite.failed', {
+  reason: WRITE_REASONS[cause?.code] ? t(`context.settings.docAgentsWrite.${WRITE_REASONS[cause.code]}`) : t('context.settings.docAgentsWrite.other', { code: cause?.code ?? 'unknown' }),
+})), { code: DOC_AGENTS_WRITE_FAILED, cause });
 export const DOC_AGENTS_LIMIT = 'DOC_AGENTS_LIMIT';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -466,8 +475,12 @@ export function createContextAgents(dataDir, { now = () => new Date() } = {}) {
     const current = await read();
     const nextRaw = await fn(structuredClone(current));
     const next = normalizeDocAgentsConfig(await pruneGone(normalizeDocAgentsConfig(nextRaw, { limits: false })));
-    await fs.mkdir(dataDir, { recursive: true });
-    await writeAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
+    try {
+      await fs.mkdir(dataDir, { recursive: true });
+      await writeAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
+    } catch (err) {
+      throw writeFailed(err);
+    }
     return next;
   });
 

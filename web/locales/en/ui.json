@@ -1320,6 +1320,8 @@
     "subtitle": {
       "startedAt": "Started {{time}} · settings changes apply from the next turn",
       "started": "Settings changes apply from the next turn",
+      "startedAtFresh": "Started {{time}} · settings changes apply in new conversations",
+      "startedFresh": "Settings changes apply in new conversations",
       "refreshed": "{{text}} · reloaded {{time}}"
     },
     "agent": "The agent",
@@ -1590,15 +1592,11 @@
       "ply": "Managed by Pleiad"
     },
     "instruction": {
-      "agent": "Claude reads CLAUDE.md and Codex reads AGENTS.md by their own rules",
-      "ply": "Give every agent the same files",
       "title": "Instructions",
       "none": "No instruction files found"
     },
     "skill": {
       "title": "Skills",
-      "agent": "Each agent reads its own skills folder",
-      "ply": "Provide the list and load the body only when needed",
       "none": "No skills found"
     },
     "mcp": {
@@ -1609,8 +1607,10 @@
     "copyPath": "Copy path",
     "copied": "Copied",
     "emptyFile": "(empty file)",
-    "lead": "Choose what to provide to agents.",
-    "saved": "Saved. Antigravity and Grok pick up changes in new conversations.",
+    "lead": "Choose what to provide to agents. Conversations already running pick up changes from the next turn (Antigravity and Grok from new conversations).",
+    "saved": "Saved",
+    "savedFresh": "Saved. Antigravity and Grok pick up changes in new conversations.",
+    "savedReloadFailed": "Saved, but the table couldn't be reloaded ({{error}}). Reopen it to see the latest state.",
     "saveFailed": "Couldn't save: {{error}}",
     "cancel": "Cancel",
     "add": "Add",

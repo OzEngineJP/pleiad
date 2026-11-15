@@ -1299,6 +1299,8 @@
     "subtitle": {
       "startedAt": "{{time}} に開始 · 設定の変更は次のターンから反映",
       "started": "設定の変更は次のターンから反映",
+      "startedAtFresh": "{{time}} に開始 · 設定の変更は新しい会話から反映",
+      "startedFresh": "設定の変更は新しい会話から反映",
       "refreshed": "{{text}} · {{time}} に読み込み直し"
     },
     "agent": "エージェント",
@@ -1553,15 +1555,11 @@
       "ply": "Pleiad がそろえる"
     },
     "instruction": {
-      "agent": "Claude は CLAUDE.md、Codex は AGENTS.md を各自の決まりで読む",
-      "ply": "どのエージェントにも同じものを渡す",
       "title": "指示",
       "none": "見つかった指示ファイルはありません"
     },
     "skill": {
       "title": "Skills",
-      "agent": "各エージェントが自分の skills フォルダーを読む",
-      "ply": "一覧を渡し、必要な時だけ本文を読ませる",
       "none": "見つかった Skill はありません"
     },
     "mcp": {
@@ -1572,8 +1570,10 @@
     "copyPath": "パスをコピー",
     "copied": "コピーしました",
     "emptyFile": "（空のファイル）",
-    "lead": "エージェントへ何を渡すかを決めます。",
-    "saved": "保存しました。Antigravity と Grok は、新しい会話から反映します",
+    "lead": "エージェントへ何を渡すかを決めます。始まっている会話にも次のターンから反映します（Antigravity と Grok は新しい会話から）。",
+    "saved": "保存しました",
+    "savedFresh": "保存しました。Antigravity と Grok は、新しい会話から反映します",
+    "savedReloadFailed": "保存しました。表を読み直せませんでした（{{error}}）。開き直すと最新の状態を表示します",
     "saveFailed": "保存できませんでした：{{error}}",
     "cancel": "やめる",
     "add": "追加",

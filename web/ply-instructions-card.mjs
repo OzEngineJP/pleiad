@@ -10,7 +10,13 @@ import { t, fmt } from './i18n.mjs';
 import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 import { createReorder, moveItem, slideFrom } from './reorder.mjs';
-import { agentChip, agentLegend, agentStrip, rowSwitch } from './context-matrix.mjs';
+import { FRESH_AGENTS, agentChip, agentLegend, agentStrip, rowSwitch } from './context-matrix.mjs';
+
+/** Antigravity・Grok に渡る Pleiad の指示（並び・中身・オン・オフ）が変わったか。変わったときだけ「新しい会話から反映」と添える */
+function freshChanged(before, after) {
+  const reach = (s, agent) => JSON.stringify((s?.items ?? []).filter(i => i.on && (i.agents ?? []).includes(agent)).map(i => [i.id, i.name, i.body, i.target]));
+  return FRESH_AGENTS.some(agent => reach(before, agent) !== reach(after, agent));
+}
 
 const TARGETS = ['all', 'parent', 'child'];
 const NAME_SLOT = '\u0001';   // core/ply-instructions.mjs の見出しの型の、名前の位置
@@ -40,7 +46,8 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
   const announce = text => { status.textContent = text; };
   // wantFocus: 次の描き直しでフォーカスを置く操作（data-fk）。dirty: ドラッグ中に来た描き直しを終わるまで待たせている。
   // painted: 最後に描いた中身。ordering: 保存の応答を待っている並べ替えの数
-  let state = null, wantFocus = '', dirty = false, painted = '', ordering = 0;
+  // confirmed: サーバーが最後に返した中身の写し（行のスイッチは押した行を先に書き換えるので、同じ物を指さない）
+  let state = null, confirmed = null, wantFocus = '', dirty = false, painted = '', ordering = 0;
   const key = id => `ply:${id}`;
   const movable = () => (state?.items ?? []).filter(i => i.tag !== 'linked');
   const signature = () => `${JSON.stringify(state)}\n${[...opened].filter(k => k.startsWith('ply:')).join('\n')}`;
@@ -56,6 +63,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
   // 同じ中身なら描き直さない（保存の後に届く「設定が変わった」の知らせで、動いている途中の行を作り直さない）
   function apply(next) {
     state = next;
+    confirmed = structuredClone(next);
     onCount?.(state ? state.items.length : 0);
     if (signature() !== painted) render();
   }
@@ -66,7 +74,8 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
   }
   async function change(args, focus) {
     state = await cmd('setPlyInstructions', args);
-    saved();
+    saved(freshChanged(confirmed, state));
+    confirmed = structuredClone(state);
     if (focus) wantFocus = focus;
     render();
   }
@@ -88,7 +97,8 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
       try { saving = await cmd('setPlyInstructions', { action: 'order', ids: next }); } catch (e) { failed = e; }
       ordering--;
       if (failed) { if (!ordering) await load(); throw failed; }
-      saved();
+      saved(freshChanged(confirmed, saving));
+      confirmed = structuredClone(saving);
       if (!ordering) apply(saving);
     });
   }

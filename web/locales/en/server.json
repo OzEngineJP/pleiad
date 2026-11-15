@@ -939,6 +939,17 @@
       "docNotPressable": "{{name}} cannot be switched for {{agent}}",
       "docRowLocked": "{{name}} cannot be switched with the row switch (a locked agent reads it itself, so it would stay on, or no agent can be switched). Switch the unlocked cells one by one instead",
       "docTargetRequired": "Specify at least one item key to switch.",
+      "docAgentsWrite": {
+        "failed": "Couldn't save the instructions and Skills table. {{reason}}",
+        "isDir": "A folder named context-agents.json is in the place of the file in the data folder.",
+        "denied": "context-agents.json in the data folder can't be written (another program has it open, or writing isn't allowed).",
+        "full": "There isn't enough free disk space.",
+        "other": "The file couldn't be written ({{code}})."
+      },
+      "legacyAfterTouch": {
+        "instruction": "Instructions at {{place}} are decided by the instructions and Skills table in Settings > Plugins. Changing the old settings (owner, sources, exclusions) would not change what reaches which agent, so nothing was saved. Switch the cells in the table instead (ops context.setDocAgent and context.setDocRow). To stop using the table and go back to the old settings, clear the place's settings (\"Reset to the global settings\" in a conversation's right panel, or context.setSettings with value: null)",
+        "skill": "Skills at {{place}} are decided by the instructions and Skills table in Settings > Plugins. Changing the old settings (owner, sources, exclusions) would not change what reaches which agent, so nothing was saved. Switch the cells in the table instead (ops context.setDocAgent and context.setDocRow). To stop using the table and go back to the old settings, clear the place's settings (\"Reset to the global settings\" in a conversation's right panel, or context.setSettings with value: null)"
+      },
       "connectorsUnread": "Couldn't read the list of claude.ai connectors. Wait a moment and try again",
       "kindInvalid": "The plugin settings are malformed.",
       "disabledMcpOnly": "Removing by name is only available for external MCP servers.",

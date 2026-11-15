@@ -49,9 +49,18 @@ export function createMcpMatrix({ section, onCount }) {
     return ctx.work(async () => {
       try {
         for (const { agent, on } of changes) await ctx.cmd('setMcpAgent', { name: row.key, agent, on, cwd: ctx.cwd });
-        await ctx.refreshSettings();
-        ctx.toast();
-      } finally { if (back) focus = back; await ctx.reloadMatrix(); }
+      } catch (e) {
+        if (back) focus = back;
+        await ctx.reloadMatrix().catch(() => {});
+        throw e;
+      }
+      // 保存はできた。読み直しだけ失敗したときに「保存できませんでした」と言わない（レビュー S9）
+      let reloadError = null;
+      try { await ctx.refreshSettings(); } catch (e) { reloadError = e; }
+      ctx.toast({ agents: changes.map(c => c.agent) });
+      if (back) focus = back;
+      try { await ctx.reloadMatrix(); } catch (e) { reloadError ??= e; }
+      if (reloadError) ctx.status(t('context.savedReloadFailed', { error: reloadError.message }));
     });
   }
 
