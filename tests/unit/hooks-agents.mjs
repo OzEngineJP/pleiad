@@ -136,11 +136,24 @@ export default async function (t) {
     await compare('場所ごとの担当（その外は任せる）', tmp);
     await plyHooks.setOwner({ place: repo, value: { owner: 'native' } });
 
-    // Devin へ渡す登録がある「そろえる」から移った人: Devin の取り込みは、渡すものがあるターンだけ止める（旧と同じ）
+    // Devin へ渡す登録がある「そろえる」から移った人: main の動き（--config を Devin が読む前に消していたので、登録は動かず取り込みも止まらない）から始める。
+    // Devin のマスを入れて渡すものができたターンから、旧「そろえる」の規則で取り込みが止まる
     const devReg = await plyHooks.save({ name: 'dev', agent: CLAUDE, event: 'Stop', matcher: '', command: 'node dev.mjs', targets: [DEVIN] });
     const importsStopped = r => !!devinTurnConfig({ hooksRuntime: r?.runtime ?? null })?.read_config_from;
     await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [] } });
-    await compare('そろえる・Devin へ渡す登録がある');
+    const devStart = await compare('そろえる・Devin へ渡す登録がある');
+    const devAdopt = (await ha.current()).state;
+    t.ok('旧「そろえる」で Devin へ向けた登録がある人: 移行の前も直後も Devin のターンは null（--config を付けない・取り込みを止めない。main の動き）',
+      devStart.legacy[DEVIN] === null && devStart.adopted[DEVIN] === null, JSON.stringify({ legacy: devStart.legacy[DEVIN], adopted: devStart.adopted[DEVIN]?.record ?? devStart.adopted[DEVIN] }));
+    t.ok('移行の式: Devin へ向けた登録は Devin を off から始め、互換は off のまま（入れたターンから止まる）',
+      JSON.stringify(devAdopt.off[devReg.id]) === JSON.stringify([DEVIN]) && devAdopt.compat.devin === 'off', JSON.stringify({ off: devAdopt.off[devReg.id], compat: devAdopt.compat }));
+    const devStartMatrix = await ha.matrix({ cwd: repo });
+    t.ok('移行の前の一覧: 登録の Devin のマスはオフ、Claude の定義と作業場所の Devin の列は取り込みのとおり（devinImports）、取り込みは止まらない',
+      cell(devStartMatrix, devReg.id, DEVIN).state === 'off' && cell(devStartMatrix, stopRow.key, DEVIN).detail === 'devinImports'
+      && cell(devStartMatrix, WS_KEY, DEVIN).detail === 'devinImports' && await ha.devinImportsStopped(repo) === false);
+    const warnCodes = (m, key) => (cell(m, key, DEVIN).warnings ?? []).map(w => w.code).join(',');
+    t.ok('そのマスの注意: 入れると取り込みが止まる場所なので devinImportsStop（重ねるだけの devinConfig ではない）',
+      warnCodes(devStartMatrix, devReg.id) === 'devinImportsStop', warnCodes(devStartMatrix, devReg.id));
     await ha.setRow({ key: devReg.id, on: false, cwd: repo });
     const devOff = await ha.matrix({ cwd: repo });
     await plyHooks.setOwner({ place: null, value: { owner: 'ply', disabled: [devReg.id] } });
@@ -168,8 +181,12 @@ export default async function (t) {
     const predLegacyNone = await ha.devinImportsStopped(repo);
     await plyHooks.setOwner({ place: null, value: { owner: 'native' } });
     const predNative = await ha.devinImportsStopped(repo);
-    t.ok('devinImportsStopped（移行前）: 旧「そろえる」で Devin へ渡す登録があるときだけ true（登録を外す・任せるは false）',
-      predLegacy === true && predLegacyNone === false && predNative === false && importsStopped(legacyDevOff) === false, JSON.stringify({ predLegacy, predLegacyNone, predNative }));
+    const nativeMatrix = await ha.matrix({ cwd: repo });
+    t.ok('任せるから移る人の Devin のマスの注意は devinConfig（取り込みは止まらず、利用者の設定に重ねる）',
+      cell(nativeMatrix, devReg.id, DEVIN).state === 'off' && (cell(nativeMatrix, devReg.id, DEVIN).warnings ?? []).map(w => w.code).join(',') === 'devinConfig',
+      JSON.stringify(cell(nativeMatrix, devReg.id, DEVIN)));
+    t.ok('devinImportsStopped（移行前）: いつも false（旧「そろえる」で Devin へ向けた登録があっても、main では取り込みが止まっていなかった）',
+      predLegacy === false && predLegacyNone === false && predNative === false && importsStopped(legacyDevOff) === false, JSON.stringify({ predLegacy, predLegacyNone, predNative }));
     await plyHooks.remove(devReg.id);
 
     // ---------------------------------------------------------------- 最初の操作で写す

@@ -137,16 +137,15 @@ export async function prepareHooksTurn({ agent, cwd, ctx }) {
   // Pleiad が別のエージェントの形を真似て渡すエージェント: コールバックで渡すもの（OpenCode）は止めるネイティブの設定ファイルが無く、
   // 登録はバックエンドが受け取り、Pleiad の中で走らせる（core/backends/opencode-hooks.mjs）。プラグインで渡すもの（Grok）は下
   if (HOOK_EMULATED[agent]) {
+    // 設定（--config）で渡すエージェント（Devin）: 移行前は何も渡さない。旧「そろえる」でも --config を Devin が読む前に消していたので、
+    // 登録は動かず、取り込みも止まっていなかった（main の動き）。更新しただけで動きを変えない。渡すのは Hook × エージェントの表で入れたときだけ（ADR 0338）
+    if (HOOK_VIA[agent] === 'config') return null;
     const owner = await plyHooks.resolveForTurn(cwd);
     if (owner.owner !== 'ply') return null;
     const record = { owner: 'ply', at: now.toISOString(), agent, from: owner.from, revision: owner.revision, supplied: [], unsupported: [], skipped: [], stopped: [], kept: [], leaks: [], unknownNative: [] };
     const plan = planHooks({ hooks: owner.hooks, owner, agent, platform });
     record.skipped = plan.skipped.map(({ hook, reason }) => ({ id: hook.id, name: hook.name, reason }));
     record.unsupported = plan.unsupported.map(unsupportedSummary);
-    if (HOOK_VIA[agent] === 'config') {
-      record.supplied = plan.supplied.map(s => ({ ...suppliedSummary(s), via: 'config' }));
-      return { record, runtime: { agent, emulates: HOOK_EMULATED[agent], cwd, supplied: plan.supplied, record } };
-    }
     if (HOOK_VIA[agent] !== 'plugin') {
       record.supplied = plan.supplied.map(s => ({ ...suppliedSummary(s), via: 'callback' }));
       return { record, runtime: { agent, emulates: HOOK_EMULATED[agent], cwd, supplied: plan.supplied, record } };

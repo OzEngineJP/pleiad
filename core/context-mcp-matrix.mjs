@@ -82,6 +82,8 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
   const info = { registered: registered.map(r => r.name), native: Object.fromEntries(Object.keys(native).map(a => [a, native[a].map(s => s.name)])) };
   const rules = kind.agents ?? mcpAgentsFromLegacy(kind, mcpLegacyInfo({ kind, registered, native, plugins, connectors }));
   const disabledIn = (a, name) => native[a]?.some(s => s.name === name && s.disabled) === true;
+  // 取り込みが止まる場所で、取り込んだだけの定義（Devin が Pleiad から Hook を受け取る場所の Claude などの定義。core/context-session.mjs の agentMcp）
+  const importStopped = (a, name) => native[a]?.some(s => s.name === name && s.importStopped) === true;
   // その名前の定義がある範囲。一覧を出した場所（cwd）の作業場所の定義では鍵にしない（全体の設定は、どの作業場所の会話にも効くため。
   // 作業場所の定義が勝つ会話では、実行時に会話の cwd で判定して止めない。core/context-runtime.mjs）。
   // 場所ごとの設定（place）を出すときだけ、その場所の作業場所の定義がある名前を鍵にする（workspace: { <agent>: [名前] }）
@@ -97,7 +99,10 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
     const cells = {};
     for (const a of agents) {
       const own = origins.includes(a);
-      if (own) {
+      if (own && importStopped(a, name)) {
+        // 取り込みが止まるので、そのエージェントには届かない（鍵つきのオフ。表示だけで、実行時の MCP は変えない）
+        cells[a] = { state: 'off', mode: 'locked', reason: 'devinHooks' };
+      } else if (own) {
         // 自分の設定にある名前。止められるのは、起動のときに名前で止める手があるエージェントだけ。
         // 止められない鍵には理由（reason: 'own' | 'nolinks' | 'workspace'）を付ける（nativeStopBlock）
         const block = nativeStopBlock(a, name, scopesIn(a, name));

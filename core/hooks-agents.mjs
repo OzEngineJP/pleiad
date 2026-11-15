@@ -307,13 +307,14 @@ export function cellsFor(inv, s, skip, A) {
   // Devin の取り込みの止め（compat.devin: 'off'。旧「そろえる」から）は、Devin へ渡すものがあるターンだけ効く（旧と同じ）。
   // 渡すものが無ければ取り込みが動くので、Claude の定義の Devin の列は取り込みのとおり（devinImports）に見せる
   if (A === DEVIN && s.compat?.devin === 'off') {
-    const cells = cellsOnce(inv, s, skip, A);
+    const cells = cellsOnce(inv, s, skip, A, true);
     if ([...cells.values()].some(c => c._deliver && c.state === 'on')) return cells;
-    return cellsOnce(inv, { ...s, compat: { ...s.compat, devin: 'native' } }, skip, A);
+    return cellsOnce(inv, { ...s, compat: { ...s.compat, devin: 'native' } }, skip, A, true);
   }
-  return cellsOnce(inv, s, skip, A);
+  return cellsOnce(inv, s, skip, A, false);
 }
-function cellsOnce(inv, s, skip, A) {
+// devinStops: Devin へ渡すものができると取り込みが止まる場所か（compat.devin: 'off'。セルの注意の文を選ぶ）
+function cellsOnce(inv, s, skip, A, devinStops) {
   const cells = new Map();
   const wsOn = !s.unused.includes(WS_KEY) && !has(s.off, WS_KEY, A);
   const units = new Map();
@@ -358,7 +359,8 @@ function cellsOnce(inv, s, skip, A) {
     const base = baseOf(row, inv, s).includes(A);
     const desired = !rowIsOff(row, s) && !skip.has(row.key) && ((base && !has(s.off, row.key, A)) || has(s.spread, row.key, A));
     const warnings = [...(del.d.warnings ?? []).map(w => ({ code: w.code ?? String(w), params: w.params, evidence: null }))];
-    if (A === DEVIN) warnings.push(warn('devinConfig'));
+    // Devin: 取り込みが止まる場所（compat.devin: 'off'）なら、入れると Devin が自分で読んでいた物が届かなくなる（devinImportsStop）
+    if (A === DEVIN) warnings.push(warn(devinStops ? 'devinImportsStop' : 'devinConfig'));
     if (row.agent === CODEX) warnings.push(warn('codexTrustAtTurn'));
     cells.set(row.key, { state: desired ? 'on' : 'off', _role: 'spread', _deliver: desired ? del : null, _desired: desired, needsConfirm: !base,
       ...(warnings.length ? { warnings } : {}) });
@@ -509,8 +511,9 @@ export const publicCell = c => Object.fromEntries(Object.entries(c).filter(([k])
 /**
  * 旧の担当（hooks.json の defaults・places）から、そのときの実効の状態を写した選択を作る（純粋。ADR 0338「移行」）。
  *   任せる: 定義は元の集合のまま。登録は off = targets（動いていなかった）。互換は native
- *   そろえる: Pleiad が止めていた定義（nativeFate が stopped）は元のエージェントを off、作業場所も off、登録は targets のまま（defaults の disabled は unused）、
- *            Grok の互換は off、Devin は渡すものがあれば off（無ければ取り込みが動いていたので native）
+ *   そろえる: Pleiad が止めていた定義（nativeFate が stopped）は元のエージェントを off、作業場所も off、登録は targets のまま（defaults の disabled は unused）。
+ *            ただし Devin へは届いていなかったので、Devin へ向けた登録は Devin を off。Grok の互換は off、
+ *            Devin の互換は Devin へ向けた登録があれば off（Devin のマスを入れたターンから取り込みが止まる。無ければ native）
  *   場所ごとの担当: その場所の担当で同じ計算をして places[].agents、disabled は places[].skip
  */
 export function agentsFromLegacy({ config, rows, platform = process.platform, now = new Date() }) {
@@ -521,6 +524,10 @@ export function agentsFromLegacy({ config, rows, platform = process.platform, no
       a.off[WS_KEY] = [...HOOK_AGENTS].sort();
       if (unused) a.unused = [...new Set(disabled)].sort();
       a.compat.grok = 'off';
+      // Devin へは、旧「そろえる」でも登録が届いていなかった（--config を起動の直後に消していたので、Devin が読む前に無くなっていた。main の動き）。
+      // 更新しただけで Devin の動きが変わらないよう、Devin へ向けた登録は Devin を off から始める（取り込みも止まらない）。
+      // compat.devin は旧の規則のまま: 利用者が Devin のマスを入れて渡すものができたターンから、旧「そろえる」と同じく取り込みが止まる
+      for (const h of config.hooks) if (agentList(h.targets).includes(DEVIN)) a.off[h.id] = [DEVIN];
       a.compat.devin = planHooks({ hooks: config.hooks, owner: { disabled }, agent: DEVIN, platform }).supplied.length ? 'off' : 'native';
     } else {
       for (const h of config.hooks) { const tg = agentList(h.targets); if (tg.length) a.off[h.id] = tg; }
@@ -910,7 +917,8 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
 
   /**
    * その場所の Devin のターンで、Pleiad が Hook を渡すため Devin の取り込み（read_config_from）が全部止まるか。
-   * 移行済みは forTurn の stopImports（compat.devin: 'off' で渡すものがある）、移行前は旧「そろえる」（担当が ply で渡すものがある。devinTurnConfig の既定）と同じ規則。
+   * 移行済みは forTurn の stopImports（compat.devin: 'off' で渡すものがある）。移行前は止まらない（main の動き: 旧「そろえる」でも --config を
+   * Devin が読む前に消していたので、取り込みは止まっていなかった。移行前のターンは Devin へ何も渡さない。core/hooks-unify.mjs の prepareHooksTurn）。
    * 指示・Skills の表（core/context-doc-matrix.mjs の devinImportsStopped）が、取り込む物の Devin のマスを鍵つきのオフに見せるのに使う。
    * 読めない・分からないときは false（表は今までどおり。ターンは別に断る）
    */
@@ -920,10 +928,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
   async function devinImportsStopped(cwd) {
     try {
       const stored = await read();
-      if (!stored) {
-        const owner = await plyHooks.resolve(cwd);
-        return owner?.owner === 'ply' && planHooks({ hooks: owner.hooks, owner, agent: DEVIN, platform }).supplied.length > 0;
-      }
+      if (!stored) return false;
       if (effectiveAt(stored, cwd).agents.compat?.devin !== 'off') return false;
       const plan = await turnPlan(DEVIN, cwd, stored);
       return Boolean(plan && plan.s.compat?.devin === 'off' && plan.deliver.length > 0);

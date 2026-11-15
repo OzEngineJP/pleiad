@@ -1414,6 +1414,7 @@
     "evidence": {
       "stoppedWithOthers": "Claude Code・Antigravity・Grok の互換は 1 つずつ止める口が無く、まとめて止めて渡し直します。渡し直せない定義は一緒に止まります（ADR 0338）",
       "devinConfig": "Devin の --config には、利用者の Devin の設定に Pleiad の Hook を重ねたものを渡します",
+      "devinImportsStop": "この場所では Devin へ渡すと、Devin の取り込み（read_config_from）が全部止まります。リポジトリの AGENTS.md と、Claude Code などから取り込む指示・Skills・MCP・Hooks が Devin に届かなくなります",
       "codexTrustAtTurn": "Codex の信頼の状態はターンの直前には確かめません。一覧を開いたときの状態で広げます",
       "grokTrustUnknown": "~/.grok/trusted_folders.toml があるので、この作業場所を Grok が信頼しているか分かりません",
       "duplicate": "同じイベント・matcher・コマンドが、このエージェントで既に動いています（1 回だけ動かします）"

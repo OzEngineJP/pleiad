@@ -5,6 +5,8 @@ import { buildMcpMatrix, relayBlocked } from '../../core/context-mcp-matrix.mjs'
 import { createConnectorReader, connectorList, connectorNames, readClaudePlugins } from '../../core/context-claude-extras.mjs';
 import { DEFAULT_SCAN, legacyPlan, mcpAgentsFromLegacy } from '../../core/context-settings.mjs';
 import { resolveRuntime } from '../../core/context-runtime.mjs';
+import { createContextSession } from '../../core/context-session.mjs';
+import { mcpImportFile } from '../../core/context-scan.mjs';
 
 export const name = 'context-mcp-matrix';
 export const title = '外部 MCP の一覧（名前 × エージェント）・プラグインとコネクターの読み取り・更新前後で今の接続が変わらないこと';
@@ -52,6 +54,38 @@ export default async function (t) {
     t.ok('読み取り中（null）は connectors が reading、読めなかった（null で読み取り中でない）・空なら none、あれば ready', buildMcpMatrix({ ...base, connectors: null, reading: true }).connectors === 'reading' && buildMcpMatrix({ ...base, connectors: null }).connectors === 'none' && buildMcpMatrix({ ...base, connectors: [] }).connectors === 'none' && rich.connectors === 'ready');
     const noClaude = buildMcpMatrix({ ...base, native: { codex: native.codex }, installed: { claude: false }, connectors: ['Slack'], plugins: [{ plugin: 'P', server: 's', key: 'plugin:P:s' }] });
     t.ok('Claude が無ければ行も凡例も出さない', noClaude.rows.every(r => r.kind === 'config') && noClaude.connectors === 'none');
+
+    // --- Devin の取り込みが止まる場所（Pleiad が Devin へ Hook を渡す。ADR 0338）: 取り込んだだけの定義の Devin のマスは鍵つきのオフ（表示だけ）
+    {
+      const h2 = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-mcp-import-')));
+      const r2 = path.join(h2, 'repo');
+      const devinHome = path.join(h2, 'devin-config', 'devin');
+      await write(path.join(r2, 'x.txt'), '');
+      await write(path.join(h2, '.claude.json'), JSON.stringify({ mcpServers: { fromClaude: { command: 'c' }, both: { command: 'b' } } }));
+      await write(path.join(devinHome, 'mcp_config.json'), JSON.stringify({ mcpServers: { devinOwn: { command: 'd' }, both: { command: 'b' } } }));
+      await write(path.join(h2, '.cursor', 'mcp.json'), JSON.stringify({ mcpServers: { fromCursor: { command: 'u' } } }));
+      const scanOptions = { home: h2, devinHome, claudeHome: path.join(h2, '.claude'), codexHome: path.join(h2, '.codex'), opencodeHome: path.join(h2, 'opencode'), geminiHome: path.join(h2, '.gemini'), grokHome: path.join(h2, '.grok') };
+      try {
+        t.ok('取り込みのファイルの見分け: Cursor・Zed・Windsurf の MCP のファイルだけ', mcpImportFile(path.join(h2, '.cursor', 'mcp.json')) === 'cursor'
+          && mcpImportFile(path.join(h2, '.config', 'zed', 'settings.json')) === 'zed' && mcpImportFile(path.join(h2, '.codeium', 'windsurf', 'mcp_config.json')) === 'windsurf'
+          && mcpImportFile(path.join(devinHome, 'mcp_config.json')) === null && mcpImportFile(path.join(r2, '.devin', 'mcp_config.json')) === null);
+        const stopped = await createContextSession({ store: null, snapshots: null, scanOptions, devinImportsStopped: async (_cwd, agent) => agent === 'devin' }).agentMcp(r2);
+        const flags = list => Object.fromEntries((list ?? []).map(s => [s.name, s.importStopped === true]));
+        const dv = flags(stopped.agents.devin), cl = flags(stopped.agents.claude);
+        t.ok('agentMcp: 取り込みが止まる Devin では、Claude・Cursor から取り込んだだけの名前に importStopped。Devin 自身の設定にもある名前と、Claude の列には付かない',
+          dv.fromClaude === true && dv.fromCursor === true && dv.devinOwn === false && dv.both === false && cl.fromClaude === false, JSON.stringify({ dv, cl }));
+        const open = await createContextSession({ store: null, snapshots: null, scanOptions, devinImportsStopped: async () => false }).agentMcp(r2);
+        t.ok('agentMcp: 取り込みが止まらない場所では、どの名前にも付かない（今までと同じ）', Object.values(open.agents).flat().every(s => !s.importStopped));
+        const m2 = buildMcpMatrix({ ...base, registered: [], native: stopped.agents });
+        const c2 = key => m2.rows.find(r => r.key === key)?.cells;
+        t.ok('一覧: 取り込んだだけの名前の Devin のマスは鍵つきのオフ（reason devinHooks）。Devin 自身の定義は今までどおり押せる。Claude の列は変わらない',
+          c2('fromClaude').devin.state === 'off' && c2('fromClaude').devin.mode === 'locked' && c2('fromClaude').devin.reason === 'devinHooks'
+          && c2('fromCursor').devin.reason === 'devinHooks' && c2('devinOwn').devin.mode === 'toggle' && c2('both').devin.mode === 'toggle'
+          && c2('fromClaude').claude.state === 'on', JSON.stringify({ fromClaude: c2('fromClaude'), devinOwn: c2('devinOwn')?.devin }));
+        const m3 = buildMcpMatrix({ ...base, registered: [], native: open.agents });
+        t.ok('一覧: 取り込みが止まらない場所では、取り込んだ名前の Devin のマスは今までどおり（押せる）', m3.rows.find(r => r.key === 'fromClaude')?.cells.devin.mode === 'toggle');
+      } finally { await fs.rm(h2, { recursive: true, force: true, maxRetries: 5 }); }
+    }
 
     // --- プラグインの読み取り
     const claudeHome = path.join(tmp, 'claude-home'), inst = path.join(claudeHome, 'plugins', 'cache', 'notion'), off = path.join(claudeHome, 'plugins', 'cache', 'off');

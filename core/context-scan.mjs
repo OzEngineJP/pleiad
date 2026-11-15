@@ -84,6 +84,19 @@ export function zedServers(map) {
   }));
 }
 // JSONC（// と /* */ のコメント。Devin の設定ファイルはコメントが書ける）を JSON にする。文字列の中は触らない
+/**
+ * Devin の読み込み元（devin）で探す MCP のファイルのうち、ほかの道具の設定から取り込むもの（Cursor・Zed・Windsurf）。'cursor' | 'zed' | 'windsurf' | null。
+ * Devin の取り込み（read_config_from）が止まる場所では、これらと Claude・OpenCode の定義は Devin に届かない（外部 MCP の表の鍵。core/context-mcp-matrix.mjs）
+ */
+export function mcpImportFile(file) {
+  const parts = path.normalize(file).split(path.sep);
+  const [base, dir, up] = [parts.at(-1), parts.at(-2), parts.at(-3)];
+  if (base === 'mcp.json' && dir === '.cursor') return 'cursor';
+  if (base === 'settings.json' && (dir === '.zed' || dir === 'zed')) return 'zed';
+  if (base === 'mcp_config.json' && up === '.codeium') return 'windsurf';
+  return null;
+}
+
 export function stripJsonc(text) {
   let out = '', str = false, esc = false;
   for (let i = 0; i < text.length; i++) {
