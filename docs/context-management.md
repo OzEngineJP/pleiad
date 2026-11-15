@@ -172,7 +172,7 @@ Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.m
 
 ### Hook × エージェントの一覧（2026-11-15、[ADR 0338](adr/0338-hooks-by-hook-and-agent.md)）
 
-担当の 2 択を、外部 MCP（ADR 0327）と同じ「行 × 6 つのエージェント」の一覧に置き換える（core の保存・実行時・操作。画面はまだ担当の 2 択のまま）。
+担当の 2 択を、外部 MCP（ADR 0327）と同じ「行 × 6 つのエージェント」の一覧に置き換える。画面は設定 › プラグイン › Hooks の表と、会話の右の欄の「この場所で使うか」（design-system.md「Hooks」。`web/hooks-matrix.mjs`）。
 
 - **行 ID**: 登録は `h-…`、エージェントの設定の定義は `hk-` + sha256(`[エージェント, scope, ファイル, イベント, matcher, コマンド, 名前]`) の 16 桁（並びの位置を入れないので、前に足しても変わらない）、作業場所の Hooks は 1 行 `ws:hooks`。一覧の行には `hooks.scan` の `id`（`scanIds`）も入れる。
 - **書き換えた定義**: 利用者がコマンドや matcher を直すと `hk-` が変わるので、エージェント・scope・ファイル・イベントごとに見えていた ID を `seen` に覚え、消えた 1 つと現れた 1 つが対応するときだけ外した・広げた選択を移す。対応が決められない（2 つ以上直した・既存の定義と同じになった）ときや消えただけのときは移さず、`hooksMatrix` の `orphans`（`reason: ambiguous|gone`・`candidates`）で返す（広げた状態は実行する側へ倒さない）。読めない・一部だけのファイルは比べない。`seen` は一覧を開いたときと書くときに保存し、`revision` には入れない。式は ADR 0338「書き換えた定義へ選択を引き継ぐ」。
@@ -180,6 +180,7 @@ Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.m
 - **触るまで何も変えない**: 移行前の一覧は、開くたびに今の担当の動きを写して見せるだけ。最初に押したとき、写した状態に押した変更を足して保存する。式（旧「任せる」は登録を `off = targets`、旧「そろえる」は止めていた定義と作業場所を `off`・Grok の互換を `off` など）は ADR 0338「移行」。4 つの組で、移行の前後に各エージェントのターンで動く Hook が同じことを試験で確かめる。
 - **セル**: `{ state: on|off, mode: toggle|locked|none, reason?: own|workspace|relay|admin, detail?, warnings?, needsConfirm? }`。一覧と実行時は同じ関数（`cellsFor`・`decideModes`）で決める。押してもそのセルが変わらない・ほかのセルが黙って止まるものは鍵。鍵の `detail` の一覧は ADR 0338「鍵と理由」。
 - **操作**（`core/ops/hooks.mjs`）: `hooks.matrix`（`hooksMatrix`）・`hooks.setAgent`（`setHookAgent { key, agent, on, cwd?, revision? }`）・`hooks.setRow`・`hooks.setGroup`・`hooks.setPlace`・`hooks.resetAgents`。Pleiad の登録（`h-…`）・組 `ply` を外す向きは `write`（`togglePlyHook` の無効と同じ）。エージェントの設定の定義・作業場所の Hooks・組 `own`/`place` を外す向き、場所の上書きを消す向き、入れる・広げる・戻す向きは承認（`guarded`、`approvalWords: 'hooks'`。`setHooksOwner` と同じ強さ）。`revision` は保存の中身の hash（移行の時刻は入れない）で、違えば `CONFLICT`。
+- **画面が呼ぶ操作**: 表は `hooksMatrix`・`setHookAgent`・`setHookRow`、右の欄は `hooksMatrix { cwd }` の行（`here`）と `setHookPlace`、直すのは `repairPlyHooks`。担当の 2 択・取り込み・写す（`setHooksOwner`・`hooksUnifyPreview`・`copyHooks`）と `hooks.resetAgents` は画面から呼ばない（`hooks.resetAgents` は操作として残し、CLI・MCP から呼べる）。人が画面で押したときは承認のカードを出さず、エージェント・CLI から呼ぶと guarded の操作は承認を求める（ADR 0338「操作」）。
 - **移行済みの人の旧の操作**: 担当の切り替え（`setHooksOwner`。場所ごとの担当・取り込みも）・切り替えの確認（`hooksUnifyPreview`）・「写す」（`copyHooks`）は、人の操作でもエージェントの操作でも `HOOKS_MOVED` で断り、何もしない（効かないのに効いたように見えるのを防ぐ）。エラーの文に一覧の操作（`hooks.matrix`・`hooks.setAgent`・`hooks.setRow`・`hooks.setGroup`・`hooks.setPlace`）と、旧の担当へ戻す `hooks.resetAgents` を書く。断るのは承認より前（承認のカードは出ない）。登録の追加・編集・オンオフ（`savePlyHook`・`togglePlyHook`）とネイティブの編集はそのまま使う。
 
 ### 他のエージェントへ写す（第 2 段）

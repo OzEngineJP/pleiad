@@ -208,6 +208,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 - **Devin の `--config`**: Devin CLI は起動の後（`session/new`）にファイルを読むので、ファイルは Devin のプロセスを閉じるときに消す（`openClient` の `close`）。閉じずに残ったもの（`<data>/devin/turn-configs/<uuid>.json`）は次の起動で 1 日を過ぎた分だけ消す（`pruneTurnConfigs`）。2026-11-15 までは起動の直後に消していて、旧「そろえる」でも渡したものが載っていなかった。
 - **記録**: `sessionHooks` の `unify` は `{ owner: 'ply', mode: 'agents', at, agent, revision, supplied: [{ id, name, from, event, matcher, adapter, via }], stopped, kept, skipped, unsupported, stopAll? }`。
 - **第 2 段の入口**: `hooksForTurn(agent, cwd)` は、そのターンで動く Hook（行 ID・出どころ・イベント・コマンド）を返す（`inheritCustomizations` 用）。
+- **右の欄の「この場所で使うか」**: 「この場所だけ変える」の Hooks の面は `hooksMatrix { cwd }` のうち `here` を持つ行（作業場所のまとめの行 `ws:hooks` は除く）を出し、スイッチは `setHookPlace { place, key, use, revision }`（`places[].skip`）を 1 回書く。次のターンの `forTurn` が同じセルの規則で読む。
 
 ## 圧縮と会話 ID
 

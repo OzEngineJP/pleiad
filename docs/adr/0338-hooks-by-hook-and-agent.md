@@ -1,6 +1,6 @@
 # 0338 Hooks を、Hook × エージェントの一覧にする（担当の 2 択をやめる。保存・実行時・操作）
 
-- 状態: 採用（2026-11-15。第 3 段のうち core の保存・実行時・操作を実装した。画面は別の仕事。実機での確かめは末尾「確かめ」）
+- 状態: 採用（2026-11-15。第 3 段の core の保存・実行時・操作と、画面（設定 › プラグイン › Hooks の表・会話の右の欄）を実装した。実機での確かめは末尾「確かめ」）
 - 関係: [ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP を名前 × エージェントの一覧にする）と同じ形にする。[ADR 0049](0049-hooks-pleiad-managed.md)（Pleiad がそろえる）の渡し方・止め方を使い回し、担当の 2 択（`hooks.json` の `defaults`・`places` の `owner`）を、触った人から置き換える。[ADR 0047](0047-hooks-copy-adapter.md)（写す）の変換をそのまま使う。
 
 ## 状況
@@ -135,7 +135,19 @@
     - Pleiad の分の hooks に Devin の知らないイベント名があれば、その定義は渡さない（1 つでもあると、利用者の分も含めて hooks が丸ごと外れる）。
     - 写しは鍵にしない（ADR 0336 の教訓との違い）: `config.json` には資格情報が無い（`credentials.toml` は別のファイルで、置き場から読まれる）。Devin が書き戻すのは `version` だけで、会話中の変更（許可・モデル）は保存しない。写しはデータ置き場の `devin/turn-configs`（フォルダー 0700・ファイル 0600、`wx` で作り、プロセスが終わったら消す。残ったものは 1 日で消す）に置き、中身はログに出さない。鍵にすると、利用者の hooks と権限を持つ人は Pleiad から Devin へ何も渡せなくなり、渡せば外れる、の 2 択になるため、重ねる方を採る。
 
-### 操作（`context.mcpMatrix` に当たるもの。画面はまだ呼ばない）
+### 画面（段 3）
+
+形の細部は design-system.md「Hooks」。ここには決めたことだけを書く。
+
+- 設定 › プラグイン › Hooks を、指示・Skills・外部 MCP と同じ共有の部品（`agentChip`・`rowSwitch`・`askBanner`・`agentLegend`・`web/lock-tip.mjs`）の表にした（`web/hooks-matrix.mjs`）。担当の 2 択とその確認・取り込みの選択・「ほかのエージェントへ写す」は画面から消した。旧カードの状態の文は行の詳細へ移した。
+- アイコンは「そのエージェントのターンで実行する」。`MATRIX_ICON` に「実行する」の記号は無いので、新しい記号を作らず、指示・Skills と同じエージェントのロゴにした。読み上げ名は「{エージェント} で {名前} を実行する」。
+- 広げる（`needsConfirm`）ときだけ、押した行の下で「{出どころ} の設定の Hook を、{相手} でも実行します」と聞き、`warnings` を箇条で並べる。注意があっても入れられる。
+- 作業場所の Hooks は 1 行（`ws:hooks`）にまとめ、件数には数えない。場所ごとに使うかは会話の右の欄の「この場所で使うか」（`setHookPlace`）で選ぶ。右の欄にエージェントのアイコンは出さない。
+- 移行前（`adopted: false`）は開いただけでは保存せず、最初に押したときに移行する。`hooks.resetAgents` は画面に置かない（押すと、移行してから選んだものが黙って全部消える。戻したいときは CLI・MCP から呼ぶ）。
+- 行き先の無くなった選択（`orphans`）は、件数の注記だけを出す（捨てる操作はまだ置いていない）。
+- 人が画面で押したときは承認のカードを出さない（画面の口は操作を `by: 'human', via: 'ui'` で呼ぶ）。エージェント・CLI から同じ操作を呼ぶと、上の「操作」の強さで承認を求める。
+
+### 操作（`context.mcpMatrix` に当たるもの）
 
 - `hooks.matrix`（read）: `{ adopted, agents, groups, cwd, place, skipFrom, compat, grok, claudeAllOff, trustPending, revision, orphans: [{ key, agent, scope, path, event, reason, candidates, off, spread, unused, places }], rows: [{ key, group, agent, source, scope, event, matcher, command（伏せ字）, scanIds?, on, switchable, here?, status?, targets?, enabled?, cells: { <A>: { state, mode, reason?, detail?, warnings?, needsConfirm?, copy?, reasons? } } }] }`。`needsConfirm` は、押すと広げるセル（元の集合に無く、今オフで押せる）だけに `true` で付く。
 - `revision` は保存の中身の hash（移行の時刻 `adoptedFrom.at` は入れない。移行前の一覧は開くたびに写し直すため）。操作に `revision` を渡すと、違えば `CONFLICT` で断る。押せないセルは `INVALID`（`hooksAgents.notPressable`）。
@@ -156,7 +168,8 @@
 - 新: `core/hooks-agents.mjs`（保存・行 ID・元の集合・セルの規則・移行の式・一覧・ターンで動く Hook）。
 - 変: `core/hooks-unify.mjs`（移行済みのターンの準備）、`core/hooks-plan.mjs`（Codex の行ごとの止め・agy のアダプターの絶対パス）、`core/backends/claude.mjs`・`codex.mjs`・`devin*.mjs`・`antigravity-context.mjs`、`core/ops/hooks.mjs`、`core/server.mjs`（`opsHooks`）、`tests/data-writes-allowlist.mjs`。
 - 画面の文言の鍵だけ `web/locales/{en,ja}/{agent,server}.json` に足した（鍵・注意・断りの文。画面の部品は触っていない）。
-- 画面（`web/`）は変えない。今の Hooks の画面（担当の 2 択・写す）は移行前の人にはそのまま動く。移行済みの人には、旧の操作（担当の切り替え `hooks.setOwner`・場所ごとの担当・取り込み・切り替えの確認 `hooks.unifyPreview`・写す `hooks.copy`）を `HOOKS_MOVED` で断り、エラーの文で一覧の操作と `hooks.resetAgents` を案内する（効かないのに効いたように見えるのを防ぐ。画面からも消すのは第 3 段の画面の仕事）。
+- 画面: `web/hooks-matrix.mjs`（新）、`web/context.mjs`（タブ）・`web/session-context.mjs`（右の欄）・`web/hooks-card.mjs`（行の詳細とシートだけ残した）・`web/hooks-unify-ui.mjs`（理由・注意の文、登録の詳細とシート、会話の Hooks の面だけ残した）、`web/context.css`。旧の担当の 2 択・取り込み・写すの画面と、その文言・CSS は消した。
+- 移行済みの人には、旧の操作（担当の切り替え `hooks.setOwner`・場所ごとの担当・取り込み・切り替えの確認 `hooks.unifyPreview`・写す `hooks.copy`）を `HOOKS_MOVED` で断り、エラーの文で一覧の操作と `hooks.resetAgents` を案内する（効かないのに効いたように見えるのを防ぐ。画面からは段 3 で消した）。
 
 ## 確かめ（2026-11-15、試験用のデータ置き場・作業場所・別のポートのサーバー。利用者の設定ファイルは書き換えていないことを hash で確かめた）
 

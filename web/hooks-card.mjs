@@ -44,14 +44,6 @@ export function codexState(e) {
   return s === key ? e.trust.status : s;
 }
 const codexRuns = e => ['trusted', 'managed'].includes(e.trust?.status) && e.trust.enabled;
-export function metaText(e) {
-  const bits = [scopeLabel(e)];
-  if (e.matcher !== null && e.matcher !== undefined) bits.push(t('hooks.row.matcher', { matcher: e.matcher || '*' }));
-  if (e.type !== 'command') bits.push(e.type);
-  if (e.async) bits.push('async');
-  if (e.adapter) bits.push(t('hooks.row.copied', { agent: agentLabel(e.adapter.from) }));
-  return bits.join(' · ');
-}
 export const order = (scan, ev) => { const i = (scan?.order ?? []).indexOf(ev); return i < 0 ? 999 : i; };
 const supports = (scan, agent, ev) => Boolean(scan?.events?.[agent]?.includes(ev));
 
