@@ -1392,7 +1392,7 @@
       "grokTrustUnknown": "~/.grok/trusted_folders.toml exists, so whether Grok trusts this workspace is unknown",
       "duplicate": "The same event, matcher and command already runs on this agent (it runs only once)"
     },
-    "unreadable": "The hook × agent settings file (hooks-agents.json) cannot be read. The conversation is not started so that hooks you turned off do not run. Fix it in Settings › Plugins › Hooks",
+    "unreadable": "The hook × agent settings file (hooks-agents.json) cannot be read (it is broken or from an unknown version). The conversation is not started so that hooks you turned off do not run. Fix it with Repair (the hooks.repair operation) or Go back to the previous owner (hooks.resetAgents) in Settings › Plugins › Hooks. Both keep the broken file as hooks-agents.broken-<time>.json instead of deleting it and go back to the previous hooks owner (leave to agents / Pleiad aligns)",
     "stale": "The hooks list has changed. Reopen it and try again",
     "noRow": "The hook row ({{key}}) was not found. Reopen the list",
     "notPressable": "The {{agent}} cell of the hook row ({{key}}) cannot be pressed",
@@ -1447,7 +1447,7 @@
     "hooksEnable": "Turns the Pleiad hook \"{{name}}\" on or off ({{command}}).",
     "hooksOwner_one": "Changes who owns hooks for {{place}} ({{count}} import).",
     "hooksOwner_other": "Changes who owns hooks for {{place}} ({{count}} imports).",
-    "hooksRepair": "Backs up the broken hooks registration file and rewrites it with the parts that could be read.",
+    "hooksRepair": "Backs up the broken hooks registration file and rewrites it with the parts that could be read. If the hook × agent settings file cannot be read, it is also moved aside and the previous hooks owner applies again.",
     "hooksAgent": "Changes whether the hook \"{{name}}\" runs on {{agent}} turns.",
     "hooksRow": "Changes whether the hook \"{{name}}\" is used (the per-agent choices are kept).",
     "hooksGroup": "Changes the {{agent}} column of the hook group ({{group}}) at once.",

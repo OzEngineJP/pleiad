@@ -179,7 +179,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 
 ### Hook × エージェントの一覧の会話（[ADR 0338](adr/0338-hooks-by-hook-and-agent.md)）
 
-`<data>/hooks-agents.json` が在れば（移行済み）、担当の 2 択の代わりに、ターンごとにそのエージェントのセルの状態で止める・渡す（`core/hooks-agents.mjs` の `forTurn`。`prepareHooksTurn` が呼ぶ）。無ければ上の「Pleiad がそろえる」のまま。
+`<data>/hooks-agents.json` が在れば（移行済み）、担当の 2 択の代わりに、ターンごとにそのエージェントのセルの状態で止める・渡す（`core/hooks-agents.mjs` の `forTurn`。`prepareHooksTurn` が呼ぶ）。無ければ上の「Pleiad がそろえる」のまま。読めなければ会話を断る（このプロセスで最後に読めた選択で、そのターンに止めるもの・渡すもの・互換の止めが無かったエージェントだけ続ける。`hooks.json` が読めないときと同じ側。ADR 0338「保存」）。
 
 - **今までと同じ起動**: 止めるものも渡すものも無く、互換の止めも無いターンは `null`（会話の記録も作らない）。何も触っていない人のターンは今までと同じ経路で起動する。
 - **止める・渡す**（want = そのエージェントでオンの行、native = 自分で動かす行）: 止める = native − want、渡す = want − native と巻き添えの渡し直し。渡し方は上の表と同じ（`via`）:

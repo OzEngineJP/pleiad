@@ -298,17 +298,52 @@ export default async function (t) {
     await ha.setPlace({ place: repo, key: guardRow.key, use: true });
     t.ok('使うに戻すと、場所の上書きは消える', !(await ha.read()).places[Object.keys((await ha.read()).places)[0]]?.skip?.length);
 
-    // ---------------------------------------------------------------- 読めないファイル・移行前へ戻す
+    // ---------------------------------------------------------------- 読めないファイル（壊れた・知らない版）: 会話を断り、直す操作で退避して戻す
     const goodText = await fs.readFile(ha.file, 'utf8');
-    await fs.writeFile(ha.file, '{');
-    let unread = null, unreadMatrix = null;
-    try { await newTurn(CLAUDE); } catch (e) { unread = e; }
-    try { await ha.matrix({ cwd: repo }); } catch (e) { unreadMatrix = e; }
-    t.ok('読めない hooks-agents.json は会話を止める（今までの担当で動かすと、切ったはずの Hook が動くため）', unread?.code === 'HOOKS_REFUSED' && unreadMatrix?.code === 'UNREADABLE');
     t.ok('知らない版は読めない扱い', parseState({ version: 2 }) === null && parseState({ version: 1 })?.version === 1);
+    const brokenFiles = async () => (await fs.readdir(data)).filter(n => n.startsWith('hooks-agents.broken-')).sort();
+    const sameTurn = (x, y) => JSON.stringify(x?.record?.supplied ?? null) === JSON.stringify(y?.record?.supplied ?? null) && (x === null) === (y === null);
+    for (const [label, text, fix] of [['壊れた JSON', '{"version":1,', 'repair'], ['知らない版', JSON.stringify({ version: 2, off: {} }), 'reset']]) {
+      await fs.writeFile(ha.file, goodText);
+      await ha.read(); // このプロセスで読めた選択（止めるものがある）
+      await fs.writeFile(ha.file, text);
+      const fresh = createHooksAgents({ dataDir: data, hooksConfig, plyHooks, findNode, grokHome }); // 一度も読めていない
+      const freshTurn = agent => prepareHooksTurn({ agent, cwd: repo, ctx: { plyHooks, hooksConfig, dataDir: data, findNode, grokHome, hooksAgents: fresh } });
+      let e1 = null, e2 = null;
+      try { await freshTurn(CLAUDE); } catch (e) { e1 = e; }
+      try { await newTurn(CLAUDE); } catch (e) { e2 = e; }
+      t.ok(`${label}: 会話を断る（読めた選択でも止めるものがあれば断る。hooks.json の担当が Pleiad のときと同じ側）`, e1?.code === 'HOOKS_REFUSED' && e2?.code === 'HOOKS_REFUSED', `${e1?.code} ${e2?.code}`);
+      t.ok(`${label}: 断る文が、実際にある直す操作（hooks.repair・hooks.resetAgents）と退避を案内する`, /hooks.repair/.test(e1?.message) && /hooks.resetAgents/.test(e1?.message) && /hooks-agents.broken-/.test(e1?.message)
+        && registry.get('hooks.repair') && registry.get('hooks.resetAgents'));
+      const m = await ha.matrix({ cwd: repo });
+      t.ok(`${label}: 一覧は投げずに unreadable と直す操作を返す（画面の Hooks のタブが出す）`, m.unreadable === true && m.rows.length === 0 && m.repair.join() === 'hooks.repair,hooks.resetAgents' && m.adopted === true, JSON.stringify(m).slice(0, 300));
+      let changeErr = null;
+      try { await ha.setRow({ key: stopRow.key, on: true }); } catch (e) { changeErr = e; }
+      t.ok(`${label}: 読めないまま一覧を変える操作は断り、ファイルはそのまま`, changeErr?.code === 'UNREADABLE' && await fs.readFile(ha.file, 'utf8') === text);
+      const before = await brokenFiles();
+      const r = fix === 'repair' ? await ha.repair() : await ha.reset();
+      const after = await brokenFiles();
+      const added = after.filter(n => !before.includes(n));
+      t.ok(`${label}: ${fix === 'repair' ? '修復' : '以前の担当へ戻す'}は、壊れたファイルを消さずに退避して残す（中身はそのまま）`, added.length === 1 && r.backup === path.join(data, added[0])
+        && await fs.readFile(r.backup, 'utf8') === text && !await ha.exists(), JSON.stringify({ added, r }));
+      t.ok(`${label}: 直した後は移行前（旧の担当）の動きに戻り、会話を始められる`, sameTurn(await newTurn(CLAUDE), await legacyTurn(CLAUDE)) && sameTurn(await freshTurn(CLAUDE), await legacyTurn(CLAUDE))
+        && (await ha.matrix({ cwd: repo })).adopted === false);
+      t.ok(`${label}: 読めるファイルなら修復は何もしない`, await ha.repair() === null);
+    }
+    // 読めた選択で、このターンに止めるもの・渡すものが無かったエージェントは続ける（hooks.json の、確かにエージェント任せだった場所だけ続けるのと同じ）
+    await fs.writeFile(ha.file, goodText);
+    const quiet = [];
+    for (const A of [CLAUDE, CODEX, AGY, OPENCODE, DEVIN, GROK]) if (await ha.forTurn({ agent: A, cwd: repo }) === null) quiet.push(A);
+    const loud = [CLAUDE, CODEX, AGY, OPENCODE, DEVIN, GROK].filter(A => !quiet.includes(A));
+    await fs.writeFile(ha.file, '{');
+    const quietOk = [], loudRefused = [];
+    for (const A of quiet) quietOk.push(await newTurn(A).then(x => x === null, () => false));
+    for (const A of loud) loudRefused.push(await newTurn(A).then(() => false, e => e.code === 'HOOKS_REFUSED'));
+    t.ok('読めなくなっても、最後に読めた選択でそのターンに変えるものが無かったエージェントだけ続け、ほかは断る', quiet.length > 0 && loud.length > 0 && quietOk.every(Boolean) && loudRefused.every(Boolean), JSON.stringify({ quiet, loud, quietOk, loudRefused }));
+    for (const n of await brokenFiles()) await fs.rm(path.join(data, n));
     await fs.writeFile(ha.file, goodText);
     await ha.reset();
-    t.ok('移行前へ戻す: ファイルを消し、旧の担当の動きへ戻る', !await ha.exists() && await newTurn(CLAUDE) === null);
+    t.ok('移行前へ戻す: 読めるファイルは消し（退避しない）、旧の担当の動きへ戻る', !await ha.exists() && (await brokenFiles()).length === 0 && await newTurn(CLAUDE) === null);
 
     // ---------------------------------------------------------------- 渡せないセル（relay）
     const ss = await plyHooks.save({ name: 'ctx', agent: CLAUDE, event: 'SessionStart', matcher: '', command: 'node ctx.mjs', targets: [CLAUDE] });

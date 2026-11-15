@@ -1576,7 +1576,7 @@
         "revision": "The revision from hooks.list."
       },
       "repair": {
-        "summary": "Back up a broken Pleiad hooks registration file and rewrite it with the parts that could be read. The user must approve."
+        "summary": "Back up a broken Pleiad hooks registration file and rewrite it with the parts that could be read. An unreadable hook × agent settings file (hooks-agents.json) is moved aside and the previous hooks owner applies again (when hooks.matrix returns unreadable). The user must approve."
       },
       "unifyPreview": { "summary": "What changing the owner of hooks would do (definitions to import and to stop, and the imports and revision to pass to hooks.setOwner). Nothing is written.", "direction": "ply (gather into Pleiad, the default) or native (back to the agents' config files)." }
     },

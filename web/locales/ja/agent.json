@@ -1575,7 +1575,7 @@
         "revision": "hooks.list の revision。"
       },
       "repair": {
-        "summary": "壊れた Pleiad の Hooks の登録ファイルを退避し、読めた部分だけで書き直す。ユーザーの承認が要る。"
+        "summary": "壊れた Pleiad の Hooks の登録ファイルを退避し、読めた部分だけで書き直す。読めない Hook × エージェントの設定ファイル（hooks-agents.json）は退避して、以前の担当の動きに戻す（hooks.matrix が unreadable を返すとき）。ユーザーの承認が要る。"
       },
       "unifyPreview": { "summary": "Hooks の担当を変えたときの見込み（取り込む定義・止める定義と、hooks.setOwner に渡す imports と revision）。何も書かない。", "direction": "ply（Pleiad へそろえる。既定）か native（エージェントの設定ファイルへ戻す）。" }
     },

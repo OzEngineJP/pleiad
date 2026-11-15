@@ -371,8 +371,10 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
   const run = fn => { const next = queue.catch(() => {}).then(fn); queue = next; return next; };
   const unreadable = () => Object.assign(new Error(t('hooksAgents.unreadable')), { code: 'UNREADABLE' });
 
+  // このプロセスで最後に読めた選択。ファイルが読めなくなったターンで、止めるもの・渡すものが無かったと確かに言えるかに使う（hooks.json の lastGood と同じ）
+  let lastGood = null;
   async function exists() { try { await fs.stat(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; return true; } }
-  /** null = 移行していない。読めなければ投げる（今までの担当で動かすと、止めたはずの定義が動くため） */
+  /** null = 移行していない。読めなければ投げる（今までの担当で動かすと、止めたはずの定義が動くため）。知らない version も読めない扱い */
   async function read() {
     let text;
     try { text = await fs.readFile(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw unreadable(); }
@@ -380,7 +382,22 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     try { raw = JSON.parse(text); } catch { throw unreadable(); }
     const s = parseState(raw);
     if (!s) throw unreadable();
+    lastGood = s;
     return s;
+  }
+  /**
+   * 読めないファイルを、消さずに隣へ退避する（hooks-agents.broken-<時刻>.json）。中身を読まずに名前だけ変える（読めない理由が権限でも残る）。
+   * 退避したら、ファイルが無い = 移行前（旧の担当の動き）に戻る。読めるファイル・無いファイルなら何もしない。戻り: 退避先のパスか null
+   */
+  async function moveAsideIfBroken() {
+    if (!await exists()) return null;
+    try { await read(); return null; } catch (e) { if (e.code !== 'UNREADABLE') throw e; }
+    const stamp = now().toISOString().replace(/[:.]/g, '-');
+    let backup = path.join(dataDir, `hooks-agents.broken-${stamp}.json`);
+    for (let i = 1; await fs.stat(backup).then(() => true, () => false); i++) backup = path.join(dataDir, `hooks-agents.broken-${stamp}-${i}.json`);
+    await fs.rename(file, backup);
+    lastGood = null;
+    return backup;
   }
   async function write(state) {
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
@@ -526,15 +543,22 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     await write(state);
     return { state, revision: stateRevision(state) };
   });
-  /** 移行前へ戻す（ファイルを消すだけ。旧の担当の動きへ戻る） */
-  const reset = () => run(async () => { await fs.rm(file, { force: true }); return { ok: true }; });
+  /** 移行前へ戻す（ファイルを消す。旧の担当の動きへ戻る）。読めないファイルは消さずに退避する（backup に退避先） */
+  const reset = () => run(async () => {
+    const backup = await moveAsideIfBroken();
+    if (!backup) await fs.rm(file, { force: true });
+    lastGood = null;
+    return { ok: true, ...(backup ? { backup } : {}) };
+  });
+  /** 修復（hooks.repair から）: 読めないファイルだけ退避し、移行前の動きへ戻す。読めれば何もしない。戻り: { backup } か null */
+  const repair = () => run(async () => { const backup = await moveAsideIfBroken(); return backup ? { backup } : null; });
 
   /**
    * エージェント A・場所 cwd のターンに、何を止め・何を渡すか（実行時の材料）。移行していなければ null。
    * 戻り: { inv, cells, stop: { units, rows }, deliver: [{ hook, d, row }], unsupported, skipped, kept, s }
    */
-  async function turnPlan(agent, cwd) {
-    const state = await read();
+  async function turnPlan(agent, cwd, given = null) {
+    const state = given ?? await read();
     if (!state) return null;
     const inv = await inventory({ cwd, turn: true });
     const eff = effectiveAt(state, cwd);
@@ -588,7 +612,15 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
    * 戻り: { record, runtime } か null。投げる: agy の一覧を読めない・名前がぶつかる・Skills の担当とぶつかる（HOOKS_REFUSED）
    */
   async function forTurn({ agent, cwd, ctx = {} }) {
-    const plan = await turnPlan(agent, cwd);
+    let plan;
+    try { plan = await turnPlan(agent, cwd, ctx.given ?? null); }
+    catch (e) {
+      // 読めなくなった: hooks.json と同じく、最後に読めた選択でこのターンに止めるもの・渡すもの・互換の止めが何も無かったときだけ続ける。ほかは断る（UNREADABLE）
+      if (e.code !== 'UNREADABLE' || !lastGood) throw e;
+      const prev = await forTurn({ agent, cwd, ctx: { ...ctx, given: lastGood } });
+      if (prev) throw e;
+      return null;
+    }
     if (!plan) return null;
     if (!UNIFY_TARGETS.includes(agent)) return null;
     const { s, stopUnits, stopped, kept, unsupported, skipped, inv } = plan;
@@ -683,7 +715,14 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
    * cwd があればその場所で効く選択（場所の上書き・この場所で使わない）と、その場所の作業場所の定義の行を並べる
    */
   async function matrix({ cwd = null, trust = true } = {}) {
-    const v = await view({ cwd, trust });
+    let v;
+    try { v = await view({ cwd, trust }); }
+    catch (e) {
+      // 読めない: 投げずに、画面が直す操作（hooks.repair・hooks.resetAgents）を出せる形で返す。止めたはずの Hook が動かないよう、会話は断ったまま
+      if (e.code !== 'UNREADABLE') throw e;
+      return { unreadable: true, error: e.message, repair: ['hooks.repair', 'hooks.resetAgents'], agents: [...UNIFY_TARGETS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)),
+        adopted: true, revision: '', cwd, place: null, skipFrom: null, compat: null, grok: null, claudeAllOff: false, trustPending: false, groups: [], rows: [] };
+    }
     const { inv, eff, cells } = v;
     const s = eff.agents;
     const rows = inv.rows.map(row => {
@@ -708,5 +747,5 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       groups: ['ply', 'own', 'place', 'admin'].filter(g => rows.some(r => r.group === g)), rows };
   }
 
-  return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, reset, turnPlan, forTurn, hooksForTurn };
+  return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, reset, repair, turnPlan, forTurn, hooksForTurn };
 }

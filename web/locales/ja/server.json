@@ -1390,7 +1390,7 @@
       "grokTrustUnknown": "~/.grok/trusted_folders.toml があるので、この作業場所を Grok が信頼しているか分かりません",
       "duplicate": "同じイベント・matcher・コマンドが、このエージェントで既に動いています（1 回だけ動かします）"
     },
-    "unreadable": "Hook × エージェントの設定ファイル（hooks-agents.json）を読めません。止めたはずの Hook が動かないよう、会話を始めません。設定 › プラグイン › Hooks で直してください",
+    "unreadable": "Hook × エージェントの設定ファイル（hooks-agents.json）を読めません（壊れているか、知らない版です）。止めたはずの Hook が動かないよう、会話を始めません。設定 › プラグイン › Hooks の「修復」（操作 hooks.repair）か「以前の担当へ戻す」（hooks.resetAgents）で直してください。どちらも壊れたファイルを消さずに hooks-agents.broken-<時刻>.json へ退避し、以前の Hooks の担当（任せる・そろえる）の動きに戻します",
     "stale": "Hooks の一覧が変わりました。開き直してから操作してください",
     "noRow": "Hook の行（{{key}}）が見つかりません。一覧を開き直してください",
     "notPressable": "Hook の行（{{key}}）の {{agent}} は押せないセルです",
@@ -1440,7 +1440,7 @@
     "hooksRemove": "Pleiad の Hook「{{name}}」を消します。",
     "hooksEnable": "Pleiad の Hook「{{name}}」の有効・無効を変えます（{{command}}）。",
     "hooksOwner_other": "{{place}}の Hooks の担当を変えます（取り込み {{count}} 件）。",
-    "hooksRepair": "壊れた Hooks の登録ファイルを退避し、読めた部分だけで書き直します。",
+    "hooksRepair": "壊れた Hooks の登録ファイルを退避し、読めた部分だけで書き直します。Hook × エージェントの設定ファイルが読めなければ、それも退避して以前の Hooks の担当の動きに戻します。",
     "hooksAgent": "Hook「{{name}}」を {{agent}} のターンで実行するかを変えます。",
     "hooksRow": "Hook「{{name}}」を使うかを変えます（エージェントごとの選択は覚えたままです）。",
     "hooksGroup": "Hooks の組（{{group}}）の {{agent}} の列をまとめて変えます。",

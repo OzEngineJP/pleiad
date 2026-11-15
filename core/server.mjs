@@ -5417,8 +5417,17 @@ const opsHooks = {
     }
     return plyHooks.setOwner({ place, value: args.value ?? null, add, cwd: args.cwd ?? place, expect: args.revision });
   },
-  // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）
-  repair: (cwd) => plyHooks.repair({ cwd }),
+  // 壊れた hooks.json を退避して、読めた部分だけで書き直す（画面で影響を知らせてから押させる）。
+  // 読めない hooks-agents.json（Hook × エージェントの一覧。ADR 0338）は退避して移行前の動きへ戻す。そのとき hooks.json が無事なら書き直さない
+  repair: async (cwd) => {
+    const agents = await hooksAgents.repair();
+    if (agents) {
+      const v = await plyHooks.view(cwd);
+      if (!v.unreadable && !v.problems?.length) return { ...v, agentsBackup: agents.backup };
+      return { ...(await plyHooks.repair({ cwd })), agentsBackup: agents.backup };
+    }
+    return plyHooks.repair({ cwd });
+  },
   // 担当を変える前の見込み（hooks.unifyPreview。ADR 0105）
   unifyPreview: (args) => hooksUnifyPreview(args),
   // Hook × エージェントの一覧と更新（hooks.matrix・hooks.setAgent など。ADR 0338）
