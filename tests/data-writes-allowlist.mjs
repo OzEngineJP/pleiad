@@ -186,8 +186,9 @@ export const DATA_WRITES = [
     { name: 'hooks.json', limit: 'hooks の登録・担当・場所ごとの設定。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'hooks.broken-<日時>.json', limit: '修復ボタンを押すたびに 1 個', reason: '壊れた設定の退避' },
   ] },
-  { file: 'core/hooks-agents.mjs', sites: 1, targets: [
-    { name: 'hooks-agents.json', limit: 'Hook × エージェントの選択。行（登録・エージェントの設定の定義）と場所の数まで。ユーザーが数十個まで', reason: '設定の台帳（ADR 0338）' },
+  { file: 'core/hooks-agents.mjs', sites: 2, targets: [
+    { name: 'hooks-agents.json', limit: 'Hook × エージェントの選択。行（登録・エージェントの設定の定義）と場所の数まで。ユーザーが数十個まで。seen（書き換えた定義の突き合わせ）はエージェント・scope・ファイル・イベントの組の数まで', reason: '設定の台帳（ADR 0338）' },
+    { name: 'hooks-agents.broken-<日時>.json', limit: '読めないファイルを修復・戻すの操作で直すたびに 1 個（名前を変えるだけで中身は書かない）', reason: '読めない選択のファイルの退避（ADR 0338「保存」）' },
   ] },
   { file: 'core/notify/settings.mjs', sites: 1, targets: [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },

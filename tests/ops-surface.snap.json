@@ -2666,7 +2666,7 @@
     {
       "id": "hooks.setOwner",
       "risk": "guarded",
-      "riskOf": false,
+      "riskOf": true,
       "scope": "global",
       "modeGate": true,
       "hostScreenOnly": false,
