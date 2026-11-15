@@ -122,6 +122,18 @@
   - Grok: Claude のユーザーの定義を Grok の列で止めたときだけ `GROK_CLAUDE_HOOKS_ENABLED=false` で起こし、止めないユーザーの定義をプラグインの置き場で渡し直す。Cursor の互換は `compat.grok` が `off` のときだけ止める（旧「そろえる」）。Grok 自身の hooks は止めない。
   - OpenCode: 渡すだけ（コールバック）。利用者のプラグインは一覧に出さない。
   - Devin: 渡すものがあるターンは `--config`（`read_config_from` は `compat.devin` のとおり）。`compat.devin` が `off` なら、旧「そろえる」と同じく、渡すものがあるターンだけ Devin の取り込み（MCP・ルールを含む）も止まる（`runtime.stopImports`。渡すものが無いターンは `null` で、今までと同じ起動）。`--config` のファイルは Devin のプロセスが終わるまで消さない（Devin CLI は起動の後の `session/new` のときに読む。起動の直後に消していたため、旧「そろえる」でも渡したものが載っていなかった。2026-11-15 実機。閉じずに残ったものは次の起動で 1 日を過ぎた分だけ消す）。
+    - **`--config` は利用者の `config.json` を置き換える**（重ねない。2026-11-15 実機 3000.11.92）。そのまま渡すと、利用者の hooks・`permissions` の allow/deny・`read_config_from`・`agent.model`・`devin.org_id` が黙って外れる。`mcp_config.json`・`credentials.toml`・作業場所の `.devin/` は影響を受けない。Devin に重ねる口は無い。
+    - そこで渡すファイルは、利用者の `config.json`（MCP を切るターンは、MCP を外した置き場の写しの `config.json`）を土台に、Pleiad の分だけを重ねたものにする（`overlayDevinConfig`）。
+      - hooks: イベントごとに利用者の後ろへ足す。
+      - `read_config_from`: 利用者の値に、Pleiad が止める取り込み（`false`）だけを上書きする。利用者が止めた取り込みは広げない。
+      - `disabled_tools`: 和集合。
+      - そのほかのキーは利用者のまま。Devin が受け付けない値は、Devin 自身と同じくキーごとに既定へ戻る。
+    - 断る（`DEVIN_USER_CONFIG_INVALID`、ターンを始めない。誤りの文に中身は載せない）:
+      - 利用者の `config.json` が読めない、JSONC として壊れている、全体がオブジェクトでない。Devin 自身は警告を 1 行出して既定の設定で動くが、Pleiad の中では警告が見えず、見張りの Hook と拒否の権限が黙って外れるため。
+      - Pleiad が足すキー（hooks・`read_config_from`・`disabled_tools`）に、Devin が受け付けない値がある。Devin はキーごとに既定へ戻すので、足した Pleiad の分も一緒に外れるため。特に hooks は、どこか 1 か所が受け付けられない（未知のイベント名・matcher の `null`・`type` の欠け・小数や負の timeout など）だけで丸ごと外れる。
+    - 無い・空なら Pleiad の分だけを渡す。渡すものが無いターンは `--config` を付けず、利用者のファイルを Devin が自分で読む（壊れていても断らない。今までと同じ）。
+    - Pleiad の分の hooks に Devin の知らないイベント名があれば、その定義は渡さない（1 つでもあると、利用者の分も含めて hooks が丸ごと外れる）。
+    - 写しは鍵にしない（ADR 0336 の教訓との違い）: `config.json` には資格情報が無い（`credentials.toml` は別のファイルで、置き場から読まれる）。Devin が書き戻すのは `version` だけで、会話中の変更（許可・モデル）は保存しない。写しはデータ置き場の `devin/turn-configs`（フォルダー 0700・ファイル 0600、`wx` で作り、プロセスが終わったら消す。残ったものは 1 日で消す）に置き、中身はログに出さない。鍵にすると、利用者の hooks と権限を持つ人は Pleiad から Devin へ何も渡せなくなり、渡せば外れる、の 2 択になるため、重ねる方を採る。
 
 ### 操作（`context.mcpMatrix` に当たるもの。画面はまだ呼ばない）
 
@@ -158,3 +170,11 @@
 | Antigravity | 本物 | 本物（作業場所の 1 行を止めた） | 直す前は本物で失敗（アダプターが見つからない）。直した後は Gemini の週次の上限で走らせられず、同じコマンドを 3 つのフォルダーから動かして確かめただけ | 未確認（試験だけ） |
 | Grok | 本物（利用者の Stop が互換で動いた。会話の記録は残らない＝起動は今までどおり） | 本物（利用者の Stop を止めた） | 本物（Claude の登録がプラグインで 1 回） | 未確認（会話の上限のため。試験だけ） |
 | Codex | 未確認（週次の上限） | 未確認 | 未確認 | 未確認 |
+
+Devin の `--config` に利用者の設定を重ねる直しは、試験用の設定の置き場（利用者の hooks・allow/deny・`read_config_from`・model を持つ `config.json`）と本物の Devin で、製品の経路で確かめた（2026-11-15）。
+
+- (1) 何も渡さない: `--config` 無し。利用者・作業場所・取り込んだ Claude の hook が各 1 回。allow のコマンドは確認無しで走り、deny のコマンドは走らない。
+- (2) Pleiad の登録を Devin へ広げる: 渡したファイルは、利用者のキーをすべて残し、UserPromptSubmit が利用者 → Pleiad の順。登録が 1 回、利用者と取り込んだ Claude の hook も各 1 回。allow・deny とも効いたまま。
+- (3) シェルの制限: `disabled_tools` が足され、hooks は (2) と同じく動く。ただしコマンドは ply_shell で走り、Devin の `Exec(...)` の allow/deny は当たらない（ply_shell は Pleiad の承認だけを通る。ほかのエージェントの ply_shell と同じ性質で、`--config` とは別。今までも、置き換えで deny は外れていた）。
+- (4) 戻す: (1) と同じ動き（`--config` 無し）。
+- どのターンの後も写しは残らず、利用者の `config.json` は `version` 以外変わらなかった。
