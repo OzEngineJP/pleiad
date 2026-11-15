@@ -1,6 +1,6 @@
 // playwright-cli run-code --filename=tests/browser/interrupt-resume.cjs
 // 中断と再開・実行中でも更新できる更新（docs/design-system.md「中断と再開」、ADR 0036）。
-// fake バックエンドを別ポート・別のデータ置き場で立て、最初の案内を済ませてから流す（AGENTS.md）。
+// fake バックエンドを別ポート・別のデータ置き場で立て、最初の案内を済ませてから流す（docs/dev-verification.md「fake で画面を出す」）。
 // デスクトップの更新の口（window.plyDesktop.update）は偽物にする: 更新は準備済み（downloaded）、install は記録するだけ。
 // fake は "slow" で中断されるまで走り、"ask" で承認を待つ。abort は 1.5 秒遅らせて「作業を中断しています… 0 / 3」を撮る。
 // 撮った画面は temporary/screenshots/interrupt-resume-impl-*.png（playwright-cli を起動した作業ディレクトリからの相対）。

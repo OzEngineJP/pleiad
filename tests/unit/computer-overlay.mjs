@@ -16,7 +16,7 @@ export const name = 'computer-overlay';
 export const title = 'computer use のオーバーレイと Esc: 窓・フェード・Esc の登録と解除・止める流れ・座標（偽の electron）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-// 実タイマーで確かめるので短くする（AGENTS.md: unref だけのタイマーに頼らない）
+// 実タイマーで確かめるので短くする（unref だけのタイマーに頼らない）
 const FAST = { idleMs: 60, stopMs: 50, tailMs: 20, exitMs: 10, rmExitMs: 4, marginMs: 6, keepMs: 400, escapeWaitMs: 80 };
 
 /** 主モニター（倍率 1）+ 右の副モニター（倍率 1.5。物理 1920×1080 = DIP 1280×720）。bounds は DIP */

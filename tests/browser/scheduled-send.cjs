@@ -1,6 +1,6 @@
 // playwright-cli run-code --filename=tests/browser/scheduled-send.cjs
 // 送信日時の指定（docs/design-system.md「送信日時の指定」、ADR 0103）。
-// fake バックエンドを別ポート・別のデータ置き場で立て、最初の案内を済ませてから流す（AGENTS.md）。
+// fake バックエンドを別ポート・別のデータ置き場で立て、最初の案内を済ませてから流す（docs/dev-verification.md「fake で画面を出す」）。
 // 送信の ▾・右クリック・Ctrl+Shift+Enter・日時の指定・送信予定の行（今すぐ送る・編集・取り消す）・脇の行の印・狭い幅のシートを確かめる。
 async page => {
   const checks = [];

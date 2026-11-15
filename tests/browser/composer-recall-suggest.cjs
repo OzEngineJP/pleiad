@@ -1,6 +1,6 @@
 // playwright-cli --raw run-code --filename=tests/browser/composer-recall-suggest.cjs
 // 入力欄の ↑ の呼び出しと次のメッセージの候補（docs/design-system.md「入力欄の呼び出しと候補」）。
-// fake バックエンドを別ポート・別のデータ置き場で立て、authLogin { backend: 'fake' } と最初の案内（「あとで」）を済ませてから流す（AGENTS.md）。
+// fake バックエンドを別ポート・別のデータ置き場で立て、authLogin { backend: 'fake' } と最初の案内（「あとで」）を済ませてから流す（docs/dev-verification.md「fake で画面を出す」）。
 // fake は本文の「suggest:…」を候補として返す。並びの読み込み（sessions.sentMessages）は、ページ上で WebSocket.prototype.send を包んで遅らせる。
 //   - 候補が出ている空の欄の Ctrl+Enter は送らず、Tab の印が光り、読み上げに「Tab で候補を入れます」
 //   - Esc で候補が薄れて消え、欄を打って空に戻しても出ない
