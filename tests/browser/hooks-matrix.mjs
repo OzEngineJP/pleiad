@@ -454,6 +454,21 @@ try {
       && a1.warns.includes(T('hooks.warn.devinImportsStop')) && a1.focus === T('hooks.matrix.confirm'),
       '(1) 元の対象に Devin を含む行の Devin のマス: 保存の前に「Devin の取り込みが止まります」の帯（注意つき・フォーカスは［実行する］）', a1);
     await shoot(page, 'hooks-r3-cell.png', page.locator('#cx-panel-hooks'));
+    check(!/read_config_from|--config/.test(await ask.innerText()), '日本語の確認の帯に設定名や起動引数を出さない');
+    await shoot(page, 'plugin-polish-warning-ja.png');
+    await page.evaluate(async () => {
+      await (await import('./i18n.mjs')).setLanguage('en');
+    });
+    await ask.locator('button').first().click();
+    await cellOf(page, bothKey, 'devin').click();
+    await ask.waitFor({ state: 'visible' });
+    const en = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/locales/en/ui.json'), 'utf8'));
+    check((await askFacts()).q === T('hooks.matrix.askStop', {}, en) && !/read_config_from|--config/.test(await ask.innerText()), '英語の確認の帯も設定名や起動引数を出さない');
+    await shoot(page, 'plugin-polish-warning-en.png');
+    await page.evaluate(async () => { await (await import('./i18n.mjs')).setLanguage('ja'); });
+    await ask.locator('button').first().click();
+    await cellOf(page, bothKey, 'devin').click();
+    await ask.waitFor({ state: 'visible' });
     await ask.locator('button', { hasText: T('context.matrix.cancel') }).click();
     await page.waitForFunction(() => !document.querySelector('#cx-panel-hooks .cx-ask'), { timeout: 3000 });
     await page.waitForTimeout(300);
