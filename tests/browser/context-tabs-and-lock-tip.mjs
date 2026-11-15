@@ -621,7 +621,11 @@ try {
       await page.evaluate(() => {
         document.getElementById('onboardingDialog')?.close();
         if (!document.body.classList.contains('settings')) document.getElementById('settings')?.click();
-        if (document.getElementById('contextPanel')?.hidden !== false) document.getElementById('openContext')?.click();
+        // 開いたままのときは開き直さない（外部 MCP の一覧が届く前に開き直すと、取り直しが始まってしまう）。
+        // ただし、サーバーにつながる前に開いて読めなかったとき（「未接続」）は、開き直して読み直す（main の試験の動きと同じ）
+        const panel = document.getElementById('contextPanel');
+        const failed = !!panel?.querySelector('.cx-status')?.textContent && !panel.querySelector('[data-kind=mcp] .cx-row');
+        if (panel?.hidden !== false || failed) document.getElementById('openContext')?.click();
         document.getElementById('cx-tab-mcp')?.click();
       });
       if (await dvCell(page, 'devBoth').waitFor({ state: 'visible', timeout: 1500 }).then(() => true, () => false)) return;
