@@ -24,6 +24,21 @@
 - Pleiad の登録: 登録の `id`（`h-` + 12 桁）。
 - エージェントの設定の定義: `hk-` + sha256(JSON `[エージェント, scope, ファイル, イベント, matcher ?? '', コマンドの前後の空白を除いたもの, 名前 ?? '']`) の先頭 16 桁。ファイルは `pathKey(path)`、プラグインは `plugin:<id>`。並びの位置（group・handler の番号）は入れない（前に 1 つ足しても名前が変わらない）。
 - 同じファイル・同じイベント・matcher・コマンドが 2 回書かれていれば 1 行にまとめる（どちらもエージェント自身が動かすので、止めるときは両方止める）。
+- 一覧の行には `hooks.scan` の `id`（`scanIds`、まとめた行は複数）を入れる。画面は中身ではなく id で突き合わせる。
+
+### 書き換えた定義へ選択を引き継ぐ
+
+`hk-` は中身から作るので、利用者が設定ファイルでコマンドや matcher を直すと名前が変わる。外した・広げた選択が黙って消える（＝外した Hook がオンに戻る）のを防ぐため、最後に見た名前を覚えて突き合わせる。
+
+- 覚える単位は「エージェント・scope（user / project / local）・ファイル・イベント」の組（以下、グループ）。グループごとに、見えていた行 ID と数（同じ定義が 2 つあれば 2）を `seen` に残す。
+- 次に一覧を開いたとき・選択を書くとき・ターンの計画のとき、グループごとに消えた ID と現れた ID を数ごと（多重集合）で比べる。
+  - **消えたのが 1 つ・現れたのが 1 つ**で、消えた側に選択があり、現れた側が前から在った ID でも選択を持つ ID でもないときだけ、1 対 1 に対応するとみて、外した状態・広げた状態・使わない・場所ごとの選択を現れた側へ移す（同じ ID が残っているとき＝2 つあった定義の片方だけ直したときは、元の側にも残す）。
+  - それ以外（2 つ以上を一度に直した・行を消して別の行を足した・直した結果が既存の定義と同じになった）は**引き継がない**。選択の付いていた ID のうち見えなくなったものを、一覧の返り値の `orphans` に `reason: 'ambiguous'`（何か現れた）か `'gone'`（何も現れない）で返す。候補（`candidates`、そのグループに現れた ID）も添える。黙って捨てず、画面の段で「行き先の無くなった設定」として出し、捨てる操作を置く。
+  - 広げた状態（ほかのエージェントでも実行する）は、上の 1 対 1 のときだけ移す。あいまいなら移さない（実行する側へは倒さない）。
+  - 行を足す・消す・並べ替えるだけなら、残った ID は変わらないので選択もそのまま。足した行・同じ定義の 2 つ目に、ほかの行の選択は付かない。
+  - ファイルが読めない・一部しか読めないグループは比べない（見えないだけで消えたとは言えない）。プラグイン・スキルの Hook は対象外。
+- `seen` は一覧を開いたとき（移った・覚えが変わったときだけ、その間にファイルが変わっていなければ）と、選択を書くときに保存する。ターンの計画では保存しない。`seen` は一覧の `revision` に入れない（開くたびに版が変わって書き込みが断られないように）。
+- 限り: Pleiad が一度も見ないうちに行を足し、さらに別の行を直すと、足した行も「現れた」側に数えるので、あいまい（引き継がない・`orphans` に出す）になる。
 
 ### 保存
 
@@ -35,7 +50,8 @@
     unused: [<行 ID>],                     // 全体のスイッチを切った行（エージェントごとの選択は覚えたまま）
     compat: { grok: 'native'|'off', devin: 'native'|'off' }, // 互換の読み込み元（旧「そろえる」の止め方を引き継ぐ）
     places: { <pathKey>: { path, skip?: [<行 ID>], agents?: { off, spread, unused, compat } } },
-    adoptedFrom: { owner: 'native'|'ply', at } }
+    adoptedFrom: { owner: 'native'|'ply', at },
+    seen: [{ agent, scope, path, event, keys: { <行 ID>: 数 }, lost?: { <行 ID>: 'gone'|'ambiguous' } }] } // 書き換えた定義の突き合わせ用
   ```
   - `places[].skip` は「この場所では使わない」。`places[].agents` は、旧 2 択で場所ごとに担当を変えていた人の移行でだけ書く（その場所は全体の操作の影響を受けない。元へ戻す操作 `hooks.setPlace { reset: true }` で消す）。
 - `hooks.json` には書かない（`ply-hooks.mjs` の書き込みは知らないキーを落とすため、別のファイルにする）。登録の本文（`targets`・`enabled`）と旧の担当はそのまま残す。
@@ -109,7 +125,7 @@
 
 ### 操作（`context.mcpMatrix` に当たるもの。画面はまだ呼ばない）
 
-- `hooks.matrix`（read）: `{ adopted, agents, groups, cwd, place, skipFrom, compat, grok, claudeAllOff, trustPending, revision, rows: [{ key, group, agent, source, scope, event, matcher, command（伏せ字）, on, switchable, here?, status?, targets?, enabled?, cells: { <A>: { state, mode, reason?, detail?, warnings?, needsConfirm?, copy?, reasons? } } }] }`。`needsConfirm` は、押すと広げるセル（元の集合に無く、今オフで押せる）だけに `true` で付く。
+- `hooks.matrix`（read）: `{ adopted, agents, groups, cwd, place, skipFrom, compat, grok, claudeAllOff, trustPending, revision, orphans: [{ key, agent, scope, path, event, reason, candidates, off, spread, unused, places }], rows: [{ key, group, agent, source, scope, event, matcher, command（伏せ字）, scanIds?, on, switchable, here?, status?, targets?, enabled?, cells: { <A>: { state, mode, reason?, detail?, warnings?, needsConfirm?, copy?, reasons? } } }] }`。`needsConfirm` は、押すと広げるセル（元の集合に無く、今オフで押せる）だけに `true` で付く。
 - `revision` は保存の中身の hash（移行の時刻 `adoptedFrom.at` は入れない。移行前の一覧は開くたびに写し直すため）。操作に `revision` を渡すと、違えば `CONFLICT` で断る。押せないセルは `INVALID`（`hooksAgents.notPressable`）。
 - `hooks.setAgent`（セル）・`hooks.setRow`（全体のスイッチ）・`hooks.setGroup`（組のセル・組のスイッチ）・`hooks.setPlace`（この場所で使う・場所の上書きを戻す）・`hooks.resetAgents`（移行前へ戻す）。
 - 承認（AGENTS.md・ADR 0095・0327）: 同じ結果になる今の操作と同じ強さにそろえる（write の操作で guarded の変更ができると抜け道になる。ADR 0095）。

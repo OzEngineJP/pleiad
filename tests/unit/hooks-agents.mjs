@@ -358,6 +358,104 @@ export default async function (t) {
     await plyHooks.remove(ss.id);
     await ha.reset();
 
+    // ---------------------------------------------------------------- 書き換えた定義へ選択を引き継ぐ（外した Hook を少し直してもオンに戻らない）
+    {
+      const rk = path.join(tmp, 'rekey'), rkHome = path.join(rk, 'home'), rkData = path.join(rk, 'data'), rkRepo = path.join(rk, 'repo');
+      await fs.mkdir(path.join(rkRepo, '.git'), { recursive: true });
+      const rkSettings = path.join(rkHome, '.claude', 'settings.json');
+      const cmd = c => ({ hooks: [{ type: 'command', command: c }] });
+      const put = (stop, pre = [{ matcher: 'Bash', ...cmd('node g.mjs') }]) => w(rkSettings, { hooks: { Stop: stop.map(cmd), PreToolUse: pre } });
+      await put(['node a.mjs', 'node b.mjs']);
+      const rkConfig = createHooksConfig({ home: rkHome, codexHome: path.join(rkHome, '.codex'), claudeHome: path.join(rkHome, '.claude'), geminiHome: path.join(rkHome, '.gemini'), claudeManaged: [] });
+      const rkPly = createPlyHooks(rkData);
+      const hb = createHooksAgents({ dataDir: rkData, hooksConfig: rkConfig, plyHooks: rkPly, findNode, grokHome: path.join(rk, 'grok-home') });
+      const rowOf = (m, text) => m.rows.filter(r => r.kind === 'native' && r.agent === CLAUDE && r.command.includes(text));
+      const one = (m, text) => { const r = rowOf(m, text); if (r.length !== 1) throw new Error(`rows for ${text}: ${r.length}`); return r[0]; };
+      const runs = async () => new Set(((await hb.hooksForTurn(CLAUDE, rkRepo)) ?? []).map(x => x.key));
+      let m = await hb.matrix({ cwd: rkRepo });
+      const A = one(m, 'a.mjs'), B = one(m, 'b.mjs'), G = one(m, 'g.mjs');
+      t.ok('行に hooks.scan の id を載せる（同じ定義が 1 つなら 1 つ）', A.scanIds?.length === 1 && typeof A.scanIds[0] === 'string'
+        && (await rkConfig.scan({ cwd: rkRepo, scopes: ['user', 'directory'], managed: true })).entries.some(e => e.id === A.scanIds[0] && e.command.includes('a.mjs')), JSON.stringify(A.scanIds));
+      await hb.setAgent({ key: A.key, agent: CLAUDE, on: false, cwd: rkRepo });
+      await hb.setAgent({ key: G.key, agent: CLAUDE, on: false, cwd: rkRepo });
+      const spreadCell = cell(await hb.matrix({ cwd: rkRepo }), B.key, CODEX);
+      await hb.setAgent({ key: B.key, agent: CODEX, on: true, cwd: rkRepo });
+      m = await hb.matrix({ cwd: rkRepo });
+      t.ok('前提: A と G を Claude で外し、B を Codex へ広げた', cell(m, A.key, CLAUDE).state === 'off' && cell(m, G.key, CLAUDE).state === 'off' && cell(m, B.key, CODEX).state === 'on' && !m.orphans.length,
+        JSON.stringify({ spreadCell, b: cell(m, B.key, CODEX) }));
+
+      // (d) 足す・並べ替える: 行 ID は変わらず、新しい行に選択は付かない
+      await put(['node c.mjs', 'node b.mjs', 'node a.mjs']);
+      m = await hb.matrix({ cwd: rkRepo });
+      const C = one(m, 'c.mjs');
+      t.ok('(d) 前に足して並べ替えても、外した・広げた選択は元の定義のまま。足した行には付かない', cell(m, A.key, CLAUDE).state === 'off' && cell(m, B.key, CODEX).state === 'on'
+        && cell(m, C.key, CLAUDE).state === 'on' && cell(m, C.key, CODEX).state !== 'on' && !m.orphans.length);
+
+      // (a) コマンドを直す: 消えた 1 つと現れた 1 つが対応する → 外した状態を引き継ぐ（一覧も実行時も）
+      await put(['node c.mjs', 'node b.mjs', 'node a.mjs --fixed']);
+      m = await hb.matrix({ cwd: rkRepo });
+      const A1 = one(m, 'a.mjs --fixed');
+      const r1 = await runs();
+      t.ok('(a) 外した Hook のコマンドを直しても外したまま（一覧と実行時）', A1.key !== A.key && cell(m, A1.key, CLAUDE).state === 'off' && !r1.has(A1.key) && r1.has(C.key) && !m.orphans.length,
+        JSON.stringify({ cell: cell(m, A1.key, CLAUDE), orphans: m.orphans }));
+      const saved1 = await hb.read();
+      t.ok('(a) 一覧を開いたときに引き継ぎを保存する（元の ID は残らない）', saved1.off[A1.key]?.includes(CLAUDE) && !saved1.off[A.key]);
+      // (a) matcher を直す
+      await put(['node c.mjs', 'node b.mjs', 'node a.mjs --fixed'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
+      m = await hb.matrix({ cwd: rkRepo });
+      const G1 = one(m, 'g.mjs');
+      t.ok('(a) matcher を直しても外したまま', G1.key !== G.key && cell(m, G1.key, CLAUDE).state === 'off' && !(await runs()).has(G1.key));
+      // (a) 広げた状態も 1 対 1 なら引き継ぐ
+      await put(['node c.mjs', 'node b.mjs --v2', 'node a.mjs --fixed'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
+      m = await hb.matrix({ cwd: rkRepo });
+      const B1 = one(m, 'b.mjs --v2');
+      t.ok('(a) 広げた Hook を 1 つだけ直したときは、広げた状態も引き継ぐ', cell(m, B1.key, CODEX).state === 'on' && !m.orphans.length);
+
+      // 壊れている間（書きかけ）は何も動かさない
+      await w(rkSettings, '{ "hooks": { "Stop": [');
+      m = await hb.matrix({ cwd: rkRepo });
+      await put(['node c.mjs', 'node b.mjs --v2', 'node a.mjs --fixed'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
+      const m2 = await hb.matrix({ cwd: rkRepo });
+      t.ok('設定ファイルが壊れている間は、選択を移さず捨てず、直れば元のとおり', !m.orphans.length && cell(m2, A1.key, CLAUDE).state === 'off' && cell(m2, B1.key, CODEX).state === 'on' && !m2.orphans.length);
+
+      // (d) 同じ定義が 2 つ: 1 つだけ書き換えると、書き換えた方も外したまま（残った方も外したまま）
+      await put(['node c.mjs', 'node b.mjs --v2', 'node a.mjs --fixed', 'node a.mjs --fixed'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
+      m = await hb.matrix({ cwd: rkRepo });
+      t.ok('(d) 同じ定義を 2 つにしても 1 行（scan の id は 2 つ）で、外したまま', one(m, 'a.mjs --fixed').scanIds.length === 2 && cell(m, A1.key, CLAUDE).state === 'off' && !m.orphans.length);
+      await put(['node c.mjs', 'node b.mjs --v2', 'node a.mjs --fixed', 'node a.mjs --copy'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
+      m = await hb.matrix({ cwd: rkRepo });
+      const A2 = one(m, 'a.mjs --copy');
+      t.ok('(d) 2 つのうち 1 つだけ書き換えた: 両方とも外したまま', cell(m, A2.key, CLAUDE).state === 'off' && cell(m, A1.key, CLAUDE).state === 'off' && !m.orphans.length);
+
+      // (d) 既にある定義と同じに書き換えた: 別の Hook（B）に外した状態を付けない。行き先の無い選択として返す
+      await put(['node c.mjs', 'node b.mjs --v2', 'node a.mjs --fixed', 'node b.mjs --v2'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
+      m = await hb.matrix({ cwd: rkRepo });
+      const lostA2 = m.orphans.find(o => o.key === A2.key);
+      t.ok('(d) 既にある定義と同じになった: その定義（広げた B）に外した状態は付かず、行き先の無い選択として返す', cell(m, B1.key, CLAUDE).state === 'on' && cell(m, B1.key, CODEX).state === 'on'
+        && lostA2?.reason === 'ambiguous' && lostA2.off.includes(CLAUDE) && lostA2.agent === CLAUDE && lostA2.event === 'Stop' && lostA2.path === rkSettings, JSON.stringify(m.orphans));
+
+      // (b)(c) 2 つを同時に直した: 対応を決められないので引き継がない（広げた状態も実行する側へ倒さない）。行き先の無い選択と候補を返す
+      await put(['node c.mjs', 'node b.mjs --v3', 'node a.mjs --v3'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
+      m = await hb.matrix({ cwd: rkRepo });
+      const B3 = one(m, 'b.mjs --v3'), A3 = one(m, 'a.mjs --v3');
+      const lost = Object.fromEntries(m.orphans.map(o => [o.key, o]));
+      t.ok('(b) 対応が決められないときは引き継がず、行き先の無い選択（理由・候補・中身）を返す', lost[A1.key]?.reason === 'ambiguous' && lost[B1.key]?.reason === 'ambiguous'
+        && lost[A1.key].candidates.includes(A3.key) && lost[A1.key].candidates.includes(B3.key) && lost[B1.key].spread.includes(CODEX), JSON.stringify(m.orphans));
+      t.ok('(c) 広げた状態はあいまいなら引き継がない（ほかのエージェントで実行する側へ倒さない）', cell(m, B3.key, CODEX).state !== 'on' && cell(m, A3.key, CODEX).state !== 'on');
+      t.ok('(b) 行き先の無い選択は、選択を変えた後も残る（黙って捨てない）', (await hb.setAgent({ key: C.key, agent: CLAUDE, on: false, cwd: rkRepo }), (await hb.matrix({ cwd: rkRepo })).orphans.some(o => o.key === A1.key && o.reason === 'ambiguous')));
+      // 消した: 行き先が無い（gone）。残った定義には付かない
+      await put(['node c.mjs', 'node b.mjs --v3'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
+      m = await hb.matrix({ cwd: rkRepo });
+      t.ok('(d) 選択の無い行を消しても、ほかの行の選択は付け替わらず、前の行き先の無い選択は残る', m.orphans.some(o => o.key === A3.key) === false && cell(m, B3.key, CLAUDE).state === 'on' && cell(m, C.key, CLAUDE).state === 'off'
+        && m.orphans.some(o => o.key === A1.key), JSON.stringify(m.orphans.map(o => [o.key, o.reason])));
+      await fs.writeFile(rkSettings, JSON.stringify({ hooks: { Stop: [cmd('node c.mjs')] } }));
+      await hb.setRow({ key: C.key, on: false, cwd: rkRepo });
+      m = await hb.matrix({ cwd: rkRepo });
+      t.ok('(d) 外していない行を消しても、外した行の選択は付け替わらない', cell(m, C.key, CLAUDE).state === 'off');
+      t.ok('(b) 外した行を消した（現れた行が無い）: 行き先の無い選択（gone）として返す', m.orphans.some(o => o.key === G1.key && o.reason === 'gone' && o.event === 'PreToolUse' && o.off.includes(CLAUDE)), JSON.stringify(m.orphans.map(o => [o.key, o.reason])));
+      t.ok('覚えた組は revision に入れない（一覧を開いて保存しても版は変わらない）', (await hb.matrix({ cwd: rkRepo })).revision === m.revision);
+    }
+
     // ---------------------------------------------------------------- 操作（hooks.*）
     const calls = [];
     const deps = { locale: 'ja', calls, modeOf: async () => deps.mode, audit: async e => calls.push(['audit', e.op, e.risk]),

@@ -73,11 +73,142 @@ export function parseState(raw) {
   }
   const from = raw.adoptedFrom && typeof raw.adoptedFrom === 'object' ? raw.adoptedFrom : null;
   return { version: VERSION, ...normAgents(raw), places,
-    adoptedFrom: from ? { owner: from.owner === 'ply' ? 'ply' : 'native', at: typeof from.at === 'string' ? from.at : null } : null };
+    adoptedFrom: from ? { owner: from.owner === 'ply' ? 'ply' : 'native', at: typeof from.at === 'string' ? from.at : null } : null,
+    seen: parseSeen(raw.seen) };
 }
-const plainState = s => ({ version: VERSION, off: s.off, spread: s.spread, unused: s.unused, compat: s.compat, places: s.places, adoptedFrom: s.adoptedFrom });
-// 移行の時刻は入れない（移行前の一覧は開くたびに写し直すので、時刻を入れると revision が毎回変わる）
-export const stateRevision = s => sha(JSON.stringify({ ...plainState(s), adoptedFrom: s.adoptedFrom ? { owner: s.adoptedFrom.owner } : null })).slice(0, 16);
+const plainState = s => ({ version: VERSION, off: s.off, spread: s.spread, unused: s.unused, compat: s.compat, places: s.places, adoptedFrom: s.adoptedFrom, seen: s.seen ?? [] });
+// 移行の時刻は入れない（移行前の一覧は開くたびに写し直すので、時刻を入れると revision が毎回変わる）。seen（下）は選択ではないので入れない
+export const stateRevision = s => sha(JSON.stringify({ version: VERSION, off: s.off, spread: s.spread, unused: s.unused, compat: s.compat, places: s.places,
+  adoptedFrom: s.adoptedFrom ? { owner: s.adoptedFrom.owner } : null })).slice(0, 16);
+
+// ---------- 書き換えた定義へ選択を引き継ぐ（seen。ADR 0338「書き換えた定義」） ----------
+// 行 ID はコマンドと matcher を含むので、利用者が設定ファイルでそれを直すと ID が変わり、外した選択が付かなくなる（黙ってオンに戻る）。
+// 選択の付いた定義があるファイル・イベントの組（エージェント・scope・ファイル・イベント）ごとに、そこにあった行 ID と数を覚えておき、
+// 読むときに、消えた 1 つと現れた 1 つが対応すると言えるときだけ選択を移す。言えなければ移さず、行き先の無い選択（orphans）として返す
+const REKEY_SCOPES = new Set(['user', 'project', 'local']);
+const groupId = g => JSON.stringify([g.agent, g.scope, pathKey(g.path), g.event]);
+const fileId = (agent, p) => JSON.stringify([agent, pathKey(p)]);
+const isNativeKey = k => typeof k === 'string' && k.startsWith('hk-');
+function parseSeen(v) {
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  for (const g of v.slice(0, 1000)) {
+    if (!g || typeof g !== 'object' || !HOOK_AGENTS.includes(g.agent) || !REKEY_SCOPES.has(g.scope) || typeof g.path !== 'string' || !path.isAbsolute(g.path)
+      || typeof g.event !== 'string' || !g.event) continue;
+    const keys = {}, lost = {};
+    for (const [k, n] of Object.entries(g.keys && typeof g.keys === 'object' ? g.keys : {})) if (isNativeKey(k) && KEY_RE.test(k) && Number.isInteger(n) && n > 0 && n < 1000) keys[k] = n;
+    for (const [k, r] of Object.entries(g.lost && typeof g.lost === 'object' ? g.lost : {})) if (isNativeKey(k) && KEY_RE.test(k) && !keys[k] && ['gone', 'ambiguous'].includes(r)) lost[k] = r;
+    out.push({ agent: g.agent, scope: g.scope, path: g.path, event: g.event, keys, lost });
+  }
+  return out;
+}
+/** 選択（全体・場所の上書き・この場所で使わない）に出てくる、エージェントの設定の定義の行 ID */
+function refKeys(s) {
+  const out = new Set();
+  const add = a => { if (!a) return; for (const k of [...Object.keys(a.off ?? {}), ...Object.keys(a.spread ?? {}), ...(a.unused ?? [])]) if (isNativeKey(k)) out.add(k); };
+  add(s);
+  for (const p of Object.values(s.places ?? {})) { add(p.agents); for (const k of p.skip ?? []) if (isNativeKey(k)) out.add(k); }
+  return out;
+}
+/** 行 ID の選択を別の行 ID へ移す（keep なら元にも残す: 同じ定義が 2 つあって 1 つだけ書き換えたとき） */
+function moveKey(s, from, to, keep) {
+  const fix = a => {
+    if (!a) return a;
+    const off = { ...a.off }, spread = { ...a.spread };
+    if (off[from]) { off[to] = [...off[from]]; if (!keep) delete off[from]; }
+    if (spread[from]) { spread[to] = [...spread[from]]; if (!keep) delete spread[from]; }
+    let unused = [...a.unused];
+    if (unused.includes(from)) { unused.push(to); if (!keep) unused = unused.filter(k => k !== from); }
+    return { ...a, off, spread, unused: [...new Set(unused)].sort() };
+  };
+  const places = {};
+  for (const [pk, p] of Object.entries(s.places)) {
+    const q = { ...p };
+    if (p.agents) q.agents = fix(p.agents);
+    if (p.skip?.includes(from)) q.skip = [...new Set([...p.skip.filter(k => keep || k !== from), to])].sort();
+    places[pk] = q;
+  }
+  return { ...s, ...fix(s), places };
+}
+/** その一覧で、組の中身を確かに読めたファイル（無い・空も読めた内。壊れた・一部飛ばした・読めないファイルは組を動かさない） */
+function readableFiles(inv) {
+  const out = new Set();
+  for (const f of inv.report?.files ?? []) if (['ok', 'none', 'missing'].includes(f.status) && !f.partial && f.path) out.add(fileId(f.agent, f.path));
+  return out;
+}
+function presentGroups(inv, files) {
+  const out = new Map();
+  for (const row of inv.rows) {
+    if (row.kind !== 'native' || !REKEY_SCOPES.has(row.scope) || !row.path || !isNativeKey(row.key) || !files.has(fileId(row.agent, row.path))) continue;
+    const id = groupId(row);
+    if (!out.has(id)) out.set(id, { meta: { agent: row.agent, scope: row.scope, path: row.path, event: row.event }, keys: new Map() });
+    out.get(id).keys.set(row.key, (out.get(id).keys.get(row.key) ?? 0) + row.members.length);
+  }
+  return out;
+}
+/**
+ * 覚えた組と今の一覧を突き合わせ、書き換えた定義へ選択を移した状態と、行き先の無い選択を返す（保存はしない）。
+ * 組ごとに、消えた（数が減った）定義と現れた（数が増えた）定義を数え、ちょうど 1 対 1 で、現れた方が初めて見る ID で選択を持っていないときだけ移す。
+ * それ以外（2 つ以上が同時に変わった・消えただけ・既にある定義と同じになった）は移さない。広げた状態も同じ（あいまいなら実行する側へ倒さない）
+ */
+export function resolveRekeys(state, inv) {
+  const files = readableFiles(inv);
+  const present = presentGroups(inv, files);
+  let s = state;
+  const orphans = [], moved = [];
+  for (const g of state.seen ?? []) {
+    if (!files.has(fileId(g.agent, g.path))) continue;
+    const P = present.get(groupId(g))?.keys ?? new Map();
+    const refs = refKeys(s);
+    const vanished = [], appeared = [];
+    for (const [k, n] of Object.entries(g.keys)) for (let i = P.get(k) ?? 0; i < n; i++) vanished.push(k);
+    for (const [k, n] of P) for (let i = g.keys[k] ?? 0; i < n; i++) appeared.push(k);
+    if (vanished.length === 1 && appeared.length === 1 && refs.has(vanished[0]) && !(appeared[0] in g.keys) && !refs.has(appeared[0])) {
+      s = moveKey(s, vanished[0], appeared[0], P.has(vanished[0]));
+      moved.push({ from: vanished[0], to: appeared[0], group: g });
+      continue;
+    }
+    const lost = { ...g.lost };
+    for (const k of Object.keys(g.keys)) if (!P.has(k)) lost[k] = appeared.length ? 'ambiguous' : 'gone';
+    for (const [k, reason] of Object.entries(lost)) {
+      if (P.has(k) || !refs.has(k)) continue;
+      orphans.push({ key: k, agent: g.agent, scope: g.scope, path: g.path, event: g.event, reason, candidates: [...new Set(appeared)].filter(x => !refs.has(x)).sort() });
+    }
+  }
+  // 行き先の無い選択の中身（画面が「何が付かなくなったか」を出す）
+  for (const o of orphans) {
+    o.off = s.off[o.key] ?? []; o.spread = s.spread[o.key] ?? []; o.unused = s.unused.includes(o.key);
+    o.places = Object.values(s.places).filter(p => p.skip?.includes(o.key) || p.agents?.off?.[o.key] || p.agents?.spread?.[o.key] || p.agents?.unused?.includes(o.key)).map(p => p.path).sort();
+  }
+  return { state: s, orphans, moved };
+}
+/**
+ * 保存する前に覚え直す: 今の一覧で読めた組は今の中身（と行き先の無い選択の理由）に、読めなかった組は前のまま。選択の付いた定義が無い組は覚えない
+ */
+export function nextSeen(state, inv, orphans = []) {
+  const files = readableFiles(inv);
+  const present = presentGroups(inv, files);
+  const refs = refKeys(state);
+  const lostOf = new Map();
+  for (const o of orphans) { const id = groupId(o); if (!lostOf.has(id)) lostOf.set(id, {}); lostOf.get(id)[o.key] = o.reason; }
+  const out = new Map();
+  for (const g of state.seen ?? []) {
+    const id = groupId(g);
+    if (files.has(fileId(g.agent, g.path))) continue;
+    if ([...Object.keys(g.keys), ...Object.keys(g.lost)].some(k => refs.has(k))) out.set(id, g);
+  }
+  const ids = new Set([...present.keys(), ...lostOf.keys()]);
+  for (const id of ids) {
+    if (out.has(id)) continue;
+    const p = present.get(id);
+    const meta = p?.meta ?? (state.seen ?? []).find(g => groupId(g) === id) ?? orphans.find(o => groupId(o) === id);
+    const keys = Object.fromEntries([...(p?.keys ?? new Map())].sort(([a], [b]) => a.localeCompare(b)));
+    const lost = Object.fromEntries(Object.entries(lostOf.get(id) ?? {}).filter(([k]) => refs.has(k) && !keys[k]).sort(([a], [b]) => a.localeCompare(b)));
+    if (!Object.keys(keys).some(k => refs.has(k)) && !Object.keys(lost).length) continue;
+    out.set(id, { agent: meta.agent, scope: meta.scope, path: meta.path, event: meta.event, keys, lost });
+  }
+  return [...out.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, g]) => g);
+}
 
 /** cwd で効く選択（深い場所の上書きが勝つ）と「この場所では使わない」 */
 export function effectiveAt(state, cwd) {
@@ -463,19 +594,25 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
 
   /** 一覧の材料。移行していなくても、移行したらこうなる形を返す（押した時点で写す） */
   async function view({ cwd = null, trust = true } = {}) {
-    const { state, adopted } = await current();
+    const { state: stored, adopted } = await current();
     const inv = await inventory({ cwd, trust });
+    const { state, orphans, moved } = resolveRekeys(stored, inv);
     const eff = effectiveAt(state, cwd);
     const cells = Object.fromEntries(UNIFY_TARGETS.map(A => [A, decideModes(inv, eff.agents, eff.skip, A)]));
-    return { state, adopted, inv, eff, cells, revision: stateRevision(state) };
+    return { state, stored, adopted, inv, eff, cells, orphans, moved, revision: stateRevision(state) };
   }
+  /** 一覧の版（expect）の照合。書き換えた定義へ移す前と後のどちらの版でもよい（一覧を開いた場所と押した場所で、読めた組が違うことがあるため） */
+  const checkExpect = (expect, stored, state) => {
+    if (expect && expect !== stateRevision(stored) && expect !== stateRevision(state)) throw Object.assign(new Error(t('hooksAgents.stale')), { code: 'CONFLICT' });
+  };
 
   /** 選択を変えて保存する。edit(agents, inv, eff) は新しい agents を返す。place があればその場所の上書きを、無ければ全体を変える */
   function change({ cwd = null, expect = null }, edit) {
     return run(async () => {
-      const { state } = await current();
-      if (expect && expect !== stateRevision(state)) throw Object.assign(new Error(t('hooksAgents.stale')), { code: 'CONFLICT' });
+      const { state: stored } = await current();
       const inv = await inventory({ cwd });
+      const { state, orphans } = resolveRekeys(stored, inv);
+      checkExpect(expect, stored, state);
       const eff = effectiveAt(state, cwd);
       const target = eff.agentsFrom ? state.places[eff.agentsFrom].agents : state;
       const next = await edit({ off: target.off, spread: target.spread, unused: target.unused, compat: target.compat }, inv, eff);
@@ -485,6 +622,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       if (eff.agentsFrom) state.places[eff.agentsFrom].agents = clean;
       else Object.assign(state, clean);
       for (const id of enable) await plyHooks.toggle(id, true);
+      state.seen = nextSeen(state, inv, orphans);
       await write(state);
       return { state, place: eff.agentsFrom ? state.places[eff.agentsFrom].path : null, revision: stateRevision(state) };
     });
@@ -527,8 +665,10 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
   /** この場所で使う（hooks.setPlace）。reset: true は移行で書いた場所の上書き（agents）を消す */
   const setPlace = ({ place, key = null, use = true, reset = false, expect = null }) => run(async () => {
     if (typeof place !== 'string' || !path.isAbsolute(place)) throw invalid('hooksAgents.badPlace');
-    const { state } = await current();
-    if (expect && expect !== stateRevision(state)) throw Object.assign(new Error(t('hooksAgents.stale')), { code: 'CONFLICT' });
+    const { state: stored } = await current();
+    const inv = await inventory({ cwd: place, turn: true });
+    const { state, orphans } = resolveRekeys(stored, inv);
+    checkExpect(expect, stored, state);
     const pk = pathKey(place);
     const entry = state.places[pk] ?? { path: path.resolve(place) };
     if (reset) delete entry.agents;
@@ -540,6 +680,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       entry.skip = [...list].sort();
     }
     if (entry.skip || entry.agents) state.places[pk] = entry; else delete state.places[pk];
+    state.seen = nextSeen(state, inv, orphans);
     await write(state);
     return { state, revision: stateRevision(state) };
   });
@@ -558,9 +699,10 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
    * 戻り: { inv, cells, stop: { units, rows }, deliver: [{ hook, d, row }], unsupported, skipped, kept, s }
    */
   async function turnPlan(agent, cwd, given = null) {
-    const state = given ?? await read();
-    if (!state) return null;
+    const stored = given ?? await read();
+    if (!stored) return null;
     const inv = await inventory({ cwd, turn: true });
+    const { state } = resolveRekeys(stored, inv);
     const eff = effectiveAt(state, cwd);
     const s = eff.agents;
     const cells = cellsFor(inv, s, eff.skip, agent);
@@ -721,8 +863,9 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       // 読めない: 投げずに、画面が直す操作（hooks.repair・hooks.resetAgents）を出せる形で返す。止めたはずの Hook が動かないよう、会話は断ったまま
       if (e.code !== 'UNREADABLE') throw e;
       return { unreadable: true, error: e.message, repair: ['hooks.repair', 'hooks.resetAgents'], agents: [...UNIFY_TARGETS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)),
-        adopted: true, revision: '', cwd, place: null, skipFrom: null, compat: null, grok: null, claudeAllOff: false, trustPending: false, groups: [], rows: [] };
+        adopted: true, revision: '', cwd, place: null, skipFrom: null, compat: null, grok: null, claudeAllOff: false, trustPending: false, groups: [], rows: [], orphans: [] };
     }
+    await keepSeen(v);
     const { inv, eff, cells } = v;
     const s = eff.agents;
     const rows = inv.rows.map(row => {
@@ -736,7 +879,8 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
         switchable: pressable,
         // 場所ごと: この場所で使う（cwd があるときだけ）
         ...(cwd && pressable ? { here: { use: !eff.skip.has(row.key) } } : {}),
-        ...(row.kind === 'native' ? { status: row.fate } : {}),
+        // scanIds: hooks.scan の行の id（同じ定義が 2 つあれば 2 つ）。画面はこれで編集のシート・行の詳細と結ぶ（中身で突き合わせない）
+        ...(row.kind === 'native' ? { status: row.fate, scanIds: row.members.map(m => m.entry?.id).filter(x => typeof x === 'string') } : {}),
         ...(row.kind === 'reg' ? { targets: row.hook.targets, enabled: row.hook.enabled } : {}),
         cells: byAgent };
       return out;
@@ -744,7 +888,20 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     return { agents: [...UNIFY_TARGETS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)), adopted: v.adopted, revision: v.revision, cwd,
       place: eff.agentsFrom ? v.state.places[eff.agentsFrom].path : null, skipFrom: eff.skipFrom ? v.state.places[eff.skipFrom].path : null,
       compat: s.compat, grok: inv.grokEnv, claudeAllOff: inv.claudeAllOff, trustPending: inv.report.trustPending === true,
-      groups: ['ply', 'own', 'place', 'admin'].filter(g => rows.some(r => r.group === g)), rows };
+      groups: ['ply', 'own', 'place', 'admin'].filter(g => rows.some(r => r.group === g)), rows,
+      // 行き先の無くなった選択（外した・広げた定義を書き換えて、どれに当たるか決められない・消えた）。黙って捨てず、画面が出す
+      orphans: v.orphans.map(o => ({ key: o.key, agent: o.agent, scope: o.scope, path: o.path, event: o.event, reason: o.reason, candidates: o.candidates,
+        off: o.off, spread: o.spread, unused: o.unused, places: o.places })) };
+  }
+  /** 一覧を開いたときに、書き換えた定義へ移した選択と、覚えた組を保存する（選択の意味は変えない。版も変えない）。保存する間にファイルが変わっていれば何もしない */
+  async function keepSeen(v) {
+    if (!v.adopted) return;
+    const seen = nextSeen(v.state, v.inv, v.orphans);
+    if (!v.moved.length && JSON.stringify(seen) === JSON.stringify(v.stored.seen ?? [])) return;
+    await run(async () => {
+      const cur = await read().catch(() => null);
+      if (cur && JSON.stringify(plainState(cur)) === JSON.stringify(plainState(v.stored))) await write({ ...v.state, seen });
+    });
   }
 
   return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, reset, repair, turnPlan, forTurn, hooksForTurn };
