@@ -9,9 +9,12 @@ import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.PW_CORE);
-const base = path.join(os.homedir(), 'AppData/Local/ms-playwright');
-const version = fs.readdirSync(base).filter(n => n.startsWith('chromium_headless_shell-')).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]))[0];
-const executablePath = process.env.PW_CHROMIUM || path.join(base, version, 'chrome-headless-shell-win64/chrome-headless-shell.exe');
+function chromiumPath() {
+  if (process.env.PW_CHROMIUM) return process.env.PW_CHROMIUM;
+  const base = path.join(os.homedir(), 'AppData/Local/ms-playwright');
+  const version = fs.readdirSync(base).filter(n => n.startsWith('chromium_headless_shell-')).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]))[0];
+  return path.join(base, version, 'chrome-headless-shell-win64/chrome-headless-shell.exe');
+}
 const shots = process.env.SHOT_DIR;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-plugin-brands-'));
 const home = path.join(root, 'home');
@@ -38,7 +41,7 @@ try {
   await client.cmd('onboardingSeen');
   const session = await client.cmd('newSession', { backend: 'fake', cwd: home });
   await client.runTurn({ ...session, prompt: 'echo:plugin brands' });
-  browser = await chromium.launch({ executablePath });
+  browser = await chromium.launch({ executablePath: chromiumPath() });
   for (const tab of ['instruction', 'skill', 'mcp', 'hooks']) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 700 }, locale: 'ja-JP' });
     const page = await ctx.newPage();
@@ -77,7 +80,7 @@ try {
     await panel.locator('button.cx-ag .mk').first().waitFor();
     const before = await panel.locator('button.cx-ag .mk').evaluateAll(els => els.map(e => e.tagName));
     assert(before.includes('SPAN'), `${tab}: 一覧より先に表が出る`);
-    if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, `plugin-polish-${process.env.BASELINE ? 'before' : 'pending'}-${tab}.png`) }); }
+    if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, `plugin-polish-pending-${tab}.png`) }); }
     // 詳細・確認の帯を開き、帯のボタンへフォーカス。保存はしない。
     const rows = panel.locator('.cx-row[data-key]');
     const detail = rows.locator('button.nm, button.cx-open').first();
@@ -103,17 +106,17 @@ try {
     const state = await page.evaluate(() => ({ ask: !!document.querySelector('.cx-ask'), peek: document.querySelectorAll('.cx-peek').length, scroll: document.querySelector('.settings-content').scrollTop,
       focus: window.__brandFocusPath.reduce((node, index) => node?.children[index], window.__brandFocusPanel) === document.activeElement && document.activeElement !== document.body }));
     observations.push({ tab, before, after, focused, state });
-    if (shots) await page.screenshot({ path: path.join(shots, `plugin-polish-${process.env.BASELINE ? 'stale' : 'after'}-${tab}.png`) });
-    if (!process.env.BASELINE) {
-      assert(!after.includes('SPAN'), `${tab}: 一覧が届いたらロゴになる`);
-      assert.equal(state.ask, focused.ask, `${tab}: 確認の帯を保つ`);
-      assert.equal(state.peek, focused.peek, `${tab}: 行の詳細を保つ`);
-      assert.equal(state.scroll, focused.scroll, `${tab}: スクロールを保つ`);
-      assert(state.focus, `${tab}: フォーカスを保つ`);
-      assert(focused.ask && focused.peek > 0, `${tab}: 確認と詳細が実際に開いている`);
-      const names = await panel.locator('button.cx-ag').evaluateAll(els => els.map(e => e.getAttribute('aria-label')).join(' '));
-      assert(!names.includes('Devin CLI') && !names.includes('Grok Build'), `${tab}: 読み上げ名も短い名前へ更新する`);
-    }
+    if (shots) await page.screenshot({ path: path.join(shots, `plugin-polish-after-${tab}.png`) });
+    assert(!after.includes('SPAN'), `${tab}: 一覧が届いたらロゴになる`);
+    assert.equal(state.ask, focused.ask, `${tab}: 確認の帯を保つ`);
+    assert.equal(state.peek, focused.peek, `${tab}: 行の詳細を保つ`);
+    assert.equal(state.scroll, focused.scroll, `${tab}: スクロールを保つ`);
+    assert(state.focus, `${tab}: フォーカスを保つ`);
+    assert(focused.ask && focused.peek > 0, `${tab}: 確認と詳細が実際に開いている`);
+    const names = await panel.locator('button.cx-ag').evaluateAll(els => els.map(e => e.getAttribute('aria-label')).join(' '));
+    assert(!names.includes('Devin CLI') && !names.includes('Grok Build'), `${tab}: 読み上げ名も短い名前へ更新する`);
+    assert(names.includes('Devin') && names.includes('Grok'), `${tab}: 読み上げ名に一覧の短い名前が入る`);
+    assert((await panel.locator('.cx-ask').innerText()).includes('OpenCode'), `${tab}: 確認の帯も一覧の短い名前へ更新する`);
     await ctx.close();
   }
   assert.deepEqual(errors, []);
@@ -122,4 +125,5 @@ try {
 } finally {
   await browser?.close(); client?.close(); await server?.stop();
   fs.rmSync(root, { recursive: true, force: true });
+  if (server) console.log(`CLEANUP: ${JSON.stringify({ pid: server.child.pid, port: server.port, exited: server.child.exitCode !== null || server.child.signalCode !== null })}`);
 }
