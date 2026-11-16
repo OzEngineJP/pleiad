@@ -183,6 +183,16 @@ export default async function (t) {
       assert.equal(turnG?.phase, 'waiting', 'G: phase: waiting が戻る');
       assert.equal(turnG?.background?.length, 1, 'G: 裏の作業が戻る');
     }
+    {
+      const envFile = path.join(dataDir, 'run', cards.G.backendCard.envFile);
+      const valuesFile = envFile.replace(/\.sh$/, '.vals');
+      const saved = await cb.cmd('invoke', { op: 'secrets.save', args: { kind: 'var', label: 'ADOPT_LIVE_TOKEN', value: 'adopt-test-only', env: { name: 'ADOPT_LIVE_TOKEN', scope: { folders: [work] } } } });
+      assert.ok((await fs.readFile(valuesFile, 'utf8')).includes('export ADOPT_LIVE_TOKEN='), '付け直したターンの同じ .vals に保存が反映される');
+      await cb.cmd('invoke', { op: 'secrets.delete', args: { id: saved.id } });
+      assert.ok(!(await fs.readFile(valuesFile, 'utf8')).includes('export '), '付け直したターンでも削除後は export が無い');
+      assert.ok((await fs.stat(envFile)).isFile(), '.sh は同じターンが終わるまで残る');
+      t.ok('付け直し後の保存・削除: 裏の作業を待つ同じターンの .vals を書き換える', true);
+    }
     await cb.cmd('resolvePermission', { id: askB.id, allow: true });
     await gates.open('s-tool');
     await cb.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 's-steer-0001', { ms: WAIT_MS });

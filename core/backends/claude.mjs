@@ -986,6 +986,11 @@ export const backend = {
     let envFile = null, mcpFile = null;
     try {
       envFile = adopt ? adoptClaudeEnvFile(store.dataDir, adopt.card.envFile) : await writeClaudeEnvFile(store.dataDir, secretsRuntime?.env);
+      if (control && !compact) {
+        control.updateSecrets = vars => envFile ? envFile.update(vars) : Promise.resolve(false);
+        // 準備中の変更・無停止の更新のあいだの変更も、起動／読み直しより先に反映する。
+        if (control.readSecretsEnv) await control.updateSecrets(await control.readSecretsEnv());
+      }
       // HTTP の MCP の設定。付け直しは CLI が起動済みなので新たに書かず、旧サーバーのファイルを札から引き継ぐ
       mcpFile = adopt ? adoptClaudeMcpFile(store.dataDir, adopt.card.mcpFile) : await writeClaudeMcpFile(store.dataDir, httpServers);
     }
@@ -1452,7 +1457,7 @@ export const backend = {
       for (const [id, x] of liveTrackers) if (x === tracker) liveTrackers.delete(id);
       closeInput();
       if (contextRuntime) { q.close(); releaseContext(); }
-      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
+      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.updateSecrets = null; control.holder = null; control.backendCard = null; }
       // 保持役の子の片付け（終わった子の記録を捨てる）
       if (held) void held.finish();
       else if (finished) { if (sawExit) adopt.source.release(); adopt.source.dispose(); }

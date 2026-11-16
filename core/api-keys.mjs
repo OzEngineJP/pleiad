@@ -123,7 +123,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
   const serial = fn => { const run = queue.catch(() => {}).then(fn); queue = run; return run; };
   const migrated = () => state.migration?.done === true;
   const eps = () => endpoints?.() ?? null;
-  const emit = change => { try { onChange(change); } catch (e) { log('apikeys.on_change_failed', { code: String(e?.code ?? '') }); } };
+  const emit = async change => { try { await onChange(change); } catch (e) { log('apikeys.on_change_failed', { code: String(e?.code ?? '') }); } };
 
   async function load() {
     try { return clean(JSON.parse(await fs.readFile(file, 'utf8'))); }
@@ -454,7 +454,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       await secrets.set(SECRET_PREFIX + id, { key: value });
       try { await mutate(s => { s.keys.push({ id, provider: p, label: name, createdAt: iso(now()), host: normalizeHost(p, host), lastCheck: null }); }); }
       catch (e) { await secrets.delete(SECRET_PREFIX + id).catch(() => {}); throw e; }
-      emit({ keys: true });
+      await emit({ keys: true });
       return { id };
     },
     /** 値を差し替える。確認の結果は消え、古い置き場の同じ割り当ても新しい値にそろえる */
@@ -467,7 +467,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       await mutate(() => { known(id).lastCheck = null; });
       for (const u of USES) if (state.uses[u] === id) await mirrorUse(u);
       for (const e of (await eps()?.keyUsers?.()) ?? []) if (e.keyRef === id) await mirrorEndpoint(e.id, id);
-      emit({ keys: true, uses: USES.filter(u => state.uses[u] === id), endpoints: true });
+      await emit({ keys: true, uses: USES.filter(u => state.uses[u] === id), endpoints: true });
       return { id, uses: await usersOf(id) };
     },
     /** 消す。使っていた通話・自動選択・wait_until の問いは「使わない」に、接続先はキー無し（確認に失敗した扱い。黙って公式に戻らない）になる */
@@ -486,7 +486,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       for (const u of usesBefore) await mirrorUse(u);
       for (const epId of detached) await mirrorEndpoint(epId, null);
       await secrets.delete(SECRET_PREFIX + id).catch(() => {});
-      emit({ keys: true, uses: usesBefore, endpoints: detached.length > 0 });
+      await emit({ keys: true, uses: usesBefore, endpoints: detached.length > 0 });
       return { id, affected };
     },
     /**
@@ -498,7 +498,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       if (!migrated() || state.uses[JUDGE_USE] || state.uses.voice) return false;
       await mutate(s => { s.uses[JUDGE_USE] = PLUS_KEY_ID; s.uses.voice = PLUS_KEY_ID; });
       for (const u of [JUDGE_USE, 'voice']) await mirrorUse(u);
-      emit({ uses: [JUDGE_USE, 'voice'], autoPlus: true });
+      await emit({ uses: [JUDGE_USE, 'voice'], autoPlus: true });
       return true;
     },
     /** 中継が credit_exhausted を返した月の状態（{ resetAt }。無ければ null）。過ぎた・上限未満に戻った値は返さない */
@@ -511,7 +511,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
         if (!PLUS_USES.has(use)) throw new ApiKeyError('UNSUPPORTED_USE', { use: String(use) });
         await mutate(s => { s.uses[use] = PLUS_KEY_ID; });
         await mirrorUse(use);
-        emit({ uses: [use] });
+        await emit({ uses: [use] });
         return { use, id: PLUS_KEY_ID };
       }
       if (id !== null && id !== undefined) {
@@ -521,7 +521,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       }
       await mutate(s => { s.uses[use] = id ? String(id) : null; });
       await mirrorUse(use);
-      emit({ uses: [use] });
+      await emit({ uses: [use] });
       return { use, id: state.uses[use] };
     },
     /** 古い置き場の項目を揃える（互換の接続先を保存したとき） */
@@ -530,7 +530,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     async resolveGuide(keep) {
       await writable();
       if (state.guide !== 'pending') return { merged: [] };
-      if (keep === null || keep === undefined) { await mutate(s => { s.guide = 'done'; }); emit({ keys: true }); return { merged: [] }; }
+      if (keep === null || keep === undefined) { await mutate(s => { s.guide = 'done'; }); await emit({ keys: true }); return { merged: [] }; }
       const target = known(String(keep));
       if (!target) throw new ApiKeyError('NOT_FOUND');
       const drop = state.keys.filter(k => k.provider === target.provider && k.id !== target.id).map(k => k.id);
@@ -548,7 +548,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       for (const u of movedUses) await mirrorUse(u);
       for (const epId of movedEndpoints) await mirrorEndpoint(epId, target.id);
       for (const id of drop) await secrets.delete(SECRET_PREFIX + id).catch(() => {});
-      emit({ keys: true, uses: movedUses, endpoints: movedEndpoints.length > 0 });
+      await emit({ keys: true, uses: movedUses, endpoints: movedEndpoints.length > 0 });
       return { merged: drop, keep: target.id };
     },
     /** キーそのものを確かめる。結果は台帳に記録する。プロバイダーが確かめ方を持たなければ { ok: null, code: 'unsupported' } */
@@ -563,7 +563,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       const result = await probe(value);
       const at = iso(now());
       await mutate(() => { const k = known(key.id); if (k) k.lastCheck = { ok: result.ok, at, ...(result.code ? { code: result.code } : {}), ...(result.status ? { status: result.status } : {}) }; }).catch(() => {});
-      emit({ keys: true });
+      await emit({ keys: true });
       return { id: key.id, ...result, at };
     },
     /** 接続先を保存するとき、新しく入れたキーの登録を取り消す（保存に失敗したとき） */

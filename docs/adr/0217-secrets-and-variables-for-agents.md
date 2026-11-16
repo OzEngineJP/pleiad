@@ -56,7 +56,7 @@ ADR 0155 と同じ分け方にする。登録は置くだけで、**使い道を
 ### 環境変数の渡し方
 
 - **渡す場所**: 「すべてのフォルダー」か、選んだフォルダー（リポジトリ）。会話の cwd を含むリポジトリの根で引く。worktree（ADR 0136）と委譲の子は、元のリポジトリの設定を引く。フォルダーの値が「すべて」の値に勝つ。
-- **効き始め**: 次のターンから。走っているターンと、保持役に載ったプロセス（ADR 0151）の env は変えない。
+- **効き始め**: 当初は次のターンから。**2026-11-16 の追記で変更した**: `ply_shell` と途中反映に対応するエージェントのシェルには、走っているターンにも反映する。対応範囲・通知・自動継続は末尾の追記を参照。
 - **道は今の 1 本だけ**: 会話ごとの env（`controlRuntimeFor(turn).env`・`browserEnv` と同じ所）に載せる。新しい注入の道は作らない。
   - **Claude**: CLI の `options.env` には入れず、`CLAUDE_ENV_FILE` で Bash ツールのシェルにだけ渡す。これは Claude Code が各 Bash コマンドの前に読むスクリプトで、データ置き場の `run/claude-env-<uuid>.sh`（0600）に書き、ターンの終わりに消す（消し損ねは起動時に片付ける。`run/claude-compat-<uuid>.json` と同じ扱い）。CLI 本体の env に入れないので、利用者が自分のアプリのために登録した `ANTHROPIC_API_KEY`・`ANTHROPIC_BASE_URL` が、Claude Code 自身の認証・接続先を替えることはない。**（2026-10-29 の [ADR 0284](0284-secrets-off-claude-command-line.md) で書き方を変えた: env file の中身は `bash.exe -c` の引数に載り値がコマンドラインに出るため、値は別の `run/claude-env-<uuid>.vals`（0600）に置き、`.sh` は読み込む行だけにした。Claude の PowerShell ツールには値が届かなくなった）**
   - **Codex**: スレッドの config の `shell_environment_policy.set`（今の `PLEIAD_CONTROL_*` と同じ所）。シェルにだけ届き、共有の app-server の env は変えない。
@@ -145,3 +145,19 @@ ADR 0155 と同じ分け方にする。登録は置くだけで、**使い道を
 - **入力のカードの届け方**: `secrets.request` は待たずに返り、結果は設定の変更の承認と同じ台帳（`setting-approvals.json`）と届け方で会話へ届ける（ply_control の呼び出しは Codex で 60 秒で切れるので、カードを待って返さない）。
 - **ターンを止めない**: 値の復号は main に頼むため、main が居ない間は待たされる。ターンの始めに読む上限を 10 秒にし、過ぎたら渡さずに始める。秘密情報の無い会話（API キーに使い道を選んでいない）は、API キーの置き場にも暗号化にも触れない。
 - **サイトで入力する**: `agent-browser fill` に値を渡すとプロセスの引数に載るので使わず、中継自身のセッションで今のタブに付けて `Input.insertText` で入れる。入力先は、エージェントが先に `agent-browser click` で選んだ欄（または `selector`）。
+
+## 追記（2026-11-16）: 走っているターンのシェルにも反映する
+
+画面の返答が終わっていても、Claude の Bash の裏実行などを待つターンは Pleiad では走り続ける。その間に `secrets.request` の答えが途中送信で届くと、開始時の env には値がなく、AI が人に次の発言を求めて止まった。このため「効き始め」を次のように変える。
+
+- 秘密情報・変数・API キーの値、環境変数の名前・使い道・場所が変わる操作（入力のカードへの答え、`.env` の取り込み、削除を含む）は、各ターンの cwd の scope で env を引き直す。`ply_shell` はコマンドを始めるたびに引く。既に起動したコマンドのプロセスの env は変わらず、次のコマンドから効く。
+- エージェントの途中反映は性質の印 `liveSecrets` で表す。サーバーは既存の `control` の `updateSecrets` を呼び、組み直した env 全体を置き換える。`readSecretsEnv` で初期化・付け直し中の変更も取り込む。削除・名前の変更・場所の縮小でも古い名前を残さない。値を読めない場合は空の env として扱う。
+- **Claude**: ADR 0284 の同じ `.vals` を 0600 の一時ファイルから置き換える。空になっても export のないファイルを残し、`.sh` はターンの終わりまで残す。保持役から付け直したターンも札が指す同じ組を書き換える。値を CLI 本体の env や argv に移さない。PowerShell ツールへの制約は ADR 0284 のまま。
+- **OpenCode**: `PUT /api/session/{id}/environment` を再送し、準備済みの子のセッションにも再送する。その後に作る子も最新の env を使う。既存の中継の env と、保持役からの付け直しに使う 0600 の `opencode-env-*.json` も同じ値にする。
+- **Codex・Antigravity・Devin・Grok**: 途中反映は未対応として扱う。Codex 0.160.0 の実物の `app-server generate-json-schema` で、`turn/steer` に config/env の指定がなく、既存の `shell_environment_policy.set` は thread の開始・再開の指定であることを確認した。Antigravity・Devin・Grok の既存の注入先はプロセス起動時の env で、Pleiad が使う通信の口に実行中の env を置き換える手段を確認できなかった。Grok の [hooks の仕様](https://docs.x.ai/build/features/hooks) も許可・拒否などの応答で、実行中のシェルの env を置き換える指定はない。これらは実機の途中変更の試験を通したという意味ではなく、コード・通信の仕様からの判断。新たな hooks/MCP の注入経路は作らない。
+- `secrets.request` の保存通知は、新しいターンで届く場合と途中反映に成功した場合に「今から使えます」と伝える。途中反映できないターンには、エージェントのシェルにはまだ入っていないことと、会話で `ply_shell` を提供していればそのターンでも使えることを伝える。開始時の名前一覧は変えられないため、名前はこの通知で伝える。
+- 途中反映できないターンに保存通知が渡った場合は、設定変更の承認結果を届ける既存の台帳に「次のターンで続ける」を残す。今のターンが終わった後に内部の新しいターンを一度始め、続きを頼む。再起動時も同じ台帳から届ける。ログイン情報だけを頼み、環境変数を頼んでいないカードではこの継続は不要。
+
+**Claude の実機確認（Windows・Claude Code 2.1.322、2026-11-16）**: 1 本の CLI を `-p --input-format stream-json --output-format stream-json --tools Bash --model haiku --no-session-persistence` で起動し、1 回の入力から Bash のコマンドを 4 回順に実行させた。`CLAUDE_ENV_FILE` は既存の `.sh`、読み先は同じ `.vals` に固定した。各コマンドの検査用プログラムを合図待ちにし、その間に親のプログラムが `.vals` を「未設定 → 検査用の値を追加 → 別の検査用の値へ差し替え → export なし」へ置き換えてから次へ進めた。4 回とも期待する有無・値との一致を確認し、CLI は終了コード 0 で終わった。出力は段階番号と一致したかの真偽だけで、実際の秘密は使っていない。値は CLI の引数に入れていない。この確認は、同じターンの次の Bash が書き換えた `.vals` を読むことと、export を外すと次の Bash で消えることを確かめたもの。
+
+OpenCode の判断は v2 の [セッション環境変数の実装](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/environment.ts) と既存の environment API に基づく。[シェルの実装](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/shell.ts) でも、コマンドを作る `Shell.create` ごとに `SessionEnvironment` を引き、プロセスへ渡す env 全体を作ることを確認した。Pleiad 側は偽のサーバーを通した試験で再送を確認する。実物の OpenCode にモデルのターンを流して途中反映を確認したものではない。

@@ -11,9 +11,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { writeAtomic } from './atomic-file.mjs';
 
 const ENV_FILE = /^claude-env-[0-9a-f-]+\.sh$/;
 const VALS_FILE = /^claude-env-[0-9a-f-]+\.vals$/;
+const TEMP_FILE = /^claude-env-[0-9a-f-]+\.vals\.[0-9a-f-]+\.tmp$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** 値ファイルの名前（スクリプトの名前から導く。札にはスクリプトの名前だけを入れる） */
@@ -36,16 +38,15 @@ export function envScript({ valuesFile, inherit = null }) {
   return lines.join('\n') + '\n';
 }
 
-/** 値ファイル（.vals）の中身。vars は { NAME: value }。export 行だけ（source される）。値の無いファイルは作らない */
+/** 値ファイル（.vals）の中身。vars は { NAME: value }。export 行だけ（source される）。空でもファイルを残し、次のコマンドから値を外す */
 export function envValues(vars) {
   const lines = ['# Pleiad: values for this conversation (sourced by the matching claude-env-*.sh).'];
   for (const [name, value] of Object.entries(vars ?? {})) if (NAME.test(name)) lines.push(`export ${name}=${shQuote(value)}`);
   return lines.join('\n') + '\n';
 }
 
-/** 書く。vars が空なら書かずに null。返りの dispose() でスクリプトと値ファイルを消す */
+/** 書く。空でも作る（ターンの途中の追加にも同じ道を使う）。update() で値だけを置き換え、dispose() で両方消す */
 export async function writeClaudeEnvFile(dataDir, vars, { inherit = process.env.CLAUDE_ENV_FILE ?? null } = {}) {
-  if (!vars || !Object.keys(vars).length) return null;
   const dir = path.join(dataDir, 'run');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, `claude-env-${crypto.randomUUID()}.sh`);
@@ -61,8 +62,7 @@ export async function writeClaudeEnvFile(dataDir, vars, { inherit = process.env.
     await fs.rm(file, { force: true }).catch(() => {});
     throw e;
   }
-  let gone = false;
-  return { file, values, dispose: async () => { if (gone) return; gone = true; await fs.rm(values, { force: true }).catch(() => {}); await fs.rm(file, { force: true }).catch(() => {}); } };
+  return envFileHandle(file, values);
 }
 
 /** 付け直したターン（無停止の更新）のファイル。旧サーバーが書き、札が名前を持つ。名前の形が違えば null（run\ の外は指さない） */
@@ -70,8 +70,29 @@ export function adoptClaudeEnvFile(dataDir, name) {
   if (typeof name !== 'string' || !ENV_FILE.test(name)) return null;
   const file = path.join(dataDir, 'run', name);
   const values = path.join(dataDir, 'run', claudeEnvValuesName(name));
-  let gone = false;
-  return { file, values, dispose: async () => { if (gone) return; gone = true; await fs.rm(values, { force: true }).catch(() => {}); await fs.rm(file, { force: true }).catch(() => {}); } };
+  return envFileHandle(file, values);
+}
+
+function envFileHandle(file, values) {
+  let gone = false, chain = Promise.resolve();
+  return {
+    file, values,
+    update(vars) {
+      if (gone) return Promise.resolve(false);
+      const write = chain.catch(() => {}).then(async () => {
+        await writeAtomic(values, envValues(vars), { mode: 0o600 });
+        return true;
+      });
+      chain = write;
+      return write;
+    },
+    async dispose() {
+      gone = true;
+      await chain.catch(() => {});
+      await fs.rm(values, { force: true }).catch(() => {});
+      await fs.rm(file, { force: true }).catch(() => {});
+    },
+  };
 }
 
 /** 前の起動で消し損ねたファイルを片付ける（起動時）。except は付け直すターンの札が指すファイルの名前（スクリプト側。値ファイルは対になって残る） */
@@ -84,10 +105,11 @@ export async function sweepClaudeEnvFiles(dataDir, { olderThanMs = 0, except = [
   for (const name of names) {
     const isScript = ENV_FILE.test(name);
     // スクリプトと対の値ファイルは、札が指すスクリプトが残るなら残す。対のスクリプトが無い値ファイルは残った方（片付ける）
-    if (!isScript && !VALS_FILE.test(name)) continue;
+    const temporary = TEMP_FILE.test(name);
+    if (!isScript && !VALS_FILE.test(name) && !temporary) continue;
     const script = isScript ? name : name.replace(/\.vals$/, '.sh');
-    if (except.includes(script)) continue;
-    if (!isScript && live.has(script)) continue;   // スクリプトの分で一緒に消す
+    if (!temporary && except.includes(script)) continue;
+    if (!isScript && !temporary && live.has(script)) continue;   // スクリプトの分で一緒に消す
     const f = path.join(dir, name);
     const st = await fs.stat(f).catch(() => null);
     if (!st || (olderThanMs > 0 && Date.now() - st.mtimeMs < olderThanMs)) continue;

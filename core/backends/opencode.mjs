@@ -616,10 +616,17 @@ export const backend = {
     const envFile = !heldServer ? null : adopt ? await adoptOpencodeEnvFile(store.dataDir, card.envFile) : await writeOpencodeEnvFile(store.dataDir, shellEnv(args)).catch(() => null);
     // Pleiad の MCP・会話のシェルの環境変数・ツールの前後の Hooks を、この会話に結び付ける（付け直しは、札の口とファイルの環境変数で結び直す）
     const runtimes = adopt ? (card.runtimes ?? {}) : relayRuntimes(args);
-    const variables = adopt ? (envFile?.vars ?? {}) : shellEnv(args);
+    let variables = adopt ? (envFile?.vars ?? {}) : shellEnv(args);
     const relayAccount = account?.id ?? 'login';
-    const environment=Object.fromEntries(Object.entries({...process.env,...prepareAccount(account),...variables}).filter(([key,value])=>value!=null && !/^PLEIAD_OPENCODE_/i.test(key) && !/^OPENCODE_(SERVER_)?PASSWORD$/i.test(key)).map(([key,value])=>[key,String(value)]));
-    const prepareEnvironment = id => srv.request('PUT', `/api/session/${id}/environment`, {body:{variables:environment}});
+    const environment = () => Object.fromEntries(Object.entries({...process.env,...prepareAccount(account),...variables}).filter(([key,value])=>value!=null && !/^PLEIAD_OPENCODE_/i.test(key) && !/^OPENCODE_(SERVER_)?PASSWORD$/i.test(key)).map(([key,value])=>[key,String(value)]));
+    const preparedSessions = new Set();
+    let environmentWrites = Promise.resolve();
+    const prepareEnvironment = id => {
+      preparedSessions.add(id);
+      const write = environmentWrites.catch(() => {}).then(() => srv.request('PUT', `/api/session/${id}/environment`, { body: { variables: environment() } }));
+      environmentWrites = write;
+      return write;
+    };
     await prepareEnvironment(sessionId);
     const instructions=instructionContext(srv,account);
     const servers = opencodeRelay.bind(sessionId, { runtimes, env: variables, account:relayAccount, system:systemText(args),
@@ -639,6 +646,16 @@ export const backend = {
         },
         afterTool:p=>{if(p.tool==='read')instructions.invalidate(p.sessionID);return hooks?.afterTool(p,{signal:signal?.signal}) ?? {};},
       } });
+    if (control) {
+      control.updateSecrets = async env => {
+        variables = shellEnv({ ...args, secretsRuntime: { env } });
+        opencodeRelay.setEnv(sessionId, variables, relayAccount);
+        await envFile?.update(variables);
+        for (const id of preparedSessions) await prepareEnvironment(id);
+        return true;
+      };
+      if (control.readSecretsEnv) await control.updateSecrets(await control.readSecretsEnv());
+    }
     await ensureRelay(directory, servers, srv);
 
     // 「既定」でもモデルを明示して送る。省くと OpenCode は自分の覚えている最後のモデルを使い、画面の「既定」（resolvesTo）と食い違う
@@ -924,7 +941,7 @@ export const backend = {
       liveModes.delete(turnKey);
       liveModelRefs.delete(turnKey);
       for (const child of children) if (turnsBySession.get(sessionKey(child, srv)) === route) turnsBySession.delete(sessionKey(child, srv));
-      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
+      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.updateSecrets = null; }
       // 手を離したターンは、札も環境変数のファイルも新しいサーバーのもの
       heldServer?.endTurn(sessionId); void envFile?.dispose();
     }

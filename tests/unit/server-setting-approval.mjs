@@ -216,5 +216,41 @@ async function ledger(t) {
     await sleep(120);
     t.ok('ターンが続く間も終わった後も送り直さない', calls.length === 1 && ap2.snapshot().notices.length === 0);
     ap2.close();
+
+    // 途中送信の後に必要になった新しいターンも、既存の台帳に残す。
+    const data3 = path.join(dir, 'continuation');
+    await fs.mkdir(data3);
+    let running = true;
+    const deliveries = [];
+    let ap3 = await createSettingApprovals({ dataDir: data3, intervalMs: 20, deliver: async (id, list) => {
+      deliveries.push(list.map(n => [n.requestId, Boolean(n.nextTurn)]));
+      return list.some(n => n.nextTurn) ? 'requeue' : { nextTurn: list.filter(n => n.outcome === 'allowed').map(n => n.requestId) };
+    } });
+    await ap3.add({ requestId: 'secret-live', sessionId: 's6', key: 'TOKEN', op: 'secrets.request', envRequested: true });
+    await ap3.settle('secret-live', 'allowed');
+    for (let i = 0; i < 100 && !ap3.snapshot().notices[0]?.nextTurn; i++) await sleep(10);
+    t.ok('途中で入れられない要求は、途中送信後に終了待ちとして台帳へ残る', ap3.snapshot().notices[0]?.nextTurn && ap3.snapshot().notices[0].envRequested);
+    await ap3.add({ requestId: 'secret-new', sessionId: 's6', key: 'OTHER', op: 'secrets.request' });
+    await ap3.settle('secret-new', 'denied');
+    for (let i = 0; i < 100 && !deliveries.some(l => l.some(([id, next]) => id === 'secret-new' && !next)); i++) await sleep(10);
+    t.ok('終了待ちの結果があっても、新しい結果を途中送信できる', deliveries.some(l => l.length === 1 && l[0][0] === 'secret-new' && !l[0][1]));
+    for (let i = 0; i < 100 && ap3.snapshot().notices.some(n => n.requestId === 'secret-new'); i++) await sleep(10);
+    ap3.close();
+    for (let i = 0; i < 100 && ap3.settling; i++) await sleep(10);
+    await ap3.flush();
+    let acceptedTurns = 0;
+    ap3 = await createSettingApprovals({ dataDir: data3, intervalMs: 20, deliver: async (id, list, { accepted }) => {
+      if (running) return 'requeue';
+      acceptedTurns += 1;
+      deliveries.push(list.map(n => [n.requestId, Boolean(n.nextTurn)]));
+      await accepted();
+      return 'ok';
+    } });
+    t.ok('再起動しても終了待ちを引き継ぐ', ap3.snapshot().notices.length === 1 && ap3.snapshot().notices.every(n => n.nextTurn), JSON.stringify(ap3.snapshot().notices));
+    running = false; ap3.changed();
+    for (let i = 0; i < 100 && ap3.snapshot().notices.length; i++) await sleep(10);
+    await sleep(80);
+    t.ok('終了後の新しいターンは受領した時点で消し、重複して始めない', ap3.snapshot().notices.length === 0 && acceptedTurns === 1, JSON.stringify({ acceptedTurns, notices: ap3.snapshot().notices }));
+    ap3.close();
   } finally { await fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }

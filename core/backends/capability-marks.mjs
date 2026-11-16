@@ -147,6 +147,7 @@ export const TRAITS = {
   // 秘密情報と変数は、値ファイルを読むスクリプト（CLAUDE_ENV_FILE。core/claude-env-file.mjs）経由で Bash 系のシェルにだけ届く。
   // エージェント自身の PowerShell ツールには渡らないので、AI への一覧の文を替える（core/secrets-prompt.mjs・ADR 0284）
   secretsViaEnvFile: { hint: 'true' },
+  liveSecrets: { hint: 'true' }, // 走っているターンのシェルへ、既存の道の環境変数を入れ直せる
 };
 
 export const TRAIT_KEYS = Object.freeze(Object.keys(TRAITS));

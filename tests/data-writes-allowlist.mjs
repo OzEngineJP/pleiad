@@ -67,8 +67,8 @@ export const DATA_WRITES = [
     { name: 'devin/turn-configs/<uuid>.json', limit: '最大 1 MiB・会話ごとに 1 ファイル', reason: 'Hooks / nativeShellOff を会話単位で適用し、Devin のプロセスが終わったら削除する（Devin は session/new のときに読む。閉じずに残ったものは 1 日で消す）。Devin の --config は利用者の config.json を置き換えるので、中身は利用者の config.json に Pleiad の分を重ねたもの（利用者のファイルには書かない。所有者だけが読める 0600）' },
     { name: 'devin/metadata-config/devin/mcp_config.json', limit: '固定 1 ファイル。{"mcpServers":{}} の 17 bytes', reason: 'metadata 専用の空 MCP 設定。会話やカタログを保存せず、同じ固定パスだけを書き直す' },
   ] },
-  { file: 'core/backends/opencode-held.mjs', sites: 1, targets: [
-    { name: 'run/opencode-env-<uuid>.json', limit: '保持役に載せた OpenCode のターンごとに 1 つ（会話のシェルの環境変数。数 KB）。ターンの終わりに消し、消し損ねは起動時に片付ける', reason: '無停止の更新で付け直す新しいサーバーが読む、秘密情報を含む環境変数（権限 0600。札には名前だけを置く）' },
+  { file: 'core/backends/opencode-held.mjs', sites: 2, targets: [
+    { name: 'run/opencode-env-<uuid>.json（更新中は .json.<uuid>.tmp）', limit: '保持役に載せた OpenCode のターンごとに 1 つ（会話のシェルの環境変数。数 KB）。ターンの終わりに消し、消し損ねは起動時に片付ける', reason: '無停止の更新で付け直す新しいサーバーが読む、秘密情報を含む環境変数（権限 0600。札には名前だけを置く）' },
   ] },
   { file: 'core/backends/opencode-context.mjs', sites: 5, targets: [
     { name: 'opencode/managed/<担当の組み合わせ>/opencode/…', limit: '担当の組み合わせ・止めた名前の組ごとに 1 つ（使ったのが新しい 12 個まで。超えたら古いものから消す）。中身は OpenCode の全体の設定ファイルの写し（数 KB）と junction だけ。ターンごとに作り直す', reason: 'Pleiad 担当のコンテキストのターンの専用の OpenCode に渡す設定の置き場（担当の種類の AGENTS.md・skills・mcp を外した写し。docs/multi-backend.md §2.10）' },
@@ -177,8 +177,8 @@ export const DATA_WRITES = [
     { name: 'compat-endpoints.json', limit: '互換の接続先。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'run/claude-compat-<uuid>.json', limit: 'ターンごとに 1 つ。dispose で消す', reason: 'ターン中だけの一時ファイル' },
   ] },
-  { file: 'core/claude-env-file.mjs', sites: 2, targets: [
-    { name: 'run/claude-env-<uuid>.sh・run/claude-env-<uuid>.vals', limit: 'ターンごとに 1 組。dispose で消す（消し損ねは起動時に片付ける）', reason: 'Claude のシェルへ渡す秘密情報と変数（権限 0600）。値は .vals にだけ書き、CLAUDE_ENV_FILE の .sh は読む行だけ（値が bash.exe -c の引数に載らないように。ADR 0284）' },
+  { file: 'core/claude-env-file.mjs', sites: 3, targets: [
+    { name: 'run/claude-env-<uuid>.sh・run/claude-env-<uuid>.vals（更新中は .vals.<uuid>.tmp）', limit: 'ターンごとに 1 組。dispose で消す（消し損ねは起動時に片付ける）', reason: 'Claude のシェルへ渡す秘密情報と変数（権限 0600）。値は .vals にだけ書き、CLAUDE_ENV_FILE の .sh は読む行だけ（値が bash.exe -c の引数に載らないように。ADR 0284）' },
   ] },
   { file: 'core/claude-mcp-file.mjs', sites: 1, targets: [
     { name: 'run/claude-mcp-<uuid>.json', limit: 'ターンごとに 1 つ。dispose で消す（消し損ねは起動時に片付ける）', reason: 'Claude へ渡す HTTP の MCP の設定（トークンを含む、権限 0600）。--mcp-config にはパスだけを渡し、トークンが argv に載らないようにする（ADR 0284）。ターン中だけの一時ファイル' },

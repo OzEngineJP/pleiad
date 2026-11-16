@@ -79,6 +79,7 @@ export const TRAIT_CONTRACTS = {
   failureDiagnostics: ['server-antigravity', 'server-devin'],
   promptDelivery: ['message-queue', 'server-antigravity'],
   secretsViaEnvFile: ['secrets-store'],
+  liveSecrets: ['server-secrets', 'secrets-store', 'server-opencode'],
 };
 
 /**
