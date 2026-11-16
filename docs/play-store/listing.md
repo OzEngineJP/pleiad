@@ -29,7 +29,7 @@ Google Play の「メインのストアの掲載情報」に入れる文の下�
 ```text
 Pleiad は、PC で動くコーディングエージェントの作業場「Pleiad」に、スマートフォンからつなぐためのアプリです。PC で任せた作業の続きを、席を離れても確かめ、承認し、指示できます。
 
-ご利用には、PC 版の Pleiad（https://pleiad.dev/ ）と、Pleiad の中継サーバーが必要です。中継はご自身で用意します（手順は Pleiad のドキュメントにあります）。このアプリだけでは使えません。
+ご利用には、PC 版の Pleiad（https://pleiad.dev/ ）と、Pleiad の中継サーバーが必要です。中継はご自身で用意するか、ログインして Pleiad Plus の公式の中継を使います（手順は Pleiad のドキュメントにあります）。このアプリだけでは使えません。
 
 できること
 ・PC の Pleiad と同じ画面で、会話の一覧・会話の続き・設定を使えます。
@@ -44,7 +44,7 @@ PC の Pleiad で「設定 › リモート › 端末を追加」を開き、�
 安全とプライバシー
 ・端末と PC の間の通信は、ペアリングで交換した鍵で暗号化されます。中継は中身を読めません。
 ・通知の中身も PC が端末ごとの鍵で暗号化して送ります。通知に会話の本文は載せません。
-・開発者はアプリの利用者の情報を受け取りません。広告・利用状況の解析はありません。
+・広告・利用状況の解析はありません。
 
 通知について
 通知をオンにしている間は、中継とのつながりを保つため、常駐の通知が 1 つ表示されます。通知はアプリの「通知」の画面でいつでもオフにできます。
@@ -60,7 +60,7 @@ PC の Pleiad は、Claude Code・Codex・Antigravity などのエージェン�
 ```text
 Pleiad connects your phone to Pleiad, the workspace for coding agents running on your PC. Keep up with work you handed to agents when you are away from your desk: check progress, approve actions and send instructions.
 
-You need Pleiad for PC (https://pleiad.dev/) and a Pleiad relay server, which you set up yourself (see the Pleiad documentation). This app does not work on its own.
+You need Pleiad for PC (https://pleiad.dev/) and a Pleiad relay server: set up your own (see the Pleiad documentation), or use the Pleiad Plus relay by signing in. This app does not work on its own.
 
 What you can do
 - Use the same screens as Pleiad on your PC: the conversation list, conversations and settings.
@@ -75,7 +75,7 @@ On your PC, open Settings > Remote > Add device in Pleiad and scan the QR code w
 Security and privacy
 - Traffic between your phone and your PC is encrypted with keys exchanged at pairing. The relay cannot read it.
 - Your PC encrypts each notification with a key for your device. Notifications never contain message text.
-- The developer does not receive any information about you. There are no ads and no usage analytics.
+- There are no ads and no usage analytics.
 
 About notifications
 While notifications are on, one ongoing notification stays visible so the app can keep its connection to the relay. You can turn notifications off at any time on the app's Notifications screen.
