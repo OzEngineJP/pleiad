@@ -989,7 +989,7 @@ export const backend = {
       if (control && !compact) {
         control.updateSecrets = vars => envFile ? envFile.update(vars) : Promise.resolve(false);
         // 準備中の変更・無停止の更新のあいだの変更も、起動／読み直しより先に反映する。
-        if (control.readSecretsEnv) await control.updateSecrets(await control.readSecretsEnv());
+        { const env = await control.readSecretsEnv?.(); if (env) await control.updateSecrets(env); }   // 変わっていなければ null（読み直さない）
       }
       // HTTP の MCP の設定。付け直しは CLI が起動済みなので新たに書かず、旧サーバーのファイルを札から引き継ぐ
       mcpFile = adopt ? adoptClaudeMcpFile(store.dataDir, adopt.card.mcpFile) : await writeClaudeMcpFile(store.dataDir, httpServers);

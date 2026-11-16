@@ -724,7 +724,8 @@ const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets:
 // 値は secret-values.json（API キー・MCP と同じ暗号化）。API キーの使い道（環境変数）も台帳の keyUses に id で持つ
 const secretValueStore = createSecretStore({ file: path.join(store.dataDir, 'secret-values.json'), cipher: secretCipher });
 secretValueStore.migrate().catch(() => {});
-let secretsRefresh = Promise.resolve(), secretsTurnsReady = false;
+// secretsGen は秘密情報・変数・API キーの使い道が変わるたびに増える世代（readSecretsEnvIfChanged）
+let secretsRefresh = Promise.resolve(), secretsTurnsReady = false, secretsGen = 0;
 const secrets = createSecrets({
   dataDir: store.dataDir, values: secretValueStore, apiKeys: () => apiKeys,
   // worktree（<リポジトリ>.pleiad/… など）の会話も、元のリポジトリのフォルダーの使い道を引く
@@ -2388,8 +2389,19 @@ async function turnSecretsEnv(turn, { requireReadable = false } = {}) {
   finally { clearTimeout(timer); }
 }
 
+/**
+ * エージェントが起動の前に呼ぶ（core/backends の control.readSecretsEnv）。ターンの始めに読んだ後で変わっていなければ null（読み直さない）。
+ * 毎ターン読み直すと、値の復号（main に頼む）の分だけターンの始まりが遅れるため
+ */
+async function readSecretsEnvIfChanged(turn) {
+  if (turn.secretsGen === secretsGen) return null;
+  turn.secretsGen = secretsGen;
+  return turnSecretsEnv(turn);
+}
+
 /** 保存・使い道の変更・削除を、既存のシェルへの道へ入れ直す。並行した保存でも古い更新を最後に書かない。 */
 function refreshRunningSecrets() {
+  secretsGen++;
   if (!secretsTurnsReady) return Promise.resolve();
   secretsRefresh = secretsRefresh.catch(() => {}).then(async () => {
     for (const turn of runtime.turns.values()) {
@@ -8534,7 +8546,9 @@ async function beginTurn(ctx) {
   }
   // 秘密情報と変数（ADR 0217）。この会話の場所に渡す環境変数（シェルにだけ入る）と、名前だけの一覧の文。圧縮のターンには渡さない
   turn.secretsEnabled = !hooks.compact && Boolean(backend.capabilities?.secrets);
-  turn.control.readSecretsEnv = () => turnSecretsEnv(turn);
+  // 下で読む前の世代を控える。読んだ後〜エージェントの起動までに変わったときだけ、起動の前に読み直す
+  turn.secretsGen = secretsGen;
+  turn.control.readSecretsEnv = () => readSecretsEnvIfChanged(turn);
   if (turn.secretsEnabled) {
     // env file 経由（CLAUDE_ENV_FILE）のエージェントは Bash のシェルにだけ届く。文の出し分けは性質の印から（agent-marks.mjs）
     const secretsRuntime = await secretsRuntimeFor(cwd, agentLocale, { browser: Boolean(runArgs.browserRuntime), envFile: Boolean(backend.traits?.secretsViaEnvFile) });
@@ -9012,7 +9026,9 @@ async function restoreTurn(card, source) {
   turnContexts.set(turn, ctx);
   if (meta.bot && !fields.compactTrigger && !await botHost?.restoreTurn(turn, fields)) throw new Error('bot turn cannot be restored');
   turn.secretsEnabled = !fields.compactTrigger && Boolean(backend.capabilities?.secrets);
-  turn.control.readSecretsEnv = () => turnSecretsEnv(turn);
+  // 付け直し（無停止の更新）は、旧サーバーの間の変更を知らないので必ず読み直す
+  turn.secretsGen = -1;
+  turn.control.readSecretsEnv = () => readSecretsEnvIfChanged(turn);
   runtime.turns.set(turn.key, turn);
   // 途中送信の控え（札の steers）。登録の後に作り直す（ここから先は投げない）
   // 札で切った完了通知の本文は、折り込まれていれば transcript の人の発言にある（Claude）。ハッシュで引いて戻す

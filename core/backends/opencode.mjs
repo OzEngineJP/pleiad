@@ -654,7 +654,7 @@ export const backend = {
         for (const id of preparedSessions) await prepareEnvironment(id);
         return true;
       };
-      if (control.readSecretsEnv) await control.updateSecrets(await control.readSecretsEnv());
+      { const env = await control.readSecretsEnv?.(); if (env) await control.updateSecrets(env); }   // 変わっていなければ null（読み直さない）
     }
     await ensureRelay(directory, servers, srv);
 

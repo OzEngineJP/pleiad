@@ -543,7 +543,7 @@ export const backend = {
         secretsRuntime = { ...secretsRuntime, env: { ...env } };
         return true;
       };
-      if (control.readSecretsEnv) await control.updateSecrets(await control.readSecretsEnv());
+      { const env = await control.readSecretsEnv?.(); if (env) await control.updateSecrets(env); }   // 変わっていなければ null（読み直さない）
     }
     // 最初の発言と、裏の作業を待つ間の途中送信が同じシェル・環境変数を使う。
     const runtimeReply = async text => {
