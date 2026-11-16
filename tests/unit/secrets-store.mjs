@@ -17,6 +17,7 @@ import { secretsPrompt } from '../../core/secrets-prompt.mjs';
 import { resolveShell } from '../../core/shell-bridge.mjs';
 import { parseDotenv, looksSecret, reservedName } from '../../web/dotenv.mjs';
 import { agentT } from '../../core/i18n.mjs';
+import { writeOpencodeEnvFile, adoptOpencodeEnvFile, sweepOpencodeEnvFiles } from '../../core/backends/opencode-held.mjs';
 
 export const name = 'secrets-store';
 export const title = '秘密情報と変数の置き場: 値を出さない・使えない名前・渡す場所の勝ち負け・worktree・.env・origin の照合・伏せる・Claude のシェルへ渡すファイル';
@@ -177,22 +178,53 @@ export default async function (t) {
     && !scriptText.includes(SECRET) && valuesText.includes(`export TOKEN='${SECRET}'`)
     && (process.platform === 'win32' || (st.mode & 0o077) === 0 && (stv.mode & 0o077) === 0));
   t.ok('ターンの終わりに両方消す', (await file.dispose(), await fs.stat(file.file).then(() => false, () => true) && await fs.stat(file.values).then(() => false, () => true)));
-  t.ok('値が無ければ書かない（CLAUDE_ENV_FILE を付けない）', (await writeClaudeEnvFile(dataDir, {})) === null);
+  const empty = await writeClaudeEnvFile(dataDir, {}, { inherit: null });
+  const emptyScript = await fs.readFile(empty.file, 'utf8');
+  t.ok('空でも同じ注入先を用意する（ターンの途中に初めて保存した値も届く）', !/export /.test(await fs.readFile(empty.values, 'utf8')));
+  await empty.update({ LIVE_TOKEN: SECRET });
+  t.ok('途中の追加は値ファイルだけを書き換える（スクリプトとパスは変えず、値を argv に載せない）', (await fs.readFile(empty.values, 'utf8')).includes(SECRET) && await fs.readFile(empty.file, 'utf8') === emptyScript);
+  await empty.update({ RENAMED_TOKEN: 'replacement' });
+  const replaced = await fs.readFile(empty.values, 'utf8');
+  t.ok('途中の差し替え・名前の変更は古い名前と値を取り除く。権限は 0600 のまま', !replaced.includes(SECRET) && !replaced.includes('LIVE_TOKEN') && replaced.includes('RENAMED_TOKEN') && (process.platform === 'win32' || ((await fs.stat(empty.values)).mode & 0o777) === 0o600));
+  await empty.update({});
+  t.ok('全部消しても両方のファイルを残し、export の無い値ファイルにする', !/export /.test(await fs.readFile(empty.values, 'utf8')) && await fs.readFile(empty.file, 'utf8') === emptyScript);
+  const writing = empty.update({ LAST_TOKEN: SECRET });
+  await empty.dispose(); await writing;
+  t.ok('終了と書き換えが重なっても復活しない。終了後は更新しない', await fs.stat(empty.file).then(() => false, () => true) && await fs.stat(empty.values).then(() => false, () => true) && await empty.update({}) === false);
   const adoptedSrc = await writeClaudeEnvFile(dataDir, { X: 'y' }, { inherit: null });
   const adopted = adoptClaudeEnvFile(dataDir, path.basename(adoptedSrc.file));
   t.ok('付け直し: 札のスクリプトの名前から両方を引く。名前の形が違う・run の外は引かない',
     adopted && adopted.file === adoptedSrc.file && adopted.values === adoptedSrc.values
     && adoptClaudeEnvFile(dataDir, '../secrets.json') === null && adoptClaudeEnvFile(dataDir, 'claude-env-x.txt') === null);
+  await adopted.update({ ADOPTED_TOKEN: 'new' });
+  t.ok('無停止の更新で付け直しても同じ値ファイルを更新する', (await fs.readFile(adoptedSrc.values, 'utf8')).includes('ADOPTED_TOKEN') && !(await fs.readFile(adoptedSrc.values, 'utf8')).includes('export X='));
   t.ok('付け直した分も終わりに両方消す', (await adopted.dispose(), await fs.stat(adoptedSrc.file).then(() => false, () => true) && await fs.stat(adoptedSrc.values).then(() => false, () => true)));
   const left = await writeClaudeEnvFile(dataDir, { X: 'y' }, { inherit: null });
   const keep = await writeClaudeEnvFile(dataDir, { X: 'y' }, { inherit: null });
   const orphan = path.join(dataDir, 'run', 'claude-env-0d0a5b1c-0000-4000-8000-0000000000aa.vals');
   await fs.writeFile(orphan, 'export ORPHAN=1');
+  const temporary = keep.values + '.00000000-0000-4000-8000-000000000000.tmp';
+  await fs.writeFile(temporary, 'export INTERRUPTED=1');
   t.ok('起動時の片付け: 消し損ねたスクリプトと値ファイル（対のスクリプトの無い残りも）を消し、札が指す組は残す',
-    (await sweepClaudeEnvFiles(dataDir, { except: [path.basename(keep.file)] })) === 3
+    (await sweepClaudeEnvFiles(dataDir, { except: [path.basename(keep.file)] })) === 4
     && await fs.stat(left.file).then(() => false, () => true) && await fs.stat(left.values).then(() => false, () => true)
     && await fs.stat(orphan).then(() => false, () => true) && await fs.stat(keep.file).then(() => true, () => false) && await fs.stat(keep.values).then(() => true, () => false));
+  t.ok('書き換えの途中で落ちた一時ファイルは、生きているターンのものも起動時に消す', !await fs.stat(temporary).then(() => true, () => false));
   await keep.dispose();
+
+  // OpenCode の保持役も同じファイルを入れ直し、付け直しでは最新の値を読む。
+  const oc = await writeOpencodeEnvFile(dataDir, {});
+  await oc.update({ LIVE_TOKEN: SECRET });
+  const ocAdopted = await adoptOpencodeEnvFile(dataDir, oc.name);
+  t.ok('OpenCode: 空で開始したターンへ追加し、付け直しでも最新の値を読む（0600）', ocAdopted.vars.LIVE_TOKEN === SECRET && (process.platform === 'win32' || ((await fs.stat(oc.file)).mode & 0o777) === 0o600));
+  await ocAdopted.update({});
+  t.ok('OpenCode: 付け直した後の削除も同じファイルに空の辞書を残す', await fs.readFile(oc.file, 'utf8') === '{}');
+  const ocTemporary = oc.file + '.00000000-0000-4000-8000-000000000000.tmp';
+  await fs.writeFile(ocTemporary, '{}');
+  t.ok('OpenCode: 生きているファイルを残して、更新中に落ちた一時ファイルを片付ける', await sweepOpencodeEnvFiles(dataDir, { except: [oc.name] }) === 1 && await fs.stat(oc.file).then(() => true, () => false));
+  const ocWriting = ocAdopted.update({ FINAL_TOKEN: SECRET });
+  await ocAdopted.dispose(); await ocWriting;
+  t.ok('OpenCode: 更新中の終了でもファイルが復活せず、終了後の更新を断る', !await fs.stat(oc.file).then(() => true, () => false) && await ocAdopted.update({}) === false);
 
   // ---- Claude Code の Bash ツールと同じ形（bash -c '<env file の中身>\n: && <command>'）で動かし、値がプロセスのコマンドラインに出ないか（ADR 0284）
   const bash = resolveShell('bash');

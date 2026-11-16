@@ -136,6 +136,7 @@ export function createOpencodeRelay({ secret: initialSecret = crypto.randomBytes
     },
     /** 子の会話（サブエージェント）を親の会話に結び付ける。子のツールの呼び出しは親の口へ */
     alias(childId, parentId, account = 'login') { if (childId && parentId && childId !== parentId && lookup(parentId,account)) aliases.set(scoped(childId,account), scoped(parentId,account)); },
+    setEnv(sessionId, env, account = 'login') { const entry = lookup(sessionId, account); if (entry) entry.env = { ...env }; },
     setSystem(sessionId, text, account = 'login') { const entry=lookup(sessionId,account);if(entry)entry.system=String(text ?? ''); },
     /** 会話の結び付きを外す（会話を消したとき）。走っていない会話も、続きのターンまで残しておいてよい */
     unbind(sessionId, account = 'login') {const key=scoped(sessionId,account); sessions.delete(key); release(key); for (const [k, v] of aliases) if (k === key || v === key) aliases.delete(k); },

@@ -150,6 +150,15 @@ export default async function (t) {
     const mark = c.mark();
     const holding = c.runTurn({ sessionId: sid, prompt: 'hold on' });
     await c.waitFor((e) => e.type === 'activity' && e.sessionId === sid, { ms: 30_000, from: mark });
+    // environment API は実行の途中にも全体を置き換える（値を会話・診断の出力へ出さない）。
+    const nativeEnv = async () => JSON.parse(await fs.readFile(path.join(fakeState, 'sessions.json'), 'utf8'))[sid]?.environment ?? {};
+    const savedLive = await c.cmd('invoke', { op: 'secrets.save', args: { kind: 'secret', label: 'live environment', value: 'oc-' + 'j'.repeat(28), env: { name: 'OC_LIVE_TOKEN', scope: 'all' } } });
+    t.ok('途中の保存: 同じ OpenCode セッションの environment API に値を入れ直す', Boolean((await nativeEnv()).OC_LIVE_TOKEN));
+    await c.cmd('invoke', { op: 'secrets.save', args: { id: savedLive.id, env: { name: 'OC_RENAMED_TOKEN', scope: 'all' } } });
+    const renamed = await nativeEnv();
+    t.ok('途中の名前変更: environment API から古い名前が消え、新しい名前だけになる', !Object.hasOwn(renamed, 'OC_LIVE_TOKEN') && Boolean(renamed.OC_RENAMED_TOKEN));
+    await c.cmd('invoke', { op: 'secrets.delete', args: { id: savedLive.id } });
+    t.ok('途中の削除: 同じ OpenCode セッションの environment API から値を外す', !Object.hasOwn(await nativeEnv(), 'OC_RENAMED_TOKEN'));
     await c.cmd('sendMessage', { sessionId: sid, messageId: 'oc-steer-0001', prompt: 'steer-me' });
     const held = await holding;
     t.ok('途中送信が同じ実行で読まれ、渡った合図が出る', text(held).includes('受け取った: steer-me')

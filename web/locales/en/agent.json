@@ -1241,7 +1241,7 @@
         "overwrite": "Whether to overwrite existing names"
       },
       "setVariable": {
-        "summary": "Save or change a variable (a non-secret value that is shown on screen). It is passed as a shell environment variable from the next turn of conversations in its folders.",
+        "summary": "Save or change a variable (a non-secret value that is shown on screen). It is available immediately in ply_shell and in agent shells that support updates during a turn, for conversations in its folders. Other agent shells receive it from the next turn.",
         "id": "Id of the variable to change (omit to add one)",
         "name": "Environment variable name (a letter or _, then letters, digits and _)",
         "value": "Value (not for secrets; ask a person with secrets.request instead)",
@@ -1285,7 +1285,10 @@
         "scope": "all (all folders) or folder (this conversation's repository). Default all",
         "pending": "Showed an input card (requestId: {{requestId}}, name: {{name}}). When the user saves a value, the result arrives in this conversation. Until then, continue with work that does not need it.",
         "notice": {
-          "allowed": "Secret request (requestId: {{requestId}}): the user saved {{name}}. It is available from the next turn (use it as an environment variable; enter a login with fill_secret). Never print the value.",
+          "allowed": "Secret request (requestId: {{requestId}}): the user saved {{name}}. It is available now (use it as an environment variable; enter a login with fill_secret). Never print the value.",
+          "allowedWaiting": "Secret request (requestId: {{requestId}}): the user saved {{name}}. It is not yet in this turn’s agent shell. Pleiad will start a new turn when this turn ends and ask you to continue. Continue with work you can do; do not ask the user for another message. Never print the value.",
+          "plyShell": "During this turn you can use it as an environment variable in ply_shell.",
+          "continue": "Check the saved name’s current usage and continue the original task.",
           "denied": "Secret request (requestId: {{requestId}}): the user cancelled. {{name}} is not saved.",
           "superseded": "Secret request (requestId: {{requestId}}) was replaced by a newer request for the same name.",
           "restart": "Secret request (requestId: {{requestId}}) was withdrawn because Pleiad restarted. Ask again if you still need it.",

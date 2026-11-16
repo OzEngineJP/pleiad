@@ -23,7 +23,8 @@ export const OUTCOMES = ['allowed', 'denied', 'failed', 'superseded', 'restart']
 
 /**
  * @param dataDir    データ置き場
- * @param deliver    (sessionId, notices, { accepted }) => 'ok' | 'requeue' | 'error'。requeue は受け取られていない（会話が空いてから送り直す）。
+ * @param deliver    (sessionId, notices, { accepted }) => 'ok' | 'requeue' | 'error' | { nextTurn: requestId[] }。requeue は受け取られていない（会話が空いてから送り直す）。
+ *                   nextTurn は途中送信済みのうち、終了後に新しいターンで続ける要求（台帳の nextTurn に保存）。
  *                   error は渡ったか分からない（送り直さない）。sessionId は届け先で、求めた会話と違うとき、渡す結果に via（route の返り）が付く。
  *                   accepted() は、新しいターンがプロンプトを受け取ったときに呼ぶ（以後の結果は台帳に反映しない）
  * @param route      (notice) => { sessionId, via? } | null。届け先の会話。null（引けない・失敗）は求めた会話
@@ -84,7 +85,11 @@ export async function createSettingApprovals({ dataDir, deliver, route = null, n
       // 受け取られた後の結果（ターンの終わり・引き継ぎ）では台帳を書かない
       if (acceptance) { await acceptance; return; }
       if (outcome === 'requeue') for (const n of list) n.state = 'queued';
-      else notices = notices.filter((n) => !list.includes(n));
+      else {
+        const nextTurn = new Set(outcome?.nextTurn ?? []);
+        for (const n of list) if (nextTurn.has(n.requestId)) { n.nextTurn = true; n.state = 'queued'; }
+        notices = notices.filter(n => !list.includes(n) || nextTurn.has(n.requestId));
+      }
       await save();
     } finally { sending.delete(sessionId); unsettled.delete(sessionId); }
   }
@@ -96,10 +101,11 @@ export async function createSettingApprovals({ dataDir, deliver, route = null, n
       const groups = new Map();
       for (const n of notices.filter((x) => x.state === 'queued')) {
         const to = await destinationOf(n);
-        if (!groups.has(to.sessionId)) groups.set(to.sessionId, []);
-        groups.get(to.sessionId).push({ n, via: to.via });
+        const key = JSON.stringify([to.sessionId, Boolean(n.nextTurn)]);
+        if (!groups.has(key)) groups.set(key, { sessionId: to.sessionId, items: [] });
+        groups.get(key).items.push({ n, via: to.via });
       }
-      for (const [id, items] of groups) await deliverSession(id, items);
+      for (const { sessionId, items } of groups.values()) await deliverSession(sessionId, items);
     } finally { kicking = false; }
   }
   const timer = setInterval(() => { if (notices.length) kick().catch(onError); }, intervalMs);
@@ -150,4 +156,4 @@ export async function createSettingApprovals({ dataDir, deliver, route = null, n
   };
 }
 
-const pick = ({ requestId, sessionId, key, op }) => ({ requestId, sessionId, key: key ?? null, op: op ?? null });
+const pick = ({ requestId, sessionId, key, op, envRequested }) => ({ requestId, sessionId, key: key ?? null, op: op ?? null, ...(envRequested !== undefined ? { envRequested } : {}) });

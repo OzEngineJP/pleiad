@@ -167,9 +167,9 @@ export function createSecrets({ dataDir, values, apiKeys = () => null, repoRoot 
   let queue = Promise.resolve();
   let maskCache = null;   // 伏せる値の一覧（変わったら捨てる）
   const serial = fn => { const run = queue.catch(() => {}).then(fn); queue = run; return run; };
-  const emit = change => {
+  const emit = async change => {
     maskCache = null;
-    try { onChange(change); } catch (e) { log('secrets.on_change_failed', { code: String(e?.code ?? '') }); }
+    try { await onChange(change); } catch (e) { log('secrets.on_change_failed', { code: String(e?.code ?? '') }); }
   };
   const keys = () => apiKeys?.() ?? null;
 
@@ -294,7 +294,7 @@ export function createSecrets({ dataDir, values, apiKeys = () => null, repoRoot 
       if (secret !== null) await values.set(VALUE_PREFIX + id, kind === 'login' ? { password: secret } : { value: secret });
       try { await mutate(s => { s.items.push(item); }); }
       catch (e) { if (secret !== null) await values.delete(VALUE_PREFIX + id).catch(() => {}); throw e; }
-      emit({ items: [id] });
+      await emit({ items: [id] });
       return { id, item: publicItem(item) };
     },
 
@@ -333,7 +333,7 @@ export function createSecrets({ dataDir, values, apiKeys = () => null, repoRoot 
       next.updatedAt = iso(now());
       if (secret !== null) await values.set(VALUE_PREFIX + id, next.kind === 'login' ? { password: secret } : { value: secret });
       await mutate(s => { s.items[s.items.findIndex(i => i.id === id)] = next; });
-      emit({ items: [id] });
+      await emit({ items: [id] });
       return { id, item: publicItem(next) };
     },
 
@@ -343,7 +343,7 @@ export function createSecrets({ dataDir, values, apiKeys = () => null, repoRoot 
       const item = need(id);
       await mutate(s => { s.items = s.items.filter(i => i.id !== id); });
       if (item.kind !== 'var') await values.delete(VALUE_PREFIX + id).catch(() => {});
-      emit({ items: [id] });
+      await emit({ items: [id] });
       return { id, item: publicItem(item) };
     },
 
@@ -356,7 +356,7 @@ export function createSecrets({ dataDir, values, apiKeys = () => null, repoRoot 
       const next = { env: env === undefined ? before.env : normalizeEnv(env), note: note === undefined ? before.note : text(note, MAX_NOTE) };
       assertUniqueEnv(next.env, id);
       await mutate(s => { if (next.env || next.note) s.keyUses[id] = next; else delete s.keyUses[id]; });
-      emit({ keyUses: [id] });
+      await emit({ keyUses: [id] });
       return { id, use: next.env || next.note ? structuredClone(next) : null };
     },
     /** API キーを消したとき（core/api-keys.mjs の onChange）。台帳に無いキーの使い道を外す */
@@ -368,7 +368,7 @@ export function createSecrets({ dataDir, values, apiKeys = () => null, repoRoot 
       const gone = Object.keys(state.keyUses).filter(id => !keyMap.has(id));
       if (!gone.length) return;
       await mutate(s => { for (const id of gone) delete s.keyUses[id]; }).catch(e => log('secrets.prune_failed', { code: String(e?.code ?? '') }));
-      emit({ keyUses: gone });
+      await emit({ keyUses: gone });
     },
 
     /**
@@ -461,7 +461,7 @@ export function createSecrets({ dataDir, values, apiKeys = () => null, repoRoot 
       if (broken || !known(id)) return;
       await mutate(s => { const item = s.items.find(i => i.id === id); if (item) item.lastUse = { at: iso(now()), sessionId, site }; })
         .catch(e => log('secrets.record_failed', { code: String(e?.code ?? '') }));
-      emit({ items: [id], use: true });
+      await emit({ items: [id], use: true });
     },
 
     /** 画面・リモートへ出す前に伏せる値（秘密の値・パスワード・API キー。8 文字以上）。変数は伏せない */

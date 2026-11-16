@@ -15,6 +15,7 @@ import { directCommand } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { LABEL_MAX_BYTES } from '../holder/protocol.mjs';
 import { ADOPT_TURN_MARK, registerChildExpander } from '../adopt.mjs';
+import { writeAtomic } from '../atomic-file.mjs';
 import { accountKey } from './opencode-accounts.mjs';
 import { startupUrl } from './opencode-server.mjs';
 
@@ -23,6 +24,7 @@ export const OPENCODE_LABEL_KIND = 'opencode-server';
 /** 親が居ない状態が続いたとき、保持役が OpenCode を止めるまで（codex-held.mjs と同じ。引き継ぎ・落ちた後の起こし直しよりずっと長く、Pleiad を閉じた後に残り続けない長さ） */
 const KEEP_MS = 10 * 60_000;
 const ENV_FILE = /^opencode-env-[0-9a-f-]+\.json$/;
+const TEMP_FILE = /^opencode-env-[0-9a-f-]+\.json\.[0-9a-f-]+\.tmp$/;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** 保持役に載せる切り替え。off で今の流れ（Pleiad の子）。何も書かなければ、置き場（AGENT_HOST_RUNTIME_ROOT = パッケージ版・on の起動）があるとき */
@@ -249,14 +251,13 @@ export async function stopHeldOpencode() {
 
 // ---- 会話のシェルの環境変数（秘密情報を含む）。札には名前だけを置く
 
-/** 書く。vars が空なら書かずに null。返りの name を札に置き、dispose() で消す */
+/** 書く。空でも作る。返りの name を札に置き、update() で入れ直し、dispose() で消す */
 export async function writeOpencodeEnvFile(dataDir, vars) {
-  if (!vars || !Object.keys(vars).length) return null;
   const dir = path.join(dataDir, 'run');
   await fs.mkdir(dir, { recursive: true });
   const name = `opencode-env-${crypto.randomUUID()}.json`;
   const file = path.join(dir, name);
-  await fs.writeFile(file, JSON.stringify(vars), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  await fs.writeFile(file, JSON.stringify(vars ?? {}), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   await fs.chmod(file, 0o600).catch(() => {});
   return envFileHandle(file, name);
 }
@@ -271,8 +272,20 @@ export async function adoptOpencodeEnvFile(dataDir, name) {
 }
 
 function envFileHandle(file, name) {
-  let gone = false;
-  return { file, name, dispose: async () => { if (gone) return; gone = true; await fs.rm(file, { force: true }).catch(() => {}); } };
+  let gone = false, chain = Promise.resolve();
+  return {
+    file, name,
+    update(vars) {
+      if (gone) return Promise.resolve(false);
+      const write = chain.catch(() => {}).then(async () => {
+        await writeAtomic(file, JSON.stringify(vars ?? {}), { mode: 0o600 });
+        return true;
+      });
+      chain = write;
+      return write;
+    },
+    async dispose() { gone = true; await chain.catch(() => {}); await fs.rm(file, { force: true }).catch(() => {}); },
+  };
 }
 
 /** 前の起動で消し損ねたファイルを片付ける（起動時）。except は付け直すターンの札が指すファイルの名前 */
@@ -282,7 +295,7 @@ export async function sweepOpencodeEnvFiles(dataDir, { olderThanMs = 0, except =
   try { names = await fs.readdir(dir); } catch { return 0; }
   let n = 0;
   for (const name of names) {
-    if (!ENV_FILE.test(name) || except.includes(name)) continue;
+    if ((!ENV_FILE.test(name) && !TEMP_FILE.test(name)) || except.includes(name)) continue;
     const f = path.join(dir, name);
     const st = await fs.stat(f).catch(() => null);
     if (!st || (olderThanMs > 0 && Date.now() - st.mtimeMs < olderThanMs)) continue;

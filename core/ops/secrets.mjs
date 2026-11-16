@@ -110,7 +110,7 @@ export const secretOps = [
     id: 'secrets.setVariable',
     summary: 'agent:ops.secrets.setVariable.summary',
     risk: 'write',
-    riskReason: 'A variable is a non-secret value that is shown on screen as is (NODE_ENV=development); it is passed to the shell of later turns of conversations in its folders. It cannot touch a secret value, a password or an API key (secrets.save / secrets.create), and turning a secret back into a variable is refused (ADR 0217)',
+    riskReason: 'A variable is a non-secret value that is shown on screen as is (NODE_ENV=development); conversations in its folders receive it immediately in ply_shell and agents that support live environment updates, and otherwise in their next turn. It cannot touch a secret value, a password or an API key (secrets.save / secrets.create), and turning a secret back into a variable is refused (ADR 0217)',
     input: z.object({
       id: z.string().max(40).optional().describe(D('setVariable', 'id')),
       name: z.string().min(1).max(128).describe(D('setVariable', 'name')),

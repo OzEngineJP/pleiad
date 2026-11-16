@@ -724,6 +724,7 @@ const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets:
 // 値は secret-values.json（API キー・MCP と同じ暗号化）。API キーの使い道（環境変数）も台帳の keyUses に id で持つ
 const secretValueStore = createSecretStore({ file: path.join(store.dataDir, 'secret-values.json'), cipher: secretCipher });
 secretValueStore.migrate().catch(() => {});
+let secretsRefresh = Promise.resolve(), secretsTurnsReady = false;
 const secrets = createSecrets({
   dataDir: store.dataDir, values: secretValueStore, apiKeys: () => apiKeys,
   // worktree（<リポジトリ>.pleiad/… など）の会話も、元のリポジトリのフォルダーの使い道を引く
@@ -1797,21 +1798,24 @@ let plyInstructionsCache = await (async () => { const prefs = await store.getPre
 const plyInstructionsState = () => plyInstructionsScreen(plyInstructionsCache, currentLocale(), { routing: routingSettingsCache.enabled });
 const routingEndpoint = () => apiKeys.useEndpoint(JUDGE_USE);
 /** API キー・割り当てが変わったとき（core/api-keys.mjs の onChange）。使う側の画面と通話のキーを更新する */
-function apiKeysChanged(change = {}) {
+async function apiKeysChanged(change = {}) {
   emitGlobal({ type: 'apiKeysChanged', autoPlus: change.autoPlus === true, sessionId: null });
   // API キーの値・一覧が変わった。伏せる値を読み直し、消したキーの使い道（環境変数）を外す
   secrets.invalidate();
-  if (change.keys) secrets.pruneKeyUses().catch(() => {});
-  refreshSecretMask();
+  if (change.keys) await secrets.pruneKeyUses().catch(() => {});
+  await refreshSecretMask();
+  await refreshRunningSecrets();
   const uses = change.uses ?? [];
   if (uses.includes('voice')) { voiceHost.keysChanged().catch(() => {}); emitGlobal({ type: 'voiceChanged', sessionId: null }); }
   if (uses.some(u => u.startsWith('judge:'))) emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
   if (change.endpoints) emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
 }
 /** 秘密情報と変数が変わったとき（core/secrets.mjs の onChange）。画面へ知らせ、伏せる値を読み直す（値は載せない） */
-function secretsChanged() {
+async function secretsChanged(change = {}) {
+  // 値を使う次のコマンド・通知が先に出ないよう、マスクと既存の注入先の更新まで待つ。
+  await refreshSecretMask();
+  if (!change.use) await refreshRunningSecrets();
   emitGlobal({ type: 'secretsChanged', sessionId: null });
-  refreshSecretMask();
 }
 /**
  * 古い口（setVoiceKey・setDelegationRoutingKey）の中身。移行済みなら API キーに登録して使うキーに選ぶ（同じ値があれば再利用）、
@@ -2294,7 +2298,7 @@ function openShellPort(entry, token) {
       await live.setup;
       const sessionId = live.info.sessionId;
       if (!sessionId) throw new Error(agentT(entry.locale, 'delegation.idPending'));
-      return { sessionId, cwd: live.info.cwd, mode: modePosition(live.backend.modes()[live.info.mode]), signal: live.ac.signal, env: entry.shellEnv ?? {} };
+      return { sessionId, cwd: live.info.cwd, mode: modePosition(live.backend.modes()[live.info.mode]), signal: live.ac.signal, env: { ...(entry.shellEnv ?? {}), ...await turnSecretsEnv(live) } };
     } });
 }
 /** エージェントのシェルのツール（設定 shellTool。ADR 0227 §3）: 'native'（エージェントのもの）か 'ply'（ply_shell だけ） */
@@ -2371,6 +2375,36 @@ async function secretsRuntimeFor(cwd, lng, { browser = false, envFile = false } 
     return null;
   } finally { clearTimeout(timer); }
 }
+/** ply_shell はコマンドを始めるたびに読む。失敗・時間切れなら空にして、取り消した値を使い続けない。 */
+async function turnSecretsEnv(turn, { requireReadable = false } = {}) {
+  if (!turn.secretsEnabled) return {};
+  let timer;
+  try {
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), SECRETS_TURN_WAIT_MS); timer.unref?.(); });
+    const current = await Promise.race([secrets.envFor(turn.info.cwd), late]);
+    if (requireReadable && current.unreadable.length) throw new Error('unreadable');
+    return current.vars;
+  } catch (error) { if (requireReadable) throw error; return {}; }
+  finally { clearTimeout(timer); }
+}
+
+/** 保存・使い道の変更・削除を、既存のシェルへの道へ入れ直す。並行した保存でも古い更新を最後に書かない。 */
+function refreshRunningSecrets() {
+  if (!secretsTurnsReady) return Promise.resolve();
+  secretsRefresh = secretsRefresh.catch(() => {}).then(async () => {
+    for (const turn of runtime.turns.values()) {
+      if (!turn.secretsEnabled || turn.ended) continue;
+      let readable = true;
+      const env = await turnSecretsEnv(turn, { requireReadable: true }).catch(() => { readable = false; return {}; });
+      if (turn.backend.traits?.liveSecrets && turn.control.updateSecrets) {
+        // 失敗の例外は値を含みうるので出さない。通知も「入れ直せた」とは伝えない。
+        turn.secretsLive = await turn.control.updateSecrets(env).catch(() => false) === true && readable;
+      } else turn.secretsLive = false;
+    }
+  });
+  return secretsRefresh;
+}
+
 /** ターンを始めるときに秘密情報と変数を読む上限（ms） */
 const SECRETS_TURN_WAIT_MS = 10_000;
 
@@ -6118,7 +6152,7 @@ async function requestSecret(ctx, args) {
   const agent = { id: backend?.id ?? '', label: backend?.label ?? '' };
   const requestId = `secret-${crypto.randomUUID()}`;
   for (const old of settingApprovals.pendingFor(sessionId, key, 'secrets.request')) await withdrawSettingCard(old.requestId, 'superseded');
-  await settingApprovals.add({ requestId, sessionId, key, op: 'secrets.request' });
+  await settingApprovals.add({ requestId, sessionId, key, op: 'secrets.request', envRequested: Boolean(spec.name) });
   const ac = new AbortController();
   settingCards.set(requestId, ac);
   askPermission({
@@ -6172,13 +6206,18 @@ const secretsOps = {
 };
 
 /** 設定と操作の承認結果を、エージェントへ渡す文にする。via は、求めた子ではなく依頼元へ届けるときの子（routeSettingNotice） */
-function settingNotice(lng, notices) {
+function settingNotice(lng, notices, { live = null, sessionId = null } = {}) {
   // i18n-dynamic: agent:ops.settingNotice.
   return notices.map((n) => {
     // 秘密情報の入力のカード（secrets.request）の結果。値は載せず、保存した名前だけ（key に名前を持たせている）
     // i18n-dynamic: agent:ops.secrets.request.notice.
-    if (n.op === 'secrets.request') return agentT(lng, `ops.secrets.request.notice.${n.outcome}`, { requestId: n.requestId, name: n.key ?? '', error: n.error ?? '' })
-      + (n.via ? '\n' + agentT(lng, 'ops.settingNotice.opFromChild', { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '');
+    if (n.op === 'secrets.request') {
+      const waiting = n.outcome === 'allowed' && n.envRequested !== false && live && !live.secretsLive;
+      return agentT(lng, `ops.secrets.request.notice.${waiting ? 'allowedWaiting' : n.outcome}`, { requestId: n.requestId, name: n.key ?? '', error: n.error ?? '' })
+        + (waiting && plyShellOffered(sessionId) ? '\n' + agentT(lng, 'ops.secrets.request.notice.plyShell') : '')
+        + (n.nextTurn ? '\n' + agentT(lng, 'ops.secrets.request.notice.continue') : '')
+        + (n.via ? '\n' + agentT(lng, 'ops.settingNotice.opFromChild', { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '');
+    }
     const setting = n.op === 'settings.set';
     const words = setting ? null : opsRegistry.get(n.op)?.approvalWords ?? 'op';
     const params = setting ? { target: settingTarget(lng, n.op, n.key) } : approvalWords(lng, words);
@@ -7862,16 +7901,24 @@ const remoteTelemetryTimer = setInterval(() => remoteTasksChanged(true), 30_000)
 remoteTelemetryTimer.unref();
 // 設定の変更の承認の結果を会話へ届ける（ADR 0088）。届け方は委譲の完了通知と同じ（ADR 0057）: 走っているターンへ途中送信で渡せればそこへ、
 // 渡せなければ会話が空いてから新しいターンで。前の起動で待っていた要求は、再起動で取り下げた結果として届ける
+secretsTurnsReady = true;
 settingApprovals = await createSettingApprovals({
   dataDir: store.dataDir,
   route: routeSettingNotice,
   onError: e => console.error('  設定の変更の承認の台帳:', String(e?.message ?? e)),
   deliver: async (sessionId, notices, { accepted } = {}) => {
     const live = await noticeTarget(sessionId);
+    // 途中で入れられなかった分の続きは、走っているターンへ繰り返し送らない。
+    if (notices.some(n => n.nextTurn) && (live || await noticeBlocked(sessionId))) return 'requeue';
     if (!live && await noticeBlocked(sessionId)) return 'requeue';
-    const prompt = settingNotice(await ensureAgentLocale(sessionId), notices);
+    if (live && notices.some(n => n.op === 'secrets.request' && n.outcome === 'allowed')) await refreshRunningSecrets();
+    const prompt = settingNotice(await ensureAgentLocale(sessionId), notices, { live, sessionId });
     if (live) {
-      const r = await steerNotice(live, sessionId, prompt, [], notices.map(({ requestId, sessionId, key, op, outcome, error, at }) => ({ requestId, sessionId, key, op, outcome, error, at })));
+      const r = await steerNotice(live, sessionId, prompt, [], notices.map(({ requestId, sessionId, key, op, outcome, error, at, envRequested }) => ({ requestId, sessionId, key, op, outcome, error, at, envRequested })));
+      if (r === 'ok' && !live.secretsLive) {
+        const nextTurn = notices.filter(n => n.op === 'secrets.request' && n.outcome === 'allowed' && n.envRequested !== false).map(n => n.requestId);
+        if (nextTurn.length) return { nextTurn };
+      }
       return r === 'requeue' ? 'requeue' : r === 'ok' ? 'ok' : 'error';
     }
     return (await runTurn({ sessionId, prompt }, () => {}, { internal: true, onAccepted: accepted })) === 'requeue' ? 'requeue' : 'ok';
@@ -8486,13 +8533,15 @@ async function beginTurn(ctx) {
     runArgs.browserRuntime = browserRuntimeFor(turn);
   }
   // 秘密情報と変数（ADR 0217）。この会話の場所に渡す環境変数（シェルにだけ入る）と、名前だけの一覧の文。圧縮のターンには渡さない
-  if (!hooks.compact && backend.capabilities?.secrets) {
+  turn.secretsEnabled = !hooks.compact && Boolean(backend.capabilities?.secrets);
+  turn.control.readSecretsEnv = () => turnSecretsEnv(turn);
+  if (turn.secretsEnabled) {
     // env file 経由（CLAUDE_ENV_FILE）のエージェントは Bash のシェルにだけ届く。文の出し分けは性質の印から（agent-marks.mjs）
     const secretsRuntime = await secretsRuntimeFor(cwd, agentLocale, { browser: Boolean(runArgs.browserRuntime), envFile: Boolean(backend.traits?.secretsViaEnvFile) });
     if (secretsRuntime) runArgs.secretsRuntime = secretsRuntime;
   }
   // ply_shell のコマンドへ渡す、会話のシェルの環境変数（エージェントのシェルと同じ: ブラウザー・CLI の接続・秘密情報）
-  conversationConnection(turn).shellEnv = { ...(runArgs.browserEnv ?? {}), ...(runArgs.controlRuntime?.env ?? {}), ...(runArgs.secretsRuntime?.env ?? {}) };
+  conversationConnection(turn).shellEnv = { ...(runArgs.browserEnv ?? {}), ...(runArgs.controlRuntime?.env ?? {}) };
   // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
   const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: ctx.runtimeContext?.sections ?? null,
     visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentPort.instructions, added: contextRecord.added,
@@ -8962,6 +9011,8 @@ async function restoreTurn(card, source) {
   bindTurnContext(ctx);
   turnContexts.set(turn, ctx);
   if (meta.bot && !fields.compactTrigger && !await botHost?.restoreTurn(turn, fields)) throw new Error('bot turn cannot be restored');
+  turn.secretsEnabled = !fields.compactTrigger && Boolean(backend.capabilities?.secrets);
+  turn.control.readSecretsEnv = () => turnSecretsEnv(turn);
   runtime.turns.set(turn.key, turn);
   // 途中送信の控え（札の steers）。登録の後に作り直す（ここから先は投げない）
   // 札で切った完了通知の本文は、折り込まれていれば transcript の人の発言にある（Claude）。ハッシュで引いて戻す
@@ -9026,8 +9077,14 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
           } catch (e) { console.error(`  ply_context の口を開き直せない（${sessionId}）:`, String(e?.message ?? e)); }
         }
         releaseContext();
+        // 付け直しでも秘密情報以外の既存の環境を保つ。OpenCode の再送と ply_shell が同じ接続情報を使う。
+        const browserEnv = !backend.capabilities?.browser || chromeConnection?.state().state === 'unsupported' ? null
+          : await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId, cwd: ctx.cwd }).catch(() => null);
+        const controlRuntime = backend.capabilities?.plyControl ? controlRuntimeFor(turn) : null;
+        conversationConnection(turn).shellEnv = { ...(browserEnv ?? {}), ...(controlRuntime?.env ?? {}) };
         ctx.runArgs = {
           sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
+          browserEnv, controlRuntime,
           card: ctx.card.backendCard, source, ...(ctx.account ? { account: ctx.account } : {}),
           restoredSteers: ctx.restoredSteers,
           ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),

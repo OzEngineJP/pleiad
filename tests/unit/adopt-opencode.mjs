@@ -170,6 +170,16 @@ export default async function (t) {
       await sleep(300);
       assert.equal(askB.id, askA.id, 'Q: 承認の id は S1 と同じ');
       assert.equal(c2.events.filter(e => e.type === 'permission' && e.sessionId === ids.Q).length, 1, 'Q: B に承認が 1 つだけ');
+      const envNames = (await fs.readdir(path.join(dataDir, 'run'))).filter(name => /^opencode-env-.*\.json$/.test(name));
+      assert.equal(envNames.length, 3, '付け直した 3 ターンの env ファイル');
+      const saved = await c2.cmd('invoke', { op: 'secrets.save', args: { kind: 'var', label: 'ADOPT_LIVE_TOKEN', value: 'adopt-test-only', env: { name: 'ADOPT_LIVE_TOKEN', scope: { folders: [work] } } } });
+      for (const name of envNames) {
+        const vars = JSON.parse(await fs.readFile(path.join(dataDir, 'run', name), 'utf8'));
+        assert.ok(vars.ADOPT_LIVE_TOKEN === 'adopt-test-only' && Boolean(vars.PLEIAD_CONTROL_TOKEN), '付け直した同じファイルに保存を反映し、既存の接続情報も保つ');
+      }
+      await c2.cmd('invoke', { op: 'secrets.delete', args: { id: saved.id } });
+      for (const name of envNames) assert.ok(!Object.hasOwn(JSON.parse(await fs.readFile(path.join(dataDir, 'run', name), 'utf8')), 'ADOPT_LIVE_TOKEN'), '付け直したターンの削除も同じファイルへ反映する');
+      t.ok('付け直し後の保存・削除: 3 ターンの同じ env ファイルを更新し、既存の接続情報も保つ', true);
       await c2.cmd('resolvePermission', { id: askB.id, allow: true });
       await gates.open('s-tool');
       await gates.open('t-text');

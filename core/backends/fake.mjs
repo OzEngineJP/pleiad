@@ -270,7 +270,7 @@ export function scriptOf(prompt) {
  * 待っている間の途中送信（control.steer）には、main がその場で答える。
  * 中断されたら true（呼び出し側はそこで終わる）。
  */
-async function background(text, { s, out, emit, signal, control }) {
+async function background(text, { s, out, emit, signal, control, runtimeReply }) {
   const [, nArg, secArg] = text.split(/\s+/);
   const n = Math.max(1, Math.min(5, Math.floor(Number(nArg)) || 2));
   const gate = /^gate:(.+)$/.exec(secArg ?? "")?.[1] ?? null;
@@ -354,7 +354,7 @@ async function background(text, { s, out, emit, signal, control }) {
         // 本物は受け取ってから本文が出るまで 1 秒近くかかる。すぐ返すと、server が送信済み（userMessage）を
         // 配るより先に本文が流れ、画面で順序が入れ替わる
         await wait(STEER_LATENCY_MS);
-        await reply(`受け取った: ${said}`);
+        await reply(await runtimeReply(said) ?? `受け取った: ${said}`);
         emit({ type: "phase", state: "waiting" });
         continue;
       }
@@ -536,7 +536,44 @@ export const backend = {
 
     // 実行中の切り替えが効いたことを確かめられるよう、handle にも今の値を持たせる
     const handle = { sessionId: id, mode, model };
-    if (control) control.handle = handle;
+    if (control) {
+      control.handle = handle;
+      control.updateSecrets = async env => {
+        if (process.env.AGENT_HOST_FAKE_SECRETS_UPDATE === 'off') return false;
+        secretsRuntime = { ...secretsRuntime, env: { ...env } };
+        return true;
+      };
+      if (control.readSecretsEnv) await control.updateSecrets(await control.readSecretsEnv());
+    }
+    // 最初の発言と、裏の作業を待つ間の途中送信が同じシェル・環境変数を使う。
+    const runtimeReply = async text => {
+      if (text.startsWith('control:') || text.startsWith('shell:')) {
+        // ply_control（操作の一覧。ADR 0081）・ply_shell（ADR 0227）の呼び出し。ほかの MCP と同じく mcp__<サーバー>__<ツール> の行で残す。渡っていなければ "<名前>: unavailable"
+        const kind = text.startsWith('shell:') ? 'shell' : 'control';
+        const port = kind === 'shell' ? shellRuntime : controlRuntime;
+        if (!port) out.text = `${kind}: unavailable`;
+        else {
+          out.toolCalls = []; const texts = [];
+          for (const params of [].concat(JSON.parse(text.slice(kind.length + 1)))) {
+            const callId = crypto.randomUUID();
+            const toolName = `mcp__ply_${kind}__${params.name}`;
+            emit({ type: 'tool.start', id: callId, name: toolName, input: params.arguments ?? {} });
+            const response = await fetch(port.url, { method: 'POST', headers: { ...port.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params }) });
+            const result = (await response.json()).result;
+            const raw = result.content[0].text;
+            emit({ type: 'tool.result', id: callId, text: raw, isError: Boolean(result.isError) });
+            out.toolCalls.push({ id: callId, name: toolName, input: params.arguments ?? {}, result: { text: raw, isError: Boolean(result.isError) } });
+            texts.push(raw);
+          }
+          out.text = texts.join('\n');
+        }
+      } else if (text === 'secrets-info') {
+        out.text = JSON.stringify({ names: Object.keys(secretsRuntime?.env ?? {}).sort(), instructions: secretsRuntime?.instructions ?? null });
+      } else if (text.startsWith('secrets-env:')) {
+        out.text = `value=${secretsRuntime?.env?.[text.slice('secrets-env:'.length).trim()] ?? '(none)'}`;
+      } else return null;
+      return out.text;
+    };
 
     // "deny-" で始まるモデルは、backend が理由を付けて断る検査用（CLI が使えないモデルを断る形。
     // Pleiad が送信直前に一覧で遮らないので、断る側の文が会話に出るかを確かめる）
@@ -584,7 +621,7 @@ export const backend = {
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
       emit({ type: 'turnResult', outcome: 'limited', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null,
         window: 'five_hour' });
-      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
+      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.updateSecrets = null; }
       return { sessionId: id };
     }
     // 発言の id は先に決めておき、text.end に載せる（履歴と同じ id で分岐の起点になる）
@@ -705,26 +742,7 @@ export const backend = {
         out.text = JSON.stringify(text.startsWith("notes:") ? notes : botInstructions);
         await say(emit, out.text, out.uuid);
       } else if (text.startsWith('control:') || text.startsWith('shell:')) {
-        // ply_control（操作の一覧。ADR 0081）・ply_shell（ADR 0227）の呼び出し。ほかの MCP と同じく mcp__<サーバー>__<ツール> の行で残す。渡っていなければ "<名前>: unavailable"
-        const kind = text.startsWith('shell:') ? 'shell' : 'control';
-        const port = kind === 'shell' ? shellRuntime : controlRuntime;
-        if (!port) out.text = `${kind}: unavailable`;
-        else {
-          out.toolCalls = []; const texts = [];
-          for (const params of [].concat(JSON.parse(text.slice(kind.length + 1)))) {
-            const callId = crypto.randomUUID();
-            const toolName = `mcp__ply_${kind}__${params.name}`;
-            emit({ type: 'tool.start', id: callId, name: toolName, input: params.arguments ?? {} });
-            const response = await fetch(port.url, { method: 'POST', headers: { ...port.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params }) });
-            const result = (await response.json()).result;
-            const raw = result.content[0].text;
-            emit({ type: 'tool.result', id: callId, text: raw, isError: Boolean(result.isError) });
-            out.toolCalls.push({ id: callId, name: toolName, input: params.arguments ?? {}, result: { text: raw, isError: Boolean(result.isError) } });
-            texts.push(raw);
-          }
-          out.text = texts.join('\n');
-        }
-        await say(emit, out.text, out.uuid);
+        await say(emit, await runtimeReply(text), out.uuid);
       } else if (text === 'shell-info') {
         out.text = shellRuntime ? JSON.stringify({ url: shellRuntime.url, nativeOff: shellRuntime.nativeOff, instructions: shellRuntime.instructions }) : 'shell: unavailable';
         await say(emit, out.text, out.uuid);
@@ -733,14 +751,8 @@ export const backend = {
         out.text = controlRuntime ? JSON.stringify({ url: controlRuntime.url, instructions: controlRuntime.instructions, env: Object.keys(controlRuntime.env ?? {}),
           envUrl: controlRuntime.env?.PLEIAD_CONTROL_URL, token: controlRuntime.env?.PLEIAD_CONTROL_TOKEN, sameToken: controlRuntime.env?.PLEIAD_CONTROL_TOKEN === controlRuntime.headers?.Authorization?.replace('Bearer ', '') }) : 'control: unavailable';
         await say(emit, out.text, out.uuid);
-      } else if (text === 'secrets-info') {
-        // 秘密情報と変数（ADR 0217）で渡った環境変数の名前と一覧の文。値は返さない
-        out.text = JSON.stringify({ names: Object.keys(secretsRuntime?.env ?? {}).sort(), instructions: secretsRuntime?.instructions ?? null });
-        await say(emit, out.text, out.uuid);
-      } else if (text.startsWith('secrets-env:')) {
-        // 渡った値をそのまま言う（エージェントがシェルで値を表示した場面。画面へ出る前に伏せられることを試験が確かめる）
-        out.text = `value=${secretsRuntime?.env?.[text.slice('secrets-env:'.length).trim()] ?? '(none)'}`;
-        await say(emit, out.text, out.uuid);
+      } else if (text === 'secrets-info' || text.startsWith('secrets-env:')) {
+        await say(emit, await runtimeReply(text), out.uuid);
       } else if (text === 'browser-instructions') {
         out.text = browserInstructions ?? '(none)';
         await say(emit, out.text, out.uuid);
@@ -944,7 +956,7 @@ export const backend = {
       } else if (/^fail(\s|$)/.test(text)) {
         throw new Error('fake: failure');
       } else if (/^bg(\s|$)/.test(text)) {
-        if (await background(text, { s, out, emit, signal, control })) return { sessionId: id };
+        if (await background(text, { s, out, emit, signal, control, runtimeReply })) return { sessionId: id };
       } else if (/^(?:bg-shell|active-shell)(\s|$)/.test(text)) {
         if (await hangingShell(text, { s, out, emit, signal, keys: [...new Set([hostSessionId, id].filter(Boolean))] })) return { sessionId: id };
       } else if (/^hook-follow(\s|$)/.test(text)) {
@@ -997,7 +1009,7 @@ export const backend = {
       if (authFailure && out.toolCalls) push(s, out);
       throw err;
     } finally {
-      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
+      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.updateSecrets = null; }
     }
 
     if (out.text || out.toolCalls) push(s, out);

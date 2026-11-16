@@ -996,6 +996,8 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 現役のエージェントは `NO_CAPABILITIES` を使えない（対応を終えたバックエンドだけ）。
 **性質を足すとき**は `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS` に足す（性質は能力の表・公開文書に出さない）。
 
+秘密情報と変数の途中反映は性質 `liveSecrets` で表す（Claude・OpenCode・試験用の fake）。`control.readSecretsEnv()` で cwd の現在の env を読み、バックエンドは `control.updateSecrets(env)` を登録して既存の注入先の全体を置き換え、成功なら true を返す。初期化・保持役からの付け直しでも最新の env を読む。`ply_shell` はコマンドごとに読み直す。途中反映できないエージェントへの保存通知は、その制約と `ply_shell` の可否を伝え、既存の設定承認の台帳の `nextTurn` で終了後の継続を一度届ける（[ADR 0217](adr/0217-secrets-and-variables-for-agents.md) の 2026-11-16 の追記）。
+
 **runArgs の配達物**（エージェントへ機能を渡すキー: `browserEnv`・`controlRuntime`・`secretsRuntime` など）は `contract.mjs` の
 `RUN_ARG_FEATURES` に「キー → 能力の印」の行が要る。`server.mjs` は runArgs を組み立てるところと、バックエンドへ渡す前の `gateRunArgs` の
 両方で印を見るので、印の無いバックエンドにはその配達物が届かない（消したキーはバックエンドの既定値に落ちる）。一覧に無いキーを runArgs に
