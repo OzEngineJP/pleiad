@@ -52,6 +52,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   const nd = {};                   // 打ちかけの表示名（カード id → 文字）
   const err = {};                  // 表示名の誤り（カード id → 文）
   const fresh = {};                // いま済んだ認証（`${id}:tok` / `${id}:lg`）。✓ を出す
+  const lastFix = new Map();       // カードを開くとき、直すボタンが畳み終わるまで文字を残す
   const alias = new Map();         // 追加のカードが実際のアカウントになったとき、そのカードの DOM を引き継ぐ（実 id → 札）
   let seq = 1, draftId = 'new1';
   let focusAfter = null, selectAfter = false, flashAfter = [];
@@ -136,8 +137,11 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const own = dr ? '' : ownerWarning(a);
     const hasToken = !dr && a.hasToken, hasLogin = !dr && a.usageLogin;
     const f = flow?.id === id ? flow : null, manual = manualId === id, confirm = confirmId === id;
-    // 閉じたカードの状態の行の右に出す、直すボタン（認証が無い → ログインがまだ）。持ち主の食い違いは知らせの横の［トークンを発行し直す］
-    const fix = dr || open ? null : !hasToken ? { kind: 'tok', label: t('accounts.issue') } : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : null;
+    // 閉じたカードの直すボタン（認証が無い → ログインがまだ）。操作の組 [直す][編集][削除] の先頭に置く。持ち主の食い違いは知らせの横の［トークンを発行し直す］
+    const want = dr ? null : !hasToken ? { kind: 'tok', label: t('accounts.issue') } : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : null;
+    const fix = open ? null : want;
+    if (want) lastFix.set(id, want);
+    const fx = fix ?? lastFix.get(id);
     // 開いたカードで一番目立たせる操作は 1 つ
     const main = f || manual ? 'step' : dr || !hasToken || own ? 'tok' : !hasLogin ? 'lg' : 'done';
     const pri = k => main === k ? ' btn-primary' : '';
@@ -146,18 +150,20 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const tokWord = hasToken ? t('accounts.status.registered') : t('accounts.status.none');
     const lgWord = hasLogin ? t('accounts.status.done') : t('accounts.status.none');
     const key = alias.get(id) ?? id;
+    // 状態の行。直すボタンがあるカードでは名前の下（名前と同じ列）に入れ、操作の組が名前の横に収まらなければ組ごと状態の行の下へ回る
+    const sum = `<div class="mp-fold${open || dr ? '' : ' open'}" data-k="sum"><div class="mp-fold-in mp-sum"><small data-t>${esc(t('accounts.summary', { token: tokWord, login: lgWord }))}</small></div></div>`;
 
     const head = `<div class="mp-row mp-head"><div class="mp-card-info"><div class="mp-name">`
       + `<strong data-k="nm"${open ? ' aria-hidden="true"' : ''}${a.name.length > 20 ? ` title="${n}"` : ''}>${n}</strong>`
       + `<input class="mp-name-in" data-k="in" data-name="${esc(id)}" value="${esc(nd[id] ?? a.name)}" aria-label="${esc(t('accounts.name.label'))}" maxlength="${MAX_NAME}" placeholder="${esc(t('accounts.name.placeholder'))}" ${NOPM} spellcheck="false"${e ? ` aria-invalid="true" aria-describedby="mpe-${esc(key)}"` : ''}>`
-      + `</div><div data-slot="err:${esc(key)}">${e ? `<p class="mp-state" id="mpe-${esc(key)}" role="alert">${esc(e)}</p>` : ''}</div></div>`
+      + `</div><div data-slot="err:${esc(key)}">${e ? `<p class="mp-state" id="mpe-${esc(key)}" role="alert">${esc(e)}</p>` : ''}</div>`
+      + (want ? sum : '') + `</div>`
       + `<div class="mp-card-actions${confirm ? ' away' : ''}" data-k="acts">`
+      + `<span class="mp-hfold${fix ? ' open' : ''}" data-k="fixf"><span>${fx ? `<button class="btn btn-quiet" type="button" data-fix="${esc(id)}:${fx.kind}"${fix ? '' : ' tabindex="-1"'}>${esc(fx.label)}</button>` : ''}</span></span>`
       + `<button class="btn${open && !dr ? pri('done') : ''}" type="button" data-toggle="${esc(id)}" aria-expanded="${open}" aria-controls="mpb-${esc(key)}" aria-label="${esc(tgl[1])}"><span data-t>${esc(tgl[0])}</span></button>`
       + `<span class="mp-hfold${dr ? '' : ' open'}" data-k="delf"><span><button class="btn" type="button" data-del="${esc(id)}" aria-label="${esc(a.name ? t('accounts.label.delete', { name: a.name }) : t('accounts.label.newAccount'))}">${esc(t('accounts.delete'))}</button></span></span></div></div>`;
 
-    const sum = `<div class="mp-fold${open || dr ? '' : ' open'}" data-k="sum"><div class="mp-fold-in mp-sum"><small data-t>${esc(t('accounts.summary', { token: tokWord, login: lgWord }))}</small>`
-      + `<div class="mp-fix" data-slot="fix:${esc(key)}">${fix ? `<button class="btn btn-quiet" type="button" data-fix="${esc(id)}:${fix.kind}">${esc(fix.label)}</button>` : ''}</div>`
-      + `<div class="mp-own" data-slot="own:${esc(key)}">${!open && own ? `<div class="mp-confirm"><p class="mp-warn">⚠ ${esc(own)}</p><div class="mp-card-actions"><button class="btn btn-quiet" type="button" data-fix="${esc(id)}:tok">${esc(t('accounts.reissue'))}</button></div></div>` : ''}</div></div></div>`;
+    const ownNote = `<div class="mp-own" data-slot="own:${esc(key)}">${!open && own ? `<div class="mp-confirm"><p class="mp-warn">⚠ ${esc(own)}</p><div class="mp-card-actions"><button class="btn btn-quiet" type="button" data-fix="${esc(id)}:tok">${esc(t('accounts.reissue'))}</button></div></div>` : ''}</div>`;
 
     const step = kind => f?.kind === kind ? stepHtml(f, manualWord) : kind === 'tok' && manual ? manualHtml(id) : '';
     const cred = (kind, label, status, acts, extra = '') => `<div class="mp-cred" data-k="cred:${kind}" role="group" aria-label="${esc(label)}"><div class="mp-cred-info"><span>${esc(label)}</span><small data-t aria-live="polite">${esc(status)}</small></div>`
@@ -170,7 +176,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const body = `<div class="mp-fold${open ? ' open' : ''}" data-k="body" id="mpb-${esc(key)}"><div class="mp-fold-in mp-wide mp-body" role="group" aria-label="${esc(dr ? t('accounts.label.newAccount') : t('accounts.label.settings', { name: a.name }))}" tabindex="-1">${tok}`
       + `<div class="mp-fold${dr ? '' : ' open'}" data-k="lgf"><div class="mp-fold-in mp-wide">${lg}</div></div></div></div>`;
     const conf = `<div data-slot="confirm:${esc(key)}">${confirm ? `<div class="mp-confirm" role="group" aria-label="${esc(t('accounts.label.confirm', { name: a.name }))}"><p>${esc(t('accounts.confirmDelete', { name: a.name }))}</p><div class="mp-card-actions"><button class="btn" type="button" data-confirm="no">${esc(t('accounts.cancel'))}</button><button class="btn danger" type="button" data-confirm="yes">${esc(t('accounts.confirmDeleteButton'))}</button></div></div>` : ''}</div>`;
-    return `<div class="mp-fold${(dr ? open : true) && removing !== id ? ' open' : ''}" data-k="fold:${esc(key)}"><div class="mp-fold-in"><div class="mp-card mp-acct${open ? ' is-open' : ''}" data-account="${esc(id)}">${head}${sum}${body}${conf}</div></div></div>`;
+    return `<div class="mp-fold${(dr ? open : true) && removing !== id ? ' open' : ''}" data-k="fold:${esc(key)}"><div class="mp-fold-in"><div class="mp-card mp-acct${open ? ' is-open' : ''}${want ? ' has-fix' : ''}" data-account="${esc(id)}">${head}${want ? '' : sum}${ownNote}${body}${conf}</div></div></div>`;
   }
 
   function html() {

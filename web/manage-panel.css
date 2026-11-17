@@ -414,10 +414,17 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mp-acct .btn,.mp-fold-in>[data-add]{min-height:var(--hit)}
 .mp-acct .mp-stage .mp-note a{display:inline-flex;align-items:center;min-height:var(--hit);margin-block:calc((1lh - var(--hit)) / 2)}
 .mp-acct .btn.lnk{color:var(--ink-blue)}
-/* 見出しの行: どの幅でも 1 行（名前 | ［編集］［削除］）。名前が長いときは名前のほうを省く。直すボタンは状態の行の右（.mp-fix） */
+/* 見出しの行: 名前 | 操作の組（［直す］［編集］［削除］）。組は割らない。直すボタンが無いカードと開いたカードは 1 行で、長い名前のほうを省く。
+   直すボタンがあるカードは、名前（と下の状態の行）の列が「名前の幅か 18em の広いほう」と組を並べて収まらなければ、組ごと状態の行の下へ回り右に寄る（窓の幅ではなく、カードの幅と名前の長さで決まる）。
+   状態の行と名前の欄は width:0;min-width:100% で列の幅に合わせ、列の自然な幅（折り返しの判断）には名前だけが効くようにする */
 .mp-acct .mp-head{flex-wrap:nowrap}
 .mp-acct .mp-head>.mp-card-info{flex:1 1 0}
-.mp-acct .mp-head>.mp-card-actions{flex:none;flex-wrap:nowrap;transition:opacity var(--dur) var(--ease-out),visibility 0s}
+.mp-acct.has-fix:not(.is-open) .mp-head{flex-wrap:wrap}
+.mp-acct.has-fix:not(.is-open) .mp-head>.mp-card-info{flex:1 1 auto;min-width:min(100%,18em)}
+.mp-acct.has-fix .mp-card-info>.mp-fold,.mp-acct.has-fix:not(.is-open) .mp-name-in{width:0;min-width:100%}
+/* 右端の基準は 1 本: 塗りのボタンは面の端、文字だけのボタンは文字の端を、カードの内側の端に揃える（文字だけのボタンで終わる組は、その余白の分だけ外へ出す） */
+.mp-acct .mp-head>.mp-card-actions{flex:none;flex-wrap:nowrap;margin-left:auto;margin-right:-12px;transition:opacity var(--dur) var(--ease-out),visibility 0s}
+.mp-acct .mp-cred>.mp-fold:has(.mp-card-actions>.btn:last-child:not(.btn-primary):not(.btn-quiet)){margin-right:-12px}
 .mp-acct .mp-head>.mp-card-actions.away{opacity:0;visibility:hidden;transition:opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}
 .mp-name{display:grid;align-items:center;min-height:var(--hit);min-width:0}
 .mp-name>*{grid-area:1/1;min-width:0}
@@ -429,8 +436,8 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mp-acct .mp-state[role=alert]{color:var(--ink-danger);font-size:var(--fs-s)}
 .mp-sum{display:flex;flex-wrap:wrap;align-items:center}
 .mp-sum>small{flex:1 1 220px;min-width:0}
-.mp-sum>.mp-fix{margin-left:auto}
-.mp-sum>.mp-own{flex:1 0 calc(100% + 8px)}
+/* 持ち主の食い違いの知らせ: 地を敷かず、カードの内側の端に［トークンを発行し直す］の右端を揃える */
+.mp-acct .mp-own .mp-confirm{margin-top:6px;padding:0;background:none}
 .mp-acct .mp-cred{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;margin:4px -10px 0;padding:6px 10px;border-radius:var(--r-s)}
 .mp-cred-info{flex:1 1 180px;min-width:0}
 .mp-cred-info>span{display:block}
