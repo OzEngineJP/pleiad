@@ -583,6 +583,7 @@
       "badToken": "The token format is invalid. Paste the value shown by `claude setup-token` exactly as is.",
       "nameRequired": "Enter a display name for the account.",
       "nameTooLong": "Use {{max}} characters or fewer for the display name.",
+      "nameDuplicate": "An account with this name already exists.",
       "ownerUnknown": "Could not verify the token owner ({{message}}).",
       "ownerHttp": "Could not verify the token owner (HTTP {{status}}).",
       "ownerNoOrg": "Could not verify the token owner (no organization in the response).",

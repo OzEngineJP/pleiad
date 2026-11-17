@@ -581,6 +581,7 @@
       "badToken": "トークンの形式が正しくありません。`claude setup-token` が表示した値をそのまま貼り付けてください",
       "nameRequired": "アカウントの表示名を入力してください",
       "nameTooLong": "表示名は {{max}} 文字以内にしてください",
+      "nameDuplicate": "同じ名前のアカウントがあります",
       "ownerUnknown": "トークンの持ち主を確認できません（{{message}}）",
       "ownerHttp": "トークンの持ち主を確認できません（HTTP {{status}}）",
       "ownerNoOrg": "トークンの持ち主を確認できません（応答に組織がありません）",
