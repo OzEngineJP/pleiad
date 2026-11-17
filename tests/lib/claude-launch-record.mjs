@@ -2,7 +2,7 @@
 // 各起動の経路を、親の env・アカウントの状態・接続先の組み合わせごとに流し、次の 2 つを記録する:
 //   sdk   … SDK の query に渡した options（関数・AbortController などは型名にする。env は値まで残す）
 //   proc  … 実際に起こされた CLI の argv・cwd・env（偽の CLI が書く。tests/lib/launch-record-cli.mjs）。起こされなければ null
-// 期待値は変更前のコード（main）で採った tests/fixtures/claude-launch-main.json。この記録を作る側は core の置き場（root）を引数に取り、
+// 期待値は変更前のコード（main）で採った tests/fixtures/claude-launch-main.<OS>.json（fixtureFile()。OS ごと）。この記録を作る側は core の置き場（root）を引数に取り、
 // 旧い道に新しい組み立ての関数を挟まない。認証の値はすべて固定の偽物。
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -19,6 +19,13 @@ export const FAKE = {
   registered: 'fake-registered-token-0001', parentOauth: 'fake-parent-oauth-0002', apiKey: 'fake-api-key-0003', authToken: 'fake-auth-token-0004',
   endpointKey: 'fake-endpoint-key-0005', configDir: 'FAKE_CONFIG_DIR',
 };
+/**
+ * 期待値の fixture。OS ごとに 1 つ（どちらも main で採る）。起動の記録が OS で違うため: 製品の側は、Windows は npm の .cmd を SDK の起動では cli.mjs へ解決する・
+ * Windows だけの env（SystemRoot など）を子へ渡す。試験の側は、偽の CLI の入口が Windows は .cmd・Linux は sh（sh が子の env に PWD を足す）。
+ * win32 以外は linux の記録と比べる（CI は ubuntu と windows。macOS は確かめていない）
+ */
+export const fixtureFile = (platform = process.platform) =>
+  fileURLToPath(new URL(`../fixtures/claude-launch-main.${platform === 'win32' ? 'win32' : 'linux'}.json`, import.meta.url));
 // 機械ごとに違う env は有無だけ記録する
 const MACHINE = new Set(['path', 'systemroot', 'comspec', 'pathext', 'temp', 'tmp', 'windir', 'systemdrive', 'home', 'userprofile']);
 
@@ -47,9 +54,11 @@ export function scenarios() {
 }
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
-function makeNorm(tmp) {
+function makeNorm(tmp, repos) {
   const slash = tmp.replace(/\\/g, '/');
-  return s => String(s).replace(/\\/g, '/').split(slash).join('<tmp>').replace(UUID, '<uuid>').replace(/claude-[0-9a-f]{8}/g, 'claude-<id>')
+  // 作業ツリーの置き場（試験を流した場所と、記録する core の置き場）は機械ごとに違うので <repo> にする（長い方から）
+  const repoSlashes = [...new Set(repos.map(r => path.resolve(r).replace(/\\/g, '/').replace(/\/$/, '')))].sort((a, b) => b.length - a.length);
+  return s => repoSlashes.reduce((v, r) => v.split(r).join('<repo>'), String(s).replace(/\\/g, '/').split(slash).join('<tmp>')).replace(UUID, '<uuid>').replace(/claude-[0-9a-f]{8}/g, 'claude-<id>')
     // 実行時の置き場（core が読み込み時に決める。試験のプロセスによって違う）の一時ファイル
     .replace(/[^"'\s=]*\/run\/(claude-[a-z]+-)<uuid>/g, '<run>/$1<uuid>')
     // 記録を受ける一時ファイルの連番（流す組み合わせを絞ると番号がずれる）
@@ -88,10 +97,11 @@ async function waitFile(file, ms) {
  *   accountFor(accounts, id, { data })  … 会話が使うアカウントの決め方（既定: accounts.resolve。段 1 以降は入口を通す関数を渡す。data = 試験のデータ置き場）
  *   onSetup({ data })         … 流す前に、データ置き場へ足すものがあれば（段 1 の設定ファイルなど）
  */
-export async function recordAll({ root, accountFor = (accounts, id, ctx) => accounts.resolve(id), onSetup = null, only = null } = {}) {
+export async function recordAll({ root, accountFor = (accounts, id, ctx) => accounts.resolve(id), onSetup = null, only = null, dumpName = 'records' } = {}) {
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-launch-rec-')));
-  const norm = makeNorm(tmp);
+  const norm = makeNorm(tmp, [process.cwd(), root]);
   const savedEnv = { ...process.env };
+  const dumpDir = process.env.LAUNCH_RECORD_DUMP || '';
   // core はデータ置き場を読み込み時に決めるので、読み込む前に一時の置き場へ向ける（利用者の ~/.agent-host に書かない）
   process.env.AGENT_HOST_DATA = path.join(tmp, 'data');
   const imp = rel => import(pathToFileURL(path.join(root, 'core', rel)).href);
@@ -139,8 +149,10 @@ export async function recordAll({ root, accountFor = (accounts, id, ctx) => acco
         const file = path.join(tmp, `rec-${n++}.json`);
         process.env.LAUNCH_RECORD_OUT = file;
         sdkRec = [];
-        await Promise.race([Promise.resolve().then(run).catch(() => {}), sleep(30000)]);
-        const proc = await waitFile(file, 25000);
+        // どの経路も CLI が終わるまで待ってから戻る（記録は CLI が終わる前に書かれる。実測で戻ってから記録が読めるまで数 ms）。
+        // 待ちが長いのは起動されない・戻らない壊れたときだけなので短く切る: 戻ったら 2 秒、戻らなければ 10 秒で見切ってさらに 10 秒
+        const settled = await Promise.race([Promise.resolve().then(run).then(() => true, () => true), sleep(10000).then(() => false)]);
+        const proc = await waitFile(file, settled ? 2000 : 10000);
         delete process.env.LAUNCH_RECORD_OUT;
         rec[pathName] = { sdk: sdkRec, proc: proc && { argv: proc.argv.map(norm), cwd: norm(proc.cwd), env: envRecord(proc.env, norm),
           files: Object.fromEntries(Object.entries(proc.files ?? {}).map(([k, v]) => [norm(k), norm(v)])) } };
@@ -161,6 +173,12 @@ export async function recordAll({ root, accountFor = (accounts, id, ctx) => acco
     Object.assign(process.env, savedEnv);
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5 }).catch(() => {});
   }
+  // 調べる口: LAUNCH_RECORD_DUMP=<フォルダー> を付けて流すと、比べる前の記録（sha の元）を丸ごと書き出す。
+  //   落ちたときに、main の worktree（root）で同じ口を付けて流した物と、JSON の差分で見比べる（どのキー・どの引数が違うか）
+  if (dumpDir) {
+    await fs.mkdir(dumpDir, { recursive: true });
+    await fs.writeFile(path.join(dumpDir, `${dumpName}.json`), JSON.stringify(out, null, 1) + '\n');
+  }
   return out;
 }
 
@@ -177,4 +195,33 @@ export function digest(records) {
     }
   }
   return out;
+}
+
+/**
+ * 合わなかった組み合わせ × 経路の手がかり（argv の数・env のキーの増減・認証に関わる env の値の違い）を短く返す。
+ * 中身まで見るときは LAUNCH_RECORD_DUMP（recordAll の末尾の説明）で記録を書き出し、main の記録と見比べる
+ */
+export function explain(want, got, limit = 6) {
+  const bad = [];
+  for (const label of new Set([...Object.keys(want), ...Object.keys(got)])) {
+    for (const route of new Set([...Object.keys(want[label] ?? {}), ...Object.keys(got[label] ?? {})])) {
+      const w = want[label]?.[route], g = got[label]?.[route];
+      if (JSON.stringify(w) === JSON.stringify(g)) continue;
+      const hint = [];
+      if (!w || !g) hint.push(!w ? 'fixture に無い' : '記録が無い');
+      else {
+        if (w.argv !== g.argv) hint.push(`argv の数 ${w.argv}→${g.argv}`);
+        const wk = new Set((w.envKeys ?? '').split(',').filter(Boolean)), gk = new Set((g.envKeys ?? '').split(',').filter(Boolean));
+        const add = [...gk].filter(k => !wk.has(k)), del = [...wk].filter(k => !gk.has(k));
+        if (add.length) hint.push(`env +${add.join(' +')}`);
+        if (del.length) hint.push(`env -${del.join(' -')}`);
+        for (const k of new Set([...Object.keys(w.auth ?? {}), ...Object.keys(g.auth ?? {})])) if (w.auth?.[k] !== g.auth?.[k]) hint.push(`${k} ${JSON.stringify(w.auth?.[k])}→${JSON.stringify(g.auth?.[k])}`);
+        if (('proc' in w) !== ('proc' in g)) hint.push(g.proc === null ? '起動されなかった' : '起動された');
+        if (!hint.length) hint.push('ほかの中身（SDK の options・env の値・argv の中身）');
+      }
+      bad.push(`${label} ${route}: ${hint.join(', ')}`);
+    }
+  }
+  const more = bad.length > limit ? ` …ほか ${bad.length - limit} 件` : '';
+  return { count: bad.length, text: bad.length ? `${bad.slice(0, limit).join(' | ')}${more}（中身は LAUNCH_RECORD_DUMP=<フォルダー> を付けて流し、main の記録と見比べる。tests/unit/claude-launch-main-pinned.mjs の先頭）` : '' };
 }
