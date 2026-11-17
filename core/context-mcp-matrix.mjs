@@ -85,7 +85,9 @@ export function mcpRowMeta(row, agents, restore = null) {
   const counted = toggles.length + lockedOn.length;
   const rowChangeableOn = unlockedOn.length > 0;
   const was = (restore ?? []).filter(a => toggles.includes(a));
-  const defaults = toggles.filter(a => row.group === 'ply' || row.origins.includes(a));
+  // 記録が無いときの戻し先（既定）。鍵つきのオンが 1 つでもある行では使わない（指示・Skills と同じ。初めから鍵だけの行は、止めたい意図と逆になるので、
+  // ほかのエージェントへ新しく配らない。押せない行にして、マスを 1 つずつ押してもらう）
+  const defaults = lockedOn.length ? [] : toggles.filter(a => row.group === 'ply' || row.origins.includes(a));
   const restoreAgents = rowChangeableOn ? [] : was.length ? was : defaults;
   const rowRestore = rowChangeableOn ? null : was.length ? 'was' : defaults.length ? 'default' : null;
   return {
