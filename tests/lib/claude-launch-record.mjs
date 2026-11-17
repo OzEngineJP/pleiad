@@ -1,4 +1,4 @@
-// Claude の起動の記録（段 0。「Claude アカウントで claude.ai のコネクターを使う」計画。ADR 0339）。
+// Claude の起動の記録（段 0。「Claude アカウントで claude.ai のコネクターを使う」計画。ADR 0340）。
 // 各起動の経路を、親の env・アカウントの状態・接続先の組み合わせごとに流し、次の 2 つを記録する:
 //   sdk   … SDK の query に渡した options（関数・AbortController などは型名にする。env は値まで残す）
 //   proc  … 実際に起こされた CLI の argv・cwd・env（偽の CLI が書く。tests/lib/launch-record-cli.mjs）。起こされなければ null

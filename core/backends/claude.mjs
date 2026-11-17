@@ -136,10 +136,10 @@ const states = new Map();
 const accountScopeKey = (account) => {
   const id = typeof account === "string" ? account : account?.id;
   const key = id ? `account:${id}` : "login";
-  // コネクターの入口がオンのときだけ識別子の接尾辞を足す（ADR 0339）。オフはこの分岐へ入らず、キーは今までの文字列のまま
+  // コネクターの入口がオンのときだけ識別子の接尾辞を足す（ADR 0340）。オフはこの分岐へ入らず、キーは今までの文字列のまま
   return account?.connectors?.identity ? key + identitySuffix(account.connectors.identity) : key;
 };
-/** 試験用: アカウントごとのキャッシュのキー（ADR 0339。入口がオフのキーが今までと同じ文字列であることを試験が確かめる） */
+/** 試験用: アカウントごとのキャッシュのキー（ADR 0340。入口がオフのキーが今までと同じ文字列であることを試験が確かめる） */
 export const accountScopeKeyForTest = (account) => accountScopeKey(account);
 function stateFor(account) {
   const key = accountScopeKey(account);

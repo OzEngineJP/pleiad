@@ -1,4 +1,4 @@
-# 0339 登録した Claude アカウントで claude.ai のコネクターを使う（方式 b1・入口は既定でオフ・段階の出し方）
+# 0340 登録した Claude アカウントで claude.ai のコネクターを使う（方式 b1・入口は既定でオフ・段階の出し方）
 
 - 状態: 提案（未承認。段 0・段 1 の実装はこの決定の段 2 以降を縛らない範囲に収めてある）
 - 関係: [ADR 0329](0329-claude-per-account-model-catalog.md)（アカウントごとのモデル一覧）・[ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP と claude.ai のコネクターの一覧）・[ADR 0270](0270-server-may-die-anytime.md)

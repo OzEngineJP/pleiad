@@ -632,7 +632,7 @@ async function accountResolve(backend, id) {
   if (!id || !kind) return null;
   if (kind === 'token') {
     if (await agentAccounts.get(id)) return null;
-    // 登録したアカウントのコネクターの入口（ADR 0339）。オフ・未設定は同じ account がそのまま返る
+    // 登録したアカウントのコネクターの入口（ADR 0340）。オフ・未設定は同じ account がそのまま返る
     return claudeAccountConnectors.gate(await claudeAccounts.resolve(id));
   }
   return agentAccounts.resolve(backend.id, id, { known: other => claudeAccounts.has(other) });

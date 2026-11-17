@@ -512,9 +512,9 @@ const SUITES = [
   './unit/hooks-agents.mjs',
   // 同じく、更新しただけの人のターンを main の値で固定して比べる（期待値をこのブランチの旧い道から作らない）
   './unit/hooks-main-pinned.mjs',
-  // Claude の起動の記録を main の値で固定する（段 0。ADR 0339）
+  // Claude の起動の記録を main の値で固定する（段 0。ADR 0340）
   './unit/claude-launch-main-pinned.mjs',
-  // 登録アカウントのコネクターの入口（段 1。ADR 0339）: オフ・未設定・壊れた設定の起動が main の記録と同じ
+  // 登録アカウントのコネクターの入口（段 1。ADR 0340）: オフ・未設定・壊れた設定の起動が main の記録と同じ
   './unit/claude-connectors-off.mjs',
   './unit/context-scan.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）

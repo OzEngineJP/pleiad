@@ -1,4 +1,4 @@
-// 登録した Claude アカウントで claude.ai のコネクターを使う入口（ADR 0339。段 1: 既定オフ・画面なし・書き込みなし）。
+// 登録した Claude アカウントで claude.ai のコネクターを使う入口（ADR 0340。段 1: 既定オフ・画面なし・書き込みなし）。
 // 入口はアカウントごとに 1 つのスイッチ。未設定・読めない・知らない版・知らない値はすべてオフ。
 //   <データ置き場>/claude-account-connectors.json = { version: 1, accounts: { <アカウント id>: { enabled: true } } }
 //   （秘密を含まない。claude-accounts.json の版は上げない。claude-connectors.json は設定 › 外部 MCP のコネクターの一覧の覚えで別のもの）

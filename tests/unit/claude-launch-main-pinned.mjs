@@ -1,4 +1,4 @@
-// Claude の起動（会話・保持役の起動の変換・内部ターン・題の生成・モデル一覧・コネクター一覧・使用量）を、変更前の main の記録で固定する（段 0。ADR 0339）。
+// Claude の起動（会話・保持役の起動の変換・内部ターン・題の生成・モデル一覧・コネクター一覧・使用量）を、変更前の main の記録で固定する（段 0。ADR 0340）。
 // LLM も本物の CLI も呼ばない（起動の入力を記録する偽の CLI。tests/lib/launch-record-cli.mjs）。認証の値は固定の偽物だけ。
 //   - 期待値は tests/fixtures/claude-launch-main.<win32|linux>.json（OS ごと。win32 以外は linux と比べる。fixtureFile()）。
 //     「親の env × アカウント × 接続先」× 経路ごとの、SDK に渡した options と、実際に起こされた CLI の argv・cwd・env の記録の
