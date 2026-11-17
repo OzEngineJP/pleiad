@@ -45,9 +45,16 @@ const TOKEN = /^[\x21-\x7e]{20,4096}$/;
 const SCOPE = /^[A-Za-z0-9:_.-]{1,64}$/;
 /** ファイルでログインを持つ OS。macOS のキーチェーンは項目名が設定フォルダに依存し公開されていないので、確かめた OS だけにする */
 const FILE_PLATFORMS = ['win32', 'linux'];
+/**
+ * 401 のとき、CLI が渡したトークンを捨てて、共有の .credentials.json・ホストが持つトークン・別の出どころのトークンへ
+ * 乗り換える道を開く指定（CLI 2.1.322 のコードで確かめた。足さなかった候補と理由は ADR 0340）
+ */
+const SWITCH_ON_401_ENV = ['ANTHROPIC_UNIX_SOCKET', 'CLAUDE_CODE_REMOTE_SESSION_ID', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+  'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST', 'CLAUDE_CODE_HOST_AUTH_ENV_VAR', 'CLAUDE_CODE_HOST_CREDS_FILE', 'CLAUDE_BG_AUTH_SNAPSHOT_PATH'];
 /** 別の認証・接続先が環境にあると、CLI はそちらで動く（トークンの経路が混ざる） */
 const MIXED_AUTH_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'ANTHROPIC_BASE_URL',
-  'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_GATEWAY'];
+  'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_GATEWAY',
+  ...SWITCH_ON_401_ENV];
 /** 履歴の置き場を動かす指定が親にあると、共有の履歴を保てない */
 const HISTORY_ENV = ['CLAUDE_CODE_PROJECT_DIR_NAME'];
 /** 共有の settings.json の env で、上の 2 つに加えて止める名前（Pleiad が渡す 3 つを settings が上書きすると、渡した認証・置き場が効かない） */

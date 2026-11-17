@@ -28,7 +28,9 @@ const EMAIL = 'fake.connectors@example.invalid';
 const SCOPES = ['user:inference', 'user:profile', 'user:mcp_servers'];
 // 別の認証・履歴の置き場の指定は空にする（実行元の環境に何があっても、止める条件の env に当たらない）
 const QUIET_ENV = Object.fromEntries(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK',
-  'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_GATEWAY', 'CLAUDE_CODE_PROJECT_DIR_NAME'].map(k => [k, '']));
+  'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_GATEWAY', 'CLAUDE_CODE_PROJECT_DIR_NAME',
+  'ANTHROPIC_UNIX_SOCKET', 'CLAUDE_CODE_REMOTE_SESSION_ID', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+  'CLAUDE_CODE_HOST_AUTH_ENV_VAR', 'CLAUDE_CODE_HOST_CREDS_FILE', 'CLAUDE_BG_AUTH_SNAPSHOT_PATH'].map(k => [k, '']));
 
 async function boot(label) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), `ply-srv-cn-list-${label}-`)));

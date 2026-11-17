@@ -41,6 +41,10 @@ const SECRETS = [ACCESS, ACCESS2, REFRESH, EMAIL, ORG, FAKE.registered];
 const credsJson = ({ token = ACCESS, expiresAt = T0 + 8 * 3600_000, scopes = SCOPES } = {}) =>
   JSON.stringify({ claudeAiOauth: { accessToken: token, refreshToken: REFRESH, expiresAt, scopes, subscriptionType: 'max' }, oauthAccount: { emailAddress: EMAIL, organizationUuid: ORG } });
 const leaked = text => SECRETS.filter(s => String(text).includes(s));
+/** 401 のとき保存された資格情報・ホストのトークン・別の出どころへ乗り換える道を開く指定（CLI 2.1.322。ADR 0340）。確かめから外すと落ちることを 1 つずつ確かめる */
+const SWITCH_ON_401 = ['ANTHROPIC_UNIX_SOCKET', 'CLAUDE_CODE_REMOTE_SESSION_ID', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+  'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST', 'CLAUDE_CODE_HOST_AUTH_ENV_VAR', 'CLAUDE_CODE_HOST_CREDS_FILE', 'CLAUDE_BG_AUTH_SNAPSHOT_PATH'];
+const SWITCH_VALUE = 'fake-switch-value-SSSS-0011';
 const sha = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
 const readJson = async file => JSON.parse(await fs.readFile(file, 'utf8'));
 
@@ -217,6 +221,21 @@ export default async function (t) {
           error instanceof ConnectorsAuthError && error.code === `connectors-${kind}` && error.message.length > 10 && !error.message.includes('{{') && leaked(error.message).length === 0
           && calls.refresh === 0 && calls.project === 0 && (readsCred || reads === 0), `${error?.code} ${error?.message?.slice(0, 80)} reads=${reads} ${JSON.stringify(calls)}`);
       }
+      await fs.writeFile(credFile, credsJson()); reset();
+
+      // 401 のとき、渡したトークンを捨てて共有の .credentials.json・ホストのトークン・別の出どころへ乗り換える道を開く指定（CLI 2.1.322。ADR 0340）。
+      // 親の env に 1 つでもあれば env で止め、版（CLI を起こす）も持ち主も聞かず、印付け・refresh・反映もせず、ファイルを 1 つも読まない
+      for (const name of SWITCH_ON_401) {
+        reset(); await fs.writeFile(credFile, credsJson());
+        let reads = 0;
+        const error = await make({ env: { [name]: SWITCH_VALUE }, readFile: async (...a) => { reads++; return fs.readFile(...a); }, sleep: async () => {} })(account).then(() => null, e => e);
+        t.ok(`止める: env（401 で乗り換える道を開く ${name}）→ connectors-env・名前だけ出す・何も起動しない（版・持ち主・印付け・refresh・反映 0 回・ファイルを読まない）`,
+          error instanceof ConnectorsAuthError && error.code === 'connectors-env' && error.message.includes(name) && !error.message.includes(SWITCH_VALUE) && leaked(error.message).length === 0
+          && Object.values(calls).every(n => n === 0) && reads === 0, `${error?.code} ${error?.message?.slice(0, 80)} reads=${reads} ${JSON.stringify(calls)}`);
+      }
+      reset();
+      const emptySwitch = await make({ env: Object.fromEntries(SWITCH_ON_401.map(n => [n, ''])) })(account).then(r => r.account, e => e);
+      t.ok('止める: 401 で乗り換える道を開く指定も、空の値なら止めない（今の確かめと同じ扱い）', emptySwitch?.token === ACCESS, emptySwitch?.code);
       await fs.writeFile(credFile, credsJson()); reset();
 
       // 期限と更新（更新は CLI に任せる）
@@ -550,6 +569,24 @@ export default async function (t) {
         t.ok(`一覧（項目 1）: オンの解決の想定外の例外（${label}）も止める条件にして投げ、ログイン中のアカウントで読み直さない・文面に秘密なし`,
           error instanceof ConnectorsAuthError && error.code === code && calls.length === 0 && leaked(error.message).length === 0, `${error?.code} calls=${calls.length}`);
       }
+      // 401 で乗り換える道を開く指定が親の env にあれば、入口（gate）を通した一覧も env で止め、版を聞かず、ログイン中のアカウントで読み直さない
+      const switchList = [];
+      for (const name of SWITCH_ON_401) {
+        calls.length = 0;
+        let asked = 0;
+        const { gate } = createClaudeConnectorsWiring({
+          dataDir: path.join(tmp, 'list-wiring'),
+          accounts: { usageDir: i => path.join(tmp, 'list-wiring', 'claude-usage', i), ownerStatus: async () => { asked++; return 'ok'; } },
+          settings: { read: async () => ({ enabled: true }) },
+          versions: async () => { asked++; return { cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }; },
+          usage: { guard: () => { asked++; }, refresh: async () => { asked++; } },
+          env: { [name]: SWITCH_VALUE }, home: path.join(tmp, 'list-wiring-home'), platform: 'linux', now: () => T0, project: async () => { asked++; return { changed: false }; },
+        });
+        const error = await run(id => gate({ id, name: 'fake-account', token: FAKE.registered })).then(() => null, e => e);
+        if (!(error instanceof ConnectorsAuthError) || error.code !== 'connectors-env' || calls.length || asked || error.message.includes(SWITCH_VALUE)) switchList.push(`${name}: ${error?.code} calls=${calls.length} asked=${asked}`);
+      }
+      t.ok('一覧（項目 1）: 401 で乗り換える道を開く 7 つの指定が親の env にあれば、入口を通した一覧も env で止め、版・持ち主を聞かず、ログイン中のアカウントで読み直さない（probe を呼ばない）',
+        switchList.length === 0, switchList.slice(0, 3).join(' | '));
       // probeClaudeConnectors: オンは fresh() の値で起こし、起こした後の失敗の文面からトークンを伏せる。fresh() が投げれば CLI を起こさない
       const savedBin = process.env.AGENT_HOST_CLAUDE_BIN;
       const { installFakeClaude } = await import('../lib/fake-claude.mjs');
@@ -812,6 +849,25 @@ export default async function (t) {
       const late = await resolved.connectors.fresh({ cwd: tmp }).then(() => null, x => x);
       t.ok('settings.json の確かめ（項目 8）: 別の認証（env・apiKeyHelper）・読めない設定・履歴の置き場は、解決のとき（版を聞く前）にも起動の直前（fresh）にも止める。メッセージに値を出さない',
         stopsAt.length === 0 && late?.code === 'connectors-env' && !late.message.includes(SETTING_SECRET), `${stopsAt.join(' | ')} late=${late?.code}`);
+      // 401 で乗り換える道を開く指定（ADR 0340）: settings.json の env にあっても（小文字の名前でも）、解決のとき（版を聞く前）にも起動の直前（fresh）にも env で止める
+      const switchBad = [];
+      for (const name of SWITCH_ON_401) {
+        for (const key of [name, name.toLowerCase()]) {
+          await fs.writeFile(file, JSON.stringify({ env: { [key]: SWITCH_VALUE } }));
+          const got = await settingsOverrides(dir);
+          if (JSON.stringify(got) !== JSON.stringify({ auth: [name], history: [] })) switchBad.push(`overrides ${key}: ${JSON.stringify(got)}`);
+          await fs.writeFile(sfile, JSON.stringify({ env: { [key]: SWITCH_VALUE } })); versionsCalled = 0;
+          const e = await make()(account).then(() => null, x => x);
+          if (e?.code !== 'connectors-env' || !e.message.includes(name) || e.message.includes(SWITCH_VALUE) || leaked(e.message).length || versionsCalled) switchBad.push(`resolve ${key}: ${e?.code} versions=${versionsCalled}`);
+        }
+        await fs.writeFile(sfile, JSON.stringify({ env: { FOO: 'bar' } }));
+        const ok = (await make()(account)).account;
+        await fs.writeFile(sfile, JSON.stringify({ env: { [name]: SWITCH_VALUE } }));
+        const lateSwitch = await ok.connectors.fresh({ cwd: tmp }).then(() => null, x => x);
+        if (lateSwitch?.code !== 'connectors-env' || lateSwitch.message.includes(SWITCH_VALUE)) switchBad.push(`fresh ${name}: ${lateSwitch?.code}`);
+      }
+      t.ok('settings.json の確かめ: 401 で乗り換える道を開く 7 つの指定（大文字小文字を問わない）は、解決のとき（版を聞く前）にも起動の直前（fresh）にも env で止める。メッセージに値を出さない',
+        switchBad.length === 0, switchBad.slice(0, 3).join(' | '));
     }
   } finally {
     restoreConsole();

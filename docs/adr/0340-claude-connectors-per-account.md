@@ -88,11 +88,37 @@ Pleiad に登録した Claude のアカウント（長期トークン）で動�
 | `owner` | 登録したアカウントと使用量のログインの組織が違う・確かめられない（組織の単位。下の「持ち主の確かめの限り」） |
 | `version` | CLI・SDK の版が確かめた組（CLI 2.1.322・SDK 0.3.288）と違う、または版を取れない |
 | `platform` | Windows・Linux 以外（macOS はキーチェーンの項目名が設定フォルダに依存するので段 4 まで出さない） |
-| `env` | 親の環境に別の認証・接続先がある（`ANTHROPIC_API_KEY`・`ANTHROPIC_AUTH_TOKEN`・`CLAUDE_CODE_OAUTH_REFRESH_TOKEN`・`ANTHROPIC_BASE_URL`・Bedrock・Vertex・Foundry などの指定）。共有の設定フォルダの `settings.json` の `env` に同じ指定か、渡す 3 つの名前（`CLAUDE_CODE_OAUTH_TOKEN`・`CLAUDE_CODE_OAUTH_SCOPES`・`CLAUDE_CONFIG_DIR`）がある、`apiKeyHelper` がある。`settings.json` が読めない・壊れている・形が違う（コメント入りを含む）も止める（CLI がどう読むか分からないため） |
+| `env` | 親の環境に別の認証・接続先がある（`ANTHROPIC_API_KEY`・`ANTHROPIC_AUTH_TOKEN`・`CLAUDE_CODE_OAUTH_REFRESH_TOKEN`・`ANTHROPIC_BASE_URL`・Bedrock・Vertex・Foundry などの指定）か、401 のときに渡したトークンから別の資格情報へ乗り換える道を開く指定（下の「401 で乗り換える道を開く指定」の 7 つ）がある。共有の設定フォルダの `settings.json` の `env` に同じ指定（名前の大文字小文字は問わない）か、渡す 3 つの名前（`CLAUDE_CODE_OAUTH_TOKEN`・`CLAUDE_CODE_OAUTH_SCOPES`・`CLAUDE_CONFIG_DIR`）がある、`apiKeyHelper` がある。`settings.json` が読めない・壊れている・形が違う（コメント入りを含む）も止める（CLI がどう読むか分からないため） |
 | `history` | 履歴の置き場を動かす `CLAUDE_CODE_PROJECT_DIR_NAME` が親か、共有の `settings.json` の `env` にある |
 | `profile` | 設定の反映に失敗した |
 
 知らない版は、オンを止める（古い経路へ黙って戻さない）。確かめた版は `VERIFIED_VERSIONS` に足して増やす。
+
+**401 で乗り換える道を開く指定（CLI 2.1.322 のコードで洗った）。** 渡した `CLAUDE_CODE_OAUTH_TOKEN` は起動のとき必ず勝つ（これがあると、CLI はほかのトークンの出どころも共有の `.credentials.json` も読まない）。分かれ目は 401（トークンが切れた・取り消された）を受けたときで、CLI は次の順に見る。(1) 起動元のホストがトークンを持つ形（`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` と `CLAUDE_CODE_HOST_AUTH_ENV_VAR` が揃う）なら、ホストのトークンへ替える。(2) SDK のホストに新しいトークンを聞く。(3) 渡したトークンを「利用者が渡したもの」と見なせれば持ち続け、見なせなければ共有の `.credentials.json` のログインへ替える。(4) env か FD のトークンが替わるのを待つ。下の 7 つが無ければ (3) で渡したトークンを持ち続け、共有のログインは読まない（コードを読んだ結果。実機では囮の資格情報と対照の試験で確かめる。まだ確かめていない）。7 つのどれかが親の env か共有の `settings.json` の `env`（名前の大文字小文字は問わない）にあれば、`env` で止める（版も聞かず、何も起動しない）。CLI の版を `VERIFIED_VERSIONS` に足すときは洗い直す。
+
+| 指定 | 足した理由 |
+|---|---|
+| `ANTHROPIC_UNIX_SOCKET` | 要求をソケットへ流す。決まった条件で (3) の「利用者が渡したもの」の判定を外し、共有の `.credentials.json` へ替える道を開く。CLI もホスト管理の組（この名前・`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`・`CLAUDE_CODE_HOST_AUTH_ENV_VAR`）に入れている |
+| `CLAUDE_CODE_REMOTE_SESSION_ID` | リモートのセッションとして動く。(3) の判定を外すので、401 で共有の `.credentials.json` へ替える。トークンの差し替えを待つ動きも入る |
+| `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` | 渡したトークンが無いときに読まれる、別のトークンの出どころ（FD）。CLI も起動元の資格情報（launcher_credential）として扱う。今は渡したトークンが勝つが、版が変わって順が変わると別のトークンで動く |
+| `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` | `CLAUDE_CODE_HOST_AUTH_ENV_VAR` と揃うと (1) が働き、401 でホストのトークンへ替える。`CLAUDE_CODE_HOST_CREDS_FILE` と揃うと、デスクトップアプリが保存した資格情報を読み込み、そのトークンを env に当てる |
+| `CLAUDE_CODE_HOST_AUTH_ENV_VAR` | ホストの認証トークンを入れる env の名前を指す。(1) が働く |
+| `CLAUDE_CODE_HOST_CREDS_FILE` | デスクトップアプリの資格情報のファイルを読み、`CLAUDE_CODE_OAUTH_TOKEN` などを当てる。ホストの認証の更新のときに読み直す（保存された資格情報への乗り換え） |
+| `CLAUDE_BG_AUTH_SNAPSHOT_PATH` | ファイルのトークンを FD と同じ口へ入れる。CLI も FD の指定と同じ組（launcher_credential）に入れている |
+
+足さなかった候補と理由:
+
+- `CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH`・`CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH`: 401 で (2) の SDK のホストに聞くだけ。そのホストは Pleiad 自身で、SDK にトークンを返す口（`getOAuthToken`）を渡していないので、別の資格情報は返らない。働くのも起動元の種類（`CLAUDE_CODE_ENTRYPOINT`）がデスクトップアプリ・VS Code のときだけで、SDK は `sdk-ts` を入れる。
+- `CLAUDE_CODE_OAUTH_401_WAIT_MS`: (4) の待つ長さだけ。env と FD のトークンが替わるのを待つだけで、共有の `.credentials.json` は読まない（対照の試験で使う）。
+- `CLAUDE_CODE_AUTH_FAIL_EXIT_MS`: `CLAUDE_CODE_REMOTE_SESSION_ID` があるときだけ働く（そちらで止める）。
+- `CLAUDE_CODE_REMOTE_SESSION_ORIGIN`・`CLAUDE_CODE_REMOTE`・`CLAUDE_CODE_SESSION_ACCESS_TOKEN`・`CLAUDE_SESSION_INGRESS_TOKEN_FILE`: レビュー用のリモートの形は、(3) の共有の `.credentials.json` の読み取りを閉じる側に働く。セッションのトークンはセッションの出入り口に使うもので、モデルの API には使わない。
+- `CLAUDE_CODE_SIMPLE`（`--bare`）: OAuth を切るので、目に見えて失敗する（黙って乗り換えない）。
+- `CLAUDE_CODE_SUBSCRIPTION_TYPE`・`CLAUDE_CODE_RATE_LIMIT_TIER`: 表示に使う情報だけ。
+- `CLAUDE_CODE_REMOTE_TOOLS_PIN_STORED_LOGIN`: リモートの道具の補助（serve helper）と設定の固めにだけ使う。起動のときのトークンの選び方と 401 の扱いには触れない。
+- ほかの FD の指定（`CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR`・`CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR`・`CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR`・`CCR_AGENT_PROXY_TOKEN_FILE_DESCRIPTOR`）: 401 で乗り換える道には無い。前の 2 つは API キー・ゲートウェイという別の認証の FD の形なので、別の認証の指定として別に提案する。後の 2 つはリモートの通り道の資格情報。
+- 401 の道には無いが、接続先・認証の指定として今の一覧に無いもの（別に提案する）: `CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD`（CLI の接続先の一覧にある）・`CLAUDE_CODE_API_BASE_URL`・`CLAUDE_CODE_CUSTOM_OAUTH_URL`。`AWS_BEARER_TOKEN_BEDROCK`・`ANTHROPIC_FOUNDRY_*`・`ANTHROPIC_AWS_API_KEY` などの接続先ごとのキーは、接続先の指定（既に止める）が無ければ使われない。
+- 決まった置き場のトークン（`/home/claude/.claude/remote/.oauth_token`）: env の指定ではない。`CLAUDE_CODE_OAUTH_TOKEN` があるあいだは読まれない。
+- 待機中の予備のプロセスの引き取り（warm spare）: デスクトップアプリだけの動き。
 
 **設定の反映（許可リスト）。** 反映元は CLI が読むホームの `.claude.json`（`cliConfigFile`。読むだけで書かない）、反映先は共有の設定フォルダの `.claude.json`。
 
@@ -120,7 +146,7 @@ Pleiad に登録した Claude のアカウント（長期トークン）で動�
 
 **段 2 では未確認・未対応。**
 
-- 走っている会話（保持している子プロセス）の途中でアクセス用トークンが切れる場合: 期限の確認は起動の直前だけ（余裕は 60 分）。途中で切れた場合の挙動（CLI が自分で更新するか、黙って共有の `~/.claude/.credentials.json` のログイン中のアカウントへ切り替えるか）は未確認。実機で確かめる。
+- 走っている会話（保持している子プロセス）の途中でアクセス用トークンが切れる場合: 期限の確認は起動の直前だけ（余裕は 60 分）。途中で切れた場合の挙動（CLI が自分で更新するか、黙って共有の `~/.claude/.credentials.json` のログイン中のアカウントへ切り替えるか）は未確認。実機で確かめる（コードの上の分かれ目と、止める指定は上の「401 で乗り換える道を開く指定」）。
 - 共有の設定フォルダの `settings.json` 以外の設定（作業場所の `.claude/settings.json`・`.claude/settings.local.json`・管理者の設定）の `env`・`apiKeyHelper` は見ていない（段 3）。
 - macOS・Linux の実機、複数アカウントを同時にオンにした場合の長時間の確認。
 
