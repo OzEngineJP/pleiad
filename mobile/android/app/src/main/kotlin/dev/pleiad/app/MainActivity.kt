@@ -1,8 +1,11 @@
 package dev.pleiad.app
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
+import android.webkit.WebView
 import com.getcapacitor.BridgeActivity
+import com.getcapacitor.BridgeWebViewClient
 import dev.pleiad.app.remote.ResumePolicy
 
 /**
@@ -16,11 +19,34 @@ class MainActivity : BridgeActivity() {
         registerPlugin(PleiadRemotePlugin::class.java)
         registerPlugin(PleiadPlusPlugin::class.java)
         super.onCreate(savedInstanceState)
+        keepFirstPageListeners()
         takePairLink(intent)
         takeOpenLink(intent)
         takeAuthLink(intent)
         takePlusLink(intent)
         NotifyService.sync(this)
+    }
+
+    /**
+     * Capacitor clears every plugin's listeners in onPageStarted (bridge.reset), meant for a navigation away from an old page.
+     * The WebView posts that callback to the main thread, while the page's addListener calls arrive on the plugin thread, so
+     * on a busy start the first page's reset can land after the list registered its listeners and wipe them (Plus "state",
+     * so the list never re-lists hosts after sign-in). This bridge's first page start has no older page whose listeners
+     * could be stale, so it skips the reset; later starts (reload, error page) reset as before. Capacitor's own
+     * onPageStarted WebViewListener hook is skipped once too: no installed plugin uses it (SystemBars uses onPageCommitVisible).
+     */
+    private fun keepFirstPageListeners() {
+        bridge.setWebViewClient(object : BridgeWebViewClient(bridge) {
+            private var first = true
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                if (first) {
+                    first = false
+                    return
+                }
+                super.onPageStarted(view, url, favicon)
+            }
+        })
     }
 
     /**

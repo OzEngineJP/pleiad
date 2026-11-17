@@ -9,7 +9,7 @@ const { createMacChromeOs } = require('./mac.cjs');
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false, allow: false, enable: false });
 const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'appWindow', 'close', 'allowPermission', 'enableRemoteDebugging',
-  'locateBrowser', 'launchWindow', 'findWindowByNonce', 'findWindowByBounds', 'hiddenSpot', 'conceal', 'reveal', 'release', 'closeAgent', 'exportAgent', 'adoptAgent']);
+  'locateBrowser', 'launchWindow', 'findWindowByNonce', 'findWindowByBounds', 'hiddenSpot', 'conceal', 'reveal', 'release', 'closeAgent', 'exportAgent', 'adoptAgent', 'openVisible']);
 
 /**
  * @param {{ platform?: string, win32?: object|null, mac?: object|null, helper?: object|null, reason?: string, log?: (line: string) => void }} options
@@ -50,7 +50,7 @@ function createChromeOs({ platform = process.platform, win32 = null, mac = null,
 }
 
 /** core（utilityProcess）の `chrome-os` の依頼を受けて口を呼び、`chrome-os-result` を返す。起動時と chrome-os-ready-request に chrome-os-ready を送る */
-function attachChromeOs(worker, { chromeOs, log = () => {} }) {
+function attachChromeOs(worker, { chromeOs, openVisible = null, log = () => {} }) {
   const post = message => { try { worker.postMessage(message); } catch (error) { log(`postMessage failed: ${error.message}`); } };
   const epoch = crypto.randomBytes(8).toString('hex');
   const ready = () => { const c = chromeOs.capabilities(); post({ type: 'chrome-os-ready', supported: c.supported === true, ...(c.reason ? { reason: c.reason } : {}), features: c.features ?? FEATURES_NONE, epoch }); };
@@ -81,6 +81,8 @@ function attachChromeOs(worker, { chromeOs, log = () => {} }) {
         case 'closeAgent': result = chromeOs.closeAgent(a.ref); break;
         case 'exportAgent': result = chromeOs.exportAgent(a.ref); break;
         case 'adoptAgent': result = chromeOs.adoptAgent(a.token, { revealed: a.revealed === true }); break;
+        // 外から渡った URL が入った隠した窓のタブを見える窓で開き直す（main の口。無ければ false）
+        case 'openVisible': result = openVisible ? await openVisible(a.url) : false; break;
         default: result = chromeOs[action](); break;
       }
       if (result && typeof result.then === 'function') {

@@ -114,10 +114,16 @@
     }
   }
 
+  // list() reads run side by side (iOS reads on a concurrent queue): one that started before sign-in finished (no Plus hosts)
+  // can return after a newer one, so a read older than the list on screen is dropped
+  let listSeq = 0, shownSeq = 0;
   async function refresh() {
     if (!Remote) return;
+    const seq = ++listSeq;
     try {
       const { hosts: list, plusError } = await Remote.list();
+      if (seq < shownSeq) return;
+      shownSeq = seq;
       hosts.clear();
       for (const h of list) hosts.set(h.hostId, h);
       const banner = $('hostBanner');
