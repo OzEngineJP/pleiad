@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { run } from '../process.mjs';
+import { systemTool } from '../win-system.mjs';
 import { t } from '../i18n.mjs';
 
 const stat = p => fs.lstat(p).catch(e => { if (e.code === 'ENOENT') return null; throw e; });
@@ -43,10 +44,10 @@ async function accountHome(account, dataDir, { create = false } = {}) {
 async function protect(dir) {
   await fs.chmod(dir, 0o700);
   if (process.platform !== 'win32') return;
-  const who = await run('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
+  const who = await run(systemTool('whoami'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
   const sid = who.stdout.match(/S-1-\d+(?:-\d+)+/)?.[0];
   if (!sid) throw new Error(t('accounts.backend.permissionsUnknown', { agent: 'Grok Build' }));
-  const acl = await run('icacls.exe', [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`], { windowsHide: true });
+  const acl = await run(systemTool('icacls'), [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`], { windowsHide: true });
   if (acl.startError || acl.exitCode !== 0) throw new Error(t('accounts.backend.permissionsFailed', { agent: 'Grok Build' }));
 }
 

@@ -15,6 +15,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { spawnChild } from '../process.mjs';
+import { systemTool } from '../win-system.mjs';
 import { writeAtomic } from '../atomic-file.mjs';
 import { encodeLine, decodeLine, createLineReader } from '../link-codec.mjs';
 import {
@@ -267,7 +268,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
     try {
       if (!tree) c.proc.kill();
       else if (platform === 'win32') {
-        const killer = spawnChildImpl('taskkill', ['/PID', String(c.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        const killer = spawnChildImpl(systemTool('taskkill'), ['/PID', String(c.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
         killer.on('error', () => { try { c.proc.kill(); } catch { /* 既に終わっている */ } });
       } else process.kill(-c.pid, 'SIGKILL');
     } catch { try { c.proc.kill('SIGKILL'); } catch { /* 既に終わっている */ } }

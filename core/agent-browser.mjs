@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import { run, detach } from './process.mjs';
+import { systemTool } from './win-system.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -247,7 +248,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 /** 動いているプロセスの pid -> 実行ファイル名。引けなければ null（そのときは落とさない） */
 export async function listProcesses() {
   const win = process.platform === 'win32';
-  const [command, args] = win ? ['tasklist', ['/FO', 'CSV', '/NH']] : ['ps', ['-A', '-o', 'pid=,comm=']];
+  const [command, args] = win ? [systemTool('tasklist'), ['/FO', 'CSV', '/NH']] : ['ps', ['-A', '-o', 'pid=,comm=']];
   const result = await run(command, args, { windowsHide: true, timeoutMs: 10_000, maxOutputChars: 32 * 1024 * 1024 });
   if (result.startError || result.exitCode !== 0) return null;
   const map = new Map();

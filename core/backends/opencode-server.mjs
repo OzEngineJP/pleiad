@@ -1,6 +1,7 @@
 // OpenCode v2 HTTP/SSE transport. The holder owns the --stdio lease during updates.
 import crypto from 'node:crypto';
 import { runSync, onExit } from '../process.mjs';
+import { systemTool } from '../win-system.mjs';
 import { spawnCli, directCommand } from '../cli-installation.mjs';
 import { killTree } from './antigravity-background.mjs';
 import { createV2Protocol } from './opencode-v2.mjs';
@@ -157,7 +158,7 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
   function stopSync() {
     unwatchExit();
     const child=proc;proc=null;if(!child?.pid)return;
-    try{if(process.platform==='win32')runSync('taskkill',['/pid',String(child.pid),'/t','/f'],{windowsHide:true,stdio:'ignore'});else child.kill('SIGKILL');}catch{}
+    try{if(process.platform==='win32')runSync(systemTool('taskkill'),['/pid',String(child.pid),'/t','/f'],{windowsHide:true,stdio:'ignore'});else child.kill('SIGKILL');}catch{}
   }
   async function stopNow() {
     unwatchExit();

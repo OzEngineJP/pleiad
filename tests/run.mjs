@@ -283,6 +283,8 @@ const SUITES = [
   './unit/agent-lists.mjs',
   // 子を起こす API の lint（ADR 0270 の規則 ①）: 口（core/process.mjs・desktop/process.cjs）の外で直に読むファイルを増やさない
   './unit/child-process-lint.mjs',
+  // Windows の標準の道具（whoami・icacls・taskkill・tasklist・powershell・cmd）は System32 の絶対パスで呼ぶ（core/win-system.mjs）: システムのフォルダーの決め方・PATH の先頭の同名の道具に当たらない・core/ に名前だけの呼び出しを残さない
+  './unit/win-system-tools.mjs',
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
   './unit/server-opencode.mjs',
   './unit/opencode-parts.mjs',

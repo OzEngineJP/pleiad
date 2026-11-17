@@ -5,6 +5,7 @@
 // 台帳（mcp_processes）: stdio で起こした根の PID と、当時のサーバー（親）の PID・起動時刻を記録する。
 // 起動時の掃除（sweep）で、記録の親が死んでいる分を木ごと止める。画面には出さず、サーバーのログと台帳に残す（承認済みの形）。
 import { run } from './process.mjs';
+import { systemTool } from './win-system.mjs';
 import { openData } from './data-schema.mjs';
 import { mcpToolCacheTable, mcpProcessTable } from './db.mjs';
 import { t } from './i18n.mjs';
@@ -23,7 +24,7 @@ async function startTimesOf(pids, { now = Date.now } = {}) {
   const out = new Map();
   if (!pids.length) return out;
   if (process.platform === 'win32') {
-    const res = await run('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+    const res = await run(systemTool('powershell'), ['-NoProfile', '-NonInteractive', '-Command',
       `Get-Process -Id ${pids.join(',')} -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToFileTimeUtc())" }`],
       { timeoutMs: 15_000, windowsHide: true, maxOutputChars: 4 * 1024 * 1024 });
     // 死んでいる pid が混ざると Get-Process は出力しつつ status 1 で返る。起動自体が失敗したときだけ取れないとみなす
@@ -58,7 +59,7 @@ export function elapsedSeconds(text) {
 /** 木ごと止める。Windows は taskkill /T、POSIX は detached で分けたプロセスグループごと（core/context-bridge.mjs） */
 async function killTree(pid) {
   if (process.platform === 'win32') {
-    await run('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeoutMs: 5000 });
+    await run(systemTool('taskkill'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeoutMs: 5000 });
     return;
   }
   try { process.kill(-pid, 'SIGKILL'); return; } catch { /* グループで無ければ根だけ */ }

@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnChild } from './process.mjs';
+import { systemTool } from './win-system.mjs';
 import { createRequire } from 'node:module';
 import { t } from './i18n.mjs';
 
@@ -140,7 +141,7 @@ function commandLine(argv, args) {
   const [command, ...prefix] = argv;
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
     const quote = v => { if (/["%\r\n]/.test(v)) throw new Error(t('cli.badArgument')); return `"${v}"`; };
-    return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${[command, ...prefix, ...args].map(quote).join(' ')}"`] };
+    return { file: process.env.ComSpec || systemTool('cmd'), args: ['/d', '/s', '/c', `"${[command, ...prefix, ...args].map(quote).join(' ')}"`] };
   }
   return { file: command, args: [...prefix, ...args] };
 }
@@ -194,7 +195,7 @@ export function pipeSpawner() {
       write: s => { try { child.stdin.write(s.replace(/\r$/, '\n')); } catch {} },
       kill: () => {
         if (exited) return;
-        if (process.platform === 'win32' && child.pid) spawnChild('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
+        if (process.platform === 'win32' && child.pid) spawnChild(systemTool('taskkill'), ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
         else try { child.kill('SIGTERM'); } catch {}
       },
     };
