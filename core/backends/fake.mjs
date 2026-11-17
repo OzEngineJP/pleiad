@@ -1209,6 +1209,8 @@ export const backend = {
   auth: {
     async status() {
       if (auth.pending) return { loggedIn: false, pending: true };
+      // 審査モード（審査員が使う審査用のホスト）では、ホストの PC でのログインが無いので、最初からログイン済みとして扱う（送信を止めない）。ふつうのホストは変えない
+      if (isReviewMode()) return { loggedIn: true, account: auth.account || "reviewer", detail: "テスト用のダミー" };
       return { loggedIn: auth.loggedIn, account: auth.account, detail: "テスト用のダミー" };
     },
     async login({ emit }) {

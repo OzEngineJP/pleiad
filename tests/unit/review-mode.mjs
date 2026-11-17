@@ -194,6 +194,8 @@ export default async function (t) {
       t.ok('hostCapabilities が reviewMode: true を返す（画面が「端末を追加」を隠す）', caps.reviewMode === true, JSON.stringify(caps));
       t.ok('listSessions は通る', Array.isArray(await c.cmd('listSessions')));
       t.ok('backends は fake だけ', (await c.cmd('backends')).every((b) => b.id === 'fake'));
+      const fakeAuth = await c.cmd('authStatus', { backend: 'fake' });
+      t.ok('fake はログイン済み（ホストの PC でのログインが無いので、送信が止まらない）', fakeAuth.loggedIn === true, JSON.stringify(fakeAuth));
       const created = await c.cmd('newSession', { backend: 'fake', cwd: os.homedir() });
       const info = (await c.cmd('listSessions')).find((s) => s.id === created.sessionId);
       t.ok('newSession: cwd を渡しても作業フォルダーに固定', path.resolve(info.cwd) === path.resolve(work), `${info?.cwd} / ${work}`);
