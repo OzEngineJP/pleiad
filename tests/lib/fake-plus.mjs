@@ -83,6 +83,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     accounts: {},             // uid -> account の欄
     refreshError: null,       // 'TOKEN_EXPIRED' など
     rotateRefresh: false,     // 真なら refresh_token を替える
+    passwordUsers: {},        // email -> { password, uid }。POST /v1/accounts:signInWithPassword（Firebase の signInWithPassword の代わり。審査用ホストの自動ログイン）
     down: false,              // 真の間は全部の口が接続を切る
     calls: [],                // { method, path, client, auth, admission, ticket }
     proxy: {},                // pathname -> { status?, body?, headers? } | async (req, body) => 同じ形。中継の口の応答（未設定は 404）
@@ -247,6 +248,15 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
         idToken: issueIdToken(entry.uid, { email: entry.email, auth_time: authTime }), refreshToken, expiresAt: Date.now() + 3600_000,
         uid: entry.uid, email: entry.email, tokenProjectId: PROJECT_ID, apiKey: API_KEY,
       });
+    }
+    if (url.pathname === '/v1/accounts:signInWithPassword' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const user = state.passwordUsers[String(body.email ?? '').toLowerCase()];
+      if (url.searchParams.get('key') !== API_KEY || !user || user.password !== body.password) return json(res, 400, { error: { message: 'INVALID_LOGIN_CREDENTIALS' } });
+      const refreshToken = `rt-${++seq}`;
+      const authTime = nowSec();
+      refreshTokens.set(refreshToken, { uid: user.uid, authTime });
+      return json(res, 200, { idToken: issueIdToken(user.uid, { email: body.email, auth_time: authTime }), refreshToken, localId: user.uid, email: body.email, expiresIn: '3600' });
     }
     if (url.pathname === '/v1/token' && req.method === 'POST') {
       const form = new URLSearchParams(await readBody(req));

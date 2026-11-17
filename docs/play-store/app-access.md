@@ -105,3 +105,7 @@ Pleiad は、PC で動く Pleiad につなぐためのアプリです。審査�
 ```text
 Pleiad is a companion app for Pleiad on a PC (https://pleiad.dev/). All content (conversations, approvals, notifications) lives on the user's own PC and is reached through a relay server (the user's own, or the Pleiad Plus relay after signing in). Our review host is temporarily unavailable. A video of the full flow is here: 〈video URL〉. Please contact us at 〈email〉 and we will send a working pairing code and a test account for the optional Plus sign-in right away.
 ```
+
+## iOS（App Store）の審査
+
+iOS の審査（Guideline 2.1）は、ユーザー名とパスワードのデモアカウントを求める。Plus の審査用アカウント（メールとパスワード）を出す。審査員は、アプリの「Sign in with email」でログインし、審査用ホストへ承認なしで入る（[ADR 0339](../adr/0339-review-host-plus-email-login.md)、手順は [review-host.md](review-host.md) の付録）。メールとパスワードは App Store Connect の審査情報にだけ書き、**このリポジトリには書かない**。
