@@ -280,6 +280,32 @@ export async function fileLines(root, to, file) {
 // ---------------------------------------------------------------- 隠し ref
 
 /**
+ * 本物の index を一時ファイルへ写す。内容だけでなく更新時刻（atime・mtime）も元に合わせる。
+ *
+ * なぜ時刻まで写すか（racy git）: git は「index ファイルの更新時刻」と「各エントリの mtime」を比べ、エントリの mtime が
+ * index の時刻と同じか新しいもの（racily clean）は、stat が一致していても信用せず中身を読んで比べる。
+ * fs.copyFile の写しは更新時刻が「今」になるので、元の index と同じ区間に書いたエントリ（ステージした直後に同じ大きさの
+ * 内容へ戻した、など）が racy でなくなり、add -A が「変わっていない」と読み違える。すると撮影した tree と HEAD・index の
+ * 差が実際の作業ツリーとずれ、変更の件数と一覧が食い違う。写しに元の時刻を移せば、git の判断は元の index のときと同じになる。
+ *
+ * 丸めの向き: 写しの時刻は「元以下」でなければならない。小さい分には racy と見なされるエントリが増えるだけ（中身を余計に
+ * 読むだけで結果は正しい）。大きいと、本当は racy なエントリを信用して変更を見落とす。fs.stat の mtimeMs は double
+ * （約 0.2 マイクロ秒の誤差）で、utimes も double の秒を受けるので、ミリ秒に切り捨てた上でさらに 1 ミリ秒引き、
+ * どの丸めでも元を超えないようにする。git の側も、秒だけで比べる版（USE_NSEC なし）とナノ秒まで比べる版の両方で、
+ * 「写しの時刻 ≦ 元の時刻」なら racy の集合は元以上になる。
+ *
+ * 時刻を移せなかったとき（読み取り専用・対応しない場所など）は、これまでどおり写しただけで続ける。
+ * index がまだ無い（最初のコミット前）など、写せなければ何もしない（空の index になる）
+ */
+async function copyIndex(src, dst) {
+  try { await fs.copyFile(src, dst); } catch { return; }
+  try {
+    const st = await fs.stat(src);
+    await fs.utimes(dst, st.atime, Math.max(0, Math.floor(st.mtimeMs) - 1) / 1000);
+  } catch { /* 時刻だけ移せない。写しは済んでいるので、これまでの動き（写しの時刻は今）で続ける */ }
+}
+
+/**
  * 今の作業ツリー（未追跡を含む。.gitignore は守る）を tree にする。ユーザーの index は触らない:
  * 本物の index を一時ファイルへ写し、その上で add -A → write-tree。写しなので変更の無いファイルは再計算されない。
  * 失敗・時間切れは null
@@ -288,7 +314,7 @@ export async function snapshotTree(root) {
   const tmp = path.join(os.tmpdir(), `pleiad-index-${crypto.randomUUID()}`);
   try {
     const idx = await readGit(root, ['rev-parse', '--path-format=absolute', '--git-path', 'index']);
-    if (idx.ok && idx.stdout.trim()) await fs.copyFile(idx.stdout.trim(), tmp).catch(() => {});
+    if (idx.ok && idx.stdout.trim()) await copyIndex(idx.stdout.trim(), tmp);
     const env = { GIT_INDEX_FILE: tmp };
     const added = await writeGit(root, ['add', '-A'], { env, timeout: SNAPSHOT_TIMEOUT });
     if (!added.ok) return null;
@@ -306,7 +332,7 @@ export async function indexTree(root) {
   try {
     const idx = await readGit(root, ['rev-parse', '--path-format=absolute', '--git-path', 'index']);
     if (!idx.ok || !idx.stdout.trim()) return null;
-    await fs.copyFile(idx.stdout.trim(), tmp).catch(() => {});   // index がまだ無い（最初のコミット前）なら空の index
+    await copyIndex(idx.stdout.trim(), tmp);   // index がまだ無い（最初のコミット前）なら空の index
     const tree = await writeGit(root, ['write-tree'], { env: { GIT_INDEX_FILE: tmp } });
     return tree.ok && /^[0-9a-f]{40,64}$/.test(tree.stdout.trim()) ? tree.stdout.trim() : null;
   } catch { return null; } finally { fs.rm(tmp, { force: true }).catch(() => {}); }
