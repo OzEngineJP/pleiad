@@ -157,7 +157,7 @@ export default async function (t) {
       let owner = 'ok', versions = { cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }, refreshWrites = null, refreshThrows = false, projectThrows = false;
       let now = T0;
       const make = (over = {}) => createClaudeConnectorsAuth({
-        accounts: { usageDir: id => path.join(usageRoot, id), ownerStatus: async () => { calls.owner++; return owner; } },
+        accounts: { usageDir: id => path.join(usageRoot, id), ownerStatus: async () => { calls.owner++; if (owner instanceof Error) throw owner; return owner; } },
         versions: async () => { calls.versions++; if (versions instanceof Error) throw versions; return versions; },
         refresh: async d => { calls.refresh++; if (d !== dir) throw new Error('別の設定フォルダ'); if (refreshWrites) await fs.writeFile(credFile, refreshWrites); if (refreshThrows) throw new Error(`refresh failed ${ACCESS}`); },
         guard: () => { calls.guard++; },
@@ -201,6 +201,10 @@ export default async function (t) {
         ['version', '版を聞くのに失敗', () => { versions = new Error('boom'); }, {}, false],
         ['owner', '持ち主が食い違う', () => { owner = 'mismatch'; }, {}, false],
         ['owner', '持ち主を確認できない', () => { owner = 'unknown'; }, {}, false],
+        // 想定外の例外も止める条件に揃える（一覧の読み取りがログイン中のアカウントへ落ちないように。元の文面は出さない）
+        ['owner', '持ち主の確かめが例外（アカウントの一覧・使用量のログインを読めない）', () => { owner = new Error(`EACCES ${ACCESS}`); }, {}, false],
+        ['login', '使用量の設定フォルダを引けない（例外）', () => {}, { accounts: { usageDir: () => { throw new Error(`usageDir ${ACCESS}`); }, ownerStatus: async () => 'ok' } }, false],
+        ['login', '想定外の例外（印付けが投げる）', () => {}, { guard: () => { throw new Error(`guard ${ACCESS}`); } }, false],
         ['login', '資格情報が無い', async () => { await fs.rm(credFile, { force: true }); }, {}, true],
         ['format', '資格情報の形が違う', async () => { await fs.writeFile(credFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x' } })); }, {}, true],
       ];
@@ -528,6 +532,24 @@ export default async function (t) {
       await run(async () => null);
       t.ok('一覧: オフ・ほかの失敗・既定なしは今までの呼び方（{ deny, token } だけ。失敗と既定なしはログイン中 = token null）',
         calls.length === 3 && calls.every(c => Object.keys(c).join() === 'deny,token') && calls[0].token === FAKE.registered && calls[1].token === null && calls[2].token === null, JSON.stringify(calls.map(c => Object.keys(c))));
+      // オンの解決の想定外の例外（持ち主の確かめが読めない・使用量の設定フォルダを引けない）も、入口（gate）を通した一覧で
+      // ConnectorsAuthError になり、ログイン中のアカウントで読み直さない（probe を呼ばない）
+      for (const [label, accounts, code] of [
+        ['持ち主の確かめが例外', { usageDir: i => path.join(tmp, 'list-wiring', 'claude-usage', i), ownerStatus: async () => { throw new Error(`EACCES ${ACCESS}`); } }, 'connectors-owner'],
+        ['使用量の設定フォルダを引けない', { usageDir: () => { throw new Error(`usageDir ${ACCESS}`); }, ownerStatus: async () => 'ok' }, 'connectors-login'],
+      ]) {
+        calls.length = 0;
+        const { gate } = createClaudeConnectorsWiring({
+          dataDir: path.join(tmp, 'list-wiring'), accounts,
+          settings: { read: async () => ({ enabled: true }) },
+          versions: async () => ({ cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }),
+          usage: { guard: () => {}, refresh: async () => {} },
+          env: {}, home: path.join(tmp, 'list-wiring-home'), platform: 'linux', now: () => T0, project: async () => ({ changed: false }),
+        });
+        const error = await run(id => gate({ id, name: 'fake-account', token: FAKE.registered })).then(() => null, e => e);
+        t.ok(`一覧（項目 1）: オンの解決の想定外の例外（${label}）も止める条件にして投げ、ログイン中のアカウントで読み直さない・文面に秘密なし`,
+          error instanceof ConnectorsAuthError && error.code === code && calls.length === 0 && leaked(error.message).length === 0, `${error?.code} calls=${calls.length}`);
+      }
       // probeClaudeConnectors: オンは fresh() の値で起こし、起こした後の失敗の文面からトークンを伏せる。fresh() が投げれば CLI を起こさない
       const savedBin = process.env.AGENT_HOST_CLAUDE_BIN;
       const { installFakeClaude } = await import('../lib/fake-claude.mjs');

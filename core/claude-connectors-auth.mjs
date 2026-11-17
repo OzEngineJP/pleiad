@@ -412,7 +412,9 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     if (!verified.some(v => v.cli === found?.cli && v.sdk === found?.sdk)) {
       throw new ConnectorsAuthError('version', { name, cli: found?.cli ?? '?', sdk: found?.sdk ?? '?', verified: verified.map(v => `CLI ${v.cli} / SDK ${v.sdk}`).join(', ') });
     }
-    if ((await accounts.ownerStatus(account.id)) !== 'ok') throw new ConnectorsAuthError('owner', { name });
+    // 読めない（例外）も確かめられない扱いで止める（一覧の読み取りがログイン中のアカウントへ落ちないように）
+    const owner = await Promise.resolve().then(() => accounts.ownerStatus(account.id)).catch(() => 'unknown');
+    if (owner !== 'ok') throw new ConnectorsAuthError('owner', { name });
   }
 
   async function credentials(account, dir) {
@@ -422,7 +424,20 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     return cred;
   }
 
+  /**
+   * 入口がオンのときの解決。止める条件は ConnectorsAuthError で投げる。想定外の例外（使用量の設定フォルダを引けないなど）も
+   * login に揃えて投げる（呼び手の一覧の読み取りは ConnectorsAuthError 以外をオフと同じ「ログイン中のアカウントで読む」に回すため。
+   * 元の文面は出さない）
+   */
   return async function resolveAuth(account) {
+    try { return await resolveOn(account); }
+    catch (error) {
+      if (error instanceof ConnectorsAuthError) throw error;
+      throw new ConnectorsAuthError('login', { name: account?.name ?? account?.id });
+    }
+  };
+
+  async function resolveOn(account) {
     await checks(account);
     const dir = accounts.usageDir(account.id);
     guard(dir, account);
@@ -452,7 +467,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
         },
       },
     };
-  };
+  }
 }
 
 /**
@@ -473,7 +488,8 @@ export function createClaudeConnectorsWiring({ dataDir, accounts, versions, usag
  * 設定 › 外部 MCP のコネクターの一覧の読み取り（core/context-claude-extras.mjs の createConnectorReader の probe）。
  * 新しい会話の既定のアカウントで読む。入口がオンのアカウントは会話と同じ組み立て（connectors.fresh()）を通し、
  * 止める条件（ConnectorsAuthError）はそのまま投げる（ログイン中のアカウントで読み直さない。読めなかった扱いで、覚えの一覧は書かない）。
- * それ以外の失敗（アカウントを消した・トークンが無いなど）は今までどおりログイン中のアカウントで読む
+ * オンの解決は想定外の例外も ConnectorsAuthError にして投げる（createClaudeConnectorsAuth）ので、ここへ来るそれ以外の失敗は
+ * 入口の手前（アカウントを消した・トークンが無いなど。オフと同じ）だけで、今までどおりログイン中のアカウントで読む
  */
 export function connectorListProbe({ defaultId, resolve, probe }) {
   return async ({ deny }) => {
