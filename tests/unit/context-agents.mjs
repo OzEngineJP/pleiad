@@ -11,11 +11,13 @@ import {
   createContextAgents,
   docAgentsFromLegacy,
   docItemKey,
+  docRestoreRule,
   emptyDocAgentsConfig,
   evaluateDocCells,
   legacyEntryIncluded,
   normalizeDocAgentsConfig,
   pathIsGone,
+  planDocRowPress,
   posixMountPointOf,
   resolveEffectiveDocSource,
   resolveRuleForItem,
@@ -189,6 +191,59 @@ export default async function (t) {
     const rowBackCustom = evaluateDocCells('instruction', instCustom, setDocRowRule('instruction', instCustom, rowOffCustom, true));
     t.ok('オフにしてからオンにすると、前の状態（Claude だけ）に戻る',
       rowBackCustom.claude.on === true && ['codex', 'antigravity', 'opencode', 'devin', 'grok'].every(a => !rowBackCustom[a].on));
+
+    // ---- 行のスイッチの計画（ADR 0337 §決定 4 の 2026-11-17 改訂）: 鍵つきのオンが残る行でも、鍵の無いオンだけをまとめてオフにして戻せる
+    const lockedOnList = (cells) => Object.keys(cells).filter((a) => cells[a].locked && cells[a].on).sort().join(',');
+    const unlockedOnList = (cells) => Object.keys(cells).filter((a) => !cells[a].locked && cells[a].on).sort().join(',');
+    const instBase = { off: [], spread: ['codex'] };
+    const beforeCells = evaluateDocCells('instruction', instA, instBase);
+    t.ok('前提: instA（Claude の指示）は Grok が鍵つきでオンのまま、鍵の無いマス（Claude と広げた Codex）がオン',
+      lockedOnList(beforeCells).includes('grok') && unlockedOnList(beforeCells) === 'claude,codex',
+      `${lockedOnList(beforeCells)} / ${unlockedOnList(beforeCells)}`);
+    const pOff = planDocRowPress('instruction', instA, instBase, false);
+    const offCells = evaluateDocCells('instruction', instA, pOff?.rule);
+    t.ok('planDocRowPress(オフ): 鍵の無いオンだけまとめてオフ、鍵つきのオンは残り、外す前の規則が was に残る',
+      pOff?.source === 'off' && unlockedOnList(offCells) === '' && lockedOnList(offCells) === lockedOnList(beforeCells)
+      && pOff.rule.was?.spread?.join(',') === 'codex' && pOff.rule.was?.off?.length === 0,
+      JSON.stringify(pOff));
+    t.ok('planDocRowPress(オフ): 鍵の無いオンが無い行は変えない（null）', planDocRowPress('instruction', instA, pOff.rule, false) === null);
+    const pBack = planDocRowPress('instruction', instA, pOff.rule, true);
+    t.ok('planDocRowPress(オン): 外す前の規則（was）に戻り、鍵つきのマスは触らず、was は消える',
+      pBack?.source === 'was' && unlockedOnList(evaluateDocCells('instruction', instA, pBack.rule)) === 'claude,codex' && pBack.rule.was === undefined,
+      JSON.stringify(pBack));
+    t.ok('planDocRowPress(オン): 鍵の無いオンがある行は変えない（null）', planDocRowPress('instruction', instA, instBase, true) === null);
+    const offAll = { off: ['claude', 'codex', 'antigravity', 'opencode', 'devin'], spread: [] };
+    // 鍵つきのオンが残る行（instA）は、記録が無ければ戻す先なし（鍵だけの行を止めたい意図と逆に、ほかへ配らない）。鍵つきのオンが無い行は出どころだけ
+    t.ok('planDocRowPress(オン): 鍵つきのオンが残り、記録も無い行は変えない（出どころの初期値へも広げない）',
+      planDocRowPress('instruction', instA, offAll, true) === null);
+    const openPath = path.join(home, '.config', 'opencode', 'AGENTS.md');
+    const instOpen = { kind: 'instruction', name: 'AGENTS.md', path: openPath, scope: 'user',
+      origins: [{ path: openPath, source: 'opencode', scope: 'user' }] };
+    const pDefault = planDocRowPress('instruction', instOpen, offAll, true);
+    t.ok('planDocRowPress(オン): 鍵つきのオンが無い行で記録が無いときは、出どころのエージェントだけ戻す（ほかへ広げない）',
+      pDefault?.source === 'default' && unlockedOnList(evaluateDocCells('instruction', instOpen, pDefault.rule)) === 'opencode',
+      JSON.stringify(pDefault));
+    t.ok('planDocRowPress(オン・allowDefault=false): 記録が無い行は変えない（まとまりで、もともとオフの子をオンにしない）',
+      planDocRowPress('instruction', instOpen, offAll, true, null, { allowDefault: false }) === null);
+    const inheritedRule = { off: ['claude', 'antigravity', 'opencode', 'devin'], spread: ['codex'] };
+    const pInherited = planDocRowPress('instruction', instA, offAll, true, null, { allowDefault: false, inherited: inheritedRule });
+    t.ok('planDocRowPress(オン): この場所の上書きが無いときの動き（inherited）は、記録の次・出どころの初期値より先に使う',
+      pInherited?.source === 'inherited' && unlockedOnList(evaluateDocCells('instruction', instA, pInherited.rule)) === 'codex',
+      JSON.stringify(pInherited));
+    // 初めから鍵つきのオンだけの行（Codex の自分の物）: 戻す先が無い。ほかのエージェントへ配らない
+    const instCodexOwn = { kind: 'instruction', name: 'AGENTS.md', path: path.join(home, '.codex', 'AGENTS.md'), scope: 'user',
+      origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }] };
+    const ownCells = evaluateDocCells('instruction', instCodexOwn, { off: [], spread: [] });
+    const ownRestore = docRestoreRule('instruction', instCodexOwn, { off: [], spread: [] });
+    t.ok('初めから鍵つきのオンだけで、鍵の無いオンも記録も無い行は、戻す先が無い（docRestoreRule が null・押しても変わらない）',
+      lockedOnList(ownCells).includes('codex') && unlockedOnList(ownCells) === '' && ownRestore === null
+      && planDocRowPress('instruction', instCodexOwn, { off: [], spread: [] }, true) === null
+      && planDocRowPress('instruction', instCodexOwn, { off: [], spread: [] }, false) === null,
+      JSON.stringify({ locked: lockedOnList(ownCells), restore: ownRestore }));
+    // 古い記録: was を戻すと鍵の無いオンが 1 つも生まれないなら（Claude だけ載っていた記録が、いまは鍵つきになった等）、記録は使わない
+    const staleWas = { off: ['claude', 'codex', 'antigravity', 'opencode', 'devin'], spread: [], was: { off: ['claude', 'codex', 'antigravity', 'opencode', 'devin'], spread: [] } };
+    t.ok('戻すと鍵の無いオンが生まれない古い記録（was）は使わず、鍵つきのオンが無い行なら出どころの初期値へ回り、鍵つきのオンが残る行は戻す先なしになる',
+      docRestoreRule('instruction', instCustom, staleWas)?.source === 'default' && docRestoreRule('instruction', instA, staleWas) === null);
 
     // ---- 永続化・place 削除・旧 context-scans.json (.strict()) 非汚染保証
     const dataDir = path.join(tmp, 'data');

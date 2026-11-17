@@ -5631,6 +5631,8 @@ function serializeDocRow(row) {
     origins: row.origins, duplicates: row.duplicates.map(compactCopy),
     rule: row.rule, cells: row.cells, rowLocked: row.rowLocked, rowMixed: row.rowMixed,
     rowSwitchOn: row.rowSwitchOn, anyOn: row.anyOn,
+    // 行のスイッチの押す向きと戻し先（ADR 0337 §決定 4 の 2026-11-17 改訂）。画面は rowNextOn を setDocRow の on に送る
+    rowFixed: row.rowFixed, rowChangeableOn: row.rowChangeableOn, rowNextOn: row.rowNextOn, rowRestore: row.rowRestore,
   };
 }
 

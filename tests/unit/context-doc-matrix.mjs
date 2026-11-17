@@ -261,18 +261,52 @@ export default async function (t) {
     place: null, placeKey: null, agent, keys: [key], on,
   });
   const onSet = (row) => Object.keys(row.cells).filter((a) => row.cells[a].on).sort().join(',');
-  // 自分の物（~/.codex/AGENTS.md は Codex の鍵つきでオン）: 行のスイッチはオンに見え、押せない（押しても変わらない、を作らない）
+  // 自分の物（~/.codex/AGENTS.md は Codex の鍵つきでオン）: 初めから鍵つきのオンだけで、戻す先（外す前の記録）も無いので、押せない。
+  // 押しても変わらない、を作らず、ほかのエージェントへ配ることもしない（ADR 0337 §決定 4 の 2026-11-17 改訂）
   const codexRow = defMatrix(emptyDocAgentsConfig()).byKey.get(docItemKey(userCodex));
   let lockedErr = null;
   try { defPress(emptyDocAgentsConfig(), docItemKey(userCodex), false); } catch (e) { lockedErr = e; }
-  t.ok('鍵つきでオンのマスがある行: 行のスイッチはオン・押せない（setDocRow は docRowLocked で断る）',
-    codexRow.rowSwitchOn === true && codexRow.rowLocked === true && codexRow.anyOn === true
+  t.ok('初めから鍵つきでオンだけの行: 行のスイッチは「一部」の形で押せない（戻す先が無い。setDocRow は docRowLocked で断る）',
+    codexRow.rowSwitchOn === true && codexRow.rowFixed === true && codexRow.rowChangeableOn === false && codexRow.rowRestore === null
+    && codexRow.rowLocked === true && codexRow.anyOn === true
     && lockedErr instanceof DocTouchError && lockedErr.code === 'docRowLocked',
-    JSON.stringify({ on: codexRow.rowSwitchOn, locked: codexRow.rowLocked, err: lockedErr?.code }));
+    JSON.stringify({ on: codexRow.rowSwitchOn, locked: codexRow.rowLocked, restore: codexRow.rowRestore, err: lockedErr?.code }));
 
-  // Claude の物は Grok・Devin が自分で読む（鍵つきでオン）ので押せない
-  t.ok('Claude のユーザーの物: Grok・Devin の鍵つきでオンが残るので行のスイッチは押せない',
-    defMatrix(emptyDocAgentsConfig()).byKey.get(docItemKey(userClaude)).rowLocked === true);
+  // Claude の物は Grok・Devin が自分で読む（鍵つきでオン）。行のスイッチは押せて、鍵の無いオンだけをまとめてオフにし、鍵つきのオンは残る。
+  // もう一度押すと、外す前のマスに戻る（鍵つきのマスは触らない）
+  const claudeKey = docItemKey(userClaude);
+  const lockCfg = emptyDocAgentsConfig();
+  const claudeBefore = defMatrix(lockCfg).byKey.get(claudeKey);
+  const lockedOnOf = (row) => Object.keys(row.cells).filter((a) => row.cells[a].locked && row.cells[a].on).sort().join(',');
+  const unlockedOnOf = (row) => Object.keys(row.cells).filter((a) => !row.cells[a].locked && row.cells[a].on).sort().join(',');
+  t.ok('Claude のユーザーの物: Grok・Devin の鍵つきでオンが残っても、行のスイッチは押せる（鍵の無いオンがあるので、押す向きはオフ）',
+    claudeBefore.rowLocked === false && claudeBefore.rowFixed === true && claudeBefore.rowChangeableOn === true
+    && claudeBefore.rowNextOn === false && lockedOnOf(claudeBefore) === 'devin,grok' && unlockedOnOf(claudeBefore) === 'claude',
+    JSON.stringify({ locked: claudeBefore.rowLocked, fixed: claudeBefore.rowFixed, next: claudeBefore.rowNextOn, lockedOn: lockedOnOf(claudeBefore), on: unlockedOnOf(claudeBefore) }));
+  defPress(lockCfg, claudeKey, false);
+  const claudeOff = defMatrix(lockCfg).byKey.get(claudeKey);
+  t.ok('Claude のユーザーの物の行をオフ: 鍵の無いマスだけ全部オフ・Grok と Devin の鍵つきのオンは残り、「一部」＋鍵の形になる（外す前の記録つき）',
+    unlockedOnOf(claudeOff) === '' && lockedOnOf(claudeOff) === 'devin,grok' && claudeOff.rowSwitchOn === true && claudeOff.rowMixed === true
+    && claudeOff.rowChangeableOn === false && claudeOff.rowFixed === true && claudeOff.rowRestore === 'was' && claudeOff.rowNextOn === true && claudeOff.rowLocked === false
+    && lockCfg.defaults.instruction.agents[claudeKey].was !== undefined,
+    JSON.stringify({ on: unlockedOnOf(claudeOff), locked: lockedOnOf(claudeOff), restore: claudeOff.rowRestore }));
+  const claudeOffAgain = structuredClone(lockCfg);
+  defPress(claudeOffAgain, claudeKey, false);
+  t.ok('鍵の無いオンが無い行をオフにしても変わらない（外す前の記録も作り直さない）',
+    JSON.stringify(claudeOffAgain.defaults.instruction.agents[claudeKey]) === JSON.stringify(lockCfg.defaults.instruction.agents[claudeKey]));
+  defPress(lockCfg, claudeKey, true);
+  const claudeBack = defMatrix(lockCfg).byKey.get(claudeKey);
+  t.ok('もう一度押すと、外す前のマスに戻る（鍵つきのマスは触らず、記録は消える）',
+    unlockedOnOf(claudeBack) === 'claude' && lockedOnOf(claudeBack) === 'devin,grok' && claudeBack.rowRestore === null && claudeBack.rowChangeableOn === true
+    && lockCfg.defaults.instruction.agents[claudeKey].was === undefined,
+    JSON.stringify({ on: unlockedOnOf(claudeBack), locked: lockedOnOf(claudeBack) }));
+  // 外した後にマスを 1 つ押すと、外す前の記録は消える（古い記録で、あとから足したエージェントまで戻さない）
+  defPress(lockCfg, claudeKey, false);
+  defPress(lockCfg, claudeKey, true, 'codex');
+  const claudeCell = defMatrix(lockCfg).byKey.get(claudeKey);
+  t.ok('外した後にマスを押すと、外す前の記録は消え、押したマスだけがオンになる（行のスイッチで古い選択へ戻さない）',
+    lockCfg.defaults.instruction.agents[claudeKey].was === undefined && unlockedOnOf(claudeCell) === 'codex' && claudeCell.rowRestore === null,
+    JSON.stringify({ on: unlockedOnOf(claudeCell), restore: claudeCell.rowRestore }));
   // OpenCode の物を Codex にも広げてから、行をオフ → オン で、オフにする前（OpenCode・Codex）に戻る
   const rowCfg = emptyDocAgentsConfig();
   const ucKey = docItemKey(userOpen);
@@ -328,6 +362,60 @@ export default async function (t) {
   t.ok('setDocAgent の keys: 複数の名前の同じエージェントのマスを 1 回で書く',
     skM.byKey.get(docItemKey(skA)).cells.codex.on && skM.byKey.get(docItemKey(skB)).cells.codex.on);
 
+  // ---- まとまり（Skills）の行スイッチ: 子の全マスで数え、押すと変えられるオンだけがまとめてオフ。戻すと子ごとに外す前へ戻り、もともとオフの子はオンにしない
+  const skC = mkSkill('gamma', path.join(home, '.claude', 'skills', 'gamma', 'SKILL.md'), 'claude', 'user');
+  const grpEntries = [skA, skB, skC];
+  const grpKeys = [docItemKey(skA), docItemKey(skB), docItemKey(skC)];
+  const grpCfg = emptyDocAgentsConfig();
+  const grpPress = (on) => applyDocTouch(grpCfg, { kind: 'skill', entries: grpEntries, legacyConfig: nativeRaw, matrixCwd: null, home, place: null, placeKey: null, agent: null, keys: grpKeys, on });
+  const grpView = () => buildDocMatrix({ kind: 'skill', entries: grpEntries, legacyConfig: nativeRaw, docAgentsConfig: grpCfg, cwd: null, home });
+  const grpUnlockedOn = (row) => Object.keys(row.cells).filter((a) => !row.cells[a].locked && row.cells[a].on).sort().join(',');
+  const grpLockedOn = (row) => Object.keys(row.cells).filter((a) => row.cells[a].locked && row.cells[a].on).sort().join(',');
+  // skC は初めから、鍵の無いマスを全部オフにしてあった子（記録なし）。skB は Codex にも広げてある子
+  applyDocTouch(grpCfg, { kind: 'skill', entries: grpEntries, legacyConfig: nativeRaw, matrixCwd: null, home, place: null, placeKey: null, agent: 'codex', keys: [docItemKey(skB)], on: true });
+  grpCfg.defaults.skill.agents[docItemKey(skC)] = { off: ['claude', 'codex', 'antigravity', 'opencode', 'devin'], spread: [] };
+  const grp0 = grpView();
+  const grpBefore = Object.fromEntries(grpKeys.map((k) => [k, grpUnlockedOn(grp0.byKey.get(k))]));
+  grpPress(false);
+  const grp1 = grpView();
+  t.ok('まとまりをオフ: どの子も鍵の無いマスは全部オフ（鍵つきのオンは残る）・オンだった子は外す前の記録つき・もともとオフの子には記録を作らない',
+    grpKeys.every((k) => grpUnlockedOn(grp1.byKey.get(k)) === '')
+    && grpKeys.every((k) => grpLockedOn(grp1.byKey.get(k)) === grpLockedOn(grp0.byKey.get(k)))
+    && grp1.byKey.get(docItemKey(skA)).rowRestore === 'was' && grp1.byKey.get(docItemKey(skB)).rowRestore === 'was'
+    && grpCfg.defaults.skill.agents[docItemKey(skC)].was === undefined,
+    JSON.stringify(grpBefore));
+  grpPress(true);
+  const grp2 = grpView();
+  t.ok('まとまりを戻す: 外す前にオンだった子は子ごとに外す前のマスへ戻り（skB は Codex も）、もともとオフの子はオフのまま',
+    grpUnlockedOn(grp2.byKey.get(docItemKey(skA))) === grpBefore[docItemKey(skA)]
+    && grpUnlockedOn(grp2.byKey.get(docItemKey(skB))) === grpBefore[docItemKey(skB)]
+    && grpUnlockedOn(grp2.byKey.get(docItemKey(skC))) === '' && grpBefore[docItemKey(skC)] === '',
+    JSON.stringify({ before: grpBefore, after: Object.fromEntries(grpKeys.map((k) => [k, grpUnlockedOn(grp2.byKey.get(k))])) }));
+  // 実行時: オフの間 Claude には出ず、戻すと出る（表と実際の配り方が同じ）
+  const claudeActive = () => resolveDocForAgent({ kind: 'skill', agent: 'claude', entries: grpEntries, legacyConfig: nativeRaw, docAgentsConfig: grpCfg, cwd: null, home })
+    .active.map((a) => a.row.key);
+  grpPress(false);
+  const claudeActiveOff = claudeActive();
+  grpPress(true);
+  const claudeActiveOn = claudeActive();
+  t.ok('まとまりをオフにすると Claude への配りからも外れ（鍵の無いエージェントだけ）、戻すと配りに戻る',
+    !claudeActiveOff.includes(docItemKey(skA)) && !claudeActiveOff.includes(docItemKey(skB))
+    && claudeActiveOn.includes(docItemKey(skA)) && claudeActiveOn.includes(docItemKey(skB)) && !claudeActiveOn.includes(docItemKey(skC)),
+    JSON.stringify({ off: claudeActiveOff, on: claudeActiveOn }));
+  // 鍵つきのオン（Grok・Devin が自分で読む）が残り、鍵の無いマスが全部オフで、外す前の記録も無い子だけのまとまりは、押せない（ほかのエージェントへ配らない）
+  const grpAllOff = emptyDocAgentsConfig();
+  grpAllOff.defaults.skill = { agents: Object.fromEntries([skA, skB].map((s) => [docItemKey(s), { off: ['claude', 'codex', 'antigravity', 'opencode', 'devin'], spread: [] }])) };
+  const grpAllOffBefore = JSON.stringify(grpAllOff);
+  let grpAllOffErr = null;
+  try {
+    applyDocTouch(grpAllOff, { kind: 'skill', entries: [skA, skB], legacyConfig: nativeRaw, matrixCwd: null, home, place: null, placeKey: null, agent: null, keys: [docItemKey(skA), docItemKey(skB)], on: true });
+  } catch (e) { grpAllOffErr = e; }
+  const grpAllOffM = buildDocMatrix({ kind: 'skill', entries: [skA, skB], legacyConfig: nativeRaw, docAgentsConfig: grpAllOff, cwd: null, home });
+  t.ok('初めから鍵つきのオンだけで外す前の記録がどの子にも無いまとまりは押せない（docRowLocked で断り、設定は変えない）',
+    grpAllOffErr instanceof DocTouchError && grpAllOffErr.code === 'docRowLocked' && JSON.stringify(grpAllOff) === grpAllOffBefore
+    && [skA, skB].every((s) => grpAllOffM.byKey.get(docItemKey(s)).rowLocked === true && grpAllOffM.byKey.get(docItemKey(s)).rowRestore === null),
+    JSON.stringify({ err: grpAllOffErr?.code }));
+
   // ---- 場所のまとめの行（CLAUDE.md・AGENTS.md）が、場所のファイルの行と実行時に届く（レビュー M3）
   const sumCfg = emptyDocAgentsConfig();
   const sumEntries = [userClaude, wsClaude, wsAgents];
@@ -351,8 +439,35 @@ export default async function (t) {
   const sumBack = buildDocMatrix({ kind: 'instruction', entries: sumEntries, legacyConfig: nativeRaw, docAgentsConfig: sumCfg, cwd: repo, home });
   t.ok('場所のまとめの行で Claude を戻すと、作業場所の行の Claude も戻る',
     sumBack.summaryRow.cells.claude.on && sumBack.byKey.get(docItemKey(wsClaude)).cells.claude.on && sumBack.byKey.get(docItemKey(wsAgents)).cells.claude.on);
-  t.ok('まとめの行は Devin・Grok が鍵つきでオンなので、行のスイッチはオンで押せない',
-    sumBack.summaryRow.rowSwitchOn === true && sumBack.summaryRow.rowLocked === true);
+  t.ok('まとめの行は Devin・Grok が鍵つきでオンのまま、Claude などの鍵の無いオンがあるので、行のスイッチは押せる（押す向きはオフ）',
+    sumBack.summaryRow.rowSwitchOn === true && sumBack.summaryRow.rowFixed === true && sumBack.summaryRow.rowChangeableOn === true
+    && sumBack.summaryRow.rowLocked === false && sumBack.summaryRow.rowNextOn === false);
+  // まとめの行の行スイッチ: 鍵の無いオンだけオフになり、作業場所の行にも届く。戻すと外す前に戻る（鍵は触らない）
+  const sumRowCfg = structuredClone(sumCfg);
+  const sumPress = (on) => applyDocTouch(sumRowCfg, {
+    kind: 'instruction', entries: sumEntries, legacyConfig: nativeRaw, matrixCwd: repo, home,
+    place: repo, placeKey: pathKey(repo), agent: null, keys: [WORKSPACE_SUMMARY_KEY], on,
+  });
+  const sumView = () => buildDocMatrix({ kind: 'instruction', entries: sumEntries, legacyConfig: nativeRaw, docAgentsConfig: sumRowCfg, cwd: repo, home });
+  const sumOnOf = (row) => Object.keys(row.cells).filter((a) => row.cells[a].on).sort().join(',');
+  const sumLockedOnOf = (row) => Object.keys(row.cells).filter((a) => row.cells[a].locked && row.cells[a].on).sort().join(',');
+  const sumBefore = sumView();
+  const sumBeforeOn = { summary: sumOnOf(sumBefore.summaryRow), claude: sumOnOf(sumBefore.byKey.get(docItemKey(wsClaude))), agents: sumOnOf(sumBefore.byKey.get(docItemKey(wsAgents))) };
+  sumPress(false);
+  const sumOff = sumView();
+  t.ok('まとめの行のスイッチをオフ: 鍵の無いマスだけ全部オフ（作業場所の行にも届く）・鍵つきのオンは残る',
+    sumOff.summaryRow.rowSwitchOn === true && sumOff.summaryRow.rowRestore === 'was'
+    && sumOnOf(sumOff.summaryRow) === sumLockedOnOf(sumOff.summaryRow)
+    && sumOnOf(sumOff.byKey.get(docItemKey(wsClaude))) === sumLockedOnOf(sumOff.byKey.get(docItemKey(wsClaude)))
+    && sumOnOf(sumOff.byKey.get(docItemKey(wsAgents))) === sumLockedOnOf(sumOff.byKey.get(docItemKey(wsAgents))),
+    JSON.stringify({ summary: sumOnOf(sumOff.summaryRow), restore: sumOff.summaryRow.rowRestore }));
+  sumPress(true);
+  const sumOn = sumView();
+  t.ok('まとめの行のスイッチをもう一度押すと、外す前のマスに戻る（作業場所の行も。もともとオフだった名前をオンにしない）',
+    sumOnOf(sumOn.summaryRow) === sumBeforeOn.summary
+    && sumOnOf(sumOn.byKey.get(docItemKey(wsClaude))) === sumBeforeOn.claude
+    && sumOnOf(sumOn.byKey.get(docItemKey(wsAgents))) === sumBeforeOn.agents,
+    JSON.stringify({ before: sumBeforeOn, after: { summary: sumOnOf(sumOn.summaryRow) } }));
 
   // ---- Pleiad の指示（Grok 解放・委譲と連動だけ別扱い・toggleAgent）
   const initList = normalizePlyInstructions(null, null, 'ja');
