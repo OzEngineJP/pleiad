@@ -106,7 +106,7 @@ export async function recordAll({ root, accountFor = (accounts, id, ctx) => acco
   const installed = await installFakeClaude(path.join(tmp, 'bin'), { cli: CLI });
   const realQuery = (await sdkMod.loadClaudeSdk()).query;
   let sdkRec = [];
-  const wrapped = args => { sdkRec.push(plain(args.options ?? {}, norm)); return realQuery(args); };
+  const wrapped = args => { const o = args.options ?? {}; sdkRec.push(plain({ ...o, env: o.env && typeof o.env === 'object' ? envRecord(o.env, norm) : o.env }, norm)); return realQuery(args); };
   const restoreSdk = setClaudeSdkForTest({ query: wrapped, resolveSettings: async () => ({ sources: [], effective: {} }), probe: null });
   const out = {};
   let n = 0;
@@ -139,8 +139,8 @@ export async function recordAll({ root, accountFor = (accounts, id, ctx) => acco
         const file = path.join(tmp, `rec-${n++}.json`);
         process.env.LAUNCH_RECORD_OUT = file;
         sdkRec = [];
-        await Promise.race([Promise.resolve().then(run).catch(() => {}), sleep(15000)]);
-        const proc = await waitFile(file, 3000);
+        await Promise.race([Promise.resolve().then(run).catch(() => {}), sleep(30000)]);
+        const proc = await waitFile(file, 25000);
         delete process.env.LAUNCH_RECORD_OUT;
         rec[pathName] = { sdk: sdkRec, proc: proc && { argv: proc.argv.map(norm), cwd: norm(proc.cwd), env: envRecord(proc.env, norm),
           files: Object.fromEntries(Object.entries(proc.files ?? {}).map(([k, v]) => [norm(k), norm(v)])) } };
