@@ -52,7 +52,6 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   const nd = {};                   // 打ちかけの表示名（カード id → 文字）
   const err = {};                  // 表示名の誤り（カード id → 文）
   const fresh = {};                // いま済んだ認証（`${id}:tok` / `${id}:lg`）。✓ を出す
-  const lastFix = new Map();       // 閉じるとき、直すボタンが消えきるまで文字を残す
   const alias = new Map();         // 追加のカードが実際のアカウントになったとき、そのカードの DOM を引き継ぐ（実 id → 札）
   let seq = 1, draftId = 'new1';
   let focusAfter = null, selectAfter = false, flashAfter = [];
@@ -137,11 +136,8 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const own = dr ? '' : ownerWarning(a);
     const hasToken = !dr && a.hasToken, hasLogin = !dr && a.usageLogin;
     const f = flow?.id === id ? flow : null, manual = manualId === id, confirm = confirmId === id;
-    // 閉じたカードで直すのは 1 つだけ: 認証が無い → 持ち主の食い違い → ログインがまだ
-    const fix = dr || open ? null : !hasToken ? { kind: 'tok', label: t('accounts.issue') } : own ? { kind: 'tok', label: t('accounts.reissue') }
-      : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : null;
-    if (fix) lastFix.set(id, fix);
-    const fx = fix ?? lastFix.get(id);
+    // 閉じたカードの状態の行の右に出す、直すボタン（認証が無い → ログインがまだ）。持ち主の食い違いは知らせの横の［トークンを発行し直す］
+    const fix = dr || open ? null : !hasToken ? { kind: 'tok', label: t('accounts.issue') } : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : null;
     // 開いたカードで一番目立たせる操作は 1 つ
     const main = f || manual ? 'step' : dr || !hasToken || own ? 'tok' : !hasLogin ? 'lg' : 'done';
     const pri = k => main === k ? ' btn-primary' : '';
@@ -156,12 +152,12 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       + `<input class="mp-name-in" data-k="in" data-name="${esc(id)}" value="${esc(nd[id] ?? a.name)}" aria-label="${esc(t('accounts.name.label'))}" maxlength="${MAX_NAME}" placeholder="${esc(t('accounts.name.placeholder'))}" ${NOPM} spellcheck="false"${e ? ` aria-invalid="true" aria-describedby="mpe-${esc(key)}"` : ''}>`
       + `</div><div data-slot="err:${esc(key)}">${e ? `<p class="mp-state" id="mpe-${esc(key)}" role="alert">${esc(e)}</p>` : ''}</div></div>`
       + `<div class="mp-card-actions${confirm ? ' away' : ''}" data-k="acts">`
-      + `<span class="mp-hfold${fix ? ' open' : ''}" data-k="fixf"><span>${fx ? `<button class="btn btn-quiet" type="button" data-fix="${esc(id)}:${fx.kind}"${fix ? '' : ' tabindex="-1"'}><span data-t>${esc(fx.label)}</span></button>` : ''}</span></span>`
       + `<button class="btn${open && !dr ? pri('done') : ''}" type="button" data-toggle="${esc(id)}" aria-expanded="${open}" aria-controls="mpb-${esc(key)}" aria-label="${esc(tgl[1])}"><span data-t>${esc(tgl[0])}</span></button>`
       + `<span class="mp-hfold${dr ? '' : ' open'}" data-k="delf"><span><button class="btn" type="button" data-del="${esc(id)}" aria-label="${esc(a.name ? t('accounts.label.delete', { name: a.name }) : t('accounts.label.newAccount'))}">${esc(t('accounts.delete'))}</button></span></span></div></div>`;
 
     const sum = `<div class="mp-fold${open || dr ? '' : ' open'}" data-k="sum"><div class="mp-fold-in mp-sum"><small data-t>${esc(t('accounts.summary', { token: tokWord, login: lgWord }))}</small>`
-      + `<div class="mp-own" data-slot="own:${esc(key)}">${!open && own ? `<div class="mp-confirm"><p class="mp-warn">⚠ ${esc(own)}</p></div>` : ''}</div></div></div>`;
+      + `<div class="mp-fix" data-slot="fix:${esc(key)}">${fix ? `<button class="btn btn-quiet" type="button" data-fix="${esc(id)}:${fix.kind}">${esc(fix.label)}</button>` : ''}</div>`
+      + `<div class="mp-own" data-slot="own:${esc(key)}">${!open && own ? `<div class="mp-confirm"><p class="mp-warn">⚠ ${esc(own)}</p><div class="mp-card-actions"><button class="btn btn-quiet" type="button" data-fix="${esc(id)}:tok">${esc(t('accounts.reissue'))}</button></div></div>` : ''}</div></div></div>`;
 
     const step = kind => f?.kind === kind ? stepHtml(f, manualWord) : kind === 'tok' && manual ? manualHtml(id) : '';
     const cred = (kind, label, status, acts, extra = '') => `<div class="mp-cred" data-k="cred:${kind}" role="group" aria-label="${esc(label)}"><div class="mp-cred-info"><span>${esc(label)}</span><small data-t aria-live="polite">${esc(status)}</small></div>`

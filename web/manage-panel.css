@@ -407,14 +407,17 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 [data-slot]{display:flow-root;box-sizing:border-box;min-width:0;padding:4px;margin:-4px}
 [data-slot][tabindex="-1"],.mp-body[tabindex="-1"]{outline:none}
 .mp-list{margin-top:10px}
+/* エージェントのカード（白）の中に移っても、アカウントは灰色の面の上の白いカードに見せる（節の枠に入れるとき面の地を脱ぐ style.css の .conn-sec .mp-panel を、この面だけ戻す。狭い幅では、エージェントのカードの余白へ 6px ずつ広げ、閉じたカードの状態を 1 行に収める） */
+.conn-sec #claudeAccountsPanel{padding:6px 20px 20px;background:var(--surface-1);border-radius:var(--r-l)}
+@media (max-width:700px){.conn-sec #claudeAccountsPanel{margin-inline:-6px;padding:2px 6px 8px}}
 .mp-fold-in>.mp-acct{margin:0 0 10px}
 .mp-acct .btn,.mp-fold-in>[data-add]{min-height:var(--hit)}
 .mp-acct .mp-stage .mp-note a{display:inline-flex;align-items:center;min-height:var(--hit);margin-block:calc((1lh - var(--hit)) / 2)}
 .mp-acct .btn.lnk{color:var(--ink-blue)}
-/* 見出しの行: 広いときは 1 行（名前・状態 | 直す・［編集］・［削除］）。狭いときは操作の組ごと次の行へ折り返し、右に寄せる（1 つのボタンだけが落ちない） */
-.mp-acct .mp-head{flex-wrap:wrap}
-.mp-acct .mp-head>.mp-card-info{flex:1 1 200px}
-.mp-acct .mp-head>.mp-card-actions{flex:none;flex-wrap:nowrap;margin-left:auto;transition:opacity var(--dur) var(--ease-out),visibility 0s}
+/* 見出しの行: どの幅でも 1 行（名前 | ［編集］［削除］）。名前が長いときは名前のほうを省く。直すボタンは状態の行の右（.mp-fix） */
+.mp-acct .mp-head{flex-wrap:nowrap}
+.mp-acct .mp-head>.mp-card-info{flex:1 1 0}
+.mp-acct .mp-head>.mp-card-actions{flex:none;flex-wrap:nowrap;transition:opacity var(--dur) var(--ease-out),visibility 0s}
 .mp-acct .mp-head>.mp-card-actions.away{opacity:0;visibility:hidden;transition:opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}
 .mp-name{display:grid;align-items:center;min-height:var(--hit);min-width:0}
 .mp-name>*{grid-area:1/1;min-width:0}
@@ -426,6 +429,7 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mp-acct .mp-state[role=alert]{color:var(--ink-danger);font-size:var(--fs-s)}
 .mp-sum{display:flex;flex-wrap:wrap;align-items:center}
 .mp-sum>small{flex:1 1 220px;min-width:0}
+.mp-sum>.mp-fix{margin-left:auto}
 .mp-sum>.mp-own{flex:1 0 calc(100% + 8px)}
 .mp-acct .mp-cred{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;margin:4px -10px 0;padding:6px 10px;border-radius:var(--r-s)}
 .mp-cred-info{flex:1 1 180px;min-width:0}

@@ -94,7 +94,7 @@ async function japaneseCases(t, tmp) {
     for (const row of [work, personal]) {
       assert.equal(row.reason, 'no-login'); assert.equal(row.message, reauthNeeded); assert.equal(row.reauth, true, '「認可をやり直す」の元');
     }
-    assert.match(work.message, /再ログインが必要です/);
+    assert.match(work.message, /claude\.ai のログインが切れています/);
     assert.equal(spare.reason, undefined, 'トークンがあれば今までどおり');
     assert.equal(spare.message, serverT('usage.claudeUnavailable'));
     assert.ok(!JSON.stringify(quota).includes('fake-'), 'トークンの値を出さない');
