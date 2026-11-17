@@ -33,6 +33,7 @@ import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
 import { unifySessionBox, unsupportedAgentText, warnText } from './hooks-unify-ui.mjs';
 import { hookAgentLabel, hookRowName, hookRowSub, rememberAgentLabels } from './hooks-matrix.mjs';
+import { rememberAgentNames } from './agent-brands.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -585,6 +586,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const skillRes = await wrap(() => cmd('docMatrix', { kind: 'skill', cwd, place: cwd }));
     if (place.cwd !== cwd) return;
     editDocLoading = false;
+    if (instRes.status === 'fulfilled') rememberAgentNames(instRes.value?.labels);
+    if (skillRes.status === 'fulfilled') rememberAgentNames(skillRes.value?.labels);
     if (scanRes.status === 'fulfilled') editScan = scanRes.value;
     else {
       if (!editScan) editScan = { entries: [] };

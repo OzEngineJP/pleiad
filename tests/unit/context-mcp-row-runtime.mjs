@@ -54,21 +54,28 @@ export default async function (t) {
 
     // 実際の ctx と同じ形（保存は kindValue に入れる）
     let kindValue = { owner: 'ply', user: null, directory: null, agents: { off: {}, spread: {} } };
+    // 場所ごとの設定（place）。全体の設定とは別の保存先で、戻し先の記録も場所ごと
+    const placePath = path.join(tmp, 'place-a');
+    let placeKind = { owner: 'ply', user: null, directory: null, agents: { off: {}, spread: {} } };
     const store = createMcpWas(path.join(tmp, 'data'));
     const ctx = {
       actor: { kind: 'human' },
       context: {
-        view: async () => ({ defaults: { kinds: { instruction: { value: { owner: 'native' } }, skill: { value: { owner: 'native' } }, mcp: { value: kindValue } } }, places: [] }),
+        view: async () => ({
+          defaults: { kinds: { instruction: { value: { owner: 'native' } }, skill: { value: { owner: 'native' } }, mcp: { value: kindValue } } },
+          places: [{ path: placePath, kinds: { instruction: { value: { owner: 'native' } }, skill: { value: { owner: 'native' } }, mcp: { value: placeKind } } }],
+        }),
         agentMcp: async () => ({ agents: native }),
         claudeExtras: async () => ({ plugins: [], connectors: [], reading: false, readFailed: false }),
-        set: async args => { kindValue = structuredClone(args.value); return { defaults: {} }; },
+        set: async args => { if (args.place) placeKind = structuredClone(args.value); else kindValue = structuredClone(args.value); return { defaults: {} }; },
         mcpRestore: store,
       },
       mcp: { list: async () => ({ servers: plyServers.servers.map(s => ({ name: s.name, transport: 'stdio' })) }) },
     };
     const press = (n, on) => op('context.setMcpRow').handler(ctx, { name: n, on }).then(r => r, e => e);
     const icon = (n, agent, on) => op('context.setMcpAgent').handler(ctx, { name: n, agent, on }).then(r => r, e => e);
-    const rowOf = async n => (await op('context.mcpMatrix').handler(ctx, {})).rows.find(r => r.key === n);
+    const rowOf = async (n, place) => (await op('context.mcpMatrix').handler(ctx, place ? { place } : {})).rows.find(r => r.key === n);
+    const pressAt = (n, on, place) => op('context.setMcpRow').handler(ctx, { name: n, on, place }).then(r => r, e => e);
 
     // 実行時に使えるか（core/context-runtime.mjs の suppress と、止められない自分の定義の残り方）
     const usableAt = (rt, id, n) => rt.servers.some(s => s.name === n) || (ownEnabled(id, n) && !((rt.mcp.suppress ?? []).includes(n) && stoppable(id, n)));
@@ -126,6 +133,48 @@ export default async function (t) {
     await press('reg', true);
     const regBack = await sameAsScreen('登録の行を戻す', 'reg');
     t.ok('登録の行: 戻すと初期と同じ', onIds(regBack) === onIds(startReg), onIds(regBack));
+
+    // 続けて同じ行へ送る（画面の 2 度押し・遅れた応答）。off → off は 2 度目が何も変えず戻し先を壊さない。off → on は外す前の組へ戻る
+    for (const id of changeable) await icon('shared', id, true);
+    const base = await sameAsScreen('続けて送る前（初期へ戻した）', 'shared');
+    t.ok('前提: アイコンで全部オンに戻すと初期と同じ', onIds(base) === onIds(start), onIds(base));
+    const o1 = await press('shared', false);
+    const o2 = await press('shared', false);
+    t.ok('off → off: 1 度目は変えられるオンを外し、2 度目は何も変えずに成功する（changed が空）',
+      o1.ok === true && o1.changed.length === changeable.length && o2.ok === true && o2.changed.length === 0 && o2.on === false, JSON.stringify([o1.changed, o2]));
+    const offTwice = await sameAsScreen('off → off', 'shared');
+    t.ok('off → off の後: 鍵つきだけが残り、戻す記録は 2 度目に消えない', onIds(offTwice) === [...fixed].sort().join() && (await rowOf('shared')).rowRestore === 'was', onIds(offTwice));
+    const o3 = await press('shared', true);
+    t.ok('off → off → on: 外す前の組（記録）へ戻り、実行時も初期と同じ', o3.ok === true && o3.source === 'was' && onIds(await sameAsScreen('off → off → on', 'shared')) === onIds(start), JSON.stringify(o3));
+    const o4 = await press('shared', true);
+    t.ok('on → on（もう戻っている行へ遅れて届いた戻す）: 何も変えずに成功し、広げない', o4.ok === true && o4.changed.length === 0 && onIds(await sameAsScreen('on → on', 'shared')) === onIds(start), JSON.stringify(o4));
+    // 同時に 2 つ届いても（遅れて重なった off・on）、最後は外す前の組へ戻せる
+    const [c1, c2] = await Promise.all([press('shared', false), press('shared', false)]);
+    t.ok('off と off が同時に届いても、どちらも成功する', c1.ok === true && c2.ok === true, JSON.stringify([c1.changed, c2.changed]));
+    const c3 = await press('shared', true);
+    t.ok('同時の off の後に on: 外す前の組へ戻る（記録が壊れない）', c3.ok === true && onIds(await sameAsScreen('同時の off の後に on', 'shared')) === onIds(start), JSON.stringify(c3));
+
+    // 場所ごとの設定（place）: 保存先も戻し先の記録も場所ごと。全体の設定を巻き込まない
+    const globalBefore = JSON.stringify(kindValue);
+    const p1 = await pressAt('shared', false, placePath);
+    t.ok('place で行をオフ: 成功し、変えたのは鍵の無いオンだけ', p1.ok === true && p1.changed.slice().sort().join() === changeable.slice().sort().join(), JSON.stringify(p1));
+    t.ok('place で行をオフ: 全体の設定（保存先）は変わらない', JSON.stringify(kindValue) === globalBefore && placeKind.agents.off.shared?.length > 0, JSON.stringify({ g: kindValue.agents, p: placeKind.agents }));
+    const pRow = await rowOf('shared', placePath);
+    const gRow = await rowOf('shared');
+    t.ok('place の一覧は横棒＋鍵・戻す記録あり（場所ごとの記録）。全体の一覧は今までどおりオン',
+      pRow.rowMixed && pRow.rowFixed && !pRow.rowChangeableOn && pRow.rowRestore === 'was' && gRow.rowChangeableOn === true && gRow.rowRestore !== 'was', JSON.stringify({ p: [pRow.rowMixed, pRow.rowRestore], g: [gRow.rowChangeableOn, gRow.rowRestore] }));
+    const p2 = await pressAt('shared', true, placePath);
+    t.ok('place で行を戻す: 外す前の組（記録）へ戻る', p2.ok === true && p2.source === 'was' && p2.changed.slice().sort().join() === changeable.slice().sort().join(), JSON.stringify(p2));
+    const pBack = await rowOf('shared', placePath);
+    t.ok('place で戻した後: 変えられるオンが戻り、戻す記録は消える', pBack.rowChangeableOn === true && pBack.rowRestore !== 'was' && JSON.stringify(kindValue) === globalBefore, JSON.stringify([pBack.rowChangeableOn, pBack.rowRestore]));
+    // place の off → off（2 度目は何もしない）と、全体の記録との独立
+    await pressAt('shared', false, placePath);
+    const pp = await pressAt('shared', false, placePath);
+    t.ok('place の off → off: 2 度目は何も変えない', pp.ok === true && pp.changed.length === 0, JSON.stringify(pp));
+    const gOff = await press('shared', false);
+    t.ok('全体の行をオフにしても、place の記録とは別（それぞれ自分の組を覚える）', gOff.ok === true && gOff.changed.length === changeable.length, JSON.stringify(gOff));
+    const gBack = await press('shared', true), pBack2 = await pressAt('shared', true, placePath);
+    t.ok('全体と place をそれぞれ戻すと、どちらも外す前の組へ戻る', gBack.source === 'was' && pBack2.source === 'was' && onIds(await sameAsScreen('全体と place を戻した後', 'shared')) === onIds(start), JSON.stringify([gBack.source, pBack2.source]));
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

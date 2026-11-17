@@ -16,7 +16,7 @@ import { importCandidate, rowSummary, adapterSource, writeAdapterTo, grokNativeH
 import { parseAdapterCommand, safeAdapterPath } from './hooks-copy.mjs';
 import { parseToml } from './toml.mjs';
 import { resolveOwner, hooksWriteFailed } from './ply-hooks.mjs';
-import { agentPresentation } from './backends/agents.mjs';
+import { agentPresentation, agentShortName } from './backends/agents.mjs';
 
 // backend-allow: 元の集合と止め方がエージェントごとに違う（ADR 0338「元の集合」「実行時」）
 const CLAUDE = 'claude', CODEX = 'codex', AGY = 'antigravity', GROK = 'grok', DEVIN = 'devin';
@@ -34,6 +34,8 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 const refuse = (key, params = {}) => Object.assign(new Error(t(key, params)), { code: 'HOOKS_REFUSED' });
 // i18n-dynamic: hooksAgents.
 const invalid = (key, params = {}) => Object.assign(new Error(t(key, params)), { code: 'INVALID' });
+/** 鍵の文に出すエージェントの名前（内部の id でなく、表のマスの吹き出しと同じ短い名前）。エージェントが決まらない鍵は「いずれかのエージェント」 */
+const lockAgentName = (lock) => (lock?.agent ? agentShortName(lock.agent) : t('hooksAgents.someAgent'));
 
 /**
  * エージェントの設定の定義の行 ID。並びの位置（group・handler の番号）は入れない（前に 1 つ足しても変わらない）。
@@ -495,7 +497,7 @@ function lockUnit(c, A) {
  *   すでに切れるオンがある行を入れても変えない。
  * 押せないとき: { lock: { reason, detail, agent }, idle? }。idle は「変えるものが無い」（切れるオンが無い・入れても動くものが無い。組のスイッチは飛ばす）。
  * ほかの行が黙って止まる（渡し直せずに一緒に止まる。セルの押せる・押せないの decideModes と同じ物差し）ときは idle を付けず、組でも断る。
- * 押せるとき: { next }（s.enable つき）。
+ * 押せるとき: { next }（s.enable つき）。入れる向き（on）のときは restored: 覚えたエージェントごとの選択（off・spread）へ戻るか（覚えが無い・覚えでは動くマスが無いなら false = 元の集合に戻す）。
  * Devin の取り込みの止め（compat.devin: 'off'）は、Devin へ渡すものが無くなると取り込みが戻る。そのときほかの行の Devin の列が変わるのは、
  * セルを押したときと同じく事実のとおり（鍵の理由 devinImports・devinCompatOff で見せる）
  */
@@ -523,13 +525,16 @@ export function rowSwitchPlan(inv, s, skip, row, on, before = null) {
   // 切れるオンが無く、鍵つきのオンだけが動く行は、切る向きでは変えるものが無い（どのマスも動いていない行を切るのは、今までどおり印を付けるだけ）
   if (!on && !changeable(was).length && fixed.size) return idleLock();
   const next = on ? structuredClone(base) : cut;
+  let restored = false;
   if (on) {
     next.unused = next.unused.filter(k => k !== row.key);
     if (row.kind === 'reg' && !row.hook.enabled) next.enable = [...new Set([...next.enable, row.key])];
   }
   let after = on ? cellsAt(next) : afterCut;
   // 入れる向き: 覚えた選択で動くマスが無ければ、覚えた選択を消して元の集合に戻す（鍵つきでオンのマスだけが動いていても同じ）
+  if (on) restored = Boolean(next.off[row.key]?.length || next.spread[row.key]?.length);
   if (on && !changeable(after).length) {
+    restored = false;
     delete next.off[row.key];
     delete next.spread[row.key];
     after = cellsAt(next);
@@ -544,7 +549,7 @@ export function rowSwitchPlan(inv, s, skip, row, on, before = null) {
     const c = UNIFY_TARGETS.map(A => [A, after[A].get(row.key)]).find(([, x]) => x?.mode === 'locked' && x.reason);
     return { lock: c ? { reason: c[1].reason, detail: c[1].detail, agent: c[0] } : { reason: 'relay', detail: 'nothingToRun', agent: row.agent ?? null }, idle: true };
   }
-  return { next };
+  return on ? { next, restored } : { next };
 }
 /**
  * 行のスイッチの見え方の材料（matrix が行に載せる。画面は混ぜない）。
@@ -749,9 +754,9 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
   const pressCell = (inv, eff, key, A) => {
     const row = inv.byKey.get(key);
     if (!row) throw invalid('hooksAgents.noRow', { key });
-    if (!UNIFY_TARGETS.includes(A)) throw invalid('hooksAgents.notPressable', { key, agent: A });
+    if (!UNIFY_TARGETS.includes(A)) throw invalid('hooksAgents.notPressable', { key, agent: agentShortName(A) });
     const cell = decideModes(inv, eff.agents, eff.skip, A).get(key);
-    if (!cell || cell.mode !== 'toggle') throw invalid('hooksAgents.notPressable', { key, agent: A });
+    if (!cell || cell.mode !== 'toggle') throw invalid('hooksAgents.notPressable', { key, agent: agentShortName(A) });
     return { row, cell };
   };
 
@@ -766,7 +771,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     const row = inv.byKey.get(key);
     if (!row) throw invalid('hooksAgents.noRow', { key });
     const plan = rowSwitchPlan(inv, { ...s, enable: [] }, eff.skip, row, on);
-    if (plan.lock) throw invalid('hooksAgents.rowLocked', { key, agent: plan.lock.agent ?? '*', detail: plan.lock.detail });
+    if (plan.lock) throw invalid('hooksAgents.rowLocked', { key, agent: lockAgentName(plan.lock), detail: plan.lock.detail });
     return plan.next;
   });
   /**
@@ -781,7 +786,7 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
         const plan = rowSwitchPlan(inv, cur, eff.skip, row, on);
         // 変えるものが無い行（切れるオンが無い・入れても動かない）は飛ばす。ほかの行が黙って止まる行は、どれも変えずに断る
         if (plan.lock && plan.idle) continue;
-        if (plan.lock) throw invalid('hooksAgents.rowLocked', { key: row.key, agent: plan.lock.agent ?? '*', detail: plan.lock.detail });
+        if (plan.lock) throw invalid('hooksAgents.rowLocked', { key: row.key, agent: lockAgentName(plan.lock), detail: plan.lock.detail });
         cur = plan.next;
         continue;
       }
@@ -1049,6 +1054,8 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
         on: rowOn, unused: s.unused.includes(row.key) || (row.kind === 'reg' && !row.hook.enabled),
         // rowMixed: 一部だけオン（横の棒）／ rowFixed: 切ってもオンのまま残るマス（鍵つき）／ rowChangeableOn: 切れるオン ／ rowNextOn: 押すと入れる向き
         rowMixed, rowFixed: view.fixed, rowChangeableOn: view.changeableOn, rowNextOn: view.nextOn,
+        // rowRestore: 切れるオンが無いとき押すと、覚えた選択へ戻すか（'was'）、覚えが無く元の集合に戻すか（'default'）。読み上げの「外す前の選択に戻す」を、覚えがあるときだけにする
+        rowRestore: (view.nextOn ? plan.restored : Boolean(s.off[row.key]?.length || s.spread[row.key]?.length)) ? 'was' : 'default',
         // switchable: 行のスイッチを押せるか（rowSwitchPlan。押しても変わらない・ほかが黙って変わるなら false）。switchLock: そのときの鍵の理由
         switchable: !lock, ...(lock ? { switchLock: lock } : {}),
         // switchConfirm: 行のスイッチを押すと Devin の取り込みが止まり始める（画面は保存の前に確認の帯を出す。セルの stopsDevinImports と同じ）

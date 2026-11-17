@@ -1431,6 +1431,7 @@
     "stale": "Hooks の一覧が変わりました。開き直してから操作してください",
     "noRow": "Hook の行（{{key}}）が見つかりません。一覧を開き直してください",
     "notPressable": "Hook の行（{{key}}）の {{agent}} は押せないセルです",
+    "someAgent": "いずれかのエージェント",
     "rowLocked": "Hook の行（{{key}}）の行のスイッチは押せません。切っても {{agent}} で動き続けるか、ほかの行が一緒に変わるか、入れても動くエージェントがありません（{{detail}}。理由は hooks.matrix の行の switchLock）",
     "badPlace": "場所は絶対パスで指定してください",
     "legacyBroken": "Hooks の登録ファイル（hooks.json）に読めない所があるので、今の動きを写せません。先に修復してください",

@@ -3,6 +3,7 @@
  * Guarantees Settings UI, Right Panel, and runtime per-agent execution derive from the exact same rules.
  */
 import os from 'node:os';
+import { agentShortName, agentShortNames } from './backends/agents.mjs';
 import { SOURCES, containsPath, pathKey } from './context-settings.mjs';
 import {
   DOC_AGENT_IDS,
@@ -213,6 +214,8 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
     legacyOwner: sourceState.legacyOwner,
     devinImportsStopped: Boolean(devinImportsStopped),
     agents: [...DOC_AGENT_IDS],
+    // 列の表示名（行の鍵の吹き出しの `{{agent}}` 用。画面のエージェントの一覧に無い列でも、内部の id を出さない）
+    labels: agentShortNames(DOC_AGENT_IDS),
     summaryRow,
     rows,
     byKey,
@@ -289,11 +292,11 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
     pressable = targets;
     const { k, row } = pressable[0];
     const cell = row.cells[agent];
-    if (!cell || cell.locked) throw new DocTouchError('docNotPressable', { name: row.name ?? k, agent });
+    if (!cell || cell.locked) throw new DocTouchError('docNotPressable', { name: row.name ?? k, agent: agentShortName(agent) });
   } else if (agent) {
     // まとまりのチップ・確認の後の広げは、複数の名前を 1 回で書く（途中で止まって半端に残らない。レビュー S3）。鍵のマスの名前は飛ばす
     pressable = targets.filter((tRow) => tRow.row.cells[agent] && !tRow.row.cells[agent].locked);
-    if (!pressable.length) throw new DocTouchError('docNotPressable', { name: targets[0].row.name ?? targets[0].k, agent });
+    if (!pressable.length) throw new DocTouchError('docNotPressable', { name: targets[0].row.name ?? targets[0].k, agent: agentShortName(agent) });
   } else {
     pressable = targets.filter((tRow) => !tRow.row.rowLocked);
     if (!pressable.length) throw new DocTouchError('docRowLocked', { name: targets[0].row.name ?? targets[0].row.key });

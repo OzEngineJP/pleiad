@@ -5,7 +5,7 @@
 import { PLY_CONTEXT_CONFLICTS } from './backends/agent-marks.mjs';
 import { mcpOffBlockedByLinks, nativeMcpOffMode } from './backends/mcp-off-home.mjs';
 import { mcpAgentsFromLegacy } from './context-settings.mjs';
-import { agentOf } from './backends/agents.mjs';
+import { agentOf, agentShortNames } from './backends/agents.mjs';
 
 /** 画面に並べるエージェントの順（アイコンの列）。ここに無いエージェントは末尾 */
 // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
@@ -197,6 +197,8 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
   for (const r of rows) Object.assign(r, mcpRowMeta(r, agents, restore?.[r.key]));
   return {
     agents, rows,
+    // 列の表示名（行の鍵の吹き出しの `{{agent}}` 用。画面のエージェントの一覧に無い列でも、内部の id を出さない）
+    labels: agentShortNames(agents),
     locked: rows.some(r => agents.some(a => r.cells[a].mode === 'locked' || r.cells[a].mode === 'blocked')),
     // null（未読）で読み取り中なら reading、読み取りが終わって読めなかったなら none（読めた 0 件と区別するのは保存側）
     connectors: !claudeHere ? 'none' : connectors === null ? (reading ? 'reading' : 'none') : connectors.length ? 'ready' : 'none',

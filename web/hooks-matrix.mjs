@@ -10,11 +10,12 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
-import { agentShortLabel } from './agent-brands.mjs';
+import { agentName, rememberAgentNames } from './agent-brands.mjs';
 import { MATRIX_ICON, agentChip, agentLegend, agentStrip, askBanner, freshAgents, lockedAgentChip, matrixSvg, savedText, wholeSwitch } from './context-matrix.mjs';
 import { addButton, agentLabel, eventLabel, openHookSheet, peekHook, scopeLabel } from './hooks-card.mjs';
 import { originMarks } from './context-tabs.mjs';
 import { openPlyHookSheet, plyPeek, reasonText, warnText } from './hooks-unify-ui.mjs';
+import { joinLockReasons } from './lock-tip.mjs';
 
 function button(text, className = 'btn', onClick) {
   const b = el('button', className, text);
@@ -22,15 +23,11 @@ function button(text, className = 'btn', onClick) {
   if (onClick) b.onclick = onClick;
   return b;
 }
-// 列の短い名前。画面の短い名前（agent-brands）は有効なエージェントの分しか届かないので、無いものは一覧が載せる短い名前（hooks.matrix の labels）、
-// それも無ければ正式名（Devin CLI など）
-const listLabels = new Map();
-/** 一覧（hooks.matrix）が載せる列の短い名前を覚える（設定の表・会話の右の欄の両方が呼ぶ） */
-export function rememberAgentLabels(labels) {
-  if (labels && typeof labels === 'object') for (const [id, s] of Object.entries(labels)) if (typeof s === 'string' && s) listLabels.set(id, s);
-}
+// 列の短い名前は、画面の短い名前（agent-brands。有効なエージェントの分）と、表が載せる短い名前（hooks.matrix の labels。agent-brands が控える）から引く。内部の id は出さない
+/** 一覧（hooks.matrix）が載せる列の短い名前を覚える（設定の表・会話の右の欄の両方が呼ぶ。doc・MCP の表と同じ控え） */
+export function rememberAgentLabels(labels) { rememberAgentNames(labels); }
 /** エージェントの短い名前（確認の帯・読み上げ名・鍵の文・右の欄で同じもの） */
-export const hookAgentLabel = a => agentShortLabel(a, listLabels.get(a) ?? agentLabel(a));
+export const hookAgentLabel = agentName;
 const short3 = hookAgentLabel;
 
 // i18n-dynamic: hooks.matrix.tip.
@@ -227,7 +224,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       const v = hookCellView({ ...row, on: true }, a);
       if (v.state === 'lockon' && v.cell?.tip && !out.includes(v.cell.tip)) out.push(v.cell.tip);
     }
-    return out.length ? out.join(t('context.rowSwitch.reasonJoin')) : null;
+    return joinLockReasons(out);
   }
 
   function askEl(row) {
@@ -295,7 +292,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       const v = hookCellView({ ...row, on: true }, a);
       if (v.cell?.tip && !locks.includes(v.cell.tip)) locks.push(v.cell.tip);
     }
-    put(t('hooks.matrix.fact.locked'), locks.join(' / '));
+    put(t('hooks.matrix.fact.locked'), joinLockReasons(locks));
     return box;
   }
   const sheetCtx = () => ({ cmd, scan, short, onSaved: async () => { saved(t('hooks.saved')); await reload(); } });
@@ -357,7 +354,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       fixed: Boolean(row.rowFixed) && !row.rowChangeableOn,
       fixedReason: fixedReasons(row),
       name,
-      next: row.rowChangeableOn ? 'off' : row.unused ? 'restore' : 'on',
+      next: row.rowChangeableOn ? 'off' : row.rowRestore === 'was' ? 'restore' : 'on',
       disabledReason: row.switchable ? null : (hookTip(row.switchLock ?? {}) ?? t('context.lockReason.own', { agent: short3(row.switchLock?.agent ?? row.agent) })),
       key: `sw:${row.key}`,
       keyAttr: 'cxFk',

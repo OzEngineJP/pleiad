@@ -3,9 +3,9 @@
 
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { agentShortLabel, conversationContextAgents } from './agent-brands.mjs';
+import { agentName, conversationContextAgents } from './agent-brands.mjs';
 import { brandMark } from './context-tabs.mjs';
-import { ensureLockTips, lockReasonText, lockAriaLabel } from './lock-tip.mjs';
+import { ensureLockTips, lockReasonText, lockAriaLabel, joinLockReasons, spokenLockReason } from './lock-tip.mjs';
 
 /**
  * 会話を始めるときだけ設定を読むエージェント（エージェントの記述の contextAt）。始まっている会話には次のターンでも届かないので、
@@ -71,7 +71,7 @@ export function matrixButton(cls, text) {
 
 /** 鍵つきで押せないエージェントアイコン（MCP・指示・Skills・Pleiad の指示・テストで共通） */
 export function lockedAgentChip(agent, cell, name, { ariaLabel, key, keyAttr = 'fk', agentLabel = null } = {}) {
-  const short = agentLabel ?? agentShortLabel(agent, agent);
+  const short = agentLabel ?? agentName(agent);
   const on = cell.on !== undefined ? Boolean(cell.on) : cell.state === 'on';
   const b = matrixButton(`cx-ag be-${agent}`);
   b.setAttribute('aria-pressed', String(on));
@@ -116,7 +116,7 @@ export function agentChip({
   if (locked) {
     return lockedAgentChip(agent, cell ?? { on: state === 'lockon' }, name, { ariaLabel, key, keyAttr });
   }
-  const short = agentLabel ?? agentShortLabel(agent, agent);
+  const short = agentLabel ?? agentName(agent);
   const pressed = state === 'mixed' ? 'mixed' : String(state === 'on' || Boolean(cell?.on));
   const b = matrixButton(`cx-ag be-${agent}`);
   b.dataset.agent = agent;
@@ -213,7 +213,7 @@ export function wholeSwitch({
       // 鍵の上だけに理由を出す。押す動きは止めない（lock-tip.mjs の data-tip-pass）
       lk.dataset.tip = fixedReason;
       lk.dataset.tipPass = '';
-      const desc = el('span', null, fixedReason);
+      const desc = el('span', null, spokenLockReason(fixedReason));
       desc.hidden = true;
       desc.id = `cx-sw-why-${++wholeSeq}`;
       sw.setAttribute('aria-describedby', desc.id);
@@ -262,7 +262,7 @@ export function agentLegend(agents) {
   legend.setAttribute('aria-hidden', 'true');
   for (const a of agents) {
     const id = typeof a === 'string' ? a : a.id;
-    const text = typeof a === 'string' ? agentShortLabel(a, a) : (a.label ?? agentShortLabel(a.id, a.id));
+    const text = typeof a === 'string' ? agentName(a) : (a.label ?? agentName(a.id));
     const i = el('span', `li be-${id}`);
     i.append(brandMark(id), document.createTextNode(text));
     legend.append(i);
@@ -280,11 +280,11 @@ export function docFixedReasons(doc, rows) {
     for (const a of doc?.agents ?? []) {
       const cell = row?.cells?.[a];
       if (!cell?.locked || !cell.on) continue;
-      const text = lockReasonText(agentShortLabel(a, a), cell);
+      const text = lockReasonText(agentName(a), cell);
       if (!out.includes(text)) out.push(text);
     }
   }
-  return out.length ? out.join(t('context.rowSwitch.reasonJoin')) : null;
+  return joinLockReasons(out);
 }
 
 /** 押せない行（変えられるマスが無い・外す前の選択も無い）の理由文（右パネル・設定画面で共通）。鍵つきでオンのマスがあればその理由 */
@@ -292,7 +292,7 @@ export function docLockReason(doc, row) {
   const fixed = docFixedReasons(doc, row);
   if (fixed) return fixed;
   const lockAgent = doc?.agents?.find(a => row.cells?.[a]?.locked);
-  return lockAgent ? lockReasonText(agentShortLabel(lockAgent, lockAgent), row.cells[lockAgent]) : t('context.matrix.locked');
+  return lockAgent ? lockReasonText(agentName(lockAgent), row.cells[lockAgent]) : t('context.matrix.locked');
 }
 
 /** まとまりのスイッチを押せないときの理由文。鍵つきでオンのマスがあればその理由、無ければ押せない子の理由 */

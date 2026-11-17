@@ -5,7 +5,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { buildMcpMatrix, mcpRowMeta, planMcpRowPress } from '../../core/context-mcp-matrix.mjs';
-import { createMcpWas, emptyMcpWas, MCP_WAS_FILE, MCP_WAS_MAX_NAMES, normalizeMcpWas } from '../../core/context-mcp-was.mjs';
+import {
+  createMcpWas, emptyMcpWas, MCP_WAS_FILE, MCP_WAS_MAX_NAMES, MCP_WAS_MAX_PLACES, MCP_WAS_MAX_AGENTS, MCP_WAS_MAX_BROKEN, normalizeMcpWas,
+} from '../../core/context-mcp-was.mjs';
 import { DEFAULT_SCAN, legacyPlan, normalizeKind } from '../../core/context-settings.mjs';
 import { setMcpOffLinker } from '../../core/backends/mcp-off-home.mjs';
 import { contextOps } from '../../core/ops/context.mjs';
@@ -79,10 +81,75 @@ export default async function (t) {
     t.ok('ファイルの形: { version: 1, places: { <場所のキー。全体は *>: { <名前>: [エージェント] } } }', saved1.version === 1 && saved1.places['*'].reg.join() === 'claude,codex' && Object.keys(saved1).join() === 'version,places', saved1);
     await was.set(null, 'reg', null);
     t.ok('null・空で消す。空になった場所は消える', !('reg' in await was.get(null)) && !('*' in JSON.parse(await fs.readFile(path.join(dataDir, MCP_WAS_FILE), 'utf8')).places));
+    const brokenFiles = async () => (await fs.readdir(dataDir)).filter((f) => /^context-mcp-was\.broken-.+\.json$/.test(f)).sort();
     await fs.writeFile(path.join(dataDir, MCP_WAS_FILE), '{ broken');
-    t.ok('壊れたファイルは空として読む（設定は無事で、戻し先が既定になるだけ）。次に書くと作り直す', JSON.stringify(await was.get(null)) === '{}' && (await was.set(null, 'a', ['claude']), (await was.get(null)).a.join() === 'claude'));
+    t.ok('壊れたファイルは空として読む（設定は無事で、戻し先が既定になるだけ）。読むだけでは動かさない', JSON.stringify(await was.get(null)) === '{}' && (await brokenFiles()).length === 0);
+    await was.set(null, 'a', ['claude']);
+    const brokenA = await brokenFiles();
+    t.ok('次に書くとき、壊れた物は context-mcp-was.broken-<時刻>.json へ退避してから作り直す（消さない）',
+      (await was.get(null)).a.join() === 'claude' && brokenA.length === 1 && await fs.readFile(path.join(dataDir, brokenA[0]), 'utf8') === '{ broken', brokenA);
     await fs.writeFile(path.join(dataDir, MCP_WAS_FILE), JSON.stringify({ version: 9, places: { '*': { a: ['claude'] } } }));
     t.ok('知らない版は空として読む', JSON.stringify(await was.get(null)) === '{}');
+    await was.set(null, 'b', ['codex']);
+    const brokenB = (await brokenFiles()).filter((f) => !brokenA.includes(f));
+    t.ok('知らない版も、書くときは退避してから作り直す（新しい版の覚えを黙って消さない）',
+      brokenB.length === 1 && JSON.parse(await fs.readFile(path.join(dataDir, brokenB[0]), 'utf8')).version === 9 && (await was.get(null)).b.join() === 'codex' && !('a' in await was.get(null)), brokenB);
+    // 退避は MCP_WAS_MAX_BROKEN 個まで（古い物から消す。置き場を際限なく増やさない）
+    for (let i = 0; i < MCP_WAS_MAX_BROKEN + 2; i++) {
+      await fs.writeFile(path.join(dataDir, MCP_WAS_FILE), `{ broken ${i}`);
+      await was.set(null, `r${i}`, ['claude']);
+    }
+    const brokenAll = await brokenFiles();
+    const newestBroken = await fs.readFile(path.join(dataDir, brokenAll.at(-1)), 'utf8').catch(() => '');
+    t.ok('退避した読めないファイルは MCP_WAS_MAX_BROKEN 個まで（今退避した物は必ず残る）', brokenAll.length === MCP_WAS_MAX_BROKEN && newestBroken.startsWith('{ broken'), brokenAll);
+
+    // 読み込みの失敗（ENOENT・壊れ・形の違い以外）は空として読まない。次の set で 1 件だけのファイルに上書きして、ほかの覚えを全部消さないため
+    await fs.writeFile(path.join(dataDir, MCP_WAS_FILE), JSON.stringify({ version: 1, places: { '*': { keep1: ['claude'], keep2: ['codex'] } } }));
+    const realRead = fs.readFile;
+    const failWith = async (code, run) => {
+      fs.readFile = async (p, ...rest) => {
+        if (String(p).endsWith(MCP_WAS_FILE)) throw Object.assign(new Error(`${code}: fake`), { code });
+        return realRead.call(fs, p, ...rest);
+      };
+      try { return await run(); } finally { fs.readFile = realRead; }
+    };
+    for (const code of ['EBUSY', 'EPERM', 'EACCES', 'EIO']) {
+      const getErr = await failWith(code, () => was.get(null).then(() => null, (e) => e));
+      const setErr = await failWith(code, () => was.set(null, 'new', ['grok']).then(() => null, (e) => e));
+      const after = JSON.parse(await fs.readFile(path.join(dataDir, MCP_WAS_FILE), 'utf8'));
+      t.ok(`読み込みが ${code} で失敗したら、get も set も投げる。ファイルは上書きされず、ほかの覚えが残る`,
+        getErr?.code === code && setErr?.code === code && Object.keys(after.places['*']).sort().join() === 'keep1,keep2', JSON.stringify({ getErr: getErr?.code, setErr: setErr?.code, after }));
+    }
+    t.ok('失敗のあとの set は、直列の待ちを詰まらせず次の set が通る', (await was.set(null, 'ok', ['claude']), (await was.get(null)).ok.join() === 'claude' && 'keep1' in await was.get(null)));
+    // 呼ぶ側（context.setMcpRow の rememberMcpRow）は覚えの失敗を握る: 操作は成功し、覚えだけが書かれない（下の setMcpRow の試験の前に、握る形を固定する）
+    const dirOnly = path.join(tmp, 'was-dir');
+    await fs.mkdir(path.join(dirOnly, MCP_WAS_FILE), { recursive: true });
+    const wasDir = createMcpWas(dirOnly);
+    const dirErr = await wasDir.set(null, 'x', ['claude']).then(() => null, (e) => e);
+    t.ok('ファイルの場所がディレクトリ（EISDIR）など、読めない失敗でも投げる（空にして上書きを試みない）', dirErr?.code === 'EISDIR' && (await fs.stat(path.join(dirOnly, MCP_WAS_FILE))).isDirectory(), dirErr?.code);
+
+    // 上限と直列化
+    const manyPlaces = emptyMcpWas();
+    for (let i = 0; i < MCP_WAS_MAX_PLACES + 30; i++) manyPlaces.places[`/p/${i}`] = { n: ['claude'] };
+    const cappedPlaces = normalizeMcpWas(manyPlaces);
+    t.ok('場所の数に上限がある（200。先に入れた物から外す）',
+      MCP_WAS_MAX_PLACES === 200 && Object.keys(cappedPlaces.places).length === MCP_WAS_MAX_PLACES && !('/p/0' in cappedPlaces.places) && `/p/${MCP_WAS_MAX_PLACES + 29}` in cappedPlaces.places);
+    const manyAgents = normalizeMcpWas({ version: 1, places: { '*': { n: Array.from({ length: MCP_WAS_MAX_AGENTS + 10 }, (_, i) => `agent${String(i).padStart(2, '0')}`) } } });
+    t.ok('1 つの名前のエージェントの数に上限がある（24）', MCP_WAS_MAX_AGENTS === 24 && manyAgents.places['*'].n.length === MCP_WAS_MAX_AGENTS, manyAgents.places['*'].n.length);
+    const serialDir = path.join(tmp, 'was-serial');
+    const wasSerial = createMcpWas(serialDir);
+    await Promise.all(Array.from({ length: 30 }, (_, i) => wasSerial.set(i % 2 ? `/place/${i % 5}` : null, `n${i}`, ['claude', 'codex'])));
+    const serialSaved = JSON.parse(await fs.readFile(path.join(serialDir, MCP_WAS_FILE), 'utf8'));
+    const serialNames = Object.values(serialSaved.places).flatMap((o) => Object.keys(o));
+    t.ok('set を並行に呼んでも直列に書く（どれも失われず、ファイルは常に完結した JSON）', serialNames.length === 30 && new Set(serialNames).size === 30, serialNames.length);
+    // 先に失敗した set があっても、続けて呼んだ set は書かれる（直列の鎖が切れない）。1 つ目は読み込みの失敗で投げる
+    const chainDir = path.join(tmp, 'was-chain');
+    const wasChain = createMcpWas(chainDir);
+    await wasChain.set(null, 'seed', ['claude']);
+    const chainResults = await failWith('EBUSY', () => Promise.allSettled([wasChain.set(null, 'a', ['claude'])]));
+    const chainSecond = await wasChain.set(null, 'b', ['codex']).then(() => 'ok', () => 'ng');
+    t.ok('直列の鎖: 失敗した set の後ろに続けて呼んだ set も書かれ、前の覚えは残る',
+      chainResults[0].status === 'rejected' && chainSecond === 'ok' && Object.keys(await wasChain.get(null)).sort().join() === 'b,seed');
     const big = { version: 1, places: { '*': Object.fromEntries(Array.from({ length: MCP_WAS_MAX_NAMES + 20 }, (_, i) => [`n${i}`, ['claude']])) } };
     const capped = normalizeMcpWas(big);
     t.ok('名前の数に上限がある（先に入れた物から外す）', Object.keys(capped.places['*']).length === MCP_WAS_MAX_NAMES && !('n0' in capped.places['*']) && `n${MCP_WAS_MAX_NAMES + 19}` in capped.places['*']);

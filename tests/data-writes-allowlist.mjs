@@ -138,8 +138,9 @@ export const DATA_WRITES = [
     { name: 'context-agents.json', limit: 'places 上限 MAX_PLACES=100、合計項目上限 MAX_AGENT_KEYS=2000（書くとき、もう無いフォルダーの場所を外す）', reason: '指示と Skills の名前ごと・エージェントごとの設定（ADR 0337）。旧版（beta.31）の strict スキーマが読む context-scans.json と分けてダウングレード互換を守る' },
     { name: 'context-agents.broken-<時刻>.json', limit: 'MAX_BROKEN_BACKUPS=5（利用者が「壊れたファイルを退避して直す」（context.repairDocAgents）を押したときの rename。超えたら古い物から消す）', reason: '読めなかった設定ファイルを消さずに残す（調べる・手で戻すため）' },
   ] },
-  { file: 'core/context-mcp-was.mjs', sites: 1, targets: [
-    { name: 'context-mcp-was.json', limit: 'MCP_WAS_MAX_PLACES=200・場所ごとに MCP_WAS_MAX_NAMES=500・名前ごとにエージェント 24（超えたら先に入れた物から外す）', reason: '外部 MCP の行のスイッチを「オフにする前に使っていたエージェントの組」へ戻すための覚え（ADR 0337 §決定 4）。設定（context-scans.json）の strict スキーマに足さず別に置くので、旧い版は存在を知らず、読めなければ空として既定へ戻る' },
+  { file: 'core/context-mcp-was.mjs', sites: 2, targets: [
+    { name: 'context-mcp-was.json', limit: 'MCP_WAS_MAX_PLACES=200・場所ごとに MCP_WAS_MAX_NAMES=500・名前ごとにエージェント 24（超えたら先に入れた物から外す）', reason: '外部 MCP の行のスイッチを「オフにする前に使っていたエージェントの組」へ戻すための覚え（ADR 0337 §決定 4）。設定（context-scans.json）の strict スキーマに足さず別に置くので、旧い版は存在を知らず、無い・壊れている・形が違うときは空として既定へ戻る（読めない失敗は投げ、空で上書きしない）' },
+    { name: 'context-mcp-was.broken-<時刻>.json', limit: 'MCP_WAS_MAX_BROKEN=5（壊れた覚えを次に書くときの rename。超えたら古い物から消す）', reason: '壊れた覚えのファイルを消さずに残す（調べる・手で戻すため。context-agents.json と同じ）' },
   ] },
   { file: 'core/context-claude-extras.mjs', sites: 1, targets: [
     { name: 'claude-connectors.json', limit: 'CONNECTOR_CACHE_MAX=200（claude.ai のコネクターの名前。実際は数個）', reason: '最後に読めたコネクターの一覧。次に設定を開いたとき、読み取りを待たずに出すための覚え' },

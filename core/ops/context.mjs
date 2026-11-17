@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { agentT, t } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { diffRows } from './settings.mjs';
+import { agentShortName } from '../backends/agents.mjs';
 import { mcpAgentsFromLegacy, toggleMcpAgent } from '../context-settings.mjs';
 import { buildMcpMatrix, mcpLegacyInfo, planMcpRowPress } from '../context-mcp-matrix.mjs';
 import { byAgent, cwdFor, maskTree, run, sessionFor } from './redact.mjs';
@@ -205,7 +206,7 @@ export const contextOps = [
       const row = matrix.rows.find((r) => r.key === name);
       if (!row) throw new OpError('INVALID', t('context.settings.unknownMcp', { name }));
       const cell = row.cells[agent];
-      if (!cell || cell.mode !== 'toggle') throw new OpError('INVALID', t('context.settings.mcpNotPressable', { name, agent }));
+      if (!cell || cell.mode !== 'toggle') throw new OpError('INVALID', t('context.settings.mcpNotPressable', { name, agent: agentShortName(agent) }));
       const info = mcpLegacyInfo(input);
       const current = kind.agents ?? mcpAgentsFromLegacy(kind, info);
       // プラグインの MCP・claude.ai のコネクターは Claude 自身の名前として数える（止めるのは deniedMcpServers）

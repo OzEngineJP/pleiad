@@ -1671,7 +1671,6 @@
       },
       "aria": "{{name}} ({{state}}). Press to {{next}}",
       "ariaState": "{{name}} ({{state}})",
-      "reasonJoin": " / ",
       "reasonName": "Why it can't be turned off"
     },
     "workspaceRow": {
@@ -1704,6 +1703,8 @@
       "devinHooks": "Here Pleiad gives hooks to {{agent}}, so {{agent}} does not import settings from Claude Code and others (it reads them again once you stop the hooks given to {{agent}} in the Hooks table)"
     },
     "lockAria": "{{label}} ({{reason}})",
+    "lockAriaSentence": "{{reason}}.",
+    "someAgent": "an agent",
     "roots": {
       "add": "Add a location to search",
       "addAria": "Path of the folder to search",

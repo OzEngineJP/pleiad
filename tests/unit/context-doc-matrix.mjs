@@ -272,6 +272,19 @@ export default async function (t) {
     && lockedErr instanceof DocTouchError && lockedErr.code === 'docRowLocked',
     JSON.stringify({ on: codexRow.rowSwitchOn, locked: codexRow.rowLocked, restore: codexRow.rowRestore, err: lockedErr?.code }));
 
+  // 表示名: 表は列の表示名（labels。有効なエージェントの一覧に無い列でも画面が内部のキーを出さないための控え）を渡し、
+  // 鍵のマスを押したときの知らせ（docNotPressable）の {{agent}} も、表のマスの吹き出しと同じ表示名
+  const labelMx = defMatrix(emptyDocAgentsConfig());
+  t.ok('表は列の表示名（labels: id → 短い名前）を持つ。内部のキーのままの名前は無い',
+    labelMx.labels && Object.keys(labelMx.labels).sort().join() === [...labelMx.agents].sort().join()
+    && labelMx.labels.devin === 'Devin' && labelMx.labels.grok === 'Grok' && labelMx.labels.codex === 'Codex' && labelMx.labels.claude === 'Claude'
+    && Object.entries(labelMx.labels).every(([id, n]) => typeof n === 'string' && n && n !== id),
+    JSON.stringify(labelMx.labels));
+  let padErr = null;
+  try { defPress(emptyDocAgentsConfig(), docItemKey(userCodex), true, 'codex'); } catch (e) { padErr = e; }
+  t.ok('鍵のマスを押した知らせの {{agent}} は、内部のキーではなく表示名（Codex）',
+    padErr instanceof DocTouchError && padErr.code === 'docNotPressable' && padErr.params.agent === 'Codex', JSON.stringify(padErr?.params));
+
   // Claude の物は Grok・Devin が自分で読む（鍵つきでオン）。行のスイッチは押せて、鍵の無いオンだけをまとめてオフにし、鍵つきのオンは残る。
   // もう一度押すと、外す前のマスに戻る（鍵つきのマスは触らない）
   const claudeKey = docItemKey(userClaude);

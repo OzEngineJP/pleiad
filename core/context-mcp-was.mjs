@@ -3,7 +3,9 @@
 //
 // 設定そのもの（context-scans.json の kinds.mcp.agents）には書かない。そこは strict の形で、知らない項目があると
 // 旧い版が設定ごと読めなくなる。この記録は別のファイルに置き、旧い版は存在を知らないので無視する（読み飛ばして困ることが無い、戻し先の覚えだけ）。
-// 読めない・形が違うファイルは空として読む（壊れても設定は無事で、戻し先が既定になるだけ）。次に書くときに作り直す。
+// 無い・JSON が壊れている・形が違う（知らない版）ファイルだけを空として読む（壊れても設定は無事で、戻し先が既定になるだけ）。
+// 壊れた物は、次に書くとき context-mcp-was.broken-<時刻>.json へ退避してから作り直す（context-agents.json と同じ。消さない）。
+// それ以外の読み込みの失敗（EBUSY・EPERM など）は空にせず投げる（1 件だけのファイルで上書きして、ほかの覚えを全部消さない。呼ぶ側が握るので操作は成功する）。
 //
 // 形: { version: 1, places: { <場所のキー。全体は '*'>: { <名前>: [<エージェント>] } } }
 import fs from 'node:fs/promises';
@@ -14,7 +16,10 @@ import { pathKey } from './context-settings.mjs';
 export const MCP_WAS_FILE = 'context-mcp-was.json';
 export const MCP_WAS_MAX_PLACES = 200;
 export const MCP_WAS_MAX_NAMES = 500;
-const MAX_AGENTS = 24;
+export const MCP_WAS_MAX_AGENTS = 24;
+// 退避した読めないファイルを残す数（超えたら古い物から消す。今退避した物は必ず残る）
+export const MCP_WAS_MAX_BROKEN = 5;
+const MAX_AGENTS = MCP_WAS_MAX_AGENTS;
 const GLOBAL = '*';
 
 /** 場所（null・'' は全体）の記録のキー */
@@ -53,9 +58,42 @@ export function normalizeMcpWas(raw) {
 export function createMcpWas(dataDir) {
   const file = path.join(dataDir, MCP_WAS_FILE);
   let queue = Promise.resolve();
-  const read = async () => {
-    try { return normalizeMcpWas(JSON.parse(await fs.readFile(file, 'utf8'))); }
-    catch { return emptyMcpWas(); }
+  /**
+   * ファイルを読む。空とみなすのは「無い（ENOENT）」「JSON が壊れている」「形が違う（知らない版など）」だけ。
+   * ほかの失敗（Windows のウイルス対策の EBUSY・EPERM など）は投げる。空として読んで次の set で 1 件だけのファイルに上書きし、ほかの覚えを全部消さないため
+   */
+  const load = async () => {
+    let text;
+    try { text = await fs.readFile(file, 'utf8'); }
+    catch (e) {
+      if (e?.code === 'ENOENT') return { state: 'missing', data: emptyMcpWas() };
+      throw e;
+    }
+    let raw;
+    try { raw = JSON.parse(text); } catch { return { state: 'broken', data: emptyMcpWas() }; }
+    if (!isObj(raw) || raw.version !== 1 || !isObj(raw.places)) return { state: 'broken', data: emptyMcpWas() };
+    return { state: 'ok', data: normalizeMcpWas(raw) };
+  };
+  const read = async () => (await load()).data;
+  /** 読めないファイルを context-mcp-was.broken-<時刻>.json へ移す（消さない。context-agents.json と同じ）。古い退避は MCP_WAS_MAX_BROKEN 個まで */
+  const moveAside = async () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let name = null;
+    for (let i = 0; !name; i++) {
+      const candidate = `context-mcp-was.broken-${stamp}${i ? `-${i}` : ''}.json`;
+      if (await fs.stat(path.join(dataDir, candidate)).then(() => true, () => false)) continue;
+      await fs.rename(file, path.join(dataDir, candidate));
+      name = candidate;
+    }
+    const backups = [];
+    for (const f of await fs.readdir(dataDir).catch(() => [])) {
+      if (f === name || !/^context-mcp-was\.broken-.+\.json$/.test(f)) continue;
+      const st = await fs.stat(path.join(dataDir, f)).catch(() => null);
+      if (st?.isFile()) backups.push({ f, at: st.mtimeMs });
+    }
+    backups.sort((a, b) => b.at - a.at || b.f.localeCompare(a.f));
+    for (const { f } of backups.slice(MCP_WAS_MAX_BROKEN - 1)) await fs.rm(path.join(dataDir, f), { force: true }).catch(() => {});
+    return name;
   };
   const serial = (fn) => {
     const run = queue.then(fn);
@@ -64,7 +102,8 @@ export function createMcpWas(dataDir) {
   };
   const get = async (place) => structuredClone((await read()).places[mcpWasKey(place)] ?? {});
   const set = (place, name, list) => serial(async () => {
-    const cur = await read();
+    const { state, data: cur } = await load();
+    if (state === 'broken') await moveAside();
     const key = mcpWasKey(place);
     const at = { ...(cur.places[key] ?? {}) };
     delete at[name];

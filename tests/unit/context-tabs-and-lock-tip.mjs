@@ -3,16 +3,20 @@
 import { N } from '../lib/dom-stub.mjs';
 import { setLanguage } from '../../web/i18n.mjs';
 import {
-  LOCK_REASONS, lockReasonKey, lockReasonText, lockAriaLabel,
+  LOCK_REASONS, lockReasonKey, lockReasonText, lockAriaLabel, joinLockReasons, spokenLockReason,
   hideLockTip, ensureLockTips, _resetLockTipForTest,
 } from '../../web/lock-tip.mjs';
+import { agentName, agentShortLabel, forgetAgentNames, rememberAgentNames, setAgentBrands } from '../../web/agent-brands.mjs';
 import {
   CONTEXT_TABS, BUNDLE_COLLAPSE_AFTER,
   readTabStorage, writeTabStorage,
   bundleFolder, bundleLabel, groupEntries,
-  createTabBar, createFindBar,
+  createTabBar, createFindBar, originMarks,
 } from '../../web/context-tabs.mjs';
-import { docBundleMeta, wholeState, wholeNext, recalcDocRow, applyDocBundleLocal } from '../../web/context-matrix.mjs';
+import {
+  docBundleMeta, wholeState, wholeNext, recalcDocRow, applyDocBundleLocal,
+  docFixedReasons, docLockReason, docRowLockSummary, docReasonKey, lockedAgentChip, agentLegend, wholeSwitch,
+} from '../../web/context-matrix.mjs';
 
 export const name = 'context-tabs-and-lock-tip';
 export const title = 'プラグインの 4 タブ・フォルダーまとまり・絞り込みと、鍵の吹き出し';
@@ -153,6 +157,7 @@ function makeEnv() {
     activeElement: body,
     createElement: tag => new TestNode(tag),
     createElementNS: (_ns, tag) => new TestNode(tag),
+    createTextNode: text => { const n = new TestNode('#text'); n.textContent = text; return n; },
     addEventListener(type, fn, opts) {
       const list = docListeners.get(type) ?? [];
       list.push({ fn, capture: Boolean(opts === true || opts?.capture) });
@@ -258,11 +263,47 @@ export default async function (t) {
     t.ok('lockAriaLabel は元の名前に括弧で理由を添える',
       lockAriaLabel('Claude の 設定', reasonsJa.own) === 'Claude の 設定（Claude の設定にあるため、Pleiad からは止められません）');
 
+    // 理由が 2 つ以上のときは「／」で 1 文につながず、理由ごとに行を分ける。読み上げでは 1 つずつ文として区切る
+    const twoJa = joinLockReasons([reasonsJa.workspace, reasonsJa.relay, reasonsJa.workspace, '', null]);
+    t.ok('joinLockReasons は理由ごとに改行で分け、重複と空を落とし、無ければ null',
+      twoJa === `${reasonsJa.workspace}\n${reasonsJa.relay}` && !twoJa.includes('／')
+      && joinLockReasons([]) === null && joinLockReasons(undefined) === null && joinLockReasons(['', ' ']) === null
+      && joinLockReasons(reasonsJa.own) === reasonsJa.own, twoJa);
+    const spokenJa = spokenLockReason(twoJa);
+    t.ok('spokenLockReason は 1 つなら元のまま、複数なら 1 つずつ文末の「。」で区切る',
+      spokenLockReason(reasonsJa.own) === reasonsJa.own && spokenLockReason('') === ''
+      && spokenJa === `${reasonsJa.workspace}。 ${reasonsJa.relay}。`
+      && spokenLockReason('A。\nB') === 'A。 B。', spokenJa);
+    t.ok('lockAriaLabel は複数の理由を、文として区切れる形で括弧の中に添える（改行は読み上げに残さない）',
+      lockAriaLabel('指示', twoJa) === `指示（${spokenJa}）` && !lockAriaLabel('指示', twoJa).includes('\n'));
+
+    // 吹き出し・知らせ・読み上げの {{agent}} は、表の個々のマスの吹き出しと同じ表示名。一覧に無い id でも内部のキーを出さない
+    forgetAgentNames();   // 前の試験が控えた表示名を持ち込まない
+    t.ok('agentShortLabel は一覧にも表の labels にも無い id なら null、agentName は「いずれかのエージェント」（内部の id を返さない）',
+      agentShortLabel('unlisted-agent') === null && agentName('unlisted-agent') === 'いずれかのエージェント' && agentName(undefined) === 'いずれかのエージェント');
+    rememberAgentNames({ devin: 'Devin', grok: 'Grok', claude: 'Claude', bad: 7, '': 'x' });
+    rememberAgentNames(null); rememberAgentNames('x');
+    t.ok('rememberAgentNames の後は devin・grok・claude が表示名になり、数値や空の id は控えない',
+      agentName('devin') === 'Devin' && agentName('grok') === 'Grok' && agentName('claude') === 'Claude'
+      && agentShortLabel('bad') === null && agentName('bad') === 'いずれかのエージェント');
+    setAgentBrands([{ id: 'devin', label: 'Devin Pro', shortLabel: 'Dv' }]);
+    t.ok('エージェントの一覧にある id は、一覧の短い名前を優先する',
+      agentName('devin') === 'Dv' && agentName('grok') === 'Grok');
+    setAgentBrands([]);
+    const devinLock = lockReasonText(agentName('devin'), { reason: 'devinHooks' });
+    const grokLock = lockReasonText(agentName('grok'), { reason: 'workspace' });
+    t.ok('行の鍵の吹き出し（lockReasonText に渡す名前）に、内部のキー devin・grok が入らない',
+      devinLock.includes('Devin') && !/\bdevin\b/.test(devinLock) && grokLock.includes('Grok') && !/\bgrok\b/.test(grokLock), `${devinLock} / ${grokLock}`);
+
     await setLanguage('en');
     const enOwn = lockReasonText('Claude', { mode: 'locked' });
     const enAria = lockAriaLabel('Claude setting', enOwn);
     t.ok('英語ロケールでも理由文と読み上げ名が組み立てられる',
       enOwn.includes('Claude') && enAria === `Claude setting (${enOwn})`, enOwn);
+    const enTwo = joinLockReasons([lockReasonText('Codex', { reason: 'workspace' }), lockReasonText('Grok', { mode: 'blocked' })]);
+    const enSpoken = spokenLockReason(enTwo);
+    t.ok('英語でも改行で分けた理由は、1 つずつ文末のピリオドで区切って読み上げる',
+      enTwo.split('\n').length === 2 && enSpoken.split('. ').length === 2 && enSpoken.endsWith('.') && !enSpoken.includes('\n'), enSpoken);
     await setLanguage('ja');
 
     // 2. 鍵の吹き出しの対話（ホバー 150ms・フォーカス・タッチ・click 抑止・Escape 保持・スクロール・リサイズ）
@@ -497,6 +538,62 @@ export default async function (t) {
     find.input.dispatchEvent(escFind);
     t.ok('createFindBar は入力で通知し、Escape で空にして再描画を呼ぶ',
       typed.join(',') === 'deploy,' && find.input.value === '' && escFind.defaultPrevented && escFind.propagationStopped);
+    // （鍵の吹き出しの対話の試験が終わった後に置く: ensureLockTips が文書へ聞き取りを足すため）
+    forgetAgentNames();
+    setAgentBrands([]);
+    // 5. ブランド表（setAgentBrands）が空で、表の labels も届いていない列（antigravity・opencode）でも、どの経路も内部の id を出さない
+    const INTERNAL = /antigravity|opencode/;
+    const noBrandDoc = {
+      agents: ['antigravity', 'opencode', 'grok'],
+      labels: {},
+    };
+    const lockedOn = (reason) => ({ locked: true, on: true, mode: 'locked', reason });
+    const fixedRow = { key: 'fixed', cells: { antigravity: lockedOn('workspace'), opencode: lockedOn('own'), grok: { locked: false, on: false, mode: 'toggle' } } };
+    const lockedRow = { key: 'locked', cells: { antigravity: { locked: true, on: false, mode: 'locked', reason: 'bundled' }, opencode: { locked: false, on: false, mode: 'toggle' } } };
+    const spots = {
+      docFixedReasons: docFixedReasons(noBrandDoc, fixedRow),
+      docFixedReasonsGroup: docFixedReasons(noBrandDoc, [fixedRow, fixedRow]),
+      docLockReason: docLockReason(noBrandDoc, fixedRow),
+      docLockReasonOff: docLockReason(noBrandDoc, lockedRow),
+      docRowLockSummary: docRowLockSummary(noBrandDoc, [lockedRow]),
+      reasonKeyTip: docReasonKey(noBrandDoc, fixedRow)[0]?.dataset.tip,
+      reasonKeyAria: docReasonKey(noBrandDoc, fixedRow)[0]?.getAttribute('aria-label'),
+      lockedChipTip: lockedAgentChip('antigravity', lockedOn('workspace'), 'AGENTS.md').dataset.tip,
+      lockedChipAria: lockedAgentChip('opencode', lockedOn('own'), 'AGENTS.md').getAttribute('aria-label'),
+      legend: agentLegend(['antigravity', 'opencode']).textContent,
+      origin: originMarks(['antigravity', 'opencode'])?.getAttribute('aria-label'),
+    };
+    const leaked = Object.entries(spots).filter(([, v]) => typeof v !== 'string' || !v || INTERNAL.test(v));
+    t.ok('ブランド表も labels も無いとき、鍵の吹き出し・読み上げ・右の欄の理由・凡例・出どころに内部の id（antigravity・opencode）が出ない',
+      leaked.length === 0 && spots.docFixedReasons.includes('いずれかのエージェント'), JSON.stringify(leaked));
+    // 表の labels が届けば、その表示名になる
+    rememberAgentNames({ antigravity: 'Antigravity', opencode: 'OpenCode' });
+    t.ok('表の labels が届いた後は、同じ経路が表示名（Antigravity・OpenCode）を使う',
+      docFixedReasons(noBrandDoc, fixedRow).includes('Antigravity') && docFixedReasons(noBrandDoc, fixedRow).includes('OpenCode')
+      && agentLegend(['antigravity']).textContent.endsWith('Antigravity'));
+
+    // 6. 行のスイッチの鍵: キーボードで届き、理由を読み上げで読める（押せない行・押せるが鍵つきでオンが残る行）
+    const reasonText = lockReasonText('Devin', { reason: 'devinHooks' });
+    const blocked = wholeSwitch({ state: 'true', fixed: true, name: 'blocked-row', disabledReason: reasonText, next: 'off' });
+    t.ok('押せない行（aria-disabled）: ボタンのままキーボードのフォーカスを受ける（disabled・tabindex=-1 にしない）',
+      blocked.tagName === 'BUTTON' && blocked.getAttribute('aria-disabled') === 'true' && !blocked.hasAttribute('disabled') && blocked.getAttribute('tabindex') !== '-1'
+      && blocked.getAttribute('role') === 'checkbox' && blocked.getAttribute('aria-checked') === 'true', blocked.outerHTML ?? '');
+    t.ok('押せない行: 理由は吹き出し（data-tip）と読み上げ名（aria-label）の両方にあり、読み上げ名では文として区切れる',
+      blocked.dataset.tip === reasonText && blocked.getAttribute('aria-label').includes(spokenLockReason(reasonText)) && blocked.getAttribute('aria-label').includes('blocked-row'),
+      blocked.getAttribute('aria-label'));
+    const pressable = wholeSwitch({ state: 'mixed', fixed: true, fixedReason: reasonText, name: 'mixed-row', next: 'off', onToggle: () => {} });
+    const pressLk = pressable.querySelector('.lk');
+    const pressDesc = pressable.querySelector('span[hidden]');
+    t.ok('押せる行（鍵つきでオンが残る）: スイッチ自身がフォーカスを受け、理由は aria-describedby の説明で読める（名前には混ぜない）',
+      pressable.tagName === 'BUTTON' && !pressable.hasAttribute('disabled') && pressable.getAttribute('tabindex') !== '-1' && pressable.getAttribute('aria-disabled') == null
+      && pressable.getAttribute('aria-checked') === 'mixed' && Boolean(pressDesc?.id) && pressable.getAttribute('aria-describedby') === pressDesc.id
+      && pressDesc.textContent === spokenLockReason(reasonText) && !pressable.getAttribute('aria-label').includes(reasonText), pressable.getAttribute('aria-describedby') ?? '');
+    t.ok('押せる行の鍵: 読み上げからは外し（aria-hidden）、フォーカスは持たず、鍵の上だけに理由を出す（data-tip-pass）。押す動きは止めない',
+      pressLk?.getAttribute('aria-hidden') === 'true' && pressLk.hasAttribute('data-tip-pass') && pressLk.dataset.tip === reasonText
+      && !pressLk.hasAttribute('tabindex') && pressable.dataset.tip == null && typeof pressable.onclick === 'function');
+    const plain = wholeSwitch({ state: 'true', name: 'plain-row', next: 'off', onToggle: () => {} });
+    t.ok('鍵つきでオンが残らない行: 鍵も説明も持たない', plain.querySelector('.lk') == null && plain.getAttribute('aria-describedby') == null);
+
   } finally {
     env.restore();
     await setLanguage('ja');

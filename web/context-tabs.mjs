@@ -3,7 +3,7 @@
 // バックエンドの id は直書きせず、エージェントのブランド情報は web/agent-brands.mjs から動的に引く。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { agentBrand, agentShortLabel } from './agent-brands.mjs';
+import { agentBrand, agentName } from './agent-brands.mjs';
 import { ensureBrandMark } from './brand-marks.mjs';
 import { hideLockTip } from './lock-tip.mjs';
 
@@ -88,7 +88,7 @@ export function entryOrigins(entry) {
 export function originMarks(sources) {
   if (!sources?.length) return null;
   const joiner = t('sessionContext.chip.join');
-  const names = sources.map(id => agentShortLabel(id, id)).join(joiner);
+  const names = sources.map(agentName).join(joiner);
   const label = t('mcp.matrix.originAgent', { agents: names });
   const box = el('span', 'cx-src');
   box.setAttribute('role', 'img');

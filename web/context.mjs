@@ -19,7 +19,7 @@ import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
 import { CONTEXT_TABS, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
 import { preserveLockTip } from './lock-tip.mjs';
-import { agentShortLabel } from './agent-brands.mjs';
+import { agentName, rememberAgentNames } from './agent-brands.mjs';
 import { freshAgents, MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocAgentLocal, applyDocBundleLocal, applyDocRowLocal, askBanner, docBundleMeta, docFreshChanged, docRowSwitch, matrixSvg, savedText } from './context-matrix.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -410,8 +410,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
 
   function docAskEl(kind) {
     const a = docAsk;
-    const to = agentShortLabel(a.agent, a.agent);
-    const from = a.from === 'common' ? t('context.matrix.originCommon') : agentShortLabel(a.from, a.from);
+    const to = agentName(a.agent);
+    const from = a.from === 'common' ? t('context.matrix.originCommon') : agentName(a.from);
     const text = a.count
       ? t('context.matrix.askBundle', { from, name: a.name, count: a.count, to })
       : t('context.matrix.ask', { from, name: a.name, to });
@@ -461,7 +461,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
             state: cell.on ? 'lockon' : 'lockoff',
             cell,
             name: displayName,
-            ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: displayName }),
+            ariaLabel: t('context.matrix.agentAria', { agent: agentName(a), name: displayName }),
             key: fk,
             keyAttr: 'cxFk',
           });
@@ -471,7 +471,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
           state: cell.on ? 'on' : 'off',
           cell,
           name: displayName,
-          ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: displayName }),
+          ariaLabel: t('context.matrix.agentAria', { agent: agentName(a), name: displayName }),
           key: fk,
           keyAttr: 'cxFk',
           onToggle: () => toggleDocCell(kind, row, a, fk),
@@ -569,7 +569,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       const items = (query ? kids : block.items).map(i => i.entry);
       const anyBundleOn = items.some(e => e.anyOn);
       const bundleMeta = docBundleMeta(doc.agents, items);
-      const row =el('div', 'cx-row ag grp' + (anyBundleOn ? '' : ' off'));
+      const row = el('div', 'cx-row ag grp' + (anyBundleOn ? '' : ' off'));
       row.dataset.key = `bundle:${block.key}`;
       const tw = button('', 'cx-ic cx-tw');
       tw.dataset.cxFk = `bundle:${block.key}`;
@@ -615,7 +615,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
               state: st.state,
               cell: st.cell,
               name: block.label,
-              ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: block.label }),
+              ariaLabel: t('context.matrix.agentAria', { agent: agentName(a), name: block.label }),
               key: fk,
               keyAttr: 'cxFk',
             });
@@ -624,7 +624,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
             agent: a,
             state: st.state,
             name: block.label,
-            ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: block.label }),
+            ariaLabel: t('context.matrix.agentAria', { agent: agentName(a), name: block.label }),
             key: fk,
             keyAttr: 'cxFk',
             onToggle: () => toggleDocBundleCell(kind, block, items, a, st.state, fk),
@@ -944,6 +944,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     try {
       const grid = await cmd('mcpMatrix', { cwd: home() });
       if (ticket !== matrixTicket) return;
+      rememberAgentNames(grid?.labels);
       matrix = grid;
     } catch { return; }
     renderCard('mcp');
@@ -968,6 +969,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     try {
       const grid = await callDocRetry(() => cmd('docMatrix', { kind, cwd: target, place: 'default' }));
       if (ticket !== docTickets[kind]) return;
+      rememberAgentNames(grid?.labels);
       if (Array.isArray(grid?.rows)) docMatrices[kind] = grid;
     } catch (e) { return e; }
     renderCard(kind);
@@ -1014,6 +1016,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       ]);
       if (ticket !== scanTicket) return;
       scan = found; ply = list; agents = native;
+      rememberAgentNames(grid?.labels); rememberAgentNames(instGrid?.labels); rememberAgentNames(skillGrid?.labels);
       if (grid) { matrix = grid; pollConnectors(); }
       if (Array.isArray(instGrid?.rows) && docInstTicket === docTickets.instruction) docMatrices.instruction = instGrid;
       if (Array.isArray(skillGrid?.rows) && docSkillTicket === docTickets.skill) docMatrices.skill = skillGrid;

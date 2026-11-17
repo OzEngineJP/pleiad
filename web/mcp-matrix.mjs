@@ -10,14 +10,14 @@
 // 行の詳細（編集・名前の変更・ログイン・削除・取り込み）は web/mcp-config.mjs の peek。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { agentShortLabel } from './agent-brands.mjs';
+import { agentName } from './agent-brands.mjs';
 import { brandMark as mark } from './context-tabs.mjs';
-import { ensureLockTips, lockReasonText } from './lock-tip.mjs';
+import { ensureLockTips, lockReasonText, joinLockReasons } from './lock-tip.mjs';
 import { MATRIX_ICON as ICON, matrixSvg as svg, matrixButton as button, lockedAgentChip, agentLegend, wholeSwitch } from './context-matrix.mjs';
 
 export { lockedAgentChip };
 
-const label = id => agentShortLabel(id, id);
+const label = agentName;
 const names = ids => ids.map(label).join('・');
 
 /**
@@ -175,7 +175,7 @@ export function createMcpMatrix({ section, onCount }) {
 
     // 鍵つきでオンのマスの理由。まとめてオフにしても残るので、鍵の上に出す（常時の文字にはしない）
     const lockedReasons = v.lkOn.map(a => lockReasonText(label(a), row.cells[a]));
-    const fixedReason = lockedReasons.length ? lockedReasons.join(t('context.rowSwitch.reasonJoin')) : null;
+    const fixedReason = joinLockReasons(lockedReasons);
     let disabledReason = null;
     if (v.locked) {
       const lockAgent = v.lkOn[0] ?? m.agents.find(a => row.cells[a].mode === 'locked' || row.cells[a].mode === 'blocked');
