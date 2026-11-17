@@ -8,6 +8,7 @@
 // agy 自身・中継（agy-context-relay）・会話の外のプロセスは落とさない。見つからない・あいまいなときは何も落とさない。
 // 実機（Windows）の木: agy.exe → powershell -Command "<コマンド>" → node.exe・chrome.exe …
 import { run as runProcess } from "../process.mjs";
+import { systemTool } from "../win-system.mjs";
 
 /** 一覧の札に出すコマンドの長さ */
 const LABEL_MAX = 80;
@@ -84,7 +85,7 @@ export async function listProcesses({ parent, platform = process.platform, exec 
     const filter = Number.isInteger(parent) ? ` -Filter 'ParentProcessId=${parent}'` : "";
     const script = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
       + `ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process${filter} | Select-Object ProcessId,ParentProcessId,CommandLine)`;
-    const raw = JSON.parse(String(await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script])).trim() || "[]");
+    const raw = JSON.parse(String(await exec(systemTool("powershell"), ["-NoProfile", "-NonInteractive", "-Command", script])).trim() || "[]");
     return (Array.isArray(raw) ? raw : [raw]).map((p) => ({ pid: p.ProcessId, ppid: p.ParentProcessId, command: p.CommandLine ?? "" }));
   }
   const out = String(await exec("ps", ["-A", "-o", "pid=,ppid=,args="]));
@@ -117,7 +118,7 @@ export async function killTree(pid, list, { platform = process.platform, exec = 
   if (!Number.isInteger(pid) || pid <= 1 || pid === self.pid || pid === self.ppid) throw new Error(`refusing to kill pid ${pid}`);
   if (platform === "win32") {
     try {
-      await exec("taskkill", ["/PID", String(pid), "/T", "/F"]);
+      await exec(systemTool("taskkill"), ["/PID", String(pid), "/T", "/F"]);
     } catch (err) {
       for (const end = Date.now() + graceMs; isAlive(pid);) {
         if (Date.now() >= end) throw err;

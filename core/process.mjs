@@ -17,6 +17,7 @@ import path from 'node:path';
 import { bootEnv } from './boot-env.mjs';
 import { holderKey } from './holder/protocol.mjs';
 import { trackChild } from './proc-track.mjs';
+import { systemTool } from './win-system.mjs';
 
 // 同期の終了処理を、process には 1 本だけ登録して配る。短命の子を片付けたら戻り値で解除する。
 const exitCleanups = new Set();
@@ -76,7 +77,7 @@ export function run(command, args = [], {
     const kill = () => {
       if (!child?.pid) return;
       if (!killTree) { try { child.kill('SIGKILL'); } catch { /* 既に終わっている */ } return; }
-      if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      if (process.platform === 'win32') spawnSync(systemTool('taskkill'), ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
       else { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* 既に終わっている */ } } }
     };
     onAbort = () => { stopped = true; if (exited) finish({}); else kill(); };

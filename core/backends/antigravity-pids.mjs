@@ -15,6 +15,7 @@
 // 置き場は会話の控えと同じ `AGENT_HOST_DATA/antigravity/`（antigravity-store.mjs の `dir()`）。
 // 読み書きは壊れていても落ちない（無い・壊れている、はどちらも「控えが無い」と同じ）。
 import { run } from "../process.mjs";
+import { systemTool } from "../win-system.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { cliCommand } from "../cli-installation.mjs";
@@ -153,7 +154,7 @@ async function imageName(pid) {
 
 async function psName(pid) {
   const [command, args] = process.platform === "win32"
-    ? ["tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]]
+    ? [systemTool("tasklist"), ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]]
     : ["ps", ["-p", String(pid), "-o", "comm="]];
   const result = await run(command, args, { windowsHide: true, timeoutMs: 5_000 });
   if (result.startError || result.exitCode !== 0) return null;
