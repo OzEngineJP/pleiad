@@ -51,7 +51,9 @@ function makeNorm(tmp) {
   const slash = tmp.replace(/\\/g, '/');
   return s => String(s).replace(/\\/g, '/').split(slash).join('<tmp>').replace(UUID, '<uuid>').replace(/claude-[0-9a-f]{8}/g, 'claude-<id>')
     // 実行時の置き場（core が読み込み時に決める。試験のプロセスによって違う）の一時ファイル
-    .replace(/[^"'\s=]*\/run\/(claude-[a-z]+-)<uuid>/g, '<run>/$1<uuid>');
+    .replace(/[^"'\s=]*\/run\/(claude-[a-z]+-)<uuid>/g, '<run>/$1<uuid>')
+    // 記録を受ける一時ファイルの連番（流す組み合わせを絞ると番号がずれる）
+    .replace(/<tmp>\/rec-\d+\.json/g, '<tmp>/rec-<n>.json');
 }
 function plain(v, norm, depth = 0) {
   if (v === null) return null;
