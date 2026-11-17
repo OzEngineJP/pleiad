@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { runSync } from '../process.mjs';
+import { systemTool } from '../win-system.mjs';
 import crypto from 'node:crypto';
 import { t } from '../i18n.mjs';
 import { loadSqlite } from '../db.mjs';
@@ -131,9 +132,9 @@ function readStoredAuth(account) {
 let userSid;
 function privateRoot(dir) {
   if (process.platform !== 'win32' || privateRoots.has(dir)) return;
-  userSid ??= /S-1-[0-9-]+/.exec(runSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { windowsHide: true }).stdout ?? '')?.[0];
+  userSid ??= /S-1-[0-9-]+/.exec(runSync(systemTool('whoami'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true }).stdout ?? '')?.[0];
   if (!userSid) throw new Error(t('accounts.backend.permissionsUnknown', { agent: 'OpenCode' }));
-  const acl = runSync('icacls.exe', [dir, '/inheritance:r', '/grant:r', `*${userSid}:(OI)(CI)F`], { windowsHide: true, stdio: 'ignore' });
+  const acl = runSync(systemTool('icacls'), [dir, '/inheritance:r', '/grant:r', `*${userSid}:(OI)(CI)F`], { windowsHide: true, stdio: 'ignore' });
   if (acl.exitCode !== 0) throw new Error(t('accounts.backend.permissionsFailed', { agent: 'OpenCode' }));
   privateRoots.add(dir);
 }

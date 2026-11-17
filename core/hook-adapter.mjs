@@ -235,7 +235,7 @@ export function runCommand(command, { input, cwd, env, timeoutMs, signal }) {
     if (signal?.aborted) { resolve({ aborted: true }); return; }
     let child;
     const bash = process.env.CLAUDE_CODE_GIT_BASH_PATH || ['C:/Program Files/Git/bin/bash.exe', 'C:/Program Files/Git/usr/bin/bash.exe'].find(fs.existsSync);
-    const systemRoot = process.env.SystemRoot || 'C:/Windows';
+    const systemRoot = process.env.SystemRoot || process.env.windir || 'C:/Windows';
     const shell = process.platform === 'win32' ? env?.__pleiadFrom === 'claude' ? bash
       : env?.__pleiadFrom === 'codex' ? path.join(systemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe')
         : process.env.ComSpec || path.join(systemRoot, 'System32/cmd.exe') : true;
@@ -248,7 +248,7 @@ export function runCommand(command, { input, cwd, env, timeoutMs, signal }) {
     const onAbort = () => { kill(); finish({ aborted: true, stdout, stderr }); };
     const finish = r => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort); resolve(r); };
     const kill = () => {
-      if (process.platform === 'win32' && child.pid) runSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      if (process.platform === 'win32' && child.pid) runSync(path.join(systemRoot, 'System32/taskkill.exe'), ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
       else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
       child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
     };
