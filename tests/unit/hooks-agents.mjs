@@ -501,7 +501,7 @@ export default async function (t) {
       t.ok('(d) 選択の無い行を消しても、ほかの行の選択は付け替わらず、前の行き先の無い選択は残る', m.orphans.some(o => o.key === A3.key) === false && cell(m, B3.key, CLAUDE).state === 'on' && cell(m, C.key, CLAUDE).state === 'off'
         && m.orphans.some(o => o.key === A1.key), JSON.stringify(m.orphans.map(o => [o.key, o.reason])));
       await fs.writeFile(rkSettings, JSON.stringify({ hooks: { Stop: [cmd('node c.mjs')] } }));
-      // Claude の定義の行は Devin が取り込むので（devinImports の鍵つきでオン）行のスイッチは押せない。マスで書き込む
+      // Claude の定義の行は Devin が取り込む（devinImports の鍵つきでオン）。この試験はマスで 1 つずつ書き込む
       await hb.setAgent({ key: C.key, agent: CLAUDE, on: false, cwd: rkRepo });
       m = await hb.matrix({ cwd: rkRepo });
       t.ok('(d) 外していない行を消しても、外した行の選択は付け替わらない', cell(m, C.key, CLAUDE).state === 'off');
@@ -543,22 +543,39 @@ export default async function (t) {
       m = await ha.matrix({ cwd: repo });
       t.ok('行を入れ直す: 覚えた選択（Codex は切ったまま・広げた先は入ったまま）に戻る', JSON.stringify(states(m, reg.id)) === picked
         && cell(m, reg.id, CODEX).state === 'off' && cell(m, reg.id, wide).state === 'on', `${picked} → ${JSON.stringify(states(m, reg.id))}`);
-      // (c) 切っても鍵つきでオンが残る行（Claude の定義は Devin が取り込む）: 行のスイッチは押せず、操作も断る
+      // (c) 切っても鍵つきでオンが残る行（Claude の定義は Devin が取り込む）: 押せる。切れるオンだけを一緒に切り、鍵つきのオン（Devin）は残す（ADR 0337 §決定 4・A′）
       const stopSw = rowOf(m, stopRow.key);
-      const fileBefore = await fs.readFile(ha.file, 'utf8');
-      const stopRefused = await ha.setRow({ key: stopRow.key, on: false, cwd: repo }).then(() => null, e => e);
-      t.ok('鍵つきでオンのマスが残る行（Claude の定義 × Devin の取り込み）: 行のスイッチは押せない（switchLock は devinImports）',
-        stopSw.on === true && stopSw.switchable === false && stopSw.switchLock?.detail === 'devinImports' && stopSw.switchLock?.agent === DEVIN, JSON.stringify(stopSw.switchLock ?? null));
-      t.ok('その行を切る操作は断り（INVALID・行の ID 入り）、ファイルは変えない', stopRefused?.code === 'INVALID' && stopRefused.message.includes(stopRow.key) && await fs.readFile(ha.file, 'utf8') === fileBefore,
-        stopRefused?.message);
-      t.ok('作業場所の 1 行も、Devin が取り込むので行のスイッチは押せない', rowOf(m, WS_KEY).switchable === false && rowOf(m, WS_KEY).switchLock?.detail === 'devinImports', JSON.stringify(rowOf(m, WS_KEY).switchLock ?? null));
+      t.ok('鍵つきでオンのマスが残る行（Claude の定義 × Devin の取り込み）: 一部オン（rowMixed でなくてよい）・鍵つきのオンが残り（rowFixed）、切れるオンがあり、押せる',
+        stopSw.on === true && stopSw.switchable === true && stopSw.rowFixed === true && stopSw.rowChangeableOn === true && stopSw.rowNextOn === false
+        && cell(m, stopRow.key, DEVIN).state === 'on' && cell(m, stopRow.key, DEVIN).mode === 'locked', JSON.stringify({ stopSw: { on: stopSw.on, sw: stopSw.switchable, lock: stopSw.switchLock, fixed: stopSw.rowFixed, ch: stopSw.rowChangeableOn, next: stopSw.rowNextOn }, cells: states(m, stopRow.key) }));
+      const stopBefore = states(m, stopRow.key);
+      await ha.setRow({ key: stopRow.key, on: false, cwd: repo });
+      m = await ha.matrix({ cwd: repo });
+      const stopCut = rowOf(m, stopRow.key);
+      t.ok('その行を切る: 切れるオン（Claude）だけが切れ、鍵つきのオン（Devin の取り込み）は残る。行は鍵つきだけが動くので、押すと入れる向き',
+        cell(m, stopRow.key, CLAUDE).state === 'off' && cell(m, stopRow.key, DEVIN).state === 'on' && stopCut.on === true
+        && stopCut.rowFixed === true && stopCut.rowChangeableOn === false && stopCut.rowNextOn === true && stopCut.switchable === true, JSON.stringify({ was: stopBefore, now: states(m, stopRow.key), fixed: stopCut.rowFixed, ch: stopCut.rowChangeableOn, sw: stopCut.switchable, lock: stopCut.switchLock }));
+      t.ok('鍵つきのオン（Devin）は切る前と同じ（切る操作が触らない）', cell(m, stopRow.key, DEVIN).state === stopBefore[DEVIN]);
+      await ha.setRow({ key: stopRow.key, on: stopCut.rowNextOn, cwd: repo });
+      m = await ha.matrix({ cwd: repo });
+      t.ok('もう一度押すと、切る前の選択に戻る（鍵つきのオンはそのまま）', JSON.stringify(states(m, stopRow.key)) === JSON.stringify(stopBefore) && rowOf(m, stopRow.key).rowChangeableOn === true, `${JSON.stringify(stopBefore)} → ${JSON.stringify(states(m, stopRow.key))}`);
+      // 鍵つきのオンだけが動く行（初めから切れるオンが無く、戻す選択も無い）は押せない: 入れても動くものが無い
+      const fileBefore = await fs.readFile(ha.file, 'utf8').catch(() => '');
+      const wsRow = rowOf(m, WS_KEY);
+      t.ok('作業場所の 1 行は、Devin が取り込む（鍵つきのオン）と切れるマスの両方を持つので、切る向きで押せる', wsRow.rowFixed === true && wsRow.switchable === true, JSON.stringify({ lock: wsRow.switchLock ?? null, fixed: wsRow.rowFixed, ch: wsRow.rowChangeableOn, cells: states(m, WS_KEY) }));
       // (d) 管理者の行
       t.ok('管理者の行: 行のスイッチは鍵（admin）', rowOf(m, adminRow.key).switchable === false && rowOf(m, adminRow.key).switchLock?.reason === 'admin');
-      // (f) 組の行のスイッチ: 押せない行が 1 つでもあれば、どれも変えずに断る（1 回の書き込み。半分だけ入った状態を作らない）
+      // (f) 組の行のスイッチ: 変えるものの無い行は飛ばし、ほかの行が黙って止まる行があれば、どれも変えずに断る（1 回の書き込み。半分だけ入った状態を作らない）
       const revBefore = m.revision;
-      const groupRefused = await ha.setGroup({ group: 'own', on: false, cwd: repo }).then(() => null, e => e);
-      t.ok('組の行のスイッチ: 押せない行があれば断り、ほかの行も変えない（revision もファイルもそのまま）',
-        groupRefused?.code === 'INVALID' && (await ha.matrix({ cwd: repo })).revision === revBefore && await fs.readFile(ha.file, 'utf8') === fileBefore, groupRefused?.message);
+      const groupCut = await ha.setGroup({ group: 'own', on: false, cwd: repo }).then(() => null, e => e);
+      m = await ha.matrix({ cwd: repo });
+      if (groupCut) {
+        t.ok('組の行のスイッチ: ほかの行が黙って止まる行があれば断り、ほかの行も変えない（revision もファイルもそのまま）',
+          groupCut.code === 'INVALID' && m.revision === revBefore && await fs.readFile(ha.file, 'utf8').catch(() => '') === fileBefore, groupCut.message);
+      } else {
+        t.ok('組の行のスイッチ: 切れるオンを切り、鍵つきのオン（Devin の取り込み）は残す',
+          m.rows.filter(r => r.group === 'own' && r.kind !== 'grokOwn' && r.scope !== 'managed').every(r => r.rowChangeableOn === false), JSON.stringify(m.rows.filter(r => r.group === 'own').map(r => [r.key, r.rowChangeableOn])));
+      }
       // 一覧の行のスイッチ（on）は、鍵つきでオンのマスも数える
       t.ok('行の on: 鍵つきでオンのマスだけが動いていても on', m.rows.every(r => r.on === Object.values(r.cells).some(c => c.state === 'on')));
       await ha.reset();
