@@ -343,6 +343,17 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     /** 使用量を読むための設定フォルダ（CLAUDE_CONFIG_DIR）。作りはしない */
     usageDir,
     hasUsageLogin,
+    /**
+     * 会話用トークンの持ち主と、使用量の認可のアカウントが同じ組織か（コネクターの入口がオンのアカウントだけが呼ぶ。core/claude-connectors.mjs）。
+     * 'ok'（同じ）・'mismatch'（違う）・'unknown'（どちらかが未確認）。組織の id は返さない。共有の設定フォルダの oauthAccount は根拠にしない
+     */
+    async ownerStatus(id) {
+      const entry = (await read()).accounts.find(a => a.id === id);
+      const org = typeof entry?.tokenOrg === 'string' && ORG.test(entry.tokenOrg) ? entry.tokenOrg : null;
+      const usage = org && (await hasUsageLogin(id)) ? await usageAccount(id) : null;
+      if (!org || !usage?.org) return 'unknown';
+      return org === usage.org ? 'ok' : 'mismatch';
+    },
     /** 使用量の認可（`claude auth login`）が済んだ印を置く */
     async markUsageLogin(id) {
       if (!(await read()).accounts.some(a => a.id === id)) throw new Error(t('claude.accounts.notRegistered'));

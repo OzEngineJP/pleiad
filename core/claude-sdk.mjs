@@ -42,6 +42,20 @@ export function claudeSdkSource(env = process.env, appRoot = APP_ROOT) {
   return fs.existsSync(path.join(appRoot, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'package.json')) ? 'local' : 'download';
 }
 
+/**
+ * いま会話に使う SDK の版。local は node_modules の package.json、download は置き場に入っている版（固定した版）。
+ * 読めなければ null（claude.ai のコネクターを会話へ渡す入口が、検証していない版でオンを止めるために使う。core/claude-connectors-auth.mjs）
+ */
+export function claudeSdkVersion(env = process.env, appRoot = APP_ROOT) {
+  try {
+    if (claudeSdkSource(env, appRoot) === 'local') {
+      const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'package.json'), 'utf8'));
+      return typeof pkg?.version === 'string' ? pkg.version : null;
+    }
+    return installedSdk(claudeSdkRoot(env), CLAUDE_SDK_PIN) ? CLAUDE_SDK_PIN.version : null;
+  } catch { return null; }
+}
+
 // ---------------------------------------------------------------- 同意
 
 const consentFile = (root) => path.join(root, 'consent.json');

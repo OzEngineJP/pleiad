@@ -4,8 +4,8 @@
 //   （秘密を含まない。claude-accounts.json の版は上げない。claude-connectors.json は設定 › 外部 MCP のコネクターの一覧の覚えで別のもの）
 //   コネクターの名前ごとのオフは、同じアカウントの項目に後から足せる（今は読まない。知らない項目は無視する）
 // 入口は gate(account) の 1 か所（core/server.mjs の accountResolve）。オフ・対象外のときは同じ account をそのまま返し、新しい認証の解決へ入らない。
-// オンのときだけ resolveAuth(account) を呼ぶ。段 1 の resolveAuth は「まだ使えない」（null）を返し、本物の資格情報を読まず、旧い経路のまま会話を始める。
-// 段 2 で、resolveAuth が使えるときに account を返し、使えないときの止める条件の通知を足す
+// オンのときだけ resolveAuth(account) を呼ぶ。既定の resolveAuth（段 1 の authNotAvailableYet）は「まだ使えない」（null）を返し、本物の資格情報を読まず、旧い経路のまま会話を始める。
+// 段 2 の resolveAuth は core/claude-connectors-auth.mjs（server が差す）。使えるときは認証の入った account を返し、使えないときは投げて会話を止める（旧い経路へは戻さない）
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -38,7 +38,7 @@ export function createClaudeConnectorSettings({ dataDir }) {
  * 入口。gate(account) は、会話が使うアカウント（claudeAccounts.resolve の結果）を、入口がオンのときだけ resolveAuth に通す。
  *   account が無い（ログイン中のアカウント・アカウントの指定なし）・id が無い → 設定を読まずにそのまま返す
  *   オフ → 設定を 1 回だけ読み、同じ account をそのまま返す（resolveAuth は呼ばない）
- *   オン → resolveAuth(account) を呼ぶ。結果の account があればそれを、無ければ（段 1 は常に無い）同じ account を返す
+ *   オン → resolveAuth(account) を呼ぶ。結果の account があればそれを、無ければ（既定の段 1 の解決は常に無い）同じ account を返す。resolveAuth が投げたらそのまま投げる（止める）
  * 互換の接続先の会話は、server が accountResolve を呼ぶ前に分かれている（接続先の会話はアカウントを引かない）ので、ここへ来ない
  */
 export function createClaudeConnectorsGate({ dataDir, resolveAuth = authNotAvailableYet, settings = createClaudeConnectorSettings({ dataDir }) }) {

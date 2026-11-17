@@ -91,6 +91,9 @@ import { createContextSettings } from './context-settings.mjs';
 import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
 import { createClaudeConnectorsGate } from './claude-connectors.mjs';
+import { createClaudeConnectorsAuth } from './claude-connectors-auth.mjs';
+import { readClaudeUsage, guardUsageDir } from './backends/claude-usage.mjs';
+import { claudeSdkVersion } from './claude-sdk.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
@@ -130,7 +133,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { stopHeldAppServer } from './backends/codex-held.mjs';
-import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart } from './backends/claude-held.mjs';
+import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart, cliVersion } from './backends/claude-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
 import { stopHeldAgy } from './backends/antigravity.mjs';
 import { sweepIdleAtStart } from './backends/antigravity-held.mjs';
@@ -426,7 +429,7 @@ try {
 const contextBases = createContextBases({ file: path.join(store.dataDir, 'context-bases.json') });
 await contextBases.load();
 
-import { installation, cliCommand } from "./cli-installation.mjs";
+import { installation, cliCommand, claudeExecutable } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
 import { createSessionCommands } from './session-commands.mjs';
@@ -556,10 +559,24 @@ claudeAccountSecrets.migrate().catch(() => {});
 // トークンの持ち主（発行された組織）を GET /v1/models の応答ヘッダーで確かめ、使用量の認可と食い違えば一覧で知らせる。
 // AGENT_HOST_ANTHROPIC_API は確認の送り先（テストの偽物用）。off なら確かめない（テストは既定で off。本物へは送らない）
 const tokenCheckApi = process.env.AGENT_HOST_ANTHROPIC_API || ANTHROPIC_API;
-const claudeAccountConnectors = createClaudeConnectorsGate({ dataDir: store.dataDir });
 const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir, secrets: claudeAccountSecrets,
   checkOrg: tokenCheckApi === 'off' ? null : token => fetchTokenOrg(token, { baseUrl: tokenCheckApi }),
   onChecked: () => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }) });
+// claude.ai のコネクターを登録アカウントの会話へ渡す入口（ADR 0340）。設定がオン（試験と手元の確かめだけ）のアカウントの会話だけが認証側を通る。
+// 認証側のファクトリーは I/O もタイマーも持たない（オフの経路は何も呼ばない）。更新は CLI に任せ（使用量の読み取りを 1 回流す）、Pleiad は更新用トークンを持ち出さない
+const claudeAccountConnectors = createClaudeConnectorsGate({
+  dataDir: store.dataDir,
+  resolveAuth: createClaudeConnectorsAuth({
+    accounts: claudeAccounts,
+    versions: async () => {
+      let exe = null;
+      try { exe = claudeExecutable(); } catch { /* 入っていない。版は null になり、オンは止まる */ }
+      return { cli: exe ? await cliVersion(exe) : null, sdk: claudeSdkVersion() };
+    },
+    refresh: dir => readClaudeUsage({ configDir: dir }),
+    guard: guardUsageDir,
+  }),
+});
 // アカウントの認可を Pleiad から行う（疑似端末で claude setup-token / claude auth login を回す。core/claude-login.mjs）。
 // トークンは画面へ返さず、そのままアカウントの秘密へしまう
 const claudeLogin = createClaudeLogin({

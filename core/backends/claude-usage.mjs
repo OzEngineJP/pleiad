@@ -25,7 +25,28 @@ export function usageEnv(base = process.env, { token, configDir } = {}) {
 
 // A control-only query: no prompt is yielded and no inference request is made.
 // Keep stdin open until get_usage completes, then close the owned process.
-export async function readClaudeUsage({ token, configDir } = {}) {
+export function readClaudeUsage({ token, configDir } = {}) {
+  return configDir && guarded.has(lockKey(configDir)) ? withUsageLock(configDir, () => readClaudeUsageNow({ token, configDir })) : readClaudeUsageNow({ token, configDir });
+}
+
+// 同じ使用量の設定フォルダを同時に 2 つの CLI で読まない。CLI は読むときにアクセス用トークンの期限が近ければ更新用トークンで更新するので、
+// 重なると更新が競合しうる。コネクターの入口がオンのアカウント（core/claude-connectors-auth.mjs。ADR 0340 段 2）の設定フォルダだけを guardUsageDir で
+// 登録し、そのフォルダの読み取りだけを順に流す（会話の前の期限の確かめ直しも同じ口を通る）。登録の無いフォルダ・ログイン中のアカウントの読み取りは、今までと同じ道（待たない）
+const guarded = new Set();
+const usageLocks = new Map();
+const lockKey = dir => path.resolve(dir);
+export function guardUsageDir(dir) { guarded.add(lockKey(dir)); }
+export function withUsageLock(dir, fn) {
+  const key = lockKey(dir);
+  const prev = usageLocks.get(key) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  const tail = run.then(() => {}, () => {});
+  usageLocks.set(key, tail);
+  tail.then(() => { if (usageLocks.get(key) === tail) usageLocks.delete(key); });
+  return run;
+}
+
+async function readClaudeUsageNow({ token, configDir } = {}) {
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   const { query } = await loadClaudeSdk();

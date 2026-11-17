@@ -157,6 +157,9 @@ export const DATA_WRITES = [
     { name: 'claude-accounts.json', limit: 'Claude のアカウント。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
   ] },
+  { file: 'core/claude-connectors-auth.mjs', sites: 2, targets: [
+    { name: '(置き場の外) 共有の設定フォルダ（~/.claude）の .claude.json', limit: 'CLI 自身が丸ごと書く設定のファイル。足すのは許可した項目（mcpServers・作業場所ごとの数項目）だけで、足りない分だけ。数 KB', reason: 'コネクターを使う会話の CLI に、ホームの設定の許可した項目を渡す（ADR 0340 段 2）。変わらなければ書かない。一時ファイルに書いて名前を付け替える（途中の状態を CLI に読ませない）' },
+  ] },
   { file: 'core/claude-sdk.mjs', sites: 1, targets: [
     { name: 'claude-sdk/consent.json', limit: '固定（{ acceptedAt, reason?, evidence? }）', reason: 'Claude Agent SDK の取得への同意の印（ADR 0208）。「取得する」を押したときと、前の版から Claude を使っていた人をみなしたときだけ書く' },
   ] },

@@ -197,6 +197,8 @@ function resetCliSignatureCache() { cliSigAt = 0; cliSigValue = null; }
 
 async function probeCatalog(cwd, withSettings, account = null) {
   if (account?.id && !account?.token) throw new Error("missing Claude account token");
+  // コネクターの入口がオンのアカウント（ADR 0340 段 2）は、会話と同じ認証（期限を確かめたトークン + 設定フォルダ・権限）で引く。取れなければ投げる（会話用トークンへ戻さない）
+  const connectorsAuth = account?.connectors ? await account.connectors.fresh({ cwd }) : null;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 30_000);
   const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
@@ -206,7 +208,7 @@ async function probeCatalog(cwd, withSettings, account = null) {
     q = query({ prompt: idle(), options: {
       pathToClaudeCodeExecutable: sdk.executable(),
       // アカウントの指定があるときは会話と同じ共有の設定フォルダ＋そのアカウントのトークンで引く
-      env: claudeEnv(process.env, account?.token ? { token: account.token } : {}),
+      env: claudeEnv(process.env, connectorsAuth ? { token: connectorsAuth.token, extra: connectorsAuth.env } : account?.token ? { token: account.token } : {}),
       abortController: ac,
       ...(withSettings
         ? { settingSources: ["user", "project", "local"], settings: { disableAllHooks: true }, strictMcpConfig: true, mcpServers: {}, ...(cwd ? { cwd } : {}) }
@@ -227,7 +229,7 @@ async function probeCatalog(cwd, withSettings, account = null) {
   } catch (err) {
     if (!account?.token) throw err;
     // 元のエラー（message・cause・追加のプロパティ）にはトークンが混ざりうるので渡さない。伏せた文面と、見分けに要る code / kind だけを持つ新しいエラーにする
-    throw Object.assign(new Error(redactToken(err?.message ?? err, account.token)), err?.code ? { code: err.code } : {}, err?.kind ? { kind: err.kind } : {});
+    throw Object.assign(new Error(redactToken(redactToken(err?.message ?? err, account.token), connectorsAuth?.token)), err?.code ? { code: err.code } : {}, err?.kind ? { kind: err.kind } : {});
   } finally {
     clearTimeout(timer);
     try { q?.close?.(); } catch { /* 既に閉じている */ }
@@ -418,7 +420,7 @@ async function matchClaude(name, cwd, account = null, { passive = false } = {}) 
   return matchClaudeModel(await claudeModels(cwd, { passive }, account), c?.rows, name);
 }
 function makeScopedBackend(account) {
-  return {
+  const scoped = {
     ...backend,
     get description() { return backend.description; },
     models: (cwd, { refresh = false, passive = false } = {}) => claudeModels(cwd, { refresh, passive }, account),
@@ -429,6 +431,26 @@ function makeScopedBackend(account) {
     adoptTurn: (args) => backend.adoptTurn({ ...args, oauthToken: args?.oauthToken ?? (args?.endpoint ? null : account?.token) }),
     internalTurn: (opts) => backend.internalTurn({ ...opts, oauthToken: opts?.oauthToken ?? (opts?.endpoint ? null : account?.token) }),
     suggestTitle: (opts) => backend.suggestTitle({ ...opts, oauthToken: opts?.oauthToken ?? (opts?.endpoint ? null : account?.token) }),
+  };
+  return account?.connectors ? withConnectorsAuth(scoped, account) : scoped;
+}
+
+/**
+ * コネクターの入口がオンのアカウント（ADR 0340 段 2）の会話・内部呼出し: 起動の直前に認証を取り直し（期限・設定の反映。core/claude-connectors-auth.mjs）、
+ * 取れたトークンと env（CLAUDE_CONFIG_DIR・CLAUDE_CODE_OAUTH_SCOPES）を渡す。取れなければ投げて始めない（会話用に登録したトークンへは戻さない）。
+ * 互換の接続先の呼出しは今までどおり（コネクターの認証を足さない）。オフのアカウントはこの関数に来ない
+ */
+function withConnectorsAuth(scoped, account) {
+  const authed = async (opts, call) => {
+    if (opts?.endpoint) return call(opts);
+    const auth = await account.connectors.fresh({ cwd: opts?.cwd });
+    return call({ ...opts, oauthToken: auth.token, connectorsEnv: auth.env });
+  };
+  return {
+    ...scoped,
+    runTurn: (opts, adopt) => authed(opts, o => scoped.runTurn(o, adopt)),
+    internalTurn: (opts) => authed(opts, o => scoped.internalTurn(o)),
+    suggestTitle: (opts) => authed(opts, o => scoped.suggestTitle(o)),
   };
 }
 
@@ -892,7 +914,7 @@ export const backend = {
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, oauthToken, connectorsEnv = null, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
     // SDK を読む（配布物で初めてなら、同意があればここで取る。core/claude-sdk.mjs）。読めなければプロンプトを渡す前の失敗にする
     // （送信待ちが「失敗」に戻り、取った後に再送できる）。同意が無ければ、画面に取得の案内を出させる
     let api;
@@ -1309,7 +1331,7 @@ export const backend = {
         // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
         // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。固定の部分 + 設定 compaction.auto の delegatedHeadroom。ADR 0166）を足す
         env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, claudeExtraEnv)
-          : claudeEnv(process.env, { token: oauthToken, extra: claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env,
+          : claudeEnv(process.env, { token: oauthToken, extra: connectorsEnv ? { ...claudeExtraEnv, ...connectorsEnv } : claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env,
           // 秘密情報と変数は Bash ツールのシェルにだけ（上の envFile）。値そのものは CLI 本体の env に入れない
           ...(envFile ? { CLAUDE_ENV_FILE: envFile.file } : {}) },
         // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
@@ -1609,7 +1631,7 @@ export const backend = {
    * 接続先の会話一覧にも残さない。止められた（signal）ときは null、失敗は投げる（取れた分の使用量は error.usage に載せる）。
    * 返りは { text, usage }。usage は測れなければ null（0 扱いにしない。core/usage.mjs の internalTask 行へ渡る）
    */
-  async internalTurn({ prompt, model, signal, locale, cwd, endpoint, oauthToken }) {
+  async internalTurn({ prompt, model, signal, locale, cwd, endpoint, oauthToken, connectorsEnv = null }) {
     let text = "", usage = null;
     const ac = new AbortController();
     const stop = () => ac.abort();
@@ -1647,7 +1669,7 @@ export const backend = {
           // 互換の接続先の呼出しは、その接続先のモデル（"haiku" が ANTHROPIC_DEFAULT_HAIKU_MODEL に置き換わる）。
           // settingSources が空なのでユーザーの settings.json は読まれず、env だけで足りる
           abortController: ac,
-          ...(endpoint ? { env: claudeCompatEnv(process.env, endpoint) } : oauthToken ? { env: claudeEnv(process.env, { token: oauthToken }) } : {}) },
+          ...(endpoint ? { env: claudeCompatEnv(process.env, endpoint) } : oauthToken ? { env: claudeEnv(process.env, connectorsEnv ? { token: oauthToken, extra: connectorsEnv } : { token: oauthToken }) } : {}) },
       })) {
         if (m.type === "assistant") for (const b of m.message?.content ?? []) if (b.type === "text") text += b.text;
         // 最後の result メッセージにこの呼出しの使用量が載る（入力はキャッシュの作成・読みを含む）
@@ -1678,8 +1700,8 @@ export const backend = {
    * 返すのは生成された生のテキスト。前後の記号を落とす整形は server 側（バックエンド非依存）。
    */
   // locale は会話の言語。タイトルもその言語で作らせる
-  async suggestTitle({ transcript, oauthToken, endpoint = null, locale }) {
-    const out = await backend.internalTurn({ prompt: agentT(locale, 'title.claude') + NL + NL + transcript, model: "haiku", endpoint, oauthToken, locale });
+  async suggestTitle({ transcript, oauthToken, connectorsEnv = null, endpoint = null, locale }) {
+    const out = await backend.internalTurn({ prompt: agentT(locale, 'title.claude') + NL + NL + transcript, model: "haiku", endpoint, oauthToken, ...(connectorsEnv ? { connectorsEnv } : {}), locale });
     return out?.text ?? "";
   },
 };
