@@ -203,6 +203,12 @@ export function rebuildIdleMinutes(id) {
   return Number.isFinite(rule) ? rule : null;
 }
 
+/** 画面・エラーに出すエージェントの短い名前（表のマスの吹き出しと同じ。web/agent-brands.mjs の agentShortLabel）。知らない id は id のまま */
+export const agentShortName = (id) => agentOf(id)?.shortLabel ?? id;
+
+/** ids の表示名の表（id -> 名前）。行の鍵の吹き出し・知らせの `{{agent}}` に、内部の id でなくこの名前を入れる */
+export const agentShortNames = (ids) => Object.fromEntries([...ids].map((id) => [id, agentShortName(id)]));
+
 /** 画面に渡す記述（describeBackends に載せる分） */
 export function agentPresentation(id) {
   const a = agentOf(id);

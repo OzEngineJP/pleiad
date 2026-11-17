@@ -106,11 +106,12 @@ try {
   check(await reg.locator('.cx-ag button, button.cx-ag').count() === 0, '切れている名前にはアイコンは出ない（押せない）');
   await sw.click();
   await page.waitForTimeout(800);
-  check(await row(page, 'reg').locator('.cx-ag[aria-pressed=true]').count() >= 1 && await row(page, 'reg').locator('.cx-sw').getAttribute('aria-checked') === 'true', '全体のスイッチを入れると、その名前が使えるエージェントに渡る');
+  // 一部のエージェントにだけ渡る行は横棒（mixed）。全体のスイッチは role=checkbox の 3 状態（ADR 0337 §決定 4 の 2026-11-17 改訂）
+  check(await row(page, 'reg').locator('.cx-ag[aria-pressed=true]').count() >= 1 && ['true', 'mixed'].includes(await row(page, 'reg').locator('.cx-sw').getAttribute('aria-checked')), '全体のスイッチを入れると、その名前が使えるエージェントに渡る');
   await row(page, 'reg').locator('.cx-ag[aria-pressed=true]').first().click();
   await page.waitForTimeout(800);
   check(await row(page, 'reg').locator('.cx-ag[aria-pressed=true]').count() >= 0, 'アイコンを外せる（確認なし）');
-  await row(page, 'reg').locator('.cx-sw').evaluate(e => { if (e.getAttribute('aria-checked') !== 'true') e.click(); });
+  await row(page, 'reg').locator('.cx-sw').evaluate(e => { if (e.getAttribute('aria-checked') === 'false') e.click(); });
   await page.waitForTimeout(800);
   await row(page, 'reg').locator('.cx-sw').click();
   await page.waitForTimeout(800);

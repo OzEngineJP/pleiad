@@ -1,13 +1,13 @@
 // 設定 › プラグイン（web/context.mjs）と会話の右パネル（web/session-context.mjs）の
 // 4 タブ・フォルダーまとまり（>8 で閉じる・一部は checkbox mixed で一括切替）・Skills の絞り込み。
 import { N } from '../lib/dom-stub.mjs';
-import { setLanguage } from '../../web/i18n.mjs';
+import { setLanguage, t as tr } from '../../web/i18n.mjs';
 import { setAgentBrands } from '../../web/agent-brands.mjs';
 import { AGENTS, agentPresentation } from '../../core/backends/agents.mjs';
 import { setupContext } from '../../web/context.mjs';
 import { setupSessionContext } from '../../web/session-context.mjs';
-import { buildDocMatrix, snapshotBaselineAgents } from '../../core/context-doc-matrix.mjs';
-import { WORKSPACE_SUMMARY_KEY, docItemKey, emptyDocAgentsConfig, setDocRowRule, toggleDocAgentRule } from '../../core/context-agents.mjs';
+import { applyDocTouch, buildDocMatrix } from '../../core/context-doc-matrix.mjs';
+import { WORKSPACE_SUMMARY_KEY, docItemKey, emptyDocAgentsConfig } from '../../core/context-agents.mjs';
 
 export const name = 'context-panel-tabs';
 export const title = '設定 › プラグインと会話の右パネル編集モードの 4 タブ・まとまり・絞り込み';
@@ -228,6 +228,8 @@ export default async function (t) {
       { id: 'ply-link', name: '委譲ルール', on: true, tokens: 4, text: 'y', target: 'parent', tag: 'linked', agents: ['claude', 'grok'] },
     ];
     let failDoc = false, failPly = false;
+    let mcpCodexOn = true, failMcpRow = false;
+    const mcpRowCalls = [], mcpAgentCalls = [];
     const rootsState = { instruction: { value: [] }, skill: { value: [] }, mcp: { value: [] } };
     const toRawLegacy = (kinds) => ({
       version: 1,
@@ -293,30 +295,20 @@ export default async function (t) {
       if (command === 'setDocRow') {
         if (failDoc) throw new Error('boom-settings');
         docWrites.push({ command, ...payload });
-        const entries = scanDocsFor(payload.kind, scanEntries, kindsState);
-        const raw = toRawLegacy(kindsState);
-        const m = buildDocMatrix({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: docAgentsCfg, cwd: null, home: '/home/u' });
-        docAgentsCfg.defaults[payload.kind] ??= { agents: snapshotBaselineAgents({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: docAgentsCfg, place: null, home: '/home/u' }) };
-        const keys = payload.keys ?? [payload.key];
-        for (const k of keys) {
-          const row = k === WORKSPACE_SUMMARY_KEY ? m.summaryRow : m.byKey.get(k);
-          const cur = docAgentsCfg.defaults[payload.kind].agents[k] ?? row.rule;
-          const input = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
-          docAgentsCfg.defaults[payload.kind].agents[k] = setDocRowRule(payload.kind, input, cur, payload.on);
-        }
+        // 本物の保存（core/server.mjs の docTouch）と同じ関数。行のスイッチの規則（外す前の組を was に覚える・戻す）はここで決まる
+        applyDocTouch(docAgentsCfg, {
+          kind: payload.kind, entries: scanDocsFor(payload.kind, scanEntries, kindsState), legacyConfig: toRawLegacy(kindsState),
+          matrixCwd: null, home: '/home/u', place: null, placeKey: null, keys: payload.keys ?? [payload.key], on: payload.on,
+        });
         return { ok: true, defaults: docAgentsCfg.defaults };
       }
       if (command === 'setDocAgent') {
         if (failDoc) throw new Error('boom-settings');
         docWrites.push({ command, ...payload });
-        const entries = scanDocsFor(payload.kind, scanEntries, kindsState);
-        const raw = toRawLegacy(kindsState);
-        const m = buildDocMatrix({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: docAgentsCfg, cwd: null, home: '/home/u' });
-        docAgentsCfg.defaults[payload.kind] ??= { agents: snapshotBaselineAgents({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: docAgentsCfg, place: null, home: '/home/u' }) };
-        const row = payload.key === WORKSPACE_SUMMARY_KEY ? m.summaryRow : m.byKey.get(payload.key);
-        const cur = docAgentsCfg.defaults[payload.kind].agents[payload.key] ?? row.rule;
-        const input = payload.key === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
-        docAgentsCfg.defaults[payload.kind].agents[payload.key] = toggleDocAgentRule(payload.kind, input, cur, payload.agent, payload.on);
+        applyDocTouch(docAgentsCfg, {
+          kind: payload.kind, entries: scanDocsFor(payload.kind, scanEntries, kindsState), legacyConfig: toRawLegacy(kindsState),
+          matrixCwd: null, home: '/home/u', place: null, placeKey: null, agent: payload.agent, keys: payload.keys ?? [payload.key], on: payload.on,
+        });
         return { ok: true, defaults: docAgentsCfg.defaults };
       }
       if (command === 'plyInstructions') return {
@@ -363,8 +355,18 @@ export default async function (t) {
       if (command === 'agentMcp') return { agents: {} };
       if (command === 'mcpMatrix') return {
         agents: ['claude', 'codex'],
-        rows: [{ key: 'srv-1', name: 'github', kind: 'config', group: 'agent', origins: ['claude'], cells: { claude: { mode: 'locked', reason: 'own', state: 'on' }, codex: { mode: 'toggle', state: 'on' } } }],
+        rows: [{ key: 'srv-1', name: 'github', kind: 'config', group: 'agent', origins: ['claude'], cells: { claude: { mode: 'locked', reason: 'own', state: 'on' }, codex: { mode: 'toggle', state: mcpCodexOn ? 'on' : 'off' } },
+          // サーバーの集計（core の mcpRowMeta）。codex を外した後は、外す前の組（codex）が戻し先
+          ...(mcpCodexOn ? { rowSwitchOn: true, rowMixed: false, rowFixed: true, rowChangeableOn: true, rowNextOn: false, rowRestore: null, restoreAgents: [], rowLocked: false }
+            : { rowSwitchOn: true, rowMixed: true, rowFixed: true, rowChangeableOn: false, rowNextOn: true, rowRestore: 'was', restoreAgents: ['codex'], rowLocked: false }) }],
       };
+      if (command === 'setMcpRow') {
+        mcpRowCalls.push(payload);
+        if (failMcpRow) throw new Error('boom-mcp-row');
+        mcpCodexOn = payload.on === true;
+        return { ok: true, changed: ['codex'] };
+      }
+      if (command === 'setMcpAgent') { mcpAgentCalls.push(payload); return { ok: true }; }
       if (command === 'recentPlaces') return { places: ['/repo'] };
       if (command === 'backends') return [{ id: 'claude', name: 'Claude', capabilities: { plyContext: 'turn' } }];
       return {};
@@ -456,6 +458,34 @@ export default async function (t) {
     t.ok('タブ切替で親スクロール先頭へ戻り、最後のタブを記憶する',
       dom.scroller.scrollTop === 0 && dom.store.get('ply-context-tab') === 'mcp'
       && p.querySelector('#cx-panel-mcp').hidden === false);
+
+    // 外部 MCP の行のスイッチ（ToBe-A′）: 鍵つきでオンの Claude が残る行も押せる。1 回の setMcpRow で、変えられるオン（Codex）だけをまとめてオフにする
+    const mcpSw = () => p.querySelector('#cx-panel-mcp .cx-row[data-key="srv-1"] .cx-sw');
+    t.ok('外部 MCP の行（鍵つきの Claude がオン・Codex がオン）のスイッチは role="checkbox"・aria-checked="true" で、押せる（aria-disabled が無い）',
+      mcpSw()?.getAttribute('role') === 'checkbox' && mcpSw().getAttribute('aria-checked') === 'true' && mcpSw().getAttribute('aria-disabled') == null,
+      mcpSw()?.getAttribute('aria-label'));
+    mcpSw().onclick();
+    await settle();
+    t.ok('押すと setMcpRow が 1 回だけ（on: false）。アイコンごとの setMcpAgent は呼ばない（途中まで保存した状態を作らない）',
+      mcpRowCalls.length === 1 && mcpRowCalls[0].name === 'srv-1' && mcpRowCalls[0].on === false && mcpAgentCalls.length === 0,
+      JSON.stringify([mcpRowCalls, mcpAgentCalls]));
+    t.ok('保存の後、行は「一部オン」（aria-checked="mixed"）で小さな鍵が重なり、押し直すと外す前の選択に戻す動きを読み上げる',
+      mcpSw().getAttribute('aria-checked') === 'mixed' && mcpSw().querySelectorAll('.lk').length === 1
+      && mcpSw().getAttribute('aria-label').includes(tr('context.rowSwitch.next.restore')),
+      mcpSw()?.getAttribute('aria-label'));
+    t.ok('保存の知らせは「保存しました」だけ（Codex は始まっている会話にも次のターンから届くので、新しい会話から、と言わない）',
+      p.querySelector('.cx-toast')?.textContent === '保存しました', p.querySelector('.cx-toast')?.textContent);
+    mcpSw().onclick();
+    await settle();
+    t.ok('もう一度押すと setMcpRow（on: true）で外す前の組へ戻り、行はオンに戻る',
+      mcpRowCalls.length === 2 && mcpRowCalls[1].on === true && mcpSw().getAttribute('aria-checked') === 'true' && mcpSw().querySelectorAll('.lk').length === 0,
+      JSON.stringify(mcpRowCalls));
+    failMcpRow = true;
+    mcpSw().onclick();
+    await settle();
+    t.ok('保存に失敗したら押す前の状態（オン）へ戻り、半分だけ保存した成功は出さない',
+      mcpSw().getAttribute('aria-checked') === 'true' && mcpCodexOn === true && p.querySelector('.cx-toast')?.textContent !== '保存しました');
+    failMcpRow = false;
     p.querySelector('#cx-tab-instruction').onclick();
     await settle();
 
@@ -472,6 +502,10 @@ export default async function (t) {
       ruleKids.length === 9 && ruleKids.every(k => k.querySelector('.cx-src') == null));
 
     // 行単位で子 1 つオフ → mixed → 一括 setDocRow
+    // 子の行のスイッチの状態（集計の分母は、鍵の無いマス全部。OpenCode だけが自分で読む行は、初めから「一部オン」）
+    const kidSws = () => instPanel.querySelectorAll('.cx-row.kid').map(k => k.querySelector('.cx-sw').getAttribute('aria-checked'));
+    const kidBaseline = kidSws();
+    const grpBaseline = instPanel.querySelector('.cx-row.grp .cx-sw').getAttribute('aria-checked');
     ruleKids[0].querySelector('.cx-sw').onclick();
     await settle();
     const grpSwAfterOne = instPanel.querySelector('.cx-row.grp .cx-sw');
@@ -479,24 +513,41 @@ export default async function (t) {
       grpSwAfterOne.getAttribute('role') === 'checkbox'
       && grpSwAfterOne.getAttribute('aria-checked') === 'mixed');
 
+    // 読み上げ: 一部オンの状態と、押したときの動き（変えられる分をまとめてオフ）が名前に入る
+    const grpLabelMixed = grpSwAfterOne.getAttribute('aria-label') ?? '';
+    t.ok('一部オンのまとまりスイッチの読み上げ名は、状態「一部オン」と押したときの動き「変更できる分をまとめてオフにする」を含む',
+      grpLabelMixed.includes('一部オン') && grpLabelMixed.includes('変更できる分をまとめてオフにする'), grpLabelMixed);
+
+    // 一部だけオンのまとまりを押すと、変えられるオンのある子だけがまとめてオフになる（全部をオンへ広げない）。1 回の setDocRow に、押せる子の 9 件を渡す
+    // （先に自分の行のスイッチで外した 1 件は、外す前の記録だけを持つ子。core が今回は外していないその子の古い戻し先を消すために渡す）
     const beforeDocWrites = docWrites.length;
     grpSwAfterOne.onclick();
     await settle();
     const grpSwAfterBatch = instPanel.querySelector('.cx-row.grp .cx-sw');
-    t.ok('mixed 状態のまとまりスイッチを押すと 1 回の setDocRow 保存ですべて有効に戻る',
+    t.ok('一部オンのまとまりスイッチを押すと 1 回の setDocRow 保存（on: false）で、変えられる分がすべてオフになる',
       docWrites.length === beforeDocWrites + 1 && docWrites.at(-1).command === 'setDocRow' && docWrites.at(-1).keys?.length === 9
-      && grpSwAfterBatch?.getAttribute('aria-checked') === 'true');
-
-    grpSwAfterBatch.onclick();
-    await settle();
-    t.ok('全有効のまとまりスイッチを押すと 1 回の setDocRow ですべて無効になり、オフ行のアイコン群が隠れる',
-      docWrites.length === beforeDocWrites + 2 && docWrites.at(-1).on === false
-      && instPanel.querySelector('.cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false'
+      && docWrites.at(-1).on === false
+      && grpSwAfterBatch?.getAttribute('aria-checked') === 'false'
       && instPanel.querySelectorAll('.cx-row.grp .cx-ag.none').length === 6);
 
-    // 全有効へ戻し、鍵つきセル・広げる確認・最後の 1 つをオフでスイッチへフォーカス移動を確かめる
-    instPanel.querySelector('.cx-row.grp .cx-sw').onclick();
+    // もう一度押すと、今回オフにした子だけが外す前の選択へ戻る。先に外してあった子（1 件目）はオンにしない
+    const grpLabelOff = grpSwAfterBatch.getAttribute('aria-label') ?? '';
+    t.ok('オフのまとまりスイッチの読み上げ名は、状態「オフ」と「外す前の選択に戻す」を含む',
+      grpLabelOff.includes('オフ') && grpLabelOff.includes('外す前の選択に戻す'), grpLabelOff);
+    grpSwAfterBatch.onclick();
     await settle();
+    t.ok('もう一度押すと 1 回の setDocRow（on: true）で外す前の選択へ戻り、先に外してあった 1 件目はオフのまま（まとまりは一部オン）',
+      docWrites.length === beforeDocWrites + 2 && docWrites.at(-1).on === true
+      && kidSws().join(',') === ['false', ...kidBaseline.slice(1)].join(',')
+      && instPanel.querySelector('.cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed',
+      `${kidSws().join(',')} / baseline ${kidBaseline.join(',')}`);
+
+    // 1 件目を自分の行のスイッチで戻し、最初と同じ状態にする。鍵つきセル・広げる確認・最後の 1 つをオフでスイッチへフォーカス移動を確かめる
+    instPanel.querySelectorAll('.cx-row.kid')[0].querySelector('.cx-sw').onclick();
+    await settle();
+    t.ok('1 件目を自分のスイッチで戻すと、全部が最初の状態に戻る',
+      kidSws().join(',') === kidBaseline.join(',') && instPanel.querySelector('.cx-row.grp .cx-sw')?.getAttribute('aria-checked') === grpBaseline,
+      `${kidSws().join(',')} / baseline ${kidBaseline.join(',')}`);
     const agyKey = docItemKey({ kind: 'instruction', path: '/home/u/.gemini/GEMINI.md', realPath: '/home/u/.gemini/GEMINI.md' });
     const agyRow = instPanel.querySelector(`[data-key="${agyKey}"]`);
     const agyOwnChip = agyRow.querySelector('.cx-ag[data-agent="antigravity"]');
@@ -546,15 +597,34 @@ export default async function (t) {
       && /Antigravity と Grok は、新しい会話から反映します/.test(toastEl?.textContent ?? ''), toastEl?.textContent);
 
     // 作業場所の summaryRow スイッチ。作業場所の CLAUDE.md・AGENTS.md は Devin（取り込み）と Grok が自分で読み、止められない（鍵つきでオン）。
-    // 行のスイッチはオンのまま変わらないので、押せない見た目と鍵の理由にする（レビューの決定 (a)。押したのに変わらない、を作らない）
-    const wsSw = instPanel.querySelector(`[data-key="${WORKSPACE_SUMMARY_KEY}"] .cx-sw`);
+    // 鍵つきのオンが残っても、鍵の無いオン（Claude など）があれば押せる。押すと変えられる分だけがまとめてオフになり、鍵つきは残る（ToBe-A′）。
+    // 鍵の理由は、鍵つきのオンだけが残る間の鍵（スイッチの上の小さな錠）に出る
+    const wsSw = () => instPanel.querySelector(`[data-key="${WORKSPACE_SUMMARY_KEY}"] .cx-sw`);
+    const wsLock = () => wsSw().querySelectorAll('.lk');
     const dwBeforeWs = docWrites.length;
-    wsSw.click?.();
+    t.ok('作業場所 summaryRow: 鍵つきのオンが残っていても、変えられるオンがあれば押せる（全部オン・鍵は出さない・押すと「変更できる分をまとめてオフ」）',
+      wsSw().getAttribute('aria-checked') === 'true' && wsSw().getAttribute('role') === 'checkbox' && wsSw().getAttribute('aria-disabled') !== 'true'
+      && typeof wsSw().onclick === 'function' && wsLock().length === 0
+      && (wsSw().getAttribute('aria-label') ?? '').includes('変更できる分をまとめてオフにする'),
+      wsSw().getAttribute('aria-label'));
+    wsSw().onclick();
     await settle();
-    t.ok('作業場所 summaryRow は鍵つきでオンのマスが残るので、スイッチはオンのまま押せない（aria-disabled・鍵の理由・保存しない）',
-      wsSw.getAttribute('aria-checked') === 'true' && wsSw.getAttribute('aria-disabled') === 'true'
-      && Boolean(wsSw.dataset.tip) && typeof wsSw.onclick !== 'function' && docWrites.length === dwBeforeWs,
-      JSON.stringify({ checked: wsSw.getAttribute('aria-checked'), disabled: wsSw.getAttribute('aria-disabled'), tip: wsSw.dataset.tip }));
+    const wsAfterOff = docWrites.slice(dwBeforeWs);
+    t.ok('作業場所 summaryRow を押すと 1 回の setDocRow（on: false）で、変えられる分だけがオフ。鍵つきのオンは残り、横棒と小さな鍵になる',
+      wsAfterOff.length === 1 && wsAfterOff[0].command === 'setDocRow' && wsAfterOff[0].on === false
+      && wsSw().getAttribute('aria-checked') === 'mixed' && wsLock().length === 1
+      && Boolean(wsLock()[0].dataset.tip) && wsLock()[0].dataset.tipPass !== undefined
+      && wsSw().getAttribute('aria-disabled') !== 'true' && (wsSw().getAttribute('aria-label') ?? '').includes('外す前の選択に戻す'),
+      JSON.stringify({ writes: wsAfterOff, checked: wsSw().getAttribute('aria-checked'), lk: wsLock().length, label: wsSw().getAttribute('aria-label') }));
+    // 変えたマスに「新しい会話から反映する」エージェント（Antigravity）が含まれるので、知らせにも出す。鍵つきの Grok は変わらないので、それだけでは出さない
+    t.ok('作業場所 summaryRow をオフにした保存の知らせに「新しい会話から反映します」が付く（変えたマスに Antigravity がある）',
+      /Antigravity と Grok は、新しい会話から反映します/.test(toastEl?.textContent ?? ''), toastEl?.textContent);
+    wsSw().onclick();
+    await settle();
+    const wsAfterOn = docWrites.slice(dwBeforeWs + 1);
+    t.ok('作業場所 summaryRow をもう一度押すと、外す前の選択に戻る（setDocRow on: true・全部オン・鍵は消える）',
+      wsAfterOn.length === 1 && wsAfterOn[0].on === true && wsSw().getAttribute('aria-checked') === 'true' && wsLock().length === 0,
+      JSON.stringify({ writes: wsAfterOn, checked: wsSw().getAttribute('aria-checked'), lk: wsLock().length }));
 
     // ユーザー行 r0.md の最後のオンエージェントをオフにするとフォーカスが行スイッチ sw: へ移る
     const firstKid = instPanel.querySelectorAll('.cx-row.kid')[0];
@@ -607,7 +677,10 @@ export default async function (t) {
     findInput.dispatchEvent({ type: 'input' });
     await settle();
     const fSw = () => skillPanel.querySelector('.cx-row.grp .cx-sw');
-    t.ok('絞り込み中のまとまりスイッチは見えている 1 行だけからオンと決まる', fSw().getAttribute('aria-checked') === 'true');
+    const fKidSw = () => skillPanel.querySelector('.cx-row.kid .cx-sw');
+    t.ok('絞り込み中のまとまりスイッチは見えている 1 行だけから決まる（その行のスイッチと同じ状態で、オフではない）',
+      fSw().getAttribute('aria-checked') === fKidSw().getAttribute('aria-checked') && fSw().getAttribute('aria-checked') !== 'false',
+      `${fSw().getAttribute('aria-checked')} / ${fKidSw().getAttribute('aria-checked')}`);
     fSw().onclick();
     await settle();
     t.ok('絞り込み中のまとまりスイッチで、当たった 1 件だけが setDocRow オフになる（9 件ではない）',
@@ -616,12 +689,28 @@ export default async function (t) {
     findInput.value = '';
     findInput.dispatchEvent({ type: 'input' });
     await settle();
-    const mixedSw = [...skillPanel.querySelectorAll('.cx-row.grp .cx-sw')].find(x => x.getAttribute('aria-checked') === 'mixed');
-    t.ok('絞り込みを消すとまとまり全体の状態（一部）に戻る', Boolean(mixedSw));
-    mixedSw.onclick();
+    // OpenCode の物ではなく Codex が自分で読む 9 件のまとまり。1 件（tool-7）は今、自分の行のスイッチで外した扱い（外す前の記録だけを持つ）
+    const codexGrp = () => skillPanel.querySelectorAll('.cx-row.grp').find(g => String(g.dataset.key).includes('.codex'));
+    const codexSw = () => codexGrp().querySelector('.cx-sw');
+    t.ok('絞り込みを消すとまとまり全体の状態（一部オン）に戻る', codexSw().getAttribute('aria-checked') === 'mixed', codexSw().getAttribute('aria-checked'));
+    if (codexGrp().querySelector('.cx-tw').getAttribute('aria-expanded') === 'false') { codexGrp().querySelector('.cx-tw').onclick(); await settle(); }
+    // 開いている子の行のうち、この 9 件（tool-0〜tool-8）だけ。deploy は別のまとまり
+    const codexKids = () => skillPanel.querySelectorAll('.cx-row.kid').filter(k => String(k.querySelector('.nm')?.textContent).startsWith('tool-')).map(k => k.querySelector('.cx-sw').getAttribute('aria-checked'));
+    const codexBefore = codexKids();
+    const dwCodex = docWrites.length;
+    codexSw().onclick();
     await settle();
-    t.ok('一部のまとまりスイッチを押すと全有効に戻る',
-      skillPanel.querySelectorAll('.cx-row.grp .cx-sw').every(x => x.getAttribute('aria-checked') === 'true'));
+    t.ok('一部オンのまとまりスイッチを押すと、変えられる分がまとめてオフになる（1 回の setDocRow on: false・押せる子の 9 件）',
+      docWrites.length === dwCodex + 1 && docWrites.at(-1).on === false && docWrites.at(-1).keys?.length === 9
+      && codexSw().getAttribute('aria-checked') === 'false' && codexKids().every(x => x === 'false'),
+      `${docWrites.at(-1).keys?.length} ${codexSw().getAttribute('aria-checked')} ${codexKids().join(',')}`);
+    codexSw().onclick();
+    await settle();
+    t.ok('もう一度押すと外す前の選択へ戻り、先に外してあった tool-7 だけはオフのまま（まとまりは一部オン）',
+      docWrites.length === dwCodex + 2 && docWrites.at(-1).on === true
+      && codexKids().join(',') === codexBefore.join(',') && codexBefore.filter(x => x === 'false').length === 1
+      && codexSw().getAttribute('aria-checked') === 'mixed',
+      `${codexKids().join(',')} / before ${codexBefore.join(',')}`);
 
     // 保存失敗時のロールバック
     const oneSw = () => skillPanel.querySelectorAll('.cx-row:not(.grp) .cx-sw, .cx-row.kid .cx-sw').find(x => x.getAttribute('aria-disabled') !== 'true');
@@ -714,20 +803,10 @@ export default async function (t) {
       if (command === 'setDocRow') {
         if (failRight) throw new Error('boom-right');
         rightWrites.push({ command, ...payload });
-        const entries = scanDocsFor(payload.kind, rightEntries, placeKinds);
-        const raw = toRawLegacy(placeKinds);
-        const m = buildDocMatrix({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: rightDocAgents, cwd: '/repo', home: '/home/u' });
-        const placeHolder = (rightDocAgents.places['/repo'] ??= {});
-        if (!placeHolder[payload.kind]) {
-          placeHolder[payload.kind] = { agents: snapshotBaselineAgents({ kind: payload.kind, entries, legacyConfig: raw, docAgentsConfig: rightDocAgents, place: '/repo', home: '/home/u' }) };
-        }
-        const keys = payload.keys ?? [payload.key];
-        for (const k of keys) {
-          const row = k === WORKSPACE_SUMMARY_KEY ? m.summaryRow : m.byKey.get(k);
-          const cur = placeHolder[payload.kind].agents[k] ?? row.rule;
-          const input = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
-          placeHolder[payload.kind].agents[k] = setDocRowRule(payload.kind, input, cur, payload.on);
-        }
+        applyDocTouch(rightDocAgents, {
+          kind: payload.kind, entries: scanDocsFor(payload.kind, rightEntries, placeKinds), legacyConfig: toRawLegacy(placeKinds),
+          matrixCwd: '/repo', home: '/home/u', place: '/repo', placeKey: '/repo', keys: payload.keys ?? [payload.key], on: payload.on,
+        });
         return { ok: true, defaults: rightDocAgents.defaults, place: '/repo' };
       }
       if (command === 'scanContext' || command === 'nativeInstructions') return { entries: rightEntries.map(e => ({ ...e, status: e.defaultStatus ?? 'candidate' })) };
@@ -804,12 +883,24 @@ export default async function (t) {
       scxMixSw.getAttribute('role') === 'checkbox' && scxMixSw.getAttribute('aria-checked') === 'mixed'
       && rightWrites.at(-1).command === 'setDocRow' && rightWrites.at(-1).place === '/repo');
 
+    const scxKidStates = () => [...panelBody.querySelectorAll('#scx-panel-instruction .cx-row.kid .cx-sw')].map(x => x.getAttribute('aria-checked'));
+    const scxGrpState = () => panelBody.querySelector('#scx-panel-instruction .cx-row.grp .cx-sw').getAttribute('aria-checked');
+    const scxKidBefore = scxKidStates();
     const rwBefore = rightWrites.length;
     await scxMixSw.onclick();
     await settle();
-    t.ok('右パネルの mixed スイッチ押下で残りも一括 1 回 setDocRow 保存になり全有効に戻る',
+    t.ok('右パネルの mixed スイッチ押下は、変えられるオンだけを一括 1 回 setDocRow（オフ）で保存し、全部オフになる',
       rightWrites.length === rwBefore + 1 && rightWrites.at(-1).command === 'setDocRow' && rightWrites.at(-1).keys?.length === 2
-      && panelBody.querySelector('#scx-panel-instruction .cx-row.grp .cx-sw').getAttribute('aria-checked') === 'true');
+      && rightWrites.at(-1).on === false
+      && scxGrpState() === 'false' && scxKidStates().every(s => s === 'false'),
+      `grp=${scxGrpState()} kids=${scxKidStates().join(',')} on=${rightWrites.at(-1).on}`);
+
+    await panelBody.querySelector('#scx-panel-instruction .cx-row.grp .cx-sw').onclick();
+    await settle();
+    t.ok('右パネルのオフのまとまりスイッチを押すと外す前の選びに戻り、最初から外していた子はオフのままで「一部」になる',
+      rightWrites.at(-1).on === true && scxGrpState() === 'mixed'
+      && scxKidStates().join(',') === ['false', scxKidBefore[1]].join(',') && scxKidBefore[1] !== 'false',
+      `grp=${scxGrpState()} kids=${scxKidStates().join(',')} on=${rightWrites.at(-1).on}`);
 
     // タブ切替 → スクロールリセット・記憶、Skills 絞り込み
     rightScroller.scrollTop = 180;
@@ -842,7 +933,11 @@ export default async function (t) {
     scxFind.dispatchEvent({ type: 'input' });
     await settle();
     const scxFSw = () => panelBody.querySelector('#scx-panel-skill .cx-row.grp .cx-sw');
-    t.ok('右パネルの絞り込み中のスイッチは見えている 1 行だけからオンと決まる', scxFSw().getAttribute('aria-checked') === 'true');
+    const scxFKidSw = () => panelBody.querySelector('#scx-panel-skill .cx-row.kid .cx-sw');
+    t.ok('右パネルの絞り込み中のスイッチは見えている 1 行だけから状態が決まる（行自身のスイッチと同じ）',
+      scxFKidSw() != null && scxFSw().getAttribute('aria-checked') === scxFKidSw().getAttribute('aria-checked')
+      && scxFSw().getAttribute('aria-checked') !== 'false',
+      `grp=${scxFSw().getAttribute('aria-checked')} kid=${scxFKidSw()?.getAttribute('aria-checked')}`);
     await scxFSw().onclick();
     await settle();
     t.ok('右パネルの絞り込み中のまとまりスイッチで、当たった 1 件だけが setDocRow オフになる',
@@ -853,11 +948,19 @@ export default async function (t) {
     await settle();
     const scxMixed = [...panelBody.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].find(x => x.getAttribute('aria-checked') === 'mixed');
     t.ok('右パネルでも、絞り込みを消すと「一部」に戻る', Boolean(scxMixed));
+    const scxGrp = () => panelBody.querySelector('#scx-panel-skill .cx-row.grp .cx-sw');
     await scxMixed.onclick();
     await settle();
-    t.ok('右パネルの一部のスイッチを押すと全有効に戻る',
-      panelBody.querySelector('#scx-panel-skill .cx-row.grp .cx-sw').getAttribute('aria-checked') === 'true');
-    const scxGrp = () => panelBody.querySelector('#scx-panel-skill .cx-row.grp .cx-sw');
+    t.ok('右パネルの一部のスイッチを押すと、変えられるオンだけが 1 回でまとめてオフになる（広げない）',
+      rightWrites.at(-1).command === 'setDocRow' && rightWrites.at(-1).on === false && rightWrites.at(-1).keys?.length === 9
+      && scxGrp().getAttribute('aria-checked') === 'false',
+      `grp=${scxGrp().getAttribute('aria-checked')} keys=${rightWrites.at(-1).keys?.length} on=${rightWrites.at(-1).on}`);
+    await scxGrp().onclick();
+    await settle();
+    t.ok('右パネルのオフのまとまりスイッチを押すと外す前の選びに戻り、最初から外していた 1 件はオフのまま「一部」になる',
+      rightWrites.at(-1).on === true && scxGrp().getAttribute('aria-checked') === 'mixed'
+      && JSON.stringify(rightDocAgents.places['/repo'].skill).includes('sk-3'),
+      `grp=${scxGrp().getAttribute('aria-checked')} on=${rightWrites.at(-1).on} skill=${JSON.stringify(rightDocAgents.places['/repo'].skill)}`);
     const scxBefore = scxGrp().getAttribute('aria-checked');
     failRight = true;
     await scxGrp().onclick();

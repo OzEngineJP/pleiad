@@ -67,3 +67,17 @@
 ## 後の変更（2026-11-15）
 
 - [ADR 0331](0331-context-tabs-and-lock-tooltip.md) で、設定 › プラグインと右パネルを 4 タブ（指示・Skills・外部 MCP・Hooks）に分け、外部 MCP カード下の「Pleiad からは止められません」の凡例を鍵付き項目の吹き出し（`web/lock-tip.mjs`）へ移した。名前 × エージェントの一覧と `context-scans.json` の保存形式・実行時の規則はこの ADR のまま保つ。
+
+## 後の変更（2026-11-17）: 行のスイッチ
+
+名前の行の全体のスイッチの規則は [ADR 0337](0337-context-instructions-skills-by-name-and-agent.md) §決定 4（承認済みの ToBe-A′）にそろえた。数え方・状態・押したときの動きは、指示・Skills と同じ。
+
+- 変えられるオンだけをまとめてオフにする。鍵つきのオン（Devin・Grok が自分で読むなど）が残る行は、横線（一部オン）に小さな鍵を重ねて見せる。鍵の理由は鍵の上の吹き出しに出す。
+- 押し直すと、オフにする前の組に戻す。覚えが無ければ既定（Pleiad の登録はどのエージェントにも、エージェント自身の設定は持っているエージェントに）。ただし鍵つきのオンが残る行・最初から鍵つきのオンだけの行は、既定へ広げない（`mcpRowMeta` の `defaults` は空）。そのような行で戻せる組が無ければ押せない。
+- 操作は `context.setMcpRow { name, on, place?, cwd? }`。マスの切り替え（`toggleMcpAgent`）を組み合わせて 1 回で保存する。`guarded`（`context.setMcpAgent` と同じ強さ。入れる・戻す向きは関所を緩める）。
+- **「オフにする前の組」の置き場**: 設定そのもの（`context-scans.json` の `kinds.mcp.agents = { off, spread }`）には足さず、別の `<data>/context-mcp-was.json` に置く（`{ version: 1, places: { <場所のキー。全体は '*'>: { <名前>: [<エージェント>] } } }`。`core/context-mcp-was.mjs`。上限は場所 200・名前 500・エージェント 24）。設定の保存形式は変えない。
+  - 旧い版は `context-mcp-was.json` を読まない。設定は今までの形のまま読めるので、新しい版で行のスイッチを使った後に旧い版へ戻しても壊れず、戻し先の覚えが使われないだけ（旧い版には行のスイッチの戻しが無い）。
+  - 読めない・形が違う・知らない版のファイルは空として読む。設定は無事で、戻し先が既定になるだけ。次に書くときに作り直す。
+  - 覚えは助言で、実際の設定が正。実際の設定が覚えと食い違ったら（アイコンで直した後など）、実際を使う。
+- 通知は「保存しました」。変えたマスに、会話の始まりでだけ反映するエージェント（`contextAt`）が含まれるときだけ、「Antigravity と Grok は、新しい会話から反映します」を足す。
+- 影響: `core/context-mcp-was.mjs`・`core/context-mcp-matrix.mjs`・`core/ops/context.mjs`（`context.setMcpRow`）・`web/mcp-matrix.mjs`・`web/context-matrix.mjs`・`tests/data-writes-allowlist.mjs`。

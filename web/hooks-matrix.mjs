@@ -10,11 +10,12 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
-import { agentShortLabel } from './agent-brands.mjs';
-import { MATRIX_ICON, agentChip, agentLegend, agentStrip, askBanner, lockedAgentChip, matrixSvg, rowSwitch, savedText } from './context-matrix.mjs';
+import { agentName, rememberAgentNames } from './agent-brands.mjs';
+import { MATRIX_ICON, agentChip, agentLegend, agentStrip, askBanner, freshAgents, lockedAgentChip, matrixSvg, savedText, wholeSwitch } from './context-matrix.mjs';
 import { addButton, agentLabel, eventLabel, openHookSheet, peekHook, scopeLabel } from './hooks-card.mjs';
 import { originMarks } from './context-tabs.mjs';
 import { openPlyHookSheet, plyPeek, reasonText, warnText } from './hooks-unify-ui.mjs';
+import { joinLockReasons } from './lock-tip.mjs';
 
 function button(text, className = 'btn', onClick) {
   const b = el('button', className, text);
@@ -22,15 +23,11 @@ function button(text, className = 'btn', onClick) {
   if (onClick) b.onclick = onClick;
   return b;
 }
-// 列の短い名前。画面の短い名前（agent-brands）は有効なエージェントの分しか届かないので、無いものは一覧が載せる短い名前（hooks.matrix の labels）、
-// それも無ければ正式名（Devin CLI など）
-const listLabels = new Map();
-/** 一覧（hooks.matrix）が載せる列の短い名前を覚える（設定の表・会話の右の欄の両方が呼ぶ） */
-export function rememberAgentLabels(labels) {
-  if (labels && typeof labels === 'object') for (const [id, s] of Object.entries(labels)) if (typeof s === 'string' && s) listLabels.set(id, s);
-}
+// 列の短い名前は、画面の短い名前（agent-brands。有効なエージェントの分）と、表が載せる短い名前（hooks.matrix の labels。agent-brands が控える）から引く。内部の id は出さない
+/** 一覧（hooks.matrix）が載せる列の短い名前を覚える（設定の表・会話の右の欄の両方が呼ぶ。doc・MCP の表と同じ控え） */
+export function rememberAgentLabels(labels) { rememberAgentNames(labels); }
 /** エージェントの短い名前（確認の帯・読み上げ名・鍵の文・右の欄で同じもの） */
-export const hookAgentLabel = a => agentShortLabel(a, listLabels.get(a) ?? agentLabel(a));
+export const hookAgentLabel = agentName;
 const short3 = hookAgentLabel;
 
 // i18n-dynamic: hooks.matrix.tip.
@@ -80,14 +77,30 @@ export function hookCellView(row, agent) {
   return { state: cell.state === 'on' ? 'on' : 'off', cell };
 }
 
+/**
+ * 行のスイッチの見え方を、セルの今の状態から数え直す（core/hooks-agents.mjs の matrix と同じ数え方。ADR 0337 §決定 4・2026-11-17 の改訂）。
+ * 集計は、押せるマス + 鍵つきでオンのマス（鍵つきでオフ・対象外は数えない）。保存の後に読み直すので、ここは押した直後の見た目だけ
+ */
+function recalcRowLocal(row) {
+  const cells = Object.values(row.cells);
+  const toggles = cells.filter(c => c.mode === 'toggle');
+  const lockedOn = cells.filter(c => c.mode !== 'toggle' && c.state === 'on');
+  const onCells = cells.filter(c => c.state === 'on').length;
+  row.on = onCells > 0;
+  row.rowMixed = onCells > 0 && onCells < toggles.length + lockedOn.length;
+  row.rowFixed = lockedOn.length > 0;
+  row.rowChangeableOn = toggles.some(c => c.state === 'on');
+  row.rowNextOn = !row.rowChangeableOn;
+}
 /** 押したときの見た目だけを先に変える（保存できなければ元の表へ戻す） */
 function applyCellLocal(row, agent, on) {
   const c = row.cells[agent];
   if (!c || c.mode !== 'toggle') return;
   c.state = on ? 'on' : 'off';
   delete c.needsConfirm;
-  row.on = Object.values(row.cells).some(x => x.state === 'on');
+  recalcRowLocal(row);
 }
+/** 行のスイッチ: 切る向きは切れるオン（押せるマス）だけをまとめて切る（鍵つきでオンのマスは残す）。入れる向きは覚えた選択に戻す */
 function applyRowLocal(row, on) {
   for (const c of Object.values(row.cells)) if (c.mode === 'toggle' && !(on && c.needsConfirm)) c.state = on ? 'on' : 'off';
   if (on && !Object.values(row.cells).some(x => x.state === 'on')) {
@@ -95,7 +108,18 @@ function applyRowLocal(row, on) {
     const own = row.cells[row.agent];
     if (own?.mode === 'toggle') own.state = 'on';
   }
-  row.on = Object.values(row.cells).some(x => x.state === 'on');
+  row.unused = !on;
+  recalcRowLocal(row);
+}
+/** 保存の前後で、新しい会話からだけ設定を読むエージェント（Antigravity・Grok。エージェントの記述の contextAt）のマスのオン・オフが変わったか。前後の両方にある行だけ比べる */
+function hooksFreshChanged(before, after) {
+  const prev = new Map((before?.rows ?? []).map(r => [r.key, r]));
+  for (const row of after?.rows ?? []) {
+    const p = prev.get(row.key);
+    if (!p) continue;
+    if (freshAgents().some(a => (p.cells?.[a]?.state === 'on') !== (row.cells?.[a]?.state === 'on'))) return true;
+  }
+  return false;
 }
 
 export function createHooksMatrix({ cmd, work, saved, failed, status, opened = new Set(), onCount }) {
@@ -143,7 +167,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
   }
 
   /** 押した操作を送る。押す前の表を取っておき、失敗したら戻して描き直し、理由は work が下の固定の位置に出す */
-  function mutate(local, remote) {
+  function mutate(local, remote, { rowSwitch = false } = {}) {
     if (!grid) return;
     const prev = structuredClone(grid);
     local(grid);
@@ -152,7 +176,8 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       try { await remote(grid.revision ?? prev.revision); }
       catch (e) { grid = prev; render(); reload(); throw e; }
       await load();
-      saved(savedText(false));
+      // 行のスイッチは、新しい会話からだけ読むエージェントのマスが変わったときだけ「新しい会話から反映します」を添える
+      saved(savedText(rowSwitch && hooksFreshChanged(prev, grid)));
     });
   }
   const findRow = key => grid?.rows?.find(r => r.key === key) ?? null;
@@ -179,7 +204,8 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
   }
   /** 行のスイッチ。押すと Devin の取り込みが止まり始める行（core の switchConfirm）は、保存の前に確認の帯を出す（覚えない）。now: 帯で押した後 */
   function toggleRow(row, now = false) {
-    const on = !row.on;
+    // 押すと、切れるオンがあればそれだけをまとめてオフにする（rowNextOn: false）。残っていなければ外す前の選択に戻す（rowNextOn: true）
+    const on = Boolean(row.rowNextOn);
     if (!now && row.switchConfirm) {
       ask = { key: row.key, agent: null, fk: `sw:${row.key}`, row: true };
       focus = '.cx-ask .btn-primary';
@@ -189,7 +215,16 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     if (ask?.key === row.key) ask = null;
     focus = `[data-cx-fk="${CSS.escape(`sw:${row.key}`)}"]`;
     mutate(g => { const r = g.rows.find(x => x.key === row.key); if (r) applyRowLocal(r, on); },
-      revision => cmd('setHookRow', { key: row.key, on, revision }));
+      revision => cmd('setHookRow', { key: row.key, on, revision }), { rowSwitch: true });
+  }
+  /** 全体のスイッチの鍵（切ってもオンのまま残るマス）の理由。理由ごとに 1 回 */
+  function fixedReasons(row) {
+    const out = [];
+    for (const a of grid.agents) {
+      const v = hookCellView({ ...row, on: true }, a);
+      if (v.state === 'lockon' && v.cell?.tip && !out.includes(v.cell.tip)) out.push(v.cell.tip);
+    }
+    return joinLockReasons(out);
   }
 
   function askEl(row) {
@@ -257,7 +292,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       const v = hookCellView({ ...row, on: true }, a);
       if (v.cell?.tip && !locks.includes(v.cell.tip)) locks.push(v.cell.tip);
     }
-    put(t('hooks.matrix.fact.locked'), locks.join(' / '));
+    put(t('hooks.matrix.fact.locked'), joinLockReasons(locks));
     return box;
   }
   const sheetCtx = () => ({ cmd, scan, short, onSaved: async () => { saved(t('hooks.saved')); await reload(); } });
@@ -314,10 +349,12 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       open.onclick = () => { const k = `hook:${row.key}`; if (opened.has(k)) opened.delete(k); else opened.add(k); focus = `[data-cx-fk="${CSS.escape(`open:${row.key}`)}"]`; render(); };
       r.append(open);
     }
-    const sw = rowSwitch({
-      role: 'switch',
-      checked: row.on,
-      labelText: t('hooks.matrix.rowAria', { name }),
+    const sw = wholeSwitch({
+      state: row.rowMixed ? 'mixed' : row.on ? 'true' : 'false',
+      fixed: Boolean(row.rowFixed) && !row.rowChangeableOn,
+      fixedReason: fixedReasons(row),
+      name,
+      next: row.rowChangeableOn ? 'off' : row.rowRestore === 'was' ? 'restore' : 'on',
       disabledReason: row.switchable ? null : (hookTip(row.switchLock ?? {}) ?? t('context.lockReason.own', { agent: short3(row.switchLock?.agent ?? row.agent) })),
       key: `sw:${row.key}`,
       keyAttr: 'cxFk',

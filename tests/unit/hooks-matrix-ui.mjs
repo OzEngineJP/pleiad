@@ -287,6 +287,20 @@ export default async function (t) {
     assert.equal(chip7('ws:hooks', 'claude').getAttribute('title'), 'Claude', '定義のあるマスはふつうの名前だけ');
     t.ok('作業場所の行の空のマスは「この場所には定義がありません」の吹き出しと読み上げ名を出し、押せるまま', true);
 
+    // 切った行の読み上げ: 覚えた選択がある行だけ「外す前の選択に戻す」。覚えが無い行は元の集合へ戻すので「使う」
+    const offRow = (key, rowRestore) => ({ key, kind: 'reg', group: 'ply', agent: 'claude', name: key, event: 'Stop', matcher: null, command: `node ${key}.mjs`, on: false, unused: true,
+      switchable: true, rowMixed: false, rowFixed: false, rowChangeableOn: false, rowNextOn: true, rowRestore,
+      cells: Object.fromEntries(AG.map(a => [a, a === 'claude' || a === 'codex' ? { mode: 'toggle', state: 'off' } : none()])) });
+    const grid8 = { agents: AG, labels, adopted: true, revision: 'r8', orphans: [], rows: [offRow('kept', 'was'), offRow('fresh', 'default'), offRow('oldserver', undefined)] };
+    const card8 = createHooksMatrix({ cmd: async (op) => (op === 'hooksMatrix' ? grid8 : null), work: fn => fn(), saved: () => {}, failed: () => {}, opened: new Set() });
+    dom.body.append(card8.root);
+    await card8.load();
+    const swLabel = key => card8.root.querySelector(`.cx-row[data-key="${key}"]`)?.querySelector('[role="checkbox"]')?.getAttribute('aria-label') ?? '';
+    t.ok('切った行を押したときの読み上げ: 覚えた選択がある行は「外す前の選択に戻す」、覚えが無い行・旧い版の一覧は「使う」',
+      swLabel('kept').includes(tr('context.rowSwitch.next.restore')) && swLabel('fresh').includes(`「${tr('context.rowSwitch.next.on')}」`)
+      && !swLabel('fresh').includes(tr('context.rowSwitch.next.restore')) && swLabel('oldserver').includes(`「${tr('context.rowSwitch.next.on')}」`),
+      [swLabel('kept'), swLabel('fresh'), swLabel('oldserver')].join(' / '));
+
     // 確かめ済みは、行を消して作り直したら捨てる
     card7.root.querySelector('.cx-ask .btn-primary').click();
     await settle();

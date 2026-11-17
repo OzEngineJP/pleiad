@@ -3,9 +3,9 @@
 
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { agentShortLabel, conversationContextAgents } from './agent-brands.mjs';
+import { agentName, conversationContextAgents } from './agent-brands.mjs';
 import { brandMark } from './context-tabs.mjs';
-import { ensureLockTips, lockReasonText, lockAriaLabel } from './lock-tip.mjs';
+import { ensureLockTips, lockReasonText, lockAriaLabel, joinLockReasons, spokenLockReason } from './lock-tip.mjs';
 
 /**
  * 会話を始めるときだけ設定を読むエージェント（エージェントの記述の contextAt）。始まっている会話には次のターンでも届かないので、
@@ -71,7 +71,7 @@ export function matrixButton(cls, text) {
 
 /** 鍵つきで押せないエージェントアイコン（MCP・指示・Skills・Pleiad の指示・テストで共通） */
 export function lockedAgentChip(agent, cell, name, { ariaLabel, key, keyAttr = 'fk', agentLabel = null } = {}) {
-  const short = agentLabel ?? agentShortLabel(agent, agent);
+  const short = agentLabel ?? agentName(agent);
   const on = cell.on !== undefined ? Boolean(cell.on) : cell.state === 'on';
   const b = matrixButton(`cx-ag be-${agent}`);
   b.setAttribute('aria-pressed', String(on));
@@ -116,7 +116,7 @@ export function agentChip({
   if (locked) {
     return lockedAgentChip(agent, cell ?? { on: state === 'lockon' }, name, { ariaLabel, key, keyAttr });
   }
-  const short = agentLabel ?? agentShortLabel(agent, agent);
+  const short = agentLabel ?? agentName(agent);
   const pressed = state === 'mixed' ? 'mixed' : String(state === 'on' || Boolean(cell?.on));
   const b = matrixButton(`cx-ag be-${agent}`);
   b.dataset.agent = agent;
@@ -143,11 +143,10 @@ export function agentStrip({ agents, labelText, solo = false, renderCell }) {
   return ags;
 }
 
-/** 行またはまとまりのスイッチ（disabledReason があれば鍵つき aria-disabled にする） */
+/** 1 つのオン・オフだけのスイッチ（Pleiad の指示の行。disabledReason があれば鍵つき aria-disabled にする） */
 export function rowSwitch({
   role = 'switch',
   checked = false,
-  mixed = false,
   labelText,
   disabledReason = null,
   key = null,
@@ -156,7 +155,7 @@ export function rowSwitch({
 }) {
   const sw = matrixButton('cx-sw');
   sw.setAttribute('role', role);
-  sw.setAttribute('aria-checked', mixed ? 'mixed' : String(Boolean(checked)));
+  sw.setAttribute('aria-checked', String(Boolean(checked)));
   if (key) sw.dataset[keyAttr] = key;
   if (disabledReason) {
     ensureLockTips();
@@ -169,6 +168,67 @@ export function rowSwitch({
   }
   return sw;
 }
+
+let wholeSeq = 0;
+
+/**
+ * 行・まとまりの全体のスイッチ（外部 MCP・指示・Skills・Hooks の 4 つの表と会話の右パネルで共通。ADR 0337 §決定 4 の 2026-11-17 改訂・ToBe-A′）。
+ * 形は今のスイッチのまま。一部だけオンなら横棒、押しても残る鍵つきのオン（fixed）があれば小さな鍵を重ねる。
+ * role="checkbox" + aria-checked="true|mixed|false"（role="switch" は mixed を持てない）。
+ * 読み上げ名は「項目名、いまの状態。押したときの動き」。鍵の理由（fixedReason）は名前に混ぜず、説明（aria-describedby）と鍵へのホバーに分ける。
+ * disabledReason があるとき（押しても変わらない）だけ aria-disabled にして、スイッチ全体に鍵の吹き出しを付ける。
+ */
+export function wholeSwitch({
+  state = 'false',
+  fixed = false,
+  fixedReason = null,
+  name,
+  next = 'off',
+  disabledReason = null,
+  key = null,
+  keyAttr = 'fk',
+  onToggle = null,
+}) {
+  const sw = matrixButton('cx-sw');
+  sw.setAttribute('role', 'checkbox');
+  sw.setAttribute('aria-checked', state);
+  if (key) sw.dataset[keyAttr] = key;
+  // i18n-dynamic: ui:context.rowSwitch.state
+  const stateText = t(`context.rowSwitch.state.${state}`);
+  if (disabledReason) {
+    ensureLockTips();
+    sw.setAttribute('aria-disabled', 'true');
+    sw.dataset.tip = disabledReason;
+    sw.setAttribute('aria-label', lockAriaLabel(t('context.rowSwitch.ariaState', { name, state: stateText }), disabledReason));
+    if (fixed) { const lk = matrixLockGlyph(); lk.setAttribute('aria-hidden', 'true'); sw.append(lk); }
+    return sw;
+  }
+  // i18n-dynamic: ui:context.rowSwitch.next
+  sw.setAttribute('aria-label', t('context.rowSwitch.aria', { name, state: stateText, next: t(`context.rowSwitch.next.${next}`) }));
+  if (fixed) {
+    const lk = matrixLockGlyph();
+    lk.setAttribute('aria-hidden', 'true');
+    if (fixedReason) {
+      ensureLockTips();
+      // 鍵の上だけに理由を出す。押す動きは止めない（lock-tip.mjs の data-tip-pass）
+      lk.dataset.tip = fixedReason;
+      lk.dataset.tipPass = '';
+      const desc = el('span', null, spokenLockReason(fixedReason));
+      desc.hidden = true;
+      desc.id = `cx-sw-why-${++wholeSeq}`;
+      sw.setAttribute('aria-describedby', desc.id);
+      sw.append(lk, desc);
+    } else sw.append(lk);
+  }
+  if (onToggle) sw.onclick = onToggle;
+  return sw;
+}
+
+/** 全体のスイッチの状態（集計済みの行から）。'true' | 'mixed' | 'false' */
+export const wholeState = (row) => (row.rowMixed ? 'mixed' : row.rowSwitchOn ? 'true' : 'false');
+
+/** 押したときの動き。変えられるオンがあれば 'off'（その分だけまとめてオフ）、無ければ外す前の選択に戻す 'restore'／はじめて使う 'on' */
+export const wholeNext = (row) => (row.rowChangeableOn ? 'off' : row.rowRestore === 'was' ? 'restore' : 'on');
 
 /** ほかのエージェントへ初めて広げるときの行内確認 */
 export function askBanner({
@@ -202,7 +262,7 @@ export function agentLegend(agents) {
   legend.setAttribute('aria-hidden', 'true');
   for (const a of agents) {
     const id = typeof a === 'string' ? a : a.id;
-    const text = typeof a === 'string' ? agentShortLabel(a, a) : (a.label ?? agentShortLabel(a.id, a.id));
+    const text = typeof a === 'string' ? agentName(a) : (a.label ?? agentName(a.id));
     const i = el('span', `li be-${id}`);
     i.append(brandMark(id), document.createTextNode(text));
     legend.append(i);
@@ -210,60 +270,185 @@ export function agentLegend(agents) {
   return legend;
 }
 
-/** 名前×エージェントの行全体がロックされているときの理由文（右パネル・設定画面で共通） */
-export function docLockReason(doc, row) {
-  const lockAgent = doc?.agents?.find(a => row.cells[a]?.locked && row.cells[a]?.on)
-    ?? doc?.agents?.find(a => row.cells[a]?.locked);
-  return lockAgent ? lockReasonText(agentShortLabel(lockAgent, lockAgent), row.cells[lockAgent]) : t('context.matrix.locked');
+/**
+ * 鍵つきでオンのマス（Devin・Grok が自分で読むなど、Pleiad からは止められない物）の理由文。理由ごとに 1 回（重ねない）。
+ * rows は 1 行でも、まとまりの子の配列でもよい。無ければ null
+ */
+export function docFixedReasons(doc, rows) {
+  const out = [];
+  for (const row of [].concat(rows ?? [])) {
+    for (const a of doc?.agents ?? []) {
+      const cell = row?.cells?.[a];
+      if (!cell?.locked || !cell.on) continue;
+      const text = lockReasonText(agentName(a), cell);
+      if (!out.includes(text)) out.push(text);
+    }
+  }
+  return joinLockReasons(out);
 }
 
-/** まとまりのスイッチの理由文。鍵つきでオンの行があれば、その行の理由（その行が残るのでスイッチが変わらない） */
+/** 押せない行（変えられるマスが無い・外す前の選択も無い）の理由文（右パネル・設定画面で共通）。鍵つきでオンのマスがあればその理由 */
+export function docLockReason(doc, row) {
+  const fixed = docFixedReasons(doc, row);
+  if (fixed) return fixed;
+  const lockAgent = doc?.agents?.find(a => row.cells?.[a]?.locked);
+  return lockAgent ? lockReasonText(agentName(lockAgent), row.cells[lockAgent]) : t('context.matrix.locked');
+}
+
+/** まとまりのスイッチを押せないときの理由文。鍵つきでオンのマスがあればその理由、無ければ押せない子の理由 */
 export function docRowLockSummary(doc, items) {
-  const r = items.find(e => e.rowLocked && e.rowSwitchOn) ?? items.find(e => e.rowLocked);
+  const fixed = docFixedReasons(doc, items);
+  if (fixed) return fixed;
+  const r = items.find(e => e.rowLocked) ?? items[0];
   return r ? docLockReason(doc, r) : t('context.matrix.locked');
 }
 
 /**
- * まとまりのスイッチを押せないか。全部の行が押せないか、鍵つきでオンの行が 1 つでもあれば押せない
- * （押してもオンのまま変わらない、を作らない。ADR 0337 §決定 4）
+ * 行のスイッチの見え方（core/context-doc-matrix.mjs の summarizeRowMeta と同じ。ADR 0337 §決定 4・2026-11-17 の改訂）。
+ * 集計は、鍵の無いマスと鍵つきでオンのマスを数える（固定オフ・対象外のマスは分母に入れない）。
+ * restore は、鍵の無いオンのマスが 1 つも無いときの戻し先（'was' | 'default' | null）。省略したら前の値を引き継ぐ
  */
-export function docBundleLocked(items) {
-  return items.every(e => e.rowLocked) || items.some(e => e.rowLocked && e.rowSwitchOn);
-}
-
-/**
- * 行のスイッチの見え方（core/context-doc-matrix.mjs の summarizeRowMeta と同じ）。
- * どれかのエージェントに渡っていればオン（鍵つきでオンも数える）。鍵つきでオンのマスが残る行は押せない
- */
-export function recalcDocRow(row, agentIds) {
-  const unlocked = agentIds.filter(a => !row.cells[a]?.locked);
-  const unlockedOn = unlocked.filter(a => row.cells[a]?.on);
+export function recalcDocRow(row, agentIds, restore = row.rowRestore ?? null) {
+  const unlocked = agentIds.filter(a => row.cells[a] && !row.cells[a].locked);
+  const unlockedOn = unlocked.filter(a => row.cells[a].on);
   const lockedOn = agentIds.filter(a => row.cells[a]?.locked && row.cells[a]?.on);
   const onCount = unlockedOn.length + lockedOn.length;
-  row.rowLocked = unlocked.length === 0 || lockedOn.length > 0;
+  row.rowRestore = unlockedOn.length ? null : restore;
+  row.rowLocked = unlocked.length === 0 || (unlockedOn.length === 0 && !row.rowRestore);
   row.rowMixed = onCount > 0 && onCount < unlocked.length + lockedOn.length;
   row.rowSwitchOn = onCount > 0;
   row.anyOn = onCount > 0;
+  row.rowFixed = lockedOn.length > 0;
+  row.rowChangeableOn = unlockedOn.length > 0;
+  row.rowNextOn = unlockedOn.length === 0;
 }
 
 /**
- * 行のスイッチを押した直後の見た目（保存の後に読み直す）。core/context-agents.mjs の setDocRowRule と同じ規則:
- * オフは鍵の無いマスを全部オフ。オンはオフにする前（rule.was）に戻し、無ければ出どころ（自分で読む）のエージェントだけ。
- * 自分で読むエージェントが無い物（探す場所に足したフォルダー）は、渡せる全エージェント
+ * まとまり（Skills のフォルダー・指示の置き場）のスイッチの見え方。子の全部のマスを同じ規則で集計する。
+ * 押すと、変えられるオンのある子だけをオフにする（rowNextOn = false）。無ければ、外す前の記録のある子から戻す（無ければ初期値）。
+ * keys は押したときに書く子の名前（押せない子は含めない）。keys が空なら押せない。
+ * オフにする向きでも、外す前の記録だけを持つ子（先に自分の行のスイッチで外した子）を keys に含める。core が、今回は外していない子の
+ * 古い戻し先を消すため（残すと、まとまりを戻したときにその子までオンになる）
  */
-export function applyDocRowLocal(row, agentIds, on) {
-  // すでにどれかの押せるマスがオンの行は変えない（core/context-agents.mjs の setDocRowRule と同じ）
-  if (on && agentIds.some(a => row.cells[a] && !row.cells[a].locked && row.cells[a].on)) return;
-  const was = row.rule?.was;
-  const anyNative = agentIds.some(a => row.cells[a]?.native);
-  for (const a of agentIds) {
-    const c = row.cells[a];
-    if (!c || c.locked) continue;
-    let next = false;
-    if (on && was) next = c.native ? !(was.off ?? []).includes(a) : (was.spread ?? []).includes(a);
-    else if (on) next = anyNative ? Boolean(c.native) : true;
-    c.on = next;
-    c.mode = next ? (c.native ? 'native' : 'spread') : 'off';
+export function docBundleMeta(agentIds, items) {
+  let unlocked = 0, unlockedOn = 0, lockedOn = 0;
+  for (const r of items) {
+    for (const a of agentIds) {
+      const c = r.cells?.[a];
+      if (!c) continue;
+      if (!c.locked) { unlocked++; if (c.on) unlockedOn++; } else if (c.on) lockedOn++;
+    }
   }
-  recalcDocRow(row, agentIds);
+  const onCount = unlockedOn + lockedOn;
+  const rowChangeableOn = unlockedOn > 0;
+  const press = items.filter(r => !r.rowLocked);
+  const rowRestore = rowChangeableOn ? null : press.some(r => r.rowRestore === 'was') ? 'was' : press.length ? 'default' : null;
+  return {
+    rowMixed: onCount > 0 && onCount < unlocked + lockedOn,
+    rowSwitchOn: onCount > 0,
+    anyOn: onCount > 0,
+    rowFixed: lockedOn > 0,
+    rowChangeableOn,
+    rowNextOn: !rowChangeableOn,
+    rowRestore,
+    rowLocked: press.length === 0,
+    keys: press.map(r => r.key),
+  };
+}
+
+/** 1 つのマスを押した直後の見た目（保存の後に読み直す）。最後の変えられるオンを外したときは、core と同じく外す前の選択を覚えた扱いにする */
+export function applyDocAgentLocal(row, agentIds, agent, on) {
+  const c = row.cells[agent];
+  if (!c || c.locked) return;
+  const lastOn = !on && c.on && !agentIds.some(a => a !== agent && row.cells[a] && !row.cells[a].locked && row.cells[a].on);
+  if (lastOn) row.rule = { ...(row.rule ?? {}), was: { off: [...(row.rule?.off ?? [])], spread: [...(row.rule?.spread ?? [])] } };
+  c.on = Boolean(on);
+  c.mode = on ? (c.native ? 'native' : 'spread') : 'off';
+  recalcDocRow(row, agentIds, lastOn ? 'was' : null);
+}
+
+const setCellOn = (c, next) => { c.on = next; c.mode = next ? (c.native ? 'native' : 'spread') : 'off'; };
+
+/**
+ * 行のスイッチを押した直後の見た目（保存の後に読み直す）。core/context-agents.mjs の planDocRowPress と同じ規則。
+ * - オフ（on: false）: 鍵の無いオンのマスをまとめてオフ。鍵つきのオンは残す。外す前の選択は row.rule.was に覚える
+ * - オン（on: true）: 鍵の無いオンのマスがあれば変えない。無ければ、外す前の選択（was）→ 出どころのエージェントだけ、の順に戻す。
+ *   allowDefault が false なら、記録の無い行は初期値へ広げない（まとまりで、もともとオフだった子をオンにしない）
+ * 返り値: 見た目を変えたか
+ */
+export function applyDocRowLocal(row, agentIds, on, { allowDefault = true } = {}) {
+  const unlocked = agentIds.filter(a => row.cells[a] && !row.cells[a].locked);
+  const changeableOn = unlocked.filter(a => row.cells[a].on);
+  if (!on) {
+    if (!changeableOn.length) return false;
+    row.rule = { ...(row.rule ?? {}), was: { off: [...(row.rule?.off ?? [])], spread: [...(row.rule?.spread ?? [])] } };
+    for (const a of unlocked) setCellOn(row.cells[a], false);
+    recalcDocRow(row, agentIds, 'was');
+    return true;
+  }
+  if (changeableOn.length) return false;
+  const was = row.rule?.was;
+  const wasOn = a => (row.cells[a].native ? !(was.off ?? []).includes(a) : (was.spread ?? []).includes(a));
+  if (was && unlocked.some(wasOn)) {
+    for (const a of unlocked) setCellOn(row.cells[a], wasOn(a));
+    recalcDocRow(row, agentIds, null);
+    return true;
+  }
+  if (!allowDefault || row.rowRestore !== 'default') return false;
+  // 自分で読むエージェントが 1 つも無い物（探す場所に足したフォルダー）は、渡せる全エージェント。あれば、それだけ
+  const anyNative = agentIds.some(a => row.cells[a]?.native);
+  for (const a of unlocked) setCellOn(row.cells[a], anyNative ? Boolean(row.cells[a].native) : true);
+  recalcDocRow(row, agentIds, null);
+  return true;
+}
+
+/** まとまりのスイッチを押した直後の見た目。core/context-doc-matrix.mjs の applyDocTouch と同じ順（外す前の記録のある子から戻し、無ければ初期値） */
+export function applyDocBundleLocal(rows, agentIds, on) {
+  if (!on) {
+    for (const r of rows) {
+      if (applyDocRowLocal(r, agentIds, false) || rows.length < 2 || !r.rule?.was) continue;
+      // まとめて外したとき、今回は外していない子（先に外してあった子）の古い戻し先は消す（core の applyDocTouch と同じ）
+      const { was, ...rest } = r.rule;
+      r.rule = rest;
+      recalcDocRow(r, agentIds, 'default');
+    }
+    return;
+  }
+  let changed = false;
+  for (const r of rows) changed = applyDocRowLocal(r, agentIds, true, { allowDefault: false }) || changed;
+  if (!changed) for (const r of rows) applyDocRowLocal(r, agentIds, true, { allowDefault: true });
+}
+
+/**
+ * 会話の右パネルで、鍵つきでオンのマスの理由を開くボタン（エージェントのアイコンを並べない代わり。ToBe-A′）。
+ * 鍵つきでオンのマスが無ければ空の配列。押しても何も変えない（aria-disabled）。理由は鍵へのホバー・フォーカス・タップで出す
+ */
+export function docReasonKey(doc, rows) {
+  const reason = docFixedReasons(doc, rows);
+  if (!reason) return [];
+  ensureLockTips();
+  const b = matrixButton('reason-key');
+  b.setAttribute('aria-disabled', 'true');
+  b.setAttribute('aria-label', lockAriaLabel(t('context.rowSwitch.reasonName'), reason));
+  b.dataset.tip = reason;
+  b.append(matrixLockGlyph());
+  return [b];
+}
+
+/**
+ * 全体のスイッチ 1 つ分（行・まとまり・作業場所の行で共通）。meta は行の集計（rowLocked・rowMixed・rowFixed・rowChangeableOn・rowRestore…）か
+ * docBundleMeta の返り値。rows は鍵つきでオンのマスの理由を集める行（まとまりは子の配列）
+ */
+export function docRowSwitch({ doc, meta, rows, name, key, keyAttr = 'cxFk', onToggle }) {
+  return wholeSwitch({
+    state: wholeState(meta),
+    fixed: Boolean(meta.rowFixed) && !meta.rowChangeableOn,
+    fixedReason: docFixedReasons(doc, rows),
+    name,
+    next: wholeNext(meta),
+    disabledReason: meta.rowLocked ? docRowLockSummary(doc, [].concat(rows)) : null,
+    key,
+    keyAttr,
+    onToggle,
+  });
 }

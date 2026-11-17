@@ -180,7 +180,11 @@ try {
       for (const on of [true, false, true]) {
         const current = (await client.cmd('hooksMatrix', { trust: false })).rows.find(r => r.key === key);
         if (current.on !== on) await swOf(page, key).click();
-        await page.waitForFunction(({ key, on }) => document.querySelector(`#cx-panel-hooks .cx-row[data-key="${key}"] .cx-sw`)?.getAttribute('aria-checked') === String(on), { key, on });
+        // 登録の行は Claude・Codex だけが対象なので、オンは「一部オン（mixed）」に見える（全体のスイッチは role=checkbox の 3 状態。ADR 0337 §決定 4 の 2026-11-17 改訂）
+        await page.waitForFunction(({ key, on }) => {
+          const v = document.querySelector(`#cx-panel-hooks .cx-row[data-key="${key}"] .cx-sw`)?.getAttribute('aria-checked');
+          return on ? (v === 'true' || v === 'mixed') : v === 'false';
+        }, { key, on });
         // スイッチは先に見た目を変える。前の保存の通知ではなく、今回の保存と読み直しを待つ。
         let persisted = false;
         for (let i = 0; i < 100; i++) {
@@ -349,8 +353,11 @@ try {
     await page.waitForFunction(() => !document.querySelector('.cx-tip.on'), { timeout: 3000 });
     await page.waitForTimeout(400); // 吹き出しが消える動きの後に撮る
     const nativeSw = swOf(page, nativeKey);
-    check(await nativeSw.getAttribute('aria-disabled') === 'true' && await nativeSw.getAttribute('data-tip') === devinTip,
-      '鍵つきでオンのマスが残る行は、行のスイッチも鍵（同じ理由）', await nativeSw.getAttribute('data-tip'));
+    // 鍵つきのオン（Devin）と変えられるオン（Claude）が混ざる行: 行のスイッチは押せる「一部オン」。押すと変えられる分だけまとめてオフ（ToBe-A′）
+    const nativeSwFacts = await nativeSw.evaluate(el => ({ role: el.getAttribute('role'), checked: el.getAttribute('aria-checked'), disabled: el.getAttribute('aria-disabled'), label: el.getAttribute('aria-label'), lk: el.querySelectorAll('.lk').length }));
+    check(nativeSwFacts.role === 'checkbox' && nativeSwFacts.checked === 'mixed' && nativeSwFacts.disabled === null
+      && nativeSwFacts.label.includes(T('context.rowSwitch.next.off')) && nativeSwFacts.lk === 0,
+      '鍵つきでオンのマスが残っても変えられるオンがある行は、行のスイッチは押せる「一部オン」（role=checkbox・押すと変えられる分をまとめてオフ・鍵は出さない）', nativeSwFacts);
     const wsDevin = rowOf(page, 'ws:hooks').locator('.cx-ag[data-agent="opencode"]');
     check(await wsDevin.getAttribute('data-tip') === T('hooks.matrix.tip.noWorkspaceHooks', { agent: 'OpenCode' }),
       '作業場所の行の OpenCode は、作業場所の Hook を読まない理由の鍵', await wsDevin.getAttribute('data-tip'));
@@ -414,7 +421,7 @@ try {
     // キーボード: 登録の行のスイッチを Space で入れる（確かめの要らない Claude・Codex が入る）
     await swOf(page, regKey).focus();
     await page.keyboard.press('Space');
-    await page.waitForFunction(k => document.querySelector(`#cx-panel-hooks .cx-row[data-key="${k}"] .cx-sw`)?.getAttribute('aria-checked') === 'true', regKey, { timeout: 10000 });
+    await page.waitForFunction(k => ['true', 'mixed'].includes(document.querySelector(`#cx-panel-hooks .cx-row[data-key="${k}"] .cx-sw`)?.getAttribute('aria-checked')), regKey, { timeout: 10000 });
     await page.waitForFunction(k => document.querySelector(`#cx-panel-hooks .cx-row[data-key="${k}"] button.cx-ag[data-agent="claude"]`), regKey, { timeout: 10000 });
     // 画面は先に見た目を変える。保存の後の読み直しを待ってから、サーバーの状態を見る
     let regOn = null;

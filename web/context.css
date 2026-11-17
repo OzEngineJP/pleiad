@@ -84,6 +84,7 @@
 :is(.cx-peek,.hk-details) .fm{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;padding:8px 12px;background:var(--surface-paper);border-radius:var(--r-s)}
 :is(.cx-peek,.hk-details) .fm .k{color:var(--ink-weak);font-family:var(--font-mono);font-size:var(--fs-xs)}
 :is(.cx-peek,.hk-details) .fm .v{overflow-wrap:anywhere}
+.hk-facts .v{white-space:pre-line}   /* 止められない理由は、理由ごとに改行 */
 :is(.cx-peek,.hk-details) .facts .k{font-family:var(--font);font-size:var(--fs-s)}
 .cx-peek .row-line{display:flex;align-items:center;gap:6px;min-width:0}
 .cx-peek .row-line .cx-path{flex:1}
@@ -129,6 +130,13 @@
 .cx-row.kid+.cx-peek,.cx-row.kid+.cx-choice,.cx-peek.kid{margin-left:36px}
 .cx-sw[aria-checked=mixed]{background:var(--fill-primary);color:var(--on-fill)}
 .cx-sw[aria-checked=mixed]::after{top:8.5px;left:10px;width:14px;height:3px;border-radius:2px;transform:none}
+/* 全体のスイッチ（ToBe-A′。承認済み 2026-11-17）。押しても残る鍵つきのオンがあるときだけ、小さな鍵をトラックの右下に添える。理由は鍵へのホバー・フォーカス・タップで出す（常設しない） */
+.cx-sw>.lk{position:absolute;right:-5px;bottom:-11px;width:12px;height:12px;background:var(--surface-paper);color:var(--ink)}
+.cx-sw>.lk svg{width:9px;height:9px}
+/* 会話の右パネル: エージェントのアイコンを並べない代わりに、鍵つきのオンの理由を開くボタンを置く */
+.reason-key{flex:none;display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:var(--r-s);background:transparent;color:var(--ink-weak);cursor:help}
+.reason-key:hover{background:var(--surface-2);color:var(--ink)}
+.reason-key .lk{position:static;width:14px;height:14px;color:inherit}
 .cx-find{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--surface-paper);border-radius:var(--r-pill);color:var(--ink-weak)}
 .cx-find svg{flex:none;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
 .cx-find input{flex:1;min-width:0;padding:0;background:transparent;color:var(--ink);outline:none}
@@ -527,6 +535,7 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 /* z-index は、右パネル（狭い幅で 45）・メニュー（50）・通知（60）より上（ドラッグの影 120 より下）。下だと右パネルの鍵の吹き出しが隠れる */
 .cx-tip{position:fixed;z-index:70;left:0;top:0;width:max-content;max-width:min(340px,calc(100vw - 16px));padding:6px 12px;border-radius:var(--r-s);
   background:var(--surface-paper);box-shadow:0 4px 16px var(--shadow);font-size:var(--fs-xs);line-height:1.6;color:var(--ink);text-wrap:balance;
+  white-space:pre-line;   /* 理由が 2 つ以上のときは、理由ごとに改行（lock-tip.mjs の joinLockReasons） */
   pointer-events:none;opacity:0;visibility:hidden;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
 .cx-tip.on{opacity:1;visibility:visible;transition-delay:0s}
 @media (prefers-reduced-motion:reduce){.cx-tip{transition:none}}
@@ -546,6 +555,13 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
   .cx-ag .mk{width:20px;height:20px}
   .cx-ag .lk{right:0;bottom:0}
   .cx-legend.names{display:flex}
+  .reason-key{width:44px;height:44px}
+  /* 全体のスイッチ: 見た目は 34×20 のまま、押せる面だけ 44×44 にする（承認済みモックの .whole と同じ） */
+  .cx-sw[role=checkbox]::before{content:"";position:absolute;inset:-12px -5px}
+  /* 理由の鍵（data-tip-pass）を持つスイッチ: 鍵の当たり（鍵の 12×12 の左へ 4px・下へ 1px 足した 16×13）を、押せる面（44×44）から切り抜く。
+     鍵の見える位置は同じまま、スイッチの中央・端を押せば切り替わり、鍵を押したときだけ吹き出しが開く（面と当たりが重ならない） */
+  .cx-sw:has(>.lk[data-tip-pass])[role=checkbox]::before{clip-path:polygon(0 0,100% 0,100% 31px,28px 31px,28px 100%,0 100%)}
+  .cx-sw>.lk[data-tip-pass]::before{content:"";position:absolute;inset:0 0 -1px -4px}
   .cx-ask{margin-left:0}
   .cx-ask .q{flex-basis:100%}
 }

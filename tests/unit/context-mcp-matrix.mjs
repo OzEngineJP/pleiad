@@ -25,6 +25,9 @@ export default async function (t) {
     const m = buildMcpMatrix(base);
     t.ok('列の順は Claude・Codex・Antigravity・OpenCode・Devin・Grok', m.agents.join() === 'claude,codex,antigravity,opencode,devin,grok', m.agents);
     const row = key => m.rows.find(r => r.key === key);
+    t.ok('表は列の表示名（labels: id → 短い名前）を持つ（有効なエージェントの一覧に無い列でも、画面が内部のキーを出さない）',
+      m.labels && Object.keys(m.labels).join() === m.agents.join() && m.labels.devin === 'Devin' && m.labels.grok === 'Grok' && m.labels.claude === 'Claude'
+      && Object.entries(m.labels).every(([id, n]) => n && n !== id), JSON.stringify(m.labels));
     t.ok('Pleiad の登録の行は「Pleiad に登録」の組で、「任せる」のままなら全部 off（今と同じ）',
       row('reg').group === 'ply' && m.agents.every(a => row('reg').cells[a].state === 'off'));
     t.ok('エージェントの設定にだけある名前は「エージェントの設定」の組で、持つエージェントは on', row('cl').group === 'agent' && row('cl').cells.claude.state === 'on' && row('cl').origins.join() === 'claude');
