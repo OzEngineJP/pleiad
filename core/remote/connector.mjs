@@ -149,6 +149,8 @@ export function createRemoteHost({
   dataDir, cipher, target, token, appVersion = '', emit = () => {}, env = process.env,
   backoff = { minMs: 1000, maxMs: 60_000 }, log = () => {}, agent = null,
   now = Date.now, reviewLimits = {}, onIdentity = null,
+  // 審査用ホスト専用: 審査用アカウント（起動のときの自動ログインで入ったもの）の uid を返す。null なら自動承認はしない
+  reviewPlusUid = () => null,
 }) {
   const limits = { maxDevices: reviewLimits.maxDevices ?? INVITE_MAX_DEVICES, perHour: reviewLimits.perHour ?? INVITE_MAX_PER_HOUR };
   const store = createRemoteStore({ dataDir, cipher });
@@ -449,6 +451,11 @@ export function createRemoteHost({
       deniedRecently: publicKey => (deniedUntil.get(keyText(publicKey)) ?? 0) > now(),
       /** このアカウントからの申し込みを止めているか（続けて断ったとき。PC の画面の「再開する」で解く）。 */
       plusPaused: uid => plusPausedUntil(uid) > 0,
+      /**
+       * 審査用ホスト（AGENT_HOST_REVIEW=1）で、審査用アカウントの端末なら承認の窓を出さずに許可してよいか。
+       * 普段のホストは常に false（初めての端末は今までどおり承認待ち）
+       */
+      autoApprove: uid => reviewMode() && typeof uid === 'string' && uid !== '' && reviewPlusUid() === uid,
       /** この鍵の端末の記録（無ければ null）。この link のもの（plus）を先に、無ければ own を返す。 */
       deviceFor(publicKey) {
         const key = keyText(publicKey);

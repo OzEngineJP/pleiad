@@ -31,6 +31,7 @@ const SUITES = [
   // Pleiad Plus（core/plus/）: セッション（ログイン・保管・更新・状態。偽の Plus だけと話す）と ID トークンの検証
   './unit/plus-session.mjs',
   './unit/plus-verify.mjs',
+  './unit/review-plus-login.mjs',
   // 券（core/plus/tickets.mjs）: 取り方・確かめ方・公開鍵の覚え・jti の一度きり
   './unit/plus-tickets.mjs',
   // Plus の操作（plus.status・voice.status・delegation.routing）: agent には uid・メールを出さない

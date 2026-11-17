@@ -207,6 +207,7 @@ import {
 } from "./backends/index.mjs";
 import { takeBootEnv } from './boot-env.mjs';
 import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from './review-mode.mjs';
+import { startReviewPlusLogin } from './review-plus-login.mjs';
 import { onExit, holderRootFor } from './process.mjs';
 
 // main が起動の時にだけ渡す変数（AGENT_HOST_HANDOVER・PORT・RUNTIME_KEY・SERVER_LOG など。core/boot-env.mjs）を写して process.env から外す。
@@ -825,6 +826,7 @@ async function getPlusHosts({ fresh = false } = {}) {
   }
 }
 
+const reviewPlusLogin = startReviewPlusLogin({ session: plusSession, log: line => console.log(`  ${line}`) });
 plusSession.onChange(({ type, status }) => {
   plusHostsCache = null;
   emitGlobal({ type: 'plusStatus', status, change: type, sessionId: null });
@@ -841,6 +843,8 @@ plusSession.onChange(({ type, status }) => {
 (async () => {
   try { plusEntrance = (await store.getPrefs())?.plus?.entrance === true; } catch { /* 読めなければ印無し */ }
   await plusSession.init();
+  // 審査用ホスト: 審査用アカウントで Plus に入っておく（環境変数が無ければ何もしない。core/review-plus-login.mjs）
+  void reviewPlusLogin?.ensure();
 })().catch(e => console.error('  plus: 起動の読み込みに失敗:', String(e?.code ?? e?.message ?? e)));
 // 外部 MCP の台帳と一覧の写し（pleiad.db の行。遅延起動・孤児の掃除。core/mcp-ledger.mjs）
 const mcpLedger = createMcpLedger({ dataDir: store.dataDir, log: line => console.log(`  ${line}`) });
@@ -876,6 +880,7 @@ const remoteAgentPort = createAgentPort({
   log: line => console.log(`  ${line}`),
 });
 const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, token: TOKEN, appVersion: APP_VERSION,
+  reviewPlusUid: () => reviewPlusLogin?.uid() ?? null,
   agent: {
     attach: (stream, device) => remoteAgentPort.attach(stream, device),
     closeDevice: (deviceId, reason) => remoteAgentPort.closeDevice(deviceId, reason),

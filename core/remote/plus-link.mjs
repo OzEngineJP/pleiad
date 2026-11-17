@@ -224,6 +224,18 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
       onAdmitted(known.device);
       return;
     }
+    // 5a. 審査用ホストの審査用アカウントだけ: 承認の窓を出さず、その場で許可する（審査員が PC を操作できないため）。台数と 1 時間の数は守る
+    if (ctx.autoApprove?.(uid)) {
+      const limited = await checkRequest({ publicKey });
+      if (limited) return refuse(limited);
+      requestTimes.push(now());
+      const { device, token } = await ctx.admit({ ...label, publicKey, plusUid: uid, approvedBy: 'host' });
+      clearTimeout(timer);
+      send({ type: 'approved', deviceId: device.id, token, hostName });
+      closeWs(ws, 1000);
+      onAdmitted(device);
+      return;
+    }
     // 5. 許可していない鍵: 裏のつなぎ直しでは窓を出さない。人が選んだつなぎなら PC の画面の承認の窓へ
     if (msg.type === 'admit') return refuse('approval');
     if (ctx.plusPaused?.(uid)) return refuse('rejected');
