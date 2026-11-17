@@ -327,7 +327,13 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
   if (agent) {
     for (const p of pressable) {
       const curRule = holder[kind].agents[p.k] ?? p.row.rule;
-      holder[kind].agents[p.k] = toggleDocAgentRule(kind, entryOf(p), curRule, agent, Boolean(on), ctx);
+      const next = toggleDocAgentRule(kind, entryOf(p), curRule, agent, Boolean(on), ctx);
+      // アイコンの変更で、行のスイッチの戻し先の記録（was）は古くなるので持ち越さない。ただし、押せるマスの最後のオンを外したときだけは、
+      // その前の規則を戻し先として覚える（そのまま行のスイッチで戻せる。鍵つきのオンが残る行でも）
+      const wasOn = unlockedOnAgents(kind, entryOf(p), curRule, ctx).length > 0;
+      holder[kind].agents[p.k] = !on && wasOn && !unlockedOnAgents(kind, entryOf(p), next, ctx).length
+        ? { ...next, was: { off: [...(curRule?.off ?? [])], spread: [...(curRule?.spread ?? [])] } }
+        : next;
     }
     return cfg;
   }

@@ -307,6 +307,22 @@ export default async function (t) {
   t.ok('外した後にマスを押すと、外す前の記録は消え、押したマスだけがオンになる（行のスイッチで古い選択へ戻さない）',
     lockCfg.defaults.instruction.agents[claudeKey].was === undefined && unlockedOnOf(claudeCell) === 'codex' && claudeCell.rowRestore === null,
     JSON.stringify({ on: unlockedOnOf(claudeCell), restore: claudeCell.rowRestore }));
+  // マスで押せるマスの最後のオンを外したときだけは、その前の規則を戻し先として覚える（鍵つきのオンが残る行でも、行のスイッチで戻せる）
+  const iconCfg = emptyDocAgentsConfig();
+  defPress(iconCfg, claudeKey, false, 'claude');
+  const iconOff = defMatrix(iconCfg).byKey.get(claudeKey);
+  t.ok('マスで最後のオンを外す: 鍵つきが残る行は「一部」＋鍵のまま、行のスイッチで戻せる（戻し先は外す前の規則）',
+    unlockedOnOf(iconOff) === '' && lockedOnOf(iconOff) === 'devin,grok' && iconOff.rowMixed === true && iconOff.rowRestore === 'was' && iconOff.rowLocked === false
+    && iconCfg.defaults.instruction.agents[claudeKey].was !== undefined,
+    JSON.stringify({ on: unlockedOnOf(iconOff), restore: iconOff.rowRestore }));
+  defPress(iconCfg, claudeKey, true);
+  t.ok('その行のスイッチを押すと、外す前のマス（Claude）に戻り、記録は消える',
+    unlockedOnOf(defMatrix(iconCfg).byKey.get(claudeKey)) === 'claude' && iconCfg.defaults.instruction.agents[claudeKey].was === undefined);
+  // 最後でないオンを外したときは記録しない（鍵の無いオンが残るので、行のスイッチは「オフにする」向き）
+  const iconCfg2 = emptyDocAgentsConfig(), openKey = docItemKey(userOpen);
+  defPress(iconCfg2, openKey, true, 'codex');
+  defPress(iconCfg2, openKey, false, 'codex');
+  t.ok('最後でないオンをマスで外しても、記録は作らない', iconCfg2.defaults.instruction.agents[openKey].was === undefined);
   // OpenCode の物を Codex にも広げてから、行をオフ → オン で、オフにする前（OpenCode・Codex）に戻る
   const rowCfg = emptyDocAgentsConfig();
   const ucKey = docItemKey(userOpen);
