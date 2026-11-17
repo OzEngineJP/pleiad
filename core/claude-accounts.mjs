@@ -251,9 +251,13 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     return serial(async () => {
       const data = await read();
       const label = normalizeName(name);
+      // 名前の重複は、追加と名前の変更で止める（比べ方は normalizeName と同じ: 前後の空白だけ除く・大文字小文字は区別する）。
+      // すでに同名が 2 つある既存のデータは読めて使える。名前を変えないトークンの差し替えは通し、片方を変えれば解消する
+      const taken = skip => data.accounts.some(a => a.id !== skip && a.name.trim() === label);
       if (id !== undefined && id !== null && id !== '') {
         const entry = data.accounts.find(a => a.id === id);
         if (!entry) throw new Error(t('claude.accounts.notRegistered'));
+        if (entry.name.trim() !== label && taken(id)) throw new Error(t('claude.accounts.nameDuplicate'));
         let tokenChanged = false;
         if (token !== undefined && token !== null && String(token).trim() !== '') {
           await secrets.set(key(id), { token: normalizeToken(token) });
@@ -265,6 +269,7 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
         await write(data);
         return { id, tokenChanged };
       }
+      if (taken(null)) throw new Error(t('claude.accounts.nameDuplicate'));
       const secret = normalizeToken(token);
       const created = 'acct-' + crypto.randomBytes(6).toString('hex');
       // 秘密を先に書く。一覧に出た時点でトークンが揃っているように
@@ -300,6 +305,16 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     },
     async has(id) {
       return (await read()).accounts.some(a => a.id === id);
+    },
+    /**
+     * 追加の前の検査（ブラウザーでの認可を回す前に止めるため）。名前が不正・重複なら例外（code: bad-name。
+     * 画面はこれだけを名前の欄に出し、ほかの失敗は流れの所に［やり直す］と出す。web/claude-accounts.mjs）
+     */
+    async assertNameFree(name) {
+      const bad = e => Object.assign(e, { code: 'bad-name' });
+      let label;
+      try { label = normalizeName(name); } catch (e) { throw bad(e); }
+      if ((await read()).accounts.some(a => a.name.trim() === label)) throw bad(new Error(t('claude.accounts.nameDuplicate')));
     },
     /**
      * 追加（id 無し）か、名前の変更・トークンの差し替え（id 有り。token を省けば今のトークンを残す）。

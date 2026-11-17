@@ -395,3 +395,62 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mem-status.warn strong{color:var(--ink-strong)}
 .mem-status .mp-note{margin-top:0}
 .mem-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+
+/* ---- Claude のアカウント: その場で開くカード（docs/design-system.md「Claude のアカウント」）。動きの値はトークンだけ */
+.mp-fold{display:grid;grid-template-rows:0fr;opacity:0;visibility:hidden;transition:grid-template-rows var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}
+.mp-fold.open{grid-template-rows:1fr;opacity:1;visibility:inherit;transition:grid-template-rows var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),visibility 0s}
+.mp-fold>.mp-fold-in{overflow:hidden;min-height:0;min-width:0;padding:4px;margin:-4px}
+.mp-fold>.mp-fold-in.mp-wide{padding:4px 10px;margin:-4px -10px}
+.mp-hfold{display:inline-grid;grid-template-columns:0fr;opacity:0;visibility:hidden;margin-left:-4px;transition:grid-template-columns var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),margin-left var(--dur) var(--ease-out),visibility 0s var(--dur)}
+.mp-hfold.open{grid-template-columns:1fr;opacity:1;visibility:inherit;margin-left:0;transition:grid-template-columns var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),margin-left var(--dur) var(--ease-out),visibility 0s}
+.mp-hfold>span{overflow:hidden;min-width:0;padding:4px;margin:-4px;white-space:nowrap}
+#claudeAccountsPanel [data-slot]{display:flow-root;box-sizing:border-box;min-width:0;padding:4px;margin:-4px}
+#claudeAccountsPanel [data-slot][tabindex="-1"],.mp-body[tabindex="-1"]{outline:none}
+.mp-list{margin-top:10px}
+/* エージェントのカード（白）の中に移っても、アカウントは灰色の面の上の白いカードに見せる（節の枠に入れるとき面の地を脱ぐ style.css の .conn-sec .mp-panel を、この面だけ戻す。狭い幅では、エージェントのカードの余白へ 6px ずつ広げ、閉じたカードの状態を 1 行に収める） */
+.conn-sec #claudeAccountsPanel{padding:6px 20px 20px;background:var(--surface-1);border-radius:var(--r-l)}
+@media (max-width:700px){.conn-sec #claudeAccountsPanel{margin-inline:-6px;padding:2px 6px 8px}}
+.mp-fold-in>.mp-acct{margin:0 0 10px}
+.mp-acct .btn,.mp-fold-in>[data-add]{min-height:var(--hit)}
+.mp-acct .mp-stage .mp-note a{display:inline-flex;align-items:center;min-height:var(--hit);margin-block:calc((1lh - var(--hit)) / 2)}
+.mp-acct .btn.lnk{color:var(--ink-blue)}
+/* 見出しの行: 名前 | 操作の組（［直す］［編集］［削除］）。組は割らない。直すボタンが無いカードと開いたカードは 1 行で、長い名前のほうを省く。
+   直すボタンがあるカードは、名前（と下の状態の行）の列が「名前の幅か 18em の広いほう」と組を並べて収まらなければ、組ごと状態の行の下へ回り右に寄る（窓の幅ではなく、カードの幅と名前の長さで決まる）。
+   状態の行と名前の欄は width:0;min-width:100% で列の幅に合わせ、列の自然な幅（折り返しの判断）には名前だけが効くようにする */
+.mp-acct .mp-head{flex-wrap:nowrap}
+.mp-acct .mp-head>.mp-card-info{flex:1 1 0}
+.mp-acct.has-fix:not(.is-open) .mp-head{flex-wrap:wrap}
+.mp-acct.has-fix:not(.is-open) .mp-head>.mp-card-info{flex:1 1 auto;min-width:min(100%,18em)}
+.mp-acct.has-fix .mp-card-info>.mp-fold,.mp-acct.has-fix:not(.is-open) .mp-name-in{width:0;min-width:100%}
+/* 右端の基準は 1 本: 塗りのボタンは面の端、文字だけのボタンは文字の端を、カードの内側の端に揃える（文字だけのボタンで終わる組は、その余白の分だけ外へ出す） */
+.mp-acct .mp-head>.mp-card-actions{flex:none;flex-wrap:nowrap;margin-left:auto;margin-right:-12px;transition:opacity var(--dur) var(--ease-out),visibility 0s}
+.mp-acct .mp-cred>.mp-fold:has(.mp-card-actions>.btn:last-child:not(.btn-primary):not(.btn-quiet)){margin-right:-12px}
+.mp-acct .mp-head>.mp-card-actions.away{opacity:0;visibility:hidden;transition:opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}
+.mp-name{display:grid;align-items:center;min-height:var(--hit);min-width:0}
+.mp-name>*{grid-area:1/1;min-width:0}
+.mp-name>strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;transition:opacity var(--dur) var(--ease-out),visibility 0s}
+.mp-acct.is-edit .mp-name>strong{opacity:0;visibility:hidden;transition:opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}
+.mp-name-in{box-sizing:border-box;width:min(100%,28em);height:var(--hit);padding:0;border-radius:var(--r-pill);background:transparent;color:var(--ink);font-weight:600;opacity:0;visibility:hidden;transition:padding var(--dur) var(--ease-out),background-color var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}
+.mp-acct.is-edit .mp-name-in{padding:0 12px;background:var(--surface-1);opacity:1;visibility:inherit;transition:padding var(--dur) var(--ease-out),background-color var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),visibility 0s}
+.mp-acct .mp-state{margin:6px 0 0}
+.mp-acct .mp-state[role=alert]{color:var(--ink-danger);font-size:var(--fs-s)}
+.mp-sum{display:flex;flex-wrap:wrap;align-items:center}
+.mp-sum>small{flex:1 1 220px;min-width:0}
+/* 持ち主の食い違いの知らせ: 地を敷かず、カードの内側の端に［トークンを発行し直す］の右端を揃える */
+.mp-acct .mp-own .mp-confirm{margin-top:6px;padding:0;background:none}
+.mp-acct .mp-cred{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;margin:4px -10px 0;padding:6px 10px;border-radius:var(--r-s)}
+.mp-cred-info{flex:1 1 180px;min-width:0}
+.mp-cred-info>span{display:block}
+.mp-cred>.mp-fold{margin-left:auto}
+.mp-cred>.mp-tw,.mp-cred>.mp-flow{flex:1 0 calc(100% + 8px)}
+.mp-acct .mp-tw .mp-warn{margin:8px 0 0;font-size:var(--fs-s)}
+.mp-stage{margin-top:8px;padding:12px 14px;background:var(--surface-1);border-radius:var(--r-m)}
+.mp-acct .mp-stage p{margin:0 0 6px}
+.mp-acct .mp-stage .mp-field{margin-top:8px}
+.mp-acct .mp-stage .mp-field .mp-row{flex-wrap:nowrap}
+.mp-acct .mp-stage .mp-field .mp-row>input{flex:1}
+.mp-acct .mp-stage input{box-sizing:border-box;min-height:var(--hit)}
+.mp-acct .mp-stage .mp-actions{margin-top:12px}
+.mp-acct .mp-stage .mp-actions>.btn.lnk:first-child{margin-right:auto}
+.mp-duo{display:flex;gap:10px;align-items:center;margin-left:auto}
+.mp-acct .mp-stage code{font-family:var(--font-mono,ui-monospace,Consolas,monospace);font-size:.92em}

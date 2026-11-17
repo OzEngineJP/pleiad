@@ -61,6 +61,9 @@ export default async function (t) {
     t.ok('使用量の認可の前は照合は unknown', work.tokenCheck?.status === 'unknown');
     t.ok('どのイベントにもトークンを載せない', !JSON.stringify(c.since(m0)).includes('sk-ant-'));
     t.ok('アカウント一覧が変わったことを知らせる', c.since(m0).some(e => e.type === 'claudeAccountsChanged'));
+    refused = null;
+    await c.cmd('claudeLoginStart', { kind: 'setup-token', name: ' 仕事用 ' }).catch(e => { refused = e; });
+    t.ok('同じ名前の新しいアカウントの発行は始めない（既存のアカウントの再発行は accountId で始める）', refused?.message.includes('同じ名前'));
 
     // ---- 使用量の認可
     const m2 = c.mark();

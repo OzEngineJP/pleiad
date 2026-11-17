@@ -536,12 +536,12 @@
     },
     "usage": {
       "timeout": "使用量の取得が時間切れです",
-      "needsLogin": "使用量を表示するには、設定の「Claude のアカウント」で「使用量の表示を認可」を済ませてください。",
+      "needsLogin": "使用量を表示するには、設定の「Claude のアカウント」で「claude.ai にログイン」を済ませてください。",
       "loginAccount": "ログイン中のアカウント",
       "failed": "取得できませんでした: {{message}}",
-      "failedReauth": "取得できませんでした: {{message}}。続くときは「使用量の表示を認可」をやり直してください。",
+      "failedReauth": "取得できませんでした: {{message}}。続くときは「claude.ai にログインし直す」を押してください。",
       "relogin": "ログイン情報にトークンが無いため、使用量を読めません。再ログインが必要です。ターミナルで claude auth login を実行してください。",
-      "reauthNeeded": "このアカウントの使用量の認可が切れています（ログイン情報にトークンがありません）。再ログインが必要です。「認可をやり直す」を押してください。"
+      "reauthNeeded": "このアカウントの claude.ai のログインが切れています。「claude.ai にログインし直す」を押してください。"
     },
     "redacted": {
       "token": "[トークン]",
@@ -581,6 +581,7 @@
       "badToken": "トークンの形式が正しくありません。`claude setup-token` が表示した値をそのまま貼り付けてください",
       "nameRequired": "アカウントの表示名を入力してください",
       "nameTooLong": "表示名は {{max}} 文字以内にしてください",
+      "nameDuplicate": "同じ名前のアカウントがあります",
       "ownerUnknown": "トークンの持ち主を確認できません（{{message}}）",
       "ownerHttp": "トークンの持ち主を確認できません（HTTP {{status}}）",
       "ownerNoOrg": "トークンの持ち主を確認できません（応答に組織がありません）",

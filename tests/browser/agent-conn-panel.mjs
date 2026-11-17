@@ -99,7 +99,7 @@ try {
       const panels = await page.evaluate(() => ['claudeAccountsPanel', 'agentAccountsPanel', 'compatEndpointsPanel'].map(x => document.querySelectorAll(`#${x}`).length));
       check(panels.every(n => n === 1), `${id}: 管理の面は文書に 1 つずつのまま（作り直さない）`, panels);
       // 打ちかけのフォームは描き直しても残る（アカウントの追加の名前。フォーカスも）
-      const form = id === 'claude' ? { add: '#caAdd', name: '#caName' } : { add: '#aaAdd', name: '#aaName' };
+      const form = id === 'claude' ? { add: '[data-add]', name: '[data-account^="new"] .mp-name-in' } : { add: '#aaAdd', name: '#aaName' };
       await page.locator(`${card(id)} ${form.add}`).click();
       await page.locator(`${card(id)} ${form.name}`).fill('打ちかけ');
       await recheck(page, { keepFocus: true });

@@ -94,13 +94,13 @@ async function japaneseCases(t, tmp) {
     for (const row of [work, personal]) {
       assert.equal(row.reason, 'no-login'); assert.equal(row.message, reauthNeeded); assert.equal(row.reauth, true, '「認可をやり直す」の元');
     }
-    assert.match(work.message, /再ログインが必要です/);
+    assert.match(work.message, /claude\.ai のログインが切れています/);
     assert.equal(spare.reason, undefined, 'トークンがあれば今までどおり');
     assert.equal(spare.message, serverT('usage.claudeUnavailable'));
     assert.ok(!JSON.stringify(quota).includes('fake-'), 'トークンの値を出さない');
   });
 
-  await check(t, '設定の「使用量」に再ログインの文と「認可をやり直す」のボタンが出る。ヘッダーの札は認可待ち', async () => {
+  await check(t, '設定の「使用量」に再ログインの文と「claude.ai にログインし直す」のボタンが出る。ヘッダーの札は認可待ち', async () => {
     assert.ok(quota?.accounts, '前の場面の結果');
     const els = new Map();
     const $ = id => els.get(id) ?? (els.set(id, new N('div')), els.get(id));
@@ -112,7 +112,7 @@ async function japaneseCases(t, tmp) {
     const root = $('usageCards');
     assert.ok(root.shown.includes(relogin), root.shown);
     assert.ok(root.shown.includes(reauthNeeded));
-    const buttons = root.querySelectorAll('button').filter(b => b.textContent === tr('usage.redoAuth'));
+    const buttons = root.querySelectorAll('button').filter(b => b.textContent === tr('accounts.redoUsage'));
     assert.equal(buttons.length, 2, '登録した 2 つのアカウントにだけボタン');
     buttons[0].onclick();
     assert.deepEqual(logins, ['acct-aaaaaaaaaaaa']);

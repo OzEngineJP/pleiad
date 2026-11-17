@@ -84,6 +84,27 @@ export default async function (t) {
     t.ok('トークンを貼り直せる', (await accounts.resolve(work)).token === TOKEN_B);
     await accounts.save({ id: work, name: '仕事', token: TOKEN_A });
 
+    // 同じ名前（前後の空白だけ除いて比べる。大文字小文字は区別する）は追加・名前の変更で止める
+    const dupMsg = async fn => { try { await fn(); } catch (e) { return e.message; } return null; };
+    t.ok('同じ名前の追加は止める（前後の空白は無視）', (await dupMsg(() => accounts.save({ name: ' 仕事 ', token: TOKEN_B }))) === '同じ名前のアカウントがあります'
+      && (await accounts.list()).accounts.length === 2);
+    t.ok('ほかのアカウントと同じ名前への変更は止める', (await dupMsg(() => accounts.save({ id: home, name: '仕事' }))) === '同じ名前のアカウントがあります'
+      && (await accounts.list()).accounts.find(a => a.id === home).name === '個人用');
+    t.ok('自分の名前のままの保存と、大文字小文字だけ違う名前は通す', (await dupMsg(() => accounts.save({ id: work, name: '仕事', token: TOKEN_A }))) === null
+      && (await dupMsg(() => accounts.save({ name: 'Work', token: TOKEN_B }))) === null
+      && (await dupMsg(() => accounts.save({ name: 'work', token: TOKEN_B }))) === null);
+    // 重複を許す前の既存データ: 読めて、名前を変えないトークンの差し替えは通り、片方を変えれば解消する
+    const regFile = path.join(dir, 'claude-accounts.json');
+    const reg = JSON.parse(await fs.readFile(regFile, 'utf8'));
+    const dupIds = reg.accounts.filter(a => a.name === 'Work' || a.name === 'work').map(a => a.id);
+    reg.accounts.find(a => a.id === dupIds[1]).name = 'Work';
+    await fs.writeFile(regFile, JSON.stringify(reg));
+    t.ok('すでに同名が 2 つあるデータも一覧で読める', (await accounts.list()).accounts.filter(a => a.name === 'Work').length === 2);
+    t.ok('既存の同名は、名前を変えないトークンの差し替えができる', (await dupMsg(() => accounts.save({ id: dupIds[0], name: 'Work', token: TOKEN_A }))) === null);
+    t.ok('既存の同名は、片方の名前を変えれば解消する', (await dupMsg(() => accounts.save({ id: dupIds[1], name: 'Work 2' }))) === null
+      && (await dupMsg(() => accounts.save({ id: dupIds[1], name: 'Work' }))) === '同じ名前のアカウントがあります');
+    await accounts.remove(dupIds[0]); await accounts.remove(dupIds[1]);
+
     // 暗号化して保存したものを、この起動では復号できない（npm start で開いた）
     const raw = JSON.parse(await fs.readFile(secrets.file, 'utf8'));
     raw.entries[`claude-account:${home}`] = { enc: 'safeStorage', data: 'xxxx', at: new Date().toISOString() };

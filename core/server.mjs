@@ -110,7 +110,7 @@ import { sweepClaudeEnvFiles } from './claude-env-file.mjs';
 import { sweepClaudeMcpFiles } from './claude-mcp-file.mjs';
 import { createSecretFill } from './secret-fill.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
-import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
+import { createClaudeAccounts, redactToken, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
 import { createAgentAccounts } from './agent-accounts.mjs';
 import { createAgentAccountManager } from './agent-account-manager.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
@@ -10389,7 +10389,7 @@ wss.on("connection", (ws, req) => {
         case 'claudeLoginStart': {
           const { kind, accountId, name, open } = msg.args ?? {};
           if (accountId && !(await claudeAccounts.has(String(accountId)))) throw new Error(t('accounts.notRegistered'));
-          if (kind === 'setup-token' && !accountId) normalizeAccountName(name);
+          if (kind === 'setup-token' && !accountId) await claudeAccounts.assertNameFree(name);   // 認可を回す前に、名前の不正・重複を止める
           return reply(true, claudeLogin.start({ kind, accountId: accountId ? String(accountId) : undefined, name: name ? String(name).trim() : undefined, open: Boolean(open) }));
         }
         case 'claudeLoginCode':

@@ -96,7 +96,8 @@
 | 現在のバージョン（一覧の行で、日付のあとに出す印） | Current version |
 | ファイルプレビュー | file preview |
 | たった今 | just now |
-| 使用量の表示を認可 | Authorize usage display |
+| 会話用のトークン | conversation token |
+| claude.ai のログイン / claude.ai にログイン（し直す） | claude.ai login / Log in to claude.ai (again) |
 | ログイン中のアカウント | Signed-in account |
 | ネイティブ（指示・MCP） | native |
 | 伏せ字 | [redacted] |

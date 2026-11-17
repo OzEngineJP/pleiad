@@ -152,7 +152,7 @@ export function renderQuota(parent, quota, onUsageLogin, request, options = {}) 
   if (quota.message && (!expired || quota.needsUsageLogin || quota.reauth || quota.reason === 'no-login')) parent.append(el('p', 'usage-note', quota.message));
   // 登録したアカウントの使用量は、アカウントごとに「使用量の表示を認可」が済んでから読める（core/backends/claude-usage.mjs）
   if ((quota.needsUsageLogin || quota.reauth) && quota.accountId && onUsageLogin) {
-    const button = el('button', 'btn', quota.needsUsageLogin ? t('accounts.authorizeUsage') : t('usage.redoAuth'));
+    const button = el('button', 'btn', quota.needsUsageLogin ? t('accounts.authorizeUsage') : t('accounts.redoUsage'));
     button.type = 'button'; button.onclick = () => onUsageLogin(quota.accountId);
     parent.append(button);
   }
