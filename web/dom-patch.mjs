@@ -5,6 +5,8 @@
 // 目印: data-k=キー（同じキーのノードを引き継ぐ）/ data-slot=キー（中身が出る・変わる・消えるとき、高さが追う）/
 //       data-t（文字が変わったら淡く入れ替える）/ data-in（新しく入るとき下から入る）。
 // 属性 style・open・inert は触らない（動きの途中の値を壊さない）。
+// data-slot は box-sizing:border-box にしておく（高さを枠ごとの値で動かす。web/manage-panel.css）。
+// 試験: tests/browser/dom-patch.mjs（動きの途中の描き直しで跳ばない・残るノードを作り直さない・減らす動き設定）。
 const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 /** トークン（--dur など）の長さ（ミリ秒）。減らす動き設定では 0 */
 export const ms = n => { const v = cssv(n); return v.endsWith('ms') ? parseFloat(v) : (parseFloat(v) * 1000 || 0); };
@@ -61,10 +63,11 @@ function sync(o, n) {
 }
 
 function attrs(o, n) {
+  // 入力欄の値は、HTML の value が前の HTML から変わったときだけ入れ直す（打ちかけの文字を残す）
+  const v0 = o.nodeName === 'INPUT' ? o.getAttribute('value') : null;
   for (const a of [...o.attributes]) if (!SKIP.has(a.name) && !n.hasAttribute(a.name)) o.removeAttribute(a.name);
   for (const a of [...n.attributes]) if (!SKIP.has(a.name) && o.getAttribute(a.name) !== a.value) o.setAttribute(a.name, a.value);
-  // 入力欄の値は、HTML の value が変わったときだけ入れ直す（打ちかけの文字を残す）
-  if (o.nodeName === 'INPUT' && n.hasAttribute('value') && o._v !== n.getAttribute('value')) { o._v = n.getAttribute('value'); o.value = o._v; }
+  if (o.nodeName === 'INPUT' && n.hasAttribute('value') && v0 !== n.getAttribute('value')) o.value = n.getAttribute('value');
 }
 
 /** slot: 中身が出る・変わる・消えるとき、高さと透明度が追う。動きの途中の高さから続けるので、続けて押しても跳ばない */

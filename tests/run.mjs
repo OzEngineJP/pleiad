@@ -873,6 +873,8 @@ const SUITES = [
   './unit/antigravity-accounts.mjs',
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
+  // 同じ設定の画面の差し替え（web/dom-patch.mjs）を本物の Chrome で（B1_BROWSER_TEST=1。tests/browser/dom-patch.mjs）
+  './unit/dom-patch-browser.mjs',
   // サーバー通し: Claude のアカウント別モデル一覧・Mythos・委譲・bot・アカウント切替/入替（ADR 0329）
   './unit/server-claude-account-models.mjs',
   // Claude Agent SDK を配布物に入れず npm から取る（ADR 0208）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意
