@@ -1558,7 +1558,8 @@
       "offHere": "Turned off for this location",
       "offGlobal": "Turned off in the global settings",
       "none": "Nothing found",
-      "switchAria": "Use {{name}} in {{path}} for this location"
+      "switchAria": "Use {{name}} in {{path}} for this location",
+      "switchName": "{{name}} in {{path}} (this location)"
     },
     "hooks": {
       "reading": "Reading hooks settings…",
@@ -1637,9 +1638,7 @@
     "searchingDots": "Searching…",
     "row": {
       "shadowed": "An override in the same location takes precedence",
-      "conditional": "Only for {{paths}}",
-      "offerAria": "Offer {{name}}",
-      "provideAria": "Provide {{name}}"
+      "conditional": "Only for {{paths}}"
     },
     "budget": {
       "label": "Budget for your instructions",
@@ -1659,10 +1658,21 @@
       "aria": "Filter skills",
       "none": "No matching skills"
     },
-    "bundle": {
-      "partialAria": "{{label}} (partial: {{on}} of {{total}} enabled)",
-      "offerAria": "Offer all in {{name}}",
-      "provideAria": "Provide all in {{name}}"
+    "rowSwitch": {
+      "state": {
+        "true": "On",
+        "mixed": "Partly on",
+        "false": "Off"
+      },
+      "next": {
+        "off": "turn off everything that can be changed",
+        "restore": "restore the previous selection",
+        "on": "turn on"
+      },
+      "aria": "{{name}} ({{state}}). Press to {{next}}",
+      "ariaState": "{{name}} ({{state}})",
+      "reasonJoin": " / ",
+      "reasonName": "Why it can't be turned off"
     },
     "workspaceRow": {
       "instruction": "CLAUDE.md · AGENTS.md",
@@ -4699,7 +4709,6 @@
       "runAria": "Run {{name}} in {{agent}}",
       "emptyHere": "There are no definitions in this place",
       "noteAria": "{{label}} ({{note}})",
-      "rowAria": "Run {{name}}",
       "stripAria": "Agents that run {{name}}",
       "ask": "Also run the hook from {{from}}'s settings in {{to}}",
       "askAria": "Confirm running {{name}} in {{to}} too",

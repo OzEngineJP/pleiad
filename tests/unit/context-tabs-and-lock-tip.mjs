@@ -9,9 +9,10 @@ import {
 import {
   CONTEXT_TABS, BUNDLE_COLLAPSE_AFTER,
   readTabStorage, writeTabStorage,
-  bundleFolder, bundleLabel, groupEntries, bundleSwitchState,
+  bundleFolder, bundleLabel, groupEntries,
   createTabBar, createFindBar,
 } from '../../web/context-tabs.mjs';
+import { docBundleMeta, wholeState, wholeNext, recalcDocRow, applyDocBundleLocal } from '../../web/context-matrix.mjs';
 
 export const name = 'context-tabs-and-lock-tip';
 export const title = 'プラグインの 4 タブ・フォルダーまとまり・絞り込みと、鍵の吹き出し';
@@ -343,7 +344,7 @@ export default async function (t) {
     t.ok('ウィンドウのリサイズで吹き出しを閉じる', !tipEl()?.classList.contains('on'));
     hideLockTip();
 
-    // 3. web/context-tabs.mjs: CONTEXT_TABS・storage・bundleFolder/bundleLabel・groupEntries・bundleSwitchState
+    // 3. web/context-tabs.mjs: CONTEXT_TABS・storage・bundleFolder/bundleLabel・groupEntries と、まとまりのスイッチの集計（web/context-matrix.mjs）
     t.ok('CONTEXT_TABS は 4 タブの順で、BUNDLE_COLLAPSE_AFTER は 8',
       CONTEXT_TABS.join(',') === 'instruction,skill,mcp,hooks' && BUNDLE_COLLAPSE_AFTER === 8);
 
@@ -397,14 +398,62 @@ export default async function (t) {
       groupedSkill1.length === 1 && groupedSkill1[0].type === 'bundle' && groupedSkill1[0].defaultOpen === true
       && groupedSkill9[0].type === 'bundle' && groupedSkill9[0].defaultOpen === false);
 
-    const enabledIds = new Set(['a', 'b']);
-    const stAll = bundleSwitchState([{ id: 'a' }, { id: 'b' }], x => enabledIds.has(x.id), 'rules');
-    const stMix = bundleSwitchState([{ id: 'a' }, { id: 'c' }, { id: 'd' }], x => enabledIds.has(x.id), 'rules');
-    const stNone = bundleSwitchState([{ id: 'c' }, { id: 'd' }], x => enabledIds.has(x.id), 'rules');
-    t.ok('bundleSwitchState は true / mixed / false と一部の件数入りラベルを返す',
-      stAll.checked === 'true' && stAll.on === 2 && stAll.total === 2
-      && stNone.checked === 'false' && stNone.on === 0
-      && stMix.checked === 'mixed' && stMix.on === 1 && stMix.total === 3 && stMix.ariaLabel.includes('1') && stMix.ariaLabel.includes('3'));
+    // まとまりのスイッチは、子の全マスを行と同じ規則で数える（ADR 0337 §決定 4・2026-11-17 改訂・ToBe-A′）。
+    // 分母は「鍵の無いマス + 鍵つきでオンのマス」。押すと、変えられるオンのある子だけをオフにし、無ければ外す前の記録のある子から戻す
+    const AG = ['claude', 'codex', 'devin', 'grok'];
+    // 行は web/context-matrix.mjs が受け取る形（cells・rule）。rule は今の配り（off = 自分で読むのに外した物・spread = 渡した物）を持つ
+    const mkRow = (key, on, { locked = [], native = [], restore = null } = {}) => {
+      const cells = {};
+      for (const a of AG) cells[a] = { on: on.includes(a), locked: locked.includes(a), native: native.includes(a), mode: on.includes(a) ? (native.includes(a) ? 'native' : 'spread') : 'off' };
+      const row = { key, cells, rule: { off: native.filter(a => !on.includes(a) && !locked.includes(a)), spread: on.filter(a => !native.includes(a) && !locked.includes(a)) } };
+      recalcDocRow(row, AG, restore);
+      return row;
+    };
+    const allOn = [mkRow('a', ['claude', 'codex']), mkRow('b', ['claude', 'codex'])];
+    const partial = [mkRow('a', ['claude', 'codex']), mkRow('c', [])];
+    const none = [mkRow('c', []), mkRow('d', [], { restore: 'default' })];
+    const mAll = docBundleMeta(['claude', 'codex'], allOn);
+    const mMix = docBundleMeta(AG, partial);
+    const mNone = docBundleMeta(AG, none);
+    t.ok('docBundleMeta: 全部オン → true（押すとオフ）・一部だけオン → mixed（押してもオフ）・全部オフ → false（初期値から戻す）',
+      wholeState(mAll) === 'true' && mAll.rowNextOn === false && wholeNext(mAll) === 'off'
+      && wholeState(mMix) === 'mixed' && mMix.rowNextOn === false && wholeNext(mMix) === 'off' && mMix.keys.join(',') === 'a'
+      && wholeState(mNone) === 'false' && mNone.rowNextOn === true && wholeNext(mNone) === 'on' && mNone.rowLocked === false,
+      JSON.stringify({ mAll, mMix, mNone }));
+
+    // 鍵つきのオン（Devin・Grok が自分で読む）が残るまとまり: 鍵の無いオンが無ければ「一部オン + 鍵」。外す前の記録がある子があれば戻せる。無ければ押せない
+    const lockedOnly = [mkRow('x', ['devin', 'grok'], { locked: ['devin', 'grok'] }), mkRow('y', ['devin'], { locked: ['devin', 'grok'] })];
+    const mLock = docBundleMeta(AG, lockedOnly);
+    t.ok('docBundleMeta: 初めから鍵つきのオンだけで、外す前の記録もないまとまりは、鍵つきの一部オンで押せない',
+      mLock.rowFixed === true && mLock.rowChangeableOn === false && wholeState(mLock) === 'mixed' && mLock.rowLocked === true && mLock.keys.length === 0,
+      JSON.stringify(mLock));
+
+    const wasRows = [mkRow('p', ['claude', 'codex', 'devin'], { locked: ['devin'] }), mkRow('q', ['claude', 'devin'], { locked: ['devin'] }), mkRow('r', ['devin'], { locked: ['devin'] })];
+    applyDocBundleLocal(wasRows, AG, false);
+    const mAfterOff = docBundleMeta(AG, wasRows);
+    t.ok('applyDocBundleLocal(オフ): 鍵の無いマスだけ全部オフ・鍵つきのオンは残る・オンだった子だけ戻し先ができる（もともとオフの子は作らない）',
+      wasRows.every(r => AG.filter(a => !r.cells[a].locked).every(a => !r.cells[a].on))
+      && wasRows.every(r => r.cells.devin.on)
+      && wasRows[0].rowRestore === 'was' && wasRows[1].rowRestore === 'was' && wasRows[2].rowRestore === null && !wasRows[2].rule.was
+      && mAfterOff.rowFixed && !mAfterOff.rowChangeableOn && wholeNext(mAfterOff) === 'restore' && mAfterOff.keys.join(',') === 'p,q',
+      JSON.stringify(mAfterOff));
+    // 先に自分の行のスイッチで外してあった子（外す前の記録だけを持つ）は、まとまりの keys に入り、今回は外さず、古い戻し先を消す
+    const stale = mkRow('s', [], { restore: 'was' });
+    stale.rule.was = { off: [], spread: ['claude', 'codex'] };
+    const staleRows = [mkRow('t', ['claude']), stale];
+    const mStale = docBundleMeta(AG, staleRows);
+    t.ok('docBundleMeta: 外す前の記録だけを持つ子も keys に含める（core が今回は外していない子の古い戻し先を消せる）',
+      mStale.keys.join(',') === 't,s' && mStale.rowChangeableOn && wholeNext(mStale) === 'off', JSON.stringify(mStale));
+    applyDocBundleLocal(staleRows, AG, false);
+    applyDocBundleLocal(staleRows, AG, true);
+    t.ok('applyDocBundleLocal: まとまりをオフ → 戻すと、先に外してあった子はオンにならない（古い戻し先を消す）',
+      !stale.rule.was && AG.every(a => !stale.cells[a].on) && staleRows[0].cells.claude.on,
+      JSON.stringify(staleRows.map(r => AG.filter(a => r.cells[a].on))));
+    applyDocBundleLocal(wasRows, AG, true);
+    t.ok('applyDocBundleLocal(オン): 外す前の記録のある子だけ子ごとに戻す（もともとオフだった子はオンにしない・鍵つきは触らない）',
+      wasRows[0].cells.claude.on && wasRows[0].cells.codex.on && wasRows[1].cells.claude.on && !wasRows[1].cells.codex.on
+      && AG.filter(a => !wasRows[2].cells[a].locked).every(a => !wasRows[2].cells[a].on) && wasRows.every(r => r.cells.devin.on),
+      JSON.stringify(wasRows.map(r => AG.filter(a => r.cells[a].on))));
 
     // 4. createTabBar（ロール・件数・キーボード移動）と createFindBar（入力・Escape）
     const selected = [];

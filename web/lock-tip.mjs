@@ -144,6 +144,9 @@ export function ensureLockTips() {
   if (bound || typeof document?.addEventListener !== 'function') return;
   bound = true;
   const targetOf = e => e.target?.closest?.('[data-tip]') ?? null;
+  // 全体のスイッチの中の鍵（data-tip-pass）。スイッチにフォーカスが来たら、その鍵の理由を出す（押す動きは止めない）
+  const passOf = node => { try { return node?.querySelector?.(':scope > [data-tip-pass]') ?? null; } catch { return null; } };
+  const focusTargetOf = e => targetOf(e) ?? passOf(e.target);
   document.addEventListener('pointerover', e => {
     const tNode = targetOf(e);
     if (!tNode || e.pointerType === 'touch') return;
@@ -160,13 +163,13 @@ export function ensureLockTips() {
     if (who === tNode && !isFocusVisible(tNode) && tapped !== tNode) hideLockTip();
   });
   document.addEventListener('focusin', e => {
-    const tNode = targetOf(e);
+    const tNode = focusTargetOf(e);
     if (!tNode) return;
     clearTimeout(tm);
-    if (isFocusVisible(tNode)) { tapped = null; show(tNode); }
+    if (isFocusVisible(tNode.hasAttribute?.('data-tip-pass') ? e.target : tNode)) { tapped = null; show(tNode); }
   });
   document.addEventListener('focusout', e => {
-    const tNode = targetOf(e);
+    const tNode = focusTargetOf(e);
     if (tNode && who === tNode) hideLockTip();
   });
   document.addEventListener('pointerdown', e => {
@@ -176,9 +179,12 @@ export function ensureLockTips() {
   document.addEventListener('click', e => {
     const tNode = targetOf(e);
     if (!tNode) return;
+    const touch = lastPointer === 'touch' || e.pointerType === 'touch';
+    // 全体のスイッチの中の鍵は、マウス・キーボードの押しは通す（スイッチとして押せる）。タッチで鍵そのものを押したときだけ理由を出す
+    if (tNode.hasAttribute?.('data-tip-pass') && !touch) { hideLockTip(); return; }
     e.preventDefault();
     e.stopPropagation();
-    if (lastPointer === 'touch' || e.pointerType === 'touch') {
+    if (touch) {
       if (tapped === tNode && who === tNode && tip?.classList?.contains('on')) hideLockTip();
       else { tapped = tNode; show(tNode); }
     } else {

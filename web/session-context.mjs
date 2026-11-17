@@ -25,9 +25,9 @@ import { DEFAULT_BUDGET, instructionAmount } from './instruction-amount.mjs';
 import { findingCount, reviewDraft, reviewUrged } from './context-review.mjs';
 import {
   CONTEXT_TABS, readTabStorage, writeTabStorage,
-  groupEntries, bundleSwitchState, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
+  groupEntries, entryOrigins, originMarks, chevronIcon, createTabBar, createFindBar,
 } from './context-tabs.mjs';
-import { askBanner, freshAgents, rowSwitch, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, savedText } from './context-matrix.mjs';
+import { askBanner, freshAgents, docBundleMeta, docFreshChanged, docReasonKey, docRowSwitch, savedText } from './context-matrix.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { lockedAgentChip } from './mcp-matrix.mjs';
 import { openHookSheet, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
@@ -820,7 +820,6 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     }
   }
   function editDocRow(kind, doc, e, { child = false, displayName = null }) {
-    const on = Boolean(e.rowSwitchOn);
     const off = !e.anyOn;
     const row = el('div', 'cx-row' + (off ? ' off' : '') + (child ? ' kid' : ''));
     row.dataset.row = e.id;
@@ -839,21 +838,24 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     // どこで外しているかは行ごとに決める（レビュー S8）。この場所の上書きが無くても外れている行（inheritedOn: false）は全体の設定、
     // 上書きのせいで外れている行はこの場所。ほかの行を押してこの場所の上書きができても、注記は変わらない
     const offText = e.inheritedOn === false ? t('sessionContext.place.offGlobal') : t('sessionContext.place.offHere');
-    const subText = [child ? '' : shortPath(where), note, !on && !e.rowLocked ? offText : ''].filter(Boolean).join(' · ');
+    // 「この場所では外しています」は、実際にオンのマスが 1 つも無いときだけ（鍵つきでオンが残る行には出さない。ADR 0337 §決定 4・2026-11-17）
+    const subText = [child ? '' : shortPath(where), note, off ? offText : ''].filter(Boolean).join(' · ');
     if (subText) body.append(el('span', 'p', subText));
-    const sw = rowSwitch({
-      role: 'switch',
-      checked: on,
-      labelText: t('sessionContext.place.switchAria', { path: shortPath(e.path), name: e.name }),
-      disabledReason: e.rowLocked ? docLockReason(doc, e) : null,
-      key: `scx-sw:${e.key}`,
+    // 全体のスイッチ。押すと、変えられるオンだけをまとめてオフにし、残っていなければ外す前の選択に戻す。エージェントのアイコンはここには並べない
+    const swKey = `scx-sw:${e.key}`;
+    const sw = docRowSwitch({
+      doc,
+      meta: e,
+      rows: e,
+      name: t('sessionContext.place.switchName', { path: shortPath(e.path), name: e.name }),
+      key: swKey,
       keyAttr: 'cxFk',
-      onToggle: () => saveDocRow(kind, { key: e.key }, !on, `[data-cx-fk="${escCss(`scx-sw:${e.key}`)}"]`),
+      onToggle: () => saveDocRow(kind, { key: e.key }, Boolean(e.rowNextOn), `[data-cx-fk="${escCss(swKey)}"]`),
     });
     if (editBusy) sw.disabled = true;
     // 指示の行の右端の量（設定の表と同じ。モックどおり編集中も出す）
     const tokens = kind === 'instruction' && Number.isFinite(e.tokens) ? [el('span', 'cx-tok', about(e.tokens))] : [];
-    row.append(body, ...tokens, sw);
+    row.append(body, ...tokens, sw, ...docReasonKey(doc, e));
     return row;
   }
   function paintEditEntries(host, kind, doc) {
@@ -883,10 +885,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const open = Boolean(query) || (editBundleOpen.has(bKey) ? editBundleOpen.get(bKey) : block.defaultOpen);
         // 絞り込み中は、スイッチも見えている（当たった）行だけが対象（状態も切替も）
         const items = (query ? kids : block.items).map(i => i.entry);
-        const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
-        const swState = bundleSwitchState(items, e => Boolean(e.rowSwitchOn), actionLabel);
-        const allLocked = docBundleLocked(items);
-        const pressableKeys = items.filter(e => !e.rowLocked).map(e => e.key);
+        // まとまりのスイッチ: 子の全部のマスを同じ規則で集計する。押すと、変えられるオンのある子だけをオフにし、無ければ外す前の記録のある子から戻す
+        const bundleMeta = docBundleMeta(doc.agents, items);
         const anyBundleOn = items.some(e => e.anyOn);
         const row = el('div', 'cx-row grp' + (anyBundleOn ? '' : ' off'));
         row.dataset.bundle = bKey;
@@ -910,25 +910,24 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
         const marks = originMarks(block.origins);
         if (marks) nl.append(marks);
         body.append(nl, el('span', 'p', shortPath(block.folder)));
-        const nextOn = swState.checked !== 'true';
-        const sw = rowSwitch({
-          role: 'checkbox',
-          checked: swState.checked === 'true',
-          mixed: swState.checked === 'mixed',
-          labelText: swState.ariaLabel,
-          disabledReason: allLocked ? docRowLockSummary(doc, items) : null,
-          key: `scx-bundle-sw:${bKey}`,
+        const bundleSwKey = `scx-bundle-sw:${bKey}`;
+        const sw = docRowSwitch({
+          doc,
+          meta: bundleMeta,
+          rows: items,
+          name: block.label,
+          key: bundleSwKey,
           keyAttr: 'cxFk',
           onToggle: () => {
-            if (!pressableKeys.length) return;
-            saveDocRow(kind, { keys: pressableKeys }, nextOn, `[data-cx-fk="${escCss(`scx-bundle-sw:${bKey}`)}"]`);
+            if (bundleMeta.rowLocked || !bundleMeta.keys.length) return;
+            saveDocRow(kind, { keys: bundleMeta.keys }, bundleMeta.rowNextOn, `[data-cx-fk="${escCss(bundleSwKey)}"]`);
           },
         });
         if (editBusy) sw.disabled = true;
         // まとまりの量: 渡っている物の合計（どれも渡っていなければ全体）。設定の表と同じ数え方
         const tok = kind === 'instruction' ? items.reduce((a, x) => (Number.isFinite(x.tokens) ? { all: a.all + x.tokens, on: a.on + (x.anyOn ? x.tokens : 0) } : a), { all: 0, on: 0 }) : null;
         const tokens = tok && tok.all > 0 ? [el('span', 'cx-tok', about(tok.on || tok.all))] : [];
-        row.append(tw, body, ...tokens, sw);
+        row.append(tw, body, ...tokens, sw, ...docReasonKey(doc, items));
         host.append(row);
         if (open) for (const { entry, childLabel } of kids) host.append(editDocRow(kind, doc, entry, { child: true, displayName: childLabel }));
       }

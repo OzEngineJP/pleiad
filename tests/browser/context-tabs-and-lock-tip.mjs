@@ -47,8 +47,9 @@ const shoot = async (page, name) => {
 let server, client, browser;
 try {
   // ユーザー側（設定 › プラグインで表示）: CLAUDE.md + GEMINI.md + 9 rules（探す場所に足した ~/team-rules）+ 9 .codex/skills + 2 .agents/skills + MCP + Hook
-  // 押して切り替える rules・Skills は、Devin・Grok が自分で読まない置き場に置く。.claude/ などエージェントの置き場の物は Devin か Grok のマスが
-  // 鍵つきでオンなので、行のスイッチを押せない（ADR 0337 §4「行のスイッチ」）。rules はどの置き場も Devin か Grok が読むので、探す場所に足したフォルダーに置く
+  // 押して切り替える rules・Skills は、Devin・Grok が自分で読まない置き場に置く（鍵つきのオンが無い行は、まとまりのスイッチが「全部オン／オフ」になって試しやすい）。
+  // .claude/ などエージェントの置き場の物は Devin か Grok のマスが鍵つきでオンなので、行のスイッチは変えられるオンだけをまとめてオフにし、
+  // 鍵つきのオンが残る（横棒＋鍵。ADR 0337 §決定 4 の 2026-11-17 改訂）。rules はどの置き場も Devin か Grok が読むので、探す場所に足したフォルダーに置く
   const teamRoot = path.join(home, 'team-rules');
   write(path.join(home, '.claude/CLAUDE.md'), '# User Instructions\nAlways be concise.\n');
   write(path.join(home, '.gemini/GEMINI.md'), '# Gemini User Instructions\nExplain briefly.\n');
@@ -71,7 +72,7 @@ try {
   write(grokStub, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n');
   if (process.platform !== 'win32') fs.chmodSync(grokStub, 0o755);
 
-  // リポジトリ側（会話の右パネルで表示）: AGENTS.md + 9 rules（.claude/rules。Devin・Grok の鍵で行のスイッチは押せない）+ 9 .codex/skills + .mcp.json
+  // リポジトリ側（会話の右パネルで表示）: AGENTS.md + 9 rules（.claude/rules。Devin・Grok の鍵つきのオンが残るので、行のスイッチは変えられるオンだけを外す）+ 9 .codex/skills + .mcp.json
   fs.mkdirSync(repo, { recursive: true });
   execFileSync('git', ['init', '--quiet', repo]);
   write(path.join(repo, 'AGENTS.md'), '# Repo Instructions\nFollow test rules.\n');
@@ -277,11 +278,22 @@ try {
     await kids.first().locator('.cx-sw').click();
     await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', { timeout: 10000 });
     const mixSw = grp.locator('.cx-sw');
-    check((await mixSw.getAttribute('role')) === 'checkbox' && (await mixSw.getAttribute('aria-label')).includes('8'), '子 1 つオフでまとまりスイッチが checkbox mixed＋一部ラベルになる', await mixSw.getAttribute('aria-label'));
+    check((await mixSw.getAttribute('role')) === 'checkbox' && (await mixSw.getAttribute('aria-label')).includes('一部オン'), '子 1 つオフでまとまりスイッチが checkbox mixed＋「一部オン」のラベルになる', await mixSw.getAttribute('aria-label'));
+    check((await mixSw.getAttribute('aria-label')).includes('変更できる分をまとめてオフにする'), '一部オンのまとまりを押すと何が起きるか（変えられる分をまとめてオフ）をラベルに持つ', await mixSw.getAttribute('aria-label'));
 
+    // 一部オンのまとまりを押すと、変えられるオンだけがまとめてオフになる（オンを広げない）。もう一度押すと外す前の選択（最初にオフだった 1 件は入れない）に戻る
     await mixSw.click();
-    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
-    check(true, 'mixed スイッチ押下でまとめて有効へ戻る');
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', { timeout: 10000 });
+    check((await mixSw.getAttribute('aria-label')).includes('外す前の選択に戻す'), 'mixed を押すとまとめてオフ。次に押すと「外す前の選択に戻す」とラベルに出る', await mixSw.getAttribute('aria-label'));
+    await mixSw.click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', { timeout: 10000 });
+    check((await kids.first().locator('.cx-sw').getAttribute('aria-checked')) === 'false', 'もう一度押すと外す前の選択に戻る。最初にオフだった 1 件は入れない（オンを新しく足さない）');
+    // 最初にオフだった子を単独で押す: まとめて外したとき、今回は外していない子の古い戻し先は消してあるので、記録なし＝出どころ優先の初期値
+    // （探す場所に足したフォルダーの物は Pleiad が出どころ＝鍵の無い全エージェント）に戻る。ほかの子は Claude だけのままなので、まとまりは一部オンのまま
+    const firstKidSw = kids.first().locator('.cx-sw');
+    await firstKidSw.click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.kid .cx-sw')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
+    check((await grp.locator('.cx-sw').getAttribute('aria-checked')) === 'mixed', '子を 1 つだけ入れ直しても、ほかの子は広がらずまとまりは一部オンのまま（オンを新しく足さない）');
     await shoot(page, 'context-agents-1280-light-inst.png');
 
     // GEMINI.md: own/relay の鍵、他エージェントへ広げる前の確認（.cx-ask）→ やめる → 渡す → リロード後も永続
@@ -395,7 +407,11 @@ try {
     };
     await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
     const filteredGrp = page.locator('#cx-panel-skill .cx-row.grp');
-    check((await filteredGrp.count()) === 1 && (await filteredGrp.locator('.cx-sw').getAttribute('aria-checked')) === 'true', '絞り込み中のまとまりスイッチは見えている行だけからオンと決まる');
+    // .codex/skills の行は Codex だけがオン（鍵なしのマス 5 つのうち 1 つ）なので、まとまりスイッチは「一部オン」（横棒）。押すとオンを広げず、変えられるオンだけをまとめてオフにする
+    check((await filteredGrp.count()) === 1 && (await filteredGrp.locator('.cx-sw').getAttribute('aria-checked')) === 'mixed'
+      && (await filteredGrp.locator('.cx-sw').getAttribute('aria-label')).includes('変更できる分をまとめてオフにする'),
+    '絞り込み中のまとまりスイッチは見えている行だけから「一部オン」と決まり、押すとオンを広げずまとめてオフにする',
+    await filteredGrp.locator('.cx-sw').getAttribute('aria-label'));
     await filteredGrp.locator('.cx-sw').click();
     await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
     const afterFilterOff = await pollUntil(skillMatrixState, s => s.touched && !s.u1On && s.otherOff === 0 && s.legacyExcludes === 0);
@@ -404,10 +420,17 @@ try {
     await findInput.press('Escape');
     await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), null, { timeout: 5000 });
     check(true, '絞り込みを消すとまとまり全体の状態（一部）に戻る');
-    await page.locator('#cx-panel-skill .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
-    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), null, { timeout: 10000 });
+    // 外した u-skill-1 は、もう一度絞り込んでまとまりスイッチを押すと、外す前の選択（Codex だけオン）に戻る。ほかの行は巻き込まない
+    await findInput.fill('u-skill-1');
+    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
+    const restoreSw = page.locator('#cx-panel-skill .cx-row.grp .cx-sw');
+    check((await restoreSw.getAttribute('aria-checked')) === 'false' && (await restoreSw.getAttribute('aria-label')).includes('外す前の選択に戻す'),
+      '外した u-skill-1 だけに絞ると、まとまりスイッチはオフで、押すと「外す前の選択に戻す」', await restoreSw.getAttribute('aria-label'));
+    await restoreSw.click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', null, { timeout: 10000 });
     const afterRestoreSkill = await pollUntil(skillMatrixState, s => s.u1On && s.otherOff === 0);
-    check(afterRestoreSkill.u1On && afterRestoreSkill.otherOff === 0, 'まとまりスイッチで u-skill-1 を含む全件が有効に戻る', afterRestoreSkill);
+    check(afterRestoreSkill.u1On && afterRestoreSkill.otherOff === 0, 'まとまりスイッチで u-skill-1 が外す前の選択に戻り、ほかの行は変わらない', afterRestoreSkill);
+    await findInput.press('Escape');
 
     // 外部 MCP タブ + 鍵の吹き出し（追補 1）
     await page.locator('#cx-tab-mcp').click();
@@ -535,17 +558,25 @@ try {
     await scxArchGrp.locator('.cx-tw').click();
     const scxKids = page.locator('#scx-panel-instruction .cx-row.kid');
     check((await scxKids.count()) >= 9, '右パネルでも >8 のまとまりを開いて子行を出せる');
-    await scxKids.first().locator('.cx-sw').click();
+    // 右パネルも左と同じ動き（ADR 0337 §決定 4 の 2026-11-17 改訂）: 子を 1 つ外す → まとまりは一部オン → 押すと変えられるオンをまとめてオフ
+    // → もう一度押すと外す前の選択に戻る（最初に外していた 1 件はオンにしない）
+    const scxGrpSw = scxArchGrp.locator('.cx-sw');
+    const scxFirstKid = scxKids.first().locator('.cx-sw');
+    await scxFirstKid.click();
+    await page.waitForFunction(() => document.querySelector('#scx-panel-instruction .cx-row.kid .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
+    check((await scxGrpSw.getAttribute('aria-checked')) === 'mixed' && (await scxGrpSw.getAttribute('aria-label')).includes('変更できる分をまとめてオフにする'),
+      '右パネルでも、子を 1 つ外すとまとまりは一部オン（押すと変えられる分をまとめてオフ）', await scxGrpSw.getAttribute('aria-label'));
+    await scxGrpSw.click();
     await page.waitForFunction(() => {
-      const grpSws = [...document.querySelectorAll('#scx-panel-instruction .cx-row.grp .cx-sw')];
-      return grpSws.some(s => s.getAttribute('aria-checked') === 'mixed');
+      const kids = [...document.querySelectorAll('#scx-panel-instruction .cx-row.kid .cx-sw')];
+      return kids.length >= 9 && kids.every(s => s.getAttribute('aria-checked') === 'false');
     }, null, { timeout: 10000 });
-    await page.locator('#scx-panel-instruction .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
-    await page.waitForFunction(() => {
-      const grpSws = [...document.querySelectorAll('#scx-panel-instruction .cx-row.grp .cx-sw')];
-      return grpSws.every(s => s.getAttribute('aria-checked') === 'true');
-    }, null, { timeout: 10000 });
-    check(true, '右パネルでも一部オフで mixed になり、一括で元へ戻る');
+    check((await scxGrpSw.getAttribute('aria-checked')) === 'false' && (await scxGrpSw.getAttribute('aria-label')).includes('外す前の選択に戻す'),
+      '右パネルでも、まとまりを押すと全部の子がオフになり、次は「外す前の選択に戻す」', await scxGrpSw.getAttribute('aria-label'));
+    await scxGrpSw.click();
+    await page.waitForFunction(() => (document.querySelectorAll('#scx-panel-instruction .cx-row.kid .cx-sw')[1])?.getAttribute('aria-checked') !== 'false', null, { timeout: 10000 });
+    check((await scxFirstKid.getAttribute('aria-checked')) === 'false' && (await scxGrpSw.getAttribute('aria-checked')) === 'mixed',
+      '右パネルでも、もう一度押すと外す前の選択に戻る（最初に外していた 1 件はオンにしない）');
 
     // 右パネルの sticky & Skills 絞り込み
     await page.locator('#scx-tab-skill').click();
@@ -564,14 +595,20 @@ try {
     await scxFind.fill('r-skill-1');
     await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
     const scxOnly = page.locator('#scx-panel-skill .cx-row.grp .cx-sw');
-    check((await scxOnly.count()) === 1 && (await scxOnly.getAttribute('aria-checked')) === 'true', '右パネルの絞り込み中のスイッチは見えている行だけからオンと決まる');
+    // .codex/skills の行は Codex だけがオン（鍵なしのマス 5 つのうち 1 つ）なので、見えている 1 行だけから「一部オン」と決まる
+    check((await scxOnly.count()) === 1 && (await scxOnly.getAttribute('aria-checked')) === 'mixed', '右パネルの絞り込み中のスイッチは見えている行だけから「一部オン」と決まる', await scxOnly.getAttribute('aria-label'));
     await scxOnly.click();
     await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
     await scxFind.press('Escape');
     await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), null, { timeout: 5000 });
     check(true, '右パネルでも、絞り込み中の一括切替は当たった 1 件だけで、消すと「一部」に戻る');
-    await page.locator('#scx-panel-skill .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
-    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), null, { timeout: 10000 });
+    // 外した 1 件は、もう一度絞り込んでスイッチを押すと外す前の選択に戻る
+    await scxFind.fill('r-skill-1');
+    await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 5000 });
+    await scxOnly.click();
+    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', null, { timeout: 10000 });
+    await scxFind.press('Escape');
 
     // ==================== 3. 360px 狭幅 & ダークモードの横はみ出し・サイズ検査 ====================
     await page.setViewportSize({ width: 360, height: 760 });

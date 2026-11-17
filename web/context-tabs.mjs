@@ -185,21 +185,6 @@ export function groupEntries(kind, entries) {
   return out;
 }
 
-/**
- * まとまりのオン/オフ集計。
- * 混在時は 'mixed'（role="checkbox" + 読み上げ名に件数入りで「一部」を伝える）。
- */
-export function bundleSwitchState(items, isEnabled, baseLabel) {
-  let on = 0;
-  for (const item of items) if (isEnabled(item)) on++;
-  const total = items.length;
-  const checked = total > 0 && on === total ? 'true' : on > 0 ? 'mixed' : 'false';
-  const ariaLabel = checked === 'mixed'
-    ? t('context.bundle.partialAria', { label: baseLabel, on, total })
-    : baseLabel;
-  return { checked, ariaLabel, on, total };
-}
-
 /** キーボード（←/→・Home/End）つきの tablist を作る */
 export function createTabBar({ tabs, active, idPrefix = 'cx', ariaLabel, onSelect }) {
   const root = el('div', 'cx-tabs');

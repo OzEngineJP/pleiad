@@ -945,7 +945,7 @@
       "mcpRowNotPressable": "{{name}} cannot be switched with the row switch (no agent can be changed and there is nothing to restore). If there is an unlocked icon, press the icon instead",
       "unknownDocItem": "No instruction or Skill with this key is in the list: {{key}}",
       "docNotPressable": "{{name}} cannot be switched for {{agent}}",
-      "docRowLocked": "{{name}} cannot be switched with the row switch (a locked agent reads it itself, so it would stay on, or no agent can be switched). Switch the unlocked cells one by one instead",
+      "docRowLocked": "{{name}} cannot be switched with the row switch (no agent can be changed, or there is nothing to restore). If there is an unlocked cell, press the cell instead",
       "docTargetRequired": "Specify at least one item key to switch.",
       "docAgentsWrite": {
         "failed": "Couldn't save the instructions and Skills table. {{reason}}",
