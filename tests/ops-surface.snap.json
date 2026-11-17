@@ -1869,6 +1869,29 @@
       "input": "b4483a7833e2"
     },
     {
+      "id": "context.setMcpRow",
+      "risk": "guarded",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "mcp-row"
+          ],
+          "positional": [
+            "name"
+          ]
+        }
+      },
+      "legacyCommand": "setMcpRow",
+      "input": "b08ec0ff232d"
+    },
+    {
       "id": "context.setPlyInstructions",
       "risk": "guarded",
       "riskOf": false,
@@ -6261,6 +6284,13 @@
       "id": "context.mcpMatrix",
       "path": "context mcp-matrix",
       "positional": []
+    },
+    {
+      "id": "context.setMcpRow",
+      "path": "context mcp-row",
+      "positional": [
+        "name"
+      ]
     },
     {
       "id": "context.nativeInstructions",

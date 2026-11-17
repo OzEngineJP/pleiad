@@ -133,6 +133,7 @@ export const COMMANDS = new Set([
   'setPlyMcpSettings', // { clientMetadataUrl: https URL | null } -> 設定。Client ID Metadata Document の URL（既定は無し）
   'mcpMatrix', // { cwd?, refresh? } -> { agents: [id], rows: [{ key, name, kind, group, transport, registered, origins, plugin, cells: { <agent>: { state, mode } }, on }], locked, connectors: 'reading'|'ready'|'none' } 外部 MCP の一覧（名前 × エージェント。ADR 0327。読むだけ）
   'setMcpAgent', // { name, agent, on, place?, cwd? } -> 外部 MCP を名前 × エージェントで入れる・外す。外すときは確認なし、広げるときは呼ぶ側が先に確かめる（ADR 0327）
+  'setMcpRow', // { name, on, place?, cwd? } -> 外部 MCP の行のスイッチ。オフは鍵の無いオンをまとめて 1 度の保存で外し（鍵つきのオンは残る）、オンはオフにする前の組へ戻す（ADR 0337 §決定 4）
   'docMatrix', // { kind, cwd?, place? } -> 指示・Skills の一覧（項目 × エージェント。ADR 0337。読むだけ）
   'setDocAgent', // { kind, key, agent, on, place?, cwd? } -> 指示・Skills の 1 項目をエージェントごとに入れる・外す（ADR 0337）
   'setDocRow', // { kind, key?, keys?, on, place?, cwd? } -> 指示・Skills の 1 項目または束をまとめてオン・オフにする（ADR 0337）

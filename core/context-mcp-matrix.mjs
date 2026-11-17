@@ -65,6 +65,54 @@ export function mcpLegacyInfo({ kind, registered = [], native = {}, plugins = []
 }
 
 /**
+ * 行のスイッチの集計（指示・Skills・Hooks と同じ規則。ADR 0337 §決定 4 の 2026-11-17 改訂）。
+ *   数えるのは、鍵の無いマス（mode: toggle）と、鍵つきでオンのマス。鍵つきのオフ・使えない（none）マスは数えない。
+ *   rowChangeableOn  鍵の無いオンのマスがある（押すとこれらをまとめてオフにする。鍵つきのオンは残る）
+ *   rowFixed         鍵つきでオンのマスがある（オフにしても残る。画面は「一部オン」の横棒に小さな鍵を重ねる）
+ *   rowMixed         オンが 1 つ以上あり、数えるマスの全部ではない（横棒）
+ *   rowNextOn        押したときの向き（画面が context.setMcpRow の on に送る）。鍵の無いオンが無ければ true（戻す）
+ *   rowRestore       オンに戻すときの戻し先。'was'（オフにする前の組）・'default'（既定）・null（戻し先が無い）
+ *   restoreAgents    その戻し先のエージェント（鍵の無いマスだけ）
+ *   rowLocked        押せない（鍵の無いオンが無く、戻し先も無い。鍵つきのオンだけの行など。他のエージェントへ新しく広げない）
+ * restore: オフにする前に使っていたエージェントの組（core/context-mcp-was.mjs）
+ */
+export function mcpRowMeta(row, agents, restore = null) {
+  const cell = a => row.cells[a];
+  const toggles = agents.filter(a => cell(a)?.mode === 'toggle');
+  const unlockedOn = toggles.filter(a => cell(a).state === 'on');
+  const lockedOn = agents.filter(a => cell(a)?.mode === 'locked' && cell(a).state === 'on');
+  const onCount = unlockedOn.length + lockedOn.length;
+  const counted = toggles.length + lockedOn.length;
+  const rowChangeableOn = unlockedOn.length > 0;
+  const was = (restore ?? []).filter(a => toggles.includes(a));
+  const defaults = toggles.filter(a => row.group === 'ply' || row.origins.includes(a));
+  const restoreAgents = rowChangeableOn ? [] : was.length ? was : defaults;
+  const rowRestore = rowChangeableOn ? null : was.length ? 'was' : defaults.length ? 'default' : null;
+  return {
+    rowMixed: onCount > 0 && onCount < counted, rowSwitchOn: onCount > 0, rowFixed: lockedOn.length > 0, rowChangeableOn,
+    rowNextOn: !rowChangeableOn, rowRestore, restoreAgents, rowLocked: !rowChangeableOn && rowRestore === null,
+  };
+}
+
+/**
+ * 行のスイッチを押したときの変更（context.setMcpRow）。on は画面が送る向き（rowNextOn）。
+ *   オフ: 鍵の無いオンをすべてオフにする（鍵つきのオンは残る）。オフにする前の組は was に返す（覚えるのは呼び出し側）
+ *   オン: 鍵の無いオンが 1 つも無いときだけ、戻し先（記録の組。無ければ既定）をオンにする。鍵の無いオンがある行は変えない（広げない）
+ * 戻り: { changes: [{ agent, on }], was: [agent] | null, noop: bool, refused: bool, source: 'was'|'default'|null }
+ */
+export function planMcpRowPress(row, agents, restore, on) {
+  const meta = mcpRowMeta(row, agents, restore);
+  if (!on) {
+    const ons = agents.filter(a => row.cells[a]?.mode === 'toggle' && row.cells[a].state === 'on');
+    return ons.length ? { changes: ons.map(agent => ({ agent, on: false })), was: ons, noop: false, refused: false, source: null }
+      : { changes: [], was: null, noop: true, refused: false, source: null };
+  }
+  if (meta.rowChangeableOn) return { changes: [], was: null, noop: true, refused: false, source: null };
+  if (meta.rowLocked) return { changes: [], was: null, noop: false, refused: true, source: null };
+  return { changes: meta.restoreAgents.map(agent => ({ agent, on: true })), was: null, noop: false, refused: false, source: meta.rowRestore };
+}
+
+/**
  * 戻り: { agents: [id], rows: [...], locked: bool（鍵のアイコンが 1 つでもあるか）, connectors: 'reading'|'ready'|'none' }
  * 入力:
  *   kind        外部 MCP の設定の値（owner・disabled・agents）
@@ -76,8 +124,10 @@ export function mcpLegacyInfo({ kind, registered = [], native = {}, plugins = []
  *   needsAuth   ログインが必要なコネクターの名前（行に needsAuth: true を付ける）
  *   installed   { <agent>: bool }（そのエージェントを使えるか。使えないエージェントのアイコンは出さない）
  *   workspace   null（全体の設定）| { <agent>: [名前] }（場所ごとの設定で、その場所の作業場所の設定に定義がある名前）
+ *   restore     { <名前>: [agent] }（行のスイッチでオフにする前の組。core/context-mcp-was.mjs。無ければ {}）
+ * 行には mcpRowMeta の rowMixed・rowFixed・rowChangeableOn・rowNextOn・rowRestore・rowLocked を付ける
  */
-export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plugins = [], connectors = null, reading = false, needsAuth = [], installed = {}, workspace = null }) {
+export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plugins = [], connectors = null, reading = false, needsAuth = [], installed = {}, workspace = null, restore = {} }) {
   const agents = Object.keys(native).filter(id => installed[id] !== false).sort((a, b) => orderOf(a) - orderOf(b));
   const info = { registered: registered.map(r => r.name), native: Object.fromEntries(Object.keys(native).map(a => [a, native[a].map(s => s.name)])) };
   const rules = kind.agents ?? mcpAgentsFromLegacy(kind, mcpLegacyInfo({ kind, registered, native, plugins, connectors }));
@@ -142,6 +192,7 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
   }
   // backend-allow: 画面の列の順と、Claude 固有の読み取り（プラグイン・コネクター）。ADR 0327
   const claudeHere = installed.claude !== false && agents.includes('claude');
+  for (const r of rows) Object.assign(r, mcpRowMeta(r, agents, restore?.[r.key]));
   return {
     agents, rows,
     locked: rows.some(r => agents.some(a => r.cells[a].mode === 'locked' || r.cells[a].mode === 'blocked')),
