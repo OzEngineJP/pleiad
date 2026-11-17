@@ -90,6 +90,7 @@ import { createBulkReplies } from './bulk-replies.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
+import { createClaudeConnectorsGate } from './claude-connectors.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
@@ -555,6 +556,7 @@ claudeAccountSecrets.migrate().catch(() => {});
 // トークンの持ち主（発行された組織）を GET /v1/models の応答ヘッダーで確かめ、使用量の認可と食い違えば一覧で知らせる。
 // AGENT_HOST_ANTHROPIC_API は確認の送り先（テストの偽物用）。off なら確かめない（テストは既定で off。本物へは送らない）
 const tokenCheckApi = process.env.AGENT_HOST_ANTHROPIC_API || ANTHROPIC_API;
+const claudeAccountConnectors = createClaudeConnectorsGate({ dataDir: store.dataDir });
 const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir, secrets: claudeAccountSecrets,
   checkOrg: tokenCheckApi === 'off' ? null : token => fetchTokenOrg(token, { baseUrl: tokenCheckApi }),
   onChecked: () => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }) });
@@ -630,7 +632,8 @@ async function accountResolve(backend, id) {
   if (!id || !kind) return null;
   if (kind === 'token') {
     if (await agentAccounts.get(id)) return null;
-    return claudeAccounts.resolve(id);
+    // 登録したアカウントのコネクターの入口（ADR 0340）。オフ・未設定は同じ account がそのまま返る
+    return claudeAccountConnectors.gate(await claudeAccounts.resolve(id));
   }
   return agentAccounts.resolve(backend.id, id, { known: other => claudeAccounts.has(other) });
 }

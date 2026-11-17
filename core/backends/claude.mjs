@@ -48,6 +48,7 @@ import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
 import { stripAnsi } from "../claude-login.mjs";
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
+import { identitySuffix } from "../claude-connectors.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -134,8 +135,12 @@ const PROVIDER_ENV = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_C
 const states = new Map();
 const accountScopeKey = (account) => {
   const id = typeof account === "string" ? account : account?.id;
-  return id ? `account:${id}` : "login";
+  const key = id ? `account:${id}` : "login";
+  // コネクターの入口がオンのときだけ識別子の接尾辞を足す（ADR 0340）。オフはこの分岐へ入らず、キーは今までの文字列のまま
+  return account?.connectors?.identity ? key + identitySuffix(account.connectors.identity) : key;
 };
+/** 試験用: アカウントごとのキャッシュのキー（ADR 0340。入口がオフのキーが今までと同じ文字列であることを試験が確かめる） */
+export const accountScopeKeyForTest = (account) => accountScopeKey(account);
 function stateFor(account) {
   const key = accountScopeKey(account);
   let s = states.get(key);
