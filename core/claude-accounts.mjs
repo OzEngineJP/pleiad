@@ -306,10 +306,15 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     async has(id) {
       return (await read()).accounts.some(a => a.id === id);
     },
-    /** 追加の前の検査（ブラウザーでの認可を回す前に止めるため）。名前が不正・重複なら例外 */
+    /**
+     * 追加の前の検査（ブラウザーでの認可を回す前に止めるため）。名前が不正・重複なら例外（code: bad-name。
+     * 画面はこれだけを名前の欄に出し、ほかの失敗は流れの所に［やり直す］と出す。web/claude-accounts.mjs）
+     */
     async assertNameFree(name) {
-      const label = normalizeName(name);
-      if ((await read()).accounts.some(a => a.name.trim() === label)) throw new Error(t('claude.accounts.nameDuplicate'));
+      const bad = e => Object.assign(e, { code: 'bad-name' });
+      let label;
+      try { label = normalizeName(name); } catch (e) { throw bad(e); }
+      if ((await read()).accounts.some(a => a.name.trim() === label)) throw bad(new Error(t('claude.accounts.nameDuplicate')));
     },
     /**
      * 追加（id 無し）か、名前の変更・トークンの差し替え（id 有り。token を省けば今のトークンを残す）。

@@ -100,7 +100,7 @@ async function japaneseCases(t, tmp) {
     assert.ok(!JSON.stringify(quota).includes('fake-'), 'トークンの値を出さない');
   });
 
-  await check(t, '設定の「使用量」に再ログインの文と「認可をやり直す」のボタンが出る。ヘッダーの札は認可待ち', async () => {
+  await check(t, '設定の「使用量」に再ログインの文と「claude.ai にログインし直す」のボタンが出る。ヘッダーの札は認可待ち', async () => {
     assert.ok(quota?.accounts, '前の場面の結果');
     const els = new Map();
     const $ = id => els.get(id) ?? (els.set(id, new N('div')), els.get(id));

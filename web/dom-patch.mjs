@@ -5,7 +5,7 @@
 // 目印: data-k=キー（同じキーのノードを引き継ぐ）/ data-slot=キー（中身が出る・変わる・消えるとき、高さが追う）/
 //       data-t（文字が変わったら淡く入れ替える）/ data-in（新しく入るとき下から入る）。
 // 属性 style・open・inert は触らない（動きの途中の値を壊さない）。
-// data-slot は box-sizing:border-box にしておく（高さを枠ごとの値で動かす。web/manage-panel.css）。
+// data-slot は box-sizing:border-box にしておく（高さを枠ごとの値で動かす。使う面ごとに範囲を絞る。web/manage-panel.css の #claudeAccountsPanel [data-slot]）。
 // 試験: tests/browser/dom-patch.mjs（動きの途中の描き直しで跳ばない・残るノードを作り直さない・減らす動き設定）。
 const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 /** トークン（--dur など）の長さ（ミリ秒）。減らす動き設定では 0 */
