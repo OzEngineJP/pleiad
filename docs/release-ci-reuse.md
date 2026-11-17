@@ -44,7 +44,7 @@ test.yml の matrix やジョブを変えたら `REQUIRED_JOBS`・`SKIPPED_ON_PU
 
 ## 待ち方
 
-- 30 秒ごとに読み直し、40 分で打ち切る（`--wait-minutes 40`。test.yml のジョブの上限は 30 分）。打ち切ったら `fallback`。
+- 30 秒ごとに読み直し、40 分で打ち切る（`--wait-minutes 40`。test.yml のジョブの上限は Windows が 45 分・ほかは 30 分。Windows が 40 分を超えて終わらないときは、待ちを打ち切って `fallback` になる）。打ち切ったら `fallback`。
 - 始めの 5 分は、run が無いのも待つ（`--missing-grace-minutes 5`）。タグと main を同時に push すると、release が test.yml の run より先に始まることがあるため。
 - API の 1 回の呼び出しは、応答の本文を読み終えるまでを 20 秒で打ち切る（`--request-timeout-seconds 20`）。接続や本文が止まっても、待ちの期限の判定へ戻る。
 - API から来た文字（ジョブの名前など）は 1 行にしてから書く。ログは `ci-gate: ` で始め、`GITHUB_OUTPUT` は `decision` を最後の行に書く（ログの行頭が workflow command の `::` にならず、出力の行も増やせない）。

@@ -45,7 +45,9 @@ jobs:
           # 直近30日の Windows 固有の失敗 4 件は node の版と相関していない（20 が 3、24 が 2）。
           - { os: windows-latest, node: "22.13" }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Windows は npm test だけで 24〜30 分かかる（main と PR で 29m55s・29m57s、PR #202 は 30m7s で打ち切られた）。
+    # 30 分だと本物の失敗ではなく時間切れで赤になるので、Windows だけ 45 分にする。ubuntu は 14〜16 分で、30 分のまま（止まったときに枠を占有し続けないための上限）
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
