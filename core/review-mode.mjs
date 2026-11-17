@@ -88,7 +88,7 @@ export const COMMAND_REFUSE = [
   'worktreeCheck', 'worktreeSplit', 'worktreeDiscard', 'worktreeKeep', 'worktreeArchive', 'worktreeRestore',
   'setSessionMcp', 'agentMcp', 'nativeInstructions', 'contextFindings', 'listMcpConfig', 'readMcpServer', 'saveMcpServer',
   'listPlyMcp', 'readPlyMcp', 'savePlyMcp', 'deletePlyMcp', 'mcpAuthStart', 'mcpAuthStatus', 'mcpAuthLogout', 'mcpReconnect',
-  'renamePlyMcp', 'importPlyMcp', 'setPlyMcpSettings', 'setContextSettings', 'scanContext', 'mcpMatrix', 'setMcpAgent', 'docMatrix', 'setDocAgent', 'setDocRow', 'repairDocAgents',
+  'renamePlyMcp', 'importPlyMcp', 'setPlyMcpSettings', 'setContextSettings', 'scanContext', 'mcpMatrix', 'setMcpAgent', 'setMcpRow', 'docMatrix', 'setDocAgent', 'setDocRow', 'repairDocAgents',
   'scanHooks', 'readHook', 'hookTargets', 'saveHooks', 'copyHooks', 'sessionHooks', 'plyHooks', 'readPlyHook', 'savePlyHook',
   'removePlyHook', 'togglePlyHook', 'plyHookPreview', 'hooksUnifyPreview', 'setHooksOwner', 'repairPlyHooks',
   'hooksMatrix', 'setHookAgent', 'setHookRow', 'setHookGroup', 'setHookPlace', 'resetHooksAgents',

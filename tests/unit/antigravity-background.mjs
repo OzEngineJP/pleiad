@@ -4,6 +4,7 @@
 // 守ること: agy の直下の子でコマンドを走らせているものだけを選ぶ。agy 自身・中継・孫・会話の外は選ばない。
 // 見つからない・あいまいなら選ばない。コマンドラインの形は実機（Windows の agy 1.3.4）の木に合わせた。
 import { ancestorsOf, commandKey, commandLabel, descendantsOf, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "../../core/backends/antigravity-background.mjs";
+import { systemTool } from "../../core/win-system.mjs";
 
 export const name = "antigravity-background";
 export const title = "agy の裏のコマンドを止めるとき、その会話の agy の直下の子だけを選ぶ";
@@ -79,7 +80,8 @@ export default async function (t) {
   const calls = [];
   const noInstance = async (file, args) => { calls.push([file, ...args].join(" ")); throw new Error("taskkill: no running instance"); };
   const raced = await killTree(200, null, { platform: "win32", exec: noInstance, isAlive: () => false }).then(() => "ok", (e) => e.message);
-  t.ok("taskkill が失敗しても、根が消えていれば落とせたとみなす", raced === "ok" && calls[0] === "taskkill /PID 200 /T /F", JSON.stringify({ raced, calls }));
+  t.ok("taskkill が失敗しても、根が消えていれば落とせたとみなす", raced === "ok" && calls[0] === `${systemTool("taskkill")} /PID 200 /T /F`, JSON.stringify({ raced, calls }));
+  t.ok("taskkill は System32 の絶対パスで呼ぶ（PATH の先頭の同名の道具に当たらない）", /^[A-Za-z]:\\.+\\System32\\taskkill\.exe /i.test(calls[0]), calls[0]);
   let polls = 0;
   const exiting = await killTree(200, null, { platform: "win32", exec: noInstance, isAlive: () => ++polls < 3 }).then(() => "ok", (e) => e.message);
   t.ok("根が終わりかけなら、消えるのを待って落とせたとみなす", exiting === "ok" && polls === 3, JSON.stringify({ exiting, polls }));
@@ -107,10 +109,11 @@ export default async function (t) {
   t.ok("parent が整数でなければ絞らない", pidsOf(await listProcesses({ parent: "100", platform: "linux", exec: fakePs })) === "1,50,100,200,300,400");
   t.ok("子の無い parent は空", (await listProcesses({ parent: 999, platform: "linux", exec: fakePs })).length === 0);
   t.ok("ps -A で全部を引く", psCalls[0] === "ps -A -o pid=,ppid=,args=", psCalls[0]);
-  const psWin = [];
-  const fakePowershell = async (file, args) => { psWin.push(args.at(-1)); return '[{"ProcessId":5,"ParentProcessId":4,"CommandLine":"x"}]'; };
+  const psWin = [], psFiles = [];
+  const fakePowershell = async (file, args) => { psFiles.push(file); psWin.push(args.at(-1)); return '[{"ProcessId":5,"ParentProcessId":4,"CommandLine":"x"}]'; };
   const win = await listProcesses({ parent: 4, platform: "win32", exec: fakePowershell });
   t.ok("Windows は Win32_Process を parent で絞って引く", pidsOf(win) === "5" && psWin[0].includes("-Filter 'ParentProcessId=4'"), psWin[0]);
+  t.ok("Windows の一覧は System32 の powershell.exe を絶対パスで呼ぶ", psFiles[0] === systemTool("powershell") && /\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/i.test(psFiles[0]), psFiles[0]);
 
   // ---- 祖先
   const chain = [

@@ -1626,6 +1626,10 @@
         "agent": "Agent id (claude, codex, ...).",
         "on": "true to use it, false to stop using it."
       },
+      "setMcpRow": {
+        "summary": "The row switch of an external MCP server. false turns off every agent that can be changed, together (agents that read it themselves are locked and stay as they are). true restores the combination from before it was turned off (or the default). Restoring needs the user's approval.",
+        "on": "true to restore (use it), false to turn off every changeable agent together."
+      },
       "mcpMatrix": {
         "summary": "Read external MCP servers as a name-by-agent table (where each is used and whether it can be switched, including Claude plugin MCPs and claude.ai connectors).",
         "refresh": "If true, re-read the claude.ai connectors in the background."

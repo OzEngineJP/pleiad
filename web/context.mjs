@@ -17,10 +17,10 @@ import { createPlyInstructions } from './ply-instructions-card.mjs';
 import { createHooksMatrix } from './hooks-matrix.mjs';
 import { t, fmt } from './i18n.mjs';
 import { DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET, budgetOf } from './instruction-amount.mjs';
-import { CONTEXT_TABS, bundleSwitchState, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
+import { CONTEXT_TABS, chevronIcon, createFindBar, createTabBar, entryOrigins, groupEntries, originMarks, readTabStorage, writeTabStorage } from './context-tabs.mjs';
 import { preserveLockTip } from './lock-tip.mjs';
-import { agentShortLabel } from './agent-brands.mjs';
-import { freshAgents, MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocRowLocal, askBanner, docBundleLocked, docFreshChanged, docLockReason, docRowLockSummary, matrixSvg, recalcDocRow, rowSwitch, savedText } from './context-matrix.mjs';
+import { agentName, rememberAgentNames } from './agent-brands.mjs';
+import { freshAgents, MATRIX_ICON, agentChip, agentLegend, agentStrip, applyDocAgentLocal, applyDocBundleLocal, applyDocRowLocal, askBanner, docBundleMeta, docFreshChanged, docRowSwitch, matrixSvg, savedText } from './context-matrix.mjs';
 
 const KINDS = ['instruction', 'skill', 'mcp'];
 const TAB_KEY = 'ply-context-tab';
@@ -264,14 +264,6 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   // ---------------------------------------------------------------- 種類のカード
   const originText = row => entryOrigins(row);
 
-  function applyDocAgentLocal(row, agentIds, agent, on) {
-    const c = row.cells[agent];
-    if (!c || c.locked) return;
-    c.on = Boolean(on);
-    c.mode = on ? (c.native ? 'native' : 'spread') : 'off';
-    recalcDocRow(row, agentIds);
-  }
-
   function findDocRow(doc, key) {
     if (!doc) return null;
     if (doc.summaryRow?.key === key) return doc.summaryRow;
@@ -335,7 +327,10 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     );
   }
 
-  function toggleDocRow(kind, row, on) {
+  // 行の全体のスイッチ。変えられるオンがあればそれだけまとめてオフ（on: false）、無ければ外す前の選択に戻す（on: true）。向きは集計の rowNextOn
+  function toggleDocRow(kind, row) {
+    if (row.rowLocked) return;
+    const on = Boolean(row.rowNextOn);
     if (docAsk?.kind === kind && docAsk.key === row.key) docAsk = null;
     docFocus = `[data-cx-fk="${CSS.escape(`sw:${row.key}`)}"]`;
     runDocMutation(
@@ -397,22 +392,26 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     );
   }
 
-  function toggleDocBundleRow(kind, block, items, nextOn) {
-    const pressableKeys = items.filter(r => !r.rowLocked).map(r => r.key);
-    if (!pressableKeys.length) return;
+  // まとまりの全体のスイッチ。子の全部のマスを集計し、変えられるオンのある子だけをまとめてオフ／外す前の記録のある子から戻す（もともとオフだった子はオンにしない）
+  function toggleDocBundleRow(kind, block, items) {
+    const doc = docMatrices[kind];
+    if (!doc) return;
+    const meta = docBundleMeta(doc.agents, items);
+    if (meta.rowLocked) return;
+    const on = meta.rowNextOn;
     if (docAsk?.kind === kind && docAsk.key === `bundle:${block.key}`) docAsk = null;
     docFocus = `[data-cx-fk="${CSS.escape(`bundle-sw:${block.key}`)}"]`;
     runDocMutation(
       kind,
-      d => { for (const k of pressableKeys) { const r = findDocRow(d, k); if (r) applyDocRowLocal(r, d.agents, nextOn); } },
-      () => cmd('setDocRow', { kind, keys: pressableKeys, on: nextOn, place: 'default', cwd: home() }),
+      d => { applyDocBundleLocal(meta.keys.map(k => findDocRow(d, k)).filter(Boolean), d.agents, on); },
+      () => cmd('setDocRow', { kind, keys: meta.keys, on, place: 'default', cwd: home() }),
     );
   }
 
   function docAskEl(kind) {
     const a = docAsk;
-    const to = agentShortLabel(a.agent, a.agent);
-    const from = a.from === 'common' ? t('context.matrix.originCommon') : agentShortLabel(a.from, a.from);
+    const to = agentName(a.agent);
+    const from = a.from === 'common' ? t('context.matrix.originCommon') : agentName(a.from);
     const text = a.count
       ? t('context.matrix.askBundle', { from, name: a.name, count: a.count, to })
       : t('context.matrix.ask', { from, name: a.name, to });
@@ -462,7 +461,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
             state: cell.on ? 'lockon' : 'lockoff',
             cell,
             name: displayName,
-            ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: displayName }),
+            ariaLabel: t('context.matrix.agentAria', { agent: agentName(a), name: displayName }),
             key: fk,
             keyAttr: 'cxFk',
           });
@@ -472,7 +471,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
           state: cell.on ? 'on' : 'off',
           cell,
           name: displayName,
-          ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: displayName }),
+          ariaLabel: t('context.matrix.agentAria', { agent: agentName(a), name: displayName }),
           key: fk,
           keyAttr: 'cxFk',
           onToggle: () => toggleDocCell(kind, row, a, fk),
@@ -536,15 +535,13 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       open.append(body);
       open.onclick = () => { if (opened.has(entry.id)) opened.delete(entry.id); else opened.add(entry.id); renderCard(kind); };
       const tokens = kind === 'instruction' && Number.isFinite(entry.tokens) ? el('span', 'cx-tok', t('sessionContext.amount.about', { n: fmt.number(entry.tokens) })) : null;
-      const swLabel = kind === 'skill' ? t('context.row.offerAria', { name: entry.name }) : t('context.row.provideAria', { name: entry.name });
-      const sw = rowSwitch({
-        role: 'switch',
-        checked: entry.rowSwitchOn,
-        labelText: swLabel,
-        disabledReason: entry.rowLocked ? docLockReason(doc, entry) : null,
+      const sw = docRowSwitch({
+        doc,
+        meta: entry,
+        rows: entry,
+        name: entry.name,
         key: `sw:${entry.key}`,
-        keyAttr: 'cxFk',
-        onToggle: () => toggleDocRow(kind, entry, !entry.rowSwitchOn),
+        onToggle: () => toggleDocRow(kind, entry),
       });
       row.append(open, ...(tokens ? [tokens] : []), sw, rowAgentStrip(kind, doc, entry, entry.name));
       list.append(row);
@@ -571,9 +568,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       const open = Boolean(query) || (bundleOpen.has(block.key) ? bundleOpen.get(block.key) : block.defaultOpen);
       const items = (query ? kids : block.items).map(i => i.entry);
       const anyBundleOn = items.some(e => e.anyOn);
-      const actionLabel = kind === 'skill' ? t('context.bundle.offerAria', { name: block.label }) : t('context.bundle.provideAria', { name: block.label });
-      const swState = bundleSwitchState(items, e => e.rowSwitchOn, actionLabel);
-      const allLocked = docBundleLocked(items);
+      const bundleMeta = docBundleMeta(doc.agents, items);
       const row = el('div', 'cx-row ag grp' + (anyBundleOn ? '' : ' off'));
       row.dataset.key = `bundle:${block.key}`;
       const tw = button('', 'cx-ic cx-tw');
@@ -599,15 +594,13 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
         }
       }
       const tokens = kind === 'instruction' && tokTotal > 0 ? el('span', 'cx-tok', t('sessionContext.amount.about', { n: fmt.number(tokOn || tokTotal) })) : null;
-      const sw = rowSwitch({
-        role: 'checkbox',
-        checked: swState.checked === 'true',
-        mixed: swState.checked === 'mixed',
-        labelText: swState.ariaLabel,
-        disabledReason: allLocked ? docRowLockSummary(doc, items) : null,
+      const sw = docRowSwitch({
+        doc,
+        meta: bundleMeta,
+        rows: items,
+        name: block.label,
         key: `bundle-sw:${block.key}`,
-        keyAttr: 'cxFk',
-        onToggle: () => toggleDocBundleRow(kind, block, items, swState.checked !== 'true'),
+        onToggle: () => toggleDocBundleRow(kind, block, items),
       });
       const ags = agentStrip({
         agents: doc.agents,
@@ -622,7 +615,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
               state: st.state,
               cell: st.cell,
               name: block.label,
-              ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: block.label }),
+              ariaLabel: t('context.matrix.agentAria', { agent: agentName(a), name: block.label }),
               key: fk,
               keyAttr: 'cxFk',
             });
@@ -631,7 +624,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
             agent: a,
             state: st.state,
             name: block.label,
-            ariaLabel: t('context.matrix.agentAria', { agent: agentShortLabel(a, a), name: block.label }),
+            ariaLabel: t('context.matrix.agentAria', { agent: agentName(a), name: block.label }),
             key: fk,
             keyAttr: 'cxFk',
             onToggle: () => toggleDocBundleCell(kind, block, items, a, st.state, fk),
@@ -819,15 +812,13 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       const nl = el('span', 'nl');
       nl.append(el('span', 'nm', label));
       body.append(nl, el('span', 'p', sub));
-      const swLabel = kind === 'skill' ? t('context.row.offerAria', { name: label }) : t('context.row.provideAria', { name: label });
-      const sw = rowSwitch({
-        role: 'switch',
-        checked: summary.rowSwitchOn,
-        labelText: swLabel,
-        disabledReason: summary.rowLocked ? docRowLockSummary(doc, [summary]) : null,
+      const sw = docRowSwitch({
+        doc,
+        meta: summary,
+        rows: summary,
+        name: label,
         key: `sw:${summary.key}`,
-        keyAttr: 'cxFk',
-        onToggle: () => toggleDocRow(kind, summary, !summary.rowSwitchOn),
+        onToggle: () => toggleDocRow(kind, summary),
       });
       row.append(body, sw, rowAgentStrip(kind, doc, summary, label));
       list.append(row);
@@ -953,6 +944,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     try {
       const grid = await cmd('mcpMatrix', { cwd: home() });
       if (ticket !== matrixTicket) return;
+      rememberAgentNames(grid?.labels);
       matrix = grid;
     } catch { return; }
     renderCard('mcp');
@@ -977,6 +969,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     try {
       const grid = await callDocRetry(() => cmd('docMatrix', { kind, cwd: target, place: 'default' }));
       if (ticket !== docTickets[kind]) return;
+      rememberAgentNames(grid?.labels);
       if (Array.isArray(grid?.rows)) docMatrices[kind] = grid;
     } catch (e) { return e; }
     renderCard(kind);
@@ -1023,6 +1016,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       ]);
       if (ticket !== scanTicket) return;
       scan = found; ply = list; agents = native;
+      rememberAgentNames(grid?.labels); rememberAgentNames(instGrid?.labels); rememberAgentNames(skillGrid?.labels);
       if (grid) { matrix = grid; pollConnectors(); }
       if (Array.isArray(instGrid?.rows) && docInstTicket === docTickets.instruction) docMatrices.instruction = instGrid;
       if (Array.isArray(skillGrid?.rows) && docSkillTicket === docTickets.skill) docMatrices.skill = skillGrid;

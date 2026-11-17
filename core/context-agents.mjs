@@ -405,6 +405,47 @@ export function setDocRowRule(kind, entryOrSummary, currentRule, on, ctx = null)
 }
 
 /**
+ * 行のスイッチでオンに戻すときの戻し先（ADR 0337 §決定 4。2026-11-17 の改訂）。鍵つきのオンのマスは数えない（鍵は触らない）。
+ * - { source: 'was', rule }: オフにする前の規則（was）に戻すと鍵の無いマスのどれかがオンになる。鍵つきのオンが残っていても戻せる
+ * - { source: 'default', rule }: 記録が無いとき、出どころのエージェントだけをオンにする（nativeOnlyDocRule）。
+ *   鍵つきのオンが 1 つでもある行では使わない（初めから鍵だけの行は、止めたい意図と逆になるので、ほかのエージェントへ配らない）
+ * - null: 戻す先が無い（押しても変わらない）
+ */
+export function docRestoreRule(kind, entryOrSummary, currentRule, ctx = null) {
+  const was = isObj(currentRule?.was) ? normalizeAgentValue(currentRule.was) : null;
+  if (was && unlockedOnAgents(kind, entryOrSummary, was, ctx).length) return { source: 'was', rule: was };
+  const cells = evaluateDocCells(kind, entryOrSummary, currentRule, ctx);
+  if (DOC_AGENT_IDS.some((a) => cells[a].locked && cells[a].on)) return null;
+  const native = nativeOnlyDocRule(kind, entryOrSummary, currentRule, ctx);
+  return unlockedOnAgents(kind, entryOrSummary, native, ctx).length ? { source: 'default', rule: native } : null;
+}
+
+/**
+ * 行のスイッチを押したときの 1 行分の計画。on はスイッチの押したい向き（画面は「鍵の無いマスにオンが 1 つも無い」ときだけ true を送る）。
+ * - オフ（on: false）: 鍵の無いオンのマスをまとめてオフにし、その前の規則を was に覚える。鍵つきのオンは残る。鍵の無いオンが無い行は変えない
+ * - オン（on: true）: 鍵の無いオンのマスがある行は変えない。無い行は、戻し先（docRestoreRule）に戻す。
+ *   allowDefault が false なら、記録の無い行は出どころの初期値へ広げず変えない（まとまりで、外す前に記録のあった子だけを戻す。もともとオフだった子をオンにしない）
+ * 返り値: 変えない行は null、変える行は { rule, source }
+ */
+export function planDocRowPress(kind, entryOrSummary, currentRule, on, ctx = null, { allowDefault = true, inherited = null } = {}) {
+  const unlockedOn = unlockedOnAgents(kind, entryOrSummary, currentRule, ctx);
+  if (!on) {
+    if (!unlockedOn.length) return null;
+    return { rule: setDocRowRule(kind, entryOrSummary, currentRule, false, ctx), source: 'off' };
+  }
+  if (unlockedOn.length) return null;
+  const restore = docRestoreRule(kind, entryOrSummary, currentRule, ctx);
+  if (restore?.source === 'was') return { rule: restore.rule, source: 'was' };
+  // この場所の上書きを作る前の動き（全体の表・旧い保存）。記録（was）が無いときの戻し先なので、記録のある子だけを戻す場面（allowDefault が false）では使わない
+  // （使うと、まとまりを戻したときに、今回は外していない・もともとオフだった子までオンになる）
+  if (allowDefault && inherited && unlockedOnAgents(kind, entryOrSummary, inherited, ctx).length) {
+    return { rule: { off: [...(inherited.off ?? [])], spread: [...(inherited.spread ?? [])] }, source: 'inherited' };
+  }
+  if (restore && allowDefault) return { rule: restore.rule, source: 'default' };
+  return null;
+}
+
+/**
  * POSIX（macOS・Linux）で、外付け・ネットワークの物がつながる先のフォルダー（マウント先）。該当しなければ null。
  * /Volumes/<名前>・/mnt/<名前>・/media/<利用者>/<名前>・/run/media/<利用者>/<名前> の下のパスは、その <名前> までを返す。
  * 根 / はいつも在るので、Windows の「ドライブの根」と同じ考えで、このフォルダーが無いときは「もう無い」と言わないために使う

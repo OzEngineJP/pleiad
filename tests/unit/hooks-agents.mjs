@@ -18,6 +18,7 @@ import { classifyNativeRun, codexHooksState } from '../../core/hooks-plan.mjs';
 import { devinTurnConfig } from '../../core/backends/devin-config.mjs';
 import { containsPath } from '../../core/context-settings.mjs';
 import { registry } from '../../core/ops/index.mjs';
+import { agentShortName } from '../../core/backends/agents.mjs';
 import { t as T } from '../../core/i18n.mjs';
 
 export const name = 'hooks-agents';
@@ -279,6 +280,16 @@ export default async function (t) {
     const dupTurn = await newTurn(CLAUDE);
     t.ok('動き続けるネイティブと同じ登録は渡さない（二重に動かさない。理由は duplicate）',
       !dupTurn.runtime.supplied.some(x => x.hook.id === dup.id) && dupTurn.record.skipped.some(s => s.id === dup.id && s.reason === 'duplicate'), JSON.stringify(dupTurn.record.skipped));
+    // 切った行を押して入れるとき、覚えた選択へ戻すか（was）・覚えが無く元の集合へ戻すか（default）を一覧が言う（読み上げの言い分け）
+    await ha.setRow({ key: dup.id, on: false, cwd: repo });
+    const dupOff = (await ha.matrix({ cwd: repo })).rows.find(r => r.key === dup.id);
+    const regKept = (await ha.matrix({ cwd: repo })).rows.find(r => r.key === reg.id);
+    t.ok('切った行の一覧: 覚えたエージェントごとの選択がある行は rowRestore: was、覚えが無い行は default',
+      !(await ha.read()).off[dup.id]?.length && dupOff.unused === true && dupOff.rowRestore === 'default'
+      && (await ha.read()).off[reg.id]?.join() === CODEX && regKept.rowRestore === 'was', JSON.stringify({ dup: [dupOff.unused, dupOff.rowRestore], reg: regKept.rowRestore }));
+    await ha.setRow({ key: dup.id, on: true, cwd: repo });
+    const dupOn = (await ha.matrix({ cwd: repo })).rows.find(r => r.key === dup.id);
+    t.ok('入れ直した行は切れるオンがあるので、押す向きは切る（rowChangeableOn）', dupOn.rowChangeableOn === true && dupOn.unused === false, JSON.stringify([dupOn.rowChangeableOn, dupOn.unused]));
     await plyHooks.remove(dup.id);
 
     // ---------------------------------------------------------------- 広げる（ほかのエージェントでも実行する）
@@ -404,6 +415,13 @@ export default async function (t) {
     t.ok('入れても動くエージェントが無い行は、行のスイッチが鍵（switchLock は渡せないマスの理由）で、操作も断る',
       relayRow.on === false && relayRow.switchable === false && relayRow.switchLock?.detail === 'claudeCallback' && relayRow.switchLock?.agent === CLAUDE
       && typeof relayRefused === 'string' && relayRefused.includes(ss.id), JSON.stringify({ relayRow: { on: relayRow.on, switchable: relayRow.switchable, switchLock: relayRow.switchLock }, relayRefused }));
+    // 断る知らせの {{agent}} は、内部のキー（claude）ではなく表のマスの吹き出しと同じ表示名（Claude）
+    t.ok('行のスイッチを断る知らせは、鍵のエージェントを表示名（Claude）で呼ぶ。内部のキーのままにしない',
+      typeof relayRefused === 'string' && relayRefused.includes(agentShortName(CLAUDE)) && agentShortName(CLAUDE) !== CLAUDE
+      && relayRefused.includes(`${agentShortName(CLAUDE)} で動き続ける`), relayRefused);
+    const cellRefused = await ha.setAgent({ key: ss.id, agent: CLAUDE, on: true, cwd: repo }).then(() => null, e => e.message);
+    t.ok('鍵のマスを押したときの知らせも {{agent}} は表示名（Claude）',
+      typeof cellRefused === 'string' && cellRefused.includes('Claude') && !cellRefused.replaceAll(ss.id, '').includes(CLAUDE), cellRefused);
     const relayTurn = await newTurn(CLAUDE);
     // 止めるものも渡すものも無ければ今までと同じ起動（null）。理由は一覧のセルが持つ
     t.ok('渡せない登録は渡さない（ほかに変えるものが無ければ起動は今までと同じ）', !(relayTurn?.runtime.supplied ?? []).some(x => x.hook.id === ss.id) && (relayTurn === null || relayTurn.record.unsupported.some(u => u.id === ss.id)), JSON.stringify(relayTurn?.record ?? null));
@@ -501,7 +519,7 @@ export default async function (t) {
       t.ok('(d) 選択の無い行を消しても、ほかの行の選択は付け替わらず、前の行き先の無い選択は残る', m.orphans.some(o => o.key === A3.key) === false && cell(m, B3.key, CLAUDE).state === 'on' && cell(m, C.key, CLAUDE).state === 'off'
         && m.orphans.some(o => o.key === A1.key), JSON.stringify(m.orphans.map(o => [o.key, o.reason])));
       await fs.writeFile(rkSettings, JSON.stringify({ hooks: { Stop: [cmd('node c.mjs')] } }));
-      // Claude の定義の行は Devin が取り込むので（devinImports の鍵つきでオン）行のスイッチは押せない。マスで書き込む
+      // Claude の定義の行は Devin が取り込む（devinImports の鍵つきでオン）。この試験はマスで 1 つずつ書き込む
       await hb.setAgent({ key: C.key, agent: CLAUDE, on: false, cwd: rkRepo });
       m = await hb.matrix({ cwd: rkRepo });
       t.ok('(d) 外していない行を消しても、外した行の選択は付け替わらない', cell(m, C.key, CLAUDE).state === 'off');
@@ -543,22 +561,68 @@ export default async function (t) {
       m = await ha.matrix({ cwd: repo });
       t.ok('行を入れ直す: 覚えた選択（Codex は切ったまま・広げた先は入ったまま）に戻る', JSON.stringify(states(m, reg.id)) === picked
         && cell(m, reg.id, CODEX).state === 'off' && cell(m, reg.id, wide).state === 'on', `${picked} → ${JSON.stringify(states(m, reg.id))}`);
-      // (c) 切っても鍵つきでオンが残る行（Claude の定義は Devin が取り込む）: 行のスイッチは押せず、操作も断る
+      // (c) 切っても鍵つきでオンが残る行（Claude の定義は Devin が取り込む）: 押せる。切れるオンだけを一緒に切り、鍵つきのオン（Devin）は残す（ADR 0337 §決定 4・A′）
       const stopSw = rowOf(m, stopRow.key);
-      const fileBefore = await fs.readFile(ha.file, 'utf8');
-      const stopRefused = await ha.setRow({ key: stopRow.key, on: false, cwd: repo }).then(() => null, e => e);
-      t.ok('鍵つきでオンのマスが残る行（Claude の定義 × Devin の取り込み）: 行のスイッチは押せない（switchLock は devinImports）',
-        stopSw.on === true && stopSw.switchable === false && stopSw.switchLock?.detail === 'devinImports' && stopSw.switchLock?.agent === DEVIN, JSON.stringify(stopSw.switchLock ?? null));
-      t.ok('その行を切る操作は断り（INVALID・行の ID 入り）、ファイルは変えない', stopRefused?.code === 'INVALID' && stopRefused.message.includes(stopRow.key) && await fs.readFile(ha.file, 'utf8') === fileBefore,
-        stopRefused?.message);
-      t.ok('作業場所の 1 行も、Devin が取り込むので行のスイッチは押せない', rowOf(m, WS_KEY).switchable === false && rowOf(m, WS_KEY).switchLock?.detail === 'devinImports', JSON.stringify(rowOf(m, WS_KEY).switchLock ?? null));
+      t.ok('鍵つきでオンのマスが残る行（Claude の定義 × Devin の取り込み）: 一部オン（rowMixed でなくてよい）・鍵つきのオンが残り（rowFixed）、切れるオンがあり、押せる',
+        stopSw.on === true && stopSw.switchable === true && stopSw.rowFixed === true && stopSw.rowChangeableOn === true && stopSw.rowNextOn === false
+        && cell(m, stopRow.key, DEVIN).state === 'on' && cell(m, stopRow.key, DEVIN).mode === 'locked', JSON.stringify({ stopSw: { on: stopSw.on, sw: stopSw.switchable, lock: stopSw.switchLock, fixed: stopSw.rowFixed, ch: stopSw.rowChangeableOn, next: stopSw.rowNextOn }, cells: states(m, stopRow.key) }));
+      const stopBefore = states(m, stopRow.key);
+      await ha.setRow({ key: stopRow.key, on: false, cwd: repo });
+      m = await ha.matrix({ cwd: repo });
+      const stopCut = rowOf(m, stopRow.key);
+      t.ok('その行を切る: 切れるオン（Claude）だけが切れ、鍵つきのオン（Devin の取り込み）は残る。行は鍵つきだけが動くので、押すと入れる向き',
+        cell(m, stopRow.key, CLAUDE).state === 'off' && cell(m, stopRow.key, DEVIN).state === 'on' && stopCut.on === true
+        && stopCut.rowFixed === true && stopCut.rowChangeableOn === false && stopCut.rowNextOn === true && stopCut.switchable === true, JSON.stringify({ was: stopBefore, now: states(m, stopRow.key), fixed: stopCut.rowFixed, ch: stopCut.rowChangeableOn, sw: stopCut.switchable, lock: stopCut.switchLock }));
+      t.ok('鍵つきのオン（Devin）は切る前と同じ（切る操作が触らない）', cell(m, stopRow.key, DEVIN).state === stopBefore[DEVIN]);
+      // 切れるオンが無く、鍵つきのオンだけが動く行（切った後の Claude の Stop。Devin の取り込みだけが残る）: 切る向きで押しても変えるものが無い。
+      // rowSwitchPlan は idle の鍵（idleLock）を返し、setRow は INVALID で断る。ファイルも revision も変わらない（Devin の表示名で理由を言う）
+      const idleFile = await fs.readFile(ha.file, 'utf8');
+      const idleRev = m.revision;
+      const idleErr = await ha.setRow({ key: stopRow.key, on: false, cwd: repo }).then(() => null, e => e);
+      const idleAfter = await ha.matrix({ cwd: repo });
+      t.ok('切れるオンが無い行（鍵つきのオンだけが動く）を切る向きで押すと、setRow は INVALID で断り、ファイルも revision も変えない（idleLock）',
+        idleErr?.code === 'INVALID' && idleErr.message.includes(stopRow.key) && idleErr.message.includes('Devin')
+        && await fs.readFile(ha.file, 'utf8') === idleFile && idleAfter.revision === idleRev, JSON.stringify({ code: idleErr?.code, msg: idleErr?.message }));
+      await ha.setRow({ key: stopRow.key, on: stopCut.rowNextOn, cwd: repo });
+      m = await ha.matrix({ cwd: repo });
+      t.ok('もう一度押すと、切る前の選択に戻る（鍵つきのオンはそのまま）', JSON.stringify(states(m, stopRow.key)) === JSON.stringify(stopBefore) && rowOf(m, stopRow.key).rowChangeableOn === true, `${JSON.stringify(stopBefore)} → ${JSON.stringify(states(m, stopRow.key))}`);
+      const wsRow = rowOf(m, WS_KEY);
+      t.ok('作業場所の 1 行は、Devin が取り込む（鍵つきのオン）と切れるマスの両方を持つので、切る向きで押せる', wsRow.rowFixed === true && wsRow.switchable === true, JSON.stringify({ lock: wsRow.switchLock ?? null, fixed: wsRow.rowFixed, ch: wsRow.rowChangeableOn, cells: states(m, WS_KEY) }));
       // (d) 管理者の行
       t.ok('管理者の行: 行のスイッチは鍵（admin）', rowOf(m, adminRow.key).switchable === false && rowOf(m, adminRow.key).switchLock?.reason === 'admin');
-      // (f) 組の行のスイッチ: 押せない行が 1 つでもあれば、どれも変えずに断る（1 回の書き込み。半分だけ入った状態を作らない）
-      const revBefore = m.revision;
-      const groupRefused = await ha.setGroup({ group: 'own', on: false, cwd: repo }).then(() => null, e => e);
-      t.ok('組の行のスイッチ: 押せない行があれば断り、ほかの行も変えない（revision もファイルもそのまま）',
-        groupRefused?.code === 'INVALID' && (await ha.matrix({ cwd: repo })).revision === revBefore && await fs.readFile(ha.file, 'utf8') === fileBefore, groupRefused?.message);
+      // (f) 組の行のスイッチ: 変えるものの無い行は飛ばし、ほかの行が黙って止まる行があれば、どれも変えずに断る（1 回の書き込み。半分だけ入った状態を作らない）
+      const ownRows = mm => mm.rows.filter(r => r.group === 'own' && r.kind !== 'grokOwn' && r.scope !== 'managed');
+      const snap = mm => JSON.stringify(mm.rows.map(r => [r.key, states(mm, r.key)]));
+      const groupCut = await ha.setGroup({ group: 'own', on: false, cwd: repo }).then(() => 'ok', e => e);
+      m = await ha.matrix({ cwd: repo });
+      t.ok('組の行のスイッチ（切る）: 切れるオンを全部切り、鍵つきのオン（Devin の取り込み）は残す。断らない',
+        groupCut === 'ok' && ownRows(m).every(r => r.rowChangeableOn === false)
+        && cell(m, stopRow.key, CLAUDE).state === 'off' && cell(m, stopRow.key, DEVIN).state === 'on' && cell(m, codexRow.key, CODEX).state === 'off',
+        JSON.stringify({ groupCut: groupCut?.message ?? groupCut, rows: ownRows(m).map(r => [r.key, r.rowChangeableOn, states(m, r.key)]) }));
+      const cutSnap = snap(m);
+      const idleRows = ownRows(m).filter(r => r.rowFixed === true && r.rowChangeableOn === false && r.on === true);
+      const groupAgain = await ha.setGroup({ group: 'own', on: false, cwd: repo }).then(() => 'ok', e => e);
+      m = await ha.matrix({ cwd: repo });
+      t.ok('切れるオンが無い行（鍵つきのオンだけが動く）が組にあっても、変えるものが無い行は飛ばして断らず、何も変えない（rowSwitchPlan の idle）',
+        idleRows.length >= 1 && groupAgain === 'ok' && snap(m) === cutSnap, JSON.stringify({ idle: idleRows.map(r => r.key), groupAgain: groupAgain?.message ?? groupAgain }));
+      await ha.setGroup({ group: 'own', on: true, cwd: repo });
+      // ほかの行が黙って止まる行（Claude はどれか 1 つを切ると、渡し直せない行（SessionStart のコールバック）が一緒に止まる）が組にあれば、どれも変えずに断る
+      const claudeSettingsText = await fs.readFile(claudeSettings, 'utf8');
+      await w(claudeSettings, { hooks: { ...JSON.parse(claudeSettingsText).hooks, SessionStart: [{ hooks: [{ type: 'command', command: 'node user-start.mjs' }] }] } });
+      m = await ha.matrix({ cwd: repo });
+      const startRow = m.rows.find(r => r.kind === 'native' && r.event === 'SessionStart' && r.agent === CLAUDE && r.scope === 'user');
+      const silentFile = await fs.readFile(ha.file, 'utf8').catch(() => '');
+      const silentRev = m.revision;
+      const silentSnap = snap(m);
+      const silentRow = await ha.setRow({ key: stopRow.key, on: false, cwd: repo }).then(() => 'ok', e => e);
+      const silentGroup = await ha.setGroup({ group: 'own', on: false, cwd: repo }).then(() => 'ok', e => e);
+      const silentAfter = await ha.matrix({ cwd: repo });
+      t.ok('渡し直せない行がある Claude の行を切る向きで押すと、ほかの行が黙って止まるので、setRow も組の setGroup も INVALID で断り、ほかの行も変えない（revision・ファイル・どのマスもそのまま）',
+        !!startRow && silentRow?.code === 'INVALID' && silentGroup?.code === 'INVALID' && silentAfter.revision === silentRev
+        && await fs.readFile(ha.file, 'utf8').catch(() => '') === silentFile && snap(silentAfter) === silentSnap && cell(silentAfter, codexRow.key, CODEX).state === 'on',
+        JSON.stringify({ start: !!startRow, row: silentRow?.message ?? silentRow, group: silentGroup?.message ?? silentGroup, sw: rowOf(m, stopRow.key).switchable, lock: rowOf(m, stopRow.key).switchLock }));
+      await fs.writeFile(claudeSettings, claudeSettingsText);
+      m = await ha.matrix({ cwd: repo });
       // 一覧の行のスイッチ（on）は、鍵つきでオンのマスも数える
       t.ok('行の on: 鍵つきでオンのマスだけが動いていても on', m.rows.every(r => r.on === Object.values(r.cells).some(c => c.state === 'on')));
       await ha.reset();

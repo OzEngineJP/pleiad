@@ -330,23 +330,36 @@ export default async function (t) {
       opDocM.ok && opDocM.result.rows.length === 1 && opDocM.result.total >= 2 && Boolean(opDocM.result.next));
 
     // setDocRow で場所のまとめ切り替え + setContextSettings({ remove: true }) で同期削除。
-    // AGENTS.md は Devin・Grok が自分で読む（鍵つきでオン）ので行のスイッチでは止まらず、断る（押したのに変わらない、を作らない）。
-    // 押せる行（Devin・Grok が読まない GEMINI.md）で、その場所だけの設定を確かめる
+    // AGENTS.md は Devin・Grok が自分で読む（鍵つきでオン）。行のスイッチは、鍵の無いオンだけをまとめてオフにし、鍵つきのオンは残す
+    // （押したのに変わらない、を作らず、全部止められない行でも変えられる分は止められる。ADR 0337 §決定 4 の 2026-11-17 改訂）。
+    // その場所だけの設定を、GEMINI.md（鍵つきのオンが無い行）と AGENTS.md（鍵つきのオンが残る行）で確かめる
     await write(path.join(repo, 'GEMINI.md'), 'REPO_GEMINI_INST');
     const wsM = await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo });
-    let agentsRowErr = null;
-    try {
-      await client.cmd('setDocRow', { kind: 'instruction', key: docItemKey(wsM.rows.find((r) => r.name === 'AGENTS.md')), on: false, place: repo, cwd: repo });
-    } catch (e) { agentsRowErr = e; }
+    const agentsKey = docItemKey(wsM.rows.find((r) => r.name === 'AGENTS.md'));
+    await client.cmd('setDocRow', { kind: 'instruction', key: agentsKey, on: false, place: repo, cwd: repo });
+    const agentsOffM = await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo });
+    const agentsOff = agentsOffM.rows.find((r) => r.name === 'AGENTS.md');
+    const agentsWas = wsM.rows.find((r) => r.name === 'AGENTS.md');
+    const lockedCellsOf = (row) => JSON.stringify(Object.fromEntries(Object.entries(row.cells).filter(([, c]) => c.locked)));
+    t.ok('WS setDocRow(place): 鍵つきでオンの残る AGENTS.md も、鍵の無いマスだけ全部 off になり、鍵つきのマスは変わらず「一部」＋鍵の形になる',
+      agentsWas.rowLocked === false && agentsWas.rowChangeableOn === true && agentsWas.rowFixed === true
+      && Object.values(agentsOff.cells).every((c) => c.locked || !c.on)
+      && lockedCellsOf(agentsOff) === lockedCellsOf(agentsWas)
+      && agentsOff.rowSwitchOn === true && agentsOff.rowMixed === true && agentsOff.rowChangeableOn === false && agentsOff.rowFixed === true
+      && agentsOff.rowRestore === 'was' && agentsOff.rowNextOn === true && agentsOff.rowLocked === false,
+      JSON.stringify({ was: agentsWas.cells, off: agentsOff.cells, flags: [agentsOff.rowRestore, agentsOff.rowNextOn, agentsOff.rowLocked] }));
+    await client.cmd('setDocRow', { kind: 'instruction', key: agentsKey, on: true, place: repo, cwd: repo });
+    const agentsBackM = await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo });
+    t.ok('WS setDocRow(place): AGENTS.md をもう一度押すと外す前のマスに戻る（鍵つきのマスは触らない）',
+      JSON.stringify(agentsBackM.rows.find((r) => r.name === 'AGENTS.md').cells) === JSON.stringify(agentsWas.cells),
+      JSON.stringify(agentsBackM.rows.find((r) => r.name === 'AGENTS.md').cells));
     await client.cmd('setDocRow', { kind: 'instruction', key: docItemKey(wsM.rows.find((r) => r.name === 'GEMINI.md')), on: false, place: repo, cwd: repo });
     const afterPlaceEdit = await client.cmd('docMatrix', { kind: 'instruction', cwd: repo, place: repo });
     const geminiAfter = afterPlaceEdit.rows.find((r) => r.name === 'GEMINI.md');
     const agentsAfter = afterPlaceEdit.rows.find((r) => r.name === 'AGENTS.md');
-    t.ok('WS setDocRow(place): 押せる行は鍵の無いマスが全部 off になり、鍵つきでオンの残る AGENTS.md は断って変えない',
-      Object.values(geminiAfter.cells).every((c) => c.locked || !c.on) && geminiAfter.rowSwitchOn === false
-      && /行のスイッチ/.test(String(agentsRowErr?.message ?? '')) && agentsAfter.rowLocked === true && agentsAfter.rowSwitchOn === true
-      && JSON.stringify(agentsAfter.cells) === JSON.stringify(wsM.rows.find((r) => r.name === 'AGENTS.md').cells),
-      JSON.stringify({ err: agentsRowErr?.message, gemini: geminiAfter.cells, agents: agentsAfter.cells }));
+    t.ok('WS setDocRow(place): 鍵の無い行（GEMINI.md）は鍵の無いマスが全部 off になる',
+      Object.values(geminiAfter.cells).every((c) => c.locked || !c.on) && geminiAfter.rowSwitchOn === false,
+      JSON.stringify({ gemini: geminiAfter.cells }));
 
     // 右パネルの「この場所で外しています / 全体の設定で外しています」は行ごとの inheritedOn で決める（レビュー S8）。
     // この場所だけで外した行は、場所の設定を除けばオン（inheritedOn=true）。全体でも外すと、場所の設定を除いてもオフ（false）。

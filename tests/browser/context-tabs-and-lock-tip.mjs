@@ -44,11 +44,12 @@ const shoot = async (page, name) => {
   await page.screenshot({ path: path.join(shotDir, name), fullPage: false });
 };
 
-let server, client, browser;
+let server, client, browser, lkServer, lkClient;
 try {
   // ユーザー側（設定 › プラグインで表示）: CLAUDE.md + GEMINI.md + 9 rules（探す場所に足した ~/team-rules）+ 9 .codex/skills + 2 .agents/skills + MCP + Hook
-  // 押して切り替える rules・Skills は、Devin・Grok が自分で読まない置き場に置く。.claude/ などエージェントの置き場の物は Devin か Grok のマスが
-  // 鍵つきでオンなので、行のスイッチを押せない（ADR 0337 §4「行のスイッチ」）。rules はどの置き場も Devin か Grok が読むので、探す場所に足したフォルダーに置く
+  // 押して切り替える rules・Skills は、Devin・Grok が自分で読まない置き場に置く（鍵つきのオンが無い行は、まとまりのスイッチが「全部オン／オフ」になって試しやすい）。
+  // .claude/ などエージェントの置き場の物は Devin か Grok のマスが鍵つきでオンなので、行のスイッチは変えられるオンだけをまとめてオフにし、
+  // 鍵つきのオンが残る（横棒＋鍵。ADR 0337 §決定 4 の 2026-11-17 改訂）。rules はどの置き場も Devin か Grok が読むので、探す場所に足したフォルダーに置く
   const teamRoot = path.join(home, 'team-rules');
   write(path.join(home, '.claude/CLAUDE.md'), '# User Instructions\nAlways be concise.\n');
   write(path.join(home, '.gemini/GEMINI.md'), '# Gemini User Instructions\nExplain briefly.\n');
@@ -71,7 +72,7 @@ try {
   write(grokStub, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n');
   if (process.platform !== 'win32') fs.chmodSync(grokStub, 0o755);
 
-  // リポジトリ側（会話の右パネルで表示）: AGENTS.md + 9 rules（.claude/rules。Devin・Grok の鍵で行のスイッチは押せない）+ 9 .codex/skills + .mcp.json
+  // リポジトリ側（会話の右パネルで表示）: AGENTS.md + 9 rules（.claude/rules。Devin・Grok の鍵つきのオンが残るので、行のスイッチは変えられるオンだけを外す）+ 9 .codex/skills + .mcp.json
   fs.mkdirSync(repo, { recursive: true });
   execFileSync('git', ['init', '--quiet', repo]);
   write(path.join(repo, 'AGENTS.md'), '# Repo Instructions\nFollow test rules.\n');
@@ -277,11 +278,22 @@ try {
     await kids.first().locator('.cx-sw').click();
     await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', { timeout: 10000 });
     const mixSw = grp.locator('.cx-sw');
-    check((await mixSw.getAttribute('role')) === 'checkbox' && (await mixSw.getAttribute('aria-label')).includes('8'), '子 1 つオフでまとまりスイッチが checkbox mixed＋一部ラベルになる', await mixSw.getAttribute('aria-label'));
+    check((await mixSw.getAttribute('role')) === 'checkbox' && (await mixSw.getAttribute('aria-label')).includes('一部オン'), '子 1 つオフでまとまりスイッチが checkbox mixed＋「一部オン」のラベルになる', await mixSw.getAttribute('aria-label'));
+    check((await mixSw.getAttribute('aria-label')).includes('変更できる分をまとめてオフにする'), '一部オンのまとまりを押すと何が起きるか（変えられる分をまとめてオフ）をラベルに持つ', await mixSw.getAttribute('aria-label'));
 
+    // 一部オンのまとまりを押すと、変えられるオンだけがまとめてオフになる（オンを広げない）。もう一度押すと外す前の選択（最初にオフだった 1 件は入れない）に戻る
     await mixSw.click();
-    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
-    check(true, 'mixed スイッチ押下でまとめて有効へ戻る');
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', { timeout: 10000 });
+    check((await mixSw.getAttribute('aria-label')).includes('外す前の選択に戻す'), 'mixed を押すとまとめてオフ。次に押すと「外す前の選択に戻す」とラベルに出る', await mixSw.getAttribute('aria-label'));
+    await mixSw.click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', { timeout: 10000 });
+    check((await kids.first().locator('.cx-sw').getAttribute('aria-checked')) === 'false', 'もう一度押すと外す前の選択に戻る。最初にオフだった 1 件は入れない（オンを新しく足さない）');
+    // 最初にオフだった子を単独で押す: まとめて外したとき、今回は外していない子の古い戻し先は消してあるので、記録なし＝出どころ優先の初期値
+    // （探す場所に足したフォルダーの物は Pleiad が出どころ＝鍵の無い全エージェント）に戻る。ほかの子は Claude だけのままなので、まとまりは一部オンのまま
+    const firstKidSw = kids.first().locator('.cx-sw');
+    await firstKidSw.click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.kid .cx-sw')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
+    check((await grp.locator('.cx-sw').getAttribute('aria-checked')) === 'mixed', '子を 1 つだけ入れ直しても、ほかの子は広がらずまとまりは一部オンのまま（オンを新しく足さない）');
     await shoot(page, 'context-agents-1280-light-inst.png');
 
     // GEMINI.md: own/relay の鍵、他エージェントへ広げる前の確認（.cx-ask）→ やめる → 渡す → リロード後も永続
@@ -395,7 +407,11 @@ try {
     };
     await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
     const filteredGrp = page.locator('#cx-panel-skill .cx-row.grp');
-    check((await filteredGrp.count()) === 1 && (await filteredGrp.locator('.cx-sw').getAttribute('aria-checked')) === 'true', '絞り込み中のまとまりスイッチは見えている行だけからオンと決まる');
+    // .codex/skills の行は Codex だけがオン（鍵なしのマス 5 つのうち 1 つ）なので、まとまりスイッチは「一部オン」（横棒）。押すとオンを広げず、変えられるオンだけをまとめてオフにする
+    check((await filteredGrp.count()) === 1 && (await filteredGrp.locator('.cx-sw').getAttribute('aria-checked')) === 'mixed'
+      && (await filteredGrp.locator('.cx-sw').getAttribute('aria-label')).includes('変更できる分をまとめてオフにする'),
+    '絞り込み中のまとまりスイッチは見えている行だけから「一部オン」と決まり、押すとオンを広げずまとめてオフにする',
+    await filteredGrp.locator('.cx-sw').getAttribute('aria-label'));
     await filteredGrp.locator('.cx-sw').click();
     await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
     const afterFilterOff = await pollUntil(skillMatrixState, s => s.touched && !s.u1On && s.otherOff === 0 && s.legacyExcludes === 0);
@@ -404,10 +420,17 @@ try {
     await findInput.press('Escape');
     await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), null, { timeout: 5000 });
     check(true, '絞り込みを消すとまとまり全体の状態（一部）に戻る');
-    await page.locator('#cx-panel-skill .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
-    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), null, { timeout: 10000 });
+    // 外した u-skill-1 は、もう一度絞り込んでまとまりスイッチを押すと、外す前の選択（Codex だけオン）に戻る。ほかの行は巻き込まない
+    await findInput.fill('u-skill-1');
+    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
+    const restoreSw = page.locator('#cx-panel-skill .cx-row.grp .cx-sw');
+    check((await restoreSw.getAttribute('aria-checked')) === 'false' && (await restoreSw.getAttribute('aria-label')).includes('外す前の選択に戻す'),
+      '外した u-skill-1 だけに絞ると、まとまりスイッチはオフで、押すと「外す前の選択に戻す」', await restoreSw.getAttribute('aria-label'));
+    await restoreSw.click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', null, { timeout: 10000 });
     const afterRestoreSkill = await pollUntil(skillMatrixState, s => s.u1On && s.otherOff === 0);
-    check(afterRestoreSkill.u1On && afterRestoreSkill.otherOff === 0, 'まとまりスイッチで u-skill-1 を含む全件が有効に戻る', afterRestoreSkill);
+    check(afterRestoreSkill.u1On && afterRestoreSkill.otherOff === 0, 'まとまりスイッチで u-skill-1 が外す前の選択に戻り、ほかの行は変わらない', afterRestoreSkill);
+    await findInput.press('Escape');
 
     // 外部 MCP タブ + 鍵の吹き出し（追補 1）
     await page.locator('#cx-tab-mcp').click();
@@ -535,17 +558,25 @@ try {
     await scxArchGrp.locator('.cx-tw').click();
     const scxKids = page.locator('#scx-panel-instruction .cx-row.kid');
     check((await scxKids.count()) >= 9, '右パネルでも >8 のまとまりを開いて子行を出せる');
-    await scxKids.first().locator('.cx-sw').click();
+    // 右パネルも左と同じ動き（ADR 0337 §決定 4 の 2026-11-17 改訂）: 子を 1 つ外す → まとまりは一部オン → 押すと変えられるオンをまとめてオフ
+    // → もう一度押すと外す前の選択に戻る（最初に外していた 1 件はオンにしない）
+    const scxGrpSw = scxArchGrp.locator('.cx-sw');
+    const scxFirstKid = scxKids.first().locator('.cx-sw');
+    await scxFirstKid.click();
+    await page.waitForFunction(() => document.querySelector('#scx-panel-instruction .cx-row.kid .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
+    check((await scxGrpSw.getAttribute('aria-checked')) === 'mixed' && (await scxGrpSw.getAttribute('aria-label')).includes('変更できる分をまとめてオフにする'),
+      '右パネルでも、子を 1 つ外すとまとまりは一部オン（押すと変えられる分をまとめてオフ）', await scxGrpSw.getAttribute('aria-label'));
+    await scxGrpSw.click();
     await page.waitForFunction(() => {
-      const grpSws = [...document.querySelectorAll('#scx-panel-instruction .cx-row.grp .cx-sw')];
-      return grpSws.some(s => s.getAttribute('aria-checked') === 'mixed');
+      const kids = [...document.querySelectorAll('#scx-panel-instruction .cx-row.kid .cx-sw')];
+      return kids.length >= 9 && kids.every(s => s.getAttribute('aria-checked') === 'false');
     }, null, { timeout: 10000 });
-    await page.locator('#scx-panel-instruction .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
-    await page.waitForFunction(() => {
-      const grpSws = [...document.querySelectorAll('#scx-panel-instruction .cx-row.grp .cx-sw')];
-      return grpSws.every(s => s.getAttribute('aria-checked') === 'true');
-    }, null, { timeout: 10000 });
-    check(true, '右パネルでも一部オフで mixed になり、一括で元へ戻る');
+    check((await scxGrpSw.getAttribute('aria-checked')) === 'false' && (await scxGrpSw.getAttribute('aria-label')).includes('外す前の選択に戻す'),
+      '右パネルでも、まとまりを押すと全部の子がオフになり、次は「外す前の選択に戻す」', await scxGrpSw.getAttribute('aria-label'));
+    await scxGrpSw.click();
+    await page.waitForFunction(() => (document.querySelectorAll('#scx-panel-instruction .cx-row.kid .cx-sw')[1])?.getAttribute('aria-checked') !== 'false', null, { timeout: 10000 });
+    check((await scxFirstKid.getAttribute('aria-checked')) === 'false' && (await scxGrpSw.getAttribute('aria-checked')) === 'mixed',
+      '右パネルでも、もう一度押すと外す前の選択に戻る（最初に外していた 1 件はオンにしない）');
 
     // 右パネルの sticky & Skills 絞り込み
     await page.locator('#scx-tab-skill').click();
@@ -564,14 +595,20 @@ try {
     await scxFind.fill('r-skill-1');
     await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
     const scxOnly = page.locator('#scx-panel-skill .cx-row.grp .cx-sw');
-    check((await scxOnly.count()) === 1 && (await scxOnly.getAttribute('aria-checked')) === 'true', '右パネルの絞り込み中のスイッチは見えている行だけからオンと決まる');
+    // .codex/skills の行は Codex だけがオン（鍵なしのマス 5 つのうち 1 つ）なので、見えている 1 行だけから「一部オン」と決まる
+    check((await scxOnly.count()) === 1 && (await scxOnly.getAttribute('aria-checked')) === 'mixed', '右パネルの絞り込み中のスイッチは見えている行だけから「一部オン」と決まる', await scxOnly.getAttribute('aria-label'));
     await scxOnly.click();
     await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
     await scxFind.press('Escape');
     await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), null, { timeout: 5000 });
     check(true, '右パネルでも、絞り込み中の一括切替は当たった 1 件だけで、消すと「一部」に戻る');
-    await page.locator('#scx-panel-skill .cx-row.grp .cx-sw[aria-checked="mixed"]').click();
-    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].every(s => s.getAttribute('aria-checked') === 'true'), null, { timeout: 10000 });
+    // 外した 1 件は、もう一度絞り込んでスイッチを押すと外す前の選択に戻る
+    await scxFind.fill('r-skill-1');
+    await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 5000 });
+    await scxOnly.click();
+    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', null, { timeout: 10000 });
+    await scxFind.press('Escape');
 
     // ==================== 3. 360px 狭幅 & ダークモードの横はみ出し・サイズ検査 ====================
     await page.setViewportSize({ width: 360, height: 760 });
@@ -616,6 +653,275 @@ try {
     }
     await ctx.close();
   }
+
+  // ==================== 3b. 行のスイッチの鍵（ADR 0337 §決定 4）: 当たりの分け・吹き出し（タッチ・focus・ホバー）・4 タブ ====================
+  // 鍵の当たり（12×12 の鍵の左へ 4px・下へ 1px 足した 16×13）は、スイッチの押せる面（360 幅で 44×44）から切り抜く。
+  // 鍵の見える位置は同じまま、スイッチの中央・端を押せば切り替わり、鍵を押したときだけ吹き出しが開く。
+  // 4 タブすべてに「鍵つきのオンだけが残る行」と押せない行を置くため、専用のサーバー（別のデータ置き場・home）を立てる。
+  // 鍵つきでオンのマスを持つ物（エージェントの置き場の物）の、変えられるオンだけを外して、鍵つきのオンが残る行にする。
+  const lkRoot = path.join(dataDir, 'lock-part');
+  const lkHome = path.join(lkRoot, 'home');
+  write(path.join(lkHome, '.claude/CLAUDE.md'), '# User Instructions\nAlways be concise.\n');
+  write(path.join(lkHome, '.claude/skills/lock-skill/SKILL.md'), '---\nname: lock-skill\ndescription: Lock skill\n---\n# lock-skill\n');
+  write(path.join(lkHome, '.claude.json'), JSON.stringify({ mcpServers: { lockMcp: { command: 'lock-cmd' } } }));
+  write(path.join(lkHome, '.claude/settings.json'), JSON.stringify({ hooks: { PostToolUse: [{ matcher: 'Write', hooks: [{ type: 'command', command: 'echo lock-hook' }] }] } }));
+  // 鍵つきのオンだけで、変えられるマスも戻し先も無い行（押せない行）
+  write(path.join(lkHome, '.codex/AGENTS.md'), '# Codex\nBrief.\n');
+  write(path.join(lkHome, '.gemini/GEMINI.md'), '# Gemini\nBrief.\n');
+  write(path.join(lkHome, '.grok/auth.json'), JSON.stringify({ apiKey: 'test-key' }));
+  const lkGrokStub = path.join(lkRoot, process.platform === 'win32' ? 'grok-stub.cmd' : 'grok-stub');
+  write(lkGrokStub, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n');
+  if (process.platform !== 'win32') fs.chmodSync(lkGrokStub, 0o755);
+  const lkBins = Object.fromEntries(['CLAUDE', 'CODEX', 'AGY', 'OPENCODE', 'DEVIN', 'GROK'].map(n => [`AGENT_HOST_${n}_BIN`, path.join(lkRoot, `no-such-${n.toLowerCase()}.exe`)]));
+  lkServer = await startServer({
+    dataDir: path.join(lkRoot, 'data'),
+    env: {
+      AGENT_HOST_BACKENDS: 'fake,claude,codex,antigravity,opencode,devin,grok',
+      USERPROFILE: lkHome, HOME: lkHome, PLEIAD_SCAN_HOME: lkHome,
+      CODEX_HOME: path.join(lkHome, '.codex'), CLAUDE_CONFIG_DIR: path.join(lkHome, '.claude'),
+      AGENT_HOST_GROK_HOME: path.join(lkHome, '.grok'),
+      ...lkBins,
+      AGENT_HOST_GROK_BIN: lkGrokStub,
+    },
+  });
+  lkClient = await open({ ...lkServer, autoAllow: true });
+  await lkClient.cmd('onboardingSeen');
+  {
+    const dm = await lkClient.cmd('docMatrix', { kind: 'instruction', cwd: lkHome, place: null });
+    const instKey = dm.rows.find(r => String(r.key).replace(/\\/g, '/').endsWith('/.claude/claude.md'))?.key;
+    if (!instKey) throw new Error(`3b 用の CLAUDE.md の行が見つからない: ${JSON.stringify(dm.rows.map(r => r.key))}`);
+    await lkClient.cmd('setDocRow', { kind: 'instruction', key: instKey, on: false, cwd: lkHome, place: null });
+    await lkClient.cmd('setDocRow', { kind: 'skill', key: 'skill:lock-skill', on: false, cwd: lkHome, place: null });
+    await lkClient.cmd('setMcpRow', { name: 'lockMcp', on: false, place: null, cwd: lkHome });
+    // Hooks は画面と同じ呼び出し（cwd なし）で一覧を取る。user の Hook の行は Devin が鍵つきでオンなので、切れるオンだけを外す
+    const hm = await lkClient.cmd('hooksMatrix', { trust: false });
+    const hookKey = hm.rows.find(r => r.group === 'own')?.key;
+    if (!hookKey) throw new Error(`3b 用の Hook の行が見つからない: ${JSON.stringify(hm.rows.map(r => r.key))}`);
+    await lkClient.cmd('setHookRow', { key: hookKey, on: false, revision: hm.revision });
+  }
+  const lkUrl = `http://127.0.0.1:${lkServer.port}/?token=${lkServer.token}`;
+  const TAB_IDS = ['instruction', 'skill', 'mcp', 'hooks'];
+  const lockSwSel = tabId => `#cx-panel-${tabId} .cx-sw:has(>.lk[data-tip-pass])`;
+  const INTERNAL_ID = /(^|[^A-Za-z])(devin|grok|antigravity|opencode|codex|claude)(?![A-Za-z])/;
+  const lockTipFacts = page => page.evaluate(() => {
+    const tip = document.querySelector('.cx-tip');
+    const r = tip?.getBoundingClientRect();
+    return { on: Boolean(tip?.classList.contains('on')), text: tip?.textContent ?? '', left: r?.left ?? 0, right: r?.right ?? 0, top: r?.top ?? 0, bottom: r?.bottom ?? 0, vw: innerWidth, vh: innerHeight };
+  });
+  const lockTipSane = (f, label) => {
+    check(f.on && f.text.length > 0, `${label}: 吹き出しが開く`, f);
+    check(f.left >= 0 && f.right <= f.vw && f.top >= 0 && f.bottom <= f.vh, `${label}: 吹き出しが画面の外へはみ出さない`, f);
+    check(!f.text.includes('／') && !INTERNAL_ID.test(f.text), `${label}: 理由は行ごと（「／」でつながない）で、内部のキー（devin・grok など）が出ない`, f.text);
+  };
+  // 押すと行が描き直され、鍵の当たりを持たない形に変わることもあるので、行のキー（data-cx-fk、無ければ行の data-key）で同じスイッチを探す
+  const rowSelOf = loc => loc.evaluate(sw => {
+    if (sw.dataset.cxFk) return `.cx-sw[data-cx-fk=${JSON.stringify(sw.dataset.cxFk)}]`;
+    const r = sw.closest('[data-key],[data-row]');
+    const attr = r.hasAttribute('data-key') ? 'data-key' : 'data-row';
+    return `[${attr}=${JSON.stringify(r.getAttribute(attr))}] .cx-sw`;
+  });
+  const lockedTabs = { 360: [], 1280: [] };
+  const blockedTabs = [];
+  const gotoTab = async (page, tabId) => {
+    await page.locator(`#cx-tab-${tabId}`).click();
+    await page.waitForFunction(id => document.getElementById(`cx-tab-${id}`)?.getAttribute('aria-selected') === 'true' && !document.getElementById(`cx-panel-${id}`)?.hidden, tabId, { timeout: 5000 });
+    if (tabId === 'hooks') await page.waitForSelector('#cx-panel-hooks .cx-sw', { timeout: 15000 });
+  };
+  // Tab キーで、フォーカスを tabId のタブから行のスイッチ（sel）まで進める（タップのあとの focus() は :focus-visible にならないので、いったん外して入り直す）
+  const tabToSwitch = async (page, tabId, sel) => {
+    await page.evaluate(() => document.activeElement?.blur?.());
+    await page.locator(`#cx-tab-${tabId}`).focus();
+    for (let i = 0; i < 120; i++) {
+      await page.keyboard.press('Tab');
+      if (await page.locator(sel).first().evaluate(sw => document.activeElement === sw)) return true;
+    }
+    return false;
+  };
+  // ---- 360 幅・タッチ
+  {
+    const tctx = await browser.newContext({ viewport: { width: 360, height: 760 }, colorScheme: 'light', locale: 'ja-JP', hasTouch: true });
+    const page = await tctx.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(lkUrl, { waitUntil: 'load' });
+    await page.evaluate(() => { window.__clicks = []; document.addEventListener('click', e => window.__clicks.push(`${e.target?.tagName}.${e.target?.className} pt=${e.pointerType ?? ''} @${Math.round(e.clientX)},${Math.round(e.clientY)}`), true); });
+    await openSettingsContext(page, 'instruction');
+    for (const tabId of TAB_IDS) {
+      await gotoTab(page, tabId);
+
+      // ---- 押せない行（aria-disabled）: ボタンのままキーボードのフォーカスを受け、理由が読める（鍵の理由は読み上げ名・吹き出しの両方に出る）
+      const blocked = page.locator(`#cx-panel-${tabId} .cx-sw[aria-disabled="true"]`);
+      const blockedCount = await blocked.count();
+      console.log(`3b 360 ${tabId}: 押せない行 ${blockedCount} 行`);
+      if (blockedCount) {
+        blockedTabs.push(tabId);
+        await blocked.first().scrollIntoViewIfNeeded();
+        const bSel = `#cx-panel-${tabId} ${await rowSelOf(blocked.first())}`;
+        const bInfo = await page.locator(bSel).first().evaluate(sw => ({ tag: sw.tagName, disabled: sw.disabled === true, tabindex: sw.tabIndex, label: sw.getAttribute('aria-label') ?? '', tip: sw.dataset.tip ?? '', checked: sw.getAttribute('aria-checked') }));
+        check(bInfo.tag === 'BUTTON' && !bInfo.disabled && bInfo.tabindex >= 0, `360 ${tabId}: 押せない行のスイッチも、キーボードのフォーカスを受けるボタンのまま（disabled にしない）`, bInfo);
+        const lines = bInfo.tip.split('\n').map(x => x.trim()).filter(Boolean);
+        check(lines.length > 0 && lines.every(l => bInfo.label.includes(l.replace(/[。．.]$/, ''))), `360 ${tabId}: 押せない行の理由が読み上げ名（aria-label）に入っている`, bInfo);
+        const bReached = await tabToSwitch(page, tabId, bSel);
+        check(bReached, `360 ${tabId}: Tab で押せない行のスイッチへ届く`);
+        await page.waitForFunction(() => document.querySelector('.cx-tip.on'), null, { timeout: 3000 });
+        const bTip = await lockTipFacts(page);
+        lockTipSane(bTip, `360 ${tabId} 押せない行（focus）`);
+        check(bTip.text === bInfo.tip, `360 ${tabId}: 押せない行の吹き出しは理由そのまま`, [bTip.text, bInfo.tip]);
+        await page.waitForTimeout(400); // 吹き出しのフェードが終わってから撮る
+        await shoot(page, `rowblocked-${tabId}-360-light-focus.png`);
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(300);
+        const bAfter = await page.locator(bSel).first().evaluate(sw => ({ label: sw.getAttribute('aria-label') ?? '', checked: sw.getAttribute('aria-checked') }));
+        check(bAfter.label === bInfo.label && bAfter.checked === bInfo.checked, `360 ${tabId}: 押せない行は Enter を押しても切り替わらない`, [bInfo, bAfter]);
+        await page.keyboard.press('Escape');
+      }
+
+      // ---- 鍵つきでオンが残る行（変えられるオンだけ外した後）
+      const count = await page.locator(lockSwSel(tabId)).count();
+      console.log(`3b 360 ${tabId}: 鍵つきでオンが残る行 ${count} 行`);
+      check(count > 0, `360 ${tabId}: 鍵つきでオンが残る行がある（4 タブすべてで確かめる）`, count);
+      lockedTabs[360].push(tabId);
+      await page.locator(lockSwSel(tabId)).first().scrollIntoViewIfNeeded();
+      const rowSel = await rowSelOf(page.locator(lockSwSel(tabId)).first());
+      const nth = () => page.locator(`#cx-panel-${tabId} ${rowSel}`).first();
+      const labelOf = () => nth().getAttribute('aria-label');
+      const geo = await nth().evaluate(sw => {
+        const lk = sw.querySelector(':scope > .lk[data-tip-pass]');
+        const s = sw.getBoundingClientRect(), l = lk.getBoundingClientRect();
+        const hit = (x, y) => { const e = document.elementFromPoint(x, y); return !e ? 'none' : lk.contains(e) ? 'lk' : sw.contains(e) ? 'sw' : 'other'; };
+        const zone = { x0: l.left - 4, x1: l.right, y0: l.top, y1: l.bottom + 1 };
+        const box = { x0: s.left - 5, x1: s.right + 5, y0: s.top - 12, y1: s.bottom + 12 };
+        const bad = { glyphNotLk: 0, lkOutsideZone: 0, zoneNotLk: 0 }, counts = { sw: 0, lk: 0, other: 0, none: 0 };
+        const ext = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9 };
+        for (let x = Math.floor(box.x0); x < box.x1; x++) {
+          for (let y = Math.floor(box.y0); y < box.y1; y++) {
+            const h = hit(x + 0.5, y + 0.5);
+            counts[h]++;
+            if (h === 'lk') { ext.x0 = Math.min(ext.x0, x + 0.5); ext.x1 = Math.max(ext.x1, x + 0.5); ext.y0 = Math.min(ext.y0, y + 0.5); ext.y1 = Math.max(ext.y1, y + 0.5); }
+            const inGlyph = x + 0.5 >= l.left && x + 0.5 < l.right && y + 0.5 >= l.top && y + 0.5 < l.bottom;
+            // 当たりは画素に丸められるので、周りの 16×13 から 1px のずれまでは許す（外へ 1px 広げた枠の外・内へ 1px 縮めた枠の内で数える）
+            const inLoose = x + 0.5 >= zone.x0 - 1 && x + 0.5 < zone.x1 + 1 && y + 0.5 >= zone.y0 - 1 && y + 0.5 < zone.y1 + 1;
+            const inTight = x + 0.5 >= zone.x0 + 1 && x + 0.5 < zone.x1 - 1 && y + 0.5 >= zone.y0 + 1 && y + 0.5 < zone.y1 - 1;
+            if (inGlyph && h !== 'lk') bad.glyphNotLk++;
+            if (h === 'lk' && !inLoose) bad.lkOutsideZone++;
+            if (inTight && h !== 'lk') bad.zoneNotLk++;
+          }
+        }
+        const pt = (dx, dy) => ({ x: s.left + dx, y: s.top + dy });
+        const pts = {
+          center: pt(s.width / 2, s.height / 2),
+          leftEdge: pt(-3, s.height / 2),
+          topEdge: pt(s.width / 2, -8),
+          aboveGlyph: pt(s.width - 5, s.height - 3),
+          leftOfGlyph: pt(s.width - 22, s.height + 8),
+        };
+        const kinds = Object.fromEntries(Object.entries(pts).map(([k, p]) => [k, hit(p.x, p.y)]));
+        return { s: { x: s.left, y: s.top, w: s.width, h: s.height }, l: { x: l.left, y: l.top, w: l.width, h: l.height }, zone, ext, bad, counts, pts, kinds, lkCenter: { x: l.left + l.width / 2, y: l.top + l.height / 2 }, tip: lk.dataset.tip };
+      });
+      check(geo.bad.glyphNotLk === 0 && geo.bad.lkOutsideZone === 0 && geo.bad.zoneNotLk === 0, `360 ${tabId}: 鍵の当たりは鍵の周り（16×13）だけで、スイッチの押せる面と重ならない`, geo);
+      check(Object.values(geo.kinds).every(k => k === 'sw'), `360 ${tabId}: スイッチの中央・端（上・左・鍵のすぐ上・鍵のすぐ左下）は、鍵ではなくスイッチへ当たる`, geo.kinds);
+      const before = await labelOf();
+      // 押した直後は保存・読み直しで行が何度か描き直される。同じスイッチの要素が 4 回続けて（250ms ごと）変わらなくなってから次へ進む
+      const settle = async () => {
+        const sel = `#cx-panel-${tabId} ${rowSel}`;
+        await page.evaluate(([s]) => { window.__swRef = document.querySelector(s); }, [sel]);
+        for (let i = 0, stable = 0; stable < 4 && i < 60; i++) {
+          await page.waitForTimeout(250);
+          const same = await page.evaluate(([s]) => Boolean(window.__swRef) && document.querySelector(s) === window.__swRef, [sel]);
+          if (same) stable++; else { stable = 0; await page.evaluate(([s]) => { window.__swRef = document.querySelector(s); }, [sel]); }
+        }
+      };
+      // 行が描き直されて動くことがあるので、押す前に落ち着くのを待ち、今のスイッチの位置から押す点を測り直す
+      const flip = async (where, from) => {
+        await settle();
+        await nth().scrollIntoViewIfNeeded();
+        const at = await nth().evaluate((sw, w) => {
+          const s = sw.getBoundingClientRect();
+          const d = { center: [s.width / 2, s.height / 2], leftEdge: [-3, s.height / 2], topEdge: [s.width / 2, -8], aboveGlyph: [s.width - 5, s.height - 3] }[w];
+          return { x: s.left + d[0], y: s.top + d[1] };
+        }, where);
+        await page.touchscreen.tap(at.x, at.y);
+        const sel = `#cx-panel-${tabId} ${rowSel}`;
+        let moved = false, asked = false;
+        for (let i = 0; i < 40 && !moved; i++) {
+          moved = await page.evaluate(([s, prev]) => { const e = document.querySelector(s); return Boolean(e) && e.getAttribute('aria-label') !== prev; }, [sel, from]);
+          if (moved) break;
+          // 広げる・Devin の取り込みが止まるときの行内確認（.cx-ask）が出たら、「実行する」を押して進める
+          const ask = page.locator('#contextPanel .cx-ask .btn-primary');
+          if (await ask.count()) { asked = true; await ask.first().tap(); } else await page.waitForTimeout(250);
+        }
+        if (!moved) {
+          const diag = await page.evaluate(s => ({ clicks: window.__clicks.slice(-6), found: document.querySelectorAll(s).length, label: document.querySelector(s)?.getAttribute('aria-label'), html: document.querySelector(s)?.outerHTML?.slice(0, 400), status: document.querySelector('#contextPanel .cx-status')?.textContent ?? '', ask: document.querySelector('#contextPanel .cx-ask')?.textContent ?? '' }), sel);
+          throw new Error(`360 ${tabId}: ${where} をタップしても切り替わらない ${JSON.stringify({ where, at, asked, diag })}`);
+        }
+        return labelOf();
+      };
+      let cur = await flip('center', before);
+      check(cur !== before, `360 ${tabId}: スイッチの中央をタップすると切り替わる`, [before, cur]);
+      cur = await flip('leftEdge', cur);
+      check(cur === before, `360 ${tabId}: スイッチの左の端をタップすると切り替わり、もとへ戻る`, [before, cur]);
+      cur = await flip('aboveGlyph', cur);
+      check(cur !== before, `360 ${tabId}: スイッチの右下（鍵のすぐ上）の端をタップしても切り替わる（吹き出しだけが開かない）`, [before, cur]);
+      const tipAfterSwitchTap = await lockTipFacts(page);
+      check(!tipAfterSwitchTap.on, `360 ${tabId}: スイッチを押したときは吹き出しを開かない`, tipAfterSwitchTap);
+      cur = await flip('topEdge', cur);
+      check(cur === before, `360 ${tabId}: スイッチの上の端をタップするともとへ戻る`, [before, cur]);
+      // 鍵をタップ: 吹き出しが開き、切り替えない。押した直後の保存・描き直しが落ち着いてから押す（描き直しで鍵の要素が差し替わると吹き出しは閉じる）
+      await settle();
+      await nth().scrollIntoViewIfNeeded();
+      const lkNow = await nth().evaluate(sw => { const r = sw.querySelector(':scope > .lk[data-tip-pass]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await page.touchscreen.tap(lkNow.x, lkNow.y);
+      await page.waitForFunction(() => document.querySelector('.cx-tip.on'), null, { timeout: 3000 });
+      await page.waitForTimeout(400);
+      check((await labelOf()) === before, `360 ${tabId}: 鍵をタップしても切り替わらない`, await labelOf());
+      const touchTip = await lockTipFacts(page);
+      lockTipSane(touchTip, `360 ${tabId}（タッチ）`);
+      check(touchTip.text.replace(/\s+/g, ' ').trim().length > 0 && geo.tip === touchTip.text, `360 ${tabId}（タッチ）: 吹き出しの文は鍵の理由そのまま`, [geo.tip, touchTip.text]);
+      await shoot(page, `rowlock-${tabId}-360-light-touch.png`);
+      // 外を押して消す → キーボード（Tab）で行のスイッチへ届いたときも、同じ吹き出しが開く
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('.cx-tip.on'), null, { timeout: 3000 });
+      const reached = await tabToSwitch(page, tabId, `#cx-panel-${tabId} ${rowSel}`);
+      check(reached, `360 ${tabId}: Tab で行のスイッチへ届く`);
+      await page.waitForFunction(() => document.querySelector('.cx-tip.on'), null, { timeout: 3000 });
+      const focusTip = await lockTipFacts(page);
+      lockTipSane(focusTip, `360 ${tabId}（focus）`);
+      check(focusTip.text === touchTip.text, `360 ${tabId}: focus で開く吹き出しはタッチと同じ文`, [focusTip.text, touchTip.text]);
+      await page.waitForTimeout(400);
+      await shoot(page, `rowlock-${tabId}-360-light-focus.png`);
+      await page.keyboard.press('Escape');
+      const over = await page.evaluate(() => ({ pageOver: document.documentElement.scrollWidth > innerWidth, scOver: (sc => sc.scrollWidth > sc.clientWidth)(document.querySelector('.settings-content')) }));
+      check(!over.pageOver && !over.scOver, `360 ${tabId}: 吹き出しを開いても横にはみ出さない`, over);
+    }
+    await tctx.close();
+  }
+  // ---- 1280 幅・マウスのホバー
+  {
+    const hctx = await browser.newContext({ viewport: { width: 1280, height: 820 }, colorScheme: 'light', locale: 'ja-JP' });
+    const page = await hctx.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(lkUrl, { waitUntil: 'load' });
+    await openSettingsContext(page, 'instruction');
+    for (const tabId of TAB_IDS) {
+      await gotoTab(page, tabId);
+      const count = await page.locator(lockSwSel(tabId)).count();
+      console.log(`3b 1280 ${tabId}: 鍵つきでオンが残る行 ${count} 行`);
+      check(count > 0, `1280 ${tabId}: 鍵つきでオンが残る行がある（4 タブすべてで確かめる）`, count);
+      lockedTabs[1280].push(tabId);
+      const lk = page.locator(`${lockSwSel(tabId)} > .lk[data-tip-pass]`).first();
+      await lk.scrollIntoViewIfNeeded();
+      await lk.hover();
+      await page.waitForFunction(() => document.querySelector('.cx-tip.on'), null, { timeout: 3000 });
+      const f = await lockTipFacts(page);
+      lockTipSane(f, `1280 ${tabId}（ホバー）`);
+      await page.waitForTimeout(400);
+      await shoot(page, `rowlock-${tabId}-1280-light-hover.png`);
+      await page.mouse.move(2, 2);
+    }
+    await hctx.close();
+  }
+  console.log(`3b 鍵の吹き出しを確かめたタブ: 360 = ${lockedTabs[360].join(',')} / 1280 = ${lockedTabs[1280].join(',')} / 押せない行: ${blockedTabs.join(',')}`);
+  check(TAB_IDS.every(id => lockedTabs[360].includes(id) && lockedTabs[1280].includes(id)), '3b 鍵の吹き出しを 4 タブすべて（360・1280）で確かめた', lockedTabs);
+  check(blockedTabs.length > 0, '3b 押せない行（鍵つきのオンだけで戻し先も無い行）のキーボード・理由を確かめた', blockedTabs);
 
   // ==================== 4. Devin の自分の名前（ADR 0336） ====================
   // 別のデータ置き場・home・Devin の設定の置き場（DEVIN_CONFIG_HOME）で、偽の Devin を使うサーバーを立てる。
@@ -800,6 +1106,8 @@ try {
 } finally {
   if (browser) await browser.close().catch(() => {});
   if (client) client.close();
+  if (lkClient) lkClient.close();
   if (server) await server.stop().catch(() => {});
+  if (lkServer) await lkServer.stop().catch(() => {});
   fs.rmSync(dataDir, { recursive: true, force: true });
 }

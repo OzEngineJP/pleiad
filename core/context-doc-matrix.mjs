@@ -3,6 +3,7 @@
  * Guarantees Settings UI, Right Panel, and runtime per-agent execution derive from the exact same rules.
  */
 import os from 'node:os';
+import { agentShortName, agentShortNames } from './backends/agents.mjs';
 import { SOURCES, containsPath, pathKey } from './context-settings.mjs';
 import {
   DOC_AGENT_IDS,
@@ -21,8 +22,9 @@ import {
   hasExplicitRule,
   legacyEntryIncluded,
   resolveEffectiveDocSource,
+  planDocRowPress,
+  docRestoreRule,
   resolveRuleForItem,
-  setDocRowRule,
   toggleDocAgentRule,
   unlockedOnAgents,
 } from './context-agents.mjs';
@@ -93,19 +95,27 @@ export function groupDocEntries(kind, entries = [], preferMap = {}) {
 }
 
 /**
- * 行のスイッチの見え方（ADR 0337 §決定 4。web/context.mjs の recalcDocRow と同じ）。
- * どれかのエージェントに実際に渡っていればオン（鍵つきでオンのマスも数える）、全部オフのときだけオフ、一部なら「一部」。
- * 鍵つきでオンのマスが残る行は、押してもスイッチが変わらないので押せない（rowLocked）
+ * 行のスイッチの見え方（ADR 0337 §決定 4。2026-11-17 の改訂。web/context-matrix.mjs の recalcDocRow と同じ）。
+ * 集計は、鍵の無いマスと鍵つきでオンのマスを数える（固定オフ・対象外のマスは分母に入れない）。
+ * どれかのエージェントに実際に渡っていればオン、全部オフのときだけオフ、一部なら「一部」。
+ * - rowFixed: 鍵つきでオンのマスがある（押しても残る）
+ * - rowChangeableOn: 鍵の無いオンのマスがある。押すと、それらをまとめてオフにする（向きは rowNextOn = false）
+ * - rowRestore: 鍵の無いオンのマスが 1 つも無いとき、押して戻せる先（'was' = オフにする前の規則・'default' = 出どころ・null = 戻す先が無い）
+ * - rowLocked: 押しても変わらない（鍵の無いマスが無い／外せるオンも戻す先も無い）。鍵つきのオンが残るだけでは押せなくならない
  */
-export function summarizeRowMeta(cells) {
+export function summarizeRowMeta(cells, restore = null) {
   const unlocked = DOC_AGENT_IDS.filter((a) => !cells[a].locked);
   const unlockedOn = unlocked.filter((a) => cells[a].on);
   const lockedOn = DOC_AGENT_IDS.filter((a) => cells[a].locked && cells[a].on);
   const onCount = unlockedOn.length + lockedOn.length;
-  const rowLocked = unlocked.length === 0 || lockedOn.length > 0;
+  const rowRestore = unlockedOn.length ? null : (restore?.source ?? null);
+  const rowLocked = unlocked.length === 0 || (unlockedOn.length === 0 && !rowRestore);
   const rowMixed = onCount > 0 && onCount < unlocked.length + lockedOn.length;
   const rowSwitchOn = onCount > 0;
-  return { rowLocked, rowMixed, rowSwitchOn, anyOn: onCount > 0 };
+  return {
+    rowLocked, rowMixed, rowSwitchOn, anyOn: onCount > 0,
+    rowFixed: lockedOn.length > 0, rowChangeableOn: unlockedOn.length > 0, rowNextOn: unlockedOn.length === 0, rowRestore,
+  };
 }
 
 function mergeWorkspaceFallback(legacyBase, wsRule) {
@@ -133,8 +143,9 @@ function buildSingleRow({ kind, entryOrSummary, key, scope, sourceState, home, c
   } else {
     rule = resolveRuleForItem(agentsChain, key, scope);
   }
-  const cells = evaluateDocCells(kind, entryOrSummary, rule, { legacyOwner: sourceState.legacyOwner, devinImportsStopped });
-  return { rule, cells, ...summarizeRowMeta(cells) };
+  const ctx = { legacyOwner: sourceState.legacyOwner, devinImportsStopped };
+  const cells = evaluateDocCells(kind, entryOrSummary, rule, ctx);
+  return { rule, cells, ...summarizeRowMeta(cells, docRestoreRule(kind, entryOrSummary, rule, ctx)) };
 }
 
 /**
@@ -203,6 +214,8 @@ export function buildDocMatrix({ kind, entries = [], legacyConfig, docAgentsConf
     legacyOwner: sourceState.legacyOwner,
     devinImportsStopped: Boolean(devinImportsStopped),
     agents: [...DOC_AGENT_IDS],
+    // 列の表示名（行の鍵の吹き出しの `{{agent}}` 用。画面のエージェントの一覧に無い列でも、内部の id を出さない）
+    labels: agentShortNames(DOC_AGENT_IDS),
     summaryRow,
     rows,
     byKey,
@@ -213,8 +226,9 @@ function buildGroupedLegacyRow(kind, item, legacyRule, home, cwd, devinImportsSt
   const combined = { ...item.chosen, origins: item.origins };
   const included = item.copies.some((c) => legacyEntryIncluded(kind, c, legacyRule, { home, cwd }));
   const rule = docAgentsFromLegacy(kind, combined, legacyRule, { home, cwd, included });
-  const cells = evaluateDocCells(kind, combined, rule, { legacyOwner: legacyRule?.owner ?? 'native', devinImportsStopped });
-  return { rule, cells, ...summarizeRowMeta(cells) };
+  const ctx = { legacyOwner: legacyRule?.owner ?? 'native', devinImportsStopped };
+  const cells = evaluateDocCells(kind, combined, rule, ctx);
+  return { rule, cells, ...summarizeRowMeta(cells, docRestoreRule(kind, combined, rule, ctx)) };
 }
 
 function sameRule(a, b) {
@@ -278,17 +292,16 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
     pressable = targets;
     const { k, row } = pressable[0];
     const cell = row.cells[agent];
-    if (!cell || cell.locked) throw new DocTouchError('docNotPressable', { name: row.name ?? k, agent });
+    if (!cell || cell.locked) throw new DocTouchError('docNotPressable', { name: row.name ?? k, agent: agentShortName(agent) });
   } else if (agent) {
     // まとまりのチップ・確認の後の広げは、複数の名前を 1 回で書く（途中で止まって半端に残らない。レビュー S3）。鍵のマスの名前は飛ばす
     pressable = targets.filter((tRow) => tRow.row.cells[agent] && !tRow.row.cells[agent].locked);
-    if (!pressable.length) throw new DocTouchError('docNotPressable', { name: targets[0].row.name ?? targets[0].k, agent });
+    if (!pressable.length) throw new DocTouchError('docNotPressable', { name: targets[0].row.name ?? targets[0].k, agent: agentShortName(agent) });
   } else {
     pressable = targets.filter((tRow) => !tRow.row.rowLocked);
     if (!pressable.length) throw new DocTouchError('docRowLocked', { name: targets[0].row.name ?? targets[0].row.key });
   }
-  // 行のスイッチでオンに戻すときは、(1) この場所でオフにする前の規則（was）、(2) 場所の行なら、この場所の上書きが無いときの動き
-  // （全体の表・旧い保存。main の右パネルで除外を外したときと同じ）、(3) 出どころのエージェントだけ、の順に戻す（ADR 0337 §決定 4）
+  // 場所の行のスイッチでオンに戻すときの (2)。この場所の上書きが無いときの動き（全体の表・旧い保存。main の右パネルで除外を外したときと同じ）
   let restore = null;
   if (!agent && placeKey && on) {
     const without = structuredClone(cfg);
@@ -313,23 +326,39 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
     }
   }
   const ctx = { legacyOwner: matrix.legacyOwner, devinImportsStopped: matrix.devinImportsStopped };
-  for (const { k, row } of pressable) {
-    const entryOrSummary = k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins };
-    const curRule = holder[kind].agents[k] ?? row.rule;
-    if (agent) {
-      holder[kind].agents[k] = toggleDocAgentRule(kind, entryOrSummary, curRule, agent, Boolean(on), ctx);
-      continue;
+  const entryOf = ({ k, row }) => (k === WORKSPACE_SUMMARY_KEY ? WORKSPACE_SUMMARY_KEY : { ...row.chosen, origins: row.origins });
+  if (agent) {
+    for (const p of pressable) {
+      const curRule = holder[kind].agents[p.k] ?? p.row.rule;
+      const next = toggleDocAgentRule(kind, entryOf(p), curRule, agent, Boolean(on), ctx);
+      // アイコンの変更で、行のスイッチの戻し先の記録（was）は古くなるので持ち越さない。ただし、押せるマスの最後のオンを外したときだけは、
+      // その前の規則を戻し先として覚える（そのまま行のスイッチで戻せる。鍵つきのオンが残る行でも）
+      const wasOn = unlockedOnAgents(kind, entryOf(p), curRule, ctx).length > 0;
+      holder[kind].agents[p.k] = !on && wasOn && !unlockedOnAgents(kind, entryOf(p), next, ctx).length
+        ? { ...next, was: { off: [...(curRule?.off ?? [])], spread: [...(curRule?.spread ?? [])] } }
+        : next;
     }
-    // すでにどれかの押せるマスがオンの行は変えない（受け継いだ規則を自分の規則として書き出しもしない）
-    if (on && unlockedOnAgents(kind, entryOrSummary, curRule, ctx).length) continue;
-    if (on && !curRule?.was) {
-      const inherited = restore ? (k === WORKSPACE_SUMMARY_KEY ? restore.summaryRow : restore.byKey.get(k)) : null;
-      if (inherited && unlockedOnAgents(kind, entryOrSummary, inherited.rule, ctx).length) {
-        holder[kind].agents[k] = { off: [...(inherited.rule.off ?? [])], spread: [...(inherited.rule.spread ?? [])] };
-        continue;
-      }
+    return cfg;
+  }
+  // 行のスイッチ（ADR 0337 §決定 4。2026-11-17 の改訂）。オフは、鍵の無いオンのマスだけをまとめてオフにする（鍵つきのオンは残り、外す前の規則を was に覚える）。
+  // オンは、外す前の規則（was）→ この場所の上書きが無いときの動き → 出どころのエージェントだけ、の順に戻す。
+  // まとまり・まとめの行で複数の名前を押すときは、外す前の記録のある名前だけを戻す（もともとオフだった名前をオンにしない）。
+  // 記録がどの名前にも無いときだけ、鍵つきのオンの無い名前を出どころのエージェントだけにする
+  const plan = (allowDefault) => pressable.map((p) => {
+    const curRule = holder[kind].agents[p.k] ?? p.row.rule;
+    const inherited = restore ? (p.k === WORKSPACE_SUMMARY_KEY ? restore.summaryRow : restore.byKey.get(p.k))?.rule ?? null : null;
+    return { p, next: planDocRowPress(kind, entryOf(p), curRule, Boolean(on), ctx, { allowDefault, inherited }) };
+  });
+  let planned = plan(false);
+  if (on && !planned.some((x) => x.next)) planned = plan(true);
+  for (const { p, next } of planned) {
+    if (next) holder[kind].agents[p.k] = next.rule;
+    else if (!on && pressable.length > 1) {
+      // まとめて外したとき、今回は外していない名前（もともとオフだった子）の古い戻し先は残さない。
+      // 残すと、まとまりを戻したときに、その子まで「外す前の選択」としてオンになってしまう
+      const cur = holder[kind].agents[p.k];
+      if (cur && cur.was) { const { was, ...rest } = cur; holder[kind].agents[p.k] = rest; }
     }
-    holder[kind].agents[k] = setDocRowRule(kind, entryOrSummary, curRule, Boolean(on), ctx);
   }
   return cfg;
 }

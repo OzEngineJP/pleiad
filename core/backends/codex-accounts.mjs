@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { run } from '../process.mjs';
+import { systemTool } from '../win-system.mjs';
 import { t } from '../i18n.mjs';
 const dirs = ['sessions', 'archived_sessions', 'thread-writer-locks', 'skills', 'memories', 'rules', 'plugins', 'attachments', 'generated_images', 'packages', 'vendor_imports'];
 const files = ['config.toml', 'AGENTS.md', 'history.jsonl', 'session_index.jsonl'];
@@ -28,10 +29,10 @@ export const codexAccountChildId = account => account ? `codex-app-server-${cryp
 export async function privateCodexPath(dir) {
   await fs.chmod(dir, 0o700);
   if (process.platform !== 'win32') return;
-  const who = await run('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
+  const who = await run(systemTool('whoami'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
   const sid = who.stdout.match(/S-1-\d+(?:-\d+)+/)?.[0];
   if (!sid) throw new Error(t('accounts.backend.permissionsUnknown', { agent: 'Codex' }));
-  const acl = await run('icacls.exe', [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`], { windowsHide: true });
+  const acl = await run(systemTool('icacls'), [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`], { windowsHide: true });
   if (acl.startError || acl.exitCode !== 0) throw new Error(t('accounts.backend.permissionsFailed', { agent: 'Codex' }));
 }
 

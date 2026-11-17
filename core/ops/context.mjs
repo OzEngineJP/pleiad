@@ -18,8 +18,9 @@ import { z } from 'zod';
 import { agentT, t } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { diffRows } from './settings.mjs';
+import { agentShortName } from '../backends/agents.mjs';
 import { mcpAgentsFromLegacy, toggleMcpAgent } from '../context-settings.mjs';
-import { buildMcpMatrix, mcpLegacyInfo } from '../context-mcp-matrix.mjs';
+import { buildMcpMatrix, mcpLegacyInfo, planMcpRowPress } from '../context-mcp-matrix.mjs';
 import { byAgent, cwdFor, maskTree, run, sessionFor } from './redact.mjs';
 import { clip, pageOf, PAGE_MAX } from './host.mjs';
 
@@ -113,8 +114,18 @@ async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
     reading: extras.reading === true,
     needsAuth: Array.isArray(extras.needsAuth) ? extras.needsAuth : [],
     workspace: placeDir ? workspaceNames(atPlace) : null,
+    // 行のスイッチでオフにする前の組（無ければ {}。読めなくても一覧は出す）
+    restore: await Promise.resolve(ctx.context.mcpRestore?.get(place ?? null)).catch(() => ({})) ?? {},
   };
   return { input, extras, level, dir, claude };
+}
+
+/**
+ * 行のスイッチの戻し先（オフにする前に使っていたエージェントの組。core/context-mcp-was.mjs）を覚える。list が空・null なら消す。
+ * 戻し先は覚えだけ（設定ではない）なので、覚えられなくても操作は成功とする（次にオンにするときの戻し先が既定になるだけ）
+ */
+async function rememberMcpRow(ctx, place, name, list) {
+  try { await ctx.context.mcpRestore?.set(place, name, list?.length ? list : null); } catch { /* 覚えだけ */ }
 }
 
 export const contextOps = [
@@ -195,7 +206,7 @@ export const contextOps = [
       const row = matrix.rows.find((r) => r.key === name);
       if (!row) throw new OpError('INVALID', t('context.settings.unknownMcp', { name }));
       const cell = row.cells[agent];
-      if (!cell || cell.mode !== 'toggle') throw new OpError('INVALID', t('context.settings.mcpNotPressable', { name, agent }));
+      if (!cell || cell.mode !== 'toggle') throw new OpError('INVALID', t('context.settings.mcpNotPressable', { name, agent: agentShortName(agent) }));
       const info = mcpLegacyInfo(input);
       const current = kind.agents ?? mcpAgentsFromLegacy(kind, info);
       // プラグインの MCP・claude.ai のコネクターは Claude 自身の名前として数える（止めるのは deniedMcpServers）
@@ -204,7 +215,57 @@ export const contextOps = [
       // 名前で外してあったもの（disabled）は agents に写したので、二重に効かせないよう消す
       const { disabled: _d, ...rest } = kind;
       const result = await ctx.context.set({ place: where, kind: 'mcp', value: { ...rest, agents: next }, cwd }, ctx.actor);
+      // 行のスイッチの戻し先: アイコン 1 つの変更で、前の記録は古くなる。最後の 1 つを外して行がオフになったときだけ、外す前の組を覚える
+      // （そのまま行のスイッチで戻せる）。覚えられなくても保存は済んでいる（戻し先が既定になるだけ）
+      const before = matrix.agents.filter(a => row.cells[a].mode === 'toggle' && row.cells[a].state === 'on');
+      const left = before.filter(a => !(a === agent && !on));
+      await rememberMcpRow(ctx, where, name, !on && !left.length && before.length ? before : null);
       return { ok: true, agents: next, defaults: result.defaults };
+    }),
+  }),
+  defineOp({
+    id: 'context.setMcpRow', summary: 'agent:ops.context.setMcpRow.summary', risk: 'guarded',
+    riskReason: 'Turning a row off only narrows what the agents can call (the changeable ones, together); turning it back on connects it again, so it is raised to guarded by riskOf',
+    riskOf: (_ctx, { on }) => (on === false ? 'write' : 'guarded'),
+    input: z.object({
+      name: z.string().min(1).max(128).describe(D('setMcpAgent', 'name')),
+      on: z.boolean().describe(D('setMcpRow', 'on')),
+      place: z.string().max(4096).nullable().optional().describe(D('setSettings', 'place')),
+      cwd: z.string().max(4096).optional().describe(A('cwd')),
+      reason,
+    }),
+    approvalWords: 'mcp',
+    confirm: async (_ctx, { name, on }) => ({ key: null, before: null, rows: [{ path: `context.mcp.${name}`, before: JSON.stringify(on ? 'off' : 'on'), after: JSON.stringify(on ? 'on' : 'off') }],
+      note: t('opsApproval.mcpRow', { name }), loosens: on !== false }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'mcp-row'], positional: ['name'] } },
+    legacyCommand: 'setMcpRow',
+    // 行のスイッチ（ADR 0337 §決定 4 の 2026-11-17 改訂）。鍵の無いオンをまとめて 1 度の保存でオフにする（鍵つきのオンは残る）。
+    // オンは、鍵の無いオンが 1 つも無いときだけ、オフにする前の組（無ければ既定）へ戻す。途中まで保存した状態を作らない
+    handler: (ctx, { name, on, place, cwd }) => run(ctx, async () => {
+      const where = place ?? null;
+      const first = await matrixInput(ctx, { cwd, place: where });
+      const kind = first.level.kinds.mcp.value;
+      const needConnectors = first.claude && (name.startsWith('claude.ai ') || (!kind.agents && kind.owner === 'ply'));
+      const { input } = needConnectors && first.input.connectors === null ? await matrixInput(ctx, { cwd, place: where, wait: true }) : first;
+      if (needConnectors && input.connectors === null) throw new OpError('INVALID', t('context.settings.connectorsUnread'));
+      const matrix = buildMcpMatrix(input);
+      const row = matrix.rows.find((r) => r.key === name);
+      if (!row) throw new OpError('INVALID', t('context.settings.unknownMcp', { name }));
+      const plan = planMcpRowPress(row, matrix.agents, input.restore?.[name] ?? null, on);
+      if (plan.refused) throw new OpError('INVALID', t('context.settings.mcpRowNotPressable', { name }));
+      if (plan.noop) return { ok: true, changed: [], on, agents: kind.agents ?? null };
+      const info = mcpLegacyInfo(input);
+      let next = kind.agents ?? mcpAgentsFromLegacy(kind, info);
+      const full = { ...info, native: { ...info.native, ...(info.extras?.claude ? { claude: [...(info.native.claude ?? []), ...info.extras.claude] } : {}) } };
+      for (const c of plan.changes) next = toggleMcpAgent(next, { name, agent: c.agent, on: c.on }, full);
+      const { disabled: _d, ...rest } = kind;
+      // オフ: 戻し先を先に覚える（保存に失敗したら消す）。オン: 保存してから消す
+      if (!on) await rememberMcpRow(ctx, where, name, plan.was);
+      let result;
+      try { result = await ctx.context.set({ place: where, kind: 'mcp', value: { ...rest, agents: next }, cwd }, ctx.actor); }
+      catch (e) { if (!on) await rememberMcpRow(ctx, where, name, null); throw e; }
+      if (on) await rememberMcpRow(ctx, where, name, null);
+      return { ok: true, changed: plan.changes.map((c) => c.agent), on, source: plan.source, agents: next, defaults: result.defaults };
     }),
   }),
   defineOp({

@@ -138,6 +138,10 @@ export const DATA_WRITES = [
     { name: 'context-agents.json', limit: 'places 上限 MAX_PLACES=100、合計項目上限 MAX_AGENT_KEYS=2000（書くとき、もう無いフォルダーの場所を外す）', reason: '指示と Skills の名前ごと・エージェントごとの設定（ADR 0337）。旧版（beta.31）の strict スキーマが読む context-scans.json と分けてダウングレード互換を守る' },
     { name: 'context-agents.broken-<時刻>.json', limit: 'MAX_BROKEN_BACKUPS=5（利用者が「壊れたファイルを退避して直す」（context.repairDocAgents）を押したときの rename。超えたら古い物から消す）', reason: '読めなかった設定ファイルを消さずに残す（調べる・手で戻すため）' },
   ] },
+  { file: 'core/context-mcp-was.mjs', sites: 2, targets: [
+    { name: 'context-mcp-was.json', limit: 'MCP_WAS_MAX_PLACES=200・場所ごとに MCP_WAS_MAX_NAMES=500・名前ごとにエージェント 24（超えたら先に入れた物から外す）', reason: '外部 MCP の行のスイッチを「オフにする前に使っていたエージェントの組」へ戻すための覚え（ADR 0337 §決定 4）。設定（context-scans.json）の strict スキーマに足さず別に置くので、旧い版は存在を知らず、無い・壊れている・形が違うときは空として既定へ戻る（読めない失敗は投げ、空で上書きしない）' },
+    { name: 'context-mcp-was.broken-<時刻>.json', limit: 'MCP_WAS_MAX_BROKEN=5（壊れた覚えを次に書くときの rename。超えたら古い物から消す）', reason: '壊れた覚えのファイルを消さずに残す（調べる・手で戻すため。context-agents.json と同じ）' },
+  ] },
   { file: 'core/context-claude-extras.mjs', sites: 1, targets: [
     { name: 'claude-connectors.json', limit: 'CONNECTOR_CACHE_MAX=200（claude.ai のコネクターの名前。実際は数個）', reason: '最後に読めたコネクターの一覧。次に設定を開いたとき、読み取りを待たずに出すための覚え' },
   ] },
@@ -283,8 +287,8 @@ export const DATA_WRITES = [
   { file: 'core/folder-uploads.mjs', sites: 7, targets: [
     { name: 'uploads/…（manifest.json と、利用者が選んだ作業フォルダーへの写し）', limit: '手元のフォルダーの送信 1 回につき 1 組。7 日触られなければ掃除する', reason: '成果物と送信の途中の台帳。作業フォルダーへの書き込みは置き場の外' },
   ] },
-  { file: 'core/git-info.mjs', sites: 2, targets: [
-    { name: '(置き場の外) os.tmpdir() の pleiad-index-*', limit: 'git の索引 1 つの写し。呼び出しごとに作って消す', reason: '作業場所の git の索引を汚さずに差分を取るための一時ファイル（作業ツリーの撮影 snapshotTree と、ステージ済みの tree を読む indexTree の 2 か所）' },
+  { file: 'core/git-info.mjs', sites: 1, targets: [
+    { name: '(置き場の外) os.tmpdir() の pleiad-index-*', limit: 'git の索引 1 つの写し。呼び出しごとに作って消す', reason: '作業場所の git の索引を汚さずに差分を取るための一時ファイル（作業ツリーの撮影 snapshotTree と、ステージ済みの tree を読む indexTree の 2 か所が、写す関数 copyIndex 1 つを通る。写しには元の index の更新時刻も移す）' },
   ] },
   { file: 'desktop/agent-browser-bin.cjs', sites: 1, targets: [
     { name: 'agent-browser-bin/agent-browser(.exe)', limit: '同梱の実行ファイル 1 つ。大きさが違うときだけ写し直す', reason: '開発時（未パッケージ）に実行ファイルを置き場へ写す。書き換えない成果物' },

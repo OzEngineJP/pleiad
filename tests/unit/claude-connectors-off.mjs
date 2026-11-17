@@ -1,6 +1,10 @@
 // 登録した Claude アカウントのコネクターの入口（ADR 0340 段 1）: オフ・未設定の会話の起動が変更前と 1 バイトも変わらないこと。LLM も本物の CLI も呼ばない。認証は固定の偽物だけ。
 //   1. 入口の設定が 未設定 / 明示のオフ / 別のアカウントだけオン / 壊れた JSON / 知らない版 / 知らない値 のとき、全経路 × 全組み合わせの起動の記録が、
 //      main で採った fixture（tests/fixtures/claude-launch-main.<win32|linux>.json。claude-launch-main-pinned）と同じ。新しい認証の解決はどれも「呼ばれたら失敗」の差し替え
+//      起動の記録は重い（1 回の全組み合わせで約 120 回 CLI を起こす）ので、設定の違い 7 通りごとに全部を取り直さない。同じ入力からは同じ起動になるので、次の 3 つで同じことを確かめる:
+//        a. 全組み合わせ × 全経路の起動の記録を 1 回取る。登録アカウントの組み合わせは、会話に渡す account を 7 通りの設定の入口の結果から順に回して選ぶ
+//        b. 組み合わせごとに、7 通りすべての入口へ同じ account を通し、入口へ入る物と出る物が同じ（同じ account・中身もそのまま・process.env 全体も同じ）・新しい認証の解決 0 回
+//        c. 7 通りそれぞれで、代表の組み合わせ（GATE_SCENARIOS）の起動の記録も取り、fixture と比べる
 //   2. オフ・対象外では、同じ account を中身も変えずに返す・新しい認証の解決 0 回・設定の読み取りは入口自身の 1 回まで（対象外は 0 回）・ファイルの作成 0・タイマー 0
 //   3. オンでも、段 1 は旧い経路のまま（認証の解決を 1 回呼び、「まだ使えない」で同じ account を返す。起動の記録も fixture と同じ）
 //   4. キャッシュのキー: オフは今までの文字列、オンの識別子があるときだけ接尾辞
@@ -23,6 +27,8 @@ const OTHER = 'acct-other000001';
 // account の中身の写し（自身の項目の名前と値。記号の名前・列挙されない項目も含める）。入口が中身を触っていないかを比べる
 const accountShape = a => a && typeof a === 'object'
   ? JSON.stringify(Reflect.ownKeys(a).map(k => [String(k), Object.getOwnPropertyDescriptor(a, k).enumerable, a[k]])) : JSON.stringify(a ?? null);
+// process.env 全体の写し（入口が env を足す・消す・変えていないかを比べる）
+const envShape = () => JSON.stringify(Object.keys(process.env).sort().map(k => [k, process.env[k]]));
 const SETTINGS = (accounts, version = 1) => JSON.stringify({ version, accounts });
 // 入口の設定のバリエーション（text が null ならファイルを作らない）
 const VARIANTS = {
@@ -34,32 +40,74 @@ const VARIANTS = {
   unknownValue: SETTINGS({ [ACCOUNT_ID]: { enabled: 'true', connectors: { x: { enabled: true } } } }),
   unknownShape: JSON.stringify({ version: 1, accounts: [{ id: ACCOUNT_ID, enabled: true }] }),
 };
+// 7 通りそれぞれで、入口を通した実際の起動の記録まで取る組み合わせ（親の env が最小のものと、認証の env が全部あるもの）
+const GATE_SCENARIOS = ['plain/registered/none', 'allAuth/registered/none'];
+
+/** 設定の違いごとに、設定ファイルを置いたデータ置き場と入口を作る（認証の解決は呼ばれたら失敗・呼ばれた回数と入口が変えた組み合わせを残す） */
+async function openGates(base) {
+  const gates = {};
+  for (const [variant, text] of Object.entries(VARIANTS)) {
+    const dataDir = path.join(base, variant);
+    await fs.mkdir(dataDir, { recursive: true });
+    if (text !== null) await fs.writeFile(path.join(dataDir, CONNECTORS_FILE), text);
+    const seen = { authCalls: 0, changed: [] };
+    const { gate } = createClaudeConnectorsGate({ dataDir, resolveAuth: async () => { seen.authCalls++; throw new Error('新しい認証の解決が呼ばれた'); } });
+    gates[variant] = { gate, seen };
+  }
+  return gates;
+}
 
 export default async function (t) {
   const want = JSON.parse(await fs.readFile(fixtureFile(), 'utf8'));
   const labels = scenarios().map(([p, a, e]) => `${p}/${a}/${e}`);
 
   // 1. オフ・未設定・壊れた設定の起動が main の記録と同じ（新しい認証の解決は呼ばれたら失敗）
-  for (const [variant, text] of Object.entries(VARIANTS)) {
-    let authCalls = 0;
-    const changed = [];
-    const got = digest(await recordAll({
+  const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-cn-gates-')));
+  try {
+    const gates = await openGates(base);
+    const variants = Object.keys(gates);
+    // a + b. 全組み合わせ × 全経路の起動の記録を 1 回取る。入口は組み合わせごとに 7 通りすべてを通し、起動に使う account は 7 通りから順に回して選ぶ
+    let turn = 0;
+    const all = digest(await recordAll({
       root: REPO,
-      onSetup: async ({ data }) => { if (text !== null) await fs.writeFile(path.join(data, CONNECTORS_FILE), text); },
-      accountFor: async (accounts, id, { data }) => {
-        const { gate } = createClaudeConnectorsGate({ dataDir: data, resolveAuth: async () => { authCalls++; throw new Error('新しい認証の解決が呼ばれた'); } });
+      accountFor: async (accounts, id) => {
         const resolved = await accounts.resolve(id);
-        const shape = accountShape(resolved);
-        const gated = await gate(resolved);
-        if (gated !== resolved || accountShape(resolved) !== shape) changed.push(id || '(指定なし)');
-        return gated;
+        const shape = accountShape(resolved), env = envShape();
+        const used = id ? variants[turn++ % variants.length] : null;
+        let picked = resolved;
+        for (const variant of variants) {
+          const gated = await gates[variant].gate(resolved);
+          if (gated !== resolved || accountShape(resolved) !== shape || envShape() !== env) gates[variant].seen.changed.push(id || '(指定なし)');
+          if (variant === used) picked = gated;
+        }
+        return picked;
       },
-      dumpName: `off-${variant}`,
+      dumpName: 'off-all',
     }));
-    const bad = explain(want, got);
-    t.ok(`${variant}: 全 ${labels.length} 組み合わせ × 経路の起動の記録が main と同じ・入口は同じ account を中身も変えずに返す・新しい認証の解決 0 回`,
-      bad.count === 0 && changed.length === 0 && authCalls === 0, `calls=${authCalls} changed=${[...new Set(changed)].join(',')} ${bad.text}`);
-  }
+    const bad = explain(want, all);
+    t.ok(`全 ${labels.length} 組み合わせ × 経路の起動の記録が main と同じ（登録アカウントの組み合わせは、会話に渡す account を 7 通りの設定の入口の結果から順に回して選ぶ）`, bad.count === 0, bad.text);
+
+    // c. 7 通りそれぞれで、代表の組み合わせの起動の記録
+    const wantSome = Object.fromEntries(GATE_SCENARIOS.map(label => [label, want[label]]));
+    for (const variant of variants) {
+      const { gate, seen } = gates[variant];
+      const got = digest(await recordAll({
+        root: REPO,
+        only: GATE_SCENARIOS,
+        accountFor: async (accounts, id) => {
+          const resolved = await accounts.resolve(id);
+          const shape = accountShape(resolved), env = envShape();
+          const gated = await gate(resolved);
+          if (gated !== resolved || accountShape(resolved) !== shape || envShape() !== env) seen.changed.push(id || '(指定なし)');
+          return gated;
+        },
+        dumpName: `off-${variant}`,
+      }));
+      const some = explain(wantSome, got);
+      t.ok(`${variant}: 全 ${labels.length} 組み合わせで入口は同じ account を中身も変えずに返し process.env も変えない・新しい認証の解決 0 回・代表 ${GATE_SCENARIOS.length} 組み合わせの起動の記録が main と同じ`,
+        some.count === 0 && seen.changed.length === 0 && seen.authCalls === 0, `calls=${seen.authCalls} changed=${[...new Set(seen.changed)].join(',')} ${some.text}`);
+    }
+  } finally { await fs.rm(base, { recursive: true, force: true, maxRetries: 5 }); }
 
   // 3. オンでも段 1 は旧い経路のまま
   {

@@ -98,6 +98,7 @@ import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeCont
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
 import { DEFAULT_OWNERS, normalizeKind, pathKey, pruneInherited, scanDirectory } from './context-settings.mjs';
 import { DOC_KINDS, createContextAgents, resolveEffectiveDocSource } from './context-agents.mjs';
+import { createMcpWas } from './context-mcp-was.mjs';
 import { DocTouchError, applyDocTouch, buildDocMatrix, docScanPlan } from './context-doc-matrix.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
@@ -545,6 +546,8 @@ const IMAGE_MIME = /^image\//;
 const workspaceRoots = new Set([process.cwd()]);
 const contextSettings = createContextSettings(store.dataDir);
 const contextAgents = createContextAgents(store.dataDir);
+// 外部 MCP の行のスイッチでオフにする前の組（context-mcp-was.json。覚えだけで、設定ではない。ADR 0337 §決定 4）
+const mcpWas = createMcpWas(store.dataDir);
 // 担当が Pleiad の外部 MCP。登録は Pleiad 自身の設定（エージェントの設定ファイルは書き換えない）、秘密は safeStorage で暗号化して置く
 // 暗号器は 1 つを使い回す（main の口の応答は id で引くので、2 つ作ると同じ id を取り合う）
 const secretCipher = defaultCipher();
@@ -5647,6 +5650,8 @@ function serializeDocRow(row) {
     origins: row.origins, duplicates: row.duplicates.map(compactCopy),
     rule: row.rule, cells: row.cells, rowLocked: row.rowLocked, rowMixed: row.rowMixed,
     rowSwitchOn: row.rowSwitchOn, anyOn: row.anyOn,
+    // 行のスイッチの押す向きと戻し先（ADR 0337 §決定 4 の 2026-11-17 改訂）。画面は rowNextOn を setDocRow の on に送る
+    rowFixed: row.rowFixed, rowChangeableOn: row.rowChangeableOn, rowNextOn: row.rowNextOn, rowRestore: row.rowRestore,
   };
 }
 
@@ -5688,6 +5693,7 @@ const opsContext = {
     settingsChanged(['context.default'], actor);
     return { ...v, place: saved.place };
   },
+  mcpRestore: { get: (place) => mcpWas.get(place), set: (place, name, list) => mcpWas.set(place, name, list) },
   docMatrix: async ({ kind, cwd, place } = {}) => {
     if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
     const { scan, rawConfig, docAgents, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd, place });
@@ -10228,6 +10234,8 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.mcpMatrix');
         case 'setMcpAgent':
           return await viaOp('context.setMcpAgent');
+        case 'setMcpRow':
+          return await viaOp('context.setMcpRow');
         case 'docMatrix':
           return await viaOp('context.docMatrix');
         case 'setDocAgent':

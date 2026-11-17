@@ -10,6 +10,7 @@
 //
 // 追跡はメモリの中だけ（このプロセスが起こした子しか分からない。前の世代の子は保持役の側で拾う）
 import { bootEnv } from './boot-env.mjs';
+import { systemTool } from './win-system.mjs';
 
 /** 終わった子の記録を、子孫を拾うために残す時間 */
 const ENDED_KEEP_MS = 10 * 60_000;
@@ -60,7 +61,7 @@ const defaultKill = (pid, signal = 'SIGKILL') => process.kill(pid, signal);
  */
 export async function listProcesses({ platform = process.platform, exec = defaultExec } = {}) {
   if (platform === 'win32') {
-    const r = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    const r = await exec(systemTool('powershell'), ['-NoProfile', '-NonInteractive', '-Command',
       "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate | ConvertTo-Json -Compress"]);
     if (r.exitCode !== 0 || !r.stdout?.trim()) return [];
     const rows = JSON.parse(r.stdout);
@@ -131,7 +132,7 @@ export async function killUnder(dir, { platform = process.platform, exec = null,
   for (const root of roots) {
     if (root.endedAt != null) continue;
     try {
-      if (platform === 'win32') await exec('taskkill', ['/PID', String(root.pid), '/T', '/F']);
+      if (platform === 'win32') await exec(systemTool('taskkill'), ['/PID', String(root.pid), '/T', '/F']);
       else { try { kill(-root.pid, 'SIGKILL'); } catch { kill(root.pid, 'SIGKILL'); } }   // グループの頭でなければ単体で
       killed.add(root.pid);
     } catch { /* もう居ない */ }

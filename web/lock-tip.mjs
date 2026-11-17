@@ -23,9 +23,28 @@ export function lockReasonText(agentName, cell) {
   return t(`context.lockReason.${lockReasonKey(cell)}`, { agent: agentName });
 }
 
-/** 読み上げ名「{元の名前}（{理由}）」を作る */
+/**
+ * 理由が 2 つ以上あるとき、理由ごとに 1 行にした文字列（同じ文は 1 回）。無ければ null。
+ * 吹き出し（.cx-tip の white-space: pre-line）はこの改行をそのまま行の区切りにする。「／」でつないで 1 文にはしない
+ */
+export function joinLockReasons(reasons) {
+  const lines = [...new Set([].concat(reasons ?? []).map((s) => String(s ?? '').trim()).filter(Boolean))];
+  return lines.length ? lines.join('\n') : null;
+}
+
+/**
+ * 読み上げ用の理由。改行は読み上げでは区切りにならないので、理由が 2 つ以上なら 1 つずつ文として終える（「…。…。」）。
+ * 1 つだけならそのまま。文の終わりの記号がすでにある行は足さない
+ */
+export function spokenLockReason(reason) {
+  const lines = String(reason ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+  if (lines.length < 2) return lines[0] ?? '';
+  return lines.map((l) => (/[。．.!?！？]$/.test(l) ? l : t('context.lockAriaSentence', { reason: l }))).join(' ');
+}
+
+/** 読み上げ名「{元の名前}（{理由}）」を作る。理由が複数行なら文として区切って読ませる */
 export function lockAriaLabel(baseLabel, reason) {
-  return t('context.lockAria', { label: baseLabel, reason });
+  return t('context.lockAria', { label: baseLabel, reason: spokenLockReason(reason) });
 }
 
 let bound = false, tip = null, who = null, tapped = null, tm = null, lastPointer = '', watch = null;
@@ -144,6 +163,9 @@ export function ensureLockTips() {
   if (bound || typeof document?.addEventListener !== 'function') return;
   bound = true;
   const targetOf = e => e.target?.closest?.('[data-tip]') ?? null;
+  // 全体のスイッチの中の鍵（data-tip-pass）。スイッチにフォーカスが来たら、その鍵の理由を出す（押す動きは止めない）
+  const passOf = node => { try { return node?.querySelector?.(':scope > [data-tip-pass]') ?? null; } catch { return null; } };
+  const focusTargetOf = e => targetOf(e) ?? passOf(e.target);
   document.addEventListener('pointerover', e => {
     const tNode = targetOf(e);
     if (!tNode || e.pointerType === 'touch') return;
@@ -160,13 +182,13 @@ export function ensureLockTips() {
     if (who === tNode && !isFocusVisible(tNode) && tapped !== tNode) hideLockTip();
   });
   document.addEventListener('focusin', e => {
-    const tNode = targetOf(e);
+    const tNode = focusTargetOf(e);
     if (!tNode) return;
     clearTimeout(tm);
-    if (isFocusVisible(tNode)) { tapped = null; show(tNode); }
+    if (isFocusVisible(tNode.hasAttribute?.('data-tip-pass') ? e.target : tNode)) { tapped = null; show(tNode); }
   });
   document.addEventListener('focusout', e => {
-    const tNode = targetOf(e);
+    const tNode = focusTargetOf(e);
     if (tNode && who === tNode) hideLockTip();
   });
   document.addEventListener('pointerdown', e => {
@@ -176,9 +198,12 @@ export function ensureLockTips() {
   document.addEventListener('click', e => {
     const tNode = targetOf(e);
     if (!tNode) return;
+    const touch = lastPointer === 'touch' || e.pointerType === 'touch';
+    // 全体のスイッチの中の鍵は、マウス・キーボードの押しは通す（スイッチとして押せる）。タッチで鍵そのものを押したときだけ理由を出す
+    if (tNode.hasAttribute?.('data-tip-pass') && !touch) { hideLockTip(); return; }
     e.preventDefault();
     e.stopPropagation();
-    if (lastPointer === 'touch' || e.pointerType === 'touch') {
+    if (touch) {
       if (tapped === tNode && who === tNode && tip?.classList?.contains('on')) hideLockTip();
       else { tapped = tNode; show(tNode); }
     } else {
