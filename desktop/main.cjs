@@ -236,6 +236,22 @@ async function external(url) {
   return shell.openExternal(href).then(() => true, error => { log(`external failed: ${error?.message ?? error}`); return false; });
 }
 
+/**
+ * 隠した Chrome の窓に外のアプリから渡った URL が入ったタブを、見える窓で開き直すための口（core の中継が chrome-os の openVisible で呼ぶ）。
+ * 見える窓を前面にできたとき・見える窓を新しく開けたときだけ true。前面にできなければ false（shell.openExternal に落とさない。
+ * 落とすと URL がまた隠した窓に入り、堂々巡りになる。core は false なら隠した窓のタブを残す）
+ */
+async function openUrlVisibly(url) {
+  const href = externalUrl(url);
+  if (!href) return false;
+  let raised = null;
+  try { raised = chromeOs?.raiseVisibleBrowser?.({ scheme: new URL(href).protocol.slice(0, -1), url: href }); } catch {}
+  if (raised?.opened) return true;
+  if (!raised?.ok) { log(`external: could not move a hidden-window url to a visible window (${raised?.reason ?? 'unknown'})`); return false; }
+  await new Promise(resolve => setTimeout(resolve, 150));
+  return shell.openExternal(href).then(() => true, error => { log(`external failed: ${error?.message ?? error}`); return false; });
+}
+
 // 窓の上端を脇のパネルと同じ面にする。OS の枠を消し、閉じる・最小化のボタンだけを重ねて残す。
 // 高さは脇の見出し行（web/style.css の --bar-h）と揃える。色は画面が決めて ply:title-bar で送ってくる。
 // 送られるまでの一瞬は OS の明暗に合わせた脇の色（web/tokens.css の --surface-0 / --ink）で待つ
@@ -435,7 +451,7 @@ async function boot() {
   chromeOs = createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, mac: macBackend, reason: process.platform === 'darwin' ? computerReason : win32Reason, log: line => console.warn('[chrome-os]', line),
     pointToDip: point => screen.screenToDipPoint(point),
     appHwnd: () => { const w = window; return w && !w.isDestroyed() ? Number(w.getNativeWindowHandle().readBigUInt64LE()) : 0; } });
-  attachChromeOs(messages, { chromeOs, log: line => console.warn('[chrome-os]', line) });
+  attachChromeOs(messages, { chromeOs, openVisible: openUrlVisibly, log: line => console.warn('[chrome-os]', line) });
   chromePill = attachChromePill(messages, { electron: { BrowserWindow, ipcMain, screen }, os: chromeOs, t, log: line => console.warn('[chrome-pill]', line) });
   // 画面の構成が変わったら（モニターの増減・解像度・DPI・スリープ復帰）、画面の外へ隠しているエージェントの Chrome の窓を置き直す（ADR 0154）
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => chromeOs.reconceal());

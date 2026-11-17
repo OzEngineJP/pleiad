@@ -128,6 +128,8 @@ const SUITES = [
   './unit/chrome-auto-allow.mjs',
   // Chrome の絞り込みの中継（ADR 0148・0153）: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open）・止める・鍵・agent-browser の本物の通し（偽の Chrome）
   './unit/chrome-relay.mjs',
+  // 外のアプリから渡った URL が隠した窓に入ったタブを見える窓へ移す（判定と偽の Chrome での通し）
+  './unit/chrome-external-tab.mjs',
   './unit/chrome-close-window.mjs',
   './unit/chrome-window-shots.mjs',
   './unit/chrome-close-confirm.mjs',

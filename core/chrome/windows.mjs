@@ -143,13 +143,20 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       marked = await cdp.send('Browser.setWindowBounds', { windowId, bounds: mark }).then(() => true, () => false);
     }
     const now = marked ? (await cdp.send('Browser.getWindowBounds', { windowId }).catch(() => null))?.bounds ?? current : current;
-    return waitFor(async () => {
+    const found = await waitFor(async () => {
       if (marked) {
         const exact = await os.findWindowByBounds({ bounds: now, port, since: since ?? [], tolerance: MARK_TOLERANCE });
         if (exact) return exact;
       }
       return since ? os.findWindowByBounds({ bounds: now, port, since }) : null;   // 写しが無ければ、ゆるい外形では探さない
     }, waitMs, time.hwndPollMs);
+    // 見つからなかった窓を、画面の外に置いたまま（隠すスタイルも当たらないまま）残さない。印のために動かす前の外形へ戻す。
+    // 隠し損ねの原因だった（画面の外の位置にあるのに、タスクバーに載り、透明でも素通しでもない窓が残る）
+    if (!found && marked) {
+      await cdp.send('Browser.setWindowBounds', { windowId, bounds: { left: current.left, top: current.top, width: current.width, height: current.height } }).catch(() => {});
+      log('chrome-windows: the window was put back where it was (not found, so not hidden)');
+    }
+    return found;
   }
 
   /**
@@ -384,6 +391,12 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
 
     /** 見える形に戻してあるか（引き継ぎ中） */
     isRevealed(entryId) { return entries.get(entryId)?.revealed === true; },
+
+    /** 外のアプリから渡った URL が隠した窓に入ったタブを、見える窓で開き直す（層の openVisible。開けたら true） */
+    async openVisible({ url }) {
+      if (!os.capabilities().features.conceal) return false;   // 窓を隠さない OS（macOS）では、隠した窓に入ることが無い
+      return (await os.openVisible?.(url)) === true;
+    },
 
     /** 窓のタブがすべて無くなった（窓だけ閉じられた）。窓の記録を捨てる。次のタブは、窓が無ければ開き直す */
     windowClosed(entryId, windowId) {

@@ -45,6 +45,7 @@ import { createTabHolder, PAUSED_MESSAGE, HUMAN_MESSAGE } from './tab-holder.mjs
 import { createTabInfo } from './tab-info.mjs';
 import { createPageBridge } from './page-bridge.mjs';
 import { createChromeDownloads } from './downloads.mjs';
+import { classifyNewTab, allowRelocation, isRelocatableUrl } from './external-tab.mjs';
 
 export { safeUrl, PAUSED_MESSAGE };
 /** relay.onTabEvent(fn) で出す出来事の名前（fn(type, payload)）。ほかの名前は出さない */
@@ -107,6 +108,9 @@ const COOKIE_WRITES = new Set(['Network.setCookie', 'Network.setCookies', 'Netwo
 const PAUSED_LIMIT = 1000;
 /** Page.navigateToHistoryEntry の応答の後、移り終える（frameNavigated）のを待つ上限 */
 const HISTORY_COMMIT_WAIT_MS = 1000;
+/** 外から渡った URL が隠した窓にタブとして入ったとき、URL が決まるのを待つ長さ（external-tab.mjs） */
+const EXTERNAL_URL_SETTLE_MS = 2000;
+const EXTERNAL_URL_POLL_MS = 100;
 // ブラウザーの上（sessionId なし）で許すもの。ここに無いものは断る
 const BROWSER_ALLOWED = new Set([
   'Browser.getVersion',
@@ -292,7 +296,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   function bind(cdp) {
     if (up?.cdp === cdp) return Promise.resolve(up);
     if (binding?.cdp === cdp) return binding.promise;
-    const state = { cdp, tabs: new Map(), windows: new Map(), sessions: new Map(), attaching: new Map(), offs: [], frameTabs: new Map(), browserFetch: null,
+    const state = { cdp, live: false, relocated: new Map(), tabs: new Map(), windows: new Map(), sessions: new Map(), attaching: new Map(), offs: [], frameTabs: new Map(), browserFetch: null,
       downloadOwners: new Map(), downloadContextAt: 0 };   // downloadOwners: 持ち主を引いている途中のダウンロード（guid -> { last: 待たせた進み具合 }）
     // 持ち越した窓が、今つなぐ Chrome のものでなければ（Chrome が起動し直された）、その windowId は今の Chrome の別の窓を指す。捨てる
     const browserId = typeof cdp.browserId === 'string' && cdp.browserId ? cdp.browserId : null;
@@ -307,6 +311,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const stale = staleSessions; staleSessions = [];
       for (const sessionId of stale) cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});   // 前のサーバーの確認の Fetch は、答える相手が居ない
       await cdp.send('Target.setDiscoverTargets', { discover: true });
+      state.live = true;   // これ以降に届いた targetCreated だけが「今できたタブ」。既存のタブの数え直しは外から渡った URL と見なさない（external-tab.mjs）
       // ダウンロードのイベントを受ける（ADR 0328）。保存先は替えない（behavior: 'default'）。旗は接続の単位で、どのプロフィールのダウンロードも届く。
       // browserContextId は付けない（既定でないプロフィールの id は断られる。実機）。待たない・断られても（古い Chrome など）つなぐのは止めない
       cdp.send('Browser.setDownloadBehavior', { behavior: 'default', eventsEnabled: true })
@@ -554,7 +559,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     notifyView(entry.id, 'operating');
   }
 
-  async function onTargetCreated(state, info) {
+  async function onTargetCreated(state, info, { live = false } = {}) {
     if (info?.type !== 'page' || state.tabs.has(info.targetId)) return;
     const opener = info.openerId ? (state.tabs.get(info.openerId) ?? state.frameTabs.get(info.openerId) ?? null) : null;
     if (opener) {
@@ -575,9 +580,44 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     const where = await state.cdp.send('Browser.getWindowForTarget', { targetId: info.targetId }).catch(() => null);
     const entry = where ? state.windows.get(where.windowId) : null;
     if (entry && up === state && !state.tabs.has(info.targetId)) {
-      const fresh = await state.cdp.send('Target.getTargetInfo', { targetId: info.targetId }).catch(() => null);
-      if (fresh?.targetInfo && up === state) adopt(state, entry, fresh.targetInfo, { windowId: where.windowId });
+      let fresh = (await state.cdp.send('Target.getTargetInfo', { targetId: info.targetId }).catch(() => null))?.targetInfo ?? null;
+      const decide = (target, settled) => classifyNewTab({ info: target, settled, tracked: state.tabs.has(info.targetId), windowKnown: true, live,
+        handedOver: Boolean(entry.paused) || scope.isRevealed?.(entry.id) === true, opening: (entry.opening ?? 0) > 0 });
+      // 外から渡った URL は、タブができた直後は URL が空・about:blank のことがある。落ち着くまで少し待ってから決める
+      if (fresh && up === state && decide(fresh, false) === 'wait') fresh = await settleUrl(state, fresh);
+      if (!fresh || up !== state || state.tabs.has(info.targetId)) return;
+      if (decide(fresh, true) === 'relocate' && await relocateExternalTab(state, entry, fresh)) return;
+      if (up === state && !state.tabs.has(info.targetId)) adopt(state, entry, fresh, { windowId: where.windowId });
     }
+  }
+
+  // ---- 外から渡った URL が隠した窓に入ったタブ（external-tab.mjs） ---------------------------------------
+  /** タブの URL が http(s) になるまで少し待つ（EXTERNAL_URL_SETTLE_MS まで）。決まらなければ最後の情報を返す */
+  async function settleUrl(state, info) {
+    const end = Date.now() + EXTERNAL_URL_SETTLE_MS;
+    let last = info;
+    while (Date.now() < end && up === state && !isRelocatableUrl(last.url)) {
+      await new Promise(resolve => setTimeout(resolve, EXTERNAL_URL_POLL_MS));
+      const next = (await state.cdp.send('Target.getTargetInfo', { targetId: info.targetId }).catch(() => null))?.targetInfo;
+      if (!next) return last;
+      last = next;
+    }
+    return last;
+  }
+  /**
+   * 隠した窓に入ったタブを見える窓へ開き直し、隠した窓のタブを閉じる。開き直せなければ（見える窓に開けなかった・短時間に同じ URL を繰り返した）false を返し、
+   * 呼び出し側は今までどおり会話のタブにする（タブを失わない）
+   */
+  async function relocateExternalTab(state, entry, info) {
+    if (typeof scope.openVisible !== 'function' || !isRelocatableUrl(info.url)) return false;
+    if (!allowRelocation(state.relocated, info.url, now())) { log('chrome-relay: external url was not moved again (loop guard)'); return false; }
+    let opened = false;
+    try { opened = await scope.openVisible({ url: info.url, entryId: entry.id }) === true; } catch { opened = false; }
+    if (!opened) { log('chrome-relay: external url could not be opened in a visible window'); return false; }
+    // 開き直せた。隠した窓のタブは、エージェントのものではないので閉じる（タブを取りこぼさないよう、閉じるのは開き直しのあと）
+    await state.cdp.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {});
+    log('chrome-relay: moved an external url from a hidden window to a visible window');
+    return true;
   }
 
   // ---- 上りのイベントの配り分け --------------------------------------------------------------
@@ -603,7 +643,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       return;
     }
     switch (method) {
-      case 'Target.targetCreated': onTargetCreated(state, params.targetInfo).catch(() => {}); return;
+      case 'Target.targetCreated': onTargetCreated(state, params.targetInfo, { live: state.live === true }).catch(() => {}); return;
       case 'Target.targetInfoChanged': {
         const tab = state.tabs.get(params.targetInfo?.targetId);
         if (!tab) return;   // 範囲の外のタブの URL・題は捨てる（覚えない）
@@ -1339,7 +1379,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     const cookieFirst = wantsCookie(url);
     const direct = url === 'about:blank' || (!confirm && !cookieFirst);
     if (url !== 'about:blank') await prepareOpen(state, entry.id, url);
-    const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url: direct ? url : 'about:blank', entryId: entry.id });
+    entry.opening = (entry.opening ?? 0) + 1;
+    let opened;
+    try { opened = await scope.openTab({ cdp: state.cdp, url: direct ? url : 'about:blank', entryId: entry.id }); } finally { entry.opening -= 1; }
+    const { targetId, windowId } = opened;
     const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
     const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: 'about:blank', attached: false, canAccessOpener: false }, { windowId });
     // 窓を作っている間に引き継がれた。作った窓（隠れた about:blank）は閉じ、エージェントには断りを返す（移動もしない）
@@ -1451,7 +1494,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       await prepareOpen(state, entry.id, url);
       // ファイルのページは、空のタブで開いてタブのセッションで Cookie を入れてから移す（既定の context でないプロフィールの窓）
       const cookieFirst = wantsCookie(url);
-      const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url: cookieFirst ? 'about:blank' : url, entryId: entry.id });
+      entry.opening = (entry.opening ?? 0) + 1;
+      let opened;
+      try { opened = await scope.openTab({ cdp: state.cdp, url: cookieFirst ? 'about:blank' : url, entryId: entry.id }); } finally { entry.opening -= 1; }
+      const { targetId, windowId } = opened;
       const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
       const tab = adopt(state, entry, fresh?.targetInfo ?? { targetId, type: 'page', title: '', url: cookieFirst ? 'about:blank' : url, attached: false, canAccessOpener: false }, { windowId, human: true });
       // 人が開いたタブは「AI のタブ」にしない（人の印を付ける。エージェントが CLAIMS のコマンドで明示に操作したときだけ AI のタブになる。ADR 0321）

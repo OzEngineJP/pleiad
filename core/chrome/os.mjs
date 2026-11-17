@@ -55,6 +55,7 @@
 // exportAgent(ref)                      → Promise<string | null>  隠している窓を main の入れ替わりを越えて渡す印にする（窓は閉じない・戻さない。ADR 0167）。隠していない窓には null
 // adoptAgent(token, { revealed, profile })        → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る（revealed: true は人が操作中の見せている窓。隠さず見張らない）
 // 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
+// openVisible(url)                       → Promise<boolean>  外のアプリから渡った URL が隠した窓に入ったタブを、見える窓で開き直す（main の openUrlVisibly。見える窓を前面にできた・新しく開けたときだけ true。ほかの OS は false）
 // raiseVisibleBrowser({ scheme })（main の中だけの口。Windows）: 既定のブラウザーで開く（shell.openExternal・HTML の openPath）直前に、
 //   最後に使われていた見える Chrome の窓を前面にして Chrome の「最後にアクティブな窓」を戻す。戻さないと URL が隠した窓に開く。
 //   scheme は 'http' | 'https'（URL）・'html'（HTML のファイル。.html の関連付けで見る）。
@@ -91,6 +92,7 @@ export function unsupportedChromeOs(reason = 'platform') {
     closeAgent: async () => false,
     exportAgent: async () => null,
     adoptAgent: async () => null,
+    openVisible: async () => false,
   };
 }
 
@@ -99,6 +101,8 @@ const CALL_TIMEOUT_MS = 5000;
 /** 押す（PowerShell の起動を含む）・トグルを入れる（Chrome の起動・ページの読み込みを含む）の待ち */
 const ALLOW_TIMEOUT_MS = 20_000;
 const ENABLE_TIMEOUT_MS = 45_000;
+/** 見える窓を前面にして URL を開き直す（前面化の後の一拍・新しい窓の起動を含む） */
+const OPEN_VISIBLE_TIMEOUT_MS = 8000;
 
 /**
  * parentPort 越しの口。port が無い（Electron でない）ときは no-desktop の口を返す。
@@ -201,6 +205,7 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     release: ref => call('release', { ref }, false),
     closeAgent: ref => call('closeAgent', { ref }, false),
     exportAgent: ref => call('exportAgent', { ref }, null),
+    openVisible: url => call('openVisible', { url }, false, OPEN_VISIBLE_TIMEOUT_MS),
     adoptAgent: (token, options = {}) => call('adoptAgent', { token, revealed: options.revealed === true, profile: options.profile ?? null, userDataDir: options.userDataDir ?? null }, null),
   };
 }
