@@ -389,6 +389,50 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
     },
     login,
     cancelLogin,
+    /**
+     * メールとパスワードでログインする（審査用ホスト専用。人の画面には出さない）。
+     * Firebase の signInWithPassword を直接呼び、返った refreshToken を今までと同じ保管に置く。
+     * パスワードとトークンは、ログにも誤りの文にも出さない。
+     */
+    async loginWithPassword({ email, password } = {}) {
+      if (!email || !password) throw new PlusError({ code: 'bad_request', message: 'email and password are required' });
+      const cfg = await loadConfig({ fresh: true });
+      const apiKey = cfg?.token?.apiKey;
+      const refreshUrl = cfg?.urls?.refresh;
+      if (!apiKey || !refreshUrl) throw new PlusError({ code: 'network', message: t('plus.unreachable') });
+      const url = refreshUrl.replace('securetoken.googleapis.com', 'identitytoolkit.googleapis.com').replace(/\/v1\/token$/, '/v1/accounts:signInWithPassword');
+      let res;
+      try {
+        res = await fetchFn(`${url}?key=${encodeURIComponent(apiKey)}`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email, password, returnSecureToken: true }),
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch (e) {
+        throw new PlusError({ code: 'network', message: String(e?.message ?? e).slice(0, 200) });
+      }
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        // 誤りの種別（INVALID_LOGIN_CREDENTIALS など）だけ残す。入力した値は残さない
+        const kind = String(body?.error?.message ?? `HTTP ${res.status}`).split(/[ :]/)[0].slice(0, 60);
+        throw new PlusError({ status: res.status, code: res.status === 400 ? 'unauthenticated' : 'network', message: `sign-in rejected: ${kind}` });
+      }
+      if (typeof body?.idToken !== 'string' || typeof body?.refreshToken !== 'string') {
+        throw new PlusError({ code: 'network', message: 'bad sign-in response' });
+      }
+      idToken = body.idToken;
+      idTokenExpiresAt = now() + (Number(body.expiresIn) || 3600) * 1000;
+      await saveStored({
+        refreshToken: body.refreshToken, uid: body.localId ?? null, email: body.email ?? email,
+        tokenProjectId: cfg.token.projectId || null, apiKey, savedAt: new Date(now()).toISOString(),
+      });
+      error = null;
+      reachable = true;
+      emit('signedIn');
+      startAccountPoll();
+      void fetchAccount();
+      return statusShape();
+    },
     /** ログアウト。api には何も送らず、ID トークンを捨てて保管を消す */
     async logout() {
       cancelLogin();
