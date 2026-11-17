@@ -90,9 +90,8 @@ import { createBulkReplies } from './bulk-replies.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
-import { createClaudeConnectorsGate } from './claude-connectors.mjs';
-import { createClaudeConnectorsAuth } from './claude-connectors-auth.mjs';
-import { readClaudeUsage, guardUsageDir } from './backends/claude-usage.mjs';
+import { connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
+import { guardUsageDir, refreshUsageDir } from './backends/claude-usage.mjs';
 import { claudeSdkVersion } from './claude-sdk.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
@@ -564,18 +563,16 @@ const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir, secrets: c
   onChecked: () => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }) });
 // claude.ai のコネクターを登録アカウントの会話へ渡す入口（ADR 0340）。設定がオン（試験と手元の確かめだけ）のアカウントの会話だけが認証側を通る。
 // 認証側のファクトリーは I/O もタイマーも持たない（オフの経路は何も呼ばない）。更新は CLI に任せ（使用量の読み取りを 1 回流す）、Pleiad は更新用トークンを持ち出さない
-const claudeAccountConnectors = createClaudeConnectorsGate({
+// 使用量の読み取りの印（guard）はオンの間だけ効き、オフにすると次の読み取りで外れる。更新（refresh）は印を付ける前から走っていた読み取りも待つ
+const claudeAccountConnectors = createClaudeConnectorsWiring({
   dataDir: store.dataDir,
-  resolveAuth: createClaudeConnectorsAuth({
-    accounts: claudeAccounts,
-    versions: async () => {
-      let exe = null;
-      try { exe = claudeExecutable(); } catch { /* 入っていない。版は null になり、オンは止まる */ }
-      return { cli: exe ? await cliVersion(exe) : null, sdk: claudeSdkVersion() };
-    },
-    refresh: dir => readClaudeUsage({ configDir: dir }),
-    guard: guardUsageDir,
-  }),
+  accounts: claudeAccounts,
+  versions: async () => {
+    let exe = null;
+    try { exe = claudeExecutable(); } catch { /* 入っていない。版は null になり、オンは止まる */ }
+    return { cli: exe ? await cliVersion(exe) : null, sdk: claudeSdkVersion() };
+  },
+  usage: { guard: guardUsageDir, refresh: refreshUsageDir },
 });
 // アカウントの認可を Pleiad から行う（疑似端末で claude setup-token / claude auth login を回す。core/claude-login.mjs）。
 // トークンは画面へ返さず、そのままアカウントの秘密へしまう
@@ -5512,12 +5509,14 @@ const opsHooks = {
 };
 
 // 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0327）。コネクターは最後に読めた一覧を覚えておく
-// 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす
+// 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす。コネクターの入口がオンのアカウントは会話と同じ組み立てで読み、
+// 止める条件に当たれば読めなかった扱いにする（ログイン中のアカウントで読み直さない・覚えの一覧を書かない。ADR 0340）
 const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'),
-  probe: async ({ deny }) => {
-    const account = await accountResolve(getBackend('claude'), await defaultAccount('claude')).catch(() => null); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0327）
-    return probeClaudeConnectors({ deny, token: account?.token ?? null });
-  } });
+  probe: connectorListProbe({
+    defaultId: () => defaultAccount('claude'), // backend-allow: コネクターの一覧は Claude の既定のアカウントで読む（ADR 0327・0340）
+    resolve: id => accountResolve(getBackend('claude'), id), // backend-allow: コネクターの読み取りは Claude 固有（ADR 0327）
+    probe: probeClaudeConnectors,
+  }) });
 
 /**
  * 表（context-agents.json）を触った後の旧い設定（担当・探す形式・除外）の変更は、表の結果を変えないことが多い。

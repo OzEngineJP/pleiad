@@ -883,6 +883,8 @@ const SUITES = [
   './unit/dom-patch-browser.mjs',
   // サーバー通し: Claude のアカウント別モデル一覧・Mythos・委譲・bot・アカウント切替/入替（ADR 0329）
   './unit/server-claude-account-models.mjs',
+  // サーバー通し: 設定 › 外部 MCP のコネクターの一覧を既定の Claude アカウントで読む（ADR 0340 段 2。オフは main と同じ・オンは会話と同じ組み立て・止める条件ではログイン中へ戻らない）
+  './unit/server-claude-connectors-list.mjs',
   // Claude Agent SDK を配布物に入れず npm から取る（ADR 0208）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意
   './unit/claude-sdk-pin.mjs',
   './unit/claude-sdk.mjs',

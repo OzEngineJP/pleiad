@@ -5,7 +5,12 @@
 //      更新は CLI に任せる（期限が近いときだけ 1 回）・止めた理由に秘密が出ない・process.env を変えない
 //   4. 起動の記録（オン）: オフの記録との差が「認証に要る 3 つの環境変数」だけ（argv・cwd・ほかの env・SDK の options・保持役への変換は同じ）。互換接続は同じ
 //   5. オフ・未設定・別アカウント・壊れた設定: 認証側のどの関数（持ち主の確認・版・資格情報の読み取り・更新・設定の反映・印付け・時計・待ち）も 0 回・ファイルの作成 0・タイマー 0
-//   6. 使用量の読み取りの排他（印を付けたフォルダだけ）・server の配線
+//   6. 使用量の読み取りの排他（印を付けたフォルダだけ・印の前から走っていた読み取りも待つ・オフで印を外す）・server の配線（入口の設定と印・更新の口）
+//   7. 設定 › 外部 MCP のコネクターの一覧（connectorListProbe）: オンは会話と同じ組み立て・止める条件はログイン中へ戻らない・オフは今までの呼び方
+//   8. 付け直し（adoptTurn）も認証を通る・一覧の覚えは入口オンのキーも一緒に消える
+//   9. 作業場所のキー（CLI 2.1.322 の作り方: worktree は本体・Windows は / ・ドライブ文字はそのまま）
+//  10. 設定の反映の書き方（足す物が無ければ書かない・壊れた反映先で止める・直前の別の書き込みを残す・付け替えの一時的な失敗の繰り返し・状態が同じなら読まない）
+//  11. 共有の settings.json の別の認証（env・apiKeyHelper・読めない・壊れている）で止める
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -15,9 +20,10 @@ import { recordAll, ACCOUNT_ID, FAKE } from '../lib/claude-launch-record.mjs';
 import { createClaudeConnectorsGate, CONNECTORS_FILE, identitySuffix } from '../../core/claude-connectors.mjs';
 import {
   createClaudeConnectorsAuth, readAccessCredentials, projectProfile, ConnectorsAuthError, VERIFIED_VERSIONS, IDENTITY, EXPIRY_MARGIN_MS, READ_ATTEMPTS,
+  projectKeyOf, settingsOverrides, PROFILE_IO, connectorListProbe, createClaudeConnectorsWiring,
 } from '../../core/claude-connectors-auth.mjs';
-import { withUsageLock } from '../../core/backends/claude-usage.mjs';
-import { accountScopeKeyForTest } from '../../core/backends/claude.mjs';
+import { withUsageLock, createUsageReadsForTest } from '../../core/backends/claude-usage.mjs';
+import { backend as claudeBackend, accountScopeKeyForTest, catalogStateKeysForTest } from '../../core/backends/claude.mjs';
 
 export const name = 'claude-connectors-auth';
 export const title = 'Claude コネクターの認証（段 2）: アクセス用トークンだけを使う・設定の反映・止める条件・オンの差分は 3 つの環境変数だけ・オフは何も呼ばない';
@@ -201,8 +207,8 @@ export default async function (t) {
       for (const [kind, label, setup, over, readsCred] of stops) {
         reset(); await fs.writeFile(credFile, credsJson());
         await setup();
-        let reads = 0;
-        const error = await make({ ...over, readFile: async (...a) => { reads++; return fs.readFile(...a); }, sleep: async () => {} })(account).then(() => null, e => e);
+        let reads = 0;   // 資格情報の読み取りだけを数える（共有の settings.json の確かめは版・持ち主より前に読む）
+        const error = await make({ ...over, readFile: async (...a) => { if (String(a[0]).endsWith('.credentials.json')) reads++; return fs.readFile(...a); }, sleep: async () => {} })(account).then(() => null, e => e);
         t.ok(`止める: ${kind}（${label}）→ ConnectorsAuthError(connectors-${kind})・会話用トークンへ戻さない・refresh/反映は呼ばない${readsCred ? '' : '・資格情報を読まない'}・メッセージに秘密なし`,
           error instanceof ConnectorsAuthError && error.code === `connectors-${kind}` && error.message.length > 10 && !error.message.includes('{{') && leaked(error.message).length === 0
           && calls.refresh === 0 && calls.project === 0 && (readsCred || reads === 0), `${error?.code} ${error?.message?.slice(0, 80)} reads=${reads} ${JSON.stringify(calls)}`);
@@ -216,6 +222,13 @@ export default async function (t) {
       const near = (await make()(account)).account;
       const renewed = await near.connectors.fresh({ cwd: tmp });
       t.ok('更新: 期限が近ければ起動の前に refresh（CLI に更新させる）を 1 回流し、読み直した新しいアクセス用トークンを渡す', calls.refresh === 1 && renewed.token === ACCESS2 && near.token === ACCESS, JSON.stringify({ calls, same: renewed.token === ACCESS2 }));
+      // 余裕は 60 分（定数の値ではなく残りの時間で確かめる。保持している子プロセスは起動のときのトークンのまま走るため）
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 30 * 60_000 })); refreshWrites = credsJson({ token: ACCESS2, expiresAt: T0 + 8 * 3600_000 });
+      const halfHour = await (await make()(account)).account.connectors.fresh({ cwd: tmp });
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 61 * 60_000 }));
+      const hourLeft = await (await make()(account)).account.connectors.fresh({ cwd: tmp });
+      t.ok('更新（項目 3）: 余裕は 60 分 — 残り 30 分なら起動の前に CLI に更新させ、残り 61 分なら更新しない',
+        EXPIRY_MARGIN_MS === 60 * 60_000 && halfHour.token === ACCESS2 && hourLeft.token === ACCESS && calls.refresh === 0, JSON.stringify({ half: halfHour.token === ACCESS2, hour: hourLeft.token === ACCESS, calls }));
       reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + EXPIRY_MARGIN_MS - 1000 }));
       const stale = (await make()(account)).account;
       const staleError = await stale.connectors.fresh({ cwd: tmp }).then(() => null, e => e);
@@ -294,13 +307,12 @@ export default async function (t) {
             const sd = diffKeys(a.sdk[i].env ?? {}, b.sdk[i].env ?? {});
             if (sd.some(k => !ALLOWED.includes(k))) problems.push(`${label} ${route}: SDK の env の想定外の差 ${sd.filter(k => !ALLOWED.includes(k)).join(',')}`);
           }
-          if (route !== 'connectorList') {
-            const env = b.proc.env;
-            const shared = label.startsWith('configDir') ? 'FAKE_CONFIG_DIR' : '<tmp>/data/home/.claude';
-            if (env.CLAUDE_CODE_OAUTH_TOKEN !== ACCESS || env.CLAUDE_CODE_OAUTH_SCOPES !== SCOPES.join(' ') || env.CLAUDE_CONFIG_DIR !== shared) {
-              problems.push(`${label} ${route}: 認証の値が想定と違う（token=${env.CLAUDE_CODE_OAUTH_TOKEN === ACCESS ? 'access' : env.CLAUDE_CODE_OAUTH_TOKEN === FAKE.registered ? 'registered' : '?'} config=${env.CLAUDE_CONFIG_DIR}）`);
-            }
-          } else if (b.proc.env.CLAUDE_CODE_OAUTH_TOKEN !== ACCESS) problems.push(`${label} ${route}: 一覧の取得が会話用トークンのまま`);
+          // コネクターの一覧（connectorList）も会話と同じ組み立て（connectors.fresh()）で 3 つを渡す
+          const env = b.proc.env;
+          const shared = label.startsWith('configDir') ? 'FAKE_CONFIG_DIR' : '<tmp>/data/home/.claude';
+          if (env.CLAUDE_CODE_OAUTH_TOKEN !== ACCESS || env.CLAUDE_CODE_OAUTH_SCOPES !== SCOPES.join(' ') || env.CLAUDE_CONFIG_DIR !== shared) {
+            problems.push(`${label} ${route}: 認証の値が想定と違う（token=${env.CLAUDE_CODE_OAUTH_TOKEN === ACCESS ? 'access' : env.CLAUDE_CODE_OAUTH_TOKEN === FAKE.registered ? 'registered' : '?'} config=${env.CLAUDE_CONFIG_DIR}）`);
+          }
           const rest = JSON.stringify(stripEnv(a.proc, ALLOWED).env) === JSON.stringify(stripEnv(b.proc, ALLOWED).env);
           if (!rest) problems.push(`${label} ${route}: 3 つ以外の env が違う`);
         }
@@ -311,8 +323,8 @@ export default async function (t) {
       t.ok('オンの記録に会話用に登録したトークンは残らない（アクセス用に置き換わる）。更新用トークン・メール・組織は env にも argv にも出ない',
         !JSON.stringify(Object.fromEntries(Object.entries(on).filter(([l]) => !l.endsWith('/compat')).map(([l, r]) => [l, { ...r, usage: null, heldSpawn: null }]))).includes(FAKE.registered)
         && leaked(everything.replaceAll(FAKE.registered, '').replaceAll(ACCESS, '')).length === 0, leaked(everything.replaceAll(FAKE.registered, '').replaceAll(ACCESS, '')).join(','));
-      t.ok('オン: 更新（refresh）は期限が十分なので流れない・設定の反映は起動のたびに 1 回ずつ（会話・内部の会話・題・一覧 の 4 経路 × 組み合わせ）',
-        !log.includes('refresh') && log.filter(l => l === 'project').length === 5 * 4, JSON.stringify([...new Set(log)]) + ' x' + log.length);
+      t.ok('オン: 更新（refresh）は期限が十分なので流れない・設定の反映は起動のたびに 1 回ずつ（会話・内部の会話・題・モデルの一覧・コネクターの一覧 の 5 経路 × 組み合わせ）',
+        !log.includes('refresh') && log.filter(l => l === 'project').length === 5 * 5, JSON.stringify([...new Set(log)]) + ' x' + log.length);
     }
 
     // ---------------------------------------------------------------- 4b. 起動の直前に認証が使えなくなったら、起動しない（会話用に登録したトークンへ戻らない）
@@ -397,15 +409,387 @@ export default async function (t) {
       t.ok('排他: 同じ設定フォルダは順に（前が終わってから次を始める）・失敗しても次は流れる・別のフォルダは待たない',
         seq.indexOf('end a1') < seq.indexOf('start a2') && seq.indexOf('end a2') < seq.indexOf('start a3') && seq.indexOf('end b1') < seq.indexOf('end a1')
         && results[0].value === 'a1' && results[1].status === 'rejected' && results[2].value === 'a3' && results[3].value === 'b1', seq);
-      const usageSrc = await fs.readFile(path.join(REPO, 'core/backends/claude-usage.mjs'), 'utf8');
-      t.ok('排他は印を付けたフォルダだけ（readClaudeUsage は guarded に無いフォルダ・フォルダ指定なしでは今までと同じ道）',
-        /configDir && guarded\.has\(lockKey\(configDir\)\) \? withUsageLock\(/.test(usageSrc) && /readClaudeUsageNow\(\{ token, configDir \}\)\s*;?\s*\n\}/.test(usageSrc));
-      const server = await fs.readFile(path.join(REPO, 'core/server.mjs'), 'utf8');
-      t.ok('server: 認証側は 1 か所で組み立て、入口の resolveAuth に渡す。更新は使用量の読み取り（CLI）に任せ、印付けは guardUsageDir',
-        [...server.matchAll(/createClaudeConnectorsAuth\(/g)].length === 1 && /resolveAuth: createClaudeConnectorsAuth\(\{/.test(server) && /refresh: dir => readClaudeUsage\(\{ configDir: dir \}\)/.test(server) && /guard: guardUsageDir/.test(server));
+      // 偽の読み取り（label ごとに始まり・終わりを記録。ms 後に終わる）で、順番の口の動きを確かめる
+      const fakeReads = () => {
+        const log = [], live = new Set(); let overlap = false;
+        const reads = createUsageReadsForTest(options => {
+          const label = options.label;
+          log.push(`start ${label}`); live.add(label);
+          if (live.size > 1) overlap = true;
+          return new Promise(resolve => setTimeout(() => { live.delete(label); log.push(`end ${label}`); resolve(label); }, options.ms ?? 5));
+        });
+        return { reads, log, overlapped: () => overlap };
+      };
+      {
+        const { reads, log, overlapped } = fakeReads();
+        const d = path.join(tmp, 'usage-pre');
+        const pre = reads.read({ configDir: d, label: 'pre', ms: 40 });   // 印を付ける前から走っている読み取り（入口をオンにした直後の会話）
+        reads.guard(d, () => true);
+        const refreshed = reads.refresh(d);                                // 会話の前の更新（期限が近い）
+        const after = reads.read({ configDir: d, label: 'after', ms: 5 }); // 印の後の読み取り
+        await Promise.all([pre, refreshed, after]);
+        const seq = log.join(',');
+        t.ok('排他（項目 2）: 印を付ける前から走っていた読み取りが終わってから更新が始まり、印の後の読み取りは更新の後（同じ設定フォルダで CLI が重ならない）',
+          !overlapped() && seq.indexOf('end pre') < seq.indexOf('start undefined') && seq.indexOf('end undefined') < seq.indexOf('start after'), seq);
+      }
+      {
+        const { reads, log, overlapped } = fakeReads();
+        const d = path.join(tmp, 'usage-off');
+        let on = true;
+        reads.guard(d, async () => on);
+        await Promise.all([reads.read({ configDir: d, label: 'g1', ms: 20 }), reads.read({ configDir: d, label: 'g2', ms: 5 })]);
+        const guardedSeq = log.join(','); const wasOverlapped = overlapped();
+        on = false;   // 入口をオフにした
+        await reads.read({ configDir: d, label: 'off1', ms: 5 });
+        log.length = 0;
+        const a = reads.read({ configDir: d, label: 'm1', ms: 20 });
+        const startedNow = log.join(',');   // 今までの道は呼んだその場で読み始める（待たない）
+        const b = reads.read({ configDir: d, label: 'm2', ms: 5 });
+        await Promise.all([a, b]);
+        t.ok('印（項目 6）: オンの間は順に流れ、オフにすると次の読み取りで印が外れる。以後は今までと同じ道（呼んだその場で始まり・重なってよい）',
+          !wasOverlapped && guardedSeq.indexOf('end g1') < guardedSeq.indexOf('start g2') && !reads.isGuarded(d) && startedNow === 'start m1' && overlapped() && log.indexOf('start m2') < log.indexOf('end m1'),
+          `${guardedSeq} | ${startedNow} | ${log.join(',')}`);
+      }
+      {
+        // オフにした後の最初の読み取り（印を外す読み取り）も、更新が待っていなければ今までの道（印の前から走っていた読み取りを待たない）
+        const { reads, log } = fakeReads();
+        const d = path.join(tmp, 'usage-off-first');
+        const pre = reads.read({ configDir: d, label: 'pre', ms: 40 });   // 印を付ける前から走っている読み取り
+        reads.guard(d, async () => false);                                 // 印を付けた後、次の読み取りの前に入口がオフになった
+        const first = reads.read({ configDir: d, label: 'first', ms: 5 });
+        await Promise.all([pre, first]);
+        const seq = log.join(',');
+        t.ok('印（項目 6）: オフにした後の最初の読み取りも、更新が待っていなければ今までと同じ道（印の前から走っていた読み取りを待たずに始まる）',
+          !reads.isGuarded(d) && seq.indexOf('start first') >= 0 && seq.indexOf('start first') < seq.indexOf('end pre'), seq);
+      }
+      {
+        const { reads, log } = fakeReads();
+        const d = path.join(tmp, 'usage-never');
+        const a = reads.read({ configDir: d, label: 'n1', ms: 20 });
+        const sync1 = log.join(',');
+        const b = reads.read({ configDir: d, label: 'n2', ms: 5 });
+        const sync2 = log.join(',');
+        const c = reads.read({ label: 'login', ms: 5 });
+        const sync3 = log.join(',');
+        await Promise.all([a, b, c]);
+        t.ok('排他: 印を付けたことの無いフォルダ・フォルダ指定なし（ログイン中）は今までと同じ道（呼んだその場で始まり、待たずに重なる）',
+          sync1 === 'start n1' && sync2 === 'start n1,start n2' && sync3 === 'start n1,start n2,start login' && log.indexOf('start n2') < log.indexOf('end n1'), log.join(','));
+      }
+      // server の組み立て（createClaudeConnectorsWiring）: 入口の設定・認証・印・更新の口
+      {
+        const data = path.join(tmp, 'wiring'); const usageDir = path.join(data, 'claude-usage', ACCOUNT_ID);
+        await fs.mkdir(usageDir, { recursive: true });
+        await fs.writeFile(path.join(data, CONNECTORS_FILE), JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: true } } }));
+        await fs.writeFile(path.join(usageDir, '.credentials.json'), credsJson({ expiresAt: T0 + EXPIRY_MARGIN_MS - 1000 }));
+        const guards = [], refreshed = [];
+        const { gate } = createClaudeConnectorsWiring({
+          dataDir: data,
+          accounts: { usageDir: i => path.join(data, 'claude-usage', i), ownerStatus: async () => 'ok' },
+          versions: async () => ({ cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }),
+          usage: {
+            guard: (dir, active) => guards.push({ dir, active }),
+            refresh: async dir => { refreshed.push(dir); await fs.writeFile(path.join(dir, '.credentials.json'), credsJson({ token: ACCESS2, expiresAt: T0 + 8 * 3600_000 })); },
+          },
+          env: {}, home: path.join(tmp, 'wiring-home'), platform: 'linux', now: () => T0, project: async () => ({ changed: false }),
+        });
+        const account = await gate({ id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered });
+        const fresh = await account.connectors.fresh({ cwd: tmp });
+        const activeOn = await guards[0]?.active();
+        await fs.writeFile(path.join(data, CONNECTORS_FILE), JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: false } } }));
+        const activeOff = await guards[0]?.active();
+        t.ok('server の組み立て: オンのアカウントの使用量の設定フォルダに印を付け、その印は入口の設定がオンの間だけ効く（オフにすると active() が false）。期限が近いときの更新は usage.refresh（順番の口）を通る',
+          guards.length === 1 && guards[0].dir === usageDir && activeOn === true && activeOff === false && refreshed.length === 1 && refreshed[0] === usageDir && fresh.token === ACCESS2,
+          JSON.stringify({ guards: guards.length, activeOn, activeOff, refreshed: refreshed.length }));
+      }
       const authSrc = await fs.readFile(path.join(REPO, 'core/claude-connectors-auth.mjs'), 'utf8');
       t.ok('認証側は更新用トークンを取り出さない・私的な更新の口を呼ばない・ホーム直下の .claude.json へ書かない・ネットワークを使わない',
         !/refreshToken/.test(authSrc.replace(/\/\/.*$/gm, '')) && !/fetch\(|https?:\/\/|oauth\/token|createConnection|net\./.test(authSrc.replace(/\/\/.*$/gm, '')) && !/writeFile\([^)]*source/.test(authSrc));
+    }
+
+    // ---------------------------------------------------------------- 7. 設定 › 外部 MCP のコネクターの一覧（connectorListProbe・probeClaudeConnectors）
+    {
+      const calls = [];
+      const probe = async args => { calls.push(args); return ['fake-connector']; };
+      const connectors = { identity: IDENTITY, fresh: async () => ({ token: ACCESS, env: {} }) };
+      const run = (resolve, deny = []) => connectorListProbe({ defaultId: async () => ACCOUNT_ID, resolve, probe })({ deny });
+      const got = await run(async () => ({ id: ACCOUNT_ID, name: 'fake-account', token: ACCESS, connectors }), ['deny-me']);
+      t.ok('一覧（項目 1）: オンのアカウントは connectors（会話と同じ組み立て）を probe に渡す',
+        got[0] === 'fake-connector' && calls.length === 1 && calls[0].connectors === connectors && calls[0].token === ACCESS && calls[0].deny[0] === 'deny-me');
+      for (const kind of ['login', 'format', 'expired', 'owner', 'version', 'platform', 'env', 'history', 'profile']) {
+        calls.length = 0;
+        const stop = new ConnectorsAuthError(kind, { name: 'fake-account' });
+        const error = await run(async () => { throw stop; }).then(() => null, e => e);
+        if (error !== stop || calls.length) { t.ok(`一覧（項目 1）: 止める条件 ${kind} はそのまま投げ、probe を呼ばない`, false, `${error?.code} calls=${calls.length}`); break; }
+      }
+      t.ok('一覧（項目 1）: 止める条件 9 種（ConnectorsAuthError）はそのまま投げ、ログイン中のアカウントで読み直さない（probe を呼ばない）', calls.length === 0);
+      calls.length = 0;
+      await run(async () => ({ id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered }));
+      await run(async () => { throw new Error('アカウントが無い'); });
+      await run(async () => null);
+      t.ok('一覧: オフ・ほかの失敗・既定なしは今までの呼び方（{ deny, token } だけ。失敗と既定なしはログイン中 = token null）',
+        calls.length === 3 && calls.every(c => Object.keys(c).join() === 'deny,token') && calls[0].token === FAKE.registered && calls[1].token === null && calls[2].token === null, JSON.stringify(calls.map(c => Object.keys(c))));
+      // probeClaudeConnectors: オンは fresh() の値で起こし、起こした後の失敗の文面からトークンを伏せる。fresh() が投げれば CLI を起こさない
+      const savedBin = process.env.AGENT_HOST_CLAUDE_BIN;
+      const { installFakeClaude } = await import('../lib/fake-claude.mjs');
+      const installed = await installFakeClaude(path.join(tmp, 'probe-bin'));
+      const seen = [];
+      const { setClaudeSdkForTest } = await import('../../core/backends/claude.mjs');
+      const restoreSdk = setClaudeSdkForTest({ query: ({ options }) => { seen.push(options.env); throw Object.assign(new Error(`boom ${ACCESS} ${FAKE.registered}`), { code: 'E_FAKE' }); } });
+      process.env.AGENT_HOST_CLAUDE_BIN = installed.bin;
+      try {
+        const { probeClaudeConnectors } = await import('../../core/backends/claude.mjs');
+        const env3 = { CLAUDE_CONFIG_DIR: 'FAKE_SHARED', CLAUDE_CODE_OAUTH_SCOPES: SCOPES.join(' ') };
+        const e1 = await probeClaudeConnectors({ deny: [], token: FAKE.registered, connectors: { identity: IDENTITY, fresh: async () => ({ token: ACCESS, env: env3 }) } }).then(() => null, e => e);
+        t.ok('一覧の読み取り（オン）: fresh() のトークンと 2 つの env で CLI を起こし、失敗の文面にトークンを出さない（code は残す）',
+          seen.length === 1 && seen[0].CLAUDE_CODE_OAUTH_TOKEN === ACCESS && seen[0].CLAUDE_CONFIG_DIR === 'FAKE_SHARED' && seen[0].CLAUDE_CODE_OAUTH_SCOPES === SCOPES.join(' ')
+          && e1?.code === 'E_FAKE' && leaked(e1.message).length === 0 && !String(e1.stack).includes(ACCESS), `${e1?.code} seen=${seen.length}`);
+        seen.length = 0;
+        const e2 = await probeClaudeConnectors({ deny: [], token: FAKE.registered, connectors: { identity: IDENTITY, fresh: async () => { throw new ConnectorsAuthError('expired', { name: 'fake-account' }); } } }).then(() => null, e => e);
+        t.ok('一覧の読み取り（オン）: fresh() が止めれば CLI を起こさない（会話用トークンでもログイン中でも読まない）', e2?.code === 'connectors-expired' && seen.length === 0);
+      } finally {
+        restoreSdk();
+        if (savedBin === undefined) delete process.env.AGENT_HOST_CLAUDE_BIN; else process.env.AGENT_HOST_CLAUDE_BIN = savedBin;
+      }
+    }
+
+    // ---------------------------------------------------------------- 8. 付け直し（adoptTurn）と一覧の覚えの消し方
+    {
+      const saved = claudeBackend.adoptTurn;
+      const seen = [];
+      claudeBackend.adoptTurn = async args => { seen.push(args); return 'adopted'; };
+      try {
+        const freshCalls = [];
+        const env3 = { CLAUDE_CONFIG_DIR: 'FAKE_SHARED', CLAUDE_CODE_OAUTH_SCOPES: SCOPES.join(' ') };
+        const on = { id: ACCOUNT_ID, name: 'fake-account', token: ACCESS, connectors: { identity: IDENTITY, fresh: async o => { freshCalls.push(o); return { token: ACCESS2, env: env3 }; } } };
+        const args = { cwd: path.join(tmp, 'work'), card: { held: true }, source: { write() {} } };
+        const r = await claudeBackend.forAccount(on).adoptTurn(args);
+        t.ok('付け直し（項目 4）: オンのアカウントは起動の直前に fresh()（期限・設定の反映）を通り、取り直したトークンと env を渡す（解決のときのトークンではない）',
+          r === 'adopted' && freshCalls.length === 1 && freshCalls[0].cwd === args.cwd && seen.length === 1 && seen[0].oauthToken === ACCESS2
+          && JSON.stringify(seen[0].connectorsEnv) === JSON.stringify(env3) && seen[0].card === args.card && seen[0].source === args.source, JSON.stringify({ fresh: freshCalls.length, seen: seen.length }));
+        seen.length = 0;
+        const failing = { ...on, connectors: { identity: IDENTITY, fresh: async () => { throw new ConnectorsAuthError('expired', { name: 'fake-account' }); } } };
+        const e = await claudeBackend.forAccount(failing).adoptTurn(args).then(() => null, x => x);
+        t.ok('付け直し（項目 4）: fresh() が止めれば付け直さない（会話用トークン・解決のときのトークンへ戻らない）', e?.code === 'connectors-expired' && seen.length === 0);
+        seen.length = 0;
+        await claudeBackend.forAccount({ ...on, endpoint: null }).adoptTurn({ ...args, endpoint: { baseUrl: 'https://compat.example.invalid' } });
+        await claudeBackend.forAccount({ id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered }).adoptTurn(args);
+        t.ok('付け直し: 互換の接続先はコネクターの認証を足さない・オフのアカウントは今までどおり（会話用トークン、env を足さない）',
+          seen.length === 2 && freshCalls.length === 1 && !('connectorsEnv' in seen[0]) && seen[0].oauthToken === null && seen[1].oauthToken === FAKE.registered && !('connectorsEnv' in seen[1]), JSON.stringify(seen.map(s => Object.keys(s))));
+      } finally { claudeBackend.adoptTurn = saved; }
+      const near = `${ACCOUNT_ID}2`;   // 先頭が同じ別のアカウント（消さない）
+      const touched = [{ id: ACCOUNT_ID }, { id: ACCOUNT_ID, connectors: { identity: IDENTITY } }, { id: near }, { id: near, connectors: { identity: IDENTITY } }];
+      const before = catalogStateKeysForTest(touched);
+      claudeBackend.invalidateModels(ACCOUNT_ID);
+      const after = catalogStateKeysForTest();
+      t.ok('一覧の覚え（項目 5）: アカウントを消す・入れ替えると、オフのキーと入口オンのキー（:cn:b1）の両方を消す。先頭が同じ別のアカウントは残す',
+        [`account:${ACCOUNT_ID}`, `account:${ACCOUNT_ID}:cn:b1`].every(k => before.includes(k) && !after.includes(k)) && [`account:${near}`, `account:${near}:cn:b1`].every(k => after.includes(k)), after.join(','));
+      claudeBackend.invalidateModels(near);
+    }
+
+    // ---------------------------------------------------------------- 9. 作業場所のキー（CLI 2.1.322 の作り方）
+    {
+      // 偽のファイル操作（win32 は大文字小文字を区別せずに引く。realpath は渡された形のまま。CLI が使う JS の realpath と同じく大文字小文字を直さない）
+      const fakeIo = (entries, platform) => {
+        const P = platform === 'win32' ? path.win32 : path.posix;
+        const norm = p => { const r = P.resolve(p); return platform === 'win32' ? r.toLowerCase() : r; };
+        const table = new Map(Object.entries(entries).map(([k, v]) => [norm(k), v]));
+        const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        const get = p => { const v = table.get(norm(p)); if (v === undefined) throw enoent(); return v; };
+        const st = v => ({ isDirectory: () => v === 'dir', isFile: () => v !== 'dir', isSymbolicLink: () => false });
+        return { realpath: async p => P.resolve(p), lstat: async p => st(get(p)), stat: async p => st(get(p)), readFile: async p => { const v = get(p); if (v === 'dir') throw enoent(); return v; } };
+      };
+      const winTree = {
+        'C:\\Code\\main\\.git': 'dir', 'C:\\Code\\main\\.git\\worktrees\\wt': 'dir',
+        'C:\\Code\\main\\.git\\worktrees\\wt\\commondir': '../..\n', 'C:\\Code\\main\\.git\\worktrees\\wt\\gitdir': 'C:/Code/wt/.git\n',
+        'C:\\Code\\wt\\.git': 'gitdir: C:/Code/main/.git/worktrees/wt\n', 'd:\\Repo\\.git': 'dir',
+      };
+      const win = cwd => projectKeyOf(cwd, { platform: 'win32', io: fakeIo(winTree, 'win32') });
+      const winKeys = { main: await win('C:\\Code\\main\\pkg\\src'), wt: await win('C:\\Code\\wt\\src'), lower: await win('d:\\Repo\\pkg'), slash: await win('D:/Repo/pkg'), none: await win('E:\\nowhere\\x') };
+      t.ok('作業場所のキー（Windows）: Git のルート・worktree は本体の作業ツリー・\\ は / に・ドライブ文字の大文字小文字はそのまま・Git の外は作業場所そのもの',
+        winKeys.main === 'C:/Code/main' && winKeys.wt === 'C:/Code/main' && winKeys.lower === 'd:/Repo' && winKeys.slash === 'D:/Repo' && winKeys.none === 'E:/nowhere/x', JSON.stringify(winKeys));
+      const broken = { ...winTree, 'C:\\Code\\main\\.git\\worktrees\\wt\\gitdir': 'C:/Elsewhere/.git\n' };
+      const noCommon = Object.fromEntries(Object.entries(winTree).filter(([k]) => !k.endsWith('commondir')));
+      t.ok('作業場所のキー（Windows）: worktree の確かめが一つでも合わなければ（戻りの指す先が違う・commondir が無い）worktree の場所のまま',
+        await projectKeyOf('C:\\Code\\wt\\src', { platform: 'win32', io: fakeIo(broken, 'win32') }) === 'C:/Code/wt'
+        && await projectKeyOf('C:\\Code\\wt\\src', { platform: 'win32', io: fakeIo(noCommon, 'win32') }) === 'C:/Code/wt');
+      const posixTree = { '/home/u/main/.git': 'dir', '/home/u/main/.git/worktrees/wt': 'dir', '/home/u/main/.git/worktrees/wt/commondir': '../..\n',
+        '/home/u/main/.git/worktrees/wt/gitdir': '/home/u/wt/.git\n', '/home/u/wt/.git': 'gitdir: /home/u/main/.git/worktrees/wt\n' };
+      const px = cwd => projectKeyOf(cwd, { platform: 'linux', io: fakeIo(posixTree, 'linux') });
+      t.ok('作業場所のキー（Linux）: Git のルート・worktree は本体', await px('/home/u/main/a/b') === '/home/u/main' && await px('/home/u/wt/x') === '/home/u/main' && await px('/srv/none') === '/srv/none');
+      // 本物のファイルで（git が作る形の worktree）。設定の反映も本体のキーへ足す
+      const base = path.join(tmp, 'keys'); const main = path.join(base, 'main'); const wt = path.join(base, 'wt');
+      const fwd = p => p.replaceAll('\\', '/');
+      await fs.mkdir(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true }); await fs.mkdir(path.join(wt, 'src', 'deep'), { recursive: true });
+      await fs.writeFile(path.join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..\n');
+      await fs.writeFile(path.join(main, '.git', 'worktrees', 'wt', 'gitdir'), `${fwd(path.join(wt, '.git'))}\n`);
+      await fs.writeFile(path.join(wt, '.git'), `gitdir: ${fwd(path.join(main, '.git', 'worktrees', 'wt'))}\n`);
+      const want = process.platform === 'win32' ? fwd(main) : main;
+      const realKey = await projectKeyOf(path.join(wt, 'src', 'deep'));
+      const home = path.join(tmp, 'keys-home'); await fs.mkdir(home, { recursive: true });
+      const source = path.join(home, 'source.json'), target = path.join(home, 'target.json');
+      await fs.writeFile(source, JSON.stringify({ projects: { [want]: { hasTrustDialogAccepted: true, allowedTools: ['Bash(ls)'] }, [fwd(wt)]: { allowedTools: ['wrong'] } } }));
+      await projectProfile({ source, target, cwd: path.join(wt, 'src'), memo: new Map(), sources: new Map() });
+      const out = await readJson(target);
+      t.ok('作業場所のキー（本物のファイル）: worktree の中の作業場所は本体の作業ツリーのキーになり、設定の反映もそのキーへ足す',
+        realKey === want && Object.keys(out.projects).join() === want && out.projects[want].allowedTools[0] === 'Bash(ls)', `${realKey === want} ${Object.keys(out.projects ?? {}).length}`);
+      if (process.platform === 'win32') {
+        const lowered = main.replace(/^[A-Z]:/, d => d.toLowerCase());
+        t.ok('作業場所のキー（本物の Windows）: 小文字のドライブ文字で開いた作業場所は小文字のまま（CLI の JS の realpath と同じ）', await projectKeyOf(path.join(lowered, 'x')) === fwd(lowered));
+      }
+    }
+
+    // ---------------------------------------------------------------- 10. 設定の反映の書き方
+    {
+      const home = path.join(tmp, 'pw'); await fs.mkdir(home, { recursive: true });
+      const source = path.join(home, 'source.json');
+      await fs.writeFile(source, JSON.stringify({ mcpServers: { alpha: { command: 'alpha' }, beta: { command: 'beta' } } }));
+      const counting = (hooks = {}) => {
+        const counts = { readFile: 0, writeFile: 0, rename: 0 };
+        const io = { ...PROFILE_IO };
+        for (const k of Object.keys(counts)) io[k] = async (...a) => { counts[k]++; return hooks[k] ? hooks[k](PROFILE_IO[k], ...a) : PROFILE_IO[k](...a); };
+        return { io, counts };
+      };
+      const quick = { sleep: async () => {}, memo: new Map(), sources: new Map() };
+      const leftovers = async () => (await fs.readdir(home)).filter(n => n.endsWith('.tmp') || n.endsWith('.lock'));
+      // 足す物が無ければ書かない
+      const full = path.join(home, 'full.json');
+      await fs.writeFile(full, JSON.stringify({ mcpServers: { alpha: { command: 'mine' }, beta: { command: 'beta' } }, numStartups: 3 }));
+      const fullSha = await sha(full);
+      const c1 = counting();
+      const r1 = await projectProfile({ source, target: full, io: c1.io, ...quick });
+      t.ok('反映の書き方（項目 7）: 足す物が無ければ書かない（一時ファイル・付け替え・印のどれも作らない）',
+        r1.changed === false && c1.counts.writeFile === 0 && c1.counts.rename === 0 && await sha(full) === fullSha && (await leftovers()).length === 0, JSON.stringify(c1.counts));
+      // 壊れた・オブジェクトでない反映先は上書きしない
+      for (const [label, body] of [['壊れた JSON', '{ "mcpServers": '], ['配列', '[1, 2]'], ['文字列', '"text"'], ['null', 'null']]) {
+        const target = path.join(home, `bad-${label.length}.json`);
+        await fs.writeFile(target, body);
+        const c = counting();
+        const error = await projectProfile({ source, target, io: c.io, ...quick, memo: new Map() }).then(() => null, e => e);
+        if (!(error instanceof Error) || await fs.readFile(target, 'utf8') !== body || c.counts.writeFile !== 0) {
+          t.ok(`反映の書き方（項目 7）: 反映先が ${label} なら投げ、書かない`, false, `${error} writes=${c.counts.writeFile}`); break;
+        }
+      }
+      t.ok('反映の書き方（項目 7）: 反映先が壊れた JSON・配列・文字列・null なら投げ（入口は profile で止める）、{} で上書きしない', (await leftovers()).length === 0);
+      // 付け替えの直前に別の書き手（印を取らない）が書いた → 読み直してやり直し、その書き込みを残したうえで足す
+      const raced = path.join(home, 'raced.json');
+      await fs.writeFile(raced, JSON.stringify({ mcpServers: { alpha: { command: 'mine' } } }));
+      let raceOnce = true;
+      const c2 = counting({ writeFile: async (real, file, ...rest) => {
+        const r = await real(file, ...rest);
+        if (raceOnce && String(file).endsWith('.tmp')) { raceOnce = false; await fs.writeFile(raced, JSON.stringify({ mcpServers: { alpha: { command: 'mine' }, other: { command: 'cli-wrote' } }, numStartups: 7 })); }
+        return r;
+      } });
+      const r2 = await projectProfile({ source, target: raced, io: c2.io, ...quick, memo: new Map() });
+      const racedOut = await readJson(raced);
+      t.ok('反映の書き方（項目 7）: 付け替えの直前に別の書き込みがあれば読み直してやり直し、その書き込み（別の項目・別のサーバー）を残して足りない分だけ足す',
+        r2.changed === true && racedOut.numStartups === 7 && racedOut.mcpServers.other?.command === 'cli-wrote' && racedOut.mcpServers.alpha.command === 'mine' && racedOut.mcpServers.beta?.command === 'beta'
+        && c2.counts.writeFile === 2 && c2.counts.rename === 1 && (await leftovers()).length === 0, JSON.stringify({ counts: c2.counts, keys: Object.keys(racedOut) }));
+      // Windows の付け替えの一時的な失敗（EPERM・EBUSY）は少し待って繰り返す
+      const busy = path.join(home, 'busy.json');
+      await fs.writeFile(busy, '{}');
+      let fails = ['EPERM', 'EBUSY'];
+      const c3 = counting({ rename: async (real, ...a) => { const code = fails.shift(); if (code) throw Object.assign(new Error(code), { code }); return real(...a); } });
+      const r3 = await projectProfile({ source, target: busy, io: c3.io, ...quick, memo: new Map() });
+      t.ok('反映の書き方（項目 7）: 付け替えが EPERM・EBUSY で断られたら繰り返し、通れば足した内容になる（一時ファイルを残さない）',
+        r3.changed === true && c3.counts.rename === 3 && (await readJson(busy)).mcpServers.beta.command === 'beta' && (await leftovers()).length === 0, JSON.stringify(c3.counts));
+      const stuck = path.join(home, 'stuck.json');
+      await fs.writeFile(stuck, '{}');
+      const c4 = counting({ rename: async () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); } });
+      const e4 = await projectProfile({ source, target: stuck, io: c4.io, ...quick, memo: new Map() }).then(() => null, e => e);
+      t.ok('反映の書き方: ずっと断られれば投げ（入口は profile で止める）、反映先は変えず一時ファイルも残さない',
+        e4 instanceof Error && await fs.readFile(stuck, 'utf8') === '{}' && (await leftovers()).length === 0 && c4.counts.rename > 1, `${e4} renames=${c4.counts.rename}`);
+      // 書いた後に読み直して確かめる（付け替えの直後に別の書き手が古い内容で上書きした → やり直す）
+      const clobbered = path.join(home, 'clobbered.json');
+      await fs.writeFile(clobbered, '{"numStartups":1}');
+      let clobberOnce = true;
+      const c5 = counting({ rename: async (real, ...a) => { const r = await real(...a); if (clobberOnce) { clobberOnce = false; await fs.writeFile(clobbered, '{"numStartups":2}'); } return r; } });
+      const r5 = await projectProfile({ source, target: clobbered, io: c5.io, ...quick, memo: new Map() });
+      const clobOut = await readJson(clobbered);
+      t.ok('反映の書き方（項目 7）: 書いた後に読み直し、足した項目が無ければ（直後に上書きされた）やり直す',
+        r5.changed === true && c5.counts.rename === 2 && clobOut.numStartups === 2 && clobOut.mcpServers?.beta?.command === 'beta', JSON.stringify({ counts: c5.counts, keys: Object.keys(clobOut) }));
+      // CLI と同じ印（<反映先>.lock）が新しければ待ち、外れてから書く
+      const locked = path.join(home, 'locked.json');
+      await fs.writeFile(locked, '{}');
+      await fs.mkdir(`${locked}.lock`);
+      setTimeout(() => { fs.rmdir(`${locked}.lock`).catch(() => {}); }, 150);
+      const startedAt = Date.now();
+      const r6 = await projectProfile({ source, target: locked, memo: new Map(), sources: new Map() });
+      t.ok('反映の書き方: CLI の設定の保存と同じ印（.lock）が付いている間は待ち、外れてから書く（印は残さない）',
+        r6.changed === true && Date.now() - startedAt >= 100 && (await readJson(locked)).mcpServers.beta.command === 'beta' && (await leftovers()).length === 0, `${Date.now() - startedAt}ms`);
+      // 状態（mtime・大きさ）が同じなら読まない。変われば読み直して足す
+      const memoTarget = path.join(home, 'memo.json');
+      await fs.writeFile(memoTarget, '{}');
+      const memo = new Map(), sources = new Map();
+      await projectProfile({ source, target: memoTarget, memo, sources });
+      const c7 = counting();
+      const r7 = await projectProfile({ source, target: memoTarget, io: c7.io, memo, sources });
+      await fs.writeFile(memoTarget, '{"numStartups":9}');   // 別の書き手が足した分を消した
+      const c8 = counting();
+      const r8 = await projectProfile({ source, target: memoTarget, io: c8.io, memo, sources });
+      t.ok('反映の書き方（項目 7）: 前に確かめた状態（両方の mtime・大きさ）と同じならファイルを読まない。反映先が変われば読み直して足す',
+        r7.changed === false && c7.counts.readFile === 0 && c7.counts.writeFile === 0 && r8.changed === true && c8.counts.readFile > 0 && (await readJson(memoTarget)).numStartups === 9,
+        JSON.stringify({ second: c7.counts, third: c8.counts }));
+    }
+
+    // ---------------------------------------------------------------- 11. 共有の settings.json の別の認証で止める
+    {
+      const dir = path.join(tmp, 'settings'); await fs.mkdir(dir, { recursive: true });
+      const file = path.join(dir, 'settings.json');
+      const SETTING_SECRET = 'fake-settings-secret-SSSSSSSSSSSS-0009';
+      const cases = [
+        ['無い', null, { auth: [], history: [] }],
+        ['空', '', { auth: [], history: [] }],
+        ['関係の無い env', JSON.stringify({ env: { FOO: 'bar' }, model: 'opus' }), { auth: [], history: [] }],
+        ['空の値', JSON.stringify({ env: { ANTHROPIC_API_KEY: '' } }), { auth: [], history: [] }],
+        ['ANTHROPIC_API_KEY', JSON.stringify({ env: { ANTHROPIC_API_KEY: SETTING_SECRET } }), { auth: ['ANTHROPIC_API_KEY'], history: [] }],
+        ['小文字の anthropic_auth_token', JSON.stringify({ env: { anthropic_auth_token: SETTING_SECRET } }), { auth: ['ANTHROPIC_AUTH_TOKEN'], history: [] }],
+        ['CLAUDE_CODE_OAUTH_TOKEN（渡す値を上書きする）', JSON.stringify({ env: { CLAUDE_CODE_OAUTH_TOKEN: SETTING_SECRET } }), { auth: ['CLAUDE_CODE_OAUTH_TOKEN'], history: [] }],
+        ['CLAUDE_CODE_USE_BEDROCK', JSON.stringify({ env: { CLAUDE_CODE_USE_BEDROCK: 1 } }), { auth: ['CLAUDE_CODE_USE_BEDROCK'], history: [] }],
+        ['apiKeyHelper', JSON.stringify({ apiKeyHelper: `echo ${SETTING_SECRET}` }), { auth: ['apiKeyHelper'], history: [] }],
+        ['CLAUDE_CODE_PROJECT_DIR_NAME', JSON.stringify({ env: { CLAUDE_CODE_PROJECT_DIR_NAME: 'x' } }), { auth: [], history: ['CLAUDE_CODE_PROJECT_DIR_NAME'] }],
+        ['壊れた JSON', '{ "env": ', null],
+        ['配列', '[]', null],
+        ['env が配列', JSON.stringify({ env: ['ANTHROPIC_API_KEY'] }), null],
+        ['env が文字列', JSON.stringify({ env: 'ANTHROPIC_API_KEY=x' }), null],
+        ['コメント入り（JSONC）', '{ // c\n "env": {} }', null],
+      ];
+      const bad = [];
+      for (const [label, body, want] of cases) {
+        if (body === null) await fs.rm(file, { force: true }); else await fs.writeFile(file, body);
+        const got = await settingsOverrides(dir);
+        if (JSON.stringify(got) !== JSON.stringify(want)) bad.push(`${label}: ${JSON.stringify(got)}`);
+      }
+      const denied = await settingsOverrides(dir, { readFile: async () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } });
+      t.ok('settings.json の確かめ（項目 8）: env の認証・接続先・渡す 3 つの名前（大文字小文字を問わない）と apiKeyHelper を名前だけ返す。読めない・壊れている・形が違う（JSONC を含む）は null（止める側）',
+        bad.length === 0 && denied === null, bad.slice(0, 3).join(' | '));
+      // 入口: 解決のときと起動の直前（fresh）の両方で止める。メッセージに値を出さない
+      const home = path.join(tmp, 'settings-home'); const shared = path.join(home, '.claude');
+      const usageRoot = path.join(tmp, 'settings-usage'); await fs.mkdir(path.join(usageRoot, ACCOUNT_ID), { recursive: true });
+      await fs.writeFile(path.join(usageRoot, ACCOUNT_ID, '.credentials.json'), credsJson());
+      await fs.mkdir(shared, { recursive: true });
+      const sfile = path.join(shared, 'settings.json');
+      let versionsCalled = 0;
+      const make = () => createClaudeConnectorsAuth({
+        accounts: { usageDir: i => path.join(usageRoot, i), ownerStatus: async () => 'ok' },
+        versions: async () => { versionsCalled++; return { cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }; },
+        refresh: async () => {}, project: async () => ({ changed: false }), env: {}, home, platform: 'linux', now: () => T0, sleep: async () => {},
+      });
+      const account = { id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered };
+      const stopsAt = [];
+      for (const [label, body, code] of [['env の ANTHROPIC_API_KEY', JSON.stringify({ env: { ANTHROPIC_API_KEY: SETTING_SECRET } }), 'connectors-env'],
+        ['apiKeyHelper', JSON.stringify({ apiKeyHelper: `echo ${SETTING_SECRET}` }), 'connectors-env'],
+        ['壊れている', `{ "apiKeyHelper": "${SETTING_SECRET}`, 'connectors-env'],
+        ['履歴の置き場', JSON.stringify({ env: { CLAUDE_CODE_PROJECT_DIR_NAME: SETTING_SECRET } }), 'connectors-history']]) {
+        await fs.writeFile(sfile, body); versionsCalled = 0;
+        const e = await make()(account).then(() => null, x => x);
+        if (e?.code !== code || e.message.includes(SETTING_SECRET) || leaked(e.message).length || versionsCalled) stopsAt.push(`${label}: ${e?.code} versions=${versionsCalled}`);
+      }
+      await fs.writeFile(sfile, JSON.stringify({ env: { FOO: 'bar' } }));
+      const resolved = (await make()(account)).account;
+      await fs.writeFile(sfile, JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: SETTING_SECRET } }));
+      const late = await resolved.connectors.fresh({ cwd: tmp }).then(() => null, x => x);
+      t.ok('settings.json の確かめ（項目 8）: 別の認証（env・apiKeyHelper）・読めない設定・履歴の置き場は、解決のとき（版を聞く前）にも起動の直前（fresh）にも止める。メッセージに値を出さない',
+        stopsAt.length === 0 && late?.code === 'connectors-env' && !late.message.includes(SETTING_SECRET), `${stopsAt.join(' | ')} late=${late?.code}`);
     }
   } finally {
     restoreConsole();

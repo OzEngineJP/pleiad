@@ -329,7 +329,17 @@ function onControlRequest(m) {
       return;
     }
     case 'get_context_usage': reply({ totalTokens: 1000, rawMaxTokens: 200_000, memoryFiles: [] }); return;
-    case 'mcp_status': reply({ mcpServers: [] }); return;
+    case 'mcp_status': {
+      // 試験用: コネクターの一覧を読んだときの認証の環境を 1 行ずつ書く（トークンは呼び名だけ。権限の並びと設定フォルダは偽の値。tests/unit/server-claude-connectors-list.mjs）
+      if (process.env.FAKE_CLAUDE_ENV_LOG) {
+        let labels = {};
+        try { labels = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_MODELS_FILE, 'utf8')).labels ?? {}; } catch { /* 呼び名なし */ }
+        const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
+        fs.appendFileSync(process.env.FAKE_CLAUDE_ENV_LOG, `${JSON.stringify({ who: tok ? (labels[tok] ?? 'token') : 'login',
+          scopes: process.env.CLAUDE_CODE_OAUTH_SCOPES ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null })}\n`);
+      }
+      reply({ mcpServers: [] }); return;
+    }
     case 'get_settings': reply({ applied: {} }); return;
     case 'get_task_output':
       if (!outputs.has(req.task_id)) { out({ type: 'control_response', response: { subtype: 'error', request_id: m.request_id, error: `No task found with ID: ${req.task_id}` } }); return; }

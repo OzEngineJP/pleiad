@@ -141,6 +141,8 @@ const accountScopeKey = (account) => {
 };
 /** 試験用: アカウントごとのキャッシュのキー（ADR 0340。入口がオフのキーが今までと同じ文字列であることを試験が確かめる） */
 export const accountScopeKeyForTest = (account) => accountScopeKey(account);
+/** 試験用: 一覧を覚える場所を作り（touch のアカウントごと）、今あるキーを返す（invalidateModels が入口オンのキーも消すことを試験が確かめる。ADR 0340） */
+export const catalogStateKeysForTest = (touch = []) => { for (const account of touch) stateFor(account); return [...states.keys()]; };
 function stateFor(account) {
   const key = accountScopeKey(account);
   let s = states.get(key);
@@ -156,9 +158,11 @@ function invalidateCatalog(accountId) {
     states.clear();
     return;
   }
+  // コネクターの入口がオンのときのキー（account:<id>:cn:<識別子>。identitySuffix）も一緒に消す（ADR 0340）
   const key = accountScopeKey(accountId);
-  const s = states.get(key);
-  if (s) { s.gen++; states.delete(key); }
+  for (const [k, s] of states) {
+    if (k === key || k.startsWith(`${key}:cn:`)) { s.gen++; states.delete(k); }
+  }
 }
 // 一覧が手元に入った・変わったことを知らせる口（サーバーが画面へ取り直しを促す。ADR 0329）。
 // 画面の要求が先に着いて固定の一覧を答えたあと（起動直後・アカウントの追加直後）に本物の一覧が取れても、画面からは見えないので、
@@ -244,7 +248,9 @@ export const probeClaudeCatalogForTest = (cwd, withSettings, account = null) => 
 export const CONNECTOR_PROBE_MS = 20_000;
 
 /** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0327）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
-export async function probeClaudeConnectors({ deny = [], token = null } = {}) {
+// connectors: コネクターの入口がオンのアカウント（ADR 0340 段 2）。会話と同じ組み立て（期限を確かめたトークン + 設定フォルダ・権限）で読み、取れなければ投げる
+export async function probeClaudeConnectors({ deny = [], token = null, connectors = null } = {}) {
+  const auth = connectors ? await connectors.fresh({}) : null;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), CONNECTOR_PROBE_MS);
   const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
@@ -253,13 +259,17 @@ export async function probeClaudeConnectors({ deny = [], token = null } = {}) {
     const query = sdk.query ?? (await loadClaudeSdk()).query;
     q = query({ prompt: idle(), options: {
       // token: Pleiad に登録した Claude のアカウント（無ければログイン中のアカウント）。会話と同じ環境で読む
-      pathToClaudeCodeExecutable: claudeExecutable(), env: claudeEnv(process.env, { token }), abortController: ac,
+      pathToClaudeCodeExecutable: claudeExecutable(), env: auth ? claudeEnv(process.env, { token: auth.token, extra: auth.env }) : claudeEnv(process.env, { token }), abortController: ac,
       settingSources: ["user"], settings: { disableAllHooks: true, ...(deny.length ? { deniedMcpServers: deny.map((serverName) => ({ serverName })) } : {}) },
       persistSession: false, stderr: () => {},
     } });
     await q.initializationResult();
     await new Promise((resolve) => setTimeout(resolve, CONNECTOR_WAIT_MS));
     return connectorList(await q.mcpServerStatus());
+  } catch (err) {
+    if (!auth) throw err;
+    // オンのときは、渡したトークンが混ざりうる元のエラーを渡さない（伏せた文面と code だけ）
+    throw Object.assign(new Error(redactToken(redactToken(err?.message ?? err, auth.token), token)), err?.code ? { code: err.code } : {});
   } finally {
     clearTimeout(timer);
     try { q?.close?.(); } catch { /* 既に閉じている */ }
@@ -449,6 +459,7 @@ function withConnectorsAuth(scoped, account) {
   return {
     ...scoped,
     runTurn: (opts, adopt) => authed(opts, o => scoped.runTurn(o, adopt)),
+    adoptTurn: (args) => authed(args, o => scoped.adoptTurn(o)),
     internalTurn: (opts) => authed(opts, o => scoped.internalTurn(o)),
     suggestTitle: (opts) => authed(opts, o => scoped.suggestTitle(o)),
   };

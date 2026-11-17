@@ -601,8 +601,9 @@
       "owner": "Connectors cannot be used because it could not be confirmed that the conversation token and the usage authorization of Claude account \"{{name}}\" belong to the same account. Check the account list in Settings.",
       "version": "Connectors for Claude account \"{{name}}\" only work with the Claude Code versions that were verified (now: CLI {{cli}} / SDK {{sdk}}, verified: {{verified}}).",
       "platform": "Connectors for Claude account \"{{name}}\" are not available on this OS ({{platform}}) yet.",
-      "env": "Connectors for Claude account \"{{name}}\" cannot be used while other authentication or endpoint environment variables are set ({{names}}).",
-      "history": "Connectors for Claude account \"{{name}}\" cannot be used while an environment variable that moves the conversation history is set ({{names}}).",
+      "env": "Connectors for Claude account \"{{name}}\" cannot be used while another authentication or endpoint is specified ({{names}}, in the environment or the shared settings.json).",
+      "envSettings": "Connectors for Claude account \"{{name}}\" cannot be used because settings.json in the shared settings folder could not be read (it cannot be confirmed that no other authentication is specified).",
+      "history": "Connectors for Claude account \"{{name}}\" cannot be used while a setting that moves the conversation history is specified ({{names}}, in the environment or the shared settings.json).",
       "profile": "The connector settings for Claude account \"{{name}}\" could not be applied to the shared settings folder."
     }
   },
