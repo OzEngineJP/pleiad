@@ -104,6 +104,13 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       await chrome.turnOn();
       return { ok: true };
     },
+    /** 外から渡った URL を見える窓で開き直す。偽の Chrome の利用者の窓にタブを足す。opts.openVisibleFails なら開けない */
+    async openVisible(url) {
+      note({ op: 'openVisible', url });
+      if (opts.openVisibleFails || !chrome) return false;
+      chrome.browser.openUserTab(url);
+      return true;
+    },
     async raise(ref) { note({ op: 'raise', ref: ref?.id }); fg = ref?.id ?? fg; return { ok: true, method: 'direct' }; },
     async yieldForeground(ref, { to } = {}) {
       note({ op: 'yieldForeground', ref: ref?.id, to: to?.id });
@@ -251,6 +258,7 @@ export function fakeMainPort(os, { delayMs = 20, epoch = 'main-1' } = {}) {
       case 'closeAgent': return os.closeAgent(a.ref);
       case 'exportAgent': return os.exportAgent(a.ref);
       case 'adoptAgent': return os.adoptAgent(a.token, { revealed: a.revealed === true, profile: a.profile ?? null, userDataDir: a.userDataDir ?? null });
+      case 'openVisible': return os.openVisible(a.url);
       default: return os[action]();
     }
   };
