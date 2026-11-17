@@ -1,7 +1,7 @@
 // 登録した Claude アカウントのコネクターの入口（ADR 0339 段 1）: オフ・未設定の会話の起動が変更前と 1 バイトも変わらないこと。LLM も本物の CLI も呼ばない。認証は固定の偽物だけ。
 //   1. 入口の設定が 未設定 / 明示のオフ / 別のアカウントだけオン / 壊れた JSON / 知らない版 / 知らない値 のとき、全経路 × 全組み合わせの起動の記録が、
 //      main で採った fixture（tests/fixtures/claude-launch-main.<win32|linux>.json。claude-launch-main-pinned）と同じ。新しい認証の解決はどれも「呼ばれたら失敗」の差し替え
-//   2. オフ・対象外では、新しい認証の解決 0 回・設定の読み取りは入口自身の 1 回まで（対象外は 0 回）・ファイルの作成 0・タイマー 0
+//   2. オフ・対象外では、同じ account を中身も変えずに返す・新しい認証の解決 0 回・設定の読み取りは入口自身の 1 回まで（対象外は 0 回）・ファイルの作成 0・タイマー 0
 //   3. オンでも、段 1 は旧い経路のまま（認証の解決を 1 回呼び、「まだ使えない」で同じ account を返す。起動の記録も fixture と同じ）
 //   4. キャッシュのキー: オフは今までの文字列、オンの識別子があるときだけ接尾辞
 //   5. 設定の読み取りに書き込みの口が無い・画面・操作の一覧に出ていない・server の入口が 1 か所で入口を通る
@@ -20,6 +20,9 @@ export const title = 'Claude コネクターの入口: 未設定・オフ・壊�
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const OTHER = 'acct-other000001';
+// account の中身の写し（自身の項目の名前と値。記号の名前・列挙されない項目も含める）。入口が中身を触っていないかを比べる
+const accountShape = a => a && typeof a === 'object'
+  ? JSON.stringify(Reflect.ownKeys(a).map(k => [String(k), Object.getOwnPropertyDescriptor(a, k).enumerable, a[k]])) : JSON.stringify(a ?? null);
 const SETTINGS = (accounts, version = 1) => JSON.stringify({ version, accounts });
 // 入口の設定のバリエーション（text が null ならファイルを作らない）
 const VARIANTS = {
@@ -39,17 +42,23 @@ export default async function (t) {
   // 1. オフ・未設定・壊れた設定の起動が main の記録と同じ（新しい認証の解決は呼ばれたら失敗）
   for (const [variant, text] of Object.entries(VARIANTS)) {
     let authCalls = 0;
+    const changed = [];
     const got = digest(await recordAll({
       root: REPO,
       onSetup: async ({ data }) => { if (text !== null) await fs.writeFile(path.join(data, CONNECTORS_FILE), text); },
       accountFor: async (accounts, id, { data }) => {
         const { gate } = createClaudeConnectorsGate({ dataDir: data, resolveAuth: async () => { authCalls++; throw new Error('新しい認証の解決が呼ばれた'); } });
-        return gate(await accounts.resolve(id));
+        const resolved = await accounts.resolve(id);
+        const shape = accountShape(resolved);
+        const gated = await gate(resolved);
+        if (gated !== resolved || accountShape(resolved) !== shape) changed.push(id || '(指定なし)');
+        return gated;
       },
       dumpName: `off-${variant}`,
     }));
     const bad = explain(want, got);
-    t.ok(`${variant}: 全 ${labels.length} 組み合わせ × 経路の起動の記録が main と同じ・新しい認証の解決 0 回`, bad.count === 0 && authCalls === 0, `calls=${authCalls} ${bad.text}`);
+    t.ok(`${variant}: 全 ${labels.length} 組み合わせ × 経路の起動の記録が main と同じ・入口は同じ account を中身も変えずに返す・新しい認証の解決 0 回`,
+      bad.count === 0 && changed.length === 0 && authCalls === 0, `calls=${authCalls} changed=${[...new Set(changed)].join(',')} ${bad.text}`);
   }
 
   // 3. オンでも段 1 は旧い経路のまま
@@ -71,7 +80,6 @@ export default async function (t) {
   // 2. 設定の読み取り・ファイル・タイマーの回数
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-cn-off-')));
   try {
-    const account = { id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered };
     const origRead = fs.readFile, origSet = globalThis.setTimeout, origInt = globalThis.setInterval;
     for (const [variant, text] of Object.entries(VARIANTS)) {
       const data = path.join(tmp, variant);
@@ -82,19 +90,24 @@ export default async function (t) {
       fs.readFile = (p, ...rest) => { reads.push(String(p)); return origRead(p, ...rest); };
       globalThis.setTimeout = (...a) => { timers++; return origSet(...a); };
       globalThis.setInterval = (...a) => { timers++; return origInt(...a); };
-      let sameAccount, sameNull, sameLogin;
+      const account = { id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered };
+      let sameAccount, sameNull, sameLogin, untouched;
       try {
         const { gate } = createClaudeConnectorsGate({ dataDir: data, resolveAuth: async () => { auth++; return null; } });
-        const nullAccount = await gate(null), noId = await gate({ name: 'x' });
-        sameNull = nullAccount === null && noId?.name === 'x';
+        const noIdIn = { name: 'x' };
+        const shapes = [account, noIdIn].map(accountShape);
+        const nullAccount = await gate(null), noId = await gate(noIdIn);
+        sameNull = nullAccount === null && noId === noIdIn;
         const readsForUnspecified = reads.length;
         sameAccount = await gate(account);
         sameLogin = readsForUnspecified === 0;
+        // 同じ物を返すだけでなく、中身も触らない（項目を足す・消す・変えるのも、起動の記録に出ない経路で効くことがあるため）
+        untouched = JSON.stringify([account, noIdIn].map(accountShape)) === JSON.stringify(shapes);
       } finally { fs.readFile = origRead; globalThis.setTimeout = origSet; globalThis.setInterval = origInt; }
       const after = (await fs.readdir(data)).sort().join();
-      t.ok(`${variant}: 指定なし・id 無しは設定を読まない / オフの登録アカウントは入口自身の 1 回だけ読み、同じ account を返す / 認証 0 回・作成 0・タイマー 0`,
-        sameNull && sameLogin && sameAccount === account && reads.length === 1 && reads[0].endsWith(CONNECTORS_FILE) && auth === 0 && before === after && timers === 0,
-        JSON.stringify({ sameNull, sameLogin, same: sameAccount === account, reads: reads.length, auth, before, after, timers }));
+      t.ok(`${variant}: 指定なし・id 無しは設定を読まない / オフの登録アカウントは入口自身の 1 回だけ読み、同じ account を中身も変えずに返す / 認証 0 回・作成 0・タイマー 0`,
+        sameNull && sameLogin && sameAccount === account && untouched && reads.length === 1 && reads[0].endsWith(CONNECTORS_FILE) && auth === 0 && before === after && timers === 0,
+        JSON.stringify({ sameNull, sameLogin, same: sameAccount === account, untouched, reads: reads.length, auth, before, after, timers }));
     }
   } finally { await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5 }); }
 
