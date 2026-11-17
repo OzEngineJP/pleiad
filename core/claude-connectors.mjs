@@ -55,5 +55,3 @@ export function createClaudeConnectorsGate({ dataDir, resolveAuth = authNotAvail
 
 /** キャッシュのキーに足す識別子の接尾辞。オフ（識別子なし）は空で、キーは今までの文字列のまま */
 export const identitySuffix = identity => identity ? `:cn:${identity}` : '';
-/** コネクターの一覧の覚えのファイル名。識別子が無ければ base のまま */
-export const connectorListFile = (base, identity) => identity ? base.replace(/(\.json)?$/, `.cn-${identity}$1`) : base;

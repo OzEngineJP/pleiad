@@ -1,6 +1,6 @@
 // 登録した Claude アカウントのコネクターの入口（ADR 0339 段 1）: オフ・未設定の会話の起動が変更前と 1 バイトも変わらないこと。LLM も本物の CLI も呼ばない。認証は固定の偽物だけ。
 //   1. 入口の設定が 未設定 / 明示のオフ / 別のアカウントだけオン / 壊れた JSON / 知らない版 / 知らない値 のとき、全経路 × 全組み合わせの起動の記録が、
-//      main で採った fixture（tests/fixtures/claude-launch-main.json。claude-launch-main-pinned）と同じ。新しい認証の解決はどれも「呼ばれたら失敗」の差し替え
+//      main で採った fixture（tests/fixtures/claude-launch-main.<win32|linux>.json。claude-launch-main-pinned）と同じ。新しい認証の解決はどれも「呼ばれたら失敗」の差し替え
 //   2. オフ・対象外では、新しい認証の解決 0 回・設定の読み取りは入口自身の 1 回まで（対象外は 0 回）・ファイルの作成 0・タイマー 0
 //   3. オンでも、段 1 は旧い経路のまま（認証の解決を 1 回呼び、「まだ使えない」で同じ account を返す。起動の記録も fixture と同じ）
 //   4. キャッシュのキー: オフは今までの文字列、オンの識別子があるときだけ接尾辞
@@ -10,8 +10,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { recordAll, digest, scenarios, ACCOUNT_ID, FAKE } from '../lib/claude-launch-record.mjs';
-import { createClaudeConnectorsGate, createClaudeConnectorSettings, CONNECTORS_FILE, authNotAvailableYet, identitySuffix, connectorListFile } from '../../core/claude-connectors.mjs';
+import { recordAll, digest, explain, scenarios, fixtureFile, ACCOUNT_ID, FAKE } from '../lib/claude-launch-record.mjs';
+import { createClaudeConnectorsGate, createClaudeConnectorSettings, CONNECTORS_FILE, authNotAvailableYet, identitySuffix } from '../../core/claude-connectors.mjs';
 import { createClaudeAccounts } from '../../core/claude-accounts.mjs';
 import { accountScopeKeyForTest } from '../../core/backends/claude.mjs';
 
@@ -33,7 +33,7 @@ const VARIANTS = {
 };
 
 export default async function (t) {
-  const want = JSON.parse(await fs.readFile(fileURLToPath(new URL('../fixtures/claude-launch-main.json', import.meta.url)), 'utf8'));
+  const want = JSON.parse(await fs.readFile(fixtureFile(), 'utf8'));
   const labels = scenarios().map(([p, a, e]) => `${p}/${a}/${e}`);
 
   // 1. オフ・未設定・壊れた設定の起動が main の記録と同じ（新しい認証の解決は呼ばれたら失敗）
@@ -46,12 +46,10 @@ export default async function (t) {
         const { gate } = createClaudeConnectorsGate({ dataDir: data, resolveAuth: async () => { authCalls++; throw new Error('新しい認証の解決が呼ばれた'); } });
         return gate(await accounts.resolve(id));
       },
+      dumpName: `off-${variant}`,
     }));
-    const bad = [];
-    for (const label of labels) for (const route of new Set([...Object.keys(want[label]), ...Object.keys(got[label] ?? {})])) {
-      if (JSON.stringify(got[label]?.[route]) !== JSON.stringify(want[label][route])) bad.push(`${label} ${route}`);
-    }
-    t.ok(`${variant}: 全 ${labels.length} 組み合わせ × 経路の起動の記録が main と同じ・新しい認証の解決 0 回`, bad.length === 0 && authCalls === 0, `${bad.slice(0, 6).join(' | ')} calls=${authCalls}`);
+    const bad = explain(want, got);
+    t.ok(`${variant}: 全 ${labels.length} 組み合わせ × 経路の起動の記録が main と同じ・新しい認証の解決 0 回`, bad.count === 0 && authCalls === 0, `calls=${authCalls} ${bad.text}`);
   }
 
   // 3. オンでも段 1 は旧い経路のまま
@@ -66,8 +64,8 @@ export default async function (t) {
         return gate(await accounts.resolve(id));
       },
     }));
-    const bad = Object.keys(got).flatMap(label => Object.keys(got[label]).filter(r => JSON.stringify(got[label][r]) !== JSON.stringify(want[label][r])).map(r => `${label} ${r}`));
-    t.ok('オン（段 1）: 認証の解決は登録アカウントの 1 組み合わせにつき 1 回だけ呼ばれ、起動の記録は旧い経路のまま（fixture と同じ）', bad.length === 0 && authCalls === 2, `${bad.slice(0, 6).join(' | ')} calls=${authCalls}`);
+    const bad = explain(Object.fromEntries(Object.keys(got).map(label => [label, want[label]])), got);
+    t.ok('オン（段 1）: 認証の解決は登録アカウントの 1 組み合わせにつき 1 回だけ呼ばれ、起動の記録は旧い経路のまま（fixture と同じ）', bad.count === 0 && authCalls === 2, `calls=${authCalls} ${bad.text}`);
   }
 
   // 2. 設定の読み取り・ファイル・タイマーの回数
@@ -105,11 +103,10 @@ export default async function (t) {
     accountScopeKeyForTest(null) === 'login' && accountScopeKeyForTest('') === 'login' && accountScopeKeyForTest({ id: ACCOUNT_ID }) === `account:${ACCOUNT_ID}`
     && accountScopeKeyForTest(ACCOUNT_ID) === `account:${ACCOUNT_ID}` && accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: {} }) === `account:${ACCOUNT_ID}`
     && accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: '' } }) === `account:${ACCOUNT_ID}`
-    && identitySuffix('') === '' && identitySuffix(undefined) === '' && connectorListFile('/d/claude-connectors.json', '') === '/d/claude-connectors.json');
+    && identitySuffix('') === '' && identitySuffix(undefined) === '');
   t.ok('キー: オンの識別子があるときだけ接尾辞（アカウントごと・識別子ごとに別のキー）',
     accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: 'abc' } }) === `account:${ACCOUNT_ID}:cn:abc`
-    && accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: 'abc' } }) !== accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: 'def' } })
-    && connectorListFile('/d/claude-connectors.json', 'abc') === '/d/claude-connectors.cn-abc.json');
+    && accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: 'abc' } }) !== accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: 'def' } }));
 
   // 5. 書き込みの口・画面・操作の一覧に出ていない / server の入口
   const settings = createClaudeConnectorSettings({ dataDir: os.tmpdir() });
