@@ -226,10 +226,12 @@ export default async function (t) {
     t.ok('planDocRowPress(オン・allowDefault=false): 記録が無い行は変えない（まとまりで、もともとオフの子をオンにしない）',
       planDocRowPress('instruction', instOpen, offAll, true, null, { allowDefault: false }) === null);
     const inheritedRule = { off: ['claude', 'antigravity', 'opencode', 'devin'], spread: ['codex'] };
-    const pInherited = planDocRowPress('instruction', instA, offAll, true, null, { allowDefault: false, inherited: inheritedRule });
+    const pInherited = planDocRowPress('instruction', instA, offAll, true, null, { inherited: inheritedRule });
     t.ok('planDocRowPress(オン): この場所の上書きが無いときの動き（inherited）は、記録の次・出どころの初期値より先に使う',
       pInherited?.source === 'inherited' && unlockedOnList(evaluateDocCells('instruction', instA, pInherited.rule)) === 'codex',
       JSON.stringify(pInherited));
+    t.ok('planDocRowPress(オン・allowDefault=false): inherited も記録の無い行には使わない（まとまりで、もともとオフの子をオンにしない）',
+      planDocRowPress('instruction', instA, offAll, true, null, { allowDefault: false, inherited: inheritedRule }) === null);
     // 初めから鍵つきのオンだけの行（Codex の自分の物）: 戻す先が無い。ほかのエージェントへ配らない
     const instCodexOwn = { kind: 'instruction', name: 'AGENTS.md', path: path.join(home, '.codex', 'AGENTS.md'), scope: 'user',
       origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }] };

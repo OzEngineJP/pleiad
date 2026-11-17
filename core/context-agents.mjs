@@ -436,8 +436,9 @@ export function planDocRowPress(kind, entryOrSummary, currentRule, on, ctx = nul
   if (unlockedOn.length) return null;
   const restore = docRestoreRule(kind, entryOrSummary, currentRule, ctx);
   if (restore?.source === 'was') return { rule: restore.rule, source: 'was' };
-  // この場所の上書きを作る前の動き（全体の表・旧い保存）。記録（was）と同じく、利用者がそう決めていた形なので優先する
-  if (inherited && unlockedOnAgents(kind, entryOrSummary, inherited, ctx).length) {
+  // この場所の上書きを作る前の動き（全体の表・旧い保存）。記録（was）が無いときの戻し先なので、記録のある子だけを戻す場面（allowDefault が false）では使わない
+  // （使うと、まとまりを戻したときに、今回は外していない・もともとオフだった子までオンになる）
+  if (allowDefault && inherited && unlockedOnAgents(kind, entryOrSummary, inherited, ctx).length) {
     return { rule: { off: [...(inherited.off ?? [])], spread: [...(inherited.spread ?? [])] }, source: 'inherited' };
   }
   if (restore && allowDefault) return { rule: restore.rule, source: 'default' };

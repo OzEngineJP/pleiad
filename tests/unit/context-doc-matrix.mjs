@@ -418,6 +418,29 @@ export default async function (t) {
     !claudeActiveOff.includes(docItemKey(skA)) && !claudeActiveOff.includes(docItemKey(skB))
     && claudeActiveOn.includes(docItemKey(skA)) && claudeActiveOn.includes(docItemKey(skB)) && !claudeActiveOn.includes(docItemKey(skC)),
     JSON.stringify({ off: claudeActiveOff, on: claudeActiveOn }));
+  // 先に子を 1 つだけ自分の行のスイッチで外してある（その子には外す前の記録がある）。まとまりをオフ → 戻しても、その子は今回外していないのでオンにしない
+  const kidCfg = emptyDocAgentsConfig();
+  const kidPress = (keys, on) => applyDocTouch(kidCfg, { kind: 'skill', entries: grpEntries, legacyConfig: nativeRaw, matrixCwd: null, home, place: null, placeKey: null, agent: null, keys, on });
+  const kidView = () => buildDocMatrix({ kind: 'skill', entries: grpEntries, legacyConfig: nativeRaw, docAgentsConfig: kidCfg, cwd: null, home });
+  const kidBefore = Object.fromEntries(grpKeys.map((k) => [k, grpUnlockedOn(kidView().byKey.get(k))]));
+  kidPress([docItemKey(skA)], false);
+  t.ok('子の行のスイッチで外すと、その子だけに外す前の記録ができる',
+    kidCfg.defaults.skill.agents[docItemKey(skA)].was !== undefined && grpUnlockedOn(kidView().byKey.get(docItemKey(skA))) === ''
+    && kidBefore[docItemKey(skB)] !== '' && kidBefore[docItemKey(skC)] !== ''
+    && grpUnlockedOn(kidView().byKey.get(docItemKey(skB))) === kidBefore[docItemKey(skB)],
+    JSON.stringify(kidBefore));
+  kidPress(grpKeys, false);
+  t.ok('まとまりをまとめてオフにすると、今回は外していない子（先に外してあった子）の古い戻し先は消える',
+    kidCfg.defaults.skill.agents[docItemKey(skA)].was === undefined
+    && kidCfg.defaults.skill.agents[docItemKey(skB)].was !== undefined && kidCfg.defaults.skill.agents[docItemKey(skC)].was !== undefined
+    && grpKeys.every((k) => grpUnlockedOn(kidView().byKey.get(k)) === ''));
+  kidPress(grpKeys, true);
+  const kidBack = kidView();
+  t.ok('まとまりを戻す: 今回オフにした子だけが外す前へ戻り、先に外してあった子はオフのまま',
+    grpUnlockedOn(kidBack.byKey.get(docItemKey(skA))) === ''
+    && grpUnlockedOn(kidBack.byKey.get(docItemKey(skB))) === kidBefore[docItemKey(skB)]
+    && grpUnlockedOn(kidBack.byKey.get(docItemKey(skC))) === kidBefore[docItemKey(skC)],
+    JSON.stringify({ before: kidBefore, after: Object.fromEntries(grpKeys.map((k) => [k, grpUnlockedOn(kidBack.byKey.get(k))])) }));
   // 鍵つきのオン（Grok・Devin が自分で読む）が残り、鍵の無いマスが全部オフで、外す前の記録も無い子だけのまとまりは、押せない（ほかのエージェントへ配らない）
   const grpAllOff = emptyDocAgentsConfig();
   grpAllOff.defaults.skill = { agents: Object.fromEntries([skA, skB].map((s) => [docItemKey(s), { off: ['claude', 'codex', 'antigravity', 'opencode', 'devin'], spread: [] }])) };

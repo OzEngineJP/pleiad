@@ -350,6 +350,12 @@ export function applyDocTouch(cfg, { kind, entries = [], legacyConfig, matrixCwd
   if (on && !planned.some((x) => x.next)) planned = plan(true);
   for (const { p, next } of planned) {
     if (next) holder[kind].agents[p.k] = next.rule;
+    else if (!on && pressable.length > 1) {
+      // まとめて外したとき、今回は外していない名前（もともとオフだった子）の古い戻し先は残さない。
+      // 残すと、まとまりを戻したときに、その子まで「外す前の選択」としてオンになってしまう
+      const cur = holder[kind].agents[p.k];
+      if (cur && cur.was) { const { was, ...rest } = cur; holder[kind].agents[p.k] = rest; }
+    }
   }
   return cfg;
 }
