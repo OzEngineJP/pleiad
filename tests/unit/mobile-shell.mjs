@@ -47,6 +47,11 @@ export default async function (t) {
     /ResumePolicy\.decide\(saved, device\.store\.hosts\(\), freshStart, ResumePolicy\.isLauncherStart\(startIntent\?\.action, fromHistory\), store\.via\(\)\)/.test(main)
       && /putExtra\(HostActivity\.EXTRA_VIA, d\.via\)/.test(main)
       && main.indexOf('resumeLastHost(intent, freshStart = savedInstanceState == null)') < main.indexOf('super.onCreate(savedInstanceState)'));
+  // ログインの直後に一覧が空のまま（2026-11-17）: 最初のページの bridge.reset が、一覧の付けた state などの listener を後から消していた
+  t.ok('殻の最初のページでは Capacitor の bridge.reset（全プラグインの listener を消す）を飛ばす。2 回目からの読み込みは今までどおり',
+    main.indexOf('keepFirstPageListeners()') > main.indexOf('super.onCreate(savedInstanceState)')
+      && /bridge\.setWebViewClient\(object : BridgeWebViewClient\(bridge\) \{/.test(main)
+      && /if \(first\) \{\s+first = false\s+return\s+\}\s+super\.onPageStarted\(view, url, favicon\)/.test(main));
   // ランチャーの入口は透過のトランポリン（ADR 0237）: 既存のタスクのタップはそのまま前へ出し（ホストの窓を作り直さない）、
   // 新しいタスクだけ殻へ渡す。殻は singleTask のままなのでリンクの intent の届け方は変わらない
   const launcherKt = read(`${APP}/kotlin/dev/pleiad/app/LauncherActivity.kt`);
@@ -133,6 +138,26 @@ export default async function (t) {
   t.ok('新しい版のコードを読んだ: アプリを更新する', errorText(reject('unsupportedVersion')) === 'アプリを更新してください。', errorText(reject('unsupportedVersion')));
   t.ok('ほかの sub はこれまでの文言', ['notCode', 'broken', 'hostIdMismatch', 'relay-invalid'].every(d => errorText(reject(d)) === dict.ja['err.payload'])
     && errorText({ code: 'payload', message: 'payload' }) === dict.ja['err.payload']);
+
+  // ---- 一覧の読み（list()）は並んで走る: 後から始めた読みより遅れて返った古い読みで一覧を戻さない
+  const refreshSrc = read('mobile/www/app.js').match(/let listSeq = 0[\s\S]*?async function refresh\(\) \{[\s\S]*?\r?\n {2}\}/)?.[0] ?? '';
+  const calls = [];
+  const els = { hostBanner: { textContent: '', hidden: false }, empty: { textContent: '' } };
+  const ctx = {
+    Remote: { list: () => new Promise(resolve => calls.push(resolve)) }, hosts: new Map(), pstate: null,
+    $: id => els[id], t: k => k, render: () => {}, toast: () => {}, errorText: String,
+  };
+  const refresh = refreshSrc ? vm.runInNewContext(`${refreshSrc}; refresh`, ctx) : null;
+  if (refresh) {
+    const before = refresh();   // ログインが済む前に始めた読み（Plus のホストなし）
+    const after = refresh();    // ログインの後の読み（Plus のホストあり）
+    calls[1]({ hosts: [{ hostId: 'plus-host', via: 'plus' }] });
+    await after;
+    calls[0]({ hosts: [] });
+    await before;
+  }
+  t.ok('後から始めた読みが先に返ったら、遅れて返った古い読みは捨てる（ログイン後の Plus のホストが消えない）',
+    refresh != null && [...ctx.hosts.keys()].join() === 'plus-host', [...ctx.hosts.keys()].join());
 
   // ---- プライバシーポリシーへのリンク（Google Play はアプリの中にも求める。docs/android-releases.md「Google Play」）
   const page = (url) => url.match(/^https:\/\/pleiad\.dev\/(.*)$/)?.[1];
