@@ -112,7 +112,7 @@ async function japaneseCases(t, tmp) {
     const root = $('usageCards');
     assert.ok(root.shown.includes(relogin), root.shown);
     assert.ok(root.shown.includes(reauthNeeded));
-    const buttons = root.querySelectorAll('button').filter(b => b.textContent === tr('usage.redoAuth'));
+    const buttons = root.querySelectorAll('button').filter(b => b.textContent === tr('accounts.redoUsage'));
     assert.equal(buttons.length, 2, '登録した 2 つのアカウントにだけボタン');
     buttons[0].onclick();
     assert.deepEqual(logins, ['acct-aaaaaaaaaaaa']);

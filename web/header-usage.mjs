@@ -420,7 +420,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       section.append(el('p', 'usage-note', row.message || t('usage.header.unauthorized')));
       // 登録したアカウントの使用量は、アカウントごとに「使用量の表示を認可」が済んでから読める（web/usage.mjs と同じ口）
       if (row.accountId && onUsageLogin) {
-        const button = el('button', 'btn btn-quiet', row.needsUsageLogin ? t('accounts.authorizeUsage') : t('usage.redoAuth'));
+        const button = el('button', 'btn btn-quiet', row.needsUsageLogin ? t('accounts.authorizeUsage') : t('accounts.redoUsage'));
         button.type = 'button'; button.onclick = () => { close(); onUsageLogin(row.accountId); };
         section.append(button);
       }
