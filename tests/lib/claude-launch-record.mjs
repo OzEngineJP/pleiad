@@ -49,7 +49,9 @@ export function scenarios() {
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 function makeNorm(tmp) {
   const slash = tmp.replace(/\\/g, '/');
-  return s => String(s).replace(/\\/g, '/').split(slash).join('<tmp>').replace(UUID, '<uuid>').replace(/claude-[0-9a-f]{8}/g, 'claude-<id>');
+  return s => String(s).replace(/\\/g, '/').split(slash).join('<tmp>').replace(UUID, '<uuid>').replace(/claude-[0-9a-f]{8}/g, 'claude-<id>')
+    // 実行時の置き場（core が読み込み時に決める。試験のプロセスによって違う）の一時ファイル
+    .replace(/[^"'\s=]*\/run\/(claude-[a-z]+-)<uuid>/g, '<run>/$1<uuid>');
 }
 function plain(v, norm, depth = 0) {
   if (v === null) return null;
@@ -81,10 +83,10 @@ async function waitFile(file, ms) {
 
 /**
  * root の core で全経路を流して記録を返す。
- *   accountFor(accounts, id)  … 会話が使うアカウントの決め方（既定: accounts.resolve。段 1 以降は入口を通す関数を渡す）
+ *   accountFor(accounts, id, { data })  … 会話が使うアカウントの決め方（既定: accounts.resolve。段 1 以降は入口を通す関数を渡す。data = 試験のデータ置き場）
  *   onSetup({ data })         … 流す前に、データ置き場へ足すものがあれば（段 1 の設定ファイルなど）
  */
-export async function recordAll({ root, accountFor = (accounts, id) => accounts.resolve(id), onSetup = null, only = null } = {}) {
+export async function recordAll({ root, accountFor = (accounts, id, ctx) => accounts.resolve(id), onSetup = null, only = null } = {}) {
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-launch-rec-')));
   const norm = makeNorm(tmp);
   const savedEnv = { ...process.env };
@@ -117,7 +119,7 @@ export async function recordAll({ root, accountFor = (accounts, id) => accounts.
       for (const k of ['PATH', 'SystemRoot', 'windir', 'ComSpec', 'PATHEXT', 'SystemDrive']) { const v = pick(k); if (v !== undefined) base[k] = v; }
       Object.assign(process.env, base, { TEMP: tmp, TMP: tmp, AGENT_HOST_DATA: data, AGENT_HOST_CLAUDE_BIN: installed.bin, AGENT_HOST_CLAUDE_HOLDER: 'off' });
       for (const [k, v] of Object.entries(PARENTS[p])) if (v !== undefined) process.env[k] = v;
-      const account = a === 'registered' ? await accountFor(accounts, ACCOUNT_ID) : await accountFor(accounts, '');
+      const account = a === 'registered' ? await accountFor(accounts, ACCOUNT_ID, { data }) : await accountFor(accounts, '', { data });
       const endpoint = ENDPOINTS[e];
       const scoped = account?.id ? claude.forAccount(account) : claude;
       const paths = {
