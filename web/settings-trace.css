@@ -1,5 +1,4 @@
-/* 作業中に設定を変えた跡の行（web/settings-trace.mjs。docs/design-system.md「作業中の設定の変更」、承認済み（2026-11-18）。
-   v5 のモック temporary/mockups/composer-picker-compact-v5-*-nowlive.png・sendagent.png）。
+/* 作業中に設定を変えた跡の行（web/settings-trace.mjs。docs/design-system.md「作業中の設定の変更」、承認済み（2026-11-18））。
    会話の中の静かな 1 行: 小さい弱い文字、値だけ太字、右に時刻。エージェントの切り替えは開ける（引き継ぐもの・引き継がないもの・変わるもの）。
    色は文字（ink）のトークンだけ。枠線は使わない */
 
