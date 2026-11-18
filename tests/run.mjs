@@ -528,6 +528,7 @@ const SUITES = [
   // 登録アカウントのコネクターの入口（段 1。ADR 0340）: オフ・未設定・壊れた設定の起動が main の記録と同じ
   './unit/claude-connectors-off.mjs',
   './unit/context-scan.mjs',
+  './unit/context-claude-json-size.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   './unit/context-settings.mjs',
   // Stage 2: 指示・Skills を名前 × エージェントで管理・評価・実行時適用する（ADR 0337）
