@@ -161,6 +161,10 @@ export const DATA_WRITES = [
     { name: 'claude-accounts.json', limit: 'Claude のアカウント。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
   ] },
+  { file: 'core/claude-connectors.mjs', sites: 1, targets: [
+    { name: 'claude-account-connectors.json', limit: '登録した Claude アカウントの数（有効化フラグだけ）', reason: 'アカウントごとの claude.ai コネクター有効化設定（ADR 0340 段 3）。秘密・トークン・メールを含まない' },
+    { name: 'claude-account-connectors-cache.json', limit: 'maxAccounts=50・各 maxConnectors=200（超えたら古い順に捨てる）', reason: 'アカウントごとの claude.ai コネクター一覧と要認可状態の覚え（設定 › 外部 MCP で起動を待たず表示）。認証・メール・組織 id は sha256 の短いハッシュだけで持ち、平文を残さない' },
+  ] },
   { file: 'core/claude-connectors-auth.mjs', sites: 2, targets: [
     { name: '(置き場の外) 共有の設定フォルダ（~/.claude）の .claude.json', limit: 'CLI 自身が丸ごと書く設定のファイル。足すのは許可した項目（mcpServers・作業場所ごとの数項目）だけで、足りない分だけ。数 KB', reason: 'コネクターを使う会話の CLI に、ホームの設定の許可した項目を渡す（ADR 0340 段 2）。足す物が無ければ書かない。CLI と同じ印（<ファイル>.lock のフォルダ）を取り、印の中で読み直して足りない分だけ足し、一時ファイルに書いて名前を付け替える（途中の状態を CLI に読ませない。付け替えの直前に変わっていたらやり直し、書いた後に読み直して確かめる）。壊れている・オブジェクトでなければ書かない' },
   ] },

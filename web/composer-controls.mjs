@@ -453,21 +453,21 @@ function weekMeta(usage) {
   return m;
 }
 /** 1 段目の行。onClick が無ければ押せない行（値を見せるだけ。右端の印を出さない） */
-function navRow({ key, ic, label, value, note, meta, danger, onClick, title }) {
+function navRow({ key, ic, label, value, note, two, warn, meta, danger, onClick, title }) {
   const r = el(onClick ? "button" : "div", `prow${danger ? " danger" : ""}`);
   if (onClick) { r.type = "button"; r.onclick = onClick; } else r.setAttribute("aria-disabled", "true");
   if (key) r.dataset.key = key;
   if (title) r.title = title;
-  const val = el("span", "val");
+  const val = el("span", `val${two ? " two" : ""}`);
   val.append(el("span", "nm", value));
-  if (note) val.append(el("span", "nt", note));
+  if (note) val.append(el("span", `nt${warn ? " warn" : ""}`, note));
   r.append(icon(ic), el("span", "lb", label), val);
   if (meta) r.append(meta);
   r.append(endMark(onClick ? "go" : ""));
   return r;
 }
 /** 2 段目の選ぶ行。選んでいれば右端に ✓ */
-function optRow({ key, sel, ic, name, note, two, tag, meta, badge, danger, title, aria, onPick }) {
+function optRow({ key, sel, ic, name, note, two, warn, tag, meta, badge, danger, title, aria, onPick }) {
   const r = el("button", `prow popt${danger ? " danger" : ""}`);
   r.type = "button";
   r.setAttribute("role", "option");
@@ -479,7 +479,7 @@ function optRow({ key, sel, ic, name, note, two, tag, meta, badge, danger, title
   val.append(el("span", "nm", name));
   // 字の横の小さな札（互換の接続先のモデルの「1M」）
   if (badge) { const b = el("span", "cbadge", badge.text); if (badge.title) b.title = badge.title; val.append(b); }
-  if (note) val.append(el("span", "nt", note));
+  if (note) val.append(el("span", `nt${warn ? " warn" : ""}`, note));
   r.append(icon(ic), val);
   if (tag) r.append(el("span", "tag", tag));
   if (meta) r.append(meta);
@@ -606,7 +606,8 @@ function topView(ctx) {
     const cur = d.accounts.find((a) => a.value === d.account);
     rows.push(off
       ? navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: "", note: t("composer.account.compatOff") })
-      : navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: cur?.label ?? "", meta: weekMeta(cur?.usage), onClick: () => go("account") }));
+      : navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: cur?.label ?? "", note: cur?.conn?.text, two: Boolean(cur?.conn), warn: cur?.conn?.warn,
+        meta: weekMeta(cur?.usage), onClick: () => go("account") }));
   }
   // モデル
   const modelValue = ep?.row ? compatModelLabel(d.model || ep.row.roles?.main || "").text || t("chat.model.default")
@@ -695,7 +696,7 @@ function subView(ctx) {
     case "account": {
       if (!d.accounts || d.endpoint?.row) return null;
       return wrap(t("composer.account.title"), [plist(d.accounts.map((a) => optRow({ key: `account:${a.value}`, sel: a.value === d.account, name: a.label,
-        note: a.usage ? "" : a.hint, tag: a.value === "" ? DEFAULT_TAG() : "", meta: weekMeta(a.usage),
+        note: a.conn?.text || (a.usage ? "" : a.hint), two: Boolean(a.conn), warn: a.conn?.warn, tag: a.value === "" ? DEFAULT_TAG() : "", meta: weekMeta(a.usage),
         onPick: () => ctx.pick("account", () => { if (a.value !== d.account) ctx.on.account?.(a.value); }) })), t("composer.account.title"))]);
     }
     case "model":

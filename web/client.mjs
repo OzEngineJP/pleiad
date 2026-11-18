@@ -21,6 +21,7 @@ import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, CHILD_MENU, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard, reportAiContent } from './message-actions.mjs';
 import { tailInfo, penGlyph } from './resend-band.mjs';
 import { paintAuthFailure, resentNote } from './auth-expired.mjs';
+import { paintConnectorsFailure } from './connectors-fail.mjs';
 import { authLinks } from './auth-links.mjs';
 import { mountFold, revealFold } from './fold.mjs';
 import { isSearchShortcut } from './session-find.mjs';
@@ -3086,7 +3087,11 @@ function turnFailedRow(ev) {
   const node = sys(html.t("chat.sys.failed", { head: t("timeline.result.failed"), error: ev.error ?? t("chat.sys.unknownReason") }, ["head"]));
   node.classList.add("turn-failed");
   // ログインの期限切れ（401）だけは、何が切れたかの一文と直す入口に替える（web/auth-expired.mjs。ADR 0212）
-  if (ev.kind === 'auth' && ev.auth) authFailureRow(node, ev);
+  if (ev.kind === 'auth' && ev.auth?.mode === 'connectorsLogin') {
+    // 発言が渡らずに止まったら、直す入口は発言の下（送れませんでした）に出す。行は二重に出さない（発言の行が無いときだけここに出す）
+    if (ev.undelivered && messageRow(ev.messageId)) node.hidden = true;
+    else connectorsFailure(node, { sessionId: ev.sessionId, messageId: ev.messageId, ce: ev.connectorsError, layout: 'sys', pristine: ev.pristine === true, ev });
+  } else if (ev.kind === 'auth' && ev.auth) authFailureRow(node, ev);
   return node;
 }
 function onStopping(ev) {
@@ -3144,6 +3149,19 @@ function recheckFailure(status, item) {
 
 function markFailedMessage(row, item) {
   const status = row.querySelector('.outbox-status');
+  // コネクターで止まった発言（ADR 0340 段 3）。描いた行は送信待ちの読み直しのたびに描き直さない（ログインを待っている間の姿を保つ）
+  if (item.connectorsError) {
+    if (status.dataset.connectors === item.id && status.isConnected) return;
+    mainView.clearDeliveryTimer(row);
+    delete row.dataset.deliveryPending;
+    delete row.dataset.deliverySending;
+    status.classList.remove('outbox-status-mark');
+    status.classList.add('outbox-status-failed');
+    status.dataset.connectors = item.id;
+    connectorsFailure(status, { sessionId: state.current, messageId: item.id, ce: item.connectorsError, layout: 'outbox' });
+    return;
+  }
+  if (status.dataset.connectors) { delete status.dataset.connectors; status.classList.remove('outbox-fix', 'conn-fail'); }
   mainView.clearDeliveryTimer(row);
   delete row.dataset.deliveryPending;
   delete row.dataset.deliverySending;
@@ -3164,6 +3182,42 @@ function markFailedMessage(row, item) {
     };
     status.append(button);
   }
+}
+
+/**
+ * 登録した Claude アカウントの claude.ai のコネクターで止まった発言・ターンの、直す入口（web/connectors-fail.mjs。ADR 0340 段 3）。
+ * outbox: 発言は渡っていない（送信待ちの「送れませんでした」）。送り直しは送信待ちの再送（messageAction の retry）。
+ * そうでなければ（ターンの途中で切れた）、ログインの期限切れの行と同じ巻き戻しの送り直し（resendFailedTurn）
+ */
+// claude.ai のログイン（使用量の認可）を待っている失敗の行（アカウントの id → 済んだ・失敗・取り消しを渡す口）
+const connectorsLogins = new Map();
+function connectorsLoginEvent(ev) {
+  if (ev.kind !== 'usage-login' || !ev.accountId || !['done', 'error', 'cancelled'].includes(ev.phase)) return;
+  const waiting = connectorsLogins.get(ev.accountId);
+  connectorsLogins.delete(ev.accountId);
+  for (const done of waiting ?? []) done(ev.phase);
+}
+function connectorsFailure(node, { sessionId, messageId, ce, layout, pristine = true, ev = null }) {
+  const accountId = ce?.accountId ?? '';
+  const name = (accountId && claudeAccounts.list().find((a) => a.id === accountId)?.name) || ce?.accountName || '';
+  const outbox = layout === 'outbox' || ev?.undelivered === true;
+  const b = ev ? state.backends.find((x) => x.id === ev.backend) : null;
+  return paintConnectorsFailure(node, { ce, name, layout, on: {
+    login: () => new Promise((resolve) => {
+      const set = connectorsLogins.get(accountId) ?? new Set();
+      set.add(resolve);
+      connectorsLogins.set(accountId, set);
+      claudeAccounts.open({ usageLogin: accountId });
+    }),
+    openAccount: () => claudeAccounts.open({ focus: accountId }),
+    off: () => cmd('invoke', { op: 'accounts.setConnectors', args: { id: accountId, enabled: false } }),
+    resend: async ({ auto }) => {
+      if (outbox) { await cmd('messageAction', { sessionId, messageId, action: 'retry' }); return true; }
+      return resendFailedTurn({ sessionId, messageId, node, auto, pristine, auth: ev?.auth, agent: b?.label ?? '' });
+    },
+    cancel: outbox ? () => cmd('messageAction', { sessionId, messageId, action: 'cancel' }).catch((e) => composerError(e.message)) : null,
+    spinner: () => runMark(),
+  } });
 }
 
 /** 送れなかった発言が会話に残っている（発言のある会話には一覧を出さず、送れなかった行で知らせる） */
@@ -3269,7 +3323,7 @@ function onEvent(ev, replay = false) {
   // Pleiad に登録した外部 MCP のログインの進み具合。会話には出さず、設定 › コンテキストと会話の右パネル（web/context.mjs・web/session-context.mjs）へ渡す
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
-  if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
+  if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); connectorsLoginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') {
     // 端末の追加の承認待ちは、ホストの画面だけが OS の通知でも知らせる（端末の画面では許可できない）
@@ -3373,6 +3427,7 @@ function onEvent(ev, replay = false) {
       effortsLoader.invalidate();
       syncTopbar().catch(() => {});
       delegationSettings.event({ change: 'accounts' });
+      window.dispatchEvent(new CustomEvent('ply:claude-accounts-changed'));
       break;
     case 'agentAccountsChanged':
       agentAccounts.invalidate(); vocabRequests.invalidate(); effortsLoader.invalidate();
@@ -4554,7 +4609,7 @@ const agentAccounts = setupAgentAccounts({ cmd, labelOf,
 /** エージェントのアカウントの一覧（共通の形 { id, name, ready }）。取ってあるもの（同期） */
 function accountList(bid) {
   const kind = capsOf(bid).accounts;
-  if (kind === 'token') return claudeAccounts.list().map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken) }));
+  if (kind === 'token') return claudeAccounts.list().map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken), connectors: a.connectors ?? null }));
   if (kind === 'agent') return agentAccounts.list(bid).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
   return [];
 }
@@ -4603,11 +4658,25 @@ function accountOptions(quota) {
   const { backend, account } = composerSelection();
   return accountOptionsOf(backend, account, quota);
 }
+/**
+ * 登録した Claude アカウントの claude.ai のコネクター（ADR 0340 段 3）の、モデルの面の 2 行目の短い文。
+ * スイッチがオンのアカウントだけ（サーバーの enrichClaudeAccountsList が connectors を足す）。止まっていれば warn
+ */
+// i18n-dynamic: composer.account.connectors.why.
+function connectorsNote(c) {
+  if (!c?.enabled) return null;
+  if (c.status !== 'ok') {
+    const key = c.blockKind === 'env' && c.blockScope === 'settings' ? 'settings' : (c.blockKind ?? 'login');
+    return { text: t('composer.account.connectors.stopped', { why: t(`composer.account.connectors.why.${key}`) }), warn: true };
+  }
+  if (c.connectedCount == null) return null;
+  return { text: c.needsAuthCount ? t('composer.account.connectors.countAuth', { n: c.connectedCount, auth: c.needsAuthCount }) : t('composer.account.connectors.count', { n: c.connectedCount }) };
+}
 function accountOptionsOf(backend, value, quota) {
   const list = accountList(backend);
   return [
     { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount"), usage: weekUsage(quota, "") },
-    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? "" : t("chat.account.noToken"), usage: a.ready ? weekUsage(quota, a.id) : null })),
+    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? "" : t("chat.account.noToken"), usage: a.ready ? weekUsage(quota, a.id) : null, conn: a.ready ? connectorsNote(a.connectors) : null })),
     ...(value && !list.some((a) => a.id === value) ? [{ value, label: t("chat.account.deleted"), hint: t("chat.account.chooseAgain") }] : []),
   ];
 }
@@ -10853,14 +10922,16 @@ const shellComposer = chatComposer.useShell({
 // 最近の会話の場所は「探す場所を足す」の候補、「設定 › 委譲で変える →」は委譲のページへ
 const context = setupContext({ button: $('openContext'), cmd, showMenu,
   show: () => onboarding.page('context'), recentPlaces: cwdOptions, backends: () => state.backends, getPrefs: () => state.prefs,
-  openDelegation: () => { $('delegationTab').click(); $('delegationTab').focus(); } });
+  openDelegation: () => { $('delegationTab').click(); $('delegationTab').focus(); },
+  openClaudeAccount: o => claudeAccounts.open(o) });
 // 会話の右パネル「この会話のコンテキスト」。「…」のメニュー（700px 以下・タッチの画面）から開く
 const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   session: () => state.sessions.find(s => s.id === state.current) ?? null,
   info: () => (state.contextInfoId === state.current ? state.contextInfo : null),
   refreshInfo: (force) => refreshContextInfo({ force }),
   openSettings: () => openContextPage(), labelOf,
-  isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
+  isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview,
+  openAccount: o => claudeAccounts.open(o) });
 // 会話の目次と検索（右パネル。狭い画面は下からのシート）。見出しの虫眼鏡と、会話の画面にいるときの Ctrl+F（macOS は ⌘F）で開く
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
 // 作業のダイアログの会話内検索（2 つ目。同じ部品・同じ右の欄。見る先は選んでいる子の会話で、シートも最前面のダイアログの中に出す）

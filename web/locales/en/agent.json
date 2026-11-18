@@ -750,6 +750,17 @@
         "summary": "Cancel account sign-in",
       "attempt": "Sign-in attempt ID, matched when cancelling",
       "id": "Registered account ID"
+      },
+      "setConnectors": {
+        "summary": "Toggle claude.ai connectors for a registered Claude account",
+        "id": "Registered account ID",
+        "enabled": "Whether connectors are enabled",
+        "cwd": "Optional working directory for settings inspection"
+      },
+      "refreshConnectors": {
+        "summary": "Refresh the claude.ai connector list for a registered Claude account",
+        "id": "Registered account ID",
+        "cwd": "Optional working directory for settings inspection"
       }
     },
     "app": {

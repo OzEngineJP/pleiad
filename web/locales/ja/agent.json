@@ -749,6 +749,17 @@
         "summary": "アカウントのログインを取り消す",
       "attempt": "ログイン試行の識別子（取消との照合用）",
       "id": "登録アカウントのID"
+      },
+      "setConnectors": {
+        "summary": "登録した Claude アカウントで claude.ai のコネクターを使う設定を切り替える",
+        "id": "登録アカウントのID",
+        "enabled": "有効にするか",
+        "cwd": "検査に使う作業ディレクトリ（省略可）"
+      },
+      "refreshConnectors": {
+        "summary": "登録した Claude アカウントの claude.ai コネクター一覧を取り直す",
+        "id": "登録アカウントのID",
+        "cwd": "検査に使う作業ディレクトリ（省略可）"
       }
     },
     "app": {

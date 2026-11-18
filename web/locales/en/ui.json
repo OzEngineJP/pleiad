@@ -929,6 +929,7 @@
     "login": "claude.ai login",
     "summary": "Conversation token: {{token}} · claude.ai login: {{login}}",
     "status": {
+      "expired": "Expired",
       "registered": "Registered",
       "done": "Done",
       "none": "Not yet",
@@ -1291,6 +1292,21 @@
     }
   },
   "sessionContext": {
+    "connectors": {
+      "group": "claude.ai connectors ({{name}})",
+      "off": "Off for \"{{name}}\".",
+      "turnOn": "Turn on in External MCP",
+      "expired": "Unavailable because the claude.ai login has expired.",
+      "stopped": "Unavailable ({{why}}).",
+      "relogin": "Log in again",
+      "openAccount": "Open account",
+      "change": "Change in External MCP",
+      "unread": "The connector list hasn't been read yet",
+      "none": "No connectors on claude.ai",
+      "needsAuth": "Needs re-authorization",
+      "footLead": "To switch per account, ",
+      "footLink": "change it in External MCP →"
+    },
     "state": {
       "loading": "Loading…",
       "refreshing": "Updating…",
@@ -1768,6 +1784,54 @@
     }
   },
   "mcp": {
+    "accounts": {
+      "group": "claude.ai connectors (per account)",
+      "status": {
+        "nologin": "Not logged in · Use \"Log in to claude.ai\" in Claude accounts",
+        "off": "Off · Logged in to claude.ai",
+        "stopped": "On · Stopped · {{why}}",
+        "unusable": "Unavailable · {{why}}",
+        "readFailed": "On · Couldn't read the connector list",
+        "reading": "On · Loading connectors…",
+        "none": "On · No connectors on claude.ai",
+        "on": "On · {{n}} available",
+        "onAuth": "On · {{n}} available · {{auth}} need auth",
+        "expired": "The claude.ai login has expired",
+        "login": "Can't read the claude.ai login",
+        "owner": "The conversation token and claude.ai login have different owners",
+        "version": "Unverified Claude Code version",
+        "platform": "Not available on this OS yet",
+        "env": "Environment variable auth takes priority",
+        "settings": "settings.json auth takes priority",
+        "history": "The conversation history location is moved",
+        "profile": "Couldn't apply the settings",
+        "format": "Can't read the claude.ai login format"
+      },
+      "tip": {
+        "nologin": "\"{{name}}\" isn't logged in to claude.ai",
+        "expired": "The claude.ai login for \"{{name}}\" has expired. Log in again to turn this on",
+        "login": "Can't read the claude.ai login for \"{{name}}\". Log in again to turn this on",
+        "owner": "The conversation token and claude.ai login for \"{{name}}\" have different owners. Open the account to check",
+        "version": "Your Claude Code version hasn't been verified for connectors, so this can't be turned on",
+        "platform": "claude.ai connectors for registered accounts aren't available on this OS yet",
+        "env": "Environment variable auth (such as ANTHROPIC_API_KEY) takes priority, so this can't be turned on",
+        "settings": "settings.json has another auth setting or can't be read, so this can't be turned on",
+        "history": "A setting moves the conversation history, so this can't be turned on",
+        "profile": "Couldn't apply the connector settings for \"{{name}}\"",
+        "format": "Can't read the claude.ai login format for \"{{name}}\". Log in again to turn this on"
+      },
+      "login": "Log in",
+      "relogin": "Log in again",
+      "openAccount": "Open account",
+      "reload": "Reload",
+      "reloadAria": "Reload claude.ai connectors for \"{{name}}\"",
+      "switchAria": "Use claude.ai connectors with \"{{name}}\"",
+      "peekAria": "claude.ai connectors for \"{{name}}\"",
+      "item": {
+        "connected": "Connected",
+        "needsAuth": "Needs re-authorization (on claude.ai)"
+      }
+    },
     "matrix": {
       "groupPly": "Registered in Pleiad",
       "groupAgent": "Agent settings",
@@ -1994,6 +2058,40 @@
     "defaultTitle": "New session"
   },
   "chat": {
+    "connectorsFail": {
+      "why": {
+        "expired": "The claude.ai login for \"{{name}}\" has expired, so this can't be sent with connectors. Log in again, or turn connectors off and send.",
+        "login": "To use claude.ai connectors with \"{{name}}\", log in to claude.ai first.",
+        "owner": "The conversation token and the claude.ai login for \"{{name}}\" belong to different owners (organizations). Check it in Claude accounts, or turn connectors off and send.",
+        "version": "Stopped because your Claude Code (CLI {{cli}} / SDK {{sdk}}) hasn't been verified for connectors yet (verified: {{verified}}). Turn connectors off to send.",
+        "platform": "claude.ai connectors for registered accounts aren't available on this OS yet. Turn connectors off to send.",
+        "env": "Environment variables (such as ANTHROPIC_API_KEY) switch to other credentials, so connectors can't be used. Remove them, or turn connectors off.",
+        "settings": "settings.json (shared, workspace, local or managed) has another auth setting (apiKeyHelper or env) or can't be read, so this can't start with connectors. Remove the setting, or turn connectors off.",
+        "history": "A setting moves the conversation history (environment variable or settings.json), so this can't start with connectors. Remove it, or turn connectors off.",
+        "profile": "Stopped because the connector settings for \"{{name}}\" couldn't be applied to the shared config folder. Send again, or turn connectors off and send.",
+        "format": "Stopped because the credentials or shared settings couldn't be read or written. Log in to claude.ai again, or turn connectors off and send."
+      },
+      "fix": {
+        "relogin": "Log in to claude.ai again",
+        "login": "Log in to claude.ai",
+        "openAccount": "Open account",
+        "resend": "Resend"
+      },
+      "off": "Turn connectors off and send",
+      "offNote": "This also turns them off in other conversations using \"{{name}}\"",
+      "cancel": "Cancel",
+      "waiting": "Waiting for the claude.ai login…",
+      "sending": "Sending again…",
+      "done": {
+        "relogin": "✓ Logged in to claude.ai again and sent it again",
+        "login": "✓ Logged in to claude.ai and sent it again",
+        "off": "✓ Turned off claude.ai connectors for \"{{name}}\" and sent it again",
+        "resend": "✓ Sent it again"
+      },
+      "resendFailed": "Couldn't send it again: {{error}}",
+      "loginFailed": "Couldn't log in to claude.ai. Please try again",
+      "offFailed": "Couldn't turn connectors off: {{error}}"
+    },
     "secretRequest": {
       "headingMark": "Secret needed",
       "from": "from {{agent}}",
@@ -3333,6 +3431,23 @@
     "agent": "Agent",
     "usage": "Usage",
     "account": {
+      "connectors": {
+        "count": "{{n}} connectors",
+        "countAuth": "{{n}} connectors · {{auth}} need auth",
+        "stopped": "Connectors stopped ({{why}})",
+        "why": {
+          "expired": "login expired",
+          "login": "not logged in",
+          "owner": "owner mismatch",
+          "version": "unverified version",
+          "platform": "OS not supported",
+          "env": "environment variables",
+          "settings": "settings.json",
+          "history": "history location",
+          "profile": "couldn't apply settings",
+          "format": "unreadable login"
+        }
+      },
       "title": "Account",
       "compatOff": "Accounts aren't used with compatible endpoints",
       "week": "Week {{percent}}"

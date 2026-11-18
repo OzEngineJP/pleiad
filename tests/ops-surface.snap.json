@@ -61,6 +61,21 @@
       "input": "7e16bba9e4c6"
     },
     {
+      "id": "accounts.refreshConnectors",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "e53a6ecc45c5"
+    },
+    {
       "id": "accounts.remove",
       "risk": "human-only",
       "riskOf": false,
@@ -89,6 +104,21 @@
       },
       "legacyCommand": null,
       "input": "9ab342f94869"
+    },
+    {
+      "id": "accounts.setConnectors",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "33cf3c5fa422"
     },
     {
       "id": "agents.authStatus",

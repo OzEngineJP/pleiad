@@ -35,6 +35,7 @@ const SECRET_PREFIX = 'claude-account:';
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_NAME = 60;
 const USAGE_MARKER = 'ply-usage-login.json';
+const USAGE_EXPIRED_MARKER = 'ply-usage-expired.json';
 export const ANTHROPIC_API = 'https://api.anthropic.com';
 export const TOKEN_CHECK_TIMEOUT_MS = 10_000;
 /** 確認に失敗したアカウントを、一覧を引いたときに裏で確かめ直すまでの間（失敗のたびに叩き続けない） */
@@ -198,7 +199,10 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     return path.join(usageRoot, id);
   };
   const usageMarker = id => path.join(usageDir(id), USAGE_MARKER);
+  const expiredMarker = id => path.join(usageDir(id), USAGE_EXPIRED_MARKER);
   const hasUsageLogin = id => fs.access(usageMarker(id)).then(() => true, () => false);
+  const isUsageExpired = id => fs.access(expiredMarker(id)).then(() => true, () => false);
+  const writeMarker = (target, data) => fs.writeFile(target, JSON.stringify(data) + '\n', { mode: 0o600 });
   const usageAccount = id => readOauthAccount(path.join(usageDir(id), '.claude.json'));
 
   // ---- トークンの持ち主の確認
@@ -294,12 +298,13 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
       backfill(accounts, stored);
       const rows = await Promise.all(accounts.map(async a => {
         const usageLogin = await hasUsageLogin(a.id);
-        return { id: a.id, name: a.name, hasToken: stored.has(key(a.id)), usageLogin,
+        const usageExpired = usageLogin ? await isUsageExpired(a.id) : false;
+        return { id: a.id, name: a.name, hasToken: stored.has(key(a.id)), usageLogin, usageExpired,
           tokenOrg: typeof a.tokenOrg === 'string' ? a.tokenOrg : null, usage: usageLogin ? await usageAccount(a.id) : null };
       }));
       const checks = tokenChecks(rows, cli);
       return {
-        accounts: rows.map(a => ({ id: a.id, name: a.name, hasToken: a.hasToken, usageLogin: a.usageLogin, tokenCheck: checks.get(a.id) })),
+        accounts: rows.map(a => ({ id: a.id, name: a.name, hasToken: a.hasToken, usageLogin: a.usageLogin, usageExpired: a.usageExpired, tokenCheck: checks.get(a.id) })),
         storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
       };
     },
@@ -343,6 +348,20 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     /** 使用量を読むための設定フォルダ（CLAUDE_CONFIG_DIR）。作りはしない */
     usageDir,
     hasUsageLogin,
+    isUsageExpired,
+    /** 使用量またはコネクターの更新で認証切れが分かった印を置く */
+    async markUsageExpired(id, reason = 'expired') {
+      if (!(await hasUsageLogin(id))) return { changed: false };
+      if (await isUsageExpired(id)) return { changed: false };
+      await fs.mkdir(usageDir(id), { recursive: true });
+      await writeMarker(expiredMarker(id), { at: new Date().toISOString(), reason });
+      return { changed: true };
+    },
+    async clearUsageExpired(id) {
+      if (!(await isUsageExpired(id))) return { changed: false };
+      await fs.rm(expiredMarker(id), { force: true }).catch(() => {});
+      return { changed: true };
+    },
     /**
      * 会話用トークンの持ち主と、使用量の認可のアカウントが同じ組織か（コネクターの入口がオンのアカウントだけが呼ぶ。core/claude-connectors.mjs）。
      * 'ok'（同じ）・'mismatch'（違う）・'unknown'（どちらかが未確認）。組織の id は返さない。共有の設定フォルダの oauthAccount は根拠にしない
@@ -354,11 +373,12 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
       if (!org || !usage?.org) return 'unknown';
       return org === usage.org ? 'ok' : 'mismatch';
     },
-    /** 使用量の認可（`claude auth login`）が済んだ印を置く */
+    /** 使用量の認可（`claude auth login`）が済んだ印を置く（期限切れの印があれば消す） */
     async markUsageLogin(id) {
       if (!(await read()).accounts.some(a => a.id === id)) throw new Error(t('claude.accounts.notRegistered'));
       await fs.mkdir(usageDir(id), { recursive: true });
-      await fs.writeFile(usageMarker(id), JSON.stringify({ at: new Date().toISOString() }) + '\n', { mode: 0o600 });
+      await writeMarker(usageMarker(id), { at: new Date().toISOString() });
+      await fs.rm(expiredMarker(id), { force: true }).catch(() => {});
     },
     /**
      * 委譲の振り分けで同じ人のアカウントを見分ける手がかり（core/delegation-routing.mjs の sameIdentity）。

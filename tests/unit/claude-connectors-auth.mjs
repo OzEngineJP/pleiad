@@ -211,6 +211,9 @@ export default async function (t) {
         ['login', '想定外の例外（印付けが投げる）', () => {}, { guard: () => { throw new Error(`guard ${ACCESS}`); } }, false],
         ['login', '資格情報が無い', async () => { await fs.rm(credFile, { force: true }); }, {}, true],
         ['format', '資格情報の形が違う', async () => { await fs.writeFile(credFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x' } })); }, {}, true],
+        // 画面の検査（inspect）と同じ印を起動でも見る（画面が「止めています」なのに送れる食い違いを作らない。資格情報の期限が十分でも止める）
+        ['expired', '使用量のログインを更新できなかった印がある（資格情報の期限は十分）', () => {}, { accounts: { usageDir: id => path.join(usageRoot, id), ownerStatus: async () => 'ok', hasUsageLogin: async () => true, isUsageExpired: async () => true } }, false],
+        ['login', '使用量のログインの印が無い（資格情報はある）', () => {}, { accounts: { usageDir: id => path.join(usageRoot, id), ownerStatus: async () => 'ok', hasUsageLogin: async () => false, isUsageExpired: async () => false } }, false],
       ];
       for (const [kind, label, setup, over, readsCred] of stops) {
         reset(); await fs.writeFile(credFile, credsJson());

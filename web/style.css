@@ -2624,3 +2624,11 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   #contextStrip .bgc-logo .row-be img{height:var(--fs-xl)}
   #contextStrip .bgc-n{font-size:var(--fs-meta)}
 }
+
+/* モデルの面のアカウントの 2 行目で、claude.ai のコネクターが止まっている（ADR 0340 段 3。web/client.mjs の connectorsNote） */
+.prow .val.two .nt.warn{color:var(--ink-strong)}
+/* 送れなかった発言の下の、コネクターで止まった直す入口（web/connectors-fail.mjs）。待つ印と完了の一文は .auth-fail と同じ姿 */
+.outbox-fix.conn-fail .acts .auth-fail-note{flex-basis:100%;font-size:var(--fs-xs)}
+.outbox-fix.conn-fail .wait{display:inline-flex;align-items:center;gap:6px}
+.outbox-fix.conn-fail .wait .run,.outbox-fix.conn-fail .wait .run svg{width:12px;height:12px}
+.outbox-fix.conn-fail .done,.auth-fail .acts .done{color:var(--ink);font-weight:500}

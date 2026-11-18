@@ -69,8 +69,8 @@ export default async function (t) {
     const { id: work } = await accounts.save({ name: ' 仕事用 ', token: TOKEN_A });
     const { id: home } = await accounts.save({ name: '個人用', token: TOKEN_B });
     const listed = await accounts.list();
-    t.ok('一覧は id・表示名・登録済みかどうか・使用量の認可の有無・持ち主の照合だけ', listed.accounts.length === 2 && listed.accounts[0].name === '仕事用'
-      && listed.accounts.every(a => a.hasToken === true && a.usageLogin === false && Object.keys(a).sort().join() === 'hasToken,id,name,tokenCheck,usageLogin'));
+    t.ok('一覧は id・表示名・登録済みかどうか・使用量の認可の有無と切れの印・持ち主の照合だけ', listed.accounts.length === 2 && listed.accounts[0].name === '仕事用'
+      && listed.accounts.every(a => a.hasToken === true && a.usageLogin === false && Object.keys(a).sort().join() === 'hasToken,id,name,tokenCheck,usageExpired,usageLogin' && a.usageExpired === false));
     t.ok('確かめない設定では照合は unknown', listed.accounts.every(a => a.tokenCheck.status === 'unknown'));
     t.ok('一覧にトークンを載せない', !JSON.stringify(listed).includes(TOKEN_A) && !JSON.stringify(listed).includes(TOKEN_B));
     t.ok('保存先の状態を返す（暗号化できない起動では encrypted: false）', listed.storage?.encrypted === false);

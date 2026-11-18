@@ -105,7 +105,7 @@ export function placeStatus(here) {
 // i18n-dynamic: sessionContext.added.reason.
 // i18n-dynamic: sessionContext.amount.part.
 // i18n-dynamic: sessionContext.findings.scope.
-export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET, askReview = null }) {
+export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET, askReview = null, openAccount = null }) {
   const logins = new Map();     // MCP 名 -> ログインの進み具合（ブラウザで続けてください… / ログインしました）
   const agentCache = new Map(); // cwd -> agentMcp の結果
   const backendCache = new Map(); // backends の能力。会話の担当の選択に使う
@@ -1082,7 +1082,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const rows = data.report.entries.filter(e => e.kind === 'mcp' && (['connected', 'standby', 'starting', 'pending', 'needs-auth', 'failed', 'removed'].includes(e.status)
       || (e.status === 'excluded' && e.nativeLock)));
     const k = kindBox('MCP', ply ? t('sessionContext.mcp.who', { count: rows.filter(e => e.status !== 'removed' && e.status !== 'excluded').length }) : t('sessionContext.native'), ply);
-    if (!ply) { nativeMcp(k, data); return k; }
+    if (!ply) { nativeMcp(k, data); accountConnectors(k, data); return k; }
     if (!rows.length) k.append(el('p', 'cx-sub', t('sessionContext.mcp.none')));
     const primaryFree = !data.changed?.differs;
     let waiting = false;
@@ -1135,8 +1135,53 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const unused = data.report.entries.filter(e => e.kind === 'mcp' && e.shadowedBy === 'choice');
     if (unused.length) k.append(fold(t('sessionContext.mcp.unusedDefs', { count: unused.length }), unused.map(e => item('–', e.name, `${shortPath(e.path)} · ${reasonOf(e)}`).row)));
     if (waiting) k.append(el('p', 'cx-sub', t('sessionContext.mcp.waiting')));
+    accountConnectors(k, data);
     if (notice) k.append(el('p', 'cx-strong', notice));
     return k;
+  }
+  /**
+   * 会話の Claude のアカウント（登録したもの）の claude.ai のコネクター（ADR 0340 段 3。サーバーの sessionConnectorsInfo）。
+   * オンで使えるなら名前と状態、オフなら外部 MCP へ、止まっていれば理由と直す先。ログイン中のアカウント・互換の接続先では何も出さない
+   */
+  // i18n-dynamic: mcp.accounts.status.
+  function accountConnectors(k, data) {
+    const c = data.claudeConnectors;
+    if (!c?.accountId) return;
+    k.append(el('p', 'scx-grp', t('sessionContext.connectors.group', { name: c.accountName })));
+    const toSettings = (label, cls = 'btn lnk') => button(label, cls, () => openSettings());
+    if (c.status === 'off') {
+      const row = stateLine(t('sessionContext.connectors.off', { name: c.accountName }));
+      row.append(toSettings(t('sessionContext.connectors.turnOn')));
+      k.append(row);
+      return;
+    }
+    if (c.status === 'stopped') {
+      const key = c.blockKind === 'env' && c.blockScope === 'settings' ? 'settings' : (c.blockKind ?? 'login');
+      const text = key === 'expired' ? t('sessionContext.connectors.expired') : t('sessionContext.connectors.stopped', { why: t(`mcp.accounts.status.${key}`) });
+      const row = stateLine(text);
+      if (['expired', 'login', 'format'].includes(key) && openAccount) row.append(button(t('sessionContext.connectors.relogin'), 'btn btn-quiet', () => openAccount({ usageLogin: c.accountId })));
+      else if (key === 'owner' && openAccount) row.append(button(t('sessionContext.connectors.openAccount'), 'btn btn-quiet', () => openAccount({ focus: c.accountId })));
+      else row.append(toSettings(t('sessionContext.connectors.change')));
+      k.append(row);
+      return;
+    }
+    if (!Array.isArray(c.connectors)) k.append(el('p', 'cx-sub', t('sessionContext.connectors.unread')));
+    else if (!c.connectors.length) k.append(el('p', 'cx-sub', t('sessionContext.connectors.none')));
+    else {
+      const auth = new Set(c.needsAuth ?? []);
+      for (const name of c.connectors) {
+        const off = auth.has(name);
+        const row = el('div', 'scx-item' + (off ? ' off' : ''));
+        const body = el('div', 't');
+        body.append(el('div', 'nm', name));
+        if (off) body.append(el('div', 'p', t('sessionContext.connectors.needsAuth')));
+        row.append(el('span', 'cx-dot ' + (off ? 'off' : 'on')), body);
+        k.append(row);
+      }
+    }
+    const foot = el('p', 'scx-cx-foot');
+    foot.append(t('sessionContext.connectors.footLead'), toSettings(t('sessionContext.connectors.footLink'), 'cx-link'));
+    k.append(foot);
   }
   /** Pleiad の指示（core/ply-instructions.mjs）。直前のターンの記録。項目ごとに入れたか・入れなかった理由、入れた文は畳んで出す */
   function addedBox(data) {

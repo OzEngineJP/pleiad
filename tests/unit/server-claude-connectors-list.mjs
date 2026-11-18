@@ -4,6 +4,10 @@
 //   1. オフ（入口の設定なし）: 今までどおり会話用に登録したトークンで読み、覚えの一覧を書く（main と同じ）
 //   2. オンで止める条件に当たる（使用量のログインが無い）: ログイン中のアカウントで読み直さない（一覧のための CLI を起こさない）・覚えの一覧を書かない
 //   3. オンで使える: 会話と同じ組み立て（アクセス用トークン・権限の並び・共有の設定フォルダの 3 つ）で読み、覚えの一覧を書く
+//   段 3（2026-11-19）: オンのアカウントのコネクターは上の表に並べず、「claude.ai のコネクター（アカウントごと）」の行で読む（accounts.refreshConnectors）。
+//   覚えはアカウントごとの覚え（CONNECTORS_CACHE_FILE。名前と要認可だけ）に書き、ログイン中の覚え（claude-connectors.json）は書かない
+//   4. 段 3 のスイッチ（accounts.setConnectors。人だけ）: 止める条件に当たれば入れない（設定を書かない）・使えれば入れる・切れる。
+//      オンで止める条件に当たった会話は、CLI を起こさず発言を「送れませんでした」に戻し、止めた理由（connectorsError）と直す入口（auth.mode connectorsLogin）を渡す
 // 一覧の読み取りは 5 分覚える（読めた後は起こさない）ので、オフとオンは別のサーバー・別のデータ置き場で確かめる
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
@@ -13,7 +17,7 @@ import { startServer } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { installFakeClaude } from '../lib/fake-claude.mjs';
 import { startFakeAnthropicApi } from '../lib/fake-anthropic-api.mjs';
-import { CONNECTORS_FILE } from '../../core/claude-connectors.mjs';
+import { CONNECTORS_FILE, CONNECTORS_CACHE_FILE } from '../../core/claude-connectors.mjs';
 import { VERIFIED_VERSIONS } from '../../core/claude-connectors-auth.mjs';
 
 export const name = 'server-claude-connectors-list';
@@ -87,7 +91,10 @@ async function boot(label) {
       return { saw, state };
     };
     const enable = on => fs.writeFile(path.join(data, CONNECTORS_FILE), JSON.stringify({ version: 1, accounts: { [id]: { enabled: on } } }));
-    return { id, status, credFile, claudeConfig, envLines, savedList, read, enable, close };
+    // 行の読み直し（設定 › 外部 MCP の［読み直す］。人だけの操作）。読み終えるまで待つ
+    const refreshRow = () => c.cmd('invoke', { op: 'accounts.refreshConnectors', args: { id, cwd: work } });
+    const accountCache = path.join(data, CONNECTORS_CACHE_FILE);
+    return { c, id, data, work, status, credFile, claudeConfig, envLines, savedList, read, enable, refreshRow, accountCache, close };
   } catch (error) { await close(); throw error; }
 }
 
@@ -111,14 +118,67 @@ export default async function (t) {
       await s.enable(true);
       await fs.rm(s.credFile);   // 使用量のログインが無い → connectors-login で止まる
       const fail = await s.read();
-      t.ok('オン・止める条件（ログインが無い）: 一覧のための CLI を起こさない（ログイン中のアカウントでも会話用トークンでも読み直さない）・覚えの一覧を書かない・読めなかった扱い',
-        fail.saw && fail.state === 'none' && s.envLines().length === 0 && !fss.existsSync(s.savedList), JSON.stringify({ fail, lines: s.envLines(), saved: fss.existsSync(s.savedList) }));
+      const failRow = await s.refreshRow();
+      t.ok('オン・止める条件（ログインが無い）: 一覧のための CLI を起こさない（ログイン中のアカウントでも会話用トークンでも読み直さない）・覚えの一覧を書かない・行は止める理由つき',
+        fail.state === 'none' && failRow?.status === 'blocked' && failRow?.blockKind === 'login' && failRow?.connectors === null
+          && s.envLines().length === 0 && !fss.existsSync(s.savedList) && !fss.existsSync(s.accountCache),
+        JSON.stringify({ fail, row: failRow && { status: failRow.status, kind: failRow.blockKind }, lines: s.envLines(), saved: fss.existsSync(s.savedList) }));
       await fs.writeFile(s.credFile, JSON.stringify({ claudeAiOauth: { accessToken: ACCESS, refreshToken: REFRESH, expiresAt: Date.now() + 8 * 3600_000, scopes: SCOPES } }));
-      const ok = await s.read();
+      const row = await s.refreshRow();
       const lines = s.envLines();
-      t.ok('オン・使える: 会話と同じ組み立て — アクセス用トークン・権限の並び・共有の設定フォルダの 3 つで 1 回読み、覚えの一覧を書く',
-        ok.saw && lines.length === 1 && lines[0].who === 'access' && lines[0].scopes === SCOPES.join(' ') && lines[0].configDir === s.claudeConfig && fss.existsSync(s.savedList),
-        JSON.stringify({ ok, lines, saved: fss.existsSync(s.savedList) }));
+      t.ok('オン・使える: 会話と同じ組み立て — アクセス用トークン・権限の並び・共有の設定フォルダの 3 つで 1 回読み、アカウントごとの覚えに書く（ログイン中の覚えは書かない）',
+        row?.status === 'ok' && Array.isArray(row?.connectors) && lines.length === 1 && lines[0].who === 'access' && lines[0].scopes === SCOPES.join(' ')
+          && lines[0].configDir === s.claudeConfig && fss.existsSync(s.accountCache) && !fss.existsSync(s.savedList),
+        JSON.stringify({ row: row && { status: row.status, n: row.connectors?.length }, lines, cache: fss.existsSync(s.accountCache), saved: fss.existsSync(s.savedList) }));
+      const cacheText = fss.readFileSync(s.accountCache, 'utf8');
+      t.ok('アカウントごとの覚えにトークン・メール・組織の id を書かない', ![ACCESS, REFRESH, TOK_REG, EMAIL, ORG].some(x => cacheText.includes(x)));
+      const after = await s.read();
+      t.ok('オン: 上の表（エージェントの設定）のためには読まない（CLI を足さない）', after.state === 'none' && s.envLines().length === 1, JSON.stringify({ after, n: s.envLines().length }));
+
+      // 4. 段 3: スイッチと、送る前に止まった発言
+      const { c } = s;
+      const file = path.join(s.data, CONNECTORS_FILE);
+      const enabledInFile = () => { try { return JSON.parse(fss.readFileSync(file, 'utf8')).accounts?.[s.id]?.enabled === true; } catch { return false; } };
+      const setSwitch = enabled => c.cmd('invoke', { op: 'accounts.setConnectors', args: { id: s.id, enabled, cwd: s.work } });
+      const offRow = await setSwitch(false);
+      t.ok('スイッチ: 切ると設定に off を書き、行は enabled: false', offRow?.enabled === false && !enabledInFile(), JSON.stringify({ enabled: offRow?.enabled }));
+      const credText = fss.readFileSync(s.credFile, 'utf8');
+      await fs.rm(s.credFile);
+      const refused = await setSwitch(true).then(() => null, e => e);
+      t.ok('スイッチ: 止める条件（ログインが無い）に当たれば入れない（確かめる画面は出さず、理由を返す）・設定は off のまま',
+        refused instanceof Error && !enabledInFile() && ![ACCESS, REFRESH, TOK_REG, EMAIL, ORG].some(x => String(refused.message).includes(x)), String(refused?.message));
+      await fs.writeFile(s.credFile, credText);
+      const onRow = await setSwitch(true);
+      t.ok('スイッチ: 使えれば押すだけで入る（設定に on を書く）', onRow?.enabled === true && onRow?.status === 'ok' && enabledInFile(), JSON.stringify({ enabled: onRow?.enabled, status: onRow?.status }));
+      const listed = (await c.cmd('claudeAccounts')).accounts.find(a => a.id === s.id);
+      t.ok('アカウントの一覧: オンのアカウントにだけコネクターの状態（件数・要認可）を添える・秘密を出さない',
+        listed?.connectors?.enabled === true && listed.connectors.status === 'ok' && ![ACCESS, REFRESH, TOK_REG, EMAIL, ORG].some(x => JSON.stringify(listed.connectors).includes(x)),
+        JSON.stringify(listed?.connectors));
+
+      // オンのまま止める条件に当たる会話
+      await fs.rm(s.credFile);
+      const before = s.envLines().length;
+      const { sessionId } = await c.cmd('newSession', { backend: 'claude', cwd: s.work });
+      const from = c.mark();
+      const messageId = 'cn-stop-0001';
+      void c.cmd('sendMessage', { sessionId, messageId, prompt: 'hello' }).catch(() => {});
+      const failed = await c.waitFor(e => e.type === 'outbox' && e.sessionId === sessionId && e.messages?.some(m => m.id === messageId && m.status === 'failed'), { from, ms: 60000 })
+        .then(e => e.messages.find(m => m.id === messageId), () => null);
+      // 起動の前（ターンを作る前）に止まるので、知らせは送信待ちの行だけ（画面は発言の下に直す入口を出す）。ターンの途中で止まった
+      // ときの失敗の知らせ（turnResult）は、出るなら直す入口と渡っていない印を持つ
+      const results = c.since(from).filter(e => e.type === 'turnResult' && e.sessionId === sessionId && e.outcome === 'error');
+      t.ok('止める条件の会話: 発言は送れなかった（failed）に戻り、止めた理由（kind: login・アカウントの id）を持つ',
+        failed?.connectorsError?.kind === 'login' && failed.connectorsError.accountId === s.id, JSON.stringify(failed && { status: failed.status, kind: failed.connectorsError?.kind }));
+      t.ok('止める条件の会話: 失敗の知らせを出すなら、直す入口（auth.mode connectorsLogin）と渡っていない印（undelivered・messageId）を持つ（黙って落ちない）',
+        results.every(r => r.kind === 'auth' && r.auth?.mode === 'connectorsLogin' && r.auth.accountId === s.id && r.undelivered === true && r.messageId === messageId),
+        JSON.stringify(results.map(r => ({ kind: r.kind, mode: r.auth?.mode, undelivered: r.undelivered }))));
+      t.ok('止める条件の会話: CLI を起こさない（ログイン中・会話用に登録したトークンへ落ちない）', s.envLines().length === before, `${before} → ${s.envLines().length}`);
+      const evText = JSON.stringify([failed, results]);
+      t.ok('止める条件の会話: 知らせにトークン・メール・組織の id を出さない', ![ACCESS, REFRESH, TOK_REG, EMAIL, ORG].some(x => evText.includes(x)));
+      await c.cmd('messageAction', { sessionId, messageId, action: 'cancel' });
+      const cancelled = await c.waitFor(e => e.type === 'outbox' && e.sessionId === sessionId && e.messages?.some(m => m.id === messageId && m.status === 'cancelled'), { from, ms: 30000 })
+        .then(e => e.messages.find(m => m.id === messageId), () => null);
+      t.ok('取り消すと止めた理由も消える', cancelled?.status === 'cancelled' && !cancelled.connectorsError, JSON.stringify(cancelled && { status: cancelled.status, ce: Boolean(cancelled.connectorsError) }));
     } finally { await s.close(); }
   }
 }

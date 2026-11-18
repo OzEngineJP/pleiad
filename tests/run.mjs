@@ -884,6 +884,8 @@ const SUITES = [
   './unit/agent-accounts-ui.mjs',
   // 設定 › Claude のアカウント（web/claude-accounts.mjs）: 送るコマンドの並び（origin/main と同じ）・流れを閉じない決まり・遅れて届く応答
   './unit/claude-accounts-ui.mjs',
+  // コネクターで止まった発言の失敗の行（web/connectors-fail.mjs。ADR 0340 段 3）
+  './unit/connectors-fail-ui.mjs',
   './unit/account-backend-i18n.mjs',
   './unit/opencode-adopt.mjs',
   './unit/server-agent-account-restart.mjs',

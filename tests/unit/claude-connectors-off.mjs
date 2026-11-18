@@ -8,7 +8,7 @@
 //   2. オフ・対象外では、同じ account を中身も変えずに返す・新しい認証の解決 0 回・設定の読み取りは入口自身の 1 回まで（対象外は 0 回）・ファイルの作成 0・タイマー 0
 //   3. オンでも、段 1 は旧い経路のまま（認証の解決を 1 回呼び、「まだ使えない」で同じ account を返す。起動の記録も fixture と同じ）
 //   4. キャッシュのキー: オフは今までの文字列、オンの識別子があるときだけ接尾辞
-//   5. 設定の読み取りに書き込みの口が無い・画面・操作の一覧に出ていない・server の入口が 1 か所で入口を通る
+//   5. 設定の口（段 3 で setEnabled・remove・list が付いた）・設定ファイルの名前が画面・操作の一覧に出ていない・server の入口が 1 か所で入口を通る
 //   6. 残った設定ファイルは、旧い accounts のコードの動きに影響しない
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -171,7 +171,8 @@ export default async function (t) {
 
   // 5. 書き込みの口・画面・操作の一覧に出ていない / server の入口
   const settings = createClaudeConnectorSettings({ dataDir: os.tmpdir() });
-  t.ok('設定の読み取りは read だけ（書き込みの口が無い）', JSON.stringify(Object.keys(settings).sort()) === JSON.stringify(['file', 'read']));
+  // 段 3 で書き込みの口（setEnabled・remove）と一覧（list）が付いた。書くのは人だけの操作 accounts.setConnectors とアカウントの削除だけ（入口は read だけを呼ぶ。上の 2. の数）
+  t.ok('設定の口は read・list と、書き込みの setEnabled・remove だけ（段 3）', JSON.stringify(Object.keys(settings).sort()) === JSON.stringify(['file', 'list', 'read', 'remove', 'setEnabled']));
   const hits = [];
   for (const dir of ['core/ops', 'web', 'mobile', 'bin', 'desktop']) {
     for (const f of await fs.readdir(path.join(REPO, dir), { recursive: true, withFileTypes: true }).catch(() => [])) {

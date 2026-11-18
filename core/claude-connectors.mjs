@@ -6,30 +6,154 @@
 // 入口は gate(account) の 1 か所（core/server.mjs の accountResolve）。オフ・対象外のときは同じ account をそのまま返し、新しい認証の解決へ入らない。
 // オンのときだけ resolveAuth(account) を呼ぶ。既定の resolveAuth（段 1 の authNotAvailableYet）は「まだ使えない」（null）を返し、本物の資格情報を読まず、旧い経路のまま会話を始める。
 // 段 2 の resolveAuth は core/claude-connectors-auth.mjs（server が差す）。使えるときは認証の入った account を返し、使えないときは投げて会話を止める（旧い経路へは戻さない）
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { writeAtomic } from './atomic-file.mjs';
 
 export const CONNECTORS_FILE = 'claude-account-connectors.json';
+export const CONNECTORS_CACHE_FILE = 'claude-account-connectors-cache.json';
 export const CONNECTORS_VERSION = 1;
+const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
+const CONNECTOR_NAME_MAX = 200;
+
+/** 資格情報・メール・組織 id を平文で保存せず、認証世代の変化だけを識別するハッシュ */
+export const hashConnectorIdentity = (parts) =>
+  crypto.createHash('sha256').update(JSON.stringify(parts ?? null)).digest('hex').slice(0, 32);
+
+const readJson = async (file) => {
+  try { return { ok: true, data: JSON.parse(await fs.readFile(file, 'utf8')) }; }
+  catch (e) { return e?.code === 'ENOENT' ? { ok: true, data: null } : { ok: false, data: null }; }
+};
+const writeJson = (file, data) => writeAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
 
 /** 段 1 の認証の解決: まだ使えない。何も読まず、何も始めない */
 export const authNotAvailableYet = async () => null;
 
 /**
- * 入口の設定の読み取り（書き込みは無い）。read(id) = そのアカウントの入口の設定。壊れていても投げない
- *   戻り: { enabled: boolean }。enabled が true の項目だけオン
+ * 入口の設定。read(id) は書き込みをせず壊れていても投げない（段 1 互換）。
+ * list() / setEnabled(id, enabled) / remove(id) は段 3 の保存・削除で使う。
  */
 export function createClaudeConnectorSettings({ dataDir }) {
   const file = path.join(dataDir, CONNECTORS_FILE);
+  let queue = Promise.resolve();
+  const serial = (fn) => { const run = queue.catch(() => {}).then(fn); queue = run; return run; };
+  const validDoc = (raw) => raw?.version === CONNECTORS_VERSION && raw.accounts && typeof raw.accounts === 'object' && !Array.isArray(raw.accounts);
   return {
     file,
     async read(accountId) {
       try {
         const raw = JSON.parse(await fs.readFile(file, 'utf8'));
-        if (raw?.version !== CONNECTORS_VERSION || !raw.accounts || typeof raw.accounts !== 'object' || Array.isArray(raw.accounts)) return { enabled: false };
+        if (!validDoc(raw)) return { enabled: false };
         const entry = Object.hasOwn(raw.accounts, accountId) ? raw.accounts[accountId] : null;
         return { enabled: entry?.enabled === true };
       } catch { return { enabled: false }; }
+    },
+    async list() {
+      const { ok, data } = await readJson(file);
+      if (!ok || !validDoc(data)) return {};
+      const out = {};
+      for (const [id, entry] of Object.entries(data.accounts)) {
+        if (ID_RE.test(id) && entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          out[id] = entry.enabled === true;
+        }
+      }
+      return out;
+    },
+    setEnabled(accountId, enabled) {
+      if (!ID_RE.test(accountId ?? '')) throw new Error('Invalid Claude account id');
+      return serial(async () => {
+        const { ok, data } = await readJson(file);
+        const doc = ok && data === null
+          ? { version: CONNECTORS_VERSION, accounts: {} }
+          : ok && validDoc(data)
+            ? { version: CONNECTORS_VERSION, accounts: { ...data.accounts } }
+            : null;
+        if (!doc) throw new Error('claude-account-connectors.json is unreadable');
+        const prev = doc.accounts[accountId];
+        doc.accounts[accountId] = {
+          ...(prev && typeof prev === 'object' && !Array.isArray(prev) ? prev : {}),
+          enabled: Boolean(enabled),
+        };
+        await writeJson(file, doc);
+        return { enabled: Boolean(enabled) };
+      });
+    },
+    remove(accountId) {
+      if (!ID_RE.test(accountId ?? '')) return Promise.resolve({ removed: false });
+      return serial(async () => {
+        const { ok, data } = await readJson(file);
+        if (!ok || !validDoc(data) || !Object.hasOwn(data.accounts, accountId)) return { removed: false };
+        const accounts = { ...data.accounts };
+        delete accounts[accountId];
+        await writeJson(file, { version: CONNECTORS_VERSION, accounts });
+        return { removed: true };
+      });
+    },
+  };
+}
+
+/**
+ * アカウントごとの claude.ai コネクター一覧の覚え（秘密・メール・組織 id は保存しない。identityHash で認証・ホスト・CLI 版の組を分ける）。
+ */
+export function createClaudeConnectorsCache({ dataDir, maxAccounts = 50, maxConnectors = 200, now = () => Date.now() }) {
+  const file = path.join(dataDir, CONNECTORS_CACHE_FILE);
+  let queue = Promise.resolve();
+  const serial = (fn) => { const run = queue.catch(() => {}).then(fn); queue = run; return run; };
+  const validDoc = (raw) => raw?.version === CONNECTORS_VERSION && raw.accounts && typeof raw.accounts === 'object' && !Array.isArray(raw.accounts);
+  const cleanEntry = (raw) => {
+    if (!raw || typeof raw !== 'object' || typeof raw.identityHash !== 'string' || !Array.isArray(raw.connectors)) return null;
+    const connectors = [...new Set(raw.connectors.filter((x) => typeof x === 'string'))].slice(0, CONNECTOR_NAME_MAX);
+    const set = new Set(connectors);
+    const needsAuth = Array.isArray(raw.needsAuth) ? [...new Set(raw.needsAuth.filter((x) => typeof x === 'string' && set.has(x)))] : [];
+    const at = Number.isFinite(raw.at) ? raw.at : 0;
+    return { identityHash: raw.identityHash, connectors, needsAuth, at };
+  };
+  return {
+    file,
+    async get(accountId, { identityHash, ttlMs } = {}) {
+      if (!ID_RE.test(accountId ?? '') || !identityHash) return null;
+      const { ok, data } = await readJson(file);
+      if (!ok || !validDoc(data) || !Object.hasOwn(data.accounts, accountId)) return null;
+      const entry = cleanEntry(data.accounts[accountId]);
+      if (!entry || entry.identityHash !== identityHash) return null;
+      const stale = Number.isFinite(ttlMs) ? now() - entry.at >= ttlMs : false;
+      return { connectors: entry.connectors, needsAuth: entry.needsAuth, at: entry.at, stale };
+    },
+    set(accountId, { identityHash, connectors, needsAuth = [], at = now() }) {
+      if (!ID_RE.test(accountId ?? '') || typeof identityHash !== 'string' || !identityHash || !Array.isArray(connectors)) {
+        throw new Error('Invalid connectors cache entry');
+      }
+      return serial(async () => {
+        const { ok, data } = await readJson(file);
+        const accounts = ok && validDoc(data) ? { ...data.accounts } : {};
+        const names = [...new Set(connectors.filter((x) => typeof x === 'string'))].sort().slice(0, maxConnectors);
+        const set = new Set(names);
+        accounts[accountId] = {
+          identityHash,
+          connectors: names,
+          needsAuth: [...new Set((Array.isArray(needsAuth) ? needsAuth : []).filter((x) => typeof x === 'string' && set.has(x)))].sort(),
+          at: Number.isFinite(at) ? at : now(),
+        };
+        const ids = Object.keys(accounts);
+        if (ids.length > maxAccounts) {
+          ids.sort((a, b) => (accounts[a]?.at ?? 0) - (accounts[b]?.at ?? 0));
+          for (const drop of ids.slice(0, ids.length - maxAccounts)) delete accounts[drop];
+        }
+        await writeJson(file, { version: CONNECTORS_VERSION, accounts });
+        return accounts[accountId];
+      });
+    },
+    remove(accountId) {
+      if (!ID_RE.test(accountId ?? '')) return Promise.resolve({ removed: false });
+      return serial(async () => {
+        const { ok, data } = await readJson(file);
+        if (!ok || !validDoc(data) || !Object.hasOwn(data.accounts, accountId)) return { removed: false };
+        const accounts = { ...data.accounts };
+        delete accounts[accountId];
+        await writeJson(file, { version: CONNECTORS_VERSION, accounts });
+        return { removed: true };
+      });
     },
   };
 }

@@ -23,7 +23,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { AccountError, cliConfigFile } from './claude-accounts.mjs';
-import { createClaudeConnectorsGate, createClaudeConnectorSettings } from './claude-connectors.mjs';
+import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnectorIdentity } from './claude-connectors.mjs';
+import { claudeManagedFiles } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
 
 /** 確かめた CLI と SDK の組（ADR 0340）。これ以外の版ではオンを止める（オフの会話は影響しない） */
@@ -63,9 +64,32 @@ const SETTINGS_ENV = [...MIXED_AUTH_ENV, 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE
 /** 止める条件。code は connectors-<種類>。message はそのまま利用者に出る（秘密を含めない）。message だけ別の文にするときは messageKey */
 export class ConnectorsAuthError extends AccountError {
   // i18n-dynamic: claude.connectors.
-  constructor(kind, params = {}, messageKey = kind) {
+  constructor(kind, params = {}, messageKey = kind, { scope = null } = {}) {
     super(t(`claude.connectors.${messageKey}`, params), `connectors-${kind}`);
+    this.connectorsKind = kind;
+    this.connectorsScope = scope;
+    // 画面の失敗の行に出す細目（版・OS・指定の名前）。秘密は入らない（名前は環境変数・設定の鍵の名前）
+    this.connectorsParams = Object.fromEntries(['cli', 'sdk', 'verified', 'platform', 'names']
+      .filter(k => typeof params[k] === 'string' && params[k]).map(k => [k, params[k]]));
   }
+}
+
+function attachConnectorsError(error, account, fallbackKind = 'login') {
+  if (!(error instanceof ConnectorsAuthError)) return error;
+  if (!error.connectorsError) {
+    const kind = error.connectorsKind ?? fallbackKind;
+    error.connectorsError = {
+      kind,
+      scope: error.connectorsScope ?? null,
+      code: error.code,
+      accountId: account?.id ?? null,
+      accountName: account?.name ?? account?.id ?? '',
+      reauth: ['expired', 'login', 'format'].includes(kind),
+      needsOwnerCheck: kind === 'owner',
+      params: error.connectorsParams ?? {},
+    };
+  }
+  return error;
 }
 
 const sleepFor = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -100,13 +124,12 @@ export async function readAccessCredentials(dir, { readFile = fs.readFile, sleep
 }
 
 /**
- * 共有の設定フォルダの settings.json（CLI がユーザーの設定として読む）のうち、認証・置き場を変える指定の名前。
- * env の項目（名前は大文字にして比べる）と apiKeyHelper を見る。値は返さない。
+ * 指定の settings.json 1 ファイルのうち、認証・置き場を変える指定の名前。env と apiKeyHelper を見る。値は返さない。
  * 無い・空 → { auth: [], history: [] }。読めない・壊れている・形が違う → null（入口は止める。CLI がどう読むか分からないため）
  */
-export async function settingsOverrides(dir, { readFile = fs.readFile } = {}) {
+export async function settingsOverridesFile(file, { readFile = fs.readFile } = {}) {
   let text;
-  try { text = stripBom(await readFile(path.join(dir, SETTINGS_FILE), 'utf8')); }
+  try { text = stripBom(await readFile(file, 'utf8')); }
   catch (error) { return error?.code === 'ENOENT' ? { auth: [], history: [] } : null; }
   if (!text.trim()) return { auth: [], history: [] };
   let data;
@@ -119,6 +142,34 @@ export async function settingsOverrides(dir, { readFile = fs.readFile } = {}) {
   const auth = [...new Set(names.filter(name => SETTINGS_ENV.includes(name)))];
   if (set(data.apiKeyHelper)) auth.push('apiKeyHelper');
   return { auth, history: [...new Set(names.filter(name => HISTORY_ENV.includes(name)))] };
+}
+
+/** 互換用: 設定フォルダ直下の settings.json を見る */
+export function settingsOverrides(dir, options = {}) {
+  return settingsOverridesFile(path.join(dir, SETTINGS_FILE), options);
+}
+
+/** 管理者・共有（user）・作業場所（workspace）・ローカル（local）の settings.json を重複なく並べる */
+export function settingsFiles({ sharedDir, cwd = null, platform = process.platform, managedFiles = null } = {}) {
+  const raw = [];
+  const managed = Array.isArray(managedFiles) ? managedFiles : claudeManagedFiles(platform);
+  for (const file of managed) if (file) raw.push({ scope: 'managed', file });
+  if (sharedDir) raw.push({ scope: 'shared', file: path.join(sharedDir, SETTINGS_FILE) });
+  const wd = typeof cwd === 'string' && cwd ? path.resolve(cwd) : '';
+  if (wd && (!sharedDir || path.resolve(wd, '.claude') !== path.resolve(sharedDir))) {
+    raw.push({ scope: 'workspace', file: path.join(wd, '.claude', SETTINGS_FILE) });
+    raw.push({ scope: 'local', file: path.join(wd, '.claude', 'settings.local.json') });
+  }
+  const seen = new Set();
+  const out = [];
+  for (const entry of raw) {
+    const resolved = path.resolve(entry.file);
+    const key = platform === 'win32' ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- 作業場所のキー（CLI 2.1.322 と同じ作り方。ADR 0340）
@@ -397,24 +448,27 @@ async function projectProfileNow({ source, target, cwd, platform = process.platf
  * @returns {(account: { id: string, name: string }) => Promise<{ account: object }>}  入口の resolveAuth
  */
 export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard = () => {}, env = process.env, home = os.homedir(), platform = process.platform,
-  now = Date.now, readFile = fs.readFile, sleep = sleepFor, project = projectProfile, verified = VERIFIED_VERSIONS } = {}) {
+  now = Date.now, readFile = fs.readFile, sleep = sleepFor, project = projectProfile, verified = VERIFIED_VERSIONS, managedFiles = null,
+  expiryMarginMs = EXPIRY_MARGIN_MS } = {}) {
   const sharedDir = () => env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
 
-  async function settingsCheck(name) {
-    const found = await settingsOverrides(sharedDir(), { readFile });
-    if (!found) throw new ConnectorsAuthError('env', { name }, 'envSettings');
-    if (found.auth.length) throw new ConnectorsAuthError('env', { name, names: found.auth.join(', ') });
-    if (found.history.length) throw new ConnectorsAuthError('history', { name, names: found.history.join(', ') });
+  async function settingsCheck(name, cwd = null) {
+    for (const entry of settingsFiles({ sharedDir: sharedDir(), cwd, platform, managedFiles })) {
+      const found = await settingsOverridesFile(entry.file, { readFile });
+      if (!found) throw new ConnectorsAuthError('env', { name }, 'envSettings', { scope: 'settings' });
+      if (found.auth.length) throw new ConnectorsAuthError('env', { name, names: found.auth.join(', ') }, 'env', { scope: 'settings' });
+      if (found.history.length) throw new ConnectorsAuthError('history', { name, names: found.history.join(', ') }, 'history', { scope: 'settings' });
+    }
   }
 
-  async function checks(account) {
+  async function checks(account, { cwd = null } = {}) {
     const name = account.name ?? account.id;
     if (!FILE_PLATFORMS.includes(platform)) throw new ConnectorsAuthError('platform', { name, platform });
     const mixed = present(env, MIXED_AUTH_ENV);
-    if (mixed.length) throw new ConnectorsAuthError('env', { name, names: mixed.join(', ') });
+    if (mixed.length) throw new ConnectorsAuthError('env', { name, names: mixed.join(', ') }, 'env', { scope: 'env' });
     const moved = present(env, HISTORY_ENV);
-    if (moved.length) throw new ConnectorsAuthError('history', { name, names: moved.join(', ') });
-    await settingsCheck(name);
+    if (moved.length) throw new ConnectorsAuthError('history', { name, names: moved.join(', ') }, 'history', { scope: 'env' });
+    await settingsCheck(name, cwd);
     const found = await Promise.resolve().then(versions).catch(() => ({}));
     if (!verified.some(v => v.cli === found?.cli && v.sdk === found?.sdk)) {
       throw new ConnectorsAuthError('version', { name, cli: found?.cli ?? '?', sdk: found?.sdk ?? '?', verified: verified.map(v => `CLI ${v.cli} / SDK ${v.sdk}`).join(', ') });
@@ -422,13 +476,36 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     // 読めない（例外）も確かめられない扱いで止める（一覧の読み取りがログイン中のアカウントへ落ちないように）
     const owner = await Promise.resolve().then(() => accounts.ownerStatus(account.id)).catch(() => 'unknown');
     if (owner !== 'ok') throw new ConnectorsAuthError('owner', { name });
+    return found;
   }
 
-  async function credentials(account, dir) {
-    const cred = await readAccessCredentials(dir, { readFile, sleep });
+  /**
+   * 使用量のログインの印（無い → login、更新できなかった印 → expired）。画面の検査（inspect）と起動（resolveOn）が同じ順で見る
+   * （画面が「止めています」なのに送れてしまう食い違いを作らない）。印を読めない例外は印が無い・切れていない側に倒す
+   */
+  async function usageMarkers(account) {
+    const name = account.name ?? account.id;
+    if (accounts.hasUsageLogin && !(await Promise.resolve().then(() => accounts.hasUsageLogin(account.id)).catch(() => false))) {
+      throw new ConnectorsAuthError('login', { name });
+    }
+    if (accounts.isUsageExpired && (await Promise.resolve().then(() => accounts.isUsageExpired(account.id)).catch(() => false))) {
+      throw new ConnectorsAuthError('expired', { name });
+    }
+  }
+
+  async function credentials(account, dir, { skipSleep = false } = {}) {
+    const cred = await readAccessCredentials(dir, { readFile, sleep: skipSleep ? async () => {} : sleep });
     if (!cred) throw new ConnectorsAuthError('login', { name: account.name ?? account.id });
     if (cred.malformed) throw new ConnectorsAuthError('format', { name: account.name ?? account.id });
     return cred;
+  }
+
+  async function usageAccountDigest(dir) {
+    try {
+      const parsed = JSON.parse(stripBom(await readFile(path.join(dir, '.claude.json'), 'utf8')));
+      const oa = parsed?.oauthAccount;
+      return oa ? hashConnectorIdentity([oa.organizationUuid ?? null, oa.emailAddress ?? null]) : null;
+    } catch { return null; }
   }
 
   /**
@@ -436,16 +513,55 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
    * login に揃えて投げる（呼び手の一覧の読み取りは ConnectorsAuthError 以外をオフと同じ「ログイン中のアカウントで読む」に回すため。
    * 元の文面は出さない）
    */
-  return async function resolveAuth(account) {
+  async function resolveAuth(account) {
     try { return await resolveOn(account); }
     catch (error) {
-      if (error instanceof ConnectorsAuthError) throw error;
-      throw new ConnectorsAuthError('login', { name: account?.name ?? account?.id });
+      if (error instanceof ConnectorsAuthError) throw attachConnectorsError(error, account);
+      throw attachConnectorsError(new ConnectorsAuthError('login', { name: account?.name ?? account?.id }), account);
+    }
+  }
+
+  /** 画面・一覧用の受動検査（CLI を起こさず、書き込みもしない。止める理由・安全な識別ハッシュだけを返す） */
+  resolveAuth.inspect = async function inspectAuth(account, { cwd = null } = {}) {
+    try {
+      const ver = await checks(account, { cwd });
+      const dir = accounts.usageDir(account.id);
+      await usageMarkers(account);
+      // アクセス用トークンの時刻切れは起動の直前に CLI が更新するので止めない（切れとして出すのは、更新できなかった印があるときだけ）
+      const cred = await credentials(account, dir, { skipSleep: true });
+      const identityHash = hashConnectorIdentity({
+        id: account.id,
+        identity: IDENTITY,
+        cli: ver?.cli ?? null,
+        sdk: ver?.sdk ?? null,
+        dir,
+        tokenOrg: account.tokenOrg ?? null,
+        scopes: cred.scopes,
+        usageDigest: await usageAccountDigest(dir),
+      });
+      return { ok: true, kind: 'ok', identityHash };
+    } catch (error) {
+      const err = error instanceof ConnectorsAuthError
+        ? attachConnectorsError(error, account)
+        : attachConnectorsError(new ConnectorsAuthError('login', { name: account?.name ?? account?.id }), account);
+      return {
+        ok: false,
+        kind: err.connectorsError.kind,
+        scope: err.connectorsError.scope,
+        code: err.code,
+        message: err.message,
+        reauth: err.connectorsError.reauth,
+        needsOwnerCheck: err.connectorsError.needsOwnerCheck,
+        identityHash: null,
+      };
     }
   };
 
+  return resolveAuth;
+
   async function resolveOn(account) {
     await checks(account);
+    await usageMarkers(account);
     const dir = accounts.usageDir(account.id);
     guard(dir, account);
     const first = await credentials(account, dir);
@@ -458,18 +574,24 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
         token: first.token,
         connectors: {
           identity: IDENTITY,
-          /** 会話の起動の直前に呼ぶ。期限が近ければ CLI に更新させ、設定を反映して、{ token, env } を返す。失敗は投げる（旧いトークンへ戻さない） */
+          expiryMarginMs,
+          expiredError() { return attachConnectorsError(new ConnectorsAuthError('expired', { name }), account); },
+          /** 会話の起動の直前に呼ぶ。期限が近ければ CLI に更新させ、設定を反映して、{ token, env, expiresAt } を返す。失敗は投げる（旧いトークンへ戻さない） */
           async fresh({ cwd } = {}) {
-            await settingsCheck(name);
-            let cred = await credentials(account, dir);
-            if (cred.expiresAt - now() < EXPIRY_MARGIN_MS) {
-              await Promise.resolve().then(() => refresh(dir)).catch(() => {});   // 失敗は読み直した期限で判断する
-              cred = await credentials(account, dir);
-              if (cred.expiresAt - now() < EXPIRY_MARGIN_MS) throw new ConnectorsAuthError('expired', { name });
+            try {
+              await settingsCheck(name, cwd);
+              let cred = await credentials(account, dir);
+              if (cred.expiresAt - now() < expiryMarginMs) {
+                await Promise.resolve().then(() => refresh(dir)).catch(() => {});   // 失敗は読み直した期限で判断する
+                cred = await credentials(account, dir);
+                if (cred.expiresAt - now() < expiryMarginMs) throw new ConnectorsAuthError('expired', { name });
+              }
+              try { await project({ source: cliConfigFile(env, home), target: path.join(shared, '.claude.json'), cwd }); }
+              catch { throw new ConnectorsAuthError('profile', { name }); }
+              return { token: cred.token, env: { CLAUDE_CONFIG_DIR: shared, CLAUDE_CODE_OAUTH_SCOPES: cred.scopes.join(' ') }, expiresAt: cred.expiresAt };
+            } catch (error) {
+              throw attachConnectorsError(error, account);
             }
-            try { await project({ source: cliConfigFile(env, home), target: path.join(shared, '.claude.json'), cwd }); }
-            catch { throw new ConnectorsAuthError('profile', { name }); }
-            return { token: cred.token, env: { CLAUDE_CONFIG_DIR: shared, CLAUDE_CODE_OAUTH_SCOPES: cred.scopes.join(' ') } };
           },
         },
       },
@@ -478,7 +600,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
 }
 
 /**
- * server の組み立て: 入口の設定・認証・使用量の読み取りの印を 1 つにつなぐ。戻りは入口（{ settings, gate }）。
+ * server の組み立て: 入口の設定・認証・使用量の読み取りの印を 1 つにつなぐ。戻りは入口（{ settings, gate, inspect }）。
  * 印はオンの間だけ効く（使用量の読み取りのたびに入口の設定を見て、オフなら外す。core/backends/claude-usage.mjs）
  * @param {{ guard: (dir: string, active: () => Promise<boolean>) => void, refresh: (dir: string) => Promise<unknown> }} o.usage
  */
@@ -488,7 +610,10 @@ export function createClaudeConnectorsWiring({ dataDir, accounts, versions, usag
     guard: (dir, account) => usage.guard(dir, async () => (await settings.read(account.id)).enabled === true),
     ...options,
   });
-  return createClaudeConnectorsGate({ dataDir, resolveAuth, settings });
+  return {
+    ...createClaudeConnectorsGate({ dataDir, resolveAuth, settings }),
+    inspect: resolveAuth.inspect,
+  };
 }
 
 /**

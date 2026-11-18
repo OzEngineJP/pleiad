@@ -49,6 +49,7 @@ import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
 import { stripAnsi } from "../claude-login.mjs";
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 import { identitySuffix } from "../claude-connectors.mjs";
+import { EXPIRY_MARGIN_MS } from "../claude-connectors-auth.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -456,7 +457,7 @@ function withConnectorsAuth(scoped, account) {
   const authed = async (opts, call) => {
     if (opts?.endpoint) return call(opts);
     const auth = await account.connectors.fresh({ cwd: opts?.cwd });
-    return call({ ...opts, oauthToken: auth.token, connectorsEnv: auth.env });
+    return call({ ...opts, oauthToken: auth.token, connectorsEnv: auth.env, connectorsExpiresAt: auth.expiresAt, connectors: account.connectors });
   };
   return {
     ...scoped,
@@ -927,7 +928,7 @@ export const backend = {
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, oauthToken, connectorsEnv = null, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, oauthToken, connectorsEnv = null, connectorsExpiresAt = null, connectors = null, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
     // SDK を読む（配布物で初めてなら、同意があればここで取る。core/claude-sdk.mjs）。読めなければプロンプトを渡す前の失敗にする
     // （送信待ちが「失敗」に戻り、取った後に再送できる）。同意が無ければ、画面に取得の案内を出させる
     let api;
@@ -951,7 +952,13 @@ export const backend = {
     // 開けておけば、裏で走っている間も途中送信（control.steer）を main に届けられる。
     // 閉じるのは tracker.canCloseInput() が揃ったとき（claude-background.mjs）と中断のときだけ。
     const tracker = createTurnTracker();
-    const input = createInputQueue();
+    let activeOauthToken = oauthToken;
+    let activeConnectorsEnv = connectorsEnv;
+    let activeExpiresAt = adopt ? (adopt.card.connectorsExpiresAt ?? connectorsExpiresAt) : connectorsExpiresAt;
+    const marginMs = connectors?.expiryMarginMs ?? EXPIRY_MARGIN_MS;
+    let resumeTarget = sessionId;
+    let promptDeliveredOnce = false;
+    let input = createInputQueue();
     // プロンプトを CLI へ渡したか。渡す前の失敗（ネイティブの指示・MCP を止められないなど）は undelivered を付けて投げる
     let promptSent = Boolean(adopt);
     async function* promptStream() {
@@ -962,7 +969,10 @@ export const backend = {
       promptSent = true;
       // 最初のプロンプトにも uuid を振る。transcript のその発言の id になり、追加指示の配送との対応を ID で引ける
       const promptUuid = randomUUID();
-      onPromptDelivered?.(promptUuid);
+      if (!promptDeliveredOnce) {
+        promptDeliveredOnce = true;
+        onPromptDelivered?.(promptUuid);
+      }
       // 入力欄の `!` の結果（CLI の `!` と同じ <bash-input> / <bash-stdout><bash-stderr> の 2 行）。
       // shouldQuery: false は返答を起こさずに transcript へ積み、次に query する user 行（このプロンプト）と合わせて渡す（sdk.d.ts の SDKUserMessage）
       for (const text of shellAppends) yield { ...userMessage(text), shouldQuery: false };
@@ -977,23 +987,27 @@ export const backend = {
     // host ツールの結果も承認の返事も、この入力（CLI の stdin）を通って CLI へ戻る。
     // 走っている間は閉じない。閉じた後に終わったものは届かないので、そのときは log に出す
     // （claude-background.mjs の注意書き）。
-    const hostCalls = createHostCalls();
-    ctx.hostCalls = hostCalls;
-    const closer = createInputCloser({
-      tracker,
-      inflight: () => hostCalls.inflight,
-      graceMs: sdk.resumeGraceMs,
-      close: () => { hostCalls.markClosed(); input.close(); },
-    });
-    hostCalls.watch(() => closer.settle());   // 最後の応答が終わった時点でも閉じてよいか見直す
+    let hostCalls;
+    let closer;
+    let sdkAbort;
+    const resetInputChannel = () => {
+      input = createInputQueue();
+      hostCalls = createHostCalls();
+      ctx.hostCalls = hostCalls;
+      const curInput = input;
+      const curHost = hostCalls;
+      closer = createInputCloser({
+        tracker,
+        inflight: () => curHost.inflight,
+        graceMs: sdk.resumeGraceMs,
+        close: () => { curHost.markClosed(); curInput.close(); },
+      });
+      curHost.watch(() => closer.settle());   // 最後の応答が終わった時点でも閉じてよいか見直す
+      sdkAbort = new AbortController();
+    };
+    resetInputChannel();
     const settleInput = () => closer.settle();
     const closeInput = () => closer.now();
-    // SDK には server の AbortController（signal）を渡さない。渡すと中断の瞬間に SDK が CLI の stdin を閉じ、
-    // interrupt の control_request を書けなくなる（閉じた後の書き込みは黙って捨てられる）。
-    // stdin を閉じるだけでは CLI は止まらず、今の仕事と待ち行列を片付けてから終わる。Windows では
-    // SDK が 2 秒 + 5 秒待ってから claude.exe を kill するので、それまで動き続けていた（2026-09-23 調査）。
-    // そこで中断はまず interrupt（Esc と同じ）で頼み、応答が無いときだけ sdkAbort を引く（stopTurn）
-    const sdkAbort = new AbortController();
 
     // Pleiad 自身が渡す MCP。MCP を Pleiad が担当するときの「ネイティブ MCP を止められたか」の確認でも、これらは除く
     // ply_computer はロックを最長 10 分待つ。HTTP の MCP は既定で 60 秒（と無通信 300 秒）で切れるので、timeout で両方を上げる（実測 2026-10-01）
@@ -1035,7 +1049,7 @@ export const backend = {
       mcpFile = adopt ? adoptClaudeMcpFile(store.dataDir, adopt.card.mcpFile) : await writeClaudeMcpFile(store.dataDir, httpServers);
     }
     catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); } throw undelivered(e); }
-    const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
+    const hide = text => redactSecret(redactToken(text, activeOauthToken), endpoint?.key);
     // resume する前に読む（CLI はこの値を読み戻し、result はそこからの累計になる）。1 つの query の result は全部これから引く。
     // 付け直しは札の値（旧サーバーがターンの始まりに読んだもの。CLI が query の終わりに書く値を読み直すとずれる）
     const costBase = adopt ? (adopt.card.costBase ?? null) : await readCostBase(sessionId);
@@ -1047,7 +1061,7 @@ export const backend = {
     const finished = Boolean(adopt) && adopt.source.state.alive === false;
     let executable = null;
     try { executable = sdk.executable(); } catch { /* 入っていない。下の query が伝える */ }
-    const held = adopt ? (finished ? null : createHeldCli({ mode: 'adopt', source: adopt.source, from: acked + 1 }))
+    let held = adopt ? (finished ? null : createHeldCli({ mode: 'adopt', source: adopt.source, from: acked + 1 }))
       : await heldPlan({ dataDir: store.dataDir, executable, compact: Boolean(compact) })
         .then(plan => plan && createHeldCli({ mode: 'spawn', client: plan.client, onSpawn: () => bindHolder() }));
 
@@ -1088,6 +1102,7 @@ export const backend = {
      * 印からの再生で作り直る（付け直し直後の background_tasks_changed が全量で置き換える）ので、再生に出ない流し込みの数（pushed）だけを置く
      */
     const backendCard = () => ({ held: true, costBase, flag: flag ? path.basename(flag.file) : null, envFile: envFile ? path.basename(envFile.file) : null, mcpFile: mcpFile ? path.basename(mcpFile.file) : null,
+      ...(activeExpiresAt != null ? { connectorsExpiresAt: activeExpiresAt } : {}),
       steers: pendingSteers.map(p => ({ id: p.id, uuid: p.uuid, hash: p.hash, sawResult: p.sawResult })), pushed: tracker.pending });
     // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）。最初の 1 回は子を起こした直後・付け直した直後に置く
     const bindHolder = () => {
@@ -1332,24 +1347,32 @@ export const backend = {
     // 候補を黙って作らない（付けると警告の間も作る。上限に達した rejected では作らない）。利用者の設定 promptSuggestionEnabled より Pleiad の設定 › 入力を優先する
     const claudeExtraEnv = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...(autoCompactWindow ? { [AUTO_COMPACT_WINDOW_ENV]: String(autoCompactWindow) } : {}),
       ...(promptSuggestions ? { CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "true" } : {}) };
-    // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
-    if (!finished) try { q = query({
-      prompt: promptStream(),
-      options: {
-        pathToClaudeCodeExecutable: sdk.executable(),
-        // 保持役に載せたターンは、CLI の起動と stdin・stdout を保持役へ回す（claude-held.mjs。付け直しは走っている CLI の続き）
-        ...(held ? { spawnClaudeCodeProcess: held.spawnClaudeCodeProcess } : {}),
-        // env は置き換え（足し算ではない）なので process.env を必ず広げる。
-        // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
-        // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
-        // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。固定の部分 + 設定 compaction.auto の delegatedHeadroom。ADR 0166）を足す
-        env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, claudeExtraEnv)
-          : claudeEnv(process.env, { token: oauthToken, extra: connectorsEnv ? { ...claudeExtraEnv, ...connectorsEnv } : claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env,
-          // 秘密情報と変数は Bash ツールのシェルにだけ（上の envFile）。値そのものは CLI 本体の env に入れない
-          ...(envFile ? { CLAUDE_ENV_FILE: envFile.file } : {}) },
-        // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
-        stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
-        resume: sessionId ?? undefined,
+    let expiryTimer = null;
+    let refreshedPreExpiry = false;
+    let restartingPreExpiry = null;
+    let preExpiryAuthError = null;
+    let heldRestarts = 0;
+    const clearExpiryTimer = () => { if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; } };
+    const createSdkQuery = async () => {
+      if (finished) return null;
+      try {
+        return query({
+          prompt: promptStream(),
+          options: {
+            pathToClaudeCodeExecutable: sdk.executable(),
+            // 保持役に載せたターンは、CLI の起動と stdin・stdout を保持役へ回す（claude-held.mjs。付け直しは走っている CLI の続き）
+            ...(held ? { spawnClaudeCodeProcess: held.spawnClaudeCodeProcess } : {}),
+            // env は置き換え（足し算ではない）なので process.env を必ず広げる。
+            // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
+            // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
+            // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。固定の部分 + 設定 compaction.auto の delegatedHeadroom。ADR 0166）を足す
+            env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, claudeExtraEnv)
+              : claudeEnv(process.env, { token: activeOauthToken, extra: activeConnectorsEnv ? { ...claudeExtraEnv, ...activeConnectorsEnv } : claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env,
+              // 秘密情報と変数は Bash ツールのシェルにだけ（上の envFile）。値そのものは CLI 本体の env に入れない
+              ...(envFile ? { CLAUDE_ENV_FILE: envFile.file } : {}) },
+            // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
+            stderr: createStderrLog({ secrets: [activeOauthToken, endpoint?.key].filter(Boolean) }),
+            resume: resumeTarget ?? undefined,
         // 同じ会話の中で巻き戻して送り直す（core/conversations.mjs の rewind。ADR 0102）。at は残す最後の発言、drops は捨てる発言（ユーザーの発言）の uuid。
         // 同じ session id・同じ JSONL のまま、at から枝を伸ばす。捨てる範囲が drops のターンだけでなければ CLI が拒否する（下の catch）
         ...(rewind && sessionId ? { resumeSessionAt: rewind.at, resumeDropsTurn: rewind.drops } : {}),
@@ -1406,13 +1429,22 @@ export const backend = {
         }, claudeHookCallbacks(hooksRuntime, { onRun: run => emit({ type: 'hookRun', ...run }) })),
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
-    }); } catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); await mcpFile?.dispose(); } void held?.finish(); throw undelivered(e); }
-
-    // 実行中に承認モードやモデルを変えられるようにする。
-    // ターン開始時の options だけだと、走り出した後の切り替えが効かない。
-    if (control) control.handle = q;
-    if (sdkMode(mode) === "bypassPermissions") bypassQueries.add(q);
-    holdQuery(ctx.sessionId);
+        });
+      } catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); await mcpFile?.dispose(); } void held?.finish(); throw undelivered(e); }
+    };
+    const bindQuery = () => {
+      if (control) control.handle = q;
+      if (q && sdkMode(mode) === "bypassPermissions") bypassQueries.add(q);
+      holdQuery(ctx.sessionId);
+    };
+    if (adopt && !finished && connectors && !endpoint && Number.isFinite(activeExpiresAt) && activeExpiresAt <= Date.now()) {
+      await held?.finish();
+      const expErr = connectors.expiredError?.() ?? Object.assign(new Error('authentication_failed'), { connectorsError: null });
+      emit({ type: 'turnResult', outcome: 'error', error: hide(expErr.message), kind: 'auth', pristine: true, ...(expErr.connectorsError ? { connectorsError: expErr.connectorsError } : {}) });
+      throw expErr;
+    }
+    q = await createSdkQuery();
+    bindQuery();
     if (adopt) bindHolder();
     if (signal?.signal?.aborted) stopTurn();
     else signal?.signal?.addEventListener?.("abort", stopTurn, { once: true });
@@ -1454,18 +1486,92 @@ export const backend = {
         // result の無いまま終わった（CLI が落ちた）。ライブなら SDK が終了コードで投げる
         if (!heldResult && !limit && !stop) throw new Error(`Claude Code process exited with code ${sawExit?.code ?? 'unknown'}`);
       } else {
+        const onExpiryReached = async () => {
+          if (!refreshedPreExpiry && Date.now() < activeExpiresAt) {
+            let nextAuth;
+            try { nextAuth = await connectors.fresh({ cwd }); }
+            catch (err) {
+              preExpiryAuthError = err;
+              authFailed = { message: err?.message ?? 'authentication_failed', connectorsError: err?.connectorsError ?? null };
+              void held?.finish();
+              closeInput();
+              sdkAbort.abort();
+              return;
+            }
+            if (stop || signal?.signal?.aborted) return;
+            if (!produced && !adopt && !finished && heldRestarts < 2 && nextAuth?.expiresAt - marginMs > Date.now()) {
+              restartingPreExpiry = nextAuth;
+              void held?.finish();
+              closeInput();
+              sdkAbort.abort();
+              return;
+            }
+            refreshedPreExpiry = true;
+            scheduleExpiryTimer();
+            return;
+          }
+          const expErr = connectors.expiredError?.() ?? Object.assign(new Error('authentication_failed'), { connectorsError: null });
+          preExpiryAuthError = expErr;
+          authFailed = { message: expErr.message, connectorsError: expErr.connectorsError ?? null };
+          void held?.finish();
+          closeInput();
+          sdkAbort.abort();
+        };
+        const scheduleExpiryTimer = () => {
+          clearExpiryTimer();
+          if (!held || finished || !connectors || endpoint || !Number.isFinite(activeExpiresAt) || stop || signal?.signal?.aborted || preExpiryAuthError) return;
+          const target = refreshedPreExpiry ? activeExpiresAt : activeExpiresAt - marginMs;
+          const waitMs = Math.max(0, target - Date.now());
+          expiryTimer = setTimeout(() => {
+            expiryTimer = null;
+            if (stop || signal?.signal?.aborted || preExpiryAuthError) return;
+            if (Date.now() < target) { scheduleExpiryTimer(); return; }
+            void onExpiryReached();
+          }, Math.min(2_147_000_000, waitMs));
+          expiryTimer.unref?.();
+        };
         openSteer();
         // 付け直した直後に、もう閉じてよい（旧サーバーが閉じる前の猶予の間に手を離した）なら閉じる予約を置く
         if (adopt) settleInput();
-        for await (const message of q) {
-          await handle(message, false);
-          held?.ack(message.uuid);
+        for (;;) {
+          scheduleExpiryTimer();
+          try {
+            for await (const message of q) {
+              await handle(message, false);
+              held?.ack(message.uuid);
+            }
+            if (restartingPreExpiry && !stop && !signal?.signal?.aborted) throw new Error('PRE_EXPIRY_RESTART');
+            break;
+          } catch (loopErr) {
+            if (!restartingPreExpiry || stop || signal?.signal?.aborted) throw loopErr;
+            clearExpiryTimer();
+            for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);
+            for (const [id, x] of liveTrackers) if (x === tracker) liveTrackers.delete(id);
+            if (q) bypassQueries.delete(q);
+            try { q?.close?.(); } catch {}
+            const nextAuth = restartingPreExpiry;
+            restartingPreExpiry = null;
+            activeOauthToken = nextAuth.token;
+            activeConnectorsEnv = nextAuth.env;
+            activeExpiresAt = nextAuth.expiresAt;
+            refreshedPreExpiry = false;
+            heldRestarts++;
+            if (!resumeTarget && ctx.sessionId) resumeTarget = ctx.sessionId;
+            resetInputChannel();
+            promptSent = false;
+            await held?.finish();
+            held = await heldPlan({ dataDir: store.dataDir, executable, compact: Boolean(compact) })
+              .then(plan => plan && createHeldCli({ mode: 'spawn', client: plan.client, onSpawn: () => bindHolder() }));
+            q = await createSdkQuery();
+            bindQuery();
+            openSteer();
+          }
         }
       }
       if (stop) emit({ type: "turnResult", outcome: "aborted" });
       else if (limit) emit({ type: 'turnResult', outcome: 'limited', ...limitFields(limit) });
       // 401 の result は subtype が success のまま（is_error だけが立つ）。例外にならずに終わっても、成功として出さない
-      else if (authFailed) emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced });
+      else if (authFailed) emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced, ...(authFailed.connectorsError ? { connectorsError: authFailed.connectorsError } : {}) });
       else if (modelRejected) emit({ type: 'turnResult', outcome: 'error', error: hide(modelRejected.message ?? 'model_not_found'), kind: 'model', pristine: !produced });
       else if (heldResult) emit(heldResult);
     } catch (err) {
@@ -1484,14 +1590,17 @@ export const backend = {
         emit({ type: 'turnResult', outcome: 'limited', ...limitFields(limit) });
         return { sessionId: ctx.sessionId };
       }
-      const message = hide(err?.message ?? err);
-      const auth = authFailed || isClaudeAuthError(err?.message ?? err);
+      const errOut = preExpiryAuthError ?? err;
+      const message = authFailed?.message ? hide(authFailed.message) : hide(errOut?.message ?? errOut);
+      const auth = authFailed || isClaudeAuthError(errOut?.message ?? errOut);
+      const connectorsError = preExpiryAuthError?.connectorsError ?? authFailed?.connectorsError ?? errOut?.connectorsError ?? null;
       const modelFailed = !auth && (modelRejected || isClaudeModelError(err?.message ?? err));
-      emit({ type: "turnResult", outcome: "error", error: message, ...(auth ? { kind: 'auth', pristine: !produced } : modelFailed ? { kind: 'model', pristine: !produced } : {}) });
-      const thrown = (oauthToken || endpoint) && err?.message && message !== err.message ? new Error(message) : err;
+      emit({ type: "turnResult", outcome: "error", error: message, ...(auth ? { kind: 'auth', pristine: !produced, ...(connectorsError ? { connectorsError } : {}) } : modelFailed ? { kind: 'model', pristine: !produced } : {}) });
+      const thrown = (activeOauthToken || endpoint) && errOut?.message && message !== errOut.message ? Object.assign(new Error(message), connectorsError ? { connectorsError } : {}) : errOut;
       throw promptSent ? thrown : undelivered(thrown);
     } finally {
       clearStopTimer();
+      clearExpiryTimer();
       await flag?.dispose(); await envFile?.dispose(); await mcpFile?.dispose();
       signal?.signal?.removeEventListener?.("abort", stopTurn);
       for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);

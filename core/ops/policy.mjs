@@ -41,7 +41,7 @@ export const HUMAN_ONLY = Object.freeze({
     // Claude Agent SDK の取得。Anthropic の規約への同意を含むので、人が案内を読んで押す（ADR 0208）
     'claudeSdkInstall',
     // Pleiad Plus のログイン（外のブラウザー + ループバック + PKCE）とログアウト。アカウントの契約主体なので人だけ
-    'plusLogin', 'plusLoginCancel', 'plusLogout'], settings: ['claudeAccount', 'account'], ops: ['accounts.list', 'accounts.create', 'accounts.rename', 'accounts.remove', 'accounts.login', 'accounts.cancel', 'bots.setAccount'] },
+    'plusLogin', 'plusLoginCancel', 'plusLogout'], settings: ['claudeAccount', 'account'], ops: ['accounts.list', 'accounts.create', 'accounts.rename', 'accounts.remove', 'accounts.login', 'accounts.cancel', 'bots.setAccount', 'accounts.setConnectors', 'accounts.refreshConnectors'] },
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）
   endpointDefault: { commands: ['compatEndpointDefault'], settings: [] },
   // リモートのペアリングと外に開く設定（端末の一覧を含む）
