@@ -165,6 +165,7 @@ try {
   await openSession(sA);
   await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
   await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="nav:model"]').click();
   await page.locator('#modelPop [data-key="model:fast"]').click();
   await page.locator('#prompt').click();
   await setPromptText('echo:SlowSettingsSend');
@@ -187,7 +188,8 @@ try {
   // 1b. モード変更（setMode）の遅れ -> 注記が出て、返ると送信される
   await page.evaluate(() => window.__wsTest.holdCommand('setMode', 1));
   await page.locator('#modelChip').click();
-  await page.locator('#modelPop [data-key^="mode:"]:not(.on)').first().click();
+  await page.locator('#modelPop [data-key="nav:mode"]').click();
+  await page.locator('#modelPop [data-key^="mode:"][aria-selected="false"]').first().click();
   await page.locator('#prompt').click();
   await setPromptText('echo:SlowModeSend');
   const userCountBefore1b = await page.locator('#thread .m.user').count();
@@ -220,6 +222,7 @@ try {
   // 2. 「取り消す」で送られず、ボタン活性・字が残り、遅延解決しても送らない＆切り替え通知が出ない
   await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
   await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="nav:model"]').click();
   await page.locator('#modelPop [data-key="model:tiny"]').click();
   await page.locator('#prompt').click();
   await setPromptText('cancel-keep-draft-secret');
@@ -250,7 +253,8 @@ try {
   // 3a. 待ち中に別の会話へ切り替えると送らず、元会話に下書きが残り、通知＋「開く」が出る
   await page.evaluate(() => window.__wsTest.holdCommand('setMode', 1));
   await page.locator('#modelChip').click();
-  await page.locator('#modelPop [data-key^="mode:"]:not(.on)').first().click();
+  await page.locator('#modelPop [data-key="nav:mode"]').click();
+  await page.locator('#modelPop [data-key^="mode:"][aria-selected="false"]').first().click();
   await page.locator('#prompt').click();
   await setPromptText('switched-session-draft-body');
   const sentBefore3a = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
@@ -312,7 +316,8 @@ try {
   });
   await page.locator('#newSession').click();
   await page.locator('#modelChip').click();
-  await page.locator('#modelPop [data-key^="model:"]:not(.on)').first().click();
+  await page.locator('#modelPop [data-key="nav:model"]').click();
+  await page.locator('#modelPop [data-key^="model:"][aria-selected="false"]').first().click();
   await page.locator('#prompt').click();
   await setPromptText('echo:HomeChainedSend');
   await page.locator('#send').click();
@@ -367,6 +372,7 @@ try {
   // 7. 待ちの最中の Enter が、進行中の待ち（注記・「取り消す」・readonly）を壊さない。応答が返ると 1 回だけ送られる
   await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
   await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="nav:model"]').click();
   await page.locator('#modelPop [data-key="model:smart"]').click();
   await setPromptText('echo:EnterTwice');
   const sentBefore7 = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
@@ -387,6 +393,7 @@ try {
   // 8. 字も添付も無い Enter は待ちとして登録しない。別の会話へ移って戻っても注記・readonly が出ない
   await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
   await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="nav:model"]').click();
   await page.locator('#modelPop [data-key="model:tiny"]').click();
   await setPromptText('');
   await page.evaluate(() => document.getElementById('prompt').focus());
@@ -405,6 +412,7 @@ try {
   // 9. 設定の保存の失敗が待ちの後に分かる -> 理由の行が出て、光ってフォーカスが移る
   await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
   await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="nav:model"]').click();
   await page.locator('#modelPop [data-key="model:fast"]').click();
   await setPromptText('echo:FailedSettings');
   const sentBefore9 = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));

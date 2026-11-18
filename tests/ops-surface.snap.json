@@ -4148,6 +4148,21 @@
       "input": "d70835b046e2"
     },
     {
+      "id": "sessions.applyTurnSettings",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "applyTurnSettingsNow",
+      "input": "d1b40b697176"
+    },
+    {
       "id": "sessions.background",
       "risk": "read",
       "riskOf": false,

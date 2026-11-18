@@ -184,6 +184,7 @@ export const COMMANDS = new Set([
   "deleteUnsentSession",
   "deleteSession",   // { sessionId } -> "deleted"。送った会話も Pleiad の記録から消す（sessions.delete。ネイティブの会話は残す。ADR 0147）
   "setTurnSettings", // durable agent/model/cwd/account choice, applied at the next runTurn（account: '' = ログイン中の Claude アカウント）
+  "applyTurnSettingsNow", // { sessionId } -> { applied: 'live'|'stop'|'wait'|'none' }。作業中の予約を今のターンへ効かせる（帯の［今すぐ変える］。sessions.applyTurnSettings）
   "setStatus",
   "markRead",     // { reads: [[sessionId, completedAt], ...] } -> { reads: 変わった分 }。完了を確認した（ホストに 1 つ・大きい方だけ）。read イベントで全接続へ
   "setGrouped",   // { sessionId, ungrouped }。fork のグループから外す / 戻す（§4.1）

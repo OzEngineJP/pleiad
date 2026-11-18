@@ -1,4 +1,4 @@
-// 入力欄のモデルの面を開いてスクロールした位置が、開いている間の描き直しで戻らないこと（実ブラウザー）:
+// 入力欄のモデルの面（2 段。1 段目の「モデル」の行 → 2 段目のモデルの一覧）を開いてスクロールした位置が、開いている間の描き直しで戻らないこと（実ブラウザー）:
 //   - スマホ（360px・タッチ）: チップを押して開き、指で一覧を下までなぞる。使用量の更新（usageChanged）で面が描き直されても、
 //     位置はそのまま・焦点も同じ行のまま（以前は、開いたときに焦点を置いた一番上の宛先の札へ焦点を当て直すときに面がスクロールし、上へ戻っていた）
 //   - PC（マウスのホイール）: 同じく戻らない
@@ -32,6 +32,14 @@ const writeQuota = used => fs.writeFileSync(quotaFile, JSON.stringify({ windows:
   { label: '週', usedPercent: used / 2, resetsAt: new Date(Date.now() + 5 * 86400_000).toISOString(), minutes: 10080 },
 ] }));
 writeQuota(20);
+// モデルの一覧は 2 段目に一覧だけで出るので、面がはみ出してスクロールできるだけの行数にする（最後の行は tiny）
+const modelsFile = path.join(dataDir, 'fake-models.json');
+fs.writeFileSync(modelsFile, JSON.stringify({ models: {
+  fast: { label: 'Fast 2.1', note: '速い', efforts: ['low', 'medium', 'high'], defaultEffort: 'low' },
+  smart: { label: 'Smart 3.5', note: '賢い', efforts: ['low', 'medium', 'high'], defaultEffort: 'medium' },
+  ...Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`mid${i + 1}`, { label: `Mid ${i + 1}.0`, note: '中くらい' }])),
+  tiny: { label: 'Tiny 1.0', note: '軽い。段を選べない' },
+} }));
 let server, ws, browser;
 
 // 面の様子。描き直した回数は、面の子を印で見分ける（render は子を作り直す）
@@ -64,11 +72,16 @@ async function session({ viewport, mobile }) {
   await page.waitForFunction(() => { const c = document.getElementById('modelChip'); return c && !c.classList.contains('checking') && c.offsetParent; }, null, { timeout: 20000 });
   return { ctx, page, errors };
 }
-// 面を開き、使用量の行まで描かれて落ち着くのを待つ
+// 面を開いて 1 段目の「モデル」の行からモデルの一覧へ入り、使用量まで描かれて落ち着くのを待つ
 async function openPicker(page, how) {
   if (how === 'tap') await page.locator('#modelChip').tap();
   else await page.locator('#modelChip').click();
   await page.waitForFunction(() => !document.getElementById('modelPop').hidden);
+  const nav = page.locator('#modelPop [data-key="nav:model"]');
+  if (how === 'tap') await nav.tap();
+  else if (how === 'keys') { await nav.focus(); await page.keyboard.press('Enter'); }
+  else await nav.click();
+  await page.waitForSelector('#modelPop [data-key^="model:"]');
   await page.waitForTimeout(1500);
   const s = await popState(page);
   check(s.open && s.max > 80, `${how}: 面が開き、一覧がスクロールできる高さがある`, s);
@@ -77,8 +90,11 @@ async function openPicker(page, how) {
 }
 
 try {
-  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_LOCALE: 'ja', AGENT_HOST_FAKE_QUOTA: quotaFile } });
+  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_LOCALE: 'ja', AGENT_HOST_FAKE_QUOTA: quotaFile, AGENT_HOST_FAKE_MODELS: modelsFile } });
   ws = await open({ port: server.port, token: server.token });
+  // fake にログインし、案内（はじめての設定・使えるエージェントがありません）を出さない（後から開いて面のクリックを奪う）
+  await ws.cmd('authLogin', { backend: 'fake' });
+  await ws.cmd('onboardingSeen');
   browser = await chromium.launch({ headless: true, executablePath: chromiumPath() });
 
   const scenes = [
@@ -122,12 +138,12 @@ try {
       check(after.focusKey === scrolled.focusKey, 'PC: 焦点は同じ行のまま', { before: scrolled.focusKey, after: after.focusKey });
     }],
     ['PC（キーボード）', { viewport: { width: 1280, height: 380 }, mobile: false }, async (page) => {
-      await openPicker(page, 'click');
-      // 宛先の札から Tab でモデルの一覧へ入り、↓ で一覧の終わりへ移る（移った行は見える所までスクロールされる）
+      await openPicker(page, 'keys');
+      // Enter で入った一覧の検索の欄から ↓ で一覧の終わりへ移る（移った行は見える所までスクロールされる）
       const key = () => page.evaluate(() => document.activeElement?.dataset?.key ?? '');
-      for (let i = 0; i < 6 && !(await key()).startsWith('model:'); i++) await page.keyboard.press('Tab');
-      for (let i = 0; i < 6 && (await key()) !== 'model:tiny'; i++) await page.keyboard.press('ArrowDown');
-      check(await key() === 'model:tiny', 'キーボード: Tab と ↓ で一覧の最後の行へ移れる', await key());
+      check(await key() === 'model-q', 'キーボード: Enter で入ると焦点は検索の欄', await key());
+      for (let i = 0; i < 16 && (await key()) !== 'model:tiny'; i++) await page.keyboard.press('ArrowDown');
+      check(await key() === 'model:tiny', 'キーボード: ↓ で一覧の最後の行へ移れる', await key());
       await page.waitForTimeout(300);
       const moved = await popState(page);
       check(moved.focusKey && moved.focusVisible, 'キーボード: ↓ で移った行に焦点があり、見えている', moved);

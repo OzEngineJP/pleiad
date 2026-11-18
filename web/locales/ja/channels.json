@@ -14,7 +14,7 @@
     "failed": "削除できませんでした: {{error}}"
   },
   "plain": { "name": "エージェント" },
-  "homeDest": { "none": "bot なし" },
+  "homeDest": { "none": "なし" },
   "side": {
     "tabs": { "channels": "Channels" },
     "sections": { "channels": "チャンネル", "bots": "Bots", "routines": "ルーティン" },

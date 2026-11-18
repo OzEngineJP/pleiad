@@ -111,7 +111,7 @@ export function checkBackendShape(native) {
   }
   for (const key of Object.keys(traits)) if (!Object.hasOwn(TRAITS, key)) problems.push(`${id}: trait ${key} is not in core/backends/capability-marks.mjs TRAITS (add it to the list or remove it from ${marksFile} (${id}))`);
   // 印とメソッドの逆向き: メソッドがあるのに印が対応（true）でないと、画面がその機能を出さない（書いたのに使われない）
-  for (const [member, key] of [['setModelLive', 'liveModel'], ['setModeLive', 'liveMode'], ['setTitle', 'title'], ['setTag', 'tag'], ['fork', 'fork'], ['compact', 'compact']]) {
+  for (const [member, key] of [['setModelLive', 'liveModel'], ['setModeLive', 'liveMode'], ['setEffortLive', 'liveEffort'], ['setTitle', 'title'], ['setTag', 'tag'], ['fork', 'fork'], ['compact', 'compact']]) {
     if (typeof native?.[member] === 'function' && caps[key] !== true) {
       problems.push(`${id}: ${member}() exists but ${key} is not true (${file}; set ${key} to true for ${id} in ${marksFile} or remove the method)`);
     }

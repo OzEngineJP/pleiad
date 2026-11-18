@@ -21,6 +21,7 @@ import { renderWorktreeLine } from './worktree-ui.mjs';
 import { renderChromeHandoverLine, renderChromeClosedLine } from './chrome-control.mjs';
 import { renderChromeProfileLine } from './chrome-profile-menu.mjs';
 import { renderChromeDownloadLine } from './chrome-downloads.mjs';
+import { renderSettingsChangeLine } from './settings-trace.mjs';
 import { parseStructure, codeRoles, listClass, markerExtra, lineIndent, nestDepth } from './md-structure.mjs';
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark, unverifiedText, unverifiedMark, unverifiedOpenLink } from './computer-use.mjs';
 import { resetDateText } from './plus-key-row.mjs';
@@ -564,7 +565,9 @@ export function renderPresent(ev) {
   if (e.kind === 'chromeClosed') return renderChromeClosedLine(e);
   // Chrome のウィンドウで終わったダウンロードの行（docs/inapp-browser.md「ダウンロード」）
   if (e.kind === 'chromeDownload') return renderChromeDownloadLine(e);
-  const kind = ["image", "html", "text", "file", "visualization"].includes(e.kind) ? e.kind : "text";
+  // 作業中に設定を変えた跡の行（docs/design-system.md「作業中の設定の変更」・ADR 0341）
+  if (e.kind === 'settingsChange') return renderSettingsChangeLine(e);
+  const kind =["image", "html", "text", "file", "visualization"].includes(e.kind) ? e.kind : "text";
   const card = el("figure", `present present-${kind}`);
 
   const cap = el("figcaption", "present-cap");

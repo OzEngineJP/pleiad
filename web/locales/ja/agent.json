@@ -555,6 +555,7 @@
       "quit": "Pleiad を終了するために中断した",
       "hostAway": "利用者の画面が離れたまま時間切れになった",
       "restart": "Pleiad が落ちた、または強制終了された",
+      "settings": "利用者が作業の途中で設定（エージェント・モデル・エフォート・承認モード）を変えたので、新しい設定で続けるために止めた",
       "unknown": "理由は不明"
     },
     "cancelled": "取り消した委譲タスク（Pleiad からは再開しません。完了通知も届きません）:\n{{items}}",
@@ -562,6 +563,8 @@
     "restarted": "Pleiad の再起動で止まった委譲タスク（再開しません。止まるまでの様子は ply_task_status で確かめられます）:\n{{items}}",
     "taskItem": "- {{taskId}}「{{title}}」（止めた時点: {{status}}）",
     "unreadItem": "- {{taskId}}「{{title}}」（{{status}}）",
+    "tools": "実行中だったので止めたツール（結果は戻りません）:\n{{items}}",
+    "toolItem": "- {{tool}}: {{target}}",
     "background": "止まったバックグラウンドの作業（もう動いていません。結果も届きません）:\n{{items}}",
     "backgroundItem": "- {{id}}（{{kind}}）: {{label}}",
     "kind": {
@@ -575,7 +578,8 @@
     "waits": "ターンの外で待っていたもの（再起動で終わりました。もう待っていません）:\n{{items}}",
     "waitItem": "- {{tool}}: {{target}}",
     "dropped": "ほかに {{count}} 件ありますが、省きました。",
-    "footer": "止めたものを、そのままやり直さないでください。ファイル・コマンドの出力・ply_task_status で今の状態を確かめてから、委譲し直すか、コマンドを走らせ直すかを決めてください。"
+    "footer": "止めたものを、そのままやり直さないでください。ファイル・コマンドの出力・ply_task_status で今の状態を確かめてから、委譲し直すか、コマンドを走らせ直すかを決めてください。",
+    "resumeSettings": "設定を変えました。中断したところから作業を続けてください。"
   },
   "shell": {
     "commandNotice": "[Pleiad コマンド長時間通知 / {{noticeId}}]\nこの会話で走らせた `{{command}}` が、{{minutes}} 分たっても終わっていません（Pleiad は止めていません）。終わるはずのコマンドなら、止まっていないか確かめてください。サーバーのように終わらないものは、裏で起こしてすぐ戻る形にしてください。{{hint}}",
@@ -908,6 +912,10 @@
         "account": "Claude のアカウントの id。人（画面）だけ。AI が渡すと NEEDS_UI。",
         "endpoint": "互換の接続先の id。人（画面）だけ。AI が渡すと NEEDS_UI。",
         "remember": "選んだ値を既定として覚える。人（画面）だけ（AI は settings.set）。"
+      },
+      "applyTurnSettings": {
+        "summary": "人が作業中に予約した設定を、今のターンへ効かせる（帯の［今すぐ変える］）。その場で効かないものがあれば、ターンを止めて新しい設定で続けさせる。画面だけ。",
+        "sessionId": "会話の id。"
       },
       "suggestTitle": {
         "summary": "会話の中身から短い題を考えさせる。会話は変えない（付けるのは sessions.setTitle）。会話のアカウントで小さな 1 回が動く。",

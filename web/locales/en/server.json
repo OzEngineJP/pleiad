@@ -168,6 +168,7 @@
   },
   "turn": {
     "reservedInvalid": "The scheduled settings can no longer be used. Choose again.",
+    "settingsStopTimeout": "The settings could not be changed right away. The scheduled changes are kept; wait a moment and try again.",
     "aborted": "Stopped.",
     "visualizationSaveFailed": "Could not save the visualization: {{error}}",
     "contextSaveFailed": "Could not save the context usage record."

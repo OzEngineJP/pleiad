@@ -1,13 +1,13 @@
 // playwright-cli run-code --filename=tests/browser/preferences.cjs
 // Use a fresh isolated fake,codex server with tests/lib/fake-codex.mjs. Open its authenticated URL first.
-// 入力欄の設定はチップ（web/composer-controls.mjs）。値は data-value / data-backend / data-mode に id で出る（承認モードはモデルの面の区分け。ADR 0252）
+// 入力欄の設定はチップ（web/composer-controls.mjs）。値は data-value / data-backend / data-mode に id で出る。モデルの面は 2 段（1 段目の行 data-key="nav:<段>" → 2 段目の一覧。ADR 0252）
 async page => {
  await page.locator('#settings').click();
  await page.locator('#setupTab').click();
  if(await page.locator('#worktreeSettings, #worktreeAlways').count()) throw Error('removed worktree setting is still visible');
  await page.locator('#backToChat').click();
- const pick=async(chip,key)=>{await page.locator('#'+chip).click();await page.locator(`[data-key="${key}"]`).click();await page.keyboard.press('Escape');};
- const choose={backend:v=>pick('modelChip','backend:'+v),model:v=>pick('modelChip','model:'+v),mode:v=>pick('modelChip','mode:'+v)};
+ const pick=async(chip,view,key)=>{await page.locator('#'+chip).click();await page.locator(`#modelPop [data-key="nav:${view}"]`).click();await page.locator(`[data-key="${key}"]`).click();await page.keyboard.press('Escape');};
+ const choose={backend:v=>pick('modelChip','agent','backend:'+v),model:v=>pick('modelChip','model','model:'+v),mode:v=>pick('modelChip','mode','mode:'+v)};
  const values=async()=>page.evaluate(()=>({backend:document.getElementById('modelChip').dataset.backend,model:document.getElementById('modelChip').dataset.value,mode:document.getElementById('modelChip').dataset.mode}));
  const modeIs=v=>page.waitForFunction(v=>document.getElementById('modelChip').dataset.mode===v,v);
  const fresh=async()=>{

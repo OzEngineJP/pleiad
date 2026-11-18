@@ -1,0 +1,25 @@
+/* 作業中に設定を変えた跡の行（web/settings-trace.mjs。docs/design-system.md「作業中の設定の変更」、承認済み（2026-11-18）。
+   v5 のモック temporary/mockups/composer-picker-compact-v5-*-nowlive.png・sendagent.png）。
+   会話の中の静かな 1 行: 小さい弱い文字、値だけ太字、右に時刻。エージェントの切り替えは開ける（引き継ぐもの・引き継がないもの・変わるもの）。
+   色は文字（ink）のトークンだけ。枠線は使わない */
+
+.st-line{display:flex;align-items:baseline;gap:8px;margin:2px 0 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.st-line-t{min-width:0;flex:1 1 auto}
+.st-v{font-weight:600;color:var(--ink)}
+.st-v .row-be{display:inline-flex;vertical-align:-2px;margin-right:3px}
+.st-line-time{flex:none;font-variant-numeric:tabular-nums}
+
+/* エージェントの切り替え（details）。見出しの行は .st-line と同じ並び */
+.st-line-more{display:block}
+.st-line-sum{display:flex;align-items:baseline;gap:6px;list-style:none;cursor:pointer;border-radius:var(--r-s)}
+.st-line-sum::-webkit-details-marker{display:none}
+.st-line-sum:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
+.st-line-chev{display:inline-flex;flex:none;align-self:center}
+.st-line-chev .tc-chev{width:10px;height:10px;transition:transform var(--dur) var(--ease-out)}
+.st-line-more[open] .st-line-chev .tc-chev{transform:rotate(90deg)}
+.st-line-dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:8px 0 2px 16px;color:var(--ink)}
+.st-line-dl dt{color:var(--ink-weak)}
+.st-line-dl dd{margin:0;min-width:0}
+@media (max-width:600px){
+  .st-line-dl{gap:6px 12px;margin-left:12px}
+}

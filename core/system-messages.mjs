@@ -16,12 +16,13 @@ const TEAMMATE_PREFIX = "Another Claude session sent a message:";
 // Pleiad が中断の後の最初の発言の前に添える「止めたもの」の文の印（core/interrupt-stops.mjs。docs/design.md「中断と再開」）。
 // 発言と同じ user の行に入る（Claude は別の text ブロック、Codex は別の入力、agy は本文の前）ので、履歴で切り分ける
 export const INTERRUPTION_TAG = "pleiad-interruption";
-const INTERRUPTION = new RegExp(`^\\s*<${INTERRUPTION_TAG}>\\s*([\\s\\S]*?)\\s*</${INTERRUPTION_TAG}>\\s*`);
+// 作業中の設定の変更で止めたときは reason="settings" が付く（画面には出さない。hidden）
+const INTERRUPTION = new RegExp(`^\\s*<${INTERRUPTION_TAG}(?:\\s+reason="([\\w-]+)")?>\\s*([\\s\\S]*?)\\s*</${INTERRUPTION_TAG}>\\s*`);
 
-/** 行の先頭の「止めたもの」の文を `{ body, rest }` にする（body は印の中、rest は続く人の発言）。無ければ null */
+/** 行の先頭の「止めたもの」の文を `{ body, rest, hidden? }` にする（body は印の中、rest は続く人の発言）。無ければ null */
 export function splitInterruptionNote(text) {
   const m = INTERRUPTION.exec(String(text ?? ""));
-  return m ? { body: m[1], rest: String(text).slice(m[0].length) } : null;
+  return m ? { body: m[2], rest: String(text).slice(m[0].length), ...(m[1] === 'settings' ? { hidden: true } : {}) } : null;
 }
 
 /**
@@ -36,7 +37,7 @@ export function splitInterruptionNotes(messages) {
     // 分けた行は元の発言の uuid（groupUuid）を持つ（splitLeadingNotes と同じ。分岐・巻き戻しの切り口をまとまりの先頭に合わせる）
     const group = m.uuid ? { groupUuid: m.uuid } : {};
     const rest = (note.rest.trim() || m.attachments?.length) ? { ...m, text: note.rest, ...group } : null;
-    out.push({ role: "system", kind: "interruptionNote", text: "", body: note.body, at: m.at ?? null,
+    out.push({ role: "system", kind: "interruptionNote", text: "", body: note.body, at: m.at ?? null, ...(note.hidden ? { hidden: true } : {}),
       ...(rest ? {} : { uuid: m.uuid }), ...(m.backend ? { backend: m.backend } : {}), ...group });
     if (rest) out.push(rest);
   }
@@ -60,7 +61,7 @@ const attrsOf = (text) => Object.fromEntries([...String(text).matchAll(/([\w-]+)
 /** 行の先頭の包み 1 つを、システム側の 1 行の形（role: system）にする。包みの種類ごとの kind は splitLeadingNotes の説明 */
 function leadingRow(tag, attrText, body, m) {
   const base = { role: "system", text: "", at: m.at ?? null, ...(m.backend ? { backend: m.backend } : {}) };
-  if (tag === INTERRUPTION_TAG) return { ...base, kind: "interruptionNote", body };
+  if (tag === INTERRUPTION_TAG) return { ...base, kind: "interruptionNote", body, ...(attrsOf(attrText).reason === 'settings' ? { hidden: true } : {}) };
   const a = attrsOf(attrText);
   // <pleiad-inner> の kind（tail・pulse・wake）は見出しの出し分けに使う（wake は予約した時刻に起きた。ADR 0140）
   if (tag === MEMORY_CORE_TAG || tag === BOT_RECENT_TAG || tag === TURN_CONTEXT_TAG || tag === INNER_TAG) return { ...base, kind: "contextNote", tag: tag === MEMORY_CORE_TAG ? "memory-core" : tag === BOT_RECENT_TAG ? "bot-recent" : tag === INNER_TAG ? "inner" : "turn-context", ...(tag === INNER_TAG && a.kind ? { innerKind: a.kind } : {}), body };
@@ -283,7 +284,19 @@ export function classifySystemMessages(messages, marks = null) {
     }
     out.push(m);
   }
-  return withModelSwitches(out, marks?.modelSwitches);
+  return withModelSwitches(dropSettingsInterrupts(out), marks?.modelSwitches);
+}
+
+/**
+ * 作業中の設定の変更で止めたときに CLI が残す中断の行は出さない（止めたことは画面に出さない。ADR 0341）。
+ * 見分けは、続く行が設定の変更の印（`<pleiad-interruption reason="settings">` → hidden の interruptionNote）であること
+ */
+function dropSettingsInterrupts(rows) {
+  return rows.filter((m, i) => {
+    if (m?.kind !== "interrupt") return true;
+    const next = rows.slice(i + 1).find((x) => x?.role === "user" || x?.kind === "interruptionNote" || x?.kind === "interrupt");
+    return !(next?.kind === "interruptionNote" && next.hidden);
+  });
 }
 
 /**

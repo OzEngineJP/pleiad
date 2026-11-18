@@ -1662,24 +1662,71 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .chip .mk.in{animation:mk-in var(--dur) var(--ease-out)}
 @keyframes mk-in{from{opacity:0;transform:scale(.6)}}
 @media (prefers-reduced-motion:reduce){.chip .mk.in{animation:none}}
-/* モデルの面の下端の承認モードの切り替え（web/composer-controls.mjs の modeSegment）。選んでいるものだけ紙の面に本文色。
-   Bypass を選んでいるときは強い字。説明は選んでいるものの分だけ下に 1 行。bot の会話では薄くして押せない */
-.cpop .mode-area{padding:4px 6px}
-.cpop .seg{display:flex;gap:2px;background:var(--surface-1);border-radius:var(--r-pill);padding:2px}
-.cpop .seg button{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:28px;padding:2px 6px;border-radius:var(--r-pill);
-  background:transparent;color:var(--ink-weak);font:inherit;font-size:var(--fs-s);white-space:nowrap;cursor:pointer;
-  transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
-.cpop .seg button > span{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.cpop .seg button svg.i{width:13px;height:13px;flex:none}
-.cpop .seg button:hover{color:var(--ink)}
-.cpop .seg button.on{background:var(--surface-paper);color:var(--ink);box-shadow:0 1px 4px var(--shadow)}
-.cpop .seg button.on.danger{color:var(--ink-strong);font-weight:600}
-.cpop .seg button:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
-.cpop .mode-area.off .seg{opacity:.5}
-.cpop .mode-area.off .seg button{cursor:default}
-.cpop .mode-area .mode-hint{margin:0;padding:6px 4px 0;min-height:22px;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5}
-.cpop .mode-area .mode-hint b{color:var(--ink);font-weight:500;margin-right:4px}
-@media (pointer:coarse){.cpop .seg button{min-height:36px}}
+/* モデルの面（2 段の面。web/composer-controls.mjs の renderModel。承認済み（2026-11-18）、docs/design-system.md「入力欄の設定」）。
+   1 段目は 1 種類の行（アイコン・見出し・今の値・右端の ›）。2 段目は「‹ 見出し」の下に選ぶ一覧（選んでいる行は右端に ✓）。枠線は使わない */
+:root{--row:34px;--lbw:80px}
+@media (max-width:700px){:root{--row:44px;--lbw:84px}.prow .meta .usage-mini{display:none}}
+.plist{display:flex;flex-direction:column;gap:1px}
+.plist+.plist,.plist-wrap+.plist,.view-in>.plist+.plist{margin-top:6px}
+.prow{display:flex;align-items:center;gap:10px;width:100%;min-width:0;min-height:var(--row);padding:0 8px;border:0;border-radius:var(--r-s);background:transparent;
+  text-align:left;color:var(--ink);font:inherit;font-size:var(--fs);cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+button.prow:hover{background:var(--surface-hover)}
+.prow:focus{outline:none}
+.prow:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.prow .ic{flex:none;width:16px;height:16px;display:inline-grid;place-items:center;color:var(--ink-weak)}
+.prow .ic svg.i{width:15px;height:15px}
+.prow .ic .row-be{width:16px;height:16px}
+.prow .ic .av.xs{width:18px;height:18px;display:inline-grid;place-items:center;font-size:12px;line-height:1}
+.prow .lb{flex:none;width:var(--lbw);font-size:var(--fs-s);color:var(--ink-weak);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow .val{flex:1 1 auto;min-width:0;display:flex;align-items:baseline;gap:8px;overflow:hidden;white-space:nowrap}
+.prow .val .nm{flex:none;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.prow .val .nt{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-xs);color:var(--ink-weak)}
+.prow .val .cbadge{flex:none}
+.prow .val.two{flex-direction:column;align-items:stretch;gap:0;white-space:normal;padding:5px 0}
+.prow .val.two .nt{white-space:normal;line-height:1.5}
+.prow .tag{flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
+.prow .meta{flex:none;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--ink-weak);font-variant-numeric:tabular-nums;white-space:nowrap}
+.prow .meta.hot{color:var(--ink-strong)}
+.prow .meta.hot .usage-mini i{color:var(--ink-strong);background:currentColor}
+.prow .meta.wait{color:var(--ink-mark)}
+.prow .run{flex:none}
+.prow .end{flex:none;width:14px;height:14px;display:inline-grid;place-items:center;color:var(--ink-weak)}
+.prow .end svg.i{width:14px;height:14px}
+.prow .end.ok{color:var(--ink-blue)}
+.prow.danger .val .nm{color:var(--ink-strong);font-weight:600}
+.prow[aria-disabled=true]{cursor:default}
+.prow.backhead .val{font-weight:600}
+.prow.backhead .ic{color:var(--ink)}
+/* 使えないエージェント（エージェントの一覧の下に離し、薄く、選べない。右に状態の言葉とその場の操作） */
+.plist.unusable{margin-top:10px}
+.prow.agent-off{align-items:center}
+.prow.agent-off > :is(.ic,.val){opacity:.62}
+.prow.agent-off .val .lnk.q{display:block;font-size:var(--fs-xs)}
+.prow.agent-off .agent-off-op{flex:none;padding:2px 10px;font-size:var(--fs-xs)}
+.prow.agent-off .agent-off-st{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
+.psearch{position:relative;margin:2px 0 6px}
+.psearch svg.i{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--ink-weak);pointer-events:none}
+.psearch input{width:100%;height:var(--row);border:0;border-radius:var(--r-s);background:var(--surface-1);padding:0 10px 0 34px;font:inherit;font-size:var(--fs);color:var(--ink)}
+.psearch input:focus{outline:none;background:var(--surface-2)}
+.psearch input:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.psearch input::placeholder{color:var(--ink-weak)}
+.pnote{margin:0;padding:6px 8px 6px 34px;font-size:var(--fs-s);color:var(--ink-weak)}
+.cpop .chead.inlist{padding:8px 8px 2px 34px}
+/* エフォートの行（右へ高くなる棒。1 つの role=slider。既定の段は棒の下に小さな点） */
+.prow.erow{cursor:default}
+.eslider{position:relative;flex:1 1 auto;min-width:96px;align-self:stretch;cursor:pointer;touch-action:pan-y;border-radius:var(--r-s);-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+/* フォーカスの輪は 2px --line-blue・外側 1px、:focus-visible だけ（マウス・タッチで押しただけでは出さない） */
+.eslider:focus{outline:none;box-shadow:none}
+.eslider:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.prow .evalue{flex:none;width:50px;font-size:var(--fs);color:var(--ink);white-space:nowrap}
+.prow .evalue.none{width:auto;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ink-weak);font-size:var(--fs-s)}
+.ebars{display:flex;align-items:center;gap:3px;padding:0 2px;max-width:220px}
+.ebars i{flex:1 1 0;position:relative;height:22px;display:flex;align-items:flex-end}
+.ebars i::before{content:"";width:100%;height:var(--h);border-radius:2px;background:var(--surface-3);transition:background-color var(--dur-fast) var(--ease-out)}
+.ebars i.on::before{background:var(--fill-primary);color:var(--on-fill)}
+.ebars i.def::after{content:"";position:absolute;left:50%;bottom:-6px;width:4px;height:4px;margin-left:-2px;border-radius:50%;color:var(--ink-weak);background:currentColor}
+@media (max-width:700px){.ebars i{height:26px}.ebars i.def::after{bottom:-7px}}
+@media (prefers-reduced-motion:reduce){.prow,.ebars i::before{transition:none}}
 .crow.fit-model-icon .chip.model :is(.v,.caret){display:none}
 .chip.model{position:relative}
 .chip.model .av{flex:none}
@@ -1687,27 +1734,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .chip.model .row-be{flex:none;width:16px;height:16px}
 .chip.model .compat-mark{display:inline-grid;place-items:center;color:var(--ink-weak);font-size:13px;line-height:1}
 .crow > .chip.model.changed > .entry-dot{position:absolute;left:17px;right:auto;top:1px}
-.destination-sent,.destination-fact{margin:4px 8px;color:var(--ink-weak);font-size:var(--fs-s)}
-.destination-agent{display:flex;align-items:center;gap:5px;padding:12px 8px 4px;color:var(--ink-weak);font-size:var(--fs-s)}
-.destination-agent b{margin-right:auto;color:var(--ink);font-weight:600}
-.destination-agent .row-be{width:16px;height:16px}
-.destination-options{display:flex;flex-wrap:wrap;gap:5px;padding:4px 6px 8px}
-.destination-option{display:inline-flex;align-items:center;gap:5px;max-width:100%;min-height:36px;padding:4px 9px;border:0;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font:inherit;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
-.destination-option:hover{background:var(--surface-2)}
-.destination-option.on{background:var(--surface-sel);font-weight:600}
-.destination-option .destination-check{color:var(--ink-blue)}
-.destination-option .destination-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.destination-option .destination-wait{color:var(--ink-mark);font-size:var(--fs-xs)}
-.destination-option .run{flex:none}
-.destination-option .row-be{flex:none;width:16px;height:16px}
-.cpop .chead.destination-head{display:flex;align-items:baseline;gap:8px}
-.destination-head-note{margin-left:auto;letter-spacing:0}
-/* 宛先のエージェントの使用量の 1 行（「▬ 5時間 66% ▬ 週次 31% … 使用量 ›」） */
-.destination-usage{display:flex;align-items:center;gap:12px;padding:2px 8px 6px;font-size:var(--fs-xs);color:var(--ink-weak);font-variant-numeric:tabular-nums}
-.destination-usage-item{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
-.destination-usage .clink{margin-left:auto;font-size:var(--fs-xs)}
-.destination-agent .av.xs{width:18px;height:18px;display:inline-grid;place-items:center;font-size:12px;line-height:1;flex:none}
-.cpop > .clink:is(.destination-bot-link,.destination-reset){display:block;margin:4px 8px 6px}
 /* 縮める前の幅を測る間だけ（fitRow）。「保存済み」は測らない（入らなければ消えるだけ） */
 .crow.measuring > *{flex-shrink:0}
 .crow.measuring > .draft-saved{display:none}
@@ -1741,11 +1767,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .copt.copt-note .sub{white-space:normal;line-height:1.5}
 .copt .tag,.copt .r{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 .copt .r{margin-left:auto}
-/* アカウントの行の週の使用量（小さなバー＋「週 N%」。ADR 0224）。高いときは字もバーも強くする（率は字で読めるので色だけに頼らない） */
-.copt .r.week{display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
-.copt .tag+.r.week{margin-left:8px}
-.copt .r.week.hot{color:var(--ink-strong)}
-.copt .r.week.hot .usage-mini i{color:var(--ink-strong);background:currentColor}
 .copt.danger .main{color:var(--ink-strong);font-weight:600}
 .cpath{width:100%;background:var(--surface-1);border-radius:var(--r-pill);padding:6px 12px;font-family:var(--font-mono);font-size:var(--fs-s);color:var(--ink)}
 .cpath:focus{outline:none;background:var(--surface-2)}
@@ -1870,24 +1891,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .fu-drop::backdrop{background:var(--surface-veil)}
 .fu-drop .fu-sub{margin:4px 0 0}
 .fu-drop .fu-acts{justify-content:flex-start;padding:10px 0 0}
-/* エフォートの段。目盛りの下に「既定」の印。段を選べないモデルでは無効にして理由を出す */
-.ceffort{padding:2px 8px 4px}
-.ceffort .etop{display:flex;align-items:baseline;gap:8px;min-width:0}
-.ceffort .val{font-weight:600;flex:none}
-.ceffort .note{font-size:var(--fs-xs);color:var(--ink-weak);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ceffort .reset{margin-left:auto;flex:none;padding:0;background:transparent;color:var(--ink-blue);font-size:var(--fs-xs);cursor:pointer}
-.ceffort .reset[hidden]{display:none}
-.ceffort input[type=range]{width:100%;margin:8px 0 2px;accent-color:var(--ink-blue);cursor:pointer}
-.ceffort input[type=range]:disabled{cursor:default;opacity:.4}
-.ceffort.off .val{color:var(--ink-weak)}
-.ceffort .ticks{display:flex;justify-content:space-between;padding:0 7px 16px;font-size:var(--fs-xs);color:var(--ink-weak)}
-.ceffort .ticks span{position:relative;width:0;display:flex;justify-content:center;white-space:nowrap}
-.ceffort .ticks span.def::after{content:var(--i18n-default,"");position:absolute;top:15px;font-size:10px;color:var(--ink-blue)}
-/* 既定の段が分からず既定に従っているとき（composer-labels.mjs の effortStops の unset）: つまみを出さない。動かすと出る */
-.ceffort input[type=range].unset::-webkit-slider-thumb{opacity:0}
-.ceffort input[type=range].unset::-moz-range-thumb{opacity:0}
-/* 面の下の文字だけのボタン（「接続先を管理…」など） */
-.cfoot{display:flex;gap:16px;flex-wrap:wrap;padding:8px 8px 2px}
+/* 面の下の文字だけのボタン */
 .clink{padding:0;background:transparent;color:var(--ink-blue);font-size:var(--fs-s);cursor:pointer}
 .clink:hover{text-decoration:underline}
 .clink:disabled{color:var(--ink-weak);cursor:default;text-decoration:none}
@@ -2121,6 +2125,25 @@ main.dropping #log{background:var(--surface-1)}
 .next-settings{display:flex;align-items:center;gap:12px;background:var(--surface-2);border-radius:var(--r-m);padding:10px 16px;margin-bottom:10px;font-size:var(--fs-s)}
 .next-settings .btn{margin-left:auto;flex:none;font-size:var(--fs-s)}
 .next-settings b{font-weight:600}
+/* 作業中の設定の変更の帯（docs/design-system.md「作業中の設定の変更」、承認済み（2026-11-18））。
+   1 行目に見出し「以下の設定に変更予定」と［今すぐ変える］［取り消す］、2 行目から「名前: 値」の項目（値だけ太字）。
+   worktree だけの軽い 1 行（.wt-compact。web/worktree.css）は今の形のまま */
+.next-settings:not(.wt-compact){display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:2px 4px;padding:8px 10px 10px 16px}
+.next-settings[hidden]{display:none}
+.next-settings:not(.wt-compact)>div{display:contents}
+.next-settings:not(.wt-compact)>div>b{grid-column:1;grid-row:1;min-width:0;font-weight:400;color:var(--ink-weak);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.next-settings:not(.wt-compact) .next-apply{grid-column:2;grid-row:1;margin-left:8px}
+/* 帯の地は --surface-2 なので、［今すぐ変える］は 1 段濃い地で押せるものと分かるようにする（承認済みの v5） */
+.next-settings .next-apply{background:var(--surface-3)}
+.next-settings:not(.wt-compact) .next-cancel{grid-column:3;grid-row:1;margin-left:0}
+.next-settings:not(.wt-compact) :is(.next-items,.next-behind,.next-handoff){grid-column:1/-1}
+.next-items{display:flex;flex-wrap:wrap;gap:2px 18px;min-width:0}
+.next-item{min-width:0;color:var(--ink-weak)}
+.next-item b{color:var(--ink)}
+@media (max-width:700px){
+  .next-settings:not(.wt-compact){padding:6px 8px 10px 12px;gap:2px 4px}
+  .next-settings:not(.wt-compact) .btn{min-height:36px;padding:5px 10px}
+}
 /* 裏だけを待っている間の注記（今の送信は今のターンの設定で処理される。docs/design-system.md「入力欄の設定」） */
 .next-behind{margin-top:4px;color:var(--ink-weak)}
 /* エージェントを変える予約のときの引き継ぎの 1 行と「詳しく」（既定は閉じる。docs/design-system.md「入力欄の設定」） */

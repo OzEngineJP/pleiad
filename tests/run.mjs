@@ -161,6 +161,8 @@ const SUITES = [
   './unit/chrome-handoff-flow.mjs',
   // エージェントの Chrome の窓の状態（web/chrome-control.mjs）: 一時停止中の帯と戻すボタン・押した位置の輪・スマホの帯の読み上げ・状態の置き場・会話の引き継ぎの行・記録（DOM の代役）
   './unit/chrome-control-ui.mjs',
+  // 作業中に設定を変えた跡の行の文・記録の形・止めたことを見せない・送ったら予約を効かせる列（ADR 0341）
+  './unit/settings-trace.mjs',
   // Chrome への接続の OS の層（Windows）: 確認の窓の見つけ方・前面化・閉じる・使えない OS・parentPort の往復（偽の Win32 の表）
   './unit/chrome-os.mjs',
   './unit/desktop-chrome-pill.mjs',
@@ -324,6 +326,8 @@ const SUITES = [
   './unit/server-setting-approval-delegated.mjs',
   // 途中切り替えに対応しないエージェントの承認モード: 走っている間の変更は次のターンへの予約（nextSettings）になる（#147）
   './unit/server-mode-next-turn.mjs',
+  // 作業中の設定の変更: 予約・［今すぐ変える］（止めずに／止めて続ける）・送ったら適用・跡の行（ADR 0341）
+  './unit/server-live-settings.mjs',
   // 予約したモデルは一覧が縮んでも backend へ届く。選ぶとき（setTurnSettings）の確かめは一度だけ取り直す
   './unit/server-reserved-model.mjs',
   './unit/server-send-model.mjs',
@@ -427,6 +431,8 @@ const SUITES = [
   './unit/usage-failures.mjs',
   './unit/effort.mjs',
   './unit/composer-agy.mjs',
+  // モデルの一覧の「ほかのモデル」の分け方（Claude は系統ごとに新しい版だけを上に）
+  './unit/composer-labels.mjs',
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
   './unit/compat-endpoints.mjs',
   // API キーの置き場（設定 › API キー。ADR 0155）: 移行（同じ値は 1 件・違う値は別の件・登録済みの所だけ引き継ぐ・冪等・保留）・値を出さない・古い置き場にも書く・確認・接続先の keyRef

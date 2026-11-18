@@ -628,6 +628,9 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
         // 終わったことは稼働表示が消えれば分かる。通ったターンでは、主だけの仕事（設定の行の期限切れの読み直し）をして終わる
         if (ev.outcome === "ok") { hooks.onTurnOk?.(); return; }
         closeTurnEl();
+        // 作業中の設定の変更のために止めた（すぐ新しい設定で続く）。止めたことは出さず、「変えました」の跡の行だけを残す
+        // （docs/design-system.md「作業中の設定の変更」・ADR 0341）
+        if (ev.outcome === 'aborted' && ev.reason === 'settings') return;
         // 中断の一行は保存された状態と同じ形で描く（paintInterruptLine が二重に出さない）
         if (ev.outcome === "aborted" || ev.outcome === 'limited') hooks.paintInterruptLine({ at: ev.at ?? Date.now(),
           reason: ev.outcome === 'limited' ? 'limit' : ev.reason, resetsAt: ev.resetsAt, window: ev.window,

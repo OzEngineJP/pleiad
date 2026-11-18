@@ -329,6 +329,21 @@ export const conversationOps = [
     },
   }),
 
+  // 作業中の設定の予約を今のターンへ効かせる（入力欄の上の帯の［今すぐ変える］。docs/design-system.md「作業中の設定の変更」）。
+  // 全部がその場で効けば止めずに切り替え、効かないものがあれば今のターンを止めて新しい設定で続けさせる。画面からだけ
+  defineOp({
+    id: 'sessions.applyTurnSettings',
+    summary: 'agent:ops.sessions.applyTurnSettings.summary',
+    risk: 'write',
+    riskReason: 'Only the band above the composer calls it (not on MCP or the CLI). It applies the settings a person already reserved for this conversation to the running turn; when they cannot be applied live it stops the turn and continues it with the new settings',
+    scope: 'session',
+    input: z.object({ sessionId: z.string().min(1).max(200).describe(D('applyTurnSettings', 'sessionId')) }),
+    output: z.object({ applied: z.enum(['live', 'stop', 'wait', 'none']) }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    legacyCommand: 'applyTurnSettingsNow',
+    handler: (ctx, { sessionId }) => fromHost(() => ctx.conversations.applyTurnSettings({ sessionId })),
+  }),
+
   // 題の提案。会話の中身から短い題を作らせるだけで、会話は変えない（返った題を付けるのは sessions.setTitle）。会話のアカウントで小さな 1 回を回す
   defineOp({
     id: 'sessions.suggestTitle',

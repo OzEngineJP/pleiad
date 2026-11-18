@@ -1,7 +1,7 @@
 // Durable acceptance is separate from execution. A lost backend acknowledgement
 // is never retried automatically: the original may already have been consumed.
 import { t } from './i18n.mjs';
-export function createMessageQueue({ store, active, start, changed, delivered }) {
+export function createMessageQueue({ store, active, start, changed, delivered, applyReserved = null }) {
   const locks = new Map();
   const serial = (id, fn) => {
     const next = (locks.get(id) ?? Promise.resolve()).catch(() => {}).then(fn);
@@ -44,6 +44,15 @@ export function createMessageQueue({ store, active, start, changed, delivered })
       }
       const turn = active(id);
       if (turn?.blocked) return setWait(id, turn.wait ?? { reason: 'turn' });
+      // 作業中に送ったら、面で選んでおいた予約（nextSettings）を今のターンへ効かせてから渡す（docs/design-system.md「作業中の設定の変更」）。
+      // applyReserved（server の applyReservedNow）: 'live' = 止めずに切り替えた（そのまま途中送信へ）／'stop' = 止め始めた
+      // （止まったら列が新しい設定のターンでこの発言を始める）／'wait' = 止められない（次のターンへ回す）。
+      // main が返答を終えて裏だけを待っている間（phase: waiting）は止めない。予約と帯を残し、途中送信だけ渡す
+      if (turn && turn.phase !== 'waiting' && applyReserved && (await store.get(id)).nextSettings) {
+        const how = await applyReserved(id, turn);
+        if (how === 'stop') return setWait(id, { reason: 'turn' });
+        if (how === 'wait') return setWait(id, { reason: 'turn', detail: 'reserved' });
+      }
       if (turn && !turn.steer) return setWait(id, { reason: 'turn' });
       // 次のターンの設定の予約（nextSettings）がある間、途中送信は予約より先に今のターンで処理される。
       // main が動いている間は、すぐ終わるのでターンの終わりを待ち、新しいターンで予約を効かせる。

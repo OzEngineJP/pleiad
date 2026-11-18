@@ -20,7 +20,7 @@ export default async function (t) {
   rpc.attach = (_id, h) => { handlers = h; return () => {}; };
   rpc.claimOrphan = (h) => { handlers = h; return () => {}; };
   rpc.request = async (method, params) => {
-    if (method === "config/read") return { config: { model_reasoning_effort: "medium" } };
+    if (method === "config/read") return { config: { model_reasoning_effort: "medium", model: "gpt-config" } };
     if (method === "model/list") return { data: [] };
     if (method === "thread/start") {
       lastThread = params;
@@ -56,11 +56,11 @@ export default async function (t) {
     return { turn: { id: turnId } };
   };
 
-  const run = async (mode, sessionId, prompt = "normal", effort) => {
+  const run = async (mode, sessionId, prompt = "normal", effort, model) => {
     const before = asked;
     const events = [];
     const result = await backend.runTurn({
-      mode, sessionId, effort, cwd: process.cwd(), prompt,
+      mode, sessionId, effort, model, cwd: process.cwd(), prompt,
       emit: (e) => events.push(e),
       askPermission: async (request) => { asked++; lastAsk = request; return { allow: true }; },
     });
@@ -87,6 +87,11 @@ export default async function (t) {
     t.ok("再開ターンに effort を渡す", lastTurn.effort === "high");
     await run("ask", initial.id, "normal", "");
     t.ok("既定に戻すと前の effort を上書きする", lastTurn.effort === "medium");
+    // ロード済みのスレッドは thread/resume の model を無視するので、作業の途中で選び直したモデルも turn/start で渡す（docs/design-system.md「作業中の設定の変更」）
+    await run("ask", initial.id, "normal", "high", "gpt-picked");
+    t.ok("再開ターンに選んだモデルを渡す", lastTurn.model === "gpt-picked", JSON.stringify(lastTurn.model));
+    await run("ask", initial.id, "normal", "high", "");
+    t.ok("既定に戻すと前のモデルを公式の既定（config の model）で上書きする", lastTurn.model === "gpt-config", JSON.stringify(lastTurn.model));
     const auto = await run("auto", initial.id);
     t.ok("ask → auto: 通常操作は確認なし", auto.approvals === 0 && auto.policy === "on-request");
     const escalated = await run("auto", initial.id, "escalate");

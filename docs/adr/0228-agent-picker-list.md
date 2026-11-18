@@ -28,3 +28,9 @@
 - `web/composer-controls.mjs`（区切り → 一覧。`row` に `mark` の口）。`web/client.mjs`・`web/channels/thread-composer.mjs`・`web/channels/bot-page.mjs` が `backendUsage`（id → `weekUsage` の値）を渡す。bot のページは面を開いている間、全エージェントの使用量を 1 度ずつ読む。
 - `core/backends/agents.mjs` の devin に `brand`、`web/brand/devin.svg` を追加、`web/style.css` に `.row-be-devin` と `.main.hasmark`、区切りの CSS（`.cseg`）を削除。
 - 見た目の決まりは [design-system.md](../design-system.md)「入力欄の設定」のモデルの面。
+
+## 追記（2026-11-18）: エージェントは 1 段目の 1 行に畳む
+
+モデルの面を 2 段にした（利用者がモック v5 を承認。[design-system.md](../design-system.md)「入力欄の設定」の「面（2 段）」）。エージェントは 1 段目の **1 行**（ロゴ・「エージェント」・今の名前・週の使用量の小さな棒・›）に畳み、押すとこの ADR の一覧の行（ロゴ・正式名・右端に週の使用量）が 2 段目に出る。一覧の下に文字だけの「使用量」と「接続先を管理…」を置く。
+
+選んでいるエージェントの下の使用量の 1 行（窓ごとの内訳と「使用量 ›」）はやめた。週の値は 1 段目の行の棒で、内訳は「使用量」の先で見る。行の右の週の使用量は `weekRight` ではなく `weekMeta`（`web/composer-controls.mjs`）で描く。

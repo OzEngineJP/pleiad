@@ -29,6 +29,8 @@ export const CAPABILITY_STATES = {
     subagents: true,
     liveModel: true,
     liveMode: true,
+    // 走っているターンのエフォートを Query.applyFlagSettings({ effortLevel }) で変える（SDK の streaming 入力のときだけ）
+    liveEffort: true,
     hostTools: true,
     plyAgents: true,   // ply_agents を mcpServers に、その instructions を append に渡す
     plyInstructions: true, // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
@@ -65,6 +67,7 @@ export const CAPABILITY_STATES = {
     subagents: true,    // 子スレッド。thread/list { parentThreadId } と thread/read で読む
     liveModel: impossible('app-server に走っているターンの切り替えの口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     liveMode: impossible('app-server に走っているターンの切り替えの口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    liveEffort: impossible('app-server に走っているターンのエフォートを変える口が無い（止めて次のターンで効かせる）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     plyAgents: true,    // ply_agents を mcp_servers に、その instructions を developerInstructions に渡す
     plyInstructions: true, // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
@@ -104,6 +107,7 @@ export const CAPABILITY_STATES = {
     subagents: impossible('1.4.7 は子の conversation_id / log_uri だけを通知し、子の会話本文を取得する口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #151）
     liveModel: impossible('起動時の --model だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     liveMode: impossible('起動時の --mode だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    liveEffort: impossible('起動時のモデル id（段違い）だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     // Pleiad 担当のコンテキスト（ply_context）は、Pleiad の置き場に作ったカスタムエージェント経由で渡す（antigravity-context.mjs）。
     // agy は会話のあいだ 1 本のプロセスを生かすので、ply_context のトークンもターンごとではなく会話ごと（'conversation'）
@@ -153,6 +157,7 @@ export const CAPABILITY_STATES = {
     subagents: true,        // task のツールが作る子の会話（/session/{id}/children）
     liveModel: true,            // POST /session/{id}/model は走っているターンにも反映
     liveMode: true,             // PATCH /session/{id} の permission 更新は走っているターンにも反映
+    liveEffort: impossible('走っているターンへエフォートだけを送る口が無い（止めて次のターンで効かせる）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,        // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,      // reply: always（OpenCode が出す always のパターンで、この会話の間）
@@ -191,6 +196,7 @@ export const CAPABILITY_STATES = {
     subagents: true,                  // sessions.db の subagent_heads / message_nodes から一覧・履歴・発生元ツールを引く
     liveModel: true,                  // 実行中のターンへ session/set_config_option でモデルを送る
     liveMode: true,                   // 実行中のターンへ session/set_config_option で承認モードを送る
+    liveEffort: impossible('走っているターンへエフォートを送る口を確かめていない（止めて次のターンで効かせる）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,               // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,
@@ -233,6 +239,7 @@ export const CAPABILITY_STATES = {
     subagents: true,       // _x.ai/session_notification の subagent_spawned / finished を会話単位で控え、session/load で子の記録を読む
     liveModel: true,     // session/set_config_option
     liveMode: true,      // session/set_mode
+    liveEffort: impossible('走っているターンへエフォートを送る口を確かめていない（止めて次のターンで効かせる）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,  // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,

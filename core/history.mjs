@@ -34,6 +34,16 @@ export const chromeDownloadLine = (value) => ({
   path: value?.state === 'completed' && typeof value?.path === 'string' && value.path ? value.path.slice(0, 1000) : null,
 });
 
+/** 作業中に設定を変えた跡の行の中身。項目はエージェント・モデル・エフォート・承認モードだけで、値は id（短く切る） */
+const SETTINGS_FIELDS = ['backend', 'model', 'effort', 'mode'];
+export const settingsChangeLine = (value) => ({
+  live: value?.live === true,
+  changes: (Array.isArray(value?.changes) ? value.changes : [])
+    .filter(c => SETTINGS_FIELDS.includes(c?.field))
+    .slice(0, SETTINGS_FIELDS.length)
+    .map(c => ({ field: c.field, from: shortText(c.from, 200), to: shortText(c.to, 200) })),
+});
+
 /** ファイルごとの追記を直列化する（同一セッションへの並行 present で行が壊れないように）。 */
 const appendChains = new Map();
 
@@ -200,6 +210,9 @@ export async function recordPresent(sessionId, payload) {
     // 会話の Chrome のウィンドウのダウンロードが決着した行（core/chrome/downloads.mjs）: { name, state, size, path }（path は終わったものだけ）
     ...(payload.kind === 'chromeDownload' ? { chromeDownload: chromeDownloadLine(payload.chromeDownload) } : {}),
     ...(payload.kind === 'chromeClosed' ? { chromeClosed: { by: ['agent', 'human', 'idle'].includes(payload.chromeClosed?.by) ? payload.chromeClosed.by : 'human' } } : {}),
+    // 作業中に設定を変えた跡の行（core/server.mjs の recordSettingsChange。ADR 0341）: { live, changes: [{ field, from, to }] }。
+    // 値は id のまま残し、画面が今の言語の表示名に引く（web/render.mjs）
+    ...(payload.kind === 'settingsChange' ? { settingsChange: settingsChangeLine(payload.settingsChange) } : {}),
   };
 
   const inline =

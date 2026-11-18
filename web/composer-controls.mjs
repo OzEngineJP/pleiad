@@ -1,25 +1,25 @@
 // 入力欄の下の設定（docs/design-system.md「入力欄の設定」）。
 //
 // 「どこで」（作業ディレクトリ）「誰が・どれだけ考えて」（エージェント・モデル・エフォート・アカウント）
-// 「どこまで任せるか」（承認モード）を 2 つのチップにまとめる。承認モードはモデルの面の下端の切り替えで、
+// 「どこまで任せるか」（承認モード）を 2 つのチップにまとめる。モデルの面は 2 段（1 段目の行を押すと一覧。承認モードは最後の行）で、
 // 既定から外れているときだけモデルのチップに印を出す（ADR 0252）。チップは押すと上へ浮く面（ポップオーバー）を開く。
 //
 //   - チップの字は全部同じ色・太さ。「既定から外れている」を色で示さない（既定が見えないと意味が伝わらないため）。
 //     代わりにチップは**実際に使う値**を出す（例: Opus 5.5 · high）。一覧では「既定」は札として添えるだけ。
 //     承認モードの印だけは既定から外れたときに出す（盾と名前を --ink-blue。Bypass（範囲 full・自律 never）は ⚠ と強い字）
 //   - 値はここでは持たない。get() が毎回 client.mjs の状態から読み、変更は on.*() で client.mjs に返す
-//   - キーボード: チップは button（Enter / Space で開く）。Esc で閉じてチップへ戻る。一覧の中は ↑↓ で移る。
+//   - キーボード: チップは button（Enter / Space で開く）。Esc は 1 段戻り、1 段目なら閉じてチップへ戻る。一覧の中は ↑↓ で移る。
 //     面の外を押すと閉じる。面は画面の幅に収める（360px の画面でもはみ出さない）
 import { el, svgEl, relTime } from "./dom.mjs";
 import { isComposingKey } from "./keyboard.mjs";
-import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel } from "./composer-labels.mjs";
+import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel, splitModelRows } from "./composer-labels.mjs";
 import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText, ONE_M_TITLE } from "./compat-models.mjs";
 import { t } from "./i18n.mjs";
 import { splitChipLabel } from "./composer-layout.mjs";
 import { runMark } from "./arc.mjs";
 import { botIcon } from "./channels/bot-icon.mjs";
 import { backendLogo } from "./side.mjs";
-import { quotaOf, shortLabel, percentText, usedOf, windowsForModel } from "./header-usage.mjs";
+import { percentText } from "./header-usage.mjs";
 
 /** 一覧の「既定」の札 */
 const DEFAULT_TAG = () => t("chat.model.default");
@@ -162,10 +162,11 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
       openPanel = self;
       pop.hidden = false;
       chip.setAttribute("aria-expanded", "true");
+      views.delete(pop);   // モデルの面は開くたびに 1 段目から
       render();
       self.place();
       onShow?.();
-      if (focus) (pop.querySelector('.destination-option[aria-pressed="true"]') ?? pop.querySelector('[aria-selected="true"]') ?? pop.querySelector(".cpath") ?? pop.querySelector("input:not([type=range]):not(:disabled), button:not(:disabled), [tabindex='0']"))?.focus();
+      if (focus) (pop.querySelector('[aria-selected="true"]') ?? pop.querySelector(".cpath") ?? pop.querySelector("input:not([type=range]):not(:disabled), button:not(:disabled), [tabindex='0']"))?.focus();
     },
     hide(returnFocus = true) {
       if (pop.hidden) return;
@@ -204,24 +205,34 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
   });
   pop.addEventListener("keydown", (e) => {
     if (isComposingKey(e)) return;
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); self.hide(); return; }
-    const after = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-    // 宛先の札（宛先とモデルの面の上）: ←→ で札の間を移り、↓ で札の下の最初の部品（エージェント・モデルの一覧）へ
-    const pill = e.target.closest?.(".destination-option");
-    if (pill) {
-      const pills = [...pop.querySelectorAll(".destination-option")];
-      const i = pills.indexOf(pill);
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        e.preventDefault();
-        pills[Math.max(0, Math.min(pills.length - 1, i + (e.key === "ArrowRight" ? 1 : -1)))]?.focus();
-      } else if (e.key === "ArrowDown") {
-        const last = pills[pills.length - 1];
-        const next = [...pop.querySelectorAll("[role=option]:not(:disabled):not([aria-disabled=true]), .seg button, input, button.clink")].find((n) => after(last, n));
-        if (next) { e.preventDefault(); next.focus(); }
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      // モデルの面の 2 段目なら 1 段目へ戻り、開いた行へ。1 段目なら閉じる
+      const v = views.get(pop);
+      if (v && v.view !== "top") {
+        views.set(pop, { view: "top", q: "" });
+        self.render();
+        self.place();
+        pop.querySelector(`[data-key="nav:${v.view}"]`)?.focus({ preventScroll: true });
+        return;
       }
+      self.hide();
       return;
     }
+    const after = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    // モデルの面（2 段の面）: ↑↓ で行・エフォートの棒・検索の欄を上から順に移る（端で止まる）。
+    // 押せない行の中の操作（使えないエージェントの「入れる」など）からは、その前後の行へ
+    if (e.target.closest?.(".prow, .eslider, .psearch")) {
+      e.preventDefault();
+      const items = [...pop.querySelectorAll("button.prow:not([aria-disabled=true]), .eslider:not([aria-disabled=true]), .psearch input")];
+      const down = e.key === "ArrowDown";
+      const at = items.indexOf(e.target);
+      const next = at >= 0 ? items[Math.max(0, Math.min(items.length - 1, at + (down ? 1 : -1)))]
+        : down ? items.find((n) => after(e.target, n)) : items.filter((n) => after(n, e.target)).pop();
+      next?.focus({ preventScroll: false });
+      return;
+    }
     // 一覧の中を移る。入力欄からは ↓ で入力欄より後ろにある最初の一覧の先頭へ（互換の接続先のモデルの欄は
     // 接続先の一覧の下にあるので、面の最初の一覧ではなく直下のモデルの候補へ）。一覧の先頭で ↑ は直前の入力欄、無ければ選んでいる宛先の札へ
     const from = e.target.closest?.("[role=option]");
@@ -237,7 +248,7 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
     const i = rows.indexOf(from) + (e.key === "ArrowDown" ? 1 : -1);
     if (i < 0) {
       const input = [...pop.querySelectorAll("input:not([type=range])")].filter((n) => after(n, list)).pop();
-      (input ?? pop.querySelector(".destination-option.on") ?? [...pop.querySelectorAll(".destination-option")].pop())?.focus();
+      input?.focus();
       return;
     }
     rows[Math.min(i, rows.length - 1)]?.focus();
@@ -281,30 +292,10 @@ function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disa
   if (sub) mid.append(el("span", "sub", sub));
   b.append(mid);
   if (tag) b.append(el("span", "tag", tag));
-  // right は字か、組み立て済みの部品（アカウントの行の週の使用量。weekRight）
+  // right は字か、組み立て済みの部品
   if (right) b.append(typeof right === "object" ? right : el("span", "r", right));
   b.onclick = onPick;
   return b;
-}
-
-/** 使えないエージェントの行（選べない。右に状態の言葉とその場の操作）。状態は「本体 · SDK」の 1 行 */
-function unusableAgentRow(b, v, mark) {
-  const r = el("div", "copt agent-off");
-  r.setAttribute("role", "option");
-  r.setAttribute("aria-selected", "false");
-  r.setAttribute("aria-disabled", "true");
-  r.dataset.key = `backend:${b.id}`;
-  const mid = el("span", "cbody");
-  const m = el("span", "main hasmark");
-  m.append(mark, el("span", "txt", b.label));
-  // 状態が 1 つだけの行は、名前と同じ行の右（操作の左）に置く。本体と SDK の 2 つがある行（Claude Code）は名前の下に並べる
-  if (!v.state) mid.append(m, el("span", "sub", v.status));
-  else mid.append(m);
-  if (v.terms) mid.append(v.terms);
-  r.append(el("span", "tick", ""), mid);
-  if (v.state) { const st = el("span", "arow agent-off-st"); st.append(v.state); r.append(st); }
-  if (v.op) { v.op.classList.add("agent-off-op"); r.append(v.op); }
-  return r;
 }
 
 function listbox(label, rows) {
@@ -376,17 +367,8 @@ export function folderBrowser({ cmd, box, err, onChoose, onAt = () => {}, closed
   return browse;
 }
 
-// ---- エージェント・モデル・エフォート・アカウント
-/**
- * モデルの面を描く。入力欄・bot など、対象の保存先には依存しない。
- * @param {object} o
- * @param {HTMLElement} o.pop 描画先（面の開閉は panel() で呼び出し側が扱う）
- * @param {object} o.target 今の値と候補。backend/backends/backendSwitchable、model/models、effort/efforts/effortDisabled。
- *   endpoint と account/accounts は任意。省けば接続先・アカウントの節を出さない。
- * @param {object} o.on 変更先 { backend, model, effort, endpoint?, account? }。選べる項目の関数を渡す。
- *   保存後、更新した target で描き直す。既定に戻す model/effort は空文字を渡す。
- * @param {(returnFocus?: boolean) => void} o.hide 接続先の管理へ移るとき、面を閉じる
- */
+// ---- エージェント・モデル・エフォート・アカウント・承認モード（モデルの面）
+/** エージェントのロゴ（読み上げない。名前は横の字で読む） */
 function logo(id) {
   const mark = backendLogo(id, '');
   mark.removeAttribute('title');
@@ -396,33 +378,6 @@ function logo(id) {
     if (node.tagName === 'IMG') node.alt = '';
   }
   return mark;
-}
-
-/** 宛先の面に置く、選んだエージェントの使用量の一行。 */
-export function destinationUsage(result, { account = '', model = '', models = {}, open = null } = {}) {
-  const all = quotaOf(result?.quota, account)?.windows ?? [], resolved = model || models['']?.resolvesTo || '';
-  const windows = !resolved && all.some(w => w.provider) ? [] : windowsForModel(all, resolved);
-  if (!windows.length) return null;
-  const line = el('div', 'destination-usage');
-  for (const w of windows.slice(0, 3)) {
-    const used = usedOf(w);
-    const item = el('span', 'destination-usage-item');
-    const bar = el('span', 'usage-mini'); bar.setAttribute('aria-hidden', 'true');
-    const fill = el('i'); fill.style.width = `${Math.min(100, Math.max(0, used ?? 0))}%`; bar.append(fill);
-    item.append(bar, `${shortLabel(w)} ${percentText(used)}`);
-    line.append(item);
-  }
-  if (open) { const button = el('button', 'clink', t('composer.destination.openUsage')); button.type = 'button'; button.onclick = open; line.append(button); }
-  return line;
-}
-
-/** weekUsage の値を行の右の部品にする。小さなバー＋「週 N%」。字で率を出すので、色だけに頼らない */
-function weekRight({ used, high }) {
-  const r = el('span', `r week${high ? ' hot' : ''}`);
-  const bar = el('span', 'usage-mini'); bar.setAttribute('aria-hidden', 'true');
-  const fill = el('i'); fill.style.width = `${Math.min(100, Math.max(0, used))}%`; bar.append(fill);
-  r.append(bar, t('composer.account.week', { percent: percentText(used) }));
-  return r;
 }
 
 /** Chats とスレッドで同じ「宛先とモデル」のチップを描く。 */
@@ -457,381 +412,506 @@ export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend
 
 const botMark = (bot) => { const mark = botIcon(bot, 'av xs'); mark.setAttribute('aria-hidden', 'true'); return mark; };
 
-function destinationTop(d) {
-  const dest = d.destination;
-  if (!dest) return [];
-  if (dest.sent) return [el('p', 'destination-sent', t('composer.destination.sent'))];
-  // 見出しの無い一覧（Chats の未送信）だけ「宛先」の見出しを置き、右に「送った後は変えられません」
-  const parts = [];
-  if (!dest.groups?.[0]?.heading) {
-    const top = head(t('composer.destination.title'));
-    top.classList.add('destination-head');
-    if (dest.fixedAfterSend) top.append(el('span', 'destination-head-note', t('composer.destination.fixedAfterSend')));
-    parts.push(top);
-  }
-  for (const group of dest.groups ?? []) {
-    if (group.heading) parts.push(head(group.heading));
-    const box = el('div', 'destination-options');
-    box.setAttribute('role', 'group');
-    box.setAttribute('aria-label', group.heading || t('composer.destination.title'));
-    for (const option of group.options) {
-      const picked = option.id === dest.selected;
-      const button = el('button', `destination-option${picked ? ' on' : ''}`);
-      button.type = 'button';
-      button.dataset.key = `destination:${option.id ?? 'none'}`;
-      button.setAttribute('aria-pressed', String(picked));
-      const state = option.state ? ` · ${option.state}` : '';
-      button.setAttribute('aria-label', option.bot ? t('composer.destination.optionAria', { name: option.name, backend: option.backendLabel ?? option.backend ?? '', state }) : option.name);
-      if (picked) button.append(el('span', 'destination-check', '✓'));
-      // bot はアイコン、bot なしはそのとき動くエージェントのロゴ
-      const mark = option.bot ? botIcon(option.bot, 'av xs') : option.backend ? logo(option.backend) : null;
-      if (mark) { mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
-      button.append(el('span', 'destination-name', option.name));
-      if (option.waiting) button.append(el('span', 'destination-wait', '◆'));
-      else if (option.working) button.append(runMark());
-      button.onclick = () => { if (!picked) dest.onPick(option.id); };
-      box.append(button);
-    }
-    parts.push(box);
-  }
-  return parts;
+// ---- 2 段の面（承認済み（2026-11-18）。docs/design-system.md「入力欄の設定」）
+//
+// 1 段目は 1 種類の行（アイコン・見出し・今の値・右端の ›）を Bot → エージェント → 接続先 → アカウント → モデル → エフォート →
+// 承認モード の順に並べる（承認モードは常に最後。ADR 0252）。行を押すとその項目の一覧（2 段目）に替わり、先頭の「‹ 見出し」か Esc で戻る。
+// 一覧で選ぶと 1 段目に戻り、押した行へフォーカスを戻す。エフォートだけは 1 段目の行の中の棒で選ぶ（1 つの role=slider）。
+// どの段にいるかは面ごとに覚える（views。面を開くたびに 1 段目から）
+
+const GO = "M10 7l5 5-5 5";
+const BACK = "M14 7l-5 5 5 5";
+const CHECK = "M5 12.5l4.5 4.5L19 7.5";
+const SEARCH = ["M17.5 11a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z", "M20 20l-4.2-4.2"];
+const AT = "M4 12h12M12 6l6 6-6 6";
+const CUBE = ["M12 3l8 4.5v9L12 21l-8-4.5v-9z", "M4 7.5l8 4.5 8-4.5M12 12v9"];
+const GAUGE = ["M4 18a8 8 0 1 1 16 0", "M12 18l4-5"];
+const CHART = "M5 19V11M12 19V5M19 19v-6";
+const PLUG = "M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5";
+const PERSON = ["M15.5 8a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z", "M5 20a7 7 0 0 1 14 0"];
+const RESET = ["M5 12a7 7 0 1 0 2.1-5", "M5 4v4h4"];
+
+/** 面 -> { view, q }（view は top / bot / agent / endpoint / account / model / mode。q はモデルの検索の字） */
+const views = new WeakMap();
+
+const icon = (node) => { const s = el("span", "ic"); if (node) s.append(node); return s; };
+/** 右端の印。go は ›、ok は ✓（--ink-blue）、無しは幅だけ取る */
+function endMark(kind) {
+  const s = el("span", `end${kind === "ok" ? " ok" : ""}`);
+  s.setAttribute("aria-hidden", "true");
+  if (kind === "go") s.append(glyph(GO));
+  else if (kind === "ok") s.append(glyph(CHECK));
+  return s;
+}
+/** 週の使用量（小さな棒＋「週 N%」）。字で率を出すので、色だけに頼らない */
+function weekMeta(usage) {
+  if (!usage) return null;
+  const m = el("span", `meta${usage.high ? " hot" : ""}`);
+  const bar = el("span", "usage-mini"); bar.setAttribute("aria-hidden", "true");
+  const fill = el("i"); fill.style.width = `${Math.min(100, Math.max(0, usage.used))}%`; bar.append(fill);
+  m.append(bar, t("composer.account.week", { percent: percentText(usage.used) }));
+  return m;
+}
+/** 1 段目の行。onClick が無ければ押せない行（値を見せるだけ。右端の印を出さない） */
+function navRow({ key, ic, label, value, note, meta, danger, onClick, title }) {
+  const r = el(onClick ? "button" : "div", `prow${danger ? " danger" : ""}`);
+  if (onClick) { r.type = "button"; r.onclick = onClick; } else r.setAttribute("aria-disabled", "true");
+  if (key) r.dataset.key = key;
+  if (title) r.title = title;
+  const val = el("span", "val");
+  val.append(el("span", "nm", value));
+  if (note) val.append(el("span", "nt", note));
+  r.append(icon(ic), el("span", "lb", label), val);
+  if (meta) r.append(meta);
+  r.append(endMark(onClick ? "go" : ""));
+  return r;
+}
+/** 2 段目の選ぶ行。選んでいれば右端に ✓ */
+function optRow({ key, sel, ic, name, note, two, tag, meta, badge, danger, title, aria, onPick }) {
+  const r = el("button", `prow popt${danger ? " danger" : ""}`);
+  r.type = "button";
+  r.setAttribute("role", "option");
+  r.setAttribute("aria-selected", sel ? "true" : "false");
+  if (key) r.dataset.key = key;
+  if (title) r.title = title;
+  if (aria) r.setAttribute("aria-label", aria);
+  const val = el("span", `val${two ? " two" : ""}`);
+  val.append(el("span", "nm", name));
+  // 字の横の小さな札（互換の接続先のモデルの「1M」）
+  if (badge) { const b = el("span", "cbadge", badge.text); if (badge.title) b.title = badge.title; val.append(b); }
+  if (note) val.append(el("span", "nt", note));
+  r.append(icon(ic), val);
+  if (tag) r.append(el("span", "tag", tag));
+  if (meta) r.append(meta);
+  r.append(endMark(sel ? "ok" : ""));
+  r.onclick = onPick;
+  return r;
+}
+/** 一覧の外の操作の行（「使用量」「接続先を管理…」など） */
+function linkRow({ key, ic, text, onClick }) {
+  const r = el("button", "prow link");
+  r.type = "button";
+  if (key) r.dataset.key = key;
+  const val = el("span", "val");
+  val.append(el("span", "nm", text));
+  r.append(icon(ic), val, endMark("go"));
+  r.onclick = onClick;
+  return r;
+}
+function plist(rows, label) {
+  const box = el("div", "plist");
+  if (label) { box.setAttribute("role", "listbox"); box.setAttribute("aria-label", label); }
+  box.append(...rows.filter(Boolean));
+  return box;
+}
+const pnote = (text) => el("p", "pnote", text);
+const inHead = (text) => el("div", "chead inlist", text);
+function skeleton(n, text) {
+  const box = el("div", "cskel");
+  box.setAttribute("role", "status");
+  box.setAttribute("aria-busy", "true");
+  for (let i = 0; i < n; i++) { const bar = el("span", "cskel-row"); bar.setAttribute("aria-hidden", "true"); box.append(bar); }
+  if (text) box.append(pnote(text));
+  return box;
+}
+
+/** 2 段目に入ったときのフォーカス: 検索の欄 → 選んでいる行 → 最初の行 */
+function focusView(pop) {
+  (pop.querySelector(".psearch input") ?? pop.querySelector('.prow.popt[aria-selected="true"]')
+    ?? pop.querySelector("button.prow:not(.backhead):not([aria-disabled=true]), .eslider:not([aria-disabled=true])"))?.focus({ preventScroll: true });
+}
+
+/** 使えないエージェントの行（選べない。右に状態の言葉とその場の操作）。状態は「本体 · SDK」の 1 行 */
+function unusableAgentRow(b, v) {
+  const r = el("div", "prow popt agent-off");
+  r.setAttribute("role", "option");
+  r.setAttribute("aria-selected", "false");
+  r.setAttribute("aria-disabled", "true");
+  r.dataset.key = `backend:${b.id}`;
+  const val = el("span", "val two");
+  val.append(el("span", "nm", b.label));
+  // 状態が 1 つだけの行は、操作の左に置く。本体と SDK の 2 つがある行（Claude Code）は名前の下に並べる
+  if (!v.state && v.status) val.append(el("span", "nt", v.status));
+  if (v.terms) val.append(v.terms);
+  r.append(icon(logo(b.id)), val);
+  if (v.state) { const st = el("span", "meta agent-off-st"); st.append(v.state); r.append(st); }
+  if (v.op) { v.op.classList.add("agent-off-op"); r.append(v.op); }
+  return r;
 }
 
 /**
- * モデルの面の下端の承認モードの切り替え（Chats の入力欄。ADR 0252）。選んだ瞬間に効き、面は閉じない（モデルは次に送るときから）。
- * 名前は短い名前（狭い面に 5 つ並べるため）、長い名前と説明は選んでいるものの分だけ下に 1 行。Bypass は ⚠ と強い字。
- * 押せない（bot の会話）ときは薄くし、説明の代わりに理由を出す。←→ / Home / End で移る（移った先がそのまま効く。radio と同じ）
+ * モデルの面を描く（入力欄・スレッド・bot のページ・子の会話のモーダル）。保存先には依存しない。
+ * @param {object} o
+ * @param {HTMLElement} o.pop 描画先（面の開閉は panel() で呼び出し側が扱う）
+ * @param {object} o.target 今の値と候補。backend/backends/backendSwitchable、model/models、effort/efforts/effortDisabled。
+ *   endpoint と account/accounts、modes/mode、destination は任意。省けばその行を出さない。
+ * @param {object} o.on 変更先 { backend, model, effort, endpoint?, account?, mode? }。保存後、更新した target で描き直す。
+ *   既定に戻す model/effort は空文字を渡す。
+ * @param {(returnFocus?: boolean) => void} o.hide 面の外へ移るとき（接続先の管理・使用量・bot のページ）、面を閉じる
  */
-export function modeSegment(d, on) {
-  const label = t("chat.composer.mode");
-  if (d.modesPending) {
-    const box = el("div", "cskel");
-    box.setAttribute("role", "status");
-    box.setAttribute("aria-busy", "true");
-    const bar = el("span", "cskel-row");
-    bar.setAttribute("aria-hidden", "true");
-    box.append(bar);
-    return [head(label), box];
-  }
-  const entries = Object.entries(d.modes ?? {});
-  if (!entries.length) return [];
-  const off = Boolean(d.modeDisabled);
-  const area = el("div", `mode-area${off ? " off" : ""}`);
-  const seg = el("div", "seg");
-  seg.setAttribute("role", "radiogroup");
-  seg.setAttribute("aria-label", label);
-  const current = d.modes?.[d.mode];
-  const hint = el("p", "mode-hint");
-  hint.id = `modeHint-${Math.random().toString(36).slice(2, 8)}`;
-  if (off) hint.textContent = d.lockedNote ?? "";
-  else if (current) hint.append(el("b", null, current.label ?? d.mode), current.note ? ` ${current.note}` : "");
-  const pick = (id) => { if (!off && id !== d.mode) on.mode(id); };
-  for (const [id, m] of entries) {
-    const picked = id === d.mode, danger = isDanger(m);
-    const name = m.label ?? id;
-    const b = el("button", [picked ? "on" : "", danger ? "danger" : ""].filter(Boolean).join(" ") || null);
-    b.type = "button";
-    b.dataset.key = `mode:${id}`;
-    b.setAttribute("role", "radio");
-    b.setAttribute("aria-checked", String(picked));
-    b.setAttribute("aria-label", danger ? t("composer.mode.chipAriaDanger", { mode: name }) : name);
-    if (picked) b.setAttribute("aria-describedby", hint.id);
-    b.tabIndex = picked || (!current && id === entries[0][0]) ? 0 : -1;
-    b.title = m.note ? `${name}: ${m.note}` : name;
-    if (off) b.setAttribute("aria-disabled", "true");
-    if (danger) b.append(glyph(...WARN));
-    b.append(el("span", null, m.short && m.short !== name ? m.short : name));
-    b.onclick = () => pick(id);
-    seg.append(b);
-  }
-  seg.addEventListener("keydown", (e) => {
-    const ids = entries.map(([id]) => id);
-    const at = Math.max(0, ids.indexOf(e.target.dataset?.key?.slice(5)));
-    const next = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: ids.length - 1 }[e.key];
-    if (next === undefined) return;
-    e.preventDefault();
-    const id = ids[(next + ids.length) % ids.length];
-    seg.querySelector(`[data-key="mode:${CSS.escape(id)}"]`)?.focus();
-    pick(id);
-  });
-  area.append(seg, hint);
-  return [head(label), area];
+export function renderModel(args) {
+  const { pop, target: d } = args;
+  const st = views.get(pop) ?? { view: "top", q: "" };
+  const ctx = {
+    ...args, d, st,
+    /** 2 段目へ */
+    go(view) { views.set(pop, { view, q: "" }); renderModel(args); pop.scrollTop = 0; focusView(pop); },
+    /** 1 段目へ戻り、押した行へ */
+    back(view) {
+      views.set(pop, { view: "top", q: "" });
+      renderModel(args);
+      pop.querySelector(`[data-key="nav:${view}"]`)?.focus({ preventScroll: true });
+    },
+    /** 選んで 1 段目へ戻る（戻してから変更先を呼ぶ。呼び出し側の描き直しは押した行へフォーカスを戻す） */
+    pick(view, apply) { ctx.back(view); apply(); },
+  };
+  const sub = st.view !== "top" ? subView(ctx) : null;
+  if (st.view !== "top" && !sub) views.set(pop, { view: "top", q: "" });
+  pop.replaceChildren(...(sub ?? topView(ctx)));
 }
 
-export function renderModel({ pop, target: d, on, hide }) {
-  const parts = [];
-  parts.push(...destinationTop(d));
-  if (d.destination?.chooseOnly) { pop.replaceChildren(...parts); return; }
-  if (d.destination?.readOnlyBot) {
-    const bot = d.destination.readOnlyBot;
-    const agent = el('div', 'destination-agent');
-    agent.append(botMark(bot), el('b', null, t('composer.destination.botSetup', { name: bot.name })), logo(bot.backend), el('span', null, d.destination.backendLabel(bot.backend)));
-    parts.push(agent);
-    if (d.destination.usage) parts.push(d.destination.usage);
-    // その bot の既定で動く（ここでは変えない。送った後、スレッドの中で変える）
-    parts.push(el('p', 'destination-fact', t('composer.destination.botRuns', { name: bot.name, setup: d.destination.botSetup })));
-    if (d.destination.openBot) {
-      const link = el('button', 'clink destination-bot-link', t('composer.destination.openBot'));
-      link.type = 'button'; link.dataset.key = 'destination:openBot';
-      link.onclick = () => { hide(false); d.destination.openBot(bot.id); };
-      parts.push(link);
-    }
-    pop.replaceChildren(...parts);
-    return;
+function topView(ctx) {
+  const { d, on, hide, go } = ctx;
+  const dest = d.destination;
+  const rows = [];
+  // Bot（送る前だけ。送った会話では行ごと出さない。ADR 0160）
+  const options = (dest?.groups ?? []).flatMap((g) => g.options ?? []);
+  if (dest && !dest.sent && options.length) {
+    const picked = options.find((o) => o.id === dest.selected) ?? options.find((o) => o.id == null);
+    rows.push(navRow({ key: "nav:bot", ic: glyph(AT), label: t("composer.destination.title"), value: picked?.name ?? t("channels:homeDest.none"), onClick: () => go("bot") }));
   }
-  // 宛先の動かし方の見出し: bot は「<アイコン> <名前> の動かし方 … <ロゴ> エージェント」（エージェントは bot のページで替える）。
-  // bot なしでエージェントを選べないとき（会話を作った後のスレッド）は、見出しにエージェントを出すだけ
-  const agentHead = d.destination?.bot || (d.destination?.threadPlain && !d.backendSwitchable);
-  if (agentHead) {
-    const agent = el('div', 'destination-agent');
-    const bot = d.destination.bot;
-    if (bot) agent.append(botMark(bot));
-    agent.append(el('b', null, bot ? t('composer.destination.botSetup', { name: bot.name }) : t('composer.agent')),
-      logo(d.backend), el('span', null, d.destination.backendLabel(d.backend)));
-    parts.push(agent);
-    if (d.destination.usage) parts.push(d.destination.usage);
+  if (dest?.chooseOnly) return [plist(rows)];
+  const labelOf = (id) => d.backends?.find((b) => b.id === id)?.label ?? dest?.backendLabel?.(id) ?? id;
+  // bot を選んだ未送信の会話: その bot の既定で動く（ここでは変えない。送った後、スレッドの中で変える）
+  if (dest?.readOnlyBot) {
+    const bot = dest.readOnlyBot;
+    rows.push(navRow({ ic: logo(bot.backend), label: t("composer.agent"), value: dest.backendLabel?.(bot.backend) ?? labelOf(bot.backend) }));
+    const out = [plist(rows), pnote(t("composer.destination.botRuns", { name: bot.name, setup: dest.botSetup }))];
+    if (dest.openBot) out.push(plist([linkRow({ key: "destination:openBot", ic: botMark(bot), text: t("composer.destination.openBot"), onClick: () => { hide(false); dest.openBot(bot.id); } })]));
+    return out;
   }
-  if (d.backendSwitchable) {
-    parts.push(head(t("composer.agent")));
-    // モデル・接続先・アカウントと同じ一覧の行（承認済み（2026-10-18）、ADR 0228）。ロゴ + 正式名、右端に週の使用量（取れるものだけ）
-    // 使えないエージェントは下に離し、選べない（docs/design-system.md「エージェントの行」。右に今の状態とその場の操作）
-    const views = new Map(d.backends.map((b) => [b.id, d.agentView?.(b.id) ?? null]));
-    const usableRows = [], otherRows = [];
-    for (const b of d.backends) {
-      const v = views.get(b.id);
-      if (!v || v.usable) {
-        const usage = d.backendUsage?.(b.id);
-        usableRows.push(row({ on: b.id === d.backend, main: b.label, mark: logo(b.id), right: usage ? weekRight(usage) : "",
-          key: `backend:${b.id}`, onPick: () => { if (b.id !== d.backend) on.backend(b.id); } }));
-      } else otherRows.push(unusableAgentRow(b, v, logo(b.id)));
-    }
-    const box = listbox(t("composer.agent"), usableRows);
-    parts.push(box);
-    if (otherRows.length) {
-      const rest = listbox(t("composer.agent"), otherRows);
-      rest.classList.add("unusable");
-      parts.push(rest);
-    }
+  if (d.backend) {
+    rows.push(navRow({ key: "nav:agent", ic: logo(d.backend), label: t("composer.agent"), value: labelOf(d.backend),
+      meta: weekMeta(d.backendUsage?.(d.backend)), onClick: d.backendSwitchable ? () => go("agent") : null }));
   }
-  if (!agentHead && d.destination?.usage) parts.push(d.destination.usage);
-  // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを短い一行で出す
+  // 接続先（Claude Code・Codex）。「公式」だけのときは出さない（「接続先を管理…」はエージェントの一覧の下と設定から）
   const ep = d.endpoint;
-  if (ep) parts.push(...endpointSection(d, on));
-  if (ep?.row) parts.push(...compatModelSection(d, on));
-  else parts.push(...officialModelSection(d, on));
-  parts.push(head(t("composer.effort.title")));
-  parts.push(effortBlock(d, on.effort));
+  if (ep && (ep.options.length > 1 || ep.row)) {
+    const cur = ep.options.find((o) => o.value === ep.selected);
+    rows.push(navRow({ key: "nav:endpoint", ic: glyph(PLUG), label: t("composer.endpoint.title"), value: cur?.label ?? ep.selected, title: cur?.title, onClick: () => go("endpoint") }));
+  }
+  // アカウント。互換の接続先では使わない（接続先のキーで送る）。行は残し、理由を出す
   if (d.accounts) {
-    parts.push(head(t("composer.account.title")));
-    // 互換の接続先ではアカウントを使わない（接続先のキーで送る）。節は残し、選べない見た目と理由を出す
     const off = Boolean(ep?.row);
-    if (off) parts.push(el("p", "cnote", t("composer.account.compatOff")));
-    parts.push(listbox(t("composer.account.title"), d.accounts.map((a) => row({
-      on: !off && a.value === d.account, main: a.label, right: off ? "" : a.usage ? weekRight(a.usage) : a.hint, tag: !off && a.value === "" ? DEFAULT_TAG() : "", key: `account:${a.value}`, disabled: off,
-      onPick: () => { if (!off && a.value !== d.account) on.account?.(a.value); },
-    }))));
+    const cur = d.accounts.find((a) => a.value === d.account);
+    rows.push(off
+      ? navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: "", note: t("composer.account.compatOff") })
+      : navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: cur?.label ?? "", meta: weekMeta(cur?.usage), onClick: () => go("account") }));
   }
-  if (ep) {
-    const foot = el("div", "cfoot");
-    const manage = el("button", "clink", t("composer.endpoint.manage"));
-    manage.type = "button";
-    manage.dataset.key = "epmanage";
-    manage.onclick = () => { hide(false); ep.manage(); };
-    foot.append(manage);
-    parts.push(foot);
+  // モデル
+  const modelValue = ep?.row ? compatModelLabel(d.model || ep.row.roles?.main || "").text || t("chat.model.default")
+    : d.modelsPending ? "…" : resolvedModel(d.models ?? {}, d.model).label;
+  rows.push(navRow({ key: "nav:model", ic: glyph(...CUBE), label: t("composer.model.title"), value: modelValue, onClick: () => go("model") }));
+  // エフォート（行の中の棒）
+  rows.push(effortRow(d, on.effort));
+  // 承認モード（常に最後）
+  if (d.modesPending) rows.push(navRow({ key: "nav:mode", ic: glyph(SHIELD), label: t("chat.composer.mode"), value: "…" }));
+  else if (Object.keys(d.modes ?? {}).length) {
+    const m = d.modes[d.mode], danger = isDanger(m);
+    const name = m?.label ?? d.mode;
+    rows.push(navRow({ key: "nav:mode", ic: glyph(...(danger ? WARN : [SHIELD])), label: t("chat.composer.mode"), value: name, danger,
+      title: d.modeDisabled ? d.lockedNote : danger ? t("composer.mode.dangerTitle") : null,
+      onClick: d.modeDisabled || !on.mode ? null : () => go("mode") }));
   }
-  if (d.destination?.threadPlain || d.destination?.bot) {
-    parts.push(el('p', 'cnote', t('channels:thread.settings.note')));
-    if (d.destination.changed && d.destination.onReset) {
-      const reset = el('button', 'clink destination-reset', t('composer.destination.resetBot'));
-      reset.type = 'button'; reset.onclick = d.destination.onReset;
-      parts.push(reset);
-    }
-  }
-  pop.replaceChildren(...parts);
-}
-
-/** 接続先の節。d.endpoint は client.mjs の endpointView() */
-function endpointSection(d, on) {
-  const ep = d.endpoint;
-  const out = [head(t("composer.endpoint.title"))];
-  out.push(listbox(t("composer.endpoint.title"), ep.options.map((o) => row({
-    on: o.value === ep.selected, main: (o.warn ? "⚠ " : "") + o.label, sub: o.sub, tag: o.isDefault ? DEFAULT_TAG() : "", key: `endpoint:${o.value}`, title: o.title ?? o.label,
-    onPick: () => { if (o.value !== ep.selected && !o.gone) on.endpoint(o.value); },
-  }))));
-  if (ep.row) {
-    out.push(el("p", "cnote", t("composer.endpoint.lost", { items: ep.lost })));
+  const out = [plist(rows)];
+  // スレッドの設定はそのスレッドだけに効く。bot の既定から変えていれば戻す口
+  if (dest?.threadPlain || dest?.bot) {
+    out.push(pnote(t("channels:thread.settings.note")));
+    if (dest.changed && dest.onReset) out.push(plist([linkRow({ key: "destination:reset", ic: glyph(...RESET), text: t("composer.destination.resetBot"), onClick: dest.onReset })]));
   }
   return out;
 }
 
-/**
- * 互換の接続先のモデル: 検索と ID の入力を兼ねる欄＋接続先の一覧。空はメインのモデル（「既定」の札）。
- * 字は表示名（web/compat-models.mjs。`anthropic/` の名前空間と [1m] を隠し、1M は札）、送るのは一覧どおりの ID（title）。
- * 打った字で絞る（大文字小文字を区別しない部分一致、空白区切りは AND。表示名・送る ID・display_name のどれでも）。
- * 描くのは先頭の SHOW_LIMIT 件だけ。↓ で一覧へ、Enter は打った字（一覧の ID か表示名に当たればその ID、無ければそのまま）
- */
-function compatModelSection(d, on) {
-  const ep = d.endpoint;
-  const out = [head(t("composer.model.title"))];
-  const main = ep.row.roles?.main ?? "";
-  const cur = d.model || main;
-  // メイン → 今のモデル → 一覧の順（今のものは絞らなくても見える）
-  const cands = modelCandidates(ep.row.models ?? [], ep.row.modelInfo ?? {}, [main, cur]);
-  const initial = d.model ? compatModelLabel(d.model).text : "";
-  const input = el("input", "cpath");
-  input.value = initial;
-  if (d.model) input.title = d.model;
-  input.placeholder = main ? t("composer.model.searchMain", { model: compatModelLabel(main).text }) : t("composer.model.search");
+/** 2 段目。出せない（行が無くなった）ときは null（1 段目に戻る） */
+function subView(ctx) {
+  const { d, st } = ctx;
+  const backRow = (title) => {
+    const r = el("button", "prow backhead");
+    r.type = "button";
+    r.dataset.key = "back";
+    r.append(icon(glyph(BACK)), el("span", "val", title), endMark(""));
+    r.onclick = () => ctx.back(st.view);
+    return r;
+  };
+  const wrap = (title, parts) => { const box = el("div", "view-in"); box.append(backRow(title), ...parts.filter(Boolean)); return [box]; };
+  switch (st.view) {
+    case "bot": {
+      const dest = d.destination;
+      if (!dest || dest.sent || !dest.groups?.some((g) => g.options?.length)) return null;
+      const title = t("composer.destination.title");
+      const parts = [];
+      for (const group of dest.groups ?? []) {
+        if (!group.options?.length) continue;
+        if (group.heading) parts.push(inHead(group.heading));
+        parts.push(plist(group.options.map((o) => {
+          const picked = o.id === dest.selected;
+          const state = o.state ? ` · ${o.state}` : "";
+          const meta = o.waiting ? el("span", "meta wait", "◆") : o.working ? runMark() : null;
+          return optRow({ key: `destination:${o.id ?? "none"}`, sel: picked, ic: o.bot ? botMark(o.bot) : o.backend ? logo(o.backend) : null, name: o.name, meta,
+            aria: o.bot ? t("composer.destination.optionAria", { name: o.name, backend: o.backendLabel ?? o.backend ?? "", state }) : null,
+            onPick: () => ctx.pick("bot", () => { if (!picked) dest.onPick(o.id); }) });
+        }), group.heading || title));
+      }
+      return wrap(title, parts);
+    }
+    case "agent": {
+      if (!d.backendSwitchable) return null;
+      const usable = [], other = [];
+      for (const b of d.backends ?? []) {
+        const v = d.agentView?.(b.id) ?? null;
+        if (!v || v.usable) {
+          usable.push(optRow({ key: `backend:${b.id}`, sel: b.id === d.backend, ic: logo(b.id), name: b.label, meta: weekMeta(d.backendUsage?.(b.id)),
+            onPick: () => ctx.pick("agent", () => { if (b.id !== d.backend) ctx.on.backend(b.id); }) }));
+        } else other.push(unusableAgentRow(b, v));
+      }
+      const links = [];
+      if (d.destination?.openUsage) links.push(linkRow({ key: "agent:usage", ic: glyph(CHART), text: t("composer.usage"), onClick: () => { ctx.hide(false); d.destination.openUsage(); } }));
+      if (d.endpoint) links.push(linkRow({ key: "epmanage", ic: glyph(PLUG), text: t("composer.endpoint.manage"), onClick: () => { ctx.hide(false); d.endpoint.manage(); } }));
+      const rest = other.length ? plist(other, t("composer.agent")) : null;
+      rest?.classList.add("unusable");
+      return wrap(t("composer.agent"), [plist(usable, t("composer.agent")), rest, links.length ? plist(links) : null]);
+    }
+    case "endpoint": {
+      const ep = d.endpoint;
+      if (!ep) return null;
+      return wrap(t("composer.endpoint.title"), [
+        plist(ep.options.map((o) => optRow({ key: `endpoint:${o.value}`, sel: o.value === ep.selected, ic: o.warn ? glyph(...WARN) : null, name: o.label, note: o.sub,
+          tag: o.isDefault ? DEFAULT_TAG() : "", title: o.title ?? o.label,
+          onPick: () => ctx.pick("endpoint", () => { if (o.value !== ep.selected && !o.gone) ctx.on.endpoint(o.value); }) })), t("composer.endpoint.title")),
+        ep.row && ep.lost ? pnote(t("composer.endpoint.lost", { items: ep.lost })) : null,
+        plist([linkRow({ key: "epmanage", ic: glyph(PLUG), text: t("composer.endpoint.manage"), onClick: () => { ctx.hide(false); ep.manage(); } })]),
+      ]);
+    }
+    case "account": {
+      if (!d.accounts || d.endpoint?.row) return null;
+      return wrap(t("composer.account.title"), [plist(d.accounts.map((a) => optRow({ key: `account:${a.value}`, sel: a.value === d.account, name: a.label,
+        note: a.usage ? "" : a.hint, tag: a.value === "" ? DEFAULT_TAG() : "", meta: weekMeta(a.usage),
+        onPick: () => ctx.pick("account", () => { if (a.value !== d.account) ctx.on.account?.(a.value); }) })), t("composer.account.title"))]);
+    }
+    case "model":
+      return wrap(t("composer.model.title"), d.endpoint?.row ? compatModelView(ctx) : officialModelView(ctx));
+    case "mode": {
+      if (d.modesPending || d.modeDisabled || !ctx.on?.mode || !Object.keys(d.modes ?? {}).length) return null;
+      const def = defaultModeOf(d.modes);
+      return wrap(t("chat.composer.mode"), [plist(Object.entries(d.modes).map(([id, m]) => {
+        const danger = isDanger(m), sel = id === d.mode;
+        return optRow({ key: `mode:${id}`, sel, ic: danger ? glyph(...WARN) : null, name: m.label ?? id, note: m.note, two: true, danger: danger && sel,
+          tag: id === def ? DEFAULT_TAG() : "", aria: danger ? t("composer.mode.chipAriaDanger", { mode: m.label ?? id }) : null,
+          onPick: () => ctx.pick("mode", () => { if (!sel) ctx.on.mode(id); }) });
+      }), t("chat.composer.mode"))]);
+    }
+    default:
+      return null;
+  }
+}
+
+/** モデルの検索の欄。打つたびに list() で一覧だけを描き直す（欄のフォーカスと字を保つ）。Enter は commit() */
+function searchBox(ctx, { placeholder, list, commit }) {
+  const box = el("div", "psearch");
+  const input = el("input");
+  input.value = ctx.st.q ?? "";
+  input.placeholder = placeholder;
   input.setAttribute("aria-label", t("composer.model.searchLabel"));
-  input.dataset.key = "epmodel";
+  input.dataset.key = "model-q";
   input.autocomplete = "off"; input.spellcheck = false;
-  const box = el("div");
-  const roleOf = (id) => ep.roleNames.filter(([k]) => ep.row.roles?.[k] === id && k !== "main").map(([, n]) => n).join("・");
-  const commit = (id) => {
-    const v = String(id ?? "").trim();
-    const next = v === main ? "" : v;
-    if (next !== (d.model ?? "")) on.model(next);
-  };
-  const commitTyped = () => {
-    const typed = input.value.trim();
-    // 触っていない（今のモデルの表示名のまま）なら変えない。表示名が同じ候補（x と x[1m]）を取り違えないため
-    if (typed === initial) return;
-    commit(resolveTyped(cands, typed));
-  };
-  const paintList = () => {
-    const q = input.value.trim().toLowerCase();
-    // 今の値のままなら全部（先頭の SHOW_LIMIT 件）を出す
-    const exact = !q || q === initial.toLowerCase() || cands.some((c) => c.id.toLowerCase() === q);
-    const { shown, more } = searchModels(cands, exact ? "" : q);
-    const rows = shown.map((c) => row({
-      on: c.id === cur, main: c.text, sub: c.sub, key: `epmodel:${c.id}`, title: c.id, tag: c.id === main ? DEFAULT_TAG() : "", right: roleOf(c.id),
-      badge: c.oneM ? { text: "1M", title: ONE_M_TITLE } : null,
-      onPick: () => commit(c.id),
-    }));
-    const notes = [];
-    if (more > 0) notes.push(el("p", "cnote", moreText(more)));
-    box.replaceChildren(...(rows.length ? [listbox(t("composer.model.candidates"), rows)] : [el("p", "cnote", q ? t("composer.model.notListed") : t("composer.model.noList"))]), ...notes);
-  };
-  input.addEventListener("focus", () => input.select());
-  input.addEventListener("input", paintList);
+  input.addEventListener("focus", () => { const n = input.value.length; input.setSelectionRange(n, n); });
+  input.addEventListener("input", () => { views.set(ctx.pop, { view: ctx.st.view, q: input.value }); ctx.st.q = input.value; list(); });
   input.addEventListener("keydown", (e) => {
     if (isComposingKey(e) || e.key !== "Enter") return;
     e.preventDefault();     // フォームの送信にしない
-    commitTyped();
+    commit(input.value.trim());
   });
-  paintList();
-  out.push(input, box);
-  return out;
+  box.append(glyph(...SEARCH), input);
+  return box;
 }
 
-/** 公式のモデルの一覧（版付きの名前＋補足、既定の行に「既定」の札） */
-function officialModelSection(d, on) {
-  const parts = [head(t("composer.model.title"))];
-  // 取っている間は、前のエージェントの一覧の代わりに骨組みと一言（エージェントの行は押せるまま）
-  if (d.modelsPending) {
-    const box = el("div", "cskel");
-    box.setAttribute("role", "status");
-    box.setAttribute("aria-busy", "true");
-    for (let i = 0; i < 3; i++) { const bar = el("span", "cskel-row"); bar.setAttribute("aria-hidden", "true"); box.append(bar); }
-    box.append(el("p", "cnote", t("composer.model.loading")));
-    parts.push(box);
-    return parts;
-  }
+/**
+ * 公式のモデルの一覧: 検索の欄（大文字小文字を区別しない部分一致、空白区切りは AND。名前・補足・ID のどれでも）＋一覧。
+ * 古いモデルは「ほかのモデル」の見出しの下へ（composer-labels.mjs の splitModelRows）。当たらなければ打った ID をそのまま使える
+ */
+function officialModelView(ctx) {
+  const { d } = ctx;
+  // 取っている間は、前のエージェントの一覧の代わりに骨組みと一言
+  if (d.modelsPending) return [skeleton(3, t("composer.model.loading"))];
   const models = d.models ?? {};
   const { id: resolved, entry: current } = resolvedModel(models, d.model);
   const def = models[""]?.resolvesTo;
   // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
   const ids = modelRowIds(models, d.model);
-  // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
-  const rows = [];
-  if (!def || !ids.some((id) => holdsDefault(models, id))) rows.push(row({
-    on: !d.model, main: models[""]?.resolvedLabel ?? models[""]?.label ?? t("chat.next.useDefault"), sub: models[""]?.note, tag: DEFAULT_TAG(),
-    key: "model:", onPick: () => d.model && on.model(""),
-  }));
+  const { main, other, quiet } = splitModelRows(models, ids);
   // 宛先が bot なら、bot の既定のモデルに「<名前> の既定」の札（エージェントの既定の札は出さない）
   const botDefault = d.destination?.bot && d.destination.defaults ? d.destination.defaults.model || def : null;
   const tagOf = (id) => botDefault !== null ? (id === botDefault ? t("channels:thread.settings.botDefault", { name: d.destination.bot.name }) : "")
     : holdsDefault(models, id) ? DEFAULT_TAG() : "";
-  for (const id of ids) {
+  // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
+  const follow = !def || !ids.some((id) => holdsDefault(models, id));
+  const words = () => String(ctx.st.q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = (id) => { const m = models[id] ?? {}; const s = `${m.label ?? ""} ${m.note ?? ""} ${id}`.toLowerCase(); return words().every((w) => s.includes(w)); };
+  const choose = (v, id) => ctx.pick("model", () => { if (v !== d.model && id !== resolved) ctx.on.model(v); });
+  const modelRow = (id, showNote) => {
     const m = models[id];
-    rows.push(row({
-      on: id === resolved || Boolean(m.family && m.family === current?.family),
-      main: m.label ?? id, sub: m.note, tag: tagOf(id), key: `model:${id}`,
+    return optRow({ key: `model:${id}`, sel: id === resolved || Boolean(m.family && m.family === current?.family), name: m.label ?? id,
+      note: showNote ? m.note : "", tag: tagOf(id), title: id,
       // 既定の行を選ぶと '' を保存する（既定が変われば追従する）。選んでいる系統の行は何もしない
-      onPick: () => { const v = id === def ? "" : id; if (v !== d.model && id !== resolved) on.model(v); },
-    }));
-  }
-  parts.push(listbox(t("composer.model.title"), rows));
-  return parts;
+      onPick: () => choose(id === def ? "" : id, id) });
+  };
+  const box = el("div", "plist-wrap");
+  const list = () => {
+    const q = words().length > 0;
+    const top = main.filter(hits), old = other.filter(hits);
+    const rows = [];
+    if (follow && !q) rows.push(optRow({ key: "model:", sel: !d.model, name: models[""]?.resolvedLabel ?? models[""]?.label ?? t("chat.next.useDefault"),
+      note: models[""]?.note, tag: DEFAULT_TAG(), onPick: () => ctx.pick("model", () => { if (d.model) ctx.on.model(""); }) }));
+    rows.push(...top.map((id) => modelRow(id, true)));
+    if (old.length) rows.push(inHead(t("composer.model.other")), ...old.map((id) => modelRow(id, q || !quiet.has(id))));
+    const parts = [plist(rows, t("composer.model.title"))];
+    if (!top.length && !old.length) parts.push(pnote(t("composer.model.notListed")));
+    box.replaceChildren(...parts);
+  };
+  const commit = (typed) => {
+    if (!typed) return;
+    const low = typed.toLowerCase();
+    const exact = ids.find((id) => id.toLowerCase() === low || String(models[id]?.label ?? "").toLowerCase() === low);
+    const first = exact ?? main.find(hits) ?? other.find(hits);
+    if (first) choose(first === def ? "" : first, first);
+    else ctx.pick("model", () => { if (typed !== d.model) ctx.on.model(typed); });
+  };
+  list();
+  return [searchBox(ctx, { placeholder: t("composer.model.search"), list, commit }), box];
 }
 
-/** エフォートの段を描く。onPick(value) へ選んだ段（既定へ戻すときは空文字）を返す。 */
-export function effortBlock(d, onPick) {
-  const box = el("div", "ceffort");
-  const { stops, def, current, unset } = effortStops(d.efforts, d.effort);
-  const top = el("div", "etop");
-  const val = el("span", "val");
-  const note = el("span", "note");
-  const reset = el("button", "reset", t("composer.effort.reset"));
-  reset.type = "button";
-  top.append(val, note, reset);
-  const range = el("input");
-  range.type = "range";
-  range.min = "0"; range.step = "1";
-  range.setAttribute("aria-label", t("composer.effort.label"));
-  range.dataset.key = "effort";
-  const ticks = el("div", "ticks");
-  const { label: modelLabel } = resolvedModel(d.models, d.model);
-  // 既定に従うときに誰の設定が効くか
-  // i18n-dynamic: composer.effort.follow.
+/**
+ * 互換の接続先のモデル: 検索と ID の入力を兼ねる欄＋接続先の一覧。空はメインのモデル（「既定」の札）。
+ * 字は表示名（web/compat-models.mjs。`anthropic/` の名前空間と [1m] を隠し、1M は札）、送るのは一覧どおりの ID（title）。
+ * 描くのは先頭の SHOW_LIMIT 件だけ。Enter は打った字（一覧の ID か表示名に当たればその ID、無ければそのまま）
+ */
+function compatModelView(ctx) {
+  const { d } = ctx;
+  const ep = d.endpoint;
+  const main = ep.row.roles?.main ?? "";
+  const cur = d.model || main;
+  // メイン → 今のモデル → 一覧の順
+  const cands = modelCandidates(ep.row.models ?? [], ep.row.modelInfo ?? {}, [main, cur]);
+  const roleOf = (id) => ep.roleNames.filter(([k]) => ep.row.roles?.[k] === id && k !== "main").map(([, n]) => n).join("・");
+  const commit = (id) => {
+    const v = String(id ?? "").trim();
+    if (!v) return;
+    const next = v === main ? "" : v;
+    ctx.pick("model", () => { if (next !== (d.model ?? "")) ctx.on.model(next); });
+  };
+  const box = el("div", "plist-wrap");
+  const list = () => {
+    const q = String(ctx.st.q ?? "").trim().toLowerCase();
+    const { shown, more } = searchModels(cands, q);
+    const rows = shown.map((c) => optRow({ key: `model:${c.id}`, sel: c.id === cur, name: c.text, note: c.sub, title: c.id, tag: c.id === main ? DEFAULT_TAG() : "",
+      meta: roleOf(c.id) ? el("span", "meta", roleOf(c.id)) : null, badge: c.oneM ? { text: "1M", title: ONE_M_TITLE } : null, onPick: () => commit(c.id) }));
+    const parts = rows.length ? [plist(rows, t("composer.model.candidates"))] : [pnote(q ? t("composer.model.notListed") : t("composer.model.noList"))];
+    if (more > 0) parts.push(pnote(moreText(more)));
+    box.replaceChildren(...parts);
+  };
+  list();
+  const placeholder = main ? t("composer.model.searchMain", { model: compatModelLabel(main).text }) : t("composer.model.search");
+  return [searchBox(ctx, { placeholder, list, commit: (typed) => commit(resolveTyped(cands, typed)) }), box];
+}
+
+/**
+ * エフォートの行（案 A: 右へ高くなる棒。1 つの role=slider）。←→ / Home / End で段を変え、↑↓ は行の間を移る（panel の keydown）。
+ * 押す・なぞる間は棒と字だけを塗り、離したときに決める（段は floor(x / 幅 × 段の数)）。既定の段は棒の下に小さな点。
+ * 既定の段を選ぶと '' を保存する（既定が変われば追従する）。段を持たないモデルは「このモデルでは選べません」
+ */
+function effortRow(d, onPick) {
+  const r = el("div", "prow erow");
+  r.append(icon(glyph(...GAUGE)), el("span", "lb", t("composer.effort.label")));
+  const { stops, def, current } = effortStops(d.efforts, d.effort);
+  if (!stops.length || d.effortDisabled) {
+    r.setAttribute("aria-disabled", "true");
+    const why = d.effortsPending ? t("composer.effort.loading") : d.efforts?.[""]?.reason ?? t("composer.effort.none");
+    const v = el("span", "evalue none", why);
+    v.title = why;
+    r.append(v, endMark(""));
+    return r;
+  }
+  // 既定に従うときに誰の設定が効くか（既定の段が分からず、どの段も指さないときの読み上げ）
   // i18n-dynamic: composer.effort.defaultFollow.
   const owner = d.endpoint?.row ? "endpoint" : d.backend === "antigravity" ? "agy" : "agent";
-  const paintVal = (v) => {
-    val.textContent = v || DEFAULT_TAG();
-    note.textContent = !v ? t(`composer.effort.follow.${owner}`) : v === def && !d.effort ? t("composer.effort.modelDefault", { model: modelLabel }) : "";
-    range.setAttribute("aria-valuetext", v ? (v === def ? t("composer.effort.levelDefault", { level: v }) : v) : t(`composer.effort.defaultFollow.${owner}`));
+  const n = stops.length, dk = stops.indexOf(def);
+  const slider = el("span", "eslider ebars");
+  slider.setAttribute("role", "slider");
+  slider.tabIndex = 0;
+  slider.setAttribute("aria-label", t("composer.effort.label"));
+  slider.setAttribute("aria-valuemin", "0");
+  slider.setAttribute("aria-valuemax", String(n - 1));
+  slider.dataset.key = "effort";
+  const bars = stops.map((s, i) => {
+    const b = el("i", i === dk ? "def" : null);
+    b.style.setProperty("--h", `${Math.round(28 + (72 * i) / Math.max(1, n - 1))}%`);
+    slider.append(b);
+    return b;
+  });
+  const value = el("span", "evalue");
+  value.setAttribute("aria-hidden", "true");
+  let at = stops.indexOf(current);   // -1: 既定の段が分からず既定に従っている（どの段も指さない）
+  const paint = (k) => {
+    bars.forEach((b, i) => b.classList.toggle("on", i <= k));
+    slider.setAttribute("aria-valuenow", String(Math.max(0, k)));
+    slider.setAttribute("aria-valuetext", k < 0 ? t(`composer.effort.defaultFollow.${owner}`)
+      : t("composer.effort.valueText", { level: stops[k], n, k: k + 1, def: k === dk ? t("composer.effort.defMark") : "" }));
+    value.textContent = k < 0 ? DEFAULT_TAG() : stops[k];
   };
-  if (!stops.length || d.effortDisabled) {
-    range.disabled = true; range.max = "0"; range.value = "0";
-    val.textContent = "—";
-    note.textContent = d.effortsPending ? t("composer.effort.loading") : d.efforts?.[""]?.reason ?? t("composer.effort.noLevels", { model: modelLabel });
-    note.title = note.textContent;
-    reset.hidden = true;
-    box.classList.add("off");
-    box.append(top, range);
-    return box;
-  }
-  range.max = String(stops.length - 1);
-  // 既定の段が分からず既定に従っているときは、つまみを出さない（どの段も指さない。unset）。
-  // 目盛りに「既定」の段は作らない（本当の段ではないため）。動かすと段が決まり、「既定に戻す」で外せる
-  range.value = String(Math.max(0, stops.indexOf(current)));
-  range.classList.toggle("unset", unset);
-  for (const s of stops) ticks.append(el("span", s === def ? "def" : "", s));
-  paintVal(current);
-  reset.hidden = !d.effort;
-  // 動かしている間は字だけ変え、離したとき（change）に決める。既定の段に戻したら '' を保存する
-  let done = false;
-  const commit = () => {
-    if (done) return;
-    done = true;
-    const v = stops[+range.value];
+  const commit = (k) => {
+    if (k < 0 || k >= n) return;
+    at = k;
+    const v = stops[k];
     const next = v === def ? "" : v;
     if (next !== (d.effort ?? "")) onPick(next);
   };
-  range.addEventListener("input", () => { range.classList.remove("unset"); paintVal(stops[+range.value]); });
-  range.addEventListener("change", commit);
-  // つまみが出ていないときは、今の位置の目盛りを押しても change が来ない。離したときに決める
-  range.addEventListener("pointerup", () => { if (unset) commit(); });
-  range.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
-  reset.onclick = () => onPick("");
-  box.append(top, range, ticks);
-  return box;
+  const indexAt = (x) => { const box = slider.getBoundingClientRect(); return Math.max(0, Math.min(n - 1, Math.floor(((x - box.left) / box.width) * n))); };
+  slider.addEventListener("keydown", (e) => {
+    const k = { ArrowLeft: Math.max(0, at - 1), ArrowRight: Math.min(n - 1, at + 1), Home: 0, End: n - 1 }[e.key];
+    if (k === undefined) return;
+    e.preventDefault();
+    paint(k);
+    commit(k);
+  });
+  let drag = null;
+  slider.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    // Tab で輪が出ている棒をポインターで押したときは、一度外してポインターのフォーカスとして付け直させる（輪は Tab のときだけ）
+    if (document.activeElement === slider && slider.matches(":focus-visible")) slider.blur();
+    drag = { id: e.pointerId, k: indexAt(e.clientX) };
+    paint(drag.k);
+    try { slider.setPointerCapture(e.pointerId); } catch { /* 取れなくても押した段は塗れている */ }
+  });
+  slider.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const k = indexAt(e.clientX);
+    if (k !== drag.k) { drag.k = k; paint(k); }
+  });
+  slider.addEventListener("pointerup", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const k = drag.k;
+    drag = null;
+    commit(k);
+  });
+  slider.addEventListener("pointercancel", () => { if (!drag) return; drag = null; paint(at); });
+  paint(at);
+  r.append(slider, value, endMark(""));
+  return r;
 }
 
 // ---- 承認モード
 /**
- * 承認モードの面を描く（bot のページ・ルーティンのシート。Chats の入力欄はモデルの面の modeSegment）。target は { mode, modes }、on.mode(id) が変更先。
+ * 承認モードの面を描く（bot のページ・ルーティンのシート。Chats の入力欄はモデルの面の最後の行）。target は { mode, modes }、on.mode(id) が変更先。
  * 選択時は hide() で面を閉じ、今と違う値のときだけ変更先を呼ぶ。
  */
 export function renderMode({ pop, target: d, on, hide }) {
@@ -1029,14 +1109,10 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     input.select?.();
   }
 
-  // ---- エージェント・モデル・エフォート・アカウント・承認モード（下端の切り替え）
+  // ---- エージェント・モデル・エフォート・アカウント・承認モード（2 段の面。承認モードは 1 段目の最後の行）
   const model = panel(chips.model, pops.model, {
     align: "right",
-    render: () => {
-      const d = get();
-      renderModel({ pop: pops.model, target: d, on, hide: (focus) => model.hide(focus) });
-      pops.model.append(...modeSegment(d, on));
-    },
+    render: () => renderModel({ pop: pops.model, target: get(), on, hide: (focus) => model.hide(focus) }),
     onShow: () => on.openModel?.(),
   });
 

@@ -78,8 +78,8 @@ export default async function (t) {
     /measureText\(`\$\{chars\.slice\(0, n\)\.join\(""\)\}…`\)/.test(controlsSrc) && !/calc\(\$\{frame\}px \+ \$\{ch\}ch\)/.test(controlsSrc));
   t.ok('スレッドの入力欄も同じ詰め方（fitComposerRow）', /fitComposerRow\(destChip\.parentElement/.test(fs.readFileSync(new URL('../../web/channels/thread-composer.mjs', import.meta.url), 'utf8')));
   const hideFn = controlsSrc.slice(controlsSrc.indexOf('hide(returnFocus = true) {'), controlsSrc.indexOf('place() {'));
-  t.ok('面を閉じたら（Esc・面の外・チップのどれでも hide を通る）onHide を呼ぶ', /onHide\?\.\(\);/.test(hideFn)
-    && /export function panel\(chip, pop, \{[^}]*onHide[^}]*\}\)/.test(controlsSrc) && /if \(e\.key === "Escape"\) \{[^}]*self\.hide\(\)/.test(controlsSrc) && /openPanel\.hide\(false\)/.test(controlsSrc));
+  t.ok('面を閉じたら（Esc・面の外・チップのどれでも hide を通る）onHide を呼ぶ。モデルの面の 2 段目の Esc は閉じずに 1 段目へ戻る', /onHide\?\.\(\);/.test(hideFn)
+    && /export function panel\(chip, pop, \{[^}]*onHide[^}]*\}\)/.test(controlsSrc) && /if \(e\.key === "Escape"\) \{[\s\S]{0,800}?if \(v && v\.view !== "top"\) \{[\s\S]{0,400}?return;\s*\}\s*self\.hide\(\);/.test(controlsSrc) && /openPanel\.hide\(false\)/.test(controlsSrc));
   t.ok('作業ディレクトリの面を閉じたら確かめている途中のパスを取り消す（閉じた後に通って変わっていた）',
     /const folder = panel\(chips\.cwd, pops\.cwd, \{[^\n]*onHide: \(\) => \{ checkSeq\+\+; \}/.test(controlsSrc)
       && /found = await cmd\("listDirs", \{ path: value \}\);[\s\S]*?if \(seq !== checkSeq\) return;\s*done\(\);\s*msg\.replaceChildren\(\);[\s\S]*?commitCwd\(/.test(controlsSrc));

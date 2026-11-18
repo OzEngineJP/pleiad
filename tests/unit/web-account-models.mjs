@@ -296,17 +296,25 @@ export default async function (t) {
       nameIn.value = 'MythosBot';
       nameIn.dispatchEvent({ type: 'input' });
 
-      // モデル面を開いて承認のあるアカウントを選ぶ → そのアカウント向けの vocab を引き直す
+      // モデル面を開いて承認のあるアカウントを選ぶ → そのアカウント向けの vocab を引き直す。
+      // 面は 2 段（上の段の行 → 選ぶ一覧。docs/design-system.md「モデル選択の面」）なので、アカウントの行から一覧へ進む
+      const popButton = (key) => botView.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
       botView.querySelector('#botModelChip').click();
       await tick();
       await tick();
-      const acctBtn = botView.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === 'account:verified');
+      assert.ok(Boolean(popButton('nav:account')), 'bot ページのモデル面の上の段にアカウントの行が出る');
+      popButton('nav:account').click();
+      await tick();
+      await tick();
+      const acctBtn = popButton('account:verified');
       assert.ok(Boolean(acctBtn), 'bot ページのモデル面にアカウント選択行が出る');
       acctBtn.click();
       for (let i = 0; i < 5; i++) await tick();
       assert.ok(vocabCalls.some((c) => c.backend === 'claude' && c.account === 'verified'), JSON.stringify(vocabCalls));
 
-      const mythosBtn = botView.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === 'model:claude-mythos-5-2');
+      // アカウントを選ぶと上の段へ戻る。モデルの行から一覧へ進む
+      if (!popButton('model:claude-mythos-5-2')) { popButton('nav:model')?.click(); await tick(); await tick(); }
+      const mythosBtn = popButton('model:claude-mythos-5-2');
       assert.ok(Boolean(mythosBtn), '承認のあるアカウントを選ぶと Mythos 5.2 が選択肢に出る');
       mythosBtn.click();
       for (let i = 0; i < 5; i++) await tick();
@@ -362,9 +370,17 @@ export default async function (t) {
           view.querySelector('#botModelChip').click();
           await tick();
           await tick();
-          view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === 'account:verified').click();
+          // 2 段の面: アカウントの行 → 一覧で選ぶ → 上の段へ戻る → モデルの行 → 一覧で選ぶ
+          const pick = (key) => view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
+          pick('nav:account').click();
+          await tick();
+          await tick();
+          pick('account:verified').click();
           for (let i = 0; i < 5; i++) await tick();
-          view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === 'model:claude-mythos-5-2').click();
+          pick('nav:model').click();
+          await tick();
+          await tick();
+          pick('model:claude-mythos-5-2').click();
           for (let i = 0; i < 5; i++) await tick();
           calls.length = 0;
           view.querySelector('.bp-create').click();

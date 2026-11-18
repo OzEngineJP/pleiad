@@ -248,12 +248,14 @@ async page => {
     window.__sampler = setInterval(() => window.__samples.push({ t: Date.now(), ...read() }), 40);
   });
   await page.locator('#modelChip').click();
+  await page.locator('#modelPop [data-key="nav:model"]').click();
   await page.locator('#modelPop [data-key="model:fast"]').click();
   await page.waitForTimeout(150);
   await page.keyboard.press('Escape');
-  // 承認モードはモデルの面の下端の区分け（ADR 0252）。選んでいない段を 1 つ押す
+  // 承認モードはモデルの面の最後の行（ADR 0252）。2 段目の一覧で選んでいない行を 1 つ押す
   await page.locator('#modelChip').click();
-  await page.locator('#modelPop .seg [role="radio"][aria-checked="false"]').first().click();
+  await page.locator('#modelPop [data-key="nav:mode"]').click();
+  await page.locator('#modelPop [data-key^="mode:"][aria-selected="false"]').first().click();
   await page.waitForTimeout(150);
   await page.keyboard.press('Escape');
   await page.locator('#cwdChip').click();
