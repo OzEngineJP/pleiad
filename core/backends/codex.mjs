@@ -2028,12 +2028,21 @@ const backend = {
       if (!adopt) {
       // Loaded threads retain overrides. Resolve the native default explicitly on reset.
       let effectiveEffort = effort;
+      // モデルも毎ターン turn/start で渡す。ロード済みのスレッドは thread/resume の model を無視するので、
+      // 作業の途中で選び直したモデルが次のターンに効かなかった（v3 の不具合。docs/design-system.md「作業中の設定の変更」）。
+      // 既定（''）に戻したときは、ロード済みのスレッドに前の指定が残るので、公式の既定（config の model）を明示する
+      let turnModel = model || null;
       // 互換の接続先の既定の段は分からない（公式の model/list・config の段を持ち込まない）。'' なら段を送らない
-      if (effort === '' && !compat) {
-        const { config } = await rpc.request('config/read', { cwd, includeLayers: false });
-        const models = await backend.models();
-        const selected = models[model || config?.model] ?? models[''];
-        effectiveEffort = config?.model_reasoning_effort ?? selected?.defaultEffort;
+      if ((effort === '' || !model) && !compat) {
+        // 段を決めるのに要るときは、読めなければ今までどおり失敗にする。モデルの既定だけなら、読めなければ送らない（スレッドの指定のまま）
+        const read = rpc.request('config/read', { cwd, includeLayers: false });
+        const { config } = effort === '' ? await read : await read.catch(() => ({ config: null }));
+        if (!model && typeof config?.model === 'string' && config.model) turnModel = config.model;
+        if (effort === '') {
+          const models = await backend.models();
+          const selected = models[model || config?.model] ?? models[''];
+          effectiveEffort = config?.model_reasoning_effort ?? selected?.defaultEffort;
+        }
       }
       emit({ type: "activity", state: "thinking" });
       rolloutFrom = await rolloutSize(rolloutPath);
@@ -2048,6 +2057,7 @@ const backend = {
         // 毎ターン指定し、auto/full への変更も ask への復帰も確実に適用する。
         approvalPolicy: m.approvalPolicy,
         sandboxPolicy: sandboxForTurn(m, effectiveSandbox, botFolders ? botFolders.writableRoots ?? [] : null),
+        ...(turnModel ? { model: turnModel } : {}),
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
         // bot の人格。毎ターン同じ文を渡す（Codex は前のターンと同じなら履歴に足さないので、キャッシュは保たれ、直したターンだけ新しい文が入る）。
         // collaborationMode は model が必須で、model・effort は上と同じ値を渡す

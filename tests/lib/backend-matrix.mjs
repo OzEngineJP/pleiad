@@ -19,6 +19,7 @@ export const ABOUT = {
   subagents: 'サブエージェントの一覧と中身',
   liveModel: '走っている最中にモデルを替える',
   liveMode: '走っている最中に承認モードを替える',
+  liveEffort: '走っている最中にエフォートを替える',
   hostTools: 'AI から set_status / set_title / fork を呼ぶ（補: ply_control で同じことができる）',
   approvals: '対話の承認（none: 承認モードが確認なしだけ）',
   alwaysAllow: '承認に「常に許可」を返す',

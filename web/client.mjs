@@ -66,7 +66,7 @@ import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { whenText, timeText } from './schedule-times.mjs';
 import { setupSendMenu } from './send-menu.mjs';
-import { setupComposerControls, resolvedModel, folderBrowser, destinationUsage, modelChipLabel } from "./composer-controls.mjs";
+import { setupComposerControls, resolvedModel, folderBrowser, modelChipLabel } from "./composer-controls.mjs";
 import { createFolderUpload, canSendFolders, entriesFromDirectory, summarize, askDroppedFolder } from "./folder-upload.mjs";
 import { setupAttachMenu } from "./attach-menu.mjs";
 import { promptMaxHeight, attachSources, attachFolderHints } from "./composer-layout.mjs";
@@ -147,6 +147,7 @@ import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
 import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
+import { setSettingsTraceLabels } from './settings-trace.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
 import { whileStill, rightPanelMoving } from './panel-moving.mjs';
@@ -1638,7 +1639,8 @@ function systemHistoryNode(m) {
   if (m.kind === 'teammate') return teammateNode(m, hhmm(m.at));
   if (m.kind === 'command' || m.kind === 'shell') return commandMsg(m);
   // 中断で止めたものを Pleiad がエージェントへ伝えた文。開くと中身が読める
-  if (m.kind === 'interruptionNote') return sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
+  // 作業中の設定の変更で止めたとき（hidden）は、エージェントへは伝えるが画面には出さない（ADR 0341）
+  if (m.kind === 'interruptionNote') return m.hidden ? null : sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
   if (m.kind === 'modelSwitch') return switchRow(m);
   // bot の会話の先頭の包み（core/system-messages.mjs の splitLeadingNotes）。チャンネルの出来事は「#チャンネル · 発言者」、記憶は渡した印。開くと中身が読める
   if (m.kind === 'channelEvent') return sysFold(m.history ? t('channels:event.thread', { channel: m.channel }) : t('channels:event.post', { channel: m.channel, from: m.from }), m.body ?? '', hhmm(m.at));
@@ -4409,6 +4411,12 @@ function paintSettingsNotice() {
   $("nextSettings").querySelector('b').textContent = t(pendingWorktree ? 'worktree.pendingTitle' : 'chat.next.title');
   $("cancelSettings").title = t(pendingWorktree ? 'worktree.pendingCancel' : 'chat.next.cancel');
   $("cancelSettings").setAttribute('aria-label', $("cancelSettings").title);
+  // ［今すぐ変える］は走っているターンがあるときだけ（裏だけを待っている間は止めない。送ったメッセージは差し込み、予約は次のターンへ。ADR 0341）
+  const applyNow = !pendingWorktree && Boolean(next) && !behind && isRunningHere();
+  $("applySettings").hidden = !applyNow;
+  // i18n-dynamic: chat.next.applyLive
+  // i18n-dynamic: chat.next.applyStop
+  if (applyNow) $("applySettings").title = t(reservedAppliesLive(s, next) ? 'chat.next.applyLive' : 'chat.next.applyStop');
   if (pendingWorktree) {
     const mark = el('span', 'wt-ic');
     mark.innerHTML = branchIcon;
@@ -4424,31 +4432,52 @@ function paintSettingsNotice() {
   $("nextSettingsBehind").hidden = !behind;
   if (behind) $("nextSettingsBehind").textContent = t("chat.next.behindNote");
   if (next) {
-    const changes = [];
+    // 項目は「名前: 値」（値だけ太字）。変わったものだけを、エージェント → モデル → エフォート → 承認モードの順に（docs/design-system.md「作業中の設定の変更」）
+    const items = [];
+    const item = (field, value) => {
+      const node = el("span", "next-item");
+      // i18n-dynamic: chat.next.name.
+      node.append(document.createTextNode(t("chat.next.itemLabel", { name: t(`chat.next.name.${field}`) })), el("b", null, value));
+      items.push(node);
+    };
     // 既定のモデルは実際に当たる名前を添える（分からなければ「既定」だけ）
     const fallback = state.models[""]?.resolvesTo || state.models[""]?.resolvedLabel ? t("chat.model.defaultResolved", { model: resolvedModel(state.models, "").label }) : t("chat.model.default");
     const nextEndpoint = next.endpoint ?? (next.backend !== s.backend ? "" : s.compatEndpoint ?? "");
     // 互換の接続先のモデルは表示名（web/compat-models.mjs。札を置けないので 1M は（1M））
     const epMain = nextEndpoint ? compatEndpoints.get(nextEndpoint)?.roles?.main : "";
     const epFallback = nextEndpoint ? t("chat.model.defaultResolved", { model: epMain ? compatModelText(epMain) : t("chat.next.endpointMain") }) : fallback;
-    if (next.backend !== s.backend || next.model !== (s.model ?? "")) changes.push(`${labelOf(next.backend)} / ${next.model ? (nextEndpoint ? compatModelText(next.model) : state.models[next.model]?.label ?? next.model) : epFallback}${next.backend !== s.backend && !next.model && fallback === t("chat.model.default") ? t("chat.next.targetDefault") : ""}`);
-    if (next.effort !== undefined && next.effort !== (s.effort ?? "")) changes.push(t("chat.next.effort", { value: next.effort || t("chat.next.useDefault") }));
-    if (next.cwd) changes.push(worktreeNextText(next.cwd) ?? t("chat.next.cwd", { value: next.cwd }));
-    if (next.mode !== undefined) changes.push(t("chat.next.mode", { value: state.modes[next.mode]?.label ?? next.mode }));
-    if (next.endpoint !== undefined) changes.push(t("chat.next.endpoint", { value: endpointLabel(next.endpoint) }));
-    if (next.account !== undefined) changes.push(t("chat.next.account", { value: accountLabel(next.account) }));
-    const joined = changes.join(" · ");
+    const switching = next.backend !== s.backend;
+    if (switching) item("backend", labelOf(next.backend));
+    if (switching || next.model !== (s.model ?? "")) item("model", `${next.model ? (nextEndpoint ? compatModelText(next.model) : state.models[next.model]?.label ?? next.model) : epFallback}${switching && !next.model && fallback === t("chat.model.default") ? t("chat.next.targetDefault") : ""}`);
+    if (next.effort !== undefined && next.effort !== (s.effort ?? "")) item("effort", next.effort || t("chat.next.useDefault"));
+    if (next.mode !== undefined) item("mode", state.modes[next.mode]?.label ?? next.mode);
+    if (next.cwd) item("cwd", worktreeNextText(next.cwd) ?? next.cwd);
+    if (next.endpoint !== undefined) item("endpoint", endpointLabel(next.endpoint));
+    if (next.account !== undefined) item("account", accountLabel(next.account));
     // 変えるのが worktree だけのときは、軽い 1 行（「次のターンから適用」＋枝分かれの印の札。ADR 0089）
-    const compact = !behind && changes.length === 1 && Boolean(next.cwd && worktreeNextText(next.cwd));
+    const compact = !behind && items.length === 1 && Boolean(next.cwd && worktreeNextText(next.cwd));
     $("nextSettings").classList.toggle("wt-compact", compact);
     if (compact) {
       const mark = el("span", "wt-ic");
       mark.innerHTML = branchIcon;
       mark.setAttribute("aria-hidden", "true");
-      $("nextSettingsText").replaceChildren(mark, el("span", null, joined));
-    } else $("nextSettingsText").textContent = behind ? t("chat.next.summaryBehind", { changes: joined }) : t("chat.next.summary", { changes: joined });
+      $("nextSettingsText").replaceChildren(mark, el("span", null, worktreeNextText(next.cwd)));
+      $("nextSettings").querySelector('b').textContent = t('chat.next.titleCompact');
+    } else $("nextSettingsText").replaceChildren(...items);
   }
   paintHandoffNote(s, next);
+}
+/**
+ * 予約が全部、止めずにその場で効くか（［今すぐ変える］の title の出し分け。決めるのはサーバーの applyReservedNow で、これは見込み）。
+ * エージェント・作業ディレクトリ・接続先・アカウントを変えるときはいつも止める。Claude Code の Bypass は、Bypass で始めたターンでなければ止める
+ */
+function reservedAppliesLive(s, next) {
+  if (!s || !next || (next.backend && next.backend !== s.backend) || next.cwd || next.endpoint !== undefined || next.account !== undefined) return false;
+  const caps = capsOf(s.backend);
+  if (next.model !== undefined && next.model !== (s.model ?? "") && (!next.model || caps.liveModel !== true)) return false;
+  if (next.effort !== undefined && next.effort !== (s.effort ?? "") && caps.liveEffort !== true) return false;
+  if (next.mode !== undefined && next.mode !== s.mode && (caps.liveMode !== true || (s.backend === "claude" && next.mode === "bypass"))) return false;   // backend-allow: Claude の SDK は Bypass をクエリーの開始でしか許さない（claude.mjs の bypassQueries）。ボタンの説明の見込みだけ
+  return true;
 }
 /**
  * エージェントを変える予約のときだけ、引き継がないものを 1 行で出し、残りは「詳しく」に畳む（既定は閉じる。デスクトップもスマホも）。
@@ -4480,6 +4509,20 @@ function paintHandoffNote(s, next) {
   }
   box.replaceChildren(summary, rows);
 }
+// ［今すぐ変える］: 全部がその場で効けば止めずに切り替え、1 つでも効かなければ止めて新しい設定で続けさせる（サーバーが決める。ADR 0341）
+$("applySettings").onclick = async () => {
+  const sessionId = state.current;
+  const button = $("applySettings");
+  button.disabled = true;
+  try {
+    await cmd("applyTurnSettingsNow", { sessionId });
+    $("settingsError").textContent = "";
+  } catch (e) {
+    if (state.current === sessionId) $("settingsError").textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+};
 $("cancelSettings").onclick = () => {
   const s = state.sessions.find(s => s.id === state.current);
   if (s?.unsent && s.worktreePending) {
@@ -4796,8 +4839,8 @@ const controls = chatComposer.useControls({
         botSetup: bot ? homeBotSetup(bot) : '',
         openBot: id => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })),
         backendLabel: labelOf, onPick: id => homeDest.choose(id),
-        usage: destinationUsage(usageSource.get(bid), { model: switchedHere() ?? state.model, models: modelsReady ? state.models : {}, account: bot ? bot.account ?? '' : state.account,
-          open: () => { onboarding.open('usage'); $('usageTab').click(); } }),
+        // エージェントの一覧の下の「使用量」（使用量の画面を開く）
+        openUsage: () => { onboarding.open('usage'); $('usageTab').click(); },
         groups: sent ? [] : [{ options: [
           { id: null, name: t('channels:homeDest.none'), backend: homeBackend() },
           ...homeDest.bots.map(b => ({ id: b.id, name: b.name, bot: b, backend: b.backend, backendLabel: labelOf(b.backend),
@@ -7989,6 +8032,13 @@ $("draftSaved").onclick = () => saveDraft().catch(() => {});
 $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() => {}); };
 // 引き継いで戻した行（present kind: 'chromeHandover'）の「Claude に戻しました」の名前
 setChromeHandoverAgentName(() => labelOf(activeBackendId()));
+// 作業中に設定を変えた跡の行（web/settings-trace.mjs）の値の表示名。届くのは id なので、今の会話の一覧から引く（無ければ id のまま）
+setSettingsTraceLabels({
+  backend: (id) => labelOf(id),
+  model: (id) => state.models[id]?.label ?? id,
+  mode: (id) => state.modes[id]?.label ?? id,
+  logo: (id) => backendLogo(id, ''),
+});
 setChromeClosedSession(() => state.current);
 let modalEntry = null;   // 作業のダイアログの見出しのパネルのボタン（下の setupBrowserEntry。2 つ目）
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する

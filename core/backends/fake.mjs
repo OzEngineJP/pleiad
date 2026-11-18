@@ -461,6 +461,7 @@ export const backend = {
     // FAKE_LIVE=off でターンの途中切り替えの口が無いエージェントにする（Codex・OpenCode と同じ形）
     get liveModel() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     get liveMode() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get liveEffort() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,
     plyAgents: true,
     plyInstructions: true,
@@ -1056,6 +1057,12 @@ export const backend = {
     async setModeLive(handle, mode) {
       if (!handle) return false;
       handle.mode = mode;
+      return true;
+    },
+
+    async setEffortLive(handle, effort) {
+      if (!handle) return false;
+      handle.effort = effort;
       return true;
     },
   }),

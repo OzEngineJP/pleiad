@@ -9,7 +9,7 @@
 // 口は流れの入力欄（createChComposer）と同じ形にしてある（thread.mjs がそのまま使う）。
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
 import { renderOutbox } from '../outbox.mjs';
-import { chipCaret, chipGlyph, defaultModeOf, destinationUsage, fitComposerRow, panel, paintWhoChip, renderModel, resolvedModel } from '../composer-controls.mjs';
+import { chipCaret, chipGlyph, defaultModeOf, fitComposerRow, panel, paintWhoChip, renderModel, resolvedModel } from '../composer-controls.mjs';
 import { weekUsage } from '../header-usage.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
 import { draftStore, persistDrafts } from './ch-composer.mjs';
@@ -338,8 +338,8 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       effortDisabled: Object.keys(threadEfforts).length <= 1,
       destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain), defaults: s.defaults,
         backendLabel: (id) => backendLabel?.(id) ?? id,
-        // bot は bot のアカウント（ADR 0224）。組み込みの bot はログイン中のアカウント
-        usage: destinationUsage(host.usageOf?.(s.backend), { account: bot.plain ? '' : bot.account ?? '', open: host.openUsage }),
+        // エージェントの一覧の下の「使用量」（使用量の画面を開く）
+        openUsage: host.openUsage,
         changed, onReset: () => apply({ model: s.defaults.model ?? '', effort: s.defaults.effort ?? '' }),
         onPick: pick },
     };

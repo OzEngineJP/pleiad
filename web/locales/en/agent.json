@@ -556,6 +556,7 @@
       "quit": "stopped to quit Pleiad",
       "hostAway": "the user's screen stayed away until the grace period ran out",
       "restart": "Pleiad crashed or was force-quit",
+      "settings": "the user changed the settings (agent, model, effort, or approval mode) mid-task, so Pleiad stopped the turn to continue with the new settings",
       "unknown": "reason unknown"
     },
     "cancelled": "Delegated tasks that were cancelled (Pleiad will not resume them, and no completion notice will arrive):\n{{items}}",
@@ -563,6 +564,8 @@
     "restarted": "Delegated tasks stopped by the Pleiad restart (not resumed; check how far they got with ply_task_status):\n{{items}}",
     "taskItem": "- {{taskId}} \"{{title}}\" (state when stopped: {{status}})",
     "unreadItem": "- {{taskId}} \"{{title}}\" ({{status}})",
+    "tools": "Tools that were running and were stopped (their results will not come back):\n{{items}}",
+    "toolItem": "- {{tool}}: {{target}}",
     "background": "Background work that stopped (no longer running; no results will arrive):\n{{items}}",
     "backgroundItem": "- {{id}} ({{kind}}): {{label}}",
     "kind": {
@@ -576,7 +579,8 @@
     "waits": "Waits that were outside a turn (ended by the restart; no longer waiting):\n{{items}}",
     "waitItem": "- {{tool}}: {{target}}",
     "dropped": "{{count}} more were left out.",
-    "footer": "Do not simply redo what was stopped. Check the current state (files, command output, ply_task_status) first, then decide whether to delegate again or rerun commands."
+    "footer": "Do not simply redo what was stopped. Check the current state (files, command output, ply_task_status) first, then decide whether to delegate again or rerun commands.",
+    "resumeSettings": "The settings were changed. Continue the work from where it was interrupted."
   },
   "shell": {
     "commandNotice": "[Pleiad command duration notice / {{noticeId}}]\n`{{command}}`, run in this conversation, has not finished after {{minutes}} minutes (Pleiad has not stopped it). If it should finish, check whether it is stuck. For something that does not finish, such as a server, start it in the background so the command returns right away. {{hint}}",
@@ -909,6 +913,10 @@
         "account": "agent account id. Only a person (the screen); an agent gets NEEDS_UI.",
         "endpoint": "Compatible endpoint id. Only a person (the screen); an agent gets NEEDS_UI.",
         "remember": "Remember the chosen value as the default. Only a person (the screen); an agent uses settings.set."
+      },
+      "applyTurnSettings": {
+        "summary": "Apply the settings a person reserved during the work to the running turn (the band's Change now). If something cannot change live, stop the turn and continue with the new settings. Screen only.",
+        "sessionId": "Conversation id."
       },
       "suggestTitle": {
         "summary": "Ask for a short title from the conversation's contents. It does not change the conversation (sessions.setTitle sets it). One small call runs on the conversation's account.",

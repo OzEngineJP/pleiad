@@ -437,7 +437,7 @@ import { createShellBridge, SHELL_MCP_PATH } from './shell-bridge.mjs';
 import { createShellHolder } from './shell-held.mjs';
 import { createPlyShellHolder } from './ply-shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
-import { taskStop, backgroundStop, approvalStop, waitStop, interruptionNote } from './interrupt-stops.mjs';
+import { taskStop, toolStop, backgroundStop, approvalStop, waitStop, interruptionNote, settingsResumePrompt } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS, isInternalConversationMeta } from './channels/types.mjs';
@@ -2873,7 +2873,7 @@ const toMs = (v) => (Number.isFinite(v) ? v : (v ? Date.parse(v) || null : null)
 // 中断の理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、hostAway = ホスト不在の猶予切れ、
 // restart = Pleiad が落ちた・強制終了で終わりが記録されていないターン（起動時に store.recoverInterruptedTurns が付ける）、
 // timeout = ルーティンの承認待ちが期限（approvalTimeoutMin）を過ぎて止めた（ADR 0112）
-const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit", "timeout"]);
+const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit", "timeout", "settings"]);
 // abort で画面・デスクトップ・ルーティンが渡せる理由。ほかの値（不正・省略）は user として扱う
 const ABORT_REASONS = new Set(["user", "update", "quit", "timeout"]);
 const abortReason = (value) => (ABORT_REASONS.has(value) ? value : "user");
@@ -3786,6 +3786,9 @@ function makeEmit(turn) {
     // バックエンドが付けた時刻は上書きしない（docs/multi-backend.md §2.2）
     if (event?.type === 'tool.start' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
     if (event?.type === 'tool.result' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
+    // 実行中のツール。中断したとき「止めたもの」としてエージェントへ伝える（captureStops。結果は戻らない）
+    if (event?.type === 'tool.start' && event.id) (turn.openTools ??= new Map()).set(event.id, { id: event.id, name: event.name, input: event.input });
+    if (event?.type === 'tool.result' && event.id) turn.openTools?.delete(event.id);
     if (event?.type) {
       agentTasks?.observe(turn.info.sessionId, event); sessionCommands?.observe(turn.info.sessionId, event);
       // 委譲の子が仕事を始めた印（ADR 0302）。再生でも立てる（起きた仕事の記録の再生は、起きたことの証拠）
@@ -4447,6 +4450,129 @@ async function stopTurnForRewind(sessionId, turn) {
     if (Date.now() > deadline) throw new Error(t('rewind.stopTimeout'));
     await waitFree(sessionId, 250);
   }
+}
+
+// ---- 作業中の設定の変更（docs/design-system.md「作業中の設定の変更」・ADR 0341） ------------------
+// 作業中に面で選んだ値は予約（nextSettings）に入り、入力欄の上の帯「以下の設定に変更予定」に並ぶ。
+// ［今すぐ変える］か、作業中に送ったとき（message-queue の applyReserved）に、今のターンへ効かせる。
+// 全部がその場で効くなら止めずに切り替える。1 つでも効かないものがあれば、今のターンを止め、次のターンの prepareTurn が予約を適用する。
+// 止めたことは画面に出さない（AI にだけ interruptionNote の reason="settings" で伝える）。会話には「変えました」の跡の行だけを残す
+
+// 予約を効かせるために止めたターンの会話（sessionId → { via }）。次の prepareTurn が予約を適用したとき、跡の行を残す
+const settingsTraces = new Map();
+
+/** 今の設定と予約の違い。並びはエージェント → モデル → エフォート → 承認モード（帯と跡の行の並び） */
+function settingsDiff(before, after) {
+  const out = [];
+  if (after.backend && after.backend !== before.backend) out.push({ field: 'backend', from: before.backend, to: after.backend });
+  if ((after.model ?? '') !== (before.model ?? '')) out.push({ field: 'model', from: before.model ?? '', to: after.model ?? '' });
+  if ((after.effort ?? '') !== (before.effort ?? '')) out.push({ field: 'effort', from: before.effort ?? '', to: after.effort ?? '' });
+  if (after.mode !== undefined && after.mode !== (before.mode ?? '')) out.push({ field: 'mode', from: before.mode ?? '', to: after.mode });
+  return out;
+}
+
+/** 会話に残す「変えました」の跡の行（present kind: 'settingsChange'）。live = 作業を止めずに切り替えた */
+async function recordSettingsChange(sessionId, changes, { live }) {
+  if (!changes.length) return;
+  const record = await history.recordPresent(sessionId, { kind: 'settingsChange', by: 'human', settingsChange: { live, changes } });
+  if (record) emitGlobal({ type: 'present', sessionId, ...record });
+}
+
+/**
+ * 予約を効かせるために、走っているターンを止める。予約は残し、次のターンの prepareTurn が適用する。
+ * 「中断しています」は出さない（止めたことは見せない）。wait なら止まり終える（runtime.turns から消える）まで待つ（20 秒で諦める）
+ */
+async function stopTurnForSettings(sessionId, turn, { wait = true } = {}) {
+  turn.abortReason ??= 'settings';
+  turn.ac.abort();
+  settleAll('aborted', sessionId);
+  broadcastRunning();
+  if (!wait) return;
+  // Claude の停止は最悪 stopAckMs + stopExitMs（claude.mjs）かかる。OpenAI Codex の中断には期限が無いので、ここで打ち切る
+  const deadline = Date.now() + 20_000;
+  while (runtime.turns.get(sessionId) === turn) {
+    if (Date.now() > deadline) throw new Error(t('turn.settingsStopTimeout'));
+    await waitFree(sessionId, 250);
+  }
+}
+
+/**
+ * 予約を今のターンへ効かせる。via: 'button'（［今すぐ変える］）| 'send'（作業中に送った）。
+ * 返り: 'live'（止めずに切り替えた）| 'stop'（止めた。次のターンで効く）| 'wait'（止められない。次のターンへ回す）| 'none'（予約・ターンが無い）。
+ * その場で効くのは、同じエージェント・同じ作業場所・アカウント・接続先のまま、変える項目すべてにその場の口（setModelLive・
+ * setEffortLive・setModeLive）があるときだけ。口が false を返したら止める道へ落とす。
+ * 委譲の子は止めると委譲タスクが終わってしまうので、その場で効かないなら次のターンへ回す
+ */
+async function applyReservedNow(sessionId, { via = 'button' } = {}) {
+  await settingsWrites.get(sessionId)?.catch?.(() => {});
+  const turn = runtime.turns.get(sessionId);
+  const meta = { ...(await store.get(sessionId)) };
+  const next = meta.nextSettings;
+  if (!turn || !next || turn.ac.signal.aborted || turn.outcome || turn.compactTrigger) return 'none';
+  const backend = turn.backend;
+  const changes = settingsDiff({ backend: backend.id, model: meta.model ?? '', effort: meta.effort ?? '', mode: meta.mode }, next);
+  const want = Object.fromEntries(changes.map(c => [c.field, c.to]));
+  const handle = turn.control.handle;
+  // モデルを替えてエフォートが既定（''）に戻るだけなら、モデルの切り替えが新しいモデルの既定の段で走らせる
+  // （OpenCode・Devin・Grok の setModelLive は段を渡さない）。その場のエフォートの口が無くても止めない
+  const effortRides = want.effort === '' && want.model !== undefined;
+  const sameAgent = next.backend === backend.id && !next.cwd && next.account === undefined && next.endpoint === undefined;
+  const liveable = sameAgent && Boolean(handle)
+    && (want.model === undefined || (Boolean(want.model) && typeof backend.setModelLive === 'function'))
+    && (want.effort === undefined || effortRides || typeof backend.setEffortLive === 'function')
+    && (want.mode === undefined || typeof backend.setModeLive === 'function');
+  if (liveable) {
+    let ok = true;
+    try {
+      if (want.model !== undefined) ok = await backend.setModelLive(handle, want.model);
+      if (ok && want.effort !== undefined && typeof backend.setEffortLive === 'function') ok = await backend.setEffortLive(handle, want.effort);
+      if (ok && want.mode !== undefined) ok = await backend.setModeLive(handle, want.mode);
+    } catch (err) {
+      console.error('  作業中の設定の切り替えに失敗:', String(err?.message ?? err));
+      ok = false;
+    }
+    if (ok && runtime.turns.get(sessionId) === turn) {
+      // 使用量の行き先・上限の記録（info.model）と、Pleiad 自身の判定（委譲・ply_shell・MCP の承認。info.mode）も今の値に合わせる
+      if (want.model !== undefined) { turn.info.model = want.model; await store.setModel(sessionId, want.model); }
+      if (want.effort !== undefined) { turn.info.effort = want.effort; await store.setSessionData(sessionId, 'effort', want.effort); }
+      if (want.mode !== undefined) { turn.info.mode = want.mode; await store.setMode(sessionId, want.mode); }
+      touchCard(turn);
+      await store.setSessionData(sessionId, 'nextSettings', null, { durable: true });
+      if (want.model !== undefined) emitGlobal({ type: 'model', sessionId, model: want.model, by: 'human', live: true });
+      if (want.mode !== undefined) emitGlobal({ type: 'mode', sessionId, mode: want.mode, by: 'human', live: true });
+      emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null });
+      await recordSettingsChange(sessionId, changes, { live: true });
+      return 'live';
+    }
+  }
+  if (runtime.turns.get(sessionId) !== turn) return 'none';
+  if (taskExecutions.has(sessionId)) return 'wait';
+  settingsTraces.set(sessionId, { via });
+  await stopTurnForSettings(sessionId, turn, { wait: via === 'button' });
+  return 'stop';
+}
+
+/**
+ * ［今すぐ変える］（sessions.applyTurnSettings。WS の applyTurnSettingsNow の中身）。止めて効かせたときは、
+ * 「設定を変えました。中断したところから作業を続けてください。」を AI にだけ渡して続けさせる（画面には出さない）。
+ * 止めている間に送信待ちが入ったら、その先頭が新しい設定の最初の発言になるので、続ける文は送らない
+ */
+async function applyTurnSettingsNow(args) {
+  const { sessionId } = args ?? {};
+  if (!sessionId) throw new Error(t('session.required'));
+  const applied = await applyReservedNow(sessionId, { via: 'button' });
+  if (applied === 'stop') resumeAfterSettings(sessionId).catch(err => console.error('  設定を変えた後の再開に失敗:', String(err?.message ?? err)));
+  return { applied };
+}
+
+async function resumeAfterSettings(sessionId) {
+  // 止まったターンの片付け（releaseTurn）が終わるのを待つ
+  const deadline = Date.now() + 30_000;
+  while (sessionBusy(sessionId) && Date.now() < deadline) await waitFree(sessionId, 250);
+  if (sessionBusy(sessionId)) return;
+  if ((await outbox.list(sessionId)).some(m => m.status === 'queued' || m.status === 'sending')) return;
+  const lng = await ensureAgentLocale(sessionId);
+  await runTurn({ sessionId, prompt: settingsResumePrompt(lng) }, () => {}, { internal: true, quiet: true });
 }
 
 /** 状態グループのアイコン。人間が選んでも AI が渡しても同じ store に入る（設計メモ 2.2） */
@@ -5120,6 +5246,7 @@ const opsConversations = {
   cancelCompaction: (sessionId) => cancelRequestedCompaction({ sessionId }),
   setAutoCompaction: (sessionId, off) => setConversationAutoCompactionOf({ sessionId, off }),
   setTurnSettings: (args) => reserveTurnSettings(args),
+  applyTurnSettings: (args) => applyTurnSettingsNow(args),
   suggestTitle: (sessionId) => suggestTitleOf({ sessionId }),
   outbox: (sessionId) => outbox.list(sessionId),
   messageAction: async (sessionId, messageId, action) => { await outbox.action(sessionId, messageId, action); },
@@ -5231,11 +5358,15 @@ async function changeModel(sessionId, model, { actor, reason, backend: given } =
     || (reserved.account !== undefined && reserved.account !== (meta.claudeAccount ?? ''))
     || (reserved.endpoint !== undefined && reserved.endpoint !== (meta.compatEndpoint ?? ''))
   ));
-  // 走っている最中でも切り替える（できるエージェントだけ。能力の印 liveModel。次ターンの先が替わっていれば予約を保つ）
+  // 走っている最中でも切り替える（できるエージェントだけ。能力の印 liveModel。次ターンの先が替わっていれば予約を保つ）。
+  // 人の面からの変更は、その場で効くものも予約に入れ、帯の［今すぐ変える］か次の送信で効かせる（applyReservedNow。
+  // docs/design-system.md「作業中の設定の変更」）。AI の sessions.setModel は今までどおりその場で切り替える
   let live = false;
-  if (!nextSwitched && model && liveTurn?.control.handle && backend.setModelLive) {
+  if (who.by !== 'human' && !nextSwitched && model && liveTurn?.control.handle && backend.setModelLive) {
     live = await backend.setModelLive(liveTurn.control.handle, model)
       .catch((err) => { console.error("  モデルの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
+    // 使用量の行き先・上限の記録（turn.info.model）も、今走っているモデルに合わせる
+    if (live) liveTurn.info.model = model;
   }
   const remember = who.by === 'human' && !meta.bot ? { rememberModel: true } : { keepPrefs: true };
   // ターンが走っていて即時には切り替えられない（非対応・失敗）ときや次ターンの予約があるときは、予約（nextSettings）にモデルを反映する
@@ -7099,6 +7230,8 @@ function heldSlots(backend) {
 }
 const outbox = createMessageQueue({
   store,
+  // 作業中に送ったら、予約（nextSettings）を今のターンへ効かせる（止めずに切り替えるか、止めて新しい設定で続ける）
+  applyReserved: id => applyReservedNow(id, { via: 'send' }),
   active: id => {
     const limit = limitStates.get(id);
     if (limit && limitHolds(limit))
@@ -8092,6 +8225,10 @@ async function prepareTurn(args, hooks, compactionRevision) {
   await settingsWrites.get(sessionId);
   let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
   const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
+  // 予約を効かせるために止めたターンの続き（applyReservedNow）。予約を適用したら「変えました」の跡の行を残す
+  const settingsTrace = sessionId && settingsTraces.get(sessionId);
+  if (settingsTrace) settingsTraces.delete(sessionId);
+  const prior = settingsTrace && reserved ? { ...(await store.get(sessionId)) } : null;
   let { cwd, changedFrom } = await resolveCwd(sessionId, reserved?.cwd ?? args?.cwd, backend);
   // Claude のアカウント。削除済み・トークンが読めないものを選んでいる会話は、ここで止める
   // （黙ってログイン中のアカウントで走らせない）。予約の切り替えより前に確かめる
@@ -8159,6 +8296,12 @@ async function prepareTurn(args, hooks, compactionRevision) {
       await store.setSessionData(sessionId, "nextSettings", null, { durable: true });
       emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
       emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
+      if (prior) {
+        await recordSettingsChange(sessionId, settingsDiff(
+          { backend: previousTurnBackend.id, model: prior.model ?? '', effort: prior.effort ?? '', mode: prior.mode },
+          { backend: backend.id, model, effort, mode: permissionMode },
+        ), { live: false }).catch(err => console.error('  設定の変更の跡を残せません:', String(err?.message ?? err)));
+      }
     }
     // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0134）
     const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode, account: accountKind(backend) ? accountId : null }).catch(() => null);
@@ -8452,11 +8595,12 @@ async function beginTurn(ctx) {
   if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
     ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
     ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...(args.byHuman ? { sentByHuman: true } : {}) });
-  if (ctx.interruption) emit({ type: 'interruptionNote', text: ctx.interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
+  if (ctx.interruption && !ctx.interruption.hidden) emit({ type: 'interruptionNote', text: ctx.interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
   broadcastRunning();
   syncRunningPoll();
   if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
-  if (hooks.internal) {
+  // quiet: 設定を変えるために止めたターンの続き（resumeAfterSettings）。AI にだけ渡し、画面には何も出さない
+  if (hooks.internal && !hooks.quiet) {
     await recordTaskNotice(sessionId, prompt);
     // bot の会話へ渡すチャンネルの出来事・記憶の包みは、履歴と同じ行の形で出す（splitLeadingNotes）。それ以外は、本文も載せる。
     // 画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
@@ -8731,7 +8875,8 @@ async function driveTurn(ctx, start) {
     await closeTurn(ctx);
     hooks.signal?.removeEventListener("abort", ctx.abortFromTask);
   }
-  return beforeInvoke ? 'requeue' : turn.outcome;
+  // 設定を変えるために止めたターンは、送信待ちの列には「終わった」と返す（列を止めない。message-queue の pause）
+  return beforeInvoke ? 'requeue' : turn.abortReason === 'settings' && turn.outcome === 'aborted' ? 'ok' : turn.outcome;
 }
 
 /** ターンの締め（driveTurn の後始末）。送信待ち・表示・コンテキスト・git の終わりを書き、endTurn で終える */
@@ -8747,7 +8892,8 @@ async function closeTurn(ctx) {
     await (turn.backend.traits?.promptDelivery
       ? outbox.undelivered(sessionId, args.messageId, t('queue.undelivered'))
       : outbox.uncertain(sessionId, args.messageId, t('queue.uncertain'))).catch(() => {});
-  if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
+  // 設定を変えるために止めた（applyReservedNow）ときは、送信待ちを止めない（続きの送信が新しい設定の最初の発言になる）
+  if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue' && turn.abortReason !== 'settings') await outbox.pause(sessionId).catch(() => {});
   await turn.visualizations.close().catch(err => {
     if (turn.backend.traits?.failureDiagnostics) turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
     emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
@@ -9273,8 +9419,11 @@ async function endTurn(turn, emit, { record = true } = {}) {
   const limited = !requeued && turn.outcome === 'limited';
   const stopped = !requeued && (limited || turn.outcome === "aborted" || (turn.ac.signal.aborted && turn.outcome !== "ok"));
   // 上限で止まった会話は自動では再開しない（ADR 0161）。解除時刻がもう過ぎている（取得元が古い）なら、分からないものとして残す
+  // 作業中の設定の変更のために止めた（settings）ターンは中断として残さない。すぐ新しい設定で続きのターンが始まり、
+  // 利用者には「変えました」の跡の行だけを見せる（docs/design-system.md「作業中の設定の変更」・ADR 0341）
+  const settingsStop = stopped && !limited && turn.abortReason === 'settings';
   const interrupted = limited ? { at: completedAt, reason: 'limit', ...turn.limit, resetsAt: limitResetsAt(turn.limit?.resetsAt, completedAt) }
-    : stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
+    : stopped && !settingsStop ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
   if (turn.backend.traits?.failureDiagnostics && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
@@ -9321,7 +9470,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
     if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
-    if (stopped && turn.stops) await store.addStops(turn.info.sessionId, { ...turn.stops, reason: interrupted.reason }).catch(err => {
+    if (stopped && turn.stops) await store.addStops(turn.info.sessionId, { ...turn.stops, reason: interrupted?.reason ?? turn.abortReason ?? 'user' }).catch(err => {
       console.error("  中断で止めたものの記録に失敗:", String(err?.message ?? err));
     });
   }
@@ -9654,9 +9803,13 @@ function stoppedDescendants(sessionId) {
  */
 function captureStops(turn) {
   const id = turn.info.sessionId;
+  const waiting = id ? [...runtime.waiting].filter(([, w]) => !w.relay && blocksTurn(w) && w.payload.sessionId === id) : [];
+  // 承認待ちのツールは承認待ちの方で伝える（同じツールを 2 度数えない）
+  const asked = new Set(waiting.map(([, w]) => w.payload.toolUseID).filter(Boolean));
   return {
+    tools: [...(turn.openTools?.values() ?? [])].filter(x => !asked.has(x.id)).map(toolStop),
     background: (turn.info.background ?? []).map(backgroundStop),
-    approvals: id ? [...runtime.waiting].filter(([, w]) => !w.relay && blocksTurn(w) && w.payload.sessionId === id).map(([key, w]) => approvalStop(key, w.payload)) : [],
+    approvals: waiting.map(([key, w]) => approvalStop(key, w.payload)),
   };
 }
 
@@ -10429,6 +10582,9 @@ wss.on("connection", (ws, req) => {
 
         case "setTurnSettings":
           return await viaOp('sessions.setTurnSettings', args);
+        // 帯の［今すぐ変える］。作業中の予約を今のターンへ効かせる（applyTurnSettingsNow）
+        case "applyTurnSettingsNow":
+          return await viaOp('sessions.applyTurnSettings', args);
 
         case "saveDraft": {
           const { sessionId, text = "", attached = [], version } = msg.args ?? {};
@@ -11046,20 +11202,17 @@ wss.on("connection", (ws, req) => {
           const { sessionId, mode } = msg.args;
           const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
           if (!backend.modes()[mode]) return reply(false, t('settings.unknownMode', { value: mode }));
-          const from = (await store.get(sessionId)).mode ?? "default";
+          const meta = await store.get(sessionId);
+          const from = (meta.nextSettings?.mode ?? meta.mode) ?? "default";
           const liveTurn = runtime.turns.get(sessionId);
-          // 走っている最中でも切り替える。次のターンまで待たせない（できるエージェントだけ。能力の印 liveMode）
-          let live = false;
-          if (liveTurn?.control.handle && backend.setModeLive) {
-            live = await backend.setModeLive(liveTurn.control.handle, mode)
-              .catch((err) => { console.error("  承認モードの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
-          }
-          // ターンが走っていて即時には切り替えられない（非対応・失敗）ときは、今のターンは前のモードのまま走る。
-          // チップだけ替えて黙らせないよう、次のターンへの予約にして「次のターンから適用」の帯で示す
-          // （store.setMode はしない。予約は runTurn が使ってから取り込む）
-          if (liveTurn && !live) {
+          const live = false;
+          // 作業中の変更は、その場で効くものも含めて予約（nextSettings）に入れる。入力欄の上の帯「以下の設定に変更予定」の
+          // ［今すぐ変える］か、次の送信で適用する（applyReservedNow。docs/design-system.md「作業中の設定の変更」）。
+          // 返答の間でも予約があれば予約を書き直す: 次のターンは予約を使うので（prepareTurn の reserved.mode）、
+          // store.setMode だけでは選び直しが予約に負ける
+          if (liveTurn || meta.nextSettings) {
             // 予約先のエージェント（切り替えの予約があればそちら）の既定にも覚える。bot の会話のモードは全体の既定にしない
-            await reserveTurnSettings({ sessionId, mode, ...(!(await store.get(sessionId)).bot ? { rememberMode: true } : {}) });
+            await reserveTurnSettings({ sessionId, mode, ...(!meta.bot ? { rememberMode: true } : {}) });
             await store.recordChange(sessionId, {
               by: "human", field: "mode", from, to: mode, ...clientReason(msg.args), backend,
             });
@@ -11068,7 +11221,7 @@ wss.on("connection", (ws, req) => {
           }
           await store.setMode(sessionId, mode);
           // 人間が選んだものを、次に新しく始めるときの既定にする（bot の会話のモードは、その会話だけのもの。既定にしない）
-          if (!(await store.get(sessionId)).bot) await savePref("mode", mode, backend.id);
+          if (!meta.bot) await savePref("mode", mode, backend.id);
           await store.recordChange(sessionId, {
             by: "human", field: "mode", from, to: mode, ...clientReason(msg.args), backend,
           });

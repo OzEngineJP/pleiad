@@ -2518,18 +2518,25 @@
       "url": "リンクの URL"
     },
     "next": {
-      "title": "次のターンから適用",
+      "title": "以下の設定に変更予定",
+      "titleCompact": "次のターンから適用",
+      "applyNow": "今すぐ変える",
+      "applyLive": "今の作業を止めずに切り替えます",
+      "applyStop": "今の作業を中断して、新しい設定で続けさせます",
+      "itemLabel": "{{name}}: ",
+      "name": {
+        "backend": "エージェント",
+        "model": "モデル",
+        "effort": "エフォート",
+        "mode": "承認モード",
+        "cwd": "作業ディレクトリ",
+        "endpoint": "接続先",
+        "account": "アカウント"
+      },
       "cancel": "取り消す",
       "endpointMain": "接続先のメイン",
       "targetDefault": "（変更先の既定モデル）",
-      "effort": "エフォート: {{value}}",
       "useDefault": "既定に従う",
-      "cwd": "作業ディレクトリ: {{value}}",
-      "mode": "承認モード: {{value}}",
-      "endpoint": "接続先: {{value}}",
-      "account": "アカウント: {{value}}",
-      "summary": "{{changes}} · 次に送信すると適用されます",
-      "summaryBehind": "{{changes}} · 次のターンから適用されます",
       "behindNote": "裏の作業を待っている間に送ったメッセージは、今のターンで、今の設定のまま処理されます。",
       "handoff": {
         "line": "発言とツールの記録は引き継ぎます。「常に許可」などの承認と、考えた内容は引き継ぎません。",
@@ -2540,6 +2547,21 @@
         "dropValue": "「常に許可」などの過去の承認（{{to}} でもう一度確認します）・考えた内容・{{from}} だけが持つ状態（TODO など）",
         "change": "変わる",
         "changeValue": "モデルと承認モードは {{to}} の設定になります"
+      }
+    },
+    "settingsTrace": {
+      "default": "既定",
+      "switched": "{{from}} から {{to}} に切り替えました",
+      "switchedLive": "作業の途中で {{from}} から {{to}} に切り替えました",
+      "item": "{{name}}を {{from}} から {{to}} に",
+      "sep": "、",
+      "changed": "{{items}}変えました",
+      "changedLive": "作業の途中で{{items}}変えました",
+      "name": {
+        "backend": "エージェント",
+        "model": "モデル",
+        "effort": "エフォート",
+        "mode": "承認モード"
       }
     },
     "settingsHold": {
@@ -3193,20 +3215,16 @@
   },
   "composer": {
     "destination": {
-      "title": "宛先",
-      "sent": "宛先: この会話（AI と直接）· 送った後は変えられません",
-      "sentAria": "モデル: {{backend}} · {{model}}{{effort}}（宛先はこの会話）",
-      "botAria": "宛先とモデル: {{name}}（{{backend}} · {{model}}{{effort}}）",
-      "plainAria": "宛先とモデル: bot なし · {{backend}} · {{model}}{{effort}}",
+      "title": "Bot",
+      "sentAria": "モデル: {{backend}} · {{model}}{{effort}}",
+      "botAria": "Bot とモデル: {{name}}（{{backend}} · {{model}}{{effort}}）",
+      "plainAria": "Bot とモデル: なし · {{backend}} · {{model}}{{effort}}",
       "optionAria": "{{name}}（{{backend}}{{state}}）",
-      "botSetup": "{{name}}の動かし方",
       "botRuns": "{{name}} の既定で動きます: {{setup}}。送った後、スレッドの中で変えられます。",
-      "openBot": "bot のページで既定を変える ›",
+      "openBot": "bot のページで既定を変える",
       "locked": "{{name}} の既定で動きます（送った後、スレッドの中で変えられます）",
       "changedAria": "このスレッドだけ変更あり",
-      "fixedAfterSend": "送った後は変えられません",
-      "resetBot": "bot の既定に戻す",
-      "openUsage": "使用量 ›"
+      "resetBot": "bot の既定に戻す"
     },
     "cwd": {
       "placeholder": "作業ディレクトリのパス",
@@ -3229,6 +3247,7 @@
       "unset": "未指定"
     },
     "agent": "エージェント",
+    "usage": "使用量",
     "account": {
       "title": "アカウント",
       "compatOff": "互換の接続先ではアカウントを使いません",
@@ -3246,6 +3265,7 @@
       "search": "検索、または ID",
       "searchLabel": "モデルを検索、または ID を入力（Enter で決める）",
       "candidates": "モデルの候補",
+      "other": "ほかのモデル",
       "notListed": "一覧にありません。Enter でこの ID をそのまま使います。",
       "noList": "一覧がありません。ID を入力してください。",
       "chipTitle": "{{label}}（エージェント・モデル・エフォート。次のターンから適用）",
@@ -3255,22 +3275,15 @@
       "loadingAria": "{{backend}} · モデルを読み込んでいます"
     },
     "effort": {
-      "title": "エフォート（考える量）",
       "label": "エフォート",
-      "reset": "既定に戻す",
-      "follow": {
-        "endpoint": "（接続先の設定に従う）",
-        "agy": "（agy の設定に従う）",
-        "agent": "（エージェントの設定に従う）"
-      },
       "defaultFollow": {
         "endpoint": "既定（接続先の設定に従う）",
         "agy": "既定（agy の設定に従う）",
         "agent": "既定（エージェントの設定に従う）"
       },
-      "modelDefault": "（{{model}} の既定）",
-      "levelDefault": "{{level}}（既定）",
-      "noLevels": "{{model}} は段を選べません",
+      "valueText": "{{level}}（{{n}} 段のうち {{k}}{{def}}）",
+      "defMark": "・既定",
+      "none": "このモデルでは選べません",
       "loading": "読み込み中…"
     },
     "mode": {

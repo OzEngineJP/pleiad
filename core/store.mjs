@@ -576,7 +576,7 @@ export async function recoverInterruptedTurns(at = Date.now(), { except = new Se
 
 // 「止めたもの」の種類ごとの上限。超えた分は数だけ残す（dropped）
 const STOPS_MAX = 30;
-const STOP_LISTS = ["tasks", "background", "approvals", "waits"];
+const STOP_LISTS = ["tasks", "tools", "background", "approvals", "waits"];
 
 /**
  * 中断で止めたもの（stops）を会話に足す。同じ key のものは新しい方で置き換える（同じタスクを 2 度止めても 1 件）。

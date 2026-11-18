@@ -20,7 +20,7 @@ import { createEditMode } from './edit-mode.mjs';
 /** 入力欄の中の要素の役割（id は頭 + 役割。頭が空なら役割そのもの） */
 export const COMPOSER_PARTS = ['composer', 'contextStrip', 'contextMeterWrap', 'contextMeter', 'contextMeterPop', 'meterCompact', 'meterSettings', 'usageChip',
   'contextStripStatus', 'contextStripText', 'workEntry', 'workEntryButton', 'outbox', 'nextSettings', 'nextSettingsText', 'nextSettingsBehind',
-  'nextHandoff', 'cancelSettings', 'settingsError', 'skillList', 'composerNote', 'connNote', 'cbox', 'shellHead', 'prompt', 'composerBusy',
+  'nextHandoff', 'applySettings', 'cancelSettings', 'settingsError', 'skillList', 'composerNote', 'connNote', 'cbox', 'shellHead', 'prompt', 'composerBusy',
   'composerBusyText', 'slashHint', 'draftFail', 'draftFailText', 'draftFailRetry', 'attach', 'fileIn', 'cwdChip', 'draftSaved', 'armedChip', 'armedText',
   'armedRemove', 'modelChip', 'abort', 'resume', 'resumeLabel', 'resumeShort', 'send', 'sendMore', 'resumeNote', 'armedNote', 'cwdPop',
   'modelPop', 'sendPop', 'sendVeil'];

@@ -28,6 +28,7 @@
     "cap:hooks": "agents",
     "cap:hostTools": "agents",
     "cap:internalCall": "agents",
+    "cap:liveEffort": "agents",
     "cap:liveMode": "agents",
     "cap:liveModel": "agents",
     "cap:login": "agents",

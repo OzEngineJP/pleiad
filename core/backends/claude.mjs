@@ -110,6 +110,8 @@ const MODES = {
 // 飛ばさず canUseTool で聞いてくる。承認カードが全く出ないとは限らない（bypass の子の `rm -f $OUT/*` で出た）。
 // 受ける側（askPermission）は、モードによらず来た問いを人に回す。
 const SDK_MODES = { bypass: "bypassPermissions" };
+// Bypass（allowDangerouslySkipPermissions 付き）で始めた Query。走っている途中で Bypass へ替えられるのはこれだけ（setModeLive）
+const bypassQueries = new WeakSet();
 const sdkMode = (mode) => (MODES[mode] ? SDK_MODES[mode] ?? mode : "default");
 
 // 選べるモデル。版付きの名前・対応するエフォート・「既定」が実際に何かは SDK から引く（claude-models.mjs）。
@@ -1409,6 +1411,7 @@ export const backend = {
     // 実行中に承認モードやモデルを変えられるようにする。
     // ターン開始時の options だけだと、走り出した後の切り替えが効かない。
     if (control) control.handle = q;
+    if (sdkMode(mode) === "bypassPermissions") bypassQueries.add(q);
     holdQuery(ctx.sessionId);
     if (adopt) bindHolder();
     if (signal?.signal?.aborted) stopTurn();
@@ -1568,7 +1571,15 @@ export const backend = {
 
   async setModeLive(handle, mode) {
     if (!handle?.setPermissionMode) return false;
+    // Bypass はセッションの開始時の allowDangerouslySkipPermissions が要る。Bypass で始めていないターンでは効かない（server が止めて新しい設定で続ける）
+    if (sdkMode(mode) === "bypassPermissions" && !bypassQueries.has(handle)) return false;
     try { await handle.setPermissionMode(sdkMode(mode)); return true; } catch { return false; }
+  },
+
+  /** 走っている最中のエフォート切り替え（SDK の applyFlagSettings。'' はモデルの既定に戻す）。効かなければ false（server が止めて新しい設定で続ける） */
+  async setEffortLive(handle, effort) {
+    if (!handle?.applyFlagSettings) return false;
+    try { await handle.applyFlagSettings({ effortLevel: effort || null }); return true; } catch { return false; }
   },
 
   // ---- セッション管理 -----------------------------------------------------

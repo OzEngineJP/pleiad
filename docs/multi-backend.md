@@ -105,9 +105,14 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 （`{ kind: "turn", …, phase, background }`）に載せ、変わった時点で `running` を配り直す（4 秒ごとの定期便を待たない）。
 web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧を衛星（design-system.md §6）に替える。
 `waiting` の間もターンは終わっていない。同じ会話への送信は途中送信（`control.steer`）で届く。
-次のターンの設定の予約（`nextSettings`。実行中に作業ディレクトリ・モデルなどのチップを変えると立つ）があっても、`waiting` の間は同じに途中送信する。
+次のターンの設定の予約（`nextSettings`。実行中に選んだモデル・エフォート・承認モード・エージェント・作業ディレクトリなどは全部これに入る）があっても、`waiting` の間は同じに途中送信する。
 送信は今のターンの設定のまま処理され、予約は消さずに次のターンから効く（[ADR 0077](adr/0077-steer-before-reservation-while-waiting.md)）。
-`core/message-queue.mjs` の `kick` は、予約があって main が動いている間（`active`）だけ、すぐ終わるのでターンの終わりを待つ（送信待ちの理由は `{ reason: 'turn', detail: 'reserved' }`）。
+main が動いている間（`active`）に送ったら、`core/message-queue.mjs` の `kick` は予約を効かせてから渡す（`applyReserved` → server の `applyReservedNow`。[ADR 0341](adr/0341-settings-change-during-turn.md)）。
+同じエージェント・作業場所・アカウント・接続先のまま、変える項目すべてにその場の口（`setModelLive`・`setEffortLive`・`setModeLive`）があれば止めずに切り替えて途中送信する（`live`）。
+無ければターンを止め（`turn.abortReason = 'settings'`。中断の印・行は出さない）、送信を新しい設定の最初のターンにする（`stop`。送信待ちの理由は `{ reason: 'turn' }`）。
+委譲の子は止めず、予約のまま次のターンを待つ（`wait`。`{ reason: 'turn', detail: 'reserved' }`）。
+［今すぐ変える］（`sessions.applyTurnSettings`）は同じ判定で、止めたときは `settingsResumePrompt`（`<pleiad-interruption reason="settings">`。履歴では見えない行）の内部のターンで続けさせる。
+効かせた変更は presents の `settingsChange`（`{ live, changes: [{ field, from, to }] }`）に残り、画面の跡の行になる。
 
 途中送信の口は `control.steer`（`core/backends/acp-steer.mjs` は ACP の 2 バックエンドの共通部品）。
 ACP の `session/prompt` を走っているターンへ重ねると、**Devin は同じ回に折り込み**（実測 3000.11.92）、
@@ -774,7 +779,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 | 一覧・履歴 | **無し** → Pleiad が控える（§下） |
 | タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界)） |
 | モード | **`--dangerously-skip-permissions` の 1 つだけ**（§下） |
-| モデル・effort | `--model` だけを渡す。**起動時のみ**（liveModel / liveMode は `impossible`。画面へは `false`）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`、Hydrogen は `-xhigh` も）を選ぶことと同じなので、段は同じ系統の id に解決して `--model` に載せ、`--effort` と同時には渡さない（`--effort xhigh` を agy に渡す経路は無い。agy 1.2.8 で確認。`core/backends/antigravity-models.mjs`） |
+| モデル・effort | `--model` だけを渡す。**起動時のみ**（liveModel / liveEffort / liveMode は `impossible`。画面へは `false`）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`、Hydrogen は `-xhigh` も）を選ぶことと同じなので、段は同じ系統の id に解決して `--model` に載せ、`--effort` と同時には渡さない（`--effort xhigh` を agy に渡す経路は無い。agy 1.2.8 で確認。`core/backends/antigravity-models.mjs`） |
 | 認証 | **端末でのサインインが要る**（Pleiad からは回せない。§下） |
 
 イベントの形:

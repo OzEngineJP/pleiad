@@ -128,19 +128,21 @@ export default async function (t) {
     t.ok("予約があっても、裏だけを待つ間の送信は今のターンへ届く（ターンは分かれない）",
       !c.since(from4).some((e) => e.type === "turnEnd" && e.sessionId === rid));
     t.ok("途中送信しても予約は残る（次のターンから効く）", (await reservedOf())?.cwd === path.resolve(scratch));
-    // main が答えている間（phase: active）に受けた送信も、waiting に戻れば流れる
+    // main が答えている間（phase: active）に送ったら、予約を効かせてから渡す（ADR 0341）。作業ディレクトリはその場で変えられないので、
+    // ターンを止め、送った発言を新しい設定の最初のターンにする（docs/multi-backend.md §2.2）
     // （fake は途中送信を受けてから本文を返すまで phase: active。AGENT_HOST_FAKE_STEER_LATENCY_MS で長くしてある）
     await c.waitFor((e) => e.type === "running" && turnOf(e, rid)?.phase === "active", { from: from4, ms: 5000 });
     const from5 = c.mark();
     await c.cmd("sendMessage", { sessionId: rid, messageId: "bg-reserved-0003", prompt: "second ping" });
     const queued = (await c.cmd("listMessages", { sessionId: rid })).find((m) => m.id === "bg-reserved-0003");
-    t.ok("main が動いている間は予約を残したまま待つ", queued?.status === "queued" && queued.waiting?.reason === "turn", JSON.stringify(queued));
+    t.ok("main が動いている間は、止め終えるまで送信を待たせる", queued?.status === "queued" && queued.waiting?.reason === "turn", JSON.stringify(queued));
     await c.waitFor((e) => e.type === "userMessage" && e.messageId === "bg-reserved-0003", { from: from5, ms: 8000 });
-    t.ok("waiting に戻った時点で待っていた送信が今のターンへ流れる", !c.since(from5).some((e) => e.type === "turnEnd" && e.sessionId === rid)
+    t.ok("止めた後、待っていた送信を新しいターンで渡す", c.since(from5).some((e) => e.type === "turnEnd" && e.sessionId === rid)
       && (await c.cmd("listMessages", { sessionId: rid })).every((m) => m.status === "sent"));
     await c.waitFor((e) => e.type === "text.end" && c.since(from5).includes(e), { from: from5, ms: 8000 });
     t.ok("main がその場で答える", c.since(from4).filter((e) => e.type === "text.delta").map((e) => e.text).join("").includes("受け取った: ping with reservation"));
-    t.ok("2 回送っても予約は残る", (await reservedOf())?.cwd === path.resolve(scratch));
+    t.ok("効かせた予約は消え、新しいターンは予約の作業ディレクトリで動く", !(await reservedOf())
+      && (await c.cmd("listSessions")).find((x) => x.id === rid)?.cwd === path.resolve(scratch));
     await c.cmd("abort", { sessionId: rid });
     await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === rid, { from: from3, ms: 10000 });
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }

@@ -74,6 +74,56 @@ export function holdsDefault(models, id) {
   return id === def || Boolean(models[id]?.family && models[id].family === models[def]?.family);
 }
 
+/** 系統と版で名乗るモデル（Claude の「Opus 5.5」）の系統。新しい版だけを上に出し、この形の一覧で知らない系統は「ほかのモデル」 */
+const CLAUDE_FAMILIES = ["fable", "opus", "sonnet", "haiku"];
+const newer = (a, b) => {
+  const x = a.split(".").map(Number), y = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return false;
+};
+
+/**
+ * モデルの一覧を「上（今の世代）」と「ほかのモデル」に分ける（docs/design-system.md「入力欄の設定」）。
+ * 分け方はエージェントの id ではなく一覧の中身で決める:
+ * - 段違いを系統（family）にまとめた一覧（Antigravity）は分けない（系統の行がもう 1 つずつ）
+ * - 系統と版で名乗る一覧（Claude。名前の頭が CLAUDE_FAMILIES）は、系統ごとに一番新しい版だけを上に、古い版と知らない系統は下へ。
+ *   版の無い名前（取れなかったときの「Opus」）は上
+ * - ほかは補足が「previous generation」「legacy」のものを下へ
+ * 既定のモデル（系統）は常に上。quiet は下の行のうち補足を出さない行（系統で同じ補足・legacy の補足。名前だけで足りる）
+ * @returns {{ main: string[], other: string[], quiet: Set<string> }}
+ */
+export function splitModelRows(models, ids) {
+  const old = new Set();
+  const familyOf = (id) => {
+    const label = String(models?.[id]?.label ?? "");
+    return { m: /^(\w+)\s+(\d+(?:\.\d+)?)/.exec(label), family: label.split(/\s/)[0].toLowerCase() };
+  };
+  if (ids.some((id) => models?.[id]?.family)) {
+    // 系統にまとめた一覧は分けない
+  } else if (ids.some((id) => CLAUDE_FAMILIES.includes(familyOf(id).family))) {
+    const parsed = new Map(), top = new Map();
+    for (const id of ids) {
+      const { m, family } = familyOf(id);
+      if (!CLAUDE_FAMILIES.includes(family)) { old.add(id); continue; }
+      if (!m) continue;
+      parsed.set(id, { family, version: m[2] });
+      const prev = top.get(family);
+      if (!prev || newer(m[2], prev)) top.set(family, m[2]);
+    }
+    for (const [id, p] of parsed) if (p.version !== top.get(p.family)) old.add(id);
+  } else {
+    for (const id of ids) if (/previous generation|legacy/i.test(String(models?.[id]?.note ?? ""))) old.add(id);
+  }
+  for (const id of ids) if (holdsDefault(models, id)) old.delete(id);
+  const main = ids.filter((id) => !old.has(id)), other = ids.filter((id) => old.has(id));
+  const noteOf = (id) => String(models?.[id]?.note ?? "");
+  const quiet = new Set(other.filter((id) => {
+    const note = noteOf(id);
+    return !note || /legacy/i.test(note) || ids.some((x) => x !== id && noteOf(x) === note);
+  }));
+  return { main, other, quiet };
+}
+
 // ---------------------------------------------------------------- 接続先
 
 /** 長い字を真ん中で詰める（モデル ID は頭と末尾で見分けることが多い） */

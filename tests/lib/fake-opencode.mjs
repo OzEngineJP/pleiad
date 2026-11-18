@@ -221,7 +221,9 @@ function busyStatus(s) {
   broadcast(s.directory, 'session.status', { sessionID: s.id, status: { type: 'busy' } });
 }
 
-async function run(s, user, text, { system = null } = {}) {
+async function run(s, user, prompt, { system = null } = {}) {
+  // 前のターンを止めたときの知らせ（<pleiad-interruption>。core/interrupt-stops.mjs）は発言の前に付く。合図の語は知らせの後ろで見る
+  const text = prompt.replace(/^<pleiad-interruption[^>]*>[\s\S]*?<\/pleiad-interruption>\s*/, '');
   const ctl = { aborted: false, steers: [], abort: null, status: { type: 'busy' } };
   ctl.aborted$ = new Promise((resolve) => { ctl.abort = () => { ctl.stopped = true; resolve(); }; });
   s.run = ctl;

@@ -172,7 +172,7 @@ export default async function (t) {
     await c.waitFor((e) => e.type === 'turnEnd' && e.sessionId === sid, { ms: 30_000, from: am });
     t.ok('中断は turnResult aborted', c.since(am).some((e) => e.type === 'turnResult' && e.sessionId === sid && e.outcome === 'aborted'));
     const failed = await c.runTurn({ sessionId: sid, prompt: 'fail' });
-    t.ok('session.error は turnResult error（文を添える）', failed.outcome === 'error' && failed.events.some((e) => e.type === 'turnResult' && /fake failure/.test(e.error ?? '')));
+    t.ok('session.error は turnResult error（文を添える）', failed.outcome === 'error' && failed.events.some((e) => e.type === 'turnResult' && /fake failure/.test(e.error ?? '')), JSON.stringify({ outcome: failed.outcome, results: failed.events.filter((e) => e.type === 'turnResult'), text: text(failed).slice(0, 300) }));
     const providerFailed = await c.runTurn({ sessionId: sid, prompt: 'provider-fail' });
     t.ok('プロバイダーの 4xx（step.failed → execution.failed）も turnResult error（原因の文を添える）', providerFailed.outcome === 'error'
       && providerFailed.events.some((e) => e.type === 'turnResult' && /region not allowed/.test(e.error ?? '')), JSON.stringify(providerFailed.events.filter((e) => e.type === 'turnResult')));
@@ -194,15 +194,18 @@ export default async function (t) {
     const liveMark = c.mark();
     const liveTurn = c.runTurn({ sessionId: sid, prompt: 'hold on', mode: 'full', model: 'fake/echo' });
     await c.waitFor((e) => e.type === 'activity' && e.sessionId === sid, { ms: 30_000, from: liveMark });
-    const modelLive = await c.cmd('setModel', { sessionId: sid, model: 'fake/tiny' });
-    const modeLive = await c.cmd('setMode', { sessionId: sid, mode: 'plan' });
+    // 人の面からの作業中の変更は予約に入り、帯の［今すぐ変える］（applyTurnSettingsNow）でその場の口へ渡る（ADR 0341）
+    const modelReserved = await c.cmd('setModel', { sessionId: sid, model: 'fake/tiny' });
+    const modeReserved = await c.cmd('setMode', { sessionId: sid, mode: 'plan' });
+    t.ok('作業中に選んだモデル・承認モードはまず予約に入る', modelReserved?.live === false && modeReserved?.live === false, JSON.stringify({ modelReserved, modeReserved }));
+    const applied = await c.cmd('applyTurnSettingsNow', { sessionId: sid });
     await c.cmd('sendMessage', { sessionId: sid, messageId: 'oc-live-0001', prompt: 'release' });
     const liveDone = await liveTurn;
     const liveState = JSON.parse(await fs.readFile(path.join(fakeState, 'sessions.json'), 'utf8'))[sid];
-    t.ok('実行中のモデル変更は OpenCode の v2 session API で届く', modelLive?.live === true
-      && liveState?.model?.providerID === 'fake' && liveState?.model?.id === 'tiny', JSON.stringify({ modelLive, model: liveState?.model }));
-    t.ok('実行中の承認モード変更はセッション権限を書き換え、実行は完了する', modeLive?.live === true
-      && liveState?.permission?.some(p => p.permission === 'edit' && p.action === 'deny') && liveDone.outcome === 'ok', JSON.stringify({ modeLive, outcome: liveDone.outcome }));
+    t.ok('［今すぐ変える］のモデル変更は OpenCode の v2 session API で届く', applied?.applied === 'live'
+      && liveState?.model?.providerID === 'fake' && liveState?.model?.id === 'tiny', JSON.stringify({ applied, model: liveState?.model }));
+    t.ok('［今すぐ変える］の承認モード変更はセッション権限を書き換え、実行は完了する', applied?.applied === 'live'
+      && liveState?.permission?.some(p => p.permission === 'edit' && p.action === 'deny') && liveDone.outcome === 'ok', JSON.stringify({ applied, outcome: liveDone.outcome }));
     await c.cmd('setMode', { sessionId: sid, mode: 'full' });
     await c.cmd('setModel', { sessionId: sid, model: 'fake/echo' });
   } finally {

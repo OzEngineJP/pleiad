@@ -80,21 +80,25 @@ async page => {
   const withIcon = await waitBot('Owl2', b => b.icon === emoji.trim(), 'アイコンを絵文字ピッカーで選ぶと保存される');
   check(await page.locator('#botView .bp-av').textContent() === withIcon.icon, 'アイコンが頭に出る');
   check(await page.locator('#botView .bp-av').evaluate(n => n === document.activeElement), '選択して保存・再描画した後もアバターに焦点が戻る');
+  // 入力欄と同じ 2 段の面: 1 段目の「モデル」の行 → 2 段目のモデルの一覧
   await page.locator('#botModelChip').click();
+  await page.locator('#botModelPop [data-key="nav:model"]').click();
   const modelKeys = await page.locator('#botModelPop [data-key^="model:"]').evaluateAll(n => n.map(x => x.dataset.key));
   check(modelKeys.length >= 2, '入力欄と同じモデルの面が開く');
   const other = modelKeys.find(k => k !== `model:${withIcon.model}`);
   await page.locator(`#botModelPop [data-key="${other}"]`).click();
   await waitBot('Owl2', b => `model:${b.model}` === other || b.model === other.slice(6), 'モデルを選ぶと保存される');
-  // エフォートも同じ面のつまみ。既定でない段を選ぶと保存される
+  // エフォートは 1 段目の棒の行（role=slider）。既定でない端の段へ Home / End で移ると保存される
   if (await page.locator('#botModelPop').isHidden()) await page.locator('#botModelChip').click();
-  const ticks = await page.locator('#botModelPop .ticks span').evaluateAll(n => n.map((x, i) => ({ i, text: x.textContent, def: x.classList.contains('def') })));
-  const step = ticks.find(x => !x.def);
-  check(ticks.length >= 2 && step, 'エフォートの段が出る');
-  await page.locator('#botModelPop input[data-key="effort"]').fill(String(step.i));
-  await waitBot('Owl2', b => b.effort === step.text, 'エフォートを選ぶと保存される');
-  // 保存の後に面が描き直されて、つまみのフォーカスが外れていることがある。面の中のつまみへ押して確かに Esc を届ける
-  await page.locator('#botModelPop input[data-key="effort"]').press('Escape');
+  const slider = page.locator('#botModelPop [data-key="effort"]');
+  const bars = await slider.locator('i').evaluateAll(n => n.map(x => x.classList.contains('def')));
+  check(bars.length >= 2 && bars.includes(false), 'エフォートの段が出る');
+  await slider.focus();
+  await page.keyboard.press(bars[0] ? 'End' : 'Home');
+  const level = (await slider.getAttribute('aria-valuetext')).split(/[（(]/)[0].trim();
+  await waitBot('Owl2', b => b.effort === level, 'エフォートを選ぶと保存される');
+  // 保存の後に面が描き直されて、棒のフォーカスが外れていることがある。面の中の棒へ押して確かに Esc を届ける（1 段目の Esc で閉じる）
+  await page.locator('#botModelPop [data-key="effort"]').press('Escape');
   const sw = page.locator('#botSendSwitch');
   check(await sw.getAttribute('aria-checked') === 'true', '他の会話に送るは既定で ON');
   await sw.click();

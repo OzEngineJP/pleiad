@@ -14,7 +14,7 @@
     "failed": "Could not delete: {{error}}"
   },
   "plain": { "name": "Agent" },
-  "homeDest": { "none": "No bot" },
+  "homeDest": { "none": "None" },
   "side": {
     "tabs": { "channels": "Channels" },
     "sections": { "channels": "Channels", "bots": "Bots", "routines": "Routines" },

@@ -168,6 +168,7 @@
   },
   "turn": {
     "reservedInvalid": "予約した設定は使用できません。選び直してください",
+    "settingsStopTimeout": "設定をすぐには変えられませんでした。変更予定は残っているので、少し待ってからもう一度押してください",
     "aborted": "中断しました",
     "visualizationSaveFailed": "可視化を保存できませんでした: {{error}}",
     "contextSaveFailed": "プラグインの利用記録を保存できませんでした"

@@ -251,12 +251,16 @@ try {
     s.login();
     await page.waitForFunction(() => !document.getElementById('onboardingDialog')?.open, null, { timeout: 20_000 }).catch(async e => { throw new Error(`${e.message} ${JSON.stringify(await page.evaluate(() => ({ focus: document.hasFocus(), vis: document.visibilityState, list: document.getElementById('onboardingAgentList').innerText })))}`); });
     check(true, '使えるようになると案内が自動で閉じる');
-    // 選択欄: 使える Claude は選べ、使えない Codex は選べない
+    // 選択欄: 使える Claude は選べ、使えない Codex は選べない（モデルの面の 1 段目の「エージェント」の行 → 2 段目の一覧）
     await page.click('#modelChip');
+    await page.click('#modelPop [data-key="nav:agent"]');
     await page.waitForTimeout(400);
     const opts = await page.evaluate(() => [...document.querySelectorAll('[data-key^="backend:"]')].map(o => ({ key: o.dataset.key, off: o.getAttribute('aria-disabled') === 'true' })));
     check(opts.some(o => o.key === 'backend:claude' && !o.off), '選択欄で Claude が選べる', opts);
     check(opts.some(o => o.key === 'backend:codex' && o.off), '選択欄で使えない Codex は選べない形', opts);
+    // 一覧の下の操作の行（使用量・接続先を管理…）は名前で出る（要素を文字にした「[object …]」にならない）
+    const links = await page.evaluate(() => [...document.querySelectorAll('#modelPop .prow.link')].map(r => r.textContent.trim()));
+    check(links.length > 0 && links.every(x => x && !x.includes('[object')), '一覧の下の操作の行が名前で出る', links);
     const before = await page.textContent('#modelChip');
     await page.evaluate(() => document.querySelector('[data-key="backend:codex"]')?.click());
     await page.waitForTimeout(300);
@@ -584,6 +588,7 @@ try {
     await page.waitForFunction(() => document.querySelector('#botModelChip .v')?.textContent, null, { timeout: 15_000 });
     const before = await page.locator('#botModelChip').getAttribute('data-backend');
     await page.locator('#botModelChip').click();
+    await page.locator('[data-key="nav:agent"]:visible').click();
     await page.waitForSelector('[data-key="backend:codex"]', { timeout: 10_000 });
     // 状態の読み込みが済んで、使える Claude が選べる行になるのを待つ（済まないままなら、下の確認が行の中身つきで落ちる）
     await page.waitForFunction(() => { const r = document.querySelector('[data-key="backend:claude"]'); return r && !r.classList.contains('agent-off'); }, null, { timeout: 20_000 }).catch(() => {});
@@ -594,7 +599,7 @@ try {
     check(by.antigravity?.off && by.antigravity.disabled, '未ログインの Antigravity は選べない行', rows);
     check(/未インストール/.test(by.codex.text), 'Codex の行に状態「未インストール」が出る', by.codex.text);
     check(/未ログイン|未確認/.test(by.antigravity.text), 'Antigravity の行に状態（まだ確かめていない: 未確認）が出る', by.antigravity.text);
-    await page.locator('[data-key="backend:codex"] .main').click({ force: true });
+    await page.locator('[data-key="backend:codex"] .val').click({ force: true });
     await page.waitForTimeout(500);
     check(await page.locator('#botModelChip').getAttribute('data-backend') === before, '使えない行を押しても、選んでいるエージェントは変わらない', before);
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
