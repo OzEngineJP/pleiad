@@ -43,6 +43,7 @@ async function boot(label) {
   const work = path.join(scratch, 'work');
   const modelsFile = path.join(scratch, 'fake-claude-models.json');
   const envLog = path.join(scratch, 'fake-claude-env.log');
+  const probeLog = path.join(scratch, 'fake-claude-probe.log');
   await Promise.all([data, claudeConfig, work].map(d => fs.mkdir(d, { recursive: true })));
   await fs.writeFile(modelsFile, JSON.stringify({ labels: { [TOK_REG]: 'registered', [ACCESS]: 'access' } }));
   const cli = await installFakeClaude(path.join(scratch, 'cli'));
@@ -52,7 +53,7 @@ async function boot(label) {
     env: {
       AGENT_HOST_BACKENDS: 'claude,fake', ...cli.env, ...QUIET_ENV,
       CLAUDE_CONFIG_DIR: claudeConfig, AGENT_HOST_ANTHROPIC_API: api.url,
-      FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli, FAKE_CLAUDE_MODELS_FILE: modelsFile, FAKE_CLAUDE_ENV_LOG: envLog,
+      FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli, FAKE_CLAUDE_MODELS_FILE: modelsFile, FAKE_CLAUDE_ENV_LOG: envLog, FAKE_CLAUDE_PROBE_LOG: probeLog,
     },
   });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
@@ -94,7 +95,7 @@ async function boot(label) {
     // 行の読み直し（設定 › 外部 MCP の［読み直す］。人だけの操作）。読み終えるまで待つ
     const refreshRow = () => c.cmd('invoke', { op: 'accounts.refreshConnectors', args: { id, cwd: work } });
     const accountCache = path.join(data, CONNECTORS_CACHE_FILE);
-    return { c, id, data, work, status, credFile, claudeConfig, envLines, savedList, read, enable, refreshRow, accountCache, close };
+    return { c, id, data, work, status, credFile, claudeConfig, envLines, savedList, read, enable, refreshRow, accountCache, probeLog, close };
   } catch (error) { await close(); throw error; }
 }
 
@@ -154,6 +155,34 @@ export default async function (t) {
       t.ok('アカウントの一覧: オンのアカウントにだけコネクターの状態（件数・要認可）を添える・秘密を出さない',
         listed?.connectors?.enabled === true && listed.connectors.status === 'ok' && ![ACCESS, REFRESH, TOK_REG, EMAIL, ORG].some(x => JSON.stringify(listed.connectors).includes(x)),
         JSON.stringify(listed?.connectors));
+
+      // 段 4: 画面の会話・委譲・bot は同じアカウントの認証を使う（CLI と API だけ偽物）。
+      const until = async fn => {
+        for (let i = 0; i < 600; i++) { const value = await fn(); if (value) return value; await sleep(100); }
+        throw new Error('connector routing timeout');
+      };
+      const launches = () => fss.existsSync(s.probeLog) ? fss.readFileSync(s.probeLog, 'utf8').trim().split('\n') : [];
+      const onlyAccessSince = before => launches().length > before && launches().slice(before).every(who => who === 'access');
+      let start = launches().length;
+      const directSession = await c.cmd('newSession', { backend: 'claude', cwd: s.work });
+      await c.cmd('setTurnSettings', { sessionId: directSession.sessionId, account: s.id });
+      const direct = await c.runTurn({ sessionId: directSession.sessionId, prompt: 'hello' });
+      t.ok('段4: headless サーバーの会話は使用量ログインの認証で起動する', direct.outcome === 'ok' && onlyAccessSince(start), JSON.stringify({ outcome: direct.outcome, launches: launches().slice(start) }));
+      start = launches().length;
+      const parent = await c.runTurn({ backend: 'fake', cwd: s.work, prompt: 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'claude', account: s.id, task: 'hello' } }) });
+      const made = JSON.parse(parent.events.find(e => e.type === 'tool.result').text);
+      const task = await until(async () => (await c.cmd('agentTasks')).find(r => r.taskId === made.taskId && ['completed', 'failed', 'cancelled'].includes(r.status)));
+      const child = (await c.cmd('listSessions')).find(r => r.id === made.sessionId);
+      t.ok('段4: 委譲の子はオンのアカウントを保ち、会話用トークン・ログイン中へ戻らない', task.status === 'completed' && child?.claudeAccount === s.id && onlyAccessSince(start));
+      const op = (op, args) => c.cmd('invoke', { op, args });
+      const bot = await op('bots.create', { name: 'ConnectorCheck', backend: 'claude' });
+      await op('bots.setAccount', { botId: bot.id, account: s.id });
+      start = launches().length;
+      await op('channels.post', { channelId: bot.dmChannelId, text: 'hello' });
+      const botSession = await until(async () => (await op('bots.get', { botId: bot.id })).dmSessionId);
+      await until(async () => (await op('channels.read', { channelId: bot.dmChannelId })).posts.some(p => p.author?.botId === bot.id && p.state === 'done'));
+      const botRow = (await c.cmd('listSessions')).find(r => r.id === botSession);
+      t.ok('段4: bot の会話もオンのアカウントの認証を使う', botRow?.claudeAccount === s.id && onlyAccessSince(start));
 
       // オンのまま止める条件に当たる会話
       await fs.rm(s.credFile);
