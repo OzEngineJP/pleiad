@@ -7337,7 +7337,7 @@ function delegateDetail(card, routing) {
   return isAutoRouting(routing)
     ? routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button),
       compaction: taskById(card.dataset.taskId)?.compaction ?? null })
-    : pinnedDetail(routing, pinnedFacts(card, routing));
+    : pinnedDetail(routing, { ...pinnedFacts(card, routing), onRetry: (root, button) => toggleRetry(card, root, button) });
 }
 const foldLabels = () => ({ open: t('dialog.work.showFull'), close: t('dialog.work.collapse') });
 /** 開いた内訳の先頭の「依頼」。4 行で畳み、はみ出すときだけシェブロン（自分の長い発言・バックグラウンドの詳細と同じ部品。web/fold.mjs） */
