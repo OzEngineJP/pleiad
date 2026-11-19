@@ -8,7 +8,7 @@
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { reducedMotion, solveSpring, springPreset } from './motion.mjs';
-import { expandIcon, collapseIcon, linkIcon, chevRightIcon } from './icons.mjs';
+import { expandIcon, collapseIcon, linkIcon, chevRightIcon, moreIcon } from './icons.mjs';
 import {
   isFlowGraph, materialize, normalizeAfter, reaches, kindOf, leaves, changesFor,
   layoutList, layoutFlow, linkParts, linkInput, afterMap,
@@ -41,7 +41,6 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* ---- 印（静的な SVG の文字列だけを innerHTML で入れる） ---- */
 const PENCIL = '<svg class="i" viewBox="0 0 16 16" style="stroke-width:1.1" aria-hidden="true"><path d="M10.5 2.8l2.7 2.7L5.5 13.2l-3.4.7.7-3.4z"/></svg>';
-const DOTS = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.5" cy="12" r="1.5"/></svg>';
 const GRIP = '<svg viewBox="0 0 12 16" aria-hidden="true"><circle cx="4" cy="3.5" r="1.1"/><circle cx="8" cy="3.5" r="1.1"/><circle cx="4" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="4" cy="12.5" r="1.1"/><circle cx="8" cy="12.5" r="1.1"/></svg>';
 const PORT = '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5"/></svg>';
 const KIND = {
@@ -177,7 +176,7 @@ export function createSessionTodo(o) {
     badge.innerHTML = linkIcon;
     const badgeN = el('span'); badge.append(badgeN);
     foot.append(by, badge);
-    const more = el('button', 'td-more'); more.type = 'button'; more.innerHTML = DOTS;
+    const more = el('button', 'td-more'); more.type = 'button'; more.innerHTML = moreIcon;
     more.setAttribute('aria-label', t('todo.more')); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
     const port = el('span', 'td-port'); port.setAttribute('aria-hidden', 'true'); port.innerHTML = PORT;
     node.append(grip, mark, text, foot, more, port);

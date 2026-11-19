@@ -83,6 +83,7 @@
     "ops:settings": "reference/ops",
     "ops:shell": "reference/ops",
     "ops:statuses": "reference/ops",
+    "ops:todos": "reference/ops",
     "ops:voice": "reference/ops",
     "ops:worktrees": "reference/ops",
     "setting:account": "reference/settings",

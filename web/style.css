@@ -2768,7 +2768,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .todo-pop[data-view=flow] .td-foot{position:absolute;left:5px;right:8px;bottom:3px;margin:0;flex-direction:row-reverse}
 .todo-pop[data-view=flow] .td-badge{margin-right:auto}
 .td-more{flex:none;width:0;height:28px;overflow:hidden;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);opacity:0;visibility:hidden;cursor:pointer;transition:width var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),visibility var(--dur)}
-.td-more svg{width:16px;height:16px;fill:currentColor;flex:none}
+.td-more svg{width:16px;height:16px;flex:none}
 .todo-pop[data-mode=edit] .td-more{width:28px;opacity:1;visibility:visible}
 .td-more:hover,.td-more[aria-expanded=true]{background:var(--surface-3);color:var(--ink)}
 .td-port{position:absolute;left:50%;bottom:-8px;width:16px;height:16px;margin-left:-8px;cursor:crosshair;touch-action:none;opacity:0;pointer-events:none;transform:scale(.4);transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
