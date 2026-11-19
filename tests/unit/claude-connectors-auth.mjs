@@ -75,9 +75,9 @@ export default async function (t) {
       const shared = path.join(home, '.claude');
       await fs.mkdir(dir, { recursive: true }); await fs.mkdir(shared, { recursive: true });
       await fs.writeFile(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL } }));
-      const args = { account: { id: ACCOUNT_ID, name: 'fake' }, ver: { cli: '2.1.328', sdk: '0.3.288' }, auth: { token: ACCESS, env: {} }, dir, shared, home };
+      const args = { account: { id: ACCOUNT_ID, name: 'fake' }, ver: { cli: '2.1.328', sdk: '0.3.288' }, auth: { token: ACCESS, env: {} }, dir, shared, home, expectedIdentity: hashConnectorIdentity([ORG, EMAIL]) };
       let calls = 0;
-      const good = async () => { calls++; await new Promise(r => setTimeout(r, 5)); return { account: { organization: ORG, email: EMAIL }, connectors: ['alpha'] }; };
+      const good = async () => { calls++; await new Promise(r => setTimeout(r, 5)); return { account: { organization: ORG, email: EMAIL, tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty' }, connectors: ['alpha'] }; };
       const dataDir = path.join(tmp, 'verification-data');
       const verify = createConnectorVerification({ dataDir, probe: good });
       await Promise.all([verify(args), verify(args), verify(args)]);
@@ -90,9 +90,18 @@ export default async function (t) {
       await verify({ ...args, ver: { ...args.ver, cli: '2.2.0' } });
       t.ok('初回確認: CLI が変われば確認し直す', calls === previousCalls + 2);
       let listCalls = 0;
+      for (const [label, profile] of [['別の人', { organizationUuid: ORG, emailAddress: 'other@example.invalid' }], ['欠落', {}]]) {
+        await fs.writeFile(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: profile }));
+        const error = await verify(args).then(() => null, e => e);
+        t.ok(`使用量の本人情報が${label}なら記録済みでも停止`, error?.code === 'connectors-owner');
+      }
+      await fs.writeFile(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL } }));
+      await createConnectorVerification({ dataDir: path.join(tmp, 'no-sdk-person'), probe: async () => ({account: {tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty'}, connectors: []}) })(args);
+      t.ok('SDK が本人を返さなくても使用量の本人情報と共有の認証元で照合できる', true);
       for (const [label, probe, kind] of [
+        ...['shared-login', 'missing', 'provider'].map(label => [label, async () => ({ account: label === 'missing' ? {} : { tokenSource: label === 'shared-login' ? 'oauth' : 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: label === 'provider' ? 'bedrock' : 'firstParty' }, connectors: ['alpha'] }), 'owner']),
         ['持ち主違い', async () => ({ account: { organization: ORG, email: 'other@example.invalid' }, connectors: [] }), 'owner'],
-        ['一覧混入', async () => ({ account: { organization: ORG, email: EMAIL }, connectors: [++listCalls === 1 ? 'alpha' : 'beta'] }), 'verificationList'],
+        ['一覧混入', async () => ({ account: { organization: ORG, email: EMAIL, tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty' }, connectors: [++listCalls === 1 ? 'alpha' : 'beta'] }), 'verificationList'],
         ['ホームの本人変更', async () => { await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: String(Math.random()) } })); return good(); }, 'verificationWrites'],
         ['ホームの組織変更', async () => { await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: 'fake-other-organization', emailAddress: EMAIL } })); return good(); }, 'verificationWrites'],
         ['時間切れ', () => new Promise(() => {}), 'verificationTimeout'],
@@ -981,3 +990,4 @@ export default async function (t) {
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5 }).catch(() => {});
   }
 }
+import { hashConnectorIdentity } from '../../core/claude-connectors.mjs';

@@ -616,6 +616,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     const dir = accounts.usageDir(account.id);
     guard(dir, account);
     const first = await credentials(account, dir);
+    const expectedIdentity = await usageAccountDigest(dir);
     const shared = sharedDir();
     const name = account.name ?? account.id;
     return {
@@ -640,7 +641,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
               try { await project({ source: cliConfigFile(env, home), target: path.join(shared, '.claude.json'), cwd }); }
               catch { throw new ConnectorsAuthError('profile', { name }); }
               const auth = { token: cred.token, env: { CLAUDE_CONFIG_DIR: shared, CLAUDE_CODE_OAUTH_SCOPES: cred.scopes.join(' ') }, expiresAt: cred.expiresAt };
-              if (verify) await verify({ account, ver, auth, dir, shared, home });
+              if (verify) await verify({ account, ver, auth, dir, shared, home, expectedIdentity });
               return auth;
             } catch (error) {
               throw attachConnectorsError(error, account);
@@ -674,13 +675,14 @@ const verificationFlights = new Map();
 /** 初回だけ、同じ資格情報を使った専用設定先と共有設定先の本人・一覧を比較する。秘密は保存しない。 */
 export function createConnectorVerification({ dataDir, probe, timeoutMs = 30_000 }) {
   const read = async file => fs.readFile(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-  return async ({ account, ver, auth, dir, shared, home }) => {
+  return async ({ account, ver, auth, dir, shared, home, expectedIdentity }) => {
     let expected;
     try {
       const oa = JSON.parse(await fs.readFile(path.join(dir, '.claude.json'), 'utf8')).oauthAccount;
       if (!oa?.organizationUuid || !oa?.emailAddress) throw new Error();
       expected = hashConnectorIdentity([oa.organizationUuid, oa.emailAddress]);
     } catch { throw new ConnectorsAuthError('owner', { name: account.name }); }
+    if (!expectedIdentity || expected !== expectedIdentity) throw new ConnectorsAuthError('owner', { name: account.name });
     const key = hashConnectorIdentity([account.id, ver.cli, ver.sdk, expected]);
     const file = path.join(dataDir, 'claude-connectors-verification', `${key}.json`);
     const flightKey = path.resolve(file);
@@ -703,7 +705,7 @@ export function createConnectorVerification({ dataDir, probe, timeoutMs = 30_000
           if (ac.signal.aborted) throw new ConnectorsAuthError('verificationTimeout', { name: account.name });
           const result = await probe({ token: auth.token, verification: true, connectors: { fresh: async () => ({ ...auth, env: { ...auth.env, CLAUDE_CONFIG_DIR: config } }) }, signal: ac.signal });
           const info = result?.account;
-          if (!info?.email || !info?.organization || hashConnectorIdentity([info.organization, info.email]) !== expected) throw new ConnectorsAuthError('owner', { name: account.name });
+          if (config === shared ? (info?.tokenSource !== 'CLAUDE_CODE_OAUTH_TOKEN' || info?.apiProvider !== 'firstParty') : ((info?.email != null || info?.organization != null) && (!info.email || !info.organization || hashConnectorIdentity([info.organization, info.email]) !== expected))) throw new ConnectorsAuthError('owner', { name: account.name });
           if (!Array.isArray(result.connectors)) throw new ConnectorsAuthError('verificationList', { name: account.name });
           results.push(JSON.stringify(result.connectors.map(c => typeof c === 'string' ? c : c.name).sort()));
         }

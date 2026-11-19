@@ -45,7 +45,7 @@ async function boot(label) {
   const envLog = path.join(scratch, 'fake-claude-env.log');
   const probeLog = path.join(scratch, 'fake-claude-probe.log');
   await Promise.all([data, claudeConfig, work].map(d => fs.mkdir(d, { recursive: true })));
-  await fs.writeFile(modelsFile, JSON.stringify({ labels: { [TOK_REG]: 'registered', [ACCESS]: 'access' }, accounts: { [ACCESS]: { organization: ORG, email: EMAIL } } }));
+  await fs.writeFile(modelsFile, JSON.stringify({ labels: { [TOK_REG]: 'registered', [ACCESS]: 'access' }, accounts: { [ACCESS]: { organization: ORG, email: EMAIL, tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty' } } }));
   const cli = await installFakeClaude(path.join(scratch, 'cli'));
   const api = await startFakeAnthropicApi({ [TOK_REG]: ORG });
   const server = await startServer({
