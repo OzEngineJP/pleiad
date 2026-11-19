@@ -1,3 +1,4 @@
+import { dismissPopup } from './dismiss-popup.mjs';
 // 使用量の札（入力欄の上の帯。docs/design-system.md「使用量の札」）。
 // この会話のエージェント（新しい会話は入力欄で選んだもの）の枠のうち、使用率がいちばん高いものを 1 つだけ出す。
 // 押すと全エージェントの一覧（浮く面）。トークン数・費用などの詳しい数字は、これまでどおり設定の「使用量」で見る。
@@ -564,13 +565,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     if (focus) anchor.focus({ preventScroll: true });
   }
   chip.onclick = e => { e.stopPropagation(); if (pop.hidden) open(); else close(true); };
-  // 面の中の押下は描き直しで要素が外れることがあるので、closest ではなく押した時点の経路で見る
-  document.addEventListener('click', e => { if (!sheet && !pop.hidden && !e.composedPath().includes(pop)) close(); });
-  document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || e.isComposing || pop.hidden) return;
-    e.preventDefault?.(); e.stopImmediatePropagation?.();
-    close(true);
-  }, true);
+  dismissPopup({ isOpen: () => !pop.hidden && !sheet, surfaces: () => [pop],
+    opener: () => anchor, close: () => close(true) });
 
   // 5 分ごと。隠れている間は取らず、見えたときに古ければ取る
   const due = () => !document.hidden && Date.now() - lastRefresh >= EVERY - 1000;

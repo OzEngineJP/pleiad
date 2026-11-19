@@ -1,3 +1,4 @@
+import { dismissPopup } from './dismiss-popup.mjs';
 import { isComposingKey } from "./keyboard.mjs";
 import { el } from "./dom.mjs";
 import { t } from "./i18n.mjs";
@@ -22,12 +23,13 @@ export function createContextMenu() {
     clearTimeout(openTimer); clearTimeout(closeTimer); trim(0);
     const hook = closeHook; closeHook = null;
     hook?.();
-    document.removeEventListener('pointerdown', outside, true);
     document.removeEventListener('keydown', key, true);
     const target = typeof opener === 'function' ? opener() : opener;
     if (restore && target?.isConnected) target.focus({ preventScroll: true });
   }
-  function outside(e) { if (!panels.some(p => p.contains(e.target))) close(); }
+  dismissPopup({ isOpen: () => panels.length > 0, surfaces: () => panels,
+    opener: () => typeof opener === 'function' ? opener() : opener, close: () => close(true),
+    escape: e => { key(e); return false; } });
   function key(e) {
     if (isComposingKey(e)) return;
     const panel = panels.find(p => p.contains(e.target)) ?? panels.at(-1);
@@ -145,7 +147,7 @@ export function createContextMenu() {
     return panel;
   }
   // opts.opener は描き直される開き元の取得関数。opts.onClose は閉じたときに 1 度呼ぶ。opts.alignRight は x を面の右端に合わせる
-  return { close, open(x, y, items, title, opts = {}) {
+  return { close, isOpenFor: node => panels.length > 0 && opener === node, open(x, y, items, title, opts = {}) {
     close(); opener = opts.opener ?? document.activeElement;
     closeHook = opts.onClose ?? null;
     const own = generation;
@@ -154,7 +156,6 @@ export function createContextMenu() {
       const host = panel.parentElement?.id === 'workDialog' ? panel.parentElement.getBoundingClientRect() : { left: 0, width: innerWidth };
       panel.style.left = `${Math.max(8, Math.min(x - host.left - panel.getBoundingClientRect().width, host.width - panel.getBoundingClientRect().width - 8))}px`;
     }
-    document.addEventListener('pointerdown', outside, true);
     document.addEventListener('keydown', key, true);
     buttons(panel)[0]?.focus({ preventScroll: true });
     return (nextItems, nextTitle = title) => {

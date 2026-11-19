@@ -1,3 +1,4 @@
+import { dismissPopup } from './dismiss-popup.mjs';
 // 会話の ToDo のパネル（承認済み 2026-11-19。モック temporary/mockups/session-todo.html の createTodo・createFrame を移したもの。ADR 0342）。
 // - 頭の ToDo の入口（PC）・⋮ のメニュー（700px 以下）から開く。PC は浮く面、狭い画面は下からのシート。大きく表示できる
 // - 普段は見るだけ（完了の印は押せない）。鉛筆で編集の状態へ入り、「編集を終了」か Esc で戻る
@@ -846,13 +847,17 @@ export function createSessionTodo(o) {
     }
   }
   root.addEventListener('pointerdown', (e) => { if (menu && !e.target.closest('.td-menu,.td-more,.td-badge')) closeMenu(); });
-  root.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    if (menu) { const opener = menu._btn; closeMenu(); if (opener?.isConnected) opener.focus({ preventScroll: true }); e.stopPropagation(); }
-    else if (edit) { setEdit(false); editBtn.focus({ preventScroll: true }); e.stopPropagation(); }
-    else if (isMax) { toggleMax(); e.stopPropagation(); }
-    else if (isOpen) { close(); entry.offsetWidth ? entry.focus({ preventScroll: true }) : o.moreButton?.focus({ preventScroll: true }); e.stopPropagation(); }
-  });
+  dismissPopup({ isOpen: () => isOpen, surfaces: () => [root],
+    opener: () => entry.offsetWidth ? entry : o.moreButton,
+    close, outside: () => !isMax,
+    escape: () => {
+      if (menu) { const button = menu._btn; closeMenu(); button?.focus({ preventScroll: true }); }
+      else if (rename) rename(false);
+      else if (edit) { setEdit(false); editBtn.focus({ preventScroll: true }); }
+      else if (isMax) toggleMax();
+      else return true;
+      return false;
+    } });
 
   /* ---- 枠: 開く・閉じる・大きく表示 ---- */
   const placeTop = () => { root.style.setProperty('--td-top', `${header.offsetTop + header.offsetHeight}px`); };
@@ -935,7 +940,7 @@ export function createSessionTodo(o) {
   entry.addEventListener('click', () => (isOpen ? close() : open()));
   closeBtn.onclick = () => { close(); (entry.offsetWidth ? entry : o.moreButton)?.focus({ preventScroll: true }); };
   maxBtn.onclick = toggleMax;
-  veil.onclick = () => (narrow.matches && !isMax ? close() : isMax ? toggleMax() : null);
+
   narrow.addEventListener?.('change', () => {
     if (!isOpen) return;
     if (isMax) { isMax = false; root.classList.remove('max'); clearFrame(); setMaxButton(); }

@@ -27,6 +27,7 @@ export default async function (t) {
   const saved = {};
   for (const k of ['document', 'MutationObserver', 'IntersectionObserver', 'NodeFilter', 'requestAnimationFrame', 'getSelection']) saved[k] = globalThis[k];
   const docKeydown = [];
+  const docEvents = {};
   const body = new TN('body'), main = new TN('main'), sidebar = new TN('aside');
   globalThis.document = {
     createElement: (tag) => new TN(tag), createElementNS: (_ns, tag) => new TN(tag),
@@ -34,7 +35,7 @@ export default async function (t) {
     body, activeElement: null, hidden: false, documentElement: new TN('html'),
     querySelector: (sel) => (sel === 'body > main' ? main : null),
     getElementById: (id) => (id === 'sidebar' ? sidebar : null),
-    addEventListener: (type, fn) => { if (type === 'keydown') docKeydown.push(fn); },
+    addEventListener: (type, fn) => { (docEvents[type] ??= []).push(fn); if (type === 'keydown') docKeydown.push(fn); },
   };
   globalThis.MutationObserver = class { observe() {} disconnect() {} };
   globalThis.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
@@ -54,10 +55,23 @@ export default async function (t) {
     const mainToc = createConversationToc({ thread: mainThread, log: mainLog, nav, preview, narrow, button: new TN('button') });
     const dialogToc = createConversationToc({ thread: () => dialogThread, log: new TN('div'), nav, preview, narrow, button: new TN('button'),
       host: dialog, keyScope: dialog, inertNodes: () => [listA, head, split] });
-    assert.equal(docKeydown.length, 1, '既定の面だけが document の keydown を受ける');
-    assert.equal(dialog.on?.keydown?.length, 1, 'ダイアログの面は自分の keydown を受ける');
+    assert.equal(docKeydown.length, 2, '既定の面だけが document の keydown を受ける');
+    assert.equal(dialog.on?.keydown?.length, 2, 'ダイアログの面は自分の keydown を受ける');
 
     const sheetsIn = (node) => node.children.filter((c) => c.matches?.('.toc-sheet-wrap'));
+    const opener = new TN('button');
+    mainToc.open(opener);
+    const outside = { target: main, preventDefault() { this.prevented = true; }, stopImmediatePropagation() { this.stopped = true; } };
+    for (const fn of docEvents.pointerdown) fn(outside);
+    assert.equal(mainToc.isOpen(), false);
+    assert.equal(outside.prevented, true);
+    assert.equal(outside.stopped, true);
+    assert.equal(TN.focused, opener);
+    mainToc.open(opener);
+    for (const fn of docKeydown) fn(keydown('Escape'));
+    assert.equal(mainToc.isOpen(), false);
+    assert.equal(TN.focused, opener);
+    t.ok('Mobile search dismisses on outside pointerdown and Escape, returning focus', true);
 
     // ---- ダイアログの目次を開く: シートはダイアログの中、止まるのはダイアログの面だけ
     dialogToc.open();

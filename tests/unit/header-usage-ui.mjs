@@ -3,6 +3,7 @@ import { N } from '../lib/dom-stub.mjs';
 import { setupHeaderUsage, usagePopBounds } from '../../web/header-usage.mjs';
 import { createUsageSource } from '../../web/usage.mjs';
 import { t as tr } from '../../web/i18n.mjs';
+import { dismissPopup } from '../../web/dismiss-popup.mjs';
 
 export const name = 'header-usage-ui';
 export const title = '使用量の入口: 取得中・枠なし・失敗・互換の接続先からも一覧を開く';
@@ -14,6 +15,24 @@ const deferred = () => {
 };
 
 export default async function(t) {
+  const events = {}, entry = { focus() { focused = entry; } }, surface = {};
+  const popupDocument = { addEventListener(type, fn) { events[type] = fn; } };
+  let opened = true, focused, max = false, editing = false;
+  dismissPopup({ doc: popupDocument,
+    isOpen: () => opened, surfaces: () => [surface], opener: entry,
+    outside: () => !max, close: () => { opened = false; },
+    escape: () => { if (editing) { editing = false; return false; } } });
+  const press = path => events.pointerdown({ composedPath: () => path });
+  press([surface]); assert.equal(opened, true);
+  press([entry]); assert.equal(opened, true);
+  max = true; press([]); assert.equal(opened, true);
+  max = false; press([]); assert.equal(opened, false); assert.equal(focused, entry);
+  opened = true; editing = true;
+  events.keydown({ key: 'Escape', isComposing: true }); assert.equal(editing, true);
+  events.keydown({ key: 'Escape' }); assert.equal(editing, false); assert.equal(opened, true);
+  events.keydown({ key: 'Escape' }); assert.equal(opened, false); assert.equal(focused, entry);
+  popupDocument.body = entry; opened = true; press([entry]); assert.equal(opened, false);
+  t.ok('共通の閉じ方: 面と入口は除外・大きく表示は外押しを無視・編集と IME を優先・Esc は入口へ戻す', true);
   const globals = { document: globalThis.document, window: globalThis.window };
   const documentEvents = {}, pagehide = [];
   const chip = new N('button'), pop = new N('div');
@@ -94,7 +113,13 @@ export default async function(t) {
     assert.equal(pop.hidden, true);
     assert.equal(document.activeElement, chip);
     open(); assert.equal(pop.hidden, false);
-    documentEvents.click({ composedPath: () => [] }); assert.equal(pop.hidden, true); await tick();
+    let prevented = false, stopped = false;
+    documentEvents.pointerdown({ composedPath: () => [], preventDefault() { prevented = true; }, stopImmediatePropagation() { stopped = true; } });
+    assert.equal(pop.hidden, true); assert.equal(document.activeElement, chip);
+    assert.equal(prevented, true); assert.equal(stopped, true);
+    let clickBlocked = false;
+    documentEvents.click({ preventDefault() { clickBlocked = true; }, stopImmediatePropagation() {} });
+    assert.equal(clickBlocked, true); await tick();
     t.ok('互換の接続先にはサブスクの率を出さず、一覧を開いて Esc・外側で閉じられる', true);
 
     open(); await tick(); pop.querySelector('.usage-other-agents').querySelector('summary').focus();

@@ -1,3 +1,4 @@
+import { dismissPopup } from './dismiss-popup.mjs';
 import { el, svgEl } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
 
@@ -55,7 +56,9 @@ export function createConversationSheet(title, opener) {
   head.append(el('strong', null, title), close);
   const body = el('div', 'conversation-sheet-body');
   dialog.append(head, body);
-  dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
+  const dispose = dismissPopup({ isOpen: () => dialog.open, surfaces: () => [head, body],
+    opener, close: () => dialog.close() });
+  dialog.addEventListener('close', dispose, { once: true });
   dialog.addEventListener('close', () => { dialog.remove(); opener?.focus({ preventScroll: true }); }, { once: true });
   document.body.append(dialog);
   return { dialog, body, open: () => dialog.showModal() };

@@ -8,6 +8,7 @@
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { closeIcon } from './icons.mjs';
+import { dismissPopup } from './dismiss-popup.mjs';
 import { turnKinds } from './conversation-rail.mjs';
 import { bundleOf } from './tool-bundle.mjs';
 import { revealFold } from './fold.mjs';
@@ -408,7 +409,6 @@ export function createConversationToc({ thread: threadSource, log, nav, preview,
     head.append(closeButton);
     box.append(el('div', 'toc-grip'), head, root);
     sheet.append(veil, box);
-    veil.onclick = close;
     sheetHost().append(sheet);
     inerted = surfaces().filter(Boolean);
     for (const node of inerted) node.inert = true;
@@ -422,10 +422,11 @@ export function createConversationToc({ thread: threadSource, log, nav, preview,
     if (opener?.isConnected) opener.focus({ preventScroll: true });
   }
   narrow.addEventListener('change', () => { if (opened) close(); });
+  dismissPopup({ doc: keyScope ?? document, isOpen: () => !!sheet,
+    surfaces: () => [sheet?.querySelector('.toc-sheet')], opener: () => opener, close });
   (keyScope ?? document).addEventListener('keydown', (event) => {
     if (!sheet || event.isComposing) return;
-    if (event.key === 'Escape') { event.preventDefault(); close(); }
-    else if (event.key === 'Tab') {
+    if (event.key === 'Tab') {
       const items = [...sheet.querySelectorAll('button:not(:disabled),input')].filter((n) => n.getClientRects().length && n.tabIndex >= 0);
       const first = items[0], last = items.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }

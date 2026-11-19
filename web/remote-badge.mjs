@@ -1,3 +1,4 @@
+import { dismissPopup } from './dismiss-popup.mjs';
 // リモートの窓の印（docs/remote.md §7.2 の 1。2026-11-09 承認: 帯のバッジから脇のいちばん下の行へ。案 A）。
 // 端末のアプリ（デスクトップ版の desktop/remote-preload.cjs）が window.plyRemote を渡したときだけ描く。
 // 脇のいちばん下（アカウント行 .side-foot の下）に差しの青の 1 行「⇄ リモート: ホスト名」を常に出す（閉じるボタンは無い）。
@@ -159,8 +160,8 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
   rail.onclick = toggle;
   if (sub) sub.onclick = toggle;
   pop.addEventListener('click', e => e.stopPropagation());
-  doc.addEventListener('click', () => setOpen(false));
-  doc.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidden) { setOpen(false); opener.focus(); } });
+  dismissPopup({ doc, isOpen: () => !pop.hidden, surfaces: () => [pop],
+    opener: () => opener, close: () => setOpen(false) });
   retry.onclick = () => { Promise.resolve(remote.retry?.()).catch(() => {}); };
   close.onclick = () => { remote.closeWindow?.(); };
 

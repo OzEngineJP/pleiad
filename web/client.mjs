@@ -1,3 +1,4 @@
+import { dismissPopup } from './dismiss-popup.mjs';
 import { terminalView, updateTerminal, batchTerminalUpdates } from './terminal.mjs';
 import { setupDrawerSwipe, drawerBlockingOverlay } from './drawer-swipe.mjs';
 import { delegateResult, delegateTaskId, isPlyDelegateToolName } from './delegate-result.mjs';
@@ -8292,6 +8293,7 @@ const workMore = $('workMore');
   // 「…」は主と同じく 700px 以下で、隠れたパネルの入口を持つ
   modalEntry = entry && { ...entry, paint() { entry.paint(); workMore.hidden = !entry.available(); } };
   workMore.onclick = () => {
+    if (contextMenu.isOpenFor(workMore)) return contextMenu.close(true);
     const id = modalPaneTarget(); if (!id) return;
     const r = workMore.getBoundingClientRect();
     showMenu(r.right, r.bottom + 4, [{
@@ -11085,12 +11087,11 @@ $('contextMeter').onclick = () => {
 };
 $('meterCompact').onclick = requestCompaction;
 $('meterSettings').onclick = openAutoCompactionSettings;
-document.addEventListener('pointerdown', event => { if (!$('contextMeterPop').hidden && !event.target.closest('.context-meter-wrap')) closeMeterPop(); });
-document.addEventListener('focusin', event => { if (!$('contextMeterPop').hidden && !event.target.closest('.context-meter-wrap')) closeMeterPop(); });
+dismissPopup({ isOpen: () => !$('contextMeterPop').hidden, surfaces: () => [$('contextMeterPop')],
+  opener: () => $('contextMeter'), close: () => closeMeterPop(true) });
 document.addEventListener('keydown', event => {
   if ($('contextMeterPop').hidden) return;
-  if (event.key === 'Escape') { event.preventDefault(); closeMeterPop(true); }
-  else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
     const items = [...$('contextMeterPop').querySelectorAll('button:not(:disabled)')];
     const index = items.indexOf(document.activeElement);
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
@@ -11162,6 +11163,7 @@ $("titleEdit").onkeydown = (e) => { if (isComposingKey(e)) return; if (e.key ===
 
 // タイトルは AI にも考えてもらえる。人間が同じことをできる場所の隣に置く（設計メモ 2.2）
 $("sessionMore").onclick = () => {
+  if (contextMenu.isOpenFor($('sessionMore'))) return contextMenu.close(true);
   const s = state.sessions.find((x) => x.id === state.current);
   if (!s) return;
   const r = $("sessionMore").getBoundingClientRect();
