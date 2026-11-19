@@ -11,7 +11,6 @@ import { todoTable } from './db.mjs';
 
 export const TODO_STATUSES = Object.freeze(['todo', 'doing', 'done']);
 export const LINK_KINDS = Object.freeze(['file', 'dir', 'url']);
-export const TODO_TEXT_MAX = 500;
 export const TODO_ITEMS_MAX = 200;
 export const TODO_LINKS_MAX = 20;
 export const TODO_PATH_MAX = 4096;
@@ -75,9 +74,32 @@ export function normalizeLink(link) {
 const cleanText = text => {
   const value = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!value) throw invalid('text is empty');
-  if (value.length > TODO_TEXT_MAX) throw invalid(`text is longer than ${TODO_TEXT_MAX} characters`);
   return value;
 };
+function setDetails(item, input) {
+  const details = { ...item.external };
+  if (input.assignee !== undefined) details.assignee = input.assignee ? cleanText(input.assignee) : null;
+  if (input.humanWaiting !== undefined) details.humanWaiting = input.humanWaiting === true;
+  if (input.taskId !== undefined && input.taskId !== (details.taskId ?? null)) {
+    if (input.taskId !== null && !/^ply-task-[0-9a-f-]{36}$/.test(input.taskId)) throw invalid('taskId must identify a delegated task');
+    details.taskId = input.taskId;
+    delete details.taskStatus;
+    delete details.taskWaiting;
+  }
+  if (Object.keys(details).length) item.external = details;
+}
+
+const taskProblems = new Set(['failed', 'cancelled', 'interrupted']);
+function applyTask(item, task) {
+  const details = item.external;
+  const { status, humanWaiting } = task;
+  if (details.taskStatus === status && Boolean(details.taskWaiting) === humanWaiting) return false;
+  item.external = { ...details, taskStatus: status, taskWaiting: humanWaiting };
+  if (status === 'completed') item.status = 'done';
+  else if (item.status !== 'done' && (status === 'running' || status === 'cancelling' || taskProblems.has(status) || humanWaiting)) item.status = 'doing';
+  return true;
+}
+
 const cleanStatus = status => {
   if (!TODO_STATUSES.includes(status)) throw invalid(`status must be one of ${TODO_STATUSES.join(', ')}`);
   return status;
@@ -92,10 +114,12 @@ const cleanLinks = links => {
 function view(items) {
   const byId = new Map(items.map(t => [t.id, t]));
   return items.map(t => ({ id: t.id, text: t.text, status: t.status, waiting: waitingOf(t, byId), after: t.after.filter(id => byId.has(id)),
+    assignee: t.external?.assignee ?? null, humanWaiting: Boolean(t.external?.humanWaiting || t.external?.taskWaiting),
+    taskId: t.external?.taskId ?? null, taskIssue: taskProblems.has(t.external?.taskStatus) ? t.external.taskStatus : null,
     links: t.links, order: t.order, by: t.by ?? null, updatedBy: t.updatedBy ?? null, createdAt: t.createdAt ?? null, updatedAt: t.updatedAt ?? null }));
 }
 
-export function createTodos({ dataDir, now = Date.now, onChange = () => {}, exists = p => fs.existsSync(p) } = {}) {
+export function createTodos({ dataDir, now = Date.now, onChange = () => {}, taskOf = () => null, exists = p => fs.existsSync(p) } = {}) {
   let table = null, handle = null;
   const open = () => { if (!table) { handle = openData(dataDir); table = todoTable(handle.db); } return table; };
   const scopeOf = ({ kind = 'session', id }) => {
@@ -130,7 +154,29 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, exis
     return out;
   };
 
+  function syncItem(scope, item) {
+    if (scope.kind !== 'session' || !item.external?.taskId) return false;
+    const task = taskOf(item.external.taskId);
+    return task?.parentSessionId === scope.id && applyTask(item, task);
+  }
+
   return {
+    syncTasks() {
+      for (const id of open().linkedSessions()) {
+        const scope = { kind: 'session', id };
+        const { items } = read(scope);
+        const changed = [];
+        const at = now();
+        for (const item of items) {
+          const before = item.status;
+          if (!syncItem(scope, item)) continue;
+          item.updatedAt = at;
+          changed.push({ id: item.id, action: before === item.status ? 'updated' : item.status === 'done' ? 'done' : 'started' });
+        }
+        if (changed.length) commit(scope, items, [], changed, null);
+      }
+    },
+
     list(scope) { const s = scopeOf(scope); const { rev, items } = read(s); return { rev, items: view(items) }; },
 
     /**
@@ -152,6 +198,10 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, exis
       });
       const added = fresh.map(({ id, entry }) => ({ id, text: cleanText(entry.text), status: cleanStatus(entry.status ?? 'todo'),
         after: afterIds(entry.after ?? [], known, id), links: cleanLinks(entry.links ?? []), order: 0, by, updatedBy: by, createdAt: at, updatedAt: at }));
+      for (let i = 0; i < added.length; i++) {
+        setDetails(added[i], fresh[i].entry);
+        syncItem(s, added[i]);
+      }
       const next = [...items];
       const index = before ? next.findIndex(t => t.id === before) : -1;
       if (before && index < 0) throw new TodoError('NOT_FOUND', `no item ${before}`, { id: before });
@@ -177,6 +227,8 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, exis
         const before = { text: item.text, status: item.status };
         if (c.text !== undefined) item.text = cleanText(c.text);
         if (c.status !== undefined) item.status = cleanStatus(c.status);
+        setDetails(item, c);
+        syncItem(s, item);
         if (c.after !== undefined) item.after = afterIds(c.after, new Map(next.map(t => [t.id, t.id])), item.id);
         if (c.links !== undefined) item.links = cleanLinks(c.links);
         if (c.removeLinks?.length) item.links = item.links.filter(l => !c.removeLinks.includes(l.id) && !c.removeLinks.includes(l.path) && !c.removeLinks.includes(l.url));

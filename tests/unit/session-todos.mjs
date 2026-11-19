@@ -112,7 +112,8 @@ export default async function (t) {
     } finally { handle.release(); }
 
     // ---- 操作（todos.*）
-    const ops = createTodos({ dataDir: dir });
+    let task;
+    const ops = createTodos({ dataDir: dir, taskOf: () => task });
     const sessionsDep = { get: async id => (id === 'me' || id === 'other' ? { row: { id, backend: 'codex' }, children: [], history: [] } : null) };
     const deps = { locale: 'ja', sessions: sessionsDep, todos: ops, modeOf: async () => ({ scope: 'workspace', autonomy: 'ask' }), audit: () => {} };
     const agent = sessionId => ({ by: 'agent', via: 'mcp', sessionId });
@@ -136,6 +137,42 @@ export default async function (t) {
     const ro = await registry.invoke(agent('me'), 'todos.add', { items: [{ text: 'x' }] }, { ...deps, modeOf: async () => ({ scope: 'readonly', autonomy: 'ask' }) });
     t.ok('読むだけの AI は書けない', !ro.ok);
     t.ok('checkLinks は画面だけ（AI の目録に載らない）', registry.get('todos.checkLinks').surfaces.mcp === false && registry.get('todos.add').surfaces.mcp === 'catalog');
+    const taskId = 'ply-task-00000000-0000-4000-8000-000000000000';
+    const long = '検証項目'.repeat(160);
+    task = { parentSessionId: 'me', status: 'queued', humanWaiting: false };
+    const linkedTask = await registry.invoke(agent('me'), 'todos.add', {
+      items: [{ text: long, taskId, assignee: 'Codex', humanWaiting: true }],
+    }, deps);
+    const linkedItem = linkedTask.result.items.at(-1);
+    const readLinked = () => ops.list({ id: 'me' }).items.find(item => item.id === linkedItem.id);
+    t.ok('長文・担当・人の返事待ち・委譲を足して保存できる', linkedItem.text === long && linkedItem.assignee === 'Codex' && linkedItem.humanWaiting && linkedItem.taskId === taskId);
+    await registry.invoke(human, 'todos.update', {
+      sessionId: 'me', items: [{ id: linkedItem.id, assignee: '山田', humanWaiting: false }],
+    }, deps);
+    t.ok('担当と手動の返事待ちは個別に更新できる', readLinked().assignee === '山田' && !readLinked().humanWaiting);
+    task.status = 'running';
+    task.humanWaiting = true;
+    ops.syncTasks();
+    t.ok('子の開始と承認待ちを反映する', readLinked().status === 'doing' && readLinked().humanWaiting);
+    task.status = 'interrupted';
+    task.humanWaiting = false;
+    ops.syncTasks();
+    t.ok('中断した委譲は進行中のまま印を出す', readLinked().status === 'doing' && readLinked().taskIssue === 'interrupted');
+    await registry.invoke(human, 'todos.update', {
+      sessionId: 'me', items: [{ id: linkedItem.id, status: 'done' }],
+    }, deps);
+    task.status = 'failed';
+    task.humanWaiting = false;
+    ops.syncTasks();
+    t.ok('委譲が失敗しても手動の完了を戻さない', readLinked().status === 'done' && readLinked().taskIssue === 'failed' && !readLinked().humanWaiting);
+    await registry.invoke(human, 'todos.update', {
+      sessionId: 'me', items: [{ id: linkedItem.id, status: 'doing' }],
+    }, deps);
+    task.status = 'completed';
+    ops.syncTasks();
+    t.ok('委譲が完了すると項目も完了にする', readLinked().status === 'done' && readLinked().taskIssue === null);
+    ops.close();
+    t.ok('再び開いても 500 字を超える文と担当が残る', readLinked().text === long && readLinked().assignee === '山田');
     ops.close();
 
     // ---- 形式 3 → 4 の移行

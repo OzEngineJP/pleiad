@@ -10949,6 +10949,7 @@ const toc = createConversationToc({ thread, log, nav, preview: filePreview, narr
 const sessionTodo = createSessionTodo({
   host: document.querySelector('body > main'), header: document.querySelector('body > main > header.top'), entry: $('todoEntry'), narrow: navNarrow,
   moreButton: $('sessionMore'), cmd, notify: (text) => notify(text), labelOf, logo: (backend) => backendLogo(backend, ''),
+  openTask: taskId => { sessionTodo.close(); openWork(`t:${taskId}`); },
   openLink: (link) => (link.kind === 'url' ? openExternalLink(link.url) : filePreview.open({ path: link.path, line: null }, null)),
   linkMenu: (x, y, link, missing) => filePreview.menu(x, y, { path: link.path, kind: link.kind === 'dir' ? 'directory' : 'file', sessionId: state.current, missing }),
   onChange: () => paintMoreEntry(),

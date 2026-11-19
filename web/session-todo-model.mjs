@@ -108,36 +108,77 @@ export function changesFor(items, order, after) {
 }
 
 /** リストの配置（幅は 640px まで、真ん中に寄せる） */
-export function layoutList(items, W, rowH, gap) {
+export function layoutList(items, W, rowH, gap, deps = new Map()) {
+  const children = new Map();
+  for (const parents of deps.values()) for (const id of parents) children.set(id, (children.get(id) ?? 0) + 1);
+  const branches = new Map();
+  for (const { id } of topoOrder(items, deps)) {
+    const parents = deps.get(id) ?? [];
+    const paths = parents.map(parent => [
+      ...(branches.get(parent) ?? []),
+      ...((children.get(parent) ?? 0) > 1 ? [parent] : []),
+    ]);
+    const shared = paths[0]?.filter((branch, i) => paths.every(path => path[i] === branch)) ?? [];
+    if (parents.length > 1) shared.pop();
+    branches.set(id, shared);
+  }
   const R = new Map(), lw = Math.min(W, 640), ox = (W - lw) / 2;
   let y = 0;
-  for (const it of items) { const h = rowH(it, lw); R.set(it.id, { x: ox, y, w: lw, h, o: 1 }); y += h + gap; }
+  for (const it of items) {
+    const indent = Math.min(branches.get(it.id)?.length ?? 0, 4) * 16;
+    const h = rowH(it, lw - indent);
+    R.set(it.id, { x: ox + indent, y, w: lw - indent, h, o: 1 });
+    y += h + gap;
+  }
   const H = Math.max(0, y - gap);
-  return { R, E: [], H, CW: W, stack: 0, B: { x0: ox, x1: ox + lw, y0: 0, y1: H } };
+  return { R, E: [], H, CW: W, stacks: new Map(), B: { x0: ox, x1: ox + lw, y0: 0, y1: H } };
 }
 
 /**
  * フローの配置（モックの layout）。最長路で段に分け、段を跨ぐ線には見えない点を置き、親の位置の平均で段の中を並べる。
- * 項目が 8 を超えて畳んでよいなら、先頭から続く完了（3 つ以上）を 1 つの束（#done）にまとめる
+ * 途中の分岐をまたがずに続く完了（3 件以上）を束にまとめる
  */
 export function layoutFlow(items, deps, W, K, expand = false) {
   const R = new Map(), E = [];
   const depsOf = id => deps.get(id) ?? [];
   const order = topoOrder(items, deps);
-  let C = new Set();
-  if (!expand && items.length > 8) {
-    for (const it of order) if (it.status === 'done' && depsOf(it.id).every(d => C.has(d))) C.add(it.id);
-    if (C.size < 3) C = new Set();
+  const stacks = new Map(), folded = new Map();
+  if (!expand) {
+    const children = new Map(), done = new Set(order.filter(it => it.status === 'done').map(it => it.id));
+    for (const { id } of order) for (const parent of depsOf(id)) {
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(id);
+    }
+    for (const { id } of order) {
+      if (!done.has(id) || folded.has(id)) continue;
+      const chain = [id];
+      let tail = id;
+      while (children.get(tail)?.length === 1) {
+        const [child] = children.get(tail);
+        if (!done.has(child) || depsOf(child).length !== 1) break;
+        chain.push(child);
+        tail = child;
+      }
+      if (chain.length < 3) continue;
+      const key = `#done:${id}`;
+      stacks.set(key, chain.length);
+      for (const member of chain) folded.set(member, key);
+    }
   }
-  const nodes = [];
-  if (C.size) nodes.push({ id: '#done', deps: [] });
-  for (const it of order) if (!C.has(it.id)) nodes.push({ id: it.id, deps: [...new Set(depsOf(it.id).map(d => (C.has(d) ? '#done' : d)))] });
+  const nodes = [], seen = new Set();
+  for (const it of order) {
+    const id = folded.get(it.id) ?? it.id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    nodes.push({ id, deps: [...new Set(depsOf(it.id).map(d => folded.get(d) ?? d))] });
+  }
   const lay = new Map();
   for (const n of nodes) lay.set(n.id, n.deps.length ? 1 + Math.max(...n.deps.map(d => lay.get(d) ?? 0)) : 0);
   const nL = Math.max(0, ...lay.values()) + 1, Ls = Array.from({ length: nL }, () => []), par = new Map();
   for (const n of nodes) { par.set(n.id, []); Ls[lay.get(n.id)].push({ id: n.id }); }
-  for (const n of nodes) for (const d of n.deps) {
-    const e = { key: `${d}>${n.id}`, a: d, b: n.id, via: [] };
+  for (const n of nodes) for (const [index, d] of n.deps.entries()) {
+    const inlet = (index - (n.deps.length - 1) / 2) * Math.min(14, (K.NW - 24) / Math.max(1, n.deps.length - 1));
+    const e = { key: `${d}>${n.id}`, a: d, b: n.id, via: [], inlet };
     E.push(e);
     let prev = d;
     for (let k = lay.get(d) + 1; k < lay.get(n.id); k++) { const id = `~${e.key}:${k}`; par.set(id, [prev]); Ls[k].push({ id, dummy: e }); prev = id; }
@@ -163,8 +204,8 @@ export function layoutFlow(items, deps, W, K, expand = false) {
       c += s + K.GX;
     }
   });
-  if (C.size) for (const id of C) R.set(id, { ...R.get('#done'), o: 0 });
-  return { R, E, H, CW, stack: C.size, B: { x0: ox, x1: ox + cross, y0: 0, y1: H } };
+  for (const [id, key] of folded) R.set(id, { ...R.get(key), o: 0 });
+  return { R, E, H, CW, stacks, B: { x0: ox, x1: ox + cross, y0: 0, y1: H } };
 }
 
 /** 成果物の 1 件を、名前と場所に分ける（ファイルのリンク .file-where と同じ分け方） */

@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { byAgent } from './redact.mjs';
-import { TODO_ITEMS_MAX, TODO_LINKS_MAX, TODO_PATH_MAX, TODO_STATUSES, TODO_TEXT_MAX, TODO_TITLE_MAX, TODO_URL_MAX, LINK_KINDS } from '../todos.mjs';
+import { TODO_ITEMS_MAX, TODO_LINKS_MAX, TODO_PATH_MAX, TODO_STATUSES, TODO_TITLE_MAX, TODO_URL_MAX, LINK_KINDS } from '../todos.mjs';
 
 const D = (id, key) => `agent:ops.todos.${id}.${key}`;
 const RISK_REASON = "A to-do item is a note inside one conversation. Writing it sends nothing, deletes no work and widens no permission; it is removed together with the conversation. A human can edit another conversation's to-dos too, so an agent is treated the same (ADR 0082)";
@@ -25,10 +25,18 @@ const status = id => z.enum(TODO_STATUSES).optional().describe(D(id, 'status'));
 const after = id => z.array(z.string().min(1).max(80)).max(TODO_ITEMS_MAX).optional().describe(D(id, 'after'));
 const links = id => z.array(linkInput(id)).max(TODO_LINKS_MAX).optional().describe(D(id, 'links'));
 
+const details = id => ({
+  assignee: z.string().trim().min(1).nullable().optional().describe(D(id, 'assignee')),
+  humanWaiting: z.boolean().optional().describe(D(id, 'humanWaiting')),
+  taskId: z.string().regex(/^ply-task-[0-9a-f-]{36}$/).nullable().optional().describe(D(id, 'taskId')),
+});
+
 const linkOut = z.object({ id: z.string(), kind: z.enum(LINK_KINDS), path: z.string().optional(), url: z.string().optional(), title: z.string().optional() });
 const byOut = z.object({ kind: z.enum(['user', 'agent']), backend: z.string().optional() }).nullable();
 const itemOut = z.object({
   id: z.string(), text: z.string(), status: z.enum(TODO_STATUSES), waiting: z.boolean(), after: z.array(z.string()), links: z.array(linkOut),
+  assignee: z.string().nullable(), humanWaiting: z.boolean(), taskId: z.string().nullable(),
+  taskIssue: z.enum(['failed', 'cancelled', 'interrupted']).nullable(),
   order: z.number(), by: byOut, updatedBy: byOut, createdAt: z.number().nullable(), updatedAt: z.number().nullable(),
 });
 const listOut = z.object({ sessionId: z.string(), rev: z.number().int(), items: z.array(itemOut) });
@@ -83,7 +91,8 @@ export const todoOps = [
     input: z.object({
       sessionId: sessionId('add'),
       items: z.array(z.object({
-        text: z.string().min(1).max(TODO_TEXT_MAX).describe(D('add', 'text')),
+        text: z.string().min(1).describe(D('add', 'text')),
+        ...details('add'),
         status: status('add'), after: after('add'), links: links('add'),
         ref: z.string().min(1).max(40).optional().describe(D('add', 'ref')),
       })).min(1).max(TODO_ITEMS_MAX).describe(D('add', 'items')),
@@ -101,7 +110,8 @@ export const todoOps = [
       sessionId: sessionId('update'),
       items: z.array(z.object({
         id: z.string().min(1).max(80).describe(D('update', 'id')),
-        text: z.string().min(1).max(TODO_TEXT_MAX).optional().describe(D('update', 'text')),
+        text: z.string().min(1).optional().describe(D('update', 'text')),
+        ...details('update'),
         status: status('update'), after: after('update'), links: links('update'),
         addLinks: z.array(linkInput('update')).max(TODO_LINKS_MAX).optional().describe(D('update', 'addLinks')),
         removeLinks: z.array(z.string().max(TODO_URL_MAX)).max(TODO_LINKS_MAX).optional().describe(D('update', 'removeLinks')),

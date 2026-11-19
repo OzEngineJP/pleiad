@@ -2639,7 +2639,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 #todoEntry{position:relative}
 .todo-veil{position:absolute;inset:0;z-index:20;background:var(--surface-veil);opacity:0;pointer-events:none;transition:opacity var(--dur) var(--ease-out)}
 .todo-veil.on{opacity:1;pointer-events:auto}
-.todo-pop{--td-hit:30px;--td-mb:0px;display:flex;flex-direction:column;padding:0;top:var(--td-top,46px);right:18px;width:360px;max-height:min(560px,calc(100% - var(--td-top,46px) - 12px))}
+.todo-pop{--td-hit:30px;--td-mb:0px;display:flex;flex-direction:column;padding:0;top:var(--td-top,46px);right:18px;width:var(--td-width,360px);height:var(--td-height,560px);max-height:calc(100% - var(--td-top,46px) - 12px)}
 .todo-pop[hidden]{display:none}
 .todo-pop.in{animation:todo-pop-in var(--dur) var(--ease-out)}
 .todo-pop.out{opacity:0;transform:translateY(4px);transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out)}
@@ -2741,9 +2741,31 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .td-mark .ck-path,.td-pm .ck-path{stroke-dasharray:1;stroke-dashoffset:0}
 .td-item.just .ck-path{animation:td-draw var(--dur) var(--ease-out)}
 @keyframes td-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
-.td-text{flex:1;min-width:0;padding:5px 4px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;border-radius:6px;overflow-wrap:anywhere;transition:opacity var(--dur) var(--ease-out)}
+.td-content{flex:1;min-width:0}
+.td-meta{display:flex;align-items:center;flex-wrap:wrap;column-gap:8px;padding:0 4px 4px;color:var(--ink-weak);font-size:var(--fs-xs);line-height:1.35}
+.td-meta[hidden]{display:none}
+.td-owner{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.td-human::before{content:"◆";margin-inline-end:4px}
+.td-child{color:inherit;background:transparent;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.td-item.td-indented::before{content:"";position:absolute;inset-block:2px;inset-inline-start:-8px;width:1px;background:var(--surface-3)}
+.td-text[aria-expanded]{cursor:pointer}
+.td-item.td-reading .td-text{-webkit-line-clamp:unset}
+.todo-pop[data-view=flow] .td-item.td-reading{height:auto!important;min-height:var(--td-reading-min,100px);padding-bottom:28px;z-index:2;box-shadow:0 4px 14px var(--shadow)}
+.td-resize{position:absolute;z-index:6;background:transparent;touch-action:none;padding:0}
+.td-resize-width{top:0;bottom:18px;left:-5px;width:10px;cursor:ew-resize}
+.td-resize-height{left:18px;right:0;bottom:-5px;height:10px;cursor:ns-resize}
+.td-resize-both{left:-4px;bottom:-4px;width:24px;height:24px;cursor:nesw-resize}
+.td-resize::after{content:"";position:absolute;inset:35% 3px;border-radius:3px;background:var(--surface-3);opacity:0}
+.td-resize-width::after{inset:calc(50% - 14px) 3px}
+.td-resize-height::after{inset:3px calc(50% - 14px)}
+.td-resize-both::after{inset:auto auto 7px 7px;width:9px;height:9px;box-shadow:inset 1px -1px var(--line-strong);background:transparent;opacity:.75}
+.td-resize:is(:hover,:focus-visible,.resizing)::after{opacity:1}
+.todo-pop:is(.max,.free) .td-resize{display:none}
+@media(max-width:700px){.todo-pop .td-resize{display:none}}
+.td-text{min-width:0;margin-block:5px;padding-inline:4px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;border-radius:6px;overflow-wrap:anywhere;transition:opacity var(--dur) var(--ease-out)}
 .td-text[hidden]{display:none}
-.todo-pop[data-view=flow] .td-text{padding:6px 6px 0 2px}
+.td-rename{width:100%}
+.todo-pop[data-view=flow] .td-text{margin:6px 0 0;padding-inline:2px 6px}
 .todo-pop[data-mode=edit] .td-text{cursor:text}
 .todo-pop[data-mode=edit] .td-text:hover{background:var(--surface-2)}
 .td-item[data-kind=done] .td-text{opacity:.6;color:var(--ink-weak)}
@@ -2784,8 +2806,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .td-stack svg.i{width:12px;height:12px}
 .td-edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .td-edge{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;transition:opacity var(--dur-fast) var(--ease-out)}
-.td-edge.pend{stroke:var(--line)}
-.td-edge.new{stroke-dasharray:1;animation:td-draw 900ms var(--ease-organic) both}
+.td-edge.pend{stroke:var(--line-strong);stroke-dasharray:5 4}
+.td-edge.new:not(.pend){stroke-dasharray:1;animation:td-draw 900ms var(--ease-organic) both}
+.td-edge.highlight{stroke:var(--line-blue);stroke-width:2} /* allow-blue: 強調した依存線 */
 .td-edge.out{opacity:0}
 .td-edge.temp{stroke:var(--line-blue);stroke-dasharray:4 4}
 /* 行の「…」のメニューと成果物の一覧。面の中に置く（右クリックのメニュー .pop.menu は画面に固定なので戻す） */
@@ -2816,7 +2839,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 /* 狭い画面: 下からのシート。押す所は 44px */
 @media (max-width:700px){
   #todoEntry{display:none}
-  .todo-pop{--td-hit:44px;left:0;right:0;top:auto;bottom:0;width:auto;max-height:85%;border-radius:var(--r-l) var(--r-l) 0 0;box-shadow:0 -8px 28px var(--shadow)}
+  .todo-pop{--td-hit:44px;left:0;right:0;top:auto;bottom:0;width:auto;height:auto;max-height:85%;border-radius:var(--r-l) var(--r-l) 0 0;box-shadow:0 -8px 28px var(--shadow)}
   .todo-pop.in{animation:sheet-in var(--dur) var(--ease-out)}
   .todo-pop.free{bottom:auto;right:auto;max-height:none}
   .todo-pop.max{border-radius:0}
@@ -2839,7 +2862,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .td-mark{width:40px;height:44px}
   .todo-pop[data-view=flow] .td-mark{width:34px}
   .td-mark svg{width:18px;height:18px}
-  .todo-pop[data-view=flow] .td-text{-webkit-line-clamp:3;padding-top:7px}
+  .todo-pop[data-view=flow] .td-text{margin-top:7px}
   .td-by>span:not(.td-logo){display:none}
   .td-badge{height:44px;padding:0 8px;font-size:13px}
   .td-badge svg{width:14px;height:14px}

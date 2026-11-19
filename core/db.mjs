@@ -178,7 +178,7 @@ CREATE INDEX IF NOT EXISTS waiting_cards_origin ON waiting_cards (origin);
 /**
  * 会話の ToDo（ADR 0342）。持ち主は scope_kind・scope_id（今は 'session' と会話の ID だけ。後でプロジェクト・外のツールの
  * 課題にも広げられるように、会話の列にはしない）。after は先に終える項目の ID の配列、links は成果物のリンクの配列（どちらも JSON）。
- * external は外のツールと結ぶときの印（今は使わない）。todo_scopes は持ち主ごとの版（rev。書くたびに 1 つ上げ、ifRev の照合に使う）
+ * external は担当・人の返事待ち・委譲との結び付けの JSON（ADR 0344）。todo_scopes は持ち主ごとの版（rev。書くたびに 1 つ上げ、ifRev の照合に使う）
  */
 export const TODOS_SQL = `
 CREATE TABLE IF NOT EXISTS todos (
@@ -693,6 +693,9 @@ export function todoTable(db) {
   return {
     /** 持ち主の項目を並び順に */
     list(kind, id) { return prepared(db, 'SELECT * FROM todos WHERE scope_kind = ? AND scope_id = ? ORDER BY ord, created_at').all(kind, id).map(todoRow); },
+    linkedSessions() {
+      return prepared(db, "SELECT DISTINCT scope_id FROM todos WHERE scope_kind = 'session' AND json_extract(external, '$.taskId') IS NOT NULL").all().map(r => r.scope_id);
+    },
     rev(kind, id) { return Number(prepared(db, 'SELECT rev FROM todo_scopes WHERE scope_kind = ? AND scope_id = ?').get(kind, id)?.rev ?? 0); },
     /** 持ち主の項目をまとめて書き替え、版を 1 つ上げる（1 つのトランザクション）。新しい版を返す */
     replace(kind, id, items, removed = []) {

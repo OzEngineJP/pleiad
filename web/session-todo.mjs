@@ -64,8 +64,8 @@ function markSvg(kind) {
 const statusLabel = (kind) => t(`todo.status.${kind}`);
 
 /* 大きさの定数（モックのとおり。狭い画面は指で押せる大きさ） */
-const K_WIDE = Object.freeze({ NW: 164, NH: 58, GX: 12, GY: 32, ROW: 34, GAP: 2, EGAP: 4, MB: 40, MAPW: 84, MAPH: 64 });
-const K_NARROW = Object.freeze({ NW: 156, NH: 84, GX: 10, GY: 32, ROW: 48, GAP: 2, EGAP: 6, MB: 56, MAPW: 64, MAPH: 56 });
+const K_WIDE = Object.freeze({ NW: 164, NH: 100, GX: 12, GY: 32, ROW: 34, GAP: 2, EGAP: 4, MB: 40, MAPW: 84, MAPH: 64 });
+const K_NARROW = Object.freeze({ NW: 156, NH: 104, GX: 10, GY: 32, ROW: 48, GAP: 2, EGAP: 6, MB: 56, MAPW: 64, MAPH: 56 });
 const OX = 8, OY = 2, MX = 8, ZMIN = 0.25, ZMAX = 2;
 /** AI の変更の印の文言（todo.by.*）。action は core/todos.mjs の changed */
 const BY_KEY = { done: 'done', started: 'started', added: 'added', reopened: 'changed', moved: 'changed', updated: 'changed' };
@@ -151,10 +151,11 @@ export function createSessionTodo(o) {
   const badges = new Map();       // id → { text, backend }（AI が変えた印。パネルを閉じるまで）
   const unseen = new Set();       // 閉じている間に AI が変えた id（開いたときに光らせる）
   let tw = null, vtw = null, Vgoal = null, drive = false, Wover = null, menu = null, isMax = false, edit = false, rename = null, skipClick = false;
-  let isOpen = false, busy = false;
+  let isOpen = false, busy = false, expandedText = null;
   const V = { x: 0, y: 0, z: 1, mode: 'home' };
   const els = new Map(), edgeEls = new Map();
-  let stackEl = null, mapBox = null, mapOn = false;
+  const stackEls = new Map();
+  let mapBox = null, mapOn = false;
 
   const byId = (id) => S.items.find((i) => i.id === id);
   const flowView = () => S.flow && S.view !== 'list';
@@ -167,7 +168,15 @@ export function createSessionTodo(o) {
     const node = el('div', cls);
     const grip = el('span', 'td-grip'); grip.setAttribute('aria-hidden', 'true'); grip.innerHTML = GRIP;
     const mark = el('button', 'td-mark'); mark.type = 'button'; mark.setAttribute('role', 'checkbox');
+    const content = el('div', 'td-content');
     const text = el('span', 'td-text');
+    const meta = el('div', 'td-meta');
+    const owner = el('span', 'td-owner');
+    const human = el('span', 'td-human', t('todo.humanWaiting'));
+    const task = el('button', 'td-child', t('todo.child')); task.type = 'button';
+    const issue = el('span', 'td-task-issue');
+    meta.append(owner, human, task, issue);
+    content.append(text, meta);
     const foot = el('span', 'td-foot'); foot.hidden = true;
     const by = el('span', 'td-by'); by.setAttribute('role', 'img'); by.hidden = true;
     const byLogo = el('span', 'td-logo'), byText = el('span');
@@ -180,8 +189,8 @@ export function createSessionTodo(o) {
     const more = el('button', 'td-more'); more.type = 'button'; more.innerHTML = moreIcon;
     more.setAttribute('aria-label', t('todo.more')); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
     const port = el('span', 'td-port'); port.setAttribute('aria-hidden', 'true'); port.innerHTML = PORT;
-    node.append(grip, mark, text, foot, more, port);
-    node._p = { mark, text, foot, by, byLogo, byText, badge, badgeN, more };
+    node.append(grip, mark, content, foot, more, port);
+    node._p = { mark, text, meta, owner, human, task, issue, foot, by, byLogo, byText, badge, badgeN, more };
     return node;
   }
   const meas = itemEl('td-item td-meas');
@@ -190,6 +199,15 @@ export function createSessionTodo(o) {
   const measBox = el('div', 'td-meas-box'); measBox.append(meas); canvas.append(measBox);
   const byText = (id) => badges.get(id)?.text ?? '';
   function fillFoot(p, it) {
+    p.owner.hidden = !it.assignee;
+    p.owner.textContent = it.assignee ?? '';
+    p.owner.title = it.assignee ?? '';
+    p.human.hidden = !it.humanWaiting;
+    p.task.hidden = !it.taskId;
+    p.issue.hidden = !it.taskIssue;
+    // i18n-dynamic: todo.taskIssue.
+    p.issue.textContent = it.taskIssue ? t(`todo.taskIssue.${it.taskIssue}`) : '';
+    p.meta.hidden = !(it.assignee || it.humanWaiting || it.taskId || it.taskIssue);
     const n = it.links.length, b = badges.get(it.id), bt = b?.text ?? '';
     p.by.hidden = !bt; p.byText.textContent = bt;
     if (b && p.byLogo._be !== b.backend) { p.byLogo._be = b.backend; p.byLogo.replaceChildren(...(b.backend && o.logo ? [o.logo(b.backend)] : [])); }
@@ -198,10 +216,11 @@ export function createSessionTodo(o) {
   }
   function rowH(it, W) {
     meas.style.width = `${W}px`; meas._p.text.textContent = it.text; fillFoot(meas._p, it);
+    meas.classList.toggle('td-reading', !edit && it.id === expandedText);
     return Math.max(K().ROW, meas.offsetHeight);
   }
   const gapNow = () => (edit ? K().EGAP : K().GAP);
-  const layout = (W) => (flowView() ? layoutFlow(S.items, deps(), W, K(), S.expand) : layoutList(S.items, W, rowH, gapNow()));
+  const layout = (W) => (flowView() ? layoutFlow(S.items, deps(), W, K(), S.expand) : layoutList(S.items, W, rowH, gapNow(), S.flow ? deps() : undefined));
   function setRect(node, r) {
     node._r = r;
     node.style.transform = `translate(${r.x}px,${r.y}px)`;
@@ -212,9 +231,10 @@ export function createSessionTodo(o) {
 
   /* ---- 線 ---- */
   function edgePath(e) {
-    const ra = e.a === '#done' ? stackEl?._r : els.get(e.a)?._r, rb = els.get(e.b)?._r;
+    const rect = id => (stackEls.get(id) ?? els.get(id))?._r;
+    const ra = rect(e.a), rb = rect(e.b);
     if (!ra || !rb) return '';
-    const p0 = { x: ra.x + ra.w / 2, y: ra.y + ra.h }, pn = { x: rb.x + rb.w / 2, y: rb.y - 1 };
+    const p0 = { x: ra.x + ra.w / 2, y: ra.y + ra.h }, pn = { x: rb.x + rb.w / 2 + e.inlet, y: rb.y - 1 };
     const pts = [p0, ...e.via, pn];
     let d = `M${p0.x} ${p0.y}`;
     for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], my = (a.y + b.y) / 2; d += `C${a.x} ${my} ${b.x} ${my} ${b.x} ${b.y}`; }
@@ -230,10 +250,13 @@ export function createSessionTodo(o) {
       if (!p) {
         p = svgEl('path', { class: 'td-edge new', pathLength: '1' });
         p.addEventListener('animationend', () => p.classList.remove('new'));
+        setTimeout(() => p.classList.remove('new'), 900);
         svg.append(p); edgeEls.set(e.key, p);
       }
-      const src = e.a === '#done' ? null : byId(e.a);
-      p.classList.toggle('pend', !!src && src.status !== 'done');
+      const dashed = !S.L.stacks.has(e.a) && byId(e.a)?.status !== 'done';
+      p.classList.toggle('pend', dashed);
+      if (dashed) p.removeAttribute('pathLength');
+      else p.setAttribute('pathLength', '1');
     }
   }
 
@@ -242,7 +265,10 @@ export function createSessionTodo(o) {
   function clampV(v, vp) {
     const z = clamp(v.z, ZMIN, ZMAX), B = S.L.B;
     const rng = (c0, c1, a0, a1) => (c1 - c0 <= a1 - a0 ? [a0 - c0, a1 - c1] : [a1 - c1, a0 - c0]);
-    const [xl, xh] = rng(OX + B.x0 * z, OX + B.x1 * z, MX, vp.w - MX), [yl, yh] = rng(OY + B.y0 * z, OY + B.y1 * z, OY, vp.h - MB());
+    const expanded = els.get(expandedText);
+    const bottom = expanded?._r && !expanded.inert && expanded.classList.contains('td-reading')
+      ? Math.max(B.y1, expanded._r.y + expanded.offsetHeight) : B.y1;
+    const [xl, xh] = rng(OX + B.x0 * z, OX + B.x1 * z, MX, vp.w - MX), [yl, yh] = rng(OY + B.y0 * z, OY + bottom * z, OY, vp.h - MB());
     return { x: clamp(v.x, xl, xh), y: clamp(v.y, yl, yh), z };
   }
   function fitV(vp) {
@@ -297,7 +323,7 @@ export function createSessionTodo(o) {
     box.append(svgEl('rect', { class: 'mv', rx: '10' }));
     const rect = (r, cls) => svgEl('rect', { class: cls, x: r.x, y: r.y, width: r.w, height: r.h, rx: '8' });
     for (const it of S.items) { const r = L.R.get(it.id); if (r && r.o !== 0) box.append(rect(r, it.status === 'doing' ? 'mb doing' : 'mb')); }
-    if (L.stack) box.append(rect(L.R.get('#done'), 'mb'));
+    for (const id of L.stacks.keys()) box.append(rect(L.R.get(id), 'mb'));
     mapEl.replaceChildren(box);
     mapBox = { x: B.x0 - pd, y: B.y0 - pd, s };
   }
@@ -373,7 +399,7 @@ export function createSessionTodo(o) {
   body.addEventListener('pointerdown', (e) => {
     if (!flowView() || e.target.closest('input') || (edit && e.target.closest('.td-port'))) return;
     if (e.pointerType === 'mouse' && e.button > 1) return;
-    if (e.pointerType === 'mouse' && !e.target.closest('input,button')) body.focus({ preventScroll: true });
+    if (e.pointerType === 'mouse' && !e.target.closest('input,button,[role=button]')) body.focus({ preventScroll: true });
     if (!ptrs.size) { addEventListener('pointermove', ptrMove); addEventListener('pointerup', ptrUp); addEventListener('pointercancel', ptrUp); }
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (ptrs.size === 1) pan = { id: e.pointerId, x0: e.clientX, y0: e.clientY, vx: V.x, vy: V.y, moved: false };
@@ -402,6 +428,7 @@ export function createSessionTodo(o) {
   /* ---- 描く ---- */
   function apply(anim, how) {
     const fv = flowView(), now = fv ? 'flow' : 'list';
+    updateFloatingSize(now);
     if (root.dataset.view !== now) {
       V.mode = 'home';
       if (fv && body.scrollTop) V.y -= body.scrollTop;
@@ -420,24 +447,33 @@ export function createSessionTodo(o) {
       const node = els.get(it.id), to = L.R.get(it.id);
       if (!node || !to) continue;
       node.classList.toggle('gone', to.o === 0);
+      node.inert = to.o === 0;
+      node.classList.toggle('td-reading', !edit && it.id === expandedText);
+      node.classList.toggle('td-indented', !fv && to.w < Math.min(W, 640));
       if (node._drag) continue;
       moves.push([node, node._r || { ...to, y: to.y + 12, o: 0 }, to]);
     }
-    if (L.stack) {
+    for (const [id, count] of L.stacks) {
+      let stackEl = stackEls.get(id);
       if (!stackEl) {
         stackEl = el('button', 'td-stack'); stackEl.type = 'button'; stackEl.setAttribute('aria-expanded', 'false');
         canvas.append(stackEl);
+        stackEls.set(id, stackEl);
         stackEl.onclick = () => { S.expand = true; refresh(); };
       }
       const pm = el('span', 'td-pm'); pm.setAttribute('role', 'img'); pm.setAttribute('aria-label', statusLabel('done')); pm.innerHTML = markSvg('done');
       const chev = el('span', 'td-chev'); chev.innerHTML = chevRightIcon;
-      stackEl.replaceChildren(pm, el('span', null, t('todo.stack', { n: L.stack })), chev);
-      const to = L.R.get('#done');
+      stackEl.replaceChildren(pm, el('span', null, t('todo.stack', { n: count })), chev);
+      const to = L.R.get(id);
       moves.push([stackEl, stackEl._r || { ...to, o: 0 }, to]);
       stackEl._dead = false;
-    } else if (stackEl) { const dead = stackEl; dead._dead = true; moves.push([dead, dead._r, { ...dead._r, o: 0 }]); }
-    foldBtn.hidden = !(fv && S.expand && S.items.length > 8);
-    syncEdges(L.E); buildMap();
+    }
+    for (const [id, node] of stackEls) if (!L.stacks.has(id)) {
+      node._dead = true;
+      moves.push([node, node._r, { ...node._r, o: 0 }]);
+    }
+    foldBtn.hidden = !(fv && S.expand && S.items.filter(it => it.status === 'done').length >= 3);
+    syncEdges(L.E); highlightIncoming(); buildMap();
     const h0 = canvas._h == null ? L.H : canvas._h, w0 = canvas._w == null ? L.CW : canvas._w;
     if (tw) tweens.delete(tw);
     stopV(); drive = true;
@@ -450,7 +486,36 @@ export function createSessionTodo(o) {
       drawEdges();
       if (drive) { const T = targetV(liveVp(), V0); V.x = lerp(V0.x, T.x, p); V.y = lerp(V0.y, T.y, p); V.z = lerp(V0.z, T.z, p); }
       applyV();
-    }, () => { tw = null; if (stackEl?._dead) { stackEl.remove(); stackEl = null; } });
+    }, () => {
+      tw = null;
+      for (const [id, node] of stackEls) if (node._dead) { node.remove(); stackEls.delete(id); }
+      for (const node of els.values()) updateTextControl(node);
+    });
+  }
+  function updateTextControl(node) {
+    if (!node._p || node._p.text.hidden) return;
+    const { text } = node._p;
+    const opened = node.classList.contains('td-reading');
+    const canExpand = !edit && !node.inert && (opened || text.scrollHeight > text.clientHeight + 1);
+    if (canExpand) {
+      text.tabIndex = 0;
+      text.setAttribute('role', 'button');
+      text.setAttribute('aria-expanded', String(opened));
+    } else {
+      for (const attr of ['tabindex', 'role', 'aria-expanded']) text.removeAttribute(attr);
+    }
+  }
+  function toggleText(node) {
+    if (node._p.text.getAttribute('role') !== 'button') return;
+    const previous = els.get(expandedText);
+    expandedText = previous === node ? null : node.dataset.id;
+    previous?.classList.remove('td-reading');
+    if (expandedText) node.classList.add('td-reading');
+    if (flowView()) {
+      updateTextControl(node);
+      if (previous && previous !== node) updateTextControl(previous);
+      if (!expandedText) setV(V, V.mode);
+    } else apply(false);
   }
   function paint(it) {
     const node = els.get(it.id), p = node._p, kind = kindOf(it, S.flow);
@@ -463,7 +528,7 @@ export function createSessionTodo(o) {
     p.mark.title = statusLabel(kind);
     if (edit) p.mark.removeAttribute('aria-disabled'); else p.mark.setAttribute('aria-disabled', 'true');
     p.mark.tabIndex = edit ? 0 : -1; p.more.tabIndex = edit ? 0 : -1;
-    p.text.textContent = it.text; p.text.title = it.text;
+    if (p.text.textContent !== it.text) p.text.textContent = it.text;
     fillFoot(p, it);
     const bt = byText(it.id), n = it.links.length;
     p.by.title = bt; p.by.setAttribute('aria-label', bt);
@@ -589,7 +654,7 @@ export function createSessionTodo(o) {
     v = !!v;
     if (edit === v) return;
     if (rename) rename(true);
-    closeMenu(); edit = v;
+    closeMenu(); edit = v; expandedText = null;
     root.dataset.mode = v ? 'edit' : 'view'; addClip.inert = !v;
     const l = v ? t('todo.editEnd') : t('todo.edit');
     editBtn.setAttribute('aria-label', l); editBtn.title = l; editBtn.setAttribute('aria-pressed', v ? 'true' : 'false');
@@ -637,8 +702,28 @@ export function createSessionTodo(o) {
     if (e.target.closest('.td-mark')) { if (edit) setStatus(it, it.status === 'done' ? 'todo' : 'done'); }
     else if (e.target.closest('.td-more')) openMenu(it, node._p.more);
     else if (e.target.closest('.td-badge')) openLinks(it, node._p.badge);
-    else if (e.target.closest('.td-text')) startRename(it);
+    else if (e.target.closest('.td-child')) o.openTask?.(it.taskId);
+    else if (edit && e.target.closest('.td-text')) startRename(it);
+    else if (!edit) toggleText(node);
   });
+
+  canvas.addEventListener('keydown', e => {
+    const text = e.target.closest('.td-text[role=button]');
+    if (!text || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    if (!e.repeat) toggleText(text.closest('.td-item'));
+  });
+
+  function highlightIncoming() {
+    const hovered = canvas.querySelector('.td-item:hover');
+    const focused = document.activeElement?.closest('.td-item');
+    for (const edge of S.L?.E ?? []) {
+      edgeEls.get(edge.key)?.classList.toggle('highlight', edge.b === hovered?.dataset.id || edge.b === focused?.dataset.id);
+    }
+  }
+  for (const event of ['pointerover', 'pointerout', 'focusin', 'focusout']) {
+    canvas.addEventListener(event, () => requestAnimationFrame(highlightIncoming));
+  }
 
   /* 並べ替え（編集の状態のリストで、依存が無いとき。タッチは左のつまみだけ） */
   canvas.addEventListener('pointerdown', (e) => {
@@ -860,6 +945,91 @@ export function createSessionTodo(o) {
     } });
 
   /* ---- 枠: 開く・閉じる・大きく表示 ---- */
+  const sizeKey = 'pleiad.sessionTodo.sizes';
+  let sizes = {};
+  try { sizes = JSON.parse(localStorage.getItem(sizeKey)) ?? {}; } catch { /* storage unavailable */ }
+  const resizeHandles = new Map();
+  const dimensionLimits = () => ({
+    width: Math.max(1, host.clientWidth - 36),
+    height: Math.max(1, host.clientHeight - header.offsetTop - header.offsetHeight - 12),
+  });
+  const minimum = { width: 360, height: 280 };
+  const bounded = (axis, value, limits) => clamp(value, Math.min(minimum[axis], limits[axis]), limits[axis]);
+  function updateFloatingSize(view) {
+    const limits = dimensionLimits();
+    const saved = sizes[view];
+    const width = bounded('width', saved?.width ?? (view === 'flow' ? 640 : 360), limits);
+    const height = bounded('height', saved?.height ?? 560, limits);
+    root.style.setProperty('--td-width', `${width}px`);
+    root.style.setProperty('--td-height', `${height}px`);
+    for (const [axis, handle] of resizeHandles) {
+      const current = axis === 'width' ? width : height;
+      if (axis === 'both') {
+        handle.setAttribute('aria-label', t('todo.resize.both', { width, height }));
+      } else {
+        handle.setAttribute('aria-valuemin', String(Math.min(minimum[axis], limits[axis])));
+        handle.setAttribute('aria-valuemax', String(limits[axis]));
+        handle.setAttribute('aria-valuenow', String(current));
+      }
+    }
+  }
+  function storeSize(view, size) {
+    if (size) sizes[view] = size;
+    else delete sizes[view];
+    try { localStorage.setItem(sizeKey, JSON.stringify(sizes)); } catch { /* storage unavailable */ }
+    apply(false);
+  }
+  for (const axis of ['width', 'height', 'both']) {
+    const handle = el(axis === 'both' ? 'button' : 'div', `td-resize td-resize-${axis}`);
+    if (axis === 'both') handle.type = 'button';
+    else {
+      handle.tabIndex = 0;
+      handle.setAttribute('role', 'separator');
+      handle.setAttribute('aria-orientation', axis === 'width' ? 'vertical' : 'horizontal');
+      // i18n-dynamic: todo.resize.
+      handle.setAttribute('aria-label', t(`todo.resize.${axis}`));
+    }
+    resizeHandles.set(axis, handle);
+    root.append(handle);
+    const view = () => flowView() ? 'flow' : 'list';
+    handle.ondblclick = () => storeSize(view(), null);
+    handle.onkeydown = e => {
+      const step = e.shiftKey ? 48 : 16;
+      const limits = dimensionLimits();
+      const size = { width: root.offsetWidth, height: root.offsetHeight };
+      if (e.key === 'Home') storeSize(view(), null);
+      else if (axis !== 'height' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        size.width = bounded('width', size.width + (e.key === 'ArrowLeft' ? step : -step), limits);
+        storeSize(view(), size);
+      } else if (axis !== 'width' && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        size.height = bounded('height', size.height + (e.key === 'ArrowDown' ? step : -step), limits);
+        storeSize(view(), size);
+      } else return;
+      e.preventDefault();
+    };
+    handle.onpointerdown = e => {
+      if (e.button !== 0 || !e.isPrimary) return;
+      const mode = view();
+      const start = { x: e.clientX, y: e.clientY, width: root.offsetWidth, height: root.offsetHeight };
+      handle.setPointerCapture(e.pointerId);
+      handle.onpointermove = move => {
+        if (move.pointerId !== e.pointerId || isMax || narrow.matches || mode !== view()) return;
+        const dx = start.x - move.clientX, dy = move.clientY - start.y;
+        if (Math.hypot(axis === 'height' ? 0 : dx, axis === 'width' ? 0 : dy) < 4 && !handle.classList.contains('resizing')) return;
+        handle.classList.add('resizing');
+        const limits = dimensionLimits();
+        storeSize(mode, {
+          width: bounded('width', start.width + (axis === 'height' ? 0 : dx), limits),
+          height: bounded('height', start.height + (axis === 'width' ? 0 : dy), limits),
+        });
+      };
+      handle.onlostpointercapture = () => {
+        handle.onpointermove = null;
+        handle.classList.remove('resizing');
+      };
+    };
+  }
+
   const placeTop = () => { root.style.setProperty('--td-top', `${header.offsetTop + header.offsetHeight}px`); };
   const setFrame = (r) => { root.classList.add('free'); root.style.left = `${r.l}px`; root.style.top = `${r.t}px`; root.style.width = `${r.w}px`; root.style.height = `${r.h}px`; };
   const clearFrame = () => { root.classList.remove('free'); root.style.left = root.style.top = root.style.width = root.style.height = ''; };
@@ -896,7 +1066,7 @@ export function createSessionTodo(o) {
   }
   function close() {
     if (!isOpen) return;
-    isOpen = false; closeMenu();
+    isOpen = false; expandedText = null; closeMenu();
     if (rename) rename(true);
     if (isMax) { isMax = false; root.classList.remove('max'); setMaxButton(); }
     veil.classList.remove('on'); root.classList.remove('in'); root.classList.add('out');
@@ -915,7 +1085,7 @@ export function createSessionTodo(o) {
     const n = narrow.matches, w = n ? ar.width : Math.min(1040, ar.width * 0.94), h = n ? ar.height : Math.min(720, ar.height * 0.86);
     return { l: (ar.width - w) / 2, t: (ar.height - h) / 2, w, h };
   };
-  function snapshot() { return { h: canvas._h, w: canvas._w, v: { ...V }, r: [...els.values(), ...(stackEl ? [stackEl] : [])].map((n) => [n, n._r]) }; }
+  function snapshot() { return { h: canvas._h, w: canvas._w, v: { ...V }, r: [...els.values(), ...stackEls.values()].map((n) => [n, n._r]) }; }
   function restore(s) { canvas._h = s.h; canvas._w = s.w; for (const [n, r] of s.r) if (r) setRect(n, r); Object.assign(V, s.v); applyV(); }
   function relayout(W, anim) { Wover = W == null ? null : W; apply(anim); }
   function toggleMax() {
@@ -950,8 +1120,18 @@ export function createSessionTodo(o) {
     relayout(null, false);
   });
   if (typeof ResizeObserver === 'function') {
-    let last = 0;
-    new ResizeObserver(() => { const w = body.clientWidth; if (!isOpen || w === last || tw) return; last = w; if (Wover == null) apply(false); }).observe(body);
+    new ResizeObserver(() => {
+      if (!isOpen || isMax || narrow.matches || root.classList.contains('free')) return;
+      placeTop();
+      apply(false);
+    }).observe(host);
+    let last = '';
+    new ResizeObserver(() => {
+      const size = `${body.clientWidth}x${body.clientHeight}`;
+      if (!isOpen || size === last || tw) return;
+      last = size;
+      if (Wover == null) apply(false);
+    }).observe(body);
   }
 
   /* ---- 会話の切り替えと、届いた変更 ---- */
@@ -959,13 +1139,14 @@ export function createSessionTodo(o) {
     closeMenu();
     if (rename) rename(false);
     if (edit) setEdit(false, false, false);
-    badges.clear(); unseen.clear();
+    badges.clear(); unseen.clear(); expandedText = null;
     S.items = []; S.rev = -1; S.flow = false; S.view = 'auto'; S.expand = false; S.L = null;
     for (const node of els.values()) node.remove();
     els.clear();
     for (const p of edgeEls.values()) p.remove();
     edgeEls.clear();
-    stackEl?.remove(); stackEl = null;
+    for (const node of stackEls.values()) node.remove();
+    stackEls.clear();
     canvas._h = canvas._w = null; Object.assign(V, { x: 0, y: 0, z: 1, mode: 'home' });
   }
   async function load(sessionId) {

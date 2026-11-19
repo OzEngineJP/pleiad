@@ -1084,7 +1084,7 @@ const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitG
 // スレッドの入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
 const threadDrafts = createDrafts({ dataDir: store.dataDir });
 // 会話の ToDo（ADR 0342）。書いたら全部の画面へ配る（開いている会話の ToDo のパネル・入口の未読の点）
-const sessionTodos = createTodos({ dataDir: store.dataDir,
+const sessionTodos = createTodos({ dataDir: store.dataDir, taskOf: id => agentTasks?.todoState(id),
   onChange: ({ scope, rev, items, changed, by }) => { if (scope.kind === 'session') emitGlobal({ type: 'todosChanged', sessionId: scope.id, rev, items, changed, by }); } });
 const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
@@ -7077,6 +7077,7 @@ function settleOutlivingWaits(sessionId) {
 
 /** 承認待ちの増減を知らせる。画面の実行中一覧と、依頼元の ply_task_wait の両方を起こす */
 function permissionsChanged() {
+  syncTodoTasks();
   broadcastRunning();
   agentTasks?.wake();
   remoteTasksChanged();
@@ -7936,11 +7937,16 @@ const remoteDelegation = createRemoteDelegation({
     return runTurn({ sessionId: owner, prompt: build(lng) }, () => {}, { internal: true });
   },
 });
+function syncTodoTasks() {
+  if (!agentTasks) return;
+  try { sessionTodos.syncTasks(); } catch (error) { console.error('Could not update linked to-dos:', error.message); }
+}
+
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   // 付け直す委譲の子のタスクは、起動の復元で interrupted にしない（結果の確定は adoptChild が引き継ぐ。stage2-server-state.md S8）
   adopting: adopting.flatMap(a => a.ctx.taskId ? [a.ctx.taskId] : []),
-  changed: () => { broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
+  changed: () => { syncTodoTasks(); broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
   waiting: sessionId => Boolean(sessionId) && [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId && (blocksTurn(w) || (!w.relay && w.payload.browserHandoff))),
@@ -8299,6 +8305,7 @@ sessionCommands = createSessionCommands({
 });
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
 // 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
+syncTodoTasks();
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 // ホストに任せたタスクの写し: 動いていたものはホストで続いている。ホストの便りを聞き、つながり次第追いつく（remote-delegation.mjs）
 remoteDelegation.start();
