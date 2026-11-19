@@ -203,6 +203,7 @@ function forgetModels() {
   modelCache = null;
   modelFetch = null;
   listDefault = null;
+  modelNeedsFresh = false;
   modelGen += 1;
 }
 
@@ -245,9 +246,9 @@ async function loadModels(refresh = false) {
     return list;
   } catch (err) {
     console.error("  codex model/list に失敗:", String(err?.message ?? err));
-    // 失敗した一覧は返さず、次回も取り直す。
-    if (gen === modelGen) { modelCache = null; listDefault = null; modelNeedsFresh ||= refresh; }
-    return toModels([]).list;
+    // 前の一覧は残し、専用プロセスでの更新失敗は TTL 内でも次回取り直す。
+    if (gen === modelGen) modelNeedsFresh ||= refresh;
+    return modelCache?.list ?? toModels([]).list;
   } finally {
     if (refresh) await source.stop();
     if (gen === modelGen) modelFetch = null;
@@ -255,9 +256,9 @@ async function loadModels(refresh = false) {
 }
 
 function modelList({ refresh = false } = {}) {
+  if (modelFetch) return modelFetch;
   refresh ||= modelNeedsFresh;
-  if (refresh) forgetModels();
-  if (modelCache && Date.now() - modelCache.at < modelTtlMs()) return Promise.resolve(modelCache.list);
+  if (!refresh && modelCache && Date.now() - modelCache.at < modelTtlMs()) return Promise.resolve(modelCache.list);
   return (modelFetch ??= loadModels(refresh));
 }
 

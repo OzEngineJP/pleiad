@@ -535,7 +535,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 | backend | 一覧の取得と取り直し |
 |---|---|
 | Claude | アカウント・作業場所ごとの SDK probe を新しく起こす。通常は 30 分、明示の refresh は TTL を無視するが成功直後・失敗後の 60 秒は待つ。CLI の更新でも控えを捨てる |
-| Codex | app-server の model/list を全ページ読む。通常は 5 分の控え。refresh は取得専用の app-server を新しく起こし、取得後に閉じる。共有プロセスと走っている会話には触れない。失敗したら古い一覧を返さず、次の呼び出しでも取得専用のプロセスで再試行する |
+| Codex | app-server の model/list を全ページ読む。通常は 5 分の控え。refresh は取得専用の app-server を新しく起こし、取得後に閉じる。共有プロセスと走っている会話には触れない。refresh が同時に来たら取得中の Promise を共有する。失敗時は前の一覧を返し、TTL 内でも次の呼び出しで取得専用のプロセスから再試行する |
 | Antigravity | agy models。ログイン済みと確認した間、期限切れは裏で取り直し、refresh は取得を待つ。失敗時は前の一覧を保つ |
 | OpenCode | サーバーの /config/providers。共有サーバーの回答は 60 秒覚え、専用サーバーでは毎回聞く。認証変更時はサーバーを閉じる。refresh によるプロセス再起動は行わない |
 | Grok | 新しい ACP 接続の initialize の一覧。通常は 5 分、refresh で新しい接続から取り直す |
