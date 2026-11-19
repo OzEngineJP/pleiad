@@ -11404,7 +11404,7 @@ addEventListener('plyremote:start', () => { shellStopped = false; presenceReport
 presenceReporter.start();
 modalPresence.start();
 // 設定 › 委譲（委譲先の自動選択）。モデルの名前は入力欄と同じ語彙から
-const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
+const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend,
   modelsOf: async (id, account = '') => (state.backends.some((b) => b.id === id) ? (await loadVocab(id, account, state.cwd || '')).models : null),
   modelName: (backend, model, account = '') => routingNames.model(backend, model, account), openPage: name => $(`${name}Tab`)?.click(),
   // 使えないアカウントの候補の「ログインし直す」: エージェント設定のそのエージェントのアカウントを開き、その行へフォーカス（ADR 0264）

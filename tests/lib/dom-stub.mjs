@@ -129,6 +129,21 @@ export class N {
   get shown() { return this._text ?? (this._html ?? "") + this.children.map((c) => c.shown).join(" "); }
 }
 
+/** DOM の無い単体試験で、選択パネルを配置できる表示領域を用意する。 */
+export function stubPickerGeometry() {
+  const { window, document } = globalThis;
+  const { documentElement } = document;
+  const rect = N.prototype.getBoundingClientRect;
+  globalThis.window = { innerWidth: 1280, innerHeight: 800 };
+  document.documentElement = { clientWidth: 1280 };
+  N.prototype.getBoundingClientRect = () => ({ left: 0, right: 332, top: 380, bottom: 410, width: 332 });
+  return () => {
+    if (window === undefined) delete globalThis.window; else globalThis.window = window;
+    if (documentElement === undefined) delete document.documentElement; else document.documentElement = documentElement;
+    if (rect === undefined) delete N.prototype.getBoundingClientRect; else N.prototype.getBoundingClientRect = rect;
+  };
+}
+
 /**
  * document / location を差し替える。
  * web/render.mjs を読み込む**前**に呼ぶこと（tests/run.mjs が入口で1回だけ呼ぶ）。

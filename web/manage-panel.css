@@ -80,17 +80,17 @@
 .rt-tier-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;min-height:30px}
 .rt-tier-name{font-size:var(--fs-s);font-weight:600}
 .rt-cand-list{position:relative;list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
-.rt-cand-row{position:relative;display:grid;grid-template-columns:32px minmax(0,1fr) auto 30px;grid-template-areas:"grip info effort actions";align-items:center;gap:4px 6px;padding:6px;background:var(--surface-paper);border-radius:var(--r-m);min-width:0}
-.rt-cand-row.off .rt-cand-name{color:var(--ink-weak)}
+.rt-cand-row{position:relative;display:grid;grid-template-columns:32px minmax(0,1fr) 30px;grid-template-areas:"grip info actions";align-items:center;gap:4px 6px;padding:6px;background:var(--surface-paper);border-radius:var(--r-m);min-width:0}
+.rt-cand-row.off .rt-picker-chip{color:var(--ink-weak)}
 .rt-cand-info{grid-area:info;min-width:0}
-.rt-cand-effort{grid-area:effort;display:flex;justify-content:flex-end;min-width:0}
-.rt-cand-name{display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
+.rt-cand-name{display:flex;align-items:center;gap:2px;min-width:0}
+.rt-picker-chip{margin-left:-4px}
+.rt-picker-chip .brand{width:16px;height:16px}
+.rt-picker-chip svg.caret{display:block}
+.rt-picker .plist:has([data-key="effort:conversation"]){margin-top:8px}
+.rt-picker .prow[data-key="effort:conversation"] .nm{font-size:var(--fs-s)}
+.rt-picker-confirm{margin-top:8px}
 .rt-cand-info small{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
-/* 候補の名前「Sonnet · personal」。狭い画面では区切りの後ろで折り返し、アカウントの名前はひとかたまりで次の行へ（1 行に入らない長さのときだけ中で割る。ADR 0264） */
-.rt-label{min-width:0}
-.rt-acct{display:inline-block;max-width:100%;overflow-wrap:anywhere}
-.rt-dot{color:var(--ink-weak)}
-.rt-cand-row.off .rt-acct{color:var(--ink-weak)}
 .rt-cand-info small .btn.link{font-weight:400;font-size:var(--fs-xs);color:var(--ink-blue);padding:0 2px;margin-left:2px}
 .rt-cand-info small .btn.link:hover{text-decoration:underline}
 /* 段の上の「Claude 使う … 使わない …」。段の中身から出す表示で、押せる部品は無い */
@@ -103,11 +103,6 @@
 .rt-acct-g .v.na{color:var(--ink-weak)}
 .rt-cand-info small.rt-strong{color:var(--ink-strong);font-weight:600}
 .rt-cand-actions{grid-area:actions;display:flex}
-@container (max-width:559.98px){
-  .rt-cand-row{grid-template-columns:32px minmax(0,1fr) 30px;grid-template-areas:"grip info actions" "grip effort effort"}
-  .rt-cand-effort{justify-content:flex-start;padding:0 0 4px 0}
-  .rt-cand-effort .ef-pop{right:auto;left:0}
-}
 /* 思考の強さの選択（設定 › API キーの「使うキー」と同じ pill + リストボックス）。既定から外した値は青い字 */
 .ef-wrap{position:relative;display:inline-flex;max-width:100%}
 .ef-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 10px 4px 12px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font-size:var(--fs-s);line-height:1.5;text-align:left;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}

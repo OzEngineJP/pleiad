@@ -9,7 +9,7 @@
 //   その場の確認）はプルダウンの各レベルの行の ⋯ メニュー（docs/design-system.md「設定 › 委譲」）。
 //   作業の種類 × 難しさの表（種類の追加・名前と AI に渡す説明の編集・削除）・使用量の方針。
 //   アカウントを登録したエージェントの候補は「エージェント・モデル・アカウント」の単位（「Sonnet · personal」）で、
-//   追加はエージェント ▸ モデル ▸ アカウント（承認済み 2026-10-24・ADR 0264）
+//   候補の追加・変更は入力欄と共通のモデルの面（承認済み 2026-11-19）
 // - 末尾の「既定に戻す」（その場の確認。キーは残る）
 //
 // 状態はサーバーが持つ（delegationRouting コマンドと、変わるたびに届く delegationRoutingChanged イベント）。
@@ -22,7 +22,8 @@ import { kindText, difficultyText, tierText, skipText, usageSummary, splitCandid
 import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from './api-key-ui.mjs';
 import { keyRadioRow, keyRadioGroup, plusKeyRow, plusRowVisible } from './plus-key-row.mjs';
 import { EFFORT_LEVELS, candidateEffort, tierEffort, withEffort } from './delegation-effort.mjs';
-import { effortSelect, effortFixed } from './effort-select.mjs';
+import { effortSelect } from './effort-select.mjs';
+import { paintWhoChip, renderModel, panel } from './composer-controls.mjs';
 import { createReorder, moveItem } from './reorder.mjs';
 
 const SERVICE = 'openrouter';
@@ -73,14 +74,13 @@ const newId = prefix => `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
  * @param page       設定のページを切り替える（onboarding.page）
  * @param showMenu   右クリックのメニュー（x, y, items, title）
  * @param labelOf    エージェントの名前
- * @param logo       エージェントのロゴ（backend -> 要素）
  * @param modelsOf   そのエージェントのモデルの一覧（(backend, account) -> Promise<{ [id]: { label } }>）
  * @param modelName  モデルの表示名（(backend, model, account) -> 文字）
  * @param openPage   設定のほかのページへ移る（API キー）
  * @param openAccount エージェント設定のそのエージェントのアカウントを開き、その行へフォーカスを置く（backend, account -> void）
  * @param agents     候補に足せるエージェント（有効なエージェントの id。() -> string[]）
  */
-export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, modelsOf, modelName, openPage = () => {}, openAccount = () => {}, agents = () => [] }) {
+export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf, modelName, openPage = () => {}, openAccount = () => {}, agents = () => [] }) {
   const $ = id => document.getElementById(id);
   const root = $('delegationPanel');
   let data = null, committed = null, message = '', registering = false, keyList = null, confirmingReset = false, refreshing = false;
@@ -89,7 +89,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   // レベルと作業の種類の編集の状態。描き直しても続く（selLv: 候補を出しているレベル）
   const ui = { selLv: null, renLv: false, delLv: null, delTo: null, openKind: null, delKind: null };
   // 自動選択の面で押した部品（描き直したときにフォーカスを戻す）
-  let judgeFocus = '', levelMenu = null;
+  let judgeFocus = '', levelMenu = null, activePicker = null;
   const names = { backend: id => labelOf(id), model: (backend, model, account = '') => modelName(backend, model, account) || model };
 
   // ---- 設定の中のレベル・作業の種類 ----
@@ -416,7 +416,9 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     policy.append(numberField('avoidPercent', t('routing.settings.avoid'), t('routing.settings.avoidUnit'), { min: 1, max: 100, step: 1 }),
       numberField('paceLimit', t('routing.settings.pace'), t('routing.settings.paceUnit'), { min: 0.1, max: 10, step: 0.1 }));
     out.push(policy);
+    if (activePicker && !out.some(node => node.contains(activePicker.chip))) activePicker.panel.hide(false);
     advancedBody.replaceChildren(...out);
+    activePicker?.update();
     if (focused) [...advancedBody.querySelectorAll('button')].find(b => b.dataset?.fk === focused)?.focus({ preventScroll: true });
     if (levelMenu) {
       advancedBody.querySelector('[data-fk="lvsel"]')?.setAttribute('aria-expanded', 'true');
@@ -435,19 +437,11 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     if (!account) return row?.sameAs ? t('routing.settings.accountLoginSame', { name: row.sameAs }) : t('routing.settings.accountLogin');
     return row?.name ?? account;
   }
-  /** 候補の名前の文字（「Sonnet · personal」）。読み上げ・並べ替えの知らせ・強さの見出しに使う */
+  /** 候補のモデルとアカウントの表示名（「Sonnet · personal」） */
   function candidateName(candidate) {
     const parsed = splitCandidate(candidate);
     const model = names.model(parsed.backend, parsed.model, parsed.account ?? '');
     return scopedOf(parsed) ? [model, accountText(parsed.backend, parsed.account)].join(t('routing.line.join')) : model;
-  }
-  /** 候補の名前の要素。アカウントは区切りの後ろで折り返す（狭い画面ではアカウントが次の行へ。区切りの前は改行しない空白） */
-  function candidateLabel(candidate) {
-    const parsed = splitCandidate(candidate);
-    const label = el('span', 'rt-label');
-    label.append(names.model(parsed.backend, parsed.model, parsed.account ?? ''));
-    if (scopedOf(parsed)) label.append(' ', el('span', 'rt-dot', '·'), ' ', el('span', 'rt-acct', accountText(parsed.backend, parsed.account)));
-    return label;
   }
   /**
    * 候補の下の行。アカウントを持つ候補はそのアカウントの使用量だけ（エージェントの名前は付けない）。
@@ -546,17 +540,14 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     const rows = el('ol', 'rt-cand-list');
     if (lv) rows.setAttribute('aria-label', t('routing.settings.levelCandidates', { name: levelName(lv) }));
     list.forEach((candidate, j) => {
-      const { backend } = splitCandidate(candidate);
       const st = stateOf(candidate);
       const name = candidateName(candidate);
       const row = el('li', 'rt-cand-row' + (st && !st.usable ? ' off' : ''));
       row.dataset.candidate = candidate;
       const info = el('div', 'rt-cand-info');
-      const title = el('span', 'rt-cand-name');
-      title.append(el('span', 'rt-n', `${j + 1}.`), logo(backend), candidateLabel(candidate));
-      title.title = candidate;
-      const usage = candidateUsage(candidate);
-      info.append(title, ...usageLines(candidate, usage.lines));
+      const title = el('div', 'rt-cand-name');
+      title.append(el('span', 'rt-n', `${j + 1}.`), candidatePicker(lv, candidate, j));
+      info.append(title, ...usageLines(candidate, candidateUsage(candidate).lines));
       const actions = el('div', 'rt-cand-actions');
       const remove = button('', () => saveNested('tiers', { ...data.settings.tiers, [lv]: list.filter(c => c !== candidate) }), 'btn btn-icon rt-move');
       remove.setAttribute('aria-label', t('routing.settings.candidateRemove', { name }));
@@ -564,16 +555,12 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       remove.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
       remove.disabled = false;
       actions.append(remove);
-      const effort = el('div', 'rt-cand-effort');
-      effort.append(candidateEffortSelect(lv, candidate, name));
-      row.append(ordering.handle(lv, candidate, name), info, effort, actions);
+      row.append(ordering.handle(lv, candidate, name), info, actions);
       rows.append(row);
     });
     if (!list.length) block.append(el('p', 'mp-note', t('routing.settings.empty')));
     else block.append(rows);
-    const add = button(t('routing.settings.addCandidate'), e => addMenu(lv, e.currentTarget), 'btn rt-add');
-    add.disabled = !lv;
-    block.append(add);
+    if (lv) block.append(candidatePicker(lv, null));
     return block;
   }
   /** 一覧の行で選択、右の ⋯ でそのレベルを編集する。追加は一覧の末尾 */
@@ -685,78 +672,204 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
         { foot: t('routing.effort.fitNote') }] });
     return sel.element;
   }
-  /** 候補の行の右の強さ。選べない候補（強さを持たないモデル・強さがモデル名に入るもの）は選択を出さず、理由を 1 語 */
-  function candidateEffortSelect(tier, candidate, name) {
+  function paintCandidateChip(chip, tier, candidate, position, { animate = false, capability = stateOf(candidate)?.effort, conversation } = {}) {
     const { backend } = splitCandidate(candidate);
-    const e = candidateEffort({ settings: data.settings, tier, candidate, capability: stateOf(candidate)?.effort, conversation: conversationOf(backend) });
-    if (e.kind === 'fixed') return effortFixed({ value: e.value, reason: t('routing.effort.byModel'), title: t('routing.effort.byModelTitle') });
-    if (e.kind === 'none') return effortFixed({ reason: t('routing.effort.none'), title: t('routing.effort.noneTitle') });
-    const value = e.value ?? t('routing.effort.modelDefault');
-    const note = [e.source === 'tier' ? t('routing.effort.sourceTier') : e.source === 'conversation' ? t('routing.effort.sourceConversation') : '',
-      e.asked ? t('routing.effort.adjusted', { asked: e.asked, value: e.value ?? '—' }) : ''].filter(Boolean).join(' ');
-    const pick = v => () => { sel.button.focus(); saveEfforts(withEffort(data.settings.efforts, tier, candidate, v)); };
-    const sel = effortSelect({ focusKey: `${tier}|${candidate}`, changed: e.changed, align: 'right',
-      label: t('routing.effort.candLabel', { name, value, source: note }).trim(),
-      head: t('routing.effort.candHead', { name, tier: levelName(tier) }),
-      parts: [{ text: t('routing.effort.label') }, { text: value, cls: 'ef-v' }, ...(note ? [{ text: note, cls: 'ef-s' }] : [])],
-      rows: [{ label: t('routing.effort.followTier'), hint: e.tierDefault === '' ? t('routing.effort.convShort') : e.tierValue ?? '', on: e.own === undefined, pick: pick(undefined) },
-        { label: t('routing.effort.followConversation'), hint: t('routing.effort.now', { value: e.conversationValue ?? t('routing.effort.unset') }), on: e.own === '', pick: pick('') },
-        { sep: true },
-        ...e.options.map(l => ({ label: l, on: e.own === l, pick: pick(l) }))] });
-    return sel.element;
+    const model = candidateName(candidate);
+    const effort = candidateEffort({ settings: data.settings, tier, candidate,
+      capability, conversation: conversation ?? conversationOf(backend) }).value ?? '';
+    paintWhoChip(chip, { backend, model, effort });
+    const label = t('routing.settings.candidateChange', { tier: levelName(tier), position: position + 1,
+      candidate: [labelOf(backend), model, effort].filter(Boolean).join(t('routing.line.join')) });
+    chip.title = label;
+    chip.setAttribute('aria-label', label);
+    if (animate && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      chip.querySelector('.mn')?.animate?.([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)' });
+    }
   }
-  /**
-   * 候補を足すメニュー。エージェント ▸ モデル（▸ アカウント）と、backend:model を打ち込む欄。レベルにもうある組み合わせは出さず、
-   * アカウントを登録したエージェントは、どのアカウントもレベルにあるモデルを出さない。打ち込んだエージェントにアカウントが複数あれば、
-   * Enter の後にアカウントを選ぶ（ADR 0264）
-   */
-  async function addMenu(tier, anchor) {
-    const list = data.settings.tiers[tier] ?? [];
-    const r = anchor.getBoundingClientRect();
-    const backends = [...new Set([...agents(), ...data.candidates.map(c => c.backend)].filter(Boolean))];
-    const add = candidate => saveNested('tiers', { ...data.settings.tiers, [tier]: [...list, candidate] });
-    const byAccount = new Map();
-    const usable = m => (m && Object.keys(m).length ? m : null);
-    // そのモデルが使えて、まだレベルに無いアカウント（登録の無いエージェントは「アカウント無し」の 1 つ）
-    const free = (backend, model) => (accountsOf(backend) ?? [{ account: '' }]).filter(a => {
-      const m = byAccount.get(backend)?.get(a.account ?? '');
-      return (!m || Object.hasOwn(m, model)) && !list.includes(candidateOf(backend, model, a.account));
-    });
-    const accountItems = (backend, model) => free(backend, model).map(a => ({ label: accountText(backend, a.account),
-      ...(a.ready ? {} : { hint: t('routing.unavailable.no_token') }), onClick: () => add(candidateOf(backend, model, a.account)) }));
-    const items = await Promise.all(backends.map(async backend => {
-      const accts = accountsOf(backend);
-      let models = null;
-      if (accts?.length) {
-        const per = new Map();
-        const merged = {};
-        const entries = await Promise.all(accts.map(async a => [a.account ?? '', a.ready === false ? null : usable(await modelsOf(backend, a.account ?? '').catch(() => null))]));
-        for (const [acct, m] of entries) {
-          per.set(acct, m);
-          if (m) for (const [id, info] of Object.entries(m)) if (id && !(id in merged)) merged[id] = info;
-        }
-        byAccount.set(backend, per);
-        models = Object.keys(merged).length ? merged : accts.some(a => a.ready !== false) ? null : usable(await modelsOf(backend, '').catch(() => null));
-      } else {
-        models = usable(await modelsOf(backend, '').catch(() => null));
-      }
-      const ids = Object.keys(models ?? {}).filter(id => id && free(backend, id).length);
-      const modelItem = id => {
-        const label = models[id]?.label ?? id, hint = label === id ? '' : id;
-        return accts ? { label, hint, sub: () => accountItems(backend, id) } : { label, hint, onClick: () => add(candidateOf(backend, id, '')) };
-      };
-      return { label: labelOf(backend), sub: () => ids.length ? ids.map(modelItem) : [{ label: t('routing.settings.noModels'), disabled: true }] };
-    }));
-    const typed = v => {
-      const parsed = splitCandidate(v);
-      if (parsed.account != null || !parsed.model || !accountsOf(parsed.backend)) { add(v); return; }
-      const rest = accountItems(parsed.backend, parsed.model);
-      showMenu(r.left, r.bottom + 4, rest.length ? rest : [{ label: t('routing.settings.accountsAllAdded'), disabled: true }],
-        names.model(parsed.backend, parsed.model, free(parsed.backend, parsed.model)[0]?.account ?? ''));
+
+  function candidatePicker(tier, candidate, position) {
+    const adding = candidate === null;
+    if (activePicker?.tier === tier && activePicker.candidate === candidate) {
+      activePicker.position = position;
+      return activePicker.chip;
+    }
+    const chip = button(adding ? t('routing.settings.addCandidate') : '', null, adding ? 'btn rt-add' : 'chip model rt-picker-chip');
+    if (!adding) paintCandidateChip(chip, tier, candidate, position);
+    chip.dataset.fk = adding ? `add|${tier}` : `picker|${tier}|${position}`;
+    const pop = el('div', 'pop cpop rt-picker');
+    pop.hidden = true;
+    pop.setAttribute('role', 'dialog');
+    const picker = { tier, candidate, position, chip, panel: null, update };
+    const list = () => data.settings.tiers[tier] ?? [];
+    const duplicate = id => id !== picker.candidate && list().includes(id);
+    const duplicateText = () => t('routing.settings.candidateDuplicate');
+    const catalog = new Map();
+    const keyOf = (backend, account) => JSON.stringify([backend, account]);
+    let draft = '', draftEffort, resolvedCapability, loading = false, request = 0;
+    const capabilityOf = id => stateOf(id)?.effort ?? (resolvedCapability?.id === id ? resolvedCapability.value : undefined);
+    const candidateArgs = id => {
+      const { backend, account, model } = splitCandidate(id);
+      return [backend, account ?? '', model];
     };
-    showMenu(r.left, r.bottom + 4, [...items, { sep: true },
-      { input: { placeholder: t('routing.settings.addInput'), onCommit: typed } }],
-      t('routing.settings.addTitle', { tier: levelName(tier) }));
+    const backendIds = () => [...new Set([...agents(), ...data.candidates.map(c => c.backend)].filter(Boolean))];
+    const accountRows = backend => accountsOf(backend) ?? [{ account: '' }];
+    const modelsFor = (backend, account) => catalog.get(keyOf(backend, account)) ?? {};
+    const modelIds = models => Object.keys(models).filter(Boolean);
+    const defaultEffort = (backend, account, model) => modelsFor(backend, account)[model]?.defaultEffort;
+    const conversation = (backend, account, model) => conversationOf(backend)
+      || defaultEffort(backend, account, model) || '';
+    function alternatives(backend) {
+      return accountRows(backend).flatMap(({ account }) => {
+        const models = modelsFor(backend, account);
+        const preferred = models['']?.resolvesTo;
+        return [...new Set([preferred, ...Object.keys(models)].filter(Boolean))].map(model => candidateOf(backend, model, account));
+      }).filter(id => !duplicate(id));
+    }
+    const usage = (backend, account, model) => {
+      const states = data.candidates.filter(c => c.backend === backend && (account === undefined || (c.account ?? '') === account));
+      const state = states.find(c => c.model === model) ?? states[0];
+      const week = state?.windows?.find(w => w.minutes === 7 * 24 * 60);
+      return Number.isFinite(week?.usedPercent) ? { used: week.usedPercent, high: week.usedPercent >= data.settings.avoidPercent } : null;
+    };
+    async function loadCatalog() {
+      const serial = ++request;
+      loading = true;
+      if (adding) {
+        draft = backendIds()[0] ? candidateOf(backendIds()[0], '', '') : '';
+        draftEffort = undefined;
+      }
+      render();
+      await Promise.all(backendIds().flatMap(backend => accountRows(backend).map(async ({ account }) => {
+        const models = await modelsOf(backend, account).catch(() => null);
+        if (serial === request) catalog.set(keyOf(backend, account), models);
+      })));
+      if (serial !== request) return;
+      loading = false;
+      if (adding) {
+        const first = backendIds().flatMap(alternatives)[0];
+        if (first) { await change(first); return; }
+      }
+      update();
+    }
+    function saveCandidate(id, effort) {
+      const before = picker.candidate;
+      if (!id || duplicate(id) || (!adding && !list().includes(before))) return;
+      const next = adding ? [...list(), id] : list().map(c => c === before ? id : c);
+      let efforts = data.settings.efforts;
+      if (before && before !== id) efforts = withEffort(efforts, tier, before, undefined);
+      efforts = withEffort(efforts, tier, id, effort);
+      if (adding) picker.panel.hide(false);
+      else picker.candidate = id;
+      const animate = before !== id;
+      save({ tiers: diffFromDefaults({ ...data.settings.tiers, [tier]: next }, data.defaults.tiers),
+        efforts: diffFromDefaults(efforts, data.defaults.efforts) });
+      if (adding) {
+        root.querySelector(`[data-fk="picker|${tier}|${next.length - 1}"]`)?.focus();
+        announceOrder(t('routing.settings.candidateAdded', { tier: levelName(tier), candidate: candidateName(id) }));
+      } else if (animate) {
+        paintCandidateChip(chip, tier, id, picker.position, { animate: true, capability: capabilityOf(id), conversation: conversation(...candidateArgs(id)) });
+        announceOrder(t('routing.settings.candidateChanged', { tier: levelName(tier), position: picker.position + 1, candidate: candidateName(id) }));
+      }
+    }
+    function selectEffort(value) {
+      if (adding) { draftEffort = value; update(); }
+      else if (data.settings.efforts?.[tier]?.[picker.candidate] !== value) {
+        saveEfforts(withEffort(data.settings.efforts, tier, picker.candidate, value));
+      }
+    }
+    async function change(id) {
+      if (!id) return;
+      const { backend, account, model } = splitCandidate(id);
+      if (loading || !model || duplicate(id)) return;
+      const serial = ++request;
+      const entry = modelsFor(backend, account ?? '')[model];
+      // 段違いがモデル ID で分かれているときは、選んだ ID の段を使う。
+      const fixed = entry?.family ? entry.level ?? null : null;
+      const known = capabilityOf(id);
+      const options = known || fixed ? null
+        : await cmd('efforts', { backend, model, account: account ?? '' }).catch(() => null);
+      if (serial !== request || duplicate(id)) return;
+      const capability = known ?? { levels: Object.keys(options ?? {}).filter(Boolean), fixed };
+      const previous = adding ? draftEffort : data.settings.efforts?.[tier]?.[picker.candidate];
+      const keep = capability.levels.length && (previous === '' || capability.levels.includes(previous)) ? previous : undefined;
+      resolvedCapability = { id, value: capability };
+      if (adding) { draft = id; draftEffort = keep; update(); }
+      else saveCandidate(id, keep);
+    }
+    function render() {
+      pop.setAttribute('aria-label', chip.getAttribute('aria-label') ?? t('routing.settings.addCandidate'));
+      const id = adding ? draft : picker.candidate;
+      const { backend, account: rawAccount, model } = splitCandidate(id || '');
+      const account = rawAccount ?? '';
+      const models = modelsFor(backend, account);
+      const current = Object.fromEntries(Object.entries(models).map(([modelId, entry]) => [
+        modelId, entry?.family && entry.level
+          ? { ...entry, label: [entry.label ?? modelId, entry.level].join(t('routing.line.join')) } : entry,
+      ]));
+      for (const saved of [...list(), id].filter(Boolean).map(splitCandidate)) {
+        if (saved.backend === backend && (saved.account ?? '') === account && saved.model && !Object.hasOwn(current, saved.model)) {
+          current[saved.model] = { label: names.model(backend, saved.model, account) };
+        }
+      }
+      const settings = adding ? { efforts: withEffort(data.settings.efforts, tier, id, draftEffort) } : data.settings;
+      const effort = candidateEffort({ settings, tier, candidate: id,
+        capability: capabilityOf(id) ?? { levels: [] }, conversation: conversation(backend, account, model) });
+      const adjustable = effort.kind === 'level';
+      const from = document.activeElement;
+      const focusKey = pop.contains(from) ? from.dataset.key : '';
+      const blocked = (kind, value) => {
+        if (loading) return t('composer.model.loading');
+        if (kind === 'agent') {
+          if (alternatives(value).length) return null;
+          return accountRows(value).some(a => Object.keys(modelsFor(value, a.account)).some(Boolean))
+            ? duplicateText() : t('routing.settings.noModels');
+        }
+        const next = kind === 'model' ? candidateOf(backend, value, account) : candidateOf(backend, model, value);
+        return duplicate(next) ? duplicateText() : null;
+      };
+      renderModel({ pop, explicitModels: true, blocked,
+        target: { backend, backendSwitchable: true, backends: backendIds().map(b => ({ id: b, label: labelOf(b) })),
+          backendUsage: b => usage(b, undefined, model), account, model, models: current, modelsPending: loading,
+          accounts: scopedOf({ backend, account: rawAccount }) ? [...new Set([...accountRows(backend).map(a => a.account), account])].filter(value => {
+            const available = modelsFor(backend, value);
+            return value === account || duplicate(candidateOf(backend, model, value))
+              || !modelIds(available).length || Object.hasOwn(available, model)
+              || !accountRows(backend).some(a => Object.hasOwn(modelsFor(backend, a.account), model));
+          }).map(value => {
+            const ready = accountRows(backend).find(a => a.account === value)?.ready;
+            return { value, label: accountText(backend, value), usage: usage(backend, value, model),
+              conn: ready === false || ready === undefined ? { text: t('routing.unavailable.no_token'), warn: true } : null };
+          }) : null,
+          effort: effort.value ?? '', efforts: adjustable ? Object.fromEntries([['', {
+            resolvesTo: effort.tierDefault === '' ? effort.conversationValue : effort.tierValue,
+          }], ...effort.options.map(value => [value, {}])]) : {} },
+        effortControl: { label: t('routing.effort.candidateSlider'), follow: adjustable ? { label: t('routing.effort.followConversation'), selected: effort.own === '',
+          pick: () => selectEffort('') } : null },
+        footer: adding ? () => {
+          const b = button(t('routing.settings.candidateConfirm'), () => saveCandidate(id, draftEffort), 'prow rt-picker-confirm');
+          b.dataset.key = 'confirm';
+          b.disabled = loading || !model || duplicate(id);
+          if (b.disabled) b.setAttribute('aria-disabled', 'true');
+          return b;
+        } : null,
+        on: { backend: b => change(alternatives(b)[0]), account: a => {
+          if (!model && adding && !loading) { draft = candidateOf(backend, '', a); update(); }
+          else change(candidateOf(backend, model, a));
+        },
+          model: m => change(candidateOf(backend, m, account)), effort: e => selectEffort(e || undefined) },
+        hide: focus => picker.panel.hide(focus), afterRender: () => picker.panel.place() });
+      if (focusKey) [...pop.querySelectorAll('[data-key]')].find(node => node.dataset.key === focusKey)?.focus({ preventScroll: true });
+    }
+    function update() {
+      if (!adding) paintCandidateChip(chip, tier, picker.candidate, picker.position, { capability: capabilityOf(picker.candidate), conversation: conversation(...candidateArgs(picker.candidate)) });
+      render();
+    }
+    picker.panel = panel(chip, pop, { render, flip: true, initialFocus: '[data-key="nav:agent"]',
+      beforeShow: () => root.append(pop),
+      onShow: () => { activePicker = picker; loadCatalog(); },
+      onHide: () => { request++; activePicker = null; pop.remove(); } });
+    return chip;
   }
 
   // ---- 作業の種類 × 難しさ（種類の名前を押すと、行の下に名前と説明の欄が開く）
