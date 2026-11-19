@@ -461,7 +461,7 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
     const reply = result => json(200, { jsonrpc: '2.0', id: m.id, result });
     const error = message => json(200, { jsonrpc: '2.0', id: m.id, error: { code: -32602, message } });
     if (!b.isActive() || b.closed) return error('Turn ended');
-    if (m.method === 'initialize') return reply({ protocolVersion: ['2024-11-05','2025-03-26','2025-06-18','2025-11-25'].includes(m.params?.protocolVersion) ? m.params.protocolVersion : '2025-06-18', capabilities: { tools: {}, resources: {}, prompts: {} }, serverInfo: { name: 'Pleiad Context', version: '1.0.0' } });
+    if (m.method === 'initialize') return reply({ protocolVersion: ['2024-11-05','2025-03-26','2025-06-18','2025-11-25'].includes(m.params?.protocolVersion) ? m.params.protocolVersion : '2025-06-18', capabilities: { tools: {}, resources: {}, prompts: {} }, serverInfo: { name: 'Pleiad Context', version: '1.0.0' }, ...(b.helpers.externalMcp ? { instructions: b.helpers.externalMcp } : {}) });
     if (m.method === 'ping') return reply({});
     if (m.method === 'ply/bootstrap') return reply({ prompt: b.helpers.prompt });
     if (m.method === 'tools/list') return reply({ tools: b.tools });

@@ -475,16 +475,17 @@ export function contextTools(runtime, userPrompt = '') {
   const descendants = req.needInstructionsForPath ? agentT(locale, 'context.prompt.descendants') : '';
   const rules = req.needInstructionsForPath && scoped.length ? agentT(locale, 'context.prompt.scopedRules', { rules: [...new Set(scoped)].join('\n') }) : '';
   const skillList = req.needLoadSkill ? agentT(locale, 'context.prompt.skills', { catalog: catalog || agentT(locale, 'context.prompt.none') }) : '';
-  const prompt = [runtime.prompt, descendants, rules, skillList].filter(Boolean).join('\n\n');
+  const externalMcp = runtime.servers?.length ? agentT(locale, 'context.prompt.externalMcp') : '';
+  const prompt = [runtime.prompt, descendants, rules, skillList, externalMcp].filter(Boolean).join('\n\n');
   // 量を数えるための内訳（右パネルの「指示の量」。ADR 0056）。指示ファイルの本文は記録の行（tokens）で数えるので、
   // ここはファイルを包む文（「〈パス〉の指示（適用範囲: …）:」）と案内、Skills の一覧だけ
   const wrappers = (runtime.instructions ?? []).map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: '' }));
-  const sections = { guide: [...wrappers, descendants, rules].filter(Boolean).join('\n\n'), skills: skillList };
+  const sections = { guide: [...wrappers, descendants, rules, externalMcp].filter(Boolean).join('\n\n'), skills: skillList };
   // 渡し済みの控え。prompt を組み立てた後に触る（プロンプトには影響させない）
   const delivered = runtime.delivered ??= {};
   /** 記録の行を「読み込み済み」にし、頼まれた回数を数える（短い一行で返した分も含む） */
   const mark = id => { const row = runtime.report.entries.find(e => e.id === id); if (row) { row.status = 'loaded'; row.calls = (row.calls ?? 0) + 1; } return row; };
-  return { tools, prompt, sections, async call(name, args) {
+  return { tools, prompt, sections, externalMcp, async call(name, args) {
     const full = args?.full === true;
     if (name === 'load_skill') {
       const item = active.find(s => s.id === args?.id);

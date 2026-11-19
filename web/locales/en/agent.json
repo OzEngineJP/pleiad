@@ -490,6 +490,7 @@
       "scopedRules": "Path-scoped rules also exist. Before reading or editing a file matching one of these globs, call instructions_for_path with the file's absolute path:\n{{rules}}",
       "scopedLine": "- {{paths}} (relative to {{base}})",
       "skills": "Available Skills (use ply_context load_skill with the id before following a skill; load only when relevant):\n{{catalog}}",
+      "externalMcp": "External MCP tools registered in Pleiad appear in the ply_context tool list with names starting with m_. The [server name / tool name] prefix in each description identifies the original names.",
       "skillLine": "- {{name}}: {{description}} (id: {{id}}, directory: {{dir}})",
       "none": "(none)"
     },

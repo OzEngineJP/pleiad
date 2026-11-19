@@ -231,3 +231,5 @@ Codex の未送信会話や、ホストが履歴を写した分岐・バック�
 - `npm run test:e2e -- context-runtime`：3バックエンドの実サービスで共通指示・Skills・MCP の往復を確認。
 
 一次資料：[Claude SDK](https://platform.claude.com/docs/en/agent-sdk/typescript)、[Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference)、[Agent Skills](https://agentskills.io/client-implementation/adding-skills-support)、[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk/tree/v1.x)。
+
+外部 MCP を中継する会話では、注入文と `ply_context` の `initialize` 応答の `instructions` に、ツール一覧の `m_` 名と説明先頭の `[サーバー名 / ツール名]` から元の名前を見つける案内を付ける。中継が無い会話では付けない。ツール名は変更しない。

@@ -489,6 +489,7 @@
       "scopedRules": "パス指定の rules もある。次の glob に当たるファイルを読む・編集する前に、そのファイルの絶対パスで instructions_for_path を呼ぶこと:\n{{rules}}",
       "scopedLine": "- {{paths}}（{{base}} から見た相対パス）",
       "skills": "使える Skills（Skill に従う前に、ply_context の load_skill を id を付けて呼ぶ。関係するときだけ読み込む）:\n{{catalog}}",
+      "externalMcp": "Pleiad に登録した外部 MCP のツールは ply_context の一覧に m_ で始まる名前で出ます。説明の先頭の [サーバー名 / ツール名] が元の名前です。",
       "skillLine": "- {{name}}: {{description}}（id: {{id}}、ディレクトリ: {{dir}}）",
       "none": "（なし）"
     },
