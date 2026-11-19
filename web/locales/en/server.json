@@ -602,7 +602,7 @@
       "owner": "Connectors cannot be used because it could not be confirmed that the conversation token and the usage authorization of Claude account \"{{name}}\" belong to the same account. Check the account list in Settings.",
       "version": "Update Claude Code. Connectors require CLI 2.1.322 or later and the SDK pinned by Pleiad (current: CLI {{cli}} / SDK {{sdk}}, baseline: {{verified}}). Update Pleiad if the SDK differs.",
       "verificationList": "Connector verification stopped because the list could not be read or differed between settings folders. Check the connection and account authorization, then retry.",
-      "verificationWrites": "Verification stopped because home or shared settings changed. Wait for other Claude Code operations to finish, then retry.",
+      "verificationWrites": "Verification stopped because the login information of the currently logged-in account changed. Check your Claude Code login, then retry.",
       "verificationTimeout": "Connector verification timed out. Check the connection, then retry.",
       "platform": "Connectors for Claude account \"{{name}}\" are not available on this OS ({{platform}}) yet.",
       "env": "Connectors for Claude account \"{{name}}\" cannot be used while another authentication or endpoint is specified ({{names}}, in the environment or settings.json).",

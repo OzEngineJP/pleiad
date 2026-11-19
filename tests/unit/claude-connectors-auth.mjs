@@ -86,19 +86,43 @@ export default async function (t) {
       t.ok('初回確認: 保存した版は再起動後も起動しない', calls === 2);
       const record = await fs.readFile(path.join(dataDir, 'claude-connectors-verification', (await fs.readdir(path.join(dataDir, 'claude-connectors-verification')))[0]), 'utf8');
       t.ok('初回確認: 記録に秘密がない', leaked(record).length === 0);
+      const previousCalls = calls;
+      await verify({ ...args, ver: { ...args.ver, cli: '2.2.0' } });
+      t.ok('初回確認: CLI が変われば確認し直す', calls === previousCalls + 2);
       let listCalls = 0;
       for (const [label, probe, kind] of [
         ['持ち主違い', async () => ({ account: { organization: ORG, email: 'other@example.invalid' }, connectors: [] }), 'owner'],
         ['一覧混入', async () => ({ account: { organization: ORG, email: EMAIL }, connectors: [++listCalls === 1 ? 'alpha' : 'beta'] }), 'verificationList'],
-        ['ホーム書込み', async () => { await fs.writeFile(path.join(home, '.claude.json'), String(Math.random())); return good(); }, 'verificationWrites'],
-        ['共有設定の書込み', async () => { await fs.writeFile(path.join(shared, 'unexpected.json'), String(Math.random())); return good(); }, 'verificationWrites'],
+        ['ホームの本人変更', async () => { await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: String(Math.random()) } })); return good(); }, 'verificationWrites'],
+        ['ホームの組織変更', async () => { await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: 'fake-other-organization', emailAddress: EMAIL } })); return good(); }, 'verificationWrites'],
         ['時間切れ', () => new Promise(() => {}), 'verificationTimeout'],
       ]) {
+        await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL } }));
         const check = createConnectorVerification({ dataDir: path.join(tmp, `v-${label}`), probe, timeoutMs: 100 });
         let error;
         try { await check(args); } catch (e) { error = e; }
         t.ok(`初回確認: ${label}で停止`, error?.code === `connectors-${kind}`, error?.code);
+        const records = await fs.readdir(path.join(tmp, `v-${label}`, 'claude-connectors-verification')).catch(() => []);
+        t.ok(`初回確認: ${label}の失敗は記録しない`, records.length === 0);
+        await createConnectorVerification({ dataDir: path.join(tmp, `v-${label}`), probe: good })(args);
+        t.ok(`初回確認: ${label}の失敗後は待ち続けず再試行できる`, true);
       }
+      for (const state of ['present', 'missing', 'unreadable']) {
+        const homeFile = path.join(home, '.claude.json');
+        if (state === 'missing') await fs.rm(homeFile, { force: true });
+        else await fs.writeFile(homeFile, state === 'present' ? JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL }, count: 0 }) : '{broken');
+        const check = createConnectorVerification({ dataDir: path.join(tmp, `allowed-${state}`), probe: async () => {
+          await fs.writeFile(path.join(shared, '.claude.json'), JSON.stringify({ count: Math.random() }));
+          await fs.writeFile(path.join(shared, 'settings.json'), JSON.stringify({ count: Math.random() }));
+          await fs.writeFile(path.join(shared, 'unrelated.json'), '{}');
+          if (state === 'present') await fs.writeFile(homeFile, JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL }, count: Math.random() }));
+          else if (state === 'unreadable') await fs.writeFile(homeFile, '{different broken');
+          return good();
+        } });
+        await check(args);
+        t.ok(`初回確認: 共有の書込み・ホームの本人以外の変更を許可 (${state})`, true);
+      }
+      t.ok('初回確認: 記録の一時ファイルが残らない', (await fs.readdir(path.join(dataDir, 'claude-connectors-verification'))).every(f => f.endsWith('.json')));
     }
     // ---------------------------------------------------------------- 1. 資格情報の読み取り
     {

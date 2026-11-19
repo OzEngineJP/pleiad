@@ -674,7 +674,6 @@ const verificationFlights = new Map();
 /** 初回だけ、同じ資格情報を使った専用設定先と共有設定先の本人・一覧を比較する。秘密は保存しない。 */
 export function createConnectorVerification({ dataDir, probe, timeoutMs = 30_000 }) {
   const read = async file => fs.readFile(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-  const digest = value => crypto.createHash('sha256').update(value).digest('hex');
   return async ({ account, ver, auth, dir, shared, home }) => {
     let expected;
     try {
@@ -689,14 +688,14 @@ export function createConnectorVerification({ dataDir, probe, timeoutMs = 30_000
     const run = (async () => {
       const cached = await read(file);
       if (cached?.toString() === JSON.stringify({ version: 1, cli: ver.cli, sdk: ver.sdk, key })) return;
-      const snapshot = async () => Promise.all([path.join(home, '.claude.json'), path.join(shared, '.claude.json'), path.join(shared, 'settings.json')].map(async p => {
-        const bytes = await read(p); return bytes === null ? null : digest(bytes);
-      }));
+      const snapshot = async () => {
+        try {
+          const oa = JSON.parse(await fs.readFile(path.join(home, '.claude.json'), 'utf8')).oauthAccount;
+          return hashConnectorIdentity([oa?.organizationUuid ?? null, oa?.emailAddress ?? null]);
+        } catch (error) { return error?.code === 'ENOENT' ? 'missing' : 'unreadable'; }
+      };
       const before = await snapshot();
       const ac = new AbortController();
-      let sharedChanged = false;
-      const watcher = fsSync.watch(shared, { recursive: true }, () => { sharedChanged = true; });
-      watcher.on('error', () => { sharedChanged = true; ac.abort(); });
       let timer;
       const check = async () => {
         const results = [];
@@ -709,16 +708,20 @@ export function createConnectorVerification({ dataDir, probe, timeoutMs = 30_000
           results.push(JSON.stringify(result.connectors.map(c => typeof c === 'string' ? c : c.name).sort()));
         }
         if (results[0] !== results[1]) throw new ConnectorsAuthError('verificationList', { name: account.name });
-        if (sharedChanged || JSON.stringify(before) !== JSON.stringify(await snapshot())) throw new ConnectorsAuthError('verificationWrites', { name: account.name });
+        if (before !== await snapshot()) throw new ConnectorsAuthError('verificationWrites', { name: account.name });
       };
       try {
         await Promise.race([check(), new Promise((_, reject) => { timer = setTimeout(() => { ac.abort(); reject(new ConnectorsAuthError('verificationTimeout', { name: account.name })); }, timeoutMs); })]);
         await fs.mkdir(path.dirname(file), { recursive: true });
-        await fs.writeFile(file, JSON.stringify({ version: 1, cli: ver.cli, sdk: ver.sdk, key }), { mode: 0o600 });
+        const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+        try {
+          await fs.writeFile(tmp, JSON.stringify({ version: 1, cli: ver.cli, sdk: ver.sdk, key }), { mode: 0o600 });
+          await renameWithRetry(tmp, file, fs, sleepFor);
+        } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
       } catch (error) {
         if (error instanceof ConnectorsAuthError) throw error;
         throw new ConnectorsAuthError('verificationList', { name: account.name });
-      } finally { clearTimeout(timer); watcher.close(); }
+      } finally { clearTimeout(timer); }
     })();
     verificationFlights.set(flightKey, run);
     try { await run; } finally { if (verificationFlights.get(flightKey) === run) verificationFlights.delete(flightKey); }
