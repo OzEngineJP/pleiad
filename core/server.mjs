@@ -3952,7 +3952,7 @@ function makeEmit(turn) {
       // CLI のログイン（mode: cli）か、Pleiad の Claude のアカウントのトークン（mode: token）かを添える。CLI のときは期限切れを覚える
       // （claude auth status は期限が切れてもログイン済みを返すので、設定の行の ⚠ はこれで出す。ADR 0212）
       if (event.outcome === 'error' && event.kind === 'auth' && !turn.info.endpoint) {
-        const accountId = turn.info.account || '';
+        const accountId = limitAccount(turn.backend, turn.info.account) || '';
         const name = turn.authAccount?.id === accountId ? turn.authAccount.name : null;
         const connErr = event.connectorsError ?? turn.connectorsError ?? null;
         const viaConnectors = Boolean(connErr || (accountId && accountKind(turn.backend) === 'token' && turn.connectorsEnabled));
@@ -3974,7 +3974,7 @@ function makeEmit(turn) {
         }
       }
       // CLI のログインで走ったターンが通った = ログインは生きている（期限切れの印を消す）
-      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !turn.info.account) authExpired.delete(turn.backend.id);
+      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !limitAccount(turn.backend, turn.info.account)) authExpired.delete(turn.backend.id);
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）

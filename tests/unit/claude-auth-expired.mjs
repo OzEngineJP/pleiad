@@ -10,6 +10,7 @@ import { normalizeSdkMessage, isClaudeAuthError } from '../../core/backends/clau
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { readSessions, writeSessions } from '../lib/data-store.mjs';
 import { startFakeAnthropicApi } from '../lib/fake-anthropic-api.mjs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -219,6 +220,34 @@ export default async function (t) {
     await server.stop();
     await api.close?.();
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
+  }
+
+  // #122: アカウントを持たないエージェントが依頼元の id を継いだ会話
+  {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-auth-inherited-'));
+    const env = { AGENT_HOST_BACKENDS: 'fake', FAKE_ACCOUNTS: 'off' };
+    let srv = await startServer({ env, dataDir: dir });
+    let w = await open({ port: srv.port, token: srv.token, autoAllow: true });
+    try {
+      const { sessionId } = await w.cmd('newSession', { backend: 'fake', cwd: ROOT });
+      await w.runTurn({ sessionId, prompt: 'echo:seed' });
+      w.close(); await srv.stop();
+      const sessions = readSessions(dir);
+      sessions[sessionId].claudeAccount = 'acct-parent';
+      writeSessions(dir, sessions);
+      srv = await startServer({ env, dataDir: dir });
+      w = await open({ port: srv.port, token: srv.token, autoAllow: true });
+      await w.cmd('authLogin', { backend: 'fake' });
+      const failed = await w.runTurn({ sessionId, prompt: 'fail-auth' });
+      const auth = failed.events.find(e => e.type === 'turnResult' && e.sessionId === sessionId)?.auth;
+      t.ok('継いだ id は無視し CLI の期限切れとして知らせる', auth?.mode === 'cli' && auth.email === 'tester' && !auth.accountId, JSON.stringify(auth));
+      t.ok('継いだ id があっても期限切れの印を付ける', (await w.cmd('authStatus', { backend: 'fake' })).expired === true);
+      await w.runTurn({ sessionId, prompt: 'echo:ok' });
+      t.ok('継いだ id があっても成功で期限切れを解く', !(await w.cmd('authStatus', { backend: 'fake' })).expired);
+    } finally {
+      w.close(); await srv.stop();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   }
 
   // ---- 4. 待っているログインをやめる（fake のログインを遅らせる）。ほかの窓は cancelled のイベントで待ちを畳む（ADR 0243）
