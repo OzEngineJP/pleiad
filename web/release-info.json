@@ -1,6 +1,20 @@
 {
-  "version": "0.42.6-beta.4",
+  "version": "0.42.6-beta.5",
   "releases": [
+    {
+      "version": "0.42.6-beta.5",
+      "date": "2026-11-19",
+      "title": "登録した Claude のアカウントごとに、claude.ai のコネクターをオンにできるようにしました",
+      "sections": [
+        {
+          "title": "claude.ai のコネクター",
+          "items": [
+            "Windows と Linux では、設定 › 外部 MCP から、登録した Claude のアカウントごとに claude.ai のコネクターをオンにできます。",
+            "macOS では、まだオンにできません。"
+          ]
+        }
+      ]
+    },
     {
       "version": "0.42.6-beta.4",
       "date": "2026-11-18",
