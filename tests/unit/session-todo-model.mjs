@@ -10,7 +10,7 @@ export const name = 'session-todo-model';
 export const title = '会話の ToDo の面: リスト ⇄ フロー・依存の正規化・輪・更新の差分・配置・完了の束・リンクの名前';
 
 const it = (id, after = [], status = 'todo', extra = {}) => ({ id, text: id, status, after, links: [], ...extra });
-const K = { NW: 164, NH: 58, GX: 12, GY: 32 };
+const K = { NW: 164, MAXW: 280, SW: 112, SH: 28, GX: 12, GY: 32 };
 
 export default async function (t) {
   // リストとフロー
@@ -78,10 +78,16 @@ export default async function (t) {
   assert.equal(L.H, 34 * 3 + 2 * 2);
   assert.equal(layoutList(base, 1000, () => 34, 2).R.get('a').w, 640, 'リストは 640px まで');
   const diamond = [it('a'), it('b', ['a']), it('c', ['a']), it('d', ['b', 'c'])];
-  const F = layoutFlow(diamond, afterMap(diamond), 344, K);
+  const height = ({ id }) => id === 'b' ? 61 : 37;
+  const flow = (items, width = 344, expand = false) => layoutFlow(items, afterMap(items), width, K, height, expand);
+  const F = flow(diamond);
   assert.equal(F.R.get('a').y, 0);
   assert.equal(F.R.get('b').y, F.R.get('c').y, '同じ段');
-  assert.equal(F.R.get('d').y, 2 * (K.NH + K.GY));
+  assert.equal(F.R.get('d').y, 37 + 61 + 2 * K.GY);
+  assert.equal(F.R.get('c').h, 37);
+  assert.equal(F.R.get('b').w, 166);
+  assert.equal(flow(diamond, 300).R.get('b').w, K.NW);
+  assert.equal(flow(diamond, 624).R.get('b').w, K.MAXW);
   assert.equal(F.E.length, 4);
   assert.equal(new Set(F.E.filter(edge => edge.b === 'd').map(edge => edge.inlet)).size, 2);
   const structured = layoutList(diamond, 340, () => 34, 2, afterMap(diamond));
@@ -90,16 +96,18 @@ export default async function (t) {
   t.ok('リストは分岐で字下げし、合流で元に戻す。フローは合流の入口を分ける', true);
   assert.ok(F.R.get('b').x < F.R.get('c').x, '段の中は並びの順');
   const skip = [it('a'), it('b', ['a']), it('c', ['b']), it('d', ['a', 'c'])];
-  const S = layoutFlow(skip, afterMap(skip), 344, K);
+  const S = flow(skip);
   assert.equal(S.E.find(e => e.key === 'a>d').via.length, 2, '段を跨ぐ線は見えない点を通る');
   const many = [...Array(10)].map((_, i) => it(`n${i}`, i ? [`n${i - 1}`] : [], i < 4 ? 'done' : 'todo'));
   many[9].after = ['n7']; many[8].after = ['n7'];
-  const M = layoutFlow(many, afterMap(many), 344, K);
+  const M = flow(many);
   assert.deepEqual([...M.stacks.values()], [4], '先頭から続く完了は束にまとめる');
   assert.equal(M.R.get('n0').o, 0);
-  assert.equal(layoutFlow(many, afterMap(many), 344, K, true).stacks.size, 0, '開いたら束にしない');
+  assert.equal(M.R.get('#done:n0').h, K.SH);
+  assert.equal(M.R.get('n4').y, K.SH + K.GY);
+  assert.equal(flow(many, 344, true).stacks.size, 0, '開いたら束にしない');
   const later = [it('start'), ...[1, 2, 3].map(i => it(`later${i}`, [i === 1 ? 'start' : `later${i - 1}`], 'done'))];
-  const foldedLater = layoutFlow(later, afterMap(later), 344, K);
+  const foldedLater = flow(later);
   assert.deepEqual([...foldedLater.stacks.values()], [3]);
   assert.ok(foldedLater.E.some(e => e.a === 'start' && e.b === '#done:later1'));
   t.ok('リストは 640px まで・フローは最長路で段に分け、跨ぐ線は点を通し、完了が 3 件続くと束ねる', true);

@@ -2720,7 +2720,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .todo-pop[data-view=list] .td-item{font-size:var(--fs-body);padding:0 2px}
 .todo-pop[data-mode=edit][data-view=list] .td-item{background:var(--surface-1)}
 .todo-pop[data-mode=edit][data-view=list][data-drag=on] .td-item{cursor:grab}
-.todo-pop[data-view=flow] .td-item{background:var(--surface-1);font-size:var(--fs-ui);padding:2px 0 2px 2px;align-items:flex-start}
+.todo-pop[data-view=flow] .td-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-content:start;align-items:start;background:var(--surface-1);font-size:var(--fs-ui);padding:2px 0 5px 2px}
+.todo-pop[data-view=flow] .td-grip{display:none}
+.todo-pop[data-view=flow] .td-more{grid-area:1/3}
 .todo-pop[data-view=flow] .td-item[data-kind=doing]{background:var(--surface-sel)}
 .td-item.drag{background:var(--surface-paper)!important;box-shadow:0 8px 28px var(--shadow);z-index:5;cursor:grabbing!important}
 .td-item.aim{box-shadow:0 0 0 2px var(--line-blue)}
@@ -2750,7 +2752,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .td-item.td-indented::before{content:"";position:absolute;inset-block:2px;inset-inline-start:-8px;width:1px;background:var(--surface-3)}
 .td-text[aria-expanded]{cursor:pointer}
 .td-item.td-reading .td-text{-webkit-line-clamp:unset}
-.todo-pop[data-view=flow] .td-item.td-reading{height:auto!important;min-height:var(--td-reading-min,100px);padding-bottom:28px;z-index:2;box-shadow:0 4px 14px var(--shadow)}
+.todo-pop[data-view=flow] .td-item.td-reading{height:auto!important;z-index:2;box-shadow:0 4px 14px var(--shadow)}
 .td-resize{position:absolute;z-index:6;background:transparent;touch-action:none;padding:0}
 .td-resize-width{top:0;bottom:18px;left:-5px;width:10px;cursor:ew-resize}
 .td-resize-height{left:18px;right:0;bottom:-5px;height:10px;cursor:ns-resize}
@@ -2787,7 +2789,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .todo-pop:is([data-mode=edit],[data-view=flow]) .td-badge:is(:hover,[aria-expanded=true]){background:var(--surface-3)}
 .td-badge.bump{animation:td-bump var(--dur) var(--ease-out)}
 @keyframes td-bump{from{transform:scale(1.4)}}
-.todo-pop[data-view=flow] .td-foot{position:absolute;left:5px;right:8px;bottom:3px;margin:0;flex-direction:row-reverse}
+.todo-pop[data-view=flow] .td-foot{grid-column:1/-1;margin:0 8px 0 3px;flex-direction:row-reverse}
 .todo-pop[data-view=flow] .td-badge{margin-right:auto}
 .td-more{flex:none;width:0;height:28px;overflow:hidden;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);opacity:0;visibility:hidden;cursor:pointer;transition:width var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),visibility var(--dur)}
 .td-more svg{width:16px;height:16px;flex:none}
@@ -2861,6 +2863,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .todo-pop[data-mode=edit][data-view=list][data-drag=on] .td-grip{width:28px;height:44px}
   .td-mark{width:40px;height:44px}
   .todo-pop[data-view=flow] .td-mark{width:34px}
+  .todo-pop[data-view=flow][data-mode=view] .td-mark{height:32px}
   .td-mark svg{width:18px;height:18px}
   .todo-pop[data-view=flow] .td-text{margin-top:7px}
   .td-by>span:not(.td-logo){display:none}

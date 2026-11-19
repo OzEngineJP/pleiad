@@ -138,7 +138,7 @@ export function layoutList(items, W, rowH, gap, deps = new Map()) {
  * フローの配置（モックの layout）。最長路で段に分け、段を跨ぐ線には見えない点を置き、親の位置の平均で段の中を並べる。
  * 途中の分岐をまたがずに続く完了（3 件以上）を束にまとめる
  */
-export function layoutFlow(items, deps, W, K, expand = false) {
+export function layoutFlow(items, deps, W, K, rowH, expand = false) {
   const R = new Map(), E = [];
   const depsOf = id => deps.get(id) ?? [];
   const order = topoOrder(items, deps);
@@ -177,8 +177,7 @@ export function layoutFlow(items, deps, W, K, expand = false) {
   const nL = Math.max(0, ...lay.values()) + 1, Ls = Array.from({ length: nL }, () => []), par = new Map();
   for (const n of nodes) { par.set(n.id, []); Ls[lay.get(n.id)].push({ id: n.id }); }
   for (const n of nodes) for (const [index, d] of n.deps.entries()) {
-    const inlet = (index - (n.deps.length - 1) / 2) * Math.min(14, (K.NW - 24) / Math.max(1, n.deps.length - 1));
-    const e = { key: `${d}>${n.id}`, a: d, b: n.id, via: [], inlet };
+    const e = { key: `${d}>${n.id}`, a: d, b: n.id, via: [], index, inputs: n.deps.length };
     E.push(e);
     let prev = d;
     for (let k = lay.get(d) + 1; k < lay.get(n.id); k++) { const id = `~${e.key}:${k}`; par.set(id, [prev]); Ls[k].push({ id, dummy: e }); prev = id; }
@@ -192,18 +191,36 @@ export function layoutFlow(items, deps, W, K, expand = false) {
     }
     L.forEach((n, i) => pos.set(n.id, (i + 0.5) / L.length));
   });
-  const step = K.NH + K.GY;
-  const tot = L => L.reduce((s, n) => s + (n.dummy ? 10 : K.NW), 0) + K.GX * (L.length - 1);
-  const cross = Math.max(...Ls.map(tot)), H = nL * step - K.GY, CW = Math.max(W, cross), ox = (CW - cross) / 2;
-  Ls.forEach((L, k) => {
-    let c = (cross - tot(L)) / 2;
-    for (const n of L) {
-      const s = n.dummy ? 10 : K.NW;
-      if (n.dummy) n.dummy.via.push({ x: ox + c + s / 2, y: k * step + K.NH / 2 });
-      else R.set(n.id, { x: ox + c, y: k * step, w: K.NW, h: K.NH, o: 1 });
-      c += s + K.GX;
-    }
+  const byId = new Map(items.map(it => [it.id, it]));
+  const rows = Ls.map(L => {
+    const gaps = K.GX * Math.max(0, L.length - 1);
+    const fixed = n => n.dummy ? 10 : stacks.has(n.id) ? K.SW : 0;
+    const available = W - gaps - L.reduce((sum, n) => sum + fixed(n), 0);
+    const cards = L.filter(n => !fixed(n)).length;
+    const width = Math.max(K.NW, Math.min(K.MAXW, Math.floor(available / Math.max(1, cards))));
+    const cells = L.map(n => ({
+      ...n,
+      w: fixed(n) || width,
+      h: n.dummy ? 0 : stacks.has(n.id) ? K.SH : rowH(byId.get(n.id), width),
+    }));
+    return { cells, w: cells.reduce((sum, n) => sum + n.w, gaps), h: Math.max(0, ...cells.map(n => n.h)) };
   });
+  const cross = Math.max(...rows.map(row => row.w)), CW = Math.max(W, cross), ox = (CW - cross) / 2;
+  let y = 0;
+  for (const row of rows) {
+    let x = (CW - row.w) / 2;
+    for (const { id, dummy, w, h } of row.cells) {
+      if (dummy) dummy.via.push({ x: x + w / 2, y: y + row.h / 2 });
+      else R.set(id, { x, y, w, h, o: 1 });
+      x += w + K.GX;
+    }
+    y += row.h + K.GY;
+  }
+  const H = y - K.GY;
+  for (const edge of E) {
+    edge.inlet = (edge.index - (edge.inputs - 1) / 2)
+      * Math.min(14, (R.get(edge.b).w - 24) / Math.max(1, edge.inputs - 1));
+  }
   for (const [id, key] of folded) R.set(id, { ...R.get(key), o: 0 });
   return { R, E, H, CW, stacks, B: { x0: ox, x1: ox + cross, y0: 0, y1: H } };
 }

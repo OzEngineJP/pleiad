@@ -64,8 +64,8 @@ function markSvg(kind) {
 const statusLabel = (kind) => t(`todo.status.${kind}`);
 
 /* 大きさの定数（モックのとおり。狭い画面は指で押せる大きさ） */
-const K_WIDE = Object.freeze({ NW: 164, NH: 100, GX: 12, GY: 32, ROW: 34, GAP: 2, EGAP: 4, MB: 40, MAPW: 84, MAPH: 64 });
-const K_NARROW = Object.freeze({ NW: 156, NH: 104, GX: 10, GY: 32, ROW: 48, GAP: 2, EGAP: 6, MB: 56, MAPW: 64, MAPH: 56 });
+const K_WIDE = Object.freeze({ NW: 164, MAXW: 280, SW: 112, SH: 28, GX: 12, GY: 32, ROW: 34, GAP: 2, EGAP: 4, MB: 40, MAPW: 84, MAPH: 64 });
+const K_NARROW = Object.freeze({ NW: 156, MAXW: 280, SW: 112, SH: 36, GX: 10, GY: 32, ROW: 48, GAP: 2, EGAP: 6, MB: 56, MAPW: 64, MAPH: 56 });
 const OX = 8, OY = 2, MX = 8, ZMIN = 0.25, ZMAX = 2;
 /** AI の変更の印の文言（todo.by.*）。action は core/todos.mjs の changed */
 const BY_KEY = { done: 'done', started: 'started', added: 'added', reopened: 'changed', moved: 'changed', updated: 'changed' };
@@ -153,6 +153,7 @@ export function createSessionTodo(o) {
   let tw = null, vtw = null, Vgoal = null, drive = false, Wover = null, menu = null, isMax = false, edit = false, rename = null, skipClick = false;
   let isOpen = false, busy = false, expandedText = null;
   const V = { x: 0, y: 0, z: 1, mode: 'home' };
+  let flowCamera = null;
   const els = new Map(), edgeEls = new Map();
   const stackEls = new Map();
   let mapBox = null, mapOn = false;
@@ -214,13 +215,16 @@ export function createSessionTodo(o) {
     p.badge.hidden = !n; p.badgeN.textContent = n > 99 ? '99+' : String(n);
     p.foot.hidden = !bt && !n;
   }
-  function rowH(it, W) {
+  function itemHeight(it, W, flow) {
     meas.style.width = `${W}px`; meas._p.text.textContent = it.text; fillFoot(meas._p, it);
-    meas.classList.toggle('td-reading', !edit && it.id === expandedText);
-    return Math.max(K().ROW, meas.offsetHeight);
+    meas.classList.toggle('td-reading', !flow && !edit && it.id === expandedText);
+    return flow ? meas.offsetHeight : Math.max(K().ROW, meas.offsetHeight);
   }
   const gapNow = () => (edit ? K().EGAP : K().GAP);
-  const layout = (W) => (flowView() ? layoutFlow(S.items, deps(), W, K(), S.expand) : layoutList(S.items, W, rowH, gapNow(), S.flow ? deps() : undefined));
+  const layout = (W, flow) => {
+    const height = (it, width) => itemHeight(it, width, flow);
+    return flow ? layoutFlow(S.items, deps(), W, K(), height, S.expand) : layoutList(S.items, W, height, gapNow(), S.flow ? deps() : undefined);
+  };
   function setRect(node, r) {
     node._r = r;
     node.style.transform = `translate(${r.x}px,${r.y}px)`;
@@ -234,7 +238,8 @@ export function createSessionTodo(o) {
     const rect = id => (stackEls.get(id) ?? els.get(id))?._r;
     const ra = rect(e.a), rb = rect(e.b);
     if (!ra || !rb) return '';
-    const p0 = { x: ra.x + ra.w / 2, y: ra.y + ra.h }, pn = { x: rb.x + rb.w / 2 + e.inlet, y: rb.y - 1 };
+    const inlet = e.inlet * Math.min(1, (rb.w - 24) / (S.L.R.get(e.b).w - 24));
+    const p0 = { x: ra.x + ra.w / 2, y: ra.y + ra.h }, pn = { x: rb.x + rb.w / 2 + inlet, y: rb.y - 1 };
     const pts = [p0, ...e.via, pn];
     let d = `M${p0.x} ${p0.y}`;
     for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], my = (a.y + b.y) / 2; d += `C${a.x} ${my} ${b.x} ${my} ${b.x} ${b.y}`; }
@@ -288,6 +293,23 @@ export function createSessionTodo(o) {
     if (V.mode === 'fit' || (V.mode === 'home' && isMax)) return fitV(vp);
     if (V.mode === 'home') return homeV(vp);
     return clampV(base, vp);
+  }
+  function reflowV({ view: base, layout: from, width, height }, to) {
+    // 幅に合わせて並べ直すとき、見ていた中心に最も近いカードを基準にする。
+    const x = ((width + 16) / 2 - OX - base.x) / base.z;
+    const y = (height / 2 - OY - base.y) / base.z;
+    let nearest = Infinity, dx = 0, dy = 0;
+    for (const [id, a] of from.R) {
+      const b = to.R.get(id);
+      if (!a.o || !b?.o) continue;
+      const ax = a.x + a.w / 2, ay = a.y + a.h / 2;
+      const distance = Math.hypot(ax - x, ay - y);
+      if (distance >= nearest) continue;
+      nearest = distance;
+      dx = ax - b.x - b.w / 2;
+      dy = ay - b.y - b.h / 2;
+    }
+    return { x: base.x + dx * base.z, y: base.y + dy * base.z, z: base.z };
   }
   function applyV() {
     const id = Math.abs(V.x) < 0.01 && Math.abs(V.y) < 0.01 && Math.abs(V.z - 1) < 0.0001;
@@ -426,21 +448,37 @@ export function createSessionTodo(o) {
   });
 
   /* ---- 描く ---- */
+  let flowWidth = 0, flowHeight = 0;
   function apply(anim, how) {
     const fv = flowView(), now = fv ? 'flow' : 'list';
+    const wasFlow = root.dataset.view === 'flow';
+    const previous = wasFlow
+      ? { layout: S.L, width: flowWidth, height: flowHeight, mapOn, view: { ...V, ...Vgoal } }
+      : flowCamera;
     updateFloatingSize(now);
     if (root.dataset.view !== now) {
-      V.mode = 'home';
-      if (fv && body.scrollTop) V.y -= body.scrollTop;
+      if (wasFlow) flowCamera = previous;
+      V.mode = fv ? previous?.view.mode ?? 'home' : 'home';
       root.dataset.view = now; body.scrollTop = 0; body.scrollLeft = 0;
-      if (fv) { body.tabIndex = 0; body.setAttribute('role', 'group'); body.setAttribute('aria-label', t('todo.flowLabel')); }
+      if (fv) {
+        body.tabIndex = 0; body.setAttribute('role', 'group'); body.setAttribute('aria-label', t('todo.flowLabel'));
+        if (previous?.mapOn) setMapOn(true);
+      }
       else { body.removeAttribute('tabindex'); body.removeAttribute('role'); body.removeAttribute('aria-label'); }
     }
     root.dataset.drag = !S.flow && !fv ? 'on' : 'off';
     root.style.setProperty('--td-mb', `${MB()}px`);
     const W = canvasW();
     if (W <= 0) return;
-    const L = layout(W);
+    const L = layout(W, fv);
+    let viewTarget = Vgoal || V;
+    if (fv) {
+      if (previous && V.mode === 'user') {
+        viewTarget = previous.view;
+        if (previous.layout && previous.width !== W) viewTarget = reflowV(previous, L);
+      }
+      flowWidth = W;
+    }
     S.L = L;
     const moves = [];
     for (const it of S.items) {
@@ -484,8 +522,9 @@ export function createSessionTodo(o) {
       canvas.style.height = `${canvas._h}px`; canvas.style.width = `${canvas._w}px`;
       svg.setAttribute('width', canvas._w); svg.setAttribute('height', canvas._h);
       drawEdges();
-      if (drive) { const T = targetV(liveVp(), V0); V.x = lerp(V0.x, T.x, p); V.y = lerp(V0.y, T.y, p); V.z = lerp(V0.z, T.z, p); }
+      if (drive) { const T = targetV(liveVp(), viewTarget); V.x = lerp(V0.x, T.x, p); V.y = lerp(V0.y, T.y, p); V.z = lerp(V0.z, T.z, p); }
       applyV();
+      if (fv) flowHeight = body.clientHeight - MB();
     }, () => {
       tw = null;
       for (const [id, node] of stackEls) if (node._dead) { node.remove(); stackEls.delete(id); }
@@ -1040,7 +1079,7 @@ export function createSessionTodo(o) {
   }
   setMaxButton();
   function shown() {
-    V.mode = 'home'; apply(false);
+    flowCamera = null; V.mode = 'home'; apply(false);
     for (const id of [...unseen]) { unseen.delete(id); flash(id); }
     if (!flowView()) {
       const it = S.items.find((i) => i.status === 'doing'), r = it && S.L?.R.get(it.id);
@@ -1139,7 +1178,7 @@ export function createSessionTodo(o) {
     closeMenu();
     if (rename) rename(false);
     if (edit) setEdit(false, false, false);
-    badges.clear(); unseen.clear(); expandedText = null;
+    badges.clear(); unseen.clear(); expandedText = null; flowCamera = null;
     S.items = []; S.rev = -1; S.flow = false; S.view = 'auto'; S.expand = false; S.L = null;
     for (const node of els.values()) node.remove();
     els.clear();
