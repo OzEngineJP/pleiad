@@ -1,4 +1,4 @@
-// todos.*: 会話の ToDo（ADR 0341。本体は core/todos.mjs、handler は ctx.todos（core/server.mjs の opsDeps）を呼ぶ）。
+// todos.*: 会話の ToDo（ADR 0342。本体は core/todos.mjs、handler は ctx.todos（core/server.mjs の opsDeps）を呼ぶ）。
 // 画面（会話の ToDo のパネル）と AI（ply_control の list_ops / call_op）が同じ操作を使う。AI への使い方の説明は、
 // 毎回の既定の指示には足さず、ここの summary（web/locales/*/agent.json の ops.todos.*）にだけ書く。
 //
@@ -44,7 +44,8 @@ const missing = (ctx, id) => new OpError('SESSION_NOT_FOUND', agentT(ctx.locale,
 async function byOf(ctx) {
   if (!byAgent(ctx)) return { kind: 'user' };
   const own = ctx.actor?.sessionId ? await ctx.sessions.get(ctx.actor.sessionId).catch(() => null) : null;
-  return own?.backend ? { kind: 'agent', backend: String(own.backend) } : { kind: 'agent' };
+  const backend = own?.row?.backend; // ctx.sessions.get は { row, children, history }
+  return backend ? { kind: 'agent', backend: String(backend) } : { kind: 'agent' };
 }
 /** core/todos.mjs の TodoError を、AI が読み分けられる OpError に */
 function opError(ctx, e) {

@@ -29,7 +29,7 @@ export const DATA_WRITES = [
     { name: 'data-schema.json', limit: '固定（{ schema: N }）', reason: '形式番号。移行の最後に 1 回だけ書く' },
     { name: 'backup-schema1-<日時>/（移行前の JSON と形式番号の写し）', limit: '移行 1 回につき JSON 5 つまで。移行前の大きさのまま増えない', reason: '移行前のデータの写し（docs/desktop-releases.md「適用とデータ保護」）。書き換えない。自動では消さない' },
     { name: 'backup-schema2-<日時>/（pleiad.db・data-schema.json・memory/log.jsonl の写し）', limit: '移行の試行ごとに最大3ファイル。移行開始時の大きさで固定し、その後は書き換えない', reason: '形式2→3の照合・復旧用の写し。追加した2箇所は形式番号のコピーと旧記憶履歴の保存。DBはVACUUM INTOで写し、以後の履歴更新はmemory_stateの行で行う（docs/migrations/bot-delete/migration-plan.md）' },
-    { name: 'backup-schema3-<日時>/（pleiad.db・data-schema.json の写し）', limit: '移行の試行ごとに 2 ファイル。移行開始時の大きさで固定し、その後は書き換えない', reason: '形式3→4（会話の ToDo の表を足す。ADR 0341）の復旧用の写し。DB は VACUUM INTO で写す。自動では消さない' },
+    { name: 'backup-schema3-<日時>/（pleiad.db・data-schema.json の写し）', limit: '移行の試行ごとに 2 ファイル。移行開始時の大きさで固定し、その後は書き換えない', reason: '形式3→4（会話の ToDo の表を足す。ADR 0342）の復旧用の写し。DB は VACUUM INTO で写す。自動では消さない' },
   ] },
   { file: 'core/review-mode.mjs', sites: 1, targets: [
     { name: 'review-data.json', limit: '固定（{ review, createdAt }）', reason: '審査モード（ADR 0172）の置き場の印。空の置き場に起動のとき 1 回だけ書く' },

@@ -1,4 +1,4 @@
-// 会話の ToDo（ADR 0341）: 足す・変える・消す・並べ替え・ref で枝分かれを 1 回で作る・輪を断る・ifRev の競合・待ち・リンクの整え方と有無の確かめ・
+// 会話の ToDo（ADR 0342）: 足す・変える・消す・並べ替え・ref で枝分かれを 1 回で作る・輪を断る・ifRev の競合・待ち・リンクの整え方と有無の確かめ・
 // 変更の知らせ（onChange）・再び開いても残る・会話を消すと消える・操作（todos.*）の AI と画面の扱い・形式 3 → 4 の移行（写し・失敗で番号を変えない・旧版の拒否）。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -113,7 +113,7 @@ export default async function (t) {
 
     // ---- 操作（todos.*）
     const ops = createTodos({ dataDir: dir });
-    const sessionsDep = { get: async id => (id === 'me' || id === 'other' ? { backend: 'codex' } : null) };
+    const sessionsDep = { get: async id => (id === 'me' || id === 'other' ? { row: { id, backend: 'codex' }, children: [], history: [] } : null) };
     const deps = { locale: 'ja', sessions: sessionsDep, todos: ops, modeOf: async () => ({ scope: 'workspace', autonomy: 'ask' }), audit: () => {} };
     const agent = sessionId => ({ by: 'agent', via: 'mcp', sessionId });
     const human = { by: 'human', via: 'ui', local: true };

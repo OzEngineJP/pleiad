@@ -9,7 +9,7 @@ import { migrateSchema1To2, finishSchema1To2, migrateSchema2To3, migrateSchema3T
 // 2: 件数とともに増える記録は SQLite（pleiad.db）の行（ADR 0115）。1 は記録ごとの JSON ファイル。
 // 形式番号を上げる変更は、バックアップ → 移行 → 突き合わせ → 番号の更新を、ここと同じ形（core/schema-migration.mjs）で足す。
 // 3: bot 削除後の閲覧用状態と、行単位で消せる記憶履歴。旧版の起動を拒否する。
-// 4: 会話の ToDo（todos・todo_scopes の表。ADR 0341）。旧版は ToDo を知らずに会話を消し、ToDo だけが残るので起動を拒否する。
+// 4: 会話の ToDo（todos・todo_scopes の表。ADR 0342）。旧版は ToDo を知らずに会話を消し、ToDo だけが残るので起動を拒否する。
 export const DATA_SCHEMA = 4;
 
 const reasonOf = e => String(e?.message ?? e);

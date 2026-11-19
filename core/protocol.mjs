@@ -324,7 +324,7 @@ export const EVENTS = new Set([
   // { rows: [{ role: system, kind: channelEvent | contextNote, … }] } bot の会話へチャンネルの出来事・記憶の包みを渡した（会話の sessionId 付き。
   // 履歴の splitLeadingNotes と同じ行の形で、画面は履歴と同じ描き方をする）
   "channelEvent",
-  "todosChanged", // { sessionId, rev, items, changed: [{ id, action }], by } 会話の ToDo が変わった（ADR 0341。全接続へ。開いている会話のパネルと入口の未読の点が使う）
+  "todosChanged", // { sessionId, rev, items, changed: [{ id, action }], by } 会話の ToDo が変わった（ADR 0342。全接続へ。開いている会話のパネルと入口の未読の点が使う）
   "notificationsChanged", // { unread, waiting } 通知の一覧（ベルのボタン。ADR 0149）の件数が変わった（sessionId は null。リモートの端末にも届く）。中身は notifications.list で取り直す
   "agentAccountsChanged", // 登録アカウントの変更。backend を付けて一覧を取り直す
   "claudeAccountsChanged", // Claude のアカウント一覧が変わった（sessionId は null）。中身は claudeAccounts コマンドで取り直す。アカウントごとのモデルの一覧が手元に入った・変わったときも送る（画面は固定の一覧を持ち続けず models も取り直す）

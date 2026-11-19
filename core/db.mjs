@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS waiting_cards (
 CREATE INDEX IF NOT EXISTS waiting_cards_origin ON waiting_cards (origin);
 `;
 /**
- * 会話の ToDo（ADR 0341）。持ち主は scope_kind・scope_id（今は 'session' と会話の ID だけ。後でプロジェクト・外のツールの
+ * 会話の ToDo（ADR 0342）。持ち主は scope_kind・scope_id（今は 'session' と会話の ID だけ。後でプロジェクト・外のツールの
  * 課題にも広げられるように、会話の列にはしない）。after は先に終える項目の ID の配列、links は成果物のリンクの配列（どちらも JSON）。
  * external は外のツールと結ぶときの印（今は使わない）。todo_scopes は持ち主ごとの版（rev。書くたびに 1 つ上げ、ifRev の照合に使う）
  */
@@ -683,7 +683,7 @@ export function draftTable(db) {
   };
 }
 
-// ---- 会話の ToDo（ADR 0341）。1 項目 1 行。並び・依存・循環の検査は core/todos.mjs ----
+// ---- 会話の ToDo（ADR 0342）。1 項目 1 行。並び・依存・循環の検査は core/todos.mjs ----
 const parseJson = (text, fallback) => { try { return JSON.parse(text) ?? fallback; } catch { return fallback; } };
 const todoRow = r => ({ id: r.id, text: r.text, status: r.status, order: r.ord, after: parseJson(r.after, []), links: parseJson(r.links, []),
   external: r.external ? parseJson(r.external, null) : null, by: r.created_by ? parseJson(r.created_by, null) : null,

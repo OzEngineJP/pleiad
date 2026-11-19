@@ -2632,3 +2632,224 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .outbox-fix.conn-fail .wait{display:inline-flex;align-items:center;gap:6px}
 .outbox-fix.conn-fail .wait .run,.outbox-fix.conn-fail .wait .run svg{width:12px;height:12px}
 .outbox-fix.conn-fail .done,.auth-fail .acts .done{color:var(--ink);font-weight:500}
+
+/* ==================== 会話の ToDo（承認済み 2026-11-19。temporary/mockups/session-todo.html。ADR 0342。web/session-todo.mjs） ====================
+   頭の ToDo の入口（PC）・⋮ の先頭（700px 以下）から開く。PC は会話の頭の下・右に浮く面、狭い画面は下からのシート。
+   普段は見るだけで、鉛筆で編集の状態（data-mode=edit）。依存の形で、行のリスト（data-view=list）と上から下の流れ図（flow）を替える */
+#todoEntry{position:relative}
+.todo-veil{position:absolute;inset:0;z-index:20;background:var(--surface-veil);opacity:0;pointer-events:none;transition:opacity var(--dur) var(--ease-out)}
+.todo-veil.on{opacity:1;pointer-events:auto}
+.todo-pop{--td-hit:30px;--td-mb:0px;display:flex;flex-direction:column;padding:0;top:var(--td-top,46px);right:18px;width:360px;max-height:min(560px,calc(100% - var(--td-top,46px) - 12px))}
+.todo-pop[hidden]{display:none}
+.todo-pop.in{animation:todo-pop-in var(--dur) var(--ease-out)}
+.todo-pop.out{opacity:0;transform:translateY(4px);transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out)}
+.todo-pop.free{max-height:none;right:auto;bottom:auto}
+.todo-pop > .sheet-grab{display:none}
+@keyframes todo-pop-in{from{opacity:0;transform:translateY(4px)}}
+/* 頭 */
+.td-head{display:flex;align-items:center;gap:6px;flex:none;padding:8px 8px 4px 16px;min-height:44px}
+.td-ttl{display:flex;align-items:baseline;gap:8px;min-width:0}
+.td-ttl b{font-size:var(--fs);font-weight:600}
+.td-count{color:var(--ink-weak);font-size:var(--fs-ui);font-variant-numeric:tabular-nums}
+.td-head .sp{flex:1}
+.td-seg[hidden]{display:none}
+.td-seg button{padding:3px 10px;white-space:nowrap}
+.td-hbtn{display:grid;place-items:center;width:28px;height:28px;border-radius:var(--r-pill);color:var(--ink-weak);background:transparent;font-size:20px;line-height:1;flex:none;cursor:pointer}
+.td-hbtn:hover{background:var(--surface-1);color:var(--ink)}
+.td-hbtn svg.i{width:var(--icon);height:var(--icon)}
+/* 鉛筆（閲覧）⇄「編集を終了」（編集）。同じボタンが形を変える。幅は文言を測って --td-edit-w に入れる */
+.td-edit{position:relative;flex:none;width:28px;height:28px;border-radius:var(--r-pill);color:var(--ink-weak);background:transparent;cursor:pointer;
+  transition:width var(--dur) var(--ease-out),background-color var(--dur) var(--ease-out),color var(--dur) var(--ease-out)}
+.td-edit::after{content:"";position:absolute;inset:-4px 0}
+.td-edit .ic,.td-edit .lb{position:absolute;inset:0;display:grid;place-items:center;transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur) var(--ease-out)}
+.td-edit .lb{opacity:0;transform:scale(.8);font-size:var(--fs-ui);font-weight:600;white-space:nowrap}
+.td-edit .lb>span{display:inline-block}
+/* 見えない「編集を終了」の文字は 28px の鉛筆からはみ出し、隣の「大きく表示」を覆う。押されるのはボタン自身だけにする */
+.td-edit .ic,.td-edit .lb{pointer-events:none}
+.td-edit:hover{background:var(--surface-1);color:var(--ink)}
+.todo-pop[data-mode=edit] .td-edit{width:var(--td-edit-w,52px);background:var(--fill-primary);color:var(--on-fill)}
+.todo-pop[data-mode=edit] .td-edit:hover{background:var(--fill-primary-hover);color:var(--on-fill)}
+.todo-pop[data-mode=edit] .td-edit .ic{opacity:0;transform:scale(.8)}
+.todo-pop[data-mode=edit] .td-edit .lb{opacity:1;transform:none}
+/* 中身。フローのときだけ、つかんで動かす・拡大縮小する */
+.td-stage{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.td-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:2px 8px 6px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
+.td-body:focus-visible{outline-offset:-2px}
+.todo-pop[data-view=flow] .td-body{overflow:hidden;cursor:grab;touch-action:none;padding-bottom:var(--td-mb)}
+.todo-pop[data-view=flow][data-pan=on] .td-body,.todo-pop[data-view=flow][data-pan=on] .td-body *{cursor:grabbing!important}
+.td-canvas{position:relative;transform-origin:0 0}
+.td-empty{padding:18px 8px 12px;color:var(--ink-weak);text-align:center}
+.td-empty[hidden]{display:none}
+.td-empty button{display:block;margin:10px auto 0;padding:5px 14px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink);font-size:var(--fs-ui);min-height:var(--td-hit);cursor:pointer}
+.td-empty button:hover{background:var(--surface-2)}
+.todo-pop[data-mode=edit] .td-empty button{display:none}
+/* フローの下端の帯: 拡大縮小（右）と位置の手がかり（左。全体が収まっていないときだけ）。中身の箱に重ならないよう不透明な帯に入れ、
+   中身の見える範囲は帯の上まで（モックは中身に重なって箱を隠していたのを直した形。web/session-todo.mjs の MB） */
+.td-bar{position:absolute;left:0;right:0;bottom:0;z-index:4;height:var(--td-mb);display:none;align-items:flex-end;justify-content:space-between;gap:8px;padding:0 8px 6px;background:var(--surface-paper);border-radius:0 0 var(--r-m) var(--r-m);pointer-events:none}
+.todo-pop[data-view=flow] .td-bar{display:flex}
+.td-zoom{margin-left:auto;display:flex;align-items:center;padding:2px;border-radius:var(--r-pill);background:var(--surface-paper);box-shadow:0 1px 4px var(--shadow);font-size:var(--fs-meta);color:var(--ink-weak);pointer-events:auto}
+.td-zoom button{height:26px;min-width:26px;padding:0 6px;border-radius:var(--r-pill);display:grid;place-items:center;white-space:nowrap;background:transparent;color:inherit;cursor:pointer}
+.td-zoom .z-in,.td-zoom .z-out{font-size:15px;line-height:1}
+.td-zoom .z-fit{padding:0 10px}
+.td-zoom button:hover{background:var(--surface-1);color:var(--ink)}
+.td-zoom button[aria-disabled=true]{opacity:.4;cursor:default;background:transparent}
+.td-map{padding:3px;border-radius:var(--r-s);background:var(--surface-paper);box-shadow:0 1px 4px var(--shadow);opacity:0;pointer-events:none;transition:opacity var(--dur) var(--ease-out);cursor:pointer;touch-action:none;line-height:0}
+.td-map.on{opacity:1;pointer-events:auto}
+.td-map:not(.on){position:absolute;visibility:hidden}
+.td-map svg{display:block}
+.td-map .mv{fill:none;stroke:var(--line-blue);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.td-map .mb{fill:var(--ink-weak);opacity:.5}
+.td-map .mb.doing{fill:var(--ink-blue);opacity:1}
+.td-fold{position:absolute;left:8px;top:2px;z-index:3;padding:3px 10px;border-radius:var(--r-pill);background:var(--surface-paper);box-shadow:0 1px 4px var(--shadow);color:var(--ink-weak);font-size:var(--fs-meta);cursor:pointer}
+.td-fold:hover{color:var(--ink)}
+.td-fold[hidden]{display:none}
+/* 追加の欄は、編集の状態のときだけ開く */
+.td-addwrap{flex:none;display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--dur) var(--ease-out)}
+.todo-pop[data-mode=edit] .td-addwrap{grid-template-rows:1fr}
+.td-addclip{overflow:hidden;min-height:0}
+.td-add{margin:0;padding:4px 10px 10px}
+.todo-pop .td-add input.field{margin:0}
+/* 行と箱（同じ要素が、リストでは行、フローでは箱になる） */
+.td-item{position:absolute;left:0;top:0;display:flex;align-items:center;border-radius:var(--r-s);user-select:none;-webkit-user-select:none;transition:background-color var(--dur) var(--ease-out),font-size var(--dur) var(--ease-out)}
+.td-meas-box{position:absolute;left:0;top:0;width:0;height:0;overflow:hidden}
+.td-meas{visibility:hidden;pointer-events:none;height:auto}
+/* 子の visibility:visible（編集の状態の「…」）で、測るための行が見えたり読み上げに載ったりしない */
+.td-meas *{visibility:hidden!important}
+.td-meas,.td-meas *{transition:none!important}
+.td-item.gone{pointer-events:none}
+.todo-pop[data-view=list] .td-item{font-size:var(--fs-body);padding:0 2px}
+.todo-pop[data-mode=edit][data-view=list] .td-item{background:var(--surface-1)}
+.todo-pop[data-mode=edit][data-view=list][data-drag=on] .td-item{cursor:grab}
+.todo-pop[data-view=flow] .td-item{background:var(--surface-1);font-size:var(--fs-ui);padding:2px 0 2px 2px;align-items:flex-start}
+.todo-pop[data-view=flow] .td-item[data-kind=doing]{background:var(--surface-sel)}
+.td-item.drag{background:var(--surface-paper)!important;box-shadow:0 8px 28px var(--shadow);z-index:5;cursor:grabbing!important}
+.td-item.aim{box-shadow:0 0 0 2px var(--line-blue)}
+.td-item.flash{animation:note-flash 1.2s var(--ease-out)}
+.td-grip{flex:none;width:0;height:30px;overflow:hidden;display:grid;place-items:center;color:var(--ink-weak);opacity:0;touch-action:none;transition:width var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out)}
+.td-grip svg{width:12px;height:16px;fill:currentColor;flex:none}
+.todo-pop[data-mode=edit][data-view=list][data-drag=on] .td-grip{width:16px;opacity:.7;cursor:grab}
+.td-mark{flex:none;width:30px;height:30px;display:grid;place-items:center;border-radius:var(--r-pill);color:var(--ink-weak);background:transparent;cursor:pointer}
+.td-mark[aria-disabled=true]{cursor:inherit}
+.td-mark:not([aria-disabled=true]):hover{background:var(--surface-2);color:var(--ink)}
+.todo-pop[data-mode=edit] .td-mark:not([aria-disabled=true]):hover{background:var(--surface-3)}
+.td-mark svg,.td-pm svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.td-pm{display:inline-flex}
+.td-item[data-kind=doing] .td-mark{color:var(--ink-blue)} /* allow-blue: 進行中の印（会話の走っている印と同じ青） */
+.td-mark .spin{animation:run-spin 2s linear infinite}
+.td-mark .spin path{stroke-dasharray:10 100}
+.td-mark .dotted{stroke-dasharray:1.2 3.2}
+.td-mark .ck-path,.td-pm .ck-path{stroke-dasharray:1;stroke-dashoffset:0}
+.td-item.just .ck-path{animation:td-draw var(--dur) var(--ease-out)}
+@keyframes td-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+.td-text{flex:1;min-width:0;padding:5px 4px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;border-radius:6px;overflow-wrap:anywhere;transition:opacity var(--dur) var(--ease-out)}
+.td-text[hidden]{display:none}
+.todo-pop[data-view=flow] .td-text{padding:6px 6px 0 2px}
+.todo-pop[data-mode=edit] .td-text{cursor:text}
+.todo-pop[data-mode=edit] .td-text:hover{background:var(--surface-2)}
+.td-item[data-kind=done] .td-text{opacity:.6;color:var(--ink-weak)}
+.td-item[data-kind=wait] .td-text{color:var(--ink-weak)}
+.td-rename{flex:1;min-width:0;margin:0 2px;padding:4px 6px;border-radius:6px;background:var(--surface-paper);color:var(--ink);font-size:inherit;line-height:1.4;user-select:text;-webkit-user-select:text}
+.td-rename:focus{outline:2px solid var(--line-blue);outline-offset:-1px}
+.todo-pop[data-view=flow] .td-rename{margin-top:3px}
+.td-foot{display:inline-flex;align-items:center;gap:4px;flex:none;margin:0 2px 0 6px}
+.td-foot[hidden]{display:none}
+.td-by{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-meta);color:var(--ink-weak);white-space:nowrap}
+.td-by[hidden]{display:none}
+.td-by .td-logo{display:inline-flex;line-height:0}
+.td-by .td-logo :is(img,svg){width:12px;height:12px}
+.todo-pop[data-mode=edit] .td-by>span:not(.td-logo),.todo-pop[data-view=flow] .td-by>span:not(.td-logo){display:none}
+.td-badge{display:inline-flex;align-items:center;gap:3px;height:22px;padding:0 5px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);font:var(--fs-xs)/1 var(--font-mono);cursor:pointer}
+.td-badge[hidden]{display:none}
+.td-badge svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.td-badge:hover,.td-badge[aria-expanded=true]{background:var(--surface-2);color:var(--ink)}
+.todo-pop:is([data-mode=edit],[data-view=flow]) .td-badge:is(:hover,[aria-expanded=true]){background:var(--surface-3)}
+.td-badge.bump{animation:td-bump var(--dur) var(--ease-out)}
+@keyframes td-bump{from{transform:scale(1.4)}}
+.todo-pop[data-view=flow] .td-foot{position:absolute;left:5px;right:8px;bottom:3px;margin:0;flex-direction:row-reverse}
+.todo-pop[data-view=flow] .td-badge{margin-right:auto}
+.td-more{flex:none;width:0;height:28px;overflow:hidden;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);opacity:0;visibility:hidden;cursor:pointer;transition:width var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),visibility var(--dur)}
+.td-more svg{width:16px;height:16px;fill:currentColor;flex:none}
+.todo-pop[data-mode=edit] .td-more{width:28px;opacity:1;visibility:visible}
+.td-more:hover,.td-more[aria-expanded=true]{background:var(--surface-3);color:var(--ink)}
+.td-port{position:absolute;left:50%;bottom:-8px;width:16px;height:16px;margin-left:-8px;cursor:crosshair;touch-action:none;opacity:0;pointer-events:none;transform:scale(.4);transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
+.td-port::after{content:"";position:absolute;inset:-8px}
+.td-port svg{display:block;width:16px;height:16px}
+.td-port circle{fill:var(--surface-paper);stroke:var(--line-blue);stroke-width:1.6}
+.todo-pop[data-mode=edit][data-view=flow] .td-port{opacity:1;pointer-events:auto;transform:none}
+/* リストでは使わない。最後の行の下にはみ出して、リストに要らないスクロールバーを出さない */
+.todo-pop:not([data-view=flow]) .td-port{display:none}
+.td-stack{position:absolute;left:0;top:0;display:flex;align-items:center;justify-content:center;gap:6px;border-radius:var(--r-s);background:var(--surface-1);color:var(--ink-weak);font-size:var(--fs-ui);cursor:pointer}
+.td-stack:hover{background:var(--surface-sel);color:var(--ink)}
+.td-stack .td-chev{display:inline-flex}
+.td-stack svg.i{width:12px;height:12px}
+.td-edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.td-edge{fill:none;stroke:var(--line-strong);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;transition:opacity var(--dur-fast) var(--ease-out)}
+.td-edge.pend{stroke:var(--line)}
+.td-edge.new{stroke-dasharray:1;animation:td-draw 900ms var(--ease-organic) both}
+.td-edge.out{opacity:0}
+.td-edge.temp{stroke:var(--line-blue);stroke-dasharray:4 4}
+/* 行の「…」のメニューと成果物の一覧。面の中に置く（右クリックのメニュー .pop.menu は画面に固定なので戻す） */
+.pop.menu.td-menu{position:absolute;max-width:300px;max-height:320px}
+.pop.td-menu .head{display:flex;align-items:center;gap:6px}
+.pop.td-menu .li{min-height:var(--td-hit)}
+.pop.td-menu .li::before{content:none}
+.pop.td-menu .li[aria-disabled=true]{opacity:.45;cursor:default;background:transparent}
+.pop.td-menu .li .ck{width:12px;flex:none;font-size:10px;color:var(--ink-blue)} /* allow-blue: 選んでいる印 */
+.td-menu .back{width:24px;height:24px;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink);font-size:16px;cursor:pointer}
+.td-menu .back:hover{background:var(--surface-2)}
+/* 成果物の一覧（ファイルのリンク .file-where と同じ並び: 種類の印・名前・弱い字の場所） */
+.pop.menu.td-links{width:280px;max-width:calc(100% - 12px)}
+.td-lrow{display:flex;align-items:center;gap:2px}
+.td-link{flex:1}
+.td-link .td-kind{display:inline-flex;flex:none}
+.td-link svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--ink-weak)}
+.td-link .nm{flex:none;max-width:64%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-blue)} /* allow-blue: リンク */
+.td-link .wh{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:var(--fs-xs)/1.6 var(--font-mono);color:var(--ink-weak);direction:rtl;text-align:left}
+.pop.td-menu .li.td-link[aria-disabled=true]{opacity:1}
+.td-link[aria-disabled=true] .nm{color:var(--ink-weak)}
+.td-link[aria-disabled=true] .wh{direction:ltr;font-family:inherit}
+.td-unlink{flex:none;width:24px;height:24px;border-radius:var(--r-pill);display:grid;place-items:center;background:transparent;color:var(--ink-weak);font-size:16px;line-height:1;cursor:pointer}
+.td-unlink:hover{background:var(--surface-2);color:var(--ink)}
+.td-linkadd{margin:0;padding:6px 0 0}
+/* ⋮ のメニューの ToDo の行の、未確認の変更の点（頭の入口の .entry-dot と同じ色） */
+.pop.menu .hint.todo-menu-dot{width:8px;height:8px;padding:0;border-radius:50%;color:var(--ink-unread);background:currentColor;flex:none}
+/* 狭い画面: 下からのシート。押す所は 44px */
+@media (max-width:700px){
+  #todoEntry{display:none}
+  .todo-pop{--td-hit:44px;left:0;right:0;top:auto;bottom:0;width:auto;max-height:85%;border-radius:var(--r-l) var(--r-l) 0 0;box-shadow:0 -8px 28px var(--shadow)}
+  .todo-pop.in{animation:sheet-in var(--dur) var(--ease-out)}
+  .todo-pop.free{bottom:auto;right:auto;max-height:none}
+  .todo-pop.max{border-radius:0}
+  .todo-pop > .sheet-grab{display:block}
+  .todo-pop.max > .sheet-grab{display:none}
+  .td-bar{border-radius:0}
+  .td-head{gap:2px;padding:4px 4px 2px 14px}
+  .td-ttl{flex-direction:column;align-items:flex-start;gap:0;line-height:1.2}
+  .td-ttl b{font-size:18px}
+  .td-seg button{padding:6px 9px;font-size:13px}
+  .td-hbtn{width:44px;height:44px;font-size:24px}
+  .td-edit{width:44px;height:36px}
+  .td-zoom button{height:44px;min-width:44px}
+  .td-zoom .z-in,.td-zoom .z-out{display:none}
+  .td-zoom .z-fit{padding:0 16px}
+  .td-add{padding:6px 12px max(12px,env(safe-area-inset-bottom,0px))}
+  .todo-pop .td-add input.field,.todo-pop .td-linkadd input.field{padding:10px 16px}
+  .todo-pop[data-view=flow] .td-item{font-size:var(--fs-meta)}
+  .todo-pop[data-mode=edit][data-view=list][data-drag=on] .td-grip{width:28px;height:44px}
+  .td-mark{width:40px;height:44px}
+  .todo-pop[data-view=flow] .td-mark{width:34px}
+  .td-mark svg{width:18px;height:18px}
+  .todo-pop[data-view=flow] .td-text{-webkit-line-clamp:3;padding-top:7px}
+  .td-by>span:not(.td-logo){display:none}
+  .td-badge{height:44px;padding:0 8px;font-size:13px}
+  .td-badge svg{width:14px;height:14px}
+  .todo-pop[data-view=flow] .td-badge{height:26px}
+  .todo-pop[data-mode=edit] .td-more{width:36px;height:44px}
+  .todo-pop[data-mode=edit][data-view=flow] .td-more{width:30px;height:36px}
+  .td-unlink{width:44px;height:44px;font-size:20px}
+}
+@media (prefers-reduced-motion:reduce){
+  .todo-pop,.todo-pop *,.todo-veil{animation-duration:0s!important;transition-duration:0s!important}
+  .td-mark .spin{animation:none}
+  .td-item.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}
+}

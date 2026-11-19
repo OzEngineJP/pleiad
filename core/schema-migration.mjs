@@ -240,7 +240,7 @@ export function migrateSchema2To3(dir, { now = new Date(), afterMemoryImport, af
 }
 
 /**
- * 形式 3 → 4（会話の ToDo の表を足す。ADR 0341）。DB 全体を backup-schema3-<日時>/ へ写してから表を作り、
+ * 形式 3 → 4（会話の ToDo の表を足す。ADR 0342）。DB 全体を backup-schema3-<日時>/ へ写してから表を作り、
  * 表があることを確かめてから番号を 4 にする。失敗したら番号は 3 のまま（表は IF NOT EXISTS なので、やり直しても同じ）。
  * options.afterTodosCreate(db) はテスト用（表を作った後・番号の更新前に失敗を差し込む）
  */

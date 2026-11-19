@@ -17,6 +17,7 @@ export function contextMetrics({ usage, auto, session, compact } = {}) {
 }
 
 const paths = {
+  todo: ['M3.5 7l2.2 2.2L9.5 5M13 7.5h7.5M3.5 16.5l2.2 2.2 3.8-4.2M13 17h7.5'],
   plugins: ['M9 3v4m6-4v4M6 7h12v3.5a6 6 0 0 1-12 0zM12 16.5V21'],
   git: ['M7 7v10m10-6c0 4-10 2-10 6', 'M7 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4m0 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4m10-10a2 2 0 1 0 0 4 2 2 0 0 0 0-4'],
   browser: ['M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18', 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18'],
@@ -39,8 +40,8 @@ export function menuMeter(percent) {
 }
 
 /** The header menu is deliberately independent of the sidebar's full row menu. */
-export function conversationMenuItems({ plugins, git, browser, usage, compact, copy }) {
-  return [['plugins', plugins], ['git', git], ['browser', browser], ['usage', usage], ['compact', compact], ['copy', copy]]
+export function conversationMenuItems({ todo, plugins, git, browser, usage, compact, copy }) {
+  return [['todo', todo], ['plugins', plugins], ['git', git], ['browser', browser], ['usage', usage], ['compact', compact], ['copy', copy]]
     .filter(([, item]) => item).map(([name, item]) => ({ ...item, icon: conversationIcon(name) }));
 }
 

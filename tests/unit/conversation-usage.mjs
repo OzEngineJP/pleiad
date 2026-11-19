@@ -10,7 +10,7 @@ export default async function(t) {
   const pagehide = [];
   globalThis.document = { createElement: tag => new N(tag), createElementNS: (_ns, tag) => new N(tag) };
   try {
-    const options = Object.fromEntries(['plugins', 'git', 'browser', 'usage', 'compact', 'copy'].map(label => [label, { label }]));
+    const options = Object.fromEntries(['todo', 'plugins', 'git', 'browser', 'usage', 'compact', 'copy'].map(label => [label, { label }]));
     const items = conversationMenuItems(options);
     assert.deepEqual(items.map(item => item.label), Object.keys(options));
     for (const item of items) {
@@ -18,7 +18,7 @@ export default async function(t) {
       assert.equal(item.icon.getAttribute('aria-hidden'), 'true');
       assert.ok(item.icon.children.length);
     }
-    assert.deepEqual(conversationMenuItems({ ...options, plugins: false, git: false, browser: false }).map(item => item.label), ['usage', 'compact', 'copy']);
+    assert.deepEqual(conversationMenuItems({ ...options, todo: false, plugins: false, git: false, browser: false }).map(item => item.label), ['usage', 'compact', 'copy']);
     t.ok('利用可能な入口だけを順に並べ、全行に線画のアイコンを付ける', true);
 
     assert.equal(menuMeter(null), null);

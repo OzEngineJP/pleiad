@@ -143,6 +143,8 @@ import { setupNotificationInbox } from './notification-inbox.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
+import { createSessionTodo } from './session-todo.mjs';
+import { openExternalLink } from './link-open.mjs';
 import { createThreadNav } from './thread-nav.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
@@ -3243,6 +3245,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'botsChanged') homeDest.botsChanged();
   if (channelsUi.onEvent(ev, replay)) return;
   if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
+  if (ev.type === 'todosChanged') { sessionTodo.onEvent(ev); return; }
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -8385,7 +8388,7 @@ const voiceWraps = new WeakMap();
 voiceUi.mount({
   id: 'chat',
   canStart: () => !retiredHere(),
-  header: document.querySelector('body > main > header.top'), headerBefore: $('tocEntry'),
+  header: document.querySelector('body > main > header.top'), headerBefore: $('todoEntry'),
   composer: chatComposer.voiceSlot(),
   main: document.querySelector('body > main'), log: $('log'), overlay: $('logFrame'), replyScope: () => $('log'),
   tail: {
@@ -9099,7 +9102,8 @@ function paintHeaderEntries() {
 /** 「…」の右上の変更ありの点。700px 以下の「…」のメニューにあるプラグイン・git の状態を見る。 */
 function paintMoreEntry() {
   const button = $('sessionMore');
-  const changed = narrowView.matches && !!state.current && (!!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0);
+  // ToDo の未確認の変更（AI が変えた項目）も、狭い画面では ⋮ の点で知らせる（web/session-todo.mjs）
+  const changed = narrowView.matches && !!state.current && (!!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0 || sessionTodo.hasUnseen());
   const dot = button.querySelector('.entry-dot');
   if (changed && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
   else if (!changed) dot?.remove();
@@ -9411,6 +9415,8 @@ function syncTitleControls() {
   $("titleWand").disabled = !on || busy || s?.unsent || caps.suggestTitle === false;
   // この会話の操作（脇の行の「…」と同じメニュー）。一覧に載っている会話だけ
   $("sessionMore").hidden = !s;
+  // 会話の ToDo（ADR 0342）。一覧に載っている（送った）会話だけ。入口の出し入れは session-todo.mjs
+  sessionTodo.load(s && !s.unsent ? s.id : null);
   paintHeaderEntries();
 }
 function selectedMode(s, bid, modes, chosen = null) {
@@ -10934,6 +10940,15 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   openAccount: o => claudeAccounts.open(o) });
 // 会話の目次と検索（右パネル。狭い画面は下からのシート）。見出しの虫眼鏡と、会話の画面にいるときの Ctrl+F（macOS は ⌘F）で開く
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
+// 会話の ToDo（承認済み 2026-11-19。web/session-todo.mjs。ADR 0342）。PC は頭の ToDo の入口、700px 以下は ⋮ のメニューの先頭から開く。
+// 成果物はファイルのリンクと同じ開き方（ファイル・フォルダーは Pleiad のページ、URL は既定のブラウザー）。右クリックはファイルのメニュー
+const sessionTodo = createSessionTodo({
+  host: document.querySelector('body > main'), header: document.querySelector('body > main > header.top'), entry: $('todoEntry'), narrow: navNarrow,
+  moreButton: $('sessionMore'), cmd, notify: (text) => notify(text), labelOf, logo: (backend) => backendLogo(backend, ''),
+  openLink: (link) => (link.kind === 'url' ? openExternalLink(link.url) : filePreview.open({ path: link.path, line: null }, null)),
+  linkMenu: (x, y, link, missing) => filePreview.menu(x, y, { path: link.path, kind: link.kind === 'dir' ? 'directory' : 'file', sessionId: state.current, missing }),
+  onChange: () => paintMoreEntry(),
+});
 // 作業のダイアログの会話内検索（2 つ目。同じ部品・同じ右の欄。見る先は選んでいる子の会話で、シートも最前面のダイアログの中に出す）
 const workThread = () => $('workBody').querySelector(':scope > .thread.bg-thread');
 // 最新へのボタンと Alt+↑↓・End も主と同じ（作業のダイアログが最前面で開いている間、前面の筋に効く。一覧・右の欄・シートの中では奪わない）
@@ -11204,6 +11219,7 @@ function openConversationMenu(s, r) {
   const used = headerUsage.currentPercent();
   const supported = capsOf(s.backend).compact;
   const items = conversationMenuItems({
+    todo: Boolean(state.current) && sessionTodo.sessionId() === state.current && { label: sessionTodo.label(), hint: sessionTodo.hasUnseen() ? () => el('span', 'hint todo-menu-dot') : null, onClick: () => sessionTodo.open() },
     plugins: Boolean(state.current) && { label: t('session.context.label'), onClick: () => sessionContext.open($('sessionMore')) },
     git: Boolean(state.current && state.git.data) && { label: state.git.data.dirty > 0 ? t('git.entryChanged') : t('git.entry'), onClick: () => gitPanel?.open($('sessionMore')) },
     browser: browserEntry?.available() && { label: chromeLink === 'connected' || chromeWindows.has(state.current) ? t('browser.unifiedEntryLabel') : (rightPane.isOpen() ? t('tabs:address.closePanel') : t('tabs:address.openPagePanel')), onClick: () => browserEntry.toggle($('sessionMore')) },

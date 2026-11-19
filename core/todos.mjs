@@ -1,4 +1,4 @@
-// 会話の ToDo（ADR 0341）。会話ごとの「やること」の並びと、項目の間の「先に終える」関係（after）、成果物のリンク。
+// 会話の ToDo（ADR 0342）。会話ごとの「やること」の並びと、項目の間の「先に終える」関係（after）、成果物のリンク。
 // 画面（人）と AI（ply_control の todos.*）が同じ道具で読み書きする。保存は pleiad.db の todos・todo_scopes（core/db.mjs の todoTable）。
 //   createTodos({ dataDir, now, onChange }) → { list, add, update, remove, checkLinks, close }
 //   書く操作は持ち主（scope）の版（rev）を 1 つ上げ、onChange({ scope, rev, items, changed, by }) を呼ぶ（サーバーが画面へ配る）。
