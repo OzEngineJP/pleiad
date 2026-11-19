@@ -45,7 +45,7 @@ async function boot(label) {
   const envLog = path.join(scratch, 'fake-claude-env.log');
   const probeLog = path.join(scratch, 'fake-claude-probe.log');
   await Promise.all([data, claudeConfig, work].map(d => fs.mkdir(d, { recursive: true })));
-  await fs.writeFile(modelsFile, JSON.stringify({ labels: { [TOK_REG]: 'registered', [ACCESS]: 'access' } }));
+  await fs.writeFile(modelsFile, JSON.stringify({ labels: { [TOK_REG]: 'registered', [ACCESS]: 'access' }, accounts: { [ACCESS]: { organization: ORG, email: EMAIL, tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty' } } }));
   const cli = await installFakeClaude(path.join(scratch, 'cli'));
   const api = await startFakeAnthropicApi({ [TOK_REG]: ORG });
   const server = await startServer({
@@ -128,13 +128,13 @@ export default async function (t) {
       const row = await s.refreshRow();
       const lines = s.envLines();
       t.ok('オン・使える: 会話と同じ組み立て — アクセス用トークン・権限の並び・共有の設定フォルダの 3 つで 1 回読み、アカウントごとの覚えに書く（ログイン中の覚えは書かない）',
-        row?.status === 'ok' && Array.isArray(row?.connectors) && lines.length === 1 && lines[0].who === 'access' && lines[0].scopes === SCOPES.join(' ')
-          && lines[0].configDir === s.claudeConfig && fss.existsSync(s.accountCache) && !fss.existsSync(s.savedList),
+        row?.status === 'ok' && Array.isArray(row?.connectors) && lines.length === 3 && lines.every(line => line.who === 'access' && line.scopes === SCOPES.join(' '))
+          && lines[0].configDir !== s.claudeConfig && lines.slice(1).every(line => line.configDir === s.claudeConfig) && fss.existsSync(s.accountCache) && !fss.existsSync(s.savedList),
         JSON.stringify({ row: row && { status: row.status, n: row.connectors?.length }, lines, cache: fss.existsSync(s.accountCache), saved: fss.existsSync(s.savedList) }));
       const cacheText = fss.readFileSync(s.accountCache, 'utf8');
       t.ok('アカウントごとの覚えにトークン・メール・組織の id を書かない', ![ACCESS, REFRESH, TOK_REG, EMAIL, ORG].some(x => cacheText.includes(x)));
       const after = await s.read();
-      t.ok('オン: 上の表（エージェントの設定）のためには読まない（CLI を足さない）', after.state === 'none' && s.envLines().length === 1, JSON.stringify({ after, n: s.envLines().length }));
+      t.ok('オン: 上の表（エージェントの設定）のためには読まない（CLI を足さない）', after.state === 'none' && s.envLines().length === 3, JSON.stringify({ after, n: s.envLines().length }));
 
       // 4. 段 3: スイッチと、送る前に止まった発言
       const { c } = s;

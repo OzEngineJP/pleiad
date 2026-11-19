@@ -20,7 +20,7 @@ import { recordAll, ACCOUNT_ID, FAKE } from '../lib/claude-launch-record.mjs';
 import { createClaudeConnectorsGate, CONNECTORS_FILE, identitySuffix } from '../../core/claude-connectors.mjs';
 import {
   createClaudeConnectorsAuth, readAccessCredentials, readMacAccessCredentials, projectProfile, ConnectorsAuthError, VERIFIED_VERSIONS, IDENTITY, EXPIRY_MARGIN_MS, READ_ATTEMPTS,
-  projectKeyOf, settingsOverrides, PROFILE_IO, connectorListProbe, createClaudeConnectorsWiring,
+  projectKeyOf, settingsOverrides, PROFILE_IO, connectorListProbe, createClaudeConnectorsWiring, supportedConnectorVersions, createConnectorVerification,
 } from '../../core/claude-connectors-auth.mjs';
 import { withUsageLock, createUsageReadsForTest } from '../../core/backends/claude-usage.mjs';
 import { backend as claudeBackend, accountScopeKeyForTest, catalogStateKeysForTest } from '../../core/backends/claude.mjs';
@@ -49,6 +49,15 @@ const sha = async file => crypto.createHash('sha256').update(await fs.readFile(f
 const readJson = async file => JSON.parse(await fs.readFile(file, 'utf8'));
 
 export default async function (t) {
+  const pin = JSON.parse(await fs.readFile(new URL('../../core/claude-sdk-pin.json', import.meta.url), 'utf8'));
+  t.ok('SDK の固定値と確認済み一覧が一致する', VERIFIED_VERSIONS.length > 0 && VERIFIED_VERSIONS.every(v => v.sdk === pin.version));
+  for (const cli of ['2.1.322', '2.1.328', '2.2.0']) {
+    t.ok(`CLI ${cli} は下限以上`, supportedConnectorVersions({ cli, sdk: pin.version }));
+  }
+  for (const cli of ['2.1.321', '2.0.999', null, '', 'unknown', '2.1.328-beta', '2.1.328junk']) {
+    t.ok(`古い・不明な CLI は停止 (${cli})`, !supportedConnectorVersions({ cli, sdk: pin.version }));
+  }
+  t.ok('新しい SDK も完全一致しなければ停止', !supportedConnectorVersions({ cli: '2.2.0', sdk: '0.3.289' }));
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-cn-auth-')));
   const consoleLines = [];
   const savedConsole = {};
@@ -61,6 +70,69 @@ export default async function (t) {
   const restoreConsole = () => { for (const [k, v] of Object.entries(savedConsole)) console[k] = v; };
   const savedProcessEnv = JSON.stringify(process.env);
   try {
+    {
+      const dir = path.join(tmp, 'verification-usage'), home = path.join(tmp, 'verification-home');
+      const shared = path.join(home, '.claude');
+      await fs.mkdir(dir, { recursive: true }); await fs.mkdir(shared, { recursive: true });
+      await fs.writeFile(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL } }));
+      const args = { account: { id: ACCOUNT_ID, name: 'fake' }, ver: { cli: '2.1.328', sdk: '0.3.288' }, auth: { token: ACCESS, env: {} }, dir, shared, home, expectedIdentity: hashConnectorIdentity([ORG, EMAIL]) };
+      let calls = 0;
+      const good = async () => { calls++; await new Promise(r => setTimeout(r, 5)); return { account: { organization: ORG, email: EMAIL, tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty' }, connectors: ['alpha'] }; };
+      const dataDir = path.join(tmp, 'verification-data');
+      const verify = createConnectorVerification({ dataDir, probe: good });
+      await Promise.all([verify(args), verify(args), verify(args)]);
+      t.ok('初回確認: 同時起動は一組だけ（専用・共有の二起動）', calls === 2);
+      await createConnectorVerification({ dataDir, probe: () => { throw new Error('記録があれば呼ばない'); } })(args);
+      t.ok('初回確認: 保存した版は再起動後も起動しない', calls === 2);
+      const record = await fs.readFile(path.join(dataDir, 'claude-connectors-verification', (await fs.readdir(path.join(dataDir, 'claude-connectors-verification')))[0]), 'utf8');
+      t.ok('初回確認: 記録に秘密がない', leaked(record).length === 0);
+      const previousCalls = calls;
+      await verify({ ...args, ver: { ...args.ver, cli: '2.2.0' } });
+      t.ok('初回確認: CLI が変われば確認し直す', calls === previousCalls + 2);
+      let listCalls = 0;
+      for (const [label, profile] of [['別の人', { organizationUuid: ORG, emailAddress: 'other@example.invalid' }], ['欠落', {}]]) {
+        await fs.writeFile(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: profile }));
+        const error = await verify(args).then(() => null, e => e);
+        t.ok(`使用量の本人情報が${label}なら記録済みでも停止`, error?.code === 'connectors-owner');
+      }
+      await fs.writeFile(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL } }));
+      await createConnectorVerification({ dataDir: path.join(tmp, 'no-sdk-person'), probe: async () => ({account: {tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty'}, connectors: []}) })(args);
+      t.ok('SDK が本人を返さなくても使用量の本人情報と共有の認証元で照合できる', true);
+      for (const [label, probe, kind] of [
+        ...['shared-login', 'missing', 'provider'].map(label => [label, async () => ({ account: label === 'missing' ? {} : { tokenSource: label === 'shared-login' ? 'oauth' : 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: label === 'provider' ? 'bedrock' : 'firstParty' }, connectors: ['alpha'] }), 'owner']),
+        ['持ち主違い', async () => ({ account: { organization: ORG, email: 'other@example.invalid' }, connectors: [] }), 'owner'],
+        ['一覧混入', async () => ({ account: { organization: ORG, email: EMAIL, tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty' }, connectors: [++listCalls === 1 ? 'alpha' : 'beta'] }), 'verificationList'],
+        ['ホームの本人変更', async () => { await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: String(Math.random()) } })); return good(); }, 'verificationWrites'],
+        ['ホームの組織変更', async () => { await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: 'fake-other-organization', emailAddress: EMAIL } })); return good(); }, 'verificationWrites'],
+        ['時間切れ', () => new Promise(() => {}), 'verificationTimeout'],
+      ]) {
+        await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL } }));
+        const check = createConnectorVerification({ dataDir: path.join(tmp, `v-${label}`), probe, timeoutMs: 100 });
+        let error;
+        try { await check(args); } catch (e) { error = e; }
+        t.ok(`初回確認: ${label}で停止`, error?.code === `connectors-${kind}`, error?.code);
+        const records = await fs.readdir(path.join(tmp, `v-${label}`, 'claude-connectors-verification')).catch(() => []);
+        t.ok(`初回確認: ${label}の失敗は記録しない`, records.length === 0);
+        await createConnectorVerification({ dataDir: path.join(tmp, `v-${label}`), probe: good })(args);
+        t.ok(`初回確認: ${label}の失敗後は待ち続けず再試行できる`, true);
+      }
+      for (const state of ['present', 'missing', 'unreadable']) {
+        const homeFile = path.join(home, '.claude.json');
+        if (state === 'missing') await fs.rm(homeFile, { force: true });
+        else await fs.writeFile(homeFile, state === 'present' ? JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL }, count: 0 }) : '{broken');
+        const check = createConnectorVerification({ dataDir: path.join(tmp, `allowed-${state}`), probe: async () => {
+          await fs.writeFile(path.join(shared, '.claude.json'), JSON.stringify({ count: Math.random() }));
+          await fs.writeFile(path.join(shared, 'settings.json'), JSON.stringify({ count: Math.random() }));
+          await fs.writeFile(path.join(shared, 'unrelated.json'), '{}');
+          if (state === 'present') await fs.writeFile(homeFile, JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: EMAIL }, count: Math.random() }));
+          else if (state === 'unreadable') await fs.writeFile(homeFile, '{different broken');
+          return good();
+        } });
+        await check(args);
+        t.ok(`初回確認: 共有の書込み・ホームの本人以外の変更を許可 (${state})`, true);
+      }
+      t.ok('初回確認: 記録の一時ファイルが残らない', (await fs.readdir(path.join(dataDir, 'claude-connectors-verification'))).every(f => f.endsWith('.json')));
+    }
     // ---------------------------------------------------------------- 1. 資格情報の読み取り
     {
       const dir = path.join(tmp, 'cred'); await fs.mkdir(dir, { recursive: true });
@@ -199,7 +271,7 @@ export default async function (t) {
         ['env', 'ANTHROPIC_BASE_URL', () => {}, { env: { ANTHROPIC_BASE_URL: 'https://x.example.invalid' } }, false],
         ['env', 'CLAUDE_CODE_USE_BEDROCK', () => {}, { env: { CLAUDE_CODE_USE_BEDROCK: '1' } }, false],
         ['history', 'CLAUDE_CODE_PROJECT_DIR_NAME', () => {}, { env: { CLAUDE_CODE_PROJECT_DIR_NAME: 'x' } }, false],
-        ['version', 'CLI の版が違う', () => { versions = { cli: '2.1.323', sdk: VERIFIED_VERSIONS[0].sdk }; }, {}, false],
+        ['version', 'CLI の版が古い', () => { versions = { cli: '2.1.321', sdk: VERIFIED_VERSIONS[0].sdk }; }, {}, false],
         ['version', 'SDK の版が違う', () => { versions = { cli: VERIFIED_VERSIONS[0].cli, sdk: '0.3.289' }; }, {}, false],
         ['version', '版が分からない（null）', () => { versions = { cli: null, sdk: null }; }, {}, false],
         ['version', '版を聞くのに失敗', () => { versions = new Error('boom'); }, {}, false],
@@ -405,7 +477,7 @@ export default async function (t) {
         const boom = what => async () => { touched++; throw new Error(`呼ばれた: ${what}`); };
         const resolveAuth = createClaudeConnectorsAuth({
           accounts: { usageDir: () => { touched++; throw new Error('usageDir'); }, ownerStatus: boom('ownerStatus') }, versions: boom('versions'), refresh: boom('refresh'),
-          guard: () => { touched++; }, project: boom('project'), readFile: boom('readFile'), sleep: boom('sleep'), now: () => { touched++; return 0; }, env: new Proxy({}, { get: () => { touched++; return undefined; }, ownKeys: () => { touched++; return []; } }),
+          verify: boom('verify'), guard: () => { touched++; }, project: boom('project'), readFile: boom('readFile'), sleep: boom('sleep'), now: () => { touched++; return 0; }, env: new Proxy({}, { get: () => { touched++; return undefined; }, ownKeys: () => { touched++; return []; } }),
         });
         const { gate } = createClaudeConnectorsGate({ dataDir: data, resolveAuth });
         const origSet = globalThis.setTimeout, origInt = globalThis.setInterval;
@@ -918,3 +990,4 @@ export default async function (t) {
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5 }).catch(() => {});
   }
 }
+import { hashConnectorIdentity } from '../../core/claude-connectors.mjs';
