@@ -252,9 +252,12 @@ export const CONNECTOR_PROBE_MS = 20_000;
 
 /** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0327）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
 // connectors: コネクターの入口がオンのアカウント（ADR 0340 段 2）。会話と同じ組み立て（期限を確かめたトークン + 設定フォルダ・権限）で読み、取れなければ投げる
-export async function probeClaudeConnectors({ deny = [], token = null, connectors = null } = {}) {
+export async function probeClaudeConnectors({ deny = [], token = null, connectors = null, verification = false, signal = null } = {}) {
   const auth = connectors ? await connectors.fresh({}) : null;
   const ac = new AbortController();
+  const abort = () => ac.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) ac.abort();
   const timer = setTimeout(() => ac.abort(), CONNECTOR_PROBE_MS);
   const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
   let q = null;
@@ -264,16 +267,18 @@ export async function probeClaudeConnectors({ deny = [], token = null, connector
       // token: Pleiad に登録した Claude のアカウント（無ければログイン中のアカウント）。会話と同じ環境で読む
       pathToClaudeCodeExecutable: claudeExecutable(), env: auth ? claudeEnv(process.env, { token: auth.token, extra: auth.env }) : claudeEnv(process.env, { token }), abortController: ac,
       settingSources: ["user"], settings: { disableAllHooks: true, ...(deny.length ? { deniedMcpServers: deny.map((serverName) => ({ serverName })) } : {}) },
-      persistSession: false, stderr: () => {},
+      persistSession: false, stderr: () => {}, ...(verification ? { tools: [], model: 'haiku' } : {}),
     } });
     await q.initializationResult();
     await new Promise((resolve) => setTimeout(resolve, CONNECTOR_WAIT_MS));
-    return connectorList(await q.mcpServerStatus());
+    const list = connectorList(await q.mcpServerStatus());
+    return verification ? { connectors: list, account: await q.accountInfo() } : list;
   } catch (err) {
     if (!auth) throw err;
     // オンのときは、渡したトークンが混ざりうる元のエラーを渡さない（伏せた文面と code だけ）
     throw Object.assign(new Error(redactToken(redactToken(err?.message ?? err, auth.token), token)), err?.code ? { code: err.code } : {});
   } finally {
+    signal?.removeEventListener('abort', abort);
     clearTimeout(timer);
     try { q?.close?.(); } catch { /* 既に閉じている */ }
     ac.abort();

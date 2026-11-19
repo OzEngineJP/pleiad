@@ -28,8 +28,23 @@ import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnecto
 import { claudeManagedFiles } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
 
-/** 確かめた CLI と SDK の組（ADR 0340）。これ以外の版ではオンを止める（オフの会話は影響しない） */
+/** CLI の下限と完全一致を要求する SDK の組（ADR 0340）。 */
 export const VERIFIED_VERSIONS = [{ cli: '2.1.322', sdk: '0.3.288' }];
+/** CLI は下限以上、Pleiad が固定する SDK は完全一致。未知・先行版の文字列は許可しない。 */
+export function supportedConnectorVersions(found, verified = VERIFIED_VERSIONS) {
+  const parse = value => typeof value === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)
+    ? value.split('.').map(Number) : null;
+  const cli = parse(found?.cli);
+  if (!cli || !cli.every(Number.isSafeInteger)) return false;
+  return verified.some(v => {
+    const minimum = parse(v.cli);
+    if (!minimum || found?.sdk !== v.sdk) return false;
+    for (let i = 0; i < 3; i++) {
+      if (cli[i] !== minimum[i]) return cli[i] > minimum[i];
+    }
+    return true;
+  });
+}
 /** キャッシュのキーに足す識別子（core/claude-connectors.mjs の identitySuffix）。b1 の認証元を別のキャッシュにする */
 export const IDENTITY = 'b1';
 /**
@@ -484,7 +499,7 @@ async function projectProfileNow({ source, target, cwd, platform = process.platf
  */
 export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard = () => {}, env = process.env, home = os.homedir(), platform = process.platform,
   now = Date.now, readFile = fs.readFile, sleep = sleepFor, project = projectProfile, verified = VERIFIED_VERSIONS, managedFiles = null,
-  expiryMarginMs = EXPIRY_MARGIN_MS } = {}) {
+  expiryMarginMs = EXPIRY_MARGIN_MS, verify = null } = {}) {
   const sharedDir = () => env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
 
   async function settingsCheck(name, cwd = null) {
@@ -505,7 +520,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     if (moved.length) throw new ConnectorsAuthError('history', { name, names: moved.join(', ') }, 'history', { scope: 'env' });
     await settingsCheck(name, cwd);
     const found = await Promise.resolve().then(versions).catch(() => ({}));
-    if (!verified.some(v => v.cli === found?.cli && v.sdk === found?.sdk)) {
+    if (!supportedConnectorVersions(found, verified)) {
       throw new ConnectorsAuthError('version', { name, cli: found?.cli ?? '?', sdk: found?.sdk ?? '?', verified: verified.map(v => `CLI ${v.cli} / SDK ${v.sdk}`).join(', ') });
     }
     // 読めない（例外）も確かめられない扱いで止める（一覧の読み取りがログイン中のアカウントへ落ちないように）
@@ -596,7 +611,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
   return resolveAuth;
 
   async function resolveOn(account) {
-    await checks(account);
+    const ver = await checks(account);
     await usageMarkers(account);
     const dir = accounts.usageDir(account.id);
     guard(dir, account);
@@ -624,7 +639,9 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
               }
               try { await project({ source: cliConfigFile(env, home), target: path.join(shared, '.claude.json'), cwd }); }
               catch { throw new ConnectorsAuthError('profile', { name }); }
-              return { token: cred.token, env: { CLAUDE_CONFIG_DIR: shared, CLAUDE_CODE_OAUTH_SCOPES: cred.scopes.join(' ') }, expiresAt: cred.expiresAt };
+              const auth = { token: cred.token, env: { CLAUDE_CONFIG_DIR: shared, CLAUDE_CODE_OAUTH_SCOPES: cred.scopes.join(' ') }, expiresAt: cred.expiresAt };
+              if (verify) await verify({ account, ver, auth, dir, shared, home });
+              return auth;
             } catch (error) {
               throw attachConnectorsError(error, account);
             }
@@ -640,15 +657,71 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
  * 印はオンの間だけ効く（使用量の読み取りのたびに入口の設定を見て、オフなら外す。core/backends/claude-usage.mjs）
  * @param {{ guard: (dir: string, active: () => Promise<boolean>) => void, refresh: (dir: string) => Promise<unknown> }} o.usage
  */
-export function createClaudeConnectorsWiring({ dataDir, accounts, versions, usage, settings = createClaudeConnectorSettings({ dataDir }), ...options }) {
+export function createClaudeConnectorsWiring({ dataDir, accounts, versions, usage, probe = null, settings = createClaudeConnectorSettings({ dataDir }), ...options }) {
   const resolveAuth = createClaudeConnectorsAuth({
     accounts, versions, refresh: usage.refresh,
+    verify: probe ? createConnectorVerification({ dataDir, probe }) : null,
     guard: (dir, account) => usage.guard(dir, async () => (await settings.read(account.id)).enabled === true),
     ...options,
   });
   return {
     ...createClaudeConnectorsGate({ dataDir, resolveAuth, settings }),
     inspect: resolveAuth.inspect,
+  };
+}
+
+const verificationFlights = new Map();
+/** 初回だけ、同じ資格情報を使った専用設定先と共有設定先の本人・一覧を比較する。秘密は保存しない。 */
+export function createConnectorVerification({ dataDir, probe, timeoutMs = 30_000 }) {
+  const read = async file => fs.readFile(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  const digest = value => crypto.createHash('sha256').update(value).digest('hex');
+  return async ({ account, ver, auth, dir, shared, home }) => {
+    let expected;
+    try {
+      const oa = JSON.parse(await fs.readFile(path.join(dir, '.claude.json'), 'utf8')).oauthAccount;
+      if (!oa?.organizationUuid || !oa?.emailAddress) throw new Error();
+      expected = hashConnectorIdentity([oa.organizationUuid, oa.emailAddress]);
+    } catch { throw new ConnectorsAuthError('owner', { name: account.name }); }
+    const key = hashConnectorIdentity([account.id, ver.cli, ver.sdk, expected]);
+    const file = path.join(dataDir, 'claude-connectors-verification', `${key}.json`);
+    const flightKey = path.resolve(file);
+    if (verificationFlights.has(flightKey)) return verificationFlights.get(flightKey);
+    const run = (async () => {
+      const cached = await read(file);
+      if (cached?.toString() === JSON.stringify({ version: 1, cli: ver.cli, sdk: ver.sdk, key })) return;
+      const snapshot = async () => Promise.all([path.join(home, '.claude.json'), path.join(shared, '.claude.json'), path.join(shared, 'settings.json')].map(async p => {
+        const bytes = await read(p); return bytes === null ? null : digest(bytes);
+      }));
+      const before = await snapshot();
+      const ac = new AbortController();
+      let sharedChanged = false;
+      const watcher = fsSync.watch(shared, { recursive: true }, () => { sharedChanged = true; });
+      watcher.on('error', () => { sharedChanged = true; ac.abort(); });
+      let timer;
+      const check = async () => {
+        const results = [];
+        for (const config of [dir, shared]) {
+          if (ac.signal.aborted) throw new ConnectorsAuthError('verificationTimeout', { name: account.name });
+          const result = await probe({ token: auth.token, verification: true, connectors: { fresh: async () => ({ ...auth, env: { ...auth.env, CLAUDE_CONFIG_DIR: config } }) }, signal: ac.signal });
+          const info = result?.account;
+          if (!info?.email || !info?.organization || hashConnectorIdentity([info.organization, info.email]) !== expected) throw new ConnectorsAuthError('owner', { name: account.name });
+          if (!Array.isArray(result.connectors)) throw new ConnectorsAuthError('verificationList', { name: account.name });
+          results.push(JSON.stringify(result.connectors.map(c => typeof c === 'string' ? c : c.name).sort()));
+        }
+        if (results[0] !== results[1]) throw new ConnectorsAuthError('verificationList', { name: account.name });
+        if (sharedChanged || JSON.stringify(before) !== JSON.stringify(await snapshot())) throw new ConnectorsAuthError('verificationWrites', { name: account.name });
+      };
+      try {
+        await Promise.race([check(), new Promise((_, reject) => { timer = setTimeout(() => { ac.abort(); reject(new ConnectorsAuthError('verificationTimeout', { name: account.name })); }, timeoutMs); })]);
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, JSON.stringify({ version: 1, cli: ver.cli, sdk: ver.sdk, key }), { mode: 0o600 });
+      } catch (error) {
+        if (error instanceof ConnectorsAuthError) throw error;
+        throw new ConnectorsAuthError('verificationList', { name: account.name });
+      } finally { clearTimeout(timer); watcher.close(); }
+    })();
+    verificationFlights.set(flightKey, run);
+    try { await run; } finally { if (verificationFlights.get(flightKey) === run) verificationFlights.delete(flightKey); }
   };
 }
 

@@ -571,6 +571,7 @@ const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir, secrets: c
 // 使用量の読み取りの印（guard）はオンの間だけ効き、オフにすると次の読み取りで外れる。更新（refresh）は印を付ける前から走っていた読み取りも待つ
 const claudeAccountConnectors = createClaudeConnectorsWiring({
   dataDir: store.dataDir,
+  probe: probeClaudeConnectors,
   accounts: claudeAccounts,
   versions: async () => {
     let exe = null;
