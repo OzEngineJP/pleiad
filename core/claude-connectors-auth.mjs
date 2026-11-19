@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
+import { run as runProcess } from './process.mjs';
 import { AccountError, cliConfigFile } from './claude-accounts.mjs';
 import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnectorIdentity } from './claude-connectors.mjs';
 import { claudeManagedFiles } from './hooks-config.mjs';
@@ -96,6 +97,32 @@ const sleepFor = ms => new Promise(resolve => setTimeout(resolve, ms));
 const present = (env, names) => names.filter(name => typeof env[name] === 'string' && env[name] !== '');
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const stripBom = text => String(text).replace(/^﻿/, '');
+
+/** macOS の準備経路。実機合格までは platform の停止を解除しない。 */
+export async function readMacAccessCredentials(dir, {
+  configDir = dir, run = runProcess, readFile = fs.readFile, sleep = sleepFor,
+} = {}) {
+  // 使用量の CLI は設定フォルダーを明示する。無指定の通常 CLI とは項目名が異なる。
+  const suffix = configDir === null ? '' : `-${crypto.createHash('sha256').update(configDir.normalize('NFC')).digest('hex').slice(0, 8)}`;
+  let text;
+  try {
+    const result = await run('/usr/bin/security', ['find-generic-password', '-a', 'claude-code-user', '-w', '-s', `Claude Code-credentials${suffix}`],
+      { timeoutMs: 10_000, maxOutputChars: 1024 * 1024, windowsHide: true });
+    if (result.exitCode !== 0 || result.timedOut || result.stopped || result.truncated) {
+      throw { code: result.startCode ?? result.exitCode, killed: result.timedOut || result.stopped || result.truncated };
+    }
+    text = result.stdout;
+  } catch (error) {
+    // 項目なし・鍵束なし・実行ファイルなしだけファイル保存を確認する。
+    // ロック・拒否・確認待ちのタイムアウトでは古いファイルへ乗り換えない。
+    if ([44, 37, 50, 'ENOENT'].includes(error?.code) && !error?.killed) {
+      return readAccessCredentials(dir, { readFile, sleep });
+    }
+    return null;
+  }
+  // 既存の検査を共用し、アクセス用トークン・期限・権限だけを返す。
+  return readAccessCredentials(dir, { readFile: async () => text, sleep: async () => {} });
+}
 
 /**
  * 使用量の認可のログインから、アクセス用トークン・期限・権限を読む。更新用トークンは返さない。
@@ -388,7 +415,15 @@ const sourceCache = new Map();
  *     （Windows で一時的に断られたら少し待って繰り返す）。付け替えの直前に target が変わっていたらやり直す。書いた後に読み直して確かめる
  * 戻り: { changed }
  */
-export function projectProfile(options) {
+export async function projectProfile(options) {
+  // rename はリンク自体を置き換えるため、既存リンクの実体に対して排他・反映する。
+  // 壊れたリンクは realpath の失敗で止め、リンクを新しいファイルに替えない。
+  const io = options.io ?? PROFILE_IO;
+  const st = await io.lstat(options.target).catch(error => {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (st?.isSymbolicLink()) options = { ...options, target: await io.realpath(options.target) };
   const key = path.resolve(options.target);
   const run = (profileQueues.get(key) ?? Promise.resolve()).then(() => projectProfileNow(options));
   const tail = run.then(() => {}, () => {});
@@ -494,7 +529,8 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
   }
 
   async function credentials(account, dir, { skipSleep = false } = {}) {
-    const cred = await readAccessCredentials(dir, { readFile, sleep: skipSleep ? async () => {} : sleep });
+    const read = platform === 'darwin' ? readMacAccessCredentials : readAccessCredentials;
+    const cred = await read(dir, { readFile, sleep: skipSleep ? async () => {} : sleep });
     if (!cred) throw new ConnectorsAuthError('login', { name: account.name ?? account.id });
     if (cred.malformed) throw new ConnectorsAuthError('format', { name: account.name ?? account.id });
     return cred;
