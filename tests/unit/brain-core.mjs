@@ -91,6 +91,18 @@ export default async function (t) {
 
   // ---------------------------------------------------------------- 文の組み立て・包み・独り言の写り
   {
+    const repeated = Array.from({ length: 10 }, (_, i) => ({ kind: 'think', at: now + i, text: `${i}:00 以降、変化なし。気がかりは 2 件。` }));
+    for (const locale of ['ja', 'en']) {
+      const lines = streamLines(repeated, { locale, now });
+      t.ok(`${locale}: 数字だけ異なる要約 10 件は最新の文と件数で 1 行`, lines.length === 1 && lines[0].includes('9:00') && lines[0].includes('10'));
+    }
+    const event = { kind: 'result', at: now, text: '出来事 1' };
+    const concern = { kind: 'loop', at: now, text: '気がかり 1' };
+    t.ok('出来事と気がかりは重複しても残す', streamLines([event, event, concern, concern], { locale: 'ja', now }).length === 4);
+    t.ok('出来事を挟む要約と違う文は畳まない', streamLines([repeated[0], event, repeated[1], { ...repeated[1], text: '新しい知らせ' }], { locale: 'ja', now }).length === 4);
+    t.ok('注意の印が違う要約は畳まない', streamLines([repeated[0], { ...repeated[1], taint: true }], { locale: 'ja', now }).length === 2);
+  }
+  {
     const stream = [
       { seq: 1, at: now - 3 * HOUR, kind: 'think', text: '朝の件が気になる', meta: { workNotesVersion: 1 } }, { seq: 2, at: now - 2 * HOUR, kind: 'quiet', meta: { workNotesVersion: 1 } }, { seq: 3, at: now - 2 * HOUR + 1, kind: 'quiet', meta: { workNotesVersion: 1 } },
       { seq: 4, at: now - HOUR, kind: 'think', text: '外の文からの材料', taint: 'webhook', meta: { workNotesVersion: 1 } }];
