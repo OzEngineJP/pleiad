@@ -141,7 +141,7 @@ export default async function (t) {
       const principal = { by: 'agent', via: 'mcp' };
       const tokens = estimateTokens(JSON.stringify(mcpTools({ catalog: registry.describe(principal, lng), texts: controlTexts(lng) })) + controlInstructions(lng));
       t.note(`ply_control の文の量（${lng}）: ${tokens} トークン（指示 ${estimateTokens(controlInstructions(lng))}）`);
-      t.ok(`指示は 3〜4 行（${lng}）`, controlInstructions(lng).split('\n').length >= 3 && controlInstructions(lng).split('\n').length <= 4);
+      t.ok(`指示は 5 行で ToDo の入口を含む（${lng}）`, controlInstructions(lng).split('\n').length === 5 && controlInstructions(lng).includes('todos.*'));
     }
   } finally { await cs.close(); }
 }

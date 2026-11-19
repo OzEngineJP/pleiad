@@ -629,12 +629,14 @@
     "names": {
       "child": "委譲された会話でのコマンドの扱い",
       "route": "委譲先の自動選択の使い方",
+      "todos": "会話の ToDo",
       "codexPolicy": "Codex の実行前の拒否"
     },
     "formerDelegateName": "委譲の進め方",
     "route": "任せるときは ply_delegate に kind を付け、backend は書かない（Pleiad が選ぶ）。backend を書くのはユーザーがエージェントやモデルを指定したときだけ。ユーザーが Claude のアカウントを指定したときは、backend: \"claude\" と account（ply_usage の account の値）を書く。どの候補も枠が無いと返されたら、ユーザーに伝える。ネイティブのサブエージェント（Claude の Agent tool など）ではなく ply_delegate を使う。ply_delegate には一覧に出る短い title を付ける。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら今の作業場所を使う。完了通知や ply_task_status に「作業場所: worktree …（未取り込み）」とあれば、その作業場所のブランチの変更を元の作業場所へ取り込む（マージ）のは自分の仕事。競合は自分で解く。取り込み後の片付けは Pleiad がする。",
     "commandLifetime": "コマンドは上限の時間を付けて実行する。終わらないもの（サーバー・画面のあるアプリ）はバックグラウンドで起動し、PID を控えて自分で止める。`Start-Process -Wait` のように終わりを無期限に待つ書き方はしない。PowerShell の `Start-Process` で裏へ回すときは `-RedirectStandardOutput`・`-RedirectStandardError` を付けない（起こしたプロセスがシェルの出力を握り続け、コマンドが戻らなくなる）。ログが要るなら `Start-Process cmd -ArgumentList '/c','<コマンド> > <ログ> 2>&1'` のように、起こした先で書き出す。",
-    "codexPolicy": "Codex の承認なしのモード（full・Bypass）でも、Codex 自身の安全判定で一部のコマンドが実行前に拒否されることがある（`blocked by policy` など）。拒否されたら、言い換えや別のコマンドで回避しようとしない。実行できなかったコマンドと理由、その結果残ったもの（消せなかったファイル・止められなかったプロセスなど）を報告する。"
+    "codexPolicy": "Codex の承認なしのモード（full・Bypass）でも、Codex 自身の安全判定で一部のコマンドが実行前に拒否されることがある（`blocked by policy` など）。拒否されたら、言い換えや別のコマンドで回避しようとしない。実行できなかったコマンドと理由、その結果残ったもの（消せなかったファイル・止められなかったプロセスなど）を報告する。",
+    "todos": "作業前に todos.list でこの会話の ToDo を読む。手順が 3 つ以上なら、既存と重複しない分を todos.add で書く。開始・完了時は todos.update の status を doing・done にし、成果物のファイルや URL は addLinks で付ける。人が編集した内容は尊重し、勝手に削除・置換しない。"
   },
   "cli": {
     "usage": "使い方: pleiad [--json] [--lang ja|en] <コマンド> [引数]",
@@ -1457,7 +1459,7 @@
       "cancelDownload": { "summary": "会話の Chrome のウィンドウで進行中のダウンロードを 1 つ止める（人が画面の一覧から押す）", "id": "止めるダウンロードの id（browser.listDownloads の id）" }
     },
     "control": {
-      "instructions": "Pleiad の機能と設定は ply_control から使えます。\nまず list_ops で操作を探し（id を渡すと入力の JSON Schema が分かります）、call_op で呼びます。検索・読み出し・設定の get/set は直に呼べます。\nPleiad の状態を変える操作はこの会話の承認モードに従います。関所を緩める変更はユーザーに承認カードを出し、待たずに status: pending で返ります（結果は後でこの会話に届きます）。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、やり直さずユーザーに伝えてください。\n秘密の値は会話で聞かず secrets.request で頼みます。",
+      "instructions": "Pleiad の機能と設定は ply_control から使えます。\nlist_ops で操作と入力形式を調べ、call_op で呼びます。\nPleiad の状態を変える操作はこの会話の承認モードに従います。関所を緩める変更はユーザーに承認カードを出し、待たずに status: pending で返ります（結果は後でこの会話に届きます）。code が NEEDS_UI・NEEDS_APPROVAL・READ_ONLY_MODE で返ったら、やり直さずユーザーに伝えてください。\n秘密の値は会話で聞かず secrets.request で頼みます。\n会話の ToDo は todos.* で読み書きします。",
       "listOps": "Pleiad で使える操作の一覧。id を渡すと、その操作の説明・入力の JSON Schema・危険度を返す。呼ぶのは call_op。",
       "listOpsId": "操作の id（例: sessions.list）。省くと全部の id と 1 行の説明。",
       "listOpsPrefix": "id の先頭で絞る（例: sessions.）。",

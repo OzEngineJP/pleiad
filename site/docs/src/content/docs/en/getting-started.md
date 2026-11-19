@@ -57,6 +57,8 @@ If you send a message and the agent can't be found, the send line shows "Resend"
 
 You can change the agent and working directory in the conversation at any time. You can also add agents and sign in later under Settings › "Agents".
 
+Conversation to-dos prompt the agent to read the list before work, add tasks for work with three or more steps, and record starts, completions, and outputs. This is on by default for all agents, including delegated conversations. To turn it off, open "Instructions" in Settings, then "Pleiad instructions", and switch off "Conversation to-dos".
+
 ## Open visualizations and files in the side panel
 
 When an agent produces HTML or a visualization, it appears as a card in the conversation. In the side panel (the conversation browser) you can open them as pages, alongside files, folders, git, and plugins.

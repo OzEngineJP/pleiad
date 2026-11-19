@@ -5,7 +5,7 @@
 // ACP の系統（Devin・Grok）と agy は発言の前に足す形で受け取る。保存は prefs.json の plyInstructions（すべての場所に共通。場所ごとには持たない）。
 //
 // 項目は 3 種類:
-//   - 既定（child: 委譲された会話でのコマンドの扱い / codexPolicy: Codex の実行前の拒否（Codex の子だけ））。
+//   - 既定（todos: 会話の ToDo / child: 委譲された会話でのコマンドの扱い / codexPolicy: Codex の実行前の拒否（Codex の子だけ））。
 //     依頼元に委譲を勧める既定（前の版の delegate: 委譲の進め方）は持たない。委譲するかは利用者が自分で足した指示で決める（ADR 0210）。
 //     Pleiad が最初から入れている。編集でき、編集していなければ
 //     文面は辞書（agent:guide.*）から会話の言語で引く（Pleiad の更新で新しい文面になる）。編集したら保存した文のまま（「既定に戻す」で戻る）。
@@ -31,7 +31,7 @@ export const LEGACY_AGENTS = ['claude', 'codex'];
 // 保存済みの項目の agents は広げない: 前の版の ['claude','codex'] は「当時の全部」か「その 2 つだけ」か判別できないので、そのまま残す
 export const AGENTS = [...DEFAULT_AGENT_IDS];
 // agents を持たない既定の項目はどちらのエージェントにも入る
-const BUILTIN = { child: { target: 'child' }, codexPolicy: { target: 'child', agents: ['codex'] } };
+const BUILTIN = { child: { target: 'child' }, codexPolicy: { target: 'child', agents: ['codex'] }, todos: { target: 'all' } };
 const builtinAgents = id => [...(BUILTIN[id].agents ?? AGENTS)];
 const LINKED = 'route';
 const MAX_ITEMS = 50, MAX_BODY = 32 * 1024, MAX_NAME = 80;
@@ -39,6 +39,7 @@ const MAX_ITEMS = 50, MAX_BODY = 32 * 1024, MAX_NAME = 80;
 // i18n-dynamic: agent:guide.names.
 const builtinName = (locale, id) => agentT(locale, `guide.names.${id}`);
 function builtinBody(locale, id) {
+  if (id === 'todos') return agentT(locale, 'guide.todos');
   if (id === 'child') return agentT(locale, 'guide.commandLifetime');
   if (id === 'codexPolicy') return agentT(locale, 'guide.codexPolicy');
   return `- ${agentT(locale, 'guide.route')}`;
@@ -48,7 +49,7 @@ const edited = item => ['name', 'body', 'target', 'agents'].some(k => item[k] !=
 
 const agentsSchema = z.array(z.enum(AGENTS)).min(1).max(AGENTS.length);
 const storedSchema = z.object({
-  id: z.string().regex(/^(?:child|codexPolicy|u-[a-z0-9]{4,32})$/),
+  id: z.string().regex(/^(?:child|codexPolicy|todos|u-[a-z0-9]{4,32})$/),
   on: z.boolean().optional(),
   name: z.string().trim().min(1).max(MAX_NAME).optional(),
   body: z.string().min(1).max(MAX_BODY).optional(),
@@ -57,7 +58,7 @@ const storedSchema = z.object({
 });
 
 /** 既定の並び（前の版の委譲の指示のスイッチ on を child に写す） */
-const defaults = (on = true) => [{ id: 'child', on }, { id: 'codexPolicy', on: true }];
+const defaults = (on = true) => [{ id: 'child', on }, { id: 'codexPolicy', on: true }, { id: 'todos', on: true }];
 // 前の版の既定の項目。本文を編集していたら、この id の自分で足した指示に変える
 const FORMER_DELEGATE = 'u-delegate';
 const formerDelegateSchema = storedSchema.extend({ id: z.literal('delegate') });

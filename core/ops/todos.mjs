@@ -1,6 +1,6 @@
 // todos.*: 会話の ToDo（ADR 0342。本体は core/todos.mjs、handler は ctx.todos（core/server.mjs の opsDeps）を呼ぶ）。
 // 画面（会話の ToDo のパネル）と AI（ply_control の list_ops / call_op）が同じ操作を使う。AI への使い方の説明は、
-// 毎回の既定の指示には足さず、ここの summary（web/locales/*/agent.json の ops.todos.*）にだけ書く。
+// 既定の「会話の ToDo」で利用のタイミングを伝え、ここの summary（web/locales/*/agent.json の ops.todos.*）で引数を説明する。
 //
 // 危険度: 書く操作は write。会話の中の自分用のメモで、送る・消える・権限が広がることは無い（会話を消せば一緒に消える）。
 // AI は sessionId を省けば自分の会話。ほかの会話の ToDo も、題や状態と同じく人と同じ扱いで書ける（ADR 0082）。

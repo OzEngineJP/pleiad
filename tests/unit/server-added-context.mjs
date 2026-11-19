@@ -17,14 +17,14 @@ const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args }
 
 export default async function (t) {
   // ---- 保存の形（純粋な計算）
-  t.ok('前の版で委譲の指示を切っていたら、child を切った状態で引き継ぐ（前の版に無かった codexPolicy は入れたまま）', normalizePlyInstructions(undefined, { delegation: false }).map(i => `${i.id}:${i.on}`).join() === 'child:false,codexPolicy:true'
-    && normalizePlyInstructions(undefined, null).every(i => i.on === true) && normalizePlyInstructions(undefined, null).map(i => i.id).join() === 'child,codexPolicy');
-  t.ok('壊れた項目は落とし、既定の項目が欠けていれば足す', normalizePlyInstructions({ items: [{ id: 'u-abcd12', name: 'x' }, { id: 'child', on: false }, { id: '../x' }] }).map(i => `${i.id}:${i.on}`).join() === 'child:false,codexPolicy:true');
+  t.ok('前の版で委譲の指示を切っていたら、child を切った状態で引き継ぐ（前の版に無かった codexPolicy は入れたまま）', normalizePlyInstructions(undefined, { delegation: false }).map(i => `${i.id}:${i.on}`).join() === 'child:false,codexPolicy:true,todos:true'
+    && normalizePlyInstructions(undefined, null).every(i => i.on === true) && normalizePlyInstructions(undefined, null).map(i => i.id).join() === 'child,codexPolicy,todos');
+  t.ok('壊れた項目は落とし、既定の項目が欠けていれば足す', normalizePlyInstructions({ items: [{ id: 'u-abcd12', name: 'x' }, { id: 'child', on: false }, { id: '../x' }] }).map(i => `${i.id}:${i.on}`).join() === 'child:false,codexPolicy:true,todos:true');
   // 前の版の既定の項目 delegate（委譲の進め方。ADR 0210）
-  t.ok('前の版の delegate は、本文を編集していなければ捨てる', normalizePlyInstructions({ items: [{ id: 'delegate', on: true }, { id: 'child', on: true }, { id: 'codexPolicy', on: true }] }).map(i => i.id).join() === 'child,codexPolicy'
-    && normalizePlyInstructions({ items: [{ id: 'delegate', on: false, name: '任せ方' }] }).map(i => i.id).join() === 'child,codexPolicy');
+  t.ok('前の版の delegate は、本文を編集していなければ捨てる', normalizePlyInstructions({ items: [{ id: 'delegate', on: true }, { id: 'child', on: true }, { id: 'codexPolicy', on: true }] }).map(i => i.id).join() === 'child,codexPolicy,todos'
+    && normalizePlyInstructions({ items: [{ id: 'delegate', on: false, name: '任せ方' }] }).map(i => i.id).join() === 'child,codexPolicy,todos');
   const former = normalizePlyInstructions({ items: [{ id: 'delegate', on: false, body: '- 3 ファイルまでは自分でやる。' }, { id: 'child', on: true }, { id: 'codexPolicy', on: true }] }, null, 'en');
-  t.ok('前の版の delegate の本文を編集していたら、自分で足した指示として並びの位置・スイッチのまま残す（名前は前の版の名前）', former.map(i => i.id).join() === 'u-delegate,child,codexPolicy'
+  t.ok('前の版の delegate の本文を編集していたら、自分で足した指示として並びの位置・スイッチのまま残す（名前は前の版の名前）', former.map(i => i.id).join() === 'u-delegate,child,todos,codexPolicy'
     && former[0].on === false && former[0].body === '- 3 ファイルまでは自分でやる。' && former[0].name === agentT('en', 'guide.formerDelegateName')
     && former[0].target === 'parent' && former[0].agents.join() === 'claude,codex' && resolvePlyInstructions(former, 'ja')[0].tag === null);
   const formerSaved = normalizePlyInstructions({ items: former });
@@ -64,18 +64,33 @@ export default async function (t) {
   try {
     // ---- 前の版のスイッチを引き継ぐ
     let state = await c.cmd('plyInstructions');
-    t.ok('前の版で切っていた委譲の指示は、child が切れた状態で出る', state.items.map(i => `${i.id}:${i.tag}:${i.on}`).join() === 'child:default:false,codexPolicy:default:true,route:linked:true', JSON.stringify(state.items.map(i => [i.id, i.on])));
+    for (const locale of ['ja', 'en']) {
+      const old = { items: [{ id: 'child', on: false }, { id: 'codexPolicy', on: true }] };
+      const list = normalizePlyInstructions(old);
+      const todo = resolvePlyInstructions(list, locale).find(i => i.id === 'todos');
+      t.ok(locale + ': 旧設定にも ToDo の既定を有効で補う', todo.on && todo.tag === 'default' && todo.target === 'all' && todo.agents.length === 6 && todo.body.includes('todos.list'));
+      for (const agent of AGENTS) for (const child of [false, true]) {
+        const records = turnInstructions({ list, locale, agent, child, supported: true, routing: false, bridge: true, canDelegate: true });
+        t.ok(locale + ':' + agent + ':' + child + ': ToDo 本文を渡す', records.find(i => i.id === 'todos')?.text?.includes('todos.update'));
+      }
+    }
+    const todoFirst = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'instructions' });
+    t.ok('実際の会話にも ToDo 本文が届く', (await lastAnswer(todoFirst.sessionId)).includes(agentT('ja', 'guide.todos')));
+    await c.cmd('setPlyInstructions', { action: 'toggle', id: 'todos', on: false });
+    t.ok('無効化を保存して読み直せる', !normalizePlyInstructions((await prefs()).plyInstructions).find(i => i.id === 'todos').on);
+    state = await c.cmd('plyInstructions');
+    t.ok('前の版で切っていた委譲の指示は、child が切れた状態で出る', state.items.map(i => `${i.id}:${i.tag}:${i.on}`).join() === 'child:default:false,codexPolicy:default:true,todos:default:false,route:linked:true', JSON.stringify(state.items.map(i => [i.id, i.on])));
     t.ok('合計のトークン数は入る項目だけ（切った項目は数えない）', state.total === state.items.find(i => i.id === 'route').tokens + state.items.find(i => i.id === 'codexPolicy').tokens && state.items.every(i => i.tokens > 0));
     const first = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'instructions' });
     const sid = first.sessionId;
     let answer = await lastAnswer(sid);
     t.ok('切った既定は入らず、連動の項目（振り分けの使い方）だけが入る', answer === `${bridge}\n\n${routeText}`, answer.slice(-200));
     let rec = await added(sid);
-    t.ok('項目ごとに入れたか・入れなかった理由を記録する', rec?.map(r => `${r.id}:${r.inserted}:${r.reason ?? ''}`).join() === 'child:false:off,codexPolicy:false:target,route:true:', JSON.stringify(rec));
+    t.ok('項目ごとに入れたか・入れなかった理由を記録する', rec?.map(r => `${r.id}:${r.inserted}:${r.reason ?? ''}`).join() === 'child:false:off,codexPolicy:false:target,todos:false:off,route:true:', JSON.stringify(rec));
 
     // ---- スイッチを入れる（始まっている会話にも次のターンから）。保存すると前の版の値は消える
     state = await c.cmd('setPlyInstructions', { action: 'toggle', id: 'child', on: true });
-    t.ok('スイッチを保存し、前の版の addedContext は消す', state.items.every(i => i.on) && !Object.hasOwn(await prefs(), 'addedContext') && (await prefs()).plyInstructions.items.length === 2);
+    t.ok('スイッチを保存し、前の版の addedContext は消す', state.items.filter(i => i.id !== 'todos').every(i => i.on) && !Object.hasOwn(await prefs(), 'addedContext') && (await prefs()).plyInstructions.items.length === 3);
     answer = await ask(sid);
     t.ok('担当がエージェント任せでも、ply_agents の instructions の後ろに入る（依頼元の既定は振り分けの使い方だけ。委譲を勧める既定は無い）', answer === `${bridge}\n\n${routeText}`, answer.slice(-240));
     t.ok('入れた文は項目ごとに見出しが付く', routeText.startsWith(agentT('ja', 'guide.heading', { name: agentT('ja', 'guide.names.route') }))
@@ -96,14 +111,14 @@ export default async function (t) {
     // ---- 自分で足す・入れる会話・エージェント
     state = await c.cmd('setPlyInstructions', { action: 'save', name: '返答は短く', body: '- 結論から書く。', target: 'all', agents: ['claude', 'codex'] });
     const mine = state.items.find(i => i.tag === null);
-    t.ok('足した指示は連動の項目の前（保存した並びの最後）に入る', state.items.map(i => i.id).join() === `child,codexPolicy,${mine?.id},route` && mine.on && mine.tokens > 0);
+    t.ok('足した指示は連動の項目の前（保存した並びの最後）に入る', state.items.map(i => i.id).join() === `child,codexPolicy,todos,${mine?.id},route` && mine.on && mine.tokens > 0);
     const mineText = itemText('ja', mine);
     state = await c.cmd('setPlyInstructions', { action: 'save', name: '委譲を基本にする', body: '- 大きい作業は ply_delegate で任せる。', target: 'parent', agents: ['claude', 'codex'] });
     const mine2 = state.items.findLast(i => i.tag === null);
     const mine2Text = itemText('ja', mine2);
     answer = await ask(sid);
     t.ok('並びの順に入る', answer === `${bridge}\n\n${mineText}\n\n${mine2Text}\n\n${routeText}`, answer.slice(-240));
-    await c.cmd('setPlyInstructions', { action: 'order', ids: [mine2.id, mine.id, 'child', 'codexPolicy'] });
+    await c.cmd('setPlyInstructions', { action: 'order', ids: [mine2.id, mine.id, 'child', 'codexPolicy', 'todos'] });
     answer = await ask(sid);
     t.ok('並べ替えると入る順も変わる', answer === `${bridge}\n\n${mine2Text}\n\n${mineText}\n\n${routeText}`, answer.slice(-240));
     await c.cmd('setPlyInstructions', { action: 'delete', id: mine2.id });
