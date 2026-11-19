@@ -5231,6 +5231,89 @@
       "input": "6bf6e7291226"
     },
     {
+      "id": "todos.add",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "103e4d221556"
+    },
+    {
+      "id": "todos.checkLinks",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "881f3a96c0f5"
+    },
+    {
+      "id": "todos.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "todos",
+            "list"
+          ],
+          "positional": [
+            "sessionId"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25a73a24147c"
+    },
+    {
+      "id": "todos.remove",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "672d05598d51"
+    },
+    {
+      "id": "todos.update",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": true
+      },
+      "legacyCommand": null,
+      "input": "6f0538e41782"
+    },
+    {
       "id": "voice.status",
       "risk": "read",
       "riskOf": false,
@@ -7218,6 +7301,28 @@
         "from",
         "to"
       ]
+    },
+    {
+      "id": "todos.add",
+      "path": "todos add",
+      "positional": []
+    },
+    {
+      "id": "todos.list",
+      "path": "todos list",
+      "positional": [
+        "sessionId"
+      ]
+    },
+    {
+      "id": "todos.remove",
+      "path": "todos remove",
+      "positional": []
+    },
+    {
+      "id": "todos.update",
+      "path": "todos update",
+      "positional": []
     },
     {
       "id": "voice.status",

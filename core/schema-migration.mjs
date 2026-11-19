@@ -12,7 +12,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { assertNotGuarded } from './test-guard.mjs';
-import { dbPath, createDb, checkDb, loadSqlite, transaction, sessionTable, taskTable, usageTable, conversationTable, threadTable, memoryStateTable } from './db.mjs';
+import { dbPath, createDb, checkDb, loadSqlite, transaction, TODOS_SQL, sessionTable, taskTable, usageTable, conversationTable, threadTable, memoryStateTable } from './db.mjs';
 
 // 形式 1 の JSON。channels/threads.json と memory/learn-state.json は 0.6.0（形式 1 のまま）が書いていた（スレッドの状態・夜の整理の進み）。
 // 置き場からの相対パス（写しの中でも同じ相対パスに置く）
@@ -236,6 +236,33 @@ export function migrateSchema2To3(dir, { now = new Date(), afterMemoryImport, af
     writeSchemaFile(dir, 3);
     if (original) remove(log);
     return { backup, counts: { memoryHistory: records.length } };
+  } finally { db.close(); }
+}
+
+/**
+ * 形式 3 → 4（会話の ToDo の表を足す。ADR 0341）。DB 全体を backup-schema3-<日時>/ へ写してから表を作り、
+ * 表があることを確かめてから番号を 4 にする。失敗したら番号は 3 のまま（表は IF NOT EXISTS なので、やり直しても同じ）。
+ * options.afterTodosCreate(db) はテスト用（表を作った後・番号の更新前に失敗を差し込む）
+ */
+export function migrateSchema3To4(dir, { now = new Date(), afterTodosCreate } = {}) {
+  assertNotGuarded(dir, 'migrate todos in');
+  const reason = checkDb(dbPath(dir));
+  if (reason) throw new Error(`pleiad.db: ${reason}`);
+  let backup = path.join(dir, `backup-schema3-${stamp(now)}`);
+  for (let n = 2; exists(backup); n++) backup = path.join(dir, `backup-schema3-${stamp(now)}-${n}`);
+  fs.mkdirSync(backup, { recursive: true });
+  const db = new (loadSqlite().DatabaseSync)(dbPath(dir));
+  try {
+    db.prepare('VACUUM INTO ?').run(path.join(backup, 'pleiad.db'));
+    if (exists(path.join(dir, 'data-schema.json'))) fs.copyFileSync(path.join(dir, 'data-schema.json'), path.join(backup, 'data-schema.json'));
+    transaction(db, () => {
+      db.exec(TODOS_SQL);
+      afterTodosCreate?.(db);
+      const names = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name));
+      if (!names.has('todos') || !names.has('todo_scopes')) throw new Error('todos tables are missing after create');
+    });
+    writeSchemaFile(dir, 4);
+    return { backup, counts: {} };
   } finally { db.close(); }
 }
 

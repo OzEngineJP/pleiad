@@ -238,6 +238,9 @@ export default async function (t) {
     // 必須の引数がある操作は下の samples にも足す。足したパッケージの区画以外は触らない
     // 入力欄の書きかけのサーバーの写し（drafts.*）
     drafts: { load: () => ({ text: 'こんにちは', at: 1 }), save: () => ({ saved: true, at: 1 }) },
+    // 会話の ToDo（todos.*）。成果物のリンクのパスは画面に出す値なので、本文に目印を入れずに形だけ
+    todos: { list: () => ({ rev: 1, items: [{ id: 'todo_1', text: '下書きを作る', status: 'todo', waiting: false, after: [], links: [], order: 1, by: { kind: 'user' }, updatedBy: null, createdAt: 1, updatedAt: 1 }] }),
+      checkLinks: () => ({ links: [] }) },
     channels: {     // S1
       list: async () => [{ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', unread: 0, mentions: 0, threadsWorking: 0, ...secret }],
       get: async () => ({ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', ...secret }),
@@ -293,6 +296,7 @@ export default async function (t) {
     'channels.deliveries': [{ channelId: 'c_000000000aaaaaa', postId: 'p_000000000aaaaaa' }],
     'channels.pending': [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000aaaaaa' }],
     'drafts.load': [{ key: 'thread:c_000000000aaaaaa:p_000000000aaaaaa' }],
+    'todos.list': [{ sessionId: 's1' }], 'todos.checkLinks': [{ sessionId: 's1', id: 'todo_1' }],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
     'git.commit': [{ hash: 'abc1234' }], 'git.worktree': [{ worktree: 'C:/r' }],
     'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }], 'brain.wakeList': [{ botId: 'b_1' }],

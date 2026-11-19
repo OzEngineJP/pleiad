@@ -1158,6 +1158,8 @@ const SUITES = [
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
   './unit/bot-sessions-list.mjs',
   // 通知の一覧（ベルのボタン。ADR 0149）: 重複しない・見ている会話は既読・既読の整合・あなた待ちの決着・再起動で残る・上限・削除で消える・出来事から作る規則
+  // 会話の ToDo（ADR 0341）: 保存・操作・会話の削除で消える・形式 3 → 4 の移行
+  './unit/session-todos.mjs',
   './unit/notification-inbox.mjs',
   './unit/notification-inbox-server.mjs',
   './unit/notification-inbox-ui.mjs',

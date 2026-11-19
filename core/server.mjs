@@ -156,6 +156,7 @@ import { createPresence } from './notify/presence.mjs';
 import { createNotifications } from './notifications.mjs';
 import { normalizeEditingState } from '../web/md-editing-state.mjs';
 import { createDrafts } from './drafts.mjs';
+import { createTodos } from './todos.mjs';
 import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -1081,6 +1082,9 @@ const pushNotifier = createPushNotifier({
 const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitGlobal({ ...event, sessionId: null }) });
 // スレッドの入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
 const threadDrafts = createDrafts({ dataDir: store.dataDir });
+// 会話の ToDo（ADR 0341）。書いたら全部の画面へ配る（開いている会話の ToDo のパネル・入口の未読の点）
+const sessionTodos = createTodos({ dataDir: store.dataDir,
+  onChange: ({ scope, rev, items, changed, by }) => { if (scope.kind === 'session') emitGlobal({ type: 'todosChanged', sessionId: scope.id, rev, items, changed, by }); } });
 const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
@@ -3423,6 +3427,8 @@ const LIST_NEUTRAL_EVENTS = new Set([
   "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged", "apiKeysChanged", "secretsChanged",
   // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
   "notificationsChanged",
+  // 会話の ToDo（ADR 0341）。会話の一覧の行は変わらない
+  "todosChanged",
   // 会話の Chrome のプロフィールが替わった（core/chrome/profile-choice.mjs）。一覧の行は変わらない
   "chromeProfile",
 ]);
@@ -6730,6 +6736,7 @@ function opsDeps(lng = currentLocale()) {
     notifications: inbox,
     // 入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
     drafts: threadDrafts,
+    todos: sessionTodos,
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
