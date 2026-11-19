@@ -1029,12 +1029,11 @@
       "unsupportedHint": "{{message}}. For MCP servers that need authentication settings, use \"Import into Pleiad\" under Settings › Plugins › External MCP to authenticate in Pleiad.",
       "authRequiredPly": "The MCP server requires authentication. Check the authentication method and values under Settings › Plugins › External MCP.",
       "authRequiredNative": "The MCP server requires authentication. Use \"Import into Pleiad\" under Settings › Plugins › External MCP to sign in, or leave external MCP to the agent.",
-      "tooManyTools": "Too many tools (up to {{max}}).",
+      "pagingLoop": "Stopped loading the MCP list because it is not advancing (a repeated page, or a page with no new items).",
       "connectFailed": "Cannot connect to the MCP server. Check the endpoint, authentication, and launch command.",
       "invalidToken": "Invalid context token.",
       "tooManyServers": "Up to 32 MCP servers per session. Narrow the search.",
       "aborted": "Stopped.",
-      "toolTotalExceeded": "Removed because the total number of tools exceeds the limit ({{max}}).",
       "mcpReaped": "mcp: reaped {{name}} (pid {{pid}}) — the parent is gone",
       "mcpFolded": "mcp: folded {{name}} (pid {{pid}}) — its workspace is being removed"
     },

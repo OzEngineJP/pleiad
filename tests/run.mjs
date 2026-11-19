@@ -467,6 +467,7 @@ const SUITES = [
   './unit/context-key.mjs',
   './unit/context-warm.mjs',
   './unit/context-lazy.mjs',
+  './unit/context-paging.mjs',
   './unit/mcp-orphans.mjs',
   './unit/worktree-mcp.mjs',
   './unit/context-runtime.mjs',

@@ -181,9 +181,9 @@ export default async function(t) {
     {
       const f = await setup((m, req) => m.method === 'initialize' ? init : m.method === 'tools/list' ? { tools: Array.from({ length: req.url === '/large' ? 499 : req.url === '/over' ? 2 : 1 }, (_, i) => tool(`t${i}`)) } : {});
       const opened = await f.open([f.item('large'), f.item('over'), f.item('last')]);
-      assert.deepEqual(opened.runtime.report.entries.map(e => [e.status, e.tools]), [['connected',499],['failed',0],['connected',1]]);
-      assert.equal((await names(opened.port)).length, 500);
-      t.ok('500件の会計は index 順で、超えたサーバーだけを外し後続の小さいサーバーは登録する', true);
+      assert.deepEqual(opened.runtime.report.entries.map(e => [e.status, e.tools]), [['connected',499],['connected',2],['connected',1]]);
+      assert.equal((await names(opened.port)).length, 502);
+      t.ok('全 MCP の合計が 500 件を超えても、どのサーバーも外さず全部登録する', true);
     }
     {
       let starts = 0, calls = 0;

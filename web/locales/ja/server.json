@@ -1027,12 +1027,11 @@
       "unsupportedHint": "{{message}}。認証の設定が要る MCP は、設定 › プラグインの外部 MCP で「Pleiad に取り込む」と Pleiad 側で認証できます",
       "authRequiredPly": "MCP が認証を求めています。設定 › プラグインの外部 MCP で認証の方式と値を確かめてください",
       "authRequiredNative": "MCP が認証を求めています。設定 › プラグインの外部 MCP で「Pleiad に取り込む」とログインできます。または外部 MCP をエージェントに任せてください",
-      "tooManyTools": "ツールが多すぎます（{{max}} 件まで）",
+      "pagingLoop": "MCP の一覧が先に進まない（同じページの繰り返し、または新しい項目の無いページ）ため、読み込みを止めました",
       "connectFailed": "MCP に接続できません。接続先・認証・起動コマンドを確認してください",
       "invalidToken": "プラグインのトークンが不正です",
       "tooManyServers": "MCP は1セッション32件までです。探索対象を絞ってください",
       "aborted": "中断しました",
-      "toolTotalExceeded": "ツールの合計が上限（{{max}} 件）を超えるため外しました",
       "mcpReaped": "mcp: {{name}}（pid {{pid}}）を回収しました — 親はもういません",
       "mcpFolded": "mcp: {{name}}（pid {{pid}}）を畳みました — 作業場所を消すため"
     },
