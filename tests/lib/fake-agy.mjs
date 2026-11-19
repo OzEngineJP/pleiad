@@ -19,6 +19,14 @@ import { spawn, spawnSync } from "node:child_process";
 
 const NL = String.fromCharCode(10);
 
+// 控えのファイルは、一時のファイルに書いてから置き換える。試験は agy が書いている間にも読むので、そのまま上書きすると空の中身を読むことがある
+function writeList(file, list) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(list));
+  try { fs.renameSync(tmp, file); }
+  catch { fs.rmSync(tmp, { force: true }); fs.writeFileSync(file, JSON.stringify(list)); }
+}
+
 const argv = process.argv.slice(2);
 // 次の発言の候補を作る 1 回（core/backends/antigravity-suggest.mjs）は、使い捨てのホーム（pleiad-agy-suggest）で起きる。会話の agy ではないので、
 // 起こした数・引数の控え（FAKE_AGY_PID_FILE・FAKE_AGY_ARGS_FILE）には入れない（会話の agy の起こし直しを数える試験のため）
@@ -29,7 +37,7 @@ if (process.env.FAKE_AGY_PID_FILE && !forSuggestion) {
     const file = process.env.FAKE_AGY_PID_FILE;
     const list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
     list.push(process.pid);
-    fs.writeFileSync(file, JSON.stringify(list));
+    writeList(file, list);
   } catch {}
 }
 if (process.env.FAKE_AGY_ARGS_FILE && !forSuggestion) {
@@ -37,7 +45,7 @@ if (process.env.FAKE_AGY_ARGS_FILE && !forSuggestion) {
     const file = process.env.FAKE_AGY_ARGS_FILE;
     const list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
     list.push(argv);
-    fs.writeFileSync(file, JSON.stringify(list));
+    writeList(file, list);
   } catch {}
 }
 // 起こされたときのホーム（USERPROFILE・HOME）と作業場所を控える。候補づくりの使い捨てのホームの検査用（tests/unit/prompt-suggestions.mjs）。
@@ -55,7 +63,7 @@ if (process.env.FAKE_AGY_ENV_FILE) {
       agentMd: home ? read(path.join(home, ".agents", "agents", "ply-context", "agent.md")) : null,
       hooksJson: home ? read(path.join(home, ".agents", "hooks.json")) : null,
     });
-    fs.writeFileSync(file, JSON.stringify(list));
+    writeList(file, list);
   } catch {}
 }
 const flag = (name) => {
