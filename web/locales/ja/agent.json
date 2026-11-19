@@ -415,7 +415,6 @@
     "modelUnknown": "model_unknown: モデル {{model}} は {{backend}} の今の一覧にありません（選べるもの: {{models}}）。何も変えていません",
     "quotaFull": "quota_full: {{backend}} の {{model}} は使用枠が上限に達しています。何も変えていません",
     "accountClaudeOnly": "この子のエージェント（{{backend}}）はアカウントの選択に対応していません。account を省いてください。何も変えていません",
-    "effortUnknown": "effort_unknown: 思考の強さ {{effort}} は {{backend}} の {{model}} では選べません（選べるもの: {{choices}}）。何も変えていません",
     "childStarting": "子のターンが始まるところです。何も変えていません。少し待ってからやり直してください",
     "settingsMoved": "承認を待つ間に、子の設定かタスクの状態が変わりました。何も変えていません。ply_task_status で確かめてからやり直してください",
     "settingsFailed": "子の設定を替えられませんでした（{{error}}）。何も変えていません",

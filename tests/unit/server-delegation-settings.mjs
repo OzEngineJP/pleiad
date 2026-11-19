@@ -2,7 +2,7 @@
 // fake・身代わりの Codex・身代わりの agy でサーバー全体を通す。LLM は呼ばない
 //   - 走っている子: モデルは今のターンへ即時に伝わり、思考の強さは次のターンから。ターンは止めない
 //   - message なしで設定だけ・message と一緒に
-//   - 無いモデル・選べない思考の強さは断り、何も変えない
+//   - 未掲載モデルは通し、既知のモデルで選べない思考の強さは断る
 //   - 走っていない子のエージェントを替える: 次のターンで引き継ぎ（履歴を渡す）、完了した子を勝手に走らせない
 //   - 親より緩くなる切り替え（agy は全部自動）は親の会話で 1 回聞く。断ったら何も変えない
 //   - 他の会話のタスクは変えられない
@@ -91,14 +91,16 @@ export default async function (t) {
       && byParent.find(x => x.field === 'model').from === 'smart' && byParent.find(x => x.field === 'model').to === 'fast' && byParent.find(x => x.field === 'effort').to === 'high', JSON.stringify(logged));
     t.ok('画面にはタスクが変わったことを知らせる', c.since(mark).some(e => e.type === 'agentTaskChanged' && e.taskId === slow.taskId));
 
-    // ---- 無いモデル・選べない思考の強さは断り、何も変えない
-    const unknown = await call(parent, 'ply_task_send', { taskId: slow.taskId, model: 'no-such-model' });
-    t.ok('今の一覧に無いモデルは model_unknown で断る', String(unknown.error ?? '').includes('model_unknown') && String(unknown.error).includes('fast'), unknown.error);
+    // ---- 未掲載モデルは通し、既知のモデルで選べない思考の強さは断る
+    const unknown = await call(parent, 'ply_task_send', { taskId: slow.taskId, model: 'no-such-model', effort: 'future-effort' });
+    t.ok('今の一覧に無いモデルもそのまま予約する', !unknown.error && unknown.settings?.model === 'no-such-model' && unknown.settings?.effort === 'future-effort', JSON.stringify(unknown));
+    await call(parent, 'ply_task_send', { taskId: slow.taskId, model: 'fast', effort: 'high' });
+    const loggedAfterUnknown = await changes(slow.sessionId);
     const badEffort = await call(parent, 'ply_task_send', { taskId: slow.taskId, model: 'tiny', effort: 'high' });
     t.ok('そのモデルで選べない思考の強さは断る', Boolean(badEffort.error), JSON.stringify(badEffort));
     slowRow = (await tasks()).find(r => r.taskId === slow.taskId);
     t.ok('断ったときはタスクも子の会話も変えない', slowRow.model === 'fast' && slowRow.effort === 'high' && (await row(slow.sessionId)).model === 'fast'
-      && (await changes(slow.sessionId)).length === logged.length, JSON.stringify({ model: slowRow.model, effort: slowRow.effort }));
+      && (await changes(slow.sessionId)).length === loggedAfterUnknown.length, JSON.stringify({ model: slowRow.model, effort: slowRow.effort }));
 
     // ---- 他の会話のタスクは変えられない
     const stranger = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_task_send', { taskId: slow.taskId, model: 'smart' }) });

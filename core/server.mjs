@@ -1480,7 +1480,7 @@ async function taskSettingsPlan(owner, args, lng, turn) {
   const model = asked ?? (leftEndpoint ? await resolveModel(null, undefined, target, cwd, endpoint)
     : target.id === current.id ? before.model : target.id === source.id ? meta.model ?? ''
     : await resolveModel(null, undefined, target, cwd, endpoint));
-  if (args.model !== undefined && !(await validModel(target, model, cwd, endpoint).catch(() => false))) {
+  if (args.model !== undefined && !(model === '' || isModelId(model))) {
     throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: await knownModelNames(target, cwd, endpoint) }));
   }
   // 使用枠が満杯と分かっているときだけ断る（取り置きが無い・古いだけでは断らない。固定の ply_delegate も、account を書いたときだけ見る）
@@ -1490,8 +1490,7 @@ async function taskSettingsPlan(owner, args, lng, turn) {
     if (check.reason === 'quota_full') throw new Error(agentT(lng, 'tasks.quotaFull', { model, backend: target.id }));
   }
   if (args.effort !== undefined) {
-    const choices = Object.keys(await effortOptions(target, model, cwd, await endpointRow(endpoint)));
-    if (args.effort !== '' && !choices.includes(args.effort)) throw new Error(agentT(lng, 'tasks.effortUnknown', { effort: args.effort, backend: target.id, model: model || '-', choices: choices.filter(Boolean).join(', ') || '-' }));
+    await validateEffort(target, args.effort, model, cwd, await endpointRow(endpoint), { allowUnlistedModel: true });
   }
   const switching = target.id !== source.id;
   // 子の承認モード（エージェントを替えるとき）。上限は親の強さと、子の今の強さ（人が下げていればそれ）の弱い方
@@ -1528,7 +1527,7 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   try {
     next = await reserveTurnSettings({ sessionId, backend: target.id, model: plan.model,
       ...(plan.effort !== undefined ? { effort: plan.effort } : {}), ...(plan.switching && mode ? { mode } : {}),
-      ...(target.id !== before.backend || plan.accountGiven ? { endpoint: plan.endpoint } : {}), ...(plan.accountGiven ? { account: plan.account } : {}), keepPrefs: true });
+      ...(target.id !== before.backend || plan.accountGiven ? { endpoint: plan.endpoint } : {}), ...(plan.accountGiven ? { account: plan.account } : {}), keepPrefs: true }, { delegated: true });
   } catch (e) {
     await undoReserve();
     throw new Error(agentT(lng, 'tasks.settingsFailed', { error: String(e?.message ?? e) }));
@@ -1916,7 +1915,7 @@ async function routeDelegation(args, lng, cwd) {
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
     const preselected = await requestedAccount(args.account, null, lng, backend);
     backend = await backendForAccount(backend, await accountResolve(backend, preselected.account));
-    const model = await resolveModel(null, await canonicalModel(backend, args.model, cwd, ''), backend, cwd, '');
+    const model = typeof args.model === 'string' ? await canonicalModel(backend, args.model, cwd, '') : await resolveModel(null, undefined, backend, cwd, '');
     const chosen = await requestedAccount(args.account, model, lng, backend);
     return { ...args, account: chosen.account, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model, account: chosen.account, accountLabel: chosen.label }) };
   }
@@ -1936,7 +1935,7 @@ async function routeDelegation(args, lng, cwd) {
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
-  // 選んだ候補を確かめ直す。一覧では裁かない。エージェントが走らせられないと分かっている版（runnableModel。Devin の ACP に無い版）は次の候補へ
+  // 選んだ候補を確かめ直す。一覧では裁かず、有効なエージェントとモデル名の形だけを見る。
   const rejected = {};
   let ok, routing;
   for (;;) {
@@ -1944,8 +1943,8 @@ async function routeDelegation(args, lng, cwd) {
     if (!ok) break;
     const picked = getBackend(routing.target.backend);
     // モデルが一覧にあるかは見ない（使えるかは CLI/API が決め、断られたら次の候補で作り直す。ADR 0311）。
-    // 見るのは、エージェントが有効か・モデル名の形・エージェントが走らせられないと分かっている版（runnableModel）だけ
-    if (picked && isModelId(routing.target.model) && picked.runnableModel?.(routing.target.model) !== false) break;
+    // 見るのは、エージェントが有効か・モデル名の形だけ
+    if (picked && isModelId(routing.target.model)) break;
     rejected[candidateId(routing.target.backend, routing.target.model, routing.target.account || null)] = picked ? 'model_unknown' : 'unavailable';
   }
   if (!ok) {
@@ -3244,10 +3243,6 @@ async function validModel(backend, model, cwd, endpointId = '', { passive = fals
   // 明示モデルを「一覧に無い」で断らない。docs/adr/0304・0308）。一覧が取れている backend はここまでの結果どおり断る
   return backend.validModel ? backend.validModel(model, cwd) : false;
 }
-/**
- * 明示して渡されたモデル名を、一覧の id に当てる（AI が書く claude-sonnet-5-5 → sonnet）。
- * そのままで通る名前・互換の接続先・当てる手段の無い backend・当たらない名前は、渡された値のまま返す（断るのは呼び出し側）
- */
 async function canonicalModel(backend, name, cwd, endpointId = '') {
   if (endpointId || typeof name !== 'string' || !backend.matchModel) return name;
   // 正式な ID（claude-sonnet-5-5 など）は一覧の id ではないので、取り直しを伴う確かめ（validModel → models({ refresh })）
@@ -3255,7 +3250,7 @@ async function canonicalModel(backend, name, cwd, endpointId = '') {
   if (Object.hasOwn(await backend.models(cwd).catch(() => ({})), name)) return name;
   const matched = await backend.matchModel(name, cwd).catch(() => null);
   if (matched !== null && matched !== undefined) return matched;
-  // 両方外れた名前はそのまま返す（呼び出し側が validModel・resolveModel で取り直しを伴って確かめ、断る）
+  // 両方外れた名前はそのまま返す（一覧に無くても CLI に渡す）
   return name;
 }
 /** エラーに添える、選べるモデル名（隠し以外を先頭 30 件） */
@@ -4827,7 +4822,7 @@ async function createSession(args) {
 }
 
 /** 次のターンの設定を予約する（sessions.setTurnSettings。WS の setTurnSettings の中身）。予約は nextSettings。返り値は予約（取り消しは null） */
-async function reserveTurnSettings(args) {
+async function reserveTurnSettings(args, { delegated = false } = {}) {
   const { sessionId, cwd: requestedCwd, cancel } = args ?? {};
   const explicit = { ...args };
   if (!sessionId) throw new Error(t('session.required'));
@@ -4889,15 +4884,15 @@ async function reserveTurnSettings(args) {
     // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
     let selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
     // 承認モードと同じく、場所を替えて引いたモデルが使えなければ既定（''）にする
-    if (!cancel && explicit.model === undefined && model !== undefined && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) selectedModel = '';
-    if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
+    if (!cancel && !delegated && explicit.model === undefined && model !== undefined && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) selectedModel = '';
+    if (!cancel && !(delegated ? selectedModel === '' || isModelId(selectedModel) : await validModel(target, selectedModel, settingsCwd, selectedEndpoint))) throw new Error(t('settings.modelUnavailable'));
     const selectedEndpointRow = await endpointRow(selectedEndpoint);
     const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
       : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
     const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
     if (!explicit.effort && args.effort !== undefined && !Object.hasOwn(choices, args.effort)) args = { ...args, effort: '' };
     const selectedEffort = cancel ? '' : args.effort !== undefined
-      ? await validateEffort(target, args.effort, selectedModel, settingsCwd, selectedEndpointRow)
+      ? await validateEffort(target, args.effort, selectedModel, settingsCwd, selectedEndpointRow, { allowUnlistedModel: delegated })
       : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
     let selectedCwd = current.nextSettings?.cwd;
     if (!cancel && requestedCwd !== undefined) {
@@ -8001,12 +7996,11 @@ agentTasks = await createAgentTasks({
     const tierRule = !auto && !chosen && !endpoint && Boolean(accountKind(backend)) && (await accountRows(backend)).length > 0;
     const account = tierRule ? await tierAccountFor(backend, carried, typeof args.model === 'string' ? args.model : null, lng) : carried;
     if (!endpoint) backend = await backendForAccount(backend, await accountResolve(backend, account));
-    // 自動の振り分けで選んだモデルは、一覧で読み替え・裁きをせず選んだ名前のまま送る（claude-fable-5-2 のように一覧の id でない名前も CLI が受け付ける。
-    // 使えなければ CLI/API が断り、次の候補で作り直す。ADR 0311）
+    // 明示したモデルは全 backend でその文字列を送る。正式な ID は正確に一致する行だけ読み替え、未掲載による拒否はしない。
     const asked = auto ? args.model : await canonicalModel(backend, args.model, cwd, endpoint);
-    const model = auto ? (isModelId(asked) ? asked : '') : await resolveModel(null, asked, backend, cwd, endpoint);
-    // 依頼元が書いたモデル名が一覧に無いなら、黙って既定に落とさず断る（選べる名前を添える）。互換の接続先は形だけを見る
-    if (!auto && !endpoint && typeof args.model === 'string' && model !== asked) {
+    const model = auto ? (isModelId(asked) ? asked : '') : typeof asked === 'string' ? asked : await resolveModel(null, undefined, backend, cwd, endpoint);
+    // 文字列の形だけを確かめる。使えるかは CLI/API が決める。
+    if (!auto && !(model === '' || isModelId(model))) {
       throw new Error(agentT(lng, 'delegation.modelUnknown', { model: args.model, backend: backend.id, models: await knownModelNames(backend, cwd) }));
     }
     // 選んだモデルを使えなくなっていたら、黙って既定に落とさず断る
@@ -8015,7 +8009,9 @@ agentTasks = await createAgentTasks({
     // 振り分けでは断らず、モデルが持たない強さは合わせて記録に残す。固定の委譲は依頼元が書いた値のまま（検証する）
     const decided = auto ? decideEffort({ settings: routingSettingsCache, tier: manual ? args.routing.effortTier ?? null : args.routing.tier ?? null,
       candidate: candidateId(backend.id, model, accountKind(backend) ? account || null : null), capability: await effortCapability(backend, model, cwd) }) : null;
-    const effort = await resolveEffort(null, decided ? decided.send : args.effort, backend, model, cwd, await endpointRow(endpoint));
+    const effort = !auto && args.effort !== undefined
+      ? await validateEffort(backend, args.effort, model, cwd, await endpointRow(endpoint), { allowUnlistedModel: true })
+      : await resolveEffort(null, decided ? decided.send : args.effort, backend, model, cwd, await endpointRow(endpoint));
     // 承認モードは委譲を受け付けた側（agentBridge の call）が親の強さから決めてある。
     // ここで決め直すと「聞いた内容」と「実際に動く強さ」がずれるので、来た値をそのまま使う。
     const modes = backend.modes();
@@ -8097,7 +8093,7 @@ agentTasks = await createAgentTasks({
       if (!picked) { rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'unavailable'; continue; }
       const acct = accountKind(picked) ? next.target.account ?? '' : '';
       const scoped = await backendForAccount(picked, await accountResolve(picked, acct)).catch(() => null);
-      if (scoped && isModelId(next.target.model) && scoped.runnableModel?.(next.target.model) !== false) {
+      if (scoped && isModelId(next.target.model)) {
         backend = scoped; account = acct; model = next.target.model; break;
       }
       rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'model_unknown';
@@ -8473,6 +8469,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   await settingsWrites.get(sessionId);
   let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
   const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
+  const delegated = Boolean(sessionId && (await store.get(sessionId)).delegation);
   // 予約を効かせるために止めたターンの続き（applyReservedNow）。予約を適用したら「変えました」の跡の行を残す
   const settingsTrace = sessionId && settingsTraces.get(sessionId);
   if (settingsTrace) settingsTraces.delete(sessionId);
@@ -8499,7 +8496,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
     // モデルの一覧の確かめはしない。予約してから送信までに一覧が縮んでいても、選んだモデルをそのまま CLI/API へ渡す
     // （使えなければ CLI/API が断り、その理由が会話に出る。黙って既定へ戻さない）。形（文字列・長さ・制御文字）だけは断る
     if (!target || !(reserved.model === '' || isModelId(reserved.model)) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
-    await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
+    await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo, { allowUnlistedModel: delegated });
     if (target.id !== previousTurnBackend.id) {
       await switchBackend(sessionId, previousTurnBackend, target);
       await shellRuns.switched(sessionId, previousTurnBackend, target);
@@ -8528,7 +8525,10 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 予約のモデルは選んだときに確かめ、送る直前に形を確かめた値をそのまま渡す。予約の無い送信も同じく、保存値を一覧で裁かず
   // そのまま渡す（一覧が縮んでいても黙って既定へ戻さない。別エージェントのモデルだけ既定に戻す。sendModel。ADR 0309）
   const model = reserved ? reserved.model : await sendModel(sessionId, args?.model, backend, endpointId);
-  const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
+  const askedEffort = reserved ? reserved.effort ?? '' : args?.effort ?? (delegated ? (await store.get(sessionId)).effort ?? '' : undefined);
+  const effort = delegated && askedEffort !== undefined
+    ? await validateEffort(backend, askedEffort, model, cwd, endpointInfo, { allowUnlistedModel: true })
+    : await resolveEffort(sessionId, askedEffort, backend, model, cwd, endpointInfo);
   // worktree（ADR 0089）。使う場所が worktree の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
   const worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
   if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));

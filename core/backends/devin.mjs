@@ -10,7 +10,7 @@ import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
 import { undelivered } from './undelivered.mjs';
 import { prepareDevinLaunch, devinTurnConfig } from './devin-config.mjs';
-import { buildDevinModels, resolveDevinModel, applyDevinModel, devinAcpModel, devinModelChoices } from './devin-models.mjs';
+import { buildDevinModels, resolveDevinModel, applyDevinModel } from './devin-models.mjs';
 import { createDevinMapper } from './devin-normalize.mjs';
 import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
@@ -63,9 +63,6 @@ async function captureCatalogue(launch, signal) {
 export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, command = () => cliCommand('devin'), dataDir = store.dataDir, cancelGraceMs = 2000 } = {}) {
   const cache = new Map(), rows = new Map(), active = new Map(), liveControls = new Map(), queues = new Map();
   const metadataQueue = Symbol('metadata');
-  // CLI が最後に session/new・session/load で示した ACP の model の選択肢（まだ見ていなければ null）。
-  // カタログには載るが ACP では選べない版（effort・速さの組み合わせの多く）を、自動の振り分けが選ばないようにする
-  let acpModels = null;
   function remember(id, mapper) {
     cache.delete(id); cache.set(id, mapper);
     while (cache.size > 16) cache.delete(cache.keys().next().value);
@@ -154,8 +151,6 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     async models(cwd = process.cwd(), { refresh = false } = {}) { return buildDevinModels(await rawModels(cwd, undefined, { refresh })); },
     // 起動時に一覧を取り置く（初めての振り分けで CLI の起動を待たない）
     async warmModels(cwd = process.cwd()) { await rawModels(cwd); },
-    /** 自動の振り分けが選ぶ前に聞く。CLI が示した ACP の選択肢に無い版は、走らせても設定で止まる（まだ見ていなければ通す） */
-    runnableModel(model) { return !acpModels || !model || devinAcpModel(model, acpModels) !== null; },
     async listSessions({ cwd } = {}) {
       // Common conversations add their persisted rows without starting a CLI. An
       // explicit directory may also discover native sessions in Pleiad's session root.
@@ -341,9 +336,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             client.begin();
             response = client.running;
           } else {
-            let list = await rawModels(cwd, local.signal);
-            // 指定されたモデルが一覧に無いとき、置き場が古いだけかもしれないので取り直して確かめる
-            if (args.model && !Object.hasOwn(buildDevinModels(list), args.model)) list = await rawModels(cwd, local.signal, { refresh: true });
+            const list = await rawModels(cwd, local.signal).catch(error => { if (!args.model) throw error; return null; });
             const selection = resolveDevinModel(list, args.model ?? '');
             check();
             // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
@@ -371,7 +364,6 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
               if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('devin.errors.notConnected'));
               mapper = createDevinMapper(sessionId, mapEmit);
             }
-            acpModels = devinModelChoices(state?.configOptions) ?? acpModels;
             remember(sessionId, mapper); active.set(sessionId, client);
             check();
             const mode = args.mode || 'ask';
@@ -410,7 +402,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
                 const oldVerified = verified;
                 verified = null;
                 try {
-                  const latestList = await rawModels(cwd, local.signal);
+                  const latestList = await rawModels(cwd, local.signal).catch(() => null);
                   const nextSelection = resolveDevinModel(latestList, requested);
                   const current = latestSnapshot;
                   const appliedLive = await applyDevinModel(client.call.bind(client), sessionId, current, nextSelection);

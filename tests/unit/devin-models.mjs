@@ -89,15 +89,20 @@ export default async function (t) {
   ]) {
     const bad = catalogue(); Object.assign(bad.families[0].variants[0], patch);
     t.ok(`矛盾や期限切れをライブ無料既定にしない（${label}）`, resolveDevinModel(bad).id === 'swe-2-medium');
-    if (!Object.hasOwn(patch, 'cost_tier')) assert.throws(() => resolveDevinModel(bad, 'swe-2-high'), { code: 'DEVIN_MODEL_UNAVAILABLE' });
+    t.ok('明示した名前は無料判定で拒否しない', resolveDevinModel(bad, 'swe-2-high').id === 'swe-2-high');
   }
   const zero = catalogue(); Object.assign(zero.families[0].variants[0], { pricing: { input: 0, output: '0.00' }, free_until: '2999-01-01T00:00:00Z' });
   t.ok('Free tier だけで十分で、0料金の補足とも一致する', resolveDevinModel(raw).free && resolveDevinModel(zero).id === 'swe-2-high');
   const routed = { families: [{ family_uid: 'adaptive', slug: 'adaptive', variants: [{ model_uid: 'adaptive', cost_tier: 'Free' }] }] };
   assert.throws(() => resolveDevinModel(routed), { code: 'DEVIN_MODEL_EXPLICIT_REQUIRED' });
   t.ok('ルーティングモデルも表示し明示選択できるが無料既定にしない', Object.hasOwn(buildDevinModels(routed), 'adaptive') && resolveDevinModel(routed, 'adaptive').id === 'adaptive');
-  assert.throws(() => resolveDevinModel(raw, 'swe-2'), { code: 'DEVIN_MODEL_UNAVAILABLE' });
-  assert.throws(() => resolveDevinModel(raw, 'removed-model'), { code: 'DEVIN_MODEL_UNAVAILABLE' });
+  t.ok('未掲載 ID も指定の文字列を保持する', resolveDevinModel(raw, 'swe-2').id === 'swe-2' && resolveDevinModel(raw, 'removed-model').id === 'removed-model');
+  const fresh = rpc();
+  await applyDevinModel(fresh.call, 's', options(), resolveDevinModel(null, 'gpt-6-2-sol-xhigh'));
+  t.ok('一覧が取得できなくても GPT の明示 ID を CLI へそのまま送る', JSON.stringify(sets(fresh.calls)) === JSON.stringify([['model', 'gpt-6-2-sol-xhigh']]));
+  const rejected = new Error('CLI: model not available');
+  await assert.rejects(applyDevinModel(async () => { throw rejected; }, 's', options(), resolveDevinModel(raw, 'gpt-6.2-sol-xhigh')), error => error === rejected);
+  t.ok('CLI の断りを変更せず返す', true);
   const duplicate = catalogue(); duplicate.families.at(-1).variants.push({ model_uid: 'swe-2-high' });
   assert.throws(() => buildDevinModels(duplicate), { code: 'DEVIN_CATALOGUE_INVALID' });
   t.ok('別名・消えたID・重複IDを推測で解決しない', true);
@@ -149,8 +154,8 @@ export default async function (t) {
   t.ok('思考も速度も無い系は model の ACK だけで走る', JSON.stringify(sets(kimi.calls)) === JSON.stringify([['model', 'kimi-k2-6']]) && kimiApplied.verified.size === 1);
   // 対応軸の無い印（-priority）は送らず拒否する
   const priority = rpc();
-  await assert.rejects(applyDevinModel(priority.call, 's', options(), resolveDevinModel(raw, 'gpt-6-astra-low-priority')), { code: 'DEVIN_MODEL_CONFIG_UNAVAILABLE' });
-  t.ok('-priority は ACP に対応軸が無いので黙って別の形にせず拒否する', priority.calls.length === 0 && devinAcpModel('gpt-6-astra-low-priority', Object.keys(AXES)) === null);
+  await applyDevinModel(priority.call, 's', options(), resolveDevinModel(raw, 'gpt-6-astra-low-priority'));
+  t.ok('対応軸の分からない ID はそのまま CLI に送る', priority.calls.length === 1 && priority.calls[0].value === 'gpt-6-astra-low-priority');
   const gpt = rpc(); await applyDevinModel(gpt.call, 's', options(), resolveDevinModel(raw, 'gpt-6-astra-high'));
   t.ok('priority でない GPT 系の variant は代表 + 思考で走る', JSON.stringify(sets(gpt.calls)) === JSON.stringify([['model', 'gpt-6-astra-medium'], ['thought_level', 'high']]));
   const claudeFast = rpc(); await applyDevinModel(claudeFast.call, 's', options(), resolveDevinModel(raw, 'claude-opus-5-5-high-fast'));
@@ -175,8 +180,8 @@ export default async function (t) {
   const paid = rpc(options('paid-exact')); const paidApplied = await applyDevinModel(paid.call, 'paid', options('paid-exact'), resolveDevinModel(noFree, 'paid-exact'));
   t.ok('明示選択の有料モデルは ACP の完全一致選択肢なら使える', sets(paid.calls).length === 1 && paid.calls[0].value === 'paid-exact' && paidApplied.verified.size === 1);
   const foreign = catalogue(); foreign.families.at(-1).variants[0].model_uid = 'unknown-variant';
-  const unknown = rpc(); await assert.rejects(applyDevinModel(unknown.call, 'unknown', options(), resolveDevinModel(foreign, 'unknown-variant')), { code: 'DEVIN_MODEL_CONFIG_UNAVAILABLE' });
-  t.ok('他系列の代表との対応が不明なら推測送信も fallback もしない', unknown.calls.length === 0);
+  const unknown = rpc(); await applyDevinModel(unknown.call, 'unknown', options(), resolveDevinModel(foreign, 'unknown-variant'));
+  t.ok('他系列の代表との対応が不明なら指定の ID を送る', unknown.calls.length === 1 && unknown.calls[0].value === 'unknown-variant');
 
   for (const [kind, step] of [['model', 1], ['thought_level', 2], ['speed', 3]]) {
     const fake = rpc(options(), (state, params, n) => { if (n === step) state.find(o => o.id === params.configId).currentValue = 'unacknowledged'; });

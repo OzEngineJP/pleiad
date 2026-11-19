@@ -2,7 +2,7 @@
 
 ## 状態
 
-承認（2026-11-10）。0309（モデルの確かめは選ぶときに一本化し、送信直前には見ない）と 0310（Claude のモデル一覧は作業場所ごとに引く）のうち、「振り分けが一覧で確かめる」部分を置き換える。両方の本文は書き換えない。
+置換（0343、固定の委譲と Devin の事前検査の部分。自動の振り分けの決めは維持）。元の承認は 2026-11-10。0309（モデルの確かめは選ぶときに一本化し、送信直前には見ない）と 0310（Claude のモデル一覧は作業場所ごとに引く）のうち、「振り分けが一覧で確かめる」部分を置き換える。両方の本文は書き換えない。
 
 ## 状況
 
@@ -18,7 +18,9 @@
 - 断りの検出は `core/backends/` の中で行い、正規化した印（`turnResult` の `kind: 'model'`）として外へ渡す。Claude は `api_error_status: 404` の結果と断りの文面、Codex は `model_not_found` など。Antigravity・OpenCode・Grok・Devin は確実に見分ける形が無いので、理由つきの普通の失敗のままにする。
 - 設定の警告（`settingsWarnings`・候補の `modelNotListed`）は止めない知らせとして残し、文面を「一覧に見当たらない（使えるかは CLI が決める）」に改める。行の `resolvedModel` に正確に当たる名前は一覧にあるものとして数える。
 
-変えないもの: 固定の委譲（`backend` と `model` を書く）の `model_unknown`（`tasks.modelUnknown`）、親の送信（`sendModel`）、`reserveTurnSettings`、会話を作るときの `resolveModel`。
+固定の委譲と `ply_task_send` の一覧による拒否は ADR 0343 で廃止する。
+
+変えないもの: 親の送信（`sendModel`）、`reserveTurnSettings`、会話を作るときの `resolveModel`。
 
 ## 理由
 

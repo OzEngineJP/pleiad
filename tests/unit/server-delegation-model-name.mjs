@@ -1,7 +1,6 @@
-// ply_delegate の model の扱い（core/server.mjs の prepare / canonicalModel）。fake でサーバー全体を通す。LLM は呼ばない
+// ply_delegate の model の扱い（core/server.mjs の prepare）。fake でサーバー全体を通す。LLM は呼ばない
 //   - 一覧の id はそのまま
-//   - 正式な ID（backend が matchModel で一覧の id に当てるもの）は当てはめて走る
-//   - 当たらない名前は、黙って既定に戻さず model_unknown で断る（選べる名前を添える）。子の会話もタスクも作らない
+//   - 正式な ID は一致する行へ読み替え、未掲載の名前はそのまま CLI に渡す
 //   - model を書かなければ今までどおり既定
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
@@ -11,7 +10,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'server-delegation-model-name';
-export const title = 'ply_delegate の model: 正式な ID は一覧に当て、当たらない名前は既定に戻さず断る';
+export const title = 'ply_delegate の明示モデルは一覧で裁かず、文字列のまま渡す';
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 
 export default async function (t) {
@@ -54,18 +53,22 @@ export default async function (t) {
     const callsBefore = fss.existsSync(`${modelsFile}.calls`) ? fss.readFileSync(`${modelsFile}.calls`, 'utf8') : '';
     const official = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'fake', model: 'fake-smart-3-5', task: 'echo:B' });
     const officialTask = official.taskId ? await taskOf(official.taskId) : null;
-    t.ok('正式な ID は一覧の id に当てて走る（既定には落ちない）', !official.error && officialTask?.model === 'smart', JSON.stringify(official).slice(0, 300));
+    t.ok('正式な ID は正確に一致する一覧の行へ読み替える', !official.error && officialTask?.model === 'smart', JSON.stringify(official).slice(0, 300));
     if (official.taskId) await settle(official.taskId);
-    // canonicalModel は手元の一覧と matchModel で先に当てるので、正式な ID の読み替えで取り直し（models({ refresh })）は走らない
+    // 指定した名前の確認のために一覧を取り直さない
     const callsAfter = fss.existsSync(`${modelsFile}.calls`) ? fss.readFileSync(`${modelsFile}.calls`, 'utf8') : '';
-    t.ok('正式な ID の読み替えで取り直し（{ refresh }）は走らない',
+    t.ok('正式な ID の確認で取り直し（{ refresh }）は走らない',
       !callsAfter.slice(callsBefore.length).includes('refresh'), callsAfter.slice(callsBefore.length).trim().split('\n').join(',') || '(無し)');
 
     const before = (await tasks()).length;
     const unknown = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'fake', model: 'no-such-model', task: 'echo:C' });
-    t.ok('当たらない名前は model_unknown で断り、選べる名前を添える', String(unknown.error ?? '').includes('model_unknown') && String(unknown.error).includes('no-such-model')
-      && ['fast', 'smart', 'tiny'].every(m => String(unknown.error).includes(m)), unknown.error);
-    t.ok('断ったときは子のタスクを作らない', (await tasks()).length === before);
+    t.ok('未掲載モデルもそのまま子へ渡す', !unknown.error && (await taskOf(unknown.taskId))?.model === 'no-such-model', JSON.stringify(unknown));
+    await settle(unknown.taskId);
+    t.ok('未掲載モデルの子を 1 件だけ作る', (await tasks()).length === before + 1);
+    const withEffort = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'fake', model: 'future-model', effort: 'future-effort', task: 'echo:E' });
+    const withEffortTask = await taskOf(withEffort.taskId);
+    t.ok('未掲載モデルの明示した段を一覧で断らない', !withEffort.error && withEffortTask?.effort === 'future-effort', JSON.stringify(withEffort));
+    await settle(withEffort.taskId);
 
     const unset = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:D' });
     const unsetTask = await taskOf(unset.taskId);
