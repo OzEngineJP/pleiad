@@ -85,8 +85,14 @@
 .rt-cand-info{grid-area:info;min-width:0}
 .rt-cand-name{display:flex;align-items:center;gap:2px;min-width:0}
 .rt-picker-chip{margin-left:-4px}
+.rt-picker-chip[aria-expanded=false]:hover{background:transparent}
 .rt-picker-chip .brand{width:16px;height:16px}
 .rt-picker-chip svg.caret{display:block}
+@container (max-width:340px){
+  .rt-cand-row{column-gap:2px}
+  .chip.rt-picker-chip{padding-inline:4px;gap:3px}
+  .chip.rt-picker-chip svg.caret{width:12px;height:12px}
+}
 .rt-picker .plist:has([data-key="effort:conversation"]){margin-top:8px}
 .rt-picker .prow[data-key="effort:conversation"] .nm{font-size:var(--fs-s)}
 .rt-picker-confirm{margin-top:8px}
