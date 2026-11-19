@@ -9303,17 +9303,19 @@ async function restoreTurn(card, source) {
   if (!fields.presentKey || !fields.connectionTokens?.context) throw new Error('card is incomplete');
   let backend = getBackend(fields.backendId);
   if (!backend?.adoptTurn) throw new Error(`backend cannot adopt: ${fields.backendId}`);
-  // main がつながる前に復号を待たない。引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。
+  // main がつながる前に復号を待たない（秘密の復号は main に頼むが、main とのパイプはこの付け直しの後に立つ。待つと起動が上限まで止まる）。
+  // 引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。トークンのアカウントは、名前とコネクターの入口の設定だけを読む
   let restoredAccount = null;
   if (!fields.endpointId && fields.accountId) {
     if (accountKind(backend) === 'agent') {
       restoredAccount = await agentAccounts.get(fields.accountId);
       if (!restoredAccount || restoredAccount.backend !== backend.id) throw new Error(t('accounts.deleted'));
+      backend = await backendForAccount(backend, restoredAccount);
     } else if (accountKind(backend) === 'token') {
-      restoredAccount = await accountResolve(backend, fields.accountId);
+      const entry = await claudeAccounts.get(fields.accountId);
+      if (entry) restoredAccount = { ...entry, connectors: (await claudeAccountConnectors.settings.read(entry.id)).enabled === true };
     }
   }
-  backend = await backendForAccount(backend, restoredAccount);
   const meta = await store.get(sessionId);
   // 札が、この会話の走っている印（turnStartedAt）のターンのものか。合わない札は前の版のターンのもの
   if (!meta.turnStartedAt || meta.turnStartedAt !== startedAtMs) throw new Error('turn mismatch');

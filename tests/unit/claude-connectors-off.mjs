@@ -186,6 +186,11 @@ export default async function (t) {
   const gateCalls = [...server.matchAll(/claudeAccountConnectors\.gate\(/g)].length;
   t.ok('server は入口を accountResolve の 1 か所だけで呼び、登録アカウントを引いた直後に通す',
     gateCalls === 1 && /return claudeAccountConnectors\.gate\(await claudeAccounts\.resolve\(id\)\);/.test(server));
+  // 起動の付け直し（restoreTurn）は main とのパイプが立つ前に走る。秘密の復号（main に頼む）を待つと、デスクトップの起動の待ちを超えて止まる
+  const restoreBody = server.slice(server.indexOf('async function restoreTurn('), server.indexOf('const turn = {', server.indexOf('async function restoreTurn(')));
+  t.ok('起動の付け直しは、トークンのアカウントを復号せずに一覧の行（claudeAccounts.get）とコネクターの設定だけで読む',
+    restoreBody.length > 0 && !/accountResolve\(|claudeAccounts\.resolve\(|secrets?\.get\(/.test(restoreBody)
+      && /claudeAccounts\.get\(fields\.accountId\)/.test(restoreBody) && /claudeAccountConnectors\.settings\.read\(/.test(restoreBody));
 
   // 6. 残った設定ファイルは旧い accounts のコードに影響しない
   const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-cn-left-')));
@@ -198,5 +203,9 @@ export default async function (t) {
     const listed = await accounts.list();
     t.ok('設定ファイルが残っていても、旧い accounts は今までどおり読める（resolve・list）',
       resolved?.token === FAKE.registered && Object.keys(resolved).sort().join() === 'id,name,token' && JSON.stringify(listed).includes(ACCOUNT_ID) && !JSON.stringify(listed).includes('connectors'));
+    const locked = createClaudeAccounts({ dataDir: dir, cliConfig: path.join(dir, 'no-cli.json'),
+      secrets: { ...secrets, get: async () => { throw new Error('secret read during get'); } } });
+    t.ok('get は秘密を読まずに一覧の行（id・名前）だけを返す。無い id は null',
+      JSON.stringify(await locked.get(ACCOUNT_ID)) === JSON.stringify({ id: ACCOUNT_ID, name: 'fake-account' }) && await locked.get('acct-000000000000') === null);
   } finally { await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 }); }
 }

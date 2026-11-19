@@ -311,6 +311,11 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
     async has(id) {
       return (await read()).accounts.some(a => a.id === id);
     },
+    /** 一覧の 1 行（{ id, name }）。トークンは読まない（秘密の復号を待たない）。無ければ null */
+    async get(id) {
+      const entry = (await read()).accounts.find(a => a.id === id);
+      return entry ? { id: entry.id, name: entry.name } : null;
+    },
     /**
      * 追加の前の検査（ブラウザーでの認可を回す前に止めるため）。名前が不正・重複なら例外（code: bad-name。
      * 画面はこれだけを名前の欄に出し、ほかの失敗は流れの所に［やり直す］と出す。web/claude-accounts.mjs）
