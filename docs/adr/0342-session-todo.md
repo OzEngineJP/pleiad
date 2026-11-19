@@ -29,6 +29,6 @@
 
 ## 影響
 
-- 形式 4 の置き場は 0.42.6-beta.4 以前の版では開けない。古い版へ戻すなら `backup-schema3-*` の DB が移行前のデータで、移行後の記録は戻らない（[desktop-releases.md](../desktop-releases.md)）。
+- 形式 4 の置き場は 0.42.6-beta.5 以前の版では開けない。古い版へ戻すなら `backup-schema3-*` の DB が移行前のデータで、移行後の記録は戻らない（[desktop-releases.md](../desktop-releases.md)）。
 - 分岐した会話には ToDo が無い。写したくなったら、写した後は元と先で別々に変わる形で足す。
 - 画面は [design-system.md](../design-system.md)「会話の ToDo」。
