@@ -132,7 +132,17 @@ async function japaneseCases(t) {
   assert.ok(factText.includes('Codex（依頼元が指定）') && factText.includes('都度確認') && factText.includes('pleiad'), factText);
   assert.equal(facts.querySelectorAll('.rt-cand').length, 0, '候補は出さない');
   assert.equal(facts.querySelector('.rt-retry-open'), null, 'やり直しは出さない');
-  t.ok('固定の委譲の 1 行と内訳（難しさを決めたモデル・候補・やり直しは出さない）', true);
+  let pinnedRetryArgs;
+  const retryFacts = pinnedDetail(pinned, { names, onRetry: (...args) => { pinnedRetryArgs = args; } });
+  const retryButton = retryFacts.querySelector('.rt-retry-open');
+  assert.ok(retryButton);
+  assert.equal(retryButton.getAttribute('aria-expanded'), 'false');
+  retryButton.onclick({ preventDefault() {} });
+  assert.deepEqual(pinnedRetryArgs, [retryFacts, retryButton]);
+  assert.ok(retryFacts.querySelector('.rt-retried'));
+  const clientSource = readFileSync(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+  assert.match(clientSource, /pinnedDetail\(routing, \{ \.\.\.pinnedFacts\(card, routing\), onRetry: \(root, button\) => toggleRetry\(card, root, button\) \}\)/);
+  t.ok('固定の委譲でも共通の候補選択を開き、やり直しの記録を表示する', true);
 
   // 委譲の子の自動圧縮の閾値と内訳（ADR 0166）。タスクの記録の compaction を内訳に 1 行で出す
   const compaction = { threshold: 171000, base: 71003, source: 'own', headroom: 100000 };
