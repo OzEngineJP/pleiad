@@ -10755,6 +10755,8 @@ function connect() {
       // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
       notifySettings.refresh();
       notificationInbox.reconnected();
+      // 同じ会話を開いたままでも、切れたときに受け取れなかった ToDo の一覧を取り直す
+      sessionTodo.reconnected();
       presenceReporter.reset();
       presenceReporter.report(true);
       modalPresence.reset();

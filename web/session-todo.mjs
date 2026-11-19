@@ -537,7 +537,7 @@ export function createSessionTodo(o) {
     try {
       const res = await o.cmd('invoke', { op: 'todos.list', args: { sessionId: sid } });
       const out = res?.result ?? res;
-      if (S.session !== sid || token !== S.loading || !out?.items) return;
+      if (S.session !== sid || token !== S.loading || !out?.items || out.rev < S.rev) return;
       setItems(out.items, out.rev);
       refresh(isOpen ? undefined : false);
     } catch { /* 読めなければ今の並びのまま */ }
@@ -1006,7 +1006,7 @@ export function createSessionTodo(o) {
   }
 
   return {
-    load, reset, onEvent, open, close, isOpen: () => isOpen,
+    load, reset, reconnected: reload, onEvent, open, close, isOpen: () => isOpen,
     toggle: () => (isOpen ? close() : open()),
     stats, label: entryLabel,
     hasUnseen: () => unseen.size > 0 && !isOpen,
