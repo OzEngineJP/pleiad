@@ -91,7 +91,7 @@ import { createContextSettings } from './context-settings.mjs';
 import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { createClaudeConnectorsCache } from './claude-connectors.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
-import { ConnectorsAuthError, connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
+import { connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
 import { guardUsageDir, refreshUsageDir, shouldMarkUsageExpired } from './backends/claude-usage.mjs';
 import { claudeSdkVersion } from './claude-sdk.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
@@ -579,8 +579,13 @@ const claudeAccountConnectors = createClaudeConnectorsWiring({
     return { cli: exe ? await cliVersion(exe) : null, sdk: claudeSdkVersion() };
   },
   usage: { guard: guardUsageDir, refresh: refreshUsageDir },
+  onLoginExpired: markConnectorsLoginExpired,
 });
 const claudeConnectorsCache = createClaudeConnectorsCache({ dataDir: store.dataDir });
+async function markConnectorsLoginExpired(accountId, reason) {
+  const result = await claudeAccounts.markUsageExpired(accountId, reason).catch(() => null);
+  if (result?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+}
 const tokenAccountBackend = () => listBackends().find(b => accountKind(b) === 'token') ?? null;
 
 // アカウントの認可を Pleiad から行う（疑似端末で claude setup-token / claude auth login を回す。core/claude-login.mjs）。
@@ -3147,7 +3152,7 @@ async function providerQuota(backend, { force = false } = {}) {
       let changed = false;
       for (const row of res.accounts) {
         if (!row?.accountId) continue;
-        // ログイン切れの印は、認証が無い・更新できない行だけ（429・時間切れは付けない）
+        // CLI が認証失敗を返した行に、画面用のログイン切れの印を付ける。
         if (shouldMarkUsageExpired(row)) {
           if ((await claudeAccounts.markUsageExpired(row.accountId, row.reason ?? 'no-login').catch(() => ({}))).changed) changed = true;
         } else if (!row.skipped && !row.reason && !row.needsUsageLogin && (row.windows?.length || row.plan)) {
@@ -3961,11 +3966,9 @@ function makeEmit(turn) {
         if (viaConnectors) {
           const ce = connErr ?? { kind: 'expired', scope: null, code: 'connectors-expired', accountId, accountName: name ?? '', reauth: true, needsOwnerCheck: false };
           event = { ...event, backend: turn.backend.id, connectorsError: ce, auth: { mode: 'connectorsLogin', accountId, name } };
-          // 切れの印は期限切れ（更新できなかった）だけ。login は想定外の失敗の受け皿も兼ねるので、アカウントを「切れています」にしない
-          if (!replay && accountId && ce.kind === 'expired') {
-            claudeAccounts.markUsageExpired(accountId, ce.kind).then((r) => {
-              if (r?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
-            }).catch(() => {});
+          // トークンの時刻による停止とは別に、CLI が直接返した認証失敗を画面に記録する。
+          if (!replay && accountId && !connErr) {
+            void markConnectorsLoginExpired(accountId, 'no-login');
             claudeConnectorsCache.remove(accountId).catch(() => {});
           }
         } else {
@@ -4003,6 +4006,9 @@ function makeEmit(turn) {
       }
       turn.retry = null;
       turn.retryEpisode = null;
+      const ctx = turnContexts.get(turn);
+      if (event.outcome === 'error' && event.kind === 'auth' && !ctx?.acceptedSent
+        && ctx?.hooks.claimFailureNotice?.() === false) return;
     }
     // エージェントが上限・一時的な失敗のあと再試行を待っている（OpenCode の session.status の retry。ADR 0229）。
     // 委譲の子なら台帳が依頼元へ知らせ、ply_task_wait を待たずに返す（agentTasks の retrying）。
@@ -5856,9 +5862,7 @@ function probeAccountConnectors(acct, { identityHash, deny = [] }) {
       emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
     } catch (err) {
       accountConnectorFailed.add(acct.id);
-      if (err instanceof ConnectorsAuthError && err.connectorsError?.kind === 'expired') {
-        await claudeAccounts.markUsageExpired(acct.id, err.connectorsError.kind).catch(() => {});
-      }
+      if (err?.cliAuthFailed === true) await markConnectorsLoginExpired(acct.id, 'no-login');
       emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
     } finally {
       if (accountConnectorProbes.get(acct.id) === run) accountConnectorProbes.delete(acct.id);
@@ -8210,7 +8214,7 @@ agentTasks = await createAgentTasks({
   // 同じ依頼元への完了通知をまとめて 1 つ届ける。走っているターンへ渡せれば途中送信で（noticeTarget）、
   // 渡せなければ（requeue）空いてから新しいターンで
   // accepted は、依頼元の新しいターンにプロンプトが受け取られた（引き継げる状態になった）ときに呼ぶ口。受け取られた後は、ターンの終わりまで引き継ぎを待たせない
-  deliver: async (tasks, { accepted } = {}) => {
+  deliver: async (tasks, { accepted, claimFailureNotice } = {}) => {
     const owner = tasks[0].parentSessionId;
     // 端末の AI に任された作業の完了は、依頼元（端末）へ便りで届ける。ホストの会話に新しいターンは始めない
     if (isRemoteOwner(owner)) return remoteDeliver(tasks);
@@ -8220,7 +8224,8 @@ agentTasks = await createAgentTasks({
     if (!live && await noticeBlocked(owner)) return 'requeue';
     // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。recordTaskNotice）
     const prompt = completionNotice(await ensureAgentLocale(owner), tasks);
-    return live ? steerNotice(live, owner, prompt, tasks) : runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
+    if (live) return steerNotice(live, owner, prompt, tasks);
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted, retryUndelivered: true, claimFailureNotice });
   },
   // 止まった子に残った裏のコマンドが、まだ生きているか。OS のプロセス ID はどのバックエンドも渡さないので、
   // バックエンドが裏の作業として挙げているか（Codex の端末・Claude のターンが抱える裏の作業・ply_shell の裏のジョブ）で答える
@@ -8432,7 +8437,17 @@ async function runTurnInternal(args, onStarted, hooks) {
   const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
   if (sessionId) switching.add(sessionId);
   try {
-    const ctx = await prepareTurn(args, hooks, compactionRevision);
+    const ctx = await prepareTurn(args, hooks, compactionRevision).catch(error => {
+      const ce = error?.connectorsError;
+      if (hooks.retryUndelivered && ce) {
+        if (hooks.claimFailureNotice?.() !== false) emitGlobal({ type: 'turnResult', sessionId, outcome: 'error',
+          error: String(error.message ?? error), kind: 'auth', pristine: true, backend: tokenAccountBackend()?.id, connectorsError: ce,
+          auth: { mode: 'connectorsLogin', accountId: ce.accountId ?? '', name: ce.accountName || null } });
+        return null;
+      }
+      throw error;
+    });
+    if (!ctx) return 'undelivered';
     return await driveTurn(ctx, async () => {
       await onStarted();
       ctx.didStart = true;
@@ -8787,6 +8802,7 @@ function bindTurnContext(ctx) {
     // 内部のターン（完了通知など）の依頼元へ「受け取られた」と知らせる。以後は引き継げる。記録の確定（agentTasks・settingApprovals）が済むまで引き継ぎを待たせる
     if (ctx.hooks?.onAccepted && !ctx.acceptedSent) {
       ctx.acceptedSent = true;
+      if (ctx.hooks.retryUndelivered) emit({ type: 'taskNotice', text: String(ctx.prompt ?? '') });
       Promise.resolve().then(() => ctx.hooks.onAccepted(nativeId)).catch(e => console.error('  通知の受け取りの記録に失敗:', String(e?.message ?? e)));
     }
     if (ctx.interruption && !ctx.interruptionTaken) {
@@ -8864,7 +8880,7 @@ async function beginTurn(ctx) {
     // 画面の「タスクの結果で再開」の 1 行を開くと読める（ADR 0053）
     const rows = channelEventRows(prompt);
     if (rows.length) emit({ type: 'channelEvent', rows });
-    else emit({ type: 'taskNotice', text: String(prompt ?? '') });
+    else if (!hooks.retryUndelivered) emit({ type: 'taskNotice', text: String(prompt ?? '') });
   }
   await ctx.saveContext();
   // agy のように会話のあいだ 1 本のプロセスを生かすバックエンドには、会話ごとの同じトークンで開く（起動時にしか渡せない）
@@ -9099,8 +9115,10 @@ async function driveTurn(ctx, start) {
   const { turn, emit, hooks, sessionId, args } = ctx;
   // バックエンドを呼ぶ前に戻した（canInvoke）。後始末の失敗で turn.outcome が変わっても 'requeue' を返す
   let beforeInvoke = false;
+  let undelivered = false;
   try {
     const result = await start();
+    undelivered = result?.undelivered === true;
     if (result?.beforeInvoke) {
       beforeInvoke = true;
       turn.outcome = 'requeue';
@@ -9108,6 +9126,7 @@ async function driveTurn(ctx, start) {
       await afterResult(ctx, result);
     }
   } catch (err) {
+    undelivered ||= err?.undelivered === true || (!ctx.backendInvoked && !!err?.connectorsError);
     if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
       reason: String(err?.message ?? err) });
     // 発言を渡した後に失敗したターンでも、バックエンドが注入した分は記録に残す（agy のネイティブ指示。issue #107）
@@ -9124,11 +9143,6 @@ async function driveTurn(ctx, start) {
           auth: { mode: 'connectorsLogin', accountId: ce.accountId ?? '', name: ce.accountName || null },
           ...(args.messageId && (err?.undelivered || !ctx.backendInvoked || !ctx.initialDelivered) ? { messageId: args.messageId, undelivered: true } : {}) } : {}) });
     }
-    if (err?.connectorsError?.accountId && err.connectorsError.kind === 'expired') {
-      claudeAccounts.markUsageExpired(err.connectorsError.accountId, err.connectorsError.kind)
-        .then((r) => { if (r?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }); })
-        .catch(() => {});
-    }
     // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
     // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
     if ((err?.undelivered || !ctx.backendInvoked || !ctx.initialDelivered) && sessionId && args.messageId) {
@@ -9144,6 +9158,7 @@ async function driveTurn(ctx, start) {
     await closeTurn(ctx);
     hooks.signal?.removeEventListener("abort", ctx.abortFromTask);
   }
+  if (hooks.retryUndelivered && undelivered && !ctx.acceptedSent) return 'undelivered';
   // 設定を変えるために止めたターンは、送信待ちの列には「終わった」と返す（列を止めない。message-queue の pause）
   return beforeInvoke ? 'requeue' : turn.abortReason === 'settings' && turn.outcome === 'aborted' ? 'ok' : turn.outcome;
 }

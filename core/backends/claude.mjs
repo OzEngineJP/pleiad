@@ -12,7 +12,7 @@
 import { loadClaudeSdk, isClaudeSdkMissing, requestClaudeSdkConsent, claudeSdkStatus, onClaudeSdkChange, ensureClaudeSdk, startClaudeSdkMaintenance } from '../claude-sdk.mjs';
 import { claudeAuth } from '../auth/claude-cli.mjs';
 import { t, agentT } from '../i18n.mjs';
-import { readClaudeAccountsUsage } from './claude-usage.mjs';
+import { claudeUsageAuthFailure, readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, adoptClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
 import { writeClaudeEnvFile, adoptClaudeEnvFile } from '../claude-env-file.mjs';
@@ -49,7 +49,7 @@ import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
 import { stripAnsi } from "../claude-login.mjs";
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 import { identitySuffix } from "../claude-connectors.mjs";
-import { EXPIRY_MARGIN_MS } from "../claude-connectors-auth.mjs";
+import { REFRESH_WINDOW_MS } from "../claude-connectors-auth.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -275,8 +275,11 @@ export async function probeClaudeConnectors({ deny = [], token = null, connector
     return verification ? { connectors: list, account: await q.accountInfo() } : list;
   } catch (err) {
     if (!auth) throw err;
-    // オンのときは、渡したトークンが混ざりうる元のエラーを渡さない（伏せた文面と code だけ）
-    throw Object.assign(new Error(redactToken(redactToken(err?.message ?? err, auth.token), token)), err?.code ? { code: err.code } : {});
+    // オンのときは、渡したトークンが混ざりうる元のエラーを渡さない（伏せた文面と判定に使う情報だけ）
+    throw Object.assign(new Error(redactToken(redactToken(err?.message ?? err, auth.token), token)), {
+      ...(err?.code ? { code: err.code } : {}),
+      cliAuthFailed: claudeUsageAuthFailure(err),
+    });
   } finally {
     signal?.removeEventListener('abort', abort);
     clearTimeout(timer);
@@ -461,7 +464,7 @@ function makeScopedBackend(account) {
 function withConnectorsAuth(scoped, account) {
   const authed = async (opts, call) => {
     if (opts?.endpoint) return call(opts);
-    const auth = await account.connectors.fresh({ cwd: opts?.cwd });
+    const auth = await account.connectors.fresh({ cwd: opts?.cwd }).catch(error => { throw undelivered(error); });
     return call({ ...opts, oauthToken: auth.token, connectorsEnv: auth.env, connectorsExpiresAt: auth.expiresAt, connectors: account.connectors });
   };
   return {
@@ -960,7 +963,6 @@ export const backend = {
     let activeOauthToken = oauthToken;
     let activeConnectorsEnv = connectorsEnv;
     let activeExpiresAt = adopt ? (adopt.card.connectorsExpiresAt ?? connectorsExpiresAt) : connectorsExpiresAt;
-    const marginMs = connectors?.expiryMarginMs ?? EXPIRY_MARGIN_MS;
     let resumeTarget = sessionId;
     let promptDeliveredOnce = false;
     let input = createInputQueue();
@@ -1493,9 +1495,13 @@ export const backend = {
       } else {
         const onExpiryReached = async () => {
           if (!refreshedPreExpiry && Date.now() < activeExpiresAt) {
+            refreshedPreExpiry = true;
+            scheduleExpiryTimer();
             let nextAuth;
             try { nextAuth = await connectors.fresh({ cwd }); }
             catch (err) {
+              if (preExpiryAuthError || stop || signal?.signal?.aborted) return;
+              clearExpiryTimer();
               preExpiryAuthError = err;
               authFailed = { message: err?.message ?? 'authentication_failed', connectorsError: err?.connectorsError ?? null };
               void held?.finish();
@@ -1503,16 +1509,15 @@ export const backend = {
               sdkAbort.abort();
               return;
             }
-            if (stop || signal?.signal?.aborted) return;
-            if (!produced && !adopt && !finished && heldRestarts < 2 && nextAuth?.expiresAt - marginMs > Date.now()) {
+            if (preExpiryAuthError || stop || signal?.signal?.aborted) return;
+            if (!produced && !adopt && !finished && heldRestarts < 2 && nextAuth?.expiresAt > Math.max(activeExpiresAt, Date.now())) {
+              clearExpiryTimer();
               restartingPreExpiry = nextAuth;
               void held?.finish();
               closeInput();
               sdkAbort.abort();
               return;
             }
-            refreshedPreExpiry = true;
-            scheduleExpiryTimer();
             return;
           }
           const expErr = connectors.expiredError?.() ?? Object.assign(new Error('authentication_failed'), { connectorsError: null });
@@ -1525,7 +1530,7 @@ export const backend = {
         const scheduleExpiryTimer = () => {
           clearExpiryTimer();
           if (!held || finished || !connectors || endpoint || !Number.isFinite(activeExpiresAt) || stop || signal?.signal?.aborted || preExpiryAuthError) return;
-          const target = refreshedPreExpiry ? activeExpiresAt : activeExpiresAt - marginMs;
+          const target = refreshedPreExpiry ? activeExpiresAt : activeExpiresAt - REFRESH_WINDOW_MS;
           const waitMs = Math.max(0, target - Date.now());
           expiryTimer = setTimeout(() => {
             expiryTimer = null;
@@ -1576,7 +1581,10 @@ export const backend = {
       if (stop) emit({ type: "turnResult", outcome: "aborted" });
       else if (limit) emit({ type: 'turnResult', outcome: 'limited', ...limitFields(limit) });
       // 401 の result は subtype が success のまま（is_error だけが立つ）。例外にならずに終わっても、成功として出さない
-      else if (authFailed) emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced, ...(authFailed.connectorsError ? { connectorsError: authFailed.connectorsError } : {}) });
+      else if (authFailed) {
+        emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced, ...(authFailed.connectorsError ? { connectorsError: authFailed.connectorsError } : {}) });
+        if (!promptSent) return { sessionId: ctx.sessionId, undelivered: true };
+      }
       else if (modelRejected) emit({ type: 'turnResult', outcome: 'error', error: hide(modelRejected.message ?? 'model_not_found'), kind: 'model', pristine: !produced });
       else if (heldResult) emit(heldResult);
     } catch (err) {

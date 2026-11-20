@@ -228,6 +228,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const steers = new Map();
   // RPC の送信順だけを直列化する。配送確認は次の送信を止めない。
   const instructionSends = new Map(), deferredInstructions = new Set(), settlingInstructions = new Set();
+  const noticeRetryAt = new WeakMap(), noticeFailureShown = new Set();
   const live = new Map(), notices = new Set(), noticeOwners = new Set(), waited = new Map(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
   const serial = fn => {
     const next = writes.then(async () => { mutating = true; try { return await fn(); } finally { mutating = false; } });
@@ -636,10 +637,19 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           await persist('notify.accepted', sending.map(r => r.taskId));
           touched();
         });
-        for (const r of sending) notices.delete(r.taskId);
+        noticeFailureShown.delete(owner);
+        for (const r of sending) {
+          noticeRetryAt.delete(r);
+          notices.delete(r.taskId);
+        }
       })();
-      // delivery callback only returns 'requeue' when no prompt was accepted.
-      const outcome = await deliver(sending.map(r => structuredClone(r)), { accepted }).catch(() => 'error');
+      // requeue は受理前の待ち。undelivered はプロンプトを渡す前に失敗したと確定した場合。
+      const claimFailureNotice = () => {
+        if (noticeFailureShown.has(owner)) return false;
+        noticeFailureShown.add(owner);
+        return true;
+      };
+      const outcome = await deliver(sending.map(r => structuredClone(r)), { accepted, claimFailureNotice }).catch(() => 'error');
       // 受け取られた後の結果（ターンの終わり・引き継ぎ・失敗）では記録を変えない。送った事実は受け取られた時点で確定している
       if (acceptance) { await acceptance; return; }
       if (outcome === 'requeue') {
@@ -647,8 +657,16 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         await serial(async () => { for (const r of sending) if ((r.revision ?? 0) === revisions.get(r.taskId) && r.notification === 'delivering') r.notification = 'pending'; });
         return;
       }
+      const retryAt = now() + RETRY_WAIT_MS;
+      if (outcome === 'ok') noticeFailureShown.delete(owner);
       await serial(async () => {
-        for (const r of sending) if ((r.revision ?? 0) === revisions.get(r.taskId)) { r.notification = outcome === 'ok' ? 'sent' : 'unknown'; r.updatedAt = Date.now(); }
+        for (const r of sending) {
+          if ((r.revision ?? 0) !== revisions.get(r.taskId)) continue;
+          if (outcome === 'undelivered') noticeRetryAt.set(r, retryAt);
+          else noticeRetryAt.delete(r);
+          r.notification = outcome === 'ok' ? 'sent' : outcome === 'undelivered' ? 'pending' : 'unknown';
+          r.updatedAt = Date.now();
+        }
         await persist('notify.done', sending.map(r => r.taskId));
         touched();
       });
@@ -777,6 +795,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (closed || mutating) return;
     if (fault) { probe(); return; }
     const groups = new Map();
+    const notificationDue = r => r.notification === 'pending' && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)
+      && (noticeRetryAt.get(r) ?? -Infinity) <= now();
     for (const r of Object.values(records)) {
       // ホストに任せたタスクの写しは走らせない。新しいホストの活動の写しがあれば、通知だけ依頼元で判定する
       if (r.host) {
@@ -799,7 +819,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           if (backgroundMs && bg && !backgroundNotices.has(r.taskId) && backgroundDue(r, bg))
             spawn(notifyBackground(r).catch(e => report({ event: 'unexpected', operation: 'background', taskId: r.taskId, code: e?.code ?? null })));
         } else silenceWaiting.delete(r.taskId);
-        if (r.notification === 'pending' && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)) {
+        if (notificationDue(r)) {
           if (!groups.has(r.parentSessionId)) groups.set(r.parentSessionId, []);
           groups.get(r.parentSessionId).push(r);
         }
@@ -842,7 +862,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const ac = new AbortController(); live.set(r.taskId, ac);
         spawn(run(r, ac).catch(e => { live.delete(r.taskId); report({ event: 'unexpected', operation: 'run', taskId: r.taskId, code: e?.code ?? null }); }));
       }
-      if (r.notification === 'pending' && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)) {
+      if (notificationDue(r)) {
         if (!groups.has(r.parentSessionId)) groups.set(r.parentSessionId, []);
         groups.get(r.parentSessionId).push(r);
       }

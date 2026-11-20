@@ -181,9 +181,9 @@ export function claudeUsageAuthFailure(error) {
   return isClaudeAuthError(text) || USAGE_AUTH_TEXT.test(text);
 }
 
-/** ログイン切れの印（ply-usage-expired.json）を付ける行か。429 と時間切れは付けない */
+/** CLI の認証失敗で、ログイン切れの表示を付ける行か */
 export function shouldMarkUsageExpired(row) {
-  return row?.reauth === true && row?.reason !== 'timeout' && row?.reason !== 'rate-limited';
+  return row?.cliAuthFailed === true;
 }
 
 /** 使用量の認可を促す文。言語が実行中に変わるので呼ぶたびに引く */
@@ -221,10 +221,10 @@ export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('c
       const quota = await read({ configDir: a.configDir });
       return { ...base, ...quota, ...(quota?.reason === 'no-login' ? { reauth: true } : {}) };
     } catch (e) {
-      // ログイン切れの印は、認証が無い・更新できないときだけ。429・時間切れ・起動失敗は「取得できませんでした」
+      // ログイン切れの印は、CLI が認証失敗を返したときに付ける。429・時間切れ・起動失敗は「取得できませんでした」
       const reason = quotaFailure(e);
       const auth = reason !== 'rate-limited' && reason !== 'timeout' && claudeUsageAuthFailure(e);
-      return { ...base, windows: [], reason, ...(auth ? { reauth: true } : {}),
+      return { ...base, windows: [], reason, ...(auth ? { reauth: true, cliAuthFailed: true } : {}),
         message: auth ? t('claude.usage.failedReauth', { message: errorText(e) }) : t('claude.usage.failed', { message: errorText(e) }) };
     }
   };

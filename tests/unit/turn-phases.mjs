@@ -297,6 +297,26 @@ ${server.tail(10)}`);
       t.ok('driveTurn: canInvoke で戻ったら後始末の失敗によらず requeue を返す', out.ok && out.value.returned === 'requeue' && out.value.outcome === 'error', JSON.stringify(out));
     }
 
+    // 完了通知の認証失敗は、受け取りの合図より前に未送達が確定したときだけ再送できる。
+    {
+      const before = await scene('noticeAuthFailure');
+      const after = await scene('noticeAuthFailure', { acceptedSent: true });
+      t.ok('driveTurn: 未送達と確定した完了通知の認証失敗を呼び出し元に返す', before.ok && before.value === 'undelivered', JSON.stringify(before));
+      t.ok('driveTurn: 受け取り済みの完了通知は再送しない', after.ok && after.value === 'error', JSON.stringify(after));
+    }
+
+    {
+      const { sessionId } = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'echo:notice owner' }, { ms: TURN_WAIT_MS });
+      const mark = c.mark();
+      const out = await scene('noticePreparationAuthFailure', { sessionId });
+      await caughtUp();
+      const failures = c.since(mark).filter(e => e.type === 'turnResult' && e.sessionId === sessionId && e.outcome === 'error');
+      t.ok('prepareTurn: 完了通知の認証失敗は 2 回とも未送達を返し、依頼元の会話へ認証エラーを 1 回だけ出す',
+        out.ok && out.value.join() === 'undelivered,undelivered' && failures.length === 1
+        && failures[0].kind === 'auth' && failures[0].connectorsError?.kind === 'expired'
+        && failures[0].auth?.mode === 'connectorsLogin', JSON.stringify({ out, failures }));
+    }
+
     // 15. endTurn を 2 回呼んでも 2 回目は何もしない
     {
       const out = await scene('endTurnOnce');

@@ -5,7 +5,7 @@
 //   CLAUDE_CONFIG_DIR           共有の設定フォルダ（既定は ~/.claude。履歴・設定・Skills・プラグインを今までと同じ場所で共用する）
 //   CLAUDE_CODE_OAUTH_TOKEN     使用量の認可（claude-usage/<id>）のアクセス用トークン（会話用に登録したトークンではない）
 //   CLAUDE_CODE_OAUTH_SCOPES    そのログインに記録された権限の並び（空白区切り・順序そのまま。足すとコネクターが通常のログインと一致する）
-// 更新用トークンは取り出さない・渡さない・写さない（ファイルを解析するが、使うのは accessToken・expiresAt・scopes の 3 項目だけ）。
+// 更新用トークンは取り出さない・渡さない・写さない（更新用トークンは期限だけを読む）。
 // アクセス用トークンの更新は CLI だけが行う（Pleiad は私的な更新の口を呼ばない）。期限が近ければ使用量の読み取りを 1 回流して CLI に更新させ、
 // 読み直す。オンのアカウントの設定フォルダは使用量の読み取りを順に流す（claude-usage.mjs の guardUsageDir・refreshUsageDir）ので、
 // 同じ設定フォルダを同時に 2 つの CLI が更新しにいかない（印を付ける前から走っていた読み取りも待つ）。
@@ -27,6 +27,7 @@ import { AccountError, cliConfigFile } from './claude-accounts.mjs';
 import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnectorIdentity } from './claude-connectors.mjs';
 import { claudeManagedFiles } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
+import { claudeUsageAuthFailure } from './backends/claude-usage.mjs';
 
 /** CLI の下限と完全一致を要求する SDK の組（ADR 0340）。 */
 export const VERIFIED_VERSIONS = [{ cli: '2.1.322', sdk: '0.3.288' }];
@@ -47,12 +48,8 @@ export function supportedConnectorVersions(found, verified = VERIFIED_VERSIONS) 
 }
 /** キャッシュのキーに足す識別子（core/claude-connectors.mjs の identitySuffix）。b1 の認証元を別のキャッシュにする */
 export const IDENTITY = 'b1';
-/**
- * 期限までの残りがこれより短ければ、会話の前に CLI に更新させる（ADR 0340）。
- * 会話の途中で期限が来ると、CLI がその後どの資格情報で続けるかを確かめていない（共有の設定フォルダのログインへ黙って替わりうる）。
- * 1 回のターンが長く続いても途中で切れないよう、起動の時点で 1 時間以上残す（アクセス用トークンの寿命は数時間）
- */
-export const EXPIRY_MARGIN_MS = 60 * 60_000;
+// CLI がアクセス用トークンを更新する窓。動作確認では残り 4 分 59 秒で更新された（ADR 0340）。
+export const REFRESH_WINDOW_MS = 5 * 60_000;
 /** 資格情報の読み取り（CLI が書き換え中に壊れて見えることがある）の回数と間 */
 export const READ_ATTEMPTS = 3;
 const READ_RETRY_MS = 100;
@@ -160,7 +157,8 @@ export async function readAccessCredentials(dir, { readFile = fs.readFile, sleep
     const token = oauth?.accessToken, expiresAt = oauth?.expiresAt, scopes = oauth?.scopes;
     if (typeof token !== 'string' || !TOKEN.test(token) || !Number.isFinite(expiresAt)
       || !Array.isArray(scopes) || !scopes.length || !scopes.every(s => typeof s === 'string' && SCOPE.test(s))) return { malformed: true };
-    return { token, expiresAt, scopes: [...scopes] };
+    const refreshTokenExpiresAt = oauth?.refreshTokenExpiresAt;
+    return { token, expiresAt, scopes: [...scopes], ...(Number.isFinite(refreshTokenExpiresAt) ? { refreshTokenExpiresAt } : {}) };
   }
   return null;
 }
@@ -499,7 +497,7 @@ async function projectProfileNow({ source, target, cwd, platform = process.platf
  */
 export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard = () => {}, env = process.env, home = os.homedir(), platform = process.platform,
   now = Date.now, readFile = fs.readFile, sleep = sleepFor, project = projectProfile, verified = VERIFIED_VERSIONS, managedFiles = null,
-  expiryMarginMs = EXPIRY_MARGIN_MS, verify = null } = {}) {
+  onLoginExpired = async () => {}, verify = null } = {}) {
   const sharedDir = () => env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
 
   async function settingsCheck(name, cwd = null) {
@@ -529,20 +527,6 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     return found;
   }
 
-  /**
-   * 使用量のログインの印（無い → login、更新できなかった印 → expired）。画面の検査（inspect）と起動（resolveOn）が同じ順で見る
-   * （画面が「止めています」なのに送れてしまう食い違いを作らない）。印を読めない例外は印が無い・切れていない側に倒す
-   */
-  async function usageMarkers(account) {
-    const name = account.name ?? account.id;
-    if (accounts.hasUsageLogin && !(await Promise.resolve().then(() => accounts.hasUsageLogin(account.id)).catch(() => false))) {
-      throw new ConnectorsAuthError('login', { name });
-    }
-    if (accounts.isUsageExpired && (await Promise.resolve().then(() => accounts.isUsageExpired(account.id)).catch(() => false))) {
-      throw new ConnectorsAuthError('expired', { name });
-    }
-  }
-
   async function credentials(account, dir, { skipSleep = false } = {}) {
     const read = platform === 'darwin' ? readMacAccessCredentials : readAccessCredentials;
     const cred = await read(dir, { readFile, sleep: skipSleep ? async () => {} : sleep });
@@ -550,6 +534,8 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     if (cred.malformed) throw new ConnectorsAuthError('format', { name: account.name ?? account.id });
     return cred;
   }
+
+  const refreshExpired = cred => cred.refreshTokenExpiresAt <= now();
 
   async function usageAccountDigest(dir) {
     try {
@@ -577,9 +563,8 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     try {
       const ver = await checks(account, { cwd });
       const dir = accounts.usageDir(account.id);
-      await usageMarkers(account);
-      // アクセス用トークンの時刻切れは起動の直前に CLI が更新するので止めない（切れとして出すのは、更新できなかった印があるときだけ）
       const cred = await credentials(account, dir, { skipSleep: true });
+      if (refreshExpired(cred)) throw new ConnectorsAuthError('expired', { name: account.name ?? account.id });
       const identityHash = hashConnectorIdentity({
         id: account.id,
         identity: IDENTITY,
@@ -612,7 +597,6 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
 
   async function resolveOn(account) {
     const ver = await checks(account);
-    await usageMarkers(account);
     const dir = accounts.usageDir(account.id);
     guard(dir, account);
     const first = await credentials(account, dir);
@@ -626,22 +610,32 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
         token: first.token,
         connectors: {
           identity: IDENTITY,
-          expiryMarginMs,
           expiredError() { return attachConnectorsError(new ConnectorsAuthError('expired', { name }), account); },
           /** 会話の起動の直前に呼ぶ。期限が近ければ CLI に更新させ、設定を反映して、{ token, env, expiresAt } を返す。失敗は投げる（旧いトークンへ戻さない） */
           async fresh({ cwd } = {}) {
             try {
               await settingsCheck(name, cwd);
               let cred = await credentials(account, dir);
-              if (cred.expiresAt - now() < expiryMarginMs) {
-                await Promise.resolve().then(() => refresh(dir)).catch(() => {});   // 失敗は読み直した期限で判断する
+              let loginFailure = refreshExpired(cred) ? 'refresh-token-expired' : null;
+              if (!loginFailure && cred.expiresAt - now() <= REFRESH_WINDOW_MS) {
+                const authFailed = await Promise.resolve().then(() => refresh(dir)).then(() => false, claudeUsageAuthFailure);
+                if (authFailed) await Promise.resolve().then(() => onLoginExpired(account.id, 'no-login')).catch(() => {});
                 cred = await credentials(account, dir);
-                if (cred.expiresAt - now() < expiryMarginMs) throw new ConnectorsAuthError('expired', { name });
+                if (refreshExpired(cred)) loginFailure = 'refresh-token-expired';
               }
+              if (loginFailure) await Promise.resolve().then(() => onLoginExpired(account.id, loginFailure)).catch(() => {});
+              if (loginFailure || cred.expiresAt <= now()) throw new ConnectorsAuthError('expired', { name });
               try { await project({ source: cliConfigFile(env, home), target: path.join(shared, '.claude.json'), cwd }); }
               catch { throw new ConnectorsAuthError('profile', { name }); }
               const auth = { token: cred.token, env: { CLAUDE_CONFIG_DIR: shared, CLAUDE_CODE_OAUTH_SCOPES: cred.scopes.join(' ') }, expiresAt: cred.expiresAt };
-              if (verify) await verify({ account, ver, auth, dir, shared, home, expectedIdentity });
+              if (verify) await verify({ account, ver, auth, dir, shared, home, expectedIdentity }).catch(async error => {
+                if (error?.cliAuthFailed === true) {
+                  await Promise.resolve().then(() => onLoginExpired(account.id, 'no-login')).catch(() => {});
+                  throw new ConnectorsAuthError('expired', { name });
+                }
+                throw error;
+              });
+              if (auth.expiresAt <= now()) throw new ConnectorsAuthError('expired', { name });
               return auth;
             } catch (error) {
               throw attachConnectorsError(error, account);
@@ -721,7 +715,7 @@ export function createConnectorVerification({ dataDir, probe, timeoutMs = 30_000
           await renameWithRetry(tmp, file, fs, sleepFor);
         } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
       } catch (error) {
-        if (error instanceof ConnectorsAuthError) throw error;
+        if (error instanceof ConnectorsAuthError || error?.cliAuthFailed === true) throw error;
         throw new ConnectorsAuthError('verificationList', { name: account.name });
       } finally { clearTimeout(timer); }
     })();

@@ -103,8 +103,8 @@ async function japaneseCases(t, tmp) {
     assert.equal(spare.reason, undefined, 'トークンがあれば今までどおり');
     assert.equal(spare.message, serverT('usage.claudeUnavailable'));
     assert.ok(!JSON.stringify(quota).includes('fake-'), 'トークンの値を出さない');
-    assert.equal(claudeUsage.shouldMarkUsageExpired(work), true, 'no-login はログイン切れの印');
-    assert.equal(claudeUsage.shouldMarkUsageExpired(personal), true);
+    assert.equal(claudeUsage.shouldMarkUsageExpired(work), false, '資格情報が無いだけの場合は認可を案内する');
+    assert.equal(claudeUsage.shouldMarkUsageExpired(personal), false);
   });
 
   // CLI / SDK が実際に返す文（claude.exe と sdk.mjs。推測で広げない）。429 と時間切れと更新の取り合いは印にしない
@@ -141,8 +141,7 @@ async function japaneseCases(t, tmp) {
     assert.equal(claudeUsage.claudeUsageAuthFailure(Object.assign(new Error(authMessage), { status: 429 })), false, '429 の status は印にしない');
     assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'rate-limited' }), false);
     assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'timeout' }), false);
-    assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'no-login' }), true);
-    assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'error' }), true);
+    assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'no-login' }), false);
   });
 
   await check(t, '設定の「使用量」に再ログインの文と「claude.ai にログインし直す」のボタンが出る。ヘッダーの札は認可待ち', async () => {

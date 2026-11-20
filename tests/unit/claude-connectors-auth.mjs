@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { recordAll, ACCOUNT_ID, FAKE } from '../lib/claude-launch-record.mjs';
 import { createClaudeConnectorsGate, CONNECTORS_FILE, identitySuffix } from '../../core/claude-connectors.mjs';
 import {
-  createClaudeConnectorsAuth, readAccessCredentials, readMacAccessCredentials, projectProfile, ConnectorsAuthError, VERIFIED_VERSIONS, IDENTITY, EXPIRY_MARGIN_MS, READ_ATTEMPTS,
+  createClaudeConnectorsAuth, readAccessCredentials, readMacAccessCredentials, projectProfile, ConnectorsAuthError, VERIFIED_VERSIONS, IDENTITY, REFRESH_WINDOW_MS, READ_ATTEMPTS,
   projectKeyOf, settingsOverrides, PROFILE_IO, connectorListProbe, createClaudeConnectorsWiring, supportedConnectorVersions, createConnectorVerification,
 } from '../../core/claude-connectors-auth.mjs';
 import { withUsageLock, createUsageReadsForTest } from '../../core/backends/claude-usage.mjs';
@@ -38,8 +38,8 @@ const EMAIL = 'fake.person@example.invalid';
 const ORG = 'fake-org-uuid-0000-1111-2222';
 const SCOPES = ['user:inference', 'user:profile', 'user:mcp_servers', 'user:file_upload'];
 const SECRETS = [ACCESS, ACCESS2, REFRESH, EMAIL, ORG, FAKE.registered];
-const credsJson = ({ token = ACCESS, expiresAt = T0 + 8 * 3600_000, scopes = SCOPES } = {}) =>
-  JSON.stringify({ claudeAiOauth: { accessToken: token, refreshToken: REFRESH, expiresAt, scopes, subscriptionType: 'max' }, oauthAccount: { emailAddress: EMAIL, organizationUuid: ORG } });
+const credsJson = ({ token = ACCESS, expiresAt = T0 + 8 * 3600_000, scopes = SCOPES, refreshTokenExpiresAt } = {}) =>
+  JSON.stringify({ claudeAiOauth: { accessToken: token, refreshToken: REFRESH, expiresAt, refreshTokenExpiresAt, scopes, subscriptionType: 'max' }, oauthAccount: { emailAddress: EMAIL, organizationUuid: ORG } });
 const leaked = text => SECRETS.filter(s => String(text).includes(s));
 /** 401 のとき保存された資格情報・ホストのトークン・別の出どころへ乗り換える道を開く指定（CLI 2.1.322。ADR 0340）。確かめから外すと落ちることを 1 つずつ確かめる */
 const SWITCH_ON_401 = ['ANTHROPIC_UNIX_SOCKET', 'CLAUDE_CODE_REMOTE_SESSION_ID', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
@@ -230,17 +230,19 @@ export default async function (t) {
       const home = path.join(tmp, 'auth-home');
       const calls = { versions: 0, owner: 0, refresh: 0, project: 0, guard: 0 };
       const projectArgs = [];
+      const loginFailures = [];
       let owner = 'ok', versions = { cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }, refreshWrites = null, refreshThrows = false, projectThrows = false;
       let now = T0;
       const make = (over = {}) => createClaudeConnectorsAuth({
         accounts: { usageDir: id => path.join(usageRoot, id), ownerStatus: async () => { calls.owner++; if (owner instanceof Error) throw owner; return owner; } },
         versions: async () => { calls.versions++; if (versions instanceof Error) throw versions; return versions; },
-        refresh: async d => { calls.refresh++; if (d !== dir) throw new Error('別の設定フォルダ'); if (refreshWrites) await fs.writeFile(credFile, refreshWrites); if (refreshThrows) throw new Error(`refresh failed ${ACCESS}`); },
+        refresh: async d => { calls.refresh++; if (d !== dir) throw new Error('別の設定フォルダ'); if (refreshWrites) await fs.writeFile(credFile, refreshWrites); if (refreshThrows) throw refreshThrows; },
         guard: () => { calls.guard++; },
+        onLoginExpired: async (id, reason) => { loginFailures.push({ id, reason }); },
         project: async args => { calls.project++; projectArgs.push(args); if (projectThrows) throw new Error(`profile failed ${ACCESS}`); return { changed: false }; },
         env: {}, home, platform: 'linux', now: () => now, ...over,
       });
-      const reset = () => { for (const k of Object.keys(calls)) calls[k] = 0; projectArgs.length = 0; owner = 'ok'; versions = { cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }; refreshWrites = null; refreshThrows = false; projectThrows = false; now = T0; };
+      const reset = () => { for (const k of Object.keys(calls)) calls[k] = 0; projectArgs.length = 0; loginFailures.length = 0; owner = 'ok'; versions = { cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }; refreshWrites = null; refreshThrows = false; projectThrows = false; now = T0; };
       const account = { id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered };
       await fs.writeFile(credFile, credsJson());
 
@@ -283,9 +285,6 @@ export default async function (t) {
         ['login', '想定外の例外（印付けが投げる）', () => {}, { guard: () => { throw new Error(`guard ${ACCESS}`); } }, false],
         ['login', '資格情報が無い', async () => { await fs.rm(credFile, { force: true }); }, {}, true],
         ['format', '資格情報の形が違う', async () => { await fs.writeFile(credFile, JSON.stringify({ claudeAiOauth: { accessToken: 'x' } })); }, {}, true],
-        // 画面の検査（inspect）と同じ印を起動でも見る（画面が「止めています」なのに送れる食い違いを作らない。資格情報の期限が十分でも止める）
-        ['expired', '使用量のログインを更新できなかった印がある（資格情報の期限は十分）', () => {}, { accounts: { usageDir: id => path.join(usageRoot, id), ownerStatus: async () => 'ok', hasUsageLogin: async () => true, isUsageExpired: async () => true } }, false],
-        ['login', '使用量のログインの印が無い（資格情報はある）', () => {}, { accounts: { usageDir: id => path.join(usageRoot, id), ownerStatus: async () => 'ok', hasUsageLogin: async () => false, isUsageExpired: async () => false } }, false],
       ];
       for (const [kind, label, setup, over, readsCred] of stops) {
         reset(); await fs.writeFile(credFile, credsJson());
@@ -315,31 +314,40 @@ export default async function (t) {
 
       // 期限と更新（更新は CLI に任せる）
       reset(); now = T0;
-      await fs.writeFile(credFile, credsJson({ expiresAt: T0 + EXPIRY_MARGIN_MS - 1000 }));
+      await fs.writeFile(credFile, credsJson({ expiresAt: T0 + REFRESH_WINDOW_MS - 1000 }));
       refreshWrites = credsJson({ token: ACCESS2, expiresAt: T0 + 8 * 3600_000 });
       const near = (await make()(account)).account;
       const renewed = await near.connectors.fresh({ cwd: tmp });
       t.ok('更新: 期限が近ければ起動の前に refresh（CLI に更新させる）を 1 回流し、読み直した新しいアクセス用トークンを渡す', calls.refresh === 1 && renewed.token === ACCESS2 && near.token === ACCESS, JSON.stringify({ calls, same: renewed.token === ACCESS2 }));
-      // 余裕は 60 分（定数の値ではなく残りの時間で確かめる。保持している子プロセスは起動のときのトークンのまま走るため）
-      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 30 * 60_000 })); refreshWrites = credsJson({ token: ACCESS2, expiresAt: T0 + 8 * 3600_000 });
-      const halfHour = await (await make()(account)).account.connectors.fresh({ cwd: tmp });
-      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 61 * 60_000 }));
-      const hourLeft = await (await make()(account)).account.connectors.fresh({ cwd: tmp });
-      t.ok('更新（項目 3）: 余裕は 60 分 — 残り 30 分なら起動の前に CLI に更新させ、残り 61 分なら更新しない',
-        EXPIRY_MARGIN_MS === 60 * 60_000 && halfHour.token === ACCESS2 && hourLeft.token === ACCESS && calls.refresh === 0, JSON.stringify({ half: halfHour.token === ACCESS2, hour: hourLeft.token === ACCESS, calls }));
-      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + EXPIRY_MARGIN_MS - 1000 }));
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 57 * 60_000 }));
+      const withOldMarker = make({ accounts: { usageDir: () => dir, ownerStatus: async () => 'ok', isUsageExpired: async () => true } });
+      const inspected = await withOldMarker.inspect(account);
+      const far = await (await withOldMarker(account)).account.connectors.fresh({ cwd: tmp });
+      t.ok('残り 57 分: ログイン切れの印があっても検査と起動は通り、CLI に更新を頼まない', inspected.ok && far.token === ACCESS && calls.refresh === 0);
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 4 * 60_000 }));
+      const unchanged = await (await make()(account)).account.connectors.fresh({ cwd: tmp });
+      t.ok('残り 4 分: 更新を頼み、書き換わらなくても有効なアクセス用トークンで起動する', unchanged.token === ACCESS && calls.refresh === 1 && loginFailures.length === 0);
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 - 1000 }));
       const stale = (await make()(account)).account;
       const staleError = await stale.connectors.fresh({ cwd: tmp }).then(() => null, e => e);
-      t.ok('更新: refresh が何も変えなければ（期限が近いまま）止める（expired）・旧いトークンも会話用トークンも渡さない・設定は反映しない',
-        staleError?.code === 'connectors-expired' && calls.refresh === 1 && calls.project === 0 && leaked(staleError.message).length === 0, `${staleError?.code} ${JSON.stringify(calls)}`);
-      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 - 1000 })); refreshThrows = true;
+      t.ok('期限後: 更新後も期限切れなら起動を止める。ログイン切れの印は付けない', staleError?.code === 'connectors-expired' && calls.refresh === 1 && calls.project === 0 && loginFailures.length === 0);
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 - 1000 })); refreshThrows = new Error('一時的な失敗');
       const failed = (await make()(account)).account;
       const failedError = await failed.connectors.fresh({ cwd: tmp }).then(() => null, e => e);
       t.ok('更新: refresh が失敗し期限切れのままなら止める（expired）。失敗の文面（トークンを含む）は利用者へ出さない',
         failedError?.code === 'connectors-expired' && leaked(failedError.message).length === 0 && !String(failedError.stack).includes(ACCESS), `${failedError?.code}`);
-      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 - 1000 })); refreshThrows = true; refreshWrites = credsJson({ token: ACCESS2 });
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 - 1000 })); refreshThrows = new Error('一時的な失敗'); refreshWrites = credsJson({ token: ACCESS2 });
       const recovers = (await make()(account)).account;
       t.ok('更新: refresh が例外でも、ログインが更新されていれば（読み直して期限が十分）使える', (await recovers.connectors.fresh({ cwd: tmp }).catch(() => ({}))).token === ACCESS2);
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 - 1000 }));
+      refreshThrows = new Error('invalid_grant ' + ACCESS);
+      const rejected = await (await make()(account)).account.connectors.fresh().then(() => null, e => e);
+      t.ok('CLI が認証を拒否したらログイン切れの印を付け、元の認証エラーは返さない', rejected?.code === 'connectors-expired' && !leaked(rejected.message).length && loginFailures[0]?.reason === 'no-login');
+      reset(); await fs.writeFile(credFile, credsJson({ refreshTokenExpiresAt: T0 }));
+      const expiredRefresh = make();
+      const refreshInspection = await expiredRefresh.inspect(account);
+      const refreshError = await (await expiredRefresh(account)).account.connectors.fresh().then(() => null, e => e);
+      t.ok('更新用トークンが期限切れ: 検査も起動も止め、起動時にログイン切れの印を付ける', refreshInspection.kind === 'expired' && refreshError?.code === 'connectors-expired' && calls.refresh === 0 && loginFailures[0]?.reason === 'refresh-token-expired');
       reset(); await fs.writeFile(credFile, credsJson());
       const later = (await make()(account)).account;
       await fs.writeFile(credFile, credsJson({ token: ACCESS2 }));
@@ -578,7 +586,7 @@ export default async function (t) {
         const data = path.join(tmp, 'wiring'); const usageDir = path.join(data, 'claude-usage', ACCOUNT_ID);
         await fs.mkdir(usageDir, { recursive: true });
         await fs.writeFile(path.join(data, CONNECTORS_FILE), JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: true } } }));
-        await fs.writeFile(path.join(usageDir, '.credentials.json'), credsJson({ expiresAt: T0 + EXPIRY_MARGIN_MS - 1000 }));
+        await fs.writeFile(path.join(usageDir, '.credentials.json'), credsJson({ expiresAt: T0 + REFRESH_WINDOW_MS - 1000 }));
         const guards = [], refreshed = [];
         const { gate } = createClaudeConnectorsWiring({
           dataDir: data,
@@ -601,7 +609,7 @@ export default async function (t) {
       }
       const authSrc = await fs.readFile(path.join(REPO, 'core/claude-connectors-auth.mjs'), 'utf8');
       t.ok('認証側は更新用トークンを取り出さない・私的な更新の口を呼ばない・ホーム直下の .claude.json へ書かない・ネットワークを使わない',
-        !/refreshToken/.test(authSrc.replace(/\/\/.*$/gm, '')) && !/fetch\(|https?:\/\/|oauth\/token|createConnection|net\./.test(authSrc.replace(/\/\/.*$/gm, '')) && !/writeFile\([^)]*source/.test(authSrc));
+        !/\brefreshToken\b/.test(authSrc.replace(/\/\/.*$/gm, '')) && !/fetch\(|https?:\/\/|oauth\/token|createConnection|net\./.test(authSrc.replace(/\/\/.*$/gm, '')) && !/writeFile\([^)]*source/.test(authSrc));
     }
 
     // ---------------------------------------------------------------- 7. 設定 › 外部 MCP のコネクターの一覧（connectorListProbe・probeClaudeConnectors）

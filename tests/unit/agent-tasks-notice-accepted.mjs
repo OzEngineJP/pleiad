@@ -90,6 +90,42 @@ export default async function(t) {
       t.ok('受理されたら 1 回だけ sent', m.get(task.taskId).notification === 'sent' && !m.settling);
     }
 
+    // ---- 起動前の認証失敗で渡らなかった通知は、再起動後にも送り直せるよう pending を保存する
+    {
+      const dir = await tmp();
+      let clock = 0, attempts = 0, shown = 0;
+      let loginReady = false;
+      const m = await make(dir, { now: () => clock, deliver: async (_tasks, { accepted, claimFailureNotice }) => {
+        attempts++;
+        if (!loginReady) {
+          if (claimFailureNotice()) shown++;
+          return 'undelivered';
+        }
+        await accepted();
+        return 'ok';
+      } });
+      const task = await m.call('owner', 'ply_delegate', { backend: 'fake', task: 'auth retry' });
+      await until(() => attempts === 1 && !m.settling);
+      const stored = readAgentTasks(dir)[task.taskId];
+      t.ok('起動前の認証失敗では pending を保存し、再送時刻はファイルに残さない',
+        m.get(task.taskId).notification === 'pending' && stored.notification === 'pending' && !Object.hasOwn(stored, 'noticeRetryAt'));
+      clock = 59_999;
+      await sleep(600);
+      t.ok('60 秒より前は deliver をもう一度呼ばず、保存した行も書き換えない',
+        attempts === 1 && JSON.stringify(readAgentTasks(dir)[task.taskId]) === JSON.stringify(stored));
+      clock = 60_000;
+      await until(() => attempts === 2 && !m.settling);
+      t.ok('60 秒で再試行し、同じ認証失敗の表示は 1 回だけ', shown === 1 && m.get(task.taskId).notification === 'pending');
+      loginReady = true;
+      clock = 120_000;
+      await until(() => m.get(task.taskId).notification === 'sent' && !m.settling);
+      t.ok('認証が戻れば送って sent を保存する', attempts === 3 && readAgentTasks(dir)[task.taskId].notification === 'sent');
+      loginReady = false;
+      const next = await m.call('owner', 'ply_delegate', { backend: 'fake', task: 'auth fails again' });
+      await until(() => attempts === 4 && !m.settling);
+      t.ok('送達後にまた認証が失敗すれば表示を出せる', shown === 2 && m.get(next.taskId).notification === 'pending');
+    }
+
     // ---- 再起動: 受理の前に落ちた delivering は unknown で送らず、受理の後の sent も送らない
     {
       const dir = await tmp();

@@ -7,6 +7,7 @@ import path from 'node:path';
 const dir = process.env.TURN_PHASES_DIR;
 if (!dir) throw new Error('turn-phases-server: TURN_PHASES_DIR is not set');
 const { runTurn, driveTurn, endTurn } = await import('../../core/server.mjs');
+const { getBackend } = await import('../../core/backends/index.mjs');
 
 const scenes = {
   // 準備の後、バックエンドを呼ぶ前に予約が無効になった（idle の圧縮の canInvoke）
@@ -28,6 +29,34 @@ const scenes = {
     };
     const returned = await driveTurn(ctx, async () => ({ requeue: true, beforeInvoke: true }));
     return { returned, outcome: turn.outcome };
+  },
+  noticePreparationAuthFailure: async ({ sessionId }) => {
+    const backend = getBackend('fake');
+    const prepare = backend.prepareTurn;
+    backend.prepareTurn = async () => {
+      throw Object.assign(new Error('connectors-expired'), { connectorsError: { kind: 'expired', accountId: 'fake-account' } });
+    };
+    let shown = false;
+    const claimFailureNotice = () => {
+      if (shown) return false;
+      shown = true;
+      return true;
+    };
+    const send = () => runTurn({ sessionId, prompt: 'completion notice' }, () => {}, { internal: true, retryUndelivered: true, claimFailureNotice });
+    try { return [await send(), await send()]; }
+    finally { backend.prepareTurn = prepare; }
+  },
+  noticeAuthFailure: async ({ acceptedSent = false } = {}) => {
+    const turn = {
+      outcome: null, ended: false, info: { sessionId: null }, presentKey: 'turn-phases-notice', key: 'new:turn-phases-notice',
+      backend: { id: 'claude' }, ac: { signal: { aborted: false } }, visualizations: { close: async () => {} },
+    };
+    const emit = ev => { if (ev.type === 'turnResult') turn.outcome = ev.outcome; };
+    const ctx = { turn, emit, hooks: { retryUndelivered: true }, sessionId: null, args: {}, didStart: true,
+      backendInvoked: true, acceptedSent, saveContext: async () => {} };
+    return driveTurn(ctx, async () => {
+      throw Object.assign(new Error('connectors-expired'), { undelivered: true, connectorsError: { kind: 'expired' } });
+    });
   },
   // endTurn を 2 回呼んでも 2 回目は何もしない（turn.ended）
   endTurnOnce: async () => {
