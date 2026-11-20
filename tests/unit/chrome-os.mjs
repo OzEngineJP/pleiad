@@ -1013,7 +1013,7 @@ export default async function (t) {
   // ===== 人がプロフィールを開こうとしたとき（ADR 0246）: 隠した窓が前面を取ったら、そのプロフィールの見える窓を開く =====
   {
     const EXE = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-    const setup = ({ profile = 'Default', aumid = 'Chrome', others = [], hideAumid = false } = {}) => {
+    const setup = ({ profile = 'Default', aumid = 'Chrome', others = [], hideAumid = false, readFile = undefined } = {}) => {
       let clock = 1_000_000_000;
       const w = fakeWin32();
       w.add(500, { title: `PLY-${NONCE} - Google Chrome`, aumid: hideAumid ? null : aumid, rect: { left: 100, top: 100, right: 1700, bottom: 1180 } });
@@ -1022,7 +1022,7 @@ export default async function (t) {
       const spawned = [];
       const spawn = (exe, args) => { spawned.push({ exe, args }); return { on() {}, unref() {} }; };
       const logs = [];
-      const os = createWin32ChromeOs({ win32: w, env: ENV, exists: p => p === EXE, spawn, now: () => clock, log: line => logs.push(line) });
+      const os = createWin32ChromeOs({ win32: w, env: ENV, exists: p => p === EXE, spawn, now: () => clock, log: line => logs.push(line), ...(readFile ? { readFile } : {}) });
       const browser = os.locateBrowser({});
       const ref = os.findWindowByNonce(NONCE);
       os.conceal(ref, { profile });
@@ -1039,10 +1039,39 @@ export default async function (t) {
       t.ok('隠した窓が前面を取り、そのプロフィールの見える窓が無ければ、chrome.exe --profile-directory --new-window で見える窓を開く',
         r.spawned.length === 1 && call.exe === EXE && JSON.stringify(call.args) === JSON.stringify(['--profile-directory=Default', '--new-window']), JSON.stringify({ spawned: r.spawned, logs: r.logs }));
       t.ok('隠した窓は隠したまま（戻さない・閉じない）・プロフィール以外の窓には触らない', r.w.windows.get(500).alpha === 0 && (r.w.windows.get(500).exStyle & WS_EX_TOOLWINDOW) !== 0
-        && r.w.windows.get(701).alpha === undefined && r.logs.some(line => line.includes('opened a visible Chrome window')));
+        && r.w.windows.get(701).alpha === undefined && r.logs.some(line => line.endsWith('reason=opened')));
       r.advance(1000);
       r.w.fg = 701; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();
       t.ok('同じプロフィールで続けて前面を取っても、短い間は窓を重ねて開かない', r.spawned.length === 1);
+      r.os.stopGuard();
+    }
+    {
+      const localState = JSON.stringify({ profile: { info_cache: { 'Default': {}, 'Profile 1': {}, 'Profile 2': {} } } });
+      const bubble = { hwnd: 704, title: '', className: 'Chrome_WidgetWin_1', pid: 10, aumid: null, exStyle: WS_EX_TOOLWINDOW };
+      const r = setup({ profile: null, aumid: 'Chrome.UserData.Profile2', hideAumid: true, others: [USER_WINDOW, OTHER_PROFILE, { hwnd: 702, title: 'Default の見える窓', aumid: 'Chrome' }, bubble], readFile: file => {
+        t.ok('照合は既定の Chrome User Data 内の Local State を読む', file.endsWith('Google\\Chrome\\User Data\\Local State'));
+        return localState;
+      } });
+      r.advance(5000);
+      r.w.fg = 702; r.os.guardTick();                 // 見えている Default の Chrome 窓
+      r.w.fg = 704; r.os.guardTick();                 // WS_EX_TOOLWINDOW だけのプロフィール吹き出し
+      r.w.windows.get(500).aumid = 'Chrome.UserData.Profile2'; // 前面判定時に null だった AUMID が後から読める
+      r.w.fg = 500; r.os.guardTick();                 // 隠した Profile 2 の窓
+      t.ok('見える窓→吹き出し→隠した窓の順で、記録に無いプロフィールを一意の Local State AUMID 照合から開く',
+        r.spawned.length === 1 && r.spawned[0].args.includes('--profile-directory=Profile 2') && r.logs.some(line => line.endsWith('reason=opened')),
+        JSON.stringify({ spawned: r.spawned, logs: r.logs }));
+      r.os.stopGuard();
+    }
+    for (const [label, infoCache] of [
+      ['一致するフォルダーが 0 件', { Default: {}, 'Profile 1': {} }],
+      ['AUMID が同じになるフォルダーが複数', { Default: {}, 'Profile 2': {}, 'Profile-2': {} }],
+    ]) {
+      const localState = JSON.stringify({ profile: { info_cache: infoCache } });
+      const r = setup({ profile: null, aumid: 'Chrome.UserData.Profile2', others: [USER_WINDOW, OTHER_PROFILE], readFile: () => localState });
+      r.advance(5000);
+      r.w.fg = 701; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();
+      t.ok(`${label}なら開かず、理由コードを記録する`, r.spawned.length === 0 && r.logs.some(line => line.endsWith('reason=no-profile-dir')),
+        JSON.stringify({ spawned: r.spawned, logs: r.logs }));
       r.os.stopGuard();
     }
     {
