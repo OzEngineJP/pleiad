@@ -162,6 +162,11 @@ export const DATA_WRITES = [
     { name: 'claude-accounts.json', limit: 'Claude のアカウント。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
   ] },
+  { file: 'core/claude-own-dir.mjs', sites: 5, targets: [
+    { name: 'claude-usage/<id>/<共有リンク>（projects・skills・plugins・settings.json）', limit: 'entries の固定の 4 つ。リンクだけでリンク先の中身は書かない', reason: '専用フォルダ方式（ADR 0345）で、アカウントの設定フォルダから共有の設定フォルダへの履歴・Skills・プラグイン・設定の共有' },
+    { name: '(置き場の外) 共有の設定フォルダ（~/.claude）の projects・skills・plugins の下と settings.json', limit: 'アカウントのフォルダに元からあった分を 1 回だけ移す（link・copyFile は既存を上書きしない）。足すのは中身の無い settings.json（{}）だけ', reason: '切り替えのとき、アカウントのフォルダにあった履歴・Skills・設定を共有先へ移す。同じ名前があれば上書きせず退避へ' },
+    { name: 'claude-usage/<id>/../<元の名前>.pleiad-moved-<時刻>-<uuid>', limit: '共有先と同じ名前のときだけの rename（entries の 4 つの中の、元からあった物の数まで）', reason: '共有先と名前が重なった分を消さずに脇へ退避する（設定を切り替えたときに何をしたかを表示する）' },
+  ] },
   { file: 'core/claude-connectors.mjs', sites: 1, targets: [
     { name: 'claude-account-connectors.json', limit: '登録した Claude アカウントの数（有効化フラグだけ）', reason: 'アカウントごとの claude.ai コネクター有効化設定（ADR 0340 段 3）。秘密・トークン・メールを含まない' },
     { name: 'claude-account-connectors-cache.json', limit: 'maxAccounts=50・各 maxConnectors=200（超えたら古い順に捨てる）', reason: 'アカウントごとの claude.ai コネクター一覧と要認可状態の覚え（設定 › 外部 MCP で起動を待たず表示）。認証・メール・組織 id は sha256 の短いハッシュだけで持ち、平文を残さない' },

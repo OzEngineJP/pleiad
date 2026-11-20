@@ -268,7 +268,7 @@ export async function probeClaudeConnectors({ deny = [], token = null, connector
     const query = sdk.query ?? (await loadClaudeSdk()).query;
     q = query({ prompt: idle(), options: {
       // token: Pleiad に登録した Claude のアカウント（無ければログイン中のアカウント）。会話と同じ環境で読む
-      pathToClaudeCodeExecutable: claudeExecutable(),
+      pathToClaudeCodeExecutable: sdk.executable(),
       env: ownDir ? claudeOwnDirEnv(process.env, auth.env) : auth ? claudeEnv(process.env, { token: auth.token, extra: auth.env }) : claudeEnv(process.env, { token }),
       abortController: ac,
       settingSources: ["user"], settings: { disableAllHooks: true, ...(deny.length ? { deniedMcpServers: deny.map((serverName) => ({ serverName })) } : {}) },
