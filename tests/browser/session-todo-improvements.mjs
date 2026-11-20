@@ -78,7 +78,7 @@ try {
       await page.locator('#sessionMore').click();
       await page.getByRole('menuitem', { name: /ToDo/ }).click();
     } else await page.locator('#todoEntry').click();
-    await page.locator(`.td-item[data-id="${d}"]`).waitFor();
+    await page.locator(`.td-item[data-id="${d}"]`).waitFor({ state: 'attached' });
   }
   const row = (page, id) => page.locator(`.td-item[data-id="${id}"]`);
   const read = page => row(page, d).locator('.td-text');
@@ -188,6 +188,9 @@ try {
     }
     entries.push({ text: `確認結果をまとめる ${target}`, after: ends });
     const { items } = await invoke('todos.add', { items: entries });
+    if (target === 10) {
+      await invoke('todos.update', { items: [d, e, f].map(id => ({ id, status: 'done' })) });
+    }
     previous = items.at(-1).id;
     count = target;
     for (const [page, size] of [[dark, 1280], [mobileDark, 360]]) {
@@ -196,7 +199,25 @@ try {
       await showPanel(page, size);
       assert.equal(await panel(page).evaluate(el => el.scrollWidth <= el.clientWidth), true);
       await page.waitForFunction(n => document.querySelectorAll('.todo-pop .td-item[data-id]').length === n, count);
+      const stack = page.locator('.td-stack');
+      await stack.filter({ hasText: '完了 6' }).waitFor();
+      assert.equal(await stack.count(), 1);
+      assert.equal(await stack.evaluate(el => el.offsetWidth), 112);
+      assert.equal(await stack.evaluate(el => el.offsetHeight), size === 360 ? 36 : 28);
+      assert.equal(await panel(page).locator('.td-item.gone').count(), 6);
       assert.equal(await page.locator('.td-edge.pend').count() > 0, true);
+      if (target === 10) {
+        await stack.click();
+        await stack.waitFor({ state: 'hidden' });
+        assert.equal(await panel(page).locator('.td-item[data-id]:not(.gone)').count(), count);
+        await page.locator('.td-fold').click();
+        await stack.waitFor();
+        await mode(page, 'list');
+        assert.equal(await panel(page).locator('.td-item[data-id]:not(.gone)').count(), count);
+        assert.equal(await page.locator('.td-fold').isVisible(), false);
+        await mode(page, 'flow');
+        await stack.waitFor();
+      }
       await capture(page, `dark-${size}-flow-${count}`);
       await page.locator('.td-zoom button').last().click();
       if (count === 30) await capture(page, `dark-${size}-flow-${count}-overview`);

@@ -134,43 +134,59 @@ export function layoutList(items, W, rowH, gap, deps = new Map()) {
   return { R, E: [], H, CW: W, stacks: new Map(), B: { x0: ox, x1: ox + lw, y0: 0, y1: H } };
 }
 
-/**
- * フローの配置（モックの layout）。最長路で段に分け、段を跨ぐ線には見えない点を置き、親の位置の平均で段の中を並べる。
- * 途中の分岐をまたがずに続く完了（3 件以上）を束にまとめる
- */
+function completedStacks(order, deps) {
+  const depsOf = id => deps.get(id) ?? [];
+  const stacks = new Map(), folded = new Map();
+  const done = new Set(order.filter(it => it.status === 'done').map(it => it.id));
+  const addStack = (key, members) => {
+    stacks.set(key, members.length);
+    for (const id of members) folded.set(id, key);
+  };
+  if (order.length > 8) {
+    // 旧版と同じく、先に終える順で、依存元をすべて含められる完了を集める。
+    const leading = new Set();
+    for (const { id } of order) {
+      if (done.has(id) && depsOf(id).every(parent => leading.has(parent))) leading.add(id);
+    }
+    if (leading.size >= 3) addStack('#done', [...leading]);
+  }
+  const children = new Map();
+  for (const { id } of order) for (const parent of depsOf(id)) {
+    if (!children.has(parent)) children.set(parent, []);
+    children.get(parent).push(id);
+  }
+  for (const { id } of order) {
+    if (!done.has(id) || folded.has(id)) continue;
+    const chain = [id];
+    let tail = id;
+    while (children.get(tail)?.length === 1) {
+      const [child] = children.get(tail);
+      if (!done.has(child) || folded.has(child) || depsOf(child).length !== 1) break;
+      chain.push(child);
+      tail = child;
+    }
+    if (chain.length >= 3) addStack(`#done:${id}`, chain);
+  }
+  return { stacks, folded };
+}
+
+/** フローを最長路で段に分け、段を跨ぐ線には見えない点を置き、親の位置の平均で段の中を並べる。 */
 export function layoutFlow(items, deps, W, K, rowH, expand = false) {
   const R = new Map(), E = [];
   const depsOf = id => deps.get(id) ?? [];
   const order = topoOrder(items, deps);
-  const stacks = new Map(), folded = new Map();
-  if (!expand) {
-    const children = new Map(), done = new Set(order.filter(it => it.status === 'done').map(it => it.id));
-    for (const { id } of order) for (const parent of depsOf(id)) {
-      if (!children.has(parent)) children.set(parent, []);
-      children.get(parent).push(id);
-    }
-    for (const { id } of order) {
-      if (!done.has(id) || folded.has(id)) continue;
-      const chain = [id];
-      let tail = id;
-      while (children.get(tail)?.length === 1) {
-        const [child] = children.get(tail);
-        if (!done.has(child) || depsOf(child).length !== 1) break;
-        chain.push(child);
-        tail = child;
-      }
-      if (chain.length < 3) continue;
-      const key = `#done:${id}`;
-      stacks.set(key, chain.length);
-      for (const member of chain) folded.set(member, key);
-    }
+  const { stacks, folded } = completedStacks(order, deps);
+  const canFold = stacks.size > 0;
+  if (expand) {
+    stacks.clear();
+    folded.clear();
   }
   const nodes = [], seen = new Set();
   for (const it of order) {
     const id = folded.get(it.id) ?? it.id;
     if (seen.has(id)) continue;
     seen.add(id);
-    nodes.push({ id, deps: [...new Set(depsOf(it.id).map(d => folded.get(d) ?? d))] });
+    nodes.push({ id, deps: id === '#done' ? [] : [...new Set(depsOf(it.id).map(d => folded.get(d) ?? d))] });
   }
   const lay = new Map();
   for (const n of nodes) lay.set(n.id, n.deps.length ? 1 + Math.max(...n.deps.map(d => lay.get(d) ?? 0)) : 0);
@@ -222,7 +238,7 @@ export function layoutFlow(items, deps, W, K, rowH, expand = false) {
       * Math.min(14, (R.get(edge.b).w - 24) / Math.max(1, edge.inputs - 1));
   }
   for (const [id, key] of folded) R.set(id, { ...R.get(key), o: 0 });
-  return { R, E, H, CW, stacks, B: { x0: ox, x1: ox + cross, y0: 0, y1: H } };
+  return { R, E, H, CW, stacks, canFold, B: { x0: ox, x1: ox + cross, y0: 0, y1: H } };
 }
 
 /** 成果物の 1 件を、名前と場所に分ける（ファイルのリンク .file-where と同じ分け方） */

@@ -99,17 +99,41 @@ export default async function (t) {
   const S = flow(skip);
   assert.equal(S.E.find(e => e.key === 'a>d').via.length, 2, '段を跨ぐ線は見えない点を通る');
   const many = [...Array(10)].map((_, i) => it(`n${i}`, i ? [`n${i - 1}`] : [], i < 4 ? 'done' : 'todo'));
+  many[2].after = ['n0'];
+  many[3].after = ['n1', 'n2'];
+  many[4].after = ['n1', 'n3'];
   many[9].after = ['n7']; many[8].after = ['n7'];
   const M = flow(many);
-  assert.deepEqual([...M.stacks.values()], [4], '先頭から続く完了は束にまとめる');
-  assert.equal(M.R.get('n0').o, 0);
-  assert.equal(M.R.get('#done:n0').h, K.SH);
+  assert.deepEqual([...M.stacks], [['#done', 4]]);
+  assert.deepEqual(many.filter(({ id }) => M.R.get(id).o === 0).map(({ id }) => id), ['n0', 'n1', 'n2', 'n3']);
+  assert.deepEqual(M.E.filter(e => e.a === '#done' || e.b === '#done').map(e => e.key), ['#done>n4']);
+  assert.equal(M.R.get('#done').w, K.SW);
+  assert.equal(M.R.get('#done').h, K.SH);
   assert.equal(M.R.get('n4').y, K.SH + K.GY);
-  assert.equal(flow(many, 344, true).stacks.size, 0, '開いたら束にしない');
-  const later = [it('start'), ...[1, 2, 3].map(i => it(`later${i}`, [i === 1 ? 'start' : `later${i - 1}`], 'done'))];
+  const expanded = flow(many, 344, true);
+  assert.equal(expanded.stacks.size, 0);
+  assert.equal(expanded.canFold, true);
+  assert.ok(many.every(({ id }) => expanded.R.get(id).o === 1));
+  t.ok('10 件の先頭にある分岐と合流をまとめ、外への線を 1 本にし、開くと全件を表示する', true);
+
+  const independent = Array.from({ length: 10 }, (_, i) => it(`n${i}`, i === 9 ? ['n0', 'n5', 'n8'] : [], i < 6 ? 'done' : 'todo'));
+  const I = flow(independent);
+  assert.deepEqual([...I.stacks], [['#done', 6]]);
+  assert.deepEqual(I.E.map(e => e.key), ['#done>n9', 'n8>n9']);
+  assert.equal(flow(independent.slice(0, 8), 344, true).canFold, false);
+  t.ok('10 件のうち依存の無い完了 6 件をまとめる。8 件では畳むボタンも出さない', true);
+
+  const short = Array.from({ length: 8 }, (_, i) => it(`short${i}`, i ? [`short${i - 1}`] : [], i < 4 ? 'done' : 'todo'));
+  assert.deepEqual([...flow(short).stacks], [['#done:short0', 4]]);
+  const later = [...many.slice(0, 5), it('branch', ['n4']), it('other', ['n4']),
+    it('later1', ['branch'], 'done'), it('later2', ['later1'], 'done'), it('later3', ['later2'], 'done'),
+    it('join', ['other', 'later3'])];
   const foldedLater = flow(later);
-  assert.deepEqual([...foldedLater.stacks.values()], [3]);
-  assert.ok(foldedLater.E.some(e => e.a === 'start' && e.b === '#done:later1'));
+  assert.deepEqual([...foldedLater.stacks], [['#done', 4], ['#done:later1', 3]]);
+  assert.ok(foldedLater.E.some(e => e.key === 'branch>#done:later1'));
+  assert.ok(foldedLater.E.some(e => e.key === '#done:later1>join'));
+  assert.equal(new Set(foldedLater.E.filter(e => e.b === 'join').map(e => e.inlet)).size, 2);
+  t.ok('8 件の一本道の完了 4 件と、先頭のまとまりとは別に分岐の後ろの完了 3 件を畳む', true);
   t.ok('リストは 640px まで・フローは最長路で段に分け、跨ぐ線は点を通し、完了が 3 件続くと束ねる', true);
 
   // 成果物のリンク

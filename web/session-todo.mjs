@@ -510,7 +510,7 @@ export function createSessionTodo(o) {
       node._dead = true;
       moves.push([node, node._r, { ...node._r, o: 0 }]);
     }
-    foldBtn.hidden = !(fv && S.expand && S.items.filter(it => it.status === 'done').length >= 3);
+    foldBtn.hidden = !(fv && S.expand && L.canFold);
     syncEdges(L.E); highlightIncoming(); buildMap();
     const h0 = canvas._h == null ? L.H : canvas._h, w0 = canvas._w == null ? L.CW : canvas._w;
     if (tw) tweens.delete(tw);
