@@ -83,12 +83,14 @@ export function holderSource(client, state, { spawned = false, redelivered = fal
  * 起動で付け直す、保持役の子の元（無停止の更新 2b-5）。居る保持役にだけつなぐ（起こさない）。付け直せるのは、札（label）と
  * ターンの印を持つ子だけ。居なければ空。控えの渡し直しも列に入れる（Claude の付け直しが SDK へ流す。2c）
  */
-export async function readHolderSources({ dataDir, root, appVersion = '', log = () => {} } = {}) {
+export async function readHolderSources({ dataDir, root, appVersion = '', log = () => {}, observeChildren = () => {} } = {}) {
   let client;
   try { client = await holderLink({ dataDir, root, appVersion, launch: false, log }); }
   catch (error) { if (error?.code === 'HOLDER_NONE') return []; throw error; }
+  const children = client.welcome?.children ?? [];
+  observeChildren(client, children);
   const sources = [];
-  for (const child of client.welcome?.children ?? []) {
+  for (const child of children) {
     // 1 つの子が複数のターンを運ぶバックエンド（Codex の共有の app-server）は、子の札の種類（label.k）で登録した口が、ターンごとの元に分ける
     const expand = typeof child.label?.k === 'string' ? childExpanders.get(child.label.k) : null;
     // i18n-ignore: サーバーのログ

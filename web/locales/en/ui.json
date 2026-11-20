@@ -3115,7 +3115,8 @@
         "completed": "Completed",
         "failed": "Failed",
         "cancelled": "Stopped",
-        "interrupted": "Interrupted"
+        "interrupted": "Interrupted",
+        "stopUnconfirmed": "Stop unconfirmed"
       },
       "notificationUnknown": "It's unknown whether the completion notice was delivered. Check the result in the child conversation."
     }

@@ -21,7 +21,7 @@ const ID = n => `ply-task-${String(n).padStart(8, '0')}-0000-0000-0000-000000000
 export default async function (t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-task-remote-'));
   const hooked = hookedTaskStorage(dir, {});
-  const cancelCalls = [], delivered = [];
+  const cancelCalls = [], delivered = [], deliveryIds = new Map();
   let cancelBehavior = () => Promise.resolve(true);
   let seq = 0;
   const manager = await createAgentTasks({
@@ -29,7 +29,13 @@ export default async function (t) {
     prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
     execute: async () => ({ outcome: 'ok', text: 'x' }),
     ready: async () => true,
-    deliver: async tasks => { delivered.push(...tasks.map(x => x.taskId)); return 'ok'; },
+    deliver: async tasks => {
+      for (const { taskId, noticeId } of tasks) {
+        delivered.push(taskId);
+        deliveryIds.set(taskId, noticeId);
+      }
+      return 'ok';
+    },
     cancelHost: async row => { cancelCalls.push(row.taskId); return cancelBehavior(row); },
   });
   const adopt = (n, extra = {}) => manager.adopt({ taskId: ID(n), parentSessionId: 'parent', host: { hostId: 'h1', name: 'desk' }, title: `t${n}`, task: 'do', status: 'running', ...extra }, 'ja');
@@ -51,6 +57,17 @@ export default async function (t) {
     await sleep(700);
     t.ok('mirror: 終わった状態を写し、完了通知を届ける（sent）', manager.get(ID(3)).status === 'completed' && manager.get(ID(3)).notification === 'sent' && delivered.includes(ID(3)));
     t.ok('mirror: ホストの行は動いている数に入らない（busy は通知が済めば false）', manager.busy === false);
+
+    const firstNotice = deliveryIds.get(ID(3));
+    await manager.mirror(ID(3), { status: 'running' });
+    await manager.mirror(ID(3), { status: 'stopUnconfirmed', error: 'unconfirmed' });
+    t.ok('mirror: ホストで停止未確認の間は完了通知を出さない', manager.get(ID(3)).notification === 'none');
+    await manager.mirror(ID(3), { status: 'completed', result: '次の結果', error: null });
+    await sleep(700);
+    const nextNotice = deliveryIds.get(ID(3));
+    t.ok('mirror: 同じタスクの次の結果は別の配送 ID で届ける',
+      manager.get(ID(3)).notification === 'sent' && firstNotice && nextNotice && nextNotice !== firstNotice
+      && delivered.filter(id => id === ID(3)).length === 2);
 
     // ---- 止める予定
     await adopt(4);

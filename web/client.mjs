@@ -5601,9 +5601,10 @@ function stateMark(status) {
 // Pleiad タスクの状態 -> 行の印（サブエージェントと同じ語彙）。まだ終わっていないものは弧、文字の状態はそのまま残す
 const TASK_STATUS = { queued: t('dialog.tasks.status.queued'), running: t('dialog.tasks.status.running'), cancelling: t('dialog.tasks.status.cancelling'),
   waiting: t('dialog.tasks.status.waiting'), completed: t('dialog.tasks.status.completed'), failed: t('dialog.tasks.status.failed'),
-  cancelled: t('dialog.tasks.status.cancelled'), interrupted: t('dialog.tasks.status.interrupted') };
+  cancelled: t('dialog.tasks.status.cancelled'), interrupted: t('dialog.tasks.status.interrupted'),
+  stopUnconfirmed: t('dialog.tasks.status.stopUnconfirmed') };
 const TASK_MARK = { queued: 'running', running: 'running', cancelling: 'running', waiting: 'running',
-  completed: 'completed', failed: 'failed', cancelled: 'stopped', interrupted: 'stopped' };
+  completed: 'completed', failed: 'failed', cancelled: 'stopped', interrupted: 'stopped', stopUnconfirmed: 'waiting' };
 const TASK_LIVE = new Set(['queued', 'running', 'cancelling']);
 /**
  * 委譲のタスクの行（web/task-cards.mjs）。running は終わっていない・通知が届いていない短い行だけなので、

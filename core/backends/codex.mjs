@@ -1876,7 +1876,7 @@ const backend = {
       if (!heldServer) return;
       // 札のバックエンドの欄（server の takeCard が読む）: 付け直す側の記録の再生では戻らない控え
       control.backendCard = () => ({ held: true, dedicated, turnId, steered: [...steered], asked: [...asked], rollout: { path: rolloutPath, from: rolloutFrom } });
-      control.holder = { label: card => heldServer.putCard(threadId, card) };
+      control.holder = { label: card => heldServer.putCard(threadId, card), codexAppServer: heldServer };
       if (fresh) heldServer.markTurn(threadId);
       control.touch?.();
     };
