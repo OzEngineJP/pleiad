@@ -140,7 +140,8 @@ export async function recordAll({ root, accountFor = (accounts, id, ctx) => acco
         internalTurn: () => scoped.internalTurn({ prompt: 'hi', model: 'haiku', cwd: work, endpoint }),
         suggestTitle: () => scoped.suggestTitle({ transcript: 'hi', endpoint }),
         modelList: () => probeClaudeCatalogForTest(work, true, account?.id ? account : null),
-        connectorList: () => probeClaudeConnectors({ deny: [], token: account?.token ?? null }),
+        // コネクターの入口がオンのアカウントは、server と同じく connectors を渡す（connectorListProbe。オフは今までの呼び方のまま）
+        connectorList: () => probeClaudeConnectors({ deny: [], token: account?.token ?? null, ...(account?.connectors ? { connectors: account.connectors } : {}) }),
         usage: () => usage.readClaudeUsage({ token: account?.token, configDir: account?.id ? path.join(data, 'claude-usage', account.id) : undefined }),
       };
       if (e === 'compat') for (const k of ['modelList', 'connectorList', 'usage']) delete paths[k];

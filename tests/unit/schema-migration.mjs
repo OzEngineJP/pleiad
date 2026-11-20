@@ -143,10 +143,10 @@ export default async function (t) {
       await fs.writeFile(path.join(legacy, 'sessions.json'), JSON.stringify(sessions()));
       t.ok('形式番号が無い置き場（導入前の版）も、JSON があれば形式 1 として移行する', (await ensureDataSchema(legacy))?.counts?.sessions === 6 && readSessions(legacy).b?.title === '題2');
       const future = await tmp('future');
-      await fs.writeFile(path.join(future, 'data-schema.json'), '{"schema":4}');
+      await fs.writeFile(path.join(future, 'data-schema.json'), JSON.stringify({ schema: DATA_SCHEMA + 1 }));
       await fs.writeFile(path.join(future, 'sessions.json'), '{"keep":{"title":"x"}}');
       const rejected = await ensureDataSchema(future).then(() => null, e => e);
-      t.ok('新しい版の形式（4）は開かない。データには触れない', /別の形式/.test(rejected?.message ?? '') && (await read(path.join(future, 'sessions.json'))) === '{"keep":{"title":"x"}}' && !(await read(dbPath(future))));
+      t.ok('新しい版の形式（今の形式 + 1）は開かない。データには触れない', /別の形式/.test(rejected?.message ?? '') && (await read(path.join(future, 'sessions.json'))) === '{"keep":{"title":"x"}}' && !(await read(dbPath(future))));
       const broken = await tmp('broken');
       await fs.writeFile(path.join(broken, 'data-schema.json'), '{}');
       t.ok('壊れた形式番号では黙って作り直さない', await ensureDataSchema(broken).then(() => false, () => true));

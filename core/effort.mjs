@@ -56,9 +56,14 @@ export async function effortCapability(backend, model = '', cwd) {
   return { levels: Object.keys(options).filter(Boolean), fixed: null };
 }
 
-export async function validateEffort(backend, value, model, cwd, endpoint = null) {
+export async function validateEffort(backend, value, model, cwd, endpoint = null, { allowUnlistedModel = false } = {}) {
   if (value === '') return value;
   if (typeof value !== 'string') throw new Error(t('effort.unavailable'));
+  // 未掲載モデルの段は一覧から判定できない。明示した委譲では CLI に判断を任せる。
+  if (allowUnlistedModel && !endpoint && model && !Object.hasOwn(typeof backend.models === 'function' ? await backend.models(cwd).catch(() => ({})) : {}, model)) {
+    if (value.length > 200 || /[\s\p{Cc}]/u.test(value)) throw new Error(t('effort.unavailable'));
+    return value;
+  }
   if (!Object.hasOwn(await effortOptions(backend, model, cwd, endpoint), value)) {
     // 一覧そのものが無い backend は、一覧を取ってから候補を引き直す（一覧が無いと値の良否を判定できず、
     // モデル id に段が入ると別の強さで動くため。取れなければ requireModelCatalog が理由を分けた失敗を投げる。

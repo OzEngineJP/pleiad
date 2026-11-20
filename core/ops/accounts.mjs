@@ -4,6 +4,7 @@ import { defineOp } from './registry.mjs';
 
 const id = z.string().regex(/^acct-[0-9a-f]{12}$/);
 const name = z.string().trim().min(1).max(60);
+const cwd = z.string().max(4096);
 export const accountOps = [
   ['list', z.object({ backend: z.string().min(1).max(40) })],
   ['create', z.object({ backend: z.string().min(1).max(40), name })],
@@ -11,6 +12,8 @@ export const accountOps = [
   ['remove', z.object({ id })],
   ['login', z.object({ id, open: z.boolean().optional(), attempt: z.string().min(1).max(80).optional() })],
   ['cancel', z.object({ id, attempt: z.string().min(1).max(80).optional() })],
+  ['setConnectors', z.object({ id, enabled: z.boolean(), cwd: cwd.optional() })],
+  ['refreshConnectors', z.object({ id, cwd: cwd.optional() })],
 ].map(([verb, input]) => defineOp({
   id: `accounts.${verb}`, summary: `agent:ops.accounts.${verb}.summary`, risk: 'human-only',
   surfaces: { ui: true, mcp: false, cli: false },

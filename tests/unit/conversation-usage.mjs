@@ -10,7 +10,7 @@ export default async function(t) {
   const pagehide = [];
   globalThis.document = { createElement: tag => new N(tag), createElementNS: (_ns, tag) => new N(tag) };
   try {
-    const options = Object.fromEntries(['plugins', 'git', 'browser', 'usage', 'compact', 'copy'].map(label => [label, { label }]));
+    const options = Object.fromEntries(['todo', 'plugins', 'git', 'browser', 'usage', 'compact', 'copy'].map(label => [label, { label }]));
     const items = conversationMenuItems(options);
     assert.deepEqual(items.map(item => item.label), Object.keys(options));
     for (const item of items) {
@@ -18,7 +18,7 @@ export default async function(t) {
       assert.equal(item.icon.getAttribute('aria-hidden'), 'true');
       assert.ok(item.icon.children.length);
     }
-    assert.deepEqual(conversationMenuItems({ ...options, plugins: false, git: false, browser: false }).map(item => item.label), ['usage', 'compact', 'copy']);
+    assert.deepEqual(conversationMenuItems({ ...options, todo: false, plugins: false, git: false, browser: false }).map(item => item.label), ['usage', 'compact', 'copy']);
     t.ok('利用可能な入口だけを順に並べ、全行に線画のアイコンを付ける', true);
 
     assert.equal(menuMeter(null), null);
@@ -52,10 +52,14 @@ export default async function(t) {
     assert.ok(near.textContent.includes('残り 1 トークン'));
     t.ok('基準以上は満杯の100%で残りを省き、基準未満は1トークンまで整数で表示する', true);
     const doc = globalThis.document;
-    doc.body = new N('body'); doc.documentElement = { clientWidth: 390 }; doc.addEventListener = () => {};
+    const events = new EventTarget();
+    doc.body = new N('body'); doc.documentElement = { clientWidth: 390 };
+    doc.addEventListener = events.addEventListener.bind(events);
+    doc.removeEventListener = events.removeEventListener.bind(events);
     doc.createElement = tag => {
       const node = new N(tag);
       if (tag === 'dialog') {
+        Object.defineProperty(node, 'open', { value: false, writable: true });
         node.showModal = () => { node.open = true; };
         node.close = () => { node.open = false; node.dispatchEvent(new Event('close')); };
       }
@@ -81,7 +85,9 @@ export default async function(t) {
     assert.equal(pop.querySelector('.usage-other-agents').querySelectorAll('.usage-agent').length, 1);
     assert.equal(pop.querySelectorAll('.conversation-graph').length, 0);
     assert.ok(pop.querySelector('.usage-other-agents').textContent.includes('81%'));
-    doc.body.querySelector('.conversation-sheet').close();
+    const outside = new Event('pointerdown', { cancelable: true });
+    events.dispatchEvent(outside);
+    assert.equal(outside.defaultPrevented, true);
     assert.equal(pop.hidden, true);
     assert.equal(pop.getAttribute('role'), 'dialog');
     t.ok('スマホの使用量シートは使用枠だけを出し（コンテキストは別のシート）、他のエージェントを畳む。PC用の役割に戻して閉じる', true);

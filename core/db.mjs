@@ -175,10 +175,40 @@ CREATE TABLE IF NOT EXISTS waiting_cards (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS waiting_cards_origin ON waiting_cards (origin);
 `;
+/**
+ * 会話の ToDo（ADR 0342）。持ち主は scope_kind・scope_id（今は 'session' と会話の ID だけ。後でプロジェクト・外のツールの
+ * 課題にも広げられるように、会話の列にはしない）。after は先に終える項目の ID の配列、links は成果物のリンクの配列（どちらも JSON）。
+ * external は担当・人の返事待ち・委譲との結び付けの JSON（ADR 0344）。todo_scopes は持ち主ごとの版（rev。書くたびに 1 つ上げ、ifRev の照合に使う）
+ */
+export const TODOS_SQL = `
+CREATE TABLE IF NOT EXISTS todos (
+  id TEXT PRIMARY KEY,
+  scope_kind TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  status TEXT NOT NULL,
+  ord REAL NOT NULL,
+  after TEXT NOT NULL DEFAULT '[]',
+  links TEXT NOT NULL DEFAULT '[]',
+  external TEXT,
+  created_by TEXT,
+  created_at REAL,
+  updated_by TEXT,
+  updated_at REAL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS todos_scope ON todos (scope_kind, scope_id, ord);
+CREATE TABLE IF NOT EXISTS todo_scopes (
+  scope_kind TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  rev INTEGER NOT NULL,
+  PRIMARY KEY (scope_kind, scope_id)
+) WITHOUT ROWID;
+`;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
   if (lateEnsured.has(db)) return;
   db.exec(LATE_TABLES_SQL);
+  db.exec(TODOS_SQL);
   lateEnsured.add(db);
 }
 
@@ -202,6 +232,7 @@ export function openRaw(file, { readOnly = false, create = false } = {}) {
     if (create) {
       db.exec(SCHEMA_SQL);
       db.exec(LATE_TABLES_SQL);
+      db.exec(TODOS_SQL);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     }
   }
@@ -348,6 +379,10 @@ export function sessionTable(db) {
         prepared(db, 'DELETE FROM session_fields WHERE session_id = ?').run(id);
         prepared(db, 'DELETE FROM context_entry_refs WHERE session_id = ?').run(id);
         prepared(db, 'DELETE FROM sessions WHERE session_id = ?').run(id);
+        // 会話の ToDo も消す（会話のデータ。fork では写さない）
+        ensureLateTables(db);
+        prepared(db, "DELETE FROM todos WHERE scope_kind = 'session' AND scope_id = ?").run(id);
+        prepared(db, "DELETE FROM todo_scopes WHERE scope_kind = 'session' AND scope_id = ?").run(id);
       });
     },
     /** どの会話からも参照されない context_entries を消す（置き換えで孤立した分）。消した件数を返す */
@@ -645,6 +680,39 @@ export function draftTable(db) {
     get(key) { const row = prepared(db, 'SELECT data, at FROM drafts WHERE owner_key = ?').get(key); return row ? { ...JSON.parse(row.data), at: row.at } : null; },
     put(key, data, at) { prepared(db, 'INSERT INTO drafts (owner_key, data, at) VALUES (?, ?, ?) ON CONFLICT(owner_key) DO UPDATE SET data = excluded.data, at = excluded.at').run(key, jsonOf(data), at); },
     remove(key) { prepared(db, 'DELETE FROM drafts WHERE owner_key = ?').run(key); },
+  };
+}
+
+// ---- 会話の ToDo（ADR 0342）。1 項目 1 行。並び・依存・循環の検査は core/todos.mjs ----
+const parseJson = (text, fallback) => { try { return JSON.parse(text) ?? fallback; } catch { return fallback; } };
+const todoRow = r => ({ id: r.id, text: r.text, status: r.status, order: r.ord, after: parseJson(r.after, []), links: parseJson(r.links, []),
+  external: r.external ? parseJson(r.external, null) : null, by: r.created_by ? parseJson(r.created_by, null) : null,
+  updatedBy: r.updated_by ? parseJson(r.updated_by, null) : null, createdAt: r.created_at, updatedAt: r.updated_at });
+export function todoTable(db) {
+  ensureLateTables(db);
+  return {
+    /** 持ち主の項目を並び順に */
+    list(kind, id) { return prepared(db, 'SELECT * FROM todos WHERE scope_kind = ? AND scope_id = ? ORDER BY ord, created_at').all(kind, id).map(todoRow); },
+    linkedSessions() {
+      return prepared(db, "SELECT DISTINCT scope_id FROM todos WHERE scope_kind = 'session' AND json_extract(external, '$.taskId') IS NOT NULL").all().map(r => r.scope_id);
+    },
+    rev(kind, id) { return Number(prepared(db, 'SELECT rev FROM todo_scopes WHERE scope_kind = ? AND scope_id = ?').get(kind, id)?.rev ?? 0); },
+    /** 持ち主の項目をまとめて書き替え、版を 1 つ上げる（1 つのトランザクション）。新しい版を返す */
+    replace(kind, id, items, removed = []) {
+      return transaction(db, () => {
+        for (const gone of removed) prepared(db, 'DELETE FROM todos WHERE id = ? AND scope_kind = ? AND scope_id = ?').run(gone, kind, id);
+        for (const t of items) {
+          prepared(db, `INSERT INTO todos (id, scope_kind, scope_id, text, status, ord, after, links, external, created_by, created_at, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET text = excluded.text, status = excluded.status, ord = excluded.ord,
+            after = excluded.after, links = excluded.links, external = excluded.external, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+            .run(t.id, kind, id, t.text, t.status, t.order, jsonOf(t.after ?? []), jsonOf(t.links ?? []), t.external ? jsonOf(t.external) : null,
+              t.by ? jsonOf(t.by) : null, t.createdAt ?? null, t.updatedBy ? jsonOf(t.updatedBy) : null, t.updatedAt ?? null);
+        }
+        const rev = this.rev(kind, id) + 1;
+        prepared(db, 'INSERT INTO todo_scopes (scope_kind, scope_id, rev) VALUES (?, ?, ?) ON CONFLICT(scope_kind, scope_id) DO UPDATE SET rev = excluded.rev').run(kind, id, rev);
+        return rev;
+      });
+    },
   };
 }
 

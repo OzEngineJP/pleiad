@@ -13,12 +13,18 @@ import { t } from './i18n.mjs';
 import { agentName } from './agent-brands.mjs';
 import { brandMark as mark } from './context-tabs.mjs';
 import { ensureLockTips, lockReasonText, joinLockReasons } from './lock-tip.mjs';
-import { MATRIX_ICON as ICON, matrixSvg as svg, matrixButton as button, lockedAgentChip, agentLegend, wholeSwitch } from './context-matrix.mjs';
+import { MATRIX_ICON as ICON, matrixSvg as svg, matrixButton as button, matrixLockGlyph, lockedAgentChip, agentLegend, wholeSwitch } from './context-matrix.mjs';
 
 export { lockedAgentChip };
 
 const label = agentName;
 const names = ids => ids.map(label).join('・');
+
+/** 雲の凡例「claude.ai のコネクター」を出すか。上の表にコネクターの行があるか、読み取り中のときだけ。
+ *  アカウントの欄（claude.ai のコネクター・アカウントごと）だけでは出さない（欄の見出しと同じことになる） */
+export function connectorLegendShown(m, rows) {
+  return rows.some(r => r.kind === 'connector') || m.connectors === 'reading';
+}
 
 /**
  * section は createMcpSection() の戻り（peek・authNote を使う）。
@@ -235,6 +241,146 @@ export function createMcpMatrix({ section, onCount }) {
     return block;
   }
 
+  // ---- 登録した Claude アカウントごとの claude.ai のコネクター（ADR 0340 段 3。docs/design-system.md「登録した Claude アカウントごとの claude.ai のコネクター」）
+  // 行ごとにスイッチ 1 つ。確認の画面は置かない（利用者の判断。押したらそのままオン）。機械で確かめられる検査に合わなければ、
+  // オンにする向きだけを鍵で止めて理由を出す（オンのまま止まっているときは、オフにする向きは押せる。会話を止めたままにしない）。
+  // コネクターの一覧は上の「エージェントの設定」に並べず、行の下の畳みにだけ出す（名前と状態だけ。個別のオフは置かない）
+  const acctBusy = new Set();   // スイッチ・読み直しの最中のアカウント
+  // i18n-dynamic: mcp.accounts.status.
+  // i18n-dynamic: mcp.accounts.tip.
+  const blockKey = r => r.blockKind === 'env' && r.blockScope === 'settings' ? 'settings' : (r.blockKind ?? 'login');
+  /** 行の状態: off（使える・オフ）/ on（使える・オン）/ nologin / blocked（止める条件。オンのままのこともある） */
+  function acctState(r) {
+    if (!r.usageLogin) return 'nologin';
+    return r.status === 'ok' ? (r.enabled ? 'on' : 'off') : 'blocked';
+  }
+  function acctStatusText(r) {
+    const st = acctState(r);
+    if (st === 'nologin') return t('mcp.accounts.status.nologin');
+    if (st === 'off') return t('mcp.accounts.status.off');
+    if (st === 'blocked') {
+      const why = t(`mcp.accounts.status.${blockKey(r)}`);
+      return r.enabled ? t('mcp.accounts.status.stopped', { why }) : t('mcp.accounts.status.unusable', { why });
+    }
+    if (!Array.isArray(r.connectors)) return r.readFailed && !r.reading && !acctBusy.has(r.id) ? t('mcp.accounts.status.readFailed') : t('mcp.accounts.status.reading');
+    const n = r.connectors.length, auth = (r.needsAuth ?? []).length;
+    if (!n) return t('mcp.accounts.status.none');
+    return auth ? t('mcp.accounts.status.onAuth', { n: n - auth, auth }) : t('mcp.accounts.status.on', { n });
+  }
+  /** オンにする向きを止める理由（鍵の上の文）。止めていなければ null */
+  function acctLockReason(r) {
+    const st = acctState(r);
+    if (st === 'nologin') return t('mcp.accounts.tip.nologin', { name: r.name });
+    if (st !== 'blocked' || r.enabled) return null;
+    const k = blockKey(r);
+    // 版・履歴の置き場は、サーバーの文（版の番号・指定の名前を含む）をそのまま出す
+    return ['version', 'history', 'profile'].includes(k) && r.blockMessage ? r.blockMessage : t(`mcp.accounts.tip.${k}`, { name: r.name });
+  }
+  const acctSel = (r, part) => `.cx-row[data-acct="${CSS.escape(r.id)}"] ${part}`;
+  async function acctRun(ctx, r, part, run) {
+    if (acctBusy.has(r.id)) return;
+    acctBusy.add(r.id);
+    focus = acctSel(r, part);
+    ctx.rerender();
+    try {
+      await ctx.work(async () => {
+        try { await run(); }
+        finally { acctBusy.delete(r.id); focus = acctSel(r, part); await ctx.reloadMatrix().catch(() => {}); }
+      });
+    } catch { /* work が誤りを出す */ }
+  }
+  function acctToggle(ctx, r) {
+    const on = !r.enabled;
+    if (!acctBusy.has(r.id)) r.enabled = on;   // 先に見た目を変える（失敗したら読み直しで戻る）
+    return acctRun(ctx, r, '.cx-sw', () => ctx.cmd('invoke', { op: 'accounts.setConnectors', args: { id: r.id, enabled: on, cwd: ctx.cwd } }));
+  }
+  function acctRefresh(ctx, r) {
+    return acctRun(ctx, r, '.cx-act', () => ctx.cmd('invoke', { op: 'accounts.refreshConnectors', args: { id: r.id, cwd: ctx.cwd } }));
+  }
+  function acctAction(ctx, r) {
+    const st = acctState(r), k = st === 'blocked' ? blockKey(r) : null;
+    const open = o => ctx.openAccount?.(o);
+    let b = null;
+    if (st === 'nologin') { b = button('btn lnk cx-act', t('mcp.accounts.login')); b.onclick = () => open({ usageLogin: r.id }); }
+    else if (['expired', 'login', 'format'].includes(k)) { b = button('btn lnk cx-act', t('mcp.accounts.relogin')); b.onclick = () => open({ usageLogin: r.id }); }
+    else if (k === 'owner') { b = button('btn lnk cx-act', t('mcp.accounts.openAccount')); b.onclick = () => open({ focus: r.id }); }
+    else if (st === 'on') {
+      b = button('btn cx-act', t('mcp.accounts.reload'));
+      b.setAttribute('aria-label', t('mcp.accounts.reloadAria', { name: r.name }));
+      if (acctBusy.has(r.id) || r.reading) b.setAttribute('aria-disabled', 'true');
+      b.onclick = () => { if (b.getAttribute('aria-disabled') !== 'true') acctRefresh(ctx, r); };
+      return b;
+    }
+    if (b && !ctx.openAccount) return null;   // アカウントの面を開けない呼び手
+    if (b) b.setAttribute('aria-label', `${b.textContent}（${r.name}）`);
+    return b;
+  }
+  function acctSwitch(ctx, r) {
+    const sw = button('cx-sw');
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(Boolean(r.enabled)));
+    const name = t('mcp.accounts.switchAria', { name: r.name });
+    const reason = acctLockReason(r);
+    if (reason) {
+      ensureLockTips();
+      sw.setAttribute('aria-disabled', 'true');
+      sw.dataset.tip = reason;
+      sw.setAttribute('aria-label', `${name}（${reason}）`);
+      const lk = matrixLockGlyph(); lk.setAttribute('aria-hidden', 'true'); sw.append(lk);
+      return sw;
+    }
+    sw.setAttribute('aria-label', name);
+    if (acctBusy.has(r.id)) sw.setAttribute('aria-busy', 'true');
+    sw.onclick = () => acctToggle(ctx, r);
+    return sw;
+  }
+  function acctPeek(r) {
+    const box = el('div', 'cx-peek cx-acct-peek');
+    box.setAttribute('role', 'list');
+    box.setAttribute('aria-label', t('mcp.accounts.peekAria', { name: r.name }));
+    const auth = new Set(r.needsAuth ?? []);
+    for (const nm of r.connectors) {
+      const off = auth.has(nm);
+      const it = el('div', `cx-peek-item${off ? ' off' : ''}`); it.setAttribute('role', 'listitem');
+      it.append(el('span', `cx-dot ${off ? 'off' : 'on'}`), el('span', 'nm', nm), el('span', 'st', off ? t('mcp.accounts.item.needsAuth') : t('mcp.accounts.item.connected')));
+      box.append(it);
+    }
+    return box;
+  }
+  function acctRow(ctx, r, list) {
+    const st = acctState(r);
+    const n = el('div', `cx-row acct${st === 'on' ? '' : ' off'}`);
+    n.dataset.acct = r.id;
+    const ic = el('span', 'cx-ic'); ic.dataset.kind = 'connector'; ic.title = t('mcp.matrix.connector'); ic.append(svg(ICON.connector));
+    const body = el('span', 't');
+    const line = el('span', 'nl'); line.append(el('span', 'nm', r.name));
+    body.append(line, el('span', 'p', acctStatusText(r)));
+    const key = `acct:${r.id}`;
+    const foldable = st === 'on' && Array.isArray(r.connectors) && r.connectors.length > 0;
+    let head;
+    if (foldable) {
+      head = button('cx-open');
+      head.setAttribute('aria-expanded', String(ctx.opened.has(key)));
+      head.append(ic, body);
+      head.onclick = () => { if (ctx.opened.has(key)) ctx.opened.delete(key); else ctx.opened.add(key); focus = acctSel(r, '.cx-open'); ctx.rerender(); };
+    } else { head = el('span', 'cx-open'); head.append(ic, body); }
+    const act = acctAction(ctx, r);
+    n.append(head);
+    if (act) n.append(act);
+    n.append(acctSwitch(ctx, r));
+    list.append(n);
+    if (foldable && ctx.opened.has(key)) list.append(acctPeek(r));
+  }
+  function accountGroup(ctx, rows) {
+    const title = t('mcp.accounts.group');
+    const block = el('div', 'cx-block cx-acct-block');
+    const sec = el('div', 'cx-sec'); sec.append(el('span', 'n', title));
+    const list = el('div', 'cx-list'); list.setAttribute('role', 'group'); list.setAttribute('aria-label', title);
+    for (const r of rows) acctRow(ctx, r, list);
+    block.append(sec, list);
+    return block;
+  }
+
   /** host（種類のカード）へ、ロゴと名前の対応・2 つの組・凡例を描く。ログインの詳細設定は呼び出し側が続ける */
   function render(host, ctx) {
     const m = ctx.matrix;
@@ -248,10 +394,12 @@ export function createMcpMatrix({ section, onCount }) {
     onCount?.(rows.length);
     host.append(group(ctx, t('mcp.matrix.groupPly'), rows.filter(r => r.group === 'ply'), { add: true }));
     host.append(group(ctx, t('mcp.matrix.groupAgent'), rows.filter(r => r.group === 'agent'), { wait: m.connectors === 'reading' }));
+    const accts = Array.isArray(m.connectorAccounts) ? m.connectorAccounts : [];
+    if (accts.length) host.append(accountGroup(ctx, accts));
     ensureLockTips();
     const legend = el('div', 'cx-legend');
     const li = (glyph, text) => { const i = el('span', 'li'); i.append(glyph, document.createTextNode(text)); return i; };
-    if (rows.some(r => r.kind === 'connector') || m.connectors === 'reading') legend.append(li(svg(ICON.connector), t('mcp.matrix.connector')));
+    if (connectorLegendShown(m, rows)) legend.append(li(svg(ICON.connector), t('mcp.matrix.connector')));
     if (legend.children.length) host.append(legend);
     if (focus) { const sel = focus; focus = null; host.querySelector(sel)?.focus(); }
   }

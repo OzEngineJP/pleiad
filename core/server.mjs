@@ -88,9 +88,12 @@ import { mergeCompactionHistory, attachCompactSummaries } from './compaction-his
 import { slimRow, createListDeltas } from './session-list-delta.mjs';
 import { createBulkReplies } from './bulk-replies.mjs';
 import { createContextSettings } from './context-settings.mjs';
-import { createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
+import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
+import { createClaudeConnectorsCache } from './claude-connectors.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
-import { createClaudeConnectorsGate } from './claude-connectors.mjs';
+import { ConnectorsAuthError, connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
+import { guardUsageDir, refreshUsageDir, shouldMarkUsageExpired } from './backends/claude-usage.mjs';
+import { claudeSdkVersion } from './claude-sdk.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
@@ -131,7 +134,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { stopHeldAppServer } from './backends/codex-held.mjs';
-import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart } from './backends/claude-held.mjs';
+import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart, cliVersion } from './backends/claude-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
 import { stopHeldAgy } from './backends/antigravity.mjs';
 import { sweepIdleAtStart } from './backends/antigravity-held.mjs';
@@ -153,6 +156,7 @@ import { createPresence } from './notify/presence.mjs';
 import { createNotifications } from './notifications.mjs';
 import { normalizeEditingState } from '../web/md-editing-state.mjs';
 import { createDrafts } from './drafts.mjs';
+import { createTodos } from './todos.mjs';
 import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -427,7 +431,7 @@ try {
 const contextBases = createContextBases({ file: path.join(store.dataDir, 'context-bases.json') });
 await contextBases.load();
 
-import { installation, cliCommand } from "./cli-installation.mjs";
+import { installation, cliCommand, claudeExecutable } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
 import { createSessionCommands } from './session-commands.mjs';
@@ -559,10 +563,26 @@ claudeAccountSecrets.migrate().catch(() => {});
 // トークンの持ち主（発行された組織）を GET /v1/models の応答ヘッダーで確かめ、使用量の認可と食い違えば一覧で知らせる。
 // AGENT_HOST_ANTHROPIC_API は確認の送り先（テストの偽物用）。off なら確かめない（テストは既定で off。本物へは送らない）
 const tokenCheckApi = process.env.AGENT_HOST_ANTHROPIC_API || ANTHROPIC_API;
-const claudeAccountConnectors = createClaudeConnectorsGate({ dataDir: store.dataDir });
 const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir, secrets: claudeAccountSecrets,
   checkOrg: tokenCheckApi === 'off' ? null : token => fetchTokenOrg(token, { baseUrl: tokenCheckApi }),
   onChecked: () => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }) });
+// claude.ai のコネクターを登録アカウントの会話へ渡す入口（ADR 0340）。設定がオン（試験と手元の確かめだけ）のアカウントの会話だけが認証側を通る。
+// 認証側のファクトリーは I/O もタイマーも持たない（オフの経路は何も呼ばない）。更新は CLI に任せ（使用量の読み取りを 1 回流す）、Pleiad は更新用トークンを持ち出さない
+// 使用量の読み取りの印（guard）はオンの間だけ効き、オフにすると次の読み取りで外れる。更新（refresh）は印を付ける前から走っていた読み取りも待つ
+const claudeAccountConnectors = createClaudeConnectorsWiring({
+  dataDir: store.dataDir,
+  probe: probeClaudeConnectors,
+  accounts: claudeAccounts,
+  versions: async () => {
+    let exe = null;
+    try { exe = claudeExecutable(); } catch { /* 入っていない。版は null になり、オンは止まる */ }
+    return { cli: exe ? await cliVersion(exe) : null, sdk: claudeSdkVersion() };
+  },
+  usage: { guard: guardUsageDir, refresh: refreshUsageDir },
+});
+const claudeConnectorsCache = createClaudeConnectorsCache({ dataDir: store.dataDir });
+const tokenAccountBackend = () => listBackends().find(b => accountKind(b) === 'token') ?? null;
+
 // アカウントの認可を Pleiad から行う（疑似端末で claude setup-token / claude auth login を回す。core/claude-login.mjs）。
 // トークンは画面へ返さず、そのままアカウントの秘密へしまう
 const claudeLogin = createClaudeLogin({
@@ -573,6 +593,7 @@ const claudeLogin = createClaudeLogin({
     if (accountId && !current) throw new Error(t('accounts.deleted'));
     const saved = await claudeAccounts.save({ ...(accountId ? { id: accountId } : {}), name: current?.name ?? name, token });
     quotaStore.invalidate();
+    await claudeConnectorsCache.remove(saved.id).catch(() => {});
     refreshClaudeAccountCatalog(saved.id, { warm: true });
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
     return saved;
@@ -580,6 +601,8 @@ const claudeLogin = createClaudeLogin({
   usageDir: id => claudeAccounts.usageDir(id),
   markUsageLogin: async id => {
     await claudeAccounts.markUsageLogin(id);
+    await claudeConnectorsCache.remove(id).catch(() => {});
+    tokenAccountBackend()?.invalidateModels?.(id);
     quotaStore.invalidate();
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
   },
@@ -1060,6 +1083,9 @@ const pushNotifier = createPushNotifier({
 const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitGlobal({ ...event, sessionId: null }) });
 // スレッドの入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
 const threadDrafts = createDrafts({ dataDir: store.dataDir });
+// 会話の ToDo（ADR 0342）。書いたら全部の画面へ配る（開いている会話の ToDo のパネル・入口の未読の点）
+const sessionTodos = createTodos({ dataDir: store.dataDir, taskOf: id => agentTasks?.todoState(id),
+  onChange: ({ scope, rev, items, changed, by }) => { if (scope.kind === 'session') emitGlobal({ type: 'todosChanged', sessionId: scope.id, rev, items, changed, by }); } });
 const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
@@ -1455,7 +1481,7 @@ async function taskSettingsPlan(owner, args, lng, turn) {
   const model = asked ?? (leftEndpoint ? await resolveModel(null, undefined, target, cwd, endpoint)
     : target.id === current.id ? before.model : target.id === source.id ? meta.model ?? ''
     : await resolveModel(null, undefined, target, cwd, endpoint));
-  if (args.model !== undefined && !(await validModel(target, model, cwd, endpoint).catch(() => false))) {
+  if (args.model !== undefined && !(model === '' || isModelId(model))) {
     throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: await knownModelNames(target, cwd, endpoint) }));
   }
   // 使用枠が満杯と分かっているときだけ断る（取り置きが無い・古いだけでは断らない。固定の ply_delegate も、account を書いたときだけ見る）
@@ -1465,8 +1491,7 @@ async function taskSettingsPlan(owner, args, lng, turn) {
     if (check.reason === 'quota_full') throw new Error(agentT(lng, 'tasks.quotaFull', { model, backend: target.id }));
   }
   if (args.effort !== undefined) {
-    const choices = Object.keys(await effortOptions(target, model, cwd, await endpointRow(endpoint)));
-    if (args.effort !== '' && !choices.includes(args.effort)) throw new Error(agentT(lng, 'tasks.effortUnknown', { effort: args.effort, backend: target.id, model: model || '-', choices: choices.filter(Boolean).join(', ') || '-' }));
+    await validateEffort(target, args.effort, model, cwd, await endpointRow(endpoint), { allowUnlistedModel: true });
   }
   const switching = target.id !== source.id;
   // 子の承認モード（エージェントを替えるとき）。上限は親の強さと、子の今の強さ（人が下げていればそれ）の弱い方
@@ -1503,7 +1528,7 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   try {
     next = await reserveTurnSettings({ sessionId, backend: target.id, model: plan.model,
       ...(plan.effort !== undefined ? { effort: plan.effort } : {}), ...(plan.switching && mode ? { mode } : {}),
-      ...(target.id !== before.backend || plan.accountGiven ? { endpoint: plan.endpoint } : {}), ...(plan.accountGiven ? { account: plan.account } : {}), keepPrefs: true });
+      ...(target.id !== before.backend || plan.accountGiven ? { endpoint: plan.endpoint } : {}), ...(plan.accountGiven ? { account: plan.account } : {}), keepPrefs: true }, { delegated: true });
   } catch (e) {
     await undoReserve();
     throw new Error(agentT(lng, 'tasks.settingsFailed', { error: String(e?.message ?? e) }));
@@ -1891,7 +1916,7 @@ async function routeDelegation(args, lng, cwd) {
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
     const preselected = await requestedAccount(args.account, null, lng, backend);
     backend = await backendForAccount(backend, await accountResolve(backend, preselected.account));
-    const model = await resolveModel(null, await canonicalModel(backend, args.model, cwd, ''), backend, cwd, '');
+    const model = typeof args.model === 'string' ? await canonicalModel(backend, args.model, cwd, '') : await resolveModel(null, undefined, backend, cwd, '');
     const chosen = await requestedAccount(args.account, model, lng, backend);
     return { ...args, account: chosen.account, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model, account: chosen.account, accountLabel: chosen.label }) };
   }
@@ -1911,7 +1936,7 @@ async function routeDelegation(args, lng, cwd) {
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
-  // 選んだ候補を確かめ直す。一覧では裁かない。エージェントが走らせられないと分かっている版（runnableModel。Devin の ACP に無い版）は次の候補へ
+  // 選んだ候補を確かめ直す。一覧では裁かず、有効なエージェントとモデル名の形だけを見る。
   const rejected = {};
   let ok, routing;
   for (;;) {
@@ -1919,8 +1944,8 @@ async function routeDelegation(args, lng, cwd) {
     if (!ok) break;
     const picked = getBackend(routing.target.backend);
     // モデルが一覧にあるかは見ない（使えるかは CLI/API が決め、断られたら次の候補で作り直す。ADR 0311）。
-    // 見るのは、エージェントが有効か・モデル名の形・エージェントが走らせられないと分かっている版（runnableModel）だけ
-    if (picked && isModelId(routing.target.model) && picked.runnableModel?.(routing.target.model) !== false) break;
+    // 見るのは、エージェントが有効か・モデル名の形だけ
+    if (picked && isModelId(routing.target.model)) break;
     rejected[candidateId(routing.target.backend, routing.target.model, routing.target.account || null)] = picked ? 'model_unknown' : 'unavailable';
   }
   if (!ok) {
@@ -3116,7 +3141,23 @@ async function usageAccounts(backendId = 'claude') {
 async function providerQuota(backend, { force = false } = {}) {
   if (!backend.usage) return { windows: [], checkedAt: null, message: t('quota.unsupported') };
   // skip … 読めない間、読む間隔を延ばしているアカウントの行（読まずに前回の行を残す）
-  return quotaStore.refresh(backend.id, async ({ skip } = {}) => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.accounts ? await usageAccounts(backend.id) : {}), ...(skip?.length ? { skip } : {}) }), { force });
+  return quotaStore.refresh(backend.id, async ({ skip } = {}) => {
+    const res = await backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.accounts ? await usageAccounts(backend.id) : {}), ...(skip?.length ? { skip } : {}) });
+    if (accountKind(backend) === 'token' && Array.isArray(res?.accounts)) {
+      let changed = false;
+      for (const row of res.accounts) {
+        if (!row?.accountId) continue;
+        // ログイン切れの印は、認証が無い・更新できない行だけ（429・時間切れは付けない）
+        if (shouldMarkUsageExpired(row)) {
+          if ((await claudeAccounts.markUsageExpired(row.accountId, row.reason ?? 'no-login').catch(() => ({}))).changed) changed = true;
+        } else if (!row.skipped && !row.reason && !row.needsUsageLogin && (row.windows?.length || row.plan)) {
+          if ((await claudeAccounts.clearUsageExpired(row.accountId).catch(() => ({}))).changed) changed = true;
+        }
+      }
+      if (changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+    }
+    return res;
+  }, { force });
 }
 
 /**
@@ -3204,10 +3245,6 @@ async function validModel(backend, model, cwd, endpointId = '', { passive = fals
   // 明示モデルを「一覧に無い」で断らない。docs/adr/0304・0308）。一覧が取れている backend はここまでの結果どおり断る
   return backend.validModel ? backend.validModel(model, cwd) : false;
 }
-/**
- * 明示して渡されたモデル名を、一覧の id に当てる（AI が書く claude-sonnet-5-5 → sonnet）。
- * そのままで通る名前・互換の接続先・当てる手段の無い backend・当たらない名前は、渡された値のまま返す（断るのは呼び出し側）
- */
 async function canonicalModel(backend, name, cwd, endpointId = '') {
   if (endpointId || typeof name !== 'string' || !backend.matchModel) return name;
   // 正式な ID（claude-sonnet-5-5 など）は一覧の id ではないので、取り直しを伴う確かめ（validModel → models({ refresh })）
@@ -3215,7 +3252,7 @@ async function canonicalModel(backend, name, cwd, endpointId = '') {
   if (Object.hasOwn(await backend.models(cwd).catch(() => ({})), name)) return name;
   const matched = await backend.matchModel(name, cwd).catch(() => null);
   if (matched !== null && matched !== undefined) return matched;
-  // 両方外れた名前はそのまま返す（呼び出し側が validModel・resolveModel で取り直しを伴って確かめ、断る）
+  // 両方外れた名前はそのまま返す（一覧に無くても CLI に渡す）
   return name;
 }
 /** エラーに添える、選べるモデル名（隠し以外を先頭 30 件） */
@@ -3387,6 +3424,8 @@ const LIST_NEUTRAL_EVENTS = new Set([
   "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged", "apiKeysChanged", "secretsChanged",
   // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
   "notificationsChanged",
+  // 会話の ToDo（ADR 0342）。会話の一覧の行は変わらない
+  "todosChanged",
   // 会話の Chrome のプロフィールが替わった（core/chrome/profile-choice.mjs）。一覧の行は変わらない
   "chromeProfile",
 ]);
@@ -3915,14 +3954,29 @@ function makeEmit(turn) {
       // CLI のログイン（mode: cli）か、Pleiad の Claude のアカウントのトークン（mode: token）かを添える。CLI のときは期限切れを覚える
       // （claude auth status は期限が切れてもログイン済みを返すので、設定の行の ⚠ はこれで出す。ADR 0212）
       if (event.outcome === 'error' && event.kind === 'auth' && !turn.info.endpoint) {
-        const accountId = turn.info.account || '';
-        event = { ...event, backend: turn.backend.id, auth: accountId
-          ? { mode: accountKind(turn.backend) === 'token' ? 'token' : 'account', accountId, name: turn.authAccount?.id === accountId ? turn.authAccount.name : null }
-          : { mode: 'cli', email: authAccounts.get(turn.backend.id) ?? null } };
-        if (!accountId && !replay) authExpired.set(turn.backend.id, Date.now());
+        const accountId = limitAccount(turn.backend, turn.info.account) || '';
+        const name = turn.authAccount?.id === accountId ? turn.authAccount.name : null;
+        const connErr = event.connectorsError ?? turn.connectorsError ?? null;
+        const viaConnectors = Boolean(connErr || (accountId && accountKind(turn.backend) === 'token' && turn.connectorsEnabled));
+        if (viaConnectors) {
+          const ce = connErr ?? { kind: 'expired', scope: null, code: 'connectors-expired', accountId, accountName: name ?? '', reauth: true, needsOwnerCheck: false };
+          event = { ...event, backend: turn.backend.id, connectorsError: ce, auth: { mode: 'connectorsLogin', accountId, name } };
+          // 切れの印は期限切れ（更新できなかった）だけ。login は想定外の失敗の受け皿も兼ねるので、アカウントを「切れています」にしない
+          if (!replay && accountId && ce.kind === 'expired') {
+            claudeAccounts.markUsageExpired(accountId, ce.kind).then((r) => {
+              if (r?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+            }).catch(() => {});
+            claudeConnectorsCache.remove(accountId).catch(() => {});
+          }
+        } else {
+          event = { ...event, backend: turn.backend.id, auth: accountId
+            ? { mode: accountKind(turn.backend) === 'token' ? 'token' : 'account', accountId, name }
+            : { mode: 'cli', email: authAccounts.get(turn.backend.id) ?? null } };
+          if (!accountId && !replay) authExpired.set(turn.backend.id, Date.now());
+        }
       }
       // CLI のログインで走ったターンが通った = ログインは生きている（期限切れの印を消す）
-      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !turn.info.account) authExpired.delete(turn.backend.id);
+      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !limitAccount(turn.backend, turn.info.account)) authExpired.delete(turn.backend.id);
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
@@ -4733,15 +4787,27 @@ async function createSession(args) {
     if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
     const inheritedAccount = inherit ? source.nextSettings?.account ?? source.claudeAccount ?? '' : chosen?.account ?? await defaultAccount(backend.id);
     const chosenAccount = inheritedAccount && await accountHas(backend, inheritedAccount) ? inheritedAccount : '';
-    const scopedBackend = !endpoint && chosenAccount ? await backendForAccount(backend, await accountResolve(backend, chosenAccount)) : backend;
-    const selected = await resolveModel(null, model, scopedBackend, cwd || undefined, endpoint);
+    let scopedBackend = backend;
+    let connectorsBlocked = false;
+    if (!endpoint && chosenAccount) {
+      try { scopedBackend = await backendForAccount(backend, await accountResolve(backend, chosenAccount)); }
+      catch (error) {
+        // そのアカウントの claude.ai のコネクターがオンで、止める条件に当たっている（ADR 0340 段 3）。会話は作り、送ったときに
+        // 止めた理由と直す入口を出す。モデルの一覧はログイン中のアカウントへ落として引かない（モデル・強さは形だけ見て持ち越す）
+        if (!error?.connectorsError) throw error;
+        connectorsBlocked = true;
+      }
+    }
+    const selected = connectorsBlocked ? await sendModel(null, model, backend, endpoint) : await resolveModel(null, model, scopedBackend, cwd || undefined, endpoint);
     await store.setModel(sessionId, selected);
     const effort = args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : chosen?.effort);
-    const resolvedEffort = await resolveEffort(null, effort, scopedBackend, selected, cwd || undefined, await endpointRow(endpoint))
-      .catch(async error => {
-        if (args?.effort !== undefined || inherit) throw error;
-        return resolveEffort(null, '', scopedBackend, selected, cwd || undefined, await endpointRow(endpoint));
-      });
+    const resolvedEffort = connectorsBlocked
+      ? String(effort ?? (await store.getPrefs()).backends?.[backend.id]?.effort ?? '')
+      : await resolveEffort(null, effort, scopedBackend, selected, cwd || undefined, await endpointRow(endpoint))
+        .catch(async error => {
+          if (args?.effort !== undefined || inherit) throw error;
+          return resolveEffort(null, '', scopedBackend, selected, cwd || undefined, await endpointRow(endpoint));
+        });
     await store.setSessionData(sessionId, 'effort', resolvedEffort);
     await store.setMode(sessionId, await resolveMode(null, mode, backend));
     // 引き継ぎ元の会話で選んでいたアカウントも継ぐ（予約中ならそれを）
@@ -4758,7 +4824,7 @@ async function createSession(args) {
 }
 
 /** 次のターンの設定を予約する（sessions.setTurnSettings。WS の setTurnSettings の中身）。予約は nextSettings。返り値は予約（取り消しは null） */
-async function reserveTurnSettings(args) {
+async function reserveTurnSettings(args, { delegated = false } = {}) {
   const { sessionId, cwd: requestedCwd, cancel } = args ?? {};
   const explicit = { ...args };
   if (!sessionId) throw new Error(t('session.required'));
@@ -4820,15 +4886,15 @@ async function reserveTurnSettings(args) {
     // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
     let selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
     // 承認モードと同じく、場所を替えて引いたモデルが使えなければ既定（''）にする
-    if (!cancel && explicit.model === undefined && model !== undefined && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) selectedModel = '';
-    if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
+    if (!cancel && !delegated && explicit.model === undefined && model !== undefined && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) selectedModel = '';
+    if (!cancel && !(delegated ? selectedModel === '' || isModelId(selectedModel) : await validModel(target, selectedModel, settingsCwd, selectedEndpoint))) throw new Error(t('settings.modelUnavailable'));
     const selectedEndpointRow = await endpointRow(selectedEndpoint);
     const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
       : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
     const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
     if (!explicit.effort && args.effort !== undefined && !Object.hasOwn(choices, args.effort)) args = { ...args, effort: '' };
     const selectedEffort = cancel ? '' : args.effort !== undefined
-      ? await validateEffort(target, args.effort, selectedModel, settingsCwd, selectedEndpointRow)
+      ? await validateEffort(target, args.effort, selectedModel, settingsCwd, selectedEndpointRow, { allowUnlistedModel: delegated })
       : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
     let selectedCwd = current.nextSettings?.cwd;
     if (!cancel && requestedCwd !== undefined) {
@@ -5629,12 +5695,14 @@ const opsHooks = {
 };
 
 // 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0327）。コネクターは最後に読めた一覧を覚えておく
-// 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす
+// 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす。コネクターの入口がオンのアカウントは会話と同じ組み立てで読み、
+// 止める条件に当たれば読めなかった扱いにする（ログイン中のアカウントで読み直さない・覚えの一覧を書かない。ADR 0340）
 const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'),
-  probe: async ({ deny }) => {
-    const account = await accountResolve(getBackend('claude'), await defaultAccount('claude')).catch(() => null); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0327）
-    return probeClaudeConnectors({ deny, token: account?.token ?? null });
-  } });
+  probe: connectorListProbe({
+    defaultId: () => defaultAccount('claude'), // backend-allow: コネクターの一覧は Claude の既定のアカウントで読む（ADR 0327・0340）
+    resolve: id => accountResolve(getBackend('claude'), id), // backend-allow: コネクターの読み取りは Claude 固有（ADR 0327）
+    probe: probeClaudeConnectors,
+  }) });
 
 /**
  * 表（context-agents.json）を触った後の旧い設定（担当・探す形式・除外）の変更は、表の結果を変えないことが多い。
@@ -5770,12 +5838,199 @@ function serializeDocRow(row) {
   };
 }
 
+const accountConnectorProbes = new Map(); // accountId -> Promise<void>
+const accountConnectorFailed = new Set();
+
+function probeAccountConnectors(acct, { identityHash, deny = [] }) {
+  const existing = accountConnectorProbes.get(acct.id);
+  if (existing) return existing;
+  const run = (async () => {
+    try {
+      const account = await accountResolve(tokenAccountBackend(), acct.id);
+      const raw = await probeClaudeConnectors({ deny, token: account?.token ?? null, connectors: account?.connectors ?? null });
+      const list = Array.isArray(raw) ? raw.map(x => (typeof x === 'string' ? { name: x, status: null } : x)).filter(x => typeof x?.name === 'string') : [];
+      const connectors = [...new Set(list.map(x => x.name))].sort();
+      const needsAuth = connectors.filter(n => list.some(x => x.name === n && x.status === 'needs-auth'));
+      accountConnectorFailed.delete(acct.id);
+      await claudeConnectorsCache.set(acct.id, { identityHash, connectors, needsAuth });
+      emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+    } catch (err) {
+      accountConnectorFailed.add(acct.id);
+      if (err instanceof ConnectorsAuthError && err.connectorsError?.kind === 'expired') {
+        await claudeAccounts.markUsageExpired(acct.id, err.connectorsError.kind).catch(() => {});
+      }
+      emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+    } finally {
+      if (accountConnectorProbes.get(acct.id) === run) accountConnectorProbes.delete(acct.id);
+    }
+  })();
+  accountConnectorProbes.set(acct.id, run);
+  return run;
+}
+
+async function knownDenyNames(cwd = null) {
+  const [plugins, rawCtx] = await Promise.all([
+    readClaudePlugins({ cwd }).catch(() => []),
+    contextSettings.read().catch(() => ({})),
+  ]);
+  const plyNames = await plyMcp.list?.().then(r => r.map(x => x.name)).catch(() => []) ?? [];
+  const cfgNames = Object.keys(rawCtx?.mcp?.servers ?? {});
+  return [...new Set([...plyNames, ...cfgNames, ...plugins.map(p => p.key)])].filter(n => !String(n).startsWith('claude.ai '));
+}
+
+async function accountConnectorsList({ cwd = null, refresh = false, wait = false, targetId = null, force = false } = {}) {
+  const [{ accounts }, enabledMap] = await Promise.all([claudeAccounts.list(), claudeAccountConnectors.settings.list()]);
+  const rows = [];
+  const waiting = [];
+  let denyCache = null;
+  const getDeny = async () => (denyCache ??= await knownDenyNames(cwd));
+  for (const acct of accounts) {
+    if (targetId && acct.id !== targetId) continue;
+    const enabled = Boolean(enabledMap[acct.id]);
+    const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd });
+    let cached = inspected.ok ? await claudeConnectorsCache.get(acct.id, { identityHash: inspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
+    if (enabled && inspected.ok && (!cached || force || (refresh && cached.stale))) {
+      const p = probeAccountConnectors(acct, { identityHash: inspected.identityHash, deny: await getDeny() });
+      if (wait || force) waiting.push({ acct, inspected, p });
+    }
+    rows.push({ acct, enabled, inspected, cached });
+  }
+  if (waiting.length) {
+    await Promise.allSettled(waiting.map(w => w.p));
+    for (const w of waiting) {
+      const idx = rows.findIndex(r => r.acct.id === w.acct.id);
+      if (idx >= 0) {
+        const reInspected = await claudeAccountConnectors.inspect({ id: w.acct.id, name: w.acct.name }, { cwd });
+        rows[idx].inspected = reInspected;
+        rows[idx].cached = reInspected.ok ? await claudeConnectorsCache.get(w.acct.id, { identityHash: reInspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
+      }
+    }
+  }
+  return rows.map(({ acct, enabled, inspected, cached }) => ({
+    id: acct.id,
+    name: acct.name,
+    enabled,
+    usageLogin: Boolean(acct.usageLogin),
+    usageExpired: Boolean(acct.usageExpired),
+    status: inspected.ok ? 'ok' : 'blocked',
+    blockKind: inspected.ok ? null : inspected.kind,
+    blockScope: inspected.ok ? null : inspected.scope,
+    blockMessage: inspected.ok ? null : inspected.message,
+    reauth: inspected.reauth === true,
+    needsOwnerCheck: inspected.needsOwnerCheck === true,
+    connectors: cached ? cached.connectors : null,
+    needsAuth: cached ? cached.needsAuth : [],
+    reading: accountConnectorProbes.has(acct.id),
+    readFailed: accountConnectorFailed.has(acct.id),
+    at: cached?.at ?? null,
+  }));
+}
+
+async function enrichClaudeAccountsList(result) {
+  const enabledMap = await claudeAccountConnectors.settings.list();
+  const enabledIds = result.accounts.filter(a => enabledMap[a.id]);
+  if (!enabledIds.length) return result;
+  const rows = await accountConnectorsList({});
+  const byId = new Map(rows.map(r => [r.id, r]));
+  return {
+    ...result,
+    accounts: result.accounts.map((a) => {
+      const r = enabledMap[a.id] ? byId.get(a.id) : null;
+      if (!r) return a;
+      const total = Array.isArray(r.connectors) ? r.connectors.length : null;
+      const needsAuthCount = Array.isArray(r.needsAuth) ? r.needsAuth.length : 0;
+      const connectedCount = total === null ? null : Math.max(0, total - needsAuthCount);
+      return {
+        ...a,
+        connectors: {
+          enabled: r.enabled,
+          status: r.status,
+          blockKind: r.blockKind,
+          blockScope: r.blockScope,
+          blockMessage: r.blockMessage,
+          reauth: r.reauth,
+          needsOwnerCheck: r.needsOwnerCheck,
+          connectedCount,
+          needsAuthCount,
+          reading: r.reading,
+          readFailed: r.readFailed,
+        },
+      };
+    }),
+  };
+}
+
+async function setClaudeAccountConnectors(id, enabled, { cwd = null } = {}) {
+  const { accounts } = await claudeAccounts.list();
+  const acct = accounts.find(a => a.id === id);
+  if (!acct) throw new Error(t('accounts.deleted'));
+  if (enabled) {
+    const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd: cwd ?? null });
+    if (!inspected.ok) throw new OpError('INVALID', inspected.message);
+  }
+  await claudeAccountConnectors.settings.setEnabled(id, Boolean(enabled));
+  tokenAccountBackend()?.invalidateModels?.(id);
+  emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+  if (enabled) void accountConnectorsList({ cwd, targetId: id, refresh: true }).catch(() => {});
+  const [row] = await accountConnectorsList({ cwd, targetId: id });
+  return row;
+}
+
+async function refreshClaudeAccountConnectors(id, { cwd = null } = {}) {
+  const { accounts } = await claudeAccounts.list();
+  if (!accounts.some(a => a.id === id)) throw new Error(t('accounts.deleted'));
+  const [row] = await accountConnectorsList({ cwd, targetId: id, refresh: true, wait: true, force: true });
+  return row;
+}
+
+async function sessionConnectorsInfo(sessionId) {
+  if (!sessionId) return null;
+  const meta = await store.get(sessionId);
+  const tokenId = tokenAccountBackend()?.id;
+  const backendId = meta.nextSettings?.backend ?? meta.backend;
+  const endpointId = meta.nextSettings?.endpoint !== undefined ? meta.nextSettings.endpoint : (meta.compatEndpoint ?? '');
+  const accountId = meta.nextSettings?.account !== undefined ? meta.nextSettings.account : (meta.claudeAccount ?? '');
+  if (!tokenId || backendId !== tokenId || endpointId || !accountId) return null;
+  const [{ accounts }, enabledMap] = await Promise.all([claudeAccounts.list(), claudeAccountConnectors.settings.list()]);
+  const acct = accounts.find(a => a.id === accountId);
+  if (!acct) return null;
+  const enabled = Boolean(enabledMap[acct.id]);
+  if (!enabled) {
+    return { accountId: acct.id, accountName: acct.name, enabled: false, status: 'off', connectors: null, needsAuth: [], blockKind: null, blockMessage: null, reauth: false, needsOwnerCheck: false };
+  }
+  const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd: meta.cwd ?? null });
+  const cached = inspected.ok ? await claudeConnectorsCache.get(acct.id, { identityHash: inspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
+  return {
+    accountId: acct.id,
+    accountName: acct.name,
+    enabled: true,
+    status: inspected.ok ? 'active' : 'stopped',
+    blockKind: inspected.ok ? null : inspected.kind,
+    blockScope: inspected.ok ? null : inspected.scope,
+    blockMessage: inspected.ok ? null : inspected.message,
+    reauth: inspected.reauth === true,
+    needsOwnerCheck: inspected.needsOwnerCheck === true,
+    connectors: cached?.connectors ?? null,
+    needsAuth: cached?.needsAuth ?? [],
+  };
+}
+
 // コンテキスト（core/ops/context.mjs）の本体。設定を変えたら全画面へ settingsChanged（変えた主体つき）
 const opsContext = {
   // deny: 読み取りで起こすとき止める、claude.ai 以外の既知の名前（Claude の設定・Pleiad の登録）。プラグインの名前はここで足す。
   // wait: コネクターの一覧が無いとき、読み終えるまで待つ（読めなかったら readFailed）
   claudeExtras: async ({ refresh = false, deny = [], wait = false, cwd = null } = {}) => {
-    const plugins = await readClaudePlugins({ cwd }).catch(() => []);
+    const [plugins, connectorAccounts, defaultId] = await Promise.all([
+      readClaudePlugins({ cwd }).catch(() => []),
+      accountConnectorsList({ cwd, refresh, wait }),
+      defaultAccount('claude').catch(() => ''),   // backend-allow: コネクターの一覧は Claude の既定のアカウントで読む（ADR 0327・0340）
+    ]);
+    // 入口がオンのアカウントのコネクターは、下部「claude.ai のコネクター（アカウントごと）」の行の畳みにだけ出す（上の表に並べない。利用者の判断 2026-11-19）。
+    // 既定がそのアカウントのときは、上の表のための読み取りをしない（一覧は行の読み取り＝会話と同じ組み立てで読む）。
+    // 既定がログイン中（''）・入口がオフ・未設定の登録アカウントは、今までどおり（main と同じ）
+    if (defaultId && connectorAccounts.some(a => a.id === defaultId && a.enabled)) {
+      return { plugins, connectors: [], needsAuth: [], reading: false, readFailed: false, connectorAccounts };
+    }
     const names = [...new Set([...deny, ...plugins.map(p => p.key)])].filter(n => !n.startsWith('claude.ai '));
     let got = await claudeConnectors.get();
     let readFailed = false;
@@ -5784,7 +6039,7 @@ const opsContext = {
       got = await claudeConnectors.get();
       readFailed = readFailed || got.connectors === null;
     } else if (refresh) { void claudeConnectors.refresh({ deny: names }); got = await claudeConnectors.get(); }
-    return { plugins, connectors: got.connectors, needsAuth: got.needsAuth ?? [], reading: got.reading, readFailed };
+    return { plugins, connectors: got.connectors, needsAuth: got.needsAuth ?? [], reading: got.reading, readFailed, connectorAccounts };
   },
   view: async (cwd) => {
     const [v, docAgents] = await Promise.all([contextSettings.view(cwd), contextAgents.read()]);
@@ -5894,7 +6149,8 @@ const opsContext = {
       startedAt: saved.policy?.at ?? null, refreshedAt: saved.policy?.refreshedAt ?? null, removedMcp: saved.policy?.removedMcp ?? [], added: saved.added ?? [],
       // バックエンドが発言の前に足したネイティブの指示ファイル（agy のカスタムエージェントが読めない分。issue #107）
       nativeInjected: saved.nativeInjected ?? null,
-      plyParts: saved.plyParts ?? null };
+      plyParts: saved.plyParts ?? null,
+      claudeConnectors: await sessionConnectorsInfo(sessionId) };
   },
   diff: (sessionId) => contextSession.diff(sessionId),
   agentMcp: async (cwd) => contextSession.agentMcp((await contextSettings.get(cwd ?? process.cwd())).cwd),
@@ -6459,7 +6715,11 @@ function opsDeps(lng = currentLocale()) {
       providerUsage: (id, { force } = {}) => providerUsageOf({ backend: id }, { force }) },
     conversations: opsConversations,
     agents: opsAgents,
-    accounts: accountManager,
+    accounts: {
+      ...accountManager,
+      setConnectors: ({ id, enabled, cwd }) => setClaudeAccountConnectors(id, enabled, { cwd }),
+      refreshConnectors: ({ id, cwd }) => refreshClaudeAccountConnectors(id, { cwd }),
+    },
     prefs: () => store.getPrefs(),
     voice: { status: async () => ({ ...(await voiceHost.status()), ...(await keyChoiceInfo('voice')) }) },
     // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0155）
@@ -6473,6 +6733,7 @@ function opsDeps(lng = currentLocale()) {
     notifications: inbox,
     // 入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
     drafts: threadDrafts,
+    todos: sessionTodos,
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
@@ -6817,6 +7078,7 @@ function settleOutlivingWaits(sessionId) {
 
 /** 承認待ちの増減を知らせる。画面の実行中一覧と、依頼元の ply_task_wait の両方を起こす */
 function permissionsChanged() {
+  syncTodoTasks();
   broadcastRunning();
   agentTasks?.wake();
   remoteTasksChanged();
@@ -7676,11 +7938,16 @@ const remoteDelegation = createRemoteDelegation({
     return runTurn({ sessionId: owner, prompt: build(lng) }, () => {}, { internal: true });
   },
 });
+function syncTodoTasks() {
+  if (!agentTasks) return;
+  try { sessionTodos.syncTasks(); } catch (error) { console.error('Could not update linked to-dos:', error.message); }
+}
+
 agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   // 付け直す委譲の子のタスクは、起動の復元で interrupted にしない（結果の確定は adoptChild が引き継ぐ。stage2-server-state.md S8）
   adopting: adopting.flatMap(a => a.ctx.taskId ? [a.ctx.taskId] : []),
-  changed: () => { broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
+  changed: () => { syncTodoTasks(); broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
   waiting: sessionId => Boolean(sessionId) && [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId && (blocksTurn(w) || (!w.relay && w.payload.browserHandoff))),
@@ -7737,12 +8004,11 @@ agentTasks = await createAgentTasks({
     const tierRule = !auto && !chosen && !endpoint && Boolean(accountKind(backend)) && (await accountRows(backend)).length > 0;
     const account = tierRule ? await tierAccountFor(backend, carried, typeof args.model === 'string' ? args.model : null, lng) : carried;
     if (!endpoint) backend = await backendForAccount(backend, await accountResolve(backend, account));
-    // 自動の振り分けで選んだモデルは、一覧で読み替え・裁きをせず選んだ名前のまま送る（claude-fable-5-2 のように一覧の id でない名前も CLI が受け付ける。
-    // 使えなければ CLI/API が断り、次の候補で作り直す。ADR 0311）
+    // 明示したモデルは全 backend でその文字列を送る。正式な ID は正確に一致する行だけ読み替え、未掲載による拒否はしない。
     const asked = auto ? args.model : await canonicalModel(backend, args.model, cwd, endpoint);
-    const model = auto ? (isModelId(asked) ? asked : '') : await resolveModel(null, asked, backend, cwd, endpoint);
-    // 依頼元が書いたモデル名が一覧に無いなら、黙って既定に落とさず断る（選べる名前を添える）。互換の接続先は形だけを見る
-    if (!auto && !endpoint && typeof args.model === 'string' && model !== asked) {
+    const model = auto ? (isModelId(asked) ? asked : '') : typeof asked === 'string' ? asked : await resolveModel(null, undefined, backend, cwd, endpoint);
+    // 文字列の形だけを確かめる。使えるかは CLI/API が決める。
+    if (!auto && !(model === '' || isModelId(model))) {
       throw new Error(agentT(lng, 'delegation.modelUnknown', { model: args.model, backend: backend.id, models: await knownModelNames(backend, cwd) }));
     }
     // 選んだモデルを使えなくなっていたら、黙って既定に落とさず断る
@@ -7751,7 +8017,9 @@ agentTasks = await createAgentTasks({
     // 振り分けでは断らず、モデルが持たない強さは合わせて記録に残す。固定の委譲は依頼元が書いた値のまま（検証する）
     const decided = auto ? decideEffort({ settings: routingSettingsCache, tier: manual ? args.routing.effortTier ?? null : args.routing.tier ?? null,
       candidate: candidateId(backend.id, model, accountKind(backend) ? account || null : null), capability: await effortCapability(backend, model, cwd) }) : null;
-    const effort = await resolveEffort(null, decided ? decided.send : args.effort, backend, model, cwd, await endpointRow(endpoint));
+    const effort = !auto && args.effort !== undefined
+      ? await validateEffort(backend, args.effort, model, cwd, await endpointRow(endpoint), { allowUnlistedModel: true })
+      : await resolveEffort(null, decided ? decided.send : args.effort, backend, model, cwd, await endpointRow(endpoint));
     // 承認モードは委譲を受け付けた側（agentBridge の call）が親の強さから決めてある。
     // ここで決め直すと「聞いた内容」と「実際に動く強さ」がずれるので、来た値をそのまま使う。
     const modes = backend.modes();
@@ -7833,7 +8101,7 @@ agentTasks = await createAgentTasks({
       if (!picked) { rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'unavailable'; continue; }
       const acct = accountKind(picked) ? next.target.account ?? '' : '';
       const scoped = await backendForAccount(picked, await accountResolve(picked, acct)).catch(() => null);
-      if (scoped && isModelId(next.target.model) && scoped.runnableModel?.(next.target.model) !== false) {
+      if (scoped && isModelId(next.target.model)) {
         backend = scoped; account = acct; model = next.target.model; break;
       }
       rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'model_unknown';
@@ -8038,6 +8306,7 @@ sessionCommands = createSessionCommands({
 });
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
 // 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
+syncTodoTasks();
 await recordTaskStops(agentTasks.restored, 'restart', { restart: true });
 // ホストに任せたタスクの写し: 動いていたものはホストで続いている。ホストの便りを聞き、つながり次第追いつく（remote-delegation.mjs）
 remoteDelegation.start();
@@ -8209,6 +8478,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   await settingsWrites.get(sessionId);
   let backend = refuseRetired(await pickBackend(sessionId, args?.backend));
   const reserved = sessionId ? (await store.get(sessionId)).nextSettings : null;
+  const delegated = Boolean(sessionId && (await store.get(sessionId)).delegation);
   // 予約を効かせるために止めたターンの続き（applyReservedNow）。予約を適用したら「変えました」の跡の行を残す
   const settingsTrace = sessionId && settingsTraces.get(sessionId);
   if (settingsTrace) settingsTraces.delete(sessionId);
@@ -8235,7 +8505,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
     // モデルの一覧の確かめはしない。予約してから送信までに一覧が縮んでいても、選んだモデルをそのまま CLI/API へ渡す
     // （使えなければ CLI/API が断り、その理由が会話に出る。黙って既定へ戻さない）。形（文字列・長さ・制御文字）だけは断る
     if (!target || !(reserved.model === '' || isModelId(reserved.model)) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
-    await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
+    await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo, { allowUnlistedModel: delegated });
     if (target.id !== previousTurnBackend.id) {
       await switchBackend(sessionId, previousTurnBackend, target);
       await shellRuns.switched(sessionId, previousTurnBackend, target);
@@ -8264,7 +8534,10 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 予約のモデルは選んだときに確かめ、送る直前に形を確かめた値をそのまま渡す。予約の無い送信も同じく、保存値を一覧で裁かず
   // そのまま渡す（一覧が縮んでいても黙って既定へ戻さない。別エージェントのモデルだけ既定に戻す。sendModel。ADR 0309）
   const model = reserved ? reserved.model : await sendModel(sessionId, args?.model, backend, endpointId);
-  const effort = await resolveEffort(sessionId, reserved ? reserved.effort ?? "" : args?.effort, backend, model, cwd, endpointInfo);
+  const askedEffort = reserved ? reserved.effort ?? '' : args?.effort ?? (delegated ? (await store.get(sessionId)).effort ?? '' : undefined);
+  const effort = delegated && askedEffort !== undefined
+    ? await validateEffort(backend, askedEffort, model, cwd, endpointInfo, { allowUnlistedModel: true })
+    : await resolveEffort(sessionId, askedEffort, backend, model, cwd, endpointInfo);
   // worktree（ADR 0089）。使う場所が worktree の中なら控える（片付けの印・取り込みを頼む相手）。片付けている最中の場所では始めない。
   const worktreeEntry = await worktreeHost.worktrees.byPath(cwd);
   if (worktreeEntry && worktreeEntry.state !== 'ready') throw new Error(t('worktree.cleaning'));
@@ -8390,6 +8663,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
     startedAtMs: Date.now(),
     userSentAt: toMs(args.at) ?? Date.now(),
     backend,
+    connectorsEnabled: Boolean(account?.connectors),
     agentLocale,
     control: { handle: null, touch: () => touchCard(turn), onReady: () => {
       outbox.kick(sessionId).catch(() => {});
@@ -8842,7 +9116,18 @@ async function driveTurn(ctx, start) {
     else if (ctx.contextRecord && err?.nativeInjected) await ctx.saveContext().catch(() => {});
     if (!turn.errorShown) {
       if (turn.backend.traits?.failureDiagnostics) turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
-      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+      // コネクターの検査で止めた（ADR 0340 段 3）。会話の失敗の行が直す入口（ログインし直す・コネクターをオフにして送る）を出す。
+      // undelivered: 発言は渡っていない（送信待ちの「送れませんでした」に戻る）。画面は発言の下の行で直させ、送り直しは送信待ちの再送で行う
+      const ce = err?.connectorsError;
+      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err),
+        ...(ce ? { kind: 'auth', pristine: true, connectorsError: ce, backend: turn.backend.id,
+          auth: { mode: 'connectorsLogin', accountId: ce.accountId ?? '', name: ce.accountName || null },
+          ...(args.messageId && (err?.undelivered || !ctx.backendInvoked || !ctx.initialDelivered) ? { messageId: args.messageId, undelivered: true } : {}) } : {}) });
+    }
+    if (err?.connectorsError?.accountId && err.connectorsError.kind === 'expired') {
+      claudeAccounts.markUsageExpired(err.connectorsError.accountId, err.connectorsError.kind)
+        .then((r) => { if (r?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }); })
+        .catch(() => {});
     }
     // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
     // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
@@ -8852,7 +9137,7 @@ async function driveTurn(ctx, start) {
       const uncertain = !err?.undelivered && ctx.backendInvoked && !ctx.initialDelivered && !turn.backend.traits?.promptDelivery;
       await (uncertain
         ? outbox.uncertain(sessionId, args.messageId, String(err?.message ?? err))
-        : outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err))).catch(() => {});
+        : outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err), err?.connectorsError ?? null)).catch(() => {});
     }
     if (!ctx.didStart) throw err;
   } finally {
@@ -9027,13 +9312,19 @@ async function restoreTurn(card, source) {
   if (!fields.presentKey || !fields.connectionTokens?.context) throw new Error('card is incomplete');
   let backend = getBackend(fields.backendId);
   if (!backend?.adoptTurn) throw new Error(`backend cannot adopt: ${fields.backendId}`);
-  // main がつながる前に復号を待たない。引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。
+  // main がつながる前に復号を待たない（秘密の復号は main に頼むが、main とのパイプはこの付け直しの後に立つ。待つと起動が上限まで止まる）。
+  // 引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。トークンのアカウントは、名前とコネクターの入口の設定だけを読む
   let restoredAccount = null;
-  if (!fields.endpointId && accountKind(backend) === 'agent' && fields.accountId) {
-    restoredAccount = await agentAccounts.get(fields.accountId);
-    if (!restoredAccount || restoredAccount.backend !== backend.id) throw new Error(t('accounts.deleted'));
+  if (!fields.endpointId && fields.accountId) {
+    if (accountKind(backend) === 'agent') {
+      restoredAccount = await agentAccounts.get(fields.accountId);
+      if (!restoredAccount || restoredAccount.backend !== backend.id) throw new Error(t('accounts.deleted'));
+      backend = await backendForAccount(backend, restoredAccount);
+    } else if (accountKind(backend) === 'token') {
+      const entry = await claudeAccounts.get(fields.accountId);
+      if (entry) restoredAccount = { ...entry, connectors: (await claudeAccountConnectors.settings.read(entry.id)).enabled === true };
+    }
   }
-  backend = await backendForAccount(backend, restoredAccount);
   const meta = await store.get(sessionId);
   // 札が、この会話の走っている印（turnStartedAt）のターンのものか。合わない札は前の版のターンのもの
   if (!meta.turnStartedAt || meta.turnStartedAt !== startedAtMs) throw new Error('turn mismatch');
@@ -9079,6 +9370,8 @@ async function restoreTurn(card, source) {
     startedAtMs,
     userSentAt: fields.userSentAt ?? startedAtMs,
     backend,
+    authAccount: restoredAccount ? { id: restoredAccount.id, name: restoredAccount.name } : null,
+    connectorsEnabled: Boolean(restoredAccount?.connectors),
     agentLocale,
     control: { handle: null, touch: () => touchCard(turn), onReady: () => {
       outbox.kick(sessionId).catch(() => {});
@@ -10524,27 +10817,30 @@ wss.on("connection", (ws, req) => {
           return reply(true, await compatEndpoints.list());
         }
         case 'claudeAccounts':
-          return reply(true, await claudeAccounts.list());
+          return reply(true, await enrichClaudeAccountsList(await claudeAccounts.list()));
         case 'saveClaudeAccount': {
           const { id, name, token } = msg.args ?? {};
           const saved = await claudeAccounts.save({ id, name, token });
           quotaStore.invalidate();
+          await claudeConnectorsCache.remove(saved.id).catch(() => {});
           if (!id || (token !== undefined && token !== null && String(token).trim() !== '')) {
             refreshClaudeAccountCatalog(saved.id, { warm: true });
           }
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
-          return reply(true, { ...saved, ...(await claudeAccounts.list()) });
+          return reply(true, { ...saved, ...(await enrichClaudeAccountsList(await claudeAccounts.list())) });
         }
         case 'deleteClaudeAccount': {
           const accountId = String(msg.args?.id ?? '');
           claudeLogin.cancelAccount(accountId);
           await claudeAccounts.remove(accountId);
+          await claudeAccountConnectors.settings.remove(accountId).catch(() => {});
+          await claudeConnectorsCache.remove(accountId).catch(() => {});
           refreshClaudeAccountCatalog(accountId);
           await dropAccountCandidates(accountId);
           quotaStore.invalidate();
           if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
-          return reply(true, await claudeAccounts.list());
+          return reply(true, await enrichClaudeAccountsList(await claudeAccounts.list()));
         }
         // アカウントの認可（claude setup-token / 使用量の claude auth login）を Pleiad から回す。進み具合は claudeLogin イベント
         case 'claudeLoginStart': {

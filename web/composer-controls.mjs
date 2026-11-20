@@ -153,20 +153,21 @@ let openPanel = null;   // 同時に開くのは 1 枚だけ
  * when は開いてよいか（false なら押しても開かない）。
  * onHide は閉じたとき（Esc・面の外・チップ・選んで閉じた、のどれでも）
  */
-export function panel(chip, pop, { align = "left", render, onShow, onHide, width: wantWidth = 360, when }) {
+export function panel(chip, pop, { align = "left", render, onShow, onHide, width: wantWidth = 360, when, flip = false, initialFocus, beforeShow }) {
   const self = {
     chip, pop,
     get open() { return !pop.hidden; },
     show(focus = true) {
       if (openPanel && openPanel !== self) openPanel.hide(false);
       openPanel = self;
+      beforeShow?.();
       pop.hidden = false;
       chip.setAttribute("aria-expanded", "true");
       views.delete(pop);   // モデルの面は開くたびに 1 段目から
       render();
       self.place();
       onShow?.();
-      if (focus) (pop.querySelector('[aria-selected="true"]') ?? pop.querySelector(".cpath") ?? pop.querySelector("input:not([type=range]):not(:disabled), button:not(:disabled), [tabindex='0']"))?.focus();
+      if (focus) ((initialFocus ? pop.querySelector(initialFocus) : null) ?? pop.querySelector('[aria-selected="true"]') ?? pop.querySelector(".cpath") ?? pop.querySelector("input:not([type=range]):not(:disabled), button:not(:disabled), [tabindex='0']"))?.focus();
     },
     hide(returnFocus = true) {
       if (pop.hidden) return;
@@ -187,6 +188,15 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
       const left = Math.round(Math.max(8, Math.min(want, vw - 8 - width)));
       const bottom = Math.round(window.innerHeight - r.top + 6);
       pop.style.left = `${left}px`;
+      if (flip) {
+        const above = r.top - 12;
+        const below = window.innerHeight - r.bottom - 12;
+        const down = below > above && above < pop.scrollHeight;
+        pop.style.top = down ? `${Math.round(r.bottom + 6)}px` : '';
+        pop.style.bottom = down ? '' : `${bottom}px`;
+        pop.style.maxHeight = `${Math.max(0, Math.round(down ? below : above))}px`;
+        return;
+      }
       pop.style.bottom = `${bottom}px`;
       pop.style.maxHeight = `${Math.max(160, Math.round(r.top - 12))}px`;
       // 変形した祖先（スレッドの板の transform）の中では、fixed の位置がその祖先に対して決まる。ずれた分を戻す
@@ -453,21 +463,21 @@ function weekMeta(usage) {
   return m;
 }
 /** 1 段目の行。onClick が無ければ押せない行（値を見せるだけ。右端の印を出さない） */
-function navRow({ key, ic, label, value, note, meta, danger, onClick, title }) {
+function navRow({ key, ic, label, value, note, two, warn, meta, danger, onClick, title }) {
   const r = el(onClick ? "button" : "div", `prow${danger ? " danger" : ""}`);
   if (onClick) { r.type = "button"; r.onclick = onClick; } else r.setAttribute("aria-disabled", "true");
   if (key) r.dataset.key = key;
   if (title) r.title = title;
-  const val = el("span", "val");
+  const val = el("span", `val${two ? " two" : ""}`);
   val.append(el("span", "nm", value));
-  if (note) val.append(el("span", "nt", note));
+  if (note) val.append(el("span", `nt${warn ? " warn" : ""}`, note));
   r.append(icon(ic), el("span", "lb", label), val);
   if (meta) r.append(meta);
   r.append(endMark(onClick ? "go" : ""));
   return r;
 }
 /** 2 段目の選ぶ行。選んでいれば右端に ✓ */
-function optRow({ key, sel, ic, name, note, two, tag, meta, badge, danger, title, aria, onPick }) {
+function optRow({ key, sel, ic, name, note, two, warn, tag, meta, badge, danger, title, aria, onPick, disabledReason }) {
   const r = el("button", `prow popt${danger ? " danger" : ""}`);
   r.type = "button";
   r.setAttribute("role", "option");
@@ -479,12 +489,17 @@ function optRow({ key, sel, ic, name, note, two, tag, meta, badge, danger, title
   val.append(el("span", "nm", name));
   // 字の横の小さな札（互換の接続先のモデルの「1M」）
   if (badge) { const b = el("span", "cbadge", badge.text); if (badge.title) b.title = badge.title; val.append(b); }
-  if (note) val.append(el("span", "nt", note));
+  if (note) val.append(el("span", `nt${warn ? " warn" : ""}`, note));
   r.append(icon(ic), val);
   if (tag) r.append(el("span", "tag", tag));
   if (meta) r.append(meta);
   r.append(endMark(sel ? "ok" : ""));
-  r.onclick = onPick;
+  if (disabledReason) {
+    r.disabled = true;
+    r.setAttribute("aria-disabled", "true");
+    val.append(el("span", "nt", disabledReason));
+    val.classList.add("two");
+  } else r.onclick = onPick;
   return r;
 }
 /** 一覧の外の操作の行（「使用量」「接続先を管理…」など） */
@@ -568,6 +583,7 @@ export function renderModel(args) {
   const sub = st.view !== "top" ? subView(ctx) : null;
   if (st.view !== "top" && !sub) views.set(pop, { view: "top", q: "" });
   pop.replaceChildren(...(sub ?? topView(ctx)));
+  args.afterRender?.();
 }
 
 function topView(ctx) {
@@ -606,14 +622,16 @@ function topView(ctx) {
     const cur = d.accounts.find((a) => a.value === d.account);
     rows.push(off
       ? navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: "", note: t("composer.account.compatOff") })
-      : navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: cur?.label ?? "", meta: weekMeta(cur?.usage), onClick: () => go("account") }));
+      : navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: cur?.label ?? "", note: cur?.conn?.text, two: Boolean(cur?.conn), warn: cur?.conn?.warn,
+        meta: weekMeta(cur?.usage), onClick: () => go("account") }));
   }
   // モデル
   const modelValue = ep?.row ? compatModelLabel(d.model || ep.row.roles?.main || "").text || t("chat.model.default")
     : d.modelsPending ? "…" : resolvedModel(d.models ?? {}, d.model).label;
   rows.push(navRow({ key: "nav:model", ic: glyph(...CUBE), label: t("composer.model.title"), value: modelValue, onClick: () => go("model") }));
   // エフォート（行の中の棒）
-  rows.push(effortRow(d, on.effort));
+  rows.push(effortRow(d, on.effort, ctx.effortControl));
+  const follow = ctx.effortControl?.follow;
   // 承認モード（常に最後）
   if (d.modesPending) rows.push(navRow({ key: "nav:mode", ic: glyph(SHIELD), label: t("chat.composer.mode"), value: "…" }));
   else if (Object.keys(d.modes ?? {}).length) {
@@ -624,6 +642,8 @@ function topView(ctx) {
       onClick: d.modeDisabled || !on.mode ? null : () => go("mode") }));
   }
   const out = [plist(rows)];
+  if (follow) out.push(plist([optRow({ key: "effort:conversation", sel: follow.selected, name: follow.label, onPick: follow.pick })]));
+  if (ctx.footer) out.push(ctx.footer());
   // スレッドの設定はそのスレッドだけに効く。bot の既定から変えていれば戻す口
   if (dest?.threadPlain || dest?.bot) {
     out.push(pnote(t("channels:thread.settings.note")));
@@ -671,6 +691,7 @@ function subView(ctx) {
         const v = d.agentView?.(b.id) ?? null;
         if (!v || v.usable) {
           usable.push(optRow({ key: `backend:${b.id}`, sel: b.id === d.backend, ic: logo(b.id), name: b.label, meta: weekMeta(d.backendUsage?.(b.id)),
+            disabledReason: b.id === d.backend ? null : ctx.blocked?.("agent", b.id),
             onPick: () => ctx.pick("agent", () => { if (b.id !== d.backend) ctx.on.backend(b.id); }) }));
         } else other.push(unusableAgentRow(b, v));
       }
@@ -695,7 +716,8 @@ function subView(ctx) {
     case "account": {
       if (!d.accounts || d.endpoint?.row) return null;
       return wrap(t("composer.account.title"), [plist(d.accounts.map((a) => optRow({ key: `account:${a.value}`, sel: a.value === d.account, name: a.label,
-        note: a.usage ? "" : a.hint, tag: a.value === "" ? DEFAULT_TAG() : "", meta: weekMeta(a.usage),
+        disabledReason: a.value === d.account ? null : ctx.blocked?.("account", a.value),
+        note: a.conn?.text || (a.usage ? "" : a.hint), two: Boolean(a.conn), warn: a.conn?.warn, tag: a.value === "" ? DEFAULT_TAG() : "", meta: weekMeta(a.usage),
         onPick: () => ctx.pick("account", () => { if (a.value !== d.account) ctx.on.account?.(a.value); }) })), t("composer.account.title"))]);
     }
     case "model":
@@ -745,25 +767,30 @@ function officialModelView(ctx) {
   if (d.modelsPending) return [skeleton(3, t("composer.model.loading"))];
   const models = d.models ?? {};
   const { id: resolved, entry: current } = resolvedModel(models, d.model);
+  const selected = ctx.explicitModels ? d.model : resolved;
   const def = models[""]?.resolvesTo;
   // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
-  const ids = modelRowIds(models, d.model);
+  const ids = ctx.explicitModels ? Object.keys(models).filter(Boolean) : modelRowIds(models, d.model);
   const { main, other, quiet } = splitModelRows(models, ids);
   // 宛先が bot なら、bot の既定のモデルに「<名前> の既定」の札（エージェントの既定の札は出さない）
   const botDefault = d.destination?.bot && d.destination.defaults ? d.destination.defaults.model || def : null;
   const tagOf = (id) => botDefault !== null ? (id === botDefault ? t("channels:thread.settings.botDefault", { name: d.destination.bot.name }) : "")
     : holdsDefault(models, id) ? DEFAULT_TAG() : "";
   // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
-  const follow = !def || !ids.some((id) => holdsDefault(models, id));
+  const follow = !ctx.explicitModels && (!def || !ids.some((id) => holdsDefault(models, id)));
   const words = () => String(ctx.st.q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const hits = (id) => { const m = models[id] ?? {}; const s = `${m.label ?? ""} ${m.note ?? ""} ${id}`.toLowerCase(); return words().every((w) => s.includes(w)); };
-  const choose = (v, id) => ctx.pick("model", () => { if (v !== d.model && id !== resolved) ctx.on.model(v); });
+  const blocked = id => id === selected ? null : ctx.blocked?.("model", id);
+  const choose = (v, id) => {
+    if (!blocked(id)) ctx.pick("model", () => { if (v !== d.model && id !== selected) ctx.on.model(v); });
+  };
   const modelRow = (id, showNote) => {
     const m = models[id];
-    return optRow({ key: `model:${id}`, sel: id === resolved || Boolean(m.family && m.family === current?.family), name: m.label ?? id,
+    return optRow({ key: `model:${id}`, sel: id === selected || Boolean(!ctx.explicitModels && m.family && m.family === current?.family), name: m.label ?? id,
+      disabledReason: blocked(id),
       note: showNote ? m.note : "", tag: tagOf(id), title: id,
       // 既定の行を選ぶと '' を保存する（既定が変われば追従する）。選んでいる系統の行は何もしない
-      onPick: () => choose(id === def ? "" : id, id) });
+      onPick: () => choose(!ctx.explicitModels && id === def ? "" : id, id) });
   };
   const box = el("div", "plist-wrap");
   const list = () => {
@@ -783,8 +810,8 @@ function officialModelView(ctx) {
     const low = typed.toLowerCase();
     const exact = ids.find((id) => id.toLowerCase() === low || String(models[id]?.label ?? "").toLowerCase() === low);
     const first = exact ?? main.find(hits) ?? other.find(hits);
-    if (first) choose(first === def ? "" : first, first);
-    else ctx.pick("model", () => { if (typed !== d.model) ctx.on.model(typed); });
+    if (first) choose(!ctx.explicitModels && first === def ? "" : first, first);
+    else if (!blocked(typed)) ctx.pick("model", () => { if (typed !== d.model) ctx.on.model(typed); });
   };
   list();
   return [searchBox(ctx, { placeholder: t("composer.model.search"), list, commit }), box];
@@ -829,7 +856,7 @@ function compatModelView(ctx) {
  * 押す・なぞる間は棒と字だけを塗り、離したときに決める（段は floor(x / 幅 × 段の数)）。既定の段は棒の下に小さな点。
  * 既定の段を選ぶと '' を保存する（既定が変われば追従する）。段を持たないモデルは「このモデルでは選べません」
  */
-function effortRow(d, onPick) {
+function effortRow(d, onPick, control) {
   const r = el("div", "prow erow");
   r.append(icon(glyph(...GAUGE)), el("span", "lb", t("composer.effort.label")));
   const { stops, def, current } = effortStops(d.efforts, d.effort);
@@ -848,7 +875,7 @@ function effortRow(d, onPick) {
   const slider = el("span", "eslider ebars");
   slider.setAttribute("role", "slider");
   slider.tabIndex = 0;
-  slider.setAttribute("aria-label", t("composer.effort.label"));
+  slider.setAttribute("aria-label", control?.label ?? t("composer.effort.label"));
   slider.setAttribute("aria-valuemin", "0");
   slider.setAttribute("aria-valuemax", String(n - 1));
   slider.dataset.key = "effort";
@@ -860,7 +887,7 @@ function effortRow(d, onPick) {
   });
   const value = el("span", "evalue");
   value.setAttribute("aria-hidden", "true");
-  let at = stops.indexOf(current);   // -1: 既定の段が分からず既定に従っている（どの段も指さない）
+  let at = stops.indexOf(control ? d.effort : current);   // -1: 既定の段が分からず既定に従っている（どの段も指さない）
   const paint = (k) => {
     bars.forEach((b, i) => b.classList.toggle("on", i <= k));
     slider.setAttribute("aria-valuenow", String(Math.max(0, k)));
@@ -873,7 +900,7 @@ function effortRow(d, onPick) {
     at = k;
     const v = stops[k];
     const next = v === def ? "" : v;
-    if (next !== (d.effort ?? "")) onPick(next);
+    if (control || next !== (d.effort ?? "")) onPick(next);
   };
   const indexAt = (x) => { const box = slider.getBoundingClientRect(); return Math.max(0, Math.min(n - 1, Math.floor(((x - box.left) / box.width) * n))); };
   slider.addEventListener("keydown", (e) => {

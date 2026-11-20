@@ -82,7 +82,7 @@ const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
  * @param [deps.uia] Chrome 自身の画面を UI Automation で押す口（win32-uia.cjs の createUiaRunner。テストは偽物）
  * @param [deps.sleep] 待つ（既定は setTimeout。テストは偽物）
  */
-function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env = process.env, exists = fs.existsSync,
+function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env = process.env, exists = fs.existsSync, readFile = file => fs.readFileSync(file, 'utf8'),
   timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now, appHwnd = null, pointToDip = null,
   uia = createUiaRunner({ env, log }), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   agentGraceMs = AGENT_GRACE_MS, openVisibleCooldownMs = OPEN_VISIBLE_COOLDOWN_MS }) {
@@ -95,6 +95,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
   const launchProfiles = new Map();
   const aumidProfiles = new Map();
   const visibleOpenedAt = new Map();   // AUMID -> そのプロフィールの見える窓を開いた時刻
+  const visibleReasonLoggedAt = new Map();
   let lastUserDataDir = null;
   const remember = (hwnd, kind) => {
     const id = String(hwnd);
@@ -125,7 +126,42 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
   /** 窓の AUMID（読めなければ null。win32 の表に無い・古い層でも投げない） */
   const aumidOf = hwnd => { try { return win32.windowAumid?.(hwnd) ?? null; } catch { return null; } };
   /** 隠した窓のプロフィールのフォルダー名（core の記録が確か。無ければ、開いたときに覚えた AUMID の対応） */
-  const profileDirOf = entry => entry?.profileDir ?? (entry?.aumid ? aumidProfiles.get(entry.aumid) ?? null : null);
+  const profileDirOf = entry => {
+    if (entry?.profileDir) return entry.profileDir;
+    if (!entry?.aumid) return null;
+    const remembered = aumidProfiles.get(entry.aumid);
+    if (remembered) return remembered;
+    const userDataDir = entry.userDataDir ?? lastUserDataDir ?? defaultChromeUserDataDir();
+    if (!userDataDir) return null;
+    let localState;
+    try { localState = JSON.parse(readFile(path.win32.join(userDataDir, 'Local State'))); } catch { return null; }
+    const infoCache = localState?.profile?.info_cache;
+    if (!infoCache || typeof infoCache !== 'object' || Array.isArray(infoCache)) return null;
+    const matches = Object.keys(infoCache).filter(dir => PROFILE_DIR.test(dir) && profileAumid(dir, userDataDir) === entry.aumid);
+    if (matches.length !== 1) return null;
+    aumidProfiles.set(entry.aumid, matches[0]);
+    return matches[0];
+  };
+  function defaultChromeUserDataDir() {
+    return typeof env.LOCALAPPDATA === 'string' && env.LOCALAPPDATA
+      ? path.win32.join(env.LOCALAPPDATA, 'Google', 'Chrome', 'User Data') : null;
+  }
+  /** Chromium の Windows 実装は profile path の basename を英数字とピリオドだけ残して AUMID に組み込む。 */
+  function profileAumid(profileDir, userDataDir) {
+    const defaultDir = defaultChromeUserDataDir();
+    const isDefaultDir = defaultDir && path.win32.normalize(userDataDir).toLowerCase() === path.win32.normalize(defaultDir).toLowerCase();
+    if (isDefaultDir && profileDir === 'Default') return 'Chrome';
+    const userDataName = path.win32.basename(userDataDir).replace(/[^A-Za-z0-9.]/g, '');
+    const profileName = profileDir.replace(/[^A-Za-z0-9.]/g, '');
+    return userDataName && profileName ? `Chrome.${userDataName}.${profileName}` : null;
+  }
+  function logVisibleReason(reason) {
+    const at = now();
+    if (at - (visibleReasonLoggedAt.get(reason) ?? -Infinity) < 10_000) return;
+    visibleReasonLoggedAt.set(reason, at);
+    if (visibleReasonLoggedAt.size > 32) visibleReasonLoggedAt.delete(visibleReasonLoggedAt.keys().next().value);
+    log(`guard visible-profile reason=${reason}`);
+  }
   /** 窓のプロフィールの鍵（比べるだけに使う。AUMID はプロフィールごとに違う。読めなければ null） */
   const profileKeyOf = entry => entry?.aumid ?? null;
   /** 隠した窓のプロフィールの手がかりを取り直す。core から渡されたフォルダー名があれば、AUMID との対応も覚える */
@@ -136,7 +172,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
     if (!entry.aumid) entry.aumid = aumidOf(entry.hwnd);
     if (entry.aumid && entry.profileDir) aumidProfiles.set(entry.aumid, entry.profileDir);
   }
-  const markAgent = entry => { entry.agentAt = now(); if (entry.aumid === undefined) entry.aumid = aumidOf(entry.hwnd); };
+  const markAgent = entry => { entry.agentAt = now(); if (!entry.aumid) entry.aumid = aumidOf(entry.hwnd); };
 
   /** 今あるブラウザー（chrome.exe・msedge.exe）の最上位の窓 */
   function browserWindows() {
@@ -749,27 +785,27 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
    */
   function openVisibleWindow(entry) {
     const dir = profileDirOf(entry);
-    if (!dir) { log('guard: the profile of the raised window is unknown, so no visible window was opened'); return false; }
+    if (!dir) { logVisibleReason('no-profile-dir'); return false; }
     let browser = [...browsers.values()].find(value => value.product === 'chrome') ?? null;
     if (!browser) {
       const found = locateBrowser({ product: 'chrome' });
       browser = found ? browsers.get(found.id) ?? null : null;
     }
-    if (!browser) { log('guard: chrome.exe not found, so no visible window was opened'); return false; }
+    if (!browser) { logVisibleReason('no-chrome'); return false; }
     const args = [];
     const userDataDir = entry.userDataDir ?? lastUserDataDir;
     if (userDataDir) args.push(`--user-data-dir=${userDataDir}`);
     args.push(`--profile-directory=${dir}`, '--new-window');
     try {
       const child = spawn(browser.path, args, { detached: true, stdio: 'ignore', windowsHide: false });
-      child.on?.('error', error => log(`guard: opening a visible window failed: ${error.message}`));
+      child.on?.('error', () => logVisibleReason('spawn-failed'));
       child.unref?.();
       if (entry.aumid) visibleOpenedAt.set(entry.aumid, now());
       else if (entry.profileDir) visibleOpenedAt.set(`profile:${entry.profileDir}`, now());
-      log('guard: opened a visible Chrome window for the profile of the raised window');
+      logVisibleReason('opened');
       return true;
-    } catch (error) {
-      log(`guard: opening a visible window failed: ${error.message}`);
+    } catch {
+      logVisibleReason('spawn-failed');
       return false;
     }
   }
@@ -780,16 +816,19 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
    * 直前に前面だったのが同じ Chrome の隠した窓（エージェントが窓を切り替えた）。見分けられないときは開かない（今までどおり前面を返すだけ）
    */
   function openVisibleIfHuman(entry, previous, hidden, cameFromVisibleChrome) {
-    if (!entry || !entry.concealed || entry.ghost || entry.closeAt) return false;
+    if (!entry || !entry.concealed) { logVisibleReason('not-concealed'); return false; }
+    if (entry.ghost) { logVisibleReason('ghost'); return false; }
+    if (entry.closeAt) { logVisibleReason('closing'); return false; }
     // 直前の前面が、隠していない Chrome の窓（プロフィールの選択画面・利用者の窓）だったときだけ、人が開こうとしたと見る。
     // エージェントの窓（隠した窓）から移った・ほかのアプリから移ったときは、エージェントの操作（または分からない）として開かない
-    if (cameFromVisibleChrome !== true) return false;
-    if (now() - (entry.agentAt ?? 0) < agentGraceMs) return false;
-    if (previous && hidden.has(previous)) return false;
-    if (!profileKeyOf(entry)) return false;
+    if (cameFromVisibleChrome !== true) { logVisibleReason('not-from-visible-chrome'); return false; }
+    if (now() - (entry.agentAt ?? 0) < agentGraceMs) { logVisibleReason('agent-grace'); return false; }
+    if (previous && hidden.has(previous)) { logVisibleReason('from-hidden'); return false; }
+    if (!entry.aumid) entry.aumid = aumidOf(entry.hwnd);
+    if (!profileKeyOf(entry)) { logVisibleReason('no-aumid'); return false; }
     const key = profileKeyOf(entry);
-    if (now() - (visibleOpenedAt.get(key) ?? 0) < openVisibleCooldownMs) return false;
-    if (hasVisibleProfileWindow(entry, hidden)) return false;
+    if (now() - (visibleOpenedAt.get(key) ?? 0) < openVisibleCooldownMs) { logVisibleReason('cooldown'); return false; }
+    if (hasVisibleProfileWindow(entry, hidden)) { logVisibleReason('has-visible'); return false; }
     return openVisibleWindow(entry);
   }
 
@@ -881,7 +920,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env
     // 前面を返すだけでなく、そのプロフィールの見える窓を開く（ADR 0246）。エージェントの操作のときは開かない
     const raised = refs.get(String(fg));
     let opened = false;
-    try { opened = openVisibleIfHuman(raised, before.get(fg), hidden, beforeVisibleChrome.get(fg) === true); } catch (error) { log(`guard: opening a visible window failed: ${error.message}`); }
+    try { opened = openVisibleIfHuman(raised, before.get(fg), hidden, beforeVisibleChrome.get(fg) === true); } catch { logVisibleReason('spawn-failed'); }
     if (opened) return;   // 見える窓を開いた。前面はその新しい窓に任せる（ここで返すと、開く窓と前面を奪い合う）
     // 隠した窓が前面を取った。直前の前面（隠した窓でも、最小化・閉じた窓でもない）へ返す。直前も隠した窓なら、その前をたどる
     let target = before.get(fg);

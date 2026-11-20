@@ -1,4 +1,5 @@
 {
+  "todo": {"title": "To-do", "entry": "To-do", "entryCount": "To-do · {{done}}/{{total}} done", "view": {"label": "View", "flow": "Flow", "list": "List"}, "edit": "Edit", "editEnd": "Finish editing", "max": "Enlarge", "restore": "Restore size", "close": "Close", "empty": "No to-dos", "add": "Add a to-do", "flowLabel": "To-do flow", "zoom": {"label": "Zoom", "in": "Zoom in", "inTitle": "Zoom in (+)", "out": "Zoom out", "outTitle": "Zoom out (-)", "fit": "Fit all", "fitTitle": "Fit all (0)"}, "fold": "Collapse done", "stack": "Done {{n}}", "status": {"todo": "Not started", "doing": "In progress", "done": "Done", "wait": "Waiting for earlier steps"}, "markLabel": "{{text}} ({{status}})", "more": "Actions", "menu": {"start": "Mark in progress", "reopen": "Mark not started", "rename": "Rename", "deps": "Steps to finish first…", "depsHead": "Steps to finish first", "links": "Deliverables…", "up": "Move up", "down": "Move down", "remove": "Delete", "back": "Back"}, "links": {"title": "Deliverables", "count": "Deliverables: {{n}}", "missing": "Not found", "missingLabel": "{{kind}} {{name}} (not found)", "itemLabel": "{{kind}} {{name}}", "kind": {"file": "File", "dir": "Folder", "url": "Web page"}, "unlink": "Remove", "add": "Add a path or URL"}, "by": {"done": "{{name}} finished", "started": "{{name}} started", "added": "{{name}} added", "links": "{{name}} added deliverables", "changed": "{{name}} changed"}, "conflict": "The to-dos changed elsewhere and were reloaded. Please try again.", "failed": "Could not change the to-dos. They were reloaded.", "unseen": "changed by AI", "humanWaiting": "Waiting for a reply", "child": "Child conversation ↗", "taskIssue": {"failed": "Failed", "cancelled": "Cancelled", "interrupted": "Interrupted"}, "resize": {"width": "Resize to-do panel width", "height": "Resize to-do panel height", "both": "Resize to-do panel (width {{width}}, height {{height}})"}},
   "deletedBotReadOnly": "Read only — this bot was deleted. You cannot send more messages.",
   "taskChrome": { "view": "View Chrome window", "close": "Close child's Chrome window", "confirmClose": "Close window", "confirmHuman": "You have taken over this window. Closing it ends what you are doing midway. Close it?", "confirmWaiting": "This window is waiting for you (to sign in, for example). If you close it, the request goes unanswered. Close it?", "unknown": "Profile unknown", "running": "Working", "paused": "Handed over", "stopped": "Stopped", "idle": "Idle" },
   "pending": {
@@ -929,6 +930,7 @@
     "login": "claude.ai login",
     "summary": "Conversation token: {{token}} · claude.ai login: {{login}}",
     "status": {
+      "expired": "Expired",
       "registered": "Registered",
       "done": "Done",
       "none": "Not yet",
@@ -1291,6 +1293,21 @@
     }
   },
   "sessionContext": {
+    "connectors": {
+      "group": "claude.ai connectors ({{name}})",
+      "off": "Off for \"{{name}}\".",
+      "turnOn": "Turn on in External MCP",
+      "expired": "Unavailable because the claude.ai login has expired.",
+      "stopped": "Unavailable ({{why}}).",
+      "relogin": "Log in again",
+      "openAccount": "Open account",
+      "change": "Change in External MCP",
+      "unread": "The connector list hasn't been read yet",
+      "none": "No connectors on claude.ai",
+      "needsAuth": "Needs re-authorization",
+      "footLead": "To switch per account, ",
+      "footLink": "change it in External MCP →"
+    },
     "state": {
       "loading": "Loading…",
       "refreshing": "Updating…",
@@ -1768,6 +1785,54 @@
     }
   },
   "mcp": {
+    "accounts": {
+      "group": "claude.ai connectors (per account)",
+      "status": {
+        "nologin": "Not logged in · Use \"Log in to claude.ai\" in Claude accounts",
+        "off": "Off · Logged in to claude.ai",
+        "stopped": "On · Stopped · {{why}}",
+        "unusable": "Unavailable · {{why}}",
+        "readFailed": "On · Couldn't read the connector list",
+        "reading": "On · Loading connectors…",
+        "none": "On · No connectors on claude.ai",
+        "on": "On · {{n}} available",
+        "onAuth": "On · {{n}} available · {{auth}} need auth",
+        "expired": "The claude.ai login has expired",
+        "login": "Can't read the claude.ai login",
+        "owner": "The conversation token and claude.ai login have different owners",
+        "version": "Unverified Claude Code version",
+        "platform": "Not available on this OS yet",
+        "env": "Environment variable auth takes priority",
+        "settings": "settings.json auth takes priority",
+        "history": "The conversation history location is moved",
+        "profile": "Couldn't apply the settings",
+        "format": "Can't read the claude.ai login format"
+      },
+      "tip": {
+        "nologin": "\"{{name}}\" isn't logged in to claude.ai",
+        "expired": "The claude.ai login for \"{{name}}\" has expired. Log in again to turn this on",
+        "login": "Can't read the claude.ai login for \"{{name}}\". Log in again to turn this on",
+        "owner": "The conversation token and claude.ai login for \"{{name}}\" have different owners. Open the account to check",
+        "version": "Your Claude Code version hasn't been verified for connectors, so this can't be turned on",
+        "platform": "claude.ai connectors for registered accounts aren't available on this OS yet",
+        "env": "Environment variable auth (such as ANTHROPIC_API_KEY) takes priority, so this can't be turned on",
+        "settings": "settings.json has another auth setting or can't be read, so this can't be turned on",
+        "history": "A setting moves the conversation history, so this can't be turned on",
+        "profile": "Couldn't apply the connector settings for \"{{name}}\"",
+        "format": "Can't read the claude.ai login format for \"{{name}}\". Log in again to turn this on"
+      },
+      "login": "Log in",
+      "relogin": "Log in again",
+      "openAccount": "Open account",
+      "reload": "Reload",
+      "reloadAria": "Reload claude.ai connectors for \"{{name}}\"",
+      "switchAria": "Use claude.ai connectors with \"{{name}}\"",
+      "peekAria": "claude.ai connectors for \"{{name}}\"",
+      "item": {
+        "connected": "Connected",
+        "needsAuth": "Needs re-authorization (on claude.ai)"
+      }
+    },
     "matrix": {
       "groupPly": "Registered in Pleiad",
       "groupAgent": "Agent settings",
@@ -1994,6 +2059,40 @@
     "defaultTitle": "New session"
   },
   "chat": {
+    "connectorsFail": {
+      "why": {
+        "expired": "The claude.ai login for \"{{name}}\" has expired, so this can't be sent with connectors. Log in again, or turn connectors off and send.",
+        "login": "To use claude.ai connectors with \"{{name}}\", log in to claude.ai first.",
+        "owner": "The conversation token and the claude.ai login for \"{{name}}\" belong to different owners (organizations). Check it in Claude accounts, or turn connectors off and send.",
+        "version": "Stopped because your Claude Code (CLI {{cli}} / SDK {{sdk}}) hasn't been verified for connectors yet (verified: {{verified}}). Turn connectors off to send.",
+        "platform": "claude.ai connectors for registered accounts aren't available on this OS yet. Turn connectors off to send.",
+        "env": "Environment variables (such as ANTHROPIC_API_KEY) switch to other credentials, so connectors can't be used. Remove them, or turn connectors off.",
+        "settings": "settings.json (shared, workspace, local or managed) has another auth setting (apiKeyHelper or env) or can't be read, so this can't start with connectors. Remove the setting, or turn connectors off.",
+        "history": "A setting moves the conversation history (environment variable or settings.json), so this can't start with connectors. Remove it, or turn connectors off.",
+        "profile": "Stopped because the connector settings for \"{{name}}\" couldn't be applied to the shared config folder. Send again, or turn connectors off and send.",
+        "format": "Stopped because the credentials or shared settings couldn't be read or written. Log in to claude.ai again, or turn connectors off and send."
+      },
+      "fix": {
+        "relogin": "Log in to claude.ai again",
+        "login": "Log in to claude.ai",
+        "openAccount": "Open account",
+        "resend": "Resend"
+      },
+      "off": "Turn connectors off and send",
+      "offNote": "This also turns them off in other conversations using \"{{name}}\"",
+      "cancel": "Cancel",
+      "waiting": "Waiting for the claude.ai login…",
+      "sending": "Sending again…",
+      "done": {
+        "relogin": "✓ Logged in to claude.ai again and sent it again",
+        "login": "✓ Logged in to claude.ai and sent it again",
+        "off": "✓ Turned off claude.ai connectors for \"{{name}}\" and sent it again",
+        "resend": "✓ Sent it again"
+      },
+      "resendFailed": "Couldn't send it again: {{error}}",
+      "loginFailed": "Couldn't log in to claude.ai. Please try again",
+      "offFailed": "Couldn't turn connectors off: {{error}}"
+    },
     "secretRequest": {
       "headingMark": "Secret needed",
       "from": "from {{agent}}",
@@ -3333,6 +3432,23 @@
     "agent": "Agent",
     "usage": "Usage",
     "account": {
+      "connectors": {
+        "count": "{{n}} connectors",
+        "countAuth": "{{n}} connectors · {{auth}} need auth",
+        "stopped": "Connectors stopped ({{why}})",
+        "why": {
+          "expired": "login expired",
+          "login": "not logged in",
+          "owner": "owner mismatch",
+          "version": "unverified version",
+          "platform": "OS not supported",
+          "env": "environment variables",
+          "settings": "settings.json",
+          "history": "history location",
+          "profile": "couldn't apply settings",
+          "format": "unreadable login"
+        }
+      },
       "title": "Account",
       "compatOff": "Accounts aren't used with compatible endpoints",
       "week": "Week {{percent}}"
@@ -4351,26 +4467,15 @@
       "label": "Effort",
       "conversation": "Conversation default",
       "unset": "not set",
-      "modelDefault": "Model default",
       "tierDefault": "Level default",
+      "candidateSlider": "Effort (the dot marks the level default)",
       "tierLabel": "Default effort for {{tier}}: {{value}}",
       "tierHead": "Level default · {{tier}}",
-      "candLabel": "Effort for {{name}}: {{value}} {{source}}",
-      "candHead": "{{name}} · {{tier}}",
       "followConversation": "Follow the conversation default",
-      "followTier": "Follow the level default",
       "now": "now {{value}}",
-      "convShort": "conversation default",
       "perAgent": "per agent",
       "recommended": "recommended",
-      "fitNote": "An effort the model does not have is matched to the nearest lower one.",
-      "sourceTier": "level default",
-      "sourceConversation": "conversation default",
-      "adjusted": "({{asked}} → {{value}})",
-      "byModel": "set by the model name",
-      "byModelTitle": "The effort is part of the model name (such as -high). To use another effort, add a different model name as a candidate.",
-      "none": "not adjustable",
-      "noneTitle": "This model has no adjustable thinking effort."
+      "fitNote": "An effort the model does not have is matched to the nearest lower one."
     },
     "retry": {
       "open": "Retry with another candidate",
@@ -4452,13 +4557,15 @@
       "refreshing": "Checking…",
       "candidateRemove": "Remove {{name}}",
       "addCandidate": "+ Add candidate",
-      "addTitle": "Add to {{tier}}",
-      "addInput": "backend:model",
+      "candidateChange": "{{tier}}, change candidate {{position}}. {{candidate}}",
+      "candidateDuplicate": "Already in this level",
+      "candidateConfirm": "Add candidate",
+      "candidateAdded": "Added {{candidate}} to the end of {{tier}}",
+      "candidateChanged": "Changed candidate {{position}} in {{tier}} to {{candidate}}",
       "noModels": "Can't read the model list",
       "accountLogin": "Signed-in account",
       "accountLoginSame": "Signed-in account ({{name}})",
       "relogin": "Sign in again",
-      "accountsAllAdded": "Every account is already in this level",
       "reloginLabel": "Sign in to {{account}} again (Settings › Agent settings)",
       "empty": "No candidates",
       "tableTitle": "Work kinds × difficulty",

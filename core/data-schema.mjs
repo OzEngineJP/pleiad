@@ -4,12 +4,13 @@ import { t } from './i18n.mjs';
 import { acquire, checkDb, createDb, dbPath } from './db.mjs';
 import { acquireDataLock } from './data-lock.mjs';
 import { assertNotGuarded } from './test-guard.mjs';
-import { migrateSchema1To2, finishSchema1To2, migrateSchema2To3, finishMemoryLogMigration, legacyFiles, removeLegacy, writeSchemaFile } from './schema-migration.mjs';
+import { migrateSchema1To2, finishSchema1To2, migrateSchema2To3, migrateSchema3To4, finishMemoryLogMigration, legacyFiles, removeLegacy, writeSchemaFile } from './schema-migration.mjs';
 
 // 2: 件数とともに増える記録は SQLite（pleiad.db）の行（ADR 0115）。1 は記録ごとの JSON ファイル。
 // 形式番号を上げる変更は、バックアップ → 移行 → 突き合わせ → 番号の更新を、ここと同じ形（core/schema-migration.mjs）で足す。
 // 3: bot 削除後の閲覧用状態と、行単位で消せる記憶履歴。旧版の起動を拒否する。
-export const DATA_SCHEMA = 3;
+// 4: 会話の ToDo（todos・todo_scopes の表。ADR 0342）。旧版は ToDo を知らずに会話を消し、ToDo だけが残るので起動を拒否する。
+export const DATA_SCHEMA = 4;
 
 const reasonOf = e => String(e?.message ?? e);
 
@@ -65,10 +66,13 @@ export function ensureDataSchemaSync(directory, options = {}) {
   // 形式番号が無い置き場（形式番号を導入する前の版・新しい置き場）と形式 1 は、同じ扱いで移行する
   const unlock = acquireDataLock(directory);
   try {
-    if (schema === 2) {
+    if (schema === 2 || schema === 3) {
       let result;
-      try { result = migrateSchema2To3(directory, options); }
-      catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
+      try {
+        if (schema === 2) result = migrateSchema2To3(directory, options);
+        const todos = migrateSchema3To4(directory, options);
+        result ??= todos;
+      } catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
       verifyCurrent(directory, options);
       return result;
     }
@@ -78,7 +82,7 @@ export function ensureDataSchemaSync(directory, options = {}) {
     catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
     try { finishSchema1To2(directory, result.present, options); }
     catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
-    try { migrateSchema2To3(directory, options); }
+    try { migrateSchema2To3(directory, options); migrateSchema3To4(directory, options); }
     catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
     return { backup: result.backup, counts: result.counts };
   } finally { unlock(); }

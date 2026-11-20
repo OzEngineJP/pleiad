@@ -193,13 +193,18 @@ export default async function (t) {
     }) });
     const parentSid = firstTurn.sessionId;
     const plainEv = firstTurn.events.find((e) => e.type === 'tool.result');
-    assert.equal(Boolean(plainEv?.isError) && String(plainEv?.text).includes('model_unknown'), true, plainEv?.text);
+    assert.equal(Boolean(plainEv?.isError), false, plainEv?.text);
+    const plainTask = JSON.parse(plainEv.text);
+    assert.equal((await taskOf(plainTask.taskId))?.model, 'claude-mythos-5-2');
+    await settleTask(plainTask.taskId, parentSid);
     await waitTurnFree(parentSid);
 
     const loginDel = await callTool(parentSid, 'ply_delegate', {
       kind: 'mechanical', backend: 'claude', model: 'claude-mythos-5-2', task: 'hello-login',
     });
-    assert.equal(loginDel.isError && loginDel.text.includes('model_unknown'), true, loginDel.text);
+    assert.equal(Boolean(loginDel.isError), false, loginDel.text);
+    assert.equal((await taskOf(loginDel.data.taskId))?.model, 'claude-mythos-5-2');
+    await settleTask(loginDel.data.taskId, parentSid);
     await waitTurnFree(parentSid);
 
     const verifiedDel = await callTool(parentSid, 'ply_delegate', {
@@ -212,20 +217,20 @@ export default async function (t) {
     await settleTask(verifiedDel.data.taskId, parentSid);
     const verifiedChild = (await c.cmd('listSessions')).find((s) => s.id === verifiedTask?.sessionId);
     assert.equal(verifiedChild?.claudeAccount, verifiedId);
-    t.ok('ply_delegate: 承認のあるアカウントでは claude-mythos-5-2 を通し、ほかのアカウントとログイン中のアカウントでは model_unknown で断る', true);
+    t.ok('ply_delegate: 一覧にないモデルも、指定アカウント・ログイン中のアカウントへそのまま渡す', true);
 
     // 4b. ply_task_send のアカウント切り替え時のモデル検証
     const badSwitch = await callTool(parentSid, 'ply_task_send', {
       taskId: verifiedDel.data.taskId, account: plainId, model: 'claude-mythos-5-2',
     });
-    assert.equal(badSwitch.isError && badSwitch.text.includes('model_unknown'), true, badSwitch.text);
+    assert.equal(Boolean(badSwitch.isError), false, badSwitch.text);
     await waitTurnFree(parentSid);
     const okSwitch = await callTool(parentSid, 'ply_task_send', {
       taskId: verifiedDel.data.taskId, account: plainId, model: 'sonnet',
     });
     assert.equal(!okSwitch.isError, true, okSwitch.text);
     await waitTurnFree(parentSid);
-    t.ok('ply_task_send: 切り替え先のアカウントに無い Mythos は断り、そのアカウントにある Sonnet への変更は通す', true);
+    t.ok('ply_task_send: アカウントの一覧にないモデルへの変更も予約できる', true);
 
     // 5. bot（bots.create / bots.setAccount / bots.update）のサーバー経路
     const b = await c.cmd('invoke', { op: 'bots.create', args: { name: 'MythosBot', backend: 'claude' } });

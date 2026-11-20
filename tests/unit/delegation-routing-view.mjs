@@ -5,7 +5,7 @@ import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackTe
   skipText, parseRoutingFailure, groupSkipped, groupText, routingFailureParts } from '../../web/delegation-routing-view.mjs';
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
 import { el } from '../../web/dom.mjs';
-import { N } from '../lib/dom-stub.mjs';
+import { N, stubPickerGeometry } from '../lib/dom-stub.mjs';
 import { readFileSync } from 'node:fs';
 
 export const name = 'delegation-routing-view';
@@ -132,7 +132,17 @@ async function japaneseCases(t) {
   assert.ok(factText.includes('Codex（依頼元が指定）') && factText.includes('都度確認') && factText.includes('pleiad'), factText);
   assert.equal(facts.querySelectorAll('.rt-cand').length, 0, '候補は出さない');
   assert.equal(facts.querySelector('.rt-retry-open'), null, 'やり直しは出さない');
-  t.ok('固定の委譲の 1 行と内訳（難しさを決めたモデル・候補・やり直しは出さない）', true);
+  let pinnedRetryArgs;
+  const retryFacts = pinnedDetail(pinned, { names, onRetry: (...args) => { pinnedRetryArgs = args; } });
+  const retryButton = retryFacts.querySelector('.rt-retry-open');
+  assert.ok(retryButton);
+  assert.equal(retryButton.getAttribute('aria-expanded'), 'false');
+  retryButton.onclick({ preventDefault() {} });
+  assert.deepEqual(pinnedRetryArgs, [retryFacts, retryButton]);
+  assert.ok(retryFacts.querySelector('.rt-retried'));
+  const clientSource = readFileSync(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+  assert.match(clientSource, /pinnedDetail\(routing, \{ \.\.\.pinnedFacts\(card, routing\), onRetry: \(root, button\) => toggleRetry\(card, root, button\) \}\)/);
+  t.ok('固定の委譲でも共通の候補選択を開き、やり直しの記録を表示する', true);
 
   // 委譲の子の自動圧縮の閾値と内訳（ADR 0166）。タスクの記録の compaction を内訳に 1 行で出す
   const compaction = { threshold: 171000, base: 71003, source: 'own', headroom: 100000 };
@@ -159,8 +169,7 @@ async function japaneseCases(t) {
 
 /**
  * 設定 › 委譲のレベルの候補のアカウント（ADR 0264）。候補の名前「Sonnet · personal」・そのアカウントだけの使用量・
- * 使えないアカウントの「ログインし直す」・追加のメニュー（エージェント ▸ モデル ▸ アカウント、打ち込んだ後のアカウント）。
- * 段の上の「使う / 使わない」の行は廃止
+ * 使えないアカウントの「ログインし直す」と、入力欄と共通の面での候補の変更・追加。
  */
 async function accountPanel(t) {
   const defaults = { enabled: true, judge: JUDGE_MODEL, levels: [{ id: 't1', name: '' }], kinds: [{ id: 'implement', name: '', desc: '' }],
@@ -168,7 +177,7 @@ async function accountPanel(t) {
   const settings = { ...structuredClone(defaults), tiers: { t1: ['claude:sonnet', 'claude@acct-p:sonnet', 'claude@acct-s:opus', 'codex:gpt-6-sol'] } };
   const candidates = [
     { candidate: 'claude:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: '', accountLabel: null, windows: [{ label: '週次', usedPercent: 21 }] },
-    { candidate: 'claude@acct-p:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: 'acct-p', accountLabel: 'personal', windows: [{ label: '週次', usedPercent: 64 }] },
+    { candidate: 'claude@acct-p:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: 'acct-p', accountLabel: 'personal', effort: { levels: ['low', 'medium', 'high', 'max'], fixed: null }, windows: [{ label: '週次', usedPercent: 64 }] },
     { candidate: 'claude@acct-s:opus', backend: 'claude', model: 'opus', tiers: ['t1'], usable: false, reason: 'unavailable', detail: 'no_token', scoped: true, account: 'acct-s', accountLabel: 'work', windows: [] },
     { candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t1'], usable: true, windows: [] },
   ];
@@ -178,25 +187,32 @@ async function accountPanel(t) {
   const state = () => structuredClone({ settings, defaults, key: { hasKey: true, via: 'key' }, candidates, warnings: [], accounts, storage: { encrypted: true } });
   const cmd = async (name, args) => {
     if (name === 'invoke') return { keys: [] };
-    if (name === 'setDelegationRouting') { sent.push(args.settings); if (args.settings.tiers) settings.tiers = { ...settings.tiers, ...args.settings.tiers }; }
+    if (name === 'efforts') return args.model === 'haiku' ? {} : { low: {}, medium: {}, high: {}, ...(args.account === 'acct-p' ? { max: {} } : {}) };
+    if (name === 'setDelegationRouting') { sent.push(args.settings); if (args.settings.tiers) settings.tiers = { ...settings.tiers, ...args.settings.tiers };
+      settings.efforts = args.settings.efforts ? { ...defaults.efforts, ...args.settings.efforts } : structuredClone(defaults.efforts); }
     return state();
   };
-  const menus = [], opened = [];
+  const opened = [];
   const root = el('div'), tab = el('button');
   const saved = { getElementById: document.getElementById, activeElement: document.activeElement, focus: N.prototype.focus };
   document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
   N.prototype.focus = function () { if (!this.disabled) document.activeElement = this; };
-  const models = { claude: { sonnet: { label: 'Sonnet' }, opus: { label: 'Opus' }, haiku: { label: 'Haiku' } }, codex: { 'gpt-6-sol': { label: 'gpt-6-sol' } } };
+  const restoreGeometry = stubPickerGeometry();
+  const models = { claude: { sonnet: { label: 'Sonnet' }, opus: { label: 'Opus' }, haiku: { label: 'Haiku' } },
+    codex: { 'gpt-6-sol': { label: 'gpt-6-sol' } },
+    antigravity: {
+      'gemini-3.1-pro-low': { label: 'Gemini 3.1 Pro', family: 'pro', level: 'low', defaultEffort: 'low' },
+      'gemini-3.1-pro-high': { label: 'Gemini 3.1 Pro', family: 'pro', level: 'high', defaultEffort: 'high' },
+    } };
   try {
-    const ui = setupDelegationSettings({ cmd, page() {}, showMenu: (x, y, items, title) => menus.push({ items, title }), labelOf: id => ({ claude: 'Claude', codex: 'Codex' })[id] ?? id,
-      logo: () => el('span'), modelsOf: async b => models[b] ?? {}, modelName: (b, m) => models[b]?.[m]?.label ?? '', agents: () => ['claude', 'codex'],
+    const ui = setupDelegationSettings({ cmd, page() {}, showMenu() {}, labelOf: id => ({ claude: 'Claude', codex: 'Codex' })[id] ?? id,
+      modelsOf: async b => models[b] ?? {}, modelName: (b, m) => models[b]?.[m]?.label ?? '', agents: () => Object.keys(models),
       openAccount: (backend, account) => opened.push([backend, account]) });
     await ui.refresh();
     const rows = root.querySelectorAll('.rt-cand-row');
-    const label = row => row.querySelector('.rt-label').textContent.replace(/\u00a0/g, ' ');
+    const label = row => row.querySelector('.mn').textContent;
     t.ok('候補の名前は「モデル · アカウント」。書かない候補はログイン中のアカウント', label(rows[0]) === 'Sonnet · ログイン中のアカウント' && label(rows[1]) === 'Sonnet · personal'
       && label(rows[2]) === 'Opus · work', rows.map(label).join(' / '));
-    t.ok('狭い画面の折り返しは「Sonnet ·」の後ろだけ（区切りの前は改行しない空白）', rows[1].querySelector('.rt-label').textContent === 'Sonnet\u00a0· personal');
     t.ok('アカウントの無いエージェントの候補は名前だけで、下の行にエージェントの名前', label(rows[3]) === 'gpt-6-sol' && rows[3].querySelector('small').textContent === 'Codex');
     t.ok('アカウントの候補の下の行は、そのアカウントの使用量だけ（エージェントの名前は付けない）',
       rows[0].querySelector('small').textContent === '週次 21%' && rows[1].querySelector('small').textContent === '週次 64%');
@@ -208,38 +224,79 @@ async function accountPanel(t) {
     t.ok('「ログインし直す」はそのエージェントのそのアカウントを開く', JSON.stringify(opened) === '[["claude","acct-s"]]');
     t.ok('廃止した「使う / 使わない」の行は出さない', !root.querySelector('.rt-acct-use'));
 
-    // 追加のメニュー: エージェント ▸ モデル ▸ アカウント。レベルにもうある組み合わせは出さない
-    const anchor = { getBoundingClientRect: () => ({ left: 0, bottom: 0 }) };
-    root.querySelector('.rt-add').onclick({ currentTarget: anchor });
-    await new Promise(r => setImmediate(r));
-    const top = menus.at(-1).items;
-    const claude = top.find(i => i.label === 'Claude').sub();
-    t.ok('モデルの一覧は、まだレベルに無いアカウントが残るモデルだけ', claude.map(i => i.label).join(',') === 'Sonnet,Opus,Haiku');
-    const sonnetAccounts = claude[0].sub();
-    t.ok('アカウントの段: レベルにある組み合わせを除き、使えないアカウントに理由を添える', sonnetAccounts.map(i => i.label).join(',') === 'work,team'
-      && sonnetAccounts[0].hint === '認証情報なし' && !sonnetAccounts[1].hint);
-    sonnetAccounts[1].onClick();
-    await new Promise(r => setImmediate(r));
-    t.ok('アカウントを選ぶと「backend@account:model」でレベルの末尾に足す', sent.at(-1)?.tiers?.t1?.at(-1) === 'claude@acct-w:sonnet', JSON.stringify(sent.at(-1)));
-    const codex = top.find(i => i.label === 'Codex').sub();
-    t.ok('アカウントの無いエージェントは 2 段のまま（もうレベルにあるモデルは出さない）', codex.length === 1 && codex[0].disabled && !codex[0].sub);
+    const toggle = chip => chip.dispatchEvent({ type: 'click' });
+    const shown = () => root.querySelector('.rt-picker');
+    const item = key => shown().querySelectorAll('.prow').find(b => b.dataset.key === key);
+    const wait = () => new Promise(r => setImmediate(r));
 
-    root.querySelector('.rt-add').onclick({ currentTarget: anchor });
-    await new Promise(r => setImmediate(r));
-    const input = menus.at(-1).items.find(i => i.input).input;
-    const before = menus.length;
-    input.onCommit('claude:haiku');
-    const typed = menus.at(-1);
-    t.ok('打ち込んだエージェントにアカウントが複数あれば、Enter の後にアカウントを選ぶ', menus.length === before + 1 && typed.title === 'Haiku'
-      && typed.items.map(i => i.label).join(',') === 'ログイン中のアカウント,personal,work,team', typed.items.map(i => i.label).join(','));
+    // 同じ順位のままモデル、次にアカウントを替える
+    const chip = rows[1].querySelector('.rt-picker-chip');
+    toggle(chip);
+    await wait();
+    shown().querySelector('.eslider').dispatchEvent({ type: 'keydown', key: 'End', preventDefault() {} });
+    await wait();
+    item('nav:model').onclick();
+    t.ok('モデルの一覧には今の組に ✓ がある', item('model:sonnet').getAttribute('aria-selected') === 'true');
+    item('model:opus').onclick();
+    await wait();
+    t.ok('対応する段は同じ順位の新しい候補に引き継ぐ', settings.tiers.t1[1] === 'claude@acct-p:opus'
+      && settings.efforts.t1['claude@acct-p:opus'] === 'max' && !Object.hasOwn(settings.efforts.t1, 'claude@acct-p:sonnet'));
+    item('nav:account').onclick();
+    t.ok('重複したアカウントは理由を添えて無効、今の組に ✓', item('account:acct-s').disabled
+      && item('account:acct-s').textContent.includes('同じレベルに追加済み') && item('account:acct-p').getAttribute('aria-selected') === 'true');
+    item('account:acct-w').onclick();
+    await wait();
+    t.ok('対応しない段は新しい候補に引き継がない', settings.tiers.t1[1] === 'claude@acct-w:opus'
+      && !Object.hasOwn(settings.efforts.t1, 'claude@acct-w:opus'));
+    item('nav:model').onclick();
+    item('model:haiku').onclick();
+    await wait();
+    t.ok('段の無いモデルに変更できる', settings.tiers.t1[1] === 'claude@acct-w:haiku' && !shown().querySelector('.eslider'));
+    toggle(chip);
+
+    // 追加は選択を確定してから末尾へ
+    const add = root.querySelector('.rt-add');
     const count = sent.length;
-    input.onCommit('codex:gpt-6-luna');
-    await new Promise(r => setImmediate(r));
-    t.ok('アカウントの無いエージェントは打ち込んだまま足す', sent.length === count + 1 && sent.at(-1).tiers.t1.at(-1) === 'codex:gpt-6-luna');
+    toggle(add);
+    await wait();
+    item('nav:agent').onclick();
+    t.ok('すべての組を追加済みのエージェントは無効', item('backend:codex').disabled);
+    item('back').onclick();
+    item('nav:model').onclick();
+    t.ok('重複したモデルと今の組を一覧で区別する', item('model:sonnet').disabled
+      && item('model:sonnet').textContent.includes('同じレベルに追加済み') && item('model:opus').getAttribute('aria-selected') === 'true');
+    const search = shown().querySelector('input');
+    search.value = 'sonnet';
+    search.dispatchEvent({ type: 'input' });
+    search.dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {} });
+    t.ok('検索からも重複したモデルを選べない', !!item('model:sonnet') && sent.length === count);
+    search.value = 'claude-custom';
+    search.dispatchEvent({ type: 'input' });
+    search.dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {} });
+    await wait();
+    t.ok('検索欄でIDを選んでも確定前は保存しない', sent.length === count);
+    shown().querySelector('.rt-picker-confirm').onclick();
+    await wait();
+    t.ok('確定で候補をレベルの末尾に保存', sent.length === count + 1 && settings.tiers.t1.at(-1) === 'claude:claude-custom');
+
+    const added = root.querySelectorAll('.rt-picker-chip').at(-1);
+    toggle(added);
+    await wait();
+    item('nav:agent').onclick();
+    item('backend:antigravity').onclick();
+    await wait();
+    item('nav:model').onclick();
+    t.ok('段で ID が異なるモデルは選択肢の名前で区別できる', item('model:gemini-3.1-pro-low').textContent.includes('Gemini 3.1 Pro · low')
+      && item('model:gemini-3.1-pro-high').textContent.includes('Gemini 3.1 Pro · high'));
+    item('model:gemini-3.1-pro-high').onclick();
+    await wait();
+    t.ok('モデル名で決まる段はチップに出し、面では設定できない', added.textContent.includes('Gemini 3.1 Pro · high')
+      && shown().textContent.includes('このモデルでは選べません') && !shown().querySelector('.eslider'));
   } finally {
     document.getElementById = saved.getElementById;
     document.activeElement = saved.activeElement;
     N.prototype.focus = saved.focus;
+    restoreGeometry();
   }
 }
 

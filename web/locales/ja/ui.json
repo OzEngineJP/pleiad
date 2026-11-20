@@ -1,4 +1,5 @@
 {
+  "todo": {"title": "ToDo", "entry": "ToDo", "entryCount": "ToDo · {{done}}/{{total}} 完了", "view": {"label": "表示", "flow": "フロー", "list": "リスト"}, "edit": "編集", "editEnd": "編集を終了", "max": "大きく表示", "restore": "元の大きさに戻す", "close": "閉じる", "empty": "ToDo はありません", "add": "ToDo を追加", "flowLabel": "ToDo のフロー", "zoom": {"label": "表示の大きさ", "in": "拡大", "inTitle": "拡大（+）", "out": "縮小", "outTitle": "縮小（-）", "fit": "全体を表示", "fitTitle": "全体を表示（0）"}, "fold": "完了をまとめる", "stack": "完了 {{n}}", "status": {"todo": "未着手", "doing": "進行中", "done": "完了", "wait": "先の作業を待っています"}, "markLabel": "{{text}}（{{status}}）", "more": "操作", "menu": {"start": "進行中にする", "reopen": "未着手に戻す", "rename": "名前を変更", "deps": "先に終わらせる作業…", "depsHead": "先に終わらせる作業", "links": "成果物…", "up": "上へ移動", "down": "下へ移動", "remove": "削除", "back": "戻る"}, "links": {"title": "成果物", "count": "成果物 {{n}} 件", "missing": "見つかりません", "missingLabel": "{{kind}} {{name}}（見つかりません）", "itemLabel": "{{kind}} {{name}}", "kind": {"file": "ファイル", "dir": "フォルダー", "url": "Web ページ"}, "unlink": "外す", "add": "パスまたは URL を追加"}, "by": {"done": "{{name}} が完了", "started": "{{name}} が着手", "added": "{{name}} が追加", "links": "{{name}} が成果物を追加", "changed": "{{name}} が変更"}, "conflict": "ToDo がほかで変わったので、読み直しました。もう一度操作してください。", "failed": "ToDo を変えられませんでした。読み直しました。", "unseen": "AI の変更あり", "humanWaiting": "人の返事待ち", "child": "子の会話 ↗", "taskIssue": {"failed": "失敗", "cancelled": "取り消し", "interrupted": "中断"}, "resize": {"width": "ToDo の幅を変更", "height": "ToDo の高さを変更", "both": "ToDo の大きさを変更（幅 {{width}}、高さ {{height}}）"}},
   "deletedBotReadOnly": "閲覧用 — この bot は削除されました。続けて送信できません。",
   "taskChrome": { "view": "Chrome のウィンドウを見る", "close": "子の Chrome のウィンドウを閉じる", "confirmClose": "ウィンドウを閉じる", "confirmHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。閉じますか？", "confirmWaiting": "このウィンドウは、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。閉じますか？", "unknown": "プロフィール未確認", "running": "作業中", "paused": "引き継ぎ中", "stopped": "停止中", "idle": "待機中" },
   "pending": {
@@ -916,6 +917,7 @@
     "login": "claude.ai のログイン",
     "summary": "会話用のトークン: {{token}} · claude.ai のログイン: {{login}}",
     "status": {
+      "expired": "切れています",
       "registered": "登録済み",
       "done": "済み",
       "none": "まだ",
@@ -1270,6 +1272,21 @@
     }
   },
   "sessionContext": {
+    "connectors": {
+      "group": "claude.ai のコネクター（{{name}}）",
+      "off": "「{{name}}」ではオフです。",
+      "turnOn": "外部 MCP でオンにする",
+      "expired": "claude.ai のログインが切れているため使えません。",
+      "stopped": "使えません（{{why}}）。",
+      "relogin": "ログインし直す",
+      "openAccount": "アカウントを開く",
+      "change": "外部 MCP で変える",
+      "unread": "コネクターの一覧をまだ読めていません",
+      "none": "claude.ai にコネクターがありません",
+      "needsAuth": "再認可が必要",
+      "footLead": "アカウントごとの切り替えは ",
+      "footLink": "外部 MCP で変える →"
+    },
     "state": {
       "loading": "読み込み中…",
       "refreshing": "更新中…",
@@ -1729,6 +1746,54 @@
     }
   },
   "mcp": {
+    "accounts": {
+      "group": "claude.ai のコネクター（アカウントごと）",
+      "status": {
+        "nologin": "未ログイン · Claude のアカウントで「claude.ai にログイン」が必要です",
+        "off": "オフ · claude.ai のログイン済み",
+        "stopped": "オン · 止めています · {{why}}",
+        "unusable": "使用不可 · {{why}}",
+        "readFailed": "オン · コネクターの一覧を読めませんでした",
+        "reading": "オン · コネクターを読み込み中…",
+        "none": "オン · claude.ai にコネクターがありません",
+        "on": "オン · {{n}} 件利用可能",
+        "onAuth": "オン · {{n}} 件利用可能 · {{auth}} 件要認可",
+        "expired": "claude.ai のログインが切れています",
+        "login": "claude.ai のログインを読めません",
+        "owner": "会話用トークンと claude.ai のログインの持ち主が異なります",
+        "version": "未確認の Claude Code の版",
+        "platform": "この OS ではまだ使えません",
+        "env": "環境変数の認証が優先されています",
+        "settings": "settings.json の認証が優先されています",
+        "history": "会話の履歴の置き場が動かされています",
+        "profile": "設定の反映に失敗しました",
+        "format": "claude.ai のログインの形式を読めません"
+      },
+      "tip": {
+        "nologin": "「{{name}}」の claude.ai のログインが済んでいません",
+        "expired": "「{{name}}」の claude.ai のログインが切れています。ログインし直すとオンにできます",
+        "login": "「{{name}}」の claude.ai のログインを読めません。ログインし直すとオンにできます",
+        "owner": "「{{name}}」の会話用トークンと claude.ai のログインの持ち主が異なります。アカウントを開いて確かめてください",
+        "version": "お使いの Claude Code の版はコネクター対応の確認前のため、オンにできません",
+        "platform": "この OS では、登録したアカウントの claude.ai のコネクターはまだ使えません",
+        "env": "環境変数（ANTHROPIC_API_KEY など）の認証が優先されるため、オンにできません",
+        "settings": "settings.json に別の認証の指定があるか読み取れないため、オンにできません",
+        "history": "会話の履歴の置き場を動かす指定があるため、オンにできません",
+        "profile": "「{{name}}」のコネクターの設定を反映できませんでした",
+        "format": "「{{name}}」の claude.ai のログインの形式を読めません。ログインし直すとオンにできます"
+      },
+      "login": "ログイン",
+      "relogin": "ログインし直す",
+      "openAccount": "アカウントを開く",
+      "reload": "読み直す",
+      "reloadAria": "「{{name}}」の claude.ai のコネクターを読み直す",
+      "switchAria": "「{{name}}」で claude.ai のコネクターを使う",
+      "peekAria": "「{{name}}」の claude.ai のコネクター",
+      "item": {
+        "connected": "接続済み",
+        "needsAuth": "再認可が必要（claude.ai 側）"
+      }
+    },
     "matrix": {
       "groupPly": "Pleiad に登録",
       "groupAgent": "エージェントの設定",
@@ -1951,6 +2016,40 @@
     "defaultTitle": "新しいセッション"
   },
   "chat": {
+    "connectorsFail": {
+      "why": {
+        "expired": "「{{name}}」の claude.ai のログインが切れているため、コネクター付きで送れません。ログインし直すか、コネクターをオフにして送ってください。",
+        "login": "「{{name}}」で claude.ai のコネクターを使うには、まず claude.ai にログインしてください。",
+        "owner": "「{{name}}」の会話用トークンと claude.ai のログインの持ち主（組織）が一致しません。「Claude のアカウント」で確かめるか、コネクターをオフにして送ってください。",
+        "version": "お使いの Claude Code（CLI {{cli}} / SDK {{sdk}}）はコネクター対応の確認前の版のため停止しました（確認済み: {{verified}}）。コネクターをオフにすると送れます。",
+        "platform": "登録したアカウントでの claude.ai のコネクターは、この OS ではまだ使えません。コネクターをオフにすると送れます。",
+        "env": "環境変数（ANTHROPIC_API_KEY など）が設定されているため、別の資格情報へ切り替わりコネクターを使えません。環境変数を外すか、コネクターをオフにしてください。",
+        "settings": "settings.json（共有・作業場所・ローカル・管理者）に別の認証の指定（apiKeyHelper や env）があるか読み取れないため、コネクター付きで開始できません。設定を外すか、コネクターをオフにしてください。",
+        "history": "会話の履歴の置き場を動かす指定（環境変数か settings.json）があるため、コネクター付きで開始できません。指定を外すか、コネクターをオフにしてください。",
+        "profile": "「{{name}}」のコネクターの設定を共有の設定フォルダーへ反映できなかったため停止しました。もう一度送るか、コネクターをオフにして送ってください。",
+        "format": "資格情報または共有設定の読み書きに失敗したため停止しました。claude.ai にログインし直すか、コネクターをオフにして送ってください。"
+      },
+      "fix": {
+        "relogin": "claude.ai にログインし直す",
+        "login": "claude.ai にログイン",
+        "openAccount": "アカウントを開く",
+        "resend": "再送する"
+      },
+      "off": "コネクターをオフにして送る",
+      "offNote": "オフは「{{name}}」のほかの会話にも効きます",
+      "cancel": "取り消す",
+      "waiting": "claude.ai のログインを待っています…",
+      "sending": "もう一度送っています…",
+      "done": {
+        "relogin": "✓ claude.ai にログインし直して、もう一度送りました",
+        "login": "✓ claude.ai にログインして、もう一度送りました",
+        "off": "✓ 「{{name}}」の claude.ai のコネクターをオフにして、もう一度送りました",
+        "resend": "✓ もう一度送りました"
+      },
+      "resendFailed": "もう一度送れませんでした: {{error}}",
+      "loginFailed": "claude.ai にログインできませんでした。もう一度お試しください",
+      "offFailed": "コネクターをオフにできませんでした: {{error}}"
+    },
     "secretRequest": {
       "headingMark": "秘密情報の入力",
       "from": "{{agent}} から",
@@ -3249,6 +3348,23 @@
     "agent": "エージェント",
     "usage": "使用量",
     "account": {
+      "connectors": {
+        "count": "コネクター {{n}}",
+        "countAuth": "コネクター {{n}} · {{auth}} 要認可",
+        "stopped": "コネクター停止中（{{why}}）",
+        "why": {
+          "expired": "ログイン切れ",
+          "login": "未ログイン",
+          "owner": "持ち主の不一致",
+          "version": "未確認の版",
+          "platform": "この OS は未対応",
+          "env": "環境変数",
+          "settings": "settings.json",
+          "history": "履歴の置き場",
+          "profile": "設定の反映に失敗",
+          "format": "ログインを読めない"
+        }
+      },
       "title": "アカウント",
       "compatOff": "互換の接続先ではアカウントを使いません",
       "week": "週 {{percent}}"
@@ -4244,26 +4360,15 @@
       "label": "思考",
       "conversation": "会話の既定",
       "unset": "未設定",
-      "modelDefault": "モデルの既定",
       "tierDefault": "レベルの既定",
+      "candidateSlider": "エフォート（点はレベルの既定）",
       "tierLabel": "{{tier}}のレベルの既定: {{value}}",
       "tierHead": "レベルの既定 · {{tier}}",
-      "candLabel": "{{name}} の思考の強さ: {{value}} {{source}}",
-      "candHead": "{{name}} · {{tier}}",
       "followConversation": "会話の既定に従う",
-      "followTier": "レベルの既定に従う",
       "now": "今は {{value}}",
-      "convShort": "会話の既定",
       "perAgent": "エージェントごと",
       "recommended": "推奨",
-      "fitNote": "モデルが持たない強さは、いちばん近い下の強さに合わせて走ります。",
-      "sourceTier": "レベルの既定",
-      "sourceConversation": "会話の既定",
-      "adjusted": "（{{asked}} → {{value}}）",
-      "byModel": "モデル名で決まる",
-      "byModelTitle": "強さはモデル名（-high など）で決まります。別の強さにするには、別のモデル名を候補に足してください。",
-      "none": "調整なし",
-      "noneTitle": "このモデルは思考の強さを選べません。"
+      "fitNote": "モデルが持たない強さは、いちばん近い下の強さに合わせて走ります。"
     },
     "retry": {
       "open": "別の候補でやり直す",
@@ -4344,13 +4449,15 @@
       "refreshing": "取得中…",
       "candidateRemove": "{{name}} を外す",
       "addCandidate": "＋ 候補を追加",
-      "addTitle": "{{tier}} に追加",
-      "addInput": "backend:model",
+      "candidateChange": "{{tier}}、候補{{position}}を変更。{{candidate}}",
+      "candidateDuplicate": "同じレベルに追加済み",
+      "candidateConfirm": "候補を追加",
+      "candidateAdded": "{{tier}}の末尾に{{candidate}}を追加しました",
+      "candidateChanged": "{{tier}}の候補{{position}}を{{candidate}}に変更しました",
       "noModels": "モデルの一覧を読めません",
       "accountLogin": "ログイン中のアカウント",
       "accountLoginSame": "ログイン中のアカウント（{{name}}）",
       "relogin": "ログインし直す",
-      "accountsAllAdded": "どのアカウントもレベルに入っています",
       "reloginLabel": "{{account}} にログインし直す（設定 › エージェント設定）",
       "empty": "候補がありません",
       "tableTitle": "作業の種類 × 難しさ",

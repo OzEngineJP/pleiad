@@ -16,7 +16,7 @@ import { createBotPage } from '../../web/channels/bot-page.mjs';
 import { createThreadComposer } from '../../web/channels/thread-composer.mjs';
 import { COMPOSER_PARTS, rememberComposerTemplate } from '../../web/composer/composer.mjs';
 import { el } from '../../web/dom.mjs';
-import { N } from '../lib/dom-stub.mjs';
+import { N, stubPickerGeometry } from '../lib/dom-stub.mjs';
 import { keepProps } from '../lib/keep-props.mjs';
 
 export const name = 'web-account-models';
@@ -150,16 +150,14 @@ export default async function (t) {
         },
         storage: { encrypted: true },
       });
-      const menus = [];
       const root = el('div'), tab = el('button');
       document.getElementById = (id) => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
 
       const ui = setupDelegationSettings({
         cmd: async (n) => (n === 'invoke' ? { keys: [] } : state()),
         page() {},
-        showMenu: (_x, _y, items, title) => menus.push({ items, title }),
+        showMenu() {},
         labelOf: (id) => ({ claude: 'Claude' })[id] ?? id,
-        logo: () => el('span'),
         modelsOf: async (b, acct = '') => { modelsOfCalls.push([b, acct]); return modelsByAcct[acct] ?? {}; },
         modelName: (b, m, acct = '') => { modelNameCalls.push([b, m, acct]); return modelsByAcct[acct]?.[m]?.label ?? ''; },
         agents: () => ['claude'],
@@ -169,30 +167,28 @@ export default async function (t) {
       assert.ok(modelsOfCalls.some(([b, a]) => b === 'claude' && a === 'verified'), JSON.stringify(modelsOfCalls));
       assert.ok(modelsOfCalls.some(([b, a]) => b === 'claude' && a === 'plain'), JSON.stringify(modelsOfCalls));
       const rows = root.querySelectorAll('.rt-cand-row');
-      assert.equal(rows[0].querySelector('.rt-label').textContent.replace(/\u00a0/g, ' '), 'Mythos 5.2 · verified');
+      assert.equal(rows[0].querySelector('.mn').textContent, 'Mythos 5.2 · verified');
       assert.ok(modelNameCalls.some(([b, m, a]) => b === 'claude' && m === 'claude-mythos-5-2' && a === 'verified'), JSON.stringify(modelNameCalls));
 
-      // 追加メニュー: 候補に入っている組み合わせは出ないので、tier から一旦外してから開く
-      settings.tiers.t4 = ['claude@plain:sonnet'];
-      await ui.refresh();
-      root.querySelector('.rt-add').onclick({ currentTarget: { getBoundingClientRect: () => ({ left: 0, bottom: 0 }) } });
-      await tick();
-      const claudeSub = menus.at(-1).items.find((i) => i.label === 'Claude').sub();
-      const mythosItem = claudeSub.find((i) => i.label === 'Mythos 5.2');
-      assert.ok(Boolean(mythosItem), claudeSub.map((i) => i.label).join(','));
-      const mythosAccts = mythosItem.sub().map((i) => i.label);
-      // 承認のあるアカウントと未取得(dead) だけが出て、Mythos を持たない ready なアカウントとログイン中のアカウントは絞られる
-      assert.equal(mythosAccts.includes('verified'), true, mythosAccts.join(','));
-      assert.equal(mythosAccts.includes('broken'), true, mythosAccts.join(','));
-      assert.equal(mythosAccts.includes('plain'), false, mythosAccts.join(','));
-      assert.equal(mythosAccts.includes('ログイン中のアカウント'), false, mythosAccts.join(','));
-      const sonnetAccts = claudeSub.find((i) => i.label === 'Sonnet').sub().map((i) => i.label);
-      assert.equal(sonnetAccts.includes('verified') && sonnetAccts.includes('broken'), true);
+      const restoreGeometry = stubPickerGeometry();
+      const chip = rows[0].querySelector('.rt-picker-chip');
+      try {
+        chip.dispatchEvent({ type: 'click' });
+        await tick();
+        const pop = root.querySelector('.rt-picker');
+        pop.querySelectorAll('.prow').find(b => b.dataset.key === 'nav:account').onclick();
+        const accounts = pop.querySelectorAll('.prow').map(b => b.dataset.key);
+        assert.ok(accounts.includes('account:verified') && accounts.includes('account:dead'), accounts.join(','));
+        assert.ok(!accounts.includes('account:plain') && !accounts.includes('account:'), accounts.join(','));
+      } finally {
+        chip.dispatchEvent({ type: 'click' });
+        restoreGeometry();
+      }
 
       const countBeforeEvent = modelsOfCalls.length;
       await ui.event({ type: 'claudeAccountsChanged' });
       assert.ok(modelsOfCalls.length > countBeforeEvent);
-      t.ok('delegation-settings: アカウント別に modelsOf を引き、追加メニューも各アカウントの一覧で絞る', true);
+      t.ok('delegation-settings: アカウント別のモデル一覧で表示と選択肢を決める', true);
     }
 
     // ---- 2. delegation-routing-view.mjs: names.model に account が渡る

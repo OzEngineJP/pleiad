@@ -12,7 +12,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate`, `account`, `host`（下の「リモートのホストへ任せる」） | 子会話を作り、すぐ `taskId`（先頭のキー）・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。依頼文 `task` は返し直さない（依頼元が持っている。`core/agent-tasks.mjs` の `delegateReply`）。画面は結果の `taskId` でカードを子に結び付けるので、履歴に載せるときも `ply_delegate` の結果は 2000 文字で切らない（`core/backends/shared.mjs` の `keepsFullResult`）。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`model` は backend の一覧の名前で、Claude は対象アカウントの作業場所の一覧から引き（[ADR 0329](adr/0329-claude-per-account-model-catalog.md)）、正式な ID（`claude-sonnet-5-5`）も、一覧の id か `resolvedModel` に正確に一致する行があればその行に当てる（`backend.matchModel`）。当たらない名前は系統名へ縮めず、既定に落とさず `model_unknown`（選べる名前を添える。`agent:delegation.modelUnknown`）で断る。互換の接続先の会話は形だけを見る従来どおり。`account` は下の「Claude のアカウントを選ぶ」。`isolate`（真偽）は下の「worktree」 |
+| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate`, `account`, `host`（下の「リモートのホストへ任せる」） | 子会話を作り、すぐ `taskId`（先頭のキー）・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。依頼文 `task` は返し直さない（依頼元が持っている。`core/agent-tasks.mjs` の `delegateReply`）。画面は結果の `taskId` でカードを子に結び付けるので、履歴に載せるときも `ply_delegate` の結果は 2000 文字で切らない（`core/backends/shared.mjs` の `keepsFullResult`）。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`model` は文字列の形だけを確かめ、全 backend で指定した文字列をそのまま渡す。一覧に無くても拒否せず、正式な ID は一覧の id または resolvedModel に正確に一致する行があるときだけ読み替える。使えなければ CLI/API のエラーを返し、別のモデルへ落とさない（ADR 0343）。`account` は下の「Claude のアカウントを選ぶ」。`isolate`（真偽）は下の「worktree」 |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
 | `ply_task_send` | `taskId`, 任意の `message`, `backend`, `model`, `effort`, `account` | `backend` / `model` / `effort` / `account` を書くと子の設定を替える（下の「子の設定を替える」。設定だけなら `message` を省ける）。`message` は同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。起動準備中は受信可能になり次第、現在のターンに送る。待機分は順序を保ってまとめる。途中送信を受けられない場合は次のターンに送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
@@ -23,8 +23,8 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 **子の設定を替える**（`ply_task_send` の `backend`・`model`・`effort`・`account`。[ADR 0134](adr/0134-parent-changes-child-settings.md)・[ADR 0205](adr/0205-ai-chooses-claude-account.md)。`core/server.mjs` の `taskSettingsPlan` / `applyTaskSettings`）:
 - 子の会話の「次のターンから適用」（`nextSettings`。人の入力欄と同じ予約）に入れる。子が走っていても今のターンは止めない。走っていなければ次に走るとき（設定だけでは走らせない。例外: 使用枠の上限で止まっている子のエージェントを替えると、人の切り替えと同じく上限の待ちが解け、送信待ちが流れる）。一緒に積んだ `message` は、予約がある間は走っているターンへ途中送信しない（`canSteerNotice`）ので、替えた後のターンで読まれる。同じエージェントのモデルだけは、`sessions.setModel` と同じく走っているターンにも即時に伝える（できるエージェントだけ。返り値の `settings.modelLive`）。返り値はタスクの状態と `settings`（`{ backend, model, effort, mode, appliesTo: 'nextTurn', modelLive? }`）
 - エージェントを替えると、子の次のターンで引き継ぎ（`docs/backend-handoff.md`）を通って会話の履歴を渡す。作業場所はそのまま。子の承認モードは `resolveDelegatedMode` で、親の強さと子の今の強さ（人が下げていればそれ）の弱い方を上限にして決め、収まらなければ親の会話で 1 回承認を求め、断ったら何も変えない。元のエージェントへ戻したときは子の会話の今のモードのまま
-- アカウントは `account` を書いたときだけ替える（下の「Claude のアカウントを選ぶ」。子が Claude のとき、または同じ送信で `backend: "claude"` に替えるときだけ）。予約（`nextSettings.account`）に入れるので、人が入力欄でアカウントを選んだときと同じく次のターンから。書かなければ子の会話のアカウントのまま（別のエージェントへ替えるときは、下の「段の候補とアカウント」の固定の規則で段のアカウントから選ぶ）。モデルを書かずにアカウントだけ替えたとき、今のモデルが新しいアカウントの一覧に無ければ、一覧がアカウントで変わる Codex などと同じく、予約が断られて何も変わらない（`agent:tasks.settingsFailed`）。接続先は `ply_delegate` と同じ規則で、`account` を書いたときは公式（互換の接続先から外れるなら、モデルは公式の一覧で確かめ直す）
-- モデルが子の作業場所の一覧に無い（`model_unknown`。選べるものを添える。Claude は子が走るアカウント〈`account` を書いたときはそのアカウント〉の一覧で見る。[ADR 0329](adr/0329-claude-per-account-model-catalog.md)）・そのモデルで選べない思考の強さ（`effort_unknown`）・使用量の取り置きで使用枠が満杯（`quota_full`）・自分が委譲していないタスク・止めている途中・子のターンが始まるところ（`agent:tasks.childStarting`）・`message` が空白だけか長すぎる・承認カードを待つ間に子の設定やタスクの状態が変わった（`agent:tasks.settingsMoved`。承認の後に計画を作り直して比べる）・`account` が使えない（下の「Claude のアカウントを選ぶ」の断る理由。Claude 以外の子は `agent:tasks.accountClaudeOnly`）は断り、何も変えない。断る理由はすべて書く前に確かめる。書くのは子の予約 → タスクの記録 → 指示の順で、後の失敗（保存・受け付け）では書いた分を前に戻す
+- アカウントは `account` を書いたときだけ替える（下の「Claude のアカウントを選ぶ」。子が Claude のとき、または同じ送信で `backend: "claude"` に替えるときだけ）。予約（`nextSettings.account`）に入れるので、人が入力欄でアカウントを選んだときと同じく次のターンから。書かなければ子の会話のアカウントのまま（別のエージェントへ替えるときは、下の「段の候補とアカウント」の固定の規則で段のアカウントから選ぶ）。モデルを書かずにアカウントだけ替えたときも、今のモデル名を一覧で拒否せず次のターンへ予約する。接続先は `ply_delegate` と同じ規則で、`account` を書いたときは公式（互換の接続先から外れるなら、モデルを省いたときは公式の既定に戻す）
+- モデル名の形が不正・既知のモデルで選べない思考の強さ（未掲載モデルの明示した段は CLI に渡す）・使用量の取り置きで使用枠が満杯（`quota_full`）・自分が委譲していないタスク・止めている途中・子のターンが始まるところ（`agent:tasks.childStarting`）・`message` が空白だけか長すぎる・承認カードを待つ間に子の設定やタスクの状態が変わった（`agent:tasks.settingsMoved`。承認の後に計画を作り直して比べる）・`account` が使えない（下の「Claude のアカウントを選ぶ」の断る理由。Claude 以外の子は `agent:tasks.accountClaudeOnly`）は断り、何も変えない。断る理由はすべて書く前に確かめる。書くのは子の予約 → タスクの記録 → 指示の順で、後の失敗（保存・受け付け）では書いた分を前に戻す
 - 記録: 子の会話の変更の記録（`backend`・`model`・`effort`・`account`。by: `agent`・via・bySession、理由「依頼元の AI が変更」。`account` は内部の id ではなく伏せた見出しで残す）。タスクの `backend`・`model`・`effort`（替えたなら `mode`）を新しい値にし、`routing.target` を新しい委譲先（Claude なら `account`・`accountLabel` も）に、`routing.changed`（`{ by: 'parent', at, from, count }`。`from` は最初の委譲先で、Claude なら `account`・`accountLabel` も）を足す（今と同じ値なら書かず、最初の委譲先へ戻したら印を外す）。`ply_task_status` の値は子の次のターンからのもの。子のターンが始まるときは、タスクの記録を子が実際に走る値に合わせる（`agentTasks.sync`。人が子の予約を取り消した・替えたとき）。画面へは `agentTaskChanged { taskId }` で知らせ、委譲カードは新しい委譲先と「依頼元が変更（元: …）」を出す
 
 `ply_usage` は重い委譲・並列委譲の前に、使用率の高いバックエンドを避けるために呼ぶ。読むだけなので、読み取り・計画モードの会話からも呼べる（`ply_delegate` / `ply_task_send` だけが `DELEGATING_TOOLS` として制限される）。
@@ -108,7 +108,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    - 候補に効く枠: claude は 5 時間・週次と、そのモデルの系統の週次（`seven_day_opus` など、`model_scoped` の表示名・枠名。Mythos のモデルは Fable と使用枠を共有するので `'fable'` の枠を使う。[ADR 0329](adr/0329-claude-per-account-model-catalog.md)。`seven_day_oauth_apps` も念のため全モデルに効かせる）。codex は主の枠と、名前がそのモデルに当たる追加の枠。antigravity はモデル名の語をいちばん多く含むグループ（`gemini-*` → Gemini のグループ、`claude-*` / `gpt-*` → Claude and GPT のグループ）。ただし専用のグループ（`Gemini 4 Argon` など）は、系統・汎用の語を除いた名前の語がすべてモデルの id に含まれるときだけ当たる。agy 1.5.2 の形（`All Models` の 1 グループに、モデルと段ごとの枠）では、段を外したモデルの系統ごとの行がそれぞれ 1 グループになり、モデルの系統の行が当たる（`gemini-3.8-flash-high` → `Gemini 3.8 Flash`）。グループが見つからなければ `usage_unknown`。
 6. **アカウント。** 候補ごとにアカウントが決まっているので、振り分けはアカウントの間で釣り合わせない（2026-10-24、[ADR 0264](adr/0264-delegation-account-scope.md)。前の版の「余裕のあるアカウントを使用量で選ぶ」・同じ人の重複のまとめ・`lower_priority` は無くした）。ログイン中のアカウントが登録したアカウントと同じ人（**組織（`.claude.json` の `oauthAccount.organizationUuid`）とメールアドレスの両方が分かって一致する**。`sameIdentity`）なら、画面は「ログイン中のアカウント（<表示名>）」と書くだけで、候補は別々のまま。
 7. **レベルを選ぶ。** 表のレベル（`baseTier`）から上へ、各レベルの候補を左から見て余裕ありを先に選ぶ。無ければ表のレベルから上へ 1 レベルずつ余裕が少ない候補を選ぶ。同じレベルでは使用量が分かるもの（`usage_unknown` / `usage_stale` 以外）→ 5 時間以外の効く枠の最大使用率が低い順 → 週次のペースが低い順 → 5 時間の使用率が低い順 → レベルの候補の順。表のレベルから上がすべて使えないときは 1 レベルずつ下り、各レベルで余裕あり、次に余裕が少ない候補を選ぶ。見たすべてのレベルで全候補が使えないときだけエラー。エラー文は後回しの線と Claude のアカウントごとの理由を含む。行は言語によらない `- <候補の id> [アカウントの表示名] (レベル): 理由 (中身) 枠 使用率% pace ペース` の形（アカウントの無い候補は角括弧なし。ログイン中のアカウントの候補は `[login]`）にし、画面はこの行を読む。
-8. 選んだ backend / model / account で子の会話を作る（`prepare`）。**自動で選んだ子は親の会話の接続先を継がず公式で走る**（候補を公式の使用枠で選んでいるため）。アカウントは選んだ候補のもの（`''` はログイン中）。選んだ候補のモデルは、一覧にあるかを見ない（一覧は正本ではなく、使えるかは CLI/API が決める。ADR 0311）。形（`isModelId`）と、Devin の `runnableModel` だけ確かめ、外れたら次の候補から選び直す。それでも子の会話を作る時点で使えなければ、既定に落とさずエラー。子の思考の強さも、このとき段・候補から決める（次の節）。
+8. 選んだ backend / model / account で子の会話を作る（`prepare`）。**自動で選んだ子は親の会話の接続先を継がず公式で走る**（候補を公式の使用枠で選んでいるため）。アカウントは選んだ候補のもの（`''` はログイン中）。選んだ候補のモデルは、一覧にあるかを見ない（一覧は正本ではなく、使えるかは CLI/API が決める。ADR 0311）。形（`isModelId`）だけ確かめ、外れたら次の候補から選び直す。それでも子の会話を作る時点で使えなければ、既定に落とさずエラー。子の思考の強さも、このとき段・候補から決める（次の節）。
 
 **子の思考の強さ**（[ADR 0164](adr/0164-delegation-child-effort.md)。承認済み 2026-10-08）。自動の振り分け・人が選び直した（やり直し）子は、`prefs.json` の `delegationRouting.efforts` で強さを決める。決めるのは `prepare`（`core/server.mjs`。`decideEffort`）で、`ply_delegate` の `effort` は自動のときは書けない（`backend` を書いた固定の委譲だけ。持たない値は今までどおり断る）。
 
@@ -180,7 +180,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 ## モデルを断られたとき（自動の振り分け。ADR 0311）
 
-- 自動で選ぶ（`backend` を省いた）委譲は、モデルが一覧に無いことを理由に候補を飛ばさない。一覧は正本ではなく、候補を選ぶのと送るのが同時で、間に人がいないので、飛ばし間違えると黙って弱いモデルで走る。使えるかは CLI/API が決める。固定の委譲（`backend` と `model` を書く）は従来どおり一覧で確かめ、無ければ `model_unknown` で断る。
+- 自動で選ぶ（`backend` を省いた）委譲は、モデルが一覧に無いことを理由に候補を飛ばさない。一覧は正本ではなく、候補を選ぶのと送るのが同時で、間に人がいないので、飛ばし間違えると黙って弱いモデルで走る。使えるかは CLI/API が決める。固定の委譲（`backend` と `model` を書く）と `ply_task_send` のモデル変更も、一覧で拒否せず指定した文字列を渡す（ADR 0343）。
 - 子の最初のターンで CLI/API がモデルを断ったら（まだ仕事が始まっていない子だけ）、ADR 0302 の任せ直しの経路で次の候補で子を作り直す。断られた候補は `routing.skipped` に `model_rejected` で残し、`routing.attempts` の `reason` にも付く。候補が尽きたら理由（`routing.exhausted`）付きで失敗する。モデルを断られたときの任せ直しは 6 回まで（`MODEL_REROUTE_MAX`。ほかの理由の任せ直しは 2 回）。上限に達したら、最後の子の失敗（CLI の断りの文面）がそのまま結果になる。
 - 断られた枠（エージェント・モデル・アカウント）は 30 分だけ選ばない（`core/model-rejects.mjs`。このサーバーの間だけ。何度断られても延ばさない・同じ枠のターンが通れば消す・振り分けの設定を保存すれば忘れる）。外している間は `skipped` に `model_rejected` と期限（`until`）が付く。
 - 断りを見分けて `turnResult` の `kind: 'model'` で渡すのは Claude（`api_error_status: 404` の結果と断りの文面）と Codex（`model_not_found` など）。Antigravity・OpenCode・Grok・Devin は見分けず、理由つきの普通の失敗になる。
@@ -527,3 +527,20 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 子の設定を替えるのは `tests/unit/server-delegation-settings.mjs`（fake・身代わりの Codex と agy で、走っている子のモデル・思考の強さ、message なしと一緒、無いモデル・選べない思考の強さ、走っていない子のエージェントの切り替えと引き継ぎ、親より緩くなる切り替えの承認、他人のタスク、変更の記録）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
 単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。
+
+## モデル一覧の取得元と事前検査
+
+モデルの実行可否は CLI/API が決める。一覧は選択肢の表示と段の説明のために使う（ADR 0343）。
+
+| backend | 一覧の取得と取り直し |
+|---|---|
+| Claude | アカウント・作業場所ごとの SDK probe を新しく起こす。通常は 30 分、明示の refresh は TTL を無視するが成功直後・失敗後の 60 秒は待つ。CLI の更新でも控えを捨てる |
+| Codex | app-server の model/list を全ページ読む。通常は 5 分の控え。refresh は取得専用の app-server を新しく起こし、取得後に閉じる。共有プロセスと走っている会話には触れない。refresh が同時に来たら取得中の Promise を共有する。失敗時は前の一覧を返し、TTL 内でも次の呼び出しで取得専用のプロセスから再試行する |
+| Antigravity | agy models。ログイン済みと確認した間、期限切れは裏で取り直し、refresh は取得を待つ。失敗時は前の一覧を保つ |
+| OpenCode | サーバーの /config/providers。共有サーバーの回答は 60 秒覚え、専用サーバーでは毎回聞く。認証変更時はサーバーを閉じる。refresh によるプロセス再起動は行わない |
+| Grok | 新しい ACP 接続の initialize の一覧。通常は 5 分、refresh で新しい接続から取り直す |
+| Devin | 新しい devin models list の families[].variants[].model_uid。通常は 5 分、refresh で取り直し、失敗は覚えず次回に再試行する。GPT などの系列も同じ形で取り込む |
+
+固定の委譲と ply_task_send は未掲載のモデル名と明示した思考の強さを通す。既知のモデルで非対応の段、互換の接続先の機能、モデル名の形、backend の有効性、権限・タスクの所有者・状態、アカウントの登録・トークン・満杯と分かった使用枠は検査する。これらは未掲載による拒否ではなく、指定どおりの強さ・実行先・操作権限を守る検査である。
+
+host への新規委譲は受け側でも同じ規則。リモートの ply_task_send の設定変更は settingsUnsupported のまま（ホスト間に設定の予約・承認・失敗時の復元を届ける契約が無いため）。段の候補の保存とアカウント選択は一覧で候補を消さず、未掲載の注意だけを出す。Devin の過去の ACP の一覧による任せ直し候補の除外も行わない。通常の画面で選ぶときの検査と、モデルを省いた場合の既定の解決は維持する。

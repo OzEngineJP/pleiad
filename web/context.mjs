@@ -99,7 +99,7 @@ export function peekDocument(entry, { short = p => p } = {}) {
   return box;
 }
 
-export function setupContext({ button: openButton, cmd, show, showMenu, recentPlaces = () => [], backends = () => [], openDelegation = null, getPrefs = () => ({}) }) {
+export function setupContext({ button: openButton, cmd, show, showMenu, recentPlaces = () => [], backends = () => [], openDelegation = null, getPrefs = () => ({}), openClaudeAccount = null }) {
   const panel = document.getElementById('contextPanel');
   panel.classList.add('context');
   // 外の AI から Pleiad を使う設定（web/cli-setup.mjs）の置き場。作り直しで消えないよう取っておき、外部 MCP のカードの次へ置く
@@ -889,7 +889,7 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
       saveKind: (mutate, options) => work(() => saveKind('mcp', mutate, options)),
       reload: () => loadScan(), refreshSettings: async () => { view = await cmd('contextSettings', {}); renderAll(); },
       toast: ({ agents = [] } = {}) => saved(savedText(agents.some(a => freshAgents().includes(a)))), status: text => { status.textContent = text; }, rerender: () => renderCard('mcp'),
-      opened, loading, work };
+      opened, loading, work, openAccount: openClaudeAccount };
   }
   const mcp = createMcpSection();
   const mcpMatrix = createMcpMatrix({ section: mcp, onCount: n => { mcpCount = n; updateCounts(); } });
@@ -978,7 +978,8 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
   /** claude.ai のコネクターは Claude を裏で起こして読むので、読み終わるまで少し間をおいて取り直す（上限あり） */
   function pollConnectors() {
     clearTimeout(matrixTimer);
-    if (matrix?.connectors !== 'reading' || matrixPolls >= 10 || panel.hidden || !panel.isConnected) return;
+    const reading = matrix?.connectors === 'reading' || (matrix?.connectorAccounts ?? []).some(a => a.reading);
+    if (!reading || matrixPolls >= 10 || panel.hidden || !panel.isConnected) return;
     matrixPolls++;
     matrixTimer = setTimeout(() => reloadMatrix(), 2500);
   }
@@ -1073,6 +1074,13 @@ export function setupContext({ button: openButton, cmd, show, showMenu, recentPl
     if (keys.includes('plyInstructions')) plyInstructions.load();
     // Hooks の表と、Hooks で変わる指示・Skills の表の Devin の取り込むマス（ADR 0338）
     if (keys.includes('hooks')) { hooks.reload(); reloadDocMatrix('instruction'); reloadDocMatrix('skill'); }
+  });
+  // 登録した Claude アカウントが変わったら（claude.ai のログイン・コネクターのスイッチ）、外部 MCP のアカウントの行を取り直す
+  // （web/client.mjs が claudeAccountsChanged を ply:claude-accounts-changed として渡す）
+  window.addEventListener('ply:claude-accounts-changed', () => {
+    if (!document.body.classList.contains('settings') || panel.hidden || !view) return;
+    matrixPolls = 0;
+    reloadMatrix();
   });
   // ログインが済んだら一覧の状態を取り直す（web/client.mjs が mcpAuth を ply:mcp-auth として渡す）
   window.addEventListener('ply:mcp-auth', e => {

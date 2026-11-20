@@ -283,18 +283,14 @@ export default async function (t) {
       async call(method, params, options) { runnableCalls.push({ method, params }); return super.call(method, params, options); }
     }
     const runnable = createDevinBackend({ Acp: RunnableClient, catalogue: wideCatalogue, command, dataDir: path.join(root, 'runnable') });
-    t.ok('ACP の選択肢をまだ見ていなければ、カタログの版を振り分けから外さない', runnable.runnableModel('catalogue-only') === true);
+    t.ok('一覧による振り分けの事前除外は公開しない', runnable.runnableModel === undefined);
     const unlisted = await runnable.runTurn({ cwd, prompt: 'not runnable', model: 'catalogue-only', mode: 'ask', emit: () => {} }).catch(e => e);
-    t.ok('ACP に無い版は送る前に設定の誤りで止まる', unlisted?.code === 'DEVIN_MODEL_CONFIG_UNAVAILABLE' && !runnableCalls.some(c => c.method === 'session/prompt'), String(unlisted?.code ?? unlisted));
-    t.ok('一度止まった後は、ACP に無い版を振り分けが選ばない（Lightning・系列代表は選べる）',
-      runnable.runnableModel('catalogue-only') === false && runnable.runnableModel('swe-2-max-lightning') === true && runnable.runnableModel('swe-2-high') === true);
+    t.ok('ACP に無い版も CLI にそのまま渡し、その拒否で止まる', unlisted?.code === -32000 && runnableCalls.some(c => c.method === 'session/set_config_option' && c.params.value === 'catalogue-only') && !runnableCalls.some(c => c.method === 'session/prompt'), String(unlisted?.code ?? unlisted));
     const lightningMark = runnableCalls.length;
     const lightning = await runnable.runTurn({ cwd, prompt: 'lightning', model: 'swe-2-max-lightning', mode: 'ask', emit: () => {} });
     const lightningSet = runnableCalls.slice(lightningMark).filter(c => c.method === 'session/set_config_option').map(c => [c.params.configId, c.params.value]);
     t.ok('Lightning は swe-2-high・思考 max・速さ fast で走る', lightning.outcome !== 'error' && JSON.stringify(lightningSet.slice(1)) === JSON.stringify([['model', 'swe-2-high'], ['thought_level', 'max'], ['speed', 'fast']]),
       JSON.stringify({ outcome: lightning.outcome, lightningSet }));
-    t.ok('読み替えられる系・対応軸の無い -priority を振り分けで見分ける',
-      runnable.runnableModel('deepseek-v4-1-flash-1017-max') === true && runnable.runnableModel('gpt-6-astra-low-priority') === false);
 
     let alwaysAnswer, canAlways;
     class AlwaysClient extends DevinAcp {

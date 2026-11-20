@@ -6,7 +6,7 @@ import { decideEffort, normalizeSettings } from '../../core/delegation-routing.m
 import { effortLine, routingDetail, pinnedDetail } from '../../web/delegation-routing-view.mjs';
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
 import { el } from '../../web/dom.mjs';
-import { N } from '../lib/dom-stub.mjs';
+import { N, stubPickerGeometry } from '../lib/dom-stub.mjs';
 
 export const name = 'delegation-effort-view';
 export const title = '委譲の思考の強さの画面: 選択肢・由来の文・保存する差分・選べない候補・内訳の一言。決め方は core と同じ答え';
@@ -107,7 +107,7 @@ export default async function (t) {
   document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
   document.addEventListener = () => {}; document.removeEventListener = () => {};
   N.prototype.focus = function () { if (!this.disabled) document.activeElement = this; };
-  N.prototype.getBoundingClientRect = () => ({ left: 0, bottom: 0 });
+  const restoreGeometry = stubPickerGeometry();
   try {
     const ui = setupDelegationSettings({ cmd, page() {},
       showMenu: (_x, _y, items) => {   // 見出しの pill のメニューを root の中へ出す身代わり（context-menu は使わない）
@@ -120,22 +120,31 @@ export default async function (t) {
     await ui.refresh();
     const tierOf = () => root.querySelector('.rt-tier');
     const head = () => tierOf().querySelector('.rt-tier-head');
-    const effortOf = row => row.querySelector('.rt-cand-effort');
+    const chipOf = row => row.querySelector('.rt-picker-chip');
+    const toggle = chip => chip.dispatchEvent({ type: 'click' });
+    const pop = () => root.querySelector('.rt-picker');
+    const item = key => pop().querySelectorAll('.prow').find(b => b.dataset.key === key);
+    const wait = () => new Promise(r => setImmediate(r));
     const effortBtn = () => head().querySelector('.ef-wrap')?.querySelector('.ef-btn');
     t.ok('レベルは 1 つずつ出し、見出しに「レベルの既定」の選択（値が入っている）', root.querySelectorAll('.rt-tier').length === 1
       && head().textContent.includes('レベルの既定') && head().textContent.includes('low') && effortBtn());
     const rows1 = tierOf().querySelectorAll('.rt-cand-row');
-    t.ok('強さを持たないモデルは選択を出さず「調整なし」（警告は出さない）', effortOf(rows1[1]).textContent.includes('調整なし')
-      && !effortOf(rows1[1]).querySelector('button') && !root.textContent.includes('⚠'));
+    toggle(chipOf(rows1[1]));
+    await wait();
+    t.ok('強さを持たないモデルは共通の面に「このモデルでは選べません」', pop().textContent.includes('このモデルでは選べません')
+      && !pop().querySelector('.eslider') && !root.textContent.includes('⚠'));
+    toggle(chipOf(rows1[1]));
     // 見出しの pill でレベル 2 へ
-    head().querySelector('.ef-btn').onclick();
+    head().querySelectorAll('.ef-btn')[0].onclick();
     root.querySelectorAll('.li').find(b => b.querySelector('.lbl').textContent === 'レベル 2').onclick();
     const rows = tierOf().querySelectorAll('.rt-cand-row');
-    t.ok('レベル 2 の候補の行の右に強さの欄。選べる候補は「思考 medium レベルの既定」', rows.length === 3 && effortOf(rows[2]).textContent === '思考mediumレベルの既定');
-    t.ok('強さがモデル名に入る候補は選択を出さず「high モデル名で決まる」', effortOf(rows[0]).textContent.includes('high') && effortOf(rows[0]).textContent.includes('モデル名で決まる')
-      && !effortOf(rows[0]).querySelector('button'));
-    t.ok('使えないエージェントの候補も、持ち方が分からないので語彙全部から選べる', effortOf(rows[1]).querySelector('button'));
-    t.ok('会話の既定が空のエージェントの候補は「レベルの既定」の値で出る（medium）', effortOf(rows[1]).textContent.includes('medium'));
+    t.ok('チップは解決した強さを表示する', rows.length === 3 && chipOf(rows[2]).textContent.includes('medium')
+      && chipOf(rows[0]).textContent.includes('high') && chipOf(rows[1]).textContent.includes('medium'));
+    toggle(chipOf(rows[0]));
+    await wait();
+    t.ok('Antigravity の面はエフォートを選べない', pop().textContent.includes('このモデルでは選べません'));
+    toggle(chipOf(rows[0]));
+    t.ok('使えない行のチップも選べる', rows[1].classList.contains('off') && !chipOf(rows[1]).disabled);
 
     // レベルの既定の選択を開く: 会話の既定に従う・語彙全部・推奨
     const tierBtn = effortBtn();
@@ -148,32 +157,28 @@ export default async function (t) {
     await new Promise(r => setImmediate(r));
     t.ok('レベルの既定を選ぶと、既定との差だけを送る（レベルの行ごと）', JSON.stringify(sent.at(-1)) === '{"efforts":{"t2":{"*":"high"}}}', JSON.stringify(sent.at(-1)));
     t.ok('レベルの既定を変えると青い字（changed）になり、候補の行も新しい値になる', effortBtn().classList.contains('changed')
-      && effortOf(tierOf().querySelectorAll('.rt-cand-row')[2]).textContent.includes('high'));
+      && chipOf(tierOf().querySelectorAll('.rt-cand-row')[2]).textContent.includes('high'));
 
-    // 候補の選択: 持つ強さだけ
-    const sonnetBtn = effortOf(tierOf().querySelectorAll('.rt-cand-row')[2]).querySelector('button');
-    sonnetBtn.onclick();
-    const sonnetOptions = options();
-    t.ok('候補の選択: レベルの既定に従う・会話の既定に従う・そのモデルが持つ強さだけ（Sonnet に xhigh は無い）', sonnetOptions.join() === 'レベルの既定に従う,会話の既定に従う,low,medium,high,max', sonnetOptions.join());
-    const hints = root.querySelectorAll('.li').map(b => b.querySelector('.hint')?.textContent ?? '');
-    t.ok('「会話の既定に従う（今は high）」を出す', hints[1].includes('high'), hints.join('|'));
-    root.querySelectorAll('.li').find(b => b.querySelector('.lbl').textContent === 'low').onclick();
-    await new Promise(r => setImmediate(r));
-    t.ok('候補の上書きはレベルの行に候補の id で入れて送る', JSON.stringify(sent.at(-1)) === '{"efforts":{"t2":{"*":"high","claude:sonnet":"low"}}}', JSON.stringify(sent.at(-1)));
-    const row = tierOf().querySelectorAll('.rt-cand-row')[2];
-    t.ok('上書きした候補は値だけになり（レベルの既定の語を付けない）、レベルの既定と違うので青い字', effortOf(row).textContent.includes('low') && !effortOf(row).textContent.includes('レベルの既定')
-      && effortOf(row).querySelector('.ef-btn').classList.contains('changed'));
-    // 会話の既定に従う
-    effortOf(row).querySelector('button').onclick();
-    root.querySelectorAll('.li').find(b => b.querySelector('.lbl').textContent === '会話の既定に従う').onclick();
-    await new Promise(r => setImmediate(r));
-    t.ok('会話の既定に従う（空）は上書きとして送る', JSON.stringify(sent.at(-1)) === '{"efforts":{"t2":{"*":"high","claude:sonnet":""}}}', JSON.stringify(sent.at(-1)));
-    // レベルの既定に従う（上書きを外す）
-    const row2 = tierOf().querySelectorAll('.rt-cand-row')[2];
-    effortOf(row2).querySelector('button').onclick();
-    root.querySelectorAll('.li').find(b => b.querySelector('.lbl').textContent === 'レベルの既定に従う').onclick();
-    await new Promise(r => setImmediate(r));
-    t.ok('レベルの既定に従うは上書きを外す', JSON.stringify(sent.at(-1)) === '{"efforts":{"t2":{"*":"high"}}}', JSON.stringify(sent.at(-1)));
+    const sonnetBtn = chipOf(tierOf().querySelectorAll('.rt-cand-row')[2]);
+    toggle(sonnetBtn);
+    await wait();
+    const slider = () => pop().querySelector('.eslider');
+    const press = key => slider().dispatchEvent({ type: 'keydown', key, preventDefault() {} });
+    t.ok('候補の面にはモデルが持つ段とレベルの既定の点', slider().children.length === 4
+      && slider().children[2].classList.contains('def') && slider().getAttribute('aria-valuenow') === '2');
+    press('Home');
+    await wait();
+    t.ok('弱い段を選ぶと候補 ID に上書きを保存', stored.efforts.t2['claude:sonnet'] === 'low'
+      && sonnetBtn.textContent.includes('low'));
+    item('effort:conversation').onclick();
+    await wait();
+    t.ok('会話の既定は空の上書きを保存して選択を表示', stored.efforts.t2['claude:sonnet'] === ''
+      && item('effort:conversation').getAttribute('aria-selected') === 'true');
+    press('End');
+    press('ArrowLeft');
+    await wait();
+    t.ok('レベルの既定の点を選ぶと候補の上書きを外す', !Object.hasOwn(stored.efforts.t2, 'claude:sonnet'));
+    toggle(sonnetBtn);
     // 推奨の値へ戻すと、全部既定なので null
     effortBtn().onclick();
     root.querySelectorAll('.li').find(b => b.querySelector('.lbl').textContent === 'medium').onclick();
@@ -185,7 +190,6 @@ export default async function (t) {
     document.addEventListener = saved.addEventListener; document.removeEventListener = saved.removeEventListener;
     document.activeElement = saved.activeElement;
     N.prototype.focus = saved.focus;
-    if (saved.rect) N.prototype.getBoundingClientRect = saved.rect;
-    else delete N.prototype.getBoundingClientRect;
+    restoreGeometry();
   }
 }

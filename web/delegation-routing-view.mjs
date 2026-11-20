@@ -413,6 +413,11 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
     windows: routing.targetWindows ?? [], effort: routing.target.effort ?? null }, { names, logo }));
   root.append(list);
   // やり直したタスク（client.mjs の paintRetried が中身を入れる）
+  appendRetry(root, onRetry);
+  return root;
+}
+
+function appendRetry(root, onRetry) {
   root.append(el('div', 'rt-retried'));
   if (onRetry) {
     const actions = el('div', 'rt-actions');
@@ -423,15 +428,14 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
     actions.append(open);
     root.append(actions);
   }
-  return root;
 }
 
 /**
  * 自動でない委譲を開いたときの内訳。種類・委譲先（依頼元が指定）・承認モード・作業場所の格子だけ。
- * 難しさを決めたモデル・候補・やり直しは自動のときだけの部品なので出さない。mode は表示名、cwd は子の作業場所（分からなければ出さない）、
+ * 難しさを決めたモデル・候補は出さない。やり直しは自動と同じ操作。mode は表示名、cwd は子の作業場所（分からなければ出さない）、
  * compaction は子の自動圧縮の閾値と内訳（compactionLine。無ければ出さない）
  */
-export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '', compaction = null } = {}) {
+export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '', compaction = null, onRetry = null } = {}) {
   const root = el('div', 'rt-detail');
   root.setAttribute('role', 'group');
   root.setAttribute('aria-label', t('routing.detail.label'));
@@ -446,6 +450,7 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
   if (threshold) facts.append(fact(t('routing.detail.compaction'), threshold));
   if (cwd) facts.append(fact(t('routing.detail.cwd'), cwd));
   root.append(facts);
+  appendRetry(root, onRetry);
   return root;
 }
 

@@ -25,10 +25,11 @@ export const DATA_WRITES = [
   { file: 'core/atomic-file.mjs', sites: 2, targets: [
     { name: '(呼び出し側の書き込み先)', limit: '呼び出し側の許可に従う（writeAtomic は共通の土台）', reason: '一時ファイルに書いてから置き換える共通の部品。自分では書き先を決めない' },
   ] },
-  { file: 'core/schema-migration.mjs', sites: 5, targets: [
+  { file: 'core/schema-migration.mjs', sites: 6, targets: [
     { name: 'data-schema.json', limit: '固定（{ schema: N }）', reason: '形式番号。移行の最後に 1 回だけ書く' },
     { name: 'backup-schema1-<日時>/（移行前の JSON と形式番号の写し）', limit: '移行 1 回につき JSON 5 つまで。移行前の大きさのまま増えない', reason: '移行前のデータの写し（docs/desktop-releases.md「適用とデータ保護」）。書き換えない。自動では消さない' },
     { name: 'backup-schema2-<日時>/（pleiad.db・data-schema.json・memory/log.jsonl の写し）', limit: '移行の試行ごとに最大3ファイル。移行開始時の大きさで固定し、その後は書き換えない', reason: '形式2→3の照合・復旧用の写し。追加した2箇所は形式番号のコピーと旧記憶履歴の保存。DBはVACUUM INTOで写し、以後の履歴更新はmemory_stateの行で行う（docs/migrations/bot-delete/migration-plan.md）' },
+    { name: 'backup-schema3-<日時>/（pleiad.db・data-schema.json の写し）', limit: '移行の試行ごとに 2 ファイル。移行開始時の大きさで固定し、その後は書き換えない', reason: '形式3→4（会話の ToDo の表を足す。ADR 0342）の復旧用の写し。DB は VACUUM INTO で写す。自動では消さない' },
   ] },
   { file: 'core/review-mode.mjs', sites: 1, targets: [
     { name: 'review-data.json', limit: '固定（{ review, createdAt }）', reason: '審査モード（ADR 0172）の置き場の印。空の置き場に起動のとき 1 回だけ書く' },
@@ -160,6 +161,14 @@ export const DATA_WRITES = [
   { file: 'core/claude-accounts.mjs', sites: 3, targets: [
     { name: 'claude-accounts.json', limit: 'Claude のアカウント。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
+  ] },
+  { file: 'core/claude-connectors.mjs', sites: 1, targets: [
+    { name: 'claude-account-connectors.json', limit: '登録した Claude アカウントの数（有効化フラグだけ）', reason: 'アカウントごとの claude.ai コネクター有効化設定（ADR 0340 段 3）。秘密・トークン・メールを含まない' },
+    { name: 'claude-account-connectors-cache.json', limit: 'maxAccounts=50・各 maxConnectors=200（超えたら古い順に捨てる）', reason: 'アカウントごとの claude.ai コネクター一覧と要認可状態の覚え（設定 › 外部 MCP で起動を待たず表示）。認証・メール・組織 id は sha256 の短いハッシュだけで持ち、平文を残さない' },
+  ] },
+  { file: 'core/claude-connectors-auth.mjs', sites: 3, targets: [
+    { name: 'claude-connectors-verification/<hash>.json（保存中は同じ場所の .tmp）', limit: 'アカウントと CLI・SDK・本人の組ごとに固定サイズ', reason: '初回確認の成功だけ。一時ファイルから名前を付け替え、版とハッシュを保存する。資格情報や本人情報は保存しない' },
+    { name: '(置き場の外) 共有の設定フォルダ（~/.claude）の .claude.json', limit: 'CLI 自身が丸ごと書く設定のファイル。足すのは許可した項目（mcpServers・作業場所ごとの数項目）だけで、足りない分だけ。数 KB', reason: 'コネクターを使う会話の CLI に、ホームの設定の許可した項目を渡す（ADR 0340 段 2）。足す物が無ければ書かない。CLI と同じ印（<ファイル>.lock のフォルダ）を取り、印の中で読み直して足りない分だけ足し、一時ファイルに書いて名前を付け替える（途中の状態を CLI に読ませない。付け替えの直前に変わっていたらやり直し、書いた後に読み直して確かめる）。壊れている・オブジェクトでなければ書かない' },
   ] },
   { file: 'core/claude-sdk.mjs', sites: 1, targets: [
     { name: 'claude-sdk/consent.json', limit: '固定（{ acceptedAt, reason?, evidence? }）', reason: 'Claude Agent SDK の取得への同意の印（ADR 0208）。「取得する」を押したときと、前の版から Claude を使っていた人をみなしたときだけ書く' },

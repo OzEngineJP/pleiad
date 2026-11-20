@@ -27,6 +27,11 @@ export default async function(t) {
     await write(path.join(cwd,'.agents/skills/manual/SKILL.md'),'---\nname: manual\ndescription: manual only\ndisable-model-invocation: true\n---\nMANUAL_BODY');
     let runtime=await resolveRuntime(policy,{home});
     let helpers=contextTools(runtime);
+    t.ok('中継なしでは外部 MCP の案内を出さない', !helpers.externalMcp && !helpers.prompt.includes('m_'));
+    for (const locale of ['ja', 'en']) {
+      const guide = contextTools({...runtime, locale, servers: [{id:'external'}]});
+      t.ok(locale + ': 中継があると元の名前の見つけ方を案内する', guide.externalMcp.includes('ply_context') && guide.externalMcp.includes('m_') && guide.prompt.includes(guide.externalMcp));
+    }
     t.ok('AGENTS の直接探索と CLAUDE import は一度だけ',helpers.prompt.split('ROOT_SENTINEL').length===2);
     t.ok('初期プロンプトには Skill 本文・子階層の指示を混ぜない',!helpers.prompt.includes('SKILL_BODY_SENTINEL')&&!helpers.prompt.includes('SCOPED_SENTINEL'));
     const skill=runtime.skills.find(s=>s.name==='example');
@@ -90,6 +95,7 @@ export default async function(t) {
     const origin=`http://127.0.0.1:${server.address().port}`;
     connection=await bridge.open({runtime,prompt:'',origin,isActive:()=>true});
     const request=async(method,params={},headers=connection.headers)=>{const r=await fetch(connection.url,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});return {status:r.status,body:await r.json()};};
+    t.ok('initialize は外部 MCP の名前の見つけ方を返す', (await request('initialize')).body.result.instructions.includes('m_'));
     const tools=(await request('tools/list')).body.result.tools;
     const tool=tools.find(t=>t.description.includes('[fixture / echo]'));
     t.ok('MCP に一度接続し実際の tool を公開',tool&&await fs.readFile(launches,'utf8')==='launch\n');

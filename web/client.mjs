@@ -1,3 +1,4 @@
+import { dismissPopup } from './dismiss-popup.mjs';
 import { terminalView, updateTerminal, batchTerminalUpdates } from './terminal.mjs';
 import { setupDrawerSwipe, drawerBlockingOverlay } from './drawer-swipe.mjs';
 import { delegateResult, delegateTaskId, isPlyDelegateToolName } from './delegate-result.mjs';
@@ -21,6 +22,7 @@ import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, CHILD_MENU, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard, reportAiContent } from './message-actions.mjs';
 import { tailInfo, penGlyph } from './resend-band.mjs';
 import { paintAuthFailure, resentNote } from './auth-expired.mjs';
+import { paintConnectorsFailure } from './connectors-fail.mjs';
 import { authLinks } from './auth-links.mjs';
 import { mountFold, revealFold } from './fold.mjs';
 import { isSearchShortcut } from './session-find.mjs';
@@ -142,6 +144,8 @@ import { setupNotificationInbox } from './notification-inbox.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
 import { createConversationRail } from './conversation-rail.mjs';
 import { createConversationToc } from './conversation-toc.mjs';
+import { createSessionTodo } from './session-todo.mjs';
+import { openExternalLink } from './link-open.mjs';
 import { createThreadNav } from './thread-nav.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
@@ -3086,7 +3090,11 @@ function turnFailedRow(ev) {
   const node = sys(html.t("chat.sys.failed", { head: t("timeline.result.failed"), error: ev.error ?? t("chat.sys.unknownReason") }, ["head"]));
   node.classList.add("turn-failed");
   // ログインの期限切れ（401）だけは、何が切れたかの一文と直す入口に替える（web/auth-expired.mjs。ADR 0212）
-  if (ev.kind === 'auth' && ev.auth) authFailureRow(node, ev);
+  if (ev.kind === 'auth' && ev.auth?.mode === 'connectorsLogin') {
+    // 発言が渡らずに止まったら、直す入口は発言の下（送れませんでした）に出す。行は二重に出さない（発言の行が無いときだけここに出す）
+    if (ev.undelivered && messageRow(ev.messageId)) node.hidden = true;
+    else connectorsFailure(node, { sessionId: ev.sessionId, messageId: ev.messageId, ce: ev.connectorsError, layout: 'sys', pristine: ev.pristine === true, ev });
+  } else if (ev.kind === 'auth' && ev.auth) authFailureRow(node, ev);
   return node;
 }
 function onStopping(ev) {
@@ -3144,6 +3152,19 @@ function recheckFailure(status, item) {
 
 function markFailedMessage(row, item) {
   const status = row.querySelector('.outbox-status');
+  // コネクターで止まった発言（ADR 0340 段 3）。描いた行は送信待ちの読み直しのたびに描き直さない（ログインを待っている間の姿を保つ）
+  if (item.connectorsError) {
+    if (status.dataset.connectors === item.id && status.isConnected) return;
+    mainView.clearDeliveryTimer(row);
+    delete row.dataset.deliveryPending;
+    delete row.dataset.deliverySending;
+    status.classList.remove('outbox-status-mark');
+    status.classList.add('outbox-status-failed');
+    status.dataset.connectors = item.id;
+    connectorsFailure(status, { sessionId: state.current, messageId: item.id, ce: item.connectorsError, layout: 'outbox' });
+    return;
+  }
+  if (status.dataset.connectors) { delete status.dataset.connectors; status.classList.remove('outbox-fix', 'conn-fail'); }
   mainView.clearDeliveryTimer(row);
   delete row.dataset.deliveryPending;
   delete row.dataset.deliverySending;
@@ -3164,6 +3185,42 @@ function markFailedMessage(row, item) {
     };
     status.append(button);
   }
+}
+
+/**
+ * 登録した Claude アカウントの claude.ai のコネクターで止まった発言・ターンの、直す入口（web/connectors-fail.mjs。ADR 0340 段 3）。
+ * outbox: 発言は渡っていない（送信待ちの「送れませんでした」）。送り直しは送信待ちの再送（messageAction の retry）。
+ * そうでなければ（ターンの途中で切れた）、ログインの期限切れの行と同じ巻き戻しの送り直し（resendFailedTurn）
+ */
+// claude.ai のログイン（使用量の認可）を待っている失敗の行（アカウントの id → 済んだ・失敗・取り消しを渡す口）
+const connectorsLogins = new Map();
+function connectorsLoginEvent(ev) {
+  if (ev.kind !== 'usage-login' || !ev.accountId || !['done', 'error', 'cancelled'].includes(ev.phase)) return;
+  const waiting = connectorsLogins.get(ev.accountId);
+  connectorsLogins.delete(ev.accountId);
+  for (const done of waiting ?? []) done(ev.phase);
+}
+function connectorsFailure(node, { sessionId, messageId, ce, layout, pristine = true, ev = null }) {
+  const accountId = ce?.accountId ?? '';
+  const name = (accountId && claudeAccounts.list().find((a) => a.id === accountId)?.name) || ce?.accountName || '';
+  const outbox = layout === 'outbox' || ev?.undelivered === true;
+  const b = ev ? state.backends.find((x) => x.id === ev.backend) : null;
+  return paintConnectorsFailure(node, { ce, name, layout, on: {
+    login: () => new Promise((resolve) => {
+      const set = connectorsLogins.get(accountId) ?? new Set();
+      set.add(resolve);
+      connectorsLogins.set(accountId, set);
+      claudeAccounts.open({ usageLogin: accountId });
+    }),
+    openAccount: () => claudeAccounts.open({ focus: accountId }),
+    off: () => cmd('invoke', { op: 'accounts.setConnectors', args: { id: accountId, enabled: false } }),
+    resend: async ({ auto }) => {
+      if (outbox) { await cmd('messageAction', { sessionId, messageId, action: 'retry' }); return true; }
+      return resendFailedTurn({ sessionId, messageId, node, auto, pristine, auth: ev?.auth, agent: b?.label ?? '' });
+    },
+    cancel: outbox ? () => cmd('messageAction', { sessionId, messageId, action: 'cancel' }).catch((e) => composerError(e.message)) : null,
+    spinner: () => runMark(),
+  } });
 }
 
 /** 送れなかった発言が会話に残っている（発言のある会話には一覧を出さず、送れなかった行で知らせる） */
@@ -3189,6 +3246,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'botsChanged') homeDest.botsChanged();
   if (channelsUi.onEvent(ev, replay)) return;
   if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
+  if (ev.type === 'todosChanged') { sessionTodo.onEvent(ev); return; }
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -3269,7 +3327,7 @@ function onEvent(ev, replay = false) {
   // Pleiad に登録した外部 MCP のログインの進み具合。会話には出さず、設定 › コンテキストと会話の右パネル（web/context.mjs・web/session-context.mjs）へ渡す
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
-  if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
+  if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); connectorsLoginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') {
     // 端末の追加の承認待ちは、ホストの画面だけが OS の通知でも知らせる（端末の画面では許可できない）
@@ -3373,6 +3431,7 @@ function onEvent(ev, replay = false) {
       effortsLoader.invalidate();
       syncTopbar().catch(() => {});
       delegationSettings.event({ change: 'accounts' });
+      window.dispatchEvent(new CustomEvent('ply:claude-accounts-changed'));
       break;
     case 'agentAccountsChanged':
       agentAccounts.invalidate(); vocabRequests.invalidate(); effortsLoader.invalidate();
@@ -4554,7 +4613,7 @@ const agentAccounts = setupAgentAccounts({ cmd, labelOf,
 /** エージェントのアカウントの一覧（共通の形 { id, name, ready }）。取ってあるもの（同期） */
 function accountList(bid) {
   const kind = capsOf(bid).accounts;
-  if (kind === 'token') return claudeAccounts.list().map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken) }));
+  if (kind === 'token') return claudeAccounts.list().map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken), connectors: a.connectors ?? null }));
   if (kind === 'agent') return agentAccounts.list(bid).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
   return [];
 }
@@ -4603,11 +4662,25 @@ function accountOptions(quota) {
   const { backend, account } = composerSelection();
   return accountOptionsOf(backend, account, quota);
 }
+/**
+ * 登録した Claude アカウントの claude.ai のコネクター（ADR 0340 段 3）の、モデルの面の 2 行目の短い文。
+ * スイッチがオンのアカウントだけ（サーバーの enrichClaudeAccountsList が connectors を足す）。止まっていれば warn
+ */
+// i18n-dynamic: composer.account.connectors.why.
+function connectorsNote(c) {
+  if (!c?.enabled) return null;
+  if (c.status !== 'ok') {
+    const key = c.blockKind === 'env' && c.blockScope === 'settings' ? 'settings' : (c.blockKind ?? 'login');
+    return { text: t('composer.account.connectors.stopped', { why: t(`composer.account.connectors.why.${key}`) }), warn: true };
+  }
+  if (c.connectedCount == null) return null;
+  return { text: c.needsAuthCount ? t('composer.account.connectors.countAuth', { n: c.connectedCount, auth: c.needsAuthCount }) : t('composer.account.connectors.count', { n: c.connectedCount }) };
+}
 function accountOptionsOf(backend, value, quota) {
   const list = accountList(backend);
   return [
     { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount"), usage: weekUsage(quota, "") },
-    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? "" : t("chat.account.noToken"), usage: a.ready ? weekUsage(quota, a.id) : null })),
+    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? "" : t("chat.account.noToken"), usage: a.ready ? weekUsage(quota, a.id) : null, conn: a.ready ? connectorsNote(a.connectors) : null })),
     ...(value && !list.some((a) => a.id === value) ? [{ value, label: t("chat.account.deleted"), hint: t("chat.account.chooseAgain") }] : []),
   ];
 }
@@ -7265,7 +7338,7 @@ function delegateDetail(card, routing) {
   return isAutoRouting(routing)
     ? routingDetail(routing, { names: routingNames, logo: routingLogo, onRetry: (root, button) => toggleRetry(card, root, button),
       compaction: taskById(card.dataset.taskId)?.compaction ?? null })
-    : pinnedDetail(routing, pinnedFacts(card, routing));
+    : pinnedDetail(routing, { ...pinnedFacts(card, routing), onRetry: (root, button) => toggleRetry(card, root, button) });
 }
 const foldLabels = () => ({ open: t('dialog.work.showFull'), close: t('dialog.work.collapse') });
 /** 開いた内訳の先頭の「依頼」。4 行で畳み、はみ出すときだけシェブロン（自分の長い発言・バックグラウンドの詳細と同じ部品。web/fold.mjs） */
@@ -8220,6 +8293,7 @@ const workMore = $('workMore');
   // 「…」は主と同じく 700px 以下で、隠れたパネルの入口を持つ
   modalEntry = entry && { ...entry, paint() { entry.paint(); workMore.hidden = !entry.available(); } };
   workMore.onclick = () => {
+    if (contextMenu.isOpenFor(workMore)) return contextMenu.close(true);
     const id = modalPaneTarget(); if (!id) return;
     const r = workMore.getBoundingClientRect();
     showMenu(r.right, r.bottom + 4, [{
@@ -8316,7 +8390,7 @@ const voiceWraps = new WeakMap();
 voiceUi.mount({
   id: 'chat',
   canStart: () => !retiredHere(),
-  header: document.querySelector('body > main > header.top'), headerBefore: $('tocEntry'),
+  header: document.querySelector('body > main > header.top'), headerBefore: $('todoEntry'),
   composer: chatComposer.voiceSlot(),
   main: document.querySelector('body > main'), log: $('log'), overlay: $('logFrame'), replyScope: () => $('log'),
   tail: {
@@ -9030,7 +9104,8 @@ function paintHeaderEntries() {
 /** 「…」の右上の変更ありの点。700px 以下の「…」のメニューにあるプラグイン・git の状態を見る。 */
 function paintMoreEntry() {
   const button = $('sessionMore');
-  const changed = narrowView.matches && !!state.current && (!!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0);
+  // ToDo の未確認の変更（AI が変えた項目）も、狭い画面では ⋮ の点で知らせる（web/session-todo.mjs）
+  const changed = narrowView.matches && !!state.current && (!!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0 || sessionTodo.hasUnseen());
   const dot = button.querySelector('.entry-dot');
   if (changed && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
   else if (!changed) dot?.remove();
@@ -9342,6 +9417,8 @@ function syncTitleControls() {
   $("titleWand").disabled = !on || busy || s?.unsent || caps.suggestTitle === false;
   // この会話の操作（脇の行の「…」と同じメニュー）。一覧に載っている会話だけ
   $("sessionMore").hidden = !s;
+  // 会話の ToDo（ADR 0342）。一覧に載っている（送った）会話だけ。入口の出し入れは session-todo.mjs
+  sessionTodo.load(s && !s.unsent ? s.id : null);
   paintHeaderEntries();
 }
 function selectedMode(s, bid, modes, chosen = null) {
@@ -10678,6 +10755,8 @@ function connect() {
       // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
       notifySettings.refresh();
       notificationInbox.reconnected();
+      // 同じ会話を開いたままでも、切れたときに受け取れなかった ToDo の一覧を取り直す
+      sessionTodo.reconnected();
       presenceReporter.reset();
       presenceReporter.report(true);
       modalPresence.reset();
@@ -10853,16 +10932,28 @@ const shellComposer = chatComposer.useShell({
 // 最近の会話の場所は「探す場所を足す」の候補、「設定 › 委譲で変える →」は委譲のページへ
 const context = setupContext({ button: $('openContext'), cmd, showMenu,
   show: () => onboarding.page('context'), recentPlaces: cwdOptions, backends: () => state.backends, getPrefs: () => state.prefs,
-  openDelegation: () => { $('delegationTab').click(); $('delegationTab').focus(); } });
+  openDelegation: () => { $('delegationTab').click(); $('delegationTab').focus(); },
+  openClaudeAccount: o => claudeAccounts.open(o) });
 // 会話の右パネル「この会話のコンテキスト」。「…」のメニュー（700px 以下・タッチの画面）から開く
 const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   session: () => state.sessions.find(s => s.id === state.current) ?? null,
   info: () => (state.contextInfoId === state.current ? state.contextInfo : null),
   refreshInfo: (force) => refreshContextInfo({ force }),
   openSettings: () => openContextPage(), labelOf,
-  isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
+  isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview,
+  openAccount: o => claudeAccounts.open(o) });
 // 会話の目次と検索（右パネル。狭い画面は下からのシート）。見出しの虫眼鏡と、会話の画面にいるときの Ctrl+F（macOS は ⌘F）で開く
 const toc = createConversationToc({ thread, log, nav, preview: filePreview, narrow: navNarrow, button: $('tocEntry'), onOpen: loadAllOlder });
+// 会話の ToDo（承認済み 2026-11-19。web/session-todo.mjs。ADR 0342）。PC は頭の ToDo の入口、700px 以下は ⋮ のメニューの先頭から開く。
+// 成果物はファイルのリンクと同じ開き方（ファイル・フォルダーは Pleiad のページ、URL は既定のブラウザー）。右クリックはファイルのメニュー
+const sessionTodo = createSessionTodo({
+  host: document.querySelector('body > main'), header: document.querySelector('body > main > header.top'), entry: $('todoEntry'), narrow: navNarrow,
+  moreButton: $('sessionMore'), cmd, notify: (text) => notify(text), labelOf, logo: (backend) => backendLogo(backend, ''),
+  openTask: taskId => { sessionTodo.close(); openWork(`t:${taskId}`); },
+  openLink: (link) => (link.kind === 'url' ? openExternalLink(link.url) : filePreview.open({ path: link.path, line: null }, null)),
+  linkMenu: (x, y, link, missing) => filePreview.menu(x, y, { path: link.path, kind: link.kind === 'dir' ? 'directory' : 'file', sessionId: state.current, missing }),
+  onChange: () => paintMoreEntry(),
+});
 // 作業のダイアログの会話内検索（2 つ目。同じ部品・同じ右の欄。見る先は選んでいる子の会話で、シートも最前面のダイアログの中に出す）
 const workThread = () => $('workBody').querySelector(':scope > .thread.bg-thread');
 // 最新へのボタンと Alt+↑↓・End も主と同じ（作業のダイアログが最前面で開いている間、前面の筋に効く。一覧・右の欄・シートの中では奪わない）
@@ -10999,12 +11090,11 @@ $('contextMeter').onclick = () => {
 };
 $('meterCompact').onclick = requestCompaction;
 $('meterSettings').onclick = openAutoCompactionSettings;
-document.addEventListener('pointerdown', event => { if (!$('contextMeterPop').hidden && !event.target.closest('.context-meter-wrap')) closeMeterPop(); });
-document.addEventListener('focusin', event => { if (!$('contextMeterPop').hidden && !event.target.closest('.context-meter-wrap')) closeMeterPop(); });
+dismissPopup({ isOpen: () => !$('contextMeterPop').hidden, surfaces: () => [$('contextMeterPop')],
+  opener: () => $('contextMeter'), close: () => closeMeterPop(true) });
 document.addEventListener('keydown', event => {
   if ($('contextMeterPop').hidden) return;
-  if (event.key === 'Escape') { event.preventDefault(); closeMeterPop(true); }
-  else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
     const items = [...$('contextMeterPop').querySelectorAll('button:not(:disabled)')];
     const index = items.indexOf(document.activeElement);
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
@@ -11076,6 +11166,7 @@ $("titleEdit").onkeydown = (e) => { if (isComposingKey(e)) return; if (e.key ===
 
 // タイトルは AI にも考えてもらえる。人間が同じことをできる場所の隣に置く（設計メモ 2.2）
 $("sessionMore").onclick = () => {
+  if (contextMenu.isOpenFor($('sessionMore'))) return contextMenu.close(true);
   const s = state.sessions.find((x) => x.id === state.current);
   if (!s) return;
   const r = $("sessionMore").getBoundingClientRect();
@@ -11133,6 +11224,7 @@ function openConversationMenu(s, r) {
   const used = headerUsage.currentPercent();
   const supported = capsOf(s.backend).compact;
   const items = conversationMenuItems({
+    todo: Boolean(state.current) && sessionTodo.sessionId() === state.current && { label: sessionTodo.label(), hint: sessionTodo.hasUnseen() ? () => el('span', 'hint todo-menu-dot') : null, onClick: () => sessionTodo.open() },
     plugins: Boolean(state.current) && { label: t('session.context.label'), onClick: () => sessionContext.open($('sessionMore')) },
     git: Boolean(state.current && state.git.data) && { label: state.git.data.dirty > 0 ? t('git.entryChanged') : t('git.entry'), onClick: () => gitPanel?.open($('sessionMore')) },
     browser: browserEntry?.available() && { label: chromeLink === 'connected' || chromeWindows.has(state.current) ? t('browser.unifiedEntryLabel') : (rightPane.isOpen() ? t('tabs:address.closePanel') : t('tabs:address.openPagePanel')), onClick: () => browserEntry.toggle($('sessionMore')) },
@@ -11312,7 +11404,7 @@ addEventListener('plyremote:start', () => { shellStopped = false; presenceReport
 presenceReporter.start();
 modalPresence.start();
 // 設定 › 委譲（委譲先の自動選択）。モデルの名前は入力欄と同じ語彙から
-const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
+const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend,
   modelsOf: async (id, account = '') => (state.backends.some((b) => b.id === id) ? (await loadVocab(id, account, state.cwd || '')).models : null),
   modelName: (backend, model, account = '') => routingNames.model(backend, model, account), openPage: name => $(`${name}Tab`)?.click(),
   // 使えないアカウントの候補の「ログインし直す」: エージェント設定のそのエージェントのアカウントを開き、その行へフォーカス（ADR 0264）

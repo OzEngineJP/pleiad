@@ -374,7 +374,9 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     const waiting = kind === 'pending' || kind === 'sending';
     if (voiceDelivery.isVoice(row) && voiceDelivery.mark(row, kind)) return;
     status.replaceChildren(DELIVERY[kind]);
-    status.classList.remove('outbox-status-failed');
+    // 送れなかったときの直す入口（web/send-fail.mjs・web/connectors-fail.mjs）の姿も外す。もう一度止まったら描き直す
+    status.classList.remove('outbox-status-failed', 'outbox-fix', 'conn-fail');
+    delete status.dataset.connectors;
     status.classList.toggle('outbox-status-mark', waiting);
     if (waiting) deliveryTimers.set(row, setTimeout(() => {
       if (row.isConnected && status.textContent === DELIVERY[kind])

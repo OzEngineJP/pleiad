@@ -12,7 +12,6 @@ import { holderSource } from './adopt.mjs';
 import { startHeldMcp, readHeldMcpChildren, initOfLabel, heldMcpPlan, HeldMcpTransport } from './context-mcp-held.mjs';
 
 export const CONTEXT_MCP_PATH = '/mcp/context';
-const MAX_TOOLS = 500;
 const CONNECT_CONCURRENCY = 8;
 // 開き直しを待つ上限（外部の MCP を起こし直すのに手間取っても、呼び出しを止めっぱなしにしない）
 const REOPEN_WAIT_MS = 120_000;
@@ -47,19 +46,46 @@ async function resolveServer(item, { cwd, plyMcp, oauth } = {}) {
   return { config, tracker, ply };
 }
 
-async function listServerTools(client, item, config) {
-  const caps = client.getServerCapabilities(), tools = [];
+/**
+ * MCP の一覧（tools / resources / prompts）を nextCursor で全ページ読む。件数・全体の時間の上限は設けない（大きく遅いサーバーも読める）。
+ * 暴走の防止は「進んでいるか」で行う: (1) 一度見たカーソルがまた返ったら止める、
+ * (2) 新しい項目（keyOf が今までに無い値）が 1 件も無いのに nextCursor があるページが来たら止める。(2) は絞り込み前の生の項目で見る。
+ * 1 ページごとの待ちは fetchPage 側の timeout、中断は signal で行う。失敗は code: 'PAGING_LOOP'（文言は呼び出し側が言語で出す）。
+ */
+export async function listAllPages(fetchPage, { itemsOf = page => page.tools, keyOf = item => item.name, signal } = {}) {
+  const cursors = new Set(), keys = new Set(), pages = [];
   let cursor;
   do {
-    const list = caps?.tools ? await client.listTools(cursor ? { cursor } : {}, { timeout: config.timeout }) : { tools: [] };
-    for (const tool of list.tools) {
-      if (item.definition.enabled_tools && !item.definition.enabled_tools.includes(tool.name)) continue;
-      if (item.definition.disabled_tools?.includes(tool.name)) continue;
-      tools.push(tool);
-      if (tools.length > MAX_TOOLS) throw new Error('tool limit');
-    }
-    cursor = list.nextCursor;
+    signal?.throwIfAborted();
+    const page = await fetchPage(cursor, { signal });
+    pages.push(page);
+    let fresh = 0;
+    for (const item of itemsOf(page) ?? []) { const key = keyOf(item); if (!keys.has(key)) { keys.add(key); fresh++; } }
+    cursor = page.nextCursor;
+    if (cursor && (cursors.has(cursor) || !fresh)) throw Object.assign(new Error('paging does not advance'), { code: 'PAGING_LOOP' });
+    if (cursor) cursors.add(cursor);
   } while (cursor);
+  return pages;
+}
+const pagingError = e => e?.code === 'PAGING_LOOP' ? t('context.bridge.pagingLoop') : null;
+
+// 同名ツールを捨てたログは、接続（client）ごと・ツール名ごとに 1 回だけ（一覧の更新のたびに繰り返さない）
+const duplicateLogged = new WeakMap();
+async function listServerTools(client, item, config, log = () => {}, signal) {
+  const caps = client.getServerCapabilities(), tools = [], names = new Set();
+  const pages = caps?.tools ? await listAllPages((cursor, opts) => client.listTools(cursor ? { cursor } : {}, { timeout: config.timeout, signal: opts.signal }), { signal }) : [];
+  for (const list of pages) for (const tool of list.tools) {
+    if (item.definition.enabled_tools && !item.definition.enabled_tools.includes(tool.name)) continue;
+    if (item.definition.disabled_tools?.includes(tool.name)) continue;
+    // 同じサーバーが同名のツールを返したら最初の 1 件だけ使う（tools と binding.calls を食い違わせない）
+    if (names.has(tool.name)) {
+      const logged = duplicateLogged.get(client) ?? duplicateLogged.set(client, new Set()).get(client);
+      if (!logged.has(tool.name)) { logged.add(tool.name); log(`  external MCP: ${item.name} returned duplicate tool "${tool.name}"; ignoring the later one`); }
+      continue;
+    }
+    names.add(tool.name);
+    tools.push(tool);
+  }
   return { caps, tools };
 }
 
@@ -90,7 +116,7 @@ export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached
     onClient(client, transport);
     await client.connect(transport, { timeout: config.timeout });
     transport.stderr?.resume();
-    const list = () => listServerTools(client, item, config);
+    const list = () => listServerTools(client, item, config, log);
     return { status: 'connected', client, ...(cached ?? await list()), list, cached: !!cached };
   } catch (e) {
     await client.close().catch(() => {});
@@ -102,7 +128,7 @@ export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached
     if (e?.code === 401 || /\b401\b/.test(String(e?.message ?? ''))) {
       return { status: 'needs-auth', reason: ply ? t('context.bridge.authRequiredPly') : t('context.bridge.authRequiredNative') };
     }
-    return { status: 'failed', reason: e?.message === 'tool limit' ? t('context.bridge.tooManyTools', { max: MAX_TOOLS }) : t('context.bridge.connectFailed') };
+    return { status: 'failed', reason: pagingError(e) ?? t('context.bridge.connectFailed') };
   }
 }
 
@@ -192,7 +218,7 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
     return count;
   }
 
-  // 並列の接続や一覧の更新が先に終わっても、登録・500 件の会計は常に設定の順。
+  // 並列の接続や一覧の更新が先に終わっても、登録は常に設定の順（同名のツールは先に登録したもの）。
   function register(binding) {
     binding.dirty = false;
     binding.tools = [...binding.helpers.tools];
@@ -203,18 +229,11 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
       const { result, entry } = lease;
       const row = binding.runtime.report.entries.find(e => e.id === item.id);
       const lazy = result.status === 'standby';
-      const overflow = (result.status === 'connected' || lazy) && binding.tools.length + result.tools.length > MAX_TOOLS;
-      if ((result.status !== 'connected' && !lazy) || overflow) {
-        row.status = overflow ? 'failed' : result.status;
-        row.reason = overflow ? t('context.bridge.toolTotalExceeded', { max: MAX_TOOLS }) : result.reason;
+      if (result.status !== 'connected' && !lazy) {
+        row.status = result.status;
+        row.reason = result.reason;
         if (result.reasonCode) row.reasonCode = result.reasonCode; else delete row.reasonCode;
         row.tools = 0; delete row.capabilities;
-        if (overflow) {
-          const stopped = Promise.resolve(lease.release(true));
-          binding.pending.add(stopped);
-          void stopped.finally(() => binding.pending.delete(stopped));
-          binding.leases.delete(item.id);
-        }
         continue;
       }
       const { caps } = result;
@@ -392,12 +411,11 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
       if(!entry.caps?.[kind])continue;
       const client = await clientOf(entry);
       if (!client) continue;
-      let cursor;
-      do {
-        const data=await (resource?client.listResources(cursor?{cursor}:{}, { signal: b.controller.signal }):client.listPrompts(cursor?{cursor}:{}, { signal: b.controller.signal }));
-        for(const item of data[kind]??[]){const field=resource?'uri':'name';rows.push({...item,[field]:`ply-mcp:${id}:${encodeURIComponent(item[field])}`});if(rows.length>500)throw new Error('Metadata limit');}
-        cursor=data.nextCursor;
-      }while(cursor);
+      let pages;
+      try {
+        pages = await listAllPages((cursor, opts) => resource ? client.listResources(cursor ? { cursor } : {}, opts) : client.listPrompts(cursor ? { cursor } : {}, opts), { itemsOf: page => page[kind], keyOf: item => item[resource ? 'uri' : 'name'], signal: b.controller.signal });
+      } catch (e) { throw e?.code === 'PAGING_LOOP' ? Object.assign(new Error('paging does not advance'), { code: 'PAGING_LOOP' }) : e; }
+      for (const data of pages) for (const item of data[kind] ?? []) { const field = resource ? 'uri' : 'name'; rows.push({ ...item, [field]: `ply-mcp:${id}:${encodeURIComponent(item[field])}` }); }
     }
     return {[kind]:rows};
   }
@@ -461,13 +479,13 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
     const reply = result => json(200, { jsonrpc: '2.0', id: m.id, result });
     const error = message => json(200, { jsonrpc: '2.0', id: m.id, error: { code: -32602, message } });
     if (!b.isActive() || b.closed) return error('Turn ended');
-    if (m.method === 'initialize') return reply({ protocolVersion: ['2024-11-05','2025-03-26','2025-06-18','2025-11-25'].includes(m.params?.protocolVersion) ? m.params.protocolVersion : '2025-06-18', capabilities: { tools: {}, resources: {}, prompts: {} }, serverInfo: { name: 'Pleiad Context', version: '1.0.0' } });
+    if (m.method === 'initialize') return reply({ protocolVersion: ['2024-11-05','2025-03-26','2025-06-18','2025-11-25'].includes(m.params?.protocolVersion) ? m.params.protocolVersion : '2025-06-18', capabilities: { tools: {}, resources: {}, prompts: {} }, serverInfo: { name: 'Pleiad Context', version: '1.0.0' }, ...(b.helpers.externalMcp ? { instructions: b.helpers.externalMcp } : {}) });
     if (m.method === 'ping') return reply({});
     if (m.method === 'ply/bootstrap') return reply({ prompt: b.helpers.prompt });
     if (m.method === 'tools/list') return reply({ tools: b.tools });
     if (['resources/list','resources/read','prompts/list','prompts/get'].includes(m.method)) {
       try { return reply(await metadata(b,m.method.startsWith('resources')?'resources':'prompts',m.params)); }
-      catch { return error('MCP metadata request failed'); }
+      catch (e) { return error(e?.code === 'PAGING_LOOP' ? pagingError(e) : 'MCP metadata request failed'); }
     }
     if (m.method !== 'tools/call') return error('Method not supported');
     const call = b.calls.get(m.params?.name);
@@ -482,7 +500,7 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
         await b.changed();
         if (call && b.restarted.delete(call.item.id)) return { ...result, content: [{ type: 'text', text: agentT(b.runtime.locale, 'context.errors.mcpRestarted') }, ...(result?.content ?? [])] };
         return result;
-      } catch { return { isError: true, content: [{ type: 'text', text: agentT(b.runtime.locale, 'context.errors.callFailed') }] }; }
+      } catch (e) { return { isError: true, content: [{ type: 'text', text: pagingError(e) ?? agentT(b.runtime.locale, 'context.errors.callFailed') }] }; }
     })();
     b.pending.add(work);
     try { return reply(await work); } finally { b.pending.delete(work); }

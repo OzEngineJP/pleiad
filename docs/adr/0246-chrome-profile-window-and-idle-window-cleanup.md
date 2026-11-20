@@ -1,6 +1,6 @@
 # 0246 隠した Chrome の窓が前面を取ったときのプロフィールの窓と、使われなくなった窓の片付け
 
-- 状態: 承認（2026-10-22）。実機で起きた 2 つの不具合（プロフィールを選んでも窓が開かない・終わった会話の隠した窓が溜まる）への修正
+- 状態: 承認（2026-10-22）。一部置換（2026-11-20: AUMID と Local State の一意照合でプロフィールを復元し、救済判定の理由を desktop.log に記録）
 - 関連: [0148](0148-agent-browser-in-chrome.md)（Chrome の専用窓）、[0154](0154-agent-window-hidden-off-screen.md)（窓を隠す置き方と前面の見張り）、[0167](0167-chrome-connection-held-across-updates.md)（更新を越える窓の持ち越し）、[0219](0219-agent-browser-in-chrome-macos.md)（macOS の層）
 
 ## 状況
@@ -17,8 +17,8 @@
 
 ### 1. 人がプロフィールを開こうとしたら、そのプロフィールの見える窓を開く
 
-- 窓のプロフィールは、**窓ごとの AppUserModelID** で見分ける。Windows の層に `windowAumid(hwnd)` を足し、`SHGetPropertyStoreForWindow` と `IPropertyStore::GetValue`（`PKEY_AppUserModel_ID`）で読む。読むだけで、窓には触らない。AUMID は不透明な鍵として比べ、`Chrome` を Default、`Chrome.UserData.*` をほかのプロフィールとして扱う（フォルダー名への変換はしない。空白の落とし方などが Chrome の版で変わりうるため）。
-- 見える窓を開くときの `--profile-directory` は、**core の記録**（`core/chrome/windows.mjs` の `record.profile`）を確かな値として使う。`conceal`・`adoptAgent` に `profile` を渡し、層が窓の AUMID と対応づけて覚える。`launchWindow` で開いた窓は、題の nonce で見つけたときに同じ対応を覚える。AUMID からフォルダー名が引けない（core の記録が無い popup など）ときは開かない。
+- 窓のプロフィールは、**窓ごとの AppUserModelID** で見分ける。Windows の層に `windowAumid(hwnd)` を足し、`SHGetPropertyStoreForWindow` と `IPropertyStore::GetValue`（`PKEY_AppUserModel_ID`）で読む。読むだけで、窓には触らない。AUMID は不透明な鍵として比べる。
+- 見える窓を開くときの `--profile-directory` は、**core の記録**（`core/chrome/windows.mjs` の `record.profile`）を優先する。`conceal`・`adoptAgent` に `profile` を渡し、層が窓の AUMID と対応づけて覚える。`launchWindow` で開いた窓は、題の nonce で見つけたときに同じ対応を覚える。core の記録も対応表も無い場合は、起動時の `--user-data-dir`（無ければ Windows の既定 User Data）の `Local State` にある `profile.info_cache` のフォルダー一覧と AUMID 候補を照合し、**一致がちょうど 1 件のときだけ**そのフォルダーを使う。Default の既定 User Data は `Chrome`、それ以外は Chromium の Windows 実装に沿って User Data とフォルダー名の basename を ASCII 英数字・ピリオドだけに整えて `Chrome.<UserData basename>.<profile basename>` を候補にする。0 件または複数件なら開かない。候補を AUMID から逆算してフォルダー名を作ることはしない。
 - **条件**: 隠した窓が前面を取り、そのプロフィールに見えている Chrome の窓（隠していない・透明でない・cloaked でない・最小化でない）が無いとき、`chrome.exe --profile-directory=<dir> --new-window`（`--user-data-dir` は直前の起動に合わせる）で見える窓を開く。隠した窓は隠したままにし、エージェントの作業は止めない。開いた窓は層の記録に載せない（エージェントの窓ではない）。
 - **エージェントの操作との見分け**: 次のいずれかなら開かない（今までどおり直前の前面へ返すだけ）。
   - 窓が `ghost`（リモート デバッグのトグルを入れている最中）・`closeAt`（閉じる依頼中）・引き継ぎで見せている（`concealed` でない）。
@@ -27,6 +27,7 @@
   - **直前に前面だったのが、隠していない Chrome の窓でない**。人がプロフィールを開こうとするときは、プロフィールの選択画面か Chrome の見える窓が直前に前面にある。ほかのアプリから隠した窓へ移った場合（エージェントの操作か、見分けられない場合）は開かない。
 - 同じプロフィールで続けて前面を取っても窓を重ねないよう、AUMID ごとに 30 秒の間隔を置く。
 - AUMID が読めない・プロフィールのフォルダー名が分からないときは、**開かずに今までどおり前面を返す**（分からないまま窓を増やさない）。ログにプロフィール名は出さない。
+- 救済判定と見える窓を開く処理の各早期終了は、理由コード 1 つを desktop.log に記録する。同じ理由は 10 秒間に 1 行へ間引き、AUMID・プロフィール名・題・URL は記録しない。
 - **macOS** は `features.conceal = false` で、窓を隠さず見える通常の窓として使う（ADR 0219）。「隠した窓が前面を取る」ことが起きないため、この修正は要らない。`conceal` が効く別の OS を足すときは、同じ判定をその層に置く。
 
 ### 2. 終わった会話の窓を溜めない
@@ -40,6 +41,7 @@
 
 - **AUMID を使う**: Chrome は全プロフィールを 1 つのプロセスで動かすので、プロセスやコマンドラインでは窓のプロフィールを区別できない。窓ごとの AUMID は Chrome 自身がプロフィールごとに付けている値で、読むだけなら利用者の窓に触らない。実機で Default = `Chrome`、`Profile 1` = `Chrome.UserData.Profile1` を確かめた。
 - **フォルダー名は core の記録から**: AUMID からフォルダー名を機械的に作ると、空白の扱いなどが Chrome の版で変わりうる。Pleiad が窓を開いたときの `--profile-directory` は確かなので、それを `conceal` / `adoptAgent` で層に渡す。
+- **Local State との一意照合を許す（2026-11-20）**: 更新をまたいで残った隠し窓など、窓に core のプロフィール記録が無い場合がある。AUMID の表記だけからフォルダー名を逆算するのは曖昧なままだが、実在する Local State の `profile.info_cache` のキーに限って候補を作り、一致がちょうど 1 件なら復元できる。Chromium の [`GetProfileIdFromPath`](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/shell_integration_win.cc) は User Data と profile の basename を連結し、ASCII 英数字とピリオドだけを残す。2026-11-20 の実機記録では Default=`Chrome`、Profile 1=`Chrome.UserData.Profile1`、Profile 2=`Chrome.UserData.Profile2`。Local State の実在一覧との一意照合を根拠にするため、以前の「変換しない」決定をこの範囲だけ置き換える。候補が 0 件・複数件なら安全側で開かない。
 - **直前の前面を条件にする**: 「隠した窓が前面を取った」だけでは、`window.open` の popup・開きかけの窓・エージェントのタブ切り替えと区別できない。人がプロフィールを選ぶときは、選択画面か Chrome の見える窓が直前に前面にある。この条件と、隠した直後の猶予を組み合わせると、報告された場面だけを拾い、エージェントの操作では窓を増やさない。見分けられないときは開かない（安全側）。
 - **隠した窓を閉じない**: 利用者が見たいのは「そのプロフィールの窓」で、エージェントの作業中の窓ではない。隠した窓を閉じるとエージェントのタブとログインが失われる。
 - **24 時間・1 時間ごと**: 会話の続きに使う窓を急に閉じない。終わった会話の窓が丸 1 日残るのは許容し、その後の掃除で溜まらないようにする。定数 1 つなので、必要なら設定にできる。
@@ -47,7 +49,7 @@
 
 ## 影響
 
-- 変えるファイル: `desktop/computer/win32.cjs`（`windowAumid`）、`desktop/chrome-os/win32.cjs`（AUMID・プロフィールの記録・人が開こうとしたときの見える窓・掃除の条件）、`core/chrome/os.mjs`（`conceal` / `adoptAgent` の `profile`）、`core/chrome/windows.mjs`（プロフィールを層へ渡す）、`core/chrome/relay.mjs`（最後に使った時刻・`lastUsed`・carry）、`core/chrome/close-window.mjs`（`sweepIdle`・`by: 'idle'`）、`core/server.mjs`（1 時間ごとの掃除）、`core/history.mjs`（`idle` の記録）、`web/chrome-control.mjs` と locale（閉じた行の文言）。
+- 変えるファイル: `desktop/computer/win32.cjs`（`windowAumid`）、`desktop/chrome-os/win32.cjs`（AUMID・プロフィールの記録・人が開こうとしたときの見える窓・掃除の条件）、`core/chrome/os.mjs`（`conceal` / `adoptAgent` の `profile`）、`core/chrome/windows.mjs`（プロフィールを層へ渡す）、`core/chrome/relay.mjs`（最後に使った時刻・`lastUsed`・carry）、`core/chrome/close-window.mjs`（`sweepIdle`・`by: 'idle'`）、`core/server.mjs`（1 時間ごとの掃除）、`core/history.mjs`（`idle` の記録）、`web/chrome-control.mjs` と locale（閉じた行の文言）。2026-11-20 の一部置換: `desktop/main.cjs`（chrome-os のログを desktop.log に記録）、同ファイルのログ方針に沿った `desktop/chrome-os/win32.cjs`（理由コードと Local State 照合）、`tests/unit/chrome-os.mjs`（吹き出しを挟むケース、一意・0 件・複数件、理由コード）。
 - 変えないもの: ADR 0154 の「隠した窓が前面を取ったら直前の前面へ返す」は残る。今回の修正は、その前に「人がプロフィールを開こうとした」と分かったときだけ見える窓を足す。
 - 試験: `tests/unit/chrome-os.mjs`（AUMID・プロフィールの見える窓を開く条件・エージェントの操作との見分け・重複の抑制・分からないとき）、`tests/unit/chrome-windows.mjs`（プロフィールを `conceal` / `adoptAgent` へ渡す）、`tests/unit/chrome-relay.mjs`（`lastUsedAt` の carry）、`tests/unit/chrome-close-window.mjs`（24 時間の掃除・実行中／引き継ぎ／依頼待ちの除外・`idle` の行）。本物の利用者の Chrome は使わない。
 - 実機で確かめること: Windows の AUMID の読み取り（読み取りだけ。窓は操作しない）、プロフィールの選択で見える窓が 1 枚開くこと、エージェントの `window.open` で余計な窓が開かないこと、24 時間の掃除が実際の時計で動くこと（短い間隔に変えて確かめる）。

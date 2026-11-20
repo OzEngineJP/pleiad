@@ -1,5 +1,5 @@
 // fake ACP 越しに runTurn のモデル読み替えを確認する。実機（3000.11.92）と同じく、
-// 系ごとに代表の model・thought_level・speed の対応が違い、ACP に表せない版は送らず止まる
+// 系ごとに代表の model・thought_level・speed の対応が違い、ACP に表せない版も指定の名前を送って CLI の判断を受ける
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,15 +31,19 @@ export default async function (t) {
       async call(method, params, options) { calls.push({ method, params }); return super.call(method, params, options); }
     }
     const command = () => [process.execPath, path.join(ROOT, 'tests/lib/fake-devin.mjs')];
-    const backend = createDevinBackend({ Acp: Recorder, catalogue, command, dataDir: path.join(root, 'data') });
+    let latestCatalogue = await catalogue();
+    const backend = createDevinBackend({ Acp: Recorder, catalogue: async () => latestCatalogue, command, dataDir: path.join(root, 'data') });
+    await backend.models(cwd);
+    latestCatalogue = structuredClone(latestCatalogue);
+    latestCatalogue.families.push({ family_uid: 'gpt-6-2-sol', variants: [{ model_uid: 'gpt-6-2-sol-xhigh', cost_tier: 'High cost' }] });
+    t.ok('取り直す前は TTL の一覧、refresh 後は新しい GPT の id を含む',
+      !(await backend.models(cwd))['gpt-6-2-sol-xhigh'] && Boolean((await backend.models(cwd, { refresh: true }))['gpt-6-2-sol-xhigh']));
 
-    t.ok('ACP の選択肢をまだ見ていなければ、カタログの版を振り分けから外さない', backend.runnableModel('catalogue-only') === true && backend.runnableModel('gpt-6-astra-low-priority') === true);
+    t.ok('ACP の選択肢をまだ見ていなければ、カタログの版を振り分けから外さない', backend.runnableModel === undefined);
     const unlisted = await backend.runTurn({ cwd, prompt: 'not runnable', model: 'catalogue-only', mode: 'ask', emit: () => {} }).catch(e => e);
-    t.ok('ACP に無い版は送る前に設定の誤りで止まる', unlisted?.code === 'DEVIN_MODEL_CONFIG_UNAVAILABLE' && !calls.some(c => c.method === 'session/prompt'), String(unlisted?.code ?? unlisted));
-    t.ok('ACP の選択肢が分かれば、読み替えられる系は選べて表せない版は外れる',
-      backend.runnableModel('catalogue-only') === false && backend.runnableModel('swe-2-max-lightning') === true
-      && backend.runnableModel('deepseek-v4-1-flash-1017-max') === true && backend.runnableModel('kimi-k2-6') === true
-      && backend.runnableModel('glm-5-2-max-1m') === true && backend.runnableModel('gpt-6-astra-low-priority') === false);
+    t.ok('ACP に無い版も CLI へ送り、その拒否で止まる', unlisted?.code === -32000 && calls.some(c => c.method === 'session/set_config_option' && c.params.value === 'catalogue-only') && !calls.some(c => c.method === 'session/prompt'), String(unlisted?.code ?? unlisted));
+    t.ok('過去の ACP の選択肢が分かっても、振り分けから事前に外さない',
+      backend.runnableModel === undefined);
 
     // 系ごとの読み替え: 代表 + 思考（+ 速度）。model 切替後の軸で確認する
     for (const [model, expected] of [
@@ -61,7 +65,7 @@ export default async function (t) {
     // 対応軸の無い -priority は prompt を送らず止まる
     const mark = calls.length;
     const priority = await backend.runTurn({ cwd, prompt: 'must not run', model: 'gpt-6-astra-low-priority', mode: 'ask', emit: () => {} }).catch(e => e);
-    t.ok('-priority は ACP に対応軸が無いので送る前に止まる', priority?.code === 'DEVIN_MODEL_CONFIG_UNAVAILABLE'
+    t.ok('-priority もそのまま送り、CLI の拒否で止まる', priority?.code === -32000 && calls.slice(mark).some(c => c.method === 'session/set_config_option' && c.params.value === 'gpt-6-astra-low-priority')
       && !calls.slice(mark).some(c => c.method === 'session/prompt'), String(priority?.code ?? priority));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }

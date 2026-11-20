@@ -900,6 +900,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         ...(r.host ? { host: r.host, remoteSessionId: r.remoteSessionId ?? null, hostWaiting: waitingOf(r) } : {}),
       }));
     },
+    todoState(taskId) {
+      const row = records[taskId];
+      if (!row) return null;
+      const needsHuman = row.host ? remoteWaiting(row) : waiting(row.sessionId);
+      return { parentSessionId: row.parentSessionId, status: row.status, humanWaiting: ACTIVE.has(row.status) && Boolean(needsHuman) };
+    },
     get(taskId, offset = 0) { return records[taskId] ? view(records[taskId], offset) : null; },
     /** リモート依頼元へ周期的に渡す小さな活動の写し。活動イベントごとの保存・送信はしない */
     remoteTelemetry(taskId) {

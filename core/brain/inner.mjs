@@ -56,12 +56,16 @@ export function streamLine(row, { locale, now }) {
   return `- [${whenOf(row.at, now)}] ${label}${body ? `: ${body}` : ''}${flag}`;
 }
 
-/** 流れの行を文の行にする。連続する静かな行は「静か ×n」に畳む。新しい行から maxTokens まで入れ、古い順に返す */
+/** 連続する静かな行と、数字以外が同じ思考の要約を畳む。新しい行から maxTokens まで入れ、古い順に返す */
 export function streamLines(stream, { locale, now, maxTokens = TAIL_TOKENS }) {
   const folded = [];
   for (const row of stream ?? []) {
     const last = folded.at(-1);
     if (row.kind === 'quiet' && last?.kind === 'quiet') { last.n++; last.at = row.at; continue; }
+    if (row.kind === 'think' && last?.kind === 'think' && Boolean(row.taint) === Boolean(last.taint)
+      && oneLine(row.text).replace(/\p{N}+/gu, '#') === oneLine(last.text).replace(/\p{N}+/gu, '#')) {
+      last.n++; last.at = row.at; last.text = row.text; continue;
+    }
     folded.push({ ...row, n: 1 });
   }
   const lines = [];
@@ -69,7 +73,9 @@ export function streamLines(stream, { locale, now, maxTokens = TAIL_TOKENS }) {
   for (const row of [...folded].reverse()) {
     const line = row.kind === 'quiet' && row.n > 1
       ? `- [${whenOf(row.at, now)}] ${agentT(locale, 'brain.inner.quietMany', { n: row.n })}`
-      : streamLine(row, { locale, now });
+      : row.kind === 'think' && row.n > 1
+        ? agentT(locale, 'brain.inner.thinkMany', { line: streamLine(row, { locale, now }), n: row.n })
+        : streamLine(row, { locale, now });
     const cost = estimateTokens(line) + 2;
     if (used + cost > maxTokens && lines.length) break;
     lines.push(line);

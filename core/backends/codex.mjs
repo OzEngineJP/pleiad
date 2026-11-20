@@ -49,7 +49,7 @@ const NL = String.fromCharCode(10);
 // Each app-server owns its model/config caches, loaded threads, terminal watchers
 // and handover metadata. Keeping these in one instance avoids cross-account
 // cache hits and notifications, including helpers called outside runTurn.
-function createCodexBackend({ rpc = defaultRpc, account = null, env = null } = {}) {
+export function createCodexBackend({ rpc = defaultRpc, account = null, env = null, modelRpc = null } = {}) {
 const nativeRpc = rpc;
 const heldAppServer = () => heldForAccount(account);
 // 待っているログインをやめる口（auth.cancel。ADR 0243）
@@ -190,6 +190,7 @@ let modelCache = null;
 let modelFetch = null;
 /** forgetModels で進める。途中で忘れた引きの結果（前のアカウントの一覧）は覚えない */
 let modelGen = 0;
+let modelNeedsFresh = false;
 /** model/list の isDefault（codex 自身の既定）。config.toml に model が無いときに使われる */
 let listDefault = null;
 /** 覚えておく長さ。呼ぶたびに読む（テストが短くできるように） */
@@ -202,15 +203,16 @@ function forgetModels() {
   modelCache = null;
   modelFetch = null;
   listDefault = null;
+  modelNeedsFresh = false;
   modelGen += 1;
 }
 
 /** model/list を `nextCursor` を追って全部読む。途中の 1 ページでも落ちたら全体を失敗にする（半端な一覧を覚えない） */
-async function listModelRows() {
+async function listModelRows(source = rpc) {
   const rows = [];
   let cursor = null;
   for (let page = 0; page < MAX_MODEL_PAGES; page += 1) {
-    const res = await rpc.request("model/list", cursor == null ? {} : { cursor }, 30_000);
+    const res = await source.request("model/list", cursor == null ? {} : { cursor }, 30_000);
     rows.push(...(res?.data ?? []));
     cursor = res?.nextCursor ?? null;
     if (cursor == null) return rows;
@@ -234,25 +236,30 @@ function toModels(rows) {
   return { list: out, isDefault: preferred?.id ?? null };
 }
 
-async function loadModels() {
+async function loadModels(refresh = false) {
   const gen = modelGen;
+  const source = refresh ? (modelRpc ? modelRpc() : new CodexRpc()) : rpc;
   try {
-    const { list, isDefault } = toModels(await listModelRows());
+    const { list, isDefault } = toModels(await listModelRows(source));
     // 引けたときだけ覚える。失敗を覚えると回復しない
-    if (gen === modelGen) { modelCache = { list, at: Date.now() }; listDefault = isDefault; }
+    if (gen === modelGen) { modelCache = { list, at: Date.now() }; listDefault = isDefault; modelNeedsFresh = false; }
     return list;
   } catch (err) {
     console.error("  codex model/list に失敗:", String(err?.message ?? err));
-    // 引き直しに失敗しても、前に引けた一覧があればそれを出す（空にすると選んであったモデルが既定へ戻る）
+    // 前の一覧は残し、専用プロセスでの更新失敗は TTL 内でも次回取り直す。
+    if (gen === modelGen) modelNeedsFresh ||= refresh;
     return modelCache?.list ?? toModels([]).list;
   } finally {
+    if (refresh) await source.stop();
     if (gen === modelGen) modelFetch = null;
   }
 }
 
-function modelList() {
-  if (modelCache && Date.now() - modelCache.at < modelTtlMs()) return Promise.resolve(modelCache.list);
-  return (modelFetch ??= loadModels());
+function modelList({ refresh = false } = {}) {
+  if (modelFetch) return modelFetch;
+  refresh ||= modelNeedsFresh;
+  if (!refresh && modelCache && Date.now() - modelCache.at < modelTtlMs()) return Promise.resolve(modelCache.list);
+  return (modelFetch ??= loadModels(refresh));
 }
 
 /**
@@ -1509,8 +1516,8 @@ const backend = {
    * `""` には実際に使われるモデル（resolvesTo）とその efforts / defaultEffort を写す。
    * 実際に使われるのは config.toml の model（config/read）、無ければ model/list の isDefault（runTurn と同じ順）。
    */
-  async models(cwd) {
-    const list = await modelList();
+  async models(cwd, options = {}) {
+    const list = await modelList(options);
     const config = await readConfig(cwd);
     const out = { ...list, "": { ...list[""] } };
     const configured = config?.model;

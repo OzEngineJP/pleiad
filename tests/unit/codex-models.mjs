@@ -1,9 +1,9 @@
 // codex の model/list の読み方と覚え方。子プロセスは使わず、RPC の境界だけを差し替える。
 //   - nextCursor を追って全ページ読む。1 ページでも落ちたら全体を失敗にする（半端な一覧を覚えない）
-//   - 覚えるのは TTL の間だけ。失敗は覚えない。引き直しに失敗したら前の一覧を出す
+//   - 覚えるのは TTL の間だけ。失敗は覚えない。引き直しに失敗したら前の一覧を返し、次回再試行する
 //   - ログイン・ログアウトで捨てる。途中だった引きの結果（前のアカウントの一覧）も覚えない
 //   - タイトル生成のモデルは一覧から選ぶ（titleModel）
-import { backend, forgetModels, titleModel } from "../../core/backends/codex.mjs";
+import { backend, forgetModels, titleModel, createCodexBackend } from "../../core/backends/codex.mjs";
 import { rpc } from "../../core/backends/codex-rpc.mjs";
 
 export const name = "codex-models";
@@ -42,7 +42,29 @@ export default async function (t) {
     forgetModels();
     delete process.env.AGENT_HOST_CODEX_MODELS_TTL_MS;
 
+    let freshCount = 0, stopped = 0, failFresh = false, waitFresh = null;
+    const isolated = createCodexBackend({ rpc, modelRpc: () => {
+      freshCount++;
+      return { request: async () => { if (waitFresh) await waitFresh; if (failFresh) throw new Error('refresh failed'); return { data: [row('new', { isDefault: true })] }; }, stop: async () => { stopped++; } };
+    }}).backend;
+    pages = twoPages();
+    await isolated.models(CWD);
+    t.ok('refresh は専用 RPC から新しい一覧を取得する', ids(await isolated.models(CWD, { refresh: true })) === 'new' && freshCount === 1 && stopped === 1);
+    failFresh = true;
+    const fallback = await isolated.models(CWD, { refresh: true });
+    t.ok('refresh 失敗時は前の一覧と既定モデルを残す', ids(fallback) === 'new' && fallback[''].resolvesTo === 'new');
+    failFresh = false;
+    t.ok('失敗後は TTL 内でも専用 RPC で再試行する', ids(await isolated.models(CWD)) === 'new' && freshCount === 3 && stopped === 3);
+    let releaseFresh;
+    waitFresh = new Promise(resolve => { releaseFresh = resolve; });
+    const concurrent = [isolated.models(CWD, { refresh: true }), isolated.models(CWD, { refresh: true })];
+    t.ok('同時の refresh は専用プロセスを 1 つだけ起こす', freshCount === 4 && stopped === 3);
+    releaseFresh();
+    const refreshed = await Promise.all(concurrent);
+    t.ok('同時の refresh は同じ更新結果を受け取り専用プロセスだけ終了する', refreshed.every(m => ids(m) === 'new') && freshCount === 4 && stopped === 4);
+    waitFresh = null;
     // ---- ページを追う
+    asked.length = 0;
     pages = twoPages();
     let models = await backend.models(CWD);
     t.ok("nextCursor を追って 2 ページとも読む", ids(models) === "a,b", ids(models));
@@ -64,10 +86,10 @@ export default async function (t) {
     models = await backend.models(CWD);
     t.ok("TTL が切れたら引き直して新しい一覧を返す", ids(models) === "a,c", ids(models));
 
-    // ---- 引き直しの失敗。2 ページ目で落ちたら、半端な一覧ではなく前に引けた一覧を出す
+    // ---- 引き直しの失敗。2 ページ目で落ちたら、半端な一覧ではなく前の一覧を返す
     pages = { null: { data: [row("x")], nextCursor: "c1" }, c1: () => { throw new Error("落ちた"); } };
     models = await backend.models(CWD);
-    t.ok("引き直しに失敗したら前に引けた一覧を出す", ids(models) === "a,c", ids(models));
+    t.ok("引き直しに失敗したら前の一覧と既定モデルを返す", ids(models) === "a,c" && models[""].resolvesTo === "a", ids(models));
     pages = twoPages("d");
     models = await backend.models(CWD);
     t.ok("失敗は覚えず、次の呼び出しで引き直す", ids(models) === "a,d", ids(models));

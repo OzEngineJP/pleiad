@@ -139,21 +139,23 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const id = a.id, dr = Boolean(a.draft), edit = openId === id, n = esc(a.name), e = err[id];
     const own = dr ? '' : ownerWarning(a);
     const hasToken = !dr && a.hasToken, hasLogin = !dr && a.usageLogin;
+    // claude.ai のログインが切れている（更新できなかった印。ADR 0340 段 3）。直すボタンは「claude.ai にログインし直す」
+    const expired = hasLogin && Boolean(a.usageExpired);
     const f = flow?.id === id ? flow : null, manual = manualId === id, confirm = confirmId === id;
     // edit = 名前を書き換えている（［完了］を出す）。open = 中身が開いている（書き換え中か、流れが走っている）
     const open = edit || Boolean(f);
     // 閉じたカードの直すボタン（認証が無い → ログインがまだ）。操作の組 [直す][編集][削除] の先頭に置く。持ち主の食い違いは知らせの横の［トークンを発行し直す］
-    const want = dr ? null : !hasToken ? { kind: 'tok', label: t('accounts.issue') } : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : null;
+    const want = dr ? null : !hasToken ? { kind: 'tok', label: t('accounts.issue') } : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : expired ? { kind: 'lg', label: t('accounts.redoUsage') } : null;
     const fix = open ? null : want;
     if (want) lastFix.set(id, want);
     const fx = fix ?? lastFix.get(id);
     // 開いたカードで一番目立たせる操作は 1 つ
-    const main = f || manual ? 'step' : dr || !hasToken || own ? 'tok' : !hasLogin ? 'lg' : 'done';
+    const main = f || manual ? 'step' : dr || !hasToken || own ? 'tok' : !hasLogin || expired ? 'lg' : 'done';
     const pri = k => main === k ? ' btn-primary' : '';
     const tgl = dr ? [t('accounts.cancel'), t('accounts.label.cancelAdd')] : edit ? [t('accounts.done'), t('accounts.label.done', { name: a.name })] : [t('accounts.edit'), t('accounts.label.edit', { name: a.name })];
     const manualWord = hasToken ? t('accounts.manualReplace') : t('accounts.manualNew');
     const tokWord = hasToken ? t('accounts.status.registered') : t('accounts.status.none');
-    const lgWord = hasLogin ? t('accounts.status.done') : t('accounts.status.none');
+    const lgWord = expired ? t('accounts.status.expired') : hasLogin ? t('accounts.status.done') : t('accounts.status.none');
     const key = alias.get(id) ?? id;
     // 状態の行。直すボタンがあるカードでは名前の下（名前と同じ列）に入れ、操作の組が名前の横に収まらなければ組ごと状態の行の下へ回る
     const sum = `<div class="mp-fold${open || dr ? '' : ' open'}" data-k="sum"><div class="mp-fold-in mp-sum"><small data-t>${esc(t('accounts.summary', { token: tokWord, login: lgWord }))}</small></div></div>`;

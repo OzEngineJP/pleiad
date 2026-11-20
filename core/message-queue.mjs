@@ -60,7 +60,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
       // 予約は消さず、次のターンから効く（docs/multi-backend.md §2.2）
       if (turn && turn.phase !== 'waiting' && (await store.get(id)).nextSettings) return setWait(id, { reason: 'turn', detail: 'reserved' });
       waits.delete(id);
-      await update(id, item.id, { status: 'sending', error: null });
+      await update(id, item.id, { status: 'sending', error: null, connectorsError: null });
       if (turn) {
         try {
           const accepted = await turn.steer(item);
@@ -88,10 +88,11 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
           if (!accepted) ready();
           // Nothing was delivered (the agent was busy with a turn Pleiad did not start).
           // Back to the queue; that turn's end kicks the queue again.
-          if (outcome === 'requeue') return serial(id, () => update(id, item.id, { status: 'queued', error: null }));
+          if (outcome === 'requeue') return serial(id, () => update(id, item.id, { status: 'queued', error: null, connectorsError: null }));
           if (outcome && outcome !== 'ok') return pause(id);
         }, e => serial(id, () => update(id, item.id, {
           status: accepted ? 'unknown' : 'failed', error: String(e.message ?? e),
+          connectorsError: e?.connectorsError ?? null,
         }))).finally(() => { ready(); kick(id).catch(() => {}); }).catch(() => {});
         // A startup rejection must release this lock before recording the error.
         Promise.resolve(task).catch(() => ready());
@@ -116,7 +117,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
       const ids = [];
       for (const item of items) {
         if (item.status !== 'paused' && !(failed && item.status === 'failed')) continue;
-        item.status = 'queued'; item.error = null; ids.push(item.id);
+        item.status = 'queued'; item.error = null; item.connectorsError = null; ids.push(item.id);
       }
       if (ids.length) await save(id, items);
       return ids;
@@ -131,12 +132,13 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
     retryPaused,
     list: id => serial(id, async () => view(id, await list(id))), kick, pause,
     // ターンは始めたが、バックエンドがプロンプトを渡す前に失敗した。送っていないので失敗として残し、再送か取り消しを選ばせる
-    undelivered: (id, messageId, error) => serial(id, async () => {
+    undelivered: (id, messageId, error, connectorsError = null) => serial(id, async () => {
       const items = await list(id);
       const item = items.find(m => m.id === messageId);
       if (!item || item.status !== 'sent') return;
       item.status = 'failed';
       item.error = error;
+      if (connectorsError) item.connectorsError = connectorsError; else delete item.connectorsError;
       await save(id, items);
     }),
     // 渡った合図を出せないバックエンド（性質 promptDelivery = false）で、渡ったか分からないまま終わった発言。
@@ -216,6 +218,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
         if (!['cancel', 'retry'].includes(action)) throw new Error(t('queue.invalidAction'));
         item.status = action === 'cancel' ? 'cancelled' : 'queued';
         item.error = null;
+        delete item.connectorsError;
         await save(id, items);
       });
       kick(id).catch(() => {});

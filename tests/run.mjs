@@ -467,6 +467,7 @@ const SUITES = [
   './unit/context-key.mjs',
   './unit/context-warm.mjs',
   './unit/context-lazy.mjs',
+  './unit/context-paging.mjs',
   './unit/mcp-orphans.mjs',
   './unit/worktree-mcp.mjs',
   './unit/context-runtime.mjs',
@@ -527,6 +528,8 @@ const SUITES = [
   './unit/claude-launch-main-pinned.mjs',
   // 登録アカウントのコネクターの入口（段 1。ADR 0340）: オフ・未設定・壊れた設定の起動が main の記録と同じ
   './unit/claude-connectors-off.mjs',
+  // 登録アカウントのコネクターの認証（段 2。ADR 0340）: アクセス用トークンだけ・止める条件・オンの差分は 3 つの環境変数だけ・オフは何も呼ばない
+  './unit/claude-connectors-auth.mjs',
   './unit/context-scan.mjs',
   './unit/context-claude-json-size.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
@@ -883,6 +886,8 @@ const SUITES = [
   './unit/agent-accounts-ui.mjs',
   // 設定 › Claude のアカウント（web/claude-accounts.mjs）: 送るコマンドの並び（origin/main と同じ）・流れを閉じない決まり・遅れて届く応答
   './unit/claude-accounts-ui.mjs',
+  // コネクターで止まった発言の失敗の行（web/connectors-fail.mjs。ADR 0340 段 3）
+  './unit/connectors-fail-ui.mjs',
   './unit/account-backend-i18n.mjs',
   './unit/opencode-adopt.mjs',
   './unit/server-agent-account-restart.mjs',
@@ -893,6 +898,8 @@ const SUITES = [
   './unit/dom-patch-browser.mjs',
   // サーバー通し: Claude のアカウント別モデル一覧・Mythos・委譲・bot・アカウント切替/入替（ADR 0329）
   './unit/server-claude-account-models.mjs',
+  // サーバー通し: 設定 › 外部 MCP のコネクターの一覧を既定の Claude アカウントで読む（ADR 0340 段 2。オフは main と同じ・オンは会話と同じ組み立て・止める条件ではログイン中へ戻らない）
+  './unit/server-claude-connectors-list.mjs',
   // Claude Agent SDK を配布物に入れず npm から取る（ADR 0208）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意
   './unit/claude-sdk-pin.mjs',
   './unit/claude-sdk.mjs',
@@ -1153,6 +1160,10 @@ const SUITES = [
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）
   './unit/bot-sessions-list.mjs',
   // 通知の一覧（ベルのボタン。ADR 0149）: 重複しない・見ている会話は既読・既読の整合・あなた待ちの決着・再起動で残る・上限・削除で消える・出来事から作る規則
+  // 会話の ToDo（ADR 0342）: 保存・操作・会話の削除で消える・形式 3 → 4 の移行
+  './unit/session-todos.mjs',
+  // 会話の ToDo の面の計算（リスト ⇄ フロー・依存の正規化・配置）
+  './unit/session-todo-model.mjs',
   './unit/notification-inbox.mjs',
   './unit/notification-inbox-server.mjs',
   './unit/notification-inbox-ui.mjs',

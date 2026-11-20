@@ -269,6 +269,3 @@
 | リセットを待っています / リセットできます | Waiting to reset / Ready to reset |
 | 取り下げる（自分が頼んだリセットをやめる） | Cancel reset |
 | リセットを止める（鍵を持つ PC がほかの PC の頼みを止める） | Stop reset |
-
-## 揺れ（未統一）
-- 使用枠: `usage`（辞書での使用が多数派。例 server:antigravity.usage.badResponse・shared・none・timeout・tooLarge・cannotRead・needsUpdate） / `usage limits`（例 server:antigravity.usage.unsupported、server:usage.codexUnavailable、server:usage.claudeUnavailable）。本表には多い方の `usage` を採ったが、辞書は直していないので `usage limits` の箇所も残っている

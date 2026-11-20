@@ -81,7 +81,7 @@ export default async function (t) {
     await manager.remove({ id: committing.id });
 
     const definitions = registry.ops.filter((op) => op.id.startsWith('accounts.'));
-    t.ok('アカウント操作は6つとも画面の人にだけ出す', definitions.length === 6 && definitions.every((op) => op.risk === 'human-only' && op.surfaces.ui && !op.surfaces.mcp && !op.surfaces.cli));
+    t.ok('アカウント操作は8つとも画面の人にだけ出す（コネクターのスイッチ・読み直しを含む。ADR 0340 段 3）', definitions.length === 8 && definitions.every((op) => op.risk === 'human-only' && op.surfaces.ui && !op.surfaces.mcp && !op.surfaces.cli));
     t.ok('エージェントの操作の一覧にアカウント管理を出さない', !registry.describe({ by: 'agent' }, 'en').some((op) => op.id.startsWith('accounts.')));
     const rows = Array.from({ length: MAX_ACCOUNTS }, (_, i) => ({ id: `acct-${i.toString(16).padStart(12, '0')}`, backend: b.id, name: 'x' }));
     await fs.writeFile(accounts.file, JSON.stringify({ version: 1, accounts: rows }));

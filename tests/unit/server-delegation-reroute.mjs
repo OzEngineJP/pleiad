@@ -187,7 +187,10 @@ export default async function (t) {
       JSON.stringify({ s: exhaustedRow?.status, e: exhaustedRow?.error }));
     // 固定（backend と model を書く）は、これまでどおり
     const pinnedBad = await delegate(sid, { kind: 'trivial', backend: 'fake', model: 'rejected-a', task: 'echo:x' });
-    t.ok('固定でモデルが一覧に無ければ、これまでどおり model_unknown で断る（子を作らない）', pinnedBad.isError && pinnedBad.text.includes('model_unknown'), pinnedBad.text.slice(0, 300));
+    const pinnedBadRow = await settle(pinnedBad.data.taskId);
+    t.ok('固定の未掲載モデルも CLI へ渡し、断られたら同じ子で失敗する（別モデルへ替えない）', !pinnedBad.isError
+      && pinnedBadRow?.status === 'failed' && pinnedBadRow.model === 'rejected-a' && pinnedBadRow.sessionId === pinnedBad.data.sessionId
+      && !(pinnedBadRow.routing?.attempts ?? []).length, JSON.stringify({ model: pinnedBadRow?.model, status: pinnedBadRow?.status, error: pinnedBadRow?.error }));
     const pinnedRefused = await delegate(sid, { kind: 'trivial', backend: 'fake', model: 'fast', task: 'fail-model' });
     const pinnedRefusedRow = await settle(pinnedRefused.data.taskId);
     t.ok('固定の委譲でモデルを断られても、作り直さず同じ子の会話で失敗になる', pinnedRefusedRow?.status === 'failed' && pinnedRefusedRow.sessionId === pinnedRefused.data.sessionId

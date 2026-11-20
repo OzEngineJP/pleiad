@@ -119,11 +119,14 @@ export function buildDevinModels(rawCatalogue) {
 
 /** Resolve a new or resumed turn using the current catalogue, never a paid default. */
 export function resolveDevinModel(rawCatalogue, modelId = '') {
-  const rows = catalogueRows(rawCatalogue);
+  let rows;
+  try { rows = catalogueRows(rawCatalogue); } catch (error) { if (!modelId) throw error; rows = []; }
   if (typeof modelId !== 'string') throw fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model: String(modelId) });
   const row = modelId ? rows.find(row => row.id === modelId) : defaultRow(rows);
-  if (!row) throw modelId ? fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model: modelId }) : fail('DEVIN_MODEL_EXPLICIT_REQUIRED', 'explicitModelRequired');
-  if (row.variant.cost_tier === 'Free' && !freeProof(row)) throw fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model: row.id });
+  if (!row) {
+    if (!modelId) throw fail('DEVIN_MODEL_EXPLICIT_REQUIRED', 'explicitModelRequired');
+    return { id: modelId, ...parseDevinUid(modelId), family: [], free: false, label: modelId, maxContextTokens: null };
+  }
   const parsed = parseDevinUid(row.id);
   return {
     id: row.id, base: parsed.base, level: parsed.level, speed: parsed.speed, unmappable: parsed.unmappable,
@@ -167,12 +170,12 @@ function impliedLevel(selection, levelChoices) {
 
 /** Apply and acknowledge all requested settings, including after session/load. */
 export async function applyDevinModel(call, sessionId, configOptions, selection) {
-  if (!selection?.id || !selection.base || !Array.isArray(selection.family) || selection.unmappable) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
+  if (!selection?.id || !selection.base || !Array.isArray(selection.family)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
   let latest = configOptions;
   const verified = new Map();
-  const send = async (kind, value) => {
+  const send = async (kind, value, { unlisted = false } = {}) => {
     const option = setting(latest, kind);
-    if (choices(option.options).filter(choice => choice === value).length !== 1) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: kind });
+    if (!unlisted && choices(option.options).filter(choice => choice === value).length !== 1) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: kind });
     const result = await call('session/set_config_option', { sessionId, configId: option.id, value });
     latest = result?.configOptions;
     verified.set(kind, { id: option.id, value });
@@ -184,9 +187,13 @@ export async function applyDevinModel(call, sessionId, configOptions, selection)
   };
   // The representative is the same-base family variant ACP advertises as a model.
   const modelChoices = choices(setting(latest, 'model').options);
-  const reps = modelChoices.includes(selection.id) ? [selection.id]
+  const reps = selection.unmappable ? [] : modelChoices.includes(selection.id) ? [selection.id]
     : selection.family.filter(variant => variant.base === selection.base && !variant.unmappable && modelChoices.includes(variant.id)).map(variant => variant.id);
-  if (reps.length !== 1) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
+  if (reps.length !== 1) {
+    // カタログ・ACP の選択肢に無くても、その名前を CLI に送る。CLI の拒否はそのまま返す。
+    await send('model', selection.id, { unlisted: true });
+    return { configOptions: latest, verified };
+  }
   const rep = reps[0];
   await send('model', rep);
 

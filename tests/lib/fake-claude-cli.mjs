@@ -297,11 +297,13 @@ function onControlRequest(m) {
       }
       log(`initialize #${initializes} pending=${pending.length}`);
       let models = [{ value: 'default', displayName: 'Default', description: 'fake' }];
+      let account = {};
       let delay = 0;
       if (process.env.FAKE_CLAUDE_MODELS_FILE) {
         try {
           const cfg = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_MODELS_FILE, 'utf8'));
           const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
+          account = cfg.accounts?.[tok] ?? {};
           const picked = tok ? (cfg.tokens?.[tok] ?? cfg.default) : (cfg.login ?? cfg.default);
           // delays: { <トークン または 'login'>: ミリ秒 }。一覧の応答を遅らせる（取れるのが画面の待ちより後になる場面）
           delay = Number(cfg.delays?.[tok || 'login']) || 0;
@@ -313,7 +315,7 @@ function onControlRequest(m) {
         } catch { /* test fallback */ }
       }
       const answer = () => {
-        reply({ commands: [], agents: [], models, account: {}, output_style: 'default', available_output_styles: ['default'],
+        reply({ commands: [], agents: [], models, account, output_style: 'default', available_output_styles: ['default'],
           hooks_applied: true, ...(pending.length ? { pending_permission_requests: pending } : {}) });
         if (initializes > 1) bgChanged();
       };
@@ -329,7 +331,17 @@ function onControlRequest(m) {
       return;
     }
     case 'get_context_usage': reply({ totalTokens: 1000, rawMaxTokens: 200_000, memoryFiles: [] }); return;
-    case 'mcp_status': reply({ mcpServers: [] }); return;
+    case 'mcp_status': {
+      // 試験用: コネクターの一覧を読んだときの認証の環境を 1 行ずつ書く（トークンは呼び名だけ。権限の並びと設定フォルダは偽の値。tests/unit/server-claude-connectors-list.mjs）
+      if (process.env.FAKE_CLAUDE_ENV_LOG) {
+        let labels = {};
+        try { labels = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_MODELS_FILE, 'utf8')).labels ?? {}; } catch { /* 呼び名なし */ }
+        const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
+        fs.appendFileSync(process.env.FAKE_CLAUDE_ENV_LOG, `${JSON.stringify({ who: tok ? (labels[tok] ?? 'token') : 'login',
+          scopes: process.env.CLAUDE_CODE_OAUTH_SCOPES ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null })}\n`);
+      }
+      reply({ mcpServers: [] }); return;
+    }
     case 'get_settings': reply({ applied: {} }); return;
     case 'get_task_output':
       if (!outputs.has(req.task_id)) { out({ type: 'control_response', response: { subtype: 'error', request_id: m.request_id, error: `No task found with ID: ${req.task_id}` } }); return; }

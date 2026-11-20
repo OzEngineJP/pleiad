@@ -114,7 +114,7 @@ export default async function (t) {
     t.ok('会話ごとに別のトークン（CLI 用トークンとも別）', new Set([ask.info.token, bypass.info.token, plan.info.token, asker.info.token, cli]).size === 5);
     const again = await c.runTurn({ prompt: 'control-info', sessionId: ask.sessionId, cwd: ROOT, backend: 'fake', mode: 'default' }, { ms: 30_000 });
     t.ok('同じ会話の次のターンも同じ接続（会話のあいだ同じ口。agy は起動時にしか渡せない）', JSON.parse((await c.cmd('loadSession', { sessionId: again.sessionId })).messages.at(-1).text).token === ask.info.token);
-    t.ok('指示文は 3〜4 行（会話の言語）', ask.info.instructions.split('\n').length >= 3 && ask.info.instructions.split('\n').length <= 4);
+    t.ok('指示文は 5 行で ToDo の入口を含む（会話の言語）', ask.info.instructions.split('\n').length === 5 && ask.info.instructions.includes('todos.*'));
 
     const bound = (s) => s.info.token;
     const boundList = await api(bound(ask), 'GET', '/api/ops');

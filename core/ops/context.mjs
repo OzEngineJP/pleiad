@@ -111,6 +111,7 @@ async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
     native: known.agents ?? {}, plugins: extras.plugins,
     // null（1 度も読めていない）と [] （読めて 0 件）は最後まで区別する。null のまま保存すると、止めたはずのコネクターが開く
     connectors: Array.isArray(extras.connectors) ? extras.connectors : null,
+    connectorAccounts: Array.isArray(extras.connectorAccounts) ? extras.connectorAccounts : [],
     reading: extras.reading === true,
     needsAuth: Array.isArray(extras.needsAuth) ? extras.needsAuth : [],
     workspace: placeDir ? workspaceNames(atPlace) : null,
@@ -149,7 +150,7 @@ export const contextOps = [
     legacyCommand: 'mcpMatrix',
     handler: (ctx, { cwd, place, refresh }) => run(ctx, async () => {
       const { input } = await matrixInput(ctx, { cwd, place, refresh: refresh === true });
-      return buildMcpMatrix(input);
+      return { ...buildMcpMatrix(input), connectorAccounts: input.connectorAccounts };
     }),
   }),
   defineOp({

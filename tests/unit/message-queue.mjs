@@ -275,4 +275,36 @@ export default async function(t) {
   plainTurn = { phase: 'waiting', blocked: true, steer: async () => true };
   await plain2.kick('p');
   t.ok('ターンが終わりかけ（blocked）なら予約があっても待つ', (await plain2.list('p'))[1].status === 'queued');
+
+  // claude.ai のコネクターで止まった発言（ADR 0340 段 3）。止めた理由（connectorsError）を失敗に残し、送り直し・取り消し・送り直しの開始で消す
+  const ceData = {};
+  const ceStore = { get: async id => ceData[id] ?? {}, getAll: async () => ceData,
+    setSessionData: async (id, field, value) => { (ceData[id] ??= {})[field] = structuredClone(value); } };
+  const ce = { kind: 'expired', accountId: 'acct-000000000001', accountName: 'x', reauth: true, params: {} };
+  let ceStarts = 0;
+  const ceQueue = createMessageQueue({ store: ceStore, active: () => null, changed: () => {}, delivered: () => {},
+    start: async () => { ceStarts += 1; throw Object.assign(new Error('stopped'), { connectorsError: ce }); } });
+  await ceQueue.accept('c', 'ce-1', { prompt: 'x' });
+  const waitStatus = async (want) => { for (let i = 0; i < 100; i++) { const [m] = await ceQueue.list('c'); if (m.status === want) return m; await new Promise(r => setTimeout(r, 10)); } return (await ceQueue.list('c'))[0]; };
+  const stopped = await waitStatus('failed');
+  t.ok('コネクターで起動の前に止まった発言は失敗（failed）に戻り、止めた理由を持つ', stopped.status === 'failed' && stopped.connectorsError?.kind === 'expired' && ceStarts === 1, JSON.stringify(stopped));
+  await ceQueue.undelivered('c', 'ce-1', 'again', ce);
+  ceData.c.outbox[0].status = 'sent';
+  await ceQueue.undelivered('c', 'ce-1', 'again', ce);
+  t.ok('渡す前の失敗（undelivered）も止めた理由を残す', (await ceQueue.list('c'))[0].connectorsError?.kind === 'expired');
+  await ceQueue.undelivered('c', 'ce-1', 'plain', null);
+  t.ok('（念のため）送信済みでない発言の undelivered は何も変えない', (await ceQueue.list('c'))[0].connectorsError?.kind === 'expired');
+  await ceQueue.action('c', 'ce-1', 'cancel');
+  const ceCancelled = (await ceQueue.list('c'))[0];
+  t.ok('取り消すと止めた理由も消える（直す入口を出し直さない）', ceCancelled.status === 'cancelled' && !('connectorsError' in ceCancelled), JSON.stringify(ceCancelled));
+  await ceQueue.accept('c', 'ce-2', { prompt: 'y' });
+  for (let i = 0; i < 100 && (await ceQueue.list('c'))[1].status !== 'failed'; i++) await new Promise(r => setTimeout(r, 10));
+  let retryStarted = null;
+  const retrySeen = createMessageQueue({ store: ceStore, active: () => null, changed: (id, items) => { const m = items.find(x => x.id === 'ce-2'); if (m?.status === 'sending') retryStarted ??= m; }, delivered: () => {},
+    start: async (_args, accepted) => { await accepted(); return 'ok'; } });
+  await retrySeen.action('c', 'ce-2', 'retry');
+  for (let i = 0; i < 100 && (await retrySeen.list('c'))[1].status !== 'sent'; i++) await new Promise(r => setTimeout(r, 10));
+  const resent = (await retrySeen.list('c'))[1];
+  t.ok('再送する（ログインし直した後の自動の送り直し・オフにして送る）は止めた理由を消して送り直す',
+    resent.status === 'sent' && !resent.connectorsError && retryStarted && !retryStarted.connectorsError, JSON.stringify({ resent, retryStarted }));
 }
