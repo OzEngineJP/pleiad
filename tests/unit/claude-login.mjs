@@ -101,7 +101,8 @@ export default async function (t) {
   t.ok('認可済みのアカウントはその設定フォルダで読む（トークンは使わない）', reads.some(r => r.configDir === '/u/a1') && reads.every(r => r.token === null) && many.accounts[1].plan === 'max');
   t.ok('未認可のアカウントは読みに行かず、認可を促す', !reads.some(r => r.configDir === '/u/a2') && many.accounts[2].needsUsageLogin === true
     && many.accounts[2].message === NEEDS_USAGE_LOGIN && many.accounts[2].accountId === 'a2');
-  t.ok('取れなかったアカウントは理由と「やり直す」を出し、トークンは伏せる', many.accounts[3].reauth === true && !many.accounts[3].message.includes(TOKEN));
+  t.ok('一般の失敗はログイン切れにせず、理由を残してトークンは伏せる', many.accounts[3].reauth !== true && many.accounts[3].reason === 'error'
+    && many.accounts[3].message.includes('denied') && !many.accounts[3].message.includes(TOKEN));
 
   // ---- セッション（疑似端末の偽物）
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-login-'));

@@ -77,6 +77,11 @@ async function japaneseCases(t, tmp) {
   });
 
   const relogin = serverT('claude.usage.relogin'), reauthNeeded = serverT('claude.usage.reauthNeeded');
+  const readRow = error => claudeUsage.readClaudeAccountsUsage({
+    accounts: [{ id: 'acct-dddddddddddd', name: '予備', configDir: registered.ok, usageLogin: true }],
+    loginLabel: 'ログイン中のアカウント',
+    read: async ({ configDir } = {}) => { if (configDir) throw error; return { plan: 'max', windows: [week(1)] }; },
+  }).then(quota => quota.accounts[1]);
   // read は CLI の代わり: どのアカウントにも制限の無い応答を返し、その設定フォルダの偽のファイルを見る
   const read = ({ configDir } = {}) => claudeUsage.claudeUsageQuota(NO_LIMITS, { configDir, missing: ({ configDir: dir }) => missing({ configDir: dir }) });
   const accounts = [
@@ -98,6 +103,46 @@ async function japaneseCases(t, tmp) {
     assert.equal(spare.reason, undefined, 'トークンがあれば今までどおり');
     assert.equal(spare.message, serverT('usage.claudeUnavailable'));
     assert.ok(!JSON.stringify(quota).includes('fake-'), 'トークンの値を出さない');
+    assert.equal(claudeUsage.shouldMarkUsageExpired(work), true, 'no-login はログイン切れの印');
+    assert.equal(claudeUsage.shouldMarkUsageExpired(personal), true);
+  });
+
+  // CLI / SDK が実際に返す文（claude.exe と sdk.mjs。推測で広げない）。429 と時間切れと更新の取り合いは印にしない
+  const authMessage = 'Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.';
+  const cases = [
+    ['429', Object.assign(new Error('HTTP 429 Too Many Requests'), { reason: 'rate-limited' }), false, 'rate-limited'],
+    ['429 の文言', new Error('HTTP 429 Too Many Requests'), false, 'rate-limited'],
+    ['5xx', new Error('request failed with status 503'), false, 'error'],
+    ['起動の失敗', new Error('Claude Code process exited with code 1'), false, 'error'],
+    ['行番号の 401', new Error('ENOENT: line 401 of file'), false, 'error'],
+    ['時間切れ', Object.assign(new Error('使用量の取得が時間切れです'), { reason: 'timeout' }), false, 'timeout'],
+    ['更新の取り合い', new Error('Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh. This is usually transient; retry in a minute'), false, 'error'],
+    ['更新ロック', new Error('OAuth access token could not be refreshed: another Claude Code process is holding the refresh lock'), false, 'error'],
+    ['broker', new Error('Failed to authenticate through the broker: access denied'), false, 'error'],
+    ['401 の文', new Error(authMessage), true, 'error'],
+    ['status 401', Object.assign(new Error('unauthorized'), { status: 401 }), true, 'error'],
+    ['authentication_error', Object.assign(new Error('rejected'), { error: { type: 'authentication_error' } }), true, 'error'],
+    ['invalid_grant', new Error('Token refresh failed with invalid_grant'), true, 'error'],
+    ['取り消し', new Error('Failed to authenticate: OAuth token revoked. Please log in again or contact your administrator.'), true, 'error'],
+    ['更新できない', new Error('OAuth refresh token is no longer valid; run /login to re-authenticate'), true, 'error'],
+    ['未ログイン', new Error('Not logged in. Run claude auth login to authenticate.'), true, 'error'],
+  ];
+  await check(t, '429・一般の失敗・更新の取り合いでは reauth もログイン切れの印も付けない。401 相当は今までどおり付ける', async () => {
+    const failed = message => serverT('claude.usage.failed', { message });
+    const failedReauth = message => serverT('claude.usage.failedReauth', { message });
+    for (const [label, error, auth, reason] of cases) {
+      assert.equal(claudeUsage.claudeUsageAuthFailure(error), auth, label);
+      const row = await readRow(error);
+      assert.equal(row.reason, reason, label);
+      assert.equal(row.reauth === true, auth, label);
+      assert.equal(row.message, (auth ? failedReauth : failed)(error.message), label);
+      assert.equal(claudeUsage.shouldMarkUsageExpired(row), auth, label);
+    }
+    assert.equal(claudeUsage.claudeUsageAuthFailure(Object.assign(new Error(authMessage), { status: 429 })), false, '429 の status は印にしない');
+    assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'rate-limited' }), false);
+    assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'timeout' }), false);
+    assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'no-login' }), true);
+    assert.equal(claudeUsage.shouldMarkUsageExpired({ reauth: true, reason: 'error' }), true);
   });
 
   await check(t, '設定の「使用量」に再ログインの文と「claude.ai にログインし直す」のボタンが出る。ヘッダーの札は認可待ち', async () => {

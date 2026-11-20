@@ -92,7 +92,7 @@ import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugi
 import { createClaudeConnectorsCache } from './claude-connectors.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
 import { ConnectorsAuthError, connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
-import { guardUsageDir, refreshUsageDir } from './backends/claude-usage.mjs';
+import { guardUsageDir, refreshUsageDir, shouldMarkUsageExpired } from './backends/claude-usage.mjs';
 import { claudeSdkVersion } from './claude-sdk.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
@@ -3147,7 +3147,8 @@ async function providerQuota(backend, { force = false } = {}) {
       let changed = false;
       for (const row of res.accounts) {
         if (!row?.accountId) continue;
-        if (row.reauth && row.reason !== 'timeout') {
+        // ログイン切れの印は、認証が無い・更新できない行だけ（429・時間切れは付けない）
+        if (shouldMarkUsageExpired(row)) {
           if ((await claudeAccounts.markUsageExpired(row.accountId, row.reason ?? 'no-login').catch(() => ({}))).changed) changed = true;
         } else if (!row.skipped && !row.reason && !row.needsUsageLogin && (row.windows?.length || row.plan)) {
           if ((await claudeAccounts.clearUsageExpired(row.accountId).catch(() => ({}))).changed) changed = true;

@@ -6,6 +6,7 @@ import { loadClaudeSdk } from '../claude-sdk.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeQuota, LOGIN_ACCOUNT, quotaFailure } from '../usage.mjs';
 import { claudeEnv, TOKEN_ENV } from '../claude-accounts.mjs';
+import { isClaudeAuthError } from './claude-normalize.mjs';
 import { t } from '../i18n.mjs';
 
 /**
@@ -139,6 +140,52 @@ export async function claudeUsageQuota(result, { token, configDir, missing = cre
 
 const errorText = error => String(error?.message ?? error).replace(/sk-ant-[A-Za-z0-9_-]+/g, t('claude.redacted.token'));
 
+// 更新用トークンの取り合い。ログインは切れていない（再試行で通る）。
+// claude.exe（@anthropic-ai/claude-agent-sdk-win32-x64、SDK 0.3.288）:
+//   "Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh. This is usually transient"
+//   "OAuth access token could not be refreshed: another Claude Code process is holding the refresh lock"
+//   "OAuthRefreshLockTimeoutError" / "OAuthRefreshLockContendedError"
+const USAGE_REFRESH_CONTENTION = /another Claude Code process is (?:refreshing|holding the refresh lock)|OAuthRefreshLock(?:Timeout|Contended)Error/i;
+
+// 認証が無い・更新できない、と CLI / SDK が返す文言だけ。429 や時間切れは含めない。
+//   - isClaudeAuthError（ADR 0212）: sdk.mjs は失敗を "Claude Code returned an error result: …" で包む。
+//     sdk.d.ts の SDKAssistantMessageError に authentication_failed。
+//     観測した文は "Failed to authenticate. API Error: 401 OAuth access token has expired."
+//   - claude.exe の文言: authentication_error（401 の error.type）、
+//     "Token refresh failed with invalid_grant" / oauth_refresh_invalid_grant、
+//     "OAuth token revoked" / "OAuth access token has been revoked" / "OAuth token has been revoked"、
+//     "OAuth session expired and could not be refreshed"、"OAuth refresh token is no longer valid"、
+//     "OAuth access token is invalid"、"Not logged in. Run claude auth login"、
+//     "Please run /login"（"Your session has expired. Please run /login to sign in again." など）
+const USAGE_AUTH_TEXT = /authentication_error|oauth_refresh_invalid_grant|\binvalid_grant\b|token has been revoked|oauth token revoked|oauth session expired and could not be refreshed|refresh token is no longer valid|oauth access token is invalid|not logged in\. run claude auth login|please run \/login/i;
+
+/**
+ * 使用量の読み取りの例外が、認証が無い・更新できないときか。
+ * 429・時間切れ・更新の取り合いは false（ログイン切れの印を付けない）。
+ * status が 401、error.type が authentication_error / authentication_failed、code が invalid_grant、reason が no-login も真。
+ */
+export function claudeUsageAuthFailure(error) {
+  if (error?.reason === 'no-login') return true;
+  if (error?.reason === 'rate-limited' || error?.reason === 'timeout') return false;
+  const text = String(error?.message ?? error ?? '');
+  if (USAGE_REFRESH_CONTENTION.test(text)) return false;
+  const status = error?.status ?? error?.statusCode ?? error?.api_error_status;
+  if (status != null && Number(status) === 429) return false;
+  if (status != null && Number(status) === 401) return true;
+  const kind = error?.error?.type ?? (typeof error?.error === 'string' ? error.error : null);
+  if (kind === 'authentication_error' || kind === 'authentication_failed' || kind === 'invalid_grant' || error?.code === 'invalid_grant') return true;
+  if (/\b429\b|rate[ _-]?limit/i.test(text) || /\btime[ds]?[ _-]?out\b/i.test(text)) return false;
+  // isClaudeAuthError の "failed to authenticate" は 401 の文（"Failed to authenticate. API Error: 401 …"）用。
+  // claude.exe にある別系統（broker・registry）は claude.ai のログイン切れではない
+  if (/failed to authenticate through the broker|failed to authenticate with registry/i.test(text)) return false;
+  return isClaudeAuthError(text) || USAGE_AUTH_TEXT.test(text);
+}
+
+/** ログイン切れの印（ply-usage-expired.json）を付ける行か。429 と時間切れは付けない */
+export function shouldMarkUsageExpired(row) {
+  return row?.reauth === true && row?.reason !== 'timeout' && row?.reason !== 'rate-limited';
+}
+
 /** 使用量の認可を促す文。言語が実行中に変わるので呼ぶたびに引く */
 export const needsUsageLogin = () => t('claude.usage.needsLogin');
 /** 互換（tests/unit/claude-login.mjs が比べる）。読み込み時の言語で固まるので、本体は needsUsageLogin() を使う */
@@ -174,7 +221,11 @@ export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('c
       const quota = await read({ configDir: a.configDir });
       return { ...base, ...quota, ...(quota?.reason === 'no-login' ? { reauth: true } : {}) };
     } catch (e) {
-      return { ...base, windows: [], reauth: true, reason: quotaFailure(e), message: t('claude.usage.failedReauth', { message: errorText(e) }) };
+      // ログイン切れの印は、認証が無い・更新できないときだけ。429・時間切れ・起動失敗は「取得できませんでした」
+      const reason = quotaFailure(e);
+      const auth = reason !== 'rate-limited' && reason !== 'timeout' && claudeUsageAuthFailure(e);
+      return { ...base, windows: [], reason, ...(auth ? { reauth: true } : {}),
+        message: t(auth ? 'claude.usage.failedReauth' : 'claude.usage.failed', { message: errorText(e) }) };
     }
   };
   const rows = await Promise.all([login(), ...accounts.map(one)]);
