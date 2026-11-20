@@ -225,7 +225,7 @@ export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('c
       const reason = quotaFailure(e);
       const auth = reason !== 'rate-limited' && reason !== 'timeout' && claudeUsageAuthFailure(e);
       return { ...base, windows: [], reason, ...(auth ? { reauth: true } : {}),
-        message: t(auth ? 'claude.usage.failedReauth' : 'claude.usage.failed', { message: errorText(e) }) };
+        message: auth ? t('claude.usage.failedReauth', { message: errorText(e) }) : t('claude.usage.failed', { message: errorText(e) }) };
     }
   };
   const rows = await Promise.all([login(), ...accounts.map(one)]);
