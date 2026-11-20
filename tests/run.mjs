@@ -532,6 +532,7 @@ const SUITES = [
   './unit/claude-connectors-auth.mjs',
   './unit/claude-own-dir.mjs',
   './unit/context-scan.mjs',
+  './unit/context-claude-json-size.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   './unit/context-settings.mjs',
   // Stage 2: 指示・Skills を名前 × エージェントで管理・評価・実行時適用する（ADR 0337）

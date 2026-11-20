@@ -15,6 +15,9 @@ const digest = s => crypto.createHash('sha256').update(s).digest('hex');
 const record = v => v && typeof v === 'object' && !Array.isArray(v);
 // 読む量の上限（気になる所の計算も同じ上限で読む: core/context-findings.mjs）
 export const MAX_FILE = 256 * 1024, MAX_TOTAL = 4 * 1024 * 1024, MAX_ENTRIES = 1000;
+// `~/.claude.json` だけの上限。Claude Code が履歴・機能フラグのキャッシュを溜めて 256 KB を超える（2026-11-19 に 267 KB で全会話の送信が止まった）。
+// ここから使うのは MCP の登録だけで、全文は外へ出さない（renderServers）ので、合計の枠（MAX_TOTAL）にも数えない
+export const MAX_CLAUDE_JSON = 16 * 1024 * 1024;
 // 値を伏せるキー。キー名は残す（何が要るかは見えたほうがよい）
 const SECRET_KEYS = new Set(['env', 'headers']), MASK = '••••';
 // クエリ文字列に鍵を置く登録（?key=… / ?token=…）があるので、? 以降は伏せる。接続先そのものは残す
@@ -134,6 +137,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
   const disabledNames = new Set(plan.mcp?.disabled ?? []);
   const entries = [], diagnostics = [], searched = [], configs = [], skipped = [], cache = new Map();
   let bytes = 0, operations = 0, limited = false;
+  const claudeJsonKey = pathKey(path.join(home, '.claude.json'));
   function issue(file, message) { if (diagnostics.length < 100) diagnostics.push({ path: file, message }); }
   /** 外部 MCP の設定ファイルの問題。softMcp なら止めずに skipped へ（そのファイルの名前は渡さない） */
   function mcpIssue(file, message) { if (!softMcp) return issue(file, message); if (skipped.length < 100) skipped.push({ path: file, message }); }
@@ -152,13 +156,18 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     try {
       const stat = await fs.stat(file);
       if (!stat.isFile()) return null;
-      if (stat.size > MAX_FILE || bytes + stat.size > MAX_TOTAL) { report(file, t('context.scan.tooLarge')); return null; }
-      const handle = await fs.open(file, 'r');
+      const claudeJson = key === claudeJsonKey;
+      const max = claudeJson ? MAX_CLAUDE_JSON : MAX_FILE;
+      if (stat.size > max || (!claudeJson && bytes + stat.size > MAX_TOTAL)) { report(file, t('context.scan.tooLarge')); return null; }
       let body;
-      try { const b = Buffer.alloc(MAX_FILE + 1); const r = await handle.read(b, 0, b.length, 0); body = b.subarray(0, r.bytesRead); }
-      finally { await handle.close(); }
-      if (body.length > MAX_FILE) { report(file, t('context.scan.tooLarge')); return null; }
-      bytes += body.length;
+      if (claudeJson) body = await fs.readFile(file);   // 調べた後に育っても、下の長さの確かめで止める
+      else {
+        const handle = await fs.open(file, 'r');
+        try { const b = Buffer.alloc(MAX_FILE + 1); const r = await handle.read(b, 0, b.length, 0); body = b.subarray(0, r.bytesRead); }
+        finally { await handle.close(); }
+      }
+      if (body.length > max) { report(file, t('context.scan.tooLarge')); return null; }
+      if (!claudeJson) bytes += body.length;
       const result = { text: body.toString('utf8').replace(/^\uFEFF/, ''), real: await fs.realpath(file), bytes: body.length };
       cache.set(key, result); return result;
     } catch (e) { if (!['ENOENT', 'ENOTDIR'].includes(e.code)) report(file, t('context.scan.fileUnreadable')); return null; }
