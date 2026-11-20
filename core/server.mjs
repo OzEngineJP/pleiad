@@ -134,7 +134,7 @@ import { createPlusLink } from './remote/plus-link.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
-import { stopHeldAppServer } from './backends/codex-held.mjs';
+import { CODEX_LABEL_KIND, hasHeldCodexThread, stopHeldAppServer } from './backends/codex-held.mjs';
 import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart, cliVersion } from './backends/claude-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
 import { stopHeldAgy } from './backends/antigravity.mjs';
@@ -7563,7 +7563,32 @@ const outbox = createMessageQueue({
 // 前の起動が残した承認・質問のカードの行も読む（ADR 0270 段 3 の ②）。付け直すターンが同じ id で出し直すまでは、まだ何も出さない
 const restoredCards = waitingCards.load();
 if (restoredCards.size) console.log(`  前の起動が残した承認・質問のカード ${restoredCards.size} 件を読んだ`);
+const startupHeldChildren = new Map();
+let startupHolder = null, startupHolderUnreadable = false;
 const adopting = await restoreAdoptedTurns();
+
+async function taskStopUnconfirmed(task) {
+  if (startupHolderUnreadable) return true;
+  if (!startupHeldChildren.size) return false;
+  const nativeOwners = await nativeOwnerIndex();
+  for (const child of startupHeldChildren.values()) {
+    const { id, label, seq } = child;
+    const cards = label?.k === CODEX_LABEL_KIND ? Object.values(label.turns ?? {}) : [label];
+    const matches = id === task.heldQuit || cards.some(card => card?.taskId === task.taskId || card?.sessionId === task.sessionId)
+      || hasHeldCodexThread(child, task, nativeOwners);
+    if (!matches) continue;
+    if (startupHolder.connected && !startupHolder.attached.has(id)) {
+      try {
+        const state = await startupHolder.attach(id, { from: seq + 1 });
+        if (!state.alive) startupHeldChildren.delete(id);
+      } catch (error) {
+        if (error.reason === 'unknown') startupHeldChildren.delete(id);
+      }
+    }
+    if (startupHeldChildren.has(id)) return true;
+  }
+  return false;
+}
 // 前のサーバーが保持役に残した idle の agy（ターンを終えて札も印も無い子）を止める。付け直したターンの子（札と印がある）には触れない。
 // 待つ agy を止めるタイマーは前のサーバーのメモリにあったので、ここで止めないと agy を使わない間ずっと残る（core/backends/antigravity-held.mjs の sweepIdleAtStart）
 {
@@ -7690,8 +7715,10 @@ async function steerNotice(turn, owner, prompt, tasks, settingNotices = null, ho
     touchCard(turn);
   }
   let accepted;
-  try { accepted = await turn.control.steer?.(item); }
-  catch { if (liveNotices.delete(item.id)) touchCard(turn); return 'error'; }
+  try {
+    await hooks?.beforeDelivery?.();
+    accepted = await turn.control.steer?.(item);
+  } catch { if (liveNotices.delete(item.id)) touchCard(turn); return 'error'; }
   if (!accepted) { if (liveNotices.delete(item.id)) touchCard(turn); return 'requeue'; }
   if (!confirms) { emitGlobal({ type: 'taskNotice', sessionId: owner, text: prompt }); hooks?.delivered?.(); }
   return 'ok';
@@ -7861,11 +7888,12 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
 function adoptChild(ctx, turnPromise, { abandon = false } = {}) {
   const { taskId, execution, sessionId } = ctx;
   const claims = Object.values(ctx.card.steers).flatMap(entry => entry.waiters.includes('agentTasks') && entry.taskId === taskId && Array.isArray(entry.instructionIds) ? entry.instructionIds : []);
-  // 付け直しをあきらめた（待ち受けのポートが取れない）ときは、今までの起動の復元と同じに interrupted にする（finish を渡さない）
+  // 待ち受けのポートが取れない場合も、停止の確認は agentTasks に任せる。
   const adopted = agentTasks.adoptRun(taskId, abandon ? null : async (task, signal) => {
     const release = trackChild(task, signal, execution);
     try {
       const outcome = await turnPromise;
+      if (ctx.adoptionFailed) return { adoptionFailed: true };
       if (outcome === 'requeue') return { requeue: true };
       // 作業場所を作り直した（追加指示で再開した子）。旧サーバーが結果を書く前に落ちたときも、子の会話の今の作業場所から台帳を引き直す
       const renewed = await adoptedWorktree(task);
@@ -7972,6 +8000,10 @@ agentTasks = await createAgentTasks({
   dataDir: store.dataDir,
   // 付け直す委譲の子のタスクは、起動の復元で interrupted にしない（結果の確定は adoptChild が引き継ぐ。stage2-server-state.md S8）
   adopting: adopting.flatMap(a => a.ctx.taskId ? [a.ctx.taskId] : []),
+  stopUnconfirmed: taskStopUnconfirmed,
+  reportUnconfirmedStop: task => recordTaskStops([{ ...task, stopUnconfirmed: true }], 'restart'),
+  recoverNotice: async task => isRemoteOwner(task.parentSessionId) ? 'unknown'
+    : store.recoverTaskNotice(task, taskStop(task, { noticeUnconfirmed: true })),
   changed: () => { syncTodoTasks(); broadcastRunning(); completionNotices.changed(); remoteTasksChanged(); },
   // 人間の承認を待っているか。承認は core/server.mjs 側にしかないので判定を渡す。
   // 中継の複製も数える（孫が止まっていれば、その子も止まっている）
@@ -8245,8 +8277,25 @@ agentTasks = await createAgentTasks({
     if (!live && await noticeBlocked(owner)) return 'requeue';
     // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。recordTaskNotice）
     const prompt = completionNotice(await ensureAgentLocale(owner), tasks);
-    if (live) return steerNotice(live, owner, prompt, tasks);
-    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted, retryUndelivered: true, claimFailureNotice });
+    const beforeDelivery = () => store.recordTaskNoticeReceipt(owner, tasks, 'attempting');
+    let receipt, dropped = false;
+    const accept = () => receipt ??= store.recordTaskNoticeReceipt(owner, tasks, 'received').then(accepted);
+    const redeliver = () => {
+      if (!receipt) { dropped = true; return; }
+      void receipt.then(() => agentTasks.renotify(tasks)).catch(() => {});
+    };
+    const delivered = () => { void accept().catch(() => {}); };
+    const outcome = live
+      ? await steerNotice(live, owner, prompt, tasks, null, { beforeDelivery, delivered, redeliver })
+      : await runTurn({ sessionId: owner, prompt }, () => {}, {
+        internal: true, beforeDelivery, onAccepted: accept, retryUndelivered: true, claimFailureNotice,
+      });
+    if (outcome === 'ok') {
+      await accept();
+      if (dropped) await agentTasks.renotify(tasks);
+    } else if (receipt) await receipt;
+    else if (outcome === 'requeue' || outcome === 'undelivered') await store.recordTaskNoticeReceipt(owner, tasks, 'undelivered');
+    return ['ok', 'requeue', 'undelivered'].includes(outcome) ? outcome : 'error';
   },
   // 止まった子に残った裏のコマンドが、まだ生きているか。OS のプロセス ID はどのバックエンドも渡さないので、
   // バックエンドが裏の作業として挙げているか（Codex の端末・Claude のターンが抱える裏の作業・ply_shell の裏のジョブ）で答える
@@ -9087,6 +9136,7 @@ async function launchTurn(ctx) {
     // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
     if (!began) { turn.gitLate = true; touchCard(turn); }
   }
+  await hooks.beforeDelivery?.();
   ctx.backendInvoked = true;
   return hooks.compact && backend.compact
     ? await backend.compact({ ...runArgs, trigger: hooks.compact })
@@ -9617,7 +9667,8 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         console.log(`  ターンを付け直した（${sessionId}）: 記録 ${source.state.id}・ack ${source.acked ?? source.state.acked}`);
         return result;
       } catch (err) {
-        console.error(`  ターンを付け直せなかったので中断として残す（${sessionId}）:`, String(err?.message ?? err));
+        ctx.adoptionFailed = true;
+        console.error(`  ターンを付け直せなかった（${sessionId}）:`, String(err?.message ?? err));
         if (turn.compactTrigger) retryCompact = turn.compactTrigger;
         releaseContext();
         source.dispose?.();   // 付け直しの待ちを外す（Codex は共有の app-server の frame を預かっている。バックエンドを呼ぶ前に諦めたとき）
@@ -9649,14 +9700,24 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
  * 付け直せない元は何もせず、起動時の restart の回復（中断）に任せる
  */
 async function restoreAdoptedTurns() {
-  const failed = err => { console.error('  付け直す元を読めませんでした:', String(err?.message ?? err)); return []; };
+  const failed = err => {
+    startupHolderUnreadable = true;
+    console.error('  付け直す元を読めませんでした:', String(err?.message ?? err));
+    return [];
+  };
   const root = holderRootFor({ dataDir: store.dataDir });
-  const sources = root ? await readHolderSources({ dataDir: store.dataDir, root, appVersion: APP_VERSION }).catch(failed) : [];
+  const sources = root ? await readHolderSources({ dataDir: store.dataDir, root, appVersion: APP_VERSION, log: console.log,
+    observeChildren(client, children) {
+      startupHolder = client;
+      client.on('exit', ({ id }) => startupHeldChildren.delete(id));
+      for (const child of children) if (child.alive) startupHeldChildren.set(child.id, child);
+    },
+  }).catch(failed) : [];
   const adopted = [];
   for (const source of sources) {
     const card = source.state.label;
     try { adopted.push({ card, source, ctx: await restoreTurn(card, source) }); }
-    catch (err) { source.dispose?.(); console.error(`  ターンを付け直せないので中断として残す（記録 ${source.id}）:`, String(err?.message ?? err)); }
+    catch (err) { source.dispose?.(); console.error(`  ターンを付け直せない（記録 ${source.id}）:`, String(err?.message ?? err)); }
   }
   return adopted;
 }
@@ -10158,6 +10219,7 @@ async function abortSessions({ sessionId = null, reason } = {}) {
   // 付けるのは取り消しが実際にそのターンを止めるとき（stopChild）。先に止め始めていた（理由が付いている）ターンは最初の理由のまま
   const children = sessionId ? [...stoppedDescendants(sessionId)] : [];
   for (const id of children) if (!taskStopReasons.has(id)) taskStopReasons.set(id, why);
+  if (why === 'quit' && !sessionId) await deferQuitAppServers(targets);
   for (const t of targets) {
     t.abortReason ??= why;
     t.ac.abort();
@@ -11708,9 +11770,33 @@ async function shutdownChromeHolder() {
  * アプリの終了: 保持役の子（app-server・OpenCode・`!` の行・ply_shell のジョブ・`!` の出力）を止めてから終わる。
  * 利用者が終了を選んだ・アンインストールのときだけ通る（ADR 0270 決定 4）
  */
+const quitAppServers = new Map();
+
+async function deferQuitAppServers(turns) {
+  const tasks = new Map(agentTasks.list().map(task => [task.sessionId, task.taskId]));
+  for (const turn of turns) {
+    const held = turn.control.holder?.codexAppServer ?? adopting.find(item => item.ctx.turn === turn)?.source.held;
+    const taskId = tasks.get(turn.info.sessionId);
+    if (held && taskId && !quitAppServers.has(taskId) && await agentTasks.deferHeldStop(taskId, held.id)) quitAppServers.set(taskId, held);
+  }
+}
+
 async function stopHeldChildren() {
+  await deferQuitAppServers(runtime.turns.values());
   shellRuns.stopAll();
-  await Promise.race([Promise.all([stopHeldAppServer(), stopHeldOpencode(), stopHeldAgy(), contextBridge.dispose(), shellBridge.closeAll()]), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {});
+  const orphaned = [...startupHeldChildren.values()].filter(child => child.label?.k === CODEX_LABEL_KIND)
+    .map(child => ({ client: startupHolder, child }));
+  const receipts = new Map();
+  const codex = stopHeldAppServer({ extra: quitAppServers.values(), orphaned, onStopped: (id, exited) => receipts.set(id, exited) });
+  const stopped = await Promise.race([
+    Promise.allSettled([codex, stopHeldOpencode(), stopHeldAgy(), contextBridge.dispose(), shellBridge.closeAll()]),
+    new Promise(resolve => setTimeout(resolve, 2500)),
+  ]);
+  const tasks = [];
+  for (const [taskId, held] of quitAppServers) tasks.push(await agentTasks.settleHeldStop(taskId, receipts.get(held.id) === true));
+  const unconfirmed = !stopped || stopped.some(result => result.status === 'rejected') || [...receipts.values()].includes(false);
+  if (unconfirmed) console.warn('  アプリの終了時に、保持役の子の停止を確認できませんでした');
+  await recordTaskStops(tasks, 'quit');
   await shutdownChromeHolder().catch(() => {});
 }
 
@@ -11760,7 +11846,7 @@ function shutdownServer({ stopHeld = false } = {}) {
     store.closeStore();
     closeDataDb(store.dataDir);
     releaseDataLock();
-    console.log(`  [exit] released the data lock at=${Date.now()}${stopHeld ? ' (stopped the held children)' : ''}`);
+    console.log(`  [exit] released the data lock at=${Date.now()}${stopHeld ? ' (requested held child shutdown)' : ''}`);
     process.exit(0);
   })().catch(error => {
     console.error('  終わりの後片付けに失敗:', String(error?.message ?? error));
@@ -11892,10 +11978,12 @@ void startPageListeners();
 void fs.rm(path.join(store.dataDir, "visualization-snapshots"), { recursive: true, force: true }).catch(() => {});
 // 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）
 for (const { card, source, ctx } of adopting) {
-  const turnPromise = adoptTurn(card, source, ctx, { abandon: adoptAbandoned });
+  const stopUnconfirmed = ctx.taskId && agentTasks.get(ctx.taskId)?.status === 'stopUnconfirmed';
+  const abandon = adoptAbandoned ?? (stopUnconfirmed ? 'previous app stop unconfirmed' : null);
+  const turnPromise = adoptTurn(card, source, ctx, { abandon });
   void turnPromise.catch(err => console.error('  ターンの付け直しに失敗:', String(err?.message ?? err)));
-  // 委譲の子は、結果の確定（execute の後半）を agentTasks へ引き継ぐ。付け直せなければ今までの起動と同じに interrupted にする
-  if (ctx.taskId) adoptChild(ctx, turnPromise, { abandon: Boolean(adoptAbandoned) });
+  // 委譲の子は、結果の確定（execute の後半）を agentTasks へ引き継ぐ。
+  if (ctx.taskId && !stopUnconfirmed) adoptChild(ctx, turnPromise, { abandon: Boolean(abandon) });
 }
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 上限で止まった会話の送信待ちを、解除時刻に流すよう置き直す（Pleiad を閉じている間に過ぎた分はすぐ）

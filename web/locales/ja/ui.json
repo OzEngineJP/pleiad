@@ -3049,7 +3049,8 @@
         "completed": "完了",
         "failed": "失敗",
         "cancelled": "停止済み",
-        "interrupted": "中断"
+        "interrupted": "中断",
+        "stopUnconfirmed": "停止未確認"
       },
       "notificationUnknown": "完了通知の配送結果は不明です。子の会話で結果を確認してください。"
     }

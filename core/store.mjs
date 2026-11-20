@@ -578,16 +578,43 @@ export async function recoverInterruptedTurns(at = Date.now(), { except = new Se
 const STOPS_MAX = 30;
 const STOP_LISTS = ["tasks", "tools", "background", "approvals", "waits"];
 
+/** 完了通知の配送開始・受領を依頼元の会話に記録する。タスクごとに最新の配送だけを持つ。 */
+export async function recordTaskNoticeReceipt(sessionId, tasks, state) {
+  return exclusive(async () => {
+    const entry = (await load())[sessionId];
+    if (!entry) throw new Error(t("store.invalidSessionField"));
+    const receipts = { ...entry.taskNoticeReceipts };
+    for (const { taskId, noticeId } of tasks) {
+      if (receipts[taskId]?.state === 'received' && receipts[taskId].id === noticeId) continue;
+      receipts[taskId] = { id: noticeId, state };
+    }
+    saveOne(sessionId, { taskNoticeReceipts: receipts });
+  });
+}
+
+/** 配送の前後で止まったとき、依頼元の記録と配送 ID を照合する。 */
+export async function recoverTaskNotice(task, entryForParent) {
+  const owner = task.parentSessionId;
+  const receipt = (await get(owner)).taskNoticeReceipts?.[task.taskId];
+  if (task.noticeId && (!receipt || receipt.id !== task.noticeId || receipt.state === 'undelivered')) return 'pending';
+  if (task.noticeId && receipt.state === 'received') return 'sent';
+  const state = await addStops(owner, { tasks: [entryForParent] }, { notice: task });
+  return state === 'received' ? 'sent' : 'unknown';
+}
+
 /**
- * 中断で止めたもの（stops）を会話に足す。同じ key のものは新しい方で置き換える（同じタスクを 2 度止めても 1 件）。
- * patch: { tasks?, background?, approvals?, waits? }（それぞれ key を持つ項目の配列）。会話の行が無ければ書かない
+ * 中断で止めたもの（stops）を会話に足す。同じ key のものは新しい方で置き換える。
+ * notice があれば結果への入口を残し、同じ配送の入口を再び作らないよう同じトランザクションで記録する。
  */
-export async function addStops(sessionId, patch) {
+export async function addStops(sessionId, patch, { notice } = {}) {
   if (!sessionId || !patch) return null;
   return exclusive(async () => {
     const all = await load();
     const entry = all[sessionId];
     if (!entry) return null;
+    const key = notice?.noticeId ?? 'legacy';
+    const receipt = notice && entry.taskNoticeReceipts?.[notice.taskId];
+    if (receipt?.id === key && ['received', 'shown'].includes(receipt.state)) return receipt.state;
     const next = structuredClone(entry.stops ?? {});
     let touched = false;
     for (const name of STOP_LISTS) {
@@ -602,8 +629,10 @@ export async function addStops(sessionId, patch) {
     if (!touched) return entry.stops ?? null;
     // 理由は最後に止めたときのもの（伝える文の見出しに使う）
     if (patch.reason) next.reason = patch.reason;
-    saveOne(sessionId, { stops: next });
-    return structuredClone(next);
+    saveOne(sessionId, { stops: next, ...(notice ? { taskNoticeReceipts: {
+      ...entry.taskNoticeReceipts, [notice.taskId]: { id: key, state: 'shown' },
+    } } : {}) });
+    return notice ? 'shown' : structuredClone(next);
   });
 }
 

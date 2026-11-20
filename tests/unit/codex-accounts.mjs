@@ -20,7 +20,9 @@ export default async function test(t) {
   await fs.writeFile(path.join(home, 'config.toml'), config);
   await fs.writeFile(path.join(home, 'session_index.jsonl'), 'original-index\n');
   const originalAuth = await fs.readFile(path.join(home, 'auth.json'), 'utf8');
-  const vars = { CODEX_HOME: home, CODEX_SQLITE_HOME: home, FAKE_CODEX_ACCOUNTS: '1', FAKE_CODEX_STATE_DIR: shared,
+  const controlFile = path.join(root, 'fake-control');
+  await fs.writeFile(controlFile, '');
+  const vars = { FAKE_CODEX_CONTROL: controlFile, CODEX_HOME: home, CODEX_SQLITE_HOME: home, FAKE_CODEX_ACCOUNTS: '1', FAKE_CODEX_STATE_DIR: shared,
     FAKE_CODEX_LOG: path.join(root, 'calls.jsonl'), OPENAI_API_KEY: 'fake-inherited-key', AGENT_HOST_CODEX_HOLDER: 'off',
     AGENT_HOST_CODEX_BIN: `"${process.execPath}" "${fileURLToPath(new URL('../lib/fake-codex.mjs', import.meta.url))}"` };
   const saved = Object.fromEntries(Object.keys(vars).map(k => [k, process.env[k]]));
@@ -28,7 +30,7 @@ export default async function test(t) {
   const { backend, codexRpcForAccount, codexBackendForAccount } = await import('../../core/backends/codex.mjs');
   const { rpc: defaultRpc } = await import('../../core/backends/codex-rpc.mjs');
   const { prepareCodexAccount, removeCodexAccountDirectory, codexAccountChildId, codexHomesOverlap } = await import('../../core/backends/codex-accounts.mjs');
-  const { acquireHeldAppServer, configureCodexHeld, expandCodexHeld, heldAppServer } = await import('../../core/backends/codex-held.mjs');
+  const { acquireHeldAppServer, configureCodexHeld, expandCodexHeld, hasHeldCodexThread, heldAppServer } = await import('../../core/backends/codex-held.mjs');
   const accounts = [];
   const make = async (suffix, credential = null) => {
     const id = `acct-${suffix}`, dir = path.join(root, 'accounts', 'codex', id);
@@ -149,6 +151,33 @@ export default async function test(t) {
     await ra.request('fake/config', { unsubscribeFailure: false });
     await run(b, { sessionId: ta });
     check('busy-account removal and failed writer transfers reject without stopping another account');
+
+    // An unsubscribe response alone does not release the writer. Reproduce both
+    // wait paths without delaying the suite by 75 seconds each.
+    await fs.writeFile(controlFile, 'sticky');
+    const locked = await run(a);
+    const nativeTimeout = globalThis.setTimeout;
+    const delays = [];
+    globalThis.setTimeout = (fn, ms, ...args) => {
+      if (ms === 75_000) { delays.push(ms); return nativeTimeout(fn, 50, ...args); }
+      return nativeTimeout(fn, ms, ...args);
+    };
+    try {
+      const expected = { message: translate('codex.accounts.releaseTimeout') };
+      await assert.rejects(rb.request('thread/resume', { threadId: locked }), expected);
+      await assert.rejects(ra.request('thread/resume', { threadId: locked }), expected);
+      assert.deepEqual(delays, [75_000, 75_000]);
+      const requests = await fs.readFile(vars.FAKE_CODEX_LOG, 'utf8');
+      assert.ok(!requests.split('\n').filter(Boolean).some(line => {
+        const frame = JSON.parse(line);
+        return frame.method === 'thread/resume' && frame.threadId === locked;
+      }));
+    } finally {
+      globalThis.setTimeout = nativeTimeout;
+      await fs.writeFile(controlFile, '');
+    }
+    await run(b, { sessionId: locked });
+    check('both writer waits time out without sending thread/resume, then proceed after a confirmed close');
 
     const c = await make('login');
     const urls = [], opened = [];
@@ -281,6 +310,11 @@ export default async function test(t) {
       assert.equal(frames.filter(x => x[0] === 'write' && x[1] === hd.id && x[2].method === 'initialize').length, 1);
       await assert.rejects(backend.adoptTurn({ account: e, source: sources[0], card: { held: true } }), /mismatch/);
       sources[0].dispose();
+      const incomplete = { ...children.get(hd.id), label: { ...children.get(hd.id).label, turns: { orphan: { taskId: 'orphan' } } }, marks: {} };
+      assert.deepEqual(await expandCodexHeld({ client, child: incomplete }), []);
+      assert.equal(children.get(hd.id).alive, true);
+      assert.equal(hasHeldCodexThread(incomplete, { backend: 'codex', sessionId: 'child-session' }, new Map([['orphan', 'child-session']])), true);
+      check('a live holder child with a missing turn mark can be matched without a recovery source');
       await backend.accountRemove({ account: d });
       await he.stop();
       check('holder child expansion preserves the selected account RPC and rejects mismatched accounts');

@@ -147,7 +147,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   backgroundMinutes = Number(process.env.AGENT_HOST_TASK_BACKGROUND_MINUTES ?? 30),
   io = fs, log = line => console.error(line), retryMax = RETRY_MAX, taskStorage = null,
   // 付け直すターン（無停止の更新 2b-7）の委譲の子のタスク id。起動の復元で interrupted にせず、adoptRun() が結果の確定を引き継ぐ（stage2-server-state.md S8）
-  adopting = [],
+  adopting = [], stopUnconfirmed = () => false, reportUnconfirmedStop = async () => {},
+  recoverNotice = async () => 'unknown',
   // 子の回が終わり、止まった状態（完了・失敗・取り消し）になった。子の会話の id を渡す。エージェントのブラウザーのデーモンを止める（core/agent-browser.mjs。ADR 0180）
   ended = () => {} }) {
   const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
@@ -286,15 +287,26 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const storage = locale => fault ? { storageFault: { error: agentT(locale, 'tasks.storageFault', { code: fault.code, since: new Date(fault.since).toISOString() }),
     code: fault.code, since: fault.since, failures: fault.failures } } : {};
   // 再起動: 実行中だったものは再実行しない。まだ親に渡っていない pending はそのまま送り直す。
-  // 渡ったか分からない delivering だけを unknown にする（二重に届けない）
+  // 途中で止まった通知は依頼元の受領記録と照合する。
   // restored: 再起動で止まった（interrupted にした）タスク。server が依頼元の会話の「止めたもの」に残す（docs/design.md「中断と再開」）
-  const restored = [];
+  function interrupt(row) {
+    row.status = 'interrupted'; row.error = t('tasks.interruptedByRestart');
+    delete row.heldQuit;
+    for (const instruction of row.instructions ?? []) if (instruction.state === 'sending') setInstruction(row, instruction.id, 'delivered');
+    dropInstructions(row);
+  }
+  function setStopUnconfirmed(row) {
+    row.status = 'stopUnconfirmed';
+    row.error = agentT(undefined, 'tasks.stopUnconfirmed');
+  }
+  const restored = [], quitStops = new Set();
   // 付け直す子のタスク（taskId -> 走っている印）。子のターンは新しいサーバーが続けているので、止めずに adoptRun() を待つ。
   // 走っているのは running か cancelling の行だけ（取り消しの最中なら、その印も付けておく）
   const adoptable = new Map();
   for (const taskId of adopting) {
     const r = records[taskId];
-    if (!r || r.host || !['running', 'cancelling'].includes(r.status)) continue;
+    if (!r || r.host || r.heldQuit || !['running', 'cancelling', 'stopUnconfirmed'].includes(r.status)) continue;
+    if (r.status === 'stopUnconfirmed') { r.status = 'running'; r.error = null; }
     const ac = new AbortController();
     if (r.status === 'cancelling') ac.abort();
     adoptable.set(taskId, ac);
@@ -304,17 +316,28 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (adoptable.has(r.taskId)) continue;
     // 再起動前の活動の写しは古い。ホストの sync が届くまで停滞の判定には使わない
     if (r.host) { delete r.hostTelemetry; delete r.hostBackground; delete r.activeCommands; delete r.lastActivityAt; delete r.lastOutputAt; }
-    if (ACTIVE.has(r.status) && !r.host) {
-      restored.push({ taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status });
-      r.status = 'interrupted'; r.error = t('tasks.interruptedByRestart');
-      for (const instruction of r.instructions ?? []) if (instruction.state === 'sending') setInstruction(r, instruction.id, 'delivered');
-      dropInstructions(r);
+    if ((ACTIVE.has(r.status) || ['stopUnconfirmed', 'interrupted'].includes(r.status)) && !r.host) {
+      const uncertain = r.status !== 'queued' && await stopUnconfirmed(r);
+      const item = { taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status };
+      if (uncertain) {
+        setStopUnconfirmed(r);
+        await reportUnconfirmedStop(item);
+      } else if (r.status !== 'interrupted') {
+        restored.push(item);
+        interrupt(r);
+      }
     }
     for (const c of r.activeCommands ?? []) { c.state = 'unknown'; c.pausedAt = null; }
-    if (r.notification === 'delivering') r.notification = 'unknown';
+    if (['delivering', 'unknown'].includes(r.notification)) r.notification = await recoverNotice(structuredClone(r)).catch(() => 'unknown');
   }
   for (const [taskId, ac] of adoptable) live.set(taskId, ac);
   await serial(() => persist('restore'));
+  async function abandon(r) {
+    if (quitStops.has(r.taskId)) return;
+    const uncertain = await stopUnconfirmed(r);
+    await record(r.taskId, row => { if (!quitStops.has(row.taskId)) (uncertain ? setStopUnconfirmed : interrupt)(row); }, 'adopt.abandon');
+    if (uncertain) await reportUnconfirmedStop(r);
+  }
   const owned = (owner, id, locale) => {
     const r = records[id];
     if (!r || r.parentSessionId !== owner) throw new Error(agentT(locale, 'tasks.notOwned'));
@@ -322,7 +345,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   };
   // context は「別の候補でやり直す」で同じ依頼を渡し直すために持つだけ（長いので一覧・状態には載せない）
   const view = (r, offset = 0) => {
-    const { result = '', queue, context, instructions, rejections = [], silenceNotifiedAt, noticedCommands, noticedSilence, lastOutputAt, activeCommands = [], backgroundNotice, ...rest } = r;
+    const { result = '', queue, context, instructions, noticeId, heldQuit, rejections = [], silenceNotifiedAt, noticedCommands, noticedSilence, lastOutputAt, activeCommands = [], backgroundNotice, ...rest } = r;
     if (!r.host) pauseCommands(r, now(), waitingOf(r));
     // 子が返答を終えて裏の作業だけを待っている間は、待っているものと経過分数を見せる（ADR 0170）
     const bg = r.status === 'running' ? backgroundOf(r) : null;
@@ -491,7 +514,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     let stalled = false, requeued = false, activeInstructionIds;
     // close()（正常終了）の abort。止めたことは書かず、走っていた状態のままファイルに残す（再起動で interrupted になる。
     // docs/agent-delegation.md「保存・画面・再起動」）。利用者の取り消しは先に cancelling にするので、それは cancelled を書く
-    const halted = () => closed && r.status !== 'cancelling';
+    const halted = () => quitStops.has(r.taskId) || (closed && r.status !== 'cancelling');
     try {
       while (!controller.signal.aborted) {
         let prompt, instructionIds;
@@ -548,12 +571,18 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           result = await execute(structuredClone(r), prompt, controller.signal, {});
           if (halted()) return;
         }
+        if (quitStops.has(r.taskId)) return;
+        if (result?.adoptionFailed) {
+          await abandon(r);
+          return;
+        }
         if (result?.requeue) {
           await record(r.taskId, row => { row.queue.unshift(...(instructionIds.length ? instructionIds.map(instructionId => ({ instructionId })) : prompt ? [prompt] : [])); for (const id of instructionIds) setInstruction(row, id, 'queued'); row.status = 'queued'; }, 'run.requeue');
           activeInstructionIds = undefined; requeued = true;
           return;
         }
         await record(r.taskId, row => {
+          if (quitStops.has(r.taskId)) return;
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
           // 子の作業場所の git の要約（ADR 0085。変更・コミットが無ければ載せない）。完了通知と ply_task_status に出る
           if (result?.git) row.git = result.git; else delete row.git;
@@ -582,9 +611,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         if (r.status !== 'queued') break;
       }
     } catch (e) {
-      if (!halted()) await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); for (const id of activeInstructionIds ?? []) setInstruction(row, id, 'dropped'); dropInstructions(row); endTurnCommands(row); settleCommands(row); }, 'run.error');
+      if (!halted()) await record(r.taskId, row => { if (quitStops.has(r.taskId)) return; row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); for (const id of activeInstructionIds ?? []) setInstruction(row, id, 'dropped'); dropInstructions(row); endTurnCommands(row); settleCommands(row); }, 'run.error');
     } finally {
-      if (halted()) { live.delete(r.taskId); return; }
+      if (halted() || r.status === 'stopUnconfirmed' || r.status === 'interrupted') { live.delete(r.taskId); return; }
       // 止まった後（run.result / run.error で cancelled）に ply_task_send で積まれた指示は、止めた回の分ではない。
       // cancelled に戻して捨てず、下の kick で次の実行にする（docs/agent-delegation.md「ツール」の ply_task_send）
       if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { if (!requeued && row.status === 'queued' && row.queue.length) return; row.status = 'cancelled'; dropInstructions(row); endTurnCommands(row); settleCommands(row); }, 'run.cancelled');
@@ -599,7 +628,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       }
     }
   }
-  // 通知を送る前に delivering を保存する（送ったか分からないまま落ちたら、再起動で unknown にして再送しない）。
+  // 通知を送る前に delivering と配送 ID を保存する。再起動ではこの ID で依頼元の記録を照合する。
   // ファイルがすでに delivering（直前の requeue をメモリだけで pending に戻した）なら書き直さない。保存できなければ送らない。
   // 同じ親への通知は 1 回の保存にまとめる。まだ pending のものだけ返す（依頼元が受け取り済みの read は外れる）
   async function begin(rows) {
@@ -607,11 +636,15 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       const list = rows.filter(r => r.notification === 'pending' && !waited.has(r.taskId) && !ACTIVE.has(r.status));
       if (!list.length) return [];
       const before = list.map(r => r.updatedAt);
-      for (const r of list) r.notification = 'delivering';
-      if (list.every(r => persisted.get(r.taskId) === 'delivering')) return list;
+      const needsWrite = list.some(r => !r.noticeId || persisted.get(r.taskId) !== 'delivering');
+      for (const r of list) {
+        r.notification = 'delivering';
+        r.noticeId ??= crypto.randomUUID();
+      }
+      if (!needsWrite) return list;
       for (const r of list) r.updatedAt = Date.now();
       try { await write(list.map(r => r.taskId)); } catch (e) {
-        list.forEach((r, i) => { r.notification = 'pending'; r.updatedAt = before[i]; });
+        list.forEach((r, i) => { r.notification = 'pending'; r.updatedAt = before[i]; delete r.noticeId; });
         failed(e, 'notify.delivering', list[0].taskId); return [];
       }
       touched(); return list;
@@ -657,14 +690,18 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         await serial(async () => { for (const r of sending) if ((r.revision ?? 0) === revisions.get(r.taskId) && r.notification === 'delivering') r.notification = 'pending'; });
         return;
       }
+      const recovered = outcome === 'error'
+        ? new Map(await Promise.all(sending.filter(r => r.notification === 'delivering' && (r.revision ?? 0) === revisions.get(r.taskId))
+          .map(async r => [r.taskId, await recoverNotice(structuredClone(r)).catch(() => 'unknown')])))
+        : new Map();
       const retryAt = now() + RETRY_WAIT_MS;
       if (outcome === 'ok') noticeFailureShown.delete(owner);
       await serial(async () => {
         for (const r of sending) {
-          if ((r.revision ?? 0) !== revisions.get(r.taskId)) continue;
+          if ((r.revision ?? 0) !== revisions.get(r.taskId) || r.notification !== 'delivering') continue;
           if (outcome === 'undelivered') noticeRetryAt.set(r, retryAt);
           else noticeRetryAt.delete(r);
-          r.notification = outcome === 'ok' ? 'sent' : outcome === 'undelivered' ? 'pending' : 'unknown';
+          r.notification = outcome === 'ok' ? 'sent' : outcome === 'undelivered' ? 'pending' : recovered.get(r.taskId) ?? 'unknown';
           r.updatedAt = Date.now();
         }
         await persist('notify.done', sending.map(r => r.taskId));
@@ -908,7 +945,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
      * 届いていないものだけ。依頼文・振り分けの記録・結果は載せない（過去のタスクは画面が会話ごとに delegation.tasks で読む）
      */
     running() {
-      return Object.values(records).filter(r => ACTIVE.has(r.status) || UNDELIVERED.has(r.notification)).map(r => ({
+      return Object.values(records).filter(r => ACTIVE.has(r.status) || r.status === 'stopUnconfirmed' || UNDELIVERED.has(r.notification)).map(r => ({
         taskId: r.taskId, title: taskTitle(r.title, r.task), status: r.status, parentSessionId: r.parentSessionId, sessionId: r.sessionId,
         backend: r.backend ?? null, model: r.model ?? null, effort: r.effort ?? null, createdAt: r.createdAt ?? null, updatedAt: r.updatedAt ?? null,
         // 走っている間の最終活動。これが変わると running の配信が抑止を破り、開いているバックグラウンドの詳細が読み直される
@@ -958,7 +995,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         .filter(([r, revision]) => r.notification === 'sent' && (r.revision ?? 0) === revision && !ACTIVE.has(r.status));
       if (!rows.length) return;
       await serial(async () => {
-        for (const [r] of rows) if (r.notification === 'sent') { r.notification = 'pending'; r.updatedAt = Date.now(); }
+        for (const [r] of rows) if (r.notification === 'sent') { r.notification = 'pending'; delete r.noticeId; r.updatedAt = Date.now(); }
         await persist('notify.renotify', rows.map(([r]) => r.taskId));
         touched();
       });
@@ -1017,12 +1054,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       const r = records[taskId], ac = live.get(taskId);
       if (!r || !ac || !adoptable.delete(taskId)) return false;
       if (!finish) {
-        live.delete(taskId);
-        spawn(record(taskId, row => {
-          row.status = 'interrupted'; row.error = t('tasks.interruptedByRestart');
-          for (const instruction of row.instructions ?? []) if (instruction.state === 'sending') setInstruction(row, instruction.id, 'delivered');
-          dropInstructions(row);
-        }, 'adopt.abandon').catch(() => {}));
+        spawn(abandon(r).catch(() => {}).finally(() => live.delete(taskId)));
         return false;
       }
       const claimed = new Set(claims.filter(id => r.instructions?.find(x => x.id === id)?.state === 'sending'));
@@ -1046,6 +1078,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     async retarget(owner, taskId, { backend, model, effort, mode, account, accountLabels = {} }, locale) {
       const r = owned(owner, taskId, locale);
       if (r.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
+      if (r.status === 'stopUnconfirmed' && (live.has(taskId) || await stopUnconfirmed(r))) throw new Error(agentT(locale, 'tasks.stopUnconfirmed'));
       // アカウントは両方がアカウントを持てるとき（null でない）だけ比べる。from に account が無い（前の版で残した印）なら比べない
       const acct = v => v ?? '';
       const sameAccount = (a, b) => a.account == null || b.account == null || acct(a.account) === acct(b.account);
@@ -1138,7 +1171,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const full = { manager: 'remote', depth: (parent?.depth ?? 0) + 1, createdAt: Date.now(), updatedAt: Date.now(), status: 'queued', notification: 'none',
           result: '', error: null, instructions: [], instructionRevision: 0, queue: [], sessionId: null, ...row };
         // 最初から終わっている（すぐ終わった・すぐ失敗した）依頼は、結果を ply_delegate の戻りで渡すので、完了通知は送らない
-        if (!ACTIVE.has(full.status)) full.notification = 'read';
+        if (!ACTIVE.has(full.status) && full.status !== 'stopUnconfirmed') full.notification = 'read';
         records[full.taskId] = full;
         try { await write([full.taskId]); } catch (e) { delete records[full.taskId]; failed(e, 'adopt', full.taskId); throw refused(locale); }
         touched();
@@ -1156,7 +1189,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       return serial(async () => {
         const before = JSON.stringify(r);
         // 追えなくなっていた（hostLost）行にホストの便りが戻ったら、ホストの状態に戻し、完了通知もやり直す
-        if (r.hostLost && patch.hostLost == null) r.notification = 'none';
+        const hostReturned = r.hostLost && patch.hostLost == null;
+        if (hostReturned) r.notification = 'none';
         const was = r.status;
         // 止める予定（cancelPending）の間は、ホストの動いている状態の便り（running・waiting）で止めた状態を戻さない。終わった状態の便りは写し、予定を外す
         const keep = r.cancelPending === true && 'status' in patch && ACTIVE.has(patch.status) && !('cancelPending' in patch);
@@ -1168,8 +1202,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         if (r.cancelPending === true && !ACTIVE.has(r.status) && patch.status && !ACTIVE.has(patch.status)) delete r.cancelPending;
         if (patch.hostLost == null) delete r.hostLost;
         const wasActive = ACTIVE.has(was), isActive = ACTIVE.has(r.status);
-        if (!isActive && (wasActive || r.notification === 'none')) r.notification = r.status === 'cancelled' ? 'suppressed' : r.notification === 'read' ? 'read' : 'pending';
-        else if (isActive && !wasActive) r.notification = 'none';
+        if (hostReturned || (isActive && !wasActive)) {
+          delete r.noticeId;
+          r.revision = (r.revision ?? 0) + 1;
+        }
+        if (r.status === 'stopUnconfirmed' || (isActive && !wasActive)) r.notification = 'none';
+        else if (!isActive && (wasActive || r.notification === 'none')) r.notification = r.status === 'cancelled' ? 'suppressed' : r.notification === 'read' ? 'read' : 'pending';
         if (JSON.stringify(r) !== before) { r.updatedAt = Date.now(); await persist('mirror', taskId); touched(); }
         return view(r);
       });
@@ -1244,6 +1282,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       }
       if (name === 'ply_task_send') {
         text(locale, args.message, 'message');
+        const checkedStop = r.status === 'stopUnconfirmed' && !live.has(r.taskId) && !await stopUnconfirmed(r);
         // 追加の指示も新しい仕事なので、保存できなければ受けない（commit が理由付きで断る）
         // 錨（受け付けた時点で直前に見えていたもの）は会話の記録を読むことがあるので、commit の外で取る。
         // 取れなくても指示は受け付ける（錨が無い分は、届いた行の位置か時刻で置く）
@@ -1251,6 +1290,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         let instruction;
         await commit(r.taskId, row => {
           if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
+          if (quitStops.has(row.taskId)) throw new Error(agentT(locale, 'tasks.stopUnconfirmed'));
+          if (row.status === 'stopUnconfirmed') {
+            if (!checkedStop || live.has(row.taskId)) throw new Error(agentT(locale, 'tasks.stopUnconfirmed'));
+            interrupt(row);
+          }
+          delete row.noticeId;
           row.revision = (row.revision ?? 0) + 1;
           // 前の回の拒否を依頼元へ渡し終えていれば、この指示で走る回の分で置き換える。まだ渡していなければ（走っている・通知の前）足していく
           if (NOTICED.has(row.notification)) { delete row.rejections; delete row.rejectionsDropped; }
@@ -1291,6 +1336,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       const r = records[taskId]; if (!r) return null;
       // Stop descendant Pleiad tasks too; engine-native children follow their engine's cancellation.
       for (const child of Object.values(records).filter(c => c.parentSessionId === r.sessionId)) await this.cancel(child.taskId, { descendant: true });
+      if (r.status === 'stopUnconfirmed') return null;
       const was = r.status, stopping = ACTIVE.has(r.status) || live.has(taskId) || r.queue.length > 0;
       if (!descendant && !stopping && readable(r)) return null;
       // 止めることは保存できなくても止める（record。ファイルは後で追いつく）
@@ -1321,7 +1367,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       };
       for (const r of Object.values(records).filter(r => (!owner || r.parentSessionId === owner) && (!Number.isFinite(since) || r.createdAt >= since))) visit(r);
       const settled = r => !ACTIVE.has(r.status) && !r.queue.length && r.notification === 'suppressed' && !live.has(r.taskId);
-      const change = targets.filter(r => !settled(r));
+      const change = targets.filter(r => r.status !== 'stopUnconfirmed' && !settled(r));
       if (!change.length) return [];
       const stopped = [], hostStops = [];
       // cancel と同じく、保存できなくても止める
@@ -1344,6 +1390,28 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     },
     /** 再起動で止まった（interrupted にした）タスク。[{ taskId, parentSessionId, title, status }]（status は止まる前の状態） */
     get restored() { return structuredClone(restored); },
+    async deferHeldStop(taskId, childId) {
+      const r = records[taskId];
+      if (!r || !ACTIVE.has(r.status)) return false;
+      await record(taskId, row => {
+        if (!ACTIVE.has(row.status)) return;
+        setStopUnconfirmed(row);
+        row.heldQuit = childId;
+        quitStops.add(taskId);
+        row.notification = 'suppressed';
+      }, 'quit.stopRequested');
+      return r.heldQuit === childId;
+    },
+    async settleHeldStop(taskId, exited) {
+      const r = records[taskId];
+      if (!r?.heldQuit || r.status !== 'stopUnconfirmed') return null;
+      if (exited) await record(taskId, row => {
+        interrupt(row);
+        row.status = 'cancelled';
+        row.error = null;
+      }, 'quit.stopConfirmed');
+      return { taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status, stopUnconfirmed: !exited };
+    },
     /** 保存障害（無ければ null）。errno・操作・タスク ID・時刻だけ */
     get fault() { return fault && { code: fault.code, syscall: fault.syscall, operation: fault.operation, taskId: fault.taskId, since: fault.since, at: fault.at, failures: fault.failures }; },
     // 正常終了。保存障害では閉じない。返す Promise は、閉じる前に始まった実行・通知・保存が書き終えると解ける

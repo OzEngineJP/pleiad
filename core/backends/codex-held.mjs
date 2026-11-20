@@ -130,7 +130,7 @@ export class HeldAppServer {
     try { this.source.release(); } catch { /* つながりが切れていれば、記録は保持役が終わるときに消える */ }
     if (current.get(this.id) === this) current.delete(this.id);
     dedicatedServers.delete(this);
-    this.resolveExited();
+    this.resolveExited(true);
     this.sink?.exit({ code: exit.code ?? null, signal: exit.signal ?? null, error: exit.error ?? null });
   }
 
@@ -139,7 +139,7 @@ export class HeldAppServer {
     this.closed = true;
     if (current.get(this.id) === this) current.delete(this.id);
     dedicatedServers.delete(this);
-    this.resolveExited();
+    this.resolveExited(false);
     this.sink?.lost(`holder: ${error?.message ?? error}`);
   }
 
@@ -162,10 +162,10 @@ export class HeldAppServer {
 
   /** 止める（rpc.stop） */
   async stop({ waitMs = 3000 } = {}) {
-    if (this.closed) { this.dispose(); return; }
-    this.kill();
-    await Promise.race([this.exited, sleep(waitMs)]);
+    if (!this.closed) this.kill();
+    const exited = await Promise.race([this.exited, sleep(waitMs).then(() => false)]);
     this.dispose();
+    return exited;
   }
 
   dispose() {
@@ -357,12 +357,44 @@ export async function expandCodexHeld({ client, child, log }) {
 
 registerChildExpander(CODEX_LABEL_KIND, expandCodexHeld);
 
+/** ターンの再生に必要な情報が欠けていても、保持役の札や印から会話との対応を確認する。 */
+export function hasHeldCodexThread({ label, marks }, { backend, sessionId }, nativeOwners) {
+  if (backend !== 'codex' || label?.k !== CODEX_LABEL_KIND) return false;
+  if (Object.values(label.watch ?? {}).includes(sessionId)) return true;
+  const threads = [...Object.keys(label.loaded ?? {}), ...Object.keys(label.turns ?? {})];
+  for (const name of Object.keys(marks ?? {})) if (name.startsWith('turn:')) threads.push(name.slice('turn:'.length));
+  return threads.some(id => id === sessionId || nativeOwners.get(id) === sessionId);
+}
+
 /**
  * アプリの終了で、app-server を止めて、終わるのを待つ（server の stopHeldChildren）。ターン専用の app-server も止める。
  * 更新・落ちたときは呼ばない（保持役の子は残り、新しいサーバーが起動で拾う）
  */
-export async function stopHeldAppServer() {
-  for (const held of new Set([...pendingAdopt.values(), ...current.values(), ...dedicatedServers])) {
-    if (!held.closed) await held.stop({ waitMs: 2000 });
+export async function stopHeldAppServer({ extra = [], orphaned = [], onStopped = () => {} } = {}) {
+  const servers = new Map([...pendingAdopt.values(), ...current.values(), ...dedicatedServers, ...extra].map(held => [held.id, held]));
+  const stopping = [...servers].map(async ([id, held]) => onStopped(id, await held.stop({ waitMs: 2000 }).catch(() => false)));
+  for (const { client, child } of orphaned) {
+    if (!servers.has(child.id)) stopping.push(stopOrphanedAppServer(client, child).then(exited => onStopped(child.id, exited)));
+  }
+  await Promise.all(stopping);
+}
+
+async function stopOrphanedAppServer(client, child) {
+  let wake;
+  const exit = new Promise(resolve => { wake = resolve; });
+  const onExit = ({ id }) => { if (id === child.id) wake(true); };
+  client.on('exit', onExit);
+  try {
+    // 既存の購読を付け直すと再生位置が変わるので、未購読の場合だけ attach する。
+    if (!client.attached.has(child.id)) {
+      const state = await client.attach(child.id, { from: child.seq + 1 });
+      if (!state.alive) return true;
+    }
+    if (!client.kill(child.id, { tree: true })) return false;
+    return await Promise.race([exit, sleep(2000).then(() => false)]);
+  } catch (error) {
+    return error.reason === 'unknown';
+  } finally {
+    client.off('exit', onExit);
   }
 }

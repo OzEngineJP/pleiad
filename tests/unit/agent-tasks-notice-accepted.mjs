@@ -2,7 +2,19 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
-import { readAgentTasks, writeAgentTasks } from '../lib/data-store.mjs';
+import { readAgentTasks, writeAgentTasks, readSessions, writeSessions } from '../lib/data-store.mjs';
+import { interruptionNote, taskStop } from '../../core/interrupt-stops.mjs';
+
+async function openParentStore(dir, instance) {
+  const previous = process.env.AGENT_HOST_DATA;
+  process.env.AGENT_HOST_DATA = dir;
+  try { return await import(`../../core/store.mjs?notice-restart=${instance}`); }
+  finally {
+    if (previous === undefined) delete process.env.AGENT_HOST_DATA;
+    else process.env.AGENT_HOST_DATA = previous;
+  }
+}
+const recover = store => task => store.recoverTaskNotice(task, taskStop(task, { noticeUnconfirmed: true }));
 
 export const name = 'agent-tasks-notice-accepted';
 export const title = '完了・無音通知は親が受け取った時点で settling から外す（ターンの終わりを待たない）。受理前だけが引き継ぎを待たせ、受理後は送り直さない';
@@ -126,17 +138,68 @@ export default async function(t) {
       t.ok('送達後にまた認証が失敗すれば表示を出せる', shown === 2 && m.get(next.taskId).notification === 'pending');
     }
 
-    // ---- 再起動: 受理の前に落ちた delivering は unknown で送らず、受理の後の sent も送らない
+    // ---- 受理を保留している間の DB を写し、サーバーが落ちた直後の状態から別の管理役を起動する
+    for (const phase of ['before', 'attempting', 'received']) {
+      const dir = await tmp(), restored = await tmp();
+      writeSessions(dir, { owner: { backend: 'fake' } });
+      const parent = await openParentStore(dir, phase);
+      const delivery = gate();
+      let waiting = false;
+      const m = await make(dir, { deliver: async tasks => {
+        if (phase !== 'before') await parent.recordTaskNoticeReceipt('owner', tasks, phase);
+        waiting = true;
+        await delivery.promise;
+        return 'ok';
+      } });
+      let restartedParent;
+      try {
+        const { taskId } = await m.call('owner', 'ply_delegate', { backend: 'fake', task: phase });
+        await until(() => waiting);
+        const rows = readAgentTasks(dir);
+        t.ok(`再起動前（${phase}）の記録は識別子付きの delivering`, rows[taskId].notification === 'delivering' && !!rows[taskId].noticeId);
+        writeAgentTasks(restored, rows);
+        writeSessions(restored, readSessions(dir));
+        restartedParent = await openParentStore(restored, `restart-${phase}`);
+        const delivered = [];
+        const b = await make(restored, { recoverNotice: recover(restartedParent), deliver: async tasks => {
+          delivered.push(...tasks.map(x => x.noticeId));
+          await restartedParent.recordTaskNoticeReceipt('owner', tasks, 'received');
+          return 'ok';
+        } });
+        if (phase === 'before') await until(() => b.get(taskId).notification === 'sent');
+        const note = interruptionNote('en', (await restartedParent.get('owner')).stops);
+        const expected = phase === 'attempting' ? 'unknown' : 'sent';
+        const status = await b.call('owner', 'ply_task_status', { taskId });
+        t.ok(`再起動後（${phase}）に再送・受領済み・結果への入口を区別する`,
+          status.result === `result:${phase}` && status.notification === expected
+          && delivered.join() === (phase === 'before' ? rows[taskId].noticeId : '')
+          && (phase === 'attempting' ? note?.body.includes('ply_task_status') && note.keys.length === 1 : note === null));
+        if (phase === 'attempting') {
+          await restartedParent.takeStops('owner', note.keys);
+          await recover(restartedParent)(rows[taskId]);
+          t.ok('依頼元に渡した結果への入口を再び作らない', !(await restartedParent.get('owner')).stops);
+        }
+      } finally {
+        delivery.open();
+        restartedParent?.closeStore();
+        parent.closeStore();
+      }
+    }
+
     {
       const dir = await tmp();
-      const row = (id, notification) => ({ taskId: id, sessionId: `s-${id}`, parentSessionId: 'owner', manager: 'ply', backend: 'fake', depth: 1, task: 't', title: 't',
-        createdAt: 1, updatedAt: 1, status: 'completed', notification, result: `r-${id}`, error: null, queue: [] });
-      writeAgentTasks(dir, { before: row('before', 'delivering'), after: row('after', 'sent') });
-      const delivered = [];
-      const m = await make(dir, { deliver: async tasks => { delivered.push(...tasks.map(x => x.taskId)); return 'ok'; } });
-      await sleep(1300);
-      t.ok('再起動で、受理の前の delivering は unknown になり、sent と共に送らない',
-        delivered.length === 0 && m.get('before').notification === 'unknown' && m.get('after').notification === 'sent' && !m.settling);
+      writeSessions(dir, { owner: { backend: 'fake' } });
+      const parent = await openParentStore(dir, 'exception');
+      try {
+        const m = await make(dir, { recoverNotice: recover(parent), deliver: async tasks => {
+          await parent.recordTaskNoticeReceipt('owner', tasks, 'attempting');
+          throw new Error('transport lost before confirmation');
+        } });
+        const task = await m.call('owner', 'ply_delegate', { backend: 'fake', task: 'exception' });
+        await until(() => m.get(task.taskId).notification === 'unknown');
+        t.ok('配送中の例外も親に結果への入口を残す',
+          interruptionNote('en', (await parent.get('owner')).stops)?.body.includes(task.taskId));
+      } finally { parent.closeStore(); }
     }
 
     // ---- 無音の通知も、受理されたら settling から外れる

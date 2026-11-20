@@ -4,7 +4,7 @@
 //   - 起動の復元は付け直すタスクを interrupted にしない（付け直さないタスクは今までどおり interrupted）
 //   - 終了した A は結果を書かない・通知しない（結果は起動した B が 1 回だけ書く）
 //   - 途中送信で渡している最中の追加指示（sending）は claim として引き継ぎ、渡った合図（steered）で配送済みにする。合図なしで終われば待機へ戻して次のターンで 1 回
-//   - 付け直しをあきらめたら interrupted。取り消しの最中（cancelling）のタスクは、付け直しても cancelled で終わる
+//   - 付け直せなかった子は停止確認に従う。取り消しの最中（cancelling）のタスクは、付け直しても cancelled で終わる
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,8 +22,8 @@ export default async function(t) {
   let seq = 0;
   // 実行中の子を表す execute。通常終了で manager が abort したら、ローカルの待ちだけ解いて結果は書かない
   const hands = new Map();
-  const open = ({ adopting = [], execute }) => createAgentTasks({
-    dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0, adopting,
+  const open = ({ adopting = [], execute, ...options }) => createAgentTasks({
+    dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0, adopting, ...options,
     prepare: async (_owner, a) => ({ sessionId: `child-${++seq}`, backend: a.backend }),
     execute: async (task, prompt, signal) => {
       executed.push([task.taskId, prompt]);
@@ -126,6 +126,53 @@ export default async function(t) {
     t.ok('あきらめ: finish が無ければ false', b.adoptRun(id4, null) === false);
     await until(() => b.get(id4).status === 'interrupted');
     t.ok('あきらめたタスクは interrupted で、完了通知は出ない', b.get(id4).error && !delivered.some(x => x[0] === id4));
+    await b.close();
+    b = null;
+
+    // ---- 保持役のターン復元が失敗しても、子は停止したことにはならない
+    a = await open({});
+    const orphan = await start(a, 'orphan');
+    const failedReplay = await start(a, 'failed replay');
+    const quitting = await start(a, 'quit');
+    await a.call('p', 'ply_task_send', { taskId: orphan, message: 'previous' });
+    await a.close();
+    a = null;
+    const alive = new Set([orphan, failedReplay, quitting]), unconfirmed = [];
+    b = await open({ adopting: [failedReplay, quitting], stopUnconfirmed: async r => alive.has(r.taskId),
+      reportUnconfirmedStop: async r => unconfirmed.push(r.taskId),
+      execute: async (_task, prompt) => ({ outcome: 'ok', text: prompt }) });
+    b.adoptRun(failedReplay, async () => ({ adoptionFailed: true }));
+    await until(() => unconfirmed.includes(failedReplay));
+    t.ok('札から復元できなかった子と再生で失敗した子は共に停止未確認で、止めた一覧に載らない',
+      [orphan, failedReplay].every(id => unconfirmed.includes(id) && b.get(id).status === 'stopUnconfirmed' && !b.restored.some(x => x.taskId === id)));
+    let refusal;
+    try { await b.call('p', 'ply_task_send', { taskId: orphan, message: 'new work' }); }
+    catch (error) { refusal = error; }
+    t.ok('生存中は追加指示を受け付けず、前の指示を消さない', refusal?.message && states(b, orphan) === 'previous:sending'
+      && readAgentTasks(dir)[orphan].instructions.length === 1 && executed.filter(x => x[0] === orphan).length === 1);
+    alive.delete(orphan);
+    await b.call('p', 'ply_task_send', { taskId: orphan, message: 'new work' });
+    await until(() => b.get(orphan).status === 'completed');
+    t.ok('終了の確認後だけ次のターンを開始し、追加指示を 1 回渡す',
+      executed.filter(x => x[0] === orphan).map(x => x[1]).join(',') === 'orphan,new work' && b.get(orphan).result === 'new work');
+    t.ok('アプリ終了の期限切れでは、停止済みの結果を残さない',
+      await b.deferHeldStop(quitting, 'app-server') && (await b.settleHeldStop(quitting, false)).stopUnconfirmed
+      && readAgentTasks(dir)[quitting].status === 'stopUnconfirmed');
+    t.ok('アプリ終了で終了を確認した場合は取り消し済みになる',
+      !(await b.settleHeldStop(quitting, true)).stopUnconfirmed && readAgentTasks(dir)[quitting].status === 'cancelled');
+    b.adoptRun(quitting, null);
+    await b.close();
+    b = null;
+
+    a = await open({});
+    const timedOut = await start(a, 'quit timeout');
+    await a.deferHeldStop(timedOut, 'app-server');
+    await a.settleHeldStop(timedOut, false);
+    await a.close();
+    a = null;
+    b = await open({ adopting: [timedOut], stopUnconfirmed: async task => task.heldQuit === 'app-server' });
+    t.ok('アプリ終了で停止未確認の子は、再起動後も停止を確認するまで再開しない',
+      b.get(timedOut).status === 'stopUnconfirmed' && !b.adoptRun(timedOut, async () => ({ outcome: 'ok' })));
     await b.close();
     b = null;
 

@@ -19,9 +19,11 @@ const REASONS = new Set(['user', 'update', 'quit', 'hostAway', 'restart', 'setti
 const oneLine = (s, max = TEXT_MAX) => redactForPeer(String(s ?? '').replace(/\s+/g, ' ').trim(), max) ?? '';
 
 /** 取り消した委譲タスク（agentTasks.cancelOwner・cancel・restored の項目）を stops の形にする */
-export function taskStop(x, { restart = false } = {}) {
-  return { key: `task:${x.taskId}`, taskId: x.taskId, title: oneLine(x.title, 80), status: String(x.status ?? ''),
-    unread: Boolean(x.unread), ...(restart ? { restart: true } : {}) };
+export function taskStop(x, { restart = false, noticeUnconfirmed = false } = {}) {
+  const key = noticeUnconfirmed ? `task-result:${x.taskId}:${x.noticeId ?? 'legacy'}` : `task:${x.taskId}`;
+  return { key, taskId: x.taskId, title: oneLine(x.title, 80), status: String(x.status ?? ''),
+    unread: Boolean(x.unread), ...(restart ? { restart: true } : {}),
+    ...(x.stopUnconfirmed ? { stopUnconfirmed: true } : {}), ...(noticeUnconfirmed ? { noticeUnconfirmed: true } : {}) };
 }
 
 /** 止めた時点で結果が返っていなかったツール（makeEmit の turn.openTools の行） */
@@ -71,14 +73,18 @@ export function waitStop(id, payload) {
 export function interruptionNote(lng, stops, reason = null) {
   if (!stops) return null;
   const tasks = stops.tasks ?? [], tools = stops.tools ?? [], background = stops.background ?? [], approvals = stops.approvals ?? [], waits = stops.waits ?? [];
-  const cancelled = tasks.filter(x => !x.unread && !x.restart), unread = tasks.filter(x => x.unread), restarted = tasks.filter(x => x.restart && !x.unread);
+  const stopped = tasks.filter(x => !x.stopUnconfirmed && !x.noticeUnconfirmed);
+  const cancelled = stopped.filter(x => !x.unread && !x.restart), unread = stopped.filter(x => x.unread), restarted = stopped.filter(x => x.restart && !x.unread);
+  const unconfirmedStops = tasks.filter(x => x.stopUnconfirmed), unconfirmedNotices = tasks.filter(x => x.noticeUnconfirmed);
   if (!tasks.length && !tools.length && !background.length && !approvals.length && !waits.length) return null;
   const item = x => agentT(lng, 'stops.taskItem', { taskId: x.taskId, title: x.title || '-', status: x.status || '-' });
+  const resultItem = x => agentT(lng, 'stops.unreadItem', { taskId: x.taskId, title: x.title || '-', status: x.status || '-' });
   const sections = [];
   if (cancelled.length) sections.push(agentT(lng, 'stops.cancelled', { items: cancelled.map(item).join('\n') }));
-  if (unread.length) sections.push(agentT(lng, 'stops.unread', { items: unread.map(x =>
-    agentT(lng, 'stops.unreadItem', { taskId: x.taskId, title: x.title || '-', status: x.status || '-' })).join('\n') }));
+  if (unread.length) sections.push(agentT(lng, 'stops.unread', { items: unread.map(resultItem).join('\n') }));
   if (restarted.length) sections.push(agentT(lng, 'stops.restarted', { items: restarted.map(item).join('\n') }));
+  if (unconfirmedStops.length) sections.push(agentT(lng, 'stops.stopUnconfirmed', { items: unconfirmedStops.map(resultItem).join('\n') }));
+  if (unconfirmedNotices.length) sections.push(agentT(lng, 'stops.noticeUnconfirmed', { items: unconfirmedNotices.map(resultItem).join('\n') }));
   if (tools.length) sections.push(agentT(lng, 'stops.tools', { items: tools.map(x =>
     agentT(lng, 'stops.toolItem', { tool: x.tool || '-', target: x.target || '-' })).join('\n') }));
   if (background.length) sections.push(agentT(lng, 'stops.background', { items: background.map(x =>
@@ -91,7 +97,9 @@ export function interruptionNote(lng, stops, reason = null) {
   if (stops.dropped) sections.push(agentT(lng, 'stops.dropped', { count: stops.dropped }));
   // i18n-dynamic: agent:stops.reason.
   const why = REASONS.has(reason) ? agentT(lng, `stops.reason.${reason}`) : agentT(lng, 'stops.reason.unknown');
-  const body = [agentT(lng, 'stops.heading', { reason: why }), ...sections, agentT(lng, 'stops.footer')].join('\n\n');
+  const onlyUnconfirmed = !stopped.length && !tools.length && !background.length && !approvals.length && !waits.length;
+  const heading = onlyUnconfirmed ? agentT(lng, 'stops.recoveryHeading') : agentT(lng, 'stops.heading', { reason: why });
+  const body = [heading, ...sections, ...(!onlyUnconfirmed ? [agentT(lng, 'stops.footer')] : [])].join('\n\n');
   // 後ろを空けておく（人の発言と 1 つの文につながる履歴でも、読みやすく切れる）
   const hidden = reason === 'settings';
   const open = hidden ? `<${INTERRUPTION_TAG} reason="settings">` : OPEN;
