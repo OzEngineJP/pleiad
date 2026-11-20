@@ -569,6 +569,8 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 /* 登録した Claude アカウントごとの claude.ai のコネクター（ADR 0340 段 3。web/mcp-matrix.mjs の accountGroup・web/session-context.mjs の accountConnectors）。
    アカウントの行の畳みは名前と状態だけ（個別のスイッチは置かない） */
 .cx-acct-peek{gap:2px;margin-left:36px}
+.cx-row.acct{flex-wrap:wrap}
+.cx-acct-mode{display:flex;flex:1 0 100%;justify-content:flex-end;align-items:center;gap:8px;font-size:var(--fs-s)}
 .cx-peek-item{display:flex;align-items:center;gap:8px;min-width:0;padding:2px 0;font-size:var(--fs-s)}
 .cx-peek-item .cx-dot{margin-top:0}
 .cx-peek-item .nm{flex:1;min-width:0;overflow-wrap:anywhere}

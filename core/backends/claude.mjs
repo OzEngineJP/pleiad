@@ -49,7 +49,8 @@ import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
 import { stripAnsi } from "../claude-login.mjs";
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 import { identitySuffix } from "../claude-connectors.mjs";
-import { REFRESH_WINDOW_MS } from "../claude-connectors-auth.mjs";
+import { claudeOwnDirEnv, REFRESH_WINDOW_MS } from "../claude-connectors-auth.mjs";
+import { OWN_DIR } from "../claude-own-dir.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -203,6 +204,7 @@ function cliSignature() {
 function resetCliSignatureCache() { cliSigAt = 0; cliSigValue = null; }
 
 async function probeCatalog(cwd, withSettings, account = null) {
+  if (account?.connectors?.identity === OWN_DIR) account = await account.resolveCatalogAccount();
   if (account?.id && !account?.token) throw new Error("missing Claude account token");
   // コネクターの入口がオンのアカウント（ADR 0340 段 2）は、会話と同じ認証（期限を確かめたトークン + 設定フォルダ・権限）で引く。取れなければ投げる（会話用トークンへ戻さない）
   const connectorsAuth = account?.connectors ? await account.connectors.fresh({ cwd }) : null;
@@ -253,7 +255,8 @@ export const CONNECTOR_PROBE_MS = 20_000;
 /** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0327）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
 // connectors: コネクターの入口がオンのアカウント（ADR 0340 段 2）。会話と同じ組み立て（期限を確かめたトークン + 設定フォルダ・権限）で読み、取れなければ投げる
 export async function probeClaudeConnectors({ deny = [], token = null, connectors = null, verification = false, signal = null } = {}) {
-  const auth = connectors ? await connectors.fresh({}) : null;
+  const ownDir = connectors?.identity === OWN_DIR;
+  const auth = ownDir ? await connectors.prepare() : connectors ? await connectors.fresh({}) : null;
   const ac = new AbortController();
   const abort = () => ac.abort();
   signal?.addEventListener('abort', abort, { once: true });
@@ -265,7 +268,9 @@ export async function probeClaudeConnectors({ deny = [], token = null, connector
     const query = sdk.query ?? (await loadClaudeSdk()).query;
     q = query({ prompt: idle(), options: {
       // token: Pleiad に登録した Claude のアカウント（無ければログイン中のアカウント）。会話と同じ環境で読む
-      pathToClaudeCodeExecutable: claudeExecutable(), env: auth ? claudeEnv(process.env, { token: auth.token, extra: auth.env }) : claudeEnv(process.env, { token }), abortController: ac,
+      pathToClaudeCodeExecutable: claudeExecutable(),
+      env: ownDir ? claudeOwnDirEnv(process.env, auth.env) : auth ? claudeEnv(process.env, { token: auth.token, extra: auth.env }) : claudeEnv(process.env, { token }),
+      abortController: ac,
       settingSources: ["user"], settings: { disableAllHooks: true, ...(deny.length ? { deniedMcpServers: deny.map((serverName) => ({ serverName })) } : {}) },
       persistSession: false, stderr: () => {}, ...(verification ? { tools: [], model: 'haiku' } : {}),
     } });
@@ -464,6 +469,10 @@ function makeScopedBackend(account) {
 function withConnectorsAuth(scoped, account) {
   const authed = async (opts, call) => {
     if (opts?.endpoint) return call(opts);
+    if (account.connectors.identity === OWN_DIR) {
+      const auth = await account.connectors.prepare({ cwd: opts?.cwd }).catch(error => { throw undelivered(error); });
+      return call({ ...opts, oauthToken: null, connectorsEnv: auth.env, connectorsExpiresAt: null, connectors: account.connectors });
+    }
     const auth = await account.connectors.fresh({ cwd: opts?.cwd }).catch(error => { throw undelivered(error); });
     return call({ ...opts, oauthToken: auth.token, connectorsEnv: auth.env, connectorsExpiresAt: auth.expiresAt, connectors: account.connectors });
   };
@@ -962,7 +971,8 @@ export const backend = {
     const tracker = createTurnTracker();
     let activeOauthToken = oauthToken;
     let activeConnectorsEnv = connectorsEnv;
-    let activeExpiresAt = adopt ? (adopt.card.connectorsExpiresAt ?? connectorsExpiresAt) : connectorsExpiresAt;
+    const ownDir = connectors?.identity === OWN_DIR || adopt?.card.connectorsMode === OWN_DIR;
+    let activeExpiresAt = ownDir ? null : adopt ? (adopt.card.connectorsExpiresAt ?? connectorsExpiresAt) : connectorsExpiresAt;
     let resumeTarget = sessionId;
     let promptDeliveredOnce = false;
     let input = createInputQueue();
@@ -1109,6 +1119,7 @@ export const backend = {
      * 印からの再生で作り直る（付け直し直後の background_tasks_changed が全量で置き換える）ので、再生に出ない流し込みの数（pushed）だけを置く
      */
     const backendCard = () => ({ held: true, costBase, flag: flag ? path.basename(flag.file) : null, envFile: envFile ? path.basename(envFile.file) : null, mcpFile: mcpFile ? path.basename(mcpFile.file) : null,
+      ...(ownDir ? { connectorsMode: OWN_DIR } : {}),
       ...(activeExpiresAt != null ? { connectorsExpiresAt: activeExpiresAt } : {}),
       steers: pendingSteers.map(p => ({ id: p.id, uuid: p.uuid, hash: p.hash, sawResult: p.sawResult })), pushed: tracker.pending });
     // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）。最初の 1 回は子を起こした直後・付け直した直後に置く
@@ -1373,8 +1384,9 @@ export const backend = {
             // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
             // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
             // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。固定の部分 + 設定 compaction.auto の delegatedHeadroom。ADR 0166）を足す
-            env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, claudeExtraEnv)
-              : claudeEnv(process.env, { token: activeOauthToken, extra: activeConnectorsEnv ? { ...claudeExtraEnv, ...activeConnectorsEnv } : claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env,
+            env: { ...(endpoint ? { ...claudeCompatEnv(process.env, endpoint, claudeExtraEnv), ...browserEnv, ...controlRuntime?.env }
+              : ownDir ? claudeOwnDirEnv({ ...process.env, ...browserEnv, ...controlRuntime?.env }, { ...claudeExtraEnv, ...activeConnectorsEnv })
+              : { ...claudeEnv(process.env, { token: activeOauthToken, extra: activeConnectorsEnv ? { ...claudeExtraEnv, ...activeConnectorsEnv } : claudeExtraEnv }), ...browserEnv, ...controlRuntime?.env }),
               // 秘密情報と変数は Bash ツールのシェルにだけ（上の envFile）。値そのものは CLI 本体の env に入れない
               ...(envFile ? { CLAUDE_ENV_FILE: envFile.file } : {}) },
             // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
@@ -1544,7 +1556,7 @@ export const backend = {
         // 付け直した直後に、もう閉じてよい（旧サーバーが閉じる前の猶予の間に手を離した）なら閉じる予約を置く
         if (adopt) settleInput();
         for (;;) {
-          scheduleExpiryTimer();
+          if (!ownDir) scheduleExpiryTimer();
           try {
             for await (const message of q) {
               await handle(message, false);
@@ -1775,7 +1787,7 @@ export const backend = {
    * 接続先の会話一覧にも残さない。止められた（signal）ときは null、失敗は投げる（取れた分の使用量は error.usage に載せる）。
    * 返りは { text, usage }。usage は測れなければ null（0 扱いにしない。core/usage.mjs の internalTask 行へ渡る）
    */
-  async internalTurn({ prompt, model, signal, locale, cwd, endpoint, oauthToken, connectorsEnv = null }) {
+  async internalTurn({ prompt, model, signal, locale, cwd, endpoint, oauthToken, connectorsEnv = null, connectors = null }) {
     let text = "", usage = null;
     const ac = new AbortController();
     const stop = () => ac.abort();
@@ -1813,7 +1825,9 @@ export const backend = {
           // 互換の接続先の呼出しは、その接続先のモデル（"haiku" が ANTHROPIC_DEFAULT_HAIKU_MODEL に置き換わる）。
           // settingSources が空なのでユーザーの settings.json は読まれず、env だけで足りる
           abortController: ac,
-          ...(endpoint ? { env: claudeCompatEnv(process.env, endpoint) } : oauthToken ? { env: claudeEnv(process.env, connectorsEnv ? { token: oauthToken, extra: connectorsEnv } : { token: oauthToken }) } : {}) },
+          ...(endpoint ? { env: claudeCompatEnv(process.env, endpoint) }
+            : connectors?.identity === OWN_DIR ? { env: claudeOwnDirEnv(process.env, connectorsEnv) }
+            : oauthToken ? { env: claudeEnv(process.env, connectorsEnv ? { token: oauthToken, extra: connectorsEnv } : { token: oauthToken }) } : {}) },
       })) {
         if (m.type === "assistant") for (const b of m.message?.content ?? []) if (b.type === "text") text += b.text;
         // 最後の result メッセージにこの呼出しの使用量が載る（入力はキャッシュの作成・読みを含む）
@@ -1844,8 +1858,8 @@ export const backend = {
    * 返すのは生成された生のテキスト。前後の記号を落とす整形は server 側（バックエンド非依存）。
    */
   // locale は会話の言語。タイトルもその言語で作らせる
-  async suggestTitle({ transcript, oauthToken, connectorsEnv = null, endpoint = null, locale }) {
-    const out = await backend.internalTurn({ prompt: agentT(locale, 'title.claude') + NL + NL + transcript, model: "haiku", endpoint, oauthToken, ...(connectorsEnv ? { connectorsEnv } : {}), locale });
+  async suggestTitle({ transcript, oauthToken, connectorsEnv = null, connectors = null, endpoint = null, locale }) {
+    const out = await backend.internalTurn({ prompt: agentT(locale, 'title.claude') + NL + NL + transcript, model: "haiku", endpoint, oauthToken, ...(connectorsEnv ? { connectorsEnv, connectors } : {}), locale });
     return out?.text ?? "";
   },
 };

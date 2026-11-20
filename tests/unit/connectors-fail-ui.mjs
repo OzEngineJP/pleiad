@@ -64,10 +64,11 @@ const settle = async () => { for (let i = 0; i < 5; i++) await tick(); };
 const deferred = () => { let resolve, reject; const p = new Promise((a, b) => { resolve = a; reject = b; }); return { p, resolve, reject }; };
 
 export default async function (t) {
-  const saved = { document: globalThis.document };
-  doc = { createElement: tag => new El(tag), createTextNode: s => new Text(s), body: new El('body'), activeElement: null };
+  const saved = { document: globalThis.document, CSS: globalThis.CSS };
+  doc = { createElement: tag => new El(tag), createElementNS: (_ns, tag) => new El(tag), createTextNode: s => new Text(s), body: new El('body'), activeElement: null };
   doc.activeElement = doc.body;
   globalThis.document = doc;
+  globalThis.CSS = { escape: value => value };
   try {
     const { paintConnectorsFailure, connectorsFailKey, connectorsFailMessage } = await import('../../web/connectors-fail.mjs');
     const i18n = await import('../../web/i18n.mjs');
@@ -95,20 +96,21 @@ export default async function (t) {
     };
 
     // 1. 理由ごとの一文（両方の言語に訳がある・名前と版が埋まる・{{ が残らない）
-    const KINDS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format'];
+    const ownDirKinds = ['ownDirLogin', 'ownDirLinks', 'ownDirLinksWindows', 'ownDirProfile'];
+    const KINDS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format', ...ownDirKinds];
     for (const lng of ['ja', 'en']) {
       await i18n.setLanguage(lng);
       const bad = [];
       for (const k of KINDS) {
         const c = k === 'settings' ? ce('env', { scope: 'settings' }) : ce(k, k === 'version' ? { params: { cli: '9.9.9', sdk: '8.8.8', verified: 'CLI 1 / SDK 2' } } : {});
         const msg = connectorsFailMessage(c, NAME);
-        if (!i18n.has(`chat.connectorsFail.why.${k}`) || msg.includes('{{') || msg.includes('chat.connectorsFail') || (['expired', 'login', 'owner', 'profile'].includes(k) && !msg.includes(NAME))) bad.push(`${k}: ${msg}`);
+        if (!i18n.has(`chat.connectorsFail.why.${k}`) || msg.includes('{{') || msg.includes('chat.connectorsFail') || (['expired', 'login', 'owner', 'profile', ...ownDirKinds].includes(k) && !msg.includes(NAME))) bad.push(`${k}: ${msg}`);
         if (k === 'version' && !(msg.includes('9.9.9') && msg.includes('8.8.8'))) bad.push(`version の版が出ない: ${msg}`);
       }
       for (const k of ['fix.relogin', 'fix.login', 'fix.openAccount', 'fix.resend', 'off', 'offNote', 'cancel', 'waiting', 'sending', 'done.relogin', 'done.login', 'done.off', 'done.resend', 'resendFailed', 'loginFailed', 'offFailed']) {
         if (!i18n.has(`chat.connectorsFail.${k}`)) bad.push(`訳が無い: ${k}`);
       }
-      t.ok(`理由ごとの一文（${lng}）: 10 種すべてに訳があり、アカウントで直す理由には名前が、版の理由には版が埋まる`, bad.length === 0, bad.join(' / '));
+      t.ok(`理由ごとの一文（${lng}）: すべてに訳があり、アカウントで直す理由には名前が、版の理由には版が埋まる`, bad.length === 0, bad.join(' / '));
     }
     await i18n.setLanguage('ja');
     t.ok('理由の鍵: settings.json の分（env・scope settings）は settings、知らない種類は login（黙って空にしない）',
@@ -247,7 +249,44 @@ export default async function (t) {
       await settle();
       t.ok('行が画面から外れた後にログインが済んでも、送り直さない（別の描画が受け持つ）', v.calls.resend.length === 0);
     }
+    {
+      const { createMcpMatrix } = await import('../../web/mcp-matrix.mjs');
+      const matrix = createMcpMatrix({ section: { addButton: () => doc.createElement('button') } });
+      const row = { id: 'acct-000000000001', name: NAME, enabled: false, usageLogin: true, status: 'ok', connectors: [] };
+      const host = doc.createElement('div');
+      const calls = [];
+      const ctx = {
+        matrix: { agents: [], rows: [], connectorAccounts: [row] },
+        scan: {}, cwd: '/example', opened: new Set(),
+        work: run => run(), rerender() {}, async reloadMatrix() {},
+        async cmd(command, request) {
+          calls.push([command, request]);
+          row.mode = request.args.mode;
+        },
+      };
+      const renderMode = () => {
+        host.replaceChildren();
+        matrix.reset();
+        matrix.render(host, ctx);
+        return host.querySelector('.cx-acct-mode')?.querySelector('button');
+      };
+      t.ok('コネクターがオフの行には専用フォルダ方式を出さない', renderMode() === undefined);
+      row.enabled = true;
+      const off = renderMode();
+      t.ok('コネクターがオンの行では既定の方式が表示される',
+        off?.getAttribute('role') === 'switch' && off.getAttribute('aria-checked') === 'false');
+      off?.click();
+      await settle();
+      const on = renderMode();
+      t.ok('専用フォルダ方式を選ぶとスイッチがオンになる', on?.getAttribute('aria-checked') === 'true');
+      on?.click();
+      await settle();
+      const expected = ['own-dir', 'b1'].map(mode => ['invoke', { op: 'accounts.setConnectors', args: { id: row.id, enabled: true, mode, cwd: ctx.cwd } }]);
+      t.ok('両方向の切り替えをアカウント設定操作に渡す',
+        JSON.stringify(calls) === JSON.stringify(expected) && renderMode()?.getAttribute('aria-checked') === 'false');
+    }
   } finally {
     globalThis.document = saved.document;
+    globalThis.CSS = saved.CSS;
   }
 }

@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { writeAtomic } from './atomic-file.mjs';
+import { OWN_DIR } from './claude-own-dir.mjs';
 
 export const CONNECTORS_FILE = 'claude-account-connectors.json';
 export const CONNECTORS_CACHE_FILE = 'claude-account-connectors-cache.json';
@@ -46,7 +47,8 @@ export function createClaudeConnectorSettings({ dataDir }) {
         const raw = JSON.parse(await fs.readFile(file, 'utf8'));
         if (!validDoc(raw)) return { enabled: false };
         const entry = Object.hasOwn(raw.accounts, accountId) ? raw.accounts[accountId] : null;
-        return { enabled: entry?.enabled === true };
+        return entry?.enabled === true && entry.mode === OWN_DIR
+          ? { enabled: true, mode: OWN_DIR } : { enabled: entry?.enabled === true };
       } catch { return { enabled: false }; }
     },
     async list() {
@@ -60,7 +62,7 @@ export function createClaudeConnectorSettings({ dataDir }) {
       }
       return out;
     },
-    setEnabled(accountId, enabled) {
+    setEnabled(accountId, enabled, mode) {
       if (!ID_RE.test(accountId ?? '')) throw new Error('Invalid Claude account id');
       return serial(async () => {
         const { ok, data } = await readJson(file);
@@ -75,6 +77,8 @@ export function createClaudeConnectorSettings({ dataDir }) {
           ...(prev && typeof prev === 'object' && !Array.isArray(prev) ? prev : {}),
           enabled: Boolean(enabled),
         };
+        if (!enabled || mode === 'b1') delete doc.accounts[accountId].mode;
+        else if (mode === OWN_DIR) doc.accounts[accountId].mode = OWN_DIR;
         await writeJson(file, doc);
         return { enabled: Boolean(enabled) };
       });
@@ -168,9 +172,11 @@ export function createClaudeConnectorsCache({ dataDir, maxAccounts = 50, maxConn
 export function createClaudeConnectorsGate({ dataDir, resolveAuth = authNotAvailableYet, settings = createClaudeConnectorSettings({ dataDir }) }) {
   return {
     settings,
-    async gate(account) {
+    async gate(account, config) {
       if (!account?.id) return account;
-      if (!(await settings.read(account.id)).enabled) return account;
+      config ??= await settings.read(account.id);
+      if (!config.enabled) return account;
+      if (config.mode === OWN_DIR) return (await resolveAuth(account, config))?.account ?? account;
       const result = await resolveAuth(account);
       return result?.account ?? account;
     },

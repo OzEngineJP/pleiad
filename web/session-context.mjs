@@ -1159,7 +1159,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const key = c.blockKind === 'env' && c.blockScope === 'settings' ? 'settings' : (c.blockKind ?? 'login');
       const text = key === 'expired' ? t('sessionContext.connectors.expired') : t('sessionContext.connectors.stopped', { why: t(`mcp.accounts.status.${key}`) });
       const row = stateLine(text);
-      if (['expired', 'login', 'format'].includes(key) && openAccount) row.append(button(t('sessionContext.connectors.relogin'), 'btn btn-quiet', () => openAccount({ usageLogin: c.accountId })));
+      if (['expired', 'login', 'format', 'ownDirLogin'].includes(key) && openAccount) row.append(button(t('sessionContext.connectors.relogin'), 'btn btn-quiet', () => openAccount({ usageLogin: c.accountId })));
       else if (key === 'owner' && openAccount) row.append(button(t('sessionContext.connectors.openAccount'), 'btn btn-quiet', () => openAccount({ focus: c.accountId })));
       else row.append(toSettings(t('sessionContext.connectors.change')));
       k.append(row);

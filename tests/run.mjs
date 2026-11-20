@@ -530,6 +530,7 @@ const SUITES = [
   './unit/claude-connectors-off.mjs',
   // 登録アカウントのコネクターの認証（段 2。ADR 0340）: アクセス用トークンだけ・止める条件・オンの差分は 3 つの環境変数だけ・オフは何も呼ばない
   './unit/claude-connectors-auth.mjs',
+  './unit/claude-own-dir.mjs',
   './unit/context-scan.mjs',
   // コンテキストの設定の形式 2 と、形式 1 からの移行（意味が変わらないこと）
   './unit/context-settings.mjs',

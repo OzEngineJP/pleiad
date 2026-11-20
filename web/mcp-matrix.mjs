@@ -242,7 +242,7 @@ export function createMcpMatrix({ section, onCount }) {
   }
 
   // ---- 登録した Claude アカウントごとの claude.ai のコネクター（ADR 0340 段 3。docs/design-system.md「登録した Claude アカウントごとの claude.ai のコネクター」）
-  // 行ごとにスイッチ 1 つ。確認の画面は置かない（利用者の判断。押したらそのままオン）。機械で確かめられる検査に合わなければ、
+  // コネクターの切り替えに確認の画面は置かない。機械で確かめられる検査に合わなければ、
   // オンにする向きだけを鍵で止めて理由を出す（オンのまま止まっているときは、オフにする向きは押せる。会話を止めたままにしない）。
   // コネクターの一覧は上の「エージェントの設定」に並べず、行の下の畳みにだけ出す（名前と状態だけ。個別のオフは置かない）
   const acctBusy = new Set();   // スイッチ・読み直しの最中のアカウント
@@ -292,7 +292,7 @@ export function createMcpMatrix({ section, onCount }) {
   function acctToggle(ctx, r) {
     const on = !r.enabled;
     if (!acctBusy.has(r.id)) r.enabled = on;   // 先に見た目を変える（失敗したら読み直しで戻る）
-    return acctRun(ctx, r, '.cx-sw', () => ctx.cmd('invoke', { op: 'accounts.setConnectors', args: { id: r.id, enabled: on, cwd: ctx.cwd } }));
+    return acctRun(ctx, r, '.cx-acct-toggle', () => ctx.cmd('invoke', { op: 'accounts.setConnectors', args: { id: r.id, enabled: on, cwd: ctx.cwd } }));
   }
   function acctRefresh(ctx, r) {
     return acctRun(ctx, r, '.cx-act', () => ctx.cmd('invoke', { op: 'accounts.refreshConnectors', args: { id: r.id, cwd: ctx.cwd } }));
@@ -302,7 +302,7 @@ export function createMcpMatrix({ section, onCount }) {
     const open = o => ctx.openAccount?.(o);
     let b = null;
     if (st === 'nologin') { b = button('btn lnk cx-act', t('mcp.accounts.login')); b.onclick = () => open({ usageLogin: r.id }); }
-    else if (['expired', 'login', 'format'].includes(k)) { b = button('btn lnk cx-act', t('mcp.accounts.relogin')); b.onclick = () => open({ usageLogin: r.id }); }
+    else if (['expired', 'login', 'format', 'ownDirLogin'].includes(k)) { b = button('btn lnk cx-act', t('mcp.accounts.relogin')); b.onclick = () => open({ usageLogin: r.id }); }
     else if (k === 'owner') { b = button('btn lnk cx-act', t('mcp.accounts.openAccount')); b.onclick = () => open({ focus: r.id }); }
     else if (st === 'on') {
       b = button('btn cx-act', t('mcp.accounts.reload'));
@@ -316,7 +316,7 @@ export function createMcpMatrix({ section, onCount }) {
     return b;
   }
   function acctSwitch(ctx, r) {
-    const sw = button('cx-sw');
+    const sw = button('cx-sw cx-acct-toggle');
     sw.setAttribute('role', 'switch');
     sw.setAttribute('aria-checked', String(Boolean(r.enabled)));
     const name = t('mcp.accounts.switchAria', { name: r.name });
@@ -368,6 +368,20 @@ export function createMcpMatrix({ section, onCount }) {
     n.append(head);
     if (act) n.append(act);
     n.append(acctSwitch(ctx, r));
+    if (r.enabled) {
+      const label = t('mcp.accounts.ownDir');
+      const mode = r.mode === 'own-dir' ? 'b1' : 'own-dir';
+      const sw = button('cx-sw');
+      sw.setAttribute('role', 'switch');
+      sw.setAttribute('aria-label', t('mcp.accounts.ownDirAria', { name: r.name }));
+      sw.setAttribute('aria-checked', String(mode === 'b1'));
+      if (acctBusy.has(r.id)) sw.setAttribute('aria-busy', 'true');
+      sw.onclick = () => acctRun(ctx, r, '.cx-acct-mode .cx-sw', () =>
+        ctx.cmd('invoke', { op: 'accounts.setConnectors', args: { id: r.id, enabled: true, mode, cwd: ctx.cwd } }));
+      const modeRow = el('div', 'cx-acct-mode');
+      modeRow.append(el('span', null, label), sw);
+      n.append(modeRow);
+    }
     list.append(n);
     if (foldable && ctx.opened.has(key)) list.append(acctPeek(r));
   }

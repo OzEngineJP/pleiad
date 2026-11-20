@@ -9,8 +9,8 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 
-const KEYS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format'];
-const FIX = { expired: 'relogin', format: 'relogin', login: 'login', owner: 'openAccount', profile: 'resend' };
+const KEYS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format', 'ownDirLogin', 'ownDirLinks', 'ownDirLinksWindows', 'ownDirProfile'];
+const FIX = { expired: 'relogin', format: 'relogin', login: 'login', owner: 'openAccount', profile: 'resend', ownDirLogin: 'login', ownDirProfile: 'resend' };
 
 /** 止めた理由の鍵（env の settings.json の分は settings） */
 export function connectorsFailKey(ce) {

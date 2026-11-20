@@ -91,6 +91,7 @@ import { createContextSettings } from './context-settings.mjs';
 import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { createClaudeConnectorsCache } from './claude-connectors.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
+import { OWN_DIR } from './claude-own-dir.mjs';
 import { connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
 import { guardUsageDir, refreshUsageDir, shouldMarkUsageExpired } from './backends/claude-usage.mjs';
 import { claudeSdkVersion } from './claude-sdk.mjs';
@@ -632,7 +633,12 @@ const accountKind = backend => backend?.capabilities?.accounts || false;
  */
 async function accountRows(backend) {
   const kind = accountKind(backend);
-  if (kind === 'token') return (await claudeAccounts.list()).accounts.map(a => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken) }));
+  if (kind === 'token') {
+    const { accounts } = await claudeAccounts.list();
+    return Promise.all(accounts.map(async a => ({
+      id: a.id, name: a.name, ready: Boolean(a.hasToken) || (await claudeAccountConnectors.settings.read(a.id)).mode === OWN_DIR,
+    })));
+  }
   if (kind === 'agent') return (await agentAccounts.list(backend.id)).map(a => ({ id: a.id, name: a.name, ready: a.hasCredential }));
   return [];
 }
@@ -658,13 +664,13 @@ async function rememberAccount(backendId, id) {
   await savePref('account', id || null, backendId);
   if (accountKind(getBackend(backendId)) === 'token') await savePref('claudeAccount', id || null);
 }
-async function accountResolve(backend, id) {
+async function accountResolve(backend, id, options) {
   const kind = accountKind(backend);
   if (!id || !kind) return null;
   if (kind === 'token') {
     if (await agentAccounts.get(id)) return null;
     // 登録したアカウントのコネクターの入口（ADR 0340）。オフ・未設定は同じ account がそのまま返る
-    return claudeAccountConnectors.gate(await claudeAccounts.resolve(id));
+    return claudeAccountConnectors.resolve(id, options);
   }
   return agentAccounts.resolve(backend.id, id, { known: other => claudeAccounts.has(other) });
 }
@@ -5349,7 +5355,7 @@ const opsAgents = {
   list: () => describeBackends(),
   models: async (id, cwd, accountId) => {
     let backend = await pickBackend(null, id);
-    if (accountId) backend = await backendForAccount(backend, await accountResolve(backend, accountId));
+    if (accountId) backend = await backendForAccount(backend, await accountResolve(backend, accountId, { forModels: true }));
     return { backend: backend.id, models: await backend.models(cwd) };
   },
   modes: async (id) => { const backend = await pickBackend(null, id); return { backend: backend.id, modes: backend.modes() }; },
@@ -5847,25 +5853,31 @@ function serializeDocRow(row) {
 const accountConnectorProbes = new Map(); // accountId -> Promise<void>
 const accountConnectorFailed = new Set();
 
-function probeAccountConnectors(acct, { identityHash, deny = [] }) {
+function probeAccountConnectors(acct, { identityHash, mode, deny = [] }) {
   const existing = accountConnectorProbes.get(acct.id);
   if (existing) return existing;
+  const isCurrentMode = async () => {
+    const config = await claudeAccountConnectors.settings.read(acct.id);
+    return config.enabled && config.mode === mode;
+  };
   const run = (async () => {
     try {
       const account = await accountResolve(tokenAccountBackend(), acct.id);
+      if (!account?.connectors || (account.connectors.identity === OWN_DIR) !== (mode === OWN_DIR)) return;
       const raw = await probeClaudeConnectors({ deny, token: account?.token ?? null, connectors: account?.connectors ?? null });
+      if (!await isCurrentMode()) return;
       const list = Array.isArray(raw) ? raw.map(x => (typeof x === 'string' ? { name: x, status: null } : x)).filter(x => typeof x?.name === 'string') : [];
       const connectors = [...new Set(list.map(x => x.name))].sort();
       const needsAuth = connectors.filter(n => list.some(x => x.name === n && x.status === 'needs-auth'));
       accountConnectorFailed.delete(acct.id);
       await claudeConnectorsCache.set(acct.id, { identityHash, connectors, needsAuth });
-      emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
     } catch (err) {
+      if (!await isCurrentMode()) return;
       accountConnectorFailed.add(acct.id);
       if (err?.cliAuthFailed === true) await markConnectorsLoginExpired(acct.id, 'no-login');
-      emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
     } finally {
       if (accountConnectorProbes.get(acct.id) === run) accountConnectorProbes.delete(acct.id);
+      emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
     }
   })();
   accountConnectorProbes.set(acct.id, run);
@@ -5891,29 +5903,31 @@ async function accountConnectorsList({ cwd = null, refresh = false, wait = false
   for (const acct of accounts) {
     if (targetId && acct.id !== targetId) continue;
     const enabled = Boolean(enabledMap[acct.id]);
-    const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd });
+    const { mode } = enabled ? await claudeAccountConnectors.settings.read(acct.id) : {};
+    const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd, mode });
     let cached = inspected.ok ? await claudeConnectorsCache.get(acct.id, { identityHash: inspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
     if (enabled && inspected.ok && (!cached || force || (refresh && cached.stale))) {
-      const p = probeAccountConnectors(acct, { identityHash: inspected.identityHash, deny: await getDeny() });
+      const p = probeAccountConnectors(acct, { identityHash: inspected.identityHash, mode, deny: await getDeny() });
       if (wait || force) waiting.push({ acct, inspected, p });
     }
-    rows.push({ acct, enabled, inspected, cached });
+    rows.push({ acct, enabled, mode, inspected, cached });
   }
   if (waiting.length) {
     await Promise.allSettled(waiting.map(w => w.p));
     for (const w of waiting) {
       const idx = rows.findIndex(r => r.acct.id === w.acct.id);
       if (idx >= 0) {
-        const reInspected = await claudeAccountConnectors.inspect({ id: w.acct.id, name: w.acct.name }, { cwd });
+        const reInspected = await claudeAccountConnectors.inspect({ id: w.acct.id, name: w.acct.name }, { cwd, mode: rows[idx].mode });
         rows[idx].inspected = reInspected;
         rows[idx].cached = reInspected.ok ? await claudeConnectorsCache.get(w.acct.id, { identityHash: reInspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
       }
     }
   }
-  return rows.map(({ acct, enabled, inspected, cached }) => ({
+  return rows.map(({ acct, enabled, mode, inspected, cached }) => ({
     id: acct.id,
     name: acct.name,
     enabled,
+    ...(mode === OWN_DIR ? { mode } : {}),
     usageLogin: Boolean(acct.usageLogin),
     usageExpired: Boolean(acct.usageExpired),
     status: inspected.ok ? 'ok' : 'blocked',
@@ -5948,6 +5962,7 @@ async function enrichClaudeAccountsList(result) {
         ...a,
         connectors: {
           enabled: r.enabled,
+          ...(r.mode === OWN_DIR ? { mode: r.mode } : {}),
           status: r.status,
           blockKind: r.blockKind,
           blockScope: r.blockScope,
@@ -5964,20 +5979,25 @@ async function enrichClaudeAccountsList(result) {
   };
 }
 
-async function setClaudeAccountConnectors(id, enabled, { cwd = null } = {}) {
+async function setClaudeAccountConnectors(id, enabled, { cwd = null, mode } = {}) {
   const { accounts } = await claudeAccounts.list();
   const acct = accounts.find(a => a.id === id);
   if (!acct) throw new Error(t('accounts.deleted'));
+  const previous = await claudeAccountConnectors.settings.read(id);
+  if (mode && (!previous.enabled || !enabled)) throw new OpError('INVALID', t('claude.connectors.ownDirEnableFirst'));
+  let moves;
   if (enabled) {
-    const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd: cwd ?? null });
+    const nextMode = mode ?? previous.mode;
+    const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd, mode: nextMode, prepare: nextMode === OWN_DIR });
     if (!inspected.ok) throw new OpError('INVALID', inspected.message);
+    moves = inspected.moves;
   }
-  await claudeAccountConnectors.settings.setEnabled(id, Boolean(enabled));
+  await claudeAccountConnectors.settings.setEnabled(id, Boolean(enabled), mode);
   tokenAccountBackend()?.invalidateModels?.(id);
   emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
   if (enabled) void accountConnectorsList({ cwd, targetId: id, refresh: true }).catch(() => {});
   const [row] = await accountConnectorsList({ cwd, targetId: id });
-  return row;
+  return moves?.length ? { ...row, moves } : row;
 }
 
 async function refreshClaudeAccountConnectors(id, { cwd = null } = {}) {
@@ -6002,7 +6022,8 @@ async function sessionConnectorsInfo(sessionId) {
   if (!enabled) {
     return { accountId: acct.id, accountName: acct.name, enabled: false, status: 'off', connectors: null, needsAuth: [], blockKind: null, blockMessage: null, reauth: false, needsOwnerCheck: false };
   }
-  const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd: meta.cwd ?? null });
+  const { mode } = await claudeAccountConnectors.settings.read(acct.id);
+  const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd: meta.cwd ?? null, mode });
   const cached = inspected.ok ? await claudeConnectorsCache.get(acct.id, { identityHash: inspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
   return {
     accountId: acct.id,
@@ -6721,7 +6742,7 @@ function opsDeps(lng = currentLocale()) {
     agents: opsAgents,
     accounts: {
       ...accountManager,
-      setConnectors: ({ id, enabled, cwd }) => setClaudeAccountConnectors(id, enabled, { cwd }),
+      setConnectors: ({ id, enabled, cwd, mode }) => setClaudeAccountConnectors(id, enabled, { cwd, mode }),
       refreshConnectors: ({ id, cwd }) => refreshClaudeAccountConnectors(id, { cwd }),
     },
     prefs: () => store.getPrefs(),

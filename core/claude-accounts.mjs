@@ -29,6 +29,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { t } from './i18n.mjs';
+import { unlinkClaudeOwnDirLinks, withClaudeUsageDir } from './claude-own-dir.mjs';
 
 export const TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 const SECRET_PREFIX = 'claude-account:';
@@ -342,12 +343,17 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
         const data = await read();
         const next = data.accounts.filter(a => a.id !== id);
         if (next.length === data.accounts.length) throw new Error(t('claude.accounts.notRegistered'));
-        await write({ ...data, accounts: next });
-        bump(id);
+        const dir = usageDir(id);
+        await withClaudeUsageDir(dir, async () => {
+          await unlinkClaudeOwnDirLinks(dir);
+          const info = await fs.lstat(dir).catch(err => { if (err.code !== 'ENOENT') throw err; });
+          await write({ ...data, accounts: next });
+          bump(id);
+          if (info?.isSymbolicLink()) await fs.unlink(dir);
+          else await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});
+        });
         // 消すだけなら復号は要らない（復号できない起動でも消せる）
         await secrets.delete(key(id)).catch(() => {});
-        // 使用量の認可（CLI の資格情報）も消す
-        await fs.rm(usageDir(id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});
       });
     },
     /** 使用量を読むための設定フォルダ（CLAUDE_CONFIG_DIR）。作りはしない */
@@ -404,10 +410,11 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
      * 会話で使うトークンを引く。'' / 未指定はログイン中のアカウント（null を返す＝env に何も足さない）。
      * 削除済み・トークン無し・読めないときは AccountError（黙ってログイン中のアカウントへ落とさない）
      */
-    async resolve(id) {
+    async resolve(id, { requireToken = true } = {}) {
       if (!id) return null;
       const entry = (await read()).accounts.find(a => a.id === id);
       if (!entry) throw new AccountError(t('claude.accounts.deleted'), 'deleted');
+      if (!requireToken) return { id, name: entry.name };
       let value;
       try { value = await secrets.get(key(id)); }
       catch (e) {

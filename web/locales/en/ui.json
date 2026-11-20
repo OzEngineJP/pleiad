@@ -1806,6 +1806,10 @@
         "settings": "settings.json auth takes priority",
         "history": "The conversation history location is moved",
         "profile": "Couldn't apply the settings",
+        "ownDirLogin": "Dedicated folder login required",
+        "ownDirLinks": "Couldn't prepare links to shared settings",
+        "ownDirLinksWindows": "Check Windows permissions to create links",
+        "ownDirProfile": "Couldn't apply settings to the dedicated folder",
         "format": "Can't read the claude.ai login format"
       },
       "tip": {
@@ -1819,6 +1823,10 @@
         "settings": "settings.json has another auth setting or can't be read, so this can't be turned on",
         "history": "A setting moves the conversation history, so this can't be turned on",
         "profile": "Couldn't apply the connector settings for \"{{name}}\"",
+        "ownDirLogin": "Sign in to claude.ai in the dedicated config folder for “{{name}}”.",
+        "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
+        "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
+        "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
         "format": "Can't read the claude.ai login format for \"{{name}}\". Log in again to turn this on"
       },
       "login": "Log in",
@@ -1827,6 +1835,8 @@
       "reload": "Reload",
       "reloadAria": "Reload claude.ai connectors for \"{{name}}\"",
       "switchAria": "Use claude.ai connectors with \"{{name}}\"",
+      "ownDir": "Dedicated config folder (beta)",
+      "ownDirAria": "Use the dedicated config folder (beta) for “{{name}}”",
       "peekAria": "claude.ai connectors for \"{{name}}\"",
       "item": {
         "connected": "Connected",
@@ -2061,6 +2071,10 @@
   "chat": {
     "connectorsFail": {
       "why": {
+        "ownDirLogin": "Sign in to claude.ai in the dedicated config folder for “{{name}}”.",
+        "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
+        "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
+        "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
         "expired": "The claude.ai login for \"{{name}}\" has expired, so this can't be sent with connectors. Log in again, or turn connectors off and send.",
         "login": "To use claude.ai connectors with \"{{name}}\", log in to claude.ai first.",
         "owner": "The conversation token and the claude.ai login for \"{{name}}\" belong to different owners (organizations). Check it in Claude accounts, or turn connectors off and send.",
@@ -3446,7 +3460,11 @@
           "settings": "settings.json",
           "history": "history location",
           "profile": "couldn't apply settings",
-          "format": "unreadable login"
+          "format": "unreadable login",
+          "ownDirLogin": "dedicated folder login required",
+          "ownDirLinks": "couldn't prepare links to shared settings",
+          "ownDirLinksWindows": "Windows link creation permission required",
+          "ownDirProfile": "couldn't apply settings to the dedicated folder"
         }
       },
       "title": "Account",

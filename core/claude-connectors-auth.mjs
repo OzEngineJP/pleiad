@@ -28,6 +28,7 @@ import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnecto
 import { claudeManagedFiles } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
 import { claudeUsageAuthFailure } from './backends/claude-usage.mjs';
+import { ensureClaudeOwnDirLinks, OWN_DIR, withClaudeUsageDir } from './claude-own-dir.mjs';
 
 /** CLI の下限と完全一致を要求する SDK の組（ADR 0340）。 */
 export const VERIFIED_VERSIONS = [{ cli: '2.1.322', sdk: '0.3.288' }];
@@ -74,6 +75,11 @@ const HISTORY_ENV = ['CLAUDE_CODE_PROJECT_DIR_NAME'];
 /** 共有の settings.json の env で、上の 2 つに加えて止める名前（Pleiad が渡す 3 つを settings が上書きすると、渡した認証・置き場が効かない） */
 const SETTINGS_ENV = [...MIXED_AUTH_ENV, 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_SCOPES', 'CLAUDE_CONFIG_DIR'];
 
+export function claudeOwnDirEnv(base, extra) {
+  return Object.fromEntries(Object.entries({ ...base, ...extra })
+    .filter(([key]) => !SETTINGS_ENV.includes(key.toUpperCase()) || key === 'CLAUDE_CONFIG_DIR'));
+}
+
 /** 止める条件。code は connectors-<種類>。message はそのまま利用者に出る（秘密を含めない）。message だけ別の文にするときは messageKey */
 export class ConnectorsAuthError extends AccountError {
   // i18n-dynamic: claude.connectors.
@@ -97,7 +103,7 @@ function attachConnectorsError(error, account, fallbackKind = 'login') {
       code: error.code,
       accountId: account?.id ?? null,
       accountName: account?.name ?? account?.id ?? '',
-      reauth: ['expired', 'login', 'format'].includes(kind),
+      reauth: ['expired', 'login', 'format', 'ownDirLogin'].includes(kind),
       needsOwnerCheck: kind === 'owner',
       params: error.connectorsParams ?? {},
     };
@@ -500,13 +506,25 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
   onLoginExpired = async () => {}, verify = null } = {}) {
   const sharedDir = () => env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
 
+  async function checkSettingsFile(name, file) {
+    const found = await settingsOverridesFile(file, { readFile });
+    if (!found) throw new ConnectorsAuthError('env', { name }, 'envSettings', { scope: 'settings' });
+    if (found.auth.length) throw new ConnectorsAuthError('env', { name, names: found.auth.join(', ') }, 'env', { scope: 'settings' });
+    if (found.history.length) throw new ConnectorsAuthError('history', { name, names: found.history.join(', ') }, 'history', { scope: 'settings' });
+  }
+
   async function settingsCheck(name, cwd = null) {
     for (const entry of settingsFiles({ sharedDir: sharedDir(), cwd, platform, managedFiles })) {
-      const found = await settingsOverridesFile(entry.file, { readFile });
-      if (!found) throw new ConnectorsAuthError('env', { name }, 'envSettings', { scope: 'settings' });
-      if (found.auth.length) throw new ConnectorsAuthError('env', { name, names: found.auth.join(', ') }, 'env', { scope: 'settings' });
-      if (found.history.length) throw new ConnectorsAuthError('history', { name, names: found.history.join(', ') }, 'history', { scope: 'settings' });
+      await checkSettingsFile(name, entry.file);
     }
+  }
+
+  async function versionCheck(name) {
+    const found = await Promise.resolve().then(versions).catch(() => ({}));
+    if (!supportedConnectorVersions(found, verified)) {
+      throw new ConnectorsAuthError('version', { name, cli: found?.cli ?? '?', sdk: found?.sdk ?? '?', verified: verified.map(v => `CLI ${v.cli} / SDK ${v.sdk}`).join(', ') });
+    }
+    return found;
   }
 
   async function checks(account, { cwd = null } = {}) {
@@ -517,10 +535,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     const moved = present(env, HISTORY_ENV);
     if (moved.length) throw new ConnectorsAuthError('history', { name, names: moved.join(', ') }, 'history', { scope: 'env' });
     await settingsCheck(name, cwd);
-    const found = await Promise.resolve().then(versions).catch(() => ({}));
-    if (!supportedConnectorVersions(found, verified)) {
-      throw new ConnectorsAuthError('version', { name, cli: found?.cli ?? '?', sdk: found?.sdk ?? '?', verified: verified.map(v => `CLI ${v.cli} / SDK ${v.sdk}`).join(', ') });
-    }
+    const found = await versionCheck(name);
     // 読めない（例外）も確かめられない扱いで止める（一覧の読み取りがログイン中のアカウントへ落ちないように）
     const owner = await Promise.resolve().then(() => accounts.ownerStatus(account.id)).catch(() => 'unknown');
     if (owner !== 'ok') throw new ConnectorsAuthError('owner', { name });
@@ -550,17 +565,22 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
    * login に揃えて投げる（呼び手の一覧の読み取りは ConnectorsAuthError 以外をオフと同じ「ログイン中のアカウントで読む」に回すため。
    * 元の文面は出さない）
    */
-  async function resolveAuth(account) {
-    try { return await resolveOn(account); }
+  async function resolveAuth(account, { mode } = {}) {
+    try { return await (mode === OWN_DIR ? resolveOwnDir(account) : resolveOn(account)); }
     catch (error) {
       if (error instanceof ConnectorsAuthError) throw attachConnectorsError(error, account);
       throw attachConnectorsError(new ConnectorsAuthError('login', { name: account?.name ?? account?.id }), account);
     }
   }
 
-  /** 画面・一覧用の受動検査（CLI を起こさず、書き込みもしない。止める理由・安全な識別ハッシュだけを返す） */
-  resolveAuth.inspect = async function inspectAuth(account, { cwd = null } = {}) {
+  /** 画面・一覧用の検査。切り替え時の prepare だけはリンクを準備する。CLI は起こさない。 */
+  resolveAuth.inspect = async function inspectAuth(account, { cwd = null, mode, prepare = false } = {}) {
     try {
+      if (mode === OWN_DIR) {
+        const { dir, ver } = await ownDirChecks(account, cwd);
+        const moves = prepare ? await prepareOwnDir(account, dir, cwd, false) : [];
+        return { ok: true, kind: 'ok', identityHash: hashConnectorIdentity([OWN_DIR, account.id, dir, ver, await usageAccountDigest(dir)]), moves };
+      }
       const ver = await checks(account, { cwd });
       const dir = accounts.usageDir(account.id);
       const cred = await credentials(account, dir, { skipSleep: true });
@@ -594,6 +614,71 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
   };
 
   return resolveAuth;
+
+  async function ownDirLogin(account, dir) {
+    const isFile = file => fs.lstat(path.join(dir, file)).then(info => info.isFile(), () => false);
+    const root = await fs.lstat(dir).catch(() => null);
+    if (!root?.isDirectory() || !await accounts.hasUsageLogin(account.id) || !await isFile(CREDENTIALS_FILE)) {
+      throw new ConnectorsAuthError('ownDirLogin', { name: account.name ?? account.id });
+    }
+    const profile = await fs.lstat(path.join(dir, '.claude.json')).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    if (profile && !profile.isFile()) throw new ConnectorsAuthError('ownDirLinks', { name: account.name ?? account.id });
+  }
+
+  async function ownDirChecks(account, cwd) {
+    const name = account.name ?? account.id;
+    const ver = await versionCheck(name);
+    const dir = accounts.usageDir(account.id);
+    await ownDirLogin(account, dir);
+    const moved = present(env, HISTORY_ENV);
+    if (moved.length) throw new ConnectorsAuthError('history', { name, names: moved.join(', ') }, 'history', { scope: 'env' });
+    await settingsCheck(name, cwd);
+    return { dir, ver };
+  }
+
+  function prepareOwnDir(account, dir, cwd, projectSettings) {
+    return withClaudeUsageDir(dir, async () => {
+      const name = account.name ?? account.id;
+      let moves;
+      try {
+        await ownDirLogin(account, dir);
+        const shared = sharedDir();
+        const ownSettings = path.join(dir, SETTINGS_FILE);
+        const info = await fs.lstat(ownSettings).catch(err => { if (err.code !== 'ENOENT') throw err; });
+        if (info?.isFile() && info.size) {
+          const sharedSettings = await fs.lstat(path.join(shared, SETTINGS_FILE)).catch(err => { if (err.code !== 'ENOENT') throw err; });
+          if (!sharedSettings) await checkSettingsFile(name, ownSettings);
+        }
+        moves = await ensureClaudeOwnDirLinks(dir, shared);
+      } catch (error) {
+        if (error instanceof ConnectorsAuthError) throw error;
+        const permission = platform === 'win32' && ['EPERM', 'EACCES'].includes(error.code);
+        throw new ConnectorsAuthError(permission ? 'ownDirLinksWindows' : 'ownDirLinks', { name });
+      }
+      await settingsCheck(name, cwd);
+      if (projectSettings) {
+        try { await project({ source: cliConfigFile(env, home), target: path.join(dir, '.claude.json'), cwd }); }
+        catch { throw new ConnectorsAuthError('ownDirProfile', { name }); }
+      }
+      return moves;
+    });
+  }
+
+  async function resolveOwnDir(account) {
+    const { dir } = await ownDirChecks(account);
+    return { account: { ...account, connectors: {
+      identity: OWN_DIR,
+      async prepare({ cwd } = {}) {
+        try {
+          await prepareOwnDir(account, dir, cwd, true);
+          return { env: { CLAUDE_CONFIG_DIR: dir } };
+        } catch (error) { throw attachConnectorsError(error, account); }
+      },
+    } } };
+  }
 
   async function resolveOn(account) {
     const ver = await checks(account);
@@ -656,11 +741,23 @@ export function createClaudeConnectorsWiring({ dataDir, accounts, versions, usag
   const resolveAuth = createClaudeConnectorsAuth({
     accounts, versions, refresh: usage.refresh,
     verify: probe ? createConnectorVerification({ dataDir, probe }) : null,
-    guard: (dir, account) => usage.guard(dir, async () => (await settings.read(account.id)).enabled === true),
+    guard: (dir, account) => usage.guard(dir, async () => {
+      const config = await settings.read(account.id);
+      return config.enabled === true && config.mode !== OWN_DIR;
+    }),
     ...options,
   });
+  const gate = createClaudeConnectorsGate({ dataDir, resolveAuth, settings });
   return {
-    ...createClaudeConnectorsGate({ dataDir, resolveAuth, settings }),
+    ...gate,
+    async resolve(id, { forModels = false } = {}) {
+      const config = await settings.read(id);
+      const own = config.mode === OWN_DIR;
+      if (own && forModels) return accounts.resolve(id);
+      const account = await accounts.resolve(id, { requireToken: !own });
+      if (own) account.resolveCatalogAccount = () => accounts.resolve(id);
+      return gate.gate(account, config);
+    },
     inspect: resolveAuth.inspect,
   };
 }

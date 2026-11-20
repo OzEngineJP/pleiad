@@ -12,7 +12,7 @@ export const accountOps = [
   ['remove', z.object({ id })],
   ['login', z.object({ id, open: z.boolean().optional(), attempt: z.string().min(1).max(80).optional() })],
   ['cancel', z.object({ id, attempt: z.string().min(1).max(80).optional() })],
-  ['setConnectors', z.object({ id, enabled: z.boolean(), cwd: cwd.optional() })],
+  ['setConnectors', z.object({ id, enabled: z.boolean(), cwd: cwd.optional(), mode: z.enum(['b1', 'own-dir']).optional() })],
   ['refreshConnectors', z.object({ id, cwd: cwd.optional() })],
 ].map(([verb, input]) => defineOp({
   id: `accounts.${verb}`, summary: `agent:ops.accounts.${verb}.summary`, risk: 'human-only',

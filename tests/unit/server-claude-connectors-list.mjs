@@ -210,4 +210,64 @@ export default async function (t) {
       t.ok('取り消すと止めた理由も消える', cancelled?.status === 'cancelled' && !cancelled.connectorsError, JSON.stringify(cancelled && { status: cancelled.status, ce: Boolean(cancelled.connectorsError) }));
     } finally { await s.close(); }
   }
+  {
+    const s = await boot('own-dir');
+    try {
+      const { c } = s;
+      const dir = path.dirname(s.credFile);
+      const file = path.join(s.data, CONNECTORS_FILE);
+      const set = (enabled, mode) => c.cmd('invoke', { op: 'accounts.setConnectors', args: { id: s.id, cwd: s.work, enabled, mode } });
+      const refusedOff = await set(true, 'own-dir').then(() => false, () => true);
+      t.ok('専用フォルダ方式: コネクターがオフの行では方式を変更できない', refusedOff && !fss.existsSync(file));
+      await s.enable(true);
+      const credentials = await fs.readFile(s.credFile, 'utf8');
+      await fs.unlink(s.credFile);
+      const refusedLogin = await set(true, 'own-dir').then(() => false, () => true);
+      t.ok('専用フォルダ方式: ログイン不足を返し、コネクター方式を保存しない', refusedLogin && !JSON.parse(await fs.readFile(file, 'utf8')).accounts[s.id].mode);
+      const value = JSON.parse(credentials);
+      value.claudeAiOauth.expiresAt = 1;
+      value.claudeAiOauth.refreshTokenExpiresAt = 1;
+      await fs.writeFile(s.credFile, JSON.stringify(value));
+      await fs.writeFile(path.join(dir, 'projects'), 'preserve');
+      const refusedLink = await set(true, 'own-dir').then(() => false, () => true);
+      t.ok('専用フォルダ方式: リンクが作れないと設定を保存せず衝突したファイルを残す',
+        refusedLink && !JSON.parse(await fs.readFile(file, 'utf8')).accounts[s.id].mode && await fs.readFile(path.join(dir, 'projects'), 'utf8') === 'preserve');
+      await fs.unlink(path.join(dir, 'projects'));
+      await fs.writeFile(path.join(s.claudeConfig, 'test-link-target'), '');
+      try { await fs.symlink(path.join(s.claudeConfig, 'test-link-target'), path.join(dir, 'test-link'), 'file'); }
+      catch (err) {
+        if (process.platform !== 'win32' || !['EPERM', 'EACCES'].includes(err.code)) throw err;
+        t.skip('ファイル用シンボリックリンクの作成権限がない Windows');
+        return;
+      }
+      await fs.unlink(path.join(dir, 'test-link'));
+      const settingsRow = await set(true, 'own-dir');
+      const own = settingsRow?.enabled && settingsRow.mode === 'own-dir' && settingsRow.status === 'ok';
+      const accounts = (await c.cmd('claudeAccounts')).accounts;
+      t.ok('専用フォルダ方式: 設定の操作とアカウント一覧に選んだ方式が返る',
+        own && accounts.find(a => a.id === s.id)?.connectors?.mode === 'own-dir');
+      await fs.writeFile(path.join(s.data, 'claude-account-secrets.json'), JSON.stringify({ version: 1, entries: {} }));
+      const models = () => c.cmd('invoke', { op: 'agents.models', args: { backend: 'claude', cwd: s.work, account: s.id } });
+      const modelError = await models().then(() => null, e => e.message);
+      t.ok('専用フォルダ方式: 登録済みトークンが無いモデル一覧は既存の理由を返す', typeof modelError === 'string' && modelError.length > 0);
+      let before = s.envLines().length;
+      const list = await s.refreshRow();
+      const checks = s.envLines().slice(before);
+      t.ok('専用フォルダ方式: 一覧の CLI はトークンと権限の環境変数なしで専用フォルダを使う',
+        list?.status === 'ok' && Array.isArray(list?.connectors) && checks.length > 0 &&
+        checks.every(line => line.who === 'login' && line.scopes === null && line.configDir === dir), JSON.stringify(checks));
+      const { sessionId } = await c.cmd('newSession', { backend: 'claude', cwd: s.work });
+      await c.cmd('setTurnSettings', { sessionId, account: s.id });
+      const turns = () => fss.existsSync(s.probeLog) ? fss.readFileSync(s.probeLog, 'utf8').trim().split('\n') : [];
+      before = turns().length;
+      const turn = await c.runTurn({ sessionId, prompt: 'hello' });
+      const launches = turns().slice(before);
+      t.ok('専用フォルダ方式: 会話用トークン無し、期限の時刻が過去でも起動し、子を事前に再起動しない',
+        turn.outcome === 'ok' && launches.length === 1 && launches[0] === 'login', JSON.stringify({ outcome: turn.outcome, launches }));
+      await set(false);
+      const b1Error = await models().then(() => null, e => e.message);
+      t.ok('コネクターをオフにすると方式の表示が消え、モデル一覧は同じ理由で止まる',
+        !JSON.parse(await fs.readFile(file, 'utf8')).accounts[s.id].mode && Boolean(b1Error) && b1Error === modelError);
+    } finally { await s.close(); }
+  }
 }

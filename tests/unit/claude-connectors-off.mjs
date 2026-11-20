@@ -183,9 +183,9 @@ export default async function (t) {
   }
   t.ok('入口の設定は ops・画面・CLI・モバイル・デスクトップに出ていない', hits.length === 0, hits.join(', '));
   const server = await fs.readFile(path.join(REPO, 'core/server.mjs'), 'utf8');
-  const gateCalls = [...server.matchAll(/claudeAccountConnectors\.gate\(/g)].length;
-  t.ok('server は入口を accountResolve の 1 か所だけで呼び、登録アカウントを引いた直後に通す',
-    gateCalls === 1 && /return claudeAccountConnectors\.gate\(await claudeAccounts\.resolve\(id\)\);/.test(server));
+  const gateCalls = [...server.matchAll(/claudeAccountConnectors\.resolve\(/g)].length;
+  t.ok('server は入口を accountResolve の 1 か所だけで呼ぶ',
+    gateCalls === 1 && /return claudeAccountConnectors\.resolve\(id, options\);/.test(server));
   // 起動の付け直し（restoreTurn）は main とのパイプが立つ前に走る。秘密の復号（main に頼む）を待つと、デスクトップの起動の待ちを超えて止まる
   const restoreBody = server.slice(server.indexOf('async function restoreTurn('), server.indexOf('const turn = {', server.indexOf('async function restoreTurn(')));
   t.ok('起動の付け直しは、トークンのアカウントを復号せずに一覧の行（claudeAccounts.get）とコネクターの設定だけで読む',

@@ -1767,6 +1767,10 @@
         "settings": "settings.json の認証が優先されています",
         "history": "会話の履歴の置き場が動かされています",
         "profile": "設定の反映に失敗しました",
+        "ownDirLogin": "専用フォルダーのログインが必要です",
+        "ownDirLinks": "共有設定へのリンクを準備できません",
+        "ownDirLinksWindows": "Windows のリンク作成権限を確認してください",
+        "ownDirProfile": "専用フォルダーに設定を反映できません",
         "format": "claude.ai のログインの形式を読めません"
       },
       "tip": {
@@ -1780,6 +1784,10 @@
         "settings": "settings.json に別の認証の指定があるか読み取れないため、オンにできません",
         "history": "会話の履歴の置き場を動かす指定があるため、オンにできません",
         "profile": "「{{name}}」のコネクターの設定を反映できませんでした",
+        "ownDirLogin": "「{{name}}」の専用フォルダーで claude.ai にログインしてください。",
+        "ownDirLinks": "「{{name}}」の専用フォルダーから共有の設定フォルダーへのリンクを準備できませんでした。フォルダーの内容とアクセス権を確認してください。",
+        "ownDirLinksWindows": "「{{name}}」の専用フォルダーにリンクを作成できませんでした。Windows の開発者モード、またはシンボリックリンクの作成権限と対象フォルダーのアクセス権を確認してください。",
+        "ownDirProfile": "「{{name}}」の専用フォルダーにコネクターの設定を反映できませんでした。",
         "format": "「{{name}}」の claude.ai のログインの形式を読めません。ログインし直すとオンにできます"
       },
       "login": "ログイン",
@@ -1788,6 +1796,8 @@
       "reload": "読み直す",
       "reloadAria": "「{{name}}」の claude.ai のコネクターを読み直す",
       "switchAria": "「{{name}}」で claude.ai のコネクターを使う",
+      "ownDir": "専用フォルダ方式（ベータ）",
+      "ownDirAria": "「{{name}}」で専用フォルダ方式（ベータ）を使う",
       "peekAria": "「{{name}}」の claude.ai のコネクター",
       "item": {
         "connected": "接続済み",
@@ -2018,6 +2028,10 @@
   "chat": {
     "connectorsFail": {
       "why": {
+        "ownDirLogin": "「{{name}}」の専用フォルダーで claude.ai にログインしてください。",
+        "ownDirLinks": "「{{name}}」の専用フォルダーから共有の設定フォルダーへのリンクを準備できませんでした。フォルダーの内容とアクセス権を確認してください。",
+        "ownDirLinksWindows": "「{{name}}」の専用フォルダーにリンクを作成できませんでした。Windows の開発者モード、またはシンボリックリンクの作成権限と対象フォルダーのアクセス権を確認してください。",
+        "ownDirProfile": "「{{name}}」の専用フォルダーにコネクターの設定を反映できませんでした。",
         "expired": "「{{name}}」の claude.ai のログインが切れているため、コネクター付きで送れません。ログインし直すか、コネクターをオフにして送ってください。",
         "login": "「{{name}}」で claude.ai のコネクターを使うには、まず claude.ai にログインしてください。",
         "owner": "「{{name}}」の会話用トークンと claude.ai のログインの持ち主（組織）が一致しません。「Claude のアカウント」で確かめるか、コネクターをオフにして送ってください。",
@@ -3362,7 +3376,11 @@
           "settings": "settings.json",
           "history": "履歴の置き場",
           "profile": "設定の反映に失敗",
-          "format": "ログインを読めない"
+          "format": "ログインを読めない",
+          "ownDirLogin": "専用フォルダーのログインが必要",
+          "ownDirLinks": "共有設定へのリンクを準備できない",
+          "ownDirLinksWindows": "Windows のリンク作成権限が必要",
+          "ownDirProfile": "専用フォルダーに設定を反映できない"
         }
       },
       "title": "アカウント",

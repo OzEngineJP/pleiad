@@ -4613,7 +4613,9 @@ const agentAccounts = setupAgentAccounts({ cmd, labelOf,
 /** エージェントのアカウントの一覧（共通の形 { id, name, ready }）。取ってあるもの（同期） */
 function accountList(bid) {
   const kind = capsOf(bid).accounts;
-  if (kind === 'token') return claudeAccounts.list().map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken), connectors: a.connectors ?? null }));
+  if (kind === 'token') return claudeAccounts.list().map((a) => ({
+    id: a.id, name: a.name, ready: Boolean(a.hasToken) || a.connectors?.mode === 'own-dir', connectors: a.connectors ?? null,
+  }));
   if (kind === 'agent') return agentAccounts.list(bid).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
   return [];
 }

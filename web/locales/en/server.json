@@ -596,6 +596,11 @@
       "tokenMissing": "No token is registered for Claude account \"{{name}}\". Paste one in the account list in Settings."
     },
     "connectors": {
+      "ownDirLogin": "Sign in to claude.ai in the dedicated config folder for “{{name}}”.",
+      "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
+      "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
+      "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
+      "ownDirEnableFirst": "Turn on connectors for this account first.",
       "login": "The connector login (usage authorization) for Claude account \"{{name}}\" is missing or unreadable. Authorize again in the account list in Settings.",
       "format": "The connector login for Claude account \"{{name}}\" has a format that cannot be read, so connectors cannot be used.",
       "expired": "The connector login for Claude account \"{{name}}\" has expired and could not be renewed. Authorize again in the account list in Settings.",
