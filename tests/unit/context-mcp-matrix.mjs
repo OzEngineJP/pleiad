@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { buildMcpMatrix, relayBlocked } from '../../core/context-mcp-matrix.mjs';
+import { connectorLegendShown } from '../../web/mcp-matrix.mjs';
 import { createConnectorReader, connectorList, connectorNames, readClaudePlugins } from '../../core/context-claude-extras.mjs';
 import { DEFAULT_SCAN, legacyPlan, mcpAgentsFromLegacy } from '../../core/context-settings.mjs';
 import { resolveRuntime } from '../../core/context-runtime.mjs';
@@ -57,6 +58,11 @@ export default async function (t) {
     t.ok('読み取り中（null）は connectors が reading、読めなかった（null で読み取り中でない）・空なら none、あれば ready', buildMcpMatrix({ ...base, connectors: null, reading: true }).connectors === 'reading' && buildMcpMatrix({ ...base, connectors: null }).connectors === 'none' && buildMcpMatrix({ ...base, connectors: [] }).connectors === 'none' && rich.connectors === 'ready');
     const noClaude = buildMcpMatrix({ ...base, native: { codex: native.codex }, installed: { claude: false }, connectors: ['Slack'], plugins: [{ plugin: 'P', server: 's', key: 'plugin:P:s' }] });
     t.ok('Claude が無ければ行も凡例も出さない', noClaude.rows.every(r => r.kind === 'config') && noClaude.connectors === 'none');
+    // 凡例の雲（claude.ai のコネクター）: 表にコネクターの行があるか読み取り中のときだけ。アカウントの欄だけでは出さない
+    const noConnRows = buildMcpMatrix({ ...base, connectors: [] });
+    t.ok('凡例の雲は、表にコネクターの行が無く読み取り中でもなければ出さず（アカウントの欄があっても）、行があるか読み取り中なら出す',
+      noConnRows.rows.every(r => r.kind !== 'connector') && !connectorLegendShown({ connectors: 'none' }, noConnRows.rows)
+      && connectorLegendShown({ connectors: 'reading' }, noConnRows.rows) && connectorLegendShown(rich, rich.rows));
 
     // --- Devin の取り込みが止まる場所（Pleiad が Devin へ Hook を渡す。ADR 0338）: 取り込んだだけの定義の Devin のマスは鍵つきのオフ（表示だけ）
     {

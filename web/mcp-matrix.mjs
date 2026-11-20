@@ -20,6 +20,12 @@ export { lockedAgentChip };
 const label = agentName;
 const names = ids => ids.map(label).join('・');
 
+/** 雲の凡例「claude.ai のコネクター」を出すか。上の表にコネクターの行があるか、読み取り中のときだけ。
+ *  アカウントの欄（claude.ai のコネクター・アカウントごと）だけでは出さない（欄の見出しと同じことになる） */
+export function connectorLegendShown(m, rows) {
+  return rows.some(r => r.kind === 'connector') || m.connectors === 'reading';
+}
+
 /**
  * section は createMcpSection() の戻り（peek・authNote を使う）。
  * 戻り: { render(host, ctx) }。ctx は web/context.mjs の mcpContext() に matrix・reloadMatrix を足したもの
@@ -393,7 +399,7 @@ export function createMcpMatrix({ section, onCount }) {
     ensureLockTips();
     const legend = el('div', 'cx-legend');
     const li = (glyph, text) => { const i = el('span', 'li'); i.append(glyph, document.createTextNode(text)); return i; };
-    if (rows.some(r => r.kind === 'connector') || m.connectors === 'reading' || accts.length) legend.append(li(svg(ICON.connector), t('mcp.matrix.connector')));
+    if (connectorLegendShown(m, rows)) legend.append(li(svg(ICON.connector), t('mcp.matrix.connector')));
     if (legend.children.length) host.append(legend);
     if (focus) { const sel = focus; focus = null; host.querySelector(sel)?.focus(); }
   }
