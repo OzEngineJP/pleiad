@@ -23,7 +23,7 @@ export const managed = policy => Object.values(policy?.owners ?? {}).includes('p
 export function plyContextRefusal(backend, policy) {
   if (backend?.capabilities?.plyContext === false) return t('context.runtime.refused', { backend: backend.label ?? backend.id });
   const owners = { ...(policy?.owners ?? {}) };
-  // 表に触れた種類は表が決める。旧い「Pleiad がそろえる」の場所を触った後は、main と同じく Pleiad の担当として扱う（Grok は受けない）
+  // 表に触れた種類は表が決める。旧い「Pleiad がそろえる」の場所を触った後も、Pleiad の担当として扱う
   for (const k of ['instruction', 'skill']) {
     const st = policy?.docSourceState?.[k];
     if (st?.touched) owners[k] = st.legacyOwner === 'ply' ? 'ply' : 'native';

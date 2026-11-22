@@ -67,6 +67,21 @@ const notify = (sessionId, value) => write({ method: '_x.ai/session_notification
 const stateDir = process.env.FAKE_GROK_STATE_DIR || (process.env.GROK_HOME ? path.join(process.env.GROK_HOME, 'sessions') : '');
 if (stateDir) fs.mkdirSync(stateDir, { recursive: true });
 const sessions = new Map(), running = new Map(), pending = new Map();
+const contextServers = new Map();
+function rememberContext(sessionId, params) {
+  contextServers.set(sessionId, params.mcpServers?.find(server => server.name === 'ply_context'));
+}
+
+async function callContext(sessionId, method, params) {
+  const server = contextServers.get(sessionId);
+  if (!server) return null;
+  const headers = Object.fromEntries(server.headers.map(({ name, value }) => [name, value]));
+  const response = await fetch(server.url, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+  const { result, error } = await response.json();
+  if (error) throw new Error(error.message);
+  return result;
+}
 let seq = 0;
 const file = id => path.join(stateDir, `${id}.json`);
 // ターンの始めに届いた配達物（mcpServers・環境変数・プラグインの hooks）。配達物の試験が読む（devin の身代わりと同じ形）
@@ -144,6 +159,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         const session = { sessionId: `grok-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'default', model: spawnModel, effort: spawnEffort,
           delivery: seen(p) };
         persist(session);
+        rememberContext(session.sessionId, p);
         // 実機は modes を返さず、models と configOptions（model・reasoning_effort）を返す
         result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
       }
@@ -151,6 +167,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
         session.delivery = seen(p); persist(session);
+        rememberContext(session.sessionId, p);
         replay(session);
         result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
       }
@@ -158,6 +175,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
         session.delivery = seen(p); persist(session);
+        rememberContext(session.sessionId, p);
       result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
     }
       case '_x.ai/session/fork': {
@@ -222,9 +240,12 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         }
         update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
         const delivery = session.delivery ?? {};
-        const reply = text.includes('[env]')
+        let reply = text.includes('[env]')
           ? JSON.stringify({ ...delivery, hooks: pluginFiles(delivery.pluginDirs ?? []), prompt: text })
           : `fixture: ${text}`;
+        if (text.includes('[context-tools]')) reply = JSON.stringify((await callContext(session.sessionId, 'tools/list'))?.tools ?? []);
+        const contextMatch = /(?:^|\n)context:(\{[^\n]*\})\s*$/.exec(text);
+        if (contextMatch) reply = JSON.stringify((await callContext(session.sessionId, 'tools/call', JSON.parse(contextMatch[1])))?.content?.[0]?.text ?? null);
         const middle = Math.ceil(reply.length / 2);
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(0, middle) } });
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(middle) } });

@@ -75,21 +75,28 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
       t.ok(`C/D の組み合わせ ${TOUCH_COMBOS.length} 組が、どれも試験に登録されている`, missing.length === 0, missing.join(', '));
     }
 
+    const current = plans ? await recordPlans(ROOT, fx, { glue: 'tree' }) : null;
     // ---- A ----
     if (plans) {
-    const now = await recordPlans(ROOT, fx, { glue: 'tree' });
-    t.ok('A: エージェントが自分で読む物（native）の探索が main と同じ', isDeepStrictEqual(now.native, recorded.native));
-    {
+      t.ok('A: エージェントが自分で読む物（native）の探索が main と同じ', isDeepStrictEqual(current.native, recorded.native));
       const diffs = [];
       for (const combo of Object.keys(COMBOS)) for (const cwd of Object.keys(CWDS)) for (const agent of AGENT_IDS) {
-        const a = now.plans[combo]?.[cwd]?.[agent], b = recorded.plans[combo]?.[cwd]?.[agent];
-        if (!isDeepStrictEqual(a, b)) diffs.push(`${combo}/${cwd}/${agent}: ${Object.keys({ ...a, ...b }).filter(k => !isDeepStrictEqual(a?.[k], b?.[k])).join(',')}`);
+        const a = current.plans[combo][cwd][agent], b = recorded.plans[combo][cwd][agent];
+        // #179 で意図して変えたのは、旧い「Pleiad がそろえる」での Grok の中継と配布物だけ。
+        const expected = agent === 'grok' && !b.plyContext && (b.owners.instruction === 'ply' || b.owners.skill === 'ply');
+        if (expected && !a.plyContext) diffs.push(`${combo}/${cwd}/${agent}: ply_context が無い`);
+        const changed = Object.keys({ ...a, ...b })
+          .filter(k => !isDeepStrictEqual(a[k], b[k]) && !(expected && ['plyContext', 'delivered'].includes(k)));
+        if (changed.length) diffs.push(`${combo}/${cwd}/${agent}: ${changed.join(',')}`);
       }
-      t.ok(`A: 触っていない人の計画が main と同じ（${Object.keys(COMBOS).length} 組 × 作業場所 2 × エージェント 6）`, diffs.length === 0, diffs.slice(0, MAX_DETAIL).join(' / '));
-    }
+      t.ok('A: 保存済み設定の計画に #179 で意図した変更だけが入る', diffs.length === 0, diffs.slice(0, MAX_DETAIL).join(' / '));
     }
 
-    const mainSees = (combo, cwd, agent) => sees(agent, recorded.native[cwd][agent], recorded.plans[combo][cwd][agent]);
+    // Grok は #179 後の未編集設定を比較元にする。ほかのエージェントは main の記録を使う。
+    const baselinePlan = (combo, untouched, cwd, agent) => agent === 'grok' ? untouched[cwd][agent] : recorded.plans[combo][cwd][agent];
+    const baselineSees = (combo, untouched, cwd) => Object.fromEntries(AGENT_IDS.map(agent => [
+      agent, sees(agent, recorded.native[cwd][agent], baselinePlan(combo, untouched, cwd, agent)),
+    ]));
     const WS = tree.agentsMod.WORKSPACE_SUMMARY_KEY;
     // 固定の木 1 つ分の道具（C/D は組み合わせごとに別の木で並べて走らせる）
     const bind = (fx) => {
@@ -171,7 +178,7 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
           // 作業場所の右の欄: 行のマス ⇔ その作業場所で main のエージェントが見ていた物
           for (const cwd of Object.keys(CWDS)) {
             const { matrix } = await docView(kind, cwd);
-            const main = Object.fromEntries(AGENT_IDS.map(a => [a, mainSees(combo, cwd, a)]));
+            const main = baselineSees(combo, current.plans[combo], cwd);
             consistency(kind, matrix, main, `${kind}@${cwd}`, diffs);
             // main で見ていたのに、表に行が無い物
             for (const agent of AGENT_IDS) for (const k of main[agent][kind]) {
@@ -180,7 +187,7 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
           }
           // 設定の全体: ユーザーの段の行 ⇔ 作業場所 repo（場所の上書きが無い所）で main のエージェントが見ていた物
           const { matrix } = await docView(kind, 'default');
-          const main = Object.fromEntries(AGENT_IDS.map(a => [a, mainSees(combo, 'repo', a)]));
+          const main = baselineSees(combo, current.plans[combo], 'repo');
           consistency(kind, matrix, main, `${kind}@全体`, diffs);
           // 「作業場所の指示・Skills」の行: オン ⇔ そのエージェントが作業場所の物を 1 つ以上見ていた
           const ws = workspaceKeys(kind, 'repo');
@@ -190,7 +197,7 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
             if (on !== any) diffs.push(`${kind}@全体 作業場所の行/${agent}: 表=${on ? 'オン' : 'オフ'} 見え=${any ? 'あり' : 'なし'}`);
           }
         }
-        t.ok(`B: ${combo}: 表の初期のマスが main で見ていた物と同じ`, diffs.length === 0, `${diffs.length} 件: ${diffs.slice(0, MAX_DETAIL).join(' / ')}`);
+        t.ok(`B: ${combo}: 表の初期のマスが未編集時に見える物と同じ`, diffs.length === 0, `${diffs.length} 件: ${diffs.slice(0, MAX_DETAIL).join(' / ')}`);
       }
     }
 
@@ -198,7 +205,9 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
     const touchCombo = async (combo) => {
       const cfx = await makeFixture(path.join(root, `touch-${combo}`));
       const { allSees, docView, press, rowLabel, rowKeys, consistency } = bind(cfx);
-      const baseline = Object.fromEntries(Object.keys(CWDS).map(c => [c, Object.fromEntries(AGENT_IDS.map(a => [a, mainSees(combo, c, a)]))]));
+      await writeCombo(cfx, combo);
+      const { plans: untouched } = await allSees({ withPlans: true });
+      const baseline = Object.fromEntries(Object.keys(CWDS).map(c => [c, baselineSees(combo, untouched, c)]));
       const fails = [];
       let presses = 0;
       for (const kind of DOC_KINDS) {
@@ -238,7 +247,7 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
               // (b) 押したエージェントは、押した物を渡す・止める仕組み以外の起動の設定が main と同じで、見え方は押した物だけ変わる
               const pressedKeys = new Set(row.key === WS ? [...workspaceKeys(kind, 'repo'), ...workspaceKeys(kind, 'sub')] : rowKeys(kind, row));
               for (const c of Object.keys(CWDS)) for (const a of AGENT_IDS) {
-                const main = recorded.plans[combo][c][a];
+                const main = baselinePlan(combo, untouched, c, a);
                 if (!changedAgents.includes(a)) {
                   if (!isDeepStrictEqual(planCore(gotPlans[c][a]), planCore(main))) {
                     const diff = Object.keys(planCore(main)).filter(k => !isDeepStrictEqual(planCore(gotPlans[c][a])[k], planCore(main)[k]));
@@ -274,7 +283,7 @@ export async function runEquivalence(t, { plans = false, touch = [] } = {}) {
       return { combo, fails, presses };
     };
     for (const { combo, fails, presses } of await Promise.all(touch.map(touchCombo))) {
-      t.ok(`C/D: ${combo}: 押せるマス（${presses} 回）がそれぞれ効き、表と見え方がそろい、押し戻すと main と同じ`, fails.length === 0 && presses > 0, `${fails.length} 件: ${fails.slice(0, MAX_DETAIL).join(' / ')}`);
+      t.ok(`C/D: ${combo}: 押せるマス（${presses} 回）がそれぞれ効き、表と見え方がそろい、押し戻すと元に戻る`, fails.length === 0 && presses > 0, `${fails.length} 件: ${fails.slice(0, MAX_DETAIL).join(' / ')}`);
     }
   } finally {
     await fs.rm(root, { recursive: true, force: true });

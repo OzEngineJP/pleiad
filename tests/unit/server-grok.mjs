@@ -5,6 +5,8 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { anchored, sameRows } from '../lib/acp-history.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
+import { mcpHttpFixture } from './context-transports.mjs';
 
 export const name = 'server-grok';
 export const title = 'Grok: fake ACP でターンと途中送信（待ち行列に積んで同じターンで続けて回す）';
@@ -12,7 +14,7 @@ export default async function (t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-server-grok-'));
   const cwd = path.join(root, 'project');
   await fs.mkdir(cwd);
-  let server, c;
+  let server, c, upstream;
   try {
     server = await startServer({ dataDir: path.join(root, 'data'), env: { AGENT_HOST_BACKENDS: 'grok', AGENT_HOST_GROK_BIN: `node "${path.join(ROOT, 'tests/lib/fake-grok.mjs')}"`, GROK_HOME: path.join(root, 'grok-home') } });
     c = await open(server);
@@ -72,7 +74,61 @@ export default async function (t) {
     t.ok('サーバー再起動後も、圧縮で書き換わった会話の発言を原文のまま、同じ uuid で重複なく復元する',
       sameRows(compactRestored.messages, compactPrompts) && compacted.messages.every((m, i) => compactRestored.messages[i].uuid === m.uuid && compactRestored.messages[i].text === m.text),
       JSON.stringify(compactRestored.messages.map(m => [m.uuid, m.role, m.text.slice(0, 40)])));
+
+    const contextCwd = path.join(root, 'context-project');
+    const skillDir = path.join(contextCwd, '.claude', 'skills', 'demo');
+    const nested = path.join(contextCwd, 'nested');
+    for (const dir of [path.join(contextCwd, '.git'), skillDir, nested]) await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(contextCwd, 'AGENTS.md'), 'GROK-PROJECT-RULE');
+    await fs.writeFile(path.join(nested, 'AGENTS.md'), 'GROK-NESTED-RULE');
+    await fs.writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: demo\ndescription: Demo skill for Grok\n---\n\nGROK-SKILL-BODY\n');
+    ({ server: upstream } = mcpHttpFixture(({ method }) => {
+      if (method === 'initialize') return { protocolVersion: '2025-06-18', capabilities: { tools: {}, resources: {} }, serverInfo: { name: 'fixture', version: '1' } };
+      if (method === 'tools/list') return { tools: [{ name: 'echo', inputSchema: { type: 'object' } }] };
+      if (method === 'tools/call') return { content: [{ type: 'text', text: 'GROK-MCP-RESULT' }] };
+      if (method === 'resources/list') return { resources: [{ name: 'guide', uri: 'fixture://guide' }] };
+      if (method === 'resources/read') return { contents: [{ uri: 'fixture://guide', text: 'GROK-MCP-RESOURCE' }] };
+      return {};
+    }));
+    await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+    await fs.writeFile(path.join(contextCwd, '.mcp.json'), JSON.stringify({ mcpServers: { fixture: {
+      type: 'http', url: `http://127.0.0.1:${upstream.address().port}/mcp`, headers: { Authorization: 'Bearer fixture' },
+    } } }));
+    for (const kind of ['instruction', 'skill', 'mcp']) {
+      await c.cmd('setContextSettings', { cwd: contextCwd, place: contextCwd, kind, value: {
+        owner: 'ply', user: { sources: [], excludePaths: [] }, directory: { sources: ['common', 'claude'], excludePaths: [] },
+      } });
+    }
+    const turnText = turn => turn.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    const contextFirst = await c.runTurn({ backend: 'grok', cwd: contextCwd, prompt: '[context-tools]', mode: 'auto' });
+    assert.equal(contextFirst.outcome, 'ok');
+    const contextTools = JSON.parse(turnText(contextFirst));
+    const relayTool = contextTools.find(tool => tool.name.startsWith('m_') && tool.description.startsWith('[fixture / echo]'));
+    t.ok('新規の Grok 会話で ply_context の指示・Skills・リソース・外部 MCP ツールを列挙できる',
+      ['instructions_for_path', 'load_skill', 'mcp_resources'].every(name => contextTools.some(tool => tool.name === name)) && Boolean(relayTool),
+      JSON.stringify(contextTools.map(tool => tool.name)));
+    assert.ok(relayTool, 'Grok received the relayed fixture tool');
+    const contextRecord = await c.cmd('sessionContext', { sessionId: contextFirst.sessionId });
+    const skillId = contextRecord.report.entries.find(entry => entry.kind === 'skill')?.id;
+    const call = async (name, args) => {
+      const turn = await c.runTurn({ sessionId: contextFirst.sessionId, prompt: `context:${JSON.stringify({ name, arguments: args })}` });
+      assert.equal(turn.outcome, 'ok');
+      return JSON.parse(turnText(turn));
+    };
+    t.ok('Grok の再開ターンで外部 MCP を呼べる', await call(relayTool.name, {}) === 'GROK-MCP-RESULT');
+    const resources = await call('mcp_resources', {});
+    const uri = JSON.parse(resources).resources[0].uri;
+    t.ok('Grok の再開ターンで外部 MCP のリソースを読める', /GROK-MCP-RESOURCE/.test(await call('mcp_resources', { uri })));
+    t.ok('Grok の再開ターンで Skill 本文を読める', /GROK-SKILL-BODY/.test(await call('load_skill', { id: skillId })));
+    t.ok('Grok の再開ターンで子ディレクトリの指示を読める',
+      /GROK-NESTED-RULE/.test(await call('instructions_for_path', { id: path.join(nested, 'example.mjs') })));
     c.close(); c = null;
     await server.stop(); server = null;
-  } finally { c?.close(); await server?.stop(); await fs.rm(root, { recursive: true, force: true }); }
+  } finally {
+    c?.close();
+    await server?.stop();
+    if (upstream?.listening) await new Promise(resolve => upstream.close(resolve));
+    await cleanupTestHolder(path.join(root, 'data'));
+    await fs.rm(root, { recursive: true, force: true });
+  }
 }

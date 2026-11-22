@@ -553,10 +553,9 @@ export default async function (t) {
     const agyOwnChip = agyRow.querySelector('.cx-ag[data-agent="antigravity"]');
     const agyGrokChip = agyRow.querySelector('.cx-ag[data-agent="grok"]');
     const dwBeforeLock = docWrites.length;
-    t.ok('GEMINI.md の Antigravity セルは own 鍵・Grok セルは relay 鍵つきで押せない',
+    t.ok('GEMINI.md の Antigravity セルは鍵付きで、Grok セルは切り替えられる',
       agyOwnChip?.getAttribute('aria-disabled') === 'true' && agyOwnChip?.dataset.tip?.includes('止められません')
-      && agyGrokChip?.getAttribute('aria-disabled') === 'true' && agyGrokChip?.getAttribute('aria-pressed') === 'false'
-      && agyGrokChip?.dataset.tip?.includes('渡せません'));
+      && agyGrokChip?.getAttribute('aria-disabled') !== 'true' && agyGrokChip?.getAttribute('aria-pressed') === 'false');
     agyOwnChip?.onclick?.();
     await settle();
     t.ok('鍵つきセルを押しても保存しない', docWrites.length === dwBeforeLock);

@@ -92,8 +92,8 @@ export default async function (t) {
   t.ok('Claude ユーザー指示: Claude=native ON, Grok=own ロック ON, 他は toggle OFF',
     clRow.cells.claude.on && !clRow.cells.claude.locked && clRow.cells.grok.locked && clRow.cells.grok.reason === 'own'
     && !clRow.cells.codex.on && !clRow.cells.codex.locked);
-  t.ok('Codex ユーザー指示: Codex=native ON, Grok=relay ロック OFF',
-    cxRow.cells.codex.on && cxRow.cells.grok.locked && cxRow.cells.grok.reason === 'relay' && !cxRow.cells.grok.on);
+  t.ok('Codex ユーザー指示: Codex は自分で読み、Grok へは中継をオンにできる',
+    cxRow.cells.codex.on && !cxRow.cells.grok.locked && !cxRow.cells.grok.on);
   t.ok('Antigravity ~/.gemini/GEMINI.md: Antigravity=own ロック ON',
     agyRow.cells.antigravity.locked && agyRow.cells.antigravity.reason === 'own' && agyRow.cells.antigravity.on);
   t.ok('Devin ユーザー自身のパス: Devin=own ロック ON、.agents/skills はロック',
@@ -370,7 +370,7 @@ export default async function (t) {
   t.ok('マスを押すと was は消える', rowCfg.defaults.instruction.agents[ucKey].was === undefined
     && onSet(defMatrix(rowCfg).byKey.get(ucKey)) === 'codex');
 
-  // 「探す場所」に足したフォルダーの物は自分で読むエージェントが無いので、オンは渡せる全エージェント（Grok は渡せない）
+  // 「探す場所」に足したフォルダーの物は、オンにすると全エージェントに渡る
   const rootDoc = { ...mkInst(path.join(home, 'notes', 'extra.md'), 'common', 'user'), root: path.join(home, 'notes') };
   rootDoc.origins = [{ path: rootDoc.path, source: 'common', scope: 'user', custom: true }];
   const rootEntries = [userClaude, rootDoc];
@@ -379,7 +379,7 @@ export default async function (t) {
   applyDocTouch(rootCfg, { kind: 'instruction', entries: rootEntries, legacyConfig: nativeRaw, matrixCwd: null, home, place: null, placeKey: null, agent: null, keys: [rootKey], on: true });
   const rootRow = buildDocMatrix({ kind: 'instruction', entries: rootEntries, legacyConfig: nativeRaw, docAgentsConfig: rootCfg, cwd: null, home }).byKey.get(rootKey);
   t.ok('自分で読むエージェントが無い物（探す場所の物）のオンは、渡せる全エージェント',
-    onSet(rootRow) === 'antigravity,claude,codex,devin,opencode', onSet(rootRow));
+    onSet(rootRow) === 'antigravity,claude,codex,devin,grok,opencode', onSet(rootRow));
 
   // まとまりのチップ・確認の後の広げは、複数の名前を 1 回で書く（レビュー S3）
   const bundleCfg = emptyDocAgentsConfig();

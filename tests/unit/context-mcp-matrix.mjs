@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { buildMcpMatrix, relayBlocked } from '../../core/context-mcp-matrix.mjs';
+import { buildMcpMatrix } from '../../core/context-mcp-matrix.mjs';
 import { connectorLegendShown } from '../../web/mcp-matrix.mjs';
 import { createConnectorReader, connectorList, connectorNames, readClaudePlugins } from '../../core/context-claude-extras.mjs';
 import { DEFAULT_SCAN, legacyPlan, mcpAgentsFromLegacy } from '../../core/context-settings.mjs';
@@ -45,10 +45,8 @@ export default async function (t) {
     t.ok('「Pleiad がそろえる」の人: 広げられていた名前は他のエージェントでも on', ply.rows.find(r => r.key === 'cx').cells.claude.state === 'on' && ply.rows.find(r => r.key === 'reg').cells.codex.state === 'on');
     t.ok('今は外してあるもの（disabled）は広げない', buildMcpMatrix({ ...base, kind: { owner: 'ply', disabled: ['cx'] } }).rows.find(r => r.key === 'cx').cells.claude.state === 'off');
 
-    // Grok: 指示・Skills を Pleiad が担当すると ply_context を受け取れない
-    t.ok('Grok は指示を Pleiad が担当するとき中継を受け取れない', relayBlocked('grok', { instruction: 'ply' }) && !relayBlocked('grok', { instruction: 'native', skill: 'native' }) && !relayBlocked('codex', { instruction: 'ply' }));
-    const blocked = buildMcpMatrix({ ...base, owners: { instruction: 'ply', skill: 'native', mcp: 'ply' } });
-    t.ok('そのとき Grok の列は、広げる・登録の行で blocked（押せない）', blocked.rows.find(r => r.key === 'reg').cells.grok.mode === 'blocked' && blocked.rows.find(r => r.key === 'cx').cells.grok.mode === 'blocked');
+    t.ok('Grok でも Pleiad の登録と他のエージェントから広げる MCP を切り替えられる',
+      row('reg').cells.grok.mode === 'toggle' && row('cx').cells.grok.mode === 'toggle');
 
     // プラグインとコネクター
     const rich = buildMcpMatrix({ ...base, plugins: [{ plugin: 'Notion', server: 'notion', key: 'plugin:Notion:notion', transport: 'http' }], connectors: ['Slack'] });

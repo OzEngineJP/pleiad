@@ -1160,6 +1160,8 @@ Devin の受信は 1 行 64 MiB までとし、改行までのバイト数を加
 
 ACP には指示の欄が無いので、Pleiad の指示（visualize・browser・control・secrets・bot・追加の指示）は発言の本文の前に足して送る。エージェントにはこれまでどおり全部が届く。
 
+**Grok のコンテキスト中継（issue #179）**は、外部 MCP やファイルの中継が必要なターンに `ply_context` を ACP の `mcpServers`（type: `http`）で渡す。新規の `session/new` と、再開の `session/resume` または `session/load` には、そのターン専用の接続先と認証情報が入る。Grok 自身の指示・Skills の読み込みは続くため、旧設定の「Pleiad がそろえる」を使う場所では重複して届くことがある。
+
 **Pleiad 担当のコンテキスト（Devin、issue #102）**も同じ形で届く: 指示の本文・Skills の一覧（カタログ）を注入文として発言の前に足し、本文の読み出し（`load_skill`・`instructions_for_path`）と Pleiad が中継する外部 MCP は `ply_context` を ACP の `mcpServers`（type: `http`）に載せて渡す（ply_browser・ply_control と同じ経路）。口はターンごとのトークン（`plyContext: 'turn'`）で、再開（`session/load`）でもその回の口を渡し直す。外部 MCP のツールの承認は Devin が `session/request_permission` で聞く（`mcpApproval: 'agent'`）。**Devin 自身の読み込みは止めていない**: `read_config_from` の取り込みや `.devin/`・`mcp_config.json` の rules・Skills・MCP は ACP から止める口が無く、Pleiad 担当の種類でもネイティブに読まれた分と重複して届くことがある（抑制は別課題）。
 
 **記録する発言.** mapper（`devin-normalize.mjs`・`grok-normalize.mjs`）の `beginTurn(sent, shown)` は、行の `text` を `shown`（人が書いた分。先頭のメモと `!` の結果を含む）にする。`sent`（送った全文）は `user_message_chunk` のエコーとの照合にだけ使う。分割されたエコーは連結して照合する。`mergeMessages` は `sent` を保存せず、`promptHash`（改行コードだけを LF にそろえた全文の sha256）を残す。空白は詰めない。字下げだけが違うコードの発言を取り違えないためである。

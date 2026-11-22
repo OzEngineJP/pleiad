@@ -61,7 +61,7 @@
 
 - `core/context-settings.mjs`・`core/context-runtime.mjs`・`core/context-mcp-matrix.mjs`・`core/context-claude-extras.mjs`・`core/ops/context.mjs`（`context.mcpMatrix`・`context.setMcpAgent`）・`core/backends/*`（起動のときの止め方）・`web/mcp-matrix.mjs`・`web/context.mjs`。
 - コネクターの最後に読めた一覧を `<data>/claude-connectors.json` に小さな JSON で残す（`tests/data-writes-allowlist.mjs`）。
-- Grok は指示・Skills を「Pleiad がそろえる」にすると `ply_context` を受け取れない（`PLY_CONTEXT_CONFLICTS`）。その間、中継に頼る Grok の列は鍵と同じ見た目で押せない。
+- Grok は指示・Skills の担当にかかわらず、必要なターンに `ply_context` を受け取る（#179 で変更）。中継する外部 MCP は Grok の列で切り替えられる。
 - 会話の右パネルの「この場所だけ変える」の MCP の 2 択は残る（場所ごとの一覧は別の仕事）。
 
 ## 後の変更（2026-11-15）

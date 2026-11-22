@@ -89,7 +89,7 @@ export default async function (t) {
       fromNative.off.length === 0 && fromNative.spread.length === 0);
 
     const fromPly = docAgentsFromLegacy('instruction', instA, plyRule, { home, cwd: repo });
-    t.ok('旧「Pleiad がそろえる」はネイティブ(Claude/Devin取り込み)を除いた中継可能エージェントだけ spread に載る（Grok は載らない）',
+    t.ok('旧「Pleiad がそろえる」では Claude 由来の指示を自分で読む Devin・Grok に spread を付けない',
       fromPly.off.length === 0 && ['codex', 'antigravity', 'opencode'].every((a) => fromPly.spread.includes(a))
       && !fromPly.spread.includes('devin') && !fromPly.spread.includes('grok'));
 
@@ -98,9 +98,9 @@ export default async function (t) {
       origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }],
     }, plyRule, { home, cwd: repo });
     // ~/.codex/AGENTS.md は Codex が必ず読む（main の project_doc_max_bytes でも止まらない）ので Codex のセルは鍵（オンのまま）
-    // 鍵のマスでも、旧い「Pleiad がそろえる」で外していた物は off に覚える（触った後も Pleiad が渡さない。表のマスは鍵でオンのまま）。Grok には渡せないので書かない
+    // 鍵のマスでも、旧い「Pleiad がそろえる」で外していた物は off に覚える（触った後も Pleiad が渡さない。表のマスは鍵でオンのまま）
     t.ok('旧「探す形式」で外していた出どころは全エージェントが off（Codex 自身の全体の指示は鍵でオンのまま、off にも覚える）',
-      excludedBySource.off.includes('claude') && excludedBySource.off.includes('codex') && !excludedBySource.off.includes('grok')
+      excludedBySource.off.includes('claude') && excludedBySource.off.includes('codex') && excludedBySource.off.includes('grok')
       && evaluateDocCells('instruction', { kind: 'instruction', path: path.join(home, '.codex', 'AGENTS.md'), scope: 'user', origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }] }, excludedBySource, { legacyOwner: 'ply' }).codex.on === true
       && docCellLock('codex', 'instruction', { kind: 'instruction', path: path.join(home, '.codex', 'AGENTS.md'), scope: 'user', origins: [{ path: path.join(home, '.codex', 'AGENTS.md'), source: 'codex', scope: 'user' }] })?.lockedOn === true);
 

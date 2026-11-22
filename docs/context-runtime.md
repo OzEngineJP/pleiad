@@ -153,7 +153,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 - **Codex の全体の指示**: `~/.codex/AGENTS.md`（`AGENTS.override.md`）は `project_doc_max_bytes=0` では止まらず main も止めていないので、オンのまま鍵（`own`）にする。
 - **Antigravity の Skills**: 自分で読む Skill を 1 つでも止めると `inheritCustomizations: false` になり、Hooks・プラグイン・サブエージェントも一緒に消える。main でもそうなる旧い「Pleiad がそろえる」の場所でだけ押せるようにし、それ以外の場所では自分で読む Skill とまとめ行をオンのまま鍵（`bundled`）にする。自分で読まない Skill を広げるマスは、外部 MCP を Pleiad がそろえるときと同じカスタムエージェント（`inheritCustomizations: true`）に `load_skill` を足すだけで押せる。
 - **押したときの保存**: 画面の操作（`setDocAgent` / `setDocRow`）は `applyDocTouch`（`core/context-doc-matrix.mjs`）1 つを通る。場所の行をオンに戻すと、その場所の上書きが無いときの状態に戻す（main で除外を外したときと同じ）。旧い `excludePaths` は保存された絶対パスと、その実体の下で数える。
-- **Grok Build**: `GROK_HOME` の写しを作らない方針（[ADR 0336](adr/0336-grok-devin-native-mcp-off.md)）から、外部ファイル由来の指示・Skills はすべて鍵（Grok 自身が読むものはオン＋`own`/`workspace`、その他はオフ＋`relay`）とし、`Pleiad の指示`（`plyInstructions`）のみ 6 列に含めて切替可能とする。なお分離した一時 `GROK_HOME`（`projectTrusted: false`）下では実機 `grok 1.0.62` はワークスペース側の `AGENTS.md` を読まずグローバル `GROK_HOME/Agents.md` のみをネイティブ読込することを確認済み。
+- **Grok Build**: Grok 自身が読む指示・Skills はオンのまま鍵を付ける（`own`/`workspace`）。ほかのファイルは Grok の列で切り替え、オンにしたものを Pleiad が渡す（#179）。分離した一時 `GROK_HOME`（`projectTrusted: false`）下では実機 `grok 1.0.62` はワークスペース側の `AGENTS.md` を読まずグローバル `GROK_HOME/Agents.md` のみをネイティブ読込することを確認済み。
 
 ## Hooks
 
@@ -166,9 +166,9 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 `context-scans.json` の外部 MCP に `agents: { off: { 名前: [エージェント] }, spread: { 名前: [エージェント] } }` があると、担当は常に Pleiad（中継は常に開く）として解決し、`agentMcpRules`（`core/context-runtime.mjs`）が名前ごとに決める。無ければ従来の 2 択のまま動き、最初の操作で実効の状態を `agents` に写す（`mcpAgentsFromLegacy`）。
 - Pleiad の登録は、`off[名前]` にそのエージェントが無ければ渡す。エージェント自身の定義は渡さない。他のエージェントの定義は `spread[名前]` にそのエージェントがあるときだけ渡す。
 - エージェント自身の MCP を名前ごとに止めるのは起動のとき: Claude は `settings.deniedMcpServers`（`claude.ai <名前>`・`plugin:<プラグイン>:<名前>` も同じ）、Codex は `-c mcp_servers.<名前>.enabled=false`、OpenCode は定義を `enabled:false` で渡す。Devin は設定の置き場の写しで止める（上の「バックエンドの抑止」、[ADR 0336](adr/0336-grok-devin-native-mcp-off.md)。作業場所の定義は止められず、シンボリックリンクを作れない PC では止めない）。Grok・Antigravity は止める口が無い（`nativeMcpOff: impossible`）。エージェントの設定ファイルは書き換えない。
-- 一覧の鍵のセルには理由（`reason`）が付く: `'own'`（止める手が無い）・`'workspace'`（作業場所の定義を止められないエージェントで、作業場所にも定義がある）・`'relay'`（中継を受け取れない組み合わせ）。
+- 一覧の鍵のセルには理由（`reason`）が付く: `'own'`（止める手が無い）・`'workspace'`（作業場所の定義を止められないエージェントで、作業場所にも定義がある）・`'nolinks'`（定義を止めるのに必要なシンボリックリンクを作れない）。
 - 一覧は `context.mcpMatrix`（`core/context-mcp-matrix.mjs`）。プラグインの MCP は `core/context-claude-extras.mjs` がディスクから読み、コネクターは設定を開いたときに裏で Claude を 1 回起こして読む（資格情報の要らない Pleiad の登録は `deniedMcpServers` で止めて話しかけない）。最後に読めた一覧は `<data>/claude-connectors.json` に覚え、次はすぐ出す。
-- Grok は指示・Skills を Pleiad が担当すると `ply_context` を受け取れない（`PLY_CONTEXT_CONFLICTS`）。そのとき中継に頼る Grok の列は押せない。
+- Grok は指示・Skills の担当にかかわらず、中継が必要なターンに `ply_context` を受け取る（#179）。Pleiad に登録した外部 MCP と、ほかのエージェントから中継する外部 MCP は Grok の列で切り替えられる。
 
 ### Pleiad がそろえる会話（[ADR 0049](adr/0049-hooks-pleiad-managed.md)）
 
