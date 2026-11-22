@@ -413,8 +413,8 @@ export default async function (t) {
           && row.limit.backend === 'devin' && row.limit.model === 'swe-2-high', JSON.stringify(row?.limit ?? row));
       const parent = await pc.cmd('loadSession', { sessionId: pinned.sessionId });
       const notice = parent.messages.filter(m => m.internalTaskNotice).map(m => m.text).join('\n');
-      t.ok('上限で止まった子の完了通知に、自動の振り分けがいつまでその枠を選ばないかを添える',
-        /backend を省いた ply_delegate は、.+まで|ply_delegate without backend will not pick .+ until/.test(notice), notice.slice(0, 600));
+      t.ok('固定の子が上限で止まったときは、解除の見込みを一行だけ知らせる',
+        /^(使用量の上限で止まりました。.+ に枠が戻ります。|Stopped at a usage limit\. The quota resets at .+\.)$/.test(notice), notice.slice(0, 600));
 
       const usage = await pc.cmd('providerUsage', { backend: 'devin' });
       const heldSlot = usage.held?.find(x => x.model === 'swe-2-high');

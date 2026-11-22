@@ -109,6 +109,21 @@ export default async function (t) {
     const hostChild = (await hostCmd('listSessions')).find(s => s.id === hostRow.sessionId);
     t.ok('ホストの子の会話に出どころ（どの端末の・どの会話の AI か）が残る', hostChild?.delegation?.remote?.deviceId === deviceId && hostChild.delegation.remote.sessionId === sid);
 
+    await hostCmd('setDelegationRouting', { settings: { tiers: { t1: ['fake:fast', 'fake:smart'] } } });
+    const limitedParent = await termCmd('newSession', { backend: 'fake', cwd: ROOT });
+    const limited = toolResult(await tool(limitedParent.sessionId, 'ply_delegate', {
+      host: 'desk-test', kind: 'trivial', task: `limit ${Date.now() + 3 * 60 * 60 * 1000}`,
+    }));
+    const switchedId = limited.json?.taskId;
+    t.ok('（準備）ホストが上限に達する子の委譲先を自動で選ぶ', !limited.isError && limited.json?.model === 'fast', limited.text);
+    const switched = await until(async () => (await tRows()).find(r => r.taskId === switchedId && r.status === 'completed' && r.notification === 'sent'), 30_000, '切り替えと完了通知');
+    const switchedHostRow = (await hRows()).find(r => r.taskId === switchedId);
+    const switchMessages = (await termCmd('loadSession', { sessionId: limitedParent.sessionId })).messages.filter(m => m.internalTaskNotice);
+    t.ok('ホストは同じ子で続け、端末へ切り替えを一行で知らせて状態にも残す',
+      switchedHostRow?.routing?.attempts?.[0]?.sessionId === switchedHostRow?.sessionId
+        && switched.routing?.target?.model === 'smart' && switched.routing.limitSwitches?.[0]?.model === 'smart'
+        && switchMessages.length === 2 && /^[^\r\n]*smart[^\r\n]*$/.test(switchMessages[0].text), JSON.stringify({ routing: switched.routing, messages: switchMessages.map(m => m.text.slice(0, 200)) }));
+
     // ---- 経過の読み出し（端末の画面 → 端末のサーバー → main の橋 → 中継 → ホスト）。人の操作だけ。AI の道具には無い
     const hostView = (id, extra = {}) => termCmd('invoke', { op: 'delegation.hostView', args: { taskId: id, hostId, ...extra } });
     const hv = await hostView(taskId);

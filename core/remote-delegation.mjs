@@ -181,7 +181,9 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
       ? ev.telemetry : null;
     const patch = {
       status: ev.rawStatus ?? ev.status, hostWaiting: ev.status === 'waiting',
-      routing: ev.routing ? { mode: 'host', kind: ev.routing.kind ?? null, decidedBy: 'host', target: { backend: ev.routing.backend ?? null, model: ev.routing.model ?? null, account: null } } : undefined,
+      routing: ev.routing ? { mode: 'host', kind: ev.routing.kind ?? null, decidedBy: 'host', target: { backend: ev.routing.backend ?? null, model: ev.routing.model ?? null, account: null },
+        ...(Array.isArray(ev.routing.limitSwitches) ? { limitSwitches: ev.routing.limitSwitches.filter(target =>
+          typeof target?.backend === 'string' && typeof target?.model === 'string').map(({ backend, model }) => ({ backend: backend.slice(0, 40), model: model.slice(0, 200) })) } : {}) } : undefined,
       ...(final ? { result: ev.result ?? '', resultLength: ev.resultLength ?? 0 } : {}),
       ...(!telemetry && !final ? { hostTelemetry: null, hostBackground: null, hostLockWaiting: null,
         lastActivityAt: null, lastOutputAt: null, activeCommands: null } : {}),
