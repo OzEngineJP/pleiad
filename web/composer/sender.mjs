@@ -34,6 +34,45 @@ export const sendAttachments = (ordered) => ordered.map((a) => ({ path: a.path, 
 export function createSender(d) {
   let scheduleAttempt = null;   // 予定を置く応答が届かず送り直しても、同じ予定を二重に作らない
   return {
+    capture({ sessionId, text, ordered, agentLang, inDoc, attachedKey, attachmentLine, settings, revision }) {
+      const attachments = sendAttachments(ordered);
+      const prompt = composeSend({ text, attachments, inDoc, attachedKey, attachmentLine, agentLang });
+      return { sessionId, messageId: d.randomId(), prompt, ...(attachments.length ? { attachments } : {}), settings, revision };
+    },
+    async sendCaptured(key, captured, resolveSession) {
+      let receipt = d.receipts.get(key);
+      if (receipt && receipt.revision === undefined) {
+        const { sessionId, messageId } = receipt;
+        await d.cmd('sendMessage', receipt, { timeoutMs: 15_000 });
+        d.receipts.delete(key);
+        d.saveReceipts();
+        return { sessionId, messageId, revision: undefined };
+      }
+      if (receipt && captured.messageId !== receipt.messageId) throw new Error(d.t('chat.send.unknownPrevious'));
+      receipt ??= captured;
+      d.receipts.set(key, receipt);
+      d.saveReceipts();
+      const sessionId = receipt.sessionId ?? await resolveSession();
+      if (!sessionId) throw new Error(d.t('app.noReply'));
+      if (!receipt.sessionId) {
+        receipt = { ...receipt, sessionId };
+        d.receipts.set(key, receipt);
+        d.saveReceipts();
+      }
+      const { revision, creationRequest, ...request } = receipt;
+      try {
+        await d.cmd('sendMessage', request, { timeoutMs: 15_000 });
+      } catch (error) {
+        if (error.commandRejected) {
+          d.receipts.delete(key);
+          d.saveReceipts();
+        }
+        throw error;
+      }
+      d.receipts.delete(key);
+      d.saveReceipts();
+      return receipt;
+    },
     /**
      * 1 通送る。失敗は投げる（呼び出し側が理由の一行にする）。成功か「すでに届いていた」なら true、何も送らなかったなら false
      * @param {object} o
@@ -48,7 +87,7 @@ export function createSender(d) {
      * @param {string} [o.cwd]
      * @param {string} [o.mode]
      */
-    async send({ sessionId, text, ordered, at = null, agentLang, inDoc, attachedKey, attachmentLine, cwd, mode }) {
+    async send({ sessionId, text, ordered, at = null, agentLang, inDoc, attachedKey, attachmentLine, cwd, mode, revision }) {
       const attachments = sendAttachments(ordered);
       const full = composeSend({ text, attachments, inDoc, attachedKey, attachmentLine, agentLang });
       const args = { sessionId, prompt: full, cwd: cwd || undefined, mode, ...(attachments.length ? { attachments } : {}) };
@@ -60,7 +99,7 @@ export function createSender(d) {
           ...(args.cwd ? { cwd: args.cwd } : {}), ...(args.mode ? { mode: args.mode } : {}), ...(attachments.length ? { attachments } : {}) });
         scheduleAttempt = null;
         d.scheduled(sessionId);
-        d.clearSent(sessionId, text, attachments);
+        d.clearSent(sessionId, text, attachments, revision);
         d.say('');
         return true;
       }

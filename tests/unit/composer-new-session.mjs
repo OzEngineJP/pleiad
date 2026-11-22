@@ -23,7 +23,7 @@ export const name = 'composer-new-session';
 export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・作成中の作業場所と設定の反映・読み込み失敗で欄が戻る';
 
 const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
-  'syncRunState', 'sessionTitleOf', 'notifySwitchedUnsent', 'syncActiveSubmitWait', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
+  'syncRunState', 'captureSendSettings', 'syncActiveSubmitWait', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
   'reserveSettings', 'writeMode', 'settleNext', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings', 'startWorktree', 'chooseModel'];
 
 export default async function (t) {
@@ -92,7 +92,11 @@ export default async function (t) {
     channelsUi: { tab: 'chats', onEvent: () => false }, viewAddress: { note: () => {} },
     // まだ送っていない会話の宛先のチップ（web/composer/home-dest.mjs）。このテストは bot なし（ふつうの会話）だけ
     homeDest: { bot: null, paint: noop, reset: noop, botsChanged: noop },
-    state, $, cmd, refresh, syncRequest, joinReply, retainPlan, WINDOW_MESSAGES, WINDOW_BYTES, historyPane: { backfill: null, paintBefore: null, painting: false, olderFail: null },
+    state, $, cmd, refresh, performance, draftRevision: 'initial', provisionalByMessage: new Map(), provisionalPresent: item => item,
+    composerSelection: () => {
+      const session = state.sessions.find(s => s.id === state.current);
+      return { session, draft: state.current ? session?.nextSettings : context.draftView(state.draft.changes ?? []), backend: 'fake' };
+    }, syncRequest, joinReply, retainPlan, WINDOW_MESSAGES, WINDOW_BYTES, historyPane: { backfill: null, paintBefore: null, painting: false, olderFail: null },
     cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0, requestAnimationFrame: noop, loadBranches: (id) => context.branches.load(id), retainThread: noop, holdReading: noop, t: (k, params) => params?.error ? `${k}: ${params.error}` : k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailures: new Map(), syncSettingsHold: noop,
     cwdSaving: 0,
@@ -100,6 +104,7 @@ export default async function (t) {
     inflightNext: new Map(), settledNext: new Map(), refreshVersion: 0,
     settingsWrites: new Map(), modeWrites: new Map(),
     refreshWorktree: async () => {}, activeBackendId: () => 'fake',
+    vocabRequests: { cache: new Map() }, vocabCwd: () => '', vocabCache: () => '',
     // 選んだ直後に始めるエフォート・モデル一覧の取得（web/composer-vocab.mjs。tests/unit/composer-vocab.mjs が見る）。このテストは設定の流れだけ
     adoptEfforts: async () => true, warmAgentChoices: noop,
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
@@ -148,9 +153,9 @@ export default async function (t) {
   });
   vm.runInContext(`${code}\n${openBridge()}`, context);   // mainView は web/conversation-view.mjs の会話を開く仕事（ADR 0319 段 6-5）
   // submit が引く配送の核（web/client.mjs の chatSender。submit だけ切り出して流すので、同じ作りのものをここで作る）
-  context.chatSender = createSender({ t: (k) => context.t(k), cmd: (command, args) => cmd(command, args), limitOp: (op, args) => context.limitOp(op, args), randomId: () => context.randomId(),
+  context.chatSender = createSender({ t: (k) => context.t(k), cmd: (command, args) => context.cmd(command, args), limitOp: (op, args) => context.limitOp(op, args), randomId: () => context.randomId(),
     receipts: context.receipts, saveReceipts: () => context.saveReceipts(), refreshOutbox: (id) => context.refreshOutbox(id),
-    scheduled: (id) => { context.armedSends.delete(id); context.paintArmed(); }, clearSent: (id, text, atts) => context.clearSentDraft(id, text, atts),
+    scheduled: (id) => { context.armedSends.delete(id); context.paintArmed(); }, clearSent: (id, text, atts, revision) => context.clearSentDraft(id, text, atts, revision),
     beforeSend: () => {}, afterSend: (id, request, full) => { if (context.state.current === id && !context.messageRow(request.messageId)) context.markDelivery(context.ensureMessageRow(request.messageId, full, new Date().toISOString()), 'sending'); },
     say: (text) => { context.$('settingsError').textContent = text; } });
   context.composerWait = createComposerWait({ box: $('cbox'), prompt: $('prompt'), send: $('send'), note: $('composerNote'),
@@ -207,7 +212,7 @@ export default async function (t) {
   const making2 = run('startNew()');
   type('送る字');
   const sending = run('submit()');
-  t.ok('作っている間に送信を押すと欄を readonly にして字を保つ', prompt.readOnly === true && prompt.value === '送る字' && !prompt.disabled);
+  t.ok('作っている間に送信を押しても欄に書ける', !prompt.readOnly && prompt.value === '送る字' && !prompt.disabled);
   flushTimers();
   t.ok('150ms を越えたら「送信中」と送信ボタンの弧', !$('composerNote').hidden && $('composerNote').shown.includes('chat.composer.sending') && $('send').querySelector('.run'));
   await reply('newSession', { sessionId: 'new2' });
@@ -219,21 +224,6 @@ export default async function (t) {
   const sent = calls.filter(c => c.command === 'sendMessage');
   t.ok('できしだい、作った会話へ送る', sent.length === 1 && sent[0].args.sessionId === 'new2' && sent[0].args.prompt === '送る字', JSON.stringify(sent.map(s => s.args)));
   t.ok('送った後は欄が空で書ける・一行も消える', prompt.value === '' && !prompt.readOnly && $('composerNote').hidden && !$('send').classList.contains('wait'));
-
-  // ---------------------------------------------------------------- 取り消す
-  const making3 = run('startNew()');
-  type('やめる字');
-  const sending3 = run('submit()');
-  flushTimers();
-  $('composerNote').querySelector('button').onclick();
-  t.ok('取り消すと書けるように戻り、字はそのまま', !prompt.readOnly && prompt.value === 'やめる字');
-  type('+');
-  await reply('newSession', { sessionId: 'new3' });
-  releaseRefresh(); releaseRefresh = null;
-  await reply('loadSession', { messages: [], presents: [] });
-  await making3; await sending3;
-  t.ok('取り消した送信は送らない', calls.filter(c => c.command === 'sendMessage').length === 1);
-  t.ok('取り消した後に書き足した字も下書きに残る', prompt.value === 'やめる字+' && state.drafts.get('new3')?.text === 'やめる字+');
 
   // ---------------------------------------------------------------- 別の会話を開く・読み込みの失敗
   state.drafts.set('existing', { text: '既存の下書き', attached: [] });
@@ -341,6 +331,7 @@ export default async function (t) {
   context.setTimeout = (fn, ms) => { timer = { fn, ms }; return 7; };
   context.draftSavedAt = 0; context.draftTimer = null;
   state.attached = [];
+  await settle();
   const savesBefore = savesOf().length;
   prompt.value = '打鍵 1'; run('saveDraftSoon()'); await settle();
   prompt.value = '打鍵 2'; run('saveDraftSoon()');
@@ -385,7 +376,7 @@ export default async function (t) {
   prompt.value = 'hello cwd';
   await run('submit()');
   const sentCwd1 = calls.filter(c => c.command === 'sendMessage' && c.args.sessionId === 'cwd1');
-  t.ok('送信時の cwd は選んだ場所になる', sentCwd1.length === 1 && sentCwd1[0].args.cwd === 'D:/project-a');
+  t.ok('送信時の cwd は選んだ場所になる', sentCwd1.length === 1 && sentCwd1[0].args.settings.cwd === 'D:/project-a');
 
   // 2. 作成中に作業場所を選び、作成中に送信を予約する（queuedSend）
   state.cwd = 'C:/home';
@@ -403,7 +394,7 @@ export default async function (t) {
   await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
   await makingCwd2; await sendingCwd2;
   const sentCwd2 = calls.filter(c => c.command === 'sendMessage' && c.args.sessionId === 'cwd2');
-  t.ok('予約された送信も選んだ場所で走る', sentCwd2.length === 1 && sentCwd2[0].args.cwd === 'D:/project-b' && sentCwd2[0].args.prompt === 'queued with cwd');
+  t.ok('予約された送信も選んだ場所で走る', sentCwd2.length === 1 && sentCwd2[0].args.settings.cwd === 'D:/project-b' && sentCwd2[0].args.prompt === 'queued with cwd');
 
   // 3. 作成中に別の会話へ移った場合も、作成中に選んだ場所はできた会話に反映する
   state.cwd = 'C:/home';
@@ -439,7 +430,7 @@ export default async function (t) {
   await makingCwdFail; await sendingCwdFail;
   t.ok('反映に失敗したら settingsFailure が記録される', context.settingsFailures.has('cwd-fail'));
   const sentFail = calls.filter(c => c.command === 'sendMessage' && c.args.sessionId === 'cwd-fail');
-  t.ok('反映に失敗したときは送信しない', sentFail.length === 0);
+  t.ok('クリック時の作業場所は、予約の保存とは別に送信要求に記録する', sentFail[0]?.args.settings.cwd === 'D:/deleted-dir');
   context.cmd = oldCmd;
   context.settingsFailures.clear();
 
@@ -479,7 +470,7 @@ export default async function (t) {
       const label = `${item}・${{ before: 'newSession の応答前', refresh: '応答後の一覧の読み直し中', load: '履歴の読み込み中' }[when]}`;
       // 作った会話は応答のすぐ後に開く（state.current になる）ので、承認モードのチップは応答後なら setMode を送る
       if (item === 'mode' && when !== 'before') {
-        t.ok(`${label}に変えたら、開いた会話の承認モードを変える（setMode）`, mine.some(c => c.command === 'setMode' && c.args.sessionId === id && c.args.mode === 'auto'), JSON.stringify(mine.map(c => c.command)));
+        t.ok(`${label}に変えたら、開いた会話の承認モードを変える`, mine.some(c => c.command === 'setTurnSettings' && c.args.sessionId === id && c.args.mode === 'auto'), JSON.stringify(mine.map(c => c.command)));
       } else {
         const sent = turnSettingsOf(id);
         t.ok(`${label}に変えたら、できた会話の setTurnSettings に載る`, sent.some(spec.live), JSON.stringify(sent));
@@ -550,6 +541,7 @@ export default async function (t) {
   const failing = run('startNew()');
   run("applyCwd('D:/retry-dir')");
   run("chooseSettings({ model: 'fast', rememberModel: true })");
+  const originalRequest = calls.filter(c => c.command === 'newSession').at(-1).args;
   await reply('newSession', 'disk full', true);
   await failing;
   t.ok('作成に失敗したら、やり直しを出す', typeof retry === 'function');
@@ -557,12 +549,13 @@ export default async function (t) {
   const retrying = retry();
   await settle();
   const retryArgs = calls.filter(c => c.command === 'newSession').at(-1).args;
-  t.ok('やり直しは作っている間に選んだ作業場所とモデルで作る', retryArgs.cwd === 'D:/retry-dir' && retryArgs.model === 'fast', JSON.stringify(retryArgs));
+  t.ok('作成の応答を受け取れなかったら同じ要求をやり直す', JSON.stringify(retryArgs) === JSON.stringify(originalRequest));
   await reply('newSession', { sessionId: 'retried' });
   state.sessions.push({ id: 'retried', cwd: 'D:/retry-dir' });
   releaseRefresh(); releaseRefresh = null;
   await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
   await retrying;
+  t.ok('作り直した会話へあとから選んだ作業場所とモデルを反映する', turnSettingsOf('retried').some(p => p.cwd === 'D:/retry-dir') && turnSettingsOf('retried').some(p => p.model === 'fast'));
   context.side.showUndo = noop;
 
   // 予約が一覧の行より先に書けても、行が載ったときに合わせる（読み直しの写しが書く前のものでも、開いた会話のチップが戻らない）
@@ -581,162 +574,78 @@ export default async function (t) {
   t.ok('書く前の写しの行が載っても、予約の結果で合わせる', state.sessions.find(s => s.id === 'staged').nextSettings?.model === 'fast', JSON.stringify(state.sessions.find(s => s.id === 'staged')));
   context.cmd = cmdBefore;
 
-  // 前回の worktree の予定は、送る直前まで作らず、失敗したら本文を残して止める。
-  const planned = state.sessions.find(s => s.id === 'staged');
-  planned.unsent = true; planned.worktreePending = true;
-  state.current = 'staged'; state.cwd = 'C:/home'; prompt.value = 'worktree で送る';
-  context.cmd = (command, args = {}) => command === 'worktreeSplit' ? Promise.reject(new Error('split failed')) : cmdBefore(command, args);
-  const beforeFailed = calls.filter(c => c.command === 'sendMessage').length;
-  await run('submit()');
-  t.ok('worktree を作れなければ送らず、本文と理由を残す',
-    calls.filter(c => c.command === 'sendMessage').length === beforeFailed && prompt.value === 'worktree で送る' && $('settingsError').textContent.includes('split failed'));
-  context.cmd = (command, args = {}) => command === 'worktreeSplit' ? Promise.resolve({ cwd: 'C:/home.pleiad/one' })
-    : command === 'setTurnSettings' ? Promise.resolve({ cwd: args.cwd, backend: 'fake', model: '', effort: '' }) : cmdBefore(command, args);
-  await run('submit()');
-  t.ok('最初の送信直前に worktree を作り、その cwd で送る',
-    calls.filter(c => c.command === 'sendMessage').at(-1)?.args.cwd === 'C:/home.pleiad/one' && !planned.worktreePending);
-
-  // ---- 送信前の待ち（設定反映・受付）・取り消し・別の会話への移動 ----
-  context.cmd = cmdBefore;
-  const slowWaits = [];
-  const slowSwitches = [];
-  const notifyCalls = [];
-  const openedSessions = [];
-  context.notify = (msg, action) => notifyCalls.push({ msg, action });
-  context.openConversation = (id) => openedSessions.push(id);
-  context.slowClient = {
-    track: (_c, _a, p) => p,
-    recordSubmitWait: (entry) => slowWaits.push(entry),
-    recordSubmitSwitched: (entry) => slowSwitches.push(entry),
-    configure: noop,
-    flush: noop,
-  };
-  const sendCallsBefore = () => calls.filter(c => c.command === 'sendMessage').length;
-
   const switchTo = async (id) => {
-    const sel = run(`select(${JSON.stringify(id)})`);
+    const selection = run(`select(${JSON.stringify(id)})`);
     const cached = state.drafts.get(id);
     await reply('loadSession', cached ? { messages: [], draft: { ...cached } } : { messages: [] });
     if (releaseRefresh) releaseRefresh();
-    await sel;
+    await selection;
     await settle();
   };
-
-  // (a) settingsWrite が遅い間: 150ms で注記が出て、取り消しで欄とボタンが戻り、遅延解決しても送らない・通知しない
-  let resolveSettings;
-  state.sessions = [
-    { id: 's_wait', title: '待機テスト会話', cwd: 'C:/home', backend: 'fake', model: '' },
-    { id: 's_other', title: '別の会話', cwd: 'C:/home', backend: 'fake', model: '' },
-  ];
-  await switchTo('s_wait');
-  context.settingsWrites.set('s_wait', new Promise(r => { resolveSettings = r; }));
-  prompt.value = '設定待ちの下書き';
-  const beforeA = sendCallsBefore();
-  const submitAP = run('submit()');
-  await settle();
-  t.ok('設定反映待ちに入ると 150ms 前でも送信中は二重に送れず、取り消す前はまだ注記を出さない',
-    $('send').disabled && $('composerNote').hidden);
-  flushTimers();
-  const noteTextOf = () => $('composerNote').shown ?? $('composerNote').textContent ?? '';
-  t.ok('150ms 超の settingsWrite 待ちで 「送信中」の注記と取り消しボタンが出、欄は readonly になる',
-    !$('composerNote').hidden && noteTextOf().includes('chat.composer.sending')
-    && Boolean($('composerNote').querySelector('button')) && $('send').classList.contains('wait') && prompt.readOnly);
-  $('composerNote').querySelector('button').onclick();
-  await settle();
-  t.ok('送信準備中に取り消すと即座に注記が消え、送信ボタン活性・欄編集可・下書きが残る',
-    $('composerNote').hidden && !$('send').disabled && !prompt.readOnly && prompt.value === '設定待ちの下書き');
-  resolveSettings();
-  await submitAP;
-  await settle();
-  t.ok('取り消し後に settingsWrite が終わっても送信されず、他会話切り替え通知も出ない',
-    sendCallsBefore() === beforeA && notifyCalls.length === 0 && slowSwitches.length === 0);
-
-  // (b) settingsWrite 待ち中に別の会話へ移る -> 注記消滅、元の会話へ戻れば待機表示復帰、別会話中に完了なら送らず通知 + 開く
-  let resolveSettingsB;
-  context.settingsWrites.set('s_wait', new Promise(r => { resolveSettingsB = r; }));
-  const submitBP = run('submit()');
+  const a = { id: 's_wait', cwd: 'C:/home', backend: 'fake', model: '', unsent: true, worktreePending: true };
+  const b = { id: 's_other', cwd: 'C:/other', backend: 'fake', model: 'other' };
+  state.sessions = [a, b];
+  const sends = () => calls.filter(c => c.command === 'sendMessage');
+  const slowWaits = [];
+  context.slowClient.recordSubmitWait = entry => slowWaits.push(entry);
+  await switchTo(a.id);
+  let finishSettings, finishSend;
+  context.settingsWrites.set(a.id, new Promise(resolve => { finishSettings = resolve; }));
+  holdSend = resolve => { finishSend = resolve; };
+  prompt.value = 'A の本文';
+  const count = sends().length;
+  const sendingA = run('submit()');
   await settle();
   flushTimers();
-  t.ok('待ち中に注記が出ている状態で別会話へ切り替える前の準備ができている', !$('composerNote').hidden);
-  await switchTo('s_other');
-  const draftAfterLeave1 = state.drafts.get('s_wait')?.text;
-  t.ok('別の会話へ切り替えると前の会話の待機注記は隠れ、新会話の欄が書ける',
-    $('composerNote').hidden && !prompt.readOnly && !$('send').disabled);
-  prompt.value = '別会話へ送る';
-  const sendOther = run('submit()');
-  await settle();
-  t.ok('別の会話の設定保存が終わる前でも送れる', calls.some(c => c.command === 'sendMessage' && c.args.sessionId === 's_other'));
-  await sendOther;
-  await switchTo('s_wait');
-  const promptAfterReturn = prompt.value;
+  t.ok('設定保存中にもクリック時の本文・設定・worktree の予定で A の送信を受け付ける',
+    sends().length === count + 1 && sends().at(-1)?.args.sessionId === a.id
+    && sends().at(-1)?.args.prompt === 'A の本文' && sends().at(-1)?.args.settings.worktreePending);
+  t.ok('受付の応答待ちは入力でき、重複送信を防ぐ', !prompt.readOnly && $('send').disabled && !$('composerNote').hidden);
+  await switchTo(b.id);
+  prompt.value = 'B の下書き';
+  await switchTo(a.id);
   flushTimers();
-  t.ok('まだ待ち終わらないうちに元の会話へ戻ると、「送信中」の注記と無効状態が復帰する',
-    !$('composerNote').hidden && noteTextOf().includes('chat.composer.sending') && $('send').disabled);
-  await switchTo('s_other');
-  const beforeB = sendCallsBefore();
-  resolveSettingsB();
-  await submitBP;
+  t.ok('A に戻ると受付待ちの表示が戻る', !$('composerNote').hidden && $('send').disabled);
+  prompt.value = '書き直し中';
+  run('saveDraftSoon()');
+  prompt.value = 'A の本文';
+  run('saveDraftSoon()');
+  await switchTo(b.id);
+  finishSettings();
+  finishSend({ state: 'queued' });
+  await sendingA;
   await settle();
-  t.ok('別会話を見ている間に settingsWrite が終わると送らず、下書きは元会話に残り、タイトル付き通知と開くが記録される',
-    sendCallsBefore() === beforeB && state.drafts.get('s_wait')?.text === '設定待ちの下書き'
-    && notifyCalls.length === 1 && notifyCalls[0].msg === 'chat.send.switchedNotice'
-    && notifyCalls[0].action?.label === 'chat.send.openSession'
-    && slowSwitches.some(s => s.sessionId === 's_wait' && s.wait?.hadSettingsWrite && s.wait?.switched),
-    JSON.stringify({ draftAfterLeave1, promptAfterReturn, draftAfterLeave2: state.drafts.get('s_wait')?.text, diff: sendCallsBefore() - beforeB, notifyCalls, slowSwitches }));
-  notifyCalls[0].action.onClick();
-  t.ok('通知の開くを押すと待機していた元の会話を開く', openedSessions.at(-1) === 's_wait');
+  t.ok('B を表示したまま A に一度だけ送信し、同じ本文を書き直した下書きと B の下書き・設定を保つ',
+    sends().length === count + 1 && state.current === b.id && prompt.value === 'B の下書き'
+    && b.model === 'other' && state.drafts.get(a.id)?.text === 'A の本文');
+  t.ok('受付の時間を記録する', slowWaits.some(w => w.sessionId === a.id && w.outcome === 'sent' && typeof w.wait.sendMs === 'number'));
 
-  // (c) Home の新規会話作成中に別の会話へ切り替えた場合も黙って捨てず、下書きを新しい会話へ引き継いで通知する
-  notifyCalls.length = 0;
-  slowSwitches.length = 0;
-  openedSessions.length = 0;
-  context.settingsWrites.clear();
-  const startCP = run('startNew()');
+  const starting = run('startNew()');
   await settle();
-  prompt.value = '新規作成中の下書き';
-  const beforeC = sendCallsBefore();
-  const submitCP = run('submit()');
+  prompt.value = '新規作成中の本文';
+  const first = run('submit()');
   await settle();
-  await switchTo('s_other');
-  await reply('newSession', { sessionId: 's_created_switch', cwd: 'C:/home', backend: 'fake', model: '' });
-  await settle();
-  if (releaseRefresh) releaseRefresh();
-  await startCP;
-  await submitCP;
-  await settle();
-  t.ok('新規会話の作成完了前に別会話へ移ると送らず、無題通知を出し、新会話に下書きを移し、submit-switched を記録する',
-    sendCallsBefore() === beforeC && state.drafts.get('s_created_switch')?.text === '新規作成中の下書き'
-    && notifyCalls.length === 1 && notifyCalls[0].msg === 'chat.send.switchedNoticeUntitled'
-    && slowSwitches.some(s => s.sessionId === 's_created_switch' && s.wait?.hasNewSession),
-    JSON.stringify({ diff: sendCallsBefore() - beforeC, draft: state.drafts.get('s_created_switch'), notifyCalls, slowSwitches }));
-  notifyCalls[0].action.onClick();
-  t.ok('新規会話の未送信通知から開くで作成した会話を開ける', openedSessions.at(-1) === 's_created_switch');
+  await switchTo(b.id);
+  await reply('newSession', { sessionId: 's_created_switch', cwd: 'C:/other', backend: 'fake', model: '' });
+  await starting;
+  await first;
+  t.ok('新規会話を作成中に切り替えても、その会話に一度送る',
+    sends().length === count + 2 && sends().at(-1)?.args.sessionId === 's_created_switch'
+    && sends().at(-1)?.args.prompt === '新規作成中の本文' && state.current === b.id && prompt.value === 'B の下書き');
 
-  // (d) sendMessage 自体の応答が遅いとき: 取り消し無し sending 注記に移行し、完了で submit-wait を記録する
-  let resolveSendD;
-  await switchTo('s_wait');
-  holdSend = (res) => { resolveSendD = res; };
-  prompt.value = '遅い送信メッセージ';
-  const submitDP = run('submit()');
-  await settle();
-  flushTimers();
-  t.ok('sendMessage の受理待ちが 150ms を超えると取り消し無し sending 注記になる',
-    !$('composerNote').hidden && noteTextOf().includes('chat.composer.sending') && !$('composerNote').querySelector('button'));
-  let releaseDraftSave;
-  holdSave = (resolve) => { releaseDraftSave = resolve; };
-  resolveSendD({ ok: true, id: 'm_slow_d' });
-  await submitDP;
-  await settle();
-  t.ok('sendMessage 完了で送信注記が消え、submit-wait に outcome=sent と sendMs が記録される',
-    $('composerNote').hidden && !$('send').disabled
-    && slowWaits.some(w => w.sessionId === 's_wait' && w.outcome === 'sent' && typeof w.wait?.sendMs === 'number'),
-    JSON.stringify({ noteHidden: $('composerNote').hidden, sendDisabled: $('send').disabled, err: $('settingsError').textContent, slowWaits }));
-  t.ok('送信受理後の下書き保存が返っていなくても入力欄を使える',
-    typeof releaseDraftSave === 'function' && prompt.value === '' && !$('send').disabled);
-  holdSave = null;
-  releaseDraftSave?.({});
-  context.notify = noop;
-  context.openConversation = noop;
+  await switchTo(a.id);
+  let finishWorktree;
+  context.cmd = (command, args) => command === 'worktreeSplit'
+    ? new Promise(resolve => { finishWorktree = resolve; })
+    : command === 'setTurnSettings' ? Promise.resolve({ cwd: args.cwd, backend: 'fake', model: '', effort: '' })
+      : cmdBefore(command, args);
+  const split = run('startWorktree()');
+  await switchTo(b.id);
+  finishWorktree({ cwd: 'C:/home.pleiad/one' });
+  await split;
+  t.ok('手動で作った worktree は要求した会話だけに反映する',
+    a.nextSettings?.cwd === 'C:/home.pleiad/one' && !a.worktreePending && !b.nextSettings, JSON.stringify({ a, b, current: state.current, cwd: state.cwd }));
+  context.cmd = cmdBefore;
 
   // 予定の 1 行と × の役割。既存の wt-compact の部品を使う。
   const notice = new Map();

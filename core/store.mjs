@@ -509,12 +509,23 @@ export const dataDir = DIR;
 /** Host-only data. 書き込みはその場で行い、書けなければ投げる（durable は互換のために残す。意味は変わらない） */
 export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
   void durable;
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "deliveries", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "rebuilds", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "rewind", "scheduledSends", "bot", "deletedBot", "antigravityFailures", "contextBase", "chromeProfile", "prs", "worktreePending", "selectedSettings"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "deliveries", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "rebuilds", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "rewind", "scheduledSends", "bot", "deletedBot", "antigravityFailures", "contextBase", "chromeProfile", "prs", "worktreePending", "selectedSettings", "creationReady"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];
     if (before && isDeepStrictEqual(before[field], value)) return before[field];
     return saveOne(sessionId, { [field]: structuredClone(value) })[field];
+  });
+}
+
+/** 送信が使った予約だけを外す。設定の保存と同じロックの中で比較する。 */
+export async function consumeNextSettings(sessionId, matches) {
+  return exclusive(async () => {
+    const all = await load();
+    const next = all[sessionId]?.nextSettings;
+    if (!next || !matches(next)) return false;
+    saveOne(sessionId, { nextSettings: null });
+    return true;
   });
 }
 

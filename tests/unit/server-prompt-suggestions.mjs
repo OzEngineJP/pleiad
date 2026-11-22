@@ -108,7 +108,7 @@ export default async function (t) {
   // ---- 画面の配線
   const client = read('web/client.mjs');
   t.ok('画面は promptSuggestion を会話ごとに覚え、開いている会話なら出す', client.includes("ev.type === 'promptSuggestion'") && client.includes('suggestions.set(ev.sessionId, ev.text)'));
-  t.ok('送ったら候補を捨て、↑ の並びを読み直す', /noteSent\(id, text\);\s*dropSuggestion\(id\);\s*chatRecall\.reset\(\);/.test(client));
+  t.ok('送ったら候補を捨て、↑ の並びを読み直す', /if \(state\.current === id\) \{[^}]*chatRecall\.reset\(\);\s*\}\s*noteSent\(id, draft\?\.text \?\? text\);\s*dropSuggestion\(id\);/.test(client));
   t.ok('候補の Tab と ↑ の呼び出しは、`!`・「/」の候補の後にキーを取る', client.includes('(e) => slashSkills.keydown(e), (e) => chatSuggestion.keydown(e), (e) => chatRecall.keydown(e)'));
   t.ok('Esc で消した候補は、会話ごとの候補からも捨てる（次の返答まで出さない）', client.includes('dismiss: () => suggestions.delete(state.current)'));
   t.ok('タッチの履歴のボタンは、候補のボタンが出ている間は譲り、候補の出し入れのたびに決め直す', client.includes('covered: () => chatSuggestion.visible') && client.includes('painted: () => chatRecall.refresh()'));

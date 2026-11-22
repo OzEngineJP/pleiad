@@ -32,8 +32,9 @@ export default async function (t) {
   sh(repo, 'add', '.'); sh(repo, 'commit', '-q', '-m', 'first');
 
   const dataDir = `${scratch}/data`;
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_WORKTREES: 'on', AGENT_HOST_WORKTREE_GRACE_MS: '0' }, dataDir, timeoutMs: 30_000 });
-  const c = await open({ port: server.port, token: server.token });
+  const boot = () => startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_WORKTREES: 'on', AGENT_HOST_WORKTREE_GRACE_MS: '0' }, dataDir, timeoutMs: 30_000 });
+  let server = await boot();
+  let c = await open({ port: server.port, token: server.token });
   const branches = () => sh(repo, 'branch', '--list', 'pleiad/*').split('\n').map((s) => s.replace(/^[*+ ]+/, '')).filter(Boolean);
   // 走っているターンが無く、委譲の完了通知で始まるターンも落ち着くまで待つ（続けて同じ会話へ送ると「切り替え中」になる）
   const quiet = async () => {
@@ -194,6 +195,44 @@ export default async function (t) {
     const afterStatus = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_task_status', { taskId: forcedTask.taskId }) });
     const afterReply = (await c.cmd('loadSession', { sessionId: afterStatus.sessionId })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
     t.ok('片付いた後の ply_task_status は「片付け済み」', /作業場所: worktree pleiad\/ply-[0-9a-f]+（片付け済み）/.test(afterReply), afterReply.slice(0, 400));
+    const creationRequest = { requestId: 'worktree-on-first-send', backend: 'fake', cwd: repo };
+    const created = await c.cmd('newSession', creationRequest);
+    const initialId = created.sessionId;
+    c.close();
+    await server.stop();
+    server = await boot();
+    c = await open({ port: server.port, token: server.token });
+    const replayed = await c.cmd('newSession', creationRequest);
+    t.ok('作成と初回送信の間に再起動しても作成要求は同じ会話を返す', Boolean(initialId) && replayed.sessionId === initialId);
+    const request = { sessionId: initialId, messageId: 'first-worktree-message', prompt: 'echo:first captured',
+      settings: { backend: 'fake', cwd: repo, mode: 'default', model: '', effort: '', account: '', endpoint: '', worktreePending: true } };
+    const mark = c.mark();
+    const previousBranches = branches();
+    const hook = `${repo}/.git/hooks/post-checkout`;
+    await fs.writeFile(hook, [
+      '#!/bin/sh',
+      `touch "${scratch}/worktree-entered"`,
+      `for check in $(seq 1 100); do test -f "${scratch}/worktree-release" && exit 0; sleep 0.1; done`,
+      'exit 1',
+    ].join('\n') + '\n', { mode: 0o755 });
+    try {
+      await c.cmd('sendMessage', request);
+      for (let i = 0; i < 240 && !await exists(`${scratch}/worktree-entered`); i++) await sleep(50);
+      const held = await c.cmd('listMessages', { sessionId: initialId });
+      t.ok('worktree の作成応答を止めても受付と一覧が返り、準備中のメッセージを読める',
+        await exists(`${scratch}/worktree-entered`) && !await exists(`${scratch}/worktree-release`)
+        && held.some(m => m.id === request.messageId && m.status === 'queued' && m.waiting?.reason === 'preparing'), JSON.stringify(held));
+      await c.cmd('sendMessage', request);
+    } finally {
+      await fs.writeFile(`${scratch}/worktree-release`, '');
+    }
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === initialId, { from: mark });
+    await fs.unlink(hook);
+    const rows = await c.cmd('listMessages', { sessionId: initialId });
+    const after = branches().filter(branch => !previousBranches.includes(branch));
+    t.ok('同じ受付を再試行しても worktree とメッセージは一つ', after.length === 1 && rows.filter(m => m.id === request.messageId && m.status === 'sent').length === 1, JSON.stringify({ after, rows }));
+    const sentRow = (await c.cmd('listSessions', {})).find(row => row.id === initialId);
+    t.ok('自動で作った worktree は要求した会話に反映する', sentRow?.cwd?.endsWith(after[0]?.split('/').at(-1)) && !sentRow.worktreePending, JSON.stringify(sentRow));
   } finally {
     c.close();
     await server.stop?.();

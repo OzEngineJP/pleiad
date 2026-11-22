@@ -220,11 +220,15 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
    * purpose: 'conversation'（人が分けた会話）か 'task'（委譲の子）。sessionId は使う会話、parentSessionId は取り込みを頼む相手（子なら依頼元）。
    * nested: worktree の中からも作る（worktree の中で動く依頼元が子を分けるとき）
    */
-  async function create({ cwd, sessionId = null, parentSessionId = null, taskId = null, purpose = 'conversation', nested = false, from = null }) {
+  async function create({ cwd, sessionId = null, parentSessionId = null, taskId = null, purpose = 'conversation', nested = false, from = null, sendId = null }) {
     if (disabled) return { ok: false, reason: 'disabled' };
     const info = await git.repoInfo(cwd);
     if (!info) return { ok: false, reason: 'not-git' };
     await load();
+    if (sendId) {
+      const existing = Object.values(entries).find(e => e.sessionId === sessionId && e.sendId === sendId && e.state === 'ready');
+      if (existing) return { ok: true, entry: { ...existing } };
+    }
     if (!nested && Object.values(entries).some((e) => insideDir(info.root, e.path))) return { ok: false, reason: 'already-split' };
     const head = from?.startPoint ?? await git.headCommit(info.root);
     if (!head) return { ok: false, reason: 'no-commits' };
@@ -250,7 +254,7 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     if (!id) return { ok: false, reason: 'git', error: 'no free id' };
     const entry = { id, state: 'creating', purpose, repoDir: slash(repoDir), root: info.root, origin: slash(cwd), sub: within(sub) ? sub : '',
       path: `${parent}/${id}`, branch: `pleiad/${id}`, base: from?.base ?? head, baseBranch: from ? from.baseBranch ?? null : parsed?.branch ?? null,
-      sessionId, parentSessionId, taskId, createdAt: now(), kept: false };
+      sessionId, parentSessionId, taskId, ...(sendId ? { sendId } : {}), createdAt: now(), kept: false };
     busyIds.add(id);
     try {
       await mutate((all) => { all[id] = entry; });

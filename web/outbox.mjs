@@ -12,6 +12,7 @@ function queuedLabel(wait) {
   // 次のターンの設定の予約がある間は、main の返答が終わった時点（裏だけを待つ間も含む）で流れる（core/message-queue.mjs）
   if (wait?.reason === 'turn') return wait.detail === 'reserved' ? t('outbox.waitReply') : t('outbox.waitTurn');
   if (wait?.reason === 'order') return t('outbox.waitOrder');
+  if (wait?.reason === 'preparing') return t('outbox.preparing');
   if (wait?.reason === 'limit') return t('outbox.waitLimit', { time: limitTime(wait.resetsAt) ?? t('interrupt.unknownTime') });
   return statusLabel('sending');
 }

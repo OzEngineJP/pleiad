@@ -13,6 +13,15 @@ async page => {
       try { m = JSON.parse(data); } catch {}
       if (m?.kind !== 'command') return send.call(this, data);
       hold.log.push({ command: m.command, args: m.args, at: Date.now() });
+      if (m.command === 'sendMessage' && hold.holdResponse) {
+        hold.holdResponse = false;
+        const onmessage = this.onmessage;
+        this.onmessage = event => {
+          if (JSON.parse(event.data).id !== m.id) return onmessage.call(this, event);
+          this.onmessage = onmessage;
+          hold.release = () => onmessage.call(this, event);
+        };
+      }
       const ms = hold.delay[m.command] ?? 0;
       if (hold.once.delete(m.command)) delete hold.delay[m.command];
       if (hold.fail.delete(m.command)) {
@@ -72,8 +81,8 @@ async page => {
   await page.locator('#send').click();
   await page.waitForFunction(() => !document.querySelector('#composerNote').hidden);
   s = await ui();
-  check('作成中の送信: 欄は readonly、字は保つ、欄の上に「送信中 · 取り消す」、送信ボタンに弧', s.readOnly && !s.disabled && s.value === 'echo:queued-hello'
-    && s.note.includes('送信中') && s.note.includes('取り消す') && s.sendWait, JSON.stringify(s));
+  check('作成中の送信: 欄は書けて字を保ち、欄の上に「送信中」と送信ボタンに弧', !s.readOnly && !s.disabled && s.value === 'echo:queued-hello'
+    && s.note.includes('送信中') && !s.note.includes('取り消す') && s.sendWait, JSON.stringify(s));
   await page.screenshot({ path: `${shots}/4-queued-send.png` });
   await page.locator('#composerNote').screenshot({ path: `${shots}/4b-queued-note.png` }).catch(() => {});
   await page.waitForFunction(() => window.__hold.log.some(l => l.command === 'sendMessage' && /queued-hello/.test(l.args.prompt)), null, { timeout: 10000 });
@@ -84,18 +93,36 @@ async page => {
   await page.waitForTimeout(600);
   await page.screenshot({ path: `${shots}/5-queued-sent.png` });
 
-  // ---- 予約を取り消す
-  await page.locator('#newSession').click();
-  await page.locator('#prompt').pressSequentially('keep me');
+  // Keep the real server acknowledgement behind a gate while switching A → B → A → B.
+  await page.evaluate(() => { window.__hold.holdResponse = true; });
+  await page.locator('#prompt').pressSequentially('echo:switch-receipt');
   await page.locator('#send').click();
-  await page.waitForFunction(() => !document.querySelector('#composerNote').hidden);
-  await page.locator('#composerNote button').click();
-  s = await ui();
-  check('取り消す: 欄は書けるように戻り、字は残る', !s.readOnly && s.value === 'keep me' && s.note === null && !s.sendWait, JSON.stringify(s));
-  await page.locator('#prompt').pressSequentially('!');
-  await page.waitForTimeout(2200);
-  const cancelledSent = await page.evaluate(() => window.__hold.log.some(l => l.command === 'sendMessage' && /keep me/.test(l.args.prompt)));
-  check('取り消す: 送らない。作った後も字は残る', !cancelledSent && (await ui()).value === 'keep me!');
+  await page.waitForFunction(() => typeof window.__hold.release === 'function');
+  const row = id => page.locator(`.row[data-session="${id}"]`);
+  const ready = () => page.waitForFunction(() => !document.querySelector('#prompt').readOnly);
+  await row(created).click();
+  await ready();
+  check('受付待ちに B を開いても本文が残る', (await ui()).value === 'abcdefghi');
+  const settings = () => page.evaluate(() => {
+    const chip = document.querySelector('#modelChip');
+    return JSON.stringify([chip?.dataset.value, chip?.dataset.mode, document.querySelector('#cwdChip')?.textContent]);
+  });
+  const settingsB = await settings();
+  await row(sent).click();
+  await ready();
+  await page.waitForFunction(() => document.querySelector('#composerNote').textContent.includes('送信中'));
+  await row(created).click();
+  await ready();
+  await page.evaluate(() => window.__hold.release());
+  check('受付の応答が返っても B の本文と設定が残る', (await ui()).value === 'abcdefghi' && await settings() === settingsB);
+  const sends = await page.evaluate(() => window.__hold.log.filter(l => l.command === 'sendMessage' && l.args.prompt === 'echo:switch-receipt'));
+  check('A に一度だけ送る', sends.length === 1 && sends[0].args.sessionId === sent);
+  await row(sent).click();
+  await ready();
+  await page.waitForFunction(() => document.querySelector('#prompt').value === '');
+  const delivered = page.locator('.m.user').filter({ hasText: 'echo:switch-receipt' });
+  await delivered.first().waitFor();
+  check('A の会話にユーザーの発言が一件だけ残る', await delivered.count() === 1);
 
   // ---- 別の会話を開く（loadSession を 1.5 秒遅らせる）
   await page.evaluate(() => Object.assign(window.__hold.delay, { newSession: 0, loadSession: 1500 }));
@@ -124,17 +151,17 @@ async page => {
   await page.keyboard.press('End');
   await page.locator('#prompt').pressSequentially(' typed-after-fail');
   const valFail = (await ui()).value;
-  check('失敗: 書ける', valFail.endsWith(' typed-after-fail'), `got: "${valFail}"`);
+  check('失敗: 書ける', valFail.endsWith('typed-after-fail'), `got: "${valFail}"`);
   await page.screenshot({ path: `${shots}/7-load-failed.png` });
   await page.locator('#composerNote button').click();
   await page.waitForFunction(() => document.querySelector('#composerNote').hidden && !document.querySelector('#cbox').hasAttribute('aria-busy'), null, { timeout: 10000 });
   s = await ui();
-  check('もう一度読む: 読めたら書けて送れる。失敗の後に書いた字は残る', !s.readOnly && !s.sendDisabled && s.value.endsWith(' typed-after-fail'), JSON.stringify(s));
+  check('もう一度読む: 読めたら書けて送れる。失敗の後に書いた字は残る', !s.readOnly && !s.sendDisabled && s.value.endsWith('typed-after-fail'), JSON.stringify(s));
   await page.screenshot({ path: `${shots}/8-retried.png` });
 
   // ---- 作成中に作業場所を選ぶ（newSession を 1.5 秒遅らせる）
   await page.evaluate(() => Object.assign(window.__hold.delay, { newSession: 1500, listSessions: 0, loadSession: 0 }));
-  const folderA = 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-A';
+  const folderA = await page.evaluate(() => localStorage.getItem('ply-test-folder-a')) ?? 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-A';
   await page.locator('#newSession').click();
   await page.locator('#cwdChip').click();
   await page.locator('#cwdPop .cpath').fill(folderA);
@@ -161,7 +188,7 @@ async page => {
   await page.waitForFunction(() => window.__hold.log.some(l => l.command === 'sendMessage' && /hello-pick-during/.test(l.args?.prompt)), null, { timeout: 10000 });
   await page.waitForTimeout(1000);
   const sendCmdA = await page.evaluate(() => window.__hold.log.find(l => l.command === 'sendMessage' && /hello-pick-during/.test(l.args?.prompt)));
-  check('作成後に送信: sendMessage の cwd が選んだ場所', sendCmdA?.args?.cwd === folderA, JSON.stringify(sendCmdA?.args));
+  check('作成後に送信: sendMessage の cwd が選んだ場所', sendCmdA?.args?.settings?.cwd === folderA, JSON.stringify(sendCmdA?.args));
 
   // サーバーで実際に走った cwd を確かめる
   const serverRowA = await page.evaluate((id) => new Promise(resolve => {
@@ -186,7 +213,7 @@ async page => {
 
   // ---- 作成中に作業場所を選び、送信も予約する
   await page.evaluate(() => Object.assign(window.__hold.delay, { newSession: 1500, listSessions: 0, loadSession: 0 }));
-  const folderB = 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-B';
+  const folderB = await page.evaluate(() => localStorage.getItem('ply-test-folder-b')) ?? 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-B';
   await page.locator('#newSession').click();
   await page.locator('#cwdChip').click();
   await page.locator('#cwdPop .cpath').fill(folderB);
@@ -200,7 +227,7 @@ async page => {
   await page.waitForFunction(() => window.__hold.log.some(l => l.command === 'sendMessage' && /hello-queued-cwd/.test(l.args?.prompt)), null, { timeout: 10000 });
   await page.waitForTimeout(1000);
   const sendCmdB = await page.evaluate(() => window.__hold.log.find(l => l.command === 'sendMessage' && /hello-queued-cwd/.test(l.args?.prompt)));
-  check('送信予約: sendMessage の cwd が選んだ場所', sendCmdB?.args?.cwd === folderB, JSON.stringify(sendCmdB?.args));
+  check('送信予約: sendMessage の cwd が選んだ場所', sendCmdB?.args?.settings?.cwd === folderB, JSON.stringify(sendCmdB?.args));
   const createdIdB = await page.evaluate(() => document.querySelector('.row.sel').dataset.session);
 
   const serverRowB = await page.evaluate((id) => new Promise(resolve => {
@@ -225,7 +252,7 @@ async page => {
 
   // ---- 作成中に model・mode・作業場所を選ぶ（newSession の応答後、一覧の読み直しを 3 秒遅らせた間）
   // 以前は、チップがその間の選択を会話に渡さず、できた会話の値（サーバーの値・既定）に戻った
-  const folderC = 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-A';
+  const folderC = folderA;
   const chips = () => page.evaluate(() => ({
     cwd: document.querySelector('#cwdChip .v')?.textContent, model: document.querySelector('#modelChip')?.dataset.value,
     mode: document.querySelector('#modelChip')?.dataset.mode,
