@@ -237,7 +237,7 @@ export default async function test(t) {
         $: id => { if (!nodes.has(id)) { const node = new Node('div'); node.id = id; } return $(id); },
         t: tr, syncRemoteOriginLine() {}, rememberTitle() {}, syncTitleControls() {}, controls: { paint() {} },
         headerUsage: { show: info => headers.push(info) }, refreshGit: async () => {}, refreshWorktree: async () => {},
-        paintSettingsNotice() {}, renderSessions() {}, selectedMode: () => 'default',
+        paintSettingsNotice() {}, syncResume() {}, paintContextStrip() {}, renderSessions() {}, selectedMode: () => 'default',
         loadVocab: async (backend, account) => { vocabReads.push({ backend, account }); return { modes: { default: {} }, models: { '': {} } }; },
         cmd: effortCmd,
         loadAccounts: backend => { const response = deferred(); accountReads.push({ backend, ...response }); return response.promise; },

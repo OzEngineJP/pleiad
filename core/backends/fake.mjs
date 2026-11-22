@@ -618,7 +618,7 @@ export const backend = {
       });
     }
     if (!plain && text.startsWith('limit ')) {
-      const raw = text.slice(6).trim();
+      const raw = text.slice(6).replace(/\s+HOLD_TURN:[\w.-]+$/, '').trim();
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
       emit({ type: 'turnResult', outcome: 'limited', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null,
         window: 'five_hour' });

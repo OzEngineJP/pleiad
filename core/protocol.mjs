@@ -297,7 +297,7 @@ export const EVENTS = new Set([
   "tool.result",     // { id, text, isError, truncated }
   "activity",        // { state: thinking|writing|compacting|waiting|running|retrying|idle, label?, retry? }。retrying はバックエンドが上限・一時的な失敗のあと再試行を待っている。retry: { attempt, next（epoch ms）, message, reason, limit }（ADR 0229）
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
-  "turnResult",      // { outcome: ok|error|aborted|limited, turns?, costUsd?, error?, reason?, resetsAt?, window?, scope? }。limited は使用量の上限で止まった（resetsAt は解ける時刻の epoch ms。分からなければ無い。window は止まった枠の名前、scope: 'account' はアカウント全体の枠。ADR 0229）。costUsd はこのターンの推計費用（Claude はターン開始時の累計からの差分）。reason は aborted のときの中断の理由（user|update|quit|hostAway）
+  "turnResult",      // { outcome: ok|error|aborted|limited, turns?, costUsd?, error?, reason?, resetsAt?, window?, scope? }。limited は使用量の上限で止まった（resetsAt は解ける時刻の epoch ms。分からなければ無い。window は止まった枠の名前、scope: 'account' はアカウント全体、'model' はモデル単体の枠。ADR 0229）。costUsd はこのターンの推計費用（Claude はターン開始時の累計からの差分）。reason は aborted のときの中断の理由（user|update|quit|hostAway）
   //   kind: 'auth' はログインの期限切れ（401）の失敗。pristine はツールの実行も返答の本文もまだ出ていなかった（最初の API 呼び出しで断られた）。
   //   kind: 'model' は選んだモデルを CLI/API が断った失敗（Claude は 404、Codex は model_not_found）。委譲の自動の振り分けの子なら、次の候補で作り直す（ADR 0311）。
   //   見分けは backend の中で行う。見分けられない backend は kind を付けず、ふつうの失敗として理由を出す。pristine が true なら返答・ツールがまだ出ていない
@@ -365,7 +365,7 @@ export const EVENTS = new Set([
   // { names, count } 開始時と指示・Skills が変わっていたので、送信時に自動で読み込み直した（core/server.mjs の runTurn）
   "contextRefreshed",
   "running",      // 動いているものが増減した
-  "turnEnd",       // { completedAt, outcome, interrupted: { at, reason } | null, requeued?, delegated? }
+  "turnEnd",       // { completedAt, outcome, interrupted: { at, reason, resetsAt?, window?, backend?, account?, endpoint?, model?, scope? } | null, requeued?, delegated? }
   // { state: off|setup|permission|denied|connected|unsupported, reason, dialog, product } Chrome への接続の状態（ホストの PC の画面だけに流す。リモートの端末には送らない。sessionId は null）
   "chromeBrowser",
   // { state: running|idle|stopped|paused, since } エージェントの Chrome の窓の状態（会話ごと。sessionId つき。computer.state と同じく全部の接続へ流す）。tap は { x, y, windowId } エージェントが押した位置（右パネルの輪）

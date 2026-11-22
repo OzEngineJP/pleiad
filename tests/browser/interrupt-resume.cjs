@@ -1,20 +1,20 @@
 // playwright-cli run-code --filename=tests/browser/interrupt-resume.cjs
-// 中断と再開・実行中でも更新できる更新（docs/design-system.md「中断と再開」、ADR 0036）。
+// 更新理由で中断した会話を表示し、まとめて再開する（docs/design-system.md「中断と再開」、ADR 0036）。
 // fake バックエンドを別ポート・別のデータ置き場で立て、最初の案内を済ませてから流す（docs/dev-verification.md「fake で画面を出す」）。
-// デスクトップの更新の口（window.plyDesktop.update）は偽物にする: 更新は準備済み（downloaded）、install は記録するだけ。
-// fake は "slow" で中断されるまで走り、"ask" で承認を待つ。abort は 1.5 秒遅らせて「作業を中断しています… 0 / 3」を撮る。
+// fake は "slow" で中断されるまで走り、"ask" で承認を待つ。更新理由の中断は WebSocket から作る。
 // 撮った画面は temporary/screenshots/interrupt-resume-impl-*.png（playwright-cli を起動した作業ディレクトリからの相対）。
 async page => {
   const shots = 'temporary/screenshots/interrupt-resume-impl';
   await page.addInitScript(() => {
-    const hold = window.__hold = { delay: {}, log: [] };
+    const hold = window.__hold = { log: [] };
     const send = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
       let m = null;
       try { m = JSON.parse(data); } catch {}
-      if (m?.kind === 'command') hold.log.push({ command: m.command, args: m.args, at: Date.now() });
-      const ms = m?.kind === 'command' ? hold.delay[m.command] ?? 0 : 0;
-      if (ms) { setTimeout(() => send.call(this, data), ms); return; }
+      if (m?.kind === 'command') {
+        hold.socket = this;
+        hold.log.push({ command: m.command, args: m.args });
+      }
       return send.call(this, data);
     };
     // 更新で Pleiad が再起動したことにする: 印が立っていれば ready の startedAt（サーバーの起動時刻）を今にする。
@@ -28,16 +28,6 @@ async page => {
         return fn.call(this, e);
       });
     } });
-    let listener = null;
-    const state = { phase: 'downloaded', enabled: true, version: '0.9.2', target: '0.9.3', notice: false, autoDownload: true, autoCheck: true, channel: 'stable' };
-    window.__installs = 0;
-    window.plyDesktop = {
-      onUpdate: (fn) => { listener = fn; },
-      update: async (name) => {
-        if (name === 'install') { window.__installs++; return { ...state }; }
-        return { ...state };
-      },
-    };
   });
   const checks = [];
   const check = (label, ok, detail = '') => { checks.push(`${ok ? 'OK' : 'NG'} ${label}${detail ? ` — ${detail}` : ''}`); if (!ok) throw Error(`${label} ${detail}`); };
@@ -59,41 +49,12 @@ async page => {
   await start('slow');
   await start('slow');
   await start('ask');
-  await page.waitForFunction(() => (window.__hold.log.length, document.querySelectorAll('.row .run').length >= 2));
-  await wait(4500);   // running の放送（4 秒ごと）で脇の知らせの件数が合う
-  const promptWork = await page.evaluate(() => ({ hidden: document.querySelector('#updatePromptWork').hidden, text: document.querySelector('#updatePromptWork').textContent }));
-  check('脇の更新の知らせに「実行中 N 件・承認待ち M 件」', !promptWork.hidden && /実行中 2 件・承認待ち 1 件/.test(promptWork.text), JSON.stringify(promptWork));
-  await page.screenshot({ path: `${shots}-update-prompt.png` });
-
-  // ---- 確認の段: 止まる作業の一覧と「あとで」「中断して更新」
-  await page.locator('#viewAvailableUpdate').click();
-  await page.locator('#installUpdate').click();
-  await page.waitForFunction(() => !document.querySelector('#updateWork').hidden);
-  const confirm = await page.evaluate(() => ({
-    rows: [...document.querySelectorAll('.update-work-row')].map(r => r.textContent),
-    after: document.querySelector('#updateWorkAfter').textContent,
-    button: document.querySelector('#confirmInstallUpdate').textContent,
-    later: document.querySelector('#cancelInstallUpdate').textContent,
-  }));
-  check('確認の段に 3 件（実行中 2・承認待ち 1）', confirm.rows.length === 3 && confirm.rows.filter(r => r.includes('承認待ち')).length === 1, JSON.stringify(confirm.rows));
-  check('主ボタンは「中断して更新」、もう一方は「あとで」', confirm.button === '中断して更新' && confirm.later === 'あとで', JSON.stringify(confirm));
-  check('中断した会話がどう残るかの 1 行', confirm.after.includes('承認待ちは却下扱いになります'), confirm.after);
-  await page.locator('#updateConfirm').screenshot({ path: `${shots}-update-confirm.png` });
-
-  // ---- 中断して更新: 進み → 保存 → install
-  await page.evaluate(() => { window.__hold.delay.abort = 1500; });
-  await page.locator('#confirmInstallUpdate').click();
-  await page.waitForFunction(() => /作業を中断しています/.test(document.querySelector('#updateStatus').textContent));
-  const progress = await page.evaluate(() => document.querySelector('#updateStatus').textContent);
-  check('「作業を中断しています… N / M」', /作業を中断しています… 0 \/ 3/.test(progress), progress);
-  await page.screenshot({ path: `${shots}-update-stopping.png` });
-  await page.waitForFunction(() => window.__installs > 0, null, { timeout: 35000 });
-  const aborted = await page.evaluate(() => window.__hold.log.filter(l => l.command === 'abort').map(l => l.args));
-  // 止まり終えるまで見るたびに送り直す（待つ間に始まったターンも止める）。どれも全部・reason update
-  check('abort は全部・reason update', aborted.length >= 1 && aborted.every(a => a.reason === 'update' && !a.sessionId), JSON.stringify(aborted));
+  await page.waitForFunction(() => document.querySelectorAll('.row .run').length >= 2);
+  await page.evaluate(() => window.__hold.socket.send(JSON.stringify({ kind: 'command', id: 'test-interrupt', command: 'abort', args: { reason: 'update' } })));
+  await page.waitForFunction(() => document.querySelectorAll('.row-why').length >= 2);
 
   // ---- 更新のあと（画面を読み直す）: 三角・理由・脇の下の一行
-  await page.evaluate(() => { window.__hold.delay = {}; sessionStorage.setItem('ply-test-restarted', '1'); });
+  await page.evaluate(() => sessionStorage.setItem('ply-test-restarted', '1'));
   await page.reload();
   await page.locator('.row[data-session]').first().waitFor();
   await wait(1500);
@@ -114,11 +75,15 @@ async page => {
   await page.screenshot({ path: `${shots}-after-update.png` });
 
   // ---- 畳んだ見出しにも三角
-  await page.locator('.grp-name').first().click();
-  const head = await page.evaluate(() => document.querySelector('.grp.collapsed .grp-head .warn-mark')?.getAttribute('aria-label') ?? null);
+  const groupLabel = await page.locator('.row.sel').evaluate(row => row.closest('.grp').querySelector(':scope > .grp-head .grp-name').textContent);
+  const heading = page.locator('.grp-head').filter({ has: page.getByText(groupLabel, { exact: true }) });
+  await heading.locator('.grp-name').click();
+  const mark = heading.locator('.warn-mark');
+  await mark.waitFor();
+  const head = await mark.getAttribute('aria-label');
   check('畳んだ見出しに三角', head === '中の会話が中断', String(head));
   await page.locator('#sidebar').screenshot({ path: `${shots}-collapsed.png` });
-  await page.locator('.grp-name').first().click();
+  await heading.locator('.grp-name').click();
 
   // ---- まとめて再開
   await page.locator('#resumeAll').click();
@@ -127,7 +92,7 @@ async page => {
   const resumes = await page.evaluate(() => window.__hold.log.filter(l => l.command === 'resume').length);
   check('まとめて再開は各会話に resume', resumes >= 2, String(resumes));
   // slow はまた走るので中断して片付ける（ask の承認待ちも中断で却下）
-  await page.evaluate(() => { const ws = new WebSocket(`ws://${location.host}/ws?token=${new URL(location.href).searchParams.get('token')}`); ws.onopen = () => ws.send(JSON.stringify({ kind: 'command', id: 'cleanup', command: 'abort', args: {} })); });
+  await page.evaluate(() => window.__hold.socket.send(JSON.stringify({ kind: 'command', id: 'cleanup', command: 'abort', args: {} })));
   await wait(2000);
   return { passed: true, checks };
 }

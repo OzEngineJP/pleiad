@@ -13,7 +13,10 @@ const HOUR = 3_600_000;
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-server-limit-'));
   const dataDir = path.join(scratch, 'data');
-  const launch = () => startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir });
+  const codexState = path.join(scratch, 'codex');
+  await fs.mkdir(codexState);
+  const launch = () => startServer({ env: { AGENT_HOST_BACKENDS: 'fake,codex', AGENT_HOST_FAKE_GATE_DIR: scratch,
+    AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_STATE_DIR: codexState }, dataDir });
   let server = await launch();
   t.ok('fake サーバーを起動', Number.isFinite(server.port), server.tail());
   let c = await open({ port: server.port, token: server.token, autoAllow: true });
@@ -104,7 +107,37 @@ export default async function (t) {
     t.ok('替えた会話の中断の印は残る', (await info(switchedAgain)).interrupted?.reason === 'limit');
     t.ok('替えた後は、解除時刻の前でも人の「再開」が通る', (await op('sessions.resume', { sessionId: switchedAgain })).sent === 'text');
 
+    const restored = await newSession();
+    const originalAccount = (await info(restored)).claudeAccount ?? '';
+    const restoredAt = Date.now() + 3000;
+    await c.runTurn({ sessionId: restored, prompt: `limit ${restoredAt}` });
+    await c.cmd('setTurnSettings', { sessionId: restored, backend: 'codex' });
+    await c.cmd('setTurnSettings', { sessionId: restored, cancel: true });
+    t.ok('エージェントの切替を取り消すと再開を再び待たせる',
+      await op('sessions.resume', { sessionId: restored }).then(() => false, e => /解除|reset/i.test(e.message)));
+    await c.cmd('setTurnSettings', { sessionId: restored, account: originalAccount ? '' : account.id });
+    await c.cmd('setTurnSettings', { sessionId: restored, account: originalAccount });
+    const restoredFrom = c.mark();
+    await c.cmd('sendMessage', { sessionId: restored, messageId: 'restoredq00001', prompt: 'echo:restored-timer' });
+    t.ok('元のアカウントを選び直すと待機に戻る', (await c.cmd('listMessages', { sessionId: restored }))[0]?.waiting?.resetsAt === restoredAt);
+    const released = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === restored && e.outcome === 'ok', { from: restoredFrom, ms: 10000 });
+    t.ok('選び直した上限のタイマーが指示を配送する', released.completedAt >= restoredAt);
+
+    const late = await newSession();
+    const lateFrom = c.mark();
+    const limitedTurn = c.runTurn({ sessionId: late, prompt: `limit ${Date.now() + HOUR} HOLD_TURN:late-limit` });
+    await c.waitFor(e => e.type === 'activity' && e.sessionId === late && e.state === 'thinking', { from: lateFrom, ms: 10000 });
+    await c.cmd('setTurnSettings', { sessionId: late, backend: 'codex' });
+    await c.cmd('sendMessage', { sessionId: late, messageId: 'latelimitq0001', prompt: 'run on Codex' });
+    await fs.writeFile(path.join(scratch, 'late-limit'), '');
+    t.ok('切替を予約した後で元のターンが上限終了する', (await limitedTurn).outcome === 'limited');
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === late && e.outcome === 'ok', { from: lateFrom, ms: 10000 });
+    t.ok('元のターンの上限を待たずに別エージェントへ配送する', (await info(late)).backend === 'codex');
+
     // ---- 6. 古いデータ: 保存済みの自動再開の予定（kind: resume）と会話の印は読まない。送信予定は残る
+    const paused = await newSession();
+    await c.runTurn({ sessionId: paused, prompt: `limit ${Date.now() + HOUR}` });
+    await c.cmd('sendMessage', { sessionId: paused, messageId: 'restartheld0001', prompt: 'held across restart' });
     const legacy = await newSession();
     await c.runTurn({ sessionId: legacy, prompt: `limit ${Date.now() + 1000}` });
     const sendRow = { id: 'send:legacy-keep', kind: 'send', sessionId: legacy, at: Date.now() + 24 * HOUR, createdAt: Date.now(), by: 'human',
@@ -128,6 +161,15 @@ export default async function (t) {
     t.ok('古い自動再開の印は読まず、解除時刻を過ぎても会話は動かない', legacyInfo.interrupted?.reason === 'limit' && !('autoResume' in legacyInfo.interrupted)
       && await idle(legacy) && (await userTexts(legacy)).length === 1, JSON.stringify(legacyInfo.interrupted));
     t.ok('古い印の残った会話も、人の「再開」で続く', (await op('sessions.resume', { sessionId: legacy })).sent === 'text');
+    const statuses = async () => (await c.cmd('listMessages', { sessionId: paused })).map(m => m.status);
+    t.ok('再起動後の送信待ちは保留される', (await statuses()).join() === 'paused');
+    await c.cmd('setTurnSettings', { sessionId: paused, backend: 'codex' });
+    const afterRestart = c.mark();
+    await c.cmd('sendMessage', { sessionId: paused, messageId: 'restartnew00001', prompt: 'new after switching' });
+    await c.waitFor(e => e.type === 'userMessage' && e.messageId === 'restartnew00001', { from: afterRestart, ms: 20000 })
+      .catch(async err => { throw new Error(`${err.message}\n${JSON.stringify(await c.cmd('listMessages', { sessionId: paused }))}\n${server.tail()}`); });
+    t.ok('切替後に新規送信すると再起動で保留した指示が先に配送される',
+      c.since(afterRestart).filter(e => e.type === 'userMessage' && e.sessionId === paused).map(e => e.messageId).join() === 'restartheld0001,restartnew00001');
   } finally {
     c.close(); await server.stop();
     if (path.resolve(scratch).startsWith(path.resolve(os.tmpdir()) + path.sep)) await fs.rm(scratch, { recursive: true, force: true });

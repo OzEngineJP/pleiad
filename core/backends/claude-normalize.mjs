@@ -14,10 +14,7 @@ import { t } from "../i18n.mjs";
 import { ZERO_COST, resultCost, usageTotals, claudeUsageDelta } from "./claude-cost-state.mjs";
 import { computerResult, computerToolInput, isComputerTool } from "./computer-delivery.mjs";
 import { cleanSuggestion } from "../prompt-suggestions.mjs";
-
-// アカウント全体に効く枠（rateLimitType）。この上限はモデルを替えても通らない（seven_day_opus・seven_day_sonnet はそのモデルだけ）。
-// 上限の印に scope: 'account' を付け、委譲の振り分けがモデルを問わずそのアカウントを飛ばす（core/slot-limits.mjs）
-const ACCOUNT_WINDOWS = new Set(['five_hour', 'seven_day', 'seven_day_oauth_apps', 'seven_day_overage_included', 'overage']);
+import { claudeLimitScope } from "../limit-resume.mjs";
 
 // 履歴のツール結果の切り詰め（fullResults なら切らない）
 const cutResult = (raw, full) => !full && raw.length > MAX_RESULT_CHARS
@@ -107,8 +104,9 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = nul
       const number = Number(raw);
       const resetsAt = Number.isFinite(number) && number > 0 ? (number < 1e12 ? number * 1000 : number) : Date.parse(raw);
       const window = quota.rateLimitType ?? quota.rate_limit_type ?? null;
+      const scope = claudeLimitScope(window);
       out.push({ type: 'limit', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null, window,
-        ...(ACCOUNT_WINDOWS.has(window) ? { scope: 'account' } : {}) });
+        ...(scope ? { scope } : {}) });
     }
     if (m.type === 'rate_limit_event') return out;
   }

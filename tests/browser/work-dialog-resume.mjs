@@ -1,5 +1,5 @@
 // 作業のダイアログの「再開」（ADR 0317）。実ブラウザー。メインの入力欄の「▶ 再開」と同じ出し方・同じ字・同じ送り先。
-//   1. 上限で止まった子（解除の後）: 中断と同じ位置に「再開」。欄の下に「送ると、この指示で続けます」（書いていない間は見えない）
+//   1. 上限で止まった子（解除の後）: 中断と同じ位置に「再開」。保留がなければ欄の下の注記は出ない。
 //   2. 字を書くと「再開」は隠れ、一行が見える。消すとまた出る
 //   3. 押すと resume が子の会話へ届く（メインの resumeSession と同じ）
 //   4. 解除の前の子: 押せない時計（字は「◷ H:MM に解除」）
@@ -65,6 +65,7 @@ try {
   await wait(async () => (await taskOf(doneT.taskId))?.status === 'completed', 'finished child completed');
   const readyChild = (await taskOf(readyT.taskId)).sessionId;
   const clockChild = (await taskOf(clockT.taskId)).sessionId;
+  const { id: otherAccount } = await client.cmd('saveClaudeAccount', { name: 'Private', token: 'sk-ant-oat01-' + 'X'.repeat(48) });
 
   const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
   ab('set', 'viewport', '1280', '800');
@@ -121,19 +122,19 @@ try {
   assert.equal(s1.limit, false);
   assert.equal(s1.disabled, false);
   assert.equal(s1.abort, false, 'no stop button while it is not running');
-  assert.ok(s1.note.includes('この指示で続けます'), 'note under the field');
-  assert.equal(s1.noteVisible, false, 'note is invisible while nothing is typed (the height stays)');
+  assert.equal(s1.note, '', 'ready child has no note without held messages');
+  assert.equal(s1.noteVisible, false);
   assert.ok(s1.placeholder.includes('指示を変えて続ける'), 'placeholder for continuing with another instruction');
   shot('1-ready-1280');
 
   // ---- 2. 書くと隠れ、消すと出る ----
   typeInto('方針を変えて続けてください');
   await wait(() => !state().shown, 'resume hidden while typing');
-  assert.equal(state().noteVisible, true, 'note is visible while typing');
+  assert.equal(state().noteVisible, false, 'typing does not show a note for a ready child');
   shot('2-typing-1280');
   typeInto('');
   await wait(() => state().shown, 'resume back after clearing');
-  console.log('PASS: ready child — 再開 shows at the stop position; typing hides it and shows the note; clearing brings it back');
+  console.log('PASS: ready child — typing hides 再開 without adding a note; clearing brings it back');
 
   // ---- 3. 押す ----
   clickOn('#wkResume', 'resume');
@@ -149,7 +150,19 @@ try {
   assert.equal(s4.disabled, true, 'the clock is not pressable');
   assert.ok(/解除/.test(s4.label), 'label says when the limit is released');
   shot('4-clock-1280');
+  typeInto('解除後に続けてください');
+  await wait(() => state().noteVisible, 'limit note while typing');
+  assert.match(state().note, /上限の解除/);
   console.log('PASS: before the limit is released — a clock that cannot be pressed');
+
+  const originalAccount = (await client.cmd('listSessions')).find(s => s.id === clockChild).interrupted.account ?? '';
+  await client.cmd('setTurnSettings', { sessionId: clockChild, account: otherAccount });
+  await wait(() => !state().noteVisible, 'no limit note after choosing a different account');
+  typeInto('');
+  await wait(() => state().shown && !state().disabled && state().label === '再開', 'resume enabled after choosing a different account');
+  await client.cmd('setTurnSettings', { sessionId: clockChild, account: originalAccount });
+  await wait(() => state().shown && state().disabled && state().limit, 'clock restored after choosing the original account');
+  console.log('PASS: the account switch and reselection update the work dialog');
 
   // ---- 5. 終わった子には出ない ----
   await openCard(doneT.taskId, 'done');
