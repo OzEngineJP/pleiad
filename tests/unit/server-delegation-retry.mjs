@@ -59,8 +59,8 @@ export default async function (t) {
     t.ok('上限による待ちの子は、画面の一覧で retryWaiting（上限・理由）を持つ', waiting?.retryWaiting?.limit === true && waiting.retryWaiting.message === 'Rate limit exceeded',
       JSON.stringify(waiting ?? await taskOf(task.taskId)));
     const first = await until(async () => (await retryNotices(parent))[0]);
-    t.ok('依頼元へ再試行待ちの通知が届く（題・次の時刻・理由・待つか任せ直すか）', first?.text.includes(task.taskId) && first.text.includes('使用量の上限に当たり')
-      && first.text.includes('1 回目の再試行') && first.text.includes('Rate limit exceeded') && first.text.includes('ply_task_cancel') && first.text.includes('ply_delegate'), first?.text);
+    t.ok('依頼元へ再試行待ちの通知が届く（題・次の時刻・理由）', first?.text.includes(task.taskId) && first.text.includes('使用量の上限に当たり')
+      && first.text.includes('1 回目の再試行') && first.text.includes('Rate limit exceeded') && !/ply_task_cancel|ply_delegate/.test(first.text), first?.text);
     const status = await callTool(parent, 'ply_task_status', { taskId: task.taskId });
     t.ok('ply_task_status にも waiting と retryWaiting（nextAt は ISO）', status.status === 'waiting' && /^\d{4}-\d\d-\d\dT/.test(status.retryWaiting?.nextAt ?? ''), JSON.stringify(status));
     await sleep(1500);
@@ -86,10 +86,10 @@ export default async function (t) {
     const limited = await delegate(`limit ${resetsAt}`);
     const failed = await until(async () => { const r = await taskOf(limited.task.taskId); return r?.status === 'failed' ? r : null; });
     t.ok('上限で止まった子は failed で、limit（解除時刻・枠）を残す', failed?.limit?.resetsAt === resetsAt && failed.limit.window === 'five_hour', JSON.stringify(failed ?? await taskOf(limited.task.taskId)));
-    const notice = await until(async () => (await notices(limited.parent)).find((m) => m.text.includes(limited.task.taskId) && m.text.includes('使用量の上限で止まりました')));
-    t.ok('完了通知に、解除の見込みと続け方の一行が入る', notice?.text.includes('に解除される見込みです') && notice.text.includes('ply_task_send'), notice?.text);
+    const notice = await until(async () => (await notices(limited.parent)).find((m) => m.text.includes('使用量の上限で止まりました')));
+    t.ok('完了通知に、解除の見込みを一行だけ載せる', /^使用量の上限で止まりました。.+ に枠が戻ります。$/.test(notice?.text ?? ''), notice?.text);
     const sent = await callTool(limited.parent, 'ply_task_send', { taskId: limited.task.taskId, message: 'echo:続き' });
-    t.ok('解除の前の ply_task_send は積むだけで、警告（解除の時刻・任せ直し）と limitHeld を返す', sent.status === 'queued' && /解除まで走らせません/.test(sent.warning ?? '')
+    t.ok('解除の前の ply_task_send は積むだけで、警告（解除の時刻）と limitHeld を返す', sent.status === 'queued' && /解除まで走らせません/.test(sent.warning ?? '')
       && sent.limitHeld?.resetsAt === new Date(resetsAt).toISOString(), JSON.stringify(sent));
     await sleep(1500);
     t.ok('解除の前は子の次の回が走らない', (await taskOf(limited.task.taskId))?.status === 'queued');

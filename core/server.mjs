@@ -1553,7 +1553,7 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   const accountLabels = await accountLabelMap();
   let retargeted = null, result;
   try {
-    retargeted = await agentTasks.retarget(owner, plan.task.taskId, { ...after, account: accountKind(getBackend(after.backend)) ? nextAccount : null, accountLabels }, lng);
+    retargeted = await agentTasks.retarget(owner, plan.task.taskId, { ...after, account: accountKind(getBackend(after.backend)) ? nextAccount : null, accountLabels, pinTarget: true }, lng);
     result = message === undefined ? retargeted.task : await agentTasks.call(owner, 'ply_task_send', { taskId: plan.task.taskId, message, nextTurn: true }, signal, lng);
   } catch (e) {
     if (retargeted?.changed) await agentTasks.untarget(plan.task.taskId, retargeted.previous).catch(() => {});
@@ -1622,19 +1622,24 @@ function remoteTaskEvent(row) {
   const turn = runtime.turns.get(row.sessionId);
   const background = execution?.waitingSince && turn?.info.phase === 'waiting'
     ? (turn.info.background ?? []).map(waitingBackground) : [];
+  const attempts = row.routing?.attempts ?? [];
+  const limitSwitches = row.routing?.limitSwitches ?? attempts.flatMap(attempt => attempt.continuedTo
+    ? [{ backend: attempt.continuedTo.backend, model: attempt.continuedTo.model }] : []);
   return {
     taskId: row.taskId, requesterSessionId: parsed?.sessionId ?? null, title: row.title ?? null,
     status: waiting ? 'waiting' : row.status, rawStatus: row.status, notification: row.notification ?? null,
     backend: row.backend ?? null, model: row.model ?? null, effort: row.effort ?? null, mode: row.mode ?? null, cwd: row.cwd ?? null,
     sessionId: row.sessionId ?? null, createdAt: row.createdAt ?? null, updatedAt: row.updatedAt ?? null,
     error: row.error ? String(row.error).slice(0, 500) : null, instructionRevision: row.instructionRevision ?? 0,
+    limit: row.limit ? { resetsAt: row.limit.resetsAt ?? null, window: row.limit.window ?? null, backend: row.limit.backend ?? null, model: row.limit.model ?? null } : null,
     // 完了通知（deliver）には記録の行そのもの（結果の全文・instructions）が来て、一覧（agentTasks.list）には view（結果の最初のページ・pendingMessages）が来る。どちらも同じ形にする。
     // 中継点の写しの行は件数を hostPendingMessages に持つので、入れ子（A→B→C）でも末端の待機件数が届く
     pendingMessages: row.pendingMessages ?? row.hostPendingMessages ?? (row.instructions ?? []).filter(x => x.state === 'queued').length,
     // 結果は終わったときだけ最初のページを載せる。続きは端末が status の offset で読む
     result: REMOTE_ACTIVE.has(row.status) ? '' : String(row.result ?? '').slice(0, RESULT_PAGE), resultLength: row.resultLength ?? String(row.result ?? '').length,
     worktree: row.worktree ? { id: row.worktree.id, branch: row.worktree.branch, path: row.worktree.path, origin: row.worktree.origin } : null,
-    routing: row.routing ? { kind: row.routing.kind ?? null, mode: row.routing.mode ?? null, backend: row.routing.target?.backend ?? null, model: row.routing.target?.model ?? null } : null,
+    routing: row.routing ? { kind: row.routing.kind ?? null, mode: row.routing.mode ?? null, backend: row.routing.target?.backend ?? null, model: row.routing.target?.model ?? null,
+      ...(limitSwitches.length ? { limitSwitches } : {}) } : null,
     ...(telemetry ? { telemetry: { version: 1, ...telemetry, lockWaiting: computerLock.snapshot().some(s => s.sessionId === row.sessionId && s.state === 'waiting'),
       background: background.length ? { since: execution.waitingSince, tasks: background.slice(0, 8),
         reply: String(execution.streamed ?? '').slice(0, BACKGROUND_REPLY_MAX) } : null } } : {}),
@@ -4836,7 +4841,7 @@ async function createSession(args) {
 }
 
 /** 次のターンの設定を予約する（sessions.setTurnSettings。WS の setTurnSettings の中身）。予約は nextSettings。返り値は予約（取り消しは null） */
-async function reserveTurnSettings(args, { delegated = false } = {}) {
+async function reserveTurnSettings(args, { delegated = false, limitSwitch = false } = {}) {
   const { sessionId, cwd: requestedCwd, cancel } = args ?? {};
   const explicit = { ...args };
   if (!sessionId) throw new Error(t('session.required'));
@@ -4845,6 +4850,7 @@ async function reserveTurnSettings(args, { delegated = false } = {}) {
     const source = refuseRetired(await resolveBackendForSession(sessionId));
     if (!source) throw new Error(t('session.notFound'));
     const current = { ...(await store.get(sessionId)) };
+    if (limitSwitch && current.nextSettings) return null;
     const manual = { ...(current.selectedSettings ?? {}) };
     let pendingWorktree = current.worktreePending ?? false;
     let { backend: targetId, model, mode, account, endpoint } = args;
@@ -4925,7 +4931,7 @@ async function reserveTurnSettings(args, { delegated = false } = {}) {
       if (explicit.worktreePending === false) manual.worktree = true;
       if (Object.keys(manual).length) await store.setSessionData(sessionId, 'selectedSettings', manual);
     }
-    if (current.interrupted?.reason === 'limit'
+    if (!limitSwitch && current.interrupted?.reason === 'limit'
       && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
       leaveLimit(sessionId);
     }
@@ -7660,42 +7666,35 @@ const candidateNoticeName = target => candidateId(target?.backend ?? '', target?
  * 結果は 1 件 16000 字まで（まとめたときは全体で 16000 字ほどに分ける。切った分は ply_task_status の offset で読める）
  */
 function completionNotice(lng, tasks) {
+  const stops = tasks.filter(task => task.limit).map(task => limitNotice(lng, task.limit));
+  tasks = tasks.filter(task => !task.limit);
+  if (!tasks.length) return stops.join('\n');
   const limit = tasks.length > 1 ? Math.max(2000, Math.floor(16000 / tasks.length)) : 16000;
   const parts = [...tasks].sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0)).map(task => ({
     taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
     result: task.result.slice(0, limit),
     more: task.result.length > limit ? agentT(lng, 'delegation.noticeMore', { offset: limit }) : '',
-    // 上限で止まった子（row.limit。ADR 0229）は、失敗と分けて、解除の見込みと任せ直せることを添える
-    error: [task.limit ? limitNotice(lng, task.limit) : '', task.error ?? ''].filter(Boolean).join('\n'),
+    error: task.error ?? '',
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
     // 仕事を始める前に断られた委譲先を自動で替えた（ADR 0302）なら、元の委譲先と理由・実際に走った委譲先を 1 行ずつ添える
     // i18n-dynamic: agent:delegation.noticeRerouted
-    rerouted: (task.routing?.attempts ?? []).map((attempt, i, all) => agentT(lng,
+    rerouted: (task.routing?.attempts ?? []).flatMap((attempt, i, all) => attempt.continued ? [] : [agentT(lng,
       attempt.outcome === 'limited' ? 'delegation.noticeReroutedLimited' : 'delegation.noticeReroutedError',
-      { from: candidateNoticeName(attempt.target), to: candidateNoticeName(all[i + 1]?.target ?? task.routing.target) })).join(''),
+      { from: candidateNoticeName(attempt.target), to: candidateNoticeName(all[i + 1]?.target ?? task.routing.target) })]).join(''),
     rejections: rejectionNotice(lng, task.rejections),
     // 人が子の会話へ直接送った分（ADR 0317）。送るたびには知らせず、完了のときにまとめて一行
     human: task.humanInstructions > 0 ? agentT(lng, 'delegation.noticeHuman', { count: task.humanInstructions }) : '',
     git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
-  if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
-  return agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
+  const completed = parts.length === 1 ? agentT(lng, 'delegation.notice', parts[0])
+    : agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
+  return [...stops, completed].join('\n');
 }
 
-/**
- * 上限で止まった子の完了通知（解除の見込みと、待つか任せ直すか）。
- * 枠がまだ止まっていれば、自動の振り分けがいつまでその枠を選ばないかを添える（解除の見込みより長いことがある。Issue #111）。
- * 自動の振り分けが無効なら添えない（「backend を省いた ply_delegate は」の話で、無効のときは backend を省けない）
- */
 function limitNotice(lng, limit) {
   const resetsAt = limitResetsAt(limit?.resetsAt);
-  const head = resetsAt ? agentT(lng, 'delegation.noticeLimit', { time: clockText(resetsAt) }) : agentT(lng, 'delegation.noticeLimitUnknown');
-  const held = typeof limit?.backend === 'string' ? limitedSlots.get(limit.backend, limit.model, limitAccount(limit.backend, limit.account)) : null;
-  if (!held || !routingSettingsCache.enabled) return head;
-  // アカウント全体の枠（5 時間・週）の上限は、そのアカウントのどのモデルも選ばない
-  const time = clockText(held.until);
-  return [head, held.scope === 'account' ? agentT(lng, 'delegation.noticeLimitSkipAccount', { time }) : agentT(lng, 'delegation.noticeLimitSkip', { time })].join('\n');
+  return resetsAt ? agentT(lng, 'delegation.noticeLimit', { time: clockText(resetsAt) }) : agentT(lng, 'delegation.noticeLimitUnknown');
 }
 
 /**
@@ -8124,18 +8123,22 @@ agentTasks = await createAgentTasks({
     return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(worktree ? { worktree } : {}), ...(routing ? { routing } : {}),
       ...(remoteReq ? { requester: { deviceId: remoteReq.deviceId, deviceName: remoteReq.deviceName, sessionId: remoteReq.sessionId, title: remoteReq.title } } : {}) };
   },
-  // 自動の振り分けの子が仕事を始める前に断られた → 失敗した候補を外して route() を呼び直し、次の候補で新しい子の会話を作る（ADR 0302）。
+  // 上限なら同じ子の次のターンを予約し、仕事前のエラーなら新しい子の会話を作る（ADR 0302）。
   // 候補の選び方・子の会話の作り方は prepare の自動の分と同じ規則（公式の接続先・使用量で選んだアカウント・段の強さ）。
   // worktree は新しく作らずタスクのものを継ぐ（片付け済みなら execute の renewTaskWorktree が作り直す）。
   // 失敗した子の会話は消さず、delegation に superseded を添えて残す。次の候補が無ければ null
   reroute: async (task, failed) => {
     const owner = task.parentSessionId;
     const prev = task.routing ?? {};
+    const continuing = Boolean(failed?.triedLimits);
+    if (continuing && !routingSettingsCache.enabled) return null;
     const lng = await agentLocaleFor(owner);
     const oldSessionId = task.sessionId;
-    // 失敗した候補（これまでの試行分全部）を外す。同じ委譲先を二度選ばない（route() の skipped には理由付きで出る）
+    // 失敗した候補を外す。上限で続ける場合は、同じターンで試した枠だけを再試行しない。
     const rejected = {};
-    for (const a of [...(prev.attempts ?? []), { target: prev.target, reason: failed?.modelRejected ? 'model_rejected' : null }])
+    const excluded = continuing ? failed.triedLimits.map(target => ({ target, reason: 'recently_limited' }))
+      : [...(prev.attempts ?? []), { target: prev.target, reason: failed?.modelRejected ? 'model_rejected' : null }];
+    for (const a of excluded)
       if (a?.target?.backend && a.target.model) rejected[candidateId(a.target.backend, a.target.model, a.target.account || null)] = a.reason ?? 'rejected_before_work';
     // CLI/API がモデルを断った（最初のターン。ADR 0311）: その枠をしばらく振り分けから外し、続く委譲も選ばない
     if (failed?.modelRejected && prev.target?.backend && prev.target.model)
@@ -8145,9 +8148,15 @@ agentTasks = await createAgentTasks({
     const wt = task.worktree ? await worktreeHost.worktrees.get(task.worktree.id).catch(() => null) : null;
     const cwd = wt?.path ?? task.worktree?.origin ?? task.cwd;
     // 選んだ候補を確かめ直す（routeDelegation の preflight と同じ。一覧では裁かず、走らせない版は次の候補へ）
-    let ok, next, backend = null, account = '', model = null;
+    const child = continuing ? await store.get(oldSessionId) : null;
+    const source = continuing ? getBackend(child?.backend ?? task.backend) : null;
+    if (continuing && (!source || child.nextSettings)) return null;
+    let ok, next, backend = null, account = '', model = null, switchMode = null;
     for (;;) {
-      ({ ok, routing: next } = route({ kind: prev.kind, judged, settings: routingSettingsCache, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked }));
+      const blocked = continuing ? (b, m, a) => slotBlocked(b, m, a)
+        ?? (rejected[candidateId(b, m, a || null)] ? { reason: rejected[candidateId(b, m, a || null)] } : null) : slotBlocked;
+      ({ ok, routing: next } = route({ kind: prev.kind, judged, settings: routingSettingsCache, usage: routingUsage.snapshot(), now: Date.now(),
+        rejected: continuing ? {} : rejected, blocked }));
       if (!ok) {
         // モデルを断られた後に候補が尽きた: 振り分けの失敗と同じ集計の文面で失敗にする（今の routing.exhausted と同じ見せ方）
         if (!failed?.modelRejected) return null;
@@ -8159,6 +8168,15 @@ agentTasks = await createAgentTasks({
       const acct = accountKind(picked) ? next.target.account ?? '' : '';
       const scoped = await backendForAccount(picked, await accountResolve(picked, acct)).catch(() => null);
       if (scoped && isModelId(next.target.model)) {
+        if (continuing) {
+          const decision = source.id === scoped.id ? { mode: child.mode, escalation: false }
+            : resolveDelegatedMode({ parentMode: child.mode, parentModes: source.modes(), childModes: scoped.modes() });
+          if (!decision.mode || decision.escalation) {
+            rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'unavailable';
+            continue;
+          }
+          switchMode = decision.mode;
+        }
         backend = scoped; account = acct; model = next.target.model; break;
       }
       rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'model_unknown';
@@ -8167,14 +8185,29 @@ agentTasks = await createAgentTasks({
       candidate: candidateId(backend.id, model, accountKind(backend) ? account || null : null), capability: await effortCapability(backend, model, cwd) });
     const effort = await resolveEffort(null, decided.send, backend, model, cwd, null);
     const modes = backend.modes();
-    const mode = modes[task.mode] ? task.mode : firstMode(modes);
+    const mode = continuing ? switchMode : modes[task.mode] ? task.mode : firstMode(modes);
     const label = accountKind(backend) && next.target.accountLabel && (next.target.account ?? null) === account ? { accountLabel: next.target.accountLabel } : {};
     // 失敗した回の記録（error は完了通知に載せるのと同じ、伏せ済みの文言）。新しい子の会話の routing にも同じ attempts を書く
+    const target = { backend: backend.id, model, account: accountKind(backend) ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null };
     const attempt = { target: { backend: prev.target?.backend ?? null, model: prev.target?.model ?? null, account: prev.target?.account ?? null },
-      sessionId: oldSessionId, outcome: failed?.outcome ?? null, error: failed?.error ?? null, ...(failed?.modelRejected ? { reason: 'model_rejected' } : {}) };
-    const routing = { ...next, target: { backend: backend.id, model, account: accountKind(backend) ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null },
+      sessionId: oldSessionId, outcome: failed?.outcome ?? null, error: continuing ? null : failed?.error ?? null,
+      ...(continuing ? { continued: true, continuedTo: target } : {}), ...(failed?.modelRejected ? { reason: 'model_rejected' } : {}) };
+    const routing = { ...next, target,
       ...(decided ? { effortSource: decided.source, ...(decided.tier ? { effortTier: decided.tier } : {}), ...(decided.asked ? { effortAsked: decided.asked } : {}) } : {}),
       attempts: [...(prev.attempts ?? []), attempt] };
+    if (continuing) {
+      if (failed.signal.aborted || sessionBusy(oldSessionId)) return null;
+      const reserved = await reserveTurnSettings({ sessionId: oldSessionId, backend: backend.id, model, effort, mode,
+        ...(accountKind(backend) ? { account } : {}), endpoint: '', keepPrefs: true }, { delegated: true, limitSwitch: true });
+      if (!reserved) return null;
+      const rollback = async () => {
+        const current = await store.get(oldSessionId);
+        if (JSON.stringify(current.nextSettings) !== JSON.stringify(reserved)) return;
+        await store.setSessionData(oldSessionId, 'nextSettings', null, { durable: true });
+        emitGlobal({ type: 'nextSettings', sessionId: oldSessionId, nextSettings: null });
+      };
+      return { sessionId: oldSessionId, backend: backend.id, model, effort, cwd, mode, routing, rollback };
+    }
     const info = { title: task.title ?? null, cwd, createdAt: Date.now(), lastModified: Date.now() };
     const sessionId = await createConversation(backend, info);
     try {
@@ -8207,10 +8240,12 @@ agentTasks = await createAgentTasks({
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
       const renewed = await renewTaskWorktree(task).catch(() => null);
+      if (meta.continuing) await store.setSessionData(task.sessionId, 'routing', task.routing);
       // ターン開始の入力にした指示は、子がプロンプトを受け取った時点で配送済みにする（onAccepted。ターンの終わりを待たない）
-      const outcome = await runTurn({ sessionId: task.sessionId, prompt, ...(meta?.messageId ? { messageId: meta.messageId } : {}) }, () => {}, { signal, taskId: task.taskId,
+      const input = meta.continuing ? agentT(await agentLocaleFor(task.sessionId), 'delegation.continueAfterLimit', { task: task.task, prompt }) : prompt;
+      const outcome = await runTurn({ sessionId: task.sessionId, prompt: input, ...(meta?.messageId ? { messageId: meta.messageId } : {}) }, () => {}, { signal, taskId: task.taskId,
         onAccepted: nativeId => agentTasks.promptAccepted(task.taskId, nativeId).then(async ids => {
-          if (ids?.length) await recordDelivery(task.sessionId, { id: `task-send-${ids[0]}`, by: 'ai', text: prompt, nativeId });
+          if (ids?.length) await recordDelivery(task.sessionId, { id: `task-send-${ids[0]}`, by: 'ai', text: input, nativeId });
           for (const id of ids ?? []) emitGlobal({ type: 'userMessage.delivered', sessionId: task.sessionId, messageId: `task-send-${id}`, ...(nativeId ? { nativeId } : {}) });
         }) });
       if (outcome === 'requeue') return { requeue: true };
@@ -8317,6 +8352,18 @@ agentTasks = await createAgentTasks({
   },
   // 子が上限・一時的な失敗のあと再試行を待っている（OpenCode の session.status の retry。ADR 0229）。makeEmit が turn.retry に置く
   retrying: sessionId => runtime.turns.get(sessionId)?.retry ?? null,
+  deliverLimitSwitch: async (task, target, { redeliver }) => {
+    const owner = task.parentSessionId;
+    if (isRemoteOwner(owner)) return 'ok';
+    const lng = await ensureAgentLocale(owner);
+    const name = [getBackend(target.backend)?.label ?? target.backend, target.model, target.accountLabel].filter(Boolean).join(' · ');
+    const prompt = agentT(lng, 'delegation.noticeLimitSwitched', { target: name });
+    const live = await noticeTarget(owner);
+    if (live) return steerNotice(live, owner, prompt, [], null, { redeliver });
+    if (await noticeBlocked(owner)) return 'requeue';
+    await recordTaskNotice(owner, prompt);
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+  },
   // 再試行の待ちを依頼元へ知らせる（待ちの回ごとに 1 回）。走っている依頼元のターンへは途中送信で、空いていれば新しいターンで
   deliverRetry: async (task, retry, { accepted } = {}) => {
     const owner = task.parentSessionId;
@@ -8333,7 +8380,14 @@ agentTasks = await createAgentTasks({
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
   // 上限で止まった子の会話の解除時刻までは、積まれた指示で次の回を始めない（送信待ちの limitHolds と同じ判断）
-  held: task => { const limit = limitStates.get(task.sessionId); return limitHolds(limit) ? { resetsAt: limit.resetsAt } : null; },
+  held: task => {
+    const limit = limitStates.get(task.sessionId);
+    if (!limitHolds(limit)) return null;
+    const target = task.routing?.attempts?.at(-1)?.continued ? task.routing.target : null;
+    if (target && slotKey(target.backend, target.model, limitAccount(target.backend, target.account))
+      !== slotKey(limit.backend, limit.model, limitAccount(limit.backend, limit.account))) return null;
+    return { resetsAt: limit.resetsAt };
+  },
   deliverSilence: async (task, minutes, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';

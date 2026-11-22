@@ -40,6 +40,7 @@ export const REMOTE_TASK_FIELDS = Object.freeze([
   { wire: 'status', mirror: 'hostWaiting' },      // 'waiting' の見せかけ → 写しの hostWaiting
   { wire: 'rawStatus', mirror: 'status' },        // 便りの rawStatus（無ければ status）が写しの status
   { wire: 'error', plain: true },
+  { wire: 'limit', plain: true },
   { wire: 'backend', plain: true }, { wire: 'model', plain: true }, { wire: 'effort', plain: true },
   { wire: 'mode', plain: true }, { wire: 'cwd', plain: true },
   { wire: 'sessionId', mirror: 'remoteSessionId', plain: true },   // ホストでの会話
