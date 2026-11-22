@@ -99,9 +99,6 @@ export default async function (t) {
   const ownDirs = () => { try { return fs.readdirSync(base).filter(n => n.startsWith(`${process.pid}-`)); } catch { return []; } };
 
   try {
-    t.ok('Grok の native AGENTS.md・Skills と重なる Pleiad 担当は拒否し、MCP だけの担当は受ける',
-      backend.plyContextRefusal({ instruction: 'ply', skill: 'native', mcp: 'ply' })
-        && backend.plyContextRefusal({ instruction: 'native', skill: 'native', mcp: 'ply' }) === null);
     // 持ち主の居ない残り（終わったプロセスの pid）と、生きている別のプロセス（親）の置き場を先に置く
     const dead = spawnSync(process.execPath, ['-e', ''], { stdio: 'ignore' }).pid;
     for (const owner of [dead, process.ppid]) fs.mkdirSync(path.join(base, `${owner}-fixture`, 'hooks'), { recursive: true });
@@ -144,9 +141,13 @@ export default async function (t) {
 
     rejectResume = true;
     mark = calls.length;
-    await turn({ sessionId: first.sessionId, cwd });
-    t.ok('session/resume が未対応なら session/load に戻す',
-      of('session/resume', mark).length === 1 && of('session/load', mark).length === 1);
+    const fallbackContext = { url: 'http://127.0.0.1:1/mcp/context', headers: { Authorization: 'Bearer fallback-token' }, prompt: 'fixture context' };
+    await turn({ sessionId: first.sessionId, cwd, contextRuntime: fallbackContext });
+    const fallback = of('session/load', mark);
+    const fallbackServer = fallback[0]?.params.mcpServers.find(server => server.name === 'ply_context');
+    t.ok('session/resume が未対応なら session/load でも今回の ply_context を渡す',
+      of('session/resume', mark).length === 1 && fallback.length === 1 && fallbackServer?.url === fallbackContext.url
+      && fallbackServer.headers.some(header => header.name === 'Authorization' && header.value === fallbackContext.headers.Authorization));
     rejectResume = false;
 
     // 3. 同じ会話で、そろえない・委譲を使わないターン: 前のターンの MCP・プラグイン・環境変数を持ち越さない

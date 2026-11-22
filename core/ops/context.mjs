@@ -106,7 +106,7 @@ async function matrixInput(ctx, { cwd, place, refresh = false, wait = false }) {
   const claude = Object.hasOwn(known.agents ?? {}, 'claude'); // backend-allow: コネクターの読み取りは Claude 固有（ADR 0327）
   const extras = await ctx.context.claudeExtras({ refresh, deny, wait: wait && claude, cwd: dir });
   const input = {
-    kind: level.kinds.mcp.value, owners: Object.fromEntries(['instruction', 'skill', 'mcp'].map((k) => [k, level.kinds[k]?.value?.owner])),
+    kind: level.kinds.mcp.value,
     registered: servers.map((s) => ({ name: s.name, transport: s.transport ?? null })),
     native: known.agents ?? {}, plugins: extras.plugins,
     // null（1 度も読めていない）と [] （読めて 0 件）は最後まで区別する。null のまま保存すると、止めたはずのコネクターが開く

@@ -161,7 +161,7 @@ export function nativeReaders(kind, entryOrSummary) {
 
 /** Whether Pleiad can deliver external file instructions/skills to `agent`. */
 export function canRelayDocToAgent(agent) {
-  return agent !== 'grok';
+  return DOC_AGENT_TRAITS[agent]?.relay ?? true;
 }
 
 function scopeLockReason(origins) {
@@ -209,7 +209,7 @@ const LOCK_CHECKS = {
     }
     const matching = entryOrigins(entryOrSummary).filter((o) => !o.custom && NATIVE_READERS.grok(kind, o));
     if (matching.length) return { lockedOn: true, reason: scopeLockReason(matching) };
-    return { lockedOn: false, reason: 'relay' };
+    return null;
   },
 };
 
@@ -230,7 +230,7 @@ export const DOC_AGENT_TRAITS = Object.freeze({
   antigravity: { perFileInstructionExclude: false, perNameSkillList: false, customAgentRequired: true, relay: true },
   opencode: { perFileInstructionExclude: false, perNameSkillList: false, managedServeOnDiff: true, relay: true },
   devin: { perFileInstructionExclude: false, perNameSkillList: false, relay: true, legacyPlyKeepsNative: true },
-  grok: { perFileInstructionExclude: false, perNameSkillList: false, relay: false },
+  grok: { perFileInstructionExclude: false, perNameSkillList: false, relay: true },
 });
 
 /**

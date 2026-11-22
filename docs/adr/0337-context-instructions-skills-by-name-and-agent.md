@@ -61,7 +61,7 @@ ADR 0327 で外部 MCP を「名前ごと × 6 エージェント」の一覧に
    - 旧設定の `excludePaths` または `sources` によって除外されていた行（ロックオンされる CLI 停止不能セルを除く）→ 切り替え可能な全エージェントを `off`（行スイッチもオフ）。
    - 有効だった行：
      - 旧 `owner === 'native'`：その行をネイティブに読むエージェント（`nativeReaders(kind, entry)`。自ソースおよび仕様上ネイティブ読込するクロス互換形式）をオン（`native`）、それ以外を `off`。
-     - 旧 `owner === 'ply'`：Pleiad が配布可能な全エージェントをオン（ネイティブ読込するものは `native`、代理注入するものは `spread`）、配布不能かつ非ネイティブ（後述 Grok の他エージェント製ファイル等）は `off`（`reason: 'relay'` 鍵）。
+     - 旧 `owner === 'ply'`：Pleiad が配布可能な全エージェントをオン（ネイティブ読込するものは `native`、代理注入するものは `spread`）。
 3. **初回編集時の実体化**
    - 利用者が `(placeOrDefault, kind)` で初めて行またはセルを切り替えた瞬間、現在のスキャン結果と継承元（親ディレクトリの `agents` 設定または `docAgentsFromLegacy`）から全項目の `agents` 状態を切り出して `context-agents.json` に確定保存し、当該操作を反映する。
    - 未接続・読込前のプレースホルダのみにならないよう、`context-agents.json` 未登録の間は未編集フラグを保ち、既存 `sources` / `excludePaths` は後方互換の読み取り専用フォールバックとして扱う。
@@ -82,7 +82,7 @@ ADR 0336 の教訓（写しホーム `GROK_HOME` 等で認証切れ・無関係�
 | **Antigravity** | ユーザー `~/.gemini/GEMINI.md` はカスタムエージェントでも止められないため **オンのまま鍵（`own`）**。ワークスペース指示（`__workspace__` / `<ws>/AGENTS.md` / `GEMINI.md`）は `--agent ply-context` + `nativeInjected` のフィルタ＋`instructions_for_path` で切替可。 | Antigravity が自分で読む Skill を 1 つでも止めると `inheritCustomizations: false` になり、Hooks・プラグイン・サブエージェントも一緒に消える。このため、main でもそうなる旧い「Pleiad がそろえる」の場所でだけ押せる（`--agent ply-context` の `inheritCustomizations: false` で一括停止し、残す・代理配布するスキルを `ply_context.load_skill` で再配布）。それ以外の場所では、自分で読む Skill とまとめ行は **オンのまま鍵（`bundled`）**。自分で読まない Skill を広げるマスは押せる。本物の Antigravity では未確認（使用枠の都合）。 |
 | **OpenCode** | ネイティブと差が出るターンは専用の管理 `serve`（`managedLaunch`：空の `OPENCODE_CONFIG_DIR` と `OPENCODE_DISABLE_PROJECT_CONFIG=1`）で起動してネイティブ指示を止め、維持・配布分のみ `system` / `instructions_for_path` で渡す（1 件でも変えると管理 `serve` 経路になる点は報告へ明記）。鍵なし。 | ネイティブと差が出るターンは `managedLaunch` 上で `skill: deny` + `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1` + 隔離 `HOME` により `.opencode/skills` / `.claude/skills` / `.agents/skills` を停止し、維持・配布分を `ply_context.load_skill` で渡す。無改変時は既存の起動経路を維持。鍵なし。 |
 | **Devin** | 写しホームは作らない。Devin が自分で読む物は **オンのまま鍵**：自前の置き場（`%APPDATA%/devin/*`, `~/.devin/*`, `<ws>/.devin/*`）は `read_config_from` で止まらないので `own` / `workspace`、取り込む形式（`agents_standard`, `claude`, `cursor`, `windsurf`, `copilot`, `opencode`）の物（作業場所の `CLAUDE.md`・`AGENTS.md`・`.windsurfrules`、`.claude` / `.cursor` / `.opencode` の下の物、まとめ行 `__workspace__` を含む）は `bundled`。形式を止めると同じ形式から取り込む Hooks・MCP も止まるので、表からは止めない（§8）。`.codex`・`.config/opencode`・`.grok` の下の `AGENTS.md` と `.agent/rules` などは Devin が読まない物として数え、広げるマスだけ押せる（Pleiad が `ply_context` で渡す）。作業場所の `.windsurf/global_rules.md` も Devin が読まない物として数える。 | 写しホームは作らない。自前スキル（`.devin/skills`, `.cognition/skills`, `%APPDATA%/devin/skills`、`DEVIN_CONFIG_HOME` の置き場）、main が Devin の物として並べる `~/.codeium`・`~/.copilot` の Skills、共通 `.agents/skills`、取り込む形式の Skills（`.claude/skills`・`.cursor`・windsurf・copilot・`.opencode` の下、出どころが opencode の物）は **オンのまま鍵**（`own` / `workspace` / `bundled`）。入れてある Devin（3000.11.92）は `codex`・`kiro` の取り込みを持たないので、`~/.codex` などの Skill は Devin が読まない物として数え、広げるマスだけ押せる（新しい版の文書には `codex`・`kiro`・`cloud` があり、版を上げるときに確かめ直す）。 |
-| **Grok** | `GROK_HOME` の写しは使わない（ADR 0336）。ファイル由来の指示・Skills は全て鍵（Grok が自分で読む Grok/共通/Claude 系はオン＋`own`/`workspace`、その他はオフ＋`relay`）。**例外として `Pleiad の指示`（`plyInstructions`）は今も Grok に渡せるため鍵を外し 6 エージェントすべて切替可とする**（右端「委譲と連動」セルのみ `linked` 鍵）。 | ファイル由来は指示と同様に全て鍵（自前・共通・Claude 系はオン＋`own`/`workspace`、その他はオフ＋`relay`）。 |
+| **Grok** | `GROK_HOME` の写しは使わない（ADR 0336）。Grok が自分で読むものはオン＋`own`/`workspace` の鍵付き。他の指示と `Pleiad の指示`（`plyInstructions`）は切り替えられる。 | 指示と同じ。Grok が自分で読むものには鍵を付け、他の Skills は切り替えられる。 |
 
 無改変状態（あるエージェントについて、有効指示セット＝そのエージェントのネイティブ読込指示セット かつ 有効スキルセット＝そのエージェントのネイティブ読込スキルセット）では、そのエージェントに対して余計な抑制・代理起動を発動せず、従来通りの起動経路・引数・環境を維持する。
 
@@ -153,7 +153,7 @@ Devin の `read_config_from[fmt] = false` は、形式（`claude`・`cursor`・`
 
 - 場所と種類の組み（`(placeOrDefault, kind)`）を初めて触ったとき、全項目の状態の写しと一緒に、その時点の旧い担当（`context-scans.json` の `owner`、`native` / `ply`）を `legacyOwner` に写す。
 - 旧い「Pleiad がそろえる」（`ply`）の場所は、触った後も main と同じ止め方で起動する（legacyPly）。エージェントが自分で読む物はまとめて止め（Claude は `claudeMdExcludes` のグロブと自動メモリの停止、Codex は `project_doc_max_bytes = 0`、ほかも main の止め方）、表でオンの物を Pleiad が渡す。表に無い物（入れ子の `CLAUDE.md`・`CLAUDE.local.md`・ほかの `.claude/rules`）も止めたまま `instructions_for_path` で渡す。こうしないと、1 マス押しただけで、押していない物の届き方（自動メモリが書かれる・入れ子の `CLAUDE.md` が二重に届く）が変わる。
-- 旧い `ply` で外していた物は、鍵のマスでも `off` に覚え、触った後も Pleiad が渡さない。Grok の受け付けも旧い担当で決める（main と同じく旧い `ply` の場所では受けない）。
+- 旧い `ply` で外していた物は、鍵のマスでも `off` に覚え、触った後も Pleiad が渡さない。Grok も旧い `ply` の場所で `ply_context` を受け取る（#179 で変更）。
 - 写しを選んでいない同じ名前の Skill は、どの種類のマスを押してもエージェント自身に選ばせる。
 - **表を触った後の旧い操作（担当の切り替え・探す形式・除外）は「通るなら効く、効かないなら断る」**。旧い操作を保存したと仮定して表を組み直し、保存の前と後で表（行・マス）が変わらなければ、理由（この場所は表で決めている）と代わりの操作（表のマスか行のスイッチ）を書いて断る（`INVALID`）。変わるなら通す。黙って保存されて何も起きない、を作らない。
 

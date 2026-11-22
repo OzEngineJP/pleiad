@@ -296,54 +296,53 @@ try {
     check((await grp.locator('.cx-sw').getAttribute('aria-checked')) === 'mixed', '子を 1 つだけ入れ直しても、ほかの子は広がらずまとまりは一部オンのまま（オンを新しく足さない）');
     await shoot(page, 'context-agents-1280-light-inst.png');
 
-    // GEMINI.md: own/relay の鍵、他エージェントへ広げる前の確認（.cx-ask）→ やめる → 渡す → リロード後も永続
+    // GEMINI.md: Antigravity の鍵、Grok へ広げる前の確認（.cx-ask）→ やめる → 渡す → リロード後も永続
     const agyRow = page.locator('#cx-panel-instruction .cx-row.ag', { hasText: 'GEMINI.md' });
     const agyOwn = agyRow.locator('.cx-ag[data-agent="antigravity"]');
     const agyGrok = agyRow.locator('.cx-ag[data-agent="grok"]');
     check(
       await agyOwn.getAttribute('aria-disabled') === 'true' && (await agyOwn.getAttribute('data-tip')).includes('止められません')
-      && await agyGrok.getAttribute('aria-disabled') === 'true' && await agyGrok.getAttribute('aria-pressed') === 'false'
-      && (await agyGrok.getAttribute('data-tip')).includes('渡せません'),
-      'GEMINI.md で Antigravity は own 鍵 on、Grok は relay 鍵 off',
+      && await agyGrok.getAttribute('aria-disabled') !== 'true' && await agyGrok.getAttribute('aria-pressed') === 'false',
+      'GEMINI.md の Antigravity セルは鍵付きで、Grok セルは切り替えられる',
     );
-    await agyGrok.hover();
+    await agyOwn.hover();
     await page.waitForSelector('.cx-tip.on', { state: 'visible', timeout: 3000 });
     await shoot(page, 'context-agents-1280-light-inst-locktip.png');
     await page.mouse.move(2, 2);
     await page.waitForFunction(() => !document.querySelector('.cx-tip.on'), { timeout: 3000 });
-    await agyRow.locator('.cx-ag[data-agent="claude"]').click();
+    await agyGrok.click();
     await page.waitForSelector('#cx-panel-instruction .cx-ask', { state: 'visible', timeout: 5000 });
     await shoot(page, 'context-agents-1280-light-inst-ask.png');
     await page.locator('#cx-panel-instruction .cx-ask button').first().click();
     await page.waitForFunction(() => !document.querySelector('#cx-panel-instruction .cx-ask'), { timeout: 5000 });
     const focusedAfterCancel = await page.evaluate(() => document.activeElement?.getAttribute('data-agent'));
     check(
-      focusedAfterCancel === 'claude' && await agyRow.locator('.cx-ag[data-agent="claude"]').getAttribute('aria-pressed') === 'false',
-      '広げる確認「やめる」で未保存のまま元の Claude セルへフォーカスを戻す',
+      focusedAfterCancel === 'grok' && await agyGrok.getAttribute('aria-pressed') === 'false',
+      '広げる確認「やめる」で未保存のまま元の Grok セルへフォーカスを戻す',
       focusedAfterCancel,
     );
-    await agyRow.locator('.cx-ag[data-agent="claude"]').click();
+    await agyGrok.click();
     await page.waitForSelector('#cx-panel-instruction .cx-ask .btn-primary', { state: 'visible', timeout: 5000 });
     await page.locator('#cx-panel-instruction .cx-ask .btn-primary').click();
     await page.waitForFunction(() => {
       const rows = [...document.querySelectorAll('#cx-panel-instruction .cx-row.ag')];
       const r = rows.find(x => x.textContent.includes('GEMINI.md'));
-      return !document.querySelector('#cx-panel-instruction .cx-ask') && r?.querySelector('.cx-ag[data-agent="claude"]')?.getAttribute('aria-pressed') === 'true';
+      return !document.querySelector('#cx-panel-instruction .cx-ask') && r?.querySelector('.cx-ag[data-agent="grok"]')?.getAttribute('aria-pressed') === 'true';
     }, { timeout: 10000 });
-    check(true, '広げる確認「渡す」で GEMINI.md の Claude セルがオンになり保存される');
+    check(true, '広げる確認「渡す」で GEMINI.md の Grok セルがオンになり保存される');
 
     await page.reload({ waitUntil: 'load' });
     await openSettingsContext(page, 'instruction');
     check(
-      await page.locator('#cx-panel-instruction .cx-row.ag', { hasText: 'GEMINI.md' }).locator('.cx-ag[data-agent="claude"]').getAttribute('aria-pressed') === 'true',
-      '再読み込み後も setDocAgent で広げた設定（GEMINI.md → Claude）が保持される',
+      await agyGrok.getAttribute('aria-pressed') === 'true',
+      '再読み込み後も setDocAgent で広げた設定（GEMINI.md → Grok）が保持される',
     );
     // 元の状態へ戻す（オフ時は確認なし）
-    await page.locator('#cx-panel-instruction .cx-row.ag', { hasText: 'GEMINI.md' }).locator('.cx-ag[data-agent="claude"]').click();
+    await agyGrok.click();
     await page.waitForFunction(() => {
       const rows = [...document.querySelectorAll('#cx-panel-instruction .cx-row.ag')];
       const r = rows.find(x => x.textContent.includes('GEMINI.md'));
-      return r?.querySelector('.cx-ag[data-agent="claude"]')?.getAttribute('aria-pressed') === 'false';
+      return r?.querySelector('.cx-ag[data-agent="grok"]')?.getAttribute('aria-pressed') === 'false';
     }, { timeout: 10000 });
 
     // Skills タブ + 絞り込み欄

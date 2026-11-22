@@ -12,9 +12,9 @@ const nodes = (root) => [root, ...root.children.flatMap(nodes)];
 
 export default async function (t) {
   const grok = createGrokBackend({ command: () => null });
-  t.ok('Grok は native の AGENTS.md・Skills と重なる Pleiad 所有を拒み、MCP だけを受ける',
-    !acceptsPlyContext(grok, { owners: { instruction: 'ply', skill: 'native', mcp: 'ply' } })
-    && !acceptsPlyContext(grok, { owners: { instruction: 'native', skill: 'ply', mcp: 'ply' } })
+  t.ok('Grok は指示・Skills の担当によらず ply_context を受け取れる',
+    acceptsPlyContext(grok, { owners: { instruction: 'ply', skill: 'native', mcp: 'ply' } })
+    && acceptsPlyContext(grok, { owners: { instruction: 'native', skill: 'ply', mcp: 'ply' } })
     && acceptsPlyContext(grok, { owners: { instruction: 'native', skill: 'native', mcp: 'ply' } }));
   const { lang: originalLanguage, setLanguage } = await import('../../web/i18n.mjs');
   const saved = { document: globalThis.document, window: globalThis.window, raf: globalThis.requestAnimationFrame };

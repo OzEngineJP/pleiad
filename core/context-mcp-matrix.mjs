@@ -1,8 +1,7 @@
 // 設定 › プラグイン › 外部 MCP の一覧（名前 × エージェント）の元データ。ADR 0327。
 // 画面は行ごとに「全体のスイッチ」と、エージェントごとのアイコンを出す。この関数が、各アイコンが
-//   on / off（今そのエージェントで使われるか）と、押せるか（toggle / locked / blocked / none）を決める。
+//   on / off（今そのエージェントで使われるか）と、押せるか（toggle / locked / none）を決める。
 // 担当の 2 択のまま（agents が無い）の設定は、mcpAgentsFromLegacy で今の接続と同じ形に読み替えて見せる（書き換えない）。
-import { PLY_CONTEXT_CONFLICTS } from './backends/agent-marks.mjs';
 import { mcpOffBlockedByLinks, nativeMcpOffMode } from './backends/mcp-off-home.mjs';
 import { mcpAgentsFromLegacy } from './context-settings.mjs';
 import { agentOf, agentShortNames } from './backends/agents.mjs';
@@ -12,10 +11,6 @@ import { agentOf, agentShortNames } from './backends/agents.mjs';
 export const AGENT_ORDER = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok'];
 const orderOf = id => { const i = AGENT_ORDER.indexOf(id); return i < 0 ? AGENT_ORDER.length : i; };
 
-/** そのエージェントが、Pleiad の中継（ply_context）を受け取れない担当の組み合わせか（指示・Skills を Pleiad が担当しているとき） */
-export function relayBlocked(agent, owners) {
-  return (PLY_CONTEXT_CONFLICTS[agent] ?? []).some(k => owners?.[k] === 'ply');
-}
 /**
  * そのエージェント自身の MCP を、起動のときに名前ごとに止める手があるか（能力の印 nativeMcpOff が true か 'user'。
  * 'user' は写しの置き場を使うので、シンボリックリンクを作れない PC では無い。core/backends/mcp-off-home.mjs の nativeMcpOffMode）
@@ -43,8 +38,6 @@ export function nativeStopBlock(agent, name, scopes = ['user']) {
 export const canStopName = (agent, name, scopes) => nativeStopBlock(agent, name, scopes) === null;
 
 const CONNECTOR_PREFIX = 'claude.ai ';
-/** 中継を受け取れない担当の組み合わせ（relayBlocked）の鍵 */
-const blocked = () => ({ state: 'off', mode: 'blocked', reason: 'relay' });
 
 /**
  * 担当の 2 択から写す入力（mcpAgentsFromLegacy の info）を作る。画面と context.setMcpAgent で同じものを使い、保存の前後で見え方が変わらないようにする。
@@ -118,7 +111,6 @@ export function planMcpRowPress(row, agents, restore, on) {
  * 戻り: { agents: [id], rows: [...], locked: bool（鍵のアイコンが 1 つでもあるか）, connectors: 'reading'|'ready'|'none' }
  * 入力:
  *   kind        外部 MCP の設定の値（owner・disabled・agents）
- *   owners      効いている担当（指示・Skills の担当は、中継を受け取れるかに効く）
  *   registered  Pleiad の登録 [{ name, transport }]
  *   native      { <agent>: [{ name, transport, disabled }] }（各エージェントの設定にあるもの）
  *   plugins     [{ plugin, server, key, transport }]（Claude のプラグインの MCP。key は止めるときの名前）
@@ -129,7 +121,7 @@ export function planMcpRowPress(row, agents, restore, on) {
  *   restore     { <名前>: [agent] }（行のスイッチでオフにする前の組。core/context-mcp-was.mjs。無ければ {}）
  * 行には mcpRowMeta の rowMixed・rowFixed・rowChangeableOn・rowNextOn・rowRestore・rowLocked を付ける
  */
-export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plugins = [], connectors = null, reading = false, needsAuth = [], installed = {}, workspace = null, restore = {} }) {
+export function buildMcpMatrix({ kind, registered = [], native = {}, plugins = [], connectors = null, reading = false, needsAuth = [], installed = {}, workspace = null, restore = {} }) {
   const agents = Object.keys(native).filter(id => installed[id] !== false).sort((a, b) => orderOf(a) - orderOf(b));
   const info = { registered: registered.map(r => r.name), native: Object.fromEntries(Object.keys(native).map(a => [a, native[a].map(s => s.name)])) };
   const rules = kind.agents ?? mcpAgentsFromLegacy(kind, mcpLegacyInfo({ kind, registered, native, plugins, connectors }));
@@ -163,10 +155,10 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
         // どのエージェントの設定でも無効の名前: 広げる元が無い
         cells[a] = { state: 'off', mode: 'none' };
       } else if (reg) {
-        cells[a] = relayBlocked(a, owners) ? blocked() : { state: off(name, a) ? 'off' : 'on', mode: 'toggle' };
+        cells[a] = { state: off(name, a) ? 'off' : 'on', mode: 'toggle' };
       } else {
         // 他のエージェントの設定にだけある名前: 広げれば使える
-        cells[a] = relayBlocked(a, owners) ? blocked() : { state: spread(name, a) ? 'on' : 'off', mode: 'toggle' };
+        cells[a] = { state: spread(name, a) ? 'on' : 'off', mode: 'toggle' };
       }
     }
     rows.push({ key: name, name, kind: 'config', group: reg ? 'ply' : 'agent', transport: (reg ?? Object.values(native).flat().find(s => s.name === name))?.transport ?? null,
@@ -199,7 +191,7 @@ export function buildMcpMatrix({ kind, owners, registered = [], native = {}, plu
     agents, rows,
     // 列の表示名（行の鍵の吹き出しの `{{agent}}` 用。画面のエージェントの一覧に無い列でも、内部の id を出さない）
     labels: agentShortNames(agents),
-    locked: rows.some(r => agents.some(a => r.cells[a].mode === 'locked' || r.cells[a].mode === 'blocked')),
+    locked: rows.some(r => agents.some(a => r.cells[a].mode === 'locked')),
     // null（未読）で読み取り中なら reading、読み取りが終わって読めなかったなら none（読めた 0 件と区別するのは保存側）
     connectors: !claudeHere ? 'none' : connectors === null ? (reading ? 'reading' : 'none') : connectors.length ? 'ready' : 'none',
   };

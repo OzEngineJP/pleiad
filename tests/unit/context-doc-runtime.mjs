@@ -20,7 +20,6 @@ import {
   contextPolicy,
   contextTools,
   followSettings,
-  plyContextRefusal,
   resolveRuntime,
 } from '../../core/context-runtime.mjs';
 import { DEFAULT_SCAN, DEFAULT_SOURCES, createContextSettings, pathKey } from '../../core/context-settings.mjs';
@@ -87,10 +86,6 @@ export default async function (t) {
     });
     const attachedMixed = attachDocPolicy(baseSettings, rawCfg, mixedDocAgents);
     const mixedPolicy = contextPolicy(attachedMixed);
-
-    // Grok は Stage 2 編集後、旧オーナーが ply 相当でも plyContextRefusal で拒まれない
-    t.ok('Stage 2 で触った後は plyContextRefusal が Grok でも拒まない',
-      plyContextRefusal({ id: 'grok', label: 'Grok', capabilities: {}, plyContextRefusal: (o) => (o.instruction === 'ply' ? 'refused' : null) }, { ...mixedPolicy, owners: { instruction: 'ply', skill: 'ply', mcp: 'native' } }) === null);
 
     // Claude runtime & options
     const clRuntime = await resolveRuntime(mixedPolicy, { home, agent: 'claude' });
@@ -227,11 +222,6 @@ export default async function (t) {
     const dvMatrix = resolveDocForAgent({ kind: 'instruction', agent: 'devin', entries: [], legacyConfig: rawCfg, docAgentsConfig: dvOffAgents, cwd: repo, home }).matrix;
     t.ok('Devin: まとめの行（CLAUDE.md・AGENTS.md）の Devin のマスは鍵付きでオン（止めると Hooks・MCP も止まる）',
       dvMatrix.summaryRow.cells.devin.locked && dvMatrix.summaryRow.cells.devin.on && dvMatrix.summaryRow.cells.devin.reason === 'bundled');
-
-    // Grok: resolveDocForAgent は常に untouchedNative=true / suppress=[] / deliver=[]
-    const grokDoc = resolveDocForAgent({ kind: 'instruction', agent: 'grok', entries: [], legacyConfig: rawCfg, docAgentsConfig: mixedDocAgents, cwd: repo, home });
-    t.ok('Grok: resolveDocForAgent は常に untouchedNative=true・suppress/deliver 空',
-      grokDoc.untouchedNative === true && grokDoc.suppress.length === 0 && grokDoc.deliver.length === 0);
 
     // followSettings は docSourceState 変化を検出し keepNative では無視する
     const afterFollow = followSettings(mixedPolicy, attachedUntouched);
