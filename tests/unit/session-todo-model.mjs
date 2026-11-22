@@ -80,6 +80,11 @@ export default async function (t) {
   const diamond = [it('a'), it('b', ['a']), it('c', ['a']), it('d', ['b', 'c'])];
   const height = ({ id }) => id === 'b' ? 61 : 37;
   const flow = (items, width = 344, expand = false) => layoutFlow(items, afterMap(items), width, K, height, expand);
+  const linearFlow = flow(base);
+  assert.deepEqual([...linearFlow.R.values()].map(r => r.y), [0, 37 + K.GY, 37 + 61 + 2 * K.GY]);
+  assert.equal(new Set([...linearFlow.R.values()].map(r => r.x)).size, 1);
+  assert.deepEqual(linearFlow.E, []);
+  t.ok('依存が無い項目のフローは並びの順に縦一列で、線を引かない', true);
   const F = flow(diamond);
   assert.equal(F.R.get('a').y, 0);
   assert.equal(F.R.get('b').y, F.R.get('c').y, '同じ段');
