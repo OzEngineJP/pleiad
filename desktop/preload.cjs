@@ -46,6 +46,17 @@ contextBridge.exposeInMainWorld('plyDesktop', {
   // ホストの子の会話を、そのホストのリモートの窓で開く（承認の中継のカードの「子の会話を見る」）。この窓（ローカル）にだけ出す
   openRemoteSession: (hostId, sessionId) => ipcRenderer.invoke('ply:open-remote-session', hostId, sessionId),
   update: (action, value) => ipcRenderer.invoke('ply:update', action, value),
+  onUpdateDrafts: (flush, release) => {
+    ipcRenderer.on('ply:flush-update-drafts', async (_event, id) => {
+      try {
+        await flush(id);
+        ipcRenderer.send('ply:update-drafts-flushed', id, true);
+      } catch (error) {
+        ipcRenderer.send('ply:update-drafts-flushed', id, false, String(error?.message ?? error));
+      }
+    });
+    ipcRenderer.on('ply:release-update-drafts', (_event, id) => release(id));
+  },
   // OS にサインインしたら起動する設定（desktop/login-item.cjs）。get は OS の登録を読み直した { supported, reason?, enabled, blocked }、set は登録して同じ形の状態を返す。この窓（ローカル）にだけ出す
   loginItem: {
     get: () => ipcRenderer.invoke('ply:login-item', 'get'),

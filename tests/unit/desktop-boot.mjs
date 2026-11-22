@@ -7,6 +7,7 @@
 //     起こし直せない・続けて落ちるなら server-exited。切り替え中・bye closing・off は起こし直さない//   - 更新: 更新ロック → 旧サーバーの通常停止 → 新サーバーの通常起動。
 //     付け直した後は切り替え（desktop/switch.cjs）を始め、S1 を手放している間はサーバーの終了を知らせない
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -39,7 +40,10 @@ class FakeLink extends EventEmitter {
   postMessage(message) {
     this.calls.messages.push(message);
     if (message.type === 'shutdown') this.calls.order.push('shutdown');
-    if (message.type === 'shutdown' && this.exitOnShutdown) queueMicrotask(() => this.emit('exit', 0));
+    if (message.type === 'shutdown' && this.exitOnShutdown) queueMicrotask(() => {
+      this.exitReason = 'closing';
+      this.emit('exit', 0);
+    });
     return true;
   }
   leave(reason) { this.calls.left = reason; this.calls.order.push(`leave:${reason}`); }
@@ -105,6 +109,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     readLogTail: () => 'tail of the log',
   };
   const modules = {
+    './lifecycle.cjs': { createLifecycle: options => { calls.lifecycle = options; return { reconcile: async () => {} }; } },
     './updates.cjs': { Updates: class { constructor(options) { calls.updates = options; this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },
     './msix.cjs': { packagedIdentity: () => false, stableLauncher: () => 'C:\\inst\\Ply.exe' },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
@@ -145,6 +150,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   };
   const require = id => {
     if (id === 'electron') return electron;
+    if (id === 'node:crypto') return crypto;
     if (id.startsWith('node:')) return id === 'node:path' ? path : fs;
     if (id === '../package.json') return {};
     if (id in modules) return modules[id];
@@ -466,6 +472,13 @@ export default async function (t) {
 
   // ---- 更新の流れ（1-6）
   {
+    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true });
+    link.exitOnShutdown = true;
+    await calls.lifecycle.stop('restart');
+    t.ok('同じ版の再起動は独立サーバーを通常停止し、本体を再起動する',
+      calls.order.join() === 'shutdown' && calls.relaunches.length === 1 && calls.quits === 1 && !calls.killed);
+  }
+  {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });
     link.exitOnShutdown = true;
     calls.messages.length = 0;
@@ -491,7 +504,7 @@ export default async function (t) {
     const { calls, utility } = await start({ env: {} });
     await calls.updates.install();
     const types = calls.messages.map(m => m.type);
-    t.ok('off の更新は今のまま: update-lock を取ってから shutdown', types.join() === 'update-lock,shutdown' , types.join());
+    t.ok('off の更新は共通の事前確認後、インストーラーの起動を待ってから shutdown', types.join() === 'shutdown' && calls.order.join() === 'quitAndInstall', types.join());
     void utility;
   }
   {

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -79,6 +80,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     crashReporter: { start: () => {} },
   };
   const modules = {
+    './lifecycle.cjs': { createLifecycle: () => ({ reconcile: async () => {} }) },
     './updates.cjs': { Updates: class { constructor() { this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },
     './msix.cjs': { packagedIdentity: () => false, stableLauncher: () => 'C:\\inst\\Ply.exe' },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
@@ -109,12 +111,13 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     './worker-messages.cjs': workerMessages,
     './plus-link.cjs': plusLink,
     // 起動の失敗の理由は、サーバーが書いた logs\server.log の末尾（core/server-log.mjs）
-    './server-boot.cjs': { readLogTail: () => 'tail of the log' },
+    './server-boot.cjs': { readLogTail: () => 'tail of the log', resolveDataDir: () => 'D:\\data' },
     './process.cjs': { forkUtility: (file, args, options) => electron.utilityProcess.fork(file, args, options) },
     'electron-updater': { autoUpdater: {} },
   };
   const require = id => {
     if (id === 'electron') return electron;
+    if (id === 'node:crypto') return crypto;
     if (id.startsWith('node:')) return id === 'node:path' ? path : fs;
     if (id === '../package.json') return {};
     if (id in modules) return modules[id];

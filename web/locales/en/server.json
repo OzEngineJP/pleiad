@@ -264,7 +264,14 @@
     "cannotStop": "{{backend}} cannot stop background tasks.",
     "agentIdsRequired": "sessionId and agentId are required."
   },
+  "lifecycle": {
+    "server": "This is a standalone server. Desktop update and restart are unavailable.",
+    "disconnected": "The desktop did not reply. After reconnecting, check the result with the original request ID."
+  },
   "updateLock": {
+    "nonResumable_one": "{{count}} running conversation cannot resume after restart.",
+    "nonResumable_other": "{{count}} running conversations cannot resume after restart.",
+    "background": "A background task cannot resume after restart.",
     "turns_one": "{{count}} conversation is running.",
     "turns_other": "{{count}} conversations are running.",
     "approvals_one": "{{count}} approval is waiting.",

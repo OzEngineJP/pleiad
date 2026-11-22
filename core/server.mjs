@@ -175,6 +175,7 @@ import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeW
 import { createChromeLoginGroups } from './chrome/login-groups.mjs';
 import { resumeFromPill } from './chrome/pill-resume.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
+import { createDesktopLifecycleClient } from './desktop-lifecycle.mjs';
 import { createLoginItemClient } from './login-item.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
 import { createOrphanGuard } from './orphan-guard.mjs';
@@ -232,6 +233,7 @@ process.on('unhandledRejection', (reason) => {
   console.error('  [unhandledRejection]', String(reason?.stack ?? reason));
 });
 const updateGate = createUpdateGate();
+let lifecycleLeaseId = null;
 // 使用枠の正本（core/usage.mjs）。取れた値は購読へ流し、usageChanged で画面へ届ける
 // 読めなくなった・読めるようになった行は server.log に 1 行（core/usage.mjs の createQuotaStore）
 const quotaStore = createQuotaStore({ dir: store.dataDir, log: line => console.log(`  [usage] ${line}`) });
@@ -4670,6 +4672,7 @@ const opsApp = {
     return { items };
   },
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
+  lifecycle: createDesktopLifecycleClient({ port: mainPort, version: APP_VERSION, timeoutMs: 40_000 }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
   // 遅い命令・イベントループ・送信待ちの診断ログ（slow-commands.log）
@@ -8493,7 +8496,7 @@ for (const b of listBackends()) {
 }
 
 async function runTurn(args, onStarted = () => {}, hooks = {}) {
-  const releaseUpdateGate = updateGate.enter();
+  const releaseUpdateGate = updateGate.enter({ turn: true });
   try {
     return await withWritableSession(args.sessionId, () => runTurnInternal(args, onStarted, hooks));
   } finally { releaseUpdateGate(); }
@@ -9375,9 +9378,16 @@ function touchCard(turn) {
 }
 
 /** 保持役の入力へ先行させる必要がある札は、遅延まとめを待たず同じ接続へ書く。TCP の順序で札を先に届ける */
-function writeTurnCard(turn, ctx = turnContexts.get(turn)) {
+function writeTurnCard(turn, ctx = turnContexts.get(turn), { requireRestorable = false } = {}) {
   if (!ctx || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return false;
-  try { turn.control.holder.label(heldTurnCard(ctx).card); return true; }
+  try {
+    const { card } = heldTurnCard(ctx);
+    if (requireRestorable) {
+      const fields = restoreFields(card);
+      if (!fields?.presentKey || !fields.connectionTokens?.context) return false;
+    }
+    return turn.control.holder.label(card) !== false;
+  }
   catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); return false; }
 }
 
@@ -9596,7 +9606,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   const { turn, sessionId, backend, agentLocale } = ctx;
   const emit = ctx.emit;
   let retryCompact = null;
-  const releaseUpdateGate = updateGate.enter();
+  const releaseUpdateGate = updateGate.enter({ turn: true });
   // ply_context の口は下で開き直す。それまでに CLI から届いた呼び出しは断らずに待たせる（待ち受けた直後から呼べる。外部の MCP の起こし直しは数秒かかりうる）
   const contextToken = ctx.card.connectionTokens?.context;
   const releaseContext = contextToken ? contextBridge.reserve(contextToken) : () => {};
@@ -10659,7 +10669,8 @@ wss.on("connection", (ws, req) => {
       // Only definitions guaranteed to remain reads can be abandoned during
       // shutdown. Dynamic risks and unknown commands keep protecting writes.
       const readOnly = operation?.risk === 'read' && !operation.riskOf;
-      releaseUpdateGate = updateGate.enter({ blocking: !readOnly });
+      // runTurn holds its own lease, classified by whether it can be resumed.
+      releaseUpdateGate = updateGate.enter({ blocking: !readOnly && msg.command !== 'runTurn' });
       // ブラウザーの一本化の WS のコマンド（core/browser-unify-ws.mjs）
       if (isBrowserUnifyCommand(msg.command)) {
         try {
@@ -11746,17 +11757,31 @@ mainPort.on("message", async ({ data }) => {
   }
   if (data?.type === 'wake') { await schedule.check(); await recoverLimitWaits().catch(() => {}); }
   if (data?.type === 'update-lock') {
+    const turns = [...runtime.turns.values()];
+    const nonResumable = turns.filter(turn => !data.preserveTurns || !heldTurn(turn) ||
+      !turn.backend?.adoptTurn || !writeTurnCard(turn, undefined, { requireRestorable: true }));
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
-    const reason = runtime.turns.size ? t('updateLock.turns', { count: runtime.turns.size })
+    const reason = nonResumable.length ? (data.preserveTurns
+      ? t('updateLock.nonResumable', { count: nonResumable.length })
+      : t('updateLock.turns', { count: nonResumable.length }))
       : blockingWaits().length ? t('updateLock.approvals', { count: blockingWaits().length })
       : agentTasks.busy ? t('updateLock.delegation')
       : outbox.busy ? t('updateLock.steer')
-      : switching.size || forking.size ? t('updateLock.switching')
+      : [...switching].some(id => !runtime.turns.has(id)) || forking.size ? t('updateLock.switching')
+      : data.preserveTurns && ([...runtime.background.values()].some(work => !getBackend(work.backend)?.holdsBackground?.()) ||
+        shellBridge.sessionsWithJobs().some(id => shellBridge.jobs(id).some(job => job.running && !job.held)))
+        ? t('updateLock.background')
       : null;
-    const ok = updateGate.acquire(Boolean(reason));
+    const ok = updateGate.acquire(Boolean(reason), {
+      preservedTurns: data.preserveTurns ? turns.length : 0, owner: data.leaseId,
+    });
+    if (ok) lifecycleLeaseId = data.leaseId ?? null;
     mainPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
-  if (data?.type === 'update-unlock') updateGate.release();
+  if (data?.type === 'update-unlock') {
+    updateGate.release(data.leaseId);
+    if (data.leaseId === lifecycleLeaseId) lifecycleLeaseId = null;
+  }
   // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
   // 更新を取りやめた（インストーラーが起きなかった・失敗した）。main は居続けるので、猶予を数える状態と切断の上限を元に戻す
   if (data?.type === "running") mainPort.postMessage({ type: "running", work: await runningWork() });
@@ -11879,7 +11904,11 @@ const orphanGuard = mainLink ? createOrphanGuard({
   },
   log: line => console.log(`  [main-link] ${line}`),
 }) : null;
-mainPort.on('disconnect', () => orphanGuard?.disconnected());
+mainPort.on('disconnect', () => {
+  if (lifecycleLeaseId && !shuttingDown) updateGate.release(lifecycleLeaseId);
+  lifecycleLeaseId = null;
+  orphanGuard?.disconnected();
+});
 orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
 let readyMessage = null;
 mainAway.onBack(({ first }) => {
@@ -11909,7 +11938,7 @@ async function announce() {
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
   // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
   // appVersion・build・runtimeKey は、付け直した新しい main が版を比べて切り替える・前の版へ戻すのに使う（desktop/switch.cjs）
-  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null,
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null,
     // 起動で拾ったターンの数（main の切り替えの記録に載る。desktop/switch.cjs）
     adopted: adopting.length };
   if (adopting.length) console.log(`  起動で拾ったターン ${adopting.length} 件（付け直しは待ち受けの後）`);

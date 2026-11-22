@@ -481,6 +481,7 @@ const SUITES = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   './unit/mcp-oauth-processes.mjs',
   './unit/desktop-updates.mjs',
+  './unit/desktop-lifecycle.mjs',
   // 更新のノート（前に入っていた版の記録・途中の版のノートの切り出しと取得・版の比較）
   './unit/update-release-notes.mjs',
   // 設定 › バージョンと更新 › リリースノート（web/release-notes.mjs）: 節・畳み・ページング・本文（DOM の代役）

@@ -13,6 +13,7 @@
 //   4. 後片付け: 保持役・偽の CLI が残らない
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -349,10 +350,36 @@ ${b.tail(40)}`);
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
       t.ok('main が起こした起動: A を普通に止めて B を同じトークン・ポートで起こすと、保持役の Claude のターン（承認待ち・ツールの実行中）を起動で付け直す。承認は同じ id で 1 つ、turnEnd・completedAt・使用量は 1 回', true);
       t.ok('R15: Pleiad がコンテキストを担当する会話は、S2 が ply_context の口を札のトークンで開き直す。外部の stdio MCP は保持役の子のまま（同じツールの名前。中の状態が残り、起こし直さない。ADR 0270 段 2c）', true);
+
+      const beforeRestart = cb.mark();
+      for (const k of ['Q', 'R']) {
+        void cb.cmd('sendMessage', { sessionId: ids[k], messageId: `lifecycle-${k}-0001`,
+          prompt: script([{ tool: 'Read', input: { file_path: k }, result: k, gate: `lifecycle-${k}` }, { text: `finished ${k}` }]) }).catch(() => {});
+        await cb.waitFor(e => e.type === 'tool.start' && e.name === 'Read' && e.sessionId === ids[k], { ms: WAIT_MS, from: beforeRestart });
+      }
+      const draft = 'Unsent draft across desktop restart';
+      await cb.cmd('saveDraft', { sessionId: ids.R, text: draft, attached: [], version: 2 });
+      const lock = await m2.request('update-lock', { preserveTurns: true, leaseId: randomUUID() });
+      assert.ok(lock.ok, lock.reason);
+      assert.ok(m2.link.postMessage({ type: 'shutdown' }));
+      await until(() => b.child.exitCode !== null || b.child.signalCode !== null, WAIT_MS, 'desktop lifecycle server exits');
       cb.close(); cb = null;
-      m2.link.leave(); m2 = null;
-      m1 = null;   // A と一緒に切れている
       await b.stop(); b = null;
+      m2 = null;
+      a = await startServer({ env: { ...envH, AGENT_HOST_PORT: String(portA) }, dataDir, timeoutMs: 60_000 });
+      m1 = await attachMain(dataDir, a);
+      ca = await open({ port: a.port, token: a.token });
+      assert.equal((await ca.cmd('loadSession', { sessionId: ids.R })).draft?.text, draft);
+      for (const k of ['Q', 'R']) await gates.open(`lifecycle-${k}`);
+      for (const k of ['Q', 'R']) {
+        const end = await ca.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids[k], { ms: WAIT_MS });
+        assert.equal(end.outcome, 'ok', a.tail(20));
+        assert.equal(sessionMeta(ids[k]).interrupted ?? null, null);
+      }
+      t.ok('デスクトップの再起動経路は、実行中の 2 会話を通常停止後に復元し、未送信の下書きを残す', true);
+      ca.close(); ca = null;
+      m1.link.leave(); m1 = null;
+      await a.stop(); a = null;
     }
 
     // 4. 後片付け

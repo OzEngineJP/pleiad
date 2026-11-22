@@ -318,6 +318,9 @@ export const DATA_WRITES = [
   { file: 'desktop/main.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData/update-restart-notice', limit: '固定の 1 文字', reason: 'Electron の入れ替えで接続が切れた画面へ、更新が理由だと次の起動で知らせる' },
   ] },
+  { file: 'desktop/lifecycle.cjs', sites: 1, targets: [
+    { name: 'desktop-lifecycle/<uuid>.json', limit: '受け付けた適用・再起動それぞれに 1 ファイル。依頼番号・版・起動情報・結果だけで、エラー文は 500 文字まで', reason: '本体とサーバーが止まる前に記録し、再接続後の結果照会と同じ依頼の二重実行防止に使う。サーバーの停止中も本体から結果を記録できる' },
+  ] },
   { file: 'desktop/browser-partition-cleanup.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData/browser-partition-cleared', limit: '固定の小ささ（{ done, attempts }）', reason: '前の版の内蔵ブラウザーの保存領域を消した印。2 回目の起動から何もしないため（ADR 0294 の 6）' },
   ] },
