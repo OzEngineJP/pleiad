@@ -26,7 +26,7 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
   const pending = new Map();
   let seq = 0;
   let hosts = [];
-  let refreshing = null;
+  const refreshing = new Map();
   const listeners = { event: new Set(), state: new Set(), hosts: new Set(), ready: new Set() };
   const fire = (kind, ...args) => { for (const fn of [...listeners[kind]]) { try { fn(...args); } catch { /* 聞き手の失敗で口は止めない */ } } };
   const offline = () => Object.assign(new Error('the host is not available (Pleiad is restarting)'), { code: 'OFFLINE' });
@@ -93,8 +93,14 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
     get hosts() { return hosts; },
     /** main との口が使えるか（更新の引き継ぎの間は false）。false の間のオフラインは、ホストの不通ではない */
     get connected() { return !port.resumable || port.connected !== false; },
-    refresh: () => (refreshing ??= call('hosts', {}, { timeoutMs: 250 })
-      .then(() => hosts).finally(() => { refreshing = null; })),
+    refresh: ({ timeoutMs: ms = timeoutMs } = {}) => {
+      // 同じ上限の確認をまとめる。起動時の確認と委譲直前の確認はそれぞれの上限で待つ。
+      if (!refreshing.has(ms)) {
+        refreshing.set(ms, call('hosts', {}, { timeoutMs: ms })
+          .then(() => hosts).finally(() => { refreshing.delete(ms); }));
+      }
+      return refreshing.get(ms);
+    },
     /** 委譲の 6 つの操作のどれか（ホストの答えの result で解決。失敗は code 付きの Error）。ms は main がホストの答えを待つ上限 */
     request: async (hostId, op, args, requester, { signal, timeoutMs: ms = 60_000 } = {}) =>
       (await call('request', { hostId, op, args, requester, timeoutMs: ms }, { signal, timeoutMs: ms + 10_000 })).result,
@@ -171,7 +177,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     let hits = matches();
     // main がすでに知っている状態だけを聞き直す。ホストへの再接続は待たない。
     if (hits.length <= 1 && !usable(hits[0]) && bridge && bridge.connected !== false) {
-      await bridge.refresh().catch(() => {});
+      await bridge.refresh({ timeoutMs: 250 }).catch(() => {});
       hits = matches();
     }
     if (hits.length > 1) throw new DelegationError(agentT(lng, 'delegation.remote.hostAmbiguous', { host: String(name) }), 'HOST_AMBIGUOUS');

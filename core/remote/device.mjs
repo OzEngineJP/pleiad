@@ -443,13 +443,23 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
         backoff: { offlineMaxMs: AGENT_LINK_OFFLINE_MAX_MS, ...proxyOptions.backoff },
         ...(proxyOptions.connectTimeoutMs ? { connectTimeoutMs: proxyOptions.connectTimeoutMs } : {}) });
       const agent = new AgentLink({ link, ...(proxyOptions.agentRequestTimeoutMs ? { requestTimeoutMs: proxyOptions.agentRequestTimeoutMs } : {}) });
-      let lastLogged;
+      const logged = new Set();
+      let lastState;
+      let suppressed = 0;
+      // 再試行で状態が行き来しても、復帰するまでは同じ状態・許可・理由を繰り返し記録しない。
       // エラー本文・中継の理由文・ホストの表示名は記録しない。
       const report = ({ state, allowed }, reason) => {
-        const line = `remote agent host=${HOST_ID.test(hostId) ? hostId : '[invalid]'} via=${via === 'plus' ? 'plus' : 'own'} state=${state} allowed=${allowed} reason=${reason}`;
-        if (line === lastLogged) return;
-        lastLogged = line;
-        logAgentState(line);
+        let summary = '';
+        if (state === 'ready' && lastState !== 'ready') {
+          if (suppressed) summary = ` suppressed=${suppressed}`;
+          logged.clear();
+          suppressed = 0;
+        }
+        lastState = state;
+        const key = `state=${state} allowed=${allowed} reason=${reason}`;
+        if (logged.has(key)) { suppressed++; return; }
+        logged.add(key);
+        logAgentState(`remote agent host=${HOST_ID.test(hostId) ? hostId : '[invalid]'} via=${via === 'plus' ? 'plus' : 'own'} ${key}${summary}`);
       };
       link.on('status', s => {
         if (s.state === 'connected') store.updateHost(hostId, { lastConnectedAt: new Date().toISOString(), revokedAt: null, reapproveAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) }, via).catch(() => {});

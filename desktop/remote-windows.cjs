@@ -695,7 +695,10 @@ function createRemoteWindows(deps) {
     const { attachRemoteAgentBridge } = require('./remote-agent-bridge.cjs');
     agentBridge = attachRemoteAgentBridge(worker, {
       getDevice: device, log: line => console.warn('[remote-agent]', line),
-      logDeliveryFailure: () => desktopLog?.warn('remote agent: could not send host state to server'),
+      logDeliveryFailure: () => {
+        if (worker.connected === false) desktopLog?.info('remote agent: host state delivery skipped while server link is disconnected');
+        else desktopLog?.warn('remote agent: could not send host state to server');
+      },
     });
     // ペアリングしたホストへ線を張り、一覧をサーバーへ送る（サーバーはこの便りで「任せられるホスト」を知る）
     agentBridge.refresh();

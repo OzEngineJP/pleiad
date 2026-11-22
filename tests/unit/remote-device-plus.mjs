@@ -10,6 +10,8 @@ import crypto from 'node:crypto';
 import WebSocket, { WebSocketServer } from 'ws';
 import { createRelay } from '../../relay/server.mjs';
 import { createRemoteHost } from '../../core/remote/connector.mjs';
+import { AGENT_PROTO } from '../../core/remote/agent-protocol.mjs';
+import { RESET_CODE } from '../../core/remote/frames.mjs';
 import { createPlusLink } from '../../core/remote/plus-link.mjs';
 import { createPlusHost } from '../../core/plus/hosts.mjs';
 import { createPlusConfig } from '../../core/plus/config.mjs';
@@ -137,7 +139,22 @@ export default async function (t) {
     onChange: () => {},
   };
 
+  let agentAttempts = 0;
+  let readyStream;
   const remoteHost = createRemoteHost({
+    agent: {
+      closeDevice() {},
+      attach(stream) {
+        const attempt = ++agentAttempts;
+        if (attempt >= 5) return stream.reset(RESET_CODE.FORBIDDEN);
+        void stream.accept().then(() => {
+          if (attempt === 3) {
+            readyStream = stream;
+            return stream.send(JSON.stringify({ t: 'ready', v: AGENT_PROTO, allowed: true }));
+          }
+        }).catch(() => {});
+      },
+    },
     dataDir: hostDataDir, cipher: plainCipher,
     target: () => ({ host: '127.0.0.1', port: dummyPort }),
     token: 'test-host-token', env: {}, backoff: { minMs: 60, maxMs: 200 }, log: () => {},
@@ -205,7 +222,7 @@ export default async function (t) {
       },
       getIdToken: async () => plus.issueIdToken(UID),
     }),
-    proxyOptions: { backoff: { minMs: 30, maxMs: 60 } },
+    proxyOptions: { connectTimeoutMs: 800, backoff: { minMs: 30, maxMs: 60 } },
   });
 
   const sockets = [];
@@ -243,13 +260,19 @@ export default async function (t) {
     t.ok('hosts.json に via: "plus" と uid が保存されている', savedHost?.via === 'plus' && savedHost?.uid === UID && savedHost?.hostName === 'my-plus-pc');
 
     await device.agentSync();
-    await until(() => device.agent(hostId)?.state === 'unsupported', 5000, '委譲を受けないホスト');
-    t.ok('委譲接続の失敗と状態の変化を各 1 行だけ記録し、券と URL は出さない',
-      ticketAttempts === 3 && agentLog.length === 3 &&
-      agentLog.every(line => line.includes(`host=${hostId} via=plus`) && !line.includes(ticketSecret) && !line.includes('private-query') && !line.includes('://')) &&
+    await until(() => device.agent(hostId)?.usable, 10_000, '握手を 2 回タイムアウトした後に委譲が使える');
+    t.ok('握手のタイムアウトと繰り返しを各 1 行に抑え、復帰時に抑えた回数を記録する',
+      ticketAttempts === 3 && agentAttempts === 3 && agentLog.length === 4 &&
       agentLog[0].endsWith('state=offline allowed=false reason=ticket-failed') &&
       agentLog[1].endsWith('state=connecting allowed=false reason=agent-handshake') &&
-      agentLog[2].endsWith('state=unsupported allowed=false reason=agent-handshake-rejected'), agentLog.join('\n'));
+      agentLog[2].endsWith('state=offline allowed=false reason=agent-handshake-timeout') &&
+      agentLog[3].endsWith('state=ready allowed=true reason=agent-ready suppressed=4'), agentLog.join('\n'));
+    readyStream.reset(RESET_CODE.CANCEL);
+    await until(() => device.agent(hostId)?.state === 'unsupported', 10_000, '復帰後にもう一度タイムアウトし、次に拒否される');
+    t.ok('復帰後のタイムアウトと拒否は新たに記録し、どの行にも券と URL は出さない',
+      agentLog.filter(line => line.includes('reason=agent-handshake-timeout')).length === 2 &&
+      agentLog.at(-1).endsWith('state=unsupported allowed=false reason=agent-handshake-rejected') &&
+      agentLog.every(line => line.includes(`host=${hostId} via=plus`) && !line.includes(ticketSecret) && !line.includes('private-query') && !line.includes('://')), agentLog.join('\n'));
 
     // ---- プロキシ起動と 4ヘッダー接続 ----
     let readmitCalled = 0;

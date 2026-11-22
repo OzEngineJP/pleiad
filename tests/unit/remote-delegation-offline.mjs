@@ -163,17 +163,25 @@ export default async function (t) {
     agent.status = old;
     port.emit('message', { type: 'remote-agent-state', ...record, ...old });
     actions.length = 0;
-    const offline = await delegate().catch(e => e.code);
-    t.ok('ホストが実際にオフラインなら再接続を待たず、main の一覧確認だけで HOST_OFFLINE',
-      offline === 'HOST_OFFLINE' && actions.join() === 'hosts');
+    const offline = await Promise.all([delegate().catch(e => e.code), delegate().catch(e => e.code)]);
+    t.ok('同時に委譲しても main への一覧確認は 1 回で、実際にオフラインならどちらも再接続を待たず HOST_OFFLINE',
+      offline.every(code => code === 'HOST_OFFLINE') && actions.join() === 'hosts');
 
     let lateRequest;
     port.postMessage = message => { lateRequest = message; };
+    const startupRefresh = localBridge.refresh().catch(() => []);
+    const startupRequest = lateRequest;
     let watchdog;
     const timedOut = await Promise.race([
       delegate().catch(e => e.code),
       new Promise(resolve => { watchdog = setTimeout(resolve, 1000, 'too slow'); }),
     ]).finally(() => clearTimeout(watchdog));
+    // 委譲の確認が時間切れになった後も、起動時の確認は応答を受け取れる。
+    const shortRequest = lateRequest;
+    port.emit('message', { type: 'remote-agent', id: startupRequest?.id, ok: true, hosts: [{ ...record, ...old, name: 'Lab' }] });
+    t.ok('起動時の一覧取得は、同時の委譲確認が時間切れになっても応答を待てる',
+      startupRequest?.id !== shortRequest?.id && (await startupRefresh)[0]?.state === 'offline');
+    lateRequest = shortRequest;
     port.emit('message', { type: 'remote-agent-state', ...record, ...agent.status, state: 'ready' });
     port.emit('message', { type: 'remote-agent', id: lateRequest?.id, ok: true, hosts: [{ ...record, ...old, name: 'Lab' }] });
     t.ok('main が応答しない場合は短い上限で HOST_OFFLINE。遅れた返事は新しい ready を上書きしない',
