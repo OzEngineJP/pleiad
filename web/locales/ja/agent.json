@@ -597,7 +597,6 @@
     "commandRequired": "command が要ります。",
     "cwdMissing": "作業フォルダーがありません: {{cwd}}",
     "shellMissing": "シェルが見つかりません: {{shell}}",
-    "tooMany": "この会話で同時に走らせられるジョブは {{max}} までです。終わったものを確かめるか、stop で止めてください。",
     "started": "ジョブ {{jobId}} を裏で始めました（シェル: {{shell}}、作業フォルダー: {{cwd}}）。出力は ply_shell の output（jobId: {{jobId}}）で読めます。止めるときは stop。",
     "noJob": "ジョブがありません: {{jobId}}",
     "noOutput": "（出力なし）",
