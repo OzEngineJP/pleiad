@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import vm from 'node:vm';
 
 const require = createRequire(import.meta.url);
 const { createLoginItem, attachLoginItem, HIDDEN_ARG, launchedHidden } = require('../../desktop/login-item.cjs');
@@ -126,7 +127,10 @@ export default async function(t) {
     const main = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
     const call = /createLoginItem\(\{[\s\S]*?\}\);/.exec(main)?.[0] ?? '';
     t.ok('main.cjs: createLoginItem には process.execPath を渡す（版ごとの実行場所を渡さない）', /execPath: process\.execPath/.test(call) && !/runtime|resources/i.test(call), call);
-    t.ok('main.cjs: 再起動の relaunch は --hidden を引き継がない', /app\.relaunch\(\{ args: process\.argv\.slice\(1\)\.filter\(arg => arg !== '--hidden'\) \}\)/.test(main));
+    const relaunch = vm.runInNewContext(`(${main.match(/function relaunchArgs\(argv\) \{[\s\S]*?\n\}/)[0]})`);
+    const args = relaunch([INSTALLED, '--hidden', '--lifecycle-restart=old', '--no-sandbox']);
+    t.ok('main.cjs: 再起動の relaunch は --hidden と以前の依頼番号を引き継がない',
+      /app\.relaunch\(\{ args: relaunchArgs\(process\.argv\) \}\)/.test(main) && args.join() === '--no-sandbox');
   }
 
   // サーバーからの依頼（ply_control の設定）を受けて main が答える橋

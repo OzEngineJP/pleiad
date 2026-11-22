@@ -281,8 +281,9 @@ export default async function (t) {
     const source = fs.readFileSync(path.join(ROOT, 'desktop/main.cjs'), 'utf8');
     const closeSource = source.match(/window\.on\('close', event => \{[\s\S]*?\n  \}\);/)[0];
     for (const remote of [false, true]) for (const keep of [false, true]) for (const routines of [0, 1]) {
-      let close, hidden = 0, exits = 0, prevented = 0;
+      let close, hidden = 0, exits = 0, prevented = 0, notices = 0;
       const context = vm.createContext({ quitting: false, crashRestarting: false,
+        lifecycle: { stopping: false }, notifyLifecycleQuitPending: () => notices++,
         window: { on: (_, fn) => { close = fn; }, hide: () => hidden++ },
         resident: { keepOnClose: () => keepRunning({ remote, keepRunning: keep, routines }) },
         closeSafely: () => exits++,
@@ -295,6 +296,11 @@ export default async function (t) {
       context.quitting = true;
       close({ preventDefault: () => prevented++ });
       t.ok('終了処理中は常駐を理由に閉じる操作を妨げない', prevented === 1);
+      context.quitting = false;
+      context.lifecycle.stopping = true;
+      close({ preventDefault: () => prevented++ });
+      t.ok('再起動でサーバーを停止している間に窓を閉じようとすると通知する',
+        notices === 1 && prevented === 2 && hidden === Number(stays) && exits === Number(!stays));
     }
 
     const serverSource = fs.readFileSync(path.join(ROOT, 'core/server.mjs'), 'utf8');

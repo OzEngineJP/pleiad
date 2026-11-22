@@ -4672,7 +4672,8 @@ const opsApp = {
     return { items };
   },
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
-  lifecycle: createDesktopLifecycleClient({ port: mainPort, version: APP_VERSION, timeoutMs: 40_000 }),
+  // Allow for 25 s to flush renderer drafts and 10 s to acquire the update lock, plus IPC and disk writes.
+  lifecycle: createDesktopLifecycleClient({ port: mainPort, version: APP_VERSION, timeoutMs: 60_000 }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
   // 遅い命令・イベントループ・送信待ちの診断ログ（slow-commands.log）
@@ -7185,7 +7186,7 @@ function chromeHandoffProfile(sessionId) {
   const dir = chromeRelay?.scope.windows?.(sessionId)?.find(window => window.windowId === windowId)?.profile;
   return dir ? { browser: 'chrome', dir } : null;
 }
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, secretRequest, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, secretRequest, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff, replayable = false }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -7318,7 +7319,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       permissionsChanged();
     };
 
-    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached, outlivesTurn, origin: sessionId ?? null });
+    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached, outlivesTurn, replayable, origin: sessionId ?? null });
     // 続きに要る状態（カードの中身）を DB に置く（ADR 0270 段 3 の ②）。中継の複製は元のカードから作り直せるので置かない。
     // 起動で拾えなかった行は、取り下げを会話へ届ける（core/waiting-cards.mjs・withdrawRestoredCards）
     waitingCards.put({
@@ -9024,7 +9025,7 @@ async function beginTurn(ctx) {
     // 記録からの組み立て直しの区切り（conversations.mjs が start/complete/failed で呼ぶ。失敗は渡し損なわないよう内側で握りつぶす）
     onContextRebuild: (info) => recordContextRebuild(turn, info).catch(error => { console.error('  区切りの記録に失敗:', String(error?.message ?? error)); }),
     // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
-    askPermission: request => askPermission({ ...request, locale: agentLocale }),
+    askPermission: request => askPermission({ ...request, locale: agentLocale, replayable: true }),
     hostInvoke: hostInvokeFor(agentLocale),
     signal: turn.ac,
     control: turn.control,
@@ -9667,7 +9668,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
             return emit(event, opts);
           }, backend.id),
           onPromptDelivered: ctx.onPromptDelivered,
-          askPermission: request => askPermission({ ...request, locale: agentLocale }),
+          askPermission: request => askPermission({ ...request, locale: agentLocale, replayable: true }),
           hostInvoke: hostInvokeFor(agentLocale),
           signal: turn.ac,
           control: turn.control,
@@ -11760,13 +11761,16 @@ mainPort.on("message", async ({ data }) => {
     const turns = [...runtime.turns.values()];
     const nonResumable = turns.filter(turn => !data.preserveTurns || !heldTurn(turn) ||
       !turn.backend?.adoptTurn || !writeTurnCard(turn, undefined, { requireRestorable: true }));
+    const preserved = new Set(data.preserveTurns && !nonResumable.length ? turns.map(turn => turn.info.sessionId) : []);
+    // Native approvals are replayed from the holder. A server-side tool callback is not.
+    const waits = blockingWaits().filter(wait => !wait.replayable || !preserved.has(wait.origin));
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
     const reason = nonResumable.length ? (data.preserveTurns
       ? t('updateLock.nonResumable', { count: nonResumable.length })
       : t('updateLock.turns', { count: nonResumable.length }))
-      : blockingWaits().length ? t('updateLock.approvals', { count: blockingWaits().length })
-      : agentTasks.busy ? t('updateLock.delegation')
-      : outbox.busy ? t('updateLock.steer')
+      : waits.length ? t('updateLock.approvals', { count: waits.length })
+      : (data.preserveTurns ? agentTasks.settling : agentTasks.busy) ? t('updateLock.delegation')
+      : outbox.busySessions().some(id => !preserved.has(id)) ? t('updateLock.steer')
       : [...switching].some(id => !runtime.turns.has(id)) || forking.size ? t('updateLock.switching')
       : data.preserveTurns && ([...runtime.background.values()].some(work => !getBackend(work.backend)?.holdsBackground?.()) ||
         shellBridge.sessionsWithJobs().some(id => shellBridge.jobs(id).some(job => job.running && !job.held)))

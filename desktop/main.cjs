@@ -60,6 +60,7 @@ let serverSwitch = null;
 // 最後に届いたサーバーの ready。サーバーが落ちたとき、同じトークン・ポート・版で起こし直す材料（desktop/server-restart.cjs）
 let serverReady = null;
 let updateRestartNotice = false;
+let updateRequest;
 // サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
 let bootLogger = null;
 let desktopLog = null, crashReporting = null;
@@ -173,7 +174,7 @@ async function flushLifecycleDrafts() {
   return release;
 }
 
-async function installUpdate(action = 'install') {
+async function installUpdate(action = 'install', requestId) {
   // 更新でも通常の shutdown で旧サーバーを終え、新しい main が通常起動する。
   // サーバーの shutdown は保持役の子を残し、DB のロックを解放してから終了する。
   const linkedServer = Boolean(linked);
@@ -182,7 +183,6 @@ async function installUpdate(action = 'install') {
   try {
     if (linkedServer) {
       updateInProgress = true;
-      quitting = true;
       await new Promise((resolve, reject) => {
         const fail = () => { clearTimeout(timer); worker.off('exit', exited); reject(new Error(t('lifecycle.stopFailed'))); };
         const timer = setTimeout(fail, 30_000);
@@ -202,7 +202,8 @@ async function installUpdate(action = 'install') {
       }
     }
     if (action === 'restart') {
-      app.relaunch({ args: relaunchArgs(process.argv) });
+      app.relaunch({ args: [...relaunchArgs(process.argv), `--lifecycle-restart=${requestId}`] });
+      quitting = true;
       app.quit();
       return;
     }
@@ -222,7 +223,7 @@ async function installUpdate(action = 'install') {
       };
       const ready = () => {
         cleanup();
-        try { fs.writeFileSync(path.join(app.getPath('userData'), 'update-restart-notice'), '1'); } catch (error) { log(`update restart notice could not be saved: ${error.message}`); }
+        try { fs.writeFileSync(path.join(app.getPath('userData'), 'update-restart-notice'), requestId || '1'); } catch (error) { log(`update restart notice could not be saved: ${error.message}`); }
         quitting = true; if (!linkedServer) worker.postMessage({ type: 'shutdown' }); resolve();
       };
       const timer = setTimeout(failed, 90_000);
@@ -366,6 +367,7 @@ function relaunchArgs(argv) {
     arg !== '--hidden'
     && arg !== '--remote-hosts'
     && !String(arg).startsWith('--remote-hosts=')
+    && !String(arg).startsWith('--lifecycle-restart=')
     && !/^pleiad:\/\//i.test(String(arg))
   ));
 }
@@ -427,7 +429,7 @@ function startServerSwitch(ready, portFile, onServerExit) {
     rearm: () => { if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit); },
     reload: next => reloadWindow(next, portFile),
     // 自動起動の --hidden は引き継がない（利用者が押した「再起動」で、窓が出ないままにならないように）
-    restart: () => { quitting = true; app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== '--hidden') }); app.exit(0); },
+    restart: () => { quitting = true; app.relaunch({ args: relaunchArgs(process.argv) }); app.exit(0); },
     fallback: () => { void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
     failed: error => { quitting = true; return showFatalError('Pleiad', t('switch.failed', { detail: error?.message ?? '' })).catch(e => console.error(e)).finally(() => app.quit()); },
   });
@@ -436,7 +438,12 @@ function startServerSwitch(ready, portFile, onServerExit) {
 
 async function boot() {
   const updateNoticeFile = path.join(app.getPath('userData'), 'update-restart-notice');
-  try { updateRestartNotice = fs.readFileSync(updateNoticeFile, 'utf8') === '1'; fs.unlinkSync(updateNoticeFile); } catch { updateRestartNotice = false; }
+  try {
+    const notice = fs.readFileSync(updateNoticeFile, 'utf8');
+    fs.unlinkSync(updateNoticeFile);
+    updateRestartNotice = Boolean(notice);
+    updateRequest = notice;
+  } catch { updateRestartNotice = false; }
   // 待たない（大きい保存領域を消すのに時間が掛かっても、起動を遅らせない）。失敗しても投げない
   void clearOldBrowserPartition({ userData: app.getPath('userData'), session, log: line => log(`browser partition: ${line}`) });
   // キーチェーンの確認は、サーバーの起動の待ちを始める前に済ませる（desktop/secret-bridge.cjs の warmSecretStorage）
@@ -601,6 +608,7 @@ async function boot() {
   window.on('close', event => {
     if (quitting) return;
     event.preventDefault();
+    if (lifecycle?.stopping) { notifyLifecycleQuitPending(); return; }
     if (crashRestarting) { window.hide?.(); return; }
     if (resident?.keepOnClose()) { window.hide(); return; }
     closeSafely();
@@ -611,7 +619,7 @@ async function boot() {
     dataDir: serverBoot().resolveDataDir(), resourcesPath: runtimeResources(), execPath: process.execPath, systemLocale: systemLanguage(), cwd: app.getPath('home'), log: line => log(`restart: ${line}`) }) : null;
   const onServerExit = () => {
     // 切り替え（desktop/switch.cjs）が古いサーバーを終わらせている間は、終了の知らせを出さない
-    if (quitting || exitInProgress || serverSwitch?.replacing) return;
+    if (quitting || exitInProgress || updateInProgress || serverSwitch?.replacing) return;
     void (async () => {
       let restartFailed = false;
       // 名前付きパイプの経路: 別の main が付け直した（bye 'replaced'）なら静かに終わる。つながりだけが切れたなら（サーバーは居る）付け直す。
@@ -679,7 +687,7 @@ async function boot() {
   if (updaterOn) try { installUpdateSignatureVerifier(autoUpdater); } catch (e) { bootLogger.warn?.(`update signature verifier: ${e.message}`); }
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
     store: isStoreBuild({ pkg, windowsStore: process.windowsStore }),
-    enabled: updaterOn, install: installUpdate,
+    enabled: updaterOn, install: requestId => installUpdate('install', requestId),
     prepareCheck: () => prepareUpdateCheck(autoUpdater, path.join(process.resourcesPath, 'app-update.yml')) });
   updates.on('state', state => { if (!window.isDestroyed()) window.webContents.send('ply:update-state', state); });
   try { await updates.init(); }
@@ -692,24 +700,27 @@ async function boot() {
       : null,
     flush: flushLifecycleDrafts,
     lock: async leaseId => {
-      if (quitting || exitInProgress || crashRestarting || serverSwitch?.replacing ||
-        (linked && serverReady?.appVersion !== app.getVersion())) throw new Error(t('update.busy'));
+      if (linked && serverReady?.appVersion !== app.getVersion()) throw new Error(t('lifecycle.serverVersionPending', {
+        desktop: app.getVersion(), server: serverReady?.appVersion || t('lifecycle.unknownVersion'),
+      }));
+      if (quitting || exitInProgress || crashRestarting || serverSwitch?.replacing) throw new Error(t('update.busy'));
       const result = await workerRequest('update-lock', { leaseId, preserveTurns: Boolean(linked) });
       if (!result.ok) throw new Error(linked
         ? t('lifecycle.blocked', { reason: result.reason }) : t('update.blocked', { reason: result.reason }));
     },
     unlock: leaseId => worker.postMessage({ type: 'update-unlock', leaseId }),
-    stop: action => action === 'install' ? updates.command('install') : installUpdate('restart'),
+    stop: (action, id) => action === 'install' ? updates.command('install', id) : installUpdate('restart', id),
     boot: () => ({ main: `${process.pid}:${processStartedAt}`, server: { pid: serverReady?.pid, startedAt: serverReady?.startedAt },
-      version: app.getVersion(), serverVersion: serverReady?.appVersion, switching: serverSwitch?.replacing }),
+      version: app.getVersion(), serverVersion: serverReady?.appVersion, switching: serverSwitch?.replacing,
+      updateRequest, restartRequest: process.argv.find(arg => arg.startsWith('--lifecycle-restart='))?.split('=')[1] }),
     log: error => log(`lifecycle receipt: ${error.code ?? error.message}`),
   });
   let reconciliation = lifecycle.reconcile().catch(error => log(`lifecycle receipt: ${error.code ?? error.message}`));
-  messages.on('message', message => {
-    if (message?.type === 'ready') {
-      reconciliation = reconciliation.then(() => lifecycle.reconcile()).catch(error => log(`lifecycle receipt: ${error.code ?? error.message}`));
-    }
-  });
+  const reconcile = () => {
+    reconciliation = reconciliation.then(() => lifecycle.reconcile()).catch(error => log(`lifecycle receipt: ${error.code ?? error.message}`));
+  };
+  messages.on('message', message => { if (message?.type === 'ready') reconcile(); });
+  setInterval(reconcile, 24 * 60 * 60 * 1000).unref?.();
   lifecycleReady.resolve();
   window.webContents.send('ply:update-state', updates.snapshot());
   // 先行版は 1 日に何度も出る。6 時間おきでは、開きっぱなしの Pleiad が半日近く新しい版に気付かなかった。
@@ -730,6 +741,10 @@ function scheduledText(scheduled) {
     ? t('quit.scheduledSendNext', { time: new Date(scheduled.nextSendAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit' }) }) : '';
   // 送信予定は終了している間は送られない
   return t('quit.scheduledSend', { count: send, next }) + t('quit.scheduledTail') + t('quit.scheduledLate');
+}
+
+function notifyLifecycleQuitPending() {
+  notifyCompletion({ sessionId: 'settings:updates', completedAt: Date.now(), title: app.getName(), body: t('lifecycle.quitPending') });
 }
 
 async function closeSafely() {
@@ -785,6 +800,8 @@ ipcMain.handle('ply:login-item', (event, action, value) => {
 ipcMain.handle('ply:update', async (event, action, value) => {
   trusted(event);
   if (!updates) return { version: app.getVersion(), enabled: false, phase: 'unavailable', channel: app.getVersion().includes('-') ? 'beta' : 'stable' };
+  if (action !== 'status' && lifecycle?.busy)
+    throw new Error(lifecycle.stopping ? t('lifecycle.inProgress') : t('update.busy'));
   try {
     if (action === 'install') {
       // Keep the existing settings screen waiting on preflight so it can show the reason for refusal.
@@ -792,7 +809,6 @@ ipcMain.handle('ply:update', async (event, action, value) => {
       await lifecycle.request('install', { requestId: randomUUID(), targetVersion: value }, null, { screen: true });
       return updates.snapshot();
     }
-    if (action !== 'status' && lifecycle?.busy) throw new Error(t('update.busy'));
     return await updates.command(action, value);
   }
   catch (e) { throw new Error(['check', 'download'].includes(action) ? updates.snapshot().error || t('update.fetchFailed') : e.message); }
@@ -829,7 +845,11 @@ else {
   // 自動起動（--hidden）が、すでに動いている Pleiad に重なっただけなら、窓を前に出さない
   app.on('second-instance', (_event, argv) => { const action = plusLinkArgv(argv); if (action) { worker?.postMessage({ type: 'plus-entrance', action }); frontMainWindow(); return; } if (remoteWindows?.handleArgv(argv)) return; if (launchedHidden(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => {
-    if (!quitting && (crashRestarting || lifecycle?.stopping)) { event.preventDefault(); return; }
+    if (!quitting && (crashRestarting || lifecycle?.stopping)) {
+      event.preventDefault();
+      if (lifecycle?.stopping) notifyLifecycleQuitPending();
+      return;
+    }
     exitInProgress = true;
     if (!quitting && window) { event.preventDefault(); void closeSafely(); }
   });

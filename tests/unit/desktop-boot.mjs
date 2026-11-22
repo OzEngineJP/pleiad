@@ -93,7 +93,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     app, BrowserWindow, WebContentsView: class {}, dialog,
     utilityProcess: { fork: (_file, _args, options) => { calls.forks++; calls.forkOptions = options; calls.bootSteps.push('fork'); queueMicrotask(() => utility.emit('message', { type: 'ready', port: 7499, token: 'utility-token' })); return utility; } },
     shell: { openExternal: () => Promise.resolve() },
-    ipcMain: { on: () => {}, handle: () => {} },
+    ipcMain: { on: () => {}, handle: (name, fn) => { if (name === 'ply:update') calls.updateIPC = fn; } },
     Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(), screen: calls.screen = new EventEmitter(),
     crashReporter: { start: opts => { calls.crashStarts.push(opts); } },
     autoUpdater: new EventEmitter(),
@@ -109,7 +109,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     readLogTail: () => 'tail of the log',
   };
   const modules = {
-    './lifecycle.cjs': { createLifecycle: options => { calls.lifecycle = options; return { reconcile: async () => {} }; } },
+    './lifecycle.cjs': { createLifecycle: options => { calls.lifecycle = options; return calls.lifecycleState = { reconcile: async () => {} }; } },
     './updates.cjs': { Updates: class { constructor(options) { calls.updates = options; this.enabled = false; this.state = { phase: 'idle' }; } on() {} async init() {} snapshot() { return {}; } }, isStoreBuild: () => false, updaterEnabled: () => false },
     './msix.cjs': { packagedIdentity: () => false, stableLauncher: () => 'C:\\inst\\Ply.exe' },
     './update-auth.cjs': { prepareUpdateCheck: () => {} },
@@ -124,7 +124,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
     './file-bridge.cjs': { attachFileBridge: listens(calls) },
     './resident.cjs': { attachResident: ({ worker }) => listens(calls)(worker) },
-    './window-trust.cjs': { createWindowTrust: () => ({ register: () => {}, update: (_window, patch) => { calls.trusted = patch.origin; } }) },
+    './window-trust.cjs': { createWindowTrust: () => ({ register: () => {}, check: () => {}, update: (_window, patch) => { calls.trusted = patch.origin; } }) },
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: listens(calls), handleArgv: () => false }) },
     './browser-partition-cleanup.cjs': { clearOldBrowserPartition: async options => { calls.partitionCleanup = options; return { state: 'done', attempts: 1 }; } },
     './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
@@ -135,7 +135,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './computer-overlay.cjs': { attachComputerOverlay: listens(calls) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './shell-env.cjs': { applyLoginShellEnv: options => { calls.bootSteps.push('shell-env:start'); return shellEnv({ env, options }).then(result => { calls.bootSteps.push('shell-env:done'); return result; }); } },
-    './notifications.cjs': { createDesktopNotifications: () => () => {} },
+    './notifications.cjs': { createDesktopNotifications: () => notice => { calls.notification = notice; } },
     './server-boot.cjs': serverBoot,
     './process.cjs': { forkUtility: (file, args, options) => electron.utilityProcess.fork(file, args, options) },
     './server-restart.cjs': { createServerRestarter: options => { calls.restarterOptions = options; return { restart: async () => { calls.restarts++; calls.order.push('restart'); return typeof restart === 'function' ? restart(calls) : restart; } }; } },
@@ -472,11 +472,32 @@ export default async function (t) {
 
   // ---- 更新の流れ（1-6）
   {
+    const { calls, link, app } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true });
+    const mismatch = await calls.lifecycle.lock('lease').then(() => '', error => error.message);
+    t.ok('本体とサーバーの版が違う間は、ロックを頼む前に版の違いを伝える', mismatch === 'lifecycle.serverVersionPending' &&
+      !calls.messages.some(message => message.type === 'update-lock'));
+    Object.assign(calls.lifecycleState, { busy: true, stopping: true });
+    const stop = calls.lifecycle.stop('restart', '00000000-0000-0000-0000-000000000041');
+    let prevented = false;
+    app.emit('before-quit', { preventDefault: () => { prevented = true; } });
+    t.ok('サーバーを停止している最中の終了を抑え、通知で理由を伝える',
+      prevented && calls.notification?.body === 'lifecycle.quitPending' && calls.quits === 0);
+    for (const action of ['check', 'download']) {
+      const reason = await calls.updateIPC({}, action).then(() => '', error => error.message);
+      t.ok(`再起動中の ${action} は再起動処理中と伝える`, reason === 'lifecycle.inProgress');
+    }
+    link.exitReason = 'closing';
+    link.emit('exit', 0);
+    await stop;
+  }
+  {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true });
     link.exitOnShutdown = true;
-    await calls.lifecycle.stop('restart');
+    const id = '00000000-0000-0000-0000-000000000042';
+    await calls.lifecycle.stop('restart', id);
     t.ok('同じ版の再起動は独立サーバーを通常停止し、本体を再起動する',
-      calls.order.join() === 'shutdown' && calls.relaunches.length === 1 && calls.quits === 1 && !calls.killed);
+      calls.order.join() === 'shutdown' && calls.relaunches.length === 1 &&
+      calls.relaunches[0].args.includes(`--lifecycle-restart=${id}`) && calls.quits === 1 && !calls.killed);
   }
   {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });

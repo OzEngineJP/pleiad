@@ -125,7 +125,7 @@ class Updates extends EventEmitter {
         } else if (action === 'install') {
           if (this.state.phase !== 'downloaded') throw new Error(t('update.notDownloaded'));
           this.patch({ phase: 'installing', error: null });
-          try { await this.install(); }
+          try { await this.install(value); }
           catch (e) { this.patch({ phase: 'downloaded', error: e.message }); throw e; }
         } else throw new Error(t('update.unknownAction'));
       }

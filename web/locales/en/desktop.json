@@ -67,6 +67,10 @@
     "requestConflict": "This request ID is already in use.",
     "versionChanged": "The target version has changed. Check the version and try again.",
     "stopFailed": "Could not confirm that the server stopped.",
+    "serverVersionPending": "The desktop is on {{desktop}} and the server is on {{server}}. Finish switching the server to the desktop version before restarting or applying an update.",
+    "unknownVersion": "an unknown version",
+    "quitPending": "Pleiad cannot quit while a restart or update is in progress.",
+    "inProgress": "A restart or update is in progress. Try again when it finishes.",
     "blocked": "Cannot restart or apply the update: {{reason}}",
     "bootMismatch": "The desktop and server did not both start on the requested version.",
     "failed": "Could not record or read the desktop operation."

@@ -57,6 +57,10 @@
     "encryptFailed": "暗号化できませんでした"
   },
   "lifecycle": {
+    "serverVersionPending": "本体は {{desktop}}、サーバーは {{server}} で動いています。サーバーを本体と同じ版に切り替えてから、再起動または更新してください。",
+    "unknownVersion": "不明な版",
+    "quitPending": "再起動または更新を処理しているため、今は Pleiad を終了できません。",
+    "inProgress": "再起動または更新を処理中です。完了してから、もう一度お試しください。",
     "store": "この版は Microsoft Store で管理されています。",
     "distribution": "この操作には Pleiad のデスクトップ配布版が必要です。",
     "independent": "このデスクトップは本体の子プロセスとしてサーバーを起動しています。この操作には独立したサーバーが必要です。",

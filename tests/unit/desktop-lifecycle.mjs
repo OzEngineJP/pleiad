@@ -161,7 +161,7 @@ export default async function (t) {
       !(await invoke('app.restart', restart, 'other')).ok);
     desktop = createLifecycle(options);
     lifecycle = connect();
-    boot = { ...boot, main: 'second', server: { pid: 11, startedAt: 2 } };
+    boot = { ...boot, main: 'second', server: { pid: 11, startedAt: 2 }, restartRequest: restart.requestId };
     await desktop.reconcile();
     const after = (await status(restart.requestId, 'ask')).result.result;
     t.ok('The original conversation recovers success using the same request ID on a new connection', after?.state === 'succeeded' &&
@@ -171,7 +171,7 @@ export default async function (t) {
     events.length = 0;
     await desktop.request('install', apply, null, { screen: true });
     t.ok('Settings uses the same draft, gate and stop sequence', events.join(',') === 'flush,lock,install');
-    boot = { ...boot, main: 'third', server: { pid: 12 }, version: '1.1.0' };
+    boot = { ...boot, main: 'third', server: { pid: 12 }, version: '1.1.0', updateRequest: apply.requestId };
     await desktop.reconcile();
     t.ok('The wrong server version records a durable failure', (await desktop.request('status', { requestId: apply.requestId })).result.state === 'failed');
 
@@ -186,6 +186,50 @@ export default async function (t) {
     }
     t.ok('A failed application records the reason and releases the gate and renderer', failedReceipt?.state === 'failed' &&
       failedReceipt.error === 'installer failed' && events.join(',') === 'flush,lock,install,unlock,unfreeze');
+
+    const receipts = path.join(temp, 'retention');
+    await fs.mkdir(receipts);
+    const clock = Date.now(), day = 86_400_000;
+    const previous = { main: 'old', server: { pid: 10 }, version: '1.0.0' };
+    const file = id => path.join(receipts, `${id}.json`);
+    const put = async (id, fields = {}) => fs.writeFile(file(id), JSON.stringify({
+      requestId: id, action: 'restart', targetVersion: '1.0.0', owner: null, state: 'accepted', previous, ...fields,
+    }));
+    const damaged = '00000000-0000-0000-0000-000000000001';
+    const invalidShape = randomUUID(), laterDamaged = randomUUID(), valid = randomUUID(), wrongLaunch = randomUUID(), fresh = randomUUID();
+    await fs.writeFile(file(damaged), '{');
+    await fs.writeFile(file(invalidShape), '{}');
+    await put(valid);
+    await put(wrongLaunch);
+    await put(fresh, { state: 'failed' });
+    for (let i = 0; i < 150; i++) {
+      const id = randomUUID(), old = new Date(clock - 31 * day);
+      await put(id, { state: i % 2 ? 'succeeded' : 'failed' });
+      await fs.utimes(file(id), old, old);
+    }
+    const errors = [];
+    desktop = createLifecycle({ ...options, dir: receipts, now: () => clock, log: error => errors.push(error) });
+    boot = { main: 'new', server: { pid: 20 }, version: '1.0.0', serverVersion: '1.0.0', restartRequest: valid };
+    await desktop.reconcile();
+    const result = async requestId => (await desktop.request('status', { requestId })).result;
+    t.ok('Damaged receipts are isolated without blocking reconciliation; quarantined IDs cannot run again',
+      errors.length === 2 && (await fs.stat(file(damaged) + '.invalid')).isFile() &&
+      (await fs.stat(file(invalidShape) + '.invalid')).isFile() && (await result(valid)).state === 'succeeded' &&
+      await desktop.request('restart', { requestId: damaged, targetVersion: '1.0.0' }).then(() => false, () => true));
+    t.ok('A new unrelated boot cannot turn an unfinished same-version receipt into success', (await result(wrongLaunch)).state === 'failed');
+    t.ok('Expired final results are pruned and recent results are readable', (await fs.readdir(receipts)).length === 5 && (await result(fresh)).state === 'failed');
+    await fs.writeFile(file(laterDamaged), '{');
+    await desktop.reconcile();
+    t.ok('A reconnect processes pending requests without sweeping final receipts again', errors.length === 2 && (await fs.stat(file(laterDamaged))).isFile());
+
+    const installId = randomUUID(), otherInstall = randomUUID();
+    await put(installId, { action: 'install', targetVersion: '1.1.0' });
+    await put(otherInstall, { action: 'install', targetVersion: '1.1.0' });
+    boot = { ...boot, version: '1.1.0', serverVersion: '1.1.0', updateRequest: installId };
+    desktop = createLifecycle({ ...options, dir: receipts, now: () => clock, log: error => errors.push(error) });
+    await desktop.reconcile();
+    t.ok('Only the installer dispatch for this request can succeed on the new version',
+      (await result(installId)).state === 'succeeded' && (await result(otherInstall)).state === 'failed');
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

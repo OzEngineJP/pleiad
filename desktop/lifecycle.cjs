@@ -1,20 +1,32 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { t } = require('./i18n.cjs');
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Each accepted request keeps its own receipt across both process lifetimes.
 // Request IDs are supplied before the call so a lost reply can be recovered.
-function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop, boot, log }) {
+function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop, boot, log, now = Date.now }) {
   let operation = null;
+  let nextSweep = 0;
+  const pending = new Set();
   const file = id => path.join(dir, id.toLowerCase() + '.json');
+  const invalidFile = id => `${file(id)}.invalid`;
   const validId = id => typeof id === 'string' && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id);
   async function read(id) {
-    try { return JSON.parse(await fs.readFile(file(id), 'utf8')); }
+    try {
+      const receipt = JSON.parse(await fs.readFile(file(id), 'utf8'));
+      if (receipt?.requestId !== id.toLowerCase() || !['install', 'restart'].includes(receipt?.action) ||
+          !['accepted', 'succeeded', 'failed'].includes(receipt?.state) || typeof receipt.targetVersion !== 'string' ||
+          typeof receipt.previous?.main !== 'string') throw new SyntaxError(t('lifecycle.failed'));
+      return receipt;
+    }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   }
   async function save(receipt) {
     const { writeAtomic } = await import('../core/atomic-file.mjs');
     await writeAtomic(file(receipt.requestId), JSON.stringify(receipt), { mode: 0o600 });
+    if (receipt.state === 'accepted') pending.add(receipt.requestId);
+    else pending.delete(receipt.requestId);
   }
   const publicResult = ({ owner, previous, ...result }) => result;
   const capability = reason => ({ supported: !reason, reason: reason || null });
@@ -41,6 +53,8 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
           throw new Error(t('lifecycle.requestConflict'));
         return publicResult(receipt);
       }
+      const quarantined = await fs.stat(invalidFile(requestId)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      if (quarantined) throw new Error(t('lifecycle.requestConflict'));
     }
     const current = status();
     const availability = current[action === 'install' ? 'apply' : action];
@@ -64,7 +78,7 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
       await fs.mkdir(dir, { recursive: true, mode: 0o700 });
       await save(receipt);
       async function finish() {
-        try { await stop(action); }
+        try { await stop(action, receipt.requestId); }
         catch (error) {
           try { await save({ ...receipt, state: 'failed', error: String(error.message ?? error).slice(0, 500) }); }
           catch (writeError) { log(writeError); }
@@ -90,23 +104,51 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
       throw error;
     }
   }
-  async function reconcile() {
-    const current = boot();
+  async function isolateDamagedReceipt(id, error) {
+    log(error);
+    if (!(error instanceof SyntaxError)) return;
+    // Keep this ID reserved while its damaged record is quarantined.
+    try { await fs.rename(file(id), invalidFile(id)); pending.delete(id); }
+    catch (moveError) { log(moveError); }
+  }
+  async function sweep() {
+    const time = now();
+    if (time < nextSweep) return;
     const files = await fs.readdir(dir).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
+    nextSweep = time + DAY_MS;
     for (const name of files) {
-      const id = path.basename(name, '.json');
-      if (!name.endsWith('.json') || !validId(id)) continue;
-      const receipt = await read(id);
-      if (receipt?.state !== 'accepted' || receipt.previous.main === current.main || !current.server?.pid) continue;
-      // A fresh main may briefly reattach to the older server before switching.
-      if (current.switching && current.version === receipt.targetVersion) continue;
-      const previousServer = receipt.previous.server;
-      const restarted = current.server.pid !== previousServer?.pid ||
-        (current.server.startedAt && previousServer?.startedAt && current.server.startedAt !== previousServer.startedAt);
-      const succeeded = restarted &&
-        current.version === receipt.targetVersion && current.serverVersion === receipt.targetVersion;
-      await save({ ...receipt, state: succeeded ? 'succeeded' : 'failed', version: current.version,
-        serverVersion: current.serverVersion, ...(succeeded ? {} : { error: t('lifecycle.bootMismatch') }) });
+      const match = /^(.+)\.json(\.invalid)?$/.exec(name);
+      if (!match || !validId(match[1])) continue;
+      const [, id, invalid] = match;
+      try {
+        const entry = invalid ? null : await read(id);
+        if (entry?.state === 'accepted') pending.add(id);
+        else if (entry || invalid) {
+          const target = path.join(dir, name);
+          if ((await fs.stat(target)).mtimeMs < time - 30 * DAY_MS) await fs.unlink(target);
+        }
+      } catch (error) { await isolateDamagedReceipt(id, error); }
+    }
+  }
+  async function reconcile() {
+    await sweep();
+    const current = boot();
+    for (const id of pending) {
+      try {
+        const receipt = await read(id);
+        if (receipt?.state !== 'accepted') { pending.delete(id); continue; }
+        if (receipt.previous.main === current.main || !current.server?.pid) continue;
+        // A fresh main may briefly reattach to the older server before switching.
+        if (current.switching && current.version === receipt.targetVersion) continue;
+        const previousServer = receipt.previous.server;
+        const restarted = current.server.pid !== previousServer?.pid ||
+          (current.server.startedAt && previousServer?.startedAt && current.server.startedAt !== previousServer.startedAt);
+        const expectedLaunch = receipt.action === 'restart' ? current.restartRequest === id : current.updateRequest === id;
+        const succeeded = expectedLaunch && restarted &&
+          current.version === receipt.targetVersion && current.serverVersion === receipt.targetVersion;
+        await save({ ...receipt, state: succeeded ? 'succeeded' : 'failed', version: current.version,
+          serverVersion: current.serverVersion, ...(succeeded ? {} : { error: t('lifecycle.bootMismatch') }) });
+      } catch (error) { await isolateDamagedReceipt(id, error); }
     }
   }
   return { request, reconcile,
