@@ -189,21 +189,26 @@ export default async function (t) {
 
     const receipts = path.join(temp, 'retention');
     await fs.mkdir(receipts);
-    const clock = Date.now(), day = 86_400_000;
+    let clock = Date.now();
+    const day = 86_400_000, old = new Date(clock - 31 * day);
     const previous = { main: 'old', server: { pid: 10 }, version: '1.0.0' };
     const file = id => path.join(receipts, `${id}.json`);
     const put = async (id, fields = {}) => fs.writeFile(file(id), JSON.stringify({
       requestId: id, action: 'restart', targetVersion: '1.0.0', owner: null, state: 'accepted', previous, ...fields,
     }));
-    const damaged = '00000000-0000-0000-0000-000000000001';
+    const damaged = randomUUID();
     const invalidShape = randomUUID(), laterDamaged = randomUUID(), valid = randomUUID(), wrongLaunch = randomUUID(), fresh = randomUUID();
     await fs.writeFile(file(damaged), '{');
+    await fs.utimes(file(damaged), old, old);
     await fs.writeFile(file(invalidShape), '{}');
+    const future = randomUUID(), futureBody = JSON.stringify({ schemaVersion: 2, opaque: true });
+    await fs.writeFile(file(future), futureBody);
+    await fs.utimes(file(future), old, old);
     await put(valid);
     await put(wrongLaunch);
     await put(fresh, { state: 'failed' });
     for (let i = 0; i < 150; i++) {
-      const id = randomUUID(), old = new Date(clock - 31 * day);
+      const id = randomUUID();
       await put(id, { state: i % 2 ? 'succeeded' : 'failed' });
       await fs.utimes(file(id), old, old);
     }
@@ -217,7 +222,13 @@ export default async function (t) {
       (await fs.stat(file(invalidShape) + '.invalid')).isFile() && (await result(valid)).state === 'succeeded' &&
       await desktop.request('restart', { requestId: damaged, targetVersion: '1.0.0' }).then(() => false, () => true));
     t.ok('A new unrelated boot cannot turn an unfinished same-version receipt into success', (await result(wrongLaunch)).state === 'failed');
-    t.ok('Expired final results are pruned and recent results are readable', (await fs.readdir(receipts)).length === 5 && (await result(fresh)).state === 'failed');
+    t.ok('Expired final results are pruned and recent results are readable', (await fs.readdir(receipts)).length === 6 && (await result(fresh)).state === 'failed');
+    const unknown = await status(damaged);
+    t.ok('Status through the operation reports that a quarantined receipt cannot be read',
+      unknown.ok && unknown.result.result?.state === 'unknown' && unknown.result.result?.requestId === damaged && Boolean(unknown.result.result?.error));
+    t.ok('A future schema is left intact and its request ID stays reserved',
+      await fs.readFile(file(future), 'utf8') === futureBody && (await fs.stat(file(future))).mtimeMs === old.getTime() &&
+      await desktop.request('restart', { requestId: future, targetVersion: '1.0.0' }).then(() => false, () => true));
     await fs.writeFile(file(laterDamaged), '{');
     await desktop.reconcile();
     t.ok('A reconnect processes pending requests without sweeping final receipts again', errors.length === 2 && (await fs.stat(file(laterDamaged))).isFile());
@@ -230,6 +241,13 @@ export default async function (t) {
     await desktop.reconcile();
     t.ok('Only the installer dispatch for this request can succeed on the new version',
       (await result(installId)).state === 'succeeded' && (await result(otherInstall)).state === 'failed');
+    clock += day;
+    await desktop.reconcile();
+    t.ok('Old damaged receipts stay quarantined after the next sweep', (await result(damaged))?.state === 'unknown');
+    clock += 30 * day;
+    await desktop.reconcile();
+    t.ok('Quarantine expires 30 days after isolation; future schemas still remain',
+      (await result(damaged)) === null && await fs.readFile(file(future), 'utf8') === futureBody);
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

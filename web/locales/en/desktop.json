@@ -73,6 +73,7 @@
     "inProgress": "A restart or update is in progress. Try again when it finishes.",
     "blocked": "Cannot restart or apply the update: {{reason}}",
     "bootMismatch": "The desktop and server did not both start on the requested version.",
+    "damagedReceipt": "The request record is damaged, so its result could not be determined.",
     "failed": "Could not record or read the desktop operation."
   },
   "update": {

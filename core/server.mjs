@@ -8008,7 +8008,9 @@ function syncTodoTasks() {
   try { sessionTodos.syncTasks(); } catch (error) { console.error('Could not update linked to-dos:', error.message); }
 }
 
+let delegatedQueueReady = false;
 agentTasks = await createAgentTasks({
+  canStart: () => delegatedQueueReady && !updateGate.locked,
   dataDir: store.dataDir,
   // 付け直す委譲の子のタスクは、起動の復元で interrupted にしない（結果の確定は adoptChild が引き継ぐ。stage2-server-state.md S8）
   adopting: adopting.flatMap(a => a.ctx.taskId ? [a.ctx.taskId] : []),
@@ -11762,6 +11764,10 @@ mainPort.on("message", async ({ data }) => {
     const nonResumable = turns.filter(turn => !data.preserveTurns || !heldTurn(turn) ||
       !turn.backend?.adoptTurn || !writeTurnCard(turn, undefined, { requireRestorable: true }));
     const preserved = new Set(data.preserveTurns && !nonResumable.length ? turns.map(turn => turn.info.sessionId) : []);
+    const preservedTasks = new Set(turns.filter(turn => preserved.has(turn.info.sessionId)).map(turn => {
+      const ctx = turnContexts.get(turn);
+      return ctx?.taskId ?? ctx?.hooks?.taskId;
+    }).filter(Boolean));
     // Native approvals are replayed from the holder. A server-side tool callback is not.
     const waits = blockingWaits().filter(wait => !wait.replayable || !preserved.has(wait.origin));
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
@@ -11769,7 +11775,7 @@ mainPort.on("message", async ({ data }) => {
       ? t('updateLock.nonResumable', { count: nonResumable.length })
       : t('updateLock.turns', { count: nonResumable.length }))
       : waits.length ? t('updateLock.approvals', { count: waits.length })
-      : (data.preserveTurns ? agentTasks.settling : agentTasks.busy) ? t('updateLock.delegation')
+      : (data.preserveTurns ? agentTasks.blocksRestart(preservedTasks) : agentTasks.busy) ? t('updateLock.delegation')
       : outbox.busySessions().some(id => !preserved.has(id)) ? t('updateLock.steer')
       : [...switching].some(id => !runtime.turns.has(id)) || forking.size ? t('updateLock.switching')
       : data.preserveTurns && ([...runtime.background.values()].some(work => !getBackend(work.backend)?.holdsBackground?.()) ||
@@ -12036,6 +12042,7 @@ for (const { card, source, ctx } of adopting) {
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 上限で止まった会話の送信待ちを、解除時刻に流すよう置き直す（Pleiad を閉じている間に過ぎた分はすぐ）
 await recoverLimitWaits().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));
+delegatedQueueReady = true;
 await redoInterruptedCompactions(new Set(adopting.filter(item => item.ctx.turn.compactTrigger).map(item => item.ctx.sessionId)))
   .catch(err => console.error('  圧縮をやり直せませんでした:', String(err?.message ?? err)));
 // 起動のときに過ぎていた送信予定の知らせは、リモートがつながってからでないと届かない。落ち着いたころにもう一度だけ確かめる

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
 import { agentT } from '../../core/i18n.mjs';
 import { clockText } from '../../core/limit-resume.mjs';
+import { createUpdateGate } from '../../core/update-gate.mjs';
 
 export const name = 'agent-tasks-retry';
 export const title = '子の再試行の待ち（ADR 0229）: 長い・上限の待ちは waiting と回ごとに 1 回の知らせ・ply_task_wait はすぐ戻る・上限で止まった子は limit を残し、指示は解除まで走らせない';
@@ -16,24 +17,31 @@ export default async function(t) {
   let clock = NOW, retry = null, hold = null, release, runs = 0;
   let outcome = { outcome: 'ok', text: 'done' };
   const notices = [];
-  const manager = await createAgentTasks({
+  const gate = createUpdateGate(), prompts = [];
+  const open = () => createAgentTasks({
     dataDir: dir, now: () => clock, silenceMinutes: 0, log: () => {},
-    prepare: async () => ({ sessionId: 'child', backend: 'opencode' }),
-    execute: async (_task, _prompt, signal) => {
+    prepare: async (_owner, _args, taskId) => ({ sessionId: taskId, backend: 'opencode' }),
+    execute: async (_task, prompt, signal) => {
       runs++;
+      prompts.push(prompt);
+      if (prompt !== 'work') { const leave = gate.enter({ turn: true }); leave(); }
       await new Promise(resolve => { release = resolve; signal.addEventListener('abort', resolve, { once: true }); });
       release = null;
       return outcome;
     },
     deliver: async () => 'ok',
     retrying: () => retry, deliverRetry: async (task, rt) => { notices.push({ taskId: task.taskId, since: rt.since, limit: rt.limit }); return 'ok'; },
-    held: () => hold,
+    held: task => task.title === 'Retry work' ? hold : null,
+    canStart: () => !gate.locked,
   });
+  let manager = await open();
   const status = async taskId => manager.call('parent', 'ply_task_status', { taskId });
   const tick = async () => { manager.wake(); manager.checkSilence(); await sleep(30); };
   try {
     const task = await manager.call('parent', 'ply_delegate', { backend: 'opencode', task: 'work', title: 'Retry work' });
     await until(() => release);
+    t.ok('保持役のターンをまだ持たない準備中の子がいると更新ロックを取れない',
+      !gate.acquire(manager.blocksRestart(new Set())) && !gate.locked);
 
     // 短い待ち（混雑の再試行。次まで 5 秒）: 走っているまま。待ちの中身は見せるが、依頼元は起こさない
     retry = { attempt: 1, next: clock + 5_000, message: 'Provider is overloaded', reason: null, limit: false, since: clock, seenAt: clock };
@@ -95,11 +103,30 @@ export default async function(t) {
     t.ok('解除の前の ply_task_send は積むだけで走らせず、警告と limitHeld を返す', runs === 1 && sent.status === 'queued'
       && sent.warning === agentT(undefined, 'tasks.limitHeld', { time: clockText(resetsAt) }) && sent.limitHeld?.resetsAt === new Date(resetsAt).toISOString(),
       JSON.stringify({ runs, sent }));
+    t.ok('使用枠の解除を待つ子は更新を妨げない', gate.acquire(manager.blocksRestart(new Set())));
+    const queued = await manager.call('parent', 'ply_delegate', { backend: 'opencode', task: 'new work', title: 'Queued work' });
+    await manager.call('parent', 'ply_task_send', { taskId: queued.taskId, message: 'additional instruction' });
     hold = null;
+    await sleep(550);
+    t.ok('更新ロック中は、今積んだ子も使用枠の待ちが解けた子も待機のまま',
+      runs === 1 && [task, queued].every(row => manager.get(row.taskId).status === 'queued' && manager.get(row.taskId).pendingMessages === 1));
+    await manager.close();
+    hold = { resetsAt };
+    manager = await open();
+    t.ok('再起動後も待機中の子と追加指示が残り、使用枠の解除時刻も変わらない',
+      [task, queued].every(row => manager.get(row.taskId).status === 'queued' && manager.get(row.taskId).pendingMessages === 1)
+      && manager.get(task.taskId).limitHeld?.resetsAt === new Date(resetsAt).toISOString() && manager.restored.length === 0);
     outcome = { outcome: 'ok', text: 'done again' };
-    await tick();
+    gate.release();
     await until(() => release);
-    t.ok('解除の後は積まれた指示で次の回が走る', runs === 2);
+    t.ok('再起動後は使用枠を待たない子から走る', prompts.join(',') === 'work,new work');
+    release();
+    await until(() => prompts.includes('additional instruction') && release);
+    release();
+    await until(() => manager.get(queued.taskId).status === 'completed');
+    hold = null;
+    await until(() => release);
+    t.ok('解除の後は積まれた指示で次の回が走る', runs === 4 && prompts.at(-1) === 'continue');
     release();
     await until(() => manager.get(task.taskId).status === 'completed');
     t.ok('通った回の結果では limit を消す', !('limit' in manager.get(task.taskId)));

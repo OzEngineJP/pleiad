@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { t } = require('./i18n.cjs');
 const DAY_MS = 24 * 60 * 60 * 1000;
+const FUTURE_RECEIPT = Symbol('future receipt format');
 
 // Each accepted request keeps its own receipt across both process lifetimes.
 // Request IDs are supplied before the call so a lost reply can be recovered.
@@ -15,6 +16,7 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
   async function read(id) {
     try {
       const receipt = JSON.parse(await fs.readFile(file(id), 'utf8'));
+      if (Number.isInteger(receipt?.schemaVersion) && receipt.schemaVersion > 1) return FUTURE_RECEIPT;
       if (receipt?.requestId !== id.toLowerCase() || !['install', 'restart'].includes(receipt?.action) ||
           !['accepted', 'succeeded', 'failed'].includes(receipt?.state) || typeof receipt.targetVersion !== 'string' ||
           typeof receipt.previous?.main !== 'string') throw new SyntaxError(t('lifecycle.failed'));
@@ -24,11 +26,14 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
   }
   async function save(receipt) {
     const { writeAtomic } = await import('../core/atomic-file.mjs');
-    await writeAtomic(file(receipt.requestId), JSON.stringify(receipt), { mode: 0o600 });
+    await writeAtomic(file(receipt.requestId), JSON.stringify({ ...receipt, schemaVersion: 1 }), { mode: 0o600 });
     if (receipt.state === 'accepted') pending.add(receipt.requestId);
     else pending.delete(receipt.requestId);
   }
-  const publicResult = ({ owner, previous, ...result }) => result;
+  const publicResult = ({ owner, previous, schemaVersion, ...result }) => result;
+  async function quarantined(id) {
+    return Boolean(await fs.stat(invalidFile(id)).catch(error => { if (error.code !== 'ENOENT') throw error; }));
+  }
   const capability = reason => ({ supported: !reason, reason: reason || null });
   function status(result = null) {
     const { version, channel, target, phase, progress, error, enabled } = updates.snapshot();
@@ -42,19 +47,23 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
     if (requestId !== undefined && !validId(requestId)) throw new Error(t('lifecycle.invalidRequest'));
     if (!['status', 'prepare', 'install', 'restart'].includes(action)) throw new Error(t('update.unknownAction'));
     if (action === 'status') {
-      const receipt = requestId && await read(requestId);
-      return status(receipt?.owner === owner ? publicResult(receipt) : null);
+      if (!requestId) return status();
+      const receipt = await read(requestId).catch(error => { if (!(error instanceof SyntaxError)) throw error; return null; });
+      if (receipt?.owner === owner) return status(publicResult(receipt));
+      if (!receipt && await quarantined(requestId))
+        return status({ requestId: requestId.toLowerCase(), state: 'unknown', error: t('lifecycle.damagedReceipt') });
+      return status();
     }
     if (action === 'install' || action === 'restart') {
       if (!validId(requestId)) throw new Error(t('lifecycle.invalidRequest'));
       const receipt = await read(requestId);
+      if (receipt === FUTURE_RECEIPT) throw new Error(t('lifecycle.requestConflict'));
       if (receipt) {
         if (receipt.owner !== owner || receipt.action !== action || receipt.targetVersion !== targetVersion)
           throw new Error(t('lifecycle.requestConflict'));
         return publicResult(receipt);
       }
-      const quarantined = await fs.stat(invalidFile(requestId)).catch(error => { if (error.code !== 'ENOENT') throw error; });
-      if (quarantined) throw new Error(t('lifecycle.requestConflict'));
+      if (await quarantined(requestId)) throw new Error(t('lifecycle.requestConflict'));
     }
     const current = status();
     const availability = current[action === 'install' ? 'apply' : action];
@@ -108,7 +117,12 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
     log(error);
     if (!(error instanceof SyntaxError)) return;
     // Keep this ID reserved while its damaged record is quarantined.
-    try { await fs.rename(file(id), invalidFile(id)); pending.delete(id); }
+    try {
+      const isolatedAt = new Date(now());
+      await fs.utimes(file(id), isolatedAt, isolatedAt);
+      await fs.rename(file(id), invalidFile(id));
+      pending.delete(id);
+    }
     catch (moveError) { log(moveError); }
   }
   async function sweep() {
@@ -122,6 +136,7 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
       const [, id, invalid] = match;
       try {
         const entry = invalid ? null : await read(id);
+        if (entry === FUTURE_RECEIPT) continue;
         if (entry?.state === 'accepted') pending.add(id);
         else if (entry || invalid) {
           const target = path.join(dir, name);

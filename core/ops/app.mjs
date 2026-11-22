@@ -24,7 +24,7 @@ const updateStatus = z.object({
   prepare: capability,
   apply: capability,
   restart: capability,
-  result: result.nullable(),
+  result: z.union([result, z.object({ requestId: z.uuid(), state: z.literal('unknown'), error: z.string() })]).nullable(),
 });
 const surfaces = (name) => ({ ui: false, mcp: 'catalog', cli: { path: ['app', name] } });
 
