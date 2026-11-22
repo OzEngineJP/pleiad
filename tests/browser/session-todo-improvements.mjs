@@ -224,6 +224,59 @@ try {
     }
   }
   console.log('ToDo text, metadata, branches, resizing, and 10/15/30-item flows passed');
+
+  const { items: existing } = await invoke('todos.list', {});
+  await invoke('todos.remove', { ids: existing.map(item => item.id) });
+  const empty = mobileDark.getByText('ToDo はありません', { exact: true });
+  const switcher = mobileDark.locator('.td-seg');
+  const firstText = '下書きを確認する';
+  const secondText = '下書きを送る';
+  const addInput = mobileDark.getByRole('textbox', { name: 'ToDo を追加' });
+  await empty.waitFor();
+  assert.equal(await switcher.isVisible(), false);
+  await capture(mobileDark, 'dark-360-empty');
+  await mobileDark.getByRole('button', { name: 'ToDo を追加' }).click();
+  assert.equal(await addInput.evaluate(el => document.activeElement === el), true);
+  await addInput.fill(firstText);
+  await addInput.press('Enter');
+  await switcher.waitFor();
+  assert.equal(await empty.isVisible(), false);
+  assert.equal(await panel(mobileDark).getAttribute('data-view'), 'list');
+  assert.equal(await switcher.locator('[data-v="list"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await mobileDark.locator('.td-head').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+  await capture(mobileDark, 'dark-360-first-item-edit');
+  await mode(mobileDark, 'flow');
+  assert.equal(await panel(mobileDark).getAttribute('data-view'), 'flow');
+  await addInput.fill(secondText);
+  await addInput.press('Enter');
+  const first = mobileDark.locator('.td-item[data-id]').filter({ hasText: firstText });
+  const second = mobileDark.locator('.td-item[data-id]').filter({ hasText: secondText });
+  await second.waitFor();
+  assert.equal(await panel(mobileDark).getAttribute('data-view'), 'flow');
+  const firstBox = await first.boundingBox();
+  const secondBox = await second.boundingBox();
+  assert.equal(firstBox.x, secondBox.x);
+  assert.ok(firstBox.y < secondBox.y);
+  assert.equal(await mobileDark.locator('.td-edge').count(), 0);
+  const { items: independent } = await invoke('todos.list', {});
+  assert.deepEqual(independent.map(item => item.after), [[], []]);
+  await capture(mobileDark, 'dark-360-independent-flow');
+
+  await mode(mobileDark, 'list');
+  await first.locator('.td-more').click();
+  await mobileDark.getByRole('menuitem', { name: '削除' }).click();
+  await first.waitFor({ state: 'detached' });
+  await mode(mobileDark, 'flow');
+  await second.locator('.td-more').click();
+  await mobileDark.getByRole('menuitem', { name: '削除' }).click();
+  await empty.waitFor();
+  assert.equal(await switcher.isVisible(), false);
+  assert.equal(await panel(mobileDark).getAttribute('data-view'), 'list');
+  await addInput.fill(firstText);
+  await addInput.press('Enter');
+  await switcher.waitFor();
+  assert.equal(await panel(mobileDark).getAttribute('data-view'), 'list');
+  console.log('ToDo empty state, first addition, flow without dependencies, and last deletion passed');
 } finally {
   await browser?.close();
   client?.close();

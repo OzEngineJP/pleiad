@@ -2,7 +2,7 @@ import { dismissPopup } from './dismiss-popup.mjs';
 // 会話の ToDo のパネル（承認済み 2026-11-19。モック temporary/mockups/session-todo.html の createTodo・createFrame を移したもの。ADR 0342）。
 // - 頭の ToDo の入口（PC）・⋮ のメニュー（700px 以下）から開く。PC は浮く面、狭い画面は下からのシート。大きく表示できる
 // - 普段は見るだけ（完了の印は押せない）。鉛筆で編集の状態へ入り、「編集を終了」か Esc で戻る
-// - 依存が無ければリスト、枝分かれ・合流があれば自動でフロー（つかんで動かす・拡大縮小）。手でリストへ戻せる
+// - 初期表示は枝分かれ・合流があればフロー、それ以外はリスト。項目があれば手で切り替えられる
 // - 書き換えは todos.* の操作（ifRev 付き）だけ。返った一覧をそのまま映す。AI の変更は todosChanged で届き、
 //   見ている間は 1.2 秒光らせて「Claude が完了」などの印を出す。閉じている間は入口に未確認の点を出す
 // 計算（配置・依存の正規化）は web/session-todo-model.mjs
@@ -159,7 +159,7 @@ export function createSessionTodo(o) {
   let mapBox = null, mapOn = false;
 
   const byId = (id) => S.items.find((i) => i.id === id);
-  const flowView = () => S.flow && S.view !== 'list';
+  const flowView = () => S.items.length > 0 && (S.view === 'auto' ? S.flow : S.view === 'flow');
   const deps = () => materialize(S.items, S.flow);
   const depsOf = (id) => deps().get(id) ?? [];
   const MB = () => (flowView() ? (mapOn ? Math.max(K().MB, K().MAPH + 12) : K().MB) : 0);
@@ -223,7 +223,8 @@ export function createSessionTodo(o) {
   const gapNow = () => (edit ? K().EGAP : K().GAP);
   const layout = (W, flow) => {
     const height = (it, width) => itemHeight(it, width, flow);
-    return flow ? layoutFlow(S.items, deps(), W, K(), height, S.expand) : layoutList(S.items, W, height, gapNow(), S.flow ? deps() : undefined);
+    if (flow) return layoutFlow(S.items, afterMap(S.items), W, K(), height, S.expand);
+    return layoutList(S.items, W, height, gapNow(), S.flow ? deps() : undefined);
   };
   function setRect(node, r) {
     node._r = r;
@@ -457,7 +458,7 @@ export function createSessionTodo(o) {
       : flowCamera;
     updateFloatingSize(now);
     if (root.dataset.view !== now) {
-      if (wasFlow) flowCamera = previous;
+      if (wasFlow) flowCamera = S.items.length ? previous : null;
       V.mode = fv ? previous?.view.mode ?? 'home' : 'home';
       root.dataset.view = now; body.scrollTop = 0; body.scrollLeft = 0;
       if (fv) {
@@ -590,7 +591,7 @@ export function createSessionTodo(o) {
     const st = stats();
     countEl.textContent = st.n ? `${st.done}/${st.n}` : '';
     emptyEl.hidden = st.n > 0;
-    seg.hidden = !S.flow;
+    seg.hidden = st.n === 0;
     for (const b of seg.children) { const on = (b.dataset.v === 'flow') === flowView(); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }
     if (isOpen) apply(anim, how);
     const label = entryLabel();
@@ -609,9 +610,8 @@ export function createSessionTodo(o) {
   function setItems(list, rev) {
     S.items = [...list].sort((a, b) => a.order - b.order);
     S.rev = rev;
-    const f = isFlowGraph(S.items);
-    if (!f && S.flow) S.view = 'auto';
-    S.flow = f;
+    if (!S.items.length) S.view = 'auto';
+    S.flow = isFlowGraph(S.items);
     for (const id of [...badges.keys()]) if (!byId(id)) badges.delete(id);
     for (const id of [...unseen]) if (!byId(id)) unseen.delete(id);
   }

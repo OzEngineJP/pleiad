@@ -1,6 +1,6 @@
 // 会話の ToDo の面の、DOM に触れない計算（承認済みのモック temporary/mockups/session-todo.html の配置の式を移したもの。ADR 0342）。
 // 項目は core/todos.mjs の形（{ id, text, status, waiting, after, links, ... }。並び = 先に終える順）。
-// - 依存（after）が無い・並びどおりの 1 本道なら「リスト」、枝分かれ・合流があれば「フロー」（上から下への流れ図）
+// - 初期表示は依存（after）が無い・並びどおりの 1 本道ならリスト、枝分かれ・合流があればフロー
 // - 画面の編集は、依存の表（id → 先に終える id の配列）を組み替えて正規化し、todos.update の差分へ直す
 
 /** id → 先に終える id（今ある項目だけ。自分と重なりは外す） */
@@ -17,7 +17,7 @@ function isOrderChain(items, deps) {
   });
 }
 
-/** フローで見せるか。依存が無い、または並びどおりの 1 本道ならリスト */
+/** 初期表示にフローを使うか。依存が無い、または並びどおりの 1 本道ならリスト */
 export function isFlowGraph(items) {
   if (items.length < 2) return false;
   const deps = afterMap(items);
@@ -189,7 +189,11 @@ export function layoutFlow(items, deps, W, K, rowH, expand = false) {
     nodes.push({ id, deps: id === '#done' ? [] : [...new Set(depsOf(it.id).map(d => folded.get(d) ?? d))] });
   }
   const lay = new Map();
-  for (const n of nodes) lay.set(n.id, n.deps.length ? 1 + Math.max(...n.deps.map(d => lay.get(d) ?? 0)) : 0);
+  if (order.every(it => depsOf(it.id).length === 0)) {
+    nodes.forEach((n, i) => lay.set(n.id, i));
+  } else {
+    for (const n of nodes) lay.set(n.id, n.deps.length ? 1 + Math.max(...n.deps.map(d => lay.get(d) ?? 0)) : 0);
+  }
   const nL = Math.max(0, ...lay.values()) + 1, Ls = Array.from({ length: nL }, () => []), par = new Map();
   for (const n of nodes) { par.set(n.id, []); Ls[lay.get(n.id)].push({ id: n.id }); }
   for (const n of nodes) for (const [index, d] of n.deps.entries()) {
