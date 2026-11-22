@@ -4,14 +4,16 @@
 //   条件から外れた（Plus でなくなった・登録が外れた）: 回していても止める。そろい直したら start から回し直す（タイマーも張り直す）
 //   api が 403 not_plus・account_disabled を返した（engine が stopped で止まる）: セッションがまだ plus と読んでいても、
 //     止まったあとに GET /v1/account を読めて plus と分かる（accountReadAt が進む）か、条件がいったん外れるまで回さない
-//   ログアウト・アカウントの切り替え: 止めて、アカウントの同期鍵（plus:syncAccountKey）と手元の覚えを捨てる。ホストの鍵対は残す
+//   サインアウト（人のログアウト・401 の繰り返し・更新の拒否）: 止めるだけ。同期鍵（K）・申し込みの覚え・手元の覚えは残す（ADR 0346 の D7）
+//   別のアカウントで同期を始める（保存した K の uid が今の uid と違う）: そのときだけ K と申し込みの覚え・手元の覚えを捨てる。ホストの鍵対は残す
 //   api が 403 host を返した（engine が unregistered で止まる）: onHostLost（登録の確かめ直し）を待ってから update で回し直す
-//   getSyncStatus(): { state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|error, lastSyncedAt, totalBytes,
-//     limitBytes, conflicts, error, wait, sharedTo, inbox, inboxAt }
-//     wait: 鍵を待つ間に見せるもの（keys.mjs の waitInfo）。sharedTo: 7 日の間に鍵を渡した新しい PC
+//   getSyncStatus(): { state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|update_required|error, lastSyncedAt,
+//     totalBytes, limitBytes, conflicts, error, wait, sharedTo, inbox, inboxAt }
+//     wait: 鍵を待つ間の見え方 { kind: approval|preparing|restarted, ... }（keys.mjs の冒頭）。sharedTo: 7 日の間に鍵を渡した新しい PC
 //     inbox・inboxAt: 受け入れ待ちの件数と、いちばん新しく届いた時刻（ADR 0250）
 //     approvals: 鍵を渡す承認を待っている新しい PC [{ hostId, name, platform, code, at }]（v2 の api）
-//     recoveryAlert: この PC は外されたが今の鍵を持っていて、ほかの PC が回復を頼んでいる { requestedByName, readyAt, … }
+//     recoveryAlert: この PC は外された（または活動していなかった）が今の鍵を持っていて、ほかの PC が始め直しを頼んでいる
+//       { requestedByName, readyAt }
 //   同期の券（ticket.mjs）: identity（ホストの鍵）を渡したときだけ使う。券の口が 404 の api では前の版の流れ
 //   外された PC: 今の鍵を手元に持っていれば、回復が頼まれていないかを 10 分ごとに見る（券は要らない）。止めるのは K の署名
 //   受け入れ待ち（inboxList・inboxItem・inboxTake・inboxDrop）: 画面に出す形にする。パスは ~/ からの見た目、送った PC は台帳の名前
@@ -54,8 +56,8 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
   const keys = createSyncKeys({ client: session.client, ticket, secrets, uid, hostId, log, onShared: to => engine?.noteShared(to) });
   const targets = createSyncTargets({ dataDir, home, env, settings, log });
   let runningUid = null;   // 回している uid
-  let keptUid = null;      // 同期鍵と手元の覚えを持っている uid（ログアウト・切り替えで捨てる）
   let held = null;         // engine が api の 403 で止まった: { readAt }（止まったときの accountReadAt）
+  let accountCleanup = null;
   engine = createSyncEngine({
     client: syncClient, keys, targets, dataDir, uid, hostId, log, settingsEvents,
     ...(clock ? { clock } : {}), ...(watch ? { watch } : {}),
@@ -88,13 +90,21 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
   async function update() {
     const s = session.snapshot?.() ?? {};
     const now = s.signedIn ? uid() : null;
-    if (keptUid && now !== keptUid) {
-      // ログアウト・アカウントの切り替え: 前のアカウントの同期鍵と覚えを捨てる
-      runningUid = null; keptUid = null; held = null;
-      unwatchRecovery();
-      ticket?.forget();
-      await engine.forget();
-      await keys.forget();
+    if (runningUid && now !== runningUid) { runningUid = null; held = null; engine.stop(); }
+    // 別のアカウントで入った: 前のアカウントの同期鍵と覚えを捨てる（サインアウトだけでは捨てない）
+    if (accountCleanup) await accountCleanup;
+    const owner = now ? await keys.ownerUid() : null;
+    if (now !== (session.snapshot?.()?.signedIn ? uid() : null)) return;
+    if (owner && owner !== now) {
+      accountCleanup ??= (async () => {
+        runningUid = null; held = null;
+        unwatchRecovery();
+        ticket?.forget();
+        await engine.forget();
+        await keys.forget();
+      })().finally(() => { accountCleanup = null; });
+      await accountCleanup;
+      if (now !== (session.snapshot?.()?.signedIn ? uid() : null)) return;
     }
     if (!eligible()) {
       runningUid = null; held = null; engine.stop({ reason: stopReason(s) });
@@ -106,26 +116,32 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
     // api の 403 で止まったあとは、plus と新しく読めるまで待つ（読むたびに 1 回だけ試す）
     if (held && (s.accountReadAt ?? 0) <= held.readAt) return;
     held = null;
-    runningUid = keptUid = now;
+    runningUid = now;
     await engine.start();
   }
 
   // ---- 外された PC の回復の見張り ----------------------------------------------------------------------------
   const timers = clock ?? defaultTimers;
   let recoveryTimer = null;
+  let recoveryWatchId = 0;
   function unwatchRecovery() {
+    const watched = recoveryTimer != null;
     if (recoveryTimer) timers.clearTimeout(recoveryTimer);
     recoveryTimer = null;
-    if (engine.status().recoveryAlert) engine.note({ recoveryAlert: null });
+    recoveryWatchId++;
+    if ((watched || !eligible()) && engine.status().recoveryAlert) engine.note({ recoveryAlert: null });
   }
   async function checkRecovery() {
+    const watchId = recoveryWatchId;
     let alert = null;
     try { alert = (await keys.recoveryWatch())?.recovery ?? null; } catch {}
-    engine.note({ recoveryAlert: alert });
+    if (watchId === recoveryWatchId) engine.note({ recoveryAlert: alert });
   }
   function watchRecovery() {
     if (recoveryTimer || !ticket) return;
+    const watchId = ++recoveryWatchId;
     const tick = () => {
+      if (watchId !== recoveryWatchId) return;
       recoveryTimer = timers.setTimeout(() => { void checkRecovery().finally(tick); }, RECOVERY_WATCH_MS);
       recoveryTimer?.unref?.();
     };
@@ -198,24 +214,15 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
       if (runningUid) await engine.run();
       return out;
     },
-    /**
-     * 同期をやり直す: 新しい鍵で作り直し、手元の全部を上げ直す。
-     * confirm: { keyId, itemCount }（鍵を持たない PC がサーバーのデータを消すとき、人が件数を見て確かめた印）。
-     * 戻り値 { confirmNeeded, status }
-     */
-    resetSync: (confirm = null) => engine.reset(confirm),
+    /** 同期をリセットする（容量の上限のときだけ。今の内容で作り直し、ほかの PC は自動でついてくる）。戻り値 { reset, status } */
+    resetSync: () => engine.reset(),
     /** 新しい PC に鍵を渡す（code: 画面に出した確認コード。読み直して同じときだけ渡す）。{ shared } か { shared: false, reason } */
     approveSync: (target, code) => engine.approve(target, code),
     /** 渡さない（その PC は 1 時間申し込み直せない） */
     denySync: target => engine.deny(target),
-    /** 前の鍵では確かめられない新しい鍵へ移る（人が選んだ）。{ accepted } か { changed }（その間にまた替わった） */
+    /** ほかの PC で始め直された同期に加わる（人が「{name} と同期する」を押した）。{ accepted } か { changed }（その間にまた替わった） */
     acceptRestart: keyId => engine.acceptRestart(keyId),
-    /** 回復を頼む。{ recovery } か { reauth }（最近のログインが要る）か { holder } か { other } */
-    requestRecovery: () => engine.recovery.request(),
-    cancelRecovery: () => engine.recovery.cancel(),
-    /** 待ちが明けた回復を仕上げる（新しい鍵で始め直す。前のデータは消える） */
-    completeRecovery: () => engine.recovery.complete(),
-    /** ほかの PC の頼んだ回復を、今の鍵の署名で止める（外された PC からも） */
+    /** ほかの PC の頼んだ始め直しを、今の鍵の署名で止める（外された・活動していない PC から） */
     async stopRecovery() {
       const out = await keys.recoveryStop();
       if (runningUid) await engine.run({ full: false });
@@ -226,7 +233,7 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
       await fsp.mkdir(engine.conflictsDir, { recursive: true });
       return openFolder(engine.conflictsDir);
     },
-    stop: () => { runningUid = null; held = null; engine.stop(); },
+    stop: () => { runningUid = null; held = null; unwatchRecovery(); engine.stop(); },
     engine, keys, targets,
   };
 }

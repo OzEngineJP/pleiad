@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { startServer } from '../lib/server.mjs';
+import { open as openWs } from '../lib/ws-client.mjs';
 import { startFakePlus } from '../lib/fake-plus.mjs';
 
 const require = createRequire(import.meta.url);
@@ -63,6 +64,7 @@ function hold(logical, { kind, incoming = null, base = null, minutesAgo, rev = 2
 try {
   for (const d of ['.claude/skills/release', '.codex', '.agents/skills/old-notes', '.gemini']) fs.mkdirSync(path.join(home, d), { recursive: true });
   fs.mkdirSync(path.join(dataDir, 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'onboarding.json'), JSON.stringify({ seen: true, setupComplete: true }));
   fs.writeFileSync(path.join(home, '.claude/skills/release/SKILL.md'), SKILL_BEFORE);
   fs.writeFileSync(path.join(home, '.agents/skills/old-notes/SKILL.md'), OLD_NOTES);
 
@@ -70,6 +72,8 @@ try {
     env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: captureFile, AGENT_HOST_OS_OPEN: 'dry',
       HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), CODEX_HOME: path.join(home, '.codex') } });
   const url = `http://127.0.0.1:${server.port}/?token=${server.token}`;
+  const client = await openWs(server);
+  try { await client.cmd('authLogin', { backend: 'fake' }); } finally { client.ws.close(); }
   browser = await chromium.launch({ executablePath: chromiumPath() });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
   const page = await ctx.newPage();
@@ -105,9 +109,8 @@ try {
   }
 
   await page.goto(url, { waitUntil: 'load' });
-  await page.waitForTimeout(1500);
-  await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
-  await page.evaluate(() => document.getElementById('settings')?.click());
+  await page.waitForSelector('html[data-agent-gate]', { state: 'attached' });
+  await page.locator('#settings').click();
   await page.waitForSelector('#plusTab:not([hidden])');
   await page.locator('#plusTab').click();
   await page.waitForSelector('#plusPanel:not([hidden])');
@@ -127,7 +130,7 @@ try {
     }
   }
   await page.waitForSelector('#plusSyncSection', { timeout: 20_000 });
-  await waitText('#plusSyncSection', '最後の同期:', 60_000);
+  await waitText('#plusSyncSection', '同期済み', 60_000);
   ok('前提: 同期が idle になる。届いた変更が無い間は行を出さない', !(await page.locator('#plusSyncSection [data-fk="syncInbox"]').count()));
 
   // ---- 待ちに 3 件置いて、1 回回す ----

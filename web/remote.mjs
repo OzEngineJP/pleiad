@@ -100,7 +100,7 @@ export function plusRemoteLine(plusStatus, remoteStatus) {
   if (s.account?.status === 'disabled' || plus.link?.error?.code === 'account' || s.error?.code === 'account') return { kind: 'text', text: t('settings.remote.plus.account') };
   if (plus.host?.state === 'taken') return { kind: 'settings', text: t('settings.plus.hostTaken') };
   // アカウントから外された PC: つなぎ直しても戻らない。Plus の画面の「この PC を登録し直す」へ
-  if (plus.host?.state === 'removed') return { kind: 'settings', text: t(plus.host.error?.permanent ? 'settings.plus.hostRemovedKey' : 'settings.plus.hostRemoved') };
+  if (plus.host?.state === 'removed') return { kind: 'settings', text: t('settings.plus.hostRemoved') };
   if (plus.connect === false) return { kind: 'off', text: remoteStatus?.relayUrl ? t('settings.remote.state.plusOff') : t('settings.remote.state.off') };
   if (plus.host?.state === 'limit' || plus.link?.error?.code === 'limit' || s.error?.code === 'limit') return { kind: 'text', text: t('settings.plus.hostLimit') };
   // Plus が止まっている（api の 503・中継の 4401 plus unavailable）: つながらないのではなく、再開を待っている

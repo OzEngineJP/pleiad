@@ -2,7 +2,7 @@
 // agent にはアカウントを名指しする欄（uid・account.uid・account.email）を伏せる。トークン・apiKey はどの口にも出さない。
 // Plus の行を混ぜて返すほかの操作（voice.status・delegation.routing の plus）も plusIdentityShown を通す。
 import { z } from 'zod';
-import { defineOp, MASK } from './registry.mjs';
+import { defineOp, MASK, OpError } from './registry.mjs';
 import { byAgent, run } from './redact.mjs';
 
 const loose = z.record(z.string(), z.unknown());
@@ -62,17 +62,16 @@ export const plusOps = [
   }),
   defineOp({
     id: 'plus.syncReset', summary: 'agent:ops.plus.syncReset.summary', risk: 'write',
-    riskReason: 'Deletes the synced content on the server and starts over with a new key on every PC; only the settings screen on the host PC can call it, behind its own confirm (not on MCP or the CLI)',
-    // confirm: 鍵を持たない PC がサーバーのデータを消すとき、人が件数を見て確かめた印（無い・合わなければ confirmNeeded で今の値を返す）
-    input: z.object({
-      confirm: z.object({
-        keyId: z.string().min(1).max(200),
-        itemCount: z.number().int().min(0),
-      }).nullable().optional().describe('agent:ops.plus.syncReset.confirm'),
-    }),
+    riskReason: 'At the storage limit only, deletes the synced content on the server and starts over from this PC (other PCs follow automatically); only the settings screen on the host PC can call it, behind its own confirm (not on MCP or the CLI)',
+    // 容量の上限のときだけ通す（ADR 0346）。ほかのときは 409 NOT_QUOTA
+    input: z.object({}),
     surfaces: { ui: true, mcp: false, cli: false },
     hostScreenOnly: true,
-    handler: (ctx, { confirm } = {}) => run(ctx, () => ctx.plus.syncReset(confirm ?? null)),
+    handler: (ctx) => run(ctx, async () => {
+      const s = (await ctx.plus?.syncStatus?.()) ?? null;
+      if (s?.state !== 'quota') throw new OpError('NOT_QUOTA', 'sync reset is only available when the storage limit is reached');
+      return ctx.plus.syncReset();
+    }),
   }),
   // 受け入れ待ち（ADR 0250）: ほかの PC から届いた skill・指示ファイル。中身を見せるので画面だけの口にする（MCP・CLI に出さない）。
   // 取り込む・捨てるは ~/.claude などに書くので、この PC の画面だけ（つないだ端末からは呼べない）
@@ -122,7 +121,7 @@ export const plusOps = [
     hostScreenOnly: true,
     handler: (ctx) => run(ctx, () => ctx.plus.syncOpenConflicts()),
   }),
-  // 同期の鍵の受け渡し（docs/plus.md「同期の鍵の受け渡し」）。渡す・回復を頼む・仕上げる・止めるは、鍵を持つ PC の前の人だけ
+  // 同期の鍵の受け渡し（docs/plus.md「同期の鍵の受け渡し」）。許可する・始め直しに加わる・止めるは、その PC の前の人だけ
   defineOp({
     id: 'plus.syncApprove', summary: 'agent:ops.plus.syncApprove.summary', risk: 'write',
     riskReason: 'Hands the account sync key to another PC after the person compared the confirmation code; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
@@ -144,38 +143,15 @@ export const plusOps = [
   }),
   defineOp({
     id: 'plus.syncAcceptRestart', summary: 'agent:ops.plus.syncAcceptRestart.summary', risk: 'write',
-    riskReason: 'Moves this PC to a sync key that its previous key cannot vouch for (after a recovery), through the approval window; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
+    riskReason: 'Joins sync that another PC restarted (its previous key cannot vouch for the new one), through the approval window; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
     input: z.object({ keyId: z.string().min(1).max(128).describe('agent:ops.plus.syncAcceptRestart.keyId') }),
     surfaces: { ui: true, mcp: false, cli: false },
     hostScreenOnly: true,
     handler: (ctx, { keyId }) => run(ctx, () => ctx.plus.syncAcceptRestart(keyId)),
   }),
   defineOp({
-    id: 'plus.syncRecoveryRequest', summary: 'agent:ops.plus.syncRecoveryRequest.summary', risk: 'write',
-    riskReason: 'Starts the 72-hour wait to restart sync with a new key when no PC holds the key; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
-    input: z.object({}),
-    surfaces: { ui: true, mcp: false, cli: false },
-    hostScreenOnly: true,
-    handler: (ctx) => run(ctx, () => ctx.plus.syncRecoveryRequest()),
-  }),
-  defineOp({
-    id: 'plus.syncRecoveryCancel', summary: 'agent:ops.plus.syncRecoveryCancel.summary', risk: 'write',
-    riskReason: 'Withdraws this PC\'s own recovery request; only the settings screen calls it (not on MCP or the CLI)',
-    input: z.object({}),
-    surfaces: { ui: true, mcp: false, cli: false },
-    handler: (ctx) => run(ctx, () => ctx.plus.syncRecoveryCancel()),
-  }),
-  defineOp({
-    id: 'plus.syncRecoveryComplete', summary: 'agent:ops.plus.syncRecoveryComplete.summary', risk: 'write',
-    riskReason: 'Restarts sync with a new key after the recovery wait, deleting the data on the server; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
-    input: z.object({}),
-    surfaces: { ui: true, mcp: false, cli: false },
-    hostScreenOnly: true,
-    handler: (ctx) => run(ctx, () => ctx.plus.syncRecoveryComplete()),
-  }),
-  defineOp({
     id: 'plus.syncRecoveryStop', summary: 'agent:ops.plus.syncRecoveryStop.summary', risk: 'write',
-    riskReason: 'Stops another PC\'s recovery request with a signature from the current sync key; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
+    riskReason: 'Stops another PC\'s sync restart with a signature from the current sync key; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
     input: z.object({}),
     surfaces: { ui: true, mcp: false, cli: false },
     hostScreenOnly: true,

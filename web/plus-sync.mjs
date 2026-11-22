@@ -1,24 +1,23 @@
-// 設定 › Pleiad Plus の「同期」のまとまり（docs/plus.md「同期」）。
+// 設定 › Pleiad Plus の「同期」のまとまり（docs/plus.md「同期」。承認済みの形は docs/design-system.md「設定 › Pleiad Plus › 同期」）。
 // 状態から DOM を作る純粋な関数（tests/unit/plus-sync-ui.mjs が tests/lib/dom-stub.mjs で動かす）。
-// スイッチはアカウントの sync.enabled（status.account.sync）、状態の行は getSyncStatus() の形。
-// enabled が false・state が disabled のときは状態の行を出さない（スイッチだけが残る）。
-// stopped（アカウントの停止で止まっている）は誤りにしない。Plus と分かり直せば自動で回し直すので、ボタンも出さない。
-// waiting_key は status.wait（鍵を持つ PC・サーバーの件数と大きさ）で中身を分ける（docs/plus.md「同期の始め直しと登録の外れ」）:
-//   鍵を持つ PC が台帳に居る → その PC の名前と最後の同期。控えめな「鍵を持つ PC が使えないとき」
-//   居ない → サーバーにあるデータの件数と大きさ。「鍵を持つ PC が使えない」
-//   どちらも確かめの窓はチェック 1 つ（入れるまで「消して始め直す」を押せない）
+// スイッチはアカウントの sync.enabled（status.account.sync）、状態は getSyncStatus() の形。
+// 人に鍵を意識させない（ADR 0346）: 画面には「鍵」と出さない。状態はスイッチの行の中の 1 行で、見え方は 4 つだけ:
+//   同期済み · {時刻}（idle）／同期しています…（syncing）／ほかの PC の許可を待っています（waiting_key の approval）
+//   ／準備しています…（waiting_key の preparing・restarted。preparing に startsAt があれば「· {時刻} に始まります」）
+// waiting_key の中身（status.wait.kind）:
+//   approval  → 開く PC の名前（3 台まで）。確認コードの途中なら「{PC} の画面で、この数字を確かめて許可してください」と数字。
+//               許可されなかった（deniedAt）ら 1 時間待つことを出す
+//   preparing → relogin なら「ログインし直してください」とログインのボタン。ほかは状態の行だけ
+//   restarted → 前の K の PC（scene 04）。「{name} で同期が始め直されました」と「{name} と同期する」（人が押すまで移らない）
+// この PC が外された・活動していないが今の K を持っていて、ほかの PC が始め直そうとしている（status.recoveryAlert。scene 05）
+//   → 知らせと「止める」。状態の行は出さない
+// 「同期をリセット」は容量の上限（quota）のときだけ出す。確かめの窓を通してから送る
+// stopped（アカウントの停止で止まっている）は誤りにしない。Plus と分かり直せば自動で回し直すので、ボタンも出さない
+// update_required（この版では使えない api）→ 更新を促す。error の api_downgraded（券を取れた後に api が前の版を名乗った）→ 「同期できませんでした」
 // 受け入れ待ち（status.inbox）が 1 件以上あれば、まとまりの終わりに「届いた変更 N 件」の行（押すと web/plus-inbox.mjs の面。ADR 0250）
-// 受け入れの v2 の api（wait.v2。docs/plus.md「同期の鍵の受け渡し」）では、鍵は鍵を持つ PC の承認でだけ届く:
-//   鍵を持つ PC が居る → 承認を待つ行。明かし終えたら「{PC} の画面で承認してください」と確認コード。断られたら 1 時間待つ
-//     「鍵を持つ PC が使えないとき」は、PC の外し方と同期のリセットの説明（始め直しの窓は出さない）
-//   居ない → 「鍵を持つ PC がありません」→ リセットの待ち → 消えるもの → ［同期をリセット］（頼む・待つ・取り下げる・待ちが明けたらリセット。ほかの PC のリセットは今の鍵で止める）
-//   外された PC が今の鍵を持っていて、リセットが頼まれている（status.recoveryAlert）→ 知らせと「リセットを止める」
-//   前の鍵を持つ PC で、前の鍵では確かめられない新しい鍵が置かれた（wait.restarted。リセットなど）→ 自動では移らず「新しい鍵を受け取る」。
-//   届いた鍵を確かめられなかった（wait.unverified・restarted.unverified）→ 受け取らずに止めていることと、直し方（外して登録し直す・鍵を持つ PC が 1 台だけなら同期のリセット）
-//   update_required（この版では使えない api）→ 更新を促す。error が api_downgraded（券を取れた後に api が前の版を名乗った）→ 止めたことを知らせる
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
-import { button, switchButton, waitLine } from './remote-parts.mjs';
+import { button, switchButton, spinner } from './remote-parts.mjs';
 import { inboxRow } from './plus-inbox.mjs';
 
 const MB = 1024 * 1024;
@@ -38,7 +37,7 @@ export function syncTimeText(iso, { lang: l = lang, now = new Date() } = {}) {
 
 const actButton = (text, onclick, className, fk) => { const b = button(text, onclick, className); if (fk) b.dataset.fk = fk; return b; };
 
-/** 確認コードを 3 桁ずつに分ける（「731 058」。端末の承認の窓と同じ区切り）。6 桁でなければそのまま */
+/** 確認コードを 3 桁ずつに分ける（「731 058」。ほかの PC の許可の窓と同じ区切り）。6 桁でなければそのまま */
 export function syncCodeText(code) {
   const s = String(code ?? '');
   return /^\d{6}$/.test(s) ? `${s.slice(0, 3)} ${s.slice(3)}` : s;
@@ -51,137 +50,56 @@ export const pcPlatform = p => PLATFORMS[p] ?? (typeof p === 'string' ? p : '');
 /** PC の名前。無ければ「名前の無い PC」 */
 const pcName = name => (typeof name === 'string' && name ? name : t('settings.plus.syncUnnamedPc'));
 
-/** 鍵を待つ間の中身（場面 1・2）。ボタンの文言を返す */
-function waitingLines(w, text) {
-  const holder = (w.holders ?? []).find(h => h.registered);
-  if (holder) {
-    text.append(el('span', 'rm-nm', t('settings.plus.syncWaitingKey')),
-      el('span', 'rm-sub', holder.lastSyncAt
-        ? t('settings.plus.syncWaitHolder', { name: pcName(holder.name), time: syncTimeText(holder.lastSyncAt) })
-        : t('settings.plus.syncWaitHolderNoTime', { name: pcName(holder.name) })));
-    return { label: t('settings.plus.syncHolderUnavailable'), className: 'btn btn-quiet' };
-  }
-  dataLines(w, text);
-  text.append(el('span', 'rm-sub', t('settings.plus.syncHolderGone')));
-  const gone = (w.holders ?? []).filter(h => !h.registered && h.name).map(h => h.name);
-  if (gone.length) text.append(el('span', 'rm-sub', t('settings.plus.syncHolderGoneNames', { names: new Intl.ListFormat(lang).format(gone) })));
-  return { label: t('settings.plus.syncNoHolder'), className: 'btn' };
-}
-
-/** サーバーにある同期のデータの行（鍵を持つ PC が居ないとき） */
-function dataLines(w, text) {
-  text.append(el('span', 'rm-nm', Number.isInteger(w.itemCount)
-    ? t('settings.plus.syncDataFound', { count: w.itemCount, size: megaBytes(w.totalBytes) })
-    : t('settings.plus.syncDataMaybe')));
-  if (w.updatedAt) {
-    const time = syncTimeText(w.updatedAt);
-    text.append(el('span', 'rm-sub', w.lastWriter?.name
-      ? t('settings.plus.syncDataUpdatedBy', { time, name: w.lastWriter.name }) : t('settings.plus.syncDataUpdated', { time })));
-  }
+/** PC の名前を「a」「a か b」「a・b か c」に（3 台まで。copy の syncNamesOr・syncNamesOrMore） */
+export function pcNames(names) {
+  const n = (Array.isArray(names) ? names : []).slice(0, 3).map(pcName);
+  if (n.length <= 1) return n[0] ?? '';
+  if (n.length === 2) return t('settings.plus.syncNamesOr', { a: n[0], b: n[1] });
+  return t('settings.plus.syncNamesOrMore', { a: n[0], b: n[1], c: n[2] });
 }
 
 /**
- * 鍵を待つ間の中身（v2）。行は live に、ボタンは act で足す。
- * 鍵を持つ PC が居れば承認を待つ・確認コード・断られた。居なければ同期のリセット
- * （承認済みの形は docs/design-system.md「設定 › Pleiad Plus › 同期」）
+ * スイッチの行の中の状態（4 つの見え方）。出さないときは null。
+ * 戻り値 { kind: ok|wait|spin, text }
  */
-function approvalLines(w, live, act, { onAskReset, onRecovery, onAcceptRestart, now }) {
-  if (w.unverified || w.restarted?.unverified) {
-    live.append(el('p', 'rm-err', t('settings.plus.syncKeyUnverified')), el('p', 'rm-sub', t('settings.plus.syncKeyUnverifiedHint')));
-    return;
+export function syncStatusLine(s, { now = new Date() } = {}) {
+  if (!s) return null;
+  if (s.state === 'idle') return { kind: 'ok', text: t('settings.plus.syncSynced', { time: syncTimeText(s.lastSyncedAt, { now }) }) };
+  if (s.state === 'syncing') return { kind: 'spin', text: t('settings.plus.syncing') };
+  if (s.state !== 'waiting_key') return null;
+  const w = s.wait ?? null;
+  if (w?.kind === 'approval') return { kind: 'wait', text: t('settings.plus.syncWaitApproval') };
+  if (w?.kind === 'preparing' && w.startsAt && Date.parse(w.startsAt) > now.getTime()) {
+    return { kind: 'spin', text: t('settings.plus.syncPreparingAt', { time: syncTimeText(w.startsAt, { now }) }) };
   }
-  if (w.restarted) {
-    // 前の鍵では確かめられない新しい鍵（リセットなど）: 人が選ぶまで申し込まない
-    live.append(el('p', 'rm-warn', t('settings.plus.syncRestarted')), el('p', 'rm-sub', t('settings.plus.syncRestartedHint')));
-    act(t('settings.plus.syncAcceptRestart'), () => onAcceptRestart(w.restarted.keyId), 'btn', 'syncAcceptRestart');
-    return;
-  }
-  if (w.holder) {
-    const text = el('span', 'rm-rt');
-    const box = el('div', 'rm-row rm-plain-row');
-    box.append(text);
-    live.append(box);
-    const holders = (w.holders ?? []).filter(h => h.registered);
-    const j = w.join ?? null;
-    if (j?.state === 'denied') {
-      text.append(el('span', 'rm-nm', t('settings.plus.syncJoinDenied')), el('span', 'rm-sub', t('settings.plus.syncJoinDeniedHint')));
-    } else if (j?.state === 'revealed' && j.code) {
-      const h = holders.find(x => x.hostId === j.approver?.hostId);
-      text.append(el('span', 'rm-nm', t('settings.plus.syncApproveOn', { name: pcName(j.approver?.name ?? h?.name) })));
-      if (h?.lastSyncAt) text.append(el('span', 'rm-sub', t('settings.plus.syncLast', { time: syncTimeText(h.lastSyncAt, { now }) })));
-      const code = el('p', 'rm-ccode sync-code', syncCodeText(j.code));
-      code.setAttribute('aria-label', `${t('settings.plus.syncCode')} ${syncCodeText(j.code)}`);
-      live.append(code);
-    } else {
-      const names = new Intl.ListFormat(lang, { type: 'disjunction' }).format(holders.map(h => pcName(h.name)));
-      text.append(el('span', 'rm-nm', t('settings.plus.syncWaitApproval')), el('span', 'rm-sub', t('settings.plus.syncWaitApprovalHint', { name: names })));
-    }
-    act(t('settings.plus.syncHolderUnavailable'), onAskReset, 'btn btn-quiet', 'syncReset');
-    return;
-  }
-  // 鍵を持つ PC が 1 台も無い: 経緯の記録（データ・外れた PC の名前）は出さず、状態 → 取れる道 → 消えるもの → ボタン
-  const r = w.recovery ?? null;
-  const lost = el('p', 'rm-sub', Number.isInteger(w.itemCount)
-    ? t('settings.plus.syncResetLost', { count: w.itemCount, size: megaBytes(w.totalBytes) })
-    : t('settings.plus.syncResetLostMaybe'));
-  if (!r) {
-    live.append(el('p', 'rm-warn', t('settings.plus.syncHolderGoneAll')), el('p', 'rm-sub', t('settings.plus.syncRecoveryAbout')), lost);
-    act(t('settings.plus.syncRecoveryAsk'), () => onRecovery('request'), 'btn', 'syncRecoveryRequest');
-  } else if (w.recoveryMine) {
-    const ready = Date.parse(r.readyAt) <= now.getTime();
-    const text = el('span', 'rm-rt');
-    text.append(el('span', 'rm-nm', ready ? t('settings.plus.syncRecoveryReady') : t('settings.plus.syncRecoveryWaiting')),
-      el('span', 'rm-sub', ready ? t('settings.plus.syncRecoveryReadyHint') : t('settings.plus.syncRecoveryWaitingHint', { time: syncTimeText(r.readyAt, { now }) })));
-    const box = el('div', 'rm-row rm-plain-row');
-    box.append(text);
-    live.append(box, lost);
-    act(t('settings.plus.syncRecoveryWithdraw'), () => onRecovery('cancel'), 'btn btn-quiet', 'syncRecoveryCancel');
-    if (ready) act(t('settings.plus.syncRecoveryStart'), onAskReset, 'btn', 'syncReset');
-  } else {
-    live.append(el('p', 'rm-weak', t('settings.plus.syncRecoveryOther', { name: pcName(r.requestedByName), time: syncTimeText(r.readyAt, { now }) })), lost);
-    if (w.recoveryStop) act(t('settings.plus.syncRecoveryStop'), () => onRecovery('stop'), 'btn', 'syncRecoveryStop');
-  }
+  return { kind: 'spin', text: t('settings.plus.syncPreparing') };
 }
 
-/** 「鍵を持つ PC が使えないとき」（v2）: PC の外し方と同期のリセットの説明。始め直しはできない（鍵を持つ PC の承認かリセットだけ） */
-function holderHelpBox({ onClose, onOpenAccount }) {
-  const box = el('div', 'rm-confirm');
-  box.append(el('p', 'sync-confirm-title', t('settings.plus.syncHolderUnavailable')),
-    el('p', null, t('settings.plus.syncHelpRemove')), el('p', null, t('settings.plus.syncHelpRecovery')));
-  const cacts = el('div', 'rm-acts');
-  if (onOpenAccount) cacts.append(actButton(t('settings.plus.manage'), onOpenAccount, 'btn btn-quiet', 'syncHelpAccount'));
-  cacts.append(actButton(t('settings.plus.syncHelpClose'), onClose, 'btn', 'syncHelpClose'));
-  box.append(cacts);
-  return box;
+function statusSpan(line) {
+  const st = el('span', `sync-st${line.kind === 'wait' ? ' is-wait' : ''}`);
+  st.setAttribute('role', 'status');
+  st.dataset.state = line.kind;
+  st.append(line.kind === 'spin' ? spinner() : el('i', `rm-dot ${line.kind === 'ok' ? 'rm-dot-ok' : 'rm-dot-off'}`), el('span', null, line.text));
+  return st;
 }
 
-/** 鍵を持たない PC の確かめの窓（場面 3）。消えるもの・消えないもの・ほかの PC と、チェック 1 つ */
-function startOverBox(w, { checked, changed, busy, onCheck, onCancel, onReset }) {
-  const box = el('div', 'rm-confirm');
-  box.append(el('p', 'sync-confirm-title', t('settings.plus.syncStartOverTitle')));
-  if (changed) box.append(el('p', 'rm-warn', t('settings.plus.syncStartOverChanged')));
-  box.append(
-    el('p', null, Number.isInteger(w?.itemCount)
-      ? t('settings.plus.syncStartOverLost', { count: w.itemCount, size: megaBytes(w.totalBytes) })
-      : t('settings.plus.syncStartOverLostMaybe')),
-    el('p', null, t('settings.plus.syncStartOverKept')),
-    el('p', null, w?.v2 ? t('settings.plus.syncStartOverOthersApproval') : t('settings.plus.syncStartOverOthers')),
-  );
-  const check = el('label', 'mp-check');
-  const cb = el('input');
-  cb.type = 'checkbox';
-  cb.checked = checked === true;
-  cb.disabled = busy;
-  cb.dataset.fk = 'syncResetCheck';
-  cb.onchange = () => onCheck(cb.checked);
-  check.append(cb, el('span', null, t('settings.plus.syncStartOverCheck')));
-  box.append(check);
-  const cacts = el('div', 'rm-acts');
-  const yes = actButton(t('settings.plus.syncStartOverYes'), onReset, 'btn rm-danger', 'syncResetYes');
-  yes.disabled = busy || checked !== true;
-  cacts.append(actButton(t('settings.plus.cancel'), onCancel, 'btn btn-quiet', 'syncResetNo'), yes);
-  box.append(cacts);
-  return box;
+/** 許可を待つ間の中身（approval）: 開く PC の名前・確認コード・許可されなかった */
+function approvalLines(w, live) {
+  const names = Array.isArray(w.approvers) ? w.approvers : [];
+  if (w.deniedAt) {
+    live.append(el('p', 'rm-warn', t('settings.plus.syncJoinDenied')), el('p', 'rm-sub', t('settings.plus.syncJoinDeniedHint')));
+    return;
+  }
+  if (w.code) {
+    live.append(el('p', 'rm-sub', names.length > 1
+      ? t('settings.plus.syncApproveOnAny', { names: pcNames(names) })
+      : t('settings.plus.syncApproveOn', { name: pcName(names[0]) })));
+    const code = el('p', 'rm-ccode sync-code', syncCodeText(w.code));
+    code.setAttribute('aria-label', `${t('settings.plus.syncCode')} ${syncCodeText(w.code)}`);
+    live.append(code);
+    return;
+  }
+  if (names.length) live.append(el('p', 'rm-sub', t('settings.plus.syncWaitApprovalHint', { names: pcNames(names) })));
 }
 
 /** 「同期するもの」の折り畳み。開くと同期するものの箇条書き（言語で変わる 3 項目は辞書、パスはコードの定数） */
@@ -198,81 +116,73 @@ function whatSynced() {
 }
 
 /**
- * 「同期」の中身（見出し・スイッチ・状態の行・ボタン・競合の行）を返す。
+ * 「同期」の中身（見出し・スイッチと状態の行・中身・ボタン・競合の行）を返す。
  * @param enabled  account.sync.enabled（null・未定義は入）
  * @param sync     getSyncStatus() の形。まだ取れていなければ null
- * @param confirming  「同期をリセット」の確かめを出しているか
- * @param message  スイッチを変えられなかったときの文言（'' なら出さない）
+ * @param confirming  「同期をリセット」の確かめを出しているか（容量の上限のときだけ）
+ * @param message  スイッチ・操作がうまくいかなかったときの文言（'' なら出さない）
  * @param busy     コマンドを送っている最中（ボタンを押せなくする）
- * @param resetChecked  鍵を持たない PC の確かめの窓で、チェックを入れたか（onResetCheck で知らせる）
- * @param resetChanged  確かめている間にサーバーの件数が変わった（もう一度確かめてもらう）
- * @param recoveryNote  リセットの操作の結果の一言（reauth・other・holder・waiting・gone・stopped・stopFailed。'' なら出さない）
- * @param onRecovery  リセットの操作（'request'・'cancel'・'complete'・'stop'）
- * @param onAcceptRestart  (keyId) 前の鍵では確かめられない新しい鍵を受け取ると選んだ
- * @param onLogin     ログインし直す（リセットを頼むのに最近のログインが要るとき）
- * @param onOpenAccount  アカウントのページを開く（「鍵を持つ PC が使えないとき」の説明から。無ければボタンを出さない）
- * @param now         いまの時刻（リセットの待ちが明けたか・時刻の書式）
+ * @param recoveryNote  始め直しを止める操作の結果の一言（stopped・stopFailed・gone。'' なら出さない）
+ * @param onRecoveryStop  ほかの PC の始め直しを止める（scene 05）
+ * @param onAcceptRestart  (keyId) ほかの PC で始め直された同期に加わる（scene 04）
+ * @param onLogin     ログインし直す（始め直しに最近のログインが要るとき）
+ * @param now         いまの時刻（時刻の書式・始まる時刻が過ぎたか）
  */
 export function renderSync({ enabled = true, sync = null, confirming = false, message = '', busy = false,
-  resetChecked = false, resetChanged = false, onResetCheck = () => {},
   onToggle = () => {}, onNow = () => {}, onAskReset = () => {}, onCancelReset = () => {}, onReset = () => {}, onOpenConflicts = () => {},
-  onOpenInbox = () => {}, recoveryNote = '', onRecovery = () => {}, onAcceptRestart = () => {}, onLogin = null, onOpenAccount = null, now = new Date() } = {}) {
+  onOpenInbox = () => {}, recoveryNote = '', onRecoveryStop = () => {}, onAcceptRestart = () => {}, onLogin = null, now = new Date() } = {}) {
   const out = [];
   out.push(el('div', 'rm-gh', t('settings.plus.sync')));
 
-  const row = el('div', 'rm-mrow');
+  const s = sync ?? {};
+  const alert = enabled && s.state !== 'disabled' ? s.recoveryAlert ?? null : null;
+  const line = enabled && !alert ? syncStatusLine(s, { now }) : null;
+  const row = el('div', 'rm-mrow sync-row');
+  const text = el('div', 'rm-rt');
+  text.append(el('span', 'rm-lbl', t('settings.plus.syncSwitch')));
+  if (line) text.append(statusSpan(line));
   const sw = switchButton(t('settings.plus.syncSwitch'), () => onToggle(!enabled));
   sw.setAttribute('aria-checked', String(enabled === true));
   sw.disabled = busy;
   sw.dataset.fk = 'syncToggle';
-  row.append(el('span', 'rm-lbl', t('settings.plus.syncSwitch')), sw);
+  row.append(text, sw);
   out.push(row);
   out.push(whatSynced());
   if (message) out.push(el('p', 'rm-err', message));
 
-  if (!enabled) return out;   // アカウントで切っている: 状態の行は出さない
-  const s = sync ?? {};
+  if (!enabled) return out;   // アカウントで切っている: 状態は出さない
   const live = el('div', 'sync-live');
   live.setAttribute('aria-live', 'polite');
   const acts = el('div', 'rm-acts');
   let hasActs = false;
-  const act = (text, onclick, className, fk) => { hasActs = true; acts.append(actButton(text, onclick, className, fk)); };
+  const act = (label, onclick, className, fk) => { hasActs = true; acts.append(actButton(label, onclick, className, fk)); };
 
   switch (s.state) {
-    case 'disabled':    // アカウントで止められている。状態の行は出さない
+    case 'disabled':    // アカウントで止められている。状態は出さない
+    case 'syncing':
+      break;
+    case 'idle':        // 状態はスイッチの行に出ている。ボタンは「今すぐ同期」だけ
+      act(t('settings.plus.syncNow'), onNow, 'btn', 'syncNow');
       break;
     case 'waiting_key': {
       const w = s.wait ?? null;
-      // ほかの PC で始め直されて手元の鍵が古い（w.stale）・鍵を渡した記録（sharedTo）も、鍵を待っている間は出さない
-      if (w?.v2) { approvalLines(w, live, act, { onAskReset, onRecovery, onAcceptRestart, now }); break; }
-      const text = el('span', 'rm-rt');
-      let label = t('settings.plus.syncReset'), className = 'btn btn-quiet';
-      if (w) ({ label, className } = waitingLines(w, text));
-      else text.append(el('span', 'rm-nm', t('settings.plus.syncWaitingKey')), el('span', 'rm-sub', t('settings.plus.syncWaitingKeyHint')));
-      const box = el('div', 'rm-row rm-plain-row');
-      box.append(text);
-      live.append(box);
-      act(label, onAskReset, className, 'syncReset');
+      if (w?.kind === 'approval') approvalLines(w, live);
+      else if (w?.kind === 'restarted') {
+        // scene 04: 前の K では確かめられない始め直し。人が押すまで移らない
+        const name = pcName(w.byName);
+        live.append(el('p', 'rm-warn', t('settings.plus.syncRestarted', { name })), el('p', 'rm-sub', t('settings.plus.syncRestartedHint')));
+        act(t('settings.plus.syncAcceptRestart', { name }), () => onAcceptRestart(w.keyId), 'btn', 'syncAcceptRestart');
+      } else if (w?.kind === 'preparing' && w.relogin) {
+        live.append(el('p', 'rm-sub', t('settings.plus.syncPreparingRelogin')));
+        if (onLogin) act(t('settings.plus.syncRelogin'), onLogin, 'btn btn-primary', 'syncRelogin');
+      }
       break;
     }
     case 'unregistered':   // この PC の登録が外れた。登録し直すと自動で回し直す
-      live.append(el('p', 'rm-weak', t('settings.plus.syncUnregistered')), el('p', 'rm-sub', t('settings.plus.syncUnregisteredHint')));
+      if (!alert) live.append(el('p', 'rm-weak', t('settings.plus.syncUnregistered')), el('p', 'rm-sub', t('settings.plus.syncUnregisteredHint')));
       break;
     case 'update_required':   // この版では使えない api。更新すると再開する
-      if (sync.error === 'api_downgraded') {
-        // 券を取れたアカウントで、api が前の版を名乗った。前の版のやり方では鍵を渡さずに止めている
-        live.append(el('p', 'rm-err', t('settings.plus.syncApiDowngraded')), el('p', 'rm-sub', t('settings.plus.syncApiDowngradedHint')));
-        break;
-      }
       live.append(el('p', 'rm-err', t('settings.plus.syncUpdateRequired')), el('p', 'rm-sub', t('settings.plus.syncUpdateRequiredHint')));
-      break;
-    case 'syncing':
-      live.append(waitLine(t('settings.plus.syncing')));
-      break;
-    case 'idle':
-      live.append(el('p', 'rm-weak', t('settings.plus.syncLast', { time: syncTimeText(s.lastSyncedAt) })));
-      act(t('settings.plus.syncNow'), onNow, 'btn', 'syncNow');
-      act(t('settings.plus.syncReset'), onAskReset, 'btn btn-quiet', 'syncReset');
       break;
     case 'quota':
       live.append(el('p', 'rm-err', t('settings.plus.syncQuota')),
@@ -287,63 +197,55 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
     case 'error': {
       const code = s.error;
       if (code === 'unavailable') {
-        // api の 503: Pleiad Plus が止まっている。誤りではなく待ち（engine が間をおいてやり直す）。やり直し（reset）も断られるので出さない
+        // api の 503: Pleiad Plus が止まっている。誤りではなく待ち（engine が間をおいてやり直す）
         live.append(el('p', 'rm-weak', t('settings.plus.paused')), el('p', 'rm-sub', t('settings.plus.syncPausedNote')));
         act(t('settings.plus.syncNow'), onNow, 'btn', 'syncNow');
         break;
       }
       const detail = code === 'network' ? t('settings.plus.syncErrUnavailable')
-        : code === 'rate_limited' ? t('settings.plus.syncErrRetry') : t('settings.plus.syncErrOther');
+        : code === 'rate_limited' ? t('settings.plus.syncErrRetry')
+        : code === 'api_downgraded' ? t('settings.plus.syncErrServer') : t('settings.plus.syncErrOther');
       live.append(el('p', 'rm-err', t('settings.plus.syncFailed')), el('p', 'rm-sub', detail));
-      act(t('settings.plus.syncNow'), onNow, 'btn', 'syncNow');
-      act(t('settings.plus.syncReset'), onAskReset, 'btn btn-quiet', 'syncReset');
+      // api_downgraded は起動し直すまで試さない（今すぐ同期を押しても同じ）
+      if (code !== 'api_downgraded') act(t('settings.plus.syncNow'), onNow, 'btn', 'syncNow');
       break;
     }
     default:   // 'off'・まだ取れていない
-      live.append(el('p', 'rm-weak', t('settings.plus.syncOff')));
+      if (!alert) live.append(el('p', 'rm-weak', t('settings.plus.syncOff')));
   }
 
-  // 外されたこの PC が今の鍵を持っていて、ほかの PC がリセットを頼んでいる: 止められる
-  const alert = s.state !== 'disabled' ? s.recoveryAlert : null;
+  // scene 05: 外された・活動していないこの PC が今の K を持っていて、ほかの PC が始め直そうとしている。止められる
   if (alert) {
-    live.append(el('p', 'rm-warn', t('settings.plus.syncRecoveryAlert', { name: pcName(alert.requestedByName), time: syncTimeText(alert.readyAt, { now }) })));
-    act(t('settings.plus.syncRecoveryStop'), () => onRecovery('stop'), 'btn', 'syncRecoveryStop');
+    live.append(el('p', 'rm-warn', t('settings.plus.syncRecoveryAlert', { name: pcName(alert.requestedByName) })),
+      el('p', 'rm-sub', t('settings.plus.syncRecoveryAlertHint', { time: syncTimeText(alert.readyAt, { now }) })));
+    act(t('settings.plus.syncRecoveryStop'), onRecoveryStop, 'btn', 'syncRecoveryStop');
   }
-  // リセットの操作の結果
   if (recoveryNote) {
     // i18n-dynamic: settings.plus.syncRecoveryNote.
     live.append(el('p', recoveryNote === 'stopped' ? 'rm-sub' : 'rm-warn', t(`settings.plus.syncRecoveryNote.${recoveryNote}`)));
-    if (recoveryNote === 'reauth' && onLogin) act(t('settings.plus.syncRelogin'), onLogin, 'btn btn-primary', 'syncRelogin');
   }
-  // 鍵を渡した新しい PC（場面 6。7 日の間）。この PC が鍵を持っている間だけ出す（鍵を待っている間は出さない）
-  if (s.state !== 'disabled' && s.state !== 'waiting_key') {
+  // 許可した新しい PC（7 日の間）。この PC が同期している間だけ出す（待っている間は出さない）
+  if (!alert && (s.state === 'idle' || s.state === 'syncing')) {
     for (const to of Array.isArray(s.sharedTo) ? s.sharedTo : []) {
-      live.append(el('p', 'rm-sub', t('settings.plus.syncSharedTo', { name: pcName(to.name), time: syncTimeText(to.at) })));
+      live.append(el('p', 'rm-sub', t('settings.plus.syncSharedTo', { name: pcName(to.name), time: syncTimeText(to.at, { now }) })));
     }
   }
-
   if ((s.conflicts ?? 0) >= 1) {
-    const text = el('span', 'rm-rt');
-    text.append(el('span', 'rm-nm', t('settings.plus.syncConflicts', { n: s.conflicts })), el('span', 'rm-sub', t('settings.plus.syncConflictDays')));
+    const ctext = el('span', 'rm-rt');
+    ctext.append(el('span', 'rm-nm', t('settings.plus.syncConflicts', { n: s.conflicts })), el('span', 'rm-sub', t('settings.plus.syncConflictDays')));
     const box = el('div', 'rm-mrow');
-    box.append(text, actButton(t('settings.plus.syncOpenFolder'), onOpenConflicts, 'btn btn-quiet', 'syncOpenConflicts'));
+    box.append(ctext, actButton(t('settings.plus.syncOpenFolder'), onOpenConflicts, 'btn btn-quiet', 'syncOpenConflicts'));
     live.append(box);
   }
   out.push(live);
-
-  if (confirming && s.state === 'waiting_key' && s.wait?.v2 && s.wait.holder) {
-    out.push(holderHelpBox({ onClose: onCancelReset, onOpenAccount }));
-  } else if (confirming && s.state === 'waiting_key' && s.wait?.v2) {
-    // リセットの待ちが明けた: 確かめの窓（サーバーのデータは消える）
-    out.push(startOverBox(s.wait, { checked: resetChecked, changed: resetChanged, busy, onCheck: onResetCheck, onCancel: onCancelReset, onReset: () => onRecovery('complete') }));
-  } else if (confirming && s.state === 'waiting_key') {
-    out.push(startOverBox(s.wait, { checked: resetChecked, changed: resetChanged, busy, onCheck: onResetCheck, onCancel: onCancelReset, onReset }));
-  } else if (confirming) {
+  if (confirming && s.state === 'quota') {
     const box = el('div', 'rm-confirm');
     box.append(el('p', 'sync-confirm-title', t('settings.plus.syncResetTitle')), el('p', null, t('settings.plus.syncResetBody')));
     const cacts = el('div', 'rm-acts');
-    cacts.append(actButton(t('settings.plus.cancel'), onCancelReset, 'btn btn-quiet', 'syncResetNo'),
-      actButton(t('settings.plus.syncResetYes'), onReset, 'btn rm-danger', 'syncResetYes'));
+    const no = actButton(t('settings.plus.cancel'), onCancelReset, 'btn btn-quiet', 'syncResetNo');
+    const yes = actButton(t('settings.plus.syncResetYes'), onReset, 'btn rm-danger', 'syncResetYes');
+    no.disabled = busy; yes.disabled = busy;
+    cacts.append(no, yes);
     box.append(cacts);
     out.push(box);
   } else if (hasActs) {

@@ -26,8 +26,8 @@ export default async function (t) {
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'taken' } } },'この PC はほかの Pleiad Plus のアカウントでつないでいます。', 'disabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'limit' } } }, 'このアカウントの上限に達しています', 'enabled'],
     // アカウントから外された PC（つながりは disabled に落ち、誤りを持たない）: 「接続しています…」ではなく、登録し直す行
-    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'disabled' }, host: { state: 'removed' } } }, 'この PC は Pleiad Plus の登録から外されています。登録し直すと、中継と同期が再開します。', 'disabled', 'settings'],
-    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'disabled' }, host: { state: 'removed', error: { code: 'host_removed', permanent: true } } } }, 'この PC は Pleiad Plus の登録から外されています。登録し直すには、この PC の鍵を作り直します。', 'disabled', 'settings'],
+    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'disabled' }, host: { state: 'removed' } } }, 'この PC は Pleiad Plus の登録から外されています。', 'disabled', 'settings'],
+    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'disabled' }, host: { state: 'removed', error: { code: 'host_removed', permanent: true } } } }, 'この PC は Pleiad Plus の登録から外されています。', 'disabled', 'settings'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'error' } } }, 'サーバーへの接続に失敗しました', 'enabled'],
     // Plus が止まっている（api の 503・中継の 4401 plus unavailable）: つながらないのではなく、再開を待っている
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'retrying', error: { code: 'unavailable' } } } }, 'Pleiad Plus が一時的に止まっています（再開を待っています）', 'enabled'],

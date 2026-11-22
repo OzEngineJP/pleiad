@@ -1,10 +1,11 @@
 // 同期のエンジン（docs/plus.md「同期」）。手元の項目を暗号化して上げ、ほかの PC の項目を受ける。
 //
-//   手元の覚え: <data>/plus/sync-state.json = { keyId, cursor, items: { <論理名>: { itemId, rev, sha256, deleted, mtime } }, rejoinedAt, sharedTo, dropped }
+//   手元の覚え: <data>/plus/sync-state.json = { uid, keyId, cursor, items: { <論理名>: { itemId, rev, sha256, deleted, mtime } }, rejoinedAt, sharedTo, dropped }
 //     rejoinedAt: 前の鍵を持っていて、別の鍵に替わった時刻。覚えを空にしたあと、手元の設定の mtime の代わりに使う
 //       （始め直したほかの PC の「初めて上げた設定」に負けないように。初めての PC は 0 のままで、アカウントの設定を採る）
 //     sharedTo: 鍵を渡した新しい PC（新しい順に 3 つ { hostId, name, at }。画面には 7 日の間だけ出す）
 //     dropped: 人が捨てた版 { <論理名>: 中身の sha256 | 'deleted' }。同じ版が届き直しても待ちに出さない（違う版が来たら忘れる）
+//     uid: 覚えのアカウント。今の uid と違えば覚えと受け入れ待ちを捨てて最初から（uid の無い前の版の覚えは今の uid に結ぶ）
 //   受け入れ待ち（ADR 0250）: ほかの PC から届いた skill・指示ファイルは書かずに <data>/plus/sync-inbox/<id>/ に置く
 //     （id = 論理名の sha256 の先頭 32 字。incoming（消すときは無い）・base（手元に無いときは無い）・meta.json）。
 //     人が「取り込む」と書き、「捨てる」と dropped に覚える。設定の項目は今のまま自動で書く。
@@ -17,10 +18,12 @@
 //   アカウントの停止（403 not_plus・account_disabled）: stop まで行い、状態は stopped（error に理由）。回し直すのは start（index.mjs）
 //   登録の外れ（403 forbidden・message host）: 止めて状態は unregistered。onHostLost で上（登録の確かめ直し）へ知らせる。
 //     知らせるのは、次にうまく回るまで 1 回だけ（同じ誤りで確かめ直しを繰り返さない）
-//   鍵を待つ（waiting_key）: 状態の wait に、鍵を持つ PC・サーバーの件数と大きさを載せる（keys.mjs の waitInfo）
+//   鍵を待つ（waiting_key）: 状態の wait に { kind: approval|preparing|restarted, ... }（keys.mjs の冒頭）。
+//     始め直しの時刻（wait.startsAt）があれば、その時刻にも回す（10 分ごとに加えて）
 //   v2 の api（同期の券。keys.mjs）: 鍵を持つ PC は、新しい PC の申し込みを approvals に並べ、人が承認したら渡す（approve・deny）。
 //     申し込んでいる間（受け取る側）は 15 分まで 10 秒ごと、その後は 1 分ごとに見る。渡す側は、明かされるのを待つ間 3 分まで 5 秒ごとに見る
 //   426 update_required（この版では使えない api）: 止めて状態は update_required。回し直すのは start
+//   426 api_downgraded（券を取れたアカウントで api が前の版を名乗った）: 止めて状態は error（error: api_downgraded）
 //   券を取れない（404 not_found・403 host_removed）は 403 host と同じ（登録が外れた）
 //
 // ログには論理名・中身・鍵を出さない（項目は itemId だけ）。
@@ -58,7 +61,7 @@ const sha256 = buf => crypto.createHash('sha256').update(buf).digest('hex');
 const pad = n => String(n).padStart(2, '0');
 const stampOf = ms => { const d = new Date(ms); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
 const stampTime = name => { const m = STAMP_RX.exec(name); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null; };
-const emptyState = keyId => ({ keyId: keyId ?? null, cursor: 0, items: {} });
+const emptyState = (keyId, owner = null) => ({ uid: owner, keyId: keyId ?? null, cursor: 0, items: {} });
 /** 受け入れ待ちの id（鍵に依らない。鍵が替わっても同じ項目は同じ場所） */
 export const inboxIdOf = logical => sha256(Buffer.from(logical, 'utf8')).slice(0, 32);
 const isSetting = logical => logical.startsWith('settings/');
@@ -96,7 +99,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   let quota = false;
   let running = null, again = null;
   let turn = Promise.resolve();   // 回と、取り込む・捨てるを 1 本ずつにする
-  let debounceTimer = null, receiveTimer = null, shareTimer = null, retryTimer = null, pollTimer = null;
+  let debounceTimer = null, receiveTimer = null, shareTimer = null, retryTimer = null, pollTimer = null, startTimer = null;
   let joinSince = null;         // 鍵を受け取る申し込みを見始めた時刻（v2）
   let challengeSince = null;    // 渡す側として明かされるのを待ち始めた時刻（v2）
   let backoffMs = 0;
@@ -120,11 +123,11 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   // ---- 手元の覚え ------------------------------------------------------------------------------------------
 
   async function loadLocal() {
-    if (local) return local;
+    if (local) return otherAccount() ? dropOtherAccount() : local;
     try {
       const raw = JSON.parse(await fsp.readFile(stateFile, 'utf8'));
       local = raw && typeof raw === 'object' && raw.items && typeof raw.items === 'object'
-        ? { keyId: raw.keyId ?? null, cursor: raw.cursor ?? 0, items: raw.items } : emptyState(null);
+        ? { uid: typeof raw.uid === 'string' ? raw.uid : null, keyId: raw.keyId ?? null, cursor: raw.cursor ?? 0, items: raw.items } : emptyState(null);
       if (Number.isFinite(raw?.rejoinedAt)) local.rejoinedAt = raw.rejoinedAt;
       if (Array.isArray(raw?.sharedTo)) {
         local.sharedTo = raw.sharedTo.filter(s => typeof s?.hostId === 'string' && Number.isFinite(s.at))
@@ -134,11 +137,23 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
         local.dropped = Object.fromEntries(Object.entries(raw.dropped).filter(([k, v]) => typeof v === 'string' && targets.parse(k) && !isSetting(k)));
       }
     } catch { local = emptyState(null); }
+    if (otherAccount()) return dropOtherAccount();
     showShared();
+    return local;
+  }
+  /** 覚えが別のアカウントのもの（uid の無い前の版の覚えは今の uid のものと見る） */
+  const otherAccount = () => !!local?.uid && !!uid() && local.uid !== uid();
+  /** 別のアカウントの覚え: 捨てて最初から（受け入れ待ちも捨てる） */
+  async function dropOtherAccount() {
+    local = emptyState(null, uid());
+    await fsp.rm(inboxDir, { recursive: true, force: true }).catch(() => {});
+    setStatus({ inbox: 0, inboxAt: null, sharedTo: [] });
+    await saveLocal();
     return local;
   }
   async function saveLocal() {
     if (!local) return;
+    if (!local.uid && uid()) local.uid = uid();
     await fsp.mkdir(plusDir, { recursive: true });
     await writeAtomic(stateFile, `${JSON.stringify(local)}\n`);
   }
@@ -325,12 +340,12 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     const code = e?.code ?? 'error';
     if (e?.status === 403 && e.message === 'sync_disabled') { setStatus({ state: 'disabled', error: null, wait: null }); return; }
     if (e?.status === 426) {
-      // この版では使えない api（受け入れの v2 が要る）か、券を取れたアカウントで api が前の版を名乗った（api_downgraded）:
-      // 前の版の道で K を渡さず、止めて知らせる
+      // この版では使えない api（受け入れの v2 が要る）: 止めて更新を促す。
+      // 券を取れたアカウントで api が前の版を名乗った（api_downgraded）: 前の版の道で K を渡さず、誤りとして止める
       const why = code === 'api_downgraded' ? 'api_downgraded' : 'update_required';
       log(`sync stopped (${why})`);
       halt();
-      setStatus({ state: 'update_required', error: why, wait: null, approvals: [] });
+      setStatus({ state: why === 'api_downgraded' ? 'error' : 'update_required', error: why, wait: null, approvals: [] });
       return;
     }
     if ((e?.status === 403 && (e.message === 'host' || e.code === 'host_removed')) || (e?.ticket && e.status === 404)) {
@@ -405,12 +420,15 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   }
 
   async function receive(scan, { since } = {}) {
+    const receivingKey = key;
     let cursor = since ?? local.cursor ?? 0;
     let rekey = false;
     for (let page = 0; page < MAX_PAGES; page++) {
       const out = await client.request('GET', `/v1/sync/items?since=${encodeURIComponent(cursor)}&limit=${PAGE_LIMIT}`);
+      if (key !== receivingKey) return { rekey: false };
       const items = Array.isArray(out?.items) ? out.items : [];
       for (const it of items) {
+        if (key !== receivingKey) return { rekey: false };
         if (!it || !ITEM_ID_RX.test(String(it.itemId)) || !Number.isSafeInteger(it.rev) || it.rev < 1) continue;
         if (it.keyId !== key.keyId) { rekey = true; continue; }
         const plain = openItem(it);
@@ -548,29 +566,33 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
 
   // ---- 1 回の流れ -----------------------------------------------------------------------------------------
 
-  /** 1 回回す。人の確かめが要る（409 reset_confirm）ときは 'confirm_needed' を返す */
-  async function runOnce({ full = true, forceNew = false, confirm = null } = {}) {
+  /** 1 回回す */
+  async function runOnce({ full = true, forceNew = false } = {}) {
+    const accountUid = uid();
+    const stillRunning = () => active && uid() === accountUid;
     await loadLocal();
     for (let attempt = 0; attempt < 3; attempt++) {
-      const r = await keys.setup({ forceNew, confirm });
+      if (!stillRunning()) return;
+      const r = await keys.setup({ forceNew });
+      if (!stillRunning()) return;
       forceNew = false;
-      confirm = null;
       if (r.state) setStatus({ totalBytes: Number(r.state.totalBytes) || 0, limitBytes: Number(r.state.limitBytes) || 0 });
       if (r.status === 'disabled') { key = null; setStatus({ state: 'disabled', error: null, wait: null, approvals: [] }); return; }
-      // 待つ・確かめが要る: 自分宛ての鍵を api に聞けた（台帳に載っている）ので、403 host の知らせをまた出せるようにする
+      // 待つ: 自分宛ての鍵を api に聞けた（台帳に載っている）ので、403 host の知らせをまた出せるようにする
       if (r.status === 'waiting_key') {
         key = null; hostLostCalled = false; challengeSince = null;
-        setStatus({ state: 'waiting_key', error: null, wait: r.wait ?? null, approvals: [] });
-        pollJoin(r.wait?.join);
+        setStatus({ state: 'waiting_key', error: null, wait: r.wait ?? null, approvals: [], recoveryAlert: null });
+        pollJoin(r.join);
+        scheduleStart(r.wait?.kind === 'preparing' ? r.wait.startsAt : null);
         return;
       }
-      if (r.status === 'confirm_needed') { key = null; hostLostCalled = false; setStatus({ state: 'waiting_key', error: null, wait: r.wait ?? null, approvals: [] }); return 'confirm_needed'; }
       key = r.key;
       joinSince = null;
+      scheduleStart(null);
       if (status.wait) setStatus({ wait: null });
       if (r.changed || local.keyId !== key.keyId) {
         const prev = local.keyId;
-        local = { ...emptyState(key.keyId), sharedTo: local.sharedTo ?? [], dropped: local.dropped ?? {} };
+        local = { ...emptyState(key.keyId, uid()), sharedTo: local.sharedTo ?? [], dropped: local.dropped ?? {} };
         if (prev && prev !== key.keyId) local.rejoinedAt = clock.now();
         settingsChangedAt.clear();
         tooLarge.clear();
@@ -580,17 +602,25 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
       if (r.v2) {
         // 新しい PC の申し込み: 確認コードを付けて並べる。渡すのは人が承認したときだけ
         const a = await keys.approvals(r.state, key);
-        setStatus({ approvals: a.list });
+        if (!stillRunning()) return;
+        // 活動していなかった間に、ほかの PC が始め直しを頼んでいた（D11）: 外された PC と同じく、今の K の署名で止められる
+        const rec = r.state?.recovery;
+        const alert = rec && rec.requestedBy !== hostId() ? { requestedByName: rec.requestedByName ?? null, requestedAt: rec.requestedAt ?? null, readyAt: rec.readyAt ?? null } : null;
+        setStatus({ approvals: a.list, recoveryAlert: alert });
         pollChallenge(a.waiting);
       } else if ((await keys.sharePending(r.state, key)) === 'rekey') continue;
-      if (!full) { setStatus({ state: quota ? 'quota' : (status.state === 'syncing' ? 'syncing' : 'idle'), error: null }); return; }
+      // 鍵の受け渡しだけの回でも、鍵が替わった（承認された・始め直した）ならそのまま受けて上げる
+      if (!full && !r.changed) { setStatus({ state: quota ? 'quota' : (status.state === 'syncing' ? 'syncing' : 'idle'), error: null }); return; }
 
       setStatus({ state: 'syncing', error: null });
       const scan = await targets.scan();
+      if (!stillRunning()) return;
       try {
         const got = await receive(scan);
+        if (!stillRunning()) return;
         if (got.rekey) { await saveLocal(); continue; }
         const up = await upload(scan);
+        if (!stillRunning()) return;
         if (up.rekey) { await saveLocal(); continue; }
       } finally {
         await saveLocal();
@@ -607,10 +637,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   function run(opts = {}) {
     if (!active) return Promise.resolve();
     if (running) {
-      again = {
-        full: Boolean(again?.full || opts.full !== false), forceNew: Boolean(again?.forceNew || opts.forceNew),
-        confirm: opts.confirm ?? again?.confirm ?? null,
-      };
+      again = { full: Boolean(again?.full || opts.full !== false), forceNew: Boolean(again?.forceNew || opts.forceNew) };
       return running;
     }
     running = (async () => {
@@ -621,7 +648,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
           again = null;
           const opts = next;
           try { last = await exclusive(() => runOnce(opts)) ?? null; }
-          catch (e) { last = null; handleRunError(e); }
+          catch (e) { last = null; if (active) handleRunError(e); }
           next = again;
         }
       } finally { running = null; }
@@ -633,8 +660,17 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   // ---- いつ回すか -----------------------------------------------------------------------------------------
 
   function clearTimers() {
-    for (const id of [debounceTimer, receiveTimer, shareTimer, retryTimer, pollTimer]) if (id) clock.clearTimeout(id);
-    debounceTimer = receiveTimer = shareTimer = retryTimer = pollTimer = null;
+    for (const id of [debounceTimer, receiveTimer, shareTimer, retryTimer, pollTimer, startTimer]) if (id) clock.clearTimeout(id);
+    debounceTimer = receiveTimer = shareTimer = retryTimer = pollTimer = startTimer = null;
+  }
+  /** 始め直しの時刻（readyAt）に回す。明けたかは api の応答で知るので、時計がずれていても 10 分ごとの回で追いつく */
+  function scheduleStart(at) {
+    if (startTimer) { clock.clearTimeout(startTimer); startTimer = null; }
+    const ms = Date.parse(at ?? '');
+    const delay = ms - clock.now();
+    if (!active || !Number.isFinite(delay) || delay <= 0 || delay >= SYNC_RECEIVE_MS) return;
+    startTimer = clock.setTimeout(() => { startTimer = null; void run(); }, delay + 1_000);
+    startTimer?.unref?.();
   }
   /** 申し込み・承認の途中を短い間隔で見る（鍵の受け渡しだけ。項目は受けない） */
   function schedulePoll(ms) {
@@ -781,8 +817,8 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   }
 
   /**
-   * 鍵の受け渡しと回復の操作（v2）。回と重ねずに通し、終わったら鍵の受け渡しだけを見直す。
-   * fn は keys の関数（approve・deny・recoveryRequest・recoveryCancel・recoveryComplete）
+   * 鍵の受け渡しの操作（v2）。回と重ねずに通し、終わったら鍵の受け渡しだけを見直す。
+   * fn は keys の関数（approve・deny・acceptRestart・recoveryStop）
    */
   async function keyAction(fn) {
     const out = await exclusive(fn);
@@ -791,24 +827,26 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   }
 
   /**
-   * 同期をやり直す: 新しい鍵で作り直し、手元の全部を上げ直す。
-   * confirm: 人が件数を見て確かめた印 { keyId, itemCount }（鍵を持たない PC がサーバーのデータを消すときに要る）。
-   * 戻り値 { confirmNeeded, status }。confirmNeeded: 確かめが無い・数字が変わった（status.wait に今の値）
+   * 同期をリセットする（容量の上限のときだけ）: 今の K で署名して作り直し（ほかの PC へは carry で届く）、手元の全部を上げ直す。
+   * 戻り値 { reset, status }。容量の上限でなければ何もしない（reset: false）
    */
-  async function reset(confirm = null) {
-    if (!active) return { confirmNeeded: false, status: { ...status } };
+  async function reset() {
     while (running) await running;
-    const last = await run({ forceNew: true, confirm });
-    return { confirmNeeded: last === 'confirm_needed', status: { ...status } };
+    if (!active || status.state !== 'quota') return { reset: false, status: { ...status } };
+    const before = key?.keyId;
+    await run({ forceNew: true });
+    return { reset: !!before && !!key && key.keyId !== before, status: { ...status } };
   }
 
-  /** ログアウト・アカウントの切り替え: 止めて、手元の覚えを捨てる（次のアカウントで最初から） */
+  /** 別のアカウントで同期を始める前: 止めて、手元の覚えを捨てる（次のアカウントで最初から）。サインアウトでは呼ばない */
   async function forget() {
     stop();
-    local = emptyState(null);
-    await saveLocal().catch(() => {});
-    await fsp.rm(inboxDir, { recursive: true, force: true }).catch(() => {});
-    setStatus({ inbox: 0, inboxAt: null });
+    await exclusive(async () => {
+      local = emptyState(null, uid());
+      await saveLocal().catch(() => {});
+      await fsp.rm(inboxDir, { recursive: true, force: true }).catch(() => {});
+      setStatus({ inbox: 0, inboxAt: null });
+    });
   }
 
   return {
@@ -817,14 +855,8 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     approve: (target, code) => keyAction(() => keys.approve(target, code)),
     /** 渡さない */
     deny: target => keyAction(() => keys.deny(target)),
-    /** 前の鍵では確かめられない新しい鍵（回復など）へ移ると人が選んだ。この後は承認の窓を通して受け取る */
+    /** ほかの PC で始め直された同期に加わると人が選んだ（「{name} と同期する」）。この後は承認の窓を通して受け取る */
     acceptRestart: keyId => keyAction(() => keys.acceptRestart(keyId)),
-    /** 回復（鍵を持つ PC が 1 台も無いとき）: 頼む・取り下げる・待ちが明けたら仕上げる */
-    recovery: {
-      request: () => keyAction(() => keys.recoveryRequest()),
-      cancel: () => keyAction(() => keys.recoveryCancel()),
-      complete: () => keyAction(() => keys.recoveryComplete()),
-    },
     /** 状態に足す（回の外で分かったこと。外された PC の回復の見張りなど） */
     note: patch => setStatus(patch),
     status: () => ({ ...status }),
