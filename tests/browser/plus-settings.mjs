@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { startServer } from '../lib/server.mjs';
 import { startFakePlus } from '../lib/fake-plus.mjs';
+import { open as openWs } from '../lib/ws-client.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_CORE || 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core');
@@ -32,9 +33,29 @@ const BASE_ACCOUNT = { uid: 'user-1', email: 'user@example.com', provider: 'goog
 const PLUS_ACCOUNT = { ...BASE_ACCOUNT, status: 'plus', plan: { name: 'Pleiad Plus' },
   limits: { hosts: 3, creditsPerMonth: 500, syncBytes: 100 }, usage: { credits: 120, resetAt: '2026-11-01T00:00:00+09:00' }, sync: { enabled: false } };
 
+async function startPlusServer(dataDir, capture, env = {}) {
+  fs.writeFileSync(path.join(dataDir, 'onboarding.json'), JSON.stringify({ seen: true, setupComplete: true }));
+  const host = await startServer({ dataDir, entry: path.join(ROOT, 'tests', 'lib', 'plus-main-port.mjs'),
+    env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: capture, AGENT_HOST_OS_OPEN: 'dry',
+      HOME: dataDir, USERPROFILE: dataDir, CLAUDE_CONFIG_DIR: path.join(dataDir, '.claude'), CODEX_HOME: path.join(dataDir, '.codex'), ...env } });
+  try {
+    const client = await openWs(host);
+    try { await client.cmd('authLogin', { backend: 'fake' }); } finally { client.ws.close(); }
+    return host;
+  } catch (err) {
+    await host.stop();
+    throw err;
+  }
+}
+
+async function openSettings(page) {
+  await page.waitForSelector('html[data-agent-gate]', { state: 'attached' });
+  await page.locator('#settings').click();
+  await page.waitForSelector('#settingsView:not([hidden])');
+}
+
 try {
-  server = await startServer({ dataDir, entry: path.join(ROOT, 'tests', 'lib', 'plus-main-port.mjs'),
-    env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: captureFile } });
+  server = await startPlusServer(dataDir, captureFile);
   const url = `http://127.0.0.1:${server.port}/?token=${server.token}`;
   browser = await chromium.launch({ executablePath: chromiumPath() });
 
@@ -70,10 +91,7 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 }, colorScheme: 'light', locale: 'ja-JP' });
   const page = await ctx.newPage();
   await page.goto(url, { waitUntil: 'load' });
-  await page.waitForTimeout(1500);
-  await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
-  await page.evaluate(() => document.getElementById('settings')?.click());
-  await page.waitForSelector('#settingsView:not([hidden])');
+  await openSettings(page);
   const openPlus = async () => { await page.locator('#plusTab').click(); await page.waitForSelector('#plusPanel:not([hidden])'); };
   await openPlus();
 
@@ -236,16 +254,12 @@ try {
   {
     const dataDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-plus-off-'));
     const capture2 = path.join(dataDir2, 'external.log');
-    const server2 = await startServer({ dataDir: dataDir2, entry: path.join(ROOT, 'tests', 'lib', 'plus-main-port.mjs'),
-      env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, AGENT_HOST_PLUS: '0', PLUS_EXTERNAL_CAPTURE: capture2 } });
+    const server2 = await startPlusServer(dataDir2, capture2, { AGENT_HOST_PLUS: '0' });
     try {
       const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 1000 }, locale: 'ja-JP' });
       const page2 = await ctx2.newPage();
       await page2.goto(`http://127.0.0.1:${server2.port}/?token=${server2.token}`, { waitUntil: 'load' });
-      await page2.waitForTimeout(1500);
-      await page2.evaluate(() => document.getElementById('onboardingDialog')?.close());
-      await page2.evaluate(() => document.getElementById('settings')?.click());
-      await page2.waitForSelector('#settingsView:not([hidden])');
+      await openSettings(page2);
       const hidden = await page2.evaluate(() => document.getElementById('plusTab').hidden);
       ok('available === false → メニューに Pleiad Plus は出ない', hidden === true, `hidden=${hidden}`);
       await ctx2.close();
@@ -260,16 +274,12 @@ try {
     plus.state.visibility = 'optin';
     const dataDir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-plus-optin-'));
     const capture3 = path.join(dataDir3, 'external.log');
-    const server3 = await startServer({ dataDir: dataDir3, entry: path.join(ROOT, 'tests', 'lib', 'plus-main-port.mjs'),
-      env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: capture3 } });
+    const server3 = await startPlusServer(dataDir3, capture3);
     try {
       const ctx3 = await browser.newContext({ viewport: { width: 1280, height: 1000 }, locale: 'ja-JP' });
       const page3 = await ctx3.newPage();
       await page3.goto(`http://127.0.0.1:${server3.port}/?token=${server3.token}`, { waitUntil: 'load' });
-      await page3.waitForTimeout(1500);
-      await page3.evaluate(() => document.getElementById('onboardingDialog')?.close());
-      await page3.evaluate(() => document.getElementById('settings')?.click());
-      await page3.waitForSelector('#settingsView:not([hidden])');
+      await openSettings(page3);
       const hidden = await page3.evaluate(() => document.getElementById('plusTab').hidden);
       ok('visibility: optin・印無し → メニューに Pleiad Plus は出ない', hidden === true, `hidden=${hidden}`);
       await ctx3.close();

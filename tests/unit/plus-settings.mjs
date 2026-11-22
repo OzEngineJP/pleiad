@@ -155,18 +155,14 @@ export default async function (t) {
   t.ok('host removed: 外されている旨と「この PC を登録し直す」', text(nodes).includes('この PC は Pleiad Plus の登録から外されています') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
   byFk(nodes, 'hostReregister').onclick();
   t.ok('「この PC を登録し直す」は reregister を呼ぶ', rereg === 1);
-  // 外した hostId を api が登録し直さない（host.error.permanent）: 同じボタンが鍵の作り直しの確かめを開く
+  // 外した hostId を API が登録し直さない場合も、同じ操作で新しい登録に戻る。
   const permanent = { state: 'removed', hostId: 'h1', error: { code: 'host_removed', permanent: true } };
   let askedKey = false;
   rereg = 0;
   nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: permanent }, { ...deps, reregister: () => { rereg++; }, askRebind: () => { askedKey = true; } });
-  t.ok('host removed（登録し直せない）: 鍵を作り直す旨と「この PC を登録し直す」', text(nodes).includes('この PC の鍵を作り直します') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
+  t.ok('host removed（登録し直せない）: 登録から外された旨と「この PC を登録し直す」', text(nodes).includes('この PC は Pleiad Plus の登録から外されています') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
   byFk(nodes, 'hostReregister').onclick();
-  t.ok('登録し直せないときの「この PC を登録し直す」は確かめを開く（reregister は呼ばない）', askedKey && rereg === 0);
-  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: permanent }, { ...deps, confirming: true });
-  t.ok('確かめの窓: 「作り直す」「やめる」', buttonTexts(nodes).includes('作り直す') && buttonTexts(nodes).includes('やめる'));
-  byFk(nodes, 'rebindYes').onclick();
-  t.ok('「作り直す」は plusHostRebind', sent.at(-1) === 'plusHostRebind');
+  t.ok('前の登録に戻れない場合も「この PC を登録し直す」は 1 回で呼ぶ', !askedKey && rereg === 1 && !text(nodes).includes('鍵'));
   // api が更新を求めた（host.state update）
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'update' } });
   t.ok('host update: 「Pleiad を更新してください」（ボタンは出さない）', text(nodes).includes('Pleiad を更新してください') && !byFk(nodes, 'hostReregister') && !byFk(nodes, 'rebind'), text(nodes));
@@ -226,14 +222,13 @@ export default async function (t) {
     } finally { document.getElementById = savedGet; globalThis.window = savedWindow; }
   }
 
-  // ---- 始め直しの確かめ（鍵を待つ PC）: 見せた keyId と件数を confirm に付けて送る・数字が変わったらチェックを外す ----
+  // ---- 容量の上限を知らせ、確かめた後に同期をリセットする ----
   {
     const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
     const savedGet = document.getElementById;
     document.getElementById = id => nodes2[id] ?? null;
     const invoked = [];
     let resetReply = null;
-    const WAIT = { keyId: 'key-1', itemCount: 312, totalBytes: 4_404_019, updatedAt: '2026-10-21T04:00:00Z', holder: false, holders: [] };
     try {
       const settings = setupPlusSettings({
         cmd: async (name, args) => {
@@ -245,35 +240,17 @@ export default async function (t) {
       });
       const panel = () => [nodes2.plusPanel];
       settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered' } } });
-      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: WAIT } });
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: { kind: 'preparing' } } });
+      t.ok('準備中は同期のリセットを表示しない', !byFk(panel(), 'syncReset'));
+      settings.event({ type: 'plusSyncStatus', status: { state: 'quota', totalBytes: 2000, limitBytes: 2000 } });
       byFk(panel(), 'syncReset').onclick();
-      t.ok('窓を開いた直後はチェックが外れていて押せない', byFk(panel(), 'syncResetCheck')?.checked === false && byFk(panel(), 'syncResetYes')?.disabled === true);
+      t.ok('容量上限のときは確かめを開く', byFk(panel(), 'syncResetYes')?.disabled === false);
+      resetReply = { reset: true, status: { state: 'idle', wait: null } };
       byFk(panel(), 'syncResetYes').onclick();
       await new Promise(r => setImmediate(r));
-      t.ok('チェックの前に「消して始め直す」を呼んでも送らない', !invoked.some(([op]) => op === 'plus.syncReset'));
-      const check = byFk(panel(), 'syncResetCheck');
-      check.checked = true; check.onchange();
-      resetReply = { confirmNeeded: true, status: { state: 'waiting_key', wait: { ...WAIT, itemCount: 315 } } };
-      byFk(panel(), 'syncResetYes').onclick();
-      await new Promise(r => setImmediate(r));
-      const sentReset = invoked.filter(([op]) => op === 'plus.syncReset').at(-1);
-      t.ok('plus.syncReset に見せた keyId と件数を confirm で付ける', sentReset?.[1]?.confirm?.keyId === 'key-1' && sentReset[1].confirm.itemCount === 312, JSON.stringify(sentReset));
-      t.ok('confirmNeeded なら窓を開いたまま、新しい件数でチェックを外す',
-        nodes2.plusPanel.textContent.includes('確かめている間に、サーバーのデータが変わりました') && nodes2.plusPanel.textContent.includes('315 件') && byFk(panel(), 'syncResetCheck')?.checked === false);
-      // もう一度チェックして送る → 今度は始め直せた
-      byFk(panel(), 'syncResetCheck').checked = true; byFk(panel(), 'syncResetCheck').onchange();
-      resetReply = { confirmNeeded: false, status: { state: 'idle', wait: null } };
-      byFk(panel(), 'syncResetYes').onclick();
-      await new Promise(r => setImmediate(r));
-      const sent2 = invoked.filter(([op]) => op === 'plus.syncReset').at(-1);
-      t.ok('2 回目は新しい件数で送り、窓を閉じる', sent2?.[1]?.confirm?.itemCount === 315 && !byFk(panel(), 'syncResetCheck'), JSON.stringify(sent2));
-      // 窓を開いている間に、ほかの PC が上げて件数が変わった（plusSyncStatus）
-      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: WAIT } });
-      byFk(panel(), 'syncReset').onclick();
-      byFk(panel(), 'syncResetCheck').checked = true; byFk(panel(), 'syncResetCheck').onchange();
-      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: { ...WAIT, itemCount: 320 } } });
-      t.ok('確かめている間に件数が変わったら、チェックを外して変わった旨を出す',
-        byFk(panel(), 'syncResetCheck')?.checked === false && nodes2.plusPanel.textContent.includes('320 件') && nodes2.plusPanel.textContent.includes('サーバーのデータが変わりました'));
+      const sentReset = invoked.find(([op]) => op === 'plus.syncReset');
+      t.ok('確かめたら引数なしでリセットを送り、確かめを閉じる',
+        JSON.stringify(sentReset?.[1]) === '{}' && !byFk(panel(), 'syncResetYes'), JSON.stringify(sentReset));
       // 利用者が外した PC: 「この PC を登録し直す」は plus.hostReregister
       settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'removed' } } });
       byFk(panel(), 'hostReregister').onclick();
@@ -318,7 +295,7 @@ export default async function (t) {
       let d = dialog();
       t.ok('承認の窓: 申し込みが来たら、どの画面にいても rm-dialog の窓を開く', d?.open === true && d.className === 'rm-dialog' && d.getAttribute('aria-labelledby') === 'plusSyncApprovalTitle');
       t.ok('承認の窓: 題・PC の種類と版・3 桁ずつの確認コード・見比べる案内',
-        d.textContent.includes('「lap」に同期の鍵を渡しますか？') && d.textContent.includes('Windows · 0.34.0') && d.textContent.includes('731 058') && d.textContent.includes('同じ数字が出ている'), d.textContent);
+        d.textContent.includes('「lap」の同期を許可しますか？') && d.textContent.includes('Windows · 0.34.0') && d.textContent.includes('731 058') && d.textContent.includes('同じ数字が出ている'), d.textContent);
       let prevented = false;
       d.dispatchEvent({ type: 'cancel', preventDefault: () => { prevented = true; } });
       t.ok('承認の窓: Esc では黙って閉じない', prevented && d.open === true);
@@ -349,27 +326,15 @@ export default async function (t) {
       byFk([dialog()], 'syncApproveYes').onclick();
       await new Promise(r => setImmediate(r));
       t.ok('取り下げられていたら窓を閉じ、同期の行に「取り下げられました」', dialog().open === false && nodes2.plusPanel.textContent.includes('申し込みが取り下げられました'), nodes2.plusPanel.textContent);
-      // リセットを頼む: 最近のログインが要る → 一言とログインし直すボタン
-      const NOHOLD = { keyId: 'key-1', itemCount: 3, totalBytes: 1000, updatedAt: null, v2: true, holder: false, holders: [], recovery: null };
-      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: NOHOLD } });
-      replies['plus.syncRecoveryRequest'] = { reauth: true, status: { state: 'waiting_key', wait: NOHOLD } };
-      byFk([nodes2.plusPanel], 'syncRecoveryRequest').onclick();
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: { kind: 'preparing', relogin: true } } });
+      t.ok('自動で始め直すために再ログインが必要なら案内を出す', nodes2.plusPanel.textContent.includes('ログインし直してください')
+        && byFk([nodes2.plusPanel], 'syncRelogin') !== null && !byFk([nodes2.plusPanel], 'syncReset'));
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: { kind: 'restarted', keyId: 'key-new', byName: 'lap' } } });
+      replies['plus.syncAcceptRestart'] = { accepted: true, status: { state: 'waiting_key', wait: { kind: 'approval' } } };
+      byFk([nodes2.plusPanel], 'syncAcceptRestart').onclick();
       await new Promise(r => setImmediate(r));
-      t.ok('「同期をリセット」は plus.syncRecoveryRequest を送り、reauth ならログインし直す案内', invoked.at(-1)?.[0] === 'plus.syncRecoveryRequest'
-        && nodes2.plusPanel.textContent.includes('ログインし直してください') && byFk([nodes2.plusPanel], 'syncRelogin') !== null);
-      // 待ちが明けた: 始め直すはチェックを入れてからだけ plus.syncRecoveryComplete
-      const R = { requestedBy: 'me', requestedAt: '2026-01-01T00:00:00Z', readyAt: '2026-01-04T00:00:00Z', requestedByName: 'me' };
-      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: { ...NOHOLD, recovery: R, recoveryMine: true } } });
-      byFk([nodes2.plusPanel], 'syncReset').onclick();
-      byFk([nodes2.plusPanel], 'syncResetYes').onclick();
-      await new Promise(r => setImmediate(r));
-      t.ok('リセットの始め直し: チェックの前は送らない', !invoked.some(([op]) => op === 'plus.syncRecoveryComplete'));
-      byFk([nodes2.plusPanel], 'syncResetCheck').checked = true; byFk([nodes2.plusPanel], 'syncResetCheck').onchange();
-      replies['plus.syncRecoveryComplete'] = { done: true, status: { state: 'idle' } };
-      byFk([nodes2.plusPanel], 'syncResetYes').onclick();
-      await new Promise(r => setImmediate(r));
-      t.ok('リセットの始め直し: チェックを入れたら plus.syncRecoveryComplete を送り、窓を閉じる',
-        invoked.at(-1)?.[0] === 'plus.syncRecoveryComplete' && !byFk([nodes2.plusPanel], 'syncResetCheck') && !invoked.some(([op]) => op === 'plus.syncReset'));
+      t.ok('始め直された同期に加わる操作は、表示した鍵の ID を送る',
+        invoked.at(-1)?.[0] === 'plus.syncAcceptRestart' && invoked.at(-1)[1].keyId === 'key-new');
     } finally { document.getElementById = savedGet; document.createElement = savedCreate; document.body = savedBody; }
   }
 

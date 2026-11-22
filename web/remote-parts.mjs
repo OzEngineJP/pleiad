@@ -224,7 +224,7 @@ export function errorLine(text) {
   return p;
 }
 
-function spinner() {
+export function spinner() {
   const spin = svgEl('svg', { class: 'rm-spin', viewBox: '0 0 16 16', 'aria-hidden': 'true' });
   spin.append(svgEl('circle', { class: 'rm-spin-track', cx: 8, cy: 8, r: 6 }), svgEl('path', { class: 'rm-spin-arc', d: 'M8 2a6 6 0 0 1 6 6' }));
   return spin;

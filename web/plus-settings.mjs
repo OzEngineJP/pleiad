@@ -150,9 +150,8 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
   }
 
   // この PC の行（host は B4 が埋める。null なら出さない）
-  // ホストの鍵を作り直す: ほかのアカウントの PC と同じ鍵のとき（「つなぎ直す」）・外されて同じ鍵では戻れないとき
-  // （「この PC を登録し直す」）。どちらも同じ確かめを通す
-  const rebindRow = ({ label = t('settings.plus.rebind'), fk = 'rebind', cls = 'btn btn-quiet' } = {}) => {
+  // ほかのアカウントの PC と同じ鍵で登録できないときは「つなぎ直す」を確かめる
+  const rebindRow = () => {
     if (confirming) {
       // 確かめの窓は今の設定の画面の確かめと同じ作り（.rm-confirm）
       const box = el('div', 'rm-confirm');
@@ -164,7 +163,7 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
       out.push(box);
     } else {
       const acts = el('div', 'rm-acts');
-      acts.append(actButton(label, askRebind, cls, { fk }));
+      acts.append(actButton(t('settings.plus.rebind'), askRebind, 'btn btn-quiet', { fk: 'rebind' }));
       out.push(acts);
     }
   };
@@ -173,10 +172,6 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
     rebindRow();
   } else if (s.host?.state === 'limit') {
     out.push(el('p', 'rm-warn', t('settings.plus.hostLimit')));
-  } else if (s.host?.state === 'removed' && s.host.error?.permanent) {
-    // 外された PC は同じ鍵では戻れない（受け入れの v2 の api）: 「この PC を登録し直す」は鍵を作り直す
-    out.push(el('p', 'rm-warn', t('settings.plus.hostRemovedKey')));
-    rebindRow({ label: t('settings.plus.hostReregister'), fk: 'hostReregister', cls: 'btn' });
   } else if (s.host?.state === 'update') {
     if (!s.needsUpdate) out.push(el('p', 'rm-warn', t('settings.plus.needsUpdate')));
   } else if (s.host?.state === 'removed') {
@@ -212,12 +207,10 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   let confirming = false, busy = false, message = '';
   /** ログインで委譲と通話に plus が自動で選ばれた案内を出す（閉じたら prefs.plus.autoNoticeSeen に書いて二度と出さない） */
   let autoNotice = false;
-  /** 同期の状態（plus.syncStatus 操作と plusSyncStatus 出来事）・「やり直す」の確かめ・同期の操作の失敗 */
+  /** 同期の状態（plus.syncStatus 操作と plusSyncStatus 出来事）・「同期をリセット」の確かめ（容量の上限のとき）・同期の操作の失敗 */
   let syncStatus = null, syncConfirming = false, syncBusy = false, syncMessage = '';
   /** プランの「再試行」で読み直している間 */
   let retrying = false;
-  /** 鍵を持たない PC の確かめの窓: チェックを入れたか・確かめている間にサーバーの件数が変わったか */
-  let syncChecked = false, syncChanged = false;
   /**
    * 届いた変更の面（null は Pleiad Plus のページ）: { items, open, details: id → 中身, results: id → 押した結果, busy, loading, message }。
    * 押し終えた行は一覧から外さずに残す（「取り込みました」）
@@ -225,20 +218,18 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   let inbox = null;
   /** 前に受けた受け入れ待ちの件数と時刻（変わったときだけ一覧を読み直す） */
   let inboxSeen = { at: null, count: 0 };
-  /** リセットの操作の結果の一言（plus-sync.mjs の recoveryNote） */
+  /** 始め直しを止める操作の結果の一言（plus-sync.mjs の recoveryNote） */
   let recoveryNote = '';
 
   function syncView() {
     return {
       enabled: status?.account?.sync?.enabled !== false, sync: syncStatus,
       confirming: syncConfirming, message: syncMessage, busy: syncBusy,
-      resetChecked: syncChecked, resetChanged: syncChanged, onResetCheck: v => { syncChecked = v === true; paint(); },
       onToggle: syncToggle, onNow: () => syncSend('plus.syncNow'),
       onAskReset: askSyncReset, onCancelReset: cancelSyncReset, onReset: syncReset,
       onOpenConflicts: () => syncSend('plus.syncOpenConflicts'),
       onOpenInbox: openInbox,
-      recoveryNote, onRecovery: syncRecovery, onAcceptRestart: acceptSyncRestart, onLogin: () => send('plusLogin'),
-      onOpenAccount: (inMobileShell() ? status?.urls?.profile : status?.urls?.account) ? (() => openExternalLink(inMobileShell() ? status.urls.profile : status.urls.account)) : null,
+      recoveryNote, onRecoveryStop: stopSyncRecovery, onAcceptRestart: acceptSyncRestart, onLogin: () => send('plusLogin'),
     };
   }
 
@@ -380,7 +371,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       paintInto(root, JSON.stringify(['inbox', inbox]), () => renderInbox(inboxView()));
       return;
     }
-    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage, retrying, syncChecked, syncChanged, recoveryNote]);
+    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage, retrying, recoveryNote]);
     paintInto(root, sig, () => {
       const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming, syncView: syncView(), retrying, onRetry: retryPlan, reregister: hostReregister });
       if (autoNotice) nodes.unshift(autoNoticeRow());
@@ -418,58 +409,38 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   function cancelRebind() { confirming = false; paint(); }
 
   function askSyncReset() {
-    syncConfirming = true; syncChecked = false; syncChanged = false;
+    syncConfirming = true;
     paint();
-    queueMicrotask(() => (root.querySelector('[data-fk="syncResetNo"]') ?? root.querySelector('[data-fk="syncHelpClose"]'))?.focus());
+    queueMicrotask(() => root.querySelector('[data-fk="syncResetNo"]')?.focus());
   }
-  function cancelSyncReset() { syncConfirming = false; syncChecked = false; syncChanged = false; paint(); }
+  function cancelSyncReset() { syncConfirming = false; paint(); }
 
-  /** 確かめの窓で見せている数字（鍵を待つときの keyId と件数）。変わったらチェックを外す */
-  const waitSig = s => (s?.state === 'waiting_key' && s.wait ? `${s.wait.keyId ?? ''}:${s.wait.itemCount ?? ''}` : '');
-
-  /**
-   * 「同期をリセット」「消して始め直す」。鍵を待つ PC は、見せた keyId と件数を confirm に付けて送る。
-   * 数字が変わっていた（confirmNeeded）ら窓を開いたまま、新しい数字でもう一度チェックしてもらう
-   */
+  /** 「同期をリセット」（容量の上限のときだけ。core は上限でなければ 409 NOT_QUOTA で断る） */
   async function syncReset() {
     if (syncBusy) return;
-    const waiting = syncStatus?.state === 'waiting_key';
-    if (waiting && !syncChecked) return;
-    const w = waiting ? syncStatus.wait : null;
-    const confirm = w?.keyId && Number.isInteger(w.itemCount) ? { keyId: w.keyId, itemCount: w.itemCount } : null;
     syncBusy = true; syncMessage = '';
     paint();
     try {
-      const out = await cmd('invoke', { op: 'plus.syncReset', args: confirm ? { confirm } : {} });
+      const out = await cmd('invoke', { op: 'plus.syncReset', args: {} });
       if (out?.status && typeof out.status === 'object') syncStatus = out.status;
-      if (out?.confirmNeeded) { syncChecked = false; syncChanged = true; }
-      else { syncConfirming = false; syncChecked = false; syncChanged = false; }
-    } catch (e) { syncMessage = e.message; syncConfirming = false; syncChecked = false; }
-    finally { syncBusy = false; paint(); }
+    } catch (e) { syncMessage = e.message; }
+    finally { syncConfirming = false; syncBusy = false; paint(); }
   }
 
-  /**
-   * リセットの操作（plus.syncRecovery*）。結果を一言にして出す（最近のログインが要る・ほかの PC が先に頼んだ など）。
-   * complete は待ちが明けた「同期をリセット」の確かめの窓から（チェックを入れたときだけ）
-   */
-  async function syncRecovery(action) {
+  /** ほかの PC の始め直しを、この PC の K の署名で止める（scene 05）。結果を一言にして出す */
+  async function stopSyncRecovery() {
     if (syncBusy) return;
-    if (action === 'complete' && !syncChecked) return;
-    const op = { request: 'plus.syncRecoveryRequest', cancel: 'plus.syncRecoveryCancel', complete: 'plus.syncRecoveryComplete', stop: 'plus.syncRecoveryStop' }[action];
-    if (!op) return;
     syncBusy = true; syncMessage = ''; recoveryNote = '';
     paint();
     try {
-      const out = await cmd('invoke', { op, args: {} });
+      const out = await cmd('invoke', { op: 'plus.syncRecoveryStop', args: {} });
       if (out?.status && typeof out.status === 'object') syncStatus = out.status;
-      recoveryNote = out?.reauth ? 'reauth' : out?.other ? 'other' : out?.holder ? 'holder' : out?.waiting ? 'waiting' : out?.gone ? 'gone'
-        : action === 'stop' ? (out?.stopped ? 'stopped' : 'stopFailed') : '';
-      if (action === 'complete') { syncConfirming = false; syncChecked = false; syncChanged = false; }
-    } catch (e) { syncMessage = e.message; if (action === 'complete') { syncConfirming = false; syncChecked = false; } }
+      recoveryNote = out?.stopped ? 'stopped' : out?.reason === 'gone' ? 'gone' : 'stopFailed';
+    } catch (e) { syncMessage = e.message; }
     finally { syncBusy = false; paint(); }
   }
 
-  /** 前の鍵では確かめられない新しい鍵を受け取る（同期のリセットなど）。この後、鍵を持つ PC の承認の窓を通して届く */
+  /** ほかの PC で始め直された同期に加わる（「{name} と同期する」）。この後、ほかの PC の許可の窓を通して届く */
   async function acceptSyncRestart(keyId) {
     if (syncBusy || !keyId) return;
     syncBusy = true; syncMessage = '';
@@ -482,7 +453,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
     finally { syncBusy = false; paint(); }
   }
 
-  // ---- 同期の鍵を渡す承認の窓（端末の承認の窓と同じ組み方。どの画面にいても出す）
+  // ---- 新しい PC の同期を許可する窓（端末の承認の窓と同じ組み方。どの画面にいても出す）
   /** 窓（初めて要るときに作る）・出している申し込み（hostId:code）・次に窓に出す一言 */
   let approvalDialog = null, approving = '', approvalNote = '';
   function paintApproval() {
@@ -509,7 +480,8 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
     kind.append(el('span', 'card-kind', `◆ ${t('settings.plus.syncApprove.mark')}`));
     const title = el('h2', null, t('settings.plus.syncApprove.title', { name }));
     title.id = 'plusSyncApprovalTitle';
-    const meta = [pcPlatform(current.platform), current.app].filter(Boolean).join(' · ');
+    const os = pcPlatform(current.platform);
+    const meta = os && current.app ? t('settings.plus.syncApprove.device', { os, version: current.app }) : (os || current.app || '');
     const state = el('p', 'mp-state rm-dialog-state', approvalNote);
     state.setAttribute('role', 'status');
     approvalNote = '';
@@ -523,9 +495,9 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       el('p', 'rm-dialog-label', t('settings.plus.syncCode')), el('p', 'rm-dialog-code', syncCodeText(current.code)),
       el('p', 'rm-dialog-hint', t('settings.plus.syncApprove.hint', { name })), state, actions);
     if (!approvalDialog.open) approvalDialog.showModal();
-    deny.focus();   // 既定の居場所は「渡さない」（Enter の押し間違いで渡さない）
+    deny.focus();   // 既定の居場所は「許可しない」（Enter の押し間違いで許可しない）
   }
-  /** 渡す・渡さない。渡す前にコードを読み直し、変わっていたら新しいコードで窓を出し直す */
+  /** 許可する・許可しない。許可する前にコードを読み直し、変わっていたら新しいコードで窓を出し直す */
   async function decideApproval(a, yes, state) {
     for (const b of approvalDialog.querySelectorAll('button')) b.disabled = true;
     try {
@@ -621,11 +593,9 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       return;
     }
     if (ev?.type === 'plusSyncStatus') {
-      const before = waitSig(syncStatus);
       syncStatus = ev.status ?? syncStatus;
-      const after = waitSig(syncStatus);
-      // 確かめている間にほかの PC が上げて件数が変わった: 新しい数字でもう一度チェックしてもらう
-      if (syncConfirming && before && after && before !== after) { syncChecked = false; syncChanged = true; }
+      // 容量の上限から外れた: 「同期をリセット」の確かめを閉じる
+      if (syncConfirming && syncStatus?.state !== 'quota') syncConfirming = false;
       // 届いた変更の面を開いている間に、届いたもの・残りの数が変わった: 一覧を読み直す
       if (inbox && !inbox.loading && (syncStatus?.inboxAt !== inboxSeen.at || syncStatus?.inbox !== inboxSeen.count)) loadInbox();
       inboxSeen = { at: syncStatus?.inboxAt ?? null, count: syncStatus?.inbox ?? 0 };

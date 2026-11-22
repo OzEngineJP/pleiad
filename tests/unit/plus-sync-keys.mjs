@@ -40,7 +40,7 @@ export default async function (t) {
       hostId, uid, publicKey: 'not-used', name: label, platform: 'linux', online: false, lastSeenAt: null,
       syncPublicKey: await keys.publicKey(), createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, ++hostSeq)).toISOString(), deviceCount: 0,
     };
-    return { hostId, keys, secrets, logs, shared };
+    return { hostId, keys, secrets, logs, shared, client };
   }
   const resets = () => plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length;
   /** 墓標でない項目を 1 つ台帳に置く（ほかの PC が同期したデータの代わり） */
@@ -65,8 +65,11 @@ export default async function (t) {
     const firstReset = plus.state.syncBodies.find(b => b.path === '/v1/sync/reset');
     t.ok('最初の reset の previousKeyId は null', JSON.parse(firstReset.body).previousKeyId === null);
     const stored = await a.secrets.get(SYNC_ACCOUNT_KEY);
-    t.ok('K は手元の plus:syncAccountKey に { keyId, key } で保管する', stored?.keyId === r1.key.keyId && Buffer.from(stored.key, 'base64url').equals(r1.key.key));
+    t.ok('K は手元の plus:syncAccountKey に uid と組にして保管する', stored?.uid === UID && stored.keyId === r1.key.keyId && Buffer.from(stored.key, 'base64url').equals(r1.key.key));
     t.ok('ホストの同期の鍵対（plus:syncKey）は始め方で作り替えない', pairBefore && JSON.stringify(await a.secrets.get(SYNC_KEY_PAIR)) === JSON.stringify(pairBefore));
+    await a.secrets.set(SYNC_ACCOUNT_KEY, { keyId: stored.keyId, key: stored.key });
+    await a.keys.setup();
+    t.ok('uid の無い旧形式を、同じ K のまま今の uid に結び直す', (await a.secrets.get(SYNC_ACCOUNT_KEY))?.uid === UID && ledger.keyId === stored.keyId);
     t.ok('台帳の syncPublicKey は plus:syncKey の公開鍵', plus.state.hosts[a.hostId].syncPublicKey === pairBefore.publicKey);
     const again = await a.keys.setup();
     t.ok('手元の keyId が同じならそのまま使う（changed: false・reset しない）',
@@ -106,7 +109,7 @@ export default async function (t) {
     const w3 = await c.keys.setup();
     t.ok('まだ鍵を持つホスト（b）が台帳に居れば作り直さずに待つ', w3.status === 'waiting_key' && plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length === resetsBefore);
     t.ok('待つ間の wait に、鍵を持つ PC（b・台帳に居る）を載せる',
-      w3.wait?.holder === true && w3.wait.holders.some(h => h.hostId === b.hostId && h.registered === true && h.name === 'b'), JSON.stringify(w3.wait));
+      w3.wait?.kind === 'approval' && w3.wait.approvers.includes('b'), JSON.stringify(w3.wait));
     delete plus.state.hosts[b.hostId];
     const r3 = await c.keys.setup();
     const lastReset = JSON.parse(plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').at(-1).body);
@@ -154,9 +157,9 @@ export default async function (t) {
     t.ok('enabled が false なら何もしない（disabled）', off.status === 'disabled');
     plus.state.accounts[UID2].sync = {};
 
-    // ---- ログアウト
+    // ---- 別アカウントへの切り替え
     await d.keys.forget();
-    t.ok('ログアウトで plus:syncAccountKey を消し、plus:syncKey は残す', !(await d.secrets.get(SYNC_ACCOUNT_KEY)) && Boolean((await d.secrets.get(SYNC_KEY_PAIR))?.privateKey));
+    t.ok('別アカウントで plus:syncAccountKey を消し、plus:syncKey は残す', !(await d.secrets.get(SYNC_ACCOUNT_KEY)) && Boolean((await d.secrets.get(SYNC_KEY_PAIR))?.privateKey));
 
     // ---- サーバーにデータがあり、鍵を持つ PC が外れた（docs/plus.md「同期の始め直しと登録の外れ」）
     const UID3 = 'test-user-3';
@@ -167,42 +170,15 @@ export default async function (t) {
     putItem(UID3, 'item-f-2', 1024);
     const g = await makeHost(UID3, 'g');
     const gw1 = await g.keys.setup();
-    t.ok('鍵を持つ PC（f）が居れば待ち、wait に件数・大きさ・その PC を載せる',
-      gw1.status === 'waiting_key' && gw1.wait?.holder === true && gw1.wait.itemCount === 2 && gw1.wait.totalBytes === 5120 && gw1.wait.holders[0]?.hostId === f.hostId, JSON.stringify(gw1.wait));
+    t.ok('鍵を持つ PC が居れば承認待ちに名前を出す', gw1.wait?.kind === 'approval' && gw1.wait.approvers[0] === 'f');
     plus.unbindHost(f.hostId, 'admin');
     const gResets = resets();
-    const gw2 = await g.keys.setup();
-    t.ok('鍵を持つ PC が外れても、データがあれば作り直さずに待つ（reset を送らない）', gw2.status === 'waiting_key' && resets() === gResets && plus.state.sync[UID3].keyId === fKey.key.keyId);
-    t.ok('wait は holder: false で、外れた PC を registered: false・名前つきで載せる',
-      gw2.wait?.holder === false && gw2.wait.holders.length === 1 && gw2.wait.holders[0].hostId === f.hostId && gw2.wait.holders[0].registered === false && gw2.wait.holders[0].name === 'f', JSON.stringify(gw2.wait));
-    t.ok('wait に keyId・itemCount・totalBytes・updatedAt を載せる',
-      gw2.wait.keyId === fKey.key.keyId && gw2.wait.itemCount === 2 && gw2.wait.totalBytes === 5120 && typeof gw2.wait.updatedAt === 'string');
-    // 人の確かめ無しの「やり直す」→ api が 409 reset_confirm で断り、何も消えない
-    const gc1 = await g.keys.setup({ forceNew: true });
-    t.ok('確かめ無しのやり直しは confirm_needed（何も消えない）',
-      gc1.status === 'confirm_needed' && gc1.wait?.itemCount === 2 && gc1.wait.keyId === fKey.key.keyId && Object.keys(plus.state.sync[UID3].items).length === 2 && plus.state.sync[UID3].keyId === fKey.key.keyId, JSON.stringify(gc1));
-    // 確かめの窓を開いている間に件数が変わった → 古い件数の confirm は断られ、新しい値が返る
-    putItem(UID3, 'item-f-3', 512);
-    const gc2 = await g.keys.setup({ forceNew: true, confirm: { keyId: fKey.key.keyId, itemCount: 2 } });
-    t.ok('見た件数が今と違えば confirm_needed で、wait は新しい件数', gc2.status === 'confirm_needed' && gc2.wait?.itemCount === 3 && gc2.wait.totalBytes === 5632 && Object.keys(plus.state.sync[UID3].items).length === 3, JSON.stringify(gc2.wait));
-    const sentConfirm = JSON.parse(plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').at(-1).body).confirm;
-    t.ok('reset の本文に confirm { keyId, itemCount } を付ける', sentConfirm?.keyId === fKey.key.keyId && sentConfirm.itemCount === 2, JSON.stringify(sentConfirm));
-    // 前の版のアプリ（reset の本文に confirm が無い）: 鍵を持たない PC の reset は 409 reset_confirm で断られ、何も消えない
-    const oldErrs = [];
-    const o = await makeHost(UID3, 'o-old-app', { wrapClient: base => ({
-      async request(method, p, opts) {
-        if (p === '/v1/sync/reset' && opts?.body) { const { confirm: _drop, ...rest } = opts.body; opts = { ...opts, body: rest }; }
-        try { return await base.request(method, p, opts); } catch (e) { oldErrs.push(e); throw e; }
-      },
-    }) });
-    await o.keys.setup({ forceNew: true, confirm: { keyId: gc2.wait.keyId, itemCount: gc2.wait.itemCount } });
-    t.ok('confirm を送らない前の版の reset は 409 reset_confirm（今の値つき）で、項目も keyId も残る',
-      oldErrs.at(-1)?.status === 409 && oldErrs.at(-1).code === 'reset_confirm' && oldErrs.at(-1).body?.error?.itemCount === 3
-      && Object.keys(plus.state.sync[UID3].items).length === 3 && plus.state.sync[UID3].keyId === fKey.key.keyId,
-      JSON.stringify({ status: oldErrs.at(-1)?.status, code: oldErrs.at(-1)?.code, body: oldErrs.at(-1)?.body }));
-    const gr = await g.keys.setup({ forceNew: true, confirm: { keyId: gc2.wait.keyId, itemCount: gc2.wait.itemCount } });
-    t.ok('今の件数で確かめれば作り直し、項目と鍵の行を消す',
-      gr.status === 'ready' && gr.changed === true && gr.key.keyId !== fKey.key.keyId && Object.keys(plus.state.sync[UID3].items).length === 0 && Object.keys(plus.state.sync[UID3].keys).join() === g.hostId);
+    const gw2 = await g.keys.setup({ forceNew: true });
+    t.ok('前の版の api にデータがあるときは始め直さずに待つ', gw2.status === 'waiting_key' && gw2.wait?.kind === 'preparing' && resets() === gResets && plus.state.sync[UID3].keyId === fKey.key.keyId);
+    const body = { ...JSON.parse(plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').at(-1).body), hostId: g.hostId,
+      keyId: '0000000000000001', previousKeyId: fKey.key.keyId };
+    const rejected = await g.client.request('POST', '/v1/sync/reset', { body }).catch(e => e);
+    t.ok('古いクライアントが確かめを送らずに消そうとすると拒む', rejected.status === 409 && rejected.code === 'reset_confirm' && Object.keys(plus.state.sync[UID3].items).length === 2);
     // 項目が 1 つも無いアカウントは、鍵を持つ PC が居なければ確かめずに作り直す
     const UID4 = 'test-user-4';
     account(UID4);
@@ -225,10 +201,9 @@ export default async function (t) {
     const pResets = resets();
     const pw = await p2.keys.setup();
     t.ok('前の api では件数が分からないので、鍵を持つ PC が居なくても自分からは作り直さない',
-      pw.status === 'waiting_key' && resets() === pResets && pw.wait?.itemCount === null && pw.wait.holder === false && plus.state.sync[UID5].keyId === p1Key.key.keyId, JSON.stringify(pw.wait));
+      pw.status === 'waiting_key' && resets() === pResets && pw.wait?.kind === 'preparing' && plus.state.sync[UID5].keyId === p1Key.key.keyId, JSON.stringify(pw.wait));
     const pr = await p2.keys.setup({ forceNew: true });
-    t.ok('前の api でも、人の「やり直す」なら作り直せる（confirm は送らない）',
-      pr.status === 'ready' && pr.key.keyId !== p1Key.key.keyId && !('confirm' in JSON.parse(plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').at(-1).body)));
+    t.ok('前の api でも、今の鍵を持たなければ作り直さない', pr.status === 'waiting_key' && resets() === pResets);
     plus.state.legacySync = false;
 
     // ---- 鍵は api に届かない

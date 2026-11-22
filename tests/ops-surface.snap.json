@@ -3644,51 +3644,6 @@
       "input": "25c7d85c859a"
     },
     {
-      "id": "plus.syncRecoveryCancel",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": false
-      },
-      "legacyCommand": null,
-      "input": "25c7d85c859a"
-    },
-    {
-      "id": "plus.syncRecoveryComplete",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": true,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": false
-      },
-      "legacyCommand": null,
-      "input": "25c7d85c859a"
-    },
-    {
-      "id": "plus.syncRecoveryRequest",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": true,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": false
-      },
-      "legacyCommand": null,
-      "input": "25c7d85c859a"
-    },
-    {
       "id": "plus.syncRecoveryStop",
       "risk": "write",
       "riskOf": false,
@@ -3716,7 +3671,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "b394a926c275"
+      "input": "25c7d85c859a"
     },
     {
       "id": "plus.syncSetEnabled",

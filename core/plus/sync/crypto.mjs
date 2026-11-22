@@ -180,6 +180,10 @@ export const resetMessage = ({ uid, previousKeyId, keyId, hostId, resetPublicKey
 /** 回復の取り消しの署名の文 */
 export const recoveryCancelMessage = ({ uid, keyId, requestedAt }) => `pleiad sync recovery cancel v1\n${uid}\n${keyId}\n${requestedAt}`;
 
+/** K を持つ証明で戻るときの署名の文（docs/plus.md「同期の始め直しと登録の外れ」）。最後は sha256(wrapped の文字列を UTF-8 で) の base64url */
+export const rejoinMessage = ({ uid, keyId, hostId, syncPublicKey, wrapped }) =>
+  `pleiad sync rejoin v1\n${uid}\n${keyId}\n${hostId}\n${syncPublicKey}\n${b64url(crypto.createHash('sha256').update(String(wrapped), 'utf8').digest())}`;
+
 /** 鍵の受け渡しの commit（nonceN・syncPubN は生のバイト列） */
 export function joinCommit(nonceN, syncPubN) {
   return b64url(crypto.createHash('sha256').update(Buffer.from(nonceN)).update(Buffer.from(syncPubN)).digest());

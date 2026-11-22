@@ -420,7 +420,15 @@ export default async function (t) {
     // ================= やり直す（新しい鍵）=================
     const oldKeyId = ledger.keyId;
     a.engine.stop(); await a.engine.start();
-    await a.engine.reset();
+    const tooBig = a.skill('demo', 'quota-reset.md');
+    await put(tooBig, 'a'.repeat(500));
+    plus.state.syncLimitBytes = ledger.totalBytes + 50;
+    await a.engine.run();
+    t.ok('容量上限のときにリセットできる', a.engine.status().state === 'quota');
+    await fs.unlink(tooBig);
+    const reset = await a.engine.reset();
+    t.ok('容量上限のリセットで鍵が変わる', reset.reset === true);
+    plus.state.syncLimitBytes = LIMIT;
     const fresh = plus.state.sync[UID];
     t.ok('やり直すと新しい鍵で手元の全部を上げ直す', fresh.keyId !== oldKeyId && a.engine.status().state === 'idle' && Object.keys(fresh.items).length > 0
       && Object.values(fresh.items).every(it => it.keyId === fresh.keyId));
@@ -491,6 +499,19 @@ export default async function (t) {
     readAccount('plus');
     await sync.update();
     t.ok('not_plus のあと、plus と読み直した update() で回して idle', sync.getSyncStatus().state === 'idle' && countS('GET /v1/sync/state') === notPlusState + 1);
+    for (const reason of ['401', 'refresh_denied', 'logout']) {
+      snap = { signedIn: false, reason, account: null };
+      await sync.update();
+      t.ok(`${reason}: サインアウトしても同期の鍵が残る`, (await a.secrets.get(SYNC_ACCOUNT_KEY))?.keyId === fresh.keyId);
+      snap = { signedIn: true, account: { uid: UID, status: 'plus' }, accountReadAt: ++readAt };
+      await sync.update();
+      t.ok(`${reason}: 同じアカウントに戻れば同期が続く`, sync.getSyncStatus().state === 'idle'
+        && (await a.secrets.get(SYNC_ACCOUNT_KEY))?.keyId === fresh.keyId);
+    }
+    snap = { signedIn: true, account: { uid: 'other-user', status: 'free' }, accountReadAt: ++readAt };
+    await sync.update();
+    const afterSwitch = JSON.parse(await fs.readFile(sync.engine.stateFile, 'utf8'));
+    t.ok('別のアカウントでは前の鍵と同期の記録を捨てる', !(await a.secrets.get(SYNC_ACCOUNT_KEY)) && afterSwitch.keyId == null);
     sync.stop();
 
     // ================= 鍵を持つ PC が外れた（運営の画面）→ 新しい PC は消さずに待つ → 外れた PC が登録し直す =================
@@ -515,11 +536,10 @@ export default async function (t) {
     t.ok('鍵を持つ PC が外れても、データがあれば新しい PC は始め直さずに待つ（reset を送らない・項目と keyId はそのまま）',
       c2Wait.state === 'waiting_key' && plus.state.syncBodies.filter(x => x.path === '/v1/sync/reset').length === resets2 && l2.keyId === key1 && live() === items1,
       JSON.stringify(c2Wait));
-    t.ok('待つ間の状態の wait: 鍵を持つ PC は外れている（holder: false）・件数はサーバーの項目の数',
-      c2Wait.wait?.holder === false && c2Wait.wait.itemCount === items1 && c2Wait.wait.holders.some(h => h.hostId === a2.hostId && h.registered === false), JSON.stringify(c2Wait.wait));
+    t.ok('活動中の PC が居なければ自動で始め直す準備をする', c2Wait.wait?.kind === 'preparing', JSON.stringify(c2Wait.wait));
     const c2Reset = await c2.engine.reset();
-    t.ok('確かめ無しの「やり直す」は confirmNeeded を返し、何も消えない',
-      c2Reset.confirmNeeded === true && c2Reset.status.state === 'waiting_key' && c2Reset.status.wait?.itemCount === items1 && l2.keyId === key1 && live() === items1, JSON.stringify(c2Reset));
+    t.ok('容量上限以外からはリセットできない', c2Reset.reset === false && c2Reset.status.state === 'waiting_key'
+      && l2.keyId === key1 && live() === items1, JSON.stringify(c2Reset));
     // 外れた A2: 403 host → unregistered で止まり、上へ 1 回だけ知らせる
     await put(a2.skill('mine-a2', 'more.md'), 'while removed\n');
     await a2.engine.run();
@@ -551,9 +571,15 @@ export default async function (t) {
     // A2 を止めた（PC を落とした）間に、A2 の設定を変える。C2 が同期をリセットする（鍵を持つので確かめは要らない）
     a2.engine.stop();
     a2.store.colorish = 'green';
+    const tooBig2 = c2.skill('mine-c2', 'quota-reset.md');
+    await put(tooBig2, 'a'.repeat(500));
+    plus.state.syncLimitBytes = l2.totalBytes + 50;
+    await c2.engine.run();
+    await fs.unlink(tooBig2);
     const c2Reset2 = await c2.engine.reset();
+    plus.state.syncLimitBytes = LIMIT;
     const key2 = plus.state.sync[UID2].keyId;
-    t.ok('鍵を持つ PC の「やり直す」は確かめ無しで作り直す', c2Reset2.confirmNeeded === false && key2 !== key1 && c2.engine.status().state === 'idle', JSON.stringify(c2Reset2));
+    t.ok('鍵を持つ PC の「やり直す」は確かめ無しで作り直す', c2Reset2.reset === true && key2 !== key1 && c2.engine.status().state === 'idle', JSON.stringify(c2Reset2));
     // A2 を起動し直す（C2 より後の時刻）。新しい鍵を受けて、覚えを空にしてから受ける
     await a2.clock.advance(c2.clock.now() - a2.clock.now() + 60_000);
     await a2.engine.start();

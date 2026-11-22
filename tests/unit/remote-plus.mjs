@@ -16,11 +16,14 @@ import { createPlusConfig } from '../../core/plus/config.mjs';
 import { createPlusClient } from '../../core/plus/client.mjs';
 import { createIdTokenVerifier } from '../../core/plus/verify.mjs';
 import { createPlusRelayAuthz } from '../lib/plus-relay-authz.mjs';
-import { plainCipher } from '../../core/secret-store.mjs';
+import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
+import { createSyncKeys } from '../../core/plus/sync/keys.mjs';
+import { createSyncTicket } from '../../core/plus/sync/ticket.mjs';
+import { b64url } from '../../core/plus/sync/crypto.mjs';
 import { startFakePlus } from '../lib/fake-plus.mjs';
 import { admitDevice, connectDevice, pairDevice } from '../lib/remote-device.mjs';
 import { pairingPayload } from '../../core/remote/pairing.mjs';
-import { generateKeyPair } from '../../core/remote/noise.mjs';
+import { generateKeyPair, hostIdFor } from '../../core/remote/noise.mjs';
 
 export const name = 'remote-plus';
 export const title = 'Pleiad Plus のつながり: この PC の登録・承認の窓での受け入れ・再接続・断り・止め・張り直し・own との共存';
@@ -44,6 +47,53 @@ function within(p, ms, label) {
     Promise.resolve(p).finally(() => clearTimeout(timer)),
     new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${label} が ${ms}ms で終わらない`)), ms); }),
   ]);
+}
+
+async function syncAfterMigration(t, plus, config, scratch) {
+  const uid = 'remote-sync-incident';
+  plus.state.accounts[uid] = { uid, status: 'plus', sync: { enabled: true } };
+  const client = createPlusClient({ config, getIdToken: async () => plus.issueIdToken(uid), appVersion: 'test' });
+  async function pc(name) {
+    const pair = generateKeyPair();
+    const hostId = hostIdFor(pair.publicKey);
+    const identity = { ...pair, hostId };
+    const secrets = createSecretStore({ file: path.join(scratch, name, 'plus-secrets.json'), cipher: plainCipher });
+    const opts = { client, secrets, uid: () => uid, hostId: () => hostId };
+    const legacy = createSyncKeys(opts);
+    const ticket = createSyncTicket({ client, identity: async () => identity });
+    plus.state.hosts[hostId] = { hostId, uid, name, publicKey: b64url(pair.publicKey), syncPublicKey: await legacy.publicKey(), createdAt: new Date().toISOString() };
+    return { hostId, legacy, current: createSyncKeys({ ...opts, ticket }) };
+  }
+
+  try {
+    plus.state.noTickets = true;
+    const desk = await pc('sync-desk');
+    const lap = await pc('sync-lap');
+    const standby = await pc('sync-standby');
+    const before = await desk.legacy.setup();
+    await lap.legacy.setup();
+    await desk.legacy.sharePending((await desk.legacy.setup()).state, before.key);
+    const lapBefore = await lap.legacy.setup();
+    t.ok('移行前の 2 台が同じ同期鍵を持つ', lapBefore.key?.keyId === before.key?.keyId);
+
+    plus.state.noTickets = false;
+    const deskAfter = await desk.current.setup();
+    const lapAfter = await lap.current.setup();
+    const ledger = plus.state.sync[uid];
+    t.ok('移行すると 2 台目へ同期鍵が自動で引き継がれる', deskAfter.key?.keyId !== before.key?.keyId
+      && lapAfter.key?.keyId === deskAfter.key?.keyId && !ledger.joins[lap.hostId]);
+
+    ledger.items = { previous: { rev: 1 } };
+    plus.unbindHost(desk.hostId, 'user');
+    plus.unbindHost(lap.hostId, 'user');
+    plus.state.clockOffsetMs = 8 * 86_400_000;
+    const restarted = await standby.current.setup();
+    t.ok('同期していた PC をすべて外して 7 日を過ぎると、残った PC が待たずに始め直す', restarted.status === 'ready'
+      && restarted.key?.keyId !== deskAfter.key?.keyId && !ledger.recovery && ledger.keys[standby.hostId] && !Object.keys(ledger.items).length);
+  } finally {
+    plus.state.noTickets = false;
+    plus.state.clockOffsetMs = 0;
+  }
 }
 
 export default async function (t) {
@@ -123,6 +173,7 @@ export default async function (t) {
   const live = [];
 
   try {
+    await syncAfterMigration(t, plus, plusConfig, scratch);
     // ---- 登録からつながりまで（自分の中継も設定して own・plus を並べる）
     await remote.setSettings({ relayUrl: ownUrl, enrollSecret: SECRET, enabled: true, hostName: 'plus-desk', plusConnect: true });
     const identity = await remote.store.peekIdentity();

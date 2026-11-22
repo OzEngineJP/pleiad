@@ -1014,7 +1014,7 @@ const plusLink = createPlusLink({
 remote.setPlusProvider(plusLink.provider);
 let lastPlusUid = null, sawSignedIn = false;
 /** ログイン・アカウント・設定が変わったときに、登録とつながりの条件を見直す。 */
-async function syncPlusLink({ registerHost = true } = {}) {
+async function syncPlusLink({ registerHost = true, signedInAgain = false } = {}) {
   const snap = plusSession.snapshot();
   if (snap.signedIn) sawSignedIn = true;
   const registrationInputs = JSON.stringify([snap.signedIn === true, snap.account?.uid ?? null, snap.account?.status ?? null]);
@@ -1044,7 +1044,9 @@ async function syncPlusLink({ registerHost = true } = {}) {
     admission: cfg?.admission ?? null,
   });
   if (shouldRegisterHost) await plusHost.maybeRegister();
-  void plusSync.update().catch(() => {});
+  void plusSync.update().then(() => {
+    if (signedInAgain && plusSync.getSyncStatus()?.wait?.relogin) return plusSync.engine.run();
+  }).catch(() => {});
   plusInputsLast = plusInputs(st);
   remote.refreshPlus();
 }
@@ -1062,7 +1064,7 @@ function syncPlusFromRemote(status) {
   const key = plusInputs(status);
   if (key !== plusInputsLast) { plusInputsLast = key; remote.refreshPlus(); }
 }
-plusSession.onChange(() => { void syncPlusLink(); });
+plusSession.onChange(({ type }) => { void syncPlusLink({ signedInAgain: type === 'signedIn' }); });
 // 暗号化の口（main の safeStorage）が答えを返せないまま待ちの上限を過ぎた後に答えた（macOS でキーチェーンの確認に答えた）。
 // 秘密を読めずに止まったリモートの接続・Plus のログインを読み直し、起動時に回せなかった平文の暗号化し直しを回す。再起動は要らない
 secretCipher.onAvailable?.(() => {
@@ -1119,7 +1121,7 @@ plusSync.onChange(({ approvals }) => {
       : null);
   } catch (e) { console.error(`  notifications: ${e.message}`); }
 });
-// ほかの PC が同期の回復を頼んでいる（この PC は今の鍵を持っていて止められる）: 必ず知らせる。頼んだ時刻が版
+// ほかの PC が同期の始め直しを頼んでいる（この PC は今の鍵を持っていて止められる）: 必ず知らせる。頼んだ時刻が版
 plusSync.onChange(({ recoveryAlert }) => {
   try {
     const at = recoveryAlert?.requestedAt ?? null;
@@ -1129,14 +1131,14 @@ plusSync.onChange(({ recoveryAlert }) => {
       : null);
   } catch (e) { console.error(`  notifications: ${e.message}`); }
 });
-// ほかの PC が、前の鍵では確かめられない新しい鍵で始め直した（回復など）: この PC は自動で移らず、人が選ぶのを待つ。
+// ほかの PC が、前の鍵では確かめられない新しい鍵で始め直した: この PC は自動で移らず、人が「{name} と同期する」を押すのを待つ。
 // 新しい keyId が版。通信の誤りの間は置いたまま（消して置き直すと、また未読になる）
 plusSync.onChange(({ state, wait }) => {
   if (state === 'error') return;
   try {
-    const r = state === 'waiting_key' ? wait?.restarted ?? null : null;
+    const r = state === 'waiting_key' && wait?.kind === 'restarted' ? wait : null;
     inbox.standing('syncRestarted', r
-      ? { version: `${r.keyId}${r.unverified ? ':unverified' : ''}`, at: Number.isFinite(Date.parse(r.at)) ? Date.parse(r.at) : Date.now(),
+      ? { version: String(r.keyId), at: Date.now(),
         data: { ask: 'syncRestarted', title: r.byName ?? '', settings: 'plus' } }
       : null);
   } catch (e) { console.error(`  notifications: ${e.message}`); }
@@ -6777,8 +6779,17 @@ function opsDeps(lng = currentLocale()) {
       syncStatus: () => plusSync?.getSyncStatus() ?? null,
       syncSetEnabled: (enabled) => plusSync.setSyncEnabled(enabled),
       syncNow: () => plusSync.engine.run(),
-      syncReset: (confirm) => plusSync.resetSync(confirm),
-      hostReregister: () => plusHost.reregister(),
+      syncReset: () => plusSync.resetSync(),
+      hostReregister: async () => {
+        const before = plusHost.host();
+        if (before.state !== 'removed') return;
+        if (before.error?.permanent) await remote.plusHostRebind();
+        await plusHost.reregister();
+        if (plusHost.host().state !== 'registered') return;
+        await plusSync.update();
+        await plusSync.engine.run();
+        if (plusSync.getSyncStatus()?.wait?.relogin) await plusSession.login();
+      },
       syncOpenConflicts: () => plusSync.openConflictsFolder(),
       syncInbox: () => plusSync.inboxList(),
       syncInboxItem: (id) => plusSync.inboxItem(id),
@@ -6787,9 +6798,6 @@ function opsDeps(lng = currentLocale()) {
       syncApprove: (hostId, code) => plusSync.approveSync(hostId, code),
       syncDeny: (hostId) => plusSync.denySync(hostId),
       syncAcceptRestart: (keyId) => plusSync.acceptRestart(keyId),
-      syncRecoveryRequest: () => plusSync.requestRecovery(),
-      syncRecoveryCancel: () => plusSync.cancelRecovery(),
-      syncRecoveryComplete: () => plusSync.completeRecovery(),
       syncRecoveryStop: () => plusSync.stopRecovery(),
     },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）

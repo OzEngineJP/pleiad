@@ -38,14 +38,20 @@ const PLUS_ACCOUNT = { uid: UID, email: 'user@example.com', provider: 'google.co
 const OTHER_HOST = 'bbbbbbbbbbbbbbbbbbbbbbbbbb';
 const seedWaitingKey = () => {
   plus.state.hosts[OTHER_HOST] = { hostId: OTHER_HOST, publicKey: 'x', name: 'other-pc', platform: 'win32', online: true, lastSeenAt: null, syncPublicKey: 'x'.repeat(43), createdAt: new Date().toISOString(), deviceCount: 0, uid: UID };
-  plus.state.sync[UID] = { keyId: '0123456789abcdef', keys: { [OTHER_HOST]: { keyId: '0123456789abcdef', wrapped: 'x'.repeat(80), wrappedBy: OTHER_HOST } }, items: {}, seq: 0, totalBytes: 0 };
+  plus.state.sync[UID] = { keyId: '0123456789abcdef', keys: { [OTHER_HOST]: { keyId: '0123456789abcdef', wrapped: 'x'.repeat(80), wrappedBy: OTHER_HOST, createdAt: new Date().toISOString() } }, items: {}, seq: 0, totalBytes: 0 };
 };
+
+async function signInToFakeAgent(server) {
+  const client = await openWs(server);
+  try { await client.cmd('authLogin', { backend: 'fake' }); } finally { client.ws.close(); }
+}
 
 try {
   // 「同期するもの」の暗号化に実 home を読ませないため、指示ファイルの元は試験の置き場へ向ける
   fs.mkdirSync(path.join(dataDir, 'claude'), { recursive: true });
   fs.mkdirSync(path.join(dataDir, 'codex'), { recursive: true });
   fs.mkdirSync(path.join(dataDir, 'skills'), { recursive: true });   // エンジンの fs.watch が張られるよう、起動前に置く
+  fs.writeFileSync(path.join(dataDir, 'onboarding.json'), JSON.stringify({ seen: true, setupComplete: true }));
   // PATCH /v1/account の失敗を差し込める口（failPatch が真の間だけ 500）
   let failPatch = false;
   plus.route('PATCH', '/v1/account', async (req, res) => {
@@ -65,8 +71,9 @@ try {
 
   server = await startServer({ dataDir, entry: path.join(ROOT, 'tests', 'lib', 'plus-main-port.mjs'),
     env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: captureFile, AGENT_HOST_OS_OPEN: 'dry',
-      CLAUDE_CONFIG_DIR: path.join(dataDir, 'claude'), CODEX_HOME: path.join(dataDir, 'codex') } });
+      HOME: dataDir, USERPROFILE: dataDir, CLAUDE_CONFIG_DIR: path.join(dataDir, 'claude'), CODEX_HOME: path.join(dataDir, 'codex') } });
   const url = `http://127.0.0.1:${server.port}/?token=${server.token}`;
+  await signInToFakeAgent(server);
   browser = await chromium.launch({ executablePath: chromiumPath() });
 
   const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `sync-${name}.png`) }); };
@@ -98,9 +105,8 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 }, colorScheme: 'light', locale: 'ja-JP' });
   const page = await ctx.newPage();
   await page.goto(url, { waitUntil: 'load' });
-  await page.waitForTimeout(1500);
-  await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
-  await page.evaluate(() => document.getElementById('settings')?.click());
+  await page.waitForSelector('html[data-agent-gate]', { state: 'attached' });
+  await page.locator('#settings').click();
   await page.waitForSelector('#settingsView:not([hidden])');
   // 起動の直後（ログインの出来事を起こす前）に、設定の「Pleiad Plus」の項目が出る
   await page.waitForSelector('#plusTab:not([hidden])');
@@ -148,38 +154,33 @@ try {
   }
   await page.waitForSelector('#plusSyncSection', { timeout: 20_000 });
   ok('plus: 「同期」のまとまりが出る（見出し・スイッチ・同期するもの）', (await syncText(page)).includes('同期') && (await syncText(page)).includes('設定・skill・指示ファイルを同期する'));
-  const waitTx = await waitText('#plusSyncSection', 'ほかの PC が鍵を渡すのを待っています', 60_000);
-  ok('waiting_key: 文と鍵を持つ PC の名前と「鍵を持つ PC が使えないとき」', waitTx.includes('鍵を持つ PC: other-pc') && waitTx.includes('鍵を持つ PC が使えないとき'), waitTx);
+  const waitTx = await waitText('#plusSyncSection', 'ほかの PC の許可を待っています', 60_000);
+  ok('前の api の許可待ち: PC の名前を案内し、リセットの操作は出さない',
+    waitTx.includes('other-pc で Pleiad を開いてください') && !waitTx.includes('同期をリセット'), waitTx);
   await shots(page, 'waiting-key');
 
-  // 「鍵を持つ PC が使えないとき」→ 確かめ → やめる（何も送らない）
-  await page.locator('#plusSyncSection button:has-text("鍵を持つ PC が使えないとき")').click();
-  const confirmTx = await waitText('#plusSyncSection', '同期をリセットしますか？');
-  ok('確かめ: 題と消えないものと「やめる」。チェックの前は「消して始め直す」を押せない', confirmTx.includes('消えないもの') && confirmTx.includes('やめる')
-    && await page.locator('#plusSyncSection [data-fk="syncResetYes"]').isDisabled(), confirmTx);
-  await shots(page, 'reset-confirm');
-  const resetsBefore = plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length;
-  await page.locator('#plusSyncSection button:has-text("やめる")').click();
-  await page.waitForTimeout(500);
-  ok('やめる: reset は飛ばない', plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length === resetsBefore);
-
-  // チェックを入れて「消して始め直す」→ POST /v1/sync/reset → 新しい鍵で始まる（waiting_key → idle）
-  await page.locator('#plusSyncSection button:has-text("鍵を持つ PC が使えないとき")').click();
-  await page.locator('#plusSyncSection [data-fk="syncResetCheck"]').check();
-  await page.locator('#plusSyncSection button:has-text("消して始め直す")').click();
-  {
-    const deadline = Date.now() + 15_000;
-    for (;;) {
-      if (plus.state.syncBodies.some(b => b.method === 'POST' && b.path === '/v1/sync/reset')) break;
-      if (Date.now() > deadline) { ok('やり直す: POST /v1/sync/reset が飛ぶ', false); break; }
-      await new Promise(r => setTimeout(r, 100));
-    }
-    ok('やり直す: POST /v1/sync/reset が飛ぶ', plus.state.syncBodies.some(b => b.method === 'POST' && b.path === '/v1/sync/reset'));
-  }
+  // 旧 API は、データが空で他の PC がいなくなった場合に、同期の準備から始める。
+  plus.unbindHost(OTHER_HOST, 'user');
+  await page.locator('#plusSyncSection [data-fk="syncToggle"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-fk=syncToggle]')?.getAttribute('aria-checked') === 'false');
+  await page.locator('#plusSyncSection [data-fk="syncToggle"]').click();
   // やり直しのあとの最初の同期で、上限を越える PUT が 413 → quota
   const quotaTx = await waitText('#plusSyncSection', '同期の容量の上限に達しました', 60_000);
   ok('quota: 上限・使用量・送られない・「同期をリセット」', quotaTx.includes('/ 0.0 MB') && quotaTx.includes('新しく変えたものは送られません') && quotaTx.includes('同期をリセット'), quotaTx);
   await shots(page, 'quota');
+
+  await page.locator('#plusSyncSection [data-fk="syncReset"]').click();
+  const confirmTx = await waitText('#plusSyncSection', '同期をリセットしますか？');
+  ok('容量の上限でのリセット: 手元のファイルが残ることを伝える', confirmTx.includes('手元のファイルはどの PC でも消えません'), confirmTx);
+  await shots(page, 'reset-confirm');
+  const resetsBefore = plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length;
+  await page.locator('#plusSyncSection [data-fk="syncResetNo"]').click();
+  ok('やめる: リセットしない', plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length === resetsBefore);
+  await page.locator('#plusSyncSection [data-fk="syncReset"]').click();
+  plus.state.syncLimitBytes = 7_340_032;
+  await page.locator('#plusSyncSection [data-fk="syncResetYes"]').click();
+  await waitText('#plusSyncSection', '同期済み');
+  ok('容量上限でリセットを確かめた場合は鍵が変わる', plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length === resetsBefore + 1);
 
   // 上限を戻して、手元の変更（skill を足す → fs.watch → 5 秒まとめて run）で idle へ
   plus.state.syncLimitBytes = 7_340_032;
@@ -190,8 +191,8 @@ try {
     await page.waitForTimeout(9000);
   };
   await touchSkill('skill-a');
-  const idleTx = await waitText('#plusSyncSection', '最後の同期:', 60_000);
-  ok('idle: 「最後の同期: 」と「今すぐ同期」「同期をリセット」', idleTx.includes('今すぐ同期') && idleTx.includes('同期をリセット'), idleTx);
+  const idleTx = await waitText('#plusSyncSection', '同期済み', 60_000);
+  ok('idle: 「同期済み」と「今すぐ同期」を表示し、リセットは出さない', idleTx.includes('今すぐ同期') && !idleTx.includes('同期をリセット'), idleTx);
   ok('競合の写し 1 件: 行と「フォルダーを開く」と 30 日', idleTx.includes('1 件の古い方を残しました') && idleTx.includes('フォルダーを開く') && idleTx.includes('30 日で消えます'), idleTx);
   await shots(page, 'idle-conflicts');
   // 「フォルダーを開く」（AGENT_HOST_OS_OPEN=dry で成功。失敗の文言が出ないことだけ見る）
@@ -214,17 +215,17 @@ try {
     const deadline = Date.now() + 30_000;
     for (;;) {
       const tx = await syncText(page);
-      if (!tx.includes('最後の同期')) break;
+      if (!tx.includes('同期済み')) break;
       if (Date.now() > deadline) break;
       await page.waitForTimeout(300);
     }
   }
   const offTx = await syncText(page);
-  ok('切ったあと: 状態の行は出さない（スイッチだけ残る）', !offTx.includes('最後の同期') && !offTx.includes('同期できませんでした'), offTx);
+  ok('切ったあと: 状態の行は出さない（スイッチだけ残る）', !offTx.includes('同期済み') && !offTx.includes('同期できませんでした'), offTx);
   await shots(page, 'sync-off');
   // 入れ直す
   await page.locator('#plusSyncSection [data-fk="syncToggle"]').click();
-  await waitText('#plusSyncSection', '最後の同期:', 60_000);
+  await waitText('#plusSyncSection', '同期済み', 60_000);
   ok('入れ直す: sync.enabled が true に戻る', plus.state.accounts[UID]?.sync?.enabled === true);
   // PATCH の失敗 → スイッチが戻って「変えられませんでした」
   failPatch = true;
@@ -248,7 +249,8 @@ try {
     await server.stop();
     server = await startServer({ dataDir, entry: path.join(ROOT, 'tests', 'lib', 'plus-main-port.mjs'),
       env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: captureFile, AGENT_HOST_OS_OPEN: 'dry',
-        CLAUDE_CONFIG_DIR: path.join(dataDir, 'claude'), CODEX_HOME: path.join(dataDir, 'codex'), AGENT_HOST_LOCALE: 'en' } });
+        HOME: dataDir, USERPROFILE: dataDir, CLAUDE_CONFIG_DIR: path.join(dataDir, 'claude'), CODEX_HOME: path.join(dataDir, 'codex'), AGENT_HOST_LOCALE: 'en' } });
+    await signInToFakeAgent(server);
     const url2 = `http://127.0.0.1:${server.port}/?token=${server.token}`;
     const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 1000 }, colorScheme: 'light', locale: 'en-US' });
     const page2 = await ctx2.newPage();
@@ -268,8 +270,8 @@ try {
         await new Promise(r => setTimeout(r, 300));
       }
     }
-    await page2.evaluate(() => document.getElementById('onboardingDialog')?.close()).catch(() => {});
-    await page2.evaluate(() => document.getElementById('settings')?.click());
+    await page2.waitForSelector('html[data-agent-gate]', { state: 'attached' });
+    await page2.locator('#settings').click();
     await page2.waitForSelector('#settingsView:not([hidden])', { timeout: 15_000 });
     // 起動直後の取得は ready の後に送るので、ログインの出来事を起こさなくても tab は出る
     await page2.waitForSelector('#plusTab:not([hidden])', { timeout: 15_000 });
