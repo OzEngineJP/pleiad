@@ -6,7 +6,7 @@
 //   （エージェントのサンドボックスの外になるので、エージェント側の承認とは別に Pleiad が決める。エージェント側では ply_shell を自動で通す）
 // - ジョブの出力はメモリだけ（OUTPUT_KEEP。古い方から捨て、どこまで捨てたかを数える）。データ置き場に書かない。
 //   保持役に載せたジョブ（ADR 0270 段 2a）は、保持役の子の記録にも残る（サーバーを入れ替えても output・list で読める）
-// - 会話ごとの同時のジョブは JOBS_PER_SESSION まで。終わったジョブは JOBS_KEPT まで覚える（output で読み直せる）
+// - 終わったジョブは JOBS_KEPT まで覚える（output で読み直せる）
 //
 //   createShellBridge({ askPermission, onJobStart, onJobEnd, now?, holder? })
 //     askPermission(request)            server の askPermission（{ toolName, input, title, sessionId, signal, kind, canAlways, locale }）
@@ -33,7 +33,6 @@ export const JOB_TIMEOUT_MS = 24 * 60 * 60_000;
 export const OUTPUT_KEEP = 256 * 1024;
 /** 1 回の output・run で返す出力の上限（文字） */
 export const OUTPUT_RETURN = 30_000;
-export const JOBS_PER_SESSION = 8;
 const JOBS_KEPT = 20;
 const SHELLS = ['default', 'bash', 'powershell', 'cmd'];
 
@@ -184,8 +183,6 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
     const lng = locale;
     const map = jobsOf(owner.sessionId);
     if (name === 'run' || name === 'start') {
-      const running = [...map.values()].filter((j) => j.endedAt == null).length;
-      if (name === 'start' && running >= JOBS_PER_SESSION) throw new Error(agentT(lng, 'shell.tooMany', { max: JOBS_PER_SESSION }));
       const plan = prepare(owner, args, lng);
       await gate(owner, plan, lng, signal);
       if (name === 'start') {

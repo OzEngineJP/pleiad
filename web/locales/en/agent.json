@@ -598,7 +598,6 @@
     "commandRequired": "command is required.",
     "cwdMissing": "The working folder does not exist: {{cwd}}",
     "shellMissing": "Shell not found: {{shell}}",
-    "tooMany": "This conversation can run at most {{max}} jobs at once. Check the ones that have finished, or stop some with stop.",
     "started": "Started job {{jobId}} in the background (shell: {{shell}}, working folder: {{cwd}}). Read its output with ply_shell's output (jobId: {{jobId}}). Stop it with stop.",
     "noJob": "No such job: {{jobId}}",
     "noOutput": "(no output)",

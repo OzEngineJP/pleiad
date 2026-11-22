@@ -1,6 +1,7 @@
 // ply_shell（core/shell-bridge.mjs、ADR 0227 §1）を使い捨てのポートの HTTP で確かめる。サーバーは立てない。LLM は呼ばない。
 //   - run: 出力と終了コードを返す。裏に残ったプロセスがあっても戻り、そのことを書く。上限で止める
 //   - start → output → stop: すぐ戻る・出力の続きを since で読む・子ごと止める・終わりを onJobEnd で知らせる
+//   - 同時のジョブの本数は限らない（1 つの会話で 9 本以上の start が通る）
 //   - 承認: 読み取りだけのモードは断る。確認なしのモードは聞かない。ほかは聞き、断られたら走らせない
 import fs from 'node:fs';
 import os from 'node:os';
@@ -74,6 +75,18 @@ export default async function (t) {
     r = await call('stop', { jobId });
     t.ok('stop: 子ごと止めて、止めたと書く・終わりを知らせる', r.text.includes('止めました') && ended.some((x) => x.job.jobId === jobId && x.job.stopped), r.text);
     t.ok('止めた後は走っていない', !bridge.running('s1') && bridge.jobs('s1').every((j) => !j.running));
+
+    // ---- 同時のジョブの本数は限らない（ADR 0227 追記 2026-11-23、Issue #207。前は 9 本目の start を断っていた）
+    const many = [];
+    for (let i = 0; i < 10; i++) {
+      r = await call('start', { command: `${node} -e "setTimeout(() => {}, 30000)"` });
+      many.push({ r, jobId: /ジョブ (sh-[a-f0-9]+)/.exec(r.text)?.[1] });
+    }
+    const runningIds = new Set(bridge.jobs('s1').filter((j) => j.running).map((j) => j.jobId));
+    t.ok('1 つの会話で 10 本の start が断られずに通り、どれも走っている', many.every((x) => !x.r.isError && x.jobId && runningIds.has(x.jobId)),
+      many.map((x) => x.r.text).filter((s) => !/ジョブ sh-/.test(s)).join(' | ') || `running=${runningIds.size}`);
+    await Promise.all(many.filter((x) => x.jobId).map((x) => bridge.stop('s1', x.jobId)));
+    t.ok('10 本とも止まる', !bridge.running('s1'));
 
     // ---- 承認の関門
     mode = { scope: 'readonly', autonomy: 'ask' };
