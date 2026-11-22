@@ -23,11 +23,10 @@ export class AgentError extends Error {
 
 export class AgentLink extends EventEmitter {
   /** link: DeviceLink。start() で聞き始める（link の start は呼び側） */
-  constructor({ link, requestTimeoutMs = REQUEST_TIMEOUT_MS, log = () => {} }) {
+  constructor({ link, requestTimeoutMs = REQUEST_TIMEOUT_MS }) {
     super();
     this.link = link;
     this.requestTimeoutMs = requestTimeoutMs;
-    this.log = log;
     this.state = 'offline';
     this.allowed = false;
     this.hostName = '';
@@ -38,6 +37,7 @@ export class AgentLink extends EventEmitter {
     this.seq = 0;
     this.started = false;
     this.reopenTimer = null;
+    this.handshakeTimer = null;
     this.reopenAttempt = 0;
     this.onChannel = ch => { this.reopenAttempt = 0; this.#open(ch); };
     this.onStatus = s => {
@@ -75,6 +75,7 @@ export class AgentLink extends EventEmitter {
     if (!this.started) return;
     this.started = false;
     clearTimeout(this.reopenTimer);
+    clearTimeout(this.handshakeTimer);
     this.reopenTimer = null;
     this.link.off('channel', this.onChannel);
     this.link.off('status', this.onStatus);
@@ -85,8 +86,10 @@ export class AgentLink extends EventEmitter {
     this.state = 'offline';
   }
 
-  #setState(state, extra = {}) {
-    const changed = state !== this.state || (extra.allowed !== undefined && extra.allowed !== this.allowed) || (extra.hostName !== undefined && extra.hostName !== this.hostName)
+  #setState(state, extra = {}, reason) {
+    if (state !== 'connecting') clearTimeout(this.handshakeTimer);
+    const stateChanged = state !== this.state || (extra.allowed !== undefined && extra.allowed !== this.allowed);
+    const changed = stateChanged || (extra.hostName !== undefined && extra.hostName !== this.hostName)
       || (extra.view !== undefined && extra.view !== this.canView)
       || (extra.features !== undefined && JSON.stringify(extra.features) !== JSON.stringify(this.features));
     this.state = state;
@@ -94,7 +97,7 @@ export class AgentLink extends EventEmitter {
     if (extra.features !== undefined) this.features = extra.features === null ? null : normalizeAgentFeatures(extra.features);
     if (extra.allowed !== undefined) this.allowed = extra.allowed === true;
     if (extra.hostName !== undefined) this.hostName = String(extra.hostName);
-    if (changed) this.emit('state', this.status);
+    if (changed) this.emit('state', this.status, stateChanged ? reason : undefined);
   }
 
   #failPending(err) {
@@ -102,13 +105,13 @@ export class AgentLink extends EventEmitter {
     this.pending.clear();
   }
 
-  #drop(state = 'offline') {
+  #drop(state = 'offline', reason) {
     const had = this.stream;
     this.stream = null;
     this.#failPending(new AgentError('OFFLINE', 'the host is offline'));
     if (had) { try { had.reset(RESET_CODE.CANCEL); } catch { /* もう無い */ } }
     // 許可の最後の値は、オフラインの間も覚える（一覧に「オフライン」の印で出すため）。知らない・取り消された間だけ捨てる
-    this.#setState(state, state === 'unsupported' || state === 'revoked' ? { allowed: false, view: false, features: null } : {});
+    this.#setState(state, state === 'unsupported' || state === 'revoked' ? { allowed: false, view: false, features: null } : {}, reason);
   }
 
   #open(ch) {
@@ -116,17 +119,25 @@ export class AgentLink extends EventEmitter {
     // 前のチャネルの口は、そのチャネルが閉じたときに捨ててある
     let s;
     try { s = ch.openWs({ path: AGENT_PATH, protocols: [] }); }
-    catch (e) { this.log(`remote agent: ${e.message}`); return this.#drop('offline'); }
+    catch { this.#drop('offline', 'agent-open-failed'); this.#reopenLater(); return; }
     this.stream = s;
-    this.#setState('connecting');
+    this.#setState('connecting', {}, 'agent-handshake');
     const mine = () => this.stream === s;
-    s.on('accept', () => { /* ready を待つ */ });
-    s.on('reject', () => { if (mine()) this.#drop('unsupported'); });
+    clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = setTimeout(() => {
+      if (!mine() || this.state !== 'connecting') return;
+      this.#drop('offline', 'agent-handshake-timeout');
+      this.#reopenLater();
+    }, this.link.connectTimeoutMs);
+    this.handshakeTimer.unref?.();
+    s.on('reject', () => { if (mine()) this.#drop('unsupported', 'agent-handshake-rejected'); });
     s.on('reset', code => {
       if (!mine()) return;
       this.stream = null;
       this.#failPending(new AgentError('OFFLINE', 'the host is offline'));
-      this.#setState(code === RESET_CODE.FORBIDDEN ? 'unsupported' : 'offline', code === RESET_CODE.FORBIDDEN ? { allowed: false } : {});
+      const reason = ch.closed ? (ch.closeError?.code === 'timeout' ? 'relay-timeout' : 'relay-disconnected')
+        : code === RESET_CODE.FORBIDDEN ? 'agent-handshake-rejected' : 'agent-reset';
+      this.#setState(code === RESET_CODE.FORBIDDEN ? 'unsupported' : 'offline', code === RESET_CODE.FORBIDDEN ? { allowed: false } : {}, reason);
       this.#reopenLater();
     });
     s.on('close', (code, reason) => {
@@ -134,7 +145,8 @@ export class AgentLink extends EventEmitter {
       s.close(code === 1005 ? 1000 : code, reason ?? '').catch(() => {});
       this.stream = null;
       this.#failPending(new AgentError('OFFLINE', 'the host closed the agent port'));
-      this.#setState(code === 1008 && reason === 'revoked' ? 'revoked' : 'offline', code === 1008 && reason === 'revoked' ? { allowed: false } : {});
+      const revoked = code === 1008 && reason === 'revoked';
+      this.#setState(revoked ? 'revoked' : 'offline', revoked ? { allowed: false } : {}, revoked ? 'revoked' : 'agent-closed');
       this.#reopenLater();
     });
     s.on('message', (data, text, release) => {
@@ -150,13 +162,13 @@ export class AgentLink extends EventEmitter {
     switch (msg.t) {
       case 'ready':
         this.reopenAttempt = 0;
-        if (msg.v !== AGENT_PROTO) { this.log(`remote agent: unknown protocol ${msg.v}`); return this.#drop('unsupported'); }
-        this.#setState('ready', { allowed: msg.allowed === true, view: msg.view === true, features: normalizeAgentFeatures(msg.features), hostName: typeof msg.hostName === 'string' ? msg.hostName : this.hostName });
+        if (msg.v !== AGENT_PROTO) return this.#drop('unsupported', 'agent-protocol-unsupported');
+        this.#setState('ready', { allowed: msg.allowed === true, view: msg.view === true, features: normalizeAgentFeatures(msg.features), hostName: typeof msg.hostName === 'string' ? msg.hostName : this.hostName }, msg.allowed === true ? 'agent-ready' : 'agent-not-allowed');
         this.emit('ready', this.status);
         return;
       case 'allowed':
-        this.#setState(this.state === 'offline' ? 'ready' : this.state, { allowed: msg.allowed === true });
-        if (msg.allowed !== true && msg.reason === 'revoked') this.#setState('revoked', { allowed: false });
+        if (msg.allowed !== true && msg.reason === 'revoked') this.#setState('revoked', { allowed: false }, 'revoked');
+        else this.#setState(this.state === 'offline' ? 'ready' : this.state, { allowed: msg.allowed === true }, 'agent-permission-changed');
         return;
       case 'res': case 'viewed': {
         const p = this.pending.get(msg.id);

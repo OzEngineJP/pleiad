@@ -187,6 +187,9 @@ export default async function (t) {
   t.ok('ホストが公式中継に connected でつながる', s1?.links?.plus?.state === 'connected');
 
   // 5. 端末の作成
+  const agentLog = [];
+  let ticketAttempts = 0;
+  const ticketSecret = 'private-ticket-value';
   const device = createRemoteDevice({
     dir: deviceDataDir,
     cipher: plainCipher,
@@ -194,6 +197,15 @@ export default async function (t) {
     name: 'laptop-client',
     platform: 'desktop',
     log: () => {},
+    logAgentState: line => agentLog.push(line),
+    plusAuth: () => ({
+      getTicket: async () => {
+        if (++ticketAttempts <= 2) throw new Error(`ticket=${ticketSecret} https://relay.test/?key=private-query`);
+        return null;
+      },
+      getIdToken: async () => plus.issueIdToken(UID),
+    }),
+    proxyOptions: { backoff: { minMs: 30, maxMs: 60 } },
   });
 
   const sockets = [];
@@ -229,6 +241,15 @@ export default async function (t) {
     const hostsList = await device.list();
     const savedHost = hostsList.find(h => h.hostId === hostId && h.via === 'plus');
     t.ok('hosts.json に via: "plus" と uid が保存されている', savedHost?.via === 'plus' && savedHost?.uid === UID && savedHost?.hostName === 'my-plus-pc');
+
+    await device.agentSync();
+    await until(() => device.agent(hostId)?.state === 'unsupported', 5000, '委譲を受けないホスト');
+    t.ok('委譲接続の失敗と状態の変化を各 1 行だけ記録し、券と URL は出さない',
+      ticketAttempts === 3 && agentLog.length === 3 &&
+      agentLog.every(line => line.includes(`host=${hostId} via=plus`) && !line.includes(ticketSecret) && !line.includes('private-query') && !line.includes('://')) &&
+      agentLog[0].endsWith('state=offline allowed=false reason=ticket-failed') &&
+      agentLog[1].endsWith('state=connecting allowed=false reason=agent-handshake') &&
+      agentLog[2].endsWith('state=unsupported allowed=false reason=agent-handshake-rejected'), agentLog.join('\n'));
 
     // ---- プロキシ起動と 4ヘッダー接続 ----
     let readmitCalled = 0;

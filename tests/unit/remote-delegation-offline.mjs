@@ -6,8 +6,10 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
-import { createRemoteDelegation } from '../../core/remote-delegation.mjs';
+import { createRemoteDelegation, parentPortRemoteAgent } from '../../core/remote-delegation.mjs';
+import { createRemoteAgentService } from '../../core/remote/agent-service.mjs';
 import { agentT } from '../../core/i18n.mjs';
 
 export const name = 'remote-delegation-offline';
@@ -132,5 +134,55 @@ export default async function (t) {
     await manager.mirror(id(1), { status: 'completed', result: 'x' });
     setState('h1', 'offline'); clock += 60 * MIN; await check();
     t.ok('走っている子が無ければ知らせない', sent.length === 0);
+
+    // main の一覧の読み込み時点の状態が古くても、送信時点の線の状態で判定する。
+    const record = { hostId: 'h3', hostName: 'Lab' };
+    const old = { state: 'offline', allowed: true };
+    const agent = Object.assign(new EventEmitter(), {
+      status: { state: 'ready', allowed: true },
+      request: async () => ({ task: { taskId: id(6), status: 'completed' } }),
+    });
+    const device = Object.assign(new EventEmitter(), {
+      agent: () => agent,
+      agentSync: async () => {},
+      list: async () => [{ ...record, agent: old }],
+      store: { hosts: async () => [record] },
+    });
+    const port = new EventEmitter();
+    port.resumable = port.connected = true;
+    const service = createRemoteAgentService({ getDevice: async () => device, post: message => port.emit('message', message) });
+    const actions = [];
+    port.postMessage = message => { actions.push(message.action); void service.handle(message); };
+    const localBridge = parentPortRemoteAgent(port);
+    port.emit('message', { type: 'remote-agent-hosts', hosts: [{ ...record, ...old, name: 'Lab' }] });
+    const local = createRemoteDelegation({ bridge: localBridge, tasks: () => manager, agentT });
+    const delegate = () => local.delegate({ owner: 'parent', args: { host: 'Lab', task: 'check' }, lng: 'ja' });
+    const task = await delegate();
+    t.ok('サーバーだけが古い一覧を持つとき、main への確認 1 回で委譲できる',
+      task.taskId === id(6) && actions.join() === 'hosts,request' && localBridge.hosts[0].state === 'ready');
+    agent.status = old;
+    port.emit('message', { type: 'remote-agent-state', ...record, ...old });
+    actions.length = 0;
+    const offline = await delegate().catch(e => e.code);
+    t.ok('ホストが実際にオフラインなら再接続を待たず、main の一覧確認だけで HOST_OFFLINE',
+      offline === 'HOST_OFFLINE' && actions.join() === 'hosts');
+
+    let lateRequest;
+    port.postMessage = message => { lateRequest = message; };
+    let watchdog;
+    const timedOut = await Promise.race([
+      delegate().catch(e => e.code),
+      new Promise(resolve => { watchdog = setTimeout(resolve, 1000, 'too slow'); }),
+    ]).finally(() => clearTimeout(watchdog));
+    port.emit('message', { type: 'remote-agent-state', ...record, ...agent.status, state: 'ready' });
+    port.emit('message', { type: 'remote-agent', id: lateRequest?.id, ok: true, hosts: [{ ...record, ...old, name: 'Lab' }] });
+    t.ok('main が応答しない場合は短い上限で HOST_OFFLINE。遅れた返事は新しい ready を上書きしない',
+      timedOut === 'HOST_OFFLINE' && lateRequest?.action === 'hosts' && localBridge.hosts[0].state === 'ready');
+
+    port.connected = false;
+    port.emit('disconnect');
+    lateRequest = undefined;
+    t.ok('main が切れていれば一覧の確認にも送信せず HOST_OFFLINE',
+      await delegate().catch(e => e.code) === 'HOST_OFFLINE' && lateRequest === undefined);
   } finally { await manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
 }

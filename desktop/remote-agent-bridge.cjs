@@ -12,9 +12,18 @@ const { pathToFileURL } = require('node:url');
  * getDevice: () => Promise<createRemoteDevice の戻り値>（desktop/remote-windows.cjs の device()）
  * 戻り値の refresh() は、ホストが増減したときに呼ぶ（線を張り直してサーバーへ一覧を送る）
  */
-function attachRemoteAgentBridge(worker, { getDevice, log = () => {} }) {
+function attachRemoteAgentBridge(worker, { getDevice, log = () => {}, logDeliveryFailure = () => {} }) {
+  let stateSendFailed = false;
+  function post(message) {
+    let sent;
+    try { sent = worker.postMessage(message) !== false; } catch { sent = false; }
+    if (message.type === 'remote-agent-state' || message.type === 'remote-agent-hosts' || message.type === 'remote-agent-ready') {
+      if (!sent && !stateSendFailed) logDeliveryFailure();
+      stateSendFailed = !sent;
+    }
+  }
   const service = import(pathToFileURL(path.join(__dirname, '..', 'core', 'remote', 'agent-service.mjs')).href)
-    .then(({ createRemoteAgentService }) => createRemoteAgentService({ getDevice, post: message => { try { worker.postMessage(message); } catch { /* サーバーが終わった */ } }, log }));
+    .then(({ createRemoteAgentService }) => createRemoteAgentService({ getDevice, post, log }));
   service.catch(e => log(`remote agent bridge: ${e?.message ?? e}`));
   worker.on('message', async message => {
     if (message?.type === 'ready') { try { await (await service).resync(); } catch (e) { log(`remote agent bridge: ${e?.message ?? e}`); } return; }

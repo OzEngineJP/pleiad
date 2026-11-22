@@ -345,7 +345,7 @@ export class DeviceLink extends EventEmitter {
       catch (e) {
         if (!live()) return;
         this.log(`remote device: ticket failed: ${e.message}`);
-        return this.#scheduleRetry(ticketFailureState(e), { reason: 'ticket' });
+        return this.#scheduleRetry(ticketFailureState(e), { reason: 'ticket', diagnostic: 'ticket-failed' });
       }
       if (!live()) return;
       if (ticket) headers['x-pleiad-ticket'] = ticket;
@@ -365,7 +365,7 @@ export class DeviceLink extends EventEmitter {
       sock = openRelaySocket(relayWsUrl(creds.relayUrl, '/v1/device'), headers, { openTimeoutMs: this.connectTimeoutMs });
     } catch (e) {
       this.log(`remote device: ${e.message}`);
-      return this.#scheduleRetry('offline', { reason: 'url' });
+      return this.#scheduleRetry('offline', { reason: 'url', diagnostic: 'relay-url-invalid' });
     }
     this.socket = sock.ws;
     const fail = (state, detail = {}, retryOpts = {}) => {
@@ -381,7 +381,9 @@ export class DeviceLink extends EventEmitter {
       const closedReason = (await Promise.race([sock.closed, Promise.resolve(null)]))?.reason ?? '';
       const reason = closedReason || o.reason || o.error || '';
       const closeCode = o.closeCode ?? (o.status ? Number(o.status) : null);
-      const detail = closeCode != null ? { closeCode, reason } : { reason };
+      const diagnostic = o.error === 'open timeout' || o.error === 'Opening handshake has timed out'
+        ? 'relay-connect-timeout' : closeCode != null ? 'relay-connect-rejected' : 'relay-connect-failed';
+      const detail = { closeCode, reason, diagnostic };
       const st = classifyClose({ closeCode, reason, via: this.via });
       const again = this.#plusRetry(closeCode, reason);
       if (again) return fail(again.state, detail, again.opts);
@@ -399,16 +401,16 @@ export class DeviceLink extends EventEmitter {
       const closed = await Promise.race([sock.closed, Promise.resolve(null)]);
       const closeCode = e.closeCode ?? closed?.code ?? null;
       const reason = closed?.reason || e.reason || '';
-      const detail = { closeCode, reason };
+      const detail = { closeCode, reason, diagnostic: 'handshake-rejected' };
       if (closeCode != null) {
         const st = classifyClose({ closeCode, reason, via: this.via });
         const again = this.#plusRetry(closeCode, reason);
         if (again) return fail(again.state, detail, again.opts);
         return fail(st, detail);
       }
-      if (e.code === 'timeout') return fail('host-offline', { reason: 'timeout' });
+      if (e.code === 'timeout') return fail('host-offline', { reason: 'timeout', diagnostic: 'handshake-timeout' });
       this.log(`remote device: handshake failed: ${e.message}`);
-      return fail('revoked', { reason: 'handshake' });
+      return fail('revoked', { reason: 'handshake', diagnostic: 'handshake-failed' });
     }
 
     const ch = new Channel({
@@ -436,7 +438,8 @@ export class DeviceLink extends EventEmitter {
         clearTimeout(this.stableTimer);
         if (this.socket === sock.ws) this.socket = null;
         if (!live()) return;
-        const detail = { closeCode: c.code, reason: c.reason, ...(goaway ? { goaway } : {}) };
+        const detail = { closeCode: c.code, reason: c.reason, ...(goaway ? { goaway } : {}),
+          diagnostic: ch.closeError?.code === 'timeout' ? 'relay-timeout' : 'relay-disconnected' };
         const st = classifyClose({ closeCode: c.code, reason: c.reason, goaway, via: this.via });
         const again = this.#plusRetry(c.code, c.reason);
         if (again) return this.#scheduleRetry(again.state, detail, again.opts);
@@ -455,6 +458,7 @@ export class DeviceLink extends EventEmitter {
       const reason = c?.reason ?? '';
       const st = classifyClose({ closeCode, reason, goaway, via: this.via });
       const detail = { ...(closeCode != null ? { closeCode } : {}), ...(reason ? { reason } : {}), ...(goaway ? { goaway } : {}), ...(h.timeout ? { reason: 'timeout' } : {}) };
+      detail.diagnostic = h.timeout ? 'hello-timeout' : 'hello-rejected';
       return fail(h.timeout && closeCode == null ? 'host-offline' : st, detail);
     }
     settled = true;
@@ -471,7 +475,7 @@ export class DeviceLink extends EventEmitter {
       this.channel = null;
       const c = await sock.closed;
       if (live() && this.state === 'connected') {
-        const detail = { closeCode: c.code, reason: c.reason };
+        const detail = { closeCode: c.code, reason: c.reason, diagnostic: 'relay-disconnected' };
         const st = classifyClose({ closeCode: c.code, reason: c.reason, via: this.via });
         this.#scheduleRetry(st, detail);
       }
