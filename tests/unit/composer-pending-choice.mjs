@@ -31,9 +31,9 @@ export default async function (t) {
     'endpointOf', 'selectedMode', 'syncTopbar', 'runRefresh', 'activeBackendId', 'capsOf', 'vocabCwd'];
   const onBackend = /^\s+backend: (\(v\) => \{.*\}),$/m.exec(source);
   if (!onBackend) throw new Error('client.mjs の on.backend が見つからない');
-  const code = `let settingsWrite = Promise.resolve(), settingsFailure = null, failedSettingsPatch = null, failedSettingsError = '';
+  const code = `const settingsWrites = new Map(), settingsFailures = new Map();
 let topbarVersion = 0, refreshVersion = 0, refreshSnapshotReady = false;
-const inflightNext = new Map(), settledNext = new Map(), stagedNext = new Map();
+const inflightNext = new Map(), settledNext = new Map();
 ${FUNCTIONS.map(take).join('\n')}
 const onBackend = ${onBackend[1]};`;
 
@@ -131,7 +131,7 @@ const onBackend = ${onBackend[1]};`;
   await vm.runInContext('syncTopbar()', context);
   painted.length = 0;
   vm.runInContext("onBackend('codex')", context);
-  const failing = vm.runInContext("settingsWrite", context);
+  const failing = vm.runInContext("settingsWrites.get('A')", context);
   await settle();
   const failedWrite = writes[0];
   const stale = refresh();
@@ -142,7 +142,7 @@ const onBackend = ${onBackend[1]};`;
   await stale;
   t.ok('書けなかったら、保存できた値（前のエージェント）へ戻る', state.shownBackend === 'claude' && sel().backend === 'claude' && sel().draft === null, `${state.shownBackend}`);
   t.ok('書けなかった予約は控えに残らない', vm.runInContext('inflightNext.size', context) === 0 && vm.runInContext('settledNext.size', context) === 0);
-  t.ok('失敗は入力欄の上の通知へ渡る（失敗した予約と理由）', vm.runInContext('settingsFailure', context) === 'A' && vm.runInContext('failedSettingsError', context) === 'disk');
+  t.ok('失敗は入力欄の上の通知へ渡る（失敗した予約と理由）', vm.runInContext("settingsFailures.get('A')?.error", context) === 'disk');
   await failing.catch(() => {});
 
   // ---------------------------------------------------------------- 続けた選択・取り消し・ほかの会話

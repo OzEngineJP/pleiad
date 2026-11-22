@@ -176,7 +176,7 @@ try {
     return !st.noteHidden && st.cancelVisible && st.sendWaitClass && st.promptReadOnly;
   }, '1a waitingSettings note shown');
   const ui1a = await readComposer();
-  assert.ok(ui1a.noteText.includes('設定の反映を待っています'), `unexpected noteText 1a: ${ui1a.noteText}`);
+  assert.ok(ui1a.noteText.includes('送信中'), `unexpected noteText 1a: ${ui1a.noteText}`);
   assert.equal(ui1a.sendDisabled, true, '1a send button disabled while waiting');
   await page.screenshot({ path: path.join(shotDir, 'slow-wait-settings.png') });
   await sleep(220);
@@ -208,7 +208,7 @@ try {
   await page.locator('#send').click();
   await waitUntil(async () => {
     const st = await readComposer();
-    return !st.noteHidden && st.noteText.includes('送信を受け付けています');
+    return !st.noteHidden && st.noteText.includes('送信中');
   }, '1c sending note shown');
   const ui1c = await readComposer();
   assert.equal(ui1c.cancelVisible, false, '1c sendMessage wait must not show Cancel');
@@ -292,7 +292,7 @@ try {
   await page.locator('#send').click();
   await waitUntil(async () => {
     const st = await readComposer();
-    return !st.noteHidden && st.noteText.includes('会話ができしだい送ります');
+    return !st.noteHidden && st.noteText.includes('送信中');
   }, '3b home newSession queued note');
   await page.locator(`#groups .row[data-session="${sB}"]`).click();
   await sleep(220);
@@ -323,7 +323,7 @@ try {
   await page.locator('#send').click();
   await waitUntil(async () => {
     const st = await readComposer();
-    return !st.noteHidden && st.noteText.includes('会話ができしだい送ります');
+    return !st.noteHidden && st.noteText.includes('送信中');
   }, '4 queued newSession note');
   await page.evaluate(() => window.__wsTest.unholdCommand('newSession'));
   // 会話作成後に sendDraftSettings が setTurnSettings を投げ、まだ設定反映待ちの間も注記は 1 つだけ
@@ -336,7 +336,7 @@ try {
   await page.locator('#send').click();
   await waitUntil(async () => {
     const st = await readComposer();
-    return !st.noteHidden && st.noteText.includes('設定の反映を待っています');
+    return !st.noteHidden && st.noteText.includes('送信中');
   }, '4 re-submit enters waitingSettings cleanly');
   assert.equal(await page.locator('.composer-note:not([hidden])').count(), 1, '4 exactly one visible composer note without duplicates');
   await sleep(220);
@@ -350,7 +350,7 @@ try {
   await page.evaluate(() => window.__wsTest.holdCommand('sendMessage', 1));
   await setPromptText('echo:AcceptHeld');
   await page.locator('#send').click();
-  await waitUntil(async () => (await readComposer()).noteText.includes('送信を受け付けています'), '6 sending note shown');
+  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '6 sending note shown');
   assert.equal((await readComposer()).promptReadOnly, false, '6 prompt stays writable while sendMessage is pending');
   await page.evaluate(() => document.getElementById('prompt').focus());
   await page.keyboard.type('XY');
@@ -358,7 +358,7 @@ try {
   await page.locator(`#groups .row[data-session="${sB}"]`).click();
   await sleep(150);
   await openSession(sA);
-  await waitUntil(async () => (await readComposer()).noteText.includes('送信を受け付けています'), '6 note restored after returning');
+  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '6 note restored after returning');
   assert.equal((await readComposer()).promptReadOnly, false, '6 prompt writable after switching away and back');
   await page.evaluate(() => document.getElementById('prompt').focus());
   await page.keyboard.type('Z');
@@ -456,6 +456,34 @@ try {
   await sleep(300);
   assert.equal(await page.evaluate(() => window.__roAdds), 0, '10 fast submit never made the prompt readonly');
   console.log('OK 10: fast submit never sets readonly');
+
+  // 新規の最初の発言は、一覧の応答や下書き保存を待たずに画面に載る。
+  await page.evaluate(() => {
+    window.__wsTest.holdCommand('newSession', 1);
+    window.__wsTest.holdCommand('listSessions');
+    window.__wsTest.holdCommand('saveDraft');
+    window.__newSendWaitSeen = false;
+    const outbox = document.getElementById('outbox');
+    new MutationObserver(() => {
+      if (outbox.textContent.includes('作業が終わると自動で送信')) window.__newSendWaitSeen = true;
+    }).observe(outbox, { childList: true, subtree: true });
+    document.getElementById('newSession').click();
+  });
+  await setPromptText('echo:NewSendWithoutList');
+  await page.locator('#send').click();
+  await waitUntil(async () => (await readComposer()).cancelVisible, '11 first send queued while creating session');
+  await page.evaluate(() => window.__wsTest.unholdCommand('newSession'));
+  await page.locator('#thread .m.user', { hasText: 'echo:NewSendWithoutList' }).waitFor();
+  await waitUntil(async () => {
+    const st = await readComposer();
+    return st.noteHidden && !st.sendDisabled;
+  }, '11 accepted first send releases composer with list and draft commands still held');
+  assert.equal(await page.evaluate(() => window.__newSendWaitSeen), false, '11 no work wait on a fresh conversation');
+  await page.evaluate(() => {
+    window.__wsTest.unholdCommand('listSessions');
+    window.__wsTest.unholdCommand('saveDraft');
+  });
+  console.log('OK 11: first send and author bubble do not wait for the list or draft save');
 
   // 報告バッチの送信完了を少し待ってからサーバーを正常停止（close 時に slow-commands.log へフラッシュされる）
   await sleep(300);

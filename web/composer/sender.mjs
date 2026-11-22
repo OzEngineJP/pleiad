@@ -26,7 +26,7 @@ export const sendAttachments = (ordered) => ordered.map((a) => ({ path: a.path, 
  * @param {() => void} d.saveReceipts
  * @param {(sessionId: string) => Promise<object[]>} d.refreshOutbox 送信待ちを読み直す
  * @param {(sessionId: string) => void} d.scheduled 予定を置いた（時刻のチップを外す）
- * @param {(sessionId: string, text: string, attachments: object[]) => Promise<void>} d.clearSent 送った分の下書きを片付ける
+ * @param {(sessionId: string, text: string, attachments: object[]) => void} d.clearSent 送った分の下書きを片付け、保存は裏で進める
  * @param {(sessionId: string, request: object, full: string, ordered: object[]) => void} d.beforeSend 送る前に仮の添付を覚える
  * @param {(sessionId: string, request: object, full: string) => void} d.afterSend 送った後の仮の行
  * @param {(text: string) => void} d.say 理由の一行（成功のときは ''）
@@ -60,7 +60,7 @@ export function createSender(d) {
           ...(args.cwd ? { cwd: args.cwd } : {}), ...(args.mode ? { mode: args.mode } : {}), ...(attachments.length ? { attachments } : {}) });
         scheduleAttempt = null;
         d.scheduled(sessionId);
-        await d.clearSent(sessionId, text, attachments);
+        d.clearSent(sessionId, text, attachments);
         d.say('');
         return true;
       }
@@ -69,7 +69,7 @@ export function createSender(d) {
         const known = (await d.refreshOutbox(sessionId)).find((m) => m.id === previous.messageId);
         if (!known && previous.prompt !== full) throw new Error(d.t('chat.send.unknownPrevious'));
         if (known && previous.prompt === full) {
-          await d.clearSent(sessionId, text, attachments);
+          d.clearSent(sessionId, text, attachments);
           d.receipts.delete(sessionId); d.saveReceipts();
           return true;
         }
@@ -79,7 +79,7 @@ export function createSender(d) {
       d.beforeSend(sessionId, request, full, ordered);
       await d.cmd('sendMessage', request);
       d.afterSend(sessionId, request, full);
-      await d.clearSent(sessionId, text, attachments);
+      d.clearSent(sessionId, text, attachments);
       d.receipts.delete(sessionId); d.saveReceipts();
       d.say('');
       return true;

@@ -11,8 +11,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
   };
   const list = async id => structuredClone((await store.get(id)).outbox ?? []);
   // 送信待ちが何を待っているか（sessionId -> { reason, limit? }）。保存しない。kick のたびに決め直し、
-  // 画面へ渡すときだけ queued の項目に waiting として添える（同じ「送信待ち」でも、この会話の作業待ちと
-  // 同時実行の上限待ちでは利用者が取れる手が違う）
+  // 画面へ渡すときだけ queued の項目に waiting として添える。
   const waits = new Map();
   const view = (id, items) => {
     const wait = waits.get(id);
@@ -65,6 +64,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
         try {
           const accepted = await turn.steer(item);
           if (!accepted) {
+            waits.set(id, { reason: 'turn' });
             await update(id, item.id, { status: 'queued' });
             return;
           }
@@ -88,7 +88,10 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
           if (!accepted) ready();
           // Nothing was delivered (the agent was busy with a turn Pleiad did not start).
           // Back to the queue; that turn's end kicks the queue again.
-          if (outcome === 'requeue') return serial(id, () => update(id, item.id, { status: 'queued', error: null, connectorsError: null }));
+          if (outcome === 'requeue') return serial(id, () => {
+            waits.set(id, { reason: 'turn' });
+            return update(id, item.id, { status: 'queued', error: null, connectorsError: null });
+          });
           if (outcome && outcome !== 'ok') return pause(id);
         }, e => serial(id, () => update(id, item.id, {
           status: accepted ? 'unknown' : 'failed', error: String(e.message ?? e),

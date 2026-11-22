@@ -303,7 +303,7 @@ export function createWorkComposer(h) {
   });
   const paths = (list) => JSON.stringify(list.map((a) => a.path).sort());
   /** 送った分の下書きを片付ける。送っている間に書き足していたら、書き足した分は残す（メインの clearSentDraft と同じ） */
-  async function clearSent(id, text, attachments) {
+  function clearSent(id, text, attachments) {
     const shown = childId === id;
     const draft = shown ? { text: input.value, attached: att.items } : h.drafts.get(id);
     if (draft?.text !== text || paths(draft.attached ?? []) !== paths(attachments)) return;
@@ -311,7 +311,7 @@ export function createWorkComposer(h) {
       input.value = ''; att.restore([]); els.slashHint.textContent = ''; c.slash?.close(); c.fit();
       input.dispatchEvent(new Event('input', { bubbles: true }));
     } else attachedBy.delete(id);
-    await h.drafts.set(id, { text: '', attached: [], version: 2, dirty: true });
+    h.drafts.set(id, { text: '', attached: [], version: 2, dirty: true }).catch(() => {});
   }
   async function submit({ at = null } = {}) {
     const id = childId;

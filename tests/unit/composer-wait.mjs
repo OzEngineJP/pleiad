@@ -1,7 +1,7 @@
 // 入力欄の待ち（web/composer-wait.mjs、docs/design-system.md「入力欄の待ち」）。
 //   - 書けない待ち（会話を開く・初めて接続するまで）は readonly + aria-busy。disabled にしない。150ms を越えてから見せる
 //   - 読み込みの失敗で欄を書けるように戻し、欄の上に理由と「もう一度読む」。送信は押せない（理由を title に）
-//   - 作成中の送信の予約: readonly、150ms を越えたら送信に弧と「会話ができしだい送ります · 取り消す」。取り消すと字はそのまま
+//   - 作成中の送信の予約: readonly、150ms を越えたら送信に弧と「送信中 · 取り消す」。取り消すと字はそのまま
 // client.mjs の流れ（作っている間に書いた字が残る・失敗で欄が戻る）はブラウザーで tests/browser/composer-loading.cjs。
 // ここではその配線がコードに載っているかも見る。
 import { readFileSync } from 'node:fs';
@@ -81,7 +81,7 @@ export default function (t) {
     t.ok('150ms までは弧も一行も出さない', s.note.hidden && s.send.children[0] === s.icon);
     s.flush();
     t.ok('150ms を越えたら送信ボタンに弧', s.send.classList.contains('wait') && s.send.querySelector('.run'));
-    t.ok('欄の上に「会話ができしだい送ります」と「取り消す」', !s.note.hidden && s.note.shown.includes('[chat.composer.queued]')
+    t.ok('欄の上に「送信中」と「取り消す」', !s.note.hidden && s.note.shown.includes('[chat.composer.sending]')
       && s.note.querySelector('button')?.textContent === '[chat.composer.queuedCancel]');
     s.w.busy('history'); s.w.idle();
     t.ok('待ちを解いても予約中は readonly のまま', s.prompt.readOnly === true);
@@ -143,7 +143,7 @@ export default function (t) {
   t.ok('index.html に欄の上の一行と欄の中の待機表示', /id="composerNote"[^>]*role="status"/.test(html) && /id="composerBusy"/.test(html) && /id="composerBusyText"/.test(html));
   const css = read('web/style.css');
   t.ok('style.css: 待ちは 150ms 後の data-wait で字を隠し、流れる棒は reduced-motion で止める', /\.cbox\[data-wait\] :is\(#prompt,#thPrompt,#wkPrompt\)/.test(css) && /\.composer-busy-bar\{animation:none\}/.test(css));
-  const keys = ['queued', 'waitingSettings', 'sending', 'queuedCancel', 'historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
+  const keys = ['sending', 'queuedCancel', 'historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
   const missing = ['ja', 'en'].flatMap(lang => { const c = JSON.parse(read(`web/locales/${lang}/ui.json`)).chat.composer; return keys.filter(k => !c[k]).map(k => `${lang}:${k}`); });
   t.ok('文言は ja・en の辞書にある', missing.length === 0, missing.join(' '));
 

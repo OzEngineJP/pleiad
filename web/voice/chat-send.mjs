@@ -15,7 +15,7 @@ const READY_MAX_MS = 8000;
  * @param {() => string} o.randomId
  * @param {() => string|null} o.freshId  作ったばかりの会話を開いている間の id（client.mjs の freshSessionId）
  * @param {() => Promise<string|null>} o.ensureSession  会話がまだ無い（作っている途中）なら作って、できた id を返す。できなければ null
- * @param {() => Promise<void>} o.settingsSettled  設定の保存が済むまで待つ
+ * @param {(sessionId: string) => Promise<void>} o.settingsSettled  設定の保存が済むまで待つ
  * @param {(sessionId: string, messageId: string, text: string) => void} o.place  受理された発言を会話の行に置く（送信中の一行つき）
  * @param {ReturnType<import('./delivery.mjs').createVoiceDelivery>} o.delivery
  * @param {(ms: number) => Promise<void>} [o.sleep]
@@ -46,7 +46,7 @@ export function createChatVoiceSender({ state, cmd, randomId, freshId, ensureSes
     if (!sessionId) throw new Error(t('voice.note.notSent'));
     writable(sessionId);
     await settled();
-    await settingsSettled().catch(() => {});
+    await settingsSettled(sessionId).catch(() => {});
     if (state.current !== sessionId) throw new Error(t('voice.note.notSent'));   // 話している間に別の会話へ移った
     writable(sessionId);
     const messageId = randomId();

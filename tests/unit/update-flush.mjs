@@ -12,7 +12,7 @@ export const title = '更新の前の保存: 前に失敗した設定・モー�
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const settle = async () => { for (let i = 0; i < 12; i++) await tick(); };
 const gate = () => { const g = {}; g.promise = new Promise((res, rej) => { g.resolve = res; g.reject = rej; }); return g; };
-// 拒否のまま残った保存の約束（client.mjs の settingsWrite・modeWrite と同じ。失敗は別の受け手が知らせ済み）
+// 拒否のまま残った保存の約束（client.mjs の設定とモードの保存と同じ。失敗は別の受け手が知らせ済み）
 const rejected = (message) => { const p = Promise.reject(new Error(message)); p.catch(() => {}); return p; };
 const throws = async (promise) => { try { await promise; return null; } catch (e) { return e.message; } };
 
@@ -31,7 +31,7 @@ export default async function (t) {
   const context = vm.createContext({
     state, $, t: (k) => k, creatingSession: null,
     saveDraft: () => Promise.resolve(),
-    settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(), draftWrites: new Map(),
+    settingsWrites: new Map(), modeWrites: new Map(), draftWrites: new Map(),
     persistDraft: (id, value) => { const g = gate(); draftsSaved.push({ id, value, ...g }); return g.promise; },
   });
   vm.runInContext(code, context);
@@ -47,14 +47,15 @@ export default async function (t) {
   state.current = 's1'; $('prompt').value = '';
 
   // ---- 前に失敗した設定・モードの保存は止めない（「選択したモデルは使用できません」で止まった 0.42.5-beta.2 の不具合）
-  context.settingsWrite = rejected('選択したモデルは使用できません');
-  context.modeWrite = rejected('モードを保存できませんでした');
+  context.settingsWrites.set('s1', rejected('選択したモデルは使用できません'));
+  context.modeWrites.set('s2', rejected('モードを保存できませんでした'));
   t.ok('前に失敗した設定・モードの保存が残っていても、更新の保存は進む', (await throws(flush())) === null);
-  context.settingsWrite = Promise.resolve(); context.modeWrite = Promise.resolve();
+  context.settingsWrites.clear(); context.modeWrites.clear();
 
   // ---- 走っている設定・モードの保存は終わるまで待つ
   const pendingSettings = gate(), pendingMode = gate();
-  context.settingsWrite = pendingSettings.promise; context.modeWrite = pendingMode.promise;
+  context.settingsWrites.set('s1', pendingSettings.promise);
+  context.modeWrites.set('s2', pendingMode.promise);
   let done = false;
   const waiting = flush().then(() => { done = true; });
   await settle();

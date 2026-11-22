@@ -179,7 +179,7 @@ export const COMMANDS = new Set([
   "listSessions",
   "loadSession",     // 履歴（本文 + present）を読み直す。outline: true は系譜の照合用に骨だけ返す（本文・ツール名つき）。outline: { digest: true } は本文を運ばず、本文とツール名の指紋と人の発言の抜粋だけを返す（ADR 0334）。watch: true はこの接続が開いた会話として登録する（下の watchSession）。from・check・presentFrom・presentCheck を付けると、持っている先頭が合うときだけ続きを返す（ADR 0062）
   "watchSession",    // { sessionId, slot? } 開いている会話を登録し直す。登録した接続には、流れの出来事をその会話の分だけ送る（turnEnd は全部。ADR 0024）。slot は main（既定）か modal（作業のダイアログが映す子の会話。ADR 0315）。窓口ごとに 1 つ、sessionId が null なら空にする
-  "newSession",      // 空のセッションを開始する（最初の runTurn まで id は無い）。draft を渡すと入力欄の下書きとして保存する（送らない。「見直しを頼む」）
+  "newSession",      // 空の会話を作り sessionId を返す。includeSession: true なら一覧と同じ会話の行も返す。draft は送らず下書きとして保存する
   "saveDraft",
   "deleteUnsentSession",
   "deleteSession",   // { sessionId } -> "deleted"。送った会話も Pleiad の記録から消す（sessions.delete。ネイティブの会話は残す。ADR 0147）

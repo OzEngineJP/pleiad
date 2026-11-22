@@ -182,7 +182,10 @@ function saveReceipts() {
 function paintOutbox() {
   const id = state.current;
   const shown = new Set([...thread.querySelectorAll('.mw[data-message-id]')].map(w => w.dataset.messageId));
-  renderOutbox($('outbox'), outboxes.get(id) ?? [], async (messageId, action) => {
+  const messages = outboxes.get(id) ?? [];
+  const sendingId = submittingMessages.has(id) && receipts.get(id)?.messageId;
+  if (messages.some(m => m.id === sendingId && (m.status === 'sending' || m.status === 'queued'))) shown.add(sendingId);
+  renderOutbox($('outbox'), messages, async (messageId, action) => {
     await cmd('messageAction', { sessionId: id, messageId, action });
   }, shown, { schedules: sendSchedules(id), scheduleActions });
   // 保留の件数で「再開」の字が変わる（renderSessions より先に届くこともある）
@@ -1331,8 +1334,8 @@ async function rewindSend({ m, source, tail, text, attached, editing = false, af
     return true;
   };
   try {
-    await settingsWrite.catch(() => {});
-    await modeWrite;
+    await settingsWrites.get(source)?.catch(() => {});
+    await modeWrites.get(source);
     await cmd('sendMessage', { ...request, rewind: { beforeMessageId: m.dataset.uuid, ...(isRunningHere() ? { stopRunning: true } : {}) } });
     return await done();
   } catch (e) {
@@ -1824,9 +1827,9 @@ async function runShellFromComposer() {
   if (connStatus.blocksSend() || retiredHere()) return;
   const command = $('prompt').value;
   if (!command.trim()) return;
-  if (!state.current || state.current === freshSessionId) {
+  if (!state.current) {
     const created = await (creatingSession ?? startNew());
-    if (!created || state.current !== created || state.current === freshSessionId) return;
+    if (!created || state.current !== created) return;
   }
   const sessionId = state.current;
   const runId = randomId();
@@ -1907,7 +1910,7 @@ function chooseModel(v) {
   chooseSettings({ model: v, rememberModel: true });
   if (retryRow) {
     const row = retryRow; retryRow = null;
-    settingsWrite.catch(() => {}).then(() => resendFrom(row, false));
+    resendFrom(row, false);
   }
 }
 
@@ -3362,6 +3365,10 @@ function onEvent(ev, replay = false) {
     return;
   }
   if (ev.type === 'userMessage' && ev.sessionId && !replay) dropSuggestion(ev.sessionId);
+  if (ev.type === 'nextSettings' && typeof ev.worktreePending === 'boolean') {
+    const row = state.sessions.find(s => s.id === ev.sessionId);
+    if (row) row.worktreePending = ev.worktreePending;
+  }
   // 子の会話のモーダルの入力欄の上の帯（文脈）は、子ごとの最後の値を持つ。メインの state.contextWindow とは別
   if (ev.type === 'contextWindow' && ev.sessionId) {
     childContext.set(ev.sessionId, ev);
@@ -4331,13 +4338,18 @@ function onAuthEvent(ev) {
 // ---------------------------------------------------------------- 入力欄の combo
 // 人間が入力する箇所は同時に候補も出す（docs/design-system.md §2.4）。
 
-let settingsWrite = Promise.resolve();
-let modeWrite = Promise.resolve();
-let settingsFailure = null;
-let failedSettingsPatch = null;
-let failedSettingsError = "";
+const settingsWrites = new Map();
+const modeWrites = new Map();
+const settingsFailures = new Map();
+
+function writeMode(sessionId, mode) {
+  const write = (modeWrites.get(sessionId) ?? Promise.resolve()).catch(() => {})
+    .then(() => cmd('setMode', { sessionId, mode, reasonKey: 'manual' }));
+  modeWrites.set(sessionId, write);
+  write.then(() => { if (modeWrites.get(sessionId) === write) modeWrites.delete(sessionId); }, () => {});
+  return write;
+}
 let cwdSaving = 0;   // 作業ディレクトリを保存している間、チップの字を弱くする（docs/design-system.md §4.6）
-const stagedNext = new Map();   // 一覧に行が載る前に書けた予約（sessionId -> nextSettings）
 // 予約を書いている間（まだ行の nextSettings に載っていない間）の選択。入力欄の表示は、最後に選んだ意図をこれで重ねて決める。
 // 書いている間に別の会話の変更などで取り直しが走っても、チップが前の選択へ戻らない（pendingChoice）
 const inflightNext = new Map();   // sessionId -> [{ patch }]（書く順）
@@ -4352,30 +4364,24 @@ function reserveSettings(patch, targetId = state.current) {
     const rest = (inflightNext.get(id) ?? []).filter((e) => e !== entry);
     if (rest.length) inflightNext.set(id, rest); else inflightNext.delete(id);
   };
-  const write = settingsWrite.catch(() => {}).then(async () => {
+  const write = (settingsWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(async () => {
     let value;
     try { value = await cmd("setTurnSettings", { sessionId: id, ...patch }); } catch (e) { release(); throw e; }
     release();
-    settledNext.set(id, { value, version: refreshVersion });
-    // 書いている間に一覧が読み直されることがあるので、行は書けた後に引く。まだ一覧に行が無いなら控えておき、
-    // startNew が行が載ったところで合わせる（読み直しの写しが書く前のものでも、チップが戻らないように）
-    const s = state.sessions.find(s => s.id === id);
-    if (s) { s.nextSettings = value; stagedNext.delete(id); } else if (state.draft.created === id) stagedNext.set(id, value);
-    settingsFailure = null;
-    failedSettingsPatch = null;
-    // 保存の約束（settingsWrite）は保存できたところで終える。チップの描き直し（語彙・エフォート・使用量・git の取り直し）は待たない:
-    // 待たせると、次の送信と新しい会話の作成が、保存と関係のない取得の分だけ遅れ、描き直しの失敗が「保存の失敗」に見える
+    const row = state.sessions.find(s => s.id === id);
+    settledNext.set(id, { value, worktreePending: row?.worktreePending, version: refreshVersion });
+    if (row) row.nextSettings = value;
+    settingsFailures.delete(id);
+    // 設定保存を待つ操作から、チップの描き直しは独立させる。
     if (state.current === id) { syncSettingsHold(); syncTopbar().catch(() => {}); }
     return value;
   });
-  settingsWrite = write;
+  settingsWrites.set(id, write);
   write.catch(e => {
-    settingsFailure = id;
-    failedSettingsPatch = patch;
-    failedSettingsError = e.message;
-    // チップは保存できた値に戻し（§4.6「失敗時は元の位置へ戻す」）、欄の上に理由と操作。解決するまで送らせない
+    settingsFailures.set(id, { patch, error: e.message });
+    // チップは保存できた値に戻し、欄の上に理由と操作を出す。
     if (state.current === id) { syncSettingsHold(); syncTopbar().catch(() => {}); }
-  });
+  }).finally(() => { if (settingsWrites.get(id) === write) settingsWrites.delete(id); }).catch(() => {});
   return write;
 }
 /**
@@ -4432,9 +4438,12 @@ function sendDraftSettings(draft, sessionId, requestedCwd) {
  * 送信を止める（web/composer-wait.mjs の hold。docs/design-system.md「入力欄の待ち」）。開いている会話に合わせて出し入れする
  */
 function syncSettingsHold() {
-  if (!state.current || settingsFailure !== state.current || !failedSettingsPatch) { composerWait.release(); return; }
-  const patch = failedSettingsPatch, cwd = typeof patch.cwd === "string" ? patch.cwd : null;
-  const drop = () => { settingsFailure = null; failedSettingsPatch = null; composerWait.release(); };
+  const id = state.current;
+  const failure = settingsFailures.get(id);
+  if (!failure) { composerWait.release(); return; }
+  const { patch, error } = failure;
+  const cwd = typeof patch.cwd === "string" ? patch.cwd : null;
+  const drop = () => { settingsFailures.delete(id); composerWait.release(); };
   // 押したボタンは一行ごと消える。結果が出たら、また失敗なら出し直した一行の「再試行」へ、通れば入力欄へフォーカスを移す
   // （その間にほかへ移っていたら動かさない）
   const retry = () => {
@@ -4446,7 +4455,7 @@ function syncSettingsHold() {
   const actions = [{ label: t("chat.settingsHold.retry"), onClick: retry }];
   if (cwd != null) actions.push({ label: t("chat.settingsHold.rechoose"), onClick: () => { drop(); syncTopbar().catch(() => {}); controls.panels.folder.show(); controls.typeCwd(cwd); } });
   actions.push({ label: t("chat.settingsHold.cancel"), onClick: () => { drop(); syncTopbar().catch(() => {}); $("prompt").focus(); } });
-  const reason = cwd != null ? t("chat.settingsHold.cwd", { error: failedSettingsError }) : t("chat.settingsHold.settings", { error: failedSettingsError });
+  const reason = cwd != null ? t("chat.settingsHold.cwd", { error }) : t("chat.settingsHold.settings", { error });
   composerWait.hold(`✕ ${reason}`, actions);
 }
 function paintSettingsNotice() {
@@ -4644,7 +4653,10 @@ function settleNext(version) {
   for (const [id, entry] of settledNext) {
     if (version > entry.version) { settledNext.delete(id); continue; }
     const row = state.sessions.find((s) => s.id === id);
-    if (row) row.nextSettings = entry.value;
+    if (row) {
+      row.nextSettings = entry.value;
+      if (entry.worktreePending !== undefined) row.worktreePending = entry.worktreePending;
+    }
   }
 }
 function composerSelection() {
@@ -4957,8 +4969,9 @@ const controls = chatComposer.useControls({
         return;
       }
       // 会話のモードを覚えさせる（setMode は次に新しく始めるときの既定にもする）
-      modeWrite = modeWrite.catch(() => {}).then(() => cmd("setMode", { sessionId, mode: v, reasonKey: "manual" }));
-      modeWrite.catch(e => composerError(t("chat.sys.modeSaveFailed", { error: e.message })));
+      writeMode(sessionId, v).catch(e => {
+        if (state.current === sessionId) composerError(t("chat.sys.modeSaveFailed", { error: e.message }));
+      });
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
     openModel: () => {
@@ -5470,30 +5483,32 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
   const cancel = pendingAfterDelay(pendingRows.get(pendingNewSession.id));
   creatingSession = (async () => {
     try {
-      await settingsWrite.catch(() => {});
-      await modeWrite;
-      const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? chosen.backend,
+      if (source) {
+        await settingsWrites.get(source)?.catch(() => {});
+        await modeWrites.get(source);
+      }
+      const result = await cmd("newSession", { includeSession: true, sourceSessionId: source, backend: backend ?? chosen.backend,
         cwd: requestedCwd, status,
         ...Object.fromEntries(["model", "effort", "mode", "endpoint"].filter(k => chosen[k] !== undefined).map(k => [k, chosen[k]])) });
       pendingRows.delete(pendingNewSession.id);
       pendingNewSession = null;
       side.keep(status);
 
-      // 作っている間に選んだ設定（作業場所・モデルなど）をできた会話へ流す。会話はすぐ開く（下の select）ので、ここから後の選び直しは
-      // ふつうの予約になる。一覧に行が載るまでの表示は集めた変更が持つので、draft.created の間は chooseSettings・applyCwd が草稿にも残す。
-      // 一覧の読み直しは待たずに会話を開き、履歴の読み込みと並べる（描く前に select が待つ）。sessionsChanged の分が走っていれば共有して 1 回にする。
-      // 読み直しの写しが予約を書く前のものでも、書けた結果で合わせる（下の stagedNext）
+      // 新規作成の応答にある会話をすぐ開く。一覧・空の履歴の読み直しは送信と並行して進める。
+      if (result.session && !state.sessions.some(s => s.id === result.sessionId)) state.sessions.push(result.session);
       draft.created = result.sessionId;
       sendDraftSettings(draft, result.sessionId, requestedCwd);
-      const listing = refresh({ sharePending: true, listedOnly: true }).catch(() => {});
+      const listing = refresh({ listedOnly: true }).catch(() => {});
       if (state.current === null) {
         // 開き直しと違い、欄に触らない（無効にしない・下書きを読み直さない）。写しも取らない:
         // 作っている間に書いた字は、終わった時点で欄にあるものがそのまま、この会話の下書きになる
-        await select(result.sessionId, { fresh: true, after: listing });
+        if (result.session) state.mode = result.session.mode;
+        const opening = select(result.sessionId, { fresh: true });
         if (state.current === result.sessionId) {
-          if ($('prompt').value || state.attached.length) await saveDraft().catch(() => {});
+          if ($('prompt').value || state.attached.length) saveDraft().catch(() => {});
           dropBlankDraft();
         }
+        opening.catch(() => {});
       } else if (state.drafts.get("")) {
         // 作っている間に別の会話へ移った。新しい会話の欄に書いてあった分（"" の下書き）は、この会話の下書きへ移す
         const blank = state.drafts.get("");
@@ -5501,16 +5516,13 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
         dropBlankDraft();
       }
       adoptUploads(result.sessionId);   // 作っている間に始めた添付（会話を開けなかった・別の会話へ移った場合も、できた会話のもの）
-      await listing;
-      await settingsWrite.catch(() => {});
-      const staged = stagedNext.get(result.sessionId);
-      stagedNext.delete(result.sessionId);
-      const row = state.sessions.find(s => s.id === result.sessionId);
-      if (row && staged !== undefined) row.nextSettings = staged;
-      // 集めた設定は会話に渡し終えた（会話が消えて欄が新規に戻ったとき、古い選択を出さない）。ここから先のチップは会話の予約が元
-      const touched = draft.changes.length > 0 || draft.cwd !== requestedCwd;
-      if (state.draft === draft) { draft.changes = []; draft.base = null; draft.created = null; }
-      if (touched && state.current === result.sessionId) syncTopbar().catch(() => {});   // 会話はもうできている。チップの描き直し（語彙・エフォートなど）は待たない
+      listing.then(async () => {
+        await settingsWrites.get(result.sessionId)?.catch(() => {});
+        // 一覧と予約が揃ったら、表示も会話に保存した値を使う。
+        const touched = draft.changes.length > 0 || draft.cwd !== requestedCwd;
+        if (state.draft === draft) { draft.changes = []; draft.base = null; draft.created = null; }
+        if (touched && state.current === result.sessionId) syncTopbar().catch(() => {});
+      }).catch(() => {});
       return result.sessionId;
     } catch (e) {
       if (pendingNewSession) pendingRows.delete(pendingNewSession.id);
@@ -5538,8 +5550,8 @@ function draftReview({ cwd, text }) {
   reviewDrafting = (async () => {
     try {
       await saveDraft().catch(() => {});
-      await settingsWrite.catch(() => {});
-      await modeWrite;
+      await settingsWrites.get(source)?.catch(() => {});
+      await modeWrites.get(source);
       const { sessionId } = await cmd("newSession", { sourceSessionId: source, cwd: cwd || state.cwd || state.homeDir || "", draft: text });
       await refresh().catch(() => {});
       await select(sessionId);
@@ -9215,15 +9227,19 @@ function worktreeBusyPlan() {
 function worktreeCheckState() { return auxState(state.worktree, state.current ?? ''); }
 /** worktree を作り、次のターンの作業場所に予約する（下書きなら作業場所をそれにする） */
 async function startWorktree() {
+  const sessionId = state.current;
   try {
-    const res = await cmd('worktreeSplit', { ...(state.current ? { sessionId: state.current } : {}), cwd: state.cwd });
-    await applyCwd(res.cwd);
-    const row = state.sessions.find(s => s.id === state.current);
+    const res = await cmd('worktreeSplit', { ...(sessionId ? { sessionId } : {}), cwd: state.cwd });
+    if (state.current === sessionId) await applyCwd(res.cwd);
+    else if (sessionId) await reserveSettings({ cwd: res.cwd }, sessionId);
+    const row = state.sessions.find(s => s.id === sessionId);
     if (row) row.worktreePending = false;
-    $('settingsError').textContent = '';
+    if (state.current === sessionId) $('settingsError').textContent = '';
     refreshWorktree().catch(() => {});
     return true;
-  } catch (e) { $('settingsError').textContent = t('worktree.splitFailed', { error: e.message }); }
+  } catch (e) {
+    if (state.current === sessionId) $('settingsError').textContent = t('worktree.splitFailed', { error: e.message });
+  }
   refreshWorktree().catch(() => {});
   return false;
 }
@@ -9582,7 +9598,7 @@ async function listSessions(wait) {
   return ask().catch((e) => (e?.listSync ? ask() : Promise.reject(e)));
 }
 // 取り直しの返事を待つ上限。後の refresh() は走っている分の終わりを待つので、返事が来ないと一覧が二度と更新されず、
-// それを待つ操作（脇の移動の「移動中」・新しい会話の最初の送信）も止まったままになる
+// それを待つ操作（脇の移動の「移動中」など）も止まったままになる
 const REFRESH_REPLY_TIMEOUT_MS = 60_000;
 async function runRefresh(listed) {
   const version = ++refreshVersion;
@@ -9600,7 +9616,10 @@ async function runRefresh(listed) {
   moveLanes.confirm(version);
   serverMoveFields.clear();
   for (const s of sessions) serverMoveFields.set(s.id, { status: s.status ?? '', ungrouped: Boolean(s.ungrouped) });
-  state.sessions = applyPendingPatches(sessions);
+  // 作成前に取り始めた一覧が届いても、新しい会話の応答で得た行を保つ。
+  const createdId = state.draft.created;
+  const created = createdId && state.sessions.find(s => s.id === createdId);
+  state.sessions = applyPendingPatches(created && !sessions.some(s => s.id === createdId) ? [...sessions, created] : sessions);
   renameHandoffCards();
   settleNext(version);
   readCompletions.fromSessions(sessions);
@@ -9767,11 +9786,10 @@ async function loadHistory(args, prev = null, { window = false, bulk = false } =
  * fresh は作ったばかりの会話（startNew）。空なので骨組みも「読み込み中」も出さず、入力欄に触らない（書いている字が正本）。
  * retry は読み込みに失敗した今の会話を読み直す（「もう一度読む」。開き直しと同じ見せ方）
  * jump は脇の検索の抜粋から開いたとき。読み込んだ後にその発言へ送って輪を付ける（openFromSearch・revealMessage）
- * after は fresh のとき、描く前に待つ約束（startNew の一覧の読み直し。会話の行が載ってから描く）
  * keepDrawer は起動・つなぎ直しで自動で開くとき。利用者が開いている脇のパネルを閉じない（行を押して選ぶ道は閉じる）
  * viaOpen は openConversation が根の会話を開くとき。利用者の選び直しとは違うので、開く途中の呼び出しの順番札（openGate）を古くしない
  */
-async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null, after = null, keepDrawer = false, viaOpen = false } = {}) {
+async function select(id, { keepUpTo, reload = false, fresh = false, retry = false, jump = null, keepDrawer = false, viaOpen = false } = {}) {
   if (state.busy || (id === state.current && keepUpTo === undefined && !reload && !retry)) return;
   // 利用者・他の入口が別の会話を選んだ。開く途中の openConversation（子のモーダルを開くはずの呼び出し）は、後から重ねずに終わる
   if (!viaOpen && keepUpTo === undefined && !reload && !retry) openGate.interrupt();
@@ -9813,7 +9831,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     chatSuggestion.set(suggestions.get(id) ?? null);
   }
   try {
-    await loadAndPaint(id, { keepUpTo, quiet, fresh, after });
+    await loadAndPaint(id, { keepUpTo, quiet, fresh });
   } finally { if (freshSessionId === id) freshSessionId = null; }
   if (jump && state.current === id && !state.loadingSession) revealMessage(jump);
 }
@@ -9988,7 +10006,7 @@ function takeBootPrefetch(id, adoptable) {
   return pre;
 }
 
-async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
+async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
   sessionLoads.cancel(state.displayLoad);
   const pre = takeBootPrefetch(id, keepUpTo === undefined && !quiet && !fresh);
   const load = pre?.load ?? sessionLoads.begin(id);
@@ -10009,8 +10027,6 @@ async function loadAndPaint(id, { keepUpTo, quiet, fresh, after = null }) {
       : await loadHistory({ sessionId: id, live: true, watch: true },
         quiet && state.messages.length ? { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase } : null, { window: true, bulk: true });
     await cards;
-    // 作ったばかりの会話（startNew）は、一覧の読み直しと並べて履歴を読む。描く前に一覧の行が載るのを待つ
-    await after;
   } catch (e) {
     clearTimeout(historyTimer);
     sessionLoads.cancel(load);
@@ -10226,8 +10242,9 @@ async function forkFrom(m, { draft, pending } = {}) {
   state.busy = true;
   log.classList.add('branch-transition');
   try {
-    await settingsWrite;
-    await modeWrite;
+    await settingsWrites.get(source);
+    if (settingsFailures.has(source)) throw new Error(settingsFailures.get(source).error);
+    await modeWrites.get(source);
     const boundary = draft ? { beforeMessageId: uuid } : { upToMessageId: uuid };
     const result = await cmd('fork', { sessionId: source, ...boundary });
     if (!result?.sessionId) throw new Error(t('chat.fork.noId'));
@@ -10259,8 +10276,9 @@ async function forkTail(id) {
   state.busy = true;
   log.classList.add('branch-transition');
   try {
-    await settingsWrite;
-    await modeWrite;
+    await settingsWrites.get(id);
+    if (settingsFailures.has(id)) throw new Error(settingsFailures.get(id).error);
+    await modeWrites.get(id);
     const r = await cmd('fork', { sessionId: id });
     await refresh();
     await loadBranches(id);
@@ -10334,7 +10352,7 @@ function syncRunState() {
   voiceUi.sync();
   nav.syncRunning();
   // エージェント・作業ディレクトリは実行中も次のターンの分を予約できる（チップは無効にしない）
-  // 作ったばかりの会話（freshSessionId）を開いている間は押せる（送信を予約する。submit）
+  // 新規会話は会話の ID を受け取ったら、履歴の応答を待たずに送れる
   $("send").disabled = submittingMessages.has(state.current)
     || state.loadingSession === state.current && Boolean(state.current) && state.current !== freshSessionId
     || noAgent.blocks() || composerWait.blocksSend() || Boolean(retiredHere()) || connStatus.blocksSend() || Boolean(composerShellMode ? null : uploadBlockReason());
@@ -10359,7 +10377,7 @@ function syncRunState() {
   }
 }
 
-async function clearSentDraft(id, text, attachments) {
+function clearSentDraft(id, text, attachments) {
   const draft = state.current === id ? { text: $('prompt').value, attached: state.attached } : state.drafts.get(id);
   const paths = (list) => JSON.stringify(list.map(a => a.path).sort());
   if (draft?.text !== text || paths(draft.attached ?? []) !== paths(attachments)) return;
@@ -10367,7 +10385,7 @@ async function clearSentDraft(id, text, attachments) {
   noteSent(id, text);
   dropSuggestion(id);
   chatRecall.reset();
-  await persistDraft(id, { text: '', attached: [], dirty: true });
+  persistDraft(id, { text: '', attached: [], dirty: true }).catch(() => {});
 }
 /**
  * 通話で確定した発言を会話へ送る（web/voice/index.mjs の slot.send）。入力欄を通さず、sendMessage へ直に渡して会話の行に置く
@@ -10375,8 +10393,11 @@ async function clearSentDraft(id, text, attachments) {
  */
 const submitVoiceText = createChatVoiceSender({
   state, cmd: (command, args) => cmd(command, args), randomId, freshId: () => freshSessionId, delivery: voiceDelivery,
-  ensureSession: async () => { const created = await (creatingSession ?? startNew()); return created && state.current === created ? created : null; },
-  settingsSettled: async () => { await settingsWrite.catch(() => {}); await modeWrite; },
+  ensureSession: async () => {
+    const id = state.current ?? await (creatingSession ?? startNew());
+    return state.current === id ? id : null;
+  },
+  settingsSettled: async (id) => { await settingsWrites.get(id)?.catch(() => {}); await modeWrites.get(id); },
   place: (sessionId, messageId, text) => {
     if (messageRow(messageId)) return;
     markDelivery(ensureMessageRow(messageId, text, new Date().toISOString()), 'sending');
@@ -10478,10 +10499,9 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
     phase: 'preSend', hadSettingsWrite: false, hadModeWrite: false, hadWorktree: false,
     cancelled: false, switched: false, hasNewSession: false,
   };
-  if (!state.current || state.current === freshSessionId) {
-    // 新しい会話を作っている間の送信は予約する（docs/design-system.md「入力欄の待ち」）。欄は readonly にして字を保ち、
-    // 150ms を越えたら送信ボタンに弧、欄の上に「会話ができしだい送ります · 取り消す」。できしだい下の続きで送る
-    if (queuedSend) return;
+  if (queuedSend) return;
+  if (!state.current) {
+    // 会話の作成中は送信を予約し、欄を readonly にして本文を保つ。
     waitInfo.hasNewSession = true;
     waitInfo.phase = 'newSession';
     const hasContent = Boolean($('prompt').value.trim() || state.attached.length);
@@ -10492,7 +10512,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
         if (reason === 'switch') { newTicket.switched = true; waitInfo.switched = true; }
         else { newTicket.cancelled = true; waitInfo.cancelled = true; }
         if (queuedSend === newTicket) queuedSend = null;
-      }, { text: t('chat.composer.queued'), kind: 'queued', cancelable: true });
+      }, { kind: 'queued', cancelable: true });
     }
     const tNew = monoNow();
     let created = null;
@@ -10527,46 +10547,35 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
       }
       return;
     }
-    if (state.current === freshSessionId) { composerWait.unqueue(); return; }
     // 待っている間に添付を始めたもの（会話ができたら持ち主がその会話になる）も、届くまで送らない
     const stillBlocked = uploadBlockReason();
     if (stillBlocked) { composerWait.unqueue(); notify(stillBlocked); flashAttachEntry(); return; }
   }
   const sessionId = state.current;
-  if (submittingMessages.has(sessionId) || state.busy || state.loadingSession || composerWait.blocksSend() || retiredHere()) {
+  if (submittingMessages.has(sessionId) || state.busy || (state.loadingSession && state.loadingSession !== freshSessionId) || composerWait.blocksSend() || retiredHere()) {
     // 進行中の送信（別の呼び出し）が張った待ちは壊さない。自分が張ったもの（新しい会話の予約）だけ解く
     if (waitInfo.hasNewSession && !submittingMessages.has(sessionId)) composerWait.unqueue();
     return;
   }
   const hasContent = Boolean($('prompt').value.trim() || state.attached.length);
   let pointAfter = false;
-  const ticket = { cancelled: false, switched: false, sentDispatched: false, onCancel: null, queueOpts: null };
-  const setWaitStage = (phase, text, cancelable) => {
+  const ticket = { cancelled: false, onCancel: null, queueOpts: null };
+  const setWaitStage = (phase, cancelable) => {
     waitInfo.phase = phase;
     if (!hasContent) return;
     // 取り消せる待ちだけ欄を readonly にする（注記と同じ時点から）。取り消せない待ちは注記と弧だけで、欄は書けるまま
-    ticket.queueOpts = { text, kind: cancelable ? 'queued' : 'sending', cancelable, lock: cancelable ? 'shown' : 'none' };
-    ticket.onCancel = cancelable
-      ? (reason) => {
-          if (reason === 'switch') {
-            ticket.switched = true;
-            waitInfo.switched = true;
-            return;
-          }
-          ticket.cancelled = true;
-          waitInfo.cancelled = true;
-          if (typeof activeSubmits !== 'undefined' && activeSubmits.get(sessionId) === ticket) {
-            activeSubmits.delete(sessionId);
-            submittingMessages.delete(sessionId);
-            syncRunState();
-          }
-        }
-      : (reason) => {
-          if (reason === 'switch') {
-            ticket.switched = true;
-            waitInfo.switched = true;
-          }
-        };
+    ticket.queueOpts = { kind: cancelable ? 'queued' : 'sending', cancelable, lock: cancelable ? 'shown' : 'none' };
+    ticket.onCancel = (reason) => {
+      if (reason === 'switch') { waitInfo.switched = true; return; }
+      if (!cancelable) return;
+      ticket.cancelled = true;
+      waitInfo.cancelled = true;
+      if (activeSubmits.get(sessionId) === ticket) {
+        activeSubmits.delete(sessionId);
+        submittingMessages.delete(sessionId);
+        syncRunState();
+      }
+    };
     if (state.current === sessionId && !ticket.cancelled) composerWait.queue(ticket.onCancel, ticket.queueOpts);
   };
   submittingMessages.add(sessionId);
@@ -10574,14 +10583,16 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
   syncRunState();
   let outcome = null;
   try {
-    setWaitStage('settings', t('chat.composer.waitingSettings'), true);
-    waitInfo.hadSettingsWrite = true;
+    const settingsWrite = settingsWrites.get(sessionId);
+    setWaitStage('settings', true);
+    waitInfo.hadSettingsWrite = Boolean(settingsWrite);
     const tSettings = monoNow();
-    await settingsWrite.catch(() => {});
+    await settingsWrite?.catch(() => {});
     waitInfo.settingsMs = Math.max(0, Math.round(monoNow() - tSettings));
     if (ticket.cancelled) { outcome = 'cancelled'; return; }
-    setWaitStage('mode', t('chat.composer.waitingSettings'), true);
-    waitInfo.hadModeWrite = true;
+    const modeWrite = modeWrites.get(sessionId);
+    setWaitStage('mode', true);
+    waitInfo.hadModeWrite = Boolean(modeWrite);
     const tMode = monoNow();
     await modeWrite;
     waitInfo.modeMs = Math.max(0, Math.round(monoNow() - tMode));
@@ -10593,7 +10604,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
       if (typeof notifySwitchedUnsent === 'function') notifySwitchedUnsent(sessionId);
       return;
     }
-    if (settingsFailure === sessionId) { pointAfter = true; return; }
+    if (settingsFailures.has(sessionId)) { pointAfter = true; return; }
     // 候補が開いたまま blur した場合の後片付けが先に走ると、送信の入力が書き換わる
     slashSkills.close();
     const text = $('prompt').value;
@@ -10601,15 +10612,15 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
     const attachments = ordered.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
     if (state.sessions.find(s => s.id === sessionId)?.worktreePending) {
-      setWaitStage('worktree', t('chat.composer.waitingSettings'), false);
+      setWaitStage('worktree', false);
       waitInfo.hadWorktree = true;
       const tWt = monoNow();
       const okWt = await startWorktree();
       waitInfo.worktreeMs = Math.max(0, Math.round(monoNow() - tWt));
       if (!okWt || ticket.cancelled) { outcome = 'cancelled'; return; }
-      setWaitStage('postSettings', t('chat.composer.waitingSettings'), true);
+      setWaitStage('postSettings', true);
       const tPost = monoNow();
-      await settingsWrite;
+      await settingsWrites.get(sessionId);
       waitInfo.postSettingsMs = Math.max(0, Math.round(monoNow() - tPost));
       if (ticket.cancelled) { outcome = 'cancelled'; return; }
       if (state.current !== sessionId) {
@@ -10622,21 +10633,19 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
     }
     if (text.trim() === '/compact' && !attachments.length) {
       if (canCompactHere()) {
-        ticket.sentDispatched = true;
-        setWaitStage('compact', t('chat.composer.sending'), false);
+        setWaitStage('compact', false);
         const tCompact = monoNow();
         await cmd('compactConversation', { sessionId });
         waitInfo.compactMs = Math.max(0, Math.round(monoNow() - tCompact));
         outcome = 'sent';
-        await clearSentDraft(sessionId, text, attachments);
+        clearSentDraft(sessionId, text, attachments);
       } else sys(t('compaction.agentManaged', { agent: labelOf(activeBackendId()) }));
       return;
     }
     if (!at) { state.compactionAt = null; paintContextStrip(); }
     // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）。
     // 本文は文中の印（[添付] パス）ごとそのまま送る。文中に無い添付（文末に付く）だけ、今までどおり末尾に印を足す
-    ticket.sentDispatched = true;
-    setWaitStage('send', t('chat.composer.sending'), false);
+    setWaitStage('send', false);
     const tSend = monoNow();
     await chatSender.send({ sessionId, text, ordered, at, cwd: state.cwd.trim(), mode: state.mode, attachedKey, attachmentLine,
       agentLang: state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang, inDoc: composerEditor.attachmentKeys() });
@@ -10662,6 +10671,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
         composerWait.unqueue();
         // 待ちの注記が消えてから、理由の一行を光らせてフォーカスを移す（注記が出ている間は point が効かない）
         if (pointAfter) composerWait.point();
+        paintOutbox();
       }
       syncRunState();
     }
@@ -10861,10 +10871,7 @@ const workControls = createWorkControls({
   loadVocab,
   efforts: workEfforts,
   reserve: (patch, id) => reserveSettings(patch, id),
-  setMode: (id, mode) => {
-    modeWrite = modeWrite.catch(() => {}).then(() => cmd('setMode', { sessionId: id, mode, reasonKey: 'manual' }));
-    return modeWrite;
-  },
+  setMode: writeMode,
   recent: cwdOptions,
   worktreeNote: (branch) => t('worktree.childLocked', { branch }),
   // 子のアカウント・接続先の候補（メインの accountOptions / endpointView と同じ部品。選んでいる値だけ子のもの）。
@@ -10895,7 +10902,7 @@ workComposer = createWorkComposer({
   format: { attachedKey, attachmentLine },
   send: { cmd: (command, args) => cmd(command, args), limitOp, randomId, receipts, saveReceipts, refreshOutbox },
   submitting: submittingMessages,
-  settled: async () => { await settingsWrite.catch(() => {}); await modeWrite.catch(() => {}); },
+  settled: async (id) => { await settingsWrites.get(id)?.catch(() => {}); await modeWrites.get(id)?.catch(() => {}); },
   sendOptions: (id) => { const s = workControls.selection(id); return { cwd: s.cwd || '', mode: s.mode || undefined }; },
   controls: workControls,
   outbox: {
@@ -11348,7 +11355,9 @@ updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: o
   // 設定・モードの保存は、走っている分が終わるのを待つだけにする。失敗した書き込みは次に書けるまで拒否のまま残るが、
   // 失敗の知らせは入力欄の上や会話に出ていて選び直しでしか解けない。ここで止めると「再起動して更新」がその理由で進まなくなる。
   // 下書きの保存（saveDraft・persistDraft・draftWrites）は、失敗すると書きかけを失うおそれがあるので、失敗したら更新を止める
-  await Promise.all([settingsWrite.catch(() => {}), modeWrite.catch(() => {}), ...[...state.drafts].filter(([id, draft]) => id && draft.dirty).map(([id, draft]) => persistDraft(id, draft))]);
+  await Promise.all([...Array.from(settingsWrites.values(), write => write.catch(() => {})),
+    ...Array.from(modeWrites.values(), write => write.catch(() => {})),
+    ...[...state.drafts].filter(([id, draft]) => id && draft.dirty).map(([id, draft]) => persistDraft(id, draft))]);
   await Promise.all([...draftWrites.values()]);
 } });
 // 狭い画面の引き出しから開いたなら閉じておく（docs/design-system.md「幕・会話の行・設定・Esc で閉じる」）。

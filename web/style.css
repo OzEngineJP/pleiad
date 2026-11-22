@@ -2215,6 +2215,7 @@ main.dropping #log{background:var(--surface-1)}
 .outbox-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 80px; overflow-y: auto; }
 .outbox-status { color: var(--ink-weak); font-size: 12px; margin-top: 4px; }
 /* 途中送信がまだエージェントに渡っていない間だけ、回る弧を一言の前に置く（design-system.md §6。色は本文と同じ） */
+.outbox-status:empty { display: none; }
 .outbox-status-mark { display: flex; align-items: center; gap: 6px; }
 .outbox-status-mark .run, .outbox-status-mark .run svg { width: 12px; height: 12px; }
 .outbox-status-failed { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

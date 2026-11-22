@@ -2389,7 +2389,6 @@
       "failed": "✕ Couldn't send",
       "pending": "Will pass to the AI at the next break",
       "late": "Too late for this task. The AI will answer next.",
-      "sent": "Sent to the AI",
       "notYet": "Not yet passed to the agent"
     },
     "system": {
@@ -2725,9 +2724,7 @@
       "placeholder": "{{sendKeys}} to send",
       "placeholderTouch": "Write a message",
       "editorLabel": "Message",
-      "queued": "Will send once the conversation is ready",
-      "waitingSettings": "Waiting for settings to apply. Will send when ready",
-      "sending": "Waiting for message to be accepted",
+      "sending": "Sending…",
       "queuedCancel": "Cancel",
       "historyLoading": "Loading history…",
       "connecting": "Connecting…",
@@ -3746,8 +3743,7 @@
   },
   "outbox": {
     "status": {
-      "queued": "Waiting to be sent",
-      "sending": "Sending to the AI",
+      "sending": "Sending…",
       "paused": "Sending paused",
       "failed": "Couldn't send",
       "unknown": "Can't confirm whether it was sent"

@@ -6,7 +6,7 @@
 //               欄は readonly、箱に aria-busy。150ms を越えたら中の字と案内を隠し、弧・待機文言・流れる棒を出す
 //   failed()    読み込みに失敗した。欄は書ける。欄の上に理由と「もう一度読む」。送信は読み込めるまで押せない（理由を title に）
 //   queue()     新しい会話を作っている間に送信が押された。欄は readonly、150ms を越えたら送信ボタンに弧、
-//               欄の上に「会話ができしだい送ります」と「取り消す」。opts.lock で欄の扱いを選ぶ:
+//               欄の上に「送信中」と「取り消す」。opts.lock で欄の扱いを選ぶ:
 //               'now'（既定。予約したとき readonly）・'shown'（注記と同じ 150ms 後から readonly。速い送信は欄に触れない）・
 //               'none'（欄は書けるまま。取り消しの無い待ち = 受理・worktree。注記と弧だけ出す）
 //   hold()      設定（作業ディレクトリなど）を保存できず、解決するまで送らせない。欄は書ける。欄の上に強い字の理由と操作
@@ -44,7 +44,7 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
 
   const normalizeQueue = (onCancel, opts = {}) => ({
     onCancel: typeof onCancel === 'function' ? onCancel : null,
-    text: typeof opts.text === 'string' && opts.text ? opts.text : t('chat.composer.queued'),
+    text: typeof opts.text === 'string' && opts.text ? opts.text : t('chat.composer.sending'),
     cancelable: opts.cancelable !== false && typeof onCancel === 'function',
     cancelLabel: typeof opts.cancelLabel === 'string' && opts.cancelLabel ? opts.cancelLabel : t('chat.composer.queuedCancel'),
     kind: typeof opts.kind === 'string' && opts.kind ? opts.kind : 'queued',
@@ -64,7 +64,7 @@ export function createComposerWait({ box, prompt, send, note, busyLine, busyText
     note.replaceChildren();
     const b = document.createElement('b');
     b.textContent = queued.text;
-    note.append(runMark(), b);
+    note.append(b);
     if (queued.cancelable) {
       note.append(noteButton(queued.cancelLabel, () => { cancel('user'); prompt.focus?.(); }));
     }

@@ -2346,7 +2346,6 @@
       "failed": "✕ 送れませんでした",
       "pending": "次の区切りで AI に渡します",
       "late": "この作業には間に合いませんでした。続けて答えます",
-      "sent": "AIへ送信済み",
       "notYet": "まだエージェントに渡っていない"
     },
     "system": {
@@ -2672,9 +2671,7 @@
       "placeholder": "{{sendKeys}} で送信",
       "placeholderTouch": "メッセージを書く",
       "editorLabel": "メッセージ",
-      "queued": "会話ができしだい送ります",
-      "waitingSettings": "設定の反映を待っています。終わりしだい送ります",
-      "sending": "送信を受け付けています",
+      "sending": "送信中",
       "queuedCancel": "取り消す",
       "historyLoading": "履歴を読み込み中…",
       "connecting": "接続しています…",
@@ -3652,8 +3649,7 @@
   },
   "outbox": {
     "status": {
-      "queued": "送信待ち",
-      "sending": "AIへ送信中",
+      "sending": "送信中",
       "paused": "送信を保留中",
       "failed": "送信できませんでした",
       "unknown": "送信結果を確認できません"

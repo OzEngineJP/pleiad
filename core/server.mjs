@@ -4943,7 +4943,7 @@ async function reserveTurnSettings(args, { delegated = false } = {}) {
       // 人が選んだアカウントは、そのエージェントで次に開く新しい会話の既定にする（newSession）
       if (explicit.account !== undefined) await rememberAccount(target.id, account);
     }
-    emitGlobal({ type: "nextSettings", sessionId, nextSettings: next });
+    emitGlobal({ type: "nextSettings", sessionId, nextSettings: next, worktreePending: Boolean(current.unsent && pendingWorktree) });
     return next;
   });
   settingsWrites.set(sessionId, work);
@@ -7517,7 +7517,7 @@ const outbox = createMessageQueue({
       return { blocked: true, wait: { reason: 'limit', resetsAt: limit.resetsAt } };
     const turn = runtime.turns.get(id);
     if (!turn) {
-      if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'turn' } };
+      if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'preparing' } };
       return null;
     }
     const steer = turn.control.steer;
@@ -11268,8 +11268,15 @@ wss.on("connection", (ws, req) => {
         }
 
         // Allocate the host identity before the native engine has a first turn.
-        case "newSession":
-          return await viaOp('sessions.new', args);
+        case "newSession": {
+          const { includeSession, ...request } = args ?? {};
+          return await viaOp('sessions.new', request, { shape: async result => {
+            if (includeSession !== true) return result;
+            const meta = await store.get(result.sessionId);
+            const backend = getBackend(meta.backend);
+            return backend ? { ...result, session: sessionRow(backend, null, { ...meta, id: result.sessionId }) } : result;
+          } });
+        }
 
         // 既出の状態一覧。事前定義ではなく補完候補（設計メモ §6）。
         case "listStatuses":

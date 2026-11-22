@@ -358,7 +358,6 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     sending: t('chat.delivery.sending'),
     pending: t('chat.delivery.pending'),
     late: t('chat.delivery.late'),
-    sent: t('chat.delivery.sent'),
   };
   const messageRow = (messageId) => (messageId
     ? [...thread.querySelectorAll('.mw[data-message-id]')].find(w => w.dataset.messageId === messageId)
@@ -373,7 +372,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     else delete row.dataset.deliverySending;
     const waiting = kind === 'pending' || kind === 'sending';
     if (voiceDelivery.isVoice(row) && voiceDelivery.mark(row, kind)) return;
-    status.replaceChildren(DELIVERY[kind]);
+    status.replaceChildren(...(kind === 'sent' ? [] : [DELIVERY[kind]]));
     // 送れなかったときの直す入口（web/send-fail.mjs・web/connectors-fail.mjs）の姿も外す。もう一度止まったら描き直す
     status.classList.remove('outbox-status-failed', 'outbox-fix', 'conn-fail');
     delete status.dataset.connectors;
