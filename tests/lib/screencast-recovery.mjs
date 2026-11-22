@@ -34,7 +34,23 @@ export async function checkScreencastRecovery(createBridge, createHub, t) {
       later(fn,ms){timers.add({fn,at:clock+ms});},
       hold(){let release;const promise=new Promise(resolve=>{release=resolve;});gate={promise,release};},release(){const release=gate.release;gate=null;release();},
       emit(data){for(const v of views)if(v.active&&v.running)v.event('Page.screencastFrame',{sessionId:++id,data,metadata});},
-      tab(tabId){current=tabId;changed('s','current');},
+      // 実のタブ切り替えが済んでから仮想時計を進め、再試行の判定時刻を揃える。
+      tab(tabId) {
+        return new Promise((resolve, reject) => {
+          const unsubscribe = bridge.onState((sessionId, state) => {
+            if (sessionId !== 's' || state.tabId !== tabId) return;
+            clearTimeout(timer);
+            unsubscribe();
+            resolve();
+          });
+          const timer = setTimeout(() => {
+            unsubscribe();
+            reject(new Error(`screencast did not report tab ${tabId}`));
+          }, 5000);
+          current = tabId;
+          changed('s', 'current');
+        });
+      },
       running:()=>views.filter(v=>v.active&&v.running),close:async()=>{bridge.close();await flush();}};
   }
   {
@@ -104,7 +120,7 @@ export async function checkScreencastRecovery(createBridge, createHub, t) {
     let changed;
     try {
       await r.hub.watch(client,'s',{width:400,height:400});r.fail=1000;await r.advance(7300);r.hold();await r.advance(8000);
-      if(trigger==='tab')r.tab('B');
+      if(trigger==='tab')changed=r.tab('B');
       else changed=r.hub.watch(client,'s',{width:500,height:400});
       await r.flush();r.release();await changed;await r.flush();
       const before=r.starts.filter(s=>s.quality===80).length;
@@ -128,7 +144,7 @@ export async function checkScreencastRecovery(createBridge, createHub, t) {
       t.ok(`${multi?'段別':'共有'}/${trigger}: 打ち切り後は重複画像で再開しない`,r.attempts.length===before);
       r.fail=0;
       if(trigger==='content')r.emit('new-content');
-      if(trigger==='tab')r.tab('B');
+      if(trigger==='tab')await r.tab('B');
       if(trigger==='viewer')await r.hub.watch(second,'s',{width:400,height:400});
       await r.advance(10000);
       t.ok(`${multi?'段別':'共有'}/${trigger}: 中身・タブ・閲覧者の変更で再び画質を上げられる`,r.running().length===1&&r.running()[0].format.quality===80&&r.attempts.length>before);
@@ -163,7 +179,7 @@ export async function checkScreencastRecovery(createBridge, createHub, t) {
       r.emit('one-change');await r.flush();await r.advance(68000);
       const top=r.starts.filter(s=>s.quality===80);
       t.ok(`${multi?'段別':'共有'}: 打ち切り後の中身の変更 1 回は新しい 5 回の予算を作らない`,top.length===6&&top[5].at-top[4].at===8000);
-      r.tab('B');await r.flush();await r.advance(9000);
+      await r.tab('B');await r.advance(9000);
       const reset=r.starts.filter(s=>s.quality===80);
       t.ok(`${multi?'段別':'共有'}: タブの変更では要求中の失敗の待ちを守り、その後は 1 秒から再試行する`,reset.length===9&&reset[7].at-reset[6].at===8000&&reset[8].at-reset[7].at===1000,JSON.stringify(reset));
     } finally {await r.hub.unwatch(client,'s');await r.close();}
