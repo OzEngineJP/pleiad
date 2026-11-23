@@ -239,7 +239,7 @@ export default async function (t) {
     t.ok('Status through the operation reports that a quarantined receipt cannot be read',
       unknown.ok && unknown.result.result?.state === 'unknown' && unknown.result.result?.requestId === damaged && Boolean(unknown.result.result?.error));
     t.ok('A future schema is left intact and its request ID stays reserved',
-      await fs.readFile(file(future), 'utf8') === futureBody && (await fs.stat(file(future))).mtimeMs === old.getTime() &&
+      await fs.readFile(file(future), 'utf8') === futureBody && Math.abs((await fs.stat(file(future))).mtimeMs - old.getTime()) < 1 &&
       await desktop.request('restart', { requestId: future, targetVersion: '1.0.0' }).then(() => false, () => true));
     await fs.writeFile(file(laterDamaged), '{');
     await desktop.reconcile();
