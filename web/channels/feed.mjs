@@ -369,12 +369,15 @@ export function createFeed(host) {
 
   // ---------------------------------------------------------------- 操作
   async function post({ text, attachments, confirmedWake }) {
-    if (S.id === HOME) { await host.newHomeThread?.({ text, attachments: attachments ?? [] }); return; }
-    const made = await host.invoke('channels.post', { channelId: S.id, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
+    // 送り先は押した時のチャンネル。応答を待つ間に別のチャンネルへ移ったら、流れへの追加・スクロール・スレッドを開くのは移った先に持ち込まない
+    const channelId = S.id, dm = S.channel?.kind === 'dm';
+    if (channelId === HOME) { await host.newHomeThread?.({ text, attachments: attachments ?? [] }); return; }
+    const made = await host.invoke('channels.post', { channelId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
+    if (S.id !== channelId) return;   // 投稿は届いた知らせ（channels の更新）で、そのチャンネルを開いたときに載る
     if (made?.id && !S.index.has(made.id) && !made.threadId) addPost(made);
     toBottom();
     // bot を @ で呼んだ投稿は新しいスレッドの根になる。ここで書いた人にその返事が見えるよう、スレッドを開く（DM は流れがスレッドの代わり）
-    if (made?.id && S.channel?.kind !== 'dm' && (made.mentions ?? []).some((m) => m !== 'you')) host.openThread?.(S.id, made.id);
+    if (made?.id && !dm && (made.mentions ?? []).some((m) => m !== 'you')) host.openThread?.(channelId, made.id);
   }
 
   async function react(p, emoji, on, had) {

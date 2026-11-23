@@ -65,6 +65,19 @@ export default async function(t) {
     const editedMessages = (await c.cmd('loadSession', { sessionId: edited.sessionId })).messages;
     t.ok('later edit excludes the selected user and all following replies',
       JSON.stringify(editedMessages) === JSON.stringify(editSource.slice(0, secondUser)));
+    // ［分岐して送る］は 1 つの操作（ADR 0347）: fork の send で、分岐を作るのと一緒に分岐先の送信待ちへ受け付ける
+    const sendId = crypto.randomUUID();
+    const sentFrom = c.mark();
+    const forked = await c.cmd('fork', { sessionId: id, beforeMessageId: source.messages[0].uuid, send: { messageId: sendId, prompt: 'fork and send' } });
+    t.ok('fork の send は分岐と受け付けを一緒に返す', Boolean(forked.sessionId) && forked.accepted?.id === sendId && !forked.sendError, JSON.stringify(forked));
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === forked.sessionId, { from: sentFrom });
+    const forkedHistory = (await c.cmd('loadSession', { sessionId: forked.sessionId })).messages;
+    t.ok('分岐先で 1 回だけ届く（元の会話は変わらない）', forkedHistory.filter(m => m.role === 'user' && m.text === 'fork and send').length === 1
+      && JSON.stringify(source) === JSON.stringify(await c.cmd('loadSession', { sessionId: id })));
+    const countBefore = (await c.cmd('listSessions')).length;
+    const badSend = await c.cmd('fork', { sessionId: id, beforeMessageId: source.messages[0].uuid, send: { messageId: 'bad', prompt: 'x' } }).then(() => null, e => e.message);
+    const emptySend = await c.cmd('fork', { sessionId: id, beforeMessageId: source.messages[0].uuid, send: { messageId: crypto.randomUUID(), prompt: '  ' } }).then(() => null, e => e.message);
+    t.ok('送る中身が正しくなければ、分岐を作らずに断る', Boolean(badSend) && Boolean(emptySend) && (await c.cmd('listSessions')).length === countBefore);
     const at = source.messages[0].uuid;
     const mark = c.mark();
     await c.cmd("runTurn", { sessionId: id, prompt: "slow" });

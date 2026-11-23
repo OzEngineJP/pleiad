@@ -1317,10 +1317,12 @@ function resendPayload(text, attached, sessionId) {
  * 同じ会話の中で送り直す（sendMessage の rewind）。消える範囲は先に畳み、サーバーが巻き戻して送り終えたら履歴を読み直して
  * 消えた発言を片付け、新しい発言の吹き出しを置く（会話は切り替えない）。送れなかったら畳んだ範囲を戻して理由を出す。成功したら true。
  * 押した時点の実行中の判定は、帯を開いたときのものではなく今のもの（開いたあとに走り出していたら、入力欄の帯を作り直して、もう一度押してもらう）。
+ * 実行中かは送り直す会話（source）で見る（画面がいま開いている会話ではない）。止めてよいかは、押した時に見せた帯（tail.running）で決める。
+ * 送る中身と設定は押した時に決め、巻き戻しと受け付けはサーバーの 1 つの操作（sendMessage の rewind）。設定を添えたら保存は待たない（ADR 0347）。
  * 巻き戻しは済んで受け付けだけが失敗したときは、rewind を外して同じ messageId で送り直す（起点の発言はもう無いので、巻き戻し直せない）
  */
 async function rewindSend({ m, source, tail, text, attached, editing = false, after = null }) {
-  if (isRunningHere() && !tail.running) {
+  if (state.runningIds.has(source) && !tail.running) {
     const next = { ...tail, running: true, any: true };
     if (editing) chatEdit.setTail(next);
     return false;
@@ -1331,7 +1333,10 @@ async function rewindSend({ m, source, tail, text, attached, editing = false, af
   for (const w of doomed) w.classList.add('leaving');
   if (attached.length) provisionalByMessage.set(messageId, attached.map(provisionalPresent));
   rewindingNow = source;
-  const request = { sessionId: source, messageId, prompt, cwd: state.cwd.trim() || undefined, mode: state.mode, ...(attachments.length ? { attachments } : {}) };
+  // 設定は押した時の入力欄のもの（送り直す会話を開いているときだけ。メインの送信と同じ settings）。開いていなければ会話の保存済みの設定で届ける
+  const captured = state.current === source ? captureSendSettings() : null;
+  const settings = typeof captured?.worktreePending === 'boolean' ? captured : null;
+  const request = { sessionId: source, messageId, prompt, ...(settings ? { settings } : {}), ...(attachments.length ? { attachments } : {}) };
   const done = async () => {
     $('settingsError').textContent = '';
     announce(tail.users > 0 ? t('chat.resend.doneUsers', { count: tail.users }) : tail.saved > 0 ? t('chat.resend.doneReplies') : t('chat.resend.done'));
@@ -1344,9 +1349,11 @@ async function rewindSend({ m, source, tail, text, attached, editing = false, af
     return true;
   };
   try {
-    await settingsWrites.get(source)?.catch(() => {});
-    await modeWrites.get(source);
-    await cmd('sendMessage', { ...request, rewind: { beforeMessageId: m.dataset.uuid, ...(isRunningHere() ? { stopRunning: true } : {}) } });
+    if (!settings) {
+      await settingsWrites.get(source)?.catch(() => {});
+      await modeWrites.get(source);
+    }
+    await cmd('sendMessage', { ...request, rewind: { beforeMessageId: m.dataset.uuid, ...(tail.running ? { stopRunning: true } : {}) } });
     return await done();
   } catch (e) {
     for (const w of doomed) w.classList.remove('leaving');
@@ -1458,9 +1465,10 @@ async function editBranch({ id, text, attached }) {
   if (!m || !found) { chatEdit.targetLost(); return false; }
   const source = state.current;
   const stash = chatEdit.stashed();
-  await forkFrom(m, { draft: { text, attached, editing: composerEditor.snapshotEditing(), index: found.index } });
-  // 分岐の先へ移ったなら、元の会話の下書きは編集前の書きかけに戻す（直した内容は分岐の先へ渡った）。移れなかったら（理由は forkFrom が出した）開いたまま
-  if (state.current === source) return false;
+  const made = await forkFrom(m, { draft: { text, attached, editing: composerEditor.snapshotEditing(), index: found.index } });
+  // 分岐の先へ移ったなら、元の会話の下書きは編集前の書きかけに戻す（直した内容は分岐の先へ渡った）。移れなかったら（理由は forkFrom が出した）開いたまま。
+  // 分岐の先へ送れたのに移れなかったときは、編集を終える（開いたままだと、同じ内容をもう一度送れてしまう）
+  if (state.current === source) return Boolean(made?.sent);
   persistDraft(source, { text: stash?.text ?? '', attached: stash?.attached ?? [], editing: stash?.editing, version: 2, dirty: true }).catch(() => {});
   if (stash?.extra !== undefined) armedSends.set(source, stash.extra);
   announce(t('chat.resend.doneBranch'));
@@ -4278,7 +4286,7 @@ async function resendFailedTurn({ sessionId, messageId, node, auto, pristine, au
   if (!data || state.current !== sessionId || !m.isConnected) return false;
   const index = data.messages.findIndex((x) => x.uuid === m.dataset.uuid);
   if (index < 0) return confirm();
-  const tail = tailInfo(data.messages, index, { running: isRunningHere(), forkOnly: Boolean(state.sessions.find((x) => x.id === sessionId)?.delegation) });
+  const tail = tailInfo(data.messages, index, { running: state.runningIds.has(sessionId), forkOnly: Boolean(state.sessions.find((x) => x.id === sessionId)?.delegation) });
   if (tail.users > 0 || tail.running || tail.forkOnly || tail.files) return confirm();
   return rewindSend({ m, source: sessionId, tail, text: data.messages[index].text ?? '', attached: messageAttachments(data, index),
     after: auto ? () => placeResentNote(auth, agent) : null });
@@ -8438,8 +8446,9 @@ voiceUi.mount({
     createRow: () => { const m = el('div', 'm user'); m.append(whoLine(t('chat.message.you'), new Date().toISOString(), { actions: false })); const body = el('div', 'body'); m.append(body); return { el: wrap(m), body }; },
   },
   target: () => ({ kind: 'chat', sessionId: state.current && state.current !== freshSessionId ? state.current : null }),
-  send: (text) => submitVoiceText(text),
-  sendTo: (target, text) => submitVoiceText(text, target),
+  // 送り先は発言を確定した時の会話（target）。新しい会話の欄（sessionId: null）なら、そのとき会話を作る
+  send: (text, target) => submitVoiceText(text, target ? { sessionId: target.sessionId ?? null, fresh: !target.sessionId } : null),
+  sendTo: (target, text) => submitVoiceText(text, { sessionId: target.sessionId ?? null }),
   follow: () => { const log = $('log'); if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight; },
 });
 // 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）。押したリンクは既定のブラウザーへ（web/link-open.mjs）
@@ -10255,16 +10264,24 @@ function forkPending(button) {
   return () => { clearTimeout(timer); if (button.isConnected) button.replaceChildren(...old); button.disabled = false; };
 }
 
-/** Create the actual child first, then grow its edge, reveal its node, and promote it. */
+/**
+ * Create the actual child first, then grow its edge, reveal its node, and promote it.
+ * draft（［分岐して送る］）: 送る中身は押した時に決め、分岐を作るのと同じ 1 つの操作（fork の send）でサーバーが分岐先の送信待ちに受け付ける。
+ * 分岐の先へ移った後に入力欄を読み直して送ることはしない（ADR 0347）。受け付けられなかったら、中身は分岐先の下書きに残す。
+ * 返り値: 分岐を作れたら { sessionId, sent }、作れなかったら null
+ */
 async function forkFrom(m, { draft, pending } = {}) {
   const uuid = m.dataset.uuid, mw = m.closest('.mw');
-  if (!uuid || !state.current || state.busy) return;
+  if (!uuid || !state.current || state.busy) return null;
   const key = mw?.dataset.key ?? '';
   const found = state.messages.findIndex(x => x.uuid === uuid);
   const mi = draft ? draft.index - 1 : key.startsWith('m:') ? Number(key.slice(2)) : found < 0 ? -1 : state.base + found;
   const source = state.current;
   const clearPending = forkPending(pending ?? m.querySelector(':scope > .who .who-more'));
-  let sendTo;
+  const payload = draft ? resendPayload(draft.text, draft.attached, source) : null;
+  const send = payload ? { messageId: randomId(), prompt: payload.prompt, ...(payload.attachments.length ? { attachments: payload.attachments } : {}) } : null;
+  if (send && draft.attached.length) provisionalByMessage.set(send.messageId, draft.attached.map(provisionalPresent));
+  let made = null, sendError = null;
   state.busy = true;
   log.classList.add('branch-transition');
   try {
@@ -10272,22 +10289,30 @@ async function forkFrom(m, { draft, pending } = {}) {
     if (settingsFailures.has(source)) throw new Error(settingsFailures.get(source).error);
     await modeWrites.get(source);
     const boundary = draft ? { beforeMessageId: uuid } : { upToMessageId: uuid };
-    const result = await cmd('fork', { sessionId: source, ...boundary });
+    const result = await cmd('fork', { sessionId: source, ...boundary, ...(send ? { send } : {}) });
     if (!result?.sessionId) throw new Error(t('chat.fork.noId'));
-    if (draft) await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, editing: draft.editing, version: 2, dirty: true });
+    made = { sessionId: result.sessionId, sent: Boolean(send) && !result.sendError };
+    if (send && result.sendError) {
+      // 分岐はできたが受け付けられなかった。直した中身は分岐先の下書きに残す（移った先で、もう一度送れる）
+      sendError = result.sendError;
+      provisionalByMessage.delete(send.messageId);
+      await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, editing: draft.editing, version: 2, revision: randomId(), dirty: true });
+    }
     await refresh();
     await loadBranches(source);
     const groups = placeJunctions();
     const row = groups.find(r => r.dataset.key === `m:${mi}`);
     if (row) await row.grow(result.sessionId);
     await changeBranch(result.sessionId, row);
-    if (draft) sendTo = result.sessionId;
+    if (made.sent) refreshOutbox(result.sessionId).catch(() => {});
     $('prompt').focus({ preventScroll: true });
   } catch (e) {
+    if (send && !made) provisionalByMessage.delete(send.messageId);
     placeJunctions();
     composerError(t("chat.fork.failed", { error: e.message }));
   } finally { clearPending(); await finishBranchChange(); }
-  if (sendTo && state.current === sendTo) await submit();
+  if (sendError) composerError(t('chat.send.failed', { error: sendError }));
+  return made;
 }
 
 /** The session menu uses the same creation animation as the message action. */
@@ -10436,6 +10461,12 @@ const submitVoiceText = createChatVoiceSender({
     return state.current === id ? id : null;
   },
   settingsSettled: async (id) => { await settingsWrites.get(id)?.catch(() => {}); await modeWrites.get(id); },
+  // その会話を開いて落ち着いているときだけ、入力欄の今の設定（メインの送信と同じ settings）。開き途中・移った後は添えない
+  captureSettings: (id) => {
+    if (state.current !== id || state.busy || state.loadingSession) return undefined;
+    const settings = captureSendSettings();
+    return typeof settings.worktreePending === 'boolean' ? settings : undefined;
+  },
   place: (sessionId, messageId, text) => {
     if (messageRow(messageId)) return;
     markDelivery(ensureMessageRow(messageId, text, new Date().toISOString()), 'sending');
@@ -10453,28 +10484,54 @@ function unsentHere() {
  * 新しい会話の宛先に bot を選んだ最初の送信: 一時チャットの実体のチャンネルへ、その bot 宛ての投稿を置き（channels.post の to）、
  * そのスレッドを開く。空の会話（未送信）は残さず消す。送り直しても同じ投稿を二重に作らない（clientId）
  */
-let homeAttempt = null;
-async function sendToHomeBot(bot) {
-  const text = $('prompt').value;
-  const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
-  if (!text.trim() && !attachments.length) return;
-  const key = JSON.stringify([bot.id, text, attachments]);
-  if (homeAttempt?.key !== key) homeAttempt = { key, clientId: `home-${randomId()}` };
-  try {
-    const post = await cmd('invoke', { op: 'channels.post', args: { channelId: 'home', text, ...(attachments.length ? { attachments } : {}), to: bot.id, clientId: homeAttempt.clientId } });
-    homeAttempt = null;
-    const empty = state.sessions.find(s => s.id === state.current && s.unsent && !s.bot) ?? null;
+// 送り直しの id と送っている印は、投稿を始めた会話（新しい会話の欄は ""）ごと
+const homeAttempts = new Map();
+const homeSending = new Set();
+/** 投稿を始めた会話の下書きを、押した時の版のままなら空にする。空にしたら true（ほかの会話へ移っていても、その会話の下書きだけを見る） */
+function clearHomeDraft(source, revision) {
+  const key = source ?? '';
+  if ((state.current ?? '') === key) {
+    if (draftRevision !== revision) return false;   // 応答を待つ間に書き足した: 残す
     $('prompt').value = '';
     state.attached = [];
     renderAttached();
     fitPrompt();
-    homeDest.reset();
-    $('settingsError').textContent = '';
-    viewAddress.go({ channelId: post.channelId, threadId: post.id });
-    if (empty) deleteSessionRow(empty).catch(() => {});
+    draftRevision = randomId();
+  } else if (state.drafts.get(key)?.revision !== revision) return false;
+  if (key) persistDraft(key, { text: '', attached: [], revision: key === (state.current ?? '') ? draftRevision : randomId(), dirty: true }).catch(() => {});
+  else dropBlankDraft();
+  return true;
+}
+async function sendToHomeBot(bot) {
+  // 送る中身・始めた会話・下書きの版は押した時に決める。応答を待つ間に別の会話へ移っても、後片付けは始めた会話とその版にだけ
+  const source = state.current;
+  const sourceKey = source ?? '';
+  if (homeSending.has(sourceKey)) return;
+  const text = $('prompt').value;
+  const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
+  if (!text.trim() && !attachments.length) return;
+  saveDraft().catch(() => {});   // 押した時の版を下書きに写す（移った後に、その会話の下書きの版で見分ける）
+  const revision = draftRevision;
+  const empty = source ? state.sessions.find(s => s.id === source && s.unsent && !s.bot) ?? null : null;
+  const key = JSON.stringify([bot.id, text, attachments]);
+  if (homeAttempts.get(sourceKey)?.key !== key) homeAttempts.set(sourceKey, { key, clientId: `home-${randomId()}` });
+  homeSending.add(sourceKey);
+  try {
+    const post = await cmd('invoke', { op: 'channels.post', args: { channelId: 'home', text, ...(attachments.length ? { attachments } : {}), to: bot.id, clientId: homeAttempts.get(sourceKey).clientId } });
+    homeAttempts.delete(sourceKey);
+    const here = state.current === source;
+    const cleared = clearHomeDraft(source, revision);
+    if (here && cleared) {
+      homeDest.reset();
+      $('settingsError').textContent = '';
+      viewAddress.go({ channelId: post.channelId, threadId: post.id });
+    }
+    // 空の会話（未送信）は、下書きを空にできたときだけ消す（移った先で書き足した会話は残す）
+    if (cleared && empty && state.sessions.find(s => s.id === empty.id)?.unsent) deleteSessionRow(empty).catch(() => {});
   } catch (e) {
+    if (state.current !== source) { notify(t('chat.send.failed', { error: e.message })); return; }
     $('settingsError').textContent = t('chat.send.failed', { error: e.message });
-  }
+  } finally { homeSending.delete(sourceKey); }
 }
 
 // メインの入力欄の配送（web/composer/sender.mjs。子の会話のモーダルの入力欄も同じ核を使う）
@@ -10847,10 +10904,18 @@ workComposer = createWorkComposer({
   notify: (text) => notify(text),
   agentLang: (id) => state.sessions.find(s => s.id === id)?.agentLocale ?? uiLang,
   format: { attachedKey, attachmentLine },
-  send: { cmd: (command, args) => cmd(command, args), limitOp, randomId, receipts, saveReceipts, refreshOutbox },
+  send: { cmd: (command, args, options) => cmd(command, args, options), limitOp, randomId, receipts, saveReceipts, refreshOutbox },
   submitting: submittingMessages,
   settled: async (id) => { await settingsWrites.get(id)?.catch(() => {}); await modeWrites.get(id)?.catch(() => {}); },
   sendOptions: (id) => { const s = workControls.selection(id); return { cwd: s.cwd || '', mode: s.mode || undefined }; },
+  // 押した時の子の設定（メインの captureSendSettings と同じ形。サーバーが届ける前にこの値で会話を整える）
+  captureSettings: (id) => {
+    const s = workControls.selection(id);
+    const row = state.sessions.find(x => x.id === id);
+    if (!s.backend || !row) return undefined;
+    return { backend: s.backend, account: s.endpoint ? '' : s.account ?? '', endpoint: s.endpoint ?? '', cwd: s.cwd ?? '', model: s.model ?? '', effort: s.effort ?? '', mode: s.mode ?? '',
+      worktreePending: Boolean(row.worktreePending) };
+  },
   controls: workControls,
   outbox: {
     list: (id) => outboxes.get(id) ?? [],

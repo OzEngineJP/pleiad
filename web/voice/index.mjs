@@ -23,7 +23,8 @@
 //                 createRow・place・markHost は、聞き取れなかった行（view.mjs の createListenFail。吹き出しではなく面を塗らない 1 行）も使う（見た目は voice.css の .vc-ghost）
 //   target()      見ている先 { kind: 'chat', sessionId } | { kind: 'thread', channelId, threadId } | null
 //   canStart?()   false なら通話を始めず、実行中の通話も送信待ちの言葉を捨てて終える（閲覧用など）
-//   send(text)    まとめ待ちを終えた 1 通を、いまの送信の経路（会話へは sendMessage で会話の行に置く、スレッドへは channels.post）へ。失敗したら投げる。
+//   send(text, target)  まとめ待ちを終えた 1 通を、target（発言を確定した時の target()。順番を待つ間に画面が移っても変えない）へ
+//                 （会話へは sendMessage で会話の行に置く、スレッドへは channels.post）。失敗したら投げる。
 //                 index.mjs が直列に呼ぶ（前の送信が済むまで次を呼ばない）。入力欄は通さない。会話の id を返す口（{ sessionId, messageId }）なら、
 //                 messageId が「AI に渡しました」になったとき（delivery.mjs の ply:voice-delivered）に受け取りの一言の時計を始める。何も返さない口（スレッド）は、送れた時点で渡ったとする
 //   sendTo?(target, text)  通話を終えたとき、話していた会話から別の会話へ移っていた場合の送り先指定の送信（まとめ待ちの残りを、話していた会話へ）。
@@ -310,9 +311,13 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     const bubble = rec.live.row;
     engine.noteSent(true);
     say(t('voice.live.sent'));
+    // 送り先は確定した今の会話（キューの順番を待つ間に画面が別の会話へ移っても、話していた会話へ送る）
+    const target = rec.slot.target();
     sendQueue.push(() => {
       if (!canStart(rec)) throw new Error(t('ui:deletedBotReadOnly'));
-      return rec.slot.send(text);
+      // 新しい会話の欄で話し、その会話の id が順番を待つ間に決まった（watchTarget が startedTarget を更新した）なら、その会話へ
+      const fresh = target?.kind === 'chat' && !target.sessionId && startedTarget?.kind === 'chat' && startedTarget.sessionId;
+      return rec.slot.send(text, fresh ? startedTarget : target);
     }).then(
       (result) => {
         noteHanded(result);
@@ -338,7 +343,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     const target = startedTarget;
     const here = !target || keyOf(target) === keyOf(rec.slot.target());
     say(t('voice.live.sent'));
-    sendQueue.push(() => (here ? rec.slot.send(text) : sendTo(rec, target, text))).then(
+    sendQueue.push(() => (here ? rec.slot.send(text, target ?? rec.slot.target()) : sendTo(rec, target, text))).then(
       () => { sounds.play('sent'); if (!here) say(t('voice.note.sentOnLeave')); },
       (e) => {
         rec.note.show(t('voice.note.sendFailed', { error: e?.message ?? String(e) }), { settings: false });

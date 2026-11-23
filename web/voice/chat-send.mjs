@@ -3,10 +3,8 @@
 // 入力欄を通さない。入力欄に書いて submit() を呼ぶやり方は、送信中（submittingMessages）なら黙って return して 2 通目が入力欄に残り、
 // 1 通目は await のあとで入力欄を読むので 2 通目が混ざり、書きかけの文にも触れていた。ここでは本文を直に sendMessage へ渡し、
 // 受理された発言を会話の中の行に置く（状態は web/voice/delivery.mjs の 3 つの言い方）。呼ぶ側（index.mjs）が直列に呼ぶので、順番は守られる。
+// 送り先は呼ぶ側が発言の確定の時に決めた会話（話していた会話）。キューの順番を待つ間に画面が別の会話へ移っても、その会話へ送る（ADR 0347）。
 import { t } from '../i18n.mjs';
-
-const READY_POLL_MS = 100;
-const READY_MAX_MS = 8000;
 
 /**
  * @param {object} o
@@ -15,46 +13,48 @@ const READY_MAX_MS = 8000;
  * @param {() => string} o.randomId
  * @param {() => string|null} o.freshId  作ったばかりの会話を開いている間の id（client.mjs の freshSessionId）
  * @param {() => Promise<string|null>} o.ensureSession  会話がまだ無い（作っている途中）なら作って、できた id を返す。できなければ null
- * @param {(sessionId: string) => Promise<void>} o.settingsSettled  設定の保存が済むまで待つ
+ * @param {(sessionId: string) => Promise<void>} o.settingsSettled  設定の保存が済むまで待つ（押した時の設定を添えられないときだけ）
+ * @param {(sessionId: string) => object|undefined} [o.captureSettings]  その会話を開いて落ち着いているときの、入力欄の今の設定（sendMessage の settings）
  * @param {(sessionId: string, messageId: string, text: string) => void} o.place  受理された発言を会話の行に置く（送信中の一行つき）
  * @param {ReturnType<import('./delivery.mjs').createVoiceDelivery>} o.delivery
  * @param {(ms: number) => Promise<void>} [o.sleep]
  */
-export function createChatVoiceSender({ state, cmd, randomId, freshId, ensureSession, settingsSettled, place, delivery, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export function createChatVoiceSender({ state, cmd, randomId, freshId, ensureSession, settingsSettled, captureSettings = () => undefined, place, delivery }) {
   const writable = (id) => {
     if (state.sessions?.find(s => s.id === id)?.deletedBot) throw new Error(t('ui:deletedBotReadOnly'));
   };
-  /** 会話を開いている途中・切り替えている途中は、終わるまで待つ（submit() はこの間、黙って送らない） */
-  async function settled() {
-    for (let waited = 0; (state.busy || state.loadingSession) && waited < READY_MAX_MS; waited += READY_POLL_MS) await sleep(READY_POLL_MS);
-  }
+  const notSent = () => new Error(t('voice.note.notSent'));
 
   /**
    * 送る。受理されたら返る。送れなかったら投げる（発言は入力欄へ戻さない。画面は失敗の一行を出す）。
-   * to = { sessionId }: 通話を終えたとき、別の会話へ移っていたときの、話していた会話への送り（いま見ている会話の行・設定には触れない）
+   * to = { sessionId, fresh? }: 話していた会話（発言を確定した時に決めたもの）。fresh は新しい会話の欄で話したとき（まだ会話が無いので作る）。
+   * 省くと、いま開いている会話。送った後、その会話をまだ開いていれば会話の行に置く（移っていれば行・入力欄には触れない）
    */
   return async function send(text, to = null) {
-    if (to) {
-      if (!to.sessionId) throw new Error(t('voice.note.notSent'));
-      writable(to.sessionId);
-      const messageId = randomId();
-      await cmd('sendMessage', { sessionId: to.sessionId, messageId, prompt: text });
-      return { sessionId: to.sessionId, messageId };
+    to ??= { sessionId: state.current && state.current !== freshId() ? state.current : null, fresh: true };
+    let sessionId = to.sessionId;
+    if (!sessionId) {
+      // 新しい会話の欄で話した。まだその欄を開いているときだけ会話を作る（ほかの会話へ移っていたら、そこへは送らない）
+      if (!to.fresh || (state.current && state.current !== freshId())) throw notSent();
+      sessionId = await ensureSession();
+      if (!sessionId) throw notSent();
     }
-    let sessionId = state.current;
-    if (!sessionId || sessionId === freshId()) sessionId = await ensureSession();
-    if (!sessionId) throw new Error(t('voice.note.notSent'));
     writable(sessionId);
-    await settled();
-    await settingsSettled(sessionId).catch(() => {});
-    if (state.current !== sessionId) throw new Error(t('voice.note.notSent'));   // 話している間に別の会話へ移った
-    writable(sessionId);
+    // その会話を開いて落ち着いていれば、入力欄の今の設定を一緒に送る（サーバーが届ける前に会話を整える。メインの送信と同じ）。
+    // 開いていなければ設定は添えず、その会話の保存済みの設定で届ける（保存が済むのを待つ）
+    const settings = captureSettings(sessionId);
+    if (!settings) {
+      await settingsSettled(sessionId).catch(() => {});
+      writable(sessionId);
+    }
     const messageId = randomId();
-    delivery.claim(messageId);
+    const shown = state.current === sessionId;
+    if (shown) delivery.claim(messageId);
     try {
-      await cmd('sendMessage', { sessionId, messageId, prompt: text, cwd: state.cwd.trim() || undefined, mode: state.mode });
-    } catch (e) { delivery.release(messageId); throw e; }
-    if (state.current === sessionId) place(sessionId, messageId, text);
+      await cmd('sendMessage', { sessionId, messageId, prompt: text, ...(settings ? { settings } : {}) });
+    } catch (e) { if (shown) delivery.release(messageId); throw e; }
+    if (shown && state.current === sessionId) place(sessionId, messageId, text);
+    else if (shown) delivery.release(messageId);
     return { sessionId, messageId };
   };
 }

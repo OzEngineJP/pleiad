@@ -79,7 +79,7 @@ export default function (t) {
   t.ok('client.mjs の host は、質問のカードの口を渡し、内蔵ブラウザーの口は無い', !/browser: browserPanel/.test(client) && /ev\.kind === 'question' \? questionCard\(ev, into\)/.test(client));
   const thread = read('web/channels/thread.mjs');
   t.ok('承認のカードは host.permissionCard を通す（Chats と同じ部品。決着は resolvePermission）', thread.includes('host.permissionCard(ev, perms)') && !thread.includes("'resolvePermission'"));
-  t.ok('止めるは channels.stopThread・返信は channels.post の threadId・読み込みは channels.read の threadId', thread.includes("'channels.stopThread'") && /channels\.post', \{ channelId: S\.channelId, threadId: S\.threadId/.test(thread)
+  t.ok('止めるは channels.stopThread・返信は channels.post の threadId・読み込みは channels.read の threadId', thread.includes("'channels.stopThread'") && /channels\.post', \{ channelId, threadId, text/.test(thread)
     && thread.includes("'channels.read', { channelId, threadId"));
   const css = read('web/channels-thread.css');
   t.ok('動きは transform（deck.mjs）。CSS は 200ms の値だけを持ち、動きを減らす設定では 0', /--dur-deck:200ms/.test(css) && /prefers-reduced-motion:reduce\)\{\.deck\{--dur-deck:0ms\}/.test(css));

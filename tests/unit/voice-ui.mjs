@@ -54,6 +54,35 @@ export default async function (t) {
     await send('生存会話への声');
     t.ok('生存会話の音声送信は維持する', sent === 1 && placed === 1 && claims === 1);
   }
+  // ---- 送り先は発言を確定した時の会話（ADR 0347 第 2 段）。順番を待つ間に画面が移っても変わらず、1 回だけ送る
+  {
+    const a = { id: 'voice-a' }, b = { id: 'voice-b' };
+    const state = { current: a.id, sessions: [a, b], busy: false, loadingSession: null };
+    const calls = [], placed = [], waited = [];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const send = createChatVoiceSender({ state, randomId: (() => { let n = 0; return () => `m${++n}`; })(), freshId: () => null,
+      cmd: async (command, args) => { calls.push({ command, args }); },
+      ensureSession: async () => { throw new Error('作らない'); },
+      settingsSettled: async (id) => { waited.push(id); await gate; },
+      captureSettings: (id) => (state.current === id ? { backend: 'fake', worktreePending: false } : undefined),
+      place: (sessionId, messageId) => { placed.push({ sessionId, messageId }); },
+      delivery: { claim() {}, release() {} } });
+    const sentNow = await send('A で話した', { sessionId: a.id });
+    t.ok('開いている会話へは押した時の設定を添え、保存を待たない', calls.length === 1 && calls[0].args.sessionId === a.id && calls[0].args.settings?.backend === 'fake'
+      && !waited.length && placed.length === 1 && sentNow.sessionId === a.id, JSON.stringify(calls));
+    state.current = b.id;   // 順番を待つ間に B へ移った
+    const pending = send('A で話した 2 通目', { sessionId: a.id });
+    await Promise.resolve();
+    release();
+    await pending;
+    t.ok('移った後も話していた会話（A）へ 1 回だけ送り、B の行・設定には触れない',
+      calls.length === 2 && calls[1].args.sessionId === a.id && !('settings' in calls[1].args) && !('cwd' in calls[1].args)
+      && waited.join() === a.id && placed.length === 1, JSON.stringify(calls[1]));
+    let refused = false;
+    try { await send('新しい欄で話した', { sessionId: null, fresh: true }); } catch { refused = true; }
+    t.ok('新しい会話の欄で話した後に既存の会話へ移っていたら、その会話へは送らない', refused && calls.length === 2);
+  }
   // ---- 送信ゲート
   {
     const gate = createSendGate();

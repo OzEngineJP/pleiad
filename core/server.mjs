@@ -5262,8 +5262,9 @@ async function acceptMessage(sessionId, messageId, args, options) { return withW
 async function acceptWritableMessage(sessionId, messageId, args, { rewind } = {}) {
   compactionScheduler.cancel(sessionId);
   if (rewind) {
+    // 巻き戻しと受け付けは 1 つの操作（ADR 0347）。受け付けられない送信（同じ id の別の中身・送信待ちが満杯）は、履歴を変える前に断る。
     // 受け付け済みの再送（応答が届かず送り直した同じ messageId）は、巻き戻し直さない（もう巻き戻してある）
-    if ((await outbox.list(sessionId)).some(m => m.id === messageId)) return outbox.accept(sessionId, messageId, args);
+    if (await outbox.check(sessionId, messageId, args) === 'accepted') return outbox.accept(sessionId, messageId, args);
     const rewound = await rewindConversation({ sessionId, beforeMessageId: rewind.beforeMessageId, stopRunning: rewind.stopRunning === true });
     return { ...(await outbox.accept(sessionId, messageId, args)), rewind: rewound };
   }
@@ -11791,9 +11792,26 @@ wss.on("connection", (ws, req) => {
           return r.ok ? reply(true, "ok") : reply(false, r.error, r.code);
         }
 
+        // send: { messageId, prompt, attachments? }（［分岐して送る］）。分岐を作るのと同じ操作で、分岐先の送信待ちに受け付ける（ADR 0347）。
+        // 中身は分岐を作る前に確かめる。分岐はできて受け付けだけが失敗したら、分岐の id と sendError を返す（画面は中身を分岐先の下書きに残す）
         case "fork": {
-          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'sessions.fork', msg.args, opsDeps(locale.lang));
-          return r.ok ? reply(true, { sessionId: r.result.sessionId }) : reply(false, r.error, r.code);
+          const { send, ...forkArgs } = msg.args ?? {};
+          if (send !== undefined) {
+            if (!send || typeof send.messageId !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(send.messageId)) throw new Error(t('send.messageIdRequired'));
+            if (typeof send.prompt !== 'string' || !send.prompt.trim()) throw new Error(t('send.messageRequired'));
+            if (send.attachments !== undefined && !Array.isArray(send.attachments)) throw new Error(t('send.invalidAttachments'));
+          }
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, 'sessions.fork', forkArgs, opsDeps(locale.lang));
+          if (!r.ok) return reply(false, r.error, r.code);
+          const child = r.result.sessionId;
+          if (send === undefined) return reply(true, { sessionId: child });
+          try {
+            const args = { prompt: send.prompt, ...(send.attachments ? { attachments: send.attachments } : {}), ...(agentTasks.isChild(child) ? { byHuman: true } : {}) };
+            const accepted = await acceptMessage(child, send.messageId, args);
+            return reply(true, { sessionId: child, accepted });
+          } catch (e) {
+            return reply(true, { sessionId: child, sendError: String(e?.message ?? e) });
+          }
         }
       }
     } catch (err) {

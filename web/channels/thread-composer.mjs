@@ -82,7 +82,12 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   els.attach.after(destChip);
   let chosen = null;   // 人が選んだ宛先（null = 選んでいない。このスレッドの決まりで決まる）
 
-  let busy = false, disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null, pendingEdit = null;
+  let disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null, pendingEdit = null;
+  // 送っている持ち主（スレッド）。送信中はそのスレッドだけのもの: 別のスレッドへ移れば、そこではすぐ書いて送れる
+  const sending = new Set();
+  // 持ち主を離れている間に届いた失敗。戻ったときに入力欄の下へ出す
+  const failures = new Map();
+  const busy = () => sending.has(draftKey ?? '');
   const dismissWake = () => { pendingWake = null; wakeCard.hidden = true; };
   wakeCancel.onclick = dismissWake;
   const say = (text, sticky = false) => {
@@ -221,7 +226,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   els.attach.addEventListener('click', () => { if (!disabled) els.fileIn.click(); });
   els.fileIn.onchange = () => { att.attachFiles([...els.fileIn.files]); els.fileIn.value = ''; };
 
-  function syncSend() { els.send.disabled = busy || disabled || Boolean(att.blockReason()); }
+  function syncSend() { els.send.disabled = busy() || disabled || Boolean(att.blockReason()); }
 
   // ---- 宛先
   const destNow = () => {
@@ -412,38 +417,59 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
 
   // ---- 送る
   // 送り直し（応答が届かなかった）でも二重に投稿しないよう、同じ中身には同じ clientId を使う（サーバーが同じ id の投稿を作らない）
-  let attempt = null;
-  const clientIdOf = (body, at) => {
+  // 送り直しの id はスレッドごと（並べて送ったほかのスレッドの応答で消さない）
+  const attempts = new Map();
+  const clientIdOf = (owner, body, at) => {
     const key = JSON.stringify([body, at ?? null, chosen]);
-    if (attempt?.key !== key) attempt = { key, id: `th-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` };
-    return attempt.id;
+    if (attempts.get(owner)?.key !== key) attempts.set(owner, { key, id: `th-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` });
+    return attempts.get(owner).id;
   };
-  async function sendBody(body, confirmedWake, at = null) {
-    busy = true;
-    syncSend();
-    wakeButton.disabled = true;
-    say('');
-    try {
-      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}), ...(chosen ? { to: chosen } : {}), clientId: clientIdOf(body, at), ...(at ? { at } : {}) });
-      attempt = null;
+  // 送った版（押した時の字と添付）。応答が届いたとき、片付けてよいのはこの版のままの下書きだけ
+  const versionOf = (text, items) => JSON.stringify([text ?? '', items ?? []]);
+  function clearSent(owner, version) {
+    if ((draftKey ?? '') === owner) {
+      if (versionOf(input.value, c.attach.items) !== version) return;   // 送っている間に書き足した: 残す
       input.value = '';
       att.clear();
       dismissWake();
       saveDraft();
       paintHint();
       c.fit();
+      return;
+    }
+    const d = draftStore().get(owner);
+    if (!d || versionOf(d.text, d.attached) !== version) return;
+    if (d.edit) draftStore().set(owner, { text: '', attached: [], at: Date.now(), edit: d.edit }); else draftStore().delete(owner);
+    persistDrafts();
+    if (owner) host.invoke('drafts.save', { key: owner, text: '', at: Date.now() }).catch(() => {});
+  }
+  async function sendBody(body, confirmedWake, at = null) {
+    // 送り先（持ち主）・宛先・版は押した時に決める。応答を待つ間に別のスレッドへ移っても、片付けと失敗の知らせはこのスレッドへ
+    const owner = draftKey ?? '';
+    const version = versionOf(input.value, c.attach.items);
+    const to = chosen;
+    const clientId = clientIdOf(owner, body, at);
+    sending.add(owner);
+    failures.delete(owner);
+    syncSend();
+    wakeButton.disabled = true;
+    say('');
+    try {
+      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}), clientId, ...(at ? { at } : {}) });
+      attempts.delete(owner);
+      clearSent(owner, version);
     } catch (err) {
-      dismissWake();
-      say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true);
+      const message = t('channels:feed.composer.failed', { error: err?.message ?? String(err) });
+      if ((draftKey ?? '') === owner) { dismissWake(); say(message, true); } else failures.set(owner, message);
     } finally {
-      busy = false;
+      sending.delete(owner);
       syncSend();
       wakeButton.disabled = false;
     }
   }
   async function submit({ at = null } = {}) {
     if (edit.active) return edit.send();
-    if (busy || disabled || pendingWake) return;
+    if (busy() || disabled || pendingWake) return;
     if (c.shell?.active) return runShell();
     if (c.shell?.blocked) return c.shell.flash?.();
     c.slash?.close();
@@ -455,20 +481,21 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     if (body.text.trim() === '/compact' && !body.attachments.length) {
       const s = destSession();
       if (!s?.sessionId) { say(t('channels:thread.compactNoSession')); return; }
-      busy = true; syncSend();
-      try { await compact(s.sessionId); input.value = ''; saveDraft(); }
-      catch (err) { say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true); }
-      finally { busy = false; syncSend(); }
+      const owner = draftKey ?? '';
+      sending.add(owner); syncSend();
+      try { await compact(s.sessionId); if (owner === (draftKey ?? '') && input.value.trim() === '/compact') { input.value = ''; saveDraft(); } }
+      catch (err) { if (owner === (draftKey ?? '')) say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true); }
+      finally { sending.delete(owner); syncSend(); }
       return;
     }
     if (at) { await sendBody(body, null, at); return; }
     if (wakePreview && /[@＠](?:here|everyone)(?![\p{L}\p{N}_-])/iu.test(body.text)) {
-      const owner = draftKey;
-      busy = true;
+      const owner = draftKey ?? '';
+      sending.add(owner);
       syncSend();
       try {
         const preview = await wakePreview(body.text);
-        if (owner !== draftKey || JSON.stringify(att.compose(input.value)) !== JSON.stringify(body)) return;
+        if (owner !== (draftKey ?? '') || JSON.stringify(att.compose(input.value)) !== JSON.stringify(body)) return;
         if (preview.required) {
           pendingWake = { body, botIds: preview.botIds };
           wakeText.textContent = t('channels:feed.wakeConfirm.count', { count: preview.botIds.length });
@@ -476,14 +503,14 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
           wakeButton.focus();
           return;
         }
-      } catch (err) { say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true); return; }
-      finally { busy = false; syncSend(); }
+      } catch (err) { if (owner === (draftKey ?? '')) say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true); return; }
+      finally { sending.delete(owner); syncSend(); }
     }
     await sendBody(body);
   }
-  wakeButton.onclick = () => { if (pendingWake && !busy && !disabled) sendBody(pendingWake.body, pendingWake.botIds); };
+  wakeButton.onclick = () => { if (pendingWake && !busy() && !disabled) sendBody(pendingWake.body, pendingWake.botIds); };
 
-  input.addEventListener('input', () => { dismissWake(); if (els.settingsError.textContent && !busy) say(''); paintHint(); saveDraftSoon(); });
+  input.addEventListener('input', () => { dismissWake(); if (els.settingsError.textContent && !busy()) say(''); paintHint(); saveDraftSoon(); });
   input.addEventListener('blur', saveDraft);
   const onHidden = () => { if (document.visibilityState === 'hidden') saveDraft(); };
   document.addEventListener('visibilitychange', onHidden);
@@ -535,7 +562,9 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       // 編集中だったスレッドは、投稿を読み込んだあと（syncEdit）に「編集中」へ戻す
       if (d?.edit) pendingEdit = d.edit;
       if (!d) void loadServerDraft(key);   // この端末に写しが無い: サーバーの写しを読む（ほかの端末で書いた続き）
-      say('');
+      say(failures.get(key ?? '') ?? '', true);
+      failures.delete(key ?? '');
+      syncSend();
       paintHint();
       paintDest();
     },

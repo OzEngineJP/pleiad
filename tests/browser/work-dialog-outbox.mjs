@@ -3,6 +3,7 @@
 //   2. 戻した本文をもう一度送ると、添付の印が二重にならない
 //   3. 添付つきで終わった子へ送ると、添付が子へ届く（送信の要求に attachments が載る）
 //   4. 人からの指示の数は渡った分だけ（編集・取り消しで下げた送信待ちは数えず、届いた 1 件は 1 と数える）
+//   5. 送った後、届く前に別の子へ移っても、送り先は押した時の子のまま 1 回だけ。移った先の子の欄の字には触れない（ADR 0347 第 2 段）
 // 実行: node tests/browser/work-dialog-outbox.mjs   （会話の agent-browser の窓を使う。WORK_DIALOG_OUTBOX_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -95,8 +96,15 @@ try {
   evaluate(() => {
     const log = window.__cmds = [];
     const send = WebSocket.prototype.send;
+    window.__heldSends = [];
+    window.__releaseSends = () => { window.__holdSend = false; for (const f of window.__heldSends.splice(0)) f(); };
     WebSocket.prototype.send = function (data) {
-      try { const m = JSON.parse(data); if (m.command) log.push({ command: m.command, sessionId: m.args?.sessionId ?? null, prompt: m.args?.prompt ?? null, attachments: m.args?.attachments ?? null, action: m.args?.action ?? null }); } catch { /* 文字でないフレーム */ }
+      try {
+        const m = JSON.parse(data);
+        if (m.command) log.push({ command: m.command, sessionId: m.args?.sessionId ?? null, prompt: m.args?.prompt ?? null, attachments: m.args?.attachments ?? null, action: m.args?.action ?? null });
+        // window.__holdSend の間の送信（sendMessage）は握っておき、__releaseSends() で出す（届く前に別の子へ移る場面を作る）
+        if (window.__holdSend && m.command === 'sendMessage') { window.__heldSends.push(() => send.call(this, data)); return; }
+      } catch { /* 文字でないフレーム */ }
       return send.call(this, data);
     };
   });
@@ -176,6 +184,32 @@ try {
   assert.equal(await countOf(done.taskId), 1, 'the delivered send is counted once');
   assert.equal(await countOf(running.taskId), 0, 'withdrawn queued sends are not counted');
   console.log('PASS: human instruction count follows deliveries only');
+
+  // ---- 5. 届く前に別の子へ移る: 送り先は押した時の子（終わった子）のまま 1 回だけ。移った先（走っている子）の欄には触れない ----
+  const late = 'あとで届く指示';
+  typeInto('wkPrompt', late);
+  await sleep(400);
+  evaluate(() => { window.__holdSend = true; });
+  clickOn('#wkSend', 'send then move');
+  await wait(() => evaluate(() => window.__heldSends.length === 1), 'the send is held');
+  await openCard(running.taskId, 'running again');
+  await wait(() => childOf() === runChild, 'moved to the running child');
+  typeInto('wkPrompt', '走っている子の書きかけ');
+  await sleep(300);
+  evaluate(() => window.__releaseSends());
+  await wait(() => evaluate(() => !document.querySelector('#workDialog .wk-composer [aria-busy="true"]')), 'send settled', 10_000);
+  await sleep(1200);
+  const lateSends = cmds('sendMessage').filter(c => (c.prompt ?? '').includes(late));
+  assert.equal(lateSends.length, 1, 'the send goes out once');
+  assert.equal(lateSends[0].sessionId, doneChild, 'to the child it was sent from');
+  assert.equal(childOf(), runChild, 'the view stays on the child we moved to');
+  assert.equal(evaluate(() => document.getElementById('wkPrompt').value), '走っている子の書きかけ', 'the moved-to child keeps its draft');
+  await openCard(done.taskId, 'done again');
+  await wait(() => childOf() === doneChild, 'back on the done child');
+  await wait(() => evaluate(t => document.getElementById('workBody').textContent.includes(t), late), 'the late send shows in the child it was sent to');
+  assert.equal(evaluate(() => document.getElementById('wkPrompt').value), '', 'the sent draft is cleared in the child it was sent from');
+  assert.equal(cmds('sendMessage').filter(c => (c.prompt ?? '').includes(late)).length, 1, 'still sent only once');
+  console.log('PASS: moving to another child before the send arrives keeps the target and the other draft');
   console.log('PASS');
 } finally {
   client?.close();

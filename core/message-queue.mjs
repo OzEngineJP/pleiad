@@ -255,6 +255,23 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
         }
       }
     },
+    /**
+     * 受け付けられるかだけを確かめる（積まない）。同じ id で同じ中身なら 'accepted'（受け付け済みの送り直し）、新しく積めるなら 'new'。
+     * 積めない（同じ id で別の中身・送信待ちが満杯）なら accept と同じ理由で投げる。履歴を変えてから受け付ける送信（巻き戻し）が、
+     * 先にこれで確かめて、受け付けられないのに履歴だけ変わることを防ぐ
+     */
+    async check(id, messageId, args) {
+      return serial(id, async () => {
+        const items = await list(id);
+        const existing = items.find(m => m.id === messageId);
+        if (existing) {
+          if (JSON.stringify(existing.args) !== JSON.stringify(args)) throw new Error(t('queue.idConflict'));
+          return 'accepted';
+        }
+        if (items.filter(m => !['sent', 'cancelled'].includes(m.status)).length >= 100) throw new Error(t('queue.full', { max: 100 }));
+        return 'new';
+      });
+    },
     async accept(id, messageId, args, { resumePaused = false } = {}) {
       const item = await serial(id, async () => {
         const items = await list(id);

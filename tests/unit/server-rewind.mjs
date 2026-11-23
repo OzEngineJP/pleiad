@@ -73,6 +73,12 @@ export default async function(t) {
       const afterDup = (await c.cmd("loadSession", { sessionId: id })).messages;
       const replay = await c.cmd("sendMessage", { sessionId: id, messageId: again, prompt: "echo:dup", rewind: { beforeMessageId: afterNext[2].uuid } }).then(() => "ok", e => e.message);
       t.ok(label("同じ messageId の再送は巻き戻し直さない"), replay === "ok" && (await c.cmd("loadSession", { sessionId: id })).messages.length === afterDup.length, String(replay));
+      // 巻き戻しと受け付けは 1 つの操作（ADR 0347）: 受け付けられない送信（同じ id で別の中身）は、履歴を変える前に断る
+      const kept = JSON.stringify((await c.cmd("loadSession", { sessionId: id })).messages);
+      const usersNow = (await c.cmd("loadSession", { sessionId: id })).messages.filter(m => m.role === "user");
+      const conflict = await c.cmd("sendMessage", { sessionId: id, messageId: again, prompt: "echo:other content", rewind: { beforeMessageId: usersNow[1].uuid } }).then(() => null, e => e.message);
+      t.ok(label("同じ id で別の中身の巻き戻しは、履歴を変えずに断る"), Boolean(conflict)
+        && JSON.stringify((await c.cmd("loadSession", { sessionId: id })).messages) === kept, String(conflict));
 
       // 検査: 自分の発言以外・存在しない発言は断り、会話は変わらない
       const snapshot = JSON.stringify((await c.cmd("loadSession", { sessionId: id })).messages);

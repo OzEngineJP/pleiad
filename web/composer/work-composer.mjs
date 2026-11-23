@@ -9,7 +9,7 @@
 // 入力欄は #workBody の外に置く。詳細の読み直し（refreshDetail）は #workBody の中身だけを作り直すので、打っている途中の文字・
 // カーソル・IME の変換・添付は、子が流れている間も消えない。
 import { buildComposer, composerEls, createComposer } from './composer.mjs';
-import { createSender } from './sender.mjs';
+import { createSender, sendAttachments } from './sender.mjs';
 import { renderOutbox } from '../outbox.mjs';
 import { runMark } from '../arc.mjs';
 import { t } from '../i18n.mjs';
@@ -32,8 +32,9 @@ const UNUSED = ['armedChip', 'draftSaved', 'armedNote', 'draftFail', 'connNote',
  * @param {{ attachedKey: (p: string) => string, attachmentLine: (lang: string, p: string) => string }} h.format
  * @param {object} h.send メインと同じ送る核の道具（cmd・limitOp・randomId・receipts・saveReceipts・refreshOutbox）
  * @param {Set<string>} h.submitting 送っている途中の会話（メインと共有。二重に送らない）
- * @param {() => Promise<void>} h.settled 設定の保存が済むのを待つ
+ * @param {() => Promise<void>} h.settled 設定の保存が済むのを待つ（日時を指定した送信だけ。今すぐの送信は押した時の設定を一緒に送る）
  * @param {(childId: string) => { cwd?: string, mode?: string }} h.sendOptions 送るときに添える作業場所・承認モード
+ * @param {(childId: string) => object|undefined} h.captureSettings 押した時の子の設定（メインの captureSendSettings と同じ形。決められなければ undefined）
  * @param {{ get: (childId: string) => object, on: Record<string, (childId: string, ...args: any[]) => void> }} h.controls チップ（モデル・effort・作業場所・承認モード）
  * @param {{ list: (id: string) => object[], schedules: (id: string) => object[], cancelSchedule: (id: string) => Promise<any>, sendScheduledNow: (id: string) => Promise<any> }} h.outbox
  * @param {() => Promise<object>} h.environment 送信の日時の面の前提（常駐しているか）
@@ -84,7 +85,13 @@ export function createWorkComposer(h) {
   const paintSolo = (visible, disabled) => { solo.hidden = !visible; soloButton.disabled = disabled; };
 
   // ---- 書きかけ（子ごと。メインの下書きと同じ入れ物に、子の id で置く）
-  const snapshot = () => ({ text: input.value ?? '', attached: att.items.slice(), editing: c.editor.snapshotEditing(), version: 2, dirty: true });
+  const snapshot = () => {
+    const text = input.value ?? '', attached = att.items.slice();
+    // 版（revision）はメインの下書きと同じ決まり: 中身が変わったときだけ新しくする。送った版の受け取りと突き合わせる
+    const old = h.drafts.get(childId);
+    const same = old?.revision && old.text === text && JSON.stringify(old.attached ?? []) === JSON.stringify(attached);
+    return { text, attached, editing: c.editor.snapshotEditing(), version: 2, revision: same ? old.revision : h.send.randomId(), dirty: true };
+  };
   function saveDraft() {
     clearTimeout(saveTimer);
     saveTimer = null;
@@ -311,7 +318,7 @@ export function createWorkComposer(h) {
       input.value = ''; att.restore([]); els.slashHint.textContent = ''; c.slash?.close(); c.fit();
       input.dispatchEvent(new Event('input', { bubbles: true }));
     } else attachedBy.delete(id);
-    h.drafts.set(id, { text: '', attached: [], version: 2, dirty: true }).catch(() => {});
+    h.drafts.set(id, { text: '', attached: [], version: 2, revision: h.send.randomId(), dirty: true }).catch(() => {});
   }
   async function submit({ at = null } = {}) {
     const id = childId;
@@ -319,19 +326,39 @@ export function createWorkComposer(h) {
     if (c.wait.held) { c.wait.point(); return; }
     const blocked = att.blockReason();
     if (blocked) { h.notify(blocked); att.flash(); return; }
+    // 送る先・中身・設定・下書きの版は押した時に決める（メインの入力欄と同じ受け付けの道。ADR 0347）。
+    // 応答を待つ間に別の子へ移っても、送り先と片付ける下書きはこの子のまま
+    c.slash?.close();
+    const text = input.value;
+    const ordered = att.ordered();
+    if (!text.trim() && !ordered.length) return;
+    saveDraft();
+    const revision = h.drafts.get(id)?.revision ?? h.send.randomId();
+    const pending = at ? null : h.send.receipts.get(id);
+    if (pending && pending.revision !== revision) { paintOutbox(); h.notify(t('chat.send.unknownPrevious')); return; }
+    const sent = sendAttachments(ordered);   // 片付けるときに比べる添付（送った分）
+    const options = h.sendOptions(id);
+    const input0 = { text, ordered, at, ...options, attachedKey: h.format.attachedKey, attachmentLine: h.format.attachmentLine,
+      agentLang: h.agentLang(id), inDoc: c.editor.attachmentKeys(), revision };
+    const settings = at ? undefined : h.captureSettings(id);
+    // 設定を決められない子（行がまだ無い）は、これまでどおり保存を待ってから送る
+    const captured = at ? null : pending ?? (settings ? sender.capture({ ...input0, sessionId: id, settings }) : null);
     h.submitting.add(id);
     sync();
     try {
-      await h.settled(id);
-      if (childId !== id) return;   // 待っている間に別の子へ移った。欄はその子の下書きなので送らない
-      c.slash?.close();
-      const text = input.value;
-      const ordered = att.ordered();
-      if (!text.trim() && !ordered.length) return;
-      await sender.send({ sessionId: id, text, ordered, at, ...h.sendOptions(id), attachedKey: h.format.attachedKey, attachmentLine: h.format.attachmentLine,
-        agentLang: h.agentLang(id), inDoc: c.editor.attachmentKeys() });
+      if (captured) {
+        await sender.sendCaptured(id, captured, async () => id);
+        clearSent(id, text, sent);
+        h.send.refreshOutbox(id).catch(() => {});
+      } else {
+        // 日時を指定した送信は予定として置く（設定は時刻が来たときの会話の設定。保存が済むのを待ってから置く）
+        await h.settled(id);
+        await sender.send({ ...input0, sessionId: id });
+      }
+      if (childId === id) say('');
     } catch (e) {
-      say(at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message }), true);
+      const message = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
+      if (childId === id) say(message, true); else h.notify(message);
     } finally {
       h.submitting.delete(id);
       sync();

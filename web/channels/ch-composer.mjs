@@ -75,7 +75,12 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
   send.setAttribute('aria-label', t('channels:feed.composer.send'));
   send.append(sendIcon());
 
-  let busy = false, disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null;
+  let disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null;
+  // 送っている持ち主（チャンネル）。送信中はその持ち主だけのもの: 別のチャンネルへ移れば、そこではすぐ書いて送れる
+  const sending = new Set();
+  // 持ち主を離れている間に届いた失敗。戻ったときに入力欄の下へ出す
+  const failures = new Map();
+  const busy = () => sending.has(draftKey ?? '');
   const dismissWake = () => { pendingWake = null; wakeCard.hidden = true; };
   wakeCancel.onclick = dismissWake;
 
@@ -143,42 +148,57 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     hint.hidden = false;
   }
 
-  async function sendBody(body, confirmedWake) {
-    busy = true;
-    send.disabled = true;
-    wakeButton.disabled = true;
-    say('');
-    try {
-      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}) });
+  // 送った版（押した時の字と添付）。応答が届いたとき、片付けてよいのはこの版のままの下書きだけ
+  const versionOf = (text, items) => JSON.stringify([text ?? '', items ?? []]);
+  function clearSent(owner, version) {
+    if ((draftKey ?? '') === owner) {
+      if (versionOf(input.value, attach.items) !== version) return;   // 送っている間に書き足した: 残す
       input.value = '';
       attach.clear();
       dismissWake();
       saveDraft();
       paintHint();
+      return;
+    }
+    const d = draftStore().get(owner);
+    if (d && versionOf(d.text, d.attached) === version) { draftStore().delete(owner); persistDrafts(); }
+  }
+  async function sendBody(body, confirmedWake) {
+    // 送り先（持ち主）と版は押した時に決める。応答を待つ間に別のチャンネルへ移っても、片付けと失敗の知らせはこの持ち主へ
+    const owner = draftKey ?? '';
+    const version = versionOf(input.value, attach.items);
+    sending.add(owner);
+    failures.delete(owner);
+    send.disabled = true;
+    wakeButton.disabled = true;
+    say('');
+    try {
+      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}) });
+      clearSent(owner, version);
     } catch (err) {
-      dismissWake();
-      say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true);
+      const message = t('channels:feed.composer.failed', { error: err?.message ?? String(err) });
+      if ((draftKey ?? '') === owner) { dismissWake(); say(message, true); } else failures.set(owner, message);
     } finally {
-      busy = false;
-      send.disabled = disabled;
+      sending.delete(owner);
+      send.disabled = disabled || busy();
       wakeButton.disabled = false;
     }
   }
 
   async function submit() {
-    if (busy || disabled || pendingWake) return;
+    if (busy() || disabled || pendingWake) return;
     // 送っている途中・失敗の添付があるうちは送らない（欠けた添付を前提に bot が動き出さないように）。札が理由と外す・再試行を持つ
     const body = attach.compose(input.value);
     if (!body.text.trim() && !body.attachments.length) return;
     const block = attach.blockReason();
     if (block) { say(block); attach.flash(); return; }
     if (wakePreview && /[@＠](?:here|everyone)(?![\p{L}\p{N}_-])/iu.test(body.text)) {
-      const owner = draftKey;
-      busy = true;
+      const owner = draftKey ?? '';
+      sending.add(owner);
       send.disabled = true;
       try {
         const preview = await wakePreview(body.text);
-        if (owner !== draftKey || JSON.stringify(attach.compose(input.value)) !== JSON.stringify(body)) return;
+        if (owner !== (draftKey ?? '') || JSON.stringify(attach.compose(input.value)) !== JSON.stringify(body)) return;
         if (preview.required) {
           pendingWake = { body, botIds: preview.botIds };
           wakeText.textContent = t('channels:feed.wakeConfirm.count', { count: preview.botIds.length });
@@ -186,12 +206,12 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
           wakeButton.focus();
           return;
         }
-      } catch (err) { say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true); return; }
-      finally { busy = false; send.disabled = disabled; }
+      } catch (err) { if (owner === (draftKey ?? '')) say(t('channels:feed.composer.failed', { error: err?.message ?? String(err) }), true); return; }
+      finally { sending.delete(owner); send.disabled = disabled || busy(); }
     }
     await sendBody(body);
   }
-  wakeButton.onclick = () => { if (pendingWake && !busy && !disabled) sendBody(pendingWake.body, pendingWake.botIds); };
+  wakeButton.onclick = () => { if (pendingWake && !busy() && !disabled) sendBody(pendingWake.body, pendingWake.botIds); };
 
   form.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
   input.addEventListener('keydown', (e) => {
@@ -199,7 +219,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     if (mention.keydown(e)) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
   });
-  input.addEventListener('input', () => { dismissWake(); if (note.textContent && !busy) say(''); paintHint(); saveDraftSoon(); });
+  input.addEventListener('input', () => { dismissWake(); if (note.textContent && !busy()) say(''); paintHint(); saveDraftSoon(); });
   input.addEventListener('blur', saveDraft);
   document.addEventListener('visibilitychange', onHidden);
   addEventListener('pagehide', saveDraft);
@@ -221,7 +241,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
       dismissWake();
       disabled = on;
       input.disabled = on;
-      send.disabled = on || busy;
+      send.disabled = on || busy();
       attach.button.disabled = on;
       form.classList.toggle('disabled', on);
       say(on ? reason : '', true);
@@ -245,7 +265,9 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
       attach.restore(d?.attached);   // 添付の実体が先（本文の印は、ここにあるものだけが札になる）
       input.editor.restoreDraft(d?.text ?? '', d?.editing);
       attach.placeTail();   // 文中に無い添付は末尾に札で（一覧の面が無いので）
-      say('');
+      say(failures.get(key ?? '') ?? '', true);
+      failures.delete(key ?? '');
+      send.disabled = disabled || busy();
       paintHint();
     },
     saveDraft,
