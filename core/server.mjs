@@ -76,7 +76,7 @@ import * as history from "./history.mjs";
 import { createSuggestionJobs, suggestionGist, suggestionPrompt } from './prompt-suggestions.mjs';
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
-import { limitHolds, limitResetsAt, clockText } from './limit-resume.mjs';
+import { activeLimit as limitForTarget, limitResetsAt, limitScope, clockText } from './limit-resume.mjs';
 import { createSlotLimits, slotKey, slotAccount } from './slot-limits.mjs';
 import { createModelRejects } from './model-rejects.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
@@ -1535,6 +1535,7 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   const priorNext = prior.nextSettings ?? null;
   const undoReserve = async () => {
     await store.setSessionData(sessionId, 'nextSettings', priorNext, { durable: true }).catch(() => {});
+    syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: true });
     emitGlobal({ type: 'nextSettings', sessionId, nextSettings: priorNext });
   };
   let next;
@@ -2904,10 +2905,12 @@ const abortReason = (value) => (ABORT_REASONS.has(value) ? value : "user");
 /** 保存された中断の印を、画面へ渡す形 { at, reason } に揃える。形が崩れていれば null */
 function interruptedOf(value) {
   if (!value || typeof value !== "object" || !Number.isFinite(value.at)) return null;
+  const scope = value.reason === 'limit' ? limitScope(value) : undefined;
   return { at: value.at, reason: INTERRUPT_REASONS.has(value.reason) ? value.reason : "user",
     ...(value.reason === 'limit' ? { resetsAt: Number.isFinite(value.resetsAt) ? value.resetsAt : null,
       window: value.window ?? null, account: value.account ?? null, backend: value.backend ?? null,
-      model: value.model ?? null } : {}) };
+      model: value.model ?? null, endpoint: value.endpoint ?? '',
+      ...(scope ? { scope } : {}) } : {}) };
 }
 
 /**
@@ -3960,7 +3963,8 @@ function makeEmit(turn) {
       turn.outcome = event.outcome;
       if (event.outcome === 'limited') {
         turn.limit = { resetsAt: Number.isFinite(event.resetsAt) ? event.resetsAt : null,
-          window: event.window ?? null, account: limitAccount(turn.backend, turn.info.account), backend: turn.backend.id, model: turn.info.model ?? null };
+          window: event.window ?? null, account: limitAccount(turn.backend, turn.info.account), backend: turn.backend.id, model: turn.info.model ?? null,
+          endpoint: turn.info.endpoint ?? '', ...(event.scope ? { scope: event.scope } : {}) };
         event = { ...event, ...turn.limit };
       }
       // ログインの期限切れ（401。バックエンドの kind: 'auth'）。互換の接続先の会話は接続先のキーの問題なので、ふつうの失敗のまま。
@@ -4466,7 +4470,7 @@ async function rewindWritableConversation({ sessionId, beforeMessageId, stopRunn
     if (entry.contextSession?.delivered) await store.setSessionData(sessionId, 'contextSession', { ...entry.contextSession, delivered: null });
     // 中断した位置・止めたものは、捨てた範囲の出来事
     await store.setMeta(sessionId, { interrupted: null });
-    limitStates.delete(sessionId);
+    syncLimitWait(sessionId, null);
     await store.clearStops(sessionId);
     // 切り口より後の記録（圧縮・渡さなかった `!` の行・hooks の発火）は捨てる。渡していない `!` の結果（shellPending）は次の発言と一緒に渡るので残す
     if (Number.isFinite(since)) {
@@ -4927,10 +4931,7 @@ async function reserveTurnSettings(args, { delegated = false } = {}) {
       if (explicit.worktreePending === false) manual.worktree = true;
       if (Object.keys(manual).length) await store.setSessionData(sessionId, 'selectedSettings', manual);
     }
-    if (current.interrupted?.reason === 'limit'
-      && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
-      leaveLimit(sessionId);
-    }
+    syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: true });
     // 取り消した・別の場所に替えた予約が worktree なら、使っていなければ片付ける（ADR 0089）
     if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
     // keepPrefs: 依頼元の AI が子の設定を替えるとき（applyTaskSettings）。人の既定には覚えない
@@ -5021,8 +5022,7 @@ async function deleteSessionOf(sessionId) {
     await deleteConversation(sessionId, backend.id);
     await store.removeSession(sessionId);
     deleted = true;
-    clearTimeout(limitReleaseTimers.get(sessionId));
-    limitReleaseTimers.delete(sessionId); limitStates.delete(sessionId);
+    syncLimitWait(sessionId, null);
     relayHops.delete(sessionId);
     completionNotices.forget(sessionId);
     sessionCommands?.forget(sessionId);
@@ -6375,9 +6375,6 @@ const opsSessionWork = {
       const target = getBackend(targetId);
       if (!source || !target) throw new Error(t('agents.notFound'));
       await switchBackend(sessionId, source, target);
-      if (source.id !== target.id) {
-        if ((await store.get(sessionId)).interrupted?.reason === 'limit') leaveLimit(sessionId);
-      }
       // 入力欄の `!`: 走っている分は止め、渡していない分は捨てる（前のエージェントの形でしか渡せない。ADR 0054）
       if (source.id !== target.id) await shellRuns.switched(sessionId, source, target);
       // 接続先はエージェントごとの形式なので、エージェントが変わったら変えた先の既定（「既定にする」を押したもの。無ければ公式）に置き直す
@@ -6385,7 +6382,11 @@ const opsSessionWork = {
       await savePref("backend", target.id);
       emitGlobal({ type: "backend", sessionId, backend: target.id });
       return { sessionId, backend: target.id };
-    } finally { switching.delete(sessionId); completionNotices.changed(sessionId); }
+    } finally {
+      switching.delete(sessionId);
+      syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: true });
+      completionNotices.changed(sessionId);
+    }
   },
   // グループから外す / 戻す。まとまりは親子と状態から決まるので、覚えるのは「外した」ことだけ
   setGrouped: async (sessionId, ungrouped) => {
@@ -7454,9 +7455,8 @@ const liveNotices = new Map();
 // 指示の item id（task-send-<指示 ID>） -> { sessionId: 子の会話, taskId, instructionId }。合図で指示の状態を決め、
 // 合図が来ないままターンが終わったら待機へ戻して次のターンで送る（ADR 0065）
 const liveInstructions = new Map();
-// 使用量の上限で止まっている会話 -> interruptedOf の形。解除時刻を過ぎるまで、新しい指示は API に渡さず送信待ちに置き、
-// 解除時刻に流す（解除時刻が分からない上限は待たせない。limitHolds）。印は再開（resumeSession）かターンの開始で下ろす
-const limitStates = new Map();
+// 上限で止まった会話の、解除時刻に送信待ち（上限中に人が送った指示）を流すタイマー
+const limitReleaseTimers = new Map();
 // 上限で止まったばかりの枠（エージェント・モデル・アカウント）。委譲の振り分けで飛ばす（ADR 0229）。
 // 解除の見込み（最低 1 分。見込みを過ぎてすぐの再発は延ばす）を過ぎるか、同じ枠のターンが通ったら外す。
 // 解除時刻が分からないものは 30 分（覚えるのはこのサーバーの間だけ。core/slot-limits.mjs）
@@ -7511,9 +7511,9 @@ const outbox = createMessageQueue({
   store,
   // 作業中に送ったら、予約（nextSettings）を今のターンへ効かせる（止めずに切り替えるか、止めて新しい設定で続ける）
   applyReserved: id => applyReservedNow(id, { via: 'send' }),
-  active: id => {
-    const limit = limitStates.get(id);
-    if (limit && limitHolds(limit))
+  active: async id => {
+    const limit = activeLimit(await store.get(id));
+    if (limit)
       return { blocked: true, wait: { reason: 'limit', resetsAt: limit.resetsAt } };
     const turn = runtime.turns.get(id);
     if (!turn) {
@@ -8340,8 +8340,11 @@ agentTasks = await createAgentTasks({
     if (await noticeBlocked(owner)) return 'requeue';
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
-  // 上限で止まった子の会話の解除時刻までは、積まれた指示で次の回を始めない（送信待ちの limitHolds と同じ判断）
-  held: task => { const limit = limitStates.get(task.sessionId); return limitHolds(limit) ? { resetsAt: limit.resetsAt } : null; },
+  // 上限で止まった子の会話の解除時刻までは、積まれた指示で次の回を始めない。
+  held: task => {
+    const wait = limitReleaseTimers.get(task.sessionId);
+    return wait?.resetsAt > Date.now() ? { resetsAt: wait.resetsAt } : null;
+  },
   deliverSilence: async (task, minutes, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';
@@ -8931,12 +8934,12 @@ async function beginTurn(ctx) {
     resolvedContext, shellHandoff } = ctx;
 
   // 次のターンが始まったので中断の印を消し、走っている印を付ける（新しい会話は id が決まったとき。makeEmit の session）
-  if (sessionId) limitStates.delete(sessionId);
   // 圧縮のターンは印も置く（落ちたら、起動で中断として残してもう一度頼む。ADR 0270 段 4）
   if (sessionId) await store.setMeta(sessionId, { turnStartedAt: turn.startedAtMs, interrupted: null,
     ...(hooks.compact ? { compacting: { trigger: hooks.compact, at: Date.now() } } : {}) }).catch(err => {
     console.error("  ターンの開始の記録に失敗:", String(err?.message ?? err));
   });
+  if (sessionId) syncLimitWait(sessionId, null);
   // 中断で止めたものがあれば、エージェントの言語で文にして発言の前に添える（圧縮のターンでは添えない）。
   // 画面には、何を伝えたかを開ける 1 行で出す（履歴は system-messages.mjs の splitInterruptionNotes が同じ行にする）。
   // 発言の吹き出しの後に送り、画面は messageId の吹き出しの前へ置く（履歴と同じ並び）
@@ -9844,11 +9847,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
-    if (limited) {
-      const id = turn.info.sessionId;
-      limitStates.set(id, interrupted);
-      releaseLimitWait(id);
-    }
+    syncLimitWait(turn.info.sessionId, store.peek(turn.info.sessionId), { kickIfReleased: true });
     // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
     if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
@@ -10307,21 +10306,6 @@ async function resumeSession(sessionId, options) { return withWritableSession(se
 async function resumeWritableSession(sessionId, { onSettled } = {}) {
   if (!sessionId || typeof sessionId !== 'string' || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   if (resuming.has(sessionId) || sessionBusy(sessionId)) throw resumeRunning();
-  const oldLimit = limitStates.get(sessionId);
-  // 待ちの印と予定の行は、断る検査を通ってから下ろす（断った再開が、待たせる側だけを消さない）
-  const releaseLimit = async () => {
-    if (!oldLimit) return;
-    limitStates.delete(sessionId);
-    await schedule.cancel(`resume:${sessionId}`);
-  };
-  if (oldLimit) {
-    const selected = await store.get(sessionId);
-    if (limitSwitched(selected, oldLimit)) await releaseLimit();
-    else if (Number.isFinite(oldLimit.resetsAt) && oldLimit.resetsAt > Date.now()) {
-      // 解除時刻の前は、人が押しても解除を待たせる（画面はこの間、再開を押せない表示にする）。時刻が分からない上限は断らない
-      throw Object.assign(new Error(t('resume.limitWaiting')), { code: 'LIMIT_WAITING' });
-    }
-  }
   resuming.add(sessionId);
   let sent = null;
   try {
@@ -10329,16 +10313,16 @@ async function resumeWritableSession(sessionId, { onSettled } = {}) {
     // 一覧は送信待ちの処理（kick）の後ろに並ぶので、読み終えた時点でもう始まっているかもしれない。読んだ後に確かめ直す
     if (sessionBusy(sessionId)) throw resumeRunning();
     const entry = await store.get(sessionId);
+    if (activeLimit(entry)) throw Object.assign(new Error(t('resume.limitWaiting')), { code: 'LIMIT_WAITING' });
     const interrupted = interruptedOf(entry.interrupted);
     if (!interrupted) throw Object.assign(new Error(t('resume.notInterrupted')), { code: 'NOT_INTERRUPTED' });
     const open = items.filter(m => !['sent', 'cancelled'].includes(m.status));
     // 送信中、または先頭が送信待ち（すぐ送られる）なら、もう続きを送っている（再開の二度押し・別の端末から）。
     // 中断の後に送った（受け付けた）ものが既に渡っていても同じ（ターンの開始で中断の印が消えるまでの間）
-    if (open.some(m => m.status === 'sending') || (open[0]?.status === 'queued' && !oldLimit)
+    if (open.some(m => m.status === 'sending') || (open[0]?.status === 'queued' && interrupted.reason !== 'limit')
       || items.some(m => m.status === 'sent' && Date.parse(m.at) > interrupted.at)) throw resumeRunning();
     if (open.some(m => m.status === 'unknown')) throw Object.assign(new Error(t('resume.outboxUnknown')), { code: 'OUTBOX_UNKNOWN' });
-    await releaseLimit();
-    if (open[0]?.status === 'queued' && oldLimit) {
+    if (open[0]?.status === 'queued') {
       sent = open.filter(m => m.status === 'queued').map(m => m.id);
       outbox.kick(sessionId).catch(() => {});
       return { sent: 'outbox', count: sent.length };
@@ -10383,41 +10367,33 @@ async function withWritableSession(sessionId, fn) {
 
 async function acceptSend(sessionId, messageId, args) { return withWritableSession(sessionId, () => acceptWritableSend(sessionId, messageId, args)); }
 async function acceptWritableSend(sessionId, messageId, args) {
-  if (!sessionBusy(sessionId) && interruptedOf((await store.get(sessionId)).interrupted)?.reason !== 'limit'
+  if (!sessionBusy(sessionId) && !activeLimit(await store.get(sessionId))
     && (await outbox.list(sessionId)).some(m => m.status === 'paused')) await outbox.retryPaused(sessionId);
   return outbox.accept(sessionId, messageId, args);
 }
 
-/** 会話の選択中のアカウント・エージェントが、上限で止まったときと違うか（替えたなら、止まった枠の待ちは関係なくなる） */
-function limitSwitched(meta, limit) {
-  const account = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
-  const backend = meta.nextSettings?.backend ?? meta.backend;
-  return backend !== limit.backend || (Boolean(accountKind(getBackend(limit.backend))) && account !== (limit.account ?? ''));
+function activeLimit(meta) {
+  if (meta?.interrupted?.reason !== 'limit') return null;
+  const backend = getBackend(meta?.nextSettings?.backend ?? meta?.backend);
+  return limitForTarget(meta, { hasAccounts: Boolean(accountKind(backend)) });
 }
 
-/**
- * アカウントやエージェントを替えた。止まった枠の待ちは、替えた先には関係ない。待ちの印を下ろして、
- * 送信待ち（替えて送った指示）をすぐ流す。interrupted の印は残る（会話は人の「再開」で続けられる）
- */
-function leaveLimit(sessionId) {
-  clearTimeout(limitReleaseTimers.get(sessionId));
-  limitReleaseTimers.delete(sessionId);
-  limitStates.delete(sessionId);
-  outbox.kick(sessionId).catch(() => {});
-}
-
-// 上限で止まった会話の、解除時刻に送信待ち（上限中に人が送った指示）を流すタイマー
-const limitReleaseTimers = new Map();
 /** 止まった会話の待ちが解けていたら、送信待ちを流す。まだなら解除時刻に流す（解除時刻が分からない上限は待たせない） */
-function releaseLimitWait(sessionId) {
-  clearTimeout(limitReleaseTimers.get(sessionId));
-  limitReleaseTimers.delete(sessionId);
-  const limit = limitStates.get(sessionId);
-  if (!limit) return;
-  if (!limitHolds(limit)) { outbox.kick(sessionId).catch(() => {}); return; }
-  const timer = setTimeout(() => releaseLimitWait(sessionId), Math.min(2_147_000_000, Math.max(0, limit.resetsAt - Date.now())));
+function syncLimitWait(sessionId, meta, { kickIfReleased = false } = {}) {
+  const previous = limitReleaseTimers.get(sessionId);
+  clearTimeout(previous?.timer);
+  const limit = activeLimit(meta);
+  if (!limit) {
+    limitReleaseTimers.delete(sessionId);
+    if (kickIfReleased && (previous || meta?.interrupted?.reason === 'limit')
+      && meta?.outbox?.some(m => m.status === 'queued')) outbox.kick(sessionId).catch(() => {});
+    return;
+  }
+  const { resetsAt } = limit;
+  const timer = setTimeout(() => syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: true }),
+    Math.min(2_147_000_000, Math.max(0, resetsAt - Date.now())));
   timer.unref?.();
-  limitReleaseTimers.set(sessionId, timer);
+  limitReleaseTimers.set(sessionId, { timer, resetsAt });
 }
 
 /**
@@ -10425,11 +10401,11 @@ function releaseLimitWait(sessionId) {
  * 解除時刻を過ぎた会話は送信待ちを流し、アカウント・エージェントを替えた会話は待ちを下ろす。会話そのものは再開しない
  */
 async function recoverLimitWaits() {
-  for (const [id, limit] of [...limitStates]) {
-    const meta = await store.get(id).catch(() => null);
-    if (meta?.interrupted?.reason !== 'limit') { limitStates.delete(id); continue; }
-    if (limitSwitched(meta, limit) || limitAccount(limit.backend, meta.claudeAccount) !== limitAccount(limit.backend, limit.account)) { leaveLimit(id); continue; }
-    releaseLimitWait(id);
+  for (const id of Object.keys(await store.getAll())) {
+    const meta = store.peek(id);
+    if (meta?.interrupted?.reason === 'limit' || limitReleaseTimers.has(id)) {
+      syncLimitWait(id, meta, { kickIfReleased: true });
+    }
   }
 }
 
@@ -11975,10 +11951,6 @@ server.once("error", onListenError);
 // 検索の写しは、起動の混み合いが落ち着いてから裏で作る（探されたときは待たずに読めた分で答える）
 setTimeout(() => sessionSearch.start().catch(() => {}), 3000).unref();
 await restoreCompactionSchedule().catch(err => console.error('  自動圧縮の予約を戻せませんでした:', String(err?.message ?? err)));
-for (const [id, meta] of Object.entries(await store.getAll())) {
-  // 止まったときと違うアカウント・エージェントを選んでいる会話は、止まった枠の待ちに入れない
-  if (meta.interrupted?.reason === 'limit' && !limitSwitched(meta, interruptedOf(meta.interrupted))) limitStates.set(id, interruptedOf(meta.interrupted));
-}
 // Restored sends can start a turn and use localOrigin(), which needs a bound port.
 const listening = new Promise(resolve => server.once('listening', resolve));
 portDeadline = Date.now() + PORT_WAIT_MS;

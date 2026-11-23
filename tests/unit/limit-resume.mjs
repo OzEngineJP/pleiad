@@ -4,7 +4,7 @@ import path from 'node:path';
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
 import { codexLimitError, codexResetOf } from '../../core/backends/codex-limit.mjs';
 import { createSchedule } from '../../core/schedule.mjs';
-import { limitHolds, limitResetsAt } from '../../core/limit-resume.mjs';
+import { activeLimit, limitHolds, limitResetsAt } from '../../core/limit-resume.mjs';
 
 export const name = 'limit-resume';
 export const title = '使用量の上限の正規化・古い自動再開の予定を戻さない・送信待ちを待たせるかの判断・Codex の解除時刻';
@@ -45,6 +45,25 @@ export default async function (t) {
 
   // ---- 解除時刻の判断（自動では再開しない。上限中に送った指示を待たせるかだけ）
   const base = Date.parse('2026-10-04T10:00:00Z');
+  t.ok('Claude が Opus と Sonnet の週次枠をモデル単体の枠として返す',
+    ['seven_day_opus', 'seven_day_sonnet'].every(rateLimitType => normalizeSdkMessage({
+      type: 'rate_limit_event', rate_limit_info: { ...transcript.quotaLimits, rateLimitType },
+    }).some(e => e.type === 'limit' && e.scope === 'model')));
+  const interrupted = { reason: 'limit', resetsAt: base + 1000, backend: 'claude', account: 'first', model: 'opus', scope: 'model' };
+  const meta = { backend: 'claude', claudeAccount: 'first', model: 'opus', interrupted };
+  const options = { hasAccounts: true, now: base };
+  t.ok('互換接続先の記録がない保存済み中断は公式の送信先で待つ', activeLimit(meta, options) === interrupted);
+  for (const nextSettings of [{ backend: 'codex' }, { account: '' }, { endpoint: 'proxy' }, { model: 'sonnet' }]) {
+    t.ok(`上限の送信先を離れたら解除を待たない ${JSON.stringify(nextSettings)}`, activeLimit({ ...meta, nextSettings }, options) === null);
+  }
+  t.ok('アカウント全体の枠は別モデルでも待つ', Boolean(activeLimit({ ...meta, nextSettings: { model: 'sonnet' },
+    interrupted: { ...interrupted, scope: 'account' } }, options)));
+  t.ok('枠の名前だけが保存された Claude のモデル単体上限も、別モデルなら待たない', activeLimit({
+    ...meta, nextSettings: { model: 'sonnet' }, interrupted: { ...interrupted, scope: undefined, window: 'seven_day_opus' },
+  }, options) === null);
+  t.ok('同じ互換接続先では公式アカウントの選択に関係なく待つ', Boolean(activeLimit({
+    ...meta, nextSettings: { endpoint: 'proxy', account: '' }, interrupted: { ...interrupted, endpoint: 'proxy' },
+  }, options)));
   t.ok('解除前は送信待ち。解除時刻を過ぎたら待ちを解く', limitHolds({ resetsAt: base + 1000 }, base) && !limitHolds({ resetsAt: base }, base) && !limitHolds({ resetsAt: base - 1 }, base));
   t.ok('解除時刻が分からない上限は待たせない（古い自動再開の印が残っていても）', !limitHolds({ resetsAt: null }, base) && !limitHolds({ resetsAt: null, autoResume: true }, base) && !limitHolds(null, base));
   t.ok('保存する解除時刻は未来のときだけ。過ぎた・分からないなら null', limitResetsAt(base + 5, base) === base + 5 && limitResetsAt(base, base) === null && limitResetsAt(undefined, base) === null);

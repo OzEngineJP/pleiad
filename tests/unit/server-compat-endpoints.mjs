@@ -131,6 +131,23 @@ export default async function (t) {
     const titleTurn = (await entries()).filter(e => e.method === "turn/start" && e.ephemeral).at(-1);
     t.ok("タイトル生成は互換の会話ではその接続先で作る", titleTurn?.provider?.baseUrl === api.url + "/v1" && titleTurn.model === "vendor/fake-large", JSON.stringify({ titled, model: titleTurn?.model }));
 
+    const limitSession = carried.sessionId;
+    await cmd("setTurnSettings", { sessionId: limitSession, backend: "codex", endpoint: id });
+    const limitFrom = c.mark();
+    const limited = await c.runTurn({ sessionId: limitSession, prompt: "hit usage limit" });
+    const interruption = c.since(limitFrom).find(e => e.type === "turnEnd" && e.sessionId === limitSession)?.interrupted;
+    t.ok("互換接続先での上限中断に接続先と未来の解除時刻が残る",
+      limited.outcome === "limited" && interruption?.endpoint === id && interruption.resetsAt > Date.now(), JSON.stringify(interruption));
+    await cmd("setTurnSettings", { sessionId: limitSession, endpoint: "" });
+    await cmd("setTurnSettings", { sessionId: limitSession, endpoint: id });
+    t.ok("元の互換接続先を選び直すと再開を待たせる",
+      /解除|reset/i.test((await rejects(cmd("resume", { sessionId: limitSession })))?.message ?? ''));
+    await cmd("setTurnSettings", { sessionId: limitSession, endpoint: "" });
+    const officialFrom = c.mark();
+    await cmd("sendMessage", { sessionId: limitSession, messageId: "endpointlimit01", prompt: "send on official" });
+    await c.waitFor(e => e.type === "turnEnd" && e.sessionId === limitSession && e.outcome === "ok", { from: officialFrom, ms: 10000 });
+    t.ok("公式に切り替えると上限解除を待たず送れる", (await lastTurn())?.provider?.id === "openai");
+
     // ---- 使えない接続先で止める（黙って公式に戻さない）
     api.set({ keys: ["another"] });
     const recheck = await cmd("compatEndpointRecheck", { id });

@@ -435,7 +435,7 @@ export function createWorkComposer(h) {
       els.resume.disabled = Boolean(r.disabled);
       els.resumeNote.hidden = !r.note;
       if (els.resumeNote.textContent !== (r.note ?? '')) els.resumeNote.textContent = r.note ?? '';
-      els.resumeNote.classList.toggle('quiet', Boolean(r.quiet));
+      els.resumeNote.classList.toggle('quiet', Boolean(r.note && r.quiet));
       if (r.placeholder) {
         if (normalPlaceholder === null) normalPlaceholder = input.placeholder;
         input.placeholder = r.placeholder;

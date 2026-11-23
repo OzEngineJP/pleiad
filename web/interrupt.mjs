@@ -78,30 +78,35 @@ export const limitTime = (at, now = Date.now()) => Number.isFinite(at) ? whenTex
  * 上限で止まった会話の、入力欄の再開の状態（docs/design-system.md「中断と再開」）。上限で止まった会話は自動では再開しない（ADR 0161）。
  * release = 解除前（押せない時計）、ready = 解除の後・解除時刻が分からない上限で、普通の「再開」。上限でなければ null
  */
-export function limitResumeState(interrupted, now = Date.now()) {
+export function limitResumeState(interrupted, target, now = Date.now()) {
   if (reasonOf(interrupted) !== 'limit') return null;
+  if (typeof target === 'number') { now = target; target = null; }
+  if (target && (target.backend !== interrupted.backend
+    || (target.endpoint ?? '') !== (interrupted.endpoint ?? '')
+    || (!target.endpoint && target.hasAccounts && (target.account ?? '') !== (interrupted.account ?? ''))
+    || (interrupted.scope === 'model' && (target.model ?? '') !== (interrupted.model ?? '')))) return 'ready';
   return Number.isFinite(interrupted.resetsAt) && interrupted.resetsAt > now ? 'release' : 'ready';
 }
 
 /** 再開ボタンの字。保留があれば「保留中の N 件を送って再開」。上限の解除前は時計の字（「2:30 に解除」） */
-export function resumeLabel(paused, interrupted, now = Date.now()) {
-  const state = limitResumeState(interrupted, now);
+export function resumeLabel(paused, interrupted, target, now = Date.now()) {
+  const state = limitResumeState(interrupted, target, now);
   if (state === 'release') return t('interrupt.limitReleaseAt', { time: limitTime(interrupted.resetsAt) });
   return paused > 0 ? t("interrupt.resumeOutbox", { count: paused }) : t("interrupt.resume");
 }
 
 /** 狭い幅（480px 以下）の上限の解除前の時計の字。時刻だけ（「21:04」）。時計でなければ空 */
-export function resumeShortLabel(interrupted, now = Date.now()) {
-  return limitResumeState(interrupted, now) === 'release' ? timeText(interrupted.resetsAt) : '';
+export function resumeShortLabel(interrupted, target, now = Date.now()) {
+  return limitResumeState(interrupted, target, now) === 'release' ? timeText(interrupted.resetsAt) : '';
 }
 
 /** 入力欄の下の一行。保留があれば「送ると、保留中の N 件の後にこの指示で続けます」（サーバーが保留を先に送り直す） */
-export function resumeNoteText(paused, interrupted, now = Date.now()) {
-  if (limitResumeState(interrupted, now) === 'release') return t('interrupt.limitSendNote', { time: limitTime(interrupted.resetsAt) });
-  return paused > 0 ? t("interrupt.resumeNoteHeld", { count: paused }) : t("interrupt.resumeNote");
+export function resumeNoteText(paused, interrupted, target, now = Date.now()) {
+  if (limitResumeState(interrupted, target, now) === 'release') return t('interrupt.limitSendNote', { time: limitTime(interrupted.resetsAt) });
+  return paused > 0 ? t("interrupt.resumeNoteHeld", { count: paused }) : '';
 }
 
-/** 会話の末尾の 2 行目の文（上限の会話）。「2:30 に解除。解除の後に「再開」で続けられます」、解除時刻が分からなければその旨 */
+/** 会話の末尾の 2 行目は、中断時に分かった解除時刻。 */
 export function limitLineNote(interrupted, now = Date.now()) {
   const time = limitTime(interrupted.resetsAt, now);
   return time ? t('interrupt.limitResetAt', { time }) : t('interrupt.limitResetUnknown');

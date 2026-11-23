@@ -84,9 +84,9 @@ try {
   await wait(() => evaluate(() => document.querySelectorAll('.tc[data-tool$="ply_delegate"][data-task-id] .tc-go').length >= 2), 'delegate cards');
 
   const clickOn = (sel, label) => {
-    const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
+    const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
     assert.ok(ok, `target exists: ${label}`);
-    try { ab('click', '[data-probe="pick"]'); } finally { evaluate(() => document.querySelector('[data-probe="pick"]')?.removeAttribute('data-probe')); }
+    ab('click', sel);
   };
   const dialogOpen = () => evaluate(() => document.getElementById('workDialog').open);
   const openCard = async (taskId, label) => {
@@ -249,6 +249,7 @@ try {
 
   // ---- 5b. アカウントの節: メインと同じ面に出て、選ぶと子の予約に流れる ----
   clickOn('#wkModelChip', 'model chip (accounts)');
+  clickOn('#workDialog [data-key="nav:account"]', 'account section');
   await wait(() => evaluate(() => !!document.querySelector('#workDialog [data-key^="account:"]')), 'account rows in the child model pop');
   const accountRows = evaluate(() => [...document.querySelectorAll('#workDialog [data-key^="account:"]')].map(n => ({ key: n.dataset.key, on: n.getAttribute('aria-selected') === 'true' || n.getAttribute('aria-checked') === 'true' || n.classList.contains('on') })));
   console.log('account rows', JSON.stringify(accountRows));

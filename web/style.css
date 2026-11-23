@@ -1606,7 +1606,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .resume.is-limit .resume-clock{display:block}
 .resume.is-limit{font-variant-numeric:tabular-nums;background:transparent;color:var(--ink-weak);cursor:default;opacity:1}
 .resume .resume-short{display:none}
-/* 中断中に字を書いたときの「送ると、この指示で続けます」。入力の箱の下に小さく。書いていない間も高さは保つ */
+/* 上限待機と保留の注記。注記があるときは空欄でも高さを保つ。 */
 .resume-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 10px 0;min-height:22px}
 .resume-note[hidden]{display:none}
 .resume-note.quiet{visibility:hidden}

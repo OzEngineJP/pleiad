@@ -783,7 +783,10 @@ async function handle(method, params) {
         }
       }
       // 応答を返してから走る。本物も turn/start の応答と通知は別々に来る
-      const script = text.startsWith("slow") ? runSlowTurn(t, turnId, text)
+      const script = text === "hit usage limit" ? Promise.resolve().then(() => notify("turn/completed", {
+        threadId: t.id, turn: { id: turnId, items: [], status: "failed", error: { message: "You've hit your usage limit" } },
+      }))
+        : text.startsWith("slow") ? runSlowTurn(t, turnId, text)
         : text.startsWith("question") ? runQuestionTurn(t, turnId)
         : text.startsWith("subagent-slow") ? runSubagentTurn(t, turnId, { slow: true })
         : text.startsWith("subagent") ? runSubagentTurn(t, turnId)

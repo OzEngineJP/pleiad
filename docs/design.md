@@ -216,17 +216,17 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 保存時と実行前に値を検証する。エージェント・モデル変更時に以前の値が非対応なら既定へ戻し、明示的な不正値は拒否する。
 
-## 中断と再開（2026-09-27）
+## 中断と再開（2026-11-23）
 
 中断は会話ごとの状態として残す。理由は [ADR 0036](adr/0036-interrupt-and-update-while-running.md)。画面の形は `docs/design-system.md`。
 
-使用量の上限は [ADR 0093](adr/0093-resume-after-usage-limit.md) と [ADR 0161](adr/0161-limit-no-auto-resume.md) に従う。`turnResult.outcome: limited` を正常終了・失敗と分け、`interrupted: { at, reason: "limit", resetsAt, window, account, backend, model }` を保存する（`resetsAt` は分からない・もう過ぎている（取得元が古い）なら `null`。`limitResetsAt`）。Claude は SDK の `rate_limit_event` と合成 assistant の `error: rate_limit`、Codex は失敗の文と `account/rateLimits/read`、Antigravity は失敗の文（`core/backends/antigravity-limit.mjs`。「Resets in …」から解除時刻を読む。無ければ `null`）で判定する。Codex の解除時刻は、使い切った（100%）枠のうち最も遅く解ける時刻で、どれも 100% でなければ一番早く解ける枠（`codexResetOf`）。`user`・`update`・`quit`・`hostAway`・`restart` は ADR 0036 の押して再開する規則を保つ。
+使用量の上限は [ADR 0093](adr/0093-resume-after-usage-limit.md) と [ADR 0161](adr/0161-limit-no-auto-resume.md) に従う。`turnResult.outcome: limited` を正常終了・失敗と分け、`interrupted: { at, reason: "limit", resetsAt, window, account, backend, endpoint, model, scope? }` を保存する（`resetsAt` は分からない・もう過ぎている（取得元が古い）なら `null`。`limitResetsAt`）。既存の記録で `endpoint` が無ければ空文字として扱う。`scope: "model"` はモデル単体の枠を表す。Claude は SDK の `rate_limit_event` と合成 assistant の `error: rate_limit`、Codex は失敗の文と `account/rateLimits/read`、Antigravity は失敗の文（`core/backends/antigravity-limit.mjs`。「Resets in …」から解除時刻を読む。無ければ `null`）で判定する。Codex の解除時刻は、使い切った（100%）枠のうち最も遅く解ける時刻で、どれも 100% でなければ一番早く解ける枠（`codexResetOf`）。`user`・`update`・`quit`・`hostAway`・`restart` は ADR 0036 の押して再開する規則を保つ。
 
 **上限で止まった会話は、自動では再開しない**（[ADR 0161](adr/0161-limit-no-auto-resume.md)）。続けるのは人の「再開」と、人が送った指示だけ。予定（`schedule.json`）は置かない。前の版（[ADR 0132](adr/0132-limit-resume-auto-only.md)）が残した `schedule.json` の `kind: resume` の行と、会話の `interrupted.autoResume`・`autoResumeOff` は読まない（`kind: resume` の行は起動で戻さず撃たず、次に予定を保存したときにファイルから消える。DB の形は変えない）。
 
-上限中に受け付けた指示は送信待ちの `waiting: { reason: "limit", resetsAt }` に置き、API には渡さない。待たせるのは解除時刻まで（`limitHolds`）で、解除時刻に人の操作なしで流す（会話ごとのタイマー `releaseLimitWait`。起動時とスリープ解除時に `recoverLimitWaits` が置き直し、閉じている間に過ぎていればすぐ流す）。**解除時刻が分からない上限は待たせない**: 送った指示はすぐ送る（まだ上限なら、また上限で止まる）。再起動をまたぐと送信待ちは保留（`paused`）に戻るので、その会話は解除の後に人の「再開」で戻す（既知の制限）。再開で送るのは、保留・配送失敗の指示、続く待機指示の順で、無ければ `resume.prompt.limit` を見える発言として送る。結果不明の指示は自動では送らない。最初の指示を重ねて送らない。放置時の自動圧縮は、上限中の会話では予約しない。日時を指定した送信は同じ `schedule.json` の `kind: send`（「送信予定」。日時の候補に「上限の解除後」は無い）。
+次の送信先が中断元と一致し、解除時刻が未来なら、受け付けた指示を `waiting: { reason: "limit", resetsAt }` で待たせる（`activeLimit`）。次の送信設定（`nextSettings`）を重ねてエージェント、対象アカウント、互換接続先を比較する。モデル単体の枠ではモデルも比較する。会話ごとのタイマーは `syncLimitWait` が管理し、解除時刻の到達や送信先の切替で待ちが解けると指示を配送する。解除前に元の送信先を選び直すと待機に戻る。起動時とスリープ復帰時も同じ判定でタイマーを同期する。
 
-人の「再開」は、解除時刻の前は断る（`LIMIT_WAITING`）。解除時刻が分からない上限と、解除の後は断らない。アカウントは自動で替えず、Claude の別アカウントやエージェントを人が選んだときは、止まった枠の待ちを下ろして、替えて送った指示をすぐ流す（`leaveLimit`。印は残り、人の「再開」は解除前でも通る）。再開・予定は `sessions.resume`、`sessions.listMessages`、`sessions.schedules`、`sessions.cancelSchedule` の操作で画面と CLI に出す。
+人の「再開」は、上限待機中だけ `LIMIT_WAITING` を返す。再起動で保留（`paused`）になった指示は、待機が解けた後の「再開」または新規送信で先に配送する。「再開」は保留・配送失敗の指示、続く待機指示の順に配送し、どちらも無ければ `resume.prompt.limit` を見える発言として送る。結果不明の指示は人の判断を待つ。放置時の自動圧縮は上限中の会話では予約しない。日時指定の送信は `schedule.json` の `kind: send` に保存する。再開と送信予定は `sessions.resume`、`sessions.listMessages`、`sessions.schedules`、`sessions.cancelSchedule` で画面と CLI に出す。
 
 上限で止まったことは完了として通知しない（脇の行の中断の三角で見せる）。送信予定の時刻を過ぎて送らなかったら `scheduleMissed` 通知を出す（「送信予定」）。通知の題とロック画面の文には会話本文を含めない。
 

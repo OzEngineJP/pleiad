@@ -41,7 +41,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
         // 先頭が保留・失敗・結果不明なら、後ろの送信待ちは順序を守ってそれを待つ
         return setWait(id, items.some(m => m.status === 'queued') ? { reason: 'order' } : null);
       }
-      const turn = active(id);
+      const turn = await active(id);
       if (turn?.blocked) return setWait(id, turn.wait ?? { reason: 'turn' });
       // 作業中に送ったら、面で選んでおいた予約（nextSettings）を今のターンへ効かせてから渡す（docs/design-system.md「作業中の設定の変更」）。
       // applyReserved（server の applyReservedNow）: 'live' = 止めずに切り替えた（そのまま途中送信へ）／'stop' = 止め始めた
@@ -190,7 +190,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
         }
         await save(id, items);
         for (const item of recovered) {
-          const current = active(id);
+          const current = await active(id);
           const turn = current?.turn ?? current;
           if (turn) await delivered(id, item, { turn, recovered: true });
         }

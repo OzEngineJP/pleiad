@@ -610,7 +610,7 @@ const {
 
 const compactNumber = n => `${Math.round(n / 1000)}k`;
 const compactTime = at => new Date(at).toLocaleTimeString(uiLang, { hour: '2-digit', minute: '2-digit' });
-function canCompactHere() { return Boolean(state.current && capsOf(activeBackendId()).compact && !retiredHere()); }
+function canCompactHere() { return Boolean(state.current && capsOf(selectedBackend()).compact && !retiredHere()); }
 function closeMeterPop(focus = false) {
   $('contextMeterPop').hidden = true;
   $('contextMeter').setAttribute('aria-expanded', 'false');
@@ -4360,6 +4360,7 @@ function reserveSettings(patch, targetId = state.current) {
   if (!id) return;
   const entry = { patch };
   inflightNext.set(id, [...(inflightNext.get(id) ?? []), entry]);
+  syncResume();
   const release = () => {
     const rest = (inflightNext.get(id) ?? []).filter((e) => e !== entry);
     if (rest.length) inflightNext.set(id, rest); else inflightNext.delete(id);
@@ -4374,6 +4375,7 @@ function reserveSettings(patch, targetId = state.current) {
     settingsFailures.delete(id);
     // 設定保存を待つ操作から、チップの描き直しは独立させる。
     if (state.current === id) { syncSettingsHold(); syncTopbar().catch(() => {}); }
+    else syncWorkResume();
     return value;
   });
   settingsWrites.set(id, write);
@@ -4381,6 +4383,7 @@ function reserveSettings(patch, targetId = state.current) {
     settingsFailures.set(id, { patch, error: e.message });
     // チップは保存できた値に戻し、欄の上に理由と操作を出す。
     if (state.current === id) { syncSettingsHold(); syncTopbar().catch(() => {}); }
+    else syncWorkResume();
   }).finally(() => { if (settingsWrites.get(id) === write) settingsWrites.delete(id); }).catch(() => {});
   return write;
 }
@@ -4666,8 +4669,10 @@ function composerSelection() {
   const backend = homeBot?.backend ?? draft?.backend ?? session?.nextSettings?.backend ?? activeBackendId();
   const account = composerAccount({ backend, session, draft, prefs: state.prefs, kind: capsOf(backend).accounts, homeBot });
   const endpoint = homeBot ? '' : draft?.endpoint ?? (draft?.reset ? '' : endpointOf(session));
-  return { session, draft, homeBot, backend, account, endpoint };
+  const model = homeBot?.model ?? draft?.model ?? (draft?.reset ? '' : session?.nextSettings?.model ?? session?.model) ?? '';
+  return { session, draft, homeBot, backend, account, endpoint, model, hasAccounts: Boolean(capsOf(backend).accounts) };
 }
+function selectedBackend() { return composerSelection().backend; }
 /**
  * アカウントの候補。選んでいたものが消えていれば、その旨の行を残す（黙って別のものに見せない）。
  * 使えるアカウントの行には、その週の使用量を添える（quota はそのエージェントの使用量。web/header-usage.mjs の weekUsage）
@@ -4987,7 +4992,7 @@ const controls = chatComposer.useControls({
 const slashSkills = chatComposer.useSlash({
   cwd: () => state.cwd.trim() || state.draft.cwd || "",
   canCompact: () => canCompactHere(),
-  compactNote: () => t('compaction.agentManaged', { agent: labelOf(activeBackendId()) }),
+  compactNote: () => t('compaction.agentManaged', { agent: labelOf(selectedBackend()) }),
   load: (cwd) => cmd("slashSkills", { cwd: cwd || undefined }),
   off: () => shellComposer.active || composerEditor.inCode(),
 });
@@ -5267,7 +5272,7 @@ function paintInterruptLine(live) {
 let limitClockTimer = null;
 /**
  * 入力欄の「▶ 再開」。中断状態・走っていない・欄が空のときだけ「中断」の位置に出す。
- * 保留の未送信があれば「保留中の N 件を送って再開」。字を書いたら隠し、欄の下に「送ると、この指示で続けます」。
+ * 字を書くと再開を隠す。上限待機または保留の未送信があるときは、欄の下に注記を出す。
  * 中断中だけプレースホルダを「指示を変えて続ける…」にする
  */
 function syncResume() {
@@ -5279,15 +5284,16 @@ function syncResume() {
   const show = resumeVisible({ interrupted, running, waiting: isWaitingHere(), text, attached });
   const button = $('resume');
   const paused = interrupted ? pausedCount(outboxes.get(state.current)) : 0;
-  const label = resumeLabel(paused, s?.interrupted);
-  const limitState = interrupted ? limitResumeState(s.interrupted) : null;
+  const target = composerSelection();
+  const label = resumeLabel(paused, s?.interrupted, target);
+  const limitState = interrupted ? limitResumeState(s.interrupted, target) : null;
   if ($('resumeLabel').textContent !== label) {
     $('resumeLabel').textContent = label;
     button.title = label;
     button.setAttribute('aria-label', label);
   }
   // 480px 以下の上限の時計は時刻だけ（全文は title と読み上げ名に残る）
-  $('resumeShort').textContent = resumeShortLabel(s?.interrupted);
+  $('resumeShort').textContent = resumeShortLabel(s?.interrupted, target);
   // 上限の解除前の時計は押せない表示。解除の後（解除時刻が分からない上限も）は普通の「再開」
   const waitingClock = limitState === 'release';
   button.classList.toggle('is-limit', waitingClock);
@@ -5299,12 +5305,12 @@ function syncResume() {
     limitClockTimer = setTimeout(() => { syncResume(); renderSessions(); }, Math.min(2_147_000_000, Math.max(1000, switchAt - Date.now())));
   }
   const note = $('resumeNote');
-  note.hidden = !interrupted || running;
   // 保留があれば、送った指示は保留の後ろに並ぶ（サーバーが保留を先に送り直す。sendMessage）
-  const noteText = resumeNoteText(paused, s?.interrupted);
+  const noteText = resumeNoteText(paused, s?.interrupted, target);
+  note.hidden = !interrupted || running || !noteText;
   if (note.textContent !== noteText) note.textContent = noteText;
   // 書いていない間も高さは取っておく（書き始めたときに入力欄が跳ねない）
-  note.classList.toggle('quiet', !(text.trim() || attached));
+  note.classList.toggle('quiet', !note.hidden && !(text.trim() || attached));
   const placeholder = t('interrupt.placeholder');
   if (!$('prompt').disabled) {
     if (interrupted && !running) $('prompt').placeholder = placeholder;
@@ -5339,7 +5345,7 @@ async function resumeSession(sessionId) {
 let workLimitClockTimer = null;
 /**
  * 子の会話のモーダルの「▶ 再開」と欄の下の一行。出す条件と字はメインの syncResume と同じ（web/interrupt.mjs）。
- * 子が中断状態・走っていない・承認待ちでない・欄が空のときだけ。字を書いたら隠し、「送ると、この指示で続けます」を出す
+ * 子が中断状態・走っていない・承認待ちでない・欄が空のときだけ再開を出す。
  */
 function syncWorkResume() {
   if (!workComposer) return;
@@ -5352,7 +5358,9 @@ function syncWorkResume() {
   const waiting = (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && p.sessionId === id);
   const written = workComposer.hasDraft();
   const paused = pausedCount(outboxes.get(id));
-  const limitState = limitResumeState(s.interrupted);
+  const selection = workControls.selection(id);
+  const target = { ...selection, hasAccounts: Boolean(capsOf(selection.backend).accounts) };
+  const limitState = limitResumeState(s.interrupted, target);
   const waitingClock = limitState === 'release';
   if (waitingClock) {
     const switchAt = s.interrupted.resetsAt + 500;
@@ -5360,11 +5368,11 @@ function syncWorkResume() {
   }
   workComposer.setResume({
     show: resumeVisible({ interrupted, running, waiting, text: '', attached: written }),
-    label: resumeLabel(paused, s.interrupted),
-    short: resumeShortLabel(s.interrupted),
+    label: resumeLabel(paused, s.interrupted, target),
+    short: resumeShortLabel(s.interrupted, target),
     limit: waitingClock,
     disabled: resuming.has(id) || waitingClock,
-    note: running ? '' : resumeNoteText(paused, s.interrupted),
+    note: running ? '' : resumeNoteText(paused, s.interrupted, target),
     quiet: !written,
     placeholder: running ? '' : t('interrupt.placeholder'),
   });
@@ -9475,7 +9483,9 @@ async function syncTopbar() {
   const id = state.current;
   // 新しい会話の欄（まだ会話が無い）と、作ったばかりの会話（startNew が予約を流し終えるまで）は、そこで選んだ設定を見せる。
   // 流している途中に来た一覧の読み直しは書く前の予約を持つことがあり、そのまま見せるとチップが一瞬戻る（chooseSettings）
-  const { draft: chosen, homeBot, backend: bid, account: selectedAccount, endpoint: selectedEndpoint } = composerSelection();
+  const { draft: chosen, homeBot, backend: bid, account: selectedAccount, endpoint: selectedEndpoint, model: selectedModel } = composerSelection();
+  syncResume();
+  paintContextStrip();
   const current = () => state.current === id && version === topbarVersion;
   const caps = capsOf(activeBackendId());
 
@@ -9486,7 +9496,7 @@ async function syncTopbar() {
   state.account = selectedAccount;
   if (homeBot) state.accountShown = false;
   // 帯の使用量の札は、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
-  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: chosen?.model ?? (chosen?.reset ? '' : s?.nextSettings?.model ?? s?.model) ?? '' });
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: selectedModel });
 
   // 予約があれば次のターンの作業場所を表示する。
   if (s) state.cwd = (justCreated() && state.draft.cwd) || (chosen?.cwd ?? s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
@@ -9505,7 +9515,7 @@ async function syncTopbar() {
   if (state.current !== id || version !== topbarVersion) return;
   state.modes = modes;
   state.models = models;
-  if (s) { state.mode = s.mode ?? "default"; state.model = chosen?.model ?? (chosen?.reset ? "" : s.nextSettings?.model ?? s.model) ?? ""; }
+  if (s) { state.mode = s.mode ?? "default"; state.model = selectedModel; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = chosen.model ?? prefs.model ?? ""; }
   state.mode = homeBot?.mode ?? selectedMode(s, bid, modes, chosen);
   refreshWorktree().catch(() => {});   // 作業場所・モードが決まったら始める（接続先・エフォート・アカウントの取得を待たない）
@@ -10639,7 +10649,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
         waitInfo.compactMs = Math.max(0, Math.round(monoNow() - tCompact));
         outcome = 'sent';
         clearSentDraft(sessionId, text, attachments);
-      } else sys(t('compaction.agentManaged', { agent: labelOf(activeBackendId()) }));
+      } else sys(t('compaction.agentManaged', { agent: labelOf(selectedBackend()) }));
       return;
     }
     if (!at) { state.compactionAt = null; paintContextStrip(); }
@@ -10886,7 +10896,7 @@ const workControls = createWorkControls({
   },
   endpointView: (backend, selected) => (capsOf(backend).compatEndpoints ? endpointViewOf(backend, selected) : null),
   revalidate: revalidateVocab,
-  repaint: () => { workComposer?.paintControls(); syncWorkUsage(); },
+  repaint: () => { workComposer?.paintControls(); syncWorkUsage(); syncWorkResume(); },
   fail: (error, kind) => workComposer?.say(kind === 'mode' ? t('chat.sys.modeSaveFailed', { error }) : t('chat.settingsHold.settings', { error }), true),
   empty: noEfforts,
 });
@@ -11186,9 +11196,10 @@ $("sessionMore").onclick = () => {
 function conversationContext() {
   const session = state.sessions.find(s => s.id === state.current);
   const auto = state.prefs.autoCompaction;
-  const key = state.backends.find(b => b.id === activeBackendId())?.idleCompaction;
+  const backend = selectedBackend();
+  const key = state.backends.find(b => b.id === backend)?.idleCompaction;
   return { usage: state.contextWindow, auto: { ...auto, enabled: auto?.enabled && auto?.[key]?.enabled }, session,
-    compact: canCompactHere(), agent: labelOf(activeBackendId()),
+    compact: canCompactHere(), agent: labelOf(backend),
     scheduled: state.compactionAt ? compactTime(state.compactionAt) : null };
 }
 function openCompactionSheet() {
