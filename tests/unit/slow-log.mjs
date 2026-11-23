@@ -2,7 +2,7 @@
 //   - しきい値の環境変数読み込み・サニタイズ（本文・タイトル・パス・設定値・生エラー文言を落とす）
 //   - slow-commands.log への追記・自己除外（invoke:app.reportSlow）・上限超過時の新しい半分への切り詰め
 //   - monitorEventLoopDelay によるイベントループ遅延の記録
-//   - slowClient の client-pending / client-rtt / offline バッファと再送・submit-wait / submit-switched
+//   - slowClient の client-pending / client-rtt / offline バッファと再送・submit-wait
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -201,20 +201,20 @@ export default async function (t) {
     sentBatches.length = 0;
     connected = false;
     slowClient.recordSubmitWait({ sessionId: 's-off', ms: 3000, outcome: 'sent', wait: { phase: 'send', sendMs: 3000 } });
-    slowClient.recordSubmitSwitched({ sessionId: 's-sw', ms: 90, wait: { phase: 'settings', switched: true } });
+    slowClient.recordSubmitWait({ sessionId: 's-sw', ms: 2500, outcome: 'sent', wait: { phase: 'settings', settingsMs: 2500 } });
     await slowClient.flush();
     t.ok('切断中は送らずバッファに保持する', sentBatches.length === 0 && slowClient.queueSize === 2);
 
     connected = true;
     await slowClient.flush();
     const reconnected = sentBatches.flat();
-    t.ok('再接続後の flush でまとめて送る（submit-wait / submit-switched）',
-      reconnected.length === 2 && reconnected[0].kind === 'submit-wait' && reconnected[1].kind === 'submit-switched' && slowClient.queueSize === 0,
+    t.ok('再接続後の flush でまとめて送る（submit-wait 2 件）',
+      reconnected.length === 2 && reconnected[0].kind === 'submit-wait' && reconnected[1].kind === 'submit-wait' && reconnected[1].sessionId === 's-sw' && slowClient.queueSize === 0,
       JSON.stringify(reconnected));
 
     // 記録送信の失敗は投げず画面を止めない
     failSend = true;
-    slowClient.recordSubmitSwitched({ sessionId: 's-drop', ms: 10, wait: { phase: 'mode', switched: true } });
+    slowClient.recordSubmitWait({ sessionId: 's-drop', ms: 2500, outcome: 'sent', wait: { phase: 'mode', modeMs: 2500 } });
     await slowClient.flush();
     t.ok('記録送信が接続中に失敗しても例外を投げず溜め続けない', slowClient.queueSize === 0);
   }

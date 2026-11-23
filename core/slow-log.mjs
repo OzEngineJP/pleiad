@@ -21,10 +21,9 @@ const ALLOWED_KINDS = new Set([
   'server-cmd',
   'event-loop',
   'submit-wait',
-  'submit-switched',
 ]);
 const ALLOWED_SOURCES = new Set(['client', 'server']);
-const ALLOWED_OUTCOMES = new Set(['pending', 'ok', 'error', 'closed', 'cancelled', 'switched', 'sent']);
+const ALLOWED_OUTCOMES = new Set(['pending', 'ok', 'error', 'closed', 'cancelled', 'sent']);
 const ALLOWED_PHASES = new Set([
   'newSession',
   'preSend',
@@ -48,7 +47,7 @@ const WAIT_MS_KEYS = [
   'sendMs',
   'compactMs',
 ];
-const WAIT_BOOL_KEYS = ['hadSettingsWrite', 'hadModeWrite', 'hadWorktree', 'cancelled', 'switched', 'hasNewSession'];
+const WAIT_BOOL_KEYS = ['hadSettingsWrite', 'hadModeWrite', 'hadWorktree', 'cancelled', 'hasNewSession'];
 
 function parseThreshold(raw, fallback, min = 0) {
   if (raw === undefined || raw === null || raw === '') return fallback;

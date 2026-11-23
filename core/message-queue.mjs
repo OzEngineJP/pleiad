@@ -84,10 +84,12 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
       // 予約は消さず、次のターンから効く（docs/multi-backend.md §2.2）
       if (!snapshot && turn && turn.phase !== 'waiting' && (await store.get(id)).nextSettings) return setWait(id, { reason: 'turn', detail: 'reserved' });
       const starting = snapshot && !turn;
+      // 新しいターンで始める項目は、受け付けられるまで queued のまま。始めた発言（userMessage の initial）を
+      // 画面が「待ちに戻された」と取り違えないよう、準備中の印（waiting）は始める前に外す
       if (!starting) {
         waits.delete(id);
         if (!await update(id, item.id, { status: 'sending', error: null, connectorsError: null }, 'queued')) continue;
-      }
+      } else await setWait(id, null);
       if (turn) {
         const delivery = (async () => {
           try {

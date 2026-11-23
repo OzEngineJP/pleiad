@@ -347,4 +347,15 @@ export default async function(t) {
   const recovering = await resumed.list('restart');
   t.ok('再起動は配送前の設定を復元し、配送開始済みの項目を結果不明にする',
     recovering[0].status === 'queued' && recovering[0].args.settings.model === 'first' && recovering[1].status === 'unknown');
+  // 設定つきの発言を新しいターンで始めるとき、始める直前（userMessage の initial が出る前）の一覧に準備中の印を残さない。
+  // 残すと画面は「始めた発言が待ちに戻された」と取り違えて吹き出しを消す
+  let seenAtStart = null;
+  const lastSeen = new Map();
+  const startsClean = createMessageQueue({ ...adapter, prepare: async (_id, item) => item.args,
+    changed: (id, items) => lastSeen.set(id, structuredClone(items)),
+    start: async (_args, accepted) => { seenAtStart = lastSeen.get('clean')?.find(m => m.id === 'clean-1') ?? null; await accepted(); return 'ok'; } });
+  await startsClean.accept('clean', 'clean-1', payload);
+  for (let i = 0; i < 100 && (await startsClean.list('clean'))[0].status === 'queued'; i++) await new Promise(r => setTimeout(r, 10));
+  t.ok('設定つきの発言は、始める前の一覧で queued・待ちの印なし（画面が始めた吹き出しを消さない）',
+    seenAtStart?.status === 'queued' && !seenAtStart.waiting, JSON.stringify(seenAtStart));
 }

@@ -98,7 +98,7 @@ export default async function (t) {
       return { session, draft: state.current ? session?.nextSettings : context.draftView(state.draft.changes ?? []), backend: 'fake' };
     }, syncRequest, joinReply, retainPlan, WINDOW_MESSAGES, WINDOW_BYTES, historyPane: { backfill: null, paintBefore: null, painting: false, olderFail: null },
     cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0, requestAnimationFrame: noop, loadBranches: (id) => context.branches.load(id), retainThread: noop, holdReading: noop, t: (k, params) => params?.error ? `${k}: ${params.error}` : k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
-    creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailures: new Map(), syncSettingsHold: noop,
+    creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, settingsFailures: new Map(), syncSettingsHold: noop,
     cwdSaving: 0,
     // 予約を書いている間の選択と、書けた予約の控え（reserveSettings が出し入れする。tests/unit/composer-pending-choice.mjs が見る）
     inflightNext: new Map(), settledNext: new Map(), refreshVersion: 0,
@@ -124,7 +124,7 @@ export default async function (t) {
     ACTIVITY_LABEL: {}, attachMenu: null, setDraftNote: noop,
     isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop, paint: noop }, retiredHere: () => null, submittingMessages: new Set(),
     activeSubmits: new Map(), openConversation: noop,
-    slowClient: { track: (_c, _a, p) => p, recordSubmitWait: noop, recordSubmitSwitched: noop, configure: noop, flush: noop },
+    slowClient: { track: (_c, _a, p) => p, recordSubmitWait: noop, configure: noop, flush: noop },
     connStatus: { blocksSend: () => false },
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの弧を合わせる呼び出しだけ受ける
     nav: { syncRunning: noop, reset: noop }, navSession: null, toc: { reset: () => {}, refresh: () => {} },
@@ -378,7 +378,7 @@ export default async function (t) {
   const sentCwd1 = calls.filter(c => c.command === 'sendMessage' && c.args.sessionId === 'cwd1');
   t.ok('送信時の cwd は選んだ場所になる', sentCwd1.length === 1 && sentCwd1[0].args.settings.cwd === 'D:/project-a');
 
-  // 2. 作成中に作業場所を選び、作成中に送信を予約する（queuedSend）
+  // 2. 作成中に作業場所を選び、作成中に送信を予約する
   state.cwd = 'C:/home';
   state.attached = [];
   prompt.value = '';

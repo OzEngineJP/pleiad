@@ -65,11 +65,11 @@ export const appOps = [
     input: z.object({
       entries: z.array(z.object({
         at: z.string().max(40).optional().describe('agent:ops.app.reportSlow.at'),
-        kind: z.enum(['client-pending', 'client-rtt', 'submit-wait', 'submit-switched']).describe('agent:ops.app.reportSlow.kind'),
+        kind: z.enum(['client-pending', 'client-rtt', 'submit-wait']).describe('agent:ops.app.reportSlow.kind'),
         command: z.string().max(80).optional().describe('agent:ops.app.reportSlow.command'),
         ms: z.number().nonnegative().optional().describe('agent:ops.app.reportSlow.ms'),
         sessionId: z.string().max(80).optional().describe('agent:ops.app.reportSlow.sessionId'),
-        outcome: z.enum(['pending', 'ok', 'error', 'closed', 'cancelled', 'switched', 'sent']).optional().describe('agent:ops.app.reportSlow.outcome'),
+        outcome: z.enum(['pending', 'ok', 'error', 'closed', 'cancelled', 'sent']).optional().describe('agent:ops.app.reportSlow.outcome'),
         errorCode: z.string().max(64).optional().describe('agent:ops.app.reportSlow.errorCode'),
         pendingCount: z.number().int().nonnegative().optional().describe('agent:ops.app.reportSlow.pendingCount'),
         wait: z.object({
@@ -85,7 +85,6 @@ export const appOps = [
           hadModeWrite: z.boolean().optional().describe('agent:ops.app.reportSlow.waitFlag'),
           hadWorktree: z.boolean().optional().describe('agent:ops.app.reportSlow.waitFlag'),
           cancelled: z.boolean().optional().describe('agent:ops.app.reportSlow.waitFlag'),
-          switched: z.boolean().optional().describe('agent:ops.app.reportSlow.waitFlag'),
           hasNewSession: z.boolean().optional().describe('agent:ops.app.reportSlow.waitFlag'),
         }).optional().describe('agent:ops.app.reportSlow.wait'),
       }).describe('agent:ops.app.reportSlow.entry')).max(100).describe('agent:ops.app.reportSlow.entries'),
