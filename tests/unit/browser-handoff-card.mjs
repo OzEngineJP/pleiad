@@ -45,6 +45,12 @@ export default async function (t_) {
     reason: 'connect', state: 'setup', assist: 'enable-failed', enable: true, setupReason: 'accessibility-permission',
   } }, { el, t, cmd: async () => {} });
   t_.ok('only the missing accessibility permission is named', texts(axPermissionView).join('|').includes('chat.browserHandoff.connect.macAccessibilityPermission') && !texts(axPermissionView).join('|').includes('macScreenPermission'));
+  const dataPermissionView = browserHandoffView({ sessionId: 's', browserHandoff: {
+    reason: 'connect', state: 'setup', assist: 'enable-failed', enable: true, setupReason: 'chrome-data-permission',
+  } }, { el, t, cmd: async () => {} });
+  const dataPermissionText = texts(dataPermissionView).join('|');
+  t_.ok('Chrome data denial names only its Files and Folders permission on the existing card',
+    dataPermissionText.includes('chat.browserHandoff.connect.macChromeDataPermission') && !/macScreenPermission|macAccessibilityPermission/.test(dataPermissionText));
 
 
   // 画面を開く口が無い呼び出し元でも、操作中の戻すボタンは出す（カードが入口の 1 つ）

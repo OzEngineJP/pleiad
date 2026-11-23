@@ -1701,6 +1701,39 @@ export default async function (t) {
       t.ok('使えない OS・macOS の層の raiseVisibleBrowser は何もしない', unsupported.raiseVisibleBrowser({}).reason === 'unsupported' && mac.raiseVisibleBrowser({}).reason === 'unsupported');
     }
   }
+  // #221: Chrome app-data denial is not an OFF toggle; retry reads the grant afresh.
+  for (const code of ['EPERM', 'EACCES']) {
+    let denied = true, helperCalls = 0, spawned = 0, probes = 0;
+    const os = createMacChromeOs({
+      helper: { call: async () => { helperCalls++; return {}; } },
+      readFile: () => { if (denied) throw Object.assign(new Error('private path'), { code }); return '9222\n/devtools/browser/test'; },
+      probePort: async () => { probes++; return true; },
+      spawn: () => { spawned++; }, exists: () => true,
+    });
+    const result = await os.enableRemoteDebugging();
+    t.ok(`mac: ${code} reports Chrome data permission without toggling or other permission prompts`,
+      result.ok === false && result.reason === 'chrome-data-permission' && !helperCalls && !spawned && !probes && result.diag.steps.length === 0);
+    denied = false;
+    t.ok(`mac: ${code} grant is read again on retry`, (await os.enableRemoteDebugging()).ok === true && probes === 1 && !spawned);
+  }
+  {
+    let denied = false, title, closed = 0;
+    const os = createMacChromeOs({
+      helper: { call: async op => {
+        if (op === 'chromeWindows') return { windows: title ? [{ id: 'setup', title }] : [] };
+        if (op === 'chromeEnableStep') { denied = true; title = 'Inspect'; return { state: 'toggled', checked: true }; }
+        if (op === 'chromeClose') { closed++; return { ok: false, reason: 'setup-cleanup-failed' }; }
+        return {};
+      } },
+      readFile: () => { if (denied) throw Object.assign(new Error('private path'), { code: 'EPERM' }); return ''; },
+      exists: () => true,
+      spawn: (_exe, args) => { title = args.at(-1).match(/<title>([^<]+)<\/title>/)[1]; return { on() {}, unref() {} }; },
+      timing: { findSetupMs: 100, toggleMs: 100, pollMs: 1 },
+    });
+    const result = await os.enableRemoteDebugging();
+    t.ok('mac: permission revoked while enabling keeps the data-permission reason and still attempts cleanup',
+      result.reason === 'chrome-data-permission' && closed === 1);
+  }
   // #221: permission failures use the shared TCC prompt/restart path.
   for (const permission of ['screen', 'accessibility']) {
     const { withPermissionPrompt } = require('../../desktop/computer/mac.cjs');

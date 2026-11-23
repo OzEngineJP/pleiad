@@ -145,7 +145,8 @@ export function setupBrowserSettings({ available = desktopHost(), cmd, getPrefs,
       // Pleiad がトグルを入れられる（Windows）なら「オンにしてつなぐ」。押したときだけ入れる（ADR 0218）。手で入れる手順とコピーは残す
       const canEnable = chrome.enable === true && chrome.assist !== 'enable-failed';
       status.textContent = chrome.assist === 'enable-failed' ? t(`${k}enable.failed`) : t(unreachable ? `${k}setup.unreachable` : `${k}setup.status`);
-      if (['screen-permission', 'accessibility-permission'].includes(chrome.enableReason)) details.push(note(t(`${k}enable.${chrome.enableReason === 'screen-permission' ? 'macScreenPermission' : 'macAccessibilityPermission'}`)));
+      const permissionNote = { 'screen-permission': 'macScreenPermission', 'accessibility-permission': 'macAccessibilityPermission', 'chrome-data-permission': 'macChromeDataPermission' }[chrome.enableReason];
+      if (permissionNote) details.push(note(t(`${k}enable.${permissionNote}`)));
       if (canEnable) details.push(note(t(`${k}enable.note`)));
       else if (unreachable) details.push(note(t(`${k}setup.unreachableNote`)));
       const steps = el('ol', 'browser-conn-steps');
@@ -272,7 +273,7 @@ export function setupBrowserSettings({ available = desktopHost(), cmd, getPrefs,
     /** サーバーの chromeBrowser イベント（ホストの画面だけに届く） */
     chromeEvent(ev) {
       const was = chrome?.state;
-      chrome = { state: ev.state, reason: ev.reason ?? null, dialog: ev.dialog === true, product: ev.product ?? null, assist: ev.assist ?? null, enable: ev.enable === true }; paintChrome();
+      chrome = { state: ev.state, reason: ev.reason ?? null, enableReason: ev.enableReason ?? null, dialog: ev.dialog === true, product: ev.product ?? null, assist: ev.assist ?? null, enable: ev.enable === true }; paintChrome();
       if (ev.state === 'connected' && was !== 'connected') void loadProfiles();   // つないだときに、増やした・名前を変えたプロフィールを読み直す
     },
     /** hostCapabilities が届いた（つなぎ直したときも）。使える環境なら今の状態を取り直す */

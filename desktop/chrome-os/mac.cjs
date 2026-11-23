@@ -196,13 +196,16 @@ function createMacChromeOs({
     return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
   }
 
-  async function isActivePortListening(dir) {
-    if (!dir) return false;
+  async function activePortStatus(dir) {
+    if (!dir) return { listening: false };
     let text;
-    try { text = readFile(path.join(dir, 'DevToolsActivePort')); } catch { return false; }
+    try { text = readFile(path.join(dir, 'DevToolsActivePort')); }
+    catch (error) {
+      // App-data protection is not an OFF toggle. Do not launch a setup window or request unrelated TCC permissions.
+      return { listening: false, ...(['EPERM', 'EACCES'].includes(error?.code) ? { reason: 'chrome-data-permission' } : {}) };
+    }
     const parsed = parseActivePortText(text);
-    if (!parsed) return false;
-    return (await probePort(parsed.port)) === true;
+    return { listening: parsed ? (await probePort(parsed.port)) === true : false };
   }
 
   async function cleanupSetupWindows(current = pendingSetup) {
@@ -242,7 +245,9 @@ function createMacChromeOs({
     };
     const targetDir = resolveUserDataDir(userDataDir);
     if (userDataDir != null && !targetDir) return { ok: false, reason: 'invalid-user-data-dir', diag };
-    if (await isActivePortListening(targetDir)) {
+    let portStatus = await activePortStatus(targetDir);
+    if (portStatus.reason) return { ok: false, reason: portStatus.reason, diag };
+    if (portStatus.listening) {
       if (pendingSetup) await cleanupSetupWindows();
       return { ok: true, diag };
     }
@@ -348,7 +353,9 @@ function createMacChromeOs({
           const portStart = Date.now();
           const portDeadline = portStart + time.portWaitMs;
           while (Date.now() < portDeadline) {
-            if (await isActivePortListening(targetDir)) { listening = true; break; }
+            portStatus = await activePortStatus(targetDir);
+            if (portStatus.reason) return { ok: false, reason: portStatus.reason, diag };
+            if (portStatus.listening) { listening = true; break; }
             await sleep(time.pollMs);
           }
           diag.portWait = { ms: Date.now() - portStart, listening, state: step?.state };
@@ -365,7 +372,7 @@ function createMacChromeOs({
       }
       const closed = await cleanupSetupWindows({ ...(setupId ? { id: setupId } : {}), marker });
       if (prevFrontPid > 0) await callHelper('activate', { pid: prevFrontPid });
-      if (!listening && !closed.ok) return { ok: false, reason: closed.reason, diag };
+      if (!listening && !closed.ok && !portStatus.reason) return { ok: false, reason: closed.reason, diag };
     }
   }
 
