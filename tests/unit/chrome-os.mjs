@@ -1746,7 +1746,7 @@ export default async function (t) {
   {
     // A launch can surface after findSetupMs AND its cleanup have both completed.
     const old = ['288d21f0099a0158', '52048e41fa2ff091', 'd1f9167c3c181bf6', '0557c74ff1f53bc5']
-      .map((nonce, i) => ({ id: `old-${i}`, title: `PLY-ENABLE-${nonce}` }));
+      .map((nonce, i) => ({ id: `old-${i}`, title: `PLY-ENABLE-${nonce}${i % 2 ? " - Google Chrome - Test Profile" : ""}` }));
     const ordinary = ['Usual tab', 'PLY-ENABLE', 'PLY-ENABLE-1234', 'PLY-ENABLE-ABCDEF0123456789',
       'prefix PLY-ENABLE-0123456789abcdef', 'PLY-ENABLE-0123456789abcdef suffix', 'PLY-ENABLE-0123456789abcdef\n']
       .map((title, i) => ({ id: `user-${i}`, title }));
@@ -1764,7 +1764,7 @@ export default async function (t) {
         }
         if (op === 'chromeEnableStep') {
           windows.find(w => w.id === args.id).title = 'Inspect with Chrome Developer Tools';
-          windows.push({ id: 'late-during-toggle', title: 'PLY-ENABLE-aaaaaaaaaaaaaaaa' });
+          windows.push({ id: 'late-during-toggle', title: 'PLY-ENABLE-aaaaaaaaaaaaaaaa - Google Chrome - Test Profile' });
           listening = true;
           return { state: 'toggled', checked: true };
         }
@@ -1774,7 +1774,7 @@ export default async function (t) {
       spawn: (_exe, args) => {
         beforeLaunch.push(windows.map(w => w.id));
         const title = args.find(a => a.startsWith('data:text/html,')).match(/<title>([^<]+)<\/title>/)[1];
-        const w = { id: `setup-${++spawned}`, title };
+        const w = { id: `setup-${++spawned}`, title: `${title} - Google Chrome - Test Profile` };
         if (spawned === 1) delayed = w; else windows.push(w);
         return { on() {}, unref() {} };
       },
@@ -1784,10 +1784,11 @@ export default async function (t) {
     t.ok('mac: sweeps all four old nonces before launching', old.every(w => closed.some(c => c.id === w.id && c.exactMarker === true)));
     windows.push(delayed);
     t.ok('mac: next enable succeeds after a launch appeared beyond the previous cleanup', (await os.enableRemoteDebugging()).ok === true);
+    t.ok('mac: decorated titles pass only the nonce marker to cleanup', closed.filter(c => c.exactMarker).every(c => /^PLY-ENABLE-[a-f0-9]{16}$/.test(c.marker)));
     t.ok('mac: late previous window is closed before launching another', beforeLaunch[1].every(id => id.startsWith('user-')));
     t.ok('mac: final cleanup closes owned inspect and another late nonce',
       closed.some(c => c.id === 'setup-2' && !c.exactMarker) && closed.some(c => c.id === 'late-during-toggle' && c.exactMarker === true));
-    t.ok('mac: exact marker sweeps preserve every ordinary or near-matching window',
+    t.ok('mac: marker prefix sweeps preserve every ordinary or near-matching window',
       JSON.stringify(windows) === JSON.stringify(ordinary) && !closed.some(c => c.id?.startsWith('user-')));
   }
   {

@@ -180,3 +180,15 @@ public func shouldRequestAppAccessibility(previousAccepted: Bool?, sameInstance:
     return secondsSince >= retryAfterSeconds
 }
 
+// Chrome's AX title includes the browser/profile suffix; CG can return only the page title.
+public func chromeSetupMarker(_ title: String) -> String? {
+    guard !title.contains("\n"), !title.contains("\r"),
+          let range = title.range(of: "^PLY-ENABLE-[a-f0-9]{16}(?= - |\\z)", options: .regularExpression) else { return nil }
+    return String(title[range])
+}
+
+public func canCloseChromeSetupWindow(title: String, marker: String, tabCount: Int?, requireMarker: Bool) -> Bool {
+    guard chromeSetupMarker(marker) == marker, tabCount == 1 else { return false }
+    // Our owned window navigates to inspect; sweeps must still match the marker at close time.
+    return !requireMarker || chromeSetupMarker(title) == marker
+}

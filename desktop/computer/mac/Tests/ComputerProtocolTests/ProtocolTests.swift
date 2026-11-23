@@ -154,5 +154,25 @@ final class ProtocolTests: XCTestCase {
         XCTAssertFalse(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: true, secondsSince: 4, retryAfterSeconds: 5))
         XCTAssertTrue(shouldRequestAppAccessibility(previousAccepted: false, sameInstance: true, secondsSince: 5, retryAfterSeconds: 5))
     }
+
+    func testChromeSetupTitlesAndSingleTabCleanup() {
+        let marker = "PLY-ENABLE-0123456789abcdef"
+        for title in [marker, marker + " - Google Chrome", marker + " - Google Chrome - Test Profile"] {
+            XCTAssertEqual(chromeSetupMarker(title), marker)
+            XCTAssertTrue(canCloseChromeSetupWindow(title: title, marker: marker, tabCount: 1, requireMarker: true))
+            for count: Int? in [nil, 0, 2, 10] {
+                XCTAssertFalse(canCloseChromeSetupWindow(title: title, marker: marker, tabCount: count, requireMarker: true))
+            }
+        }
+        for title in ["Usual tab", "prefix " + marker, marker + "f", marker + " suffix", marker + "\n", "PLY-ENABLE-1234", "PLY-ENABLE-ABCDEF0123456789"] {
+            XCTAssertNil(chromeSetupMarker(title))
+            XCTAssertFalse(canCloseChromeSetupWindow(title: title, marker: marker, tabCount: 1, requireMarker: true))
+        }
+        XCTAssertFalse(canCloseChromeSetupWindow(title: "PLY-ENABLE-aaaaaaaaaaaaaaaa - Google Chrome", marker: marker, tabCount: 1, requireMarker: true))
+        // Owned windows are closed after navigating away from the marker, only while still single-tab.
+        XCTAssertTrue(canCloseChromeSetupWindow(title: "Inspect with Chrome Developer Tools", marker: marker, tabCount: 1, requireMarker: false))
+        XCTAssertFalse(canCloseChromeSetupWindow(title: "Inspect with Chrome Developer Tools", marker: marker, tabCount: 2, requireMarker: false))
+        XCTAssertFalse(canCloseChromeSetupWindow(title: marker, marker: "bad", tabCount: 1, requireMarker: false))
+    }
 }
 

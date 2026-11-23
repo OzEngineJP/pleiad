@@ -35,7 +35,9 @@ const PROFILE_DIR = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
 const NONCE = /^[a-f0-9]{8,64}$/;
 const NONCE_URL = /^data:text\/html[,;]/;
 const WS_PATH = /^\/devtools\/browser\/[A-Za-z0-9-]+$/;
-const SETUP_MARKER = /^PLY-ENABLE-[a-f0-9]{16}$/;
+// AX titles append " - Google Chrome - <profile>"; CG titles can be bare.
+const SETUP_MARKER = /^PLY-ENABLE-[a-f0-9]{16}(?= - |$)/;
+const setupMarker = title => typeof title === 'string' && !/[\r\n]/.test(title) ? SETUP_MARKER.exec(title)?.[0] : undefined;
 
 const DEFAULT_FEATURES = Object.freeze({
   dialog: true,
@@ -220,9 +222,9 @@ function createMacChromeOs({
       pendingSetup ??= current;
     } else {
       for (const w of snapshot.windows) {
-        // Compare the entire match: JS's $ also accepts a trailing newline.
-        if (typeof w.title !== 'string' || SETUP_MARKER.exec(w.title)?.[0] !== w.title || w.id === current?.id) continue;
-        await close({ id: w.id, marker: w.title, exactMarker: true });
+        const marker = setupMarker(w.title);
+        if (!marker || w.id === current?.id) continue;
+        await close({ id: w.id, marker, exactMarker: true });
       }
     }
     log(`enable cleanup ok=${result.ok} ${JSON.stringify(enableStepSummary(result))}`);
@@ -298,7 +300,7 @@ function createMacChromeOs({
       while (Date.now() < findDeadline) {
         diag.findSetup.attempts += 1;
         const res = await callHelper('chromeWindows', {});
-        const hit = res?.windows?.find(w => w.title === marker);
+        const hit = res?.windows?.find(w => setupMarker(w.title) === marker);
         if (hit?.id) { setupId = String(hit.id); break; }
         await sleep(time.pollMs);
       }
@@ -359,7 +361,7 @@ function createMacChromeOs({
       // Keep the owned ID after navigation, and sweep late windows from older invocations too.
       if (!setupId) {
         const res = await callHelper('chromeWindows');
-        setupId = res?.windows?.find(w => w.title === marker)?.id ?? null;
+        setupId = res?.windows?.find(w => setupMarker(w.title) === marker)?.id ?? null;
       }
       const closed = await cleanupSetupWindows({ ...(setupId ? { id: setupId } : {}), marker });
       if (prevFrontPid > 0) await callHelper('activate', { pid: prevFrontPid });

@@ -793,23 +793,46 @@ enum Chrome {
         return ["ok": r1 == .success || activated, "method": "direct"]
     }
 
+    // Count only browser tabs, never radio buttons in web content. Unknown/incomplete trees fail closed.
+    private static func tabCount(in root: AXUIElement) -> Int? {
+        var count = 0, groups = 0, visited = 0
+        var complete = true
+        func walk(_ node: AXUIElement, inTabGroup: Bool, depth: Int) {
+            guard depth <= 20, visited < 2000 else { complete = false; return }
+            visited += 1
+            guard let role = axString(node, kAXRoleAttribute as String) else { complete = false; return }
+            if role == "AXWebArea" { return }
+            if role == "AXTabGroup" { groups += 1 }
+            if inTabGroup && role == "AXRadioButton" { count += 1; return }
+            var ref: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(node, kAXChildrenAttribute as CFString, &ref)
+            if status == .attributeUnsupported || status == .noValue { return }
+            guard status == .success, let children = ref as? [AXUIElement] else { complete = false; return }
+            for child in children {
+                walk(child, inTabGroup: inTabGroup || role == "AXTabGroup", depth: depth + 1)
+            }
+        }
+        walk(root, inTabGroup: false, depth: 0)
+        return complete && groups == 1 ? count : nil
+    }
+
     /** { id: String } → { ok: Bool, gone?: Bool } */
     static func close(_ args: [String: Any]) -> [String: Any] {
         var id = args["id"] as? String
         // Marker cleanup belongs only to setup windows. Preserve ordinary close semantics.
         if let marker = args["marker"] as? String,
-           marker.range(of: "^PLY-ENABLE-[a-f0-9]{16}\\z", options: .regularExpression) != nil {
+           chromeSetupMarker(marker) == marker {
             guard CGPreflightScreenCaptureAccess() else { return ["ok": false, "reason": "screen-permission"] }
             guard AXIsProcessTrusted() else { return ["ok": false, "reason": "accessibility-permission"] }
             if id == nil || lookupWindow(id: id!) == nil {
                 let all = browserPids().flatMap { collectAxWindows(for: $0) }
-                id = all.first { ($0["title"] as? String) == marker }?["id"] as? String
+                id = all.first { chromeSetupMarker(($0["title"] as? String) ?? "") == marker }?["id"] as? String
                 if id == nil {
                     // Include minimized/off-screen windows before concluding it is gone.
                     guard let cg = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
                         return ["ok": false, "reason": "setup-cleanup-failed"]
                     }
-                    let remains = cg.contains { ($0[kCGWindowName as String] as? String) == marker }
+                    let remains = cg.contains { chromeSetupMarker(($0[kCGWindowName as String] as? String) ?? "") == marker }
                     return remains ? ["ok": false, "reason": "setup-cleanup-failed"] : ["ok": true, "gone": true]
                 }
             }
@@ -818,10 +841,13 @@ enum Chrome {
         guard let entry = lookupWindow(id: id) else {
             return ["ok": true, "gone": true]
         }
-        // Sweeps must not close a window whose title changed since enumeration.
-        if args["exactMarker"] as? Bool == true,
-           axString(entry.element, kAXTitleAttribute as String) != args["marker"] as? String {
-            return ["ok": true, "gone": true]
+        if let marker = args["marker"] as? String, chromeSetupMarker(marker) == marker {
+            let title = axString(entry.element, kAXTitleAttribute as String) ?? ""
+            let requireMarker = args["exactMarker"] as? Bool == true
+            if requireMarker && chromeSetupMarker(title) != marker { return ["ok": true, "gone": true] }
+            guard canCloseChromeSetupWindow(title: title, marker: marker, tabCount: tabCount(in: entry.element), requireMarker: requireMarker) else {
+                return ["ok": false, "reason": "setup-cleanup-failed"]
+            }
         }
         var btnRef: CFTypeRef?
         if AXUIElementCopyAttributeValue(entry.element, kAXCloseButtonAttribute as CFString, &btnRef) == .success,
