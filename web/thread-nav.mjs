@@ -20,12 +20,14 @@ const GAP = 12;
 const AWAY = 120;
 
 /**
- * @param {{ log:HTMLElement, thread:() => (HTMLElement|null), rows?:object, frame?:HTMLElement, keys?:EventTarget, skip?:string, isRunning?:() => boolean }} o
+ * @param {{ log:HTMLElement, thread:() => (HTMLElement|null), rows?:object, frame?:HTMLElement, keys?:EventTarget, skip?:string, isRunning?:() => boolean, generation?:() => unknown }} o
  *   log は筋を入れてスクロールする要素（#workBody）、thread はいまの筋を返す関数。
+ *   generation は表示の世代（いま映している会話・項目）を返す関数。数フレームの合わせ直しの間に変わったら、合わせ直しをやめる
+ *   （別の会話の中身へ移った後に、前の会話の位置へ送り続けない。ADR 0347 第 3 段）。省くと筋の要素そのもの
  *   frame は log を包む相対位置の入れ物（最新へを置く先。省くと最新へ・キーは持たない）。
  *   keys はキーを受ける先（ダイアログ。最前面で開いている間、前面の筋に効かせる）、skip はそのキーを奪わない所の selector（一覧・右の欄など）
  */
-export function createThreadNav({ log, thread, rows = CHAT_ROWS, frame = null, keys = null, skip = '', isRunning = () => false }) {
+export function createThreadNav({ log, thread, rows = CHAT_ROWS, frame = null, keys = null, skip = '', isRunning = () => false, generation = thread }) {
   let turns = [], raf = 0, settle = null;
   const texts = new WeakMap();
   const listeners = new Set();
@@ -67,11 +69,14 @@ export function createThreadNav({ log, thread, rows = CHAT_ROWS, frame = null, k
   function settleScroll(want, onSettled = null) {
     settle?.abort();
     const run = settle = new AbortController();
+    const gen = generation();
     log.scrollTop = want();
     for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) log.addEventListener(type, () => run.abort(), { signal: run.signal, passive: true });
     let frames = 0, calm = 0;
     const tick = () => {
       if (run.signal.aborted) return;
+      // 表示の世代が替わった（別の会話・項目を映した）。送り先は前の中身のものなので、ここでやめる（済んだ知らせも出さない）
+      if (generation() !== gen) { run.abort(); return; }
       const target = want();
       if (Math.abs(target - log.scrollTop) > 1) { log.scrollTop = target; calm = 0; } else calm++;
       if (++frames > 30 || calm >= 3) { const aborted = run.signal.aborted; run.abort(); if (!aborted) onSettled?.(); return; }

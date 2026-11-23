@@ -150,8 +150,22 @@ export function createSessionTodo(o) {
   const S = { session: null, rev: -1, items: [], flow: false, view: 'auto', expand: false, L: null, loading: 0 };
   const badges = new Map();       // id → { text, backend }（AI が変えた印。パネルを閉じるまで）
   const unseen = new Set();       // 閉じている間に AI が変えた id（開いたときに光らせる）
+  /**
+   * 表示していない会話の変更の印（会話 ID → { badges, unseen, rev }）。切り替えで捨てず、戻ったときに戻す。
+   * 表示していない会話に届いた AI の変更（todosChanged）もここへ覚える（rev が覚えより新しいものだけ。ADR 0347 第 3 段）
+   */
+  const kept = new Map();
+  const keptOf = (id) => {
+    let k = kept.get(id);
+    if (!k) { k = { badges: new Map(), unseen: new Set(), rev: -1 }; kept.set(id, k); }
+    kept.delete(id); kept.set(id, k);
+    if (kept.size > 50) kept.delete(kept.keys().next().value);
+    return k;
+  };
   let tw = null, vtw = null, Vgoal = null, drive = false, Wover = null, menu = null, isMax = false, edit = false, rename = null, skipClick = false;
-  let isOpen = false, busy = false, expandedText = null;
+  let isOpen = false, expandedText = null;
+  /** 書き込み中の会話（会話ごとに 1 本。A の更新中でも B は操作できる） */
+  const busy = new Set();
   const V = { x: 0, y: 0, z: 1, mode: 'home' };
   let flowCamera = null;
   const els = new Map(), edgeEls = new Map();
@@ -616,11 +630,11 @@ export function createSessionTodo(o) {
     for (const id of [...unseen]) if (!byId(id)) unseen.delete(id);
   }
   async function send(op, args, touched = []) {
-    const sid = S.session;
-    if (!sid || busy) return null;
-    busy = true;
+    const sid = S.session, rev = S.rev;
+    if (!sid || busy.has(sid)) return null;
+    busy.add(sid);
     try {
-      const res = await o.cmd('invoke', { op, args: { sessionId: sid, ...args, ifRev: S.rev } });
+      const res = await o.cmd('invoke', { op, args: { sessionId: sid, ...args, ifRev: rev } });
       const out = res?.result ?? res;
       if (S.session !== sid || !out?.items) return out;
       for (const id of touched) badges.delete(id);
@@ -632,7 +646,7 @@ export function createSessionTodo(o) {
       else o.notify?.(t('todo.failed'));
       await reload();
       return null;
-    } finally { busy = false; }
+    } finally { busy.delete(sid); }
   }
   async function reload() {
     const sid = S.session;
@@ -661,13 +675,16 @@ export function createSessionTodo(o) {
     return Boolean(await send('todos.update', { items: changes }, touched));
   }
   async function removeItem(it) {
-    // 消す項目を待っていた項目は、消す項目が待っていた項目を待つようにつなぎ直してから消す
+    // 消す項目を待っていた項目は、消す項目が待っていた項目を待つようにつなぎ直す。
+    // つなぎ直しは押した時の並びで決め、消すのと同じ 1 回の todos.remove（同じ会話・同じ版）で送る
+    let items;
     if (S.flow) {
       const d = deps(), rest = S.items.filter((x) => x.id !== it.id), next = new Map();
       for (const x of rest) { const own = d.get(x.id) ?? []; next.set(x.id, own.includes(it.id) ? [...new Set([...own.filter((y) => y !== it.id), ...(d.get(it.id) ?? [])])] : own); }
-      if (!(await sendGraph(next, rest))) { refresh(); return; }
+      const { order, after } = normalizeAfter(rest, next);
+      items = changesFor(rest, order, after);
     }
-    await send('todos.remove', { ids: [it.id] });
+    await send('todos.remove', { ids: [it.id], ...(items?.length ? { items } : {}) });
     refresh();
   }
   async function toggleDep(it, other) {
@@ -1190,8 +1207,13 @@ export function createSessionTodo(o) {
   }
   async function load(sessionId) {
     if (S.session === sessionId) return;
+    // 離れる会話の印は覚えておく（開いて見た印は close が消している）
+    if (S.session && (badges.size || unseen.size)) Object.assign(keptOf(S.session), { badges: new Map(badges), unseen: new Set(unseen), rev: S.rev });
+    else if (S.session) kept.delete(S.session);
     clearView();
     S.session = sessionId || null;
+    const back = S.session ? kept.get(S.session) : null;
+    if (back) { for (const [id, b] of back.badges) badges.set(id, b); for (const id of back.unseen) unseen.add(id); kept.delete(S.session); }
     entry.hidden = !S.session;
     if (!S.session) { close(); refresh(false); paintDot(); return; }
     refresh(false);
@@ -1199,8 +1221,31 @@ export function createSessionTodo(o) {
     paintDot();
   }
   function reset() { load(null); }
+  /** 表示していない会話に届いた変更。AI の変更の印を覚え、人の変更なら印を外す（開いたときの一覧は読み直す） */
+  function keepHidden(ev) {
+    if (!ev.sessionId) return;
+    const k = kept.get(ev.sessionId);
+    if (k && !(ev.rev > k.rev)) return;
+    const agent = ev.by?.kind === 'agent';
+    if (!agent && !k) return;
+    const into = keptOf(ev.sessionId);
+    into.rev = ev.rev;
+    const alive = new Set((ev.items ?? []).map((i) => i.id));
+    for (const c of ev.changed ?? []) {
+      if (!alive.has(c.id) || !agent) { into.badges.delete(c.id); into.unseen.delete(c.id); continue; }
+      const key = BY_KEY[c.action];
+      if (!key) continue;
+      const name = o.labelOf?.(ev.by.backend) ?? ev.by.backend ?? '';
+      // i18n-dynamic: todo.by.
+      into.badges.set(c.id, { text: t(`todo.by.${key}`, { name }), backend: ev.by.backend ?? null });
+      into.unseen.add(c.id);
+    }
+    if (!into.badges.size && !into.unseen.size) kept.delete(ev.sessionId);
+  }
   function onEvent(ev) {
-    if (ev?.type !== 'todosChanged' || ev.sessionId !== S.session || !(ev.rev > S.rev)) return;
+    if (ev?.type !== 'todosChanged') return;
+    if (ev.sessionId !== S.session) { keepHidden(ev); return; }
+    if (!(ev.rev > S.rev)) return;
     const before = new Map(S.items.map((i) => [i.id, i]));
     setItems(ev.items ?? [], ev.rev);
     const agent = ev.by?.kind === 'agent';

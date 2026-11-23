@@ -1100,7 +1100,8 @@ const threadDrafts = createDrafts({ dataDir: store.dataDir });
 const sessionTodos = createTodos({ dataDir: store.dataDir, taskOf: id => agentTasks?.todoState(id),
   onChange: ({ scope, rev, items, changed, by }) => { if (scope.kind === 'session') emitGlobal({ type: 'todosChanged', sessionId: scope.id, rev, items, changed, by }); } });
 const inboxSources = createNotificationSources({
-  inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
+  // 最初から既読で載せるのは、その会話を描き終えて見ている画面があるときだけ（読み込みに失敗した画面には映っていない。ADR 0347 第 3 段）
+  inbox, store, viewing: sessionId => notifyPresence.showing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
   hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
 });
@@ -6953,6 +6954,15 @@ function remoteHostsNow() {
   return out;
 }
 
+/**
+ * 承認の中身を差し替えるたびに進める版（payload.rev。最初の配信は 0）。permissionUpdate と、loadSession・つなぎ直しが返す保留中の承認に載る。
+ * 画面は同じ承認の id で版の古い中身を当てない（遅れて届いた履歴の応答で新しい中身を戻さない。ADR 0347 第 3 段）
+ */
+function bumpPermissionRev(w) {
+  w.payload.rev = (w.payload.rev ?? 0) + 1;
+  return w.payload.rev;
+}
+
 async function runningWork() {
   // 保持役に載っているターン（子が保持役に居る。切り替えの待ちの表示が使う。desktop/switch.cjs）
   const held = new Set([...runtime.turns.values()].filter(heldTurn).map(t => t.info.sessionId));
@@ -7296,7 +7306,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       if (parentCard) {
         const waitingTasks = chromeLoginGroups.tasks(loginGroup, parentCard.payload.targetSessionId ?? sessionId);
         parentCard.payload.browserHandoff = { ...parentCard.payload.browserHandoff, waitingTasks };
-        emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: parentCard.payload.browserHandoff });
+        emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: parentCard.payload.browserHandoff, rev: bumpPermissionRev(parentCard) });
       }
     }
     // 端末の AI に任された子の承認は、端末（依頼元の会話）へも中継する（docs/remote.md §4.5）。決着したら端末のカードも畳む
@@ -7308,7 +7318,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
         const w = runtime.waiting.get(card.id);
         if (!w) continue;
         w.payload.browserHandoff = { ...w.payload.browserHandoff, ...patch };
-        emitGlobal({ type: 'permissionUpdate', id: card.id, sessionId: card.payload.sessionId ?? null, browserHandoff: w.payload.browserHandoff });
+        emitGlobal({ type: 'permissionUpdate', id: card.id, sessionId: card.payload.sessionId ?? null, browserHandoff: w.payload.browserHandoff, rev: bumpPermissionRev(w) });
       }
       // 端末の依頼元のカードも、同じ状態に替える（setup → permission → denied。docs/remote.md §4.5）
       remoteRelay?.update(chromeWaitOf(cards[0].payload.browserHandoff));
@@ -7330,14 +7340,14 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
           waiting.payload.targetSessionId = nextLogin.sessionId;
           waiting.payload.browserHandoff = { ...nextWait?.payload.browserHandoff, targetSessionId: nextLogin.sessionId,
             waitingTasks: chromeLoginGroups.tasks(loginGroup, nextLogin.sessionId) };
-          emitGlobal({ type: 'permissionUpdate', id: parentCard.id, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff });
+          emitGlobal({ type: 'permissionUpdate', id: parentCard.id, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff, rev: bumpPermissionRev(waiting) });
         }
       } else if (loginGroup && nextLogin) {
         const waiting = runtime.waiting.get(loginGroup.parentCardId);
         if (waiting) {
           waiting.payload.browserHandoff = { ...waiting.payload.browserHandoff,
             waitingTasks: chromeLoginGroups.tasks(loginGroup, waiting.payload.targetSessionId ?? waiting.payload.browserHandoff?.targetSessionId) };
-          emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff });
+          emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff, rev: bumpPermissionRev(waiting) });
         }
       }
       // どれか1つで決着し、残りの複製も消す。1つも残っていなければ二重解決
@@ -8021,7 +8031,7 @@ const remoteCards = {
     const w = runtime.waiting.get(id);
     if (!w?.payload.chromeWait || !patch?.chromeWait) return;
     w.payload.chromeWait = { ...w.payload.chromeWait, ...patch.chromeWait };
-    emitGlobal({ type: 'permissionUpdate', id, sessionId: w.payload.sessionId ?? null, chromeWait: w.payload.chromeWait });
+    emitGlobal({ type: 'permissionUpdate', id, sessionId: w.payload.sessionId ?? null, chromeWait: w.payload.chromeWait, rev: bumpPermissionRev(w) });
   },
   close(id, resolution) {
     const w = runtime.waiting.get(id);
@@ -11262,11 +11272,16 @@ wss.on("connection", (ws, req) => {
         case 'presence': {
           const a = msg.args ?? {};
           const via = connectionDevices.get(ws);
-          notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId, slot: a.slot });
+          // shownAt: 画面がこの会話を読み込んで描き終えた履歴の時点（loadSession の返事の shownAt。サーバーの時計）。描けていない画面は付けない
+          const shownAt = Number.isFinite(a.shownAt) && a.shownAt > 0 ? Math.min(a.shownAt, Date.now()) : null;
+          notifyPresence.set(ws, { deviceId: via?.id ?? null, platform: via?.platform ?? null, visible: a.visible === true, sessionId: a.sessionId, slot: a.slot, shownAt });
           if (a.visible === true && typeof a.sessionId === 'string' && a.sessionId) {
+            // スマホへの通知を送らない・消すのは、見ている報告だけで決める（今までどおり）
             pushNotifier.viewed(a.sessionId);
-            // 開いて見た会話の通知（あなた待ち・完了・失敗）は既読にする（ADR 0149）
-            try { inbox.viewSession(a.sessionId); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
+            // 通知の一覧の既読は、実際に表示した位置（shownAt）まで（ADR 0149・ADR 0347 第 3 段）。読み込み中・読み込みに失敗した画面の報告では進めない
+            if (shownAt != null) {
+              try { inbox.viewSession(a.sessionId, shownAt); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
+            }
           }
           return reply(true, 'ok');
         }
@@ -11372,11 +11387,12 @@ wss.on("connection", (ws, req) => {
               const { messages, presents, events } = liveBody(turn);
               return loadReply(true, serve({
                 messages, presents, completedAt, interrupted: null, draft, ...compactionData,
-                stream: { events }, streamCursor: streamSequence, permissions,
+                stream: { events }, streamCursor: streamSequence, permissions, shownAt: readStarted,
                 initialMessageId: turn.stream.initialMessageId,
               }, msg.args, subagentToolsOf, toolHintsOf));
             }
-            return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf, toolHintsOf));
+            // shownAt: この返事が映す履歴の時点（読み始めた時刻）。画面は描き終えたら presence でこれを返し、通知の一覧はここまでを既読にする（ADR 0347 第 3 段）
+            return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, shownAt: readStarted, ...retired }, msg.args, subagentToolsOf, toolHintsOf));
           } finally {
             liveReads.delete(read);
             timing.finish(msg.args?.outline ? 'outline' : msg.args?.older ? 'older' : msg.args?.live ? 'live' : 'open');

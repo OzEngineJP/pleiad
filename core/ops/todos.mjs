@@ -129,12 +129,17 @@ export const todoOps = [
     input: z.object({
       sessionId: sessionId('remove'),
       ids: z.array(z.string().min(1).max(80)).min(1).max(TODO_ITEMS_MAX).describe(D('remove', 'ids')),
+      items: z.array(z.object({
+        id: z.string().min(1).max(80).describe(D('update', 'id')),
+        after: after('update'),
+        before: z.string().min(1).max(80).nullable().optional().describe(D('update', 'before')),
+      })).max(TODO_ITEMS_MAX).optional().describe(D('remove', 'items')),
       ifRev: ifRev('remove'),
     }),
     output: listOut,
     surfaces: { ui: true, mcp: 'catalog', cli: true },
-    handler: (ctx, { sessionId: given, ids, ifRev: rev }) =>
-      write(ctx, given, (scope, by) => ctx.todos.remove(scope, { ids, ifRev: rev, by })),
+    handler: (ctx, { sessionId: given, ids, items, ifRev: rev }) =>
+      write(ctx, given, (scope, by) => ctx.todos.remove(scope, { ids, changes: items ?? [], ifRev: rev, by })),
   }),
   defineOp({
     id: 'todos.checkLinks', summary: D('checkLinks', 'summary'), risk: 'read', scope: 'session',

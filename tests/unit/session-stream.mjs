@@ -27,6 +27,8 @@ export default async function (t) {
   const historyTimers = new Map();
   let timerId = 0;
   const state = { current: "other", sessions: [], drafts: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
+  const shownUpTo = new Map();
+  let failHistory = null;
   const loads = createSessionLoads();
   const context = vm.createContext({
     // 本文の描き直しは 1 コマに 1 回（client.mjs の flushStream）。このテストは本文の raw だけを見る
@@ -70,6 +72,9 @@ export default async function (t) {
     browserEntry: null, browserSettings: { chromeRepaint: noop },
     // 承認カードはこのテストの対象外（tests/unit/server-fake.mjs の reopenCase が見ている）
     paintPendingPerms: id => { for (const ev of state.pendingPerms.values()) if (ev.sessionId === id) context.renderPermission(ev); }, paintComputerWait: noop,
+    // 描き終えた履歴の時点（閲覧状況の報告に載せ、通知の一覧の既読に使う。ADR 0347 第 3 段）。片付いた承認の覚えは client の adoptPendingPerms
+    shownUpTo, noteShown: (id, at) => { if (id && Number.isFinite(at)) shownUpTo.set(id, at); },
+    adoptPendingPerms: list => { for (const p of list ?? []) state.pendingPerms.set(p.id, p); }, settledPerms: new Set(),
     readCompletions: { mark: noop }, renderSessions: noop, acknowledgeDisplayed: noop, el: () => ({ dataset: {} }), renderMarkdown: x => x, renderAssistantMarkdown: x => x,
     closeBundle: noop, settleStrays: noop, followBottom: noop, closeThink: noop, activity: { show: noop, hide: noop }, atBottom: () => false,
     ensureTurnEl: () => ({ append: x => bodies.push(x) }),
@@ -87,7 +92,7 @@ export default async function (t) {
     syncHistory: () => { syncs++; }, refresh: async () => {},
     // 委譲の行（会話の分）を一緒に読む（web/task-cards.mjs）。このテストの対象外
     loadTaskCards: async () => {},
-    cmd: () => new Promise(r => { releaseHistory = r; }),
+    cmd: () => new Promise((r, j) => { releaseHistory = r; failHistory = j; }),
     // 文言（web/i18n.mjs の t と client.mjs の html.t・ACTIVITY_LABEL）。このテストは文言を見ない
     t: key => key, html: { t: key => key }, ACTIVITY_LABEL: {},
     // 入力欄の「編集中」（web/composer/edit-mode.mjs・client.mjs の chatEdit / syncEdit）。このテストの対象外（編集中ではない会話だけ）
@@ -130,8 +135,10 @@ export default async function (t) {
   t.ok('turnEnd 自体は OS 通知を出さない', notices.length === 0);
   deliver({ type: 'completionReady', sessionId: 'target', completedAt: 100 });
   t.ok("読込中の終了による同期は復元まで待つ", syncs === 0);
-  releaseHistory({ messages: [], presents: [], stream: { events: [event("全文", 5)] }, streamCursor: 5 });
+  t.ok('読み込み中は、その会話を「表示した」と言わない（閲覧状況の報告に位置を付けない。ADR 0347 第 3 段）', !shownUpTo.has('target'));
+  releaseHistory({ messages: [], presents: [], stream: { events: [event("全文", 5)] }, streamCursor: 5, shownAt: 50 });
   await next;
+  t.ok('描き終えたら、返事が映す履歴の時点（shownAt）を表示した位置として覚える', shownUpTo.get('target') === 50);
   t.ok("系譜を待たずに描き終える", syncs === 1);
   releaseBranches();
   await new Promise(setImmediate);
@@ -167,6 +174,15 @@ export default async function (t) {
   t.ok('再生後に受信した承認を一度だけ描く', renderedPermissions.length === 1 && renderedPermissions[0].id === 'during-replay');
   state.pendingPerms.clear();
   loads.replay = originalReplay;
+
+  // 読み込みの失敗: 開き直しで前の位置を消し、失敗したら付け直さない（通知の一覧をその会話の分まで既読にしない）
+  state.current = "other";
+  shownUpTo.set('target', 300);
+  const failing = vm.runInContext("select('target')", context);
+  await new Promise(setImmediate);
+  failHistory(new Error('offline'));
+  await failing.catch(() => {});
+  t.ok('読み込みに失敗した会話は、表示した位置を持たない（前の位置も持ち越さない）', !shownUpTo.has('target'));
 
   const cancelled = loads.begin("target");
   loads.cancel(cancelled);

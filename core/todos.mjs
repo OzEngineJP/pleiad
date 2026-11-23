@@ -160,6 +160,38 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, task
     return task?.parentSessionId === scope.id && applyTask(item, task);
   }
 
+  /** changes を並び（写し）に順に当てて、新しい並びと changed を返す（update と、remove のつなぎ直しが共用） */
+  function applyChanges(scope, list, changes, by) {
+    let next = list;
+    const at = now();
+    const changed = [];
+    for (const c of changes) {
+      const item = next.find(t => t.id === c.id);
+      if (!item) throw new TodoError('NOT_FOUND', `no item ${c.id}`, { id: c.id });
+      const before = { text: item.text, status: item.status };
+      if (c.text !== undefined) item.text = cleanText(c.text);
+      if (c.status !== undefined) item.status = cleanStatus(c.status);
+      setDetails(item, c);
+      syncItem(scope, item);
+      if (c.after !== undefined) item.after = afterIds(c.after, new Map(next.map(t => [t.id, t.id])), item.id);
+      if (c.links !== undefined) item.links = cleanLinks(c.links);
+      if (c.removeLinks?.length) item.links = item.links.filter(l => !c.removeLinks.includes(l.id) && !c.removeLinks.includes(l.path) && !c.removeLinks.includes(l.url));
+      if (c.addLinks?.length) item.links = cleanLinks([...item.links, ...c.addLinks]);
+      if (c.before !== undefined) {
+        next = next.filter(t => t !== item);
+        const index = c.before === null ? -1 : next.findIndex(t => t.id === c.before);
+        if (c.before !== null && index < 0) throw new TodoError('NOT_FOUND', `no item ${c.before}`, { id: c.before });
+        next.splice(index < 0 ? next.length : index, 0, item);
+      }
+      item.updatedAt = at;
+      item.updatedBy = by;
+      const action = before.status !== item.status ? (item.status === 'done' ? 'done' : item.status === 'doing' ? 'started' : 'reopened')
+        : c.before !== undefined && c.text === undefined && c.after === undefined && c.links === undefined && !c.addLinks && !c.removeLinks ? 'moved' : 'updated';
+      changed.push({ id: item.id, action });
+    }
+    return { next, changed };
+  }
+
   return {
     syncTasks() {
       for (const id of open().linkedSessions()) {
@@ -218,48 +250,28 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, task
       const s = scopeOf(scope);
       if (!Array.isArray(changes) || !changes.length) throw invalid('items is empty');
       const { items } = guard(s, ifRev);
-      let next = items.map(t => ({ ...t }));
-      const at = now();
-      const changed = [];
-      for (const c of changes) {
-        const item = next.find(t => t.id === c.id);
-        if (!item) throw new TodoError('NOT_FOUND', `no item ${c.id}`, { id: c.id });
-        const before = { text: item.text, status: item.status };
-        if (c.text !== undefined) item.text = cleanText(c.text);
-        if (c.status !== undefined) item.status = cleanStatus(c.status);
-        setDetails(item, c);
-        syncItem(s, item);
-        if (c.after !== undefined) item.after = afterIds(c.after, new Map(next.map(t => [t.id, t.id])), item.id);
-        if (c.links !== undefined) item.links = cleanLinks(c.links);
-        if (c.removeLinks?.length) item.links = item.links.filter(l => !c.removeLinks.includes(l.id) && !c.removeLinks.includes(l.path) && !c.removeLinks.includes(l.url));
-        if (c.addLinks?.length) item.links = cleanLinks([...item.links, ...c.addLinks]);
-        if (c.before !== undefined) {
-          next = next.filter(t => t !== item);
-          const index = c.before === null ? -1 : next.findIndex(t => t.id === c.before);
-          if (c.before !== null && index < 0) throw new TodoError('NOT_FOUND', `no item ${c.before}`, { id: c.before });
-          next.splice(index < 0 ? next.length : index, 0, item);
-        }
-        item.updatedAt = at;
-        item.updatedBy = by;
-        const action = before.status !== item.status ? (item.status === 'done' ? 'done' : item.status === 'doing' ? 'started' : 'reopened')
-          : c.before !== undefined && c.text === undefined && c.after === undefined && c.links === undefined && !c.addLinks && !c.removeLinks ? 'moved' : 'updated';
-        changed.push({ id: item.id, action });
-      }
+      const { next, changed } = applyChanges(s, items.map(t => ({ ...t })), changes, by);
       renumber(next);
       return commit(s, next, [], changed, by);
     },
 
-    /** 消す。ほかの項目の after からも外す */
-    remove(scope, { ids, ifRev, by }) {
+    /**
+     * 消す。ほかの項目の after からも外す。
+     * changes（update と同じ形）を渡すと、消した後の残りに同じ版の 1 回の書き込みで当てる
+     * （画面の「消す項目を待っていた項目を、消す項目が待っていた項目につなぎ直す」。つなぎ直しだけ済んで消せない、を作らない）
+     */
+    remove(scope, { ids, changes = [], ifRev, by }) {
       const s = scopeOf(scope);
       if (!Array.isArray(ids) || !ids.length) throw invalid('ids is empty');
+      if (!Array.isArray(changes)) throw invalid('items must be an array');
       const { items } = guard(s, ifRev);
       for (const id of ids) if (!items.some(t => t.id === id)) throw new TodoError('NOT_FOUND', `no item ${id}`, { id });
       const gone = new Set(ids);
       const at = now();
-      const next = items.filter(t => !gone.has(t.id)).map(t => (t.after.some(id => gone.has(id)) ? { ...t, after: t.after.filter(id => !gone.has(id)), updatedAt: at } : t));
+      const rest = items.filter(t => !gone.has(t.id)).map(t => (t.after.some(id => gone.has(id)) ? { ...t, after: t.after.filter(id => !gone.has(id)), updatedAt: at } : { ...t }));
+      const { next, changed } = applyChanges(s, rest, changes, by);
       renumber(next);
-      return commit(s, next, [...gone], [...gone].map(id => ({ id, action: 'removed' })), by);
+      return commit(s, next, [...gone], [...[...gone].map(id => ({ id, action: 'removed' })), ...changed], by);
     },
 
     /** 成果物のリンクのうち、ファイル・フォルダーが今あるか（url は見ない） */

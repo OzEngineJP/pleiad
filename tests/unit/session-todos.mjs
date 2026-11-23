@@ -91,6 +91,16 @@ export default async function (t) {
     const r = store.remove(s1, { ids: [db.id], by: user });
     t.ok('消すと、ほかの項目の after からも外す', !r.items.some(x => x.id === db.id) && JSON.stringify(r.items.find(x => x.id === test.id).after) === JSON.stringify([ui.id]) && events.at(-1).changed[0].action === 'removed');
     t.ok('無い id を消すのは NOT_FOUND', throwsCode(() => store.remove(s1, { ids: ['todo_none'], by: user }), 'NOT_FOUND'));
+    // 消すのとつなぎ直しは同じ版の 1 回の書き込み（ADR 0347 第 3 段。つなぎ直しだけ済んで消せない、を作らない）
+    const beforeRemove = store.list(s1), eventsBefore = events.length;
+    t.ok('つなぎ直しが消す項目を指すと NOT_FOUND で、何も変えない', throwsCode(() => store.remove(s1, { ids: [ui.id], changes: [{ id: ui.id, after: [] }], by: user }), 'NOT_FOUND')
+      && JSON.stringify(store.list(s1)) === JSON.stringify(beforeRemove) && events.length === eventsBefore);
+    t.ok('古い ifRev の削除は CONFLICT で、つなぎ直しも当てない', throwsCode(() => store.remove(s1, { ids: [ui.id], changes: [{ id: test.id, after: [i1.id] }], ifRev: beforeRemove.rev - 1, by: user }), 'CONFLICT')
+      && JSON.stringify(store.list(s1)) === JSON.stringify(beforeRemove));
+    const rewired = store.remove(s1, { ids: [ui.id], changes: [{ id: test.id, after: [i1.id] }], ifRev: beforeRemove.rev, by: user });
+    t.ok('changes を渡すと、消すのと残りのつなぎ直しを 1 回で書く（rev は 1 つだけ上がる・知らせも 1 回）', rewired.rev === beforeRemove.rev + 1 && events.length === eventsBefore + 1
+      && !rewired.items.some(x => x.id === ui.id) && JSON.stringify(rewired.items.find(x => x.id === test.id).after) === JSON.stringify([i1.id])
+      && events.at(-1).changed.map(c => c.action).join() === 'removed,updated');
 
     // ---- 会話ごとに分かれる・開き直しても残る
     store.add({ kind: 'session', id: 's2' }, { entries: [{ text: '別の会話' }], by: user });
@@ -98,7 +108,7 @@ export default async function (t) {
     store.close();
     const again = createTodos({ dataDir: dir });
     t.ok('開き直しても並び・状態・リンク・rev が残る', JSON.stringify(again.list(s1)) === JSON.stringify(kept));
-    t.ok('会話ごとに分かれる', again.list({ kind: 'session', id: 's2' }).items.length === 1 && again.list(s1).items.length === 4);
+    t.ok('会話ごとに分かれる', again.list({ kind: 'session', id: 's2' }).items.length === 1 && again.list(s1).items.length === 3);
     again.close();
 
     // ---- 会話を消すと ToDo も消える
@@ -130,6 +140,19 @@ export default async function (t) {
     t.ok('輪は TODO_CYCLE', !loop.ok && loop.code === 'TODO_CYCLE');
     const unknown = await registry.invoke(agent('me'), 'todos.remove', { ids: ['todo_x'] }, deps);
     t.ok('無い項目は TODO_NOT_FOUND', !unknown.ok && unknown.code === 'TODO_NOT_FOUND');
+    {
+      // 2 つの窓: 窓 1 が読んだ版で「C を消して D を A につなぎ直す」を送る前に、窓 2 が書く → 窓 1 は TODO_CONFLICT で、消しもつなぎ直しもしない
+      const extra = await registry.invoke(human, 'todos.add', { sessionId: 'other', items: [{ text: 'A', ref: 'a' }, { text: 'C', ref: 'c', after: ['a'] }, { text: 'D', after: ['c'] }] }, deps);
+      const [ea, ec, ed] = extra.result.items;
+      const win2 = await registry.invoke(human, 'todos.update', { sessionId: 'other', items: [{ id: ea.id, text: 'A2' }], ifRev: extra.result.rev }, deps);
+      const win1 = await registry.invoke(human, 'todos.remove', { sessionId: 'other', ids: [ec.id], items: [{ id: ed.id, after: [ea.id] }], ifRev: extra.result.rev }, deps);
+      const mid = ops.list({ id: 'other' });
+      t.ok('2 つの窓: 古い版の削除＋つなぎ直しは TODO_CONFLICT で、どちらも当てない', win2.ok && !win1.ok && win1.code === 'TODO_CONFLICT'
+        && mid.items.length === 3 && JSON.stringify(mid.items.find(x => x.id === ed.id).after) === JSON.stringify([ec.id]), JSON.stringify(win1).slice(0, 200));
+      const again1 = await registry.invoke(human, 'todos.remove', { sessionId: 'other', ids: [ec.id], items: [{ id: ed.id, after: [ea.id] }], ifRev: mid.rev }, deps);
+      t.ok('todos.remove の items で、消すのとつなぎ直しを 1 回で行う（ほかの会話には触れない）', again1.ok && again1.result.sessionId === 'other' && again1.result.rev === mid.rev + 1
+        && JSON.stringify(again1.result.items.find(x => x.id === ed.id).after) === JSON.stringify([ea.id]) && ops.list({ id: 'me' }).items.length === 2);
+    }
     const done = await registry.invoke(human, 'todos.update', { sessionId: 'me', items: [{ id: added.result.items[0].id, status: 'done' }] }, deps);
     t.ok('人の書き込みは by が user', done.ok && done.result.items[0].updatedBy.kind === 'user' && !done.result.items[1].waiting);
     const read = await registry.invoke(human, 'todos.list', { sessionId: 'me' }, deps);

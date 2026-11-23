@@ -98,6 +98,23 @@ export default async function (t) {
   const uses = (client.match(/alreadyResolved\(/g) ?? []).length;
   t.ok('画面: 承認・質問・行の承認・コンピューターの承認・設定の変更の承認の答えが ALREADY_RESOLVED なら、失敗の表示にせず畳む', uses >= 5, String(uses));
   t.ok('画面: どの承認カードも名簿に載る（中継のカードだけではない）', !/if \(ev\.remote \|\| ev\.remoteOrigin\) registerRelayCard/.test(client) && !/if \(ev\.remote\) registerRelayCard/.test(client));
+  // ---- ID と版で当てる（ADR 0347 第 3 段）。古い取得結果・開いていない会話の出来事で、新しい状態を上書きしない・落とさない
+  t.ok('画面: 中継のカードの終わり・状態は、会話の絞り込み（isMine）の前に受ける（開いていない会話の覚えも片付ける）',
+    /ev\.type === 'permissionRelayEnd' \|\| ev\.type === 'permissionRelayState'/.test(onEvent)
+    && onEvent.indexOf("ev.type === 'permissionRelayEnd'") < onEvent.indexOf('if (!isMine(ev))'));
+  const adopt = client.slice(client.indexOf('function adoptPendingPerms('), client.indexOf('function adoptPendingPerms(') + 700);
+  t.ok('画面: 履歴の保留中の承認は、片付いた id と版の古い中身を当てない（古い応答が遅れて届いても畳んだカードを出し直さない）',
+    /settledPerms\.has\(/.test(adopt) && /\.rev/.test(adopt) && /adoptPendingPerms\(data\?\.permissions\)/.test(client));
+  t.ok('画面: 決着・別の場所での処理・中継の終わりで、片付いた id を覚える', (client.match(/rememberSettled\(/g) ?? []).length >= 4);
+  t.ok('画面: 同じ id の承認が新しく届いたら、片付いた覚えから外す（再起動で id が戻る）', /settledPerms\.delete\(ev\.id\)/.test(client));
+  const fetchCards = client.slice(client.indexOf('async function fetchTaskCards('), client.indexOf('async function fetchTaskCards(') + 2500);
+  t.ok('画面: 委譲カードの取得結果は更新時刻で比べ、古い行で新しい行を上書きしない', /function isOlderTask\(/.test(client) && /isOlderTask\(/.test(fetchCards));
+  t.ok('画面: 委譲の更新は、チャンネルの写しにしか無いカードも取り直す', /watched\.rows\.has\(ev\.taskId\)/.test(client));
+  const nav = read('web/thread-nav.mjs');
+  t.ok('画面: スクロールの補正は表示の世代（generation）が変わったらやめる', /const gen = generation\(\)/.test(nav) && /if \(generation\(\) !== gen\) \{ run\.abort\(\); return; \}/.test(nav)
+    && /generation: \(\) => bg\.view\?\.key \?\? null/.test(client));
+  t.ok('画面: 会話名の保存は会話 ID ごとに送っている最中の値を持ち、同じ会話の同じ値を二重に送らない',
+    /const titleSending = new Map\(\)/.test(client) && /titleSending\.get\(sessionId\) === v\) return/.test(client));
   for (const lng of ['ja', 'en']) {
     const ui = JSON.parse(read(`web/locales/${lng}/ui.json`));
     t.ok(`辞書（${lng}）: 別の場所で処理された`, typeof ui.chat?.approval?.elsewhere === 'string' && ui.chat.approval.elsewhere.length > 0);

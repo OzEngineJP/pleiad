@@ -75,14 +75,31 @@ export default async function (t) {
     const failRow = await until(async () => (await list()).items.find((x) => x.kind === 'failed' && x.target.sessionId === failed.sessionId), { label: '失敗の行' });
     t.ok('失敗が行になる（未読）', failRow.unread === true);
 
-    // ---- 見ている会話: presence で、その会話の通知（あなた待ち・完了・失敗）が既読になる
+    // ---- 見ている会話: 描き終えた位置（presence の shownAt）までの通知（あなた待ち・完了・失敗）が既読になる（ADR 0347 第 3 段）
     const before = (await call('notifications.count', {})).unread;
+    const unreadOf = async (id) => (await list()).items.find((x) => x.id === id)?.unread;
+    // 読み込み中・読み込みに失敗した画面（shownAt を付けない）の報告では既読にしない。プッシュの判定（server-push-notify）はこの報告のまま
     await host.cmd('presence', { visible: true, sessionId: failed.sessionId });
-    t.ok('その会話を見る（presence）と、その会話の未読の通知が既読になる', (await until(async () => (await list()).items.find((x) => x.id === failRow.id && x.unread === false), { label: '既読' })) && (await call('notifications.count', {})).unread < before);
+    await sleep(150);
+    t.ok('読み込みに失敗した画面の presence（shownAt なし）では、その会話の通知を既読にしない', await unreadOf(failRow.id) === true);
+    const shown = await host.cmd('loadSession', { sessionId: failed.sessionId, live: true });
+    t.ok('live の loadSession は、映す履歴の時点（shownAt。サーバーの時計）を返す', Number.isFinite(shown?.shownAt) && shown.shownAt >= failRow.at, String(shown?.shownAt));
+    // 古い取得結果（失敗より前の時点）を描いた画面: その位置より後の通知は既読にしない
+    await host.cmd('presence', { visible: true, sessionId: failed.sessionId, shownAt: failRow.at - 1 });
+    await sleep(150);
+    t.ok('表示した位置より後の通知は既読にしない（古い取得結果が遅れて描かれた）', await unreadOf(failRow.id) === true);
+    await host.cmd('presence', { visible: true, sessionId: failed.sessionId, shownAt: shown.shownAt });
+    t.ok('描き終えた位置（shownAt）まで見ると、その会話の未読の通知が既読になる', (await until(async () => await unreadOf(failRow.id) === false, { label: '既読' })) && (await call('notifications.count', {})).unread < before);
     const watched = await run('echo:見ている', failed.sessionId);
     const watchedRow = await until(async () => (await list()).items.find((x) => x.kind === 'done' && x.target.sessionId === failed.sessionId), { label: '見ている会話の完了' });
-    t.ok('見ている会話で終わったターンは、最初から既読で載る', watchedRow.unread === false && watched.sessionId === failed.sessionId);
+    t.ok('描き終えて見ている会話で終わったターンは、最初から既読で載る', watchedRow.unread === false && watched.sessionId === failed.sessionId);
+    // 読み直し中（shownAt なし）の画面には映っていない。その間に終わったターンは未読で載る
+    await host.cmd('presence', { visible: true, sessionId: failed.sessionId });
+    await run('echo:読み込み中', failed.sessionId);
+    const loadingRow = await until(async () => (await list()).items.find((x) => x.kind === 'done' && x.target.sessionId === failed.sessionId && x.id !== watchedRow.id), { label: '読み込み中の完了' });
+    t.ok('描き終えていない画面を見ている間に終わったターンは、未読で載る', loadingRow.unread === true, JSON.stringify(loadingRow));
     await host.cmd('presence', { visible: false, sessionId: failed.sessionId });
+    await call('notifications.markRead', { ids: [loadingRow.id] });
 
     // ---- ops: ids・all・ページ
     const fresh = await run('fail');

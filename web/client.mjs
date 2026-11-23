@@ -2870,8 +2870,30 @@ const reconcileTimers = new Map();
 /** 片付いた承認への答え（サーバーの ALREADY_RESOLVED）。失敗ではなく、別の場所で処理された知らせ */
 const alreadyResolved = (err) => err?.code === "ALREADY_RESOLVED";
 
+/**
+ * 片付いた承認の id（新しい順に上限まで）。承認の id は 1 回きりなので、片付いた後に届いた古い履歴の応答（loadSession の permissions）に
+ * 同じ id があっても描き直さない（ADR 0347 第 3 段）
+ */
+const settledPerms = new Set();
+function rememberSettled(id) {
+  if (!id) return;
+  settledPerms.delete(id);
+  settledPerms.add(id);
+  if (settledPerms.size > 500) settledPerms.delete(settledPerms.values().next().value);
+}
+/** 履歴の応答が返した保留中の承認を写しに取り込む。片付いたもの・今の写しより版の古いものは当てない */
+function adoptPendingPerms(list) {
+  for (const ev of list ?? []) {
+    if (!ev?.id || settledPerms.has(ev.id)) continue;
+    const known = state.pendingPerms.get(ev.id);
+    if (known && (known.rev ?? 0) > (ev.rev ?? 0)) continue;
+    state.pendingPerms.set(ev.id, ev);
+  }
+}
+
 /** そのカードを「別の場所で処理されました」に畳む。出ていなければ何もしない */
 function foldElsewhere(id) {
+  rememberSettled(id);
   state.pendingPerms.delete(id);
   browserEntry?.paint();
   openCards.fold(id, { by: "elsewhere" });
@@ -2880,6 +2902,7 @@ function foldElsewhere(id) {
 /** permissionSettled。この窓で答えを送っている最中のカードは、答えの応答で畳むのでここでは触らない（「許可した」と出すため） */
 function onPermissionSettled(ev) {
   const handoff = Boolean(state.pendingPerms.get(ev.id)?.browserHandoff);
+  rememberSettled(ev.id);
   state.pendingPerms.delete(ev.id);
   browserEntry?.paint();
   if (!openCards.has(ev.id) || openCards.sending(ev.id)) return;
@@ -2968,6 +2991,8 @@ function registerRelayCard(ev, parts) {
 
 /** 中継のカードの決着（permissionRelayEnd）と、ホストの接続の状態（permissionRelayState）。開いていないカードは何もしない */
 function onRelayCardEvent(ev) {
+  // 決着は開いていない会話の分でも覚えから外す（開き直したときに片付いたカードを出さない）
+  if (ev.type === "permissionRelayEnd") { rememberSettled(ev.id); state.pendingPerms.delete(ev.id); browserEntry?.paint(); }
   if (!openCards.has(ev.id)) return;
   if (ev.type === "permissionRelayState") for (const entry of openCards.of(ev.id)) entry.setOnline?.(ev.online !== false);
   else openCards.fold(ev.id, { by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName });
@@ -2978,9 +3003,12 @@ function onRelayCardEvent(ev) {
  * 出ているカードには update(ev) を渡す（種類ごとの描き方は、そのカードの parts.onUpdate が持つ。無ければ何もしない）
  */
 function onPermissionUpdate(ev) {
+  if (settledPerms.has(ev.id)) return;
   const pending = state.pendingPerms.get(ev.id);
+  // 版（rev）が今の写し以下なら古い中身。写しもカードも替えない（ADR 0347 第 3 段）
+  if (pending && ev.rev != null && (pending.rev ?? 0) >= ev.rev) return;
   if (pending) {
-    state.pendingPerms.set(ev.id, { ...pending, ...(ev.browserHandoff ? { browserHandoff: ev.browserHandoff } : {}), ...(ev.chromeWait ? { chromeWait: ev.chromeWait } : {}) });
+    state.pendingPerms.set(ev.id, { ...pending, ...(ev.browserHandoff ? { browserHandoff: ev.browserHandoff } : {}), ...(ev.chromeWait ? { chromeWait: ev.chromeWait } : {}), ...(ev.rev != null ? { rev: ev.rev } : {}) });
     browserEntry?.paint(); browserSettings.chromeRepaint();
   }
   openCards.update(ev.id, ev);
@@ -3305,6 +3333,8 @@ function onEvent(ev, replay = false) {
   // 承認は一度きりしか届かない。開いていない会話の分も覚えておき、開いたときに描く
   // （覚えずに捨てると、一覧は「承認待ち」なのにカードがどこにも出ない）
   if (ev.type === "permission" && ev.id) {
+    // 届いた承認はいま待っているもの（同じ id で聞き直されたなら、片付いた覚えから外す）
+    settledPerms.delete(ev.id);
     state.pendingPerms.set(ev.id, ev);
     browserEntry?.paint(); browserSettings.chromeRepaint();
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -3333,6 +3363,9 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
   if (ev.type === 'permissionSettled') { dropModalChildPermission(ev); onPermissionSettled(ev); return; }
+  // 承認の中身の差し替えと中継の決着も、開いていない会話の分の覚え（pendingPerms）に当てるので、絞り込みの前に受ける（ADR 0347 第 3 段）
+  if (ev.type === 'permissionUpdate') { onPermissionUpdate(ev); return; }
+  if (ev.type === 'permissionRelayEnd' || ev.type === 'permissionRelayState') { onRelayCardEvent(ev); return; }
   if (ev.type === 'compactionSchedule') {
     if (ev.sessionId === state.current) { state.compactionAt = ev.at; paintContextStrip(); }
     return;
@@ -3366,7 +3399,8 @@ function onEvent(ev, replay = false) {
   // 使用枠の正本に新しい値が届いた・無効化した（backend が無ければ全部）。購読している面へ結果を配る
   if (ev.type === 'usageChanged') { ev.backend ? usageSource.changed(ev.backend).catch(() => {}) : usageSource.reload(); return; }
   // 依頼元が委譲の子の設定を替えた（ADR 0134）。持っている行なら読み直す（終わったタスクは running に載らないため）
-  if (ev.type === 'agentTaskChanged') { if (taskCards.rows.has(ev.taskId)) fetchTaskCards([ev.taskId]).catch(() => {}); return; }
+  // Channels のスレッドの入れ物（watched.rows）にだけある行も読み直す（ADR 0347 第 3 段）
+  if (ev.type === 'agentTaskChanged') { if (taskCards.rows.has(ev.taskId) || watched.rows.has(ev.taskId)) fetchTaskCards([ev.taskId]).catch(() => {}); return; }
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
   // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
@@ -3483,13 +3517,6 @@ function onEvent(ev, replay = false) {
       // after replay has created its tool row (paintPendingPerms below).
       if (state.displayLoad?.id === ev.sessionId && sessionLoads.isPending(state.displayLoad)) return;
       return renderPermission(ev);
-
-    case "permissionRelayEnd":
-    case "permissionRelayState":
-      return onRelayCardEvent(ev);
-
-    case "permissionUpdate":
-      return onPermissionUpdate(ev);
 
     case "session":
       if (ev.sessionId && state.current !== ev.sessionId) {
@@ -5436,6 +5463,13 @@ $('closeResumeStrip').onclick = () => {
   syncResumeStrip();
 };
 
+// 会話 → 描き終えた履歴の時点（loadSession の返事の shownAt。サーバーの時計）。閲覧状況の報告（presence）に載せ、
+// ホストは通知の一覧をここまでだけ既読にする。読み込みを始めたら消し、描き終えたら付ける（読み込みに失敗した会話は既読にしない。ADR 0347 第 3 段）
+const shownUpTo = new Map();
+function noteShown(id, at) {
+  if (!id || !Number.isFinite(at)) return;
+  shownUpTo.set(id, Math.max(shownUpTo.get(id) ?? 0, at));
+}
 function acknowledgeDisplayed(id, completedAt) {
   displayedCompletions.set(id, Math.max(displayedCompletions.get(id) ?? 0, completedAt ?? 0));
   if (document.visibilityState === "visible") readCompletions.mark(id, displayedCompletions.get(id));
@@ -5745,12 +5779,18 @@ async function fetchTaskCards(ids, { again = true } = {}) {
     if (!Array.isArray(part) || taskCards.sessionId !== sessionId) return;
     rows.push(...part);
   }
-  for (const r of rows) taskCards.rows.set(r.taskId, r);
-  const forWatched = keepWatched(rows);
+  // 読んでいる間に、より新しい行（updatedAt が後）が届いていたら古い取得結果で戻さない
+  const fresh = rows.filter(r => !isOlderTask(r, taskCards.rows.get(r.taskId)) && !isOlderTask(r, watched.rows.get(r.taskId)));
+  for (const r of fresh) taskCards.rows.set(r.taskId, r);
+  const forWatched = keepWatched(fresh);
   taskCards.ver++;
   if (state.current === sessionId || forWatched) repaintTasks();
   const stale = staleTasks(rows, state.work.tasks);
   if (again && stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
+}
+/** 取った行 r が、持っている行 have より古いか（同じ委譲の updatedAt で比べる。無ければ古いとは言わない） */
+function isOlderTask(r, have) {
+  return Boolean(have && r && have.updatedAt != null && r.updatedAt != null && r.updatedAt < have.updatedAt);
 }
 /** running が届いた。この会話の木の新しい委譲と、終わって running から外れたものを読む */
 function syncTaskCards() {
@@ -5786,7 +5826,7 @@ function watchSessions(ids, { force = false } = {}) {
     watched.loaded.add(id);
     readTaskCards(id).then((rows) => {
       if (!rows) { watched.loaded.delete(id); return; }
-      for (const r of rows) watched.rows.set(r.taskId, r);
+      for (const r of rows) if (!isOlderTask(r, watched.rows.get(r.taskId))) watched.rows.set(r.taskId, r);
       taskCards.ver++;
       const stale = staleTasks(rows, state.work.tasks);
       if (stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
@@ -6983,6 +7023,7 @@ async function syncModalChildHistory(view, { force = false } = {}) {
     const res = await view.paint(data, { id, load, quiet: true });
     if (!res || !alive()) return;
     view.finish(res, { quiet: true });
+    noteShown(id, data?.shownAt);
     settleModalChild(mc, data);
     if (load.syncHistory) mc.syncAgain = true;   // 流し直しの間にターンが終わった（主の loadAndPaint の後と同じ。下の finally がもう 1 回読む）
     modalToc.refresh();   // 筋が作り直されたので、会話内検索の印を待たずに付け直す（開いていれば。debounce の間だけ印が消えるのを避ける）
@@ -7012,6 +7053,7 @@ async function openLiveChild(owner) {
   const view = createModalChildView(item, th);
   const mc = modalChild = { view, id, owner, ready: false, instrStale: false, instrBusy: false, instrAgain: false };
   owner.liveChild = true;
+  shownUpTo.delete(id);
   view.setChild({ backend: item.backend, live: item.live, steer: capsOf(item.backend)?.steer !== false, prompt: item.request, waiting: item.waiting === true });
   const load = view.loads.begin(id);
   view.displayLoad = load;
@@ -7030,6 +7072,7 @@ async function openLiveChild(owner) {
     const res = await view.paint(data, { id, load });
     if (!res || !alive()) return;
     view.finish(res, {});
+    noteShown(id, data?.shownAt);
     mc.ready = true;
     owner.lastReadMs = 0;
     owner.wasLive = item.live;
@@ -8282,8 +8325,8 @@ $('workBody').addEventListener('click', event => {
 let modalWatched = null;
 const modalWatchId = () => ($('workDialog').open && !bg.scope && $('workBody').dataset.paneKind === 'task' ? $('workBody').dataset.sessionId || null : null);
 const modalPresence = createPresenceReporter({
-  send: (visible, sessionId) => cmd('presence', { visible, sessionId, slot: 'modal' }),
-  current: modalWatchId, visible: watchingNow });
+  send: (visible, sessionId, shownAt) => cmd('presence', { visible, sessionId, slot: 'modal', ...(shownAt ? { shownAt } : {}) }),
+  current: modalWatchId, visible: watchingNow, shown: id => shownUpTo.get(id) ?? null });
 function syncModalWatch({ force = false } = {}) {
   const want = modalWatchId();
   if (force || want !== modalWatched) {
@@ -10043,6 +10086,8 @@ function takeBootPrefetch(id, adoptable) {
 
 async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
   sessionLoads.cancel(state.displayLoad);
+  // 開き直し・枝の切り替えは描き終えるまで「表示した」と言わない（静かな読み直しの間は、今の表示が映している位置のまま）
+  if (!quiet) shownUpTo.delete(id);
   const pre = takeBootPrefetch(id, keepUpTo === undefined && !quiet && !fresh);
   const load = pre?.load ?? sessionLoads.begin(id);
   state.displayLoad = load;
@@ -10159,7 +10204,8 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   syncTopbar();
   // まだ答えていない承認は本文の後（＝稼働表示の手前）に出す。届いたときに取りこぼしていても、
   // loadSession が返す保留中の一覧から拾える
-  for (const ev of data?.permissions ?? []) if (ev.id) state.pendingPerms.set(ev.id, ev);
+  // 片付いた承認・版の古い中身は当てない（応答を待つ間に別の窓で答えた・中身が替わった。ADR 0347 第 3 段）
+  adoptPendingPerms(data?.permissions);
   paintPendingPerms(id);
   paintComputerWait();
   // 中断した会話は末尾に「■ 中断しました」（保存された状態から。読み直しても消えない）。loadSession の値が一覧より新しい
@@ -10167,6 +10213,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (opened && data && 'interrupted' in data) opened.interrupted = data.interrupted ?? null;
   paintInterruptLine();
   acknowledgeDisplayed(id, Math.max(data?.completedAt ?? 0, isInterrupted(opened) ? interruptReadPoint(opened) : 0) || data?.completedAt);
+  noteShown(id, data?.shownAt);   // 描き終えた。次の閲覧状況の報告（1 秒ごとに見比べる）でホストへ届く
   const groups = placeJunctions({ snapshots });
   const moving = transition ? groups.find(r => r.dataset.key === transition.key) : null;
   if (transition) {
@@ -10979,7 +11026,9 @@ const sessionTodo = createSessionTodo({
 // 作業のダイアログの会話内検索（2 つ目。同じ部品・同じ右の欄。見る先は選んでいる子の会話で、シートも最前面のダイアログの中に出す）
 const workThread = () => $('workBody').querySelector(':scope > .thread.bg-thread');
 // 最新へのボタンと Alt+↑↓・End も主と同じ（作業のダイアログが最前面で開いている間、前面の筋に効く。一覧・右の欄・シートの中では奪わない）
-const modalNav = createThreadNav({ log: $('workBody'), thread: workThread, frame: $('workBodyFrame'), keys: $('workDialog'), skip: '.work-side, #filePreview, .toc, .toc-sheet', isRunning: () => bg.view?.item?.live === true });
+// 表示の世代は映している項目（bg.view.key）。合わせ直しの途中で別の項目・子へ移ったら、前の位置へ送り続けない（ADR 0347 第 3 段）
+const modalNav = createThreadNav({ log: $('workBody'), thread: workThread, frame: $('workBodyFrame'), keys: $('workDialog'), skip: '.work-side, #filePreview, .toc, .toc-sheet', isRunning: () => bg.view?.item?.live === true,
+  generation: () => bg.view?.key ?? null });
 const modalToc = createConversationToc({ thread: workThread, log: $('workBody'), nav: modalNav,
   preview: {
     openPanel: (spec) => { mountModalPane(); return filePreview.openPanel(spec); },
@@ -11173,14 +11222,23 @@ $("workDialog").addEventListener("click", (e) => {
 });
 
 // タイトルは人間もその場で変えられる。AI 用ツールと同じ store を通る（設計メモ 2.2）
-let titleSent = null;   // 送ったばかりの値。Enter → blur で change と blur の両方から呼ばれても 1 回にする
+// 送っている途中の名前（会話 ID → 値）。Enter → blur で change と blur の両方から呼ばれても、同じ会話の同じ値は 1 回にする。
+// 会話ごとに持つので、別の会話に同じ名前を付けるのは止めない。応答が来たら（失敗でも）外すので、同じ値で直しても送れる（ADR 0347 第 3 段）
+const titleSending = new Map();
 async function commitTitle() {
-  const s = state.sessions.find((x) => x.id === state.current);
+  const sessionId = state.current;
+  const s = state.sessions.find((x) => x.id === sessionId);
   const v = $("titleEdit").value.trim();
-  if (!state.current || !v || v === s?.title || v === titleSent) return;
-  titleSent = v;
-  await cmd("setTitle", { sessionId: state.current, title: v, reasonKey: "manual" })
-    .catch((e) => composerError(t("session.titleFailed", { error: e.message })));
+  if (!sessionId || !v || v === s?.title || titleSending.get(sessionId) === v) return;
+  titleSending.set(sessionId, v);
+  try {
+    await cmd("setTitle", { sessionId, title: v, reasonKey: "manual" });
+  } catch (e) {
+    if (state.current === sessionId) composerError(t("session.titleFailed", { error: e.message }));
+    else sideNote(t("session.titleFailed", { error: e.message }));
+  } finally {
+    if (titleSending.get(sessionId) === v) titleSending.delete(sessionId);
+  }
 }
 $("titleEdit").onchange = commitTitle;
 $("titleEdit").onblur = commitTitle;
@@ -11420,8 +11478,9 @@ const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id 
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）
 window.plyRemote?.onOpenSession?.(id => { if (id) openConversation(id); });
 // 見ている会話をホストへ知らせる。スマホへの通知を送らない・消すのに使う
-const presenceReporter = createPresenceReporter({ send: (visible, sessionId) => cmd('presence', { visible, sessionId }),
-  current: () => state.current, visible: watchingNow });
+// shownAt（描き終えた履歴の時点）があるときだけ、ホストは通知の一覧を既読にする（ADR 0347 第 3 段）
+const presenceReporter = createPresenceReporter({ send: (visible, sessionId, shownAt) => cmd('presence', { visible, sessionId, ...(shownAt ? { shownAt } : {}) }),
+  current: () => state.current, visible: watchingNow, shown: id => shownUpTo.get(id) ?? null });
 document.addEventListener('visibilitychange', () => { presenceReporter.report(); modalPresence.report(); });
 addEventListener('plyremote:stop', () => { shellStopped = true; presenceReporter.report(); modalPresence.report(); });
 addEventListener('plyremote:start', () => { shellStopped = false; presenceReporter.report(true); modalPresence.report(true); });

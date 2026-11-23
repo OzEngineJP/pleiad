@@ -104,6 +104,20 @@ export default async function (t) {
   t.ok('presence: 別の会話に移れば送る', sent.at(-1)[1] === 's2');
   rep.report(true);
   t.ok('presence: つなぎ直したときは force で送り直す', sent.length >= 2 && sent.at(-1)[1] === 's2' && sent.at(-2)[1] === 's2');
+  {
+    // 描き終えた位置（shownAt）: 描き終えた会話だけに付け、変わったら送り直す（ホストは通知の一覧をここまでだけ既読にする。ADR 0347 第 3 段）
+    const got = [], shownMap = new Map();
+    let c2 = 's1', v2 = true;
+    const r2 = createPresenceReporter({ send: (v, s, at) => { got.push([v, s, at]); }, current: () => c2, visible: () => v2, shown: id => shownMap.get(id) ?? null, now: () => clock });
+    r2.report();
+    t.ok('presence: 読み込み中（描き終えていない）は shownAt を付けない', got.at(-1)[0] === true && got.at(-1)[2] === null);
+    shownMap.set('s1', 500);
+    t.ok('presence: 描き終えたら、その位置を付けて送り直す', r2.report() === true && got.at(-1)[2] === 500);
+    c2 = 's2';
+    t.ok('presence: 別の会話へ移れば、前の会話の位置を持ち越さない', r2.report() === true && got.at(-1)[1] === 's2' && got.at(-1)[2] === null);
+    v2 = false;
+    t.ok('presence: 見ていない間は位置を付けない', r2.report() === true && got.at(-1)[0] === false && got.at(-1)[2] === null);
+  }
   const failing = createPresenceReporter({ send: () => Promise.reject(new Error('not connected')), current: () => 's1', visible: () => true, now: () => clock });
   failing.report();
   await sleep(5);

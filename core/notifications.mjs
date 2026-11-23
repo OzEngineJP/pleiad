@@ -9,7 +9,8 @@
 //
 // 規則:
 //   - 書く側は同じ出来事を何度渡してもよい（dedupeKey が同じなら載せない）。完了は `done:<会話>:<completedAt>`・あなた待ちは `wait:<承認の id>`・メンションは `mention:<投稿の id>`
-//   - いま見ている会話で起きたものは、最初から既読で載せる（viewing）
+//   - いま見ている会話で起きたものは、最初から既読で載せる（viewing。その会話を描き終えて見ている画面があるときだけ。core/notify/presence.mjs の showing）
+//   - 会話を見た既読（viewSession）は、画面が実際に表示した位置（upTo）までにする。読み込み中・読み込みに失敗した画面の報告では進めない（ADR 0347 第 3 段）
 //   - 既読は通知ごと（readAt）。会話の既読（readAt・markRead）とチャンネルの既読（channels.markRead）が進むと、対応する通知も既読になる（markSession・markChannel）
 //   - 上限: 未解決の待ちを除き NOTIFICATION_MAX 件・NOTIFICATION_KEEP_MS（古い方から捨てる。既読を先に）。会話を消す・チャンネルをアーカイブすると、その行も消す
 //   - あなた待ちの承認はメモリにしか無く、再起動で消える。起動時に、決着していないあなた待ちを 'cancelled' で決着させる（settleAllWaiting）
@@ -22,6 +23,7 @@
 //     counts(): { unread, waiting }
 //     markRead({ ids?, all? }): { changed }
 //     markSession(sessionId, upTo, kinds?)・markChannel(channelId, upTo)  … 会話・チャンネルの既読に合わせる
+//     viewSession(sessionId, upTo)  … その会話を upTo（表示した履歴の時点）まで見た。種類を問わず既読にする
 //     settle(dedupeKey, outcome)  … あなた待ちの決着（outcome: allowed | answered | denied | cancelled）
 //     settleAllWaiting(outcome, { except? })・removeSession(id)・removeChannel(id)・close()
 //     standing(name, { version, at, data } | null)  … 続いている状態のあなた待ちを置く・直す・消す（null で消す）
@@ -116,10 +118,10 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
       if (n) changed();
       return n;
     },
-    /** その会話を見た（presence）。承認・質問・完了・失敗・メンションを、いまの時刻までまとめて既読にする */
-    viewSession(sessionId) {
-      if (typeof sessionId !== 'string' || !sessionId) return 0;
-      const n = open().markSession(sessionId, Number.MAX_SAFE_INTEGER, now(), null);
+    /** その会話を upTo（画面が実際に表示した履歴の時点）まで見た（presence の shownAt）。承認・質問・完了・失敗・メンションを upTo までまとめて既読にする */
+    viewSession(sessionId, upTo) {
+      if (typeof sessionId !== 'string' || !sessionId || !Number.isFinite(upTo)) return 0;
+      const n = open().markSession(sessionId, upTo, now(), null);
       if (n) changed();
       return n;
     },

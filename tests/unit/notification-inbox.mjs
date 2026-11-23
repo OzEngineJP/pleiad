@@ -53,7 +53,11 @@ export default async function (t) {
       && inbox.list().items.find((x) => x.id && x.target.sessionId === 's4' && x.kind === 'failed').unread === true);
     inbox.add({ kind: 'wait', dedupeKey: 'wait:card-2', sessionId: 's5', data: { ask: 'question' } });
     t.ok('markSession は既定で完了・失敗だけ。あなた待ちには効かない', inbox.markSession('s5', Number.MAX_SAFE_INTEGER) === 0 && inbox.counts().waiting === 1);
-    t.ok('その会話を見たら（viewSession）、あなた待ちも含めて既読になる', inbox.viewSession('s5') === 1 && inbox.counts().waiting === 1);
+    t.ok('表示した位置（upTo）が無い viewSession は何も既読にしない（ADR 0347 第 3 段）', inbox.viewSession('s5') === 0 && inbox.viewSession('s5', null) === 0);
+    inbox.add({ kind: 'done', dedupeKey: 'done:s5:later', at: clock + 1000, sessionId: 's5', data: { title: 'B' } });
+    t.ok('その会話を upTo まで見たら（viewSession）、あなた待ちも含めて upTo までを既読にする（後の分は未読のまま）', inbox.viewSession('s5', clock + 500) === 1 && inbox.counts().waiting === 1
+      && inbox.list().items.find((x) => x.target.sessionId === 's5' && x.kind === 'done').unread === true);
+    t.ok('upTo を進めれば、後の分も既読になる', inbox.viewSession('s5', clock + 1000) === 1);
     inbox.add({ kind: 'mention', dedupeKey: 'mention:p9', at: clock + 50, channelId: 'c2', data: { threadId: 't9', postId: 'p9' } });
     inbox.add({ kind: 'failed', dedupeKey: 'failed:s6:1', at: clock + 20, sessionId: 's6', channelId: 'c2', data: { threadId: 't9' } });
     t.ok('チャンネルの既読（readAt）が進むと、そのチャンネルの通知を readAt まで既読にする（bot のスレッドの失敗も）', inbox.markChannel('c2', clock + 30) === 1
